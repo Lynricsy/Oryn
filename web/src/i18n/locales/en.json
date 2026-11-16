@@ -1763,6 +1763,8 @@
 			"all": "All",
 			"filter": "Filter",
 			"filterN": "Filter · {{n}}",
+			"options": "Filter & view",
+			"optionsN": "Filter & view · {{n}}",
 			"projects": "Projects",
 			"noProject": "No project",
 			"origins": "Source",

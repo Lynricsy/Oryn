@@ -6,7 +6,8 @@
  * （换成 artifact 切换菜单）、用 `actions` 追加「放大查看」，两者合成一行工具条。页面试图跳走时帧上方出一条提示：「此页面试图打开 <主机>」。
  *
  * 侧栏列（宽 300）有「历史 / 评论」两段（右面板只有历史）：查看器窄于 900 时覆盖在内容上，`compact` 断点下占满并在顶部给
- * 「页面 / 历史 / 评论」分段切换。选一个旧版本：帧以该版本重新申请（服务端不注入运行时，只读），帧上方出状态条
+ * 「页面 / 历史 / 评论」分段切换。手机上或查看器本身窄于 520（右面板）时顶栏收起：历史、重新加载、在浏览器中打开在更多菜单里，
+ * 分享只留图标；手机上元素编辑是帧下方的非模态底部抽屉。选一个旧版本：帧以该版本重新申请（服务端不注入运行时，只读），帧上方出状态条
  * 「版本 n / head · 时间 · 备注」与「恢复这个版本」；恢复以当前 head 为 `baseVersion`，409 时提示重试。
  *
  * 选择与评论（3.3）：页面类型的 artifact 跟随最新版本且不在回收站时才有两个模式，模式经 `select-mode` 下发。评论模式下点页面元素
@@ -71,6 +72,8 @@ export type ViewerVariant = "page" | "panel";
 /** 侧栏列固定宽度与「并排放得下」的查看器宽度（更窄时侧栏覆盖在内容上）。 */
 export const SIDE_WIDTH = 300;
 export const SIDE_INLINE_MIN = 900;
+/** 查看器本身窄于这个宽度（如右面板）时顶栏与手机一样收起：放不下全部按钮。 */
+export const TIGHT_HEADER_MAX = 520;
 
 /** 侧栏列的分段。 */
 type SideTab = "history" | "comments";
@@ -209,6 +212,8 @@ export function ArtifactViewer({
 	const width = useWidth(rootRef);
 	const compact = bp === "compact";
 	const inline = !compact && width >= SIDE_INLINE_MIN;
+	// 顶栏收起：手机，或量得出的查看器宽度不够（还没量到时按宽的算）
+	const tight = compact || (width > 0 && width < TIGHT_HEADER_MAX);
 
 	useEffect(() => watchArtifact(artifactId), [artifactId]);
 
@@ -245,7 +250,7 @@ export function ArtifactViewer({
 	// 元素直接编辑（3.6）：整页里选择模式下有选中元素时显示
 	const editing =
 		variant === "page" && activeMode === "select" ? selection : null;
-	// 编辑面板在宽屏下占用侧栏列（历史 / 评论让位）；compact 下停靠在帧下方
+	// 编辑面板在宽屏下占用侧栏列（历史 / 评论让位）；compact 下是帧下方的底部抽屉
 	const sideVisible =
 		showSide && !(editing && !compact) && (!compact || segment === "side");
 
@@ -552,7 +557,7 @@ export function ArtifactViewer({
 				)}
 				{lead ?? (
 					<h1 className="flex min-w-0 items-center gap-2 px-1 font-semibold text-sm">
-						{artifact && (
+						{artifact && !tight && (
 							<Icon
 								name={kindIcon(artifact.kind)}
 								size={15}
@@ -643,33 +648,38 @@ export function ArtifactViewer({
 								onClick={() => setShow({ start: null })}
 							/>
 						)}
-						<IconButton
-							icon="history"
-							box="sm"
-							size={15}
-							active={showSide && side === "history"}
-							data-testid="artifact-history-toggle"
-							label={t("artifacts.history.title")}
-							onClick={toggleHistory}
-						/>
-						<IconButton
-							icon="refresh"
-							box="sm"
-							size={15}
-							label={t("artifacts.viewer.reload")}
-							onClick={() => {
-								setBlocked(null);
-								setReloadNonce((n) => n + 1);
-							}}
-						/>
-						<IconButton
-							icon="external"
-							box="sm"
-							size={15}
-							label={t("artifacts.viewer.openInBrowser")}
-							onClick={() => openInBrowser()}
-						/>
-						<ShareControl artifact={artifact} />
+						{/* 顶栏收起时：历史、重新加载、在浏览器中打开都在更多菜单里（历史也可点版本胶囊） */}
+						{!tight && (
+							<>
+								<IconButton
+									icon="history"
+									box="sm"
+									size={15}
+									active={showSide && side === "history"}
+									data-testid="artifact-history-toggle"
+									label={t("artifacts.history.title")}
+									onClick={toggleHistory}
+								/>
+								<IconButton
+									icon="refresh"
+									box="sm"
+									size={15}
+									label={t("artifacts.viewer.reload")}
+									onClick={() => {
+										setBlocked(null);
+										setReloadNonce((n) => n + 1);
+									}}
+								/>
+								<IconButton
+									icon="external"
+									box="sm"
+									size={15}
+									label={t("artifacts.viewer.openInBrowser")}
+									onClick={() => openInBrowser()}
+								/>
+							</>
+						)}
+						<ShareControl artifact={artifact} compact={tight} />
 					</>
 				)}
 				{actions}
@@ -809,9 +819,18 @@ export function ArtifactViewer({
 						)}
 					</div>
 					{editing && compact && (
-						<div className="flex max-h-[50%] min-h-0 shrink-0 flex-col border-border border-t bg-panel">
+						// 手机：非模态的底部抽屉（与对话框的抽屉同一套外观），帧留在上方看实时预览
+						<section
+							data-testid="artifact-edit-drawer"
+							aria-label={t("artifacts.edit.title")}
+							className="relative z-10 flex max-h-[55%] min-h-0 shrink-0 flex-col overflow-hidden rounded-t-xl bg-panel pb-safe shadow-xl ring-1 ring-[var(--glass-line)]"
+						>
+							<span
+								aria-hidden
+								className="mx-auto mt-1.5 h-1 w-9 shrink-0 rounded-full bg-border-strong"
+							/>
 							{editPanel(editing)}
-						</div>
+						</section>
 					)}
 				</div>
 				{editing && !compact && (

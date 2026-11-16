@@ -2,7 +2,8 @@
  * Artifacts 总览页（计划 M14 2.5）：`/artifacts` 与 `/artifacts/trash`（最近删除）。骨架照统计页（`Sheet` + 标题栏 + 工具条），
  * 筛选全部进 URL 查询串（`artifacts-model.ts` 的 `parseView` / `viewSearch`），刷新后视图不变。
  * - 工具条：类型标签、筛选（项目多选含「无项目」、来源多选）、显示（三种排序、两种布局）、标题搜索（`Mod+F` 聚焦，
- *   `Esc` 在有筛选时清除）、导入（HTML 文件 / 带 index.html 的文件夹）。
+ *   `Esc` 在有筛选时清除）、导入（HTML 文件 / 带 index.html 的文件夹）。`compact` 断点下（9.2）类型标签独占一行，
+ *   筛选、显示与导入收进一个「筛选与显示」菜单；网格 2 列（360 一档 1 列）。
  * - 卡片网格是一个 Tab 停靠点：方向键按阅读顺序移动，`Home` / `End` 跳首尾；右键或 `Shift+F10` 打开卡片菜单；
  *   从查看器返回时恢复滚动位置并聚焦刚才那张。
  * - 空态：没有任何 artifact 时四个「让 Agent 做一份」磁贴（把一行提示交给首屏输入框）；筛不出结果时「清除筛选」。
@@ -153,14 +154,16 @@ function TitleBar({ trash }: { trash: boolean }): ReactNode {
 	);
 }
 
+/**
+ * 卡片网格的列数：手机 2 列（视口窄于 380，即 360 一档，1 列），往上 3 / 4 / 5 列。断点按视口宽度（同 `useBreakpoint`）。
+ */
+const GRID_CLASS =
+	"grid grid-cols-1 gap-3 min-[380px]:grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5";
+
 /** 骨架卡：与 tile 同形的占位（加载中）。 */
 function SkeletonGrid(): ReactNode {
 	return (
-		<div
-			role="status"
-			data-testid="artifacts-loading"
-			className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4"
-		>
+		<div role="status" data-testid="artifacts-loading" className={GRID_CLASS}>
 			{[0, 1, 2, 3].map((i) => (
 				<div
 					key={i}
@@ -320,16 +323,13 @@ function CardGrid({
 			action={renderAction?.(a)}
 		/>
 	);
-	const gridClass =
-		"grid grid-cols-1 gap-3 min-[400px]:grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5";
-
 	if (!groups)
 		return (
 			<div ref={rootRef}>
 				<ul
 					aria-label={t("artifacts.page.grid")}
 					data-testid="artifacts-grid"
-					className={gridClass}
+					className={GRID_CLASS}
 				>
 					{flat.map(cell)}
 				</ul>
@@ -382,7 +382,7 @@ function CardGrid({
 										<span className="truncate">{title}</span>
 									)}
 								</h3>
-								<ul aria-label={title} className={gridClass}>
+								<ul aria-label={title} className={GRID_CLASS}>
 									{s.items.map((a) => cell(a, i++))}
 								</ul>
 							</div>
@@ -425,6 +425,31 @@ function ChoiceRow({
 	);
 }
 
+/** 手机菜单里的一行动作（导入）：点了关弹层再执行。 */
+function ActionRow({
+	onClick,
+	children,
+	icon,
+	testId,
+}: {
+	onClick(): void;
+	children: ReactNode;
+	icon: IconName;
+	testId: string;
+}): ReactNode {
+	return (
+		<button
+			type="button"
+			data-testid={testId}
+			onClick={onClick}
+			className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-fg transition-colors duration-150 hover:bg-hover"
+		>
+			<Icon name={icon} size={14} className="shrink-0 text-faint" />
+			<span className="min-w-0 flex-1 truncate">{children}</span>
+		</button>
+	);
+}
+
 function toggled<T>(list: readonly T[], x: T): T[] {
 	return list.includes(x) ? list.filter((y) => y !== x) : [...list, x];
 }
@@ -442,7 +467,8 @@ function OverviewScreen(): ReactNode {
 	const searchRef = useRef<HTMLInputElement>(null);
 	const fileRef = useRef<HTMLInputElement>(null);
 	const folderRef = useRef<HTMLInputElement>(null);
-	const [pop, setPop] = useState<"filter" | "display" | null>(null);
+	const [pop, setPop] = useState<"filter" | "display" | "options" | null>(null);
+	const compact = bp === "compact";
 	const [importing, setImporting] = useState<File[] | null>(null);
 	const [folderPick] = useState(supportsFolderPick);
 
@@ -496,6 +522,79 @@ function OverviewScreen(): ReactNode {
 	const pickFiles = (files: FileList | null) => {
 		if (files && files.length > 0) setImporting([...files]);
 	};
+
+	const filterChoices = (
+		<>
+			<PopoverLabel>{t("artifacts.page.projects")}</PopoverLabel>
+			<ChoiceRow
+				selected={view.projects.includes(NO_PROJECT)}
+				icon="folder"
+				onClick={() =>
+					setView({
+						...view,
+						projects: toggled(view.projects, NO_PROJECT),
+					})
+				}
+			>
+				{t("artifacts.page.noProject")}
+			</ChoiceRow>
+			{projectIds.map((id) => (
+				<ChoiceRow
+					key={id}
+					selected={view.projects.includes(id)}
+					icon="folder"
+					onClick={() =>
+						setView({
+							...view,
+							projects: toggled(view.projects, id),
+						})
+					}
+				>
+					{projectName(id)}
+				</ChoiceRow>
+			))}
+			<PopoverLabel>{t("artifacts.page.origins")}</PopoverLabel>
+			{ORIGIN_KEYS.map((o) => (
+				<ChoiceRow
+					key={o}
+					selected={view.origins.includes(o)}
+					icon={o === "agent" ? "message" : "upload"}
+					testId={`origin-${o}`}
+					onClick={() =>
+						setView({ ...view, origins: toggled(view.origins, o) })
+					}
+				>
+					{t(`artifacts.page.origin.${o}`)}
+				</ChoiceRow>
+			))}
+		</>
+	);
+	const displayChoices = (
+		<>
+			<PopoverLabel>{t("artifacts.page.sortBy")}</PopoverLabel>
+			{SORT_KEYS.map((s) => (
+				<ChoiceRow
+					key={s}
+					selected={view.sort === s}
+					testId={`sort-${s}`}
+					onClick={() => setView({ ...view, sort: s })}
+				>
+					{t(`artifacts.page.sort.${s}`)}
+				</ChoiceRow>
+			))}
+			<PopoverLabel>{t("artifacts.page.layoutBy")}</PopoverLabel>
+			{LAYOUT_KEYS.map((l) => (
+				<ChoiceRow
+					key={l}
+					selected={view.layout === l}
+					testId={`layout-${l}`}
+					onClick={() => setView({ ...view, layout: l })}
+				>
+					{t(`artifacts.page.layout.${l}`)}
+				</ChoiceRow>
+			))}
+		</>
+	);
 
 	let content: ReactNode;
 	if (list.isPending) content = <SkeletonGrid />;
@@ -586,7 +685,7 @@ function OverviewScreen(): ReactNode {
 					>
 						<nav
 							aria-label={t("artifacts.page.kinds")}
-							className="flex min-w-0 items-center gap-0.5 overflow-x-auto"
+							className={`flex min-w-0 items-center gap-0.5 overflow-x-auto ${compact ? "w-full" : ""}`}
 						>
 							{KIND_TABS.map((k) => (
 								<button
@@ -601,103 +700,89 @@ function OverviewScreen(): ReactNode {
 								</button>
 							))}
 						</nav>
-						<div className="relative">
-							<Button
-								size="sm"
-								icon="funnel"
-								aria-expanded={pop === "filter"}
-								data-testid="artifacts-filter"
-								onClick={() => setPop(pop === "filter" ? null : "filter")}
-							>
-								{filterCount > 0
-									? t("artifacts.page.filterN", { n: filterCount })
-									: t("artifacts.page.filter")}
-							</Button>
-							{pop === "filter" && (
-								<Popover side="bottom" onClose={() => setPop(null)}>
-									<PopoverLabel>{t("artifacts.page.projects")}</PopoverLabel>
-									<ChoiceRow
-										selected={view.projects.includes(NO_PROJECT)}
-										icon="folder"
-										onClick={() =>
-											setView({
-												...view,
-												projects: toggled(view.projects, NO_PROJECT),
-											})
-										}
+						{compact ? (
+							// 手机：筛选、显示与导入收进一个菜单
+							<div className="relative">
+								<Button
+									size="sm"
+									icon="sliders"
+									aria-expanded={pop === "options"}
+									data-testid="artifacts-options"
+									onClick={() => setPop(pop === "options" ? null : "options")}
+								>
+									{filterCount > 0
+										? t("artifacts.page.optionsN", { n: filterCount })
+										: t("artifacts.page.options")}
+								</Button>
+								{pop === "options" && (
+									<Popover side="bottom" onClose={() => setPop(null)}>
+										{filterChoices}
+										{displayChoices}
+										<PopoverLabel>{t("artifacts.import.button")}</PopoverLabel>
+										<ActionRow
+											icon="fileCode"
+											testId="artifacts-import-file"
+											onClick={() => {
+												setPop(null);
+												fileRef.current?.click();
+											}}
+										>
+											{t("artifacts.import.file")}
+										</ActionRow>
+										{folderPick && (
+											<ActionRow
+												icon="folder"
+												testId="artifacts-import-folder"
+												onClick={() => {
+													setPop(null);
+													folderRef.current?.click();
+												}}
+											>
+												{t("artifacts.import.folder")}
+											</ActionRow>
+										)}
+									</Popover>
+								)}
+							</div>
+						) : (
+							<>
+								<div className="relative">
+									<Button
+										size="sm"
+										icon="funnel"
+										aria-expanded={pop === "filter"}
+										data-testid="artifacts-filter"
+										onClick={() => setPop(pop === "filter" ? null : "filter")}
 									>
-										{t("artifacts.page.noProject")}
-									</ChoiceRow>
-									{projectIds.map((id) => (
-										<ChoiceRow
-											key={id}
-											selected={view.projects.includes(id)}
-											icon="folder"
-											onClick={() =>
-												setView({
-													...view,
-													projects: toggled(view.projects, id),
-												})
-											}
-										>
-											{projectName(id)}
-										</ChoiceRow>
-									))}
-									<PopoverLabel>{t("artifacts.page.origins")}</PopoverLabel>
-									{ORIGIN_KEYS.map((o) => (
-										<ChoiceRow
-											key={o}
-											selected={view.origins.includes(o)}
-											icon={o === "agent" ? "message" : "upload"}
-											testId={`origin-${o}`}
-											onClick={() =>
-												setView({ ...view, origins: toggled(view.origins, o) })
-											}
-										>
-											{t(`artifacts.page.origin.${o}`)}
-										</ChoiceRow>
-									))}
-								</Popover>
-							)}
-						</div>
-						<div className="relative">
-							<Button
-								size="sm"
-								icon="sliders"
-								aria-expanded={pop === "display"}
-								data-testid="artifacts-display"
-								onClick={() => setPop(pop === "display" ? null : "display")}
-							>
-								{t("artifacts.page.display")}
-							</Button>
-							{pop === "display" && (
-								<Popover side="bottom" onClose={() => setPop(null)}>
-									<PopoverLabel>{t("artifacts.page.sortBy")}</PopoverLabel>
-									{SORT_KEYS.map((s) => (
-										<ChoiceRow
-											key={s}
-											selected={view.sort === s}
-											testId={`sort-${s}`}
-											onClick={() => setView({ ...view, sort: s })}
-										>
-											{t(`artifacts.page.sort.${s}`)}
-										</ChoiceRow>
-									))}
-									<PopoverLabel>{t("artifacts.page.layoutBy")}</PopoverLabel>
-									{LAYOUT_KEYS.map((l) => (
-										<ChoiceRow
-											key={l}
-											selected={view.layout === l}
-											testId={`layout-${l}`}
-											onClick={() => setView({ ...view, layout: l })}
-										>
-											{t(`artifacts.page.layout.${l}`)}
-										</ChoiceRow>
-									))}
-								</Popover>
-							)}
-						</div>
-						<span className="min-w-0 flex-1" />
+										{filterCount > 0
+											? t("artifacts.page.filterN", { n: filterCount })
+											: t("artifacts.page.filter")}
+									</Button>
+									{pop === "filter" && (
+										<Popover side="bottom" onClose={() => setPop(null)}>
+											{filterChoices}
+										</Popover>
+									)}
+								</div>
+								<div className="relative">
+									<Button
+										size="sm"
+										icon="sliders"
+										aria-expanded={pop === "display"}
+										data-testid="artifacts-display"
+										onClick={() => setPop(pop === "display" ? null : "display")}
+									>
+										{t("artifacts.page.display")}
+									</Button>
+									{pop === "display" && (
+										<Popover side="bottom" onClose={() => setPop(null)}>
+											{displayChoices}
+										</Popover>
+									)}
+								</div>
+								<span className="min-w-0 flex-1" />
+							</>
+						)}
 						<label className="relative flex min-w-0 flex-1 items-center sm:max-w-64">
 							<Icon
 								name="search"
@@ -714,36 +799,38 @@ function OverviewScreen(): ReactNode {
 								className="h-7 w-full rounded-md border border-border bg-inset pr-2.5 pl-8 text-sm text-fg placeholder:text-faint focus-visible:border-accent focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-accent/20"
 							/>
 						</label>
-						<Menu
-							items={[
-								{
-									key: "file",
-									icon: "fileCode",
-									label: t("artifacts.import.file"),
-									onSelect: () => fileRef.current?.click(),
-								},
-								...(folderPick
-									? [
-											{
-												key: "folder",
-												icon: "folder" as const,
-												label: t("artifacts.import.folder"),
-												onSelect: () => folderRef.current?.click(),
-											},
-										]
-									: []),
-							]}
-							trigger={(p) => (
-								<Button
-									size="sm"
-									icon="upload"
-									data-testid="artifacts-import"
-									{...p}
-								>
-									{t("artifacts.import.button")}
-								</Button>
-							)}
-						/>
+						{!compact && (
+							<Menu
+								items={[
+									{
+										key: "file",
+										icon: "fileCode",
+										label: t("artifacts.import.file"),
+										onSelect: () => fileRef.current?.click(),
+									},
+									...(folderPick
+										? [
+												{
+													key: "folder",
+													icon: "folder" as const,
+													label: t("artifacts.import.folder"),
+													onSelect: () => folderRef.current?.click(),
+												},
+											]
+										: []),
+								]}
+								trigger={(p) => (
+									<Button
+										size="sm"
+										icon="upload"
+										data-testid="artifacts-import"
+										{...p}
+									>
+										{t("artifacts.import.button")}
+									</Button>
+								)}
+							/>
+						)}
 						<input
 							ref={fileRef}
 							type="file"

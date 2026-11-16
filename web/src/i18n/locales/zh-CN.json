@@ -1763,6 +1763,8 @@
 			"all": "全部",
 			"filter": "筛选",
 			"filterN": "筛选 · {{n}}",
+			"options": "筛选与显示",
+			"optionsN": "筛选与显示 · {{n}}",
 			"projects": "项目",
 			"noProject": "无项目",
 			"origins": "来源",

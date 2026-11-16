@@ -47,6 +47,7 @@ import {
 	Dialog,
 	describeError,
 	ErrorText,
+	IconButton,
 	Radio,
 	Spinner,
 	Toggle,
@@ -570,11 +571,15 @@ export function SharePopover({
 /**
  * 查看器顶栏的分享入口：访客数（大于 0 时「{n} 位访客」，悬停说明「在看分享链接，只读」）与「分享 / 已分享」按钮，
  * 按钮打开 `SharePopover`。访客数取发布状态，观看期间随 `artifact.activity` 更新。
+ * 顶栏放不下文字时（`compact`：手机，或查看器本身很窄，由查看器判断）访客数只留眼睛与数字，按钮只留图标
+ * （文案作读屏名与悬停提示）。
  */
 export function ShareControl({
 	artifact,
+	compact = false,
 }: {
 	artifact: ShareArtifact & Partial<Pick<Artifact, "published">>;
+	compact?: boolean;
 }): ReactNode {
 	const { t } = useTranslation();
 	const [open, setOpen] = useState(false);
@@ -582,32 +587,58 @@ export function ShareControl({
 	const published = artifact.published !== undefined;
 	const state = useArtifactPublication(artifact.id, published);
 	const visitors = published ? (state.data?.publication?.visitors ?? 0) : 0;
+	const label = published
+		? t("artifacts.share.buttonShared")
+		: t("artifacts.share.button");
+	const visitorsText = t("artifacts.share.visitors", { count: visitors });
 	return (
 		<>
 			{visitors > 0 && (
 				<span
 					data-testid="artifact-visitors"
-					title={t("artifacts.share.visitorsHint")}
+					title={
+						compact
+							? `${visitorsText} · ${t("artifacts.share.visitorsHint")}`
+							: t("artifacts.share.visitorsHint")
+					}
 					className="inline-flex shrink-0 items-center gap-1 px-1 text-muted text-xs tabular-nums"
 				>
 					<Icon name="eye" size={13} aria-hidden />
-					{t("artifacts.share.visitors", { count: visitors })}
+					{compact ? (
+						<>
+							<span aria-hidden>{visitors}</span>
+							<span className="sr-only">{visitorsText}</span>
+						</>
+					) : (
+						visitorsText
+					)}
 				</span>
 			)}
 			<span ref={anchor} className="inline-flex shrink-0">
-				<Button
-					size="sm"
-					variant="ghost"
-					icon={published ? "globe" : "share"}
-					data-testid="artifact-share"
-					aria-expanded={open}
-					aria-haspopup="dialog"
-					onClick={() => setOpen((o) => !o)}
-				>
-					{published
-						? t("artifacts.share.buttonShared")
-						: t("artifacts.share.button")}
-				</Button>
+				{compact ? (
+					<IconButton
+						icon={published ? "globe" : "share"}
+						box="sm"
+						size={15}
+						label={label}
+						data-testid="artifact-share"
+						aria-expanded={open}
+						aria-haspopup="dialog"
+						onClick={() => setOpen((o) => !o)}
+					/>
+				) : (
+					<Button
+						size="sm"
+						variant="ghost"
+						icon={published ? "globe" : "share"}
+						data-testid="artifact-share"
+						aria-expanded={open}
+						aria-haspopup="dialog"
+						onClick={() => setOpen((o) => !o)}
+					>
+						{label}
+					</Button>
+				)}
 			</span>
 			{open && (
 				<SharePopover

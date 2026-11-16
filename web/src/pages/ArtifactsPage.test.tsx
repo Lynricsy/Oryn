@@ -301,4 +301,59 @@ describe("ArtifactsPage", () => {
 			"/artifacts/trash",
 		);
 	});
+
+	it("手机：筛选、显示与导入收进一个菜单；浏览器不支持选文件夹时没有那一项", async () => {
+		const width = window.innerWidth;
+		window.innerWidth = 390;
+		try {
+			mount("/artifacts");
+			await waitFor(() => expect(cardTitles()).toHaveLength(3));
+			expect(screen.queryByTestId("artifacts-filter")).toBeNull();
+			expect(screen.queryByTestId("artifacts-display")).toBeNull();
+			expect(screen.queryByTestId("artifacts-import")).toBeNull();
+			fireEvent.click(screen.getByTestId("artifacts-options"));
+			// 一个菜单里有筛选与显示的全部选项，还有导入
+			fireEvent.click(screen.getByTestId("origin-import"));
+			expect(search().get("origin")).toBe("import");
+			expect(screen.getByTestId("artifacts-options")).toHaveTextContent(
+				i18n.t("artifacts.page.optionsN", { n: 1 }),
+			);
+			fireEvent.click(screen.getByTestId("sort-name"));
+			expect(search().get("sort")).toBe("name");
+			// jsdom 的 <input> 没有 webkitdirectory
+			expect(screen.queryByTestId("artifacts-import-folder")).toBeNull();
+			const pick = vi
+				.spyOn(HTMLInputElement.prototype, "click")
+				.mockImplementation(() => {});
+			fireEvent.click(screen.getByTestId("artifacts-import-file"));
+			expect(pick).toHaveBeenCalledTimes(1);
+			expect(pick.mock.contexts[0]).toBe(screen.getByTestId("import-file"));
+			// 选了导入就收起菜单
+			expect(screen.queryByTestId("artifacts-import-file")).toBeNull();
+		} finally {
+			window.innerWidth = width;
+			vi.restoreAllMocks();
+		}
+	});
+
+	it("手机：浏览器能选文件夹时菜单里有「文件夹」", async () => {
+		const width = window.innerWidth;
+		window.innerWidth = 390;
+		Object.defineProperty(HTMLInputElement.prototype, "webkitdirectory", {
+			configurable: true,
+			value: false,
+			writable: true,
+		});
+		try {
+			mount("/artifacts");
+			await waitFor(() => expect(cardTitles()).toHaveLength(3));
+			fireEvent.click(screen.getByTestId("artifacts-options"));
+			expect(screen.getByTestId("artifacts-import-folder")).toHaveTextContent(
+				i18n.t("artifacts.import.folder"),
+			);
+		} finally {
+			window.innerWidth = width;
+			Reflect.deleteProperty(HTMLInputElement.prototype, "webkitdirectory");
+		}
+	});
 });

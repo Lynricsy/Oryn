@@ -8,6 +8,7 @@ import {
 	render,
 	screen,
 	waitFor,
+	within,
 } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router";
@@ -251,5 +252,111 @@ describe("ArtifactViewer", () => {
 		expect(
 			screen.getByRole("button", { name: i18n.t("artifacts.viewer.retry") }),
 		).toBeVisible();
+	});
+
+	describe("手机（compact）", () => {
+		let width: number;
+		beforeEach(() => {
+			width = window.innerWidth;
+			window.innerWidth = 390;
+		});
+		afterEach(() => {
+			window.innerWidth = width;
+		});
+
+		it("顶栏只留常用按钮：历史、重新加载、在浏览器中打开收进更多菜单，分享只有图标", async () => {
+			wrap(<ArtifactViewer artifactId={ID} variant="page" onBack={vi.fn()} />);
+			await screen.findByTestId("artifact-share");
+			const bar = screen.getByRole("toolbar", {
+				name: i18n.t("artifacts.viewer.toolbar"),
+			});
+			expect(screen.queryByTestId("artifact-history-toggle")).toBeNull();
+			for (const name of [
+				i18n.t("artifacts.viewer.reload"),
+				i18n.t("artifacts.viewer.openInBrowser"),
+			])
+				expect(within(bar).queryByRole("button", { name })).toBeNull();
+			const share = screen.getByTestId("artifact-share");
+			expect(share).toHaveAccessibleName(i18n.t("artifacts.share.button"));
+			expect(share).toHaveTextContent("");
+			// 在浏览器中打开走更多菜单；移动壳里 window.open 恒回 null，不用它的返回值
+			fireEvent.click(screen.getByTestId("artifact-menu"));
+			fireEvent.click(
+				screen.getByRole("menuitem", {
+					name: i18n.t("artifacts.viewer.openInBrowser"),
+				}),
+			);
+			await waitFor(() =>
+				expect(opened).toEqual(["https://a-top.example.test/"]),
+			);
+			// 版本胶囊打开占满整页的侧栏，顶部是「页面 / 历史 / 评论」分段
+			fireEvent.click(screen.getByTestId("artifact-version"));
+			const tabs = screen.getByRole("tablist", {
+				name: i18n.t("artifacts.history.segments"),
+			});
+			expect(
+				within(tabs)
+					.getAllByRole("tab")
+					.map((t) => t.textContent),
+			).toEqual([
+				i18n.t("artifacts.history.segmentPage"),
+				i18n.t("artifacts.comments.tabHistory"),
+				i18n.t("artifacts.comments.tabComments"),
+			]);
+		});
+
+		it("选择模式下选中元素：编辑面板是帧下方的底部抽屉，不占侧栏列", async () => {
+			wrap(<ArtifactViewer artifactId={ID} variant="page" />);
+			const frame = (await screen.findByTestId(
+				"artifact-frame",
+			)) as HTMLIFrameElement;
+			const post = vi.fn();
+			vi.spyOn(frame.contentWindow as Window, "postMessage").mockImplementation(
+				post,
+			);
+			act(() => {
+				frame.dispatchEvent(new Event("load"));
+			});
+			const channel = String(
+				(
+					post.mock.calls.map((c) => c[0]) as {
+						kind: string;
+						channel: string;
+					}[]
+				).find((m) => m.kind === "hello")?.channel,
+			);
+			fireEvent.click(screen.getByTestId("artifact-mode-select"));
+			act(() => {
+				window.dispatchEvent(
+					new MessageEvent("message", {
+						data: {
+							v: 1,
+							channel,
+							kind: "select",
+							selection: {
+								path: "index.html",
+								src: 12,
+								tag: "h1",
+								text: "本周习惯打卡",
+								textOnly: true,
+								style: {
+									color: "#18181b",
+									"background-color": "#00000000",
+									"font-size": "28px",
+									"font-weight": "700",
+									"text-align": "left",
+									padding: "0px",
+									"border-radius": "0px",
+								},
+							},
+						},
+						source: frame.contentWindow,
+					}),
+				);
+			});
+			const drawer = await screen.findByTestId("artifact-edit-drawer");
+			expect(drawer).toHaveAccessibleName(i18n.t("artifacts.edit.title"));
+			expect(screen.queryByTestId("artifact-edit-side")).toBeNull();
+		});
 	});
 });
