@@ -294,6 +294,9 @@ func (r svcResolver) Policy() egress.Policy {
 	ga.APIOrigin, ga.GitOrigin = r.e.fake.URL(), r.e.fake.URL()
 	return egress.Policy{GitHub: &ga}
 }
+
+// ThreadGates：这些端到端用例的 orb 没有线程限制（线程限制的现查在 orbs 里实现与测试）。
+func (svcResolver) ThreadGates() (egress.ThreadGates, error) { return egress.ThreadGates{}, nil }
 func (r svcResolver) PrepareOK(sha, level string) (bool, bool) {
 	return r.e.s.PrepareOK(r.e.ctx, r.orbID, sha, level)
 }

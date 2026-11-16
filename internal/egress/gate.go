@@ -2,6 +2,7 @@ package egress
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -12,9 +13,9 @@ import (
 
 // 出站代理门禁（M15 步骤 5.4，R16 / R19 / R21，docs/plan-m15.md 的覆盖表）。
 //
-// 项目门禁（推送 / PR）与线程限制（只读评审、只发 COMMENT、实现需授权）来自 setup 时生成的 Policy.GitHub；
-// 会在线程期间变化的状态（实现授权、是否发布任务、prepare 通过记录、head SHA、默认分支、Oryn 的 hook）
-// 每次写请求经 GateLookup 向控制面现查，不进缓存的策略。门禁开启时一切无法确定的情况都拒绝。
+// 项目门禁（推送 / PR）来自 setup 时生成的 Policy.GitHub；线程限制（只读评审、只发 COMMENT、实现需授权）与其它会在线程
+// 期间变化的状态（实现授权、是否发布任务、prepare 通过记录、head SHA、默认分支、Oryn 的 hook）每次写请求经 GateLookup
+// 向控制面现查，不进缓存的策略：线程任务可能在 orb 完成 setup 之后才写入。门禁开启时一切无法确定的情况都拒绝。
 
 // GateConfig 是项目的门禁配置（projects.github_gates）。Push、PR 都为假时等于没有门禁。
 type GateConfig struct {
@@ -41,9 +42,22 @@ const (
 // defaultBranchTTL 是仓库默认分支在 Handler 里的缓存时长。
 const defaultBranchTTL = 10 * time.Minute
 
+// ThreadGates 是 orb 线程任务的限制（thread_issues.review_only，与建立任务的触发规则的 comment_only_reviews / impl_auth）。
+type ThreadGates struct {
+	ReviewOnly         bool // 外部 PR 评审线程是只读工作区：拒绝推送、创建 PR、合并与改 ref 的 API（R21）
+	CommentOnlyReviews bool // review 只放行 COMMENT 与没有 event 的待提交 review（R21）
+	ImplAuth           bool // 创建 PR 须 ImplAuthorized（R16）
+}
+
+// strictThreadGates 是 ThreadGates 查询失败时的取值：全部开启（只多拒绝）。
+var strictThreadGates = ThreadGates{ReviewOnly: true, CommentOnlyReviews: true, ImplAuth: true}
+
 // GateLookup 是门禁向控制面现查的状态，都以该 orb 自己的线程与身份槽位为准。查询失败时实现应返回
 // 不放行的结果（false / error），门禁据此拒绝。
 type GateLookup interface {
+	// ThreadGates 返回该 orb 线程任务的当前限制；orb 没有唯一的未归档工作线程或线程没有任务时为零值。
+	// 返回错误时门禁按 strictThreadGates 处理。
+	ThreadGates() (ThreadGates, error)
 	// PrepareOK 报告该 orb 是否登记过 sha 在 level（push / pr）上的 github_prepare 通过记录；pr 级同时满足 push。
 	PrepareOK(sha, level string) (ok, skipped bool)
 	// ImplAuthorized 报告该 orb 线程的任务是否已获得实现授权（R16）。
@@ -62,6 +76,9 @@ type GateLookup interface {
 // NoGateLookup 是没有 GitHub 路由的 Resolver 用的 GateLookup：一律不放行（这类 Resolver 的策略里没有 GitHub 门禁，不会被调用）。
 type NoGateLookup struct{}
 
+func (NoGateLookup) ThreadGates() (ThreadGates, error) {
+	return ThreadGates{}, fmt.Errorf("egress: 没有 GitHub 门禁查询")
+}
 func (NoGateLookup) PrepareOK(string, string) (bool, bool) { return false, false }
 func (NoGateLookup) ImplAuthorized() bool                  { return false }
 func (NoGateLookup) HeadSHA(string, string) (string, error) {
@@ -85,20 +102,33 @@ const (
 // closingRefRe 匹配 PR 正文里的关闭引用（R19）。
 var closingRefRe = regexp.MustCompile(`(?i)\b(?:fix(?:e[sd])?|close[sd]?|resolve[sd]?)\s+(?:[\w.-]+/[\w.-]+)?#\d+\b`)
 
-// gateRun 是一个请求的门禁求值：同一请求内只查一次是否发布任务。
+// gateRun 是一个请求的门禁求值：同一请求内线程限制与是否发布任务各只查一次（用到时才查）。
 type gateRun struct {
 	h       *Handler
 	gh      *GitHubAccess
 	release *bool
+	thread  *ThreadGates
 }
 
 // active 报告门禁或线程限制是否开启：开启时无法解析的写请求一律拒绝（R19「失败即拒绝」）。
 func (g *gateRun) active() bool {
-	return g.pushGate() || g.prGate() || g.gh.ReviewOnly || g.gh.CommentOnlyReviews || g.gh.ImplAuth
+	if g.pushGate() || g.prGate() {
+		return true
+	}
+	tg := g.threadGates()
+	return tg.ReviewOnly || tg.CommentOnlyReviews || tg.ImplAuth
 }
 
 func (g *gateRun) pushGate() bool { return g.gh.Gates != nil && g.gh.Gates.Push }
 func (g *gateRun) prGate() bool   { return g.gh.Gates != nil && g.gh.Gates.PR }
+
+func (g *gateRun) threadGates() ThreadGates {
+	if g.thread == nil {
+		tg := g.h.threadGates()
+		g.thread = &tg
+	}
+	return *g.thread
+}
 
 func (g *gateRun) isRelease() bool {
 	if g.release == nil {
@@ -106,6 +136,16 @@ func (g *gateRun) isRelease() bool {
 		g.release = &v
 	}
 	return *g.release
+}
+
+// threadGates 现查 orb 线程任务的限制；查询失败时按 strictThreadGates 处理。
+func (h *Handler) threadGates() ThreadGates {
+	tg, err := h.R.ThreadGates()
+	if err != nil {
+		slog.Warn("egress: 查询线程限制失败，按最严处理", "orb", h.OrbID, "err", err)
+		return strictThreadGates
+	}
+	return tg
 }
 
 // check 对一个写操作求门禁结论：denied 为真时 verdict 是拒绝原因，否则为 ""（不经门禁）、GatePass 或 GateSkipped。
@@ -132,7 +172,7 @@ func (g *gateRun) check(w GitHubWrite, op *GitHubOp) (verdict string, denied boo
 	case CatPRCreate:
 		return g.prCreate(op)
 	case CatRefUpdate:
-		if g.gh.ReviewOnly {
+		if g.threadGates().ReviewOnly {
 			return denyReviewOnly, true
 		}
 		if !g.pushGate() {
@@ -150,18 +190,18 @@ func (g *gateRun) check(w GitHubWrite, op *GitHubOp) (verdict string, denied boo
 		}
 		return g.branchUpdate(opRepo(op), ref, op.SHA)
 	case CatRefUnknown:
-		if g.gh.ReviewOnly {
+		if g.threadGates().ReviewOnly {
 			return denyReviewOnly, true
 		}
 		if g.pushGate() {
 			return denyRefUnknown, true
 		}
 	case CatPRMerge:
-		if g.gh.ReviewOnly {
+		if g.threadGates().ReviewOnly {
 			return denyReviewOnly, true
 		}
 	case CatReview:
-		if g.gh.CommentOnlyReviews {
+		if g.threadGates().CommentOnlyReviews {
 			if op.ReviewEvent != "" && op.ReviewEvent != "COMMENT" {
 				return "本线程只能提交 COMMENT 类型的 review，不能 " + op.ReviewEvent, true
 			}
@@ -173,11 +213,12 @@ func (g *gateRun) check(w GitHubWrite, op *GitHubOp) (verdict string, denied boo
 
 // prCreate：ReviewOnly 拒绝；ImplAuth 时须已获授权；PR 门禁开启时 head SHA 须有 pr 级通过记录、正文满足项目规则。
 func (g *gateRun) prCreate(op *GitHubOp) (string, bool) {
-	if g.gh.ReviewOnly {
+	tg := g.threadGates()
+	if tg.ReviewOnly {
 		return denyReviewOnly, true
 	}
 	verdict := ""
-	if g.gh.ImplAuth {
+	if tg.ImplAuth {
 		if !g.h.R.ImplAuthorized() {
 			return denyImplAuth, true
 		}
@@ -218,7 +259,7 @@ func (g *gateRun) push(w GitHubWrite) (string, bool) {
 	if len(w.Refs) == 0 {
 		return "", false
 	}
-	if g.gh.ReviewOnly {
+	if g.threadGates().ReviewOnly {
 		return denyReviewOnly, true
 	}
 	if !g.pushGate() {

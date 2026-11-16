@@ -2,8 +2,11 @@ package orbs
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -201,8 +204,7 @@ func TestPlanGitHub(t *testing.T) {
 	assert.Nil(t, p.Params.Repo.PreviousUrls)
 }
 
-// M15 5.4：门禁策略按项目的 github_gates 与 orb 线程的任务填写；推送、PR 门禁都关闭等于没有门禁；实现授权与发布任务
-// 不进策略（出站代理现查）。
+// M15 5.4：setup 只按项目的 github_gates 填写门禁；推送、PR 门禁都关闭等于没有门禁。线程限制不进策略（出站代理现查）。
 func TestPlanGitHubGates(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(ctx, t.TempDir())
@@ -210,70 +212,155 @@ func TestPlanGitHubGates(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	gh := stubGitHub{ok: true, gs: GitHubSetup{Login: "oryn-bot", APIOrigin: "https://api.github.com", GitOrigin: "https://github.com"}}
 	d := &DefaultSetup{Store: st, GitHub: gh}
-	require.NoError(t, st.Q.CreateProvider(ctx, db.CreateProviderParams{ID: "prov_1", Name: "local", TokenHash: "h", CreatedAt: 1}))
 	prj := ids.New("prj")
 	repo := "https://github.com/acme/widgets"
 	require.NoError(t, st.Q.CreateProject(ctx, db.CreateProjectParams{ID: prj, Name: prj, RepoUrl: &repo, CreatedAt: 1, UpdatedAt: 1}))
-	newOrb := func() db.Orb {
-		t.Helper()
-		id := "orb-" + ids.New("x")[2:]
-		require.NoError(t, st.Q.CreateOrb(ctx, db.CreateOrbParams{ID: id, ProviderID: "prov_1", Type: "small", Image: "img", State: "ready",
-			TokenHash: ids.Token("h"), CreatedAt: 1, ProjectID: &prj}))
-		o, err := st.Q.GetOrb(ctx, id)
-		require.NoError(t, err)
-		return o
-	}
-	newThread := func(orbID string) string {
-		t.Helper()
-		id := ids.New("thr")
-		require.NoError(t, st.Q.CreateThread(ctx, db.CreateThreadParams{ID: id, ProjectID: &prj, OrbID: &orbID, Title: "t", TitleSource: "auto",
-			State: "idle", SessionDir: "d", CreatedAt: 1, UpdatedAt: 1, Kind: "work"}))
-		return id
-	}
-	ga := func(orb db.Orb) *egress.GitHubAccess {
+	gates := func(orb db.Orb) *egress.GateConfig {
 		t.Helper()
 		p, err := d.Plan(ctx, orb)
 		require.NoError(t, err)
 		require.NotNil(t, p.Egress.GitHub)
-		return p.Egress.GitHub
+		return p.Egress.GitHub.Gates
 	}
 	setGates := func(raw string) {
 		t.Helper()
 		require.NoError(t, st.Q.SetProjectGithubGates(ctx, db.SetProjectGithubGatesParams{GithubGates: &raw, UpdatedAt: 2, ID: prj}))
 	}
-
-	plain := newOrb()
-	g := ga(plain)
-	assert.Nil(t, g.Gates, "项目没有门禁")
-	assert.False(t, g.ReviewOnly || g.CommentOnlyReviews || g.ImplAuth, "没有线程任务")
-	assert.Nil(t, ga(db.Orb{ID: "orb-noproject"}).Gates, "无项目 orb 没有门禁")
-
+	orb := db.Orb{ID: "orb-x", ProjectID: &prj}
+	assert.Nil(t, gates(orb), "项目没有门禁")
+	assert.Nil(t, gates(db.Orb{ID: "orb-noproject"}), "无项目 orb 没有门禁")
 	setGates(`{"push":false,"pr":false,"checkCmd":"make check"}`)
-	assert.Nil(t, ga(plain).Gates, "两个门禁都关闭")
+	assert.Nil(t, gates(orb), "两个门禁都关闭")
 	setGates(`{"push":true,"pr":true,"prHeadings":["Summary"],"requireClosingRef":true}`)
-	assert.Equal(t, &egress.GateConfig{Push: true, PR: true, PRHeadings: []string{"Summary"}, RequireClosingRef: true}, ga(plain).Gates)
+	assert.Equal(t, &egress.GateConfig{Push: true, PR: true, PRHeadings: []string{"Summary"}, RequireClosingRef: true}, gates(orb))
+}
 
-	// 评审线程：review_only 与规则的 comment_only_reviews / impl_auth
-	orb := newOrb()
-	thr := newThread(orb.ID)
+// gateStore 建一个项目与一台属于它的 orb，返回 orb 与建线程的函数。
+func gateStore(t *testing.T, st *store.Store) (prj string, orb db.Orb, newThread func() string) {
+	t.Helper()
+	ctx := context.Background()
+	require.NoError(t, st.Q.CreateProvider(ctx, db.CreateProviderParams{ID: "prov_1", Name: "local", TokenHash: "h", CreatedAt: 1}))
+	prj = ids.New("prj")
+	repo := "https://github.com/acme/widgets"
+	require.NoError(t, st.Q.CreateProject(ctx, db.CreateProjectParams{ID: prj, Name: prj, RepoUrl: &repo, CreatedAt: 1, UpdatedAt: 1}))
+	id := "orb-" + ids.New("x")[2:]
+	require.NoError(t, st.Q.CreateOrb(ctx, db.CreateOrbParams{ID: id, ProviderID: "prov_1", Type: "small", Image: "img", State: "ready",
+		TokenHash: ids.Token("h"), CreatedAt: 1, ProjectID: &prj}))
+	orb, err := st.Q.GetOrb(ctx, id)
+	require.NoError(t, err)
+	newThread = func() string {
+		t.Helper()
+		tid := ids.New("thr")
+		require.NoError(t, st.Q.CreateThread(ctx, db.CreateThreadParams{ID: tid, ProjectID: &prj, OrbID: &orb.ID, Title: "t", TitleSource: "auto",
+			State: "idle", SessionDir: "d", CreatedAt: 1, UpdatedAt: 1, Kind: "work"}))
+		return tid
+	}
+	return prj, orb, newThread
+}
+
+// M15 5.4（修订 v6）：线程限制从 orb 线程的任务现查：thread_issues.review_only 与规则（rule_id，缺省 trigger_id）的
+// comment_only_reviews / impl_auth；没有唯一未归档工作线程或没有任务时为零值；读库失败返回错误。
+func TestEgressThreadGates(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	prj, orb, newThread := gateStore(t, st)
+	s := &Service{st: st}
+	tg := func() egress.ThreadGates {
+		t.Helper()
+		v, err := egressResolver{s: s, orbID: orb.ID}.ThreadGates()
+		require.NoError(t, err)
+		return v
+	}
+	assert.Zero(t, tg(), "没有线程")
+	thr := newThread()
+	assert.Zero(t, tg(), "线程没有任务")
 	rule := ids.New("trg")
 	require.NoError(t, st.Q.InsertGithubTrigger(ctx, db.InsertGithubTriggerParams{ID: rule, ProjectID: prj, Name: "r", Event: "pull_request_opened",
 		Prompt: "p", Enabled: true, CreatedAt: 1, UpdatedAt: 1}))
 	require.NoError(t, st.Q.SetGithubTriggerOptions(ctx, db.SetGithubTriggerOptionsParams{Drivers: "anyone", Maintainers: "[]", ReviewerBots: "[]",
 		Models: "[]", ImplAuth: true, CommentOnlyReviews: true, UpdatedAt: 2, ID: rule}))
 	require.NoError(t, st.Q.UpsertThreadIssue(ctx, db.UpsertThreadIssueParams{RepoID: 42, Number: 5, ThreadID: thr, TriggerID: &rule, CreatedAt: 1}))
-	g = ga(orb)
-	assert.False(t, g.ReviewOnly)
-	assert.True(t, g.CommentOnlyReviews, "规则取自 trigger_id")
-	assert.True(t, g.ImplAuth)
+	assert.Equal(t, egress.ThreadGates{CommentOnlyReviews: true, ImplAuth: true}, tg(), "规则取自 trigger_id")
 	require.NoError(t, st.Q.SetThreadIssueTask(ctx, db.SetThreadIssueTaskParams{RuleID: &rule, ReviewOnly: true, RepoID: 42, Number: 5}))
-	assert.True(t, ga(orb).ReviewOnly)
-	assert.NotNil(t, ga(orb).Gates, "项目门禁照样生效")
+	assert.Equal(t, egress.ThreadGates{ReviewOnly: true, CommentOnlyReviews: true, ImplAuth: true}, tg())
 
-	// 同一 orb 上不止一个未归档工作线程：无法确定任务，不加线程限制
-	newThread(orb.ID)
-	g = ga(orb)
-	assert.False(t, g.ReviewOnly || g.CommentOnlyReviews || g.ImplAuth)
+	newThread()
+	assert.Zero(t, tg(), "不止一个未归档工作线程：无法确定任务")
+
+	require.NoError(t, st.Close())
+	_, err = egressResolver{s: s, orbID: orb.ID}.ThreadGates()
+	assert.Error(t, err, "读库失败返回错误（出站代理按最严处理）")
+}
+
+// M15 5.4（修订 v6）回归：orb 先完成 setup、之后才写入 review_only=1 的线程任务，下一次推送与 createPullRequest 就被拒，
+// 不必等 orb 重新 setup。
+func TestEgressReviewOnlyAfterSetup(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	_, orb, newThread := gateStore(t, st)
+	calls := 0
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if strings.HasSuffix(r.URL.Path, "/git-receive-pack") {
+			w.Header().Set("Content-Type", "application/x-git-receive-pack-result")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"data":{}}`)
+	}))
+	defer up.Close()
+	gh := stubGitHub{ok: true, tok: "T0KEN", state: GitHubTokenOK, gs: GitHubSetup{Login: "oryn-bot", APIOrigin: up.URL, GitOrigin: up.URL}}
+	s := &Service{st: st, github: gh, policies: map[string]egress.Policy{}}
+	plan, err := (&DefaultSetup{Store: st, GitHub: gh}).Plan(ctx, orb)
+	require.NoError(t, err)
+	s.setPolicy(orb.ID, plan.Egress) // setup 完成：此时线程还没有任务
+	px := httptest.NewServer(egress.NewHandler(orb.ID, egressResolver{s: s, orbID: orb.ID}))
+	defer px.Close()
+
+	pushBody := func() io.Reader {
+		cmd := "1111111111111111111111111111111111111111 2222222222222222222222222222222222222222 refs/heads/feat\x00report-status"
+		return strings.NewReader(fmt.Sprintf("%04x%s0000PACK", len(cmd)+4, cmd))
+	}
+	create := `{"query":"mutation { createPullRequest(input: {repositoryId: \"R_1\", baseRefName: \"main\", headRefName: \"feat\", title: \"t\"}) { clientMutationId } }"}`
+	push := func() (int, string) {
+		t.Helper()
+		resp, err := http.Post(px.URL+"/git/github.com/acme/widgets.git/git-receive-pack", "application/x-git-receive-pack-request", pushBody())
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	createPR := func() (int, string) {
+		t.Helper()
+		resp, err := http.Post(px.URL+"/gh/api.github.com/graphql", "application/json", strings.NewReader(create))
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+
+	thr := newThread()
+	code, out := push()
+	assert.Equal(t, http.StatusOK, code)
+	assert.NotContains(t, out, "ng ")
+	code, _ = createPR()
+	assert.Equal(t, http.StatusOK, code)
+	assert.Equal(t, 2, calls, "任务写入之前照常转发")
+
+	// 规则建线程之后才写入任务（review_only=1）；策略缓存不变
+	require.NoError(t, st.Q.UpsertThreadIssue(ctx, db.UpsertThreadIssueParams{RepoID: 42, Number: 7, ThreadID: thr, CreatedAt: 2}))
+	require.NoError(t, st.Q.SetThreadIssueTask(ctx, db.SetThreadIssueTaskParams{ReviewOnly: true, RepoID: 42, Number: 7}))
+	code, out = push()
+	assert.Equal(t, http.StatusOK, code)
+	assert.Contains(t, out, "ng refs/heads/feat oryn: 外部 PR 评审线程是只读工作区")
+	code, out = createPR()
+	assert.Equal(t, http.StatusForbidden, code)
+	assert.Contains(t, out, "oryn: 外部 PR 评审线程是只读工作区")
+	assert.Equal(t, 2, calls, "被拒绝的写请求不触达上游")
 }
 
 // M15 2.1：有 github.com 项目的 orb 经出站代理可读写任意 github.com 仓库，但不能读其它 PAT 主机上的非项目仓库。
@@ -294,7 +381,7 @@ func TestPlanGitHubEgress(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"github.com"}, plan.Params.GitHosts, "其它 PAT 主机不覆盖")
 
-	s := &Service{secrets: vault, github: gh, policies: map[string]egress.Policy{"orb-x": plan.Egress}}
+	s := &Service{st: st, secrets: vault, github: gh, policies: map[string]egress.Policy{"orb-x": plan.Egress}}
 	srv := httptest.NewServer(egress.NewHandler("orb-x", egressResolver{s: s, orbID: "orb-x"}))
 	t.Cleanup(srv.Close)
 	for path, code := range map[string]int{

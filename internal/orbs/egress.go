@@ -2,7 +2,9 @@ package orbs
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -99,6 +101,61 @@ var errNoGitHub = errors.New("orbs: GitHub 集成未启用")
 // gateCtx 是门禁现查的超时（HeadSHA / DefaultBranch 会访问 GitHub）。
 func gateCtx() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 15*time.Second)
+}
+
+// ThreadGates 实现 egress.GateLookup：每次写请求现查本 orb 线程任务的限制（线程任务可能在 orb 完成 setup 之后才写入）。
+func (r egressResolver) ThreadGates() (egress.ThreadGates, error) {
+	ctx, cancel := gateCtx()
+	defer cancel()
+	return r.s.threadGates(ctx, r.orbID)
+}
+
+// threadGates 读 orb 线程任务的限制：thread_issues.review_only，以及建立任务的规则（rule_id，缺省取 trigger_id）的
+// impl_auth / comment_only_reviews。orb 没有唯一的未归档工作线程、线程没有任务或规则已删除时为零值；读库失败返回错误
+// （出站代理按最严处理）。
+func (s *Service) threadGates(ctx context.Context, orbID string) (egress.ThreadGates, error) {
+	var tg egress.ThreadGates
+	ths, err := s.st.Q.ListThreadsByOrb(ctx, &orbID)
+	if err != nil {
+		return tg, fmt.Errorf("读取 orb 的线程: %w", err)
+	}
+	var tid string
+	for _, th := range ths {
+		if th.Kind != threadKindWork || th.ArchivedAt != nil {
+			continue
+		}
+		if tid != "" {
+			return tg, nil
+		}
+		tid = th.ID
+	}
+	if tid == "" {
+		return tg, nil
+	}
+	ti, err := s.st.Q.GetThreadIssueByThread(ctx, tid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return tg, nil
+	}
+	if err != nil {
+		return tg, fmt.Errorf("读取线程任务: %w", err)
+	}
+	tg.ReviewOnly = ti.ReviewOnly
+	rule := ti.RuleID
+	if rule == nil {
+		rule = ti.TriggerID
+	}
+	if rule == nil {
+		return tg, nil
+	}
+	trig, err := s.st.Q.GetGithubTrigger(ctx, *rule)
+	if errors.Is(err, sql.ErrNoRows) {
+		return tg, nil
+	}
+	if err != nil {
+		return tg, fmt.Errorf("读取触发规则: %w", err)
+	}
+	tg.ImplAuth, tg.CommentOnlyReviews = trig.ImplAuth, trig.CommentOnlyReviews
+	return tg, nil
 }
 
 // PrepareOK 实现 egress.GateLookup：sha 在 level 上是否有本 orb 的 github_prepare 通过记录。

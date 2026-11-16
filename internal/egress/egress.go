@@ -58,18 +58,12 @@ type Policy struct {
 // GitOrigin 是 `github.com` 的 git 上游，默认 https://github.com；UploadsOrigin 是上传主机的上游，空 = https://uploads.github.com。
 // 两者只有测试会指向别处。
 //
-// 其余字段是出站代理门禁（M15 步骤 5.4，见 gate.go）的 setup 时策略：Gates 取自项目的 github_gates，后三项取自 orb 线程的
-// 任务（thread_issues.review_only 与触发规则的 impl_auth / comment_only_reviews）。线程期间会变的状态经 GateLookup 现查。
+// Gates 是出站代理门禁（M15 步骤 5.4，见 gate.go）里 setup 时固定的部分：项目的 github_gates。线程限制（只读评审、只发
+// COMMENT、实现需授权）与其它会在线程期间变化的状态都经 GateLookup 每次写请求现查。
 type GitHubAccess struct {
 	APIOrigin, GitOrigin, UploadsOrigin string
 	// Gates 是项目的推送 / PR 门禁；nil = 项目没有门禁（含无项目的 orb）。
 	Gates *GateConfig
-	// ReviewOnly：外部 PR 评审线程是只读工作区，拒绝推送、创建 PR、合并与改 ref 的 API（R21）。
-	ReviewOnly bool
-	// CommentOnlyReviews：review 只放行 COMMENT 与没有 event 的待提交 review（R21）。
-	CommentOnlyReviews bool
-	// ImplAuth：创建 PR 须 GateLookup.ImplAuthorized（R16）。
-	ImplAuth bool
 }
 
 // defaultUploadsOrigin 是 GitHub 上传 API（release 附件）的上游。
@@ -293,8 +287,8 @@ func (h *Handler) resolve(r *http.Request) (target, int) {
 				return target{}, http.StatusForbidden
 			}
 		}
-		// R21：只读评审线程在推送协商阶段（info/refs?service=git-receive-pack）就拒绝；推送本身由门禁回 ng。
-		if githubOpen && write && pol.GitHub.ReviewOnly && !strings.HasSuffix(rest, "/git-receive-pack") {
+		// R21：只读评审线程在推送协商阶段（info/refs?service=git-receive-pack）就拒绝；推送本身由门禁回 ng。线程限制现查。
+		if githubOpen && write && !strings.HasSuffix(rest, "/git-receive-pack") && h.threadGates().ReviewOnly {
 			return target{deny: denyReviewOnly}, http.StatusForbidden
 		}
 		tok, ok := h.R.GitToken(host)

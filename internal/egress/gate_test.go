@@ -29,11 +29,40 @@ type gateFake struct {
 	release    bool
 	relCalls   int
 	defaultErr error
+	thread     ThreadGates // 线程任务的限制（每次写请求现查）
+	threadErr  error
+	threadN    int
 }
 
 type prepRec struct {
 	level   string
 	skipped bool
+}
+
+// ThreadGates：gl 为 nil（没有门禁的代理）时没有线程限制。
+func (f fakeR) ThreadGates() (ThreadGates, error) {
+	if f.gl == nil {
+		return ThreadGates{}, nil
+	}
+	f.gl.mu.Lock()
+	defer f.gl.mu.Unlock()
+	f.gl.threadN++
+	return f.gl.thread, f.gl.threadErr
+}
+
+// setThread 在请求之间改线程任务的限制。
+func (e *gateEnv) setThread(tg ThreadGates, err error) {
+	e.gl.mu.Lock()
+	defer e.gl.mu.Unlock()
+	e.gl.thread, e.gl.threadErr = tg, err
+}
+
+// newThreadEnv 是没有项目门禁、只有线程限制的代理。
+func newThreadEnv(t *testing.T, tg ThreadGates) *gateEnv {
+	t.Helper()
+	e := newGateEnv(t, GitHubAccess{})
+	e.setThread(tg, nil)
+	return e
 }
 
 func (f fakeR) PrepareOK(sha, level string) (bool, bool) {
@@ -285,7 +314,7 @@ func TestGatePRCreate(t *testing.T) {
 
 // 覆盖表「创建 PR」的 ImplAuth：授权状态每个请求现查，线程期间变为已授权后放行。
 func TestGateImplAuth(t *testing.T) {
-	e := newGateEnv(t, GitHubAccess{ImplAuth: true})
+	e := newThreadEnv(t, ThreadGates{ImplAuth: true})
 	body := []byte(`{"title":"t","head":"feat","base":"main","body":"x"}`)
 	pulls := "/gh/api.github.com/repos/acme/widgets/pulls"
 	e.denied("未授权", "POST", pulls, body, "尚未获得实现授权")
@@ -352,7 +381,7 @@ func TestGateRefUnknown(t *testing.T) {
 			[]byte(`{"query":"mutation { updatePullRequestBranch(input: {pullRequestId: \"PR_1\"}) { clientMutationId } }"}`)},
 	}
 	on := newGateEnv(t, GitHubAccess{Gates: &GateConfig{Push: true}})
-	ro := newGateEnv(t, GitHubAccess{ReviewOnly: true})
+	ro := newThreadEnv(t, ThreadGates{ReviewOnly: true})
 	off := newGateEnv(t, GitHubAccess{Gates: &GateConfig{PR: true}})
 	for _, c := range cases {
 		on.denied(c.name+"（推送门禁）", c.method, c.path, c.body, "无法确定新 SHA")
@@ -363,7 +392,7 @@ func TestGateRefUnknown(t *testing.T) {
 
 // 覆盖表「合并」与 R21 的只读工作区：ReviewOnly 拒绝推送、创建 PR、合并、改 ref；评论与 review 照常。
 func TestGateReviewOnly(t *testing.T) {
-	e := newGateEnv(t, GitHubAccess{ReviewOnly: true})
+	e := newThreadEnv(t, ThreadGates{ReviewOnly: true})
 	base := "/gh/api.github.com/repos/acme/widgets"
 	gqlURL := "/gh/api.github.com/graphql"
 	e.denied("PUT merge", "PUT", base+"/pulls/3/merge", []byte(`{"merge_method":"squash"}`), denyReviewOnly)
@@ -397,7 +426,7 @@ func TestGateReviewOnly(t *testing.T) {
 
 // 覆盖表「review 事件」：CommentOnlyReviews 只放行 COMMENT 与没有 event 的待提交 review；别名、fragment 不能绕开。
 func TestGateReviewEvents(t *testing.T) {
-	e := newGateEnv(t, GitHubAccess{CommentOnlyReviews: true})
+	e := newThreadEnv(t, ThreadGates{CommentOnlyReviews: true})
 	base := "/gh/api.github.com/repos/acme/widgets/pulls/3/reviews"
 	gqlURL := "/gh/api.github.com/graphql"
 	e.allowed("COMMENT", "POST", base, []byte(`{"event":"COMMENT","body":"nit","comments":[{"path":"a.go","line":1,"body":"x"}]}`), GatePass)
@@ -442,13 +471,21 @@ func TestGateUnparsed(t *testing.T) {
 	comment := "/gh/api.github.com/repos/acme/widgets/issues/5/comments"
 	gqlURL := "/gh/api.github.com/graphql"
 	unresolved := gql(t, `mutation($in: CreatePullRequestInput!) { createPullRequest(input: $in) { clientMutationId } }`, nil, "")
-	for name, ga := range map[string]GitHubAccess{
-		"推送门禁":               {Gates: &GateConfig{Push: true}},
-		"PR 门禁":              {Gates: &GateConfig{PR: true}},
-		"ReviewOnly":         {ReviewOnly: true},
-		"CommentOnlyReviews": {CommentOnlyReviews: true},
+	type env struct {
+		ga  GitHubAccess
+		tg  ThreadGates
+		err error
+	}
+	for name, c := range map[string]env{
+		"推送门禁":               {ga: GitHubAccess{Gates: &GateConfig{Push: true}}},
+		"PR 门禁":              {ga: GitHubAccess{Gates: &GateConfig{PR: true}}},
+		"ReviewOnly":         {tg: ThreadGates{ReviewOnly: true}},
+		"CommentOnlyReviews": {tg: ThreadGates{CommentOnlyReviews: true}},
+		"ImplAuth":           {tg: ThreadGates{ImplAuth: true}},
+		"线程限制查询失败":           {err: errors.New("db down")},
 	} {
-		e := newGateEnv(t, ga)
+		e := newGateEnv(t, c.ga)
+		e.setThread(c.tg, c.err)
 		e.denied(name+"：超限请求体", "POST", comment, big, denyUnparsed)
 		e.denied(name+"：压缩编码", "POST", comment, []byte("\x1f\x8b"), denyUnparsed)
 		code, _ := e.send("POST", comment, []byte(`{"body":"x"}`), map[string]string{"Content-Encoding": "gzip"})
@@ -587,4 +624,52 @@ func TestGateDefaultBranch(t *testing.T) {
 	_, out = failing.send("POST", url, feat, nil)
 	assert.Contains(t, out, "ng refs/heads/feat oryn: 推送门禁：查询 acme/widgets 的默认分支失败（boom）")
 	assert.Zero(t, failing.upstreamCalls())
+}
+
+// 线程限制每次写请求现查（修订 v6）：orb 完成 setup（策略里没有线程限制）之后才写入 review_only 的任务，
+// 下一次推送与 createPullRequest 就被拒；查询失败按最严处理（review-only 视为开启）。
+func TestGateThreadGatesLive(t *testing.T) {
+	e := newGateEnv(t, GitHubAccess{})
+	push := "/git/github.com/acme/widgets.git/git-receive-pack"
+	body := append(pkt(oidA+" "+shaRaw+" refs/heads/feat\x00report-status", "0000"), "PACK"...)
+	gqlURL := "/gh/api.github.com/graphql"
+	create := []byte(`{"query":"mutation { createPullRequest(input: {repositoryId: \"R_1\", baseRefName: \"main\", headRefName: \"feat\", title: \"t\"}) { clientMutationId } }"}`)
+	advertise := "/git/github.com/acme/widgets.git/info/refs?service=git-receive-pack"
+
+	// 任务写入之前：照常放行
+	code, out := e.send("POST", push, body, nil)
+	assert.Equal(t, http.StatusOK, code)
+	assert.NotContains(t, out, "ng ")
+	assert.Equal(t, 1, e.upstreamCalls())
+	e.rec.take()
+	e.allowed("任务写入前开 PR", "POST", gqlURL, create, "")
+
+	// 线程任务之后才写入 review_only=1：同一台 orb、同一份策略，下一次写请求即被拒
+	e.setThread(ThreadGates{ReviewOnly: true}, nil)
+	code, out = e.send("POST", push, body, nil)
+	assert.Equal(t, http.StatusOK, code)
+	assert.Equal(t, string(ReportStatusNG([]string{"refs/heads/feat"}, "oryn: "+denyReviewOnly, false)), out)
+	assert.Zero(t, e.upstreamCalls())
+	e.rec.take()
+	e.denied("任务写入后开 PR", "POST", gqlURL, create, denyReviewOnly)
+	code, out = e.send("GET", advertise, nil, nil)
+	assert.Equal(t, http.StatusForbidden, code, "推送协商阶段同样现查")
+	assert.Contains(t, out, "oryn: "+denyReviewOnly)
+	assert.Zero(t, e.upstreamCalls())
+
+	// 查询失败：按最严处理
+	e.setThread(ThreadGates{}, errors.New("db down"))
+	code, out = e.send("POST", push, body, nil)
+	assert.Equal(t, http.StatusOK, code)
+	assert.Contains(t, out, "ng refs/heads/feat oryn: "+denyReviewOnly)
+	e.rec.take()
+	e.denied("查询失败时开 PR", "POST", gqlURL, create, denyReviewOnly)
+	e.denied("查询失败时 APPROVE", "POST", "/gh/api.github.com/repos/acme/widgets/pulls/3/reviews", []byte(`{"event":"APPROVE"}`), "只能提交 COMMENT")
+	code, _ = e.send("GET", advertise, nil, nil)
+	assert.Equal(t, http.StatusForbidden, code)
+	e.allowed("查询失败不影响评论", "POST", "/gh/api.github.com/repos/acme/widgets/issues/3/comments", []byte(`{"body":"hi"}`), "")
+
+	// 限制解除后恢复
+	e.setThread(ThreadGates{}, nil)
+	e.allowed("限制解除", "POST", gqlURL, create, "")
 }

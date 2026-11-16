@@ -22,6 +22,7 @@
   - 6.1 增加 orbd 侧接线：`github.prepare` 先经 ctl 向控制面查询该线程是否为发布任务，再决定 `Release`；查询失败按非发布处理（只会多拒绝，不会多放行）。
   - 5.4 增加服务端兜底：**推送门禁开启时**，非发布线程推送默认分支一律拒绝，不依赖 orbd 的检查。门禁关闭（R19 的默认）或项目没有门禁（含无项目 orb）时不加这条限制，按 R5 以账号权限读写。
 - **v5（2026-11-16，执行中修订）**：评审发现 3.1 会静默漏事件：仓库级每轮 20 次时间线查询用完后跳过其余项，却照样保存 ETag、把 since 推到全列表的最大时间；列表翻满 5 页仍有下一页时也照常提交。改为可续跑（规则见附录 C「续跑」）：没处理完的列表不提交 ETag，游标不越过第一个没处理的项；PR 改由 issue 列表发现（`pulls` 列表没有 `since`、倒序读不到续点），迁移 `0035` 删掉 `github_repo_watches.etag_pulls`。
+- **v6（2026-11-16，执行中修订）**：5.4 的线程限制（`ReviewOnly`、`CommentOnlyReviews`、`ImplAuth`）原定在 setup 时写进策略，但规则在建线程之后才写入 `thread_issues`，池中 orb 被认领时 setup 可能先算出策略，于是首个会话里只读评审线程能推送、开 PR。改为出站代理每次写请求经 `GateLookup.ThreadGates()` 现查（含 `info/refs` 阶段的 403），查询失败按最严处理（三项都视为开启）；策略里只保留项目的 `Gates`。
 
 ## Context
 
@@ -752,14 +753,15 @@ Depends on：5.3、2.3、4.1、4.3。
 Files：
 
 - 新建 `internal/egress/gate.go`、`gate_test.go`；
-- `egress.Policy.GitHub` 增加 `Gates *GateConfig`、`ReviewOnly`、`CommentOnlyReviews`、`ImplAuth`；
+- `egress.Policy.GitHub` 增加 `Gates *GateConfig`（setup 时取自项目的 `github_gates`）；
 - `Resolver` 增加：
+  - `ThreadGates() (ThreadGates, error)`（v6）：该 orb 线程任务的 `ReviewOnly`、`CommentOnlyReviews`、`ImplAuth`（`thread_issues.review_only` 与规则的 `comment_only_reviews` / `impl_auth`），每次写请求现查；没有唯一的未归档工作线程或没有任务时全为假，查询失败时门禁按三项都开启处理
   - `PrepareOK(sha, level string) (ok, skipped bool)`
   - `ImplAuthorized() bool`
   - `HeadSHA(repo, ref string) (string, error)`：用该 orb 自己槽位的令牌查询
   - `IsOrynHook(repo string, id int64) bool`
   - `ReleaseThread() bool`（v4）：该 orb 的线程是否为发布任务，取控制面的任务状态；仓库默认分支用 `HeadSHA` 同一令牌查询并缓存
-- `internal/orbs/setup.go`：按项目和线程填写上述策略。
+- `internal/orbs/setup.go`：按项目填写 `Gates`；`internal/orbs/egress.go` 的 resolver 实现上述现查。
 
 Do：按下面的覆盖表执行。REST 的前缀 `/repos/{o}/{r}` 与 `/repositories/{id}` 等价，匹配前先解码路径并去掉结尾斜杠。
 
