@@ -478,7 +478,7 @@ jobs:
           if [[ "$ver" != "$VERSION" ]]; then echo "::error::CFBundleShortVersionString 是 ${ver}，应为 Cargo.toml 的 ${VERSION}"; exit 1; fi
           /usr/libexec/PlistBuddy -c 'Print :NSCameraUsageDescription' "$plist" > /dev/null \
             || { echo "::error::Info.plist 缺 NSCameraUsageDescription（见 web/src-tauri/Info.ios.plist）"; exit 1; }
-          echo "产物：$app（版本 ${ver}）" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "产物：${app}（版本 ${ver}）" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "path=$app" >> "$GITHUB_OUTPUT"
 
       # 硬门禁：debug 包的 ORYN_TABBAR_DEMO 钩子在连接页摆出原生底栏，进度 0 / 0.5 / 1 与基线逐区域比像素，结果写进 Step Summary。
