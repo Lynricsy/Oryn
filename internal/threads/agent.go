@@ -1619,6 +1619,8 @@ func (s *Service) UIResponse(ctx context.Context, threadID string, frame json.Ra
 
 // Focus 记录连接当前查看的线程（空串 = 无）：清未读、记用户交互、按配置唤醒。失败（orb failed、agent 没能启动）
 // 不因 focus 自动重试，只由显式重试（`POST threads/{id}/wake`，即横幅的「重试」）恢复。
+// 停机（stopping / stopped）的 orb 也不因 focus 唤醒：冷启动代价高，打开线程页只读浏览文件（offline fs）即可；
+// 发消息、作答、`POST threads/{id}/wake` 照常唤醒。
 func (s *Service) Focus(ctx context.Context, connID, threadID string) {
 	s.mu.Lock()
 	if threadID == "" {
@@ -1641,7 +1643,7 @@ func (s *Service) Focus(ctx context.Context, connID, threadID string) {
 	needWake := false
 	if orbID != "" && !t.failed {
 		st := s.orbState(orbID)
-		needWake = st != orbStateFailed && (!t.agentReady() || st != orbStateReady)
+		needWake = st != orbStateFailed && !orbStopped(st) && (!t.agentReady() || st != orbStateReady)
 	}
 	s.observer().Seen(t.id)
 	t.mu.Unlock()

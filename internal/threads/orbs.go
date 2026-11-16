@@ -26,6 +26,11 @@ func orbSuspended(state string) bool {
 	return false
 }
 
+// orbStopped 判断 orb 是否正在或已经停机（唤醒要冷启动；聚焦不唤醒它）。
+func orbStopped(state string) bool {
+	return state == "stopping" || state == "stopped"
+}
+
 // orbGoingDown 判断 orb 是否正在或已经挂起 / 失败 / 删除（不会自行恢复，只有唤醒才能让 agent 再次可用）。
 // 与 orbSuspended 的区别：waking 等恢复途中的状态不算（agent 会自行就绪）。
 func orbGoingDown(state string) bool {

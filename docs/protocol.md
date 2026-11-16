@@ -181,7 +181,7 @@ M3 只新增两条通道：终端走现有 agent 流（WS `cmd` / `frame` 透传
 
 ### 停机 orb 的只读预览（`offline=1`）
 
-orb 停机（`stopped`）时，文件面板只读浏览文件，不唤醒 orb。控制面接触不到 provider 的宿主，所以由 provider 读取已退出的容器，再经一条内存中继把结果流式交给浏览器。
+orb 停机（`stopped`）时，文件面板只读浏览文件，不唤醒 orb。控制面接触不到 provider 的宿主，所以由 provider 读取已退出的容器，再经一条内存中继把结果流式交给浏览器。打开线程页（客户端 `focus`）时，即使开启了 `idle.wake_on_focus`，也不会唤醒停机（`stopping` / `stopped`）的 orb，因为从停机恢复需要冷启动；只会唤醒冻结的 orb。发消息、回答提问、`POST threads/{id}/wake` 仍会唤醒停机的 orb。
 
 - **用户端**：`GET fs/{roots,list,stat,file}` 带 `offline=1`。
   - orb 为 `stopped`：走中继，不计用户交互；其它状态与不带参数完全相同（会唤醒）。
@@ -1369,7 +1369,7 @@ docker:    { pids_limit: 4096 }
 - `Thread.cwd?`（runner 线程的工作目录）、`Thread.worktree?: ThreadWorktree{repo, dir, branch}`（Oryn 建的 worktree；没有或已移除则省略）。
 - `ThreadError.kind` 增加 `agent_failed`（M11 审查修复）：orb 正常、但 agent 在 orb 里没能启动（如 runner 拒绝工作目录，`agent.start` 回 `dir_not_served`），`reason` 为 orbd 返回的 `code: message`；agent 之后启动成功则 `error` 消失。线程页横幅显示该原因，「重试」走 `POST threads/{id}/wake`。
 - `ThreadError.cause?` / `detail?`（收件箱友好错误）：转 API 时由 `reason` 原文归类（`internal/threads/errclass.go`，规则改了历史行也跟着变），取值 `image_pull_denied | image_missing | provider_command | orb_connect_timeout | fork_failed | dir_not_served | invalid_params | agent_start_timeout | agent_start_failed | unknown`；`detail` 为抽出的镜像名、退出码或目录。客户端按 `cause` 显示一句人话，原文仍在 `reason`。agent 反复崩溃、重启耗尽时线程是 `error` 但没有 `error` 字段（退出码与 stderr 未保存），不在归类范围内。
-- `idle.wake_on_focus` 的聚焦唤醒不再碰失败状态：所在 orb 为 `failed` 或 agent 启动失败的线程，打开线程页不会自动重试，只有显式 `POST threads/{id}/wake`（横幅的「重试」）或发消息才恢复。
+- `idle.wake_on_focus` 的聚焦唤醒不再碰失败状态：所在 orb 为 `failed` 或 agent 启动失败的线程，打开线程页不会自动重试，只有显式 `POST threads/{id}/wake`（横幅的「重试」）或发消息才恢复。停机（`stopping` / `stopped`）的 orb 同样不因聚焦唤醒（见「停机 orb 的只读预览」）。
 - `Orb.kind?: OrbKind`（`orb | runner`，省略 = `orb`）、`Orb.features?: string[]`（有活动 link 时取其 hello；没有时 runner 取最近一次上报的，普通 orb 省略）。客户端据此决定右面板标签：`changes` 需要 `git`、`files` 需要 `fs`、`terminal` 需要 `terminal`；省略时保持 M3 行为。
 - `/api/v1/orbs/{id}/fs/*` 与 `/git/*` 各端点增加可选查询参数 `thread`（`ThreadId`，`OrbThreadQuery`）：须是该 orb 上的线程（否则 400 `invalid_request`）；线程有 `cwd` 时控制面加请求头 `X-Oryn-Workdir`。runner 的 orb 必须带（否则 400 `thread_required`）。`publishOrbFile` 不另设该参数，范围取 `threadId` 线程的工作目录。
 - runner 的 orb 上：`POST orbs/{id}/pause`、`POST orbs/{id}/resume`、`DELETE orbs/{id}` → 409 `runner_unsupported`；`forkThread` 只能 `env: "share"`（子线程继承 `cwd`、不继承 `worktree`），`env: "copy"` → 409 `runner_unsupported`。

@@ -530,6 +530,30 @@ func TestFocusWakesFrozenOrb(t *testing.T) {
 	}
 }
 
+// 停机的 orb 冷启动代价高：focus 不唤醒（只读浏览走 offline fs），发消息照常唤醒。
+func TestFocusSkipsStoppedOrb(t *testing.T) {
+	for _, st := range []string{"stopping", "stopped"} {
+		t.Run(st, func(t *testing.T) {
+			f := newFixture(t, Config{WakeOnFocus: true})
+			orb := f.orb(st)
+			th := f.thread(orb, StateIdle)
+			f.s.Focus(f.ctx, "conn-1", th.id)
+			select {
+			case id := <-f.orbs.wakes:
+				t.Fatalf("focus 唤醒了停机的 orb %s", id)
+			case <-time.After(300 * time.Millisecond):
+			}
+			require.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(`{"type":"prompt","message":"hi"}`), noReply))
+			select {
+			case id := <-f.orbs.wakes:
+				assert.Equal(t, orb, id)
+			case <-time.After(5 * time.Second):
+				t.Fatal("发消息没有唤醒停机的 orb")
+			}
+		})
+	}
+}
+
 // ---- W7 ----
 
 func TestPlanApprovalBroadcastsResolved(t *testing.T) {

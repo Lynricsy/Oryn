@@ -1,11 +1,47 @@
-/** 转录末尾的工作状态行：环境准备 / 启动 agent、agent 退出、工作中（含当前活动）。 */
-import type { ReactNode } from "react";
+/** 转录末尾的工作状态行：环境准备 / 启动 agent、orb 停机、agent 退出、工作中（含当前活动）。 */
+import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { wakeThread } from "../../state/actions";
 import { useThread } from "../../state/stores";
 import { useOrbOf } from "../thread/ThreadHeader";
 import { Callout } from "../ui/data";
 import { OrbBead } from "../ui/OrbBead";
-import { Spinner } from "../ui/primitives";
+import { Button, ErrorText, Spinner } from "../ui/primitives";
+
+/** orb 停机时打开线程页不会自动唤醒（冷启动代价高）：说明现状，给出唤醒入口。 */
+function StoppedNotice({ threadId }: { threadId: string }): ReactNode {
+	const { t } = useTranslation();
+	const [pending, setPending] = useState(false);
+	const [error, setError] = useState<unknown>(null);
+	const wake = async () => {
+		setPending(true);
+		setError(null);
+		try {
+			await wakeThread(threadId);
+		} catch (e) {
+			setError(e);
+		} finally {
+			setPending(false);
+		}
+	};
+	return (
+		<div className="py-3">
+			<Callout
+				tone="neutral"
+				icon="info"
+				actions={
+					<Button size="sm" disabled={pending} onClick={() => void wake()}>
+						{pending ? <Spinner size={12} /> : null}
+						{t("thread.orbWake")}
+					</Button>
+				}
+			>
+				{t("thread.orbStopped")}
+				{error !== null && <ErrorText error={error} />}
+			</Callout>
+		</div>
+	);
+}
 
 export function WorkingFooter({ threadId }: { threadId: string }): ReactNode {
 	const { t } = useTranslation();
@@ -30,6 +66,9 @@ export function WorkingFooter({ threadId }: { threadId: string }): ReactNode {
 						})}
 			</div>
 		);
+	}
+	if (!running && (orb?.state === "stopped" || orb?.state === "stopping")) {
+		return <StoppedNotice threadId={threadId} />;
 	}
 	if (agentStatus === "exited") {
 		return (

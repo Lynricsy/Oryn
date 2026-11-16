@@ -34,6 +34,8 @@ push: { fcm: { service_account_secret: "" } }   # Android gms 包的 FCM 推送�
 
 docker0 地址因机器而异，用 `ip -4 addr show docker0` 查看（例如有的机器是 `172.18.0.1`）。orb 不经过反代，直接连这个地址。
 
+`wake_on_focus` 控制打开线程页时是否唤醒冻结的 orb。已停机的 orb 不会因此唤醒：打开线程页时文件面板只读浏览，用户发消息或点「唤醒」后才冷启动。
+
 ### 移动 App 推送
 
 Android App 的后台推送默认走 UnifiedPush（手机上装 ntfy 等分发器），服务端不需要任何配置。要给装了 Google Play 服务、又不想装分发器的手机用 `gms` 包的 FCM 回退通道：
