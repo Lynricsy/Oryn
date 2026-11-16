@@ -932,6 +932,32 @@ func (q *Queries) GetThreadIssueByThread(ctx context.Context, threadID string) (
 	return i, err
 }
 
+const getThreadReleaseSummary = `-- name: GetThreadReleaseSummary :one
+SELECT t.id AS thread_id, gr.version, gr.state, COALESCE(p.repo_url, '') AS repo_url
+FROM github_releases gr JOIN threads t ON t.id = gr.thread_id LEFT JOIN projects p ON p.id = t.project_id
+WHERE t.id = ?1
+ORDER BY gr.updated_at DESC, gr.version DESC LIMIT 1
+`
+
+type GetThreadReleaseSummaryRow struct {
+	ThreadID string `json:"threadId"`
+	Version  string `json:"version"`
+	State    string `json:"state"`
+	RepoUrl  string `json:"repoUrl"`
+}
+
+func (q *Queries) GetThreadReleaseSummary(ctx context.Context, threadID string) (GetThreadReleaseSummaryRow, error) {
+	row := q.db.QueryRowContext(ctx, getThreadReleaseSummary, threadID)
+	var i GetThreadReleaseSummaryRow
+	err := row.Scan(
+		&i.ThreadID,
+		&i.Version,
+		&i.State,
+		&i.RepoUrl,
+	)
+	return i, err
+}
+
 const getThreadTaskSummary = `-- name: GetThreadTaskSummary :one
 SELECT ti.thread_id, ti.number, ti.state, COALESCE(p.repo_url, '') AS repo_url
 FROM thread_issues ti JOIN threads t ON t.id = ti.thread_id LEFT JOIN projects p ON p.id = t.project_id
@@ -2502,6 +2528,49 @@ func (q *Queries) ListThreadPulls(ctx context.Context, threadID string) ([]ListT
 			&i.Draft,
 			&i.HtmlUrl,
 			&i.Checks,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listThreadReleaseSummaries = `-- name: ListThreadReleaseSummaries :many
+SELECT t.id AS thread_id, gr.version, gr.state, COALESCE(p.repo_url, '') AS repo_url
+FROM github_releases gr JOIN threads t ON t.id = gr.thread_id LEFT JOIN projects p ON p.id = t.project_id
+ORDER BY t.id, gr.updated_at, gr.version
+`
+
+type ListThreadReleaseSummariesRow struct {
+	ThreadID string `json:"threadId"`
+	Version  string `json:"version"`
+	State    string `json:"state"`
+	RepoUrl  string `json:"repoUrl"`
+}
+
+// Thread header release badge (R15, release sentinel): the thread's release rows with the repo URL of the thread's
+// project, oldest first per thread (ties by version).
+func (q *Queries) ListThreadReleaseSummaries(ctx context.Context) ([]ListThreadReleaseSummariesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listThreadReleaseSummaries)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListThreadReleaseSummariesRow{}
+	for rows.Next() {
+		var i ListThreadReleaseSummariesRow
+		if err := rows.Scan(
+			&i.ThreadID,
+			&i.Version,
+			&i.State,
+			&i.RepoUrl,
 		); err != nil {
 			return nil, err
 		}

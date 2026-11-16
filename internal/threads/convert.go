@@ -189,13 +189,11 @@ func (s *Service) threadAPI(ctx context.Context, t db.Thread) (apigen.Thread, er
 	for _, p := range pulls {
 		out.Pulls = append(out.Pulls, threadPullAPI(p))
 	}
-	task, err := s.st.Q.GetThreadTaskSummary(ctx, t.ID)
-	switch {
-	case err == nil:
-		out.GithubTask = threadTaskAPI(db.ListThreadTaskSummariesRow(task))
-	case !errors.Is(err, sql.ErrNoRows):
+	task, err := s.threadTask(ctx, t.ID)
+	if err != nil {
 		return apigen.Thread{}, err
 	}
+	out.GithubTask = task
 	sum, err := s.st.Q.GetScheduleSummary(ctx, t.ID)
 	switch {
 	case err == nil:
@@ -206,10 +204,40 @@ func (s *Service) threadAPI(ctx context.Context, t db.Thread) (apigen.Thread, er
 	return out, nil
 }
 
-// threadTaskAPI 把线程的 issue 任务摘要转成页头徽标（M15 R15；单线程与列表共用）。仓库取线程项目的 repo_url 路径。
-func threadTaskAPI(r db.ListThreadTaskSummariesRow) *apigen.GitHubThreadTask {
+// threadTask 取单个线程的页头任务徽标：先取最新的 issue 任务，没有时取最新的发布哨兵行；都没有返回 nil。
+// 一个线程按设计只挂其中一种（触发规则建 issue 线程，发布哨兵另建修复线程）；万一两者都在，issue 任务优先，
+// 与列表（List）一致。
+func (s *Service) threadTask(ctx context.Context, threadID string) (*apigen.GitHubThreadTask, error) {
+	issue, err := s.st.Q.GetThreadTaskSummary(ctx, threadID)
+	switch {
+	case err == nil:
+		return issueTaskAPI(db.ListThreadTaskSummariesRow(issue)), nil
+	case !errors.Is(err, sql.ErrNoRows):
+		return nil, err
+	}
+	rel, err := s.st.Q.GetThreadReleaseSummary(ctx, threadID)
+	switch {
+	case err == nil:
+		return releaseTaskAPI(db.ListThreadReleaseSummariesRow(rel)), nil
+	case errors.Is(err, sql.ErrNoRows):
+		return nil, nil
+	default:
+		return nil, err
+	}
+}
+
+// issueTaskAPI 把线程的 issue 任务摘要转成页头徽标（M15 R15；单线程与列表共用）。仓库取线程项目的 repo_url 路径。
+func issueTaskAPI(r db.ListThreadTaskSummariesRow) *apigen.GitHubThreadTask {
 	return &apigen.GitHubThreadTask{
 		Kind: apigen.GitHubThreadTaskKindIssue, Repo: repoPathOf(r.RepoUrl), Number: &r.Number, State: r.State,
+	}
+}
+
+// releaseTaskAPI 把线程的发布哨兵摘要转成页头徽标（M15 步骤 6.1 / R15；单线程与列表共用）。github_releases 不存仓库名，
+// 仓库同 issue 路径取线程项目的 repo_url 路径；状态原样取发布行（awaiting_ci / fixing / green / failed / superseded）。
+func releaseTaskAPI(r db.ListThreadReleaseSummariesRow) *apigen.GitHubThreadTask {
+	return &apigen.GitHubThreadTask{
+		Kind: apigen.GitHubThreadTaskKindRelease, Repo: repoPathOf(r.RepoUrl), Version: &r.Version, State: r.State,
 	}
 }
 

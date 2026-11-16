@@ -578,6 +578,19 @@ FROM thread_issues ti JOIN threads t ON t.id = ti.thread_id LEFT JOIN projects p
 WHERE ti.thread_id = @thread_id
 ORDER BY ti.created_at DESC LIMIT 1;
 
+-- Thread header release badge (R15, release sentinel): the thread's release rows with the repo URL of the thread's
+-- project, oldest first per thread (ties by version).
+-- name: ListThreadReleaseSummaries :many
+SELECT t.id AS thread_id, gr.version, gr.state, COALESCE(p.repo_url, '') AS repo_url
+FROM github_releases gr JOIN threads t ON t.id = gr.thread_id LEFT JOIN projects p ON p.id = t.project_id
+ORDER BY t.id, gr.updated_at, gr.version;
+
+-- name: GetThreadReleaseSummary :one
+SELECT t.id AS thread_id, gr.version, gr.state, COALESCE(p.repo_url, '') AS repo_url
+FROM github_releases gr JOIN threads t ON t.id = gr.thread_id LEFT JOIN projects p ON p.id = t.project_id
+WHERE t.id = @thread_id
+ORDER BY gr.updated_at DESC, gr.version DESC LIMIT 1;
+
 -- Task options fixed when a rule creates the thread.
 -- name: SetThreadIssueTask :exec
 UPDATE thread_issues SET rule_id = sqlc.narg(rule_id), review_only = @review_only, deadline_at = sqlc.narg(deadline_at)

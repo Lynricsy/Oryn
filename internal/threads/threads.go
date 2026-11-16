@@ -432,9 +432,17 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]apigen.Thread, erro
 	if err != nil {
 		return nil, err
 	}
-	tasks := make(map[string]*apigen.GitHubThreadTask, len(taskRows))
+	relRows, err := s.st.Q.ListThreadReleaseSummaries(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// 同 threadTask：每线程按时间升序，留下最新的一条；issue 任务优先，发布哨兵只补没有 issue 任务的线程。
+	tasks := make(map[string]*apigen.GitHubThreadTask, len(taskRows)+len(relRows))
+	for _, r := range relRows {
+		tasks[r.ThreadID] = releaseTaskAPI(r)
+	}
 	for _, r := range taskRows {
-		tasks[r.ThreadID] = threadTaskAPI(r) // 每线程按 created_at 升序：留下最新的一条
+		tasks[r.ThreadID] = issueTaskAPI(r)
 	}
 	archived := false
 	if f.Archived != nil {

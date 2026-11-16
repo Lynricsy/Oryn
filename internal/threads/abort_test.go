@@ -62,3 +62,49 @@ func TestThreadGithubTask(t *testing.T) {
 	}
 	assert.Equal(t, "", repoPathOf("not a url/x/y/z"))
 }
+
+// M15 步骤 6.1 / R15：只挂发布哨兵行的线程，Get 与 List 都给出 release 徽标（版本与状态取最新一行，仓库取项目的 repo_url）；
+// 同时挂 issue 任务与发布行时 issue 任务优先；什么都不挂的线程没有徽标。
+func TestThreadGithubReleaseTask(t *testing.T) {
+	f := newFixture(t, Config{})
+	prj := ids.New("prj")
+	require.NoError(t, f.st.Q.CreateProject(f.ctx, db.CreateProjectParams{ID: prj, Name: "w", RepoUrl: new("https://github.com/Acme/Widgets.git"), CreatedAt: 1, UpdatedAt: 1}))
+	thread := func() string {
+		id := ids.Thread()
+		require.NoError(t, f.st.Q.CreateThread(f.ctx, db.CreateThreadParams{Kind: "work", ID: id, ProjectID: &prj, TitleSource: "auto", State: StateIdle, SessionDir: sessionDirOf(id), CreatedAt: 1, UpdatedAt: 1}))
+		return id
+	}
+	release := func(id, version, state string, at int64) {
+		require.NoError(t, f.st.Q.UpsertGithubRelease(f.ctx, db.UpsertGithubReleaseParams{RepoID: 42, Version: version, Sha: "abc", State: "awaiting_ci", UpdatedAt: at}))
+		require.NoError(t, f.st.Q.SetGithubReleaseThread(f.ctx, db.SetGithubReleaseThreadParams{ThreadID: &id, UpdatedAt: at, RepoID: 42, Version: version}))
+		require.NoError(t, f.st.Q.SetGithubReleaseState(f.ctx, db.SetGithubReleaseStateParams{State: state, Rounds: 1, UpdatedAt: at, RepoID: 42, Version: version}))
+	}
+	rel := thread()
+	release(rel, "1.0.0", "green", 5)
+	release(rel, "1.1.0", "fixing", 9)
+	both := thread()
+	release(both, "2.0.0", "fixing", 20)
+	require.NoError(t, f.st.Q.UpsertThreadIssue(f.ctx, db.UpsertThreadIssueParams{RepoID: 42, Number: 7, ThreadID: both, CreatedAt: 1}))
+	plain := thread()
+
+	want := map[string]*apigen.GitHubThreadTask{
+		rel:   {Kind: apigen.GitHubThreadTaskKindRelease, Repo: "Acme/Widgets", Version: new("1.1.0"), State: "fixing"},
+		both:  {Kind: apigen.GitHubThreadTaskKindIssue, Repo: "Acme/Widgets", Number: new(int64(7)), State: "new"},
+		plain: nil,
+	}
+	for id, w := range want {
+		got, err := f.s.Get(f.ctx, id)
+		require.NoError(t, err)
+		assert.Equal(t, w, got.GithubTask, "Get %s", id)
+	}
+	list, err := f.s.List(f.ctx, ListFilter{})
+	require.NoError(t, err)
+	seen := 0
+	for _, th := range list {
+		if w, ok := want[th.ID]; ok {
+			seen++
+			assert.Equal(t, w, th.GithubTask, "List %s", th.ID)
+		}
+	}
+	assert.Equal(t, len(want), seen)
+}
