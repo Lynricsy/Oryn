@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 由 web/scripts/gen-icons.py 生成，勿手改。深色图标：启动器按深色配置解析资源时生效（取决于启动器） -->
+<resources>
+    <color name="ic_launcher_background">#FF151C1F</color>
+    <color name="ic_launcher_ink">#FFE7ECEF</color>
+    <color name="ic_launcher_caret">#FFE7ECEF</color>
+</resources>

@@ -121,6 +121,9 @@ make android DIST=foss                                      # 仓库根目录：
 - gms 需要 `web/src-tauri/gen/android/app/google-services.json`（已 gitignore，不入库）：本机从 `.dev/m7/google-services.json` 复制，CI 从 secret `ANDROID_GOOGLE_SERVICES_JSON` 写入。缺它时 gms 构建在配置阶段报错。
 - 插件 JVM 单测：`cd web/src-tauri/gen/android && ./gradlew :tauri-plugin-oryn-mobile:testDebugUnitTest`。
 - debug 包可用 `chrome://inspect` 调试 WebView，并把事件写到 App 缓存目录的 `events.jsonl`：`adb shell run-as com.lynricsy.oryn cat cache/events.jsonl`。release 包没有事件日志、不能调试。
+- App 图标由 `web/scripts/gen-icons.py` 生成（各端总览见 [desktop.md 的「App 图标」](desktop.md#app-图标)），默认只用黑白两色：
+  - Android：`res/mipmap-anydpi/ic_launcher*.xml` 自适应图标，前景是矢量字形，背景与字形颜色在 `values/ic_launcher.xml`，`values-night/` 给深色（启动器按深色配置解析资源时生效，取决于启动器）；单色层供 Android 13+ 的主题图标按壁纸着色。
+  - iOS：`icons/ios/AppIcon.appiconset` 带 Any / Dark / Tinted 三种外观（iOS 18+）。`gen/apple` 不入库，CI 在 `tauri ios init` 之后用 `ci/ios-appicon.sh` 换掉模板里的 tauri 默认图标；本机生成工程后也要跑一次。`ios-check` 与 `ios-release` 会断言包里的 `Assets.car` 有带深色外观的 AppIcon。
 
 ### 本机验收
 

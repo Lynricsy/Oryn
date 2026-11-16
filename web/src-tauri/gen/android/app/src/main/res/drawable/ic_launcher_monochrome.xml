@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 由 web/scripts/gen-icons.py 生成，勿手改 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group android:translateX="27.6583" android:translateY="27.3333"
+        android:scaleX="1.66667" android:scaleY="1.66667">
+        <path android:fillColor="#FFFFFFFF" android:pathData="M20.1 4.52A12 12 0 1 0 20.1 27.48Z"/>
+        <path android:fillColor="#FFFFFFFF" android:pathData="M24.5 4H25.9A1.1 1.1 0 0 1 27 5.1V26.9A1.1 1.1 0 0 1 25.9 28H24.5A1.1 1.1 0 0 1 23.4 26.9V5.1A1.1 1.1 0 0 1 24.5 4Z"/>
+    </group>
+</vector>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 由 web/scripts/gen-icons.py 生成，勿手改。浅色图标 -->
+<resources>
+    <color name="ic_launcher_background">#FFEEF3F6</color>
+    <color name="ic_launcher_ink">#FF121A1E</color>
+    <color name="ic_launcher_caret">#FF121A1E</color>
+</resources>

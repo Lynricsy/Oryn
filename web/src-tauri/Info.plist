@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- tauri 构建 macOS 与 iOS 包时都会把本文件合并进 Info.plist（iOS 再叠加 Info.ios.plist），所以这里只放两端通用的键。
+	     AppIcon 是 App 图标在 Assets.car 里的资源名：macOS 由 Icon Composer 包（icons/macos/AppIcon.icon）编出，
+	     macOS 26 据此显示浅色 / 深色 / 着色图标；iOS 是 AppIcon.appiconset（ci/ios-appicon.sh 装进工程），本来就叫这个名字。
+	     macOS 包里没有 Assets.car（本地未跑 ci/macos-appicon.sh）时，系统回退到 CFBundleIconFile 指向的 icon.icns。 -->
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
+</dict>
+</plist>

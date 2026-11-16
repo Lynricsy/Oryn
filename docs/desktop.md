@@ -105,6 +105,18 @@ cd src-tauri && cargo fmt --check && cargo clippy --locked -- -D warnings && car
 
 设环境变量 `ORYN_DESKTOP_EVENT_LOG=<文件>` 后，App 把关键事件逐行写成 JSON（配对、会话、窗口、托盘、通知、深链接、快捷键、更新等）。日志不包含令牌、verifier 和一次性码，验收脚本就是靠它观察 App 的行为。`oryn-desktop --smoke` 用临时配置目录启动一遍，连接页成功调用 IPC 后以退出码 0 退出；CI 在三个平台上都跑这一步。
 
+### App 图标
+
+各端图标都由 `web/scripts/gen-icons.py` 从同一份字形（与界面里的 `BrandMark` 相同）生成，产物直接入库；改设计后在 `web/` 下重跑 `python3 scripts/gen-icons.py --preview /tmp/icons.png`（需要 `rsvg-convert` 与 Pillow），看一眼总览图再提交。默认图标只用黑白两色。
+
+| 平台 | 文件 | 浅色 / 深色 |
+|---|---|---|
+| macOS 26+ | `icons/macos/AppIcon.icon`（Icon Composer 包），CI 用 `ci/macos-appicon.sh` 编进 `Contents/Resources/Assets.car`，`Info.plist` 的 `CFBundleIconName` 指向它 | 浅色、深色、着色随系统外观切换 |
+| macOS 26 之前、`tauri dev` | `icons/icon.icns`（macOS 图标网格 + 投影） | 只有浅色 |
+| Windows / Linux | `icons/icon.ico`、`icons/*.png`（浅色圆角方块） | 系统不支持按深浅切换应用图标 |
+
+本地在 Mac 上打正式包时，先跑 `bash src-tauri/ci/macos-appicon.sh <目录>`，再用 `--config` 把 `bundle.macOS.files` 的 `Resources/Assets.car` 指到 `<目录>/Assets.car`（CI 的「签名配置」步骤就是这么做的）；不加也能打包，只是回退到 icns。CI 的「断言 App 图标（macOS）」检查包里的 `CFBundleIconName` 与 `Assets.car` 里有带深色外观的 AppIcon。
+
 ### 本机验收
 
 ```bash

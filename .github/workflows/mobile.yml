@@ -452,12 +452,13 @@ jobs:
         working-directory: web
         run: VITE_MOCK=1 bunx vite build --outDir dist-e2e
 
-      - name: 生成 iOS 工程（未入库时）
+      - name: 生成 iOS 工程（未入库时）并装入 App 图标
         working-directory: web
         shell: bash
         run: |
           set -euo pipefail
           if [[ ! -d src-tauri/gen/apple ]]; then bun run tauri ios init --ci; fi
+          bash src-tauri/ci/ios-appicon.sh
 
       - name: 不签名编译模拟器包
         working-directory: web
@@ -478,6 +479,7 @@ jobs:
           if [[ "$ver" != "$VERSION" ]]; then echo "::error::CFBundleShortVersionString 是 ${ver}，应为 Cargo.toml 的 ${VERSION}"; exit 1; fi
           /usr/libexec/PlistBuddy -c 'Print :NSCameraUsageDescription' "$plist" > /dev/null \
             || { echo "::error::Info.plist 缺 NSCameraUsageDescription（见 web/src-tauri/Info.ios.plist）"; exit 1; }
+          bash web/src-tauri/ci/check-appicon.sh "$app/Assets.car" "iOS 模拟器包"
           echo "产物：${app}（版本 ${ver}）" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "path=$app" >> "$GITHUB_OUTPUT"
 
@@ -603,12 +605,13 @@ jobs:
         working-directory: web
         run: bun install --frozen-lockfile
 
-      - name: 生成 iOS 工程（未入库时）
+      - name: 生成 iOS 工程（未入库时）并装入 App 图标
         working-directory: web
         shell: bash
         run: |
           set -euo pipefail
           if [[ ! -d src-tauri/gen/apple ]]; then bun run tauri ios init --ci; fi
+          bash src-tauri/ci/ios-appicon.sh
 
       # tauri 从 IOS_* 建临时钥匙串并装描述文件。
       # build number = run_number × 100 + run_attempt：重跑同一次运行（如 Android 失败后 Re-run）时也换一个新号，
@@ -653,6 +656,7 @@ jobs:
             echo "::error::签名者「${signer}」不是分发证书"
             exit 1
           fi
+          bash web/src-tauri/ci/check-appicon.sh "$app/Assets.car" "iOS IPA"
           echo "path=$ipa" >> "$GITHUB_OUTPUT"
           echo "- iOS：\`${bid}\` ${ver}（build ${build}），签名者 ${signer}" | tee -a "$GITHUB_STEP_SUMMARY"
 

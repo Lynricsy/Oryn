@@ -155,6 +155,16 @@ jobs:
         working-directory: web
         run: bun install --frozen-lockfile
 
+      # Icon Composer 图标（浅色 / 深色 / 着色）只能由 Xcode 26+ 的 actool 编成 Assets.car，随包放进 Contents/Resources
+      - name: 编译 App 图标（macOS）
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+          v=$(xcodebuild -version | awk 'NR==1{print $2}')
+          if [[ ${v%%.*} -lt 26 ]]; then echo "::error::编译 .icon 需要 Xcode 26+，当前 $v"; exit 1; fi
+          bash web/src-tauri/ci/macos-appicon.sh "$RUNNER_TEMP/appicon"
+
       # 这一步只拿「有没有」的布尔（非发布运行恒为 false），决定签名方式并生成构建参数与包装脚本；不接触 secret 的值
       - name: 签名配置
         id: sign
@@ -186,6 +196,9 @@ jobs:
 
           codesign="未签名"
           apple_cert=false
+          # macOS 段的字段（Assets.car、ad-hoc 签名）攒在这里，最后合成一个 "macOS" 对象
+          mac=""
+          madd() { mac="${mac:+$mac, }$1"; }
           notarize=none
           mac_sign=none
           if [[ "$PLATFORM" == "macos" ]]; then
@@ -205,10 +218,12 @@ jobs:
               fi
             else
               # ad-hoc 签名：Apple Silicon 上才能运行；首次打开需右键「打开」
-              add '"macOS": {"signingIdentity": "-"}'
+              madd '"signingIdentity": "-"'
               codesign="未签名（ad-hoc）"
               mac_sign=adhoc
             fi
+            madd "\"files\": {\"Resources/Assets.car\": \"$tmp/appicon/Assets.car\"}"
+            add "\"macOS\": {$mac}"
           fi
 
           printf '{"bundle": {%s}}\n' "$bundle" > "$tmp/tauri.override.json"
@@ -299,6 +314,16 @@ jobs:
         if: matrix.platform == 'macos'
         timeout-minutes: 3
         run: web/src-tauri/target/universal-apple-darwin/release/bundle/macos/Oryn.app/Contents/MacOS/oryn-desktop --smoke
+
+      - name: 断言 App 图标（macOS）
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+          app=web/src-tauri/target/universal-apple-darwin/release/bundle/macos/Oryn.app
+          name=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$app/Contents/Info.plist")
+          if [[ "$name" != "AppIcon" ]]; then echo "::error::CFBundleIconName 是「${name}」，应为 AppIcon（见 web/src-tauri/Info.plist）"; exit 1; fi
+          bash web/src-tauri/ci/check-appicon.sh "$app/Contents/Resources/Assets.car" "macOS"
 
       - name: 验签（macOS）
         if: matrix.platform == 'macos' && steps.sign.outputs.mac_sign != 'adhoc'

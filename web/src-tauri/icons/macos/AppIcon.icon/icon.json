@@ -1,0 +1,94 @@
+{
+  "fill-specializations": [
+    {
+      "value": {
+        "linear-gradient": [
+          "srgb:0.98824,0.99608,1.00000,1.00000",
+          "srgb:0.87451,0.90980,0.92941,1.00000"
+        ]
+      }
+    },
+    {
+      "appearance": "dark",
+      "value": {
+        "linear-gradient": [
+          "srgb:0.12549,0.15686,0.17255,1.00000",
+          "srgb:0.03922,0.05882,0.07059,1.00000"
+        ]
+      }
+    }
+  ],
+  "groups": [
+    {
+      "layers": [
+        {
+          "name": "caret",
+          "image-name": "caret.svg",
+          "glass": true,
+          "hidden": false,
+          "opacity": 1,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          },
+          "fill-specializations": [
+            {
+              "value": {
+                "solid": "srgb:0.07059,0.10196,0.11765,1.00000"
+              }
+            },
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "srgb:0.90588,0.92549,0.93725,1.00000"
+              }
+            }
+          ]
+        },
+        {
+          "name": "disc",
+          "image-name": "disc.svg",
+          "glass": true,
+          "hidden": false,
+          "opacity": 1,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          },
+          "fill-specializations": [
+            {
+              "value": {
+                "solid": "srgb:0.07059,0.10196,0.11765,1.00000"
+              }
+            },
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "srgb:0.90588,0.92549,0.93725,1.00000"
+              }
+            }
+          ]
+        }
+      ],
+      "lighting": "individual",
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "specular": true,
+      "translucency": {
+        "enabled": true,
+        "value": 0.5
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": "shared"
+  }
+}
