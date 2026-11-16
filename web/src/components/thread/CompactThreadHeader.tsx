@@ -75,6 +75,7 @@ type Row = MenuItem & { sub?: ReactNode };
 export function CompactThreadHeader({
 	threadId,
 	veil,
+	safeTop = 0,
 	chromeLeft = false,
 	chromeRight = false,
 	viewMenu,
@@ -83,6 +84,11 @@ export function CompactThreadHeader({
 	threadId: string;
 	/** 渐进模糊纱的高度（px） */
 	veil: number;
+	/**
+	 * 页面铺到状态栏下面时的顶部安全区（px，ThreadPage 给）：页头往下推这么多；
+	 * 此时纱只盖这一带（再 12px 渐隐）：胶囊本身是玻璃，胶囊下面的对话保持清楚，从灵动岛附近才开始渐进模糊。
+	 */
+	safeTop?: number;
 	/** 页头是窗口最左 / 最右侧的标题行（桌面 App 窗口拉窄时）：两端放窗口控件 */
 	chromeLeft?: boolean;
 	chromeRight?: boolean;
@@ -112,6 +118,7 @@ export function CompactThreadHeader({
 	const leadRef = useRef<HTMLButtonElement>(null);
 	const probeRef = useRef<HTMLSpanElement>(null);
 	const native = useNativeHeaderActive();
+	const veilH = safeTop > 0 ? safeTop + 12 : veil;
 	const theme = useHeaderTheme(probeRef);
 	const dark = theme?.dark ?? isDark();
 	const leadFrame = useSlotFrame(leadRef);
@@ -418,9 +425,15 @@ export function CompactThreadHeader({
 			ref={headerRef}
 			data-window-drag=""
 			data-testid="compact-thread-header"
-			className="veil-host relative isolate flex shrink-0 items-center gap-2 px-3 py-2"
+			className="veil-host relative isolate flex shrink-0 items-center gap-2 px-3 pb-2"
+			style={{ paddingTop: safeTop + 8 }}
 		>
-			<div aria-hidden className="veil" style={{ height: veil }}>
+			<div
+				aria-hidden
+				className="veil"
+				data-band={safeTop > 0 ? "" : undefined}
+				style={{ height: veilH }}
+			>
 				<i />
 				<i />
 				<i />

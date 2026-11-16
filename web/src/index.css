@@ -331,6 +331,14 @@ body {
 @utility pb-keyboard {
 	padding-bottom: max(env(safe-area-inset-bottom), var(--kb-inset));
 }
+/*
+ * 内容铺到状态栏下面：页面里有 [data-safe-bleed] 时，应用壳 <main> 不再让出顶部安全区，
+ * 由该页自己把页头往下推、转录的顶部留白加上安全区（手机线程页 / 协调对话：对话滚到灵动岛下面，只在那一带渐进模糊）。
+ * 叠在原处但 inert 的隐藏面（Space 页切到「线程」时的聊天）里的标记不算。不放进 @layer：要压过 pt-safe 工具类。
+ */
+main.pt-safe:has([data-safe-bleed]:not([inert] *)) {
+	padding-top: 0;
+}
 
 /*
  * 屏幕圆角同心（M7）：贴着屏幕边缘的浮层（抽屉、侧栏、底部弹层、输入坞）在对应角上取
@@ -789,6 +797,36 @@ body {
 	.sheet .veil > i,
 	.sheet .veil::after {
 		border-radius: calc(var(--r-xl) - 1px) calc(var(--r-xl) - 1px) 0 0;
+	}
+	/*
+	 * 轻模糊的纱（data-band，页面铺到状态栏下面时）：最重 6px，着色也淡。手机线程页只盖安全区再 12px 渐隐
+	 * （玻璃胶囊下面的对话保持清楚）；协调对话的平铺页头仍盖住页头一行，免得标题压在清楚的文字上。
+	 */
+	.veil[data-band] > i:nth-child(1) {
+		--b: 6px;
+	}
+	.veil[data-band] > i:nth-child(2) {
+		--b: 4px;
+	}
+	.veil[data-band] > i:nth-child(3) {
+		--b: 2.5px;
+	}
+	.veil[data-band] > i:nth-child(4) {
+		--b: 1.5px;
+	}
+	.veil[data-band] > i:nth-child(5) {
+		--b: 0.75px;
+	}
+	.veil[data-band] > i:nth-child(6) {
+		--b: 0.4px;
+	}
+	.veil[data-band]::after {
+		background: linear-gradient(
+			to bottom,
+			color-mix(in oklab, var(--panel) 45%, transparent),
+			color-mix(in oklab, var(--panel) 20%, transparent) 60%,
+			transparent
+		);
 	}
 	/* 无模糊或要求减少透明度：纱撤掉，页头回到不透明纸面 + 一条细线 */
 	@supports not (

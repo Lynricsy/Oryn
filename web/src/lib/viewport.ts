@@ -33,6 +33,37 @@ export function useBreakpoint(): Breakpoint {
 	);
 }
 
+// 顶部安全区（状态栏 / 灵动岛）的 px：env() 只能在 CSS 里取，用一个隐藏探针读计算值；resize（转屏）时重读
+let safeTopProbe: HTMLDivElement | null = null;
+let safeTopPx = -1;
+
+function readSafeTop(): number {
+	if (safeTopPx >= 0) return safeTopPx;
+	if (!safeTopProbe) {
+		safeTopProbe = document.createElement("div");
+		safeTopProbe.setAttribute("aria-hidden", "true");
+		safeTopProbe.style.cssText =
+			"position:fixed;top:0;left:0;width:0;height:0;visibility:hidden;pointer-events:none;padding-top:env(safe-area-inset-top)";
+		document.body.appendChild(safeTopProbe);
+	}
+	safeTopPx = Number.parseFloat(getComputedStyle(safeTopProbe).paddingTop) || 0;
+	return safeTopPx;
+}
+
+function subscribeSafeTop(cb: () => void) {
+	const onResize = () => {
+		safeTopPx = -1;
+		cb();
+	};
+	window.addEventListener("resize", onResize);
+	return () => window.removeEventListener("resize", onResize);
+}
+
+/** 顶部安全区高度（px）：iOS 铺满整屏的 WKWebView 里是状态栏 / 灵动岛的高度，其它宿主通常为 0。 */
+export function useSafeTop(): number {
+	return useSyncExternalStore(subscribeSafeTop, readSafeTop, () => 0);
+}
+
 /** 左右双段视口：左段宽、铰链宽（两段之间的缝）、右段宽（px）。 */
 export interface DualSegments {
 	left: number;

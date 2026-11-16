@@ -20,12 +20,24 @@ export function CoordinatorHeader({
 }): ReactNode {
 	const { t } = useTranslation();
 	const sidebarCollapsed = useUi((s) => s.sidebarCollapsed);
+	const safeTop = layout.safeTop ?? 0;
 	return (
 		<header
 			data-window-drag=""
-			className="veil-host relative isolate @container/header flex h-12 shrink-0 items-center gap-1.5 px-2 sm:px-3"
+			className="veil-host relative isolate @container/header flex shrink-0 items-center gap-1.5 px-2 sm:px-3"
+			// 铺到状态栏下面时整体往下推一个安全区（48px 一行仍在安全区下方），纱从屏幕顶部盖起
+			style={{ height: 48 + safeTop, paddingTop: safeTop }}
 		>
-			<div aria-hidden className="veil" style={{ height: layout.veil }}>
+			{/*
+			 * 铺到状态栏下面时纱从屏幕顶部盖起、换成轻模糊（data-band）。这里的标题与按钮不是玻璃胶囊，
+			 * 纱仍要盖住页头这一行，否则标题直接压在清楚的对话文字上；手机线程页的玻璃胶囊才让纱只盖状态栏一带。
+			 */}
+			<div
+				aria-hidden
+				className="veil"
+				data-band={safeTop > 0 ? "" : undefined}
+				style={{ height: layout.veil + safeTop }}
+			>
 				<i />
 				<i />
 				<i />

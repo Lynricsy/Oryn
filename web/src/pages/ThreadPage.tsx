@@ -62,7 +62,11 @@ import { WorkingFooter } from "../components/transcript/WorkingFooter";
 import { Sheet } from "../components/ui/data";
 import { Spinner } from "../components/ui/primitives";
 import { usePresence } from "../lib/presence";
-import { useBreakpoint, useViewportSegments } from "../lib/viewport";
+import {
+	useBreakpoint,
+	useSafeTop,
+	useViewportSegments,
+} from "../lib/viewport";
 import { realtime } from "../realtime/socket";
 import { useComposerDraft } from "../state/composer-drafts";
 import { useConnection, useIndex, useThread } from "../state/stores";
@@ -132,6 +136,8 @@ export interface ScreenHeaderLayout {
 	sidebarToggle: boolean;
 	/** 渐进模糊纱的高度 */
 	veil: number;
+	/** 页面铺到状态栏下面时的顶部安全区（px）：页头往下推这么多、纱从屏幕顶部盖起；缺省 0（页头在流里，壳已让出安全区） */
+	safeTop?: number;
 	chromeLeft: boolean;
 	chromeRight: boolean;
 }
@@ -186,6 +192,7 @@ export function ThreadScreen({
 	const coordinator = variant === "coordinator";
 	const { t } = useTranslation();
 	const bp = useBreakpoint();
+	const safeTop = useSafeTop();
 	const segments = useViewportSegments();
 	const threadTab = useUi((s) => s.threadTab);
 	const panelOpen = useUi((s) => s.panelOpen);
@@ -297,6 +304,10 @@ export function ThreadScreen({
 	const panelFull = showPanelColumn && panelMax && panelTab !== "info";
 	/** 转录被面板标签或最大化面板挡住（保持挂载、仍参与布局，见下面纸面的注释）。 */
 	const away = panelFull || !onAgent;
+	// 手机线程页看转录时内容铺到状态栏下面（灵动岛下也看得到对话）：壳不让出顶部安全区，页头往下推、转录留白加上它。
+	// 协调对话（Space / 助手）的 48px 页头同理
+	const bleed = bp === "compact" && !dual && !away;
+	const bleedTop = bleed ? safeTop : 0;
 	// 面板列的进出场：打开时挂载后下一帧再展开，收起时先走完 260ms 的收窄再卸载（与左栏同一套时长与缓动）
 	const column = usePresence(showPanelColumn, PANEL_ANIM_MS);
 	const firstUi = pendingUi[0];
@@ -424,7 +435,7 @@ export function ThreadScreen({
 								<Transcript
 									items={model.items}
 									footer={<WorkingFooter threadId={threadId} />}
-									insetTop={topInset}
+									insetTop={topInset + bleedTop}
 									insetBottom={dockH + 16}
 									onReadDirection={collapsible ? onReadDirection : undefined}
 									trayTop={mini && miniH > 0 ? miniH : undefined}
@@ -432,11 +443,15 @@ export function ThreadScreen({
 							)}
 						</div>
 					</TranscriptContext.Provider>
-					<div className="absolute inset-x-0 top-0 z-30">
+					<div
+						className="absolute inset-x-0 top-0 z-30"
+						data-safe-bleed={bleed ? "" : undefined}
+					>
 						{header ? (
 							header({
 								sidebarToggle: !expanded,
 								veil: topInset,
+								safeTop: bleedTop,
 								chromeLeft: chromeLeft && transcriptShown,
 								chromeRight: transcriptShown && edgeRight && !dual,
 							})
@@ -444,6 +459,7 @@ export function ThreadScreen({
 							<CompactThreadHeader
 								threadId={threadId}
 								veil={topInset}
+								safeTop={bleedTop}
 								chromeLeft={chromeLeft && transcriptShown}
 								chromeRight={transcriptShown}
 								visible={!away}
@@ -489,7 +505,7 @@ export function ThreadScreen({
 					{conn !== "open" && (
 						<div
 							className="pointer-events-none absolute inset-x-0 z-20 flex justify-center px-3"
-							style={{ top: topInset - 8 }}
+							style={{ top: topInset + bleedTop - 8 }}
 						>
 							<div className="glass flex items-center gap-2 rounded-full px-3 py-1 text-muted text-xs">
 								<Spinner size={11} />
