@@ -205,8 +205,9 @@ function CardCell({
 	action?: ReactNode;
 }): ReactNode {
 	const openMenu = useRef<(() => void) | null>(null);
+	// 菜单弹层在右上角按钮的容器里（带 backdrop-blur，自成层叠上下文），盖不过后面的卡片：菜单开着时把整格抬上来
 	return (
-		<li className="group/cell relative min-w-0">
+		<li className="group/cell relative min-w-0 [&:has([aria-expanded=true])]:z-20">
 			<ArtifactCard
 				artifact={artifact}
 				form="tile"
