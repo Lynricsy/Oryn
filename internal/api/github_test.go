@@ -229,3 +229,39 @@ func TestProjectGitHubBinding(t *testing.T) {
 	r.json(t, &p)
 	assert.Nil(t, p.Github)
 }
+
+func TestListGitHubReposAPI(t *testing.T) {
+	e, fake, gh := newGitHubEnv(t)
+	dev := h2DeviceToken(t, e)
+	createGitHubApp(t, fake, gh)
+	r := e.do("GET", "/api/v1/github/repos", dev, nil)
+	assert.Equal(t, 409, r.status)
+	assert.Equal(t, "github_identity_required", r.code(t))
+
+	fake.AddUser(1, "owner", "")
+	fake.GrantCode("u1", "owner")
+	raw, err := gh.BeginAuthorize(context.Background(), "user")
+	require.NoError(t, err)
+	u, err := url.Parse(raw)
+	require.NoError(t, err)
+	_, err = gh.FinishAuthorize(context.Background(), "u1", u.Query().Get("state"))
+	require.NoError(t, err)
+	fake.AddInstallation(10, "acme")
+	fake.AddRepo(githubtest.Repo{ID: 1, FullName: "acme/widgets", InstallationID: 10})
+	fake.AddRepo(githubtest.Repo{ID: 2, FullName: "acme/gadgets", InstallationID: 10})
+
+	r = e.do("GET", "/api/v1/github/repos?q=wid", dev, nil)
+	require.Equal(t, 200, r.status, string(r.body))
+	var list struct {
+		Repos []struct {
+			ID            int64
+			FullName      string
+			DefaultBranch string
+		}
+	}
+	r.json(t, &list)
+	require.Len(t, list.Repos, 1)
+	assert.Equal(t, "acme/widgets", list.Repos[0].FullName)
+	assert.Equal(t, "main", list.Repos[0].DefaultBranch)
+	assert.Equal(t, 400, e.do("GET", "/api/v1/github/repos?q="+strings.Repeat("x", 101), dev, nil).status)
+}

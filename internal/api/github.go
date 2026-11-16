@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"unicode/utf8"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/auth"
@@ -178,6 +179,28 @@ func (s *Server) SyncGitHubInstallations(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.writeGitHubStatus(w, r, svc)
+}
+
+// ListGitHubRepos 对应 `GET /api/v1/github/repos`：「我的账号」经 App 可访问的仓库。
+func (s *Server) ListGitHubRepos(w http.ResponseWriter, r *http.Request, params apigen.ListGitHubReposParams) {
+	svc, ok := s.githubSvc(w)
+	if !ok {
+		return
+	}
+	q := ""
+	if params.Q != nil {
+		q = *params.Q
+	}
+	if utf8.RuneCountInString(q) > 100 {
+		WriteError(w, http.StatusBadRequest, "invalid_request", "q 不得超过 100 个字符")
+		return
+	}
+	repos, err := svc.ListRepos(r.Context(), q)
+	if err != nil {
+		writeGitHubErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, apigen.GitHubRepoList{Repos: repos})
 }
 
 // StartGitHubManifest 对应公开的 `GET /api/v1/public/github/manifest/start`：返回提交 manifest 的独立页面。
