@@ -134,12 +134,27 @@ type SeedState struct {
 		InstallationID int64             `json:"installationId"`
 		Permissions    map[string]string `json:"permissions"`
 	} `json:"repos"`
-	// Extra 由各步骤补充的状态（PR、issue、rollup 等）按 seedExtra 处理。
-	Extra json.RawMessage `json:"extra,omitempty"`
+	// Issues / Pulls / Comments 整体替换（JSON 键按字段名、不区分大小写，如 repoId、headSha、mergedAt）。
+	Issues   []Issue   `json:"issues"`
+	Pulls    []Pull    `json:"pulls"`
+	Comments []Comment `json:"comments"`
+	// Rollups 是提交 sha → statusCheckRollup 状态（SUCCESS / FAILURE / ERROR / PENDING / EXPECTED）。
+	Rollups map[string]string `json:"rollups"`
+	// Checks 是提交 sha → 检查与旧式提交状态。
+	Checks map[string]struct {
+		Runs     []CheckRun     `json:"runs"`
+		Statuses []CommitStatus `json:"statuses"`
+	} `json:"checks"`
 }
 
-// seedExtra 处理 SeedState 之外的种子数据；其它步骤在这里接上 PR / issue / rollup。nil = 没有。
-var seedExtra func(s *Server, body []byte) error
+// DeliverRequest 是 /__fake/deliver 的请求体。
+type DeliverRequest struct {
+	Target    string          `json:"target"`
+	Event     string          `json:"event"`
+	Payload   json.RawMessage `json:"payload"`
+	Reachable bool            `json:"reachable"`
+	GUID      string          `json:"guid"`
+}
 
 func (s *Server) serveControl(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
@@ -150,7 +165,7 @@ func (s *Server) serveControl(w http.ResponseWriter, r *http.Request) {
 			fail(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if err := s.seed(in, body); err != nil {
+		if err := s.seed(in); err != nil {
 			fail(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -216,19 +231,35 @@ func (s *Server) serveControl(w http.ResponseWriter, r *http.Request) {
 			"id": app.ID, "slug": app.Slug, "clientId": app.ClientID, "clientSecret": app.ClientSecret,
 			"webhookSecret": app.WebhookSecret, "manifestCode": app.ManifestCode,
 		})
-	default:
-		if extraControl != nil && extraControl(s, w, r, body) {
+	case "POST /__fake/deliver":
+		var in DeliverRequest
+		if err := json.Unmarshal(body, &in); err != nil || in.Event == "" || len(in.Payload) == 0 || (in.Reachable && in.Target == "") {
+			fail(w, http.StatusBadRequest, "event and payload are required (target when reachable)")
 			return
 		}
+		status, guid := s.deliverReach(in)
+		writeJSON(w, http.StatusOK, map[string]any{"guid": guid, "status": status})
+	default:
 		fail(w, http.StatusNotFound, "unknown control endpoint")
 	}
 }
 
-// extraControl 处理其它步骤补充的控制端点（如 /__fake/deliver）；返回是否已处理。nil = 没有。
-var extraControl func(s *Server, w http.ResponseWriter, r *http.Request, body []byte) bool
+// deliverReach 按 reachable 投递一次：不可达时只记投递日志（status_code 502）。
+func (s *Server) deliverReach(in DeliverRequest) (int, string) {
+	s.mu.Lock()
+	prev := s.Unreachable
+	s.Unreachable = !in.Reachable
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.Unreachable = prev
+		s.mu.Unlock()
+	}()
+	return s.DeliverGUID(in.Target, in.Event, in.Payload, in.GUID)
+}
 
-// seed 整体替换用户、安装与仓库（及 seedExtra 处理的状态）；GitRoot 非空时为每个仓库建裸仓库。
-func (s *Server) seed(in SeedState, raw []byte) error {
+// seed 整体替换用户、安装、仓库、issue / PR / 评论与 CI 状态（改名记录保留）；GitRoot 非空时为每个仓库建裸仓库。
+func (s *Server) seed(in SeedState) error {
 	s.mu.Lock()
 	s.Users = map[string]*User{}
 	for _, u := range in.Users {
@@ -247,7 +278,41 @@ func (s *Server) seed(in SeedState, raw []byte) error {
 		s.Installations = append(s.Installations, &v)
 	}
 	s.Repos = nil
-	s.Renamed = map[string]string{}
+	for i := range in.Issues {
+		fillIssue(&in.Issues[i])
+	}
+	for i := range in.Pulls {
+		fillIssue(&in.Pulls[i].Issue)
+		if in.Pulls[i].BaseRef == "" {
+			in.Pulls[i].BaseRef = "main"
+		}
+	}
+	s.Issues, s.Pulls, s.Comments = nil, nil, nil
+	for i := range in.Issues {
+		s.Issues = append(s.Issues, &in.Issues[i])
+	}
+	for i := range in.Pulls {
+		s.Pulls = append(s.Pulls, &in.Pulls[i])
+	}
+	for i := range in.Comments {
+		c := &in.Comments[i]
+		if c.ID == 0 {
+			s.seq++
+			c.ID = 1000 + s.seq
+		}
+		if c.CreatedAt.IsZero() {
+			c.CreatedAt = time.Now().UTC().Truncate(time.Second)
+		}
+		s.Comments = append(s.Comments, c)
+	}
+	s.Rollups = map[string]string{}
+	for k, v := range in.Rollups {
+		s.Rollups[k] = v
+	}
+	s.CheckRuns, s.Statuses = map[string][]CheckRun{}, map[string][]CommitStatus{}
+	for sha, c := range in.Checks {
+		s.CheckRuns[sha], s.Statuses[sha] = c.Runs, c.Statuses
+	}
 	now := time.Now().UTC().Truncate(time.Second)
 	for i, rp := range in.Repos {
 		br := rp.DefaultBranch
@@ -265,9 +330,6 @@ func (s *Server) seed(in SeedState, raw []byte) error {
 				return err
 			}
 		}
-	}
-	if seedExtra != nil {
-		return seedExtra(s, raw)
 	}
 	return nil
 }

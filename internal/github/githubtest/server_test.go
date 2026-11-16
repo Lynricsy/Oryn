@@ -3,6 +3,7 @@ package githubtest
 import (
 	"bytes"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -69,4 +70,47 @@ func TestGitSmartHTTP(t *testing.T) {
 	if refs := gitCmd(t, work, "ls-remote", "origin"); !strings.Contains(refs, "refs/heads/feature") {
 		t.Fatalf("改名后旧地址不可用：%s", refs)
 	}
+}
+
+// seed 的 PR / 评论 / rollup 字段按小驼峰键解析；不可达的投递只进投递日志，可达的真实 POST 并带签名，guid 可重放。
+func TestSeedAndDeliverControl(t *testing.T) {
+	s := New()
+	t.Cleanup(s.Close)
+	post(t, s.URL()+"/__fake/seed", `{"repos":[{"id":42,"fullName":"Acme/Widgets"}],
+		"pulls":[{"repoId":42,"number":12,"title":"Fix","headSha":"abc","headRef":"fix","mergedAt":"2026-11-16T08:00:00Z"}],
+		"comments":[{"repoId":42,"number":12,"author":"alice","body":"hi","path":"a.go","line":3}],
+		"rollups":{"abc":"FAILURE"}}`)
+	s.Lock()
+	if len(s.Pulls) != 1 || s.Pulls[0].HeadSHA != "abc" || s.Pulls[0].Number != 12 || s.Pulls[0].MergedAt.IsZero() || s.Pulls[0].BaseRef != "main" {
+		t.Fatalf("PR 种子解析错误：%+v", s.Pulls)
+	}
+	if len(s.Comments) != 1 || s.Comments[0].Line != 3 || s.Comments[0].ID == 0 || s.Rollups["abc"] != "FAILURE" {
+		t.Fatalf("评论 / rollup 种子解析错误：%+v %v", s.Comments, s.Rollups)
+	}
+	s.Unlock()
+
+	var got []string
+	hook := httptestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get("X-GitHub-Event")+" "+r.Header.Get("X-GitHub-Delivery")+" "+r.Header.Get("X-Hub-Signature-256"))
+		w.WriteHeader(http.StatusAccepted)
+	})
+	post(t, s.URL()+"/__fake/deliver", `{"target":"`+hook+`","event":"ping","payload":{"zen":"x"},"reachable":false,"guid":"g-1"}`)
+	post(t, s.URL()+"/__fake/deliver", `{"target":"`+hook+`","event":"ping","payload":{"zen":"x"},"reachable":true,"guid":"g-1"}`)
+	s.Lock()
+	n := len(s.Deliveries)
+	first := s.Deliveries[0].StatusCode
+	s.Unlock()
+	if n != 2 || first != http.StatusBadGateway {
+		t.Fatalf("投递日志：%d 条，第一条状态 %d", n, first)
+	}
+	if len(got) != 1 || !strings.HasPrefix(got[0], "ping g-1 sha256=") {
+		t.Fatalf("可达投递：%v", got)
+	}
+}
+
+func httptestServer(t *testing.T, h http.HandlerFunc) string {
+	t.Helper()
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	return srv.URL
 }
