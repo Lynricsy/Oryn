@@ -67,8 +67,20 @@ func TestImport(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, untitled, a.Title)
 
+	// 只上传一个 HTML 文件（界面「导入 › HTML 文件」以文件名作字段名）：它就是页面本身，存成 index.html
+	a, err = e.s.Import(ctx, multipartOf(t, "周报.html", page), ImportParams{Name: "周报.html"})
+	require.NoError(t, err)
+	assert.Equal(t, "周报", a.Title)
+	assert.Equal(t, KindWeb, a.Kind)
+	assert.Equal(t, page, readFile(t, e.s, a.ID, 0, "index.html"))
+	files, err = e.s.Files(ctx, a.ID, 0)
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+
 	// 失败
-	_, err = e.s.Import(ctx, multipartOf(t, "a.html", "<p>hi</p>"), ImportParams{})
+	_, err = e.s.Import(ctx, multipartOf(t, "a.html", "<p>hi</p>", "b.html", "<p>b</p>"), ImportParams{})
+	assert.Equal(t, CodeNoIndex, code(err))
+	_, err = e.s.Import(ctx, multipartOf(t, "site/a.html", "<p>hi</p>"), ImportParams{})
 	assert.Equal(t, CodeNoIndex, code(err))
 	_, err = e.s.Import(ctx, multipartOf(t, ".DS_Store", "x"), ImportParams{})
 	assert.Equal(t, CodeNoIndex, code(err))

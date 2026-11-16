@@ -1326,6 +1326,13 @@ export class MockArtifacts {
 		const lower = new Map([...files.keys()].map((k) => [k.toLowerCase(), k]));
 		if (lower.size !== files.size)
 			return error(400, "bad_name", "有只差大小写的文件名");
+		// 只上传了一个 HTML 文件时它就是页面本身：存成 index.html（同 import.go）
+		const [lone] = files.keys();
+		const loneFile = lone ? files.get(lone) : undefined;
+		if (files.size === 1 && lone && loneFile && /^[^/]+\.html?$/i.test(lone)) {
+			files.delete(lone);
+			files.set("index.html", loneFile);
+		}
 		const index = files.get("index.html");
 		const kind: ArtifactKind = index
 			? "web"

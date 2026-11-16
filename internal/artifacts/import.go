@@ -91,7 +91,8 @@ func (s *Service) Import(ctx context.Context, mr *multipart.Reader, p ImportPara
 		if total += f.size; total > MaxVersionBytes {
 			return Artifact{}, opErr(CodeTooLarge, "导入的文件总共不能超过 %d MiB。", MaxVersionBytes>>20)
 		}
-		if name == EntryHTML {
+		// 第一个文件若是 HTML 也先留着字节：只上传了这一个文件时它就是页面本身（见下）
+		if name == EntryHTML || len(paths) == 0 && IsHTML(name) {
 			index = f.data
 		}
 		f.data = nil // 只为标题保留 index.html 的字节
@@ -103,6 +104,12 @@ func (s *Service) Import(ctx context.Context, mr *multipart.Reader, p ImportPara
 	}
 	_, hasHTML := st.writes[EntryHTML]
 	_, hasCanvas := st.writes[EntryCanvas]
+	// 单独上传的一个 HTML 文件（不叫 index.html，例如「周报.html」）就是页面本身：存成 index.html
+	if !hasHTML && !hasCanvas && len(paths) == 1 && IsHTML(paths[0]) && !strings.Contains(paths[0], "/") {
+		st.writes[EntryHTML] = st.writes[paths[0]]
+		delete(st.writes, paths[0])
+		hasHTML = true
+	}
 	if !hasHTML && !hasCanvas {
 		return Artifact{}, opErr(CodeNoIndex, "没有找到 index.html（画布则是 canvas.json）。")
 	}
