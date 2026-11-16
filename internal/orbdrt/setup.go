@@ -48,6 +48,16 @@ func (r *Runtime) currentWorkdir() string {
 	return filepath.Join(r.home, "workspace")
 }
 
+// currentGitHubGates 返回最近一次 setup / resume 下发的项目门禁配置（M15）；未配置时为零值。
+func (r *Runtime) currentGitHubGates() apigen.GitHubGates {
+	r.envMu.Lock()
+	defer r.envMu.Unlock()
+	if r.githubGates == nil {
+		return apigen.GitHubGates{}
+	}
+	return *r.githubGates
+}
+
 // autoSetup 是一次进行中的自动 setup.run / resume.run。link 重连后控制面会重发同样的请求：
 // 等价（同方法、同参数）的重试直接等这次运行的请求结果，而不是再跑一遍、也不排在转入后台的 resume 之后。
 type autoSetup struct {
@@ -174,6 +184,7 @@ func (r *Runtime) runSetupLocked(ctx context.Context, p apigen.LinkCtlSetupRunPa
 	r.workdir = workdir
 	r.lastScripts = cloneScripts(p.Scripts)
 	r.haveParams = true
+	r.githubGates = p.GithubGates
 	r.envMu.Unlock()
 
 	// 1. omp 文本配置：用户层 ~/.omp/agent，与项目层（M12.2，严格镜像到 ~/.oryn/project-config/.omp；不属于项目时删除整个目录）。

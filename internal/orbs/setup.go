@@ -218,6 +218,7 @@ func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project, orb db.Orb) (S
 		p.Scripts.Setup = nonEmpty(prj.SetupScript)
 		p.Scripts.Resume = nonEmpty(prj.ResumeScript)
 		projectIdentity = gitIdentity(prj.GitAuthorName, prj.GitAuthorEmail)
+		p.GithubGates = githubGates(prj.GithubGates)
 	}
 	// git 提交身份：项目覆盖（两项齐全）> 所有者默认 > 不下发（orb 现有配置不动）。
 	p.GitIdentity = projectIdentity
@@ -425,4 +426,17 @@ func prevURLs(raw string) []string {
 		return nil
 	}
 	return out
+}
+
+// githubGates 解析项目的 github_gates（JSON，M15），供 orbd 的 github_prepare 读取修复 / 检查 / 测试命令；
+// NULL、空串或解析失败时返回 nil（视为未配置）。
+func githubGates(raw *string) *apigen.GitHubGates {
+	if raw == nil || *raw == "" {
+		return nil
+	}
+	var g apigen.GitHubGates
+	if json.Unmarshal([]byte(*raw), &g) != nil {
+		return nil
+	}
+	return &g
 }

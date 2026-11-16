@@ -227,6 +227,8 @@ type Runtime struct {
 	workdir     string
 	lastScripts apigen.LinkCtlSetupScripts
 	haveParams  bool
+	// githubGates 是最近一次 setup.run / resume.run 下发的项目门禁配置（M15，github_prepare 读取）；nil = 未配置。
+	githubGates *apigen.GitHubGates
 
 	statusMu sync.Mutex
 	status   orbsock.Status
