@@ -3,7 +3,6 @@ package artifacts
 import (
 	"bytes"
 	"fmt"
-	"path"
 	"slices"
 	"strings"
 )
@@ -101,8 +100,8 @@ var (
 	magicGIF89 = []byte("GIF89a")
 )
 
-// imageExts 是类型化 artifact 允许的图片扩展名（小写）→ 图片格式名。不收 SVG：它能带脚本，导出到 Word /
-// PowerPoint 也不可靠。
+// imageExts 是文档 artifact 允许的图片扩展名（小写）→ 图片格式名。不收 SVG：它能带脚本，导出到 Word 也不可靠。
+// 幻灯片不受这张表限制（images/ 下任意文件）。
 var imageExts = map[string]string{".png": "PNG", ".jpg": "JPEG", ".jpeg": "JPEG", ".gif": "GIF"}
 
 // sniffImage 按文件头识别图片格式；不认识时返回空串。
@@ -118,32 +117,21 @@ func sniffImage(head []byte) string {
 	return ""
 }
 
-// checkTypedFiles 检查类型化 artifact（typ，入口 entry）的文件集合：入口必须在；其余文件只能是 images/ 下的
-// png、jpg、jpeg、gif，且文件头与扩展名一致。
-func checkTypedFiles(typ, entry string, files map[string][]byte, ps *problems) {
+// checkEntry 检查入口文件 entry 在文件集合里。
+func checkEntry(entry string, files map[string][]byte, ps *problems) {
 	if _, ok := files[entry]; !ok {
 		ps.add(entry, "缺少入口文件 %s。", entry)
 	}
+}
+
+// extraFiles 返回入口之外的文件路径（排好序，问题列表因此稳定）。
+func extraFiles(entry string, files map[string][]byte) []string {
 	paths := make([]string, 0, len(files))
 	for p := range files {
-		paths = append(paths, p)
+		if p != entry {
+			paths = append(paths, p)
+		}
 	}
 	slices.Sort(paths)
-	for _, p := range paths {
-		if p == entry {
-			continue
-		}
-		want, ok := imageExts[strings.ToLower(path.Ext(p))]
-		if !strings.HasPrefix(p, imagesDir) || !ok {
-			ps.add(p, "%s artifact 只能有 %s 与 images/ 下的 png、jpg、gif 图片；去掉这个文件，或把图片挪到 images/ 下。", typeLabel(typ), entry)
-			continue
-		}
-		switch got := sniffImage(files[p]); got {
-		case want:
-		case "":
-			ps.add(p, "扩展名是 %s，但文件内容不是 %s 图片。", path.Ext(p), want)
-		default:
-			ps.add(p, "扩展名是 %s，但文件内容是 %s 图片；把扩展名改成与内容一致。", path.Ext(p), got)
-		}
-	}
+	return paths
 }

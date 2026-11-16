@@ -98,6 +98,22 @@ func TestDeckValid(t *testing.T) {
 	assert.Equal(t, 8, a.Pages)
 }
 
+// 幻灯片的 images/ 不限格式（文档才只收 png / jpg / gif）；images/ 之外的文件仍然被拒。
+func TestDeckImagesAnyFormat(t *testing.T) {
+	e := newEnv(t)
+	deck := deckJSON(t, map[string]any{"slides": []any{
+		map[string]any{"layout": "image", "image": "images/chart.webp", "alt": "图"},
+		map[string]any{"layout": "image", "image": "images/logo.svg", "alt": "标"},
+	}})
+	a, err := createTyped(t, e, TypeSlides, put("slides.json", deck), put("images/chart.webp", "RIFF\x00\x00\x00\x00WEBPVP8 "), put("images/logo.svg", "<svg/>"))
+	require.NoError(t, err)
+	assert.Equal(t, 2, a.Pages)
+
+	_, err = createTyped(t, e, TypeSlides, put("slides.json", deck), put("images/chart.webp", "x"), put("images/logo.svg", "<svg/>"), put("notes.txt", "x"))
+	require.Equal(t, CodeInvalid, code(err), "%v", err)
+	assert.Contains(t, err.Error(), "notes.txt: 幻灯片 artifact 只能有 slides.json 与 images/ 下的文件")
+}
+
 func TestDeckProblems(t *testing.T) {
 	e := newEnv(t)
 	slide := func(s map[string]any) string {

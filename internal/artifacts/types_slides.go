@@ -52,12 +52,12 @@ func deckPages(entry []byte) int {
 	return len(d.Slides)
 }
 
-// validateSlides 校验幻灯片 artifact：slides.json 的结构、版式字段与上限（不允许未知字段），图片引用都在版本里；
-// 文件集合与图片见 checkTypedFiles。
+// validateSlides 校验幻灯片 artifact：文件集合（checkSlidesFiles）；slides.json 的结构、版式字段与上限（不允许
+// 未知字段），图片引用都在版本里。
 func validateSlides(files map[string][]byte) []Problem {
 	const entry = EntrySlides
 	var ps problems
-	checkTypedFiles(TypeSlides, entry, files, &ps)
+	checkSlidesFiles(files, &ps)
 	raw, ok := files[entry]
 	if !ok {
 		return ps
@@ -80,6 +80,16 @@ func validateSlides(files map[string][]byte) []Problem {
 	c := deckCheck{ps: &ps, files: files}
 	c.deck(v)
 	return ps
+}
+
+// checkSlidesFiles 检查幻灯片 artifact 的文件集合：入口必须在；其余文件都在 images/ 下（不限格式）。
+func checkSlidesFiles(files map[string][]byte, ps *problems) {
+	checkEntry(EntrySlides, files, ps)
+	for _, p := range extraFiles(EntrySlides, files) {
+		if !strings.HasPrefix(p, imagesDir) {
+			ps.add(p, "幻灯片 artifact 只能有 %s 与 images/ 下的文件；去掉这个文件，或把它挪到 images/ 下。", EntrySlides)
+		}
+	}
 }
 
 // deckCheck 逐字段检查幻灯片 JSON，位置写成 slides[2].bullets[0].text 的形式。
@@ -339,8 +349,8 @@ var guideSlides = fmt.Sprintf(`# 幻灯片 artifact
 ## 创建与修改
 
 - create_artifact 带 type: "slides"，files 里给 slides.json（入口文件）；不要给 html。
-- 图片放在 images/ 下（只收 .png、.jpg、.jpeg、.gif，文件内容必须与扩展名一致；不收 SVG），在幻灯片里用相对路径引用，如 "image": "images/chart.png"。引用的图片必须在同一个版本里。
-- 幻灯片 artifact 里只能有 slides.json 与 images/ 下的图片。
+- 图片放在 images/ 下（png、jpg、gif、webp、svg 等都可以），在幻灯片里用相对路径引用，如 "image": "images/chart.png"。引用的图片必须在同一个版本里。
+- 幻灯片 artifact 里只能有 slides.json 与 images/ 下的文件。
 - 改之前先 read_artifact（缺省读 slides.json），再用 edits（缺省改 slides.json）做小改动，或用 files 整个替换 slides.json，带上 baseVersion。
 - 格式错误时 update_artifact 会逐条列出位置（如 slides[2].title）与原因，改好再写。
 

@@ -2,6 +2,7 @@ package artifacts
 
 import (
 	"net/url"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -11,12 +12,12 @@ import (
 // mdImageRe 找出 Markdown 的行内图片引用 `![alt](目标`。
 var mdImageRe = regexp.MustCompile(`!\[[^\]]*\]\(([^)\s]+)`)
 
-// validateDocument 校验文档 artifact：document.md 是 UTF-8；行内图片引用的本地路径都在这个版本里（围栏代码块里
-// 的不算）；文件集合与图片见 checkTypedFiles。
+// validateDocument 校验文档 artifact：文件集合与图片（checkDocumentFiles）；document.md 是 UTF-8；行内图片引用的
+// 本地路径都在这个版本里（围栏代码块里的不算）。
 func validateDocument(files map[string][]byte) []Problem {
 	const entry = EntryDocument
 	var ps problems
-	checkTypedFiles(TypeDocument, entry, files, &ps)
+	checkDocumentFiles(files, &ps)
 	md, ok := files[entry]
 	if !ok {
 		return ps
@@ -51,6 +52,26 @@ func validateDocument(files map[string][]byte) []Problem {
 		}
 	}
 	return ps
+}
+
+// checkDocumentFiles 检查文档 artifact 的文件集合：入口必须在；其余文件只能是 images/ 下的 png、jpg、jpeg、gif，
+// 且文件头与扩展名一致。
+func checkDocumentFiles(files map[string][]byte, ps *problems) {
+	checkEntry(EntryDocument, files, ps)
+	for _, p := range extraFiles(EntryDocument, files) {
+		want, ok := imageExts[strings.ToLower(path.Ext(p))]
+		if !strings.HasPrefix(p, imagesDir) || !ok {
+			ps.add(p, "文档 artifact 只能有 %s 与 images/ 下的 png、jpg、gif 图片；去掉这个文件，或把图片挪到 images/ 下。", EntryDocument)
+			continue
+		}
+		switch got := sniffImage(files[p]); got {
+		case want:
+		case "":
+			ps.add(p, "扩展名是 %s，但文件内容不是 %s 图片。", path.Ext(p), want)
+		default:
+			ps.add(p, "扩展名是 %s，但文件内容是 %s 图片；把扩展名改成与内容一致。", path.Ext(p), got)
+		}
+	}
 }
 
 func hasFile(files map[string][]byte, p string) bool {
