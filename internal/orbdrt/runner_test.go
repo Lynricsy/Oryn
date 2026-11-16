@@ -138,24 +138,24 @@ func TestRunnerStartupTouchesNothingOrbSpecific(t *testing.T) {
 	assert.Equal(t, []apigen.RunnerDir{{Path: f.work, Name: "repo", Git: true}}, h.Runner.Dirs)
 }
 
-// hello 的特性随 flag 与 PATH 变化：fs、attachments、metrics；git 在 PATH 里加 git；--terminal 加 terminal。
+// hello 的特性随 flag 与 PATH 变化：fs、attachments、metrics、memory；git 在 PATH 里加 git；--terminal 加 terminal。
 func TestRunnerHelloFeatures(t *testing.T) {
 	t.Run("git", func(t *testing.T) {
 		f := newRunnerHome(t)
 		startRunnerRT(t, f, nil)
-		assert.Equal(t, []string{"fs", "attachments", "metrics", "git"}, helloOf(t, f.cp).Features)
+		assert.Equal(t, []string{"fs", "attachments", "metrics", "memory", "git"}, helloOf(t, f.cp).Features)
 	})
 	t.Run("terminal", func(t *testing.T) {
 		f := newRunnerHome(t)
 		startRunnerRT(t, f, func(c *Config) { c.Runner.Terminal = true })
-		assert.Equal(t, []string{"fs", "attachments", "metrics", "git", "terminal"}, helloOf(t, f.cp).Features)
+		assert.Equal(t, []string{"fs", "attachments", "metrics", "memory", "git", "terminal"}, helloOf(t, f.cp).Features)
 	})
 	t.Run("no git", func(t *testing.T) {
 		f := newRunnerHome(t)
 		t.Setenv("PATH", t.TempDir())
 		startRunnerRT(t, f, nil)
 		h := helloOf(t, f.cp)
-		assert.Equal(t, []string{"fs", "attachments", "metrics"}, h.Features)
+		assert.Equal(t, []string{"fs", "attachments", "metrics", "memory"}, h.Features)
 		assert.False(t, h.Runner.Dirs[0].Git, "work is not a repository")
 	})
 }

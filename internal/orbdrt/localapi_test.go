@@ -124,7 +124,7 @@ func TestHelloAdvertisesFeatures(t *testing.T) {
 	_, raw := cp.waitNotif(t, 0, "hello", nil)
 	var h apigen.LinkCtlHelloParams
 	require.NoError(t, json.Unmarshal(raw, &h))
-	assert.Equal(t, []string{"fs", "git", "attachments", "services", "portal", "sync", "threads", "repo-update", "setup-defer-resume", "terminal", "metrics", "omphome-apply"}, h.Features)
+	assert.Equal(t, []string{"fs", "git", "attachments", "services", "portal", "sync", "threads", "repo-update", "setup-defer-resume", "terminal", "metrics", "omphome-apply", "memory"}, h.Features)
 	assert.Nil(t, h.Runner, "only a runner reports runner info")
 }
 

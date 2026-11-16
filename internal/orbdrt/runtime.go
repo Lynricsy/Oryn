@@ -194,6 +194,10 @@ type Runtime struct {
 	agentVersion string
 	log          *slog.Logger
 	egressLn     net.Listener
+	// memLn 是 runner 的记忆专用出站监听（M16）：第一个带 memory 的 agent.start 时由 memoryEgressAddr 建立，
+	// 之后所有线程共用；orb 形态不用（记忆走 egressLn）。memMu 保护它。
+	memMu sync.Mutex
+	memLn net.Listener
 
 	// ctx 是运行时寿命：New 创建，Run 的 ctx 结束时取消。后台 goroutine 一律挂在它上面。
 	ctx    context.Context
@@ -397,7 +401,8 @@ func New(cfg Config) (_ *Runtime, err error) {
 			return nil, fmt.Errorf("orbdrt: write %s: %w", runnerExtensionPath(home), err)
 		}
 	}
-	// runner 不开 egress：控制面的密钥不去用户机器（agent 用那台机器自己的模型配置与 git 凭据）。
+	// runner 不开常驻 egress：控制面的密钥不去用户机器（agent 用那台机器自己的模型配置与 git 凭据）；
+	// 记忆专用的通道按需开启（M16，memory.go）。
 	var ln net.Listener
 	if cfg.Runner == nil {
 		if ln = cfg.EgressListener; ln == nil {
@@ -461,12 +466,18 @@ func New(cfg Config) (_ *Runtime, err error) {
 	return r, nil
 }
 
-// EgressAddr 返回 egress 实际监听地址；runner 形态不监听，返回空串。
+// EgressAddr 返回 egress 实际监听地址；runner 形态返回记忆专用通道的地址，尚未开启时为空串。
 func (r *Runtime) EgressAddr() string {
-	if r.egressLn == nil {
+	ln := r.egressLn
+	if r.runner != nil {
+		r.memMu.Lock()
+		ln = r.memLn
+		r.memMu.Unlock()
+	}
+	if ln == nil {
 		return ""
 	}
-	return r.egressLn.Addr().String()
+	return ln.Addr().String()
 }
 
 // AgentVersion 返回 `<agent> --version` 的输出（探测失败为空）。
@@ -487,7 +498,8 @@ func detectAgentVersion(bins binResolver, bin string) string {
 // Run 运行到 ctx 结束：恢复已登记线程的 tailer、egress、指标与 link 重连循环。
 // 优雅退出（停 agent、冲刷 tailer）由调用方在取消 ctx 之前调用 Shutdown 完成。
 // 协调宿主模式只起 egress 与 tailer；link 断开（Connect 返回 ErrNoRedial）后即返回。
-// runner 形态不起 egress、orbd.sock 与受管服务的上报，另起只认 artifact.call 的 runner.sock；返回时释放实例锁。
+// runner 形态不起常驻 egress（记忆专用通道按需开启）、orbd.sock 与受管服务的上报，另起只认 artifact.call 的
+// runner.sock；返回时释放实例锁。
 func (r *Runtime) Run(ctx context.Context) error {
 	stop := context.AfterFunc(ctx, r.cancel)
 	defer stop()
@@ -503,7 +515,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 	}
 	var wg sync.WaitGroup
 	if r.egressLn != nil {
-		wg.Go(func() { r.serveEgress(ctx) })
+		wg.Go(func() { r.serveEgress(ctx, r.egressLn) })
 	}
 	if !r.cfg.Coordinator {
 		wg.Go(func() { r.metricsLoop(ctx) })
@@ -779,7 +791,8 @@ func (r *Runtime) hello() apigen.LinkCtlHelloParams {
 		}
 	}
 	// terminal（终端面板）与 metrics（metrics.sample）是 M11b 才有名字的既有能力，orb 一直具备。
-	features := []string{"fs", "git", "attachments", "services", "portal", "sync", "threads", "repo-update", "setup-defer-resume", "terminal", "metrics", "omphome-apply"}
+	// memory（M16）：agent.start 接受 memory 参数。
+	features := []string{"fs", "git", "attachments", "services", "portal", "sync", "threads", "repo-update", "setup-defer-resume", "terminal", "metrics", "omphome-apply", "memory"}
 	if r.desk != nil {
 		features = append(features, "desktop")
 	}

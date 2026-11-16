@@ -548,6 +548,9 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 	if !r.cfg.Coordinator && p.Profile != nil && *p.Profile != "" {
 		return apigen.LinkCtlAgentStartResult{}, ctlErr(link.CodeInvalidParams, "profile %q is only available on the coordinator host", *p.Profile)
 	}
+	if r.cfg.Coordinator && p.Memory != nil {
+		return apigen.LinkCtlAgentStartResult{}, ctlErr(link.CodeInvalidParams, "memory is not available on the coordinator host")
+	}
 	dir := filepath.Join(r.home, ".oryn", "threads", p.ThreadID)
 	if p.SessionDir != "" {
 		dir = r.resolvePath(p.SessionDir)
@@ -619,6 +622,8 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 		for k, v := range p.Env {
 			env[k] = v
 		}
+		// M16：记忆的环境变量在 p.Env 之后设置，env 模式的密钥覆盖不了；覆盖层排在项目层 --config 之后、桌面覆盖层之前。
+		memOverlay := r.applyMemory(env, p.ThreadID, p.Memory)
 		args = []string{"--mode", "rpc-ui", "--cwd", cwd, "--session-dir", dir}
 		if r.runner == nil {
 			// orb 环境说明扩展。
@@ -628,6 +633,9 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 		} else {
 			// runner 只加载 orbd 自带的扩展（ORYN_RUNNER=1 时只注册 artifact 工具），其余扩展与技能用那台机器自己的。
 			args = append(args, "-e", runnerExtensionPath(r.home))
+		}
+		if memOverlay != "" {
+			args = append(args, "--config", memOverlay)
 		}
 		if r.desk != nil {
 			// 桌面覆盖层：browser 工具附着到桌面上的 Chromium、启用 computer 工具（高于用户的全局 / 项目设置）。

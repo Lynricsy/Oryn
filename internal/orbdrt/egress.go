@@ -14,15 +14,15 @@ import (
 // egressWait 是 link 断开时新出站连接等待重连的上限。
 const egressWait = 30 * time.Second
 
-// serveEgress 在 127.0.0.1:7811 接受本机出站代理连接（模型 API 与 git 请求），
-// 每个 TCP 连接对应一条 `egress` 流，控制面在其上以 HTTP/1.1 服务并注入密钥（H4.6）。
-func (r *Runtime) serveEgress(ctx context.Context) {
+// serveEgress 在 ln 上接受本机出站代理连接（orb：127.0.0.1:7811 上的模型 API 与 git 请求；runner：只走记忆的通道，
+// 路径由控制面过滤），每个 TCP 连接对应一条 `egress` 流，控制面在其上以 HTTP/1.1 服务并注入密钥（H4.6）。
+func (r *Runtime) serveEgress(ctx context.Context, ln net.Listener) {
 	go func() {
 		<-ctx.Done()
-		_ = r.egressLn.Close()
+		_ = ln.Close()
 	}()
 	for {
-		nc, err := r.egressLn.Accept()
+		nc, err := ln.Accept()
 		if err != nil {
 			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
 				return

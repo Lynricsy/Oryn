@@ -64,6 +64,8 @@ type Config struct {
 	// PortalURLTemplate 返回线程的 portal 地址模板（短码已代入、保留 `{port}`）；返回空串或为 nil 时
 	// Thread.portalUrlTemplate 省略（未配置 portal_domain）。
 	PortalURLTemplate func(threadID string) string
+	// Memory 决定 agent.start 是否启用内置记忆（M16）；nil = 不启用。
+	Memory MemoryStarter
 }
 
 // DeliveredAttachment 是已投递到 orb 的附件（Path 为 orb 内绝对路径）。

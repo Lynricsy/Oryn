@@ -22,7 +22,8 @@ import (
 )
 
 // runner 形态（M11b 计划 7.2）：用户自己的机器以 `orbd run --runner --dir <目录> …` 主动接入，线程直接跑在
-// 声明的目录里。runner 完全信任控制面（能以本用户身份执行任意命令），但控制面的密钥不来这里：不开 egress、
+// 声明的目录里。runner 完全信任控制面（能以本用户身份执行任意命令），但控制面的密钥不来这里：不开常驻 egress
+// （M16 的记忆专用通道只在 agent 启用记忆时开启，只转发记忆请求，鉴权由控制面注入）、
 // 不写技能与 ~/.oryn/core、不改 git 配置；只在 orbd 自己的目录写自带的扩展（只注册 artifact 工具，M14）并监听
 // 只认 artifact.call 的 runner.sock；本机 API 只看得到线程的工作目录（X-Oryn-Workdir）。
 
@@ -78,9 +79,11 @@ func RunnerConfigFromEnv(version string, opts RunnerOptions) (Config, error) {
 	cfg := Config{
 		URL:      os.Getenv("ORYN_URL"),
 		AgentBin: os.Getenv("ORYN_AGENT_BIN"),
-		Version:  version,
-		OrbCAPEM: os.Getenv("ORYN_ORB_CA_PEM"),
-		Runner:   &RunnerConfig{Dirs: opts.Dirs, Terminal: opts.Terminal},
+		// ORYN_EGRESS_ADDR 覆盖记忆专用通道的监听地址（缺省 127.0.0.1:7811，M16）。
+		EgressAddr: os.Getenv("ORYN_EGRESS_ADDR"),
+		Version:    version,
+		OrbCAPEM:   os.Getenv("ORYN_ORB_CA_PEM"),
+		Runner:     &RunnerConfig{Dirs: opts.Dirs, Terminal: opts.Terminal},
 	}
 	if cfg.URL == "" {
 		return cfg, errors.New("missing environment: ORYN_URL")
@@ -334,9 +337,9 @@ func (r *Runtime) underThreads(p string) (string, error) {
 	return abs, nil
 }
 
-// runnerFeatures 是 runner 的 hello 特性：fs、attachments、metrics；PATH 里有 git 时加 git，--terminal 时加 terminal。
+// runnerFeatures 是 runner 的 hello 特性：fs、attachments、metrics、memory；PATH 里有 git 时加 git，--terminal 时加 terminal。
 func (r *Runtime) runnerFeatures() []string {
-	features := []string{"fs", "attachments", "metrics"}
+	features := []string{"fs", "attachments", "metrics", "memory"}
 	if _, err := r.bins.look("git"); err == nil {
 		features = append(features, "git")
 	}

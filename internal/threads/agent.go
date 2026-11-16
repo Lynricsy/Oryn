@@ -193,10 +193,16 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 		return
 	}
 	terminal := prof == nil && s.terminalEnabled(orbID)
+	var mem *apigen.LinkCtlAgentMemory
+	if prof == nil {
+		// M16：协调对话不接入记忆；查询出错时不启用、照常启动
+		mem = s.agentMemory(ctx, t.id, orbID)
+	}
 	t.mu.Lock()
 	params := apigen.LinkCtlAgentStartParams{ThreadID: t.id, SessionDir: t.sessionDir, Env: map[string]string{}, InitFrames: initFrames(t, prof, terminal)}
 	// runner 线程（M11b）：agent 在线程的工作目录里启动
 	params.Cwd = t.cwd
+	params.Memory = mem
 	if prof != nil {
 		profile := apigen.AgentProfileCoordinator
 		params.Profile, params.SystemPrompt = &profile, &prof.SystemPrompt
