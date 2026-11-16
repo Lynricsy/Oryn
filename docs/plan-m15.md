@@ -18,6 +18,9 @@
     - `github_release_status` 必须返回 `tagOid`（6.1）；
     - `presets.go` 加载文件时去掉开头的 `<!-- … -->` 出处注释（7.3）。
   - R25 的完成提醒改为只对分类为 `bug`、`documentation` 或尚未分类的线程发送（预设作者发现：`question` 等分类停在 `new` 是正常收尾）。
+- **v4（2026-11-16，执行中修订）**：评审发现 5.3 的发布例外没有接线：`PrepareRequest.Release` 只在测试里置真，`orbdrt/github.go` 的唯一生产调用从不传，orbsock 参数里也没有线程类别，发布线程的 `github_prepare` 必定因「在默认分支上」被拒。类别只能来自控制面的任务状态（orb 内的 orbd 不可信），因此：
+  - 6.1 增加 orbd 侧接线：`github.prepare` 先经 ctl 向控制面查询该线程是否为发布任务，再决定 `Release`；查询失败按非发布处理（只会多拒绝，不会多放行）。
+  - 5.4 增加服务端兜底：非发布线程推送默认分支一律拒绝，不依赖 orbd 的检查。
 
 ## Context
 
@@ -754,6 +757,7 @@ Files：
   - `ImplAuthorized() bool`
   - `HeadSHA(repo, ref string) (string, error)`：用该 orb 自己槽位的令牌查询
   - `IsOrynHook(repo string, id int64) bool`
+  - `ReleaseThread() bool`（v4）：该 orb 的线程是否为发布任务，取控制面的任务状态；仓库默认分支用 `HeadSHA` 同一令牌查询并缓存
 - `internal/orbs/setup.go`：按项目和线程填写上述策略。
 
 Do：按下面的覆盖表执行。REST 的前缀 `/repos/{o}/{r}` 与 `/repositories/{id}` 等价，匹配前先解码路径并去掉结尾斜杠。
@@ -766,7 +770,7 @@ Do：按下面的覆盖表执行。REST 的前缀 `/repos/{o}/{r}` 与 `/reposit
 | 合并 | `PUT /pulls/{n}/merge` | `mergePullRequest`、`enablePullRequestAutoMerge`、`enqueuePullRequest` | `ReviewOnly` 时拒绝 |
 | review 事件 | `POST /pulls/{n}/reviews`（`event`）、`POST /pulls/{n}/reviews/{id}/events` | `addPullRequestReview`、`submitPullRequestReview` | `CommentOnlyReviews` 时只放行 `COMMENT`，以及没有 event 的待提交 review |
 | Oryn 的 hook | `PATCH\|DELETE /hooks/{id}`、`PATCH /hooks/{id}/config` | 无 | `IsOrynHook` 为真时始终拒绝 |
-| git 推送 | `git-receive-pack` | — | 只检查 `refs/heads/*`；`ReviewOnly` 时在 `info/refs?service=git-receive-pack` 就返回 403 |
+| git 推送 | `git-receive-pack` | — | 只检查 `refs/heads/*`；`ReviewOnly` 时在 `info/refs?service=git-receive-pack` 就返回 403；目标是默认分支且 `ReleaseThread()` 为假时拒绝（v4：orbd 的默认分支检查在 orb 内，不可信） |
 
 pkt-line 解析规则：
 
@@ -801,7 +805,7 @@ Accept：`go build ./... && go test ./internal/github/... -run Autoclose` 输出
 
 ### 步骤 6.1：`workflow_run` 状态机与 `github_release_status`
 Depends on：4.1、5.2、5.4。
-Files：新建 `internal/github/release.go`、`release_test.go`；改 `tools.go`、`oryn-orb.ts`（注册 `github_release_status`）；`githubtest` 增加 `actions/runs`、`runs/{id}/jobs`、`jobs/{id}/logs`、`git/ref/tags/{tag}`、`releases/tags/{tag}`。
+Files：新建 `internal/github/release.go`、`release_test.go`；改 `tools.go`、`oryn-orb.ts`（注册 `github_release_status`）、`internal/orbdrt/github.go` 与 `github_test.go`（v4：`github.prepare` 的发布类别）；`githubtest` 增加 `actions/runs`、`runs/{id}/jobs`、`jobs/{id}/logs`、`git/ref/tags/{tag}`、`releases/tags/{tag}`。
 Do：
 
 - 落实 R22：
@@ -810,8 +814,9 @@ Do：
   - 线程身份用 `ResolveAutomationSlot(untrusted=false)`。
 - `github_release_status` 返回：runs、阻塞的 job、当前轮数、`version`、`tagOid`（事件中的 tag 对象 id，供推送命令的 lease 使用）。
 - 发布线程开启门禁时，项目门禁中推送门禁的 `level` 取 `push`。
+- **v4：发布类别接线。** orbd 处理 `github.prepare` 时，先经 ctl `github.call`（`tool: github_release_status`，同一线程 id）向控制面查询：成功即为发布线程，`PrepareRequest.Release = true`；返回「不是发布线程」或任何错误时按非发布处理。类别只取控制面的任务状态，不接受 agent 传入的参数。
 
-Accept：`go build ./... && go test ./internal/github/... -run Release && go test ./internal/orbdrt/... -run AgentAssets` 输出 `ok`，覆盖：`stale`、阻塞与非阻塞、green 需要非草稿 Release、轮数上限、默认分支被推进、`superseded`。
+Accept：`go build ./... && go test ./internal/github/... -run Release && go test ./internal/orbdrt/... -run 'AgentAssets|GithubPrepare'` 输出 `ok`，覆盖：`stale`、阻塞与非阻塞、green 需要非草稿 Release、轮数上限、默认分支被推进、`superseded`；以及经 `github.prepare` socket 的两条用例：发布线程在默认分支上通过并上报，非发布线程（含查询出错）在默认分支上被拒且不上报。
 
 ## 阶段 7：API、CLI、预设
 
