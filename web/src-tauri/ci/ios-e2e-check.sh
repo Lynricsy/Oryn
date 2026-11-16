@@ -115,6 +115,8 @@ count() { ev "$1" | wc -l | tr -d ' '; }
 
 # fail <步骤> <原因>：告诉测试（它带着原因失败），打印现场后退出
 fail() {
+  # 现场截图（限时，截不到不影响报错）：判断是页面没打开、白屏还是原生没接管
+  sim_shot "$out/e2e-fail-$1.png" 20 || true
   printf '%s' "$2" >"$sync/$1.fail"
   echo "::error::端到端（${1}）：${2}"
   echo "- ❌ ${1}：${2}" >>"$summary"

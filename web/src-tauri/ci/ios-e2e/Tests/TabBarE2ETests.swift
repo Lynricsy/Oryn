@@ -22,8 +22,9 @@ final class TabBarE2ETests: E2ECase {
     // 0. 远程页面就绪：页头的侧栏按钮出现（compact 下沉侧栏布局；关闭时侧栏 inert，不在无障碍树里）
     let toggle = app.webViews.buttons
       .matching(NSPredicate(format: "label IN %@", ["Sidebar", "侧边栏"])).firstMatch
-    guard toggle.waitForExistence(timeout: 90) else {
-      throw E2EFailure("90 秒内网页没有出现侧栏按钮（远程页面没打开，或没进 compact 布局）")
+    // 冷启动等 300 秒：CI 的 macOS 机器整机卡顿时 WebView 首次加载曾超过 90 秒
+    guard toggle.waitForExistence(timeout: 300) else {
+      throw E2EFailure("300 秒内网页没有出现侧栏按钮（远程页面没打开，或没进 compact 布局）")
     }
     let screen = app.frame.size
     let loaded = try checkpoint(

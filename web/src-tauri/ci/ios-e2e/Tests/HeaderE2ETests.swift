@@ -31,8 +31,9 @@ final class HeaderE2ETests: E2ECase {
     app.launchEnvironment = ["ORYN_E2E_URL": url, "ORYN_DESKTOP_EVENT_LOG": log]
     app.launch()
 
-    // 0. 线程页就绪且原生页头已显示：WebView 之外出现侧栏钮
-    try until("90 秒内没有出现原生侧栏钮（线程页没打开，或原生页头没接管）", timeout: 90) {
+    // 0. 线程页就绪且原生页头已显示：WebView 之外出现侧栏钮。
+    //    冷启动等 300 秒：CI 的 macOS 机器整机卡顿时 WebView 首次加载曾超过 90 秒（脚本那头也等 420 秒）
+    try until("300 秒内没有出现原生侧栏钮（线程页没打开，或原生页头没接管）", timeout: 300) {
       try self.native(app, self.sidebar) != nil
     }
     let screen = app.frame.size
