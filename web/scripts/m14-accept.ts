@@ -2038,9 +2038,14 @@ async function realR8() {
 	const list = p.getByTestId("repo-picker");
 	await list.getByRole("searchbox", { name: "搜索仓库" }).fill("wid");
 	await list.getByText(REPO, { exact: true }).waitFor({ timeout: 15_000 });
-	expect(
-		(await list.getByText("acme/other", { exact: true }).count()) === 0,
-		"搜索「wid」只剩 acme/widgets",
+	await waitFor(
+		"搜索后列表收敛",
+		async () =>
+			(await list.getByText("acme/other", { exact: true }).count()) === 0,
+		10_000,
+	).then(
+		() => expect(true, "搜索「wid」只剩 acme/widgets"),
+		() => expect(false, "搜索「wid」后仍列出 acme/other"),
 	);
 	await shot(p, "real-r8-picker");
 	await list.getByText(REPO, { exact: true }).click();
@@ -2085,7 +2090,8 @@ async function realR4() {
 	await goto(p, REAL_UI, "/settings/github");
 	const radio = p.locator('input[name="github-automation"][value="agent"]');
 	await radio.waitFor({ timeout: 30_000 });
-	await radio.check();
+	// 受控单选：状态随服务端应答才变，用 click 而不是 check（check 会立刻核对状态）
+	await radio.click();
 	await waitFor(
 		"自动化身份 = agent",
 		async () => (await ghStatus()).automationIdentity === "agent",
@@ -2647,13 +2653,19 @@ async function realR11() {
 		`PR 状态 = ${th?.pulls?.[0]?.state ?? "空"}`,
 	);
 	const nots = await rjson<{
-		notifications: { title: string; threadId?: string }[];
+		notifications: {
+			kind: string;
+			title: string;
+			body: string;
+			threadId?: string;
+		}[];
 	}>("GET", "/api/v1/notifications");
+	const latest = nots.notifications.find((n) => n.threadId === tid);
 	expect(
 		nots.notifications.some(
 			(n) => n.title === `PR #${PR_NUMBER} merged` && n.threadId === tid,
 		),
-		`通知列表有「PR #${PR_NUMBER} merged」`,
+		`通知列表有「PR #${PR_NUMBER} merged」（该线程最新一条：${latest ? `${latest.kind} 「${latest.title}」 ${clip(latest.body, 60)}` : "无"}）`,
 	);
 	const p = await realPage();
 	await goto(p, REAL_UI, `/t/${tid}`);
@@ -3030,23 +3042,41 @@ async function realR9() {
 		url === `https://github.com/${NEW}`,
 		`GET /api/v1/projects/{id} 的 repoUrl = ${url}`,
 	);
-	const pause = await rapi("POST", `/api/v1/orbs/${orbId}/pause`);
-	note(`POST /api/v1/orbs/${orbId}/pause → ${pause.status}`);
+	// 停机（stop）后唤醒会重跑 resume.run，origin 跟随在那里执行
+	const pause = await rapi("POST", `/api/v1/orbs/${orbId}/pause`, {
+		mode: "stop",
+	});
+	check(
+		pause.status === 202,
+		`POST /api/v1/orbs/${orbId}/pause {mode: stop} → ${pause.status} ${clip(pause.text, 120)}`,
+	);
 	await waitFor(
-		"orb 暂停",
-		async () => (await getOrb(orbId)).state !== "running",
-		60_000,
+		"orb 停机",
+		async () => (await getOrb(orbId)).state === "stopped",
+		90_000,
 		1_000,
-	).catch(async () => note(`orb 状态：${(await getOrb(orbId)).state}`));
-	note(`orb 状态：${(await getOrb(orbId)).state}`);
-	const n = await assistantCount(mt.id);
+	);
+	note("orb 已停机");
 	const send = cli(`thread send ${mt.id} ${q("m14 R9：醒一醒")}`);
 	check(send.code === 0, `给线程发消息唤醒：${clip(oneLine(send.out), 120)}`);
-	await waitAssistant(mt.id, n + 1, 180_000);
-	const origin = orbSh(orbId, "git remote get-url origin");
+	const want = `https://github.com/${NEW}`;
+	const origin = await waitFor(
+		"唤醒后 origin 改到新地址",
+		async () => {
+			// get-url 会套用 insteadOf（指向出站代理）：读配置里的原值
+			const o = orbSh(orbId, "git config --get remote.origin.url").stdout;
+			return o.replace(/\.git$/, "") === want ? o : null;
+		},
+		180_000,
+		2_000,
+	).catch(() => orbSh(orbId, "git config --get remote.origin.url").stdout);
+	note(`orb 状态：${(await getOrb(orbId)).state}`);
+	note(
+		`唤醒后的 insteadOf：${clip(oneLine(orbSh(orbId, "git config --global --get-regexp '^url\\.'").out), 200)}`,
+	);
 	expect(
-		origin.stdout.replace(/\.git$/, "") === `https://github.com/${NEW}`,
-		`唤醒后检出目录的 origin = ${origin.stdout}`,
+		origin.replace(/\.git$/, "") === want,
+		`唤醒后检出目录的 origin = ${origin}`,
 	);
 	const fetchR = orbSh(orbId, "git fetch -q origin 2>&1 && echo ok");
 	expect(
