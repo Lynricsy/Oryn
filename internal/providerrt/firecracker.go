@@ -60,6 +60,8 @@ type FirecrackerDriver struct {
 	launchMu sync.Mutex
 	// orbMu 让同一台 VM 的任务串行执行。
 	orbMu sync.Map // orbID → *sync.Mutex
+	// diskGates 让停机预览的读盘与 spawn / delete 互斥（见 offlinefs_fc.go）。
+	diskGates sync.Map // orbID → *fcDiskGate
 
 	// offline 缓存停机 orb 的文件索引（只读预览，见 offlinefs_fc.go）。
 	offline indexCache
@@ -126,6 +128,10 @@ func (d *FirecrackerDriver) baseImageID() string {
 func (d *FirecrackerDriver) Exec(ctx context.Context, j Job, out io.Writer) (*apigen.JobResult, error) {
 	if j.OrbID != "" {
 		defer d.lockOrb(j.OrbID)()
+		// spawn / delete 会改动（或删除）可写盘：先作废进行中的停机预览，操作期间不接受新的预览
+		if j.Op == "spawn" || j.Op == "delete" {
+			defer d.beginLifecycle(j.OrbID)()
+		}
 	}
 	switch j.Op {
 	case "spawn":

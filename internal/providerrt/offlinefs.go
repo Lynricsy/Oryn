@@ -791,6 +791,17 @@ func (c *indexCache) evict() {
 	}
 }
 
+// drop 丢弃 orb 的索引（进行中的建立被取消）：磁盘即将被改动，旧索引里的 inode 不再可信。
+func (c *indexCache) drop(orbID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if b := c.builds[orbID]; b != nil {
+		b.cancel()
+		delete(c.builds, orbID)
+	}
+	c.order = slices.DeleteFunc(c.order, func(s string) bool { return s == orbID })
+}
+
 // ---- runner 侧 ----
 
 // fsWorker 长轮询只读文件请求并回传应答，直到 ctx 结束；令牌被拒时返回 ErrUnauthorized。

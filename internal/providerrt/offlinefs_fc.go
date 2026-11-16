@@ -10,6 +10,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
@@ -30,55 +31,141 @@ const (
 )
 
 // fcFileRef 是索引条目在镜像中的位置：读取时重新打开镜像（索引不持有文件句柄，淘汰时无需关闭）。
+// gen 是建索引时的磁盘代数：inode 号只在同一代里有意义（VM 运行过后 inode 与数据块可能已被复用）。
 type fcFileRef struct {
 	img string
 	ino uint32
+	gen uint64
+}
+
+// ---- 与生命周期操作的互斥 ----
+
+// fcDiskGate 让停机预览对镜像的读取与改动磁盘的生命周期操作（spawn / delete）互斥：
+// 生命周期操作开始时代数加一并置 busy，此后旧代数的每一次读取都失败；正在进行的单次读取由写锁等它结束。
+// 因此预览只可能读到「操作开始之前」的磁盘，不会在 VM 启动后把复用了的 inode / 数据块当成旧文件读出来。
+type fcDiskGate struct {
+	mu   sync.RWMutex
+	gen  uint64
+	busy int
+}
+
+func (d *FirecrackerDriver) diskGate(orbID string) *fcDiskGate {
+	v, _ := d.diskGates.LoadOrStore(orbID, &fcDiskGate{})
+	return v.(*fcDiskGate)
+}
+
+// beginLifecycle 在 spawn / delete 改动磁盘之前调用：作废在途的预览读取与该 orb 的索引缓存，直到返回的 end 被调用前拒绝新的预览。
+func (d *FirecrackerDriver) beginLifecycle(orbID string) (end func()) {
+	g := d.diskGate(orbID)
+	g.mu.Lock()
+	g.gen++
+	g.busy++
+	g.mu.Unlock()
+	d.offline.drop(orbID)
+	return func() {
+		g.mu.Lock()
+		g.busy--
+		g.mu.Unlock()
+	}
+}
+
+// errOrbWoke 是预览进行中 orb 开始启动（或被删除）时，之后所有读取返回的错误。
+var errOrbWoke = fsErrf(http.StatusConflict, "orb_not_stopped", "orb VM started (or was deleted) while previewing")
+
+// fcDiskSession 是一次预览对镜像的读取资格（某一代磁盘）。nil = 不设闸（单测直接建索引时）。
+type fcDiskSession struct {
+	g   *fcDiskGate
+	gen uint64
+}
+
+// readerAt 返回经闸门的镜像读取器：每次 ReadAt 持读锁并核对代数。
+func (s *fcDiskSession) readerAt(f *os.File) io.ReaderAt {
+	if s == nil {
+		return f
+	}
+	return gatedReaderAt{f: f, s: s}
+}
+
+// valid 报告这一代磁盘是否仍未被生命周期操作作废。
+func (s *fcDiskSession) valid() error {
+	if s == nil {
+		return nil
+	}
+	s.g.mu.RLock()
+	defer s.g.mu.RUnlock()
+	if s.g.gen != s.gen {
+		return errOrbWoke
+	}
+	return nil
+}
+
+type gatedReaderAt struct {
+	f *os.File
+	s *fcDiskSession
+}
+
+func (r gatedReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	r.s.g.mu.RLock()
+	defer r.s.g.mu.RUnlock()
+	if r.s.g.gen != r.s.gen {
+		return 0, errOrbWoke
+	}
+	return r.f.ReadAt(p, off)
 }
 
 // OfflineFS 实现 OfflineFS。
 func (d *FirecrackerDriver) OfflineFS(ctx, life context.Context, req apigen.ProviderFsRequest) FsReply {
 	orbID := req.OrbID
-	key, vm, err := d.offlineKey(orbID)
+	sess, key, vm, err := d.offlineSession(orbID)
 	if err != nil {
 		return errReply(err)
 	}
 	lower, upper := d.paths.base(vm.Base), d.paths.vmDisk(orbID)
 	ix, err := d.offline.get(ctx, life, orbID, key, func(bctx context.Context, scanned *atomic.Int64) (*fsIndex, error) {
-		return buildOverlayIndex(bctx, lower, upper, scanned)
+		return buildOverlayIndex(bctx, lower, upper, scanned, sess)
 	})
 	if err != nil {
 		return indexErrReply(err)
 	}
-	return serveOffline(ctx, ix, req, fcOffline{})
+	return serveOffline(ctx, ix, req, fcOffline{sess: sess})
 }
 
-// offlineKey 确认 VM 已停机（firecracker 进程不在）并返回索引缓存键：基础盘 id + 可写盘的大小与修改时间。
-// 可写盘只在 VM 运行时被写，进程不在时键不变即内容不变。
-func (d *FirecrackerDriver) offlineKey(orbID string) (string, vmMeta, error) {
+// offlineSession 在闸门读锁内确认 VM 已停机、没有进行中的生命周期操作，取得当前磁盘代数与索引缓存键：
+// 基础盘 id + 可写盘的大小与修改时间 + 代数。可写盘只在 VM 运行时被写，代数不变即内容不变。
+func (d *FirecrackerDriver) offlineSession(orbID string) (*fcDiskSession, string, vmMeta, error) {
+	g := d.diskGate(orbID)
+	g.mu.RLock()
+	defer g.mu.RUnlock()
 	vm, exists, err := d.paths.loadVM(orbID)
 	if err != nil {
-		return "", vm, err
+		return nil, "", vm, err
 	}
 	if !exists {
-		return "", vm, fsErrf(http.StatusNotFound, "not_found", "no such orb VM %s", orbID)
+		return nil, "", vm, fsErrf(http.StatusNotFound, "not_found", "no such orb VM %s", orbID)
 	}
-	if d.host.Alive(orbID) {
-		return "", vm, fsErrf(http.StatusConflict, "orb_not_stopped", "orb VM %s is running", orbID)
+	if g.busy > 0 || d.host.Alive(orbID) {
+		return nil, "", vm, fsErrf(http.StatusConflict, "orb_not_stopped", "orb VM %s is running or starting", orbID)
 	}
 	st, err := os.Stat(d.paths.vmDisk(orbID))
 	if err != nil {
-		return "", vm, err
+		return nil, "", vm, err
 	}
-	return fmt.Sprintf("%s %d %d", vm.Base, st.Size(), st.ModTime().UnixNano()), vm, nil
+	sess := &fcDiskSession{g: g, gen: g.gen}
+	return sess, fmt.Sprintf("%s %d %d %d", vm.Base, st.Size(), st.ModTime().UnixNano(), g.gen), vm, nil
 }
 
-// fcOffline 是 firecracker 的 offlineBackend：按索引里的 fcFileRef 直接读镜像。
-type fcOffline struct{}
+// fcOffline 是 firecracker 的 offlineBackend：按索引里的 fcFileRef 直接读镜像（经本次请求的闸门）。
+type fcOffline struct {
+	sess *fcDiskSession
+}
 
-func (fcOffline) open(n *fsNode) (*os.File, *ext4ro.File, *ext4ro.Inode, error) {
+func (o fcOffline) open(n *fsNode) (*os.File, *ext4ro.File, *ext4ro.Inode, error) {
 	ref, ok := n.ref.(fcFileRef)
 	if !ok {
 		return nil, nil, nil, errors.New("firecracker: 索引条目缺少镜像位置")
+	}
+	if o.sess != nil && ref.gen != o.sess.gen {
+		return nil, nil, nil, errOrbWoke
 	}
 	f, err := os.Open(ref.img)
 	if err != nil {
@@ -92,7 +179,7 @@ func (fcOffline) open(n *fsNode) (*os.File, *ext4ro.File, *ext4ro.Inode, error) 
 	if err != nil {
 		return fail(err)
 	}
-	fs, err := ext4ro.Open(f, st.Size())
+	fs, err := ext4ro.Open(o.sess.readerAt(f), st.Size())
 	if err != nil {
 		return fail(err)
 	}
@@ -159,6 +246,8 @@ type ovlBuild struct {
 	lower   ovlLayer
 	upper   ovlLayer
 	scanned *atomic.Int64
+	// gen 是这次合并读取的磁盘代数，记进每个文件条目的 fcFileRef。
+	gen uint64
 	// stop 为真时（条目达到上限）停止遍历。
 	stop bool
 	// seen 记录已展开的目录（层 + inode），防御构造出的目录环。
@@ -171,7 +260,13 @@ type ovlDirKey struct {
 }
 
 // buildOverlayIndex 打开 lower / upper 两块镜像，按 overlay 规则合并出 OrbHome 子树（不含 .oryn）的索引。
-func buildOverlayIndex(ctx context.Context, lowerImg, upperImg string, scanned *atomic.Int64) (ix *fsIndex, err error) {
+// 镜像经 sess 的闸门读取；合并途中磁盘被作废时整个索引作废（逐条目的容错会把它误当成损坏条目跳过）。
+func buildOverlayIndex(ctx context.Context, lowerImg, upperImg string, scanned *atomic.Int64, sess *fcDiskSession) (ix *fsIndex, err error) {
+	defer func() {
+		if verr := sess.valid(); verr != nil {
+			ix, err = nil, verr
+		}
+	}()
 	open := func(p string) (*os.File, ovlLayer, error) {
 		f, err := os.Open(p)
 		if err != nil {
@@ -182,12 +277,16 @@ func buildOverlayIndex(ctx context.Context, lowerImg, upperImg string, scanned *
 			_ = f.Close()
 			return nil, ovlLayer{}, err
 		}
-		fs, err := ext4ro.Open(f, st.Size())
+		fs, err := ext4ro.Open(sess.readerAt(f), st.Size())
 		if err != nil {
 			_ = f.Close()
 			return nil, ovlLayer{}, fmt.Errorf("解析 %s: %w", path.Base(p), err)
 		}
 		return f, ovlLayer{img: p, fs: fs}, nil
+	}
+	var gen uint64
+	if sess != nil {
+		gen = sess.gen
 	}
 	lf, lower, err := open(lowerImg)
 	if err != nil {
@@ -200,7 +299,7 @@ func buildOverlayIndex(ctx context.Context, lowerImg, upperImg string, scanned *
 	}
 	defer uf.Close()
 
-	b := &ovlBuild{ctx: ctx, ix: &fsIndex{root: newDirNode()}, lower: lower, upper: upper, scanned: scanned, seen: map[ovlDirKey]bool{}}
+	b := &ovlBuild{ctx: ctx, ix: &fsIndex{root: newDirNode()}, lower: lower, upper: upper, scanned: scanned, gen: gen, seen: map[ovlDirKey]bool{}}
 	lowerHome, upperHome, err := b.locate(strings.Split(strings.TrimPrefix(OrbHome, "/"), "/"))
 	if err != nil {
 		return nil, err
@@ -432,7 +531,7 @@ func (b *ovlBuild) put(rel string, l ovlLayer, in *ext4ro.Inode) bool {
 	case in.IsDir():
 		n.typ, n.children = apigen.FsEntryTypeDir, map[string]*fsNode{}
 	case in.IsRegular():
-		n.typ, n.size, n.ref = apigen.FsEntryTypeFile, in.Size, fcFileRef{img: l.img, ino: in.Ino}
+		n.typ, n.size, n.ref = apigen.FsEntryTypeFile, in.Size, fcFileRef{img: l.img, ino: in.Ino, gen: b.gen}
 	case in.IsSymlink():
 		target, err := l.fs.Readlink(in)
 		if err != nil {

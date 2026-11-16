@@ -3,12 +3,15 @@ package providerrt
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -163,17 +166,121 @@ func TestOverlayIndexHomeWhitedOut(t *testing.T) {
 	assert.Empty(t, l.Entries)
 }
 
-func TestOfflineFsFirecracker(t *testing.T) {
+// fcOfflineFixture 建一台带 overlay 两层镜像的「已停机」VM。
+func fcOfflineFixture(t *testing.T, orb string) *fcTest {
+	t.Helper()
 	lowerImg, upperImg := overlayImages(t)
 	ft := newFCTest(t)
 	d := ft.d
-	const orb = "orb-fc1"
-	vm := vmMeta{OrbID: orb, Base: "base1"}
+	vm := vmMeta{OrbID: orb, Base: "base1", Type: "small", CPUs: 2, MemMB: 4096}
 	require.NoError(t, os.MkdirAll(d.paths.vmDir(orb), 0o700))
 	require.NoError(t, writeJSONFile(d.paths.vmMeta(orb), vm))
 	require.NoError(t, os.MkdirAll(d.paths.basesDir(), 0o755))
 	require.NoError(t, os.Rename(lowerImg, d.paths.base("base1")))
 	require.NoError(t, os.Rename(upperImg, d.paths.vmDisk(orb)))
+	return ft
+}
+
+func fcFsReq(orb string, op apigen.ProviderFsRequestOp, p string) apigen.ProviderFsRequest {
+	req := apigen.ProviderFsRequest{ID: "r1", OrbID: orb, Op: op}
+	if p != "" {
+		req.Path = &p
+	}
+	return req
+}
+
+// 预览过程中 orb 被唤醒：spawn 开始后，进行中的读取与旧索引一律作废，不会读到 VM 启动后被复用的 inode / 数据块。
+func TestOfflineFsFirecrackerWakeDuringRead(t *testing.T) {
+	const orb = "orb-fc1"
+	ft := fcOfflineFixture(t, orb)
+	d, ctx := ft.d, context.Background()
+
+	rep := d.OfflineFS(ctx, ctx, fcFsReq(orb, apigen.Read, "~/keep.txt"))
+	require.Equal(t, http.StatusOK, rep.Status)
+	buf := make([]byte, 1)
+	n, err := rep.Body.Read(buf)
+	require.NoError(t, err)
+	assert.Equal(t, "k", string(buf[:n]), "唤醒前正常读取")
+
+	_, err = d.Exec(ctx, fcSpawn(orb), ft.out)
+	require.NoError(t, err, ft.out.String())
+	require.True(t, ft.f.Alive(orb))
+
+	_, err = rep.Body.Read(buf)
+	assert.ErrorIs(t, err, errOrbWoke, "spawn 之后在途的应答体不能再读盘")
+	require.NoError(t, rep.Body.Close())
+
+	st, _, body := readReply(t, d.OfflineFS(ctx, ctx, fcFsReq(orb, apigen.List, "~")))
+	assert.Equal(t, http.StatusConflict, st)
+	assert.Contains(t, body, `"orb_not_stopped"`)
+
+	// 旧索引（上一代磁盘）里的条目即使被拿来读，也会被拒绝
+	ix, err := buildOverlayIndex(ctx, d.paths.base("base1"), d.paths.vmDisk(orb), nil, &fcDiskSession{g: d.diskGate(orb), gen: 0})
+	assert.ErrorIs(t, err, errOrbWoke, "旧代数的建索引整体作废")
+	assert.Nil(t, ix)
+}
+
+// 生命周期操作进行中（VM 进程还没起来）也拒绝新的预览；结束且 VM 不在时按新一代磁盘重建索引。
+func TestOfflineFsFirecrackerBusyDuringLifecycle(t *testing.T) {
+	const orb = "orb-fc1"
+	ft := fcOfflineFixture(t, orb)
+	d, ctx := ft.d, context.Background()
+	st, _, body := readReply(t, d.OfflineFS(ctx, ctx, fcFsReq(orb, apigen.List, "~")))
+	require.Equal(t, http.StatusOK, st, body)
+	old := d.offline.builds[orb]
+	require.NotNil(t, old)
+
+	end := d.beginLifecycle(orb)
+	st, _, body = readReply(t, d.OfflineFS(ctx, ctx, fcFsReq(orb, apigen.Read, "~/keep.txt")))
+	assert.Equal(t, http.StatusConflict, st, "spawn 期间 VM 进程未起来也不服务")
+	assert.Contains(t, body, `"orb_not_stopped"`)
+	assert.Nil(t, d.offline.builds[orb], "旧索引已丢弃")
+	end()
+
+	st, _, body = readReply(t, d.OfflineFS(ctx, ctx, fcFsReq(orb, apigen.Read, "~/keep.txt")))
+	require.Equal(t, http.StatusOK, st, body)
+	assert.Equal(t, "keep", body)
+	assert.NotSame(t, old, d.offline.builds[orb], "按新一代磁盘重建")
+}
+
+// 预览读取与 spawn 并发：-race 下无数据竞争，spawn 返回后不再有读取成功。
+func TestOfflineFsFirecrackerConcurrentSpawn(t *testing.T) {
+	const orb = "orb-fc1"
+	ft := fcOfflineFixture(t, orb)
+	d, ctx := ft.d, context.Background()
+	var spawned atomic.Bool
+	var lateOK atomic.Int32
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() {
+			for range 200 {
+				after := spawned.Load()
+				rep := d.OfflineFS(ctx, ctx, fcFsReq(orb, apigen.Read, "~/a.txt"))
+				if rep.Body == nil {
+					continue
+				}
+				b, err := io.ReadAll(rep.Body)
+				_ = rep.Body.Close()
+				if after && err == nil && rep.Status == http.StatusOK {
+					lateOK.Add(1)
+				}
+				if err == nil && rep.Status == http.StatusOK {
+					assert.Equal(t, "upper a!", string(b))
+				}
+			}
+		})
+	}
+	_, err := d.Exec(ctx, fcSpawn(orb), ft.out)
+	spawned.Store(true)
+	wg.Wait()
+	require.NoError(t, err, ft.out.String())
+	assert.Zero(t, lateOK.Load(), "spawn 完成后的读取全部被拒")
+}
+
+func TestOfflineFsFirecracker(t *testing.T) {
+	const orb = "orb-fc1"
+	ft := fcOfflineFixture(t, orb)
+	d := ft.d
 
 	ctx := context.Background()
 	do := func(orbID string, op apigen.ProviderFsRequestOp, p, rng string) (int, http.Header, string) {

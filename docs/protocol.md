@@ -203,11 +203,12 @@ orb 停机（`stopped`）时，文件面板只读浏览文件，不唤醒 orb。
   - 以 `docker cp <orb>:/home/user -` 读一遍 tar 头建立索引，内容丢弃。实测 950MB / 2.9 万个文件约 9s。
   - `read` 对单个文件再执行一次 `docker cp`。
 - **firecracker provider**：
-  - firecracker 进程仍在（运行或冻结）时回 409 `orb_not_stopped`。缓存键是基础盘 id + 可写盘 `disk.ext4` 的大小与修改时间。
+  - firecracker 进程仍在（运行或冻结）时回 409 `orb_not_stopped`。缓存键是基础盘 id + 可写盘 `disk.ext4` 的大小与修改时间 + 磁盘代数。
   - VM 的根是 overlay：lower 为只读基础盘 `bases/<id>.ext4`，upper 为可写盘里的 `/upper`。provider 用 `internal/ext4ro` 在用户态解析两块镜像，按 overlay 规则合并出 `$HOME`：whiteout（字符设备 0:0）删除 lower 的同名条目，`trusted.overlay.opaque=y` 的目录遮住 lower，`trusted.overlay.redirect` 指向 lower 的另一目录。
   - 不挂载镜像：镜像内容由 guest 写入，不可信，不交给宿主内核解析。解析器内存安全、有界（extent 深度、目录大小、extent 数都有上限），单个损坏的条目只跳过它自己。
-  - 日志不重放：VM 非正常退出（被 `cgroup.kill`）后，最后几秒的写入可能看不到。
+  - guest 关机只 sync、不卸载，停机后的可写盘带 `needs_recovery`。provider 只读重放 jbd2 日志，结果叠加为读取覆盖层，不写回镜像；日志无法解析时退回未重放视图（可能缺最近的写入）。
   - `read` 按索引里记下的镜像与 inode 直接读数据块。
+  - 与生命周期互斥：spawn / delete 开始时磁盘代数加一，丢弃该 orb 的索引。此后旧代数的每一次读盘都失败（409 `orb_not_stopped`），进行中的应答体中断，操作结束前不接受新的预览。单次读盘持读锁，代数加一要等它结束，所以预览不会读到 VM 启动后被复用的 inode 或数据块。
 - **限制**：只读，Changes / git 接口不提供停机预览。runner、dispatch、process 驱动暂不支持。
 
 ## M4：Portal 与受管服务
