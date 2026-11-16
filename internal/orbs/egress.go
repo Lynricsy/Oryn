@@ -278,9 +278,13 @@ func (r egressResolver) ReleaseThread() bool {
 	return r.s.github.ReleaseThread(ctx, r.orbID)
 }
 
-// policyRebuildRetries 是 policyFor 重建期间撞上门禁作废时的重建次数上限；用尽后返回最后一次的结果、不写缓存
-// （最后一次读配置晚于它之前的每次作废，期间新提交的改动由之后的请求重建）。
+// policyRebuildRetries 是 policyFor 重建期间撞上门禁作废时的重建次数上限；用尽后本次请求拿拒绝策略（denyPolicy）、
+// 不写缓存：每次读到的配置都可能已被之后提交的改动取代，不能拿它放行（下一次请求重新重建）。
 const policyRebuildRetries = 3
+
+// denyPolicy 是策略拿不到（orb 读不到、生成失败、重建次数用尽）时用的失败关闭策略：没有模型路由、没有 GitHub 访问，
+// 且关闭 git 路由。零值 Policy 不够：git 路由在没有项目仓库时仍放行只读，并会注入主机令牌。
+var denyPolicy = egress.Policy{NoGit: true}
 
 // policyFor 返回 orb 的出站策略；缓存缺失（如 orynd 重启、门禁作废后）时按当前配置重新生成。
 // 重建读配置之前记下策略代际，写缓存时代际已变（期间有 InvalidateProjectPolicies）就丢弃重来：否则读到的旧门禁
@@ -298,12 +302,12 @@ func (s *Service) policyFor(orbID string) egress.Policy {
 		gen := s.policyGeneration()
 		orb, err := s.st.Q.GetOrb(ctx, orbID)
 		if err != nil || s.setup == nil {
-			return egress.Policy{}
+			return denyPolicy
 		}
 		plan, err := s.setup.Plan(ctx, orb)
 		if err != nil {
 			slog.Warn("重建 egress 策略失败", "orb", orbID, "err", err)
-			return egress.Policy{}
+			return denyPolicy
 		}
 		if s.hookPolicyRebuilt != nil {
 			s.hookPolicyRebuilt(orbID)
@@ -313,7 +317,8 @@ func (s *Service) policyFor(orbID string) egress.Policy {
 			return pol
 		}
 	}
-	return pol
+	slog.Warn("重建 egress 策略时门禁反复作废，本次请求按拒绝处理", "orb", orbID, "retries", policyRebuildRetries)
+	return denyPolicy
 }
 
 // policyGeneration 返回出站策略的当前代际：生成策略的一方在读配置之前取一次，交给 setPolicy。

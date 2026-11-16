@@ -116,17 +116,21 @@ func TestPolicyRebuildRacingInvalidate(t *testing.T) {
 	assert.False(t, ok)
 	assert.Nil(t, s.policyFor(orb.ID).GitHub.Gates, "重建得到关闭后的门禁")
 
-	// 一直撞上作废：重建次数有上限，返回最后一次的结果、不写缓存
+	// 一直撞上作废：重建次数有上限，用尽后本次请求拿拒绝策略（不放行 GitHub 与 git、不写缓存），而不是最后一次读到的配置
 	s.mu.Lock()
 	clear(s.policies)
 	s.mu.Unlock()
+	require.NoError(t, st.Q.SetProjectGithubGates(ctx, db.SetProjectGithubGatesParams{GithubGates: raw, UpdatedAt: 4, ID: prj}))
 	rebuilds = 0
 	s.hookPolicyRebuilt = func(string) {
 		rebuilds++
 		s.InvalidateProjectPolicies(ctx, prj)
 	}
-	assert.Nil(t, s.policyFor(orb.ID).GitHub.Gates)
+	denied := s.policyFor(orb.ID)
 	assert.Equal(t, policyRebuildRetries, rebuilds)
+	assert.Nil(t, denied.GitHub, "用尽后不放行 GitHub")
+	assert.True(t, denied.NoGit, "用尽后关闭 git 路由")
+	assert.Empty(t, denied.Routes)
 	s.mu.Lock()
 	_, ok = s.policies[orb.ID]
 	s.mu.Unlock()
