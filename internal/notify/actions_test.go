@@ -162,6 +162,44 @@ func TestAnswer(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotFound)
 }
 
+// API 列表上的 quickAnswer：可一触作答的未决 input 带完整问题与选项（不受推送正文上限约束）；
+// 已解决、文字输入与非 input 不带。
+func TestQuickAnswerAPI(t *testing.T) {
+	f := newFixture(t)
+	id := f.thread("t")
+	long := "Allow tool: bash\nCommand: " + strings.Repeat("x", 300)
+	f.inputNotification(id, "r1", frame(map[string]any{"method": "select", "title": long, "options": []string{"Approve", "Deny"}}))
+	f.inputNotification(id, "r2", frame(map[string]any{"method": "confirm", "title": "Overwrite?", "message": "a.md exists"}))
+	f.inputNotification(id, "r3", frame(map[string]any{"method": "input", "title": "名字？"}))
+	f.inputNotification(id, "r4", uiFrame("r4"))
+	f.s.InputResolved(id, "r4")
+	f.flush()
+
+	list, err := f.s.List(f.ctx, 50, 0, false)
+	require.NoError(t, err)
+	got := map[string]*apigen.NotificationQuickAnswer{}
+	for _, n := range list.Notifications {
+		got[n.Body] = n.QuickAnswer
+	}
+	require.Len(t, got, 4)
+	for body, q := range got {
+		switch {
+		case strings.HasPrefix(body, "Allow tool"):
+			require.NotNil(t, q)
+			assert.Equal(t, long, q.Question)
+			assert.Equal(t, []apigen.NotificationQuickOption{{I: 0, Label: "Approve"}, {I: 1, Label: "Deny"}}, q.Options)
+		case body == "Overwrite?":
+			require.NotNil(t, q)
+			assert.Equal(t, "Overwrite?\na.md exists", q.Question)
+			require.Len(t, q.Options, 2)
+			assert.Equal(t, apigen.Yes, *q.Options[0].Role)
+			assert.Equal(t, apigen.No, *q.Options[1].Role)
+		default: // 文字输入、已解决
+			assert.Nil(t, q, body)
+		}
+	}
+}
+
 type pushRecorder struct {
 	srv  *httptest.Server
 	reqs chan pushReq

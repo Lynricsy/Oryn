@@ -14,6 +14,7 @@ import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Thread } from "../api/client";
 import { projects } from "../mock/fixtures";
+import { resetNotifyMock } from "../mock/notify";
 import { MockServer } from "../mock/server";
 import {
 	type AppNotification,
@@ -65,6 +66,7 @@ describe("收件箱页", () => {
 		indexStore.getState().setAll([], 0);
 		notificationsStore.setState({ items: [] });
 		localStorage.clear();
+		resetNotifyMock();
 	});
 
 	function mount() {
@@ -208,5 +210,49 @@ describe("收件箱页", () => {
 		expect(screen.getByTestId("archive-dialog")).toHaveTextContent("/r/.wt/x");
 		// 对话框确认前不归档
 		expect(indexStore.getState().threads.wt?.archivedAt).toBeUndefined();
+	});
+
+	it("可一触作答的提问在行内作答；本轮等待之前的旧通知不算；已在别处作答时提示", async () => {
+		// mock 后端里这条通知（Docker 审批）带 quickAnswer：允许 / 拒绝
+		const id = "ntf_01JD0000000000000000000004";
+		const ask = (createdAt: number): AppNotification => ({
+			id,
+			kind: "input",
+			threadId: "wait",
+			title: "wait",
+			body: "允许执行？",
+			url: "/t/wait",
+			createdAt,
+			deliveries: [],
+			quickAnswer: {
+				question: "允许执行 `pkill -HUP orbd`？\n让 orbd 重连。",
+				options: [
+					{ i: 0, label: "允许" },
+					{ i: 1, label: "拒绝" },
+				],
+			},
+		});
+		notificationsStore.setState({ items: [ask(NOW - 60_000)] });
+		indexStore
+			.getState()
+			.setAll(
+				[th("wait", { state: "awaiting_input", stateChangedAt: NOW })],
+				1,
+			);
+		mount();
+		expect(document.querySelector("[data-inbox-quick]")).toBeNull();
+
+		act(() => notificationsStore.setState({ items: [ask(NOW)] }));
+		const quick = document.querySelector("[data-inbox-quick]") as HTMLElement;
+		expect(quick).toHaveTextContent("让 orbd 重连。");
+		fireEvent.click(within(quick).getByRole("button", { name: "允许" }));
+		await waitFor(() =>
+			expect(within(quick).getByRole("button", { name: "允许" })).toBeEnabled(),
+		);
+		expect(within(quick).queryByText("已在别处作答")).toBeNull();
+		expect(within(quick).queryByRole("alert")).toBeNull();
+		// 同一请求再答一次：后端回 409 input_resolved
+		fireEvent.click(within(quick).getByRole("button", { name: "拒绝" }));
+		expect(await within(quick).findByText("已在别处作答")).toBeVisible();
 	});
 });

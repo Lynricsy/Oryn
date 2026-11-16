@@ -787,6 +787,7 @@ func notificationAPI(n db.Notification, dels []db.NotificationDelivery, names ma
 	out := apigen.Notification{
 		ID: n.ID, Kind: apigen.NotificationKind(n.Kind), Title: n.Title, Body: n.Body, CreatedAt: n.CreatedAt,
 		ThreadID: n.ThreadID, ReadAt: n.ReadAt, ResolvedAt: n.ResolvedAt, Deliveries: make([]apigen.NotificationDelivery, 0, len(dels)),
+		QuickAnswer: quickAnswerAPI(n),
 	}
 	out.URL = notificationPath(n.ThreadID, n.Link)
 	for _, d := range dels {

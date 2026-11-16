@@ -9623,6 +9623,37 @@ components:
         deliveries:
           type: array
           items: { $ref: '#/components/schemas/NotificationDelivery' }
+        quickAnswer:
+          allOf:
+            - $ref: '#/components/schemas/NotificationQuickAnswer'
+          description: |
+            仅未解决、属于线程、可一触作答的 `input`（判定同 `POST notifications/{id}/answer`）：完整问题与选项，
+            客户端可就地以选项作答。不受推送正文 300 字符上限约束（站内能显示完整问题）。
+            请求在别处作答后已加载的列表不会收到更新：客户端应结合线程状态判断是否仍待作答，作答得 409 `input_resolved` 时提示已在别处作答。
+    NotificationQuickAnswer:
+      type: object
+      required: [question, options]
+      properties:
+        question:
+          type: string
+          description: 完整问题（保留多行；confirm 附上说明）
+        options:
+          type: array
+          minItems: 2
+          maxItems: 3
+          items: { $ref: '#/components/schemas/NotificationQuickOption' }
+    NotificationQuickOption:
+      type: object
+      required: [i, label]
+      properties:
+        i:
+          type: integer
+          description: 选项序号（从 0 起），作答时作为 `option` 回传
+        label: { type: string }
+        role:
+          type: string
+          enum: [yes, no]
+          description: 仅 confirm：客户端按界面语言显示「是 / 否」
     NotificationList:
       type: object
       required: [notifications, unread]

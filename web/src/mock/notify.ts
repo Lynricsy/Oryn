@@ -3,7 +3,7 @@
  * `MockServer.handleFetch` 开头先调 `handleNotifyFetch`，不归这里的请求返回 null。
  */
 import type { Schemas } from "../api/client";
-import { MAIN_THREAD, NOW } from "./fixtures";
+import { M9_IDS, MAIN_THREAD, NOW } from "./fixtures";
 
 type Channel = Schemas["NotificationChannel"];
 type Notification = Schemas["Notification"];
@@ -125,6 +125,24 @@ function seed(): State {
 	];
 	const notifications: Notification[] = [
 		{
+			id: "ntf_01JD0000000000000000000005",
+			kind: "input",
+			threadId: M9_IDS.spaceNeedsYou,
+			title: "📌 FOLD: 侧栏按定时折叠运行线程",
+			body: "同一定时任务的历次运行，侧栏里默认怎么显示？",
+			url: `/t/${M9_IDS.spaceNeedsYou}`,
+			createdAt: NOW - MIN,
+			deliveries: [],
+			quickAnswer: {
+				question: "同一定时任务的历次运行，侧栏里默认怎么显示？",
+				options: [
+					{ i: 0, label: "折叠成一行" },
+					{ i: 1, label: "全部展开" },
+					{ i: 2, label: "只留最近一次" },
+				],
+			},
+		},
+		{
 			id: "ntf_01JD0000000000000000000004",
 			kind: "input",
 			threadId: "T-0193a1b2-0000-7000-8000-00000000a004",
@@ -132,6 +150,14 @@ function seed(): State {
 			body: "允许执行 `docker exec orb-… pkill -HUP -x orbd`？",
 			url: "/t/T-0193a1b2-0000-7000-8000-00000000a004",
 			createdAt: NOW - 2 * MIN,
+			quickAnswer: {
+				question:
+					"允许执行 `docker exec orb-7f3c pkill -HUP -x orbd`？\n让冻结后恢复的容器里的 orbd 重新连上控制面。",
+				options: [
+					{ i: 0, label: "允许" },
+					{ i: 1, label: "拒绝" },
+				],
+			},
 			deliveries: [
 				{
 					target: "telegram",
@@ -270,8 +296,14 @@ function listChannels(): Response {
 	return json({ channels: state.channels });
 }
 
+/** 通知按钮作答成功后由 MockServer 推进线程状态（等你处理 → 工作中）。 */
+export interface NotifyHooks {
+	answered(threadId: string): void;
+}
+
 export async function handleNotifyFetch(
 	req: Request,
+	hooks?: NotifyHooks,
 ): Promise<Response | null> {
 	const url = new URL(req.url, location.origin);
 	const p = url.pathname;
@@ -282,6 +314,24 @@ export async function handleNotifyFetch(
 			notifications: state.notifications.slice(0, limit),
 			unread: state.notifications.filter((n) => !n.readAt).length,
 		});
+	}
+	const answer = p.match(/^\/api\/v1\/notifications\/([^/]+)\/answer$/);
+	if (answer && m === "POST") {
+		const { option } = await bodyOf(req);
+		const n = state.notifications.find((x) => x.id === answer[1]);
+		if (!n) return error(404, "not_found", "notification not found");
+		if (n.resolvedAt)
+			return error(409, "input_resolved", "request already answered elsewhere");
+		if (!n.quickAnswer || !n.threadId)
+			return error(422, "not_answerable", "not answerable with one tap");
+		if (typeof option !== "number")
+			return error(400, "invalid_request", "缺少 option");
+		if (!n.quickAnswer.options.some((o) => o.i === option))
+			return error(400, "invalid_option", "option out of range");
+		n.resolvedAt = Date.now();
+		n.quickAnswer = undefined;
+		hooks?.answered(n.threadId);
+		return json({ threadId: n.threadId });
 	}
 	if (p === "/api/v1/notifications/read" && m === "POST") {
 		const { threadId, id } = await bodyOf(req);

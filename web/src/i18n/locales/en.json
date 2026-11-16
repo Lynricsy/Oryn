@@ -188,7 +188,9 @@
 		"all": "All",
 		"reply": "Reply",
 		"markRead": "Mark as read",
-		"markAllRead": "Mark all as read"
+		"markAllRead": "Mark all as read",
+		"answer": "Answer",
+		"answeredElsewhere": "Already answered elsewhere"
 	},
 	"newThread": {
 		"heading": "What should we work on?",

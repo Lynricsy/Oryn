@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
 	"github.com/Lynricsy/Oryn/internal/uiprompt"
@@ -69,6 +70,11 @@ func pushActions(m Message) ([]pushAction, string, bool) {
 	if !ok || utf8Len(c.Text) > maxPushBody {
 		return nil, "", false
 	}
+	return choiceActions(c), c.Text, true
+}
+
+// choiceActions 把可一触作答的选项转成按钮：序号即作答时的 option；confirm 的两项带 yes / no 角色。
+func choiceActions(c uiprompt.Choice) []pushAction {
 	acts := make([]pushAction, len(c.Options))
 	for i, o := range c.Options {
 		acts[i] = pushAction{I: i, Label: o}
@@ -79,7 +85,28 @@ func pushActions(m Message) ([]pushAction, string, bool) {
 			}
 		}
 	}
-	return acts, c.Text, true
+	return acts
+}
+
+// quickAnswerAPI 是 API 通知上的 `quickAnswer`：判定与 Answer 相同（未解决、属于线程、quickChoice 认可），
+// 不受推送正文上限约束——站内能显示完整问题。不满足时为 nil。
+func quickAnswerAPI(n db.Notification) *apigen.NotificationQuickAnswer {
+	if n.Kind != KindInput || n.ResolvedAt != nil || n.ThreadID == nil || n.Request == nil {
+		return nil
+	}
+	c, ok := quickChoice(json.RawMessage(*n.Request))
+	if !ok {
+		return nil
+	}
+	acts := choiceActions(c)
+	opts := make([]apigen.NotificationQuickOption, len(acts))
+	for i, a := range acts {
+		opts[i] = apigen.NotificationQuickOption{I: a.I, Label: a.Label}
+		if a.Role != "" {
+			opts[i].Role = new(apigen.NotificationQuickOptionRole(a.Role))
+		}
+	}
+	return &apigen.NotificationQuickAnswer{Question: c.Text, Options: opts}
 }
 
 // withdrawPayload 是撤回消息 `{"v":1,"kind":"withdraw","id","tag"}`：设备只在 tag 上仍显示着同一 id 的通知时撤掉它，

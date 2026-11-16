@@ -1260,7 +1260,19 @@ export class MockServer {
 		const path = url.pathname;
 		if (path === "/healthz") return json({ ok: true, version: "0.1.0-mock" });
 		if (!path.startsWith("/api/v1/")) return null;
-		const notifyRes = await handleNotifyFetch(req);
+		const notifyRes = await handleNotifyFetch(req, {
+			// 通知按钮作答 = 线程收到回复：等你处理 → 工作中
+			answered: (id) => {
+				const t = this.threads.get(id);
+				if (t?.state === "awaiting_input")
+					this.upsertThread({
+						...t,
+						state: "working",
+						stateChangedAt: Date.now(),
+						activity: "按你的选择继续",
+					});
+			},
+		});
 		if (notifyRes) return notifyRes;
 		const shareRes = await this.handleShareFetch(
 			req,

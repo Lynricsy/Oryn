@@ -11,7 +11,14 @@
 import { type ReactNode, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
-import type { Project, Thread, ThreadState } from "../api/client";
+import {
+	ApiError,
+	api,
+	type Project,
+	type Thread,
+	type ThreadState,
+	unwrap,
+} from "../api/client";
 import { useProjects } from "../api/queries";
 import { CountPill, useNow } from "../components/layout/pane-parts";
 import {
@@ -22,9 +29,12 @@ import { useArchiveThread } from "../components/thread/ArchiveDialog";
 import { ProjectBadge, Sheet, TitleGlyph } from "../components/ui/data";
 import { Icon } from "../components/ui/icons";
 import {
+	Button,
 	describeError,
 	EmptyState,
+	ErrorText,
 	IconButton,
+	Spinner,
 	ThreadStateIcon,
 	tabClass,
 } from "../components/ui/primitives";
@@ -64,17 +74,23 @@ const SECTION_GLYPH: Record<InboxState, ThreadState> = {
 const PANEL =
 	"flex flex-col divide-y divide-border overflow-hidden rounded-lg border border-border bg-panel";
 
-/** 每个线程最近的一条 input（未作答）/ done / error 通知正文，作行内预览。 */
-type Previews = Map<string, Partial<Record<AppNotification["kind"], string>>>;
+/** 每个线程最近的一条未作答 input 通知，以及最近的 done / error 通知正文，作行内预览。 */
+type Previews = Map<
+	string,
+	{ input?: AppNotification; done?: string; error?: string }
+>;
 
 function previewsOf(items: readonly AppNotification[]): Previews {
 	const out: Previews = new Map();
 	// 通知按时间新的在前：同一线程同一类只取第一条
 	for (const n of items) {
-		if (!n.threadId || !n.body) continue;
-		if (n.kind === "input" && n.resolvedAt) continue;
+		if (!n.threadId) continue;
 		const slot = out.get(n.threadId) ?? {};
-		if (slot[n.kind] === undefined) slot[n.kind] = n.body;
+		if (n.kind === "input" && !n.resolvedAt && !slot.input) slot.input = n;
+		if (n.kind === "done" && n.body && slot.done === undefined)
+			slot.done = n.body;
+		if (n.kind === "error" && n.body && slot.error === undefined)
+			slot.error = n.body;
 		out.set(n.threadId, slot);
 	}
 	return out;
@@ -121,23 +137,27 @@ export function InboxPage(): ReactNode {
 		setGroupBy(v);
 		saveInboxGroupBy(v);
 	};
-	const row = (item: InboxItem, card = false) => (
-		<InboxRow
-			key={item.thread.id}
-			item={item}
-			card={card}
-			project={projectOf(item.thread.projectId)}
-			parent={
-				item.thread.parentThreadId
-					? threads[item.thread.parentThreadId]
-					: undefined
-			}
-			preview={previewOf(item, previews)}
-			showState={groupBy === "project"}
-			now={now}
-			onArchive={onArchive}
-		/>
-	);
+	const row = (item: InboxItem, card = false) => {
+		const p = previewOf(item, previews);
+		return (
+			<InboxRow
+				key={item.thread.id}
+				item={item}
+				card={card}
+				project={projectOf(item.thread.projectId)}
+				parent={
+					item.thread.parentThreadId
+						? threads[item.thread.parentThreadId]
+						: undefined
+				}
+				preview={p.text}
+				ask={p.ask}
+				showState={groupBy === "project"}
+				now={now}
+				onArchive={onArchive}
+			/>
+		);
+	};
 	return (
 		<Sheet inset={bp === "expanded"} className="flex h-full min-h-0 flex-col">
 			<header
@@ -270,19 +290,35 @@ export function InboxPage(): ReactNode {
 	);
 }
 
-/** 行内预览：每种状态各取它最能说明「要你做什么」的一句。 */
-function previewOf(item: InboxItem, previews: Previews): string | undefined {
+/**
+ * 行内预览：每种状态各取它最能说明「要你做什么」的一句。等你处理另给出可一触作答的 input 通知（`ask`）。
+ * 通知 store 不随请求在别处作答而更新，所以 input 通知只认本轮等待开始之后发出的（`createdAt >= stateChangedAt`）。
+ */
+function previewOf(
+	item: InboxItem,
+	previews: Previews,
+): { text?: string; ask?: AppNotification } {
 	const { thread } = item;
 	const n = previews.get(thread.id);
 	switch (item.state) {
-		case "you":
-			return n?.input;
+		case "you": {
+			const input =
+				n?.input && n.input.createdAt >= thread.stateChangedAt
+					? n.input
+					: undefined;
+			return {
+				text: input?.body || undefined,
+				ask: input?.quickAnswer ? input : undefined,
+			};
+		}
 		case "ready":
-			return n?.done;
+			return { text: n?.done };
 		case "stopped":
-			return thread.error?.reason || n?.error;
+			return { text: thread.error?.reason || n?.error };
 		case "running":
-			return thread.state === "working" ? thread.activity : undefined;
+			return {
+				text: thread.state === "working" ? thread.activity : undefined,
+			};
 	}
 }
 
@@ -407,6 +443,7 @@ function InboxRow({
 	project,
 	parent,
 	preview,
+	ask,
 	showState,
 	now,
 	onArchive,
@@ -418,6 +455,8 @@ function InboxRow({
 	/** 父线程（fork / 协调者派生）；协调对话不显示来源 */
 	parent: Thread | undefined;
 	preview: string | undefined;
+	/** 可一触作答的 input 通知：问题与选项在行内（链接外）作答 */
+	ask: AppNotification | undefined;
 	/** 按项目分组时第二行写收件箱分节名（项目已是组标题） */
 	showState: boolean;
 	now: number;
@@ -507,9 +546,12 @@ function InboxRow({
 							</span>
 						)}
 					</span>
-					{preview && <Preview state={state} text={preview} />}
+					{preview && !ask && <Preview state={state} text={preview} />}
 				</span>
 			</Link>
+			{ask?.quickAnswer && (
+				<QuickAnswer id={ask.id} quick={ask.quickAnswer} tinted={!card} />
+			)}
 			{triage && (
 				<span className="absolute top-2 right-2.5 hidden items-center gap-0.5 rounded-md border border-border bg-panel p-0.5 opacity-0 shadow-xs transition-opacity duration-150 group-focus-within/row:opacity-100 group-hover/row:opacity-100 [@media(hover:hover)]:flex">
 					{thread.unread && (
@@ -531,6 +573,89 @@ function InboxRow({
 				</span>
 			)}
 		</li>
+	);
+}
+
+/**
+ * 行内一触作答：完整问题（不截断：审批要看清命令）+ 选项按钮，走 `POST notifications/{id}/answer`。
+ * 作答成功后线程经 index.patch 离开「等你处理」，这一块随行一起消失；409 `input_resolved` 提示已在别处作答。
+ */
+function QuickAnswer({
+	id,
+	quick,
+	tinted,
+}: {
+	id: string;
+	quick: NonNullable<AppNotification["quickAnswer"]>;
+	/** 面板列表里的行（按项目分组）：底色与行一致 */
+	tinted: boolean;
+}): ReactNode {
+	const { t } = useTranslation();
+	const [busy, setBusy] = useState<number | null>(null);
+	const [error, setError] = useState<unknown>(null);
+	const pick = async (option: number) => {
+		setBusy(option);
+		setError(null);
+		try {
+			await unwrap(
+				api.POST("/api/v1/notifications/{id}/answer", {
+					params: { path: { id } },
+					body: { option },
+				}),
+			);
+		} catch (e) {
+			setError(e);
+		} finally {
+			setBusy(null);
+		}
+	};
+	const elsewhere =
+		error instanceof ApiError && error.code === "input_resolved";
+	return (
+		<div
+			data-inbox-quick=""
+			className={`flex flex-col gap-2.5 pr-3.5 pb-3 pl-10 ${tinted ? "bg-accent-soft/45" : ""}`}
+		>
+			<p className="flex items-start gap-2 rounded-md bg-panel px-3 py-2 text-fg text-sm">
+				<Icon
+					name="question"
+					size={13}
+					aria-hidden
+					className="mt-[3px] shrink-0 text-accent-ink"
+				/>
+				<span className="min-w-0 whitespace-pre-wrap break-words">
+					{withCode(quick.question)}
+				</span>
+			</p>
+			{/* biome-ignore lint/a11y/useSemanticElements: 一组作答按钮，不是表单字段集 */}
+			<div
+				role="group"
+				aria-label={t("inbox.answer")}
+				className="flex flex-wrap items-center gap-1.5"
+			>
+				{quick.options.map((o) => (
+					<Button
+						key={o.i}
+						variant={o.role === "yes" ? "accent" : "secondary"}
+						disabled={busy !== null}
+						onClick={() => void pick(o.i)}
+					>
+						{busy === o.i && <Spinner size={13} />}
+						{o.role
+							? t(o.role === "yes" ? "common.yes" : "common.no")
+							: o.label}
+					</Button>
+				))}
+			</div>
+			{error !== null &&
+				(elsewhere ? (
+					<p role="status" className="text-muted text-xs">
+						{t("inbox.answeredElsewhere")}
+					</p>
+				) : (
+					<ErrorText error={error} />
+				))}
+		</div>
 	);
 }
 

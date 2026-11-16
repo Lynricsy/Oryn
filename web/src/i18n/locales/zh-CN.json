@@ -188,7 +188,9 @@
 		"all": "全部",
 		"reply": "去回复",
 		"markRead": "标为已读",
-		"markAllRead": "全部标为已读"
+		"markAllRead": "全部标为已读",
+		"answer": "作答",
+		"answeredElsewhere": "已在别处作答"
 	},
 	"newThread": {
 		"heading": "要做点什么？",
