@@ -1034,6 +1034,23 @@ func (s *Service) SetModel(ctx context.Context, threadID string, m apigen.ModelR
 	return nil
 }
 
+// Abort 以自动化来源中止线程正在进行的回合（abort 帧；M15 R25 的任务时限）。agent 没有就绪或线程不在工作中时什么也不做：
+// 不为一次中止唤醒 orb，也不把 abort 排进队列等到下一个回合才生效。
+func (s *Service) Abort(ctx context.Context, threadID string) error {
+	t, err := s.get(ctx, threadID)
+	if err != nil {
+		return err
+	}
+	t.mu.Lock()
+	working := t.agentReady() && (t.state == StateWorking || t.state == StateAwaitingInput)
+	t.mu.Unlock()
+	if !working {
+		return nil
+	}
+	_, err = s.command(ctx, threadID, json.RawMessage(`{"type":"abort"}`), nil, originAuto, "")
+	return err
+}
+
 // command 是 Command 与 Deliver 的共同主体。originAuto（自动化投递）不清未读、不通知 Seen、不记用户交互
 // （记 agent 活动），唤醒逻辑相同。tag 是带标签投递的标签（只由 Deliver 给出）；帧上的 orynTag 一律删除丢弃。
 // 返回已登记的未决命令（只读查询与带附件的命令返回 nil）。

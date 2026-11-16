@@ -74,7 +74,7 @@ func (s *Server) writer(w http.ResponseWriter, r *http.Request, tail string) (*R
 	return rp, u
 }
 
-// createReaction 接受 issue 或评论上的反应（只记进 Calls，不保存）。
+// createReaction 接受 issue 或评论上的反应；评论上的反应记进 Reactions（issue 上的只记进 Calls）。
 func (s *Server) createReaction(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -90,6 +90,9 @@ func (s *Server) createReaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.seq++
+	if id, err := strconv.ParseInt(r.PathValue("id"), 10, 64); err == nil {
+		s.Reactions = append(s.Reactions, &Reaction{ID: s.seq, CommentID: id, Content: in.Content, User: u.Login})
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{"id": s.seq, "content": in.Content, "user": map[string]any{"login": u.Login}})
 }
 

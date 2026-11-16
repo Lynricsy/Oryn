@@ -108,6 +108,9 @@ type Server struct {
 	CoreRemaining int
 	CoreReset     time.Time
 
+	// Reactions 是评论上的反应（M15 问题自动关闭，见 tasks.go）。
+	Reactions []*Reaction
+
 	seq         int64
 	codes       map[string]string // 授权码 → login
 	userTokens  map[string]string // 用户访问令牌 → login
@@ -241,6 +244,7 @@ func (s *Server) handler() http.Handler {
 	s.hookRoutes(mux)
 	s.watchRoutes(mux)
 	s.refRoutes(mux)
+	s.taskRoutes(mux)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		r.Body = io.NopCloser(bytes.NewReader(body))

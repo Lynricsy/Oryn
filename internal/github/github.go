@@ -52,6 +52,9 @@ const (
 	// 触发规则「任何人」档的按人限流（M15 R13）：每小时每个发送者的运行次数上限；OWNER / MEMBER / COLLABORATOR 不限
 	anyoneMaxPerHour      = 3
 	contributorMaxPerHour = 10
+	// issue 任务（M15 步骤 4.3 / 5.5）
+	scanInterval           = 60 * time.Second // 任务时限与问题自动关闭共用的扫描周期
+	maxCompletionReminders = 2                // 每个任务至多补发的完成提醒次数（R25）
 )
 
 // oauthScopes 是授权请求的 scope（固定字面量，见 docs/plan-m15.md「全局约束」）。
@@ -71,6 +74,13 @@ type Threads interface {
 	MarkShipped(ctx context.Context, threadID string, at int64) error
 	// SetModel 切换线程的模型与思考级别（M15 R14 的指令覆盖）；m 为零值时不改模型，thinking 为空时不改级别。
 	SetModel(ctx context.Context, threadID string, m apigen.ModelRef, thinking string) error
+	// Abort 中止线程正在进行的回合（M15 R25 的任务时限）；线程不在工作中时什么也不做。
+	Abort(ctx context.Context, threadID string) error
+}
+
+// Orbs 是 GitHub 集成用到的 orb 能力（M15 R15：任务进入终态时冻结线程的 orb；*orbs.Service 经适配器实现）。
+type Orbs interface {
+	Freeze(ctx context.Context, orbID string) error
 }
 
 // ModelCatalog 是模型目录的只读查询（控制面的中央模型目录实现；github 不导入 modelcat）：`/model <别名>` 在其中查找。
@@ -135,6 +145,7 @@ type Service struct {
 	att     Attachments
 	sampler Sampler
 	models  ModelCatalog // nil = 没有模型目录：`/model` 只在规则的模型池里查找
+	orbs    Orbs         // nil = 不冻结（测试）
 	// intn 返回 [0, n) 的随机数（模型池随机取一个，测试注入）。
 	intn func(n int) int
 
@@ -211,6 +222,9 @@ func (s *Service) SetSampler(sm Sampler) { s.sampler = sm }
 
 // SetModelCatalog 注入模型目录（目录在 GitHub 服务之后构造；未配置 omp 时不注入）。
 func (s *Service) SetModelCatalog(mc ModelCatalog) { s.models = mc }
+
+// SetOrbs 注入 orb 能力（任务进入终态时冻结 orb）。
+func (s *Service) SetOrbs(o Orbs) { s.orbs = o }
 
 func (s *Service) now() time.Time { return s.cfg.Now() }
 func (s *Service) nowMs() int64   { return s.cfg.Now().UnixMilli() }

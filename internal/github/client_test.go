@@ -47,6 +47,7 @@ type stubThreads struct {
 	delivered []string
 	published []string
 	shipped   map[string]int64
+	aborted   []string
 }
 
 func (t *stubThreads) Create(_ context.Context, p threads.CreateParams) (apigen.Thread, error) {

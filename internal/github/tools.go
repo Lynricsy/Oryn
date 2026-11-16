@@ -45,9 +45,19 @@ func (e *Error) CtlError() *link.CtlError {
 	return &link.CtlError{Code: e.Code, Message: msg}
 }
 
-// Call 执行一次 orb 内 GitHub 工具调用（ctl github.call）。未知工具名回 invalid_params；
-// 已知工具在各自的步骤（5.2 / 6.1）实现之前回 not_implemented。
+// Call 执行一次 orb 内 GitHub 工具调用（ctl github.call）。未知工具名回 invalid_params；github_release_status 在
+// 步骤 6.1 实现之前回 not_implemented。
 func (s *Service) Call(ctx context.Context, orbID, threadID string, p apigen.LinkCtlGithubCallParams) (apigen.LinkCtlGithubCallResult, error) {
+	switch p.Tool {
+	case "github_classify_issue":
+		return s.toolClassify(ctx, threadID, p.Params)
+	case "github_task_state":
+		return s.toolTaskState(ctx, threadID, p.Params)
+	case "github_autoclose":
+		return s.toolAutoclose(ctx, threadID, p.Params)
+	case "github_abort_task":
+		return s.toolAbortTask(ctx, orbID, threadID, p.Params)
+	}
 	if !slices.Contains(callTools, p.Tool) {
 		return apigen.LinkCtlGithubCallResult{}, errf(codeInvalidParams,
 			"未知的 GitHub 工具 "+p.Tool+"；可用："+strings.Join(callTools, "、"))

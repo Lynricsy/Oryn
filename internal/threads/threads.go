@@ -428,6 +428,14 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]apigen.Thread, erro
 	for _, r := range pullRows {
 		pulls[r.ThreadID] = append(pulls[r.ThreadID], threadPullAPI(db.ListThreadPullsRow(r)))
 	}
+	taskRows, err := s.st.Q.ListThreadTaskSummaries(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tasks := make(map[string]*apigen.GitHubThreadTask, len(taskRows))
+	for _, r := range taskRows {
+		tasks[r.ThreadID] = threadTaskAPI(r) // 每线程按 created_at 升序：留下最新的一条
+	}
 	archived := false
 	if f.Archived != nil {
 		archived = *f.Archived
@@ -467,6 +475,7 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]apigen.Thread, erro
 		}
 		api.Schedule = schedules[t.ID]
 		api.Pulls = pulls[t.ID]
+		api.GithubTask = tasks[t.ID]
 		out = append(out, api)
 	}
 	return out, nil

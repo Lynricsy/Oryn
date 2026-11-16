@@ -498,7 +498,7 @@ var issueActions = map[string]string{"opened": evIssueOpened, "reopened": evIssu
 // onIssues 处理 issues 事件：新 issue、重开与打标签触发规则。
 func (s *Service) onIssues(ctx context.Context, action string, body []byte) (string, error) {
 	event, ok := issueActions[action]
-	if !ok {
+	if !ok && action != "closed" {
 		return "ignored:action", nil
 	}
 	var ev hookEvent
@@ -507,6 +507,19 @@ func (s *Service) onIssues(ctx context.Context, action string, body []byte) (str
 	}
 	if ev.Issue == nil {
 		return "ignored:payload", nil
+	}
+	if action == "closed" {
+		// R18：issue 被关闭（不是自动关闭本身认领的那条）时取消待执行的自动关闭；R15：任务置为 closed、冻结 orb
+		s.cancelAutoclose(ctx, ev.Repository.ID, ev.Issue.Number, autocloseExternalClose)
+		if has, err := s.finishTask(ctx, ev.Repository.ID, ev.Issue.Number, taskClosed); err != nil || !has {
+			return "ignored:no_thread", err
+		}
+		return "handled", nil
+	}
+	if event == evIssueLabeled && ev.Label != nil && strings.EqualFold(ev.Label.Name, implAuthLabel) {
+		if done, err := s.labelAuthorize(ctx, ev); err != nil || done {
+			return "handled", err
+		}
 	}
 	cands, err := s.st.Q.ListEnabledGithubTriggersByRepo(ctx, db.ListEnabledGithubTriggersByRepoParams{RepoID: &ev.Repository.ID, Event: event})
 	if err != nil {
@@ -720,7 +733,7 @@ func (s *Service) fire(ctx context.Context, ev triggerEvent, cands []db.GithubTr
 	// 必已看到它（threads.CreateParams.InitTx 的不变式）。重新触发的 issue 由 UpsertThreadIssue 重置旧任务的状态与标志。
 	th, err := s.th.Create(ctx, threads.CreateParams{
 		ProjectID: prj.ID, Prompt: triggerPrompt(trig, ev), Title: fmt.Sprintf("#%d %s", number, ev.issue.Title),
-		Model: model, ThinkingLevel: thinking, Automation: true, Untrusted: untrusted,
+		Model: model, ThinkingLevel: thinking, Automation: true, Untrusted: untrusted, Tag: newTurnTag(),
 		InitTx: func(ctx context.Context, q *db.Queries, threadID string) error {
 			if err := q.UpsertThreadIssue(ctx, db.UpsertThreadIssueParams{
 				RepoID: ev.repoID, Number: number, ThreadID: threadID, TriggerID: &trig.ID, CreatedAt: at,

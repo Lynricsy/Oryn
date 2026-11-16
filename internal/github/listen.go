@@ -262,6 +262,10 @@ func (s *Service) listen(ctx context.Context, ev hookEvent, tgt listenTarget, ki
 	if s.isSelfEvent(ctx, listenProbe(ev, kind)) {
 		return "ignored:self", nil
 	}
+	if kind == "comment" {
+		// R18：期间有任何人（不是 agent 自己）发新评论，待执行的自动关闭同步取消
+		s.cancelAutoclose(ctx, ev.Repository.ID, subject.Number, autocloseCommented)
+	}
 	// 评审取 review 的 author_association，评论取 comment 的
 	assoc := ev.Comment.AuthorAssociation
 	if kind == "review" {
@@ -280,6 +284,10 @@ func (s *Service) listen(ctx context.Context, ev hookEvent, tgt listenTarget, ki
 	}
 	if !d.ok {
 		return "ignored:" + d.reason, nil
+	}
+	// issue 任务：评论授权实现（R16）；终态任务只接受维护者 @Agent 的重开指令，其余评论回一条固定回帖（R15）
+	if out, err := s.taskComment(ctx, ev, tgt.threadID, kind, subject.Number, it.Body, assoc, rule); err != nil || out != "" {
+		return out, err
 	}
 	listen := listenComments
 	if kind == "review" || kind == "review_comment" {
@@ -402,7 +410,8 @@ func (s *Service) flushKey(ctx context.Context, k outboxKey, now time.Time) {
 		return
 	}
 	repo := repoFromURL(rows[len(rows)-1].Url)
-	_, err = s.th.Deliver(ctx, k.threadID, threads.AutoMessage{Text: composeEvent(repo, k.number, rows)}, nil)
+	// 带标签：回合正常结束时驱动完成提醒（R25，见 TurnObserver）
+	_, err = s.th.Deliver(ctx, k.threadID, threads.AutoMessage{Text: composeEvent(repo, k.number, rows), Tag: newTurnTag()}, nil)
 	var te *threads.Error
 	switch {
 	case err == nil:

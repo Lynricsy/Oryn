@@ -331,6 +331,10 @@ WHERE repo_id = @repo_id AND number = @number AND state = 'claimed';
 UPDATE github_autoclose SET state = 'cancelled', outcome = sqlc.narg(outcome)
 WHERE repo_id = @repo_id AND number = @number AND state = 'pending';
 
+-- name: CancelGithubAutoclosesByThread :execrows
+UPDATE github_autoclose SET state = 'cancelled', outcome = sqlc.narg(outcome)
+WHERE thread_id = @thread_id AND state = 'pending';
+
 -- name: DeleteGithubAutoclosesBefore :exec
 DELETE FROM github_autoclose WHERE state IN ('done','cancelled') AND due_at < @before;
 
@@ -555,6 +559,18 @@ SELECT * FROM thread_issues WHERE thread_id = @thread_id ORDER BY created_at DES
 
 -- name: ListThreadIssues :many
 SELECT * FROM thread_issues ORDER BY created_at DESC, repo_id, number;
+
+-- Thread header task badge (R15): issue tasks with the repo URL of the thread's project, oldest first per thread.
+-- name: ListThreadTaskSummaries :many
+SELECT ti.thread_id, ti.number, ti.state, COALESCE(p.repo_url, '') AS repo_url
+FROM thread_issues ti JOIN threads t ON t.id = ti.thread_id LEFT JOIN projects p ON p.id = t.project_id
+ORDER BY ti.thread_id, ti.created_at;
+
+-- name: GetThreadTaskSummary :one
+SELECT ti.thread_id, ti.number, ti.state, COALESCE(p.repo_url, '') AS repo_url
+FROM thread_issues ti JOIN threads t ON t.id = ti.thread_id LEFT JOIN projects p ON p.id = t.project_id
+WHERE ti.thread_id = @thread_id
+ORDER BY ti.created_at DESC LIMIT 1;
 
 -- Task options fixed when a rule creates the thread.
 -- name: SetThreadIssueTask :exec

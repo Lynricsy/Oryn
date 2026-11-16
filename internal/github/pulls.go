@@ -102,6 +102,8 @@ func (s *Service) onMerged(ctx context.Context, threadID string, pull db.GithubP
 			slog.Warn("github: 发送 PR 合并通知失败", "thread", threadID, "err", err)
 		}
 	}
+	// R15：线程的 issue 任务置为 merged（已在终态时不覆盖）并冻结 orb
+	s.finishThreadTask(ctx, threadID, taskMerged)
 	return nil
 }
 
@@ -159,6 +161,16 @@ func (s *Service) onPullRequest(ctx context.Context, action string, body []byte)
 			}
 		}
 		s.th.Publish(ctx, l.ThreadID)
+	}
+	// 以这个 PR 为对象的任务（PR 评审线程，fork PR 没有关联）随 PR 进入终态（R15）
+	if action == "closed" {
+		state := taskClosed
+		if pr.merged() {
+			state = taskMerged
+		}
+		if _, err := s.finishTask(ctx, repoID, pr.Number, state); err != nil {
+			return "", err
+		}
 	}
 	// pull_request_opened 规则（M15 R12）：在入库与关联之后匹配，已关联到线程的 PR 不再触发
 	if out, err := s.onPullTrigger(ctx, action, body); err != nil || out != "" {

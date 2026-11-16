@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/url"
 	"strings"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
@@ -188,6 +189,13 @@ func (s *Service) threadAPI(ctx context.Context, t db.Thread) (apigen.Thread, er
 	for _, p := range pulls {
 		out.Pulls = append(out.Pulls, threadPullAPI(p))
 	}
+	task, err := s.st.Q.GetThreadTaskSummary(ctx, t.ID)
+	switch {
+	case err == nil:
+		out.GithubTask = threadTaskAPI(db.ListThreadTaskSummariesRow(task))
+	case !errors.Is(err, sql.ErrNoRows):
+		return apigen.Thread{}, err
+	}
 	sum, err := s.st.Q.GetScheduleSummary(ctx, t.ID)
 	switch {
 	case err == nil:
@@ -196,6 +204,26 @@ func (s *Service) threadAPI(ctx context.Context, t db.Thread) (apigen.Thread, er
 		return apigen.Thread{}, err
 	}
 	return out, nil
+}
+
+// threadTaskAPI 把线程的 issue 任务摘要转成页头徽标（M15 R15；单线程与列表共用）。仓库取线程项目的 repo_url 路径。
+func threadTaskAPI(r db.ListThreadTaskSummariesRow) *apigen.GitHubThreadTask {
+	return &apigen.GitHubThreadTask{
+		Kind: apigen.GitHubThreadTaskKindIssue, Repo: repoPathOf(r.RepoUrl), Number: &r.Number, State: r.State,
+	}
+}
+
+// repoPathOf 取仓库地址的 owner/repo（去掉主机、结尾的 `.git` 与斜杠）；解析不出时返回空串。
+func repoPathOf(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return ""
+	}
+	parts := strings.Split(strings.Trim(strings.TrimSuffix(strings.TrimSuffix(u.Path, "/"), ".git"), "/"), "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return ""
+	}
+	return parts[0] + "/" + parts[1]
 }
 
 // threadPullAPI 把线程 ↔ PR 关联摘要行转成 API 形态（单线程与列表共用；M14）。

@@ -65,6 +65,24 @@ func (q *Queries) CancelGithubAutoclose(ctx context.Context, arg CancelGithubAut
 	return result.RowsAffected()
 }
 
+const cancelGithubAutoclosesByThread = `-- name: CancelGithubAutoclosesByThread :execrows
+UPDATE github_autoclose SET state = 'cancelled', outcome = ?1
+WHERE thread_id = ?2 AND state = 'pending'
+`
+
+type CancelGithubAutoclosesByThreadParams struct {
+	Outcome  *string `json:"outcome"`
+	ThreadID string  `json:"threadId"`
+}
+
+func (q *Queries) CancelGithubAutoclosesByThread(ctx context.Context, arg CancelGithubAutoclosesByThreadParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, cancelGithubAutoclosesByThread, arg.Outcome, arg.ThreadID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const claimDueGithubAutocloses = `-- name: ClaimDueGithubAutocloses :many
 UPDATE github_autoclose SET state = 'claimed' WHERE state = 'pending' AND due_at <= ?1 RETURNING repo_id, number, thread_id, comment_id, author, due_at, state, outcome
 `
@@ -890,6 +908,32 @@ func (q *Queries) GetThreadIssueByThread(ctx context.Context, threadID string) (
 		&i.RuleID,
 		&i.DeadlineAt,
 		&i.Reminders,
+	)
+	return i, err
+}
+
+const getThreadTaskSummary = `-- name: GetThreadTaskSummary :one
+SELECT ti.thread_id, ti.number, ti.state, COALESCE(p.repo_url, '') AS repo_url
+FROM thread_issues ti JOIN threads t ON t.id = ti.thread_id LEFT JOIN projects p ON p.id = t.project_id
+WHERE ti.thread_id = ?1
+ORDER BY ti.created_at DESC LIMIT 1
+`
+
+type GetThreadTaskSummaryRow struct {
+	ThreadID string `json:"threadId"`
+	Number   int64  `json:"number"`
+	State    string `json:"state"`
+	RepoUrl  string `json:"repoUrl"`
+}
+
+func (q *Queries) GetThreadTaskSummary(ctx context.Context, threadID string) (GetThreadTaskSummaryRow, error) {
+	row := q.db.QueryRowContext(ctx, getThreadTaskSummary, threadID)
+	var i GetThreadTaskSummaryRow
+	err := row.Scan(
+		&i.ThreadID,
+		&i.Number,
+		&i.State,
+		&i.RepoUrl,
 	)
 	return i, err
 }
@@ -2388,6 +2432,48 @@ func (q *Queries) ListThreadPulls(ctx context.Context, threadID string) ([]ListT
 			&i.Draft,
 			&i.HtmlUrl,
 			&i.Checks,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listThreadTaskSummaries = `-- name: ListThreadTaskSummaries :many
+SELECT ti.thread_id, ti.number, ti.state, COALESCE(p.repo_url, '') AS repo_url
+FROM thread_issues ti JOIN threads t ON t.id = ti.thread_id LEFT JOIN projects p ON p.id = t.project_id
+ORDER BY ti.thread_id, ti.created_at
+`
+
+type ListThreadTaskSummariesRow struct {
+	ThreadID string `json:"threadId"`
+	Number   int64  `json:"number"`
+	State    string `json:"state"`
+	RepoUrl  string `json:"repoUrl"`
+}
+
+// Thread header task badge (R15): issue tasks with the repo URL of the thread's project, oldest first per thread.
+func (q *Queries) ListThreadTaskSummaries(ctx context.Context) ([]ListThreadTaskSummariesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listThreadTaskSummaries)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListThreadTaskSummariesRow{}
+	for rows.Next() {
+		var i ListThreadTaskSummariesRow
+		if err := rows.Scan(
+			&i.ThreadID,
+			&i.Number,
+			&i.State,
+			&i.RepoUrl,
 		); err != nil {
 			return nil, err
 		}

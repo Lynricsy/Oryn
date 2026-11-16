@@ -34,6 +34,14 @@ type creatingThreads struct {
 // SetModel 让 stubThreads 满足 Threads（不记录）。
 func (t *stubThreads) SetModel(context.Context, string, apigen.ModelRef, string) error { return nil }
 
+// Abort 记下被中止的线程。
+func (t *stubThreads) Abort(_ context.Context, threadID string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.aborted = append(t.aborted, threadID)
+	return nil
+}
+
 func (t *creatingThreads) SetModel(_ context.Context, threadID string, m apigen.ModelRef, thinking string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -213,9 +221,11 @@ func TestTriggerOpenedAnnounceOffAndRateLimit(t *testing.T) {
 	// 回执用新线程 orb 的身份（agent 槽位的令牌）
 	assert.NotEqual(t, e.userAuth(), react[0].Auth)
 
-	// 其它动作
-	g = e.deliver("issues", issuesEvent("closed", issueJSON(2, "a", "", "owner"), "owner", ""))
+	// 其它动作：不触发规则；closed 只同步已有任务的状态（M15 4.3），没有任务时记 ignored:no_thread
+	g = e.deliver("issues", issuesEvent("unlabeled", issueJSON(2, "a", "", "owner"), "owner", ""))
 	assert.Equal(t, "ignored:action", e.delivery(g).Outcome)
+	g = e.deliver("issues", issuesEvent("closed", issueJSON(2, "a", "", "owner"), "owner", ""))
+	assert.Equal(t, "ignored:no_thread", e.delivery(g).Outcome)
 
 	for n := int64(10); n < 10+triggerMaxPerHour-1; n++ {
 		g = e.deliver("issues", issuesEvent("opened", issueJSON(n, "a", "b", "alice"), "alice", ""))

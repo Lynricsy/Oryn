@@ -15,18 +15,19 @@ import (
 // Service 满足 orbs.GitHub（含 M15 的 Call / PrepareReport）。
 var _ orbs.GitHub = (*Service)(nil)
 
-// M15 5.1：已知工具在实现之前回 not_implemented，未知工具回 invalid_params；错误能按原码转成 ctl 错误。
+// M15 5.1 / 5.2：github_release_status 在 6.1 之前回 not_implemented，未知工具回 invalid_params；没有 GitHub 任务的线程
+// 调用任务工具回 no_github_task；错误能按原码转成 ctl 错误。
 func TestToolCallNotImplemented(t *testing.T) {
 	e := newEnv(t)
-	for _, tool := range callTools {
-		_, err := e.s.Call(e.ctx, "orb-1", "T-1", apigen.LinkCtlGithubCallParams{ThreadID: "T-1", Tool: tool, Params: map[string]any{}})
-		var ge *Error
-		require.ErrorAs(t, err, &ge, tool)
-		assert.Equal(t, codeNotImplemented, ge.Code, tool)
-		ce := ge.CtlError()
-		assert.Equal(t, codeNotImplemented, ce.Code)
-		assert.Contains(t, ce.Message, tool)
-	}
+	_, err := e.s.Call(e.ctx, "orb-1", "T-1", apigen.LinkCtlGithubCallParams{ThreadID: "T-1", Tool: "github_release_status", Params: map[string]any{}})
+	var ge *Error
+	require.ErrorAs(t, err, &ge)
+	assert.Equal(t, codeNotImplemented, ge.Code)
+	ce := ge.CtlError()
+	assert.Equal(t, codeNotImplemented, ce.Code)
+	assert.Contains(t, ce.Message, "github_release_status")
+	_, err = e.s.Call(e.ctx, "orb-1", "T-1", apigen.LinkCtlGithubCallParams{ThreadID: "T-1", Tool: "github_abort_task", Params: map[string]any{"reason": "x"}})
+	assert.Equal(t, codeNoTask, codeOf(err))
 	for _, tool := range []string{"", "github_prepare", "github_nope"} {
 		_, err := e.s.Call(e.ctx, "orb-1", "T-1", apigen.LinkCtlGithubCallParams{ThreadID: "T-1", Tool: tool})
 		var ge *Error

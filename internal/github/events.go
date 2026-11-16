@@ -233,9 +233,9 @@ func clip(v string, n int) string {
 }
 
 // Run 运行后台循环直到 ctx 结束：任务队列、恢复待处理投递与轮询 hook 投递日志、每 hookSyncInterval 校正仓库 hook 并补登记
-// 对象级 watch、每 restPollInterval 做一轮 REST 轮询、回流、每小时清理。
+// 对象级 watch、每 restPollInterval 做一轮 REST 轮询、回流、每 scanInterval 扫描任务时限与到期的自动关闭、每小时清理。
 func (s *Service) Run(ctx context.Context) {
-	const loops = 6
+	const loops = 7
 	done := make(chan struct{}, loops)
 	loop := func(every time.Duration, now bool, f func(ctx context.Context)) {
 		defer func() { done <- struct{}{} }()
@@ -277,6 +277,7 @@ func (s *Service) Run(ctx context.Context) {
 	go loop(restPollInterval, false, s.pollWatches)
 	go loop(s.cfg.FlushInterval, false, s.flush)
 	go loop(time.Hour, true, s.cleanup)
+	go loop(scanInterval, false, s.scan)
 	for range loops {
 		<-done
 	}
