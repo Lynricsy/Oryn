@@ -40,6 +40,22 @@ func (h *Hub) ArtifactComments(id string) {
 	h.ToWatchers(id, apigen.WsServerArtifactComments{Type: apigen.WsServerArtifactCommentsTypeArtifactComments, ID: id})
 }
 
+// ArtifactCanvas 实现 artifacts.CanvasHub：画布的实时变化，只发给正在观看它的连接。
+func (h *Hub) ArtifactCanvas(msg apigen.WsServerArtifactCanvas) {
+	msg.Type = apigen.WsServerArtifactCanvasTypeArtifactCanvas
+	h.ToWatchers(msg.ID, msg)
+}
+
+// WatchPages 实现 artifacts.CanvasHub：正在观看 artifact id 的各连接所在的画布页 id（按连接 id 排序；没报告的为空串）。
+func (h *Hub) WatchPages(id string) []string {
+	ws := h.Watchers(id)
+	out := make([]string, len(ws))
+	for i, w := range ws {
+		out[i] = w.Page
+	}
+	return out
+}
+
 // ToWatchers 把消息发给正在观看 artifact id 的全部连接。
 func (h *Hub) ToWatchers(id string, msg any) {
 	b, err := json.Marshal(msg)

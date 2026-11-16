@@ -293,7 +293,7 @@ func artifactToolDefs() []apigen.OmpFrame {
 			"offset":  integer("从第几个字符开始（缺省 0）；上次结果里的 nextOffset。"),
 			"limit":   integer("最多读多少个字符（缺省 100000，最大 1000000）。"),
 		}, "id"),
-		tool(ToolUpdateArtifact, "改一个 artifact，产生新版本：整文件写入或删除（files）、唯一匹配的文本替换（edits，按顺序应用在 files 之后）。只给 title 时改名、不产生版本，title 不能和其它改动一起给。改内容必须带 baseVersion。", obj{
+		tool(ToolUpdateArtifact, "改一个 artifact，产生新版本：整文件写入或删除（files）、唯一匹配的文本替换（edits，按顺序应用在 files 之后）、画布布局操作（canvas，仅画布 artifact）。只给 title 时改名、不产生版本，title 不能和其它改动一起给。改内容必须带 baseVersion。", obj{
 			"id":          id,
 			"baseVersion": integer("你读到的版本号（read_artifact 返回的 version）。"),
 			"title":       str("新标题（只改名时单独给）。"),
@@ -305,6 +305,18 @@ func artifactToolDefs() []apigen.OmpFrame {
 					"path":    str("文件路径（缺省入口文件）。"),
 					"oldText": str("要替换的原文。"),
 					"newText": str("替换成的文本。"),
+				},
+			}},
+			"canvas": obj{"type": "array", "maxItems": 2000, "description": "画布操作（仅画布 artifact），按顺序应用到最新的 canvas.json；不能与改 canvas.json 的 files / edits 同时给。新画框没有文件时补空白页 page-<id>.html，之后用 files 写入它的内容。", "items": obj{
+				"type": "object", "additionalProperties": false, "required": []string{"op"},
+				"properties": obj{
+					"op":     enum("操作种类。", "add", "set", "remove", "order"),
+					"object": obj{"type": "object", "description": "add：要新增的对象，含 type（canvas 画布页 | page 画框 | note 标注）与该类对象的字段，见 read_artifact_guide 的 canvas 主题。"},
+					"copyOf": str("add 画框时可选：新画框的 HTML 从这个画框复制。"),
+					"id":     str("set / remove / order：对象 id。"),
+					"key":    str("set：字段名。"),
+					"value":  obj{"description": "set：新值（任意 JSON）。"},
+					"index":  integer("order：移到所在列表的第几位（0 起；超出时放到最后）。"),
 				},
 			}},
 			"note": str("这个版本的备注（不超过 200 字）。"),

@@ -282,7 +282,7 @@ function registerArtifacts(pi: ExtensionAPI): boolean {
 				.optional()
 				.describe("你环境里一个文件的路径（相对路径按当前工作目录解析），用于大文件或二进制文件，单文件不超过 20 MiB；与 content 恰好给一个"),
 		};
-		// 参数逐字段对应控制面的解码结构（未知字段会被拒）；capabilities、canvas、type 等后续阶段的参数在接入时再加。
+		// 参数逐字段对应控制面的解码结构（未知字段会被拒）；capabilities、type 等后续阶段的参数在接入时再加。
 		const tools: Pick<ToolDefinition, "name" | "label" | "description" | "parameters" | "loadMode">[] = [
 			{
 				name: "create_artifact",
@@ -315,7 +315,7 @@ function registerArtifacts(pi: ExtensionAPI): boolean {
 				name: "update_artifact",
 				label: "更新 artifact",
 				description:
-					"修改 artifact 并产生一个新版本：整文件写入或删除（files）、对文本做唯一匹配的替换（edits，在 files 之后按顺序应用）。内容改动必须带 baseVersion（read_artifact 读到的版本号）；只给 title 时只改名、不产生版本，且不能与其它改动同时给。整次调用原子，任何一步失败都不落版本。",
+					"修改 artifact 并产生一个新版本：整文件写入或删除（files）、对文本做唯一匹配的替换（edits，在 files 之后按顺序应用）、画布布局操作（canvas，仅画布 artifact）。内容改动必须带 baseVersion（read_artifact 读到的版本号）；只给 title 时只改名、不产生版本，且不能与其它改动同时给。整次调用原子，任何一步失败都不落版本。",
 				parameters: z.object({
 					id,
 					baseVersion: version.optional().describe("你读到的版本号；内容改动必填"),
@@ -336,6 +336,24 @@ function registerArtifacts(pi: ExtensionAPI): boolean {
 						.max(50)
 						.optional()
 						.describe("文本替换，最多 50 条，按顺序应用"),
+					canvas: z
+						.array(
+							z.object({
+								op: z.enum(["add", "set", "remove", "order"]).describe("操作种类"),
+								object: z
+									.record(z.string(), z.unknown())
+									.optional()
+									.describe("add：要新增的对象，含 type（canvas 画布页 | page 画框 | note 标注）与该类对象的字段，见 read_artifact_guide 的 canvas 主题"),
+								copyOf: z.string().optional().describe("add 画框时可选：新画框的 HTML 从这个画框复制"),
+								id: z.string().optional().describe("set / remove / order：对象 id"),
+								key: z.string().optional().describe("set：字段名"),
+								value: z.unknown().optional().describe("set：新值"),
+								index: z.number().int().min(0).optional().describe("order：移到所在列表的第几位（0 起；超出时放到最后）"),
+							}),
+						)
+						.max(2000)
+						.optional()
+						.describe("画布操作（仅画布 artifact），按顺序应用到最新的 canvas.json；不能与改 canvas.json 的 files / edits 同时给。新画框没有文件时由 Oryn 补空白页 page-<id>.html，之后用 files 写入它的内容"),
 					note: z.string().max(200).optional().describe("这个版本的备注（不超过 200 字）"),
 				}),
 				loadMode: "essential",

@@ -255,6 +255,8 @@ type Service struct {
 	gcBeforeLock func(sha string)
 	// pub 是发布配置（ConfigurePublishing）；nil = 发布未配置。
 	pub *PublishConfig
+	// live 是实时画布（live.go）。
+	live liveSet
 }
 
 // holdContent 取内容存储的读锁并返回释放函数。凡是先把内容落进存储、再在事务里插引用行的写入路径，
@@ -287,6 +289,7 @@ func (s *Service) changed() {
 }
 
 func (s *Service) versioned(id string, n int) {
+	s.liveVersioned(id, n)
 	if s.hub != nil {
 		s.hub.ArtifactVersion(id, n)
 		s.hub.ArtifactsChanged()

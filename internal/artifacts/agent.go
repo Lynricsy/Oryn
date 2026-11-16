@@ -470,6 +470,11 @@ func (s *Service) agentRead(ctx context.Context, c Caller, params json.RawMessag
 		head["type"] = a.Type
 		head["format"] = v.Format
 	}
+	if a.Kind == KindCanvas {
+		if names := s.canvasViewing(ctx, a.ID); len(names) > 0 {
+			head["viewing"] = names
+		}
+	}
 	data, _, err := s.ReadFile(ctx, a.ID, v.Version, p.Path)
 	if oe, ok := AsOpError(err); ok && oe.Code == CodeNotFound {
 		return Result{}, opErr(CodeInvalid, "版本 %d 里没有文件 %s。path 取 files 列表里的路径；不给表示入口文件。", v.Version, p.Path)
@@ -567,8 +572,8 @@ func (s *Service) agentUpdate(ctx context.Context, c Caller, params json.RawMess
 	if hasCaps {
 		return Result{}, opErr(CodeInvalid, "当前版本还不支持 capabilities（页面能力声明）。去掉这个参数再试。")
 	}
-	if hasCanvas {
-		return Result{}, opErr(CodeInvalid, "当前版本还不支持 canvas 操作。要改画布，直接用 files 改写 canvas.json。")
+	if hasCanvas && a.Kind != KindCanvas {
+		return Result{}, opErr(CodeInvalid, "%s 不是画布 artifact，不能用 canvas 操作。改它的文件请用 files 或 edits。", a.ID)
 	}
 	if p.BaseVersion == nil {
 		return Result{}, opErr(CodeInvalid, "改内容必须带 baseVersion。先 read_artifact，把返回的 version 作为 baseVersion。")
@@ -591,9 +596,17 @@ func (s *Service) agentUpdate(ctx context.Context, c Caller, params json.RawMess
 	if ps, err = s.applyEdits(ctx, c, a, base, ps, p.Edits); err != nil {
 		return Result{}, err
 	}
+	if hasCanvas && slices.ContainsFunc(ps, func(f *pending) bool { return f.path == EntryCanvas }) {
+		return Result{}, opErr(CodeInvalid, "同一次调用里不能既给 canvas 操作又改 canvas.json（files 或 edits）。只用 canvas 操作改布局，或者分两次调用。")
+	}
 	files, closeAll := changes(ctx, c, ps)
 	defer closeAll()
-	r, err := s.Write(ctx, WriteParams{ID: a.ID, BaseVersion: base, Author: c.author(), Note: deref(p.Note), Files: files})
+	var r Artifact
+	if hasCanvas {
+		r, err = s.agentCanvas(ctx, c, a.ID, base, p.Canvas, files, deref(p.Note))
+	} else {
+		r, err = s.Write(ctx, WriteParams{ID: a.ID, BaseVersion: base, Author: c.author(), Note: deref(p.Note), Files: files})
+	}
 	if err != nil {
 		return Result{}, err
 	}

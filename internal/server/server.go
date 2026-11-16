@@ -214,6 +214,9 @@ func (s *Server) init(ctx context.Context) error {
 	if s.Artifacts, err = artifacts.New(artifacts.Config{DataDir: cfg.DataDir, PublicURL: cfg.PublicURL}, s.Store, s.Hub); err != nil {
 		return err
 	}
+	// 实时画布：观看者变化与 artifact.canvas 经 Hub；关停时把未落版本的画布操作写成版本（在关库之前）
+	s.Artifacts.AttachCanvasHub(s.Hub)
+	s.closers = append(s.closers, s.Artifacts.FlushCanvases)
 	// artifact.call（orb / Runner 内 agent 的 artifact 工具）：须在 orb 服务接受 link 之前注册
 	s.Artifacts.RegisterOrbMethod(s.Orbs, s.LibrarySync)
 	s.Notify, err = notify.New(notify.Config{
