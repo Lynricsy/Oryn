@@ -521,14 +521,22 @@ jobs:
           set -euo pipefail
           if [[ ! -d src-tauri/gen/apple ]]; then bun run tauri ios init --ci; fi
 
-      # tauri 从 IOS_* 建临时钥匙串并装描述文件；build number 用 run_number，保证同一版本的每次上传单调递增
+      # tauri 从 IOS_* 建临时钥匙串并装描述文件。
+      # build number = run_number × 100 + run_attempt：重跑同一次运行（如 Android 失败后 Re-run）时也换一个新号，
+      # 不会因 TestFlight 已收到同号构建而上传失败；单次运行最多重跑 99 次。
       - name: 签名构建 IPA（app-store-connect）
         working-directory: web
         env:
           IOS_CERTIFICATE: ${{ secrets.IOS_CERTIFICATE }}
           IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
           IOS_MOBILE_PROVISION: ${{ secrets.IOS_MOBILE_PROVISION }}
-        run: bun run tauri ios build --export-method app-store-connect --build-number ${{ github.run_number }} --ci
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if (( RUN_ATTEMPT > 99 )); then echo "::error::同一次运行重跑超过 99 次，请重新打 tag"; exit 1; fi
+          bun run tauri ios build --export-method app-store-connect --build-number $(( RUN_NUMBER * 100 + RUN_ATTEMPT )) --ci
 
       - name: 校验 IPA
         id: ipa

@@ -137,7 +137,7 @@ make android DIST=foss                                      # 仓库根目录：
 
 1. 改 `web/src-tauri/Cargo.toml` 的 `version`（只写 `x.y.z`；`versionCode` = `major*1000000 + minor*1000 + patch`，预发布与正式版相同）。
 2. 打 tag `mobile-v<版本>` 或预发布 `mobile-v<版本>-rc.N` 并推送。
-3. `.github/workflows/mobile.yml`：`prepare` 校验 tag 与版本 → `release` 建草稿 Release → `android-release`（foss / gms 各一套：debug APK、插件单测、签名的 release APK 与 AAB、`apksigner` / `zipalign` / `aapt2` 校验并把包名、版本号、SDK 与证书指纹写进 Step Summary、上传 Release 资产）→ `android-smoke`（API 34 模拟器里装 foss debug 包，90 秒内出现 `launcher.ready`）→ `ios-check`（macOS 上不签名编译模拟器包）→ `ios-release`（Apple Distribution 签名导出 IPA，build number 取 `github.run_number`，校验包名与签名者后用 `xcrun altool` 上传 TestFlight；IPA 不进 Release）→ `publish` 发布 Release。
+3. `.github/workflows/mobile.yml`：`prepare` 校验 tag 与版本 → `release` 建草稿 Release → `android-release`（foss / gms 各一套：debug APK、插件单测、签名的 release APK 与 AAB、`apksigner` / `zipalign` / `aapt2` 校验并把包名、版本号、SDK 与证书指纹写进 Step Summary、上传 Release 资产）→ `android-smoke`（API 34 模拟器里装 foss debug 包，90 秒内出现 `launcher.ready`）→ `ios-check`（macOS 上不签名编译模拟器包）→ `ios-release`（Apple Distribution 签名导出 IPA，build number 为 `run_number × 100 + run_attempt`，重跑同一次运行也不会与已上传的构建撞号；校验包名与签名者后用 `xcrun altool` 上传 TestFlight；IPA 不进 Release）→ `publish` 发布 Release。
 4. Release 资产只有 release 签名的 `Oryn_<版本>_android-{foss,gms}.apk` 与 `.aab`。debug APK（可调试、允许任意明文请求）只作为 workflow artifact，从 Actions 运行页下载，不进 Release。
 
 PR 与手动触发只产出 debug APK（workflow artifacts）并跑冒烟与 iOS 编译，拿不到签名密钥；来自 fork 的 PR 没有 `ANDROID_GOOGLE_SERVICES_JSON`，跳过 gms。手动触发可勾选 `export_ios_project`，把 `tauri ios init` 生成的 `gen/apple` 作为产物导出以便入库。
