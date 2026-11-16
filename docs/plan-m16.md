@@ -3,6 +3,14 @@
 ## 修订记录
 
 - **v1（2026-11-16）**：初稿。决定过程见 `.agent-logs` 第 0144–0151 条及其后的决策日志。
+- **v2（2026-11-16，执行中修订）**：步骤 0.3 的结论（附录 B，`docs/plan-m16-appendix-b.md`）。A3、A6 成立，Core 不需要第二处改动。据此修改了 2.2 和 2.3：
+  - Core 渲染 mental model 时，只显示无标签的模型和带本项目标签的模型（`modelVisibleForTags`）。所以网关在 list/get 响应里，把 `oryn:global` 模型的 `tags` 改写为 `[]`，否则 `user-preferences` 永远进不了 `<mental_models>`。
+  - orb 只能创建 `project-conventions-<P>` 和 `project-decisions-<P>` 两种模型，且标签必须恰好是 `[project:P]`。DELETE 请求一律 403。`/documents*` 和 `/memories/list` 这几个端点 Core 没有调用点，一律 403。
+  - 候选队列分流时必须返回 2xx：Core 的 outbox 遇到 400/413/422 会隔离事件，遇到其它非 2xx 会持续重试 7 天。
+  - document 一律按 URL 里的 threadId 归属线程。原因是子 agent 的 `metadata.session_id` 是子会话的 id，和线程对不上。
+  - 判断一次写入是不是全局写入，依据是 `items[].tags` 这个键整体缺失。这只在 `per-project-tagged` 模式下成立，所以 orbd 必须设 `HINDSIGHT_SCOPING=per-project-tagged`。
+  - env 增加 `NO_PROXY=127.0.0.1,localhost`：Bun 的 fetch 会读代理变量，不设的话发往 `127.0.0.1:7811` 的记忆请求也会被送进代理。
+  - 创建 bank 的 PUT 请求要丢弃 body，不允许任何 orb 改写共享 bank 的 mission。
 
 ## Context
 
@@ -360,13 +368,13 @@ Do：
    - 项目线程：每个 item 的 `tags` 和 `document_tags` 强制改为 `[project:P]`，并把 `document_id → (P, thread)` 记进 `memory_documents`；
    - 不带项目标签的写入和无项目线程的写入：转进 `memory_candidates`，返回附录 A 里记下的成功应答格式（R8）。
 3. recall 和 reflect：项目线程强制 `tags=[project:P, oryn:global]`、`tags_match=any`；无项目线程强制 `tags=[oryn:global]`。
-4. document 的读取、修改、删除：只有在 `memory_documents` 里属于 P 的 document 才放行，修改时不允许改标签。列表类接口按标签过滤响应结果。
+4. orb 不能直接读、改、删 document（见第 6 条）。按线程遗忘、删除 document 只能从管理页经 orynd 操作（2.6）。
 5. mental model：
-   - 列表只返回 P 的模型和 `user-preferences`；
-   - 创建时强制带 P 的标签；
-   - 刷新和删除只允许对 P 的模型操作；
-   - `user-preferences` 只能读（R9）。
-6. 创建 bank 的 `PUT` 请求直接返回 200，不转发。
+   - 列表和单个读取只返回 P 的模型和 `oryn:global` 模型，并把后者的 `tags` 改写为 `[]`。`user-preferences` 必须留在列表里，Core 看到它已存在就不会去创建；
+   - 创建只允许 id 为 `project-conventions-<P>`、`project-decisions-<P>`，且 `tags` 恰为 `[project:P]`；
+   - 刷新只允许对 P 的模型操作，DELETE 一律 403，`user-preferences` 只能读（R9）；
+   - `detail=full` 降级为 `content`。
+6. 创建 bank 的 `PUT` 请求丢弃 body，直接返回 200 `{}`，不转发。`/documents*` 和 `/memories/list` 一律 403。
 7. 未启用时返回 503，code 为 `memory_disabled`。
 8. 转发时注入 Hindsight key，响应里出现的 key 替换为 `oryn-redacted`。
 
@@ -389,6 +397,8 @@ Files：
   - `HINDSIGHT_SCOPING=per-project-tagged`；
   - 有项目时设 `ORYN_HINDSIGHT_PROJECT=<项目 ID 转小写>`；
   - 无项目时设 `HINDSIGHT_AUTO_RETAIN=false`；
+  - `NO_PROXY=127.0.0.1,localhost`（同时设小写的 `no_proxy`）；
+  - 不设 `HINDSIGHT_API_TOKEN`；
 - 改 `internal/threads/apply.go`：开关变化时，把受影响的线程标为需重启，原因写 `memory`；
 - 改 `internal/memory/service.go`：开关变化时调用重启标记。
 
@@ -554,4 +564,6 @@ Accept：`cd web && bun run accept:m16` 退出 0，输出逐项记录 R1、R4、
 
 ## 附录 A：Hindsight 探查结论（步骤 0.2 填写）
 
-## 附录 B：Core 端点与放行清单（步骤 0.3 填写）
+## 附录 B：Core 端点与放行清单（步骤 0.3）
+
+完整内容见 `docs/plan-m16-appendix-b.md`。
