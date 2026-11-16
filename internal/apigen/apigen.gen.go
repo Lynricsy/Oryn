@@ -2621,6 +2621,21 @@ func (e WsServerArtifactActivityType) Valid() bool {
 	}
 }
 
+// Defines values for WsServerArtifactCommentsType.
+const (
+	WsServerArtifactCommentsTypeArtifactComments WsServerArtifactCommentsType = "artifact.comments"
+)
+
+// Valid indicates whether the value is a known member of the WsServerArtifactCommentsType enum.
+func (e WsServerArtifactCommentsType) Valid() bool {
+	switch e {
+	case WsServerArtifactCommentsTypeArtifactComments:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for WsServerArtifactVersionType.
 const (
 	WsServerArtifactVersionTypeArtifactVersion WsServerArtifactVersionType = "artifact.version"
@@ -3217,6 +3232,104 @@ type ArtifactCapabilitiesFrames string
 // ArtifactCapability 页面运行时能力（`oryn.use(name)`）
 type ArtifactCapability string
 
+// ArtifactComment defines model for ArtifactComment.
+type ArtifactComment struct {
+	// AuthorLabel 写入时的线程标题快照（用户为空串）
+	AuthorLabel string `json:"authorLabel"`
+
+	// AuthorThreadID 回复的线程；省略 = 用户
+	AuthorThreadID *ThreadID `json:"authorThreadId,omitempty"`
+	Body           string    `json:"body"`
+
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt TimestampMs `json:"createdAt"`
+	N         int         `json:"n"`
+}
+
+// ArtifactCommentAnchor 评论的锚点；`offset` / `tag` 为空表示整个页面
+type ArtifactCommentAnchor struct {
+	// Missing 元素在最新版本里已找不到
+	Missing bool `json:"missing"`
+
+	// Offset 元素起始标签在文件里的 UTF-8 字节偏移；脚本生成的元素与整页锚点为空
+	Offset *int `json:"offset"`
+
+	// Page 画布页面上的锚点：画框在阅读顺序里的序号与名字
+	Page *struct {
+		Name   string `json:"name"`
+		Number int    `json:"number"`
+	} `json:"page"`
+
+	// Path 版本里的 HTML 文件
+	Path string  `json:"path"`
+	Tag  *string `json:"tag"`
+
+	// Text 元素文本片段（折叠空白后前 120 个字符）
+	Text string `json:"text"`
+
+	// Version 锚点最近一次定位所在的版本
+	Version int `json:"version"`
+}
+
+// ArtifactCommentCreate defines model for ArtifactCommentCreate.
+type ArtifactCommentCreate struct {
+	// Anchor 评论的锚点；`offset` / `tag` 为空表示整个页面
+	Anchor ArtifactCommentAnchor `json:"anchor"`
+	Body   string                `json:"body"`
+}
+
+// ArtifactCommentPatch defines model for ArtifactCommentPatch.
+type ArtifactCommentPatch struct {
+	Resolved bool `json:"resolved"`
+}
+
+// ArtifactCommentReply defines model for ArtifactCommentReply.
+type ArtifactCommentReply struct {
+	Body string `json:"body"`
+}
+
+// ArtifactCommentThread defines model for ArtifactCommentThread.
+type ArtifactCommentThread struct {
+	// Anchor 评论的锚点；`offset` / `tag` 为空表示整个页面
+	Anchor   ArtifactCommentAnchor `json:"anchor"`
+	Comments []ArtifactComment     `json:"comments"`
+
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt TimestampMs `json:"createdAt"`
+
+	// ID `act_<ulid>`（artifact 评论串）
+	ID ArtifactCommentThreadID `json:"id"`
+
+	// ResolvedAt UTC 毫秒时间戳
+	ResolvedAt *TimestampMs `json:"resolvedAt,omitempty"`
+
+	// SentAt UTC 毫秒时间戳
+	SentAt *TimestampMs `json:"sentAt,omitempty"`
+
+	// SentTo 发给了哪个线程
+	SentTo *ThreadID `json:"sentTo,omitempty"`
+}
+
+// ArtifactCommentThreadID `act_<ulid>`（artifact 评论串）
+type ArtifactCommentThreadID = string
+
+// ArtifactCommentThreadList defines model for ArtifactCommentThreadList.
+type ArtifactCommentThreadList struct {
+	Threads []ArtifactCommentThread `json:"threads"`
+
+	// Version 最新版本
+	Version int `json:"version"`
+}
+
+// ArtifactCommentsSent defines model for ArtifactCommentsSent.
+type ArtifactCommentsSent struct {
+	// SentTo `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	SentTo    ThreadID                  `json:"sentTo"`
+	ThreadIds []ArtifactCommentThreadID `json:"threadIds"`
+}
+
 // ArtifactConflict `conflict`（409）的响应体：标准错误结构外加 `state`
 type ArtifactConflict struct {
 	Code    string        `json:"code"`
@@ -3241,6 +3354,20 @@ type ArtifactDetail struct {
 
 	// Version 本次返回的版本
 	Version int `json:"version"`
+}
+
+// ArtifactElementEdit defines model for ArtifactElementEdit.
+type ArtifactElementEdit struct {
+	BaseVersion int    `json:"baseVersion"`
+	Offset      int    `json:"offset"`
+	Path        string `json:"path"`
+
+	// Style `color`、`background-color`、`font-size`、`font-weight`、`text-align`、`padding`、`border-radius` 中的若干项
+	Style map[string]string `json:"style,omitempty"`
+	Tag   string            `json:"tag"`
+
+	// Text 新的文字（只对内容全是文本的元素）
+	Text *string `json:"text,omitempty"`
 }
 
 // ArtifactExportFormat defines model for ArtifactExportFormat.
@@ -3369,6 +3496,11 @@ type ArtifactVersion struct {
 // ArtifactVersionList defines model for ArtifactVersionList.
 type ArtifactVersionList struct {
 	Versions []ArtifactVersion `json:"versions"`
+}
+
+// ArtifactVersionRef defines model for ArtifactVersionRef.
+type ArtifactVersionRef struct {
+	Version int `json:"version"`
 }
 
 // AssistantFile defines model for AssistantFile.
@@ -8094,6 +8226,16 @@ type WsServerArtifactActivity struct {
 // WsServerArtifactActivityType defines model for WsServerArtifactActivity.Type.
 type WsServerArtifactActivityType string
 
+// WsServerArtifactComments 某个 artifact 的评论有变化；只发给正在观看它的连接
+type WsServerArtifactComments struct {
+	// ID `art_<ulid>`（M14 artifact）
+	ID   ArtifactID                   `json:"id"`
+	Type WsServerArtifactCommentsType `json:"type"`
+}
+
+// WsServerArtifactCommentsType defines model for WsServerArtifactComments.Type.
+type WsServerArtifactCommentsType string
+
 // WsServerArtifactVersion 某个 artifact 产生了新版本；只发给正在观看它的连接
 type WsServerArtifactVersion struct {
 	// ID `art_<ulid>`（M14 artifact）
@@ -8385,6 +8527,9 @@ type WsTicket struct {
 
 // AgentConfigPath defines model for AgentConfigPath.
 type AgentConfigPath = string
+
+// ArtifactCommentThreadIDPath `act_<ulid>`（artifact 评论串）
+type ArtifactCommentThreadIDPath = ArtifactCommentThreadID
 
 // ArtifactIDPath `art_<ulid>`（M14 artifact）
 type ArtifactIDPath = ArtifactID
@@ -9161,6 +9306,21 @@ type ImportArtifactMultipartRequestBody ImportArtifactMultipartBody
 
 // PatchArtifactJSONRequestBody defines body for PatchArtifact for application/json ContentType.
 type PatchArtifactJSONRequestBody = ArtifactPatch
+
+// CreateArtifactCommentJSONRequestBody defines body for CreateArtifactComment for application/json ContentType.
+type CreateArtifactCommentJSONRequestBody = ArtifactCommentCreate
+
+// MarkArtifactCommentsSentJSONRequestBody defines body for MarkArtifactCommentsSent for application/json ContentType.
+type MarkArtifactCommentsSentJSONRequestBody = ArtifactCommentsSent
+
+// PatchArtifactCommentJSONRequestBody defines body for PatchArtifactComment for application/json ContentType.
+type PatchArtifactCommentJSONRequestBody = ArtifactCommentPatch
+
+// ReplyArtifactCommentJSONRequestBody defines body for ReplyArtifactComment for application/json ContentType.
+type ReplyArtifactCommentJSONRequestBody = ArtifactCommentReply
+
+// EditArtifactElementJSONRequestBody defines body for EditArtifactElement for application/json ContentType.
+type EditArtifactElementJSONRequestBody = ArtifactElementEdit
 
 // OpenArtifactFrameJSONRequestBody defines body for OpenArtifactFrame for application/json ContentType.
 type OpenArtifactFrameJSONRequestBody = ArtifactFrameRequest
@@ -11223,6 +11383,40 @@ func (t *WsServerMessage) MergeWsServerArtifactActivity(v WsServerArtifactActivi
 	return err
 }
 
+// AsWsServerArtifactComments returns the union data inside the WsServerMessage as a WsServerArtifactComments
+func (t WsServerMessage) AsWsServerArtifactComments() (WsServerArtifactComments, error) {
+	var body WsServerArtifactComments
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsServerArtifactComments overwrites any union data inside the WsServerMessage as the provided WsServerArtifactComments
+func (t *WsServerMessage) FromWsServerArtifactComments(v WsServerArtifactComments) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"artifact.comments"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsServerArtifactComments performs a merge with any union data inside the WsServerMessage, using the provided WsServerArtifactComments
+func (t *WsServerMessage) MergeWsServerArtifactComments(v WsServerArtifactComments) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"artifact.comments"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 func (t WsServerMessage) Discriminator() (string, error) {
 	var discriminator struct {
 		Discriminator string `json:"type"`
@@ -11239,6 +11433,8 @@ func (t WsServerMessage) ValueByDiscriminator() (interface{}, error) {
 	switch discriminator {
 	case "artifact.activity":
 		return t.AsWsServerArtifactActivity()
+	case "artifact.comments":
+		return t.AsWsServerArtifactComments()
 	case "artifact.version":
 		return t.AsWsServerArtifactVersion()
 	case "artifacts.changed":
@@ -11441,6 +11637,24 @@ type ServerInterface interface {
 	// PatchArtifact 重命名（不产生版本；回收站里的不能改）
 	// (PATCH /api/v1/artifacts/{id})
 	PatchArtifact(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
+	// ListArtifactComments 评论串（旧的在前）；返回前把锚点在最新版本上重新定位
+	// (GET /api/v1/artifacts/{id}/comments)
+	ListArtifactComments(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
+	// CreateArtifactComment 新建一个评论串（作者是用户）
+	// (POST /api/v1/artifacts/{id}/comments)
+	CreateArtifactComment(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
+	// MarkArtifactCommentsSent 记下这些评论串已发给某个线程
+	// (POST /api/v1/artifacts/{id}/comments/sent)
+	MarkArtifactCommentsSent(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
+	// PatchArtifactComment 标为已解决 / 重新打开
+	// (PATCH /api/v1/artifacts/{id}/comments/{threadId})
+	PatchArtifactComment(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, threadID ArtifactCommentThreadIDPath)
+	// ReplyArtifactComment 用户回复（清掉该串的已发送标记）
+	// (POST /api/v1/artifacts/{id}/comments/{threadId}/replies)
+	ReplyArtifactComment(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, threadID ArtifactCommentThreadIDPath)
+	// EditArtifactElement 直接编辑页面上的一个元素（文字与 7 个样式属性），落成一个用户版本
+	// (POST /api/v1/artifacts/{id}/element)
+	EditArtifactElement(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
 	// ExportArtifact 导出某个版本（`html` 只对单文件版本可用；`zip` 打包全部文件）
 	// (GET /api/v1/artifacts/{id}/export)
 	ExportArtifact(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, params ExportArtifactParams)
@@ -12125,6 +12339,42 @@ func (_ Unimplemented) GetArtifact(w http.ResponseWriter, r *http.Request, id Ar
 // PatchArtifact 重命名（不产生版本；回收站里的不能改）
 // (PATCH /api/v1/artifacts/{id})
 func (_ Unimplemented) PatchArtifact(w http.ResponseWriter, r *http.Request, id ArtifactIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListArtifactComments 评论串（旧的在前）；返回前把锚点在最新版本上重新定位
+// (GET /api/v1/artifacts/{id}/comments)
+func (_ Unimplemented) ListArtifactComments(w http.ResponseWriter, r *http.Request, id ArtifactIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateArtifactComment 新建一个评论串（作者是用户）
+// (POST /api/v1/artifacts/{id}/comments)
+func (_ Unimplemented) CreateArtifactComment(w http.ResponseWriter, r *http.Request, id ArtifactIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// MarkArtifactCommentsSent 记下这些评论串已发给某个线程
+// (POST /api/v1/artifacts/{id}/comments/sent)
+func (_ Unimplemented) MarkArtifactCommentsSent(w http.ResponseWriter, r *http.Request, id ArtifactIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PatchArtifactComment 标为已解决 / 重新打开
+// (PATCH /api/v1/artifacts/{id}/comments/{threadId})
+func (_ Unimplemented) PatchArtifactComment(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, threadID ArtifactCommentThreadIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ReplyArtifactComment 用户回复（清掉该串的已发送标记）
+// (POST /api/v1/artifacts/{id}/comments/{threadId}/replies)
+func (_ Unimplemented) ReplyArtifactComment(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, threadID ArtifactCommentThreadIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// EditArtifactElement 直接编辑页面上的一个元素（文字与 7 个样式属性），落成一个用户版本
+// (POST /api/v1/artifacts/{id}/element)
+func (_ Unimplemented) EditArtifactElement(w http.ResponseWriter, r *http.Request, id ArtifactIDPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -13727,6 +13977,180 @@ func (siw *ServerInterfaceWrapper) PatchArtifact(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PatchArtifact(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListArtifactComments operation middleware
+func (siw *ServerInterfaceWrapper) ListArtifactComments(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListArtifactComments(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateArtifactComment operation middleware
+func (siw *ServerInterfaceWrapper) CreateArtifactComment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateArtifactComment(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// MarkArtifactCommentsSent operation middleware
+func (siw *ServerInterfaceWrapper) MarkArtifactCommentsSent(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.MarkArtifactCommentsSent(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PatchArtifactComment operation middleware
+func (siw *ServerInterfaceWrapper) PatchArtifactComment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "threadId" -------------
+	var threadID ArtifactCommentThreadIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "threadId", chi.URLParam(r, "threadId"), &threadID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "threadId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PatchArtifactComment(w, r, id, threadID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReplyArtifactComment operation middleware
+func (siw *ServerInterfaceWrapper) ReplyArtifactComment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "threadId" -------------
+	var threadID ArtifactCommentThreadIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "threadId", chi.URLParam(r, "threadId"), &threadID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "threadId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReplyArtifactComment(w, r, id, threadID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// EditArtifactElement operation middleware
+func (siw *ServerInterfaceWrapper) EditArtifactElement(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.EditArtifactElement(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -20769,6 +21193,24 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/artifacts/capabilities", wrapper.GetArtifactCapabilities)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/artifacts/{id}/comments", wrapper.ListArtifactComments)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/artifacts/{id}/comments", wrapper.CreateArtifactComment)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/artifacts/{id}/comments/sent", wrapper.MarkArtifactCommentsSent)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/v1/artifacts/{id}/comments/{threadId}", wrapper.PatchArtifactComment)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/artifacts/{id}/comments/{threadId}/replies", wrapper.ReplyArtifactComment)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/artifacts/{id}/element", wrapper.EditArtifactElement)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/coordinator", wrapper.GetCoordinator)

@@ -3487,6 +3487,135 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ArtifactCapabilities' }
         default: { $ref: '#/components/responses/Error' }
+  /api/v1/artifacts/{id}/comments:
+    parameters:
+      - { $ref: '#/components/parameters/ArtifactIdPath' }
+    get:
+      tags: [artifacts]
+      operationId: listArtifactComments
+      summary: 评论串（旧的在前）；返回前把锚点在最新版本上重新定位
+      responses:
+        '200':
+          description: 评论串
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtifactCommentThreadList' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [artifacts]
+      operationId: createArtifactComment
+      summary: 新建一个评论串（作者是用户）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ArtifactCommentCreate' }
+      responses:
+        '201':
+          description: 新的评论串
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtifactCommentThread' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/artifacts/{id}/comments/sent:
+    parameters:
+      - { $ref: '#/components/parameters/ArtifactIdPath' }
+    post:
+      tags: [artifacts]
+      operationId: markArtifactCommentsSent
+      summary: 记下这些评论串已发给某个线程
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ArtifactCommentsSent' }
+      responses:
+        '204': { description: 已记录 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/artifacts/{id}/comments/{threadId}:
+    parameters:
+      - { $ref: '#/components/parameters/ArtifactIdPath' }
+      - { $ref: '#/components/parameters/ArtifactCommentThreadIdPath' }
+    patch:
+      tags: [artifacts]
+      operationId: patchArtifactComment
+      summary: 标为已解决 / 重新打开
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ArtifactCommentPatch' }
+      responses:
+        '200':
+          description: 修改后的评论串
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtifactCommentThread' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/artifacts/{id}/comments/{threadId}/replies:
+    parameters:
+      - { $ref: '#/components/parameters/ArtifactIdPath' }
+      - { $ref: '#/components/parameters/ArtifactCommentThreadIdPath' }
+    post:
+      tags: [artifacts]
+      operationId: replyArtifactComment
+      summary: 用户回复（清掉该串的已发送标记）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ArtifactCommentReply' }
+      responses:
+        '200':
+          description: 修改后的评论串
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtifactCommentThread' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/artifacts/{id}/element:
+    parameters:
+      - { $ref: '#/components/parameters/ArtifactIdPath' }
+    post:
+      tags: [artifacts]
+      operationId: editArtifactElement
+      summary: 直接编辑页面上的一个元素（文字与 7 个样式属性），落成一个用户版本
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ArtifactElementEdit' }
+      responses:
+        '200':
+          description: 新版本
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtifactVersionRef' }
+        '409':
+          description: 元素所在的文件在 `baseVersion` 之后被改过，或偏移处已不是该标签
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtifactConflict' }
+        default: { $ref: '#/components/responses/Error' }
   /api/v1/coordinator:
     get:
       tags: [automation]
@@ -4477,6 +4606,11 @@ components:
       in: path
       required: true
       schema: { type: integer, minimum: 1 }
+    ArtifactCommentThreadIdPath:
+      name: threadId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/ArtifactCommentThreadId' }
     FsPathQuery:
       name: path
       in: query
@@ -5899,6 +6033,129 @@ components:
         sample:
           type: boolean
           description: 页面能否用 `sample` 能力向模型提问
+    ArtifactCommentThreadId:
+      type: string
+      pattern: '^act_[0-9A-Z]{26}$'
+      description: '`act_<ulid>`（artifact 评论串）'
+    ArtifactCommentAnchor:
+      type: object
+      description: 评论的锚点；`offset` / `tag` 为空表示整个页面
+      required: [version, path, page, offset, tag, text, missing]
+      properties:
+        version:
+          type: integer
+          description: 锚点最近一次定位所在的版本
+        path:
+          type: string
+          description: 版本里的 HTML 文件
+        page:
+          type: object
+          nullable: true
+          description: 画布页面上的锚点：画框在阅读顺序里的序号与名字
+          required: [number, name]
+          properties:
+            number: { type: integer }
+            name: { type: string }
+        offset:
+          type: integer
+          nullable: true
+          description: 元素起始标签在文件里的 UTF-8 字节偏移；脚本生成的元素与整页锚点为空
+        tag:
+          type: string
+          nullable: true
+          pattern: '^[a-z][a-z0-9-]{0,63}$'
+        text:
+          type: string
+          maxLength: 120
+          description: 元素文本片段（折叠空白后前 120 个字符）
+        missing:
+          type: boolean
+          description: 元素在最新版本里已找不到
+    ArtifactComment:
+      type: object
+      required: [n, authorLabel, body, createdAt]
+      properties:
+        n: { type: integer }
+        authorThreadId:
+          allOf:
+            - $ref: '#/components/schemas/ThreadId'
+          description: 回复的线程；省略 = 用户
+        authorLabel:
+          type: string
+          description: 写入时的线程标题快照（用户为空串）
+        body: { type: string }
+        createdAt: { $ref: '#/components/schemas/TimestampMs' }
+    ArtifactCommentThread:
+      type: object
+      required: [id, anchor, createdAt, comments]
+      properties:
+        id: { $ref: '#/components/schemas/ArtifactCommentThreadId' }
+        anchor: { $ref: '#/components/schemas/ArtifactCommentAnchor' }
+        createdAt: { $ref: '#/components/schemas/TimestampMs' }
+        resolvedAt: { $ref: '#/components/schemas/TimestampMs' }
+        sentAt: { $ref: '#/components/schemas/TimestampMs' }
+        sentTo:
+          allOf:
+            - $ref: '#/components/schemas/ThreadId'
+          description: 发给了哪个线程
+        comments:
+          type: array
+          items: { $ref: '#/components/schemas/ArtifactComment' }
+    ArtifactCommentThreadList:
+      type: object
+      required: [version, threads]
+      properties:
+        version:
+          type: integer
+          description: 最新版本
+        threads:
+          type: array
+          items: { $ref: '#/components/schemas/ArtifactCommentThread' }
+    ArtifactCommentCreate:
+      type: object
+      required: [anchor, body]
+      properties:
+        anchor: { $ref: '#/components/schemas/ArtifactCommentAnchor' }
+        body: { type: string, minLength: 1 }
+    ArtifactCommentReply:
+      type: object
+      required: [body]
+      properties:
+        body: { type: string, minLength: 1 }
+    ArtifactCommentPatch:
+      type: object
+      required: [resolved]
+      properties:
+        resolved: { type: boolean }
+    ArtifactCommentsSent:
+      type: object
+      required: [threadIds, sentTo]
+      properties:
+        threadIds:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/ArtifactCommentThreadId' }
+        sentTo: { $ref: '#/components/schemas/ThreadId' }
+    ArtifactElementEdit:
+      type: object
+      required: [baseVersion, path, offset, tag]
+      properties:
+        baseVersion: { type: integer, minimum: 1 }
+        path: { type: string }
+        offset: { type: integer, minimum: 0 }
+        tag: { type: string, pattern: '^[a-z][a-z0-9-]{0,63}$' }
+        style:
+          type: object
+          description: '`color`、`background-color`、`font-size`、`font-weight`、`text-align`、`padding`、`border-radius` 中的若干项'
+          additionalProperties: { type: string }
+        text:
+          type: string
+          description: 新的文字（只对内容全是文本的元素）
+    ArtifactVersionRef:
+      type: object
+      required: [version]
+      properties:
+        version: { type: integer }
     CreateAssistantConversationRequest:
       type: object
       description: 新助手对话的第一条用户消息；全部省略 = 空对话
@@ -8839,6 +9096,7 @@ components:
         - $ref: '#/components/schemas/WsServerArtifactsChanged'
         - $ref: '#/components/schemas/WsServerArtifactVersion'
         - $ref: '#/components/schemas/WsServerArtifactActivity'
+        - $ref: '#/components/schemas/WsServerArtifactComments'
       discriminator:
         propertyName: type
         mapping:
@@ -8864,6 +9122,7 @@ components:
           artifacts.changed: '#/components/schemas/WsServerArtifactsChanged'
           artifact.version: '#/components/schemas/WsServerArtifactVersion'
           artifact.activity: '#/components/schemas/WsServerArtifactActivity'
+          artifact.comments: '#/components/schemas/WsServerArtifactComments'
     WsServerIndex:
       type: object
       description: 线程摘要全量（连接建立后首条）
@@ -9097,6 +9356,13 @@ components:
         type: { type: string, enum: [artifact.version], x-enum-varnames: [WsServerArtifactVersionTypeArtifactVersion] }
         id: { $ref: '#/components/schemas/ArtifactId' }
         version: { type: integer }
+    WsServerArtifactComments:
+      type: object
+      description: 某个 artifact 的评论有变化；只发给正在观看它的连接
+      required: [type, id]
+      properties:
+        type: { type: string, enum: [artifact.comments], x-enum-varnames: [WsServerArtifactCommentsTypeArtifactComments] }
+        id: { $ref: '#/components/schemas/ArtifactId' }
     WsServerArtifactActivity:
       type: object
       description: 某个 artifact 上的在场信息（观看者、agent 正在做什么）；只发给正在观看它的连接

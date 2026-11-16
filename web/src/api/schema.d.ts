@@ -2816,6 +2816,104 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/artifacts/{id}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 评论串（旧的在前）；返回前把锚点在最新版本上重新定位 */
+        get: operations["listArtifactComments"];
+        put?: never;
+        /** 新建一个评论串（作者是用户） */
+        post: operations["createArtifactComment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifacts/{id}/comments/sent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 记下这些评论串已发给某个线程 */
+        post: operations["markArtifactCommentsSent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifacts/{id}/comments/{threadId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+                threadId: components["parameters"]["ArtifactCommentThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** 标为已解决 / 重新打开 */
+        patch: operations["patchArtifactComment"];
+        trace?: never;
+    };
+    "/api/v1/artifacts/{id}/comments/{threadId}/replies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+                threadId: components["parameters"]["ArtifactCommentThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 用户回复（清掉该串的已发送标记） */
+        post: operations["replyArtifactComment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifacts/{id}/element": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 直接编辑页面上的一个元素（文字与 7 个样式属性），落成一个用户版本 */
+        post: operations["editArtifactElement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/coordinator": {
         parameters: {
             query?: never;
@@ -4437,6 +4535,80 @@ export interface components {
             renderReason?: string;
             /** @description 页面能否用 `sample` 能力向模型提问 */
             sample: boolean;
+        };
+        /** @description `act_<ulid>`（artifact 评论串） */
+        ArtifactCommentThreadId: string;
+        /** @description 评论的锚点；`offset` / `tag` 为空表示整个页面 */
+        ArtifactCommentAnchor: {
+            /** @description 锚点最近一次定位所在的版本 */
+            version: number;
+            /** @description 版本里的 HTML 文件 */
+            path: string;
+            /** @description 画布页面上的锚点：画框在阅读顺序里的序号与名字 */
+            page: {
+                number: number;
+                name: string;
+            } | null;
+            /** @description 元素起始标签在文件里的 UTF-8 字节偏移；脚本生成的元素与整页锚点为空 */
+            offset: number | null;
+            tag: string | null;
+            /** @description 元素文本片段（折叠空白后前 120 个字符） */
+            text: string;
+            /** @description 元素在最新版本里已找不到 */
+            missing: boolean;
+        };
+        ArtifactComment: {
+            n: number;
+            /** @description 回复的线程；省略 = 用户 */
+            authorThreadId?: components["schemas"]["ThreadId"];
+            /** @description 写入时的线程标题快照（用户为空串） */
+            authorLabel: string;
+            body: string;
+            createdAt: components["schemas"]["TimestampMs"];
+        };
+        ArtifactCommentThread: {
+            id: components["schemas"]["ArtifactCommentThreadId"];
+            anchor: components["schemas"]["ArtifactCommentAnchor"];
+            createdAt: components["schemas"]["TimestampMs"];
+            resolvedAt?: components["schemas"]["TimestampMs"];
+            sentAt?: components["schemas"]["TimestampMs"];
+            /** @description 发给了哪个线程 */
+            sentTo?: components["schemas"]["ThreadId"];
+            comments: components["schemas"]["ArtifactComment"][];
+        };
+        ArtifactCommentThreadList: {
+            /** @description 最新版本 */
+            version: number;
+            threads: components["schemas"]["ArtifactCommentThread"][];
+        };
+        ArtifactCommentCreate: {
+            anchor: components["schemas"]["ArtifactCommentAnchor"];
+            body: string;
+        };
+        ArtifactCommentReply: {
+            body: string;
+        };
+        ArtifactCommentPatch: {
+            resolved: boolean;
+        };
+        ArtifactCommentsSent: {
+            threadIds: components["schemas"]["ArtifactCommentThreadId"][];
+            sentTo: components["schemas"]["ThreadId"];
+        };
+        ArtifactElementEdit: {
+            baseVersion: number;
+            path: string;
+            offset: number;
+            tag: string;
+            /** @description `color`、`background-color`、`font-size`、`font-weight`、`text-align`、`padding`、`border-radius` 中的若干项 */
+            style?: {
+                [key: string]: string;
+            };
+            /** @description 新的文字（只对内容全是文本的元素） */
+            text?: string;
+        };
+        ArtifactVersionRef: {
+            version: number;
         };
         /** @description 新助手对话的第一条用户消息；全部省略 = 空对话 */
         CreateAssistantConversationRequest: {
@@ -6502,7 +6674,7 @@ export interface components {
             id: components["schemas"]["ArtifactId"];
         };
         /** @description 服务端 → 客户端 WS 消息 */
-        WsServerMessage: components["schemas"]["WsServerIndex"] | components["schemas"]["WsServerIndexPatch"] | components["schemas"]["WsServerThreadSnapshot"] | components["schemas"]["WsServerEntries"] | components["schemas"]["WsServerFrame"] | components["schemas"]["WsServerRes"] | components["schemas"]["WsServerUiResolved"] | components["schemas"]["WsServerLiveReset"] | components["schemas"]["WsServerTranscriptReset"] | components["schemas"]["WsServerPlanResolved"] | components["schemas"]["WsServerOrb"] | components["schemas"]["WsServerError"] | components["schemas"]["WsServerPong"] | components["schemas"]["WsServerTermLagged"] | components["schemas"]["WsServerTermResized"] | components["schemas"]["WsServerNotification"] | components["schemas"]["WsServerNotificationsRead"] | components["schemas"]["WsServerSchedulesChanged"] | components["schemas"]["WsServerGitHubChanged"] | components["schemas"]["WsServerArtifactsChanged"] | components["schemas"]["WsServerArtifactVersion"] | components["schemas"]["WsServerArtifactActivity"];
+        WsServerMessage: components["schemas"]["WsServerIndex"] | components["schemas"]["WsServerIndexPatch"] | components["schemas"]["WsServerThreadSnapshot"] | components["schemas"]["WsServerEntries"] | components["schemas"]["WsServerFrame"] | components["schemas"]["WsServerRes"] | components["schemas"]["WsServerUiResolved"] | components["schemas"]["WsServerLiveReset"] | components["schemas"]["WsServerTranscriptReset"] | components["schemas"]["WsServerPlanResolved"] | components["schemas"]["WsServerOrb"] | components["schemas"]["WsServerError"] | components["schemas"]["WsServerPong"] | components["schemas"]["WsServerTermLagged"] | components["schemas"]["WsServerTermResized"] | components["schemas"]["WsServerNotification"] | components["schemas"]["WsServerNotificationsRead"] | components["schemas"]["WsServerSchedulesChanged"] | components["schemas"]["WsServerGitHubChanged"] | components["schemas"]["WsServerArtifactsChanged"] | components["schemas"]["WsServerArtifactVersion"] | components["schemas"]["WsServerArtifactActivity"] | components["schemas"]["WsServerArtifactComments"];
         /** @description 线程摘要全量（连接建立后首条） */
         WsServerIndex: {
             /**
@@ -6752,6 +6924,15 @@ export interface components {
             type: "artifact.version";
             id: components["schemas"]["ArtifactId"];
             version: number;
+        };
+        /** @description 某个 artifact 的评论有变化；只发给正在观看它的连接 */
+        WsServerArtifactComments: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "artifact.comments";
+            id: components["schemas"]["ArtifactId"];
         };
         /** @description 某个 artifact 上的在场信息（观看者、agent 正在做什么）；只发给正在观看它的连接 */
         WsServerArtifactActivity: {
@@ -7695,6 +7876,7 @@ export interface components {
         AssistantFileIdPath: components["schemas"]["AssistantFileId"];
         ArtifactIdPath: components["schemas"]["ArtifactId"];
         ArtifactVersionPath: number;
+        ArtifactCommentThreadIdPath: components["schemas"]["ArtifactCommentThreadId"];
         /**
          * @description orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径。
          *     runner 的 orb（M11b）：范围改为 `thread` 线程的工作目录（越界 → 403 `dir_not_served`）。
@@ -12218,6 +12400,173 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ArtifactCapabilities"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listArtifactComments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 评论串 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactCommentThreadList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createArtifactComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArtifactCommentCreate"];
+            };
+        };
+        responses: {
+            /** @description 新的评论串 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactCommentThread"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    markArtifactCommentsSent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArtifactCommentsSent"];
+            };
+        };
+        responses: {
+            /** @description 已记录 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    patchArtifactComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+                threadId: components["parameters"]["ArtifactCommentThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArtifactCommentPatch"];
+            };
+        };
+        responses: {
+            /** @description 修改后的评论串 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactCommentThread"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    replyArtifactComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+                threadId: components["parameters"]["ArtifactCommentThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArtifactCommentReply"];
+            };
+        };
+        responses: {
+            /** @description 修改后的评论串 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactCommentThread"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    editArtifactElement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArtifactElementEdit"];
+            };
+        };
+        responses: {
+            /** @description 新版本 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactVersionRef"];
+                };
+            };
+            /** @description 元素所在的文件在 `baseVersion` 之后被改过，或偏移处已不是该标签 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactConflict"];
                 };
             };
             default: components["responses"]["Error"];
