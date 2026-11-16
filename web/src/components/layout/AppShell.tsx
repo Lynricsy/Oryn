@@ -21,6 +21,7 @@
 import { type ReactNode, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { Navigate, Outlet, useLocation, useNavigate } from "react-router";
+import { useRealtimeArtifactSync } from "../../api/artifact-queries";
 import { ApiError, UNAUTHORIZED_EVENT } from "../../api/client";
 import { useRealtimeGitHubSync } from "../../api/github-queries";
 import { useMe } from "../../api/queries";
@@ -194,6 +195,8 @@ export function AppShell(): ReactNode {
 	useRealtimeScheduleSync();
 	// GitHub 集成状态（M14）同理
 	useRealtimeGitHubSync();
+	// Artifacts 列表（M14）同理
+	useRealtimeArtifactSync();
 	const here = useRef("");
 	here.current = location.pathname + location.search;
 	// 双段抽屉的进出场（挂载与过渡状态）；钩子必须在下面的提前返回之前

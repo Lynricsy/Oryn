@@ -35,6 +35,11 @@ const InboxPage = lazy(() =>
 	import("./pages/InboxPage").then((m) => ({ default: m.InboxPage })),
 );
 
+// Artifacts（M14）：整页查看器
+const ArtifactPage = lazy(() =>
+	import("./pages/ArtifactPage").then((m) => ({ default: m.ArtifactPage })),
+);
+
 // 不常用的页面（认证、设置、匿名分享页）按需加载
 const SetupPage = lazy(() =>
 	import("./pages/AuthPages").then((m) => ({ default: m.SetupPage })),
@@ -109,6 +114,7 @@ export function App(): ReactNode {
 						/>
 						<Route path="stats/:tab" element={<StatsPage />} />
 						<Route path="inbox" element={<InboxPage />} />
+						<Route path="artifacts/:artifactId" element={<ArtifactPage />} />
 						{/* 项目管理搬到了项目分区（M9.6） */}
 						<Route
 							path="settings/projects"

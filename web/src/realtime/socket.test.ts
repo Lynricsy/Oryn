@@ -298,6 +298,55 @@ describe("RealtimeClient", () => {
 		expect(seen).toHaveBeenCalledTimes(3);
 	});
 
+	it("artifacts.changed 与连接建立通知列表监听者；artifact.version 按 id 分发；watch 引用计数并在重连后重发（M14）", async () => {
+		const changed = vi.fn();
+		client.onArtifactsChanged(changed);
+		const mine = vi.fn();
+		const other = vi.fn();
+		client.onArtifact("art_A", mine);
+		client.onArtifact("art_B", other);
+		const ws = await connected(client);
+		expect(changed).toHaveBeenCalledTimes(1);
+		ws.recv({ type: "artifacts.changed" });
+		expect(changed).toHaveBeenCalledTimes(2);
+		ws.recv({ type: "artifact.version", id: "art_A", version: 4 });
+		expect(mine).toHaveBeenCalledWith({
+			type: "artifact.version",
+			id: "art_A",
+			version: 4,
+		});
+		expect(other).not.toHaveBeenCalled();
+
+		const offA = client.watchArtifact("art_A");
+		const offB = client.watchArtifact("art_A");
+		const watches = () =>
+			ws.sent.filter(
+				(m) => m.type === "artifact.watch" || m.type === "artifact.unwatch",
+			);
+		expect(watches()).toEqual([{ type: "artifact.watch", id: "art_A" }]);
+		client.watchArtifact("art_A", "c2")();
+		expect(watches().at(-1)).toEqual({
+			type: "artifact.watch",
+			id: "art_A",
+			page: "c2",
+		});
+		offA();
+		expect(watches().at(-1)?.type).toBe("artifact.watch");
+		ws.drop();
+		await vi.advanceTimersByTimeAsync(500);
+		await vi.waitFor(() => expect(FakeWS.instances.length).toBe(2));
+		const ws2 = FakeWS.instances[1] as FakeWS;
+		ws2.accept();
+		expect(ws2.sent).toContainEqual({
+			type: "artifact.watch",
+			id: "art_A",
+			page: "c2",
+		});
+		expect(changed).toHaveBeenCalledTimes(3);
+		offB();
+		expect(ws2.sent.at(-1)).toEqual({ type: "artifact.unwatch", id: "art_A" });
+	});
+
 	describe("死连接检测（M9.6 验收 R9）", () => {
 		const PING = 25_000;
 

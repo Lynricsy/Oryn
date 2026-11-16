@@ -13,6 +13,7 @@ vi.mock("./realtime/socket", () => ({
 		send: vi.fn(),
 		onSchedulesChanged: vi.fn(() => () => undefined),
 		onGitHubChanged: vi.fn(() => () => undefined),
+		onArtifactsChanged: vi.fn(() => () => undefined),
 	},
 }));
 

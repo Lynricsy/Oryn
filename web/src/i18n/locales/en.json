@@ -1622,6 +1622,69 @@
 			"exit": "exit {{code}}"
 		}
 	},
+	"artifacts": {
+		"title": "Artifacts",
+		"kinds": {
+			"web": "Page",
+			"canvas": "Canvas",
+			"document": "Document",
+			"slides": "Slides"
+		},
+		"viewer": {
+			"toolbar": "Artifact toolbar",
+			"back": "Back",
+			"reload": "Reload",
+			"openInBrowser": "Open in browser",
+			"version": "v{{n}}",
+			"versionTitle": "Version {{n}}",
+			"frameTitle": "Artifact: {{title}}",
+			"blocked": "This page tried to open {{host}}",
+			"openFailed": "Couldn't open in the browser: {{reason}}",
+			"loading": "Loading artifact",
+			"notFound": "It's no longer in Oryn",
+			"notFoundHint": "This artifact was permanently deleted, or the link is wrong.",
+			"deleted": "This artifact was deleted",
+			"deletedDays_one": "It stays in Recently deleted for {{count}} more day, then it's removed for good.",
+			"deletedDays_other": "It stays in Recently deleted for {{count}} more days, then it's removed for good.",
+			"restore": "Restore",
+			"failed": "Can't show this artifact right now",
+			"retry": "Retry"
+		},
+		"panel": {
+			"toolbar": "Artifacts toolbar",
+			"switch": "Switch artifact",
+			"expand": "Open full view",
+			"empty": "This thread has no artifacts yet"
+		},
+		"card": {
+			"meta": "{{kind}} · v{{version}} · {{when}}",
+			"open": "Open “{{title}}”"
+		},
+		"tool": {
+			"created": "{{kind}} · created · v{{version}}",
+			"updated": "updated · v{{from}}→v{{to}}",
+			"updatedTo": "updated · v{{to}}",
+			"renamed": "renamed",
+			"restored": "restored · v{{version}}",
+			"deleted": "deleted",
+			"names": {
+				"create_artifact": "Create artifact",
+				"read_artifact": "Read artifact",
+				"update_artifact": "Update artifact",
+				"list_artifacts": "List artifacts",
+				"delete_artifact": "Delete artifact",
+				"list_artifact_versions": "List versions",
+				"restore_artifact_version": "Restore version",
+				"read_artifact_guide": "Read artifact guide",
+				"read_artifact_comments": "Read comments",
+				"reply_artifact_comment": "Reply to comment",
+				"resolve_artifact_comment": "Resolve comment",
+				"screenshot_artifact": "Screenshot",
+				"read_artifact_data": "Read page data",
+				"write_artifact_data": "Write page data"
+			}
+		}
+	},
 	"rightPanel": {
 		"label": "Right panel",
 		"tabs": {
@@ -1630,9 +1693,11 @@
 			"changes": "Changes",
 			"files": "Files",
 			"terminal": "Terminal",
+			"artifacts": "Artifacts",
 			"portal": "Portal",
 			"desktop": "Desktop"
 		},
+		"unseenArtifacts": "An artifact has a new version",
 		"attention": "A terminal is waiting for input",
 		"agentAttention": "The agent is waiting for your reply",
 		"maximize": "Maximize panel",

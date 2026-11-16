@@ -11,6 +11,8 @@
  * orb 从挂起回到 `ready` 时重取 state 与命令列表：挂起期间的只读查询被控制面以 `agent_unavailable` 拒绝，不会自行重放。
  * 移动壳（M7 计划 4.9）：转入后台 30 秒后挂起连接（关掉 socket、取消重连，状态 `idle`），不让 WebView 在后台保活网络；
  * 回到前台立即重连（退避计数归零），重连后照常按 `afterSeq` 补齐。
+ * Artifacts（M14）：`artifacts.changed` 与每次连接建立都通知 `onArtifactsChanged` 的监听者；`artifact.version` /
+ * `artifact.activity` 按 artifact id 分发给 `onArtifact` 的订阅者。`watchArtifact` 按引用计数登记观看，重连后重发 `artifact.watch`。
  */
 
 import { ApiError, api, unwrap, type WsServerMessage } from "../api/client";
@@ -51,6 +53,12 @@ export class OmpCommandError extends Error {
 
 /** 平台计时器句柄（浏览器为 number，Node 类型下为 Timeout）。 */
 type Timer = ReturnType<typeof setTimeout>;
+
+/** 只发给观看者的 artifact 消息。 */
+export type ArtifactEvent = Extract<
+	WsServerMessage,
+	{ type: "artifact.version" | "artifact.activity" }
+>;
 
 interface PendingCmd {
 	command: string;
@@ -135,6 +143,75 @@ export class RealtimeClient {
 
 	private emitGitHubChanged() {
 		for (const cb of [...this.githubListeners]) cb();
+	}
+
+	/** artifact 列表变更的监听者（M14）：收到 `artifacts.changed` 与每次连接建立时调用。 */
+	private readonly artifactsListeners = new Set<() => void>();
+	/** 按 artifact id 分发 `artifact.version` / `artifact.activity`。 */
+	private readonly artifactListeners = new Map<
+		string,
+		Set<(msg: ArtifactEvent) => void>
+	>();
+	/** 正在观看的 artifact：引用计数与最近一次的画布页；重连后重发 `artifact.watch`。 */
+	private readonly artifactWatches = new Map<
+		string,
+		{ count: number; page?: string }
+	>();
+
+	/** 订阅「artifact 列表可能变了」；连接（重新）建立时也通知。返回取消订阅。 */
+	onArtifactsChanged(cb: () => void): () => void {
+		this.artifactsListeners.add(cb);
+		return () => {
+			this.artifactsListeners.delete(cb);
+		};
+	}
+
+	private emitArtifactsChanged() {
+		for (const cb of [...this.artifactsListeners]) cb();
+	}
+
+	/** 订阅某个 artifact 的观看者消息（需另外 `watchArtifact` 才会收到）。返回取消订阅。 */
+	onArtifact(id: string, cb: (msg: ArtifactEvent) => void): () => void {
+		let set = this.artifactListeners.get(id);
+		if (!set) {
+			set = new Set();
+			this.artifactListeners.set(id, set);
+		}
+		set.add(cb);
+		return () => {
+			const cur = this.artifactListeners.get(id);
+			cur?.delete(cb);
+			if (cur?.size === 0) this.artifactListeners.delete(id);
+		};
+	}
+
+	private sendArtifactWatch(id: string, page?: string) {
+		this.send(
+			page === undefined
+				? { type: "artifact.watch", id }
+				: { type: "artifact.watch", id, page },
+		);
+	}
+
+	/**
+	 * 观看一个 artifact（引用计数）；`page` 是画布 artifact 当前所在的画布页（重复调用用来更新）。
+	 * 返回取消函数：最后一个观看者取消时发 `artifact.unwatch`。
+	 */
+	watchArtifact(id: string, page?: string): () => void {
+		const cur = this.artifactWatches.get(id);
+		const next = { count: (cur?.count ?? 0) + 1, page: page ?? cur?.page };
+		this.artifactWatches.set(id, next);
+		if (!cur || next.page !== cur.page) this.sendArtifactWatch(id, next.page);
+		return () => {
+			const w = this.artifactWatches.get(id);
+			if (!w) return;
+			if (w.count > 1)
+				this.artifactWatches.set(id, { ...w, count: w.count - 1 });
+			else {
+				this.artifactWatches.delete(id);
+				this.send({ type: "artifact.unwatch", id });
+			}
+		};
 	}
 
 	connect() {
@@ -290,6 +367,9 @@ export class RealtimeClient {
 			}, PING_INTERVAL_MS);
 			this.emitSchedulesChanged();
 			this.emitGitHubChanged();
+			for (const [id, w] of this.artifactWatches)
+				this.sendArtifactWatch(id, w.page);
+			this.emitArtifactsChanged();
 		};
 		ws.onmessage = (ev) => {
 			if (this.ws !== ws || typeof ev.data !== "string") return;
@@ -581,6 +661,14 @@ export class RealtimeClient {
 			case "github.changed":
 				this.emitGitHubChanged();
 				return;
+			case "artifacts.changed":
+				this.emitArtifactsChanged();
+				return;
+			case "artifact.version":
+			case "artifact.activity":
+				for (const cb of [...(this.artifactListeners.get(msg.id) ?? [])])
+					cb(msg);
+				return;
 			case "notifications.read":
 				notificationsStore
 					.getState()
@@ -696,3 +784,8 @@ export class RealtimeClient {
 }
 
 export const realtime = new RealtimeClient();
+
+/** 观看一个 artifact（见 `RealtimeClient.watchArtifact`）。 */
+export function watchArtifact(id: string, page?: string): () => void {
+	return realtime.watchArtifact(id, page);
+}

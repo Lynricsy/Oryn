@@ -1622,6 +1622,69 @@
 			"exit": "exit {{code}}"
 		}
 	},
+	"artifacts": {
+		"title": "Artifacts",
+		"kinds": {
+			"web": "页面",
+			"canvas": "画布",
+			"document": "文档",
+			"slides": "幻灯片"
+		},
+		"viewer": {
+			"toolbar": "Artifact 工具条",
+			"back": "返回",
+			"reload": "重新加载",
+			"openInBrowser": "在浏览器中打开",
+			"version": "v{{n}}",
+			"versionTitle": "版本 {{n}}",
+			"frameTitle": "Artifact：{{title}}",
+			"blocked": "此页面试图打开 {{host}}",
+			"openFailed": "无法在浏览器中打开：{{reason}}",
+			"loading": "正在加载 artifact",
+			"notFound": "它已不在 Oryn 中",
+			"notFoundHint": "这个 artifact 已被永久删除，或者链接有误。",
+			"deleted": "这个 artifact 已被删除",
+			"deletedDays_one": "它会在「最近删除」里再保留 {{count}} 天，之后被永久移除。",
+			"deletedDays_other": "它会在「最近删除」里再保留 {{count}} 天，之后被永久移除。",
+			"restore": "恢复",
+			"failed": "暂时无法显示这个 artifact",
+			"retry": "重试"
+		},
+		"panel": {
+			"toolbar": "Artifacts 工具条",
+			"switch": "切换 artifact",
+			"expand": "放大查看",
+			"empty": "这个线程还没有 artifact"
+		},
+		"card": {
+			"meta": "{{kind}} · v{{version}} · {{when}}",
+			"open": "打开「{{title}}」"
+		},
+		"tool": {
+			"created": "{{kind}} · 已创建 · v{{version}}",
+			"updated": "已更新 · v{{from}}→v{{to}}",
+			"updatedTo": "已更新 · v{{to}}",
+			"renamed": "已改名",
+			"restored": "已恢复 · v{{version}}",
+			"deleted": "已删除",
+			"names": {
+				"create_artifact": "创建 artifact",
+				"read_artifact": "读取 artifact",
+				"update_artifact": "更新 artifact",
+				"list_artifacts": "列出 artifact",
+				"delete_artifact": "删除 artifact",
+				"list_artifact_versions": "查看版本",
+				"restore_artifact_version": "恢复版本",
+				"read_artifact_guide": "阅读 artifact 教程",
+				"read_artifact_comments": "读取评论",
+				"reply_artifact_comment": "回复评论",
+				"resolve_artifact_comment": "解决评论",
+				"screenshot_artifact": "截图",
+				"read_artifact_data": "读取页面数据",
+				"write_artifact_data": "写入页面数据"
+			}
+		}
+	},
 	"rightPanel": {
 		"label": "右侧面板",
 		"tabs": {
@@ -1630,9 +1693,11 @@
 			"changes": "改动",
 			"files": "文件",
 			"terminal": "终端",
+			"artifacts": "Artifacts",
 			"portal": "Portal",
 			"desktop": "桌面"
 		},
+		"unseenArtifacts": "Artifact 有新版本",
 		"attention": "有终端在等待输入",
 		"agentAttention": "对话在等待你回答",
 		"maximize": "面板最大化",

@@ -15,6 +15,7 @@ import { Bell } from "@phosphor-icons/react/dist/csr/Bell";
 import { Brain } from "@phosphor-icons/react/dist/csr/Brain";
 import { Broadcast } from "@phosphor-icons/react/dist/csr/Broadcast";
 import { Browser } from "@phosphor-icons/react/dist/csr/Browser";
+import { Browsers } from "@phosphor-icons/react/dist/csr/Browsers";
 import { Bug } from "@phosphor-icons/react/dist/csr/Bug";
 import { Camera } from "@phosphor-icons/react/dist/csr/Camera";
 import { Cards } from "@phosphor-icons/react/dist/csr/Cards";
@@ -31,6 +32,7 @@ import { CircleHalf } from "@phosphor-icons/react/dist/csr/CircleHalf";
 import { ClipboardText } from "@phosphor-icons/react/dist/csr/ClipboardText";
 import { Clock } from "@phosphor-icons/react/dist/csr/Clock";
 import { ClockClockwise } from "@phosphor-icons/react/dist/csr/ClockClockwise";
+import { ClockCounterClockwise } from "@phosphor-icons/react/dist/csr/ClockCounterClockwise";
 import { Code } from "@phosphor-icons/react/dist/csr/Code";
 import { Copy } from "@phosphor-icons/react/dist/csr/Copy";
 import { Cpu } from "@phosphor-icons/react/dist/csr/Cpu";
@@ -43,6 +45,7 @@ import { DeviceMobile } from "@phosphor-icons/react/dist/csr/DeviceMobile";
 import { Devices } from "@phosphor-icons/react/dist/csr/Devices";
 import { DotsThree } from "@phosphor-icons/react/dist/csr/DotsThree";
 import { DownloadSimple } from "@phosphor-icons/react/dist/csr/DownloadSimple";
+import { Export } from "@phosphor-icons/react/dist/csr/Export";
 import { Eye } from "@phosphor-icons/react/dist/csr/Eye";
 import { FastForward } from "@phosphor-icons/react/dist/csr/FastForward";
 import { File } from "@phosphor-icons/react/dist/csr/File";
@@ -90,12 +93,14 @@ import { PencilSimple } from "@phosphor-icons/react/dist/csr/PencilSimple";
 import { Play } from "@phosphor-icons/react/dist/csr/Play";
 import { Plugs } from "@phosphor-icons/react/dist/csr/Plugs";
 import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
+import { Presentation } from "@phosphor-icons/react/dist/csr/Presentation";
 import { PushPin } from "@phosphor-icons/react/dist/csr/PushPin";
 import { QrCode } from "@phosphor-icons/react/dist/csr/QrCode";
 import { Question } from "@phosphor-icons/react/dist/csr/Question";
 import { Quotes } from "@phosphor-icons/react/dist/csr/Quotes";
 import { Robot } from "@phosphor-icons/react/dist/csr/Robot";
 import { RocketLaunch } from "@phosphor-icons/react/dist/csr/RocketLaunch";
+import { Shapes } from "@phosphor-icons/react/dist/csr/Shapes";
 import { ShareNetwork } from "@phosphor-icons/react/dist/csr/ShareNetwork";
 import { ShippingContainer } from "@phosphor-icons/react/dist/csr/ShippingContainer";
 import { SidebarSimple } from "@phosphor-icons/react/dist/csr/SidebarSimple";
@@ -271,6 +276,15 @@ const ICONS = {
 	tray: Tray,
 	/** 侧栏「需要你」分组：等待输入或出错的线程 */
 	handPalm: HandPalm,
+	/** Artifacts（M14）：功能总图标与画布 */
+	shapes: Shapes,
+	/** artifact 类型：幻灯片 / 页面（文档用 `fileText`） */
+	presentation: Presentation,
+	browsers: Browsers,
+	/** artifact 版本历史 */
+	history: ClockCounterClockwise,
+	/** 导出 artifact */
+	export: Export,
 } satisfies Record<string, PhosphorIcon>;
 
 export type IconName = keyof typeof ICONS;

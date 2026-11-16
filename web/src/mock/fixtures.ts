@@ -123,6 +123,18 @@ export const TOOL_ZOO_THREAD = "T-0193a1b2-0000-7000-8000-00000000a0aa";
 const TOOL_ZOO_ORB = "orb-01jcz8m3w4x5y6z7a8b9c0d1ea";
 
 /**
+ * Artifacts 夹具（M14，`mock/artifacts.ts`）：四种类型各一个，外加一个在「最近删除」里的页面。
+ * 页面与回收站里的那个由工具样例线程产出（转录里的 artifact 卡片指向它们），文档与幻灯片属于主线程，画布是导入的。
+ */
+export const ARTIFACT_IDS = {
+	web: "art_01JDNAWEB0000000000000000A",
+	document: "art_01JDNADOC0000000000000000B",
+	slides: "art_01JDNASLIDES00000000000000",
+	canvas: "art_01JDNACANVAS00000000000000",
+	trashed: "art_01JDNATRASH000000000000000",
+};
+
+/**
  * M9 夹具（Space / 全局助手 / 定时）的 id：一个 Space（聊天 + 三个工作线程 + 一个「每次新建线程」定时）、一个助手对话、
  * 一个带线程内定时的线程、一个项目定时及其三次运行建出的线程（第 1 次已按保留数归档，它独占的 orb 已删除）。
  */

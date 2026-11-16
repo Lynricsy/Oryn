@@ -28,6 +28,7 @@ import { readConfigDoc } from "../lib/omp-config";
 import { parseModelSource } from "../lib/turn-role";
 import type { RpcTerminalInfo, SessionState } from "../omp/types";
 import { activeBranch, isMainFile } from "../state/transcript";
+import { MockArtifacts } from "./artifacts";
 import { MockAutomation } from "./automation";
 import { MockDesktop } from "./desktop";
 import {
@@ -484,6 +485,10 @@ export class MockServer {
 	});
 	/** 全局助手文件库（M13）。 */
 	readonly library = new MockLibrary(this.threads);
+	/** Artifacts（M14）：列表、详情、版本、帧与观看者。 */
+	readonly artifacts = new MockArtifacts(this.threads, {
+		changed: () => this.broadcast({ type: "artifacts.changed" }),
+	});
 	/** Space、助手对话、定时、操作记录与协调宿主状态（M9）。 */
 	readonly automation = new MockAutomation({
 		threads: this.threads,
@@ -1311,6 +1316,8 @@ export class MockServer {
 		if (autoRes) return autoRes;
 		const libRes = await this.library.handle(req, p, m, url);
 		if (libRes) return libRes;
+		const artRes = await this.artifacts.handle(req, p, m, url);
+		if (artRes) return artRes;
 		const deskRes = await this.desktop.handle(req, p, m);
 		if (deskRes) return deskRes;
 		const statsRes = await handleStatsFetch(req, p, m, url, {
@@ -2452,6 +2459,7 @@ export class MockServer {
 		this.termWatch.delete(socket);
 		this.termWindow.delete(socket);
 		this.publicSockets.delete(socket);
+		this.artifacts.drop(socket);
 	}
 
 	/** 调试：断开全部连接（客户端会重连并补拉）。 */
@@ -2800,6 +2808,12 @@ export class MockServer {
 				socket.deliver({ type: "pong" });
 				return;
 			case "focus":
+				return;
+			case "artifact.watch":
+				this.artifacts.watch(socket, msg.id);
+				return;
+			case "artifact.unwatch":
+				this.artifacts.unwatch(socket, msg.id);
 				return;
 			case "sub": {
 				this.subs.get(socket)?.add(threadId);
