@@ -18,6 +18,7 @@ import {
 	ChromeLead,
 	WindowControls,
 } from "../components/layout/WindowControls";
+import { useArchiveThread } from "../components/thread/ArchiveDialog";
 import { ProjectBadge, Sheet, TitleGlyph } from "../components/ui/data";
 import { Icon } from "../components/ui/icons";
 import {
