@@ -48,7 +48,7 @@ func (q *Queries) BumpThreadIssueReminders(ctx context.Context, threadID string)
 
 const cancelGithubAutoclose = `-- name: CancelGithubAutoclose :execrows
 UPDATE github_autoclose SET state = 'cancelled', outcome = ?1
-WHERE repo_id = ?2 AND number = ?3 AND state = 'pending'
+WHERE repo_id = ?2 AND number = ?3 AND (state = 'pending' OR (state = 'claimed' AND outcome IS NULL))
 `
 
 type CancelGithubAutocloseParams struct {
@@ -67,7 +67,7 @@ func (q *Queries) CancelGithubAutoclose(ctx context.Context, arg CancelGithubAut
 
 const cancelGithubAutoclosesByThread = `-- name: CancelGithubAutoclosesByThread :execrows
 UPDATE github_autoclose SET state = 'cancelled', outcome = ?1
-WHERE thread_id = ?2 AND state = 'pending'
+WHERE thread_id = ?2 AND (state = 'pending' OR (state = 'claimed' AND outcome IS NULL))
 `
 
 type CancelGithubAutoclosesByThreadParams struct {
@@ -87,7 +87,8 @@ const claimDueGithubAutocloses = `-- name: ClaimDueGithubAutocloses :many
 UPDATE github_autoclose SET state = 'claimed' WHERE state = 'pending' AND due_at <= ?1 RETURNING repo_id, number, thread_id, comment_id, author, due_at, state, outcome
 `
 
-// Atomic claim: each entry runs at most once.
+// Atomic claim: each entry runs at most once. A claimed entry (outcome still NULL) stays cancellable until
+// CommitGithubAutoclose marks it 'closing' right before the close request.
 func (q *Queries) ClaimDueGithubAutocloses(ctx context.Context, now int64) ([]GithubAutoclose, error) {
 	rows, err := q.db.QueryContext(ctx, claimDueGithubAutocloses, now)
 	if err != nil {
@@ -127,6 +128,25 @@ UPDATE projects SET github_repo_id = NULL, github_bind_status = NULL WHERE id = 
 func (q *Queries) ClearProjectGithub(ctx context.Context, id string) error {
 	_, err := q.db.ExecContext(ctx, clearProjectGithub, id)
 	return err
+}
+
+const commitGithubAutoclose = `-- name: CommitGithubAutoclose :execrows
+UPDATE github_autoclose SET outcome = 'closing'
+WHERE repo_id = ?1 AND number = ?2 AND state = 'claimed' AND outcome IS NULL
+`
+
+type CommitGithubAutocloseParams struct {
+	RepoID int64 `json:"repoId"`
+	Number int64 `json:"number"`
+}
+
+// The point of no return: 0 rows means the entry was cancelled while it was being checked.
+func (q *Queries) CommitGithubAutoclose(ctx context.Context, arg CommitGithubAutocloseParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, commitGithubAutoclose, arg.RepoID, arg.Number)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const countGithubOutboxSince = `-- name: CountGithubOutboxSince :one

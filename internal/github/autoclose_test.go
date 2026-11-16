@@ -143,6 +143,82 @@ func TestAutocloseExternalCloseCancels(t *testing.T) {
 	assert.Empty(t, e.fake.CallsTo("PATCH", "/repos/acme/widgets/issues/7"))
 }
 
+// blockReactions 让下一次 reactions 查询停在 fake 里：返回「已进入」与「放行」两个通道。
+func (e *taskEnv) blockReactions() (entered <-chan struct{}, release chan<- struct{}) {
+	in, out := make(chan struct{}, 1), make(chan struct{})
+	e.fake.Lock()
+	e.fake.BeforeReactions = func() {
+		in <- struct{}{}
+		<-out
+	}
+	e.fake.Unlock()
+	return in, out
+}
+
+// 到期认领之后、查 reactions 期间（扫描已把这一项置为 claimed）事件到达：取消照样生效，之后不发关闭请求，
+// 结果也不被扫描覆盖。新评论与外部关闭各一例。
+func TestAutocloseCancelWhileChecking(t *testing.T) {
+	for name, cancel := range map[string]struct {
+		event   string
+		payload func() map[string]any
+		outcome string
+	}{
+		"新评论": {"issue_comment", func() map[string]any { return issueCommentEvent(7, false, "carol", "this is still a problem") }, autocloseCommented},
+		"外部关闭": {"issues", func() map[string]any {
+			return issuesEvent("closed", assocIssue(7, "alice", "MEMBER", "b"), "alice", "")
+		}, autocloseExternalClose},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e, _ := newAutocloseEnv(t)
+			e.schedule()
+			entered, release := e.blockReactions()
+			e.clock.Add(defaultAutocloseHours*time.Hour + time.Second)
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				e.s.scanAutoclose(e.ctx)
+			}()
+			select {
+			case <-entered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("扫描没有查询 reactions")
+			}
+			require.Equal(t, "claimed", e.autoclose().State, "扫描已认领")
+			e.deliver(cancel.event, cancel.payload())
+			close(release)
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("扫描没有结束")
+			}
+			assert.Empty(t, e.fake.CallsTo("PATCH", "/repos/acme/widgets/issues/7"), "取消之后不再关闭")
+			ac := e.autoclose()
+			assert.Equal(t, "cancelled", ac.State)
+			require.NotNil(t, ac.Outcome)
+			assert.Equal(t, cancel.outcome, *ac.Outcome, "扫描的结果不覆盖取消")
+		})
+	}
+}
+
+// 越过「不可取消」点之后（关闭请求已在路上）再到的取消是空操作：这一项仍为 claimed，由扫描写回关闭结果；承诺只能有一次。
+func TestAutocloseCancelAfterCommitIsNoop(t *testing.T) {
+	e, _ := newAutocloseEnv(t)
+	e.schedule()
+	e.clock.Add(defaultAutocloseHours*time.Hour + time.Second)
+	due, err := e.st.Q.ClaimDueGithubAutocloses(e.ctx, e.s.nowMs())
+	require.NoError(t, err)
+	require.Len(t, due, 1)
+	n, err := e.st.Q.CommitGithubAutoclose(e.ctx, db.CommitGithubAutocloseParams{RepoID: 42, Number: 7})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, n)
+	e.s.cancelAutoclose(e.ctx, 42, 7, autocloseCommented)
+	ac := e.autoclose()
+	assert.Equal(t, "claimed", ac.State, "已承诺关闭的项不能再取消")
+	n, err = e.st.Q.CommitGithubAutoclose(e.ctx, db.CommitGithubAutocloseParams{RepoID: 42, Number: 7})
+	require.NoError(t, err)
+	assert.Zero(t, n, "只能承诺一次")
+}
+
 // 并发的扫描只关闭一次；关闭回 404 时记为 already_closed。
 func TestAutocloseConcurrentAndNotFound(t *testing.T) {
 	e, _ := newAutocloseEnv(t)

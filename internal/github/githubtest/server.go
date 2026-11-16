@@ -93,6 +93,8 @@ type Server struct {
 	Unreachable bool
 	// Fail 注入失败："METHOD /path" → 状态码；命中的请求直接回该状态码（仍记进 Calls）。
 	Fail map[string]int
+	// BeforeReactions 非 nil 时，评论 reactions 列表请求在取锁之前先调用它（测试用来阻塞请求、在其间投递别的事件）。
+	BeforeReactions func()
 
 	// RepoHooks / RepoDeliveries 是仓库 webhook 与它们的投递日志（M15，见 repohooks.go）；
 	// DeliveriesUsed / DeliveriesReset 是投递日志接口的独立额度（上限 500 次/小时，304 不计数）。

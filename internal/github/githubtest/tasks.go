@@ -116,6 +116,12 @@ func (s *Server) updateIssue(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listCommentReactions(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
+	before := s.BeforeReactions
+	s.mu.Unlock()
+	if before != nil {
+		before()
+	}
+	s.mu.Lock()
 	defer s.mu.Unlock()
 	rp := s.readableRepo(w, r, "/issues/comments/"+r.PathValue("id")+"/reactions")
 	if rp == nil {

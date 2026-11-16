@@ -319,9 +319,15 @@ SELECT * FROM github_autoclose WHERE repo_id = @repo_id AND number = @number;
 -- name: ListGithubAutoclosesByThread :many
 SELECT * FROM github_autoclose WHERE thread_id = @thread_id ORDER BY due_at;
 
--- Atomic claim: each entry runs at most once.
+-- Atomic claim: each entry runs at most once. A claimed entry (outcome still NULL) stays cancellable until
+-- CommitGithubAutoclose marks it 'closing' right before the close request.
 -- name: ClaimDueGithubAutocloses :many
 UPDATE github_autoclose SET state = 'claimed' WHERE state = 'pending' AND due_at <= @now RETURNING *;
+
+-- The point of no return: 0 rows means the entry was cancelled while it was being checked.
+-- name: CommitGithubAutoclose :execrows
+UPDATE github_autoclose SET outcome = 'closing'
+WHERE repo_id = @repo_id AND number = @number AND state = 'claimed' AND outcome IS NULL;
 
 -- name: FinishGithubAutoclose :exec
 UPDATE github_autoclose SET state = @state, outcome = sqlc.narg(outcome)
@@ -329,11 +335,11 @@ WHERE repo_id = @repo_id AND number = @number AND state = 'claimed';
 
 -- name: CancelGithubAutoclose :execrows
 UPDATE github_autoclose SET state = 'cancelled', outcome = sqlc.narg(outcome)
-WHERE repo_id = @repo_id AND number = @number AND state = 'pending';
+WHERE repo_id = @repo_id AND number = @number AND (state = 'pending' OR (state = 'claimed' AND outcome IS NULL));
 
 -- name: CancelGithubAutoclosesByThread :execrows
 UPDATE github_autoclose SET state = 'cancelled', outcome = sqlc.narg(outcome)
-WHERE thread_id = @thread_id AND state = 'pending';
+WHERE thread_id = @thread_id AND (state = 'pending' OR (state = 'claimed' AND outcome IS NULL));
 
 -- name: DeleteGithubAutoclosesBefore :exec
 DELETE FROM github_autoclose WHERE state IN ('done','cancelled') AND due_at < @before;

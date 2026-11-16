@@ -131,6 +131,9 @@ func (s *Service) cancelAutoclose(ctx context.Context, repoID, number int64, out
 }
 
 // scanAutoclose 原子认领到期的自动关闭（UPDATE … WHERE state='pending'，并发的扫描各自只拿到不同的行）并逐条执行。
+// 认领之后、关闭之前这一项仍可被取消（新评论、外部关闭、任务终态）：runAutoclose 在发关闭请求前经
+// CommitGithubAutoclose 原子地越过「不可取消」点，取消先到则不关闭；FinishGithubAutoclose 只改仍为 claimed 的行，
+// 不覆盖已取消的结果。
 func (s *Service) scanAutoclose(ctx context.Context) {
 	due, err := s.st.Q.ClaimDueGithubAutocloses(ctx, s.nowMs())
 	if err != nil {
@@ -150,6 +153,8 @@ func (s *Service) scanAutoclose(ctx context.Context) {
 }
 
 // runAutoclose 执行一条已认领的自动关闭，返回终态（done / cancelled）与结果。令牌用线程身份；出错也不重试（每条只执行一次）。
+// 查询 reactions 期间可能被取消：关闭请求之前必须先赢得 CommitGithubAutoclose。余下的窗口只有关闭请求本身的往返：
+// 此时到达的评论与「关闭之后紧接着的评论」无法区分，不再取消。
 func (s *Service) runAutoclose(ctx context.Context, ac db.GithubAutoclose) (state, outcome string) {
 	repo, err := s.repoFullName(ctx, ac.RepoID)
 	if err != nil || repo == "" {
@@ -185,6 +190,13 @@ func (s *Service) runAutoclose(ctx context.Context, ac db.GithubAutoclose) (stat
 	case thumbs:
 		slog.Info("github: issue 作者 👎，取消自动关闭", "repo", repo, "number", ac.Number)
 		return "cancelled", autocloseThumbsDown
+	}
+	if n, err := s.st.Q.CommitGithubAutoclose(ctx, db.CommitGithubAutocloseParams{RepoID: ac.RepoID, Number: ac.Number}); err != nil {
+		return "done", "error: " + clip(err.Error(), 200)
+	} else if n == 0 {
+		// 检查期间已被取消（新评论、外部关闭等）：行已是 cancelled，FinishGithubAutoclose 不会覆盖
+		slog.Info("github: 自动关闭在检查期间被取消", "repo", repo, "number", ac.Number)
+		return "cancelled", ""
 	}
 	target := issuePath(repo, ac.Number, "")
 	_, err = s.selfWrite(ctx, slot, http.MethodPatch, target, egress.CatIssueUpdate, []string{target},
