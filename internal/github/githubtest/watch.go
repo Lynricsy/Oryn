@@ -281,7 +281,7 @@ func (s *Server) listReviews(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// listRuns 是仓库的 Actions 运行（按更新时间倒序），支持 event / status 过滤。
+// listRuns 是仓库的 Actions 运行（按更新时间倒序），支持 event / status / head_sha 过滤。
 func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -292,7 +292,8 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	var runs []*WorkflowRun
 	for _, run := range s.Runs {
-		if run.RepoID == rp.ID && (q.Get("event") == "" || q.Get("event") == run.Event) && (q.Get("status") == "" || q.Get("status") == run.Status) {
+		if run.RepoID == rp.ID && (q.Get("event") == "" || q.Get("event") == run.Event) && (q.Get("status") == "" || q.Get("status") == run.Status) &&
+			(q.Get("head_sha") == "" || q.Get("head_sha") == run.HeadSHA) {
 			runs = append(runs, run)
 		}
 	}

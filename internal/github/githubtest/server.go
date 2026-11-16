@@ -113,6 +113,12 @@ type Server struct {
 	// Reactions 是评论上的反应（M15 问题自动关闭，见 tasks.go）。
 	Reactions []*Reaction
 
+	// Jobs / Releases / TagObjects 是 Actions 运行的 job 与日志、GitHub Release、附注 tag 对象（tag 对象 oid → 指向的提交），
+	// 供发布哨兵（M15 步骤 6.1，见 release.go）使用。Repo.Refs 里 tags/<tag> 的值出现在 TagObjects 中时是附注 tag。
+	Jobs       []*WorkflowJob
+	Releases   []*Release
+	TagObjects map[string]string
+
 	seq         int64
 	codes       map[string]string // 授权码 → login
 	userTokens  map[string]string // 用户访问令牌 → login
@@ -247,6 +253,7 @@ func (s *Server) handler() http.Handler {
 	s.watchRoutes(mux)
 	s.refRoutes(mux)
 	s.taskRoutes(mux)
+	s.releaseRoutes(mux)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		r.Body = io.NopCloser(bytes.NewReader(body))

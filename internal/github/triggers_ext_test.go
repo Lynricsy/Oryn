@@ -230,7 +230,7 @@ func TestTriggerReviewerBotMention(t *testing.T) {
 	assert.Len(t, e.ct.created(), 1)
 }
 
-// workflow_run 只做路由（6.1 接入）：有启用的发布哨兵规则时记 ignored:release_pending。
+// workflow_run 的路由：没有启用的发布哨兵规则时不处理；有规则时交给发布状态机（head 提交不带前缀的 run 不是发布）。
 func TestTriggerWorkflowRunRouted(t *testing.T) {
 	e := newTriggerEnv(t)
 	run := map[string]any{"action": "completed", "repository": repoJSON(), "sender": who("owner"), "workflow_run": map[string]any{"id": 1}}
@@ -239,7 +239,7 @@ func TestTriggerWorkflowRunRouted(t *testing.T) {
 	tr := e.trigger(apigen.GitHubTriggerInput{Name: "rel", Event: apigen.WorkflowRunCompleted, Prompt: "p", ReleasePrefix: new("chore: release ")})
 	assert.Equal(t, "chore: release ", *tr.ReleasePrefix)
 	g = e.deliver("workflow_run", run)
-	assert.Equal(t, "ignored:release_pending", e.delivery(g).Outcome)
+	assert.Equal(t, "ignored:not_release", e.delivery(g).Outcome)
 	run["action"] = "requested"
 	g = e.deliver("workflow_run", run)
 	assert.Equal(t, "ignored:action", e.delivery(g).Outcome)

@@ -581,8 +581,8 @@ func (s *Service) onUntargetedComment(ctx context.Context, ev hookEvent) (string
 	}, cands)
 }
 
-// onWorkflowRun 处理 workflow_run 事件：只做路由，发布哨兵的状态机由步骤 6.1 接入；在此之前有启用的
-// workflow_run_completed 规则时记 ignored:release_pending。
+// onWorkflowRun 处理 workflow_run 事件：已完成的 run 交给发布哨兵的状态机（release.go），按启用的 workflow_run_completed
+// 规则中最早的一条（与 fire 相同：一个仓库的发布只对应一个线程）。
 func (s *Service) onWorkflowRun(ctx context.Context, action string, body []byte) (string, error) {
 	if action != "completed" {
 		return "ignored:action", nil
@@ -600,7 +600,7 @@ func (s *Service) onWorkflowRun(ctx context.Context, action string, body []byte)
 	if len(cands) == 0 {
 		return "ignored:no_trigger", nil
 	}
-	return "ignored:release_pending", nil
+	return s.releaseEvent(ctx, cands[0], body)
 }
 
 // issueBudget 报告规则事件是否计入 issue 的共用限流预算：issue_reopened 与 issue_opened 共用（M15 步骤 4.1）。

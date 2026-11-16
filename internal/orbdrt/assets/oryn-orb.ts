@@ -627,10 +627,18 @@ function registerGitHub(pi: ExtensionAPI) {
 				loadMode: "essential",
 			},
 			{
+				name: "github_release_status",
+				label: "Release sentinel status",
+				description:
+					"Release sentinel threads only: the release version, release sha, default branch, the tag object id (tagOid) to use as the push lease, the current repair round, the state (awaiting_ci / fixing / green / failed / superseded), whether the tag is stale or the default branch moved, and every CI run on the release commit with the blocking jobs' failed steps and log tails.",
+				parameters: z.object({}),
+				loadMode: "essential",
+			},
+			{
 				name: "github_abort_task",
 				label: "Abort GitHub task",
 				description:
-					"Give up on this thread's GitHub task because of a fault only a human can fix (environment, permissions, infrastructure). Marks it abandoned for the owner; posts nothing on GitHub.",
+					"Give up on this thread's GitHub task because of a fault only a human can fix (environment, permissions, infrastructure). Marks it abandoned (a release: failed) for the owner; posts nothing on GitHub.",
 				parameters: z.object({ reason: z.string().min(1).max(2000).describe("concrete diagnosis") }),
 				loadMode: "essential",
 			},

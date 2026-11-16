@@ -21,6 +21,8 @@ const (
 	githubCallTimeout = 2 * time.Minute
 	// githubReportTimeout 是 github.prepare.report 的上限。
 	githubReportTimeout = 30 * time.Second
+	// githubReleaseQueryTimeout 是 github.prepare 查询线程发布类别的上限（brief 查询不读 GitHub）。
+	githubReleaseQueryTimeout = 30 * time.Second
 )
 
 // githubCall 处理 orbd.sock 的 github.call：校验最基本的形状后原样转成 ctl github.call。
@@ -41,8 +43,9 @@ func (r *Runtime) githubCall(ctx context.Context, params json.RawMessage) (any, 
 	return r.ctlForwardFor(ctx, apigen.MethodGithubCall, p, githubCallTimeout)
 }
 
-// githubPrepare 处理 orbd.sock 的 github.prepare：在调用方线程的工作目录里按项目门禁执行 RunPrepare；
-// 通过时先上报控制面（上报失败即整体失败：未登记的 SHA 推送时会被出站代理拦下），再把结果回给调用方。
+// githubPrepare 处理 orbd.sock 的 github.prepare：先向控制面查询线程是否为发布任务（决定能否在默认分支上），再在调用方
+// 线程的工作目录里按项目门禁执行 RunPrepare；通过时先上报控制面（上报失败即整体失败：未登记的 SHA 推送时会被出站代理
+// 拦下），再把结果回给调用方。
 func (r *Runtime) githubPrepare(ctx context.Context, params json.RawMessage) (any, error) {
 	var p orbsock.GithubPrepareParams
 	if err := decodeSock(params, &p); err != nil {
@@ -67,7 +70,7 @@ func (r *Runtime) githubPrepare(ctx context.Context, params json.RawMessage) (an
 	maps.Copy(env, r.setupEnvSnapshot())
 	env = loginEnv(ctx, dir, env)
 	res, err := RunPrepare(ctx, PrepareRequest{
-		Dir: dir, Level: p.Level, SkipChecks: p.SkipChecks, Reason: p.Reason,
+		Dir: dir, Level: p.Level, SkipChecks: p.SkipChecks, Reason: p.Reason, Release: r.releaseThread(ctx, p.ThreadID),
 		Gates: r.currentGitHubGates(), Identity: r.currentGitIdentity(), Env: envList(env),
 	})
 	if err != nil {
@@ -96,6 +99,24 @@ func (r *Runtime) githubPrepare(ctx context.Context, params json.RawMessage) (an
 		return nil, err
 	}
 	return res, nil
+}
+
+// releaseThread 向控制面查询线程是否为进行中的发布任务（M15 v4）：ctl github.call 的 github_release_status（brief，同一线程 id）
+// 成功且状态为 awaiting_ci / fixing 时为真。「不是发布线程」、其它错误、超时或结果无法解析一律按非发布处理（只会多拒绝）。
+// 类别只取控制面的任务状态，不接受 agent 传入的任何参数。
+func (r *Runtime) releaseThread(ctx context.Context, threadID string) bool {
+	raw, err := r.ctlForwardFor(ctx, apigen.MethodGithubCall, apigen.LinkCtlGithubCallParams{
+		ThreadID: threadID, Tool: "github_release_status", Params: map[string]any{"brief": true},
+	}, githubReleaseQueryTimeout)
+	if err != nil {
+		return false
+	}
+	var res apigen.LinkCtlGithubCallResult
+	if err := json.Unmarshal(raw, &res); err != nil {
+		return false
+	}
+	state, _ := res.Details["state"].(string)
+	return state == "awaiting_ci" || state == "fixing"
 }
 
 // threadWorkdir 返回线程 agent 的工作目录（agent.start 的 cwd，含 worktree）；线程不在本 orbd 上运行过时

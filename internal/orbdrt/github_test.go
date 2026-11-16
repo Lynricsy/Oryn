@@ -169,6 +169,83 @@ func TestGithubPrepareSock(t *testing.T) {
 	assert.Empty(t, reports, "失败与无效参数都不上报")
 }
 
+// M15 v4：github.prepare 的发布类别只取控制面。orbd 先以同一线程 id 发 ctl github.call（github_release_status，brief）：
+// 进行中的发布线程在默认分支上通过并上报；不是发布线程、查询出错、控制面没有该方法、发布已结束时在默认分支上被拒、
+// 不上报；agent 在 sock 参数里自称发布线程不起作用。
+func TestGithubPrepareReleaseCategory(t *testing.T) {
+	repo := newPrepRepo(t)
+	repo.git("checkout", "-q", "main")
+	head := repo.commit("a.txt", "chore: bump version to 1.2.3 fix flaky test")
+	cp := newFakeCP(t)
+	rt := startRuntime(t, cp, nil)
+	cp.waitNotif(t, 0, "hello", nil)
+	setWorkdir(rt, repo.dir)
+	rt.envMu.Lock()
+	rt.githubGates = &apigen.GitHubGates{Push: true}
+	rt.envMu.Unlock()
+
+	var mode atomic.Value // fixing | awaiting_ci | green | not_release | error | missing
+	queries := make(chan apigen.LinkCtlGithubCallParams, 16)
+	reports := make(chan apigen.LinkCtlGithubPrepareReportParams, 16)
+	cp.extra = func(method string, params json.RawMessage) (any, bool, error) {
+		switch method {
+		case string(apigen.MethodGithubCall):
+			var p apigen.LinkCtlGithubCallParams
+			_ = json.Unmarshal(params, &p)
+			queries <- p
+			switch m := mode.Load().(string); m {
+			case "not_release":
+				return nil, true, &link.CtlError{Code: "not_release_thread", Message: "this thread is not a release sentinel thread"}
+			case "error":
+				return nil, true, &link.CtlError{Code: "internal", Message: "database is locked"}
+			case "missing":
+				return nil, false, nil
+			default:
+				return apigen.LinkCtlGithubCallResult{Text: "Release v1.2.3 is " + m, Details: map[string]any{"state": m, "version": "1.2.3"}}, true, nil
+			}
+		case string(apigen.MethodGithubPrepareReport):
+			var p apigen.LinkCtlGithubPrepareReportParams
+			_ = json.Unmarshal(params, &p)
+			reports <- p
+			return apigen.LinkCtlOkResult{Ok: true}, true, nil
+		}
+		return nil, false, nil
+	}
+	call := func(p any) PrepareResult {
+		t.Helper()
+		raw, err := sockCall(t, rt, orbsock.MethodGithubPrepare, p, nil)
+		require.NoError(t, err)
+		var res PrepareResult
+		require.NoError(t, json.Unmarshal(raw, &res))
+		return res
+	}
+
+	for _, m := range []string{"fixing", "awaiting_ci"} {
+		mode.Store(m)
+		res := call(orbsock.GithubPrepareParams{ThreadID: libThread, Level: "push"})
+		require.True(t, res.OK, "%s: %+v", m, res)
+		assert.Equal(t, head, res.SHA)
+		q := <-queries
+		assert.Equal(t, libThread, q.ThreadID)
+		assert.Equal(t, "github_release_status", q.Tool)
+		assert.Equal(t, map[string]any{"brief": true}, q.Params)
+		rep := recvReport(t, reports)
+		assert.Equal(t, head, rep.Sha)
+		assert.Equal(t, libThread, rep.ThreadID)
+	}
+
+	for _, m := range []string{"not_release", "error", "missing", "green", "failed", "superseded"} {
+		mode.Store(m)
+		res := call(map[string]any{"threadId": libThread, "level": "push", "release": true})
+		assert.False(t, res.OK, m)
+		assert.Empty(t, res.SHA, m)
+		assert.Contains(t, res.Failure, "default branch", m)
+		q := <-queries
+		assert.Equal(t, "github_release_status", q.Tool, m)
+	}
+	assert.Empty(t, reports, "非发布线程在默认分支上不上报")
+}
+
 func recvReport(t *testing.T, ch <-chan apigen.LinkCtlGithubPrepareReportParams) apigen.LinkCtlGithubPrepareReportParams {
 	t.Helper()
 	select {

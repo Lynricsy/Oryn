@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/hex"
 	"log/slog"
-	"slices"
 	"strings"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
@@ -22,10 +21,7 @@ const (
 )
 
 // 工具错误码。
-const (
-	codeNotImplemented = "not_implemented"
-	codeInvalidParams  = "invalid_params"
-)
+const codeInvalidParams = "invalid_params"
 
 // callTools 是经 ctl github.call 执行的工具（github_prepare 由 orbd 执行，不在其中）。
 var callTools = []string{
@@ -45,8 +41,7 @@ func (e *Error) CtlError() *link.CtlError {
 	return &link.CtlError{Code: e.Code, Message: msg}
 }
 
-// Call 执行一次 orb 内 GitHub 工具调用（ctl github.call）。未知工具名回 invalid_params；github_release_status 在
-// 步骤 6.1 实现之前回 not_implemented。
+// Call 执行一次 orb 内 GitHub 工具调用（ctl github.call）。未知工具名回 invalid_params。
 func (s *Service) Call(ctx context.Context, orbID, threadID string, p apigen.LinkCtlGithubCallParams) (apigen.LinkCtlGithubCallResult, error) {
 	switch p.Tool {
 	case "github_classify_issue":
@@ -55,14 +50,19 @@ func (s *Service) Call(ctx context.Context, orbID, threadID string, p apigen.Lin
 		return s.toolTaskState(ctx, threadID, p.Params)
 	case "github_autoclose":
 		return s.toolAutoclose(ctx, threadID, p.Params)
+	case "github_release_status":
+		return s.toolReleaseStatus(ctx, threadID, p.Params)
 	case "github_abort_task":
+		// 发布线程没有 issue 任务：放弃的是它的发布（R22 的 abort_task）
+		if rel, ok, err := s.releaseOfThread(ctx, threadID); err != nil {
+			return apigen.LinkCtlGithubCallResult{}, err
+		} else if ok {
+			return s.toolAbortRelease(ctx, orbID, threadID, rel, p.Params)
+		}
 		return s.toolAbortTask(ctx, orbID, threadID, p.Params)
 	}
-	if !slices.Contains(callTools, p.Tool) {
-		return apigen.LinkCtlGithubCallResult{}, errf(codeInvalidParams,
-			"未知的 GitHub 工具 "+p.Tool+"；可用："+strings.Join(callTools, "、"))
-	}
-	return apigen.LinkCtlGithubCallResult{}, errf(codeNotImplemented, p.Tool+" 尚未实现")
+	return apigen.LinkCtlGithubCallResult{}, errf(codeInvalidParams,
+		"未知的 GitHub 工具 "+p.Tool+"；可用："+strings.Join(callTools, "、"))
 }
 
 // PrepareReport 登记 github_prepare 的通过记录（ctl github.prepare.report）：同一 (sha, orb, level) 再次上报时覆盖
