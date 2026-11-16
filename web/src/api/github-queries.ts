@@ -3,7 +3,12 @@
  * 变更成功后让 `githubKeys.all` 失效；别处（回调页、另一台设备、webhook）的变化经 WS `github.changed` 推送，
  * `useRealtimeGitHubSync` 据此（以及每次 WS 重新连上时）让 GitHub 查询与项目列表失效（项目的绑定状态随之变化）。
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	keepPreviousData,
+	useMutation,
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query";
 import { useEffect } from "react";
 import { type RealtimeClient, realtime } from "../realtime/socket";
 import { api, type Schemas, unwrap } from "./client";
@@ -49,6 +54,23 @@ export function useGitHubStatus(enabled = true) {
 		queryFn: () => unwrap(api.GET("/api/v1/github")),
 		staleTime: 30_000,
 		refetchOnWindowFocus: true,
+	});
+}
+
+/** 我的账号经 App 可访问的仓库（按最近推送倒序，至多 50 个）；`q` 按 `owner/repo` 子串过滤。 */
+export function useGitHubRepos(q: string, enabled = true) {
+	return useQuery({
+		queryKey: githubKeys.repos(q),
+		enabled,
+		queryFn: () =>
+			unwrap(
+				api.GET("/api/v1/github/repos", {
+					params: { query: q ? { q } : {} },
+				}),
+			),
+		staleTime: 60_000,
+		// 改搜索词时保留上一批结果，不闪成空列表
+		placeholderData: keepPreviousData,
 	});
 }
 

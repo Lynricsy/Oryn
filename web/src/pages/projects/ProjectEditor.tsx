@@ -23,6 +23,7 @@ import {
 import type { SetupRun } from "../../lib/env-banner";
 import { PROJECT_GLYPHS } from "../../lib/glyphs";
 import { SnapshotsToggle, WarmOrbsStepper } from "./ProjectAccel";
+import { RepoPicker } from "./RepoPicker";
 
 export type ProjectForm = Schemas["ProjectCreate"];
 
@@ -183,11 +184,22 @@ export function ProjectEditor({
 				/>
 			</Field>
 			<Field label={t("projects.repoUrl")}>
-				<TextInput
-					placeholder="https://github.com/…"
-					value={f.repoUrl ?? ""}
-					onChange={(e) => set("repoUrl", e.target.value || undefined)}
-				/>
+				<div className="relative flex items-center gap-2">
+					<TextInput
+						className="min-w-0 flex-1"
+						// 同一个 label 里还有「从 GitHub 选择」按钮：名字只取字段名
+						aria-label={t("projects.repoUrl")}
+						placeholder="https://github.com/…"
+						value={f.repoUrl ?? ""}
+						onChange={(e) => set("repoUrl", e.target.value || undefined)}
+					/>
+					<RepoPicker
+						onPick={(r) => {
+							set("repoUrl", `https://github.com/${r.fullName}`);
+							if (!f.baseBranch) set("baseBranch", r.defaultBranch);
+						}}
+					/>
+				</div>
 			</Field>
 			<ProjectIconPicker
 				name={f.name}

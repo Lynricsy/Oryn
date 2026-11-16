@@ -1332,6 +1332,9 @@ export class MockServer {
 				createdAt: Date.now(),
 				updatedAt: Date.now(),
 			};
+			// M14：仓库地址是 App 可访问的 mock 仓库时自动绑定
+			const gh = this.github.projectGitHub(created.repoUrl);
+			if (gh) created.github = gh;
 			this.projects.push(created);
 			return json(created, 201);
 		}
@@ -1362,7 +1365,8 @@ export class MockServer {
 			const cur = this.projects[i];
 			if (!cur) return json({ code: "not_found", message: "project" }, 404);
 			if (m === "PATCH") {
-				const { archived, ...b } = (await body()) as Schemas["ProjectPatch"];
+				const { archived, githubListen, ...b } =
+					(await body()) as Schemas["ProjectPatch"];
 				const bad =
 					badGitPair(b.gitAuthorName, b.gitAuthorEmail) ??
 					badWarmOrbs(b.warmOrbs);
@@ -1375,6 +1379,14 @@ export class MockServer {
 				}
 				if (archived !== undefined)
 					next.archivedAt = archived ? Date.now() : undefined;
+				// M14：仓库地址变了就重新绑定；回流开关合并进绑定
+				if (b.repoUrl !== undefined && b.repoUrl !== cur.repoUrl) {
+					const gh = this.github.projectGitHub(next.repoUrl);
+					if (gh) next.github = gh;
+					else delete next.github;
+				}
+				if (githubListen && next.github)
+					next.github = { ...next.github, listen: githubListen };
 				this.projects[i] = next;
 				return json(next);
 			}

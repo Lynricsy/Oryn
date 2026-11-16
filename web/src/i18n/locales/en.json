@@ -3194,6 +3194,23 @@
 			"access_denied": "Authorization was declined on GitHub",
 			"conflict": "A GitHub App is already connected",
 			"unknown": "The GitHub connection didn't complete. Try again."
+		},
+		"repoPicker": {
+			"button": "Choose from GitHub",
+			"search": "Search repositories",
+			"empty": "No matching repositories",
+			"private": "Private"
+		},
+		"project": {
+			"bound": "Linked to",
+			"unbound": "The App isn't installed on this repository yet.",
+			"install": "Install the App",
+			"connect": "Connect GitHub first",
+			"listen": {
+				"reviews": "Deliver review feedback",
+				"comments": "Deliver comments",
+				"ci": "Deliver CI failures"
+			}
 		}
 	}
 }

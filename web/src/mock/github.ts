@@ -5,6 +5,7 @@
  * `localStorage["oryn.mock.github"] = "none"` 时初始为未连接（截图与验收用）。
  * 跳转类接口（创建 App、连接账号）不会真的去 GitHub：创建 App 清掉 `none` 标记并回到 `?created=1`（整页刷新后即为已连接）；
  * 连接账号给出一个 GitHub 授权地址的样子，要在 mock 里连上 Agent 账号用 `connectAgent()`。
+ * 仓库列表（步骤 2.3）：`GET github/repos` 给 6 个仓库（支持 `q`）；`projectGitHub(repoUrl)` 供项目新建 / 编辑时补上绑定字段。
  */
 import type { Schemas } from "../api/client";
 
@@ -43,6 +44,65 @@ function avatar(letter: string, hue: number): string {
 }
 
 const MIN = 60_000;
+const DAY = 24 * 60 * MIN;
+
+/** 我的账号经 App 可访问的仓库（`pushedAt` 相对加载时刻）。 */
+const REPOS: (Omit<Schemas["GitHubRepo"], "pushedAt"> & { ago: number })[] = [
+	{
+		id: 1001,
+		fullName: "oryn-demo/webapp",
+		private: false,
+		defaultBranch: "main",
+		description: "Oryn 演示用的前端应用",
+		ago: 25 * MIN,
+	},
+	{
+		id: 1002,
+		fullName: "oryn-demo/api-gateway",
+		private: true,
+		defaultBranch: "main",
+		description: "边缘网关与限流",
+		ago: 3 * 60 * MIN,
+	},
+	{
+		id: 1003,
+		fullName: "oryn-owner/dotfiles",
+		private: true,
+		defaultBranch: "master",
+		ago: 2 * DAY,
+	},
+	{
+		id: 1004,
+		fullName: "oryn-demo/docs-site",
+		private: false,
+		defaultBranch: "gh-pages",
+		description: "文档站",
+		ago: 5 * DAY,
+	},
+	{
+		id: 1005,
+		fullName: "oryn-owner/raytracer-in-a-weekend",
+		private: false,
+		defaultBranch: "trunk",
+		ago: 19 * DAY,
+	},
+	{
+		id: 1006,
+		fullName: "oryn-demo/mobile-shell",
+		private: true,
+		defaultBranch: "develop",
+		description: "移动壳（Tauri）",
+		ago: 41 * DAY,
+	},
+];
+
+/** `https://github.com/<owner>/<repo>`（可带 `.git`、结尾 `/`）里的 `owner/repo`，小写；不是 GitHub 地址返回 undefined。 */
+function githubPath(repoUrl: string): string | undefined {
+	const m = /^https:\/\/github\.com\/([^/]+\/[^/]+?)(?:\.git)?\/?$/i.exec(
+		repoUrl.trim(),
+	);
+	return m?.[1]?.toLowerCase();
+}
 
 function ownerIdentity(now: number): Identity {
 	return {
@@ -121,6 +181,21 @@ export class MockGitHub {
 			: connectedStatus(Date.now());
 	}
 
+	/** 项目仓库地址对应的绑定（App 可访问的 mock 仓库才有）；回流开关默认全开。 */
+	projectGitHub(
+		repoUrl: string | undefined,
+	): Schemas["ProjectGitHub"] | undefined {
+		const path = repoUrl ? githubPath(repoUrl) : undefined;
+		const repo = REPOS.find((r) => r.fullName.toLowerCase() === path);
+		if (!repo) return undefined;
+		return {
+			repoId: repo.id,
+			fullName: repo.fullName,
+			bound: true,
+			listen: { reviews: true, comments: true, ci: true },
+		};
+	}
+
 	/** 连上 Agent 账号 `@oryn-bot`（测试与截图用）。 */
 	connectAgent(): void {
 		this.status = {
@@ -151,7 +226,7 @@ export class MockGitHub {
 		p: string,
 		m: string,
 		body: () => Promise<unknown>,
-		_url: URL,
+		url: URL,
 	): Promise<Response | null> {
 		if (p === "github" && m === "GET") return json(this.status);
 		if (p === "github/app/manifest" && m === "POST") {
@@ -215,6 +290,21 @@ export class MockGitHub {
 				return error(409, "github_not_connected", "no GitHub App connected");
 			this.deps.changed();
 			return json(this.status);
+		}
+		if (p === "github/repos" && m === "GET") {
+			if (this.status.identities.user?.status !== "ok")
+				return error(
+					409,
+					"github_identity_required",
+					"my account is not connected",
+				);
+			const q = (url.searchParams.get("q") ?? "").trim().toLowerCase();
+			const now = Date.now();
+			return json({
+				repos: REPOS.filter((r) => r.fullName.toLowerCase().includes(q)).map(
+					({ ago, ...r }) => ({ ...r, pushedAt: now - ago }),
+				),
+			});
 		}
 		return null;
 	}

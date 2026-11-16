@@ -22,7 +22,14 @@ export const projects: Project[] = [
 		name: "Oryn",
 		// 有图标的项目；oryn-core 留空（前端回退为名字首字）
 		icon: "\u{F14DE}",
-		repoUrl: "https://github.com/Lynricsy/Oryn",
+		// M14：已绑定 GitHub 仓库（与 mock/github.ts 的仓库列表一致）
+		repoUrl: "https://github.com/oryn-demo/webapp",
+		github: {
+			repoId: 1001,
+			fullName: "oryn-demo/webapp",
+			bound: true,
+			listen: { reviews: true, comments: true, ci: true },
+		},
 		baseBranch: "main",
 		defaultProvider: "local",
 		defaultOrbType: "medium",

@@ -3194,6 +3194,23 @@
 			"access_denied": "你在 GitHub 上取消了授权",
 			"conflict": "已经连接了一个 GitHub App",
 			"unknown": "GitHub 连接没有完成，请重试"
+		},
+		"repoPicker": {
+			"button": "从 GitHub 选择",
+			"search": "搜索仓库",
+			"empty": "没有匹配的仓库",
+			"private": "私有"
+		},
+		"project": {
+			"bound": "已绑定",
+			"unbound": "App 尚未安装到这个仓库。",
+			"install": "安装 App",
+			"connect": "先连接 GitHub",
+			"listen": {
+				"reviews": "评审意见回流",
+				"comments": "评论回流",
+				"ci": "CI 失败回流"
+			}
 		}
 	}
 }
