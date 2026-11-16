@@ -191,6 +191,25 @@ describe("ArtifactsPage", () => {
 		expect(cardTitles()).toHaveLength(3);
 	});
 
+	it("地址还没提交时紧接着的第二次改动不会盖掉第一次（换类型后马上搜索）", async () => {
+		mount("/artifacts?kind=slides");
+		await screen.findByTestId("artifacts-search");
+		fireEvent.click(screen.getByTestId("artifacts-search"));
+		const box = screen.getByRole("searchbox", {
+			name: i18n.t("artifacts.page.search"),
+		});
+		// 两个事件之间不渲染：第二次改动若取渲染里的旧 view，kind=slides 会被写回去
+		act(() => {
+			fireEvent.click(
+				screen.getByRole("button", { name: i18n.t("artifacts.page.all") }),
+			);
+			fireEvent.change(box, { target: { value: "汇报" } });
+		});
+		expect(search().get("kind")).toBeNull();
+		expect(search().get("q")).toBe("汇报");
+		expect(box).toHaveValue("汇报");
+	});
+
 	it("Esc 在有筛选时清除筛选", async () => {
 		mount("/artifacts?kind=web&q=%E6%89%93%E5%8D%A1");
 		await screen.findByRole("button", { name: open(A.title) });

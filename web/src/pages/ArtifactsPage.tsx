@@ -14,6 +14,7 @@ import {
 	type KeyboardEvent as ReactKeyboardEvent,
 	type ReactNode,
 	type RefObject,
+	useCallback,
 	useEffect,
 	useLayoutEffect,
 	useRef,
@@ -485,10 +486,27 @@ function OverviewScreen(): ReactNode {
 		searchRef.current?.select();
 	}, [focusReq]);
 
-	const setView = (next: ArtifactsView) =>
-		setSp(new URLSearchParams(viewSearch(next)), { replace: true });
-	const viewRef = useRef(view);
-	viewRef.current = view;
+	// 路由的地址更新走 startTransition：上一次 setSp 还没提交时，渲染里的 `sp` / `view` 仍是旧的。
+	// 紧接着的第二次改动（点「全部」后马上输入搜索词）若基于旧 `view`，会把第一次的改动盖掉。
+	// 所以写入时记下已发出、未提交的查询串，下一次改动以它为底；提交后（`sp` 追上）清掉。
+	// 搜索框同理：提交前显示刚输入的 `qDraft`（普通状态，立即生效），不让受控输入框退回旧值吞掉字符。
+	const pendingRef = useRef<string | null>(null);
+	const [qDraft, setQDraft] = useState("");
+	const spText = sp.toString();
+	if (pendingRef.current === spText) pendingRef.current = null;
+	const spRef = useRef(spText);
+	spRef.current = spText;
+	const setView = useCallback(
+		(update: (v: ArtifactsView) => ArtifactsView) => {
+			const base = new URLSearchParams(pendingRef.current ?? spRef.current);
+			const nextView = update(parseView(base));
+			const next = new URLSearchParams(viewSearch(nextView));
+			pendingRef.current = next.toString();
+			setQDraft(nextView.q);
+			setSp(next, { replace: true });
+		},
+		[setSp],
+	);
 
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
@@ -499,16 +517,14 @@ function OverviewScreen(): ReactNode {
 				return;
 			}
 			if (e.key !== "Escape" || escOwnedElsewhere(e)) return;
-			const v = viewRef.current;
-			if (!hasFilters(v)) return;
+			const latest = pendingRef.current ?? spRef.current;
+			if (!hasFilters(parseView(new URLSearchParams(latest)))) return;
 			e.preventDefault();
-			setSp(new URLSearchParams(viewSearch(clearFilters(v))), {
-				replace: true,
-			});
+			setView(clearFilters);
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [setSp]);
+	}, [setView]);
 
 	const projectList = projects.data?.projects ?? [];
 	const projectName = (id: string | null) =>
@@ -543,10 +559,10 @@ function OverviewScreen(): ReactNode {
 				selected={view.projects.includes(NO_PROJECT)}
 				icon="folder"
 				onClick={() =>
-					setView({
-						...view,
-						projects: toggled(view.projects, NO_PROJECT),
-					})
+					setView((v) => ({
+						...v,
+						projects: toggled(v.projects, NO_PROJECT),
+					}))
 				}
 			>
 				{t("artifacts.page.noProject")}
@@ -557,10 +573,10 @@ function OverviewScreen(): ReactNode {
 					selected={view.projects.includes(id)}
 					icon="folder"
 					onClick={() =>
-						setView({
-							...view,
-							projects: toggled(view.projects, id),
-						})
+						setView((v) => ({
+							...v,
+							projects: toggled(v.projects, id),
+						}))
 					}
 				>
 					{projectName(id)}
@@ -574,7 +590,7 @@ function OverviewScreen(): ReactNode {
 					icon={o === "agent" ? "message" : "upload"}
 					testId={`origin-${o}`}
 					onClick={() =>
-						setView({ ...view, origins: toggled(view.origins, o) })
+						setView((v) => ({ ...v, origins: toggled(v.origins, o) }))
 					}
 				>
 					{t(`artifacts.page.origin.${o}`)}
@@ -590,7 +606,7 @@ function OverviewScreen(): ReactNode {
 					key={s}
 					selected={view.sort === s}
 					testId={`sort-${s}`}
-					onClick={() => setView({ ...view, sort: s })}
+					onClick={() => setView((v) => ({ ...v, sort: s }))}
 				>
 					{t(`artifacts.page.sort.${s}`)}
 				</ChoiceRow>
@@ -601,7 +617,7 @@ function OverviewScreen(): ReactNode {
 					key={l}
 					selected={view.layout === l}
 					testId={`layout-${l}`}
-					onClick={() => setView({ ...view, layout: l })}
+					onClick={() => setView((v) => ({ ...v, layout: l }))}
 				>
 					{t(`artifacts.page.layout.${l}`)}
 				</ChoiceRow>
@@ -658,7 +674,7 @@ function OverviewScreen(): ReactNode {
 	else if (flat.length === 0)
 		content = (
 			<EmptyState icon="search" title={t("artifacts.page.noMatch")}>
-				<Button size="sm" onClick={() => setView(clearFilters(view))}>
+				<Button size="sm" onClick={() => setView(clearFilters)}>
 					{t("artifacts.page.clearFilters")}
 				</Button>
 			</EmptyState>
@@ -710,7 +726,7 @@ function OverviewScreen(): ReactNode {
 									data-kind={k}
 									aria-pressed={view.kind === k}
 									className={`${tabClass(view.kind === k)} h-8 rounded-lg px-3 text-sm ${view.kind === k ? "bg-hover" : ""}`}
-									onClick={() => setView({ ...view, kind: k })}
+									onClick={() => setView((v) => ({ ...v, kind: k }))}
 								>
 									{k === "all" ? t("artifacts.page.all") : t(kindLabelKey(k))}
 								</button>
@@ -775,10 +791,13 @@ function OverviewScreen(): ReactNode {
 								<input
 									ref={searchRef}
 									type="search"
-									value={view.q}
+									value={pendingRef.current !== null ? qDraft : view.q}
 									aria-label={t("artifacts.page.search")}
 									placeholder={t("artifacts.page.search")}
-									onChange={(e) => setView({ ...view, q: e.target.value })}
+									onChange={(e) => {
+										const q = e.target.value;
+										setView((v) => ({ ...v, q }));
+									}}
 									// 宽屏：没有搜索词时失焦就收回放大镜
 									onBlur={() => setSearchOpen(false)}
 									className="h-8 w-full rounded-lg border border-border bg-inset pr-2.5 pl-8 text-sm text-fg placeholder:text-faint focus-visible:border-accent focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-accent/20"
