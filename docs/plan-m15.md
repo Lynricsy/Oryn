@@ -207,11 +207,11 @@
 
 ### 假设（每条注明失效时受影响的步骤）
 
-- **A1** gh 发起写操作时请求里的正文，与 webhook 载荷中的 `body` 规范化后（统一为 `\n` 换行、去掉首尾空白）相等。
+- **A1** ✅ 已实测成立（附录 B-5）：gh 发起写操作时请求里的正文，与 webhook 载荷中的 `body` 逐字节相同，CRLF 和首尾空白都原样保留。2.3 仍按规范化（统一为 `\n` 换行、去掉首尾空白）后的结果比较，作为保险。
   - 失效影响：步骤 2.3 的正文哈希改为只比较前 512 字符，并扩大时间窗。
-- **A2** git 客户端在 `POST git-receive-pack` 返回 200、内容为 report-status 的 `ng <ref> <原因>` 时，会显示原因。
+- **A2** ✅ 已实测成立（附录 B-7）：`POST git-receive-pack` 返回 200，并带 side-band 包裹的 `ng <ref> <原因>` 时，git 显示 `! [remote rejected] HEAD -> feature (<原因>)`。
   - 失效影响：5.4 改为在 `info/refs?service=git-receive-pack` 阶段预判（只能用于 `ReviewOnly`），推送门禁的拒绝原因改由 `github_prepare` 的工具输出提示。
-- **A3** 组织访问限制下，非成员在公开仓库发评论或开 PR 不受影响。
+- **A3** ⚠️ 未实测（手头没有开启 OAuth App 限制的组织）：组织访问限制下，非成员在公开仓库发评论或开 PR 不受影响。
   - 失效影响：R4 的提示文案和 deploy.md 的风险说明。
 
 ## 全局约束
@@ -322,7 +322,7 @@ Do：
 
 - 新建表：
   - `github_oauth_app(id INTEGER PRIMARY KEY CHECK(id=1), client_id, client_secret_enc, webhook_base, created_at)`。
-  - `github_hooks(repo_id PK, full_name, hook_id, secret_enc, status, error, delivery_cursor, last_delivery_at, last_delivery_src, last_webhook_at, updated_at)`。
+  - `github_hooks(repo_id PK, full_name, hook_id, secret_enc, status, error, delivery_cursor, deliveries_etag, last_delivery_at, last_delivery_src, last_webhook_at, updated_at)`。
   - `github_repo_watches(repo_id PK, full_name, etag_issues, etag_comments, etag_pulls, etag_runs, since_at, updated_at)`。
   - `github_watches(kind CHECK(pull|issue), repo_id, full_name, number, thread_id, slot, etag_issue, etag_comments, etag_reviews, etag_review_comments, etag_checks, last_seen_at, done_at, PK(kind, full_name, number))`。
   - `github_self_writes(id INTEGER PK, slot, category, target, body_sha256, created_at)`，加索引 `(target, category)`；补充键表 `github_self_keys(key PK, created_at)`。
@@ -431,7 +431,11 @@ Files：`events.go`（`HandleWebhook`、`ingest`）、重写 `poll.go`；测试 
 Do：
 
 - **验签**：`HandleWebhook` 按 `X-GitHub-Hook-ID` 查到 `github_hooks` 行，用该行的 secret 验 `X-Hub-Signature-256`，再检查 `X-GitHub-Hook-Installation-Target-ID` 等于该行的 `repo_id`。不满足任一条件返回 401。验签成功后写 `last_webhook_at`。
-- **轮询**：`poll.go` 按 `hookPollInterval` 对每个 `active` 的 hook 读取 `GET /repos/{full}/hooks/{id}/deliveries`，从 `delivery_cursor` 之后开始，第一次只建立基线，结果进入 `ingest(…, "poll")`。
+- **轮询**：`poll.go` 按 `hookPollInterval` 对每个 `active` 的 hook 读取 `GET /repos/{full}/hooks/{id}/deliveries?per_page=100`：
+  - 请求带 `If-None-Match: <deliveries_etag>`。304 不消耗额度。该接口单独计数，资源名 `webhook_deliveries`，上限 500 次/小时（附录 B-3）。
+  - 只为 `delivery_cursor` 之后、且 guid 不在 `github_deliveries` 里的投递取详情。
+  - 第一次只建立基线；结果进入 `ingest(…, "poll")`。
+  - `X-RateLimit-Remaining` 低于 50 时，暂停到 `X-RateLimit-Reset`。
 - `TouchGithubDelivery` 改为写 `github_hooks`。
 - 本步同时移除 App 的验签和 App 投递轮询（新入口已经可用）。
 
@@ -904,11 +908,46 @@ Accept：`go test ./internal/server/... -run E2EM15` 输出 `ok`；`cd web && bu
 
 ## 附录 A：gh 的 mutation 形态（步骤 0.2 填写）
 
-（待填）
+gh 版本固定为 `v2.102.1`（本机版本；orb 镜像的 Arch `github-cli` 包跟随最新版，若版本不同，2.3 实现前用同样的方法复核）。来源：cli/cli 对应 tag 下的 `api/queries_*.go`、`pkg/cmd/**/http.go`。
+
+| gh 子命令 | 请求 | 操作名 / mutation 字段 | input 中的目标字段 | 响应 selection |
+|---|---|---|---|---|
+| `pr create` | GraphQL | `PullRequestCreate` / `createPullRequest` | `repositoryId`、`baseRefName`、`headRefName`（可带 `owner:`）、`headRepositoryId?` | `pullRequest{id url}` |
+| `pr create`（元数据） | GraphQL | `PullRequestCreateMetadata` / `updatePullRequest`；`PullRequestCreateRequestReviews` / `requestReviews` | `pullRequestId` | 仅 id/url |
+| `pr review` | GraphQL | `addPullRequestReview` | `pullRequestId`、`event`（COMMENT / APPROVE / REQUEST_CHANGES）、`body` | `clientMutationId` |
+| `pr edit --add-reviewer` | GraphQL | `requestReviewsByLogin` | `pullRequestId` | — |
+| `pr comment` / `issue comment` | GraphQL | `CommentCreate` / `addComment` | `subjectId`（issue 或 PR 的 node id）、`body` | `commentEdge.node.url`（`…#issuecomment-<id>`） |
+| 编辑、删除评论 | GraphQL | `CommentUpdate` / `updateIssueComment`；`CommentDelete` / `deleteIssueComment` | `id` | url / `clientMutationId` |
+| `issue create` | GraphQL | `IssueCreate` / `createIssue` | `repositoryId` | issue url |
+| `issue close` | GraphQL | `closeIssue` | `issueId`、`stateReason?` | — |
+| `pr close` / `pr reopen` / `pr ready` / `pr ready --undo` | GraphQL | `closePullRequest` / `reopenPullRequest` / `markPullRequestReadyForReview` / `convertPullRequestToDraft` | `pullRequestId` | — |
+| `pr merge` | GraphQL | `mergePullRequest`、`enablePullRequestAutoMerge`、`disablePullRequestAutoMerge` | `pullRequestId` | — |
+| `pr update-branch` | GraphQL | `updatePullRequestBranch` | `pullRequestId` | — |
+| `pr revert` | GraphQL | `revertPullRequest` | `pullRequestId` | — |
+| `issue/pr edit --add-label` | GraphQL | `addLabelsToLabelable` / `removeLabelsFromLabelable` | `labelableId` | — |
+| `issue/pr edit`（标题、正文） | GraphQL | `updateIssue` / `updatePullRequest` | `id` / `pullRequestId` | — |
+| `pr edit`（指派） | GraphQL | `replaceActorsForAssignable` | `assignableId` | — |
+| 子 issue 与依赖 | GraphQL | `addSubIssue`、`removeSubIssue`、`addBlockedBy`、`removeBlockedBy`、`updateIssueIssueType` | `issueId` | — |
+| `repo fork` | REST | `POST /repos/{o}/{r}/forks` | — | repo JSON（含 `node_id`） |
+| `release create/upload` | REST | `POST /repos/{o}/{r}/releases`；上传走 `uploads.github.com` 的 `upload_url` | — | release JSON |
+| `api -X POST …/comments` | REST | 路径即操作 | 路径 | 评论 JSON（`id`、`node_id`、`html_url`） |
+
+结论：gh 的 mutation 响应**不含**新对象的数值 id，只有 `addComment`、`createPullRequest`、`createIssue` 返回 URL。所以防回流以「请求侧预登记目标 + 正文哈希」为主（2.3），URL 锚点和 REST 响应 id 只作为补充键。
 
 ## 附录 B：真实 GitHub 探查结论（步骤 0.2 填写）
 
-（待填）
+探查日期：2026-11-16。令牌：本机 gh 的 GitHub CLI OAuth 令牌（`gho_`，scope 为 `gist, read:org, repo, user, workflow`），等价于 OAuth App 的用户令牌。临时仓库：`Lynricsy/oryn-m15-probe`（私有，id 1459651303；令牌没有 `delete_repo`，**需主人手动删除**）。
+
+1. ✅ `X-OAuth-Scopes` 的格式是逗号加空格，例如 `gist, read:org, repo, user, workflow`。
+2. ✅ 只有 `repo` scope、没有 `admin:repo_hook` 时，也能创建和删除仓库 hook、读取投递日志。`GET` hook 返回的 `config.secret` 被打码成 `********`，所以 1.2 每轮同步都要连同 secret 一起 `PATCH`，不能先读后写。
+3. ✅ 投递日志接口 `GET /repos/{o}/{r}/hooks/{id}/deliveries` 单独计数：`X-RateLimit-Resource: webhook_deliveries`，上限 500 次/小时；列表和详情各计 1 次；带 `If-None-Match` 返回 304 时不计数（`X-RateLimit-Used` 不变）。
+4. ✅ 投递请求头带 `X-GitHub-Hook-ID`、`X-GitHub-Hook-Installation-Target-ID`（等于仓库数值 id）、`X-GitHub-Hook-Installation-Target-Type: repository`、`X-GitHub-Delivery`、`X-GitHub-Event`。即使目标地址返回 502，投递也会进日志，详情里有完整的请求头和载荷。
+5. ✅ 用 GraphQL `addComment` 发出的正文 `"  第一行 line1\r\nline2 with trailing   \r\n\r\n```\ncode\n```\n  "`，与 webhook 载荷 `comment.body` 逐字节相同。载荷里有 `comment.id`、`comment.node_id`、`issue.node_id`、`sender.login`、`comment.author_association`。
+6. ✅ 带 `Accept-Encoding: gzip` 请求 `api.github.com/user`，上游返回 `content-encoding: gzip`。2.3 删除 `Accept-Encoding` 是必要的。
+7. ✅ 本地实测 git 2.x：对 `POST git-receive-pack` 回 200，side-band-64k 的 band 1 里放 `unpack ok` 加 `ng refs/heads/feature oryn: <原因>`，客户端显示 `! [remote rejected] HEAD -> feature (oryn: <原因>)`，退出码为 1。
+8. ✅ 本地实测 R22 的原子推送命令：默认分支已被别人推进时，整体失败，分支和 tag 都不变（`atomic push failed … (fetch first)`）；没被推进时，分支快进，tag 强制移动。
+9. ✅ 对没有 push 权限的仓库（`cli/cli`）调用 `collaborators/{login}/permission`：返回 403，message 为 `Must have push access to view collaborator permission.`
+10. ⚠️ 未测：OAuth App 的组织访问限制（A3）、`check_suite` 的仓库 hook 投递（按文档只投递 `completed`）。
 
 ## 附录 C：REST 轮询的合成事件表（步骤 3.1 填写）
 
