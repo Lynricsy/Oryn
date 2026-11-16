@@ -436,31 +436,17 @@ func (s *Service) slotPolled(slot string, start time.Time) {
 // watchGet 以槽位的令牌 GET 一个轮询接口：etag 非空时带 If-None-Match，304 时 notModified 为真（out 不变）。
 // 按响应的 X-RateLimit-* 记录该槽位的核心额度（同 poll.go 的投递日志额度）。调用方持 watchMu。
 func (s *Service) watchGet(ctx context.Context, slot, path, etag string, out any) (h http.Header, notModified bool, err error) {
-	tok, err := s.tokenFor(ctx, slot)
+	req, err := s.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, false, err
 	}
-	target := path
-	if strings.HasPrefix(path, "/") {
-		target = s.cfg.APIURL + path
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
-	if err != nil {
-		return nil, false, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
 	if etag != "" {
 		req.Header.Set("If-None-Match", etag)
 	}
-	h, err = s.send(req, "Bearer "+tok, out)
+	h, err = s.send(slot, req, out)
 	s.noteWatchQuota(slot, h)
 	if isStatus(err, http.StatusNotModified) {
 		return h, true, nil
-	}
-	if errKind(err) == kindReauth {
-		if merr := s.markReauth(ctx, slot); merr != nil {
-			return h, false, errors.Join(err, merr)
-		}
 	}
 	return h, false, err
 }

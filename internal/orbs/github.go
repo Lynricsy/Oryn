@@ -42,6 +42,8 @@ type GitHub interface {
 	// Begin 预登记并返回门禁结论（非空 = 拒绝原因），End 记补充键与审计。
 	GitHubWriteBegin(ctx context.Context, orbID string, w egress.GitHubWrite) (gate string)
 	GitHubWriteEnd(ctx context.Context, orbID string, w egress.GitHubWrite, status int, respKeys []string)
+	// GitHubTokenRejected 承接出站代理的同名回调（egress.Resolver，R2）：注入的令牌被上游回 401，按令牌找到槽位置为 reauth。
+	GitHubTokenRejected(ctx context.Context, orbID, token string)
 	// 以下承接出站代理门禁的现查（egress.GateLookup，M15 步骤 5.4），都以 orb 自己的线程与身份槽位为准；查询失败返回不放行的结果。
 	PrepareOK(ctx context.Context, orbID, sha, level string) (ok, skipped bool)
 	ImplAuthorized(ctx context.Context, orbID string) bool

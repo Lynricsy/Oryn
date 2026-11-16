@@ -264,7 +264,9 @@ func TestPollHookRateLimitPause(t *testing.T) {
 func TestPollHooksNoIdentity(t *testing.T) {
 	e := newEnv(t)
 	path := e.pollEnv()
-	require.NoError(t, e.s.markReauth(e.ctx, slotUser))
+	tok, err := e.s.tokenFor(e.ctx, slotUser)
+	require.NoError(t, err)
+	require.NoError(t, e.s.tokenRejected(e.ctx, tok, slotUser))
 	e.fake.ResetCalls()
 	e.s.pollHooks(e.ctx)
 	assert.Empty(t, e.fake.CallsTo("GET", path))

@@ -3853,7 +3853,12 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** 断开身份槽位（断开 Agent 账号时自动化身份回到我的账号） */
+        /**
+         * 断开身份槽位（断开我的账号前先删除 Oryn 建的全部仓库 hook；未连接 → 404 `not_found`）
+         * @description 不改动「自动化任务的 GitHub 身份」设置（仍为 `agent` 时不会改回 `user`）。Agent 账号断开后，全自动线程按 Q6 处理：
+         *     「任何人」档规则与外部 PR 评审规则不回退，事件记为 `ignored:agent_required` 并通知主人；其余全自动线程回退到我的账号，
+         *     并在线程里写一条提示。
+         */
         delete: operations["deleteGitHubIdentity"];
         options?: never;
         head?: never;
@@ -3868,7 +3873,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** 设置自动化任务的 GitHub 身份（Agent 未连接时选 `agent` → 409 `github_agent_required`） */
+        /** 设置自动化任务的 GitHub 身份（`user` / `agent`；Agent 账号未连接时也可选 `agent`，实际使用时按 Q6 回退） */
         put: operations["putGitHubSettings"];
         post?: never;
         delete?: never;
@@ -6328,7 +6333,7 @@ export interface components {
              *     客户端据此决定右面板标签：`changes` 需要 `git`、`files` 需要 `fs`、`terminal` 需要 `terminal`；省略时保持 M3 的行为。
              */
             features?: string[];
-            /** @description orb 内 git / gh 使用的 GitHub 账号（M14）；项目未绑定或身份未连接时省略 */
+            /** @description orb 内 git / gh 使用的 GitHub 账号（M15）：工作 orb 的身份槽位已连接且可用时给出，与项目是否绑定无关；runner、协调宿主或槽位未连接 / 待重新授权时省略 */
             githubLogin?: string;
         };
         /**
@@ -8970,7 +8975,7 @@ export interface components {
             projectConfig?: components["schemas"]["LinkCtlProjectConfig"];
             /** @description 写入 `git config --global user.name / user.email`（项目覆盖 > 所有者默认）；缺省时不改动现有配置 */
             gitIdentity?: components["schemas"]["GitIdentity"];
-            /** @description 缺省 = 项目未连接 GitHub：orbd 删除 `$HOME/.oryn/gh` */
+            /** @description 缺省 = 这台 orb 不下发 GitHub 凭据（runner、协调宿主、GitHub 集成未启用，或线程身份槽位未连接 / 待重新授权；与有没有项目、项目是否绑定无关）：orbd 删除 `$HOME/.oryn/gh` */
             gh?: components["schemas"]["LinkCtlSetupGh"];
             /**
              * @description M11a 审查修复：true = 只跑 setup（clone / `repo.update` / setup 脚本），**不**跑 resume 脚本、**不**启动受管服务；

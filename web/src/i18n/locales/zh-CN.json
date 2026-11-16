@@ -4358,7 +4358,7 @@
 			},
 			"explain": {
 				"active": "webhook 正常，事件实时送达；收不到时从投递日志补齐。",
-				"no_admin": "我的账号不是仓库 admin，建不了 webhook，改为每 60 秒轮询。",
+				"no_admin": "我的账号不是仓库 admin，建不了 webhook。仓库有启用的触发规则时，改为约每 60 秒轮询它的 issue 与 PR；线程关联的 issue / PR 另行轮询，与规则无关。",
 				"org_restricted": "组织限制了 OAuth App 访问，需要组织管理员批准后才能建 webhook。",
 				"sso_required": "组织启用了 SAML SSO，需要为这次授权完成 SSO 授权。",
 				"error": "创建或校正 webhook 失败，Oryn 会定期重试。"

@@ -18,12 +18,12 @@ import (
 	"github.com/Lynricsy/Oryn/internal/orbsock"
 )
 
-// M14：orb 内 `gh` 免登录。
+// M14 / M15：orb 内 `gh` 免登录。
 //
-// 控制面在 setup / resume 参数里带上 `gh`（项目绑定了 GitHub 仓库时）。orbd 据此写 `$HOME/.oryn/gh/`：
+// 控制面在 setup / resume 参数里带上 `gh`（M15：工作 orb 的身份槽位可用时，与有没有项目无关）。orbd 据此写 `$HOME/.oryn/gh/`：
 // `hosts.yml` 只有占位令牌 `oryn-proxied`，`config.yml` 让 gh 经 `$HOME/.oryn/gh.sock` 发请求。
-// 套接字上的反向代理把发往 api.github.com 的请求转给本机 egress 的 `/gh/api.github.com/…`，
-// 由 egress 换上控制面签发的按仓库收窄的令牌；真实令牌从不落到 orb 里。
+// 套接字上的反向代理把发往 api.github.com 与 uploads.github.com 的请求转给本机 egress 的 `/gh/<host>/…`，
+// 由 egress 换上线程身份槽位的 OAuth 令牌（不按仓库限制，账号能做什么就能做什么）；真实令牌从不落到 orb 里。
 
 // ghPlaceholderToken 是写进 hosts.yml 的占位令牌：gh 需要「已登录」才肯发请求，egress 会替换掉它。
 const ghPlaceholderToken = "oryn-proxied"

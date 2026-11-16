@@ -261,12 +261,12 @@ func (s *Service) linkSampled(ctx context.Context, threadID, head string) error 
 	if prj.GithubRepoID == nil {
 		return nil
 	}
-	full, auth, err := s.projectAuth(ctx, prj)
+	full, err := s.projectRepo(prj)
 	if err != nil {
 		return err
 	}
 	var pulls []pullPayload
-	if err := s.call(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/commits/%s/pulls?per_page=5", full, head), auth, nil, &pulls); err != nil {
+	if err := s.callAs(ctx, slotUser, http.MethodGet, fmt.Sprintf("/repos/%s/commits/%s/pulls?per_page=5", full, head), nil, &pulls); err != nil {
 		return err
 	}
 	s.mu.Lock()
@@ -359,16 +359,12 @@ func (s *Service) linkCreatedPull(ctx context.Context, orbID string, w egress.Gi
 	full := w.Repo
 	switch {
 	case w.Op == "createPullRequest":
-		tok, err := s.tokenFor(ctx, slot)
-		if err != nil {
-			return err
-		}
 		var out struct {
 			Node *struct {
 				NameWithOwner string `json:"nameWithOwner"`
 			} `json:"node"`
 		}
-		if err := s.graphql(ctx, "Bearer "+tok, repoNodeQuery, map[string]any{"id": w.Target}, &out); err != nil {
+		if err := s.graphql(ctx, slot, repoNodeQuery, map[string]any{"id": w.Target}, &out); err != nil {
 			return err
 		}
 		if out.Node == nil || out.Node.NameWithOwner == "" {

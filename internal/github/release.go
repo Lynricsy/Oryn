@@ -18,7 +18,6 @@ import (
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
-	"github.com/Lynricsy/Oryn/internal/version"
 )
 
 // 发布哨兵（M15 R22，步骤 6.1）：workflow_run_completed 规则盯住 head 提交信息以规则前缀开头的 run（发布提交与之后的修复提交），
@@ -309,7 +308,7 @@ func (s *Service) releaseEvent(ctx context.Context, trig db.GithubTrigger, body 
 	repoID := ev.Repository.ID
 	defer releaseLock(repoID)()
 
-	full, auth, err := s.releaseRepoAuth(ctx, repoID, ev.Repository.FullName)
+	full, err := s.releaseRepo(ctx, repoID, ev.Repository.FullName)
 	if err != nil {
 		return "", err
 	}
@@ -339,7 +338,7 @@ func (s *Service) releaseEvent(ctx context.Context, trig db.GithubTrigger, body 
 			return "ignored:superseded", nil
 		}
 	}
-	oid, commit, err := s.releaseTag(ctx, full, auth, ver)
+	oid, commit, err := s.releaseTag(ctx, full, ver)
 	if err != nil {
 		return "", err
 	}
@@ -376,7 +375,7 @@ func (s *Service) releaseEvent(ctx context.Context, trig db.GithubTrigger, body 
 	}
 	rel = db.GithubRelease{RepoID: repoID, Version: ver, Sha: sha, TagOid: &oid, ThreadID: rel.ThreadID, State: state, Rounds: rounds, UpdatedAt: rel.UpdatedAt}
 
-	runs, complete, err := s.releaseRuns(ctx, full, auth, sha, run)
+	runs, complete, err := s.releaseRuns(ctx, full, sha, run)
 	if err != nil {
 		return "", err
 	}
@@ -395,7 +394,7 @@ func (s *Service) releaseEvent(ctx context.Context, trig db.GithubTrigger, body 
 		if !done {
 			return "handled", nil // 等其余 run
 		}
-		published, err := s.releasePublished(ctx, full, auth, ver)
+		published, err := s.releasePublished(ctx, full, ver)
 		if err != nil {
 			return "", err
 		}
@@ -412,7 +411,7 @@ func (s *Service) releaseEvent(ctx context.Context, trig db.GithubTrigger, body 
 		return "handled", s.finishRelease(ctx, rel, full, releaseFailed, "error",
 			fmt.Sprintf("CI is still blocked after %d repair rounds", maxReleaseRounds))
 	}
-	branch, head, err := s.defaultHead(ctx, full, auth)
+	branch, head, err := s.defaultHead(ctx, full)
 	if err != nil {
 		return "", err
 	}
@@ -422,7 +421,7 @@ func (s *Service) releaseEvent(ctx context.Context, trig db.GithubTrigger, body 
 	}
 	info := releaseInfo{
 		Version: ver, Tag: "v" + ver, SHA: sha, TagOid: oid, DefaultBranch: branch, Round: rounds + 1, MaxRounds: maxReleaseRounds,
-		releaseDossier: s.releaseDossier(ctx, full, auth, runs, complete),
+		releaseDossier: s.releaseDossier(ctx, full, runs, complete),
 	}
 	if rel.ThreadID != nil {
 		return s.continueRelease(ctx, rel, full, info)
@@ -664,17 +663,17 @@ func (s *Service) recheckRelease(ctx context.Context, repoID int64, ver string) 
 
 // releaseVerdict 只读地评估版本：green 为真表示可以置 green；否则 waiting 说明还在等什么。
 func (s *Service) releaseVerdict(ctx context.Context, rel db.GithubRelease) (full string, green bool, waiting string, err error) {
-	full, auth, err := s.releaseRepoAuth(ctx, rel.RepoID, "")
+	full, err = s.releaseRepo(ctx, rel.RepoID, "")
 	if err != nil {
 		full, _ = s.repoFullName(ctx, rel.RepoID) // 只为通知里的仓库名
 		return full, false, "", err
 	}
-	if _, commit, err := s.releaseTag(ctx, full, auth, rel.Version); err != nil {
+	if _, commit, err := s.releaseTag(ctx, full, rel.Version); err != nil {
 		return full, false, "", err
 	} else if commit != rel.Sha {
 		return full, false, fmt.Sprintf("the tag v%s no longer points at the release commit", rel.Version), nil
 	}
-	runs, complete, err := s.releaseRuns(ctx, full, auth, rel.Sha, runPayload{})
+	runs, complete, err := s.releaseRuns(ctx, full, rel.Sha, runPayload{})
 	if err != nil {
 		return full, false, "", err
 	}
@@ -693,7 +692,7 @@ func (s *Service) releaseVerdict(ctx context.Context, rel db.GithubRelease) (ful
 			return full, false, "CI runs on the release commit are still in progress", nil
 		}
 	}
-	published, err := s.releasePublished(ctx, full, auth, rel.Version)
+	published, err := s.releasePublished(ctx, full, rel.Version)
 	if err != nil {
 		return full, false, "", err
 	}
@@ -703,36 +702,36 @@ func (s *Service) releaseVerdict(ctx context.Context, rel db.GithubRelease) (ful
 	return full, true, "", nil
 }
 
-// ---------- GitHub 读取 ----------
+// ---------- GitHub 读取（一律以我的账号，经 callAs / releaseList / jobLogTail 带槽位发出） ----------
 
-// releaseRepoAuth 返回仓库的 owner/repo（优先取事件里的名字，改名后仍对）与我的账号的 Authorization 头。
-func (s *Service) releaseRepoAuth(ctx context.Context, repoID int64, full string) (string, string, error) {
+// releaseRepo 返回仓库的 owner/repo（优先取事件里的名字，改名后仍对）；我的账号不可用时先行报错（github_identity_required），
+// 免得后续每个读取各报一遍。出错时 full 为空。
+func (s *Service) releaseRepo(ctx context.Context, repoID int64, full string) (string, error) {
 	if full == "" {
 		var err error
 		if full, err = s.repoFullName(ctx, repoID); err != nil {
-			return "", "", err
+			return "", err
 		}
 		if full == "" {
-			return "", "", errf("github_not_bound", "the repository of this release is no longer bound")
+			return "", errf("github_not_bound", "the repository of this release is no longer bound")
 		}
 	}
-	tok, err := s.tokenFor(ctx, slotUser)
-	if err != nil {
-		return "", "", err
+	if _, err := s.tokenFor(ctx, slotUser); err != nil {
+		return "", err
 	}
-	return full, "Bearer " + tok, nil
+	return full, nil
 }
 
 // releaseTag 读远端 tag v<ver>：oid 是 ref 当前的值（附注 tag 为 tag 对象，推送命令的 lease 用它），commit 是剥到的提交；
 // tag 不存在或不指向提交时 commit 为空。
-func (s *Service) releaseTag(ctx context.Context, full, auth, ver string) (oid, commit string, err error) {
+func (s *Service) releaseTag(ctx context.Context, full, ver string) (oid, commit string, err error) {
 	var ref struct {
 		Object struct {
 			SHA  string `json:"sha"`
 			Type string `json:"type"`
 		} `json:"object"`
 	}
-	err = s.call(ctx, http.MethodGet, "/repos/"+full+"/git/ref/tags/"+escapeSegments("v"+ver), auth, nil, &ref)
+	err = s.callAs(ctx, slotUser, http.MethodGet, "/repos/"+full+"/git/ref/tags/"+escapeSegments("v"+ver), nil, &ref)
 	if errKind(err) == kindNotFound {
 		return "", "", nil
 	}
@@ -748,7 +747,7 @@ func (s *Service) releaseTag(ctx context.Context, full, auth, ver string) (oid, 
 				Type string `json:"type"`
 			} `json:"object"`
 		}
-		if err := s.call(ctx, http.MethodGet, "/repos/"+full+"/git/tags/"+commit, auth, nil, &tag); err != nil {
+		if err := s.callAs(ctx, slotUser, http.MethodGet, "/repos/"+full+"/git/tags/"+commit, nil, &tag); err != nil {
 			return "", "", err
 		}
 		commit, typ = strings.ToLower(tag.Object.SHA), tag.Object.Type
@@ -761,8 +760,8 @@ func (s *Service) releaseTag(ctx context.Context, full, auth, ver string) (oid, 
 
 // releaseRuns 列出 sha 上的 run（至多 releaseRunPages 页）；complete 为假表示到上限时还有下一页（列表不完整）。
 // ev 是触发本次处理的 run，列表还没反映它时以它为准。
-func (s *Service) releaseRuns(ctx context.Context, full, auth, sha string, ev runPayload) (runs []runPayload, complete bool, err error) {
-	more, err := s.releaseList(ctx, fmt.Sprintf("/repos/%s/actions/runs?head_sha=%s&per_page=100", full, sha), auth, releaseRunPages,
+func (s *Service) releaseRuns(ctx context.Context, full, sha string, ev runPayload) (runs []runPayload, complete bool, err error) {
+	more, err := s.releaseList(ctx, fmt.Sprintf("/repos/%s/actions/runs?head_sha=%s&per_page=100", full, sha), releaseRunPages,
 		func(raw json.RawMessage) error {
 			var page struct {
 				WorkflowRuns []runPayload `json:"workflow_runs"`
@@ -788,12 +787,12 @@ func (s *Service) releaseRuns(ctx context.Context, full, auth, sha string, ev ru
 	return append(runs, ev), !more, nil
 }
 
-// releaseList 按 Link: rel="next" 翻页 GET，至多 maxPages 页；more 为真表示读到上限时还有下一页。
+// releaseList 以我的账号按 Link: rel="next" 翻页 GET，至多 maxPages 页；more 为真表示读到上限时还有下一页。
 // 与 client.go 的 paged 不同，调用方据此知道列表是否完整。
-func (s *Service) releaseList(ctx context.Context, path, auth string, maxPages int, page func(raw json.RawMessage) error) (more bool, err error) {
+func (s *Service) releaseList(ctx context.Context, path string, maxPages int, page func(raw json.RawMessage) error) (more bool, err error) {
 	for i := 0; i < maxPages && path != ""; i++ {
 		var raw json.RawMessage
-		h, err := s.request(ctx, http.MethodGet, path, auth, nil, &raw)
+		h, err := s.request(ctx, slotUser, http.MethodGet, path, nil, &raw)
 		if err != nil {
 			return false, err
 		}
@@ -806,11 +805,11 @@ func (s *Service) releaseList(ctx context.Context, path, auth string, maxPages i
 }
 
 // releasePublished 报告 tag v<ver> 是否有非草稿的 GitHub Release。
-func (s *Service) releasePublished(ctx context.Context, full, auth, ver string) (bool, error) {
+func (s *Service) releasePublished(ctx context.Context, full, ver string) (bool, error) {
 	var rel struct {
 		Draft bool `json:"draft"`
 	}
-	err := s.call(ctx, http.MethodGet, "/repos/"+full+"/releases/tags/"+escapeSegments("v"+ver), auth, nil, &rel)
+	err := s.callAs(ctx, slotUser, http.MethodGet, "/repos/"+full+"/releases/tags/"+escapeSegments("v"+ver), nil, &rel)
 	if errKind(err) == kindNotFound {
 		return false, nil
 	}
@@ -821,9 +820,9 @@ func (s *Service) releasePublished(ctx context.Context, full, auth, ver string) 
 }
 
 // defaultHead 返回仓库的默认分支与它当前指向的提交。
-func (s *Service) defaultHead(ctx context.Context, full, auth string) (branch, sha string, err error) {
+func (s *Service) defaultHead(ctx context.Context, full string) (branch, sha string, err error) {
 	var rp repoPayload
-	if err := s.call(ctx, http.MethodGet, "/repos/"+full, auth, nil, &rp); err != nil {
+	if err := s.callAs(ctx, slotUser, http.MethodGet, "/repos/"+full, nil, &rp); err != nil {
 		return "", "", err
 	}
 	if rp.DefaultBranch == "" {
@@ -834,7 +833,7 @@ func (s *Service) defaultHead(ctx context.Context, full, auth string) (branch, s
 			SHA string `json:"sha"`
 		} `json:"object"`
 	}
-	if err := s.call(ctx, http.MethodGet, "/repos/"+full+"/git/ref/heads/"+escapeSegments(rp.DefaultBranch), auth, nil, &ref); err != nil {
+	if err := s.callAs(ctx, slotUser, http.MethodGet, "/repos/"+full+"/git/ref/heads/"+escapeSegments(rp.DefaultBranch), nil, &ref); err != nil {
 		return "", "", err
 	}
 	return rp.DefaultBranch, strings.ToLower(ref.Object.SHA), nil
@@ -843,7 +842,7 @@ func (s *Service) defaultHead(ctx context.Context, full, auth string) (branch, s
 // releaseDossier 汇总 run 与阻塞的 job：先翻页收齐每个阻塞 run 的阻塞 job（至多 releaseJobPages 页），再给前 releaseMaxJobs
 // 个附失败步骤与日志末尾，其余列入 overflow；runsComplete 为假或 job 列表到上限仍有下一页时记进 Truncated。
 // 单个 job 或日志读不到时记在该项上，不让整份报告失败。
-func (s *Service) releaseDossier(ctx context.Context, full, auth string, runs []runPayload, runsComplete bool) releaseDossier {
+func (s *Service) releaseDossier(ctx context.Context, full string, runs []runPayload, runsComplete bool) releaseDossier {
 	d := releaseDossier{Runs: []releaseRunView{}, Blocking: []releaseJobView{}}
 	if !runsComplete {
 		d.Truncated = append(d.Truncated, fmt.Sprintf("the run list stopped after %d pages; more runs exist on the release commit (gh run list --commit <sha>)", releaseRunPages))
@@ -858,7 +857,7 @@ func (s *Service) releaseDossier(ctx context.Context, full, auth string, runs []
 		}
 		runOnly := releaseJobView{RunID: r.ID, RunName: r.Name, Conclusion: r.conclusion(), URL: r.HTMLURL}
 		n := len(blocking)
-		more, err := s.releaseList(ctx, fmt.Sprintf("/repos/%s/actions/runs/%d/jobs?per_page=100", full, r.ID), auth, releaseJobPages,
+		more, err := s.releaseList(ctx, fmt.Sprintf("/repos/%s/actions/runs/%d/jobs?per_page=100", full, r.ID), releaseJobPages,
 			func(raw json.RawMessage) error {
 				var page struct {
 					Jobs []jobPayload `json:"jobs"`
@@ -899,7 +898,7 @@ func (s *Service) releaseDossier(ctx context.Context, full, auth string, runs []
 			continue
 		}
 		if v.ID != 0 {
-			tail, err := s.jobLogTail(ctx, full, auth, v.ID)
+			tail, err := s.jobLogTail(ctx, full, v.ID)
 			if err != nil {
 				v.LogError = err.Error()
 			}
@@ -910,25 +909,18 @@ func (s *Service) releaseDossier(ctx context.Context, full, auth string, runs []
 	return d
 }
 
-// jobLogTail 下载 job 日志（GitHub 回 302 到预签名地址，跨主机重定向时 net/http 丢掉 Authorization）并取末尾 releaseLogLines 行。
-func (s *Service) jobLogTail(ctx context.Context, full, auth string, jobID int64) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/repos/%s/actions/jobs/%d/logs", s.cfg.APIURL, full, jobID), nil)
+// jobLogTail 以我的账号下载 job 日志并取末尾 releaseLogLines 行：经 do 发出（401 同样把槽位标为 reauth），正文流式读取、不按 JSON 解码。
+// GitHub 回 302 到预签名地址，跨主机重定向时 net/http 丢掉 Authorization，令牌不会发给日志存储。
+func (s *Service) jobLogTail(ctx context.Context, full string, jobID int64) (string, error) {
+	req, err := s.newRequest(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/actions/jobs/%d/logs", full, jobID), nil)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	req.Header.Set("User-Agent", "oryn/"+version.Version)
-	req.Header.Set("Authorization", auth)
-	resp, err := s.cfg.HTTP.Do(req)
+	resp, err := s.do(slotUser, req)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
-		return "", classify(resp.StatusCode, resp.Header, http.StatusText(resp.StatusCode))
-	}
 	return tailLines(io.LimitReader(resp.Body, releaseLogMax), releaseLogLines)
 }
 
@@ -1001,7 +993,7 @@ func (s *Service) toolReleaseStatus(ctx context.Context, threadID string, params
 	}
 	var errs []string
 	note := func(what string, err error) { errs = append(errs, what+": "+err.Error()) }
-	full, auth, err := s.releaseRepoAuth(ctx, rel.RepoID, "")
+	full, err := s.releaseRepo(ctx, rel.RepoID, "")
 	if err == nil {
 		details["repo"] = full
 		fmt.Fprintf(&text, "Release %s v%s is %s (round %d of %d).\n", full, rel.Version, rel.State, rel.Rounds, maxReleaseRounds)
@@ -1016,8 +1008,8 @@ func (s *Service) toolReleaseStatus(ctx context.Context, threadID string, params
 		details["newerVersion"] = newer
 		fmt.Fprintf(&text, "A newer version v%s exists: stop, this release is superseded.\n", newer)
 	}
-	if full != "" && auth != "" {
-		switch _, commit, err := s.releaseTag(ctx, full, auth, rel.Version); {
+	if full != "" {
+		switch _, commit, err := s.releaseTag(ctx, full, rel.Version); {
 		case err != nil:
 			note("tag", err)
 		case commit != rel.Sha:
@@ -1026,7 +1018,7 @@ func (s *Service) toolReleaseStatus(ctx context.Context, threadID string, params
 		default:
 			details["stale"] = false
 		}
-		switch branch, head, err := s.defaultHead(ctx, full, auth); {
+		switch branch, head, err := s.defaultHead(ctx, full); {
 		case err != nil:
 			note("default branch", err)
 		default:
@@ -1038,10 +1030,10 @@ func (s *Service) toolReleaseStatus(ctx context.Context, threadID string, params
 				text.WriteString("The default branch is no longer at the release sha: stop without pushing.\n")
 			}
 		}
-		if runs, complete, err := s.releaseRuns(ctx, full, auth, rel.Sha, runPayload{}); err != nil {
+		if runs, complete, err := s.releaseRuns(ctx, full, rel.Sha, runPayload{}); err != nil {
 			note("runs", err)
 		} else {
-			d := s.releaseDossier(ctx, full, auth, runs, complete)
+			d := s.releaseDossier(ctx, full, runs, complete)
 			details["runs"], details["blockingJobs"], details["overflow"] = d.Runs, d.Blocking, d.Overflow
 			if len(d.Truncated) > 0 {
 				details["truncated"] = d.Truncated

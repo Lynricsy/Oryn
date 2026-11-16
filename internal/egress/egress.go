@@ -110,8 +110,12 @@ type Resolver interface {
 	SecretByID(id string) (value string, hosts []string, ok bool)
 	// GitToken 返回 git 主机的访问令牌（密钥 git/<host>/token）。
 	GitToken(host string) (token string, ok bool)
-	// GitHubToken 返回这台 orb 的 GitHub API 令牌（M14；按仓库收窄）；不归 GitHub App 管或拿不到时 ok 为假。
+	// GitHubToken 返回这台 orb 的 GitHub API 令牌（M15：线程身份槽位的 OAuth 令牌，账号能做什么就能做什么，不按仓库限制）；
+	// 这台 orb 不由 GitHub 集成下发凭据或拿不到时 ok 为假。
 	GitHubToken() (token string, ok bool)
+	// GitHubTokenRejected 在出站代理注入的 GitHub 令牌被上游回 401 时调用（R2，GET 与写请求都调）：/gh/ 路由的 GitHubToken，
+	// 以及 github.com git 路由的 GitToken("github.com")。令牌原样传回，由身份层按令牌找槽位；不是槽位令牌的（如 PAT）忽略。
+	GitHubTokenRejected(token string)
 	// GitHubWriteBegin 在转发 GitHub 写操作之前调用（预登记防回流记录），出站代理门禁放行之后才调用。返回非空表示拒绝，
 	// 内容是给 agent 看的原因（代理回 `oryn: <原因>`；推送按 receive-pack 的 ng 行回）。一个请求含多个写操作时逐个调用，遇到拒绝即停。
 	GitHubWriteBegin(w GitHubWrite) (gate string)
@@ -168,6 +172,8 @@ type target struct {
 	url    *url.URL
 	auth   string   // 非空时覆盖 Authorization（git、gh）
 	redact []string // 要从响应里抹掉的真实值（换成 oryn-redacted）
+	// ghToken 是注入的 GitHub 令牌（/gh/ 路由与 github.com 的 git 路由）；上游回 401 时交给 Resolver.GitHubTokenRejected。
+	ghToken string
 	// stripEncoding 为真时去掉客户端的 Accept-Encoding，让 Transport 自己协商并解压（M15：上游 gzip 时响应脱敏与写操作识别读到的是明文）。
 	stripEncoding bool
 	own           []string // 路由自己的 apiKey 密钥 id
@@ -238,6 +244,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			aud.response(resp)
+			if resp.StatusCode == http.StatusUnauthorized && t.ghToken != "" {
+				h.R.GitHubTokenRejected(t.ghToken)
+			}
 			if len(secretsUsed) == 0 {
 				return nil
 			}
@@ -374,6 +383,7 @@ func (h *Handler) resolve(r *http.Request) (target, int) {
 		}
 		if githubOpen {
 			t.ghAccess = pol.GitHub
+			t.ghToken = tok
 		}
 		return t, http.StatusOK
 	case "gh":
@@ -405,7 +415,7 @@ func (h *Handler) resolve(r *http.Request) (target, int) {
 			RawPath: o.Path + rawRest,
 		}
 		return target{
-			url: up, auth: "Bearer " + tok, redact: []string{tok}, stripEncoding: true,
+			url: up, auth: "Bearer " + tok, ghToken: tok, redact: []string{tok}, stripEncoding: true,
 			gh: true, ghUpload: upload, ghPath: rest, ghRawPath: rawRest, ghAccess: pol.GitHub,
 		}, http.StatusOK
 	}

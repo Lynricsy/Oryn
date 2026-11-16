@@ -218,8 +218,7 @@ func (s *Service) freezeThread(ctx context.Context, threadID string) {
 // selfWrite 以槽位 slot 直连 GitHub 做一次写操作（控制面自己的写入，不经出站代理）：先预登记 (类别, 目标, 正文)，
 // webhook 比响应先到时也能认出；响应里的补充键随后记下。targets 是事件探针会比对的目标（如 REST 写请求的规范化路径）。
 func (s *Service) selfWrite(ctx context.Context, slot, method, path, category string, targets []string, body map[string]any, text string) (json.RawMessage, error) {
-	tok, err := s.tokenFor(ctx, slot)
-	if err != nil {
+	if _, err := s.tokenFor(ctx, slot); err != nil { // 槽位不可用时不预登记
 		return nil, err
 	}
 	var sha *string
@@ -234,7 +233,7 @@ func (s *Service) selfWrite(ctx context.Context, slot, method, path, category st
 		}
 	}
 	var resp json.RawMessage
-	if err := s.call(ctx, method, path, "Bearer "+tok, body, &resp); err != nil {
+	if err := s.callAs(ctx, slot, method, path, body, &resp); err != nil {
 		return nil, err
 	}
 	s.rememberSelfKeys(ctx, egress.RespKeys(resp))

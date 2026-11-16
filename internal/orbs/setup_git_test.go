@@ -87,6 +87,7 @@ func (s stubGitHub) PrepareReport(context.Context, string, apigen.LinkCtlGithubP
 }
 func (s stubGitHub) GitHubWriteBegin(context.Context, string, egress.GitHubWrite) string       { return "" }
 func (s stubGitHub) GitHubWriteEnd(context.Context, string, egress.GitHubWrite, int, []string) {}
+func (s stubGitHub) GitHubTokenRejected(context.Context, string, string)                       {}
 func (s stubGitHub) PrepareOK(context.Context, string, string, string) (bool, bool) {
 	return false, false
 }
@@ -396,7 +397,7 @@ func TestPlanGitHubEgress(t *testing.T) {
 	}
 }
 
-// M14 3.3：github.com 的 git 令牌——归 App 管用收窄令牌，不可用时不回落，不归 App 管回落到 PAT。
+// github.com 的 git 令牌：由 GitHub 集成下发凭据时用身份槽位的 OAuth 令牌，不可用时不回落；不归集成管（runner 等）时回落到 PAT。
 func TestEgressResolverGitHubToken(t *testing.T) {
 	r := func(g stubGitHub) egressResolver {
 		return egressResolver{s: &Service{secrets: gitVault{}, github: g}, orbID: "orb-x"}
@@ -415,7 +416,7 @@ func TestEgressResolverGitHubToken(t *testing.T) {
 
 	tok, ok = r(stubGitHub{state: GitHubTokenUnmanaged}).GitToken("github.com")
 	assert.True(t, ok)
-	assert.Equal(t, "tok", tok, "不归 App 管时回落到密钥库的 PAT")
+	assert.Equal(t, "tok", tok, "不归 GitHub 集成管时回落到密钥库的 PAT")
 	_, ok = r(stubGitHub{state: GitHubTokenUnmanaged}).GitHubToken()
 	assert.False(t, ok)
 

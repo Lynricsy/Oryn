@@ -159,10 +159,6 @@ func (s *Service) doRollup(ctx context.Context, repoID, number int64, fresh bool
 	if err != nil {
 		return err
 	}
-	tok, err := s.tokenFor(ctx, slot)
-	if err != nil {
-		return err
-	}
 	owner, name, _ := strings.Cut(pull.RepoFullName, "/")
 	var out struct {
 		Repository *struct {
@@ -180,7 +176,7 @@ func (s *Service) doRollup(ctx context.Context, repoID, number int64, fresh bool
 			} `json:"pullRequest"`
 		} `json:"repository"`
 	}
-	if err := s.graphql(ctx, "Bearer "+tok, rollupQuery, map[string]any{"owner": owner, "name": name, "number": number}, &out); err != nil {
+	if err := s.graphql(ctx, slot, rollupQuery, map[string]any{"owner": owner, "name": name, "number": number}, &out); err != nil {
 		return err
 	}
 	if out.Repository == nil || out.Repository.PullRequest == nil {
@@ -275,11 +271,7 @@ func (s *Service) onRollup(ctx context.Context, pull db.GithubPull, _, next stri
 	if err != nil {
 		return err
 	}
-	tok, err := s.tokenFor(ctx, slot)
-	if err != nil {
-		return err
-	}
-	checks, err := s.failedChecks(ctx, "Bearer "+tok, pull.RepoFullName, pull.HeadSha)
+	checks, err := s.failedChecks(ctx, slot, pull.RepoFullName, pull.HeadSha)
 	if err != nil {
 		return err
 	}
@@ -298,8 +290,8 @@ func (s *Service) onRollup(ctx context.Context, pull db.GithubPull, _, next stri
 	return s.st.Q.SetThreadPullCIRounds(ctx, rounds)
 }
 
-// failedChecks 取提交 sha 上失败的 check run 与提交状态（合计至多 maxFailedChecks 条）。
-func (s *Service) failedChecks(ctx context.Context, auth, repo, sha string) ([]failedCheck, error) {
+// failedChecks 以槽位 slot 的令牌取提交 sha 上失败的 check run 与提交状态（合计至多 maxFailedChecks 条）。
+func (s *Service) failedChecks(ctx context.Context, slot, repo, sha string) ([]failedCheck, error) {
 	var runs struct {
 		CheckRuns []struct {
 			Name       string `json:"name"`
@@ -308,7 +300,7 @@ func (s *Service) failedChecks(ctx context.Context, auth, repo, sha string) ([]f
 		} `json:"check_runs"`
 	}
 	base := fmt.Sprintf("/repos/%s/commits/%s", repo, sha)
-	if err := s.call(ctx, http.MethodGet, base+"/check-runs?filter=latest&per_page=100", auth, nil, &runs); err != nil {
+	if err := s.callAs(ctx, slot, http.MethodGet, base+"/check-runs?filter=latest&per_page=100", nil, &runs); err != nil {
 		return nil, err
 	}
 	var statuses struct {
@@ -318,7 +310,7 @@ func (s *Service) failedChecks(ctx context.Context, auth, repo, sha string) ([]f
 			TargetURL string `json:"target_url"`
 		} `json:"statuses"`
 	}
-	if err := s.call(ctx, http.MethodGet, base+"/status", auth, nil, &statuses); err != nil {
+	if err := s.callAs(ctx, slot, http.MethodGet, base+"/status", nil, &statuses); err != nil {
 		return nil, err
 	}
 	var out []failedCheck

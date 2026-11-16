@@ -217,6 +217,9 @@ func (policyResolver) GitToken(string) (string, bool) { return "", false }
 
 func (policyResolver) GitHubToken() (string, bool) { return "", false }
 
+// 一次运行不注入 GitHub 令牌，不会有令牌被上游拒绝。
+func (policyResolver) GitHubTokenRejected(string) {}
+
 // 一次运行没有 GitHub 路由，不会出现 GitHub 写操作。
 func (policyResolver) GitHubWriteBegin(egress.GitHubWrite) string       { return "" }
 func (policyResolver) GitHubWriteEnd(egress.GitHubWrite, int, []string) {}

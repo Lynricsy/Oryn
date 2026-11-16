@@ -148,7 +148,7 @@ func TestCallClassifiesErrors(t *testing.T) {
 
 	get := func(path string) *ghError {
 		t.Helper()
-		err := e.s.call(e.ctx, http.MethodGet, srv.URL+path, "Bearer x", nil, nil)
+		err := e.s.callAs(e.ctx, "", http.MethodGet, srv.URL+path, nil, nil)
 		var ge *ghError
 		require.True(t, errors.As(err, &ge), "%v", err)
 		assert.True(t, IsUpstream(err))
@@ -169,7 +169,7 @@ func TestCallClassifiesErrors(t *testing.T) {
 
 	ge = get("/missing")
 	assert.Equal(t, kindNotFound, ge.Kind)
-	err := e.s.call(e.ctx, http.MethodGet, srv.URL+"/missing", "", nil, nil)
+	err := e.s.callAs(e.ctx, "", http.MethodGet, srv.URL+"/missing", nil, nil)
 	assert.True(t, isStatus(err, http.StatusNotFound), "仍可按状态码判断")
 	assert.False(t, retryable(err))
 }

@@ -110,30 +110,28 @@ func isStatus(err error, status int) bool {
 	return errors.As(err, &ae) && ae.Status == status
 }
 
-// call 发一次 GitHub 请求：path 以 `/` 开头时拼到 APIURL 后，否则视为完整地址；auth 原样作为 Authorization 头；
-// in 非 nil 则 JSON 编码；2xx 且 out 非 nil 则解码。非 2xx 返回 *ghError。
-func (s *Service) call(ctx context.Context, method, path string, auth string, in, out any) error {
-	_, err := s.request(ctx, method, path, auth, in, out)
-	return err
-}
+// 身份槽位与令牌（R2）：带槽位令牌的请求一律以槽位名（slotUser / slotAgent）发起，令牌由 do 现取（tokenFor）并注入，
+// 上游回 401 时也由 do 把该槽位标为 reauth；调用方不持有、不传递令牌，也就不必各自记得处理 401。slot 为空表示请求不带
+// 任何槽位的令牌（授权码兑换、校验刚兑换的新令牌、匿名请求），Authorization 由调用方自行设置或不设。
 
-// callAs 以身份槽位的令牌调用 call；上游回 401 时把槽位标为 reauth（R2）。
+// callAs 以槽位 slot 的令牌发一次 GitHub 请求（同 request，不要响应头）。
 func (s *Service) callAs(ctx context.Context, slot, method, path string, in, out any) error {
-	tok, err := s.tokenFor(ctx, slot)
-	if err != nil {
-		return err
-	}
-	err = s.call(ctx, method, path, "Bearer "+tok, in, out)
-	if errKind(err) == kindReauth {
-		if merr := s.markReauth(ctx, slot); merr != nil {
-			return errors.Join(err, merr)
-		}
-	}
+	_, err := s.request(ctx, slot, method, path, in, out)
 	return err
 }
 
-// request 同 call，另返回响应头（翻页用）。
-func (s *Service) request(ctx context.Context, method, path string, auth string, in, out any) (http.Header, error) {
+// request 以槽位 slot 的令牌发一次 GitHub 请求，另返回响应头（翻页、额度用）：path 以 `/` 开头时拼到 APIURL 后，
+// 否则视为完整地址；in 非 nil 则 JSON 编码；2xx 且 out 非 nil 则解码。非 2xx 返回 *ghError。
+func (s *Service) request(ctx context.Context, slot, method, path string, in, out any) (http.Header, error) {
+	req, err := s.newRequest(ctx, method, path, in)
+	if err != nil {
+		return nil, err
+	}
+	return s.send(slot, req, out)
+}
+
+// newRequest 构造一个 GitHub REST 请求（路径规则同 request），设好 Accept 与 Content-Type；公共头与令牌由 do 补齐。
+func (s *Service) newRequest(ctx context.Context, method, path string, in any) (*http.Request, error) {
 	var body io.Reader
 	if in != nil {
 		b, err := json.Marshal(in)
@@ -154,32 +152,19 @@ func (s *Service) request(ctx context.Context, method, path string, auth string,
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	return s.send(req, auth, out)
+	return req, nil
 }
 
-// send 补齐公共头后发出请求并解码响应。
-func (s *Service) send(req *http.Request, auth string, out any) (http.Header, error) {
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	req.Header.Set("User-Agent", "oryn/"+version.Version)
-	if auth != "" {
-		req.Header.Set("Authorization", auth)
-	}
-	resp, err := s.cfg.HTTP.Do(req)
+// send 经 do 发出请求并把 2xx 响应解码进 out（out 为 nil 时丢弃正文）；非 2xx 时返回响应头与 *ghError。
+func (s *Service) send(slot string, req *http.Request, out any) (http.Header, error) {
+	resp, err := s.do(slot, req)
 	if err != nil {
+		if resp != nil {
+			return resp.Header, err
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		var m struct {
-			Message string `json:"message"`
-		}
-		_ = json.Unmarshal(raw, &m)
-		if m.Message == "" {
-			m.Message = http.StatusText(resp.StatusCode)
-		}
-		return resp.Header, classify(resp.StatusCode, resp.Header, m.Message)
-	}
 	if out != nil {
 		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
 			return resp.Header, fmt.Errorf("github: 解析响应: %w", err)
@@ -188,6 +173,49 @@ func (s *Service) send(req *http.Request, auth string, out any) (http.Header, er
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 	}
 	return resp.Header, nil
+}
+
+// do 是本包对 GitHub 的唯一发送点：slot 非空时注入该槽位的令牌（槽位不可用时不发请求，返回 tokenFor 的错误），
+// 补齐公共头后发出并判错；上游回 401 时经 tokenRejected 把仍持有该令牌的 slot 标为 reauth（R2），之后 tokenFor
+// 拒绝该槽位，请求不再发往上游。
+// 边界：只有实际收到 401 的那一跳仍带着注入的令牌时才置 reauth。跟随重定向（如 job 日志 302 到另一主机的预签名地址）
+// 时 net/http 会去掉 Authorization，那里回的 401 说明不了 OAuth 令牌失效：照常返回 *ghError，不改动槽位。
+// 2xx 时返回响应，调用方负责关闭 Body（流式下载可直接读）；非 2xx 时 Body 已读尽关闭，返回的响应只用于读头，错误为 *ghError。
+func (s *Service) do(slot string, req *http.Request) (*http.Response, error) {
+	ctx := req.Context()
+	tok := ""
+	if slot != "" {
+		var err error
+		if tok, err = s.tokenFor(ctx, slot); err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("User-Agent", "oryn/"+version.Version)
+	resp, err := s.cfg.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 200 && resp.StatusCode <= 299 {
+		return resp, nil
+	}
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	_ = resp.Body.Close()
+	var m struct {
+		Message string `json:"message"`
+	}
+	_ = json.Unmarshal(raw, &m)
+	if m.Message == "" {
+		m.Message = http.StatusText(resp.StatusCode)
+	}
+	ge := classify(resp.StatusCode, resp.Header, m.Message)
+	if ge.Kind == kindReauth && tok != "" && resp.Request != nil && resp.Request.Header.Get("Authorization") == "Bearer "+tok {
+		if merr := s.tokenRejected(ctx, tok, slot); merr != nil {
+			return resp, errors.Join(ge, merr)
+		}
+	}
+	return resp, ge
 }
 
 // oauthTokenResponse 是 `<WebURL>/login/oauth/access_token` 的响应（失败时 GitHub 也回 200，带 error 字段）。
@@ -207,7 +235,7 @@ func (s *Service) oauthToken(ctx context.Context, form url.Values) (oauthTokenRe
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	_, err = s.send(req, "", &out)
+	_, err = s.send("", req, &out)
 	return out, err
 }
 
@@ -223,11 +251,11 @@ func nextLink(h http.Header) string {
 	return ""
 }
 
-// paged 按 Link: rel="next" 翻页 GET，最多 maxPages 页；每页交给 page 解码。
-func (s *Service) paged(ctx context.Context, path, auth string, maxPages int, page func(raw json.RawMessage) error) error {
+// paged 以槽位 slot 的令牌按 Link: rel="next" 翻页 GET，最多 maxPages 页；每页交给 page 解码。
+func (s *Service) paged(ctx context.Context, slot, path string, maxPages int, page func(raw json.RawMessage) error) error {
 	for i := 0; i < maxPages && path != ""; i++ {
 		var raw json.RawMessage
-		h, err := s.request(ctx, http.MethodGet, path, auth, nil, &raw)
+		h, err := s.request(ctx, slot, http.MethodGet, path, nil, &raw)
 		if err != nil {
 			return err
 		}
@@ -239,15 +267,15 @@ func (s *Service) paged(ctx context.Context, path, auth string, maxPages int, pa
 	return nil
 }
 
-// graphql 发一条 GraphQL 查询；响应带 errors 时返回错误。
-func (s *Service) graphql(ctx context.Context, auth, query string, vars map[string]any, out any) error {
+// graphql 以槽位 slot 的令牌发一条 GraphQL 查询；响应带 errors 时返回错误。
+func (s *Service) graphql(ctx context.Context, slot, query string, vars map[string]any, out any) error {
 	var resp struct {
 		Data   json.RawMessage `json:"data"`
 		Errors []struct {
 			Message string `json:"message"`
 		} `json:"errors"`
 	}
-	if err := s.call(ctx, http.MethodPost, "/graphql", auth, map[string]any{"query": query, "variables": vars}, &resp); err != nil {
+	if err := s.callAs(ctx, slot, http.MethodPost, "/graphql", map[string]any{"query": query, "variables": vars}, &resp); err != nil {
 		return err
 	}
 	if len(resp.Errors) > 0 {

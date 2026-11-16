@@ -24,6 +24,16 @@
 - **v5（2026-11-16，执行中修订）**：评审发现 3.1 会静默漏事件：仓库级每轮 20 次时间线查询用完后跳过其余项，却照样保存 ETag、把 since 推到全列表的最大时间；列表翻满 5 页仍有下一页时也照常提交。改为可续跑（规则见附录 C「续跑」）：没处理完的列表不提交 ETag，游标不越过第一个没处理的项；PR 改由 issue 列表发现（`pulls` 列表没有 `since`、倒序读不到续点），迁移 `0035` 删掉 `github_repo_watches.etag_pulls`。
 - **v6（2026-11-16，执行中修订）**：5.4 的线程限制（`ReviewOnly`、`CommentOnlyReviews`、`ImplAuth`）原定在 setup 时写进策略，但规则在建线程之后才写入 `thread_issues`，池中 orb 被认领时 setup 可能先算出策略，于是首个会话里只读评审线程能推送、开 PR。改为出站代理每次写请求经 `GateLookup.ThreadGates()` 现查（含 `info/refs` 阶段的 403），查询失败按最严处理（三项都视为开启）；策略里只保留项目的 `Gates`。
 - **v7（2026-11-16，执行中修订）**：只靠 v6 的现查仍有窗口：`threads.Create` 返回前已唤醒线程、排队首条提示词，而 `fire` 在它返回后才写 `thread_issues` 与任务，其间现查得到「没有任务」= 零限制。改为任务与线程同事务落库：`threads.CreateParams` 新增 `InitTx(ctx, q, threadID)`，在写线程行与首批命令的同一事务里执行，事务提交后才唤醒线程；`fire` 的 `UpsertThreadIssue`、`SetThreadIssueTask`（以及 4.3 重新触发时的字段重置）都放进 `InitTx`。6.1 的发布线程建线程时要写的任务或发布行同样走 `InitTx`。由此「没有任务 = 零限制」只会出现在确实不是任务线程的 orb 上。
+- **v8（2026-11-16，9.1 文档评审后修订）**：评审对照代码发现以下出入，正文已按代码改正：
+  - **R2 的 401 覆盖所有路径**：原先只有 `callAs` 在 401 时置 `reauth`，autoclose、checks、refs、release、repos、`selfWrite`、触发回执、job 日志下载等直接用 `s.call` / `s.request` / `HTTP.Do` 带令牌的路径不置，令牌被撤销后静默失败。改为调用方只传槽位名，令牌由 `client.go` 的唯一发送点 `do` 现取并注入，401 也在那里处理（`callAs`、`paged`、`graphql`、`releaseList`、`jobLogTail` 都经它）；不带槽位令牌的请求（授权码兑换、校验刚兑换的令牌、匿名请求）传空槽位。选这个而不是在 `request` 里按令牌反查槽位：调用方本来就知道槽位，反查要多一次比对，还会让令牌继续在调用方之间传递。
+  - **出站代理注入的令牌同样适用 R2**：`/gh/api.github.com`、`/gh/uploads.github.com` 与 github.com 的 git 路由注入的都是身份槽位的 OAuth 令牌。`egress.Resolver` 增加 `GitHubTokenRejected(token)`，上游对注入的令牌回 401 时调用（GET 与写请求都调），经 `orbs` 交给 `github.(*Service).GitHubTokenRejected` 按令牌找槽位。两边共用 `tokenRejected`：只有槽位当前的令牌仍等于被拒的那个时才置 `reauth`（以密文做条件更新 `MarkGithubIdentityReauth`），已重新授权的新令牌不会被旧请求的 401 误标；PAT 等不属于任何槽位的令牌直接忽略。控制面自己的请求另有一条边界：只有收到 401 的最后一跳仍带着该令牌时才算（job 日志 302 到预签名地址时 net/http 去掉了 Authorization，那里的 401 不置 `reauth`）。出站代理的 `ReverseProxy` 不跟随重定向，不受这条影响。
+  - **补充键**（2.3、0033 的注释）：取 REST 写操作响应顶层的 `node_id`，以及键名以 `url` 结尾的字段里的锚点（`#issuecomment-`、`#pullrequestreview-`、`#discussion_r`），不取响应的数值 `id`。
+  - **审计的仓库**（R23）：路径里取不到时，只读 REST 2xx 响应顶层的 `repository_url` / `url`；GraphQL 响应不读，`resourcePath` 不用。
+  - **冻结时机**（R15）：只有 `github_abort_task`（线程自己的工具调用）把冻结推迟到回合结束；`closed`、`merged` 与 cleanup 立即排队冻结；发布线程不冻结。
+  - **R16 的授权人**：`accepted` 标签由仓库 owner 登录名、我的账号或规则维护者打上才算（标签事件不带 association）；`go ahead` 评论的作者须是 OWNER association、仓库 owner 登录名、我的账号或规则维护者。
+  - **5.4 覆盖表**补上分支改名（`POST /branches/{branch}/rename`）、`DELETE /git/refs/*` 与 `deleteRef`。
+  - **修复命令**（R20 第 5 步）的超时是 600 秒。
+  - **`Orb.githubLogin`**：原先只在项目已绑定时给出，与 Q2「所有工作 orb 都有凭据」不符。改为与 `OrbSetup` 下发凭据的条件一致：工作 orb 的身份槽位已连接且为 `ok` 时给出，与有没有项目无关；OpenAPI 里 `githubLogin`、`LinkCtlSetupRunParams.gh`、`deleteGitHubIdentity`、`putGitHubSettings` 的说明一并按代码改正。
 
 ## Context
 
@@ -90,7 +100,7 @@
   - 登录名、头像，以及实际授予的 scope（取自 `X-OAuth-Scopes`）；
   - 缺少 scope 时显示「需要重新授权」。
 
-  两个槽位不能是同一账号。任何 GitHub 调用返回 401 时，该槽位置为 `reauth`。
+  两个槽位不能是同一账号。任何 GitHub 调用返回 401 时，该槽位置为 `reauth`：控制面自己的请求与出站代理为 orb 注入令牌的请求（含 GET）都算，只按收到 401 时仍带着的那个令牌判定（v8）。
 - **R3** 升级后删除旧 App 数据，两个槽位都要重新连接。项目的 `github_repo_id`、触发规则、PR 关联、`thread_issues` 保留。
 - **R4** 组织限制可见：
   - 绑定或建 hook 时遇到 OAuth App 组织限制（403，message 含 `OAuth App access restrictions`），项目或 hook 状态为 `org_restricted`，界面给出申请批准的链接 `<web_url>/settings/connections/applications/<client_id>`；
@@ -151,12 +161,12 @@
   - 思考级别别名：`off|none|no`、`lo|low`、`med|medium`、`hi|high`、`xhi|xhigh`、`max`。
 - **R15** issue 线程状态机：
   - 状态集合：`new`、`reproducing`、`fixing`、`reviewing`、`opened`、`needs_info`、`merged`、`closed`、`abandoned`，线程页头可见；
-  - `issues.closed` 或 PR 合并时，状态变为 `closed` 或 `merged`，orb 冻结，线程不删除；
+  - `issues.closed` 或 PR 合并时，状态变为 `closed` 或 `merged`，orb 立即冻结，线程不删除；cleanup 同样立即冻结；只有 `github_abort_task` 把冻结推迟到本回合结束（工具应答要先送到 agent）；发布线程不冻结（v8）；
   - 处于终态时，非指令评论只会收到一条固定回帖；
   - 维护者的 `@<Agent 账号>` 指令会重开该线程。
 - **R16** 实现授权：规则开启「实现需授权」后，只有以下两种情况，出站代理才放行本线程为该仓库创建 PR，否则拒绝并说明原因：
   - 本线程的分类是 `bug` 或 `documentation`；
-  - OWNER 或规则维护者已打上 `accepted` 标签，或评论里含 `go ahead`（不区分大小写）。
+  - 已打上 `accepted` 标签，打标签的人是仓库 owner 登录名、我的账号或规则维护者（标签事件不带 association）；或评论里含 `go ahead`（不区分大小写），评论作者是 OWNER association、仓库 owner 登录名、我的账号或规则维护者（v8）。
 - **R17** orb 内 omp 工具：`github_classify_issue`、`github_task_state`、`github_prepare`、`github_autoclose`、`github_release_status`、`github_abort_task`，语义见步骤 5.2 和 6.1。
 - **R18** 问题自动关闭：
   - agent 调用 `github_autoclose` 时，记录本线程身份在该 issue 上的最近一条评论；N 小时后（默认 4 小时，规则可配）只检查这条评论上 issue 作者的 👎；
@@ -174,7 +184,7 @@
   2. 当前分支不是默认分支（发布线程例外）；
   3. `origin/<默认分支>..HEAD` 非空；
   4. 把提交信息中的字面量 `\n` 改写为真换行（只改信息）；
-  5. 运行修复命令，并把产生的 diff 并入 HEAD 提交；
+  5. 运行修复命令（600 秒），并把产生的 diff 并入 HEAD 提交；
   6. 工作树干净；
   7. 区间内每个提交的作者等于线程身份的提交身份；
   8. 运行检查命令（600 秒）；
@@ -195,7 +205,7 @@
   - 解析出的 GraphQL mutation（query 不记）；
   - `git-receive-pack`（每个 ref 一行）。
 
-  每行字段：时间、线程、身份、方法、路径模板或 mutation 名、仓库（取路径，或响应中的 `url`/`resourcePath`，取不到时留空并把 node id 记入 `op`）、状态码、门禁结论、正文 SHA-256。保留 30 天。设置页、API 和 CLI 都可以按线程或仓库查询。
+  每行字段：时间、线程、身份、方法、路径模板或 mutation 名、仓库（取路径；路径里没有时取 REST 2xx 响应顶层的 `repository_url` / `url`；GraphQL 响应不读，取不到时留空并把 node id 记入 `op`）、状态码、门禁结论、正文 SHA-256。保留 30 天。设置页、API 和 CLI 都可以按线程或仓库查询。
 - **R24** CLI `oryn github`：
   - `triage <owner>/<repo>#<n> [--rule]`：合成 `issues.opened`，打印线程 id；
   - `replay <guid>`：重放 7 天内已结束的投递，载荷保留到清理时；
@@ -289,7 +299,7 @@
   - 否决：受控动作白名单（主人要求支持全部操作）。
   - 否决：出站代理按仓库收窄（GraphQL 要反查 node id，容易误拦；主人未选）。
   - 否决：`mode=env` 全局令牌（令牌会进入所有 orb）。
-- **防回流**：采用请求侧预登记 `(槽位, 动作类别, 目标, 正文哈希)`，REST 响应的 id 作为补充键。
+- **防回流**：采用请求侧预登记 `(槽位, 动作类别, 目标, 正文哈希)`，REST 响应顶层的 `node_id` 与 `*url` 字段里的锚点作为补充键（v8）。
   - 否决：正文标记（主人不要）。
   - 否决：只从响应里取 id（gh 的 mutation 不选 id；响应可能是 gzip；webhook 可能比响应先到）。
   - 否决：按登录名一刀切（会吞掉我本人的评论）。
@@ -567,7 +577,7 @@ Do：
 - **预登记**：写入 `github_self_writes(slot, category, target, body_sha256)`。target 的取法：
   - REST 取规范化路径；
   - GraphQL 取 input 中的 `subjectId`、`pullRequestId`、`issueId`、`repositoryId`。
-- **补充键**：只读 REST 写操作的 JSON 响应（不读 GraphQL 响应），取 `id`、`node_id`，以及 `html_url` 片段里的 `#issuecomment-`、`#pullrequestreview-`、`#discussion_r`。
+- **补充键**：只读 REST 写操作的 JSON 响应（不读 GraphQL 响应），取顶层的 `node_id`，以及键名以 `url` 结尾的字段里的锚点 `#issuecomment-`、`#pullrequestreview-`、`#discussion_r`；不取数值 `id`（v8）。
 - **`isSelf` 的判定**：满足以下任一即为自身写入：
   - sender 是 Agent 槽位的登录名；
   - 命中补充键；
@@ -769,8 +779,8 @@ Do：按下面的覆盖表执行。REST 的前缀 `/repos/{o}/{r}` 与 `/reposit
 | 类别 | REST | GraphQL mutation | 处理 |
 |---|---|---|---|
 | 创建 PR | `POST /pulls` | `createPullRequest` | 检查 PR 门禁、`ImplAuth`；`ReviewOnly` 时拒绝 |
-| 改 ref（可知 SHA） | `POST /git/refs`、`PATCH /git/refs/*` | `createRef`、`updateRef`、`updateRefs` | 推送门禁开启时查 `PrepareOK(sha,"push")`；`ReviewOnly` 时拒绝 |
-| 改 ref（不可知 SHA） | `PUT\|DELETE /contents/*`、`POST /merges`、`POST /merge-upstream`、`PUT /pulls/{n}/update-branch` | `createCommitOnBranch`、`mergeBranch`、`updatePullRequestBranch` | 推送门禁开启或 `ReviewOnly` 时拒绝 |
+| 改 ref（可知 SHA） | `POST /git/refs`、`PATCH /git/refs/*`、`DELETE /git/refs/*` | `createRef`、`updateRef`、`updateRefs`、`deleteRef` | 推送门禁开启时查 `PrepareOK(sha,"push")`（删除不查，但非发布线程不能动默认分支）；只带 `refId`、确定不了 ref 名时拒绝；`ReviewOnly` 时拒绝 |
+| 改 ref（不可知 SHA） | `PUT\|DELETE /contents/*`、`POST /merges`、`POST /merge-upstream`、`PUT /pulls/{n}/update-branch`、`POST /branches/{branch}/rename` | `createCommitOnBranch`、`mergeBranch`、`updatePullRequestBranch` | 推送门禁开启或 `ReviewOnly` 时拒绝 |
 | 合并 | `PUT /pulls/{n}/merge` | `mergePullRequest`、`enablePullRequestAutoMerge`、`enqueuePullRequest` | `ReviewOnly` 时拒绝 |
 | review 事件 | `POST /pulls/{n}/reviews`（`event`）、`POST /pulls/{n}/reviews/{id}/events` | `addPullRequestReview`、`submitPullRequestReview` | `CommentOnlyReviews` 时只放行 `COMMENT`，以及没有 event 的待提交 review |
 | Oryn 的 hook | `PATCH\|DELETE /hooks/{id}`、`PATCH /hooks/{id}/config` | 无 | `IsOrynHook` 为真时始终拒绝 |
@@ -950,7 +960,7 @@ gh 版本固定为 `v2.102.1`（本机版本；orb 镜像的 Arch `github-cli` �
 | `release create/upload` | REST | `POST /repos/{o}/{r}/releases`；上传走 `uploads.github.com` 的 `upload_url` | — | release JSON |
 | `api -X POST …/comments` | REST | 路径即操作 | 路径 | 评论 JSON（`id`、`node_id`、`html_url`） |
 
-结论：gh 的 mutation 响应**不含**新对象的数值 id，只有 `addComment`、`createPullRequest`、`createIssue` 返回 URL。所以防回流以「请求侧预登记目标 + 正文哈希」为主（2.3），URL 锚点和 REST 响应 id 只作为补充键。
+结论：gh 的 mutation 响应**不含**新对象的数值 id，只有 `addComment`、`createPullRequest`、`createIssue` 返回 URL。所以防回流以「请求侧预登记目标 + 正文哈希」为主（2.3），REST 响应的 `node_id` 与 URL 锚点只作为补充键（v8）。
 
 ## 附录 B：真实 GitHub 探查结论（步骤 0.2 填写）
 

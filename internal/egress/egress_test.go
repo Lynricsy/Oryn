@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -43,6 +44,15 @@ func (f fakeR) SecretByID(id string) (string, []string, bool) {
 func (f fakeR) GitToken(h string) (string, bool) { v, ok := f.git[h]; return v, ok }
 func (f fakeR) GitHubToken() (string, bool)      { return f.gh, f.gh != "" }
 
+func (f fakeR) GitHubTokenRejected(tok string) {
+	if f.rec == nil {
+		return
+	}
+	f.rec.mu.Lock()
+	defer f.rec.mu.Unlock()
+	f.rec.rejected = append(f.rec.rejected, tok)
+}
+
 func (f fakeR) GitHubWriteBegin(w GitHubWrite) string {
 	if f.rec == nil {
 		return ""
@@ -62,12 +72,13 @@ func (f fakeR) GitHubWriteEnd(w GitHubWrite, status int, keys []string) {
 	f.rec.ends = append(f.rec.ends, writeEnd{w: w, status: status, keys: keys})
 }
 
-// writeRec 记录 GitHubWriteBegin / GitHubWriteEnd；gate 非空时 Begin 一律拒绝。
+// writeRec 记录 GitHubWriteBegin / GitHubWriteEnd / GitHubTokenRejected；gate 非空时 Begin 一律拒绝。
 type writeRec struct {
-	mu     sync.Mutex
-	gate   string
-	begins []GitHubWrite
-	ends   []writeEnd
+	mu       sync.Mutex
+	gate     string
+	begins   []GitHubWrite
+	ends     []writeEnd
+	rejected []string
 }
 
 type writeEnd struct {
@@ -325,7 +336,7 @@ func TestRedactReaderSplitAcrossChunks(t *testing.T) {
 	assert.Equal(t, "abc oryn-ph-x def\n\n", string(b))
 }
 
-// M14：/gh/api.github.com/… 带收窄令牌转发，保留路径里的 %2F，响应回显的令牌被抹掉。
+// M15：/gh/api.github.com/… 注入身份槽位的令牌转发，保留路径里的 %2F，响应回显的令牌被抹掉。
 func TestGitHubRoute(t *testing.T) {
 	var gotPath, gotAuth string
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -429,6 +440,52 @@ func TestGitHubGitOpen(t *testing.T) {
 	}
 }
 
+// R2：注入的 GitHub 令牌被上游回 401 时调用 GitHubTokenRejected（GET 与写请求、/gh/ 与 github.com 的 git 路由都调），
+// 传回的是注入的那个令牌；200、403 不调。github.com 以外的 git 主机（PAT）不设 ghToken，不会走到回调。
+func TestGitHubTokenRejected(t *testing.T) {
+	var code atomic.Int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(int(code.Load()))
+	}))
+	defer up.Close()
+	rec := &writeRec{}
+	pol := Policy{GitHub: &GitHubAccess{APIOrigin: up.URL, GitOrigin: up.URL, UploadsOrigin: up.URL}}
+	toks := map[string]string{"github.com": "gho_git"}
+	srv := httptest.NewServer(NewHandler("orb-x", fakeR{gh: "T0KEN", git: toks, pol: pol, rec: rec}))
+	defer srv.Close()
+	rejected := func() []string {
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		out := rec.rejected
+		rec.rejected = nil
+		return out
+	}
+	for _, c := range []struct {
+		name, method, path string
+		status             int
+		want               []string
+	}{
+		{"gh GET 401", "GET", "/gh/api.github.com/user", http.StatusUnauthorized, []string{"T0KEN"}},
+		{"gh GET 200", "GET", "/gh/api.github.com/user", http.StatusOK, nil},
+		{"gh GET 403", "GET", "/gh/api.github.com/user", http.StatusForbidden, nil},
+		{"gh 写 401", "POST", "/gh/api.github.com/repos/a/b/issues/1/comments", http.StatusUnauthorized, []string{"T0KEN"}},
+		{"uploads 401", "POST", "/gh/uploads.github.com/repos/a/b/releases/1/assets?name=x", http.StatusUnauthorized, []string{"T0KEN"}},
+		{"git info/refs 401", "GET", "/git/github.com/a/b/info/refs?service=git-upload-pack", http.StatusUnauthorized, []string{"gho_git"}},
+		{"git info/refs 403", "GET", "/git/github.com/a/b/info/refs?service=git-upload-pack", http.StatusForbidden, nil},
+	} {
+		code.Store(int32(c.status))
+		var r *http.Response
+		if c.method == "POST" {
+			r, _ = post(t, srv.URL+c.path, []byte(`{"body":"x"}`), map[string]string{"Content-Type": "application/json"})
+		} else {
+			r = do(t, c.method, srv.URL+c.path, nil)
+			r.Body.Close()
+		}
+		assert.Equal(t, c.status, r.StatusCode, c.name)
+		assert.Equal(t, c.want, rejected(), c.name)
+	}
+}
+
 // ghProxy 起一个开放 GitHub 的代理（API 与 git 上游都是 up），返回代理地址与写操作记录。
 func ghProxy(t *testing.T, up string) (string, *writeRec) {
 	t.Helper()
@@ -453,7 +510,7 @@ func post(t *testing.T, url string, body []byte, hdr map[string]string) (*http.R
 	return resp, string(b)
 }
 
-// M15 2.3：REST 评论在转发前预登记（类别、规范化路径、正文哈希），请求体原样转发；响应的 id / node_id 作为补充键；
+// M15 2.3：REST 评论在转发前预登记（类别、规范化路径、正文哈希），请求体原样转发；响应顶层的 node_id 与 html_url 的锚点作为补充键；
 // /repositories/{id} 形态的仓库取自响应；GET 不算写操作。
 func TestGitHubWriteREST(t *testing.T) {
 	var gotBody []byte

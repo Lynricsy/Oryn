@@ -237,6 +237,9 @@ func (policy) GitToken(string) (string, bool) { return "", false }
 
 func (policy) GitHubToken() (string, bool) { return "", false }
 
+// 中转不注入 GitHub 令牌，不会有令牌被上游拒绝，所以是空实现。
+func (policy) GitHubTokenRejected(string) {}
+
 // 中转没有 GitHub 路由，不会出现 GitHub 写操作。
 func (policy) GitHubWriteBegin(egress.GitHubWrite) string       { return "" }
 func (policy) GitHubWriteEnd(egress.GitHubWrite, int, []string) {}

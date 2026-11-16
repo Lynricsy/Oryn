@@ -61,7 +61,7 @@ func (r egressResolver) GitToken(host string) (string, bool) {
 	return r.s.secrets.GitToken(host)
 }
 
-// GitHubToken 返回 GitHub API 令牌（M14）：只有这台 orb 由 GitHub 集成下发凭据且槽位可用时可用。
+// GitHubToken 返回 GitHub API 令牌（M15：线程身份槽位的 OAuth 令牌）：只有这台 orb 由 GitHub 集成下发凭据且槽位可用时可用。
 func (r egressResolver) GitHubToken() (string, bool) {
 	if r.s.github == nil {
 		return "", false
@@ -74,6 +74,16 @@ func (r egressResolver) githubToken() (string, GitHubTokenState) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	return r.s.github.OrbToken(ctx, r.orbID)
+}
+
+// GitHubTokenRejected 把出站代理注入后被上游回 401 的令牌交给 GitHub 集成（R2：按令牌找到槽位置为 reauth）。
+func (r egressResolver) GitHubTokenRejected(token string) {
+	if r.s.github == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	r.s.github.GitHubTokenRejected(ctx, r.orbID, token)
 }
 
 // GitHubWriteBegin 把出站代理观察到的 GitHub 写操作交给 GitHub 集成预登记（M15）；返回非空 = 拒绝原因。

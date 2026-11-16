@@ -829,13 +829,12 @@ func (q *Queries) GetGithubWatch(ctx context.Context, arg GetGithubWatchParams) 
 const getOrbGithubLogin = `-- name: GetOrbGithubLogin :one
 
 SELECT gi.login FROM orbs o
-JOIN projects p ON p.id = o.project_id
 JOIN github_identities gi ON gi.slot = o.github_identity
-WHERE o.id = ?1 AND p.github_repo_id IS NOT NULL
+WHERE o.id = ?1 AND gi.status = 'ok'
 `
 
 // ---------- orb ----------
-// GitHub login of an orb whose project is bound and whose identity slot is connected.
+// GitHub login of an orb whose identity slot is connected and usable (M15: any work orb, project or not).
 func (q *Queries) GetOrbGithubLogin(ctx context.Context, id string) (string, error) {
 	row := q.db.QueryRowContext(ctx, getOrbGithubLogin, id)
 	var login string
@@ -2625,6 +2624,25 @@ func (q *Queries) ListThreadTaskSummaries(ctx context.Context) ([]ListThreadTask
 		return nil, err
 	}
 	return items, nil
+}
+
+const markGithubIdentityReauth = `-- name: MarkGithubIdentityReauth :execrows
+UPDATE github_identities SET status = 'reauth', updated_at = ?1
+WHERE slot = ?2 AND access_token_enc = ?3 AND status <> 'reauth'
+`
+
+type MarkGithubIdentityReauthParams struct {
+	UpdatedAt      int64  `json:"updatedAt"`
+	Slot           string `json:"slot"`
+	AccessTokenEnc []byte `json:"accessTokenEnc"`
+}
+
+func (q *Queries) MarkGithubIdentityReauth(ctx context.Context, arg MarkGithubIdentityReauthParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markGithubIdentityReauth, arg.UpdatedAt, arg.Slot, arg.AccessTokenEnc)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const markGithubOutboxDelivered = `-- name: MarkGithubOutboxDelivered :exec

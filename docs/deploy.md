@@ -201,6 +201,7 @@ orb 内的 git 请求经 orbd 的本机代理（`127.0.0.1:7811/git/<host>/…`�
 
 - **有项目且项目 `repo_url` 为 `https://` 地址的 orb**：只放行该项目仓库，可读可写（`git-upload-pack` 与 `git-receive-pack`）。仓库路径须与 `repo_url` 完全一致（不区分大小写，忽略 `.git` 后缀）。同一主机上的其它仓库、其它主机一律拒绝（403）。orb 内的 `url.<代理>.insteadOf` 只覆盖项目仓库这一个地址前缀，其它 `https://` git 地址照常直连公网、不带令牌，公开仓库仍可匿名克隆。
 - **无项目的 orb**（以及项目没有 `https://` 仓库地址的 orb）：配置了 `git/<host>/token` 的主机上，任意仓库只读。只放行 `info/refs?service=git-upload-pack` 与 `git-upload-pack`，推送（`git-receive-pack`）一律拒绝（403）。这类 orb 的 `insteadOf` 覆盖整个主机。
+- **github.com（M15）**：上面两条只适用于 PAT 主机。orb 由 GitHub 集成下发凭据时，github.com 改由出站代理注入线程身份槽位的 OAuth 令牌，不按项目仓库限制：orb 能读写哪些仓库取决于该身份账号自身的权限，以及项目开启的门禁。详见第 13 节。
 - **路径与端点**：只放行 git smart-HTTP 端点（`info/refs`、`git-upload-pack`、`git-receive-pack`），其它路径返回 404。路径里出现 `.` 或 `..` 段、空段（`//`），或 `path.Clean` 后与原路径不同，一律返回 400。这包括 `%2e%2e` 这类编码形式，因为校验针对解码后的路径。git 路由不接受任何 `oryn-ph-…` 占位符。
 - orbd 每次执行 setup / resume 时，先删掉自己以前写入的全部 `insteadOf` 条目，再按当前策略重写。项目设置变更后，在下一次唤醒时生效。
 

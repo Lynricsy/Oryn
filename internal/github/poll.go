@@ -186,29 +186,15 @@ func (s *Service) pollDelivery(ctx context.Context, row db.GithubHook, base stri
 // deliveriesGet 以我的账号 GET 投递日志接口：etag 非空时带 If-None-Match（304 以 *ghError 返回，isStatus 可判）；
 // 按响应的 X-RateLimit-* 记录额度，剩余低于 deliveriesQuotaMin 时暂停到 X-RateLimit-Reset。调用方持 pollMu。
 func (s *Service) deliveriesGet(ctx context.Context, path, etag string, out any) (http.Header, error) {
-	tok, err := s.tokenFor(ctx, slotUser)
+	req, err := s.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
 	}
-	target := path
-	if strings.HasPrefix(path, "/") {
-		target = s.cfg.APIURL + path
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
 	if etag != "" {
 		req.Header.Set("If-None-Match", etag)
 	}
-	h, err := s.send(req, "Bearer "+tok, out)
+	h, err := s.send(slotUser, req, out)
 	s.noteDeliveriesQuota(h)
-	if errKind(err) == kindReauth {
-		if merr := s.markReauth(ctx, slotUser); merr != nil {
-			return h, errors.Join(err, merr)
-		}
-	}
 	return h, err
 }
 

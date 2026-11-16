@@ -89,35 +89,30 @@ func githubTimeMs(v string) int64 {
 	return t.UnixMilli()
 }
 
-// boundRepo 读已绑定的项目，返回其 `owner/repo` 与我的账号令牌的 Authorization 头；未绑定 → github_not_bound。
-func (s *Service) boundRepo(ctx context.Context, projectID string) (string, string, error) {
+// boundRepo 读已绑定的项目，返回其 `owner/repo`（调用方以我的账号读取）；未绑定 → github_not_bound。
+func (s *Service) boundRepo(ctx context.Context, projectID string) (string, error) {
 	prj, err := s.st.Q.GetProject(ctx, projectID)
 	if err != nil {
 		if isNoRows(err) {
-			return "", "", errf("not_found", "project not found")
+			return "", errf("not_found", "project not found")
 		}
-		return "", "", err
+		return "", err
 	}
-	return s.projectAuth(ctx, prj)
+	return s.projectRepo(prj)
 }
 
-// projectAuth 返回已绑定项目的 `owner/repo` 与我的账号令牌的 Authorization 头（交互路径一律用我的账号）；
-// 未绑定 → github_not_bound；我的账号不可用 → github_identity_required。
-func (s *Service) projectAuth(ctx context.Context, prj db.Project) (string, string, error) {
+// projectRepo 返回已绑定项目的 `owner/repo`（交互路径一律以我的账号读取）；未绑定 → github_not_bound。
+func (s *Service) projectRepo(prj db.Project) (string, error) {
 	full, ok := githubRepoPath(prj.RepoUrl)
 	if !ok || prj.GithubRepoID == nil {
-		return "", "", errf("github_not_bound", "project is not bound to a GitHub repository")
+		return "", errf("github_not_bound", "project is not bound to a GitHub repository")
 	}
-	tok, err := s.tokenFor(ctx, slotUser)
-	if err != nil {
-		return "", "", err
-	}
-	return full, "Bearer " + tok, nil
+	return full, nil
 }
 
 // ListRefs 列出已绑定项目仓库的 issue / PR 候选：q 为空取最近更新的打开项，全是数字按编号取，否则搜索。
 func (s *Service) ListRefs(ctx context.Context, projectID, q string) ([]apigen.GitHubRef, error) {
-	full, auth, err := s.boundRepo(ctx, projectID)
+	full, err := s.boundRepo(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -125,10 +120,10 @@ func (s *Service) ListRefs(ctx context.Context, projectID, q string) ([]apigen.G
 	var items []issuePayload
 	switch {
 	case q == "":
-		err = s.call(ctx, http.MethodGet, "/repos/"+full+"/issues?state=open&sort=updated&direction=desc&per_page=20", auth, nil, &items)
+		err = s.callAs(ctx, slotUser, http.MethodGet, "/repos/"+full+"/issues?state=open&sort=updated&direction=desc&per_page=20", nil, &items)
 	case isDigits(q):
 		var it issuePayload
-		err = s.call(ctx, http.MethodGet, "/repos/"+full+"/issues/"+q, auth, nil, &it)
+		err = s.callAs(ctx, slotUser, http.MethodGet, "/repos/"+full+"/issues/"+q, nil, &it)
 		if isStatus(err, http.StatusNotFound) {
 			return []apigen.GitHubRef{}, nil
 		}
@@ -137,7 +132,7 @@ func (s *Service) ListRefs(ctx context.Context, projectID, q string) ([]apigen.G
 		var res struct {
 			Items []issuePayload `json:"items"`
 		}
-		err = s.call(ctx, http.MethodGet, "/search/issues?q="+url.QueryEscape(q+" repo:"+full)+"&sort=updated&order=desc&per_page=20", auth, nil, &res)
+		err = s.callAs(ctx, slotUser, http.MethodGet, "/search/issues?q="+url.QueryEscape(q+" repo:"+full)+"&sort=updated&order=desc&per_page=20", nil, &res)
 		items = res.Items
 	}
 	if err != nil {
@@ -178,20 +173,20 @@ func refAPI(it issuePayload) apigen.GitHubRef {
 
 // AttachRef 把已绑定项目仓库的 issue / PR（含评论）渲染成 Markdown 附件（不属于任何线程）。
 func (s *Service) AttachRef(ctx context.Context, projectID string, number int64) (db.Attachment, error) {
-	full, auth, err := s.boundRepo(ctx, projectID)
+	full, err := s.boundRepo(ctx, projectID)
 	if err != nil {
 		return db.Attachment{}, err
 	}
 	base := fmt.Sprintf("/repos/%s/issues/%d", full, number)
 	var issue issuePayload
-	if err := s.call(ctx, http.MethodGet, base, auth, nil, &issue); err != nil {
+	if err := s.callAs(ctx, slotUser, http.MethodGet, base, nil, &issue); err != nil {
 		if isStatus(err, http.StatusNotFound) {
 			return db.Attachment{}, errf("not_found", "issue or pull request not found")
 		}
 		return db.Attachment{}, err
 	}
 	var comments []commentPayload
-	if err := s.call(ctx, http.MethodGet, base+"/comments?per_page=50", auth, nil, &comments); err != nil {
+	if err := s.callAs(ctx, slotUser, http.MethodGet, base+"/comments?per_page=50", nil, &comments); err != nil {
 		return db.Attachment{}, err
 	}
 	kind := "issue"
@@ -201,10 +196,10 @@ func (s *Service) AttachRef(ctx context.Context, projectID string, number int64)
 		kind = "pr"
 		pull = &pullPayload{}
 		pbase := fmt.Sprintf("/repos/%s/pulls/%d", full, number)
-		if err := s.call(ctx, http.MethodGet, pbase, auth, nil, pull); err != nil {
+		if err := s.callAs(ctx, slotUser, http.MethodGet, pbase, nil, pull); err != nil {
 			return db.Attachment{}, err
 		}
-		if err := s.call(ctx, http.MethodGet, pbase+"/comments?per_page=50", auth, nil, &reviews); err != nil {
+		if err := s.callAs(ctx, slotUser, http.MethodGet, pbase+"/comments?per_page=50", nil, &reviews); err != nil {
 			return db.Attachment{}, err
 		}
 	}

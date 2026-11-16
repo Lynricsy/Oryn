@@ -266,7 +266,7 @@ func (s *Server) init(ctx context.Context) error {
 		PublicURL: cfg.PublicURL, APIURL: cfg.GitHub.APIURL, WebURL: cfg.GitHub.WebURL, Box: box, Changed: s.Hub.GitHubChanged,
 	}, s.Store, s.Threads, s.Notify, s.Attachments)
 	s.Threads.SetGitHub(s.GitHub)
-	// orb 的 setup 计划与出站代理：绑定项目的 orb 下发 gh 登录名、按仓库收窄的令牌与提交身份
+	// orb 的 setup 计划与出站代理：工作 orb 下发 gh 登录名、提交身份，出站代理注入身份槽位的 OAuth 令牌
 	setup.GitHub = s.GitHub
 	s.Orbs.SetGitHub(s.GitHub)
 	// M15 4.3：issue 任务进入终态时冻结 orb；GitHub 投递的回合结束时检查完成提醒

@@ -16,6 +16,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/egress"
 	"github.com/Lynricsy/Oryn/internal/github/githubtest"
 	"github.com/Lynricsy/Oryn/internal/ids"
+	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
@@ -314,7 +315,18 @@ func (r svcResolver) IsOrynHook(repo string, id int64) bool {
 func (r svcResolver) ReleaseThread() bool                      { return r.e.s.ReleaseThread(r.e.ctx, r.orbID) }
 func (svcResolver) SecretByID(string) (string, []string, bool) { return "", nil, false }
 func (svcResolver) GitToken(string) (string, bool)             { return "", false }
-func (r svcResolver) GitHubToken() (string, bool)              { return r.tok, true }
+
+// GitHubToken：tok 为空时每次经 OrbToken 现取（与 orbs 的 egressResolver 一致），否则固定用 tok。
+func (r svcResolver) GitHubToken() (string, bool) {
+	if r.tok != "" {
+		return r.tok, true
+	}
+	tok, st := r.e.s.OrbToken(r.e.ctx, r.orbID)
+	return tok, st == orbs.GitHubTokenOK
+}
+func (r svcResolver) GitHubTokenRejected(tok string) {
+	r.e.s.GitHubTokenRejected(r.e.ctx, r.orbID, tok)
+}
 func (r svcResolver) GitHubWriteBegin(w egress.GitHubWrite) string {
 	return r.e.s.GitHubWriteBegin(r.e.ctx, r.orbID, w)
 }

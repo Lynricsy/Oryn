@@ -63,7 +63,8 @@ func (s *Service) ListRepos(ctx context.Context, q string) ([]apigen.GitHubRepo,
 	return out, nil
 }
 
-// userRepos 取用户令牌可访问的全部仓库（GET /user/repos，自有、协作与所在组织，按最近推送排序），按令牌的 sha256 缓存 repoListTTL。
+// userRepos 以我的账号取可访问的全部仓库（GET /user/repos，自有、协作与所在组织，按最近推送排序），按令牌 tok 的 sha256
+// 缓存 repoListTTL（重新连接换了令牌即失效）。tok 只作缓存键，请求经 paged 以槽位发出。
 func (s *Service) userRepos(ctx context.Context, tok string) ([]apigen.GitHubRepo, error) {
 	key := sha256.Sum256([]byte(tok))
 	now := s.now()
@@ -77,7 +78,7 @@ func (s *Service) userRepos(ctx context.Context, tok string) ([]apigen.GitHubRep
 	const path = "/user/repos?affiliation=owner,collaborator,organization_member&sort=pushed&per_page=100"
 	seen := map[int64]bool{}
 	var repos []apigen.GitHubRepo
-	err := s.paged(ctx, path, "Bearer "+tok, 10, func(raw json.RawMessage) error {
+	err := s.paged(ctx, slotUser, path, 10, func(raw json.RawMessage) error {
 		var page []repoPayload
 		if err := json.Unmarshal(raw, &page); err != nil {
 			return err

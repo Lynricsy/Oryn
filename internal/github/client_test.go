@@ -112,7 +112,7 @@ func newEnv(t *testing.T) *testEnv {
 
 func TestCallUpstreamError(t *testing.T) {
 	e := newEnv(t)
-	err := e.s.call(e.ctx, http.MethodGet, "/no/such/path", "", nil, nil)
+	err := e.s.callAs(e.ctx, "", http.MethodGet, "/no/such/path", nil, nil)
 	var ae *apiError
 	require.ErrorAs(t, err, &ae)
 	assert.Equal(t, 404, ae.Status)
@@ -135,10 +135,10 @@ func TestGraphQLAndHeaders(t *testing.T) {
 	}))
 	defer up.Close()
 	e.s.cfg.APIURL = up.URL
-	err := e.s.graphql(e.ctx, "Bearer x", "query{viewer{login}}", nil, nil)
+	err := e.s.graphql(e.ctx, "", "query{viewer{login}}", nil, nil)
 	require.ErrorContains(t, err, "boom")
 	assert.Equal(t, "application/vnd.github+json", got.Get("Accept"))
 	assert.Equal(t, "2022-11-28", got.Get("X-GitHub-Api-Version"))
 	assert.Equal(t, "oryn/"+version.Version, got.Get("User-Agent"))
-	assert.Equal(t, "Bearer x", got.Get("Authorization"))
+	assert.Empty(t, got.Get("Authorization"), "不带槽位的请求不注入令牌")
 }

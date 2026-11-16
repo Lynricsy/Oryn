@@ -794,13 +794,13 @@ func (s *Service) cleanupSenderRuns(ctx context.Context, now time.Time) {
 
 // linkTriggeredPull 在 PR 上触发时把 PR 入库；同仓库 PR 再建关联（orb 推不到 fork）。失败只记日志。
 func (s *Service) linkTriggeredPull(ctx context.Context, prj db.Project, ev triggerEvent, threadID string) {
-	full, auth, err := s.projectAuth(ctx, prj)
+	full, err := s.projectRepo(prj)
 	if err != nil {
 		slog.Warn("github: 触发线程取 PR 失败", "thread", threadID, "err", err)
 		return
 	}
 	var pr pullPayload
-	if err := s.call(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/pulls/%d", full, ev.issue.Number), auth, nil, &pr); err != nil {
+	if err := s.callAs(ctx, slotUser, http.MethodGet, fmt.Sprintf("/repos/%s/pulls/%d", full, ev.issue.Number), nil, &pr); err != nil {
 		slog.Warn("github: 触发线程取 PR 失败", "thread", threadID, "err", err)
 		return
 	}
@@ -823,18 +823,16 @@ func (s *Service) announce(ctx context.Context, ev triggerEvent, th apigen.Threa
 			slot = o.GithubIdentity
 		}
 	}
-	tok, err := s.tokenFor(ctx, slot)
-	if err != nil {
+	if _, err := s.tokenFor(ctx, slot); err != nil {
 		slog.Warn("github: 触发回执取令牌失败", "thread", th.ID, "slot", slot, "err", err)
 		return
 	}
-	auth := "Bearer " + tok
 	n := ev.issue.Number
 	react := fmt.Sprintf("/repos/%s/issues/%d/reactions", ev.repo, n)
 	if ev.isMention() {
 		react = fmt.Sprintf("/repos/%s/issues/comments/%d/reactions", ev.repo, ev.commentID)
 	}
-	if err := s.call(ctx, http.MethodPost, react, auth, map[string]string{"content": "eyes"}, nil); err != nil {
+	if err := s.callAs(ctx, slot, http.MethodPost, react, map[string]string{"content": "eyes"}, nil); err != nil {
 		slog.Warn("github: 触发回执加 👀 失败", "thread", th.ID, "err", err)
 	}
 	if !post {
@@ -843,7 +841,7 @@ func (s *Service) announce(ctx context.Context, ev triggerEvent, th apigen.Threa
 	// 控制面直连 GitHub、不经出站代理：回帖返回的评论 id 记为补充键，回帖的事件因此不会回流
 	body := fmt.Sprintf("Started an Oryn thread for this: %s/t/%s", s.cfg.PublicURL, th.ID)
 	var resp json.RawMessage
-	if err := s.call(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/issues/%d/comments", ev.repo, n), auth, map[string]string{"body": body}, &resp); err != nil {
+	if err := s.callAs(ctx, slot, http.MethodPost, fmt.Sprintf("/repos/%s/issues/%d/comments", ev.repo, n), map[string]string{"body": body}, &resp); err != nil {
 		slog.Warn("github: 触发回执回帖失败", "thread", th.ID, "err", err)
 		return
 	}

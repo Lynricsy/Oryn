@@ -6191,7 +6191,7 @@ type LinkCtlSetupRunParams struct {
 	DeferResume *bool             `json:"deferResume,omitempty"`
 	Env         map[string]string `json:"env"`
 
-	// Gh 缺省 = 项目未连接 GitHub：orbd 删除 `$HOME/.oryn/gh`
+	// Gh 缺省 = 这台 orb 不下发 GitHub 凭据（runner、协调宿主、GitHub 集成未启用，或线程身份槽位未连接 / 待重新授权；与有没有项目、项目是否绑定无关）：orbd 删除 `$HOME/.oryn/gh`
 	Gh *LinkCtlSetupGh `json:"gh,omitempty"`
 
 	// GitHosts 为每个主机写 git `url."http://127.0.0.1:7811/git/<host>/".insteadOf "https://<host>/"`
@@ -7115,7 +7115,7 @@ type Orb struct {
 	// 客户端据此决定右面板标签：`changes` 需要 `git`、`files` 需要 `fs`、`terminal` 需要 `terminal`；省略时保持 M3 的行为。
 	Features []string `json:"features,omitempty"`
 
-	// GithubLogin orb 内 git / gh 使用的 GitHub 账号（M14）；项目未绑定或身份未连接时省略
+	// GithubLogin orb 内 git / gh 使用的 GitHub 账号（M15）：工作 orb 的身份槽位已连接且可用时给出，与项目是否绑定无关；runner、协调宿主或槽位未连接 / 待重新授权时省略
 	GithubLogin *string `json:"githubLogin,omitempty"`
 
 	// ID `orb-<26 位小写 ULID>`（同时是容器名与 hostname）
@@ -13536,7 +13536,7 @@ type ServerInterface interface {
 	// ListGitHubHooks Oryn 管理的仓库 webhook 及其状态（M15）
 	// (GET /api/v1/github/hooks)
 	ListGitHubHooks(w http.ResponseWriter, r *http.Request)
-	// DeleteGitHubIdentity 断开身份槽位（断开 Agent 账号时自动化身份回到我的账号）
+	// DeleteGitHubIdentity 断开身份槽位（断开我的账号前先删除 Oryn 建的全部仓库 hook；未连接 → 404 `not_found`）
 	// (DELETE /api/v1/github/identities/{slot})
 	DeleteGitHubIdentity(w http.ResponseWriter, r *http.Request, slot GitHubIdentitySlotPath)
 	// AuthorizeGitHubIdentity 开始连接身份槽位（返回 GitHub 授权地址，10 分钟内有效；没有 OAuth App → 409 `github_not_configured`）
@@ -13554,7 +13554,7 @@ type ServerInterface interface {
 	// ListGitHubRepos 我的账号可访问的仓库（按最近推送倒序，至多 50 个；我的账号未连接 → 409 `github_identity_required`）
 	// (GET /api/v1/github/repos)
 	ListGitHubRepos(w http.ResponseWriter, r *http.Request, params ListGitHubReposParams)
-	// PutGitHubSettings 设置自动化任务的 GitHub 身份（Agent 未连接时选 `agent` → 409 `github_agent_required`）
+	// PutGitHubSettings 设置自动化任务的 GitHub 身份（`user` / `agent`；Agent 账号未连接时也可选 `agent`，实际使用时按 Q6 回退）
 	// (PUT /api/v1/github/settings)
 	PutGitHubSettings(w http.ResponseWriter, r *http.Request)
 	// ListGitHubTasks 触发规则建立的 issue 线程与发布哨兵的状态（M15）
@@ -14574,7 +14574,7 @@ func (_ Unimplemented) ListGitHubHooks(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// DeleteGitHubIdentity 断开身份槽位（断开 Agent 账号时自动化身份回到我的账号）
+// DeleteGitHubIdentity 断开身份槽位（断开我的账号前先删除 Oryn 建的全部仓库 hook；未连接 → 404 `not_found`）
 // (DELETE /api/v1/github/identities/{slot})
 func (_ Unimplemented) DeleteGitHubIdentity(w http.ResponseWriter, r *http.Request, slot GitHubIdentitySlotPath) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -14610,7 +14610,7 @@ func (_ Unimplemented) ListGitHubRepos(w http.ResponseWriter, r *http.Request, p
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// PutGitHubSettings 设置自动化任务的 GitHub 身份（Agent 未连接时选 `agent` → 409 `github_agent_required`）
+// PutGitHubSettings 设置自动化任务的 GitHub 身份（`user` / `agent`；Agent 账号未连接时也可选 `agent`，实际使用时按 Q6 回退）
 // (PUT /api/v1/github/settings)
 func (_ Unimplemented) PutGitHubSettings(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)

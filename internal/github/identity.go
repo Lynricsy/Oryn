@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"crypto/subtle"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -96,7 +97,13 @@ func (s *Service) FinishAuthorize(ctx context.Context, code, state string) (stri
 		Name      *string `json:"name"`
 		AvatarURL string  `json:"avatar_url"`
 	}
-	h, err := s.request(ctx, http.MethodGet, "/user", "Bearer "+tok.AccessToken, nil, &user)
+	// 刚兑换的令牌还没落进槽位：不经槽位发请求，401 也不改动槽位里现有的令牌
+	req, err := s.newRequest(ctx, http.MethodGet, "/user", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
+	h, err := s.send("", req, &user)
 	if err != nil {
 		return "", err
 	}
@@ -160,13 +167,54 @@ func (s *Service) tokenFor(ctx context.Context, slot string) (string, error) {
 	return string(b), err
 }
 
-// markReauth 把槽位标为需要重新授权（上游对该槽位的令牌回 401）。
-func (s *Service) markReauth(ctx context.Context, slot string) error {
-	if err := s.st.Q.SetGithubIdentityStatus(ctx, db.SetGithubIdentityStatusParams{Status: "reauth", UpdatedAt: s.nowMs(), Slot: slot}); err != nil {
-		return err
+// tokenRejected 在上游对令牌 tok 回 401 之后调用（R2）：slots 里当前令牌仍是 tok 的槽位置为 reauth，之后 tokenFor 拒绝该槽位，
+// 请求不再发往上游，设置页显示需要重新授权。控制面自己的请求（client.go 的 do，槽位已知）与出站代理注入的令牌
+// （GitHubTokenRejected，只知道令牌，两个槽位都比）共用这一处。先比明文、再以读到的密文做条件更新
+// （MarkGithubIdentityReauth）：401 的请求在途期间槽位可能已重新授权，换上的新令牌不会被旧令牌的 401 置为 reauth；
+// 与任何槽位都不匹配的令牌（如密钥库里 github.com 的 PAT）直接忽略。
+func (s *Service) tokenRejected(ctx context.Context, tok string, slots ...string) error {
+	if tok == "" {
+		return nil
 	}
-	s.changed()
+	marked := false
+	for _, slot := range slots {
+		row, err := s.st.Q.GetGithubIdentity(ctx, slot)
+		if isNoRows(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if row.Status == "reauth" {
+			continue
+		}
+		cur, err := s.cfg.Box.Open(aadAccess(slot), row.AccessTokenEnc)
+		if err != nil {
+			return err
+		}
+		if subtle.ConstantTimeCompare(cur, []byte(tok)) != 1 {
+			continue
+		}
+		n, err := s.st.Q.MarkGithubIdentityReauth(ctx, db.MarkGithubIdentityReauthParams{
+			UpdatedAt: s.nowMs(), Slot: slot, AccessTokenEnc: row.AccessTokenEnc,
+		})
+		if err != nil {
+			return err
+		}
+		marked = marked || n > 0
+	}
+	if marked {
+		s.changed()
+	}
 	return nil
+}
+
+// GitHubTokenRejected 实现 orbs.GitHub：出站代理注入的令牌被上游回 401 时调用（R2 同样适用于 orb 经代理的请求，
+// 含 GET），按令牌找到槽位置为 reauth。失败只记日志。
+func (s *Service) GitHubTokenRejected(ctx context.Context, orbID, token string) {
+	if err := s.tokenRejected(ctx, token, slotUser, slotAgent); err != nil {
+		slog.Warn("github: 出站代理的令牌被拒，标记重新授权失败", "orb", orbID, "err", err)
+	}
 }
 
 // identityView 把身份行转成 API 视图：scopes 取自授权时的 X-OAuth-Scopes，missingScopes = oauthScopes − scopes。

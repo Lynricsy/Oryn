@@ -172,12 +172,8 @@ func (s *Service) ensureHook(ctx context.Context, repoID int64, full string) err
 
 // findHook 在仓库的 hook 列表里找 config.url 等于 url 的 hook；没有时返回 0。
 func (s *Service) findHook(ctx context.Context, full, url string) (int64, error) {
-	tok, err := s.tokenFor(ctx, slotUser)
-	if err != nil {
-		return 0, err
-	}
 	var found int64
-	err = s.paged(ctx, "/repos/"+full+"/hooks?per_page=100", "Bearer "+tok, 10, func(raw json.RawMessage) error {
+	err := s.paged(ctx, slotUser, "/repos/"+full+"/hooks?per_page=100", 10, func(raw json.RawMessage) error {
 		var hooks []struct {
 			ID     int64 `json:"id"`
 			Config struct {
@@ -194,11 +190,6 @@ func (s *Service) findHook(ctx context.Context, full, url string) (int64, error)
 		}
 		return nil
 	})
-	if errKind(err) == kindReauth {
-		if merr := s.markReauth(ctx, slotUser); merr != nil {
-			return 0, errors.Join(err, merr)
-		}
-	}
 	return found, err
 }
 

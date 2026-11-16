@@ -143,16 +143,12 @@ func (s *Service) gateRepo(ctx context.Context, slot, repo string) (repoPayload,
 	case isDigits(repo):
 		path = "/repositories/" + repo
 	default:
-		tok, err := s.tokenFor(ctx, slot)
-		if err != nil {
-			return rp, err
-		}
 		var out struct {
 			Node *struct {
 				NameWithOwner string `json:"nameWithOwner"`
 			} `json:"node"`
 		}
-		if err := s.graphql(ctx, "Bearer "+tok, repoNodeQuery, map[string]any{"id": repo}, &out); err != nil {
+		if err := s.graphql(ctx, slot, repoNodeQuery, map[string]any{"id": repo}, &out); err != nil {
 			return rp, err
 		}
 		if out.Node == nil || out.Node.NameWithOwner == "" {

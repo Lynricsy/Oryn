@@ -69,23 +69,18 @@ func (s *Service) toolAutoclose(ctx context.Context, threadID string, params map
 		}
 		return apigen.LinkCtlGithubCallResult{}, err
 	}
-	tok, err := s.tokenFor(ctx, slot)
-	if err != nil {
-		return apigen.LinkCtlGithubCallResult{}, err
-	}
-	auth := "Bearer " + tok
 	var issue struct {
 		State string        `json:"state"`
 		User  senderPayload `json:"user"`
 	}
-	if err := s.call(ctx, http.MethodGet, issuePath(repo, number, ""), auth, nil, &issue); err != nil {
+	if err := s.callAs(ctx, slot, http.MethodGet, issuePath(repo, number, ""), nil, &issue); err != nil {
 		return apigen.LinkCtlGithubCallResult{}, err
 	}
 	if issue.State == "closed" {
 		return apigen.LinkCtlGithubCallResult{}, errf("issue_closed", fmt.Sprintf("%s#%d is already closed", repo, number))
 	}
 	var commentID int64
-	if err := s.paged(ctx, issuePath(repo, number, "/comments")+"?per_page=100", auth, maxCommentPages, func(raw json.RawMessage) error {
+	if err := s.paged(ctx, slot, issuePath(repo, number, "/comments")+"?per_page=100", maxCommentPages, func(raw json.RawMessage) error {
 		var page []struct {
 			ID   int64         `json:"id"`
 			User senderPayload `json:"user"`
@@ -161,14 +156,9 @@ func (s *Service) runAutoclose(ctx context.Context, ac db.GithubAutoclose) (stat
 		return "done", "error: repository not bound"
 	}
 	slot := s.threadSlot(ctx, ac.ThreadID)
-	tok, err := s.tokenFor(ctx, slot)
-	if err != nil {
-		return "done", "error: " + clip(err.Error(), 200)
-	}
-	auth := "Bearer " + tok
 	thumbs := false
 	path := fmt.Sprintf("/repos/%s/issues/comments/%d/reactions?content=-1&per_page=100", repo, ac.CommentID)
-	err = s.paged(ctx, path, auth, maxCommentPages, func(raw json.RawMessage) error {
+	err = s.paged(ctx, slot, path, maxCommentPages, func(raw json.RawMessage) error {
 		var page []struct {
 			User senderPayload `json:"user"`
 		}

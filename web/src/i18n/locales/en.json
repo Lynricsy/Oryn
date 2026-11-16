@@ -4358,7 +4358,7 @@
 			},
 			"explain": {
 				"active": "The webhook works and events arrive live; missed ones are filled in from the delivery log.",
-				"no_admin": "My account isn't an admin of this repository, so no webhook. Polled every 60 seconds instead.",
+				"no_admin": "My account isn't an admin of this repository, so no webhook. While the repository has an enabled trigger rule, Oryn polls its issues and pull requests about every 60 seconds instead. Issues and pull requests linked to threads are polled separately, with or without rules.",
 				"org_restricted": "The organization restricts OAuth App access. An admin must approve the app before a webhook can be created.",
 				"sso_required": "The organization enforces SAML SSO. Authorize this grant for SSO.",
 				"error": "Creating or repairing the webhook failed. Oryn retries periodically."

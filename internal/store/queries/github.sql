@@ -19,6 +19,10 @@ ON CONFLICT (slot) DO UPDATE SET
 -- name: SetGithubIdentityStatus :exec
 UPDATE github_identities SET status = @status, updated_at = @updated_at WHERE slot = @slot;
 
+-- name: MarkGithubIdentityReauth :execrows
+UPDATE github_identities SET status = 'reauth', updated_at = @updated_at
+WHERE slot = @slot AND access_token_enc = @access_token_enc AND status <> 'reauth';
+
 -- name: DeleteGithubIdentity :execrows
 DELETE FROM github_identities WHERE slot = @slot;
 
@@ -100,12 +104,11 @@ SELECT * FROM projects WHERE archived_at IS NULL AND repo_url LIKE 'https://gith
 
 -- ---------- orb ----------
 
--- GitHub login of an orb whose project is bound and whose identity slot is connected.
+-- GitHub login of an orb whose identity slot is connected and usable (M15: any work orb, project or not).
 -- name: GetOrbGithubLogin :one
 SELECT gi.login FROM orbs o
-JOIN projects p ON p.id = o.project_id
 JOIN github_identities gi ON gi.slot = o.github_identity
-WHERE o.id = @id AND p.github_repo_id IS NOT NULL;
+WHERE o.id = @id AND gi.status = 'ok';
 
 -- ---------- deliveries ----------
 

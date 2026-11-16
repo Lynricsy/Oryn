@@ -71,7 +71,7 @@ CREATE TABLE github_self_writes (
 );
 CREATE INDEX github_self_writes_target ON github_self_writes (target, category);
 
--- 自身写入的补充键：REST 响应中的 id、node_id 与 html_url 锚点。
+-- 自身写入的补充键：REST 写操作响应顶层的 node_id，以及键名以 url 结尾的字段里的锚点（#issuecomment-、#pullrequestreview-、#discussion_r）。
 CREATE TABLE github_self_keys (
     key        TEXT    PRIMARY KEY,
     created_at INTEGER NOT NULL
