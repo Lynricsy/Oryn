@@ -120,6 +120,7 @@ type Service struct {
 	instTokens map[int64]cachedToken      // 安装 id → 安装令牌
 	scoped     map[scopedKey]scopedToken  // (槽位, 仓库 id) → 按仓库收窄的令牌（M14 步骤 3.2，惰性初始化）
 	repoLists  map[[32]byte]repoListEntry // 用户令牌的 sha256 → 仓库列表（步骤 2.2，惰性初始化）
+	perms      map[permKey]permEntry      // (仓库 id, 登录名) → 是否有写权限（步骤 4.3，惰性初始化）
 
 	// 事件分发（步骤 4.1）：处理器注册表、任务队列、队列中 / 处理中的投递 guid。
 	handlers map[string]handler
