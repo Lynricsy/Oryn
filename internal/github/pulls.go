@@ -83,9 +83,6 @@ func (s *Service) link(ctx context.Context, threadID string, repoID, number int6
 // onMerged 处理关联 PR 的合并（步骤 5.3 实现）。
 func (s *Service) onMerged(context.Context, string, db.GithubPull) {}
 
-// scheduleRollup 排一次 PR 的 CI 汇总（步骤 5.2 实现）。
-func (s *Service) scheduleRollup(int64, int64, time.Duration, bool) {}
-
 // onPullRequest 处理 pull_request 事件：PR 入库，同仓库的打开 PR 按头提交关联到采到该提交的线程。
 func (s *Service) onPullRequest(ctx context.Context, action string, body []byte) (string, error) {
 	if !pullActions[action] {
