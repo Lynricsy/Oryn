@@ -19,6 +19,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/coord"
 	"github.com/Lynricsy/Oryn/internal/coordhost"
 	"github.com/Lynricsy/Oryn/internal/desktop"
+	"github.com/Lynricsy/Oryn/internal/github"
 	"github.com/Lynricsy/Oryn/internal/jobs"
 	"github.com/Lynricsy/Oryn/internal/library"
 	"github.com/Lynricsy/Oryn/internal/modelcat"
@@ -84,7 +85,9 @@ type Server struct {
 	Schedules *schedule.Service
 	Coord     *coord.Service
 	// Stats 是 M10 的统计后台（提交采样、保留期、预算）与 meta / 预算接口。
-	Stats  *stats.Service
+	Stats *stats.Service
+	// GitHub 是 M14 的 GitHub 集成。
+	GitHub *github.Service
 	Hub    *realtime.Hub
 	Notify *notify.Service
 	Share  *share.Service
@@ -224,6 +227,11 @@ func (s *Server) init(ctx context.Context) error {
 	s.Threads.AddObserver(s.Notify)
 	s.Threads.AddObserver(s.Schedules)
 	s.Threads.AddObserver(s.Coord)
+	// M14：GitHub 集成（webhook、轮询、回流在 Run 里；线程按自动化身份给新 orb 取 GitHub 身份）
+	s.GitHub = github.New(github.Config{
+		PublicURL: cfg.PublicURL, APIURL: cfg.GitHub.APIURL, WebURL: cfg.GitHub.WebURL, Box: box, Changed: s.Hub.GitHubChanged,
+	}, s.Store, s.Threads, s.Notify, s.Attachments)
+	s.Threads.SetGitHub(s.GitHub)
 	// M10：统计（提交采样观察线程转入 idle；预算告警经 notify 的系统通知送达）
 	s.Stats = stats.New(stats.Config{Now: statsNow, Retention: cfg.Stats.Retention, BudgetInterval: statsBudgetInterval}, s.Store, s.Orbs, s.Notify)
 	s.Threads.AddObserver(s.Stats)
@@ -254,6 +262,7 @@ func (s *Server) init(ctx context.Context) error {
 	go s.Schedules.Run(runCtx)
 	go s.Coord.Run(runCtx)
 	go s.Stats.Run(runCtx)
+	go s.GitHub.Run(runCtx)
 	// 事实行版本不符时在后台回填（可中断，下次启动从游标续作）
 	go func() {
 		if err := threads.BackfillFacts(runCtx, s.Store, nil, false); err != nil && runCtx.Err() == nil {
@@ -310,6 +319,7 @@ func (s *Server) init(ctx context.Context) error {
 	s.API.Schedules = &api.ScheduleDeps{Service: s.Schedules}
 	s.API.Stats = &api.StatsDeps{Service: s.Stats}
 	s.API.Search = &api.SearchDeps{Service: search.New(s.Store)}
+	s.API.GitHub = &api.GitHubDeps{Service: s.GitHub}
 	if s.Portal != nil {
 		s.API.PortalShares = &api.PortalDeps{Service: s.Portal}
 	}

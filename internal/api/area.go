@@ -26,6 +26,8 @@ type area struct {
 	Library *LibraryDeps
 	// Search 是对话内容全文搜索（search.go）；nil 时回 501。
 	Search *SearchDeps
+	// GitHub 是 M14 的 GitHub 集成（github.go）；nil 时回 501。
+	GitHub *GitHubDeps
 }
 
 // PortalDeps 是 portal 限时公开接口（portals.go）的依赖。

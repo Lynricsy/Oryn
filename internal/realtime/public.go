@@ -390,3 +390,8 @@ func (h *Hub) NotificationsRead(threadID, id string) {
 func (h *Hub) SchedulesChanged(scheduleID string) {
 	h.toAll(apigen.WsServerSchedulesChanged{Type: apigen.WsServerSchedulesChangedTypeSchedulesChanged, ScheduleID: scheduleID})
 }
+
+// GitHubChanged 实现 github.Config.Changed：GitHub 集成状态变了，广播给全部私有连接（M14）。
+func (h *Hub) GitHubChanged() {
+	h.toAll(apigen.WsServerGitHubChanged{Type: apigen.WsServerGitHubChangedTypeGitHubChanged})
+}
