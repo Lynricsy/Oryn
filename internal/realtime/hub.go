@@ -76,6 +76,10 @@ type Hub struct {
 	pubPerShare map[string]int
 	// revokedShares 是已撤销的分享 id：撤销不可逆，晚到的连接据此在登记前被拒（条目数 = 撤销次数）。
 	revokedShares map[string]bool
+	// watches 是 artifact 的观看者（artifact id → 连接 → 所在画布页），由 artifact.watch / unwatch 维护（artifacts.go）；
+	// watchFns 是观看者变化的回调。
+	watches  map[string]map[*conn]string
+	watchFns []func(id string)
 }
 
 // New 创建 hub 并设为 svc 的 Sink；rev 可为 nil。valid 在连接登记后复核票据主体（H3：票据签发后、
@@ -119,6 +123,8 @@ type conn struct {
 	// 以下由 Hub.mu 保护
 	indexReady bool
 	indexBuf   [][]byte
+	// artifactWatches 是本连接正在观看的 artifact 数。
+	artifactWatches int
 }
 
 // sub 是连接对一个线程的订阅；补发条目期间实时事件先进 buf。由 Hub.mu 保护。
@@ -184,6 +190,7 @@ func (h *Hub) drop(c *conn) {
 		}
 	}
 	h.mu.Unlock()
+	h.unwatchAll(c)
 	if !c.public {
 		h.svc.Focus(context.Background(), c.id, "")
 	}
@@ -366,6 +373,8 @@ type clientMsg struct {
 	TranscriptRev *int64          `json:"transcriptRev"`
 	Frame         json.RawMessage `json:"frame"`
 	On            *bool           `json:"on"`
+	// Page 是 artifact.watch 的画布页 id。
+	Page *string `json:"page"`
 }
 
 func (c *conn) readLoop() {
@@ -471,6 +480,10 @@ func (c *conn) handle(m clientMsg) {
 		if !c.h.setTermWatch(c, tid, *m.On) {
 			c.sendError("not_subscribed", "term.watch requires sub first", m.ThreadID, "")
 		}
+	case "artifact.watch":
+		c.h.watchArtifact(c, m.ID, m.Page)
+	case "artifact.unwatch":
+		c.h.unwatchArtifact(c, m.ID)
 	default:
 		c.sendError("bad_message", "unknown message type "+m.Type, m.ThreadID, m.ID)
 	}

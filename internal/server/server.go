@@ -12,6 +12,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/agentcfg"
 	"github.com/Lynricsy/Oryn/internal/api"
+	"github.com/Lynricsy/Oryn/internal/artifacts"
 	"github.com/Lynricsy/Oryn/internal/attachments"
 	"github.com/Lynricsy/Oryn/internal/auth"
 	"github.com/Lynricsy/Oryn/internal/cfgsync"
@@ -76,6 +77,8 @@ type Server struct {
 	Library *library.Service
 	// LibrarySync 把文件库同步进协调宿主，并从 orb 取回文件（M13）。
 	LibrarySync *library.Syncer
+	// Artifacts 是 M14 的 artifact 存储与版本（实时通知经 Hub）。
+	Artifacts *artifacts.Service
 	// ProjectHomes 是项目级 omp 配置（M12.2）。
 	ProjectHomes *agentcfg.ProjectHomes
 	// Desktop 是浏览器 Profile 与桌面 WS（M8）。
@@ -201,6 +204,9 @@ func (s *Server) init(ctx context.Context) error {
 	// 吊销时同时作废该主体未兑换的 WS 票据，连接登记后再向库复核一次主体（H3）
 	s.Auth.Subscribe(s.Tickets.Revoke)
 	s.Hub = realtime.New(s.Threads, s.Tickets, revocations{s.Auth}, s.Auth)
+	if s.Artifacts, err = artifacts.New(artifacts.Config{DataDir: cfg.DataDir, PublicURL: cfg.PublicURL}, s.Store, s.Hub); err != nil {
+		return err
+	}
 	s.Notify, err = notify.New(notify.Config{
 		PublicURL: cfg.PublicURL, DataDir: cfg.DataDir, Box: box, DoneDelay: notifyDoneDelay, InputDelay: notifyInputDelay,
 		FCM: notify.FCMConfig{Secret: cfg.Push.FCM.ServiceAccountSecret, Secrets: s.Vault},
@@ -256,6 +262,7 @@ func (s *Server) init(ctx context.Context) error {
 	go s.Auth.Run(runCtx)
 	go s.Attachments.Run(runCtx)
 	go s.Library.Run(runCtx)
+	go s.Artifacts.Run(runCtx)
 	go s.LibrarySync.Run(runCtx)
 	go s.Notify.Run(runCtx)
 	go s.Host.Run(runCtx)
@@ -320,6 +327,7 @@ func (s *Server) init(ctx context.Context) error {
 	s.API.Stats = &api.StatsDeps{Service: s.Stats}
 	s.API.Search = &api.SearchDeps{Service: search.New(s.Store)}
 	s.API.GitHub = &api.GitHubDeps{Service: s.GitHub}
+	s.API.Artifacts = &api.ArtifactsDeps{Service: s.Artifacts}
 	if s.Portal != nil {
 		s.API.PortalShares = &api.PortalDeps{Service: s.Portal}
 	}
