@@ -1059,6 +1059,7 @@
 		"projects": "Projects",
 		"secrets": "Secrets",
 		"git-identity": "Git identity",
+		"github": "GitHub",
 		"agent-config": "Advanced",
 		"agent-skills": "Skills",
 		"agent-subagents": "Subagents",
@@ -3126,5 +3127,73 @@
 		"removeWorktree": "Also remove the worktree",
 		"removeWorktreeHint": "Runs git worktree remove on the runner. Git refuses if there are uncommitted changes; branch {{branch}} is kept if it isn't merged.",
 		"removeFailed": "The thread is archived, but the worktree wasn't removed:"
+	},
+	"github": {
+		"app": {
+			"title": "GitHub App",
+			"intro": "Oryn connects to GitHub through a GitHub App of your own. Create it on GitHub in one step, then install it on the accounts or organizations you need.",
+			"org": "Organization (optional)",
+			"orgHint": "Leave empty to create it under your personal account",
+			"orgPlaceholder": "my-org",
+			"public": "Allow installing on other accounts (public App)",
+			"advanced": "Advanced",
+			"webhook": "Webhook URL",
+			"webhookHint": "Must be https. If GitHub can't reach it, Oryn catches up from the delivery log every 30 seconds.",
+			"create": "Create App on GitHub",
+			"name": "Name",
+			"owner": "Owner",
+			"lastDelivery": "Last delivery",
+			"noDelivery": "No deliveries yet",
+			"source": {
+				"webhook": "Live",
+				"poll": "Polled"
+			},
+			"delete": "Remove connection",
+			"deleteConfirm": "Remove the connection to GitHub App \"{{name}}\"? Connected accounts and installation records are cleared too. The App itself stays on GitHub."
+		},
+		"installations": {
+			"title": "Installations",
+			"all": "All repositories",
+			"selected": "Selected repositories",
+			"suspended": "Suspended",
+			"empty": "The App isn't installed on any account yet.",
+			"install": "Install on an account or organization",
+			"sync": "Sync"
+		},
+		"identity": {
+			"title": "Accounts",
+			"user": "My account",
+			"agent": "Agent account",
+			"reauth": "Needs reauthorization",
+			"connectedAt": "Connected {{when}}",
+			"notConnected": "Not connected",
+			"agentHint": "The agent account needs write access to the repositories",
+			"connect": "Connect",
+			"reconnect": "Reconnect",
+			"disconnect": "Disconnect {{slot}}",
+			"disconnectConfirm": "Disconnect {{slot}} @{{login}}?",
+			"dialogTitle": "Connect {{slot}}",
+			"continueHere": "Continue in this browser",
+			"copyLink": "Copy link",
+			"copyHint": "Open it in a browser signed in to the target GitHub account. Valid for 10 minutes."
+		},
+		"automation": {
+			"title": "Automation",
+			"legend": "GitHub identity for automated tasks (GitHub triggers, project schedules)",
+			"agentMissing": "Connect the agent account to choose it"
+		},
+		"notice": {
+			"created": "GitHub App created. Next, install it on an account or organization, then connect your accounts.",
+			"connected": "{{slot}} connected",
+			"installed": "Installation updated, syncing"
+		},
+		"error": {
+			"state_invalid": "The link expired or was already used. Start again.",
+			"exchange_failed": "GitHub authorization failed. Try again.",
+			"same_account": "Can't be the same account as the other slot",
+			"access_denied": "Authorization was declined on GitHub",
+			"conflict": "A GitHub App is already connected",
+			"unknown": "The GitHub connection didn't complete. Try again."
+		}
 	}
 }

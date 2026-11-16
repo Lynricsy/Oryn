@@ -1,0 +1,122 @@
+/**
+ * GitHub 集成（M14）的查询与写入：连接状态（App、两个身份槽位、安装、自动化身份、最近投递）。
+ * 变更成功后让 `githubKeys.all` 失效；别处（回调页、另一台设备、webhook）的变化经 WS `github.changed` 推送，
+ * `useRealtimeGitHubSync` 据此（以及每次 WS 重新连上时）让 GitHub 查询与项目列表失效（项目的绑定状态随之变化）。
+ */
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { type RealtimeClient, realtime } from "../realtime/socket";
+import { api, type Schemas, unwrap } from "./client";
+import { qk } from "./queries";
+
+export type GitHubStatus = Schemas["GitHubStatus"];
+export type GitHubIdentity = Schemas["GitHubIdentity"];
+export type GitHubIdentitySlot = Schemas["GitHubIdentitySlot"];
+export type GitHubInstallation = Schemas["GitHubInstallation"];
+export type GitHubManifestRequest = Schemas["GitHubManifestRequest"];
+
+export const githubKeys = {
+	all: ["github"] as const,
+	status: ["github", "status"] as const,
+	repos: (q: string) => ["github", "repos", q] as const,
+	triggers: (projectId: string) => ["github", "triggers", projectId] as const,
+	refs: (projectId: string, q: string) =>
+		["github", "refs", projectId, q] as const,
+};
+
+/**
+ * GitHub 查询与服务端对账：收到 `github.changed`、或 WS（重新）连上时，`["github"]` 前缀的查询与项目列表全部失效。
+ * 在调 `realtime.connect()` 的应用壳里调用一次。
+ */
+export function useRealtimeGitHubSync(
+	client: Pick<RealtimeClient, "onGitHubChanged"> = realtime,
+): void {
+	const qc = useQueryClient();
+	useEffect(
+		() =>
+			client.onGitHubChanged(() => {
+				void qc.invalidateQueries({ queryKey: githubKeys.all });
+				void qc.invalidateQueries({ queryKey: qk.projects });
+			}),
+		[client, qc],
+	);
+}
+
+export function useGitHubStatus(enabled = true) {
+	return useQuery({
+		queryKey: githubKeys.status,
+		enabled,
+		queryFn: () => unwrap(api.GET("/api/v1/github")),
+		staleTime: 30_000,
+		refetchOnWindowFocus: true,
+	});
+}
+
+function useInvalidateGitHub() {
+	const qc = useQueryClient();
+	return () => qc.invalidateQueries({ queryKey: githubKeys.all });
+}
+
+/** 开始按 manifest 创建 App；返回中转页地址，调用方整页跳转过去。 */
+export function useBeginGitHubApp() {
+	const invalidate = useInvalidateGitHub();
+	return useMutation({
+		mutationFn: (body: GitHubManifestRequest) =>
+			unwrap(api.POST("/api/v1/github/app/manifest", { body })),
+		onSuccess: () => invalidate(),
+	});
+}
+
+export function useDeleteGitHubApp() {
+	const invalidate = useInvalidateGitHub();
+	return useMutation({
+		mutationFn: () => unwrap(api.DELETE("/api/v1/github/app")),
+		onSuccess: () => invalidate(),
+	});
+}
+
+/** 开始连接某个身份槽位；返回 GitHub 授权地址（10 分钟内有效）。 */
+export function useAuthorizeGitHubIdentity() {
+	const invalidate = useInvalidateGitHub();
+	return useMutation({
+		mutationFn: (slot: GitHubIdentitySlot) =>
+			unwrap(
+				api.POST("/api/v1/github/identities/{slot}/authorize", {
+					params: { path: { slot } },
+				}),
+			),
+		onSuccess: () => invalidate(),
+	});
+}
+
+export function useDisconnectGitHubIdentity() {
+	const invalidate = useInvalidateGitHub();
+	return useMutation({
+		mutationFn: (slot: GitHubIdentitySlot) =>
+			unwrap(
+				api.DELETE("/api/v1/github/identities/{slot}", {
+					params: { path: { slot } },
+				}),
+			),
+		onSuccess: () => invalidate(),
+	});
+}
+
+export function useSetGitHubAutomation() {
+	const invalidate = useInvalidateGitHub();
+	return useMutation({
+		mutationFn: (automationIdentity: GitHubIdentitySlot) =>
+			unwrap(
+				api.PUT("/api/v1/github/settings", { body: { automationIdentity } }),
+			),
+		onSuccess: () => invalidate(),
+	});
+}
+
+export function useSyncGitHubInstallations() {
+	const invalidate = useInvalidateGitHub();
+	return useMutation({
+		mutationFn: () => unwrap(api.POST("/api/v1/github/installations/sync")),
+		onSuccess: () => invalidate(),
+	});
+}

@@ -60,6 +60,7 @@ export const SETTINGS: SettingsSection[] = [
 	"secrets",
 	"browser-profiles",
 	"git-identity",
+	"github",
 	"agent-skills",
 	"agent-subagents",
 	"agent-roles",

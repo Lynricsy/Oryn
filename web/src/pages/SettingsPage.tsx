@@ -89,6 +89,7 @@ import SubagentsPage from "./settings/agent/SubagentsPage";
 import BrowserProfilesSettings from "./settings/BrowserProfilesSettings";
 import { CoordinatorAbout } from "./settings/CoordinatorAbout";
 import DesktopSettings from "./settings/DesktopSettings";
+import GitHubSettings from "./settings/GitHubSettings";
 import { IdentitySettings } from "./settings/IdentitySettings";
 import NotificationsSettings from "./settings/NotificationsSettings";
 import RunnersSettings from "./settings/RunnersSettings";
@@ -101,6 +102,7 @@ export type SettingsSection =
 	| "secrets"
 	| "browser-profiles"
 	| "git-identity"
+	| "github"
 	| "agent-skills"
 	| "agent-subagents"
 	| "agent-roles"
@@ -1249,6 +1251,7 @@ export function SettingsPage({
 					{section === "secrets" && <SecretsSettings />}
 					{section === "browser-profiles" && <BrowserProfilesSettings />}
 					{section === "git-identity" && <GitIdentitySettings />}
+					{section === "github" && <GitHubSettings />}
 					{section === "agent-skills" && <SkillsPage />}
 					{section === "agent-subagents" && <SubagentsPage />}
 					{section === "agent-roles" && <RolesPage />}

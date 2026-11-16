@@ -702,6 +702,7 @@ const SETTINGS_SECTIONS = [
 	"projects",
 	"secrets",
 	"git-identity",
+	"github",
 	"agent-config",
 	"notifications",
 	"shares",

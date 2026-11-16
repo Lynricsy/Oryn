@@ -146,6 +146,13 @@ export const MORE_ENTRIES: readonly MoreEntry[] = [
 		to: "/settings/git-identity",
 	},
 	{
+		key: "github",
+		group: "settings",
+		icon: "github",
+		labelKey: "settings.github",
+		to: "/settings/github",
+	},
+	{
 		key: "shares",
 		group: "settings",
 		icon: "share",

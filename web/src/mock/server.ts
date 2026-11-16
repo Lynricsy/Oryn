@@ -62,6 +62,7 @@ import {
 	toolZooLiveFrames,
 	toolZooReplayFrames,
 } from "./fixtures";
+import { MockGitHub } from "./github";
 import { MockLibrary } from "./library";
 import { handleNotifyFetch } from "./notify";
 import { handleOrbFetch } from "./orbfs";
@@ -499,6 +500,10 @@ export class MockServer {
 		},
 		schedulesChanged: (scheduleId) =>
 			this.broadcast({ type: "schedules.changed", scheduleId }),
+	});
+	/** GitHub 集成（M14）。 */
+	readonly github = new MockGitHub({
+		changed: () => this.broadcast({ type: "github.changed" }),
 	});
 	gitIdentity: Schemas["GitIdentity"] | undefined = {
 		name: "Oryn Owner",
@@ -1495,6 +1500,8 @@ export class MockServer {
 			}
 			return json(this.gitIdentity ? { identity: this.gitIdentity } : {});
 		}
+		const githubRes = await this.github.handle(p, m, body, url);
+		if (githubRes) return githubRes;
 		const runnerRes = await this.handleRunnerFetch(p, m, body);
 		if (runnerRes) return runnerRes;
 		if (p === "providers" && m === "GET") return json({ providers });

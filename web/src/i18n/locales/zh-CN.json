@@ -1059,6 +1059,7 @@
 		"projects": "项目",
 		"secrets": "密钥",
 		"git-identity": "Git 身份",
+		"github": "GitHub",
 		"agent-config": "高级",
 		"agent-skills": "技能",
 		"agent-subagents": "子 agent",
@@ -3126,5 +3127,73 @@
 		"removeWorktree": "同时移除 worktree",
 		"removeWorktreeHint": "在 runner 上执行 git worktree remove；有未提交的改动时 git 会拒绝，分支 {{branch}} 未合并时保留。",
 		"removeFailed": "线程已归档，但 worktree 没有移除："
+	},
+	"github": {
+		"app": {
+			"title": "GitHub App",
+			"intro": "Oryn 通过你自己的 GitHub App 连接 GitHub：在 GitHub 上一键创建，再把它安装到需要的账号或组织。",
+			"org": "组织（可选）",
+			"orgHint": "留空则建在你当前登录的个人账号下",
+			"orgPlaceholder": "my-org",
+			"public": "允许安装到其它账号（公开 App）",
+			"advanced": "高级",
+			"webhook": "Webhook 地址",
+			"webhookHint": "须为 https。GitHub 访问不到时，Oryn 每 30 秒从投递日志补齐事件。",
+			"create": "在 GitHub 上创建 App",
+			"name": "名称",
+			"owner": "所有者",
+			"lastDelivery": "最近投递",
+			"noDelivery": "尚未收到投递",
+			"source": {
+				"webhook": "实时",
+				"poll": "轮询"
+			},
+			"delete": "删除连接",
+			"deleteConfirm": "删除与 GitHub App「{{name}}」的连接？已连接的账号与安装记录会一并清除，GitHub 上的 App 不会被删除。"
+		},
+		"installations": {
+			"title": "安装",
+			"all": "全部仓库",
+			"selected": "部分仓库",
+			"suspended": "已停用",
+			"empty": "App 还没有安装到任何账号。",
+			"install": "安装到账号或组织",
+			"sync": "同步"
+		},
+		"identity": {
+			"title": "账号",
+			"user": "我的账号",
+			"agent": "Agent 账号",
+			"reauth": "需要重新授权",
+			"connectedAt": "{{when}}连接",
+			"notConnected": "未连接",
+			"agentHint": "Agent 账号需要对仓库有写权限",
+			"connect": "连接",
+			"reconnect": "重新连接",
+			"disconnect": "断开{{slot}}",
+			"disconnectConfirm": "断开{{slot}} @{{login}}？",
+			"dialogTitle": "连接{{slot}}",
+			"continueHere": "在此浏览器继续",
+			"copyLink": "复制链接",
+			"copyHint": "在登录了目标 GitHub 账号的浏览器里打开，10 分钟内有效"
+		},
+		"automation": {
+			"title": "自动化",
+			"legend": "自动化任务（GitHub 触发、项目级定时）使用的 GitHub 身份",
+			"agentMissing": "连接 Agent 账号后才能选择它"
+		},
+		"notice": {
+			"created": "GitHub App 已创建。下一步：把它安装到账号或组织，再连接账号。",
+			"connected": "{{slot}}已连接",
+			"installed": "安装已更新，正在同步"
+		},
+		"error": {
+			"state_invalid": "链接已失效或已用过，请重新开始",
+			"exchange_failed": "GitHub 授权失败，请重试",
+			"same_account": "不能与另一个槽位是同一个账号",
+			"access_denied": "你在 GitHub 上取消了授权",
+			"conflict": "已经连接了一个 GitHub App",
+			"unknown": "GitHub 连接没有完成，请重试"
+		}
 	}
 }

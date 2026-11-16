@@ -122,6 +122,21 @@ export class RealtimeClient {
 		for (const cb of [...this.scheduleListeners]) cb();
 	}
 
+	/** GitHub 集成变更的监听者（M14）：收到 `github.changed` 与每次连接建立时调用。 */
+	private readonly githubListeners = new Set<() => void>();
+
+	/** 订阅「GitHub 集成状态可能变了」（App、身份、安装、项目绑定、触发规则）；连接（重新）建立时也通知。返回取消订阅。 */
+	onGitHubChanged(cb: () => void): () => void {
+		this.githubListeners.add(cb);
+		return () => {
+			this.githubListeners.delete(cb);
+		};
+	}
+
+	private emitGitHubChanged() {
+		for (const cb of [...this.githubListeners]) cb();
+	}
+
 	connect() {
 		this.closedByUser = false;
 		this.suspended = false;
@@ -274,6 +289,7 @@ export class RealtimeClient {
 				if (this.send({ type: "ping" })) this.awaitingPong = true;
 			}, PING_INTERVAL_MS);
 			this.emitSchedulesChanged();
+			this.emitGitHubChanged();
 		};
 		ws.onmessage = (ev) => {
 			if (this.ws !== ws || typeof ev.data !== "string") return;
@@ -561,6 +577,9 @@ export class RealtimeClient {
 				return;
 			case "schedules.changed":
 				this.emitSchedulesChanged();
+				return;
+			case "github.changed":
+				this.emitGitHubChanged();
 				return;
 			case "notifications.read":
 				notificationsStore

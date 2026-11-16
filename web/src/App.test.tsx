@@ -12,6 +12,7 @@ vi.mock("./realtime/socket", () => ({
 		close: vi.fn(),
 		send: vi.fn(),
 		onSchedulesChanged: vi.fn(() => () => undefined),
+		onGitHubChanged: vi.fn(() => () => undefined),
 	},
 }));
 
