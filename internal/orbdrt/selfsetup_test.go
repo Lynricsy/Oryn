@@ -368,6 +368,10 @@ func TestAgentAssetsAndExtensionArg(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(b), `"before_agent_start"`)
 	assert.Contains(t, string(b), "setup-status.json")
+	// M15：GitHub 任务工具（发布工具在步骤 6.1 加入）
+	for _, name := range []string{"github_classify_issue", "github_task_state", "github_prepare", "github_autoclose", "github_abort_task"} {
+		assert.Contains(t, string(b), `"`+name+`"`)
+	}
 	b, err = os.ReadFile(filepath.Join(rt.home, ".agents", "skills", "oryn-setup", "SKILL.md"))
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(string(b), "---\nname: oryn-setup\n"), "技能 frontmatter")

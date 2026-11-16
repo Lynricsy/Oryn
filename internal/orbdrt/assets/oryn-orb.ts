@@ -1,6 +1,6 @@
 // Oryn orb 环境说明（由 orbd 写出并以 `omp -e` 加载；每次 orbd 启动覆盖，请勿手改）。
 // 在 before_agent_start 向系统提示词追加一段 orb 生命周期约定，并附上最近一次 setup / resume 与受管服务的异常现状；
-// 启用了桌面时另注册 desktop_ask_user 工具；ORYN_ARTIFACT_SOCK 非空时注册 artifact 工具（M14）。
+// 启用了桌面时另注册 desktop_ask_user 工具；ORYN_ARTIFACT_SOCK 非空时注册 artifact 工具（M14）与 GitHub 任务工具（M15）。
 // Runner（ORYN_RUNNER=1）上 orbd 把同一文件写到 ~/.oryn/orbd/extensions/，此时只注册 artifact 工具与它的指引。
 import type {
 	AgentToolResult,
@@ -26,7 +26,7 @@ orb 的环境由这些生命周期文件配置（仓库内 \`.agents/setup\`、\
 需要持久的 PATH / 环境变量写进 \`~/.profile\`：agent 在启动时读取登录 shell 环境，所以只对之后启动的 agent 生效。
 仓库内脚本的改动只有合入项目基线分支后才对新 orb 生效。
 git 提交身份（user.name / user.email）由 Oryn 配置；git 报缺少身份时，请用户到 Oryn 设置（设置 → Git 身份，或项目设置）填写，不要自己编一个，也不要借用仓库历史里的作者。
-GitHub：~/.oryn/gh/identity.json 存在时，git 与 \`gh\` CLI 已经以该文件里的 GitHub 账号获得本项目仓库的访问权限。不要运行 \`gh auth login\`，也不要向用户要令牌；权限只覆盖这个仓库。
+GitHub：~/.oryn/gh/identity.json 存在时，git 与 \`gh\` CLI 已经以该文件里的 GitHub 账号登录，可以访问这个账号能访问的仓库（读写权限以 GitHub 上该账号的权限为准）。不要运行 \`gh auth login\`，也不要向用户要令牌；你在 GitHub 上的写操作会被记录。
 用户要求配置 orb 环境、或 setup / resume 失败时，使用 \`oryn-setup\` 技能。
 长驻进程（dev server、watcher、队列消费者）用受管服务，不要用 nohup / setsid / & / tmux 保活：
 - 仓库里的服务写进 \`.oryn/services.yaml\`（\`services.<名字>: {command, cwd, port, env, health, portal, portals}\`），用 \`oryn orb service start\` 按文件确保全部运行；临时服务用 \`oryn orb service start <名字> --command '<命令>' --portal\`。
@@ -529,6 +529,168 @@ function registerArtifacts(pi: ExtensionAPI): boolean {
 	}
 }
 
+// ---- GitHub 任务工具（M15）：触发规则建立的线程用来登记分类、状态、提交前检查与自动关闭 ----
+// 与 artifact 工具共用 orbd 本地控制口：github_prepare 发 github.prepare（orbd 在本机执行检查后上报控制面），
+// 其余发 github.call（orbd 原样转给控制面，internal/github/tools.go）。
+
+// formatPrepare 把 github.prepare 的结果（internal/orbdrt/prepare.go 的 PrepareResult）写成给 agent 的文本。
+function formatPrepare(r: {
+	ok?: boolean;
+	sha?: string;
+	skipped?: boolean;
+	failure?: string;
+	steps?: { name: string; ok: boolean; output?: string }[];
+}): string {
+	const lines = [r.ok ? `PASSED for ${r.sha ?? "HEAD"}${r.skipped ? " (checks skipped)" : ""}` : `FAILED: ${r.failure ?? "unknown"}`];
+	for (const s of r.steps ?? []) {
+		lines.push(`- ${s.name}: ${s.ok ? "ok" : "FAILED"}`);
+		if (!s.ok && s.output) {
+			lines.push(s.output.trimEnd());
+		}
+	}
+	if (r.ok) {
+		lines.push("Push or open the PR for exactly this commit; any new commit needs another github_prepare.");
+	}
+	return lines.join("\n");
+}
+
+function sockError(name: string, code: string, message: string): AgentToolResult {
+	return {
+		content: [{ type: "text", text: `${code}: ${message}` }],
+		isError: true,
+		details: { tool: name, error: { code, message } },
+	};
+}
+
+// registerGitHub 注册 GitHub 任务工具；ORYN_ARTIFACT_SOCK 为空时不注册。注册失败只记一行。
+function registerGitHub(pi: ExtensionAPI) {
+	const sock = process.env.ORYN_ARTIFACT_SOCK ?? "";
+	if (!sock) {
+		return;
+	}
+	try {
+		const z = pi.zod;
+		const threadId = process.env.ORYN_THREAD_ID ?? "";
+		const tools: Pick<ToolDefinition, "name" | "label" | "description" | "parameters" | "loadMode">[] = [
+			{
+				name: "github_classify_issue",
+				label: "Classify GitHub issue",
+				description:
+					"Record the classification of the GitHub issue this thread was started for and apply the matching labels. Call it before any other action on a fresh issue. Returns whether implementation is authorized and, with branch_slug, the branch name to use.",
+				parameters: z.object({
+					primary: z.enum(["bug", "wontfix", "documentation", "enhancement", "proposal", "question", "invalid", "duplicate"]),
+					priority: z.enum(["prio:p0", "prio:p1", "prio:p2", "prio:p3"]).optional().describe("required when primary is bug"),
+					functional: z
+						.array(z.enum(["agent", "tool", "tui", "cli", "prompting", "sdk", "auth", "setup", "ux", "providers"]))
+						.optional(),
+					provider: z.string().regex(/^provider:[a-z0-9._-]+$/).optional().describe("e.g. provider:openai; only with explicit evidence"),
+					platform: z.enum(["platform:linux", "platform:macos", "platform:windows", "platform:wsl"]).optional(),
+					rationale: z.string().min(1).max(2000).describe("one sentence"),
+					branch_slug: z
+						.string()
+						.regex(/^[a-z0-9]+(-[a-z0-9]+)*$/)
+						.max(60)
+						.optional()
+						.describe("short kebab-case slug for bug / documentation"),
+				}),
+				loadMode: "essential",
+			},
+			{
+				name: "github_task_state",
+				label: "Set GitHub task state",
+				description:
+					"Move this thread's GitHub task to a new state (shown to the owner in Oryn). needs_info also adds the needs-info label. Pass repro to record a reproduction in the thread.",
+				parameters: z.object({
+					state: z.enum(["reproducing", "fixing", "reviewing", "opened", "needs_info"]),
+					note: z.string().max(2000).optional(),
+					repro: z
+						.object({
+							title: z.string().min(1).max(200),
+							command: z.string().min(1).max(4000),
+							output: z.string().max(20000),
+							exit_code: z.number().int(),
+							reproduced: z.boolean(),
+						})
+						.optional(),
+				}),
+				loadMode: "essential",
+			},
+			{
+				name: "github_autoclose",
+				label: "Schedule issue auto-close",
+				description:
+					"Schedule the issue to close after the rule's window unless its author reacts 👎 to your latest comment, comments again, or it is closed otherwise. Call right after posting the answer comment.",
+				parameters: z.object({
+					number: z.number().int().min(1).optional().describe("issue number; defaults to this thread's issue"),
+					hours: z.number().int().min(1).max(720).optional().describe("leave unset to use the rule's window"),
+				}),
+				loadMode: "essential",
+			},
+			{
+				name: "github_abort_task",
+				label: "Abort GitHub task",
+				description:
+					"Give up on this thread's GitHub task because of a fault only a human can fix (environment, permissions, infrastructure). Marks it abandoned for the owner; posts nothing on GitHub.",
+				parameters: z.object({ reason: z.string().min(1).max(2000).describe("concrete diagnosis") }),
+				loadMode: "essential",
+			},
+		];
+		for (const tool of tools) {
+			pi.registerTool({
+				...tool,
+				approval: "read",
+				async execute(_toolCallId, params, signal) {
+					try {
+						const reply = await artifactSockCall(
+							sock,
+							{ method: "github.call", params: { threadId, tool: tool.name, params } },
+							signal,
+						);
+						if (!reply.ok) {
+							return sockError(tool.name, reply.code, reply.message);
+						}
+						return { content: [{ type: "text", text: reply.result.text }], details: reply.result.details };
+					} catch (err) {
+						return sockError(tool.name, "unavailable", err instanceof Error ? err.message : String(err));
+					}
+				},
+			});
+		}
+		pi.registerTool({
+			name: "github_prepare",
+			label: "Prepare commits for GitHub",
+			description:
+				"Run the project's pre-push gates on the current HEAD: fix command (formatter changes amended into HEAD), commit message and author checks, clean tree, check command, and for level=pr the test command. A pass is recorded for exactly that commit; the egress proxy only lets through pushes and PRs of recorded commits when gates are enabled.",
+			parameters: z.object({
+				level: z.enum(["push", "pr"]),
+				skip_checks: z.boolean().optional().describe("only for verified pre-existing breakage unrelated to your change"),
+				reason: z.string().max(2000).optional().describe("required with skip_checks"),
+			}),
+			loadMode: "essential",
+			approval: "read",
+			async execute(_toolCallId, params, signal) {
+				const p = params as { level: string; skip_checks?: boolean; reason?: string };
+				try {
+					const reply = await artifactSockCall(
+						sock,
+						{ method: "github.prepare", params: { threadId, level: p.level, skipChecks: p.skip_checks ?? false, reason: p.reason ?? "" } },
+						signal,
+					);
+					if (!reply.ok) {
+						return sockError("github_prepare", reply.code, reply.message);
+					}
+					const r = reply.result as unknown as Parameters<typeof formatPrepare>[0];
+					return { content: [{ type: "text", text: formatPrepare(r) }], isError: !r.ok, details: { ...r } };
+				} catch (err) {
+					return sockError("github_prepare", "unavailable", err instanceof Error ? err.message : String(err));
+				}
+			},
+		});
+	} catch (err) {
+		console.error("oryn-orb: register GitHub tools failed:", err);
+	}
+}
+
 // 嵌套 Docker（M11a）：只有带 Docker 的 orb 类型由 provider 注入 ORYN_NESTED_DOCKER=1，orbd 据此监督 dockerd。
 const DOCKER_GUIDE = `Docker：这台 orb 有自己的 Docker 守护进程，由 Oryn 托管（不要自己启动或重启 dockerd），日志在 ~/.cache/oryn/logs/dockerd.log；\`docker\` / \`docker compose\` 直接可用（user 在 docker 组，不需要 sudo）。setup 里拉取或构建的镜像会进入项目快照，新 orb 直接可用；setup 结束时不要留下运行中的容器（需要常驻的容器用受管服务启动）。`;
 const NO_DOCKER_GUIDE = `Docker：这台 orb 没有 Docker 守护进程（docker 命令存在但连不上），不要尝试自己安装或启动 dockerd；任务确实需要 Docker 时，请用户改用带 Docker 的 orb 类型新开线程。`;
@@ -599,6 +761,7 @@ export default function orynOrbExtension(pi: ExtensionAPI) {
 		}
 		return;
 	}
+	registerGitHub(pi);
 	if (desktopEnabled()) {
 		registerDesktopAsk(pi);
 	}
