@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/github"
 	"github.com/Lynricsy/Oryn/internal/glyph"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/orbs"
@@ -28,7 +29,12 @@ func projectJSON(p db.Project) apigen.Project {
 	if id := gitIdentityJSON(p.GitAuthorName, p.GitAuthorEmail); id != nil {
 		out.GitAuthorName, out.GitAuthorEmail = &id.Name, &id.Email
 	}
+	out.Github = github.ProjectGitHubAPI(p)
 	return out
+}
+
+func sameOptStr(a, b *string) bool {
+	return (a == nil) == (b == nil) && (a == nil || *a == *b)
 }
 
 func validProjectName(name string) bool {
@@ -150,6 +156,11 @@ func (s *Server) CreateProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, err)
 		return
 	}
+	if s.GitHub != nil && s.GitHub.Service != nil {
+		if err := s.GitHub.Service.BindProject(ctx, p.ID); err != nil {
+			slog.Warn("绑定项目的 GitHub 仓库失败", "project", p.ID, "err", err)
+		}
+	}
 	row, err := s.Store.Q.GetProject(ctx, p.ID)
 	if err != nil {
 		writeErr(w, r, err)
@@ -208,6 +219,7 @@ func (s *Server) UpdateProject(w http.ResponseWriter, r *http.Request, id apigen
 		return
 	}
 	var out db.Project
+	repoChanged := false
 	err = s.Store.Tx(ctx, func(q *db.Queries) error {
 		p, err := q.GetProject(ctx, id)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -267,6 +279,21 @@ func (s *Server) UpdateProject(w http.ResponseWriter, r *http.Request, id apigen
 		} else if err != nil {
 			return err
 		}
+		repoChanged = !sameOptStr(p.RepoUrl, u.RepoUrl)
+		if repoChanged && s.GitHub != nil {
+			// 旧仓库的事件不得再命中这个项目；新仓库在事务之后重新绑定
+			if err := q.ClearProjectGithub(ctx, id); err != nil {
+				return err
+			}
+		}
+		if req.GithubListen != nil {
+			if err := q.SetProjectGithubListen(ctx, db.SetProjectGithubListenParams{
+				GithubListenReviews: req.GithubListen.Reviews, GithubListenComments: req.GithubListen.Comments,
+				GithubListenCi: req.GithubListen.Ci, UpdatedAt: u.UpdatedAt, ID: id,
+			}); err != nil {
+				return err
+			}
+		}
 		if req.Snapshots != nil && !*req.Snapshots && p.Snapshots {
 			// 关闭项目快照（S-P2-2）：就绪的退役，在建的同时作废（构建者发布时看到作废会自行清理镜像）
 			if err := q.RetireProjectSnapshotsByProject(ctx, db.RetireProjectSnapshotsByProjectParams{
@@ -281,6 +308,15 @@ func (s *Server) UpdateProject(w http.ResponseWriter, r *http.Request, id apigen
 	if err != nil {
 		writeErr(w, r, err)
 		return
+	}
+	if repoChanged && s.GitHub != nil && s.GitHub.Service != nil {
+		if err := s.GitHub.Service.BindProject(ctx, id); err != nil {
+			slog.Warn("绑定项目的 GitHub 仓库失败", "project", id, "err", err)
+		}
+		if out, err = s.Store.Q.GetProject(ctx, id); err != nil {
+			writeErr(w, r, err)
+			return
+		}
 	}
 	// 预热台数、快照开关、setup 脚本、仓库、分支、默认 provider / 类型或归档变化都会改变预热池的目标或配置哈希
 	if req.WarmOrbs != nil || req.Snapshots != nil || req.SetupScript != nil || req.RepoURL != nil || req.BaseBranch != nil ||

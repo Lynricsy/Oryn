@@ -16,6 +16,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/agentcfg"
 	"github.com/Lynricsy/Oryn/internal/api"
+	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/auth"
 	"github.com/Lynricsy/Oryn/internal/config"
 	"github.com/Lynricsy/Oryn/internal/github"
@@ -162,4 +163,69 @@ func TestGitHubAPI(t *testing.T) {
 func TestGitHubAPINotConfigured(t *testing.T) {
 	e := newH2Env(t)
 	assert.Equal(t, 501, e.do("GET", "/api/v1/github", h2DeviceToken(t, e), nil).status)
+}
+
+// createGitHubApp 经服务走一遍 manifest 流程。
+func createGitHubApp(t *testing.T, fake *githubtest.Server, gh *github.Service) {
+	t.Helper()
+	ctx := context.Background()
+	raw, err := gh.BeginManifest(ctx, apigen.GitHubManifestRequest{})
+	require.NoError(t, err)
+	u, err := url.Parse(raw)
+	require.NoError(t, err)
+	require.NoError(t, gh.FinishManifest(ctx, fake.App.ManifestCode, u.Query().Get("state")))
+}
+
+func TestProjectGitHubBinding(t *testing.T) {
+	e, fake, gh := newGitHubEnv(t)
+	dev := h2DeviceToken(t, e)
+	createGitHubApp(t, fake, gh)
+	fake.AddInstallation(10, "Acme")
+	fake.AddRepo(githubtest.Repo{ID: 42, FullName: "Acme/Widgets", OwnerID: 900, InstallationID: 10})
+
+	type project struct {
+		ID     string
+		Github *struct {
+			RepoID   int64
+			FullName string
+			Bound    bool
+			Listen   struct{ Reviews, Comments, Ci bool }
+		}
+	}
+	r := e.do("POST", "/api/v1/projects", dev, map[string]any{"name": "w", "repoUrl": "https://github.com/acme/widgets.git"})
+	require.Equal(t, 201, r.status, string(r.body))
+	var p project
+	r.json(t, &p)
+	require.NotNil(t, p.Github)
+	assert.EqualValues(t, 42, p.Github.RepoID)
+	assert.Equal(t, "acme/widgets", p.Github.FullName)
+	assert.True(t, p.Github.Bound)
+	assert.True(t, p.Github.Listen.Reviews)
+
+	r = e.do("PATCH", "/api/v1/projects/"+p.ID, dev, map[string]any{"githubListen": map[string]bool{"reviews": false, "comments": true, "ci": true}})
+	require.Equal(t, 200, r.status, string(r.body))
+	p = project{}
+	r.json(t, &p)
+	require.NotNil(t, p.Github)
+	assert.False(t, p.Github.Listen.Reviews)
+	assert.True(t, p.Github.Listen.Ci)
+
+	// 改成另一个未安装 App 的仓库：三列全清
+	r = e.do("PATCH", "/api/v1/projects/"+p.ID, dev, map[string]any{"repoUrl": "https://github.com/acme/other"})
+	require.Equal(t, 200, r.status, string(r.body))
+	p = project{}
+	r.json(t, &p)
+	assert.Nil(t, p.Github)
+	row, err := e.st.Q.GetProject(context.Background(), p.ID)
+	require.NoError(t, err)
+	assert.Nil(t, row.GithubRepoID)
+	assert.Nil(t, row.GithubOwnerID)
+	assert.Nil(t, row.GithubInstallationID)
+
+	// 非 GitHub 项目没有 github 字段
+	r = e.do("POST", "/api/v1/projects", dev, map[string]any{"name": "plain"})
+	require.Equal(t, 201, r.status, string(r.body))
+	p = project{}
+	r.json(t, &p)
+	assert.Nil(t, p.Github)
 }

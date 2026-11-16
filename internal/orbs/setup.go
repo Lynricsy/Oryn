@@ -211,7 +211,7 @@ func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project, orb db.Orb) (S
 			if prev := prevURLs(prj.GithubPrevUrls); len(prev) > 0 {
 				repo.PreviousUrls = prev
 			}
-			if host, path, ok := httpsRepo(*prj.RepoUrl); ok {
+			if host, path, ok := HTTPSRepo(*prj.RepoUrl); ok {
 				projectRepo = &gitRepo{host: host, path: path}
 			}
 		}
@@ -375,9 +375,10 @@ func gitInsteadOf(repo *gitRepo, tokenHosts []string) []string {
 	return out
 }
 
-// httpsRepo 解析 https://host/owner/repo(.git) 形式的仓库地址（GitLab 子组等多段路径整体作为仓库路径）。
+// HTTPSRepo 解析 https://host/owner/repo(.git) 形式的仓库地址（GitLab 子组等多段路径整体作为仓库路径）：
+// 返回小写主机与保留原大小写、去掉 .git 的仓库路径。
 // 路径段含 `.`、`..`、空段或 git 配置键不能容纳的字符时不视为可放行的仓库。
-func httpsRepo(raw string) (host, path string, ok bool) {
+func HTTPSRepo(raw string) (host, path string, ok bool) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Port() != "" || u.RawQuery != "" || u.Fragment != "" {
 		return "", "", false

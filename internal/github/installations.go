@@ -64,6 +64,3 @@ func (s *Service) SyncInstallations(ctx context.Context) error {
 	s.changed()
 	return nil
 }
-
-// BindProjects 按仓库地址重新绑定全部候选项目（2.1 换成真实现）。
-func (s *Service) BindProjects(ctx context.Context) error { return nil }
