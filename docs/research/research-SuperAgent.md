@@ -183,9 +183,9 @@ flowchart TB
 
 在这些现有对象上加字段即可覆盖例程该有的能力：
 
-1. **观察档**：触发规则和 `new_thread` 定时各加 `mode: observe | auto`。`observe` 命中时只写一条运行记录（"本来会建线程：提示词摘要、命中的事件"），不建线程、不调模型；在规则页的运行记录里查看，确认后一键切到 `auto`。助手建的规则默认 `observe`，主人自己建的默认 `auto`。
+1. **观察档**：触发规则和 `new_thread` 定时各加 `executionPolicy: observe | auto`。不复用 `mode` 这个名字：定时已有 `mode: thread | new_thread`（`internal/schedule/spec.go:19-20,119-127`），表示投递目标，和"观察还是执行"是正交的两个维度。`observe` 命中时只写一条运行记录（"本来会建线程：提示词摘要、命中的事件"），不建线程、不调模型；在规则页的运行记录里查看，确认后一键切到 `auto`。助手建的规则默认 `observe`，主人自己建的默认 `auto`。
 2. **零成本前置检查**（Hermes `wakeAgent`）：定时加一个确定性条件，只用 orynd 已经知道的状态（CI 结论、PR 有无新评论、自上次运行以来有无新提交、线程是否卡在等你），不满足就跳过本次、不唤醒模型。
-3. **通知策略**（ChatGPT 监控任务）：触发规则与定时加 `notify: always | on_change | never`，并记录上次结果摘要，用于判断"有没有变化"。
+3. **通知策略**（ChatGPT 监控任务）：触发规则与定时加 `notifyPolicy: always | on_change | never`，并记录上次结果摘要，用于判断"有没有变化"。它管的是"要不要推送给主人"，和触发规则已有的 `announce`（在 issue 下回帖新线程链接，`schema/openapi.yaml:6458-6460`）是两回事，不合并。
 4. **助手可以管理触发规则**：新增宿主工具 `set_trigger`，行为对照现有 `set_schedule`：同样限速、`createdBy=agent` 审计，且只能建 `observe` 档，切 `auto` 必须主人在规则页操作。
 5. **自我调度**：给 `set_schedule` 的 `thread` 模式一个语义入口 `wake_me(at | after, reason)`，到点回到发起它的那个对话。
 6. **后台只读巡检**：实现为助手名下的一条定时，跑在不进任何列表的内部会话里，只能用只读工具；发现写进私有笔记，值得说的进收件箱。
