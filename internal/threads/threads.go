@@ -59,6 +59,9 @@ type CreateParams struct {
 	// Automation 为真表示由全自动入口创建——GitHub 触发、项目级定时、发布哨兵（M14 / M15）：新 orb 的 GitHub 身份由
 	// GitHub.ResolveAutomationSlot 决定（R6），回退到我的账号时把回退提示追加到首条提示词末尾（Q6）。
 	Automation bool
+	// Untrusted 与 Automation 同用：入口由不可信输入驱动（「任何人」档规则、外部 PR 评审，M15 Q6）。身份只用 Agent 账号，
+	// Agent 槽位不可用时 Create 原样返回 GitHub.ResolveAutomationSlot 的错误，不回退、不建线程。
+	Untrusted bool
 }
 
 // maxRoleLen 是新建线程时 role 名的长度上限（字节），与 role 头像接口的校验一致。
@@ -77,7 +80,7 @@ func (s *Service) githubIdentity(ctx context.Context, p CreateParams) (slot, not
 		return "user", "", nil
 	}
 	if p.Automation && s.gh != nil {
-		return s.gh.ResolveAutomationSlot(ctx, false)
+		return s.gh.ResolveAutomationSlot(ctx, p.Untrusted)
 	}
 	return "user", "", nil
 }

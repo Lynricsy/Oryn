@@ -16,10 +16,11 @@ import (
 	"github.com/Lynricsy/Oryn/internal/threads"
 )
 
-// stubNotifier 记录发出的通知（"线程\nkind\n正文"）。
+// stubNotifier 记录发出的通知（"线程\nkind\n正文"）；无线程通知另记在 system（"kind\n标题\n正文\n链接"）。
 type stubNotifier struct {
-	mu    sync.Mutex
-	posts []string
+	mu     sync.Mutex
+	posts  []string
+	system []string
 }
 
 func (n *stubNotifier) PostThread(_ context.Context, threadID, kind, body string) error {
@@ -27,6 +28,19 @@ func (n *stubNotifier) PostThread(_ context.Context, threadID, kind, body string
 	defer n.mu.Unlock()
 	n.posts = append(n.posts, threadID+"\n"+kind+"\n"+body)
 	return nil
+}
+
+func (n *stubNotifier) PostSystem(_ context.Context, kind, title, body, link string) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.system = append(n.system, kind+"\n"+title+"\n"+body+"\n"+link)
+	return nil
+}
+
+func (n *stubNotifier) systemPosts() []string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return append([]string(nil), n.system...)
 }
 
 // titles 返回各条通知正文的标题部分（第一个 ": " 之前）。

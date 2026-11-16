@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
@@ -266,12 +267,19 @@ func (s *Service) listen(ctx context.Context, ev hookEvent, tgt listenTarget, ki
 	if kind == "review" {
 		assoc = ev.Review.AuthorAssociation
 	}
-	ok, reason, err := s.canDrive(ctx, ev.Repository.FullName, who, subject.User.Login, assoc, driversWriters)
+	// 驱动判定按线程来源规则的档位（R13）；没有来源规则的线程只认写权限者
+	rule, pool := defaultDriveRule, []apigen.ModelRef(nil)
+	if trig, ok, err := s.threadRule(ctx, tgt.threadID); err != nil {
+		return "", err
+	} else if ok {
+		rule, pool = ruleOf(trig), modelsOf(trig)
+	}
+	d, err := s.canDrive(ctx, ev.Repository.FullName, who, subject.User.Login, assoc, rule)
 	if err != nil {
 		return "", err
 	}
-	if !ok {
-		return "ignored:" + reason, nil
+	if !d.ok {
+		return "ignored:" + d.reason, nil
 	}
 	listen := listenComments
 	if kind == "review" || kind == "review_comment" {
@@ -294,6 +302,7 @@ func (s *Service) listen(ctx context.Context, ev hookEvent, tgt listenTarget, ki
 		}
 		return "ignored:rate_limited", nil
 	}
+	text := it.Body
 	it.Actor = ev.Sender.Login
 	it.Body = clip(it.Body, maxItemBody)
 	raw, err := json.Marshal(it)
@@ -307,7 +316,34 @@ func (s *Service) listen(ctx context.Context, ev hookEvent, tgt listenTarget, ki
 	}); err != nil {
 		return "", err
 	}
+	s.applyPragmas(ctx, tgt.threadID, text, ev.Sender.Login, assoc, rule, pool)
 	return "handled", nil
+}
+
+// threadRule 取线程的来源规则：线程最近一条 issue 任务的 rule_id（缺省取 trigger_id）。没有任务或规则已删除时 ok 为假。
+func (s *Service) threadRule(ctx context.Context, threadID string) (db.GithubTrigger, bool, error) {
+	ti, err := s.st.Q.GetThreadIssueByThread(ctx, threadID)
+	if err != nil {
+		if isNoRows(err) {
+			return db.GithubTrigger{}, false, nil
+		}
+		return db.GithubTrigger{}, false, err
+	}
+	id := ti.RuleID
+	if id == nil {
+		id = ti.TriggerID
+	}
+	if id == nil {
+		return db.GithubTrigger{}, false, nil
+	}
+	t, err := s.st.Q.GetGithubTrigger(ctx, *id)
+	if err != nil {
+		if isNoRows(err) {
+			return db.GithubTrigger{}, false, nil
+		}
+		return db.GithubTrigger{}, false, err
+	}
+	return t, true, nil
 }
 
 // pauseLink 在 PR 关联超出每小时上限时暂停它，并通知所有者。

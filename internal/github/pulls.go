@@ -160,6 +160,10 @@ func (s *Service) onPullRequest(ctx context.Context, action string, body []byte)
 		}
 		s.th.Publish(ctx, l.ThreadID)
 	}
+	// pull_request_opened 规则（M15 R12）：在入库与关联之后匹配，已关联到线程的 PR 不再触发
+	if out, err := s.onPullTrigger(ctx, action, body); err != nil || out != "" {
+		return out, err
+	}
 	return "handled", nil
 }
 

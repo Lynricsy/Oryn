@@ -1,9 +1,13 @@
 package github
 
 import (
+	"context"
+	"encoding/json"
+	"log/slog"
 	"strings"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
 // M15 R14：触发正文或跟进评论里单独成行的 `/model <别名>`、`/thinking <级别>` 覆盖本次的模型与思考级别
@@ -97,4 +101,63 @@ func pickModel(pool []apigen.ModelRef, intn func(n int) int) *apigen.ModelRef {
 	}
 	m := pool[intn(len(pool))]
 	return &m
+}
+
+// modelsOf 解析规则的模型池（JSON 数组）；解析失败按空池。
+func modelsOf(t db.GithubTrigger) []apigen.ModelRef {
+	var pool []apigen.ModelRef
+	_ = json.Unmarshal([]byte(t.Models), &pool)
+	return pool
+}
+
+// pragmaOverride 解析 text 里的指令（R14）；text 的作者 login（assoc 是其 author_association）不是 rule 认可的维护者时忽略。
+// 返回要覆盖的模型（nil = 不覆盖）与思考级别（空 = 不覆盖）。模型别名在模型目录里查找；没有目录或目录不可用时在规则的
+// 模型池里查找。查不到、有歧义或级别不认识的指令各自忽略。
+func (s *Service) pragmaOverride(ctx context.Context, text, login, assoc string, rule driveRule, pool []apigen.ModelRef) (*apigen.ModelRef, string) {
+	p := parsePragmas(text)
+	if p.Model == "" && p.Thinking == "" || !rule.pragmaAllowed(login, assoc) {
+		return nil, ""
+	}
+	var model *apigen.ModelRef
+	if p.Model != "" {
+		cands := pool
+		if s.models != nil {
+			all, err := s.models.Models(ctx)
+			switch {
+			case err != nil:
+				slog.Warn("github: 读取模型目录失败，/model 改在规则的模型池里查找", "err", err)
+			case len(all) > 0:
+				cands = all
+			}
+		}
+		if m, ok := resolveModel(p.Model, cands); ok {
+			model = &m
+		} else {
+			slog.Info("github: /model 指令没有唯一匹配的模型，忽略", "alias", p.Model)
+		}
+	}
+	thinking := ""
+	if p.Thinking != "" {
+		if lv, ok := resolveThinking(p.Thinking); ok {
+			thinking = lv
+		} else {
+			slog.Info("github: /thinking 指令的级别不认识，忽略", "level", p.Thinking)
+		}
+	}
+	return model, thinking
+}
+
+// applyPragmas 对已准入的跟进评论应用指令覆盖（R14）：经 Threads.SetModel 切换线程的模型与思考级别。失败只记日志。
+func (s *Service) applyPragmas(ctx context.Context, threadID, text, login, assoc string, rule driveRule, pool []apigen.ModelRef) {
+	m, lv := s.pragmaOverride(ctx, text, login, assoc, rule, pool)
+	if m == nil && lv == "" {
+		return
+	}
+	var ref apigen.ModelRef
+	if m != nil {
+		ref = *m
+	}
+	if err := s.th.SetModel(ctx, threadID, ref, lv); err != nil {
+		slog.Warn("github: 应用 /model、/thinking 指令失败", "thread", threadID, "err", err)
+	}
 }

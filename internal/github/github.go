@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"strings"
 	"sync"
@@ -48,6 +49,9 @@ const (
 	restPollInterval = 60 * time.Second // 仓库级与对象级 watch 的轮询周期
 	rateLimitFloor   = 500              // 槽位的核心额度剩余低于它时，该槽位的轮询间隔加倍
 	watchRetire      = 24 * time.Hour   // 对象进入终态满这么久后 watch 退场
+	// 触发规则「任何人」档的按人限流（M15 R13）：每小时每个发送者的运行次数上限；OWNER / MEMBER / COLLABORATOR 不限
+	anyoneMaxPerHour      = 3
+	contributorMaxPerHour = 10
 )
 
 // oauthScopes 是授权请求的 scope（固定字面量，见 docs/plan-m15.md「全局约束」）。
@@ -65,11 +69,20 @@ type Threads interface {
 	Deliver(ctx context.Context, threadID string, m threads.AutoMessage, ack func(err error)) (cancel func() bool, err error)
 	Publish(ctx context.Context, threadID string)
 	MarkShipped(ctx context.Context, threadID string, at int64) error
+	// SetModel 切换线程的模型与思考级别（M15 R14 的指令覆盖）；m 为零值时不改模型，thinking 为空时不改级别。
+	SetModel(ctx context.Context, threadID string, m apigen.ModelRef, thinking string) error
 }
 
-// Notifier 发一条线程通知（*notify.Service 实现）：标题是线程标题，kind 为 done / error，正文写明 GitHub 事件。
+// ModelCatalog 是模型目录的只读查询（控制面的中央模型目录实现；github 不导入 modelcat）：`/model <别名>` 在其中查找。
+type ModelCatalog interface {
+	Models(ctx context.Context) ([]apigen.ModelRef, error)
+}
+
+// Notifier 发通知（*notify.Service 实现）。PostThread：标题是线程标题，kind 为 done / error，正文写明 GitHub 事件；
+// PostSystem：不属于任何线程的通知（如规则因 Agent 账号不可用而没有建线程，Q6），kind 为 error，link 是站内路径。
 type Notifier interface {
 	PostThread(ctx context.Context, threadID, kind, body string) error
+	PostSystem(ctx context.Context, kind, title, body, link string) error
 }
 
 // Attachments 上传一个附件（*attachments.Service 实现）。
@@ -121,6 +134,9 @@ type Service struct {
 	n       Notifier
 	att     Attachments
 	sampler Sampler
+	models  ModelCatalog // nil = 没有模型目录：`/model` 只在规则的模型池里查找
+	// intn 返回 [0, n) 的随机数（模型池随机取一个，测试注入）。
+	intn func(n int) int
 
 	mu        sync.Mutex
 	repoLists map[[32]byte]repoListEntry // 用户令牌的 sha256 → 仓库列表（步骤 2.2，惰性初始化）
@@ -182,7 +198,7 @@ func New(cfg Config, st *store.Store, th Threads, n Notifier, att Attachments) *
 		}
 	}
 	s := &Service{
-		cfg: cfg, st: st, th: th, n: n, att: att,
+		cfg: cfg, st: st, th: th, n: n, att: att, intn: rand.IntN,
 		jobs:     make(chan func(ctx context.Context), jobQueueSize),
 		inflight: map[string]bool{},
 	}
@@ -192,6 +208,9 @@ func New(cfg Config, st *store.Store, th Threads, n Notifier, att Attachments) *
 
 // SetSampler 注入提交采样（stats 在 GitHub 服务之后构造）。
 func (s *Service) SetSampler(sm Sampler) { s.sampler = sm }
+
+// SetModelCatalog 注入模型目录（目录在 GitHub 服务之后构造；未配置 omp 时不注入）。
+func (s *Service) SetModelCatalog(mc ModelCatalog) { s.models = mc }
 
 func (s *Service) now() time.Time { return s.cfg.Now() }
 func (s *Service) nowMs() int64   { return s.cfg.Now().UnixMilli() }

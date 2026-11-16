@@ -18,13 +18,30 @@ import (
 	"github.com/Lynricsy/Oryn/internal/threads"
 )
 
-// creatingThreads 的 Create 真的建出线程行（带一台 identity 身份的 orb），其余同 stubThreads。
+// creatingThreads 的 Create 真的建出线程行（带一台 identity 身份的 orb），SetModel 记下调用，其余同 stubThreads。
 type creatingThreads struct {
 	*stubThreads
 	e        *testEnv
 	identity string
 	mu       sync.Mutex
 	ids      []string
+	models   []string // "线程 provider/id thinking"
+}
+
+// SetModel 让 stubThreads 满足 Threads（不记录）。
+func (t *stubThreads) SetModel(context.Context, string, apigen.ModelRef, string) error { return nil }
+
+func (t *creatingThreads) SetModel(_ context.Context, threadID string, m apigen.ModelRef, thinking string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.models = append(t.models, threadID+" "+m.Provider+"/"+m.ID+" "+thinking)
+	return nil
+}
+
+func (t *creatingThreads) setModels() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]string(nil), t.models...)
 }
 
 func (t *creatingThreads) Create(ctx context.Context, p threads.CreateParams) (apigen.Thread, error) {

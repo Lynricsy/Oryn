@@ -13,6 +13,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/agentcfg"
 	"github.com/Lynricsy/Oryn/internal/api"
+	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/artifacts"
 	"github.com/Lynricsy/Oryn/internal/artifacts/render"
 	"github.com/Lynricsy/Oryn/internal/artifacts/sample"
@@ -379,6 +380,8 @@ func (s *Server) init(ctx context.Context) error {
 		s.API.Auth.ModelCatalog = modelcat.New(modelcat.Config{OmpPath: cfg.Coordinator.OmpPath, CacheDir: cfg.ModelCatalogDir()}, s.Home, s.Vault)
 		// 6.3：config.yml 的键是否要重启会话按钉住 Core 的设置 schema 判断
 		s.Threads.SetConfigSchema(s.API.Auth.ModelCatalog)
+		// M15 R14：GitHub 的 `/model <别名>` 指令在中央模型目录里查找
+		s.GitHub.SetModelCatalog(githubModels{s.API.Auth.ModelCatalog})
 	}
 	s.API.Orbs = &api.OrbsDeps{Service: s.Orbs}
 	s.API.Threads = &api.ThreadsDeps{Service: s.Threads}
@@ -419,4 +422,19 @@ func (s *Server) Close() {
 		s.closers[i]()
 	}
 	s.closers = nil
+}
+
+// githubModels 把中央模型目录适配为 github.ModelCatalog（github 不导入 modelcat）：取缓存中的目录（不强制刷新）。
+type githubModels struct{ c *modelcat.Catalog }
+
+func (m githubModels) Models(ctx context.Context) ([]apigen.ModelRef, error) {
+	r, err := m.c.Get(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]apigen.ModelRef, 0, len(r.Models))
+	for _, mm := range r.Models {
+		out = append(out, apigen.ModelRef{Provider: mm.Provider, ID: mm.ID})
+	}
+	return out, nil
 }

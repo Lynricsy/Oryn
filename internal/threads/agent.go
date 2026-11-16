@@ -1013,6 +1013,27 @@ func (s *Service) Command(ctx context.Context, threadID string, frame json.RawMe
 	return err
 }
 
+// SetModel 以自动化来源（不清未读、不记用户交互）给线程下发 set_model 与 set_thinking_level（M15 R14：GitHub 评论里的
+// `/model`、`/thinking` 指令）。m 为零值时不改模型，thinking 为空时不改思考级别；两者都空时什么也不发。orb 未就绪时
+// 与其它命令一样排队并唤醒；模型与级别的落库随 agent 状态同步（见 syncModelLocked）。
+func (s *Service) SetModel(ctx context.Context, threadID string, m apigen.ModelRef, thinking string) error {
+	var frames []json.RawMessage
+	if m.Provider != "" && m.ID != "" {
+		f, _ := json.Marshal(map[string]string{"type": "set_model", "provider": m.Provider, "modelId": m.ID})
+		frames = append(frames, f)
+	}
+	if thinking != "" {
+		f, _ := json.Marshal(map[string]string{"type": "set_thinking_level", "level": thinking})
+		frames = append(frames, f)
+	}
+	for _, f := range frames {
+		if _, err := s.command(ctx, threadID, f, nil, originAuto, ""); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // command 是 Command 与 Deliver 的共同主体。originAuto（自动化投递）不清未读、不通知 Seen、不记用户交互
 // （记 agent 活动），唤醒逻辑相同。tag 是带标签投递的标签（只由 Deliver 给出）；帧上的 orynTag 一律删除丢弃。
 // 返回已登记的未决命令（只读查询与带附件的命令返回 nil）。
