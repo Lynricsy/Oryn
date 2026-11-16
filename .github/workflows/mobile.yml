@@ -514,11 +514,12 @@ jobs:
       # 硬门禁：真实网页 + 真实触摸。debug 包的 ORYN_E2E_URL 钩子跳过配对，经与生产相同的 open_remote（远程能力 + 宿主命令权限）
       # 打开本机的 mock Web UI；XCUITest 合成触摸。底栏：点侧栏按钮打开、点卡片条关闭、左缘拖到一半按住、点原生「项目」、再点收起；
       # 页头（线程页）：原生接管、点胶囊开面板、进子页再返回、选「改名」打开网页对话框（select 事件 + 原生让位）、关对话框、开关侧栏。
+      # 可替换图标（设置 → 外观）：点「品牌色」、点掉系统提示、等 setAlternateIconName 完成回调后的 appicon.set，再换回「黑白」。
       # 无障碍树断言在测试里，事件日志与逐区域像素断言在脚本里，结果写进 Step Summary，截图与 xcresult 随 ios-screenshot 上传。
-      - name: 模拟器：真实网页与触摸驱动的原生底栏与页头（端到端）
+      - name: 模拟器：真实网页与触摸驱动的原生底栏、页头与可替换图标（端到端）
         # 演示失败也照跑（互相独立），一次 CI 拿到各项结果
         if: ${{ !cancelled() && steps.app.outcome == 'success' }}
-        timeout-minutes: 35
+        timeout-minutes: 45
         shell: bash
         env:
           APP: ${{ steps.app.outputs.path }}
@@ -526,19 +527,6 @@ jobs:
           rm -f ios-shot/e2e/.complete
           bash web/src-tauri/ci/ios-e2e-check.sh "$APP" web/dist-e2e ios-shot/e2e
           [[ -f ios-shot/e2e/.complete ]] || { echo "::error::端到端检查没有跑完全部断言"; exit 1; }
-
-      # 硬门禁：经与页面相同的 host_app_icon_* 命令把图标换成品牌色再换回默认，每步回读系统的 alternateIconName。
-      # 放在其它模拟器检查之后：换图标时系统弹出的提示框不会挡到它们的截图与触摸
-      - name: 模拟器：可替换图标切换
-        if: ${{ !cancelled() && steps.app.outcome == 'success' }}
-        timeout-minutes: 10
-        shell: bash
-        env:
-          APP: ${{ steps.app.outputs.path }}
-        run: |
-          rm -f ios-shot/appicon/.complete
-          bash web/src-tauri/ci/ios-appicon-check.sh "$APP" ios-shot/appicon
-          [[ -f ios-shot/appicon/.complete ]] || { echo "::error::可替换图标检查没有跑完全部断言"; exit 1; }
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()

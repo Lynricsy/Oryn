@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # jq 程序里的 $w / $dx / $k 是 jq 变量（单引号是故意的）；谓词函数与 cleanup 经 until_ok / trap 间接调用
 # shellcheck disable=SC2016,SC2329 source-path=SCRIPTDIR
-# iOS 模拟器里原生底栏与原生页头的端到端检查（mobile.yml 的 ios-check，硬门禁）：真实网页、真实宿主权限、真实触摸。
+# iOS 模拟器里原生底栏、原生页头与可替换图标的端到端检查（mobile.yml 的 ios-check，硬门禁）：真实网页、真实宿主权限、真实触摸。
 # 与 ios-tabbar-check.sh / ios-header-check.sh 的原生演示互补：演示绕过网页直接调插件，这里走生产路径的每一环——
 #   - mock Web UI（VITE_MOCK=1 的构建）由本机 vite preview 提供在 http://localhost:<端口>；
 #   - debug 包读 ORYN_E2E_URL（mobile.rs 的 e2e_open，仅 debug 构建），跳过配对，经与生产相同的 open_remote 打开它：
 #     远程能力与 MOBILE_HOST_PERMISSIONS 照常注入，页面的 host_ready / host_tab_bar_* / host_header_* 都过权限校验；
 #   - 页面认出 iOS 壳（壳注入的 window.__ORYN_HOST__，bridge ≥ 5）并进入 compact 下沉侧栏布局，原生底栏接管；线程页上原生页头接管；
 #   - 触摸由 XCUITest 合成（ios-e2e/，XcodeGen 生成工程）：经模拟器 HID 与 UIKit 命中测试，网页与原生叠层收到的都是真触摸。
-# 两个 UI 测试先后各跑一次 xcodebuild（-only-testing），测试与本脚本经共享目录交接（见 E2ESupport.swift）。
+# 三个 UI 测试先后各跑一次 xcodebuild（-only-testing），测试与本脚本经共享目录交接（见 E2ESupport.swift）。
 # 底栏（TabBarE2ETests.swift，从首页 / 起步）：
 #   loaded   页面就绪：截关闭态基线，回传胶囊矩形（来自事件日志 tabbar.set）
 #   open     点页头的侧栏按钮：等揭示边到侧栏宽，截图（无障碍树断言原生可见、网页胶囊隐藏在测试里）
@@ -26,6 +26,8 @@
 #   h-return  点遮罩关掉对话框：等 header.show（alpha 1），截图
 #   h-sidebar 点原生侧栏钮：等 header.event（lead）、header.show（alpha 0）与原生底栏揭示到侧栏宽，截图
 #   h-closed  点卡片条关侧栏：等揭示边归 0 与 header.show（alpha 1），截图
+# 可替换图标（AppIconE2ETests.swift，直接打开 mock 的 /settings/appearance）：点「品牌色」、点掉系统提示、
+#   等 appicon.set（accent），再点「黑白」同样等 appicon.set（default）；测试自己完成，脚本只核对事件顺序。
 # 像素断言（逐区域比较，同 ios-region-diff.swift）全部打印并写进 Step Summary，任一不符则退出码 1；
 # 全部断言跑完且通过才写 <输出目录>/.complete。
 # 事件日志里的 tabbar.reveal / header.show 只有 debug 包会写（mobile.rs）。就绪一律靠事件日志判断，不靠固定 sleep。
@@ -461,6 +463,28 @@ hcheck "页头：子页与主页不同" h-sub h-menu "$pnx" "$pny" "$pnw" 200 sh
 hcheck "页头：返回后回到主页" h-back h-menu "$pnx" "$pny" "$pnw" 200 same
 hcheck "页头：对话框关掉后原生页头原样回来" h-return h-native "$rowx" "$ty" "$roww" "$th" same
 hcheck "页头：关侧栏后原生页头原样回来" h-closed h-native "$rowx" "$ty" "$roww" "$th" same
+
+# ---------------------------------------------------------------- 可替换图标（第三次 xcodebuild，只跑 AppIconE2ETests）
+# 测试自己点选、点掉系统提示并等 appicon.set（壳只在 setAlternateIconName 的完成回调成功后才写）；
+# 这里再核对先后顺序：先换成品牌色，再换回默认。
+
+echo >>"$summary"
+echo "### iOS 可替换图标端到端（设置页点选 + 系统提示）" >>"$summary"
+events=appicon-events.jsonl
+xlog="$out/xcodebuild-appicon.log"
+xcrun simctl terminate "$udid" "$bundle" 2>/dev/null || true
+rm -f "$log"
+TEST_RUNNER_E2E_SYNC="$sync" TEST_RUNNER_E2E_URL="$origin/settings/appearance" TEST_RUNNER_E2E_LOG="$log" \
+  xcodebuild test-without-building "${xcb[@]}" -only-testing:OrynE2E/AppIconE2ETests -parallel-testing-enabled NO \
+  -resultBundlePath "$out/appicon.xcresult" >"$xlog" 2>&1 &
+runner=$!
+finish_runner
+ids=$(jq -r 'select(.event == "appicon.set") | .id' "$out/$events" | paste -sd, -)
+echo "- appicon.set 顺序：${ids:-（无）}（期望 accent,default）" | tee -a "$summary"
+if [[ $ids != "accent,default" ]]; then
+  echo "::error::可替换图标没有按 品牌色 → 默认 切换：${ids:-（无）}"
+  failed=1
+fi
 
 # 走到这里才写完成标记：工作流据此确认脚本跑完了全部断言，防止中途异常退出却返回 0
 if ((failed == 0)); then : >"$out/.complete"; fi

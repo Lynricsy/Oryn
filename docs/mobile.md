@@ -124,7 +124,7 @@ make android DIST=foss                                      # 仓库根目录：
 - App 图标由 `web/scripts/gen-icons.py` 生成（各端总览见 [desktop.md 的「App 图标」](desktop.md#app-图标)），默认只用黑白两色：
   - Android：`res/mipmap-anydpi/ic_launcher*.xml` 自适应图标，前景是矢量字形，背景与字形颜色在 `values/ic_launcher.xml`，`values-night/` 给深色（启动器按深色配置解析资源时生效，取决于启动器）；单色层供 Android 13+ 的主题图标按壁纸着色。
   - iOS：`icons/ios/AppIcon.appiconset` 带 Any / Dark / Tinted 三种外观（iOS 18+）。`gen/apple` 不入库，CI 在 `tauri ios init` 之后用 `ci/ios-appicon.sh` 换掉模板里的 tauri 默认图标；本机生成工程后也要跑一次。`ios-check` 与 `ios-release` 会断言包里的 `Assets.car` 有带深色外观的 AppIcon。
-  - iOS 可替换图标：目前有一个「品牌色」（`AppIconAccent`，光标竖条固定用默认强调色的色相，不随主题强调色变），在「设置 → 外观 → App 图标」里切换（壳 bridge ≥ 6）。设置页缩略图的配色由 `gen-icons.py` 一并写进 `web/src/pages/settings/app-icon-palette.gen.ts`，与主屏图标同源，只按页面浅 / 深切换。新增一个图标时要改三处：`gen-icons.py` 的 `ALTERNATES`（资源名、页面 id、颜色）、壳的 `mobile_logic::APP_ICONS`（页面 id ↔ 资源名）、两份语言文件的 `appearance.appIcons`。`ci/ios-appicon.sh` 会把全部 `.appiconset` 装进工程，并打开 `ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS`；CI 断言每个可替换图标都编进了 `Assets.car`，并登记在 `CFBundleAlternateIcons` 里。Android 与桌面端不提供切换。
+  - iOS 可替换图标：目前有一个「品牌色」（`AppIconAccent`，光标竖条固定用默认强调色的色相，不随主题强调色变），在「设置 → 外观 → App 图标」里切换（壳 bridge ≥ 6）。iOS 会先弹出「已更改图标」提示，用户点掉后 `setAlternateIconName` 才回调，页面在此之前保持「切换中」。设置页缩略图的配色由 `gen-icons.py` 一并写进 `web/src/pages/settings/app-icon-palette.gen.ts`，与主屏图标同源，只按页面浅 / 深切换。新增一个图标时要改三处：`gen-icons.py` 的 `ALTERNATES`（资源名、页面 id、颜色）、壳的 `mobile_logic::APP_ICONS`（页面 id ↔ 资源名）、两份语言文件的 `appearance.appIcons`。`ci/ios-appicon.sh` 会把全部 `.appiconset` 装进工程，并打开 `ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS`；CI 断言每个可替换图标都编进了 `Assets.car`、登记在 `CFBundleAlternateIcons` 里，端到端测试（`ci/ios-e2e/Tests/AppIconE2ETests.swift`）在模拟器的设置页上真点一遍「品牌色 → 黑白」并点掉系统提示。Android 与桌面端不提供切换。
 
 ### 本机验收
 

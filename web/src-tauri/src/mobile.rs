@@ -603,33 +603,6 @@ pub use ios::{e2e_open, header_demo, tab_bar_demo};
 #[cfg(target_os = "ios")]
 pub use ios::{header_reset, listen as listen_ios, tab_bar_reset};
 
-/// CI 用（仅 debug 构建）：环境变量 `ORYN_APPICON_DEMO=1` 时，走与页面完全相同的两条命令
-/// （`host_app_icon_get` / `host_app_icon_set`，只少了 IPC 一层），依次 默认 → 品牌色 → 默认，
-/// 每次换完都回读系统的 `alternateIconName`，整串结果记到事件日志 `appicon.demo`。
-#[cfg(all(debug_assertions, target_os = "ios"))]
-pub async fn app_icon_demo(app: &AppHandle) {
-    if std::env::var("ORYN_APPICON_DEMO").is_err() {
-        return;
-    }
-    // 换图标要求 App 处于前台活跃状态：等连接页加载完
-    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-    let mut steps = Vec::new();
-    let mut ok = true;
-    let before = host_app_icon_get(app.clone()).await;
-    ok &= matches!(&before, Ok(i) if i.supported && i.current == mobile_logic::APP_ICON_DEFAULT);
-    steps.push(json!({"op": "get", "result": format!("{before:?}")}));
-    for id in ["accent", mobile_logic::APP_ICON_DEFAULT] {
-        let set = host_app_icon_set(app.clone(), id.to_string()).await;
-        let after = host_app_icon_get(app.clone()).await;
-        let current = after.as_ref().ok().map(|i| i.current);
-        ok &= set.is_ok() && current == Some(id);
-        steps.push(json!({"op": "set", "id": id, "set": set.err(), "current": current}));
-        // 给系统的「已更改图标」提示留出出现的时间，再换下一次（提示框不挡后续调用；挡了会记在 set 里）
-        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-    }
-    eventlog::log("appicon.demo", json!({"ok": ok, "steps": steps}));
-}
-
 // ---------------------------------------------------------------- Android 原生插件
 
 #[cfg(target_os = "android")]
