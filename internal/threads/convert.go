@@ -181,6 +181,13 @@ func (s *Service) threadAPI(ctx context.Context, t db.Thread) (apigen.Thread, er
 	}
 	out.Activity = s.activityPtr(t.ID)
 	out.PublicShares = s.publicShares(ctx, t.ID)
+	pulls, err := s.st.Q.ListThreadPulls(ctx, t.ID)
+	if err != nil {
+		return apigen.Thread{}, err
+	}
+	for _, p := range pulls {
+		out.Pulls = append(out.Pulls, threadPullAPI(p))
+	}
 	sum, err := s.st.Q.GetScheduleSummary(ctx, t.ID)
 	switch {
 	case err == nil:
@@ -189,6 +196,19 @@ func (s *Service) threadAPI(ctx context.Context, t db.Thread) (apigen.Thread, er
 		return apigen.Thread{}, err
 	}
 	return out, nil
+}
+
+// threadPullAPI 把线程 ↔ PR 关联摘要行转成 API 形态（单线程与列表共用；M14）。
+func threadPullAPI(r db.ListThreadPullsRow) apigen.ThreadPull {
+	out := apigen.ThreadPull{
+		Repo: r.RepoFullName, Number: r.Number, Title: r.Title, State: apigen.ThreadPullState(r.State),
+		Draft: r.Draft, URL: r.HtmlUrl, Listening: r.Listening,
+	}
+	if r.Checks != nil {
+		c := apigen.ThreadPullChecks(*r.Checks)
+		out.Checks = &c
+	}
+	return out
 }
 
 // childCounts 返回 父线程 id → [子线程数, 处于 idle 的子线程数]。

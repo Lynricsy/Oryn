@@ -398,6 +398,14 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]apigen.Thread, erro
 	for _, r := range schedRows {
 		schedules[r.ThreadID] = &apigen.ThreadScheduleSummary{Enabled: r.Enabled, NextRunAt: r.NextRunAt}
 	}
+	pullRows, err := s.st.Q.ListThreadPullSummaries(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pulls := map[string][]apigen.ThreadPull{}
+	for _, r := range pullRows {
+		pulls[r.ThreadID] = append(pulls[r.ThreadID], threadPullAPI(db.ListThreadPullsRow(r)))
+	}
 	archived := false
 	if f.Archived != nil {
 		archived = *f.Archived
@@ -436,6 +444,7 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]apigen.Thread, erro
 			api.PublicShares = &n
 		}
 		api.Schedule = schedules[t.ID]
+		api.Pulls = pulls[t.ID]
 		out = append(out, api)
 	}
 	return out, nil

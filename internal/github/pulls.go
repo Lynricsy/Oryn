@@ -3,12 +3,14 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/store/db"
+	"github.com/Lynricsy/Oryn/internal/threads"
 )
 
 // samplingWindow 是 PR 事件找不到已采样提交时，要求立即采样的线程的活跃窗口。
@@ -73,15 +75,32 @@ func (s *Service) link(ctx context.Context, threadID string, repoID, number int6
 	}
 	switch pull.State {
 	case "merged":
-		s.onMerged(ctx, threadID, pull)
+		return true, s.onMerged(ctx, threadID, pull)
 	case "open":
 		s.scheduleRollup(repoID, number, 0, true)
 	}
 	return true, nil
 }
 
-// onMerged 处理关联 PR 的合并（步骤 5.3 实现）。
-func (s *Service) onMerged(context.Context, string, db.GithubPull) {}
+// onMerged 把关联线程标为已交付（时间 = 合并时间，不归档）并发一条通知；通知失败只记日志。
+func (s *Service) onMerged(ctx context.Context, threadID string, pull db.GithubPull) error {
+	at := s.nowMs()
+	if pull.MergedAt != nil {
+		at = *pull.MergedAt
+	}
+	if err := s.th.MarkShipped(ctx, threadID, at); err != nil {
+		if errors.Is(err, threads.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	if s.n != nil {
+		if err := s.n.Post(ctx, threadID, fmt.Sprintf("PR #%d merged", pull.Number), pull.Title); err != nil {
+			slog.Warn("github: 发送 PR 合并通知失败", "thread", threadID, "err", err)
+		}
+	}
+	return nil
+}
 
 // onPullRequest 处理 pull_request 事件：PR 入库，同仓库的打开 PR 按头提交关联到采到该提交的线程。
 func (s *Service) onPullRequest(ctx context.Context, action string, body []byte) (string, error) {
@@ -122,7 +141,20 @@ func (s *Service) onPullRequest(ctx context.Context, action string, body []byte)
 	if err != nil {
 		return "", err
 	}
+	var merged *db.GithubPull
+	if action == "closed" && pr.merged() {
+		p, err := s.st.Q.GetGithubPull(ctx, db.GetGithubPullParams(key))
+		if err != nil {
+			return "", err
+		}
+		merged = &p
+	}
 	for _, l := range live {
+		if merged != nil {
+			if err := s.onMerged(ctx, l.ThreadID, *merged); err != nil {
+				return "", err
+			}
+		}
 		s.th.Publish(ctx, l.ThreadID)
 	}
 	return "handled", nil
@@ -242,5 +274,65 @@ func (s *Service) linkSampled(ctx context.Context, threadID, head string) error 
 			return err
 		}
 	}
+	return nil
+}
+
+// threadRepoID 取线程所在项目记录的 GitHub 仓库 id；线程不存在、无项目或项目没有仓库 id → not_found。
+func (s *Service) threadRepoID(ctx context.Context, threadID string) (int64, error) {
+	notFound := errf("not_found", "thread has no GitHub repository")
+	t, err := s.st.Q.GetThread(ctx, threadID)
+	if err != nil {
+		if isNoRows(err) {
+			return 0, notFound
+		}
+		return 0, err
+	}
+	if t.ProjectID == nil {
+		return 0, notFound
+	}
+	prj, err := s.st.Q.GetProject(ctx, *t.ProjectID)
+	if err != nil {
+		if isNoRows(err) {
+			return 0, notFound
+		}
+		return 0, err
+	}
+	if prj.GithubRepoID == nil {
+		return 0, notFound
+	}
+	return *prj.GithubRepoID, nil
+}
+
+// SetPullListening 暂停或恢复线程关联 PR 的事件回流；恢复时 CI 回流轮数清零。
+func (s *Service) SetPullListening(ctx context.Context, threadID string, number int64, on bool) error {
+	repoID, err := s.threadRepoID(ctx, threadID)
+	if err != nil {
+		return err
+	}
+	n, err := s.st.Q.SetThreadPullListening(ctx, db.SetThreadPullListeningParams{Listening: on, ThreadID: threadID, RepoID: repoID, Number: number})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return errf("not_found", "pull request is not linked to this thread")
+	}
+	s.th.Publish(ctx, threadID)
+	return nil
+}
+
+// UnlinkPull 取消线程与 PR 的关联（留下墓碑，阻止自动重连）。
+func (s *Service) UnlinkPull(ctx context.Context, threadID string, number int64) error {
+	repoID, err := s.threadRepoID(ctx, threadID)
+	if err != nil {
+		return err
+	}
+	n, err := s.st.Q.UnlinkThreadPull(ctx, db.UnlinkThreadPullParams{ThreadID: threadID, RepoID: repoID, Number: number})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return errf("not_found", "pull request is not linked to this thread")
+	}
+	s.th.Publish(ctx, threadID)
 	return nil
 }

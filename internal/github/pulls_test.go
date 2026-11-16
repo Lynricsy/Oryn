@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -183,4 +184,89 @@ func TestThreadCommitsSampledAsksGitHub(t *testing.T) {
 	e.s.ThreadCommitsSampled(other, "")
 	e.drain()
 	assert.Len(t, e.fake.CallsTo("GET", "/repos/acme/widgets/commits/*"), 1)
+}
+
+func (e *testEnv) shippedAt(threadID string) (int64, bool) {
+	e.th.mu.Lock()
+	defer e.th.mu.Unlock()
+	at, ok := e.th.shipped[threadID]
+	return at, ok
+}
+
+func TestPullMergedMarksShipped(t *testing.T) {
+	e := newEnv(t)
+	n := &stubNotifier{}
+	e.s.n = n
+	p := e.boundProject()
+	th := e.thread(p, 0)
+	e.threadCommit(th, shaA)
+	e.deliver("pull_request", prEvent("opened", 12, shaA, 0, nil))
+	require.Equal(t, []int64{12}, e.links(th))
+	_, shipped := e.shippedAt(th)
+	assert.False(t, shipped)
+
+	merged := "2026-11-16T09:30:00Z"
+	guid := e.deliver("pull_request", prEvent("closed", 12, shaA, 0, func(pr map[string]any) {
+		pr["state"], pr["merged"], pr["merged_at"] = "closed", true, merged
+	}))
+	assert.Equal(t, "handled", e.delivery(guid).Outcome)
+	at, shipped := e.shippedAt(th)
+	require.True(t, shipped)
+	assert.Equal(t, githubTimeMs(merged), at)
+	assert.Equal(t, []string{"PR #12 merged"}, n.titles())
+	assert.Equal(t, "merged", e.pull(12).State)
+
+	// 未合并的关闭不标记
+	other := e.thread(p, 0)
+	e.threadCommit(other, shaB)
+	e.deliver("pull_request", prEvent("opened", 13, shaB, 0, nil))
+	require.Equal(t, []int64{13}, e.links(other))
+	e.deliver("pull_request", prEvent("closed", 13, shaB, 0, func(pr map[string]any) { pr["state"] = "closed" }))
+	_, shipped = e.shippedAt(other)
+	assert.False(t, shipped)
+}
+
+func TestLinkMergedPullMarksShipped(t *testing.T) {
+	e := newEnv(t)
+	n := &stubNotifier{}
+	e.s.n = n
+	p := e.boundProject()
+	th := e.thread(p, 0)
+	merged := time.Date(2026, 11, 15, 8, 0, 0, 0, time.UTC)
+	e.fake.AddPull(githubtest.Pull{Issue: githubtest.Issue{RepoID: 42, Number: 5, Title: "Done", State: "closed"}, HeadSHA: shaB, MergedAt: merged})
+	e.s.ThreadCommitsSampled(th, shaB)
+	e.drain()
+	assert.Equal(t, []int64{5}, e.links(th))
+	at, shipped := e.shippedAt(th)
+	require.True(t, shipped)
+	assert.Equal(t, merged.UnixMilli(), at)
+	assert.Equal(t, []string{"PR #5 merged"}, n.titles())
+}
+
+func TestSetPullListeningAndUnlink(t *testing.T) {
+	e := newEnv(t)
+	p := e.boundProject()
+	th := e.workThread(p)
+	e.linkPull(th, 12)
+	_, err := e.st.DB.ExecContext(e.ctx, `UPDATE thread_pulls SET ci_rounds = 3 WHERE thread_id = ?`, th)
+	require.NoError(t, err)
+
+	require.NoError(t, e.s.SetPullListening(e.ctx, th, 12, false))
+	rows, err := e.st.Q.ListThreadPulls(e.ctx, th)
+	require.NoError(t, err)
+	assert.False(t, rows[0].Listening)
+	require.NoError(t, e.s.SetPullListening(e.ctx, th, 12, true))
+	target, err := e.st.Q.PullTargetThread(e.ctx, db.PullTargetThreadParams{RepoID: 42, Number: 12})
+	require.NoError(t, err)
+	assert.True(t, target.Listening)
+	assert.Zero(t, target.CiRounds, "恢复时 CI 轮数清零")
+	assert.Contains(t, e.th.published, th)
+
+	assert.Equal(t, "not_found", e.s.SetPullListening(e.ctx, th, 99, true).(*Error).Code)
+	require.NoError(t, e.s.UnlinkPull(e.ctx, th, 12))
+	assert.Empty(t, e.links(th))
+	assert.Equal(t, "not_found", e.s.UnlinkPull(e.ctx, th, 12).(*Error).Code)
+	assert.Equal(t, "not_found", e.s.UnlinkPull(e.ctx, "thr_missing", 12).(*Error).Code)
+	plain := e.workThread(e.project(""))
+	assert.Equal(t, "not_found", e.s.UnlinkPull(e.ctx, plain, 12).(*Error).Code)
 }

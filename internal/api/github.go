@@ -10,6 +10,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/auth"
 	"github.com/Lynricsy/Oryn/internal/github"
+	"github.com/Lynricsy/Oryn/internal/threads"
 )
 
 // GitHubDeps 是 GitHub 集成接口（M14）的依赖。
@@ -238,6 +239,54 @@ func (s *Server) AttachGitHubRef(w http.ResponseWriter, r *http.Request, id apig
 		return
 	}
 	WriteJSON(w, http.StatusCreated, attachmentAPI(a))
+}
+
+// PutThreadPull 对应 `PUT /api/v1/threads/{id}/github/pulls/{number}`：暂停或恢复关联 PR 的事件回流。
+func (s *Server) PutThreadPull(w http.ResponseWriter, r *http.Request, id apigen.ThreadIDPath, number apigen.GitHubNumberPath) {
+	svc, ok := s.githubSvc(w)
+	if !ok {
+		return
+	}
+	th, ok := s.threadsSvc(w)
+	if !ok {
+		return
+	}
+	var req apigen.ThreadPullPatch
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if err := svc.SetPullListening(r.Context(), id, int64(number), req.Listening); err != nil {
+		writeGitHubErr(w, r, err)
+		return
+	}
+	s.writeThread(w, r, th, id)
+}
+
+// DeleteThreadPull 对应 `DELETE /api/v1/threads/{id}/github/pulls/{number}`：取消线程与 PR 的关联。
+func (s *Server) DeleteThreadPull(w http.ResponseWriter, r *http.Request, id apigen.ThreadIDPath, number apigen.GitHubNumberPath) {
+	svc, ok := s.githubSvc(w)
+	if !ok {
+		return
+	}
+	th, ok := s.threadsSvc(w)
+	if !ok {
+		return
+	}
+	if err := svc.UnlinkPull(r.Context(), id, int64(number)); err != nil {
+		writeGitHubErr(w, r, err)
+		return
+	}
+	s.writeThread(w, r, th, id)
+}
+
+// writeThread 回线程的当前 API 形态。
+func (s *Server) writeThread(w http.ResponseWriter, r *http.Request, th *threads.Service, id string) {
+	t, err := th.Get(r.Context(), id)
+	if err != nil {
+		writeThreadErr(w, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, t)
 }
 
 // StartGitHubManifest 对应公开的 `GET /api/v1/public/github/manifest/start`：返回提交 manifest 的独立页面。
