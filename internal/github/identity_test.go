@@ -1,9 +1,9 @@
 package github
 
 import (
+	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -32,20 +32,10 @@ func (e *testEnv) owner() {
 	require.NoError(e.t, e.st.Q.CreateOwner(e.ctx, db.CreateOwnerParams{DisplayName: "o", UserHandle: []byte("h"), CreatedAt: 1}))
 }
 
-func (e *testEnv) refreshCalls() int {
-	n := 0
-	for _, c := range e.fake.CallsTo("POST", "/login/oauth/access_token") {
-		if strings.Contains(string(c.Body), "grant_type=refresh_token") {
-			n++
-		}
-	}
-	return n
-}
-
 func TestAuthorizeAndSameAccount(t *testing.T) {
 	e := newEnv(t)
 	_, err := e.s.BeginAuthorize(e.ctx, "user")
-	assert.Equal(t, "github_not_connected", codeOf(err))
+	assert.Equal(t, "github_not_configured", codeOf(err))
 
 	e.installApp()
 	e.fake.AddUser(1, "owner", "The Owner")
@@ -77,7 +67,8 @@ func TestAuthorizeAndSameAccount(t *testing.T) {
 	row, err := e.st.Q.GetGithubIdentity(e.ctx, "user")
 	require.NoError(t, err)
 	assert.NotContains(t, string(row.AccessTokenEnc), "ghu_")
-	require.NotNil(t, row.AccessExpiresAt)
+	assert.Nil(t, row.AccessExpiresAt, "不再记录过期时间")
+	assert.Nil(t, row.RefreshTokenEnc, "不再保存刷新令牌")
 
 	// 授权码兑换失败
 	e.fake.Lock()
@@ -124,88 +115,105 @@ func TestFinishAuthorizeStateKinds(t *testing.T) {
 	assert.Equal(t, "state_invalid", codeOf(err))
 }
 
-func TestBaseTokenRefresh(t *testing.T) {
+func TestAuthorizeScopes(t *testing.T) {
 	e := newEnv(t)
-	e.installApp()
+	e.oauthApp()
 	e.fake.AddUser(1, "owner", "")
+	e.fake.AddUser(7, "oryn-bot", "")
+
+	raw, err := e.s.BeginAuthorize(e.ctx, "user")
+	require.NoError(t, err)
+	u, err := url.Parse(raw)
+	require.NoError(t, err)
+	assert.Equal(t, oauthScopes, u.Query().Get("scope"))
+	assert.Equal(t, e.fake.OAuthApp.ClientID, u.Query().Get("client_id"))
+
+	// 授予全部 scope：missingScopes 为空
 	require.NoError(t, e.connect("user", "c1", "owner"))
-	first, err := e.s.baseToken(e.ctx, "user")
+	calls := e.fake.CallsTo("POST", "/login/oauth/access_token")
+	require.NotEmpty(t, calls)
+	assert.Contains(t, string(calls[len(calls)-1].Body), "client_id="+e.fake.OAuthApp.ClientID)
+	row, err := e.st.Q.GetGithubIdentity(e.ctx, "user")
 	require.NoError(t, err)
-	assert.Zero(t, e.refreshCalls())
-	before, err := e.st.Q.GetGithubIdentity(e.ctx, "user")
+	assert.Equal(t, oauthScopes, row.Scopes)
+	assert.Nil(t, row.AccessExpiresAt)
+	tok, err := e.s.tokenFor(e.ctx, "user")
 	require.NoError(t, err)
-	oldRefresh, err := e.s.cfg.Box.Open(aadRefresh("user"), before.RefreshTokenEnc)
-	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(tok, "gho_"), tok)
 
-	// 过期前 10 分钟：刷新
-	e.clock.Add(8*time.Hour - 10*time.Minute)
-	tok, err := e.s.baseToken(e.ctx, "user")
+	// 授予较少：missingScopes 非空（`user` 覆盖 `user:email`）
+	e.fake.Lock()
+	e.fake.Scopes = "repo, gist, user"
+	e.fake.Unlock()
+	require.NoError(t, e.connect("agent", "c2", "oryn-bot"))
+	st, err := e.s.Status(e.ctx)
 	require.NoError(t, err)
-	assert.NotEqual(t, first, tok)
-	assert.Equal(t, 1, e.refreshCalls())
-	after, err := e.st.Q.GetGithubIdentity(e.ctx, "user")
-	require.NoError(t, err)
-	newRefresh, err := e.s.cfg.Box.Open(aadRefresh("user"), after.RefreshTokenEnc)
-	require.NoError(t, err)
-	assert.NotEqual(t, string(oldRefresh), string(newRefresh))
-
-	// 刷新后不再刷新
-	again, err := e.s.baseToken(e.ctx, "user")
-	require.NoError(t, err)
-	assert.Equal(t, tok, again)
-	assert.Equal(t, 1, e.refreshCalls())
+	require.NotNil(t, st.Identities.User)
+	require.NotNil(t, st.Identities.Agent)
+	assert.Equal(t, strings.Fields(oauthScopes), st.Identities.User.Scopes)
+	assert.Empty(t, st.Identities.User.MissingScopes)
+	assert.Equal(t, []string{"repo", "gist", "user"}, st.Identities.Agent.Scopes)
+	assert.Equal(t, []string{"workflow", "read:org", "admin:repo_hook", "write:packages"}, st.Identities.Agent.MissingScopes)
 }
 
-func TestBaseTokenConcurrentRefresh(t *testing.T) {
-	e := newEnv(t)
-	e.installApp()
-	e.fake.AddUser(1, "owner", "")
-	require.NoError(t, e.connect("user", "c1", "owner"))
-	e.clock.Add(8*time.Hour - 10*time.Minute)
-	var wg sync.WaitGroup
-	toks := make([]string, 2)
-	for i := range toks {
-		wg.Go(func() {
-			tok, err := e.s.baseToken(e.ctx, "user")
-			assert.NoError(t, err)
-			toks[i] = tok
-		})
-	}
-	wg.Wait()
-	assert.Equal(t, 1, e.refreshCalls())
-	assert.Equal(t, toks[0], toks[1])
-}
-
-func TestBaseTokenBadRefresh(t *testing.T) {
+func TestTokenForAndReauth(t *testing.T) {
 	e := newEnv(t)
 	e.owner()
-	e.installApp()
+	e.oauthApp()
 	e.fake.AddUser(1, "owner", "")
-	bot := e.fake.AddUser(7, "oryn-bot", "")
+	e.fake.AddUser(7, "oryn-bot", "")
 	require.NoError(t, e.connect("user", "c1", "owner"))
 	require.NoError(t, e.connect("agent", "c2", "oryn-bot"))
 	require.NoError(t, e.s.SetAutomationIdentity(e.ctx, "agent"))
 	assert.Equal(t, "agent", e.s.AutomationIdentity(e.ctx))
 
+	_, err := e.s.tokenFor(e.ctx, "bogus")
+	assert.Equal(t, "invalid_request", codeOf(err))
+	// 令牌不过期：拨很久的时钟仍直接解密，不请求令牌端点
+	n := len(e.fake.CallsTo("POST", "/login/oauth/access_token"))
+	e.clock.Add(365 * 24 * time.Hour)
+	tok, err := e.s.tokenFor(e.ctx, "agent")
+	require.NoError(t, err)
+	assert.NotEmpty(t, tok)
+	assert.Len(t, e.fake.CallsTo("POST", "/login/oauth/access_token"), n)
+
+	var me struct{ Login string }
+	require.NoError(t, e.s.callAs(e.ctx, "agent", http.MethodGet, "/user", nil, &me))
+	assert.Equal(t, "oryn-bot", me.Login)
+
+	// 401 → 槽位 reauth，自动化身份退回我的账号
 	e.fake.Lock()
-	bot.FailRefresh = true
+	e.fake.Fail = map[string]int{"GET /user": http.StatusUnauthorized}
 	e.fake.Unlock()
-	e.clock.Add(8*time.Hour - 10*time.Minute)
-	_, err := e.s.baseToken(e.ctx, "agent")
-	assert.Equal(t, "github_identity_required", codeOf(err))
+	err = e.s.callAs(e.ctx, "agent", http.MethodGet, "/user", nil, nil)
+	assert.Equal(t, kindReauth, errKind(err))
+	assert.True(t, isStatus(err, http.StatusUnauthorized))
 	row, err := e.st.Q.GetGithubIdentity(e.ctx, "agent")
 	require.NoError(t, err)
 	assert.Equal(t, "reauth", row.Status)
 	assert.Equal(t, "user", e.s.AutomationIdentity(e.ctx))
+	st, err := e.s.Status(e.ctx)
+	require.NoError(t, err)
+	assert.EqualValues(t, "reauth", st.Identities.Agent.Status)
+	assert.EqualValues(t, "ok", st.Identities.User.Status)
+
 	// reauth 后不再请求上游
-	n := e.refreshCalls()
-	_, err = e.s.baseToken(e.ctx, "agent")
+	calls := len(e.fake.CallsTo("GET", "/user"))
+	err = e.s.callAs(e.ctx, "agent", http.MethodGet, "/user", nil, nil)
 	assert.Equal(t, "github_identity_required", codeOf(err))
-	assert.Equal(t, n, e.refreshCalls())
+	assert.Len(t, e.fake.CallsTo("GET", "/user"), calls)
+
+	// 重新授权后恢复
+	e.fake.Lock()
+	e.fake.Fail = nil
+	e.fake.Unlock()
+	require.NoError(t, e.connect("agent", "c3", "oryn-bot"))
+	_, err = e.s.tokenFor(e.ctx, "agent")
+	require.NoError(t, err)
 
 	// 未连接的槽位
 	require.NoError(t, e.s.Disconnect(e.ctx, "agent"))
-	_, err = e.s.baseToken(e.ctx, "agent")
+	_, err = e.s.tokenFor(e.ctx, "agent")
 	assert.Equal(t, "github_identity_required", codeOf(err))
 }
 

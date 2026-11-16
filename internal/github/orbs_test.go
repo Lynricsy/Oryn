@@ -72,12 +72,11 @@ func TestOrbTokenScoped(t *testing.T) {
 	assert.Equal(t, tok, again, "第二次命中缓存")
 	assert.Len(t, e.fake.CallsTo("POST", "/applications/Iv1.test/token/scoped"), 1)
 
-	// 基础令牌刷新后重新签发（时钟拨到访问令牌过期前 10 分钟）。
-	e.clock.Add(8*time.Hour - 10*time.Minute)
+	// 收窄令牌到期后重新签发（基础令牌不再刷新）。
+	e.clock.Add(scopedTokenTTL + time.Minute)
 	fresh, st := e.s.OrbToken(e.ctx, o.ID)
 	require.Equal(t, orbs.GitHubTokenOK, st)
 	assert.NotEqual(t, tok, fresh)
-	assert.Equal(t, 1, e.refreshCalls())
 	assert.Len(t, e.fake.CallsTo("POST", "/applications/Iv1.test/token/scoped"), 2)
 }
 

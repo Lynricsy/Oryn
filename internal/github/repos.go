@@ -32,7 +32,7 @@ type repoPayload struct {
 
 // ListRepos 列出「我的账号」经 App 可访问的仓库：按 full_name 子串（忽略大小写）过滤，按最近推送倒序，至多 50 个。
 func (s *Service) ListRepos(ctx context.Context, q string) ([]apigen.GitHubRepo, error) {
-	tok, err := s.baseToken(ctx, slotUser)
+	tok, err := s.tokenFor(ctx, slotUser)
 	if err != nil {
 		return nil, err
 	}

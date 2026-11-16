@@ -31,10 +31,10 @@ const (
 	aadPrivateKey    = "github/app/private-key"
 	aadClientSecret  = "github/app/client-secret"
 	aadWebhookSecret = "github/app/webhook-secret"
+	aadOAuthSecret   = "github/oauth/client-secret"
 )
 
-func aadAccess(slot string) string  { return "github/identity/" + slot + "/access" }
-func aadRefresh(slot string) string { return "github/identity/" + slot + "/refresh" }
+func aadAccess(slot string) string { return "github/identity/" + slot + "/access" }
 
 // apiError 是上游返回的非 2xx 响应。
 type apiError struct {
@@ -43,6 +43,60 @@ type apiError struct {
 }
 
 func (e *apiError) Error() string { return fmt.Sprintf("github: HTTP %d: %s", e.Status, e.Message) }
+
+// ghError 的类别（R2 / R4）。
+const (
+	kindReauth        = "reauth"         // 401：令牌失效，槽位需要重新授权
+	kindOrgRestricted = "org_restricted" // 403：组织开启了 OAuth App 访问限制
+	kindSSORequired   = "sso_required"   // 403 且带 X-GitHub-SSO：令牌未做 SAML SSO 授权
+	kindNotFound      = "not_found"      // 404
+	kindUpstream      = "upstream"       // 其余非 2xx
+)
+
+// ghError 是分类后的上游非 2xx 响应；Unwrap 出 *apiError，原有按状态码判断的调用方不受影响。
+type ghError struct {
+	Kind   string
+	Status int
+	Msg    string
+	SSOURL string // sso_required 时为 X-GitHub-SSO 头里的授权链接
+}
+
+func (e *ghError) Error() string {
+	return fmt.Sprintf("github: %s: HTTP %d: %s", e.Kind, e.Status, e.Msg)
+}
+
+func (e *ghError) Unwrap() error { return &apiError{Status: e.Status, Message: e.Msg} }
+
+// classify 按状态码、message 与 X-GitHub-SSO 头给上游错误分类。
+func classify(status int, h http.Header, msg string) *ghError {
+	e := &ghError{Kind: kindUpstream, Status: status, Msg: msg}
+	switch {
+	case status == http.StatusUnauthorized:
+		e.Kind = kindReauth
+	case status == http.StatusForbidden && h.Get("X-GitHub-SSO") != "":
+		e.Kind = kindSSORequired
+		// 形如 `required; url=https://github.com/orgs/<org>/sso?authorization_request=…`
+		for part := range strings.SplitSeq(h.Get("X-GitHub-SSO"), ";") {
+			if u, ok := strings.CutPrefix(strings.TrimSpace(part), "url="); ok {
+				e.SSOURL = u
+			}
+		}
+	case status == http.StatusForbidden && strings.Contains(msg, "OAuth App access restrictions"):
+		e.Kind = kindOrgRestricted
+	case status == http.StatusNotFound:
+		e.Kind = kindNotFound
+	}
+	return e
+}
+
+// errKind 返回 err 链上 *ghError 的类别；不是上游响应时返回空串。
+func errKind(err error) string {
+	var ge *ghError
+	if errors.As(err, &ge) {
+		return ge.Kind
+	}
+	return ""
+}
 
 // retryable 报告错误是否值得稍后重试：网络错误、超时、上游 5xx 与 429。
 func retryable(err error) bool {
@@ -72,9 +126,24 @@ func isStatus(err error, status int) bool {
 }
 
 // call 发一次 GitHub 请求：path 以 `/` 开头时拼到 APIURL 后，否则视为完整地址；auth 原样作为 Authorization 头；
-// in 非 nil 则 JSON 编码；2xx 且 out 非 nil 则解码。
+// in 非 nil 则 JSON 编码；2xx 且 out 非 nil 则解码。非 2xx 返回 *ghError。
 func (s *Service) call(ctx context.Context, method, path string, auth string, in, out any) error {
 	_, err := s.request(ctx, method, path, auth, in, out)
+	return err
+}
+
+// callAs 以身份槽位的令牌调用 call；上游回 401 时把槽位标为 reauth（R2）。
+func (s *Service) callAs(ctx context.Context, slot, method, path string, in, out any) error {
+	tok, err := s.tokenFor(ctx, slot)
+	if err != nil {
+		return err
+	}
+	err = s.call(ctx, method, path, "Bearer "+tok, in, out)
+	if errKind(err) == kindReauth {
+		if merr := s.markReauth(ctx, slot); merr != nil {
+			return errors.Join(err, merr)
+		}
+	}
 	return err
 }
 
@@ -124,7 +193,7 @@ func (s *Service) send(req *http.Request, auth string, out any) (http.Header, er
 		if m.Message == "" {
 			m.Message = http.StatusText(resp.StatusCode)
 		}
-		return resp.Header, &apiError{Status: resp.StatusCode, Message: m.Message}
+		return resp.Header, classify(resp.StatusCode, resp.Header, m.Message)
 	}
 	if out != nil {
 		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
@@ -137,16 +206,14 @@ func (s *Service) send(req *http.Request, auth string, out any) (http.Header, er
 }
 
 // oauthTokenResponse 是 `<WebURL>/login/oauth/access_token` 的响应（失败时 GitHub 也回 200，带 error 字段）。
+// OAuth App 的令牌不过期、没有刷新令牌。
 type oauthTokenResponse struct {
-	AccessToken           string `json:"access_token"`
-	ExpiresIn             int64  `json:"expires_in"`
-	RefreshToken          string `json:"refresh_token"`
-	RefreshTokenExpiresIn int64  `json:"refresh_token_expires_in"`
-	Error                 string `json:"error"`
-	ErrorDescription      string `json:"error_description"`
+	AccessToken      string `json:"access_token"`
+	Error            string `json:"error"`
+	ErrorDescription string `json:"error_description"`
 }
 
-// oauthToken 以表单参数调用令牌端点（授权码兑换或刷新）。
+// oauthToken 以表单参数调用令牌端点（授权码兑换）。
 func (s *Service) oauthToken(ctx context.Context, form url.Values) (oauthTokenResponse, error) {
 	var out oauthTokenResponse
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.cfg.WebURL+"/login/oauth/access_token", strings.NewReader(form.Encode()))

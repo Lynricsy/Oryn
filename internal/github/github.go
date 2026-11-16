@@ -30,7 +30,6 @@ const (
 	stateTTL            = 10 * time.Minute
 	installTokenTTL     = 50 * time.Minute
 	scopedTokenTTL      = 50 * time.Minute
-	refreshSkew         = 30 * time.Minute
 	maxPerLinkPerHour   = 20
 	maxCIRounds         = 5
 	triggerMaxPerHour   = 10
@@ -39,6 +38,9 @@ const (
 	outboxMaxAge        = 24 * time.Hour
 	webhookMaxBody      = 25 << 20
 )
+
+// oauthScopes 是授权请求的 scope（固定字面量，见 docs/plan-m15.md「全局约束」）。
+const oauthScopes = "repo workflow read:org admin:repo_hook gist write:packages user:email"
 
 // 身份槽位。
 const (
@@ -114,8 +116,6 @@ type Service struct {
 	att     Attachments
 	sampler Sampler
 
-	slotMu map[string]*sync.Mutex // 按槽位串行化刷新：GitHub 的刷新令牌用一次即废
-
 	mu         sync.Mutex
 	instTokens map[int64]cachedToken      // 安装 id → 安装令牌
 	scoped     map[scopedKey]scopedToken  // (槽位, 仓库 id) → 按仓库收窄的令牌（M14 步骤 3.2，惰性初始化）
@@ -158,7 +158,6 @@ func New(cfg Config, st *store.Store, th Threads, n Notifier, att Attachments) *
 	}
 	s := &Service{
 		cfg: cfg, st: st, th: th, n: n, att: att,
-		slotMu:     map[string]*sync.Mutex{slotUser: {}, slotAgent: {}},
 		instTokens: map[int64]cachedToken{},
 		jobs:       make(chan func(ctx context.Context), jobQueueSize),
 		inflight:   map[string]bool{},

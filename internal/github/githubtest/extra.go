@@ -189,6 +189,8 @@ func (s *Server) serveControl(w http.ResponseWriter, r *http.Request) {
 			Login       string `json:"login"`
 			ExpiresIn   *int64 `json:"expiresIn"`
 			FailRefresh bool   `json:"failRefresh"`
+			// Scopes 覆盖此后 OAuth App 令牌授予的 scope（`a, b, c`）；缺省不变。
+			Scopes *string `json:"scopes"`
 		}
 		if err := json.Unmarshal(body, &in); err != nil || in.Code == "" || in.Login == "" {
 			fail(w, http.StatusBadRequest, "code and login are required")
@@ -200,6 +202,9 @@ func (s *Server) serveControl(w http.ResponseWriter, r *http.Request) {
 			u.FailRefresh = in.FailRefresh
 			if in.ExpiresIn != nil {
 				s.UserTokenTTL = *in.ExpiresIn
+			}
+			if in.Scopes != nil {
+				s.Scopes = *in.Scopes
 			}
 		}
 		s.mu.Unlock()
@@ -225,11 +230,12 @@ func (s *Server) serveControl(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	case "GET /__fake/app":
 		s.mu.Lock()
-		app := s.App
+		app, oa := s.App, s.OAuthApp
 		s.mu.Unlock()
 		writeJSON(w, http.StatusOK, map[string]any{
 			"id": app.ID, "slug": app.Slug, "clientId": app.ClientID, "clientSecret": app.ClientSecret,
 			"webhookSecret": app.WebhookSecret, "manifestCode": app.ManifestCode,
+			"oauthClientId": oa.ClientID, "oauthClientSecret": oa.ClientSecret,
 		})
 	case "POST /__fake/deliver":
 		var in DeliverRequest

@@ -199,7 +199,7 @@ func TestTriggerOpenedAnnounceOffAndRateLimit(t *testing.T) {
 // userAuth 是 user 槽位当前令牌的 Authorization 头。
 func (e *testEnv) userAuth() string {
 	e.t.Helper()
-	tok, err := e.s.baseToken(e.ctx, slotUser)
+	tok, err := e.s.tokenFor(e.ctx, slotUser)
 	require.NoError(e.t, err)
 	return "Bearer " + tok
 }

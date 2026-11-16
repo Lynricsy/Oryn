@@ -126,6 +126,43 @@ func (s *Server) DeleteGitHubApp(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// SetGitHubOAuthApp 对应 `PUT /api/v1/github/oauth-app`。
+func (s *Server) SetGitHubOAuthApp(w http.ResponseWriter, r *http.Request) {
+	svc, ok := s.githubSvc(w)
+	if !ok {
+		return
+	}
+	var req apigen.GitHubOAuthAppInput
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	var secret, base string
+	if req.ClientSecret != nil {
+		secret = *req.ClientSecret
+	}
+	if req.WebhookBase != nil {
+		base = *req.WebhookBase
+	}
+	if err := svc.SetOAuthApp(r.Context(), req.ClientID, secret, base); err != nil {
+		writeGitHubErr(w, r, err)
+		return
+	}
+	s.writeGitHubStatus(w, r, svc)
+}
+
+// DeleteGitHubOAuthApp 对应 `DELETE /api/v1/github/oauth-app`。
+func (s *Server) DeleteGitHubOAuthApp(w http.ResponseWriter, r *http.Request) {
+	svc, ok := s.githubSvc(w)
+	if !ok {
+		return
+	}
+	if err := svc.DeleteOAuthApp(r.Context()); err != nil {
+		writeGitHubErr(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // AuthorizeGitHubIdentity 对应 `POST /api/v1/github/identities/{slot}/authorize`。
 func (s *Server) AuthorizeGitHubIdentity(w http.ResponseWriter, r *http.Request, slot apigen.GitHubIdentitySlotPath) {
 	svc, ok := s.githubSvc(w)

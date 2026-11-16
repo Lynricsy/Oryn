@@ -106,7 +106,7 @@ func (s *Service) OrbToken(ctx context.Context, orbID string) (string, orbs.GitH
 	if st != orbs.GitHubTokenOK {
 		return "", st
 	}
-	base, err := s.baseToken(ctx, id.Slot)
+	base, err := s.tokenFor(ctx, id.Slot)
 	if err != nil {
 		slog.Warn("github: 取基础令牌失败", "orb", orbID, "slot", id.Slot, "err", err)
 		return "", orbs.GitHubTokenUnavailable

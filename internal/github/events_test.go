@@ -83,7 +83,7 @@ func TestWebhookSignature(t *testing.T) {
 	d := e.delivery("g1")
 	assert.Equal(t, "ignored:ping", d.Outcome)
 	assert.Equal(t, "webhook", d.Source)
-	assert.Nil(t, d.Payload)
+	assert.Equal(t, body, d.Payload, "M15：结束后保留载荷，供 replay 重放")
 	app, err := e.st.Q.GetGithubApp(e.ctx)
 	require.NoError(t, err)
 	require.NotNil(t, app.LastDeliverySrc)

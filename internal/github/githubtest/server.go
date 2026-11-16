@@ -37,6 +37,15 @@ type App struct {
 	Key *rsa.PrivateKey
 }
 
+// OAuthApp 是假 GitHub 上的 OAuth App（只有 client 凭据）。
+type OAuthApp struct {
+	ClientID     string
+	ClientSecret string
+}
+
+// DefaultScopes 是假服务默认授予 OAuth App 令牌的 scope（等于 Oryn 请求的七项）。
+const DefaultScopes = "repo, workflow, read:org, admin:repo_hook, gist, write:packages, user:email"
+
 // User 是一个 GitHub 用户。
 type User struct {
 	ID        int64
@@ -96,7 +105,11 @@ type Server struct {
 	// GitRoot 非空时以 git http-backend 服务 smart-HTTP（裸仓库在 <GitRoot>/<owner>/<repo>.git）。
 	GitRoot string
 
-	App           App
+	App App
+	// OAuthApp 是假 GitHub 上登记的 OAuth App（M15）；令牌端点同时接受它与 App 的 client 凭据。
+	OAuthApp OAuthApp
+	// Scopes 是 OAuth App 授权时实际授予的 scope（`X-OAuth-Scopes` 格式 `a, b, c`），签发时随令牌固定。
+	Scopes        string
 	Users         map[string]*User // login（小写）→ 用户
 	Installations []*Installation
 	Repos         []*Repo
@@ -124,6 +137,7 @@ type Server struct {
 	refreshTokens map[string]string // 刷新令牌 → login
 	instTokens    map[string]int64  // 安装令牌 → 安装 id
 	scopedTokens  map[string]scoped
+	tokenScopes   map[string]string // OAuth App 签发的用户令牌 → 授予的 scope
 }
 
 var sharedKey = sync.OnceValue(func() *rsa.PrivateKey {
@@ -158,6 +172,8 @@ func newServer() *Server {
 			ID: 1, Slug: "oryn-test", Name: "Oryn Test", ClientID: "Iv1.test", ClientSecret: "client-secret",
 			WebhookSecret: "webhook-secret", OwnerLogin: "owner", ManifestCode: "manifest-code", Key: sharedKey(),
 		},
+		OAuthApp:      OAuthApp{ClientID: "Ov23.test", ClientSecret: "oauth-secret"},
+		Scopes:        DefaultScopes,
 		Users:         map[string]*User{},
 		Renamed:       map[string]string{},
 		UserTokenTTL:  28800,
@@ -166,6 +182,7 @@ func newServer() *Server {
 		refreshTokens: map[string]string{},
 		instTokens:    map[string]int64{},
 		scopedTokens:  map[string]scoped{},
+		tokenScopes:   map[string]string{},
 	}
 }
 
@@ -456,7 +473,7 @@ func (s *Server) manifestConversion(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// issueUserToken 给 login 签发一对新令牌。调用方持锁。
+// issueUserToken 给 login 签发一对新令牌（GitHub App 的用户令牌：会过期、带刷新令牌、没有 scope）。调用方持锁。
 func (s *Server) issueUserToken(login string) map[string]any {
 	tok := s.nextToken("ghu")
 	s.userTokens[tok] = login
@@ -471,15 +488,25 @@ func (s *Server) issueUserToken(login string) map[string]any {
 	return out
 }
 
+// issueOAuthToken 给 login 签发 OAuth App 令牌：不过期、无刷新令牌，scope 取 s.Scopes 并随令牌固定。调用方持锁。
+func (s *Server) issueOAuthToken(login string) map[string]any {
+	tok := s.nextToken("gho")
+	s.userTokens[tok] = login
+	s.tokenScopes[tok] = s.Scopes
+	return map[string]any{"access_token": tok, "token_type": "bearer", "scope": strings.ReplaceAll(s.Scopes, " ", "")}
+}
+
 func (s *Server) oauthToken(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if r.PostForm.Get("client_id") != s.App.ClientID || r.PostForm.Get("client_secret") != s.App.ClientSecret {
+	id, secret := r.PostForm.Get("client_id"), r.PostForm.Get("client_secret")
+	oauthApp := id == s.OAuthApp.ClientID && secret == s.OAuthApp.ClientSecret
+	if !oauthApp && (id != s.App.ClientID || secret != s.App.ClientSecret) {
 		writeJSON(w, http.StatusOK, map[string]string{"error": "incorrect_client_credentials"})
 		return
 	}
-	if r.PostForm.Get("grant_type") == "refresh_token" {
+	if !oauthApp && r.PostForm.Get("grant_type") == "refresh_token" {
 		ref := r.PostForm.Get("refresh_token")
 		login, ok := s.refreshTokens[ref]
 		if !ok || s.Users[login] == nil || s.Users[login].FailRefresh {
@@ -497,16 +524,24 @@ func (s *Server) oauthToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	delete(s.codes, code)
+	if oauthApp {
+		writeJSON(w, http.StatusOK, s.issueOAuthToken(login))
+		return
+	}
 	writeJSON(w, http.StatusOK, s.issueUserToken(login))
 }
 
 func (s *Server) getUser(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	u := s.userOf(bearer(r))
+	tok := bearer(r)
+	u := s.userOf(tok)
 	if u == nil {
 		fail(w, http.StatusUnauthorized, "Bad credentials")
 		return
+	}
+	if scopes, ok := s.tokenScopes[tok]; ok {
+		w.Header().Set("X-OAuth-Scopes", scopes)
 	}
 	typ := u.Type
 	if typ == "" {

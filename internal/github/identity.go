@@ -2,9 +2,10 @@ package github
 
 import (
 	"context"
+	"net/http"
 	"net/url"
-	"time"
 
+	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
@@ -18,12 +19,12 @@ func otherSlot(slot string) string {
 	return slotUser
 }
 
-// BeginAuthorize 开始连接一个身份槽位：返回 GitHub 的授权地址（可在另一个浏览器里打开）。
+// BeginAuthorize 开始连接一个身份槽位：返回 GitHub 的授权地址（可在另一个浏览器里打开），scope 恰为 oauthScopes。
 func (s *Service) BeginAuthorize(ctx context.Context, slot string) (string, error) {
 	if !validSlot(slot) {
 		return "", errf("invalid_request", "slot must be user or agent")
 	}
-	app, err := s.app(ctx)
+	clientID, _, err := s.oauthClient(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -34,8 +35,9 @@ func (s *Service) BeginAuthorize(ctx context.Context, slot string) (string, erro
 		return "", err
 	}
 	q := url.Values{}
-	q.Set("client_id", app.ClientID)
+	q.Set("client_id", clientID)
 	q.Set("redirect_uri", s.cfg.PublicURL+oauthCallbackPath)
+	q.Set("scope", oauthScopes)
 	q.Set("state", state)
 	q.Set("prompt", "select_account")
 	return s.cfg.WebURL + "/login/oauth/authorize?" + q.Encode(), nil
@@ -47,16 +49,7 @@ func (s *Service) clientSecret(app db.GithubApp) (string, error) {
 	return string(b), err
 }
 
-// expiresAt 把「n 秒后过期」换成毫秒时间戳；n 为 0 表示不过期。
-func (s *Service) expiresAt(n int64) *int64 {
-	if n <= 0 {
-		return nil
-	}
-	v := s.now().Add(time.Duration(n) * time.Second).UnixMilli()
-	return &v
-}
-
-// FinishAuthorize 处理 OAuth 回调：消费 state，兑换用户令牌，查出账号并写进槽位。
+// FinishAuthorize 处理 OAuth 回调：消费 state，兑换用户令牌，查出账号与实际授予的 scope 并写进槽位。
 func (s *Service) FinishAuthorize(ctx context.Context, code, state string) (string, error) {
 	row, err := s.consumeState(ctx, state, "identity")
 	if err != nil {
@@ -66,16 +59,12 @@ func (s *Service) FinishAuthorize(ctx context.Context, code, state string) (stri
 		return "", errf("state_invalid", "state has no slot")
 	}
 	slot := *row.Slot
-	app, err := s.app(ctx)
-	if err != nil {
-		return "", err
-	}
-	secret, err := s.clientSecret(app)
+	clientID, secret, err := s.oauthClient(ctx)
 	if err != nil {
 		return "", err
 	}
 	form := url.Values{}
-	form.Set("client_id", app.ClientID)
+	form.Set("client_id", clientID)
 	form.Set("client_secret", secret)
 	form.Set("code", code)
 	form.Set("redirect_uri", s.cfg.PublicURL+oauthCallbackPath)
@@ -92,9 +81,11 @@ func (s *Service) FinishAuthorize(ctx context.Context, code, state string) (stri
 		Name      *string `json:"name"`
 		AvatarURL string  `json:"avatar_url"`
 	}
-	if err := s.call(ctx, "GET", "/user", "Bearer "+tok.AccessToken, nil, &user); err != nil {
+	h, err := s.request(ctx, http.MethodGet, "/user", "Bearer "+tok.AccessToken, nil, &user)
+	if err != nil {
 		return "", err
 	}
+	scopes := joinScopes(parseScopes(h.Get("X-OAuth-Scopes")))
 	if other, err := s.st.Q.GetGithubIdentity(ctx, otherSlot(slot)); err == nil && other.GithubID == user.ID {
 		return "", errf("same_account", "the other slot is already connected to this GitHub account")
 	} else if err != nil && !isNoRows(err) {
@@ -104,23 +95,21 @@ func (s *Service) FinishAuthorize(ctx context.Context, code, state string) (stri
 	if err != nil {
 		return "", err
 	}
-	var refreshEnc []byte
-	if tok.RefreshToken != "" {
-		if refreshEnc, err = s.cfg.Box.Seal(aadRefresh(slot), []byte(tok.RefreshToken)); err != nil {
-			return "", err
-		}
-	}
 	name := user.Name
 	if name != nil && *name == "" {
 		name = nil
 	}
 	now := s.nowMs()
-	if err := s.st.Q.UpsertGithubIdentity(ctx, db.UpsertGithubIdentityParams{
-		Slot: slot, GithubID: user.ID, Login: user.Login, Name: name, AvatarUrl: user.AvatarURL,
-		AccessTokenEnc: accessEnc, AccessExpiresAt: s.expiresAt(tok.ExpiresIn),
-		RefreshTokenEnc: refreshEnc, RefreshExpiresAt: s.expiresAt(tok.RefreshTokenExpiresIn),
-		ConnectedAt: now, UpdatedAt: now,
-	}); err != nil {
+	err = s.st.Tx(ctx, func(q *db.Queries) error {
+		if err := q.UpsertGithubIdentity(ctx, db.UpsertGithubIdentityParams{
+			Slot: slot, GithubID: user.ID, Login: user.Login, Name: name, AvatarUrl: user.AvatarURL,
+			AccessTokenEnc: accessEnc, ConnectedAt: now, UpdatedAt: now,
+		}); err != nil {
+			return err
+		}
+		return q.SetGithubIdentityScopes(ctx, db.SetGithubIdentityScopesParams{Scopes: scopes, UpdatedAt: now, Slot: slot})
+	})
+	if err != nil {
 		if isUnique(err) {
 			return "", errf("same_account", "the other slot is already connected to this GitHub account")
 		}
@@ -130,14 +119,11 @@ func (s *Service) FinishAuthorize(ctx context.Context, code, state string) (stri
 	return slot, nil
 }
 
-// baseToken 返回槽位的用户访问令牌；临近过期时用刷新令牌换新（按槽位串行：刷新令牌用一次即废）。
-func (s *Service) baseToken(ctx context.Context, slot string) (string, error) {
-	mu, ok := s.slotMu[slot]
-	if !ok {
+// tokenFor 返回槽位的用户访问令牌（OAuth App 的令牌不过期，直接解密）；未连接或待重新授权时返回 github_identity_required。
+func (s *Service) tokenFor(ctx context.Context, slot string) (string, error) {
+	if !validSlot(slot) {
 		return "", errf("invalid_request", "slot must be user or agent")
 	}
-	mu.Lock()
-	defer mu.Unlock()
 	row, err := s.st.Q.GetGithubIdentity(ctx, slot)
 	if err != nil {
 		if isNoRows(err) {
@@ -148,64 +134,27 @@ func (s *Service) baseToken(ctx context.Context, slot string) (string, error) {
 	if row.Status == "reauth" {
 		return "", errf("github_identity_required", "GitHub identity "+slot+" needs to be re-authorized")
 	}
-	if row.AccessExpiresAt == nil || *row.AccessExpiresAt > s.now().Add(refreshSkew).UnixMilli() {
-		b, err := s.cfg.Box.Open(aadAccess(slot), row.AccessTokenEnc)
-		return string(b), err
-	}
-	if len(row.RefreshTokenEnc) == 0 {
-		return "", s.markReauth(ctx, slot)
-	}
-	refresh, err := s.cfg.Box.Open(aadRefresh(slot), row.RefreshTokenEnc)
-	if err != nil {
-		return "", err
-	}
-	app, err := s.app(ctx)
-	if err != nil {
-		return "", err
-	}
-	secret, err := s.clientSecret(app)
-	if err != nil {
-		return "", err
-	}
-	form := url.Values{}
-	form.Set("client_id", app.ClientID)
-	form.Set("client_secret", secret)
-	form.Set("grant_type", "refresh_token")
-	form.Set("refresh_token", string(refresh))
-	tok, err := s.oauthToken(ctx, form)
-	if err != nil {
-		return "", err
-	}
-	if tok.Error != "" || tok.AccessToken == "" {
-		return "", s.markReauth(ctx, slot)
-	}
-	accessEnc, err := s.cfg.Box.Seal(aadAccess(slot), []byte(tok.AccessToken))
-	if err != nil {
-		return "", err
-	}
-	refreshEnc, refreshExp := row.RefreshTokenEnc, row.RefreshExpiresAt
-	if tok.RefreshToken != "" {
-		if refreshEnc, err = s.cfg.Box.Seal(aadRefresh(slot), []byte(tok.RefreshToken)); err != nil {
-			return "", err
-		}
-		refreshExp = s.expiresAt(tok.RefreshTokenExpiresIn)
-	}
-	if err := s.st.Q.SetGithubIdentityTokens(ctx, db.SetGithubIdentityTokensParams{
-		AccessTokenEnc: accessEnc, AccessExpiresAt: s.expiresAt(tok.ExpiresIn), RefreshTokenEnc: refreshEnc,
-		RefreshExpiresAt: refreshExp, UpdatedAt: s.nowMs(), Slot: slot,
-	}); err != nil {
-		return "", err
-	}
-	return tok.AccessToken, nil
+	b, err := s.cfg.Box.Open(aadAccess(slot), row.AccessTokenEnc)
+	return string(b), err
 }
 
-// markReauth 把槽位标为需要重新授权，返回 github_identity_required。
+// markReauth 把槽位标为需要重新授权（上游对该槽位的令牌回 401）。
 func (s *Service) markReauth(ctx context.Context, slot string) error {
 	if err := s.st.Q.SetGithubIdentityStatus(ctx, db.SetGithubIdentityStatusParams{Status: "reauth", UpdatedAt: s.nowMs(), Slot: slot}); err != nil {
 		return err
 	}
 	s.changed()
-	return errf("github_identity_required", "GitHub identity "+slot+" needs to be re-authorized")
+	return nil
+}
+
+// identityView 把身份行转成 API 视图：scopes 取自授权时的 X-OAuth-Scopes，missingScopes = oauthScopes − scopes。
+func identityView(gi db.GithubIdentity) *apigen.GitHubIdentity {
+	granted := parseScopes(gi.Scopes)
+	return &apigen.GitHubIdentity{
+		Login: gi.Login, GithubID: gi.GithubID, Name: gi.Name, AvatarURL: gi.AvatarUrl,
+		Status: apigen.GitHubIdentityStatus(gi.Status), ConnectedAt: gi.ConnectedAt,
+		Scopes: granted, MissingScopes: missingScopes(granted),
+	}
 }
 
 // Disconnect 断开一个身份槽位；断开 Agent 账号时自动化身份退回我的账号。

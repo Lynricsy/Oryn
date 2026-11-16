@@ -70,15 +70,15 @@ func (s *Service) Status(ctx context.Context) (apigen.GitHubStatus, error) {
 	case !isNoRows(err):
 		return out, err
 	}
+	if err := s.fillOAuthStatus(ctx, &out); err != nil {
+		return out, err
+	}
 	idents, err := s.st.Q.ListGithubIdentities(ctx)
 	if err != nil {
 		return out, err
 	}
 	for _, gi := range idents {
-		v := &apigen.GitHubIdentity{
-			Login: gi.Login, GithubID: gi.GithubID, Name: gi.Name, AvatarURL: gi.AvatarUrl,
-			Status: apigen.GitHubIdentityStatus(gi.Status), ConnectedAt: gi.ConnectedAt,
-		}
+		v := identityView(gi)
 		switch gi.Slot {
 		case slotUser:
 			out.Identities.User = v

@@ -87,7 +87,7 @@ func TestGitHubAPI(t *testing.T) {
 	// 未创建 App 时连接身份 → 409
 	r = e.do("POST", "/api/v1/github/identities/user/authorize", dev, nil)
 	assert.Equal(t, 409, r.status)
-	assert.Equal(t, "github_not_connected", r.code(t))
+	assert.Equal(t, "github_not_configured", r.code(t))
 
 	r = e.do("POST", "/api/v1/github/app/manifest", h2Cred{cookie: e.webSession(), csrf: true}, map[string]any{"public": false})
 	require.Equal(t, 200, r.status, string(r.body))
@@ -158,6 +158,78 @@ func TestGitHubAPI(t *testing.T) {
 	st.App = nil
 	r.json(t, &st)
 	assert.Nil(t, st.App)
+}
+
+func TestGitHubOAuthAppAPI(t *testing.T) {
+	e, fake, _ := newGitHubEnv(t)
+	dev := h2DeviceToken(t, e)
+	var st struct {
+		OauthApp *struct {
+			ClientID    string
+			CallbackURL string
+		}
+		WebhookBase string
+		Identities  struct {
+			User *struct {
+				Login         string
+				Scopes        []string
+				MissingScopes []string
+			}
+		}
+	}
+	r := e.do("GET", "/api/v1/github", dev, nil)
+	require.Equal(t, 200, r.status, string(r.body))
+	r.json(t, &st)
+	assert.Nil(t, st.OauthApp)
+	assert.Equal(t, h2PublicURL, st.WebhookBase)
+
+	// 首次保存必须带 secret
+	r = e.do("PUT", "/api/v1/github/oauth-app", dev, map[string]any{"clientId": fake.OAuthApp.ClientID})
+	assert.Equal(t, 400, r.status)
+	assert.Equal(t, "invalid_request", r.code(t))
+
+	r = e.do("PUT", "/api/v1/github/oauth-app", dev, map[string]any{
+		"clientId": fake.OAuthApp.ClientID, "clientSecret": fake.OAuthApp.ClientSecret, "webhookBase": "https://hooks.example.com/",
+	})
+	require.Equal(t, 200, r.status, string(r.body))
+	r.json(t, &st)
+	require.NotNil(t, st.OauthApp)
+	assert.Equal(t, fake.OAuthApp.ClientID, st.OauthApp.ClientID)
+	assert.Equal(t, h2PublicURL+"/api/v1/public/github/oauth/callback", st.OauthApp.CallbackURL)
+	assert.Equal(t, "https://hooks.example.com", st.WebhookBase)
+
+	// 授权：scope 恰为七项；授予少于所需时 missingScopes 非空
+	fake.AddUser(1, "owner", "")
+	fake.Lock()
+	fake.Scopes = "repo, workflow"
+	fake.Unlock()
+	fake.GrantCode("u1", "owner")
+	r = e.do("POST", "/api/v1/github/identities/user/authorize", dev, nil)
+	require.Equal(t, 200, r.status, string(r.body))
+	var red struct{ URL string }
+	r.json(t, &red)
+	u, err := url.Parse(red.URL)
+	require.NoError(t, err)
+	assert.Equal(t, "repo workflow read:org admin:repo_hook gist write:packages user:email", u.Query().Get("scope"))
+	assert.Equal(t, fake.OAuthApp.ClientID, u.Query().Get("client_id"))
+	resp := getNoRedirect(t, e.srv.URL+"/api/v1/public/github/oauth/callback?code=u1&state="+url.QueryEscape(u.Query().Get("state")))
+	assert.Equal(t, h2PublicURL+"/settings/github?connected=user", resp.Header.Get("Location"))
+	r = e.do("GET", "/api/v1/github", dev, nil)
+	r.json(t, &st)
+	require.NotNil(t, st.Identities.User)
+	assert.Equal(t, []string{"repo", "workflow"}, st.Identities.User.Scopes)
+	assert.Equal(t, []string{"read:org", "admin:repo_hook", "gist", "write:packages", "user:email"}, st.Identities.User.MissingScopes)
+
+	// 删除：身份一并断开
+	assert.Equal(t, 204, e.do("DELETE", "/api/v1/github/oauth-app", dev, nil).status)
+	st.OauthApp, st.Identities.User = nil, nil
+	r = e.do("GET", "/api/v1/github", dev, nil)
+	r.json(t, &st)
+	assert.Nil(t, st.OauthApp)
+	assert.Nil(t, st.Identities.User)
+	r = e.do("POST", "/api/v1/github/identities/user/authorize", dev, nil)
+	assert.Equal(t, 409, r.status)
+	assert.Equal(t, "github_not_configured", r.code(t))
 }
 
 func TestGitHubAPINotConfigured(t *testing.T) {

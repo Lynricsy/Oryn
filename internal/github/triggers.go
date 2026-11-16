@@ -426,7 +426,7 @@ func (s *Service) announce(ctx context.Context, ev triggerEvent, th apigen.Threa
 			slot = o.GithubIdentity
 		}
 	}
-	tok, err := s.baseToken(ctx, slot)
+	tok, err := s.tokenFor(ctx, slot)
 	if err != nil {
 		slog.Warn("github: 触发回执取令牌失败", "thread", th.ID, "slot", slot, "err", err)
 		return
