@@ -1,9 +1,9 @@
 /**
  * mock 后端的 Artifacts（M14）：`/api/v1/artifacts*` 与 `/api/v1/artifact-frames/*`，响应形状与 orynd
  * （`internal/api/artifacts.go`）一致。夹具是四种类型各一个（单文件），外加一个在「最近删除」里的页面。
- * - 帧（`POST …/frames`）回一个 `blob:` 地址：页面 HTML 里用 `<script type="module" src="<origin>/sandbox/runtime/main.ts">`
- *   引入运行时（vite 开发服务器直接提供），随后调用 `__orynStart(<配置>)`。blob 是申请帧那一刻的快照：
- *   新版本到来时帧会照常重载，但要点「重新加载」（重新申请帧）才看得到新内容。
+ * - 帧（`POST …/frames`）回 `<origin>/__mock_af/<令牌>/`，安装时拦截 iframe `src` 的 `resolveFrameUrl` 每次导航都把它换成
+ *   当时内容的 `blob:`：页面 HTML 里用 `<script type="module" src="<origin>/sandbox/runtime/main.ts">` 引入运行时（vite 开发
+ *   服务器直接提供），随后调用 `__orynStart(<配置>)`。跟随最新的帧在新版本到来、重设 `src` 时显示新版本，与 orynd 一致。
  * - 「在浏览器中打开」回一个外壳页的 `blob:` 地址，外壳里用沙箱 iframe 装内容，不让 artifact 的脚本跑在应用的源上。
  * - 观看者（`artifact.watch`）按连接登记；`write` 产生新版本并推 `artifact.version` 与 `artifacts.changed`。
  * - 页面帧给每个起始标签加 `data-oryn-src="<mark>:<字节偏移>"`（同 `htmlsrc.MarkSources`），评论与选择拿得到源码偏移。
@@ -451,6 +451,11 @@ export interface ArtifactsHub {
 export class MockArtifacts {
 	private readonly items = new Map<string, Stored>();
 	private readonly frames = new Map<string, string[]>();
+	/** 页面帧：令牌 → artifact、钉住的版本（null = 跟随最新）与是否带运行时；帧根经 `resolveFrameUrl` 换成 blob。 */
+	private readonly pageFrames = new Map<
+		string,
+		{ id: string; pinned: StoredVersion | null; runtime: boolean }
+	>();
 	private readonly watchers = new Map<string, Set<MockSocket>>();
 	/** artifact id → 评论串（旧 → 新）。 */
 	private readonly comments = new Map<string, CommentThread[]>();
@@ -707,6 +712,7 @@ export class MockArtifacts {
 			for (const u of this.frames.get(frame[1] ?? "") ?? [])
 				URL.revokeObjectURL(u);
 			this.frames.delete(frame[1] ?? "");
+			this.pageFrames.delete(frame[1] ?? "");
 			return new Response(null, { status: 204 });
 		}
 		if (p === "artifact-consents" && m === "GET") return this.listConsents();
@@ -1133,19 +1139,26 @@ export class MockArtifacts {
 			const url = `${location.origin}/__mock_af/${token}/`;
 			return json({ url, token } satisfies Schemas["ArtifactFrame"], 201);
 		}
-		const content = this.framePage(a, v, follow, topLevel);
-		const token = this.newToken();
-		const urls = [
-			URL.createObjectURL(new Blob([content], { type: "text/html" })),
-		];
-		if (topLevel) {
-			const shell = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(a.meta.title)}</title><style>html,body,iframe{margin:0;border:0;width:100%;height:100%;display:block}</style></head><body><iframe sandbox="allow-scripts allow-forms allow-downloads allow-popups allow-popups-to-escape-sandbox allow-modals" src="${urls[0]}"></iframe></body></html>`;
-			urls.push(URL.createObjectURL(new Blob([shell], { type: "text/html" })));
+		if (!topLevel) {
+			// 帧地址与画布帧同形（`<origin>/__mock_af/<令牌>/`），每次导航时由 `resolveFrameUrl` 换成当时内容的 blob：
+			// 跟随最新的帧在新版本到来、PageFrame 重设 `src` 时拿到的就是新版本，与 orynd 的帧根一致
+			const token = this.newToken();
+			this.pageFrames.set(token, {
+				id: a.meta.id,
+				pinned: follow ? null : v,
+				runtime: follow,
+			});
+			this.frames.set(token, []);
+			const url = `${location.origin}/__mock_af/${token}/`;
+			return json({ url, token } satisfies Schemas["ArtifactFrame"], 201);
 		}
-		this.frames.set(token, urls);
-		const url = urls[urls.length - 1] ?? "";
-		if (topLevel) return json({ url } satisfies Schemas["ArtifactOpenLink"]);
-		return json({ url, token } satisfies Schemas["ArtifactFrame"], 201);
+		const content = this.framePage(a, v, false, true);
+		const page = URL.createObjectURL(
+			new Blob([content], { type: "text/html" }),
+		);
+		const shell = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(a.meta.title)}</title><style>html,body,iframe{margin:0;border:0;width:100%;height:100%;display:block}</style></head><body><iframe sandbox="allow-scripts allow-forms allow-downloads allow-popups allow-popups-to-escape-sandbox allow-modals" src="${page}"></iframe></body></html>`;
+		const url = URL.createObjectURL(new Blob([shell], { type: "text/html" }));
+		return json({ url } satisfies Schemas["ArtifactOpenLink"]);
 	}
 
 	private newToken(): string {
@@ -1498,8 +1511,9 @@ export class MockArtifacts {
 	}
 
 	/**
-	 * 画布帧里画框文件的地址（`<origin>/__mock_af/<令牌>/_oryn/v/<n>/<路径>`）→ 该版本文件的 blob（HTML 注入页面运行时）。
-	 * 不是画布帧的地址返回 null。mock 安装时拦截 iframe 的 `src` 来调它。
+	 * mock 帧地址 → blob。页面帧的根（`<origin>/__mock_af/<令牌>/`）每次导航都按当时的内容新生成一份（跟随最新的帧取 head，
+	 * 钉住的帧取那个版本）；画布帧里画框文件的地址（`<origin>/__mock_af/<令牌>/_oryn/v/<n>/<路径>`）→ 该版本文件的 blob
+	 * （HTML 注入页面运行时）。不是 mock 帧的地址返回 null。mock 安装时拦截 iframe 的 `src` 来调它。
 	 */
 	resolveFrameUrl(raw: string): string | null {
 		let url: URL;
@@ -1507,6 +1521,19 @@ export class MockArtifacts {
 			url = new URL(raw, location.href);
 		} catch {
 			return null;
+		}
+		const root = /^\/__mock_af\/([a-z2-7]+)\/$/.exec(url.pathname);
+		const page = root ? this.pageFrames.get(root[1] ?? "") : undefined;
+		if (root && page) {
+			const a = this.items.get(page.id);
+			const v = a && (page.pinned ?? this.version(a, null));
+			const html =
+				a && v && !(v instanceof Response) && a.meta.deletedAt === undefined
+					? this.framePage(a, v, page.runtime, false)
+					: "<!doctype html><title>404</title><p>没有这个帧</p>";
+			const blob = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+			this.frames.get(root[1] ?? "")?.push(blob);
+			return blob;
 		}
 		const hit = /^\/__mock_af\/([a-z2-7]+)\/_oryn\/v\/(\d+)\/(.+)$/.exec(
 			url.pathname,
