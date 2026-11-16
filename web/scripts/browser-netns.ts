@@ -19,16 +19,20 @@ export interface BrowserNetns {
 	stop(): void;
 }
 
-/** 双向接上两条连接，任一端出错或关闭时两端一起关。 */
+/**
+ * 双向接上两条连接。一端正常关闭时由 pipe 把另一端 `end()`：先写完缓冲里的数据再发 FIN；只有出错才两端一起销毁。
+ * 不能在 `close` 时就 destroy 另一端：上游写完大响应随即关闭时，读得慢的浏览器那端缓冲里还压着没发完的字节，
+ * destroy 会把它们丢掉（浏览器报 ERR_CONTENT_LENGTH_MISMATCH，K24 的文档查看器 document.js 偶发截断即此）。
+ */
 function splice(a: Socket, b: Socket) {
 	a.pipe(b);
 	b.pipe(a);
-	const end = () => {
+	const kill = () => {
 		a.destroy();
 		b.destroy();
 	};
-	a.on("error", end).on("close", end);
-	b.on("error", end).on("close", end);
+	a.on("error", kill);
+	b.on("error", kill);
 }
 
 /** 建好命名空间 `name` 与 `ports` 的端口转发，返回启动 `chromium` 的包装脚本。 */
@@ -74,12 +78,13 @@ export async function startBrowserNetns({
 for (const port of ${JSON.stringify(ports)})
 	for (const host of ["127.0.0.1", "::1"])
 		createServer((c) => {
+			// 与 splice 同：正常关闭交给 pipe 排空后 end，只有出错才销毁两端
 			const u = connect(${JSON.stringify(dir)} + "/" + port + ".sock");
 			c.pipe(u);
 			u.pipe(c);
-			const end = () => { c.destroy(); u.destroy(); };
-			c.on("error", end).on("close", end);
-			u.on("error", end).on("close", end);
+			const kill = () => { c.destroy(); u.destroy(); };
+			c.on("error", kill);
+			u.on("error", kill);
 		}).listen(port, host);
 console.log("ready");
 `,
