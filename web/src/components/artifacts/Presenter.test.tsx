@@ -1,7 +1,12 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import i18n from "../../i18n";
-import { fitScale, Presenter, type PresenterPage } from "./Presenter";
+import {
+	fitScale,
+	Presenter,
+	type PresenterPage,
+	swipeDelta,
+} from "./Presenter";
 
 const PAGES: PresenterPage[] = [
 	{ id: "a", name: "首屏", width: 1280, height: 800 },
@@ -99,5 +104,39 @@ describe("Presenter", () => {
 		expect(fitScale(1280, 800, { width: 640, height: 800 })).toBe(0.5);
 		expect(fitScale(1280, 800, { width: 2560, height: 800 })).toBe(1);
 		expect(fitScale(1280, 800, { width: -10, height: 800 })).toBe(0);
+	});
+
+	it("左右轻扫翻页（触摸），不越界；鼠标拖动与竖向滑动不翻页", () => {
+		const { position } = setup();
+		const dialog = screen.getByTestId("artifact-presenter");
+		const swipe = (
+			from: [number, number],
+			to: [number, number],
+			pointerType = "touch",
+		) => {
+			const init = { pointerId: 7, pointerType, isPrimary: true };
+			fireEvent.pointerDown(dialog, {
+				...init,
+				clientX: from[0],
+				clientY: from[1],
+			});
+			fireEvent.pointerUp(dialog, { ...init, clientX: to[0], clientY: to[1] });
+		};
+		swipe([300, 700], [100, 710]);
+		expect(position()).toBe("列表 · 2 / 4");
+		swipe([100, 700], [300, 690]);
+		expect(position()).toBe("首屏 · 1 / 4");
+		swipe([100, 700], [300, 690]);
+		expect(position()).toBe("首屏 · 1 / 4");
+		swipe([300, 700], [100, 700], "mouse");
+		swipe([300, 700], [260, 400]);
+		expect(position()).toBe("首屏 · 1 / 4");
+	});
+
+	it("swipeDelta：水平距离够长且明显大于垂直距离才算轻扫", () => {
+		expect(swipeDelta({ x: 200, y: 0 }, { x: 100, y: 10 })).toBe(1);
+		expect(swipeDelta({ x: 100, y: 0 }, { x: 200, y: 10 })).toBe(-1);
+		expect(swipeDelta({ x: 100, y: 0 }, { x: 130, y: 0 })).toBe(0);
+		expect(swipeDelta({ x: 100, y: 0 }, { x: 200, y: 80 })).toBe(0);
 	});
 });

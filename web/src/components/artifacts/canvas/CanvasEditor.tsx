@@ -9,7 +9,8 @@
  * - 选择与变换：点选、`Shift` 加选、空白处框选；拖动移动、四角手柄缩放（显示「宽 × 高」）；对其它画框的边与中线吸附（6 屏幕像素，
  *   画参考线）；锁定的对象不能移动或缩放。双击画框进入「内部」：覆盖层放行指针，可以和页面交互，`Esc` 或点画框外退出。
  * - 评论工具：点画框里的元素，经 `select-pick` 让那个画框的运行时回报选中，`onComment` 交出选中与带画框序号的锚点上下文。
- * - 只读：看旧版本或 `compact` 断点（手机上只能平移、缩放与评论）。
+ * - 只读：看旧版本或 `compact` 断点。手机上（9.2）不显示工具条、图层与属性面板，换成视图条（CompactBar.tsx：画布页、评论、
+ *   适合全部）；单指拖动平移、双指捏合缩放、点画框聚焦。
  * - 6.4：工具条（Toolbar.tsx）、图层面板（LayersPanel.tsx）、属性面板（PropsPanel.tsx）、画框名称行（FrameLabel.tsx）。
  *   图层与属性面板只在整页查看器里出现（右面板里隐藏），窗口窄于 900 时覆盖在画布上（同一时间只显示一个）；
  *   只读时不显示编辑类控件。
@@ -67,6 +68,7 @@ import type { FrameLink } from "../frame-link";
 import { Presenter } from "../Presenter";
 import { FrameErrorState, ViewerLoading } from "../viewer-states";
 import { AgentPointers, FollowBar, useAgentPresence } from "./AgentPointer";
+import { CompactBar } from "./CompactBar";
 import {
 	type Camera,
 	fitBox,
@@ -178,6 +180,8 @@ export interface PresentRequest {
 const LIVE_COMMIT_MS = 100;
 /** 按下后移动超过这么多屏幕像素才算拖动。 */
 const DRAG_PX = 3;
+/** 手机上单指按下又抬起、移动不超过这么多屏幕像素算「点」（手指的抖动比鼠标大）。 */
+const TAP_PX = 8;
 /** 手柄的命中半径（屏幕像素）。 */
 const HANDLE_PX = 6;
 /** 命中标注的容差（屏幕像素）。 */
@@ -648,7 +652,7 @@ export function CanvasEditor({
 			e.button === 1 ||
 			space ||
 			tool === "hand" ||
-			(compact && e.pointerType === "touch" && tool !== "comment");
+			(compact && tool !== "comment");
 		if (pan) {
 			gesture.current = { kind: "pan", sx: s.x, sy: s.y, cam };
 			return;
@@ -938,6 +942,13 @@ export function CanvasEditor({
 		const s = screenPoint(e);
 		const p = toWorld(cam, s.x, s.y);
 		switch (g.kind) {
+			case "pan": {
+				// 手机上点画框（几乎没动）＝聚焦它
+				if (!compact || Math.hypot(s.x - g.sx, s.y - g.sy) > TAP_PX) break;
+				const page = pageAt(d, canvasKey, p);
+				if (page) setFocused(page.id);
+				break;
+			}
 			case "move":
 			case "resize":
 				if (g.ops.length > 0) commit(g.ops, inverseOps(g.startDoc, g.ops));
@@ -1550,32 +1561,46 @@ export function CanvasEditor({
 						onHandOff={() => handOff.run(doc, canvasKey, selectedIds)}
 					/>
 				)}
-				<Toolbar
-					doc={doc}
-					canvasKey={canvasKey}
-					readOnly={readOnly}
-					commentable={commentable}
-					tool={tool}
-					penKind={penKind}
-					shape={shape}
-					styles={styles}
-					onTool={chooseTool}
-					onPenKind={setPenKind}
-					onShape={setShape}
-					onStyle={(family: DrawFamily, patch: Partial<DrawStyle>) =>
-						setStyles((s) => ({ ...s, [family]: { ...s[family], ...patch } }))
-					}
-					onCanvas={switchCanvas}
-					commit={(ops) => commit(ops)}
-					zoom={z}
-					hasSelection={items.length > 0}
-					onZoom={zoomTo}
-					layers={
-						showPanels
-							? { open: layersOpen, onToggle: () => setLayersOpen((o) => !o) }
-							: undefined
-					}
-				/>
+				{compact ? (
+					<CompactBar
+						doc={doc}
+						canvasKey={canvasKey}
+						commentable={commentable}
+						commenting={tool === "comment"}
+						onComment={() =>
+							chooseTool(tool === "comment" ? "move" : "comment")
+						}
+						onCanvas={switchCanvas}
+						onFit={() => zoomTo("fit")}
+					/>
+				) : (
+					<Toolbar
+						doc={doc}
+						canvasKey={canvasKey}
+						readOnly={readOnly}
+						commentable={commentable}
+						tool={tool}
+						penKind={penKind}
+						shape={shape}
+						styles={styles}
+						onTool={chooseTool}
+						onPenKind={setPenKind}
+						onShape={setShape}
+						onStyle={(family: DrawFamily, patch: Partial<DrawStyle>) =>
+							setStyles((s) => ({ ...s, [family]: { ...s[family], ...patch } }))
+						}
+						onCanvas={switchCanvas}
+						commit={(ops) => commit(ops)}
+						zoom={z}
+						hasSelection={items.length > 0}
+						onZoom={zoomTo}
+						layers={
+							showPanels
+								? { open: layersOpen, onToggle: () => setLayersOpen((o) => !o) }
+								: undefined
+						}
+					/>
+				)}
 				{focusedPage && (
 					<FocusedPage
 						pages={focusOrder}

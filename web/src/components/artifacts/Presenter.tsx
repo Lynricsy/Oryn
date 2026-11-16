@@ -5,6 +5,7 @@
  * - 有尺寸的页（画布的画框）按原始尺寸排版，整体缩放到「四周留 48、底栏 72」之后放得下的最大尺寸；
  *   没给尺寸的页（单页 artifact）直接铺满底栏以上的区域。页面保持可交互。
  * - 键盘：`→` / 空格下一页，`←` / `Shift+空格` 上一页，`Esc` 退出；翻页不越界。焦点在页面帧里时按键归页面。
+ * - 触屏（9.2）：左右轻扫翻页（向左下一页）。手势从页面帧以外（四周留白、底栏）开始才收得到：帧里的触摸归页面本身。
  * - 底栏：上一页、「{名字} · {n} / {N}」、下一页、「Esc 退出」与退出按钮。
  * 渲染到 `document.body` 的门户里，按键在捕获阶段处理并截住（不落到画布编辑器或查看器的快捷键上）。
  */
@@ -22,6 +23,19 @@ import { IconButton } from "../ui/primitives";
 /** 页四周留白与底栏高度（像素）。 */
 export const PRESENT_MARGIN = 48;
 export const PRESENT_BAR = 72;
+/** 轻扫翻页：水平移动至少这么多像素，且明显大于垂直移动。 */
+export const SWIPE_PX = 48;
+
+/** 一次触摸从 `from` 到 `to` 是不是左右轻扫：返回翻页方向（向左扫 = 下一页 = 1），不是则 0。 */
+export function swipeDelta(
+	from: { x: number; y: number },
+	to: { x: number; y: number },
+): -1 | 0 | 1 {
+	const dx = to.x - from.x;
+	const dy = to.y - from.y;
+	if (Math.abs(dx) < SWIPE_PX || Math.abs(dx) < 1.5 * Math.abs(dy)) return 0;
+	return dx < 0 ? 1 : -1;
+}
 
 export interface PresenterPage {
 	id: string;
@@ -128,7 +142,8 @@ export function Presenter<P extends PresenterPage>({
 
 	const go = (delta: number) =>
 		setIndex((i) => Math.max(0, Math.min(total - 1, i + delta)));
-
+	// 触屏轻扫：按下的位置（只认触摸与触控笔，鼠标拖动不翻页）
+	const swipeRef = useRef<{ id: number; x: number; y: number } | null>(null);
 	const keyRef = useRef<(e: KeyboardEvent) => boolean>(() => false);
 	keyRef.current = (e) => {
 		if (e.ctrlKey || e.metaKey || e.altKey) return false;
@@ -177,7 +192,21 @@ export function Presenter<P extends PresenterPage>({
 			aria-label={t("artifacts.present.title", { title })}
 			tabIndex={-1}
 			data-testid="artifact-presenter"
-			className="theme-dark fixed inset-0 z-50 flex flex-col bg-bg text-fg outline-none"
+			className="theme-dark fixed inset-0 z-50 flex touch-pan-y flex-col bg-bg text-fg outline-none"
+			onPointerDown={(e) => {
+				if (e.pointerType === "mouse" || !e.isPrimary) return;
+				swipeRef.current = { id: e.pointerId, x: e.clientX, y: e.clientY };
+			}}
+			onPointerUp={(e) => {
+				const from = swipeRef.current;
+				swipeRef.current = null;
+				if (!from || from.id !== e.pointerId) return;
+				const d = swipeDelta(from, { x: e.clientX, y: e.clientY });
+				if (d !== 0) go(d);
+			}}
+			onPointerCancel={() => {
+				swipeRef.current = null;
+			}}
 		>
 			<div
 				ref={stageRef}

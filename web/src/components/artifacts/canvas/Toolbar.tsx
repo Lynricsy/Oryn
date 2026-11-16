@@ -445,8 +445,8 @@ export function Toolbar({
 	);
 }
 
-/** 「页面」下拉：列出各画布页（带画框数）；可编辑时还有新建、改名、复制、删除。 */
-function SheetMenu({
+/** 「页面」下拉：列出各画布页（带画框数）；可编辑时还有新建、改名、复制、删除。手机的视图条（CompactBar）也用它。 */
+export function SheetMenu({
 	doc,
 	canvasKey,
 	editable,
