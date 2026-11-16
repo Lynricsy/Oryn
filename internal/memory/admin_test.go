@@ -39,6 +39,9 @@ type admFake struct {
 	reflects    []map[string]any
 	// history 是 mental model 历史里的 previous_content（Hindsight 会一直保留旧版本全文）
 	history map[string]string
+	// pauses 按 "METHOD path" 暂停一次请求（不持有 mu），用来确定性地制造并发交错
+	pauseMu sync.Mutex
+	pauses  map[string]*admPause
 	docs     map[string]*admDoc
 	models   map[string]*admModel
 	ops      map[string]map[string]any
@@ -113,7 +116,30 @@ func writeJSONTo(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// admPause 是一次暂停：请求到达时关闭 entered，等测试关闭 release 后才继续（继续时读取的是放行那一刻的状态）。
+type admPause struct{ entered, release chan struct{} }
+
+// pause 让下一个 METHOD path 请求停在入口。
+func (f *admFake) pause(method, path string) *admPause {
+	p := &admPause{entered: make(chan struct{}), release: make(chan struct{})}
+	f.pauseMu.Lock()
+	defer f.pauseMu.Unlock()
+	if f.pauses == nil {
+		f.pauses = map[string]*admPause{}
+	}
+	f.pauses[method+" "+path] = p
+	return p
+}
+
 func (f *admFake) serve(w http.ResponseWriter, r *http.Request) {
+	f.pauseMu.Lock()
+	hold := f.pauses[r.Method+" "+r.URL.Path]
+	delete(f.pauses, r.Method+" "+r.URL.Path)
+	f.pauseMu.Unlock()
+	if hold != nil {
+		close(hold.entered)
+		<-hold.release
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.key == "" || r.Header.Get("Authorization") != "Bearer "+f.key {
@@ -1263,4 +1289,257 @@ func TestMemoryAdminStaleModelLifecycle(t *testing.T) {
 	f.with(func(f *admFake) { f.key = "rotated" })
 	assert.Equal(t, "memory_upstream", memErr(t, e.svc.DeleteDocument(ctx, "oryn-g9")).Code)
 	f.with(func(f *admFake) { assert.Contains(t, f.docs, "oryn-g9") })
+}
+
+// staleRow 读一个模型的待刷新记录。
+func staleRow(t *testing.T, e *admEnv, id string) db.MemoryStaleModel {
+	t.Helper()
+	row, err := e.st.Q.GetMemoryStaleModel(context.Background(), id)
+	require.NoError(t, err)
+	return row
+}
+
+// holdCount 是模型当前持有的删除 hold 数。
+func holdCount(t *testing.T, e *admEnv, id string) int {
+	t.Helper()
+	var n int
+	require.NoError(t, e.st.DB.QueryRow(`SELECT COUNT(*) FROM memory_stale_holds WHERE model_id = ?`, id).Scan(&n))
+	return n
+}
+
+// staleEnv 是并发测试的公共准备：项目 P 有模型 project-conventions-prj_a，以及 n 个各归一个线程（T-1…T-n）的 document。
+func staleEnv(t *testing.T, n int) (*admEnv, *admFake, string) {
+	t.Helper()
+	e := newAdmEnv(t, nil)
+	f := e.withFake(t)
+	p := "PRJ_A"
+	e.project(t, p)
+	tag := memory.ProjectTag(p)
+	f.addModel("project-conventions-prj_a", tag)
+	for i := 1; i <= n; i++ {
+		doc := fmt.Sprintf("sess-%d", i)
+		f.addDoc(doc, "段落 "+doc, tag)
+		e.record(t, doc, &p, new(fmt.Sprintf("T-%d", i)))
+	}
+	return e, f, p
+}
+
+// assertHidden 以 P 线程身份核对网关仍隐藏模型内容。
+func assertHidden(t *testing.T, e *admEnv, p, mm string) {
+	t.Helper()
+	code, raw := gwAs(t, memory.NewGateway(e.svc), p, http.MethodGet, "/v1/default/banks/oryn/mental-models?detail=content", nil)
+	require.Equal(t, http.StatusOK, code, raw)
+	c, ok := modelContent(t, raw, mm)
+	require.True(t, ok)
+	assert.Empty(t, c, "仍然隐藏")
+}
+
+func (f *admFake) refreshCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.refresh)
+}
+
+func (f *admFake) setOp(op, status string) {
+	f.with(func(f *admFake) { f.ops[op]["status"] = status })
+}
+
+// retryOnce 跑一轮重试循环并返回清除数。
+func retryOnce(t *testing.T, e *admEnv) int {
+	t.Helper()
+	n, err := e.svc.RetryStaleModels(context.Background())
+	require.NoError(t, err)
+	return n
+}
+
+// 并发 D1（ABA，旧的清除晚到）：循环读到遗忘 #1 的记录、查询 op1 时停住；期间记录被清除、遗忘 #2 重新插入同一模型；
+// op1 随后报告完成，旧请求按旧令牌清除也碰不到新记录。之后只有遗忘 #2 自己的刷新完成才清除。
+func TestMemoryAdminStaleLateClear(t *testing.T) {
+	ctx := context.Background()
+	e, f, p := staleEnv(t, 2)
+	const mm = "project-conventions-prj_a"
+	_, err := e.svc.ForgetThread(ctx, "T-1")
+	require.NoError(t, err)
+	row1 := staleRow(t, e, mm)
+	require.NotNil(t, row1.RefreshOp)
+	assert.Equal(t, "op-refresh-1", *row1.RefreshOp)
+
+	e.now = e.now.Add(2 * time.Minute)
+	pz := f.pause(http.MethodGet, "/v1/default/banks/oryn/operations/op-refresh-1")
+	done := make(chan int, 1)
+	go func() {
+		n, err := e.svc.RetryStaleModels(ctx)
+		assert.NoError(t, err)
+		done <- n
+	}()
+	<-pz.entered
+	// 记录被清除后，遗忘 #2 重新插入同一模型（按代际递增的方案里新记录会从头计数，与旧请求相同）
+	require.NoError(t, e.st.Q.DeleteMemoryStaleModel(ctx, mm))
+	_, err = e.svc.ForgetThread(ctx, "T-2")
+	require.NoError(t, err)
+	row2 := staleRow(t, e, mm)
+	assert.NotEqual(t, row1.Token, row2.Token)
+	require.NotNil(t, row2.RefreshOp)
+	assert.Equal(t, "op-refresh-2", *row2.RefreshOp)
+	f.setOp("op-refresh-1", "completed")
+	close(pz.release)
+	assert.Zero(t, <-done, "旧令牌的清除碰不到新记录")
+
+	assert.Equal(t, row2, staleRow(t, e, mm), "记录与 refresh_op 都没被旧请求改动")
+	assertHidden(t, e, p, mm)
+	e.now = e.now.Add(2 * time.Minute)
+	assert.Zero(t, retryOnce(t, e), "op2 还在排队")
+	f.setOp("op-refresh-2", "completed")
+	e.now = e.now.Add(4 * time.Minute)
+	assert.Equal(t, 1, retryOnce(t, e))
+}
+
+// 并发 D2（ABA，旧的写回晚到）：遗忘 #1 删除后立即提交刷新时停住（已读到旧令牌）；期间记录被清除、遗忘 #2 重新插入
+// 并记下自己的刷新；遗忘 #1 的提交随后返回，按旧令牌的写回作废，refresh_op 仍是遗忘 #2 的。
+func TestMemoryAdminStaleLateRetryWriteBack(t *testing.T) {
+	ctx := context.Background()
+	e, f, p := staleEnv(t, 2)
+	const mm = "project-conventions-prj_a"
+	pz := f.pause(http.MethodPost, "/v1/default/banks/oryn/mental-models/"+mm+"/refresh")
+	done := make(chan error, 1)
+	go func() {
+		_, err := e.svc.ForgetThread(ctx, "T-1")
+		done <- err
+	}()
+	<-pz.entered
+	token1 := staleRow(t, e, mm).Token
+	require.NoError(t, e.st.Q.DeleteMemoryStaleModel(ctx, mm))
+	_, err := e.svc.ForgetThread(ctx, "T-2")
+	require.NoError(t, err)
+	row2 := staleRow(t, e, mm)
+	assert.NotEqual(t, token1, row2.Token)
+	require.NotNil(t, row2.RefreshOp)
+	assert.Equal(t, "op-refresh-1", *row2.RefreshOp, "遗忘 #2 的提交先被处理")
+	close(pz.release)
+	require.NoError(t, <-done)
+	assert.Equal(t, 2, f.refreshCount(), "遗忘 #1 的提交照常发出")
+	assert.Equal(t, row2, staleRow(t, e, mm), "按旧令牌的写回作废，refresh_op 没被改成遗忘 #1 的操作")
+	assertHidden(t, e, p, mm)
+	f.setOp("op-refresh-2", "completed") // 遗忘 #1 的操作完成也无关
+	e.now = e.now.Add(2 * time.Minute)
+	assert.Zero(t, retryOnce(t, e))
+	f.setOp("op-refresh-1", "completed")
+	e.now = e.now.Add(4 * time.Minute)
+	assert.Equal(t, 1, retryOnce(t, e))
+}
+
+// 并发 E（重叠删除乱序结束）：A 标记后删除停住；B 标记同一模型并删完。A 的 hold 还在，此时不提交刷新，循环推进
+// 时钟也不提交；A 删完释放后恰好提交一次，那次操作完成才清除。随后：B 的刷新在 A 标记之前提交、在 A 标记之后完成，
+// 也不清除（令牌已变）。
+func TestMemoryAdminStaleOverlappingDeletes(t *testing.T) {
+	ctx := context.Background()
+	e, f, p := staleEnv(t, 4)
+	const mm = "project-conventions-prj_a"
+	forgetPaused := func(thread, doc string) (*admPause, chan error) {
+		pz := f.pause(http.MethodDelete, "/v1/default/banks/oryn/documents/"+doc)
+		done := make(chan error, 1)
+		go func() {
+			_, err := e.svc.ForgetThread(ctx, thread)
+			done <- err
+		}()
+		<-pz.entered
+		return pz, done
+	}
+
+	pzA, doneA := forgetPaused("T-1", "sess-1")
+	_, err := e.svc.ForgetThread(ctx, "T-2")
+	require.NoError(t, err)
+	assert.Equal(t, 1, holdCount(t, e, mm), "只剩 A 的 hold")
+	assert.Zero(t, f.refreshCount(), "A 的删除仍在进行：B 删完也不提交刷新")
+	e.now = e.now.Add(10 * time.Minute)
+	assert.Zero(t, retryOnce(t, e))
+	assert.Zero(t, f.refreshCount(), "循环同样不提交")
+	assertHidden(t, e, p, mm)
+	close(pzA.release)
+	require.NoError(t, <-doneA)
+	assert.Zero(t, holdCount(t, e, mm))
+	assert.Equal(t, 1, f.refreshCount(), "A 删完后恰好提交一次")
+	row := staleRow(t, e, mm)
+	require.NotNil(t, row.RefreshOp)
+	assert.Equal(t, "op-refresh-1", *row.RefreshOp)
+	e.now = e.now.Add(2 * time.Minute)
+	assert.Zero(t, retryOnce(t, e), "操作未完成不清除")
+	f.setOp("op-refresh-1", "completed")
+	e.now = e.now.Add(4 * time.Minute)
+	assert.Equal(t, 1, retryOnce(t, e))
+
+	// B 的刷新在 A 标记之前提交、在 A 标记之后完成：不清除
+	_, err = e.svc.ForgetThread(ctx, "T-3")
+	require.NoError(t, err)
+	assert.Equal(t, "op-refresh-2", *staleRow(t, e, mm).RefreshOp)
+	pzA, doneA = forgetPaused("T-4", "sess-4")
+	f.setOp("op-refresh-2", "completed")
+	e.now = e.now.Add(10 * time.Minute)
+	assert.Zero(t, retryOnce(t, e), "A 的 hold 还在：不处理")
+	close(pzA.release)
+	require.NoError(t, <-doneA)
+	row = staleRow(t, e, mm)
+	require.NotNil(t, row.RefreshOp)
+	assert.Equal(t, "op-refresh-3", *row.RefreshOp, "A 自己提交的刷新")
+	e.now = e.now.Add(2 * time.Minute)
+	assert.Zero(t, retryOnce(t, e), "B 的操作已完成也不清除：令牌已变，记录上是 A 的操作")
+	assertHidden(t, e, p, mm)
+	f.setOp("op-refresh-3", "completed")
+	e.now = e.now.Add(4 * time.Minute)
+	assert.Equal(t, 1, retryOnce(t, e))
+}
+
+// 并发 B：标记之后、删除结束之前（删除在假 Hindsight 里停住），时钟走到任何退避之后，重试循环也不提交刷新
+// （这时刷新会读到删除之前的数据）；删除结束后才提交。
+func TestMemoryAdminStaleNotReadyDuringDelete(t *testing.T) {
+	ctx := context.Background()
+	e, f, _ := staleEnv(t, 1)
+	const mm = "project-conventions-prj_a"
+	pz := f.pause(http.MethodDelete, "/v1/default/banks/oryn/documents/sess-1")
+	done := make(chan error, 1)
+	go func() {
+		_, err := e.svc.ForgetThread(ctx, "T-1")
+		done <- err
+	}()
+	<-pz.entered
+	assert.Equal(t, 1, holdCount(t, e, mm), "删除进行中")
+	ids, err := e.svc.StaleModelIDs(ctx)
+	require.NoError(t, err)
+	assert.True(t, ids[mm], "删除进行中已经隐藏")
+
+	e.now = e.now.Add(10 * time.Minute)
+	assert.Zero(t, retryOnce(t, e))
+	assert.Zero(t, f.refreshCount(), "删除结束之前不提交刷新")
+
+	close(pz.release)
+	require.NoError(t, <-done)
+	f.with(func(f *admFake) { assert.Equal(t, []string{mm + ":full"}, f.refresh, "删除结束后立即提交") })
+	assert.Zero(t, holdCount(t, e, mm))
+	require.NotNil(t, staleRow(t, e, mm).RefreshOp)
+}
+
+// 并发 C：上个进程在删除中途退出，留下 hold；循环不处理该模型，新的 Service 启动时清空 hold，之后循环提交刷新。
+func TestMemoryAdminStaleRecoverAfterRestart(t *testing.T) {
+	ctx := context.Background()
+	e := newAdmEnv(t, nil)
+	f := e.withFake(t)
+	p := "PRJ_A"
+	const mm = "project-conventions-prj_a"
+	f.addModel(mm, memory.ProjectTag(p))
+	require.NoError(t, e.st.Q.InsertMemoryStaleHold(ctx, db.InsertMemoryStaleHoldParams{HoldID: "leftover", ModelID: mm, CreatedAt: e.now.Unix()}))
+	require.NoError(t, e.st.Q.UpsertMemoryStaleModel(ctx, db.UpsertMemoryStaleModelParams{ModelID: mm, ProjectID: &p, Now: e.now.Unix(), Token: "t0"}))
+
+	e.now = e.now.Add(time.Hour)
+	assert.Zero(t, retryOnce(t, e))
+	assert.Zero(t, f.refreshCount(), "有 hold 的模型不处理")
+
+	restarted := memory.New(e.cfg)
+	assert.Zero(t, holdCount(t, e, mm), "启动时清空 hold")
+	_, err := restarted.RetryStaleModels(ctx)
+	require.NoError(t, err)
+	f.with(func(f *admFake) { assert.Equal(t, []string{mm + ":full"}, f.refresh) })
+	require.NotNil(t, staleRow(t, e, mm).RefreshOp)
+	ids, err := restarted.StaleModelIDs(ctx)
+	require.NoError(t, err)
+	assert.True(t, ids[mm], "刷新完成之前仍然隐藏")
 }

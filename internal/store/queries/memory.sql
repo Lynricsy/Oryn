@@ -146,20 +146,54 @@ DELETE FROM memory_tombstones WHERE document_id = @document_id;
 
 -- ---------- stale mental models ----------
 
+-- Forget starts: store this forget's fresh token and drop any earlier refresh op.
 -- name: UpsertMemoryStaleModel :exec
-INSERT INTO memory_stale_models (model_id, project_id, refresh_op, attempts, next_attempt_at, last_error, created_at)
-VALUES (@model_id, sqlc.narg(project_id), NULL, 0, @now, NULL, @now)
+INSERT INTO memory_stale_models (model_id, project_id, refresh_op, attempts, next_attempt_at, last_error, created_at, token)
+VALUES (@model_id, sqlc.narg(project_id), NULL, 0, @now, NULL, @now, @token)
 ON CONFLICT (model_id) DO UPDATE SET
     project_id = excluded.project_id, refresh_op = NULL, attempts = 0,
-    next_attempt_at = excluded.next_attempt_at, last_error = NULL;
+    next_attempt_at = excluded.next_attempt_at, last_error = NULL, token = excluded.token;
+
+-- A delete in flight for this model: no refresh, write-back or clear while any hold exists.
+-- name: InsertMemoryStaleHold :exec
+INSERT INTO memory_stale_holds (hold_id, model_id, created_at) VALUES (@hold_id, @model_id, @created_at);
+
+-- Delete finished (success or failure): release exactly this hold; idempotent.
+-- name: ReleaseMemoryStaleHold :exec
+DELETE FROM memory_stale_holds WHERE hold_id = @hold_id;
+
+-- Startup recovery: deletes in flight ended with the previous process (single orynd instance).
+-- name: DeleteAllMemoryStaleHolds :exec
+DELETE FROM memory_stale_holds;
+
+-- name: GetMemoryStaleModel :one
+SELECT * FROM memory_stale_models WHERE model_id = @model_id;
+
+-- The row exists and no delete is in flight for the model.
+-- name: GetRefreshableMemoryStaleModel :one
+SELECT m.* FROM memory_stale_models m
+WHERE m.model_id = @model_id AND NOT EXISTS (SELECT 1 FROM memory_stale_holds h WHERE h.model_id = m.model_id);
 
 -- name: ListMemoryStaleModels :many
 SELECT * FROM memory_stale_models ORDER BY created_at, model_id;
 
--- name: RetryMemoryStaleModel :exec
+-- name: ListDueMemoryStaleModels :many
+SELECT m.* FROM memory_stale_models m
+WHERE m.next_attempt_at <= @now AND NOT EXISTS (SELECT 1 FROM memory_stale_holds h WHERE h.model_id = m.model_id)
+ORDER BY m.next_attempt_at, m.model_id;
+
+-- Write back a submit or check result; void if a newer forget marked the model (new token or new hold).
+-- name: RetryMemoryStaleModel :execrows
 UPDATE memory_stale_models SET attempts = attempts + 1, next_attempt_at = @next_attempt_at,
     refresh_op = sqlc.narg(refresh_op), last_error = sqlc.narg(last_error)
-WHERE model_id = @model_id;
+WHERE memory_stale_models.model_id = @model_id AND memory_stale_models.token = @token
+    AND NOT EXISTS (SELECT 1 FROM memory_stale_holds h WHERE h.model_id = memory_stale_models.model_id);
 
+-- Forget finished (our refresh completed or the model is gone); same voiding conditions.
+-- name: ClearMemoryStaleModel :execrows
+DELETE FROM memory_stale_models WHERE memory_stale_models.model_id = @model_id AND memory_stale_models.token = @token
+    AND NOT EXISTS (SELECT 1 FROM memory_stale_holds h WHERE h.model_id = memory_stale_models.model_id);
+
+-- The model itself was deleted (project purge): regardless of token.
 -- name: DeleteMemoryStaleModel :exec
 DELETE FROM memory_stale_models WHERE model_id = @model_id;

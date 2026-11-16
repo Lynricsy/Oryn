@@ -512,6 +512,12 @@ type MemorySetting struct {
 	UpdatedAt        int64   `json:"updatedAt"`
 }
 
+type MemoryStaleHold struct {
+	HoldID    string `json:"holdId"`
+	ModelID   string `json:"modelId"`
+	CreatedAt int64  `json:"createdAt"`
+}
+
 type MemoryStaleModel struct {
 	ModelID       string  `json:"modelId"`
 	ProjectID     *string `json:"projectId"`
@@ -520,6 +526,7 @@ type MemoryStaleModel struct {
 	NextAttemptAt int64   `json:"nextAttemptAt"`
 	LastError     *string `json:"lastError"`
 	CreatedAt     int64   `json:"createdAt"`
+	Token         string  `json:"token"`
 }
 
 type MemoryTombstone struct {

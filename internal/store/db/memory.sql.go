@@ -36,6 +36,35 @@ func (q *Queries) AddMemoryUsage(ctx context.Context, arg AddMemoryUsageParams) 
 	return err
 }
 
+const clearMemoryStaleModel = `-- name: ClearMemoryStaleModel :execrows
+DELETE FROM memory_stale_models WHERE memory_stale_models.model_id = ?1 AND memory_stale_models.token = ?2
+    AND NOT EXISTS (SELECT 1 FROM memory_stale_holds h WHERE h.model_id = memory_stale_models.model_id)
+`
+
+type ClearMemoryStaleModelParams struct {
+	ModelID string `json:"modelId"`
+	Token   string `json:"token"`
+}
+
+// Forget finished (our refresh completed or the model is gone); same voiding conditions.
+func (q *Queries) ClearMemoryStaleModel(ctx context.Context, arg ClearMemoryStaleModelParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, clearMemoryStaleModel, arg.ModelID, arg.Token)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteAllMemoryStaleHolds = `-- name: DeleteAllMemoryStaleHolds :exec
+DELETE FROM memory_stale_holds
+`
+
+// Startup recovery: deletes in flight ended with the previous process (single orynd instance).
+func (q *Queries) DeleteAllMemoryStaleHolds(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, deleteAllMemoryStaleHolds)
+	return err
+}
+
 const deleteMemoryCandidate = `-- name: DeleteMemoryCandidate :execrows
 DELETE FROM memory_candidates WHERE id = ?1
 `
@@ -82,6 +111,7 @@ const deleteMemoryStaleModel = `-- name: DeleteMemoryStaleModel :exec
 DELETE FROM memory_stale_models WHERE model_id = ?1
 `
 
+// The model itself was deleted (project purge): regardless of token.
 func (q *Queries) DeleteMemoryStaleModel(ctx context.Context, modelID string) error {
 	_, err := q.db.ExecContext(ctx, deleteMemoryStaleModel, modelID)
 	return err
@@ -168,6 +198,48 @@ func (q *Queries) GetMemorySettings(ctx context.Context) (MemorySetting, error) 
 	return i, err
 }
 
+const getMemoryStaleModel = `-- name: GetMemoryStaleModel :one
+SELECT model_id, project_id, refresh_op, attempts, next_attempt_at, last_error, created_at, token FROM memory_stale_models WHERE model_id = ?1
+`
+
+func (q *Queries) GetMemoryStaleModel(ctx context.Context, modelID string) (MemoryStaleModel, error) {
+	row := q.db.QueryRowContext(ctx, getMemoryStaleModel, modelID)
+	var i MemoryStaleModel
+	err := row.Scan(
+		&i.ModelID,
+		&i.ProjectID,
+		&i.RefreshOp,
+		&i.Attempts,
+		&i.NextAttemptAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.Token,
+	)
+	return i, err
+}
+
+const getRefreshableMemoryStaleModel = `-- name: GetRefreshableMemoryStaleModel :one
+SELECT m.model_id, m.project_id, m.refresh_op, m.attempts, m.next_attempt_at, m.last_error, m.created_at, m.token FROM memory_stale_models m
+WHERE m.model_id = ?1 AND NOT EXISTS (SELECT 1 FROM memory_stale_holds h WHERE h.model_id = m.model_id)
+`
+
+// The row exists and no delete is in flight for the model.
+func (q *Queries) GetRefreshableMemoryStaleModel(ctx context.Context, modelID string) (MemoryStaleModel, error) {
+	row := q.db.QueryRowContext(ctx, getRefreshableMemoryStaleModel, modelID)
+	var i MemoryStaleModel
+	err := row.Scan(
+		&i.ModelID,
+		&i.ProjectID,
+		&i.RefreshOp,
+		&i.Attempts,
+		&i.NextAttemptAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.Token,
+	)
+	return i, err
+}
+
 const insertMemoryCandidate = `-- name: InsertMemoryCandidate :exec
 
 INSERT INTO memory_candidates (id, content, context, source_thread_id, source_project_id, created_at)
@@ -194,6 +266,22 @@ func (q *Queries) InsertMemoryCandidate(ctx context.Context, arg InsertMemoryCan
 		arg.SourceProjectID,
 		arg.CreatedAt,
 	)
+	return err
+}
+
+const insertMemoryStaleHold = `-- name: InsertMemoryStaleHold :exec
+INSERT INTO memory_stale_holds (hold_id, model_id, created_at) VALUES (?1, ?2, ?3)
+`
+
+type InsertMemoryStaleHoldParams struct {
+	HoldID    string `json:"holdId"`
+	ModelID   string `json:"modelId"`
+	CreatedAt int64  `json:"createdAt"`
+}
+
+// A delete in flight for this model: no refresh, write-back or clear while any hold exists.
+func (q *Queries) InsertMemoryStaleHold(ctx context.Context, arg InsertMemoryStaleHoldParams) error {
+	_, err := q.db.ExecContext(ctx, insertMemoryStaleHold, arg.HoldID, arg.ModelID, arg.CreatedAt)
 	return err
 }
 
@@ -241,6 +329,44 @@ func (q *Queries) ListAllMemoryDocumentIDsByProject(ctx context.Context, project
 			return nil, err
 		}
 		items = append(items, document_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDueMemoryStaleModels = `-- name: ListDueMemoryStaleModels :many
+SELECT m.model_id, m.project_id, m.refresh_op, m.attempts, m.next_attempt_at, m.last_error, m.created_at, m.token FROM memory_stale_models m
+WHERE m.next_attempt_at <= ?1 AND NOT EXISTS (SELECT 1 FROM memory_stale_holds h WHERE h.model_id = m.model_id)
+ORDER BY m.next_attempt_at, m.model_id
+`
+
+func (q *Queries) ListDueMemoryStaleModels(ctx context.Context, now int64) ([]MemoryStaleModel, error) {
+	rows, err := q.db.QueryContext(ctx, listDueMemoryStaleModels, now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []MemoryStaleModel{}
+	for rows.Next() {
+		var i MemoryStaleModel
+		if err := rows.Scan(
+			&i.ModelID,
+			&i.ProjectID,
+			&i.RefreshOp,
+			&i.Attempts,
+			&i.NextAttemptAt,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.Token,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -534,7 +660,7 @@ func (q *Queries) ListMemoryProjects(ctx context.Context) ([]MemoryProject, erro
 }
 
 const listMemoryStaleModels = `-- name: ListMemoryStaleModels :many
-SELECT model_id, project_id, refresh_op, attempts, next_attempt_at, last_error, created_at FROM memory_stale_models ORDER BY created_at, model_id
+SELECT model_id, project_id, refresh_op, attempts, next_attempt_at, last_error, created_at, token FROM memory_stale_models ORDER BY created_at, model_id
 `
 
 func (q *Queries) ListMemoryStaleModels(ctx context.Context) ([]MemoryStaleModel, error) {
@@ -554,6 +680,7 @@ func (q *Queries) ListMemoryStaleModels(ctx context.Context) ([]MemoryStaleModel
 			&i.NextAttemptAt,
 			&i.LastError,
 			&i.CreatedAt,
+			&i.Token,
 		); err != nil {
 			return nil, err
 		}
@@ -611,10 +738,21 @@ func (q *Queries) PruneMemoryUsage(ctx context.Context, before int64) error {
 	return err
 }
 
-const retryMemoryStaleModel = `-- name: RetryMemoryStaleModel :exec
+const releaseMemoryStaleHold = `-- name: ReleaseMemoryStaleHold :exec
+DELETE FROM memory_stale_holds WHERE hold_id = ?1
+`
+
+// Delete finished (success or failure): release exactly this hold; idempotent.
+func (q *Queries) ReleaseMemoryStaleHold(ctx context.Context, holdID string) error {
+	_, err := q.db.ExecContext(ctx, releaseMemoryStaleHold, holdID)
+	return err
+}
+
+const retryMemoryStaleModel = `-- name: RetryMemoryStaleModel :execrows
 UPDATE memory_stale_models SET attempts = attempts + 1, next_attempt_at = ?1,
     refresh_op = ?2, last_error = ?3
-WHERE model_id = ?4
+WHERE memory_stale_models.model_id = ?4 AND memory_stale_models.token = ?5
+    AND NOT EXISTS (SELECT 1 FROM memory_stale_holds h WHERE h.model_id = memory_stale_models.model_id)
 `
 
 type RetryMemoryStaleModelParams struct {
@@ -622,16 +760,22 @@ type RetryMemoryStaleModelParams struct {
 	RefreshOp     *string `json:"refreshOp"`
 	LastError     *string `json:"lastError"`
 	ModelID       string  `json:"modelId"`
+	Token         string  `json:"token"`
 }
 
-func (q *Queries) RetryMemoryStaleModel(ctx context.Context, arg RetryMemoryStaleModelParams) error {
-	_, err := q.db.ExecContext(ctx, retryMemoryStaleModel,
+// Write back a submit or check result; void if a newer forget marked the model (new token or new hold).
+func (q *Queries) RetryMemoryStaleModel(ctx context.Context, arg RetryMemoryStaleModelParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, retryMemoryStaleModel,
 		arg.NextAttemptAt,
 		arg.RefreshOp,
 		arg.LastError,
 		arg.ModelID,
+		arg.Token,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const retryMemoryTombstone = `-- name: RetryMemoryTombstone :exec
@@ -854,21 +998,28 @@ func (q *Queries) UpsertMemorySettings(ctx context.Context, arg UpsertMemorySett
 
 const upsertMemoryStaleModel = `-- name: UpsertMemoryStaleModel :exec
 
-INSERT INTO memory_stale_models (model_id, project_id, refresh_op, attempts, next_attempt_at, last_error, created_at)
-VALUES (?1, ?2, NULL, 0, ?3, NULL, ?3)
+INSERT INTO memory_stale_models (model_id, project_id, refresh_op, attempts, next_attempt_at, last_error, created_at, token)
+VALUES (?1, ?2, NULL, 0, ?3, NULL, ?3, ?4)
 ON CONFLICT (model_id) DO UPDATE SET
     project_id = excluded.project_id, refresh_op = NULL, attempts = 0,
-    next_attempt_at = excluded.next_attempt_at, last_error = NULL
+    next_attempt_at = excluded.next_attempt_at, last_error = NULL, token = excluded.token
 `
 
 type UpsertMemoryStaleModelParams struct {
 	ModelID   string  `json:"modelId"`
 	ProjectID *string `json:"projectId"`
 	Now       int64   `json:"now"`
+	Token     string  `json:"token"`
 }
 
 // ---------- stale mental models ----------
+// Forget starts: store this forget's fresh token and drop any earlier refresh op.
 func (q *Queries) UpsertMemoryStaleModel(ctx context.Context, arg UpsertMemoryStaleModelParams) error {
-	_, err := q.db.ExecContext(ctx, upsertMemoryStaleModel, arg.ModelID, arg.ProjectID, arg.Now)
+	_, err := q.db.ExecContext(ctx, upsertMemoryStaleModel,
+		arg.ModelID,
+		arg.ProjectID,
+		arg.Now,
+		arg.Token,
+	)
 	return err
 }

@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -66,7 +67,8 @@ type Service struct {
 	cfg Config
 }
 
-// New 构造记忆服务。
+// New 构造记忆服务。构造时清空上个进程留下的删除 hold（见 RecoverStaleModels），这发生在本进程
+// 处理任何遗忘请求之前。
 func New(cfg Config) *Service {
 	if cfg.HTTP == nil {
 		cfg.HTTP = http.DefaultClient
@@ -75,7 +77,13 @@ func New(cfg Config) *Service {
 		cfg.Now = time.Now
 	}
 	cfg.PublicURL = strings.TrimRight(cfg.PublicURL, "/")
-	return &Service{cfg: cfg}
+	s := &Service{cfg: cfg}
+	if cfg.Q != nil {
+		if err := s.RecoverStaleModels(context.Background()); err != nil {
+			slog.Warn("清空上次退出时进行中的记忆删除 hold 失败", "err", err)
+		}
+	}
+	return s
 }
 
 // Error 是带 HTTP 状态与错误码的领域错误。

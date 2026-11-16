@@ -427,12 +427,16 @@ func (s *Service) DeleteDocument(ctx context.Context, docID string) error {
 	default:
 		return err
 	}
-	stale, err := s.markStale(ctx, c, scopes)
+	marks, err := s.markStale(ctx, c, scopes)
 	if err != nil {
 		return errUpstream("标记待刷新的 mental model", err)
 	}
-	if err := c.deleteDocument(ctx, docID); err != nil {
-		return errUpstream("删除记忆", err)
+	// 删除结束（成功或失败）才释放 hold；defer 兜底，任何返回路径都释放
+	defer s.releaseStale(ctx, marks)
+	derr := c.deleteDocument(ctx, docID)
+	s.releaseStale(ctx, marks)
+	if derr != nil {
+		return errUpstream("删除记忆", derr)
 	}
 	if _, err := s.cfg.Q.DeleteMemoryDocument(ctx, docID); err != nil {
 		return err
@@ -440,7 +444,7 @@ func (s *Service) DeleteDocument(ctx context.Context, docID string) error {
 	if err := s.cfg.Q.DeleteMemoryTombstone(ctx, docID); err != nil {
 		return err
 	}
-	s.refreshStale(ctx, c, stale)
+	s.refreshStale(ctx, c, marks)
 	return nil
 }
 
@@ -569,14 +573,18 @@ func (s *Service) writeGlobal(ctx context.Context, docID, content string, contex
 	}
 	ctx, cancel := context.WithTimeout(ctx, adminTimeout)
 	defer cancel()
-	var stale []string
+	var marks []staleMark
 	if replace {
-		if stale, err = s.markStale(ctx, c, forgetScopes{GlobalTag: nil}); err != nil {
+		if marks, err = s.markStale(ctx, c, forgetScopes{GlobalTag: nil}); err != nil {
 			return apigen.MemoryDocument{}, errUpstream("标记待刷新的 mental model", err)
 		}
+		// 改写结束（成功或失败）才释放 hold；defer 兜底
+		defer s.releaseStale(ctx, marks)
 	}
-	if err := c.retainGlobal(ctx, docID, content, context_); err != nil {
-		return apigen.MemoryDocument{}, errUpstream("写入全局记忆", err)
+	rerr := c.retainGlobal(ctx, docID, content, context_)
+	s.releaseStale(ctx, marks)
+	if rerr != nil {
+		return apigen.MemoryDocument{}, errUpstream("写入全局记忆", rerr)
 	}
 	now := s.cfg.Now().Unix()
 	if err := s.cfg.Q.UpsertMemoryDocument(ctx, db.UpsertMemoryDocumentParams{DocumentID: docID, Now: now}); err != nil {
@@ -587,7 +595,7 @@ func (s *Service) writeGlobal(ctx context.Context, docID, content string, contex
 		created = row.CreatedAt
 	}
 	if replace {
-		s.refreshStale(ctx, c, stale)
+		s.refreshStale(ctx, c, marks)
 	} else {
 		s.refreshScopes(ctx, c, map[string]bool{GlobalTag: true}, false)
 	}

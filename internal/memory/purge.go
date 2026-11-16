@@ -64,14 +64,16 @@ func (s *Service) deleteDocuments(ctx context.Context, docs []tombstoneTarget, r
 	c, cerr := s.admin(ctx)
 	hctx, cancel := context.WithTimeout(ctx, purgeTimeout)
 	defer cancel()
-	var stale []string
+	var marks []staleMark
 	if cerr == nil {
 		scopes := forgetScopes{}
 		for _, d := range docs {
 			scopes.add(d.projectID)
 		}
-		stale, cerr = s.markStale(hctx, c, scopes)
+		marks, cerr = s.markStale(hctx, c, scopes)
 	}
+	// 删除全部结束（成功或失败）才释放 hold；defer 兜底，任何返回路径都释放
+	defer s.releaseStale(ctx, marks)
 	deleted, pending := 0, 0
 	for _, d := range docs {
 		err := cerr
@@ -90,8 +92,9 @@ func (s *Service) deleteDocuments(ctx context.Context, docs []tombstoneTarget, r
 			return deleted, pending, err
 		}
 	}
+	s.releaseStale(ctx, marks)
 	if refresh && deleted > 0 {
-		s.refreshStale(hctx, c, stale)
+		s.refreshStale(hctx, c, marks)
 	}
 	return deleted, pending, nil
 }
@@ -209,11 +212,13 @@ func (s *Service) RetryTombstones(ctx context.Context) (int, error) {
 			scopes.add(t.ProjectID)
 		}
 	}
-	var stale []string
+	var marks []staleMark
 	var markErr error
 	if len(scopes) > 0 {
-		stale, markErr = s.markStale(hctx, c, scopes)
+		marks, markErr = s.markStale(hctx, c, scopes)
 	}
+	// 本轮删除全部结束才释放 hold；defer 兜底
+	defer s.releaseStale(ctx, marks)
 	done, docsDeleted := 0, 0
 	for _, t := range due {
 		target := tombstoneTarget{id: t.DocumentID, projectID: t.ProjectID}
@@ -247,8 +252,9 @@ func (s *Service) RetryTombstones(ctx context.Context) (int, error) {
 			docsDeleted++
 		}
 	}
+	s.releaseStale(ctx, marks)
 	if docsDeleted > 0 {
-		s.refreshStale(hctx, c, stale)
+		s.refreshStale(hctx, c, marks)
 	}
 	return done, nil
 }
