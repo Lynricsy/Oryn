@@ -187,7 +187,7 @@ func (s *Service) SampleCommits(ctx context.Context, threadID string) error {
 	// orbd 的应答不可信：sha 格式或时间不合法的行丢弃
 	minTs := t.CreatedAt - commitTsBefore.Milliseconds()
 	maxTs := s.Now() + commitTsAfter.Milliseconds()
-	return s.st.Tx(ctx, func(q *db.Queries) error {
+	err = s.st.Tx(ctx, func(q *db.Queries) error {
 		if err := q.DeleteThreadCommits(ctx, threadID); err != nil {
 			return err
 		}
@@ -209,6 +209,17 @@ func (s *Service) SampleCommits(ctx context.Context, threadID string) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	if s.cfg.CommitsSampled != nil {
+		head := ""
+		if st.Head != nil {
+			head = *st.Head
+		}
+		s.cfg.CommitsSampled(threadID, head)
+	}
+	return nil
 }
 
 // gitGet 经 orb 的 fs 流 GET orbd 的 git 接口并解析 JSON 应答；cwd 非空时带 X-Oryn-Workdir。

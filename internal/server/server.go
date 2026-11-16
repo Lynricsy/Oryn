@@ -245,8 +245,11 @@ func (s *Server) init(ctx context.Context) error {
 	// orb 的 setup 计划与出站代理：绑定项目的 orb 下发 gh 登录名、按仓库收窄的令牌与提交身份
 	setup.GitHub = s.GitHub
 	s.Orbs.SetGitHub(s.GitHub)
-	// M10：统计（提交采样观察线程转入 idle；预算告警经 notify 的系统通知送达）
-	s.Stats = stats.New(stats.Config{Now: statsNow, Retention: cfg.Stats.Retention, BudgetInterval: statsBudgetInterval}, s.Store, s.Orbs, s.Notify)
+	// M10：统计（提交采样观察线程转入 idle；预算告警经 notify 的系统通知送达）；M14：采样落库后按提交关联 GitHub PR
+	s.Stats = stats.New(stats.Config{
+		Now: statsNow, Retention: cfg.Stats.Retention, BudgetInterval: statsBudgetInterval, CommitsSampled: s.GitHub.ThreadCommitsSampled,
+	}, s.Store, s.Orbs, s.Notify)
+	s.GitHub.SetSampler(s.Stats)
 	s.Threads.AddObserver(s.Stats)
 	home := s.Home
 	s.Share = share.New(share.Config{PublicURL: cfg.PublicURL, RoleNames: func() map[string]string {

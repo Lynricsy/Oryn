@@ -30,20 +30,9 @@ func (a *stubAttachments) Upload(_ context.Context, name, threadID string, r io.
 	return db.Attachment{ID: "att_x", Name: name, Mime: "text/markdown", Size: int64(len(b))}, nil
 }
 
-// boundWidgets 建一个绑定到 acme/widgets（id 42）的项目。
-func (e *testEnv) boundWidgets() string {
-	e.t.Helper()
-	e.installApp()
-	e.widgets()
-	id := e.project("https://github.com/acme/widgets")
-	require.NoError(e.t, e.s.BindProject(e.ctx, id))
-	require.NotNil(e.t, e.getProject(id).GithubInstallationID)
-	return id
-}
-
 func TestListRefs(t *testing.T) {
 	e := newEnv(t)
-	prj := e.boundWidgets()
+	prj := e.boundProject()
 	t0 := time.Date(2026, 11, 16, 8, 0, 0, 0, time.UTC)
 	e.fake.AddIssue(githubtest.Issue{RepoID: 42, Number: 7, Title: "Login broken", Author: "alice", UpdatedAt: t0})
 	e.fake.AddIssue(githubtest.Issue{RepoID: 42, Number: 3, Title: "Old", State: "closed", UpdatedAt: t0})
@@ -156,7 +145,7 @@ func TestAttachRef(t *testing.T) {
 	e := newEnv(t)
 	att := &stubAttachments{}
 	e.s.att = att
-	prj := e.boundWidgets()
+	prj := e.boundProject()
 	e.fake.AddPull(githubtest.Pull{
 		Issue: githubtest.Issue{RepoID: 42, Number: 12, Title: "Fix login", Body: "desc", Author: "carol"},
 		HeadRef: "fix-login", Additions: 3, Deletions: 1, ChangedFiles: 2,

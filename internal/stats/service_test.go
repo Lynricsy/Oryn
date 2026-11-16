@@ -175,6 +175,21 @@ func TestSampleCommitsWithBase(t *testing.T) {
 	assert.Equal(t, []string{"orb-1 /git/status?base=main&scope=uncommitted", "orb-1 /git/commits?base=main&limit=200"}, o.requests())
 }
 
+// 采样成功落库后回调 CommitsSampled（M14），带上 /git/status 的 head。
+func TestSampleCommitsCallback(t *testing.T) {
+	status := `{"repo":true,"head":"` + sha1B + `","base":{"name":"main","ref":"refs/remotes/origin/main"},"files":[],"scope":"uncommitted","truncated":false}`
+	o := &fakeOrbs{status: status, commits: commitsJSON}
+	var got []string
+	f, s := commitFixtureCfg(t, o, Config{CommitsSampled: func(thread, head string) { got = append(got, thread+" "+head) }}, nil)
+	require.NoError(t, s.SampleCommits(f.ctx, "W"))
+	assert.Equal(t, []string{"W " + sha1B}, got)
+	assert.Equal(t, []string{sha1A, sha1B}, commitRows(t, f, "W"), "回调时提交已落库")
+
+	o.status = statusWithBase
+	require.NoError(t, s.SampleCommits(f.ctx, "W"))
+	assert.Equal(t, []string{"W " + sha1B, "W "}, got, "没有 head 时为空串")
+}
+
 // runner 线程（M11b）：采样提交的 git 请求带线程的工作目录；普通线程不带。
 func TestSampleCommitsWorkdir(t *testing.T) {
 	o := &fakeOrbs{status: statusWithBase, commits: commitsJSON}

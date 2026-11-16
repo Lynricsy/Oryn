@@ -45,6 +45,8 @@ type Config struct {
 	BudgetInterval time.Duration
 	// SampleDelay 是线程转入 idle 后到提交采样的去抖时长（默认 5s）。
 	SampleDelay time.Duration
+	// CommitsSampled 在一次提交采样成功落库后调用（M14：按提交关联 GitHub PR）；head 是采样时的 HEAD，没有为空串。
+	CommitsSampled func(threadID, head string)
 }
 
 // OrbClient 是提交采样用到的 orb 服务（*orbs.Service 实现）。计划里叫 Orbs，与 orb 统计函数 Orbs 同名，故改名。

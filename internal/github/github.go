@@ -122,6 +122,9 @@ type Service struct {
 	repoLists  map[[32]byte]repoListEntry // 用户令牌的 sha256 → 仓库列表（步骤 2.2，惰性初始化）
 	perms      map[permKey]permEntry      // (仓库 id, 登录名) → 是否有写权限（步骤 4.3，惰性初始化）
 
+	// PR 跟踪（步骤 5.1，受 mu 保护，惰性初始化）：线程 → 上次按 HEAD 反查过 PR 的 sha。
+	sampledHeads map[string]string
+
 	// 事件分发（步骤 4.1）：处理器注册表、任务队列、队列中 / 处理中的投递 guid。
 	handlers map[string]handler
 	jobs     chan func(ctx context.Context)
