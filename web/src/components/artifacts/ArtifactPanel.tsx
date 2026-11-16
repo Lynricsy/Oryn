@@ -1,7 +1,8 @@
 /**
  * 右面板的 Artifacts 标签（计划 M14 2.4）：一行工具条（`h-11`，`role="toolbar"`）——左侧是 artifact 切换菜单
- * （类型图标 + 标题，列出该线程的全部），右侧是查看器的重新加载 / 在浏览器中打开与「放大查看」（跳到 `/artifacts/<id>`）；
- * 下面是 `ArtifactViewer variant="panel"`。工具条与查看器顶栏合成一行（切换菜单换掉查看器的图标与标题）。
+ * （类型图标 + 标题，列出该线程的全部），右侧是查看器的版本历史 / 重新加载 / 在浏览器中打开与「放大查看」（跳到 `/artifacts/<id>`）；
+ * 下面是 `ArtifactViewer variant="panel"`。工具条与查看器顶栏合成一行（切换菜单换掉查看器的图标与标题），
+ * 查看器的更多菜单里「打开线程」不指向本线程。
  * 选中项（`artifactSel`）不在该线程的列表里时取最近更新的一个。
  */
 import type { ReactNode } from "react";
@@ -78,6 +79,7 @@ export default function ArtifactPanel({
 				artifactId={currentId}
 				variant="panel"
 				lead={lead}
+				threadId={threadId}
 				actions={
 					<IconButton
 						icon="maximize"
