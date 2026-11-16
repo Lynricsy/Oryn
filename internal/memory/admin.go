@@ -160,13 +160,18 @@ func (c adminClient) listMentalModels(ctx context.Context, tag string, detail st
 	return items, nil
 }
 
-// refreshMentalModel 提交一次异步刷新；full 为真时从头重新生成（删除记忆后用，避免增量刷新保留已删除的内容）。
-func (c adminClient) refreshMentalModel(ctx context.Context, id string, full bool) error {
+// refreshMentalModel 提交一次异步刷新，返回 Hindsight 的 operation id；full 为真时从头重新生成
+// （删除记忆后用，避免增量刷新保留已删除的内容）。
+func (c adminClient) refreshMentalModel(ctx context.Context, id string, full bool) (string, error) {
 	body := map[string]any{}
 	if full {
 		body["mode"] = "full"
 	}
-	return c.call(ctx, http.MethodPost, mmPath(id)+"/refresh", body, nil)
+	var resp struct {
+		OperationID string `json:"operation_id"`
+	}
+	err := c.call(ctx, http.MethodPost, mmPath(id)+"/refresh", body, &resp)
+	return resp.OperationID, err
 }
 
 // deleteMentalModel 删除 mental model；不存在（404）也算成功。
@@ -254,7 +259,7 @@ func (s *Service) refreshScopes(ctx context.Context, c adminClient, tags map[str
 		if tag == GlobalTag {
 			created, err := c.ensureUserPrefs(ctx)
 			if err == nil && !created {
-				err = c.refreshMentalModel(ctx, UserPrefsModelID, full)
+				_, err = c.refreshMentalModel(ctx, UserPrefsModelID, full)
 			}
 			if err != nil {
 				slog.Warn("刷新 user-preferences 失败", "err", err)
@@ -267,7 +272,7 @@ func (s *Service) refreshScopes(ctx context.Context, c adminClient, tags map[str
 			continue
 		}
 		for _, m := range models {
-			if err := c.refreshMentalModel(ctx, m.ID, full); err != nil {
+			if _, err := c.refreshMentalModel(ctx, m.ID, full); err != nil {
 				slog.Warn("刷新 mental model 失败", "model", m.ID, "err", err)
 			}
 		}
@@ -392,8 +397,8 @@ func (s *Service) Search(ctx context.Context, q string, projectID *string) (apig
 	return out, nil
 }
 
-// DeleteDocument 删除一个 document（连同派生记忆），并刷新它所在范围的 mental model（R19）。
-// 归属先查 memory_documents，查不到再看 Hindsight 里的标签；两边都没有时 404。
+// DeleteDocument 删除一个 document（连同派生记忆），并让它所在范围的 mental model 在全量刷新前对 orb 隐藏（R19）。
+// 归属先查 memory_documents，查不到再看 Hindsight 里的标签；两边都没有时 404。标记失败时不删除。
 func (s *Service) DeleteDocument(ctx context.Context, docID string) error {
 	c, err := s.admin(ctx)
 	if err != nil {
@@ -401,11 +406,11 @@ func (s *Service) DeleteDocument(ctx context.Context, docID string) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, adminTimeout)
 	defer cancel()
-	tags := map[string]bool{}
+	scopes := forgetScopes{}
 	row, err := s.cfg.Q.GetMemoryDocument(ctx, docID)
 	switch {
 	case err == nil:
-		tags[scopeTag(row.ProjectID)] = true
+		scopes.add(row.ProjectID)
 	case errors.Is(err, sql.ErrNoRows):
 		doc, err := c.getDocument(ctx, docID)
 		if statusOf(err) == http.StatusNotFound {
@@ -416,11 +421,15 @@ func (s *Service) DeleteDocument(ctx context.Context, docID string) error {
 		}
 		for _, t := range doc.Tags {
 			if t == GlobalTag || strings.HasPrefix(t, "project:") {
-				tags[t] = true
+				scopes[t] = nil
 			}
 		}
 	default:
 		return err
+	}
+	stale, err := s.markStale(ctx, c, scopes)
+	if err != nil {
+		return errUpstream("标记待刷新的 mental model", err)
 	}
 	if err := c.deleteDocument(ctx, docID); err != nil {
 		return errUpstream("删除记忆", err)
@@ -431,12 +440,12 @@ func (s *Service) DeleteDocument(ctx context.Context, docID string) error {
 	if err := s.cfg.Q.DeleteMemoryTombstone(ctx, docID); err != nil {
 		return err
 	}
-	s.refreshScopes(ctx, c, tags, true)
+	s.refreshStale(ctx, c, stale)
 	return nil
 }
 
 // ForgetThread 删除该线程写入的全部 document（memory_documents 里记到这个线程的），其它线程的不动（R19）。
-// 删除失败的进入重试队列计入 pending；完成后刷新受影响项目的 mental model。
+// 删除失败的进入重试队列计入 pending；受影响项目的 mental model 在全量刷新前对 orb 隐藏。
 func (s *Service) ForgetThread(ctx context.Context, threadID string) (apigen.MemoryForgetResult, error) {
 	rows, err := s.cfg.Q.ListMemoryDocumentsByThread(ctx, &threadID)
 	if err != nil {
@@ -449,26 +458,11 @@ func (s *Service) ForgetThread(ctx context.Context, threadID string) (apigen.Mem
 	for _, r := range rows {
 		docs = append(docs, tombstoneTarget{id: r.DocumentID, projectID: r.ProjectID})
 	}
-	deleted, pending, tags, err := s.deleteDocuments(ctx, docs)
+	deleted, pending, err := s.deleteDocuments(ctx, docs, true)
 	if err != nil {
 		return apigen.MemoryForgetResult{}, err
 	}
-	return apigen.MemoryForgetResult{Deleted: deleted, Pending: pending}, s.refreshAfter(ctx, tags)
-}
-
-// refreshAfter 在删除后刷新受影响的 mental model（Hindsight 不可用时跳过：重试队列成功后会再刷新）。
-func (s *Service) refreshAfter(ctx context.Context, tags map[string]bool) error {
-	if len(tags) == 0 {
-		return nil
-	}
-	c, err := s.admin(ctx)
-	if err != nil {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(ctx, adminTimeout)
-	defer cancel()
-	s.refreshScopes(ctx, c, tags, true)
-	return nil
+	return apigen.MemoryForgetResult{Deleted: deleted, Pending: pending}, nil
 }
 
 // ListCandidates 列出待批准的全局候选（新的在前）。
@@ -561,8 +555,9 @@ func (s *Service) UpdateGlobal(ctx context.Context, docID, content string) (apig
 // newGlobalDocID 是管理页写入的 document id：`oryn-<ulid>`。
 func newGlobalDocID() string { return "oryn-" + strings.TrimPrefix(ids.New("x"), "x_") }
 
-// writeGlobal 以标签 `oryn:global` 写入（或以 replace 重写）一条全局记忆，记进 memory_documents（project 为 NULL），
-// 然后刷新 user-preferences（改写时从头刷新，旧内容的事实已被替换）。
+// writeGlobal 以标签 `oryn:global` 写入（或以 replace 重写）一条全局记忆，记进 memory_documents（project 为 NULL）。
+// 新建只增加内容，随后刷新 user-preferences；replace 会删掉旧内容的事实，属于遗忘：写入之前先把全局模型标为待刷新
+// （标记失败时不写），写入后提交全量刷新。
 func (s *Service) writeGlobal(ctx context.Context, docID, content string, context_ *string, replace bool) (apigen.MemoryDocument, error) {
 	content = strings.TrimSpace(content)
 	if content == "" || len([]rune(content)) > 4000 {
@@ -574,6 +569,12 @@ func (s *Service) writeGlobal(ctx context.Context, docID, content string, contex
 	}
 	ctx, cancel := context.WithTimeout(ctx, adminTimeout)
 	defer cancel()
+	var stale []string
+	if replace {
+		if stale, err = s.markStale(ctx, c, forgetScopes{GlobalTag: nil}); err != nil {
+			return apigen.MemoryDocument{}, errUpstream("标记待刷新的 mental model", err)
+		}
+	}
 	if err := c.retainGlobal(ctx, docID, content, context_); err != nil {
 		return apigen.MemoryDocument{}, errUpstream("写入全局记忆", err)
 	}
@@ -585,7 +586,11 @@ func (s *Service) writeGlobal(ctx context.Context, docID, content string, contex
 	if row, err := s.cfg.Q.GetMemoryDocument(ctx, docID); err == nil {
 		created = row.CreatedAt
 	}
-	s.refreshScopes(ctx, c, map[string]bool{GlobalTag: true}, replace)
+	if replace {
+		s.refreshStale(ctx, c, stale)
+	} else {
+		s.refreshScopes(ctx, c, map[string]bool{GlobalTag: true}, false)
+	}
 	return apigen.MemoryDocument{ID: docID, Preview: preview(content), Content: &content, CreatedAt: created, UpdatedAt: now}, nil
 }
 
@@ -634,7 +639,7 @@ func (s *Service) RefreshMentalModel(ctx context.Context, id string) error {
 			return nil
 		}
 	}
-	err = c.refreshMentalModel(ctx, id, false)
+	_, err = c.refreshMentalModel(ctx, id, false)
 	if statusOf(err) == http.StatusNotFound {
 		return errNotFound("mental model 不存在")
 	}
@@ -782,17 +787,32 @@ func (s *Service) OpenExport(ctx context.Context, id string) (ExportArchive, err
 	return ExportArchive{Body: resp.Body, Size: resp.ContentLength, Filename: "oryn-memory-" + id + ".zip"}, nil
 }
 
-// ListPendingDeletes 列出删除失败、等待重试的条目（R23）。
+// ListPendingDeletes 列出删除失败、等待重试的条目（R23），以及遗忘之后仍在等待全量刷新的 mental model
+// （documentId 为 `mental-model-refresh:<模型 id>`）：它们在列表里说明遗忘尚未彻底完成。
 func (s *Service) ListPendingDeletes(ctx context.Context) (apigen.MemoryPendingDeleteList, error) {
 	rows, err := s.cfg.Q.ListMemoryTombstones(ctx)
 	if err != nil {
 		return apigen.MemoryPendingDeleteList{}, err
 	}
-	out := apigen.MemoryPendingDeleteList{Items: make([]apigen.MemoryPendingDelete, 0, len(rows))}
+	stale, err := s.cfg.Q.ListMemoryStaleModels(ctx)
+	if err != nil {
+		return apigen.MemoryPendingDeleteList{}, err
+	}
+	out := apigen.MemoryPendingDeleteList{Items: make([]apigen.MemoryPendingDelete, 0, len(rows)+len(stale))}
 	for _, r := range rows {
 		out.Items = append(out.Items, apigen.MemoryPendingDelete{
 			DocumentID: r.DocumentID, ProjectID: r.ProjectID, Attempts: int(r.Attempts),
 			NextAttemptAt: r.NextAttemptAt, LastError: r.LastError,
+		})
+	}
+	for _, r := range stale {
+		reason := staleReason
+		if r.LastError != nil {
+			reason += "（上次提交刷新失败：" + *r.LastError + "）"
+		}
+		out.Items = append(out.Items, apigen.MemoryPendingDelete{
+			DocumentID: staleRefreshPrefix + r.ModelID, ProjectID: r.ProjectID, Attempts: int(r.Attempts),
+			NextAttemptAt: r.NextAttemptAt, LastError: &reason,
 		})
 	}
 	return out, nil

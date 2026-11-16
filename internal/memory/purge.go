@@ -55,13 +55,24 @@ func (s *Service) tombstone(ctx context.Context, t tombstoneTarget, cause error)
 }
 
 // deleteDocuments 逐个删除 document：成功的删掉 memory_documents 行；失败的（含未配置、Hindsight 不可用）写进重试队列后
-// 也删掉行，由墓碑接管。返回删除数、进入队列数，以及删除成功的 document 所在范围的标签（供刷新 mental model）。
-func (s *Service) deleteDocuments(ctx context.Context, docs []tombstoneTarget) (int, int, map[string]bool, error) {
+// 也删掉行，由墓碑接管。删除之前先把受影响范围的 mental model 标为待刷新，标记失败时一个都不删（全部进重试队列，
+// 重试时再标记）。refresh 为真时，有删除成功就立即对标记的模型提交全量刷新。返回删除数与进入队列数。
+func (s *Service) deleteDocuments(ctx context.Context, docs []tombstoneTarget, refresh bool) (int, int, error) {
+	if len(docs) == 0 {
+		return 0, 0, nil
+	}
 	c, cerr := s.admin(ctx)
 	hctx, cancel := context.WithTimeout(ctx, purgeTimeout)
 	defer cancel()
+	var stale []string
+	if cerr == nil {
+		scopes := forgetScopes{}
+		for _, d := range docs {
+			scopes.add(d.projectID)
+		}
+		stale, cerr = s.markStale(hctx, c, scopes)
+	}
 	deleted, pending := 0, 0
-	tags := map[string]bool{}
 	for _, d := range docs {
 		err := cerr
 		if err == nil {
@@ -69,18 +80,20 @@ func (s *Service) deleteDocuments(ctx context.Context, docs []tombstoneTarget) (
 		}
 		if err != nil {
 			if err := s.tombstone(ctx, d, err); err != nil {
-				return deleted, pending, tags, err
+				return deleted, pending, err
 			}
 			pending++
 		} else {
 			deleted++
-			tags[scopeTag(d.projectID)] = true
 		}
 		if _, err := s.cfg.Q.DeleteMemoryDocument(context.WithoutCancel(ctx), d.id); err != nil {
-			return deleted, pending, tags, err
+			return deleted, pending, err
 		}
 	}
-	return deleted, pending, tags, nil
+	if refresh && deleted > 0 {
+		s.refreshStale(hctx, c, stale)
+	}
+	return deleted, pending, nil
 }
 
 // PurgeProject 在项目删除成功后清掉它在 Hindsight 里的全部记忆（R23）：memory_documents 里记到该项目的 document，
@@ -101,7 +114,8 @@ func (s *Service) PurgeProject(ctx context.Context, projectID string) error {
 	for _, id := range ids {
 		docs = append(docs, tombstoneTarget{id: id, projectID: &pid})
 	}
-	if _, _, _, err := s.deleteDocuments(ctx, docs); err != nil {
+	// 项目的 mental model 随后整个删除，不必提交刷新；删除前它们已被标记，网关不会再给出旧内容
+	if _, _, err := s.deleteDocuments(ctx, docs, false); err != nil {
 		return err
 	}
 	// mental model：先按标签列出，再并上 Core 的固定 id（列表失败或模型尚未被列出时兜底）
@@ -126,6 +140,11 @@ func (s *Service) PurgeProject(ctx context.Context, projectID string) error {
 			if err := s.tombstone(ctx, tombstoneTarget{id: mentalModelTombstonePrefix + id, projectID: &pid}, err); err != nil {
 				return err
 			}
+			continue
+		}
+		// 模型已删除，不再需要等待刷新
+		if err := s.cfg.Q.DeleteMemoryStaleModel(context.WithoutCancel(ctx), id); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -164,8 +183,8 @@ func (c adminClient) deleteOwnedModel(ctx context.Context, t tombstoneTarget) er
 	return c.deleteMentalModel(ctx, id)
 }
 
-// RetryTombstones 重试到期的删除：成功的移出队列，并刷新仍存在的范围（全局或未删除的项目）里的 mental model；
-// 失败的按退避推迟。未配置时不重试、不计次数。返回本轮成功的条数。
+// RetryTombstones 重试到期的删除：成功的移出队列，失败的按退避推迟。document 删除之前同样先把受影响范围的
+// mental model 标为待刷新（标记失败时本轮不删），删除成功后提交全量刷新。未配置时不重试、不计次数。返回本轮成功的条数。
 func (s *Service) RetryTombstones(ctx context.Context) (int, error) {
 	c, err := s.admin(ctx)
 	if errors.Is(err, ErrNotConfigured) {
@@ -184,14 +203,28 @@ func (s *Service) RetryTombstones(ctx context.Context) (int, error) {
 	}
 	hctx, cancel := context.WithTimeout(ctx, purgeTimeout)
 	defer cancel()
-	done := 0
-	tags := map[string]bool{}
+	scopes := forgetScopes{}
+	for _, t := range due {
+		if !strings.HasPrefix(t.DocumentID, mentalModelTombstonePrefix) {
+			scopes.add(t.ProjectID)
+		}
+	}
+	var stale []string
+	var markErr error
+	if len(scopes) > 0 {
+		stale, markErr = s.markStale(hctx, c, scopes)
+	}
+	done, docsDeleted := 0, 0
 	for _, t := range due {
 		target := tombstoneTarget{id: t.DocumentID, projectID: t.ProjectID}
+		isModel := strings.HasPrefix(t.DocumentID, mentalModelTombstonePrefix)
 		var derr error
-		if strings.HasPrefix(t.DocumentID, mentalModelTombstonePrefix) {
+		switch {
+		case isModel:
 			derr = c.deleteOwnedModel(hctx, target)
-		} else {
+		case markErr != nil:
+			derr = markErr
+		default:
 			derr = c.deleteDocument(hctx, t.DocumentID)
 		}
 		if derr != nil {
@@ -210,20 +243,18 @@ func (s *Service) RetryTombstones(ctx context.Context) (int, error) {
 			return done, err
 		}
 		done++
-		if strings.HasPrefix(t.DocumentID, mentalModelTombstonePrefix) {
-			continue
-		}
-		if t.ProjectID == nil {
-			tags[GlobalTag] = true
-		} else if _, err := s.cfg.Q.GetProject(ctx, *t.ProjectID); err == nil {
-			tags[ProjectTag(*t.ProjectID)] = true
+		if !isModel {
+			docsDeleted++
 		}
 	}
-	s.refreshScopes(hctx, c, tags, true)
+	if docsDeleted > 0 {
+		s.refreshStale(hctx, c, stale)
+	}
 	return done, nil
 }
 
-// RunTombstones 是后台循环：每分钟重试到期的删除，并在记忆启用时保证 user-preferences 存在。ctx 取消时返回。
+// RunTombstones 是后台循环：每分钟重试到期的删除、检查遗忘后待刷新的 mental model，并在记忆启用时保证
+// user-preferences 存在。ctx 取消时返回。
 func (s *Service) RunTombstones(ctx context.Context) {
 	t := time.NewTicker(tombstoneInterval)
 	defer t.Stop()
@@ -235,6 +266,9 @@ func (s *Service) RunTombstones(ctx context.Context) {
 		}
 		if _, err := s.RetryTombstones(ctx); err != nil && ctx.Err() == nil {
 			slog.Warn("重试删除 Hindsight 记忆失败", "err", err)
+		}
+		if _, err := s.RetryStaleModels(ctx); err != nil && ctx.Err() == nil {
+			slog.Warn("检查待刷新的 mental model 失败", "err", err)
 		}
 		if err := s.EnsureUserPrefs(ctx); err != nil && ctx.Err() == nil {
 			// Hindsight 停机时每分钟都会失败，只记调试日志；状态页会显示不可达

@@ -304,6 +304,7 @@ func (q *gwReq) scopeTags() []string {
 }
 
 // search 处理 recall 与 reflect：只保留白名单字段，强制 tags 与 tags_match=any_strict（附录 A 第 1 项）。
+// reflect 还强制排除遗忘后尚未全量刷新的 mental model（exclude_mental_model_ids 由网关填写，客户端的值不采信）。
 func (g *Gateway) search(q *gwReq, rel string, fields []string) {
 	body, ok := q.readBody()
 	if !ok {
@@ -312,9 +313,34 @@ func (g *Gateway) search(q *gwReq, rel string, fields []string) {
 	out := pick(body, fields)
 	out["tags"] = rawJSON(q.scopeTags())
 	out["tags_match"] = rawJSON("any_strict")
+	if rel == "/reflect" {
+		stale, ok := g.staleModels(q)
+		if !ok {
+			return
+		}
+		if len(stale) > 0 {
+			ids := make([]string, 0, len(stale))
+			for id := range stale {
+				ids = append(ids, id)
+			}
+			slices.Sort(ids)
+			out["exclude_mental_model_ids"] = rawJSON(ids)
+		}
+	}
 	if status, raw, ok := q.forward(http.MethodPost, rel, nil, out); ok {
 		writeRaw(q.w, status, raw)
 	}
+}
+
+// staleModels 读遗忘后尚未全量刷新的 mental model；查询出错时写出 500（失败按拒绝处理，不给出可能过期的内容）。
+func (g *Gateway) staleModels(q *gwReq) (map[string]bool, bool) {
+	stale, err := g.svc.StaleModelIDs(q.r.Context())
+	if err != nil {
+		slog.Warn("记忆网关读取待刷新的 mental model 失败", "err", err)
+		WriteError(q.w, http.StatusInternalServerError, "internal", "读取 mental model 状态失败")
+		return nil, false
+	}
+	return stale, true
 }
 
 // ---- retain ----
@@ -489,12 +515,22 @@ func (q *gwReq) modelScope(m map[string]json.RawMessage) (visible, global bool) 
 	return true, !own
 }
 
-// rewriteModel 去掉溯源字段，并把全局模型的 tags 改写为 []。
-func rewriteModel(m map[string]json.RawMessage, global bool) {
+// rewriteModel 去掉溯源字段，并把全局模型的 tags 改写为 []。stale 为真（遗忘后尚未全量刷新）时内容置空：
+// 条目保留，Core 看到模型已存在不会重建，又因 content 为空不会注入。
+func rewriteModel(m map[string]json.RawMessage, global, stale bool) {
 	delete(m, "reflect_response")
 	if global {
 		m["tags"] = json.RawMessage(`[]`)
 	}
+	if stale {
+		m["content"] = json.RawMessage(`""`)
+	}
+}
+
+// modelID 取 mental model 条目的 id。
+func modelID(m map[string]json.RawMessage) string {
+	id, _ := optString(m["id"])
+	return id
 }
 
 // detailQuery 只放行 detail=metadata|content；full（含大量溯源）与其它取值降级为 content。
@@ -507,6 +543,10 @@ func detailQuery(r *http.Request) string {
 
 // listModels 翻完上游列表后只留调用方可见的模型，再按请求的 limit / offset 分页。
 func (g *Gateway) listModels(q *gwReq) {
+	stale, ok := g.staleModels(q)
+	if !ok {
+		return
+	}
 	detail := detailQuery(q.r)
 	var all []map[string]json.RawMessage
 	for page := range mentalModelMaxPages {
@@ -532,7 +572,7 @@ func (g *Gateway) listModels(q *gwReq) {
 				continue
 			}
 			if vis, global := q.modelScope(m); vis {
-				rewriteModel(m, global)
+				rewriteModel(m, global, stale[modelID(m)])
 				all = append(all, m)
 			}
 		}
@@ -578,21 +618,25 @@ func (q *gwReq) lookupModel(id, detail string) (m map[string]json.RawMessage, gl
 }
 
 func (g *Gateway) getModel(q *gwReq, id string) {
+	stale, ok := g.staleModels(q)
+	if !ok {
+		return
+	}
 	m, global, ok := q.lookupModel(id, detailQuery(q.r))
 	if !ok {
 		return
 	}
-	rewriteModel(m, global)
+	rewriteModel(m, global, stale[id] || stale[modelID(m)])
 	writeJSON(q.w, http.StatusOK, m)
 }
 
+// modelHistory 只核对可见性，历史一律返回空数组：历史里的 previous_content 是模型过去的全文，遗忘之后仍含已删除的
+// 事实，而 orynd 分不清哪些版本早于删除。历史只供 Core 的手动命令 `/memory mm history` 展示。
 func (g *Gateway) modelHistory(q *gwReq, id string) {
 	if _, _, ok := q.lookupModel(id, "metadata"); !ok {
 		return
 	}
-	if status, raw, ok := q.forward(http.MethodGet, "/mental-models/"+url.PathEscape(id)+"/history", nil, nil); ok {
-		writeRaw(q.w, status, raw)
-	}
+	writeRaw(q.w, http.StatusOK, []byte(`[]`))
 }
 
 // refreshModel 只允许刷新本项目的模型；全局模型（含 user-preferences）与其他项目的模型一律 403。

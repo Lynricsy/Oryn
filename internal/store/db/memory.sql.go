@@ -78,6 +78,15 @@ func (q *Queries) DeleteMemoryModel(ctx context.Context, purpose string) error {
 	return err
 }
 
+const deleteMemoryStaleModel = `-- name: DeleteMemoryStaleModel :exec
+DELETE FROM memory_stale_models WHERE model_id = ?1
+`
+
+func (q *Queries) DeleteMemoryStaleModel(ctx context.Context, modelID string) error {
+	_, err := q.db.ExecContext(ctx, deleteMemoryStaleModel, modelID)
+	return err
+}
+
 const deleteMemoryTombstone = `-- name: DeleteMemoryTombstone :exec
 DELETE FROM memory_tombstones WHERE document_id = ?1
 `
@@ -524,6 +533,41 @@ func (q *Queries) ListMemoryProjects(ctx context.Context) ([]MemoryProject, erro
 	return items, nil
 }
 
+const listMemoryStaleModels = `-- name: ListMemoryStaleModels :many
+SELECT model_id, project_id, refresh_op, attempts, next_attempt_at, last_error, created_at FROM memory_stale_models ORDER BY created_at, model_id
+`
+
+func (q *Queries) ListMemoryStaleModels(ctx context.Context) ([]MemoryStaleModel, error) {
+	rows, err := q.db.QueryContext(ctx, listMemoryStaleModels)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []MemoryStaleModel{}
+	for rows.Next() {
+		var i MemoryStaleModel
+		if err := rows.Scan(
+			&i.ModelID,
+			&i.ProjectID,
+			&i.RefreshOp,
+			&i.Attempts,
+			&i.NextAttemptAt,
+			&i.LastError,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listMemoryTombstones = `-- name: ListMemoryTombstones :many
 SELECT document_id, project_id, attempts, next_attempt_at, last_error, created_at FROM memory_tombstones ORDER BY created_at
 `
@@ -564,6 +608,29 @@ DELETE FROM memory_usage WHERE hour < ?1
 
 func (q *Queries) PruneMemoryUsage(ctx context.Context, before int64) error {
 	_, err := q.db.ExecContext(ctx, pruneMemoryUsage, before)
+	return err
+}
+
+const retryMemoryStaleModel = `-- name: RetryMemoryStaleModel :exec
+UPDATE memory_stale_models SET attempts = attempts + 1, next_attempt_at = ?1,
+    refresh_op = ?2, last_error = ?3
+WHERE model_id = ?4
+`
+
+type RetryMemoryStaleModelParams struct {
+	NextAttemptAt int64   `json:"nextAttemptAt"`
+	RefreshOp     *string `json:"refreshOp"`
+	LastError     *string `json:"lastError"`
+	ModelID       string  `json:"modelId"`
+}
+
+func (q *Queries) RetryMemoryStaleModel(ctx context.Context, arg RetryMemoryStaleModelParams) error {
+	_, err := q.db.ExecContext(ctx, retryMemoryStaleModel,
+		arg.NextAttemptAt,
+		arg.RefreshOp,
+		arg.LastError,
+		arg.ModelID,
+	)
 	return err
 }
 
@@ -782,5 +849,26 @@ type UpsertMemorySettingsParams struct {
 
 func (q *Queries) UpsertMemorySettings(ctx context.Context, arg UpsertMemorySettingsParams) error {
 	_, err := q.db.ExecContext(ctx, upsertMemorySettings, arg.Enabled, arg.HindsightUrl, arg.UpdatedAt)
+	return err
+}
+
+const upsertMemoryStaleModel = `-- name: UpsertMemoryStaleModel :exec
+
+INSERT INTO memory_stale_models (model_id, project_id, refresh_op, attempts, next_attempt_at, last_error, created_at)
+VALUES (?1, ?2, NULL, 0, ?3, NULL, ?3)
+ON CONFLICT (model_id) DO UPDATE SET
+    project_id = excluded.project_id, refresh_op = NULL, attempts = 0,
+    next_attempt_at = excluded.next_attempt_at, last_error = NULL
+`
+
+type UpsertMemoryStaleModelParams struct {
+	ModelID   string  `json:"modelId"`
+	ProjectID *string `json:"projectId"`
+	Now       int64   `json:"now"`
+}
+
+// ---------- stale mental models ----------
+func (q *Queries) UpsertMemoryStaleModel(ctx context.Context, arg UpsertMemoryStaleModelParams) error {
+	_, err := q.db.ExecContext(ctx, upsertMemoryStaleModel, arg.ModelID, arg.ProjectID, arg.Now)
 	return err
 }

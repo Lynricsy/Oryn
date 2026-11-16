@@ -143,3 +143,23 @@ WHERE document_id = @document_id;
 
 -- name: DeleteMemoryTombstone :exec
 DELETE FROM memory_tombstones WHERE document_id = @document_id;
+
+-- ---------- stale mental models ----------
+
+-- name: UpsertMemoryStaleModel :exec
+INSERT INTO memory_stale_models (model_id, project_id, refresh_op, attempts, next_attempt_at, last_error, created_at)
+VALUES (@model_id, sqlc.narg(project_id), NULL, 0, @now, NULL, @now)
+ON CONFLICT (model_id) DO UPDATE SET
+    project_id = excluded.project_id, refresh_op = NULL, attempts = 0,
+    next_attempt_at = excluded.next_attempt_at, last_error = NULL;
+
+-- name: ListMemoryStaleModels :many
+SELECT * FROM memory_stale_models ORDER BY created_at, model_id;
+
+-- name: RetryMemoryStaleModel :exec
+UPDATE memory_stale_models SET attempts = attempts + 1, next_attempt_at = @next_attempt_at,
+    refresh_op = sqlc.narg(refresh_op), last_error = sqlc.narg(last_error)
+WHERE model_id = @model_id;
+
+-- name: DeleteMemoryStaleModel :exec
+DELETE FROM memory_stale_models WHERE model_id = @model_id;

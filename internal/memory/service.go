@@ -193,7 +193,12 @@ func (s *Service) Status(ctx context.Context) (apigen.MemoryStatus, error) {
 	if err != nil {
 		return apigen.MemoryStatus{}, err
 	}
-	out.PendingDeletes, out.Candidates = len(tombs), len(cands)
+	// 遗忘后等待刷新的 mental model 也算未完成的删除（与 pending-deletes 列表一致）
+	stale, err := s.cfg.Q.ListMemoryStaleModels(ctx)
+	if err != nil {
+		return apigen.MemoryStatus{}, err
+	}
+	out.PendingDeletes, out.Candidates = len(tombs)+len(stale), len(cands)
 	switch {
 	case st.HindsightUrl == nil || *st.HindsightUrl == "":
 		out.State = apigen.MemoryStateUnconfigured

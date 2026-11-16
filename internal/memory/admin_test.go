@@ -34,6 +34,11 @@ type admFake struct {
 	mu       sync.Mutex
 	key      string
 	failDel  bool // DELETE 一律 500
+	// failRefresh 非 0 时 mental model 的 refresh 返回这个状态
+	failRefresh int
+	reflects    []map[string]any
+	// history 是 mental model 历史里的 previous_content（Hindsight 会一直保留旧版本全文）
+	history map[string]string
 	docs     map[string]*admDoc
 	models   map[string]*admModel
 	ops      map[string]map[string]any
@@ -57,16 +62,18 @@ type admDoc struct {
 }
 
 type admModel struct {
+	ID          string         `json:"id"`
 	Name        string         `json:"name"`
 	SourceQuery string         `json:"source_query"`
 	Tags        []string       `json:"tags"`
 	Content     string         `json:"content"`
 	Trigger     map[string]any `json:"trigger"`
+	LastFull    string         `json:"last_full_refreshed_at,omitempty"`
 }
 
 func newAdmFake(t *testing.T) *admFake {
 	t.Helper()
-	f := &admFake{docs: map[string]*admDoc{}, models: map[string]*admModel{}, ops: map[string]map[string]any{}, files: map[string][]byte{}}
+	f := &admFake{docs: map[string]*admDoc{}, models: map[string]*admModel{}, ops: map[string]map[string]any{}, files: map[string][]byte{}, history: map[string]string{}}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
 	return f
@@ -91,7 +98,7 @@ func (f *admFake) addDoc(id, text string, tags ...string) {
 }
 
 func (f *admFake) addModel(id string, tags ...string) {
-	f.with(func(f *admFake) { f.models[id] = &admModel{Name: id, Tags: tags, Content: "内容 " + id} })
+	f.with(func(f *admFake) { f.models[id] = &admModel{ID: id, Name: id, Tags: tags, Content: "内容 " + id} })
 }
 
 func (f *admFake) callCount() int {
@@ -210,10 +217,13 @@ func (f *admFake) bank(w http.ResponseWriter, r *http.Request, rel string, body 
 			results = append(results, map[string]any{"text": d.text, "type": "world", "document_id": id, "tags": d.tags, "mentioned_at": d.created})
 		}
 		writeJSONTo(w, 200, map[string]any{"results": results})
+	case rel == "/reflect" && r.Method == http.MethodPost:
+		f.reflects = append(f.reflects, body)
+		writeJSONTo(w, 200, map[string]any{"text": "反思结果"})
 	case rel == "/mental-models" && r.Method == http.MethodGet:
-		// all 匹配：带上无标签模型，orynd 要在客户端过滤
+		// all 匹配：带上无标签模型，orynd 要在客户端过滤；不带 tags（网关）时列出全部
 		tag := q.Get("tags")
-		items := []map[string]any{}
+		items := []*admModel{}
 		ids := make([]string, 0, len(f.models))
 		for id := range f.models {
 			ids = append(ids, id)
@@ -221,8 +231,8 @@ func (f *admFake) bank(w http.ResponseWriter, r *http.Request, rel string, body 
 		sort.Strings(ids)
 		for _, id := range ids {
 			m := f.models[id]
-			if len(m.Tags) == 0 || slices.Contains(m.Tags, tag) {
-				items = append(items, map[string]any{"id": id, "name": m.Name, "tags": m.Tags, "content": m.Content, "source_query": m.SourceQuery})
+			if tag == "" || len(m.Tags) == 0 || slices.Contains(m.Tags, tag) {
+				items = append(items, m)
 			}
 		}
 		writeJSONTo(w, 200, map[string]any{"items": items})
@@ -231,7 +241,8 @@ func (f *admFake) bank(w http.ResponseWriter, r *http.Request, rel string, body 
 		m := &admModel{}
 		raw, _ := json.Marshal(body)
 		_ = json.Unmarshal(raw, m)
-		f.models[body["id"].(string)] = m
+		m.ID = body["id"].(string)
+		f.models[m.ID] = m
 		writeJSONTo(w, 200, map[string]any{"mental_model_id": body["id"], "operation_id": "op-mm"})
 	case strings.HasPrefix(rel, "/mental-models/"):
 		id, action, _ := strings.Cut(strings.TrimPrefix(rel, "/mental-models/"), "/")
@@ -244,7 +255,16 @@ func (f *admFake) bank(w http.ResponseWriter, r *http.Request, rel string, body 
 		case action == "refresh" && r.Method == http.MethodPost:
 			mode, _ := body["mode"].(string)
 			f.refresh = append(f.refresh, id+":"+mode)
-			writeJSONTo(w, 200, map[string]any{"operation_id": "op-r", "status": "queued"})
+			if f.failRefresh != 0 {
+				writeJSONTo(w, f.failRefresh, map[string]string{"detail": "worker busy"})
+				return
+			}
+			// 每次提交一个新的刷新操作，初始为 pending；测试改 f.ops[op]["status"] 模拟执行进度
+			op := fmt.Sprintf("op-refresh-%d", len(f.refresh))
+			f.ops[op] = map[string]any{"operation_id": op, "status": "pending", "operation_type": "refresh_mental_model", "mental_model_id": id}
+			writeJSONTo(w, 200, map[string]any{"operation_id": op, "status": "queued"})
+		case action == "history" && r.Method == http.MethodGet:
+			writeJSONTo(w, 200, []map[string]any{{"previous_content": f.history[id], "changed_at": "2027-01-15T08:00:00Z"}})
 		case action == "" && r.Method == http.MethodGet:
 			writeJSONTo(w, 200, m)
 		case action == "" && r.Method == http.MethodPatch:
@@ -279,6 +299,7 @@ func (f *admFake) bank(w http.ResponseWriter, r *http.Request, rel string, body 
 type admEnv struct {
 	st  *store.Store
 	svc *memory.Service
+	cfg memory.Config
 	now time.Time
 }
 
@@ -290,11 +311,11 @@ func newAdmEnv(t *testing.T, mod func(*memory.Config)) *admEnv {
 	box, err := secrets.New(bytes.Repeat([]byte{9}, 32))
 	require.NoError(t, err)
 	e := &admEnv{st: st, now: time.Unix(1_800_000_000, 0)}
-	cfg := memory.Config{Q: st.Q, Box: box, PublicURL: testPublicURL, Now: func() time.Time { return e.now }}
+	e.cfg = memory.Config{Q: st.Q, Box: box, PublicURL: testPublicURL, Now: func() time.Time { return e.now }}
 	if mod != nil {
-		mod(&cfg)
+		mod(&e.cfg)
 	}
-	e.svc = memory.New(cfg)
+	e.svc = memory.New(e.cfg)
 	return e
 }
 
@@ -392,9 +413,23 @@ func TestMemoryAdminForgetThread(t *testing.T) {
 	assert.Equal(t, apigen.MemoryForgetResult{Deleted: 0, Pending: 2}, out)
 	pend, err := e.svc.ListPendingDeletes(ctx)
 	require.NoError(t, err)
-	require.Len(t, pend.Items, 2)
+	require.Len(t, pend.Items, 3)
 	assert.Equal(t, "PRJ_A", *pend.Items[0].ProjectID)
 	assert.Contains(t, *pend.Items[0].LastError, "500")
+	// 删除前已标记：遗忘尚未彻底完成，主人在列表里能看到
+	assert.Equal(t, "mental-model-refresh:project-conventions-prj_a", string(pend.Items[2].DocumentID))
+	assert.Contains(t, *pend.Items[2].LastError, "遗忘后等待 mental model 刷新")
+}
+
+// tombstonesOf 只留删除重试队列的条目（去掉遗忘后等待刷新的 mental model）。
+func tombstonesOf(items []apigen.MemoryPendingDelete) []apigen.MemoryPendingDelete {
+	var out []apigen.MemoryPendingDelete
+	for _, p := range items {
+		if !strings.HasPrefix(string(p.DocumentID), "mental-model-refresh:") {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // R19：浏览（预览、线程标题、全局内容）与召回（结果按范围再过滤一遍）；删除单个 document 后刷新对应 mental model。
@@ -643,7 +678,7 @@ func TestPurgeFailureTombstonesThenRetry(t *testing.T) {
 	pend, err := e.svc.ListPendingDeletes(ctx)
 	require.NoError(t, err)
 	var gotIDs []string
-	for _, p := range pend.Items {
+	for _, p := range tombstonesOf(pend.Items) {
 		gotIDs = append(gotIDs, p.DocumentID)
 		assert.Equal(t, a, *p.ProjectID)
 		assert.Zero(t, p.Attempts)
@@ -665,7 +700,7 @@ func TestPurgeFailureTombstonesThenRetry(t *testing.T) {
 	assert.Zero(t, done)
 	pend, err = e.svc.ListPendingDeletes(ctx)
 	require.NoError(t, err)
-	for _, p := range pend.Items {
+	for _, p := range tombstonesOf(pend.Items) {
 		assert.Equal(t, 1, p.Attempts)
 		assert.Equal(t, e.now.Add(time.Minute).Unix(), p.NextAttemptAt)
 	}
@@ -994,4 +1029,238 @@ func TestMemoryAdminUsage(t *testing.T) {
 	assert.Equal(t, apigen.MemoryUsageCounts{Calls: 2, InputTokens: 110, OutputTokens: 22}, r.Week)
 	assert.Equal(t, int64(7), u.Items[byP["embed"]].Day.InputTokens)
 	assert.Zero(t, u.Items[byP["rerank"]].Week.Calls)
+}
+
+// gwAs 以项目线程的身份向网关发请求（target 是 Hindsight 路径），返回状态与应答原文。
+func gwAs(t *testing.T, gw *memory.Gateway, projectID, method, target string, body any) (int, string) {
+	t.Helper()
+	var rd io.Reader
+	if body != nil {
+		buf, err := json.Marshal(body)
+		require.NoError(t, err)
+		rd = bytes.NewReader(buf)
+	}
+	req := httptest.NewRequest(method, target, rd)
+	req = req.WithContext(memory.WithCaller(req.Context(), memory.Caller{OrbID: "orb-x", ThreadID: "T-x", ProjectID: &projectID}))
+	rec := httptest.NewRecorder()
+	gw.ServeHTTP(rec, req)
+	return rec.Code, rec.Body.String()
+}
+
+// modelContent 从网关的 list 或 get 应答里取模型 id 的 content（不存在时 ok 为假）。
+func modelContent(t *testing.T, raw, id string) (string, bool) {
+	t.Helper()
+	var resp struct {
+		Items []map[string]any `json:"items"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(raw), &resp), raw)
+	if resp.Items == nil {
+		var one map[string]any
+		require.NoError(t, json.Unmarshal([]byte(raw), &one), raw)
+		resp.Items = []map[string]any{one}
+	}
+	for _, m := range resp.Items {
+		if m["id"] == id {
+			c, _ := m["content"].(string)
+			return c, true
+		}
+	}
+	return "", false
+}
+
+// 遗忘之后，mental model 的旧摘要在 Hindsight 全量刷新之前对 orb 隐藏，reflect 排除它；刷新完成后才恢复。
+func TestMemoryAdminForgetHidesStaleModel(t *testing.T) {
+	ctx := context.Background()
+	e := newAdmEnv(t, nil)
+	f := e.withFake(t)
+	p := "PRJ_A"
+	e.project(t, p)
+	const mm, oldText, newText = "project-conventions-prj_a", "旧：用 goose 写迁移", "新：用 sqlc"
+	const t0, t1 = "2027-01-15T08:00:00.000000+00:00", "2027-01-15T09:00:00.000000+00:00"
+	f.addDoc("sess-a1", "我们用 goose 写迁移", memory.ProjectTag(p))
+	e.record(t, "sess-a1", &p, new("T-a"))
+	f.with(func(f *admFake) {
+		f.models[mm] = &admModel{ID: mm, Name: "Project Conventions", Tags: []string{memory.ProjectTag(p)}, Content: oldText, LastFull: t0}
+		f.history[mm] = oldText
+		f.failRefresh = http.StatusServiceUnavailable
+	})
+
+	out, err := e.svc.ForgetThread(ctx, "T-a")
+	require.NoError(t, err)
+	assert.Equal(t, 1, out.Deleted)
+	f.with(func(f *admFake) { assert.Equal(t, []string{mm + ":full"}, f.refresh, "删除后立即提交全量刷新") })
+
+	// hidden 以 P 线程身份核对网关：list / get 的内容为空、历史为空、reflect 排除该模型
+	hidden := func(gw *memory.Gateway) {
+		t.Helper()
+		code, raw := gwAs(t, gw, p, http.MethodGet, "/v1/default/banks/oryn/mental-models?detail=content", nil)
+		require.Equal(t, http.StatusOK, code, raw)
+		c, ok := modelContent(t, raw, mm)
+		require.True(t, ok, "条目保留，Core 不会去重建")
+		assert.Empty(t, c)
+		assert.NotContains(t, raw, "goose")
+		code, raw = gwAs(t, gw, p, http.MethodGet, "/v1/default/banks/oryn/mental-models/"+mm, nil)
+		require.Equal(t, http.StatusOK, code, raw)
+		c, _ = modelContent(t, raw, mm)
+		assert.Empty(t, c)
+		assert.NotContains(t, raw, "goose")
+		code, raw = gwAs(t, gw, p, http.MethodGet, "/v1/default/banks/oryn/mental-models/"+mm+"/history", nil)
+		require.Equal(t, http.StatusOK, code, raw)
+		assert.NotContains(t, raw, "goose")
+		code, raw = gwAs(t, gw, p, http.MethodPost, "/v1/default/banks/oryn/reflect",
+			map[string]any{"query": "怎么写迁移", "exclude_mental_model_ids": []string{"forged"}})
+		require.Equal(t, http.StatusOK, code, raw)
+		f.with(func(f *admFake) {
+			last := f.reflects[len(f.reflects)-1]
+			assert.Equal(t, []any{mm}, last["exclude_mental_model_ids"], "网关自己填写，不采信客户端的值")
+		})
+	}
+	hidden(memory.NewGateway(e.svc))
+	pend, err := e.svc.ListPendingDeletes(ctx)
+	require.NoError(t, err)
+	require.Len(t, pend.Items, 1)
+	assert.Equal(t, "mental-model-refresh:"+mm, string(pend.Items[0].DocumentID))
+	assert.Equal(t, 1, pend.Items[0].Attempts)
+	assert.Contains(t, *pend.Items[0].LastError, "503")
+
+	// 重启后仍然隐藏（记录持久化在库里）
+	restarted := memory.New(e.cfg)
+	hidden(memory.NewGateway(restarted))
+
+	// step 推进时钟后跑一轮重试循环，返回本轮清除的记录数
+	step := func(d time.Duration) int {
+		t.Helper()
+		e.now = e.now.Add(d)
+		n, err := restarted.RetryStaleModels(ctx)
+		require.NoError(t, err)
+		return n
+	}
+	refreshes := func() int {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return len(f.refresh)
+	}
+	setOp := func(op, status, msg string) {
+		f.with(func(f *admFake) {
+			f.ops[op]["status"] = status
+			if msg != "" {
+				f.ops[op]["error_message"] = msg
+			}
+		})
+	}
+
+	// 恢复：未到 2 分钟退避不重发；到期后重试循环提交全量刷新并记下 operation id
+	f.with(func(f *admFake) { f.failRefresh = 0 })
+	assert.Zero(t, step(time.Minute))
+	assert.Equal(t, 1, refreshes(), "未到 2 分钟退避不重发")
+	assert.Zero(t, step(time.Minute))
+	assert.Equal(t, 2, refreshes())
+	const op2 = "op-refresh-2"
+
+	// 删除之前就开始的刷新在删除之后完成：last_full_refreshed_at 变了，内容仍来自删除之前，记录不能清除
+	f.with(func(f *admFake) { f.models[mm].LastFull = t1 })
+	assert.Zero(t, step(4*time.Minute))
+	hidden(memory.NewGateway(restarted))
+	assert.Equal(t, 2, refreshes(), "我们的刷新还在排队：不重发")
+
+	// 执行中：继续隐藏，不重发，按退避再查
+	setOp(op2, "processing", "")
+	assert.Zero(t, step(8*time.Minute))
+	assert.Equal(t, 2, refreshes())
+	hidden(memory.NewGateway(restarted))
+
+	// 失败：清掉 refresh_op、记下原因，到期重新提交
+	setOp(op2, "failed", "LLM 超时")
+	assert.Zero(t, step(16*time.Minute))
+	assert.Equal(t, 2, refreshes(), "本轮只记失败，到期再提交")
+	pend, err = restarted.ListPendingDeletes(ctx)
+	require.NoError(t, err)
+	require.Len(t, pend.Items, 1)
+	assert.Contains(t, *pend.Items[0].LastError, "LLM 超时")
+	hidden(memory.NewGateway(restarted))
+	assert.Zero(t, step(32*time.Minute))
+	assert.Equal(t, 3, refreshes(), "失败后重新提交")
+	const op3 = "op-refresh-3"
+
+	// Hindsight 已写出新内容，但我们的操作还没报告完成：仍然隐藏
+	f.with(func(f *admFake) {
+		f.models[mm].Content, f.models[mm].LastFull = newText, "2027-01-15T10:00:00.000000+00:00"
+	})
+	assert.Zero(t, step(time.Hour))
+	hidden(memory.NewGateway(restarted))
+
+	// 我们在删除之后提交的刷新完成：记录清除，网关给出新内容，旧文本不再出现在任何应答里
+	setOp(op3, "completed", "")
+	assert.Equal(t, 1, step(time.Hour))
+	gw := memory.NewGateway(restarted)
+	code, raw := gwAs(t, gw, p, http.MethodGet, "/v1/default/banks/oryn/mental-models?detail=content", nil)
+	require.Equal(t, http.StatusOK, code, raw)
+	c, _ := modelContent(t, raw, mm)
+	assert.Equal(t, newText, c)
+	code, raw2 := gwAs(t, gw, p, http.MethodGet, "/v1/default/banks/oryn/mental-models/"+mm, nil)
+	require.Equal(t, http.StatusOK, code, raw2)
+	c, _ = modelContent(t, raw2, mm)
+	assert.Equal(t, newText, c)
+	_, raw3 := gwAs(t, gw, p, http.MethodGet, "/v1/default/banks/oryn/mental-models/"+mm+"/history", nil)
+	_, raw4 := gwAs(t, gw, p, http.MethodPost, "/v1/default/banks/oryn/reflect", map[string]any{"query": "怎么写迁移"})
+	for _, r := range []string{raw, raw2, raw3, raw4} {
+		assert.NotContains(t, r, "goose")
+	}
+	f.with(func(f *admFake) {
+		_, has := f.reflects[len(f.reflects)-1]["exclude_mental_model_ids"]
+		assert.False(t, has, "没有待刷新的模型时不排除")
+	})
+	pend, err = restarted.ListPendingDeletes(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, pend.Items)
+}
+
+// 待刷新的模型已被删除（404）时清掉记录；改写全局记忆（replace）标记 user-preferences，批准与新建不标记；
+// 标记失败时不删除。
+func TestMemoryAdminStaleModelLifecycle(t *testing.T) {
+	ctx := context.Background()
+	e := newAdmEnv(t, nil)
+	f := e.withFake(t)
+	p := "PRJ_A"
+	f.addModel("project-decisions-prj_a", memory.ProjectTag(p))
+	f.addDoc("sess-a1", "a1", memory.ProjectTag(p))
+	e.record(t, "sess-a1", &p, new("T-a"))
+	require.NoError(t, e.svc.DeleteDocument(ctx, "sess-a1"))
+	ids, err := e.svc.StaleModelIDs(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]bool{"project-decisions-prj_a": true}, ids)
+	f.with(func(f *admFake) { delete(f.models, "project-decisions-prj_a") })
+	e.now = e.now.Add(2 * time.Minute) // 刷新已提交，到期后才再检查
+	cleared, err := e.svc.RetryStaleModels(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, cleared)
+	ids, err = e.svc.StaleModelIDs(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, ids)
+
+	// 批准候选与新建全局记忆只增加内容：不产生待刷新记录
+	f.addModel(memory.UserPrefsModelID, memory.GlobalTag)
+	require.NoError(t, e.st.Q.InsertMemoryCandidate(ctx, db.InsertMemoryCandidateParams{ID: "mcd_01J00000000000000000000009", Content: "偏好 tab", CreatedAt: 1}))
+	_, err = e.svc.ApproveCandidate(ctx, "mcd_01J00000000000000000000009", nil)
+	require.NoError(t, err)
+	doc, err := e.svc.CreateGlobal(ctx, "迁移必须可回滚")
+	require.NoError(t, err)
+	ids, err = e.svc.StaleModelIDs(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, ids)
+
+	// 改写（replace）会删掉旧事实：user-preferences 标为待刷新并提交全量刷新
+	_, err = e.svc.UpdateGlobal(ctx, doc.ID, "迁移必须可回滚，且写 Down")
+	require.NoError(t, err)
+	ids, err = e.svc.StaleModelIDs(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]bool{memory.UserPrefsModelID: true}, ids)
+	f.with(func(f *admFake) { assert.Equal(t, memory.UserPrefsModelID+":full", f.refresh[len(f.refresh)-1]) })
+
+	// 标记失败（列不出 mental model）时不删除 document
+	f.addDoc("oryn-g9", "全局", memory.GlobalTag)
+	e.record(t, "oryn-g9", nil, nil)
+	f.with(func(f *admFake) { f.key = "rotated" })
+	assert.Equal(t, "memory_upstream", memErr(t, e.svc.DeleteDocument(ctx, "oryn-g9")).Code)
+	f.with(func(f *admFake) { assert.Contains(t, f.docs, "oryn-g9") })
 }
