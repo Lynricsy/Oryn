@@ -13,8 +13,9 @@ import (
 // 运行时调度器（M14 步骤 7.1）：`POST <帧根>_oryn/v1` 上 use / call / stream / cancel 四种消息的校验与执行。
 //
 // 校验顺序（runtime.go 先查消息形状）：帧的运行时位 → 限速（每个 artifact 一个令牌桶）→ artifact 存在且不在回收站
-// → 能力已注册 → 最新版本声明了它（不需要声明的能力除外）→ 能力当前可用 → 操作在能力的操作表里且种类相符
-// → 并发上限。use 的任何拒绝都回 `{ok: true, value: null}`，页面分不出是没声明、不可用还是别的原因。
+// → 能力已注册 → 最新版本声明了它（不需要声明的能力除外）→ 能力当前可用 → 需要同意的能力已获同意（consent.go；
+// 只有 use 会询问用户）→ 操作在能力的操作表里且种类相符 → 并发上限。use 的任何拒绝都回 `{ok: true, value: null}`，
+// 页面分不出是没声明、不可用、没同意还是别的原因。
 //
 // stream 的应答是 application/x-ndjson：逐行 `{v, id, event}`，正常结束是 `{v, id, done: true}`；校验失败或中途出错时
 // 最后一行是 `{v, id, ok: false, error}`。客户端断开连接或发来同 id 的 cancel 即取消。
@@ -203,6 +204,9 @@ func (h *Host) admit(ctx context.Context, token string, f frame, m runtimeMsg) (
 	rc = &runtimeCall{token: token, frame: f, art: a, args: m.Args}
 	if c.available != nil && !c.available(ctx, rc) {
 		return nil, c, nil, opErr(codeUnsupported, "能力 %s 在这个页面上不可用。", m.Cap)
+	}
+	if err := h.s.consentGate(ctx, a, m.Cap, m.Kind == "use"); err != nil {
+		return nil, c, nil, err
 	}
 	if m.Kind == "use" {
 		return rc, c, nil, nil

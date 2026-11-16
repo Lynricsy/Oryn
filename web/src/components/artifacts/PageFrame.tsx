@@ -306,6 +306,17 @@ function LiveFrame({
 					}, KEEP_SCROLL_WAIT_MS);
 				})
 			: () => {};
+		// 同意请求落定时页面已经不在等（use 已超时回 null）：重载让页面重新 use（M14 步骤 7.3）
+		const offConsent = follow
+			? realtime.onArtifactConsent((msg) => {
+					if (
+						msg.kind === "settled" &&
+						msg.reload === true &&
+						msg.artifactId === artifactId
+					)
+						reload();
+				})
+			: () => {};
 
 		// 父页面 CSP 拦下的帧内跳转（只报告源）：提示后把帧带回 artifact
 		const onViolation = (e: SecurityPolicyViolationEvent) => {
@@ -319,6 +330,7 @@ function LiveFrame({
 		return () => {
 			for (const off of offs) off();
 			offVersion();
+			offConsent();
 			clearTimeout(readyTimer);
 			clearTimeout(scrollTimer);
 			document.removeEventListener("securitypolicyviolation", onViolation);

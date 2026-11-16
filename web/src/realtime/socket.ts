@@ -66,6 +66,12 @@ export type ArtifactEvent = Extract<
 	}
 >;
 
+/** 页面能力的同意请求与结果（M14 步骤 7.3）。 */
+export type ArtifactConsentEvent = Extract<
+	WsServerMessage,
+	{ type: "artifact.consent" }
+>;
+
 interface PendingCmd {
 	command: string;
 	resolve(data: unknown): void;
@@ -163,6 +169,37 @@ export class RealtimeClient {
 		string,
 		{ count: number; page?: string }
 	>();
+	/** `artifact.consent` 的监听者（不按 artifact 分发：同意对话框挂在外壳上）。 */
+	private readonly consentListeners = new Set<
+		(msg: ArtifactConsentEvent) => void
+	>();
+	/** 观看集合变化（开始或停止观看某个 artifact）的监听者。 */
+	private readonly watchListeners = new Set<() => void>();
+
+	/** 订阅 `artifact.consent`。返回取消订阅。 */
+	onArtifactConsent(cb: (msg: ArtifactConsentEvent) => void): () => void {
+		this.consentListeners.add(cb);
+		return () => {
+			this.consentListeners.delete(cb);
+		};
+	}
+
+	/** 本客户端是否正在观看 artifact id。 */
+	isWatchingArtifact(id: string): boolean {
+		return this.artifactWatches.has(id);
+	}
+
+	/** 订阅观看集合的变化（开始或停止观看某个 artifact）。返回取消订阅。 */
+	onArtifactWatchesChanged(cb: () => void): () => void {
+		this.watchListeners.add(cb);
+		return () => {
+			this.watchListeners.delete(cb);
+		};
+	}
+
+	private emitWatchesChanged() {
+		for (const cb of [...this.watchListeners]) cb();
+	}
 
 	/** 订阅「artifact 列表可能变了」；连接（重新）建立时也通知。返回取消订阅。 */
 	onArtifactsChanged(cb: () => void): () => void {
@@ -208,6 +245,7 @@ export class RealtimeClient {
 		const next = { count: (cur?.count ?? 0) + 1, page: page ?? cur?.page };
 		this.artifactWatches.set(id, next);
 		if (!cur || next.page !== cur.page) this.sendArtifactWatch(id, next.page);
+		if (!cur) this.emitWatchesChanged();
 		return () => {
 			const w = this.artifactWatches.get(id);
 			if (!w) return;
@@ -216,6 +254,7 @@ export class RealtimeClient {
 			else {
 				this.artifactWatches.delete(id);
 				this.send({ type: "artifact.unwatch", id });
+				this.emitWatchesChanged();
 			}
 		};
 	}
@@ -675,6 +714,9 @@ export class RealtimeClient {
 			case "artifact.comments":
 				for (const cb of [...(this.artifactListeners.get(msg.id) ?? [])])
 					cb(msg);
+				return;
+			case "artifact.consent":
+				for (const cb of [...this.consentListeners]) cb(msg);
 				return;
 			case "notifications.read":
 				notificationsStore

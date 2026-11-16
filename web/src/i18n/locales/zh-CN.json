@@ -1104,6 +1104,7 @@
 		"about": "关于",
 		"notifications": "通知",
 		"shares": "公开分享",
+		"artifacts": "Artifacts",
 		"desktop": "桌面应用",
 		"browser-profiles": "浏览器 Profile",
 		"automations": "自动化",
@@ -1628,6 +1629,31 @@
 	},
 	"artifacts": {
 		"title": "Artifacts",
+		"consent": {
+			"filesTitle": "允许“{{title}}”读取 {{project}} 里的文件？",
+			"filesTitleNoProject": "允许“{{title}}”读取项目里的文件？",
+			"filesBody": "页面能读取这个项目里的任何文件，但不能修改。开启后这个页面不再加载任何外部资源。随时可以在 设置 › Artifacts 里收回。",
+			"sampleTitle": "允许“{{title}}”向你的模型提问？",
+			"sampleBody": "每个问题都在一个没有任何工具的一次性会话里回答：不能读取或修改文件，也不能运行命令。用的是你自己的模型额度，同时最多两个问题。",
+			"deny": "不允许",
+			"allow": "允许"
+		},
+		"settings": {
+			"granted": "已授权的 Artifacts",
+			"hint": "这些页面可以读取项目文件或向你的模型提问。收回后，页面下次要用时会重新询问。",
+			"empty": "还没有授权过任何 artifact",
+			"emptyHint": "artifact 页面第一次要读取项目文件或向你的模型提问时，会先征求你的同意。同意过的会列在这里。",
+			"failed": "无法加载授权列表",
+			"retry": "重试",
+			"noProject": "无项目",
+			"grantedAt": "{{when}}授权",
+			"revoke": "收回",
+			"revokeConfirm": "确认收回",
+			"caps": {
+				"files": "读取项目文件",
+				"sample": "向模型提问"
+			}
+		},
 		"open": {
 			"loading": "正在打开发布的页面",
 			"gone": "这个页面已不在线上",

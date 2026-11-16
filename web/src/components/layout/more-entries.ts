@@ -168,6 +168,14 @@ export const MORE_ENTRIES: readonly MoreEntry[] = [
 		to: "/settings/shares",
 	},
 	{
+		// Artifacts 的页面能力授权（M14 步骤 7.3）
+		key: "artifact-consents",
+		group: "settings",
+		icon: "shapes",
+		labelKey: "settings.artifacts",
+		to: "/settings/artifacts",
+	},
+	{
 		key: "desktop",
 		group: "settings",
 		icon: "monitor",

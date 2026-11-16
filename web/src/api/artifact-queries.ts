@@ -39,6 +39,7 @@ export const artifactQk = {
 	versions: (id: string) => ["artifacts", "versions", id] as const,
 	capabilities: ["artifacts", "capabilities"] as const,
 	comments: (id: string) => ["artifacts", "comments", id] as const,
+	consents: ["artifacts", "consents"] as const,
 };
 
 function invalidateArtifacts(qc: QueryClient) {
@@ -496,4 +497,44 @@ export async function fetchArtifactFileBytes(
 		parseAs: "arrayBuffer",
 	});
 	return new Uint8Array(await unwrap(Promise.resolve(res)));
+}
+
+export type ArtifactConsent = Schemas["ArtifactConsent"];
+
+/** 已授权的 artifact 能力（设置 › Artifacts；不含回收站里的）。 */
+export function useArtifactConsents() {
+	return useQuery({
+		queryKey: artifactQk.consents,
+		queryFn: () => unwrap(api.GET("/api/v1/artifact-consents")),
+		select: (r) => r.consents,
+	});
+}
+
+/** 收回一个 artifact 的全部能力授权。 */
+export function useRevokeArtifactConsents() {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: async (artifactId: string) => {
+			await unwrap(
+				api.DELETE("/api/v1/artifact-consents/{key}", {
+					params: { path: { key: artifactId } },
+				}),
+			);
+		},
+		onSuccess: () =>
+			void qc.invalidateQueries({ queryKey: artifactQk.consents }),
+	});
+}
+
+/** 回答一个同意请求（第一个回答生效；请求已结束时抛 404 的 `ApiError`）。 */
+export async function answerArtifactConsent(
+	requestId: string,
+	allow: boolean,
+): Promise<void> {
+	await unwrap(
+		api.POST("/api/v1/artifact-consents/{key}", {
+			params: { path: { key: requestId } },
+			body: { allow },
+		}),
+	);
 }

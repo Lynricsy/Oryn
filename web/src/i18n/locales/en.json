@@ -1104,6 +1104,7 @@
 		"about": "About",
 		"notifications": "Notifications",
 		"shares": "Public sharing",
+		"artifacts": "Artifacts",
 		"desktop": "Desktop app",
 		"browser-profiles": "Browser profiles",
 		"automations": "Automations",
@@ -1628,6 +1629,31 @@
 	},
 	"artifacts": {
 		"title": "Artifacts",
+		"consent": {
+			"filesTitle": "Allow “{{title}}” to read files in {{project}}?",
+			"filesTitleNoProject": "Allow “{{title}}” to read project files?",
+			"filesBody": "The page can read any file in this project, but can’t change them. Once allowed, the page stops loading any outside resources. You can revoke this any time in Settings › Artifacts.",
+			"sampleTitle": "Allow “{{title}}” to ask your model questions?",
+			"sampleBody": "Each question is answered in a one-off session with no tools: it can’t read or change files or run commands. It uses your own model quota, with at most two questions at a time.",
+			"deny": "Don’t allow",
+			"allow": "Allow"
+		},
+		"settings": {
+			"granted": "Authorized artifacts",
+			"hint": "These pages can read project files or ask your model questions. After you revoke, the page asks again the next time it needs it.",
+			"empty": "No artifact has been authorized yet",
+			"emptyHint": "The first time an artifact page wants to read project files or ask your model a question, it asks for your permission. Pages you allow are listed here.",
+			"failed": "Couldn’t load the authorizations",
+			"retry": "Retry",
+			"noProject": "No project",
+			"grantedAt": "Allowed {{when}}",
+			"revoke": "Revoke",
+			"revokeConfirm": "Confirm revoke",
+			"caps": {
+				"files": "Read project files",
+				"sample": "Ask the model"
+			}
+		},
 		"open": {
 			"loading": "Opening the published page",
 			"gone": "This page is no longer online",

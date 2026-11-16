@@ -41,6 +41,7 @@ import {
 import { shareIntakeStore } from "../../state/share-intake";
 import { connectionStore, indexStore, useConnection } from "../../state/stores";
 import { uiStore, useSidebarShown, useUi } from "../../state/ui";
+import { ConsentDialog } from "../artifacts/ConsentDialog";
 import { NotificationToasts } from "../notify/NotificationToasts";
 import { PaletteHost } from "../palette/PaletteHost";
 import { togglePalette } from "../palette/palette-state";
@@ -308,6 +309,7 @@ export function AppShell(): ReactNode {
 				<NotificationToasts />
 				<Toasts />
 				<PaletteHost />
+				<ConsentDialog />
 			</>
 		);
 
@@ -366,6 +368,7 @@ export function AppShell(): ReactNode {
 			<NotificationToasts />
 			<Toasts />
 			<PaletteHost />
+			<ConsentDialog />
 		</div>
 	);
 }

@@ -86,6 +86,7 @@ export const SETTINGS: SettingsSection[] = [
 	"appearance",
 	"notifications",
 	"shares",
+	"artifacts",
 	"automations",
 	"desktop",
 	"about",

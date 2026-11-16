@@ -40,6 +40,7 @@ import {
 } from "../components/layout/WindowControls";
 import { PairApproval } from "../components/PairApproval";
 import { ApplyStatusBanner } from "../components/settings/ApplyStatusBanner";
+import { ArtifactsSection } from "../components/settings/ArtifactsSection";
 import { radioKeys } from "../components/settings/GlyphGrid";
 import { useAsync } from "../components/settings/useAsync";
 import { CopyButton } from "../components/ui/CopyButton";
@@ -114,6 +115,7 @@ export type SettingsSection =
 	| "appearance"
 	| "notifications"
 	| "shares"
+	| "artifacts"
 	| "automations"
 	| "desktop"
 	| "about";
@@ -1263,6 +1265,7 @@ export function SettingsPage({
 					{section === "appearance" && <ThemeSettings />}
 					{section === "notifications" && <NotificationsSettings />}
 					{section === "shares" && <SharesSettings />}
+					{section === "artifacts" && <ArtifactsSection />}
 					{section === "automations" && <AutomationsSettings />}
 					{section === "desktop" && <DesktopSettings />}
 					{section === "about" && <AboutSettings />}

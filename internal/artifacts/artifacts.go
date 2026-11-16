@@ -270,6 +270,8 @@ type Service struct {
 	rt runtimeGates
 	// data 是数据的监听者与 agent 写数据的限速（data.go）。
 	data dataSet
+	// consent 是页面能力的用户同意（consent.go）。
+	consent consentSet
 }
 
 // holdContent 取内容存储的读锁并返回释放函数。凡是先把内容落进存储、再在事务里插引用行的写入路径，
