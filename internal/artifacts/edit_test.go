@@ -2,11 +2,15 @@ package artifacts
 
 import (
 	"context"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Lynricsy/Oryn/internal/artifacts/htmlsrc"
 )
 
 // 与 web/src/lib/artifacts/editable.test.ts 同一组正反例：两份校验逐条相同。
@@ -137,4 +141,21 @@ func TestEditElement(t *testing.T) {
 	require.NoError(t, err)
 	_, err = e.s.EditElement(ctx, a.ID, EditParams{BaseVersion: 3, Path: "index.html", Offset: h1, Tag: "h1", Style: map[string]string{"color": "#000000"}})
 	assert.Equal(t, CodeDeleted, code(err))
+}
+
+// 帧里页面运行时回报的偏移来自 MarkSources 打的 data-oryn-src：拿它原样编辑，改到的正是那个元素（含中文前文）。
+func TestEditElementWithSourceMark(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	src := "<!doctype html><title>周报</title>\n<ul><li>第一</li><li class=\"b\">第二</li></ul>\n"
+	a, err := e.s.Create(ctx, CreateParams{Title: "页面", Files: []FileChange{put("index.html", src)}})
+	require.NoError(t, err)
+	marked := string(htmlsrc.MarkSources([]byte(src), "abcd1234"))
+	m := regexp.MustCompile(`<li data-oryn-src="abcd1234:(\d+)" class="b">`).FindStringSubmatch(marked)
+	require.NotNil(t, m, marked)
+	off, err := strconv.Atoi(m[1])
+	require.NoError(t, err)
+	_, err = e.s.EditElement(ctx, a.ID, EditParams{BaseVersion: 1, Path: "index.html", Offset: off, Tag: "li", Text: new("第二项"), Style: map[string]string{"font-weight": "700"}})
+	require.NoError(t, err)
+	assert.Equal(t, strings.Replace(src, `<li class="b">第二</li>`, `<li style="font-weight: 700" class="b">第二项</li>`, 1), readFile(t, e.s, a.ID, 2, "index.html"))
 }
