@@ -254,9 +254,6 @@ func (s *Service) cleanup(ctx context.Context) {
 	}
 }
 
-// pollOnce 拉取 App 的投递日志补齐 webhook 漏掉的投递（步骤 4.2 实现）。
-func (s *Service) pollOnce(context.Context) error { return nil }
-
 // flush 投递到期的回流消息（步骤 6.1 实现）。
 func (s *Service) flush(context.Context) {}
 
