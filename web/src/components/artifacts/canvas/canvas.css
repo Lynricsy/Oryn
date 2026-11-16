@@ -1,0 +1,209 @@
+/*
+ * 画布编辑器（计划 M14 6.3）。标注的七种颜色与只读概览页（internal/artifacts/overview.go）取同一套值，
+ * 两处看到的标注颜色一致；其余颜色只用应用的令牌。
+ */
+.canvas-editor {
+	--note-ink: #18181b;
+	--note-red: #dc2626;
+	--note-orange: #ea580c;
+	--note-yellow: #ca8a04;
+	--note-green: #16a34a;
+	--note-blue: #2563eb;
+	--note-violet: #7c3aed;
+}
+:root[data-theme="dark"] .canvas-editor {
+	--note-ink: #fafafa;
+	--note-red: #f87171;
+	--note-orange: #fb923c;
+	--note-yellow: #facc15;
+	--note-green: #4ade80;
+	--note-blue: #60a5fa;
+	--note-violet: #a78bfa;
+}
+
+.canvas-stage {
+	background-color: var(--inset);
+	background-image: radial-gradient(var(--line-strong) 1px, transparent 1px);
+	background-size: 24px 24px;
+	touch-action: none;
+	outline: none;
+}
+
+.canvas-world {
+	position: absolute;
+	left: 0;
+	top: 0;
+	transform-origin: 0 0;
+}
+
+.canvas-page {
+	position: absolute;
+	background: #fff;
+	outline: calc(1px / var(--z, 1)) solid var(--line-strong);
+	box-shadow: var(--sh-sm);
+}
+.canvas-page iframe {
+	display: block;
+	width: 100%;
+	height: 100%;
+	border: 0;
+	background: #fff;
+	pointer-events: none;
+}
+.canvas-page[data-inside] iframe {
+	pointer-events: auto;
+}
+.canvas-page[data-inside] {
+	outline: calc(2px / var(--z, 1)) solid var(--brand);
+}
+
+/* 画框名字：在画框上方，字号不随缩放变化 */
+.canvas-label {
+	position: absolute;
+	left: 0;
+	bottom: 100%;
+	max-width: 100%;
+	margin-bottom: calc(6px / var(--z, 1));
+	overflow: hidden;
+	font-size: calc(12px / var(--z, 1));
+	line-height: 1.3;
+	color: var(--text-muted);
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	pointer-events: none;
+}
+
+.canvas-placeholder {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: calc(4px / var(--z, 1));
+	padding: calc(8px / var(--z, 1));
+	background: var(--panel);
+	color: var(--text-faint);
+	font-size: calc(13px / var(--z, 1));
+	text-align: center;
+}
+
+.canvas-layer {
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 1px;
+	height: 1px;
+	overflow: visible;
+	pointer-events: none;
+}
+
+.canvas-note.c-ink {
+	--c: var(--note-ink);
+}
+.canvas-note.c-red {
+	--c: var(--note-red);
+}
+.canvas-note.c-orange {
+	--c: var(--note-orange);
+}
+.canvas-note.c-yellow {
+	--c: var(--note-yellow);
+}
+.canvas-note.c-green {
+	--c: var(--note-green);
+}
+.canvas-note.c-blue {
+	--c: var(--note-blue);
+}
+.canvas-note.c-violet {
+	--c: var(--note-violet);
+}
+.canvas-note .line {
+	fill: none;
+	stroke: var(--c);
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+.canvas-note .marker {
+	stroke-opacity: 0.35;
+}
+.canvas-note .text {
+	fill: var(--c);
+	font-family: inherit;
+}
+.canvas-note .sticky {
+	fill: var(--c);
+	fill-opacity: 0.25;
+	stroke: var(--c);
+	stroke-opacity: 0.5;
+}
+.canvas-note.done {
+	opacity: 0.5;
+}
+.canvas-note .sticky-text {
+	height: 100%;
+	overflow: hidden;
+	padding: 12px;
+	font-size: 16px;
+	line-height: 1.4;
+	color: var(--text);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+/* 选中框、手柄、参考线与框选：线宽不随缩放变化 */
+.canvas-chrome * {
+	vector-effect: non-scaling-stroke;
+}
+.canvas-chrome .sel {
+	fill: none;
+	stroke: var(--brand);
+	stroke-width: 1.5;
+}
+.canvas-chrome .handle {
+	fill: var(--panel);
+	stroke: var(--brand);
+	stroke-width: 1.5;
+}
+.canvas-chrome .guide {
+	stroke: var(--bad);
+	stroke-width: 1;
+}
+.canvas-chrome .marquee {
+	fill: var(--accent-soft);
+	fill-opacity: 0.5;
+	stroke: var(--brand);
+	stroke-width: 1;
+}
+.canvas-chrome .draft {
+	fill: none;
+	stroke: var(--brand);
+	stroke-width: 1.5;
+	stroke-dasharray: 4 3;
+}
+
+.canvas-size {
+	position: absolute;
+	padding: 1px 6px;
+	border-radius: 4px;
+	background: var(--brand);
+	color: var(--brand-fg);
+	font-size: 11px;
+	line-height: 16px;
+	white-space: nowrap;
+	pointer-events: none;
+	font-variant-numeric: tabular-nums;
+}
+
+.canvas-edit {
+	position: absolute;
+	margin: 0;
+	border: 0;
+	outline: none;
+	resize: none;
+	overflow: hidden;
+	background: transparent;
+	font-family: inherit;
+	pointer-events: auto;
+}

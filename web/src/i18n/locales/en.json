@@ -1906,6 +1906,38 @@
 			"replyPlaceholder": "Reply…",
 			"replySend": "Reply"
 		},
+		"canvas": {
+			"stage": "Canvas: {{title}}",
+			"toolbar": "Canvas tools",
+			"toolKey": "{{name}} ({{key}})",
+			"tools": {
+				"move": "Move",
+				"hand": "Hand",
+				"frame": "Frame",
+				"text": "Text",
+				"sticky": "Sticky note",
+				"pen": "Pen",
+				"marker": "Highlighter",
+				"rect": "Rectangle",
+				"ellipse": "Ellipse",
+				"line": "Line",
+				"arrow": "Arrow",
+				"comment": "Comment"
+			},
+			"zoomIn": "Zoom in",
+			"zoomOut": "Zoom out",
+			"zoomFit": "Fit all",
+			"emptyCanvas": "This page has no frames yet",
+			"frameTool": "Frame tool",
+			"emptyFrame": "New frame · empty until the agent draws it",
+			"newFrame": "Frame {{n}}",
+			"frameTitle": "Frame: {{name}}",
+			"inside": "Interacting with the frame · Esc to exit",
+			"editText": "Edit text",
+			"editSticky": "Edit sticky note",
+			"rejected": "Canvas change wasn't saved: {{reason}}",
+			"frameFailed": "Frames can't be shown right now: {{reason}}"
+		},
 		"home": {
 			"recent": "Recent artifacts",
 			"all": "All"

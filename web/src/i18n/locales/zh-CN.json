@@ -1906,6 +1906,38 @@
 			"replyPlaceholder": "回复…",
 			"replySend": "回复"
 		},
+		"canvas": {
+			"stage": "画布：{{title}}",
+			"toolbar": "画布工具",
+			"toolKey": "{{name}}（{{key}}）",
+			"tools": {
+				"move": "移动",
+				"hand": "抓手",
+				"frame": "画框",
+				"text": "文字",
+				"sticky": "便签",
+				"pen": "画笔",
+				"marker": "荧光笔",
+				"rect": "矩形",
+				"ellipse": "椭圆",
+				"line": "线",
+				"arrow": "箭头",
+				"comment": "评论"
+			},
+			"zoomIn": "放大",
+			"zoomOut": "缩小",
+			"zoomFit": "适合全部",
+			"emptyCanvas": "这个页面还没有画框",
+			"frameTool": "画框工具",
+			"emptyFrame": "新画框 · Agent 画好之前是空的",
+			"newFrame": "画框 {{n}}",
+			"frameTitle": "画框：{{name}}",
+			"inside": "正在与画框交互 · Esc 退出",
+			"editText": "编辑文字",
+			"editSticky": "编辑便签",
+			"rejected": "画布的改动没有保存：{{reason}}",
+			"frameFailed": "画框暂时无法显示：{{reason}}"
+		},
 		"home": {
 			"recent": "最近的 Artifacts",
 			"all": "全部"

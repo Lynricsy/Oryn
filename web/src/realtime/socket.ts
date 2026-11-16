@@ -159,7 +159,7 @@ export class RealtimeClient {
 
 	/** artifact 列表变更的监听者（M14）：收到 `artifacts.changed` 与每次连接建立时调用。 */
 	private readonly artifactsListeners = new Set<() => void>();
-	/** 按 artifact id 分发 `artifact.version` / `artifact.activity`。 */
+	/** 按 artifact id 分发 `artifact.version` / `artifact.activity` / `artifact.canvas`。 */
 	private readonly artifactListeners = new Map<
 		string,
 		Set<(msg: ArtifactEvent) => void>
@@ -711,6 +711,7 @@ export class RealtimeClient {
 				return;
 			case "artifact.version":
 			case "artifact.activity":
+			case "artifact.canvas":
 			case "artifact.comments":
 				for (const cb of [...(this.artifactListeners.get(msg.id) ?? [])])
 					cb(msg);

@@ -11,6 +11,7 @@ import { ArrowsClockwise } from "@phosphor-icons/react/dist/csr/ArrowsClockwise"
 import { ArrowsInSimple } from "@phosphor-icons/react/dist/csr/ArrowsInSimple";
 import { ArrowsOutSimple } from "@phosphor-icons/react/dist/csr/ArrowsOutSimple";
 import { ArrowUp } from "@phosphor-icons/react/dist/csr/ArrowUp";
+import { ArrowUpRight } from "@phosphor-icons/react/dist/csr/ArrowUpRight";
 import { Bell } from "@phosphor-icons/react/dist/csr/Bell";
 import { Brain } from "@phosphor-icons/react/dist/csr/Brain";
 import { Broadcast } from "@phosphor-icons/react/dist/csr/Broadcast";
@@ -57,6 +58,7 @@ import { Fire } from "@phosphor-icons/react/dist/csr/Fire";
 import { Folder } from "@phosphor-icons/react/dist/csr/Folder";
 import { FolderOpen } from "@phosphor-icons/react/dist/csr/FolderOpen";
 import { FolderPlus } from "@phosphor-icons/react/dist/csr/FolderPlus";
+import { FrameCorners } from "@phosphor-icons/react/dist/csr/FrameCorners";
 import { Funnel } from "@phosphor-icons/react/dist/csr/Funnel";
 import { Gauge } from "@phosphor-icons/react/dist/csr/Gauge";
 import { GearSix } from "@phosphor-icons/react/dist/csr/GearSix";
@@ -67,8 +69,10 @@ import { GithubLogo } from "@phosphor-icons/react/dist/csr/GithubLogo";
 import { GitMerge } from "@phosphor-icons/react/dist/csr/GitMerge";
 import { GitPullRequest } from "@phosphor-icons/react/dist/csr/GitPullRequest";
 import { Globe } from "@phosphor-icons/react/dist/csr/Globe";
+import { Hand } from "@phosphor-icons/react/dist/csr/Hand";
 import { HandPalm } from "@phosphor-icons/react/dist/csr/HandPalm";
 import { HardDrives } from "@phosphor-icons/react/dist/csr/HardDrives";
+import { Highlighter } from "@phosphor-icons/react/dist/csr/Highlighter";
 import { Hourglass } from "@phosphor-icons/react/dist/csr/Hourglass";
 import { Image } from "@phosphor-icons/react/dist/csr/Image";
 import { Info } from "@phosphor-icons/react/dist/csr/Info";
@@ -76,21 +80,26 @@ import { Key } from "@phosphor-icons/react/dist/csr/Key";
 import { Keyboard } from "@phosphor-icons/react/dist/csr/Keyboard";
 import { Laptop } from "@phosphor-icons/react/dist/csr/Laptop";
 import { Lightning } from "@phosphor-icons/react/dist/csr/Lightning";
+import { LineSegment } from "@phosphor-icons/react/dist/csr/LineSegment";
 import { Link } from "@phosphor-icons/react/dist/csr/Link";
 import { List } from "@phosphor-icons/react/dist/csr/List";
 import { ListChecks } from "@phosphor-icons/react/dist/csr/ListChecks";
 import { LockSimple } from "@phosphor-icons/react/dist/csr/LockSimple";
 import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
+import { MagnifyingGlassMinus } from "@phosphor-icons/react/dist/csr/MagnifyingGlassMinus";
+import { MagnifyingGlassPlus } from "@phosphor-icons/react/dist/csr/MagnifyingGlassPlus";
 import { Megaphone } from "@phosphor-icons/react/dist/csr/Megaphone";
 import { Memory } from "@phosphor-icons/react/dist/csr/Memory";
 import { Minus } from "@phosphor-icons/react/dist/csr/Minus";
 import { MinusCircle } from "@phosphor-icons/react/dist/csr/MinusCircle";
 import { Monitor } from "@phosphor-icons/react/dist/csr/Monitor";
 import { Moon } from "@phosphor-icons/react/dist/csr/Moon";
+import { Note } from "@phosphor-icons/react/dist/csr/Note";
 import { Palette } from "@phosphor-icons/react/dist/csr/Palette";
 import { Paperclip } from "@phosphor-icons/react/dist/csr/Paperclip";
 import { Pause } from "@phosphor-icons/react/dist/csr/Pause";
 import { PencilSimple } from "@phosphor-icons/react/dist/csr/PencilSimple";
+import { PenNib } from "@phosphor-icons/react/dist/csr/PenNib";
 import { Play } from "@phosphor-icons/react/dist/csr/Play";
 import { Plugs } from "@phosphor-icons/react/dist/csr/Plugs";
 import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
@@ -99,6 +108,7 @@ import { PushPin } from "@phosphor-icons/react/dist/csr/PushPin";
 import { QrCode } from "@phosphor-icons/react/dist/csr/QrCode";
 import { Question } from "@phosphor-icons/react/dist/csr/Question";
 import { Quotes } from "@phosphor-icons/react/dist/csr/Quotes";
+import { Rectangle } from "@phosphor-icons/react/dist/csr/Rectangle";
 import { Robot } from "@phosphor-icons/react/dist/csr/Robot";
 import { RocketLaunch } from "@phosphor-icons/react/dist/csr/RocketLaunch";
 import { Shapes } from "@phosphor-icons/react/dist/csr/Shapes";
@@ -115,6 +125,7 @@ import { Sun } from "@phosphor-icons/react/dist/csr/Sun";
 import { Target } from "@phosphor-icons/react/dist/csr/Target";
 import { TelegramLogo } from "@phosphor-icons/react/dist/csr/TelegramLogo";
 import { TerminalWindow } from "@phosphor-icons/react/dist/csr/TerminalWindow";
+import { TextT } from "@phosphor-icons/react/dist/csr/TextT";
 import { ThermometerHot } from "@phosphor-icons/react/dist/csr/ThermometerHot";
 import { Timer } from "@phosphor-icons/react/dist/csr/Timer";
 import { Trash } from "@phosphor-icons/react/dist/csr/Trash";
@@ -291,6 +302,18 @@ const ICONS = {
 	funnel: Funnel,
 	/** 显示选项（Artifacts 总览页）；画框的「调节」 */
 	sliders: Sliders,
+	/** 画布编辑器的工具（M14 6.3）：抓手、画框、文字、便签、画笔、荧光笔、矩形、线、箭头；椭圆用 `circle`，评论用 `message` */
+	hand: Hand,
+	frameCorners: FrameCorners,
+	textT: TextT,
+	note: Note,
+	penNib: PenNib,
+	highlighter: Highlighter,
+	rectangle: Rectangle,
+	lineSegment: LineSegment,
+	arrowUpRight: ArrowUpRight,
+	zoomIn: MagnifyingGlassPlus,
+	zoomOut: MagnifyingGlassMinus,
 } satisfies Record<string, PhosphorIcon>;
 
 export type IconName = keyof typeof ICONS;
