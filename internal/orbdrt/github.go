@@ -68,7 +68,7 @@ func (r *Runtime) githubPrepare(ctx context.Context, params json.RawMessage) (an
 	env = loginEnv(ctx, dir, env)
 	res, err := RunPrepare(ctx, PrepareRequest{
 		Dir: dir, Level: p.Level, SkipChecks: p.SkipChecks, Reason: p.Reason,
-		Gates: r.currentGitHubGates(), Env: envList(env),
+		Gates: r.currentGitHubGates(), Identity: r.currentGitIdentity(), Env: envList(env),
 	})
 	if err != nil {
 		if ctx.Err() != nil {

@@ -147,6 +147,16 @@ func TestGithubPrepareSock(t *testing.T) {
 	assert.Empty(t, res.SHA)
 	assert.Contains(t, res.Failure, "check")
 
+	// 下发的提交身份与区间内提交的作者不符：在作者检查处失败，不上报
+	rt.envMu.Lock()
+	rt.gitIdentity = &apigen.GitIdentity{Name: "Someone Else", Email: "else@example.com"}
+	rt.envMu.Unlock()
+	setGates(apigen.GitHubGates{Push: true})
+	res, err = call(orbsock.GithubPrepareParams{ThreadID: libThread, Level: "push"})
+	require.NoError(t, err)
+	assert.False(t, res.OK)
+	assert.Contains(t, res.Failure, "author")
+
 	// 参数无效：不执行、不上报
 	for _, bad := range []orbsock.GithubPrepareParams{
 		{ThreadID: libThread, Level: "merge"},

@@ -58,6 +58,17 @@ func (r *Runtime) currentGitHubGates() apigen.GitHubGates {
 	return *r.githubGates
 }
 
+// currentGitIdentity 返回最近一次下发的提交身份（M15）；从未下发时为 nil。
+func (r *Runtime) currentGitIdentity() *apigen.GitIdentity {
+	r.envMu.Lock()
+	defer r.envMu.Unlock()
+	if r.gitIdentity == nil {
+		return nil
+	}
+	id := *r.gitIdentity
+	return &id
+}
+
 // autoSetup 是一次进行中的自动 setup.run / resume.run。link 重连后控制面会重发同样的请求：
 // 等价（同方法、同参数）的重试直接等这次运行的请求结果，而不是再跑一遍、也不排在转入后台的 resume 之后。
 type autoSetup struct {
@@ -185,6 +196,11 @@ func (r *Runtime) runSetupLocked(ctx context.Context, p apigen.LinkCtlSetupRunPa
 	r.lastScripts = cloneScripts(p.Scripts)
 	r.haveParams = true
 	r.githubGates = p.GithubGates
+	// 与写 ~/.gitconfig 的规则一致：缺省时沿用上一次的身份
+	if id := p.GitIdentity; id != nil {
+		cp := *id
+		r.gitIdentity = &cp
+	}
 	r.envMu.Unlock()
 
 	// 1. omp 文本配置：用户层 ~/.omp/agent，与项目层（M12.2，严格镜像到 ~/.oryn/project-config/.omp；不属于项目时删除整个目录）。

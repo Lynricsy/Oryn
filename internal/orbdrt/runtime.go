@@ -229,6 +229,8 @@ type Runtime struct {
 	haveParams  bool
 	// githubGates 是最近一次 setup.run / resume.run 下发的项目门禁配置（M15，github_prepare 读取）；nil = 未配置。
 	githubGates *apigen.GitHubGates
+	// gitIdentity 是最近一次下发的提交身份（M15，github_prepare 校验区间内提交的作者）；nil = 未下发、不校验。
+	gitIdentity *apigen.GitIdentity
 
 	statusMu sync.Mutex
 	status   orbsock.Status
