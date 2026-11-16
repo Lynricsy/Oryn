@@ -629,3 +629,13 @@ WHERE thread_id = @thread_id AND repo_id = @repo_id AND number = @number AND cre
 
 -- name: DeleteGithubOutboxBefore :exec
 DELETE FROM github_outbox WHERE delivered_at IS NOT NULL AND delivered_at < @before;
+
+-- ---------- task list (M15 step 7.1) ----------
+
+-- Issue tasks for `GET /api/v1/github/tasks`, newest first. thread_issues has no change time, so updated_at is the later of
+-- the task's creation and the thread's last update.
+-- name: ListGithubIssueTasks :many
+SELECT ti.repo_id, ti.number, ti.thread_id, ti.state, ti.classification,
+       CAST(MAX(ti.created_at, t.updated_at) AS INTEGER) AS updated_at
+FROM thread_issues ti JOIN threads t ON t.id = ti.thread_id
+ORDER BY ti.created_at DESC, ti.repo_id, ti.number;

@@ -1671,6 +1671,56 @@ func (q *Queries) ListGithubIdentities(ctx context.Context) ([]GithubIdentity, e
 	return items, nil
 }
 
+const listGithubIssueTasks = `-- name: ListGithubIssueTasks :many
+
+SELECT ti.repo_id, ti.number, ti.thread_id, ti.state, ti.classification,
+       CAST(MAX(ti.created_at, t.updated_at) AS INTEGER) AS updated_at
+FROM thread_issues ti JOIN threads t ON t.id = ti.thread_id
+ORDER BY ti.created_at DESC, ti.repo_id, ti.number
+`
+
+type ListGithubIssueTasksRow struct {
+	RepoID         int64   `json:"repoId"`
+	Number         int64   `json:"number"`
+	ThreadID       string  `json:"threadId"`
+	State          string  `json:"state"`
+	Classification *string `json:"classification"`
+	UpdatedAt      int64   `json:"updatedAt"`
+}
+
+// ---------- task list (M15 step 7.1) ----------
+// Issue tasks for `GET /api/v1/github/tasks`, newest first. thread_issues has no change time, so updated_at is the later of
+// the task's creation and the thread's last update.
+func (q *Queries) ListGithubIssueTasks(ctx context.Context) ([]ListGithubIssueTasksRow, error) {
+	rows, err := q.db.QueryContext(ctx, listGithubIssueTasks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListGithubIssueTasksRow{}
+	for rows.Next() {
+		var i ListGithubIssueTasksRow
+		if err := rows.Scan(
+			&i.RepoID,
+			&i.Number,
+			&i.ThreadID,
+			&i.State,
+			&i.Classification,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listGithubReleases = `-- name: ListGithubReleases :many
 SELECT repo_id, version, sha, tag_oid, thread_id, state, rounds, updated_at FROM github_releases ORDER BY updated_at DESC, repo_id, version
 `

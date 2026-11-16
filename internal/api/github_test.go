@@ -27,6 +27,12 @@ import (
 // newGitHubEnv 同 newH2Env，另挂以假 GitHub 为上游的 GitHub 服务。
 func newGitHubEnv(t *testing.T) (*h2Env, *githubtest.Server, *github.Service) {
 	t.Helper()
+	return newGitHubEnvWith(t, nil)
+}
+
+// newGitHubEnvWith 同 newGitHubEnv，GitHub 服务的线程能力取 th（nil = 不建线程）。
+func newGitHubEnvWith(t *testing.T, th github.Threads) (*h2Env, *githubtest.Server, *github.Service) {
+	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
 	st, err := store.Open(ctx, dir)
@@ -45,7 +51,7 @@ func newGitHubEnv(t *testing.T) (*h2Env, *githubtest.Server, *github.Service) {
 	cfg := config.DefaultOrynd()
 	cfg.PublicURL, cfg.DataDir = h2PublicURL, dir
 	cfg.GitHub = config.GitHub{APIURL: fake.URL(), WebURL: fake.URL()}
-	gh := github.New(github.Config{PublicURL: h2PublicURL, APIURL: fake.URL(), WebURL: fake.URL(), Box: box}, st, nil, nil, nil)
+	gh := github.New(github.Config{PublicURL: h2PublicURL, APIURL: fake.URL(), WebURL: fake.URL(), Box: box}, st, th, nil, nil)
 	s := &api.Server{Deps: api.Deps{Config: cfg, Store: st, AuthMiddleware: auth.Middleware(st)}}
 	e := &h2Env{t: t, st: st, dataDir: dir, vault: secrets.NewVault(st, box), tickets: auth.NewTickets(), svc: svc}
 	s.Auth = &api.AuthDeps{Service: svc, Tickets: e.tickets, Vault: e.vault, Home: home, ProjectHomes: projectHomes}
