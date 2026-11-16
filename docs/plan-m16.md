@@ -23,7 +23,12 @@
 - **v4（2026-11-16，执行中修订）**：reembed 改为停机迁移。Hindsight 按 `provider:model:dimension` 识别嵌入模型，而 Oryn 只暴露一个别名 `oryn-embed`。中转在运行中切到新模型，API 就会用新模型读写旧向量；维度相同时写保护也认不出模型已换。为此契约追加 `MemoryEndpointUpdate.reembed`：只有带上它，才能在 `embedLocked` 下改嵌入模型或维度；Hindsight 仍可连上时返回 409 `hindsight_running`。deploy.md「换嵌入模型」改为「停 API → 切模型 → `compose run --rm --no-deps api hindsight-admin reembed` → 启动 → `--finish`」，已在 spike 栈上完整演练（39 行 `swapped`，`finish` 后召回正常）。
 - **v5（2026-11-16，执行中修订，主人决定）**：重排改为可选。本机与 models.yml 里都没有 Cohere 兼容的重排接口，而原来的 `.env` 把重排写死成 cohere，没配接口时每次召回都会因中转返回 409 而失败。改为：管理页没配重排接口时，`.env` 写 `HINDSIGHT_API_RERANKER_PROVIDER=rrf`（Hindsight 1.2.1 自带，不调用模型，只按 RRF 分融合排序）；配了就走 Cohere 中转。cohere 的三行仍然总是写出，保持键集不变，rrf 模式下 Hindsight 会忽略它们。已部署的重排模式与 LLM 协议一样记入 `deployed_families`；配置变化后页面给出 `.env` 片段并提示重启，确认重启沿用 `POST /memory/models/deployed`。重排接口可以删除，嵌入接口不能删。真机验收（5.2）用 rrf，Hindsight 默认模型用 `claude-pro/claude-haiku-5-5`，验收结束后停掉 Hindsight 并删除数据卷。
 - **v6（2026-11-16，执行中修订，安全修复）**：遗忘必须覆盖 mental model。原实现在删除之后只是「尽力刷新」一次，失败只记日志；而 Hindsight 列表接口的 `is_stale` 不观测删除（`http.py` 的字段说明：Deletions are not observed），Core 只要 `content` 非空就注入，reflect 默认也会读 mental model。结果是已遗忘的内容会通过旧摘要继续进入 agent。改为：在带遗忘语义的操作（删除 document、按线程遗忘、replace 改全局记忆、项目级联删除、墓碑重试）调用 Hindsight 删除之前，先把受影响的模型持久化进 `memory_stale_models`（迁移 0038），baseline 是 Hindsight 自己时钟上的 `last_full_refreshed_at`。后台循环按退避重刷，直到 `last_full_refreshed_at` 不等于 baseline（或模型已 404）才清除记录。在此之前，网关的 mental-model list/get 保留条目但把 `content` 置空，转发 reflect 时把这些模型并入 `exclude_mental_model_ids`；删除待重试列表也会显示「等待 mental model 刷新」。迁移 0038 要等另一个会话的 0037 合入之后才提交，避免 goose 乱序。
-- **v7（2026-11-16，执行中修订，安全修复）**：v6 按 baseline 判断会被「删除之前已开始、之后才完成的刷新」误判，已改为记下删除之后提交的那次 refresh 的 operation id（`refresh_op`），只有它 `completed` 或模型 404 才清除（1b61d8a）。之后又发现两处并发误解封：一是后台循环只按 `model_id` 写回或删除，第二次遗忘重置的标记会被上一轮的结果覆盖；二是标记后立即到期，删除尚未完成时循环就可能提交刷新。改为（迁移 0039）：每次标记把代次 `gen` 加 1，并置 `ready=0`；删除完成（无论成败）后，按代次条件置 `ready=1` 再提交刷新。循环只处理 `ready=1` 的记录，所有写回和清除都带 `gen` 条件。orynd 启动时把遗留的 `ready=0` 置为 1（那些删除已随旧进程结束）。另外，两张卡的 `.env` 片段改为覆盖全部待部署的变化，因为「我已重启」会把它们一起确认（7794384）。
+- **v7（2026-11-16，执行中修订，安全修复）**：v6 按 baseline 判断会被「删除之前已开始、之后才完成的刷新」误判，已改为记下删除之后提交的那次 refresh 的 operation id（`refresh_op`），只有它 `completed` 或模型 404 才清除（1b61d8a）。之后又发现三处并发误解封：
+  - 后台循环只按 `model_id` 写回或删除，第二次遗忘写下的标记会被前一轮的结果覆盖；
+  - 标记后立即到期，删除还没完成，循环就可能提交刷新；
+  - 两次遗忘的删除区间重叠、完成顺序反转时，后完成标记的那一方会拿着先完成的一方的刷新结果解除隐藏，而另一方的删除此时还没结束。若用一行里单个代次加 `ready` 来表示状态，还会有 ABA 问题：行被清除后再次插入，代次又回到原值。
+
+  改为（迁移 0039）：每次标记给模型行写入一个从不复用的随机 `token`，同时在 `memory_stale_holds` 里为每个在途删除插入一条 hold（随机 `hold_id`）。删除结束时（无论成败）按 `hold_id` 精确释放，之后才提交刷新。只有模型行存在、且该模型已没有任何 hold 时，才允许提交刷新；循环的写回和清除都要求 `token` 不变，并且仍然没有 hold。orynd 启动时清空 hold 表（在途的删除已随旧进程结束）。另外，两张卡的 `.env` 片段改为覆盖全部待部署的变化，因为「我已重启」会把它们一起确认（7794384）。
 
 ## Context
 
