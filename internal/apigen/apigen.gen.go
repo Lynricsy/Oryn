@@ -5791,10 +5791,12 @@ type LinkCtlGithubCallResult struct {
 
 // LinkCtlGithubPrepareReportParams M15（orbd→orynd）：`github_prepare` 通过后上报，控制面据此在出站代理放行该 SHA
 type LinkCtlGithubPrepareReportParams struct {
-	Level   LinkCtlGithubPrepareReportParamsLevel `json:"level"`
-	Reason  *string                               `json:"reason,omitempty"`
-	Sha     string                                `json:"sha"`
-	Skipped bool                                  `json:"skipped"`
+	// GatesHash 本次 prepare 所用项目门禁配置的规范化哈希（控制面 `github_gates` 答复的 `gatesHash`，原样带回）；出站门禁只认与项目当前门禁哈希相同的通过记录
+	GatesHash string                                `json:"gatesHash"`
+	Level     LinkCtlGithubPrepareReportParamsLevel `json:"level"`
+	Reason    *string                               `json:"reason,omitempty"`
+	Sha       string                                `json:"sha"`
+	Skipped   bool                                  `json:"skipped"`
 
 	// ThreadID `T-<uuidv7>`
 	//

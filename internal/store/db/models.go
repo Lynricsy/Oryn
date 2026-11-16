@@ -331,12 +331,13 @@ type GithubOutbox struct {
 }
 
 type GithubPrepare struct {
-	Sha     string  `json:"sha"`
-	OrbID   string  `json:"orbId"`
-	Level   string  `json:"level"`
-	Skipped bool    `json:"skipped"`
-	Reason  *string `json:"reason"`
-	At      int64   `json:"at"`
+	Sha       string  `json:"sha"`
+	OrbID     string  `json:"orbId"`
+	Level     string  `json:"level"`
+	Skipped   bool    `json:"skipped"`
+	Reason    *string `json:"reason"`
+	At        int64   `json:"at"`
+	GatesHash string  `json:"gatesHash"`
 }
 
 type GithubPull struct {

@@ -7,7 +7,9 @@ import (
 	"strings"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/egress"
 	"github.com/Lynricsy/Oryn/internal/link"
+	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
@@ -23,7 +25,8 @@ const (
 // 工具错误码。
 const codeInvalidParams = "invalid_params"
 
-// callTools 是经 ctl github.call 执行的工具（github_prepare 由 orbd 执行，不在其中）。
+// callTools 是经 ctl github.call 执行的 agent 工具（github_prepare 由 orbd 执行，不在其中；orbd 内部用的 github_gates
+// 也不列出，见 gatestool.go）。
 var callTools = []string{
 	"github_classify_issue",
 	"github_task_state",
@@ -52,6 +55,8 @@ func (s *Service) Call(ctx context.Context, orbID, threadID string, p apigen.Lin
 		return s.toolAutoclose(ctx, threadID, p.Params)
 	case "github_release_status":
 		return s.toolReleaseStatus(ctx, threadID, p.Params)
+	case toolGatesName:
+		return s.toolGates(ctx, orbID, p.Params)
 	case "github_abort_task":
 		// 发布线程没有 issue 任务：放弃的是它的发布（R22 的 abort_task）
 		if rel, ok, err := s.releaseOfThread(ctx, threadID); err != nil {
@@ -66,7 +71,8 @@ func (s *Service) Call(ctx context.Context, orbID, threadID string, p apigen.Lin
 }
 
 // PrepareReport 登记 github_prepare 的通过记录（ctl github.prepare.report）：同一 (sha, orb, level) 再次上报时覆盖
-// skipped / reason / at。出站代理经 PrepareOK 判断是否放行该 SHA。
+// skipped / reason / gates_hash / at。gatesHash 是 orbd 这次 prepare 所用门禁配置的哈希（github_gates 的答复原样带回）；
+// 出站代理经 Prepared 判断是否放行该 SHA。
 func (s *Service) PrepareReport(ctx context.Context, orbID string, p apigen.LinkCtlGithubPrepareReportParams) error {
 	level := string(p.Level)
 	if level != levelPush && level != levelPR {
@@ -76,6 +82,9 @@ func (s *Service) PrepareReport(ctx context.Context, orbID string, p apigen.Link
 	if !validSHA(sha) {
 		return errf(codeInvalidParams, "sha 必须是完整的提交哈希")
 	}
+	if len(p.GatesHash) != 64 || !isLowerHex(p.GatesHash) {
+		return errf(codeInvalidParams, "gatesHash 必须是 github_gates 答复的门禁配置哈希")
+	}
 	var reason *string
 	if p.Reason != nil && strings.TrimSpace(*p.Reason) != "" {
 		reason = p.Reason
@@ -84,11 +93,11 @@ func (s *Service) PrepareReport(ctx context.Context, orbID string, p apigen.Link
 		return errf(codeInvalidParams, "跳过检查时必须给出 reason")
 	}
 	if err := s.st.Q.UpsertGithubPrepare(ctx, db.UpsertGithubPrepareParams{
-		Sha: sha, OrbID: orbID, Level: level, Skipped: p.Skipped, Reason: reason, At: s.nowMs(),
+		Sha: sha, OrbID: orbID, Level: level, Skipped: p.Skipped, Reason: reason, GatesHash: p.GatesHash, At: s.nowMs(),
 	}); err != nil {
 		return err
 	}
-	attrs := []any{"orb", orbID, "thread", p.ThreadID, "sha", sha, "level", level, "skipped", p.Skipped}
+	attrs := []any{"orb", orbID, "thread", p.ThreadID, "sha", sha, "level", level, "skipped", p.Skipped, "gatesHash", p.GatesHash}
 	if reason != nil {
 		attrs = append(attrs, "reason", *reason)
 	}
@@ -96,9 +105,9 @@ func (s *Service) PrepareReport(ctx context.Context, orbID string, p apigen.Link
 	return nil
 }
 
-// PrepareOK 报告 orb 是否登记过 sha 在 level 上的通过记录；pr 级的记录同时满足 push。
-// 有多条时未跳过检查的优先（skipped 反映选中的那条）。查询失败按未通过处理。
-func (s *Service) PrepareOK(ctx context.Context, orbID, sha, level string) (ok, skipped bool) {
+// Prepared 报告 orb 在 sha、level 上的通过记录；pr 级的记录同时满足 push。只认 gates_hash 等于 orb 项目当前门禁哈希的
+// 记录（有多条时未跳过检查的优先，skipped 反映选中的那条）；只有旧哈希的记录时为 PrepareStale。查询失败按没有记录处理。
+func (s *Service) Prepared(ctx context.Context, orbID, sha, level string) egress.PrepareState {
 	var levels []string
 	switch level {
 	case levelPush:
@@ -106,23 +115,42 @@ func (s *Service) PrepareOK(ctx context.Context, orbID, sha, level string) (ok, 
 	case levelPR:
 		levels = []string{levelPR}
 	default:
-		return false, false
+		return egress.PrepareNone
 	}
-	rec, err := s.st.Q.FindGithubPrepare(ctx, db.FindGithubPrepareParams{Sha: strings.ToLower(sha), OrbID: orbID, Levels: levels})
+	recs, err := s.st.Q.ListGithubPrepares(ctx, db.ListGithubPreparesParams{Sha: strings.ToLower(sha), OrbID: orbID, Levels: levels})
 	if err != nil {
-		if !isNoRows(err) {
-			slog.Warn("github: 读取 prepare 记录失败", "orb", orbID, "sha", sha, "err", err)
-		}
-		return false, false
+		slog.Warn("github: 读取 prepare 记录失败", "orb", orbID, "sha", sha, "err", err)
+		return egress.PrepareNone
 	}
-	return true, rec.Skipped
+	if len(recs) == 0 {
+		return egress.PrepareNone
+	}
+	raw, err := s.orbGates(ctx, orbID)
+	if err != nil {
+		slog.Warn("github: 读取项目门禁失败", "orb", orbID, "err", err)
+		return egress.PrepareNone
+	}
+	cur := orbs.GitHubGatesHash(raw)
+	st := egress.PrepareStale
+	for _, r := range recs {
+		if r.GatesHash != cur {
+			continue
+		}
+		if !r.Skipped {
+			return egress.PreparePassed
+		}
+		st = egress.PrepareSkipped
+	}
+	return st
 }
 
 // validSHA 判断 s 是否是完整的十六进制提交哈希（SHA-1 40 位或 SHA-256 64 位，小写）。
 func validSHA(s string) bool {
-	if len(s) != 40 && len(s) != 64 {
-		return false
-	}
+	return (len(s) == 40 || len(s) == 64) && isLowerHex(s)
+}
+
+// isLowerHex 判断 s 是否只由小写十六进制数字组成。
+func isLowerHex(s string) bool {
 	_, err := hex.DecodeString(s)
-	return err == nil
+	return err == nil && strings.ToLower(s) == s
 }

@@ -88,8 +88,8 @@ func (s stubGitHub) PrepareReport(context.Context, string, apigen.LinkCtlGithubP
 func (s stubGitHub) GitHubWriteBegin(context.Context, string, egress.GitHubWrite) string       { return "" }
 func (s stubGitHub) GitHubWriteEnd(context.Context, string, egress.GitHubWrite, int, []string) {}
 func (s stubGitHub) GitHubTokenRejected(context.Context, string, string)                       {}
-func (s stubGitHub) PrepareOK(context.Context, string, string, string) (bool, bool) {
-	return false, false
+func (s stubGitHub) Prepared(context.Context, string, string, string) egress.PrepareState {
+	return egress.PrepareNone
 }
 func (s stubGitHub) ImplAuthorized(context.Context, string) bool                     { return false }
 func (s stubGitHub) HeadSHA(context.Context, string, string, string) (string, error) { return "", nil }
@@ -318,7 +318,7 @@ func TestEgressReviewOnlyAfterSetup(t *testing.T) {
 	s := &Service{st: st, github: gh, policies: map[string]egress.Policy{}}
 	plan, err := (&DefaultSetup{Store: st, GitHub: gh}).Plan(ctx, orb)
 	require.NoError(t, err)
-	s.setPolicy(orb.ID, plan.Egress) // setup 完成：此时线程还没有任务
+	s.setPolicy(orb.ID, plan.Egress, s.policyGeneration()) // setup 完成：此时线程还没有任务
 	px := httptest.NewServer(egress.NewHandler(orb.ID, egressResolver{s: s, orbID: orb.ID}))
 	defer px.Close()
 

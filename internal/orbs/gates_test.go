@@ -45,7 +45,7 @@ func TestInvalidateProjectPoliciesAppliesGates(t *testing.T) {
 	require.NotNil(t, pol.GitHub)
 	assert.Nil(t, pol.GitHub.Gates, "尚无门禁")
 	other := egress.Policy{Routes: map[string]egress.Route{"keep": {Origin: "https://keep.example.com"}}}
-	s.setPolicy("orb-other", other)
+	s.setPolicy("orb-other", other, s.policyGeneration())
 
 	raw, err := EncodeGitHubGates([]byte(`{"push":true,"pr":true,"prHeadings":["Summary"]}`))
 	require.NoError(t, err)
@@ -65,4 +65,87 @@ func TestInvalidateProjectPoliciesAppliesGates(t *testing.T) {
 	require.NoError(t, st.Q.SetProjectGithubGates(ctx, db.SetProjectGithubGatesParams{GithubGates: nil, UpdatedAt: 3, ID: prj}))
 	s.InvalidateProjectPolicies(ctx, prj)
 	assert.Nil(t, s.policyFor(orb.ID).GitHub.Gates)
+}
+
+// 安全边界（代际）：policyFor 重建读到旧门禁之后、写缓存之前项目门禁被改并作废，旧策略不写回缓存；重建重来，
+// 返回并缓存新门禁。
+func TestPolicyRebuildRacingInvalidate(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	prj, orb, _ := gateStore(t, st)
+	gh := stubGitHub{ok: true, gs: GitHubSetup{Login: "oryn-bot", APIOrigin: "https://api.github.com", GitOrigin: "https://github.com"}}
+	s := &Service{st: st, setup: &DefaultSetup{Store: st, GitHub: gh}, policies: map[string]egress.Policy{}}
+
+	raw, err := EncodeGitHubGates([]byte(`{"push":true,"pr":false}`))
+	require.NoError(t, err)
+	rebuilds := 0
+	s.hookPolicyRebuilt = func(string) {
+		rebuilds++
+		if rebuilds != 1 {
+			return
+		}
+		// 第一次重建已读完（无门禁）配置、尚未写缓存：此刻 PATCH 提交并作废
+		require.NoError(t, st.Q.SetProjectGithubGates(ctx, db.SetProjectGithubGatesParams{GithubGates: raw, UpdatedAt: 2, ID: prj}))
+		s.InvalidateProjectPolicies(ctx, prj)
+	}
+	pol := s.policyFor(orb.ID)
+	assert.Equal(t, 2, rebuilds, "撞上作废后重建一次")
+	require.NotNil(t, pol.GitHub)
+	require.NotNil(t, pol.GitHub.Gates, "返回新门禁")
+	assert.True(t, pol.GitHub.Gates.Push)
+	s.hookPolicyRebuilt = nil
+	s.mu.Lock()
+	cached, ok := s.policies[orb.ID]
+	s.mu.Unlock()
+	require.True(t, ok, "新策略已缓存")
+	require.NotNil(t, cached.GitHub.Gates)
+	assert.True(t, cached.GitHub.Gates.Push)
+
+	// setup 路径同理：读配置之前取的代际在作废后失效，写回被拒并清掉缓存，下一次 policyFor 按当前配置重建
+	gen := s.policyGeneration()
+	plan, err := s.setup.Plan(ctx, orb)
+	require.NoError(t, err)
+	require.NoError(t, st.Q.SetProjectGithubGates(ctx, db.SetProjectGithubGatesParams{GithubGates: nil, UpdatedAt: 3, ID: prj}))
+	s.InvalidateProjectPolicies(ctx, prj)
+	assert.False(t, s.setPolicy(orb.ID, plan.Egress, gen), "旧代际的策略不写缓存")
+	s.mu.Lock()
+	_, ok = s.policies[orb.ID]
+	s.mu.Unlock()
+	assert.False(t, ok)
+	assert.Nil(t, s.policyFor(orb.ID).GitHub.Gates, "重建得到关闭后的门禁")
+
+	// 一直撞上作废：重建次数有上限，返回最后一次的结果、不写缓存
+	s.mu.Lock()
+	clear(s.policies)
+	s.mu.Unlock()
+	rebuilds = 0
+	s.hookPolicyRebuilt = func(string) {
+		rebuilds++
+		s.InvalidateProjectPolicies(ctx, prj)
+	}
+	assert.Nil(t, s.policyFor(orb.ID).GitHub.Gates)
+	assert.Equal(t, policyRebuildRetries, rebuilds)
+	s.mu.Lock()
+	_, ok = s.policies[orb.ID]
+	s.mu.Unlock()
+	assert.False(t, ok, "没有一次重建未撞上作废，不缓存")
+}
+
+// 门禁哈希只随规范化后的配置变化：等价写法同哈希，命令改动换哈希，未配置与空串同哈希。
+func TestGitHubGatesHash(t *testing.T) {
+	enc := func(body string) *string {
+		t.Helper()
+		raw, err := EncodeGitHubGates([]byte(body))
+		require.NoError(t, err)
+		return raw
+	}
+	a := GitHubGatesHash(enc(`{"push":true,"pr":false,"checkCmd":"make check"}`))
+	assert.Regexp(t, `^[0-9a-f]{64}$`, a)
+	assert.Equal(t, a, GitHubGatesHash(enc(`{"pr":false,"checkCmd":"  make check ","push":true,"fixCmd":""}`)))
+	assert.NotEqual(t, a, GitHubGatesHash(enc(`{"push":true,"pr":false,"checkCmd":"make check2"}`)))
+	empty := ""
+	assert.Equal(t, GitHubGatesHash(nil), GitHubGatesHash(&empty))
+	assert.NotEqual(t, a, GitHubGatesHash(nil))
 }

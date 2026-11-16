@@ -2,6 +2,8 @@ package orbs
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -114,13 +116,28 @@ func gateConfig(g *apigen.GitHubGates) *egress.GateConfig {
 	}
 }
 
+// GitHubGatesHash 是项目门禁配置（projects.github_gates）的规范化哈希：ParseGitHubGates 读出后重新编码的 JSON（与
+// EncodeGitHubGates 存入的规范形状相同；未配置为 `null`）的 sha256，小写十六进制。github_prepare 的通过记录绑定这个哈希，
+// 出站门禁只认与项目当前哈希相同的记录：门禁改动之后（包括 prepare 与上报之间、上报之后）旧记录不再放行。
+func GitHubGatesHash(raw *string) string {
+	b, err := json.Marshal(ParseGitHubGates(raw))
+	if err != nil { // apigen.GitHubGates 只有字符串、布尔与字符串切片，不会失败
+		b = []byte("null")
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
 // InvalidateProjectPolicies 在项目门禁改动后作废该项目各 orb 缓存的出站策略：门禁是出站代理强制的安全边界，
-// 不能等到下次 setup / resume 才生效。作废后下一个出站请求由 policyFor 按当前配置重建（与 orynd 重启后相同）；
-// orbd 侧 github_prepare 的命令仍随下次 setup / resume 下发。读 orb 列表失败时作废全部缓存（宁可多重建，不留旧门禁）。
+// 不能等到下次 setup / resume 才生效。作废后下一个出站请求由 policyFor 按当前配置重建（与 orynd 重启后相同）。
+// 同时把策略代际加一：作废之前已读过配置、尚未写缓存的重建（policyFor、setup、omp-home 下发）不再写入旧策略
+// （见 setPolicy）。读 orb 列表失败时作废全部缓存（宁可多重建，不留旧门禁）。
+// orbd 侧 github_prepare 每次执行前经 ctl github.call（github_gates）现查命令，不受这里影响。
 func (s *Service) InvalidateProjectPolicies(ctx context.Context, projectID string) {
 	rows, err := s.st.Q.ListOrbs(ctx, nil)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.policyGen++
 	if err != nil {
 		slog.Warn("读取 orb 列表失败，作废全部出站策略缓存", "project", projectID, "err", err)
 		clear(s.policies)

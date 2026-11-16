@@ -9009,6 +9009,8 @@ export interface components {
             level: "push" | "pr";
             skipped: boolean;
             reason?: string;
+            /** @description 本次 prepare 所用项目门禁配置的规范化哈希（控制面 `github_gates` 答复的 `gatesHash`，原样带回）；出站门禁只认与项目当前门禁哈希相同的通过记录 */
+            gatesHash: string;
         };
         LinkCtlSetupRunResult: {
             /** @description setup 脚本失败（含超时）时为 false；orb 仍可使用，agent 照常启动以便修复脚本 */

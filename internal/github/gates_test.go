@@ -13,6 +13,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/egress"
 	"github.com/Lynricsy/Oryn/internal/github/githubtest"
 	"github.com/Lynricsy/Oryn/internal/ids"
+	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
@@ -128,7 +129,8 @@ func TestGateHeadSHA(t *testing.T) {
 }
 
 // 端到端：PR 门禁经出站代理现查控制面的 prepare 记录与 head；拒绝时不触达 GitHub，审计记 Rejected 的门禁原因；
-// prepare 上报后同一请求放行，审计记 pass。
+// prepare 上报后同一请求放行，审计记 pass。项目门禁改动之后旧哈希的记录不再放行（原因说明门禁配置已变），
+// 以新哈希重新上报后放行。
 func TestGateThroughEgress(t *testing.T) {
 	e := newEnv(t)
 	prj := e.boundProject()
@@ -157,9 +159,13 @@ func TestGateThroughEgress(t *testing.T) {
 	assert.Empty(t, pre, "被拒绝的写操作不预登记")
 	assert.False(t, e.s.selfWriteInflight(slotUser), "被拒绝的写操作不计在途")
 
-	require.NoError(t, e.s.PrepareReport(e.ctx, orbID, apigen.LinkCtlGithubPrepareReportParams{
-		Sha: gateSHA, Level: apigen.GitHubPrepareLevelPr, ThreadID: ids.New("thr"),
-	}))
+	report := func(hash string) {
+		t.Helper()
+		require.NoError(t, e.s.PrepareReport(e.ctx, orbID, apigen.LinkCtlGithubPrepareReportParams{
+			Sha: gateSHA, Level: apigen.GitHubPrepareLevelPr, ThreadID: ids.New("thr"), GatesHash: hash,
+		}))
+	}
+	report(orbs.GitHubGatesHash(e.getProject(prj).GithubGates))
 	resp, err = http.Post(gqlURL, "application/json", strings.NewReader(body))
 	require.NoError(t, err)
 	resp.Body.Close()
@@ -170,4 +176,35 @@ func TestGateThroughEgress(t *testing.T) {
 	pre, err = e.st.Q.ListGithubSelfWrites(e.ctx, db.ListGithubSelfWritesParams{Target: githubtest.RepoNodeID(42), Category: egress.CatPRCreate})
 	require.NoError(t, err)
 	assert.Len(t, pre, 1, "放行后预登记")
+
+	// prepare 之后（或 prepare 与上报之间）项目门禁被改：旧哈希的记录不再放行
+	raw, err := orbs.EncodeGitHubGates([]byte(`{"push":false,"pr":true,"checkCmd":"make check","requireClosingRef":true}`))
+	require.NoError(t, err)
+	require.NoError(t, e.st.Q.SetProjectGithubGates(e.ctx, db.SetProjectGithubGatesParams{GithubGates: raw, UpdatedAt: 2, ID: prj}))
+	resp, err = http.Post(gqlURL, "application/json", strings.NewReader(body))
+	require.NoError(t, err)
+	resp.Body.Close()
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	rows = e.audits()
+	require.Len(t, rows, 3)
+	var gates []string
+	for _, r := range rows {
+		gates = append(gates, r.Gate)
+	}
+	assert.Contains(t, strings.Join(gates, "\n"), "门禁配置已变，请重新运行 github_prepare level=pr")
+
+	report(orbs.GitHubGatesHash(raw))
+	resp, err = http.Post(gqlURL, "application/json", strings.NewReader(body))
+	require.NoError(t, err)
+	resp.Body.Close()
+	assert.NotEqual(t, http.StatusForbidden, resp.StatusCode, "以新哈希重新上报后放行")
+	rows = e.audits()
+	require.Len(t, rows, 4)
+	passes := 0
+	for _, r := range rows {
+		if r.Gate == egress.GatePass {
+			passes++
+		}
+	}
+	assert.Equal(t, 2, passes, "以新哈希重新上报后门禁放行")
 }

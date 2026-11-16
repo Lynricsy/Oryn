@@ -39,6 +39,16 @@ const (
 	levelPR   = "pr"
 )
 
+// PrepareState 是 GateLookup.Prepared 的结论（M15）。
+type PrepareState int
+
+const (
+	PrepareNone    PrepareState = iota // 没有通过记录（或查询失败）
+	PreparePassed                      // 有与项目当前门禁配置相符的通过记录，命令照常执行
+	PrepareSkipped                     // 同上，但该记录跳过了检查（skipChecks）
+	PrepareStale                       // 只有项目门禁配置改动之前登记的记录：配置已变，须重新 github_prepare
+)
+
 // defaultBranchTTL 是仓库默认分支在 Handler 里的缓存时长。
 const defaultBranchTTL = 10 * time.Minute
 
@@ -58,8 +68,9 @@ type GateLookup interface {
 	// ThreadGates 返回该 orb 线程任务的当前限制；orb 没有唯一的未归档工作线程或线程没有任务时为零值。
 	// 返回错误时门禁按 strictThreadGates 处理。
 	ThreadGates() (ThreadGates, error)
-	// PrepareOK 报告该 orb 是否登记过 sha 在 level（push / pr）上的 github_prepare 通过记录；pr 级同时满足 push。
-	PrepareOK(sha, level string) (ok, skipped bool)
+	// Prepared 报告该 orb 在 sha、level（push / pr）上的 github_prepare 通过记录；pr 级同时满足 push。通过记录绑定登记时
+	// 项目门禁配置的哈希，与项目当前配置不符的记录为 PrepareStale（不放行）。
+	Prepared(sha, level string) PrepareState
 	// ImplAuthorized 报告该 orb 线程的任务是否已获得实现授权（R16）。
 	ImplAuthorized() bool
 	// HeadSHA 用该 orb 自己槽位的令牌查询分支当前指向的提交。repo 是 `owner/repo`、数值仓库 id 或仓库 node id；
@@ -79,8 +90,8 @@ type NoGateLookup struct{}
 func (NoGateLookup) ThreadGates() (ThreadGates, error) {
 	return ThreadGates{}, fmt.Errorf("egress: 没有 GitHub 门禁查询")
 }
-func (NoGateLookup) PrepareOK(string, string) (bool, bool) { return false, false }
-func (NoGateLookup) ImplAuthorized() bool                  { return false }
+func (NoGateLookup) Prepared(string, string) PrepareState { return PrepareNone }
+func (NoGateLookup) ImplAuthorized() bool                 { return false }
 func (NoGateLookup) HeadSHA(string, string) (string, error) {
 	return "", fmt.Errorf("egress: 没有 GitHub 门禁查询")
 }
@@ -235,14 +246,17 @@ func (g *gateRun) prCreate(op *GitHubOp) (string, bool) {
 	if err != nil || !isOID(sha) {
 		return fmt.Sprintf("PR 门禁：查询 head %s 的提交失败（%v）", ref, err), true
 	}
-	ok, skipped := g.h.R.PrepareOK(sha, levelPR)
-	if !ok {
+	st := g.h.R.Prepared(sha, levelPR)
+	switch st {
+	case PrepareStale:
+		return fmt.Sprintf("PR 门禁：head %s 的 %s 的 pr 级 github_prepare 通过记录早于项目门禁配置的改动；门禁配置已变，请重新运行 github_prepare level=pr", ref, short(sha)), true
+	case PrepareNone:
 		return fmt.Sprintf("PR 门禁：head %s 的 %s 没有 pr 级 github_prepare 通过记录；先运行 github_prepare level=pr", ref, short(sha)), true
 	}
 	if msg := prBodyProblem(op.Body, g.gh.Gates); msg != "" {
 		return "PR 门禁：" + msg, true
 	}
-	if skipped {
+	if st == PrepareSkipped {
 		return GateSkipped, false
 	}
 	return GatePass, false
@@ -295,14 +309,15 @@ func (g *gateRun) branchUpdate(repo, ref, sha string) (string, bool) {
 	if strings.Trim(sha, "0") == "" {
 		return GatePass, false
 	}
-	ok, skipped := g.h.R.PrepareOK(strings.ToLower(sha), levelPush)
-	if !ok {
-		return fmt.Sprintf("推送门禁：%s 的 %s 没有 github_prepare 通过记录；先运行 github_prepare", branch, short(sha)), true
-	}
-	if skipped {
+	switch g.h.R.Prepared(strings.ToLower(sha), levelPush) {
+	case PreparePassed:
+		return GatePass, false
+	case PrepareSkipped:
 		return GateSkipped, false
+	case PrepareStale:
+		return fmt.Sprintf("推送门禁：%s 的 %s 的 github_prepare 通过记录早于项目门禁配置的改动；门禁配置已变，请重新运行 github_prepare", branch, short(sha)), true
 	}
-	return GatePass, false
+	return fmt.Sprintf("推送门禁：%s 的 %s 没有 github_prepare 通过记录；先运行 github_prepare", branch, short(sha)), true
 }
 
 // mergeVerdict 合并多个 ref 的结论：跳过检查优先于放行。

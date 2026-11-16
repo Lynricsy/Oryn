@@ -511,6 +511,7 @@ func (s *Service) runPhase(l *orbLink) {
 	if err != nil || !moved {
 		return
 	}
+	gen := s.policyGeneration() // 读配置之前取代际：期间项目门禁被改时不写回旧策略（由 policyFor 按需重建）
 	var plan SetupPlan
 	if s.setup != nil {
 		plan, err = s.setup.Plan(ctx, orb)
@@ -532,7 +533,7 @@ func (s *Service) runPhase(l *orbLink) {
 	if deferResume {
 		plan.Params.DeferResume = new(true)
 	}
-	s.setPolicy(l.orbID, plan.Egress)
+	s.setPolicy(l.orbID, plan.Egress, gen)
 	// linkLost 处理 ctl 调用因 link 断开失败：退回 connecting（开始 hello 计时），若新 link 已 hello 则立即重来。
 	linkLost := func(during string) {
 		slog.Info(during+"期间 link 断开", "orb", l.orbID, "phase", phase)

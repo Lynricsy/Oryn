@@ -288,6 +288,7 @@ func (s *Service) applyTargets(ctx context.Context, projectID string) ([]db.Orb,
 // applyOrb 向一台 orb 下发 omphome.apply；成功后用同一份 Plan 刷新其 egress 路由。
 func (s *Service) applyOrb(ctx context.Context, orb db.Orb) OrbApply {
 	res := OrbApply{OrbID: orb.ID}
+	gen := s.policyGeneration() // 读配置之前取代际：期间项目门禁被改时不写回旧策略
 	plan, err := s.setup.Plan(ctx, orb)
 	if err != nil {
 		res.Err = "生成下发参数: " + err.Error()
@@ -306,7 +307,7 @@ func (s *Service) applyOrb(ctx context.Context, orb db.Orb) OrbApply {
 		res.Err = err.Error()
 		return res
 	}
-	s.setPolicy(orb.ID, plan.Egress)
+	s.setPolicy(orb.ID, plan.Egress, gen)
 	res.OK = true
 	return res
 }

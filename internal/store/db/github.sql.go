@@ -430,46 +430,6 @@ func (q *Queries) DeleteRetiredGithubWatches(ctx context.Context, doneBefore *in
 	return err
 }
 
-const findGithubPrepare = `-- name: FindGithubPrepare :one
-SELECT sha, orb_id, level, skipped, reason, at FROM github_prepare
-WHERE sha = ?1 AND orb_id = ?2 AND level IN (/*SLICE:levels*/?)
-ORDER BY skipped, at DESC
-LIMIT 1
-`
-
-type FindGithubPrepareParams struct {
-	Sha    string   `json:"sha"`
-	OrbID  string   `json:"orbId"`
-	Levels []string `json:"levels"`
-}
-
-// Best pass record among the accepted levels: an unskipped one wins.
-func (q *Queries) FindGithubPrepare(ctx context.Context, arg FindGithubPrepareParams) (GithubPrepare, error) {
-	query := findGithubPrepare
-	var queryParams []interface{}
-	queryParams = append(queryParams, arg.Sha)
-	queryParams = append(queryParams, arg.OrbID)
-	if len(arg.Levels) > 0 {
-		for _, v := range arg.Levels {
-			queryParams = append(queryParams, v)
-		}
-		query = strings.Replace(query, "/*SLICE:levels*/?", strings.Repeat(",?", len(arg.Levels))[1:], 1)
-	} else {
-		query = strings.Replace(query, "/*SLICE:levels*/?", "NULL", 1)
-	}
-	row := q.db.QueryRowContext(ctx, query, queryParams...)
-	var i GithubPrepare
-	err := row.Scan(
-		&i.Sha,
-		&i.OrbID,
-		&i.Level,
-		&i.Skipped,
-		&i.Reason,
-		&i.At,
-	)
-	return i, err
-}
-
 const finishGithubAutoclose = `-- name: FinishGithubAutoclose :exec
 UPDATE github_autoclose SET state = ?1, outcome = ?2
 WHERE repo_id = ?3 AND number = ?4 AND state = 'claimed'
@@ -1732,6 +1692,61 @@ func (q *Queries) ListGithubIssueTasks(ctx context.Context) ([]ListGithubIssueTa
 			&i.State,
 			&i.Classification,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGithubPrepares = `-- name: ListGithubPrepares :many
+SELECT sha, orb_id, level, skipped, reason, at, gates_hash FROM github_prepare
+WHERE sha = ?1 AND orb_id = ?2 AND level IN (/*SLICE:levels*/?)
+`
+
+type ListGithubPreparesParams struct {
+	Sha    string   `json:"sha"`
+	OrbID  string   `json:"orbId"`
+	Levels []string `json:"levels"`
+}
+
+// Pass records among the accepted levels (at most one per level); the caller picks the best one.
+func (q *Queries) ListGithubPrepares(ctx context.Context, arg ListGithubPreparesParams) ([]GithubPrepare, error) {
+	query := listGithubPrepares
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.Sha)
+	queryParams = append(queryParams, arg.OrbID)
+	if len(arg.Levels) > 0 {
+		for _, v := range arg.Levels {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:levels*/?", strings.Repeat(",?", len(arg.Levels))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:levels*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GithubPrepare{}
+	for rows.Next() {
+		var i GithubPrepare
+		if err := rows.Scan(
+			&i.Sha,
+			&i.OrbID,
+			&i.Level,
+			&i.Skipped,
+			&i.Reason,
+			&i.At,
+			&i.GatesHash,
 		); err != nil {
 			return nil, err
 		}
@@ -3581,18 +3596,20 @@ func (q *Queries) UpsertGithubOAuthApp(ctx context.Context, arg UpsertGithubOAut
 
 const upsertGithubPrepare = `-- name: UpsertGithubPrepare :exec
 
-INSERT INTO github_prepare (sha, orb_id, level, skipped, reason, at)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-ON CONFLICT (sha, orb_id, level) DO UPDATE SET skipped = excluded.skipped, reason = excluded.reason, at = excluded.at
+INSERT INTO github_prepare (sha, orb_id, level, skipped, reason, gates_hash, at)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+ON CONFLICT (sha, orb_id, level) DO UPDATE SET skipped = excluded.skipped, reason = excluded.reason,
+    gates_hash = excluded.gates_hash, at = excluded.at
 `
 
 type UpsertGithubPrepareParams struct {
-	Sha     string  `json:"sha"`
-	OrbID   string  `json:"orbId"`
-	Level   string  `json:"level"`
-	Skipped bool    `json:"skipped"`
-	Reason  *string `json:"reason"`
-	At      int64   `json:"at"`
+	Sha       string  `json:"sha"`
+	OrbID     string  `json:"orbId"`
+	Level     string  `json:"level"`
+	Skipped   bool    `json:"skipped"`
+	Reason    *string `json:"reason"`
+	GatesHash string  `json:"gatesHash"`
+	At        int64   `json:"at"`
 }
 
 // ---------- prepare ----------
@@ -3603,6 +3620,7 @@ func (q *Queries) UpsertGithubPrepare(ctx context.Context, arg UpsertGithubPrepa
 		arg.Level,
 		arg.Skipped,
 		arg.Reason,
+		arg.GatesHash,
 		arg.At,
 	)
 	return err

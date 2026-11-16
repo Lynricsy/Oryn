@@ -218,14 +218,14 @@ func (s *Service) threadGates(ctx context.Context, orbID string) (egress.ThreadG
 	return tg, nil
 }
 
-// PrepareOK 实现 egress.GateLookup：sha 在 level 上是否有本 orb 的 github_prepare 通过记录。
-func (r egressResolver) PrepareOK(sha, level string) (bool, bool) {
+// Prepared 实现 egress.GateLookup：sha 在 level 上本 orb 的 github_prepare 通过记录（须与项目当前门禁配置相符）。
+func (r egressResolver) Prepared(sha, level string) egress.PrepareState {
 	if r.s.github == nil {
-		return false, false
+		return egress.PrepareNone
 	}
 	ctx, cancel := gateCtx()
 	defer cancel()
-	return r.s.github.PrepareOK(ctx, r.orbID, sha, level)
+	return r.s.github.Prepared(ctx, r.orbID, sha, level)
 }
 
 // ImplAuthorized 实现 egress.GateLookup：本 orb 线程的任务是否已获实现授权（每次现查，分类会在线程期间变化）。
@@ -278,7 +278,13 @@ func (r egressResolver) ReleaseThread() bool {
 	return r.s.github.ReleaseThread(ctx, r.orbID)
 }
 
-// policyFor 返回 orb 的出站策略；缓存缺失（如 orynd 重启后）时按当前配置重新生成。
+// policyRebuildRetries 是 policyFor 重建期间撞上门禁作废时的重建次数上限；用尽后返回最后一次的结果、不写缓存
+// （最后一次读配置晚于它之前的每次作废，期间新提交的改动由之后的请求重建）。
+const policyRebuildRetries = 3
+
+// policyFor 返回 orb 的出站策略；缓存缺失（如 orynd 重启、门禁作废后）时按当前配置重新生成。
+// 重建读配置之前记下策略代际，写缓存时代际已变（期间有 InvalidateProjectPolicies）就丢弃重来：否则读到的旧门禁
+// 会在作废之后写回缓存、一直留到下一次作废。
 func (s *Service) policyFor(orbID string) egress.Policy {
 	s.mu.Lock()
 	pol, ok := s.policies[orbID]
@@ -288,23 +294,47 @@ func (s *Service) policyFor(orbID string) egress.Policy {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	orb, err := s.st.Q.GetOrb(ctx, orbID)
-	if err != nil || s.setup == nil {
-		return egress.Policy{}
+	for range policyRebuildRetries {
+		gen := s.policyGeneration()
+		orb, err := s.st.Q.GetOrb(ctx, orbID)
+		if err != nil || s.setup == nil {
+			return egress.Policy{}
+		}
+		plan, err := s.setup.Plan(ctx, orb)
+		if err != nil {
+			slog.Warn("重建 egress 策略失败", "orb", orbID, "err", err)
+			return egress.Policy{}
+		}
+		if s.hookPolicyRebuilt != nil {
+			s.hookPolicyRebuilt(orbID)
+		}
+		pol = plan.Egress
+		if s.setPolicy(orbID, pol, gen) {
+			return pol
+		}
 	}
-	plan, err := s.setup.Plan(ctx, orb)
-	if err != nil {
-		slog.Warn("重建 egress 策略失败", "orb", orbID, "err", err)
-		return egress.Policy{}
-	}
-	s.setPolicy(orbID, plan.Egress)
-	return plan.Egress
+	return pol
 }
 
-func (s *Service) setPolicy(orbID string, pol egress.Policy) {
+// policyGeneration 返回出站策略的当前代际：生成策略的一方在读配置之前取一次，交给 setPolicy。
+func (s *Service) policyGeneration() uint64 {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.policyGen
+}
+
+// setPolicy 缓存 orb 的出站策略；gen 是生成它之前取的代际。代际已变（期间项目门禁被改、缓存已作废）时不写缓存，
+// 并删掉这台 orb 现有的缓存（它与这份策略谁更新说不清），返回 false：这份策略可能读自改动之前，由下一个出站请求
+// 经 policyFor 按当前配置重建。
+func (s *Service) setPolicy(orbID string, pol egress.Policy, gen uint64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if gen != s.policyGen {
+		delete(s.policies, orbID)
+		return false
+	}
 	s.policies[orbID] = pol
-	s.mu.Unlock()
+	return true
 }
 
 // serveEgress 把一条 egress 流交给该 orb 的代理服务（按需创建）。memoryOnly 为真（runner）时只放行记忆网关
@@ -334,10 +364,12 @@ func (s *Service) serveEgress(orbID string, st *link.Stream, memoryOnly bool) {
 	es.l.Push(st)
 }
 
-// memoryOnlyHandler 只把 `/memory/` 路径交给 next，其余回 403。
+// memoryOnlyHandler 只把 origin-form 的 `/memory/` 路径交给 next，其余回 403。absolute-form（代理形式，如
+// `GET http://github.com/memory/x/info/refs`）一律拒绝：出站代理把这类请求只交给 git 路由，只看路径前缀会让 runner
+// 借 owner=memory 的代理形式请求进 git 路由。
 func memoryOnlyHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, "/memory/") {
+		if r.URL.Host != "" || !strings.HasPrefix(r.URL.Path, "/memory/") {
 			memory.WriteError(w, http.StatusForbidden, "memory_forbidden", "oryn egress: runner 只开放记忆通道")
 			return
 		}

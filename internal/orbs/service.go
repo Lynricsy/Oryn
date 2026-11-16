@@ -178,6 +178,9 @@ type Service struct {
 	wakeAfter map[string]bool
 	egress    map[string]*egressServer
 	policies  map[string]egress.Policy
+	// policyGen 是出站策略的代际：InvalidateProjectPolicies 每次加一，读配置之前取的代际已变的策略不写入 policies
+	// （见 egress.go setPolicy）。
+	policyGen uint64
 	// setupLogs 是各 orb 尚未写入运行记录的 setup.log 输出（见 setuprun.go）。
 	setupLogs map[string]*setupLogs
 	// httpTr 是经 fs 流访问 orbd 本机 API 的共享 Transport（见 orbhttp.go）。
@@ -216,6 +219,8 @@ type Service struct {
 	hookRotateBegin func(orbID string)
 	// hookAfterFunc（仅测试）替换 runner 离线定时器的 time.AfterFunc（见 runner.go afterFunc）。
 	hookAfterFunc func(d time.Duration, fn func()) func() bool
+	// hookPolicyRebuilt（仅测试）在 policyFor 重建出策略之后、写缓存之前调用。
+	hookPolicyRebuilt func(orbID string)
 	// runnerOffline 是各 runner orb 的离线定时器（受 mu 保护，见 runner.go）。
 	runnerOffline map[string]*runnerTimer
 	// closed 在 Close 之后为真（受 mu 保护）。

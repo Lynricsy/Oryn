@@ -37,6 +37,7 @@ type gateFake struct {
 type prepRec struct {
 	level   string
 	skipped bool
+	stale   bool // 登记于门禁配置改动之前
 }
 
 // ThreadGates：gl 为 nil（没有门禁的代理）时没有线程限制。
@@ -65,17 +66,22 @@ func newThreadEnv(t *testing.T, tg ThreadGates) *gateEnv {
 	return e
 }
 
-func (f fakeR) PrepareOK(sha, level string) (bool, bool) {
+func (f fakeR) Prepared(sha, level string) PrepareState {
 	if f.gl == nil {
-		return false, false
+		return PrepareNone
 	}
 	f.gl.mu.Lock()
 	defer f.gl.mu.Unlock()
 	r, ok := f.gl.prepared[sha]
-	if !ok || (level == levelPR && r.level != levelPR) {
-		return false, false
+	switch {
+	case !ok || (level == levelPR && r.level != levelPR):
+		return PrepareNone
+	case r.stale:
+		return PrepareStale
+	case r.skipped:
+		return PrepareSkipped
 	}
-	return true, r.skipped
+	return PreparePassed
 }
 
 func (f fakeR) ImplAuthorized() bool {
@@ -139,6 +145,7 @@ const (
 	shaPR       = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	shaSkipped  = "cccccccccccccccccccccccccccccccccccccccc"
 	shaRaw      = "dddddddddddddddddddddddddddddddddddddddd" // 没有通过记录
+	shaStale    = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" // 只有门禁配置改动之前登记的记录
 )
 
 func newGateFake() *gateFake {
@@ -147,6 +154,7 @@ func newGateFake() *gateFake {
 			shaPrepared: {level: levelPush},
 			shaPR:       {level: levelPR},
 			shaSkipped:  {level: levelPR, skipped: true},
+			shaStale:    {level: levelPR, stale: true},
 		},
 		heads:    map[string]string{},
 		defaults: map[string]string{"acme/widgets": "main", "R_1": "main", "42": "main"},
@@ -268,6 +276,7 @@ func TestGatePRCreate(t *testing.T) {
 	e.gl.heads["acme/widgets|feat"] = shaPR
 	e.gl.heads["acme/widgets|push-only"] = shaPrepared
 	e.gl.heads["acme/widgets|skip"] = shaSkipped
+	e.gl.heads["acme/widgets|stale"] = shaStale
 	e.gl.heads["acme/widgets|raw"] = shaRaw
 	e.gl.heads["R_9|feat"] = shaPR
 	e.gl.heads["R_1|me:fix"] = shaPR
@@ -283,6 +292,7 @@ func TestGatePRCreate(t *testing.T) {
 	e.allowed("跳过检查的记录同样放行", "POST", pulls, rest("skip", prBody, ""), GateSkipped)
 	e.denied("没有通过记录", "POST", pulls, rest("raw", prBody, ""), "没有 pr 级 github_prepare 通过记录")
 	e.denied("push 级记录不够", "POST", pulls, rest("push-only", prBody, ""), "没有 pr 级")
+	e.denied("门禁配置改动前的记录", "POST", pulls, rest("stale", prBody, ""), "门禁配置已变，请重新运行 github_prepare level=pr")
 	e.denied("缺少二级标题", "POST", pulls, rest("feat", "## Summary\nFixes #1", ""), "缺少二级标题「## Testing」")
 	e.denied("缺少关闭引用", "POST", pulls, rest("feat", "## Summary\n## Testing\n", ""), "Fixes #N")
 	e.denied("head 查询失败", "POST", pulls, rest("missing", prBody, ""), "查询 head missing 的提交失败")
@@ -329,13 +339,15 @@ func TestGateImplAuth(t *testing.T) {
 	e.allowed("评论不受 ImplAuth 影响", "POST", "/gh/api.github.com/repos/acme/widgets/issues/1/comments", []byte(`{"body":"hi"}`), "")
 }
 
-// 覆盖表「改 ref（可知 SHA）」：推送门禁查 PrepareOK(sha,"push")；只管 refs/heads/*；默认分支只许发布线程改。
+// 覆盖表「改 ref（可知 SHA）」：推送门禁查 Prepared(sha,"push")；只管 refs/heads/*；默认分支只许发布线程改；
+// 门禁配置改动前登记的记录不放行。
 func TestGateRefUpdate(t *testing.T) {
 	e := newGateEnv(t, GitHubAccess{Gates: &GateConfig{Push: true}})
 	refs := "/gh/api.github.com/repos/acme/widgets/git/refs"
 	e.allowed("POST git/refs 有记录", "POST", refs, fmt.Appendf(nil, `{"ref":"refs/heads/feat","sha":%q}`, shaPrepared), GatePass)
 	e.allowed("pr 级记录满足 push", "POST", refs, fmt.Appendf(nil, `{"ref":"refs/heads/feat","sha":%q}`, shaPR), GatePass)
 	e.allowed("跳过检查", "POST", refs, fmt.Appendf(nil, `{"ref":"refs/heads/feat","sha":%q}`, shaSkipped), GateSkipped)
+	e.denied("门禁配置改动前的记录", "POST", refs, fmt.Appendf(nil, `{"ref":"refs/heads/feat","sha":%q}`, shaStale), "门禁配置已变，请重新运行 github_prepare")
 	e.denied("POST git/refs 无记录", "POST", refs, fmt.Appendf(nil, `{"ref":"refs/heads/feat","sha":%q}`, shaRaw), "没有 github_prepare 通过记录")
 	e.allowed("tag 不经推送门禁", "POST", refs, fmt.Appendf(nil, `{"ref":"refs/tags/v1","sha":%q}`, shaRaw), "")
 	e.denied("PATCH git/refs 无记录", "PATCH", refs+"/heads/feat/", fmt.Appendf(nil, `{"sha":%q,"force":true}`, shaRaw), "没有 github_prepare")

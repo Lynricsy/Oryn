@@ -166,3 +166,31 @@ func TestMemoryEgressCallerScopes(t *testing.T) {
 	code, _ := e.recall(t, e.orbA, e.tA)
 	assert.Equal(t, http.StatusForbidden, code)
 }
+
+// runner 的通道只开记忆网关：origin-form 的 `/memory/` 交给下一层；其余路径与 absolute-form（代理形式，出站代理只交给
+// git 路由）一律 403 memory_forbidden，包括路径以 `/memory/` 开头的代理形式 git 请求。
+func TestMemoryOnlyHandler(t *testing.T) {
+	var reached []string
+	h := memoryOnlyHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = append(reached, r.URL.String())
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	for _, c := range []struct {
+		target string
+		code   int
+	}{
+		{"/memory/t/T-1/v1/default/banks", http.StatusNoContent},
+		{"http://github.com/memory/a/b/info/refs?service=git-upload-pack", http.StatusForbidden},
+		{"http://127.0.0.1:9/memory/t/T-1/v1/default/banks", http.StatusForbidden},
+		{"/git/github.com/memory/a/b/info/refs", http.StatusForbidden},
+		{"/gh/api.github.com/user", http.StatusForbidden},
+	} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, c.target, nil))
+		assert.Equal(t, c.code, rec.Code, c.target)
+		if c.code == http.StatusForbidden {
+			assert.Contains(t, rec.Body.String(), "memory_forbidden", c.target)
+		}
+	}
+	assert.Equal(t, []string{"/memory/t/T-1/v1/default/banks"}, reached)
+}

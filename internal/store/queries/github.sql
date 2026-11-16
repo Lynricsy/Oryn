@@ -292,16 +292,15 @@ DELETE FROM github_audit WHERE at < @before;
 -- ---------- prepare ----------
 
 -- name: UpsertGithubPrepare :exec
-INSERT INTO github_prepare (sha, orb_id, level, skipped, reason, at)
-VALUES (@sha, @orb_id, @level, @skipped, sqlc.narg(reason), @at)
-ON CONFLICT (sha, orb_id, level) DO UPDATE SET skipped = excluded.skipped, reason = excluded.reason, at = excluded.at;
+INSERT INTO github_prepare (sha, orb_id, level, skipped, reason, gates_hash, at)
+VALUES (@sha, @orb_id, @level, @skipped, sqlc.narg(reason), @gates_hash, @at)
+ON CONFLICT (sha, orb_id, level) DO UPDATE SET skipped = excluded.skipped, reason = excluded.reason,
+    gates_hash = excluded.gates_hash, at = excluded.at;
 
--- Best pass record among the accepted levels: an unskipped one wins.
--- name: FindGithubPrepare :one
+-- Pass records among the accepted levels (at most one per level); the caller picks the best one.
+-- name: ListGithubPrepares :many
 SELECT * FROM github_prepare
-WHERE sha = @sha AND orb_id = @orb_id AND level IN (sqlc.slice('levels'))
-ORDER BY skipped, at DESC
-LIMIT 1;
+WHERE sha = @sha AND orb_id = @orb_id AND level IN (sqlc.slice('levels'));
 
 -- name: DeleteGithubPrepareBefore :exec
 DELETE FROM github_prepare WHERE at < @before;

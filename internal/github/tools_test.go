@@ -1,6 +1,7 @@
 package github
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/egress"
 	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
@@ -36,66 +38,87 @@ func TestToolCallErrors(t *testing.T) {
 	}
 }
 
-// M15 5.1：PrepareReport 写入 / 覆盖 github_prepare；PrepareOK 按 orb、sha 与级别判断，pr 级记录同时满足 push，
-// 未跳过的记录优先；无效参数不写。
+// M15 5.1：PrepareReport 写入 / 覆盖 github_prepare（含门禁哈希）；Prepared 按 orb、sha 与级别判断，pr 级记录同时满足
+// push，未跳过的记录优先；无效参数（含缺门禁哈希）不写。
 func TestPrepareReport(t *testing.T) {
 	e := newEnv(t)
+	prj := e.project("")
+	orb1, orb2 := e.orb(prj, "", "").ID, e.orb(prj, "", "").ID
+	hash := orbs.GitHubGatesHash(nil)
 	sha := "0123456789abcdef0123456789abcdef01234567"
 	sha2 := "89abcdef0123456789abcdef0123456789abcdef"
-	report := func(orbID, s, level string, skipped bool, reason *string) error {
+	reportH := func(orbID, s, level string, skipped bool, reason *string, h string) error {
 		return e.s.PrepareReport(e.ctx, orbID, apigen.LinkCtlGithubPrepareReportParams{
-			ThreadID: "T-1", Sha: s, Level: apigen.LinkCtlGithubPrepareReportParamsLevel(level), Skipped: skipped, Reason: reason,
+			ThreadID: "T-1", Sha: s, Level: apigen.LinkCtlGithubPrepareReportParamsLevel(level), Skipped: skipped, Reason: reason, GatesHash: h,
 		})
 	}
+	report := func(orbID, s, level string, skipped bool, reason *string) error {
+		return reportH(orbID, s, level, skipped, reason, hash)
+	}
+	pr := func(orbID, s, level string) egress.PrepareState { return e.s.Prepared(e.ctx, orbID, s, level) }
+	rec := func(s string) db.GithubPrepare {
+		t.Helper()
+		recs, err := e.st.Q.ListGithubPrepares(e.ctx, db.ListGithubPreparesParams{Sha: s, OrbID: orb1, Levels: []string{"pr"}})
+		require.NoError(t, err)
+		require.Len(t, recs, 1)
+		return recs[0]
+	}
 
-	ok, _ := e.s.PrepareOK(e.ctx, "orb-1", sha, "push")
-	assert.False(t, ok, "没有记录")
+	assert.Equal(t, egress.PrepareNone, pr(orb1, sha, "push"), "没有记录")
 
-	require.NoError(t, report("orb-1", sha, "push", false, nil))
-	ok, skipped := e.s.PrepareOK(e.ctx, "orb-1", sha, "push")
-	assert.True(t, ok)
-	assert.False(t, skipped)
-	ok, _ = e.s.PrepareOK(e.ctx, "orb-1", sha, "pr")
-	assert.False(t, ok, "push 级记录不满足 pr")
-	ok, _ = e.s.PrepareOK(e.ctx, "orb-2", sha, "push")
-	assert.False(t, ok, "记录按 orb 区分")
+	require.NoError(t, report(orb1, sha, "push", false, nil))
+	assert.Equal(t, egress.PreparePassed, pr(orb1, sha, "push"))
+	assert.Equal(t, egress.PrepareNone, pr(orb1, sha, "pr"), "push 级记录不满足 pr")
+	assert.Equal(t, egress.PrepareNone, pr(orb2, sha, "push"), "记录按 orb 区分")
 
 	// pr 级（跳过检查）满足 push 与 pr；大写 sha 规范化为小写
-	require.NoError(t, report("orb-1", "89ABCDEF0123456789ABCDEF0123456789ABCDEF", "pr", true, new("docs only")))
+	require.NoError(t, report(orb1, "89ABCDEF0123456789ABCDEF0123456789ABCDEF", "pr", true, new("docs only")))
 	for _, level := range []string{"push", "pr"} {
-		ok, skipped = e.s.PrepareOK(e.ctx, "orb-1", sha2, level)
-		assert.True(t, ok, level)
-		assert.True(t, skipped, level)
+		assert.Equal(t, egress.PrepareSkipped, pr(orb1, sha2, level), level)
 	}
-	rec, err := e.st.Q.FindGithubPrepare(e.ctx, db.FindGithubPrepareParams{Sha: sha2, OrbID: "orb-1", Levels: []string{"pr"}})
-	require.NoError(t, err)
-	require.NotNil(t, rec.Reason)
-	assert.Equal(t, "docs only", *rec.Reason)
-	assert.Equal(t, e.clock.Now().UnixMilli(), rec.At)
+	r := rec(sha2)
+	require.NotNil(t, r.Reason)
+	assert.Equal(t, "docs only", *r.Reason)
+	assert.Equal(t, hash, r.GatesHash)
+	assert.Equal(t, e.clock.Now().UnixMilli(), r.At)
 
-	// 同级再次上报覆盖（不再跳过）；push 有未跳过的 pr 记录时 skipped=false
+	// 同级再次上报覆盖（不再跳过）；push 有未跳过的 pr 记录时不算跳过
 	e.clock.Add(time.Minute)
-	require.NoError(t, report("orb-1", sha2, "pr", false, nil))
-	ok, skipped = e.s.PrepareOK(e.ctx, "orb-1", sha2, "push")
-	assert.True(t, ok)
-	assert.False(t, skipped)
-	rec, err = e.st.Q.FindGithubPrepare(e.ctx, db.FindGithubPrepareParams{Sha: sha2, OrbID: "orb-1", Levels: []string{"pr"}})
+	require.NoError(t, report(orb1, sha2, "pr", false, nil))
+	assert.Equal(t, egress.PreparePassed, pr(orb1, sha2, "push"))
+	r = rec(sha2)
+	assert.Nil(t, r.Reason)
+	assert.Equal(t, e.clock.Now().UnixMilli(), r.At)
+
+	// 项目门禁改动：旧哈希的记录一律过期（跳过检查的也一样），以新哈希重新上报后放行
+	raw, err := orbs.EncodeGitHubGates([]byte(`{"push":true,"pr":true,"checkCmd":"make check"}`))
 	require.NoError(t, err)
-	assert.Nil(t, rec.Reason)
-	assert.Equal(t, e.clock.Now().UnixMilli(), rec.At)
+	require.NoError(t, e.st.Q.SetProjectGithubGates(e.ctx, db.SetProjectGithubGatesParams{GithubGates: raw, UpdatedAt: 2, ID: prj}))
+	assert.Equal(t, egress.PrepareStale, pr(orb1, sha, "push"))
+	assert.Equal(t, egress.PrepareStale, pr(orb1, sha2, "pr"))
+	require.NoError(t, report(orb1, sha2, "push", true, new("docs only")))
+	assert.Equal(t, egress.PrepareStale, pr(orb1, sha2, "push"), "仍是旧哈希")
+	newHash := orbs.GitHubGatesHash(raw)
+	require.NoError(t, reportH(orb1, sha2, "push", true, new("docs only"), newHash))
+	assert.Equal(t, egress.PrepareSkipped, pr(orb1, sha2, "push"), "新哈希的跳过记录优先于旧哈希的 pr 记录")
+	assert.Equal(t, egress.PrepareStale, pr(orb1, sha2, "pr"))
+	require.NoError(t, reportH(orb1, sha2, "pr", false, nil, newHash))
+	assert.Equal(t, egress.PreparePassed, pr(orb1, sha2, "push"))
 
 	// 无效参数
 	for name, err := range map[string]error{
-		"level":   report("orb-1", sha, "merge", false, nil),
-		"short":   report("orb-1", "abc123", "push", false, nil),
-		"nonhex":  report("orb-1", "zz23456789abcdef0123456789abcdef01234567", "push", false, nil),
-		"reason":  report("orb-1", sha, "push", true, nil),
-		"blankrs": report("orb-1", sha, "push", true, new("  ")),
+		"level":     report(orb1, sha, "merge", false, nil),
+		"short":     report(orb1, "abc123", "push", false, nil),
+		"nonhex":    report(orb1, "zz23456789abcdef0123456789abcdef01234567", "push", false, nil),
+		"reason":    report(orb1, sha, "push", true, nil),
+		"blankrs":   report(orb1, sha, "push", true, new("  ")),
+		"nohash":    reportH(orb1, sha, "push", false, nil, ""),
+		"shorthash": reportH(orb1, sha, "push", false, nil, hash[:40]),
+		"upperhash": reportH(orb1, sha, "push", false, nil, strings.ToUpper(hash)),
 	} {
 		var ge *Error
 		require.ErrorAs(t, err, &ge, name)
 		assert.Equal(t, codeInvalidParams, ge.Code, name)
 	}
-	ok, _ = e.s.PrepareOK(e.ctx, "orb-1", sha, "bogus")
-	assert.False(t, ok, "未知级别不放行")
+	assert.Equal(t, egress.PrepareNone, pr(orb1, sha, "bogus"), "未知级别不放行")
 }

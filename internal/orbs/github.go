@@ -45,7 +45,8 @@ type GitHub interface {
 	// GitHubTokenRejected 承接出站代理的同名回调（egress.Resolver，R2）：注入的令牌被上游回 401，按令牌找到槽位置为 reauth。
 	GitHubTokenRejected(ctx context.Context, orbID, token string)
 	// 以下承接出站代理门禁的现查（egress.GateLookup，M15 步骤 5.4），都以 orb 自己的线程与身份槽位为准；查询失败返回不放行的结果。
-	PrepareOK(ctx context.Context, orbID, sha, level string) (ok, skipped bool)
+	// Prepared 只认绑定了项目当前门禁配置哈希（GitHubGatesHash）的通过记录。
+	Prepared(ctx context.Context, orbID, sha, level string) egress.PrepareState
 	ImplAuthorized(ctx context.Context, orbID string) bool
 	HeadSHA(ctx context.Context, orbID, repo, ref string) (string, error)
 	DefaultBranch(ctx context.Context, orbID, repo string) (string, error)

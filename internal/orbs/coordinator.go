@@ -40,10 +40,11 @@ func (s *Service) CoordinatorSetup(ctx context.Context, orbID string) (apigen.Li
 	if s.setup == nil {
 		return apigen.LinkCtlSetupRunParams{GitHosts: []string{}, OmpHome: []apigen.LinkCtlOmpHomeFile{}, Env: map[string]string{}}, nil
 	}
+	gen := s.policyGeneration() // 读配置之前取代际：期间项目门禁被改时不写回旧策略
 	plan, err := s.setup.Plan(ctx, orb)
 	if err != nil {
 		return apigen.LinkCtlSetupRunParams{}, err
 	}
-	s.setPolicy(orbID, plan.Egress)
+	s.setPolicy(orbID, plan.Egress, gen)
 	return plan.Params, nil
 }

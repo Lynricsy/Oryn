@@ -2,6 +2,9 @@ package orbdrt
 
 import (
 	"encoding/json"
+	"path/filepath"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -71,8 +74,74 @@ func TestGithubCallForward(t *testing.T) {
 	<-calls
 }
 
-// M15 5.1：orbd.sock 的 github.prepare 在线程工作目录（线程未在本 orbd 运行时为 orb 工作目录）里按下发的门禁执行；
-// 通过时经 ctl github.prepare.report 上报 (sha, level, skipped, reason) 并回结果；失败不上报；参数无效不执行。
+// fakeGates 是控制面对 github_gates 的假答复：项目当前的门禁与哈希，可在调用之间改（模拟项目门禁的 PATCH）。
+type fakeGates struct {
+	mu      sync.Mutex
+	gates   *apigen.GitHubGates
+	hash    string
+	err     *link.CtlError // 非 nil：github_gates 回这个错误
+	reply   any            // 非 nil：原样作为答复（畸形答复）
+	missing bool           // 控制面不认识 github_gates（不处理该请求）
+	after   func()         // 答复之后调用一次（模拟 prepare 与上报之间的 PATCH）
+	queries []apigen.LinkCtlGithubCallParams
+}
+
+var (
+	hashA = strings.Repeat("a", 64)
+	hashB = strings.Repeat("b", 64)
+	hashC = strings.Repeat("c", 64)
+)
+
+func (f *fakeGates) set(g apigen.GitHubGates, hash string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.gates, f.hash = &g, hash
+}
+
+// handle 处理 ctl github.call；不是 github_gates 时 handled 为假。after 在算好答复之后、答复发出之前同步调用。
+func (f *fakeGates) handle(params json.RawMessage) (res any, handled bool, err error) {
+	var p apigen.LinkCtlGithubCallParams
+	_ = json.Unmarshal(params, &p)
+	if p.Tool != "github_gates" {
+		return nil, false, nil
+	}
+	f.mu.Lock()
+	f.queries = append(f.queries, p)
+	after := f.after
+	f.after = nil
+	switch {
+	case f.missing:
+		res, handled = nil, false
+	case f.err != nil:
+		res, handled, err = nil, true, f.err
+	case f.reply != nil:
+		res, handled = f.reply, true
+	default:
+		res, handled = apigen.LinkCtlGithubCallResult{Text: "gates", Details: map[string]any{"gates": f.gates, "gatesHash": f.hash}}, true
+	}
+	f.mu.Unlock()
+	if after != nil {
+		after()
+	}
+	return res, handled, err
+}
+
+func (f *fakeGates) queryCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.queries)
+}
+
+func (f *fakeGates) lastQuery() apigen.LinkCtlGithubCallParams {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.queries[len(f.queries)-1]
+}
+
+// M15 5.1：orbd.sock 的 github.prepare 每次先经 ctl github.call（github_gates）现查项目当前的门禁，在线程工作目录
+// （线程未在本 orbd 运行时为 orb 工作目录）里按它执行，不用 setup 时下发的那份；项目门禁改了，运行中的 orb 下一次
+// prepare 就跑新命令。通过时经 ctl github.prepare.report 上报 (sha, level, skipped, reason, gatesHash) 并回结果；失败不上报；
+// 参数无效不执行。prepare 与上报之间门禁又被改时，上报的仍是这次所用配置的哈希（出站门禁据此拒绝，见 github 包）。
 func TestGithubPrepareSock(t *testing.T) {
 	repo := newPrepRepo(t)
 	head := repo.commit("a.txt", "feat: a")
@@ -80,22 +149,25 @@ func TestGithubPrepareSock(t *testing.T) {
 	rt := startRuntime(t, cp, nil)
 	cp.waitNotif(t, 0, "hello", nil)
 	setWorkdir(rt, repo.dir)
-	setGates := func(g apigen.GitHubGates) {
-		rt.envMu.Lock()
-		rt.githubGates = &g
-		rt.envMu.Unlock()
-	}
-	setGates(apigen.GitHubGates{Push: true, CheckCmd: new("echo checked")})
+	// setup 时下发的旧门禁：不再作为命令来源
+	rt.envMu.Lock()
+	rt.githubGates = &apigen.GitHubGates{Push: true, CheckCmd: new("echo stale-setup")}
+	rt.envMu.Unlock()
+	fg := &fakeGates{}
+	fg.set(apigen.GitHubGates{Push: true, CheckCmd: new("echo checked")}, hashA)
 
 	reports := make(chan apigen.LinkCtlGithubPrepareReportParams, 4)
 	cp.extra = func(method string, params json.RawMessage) (any, bool, error) {
-		if method != string(apigen.MethodGithubPrepareReport) {
-			return nil, false, nil
+		switch method {
+		case string(apigen.MethodGithubCall):
+			return fg.handle(params)
+		case string(apigen.MethodGithubPrepareReport):
+			var p apigen.LinkCtlGithubPrepareReportParams
+			_ = json.Unmarshal(params, &p)
+			reports <- p
+			return apigen.LinkCtlOkResult{Ok: true}, true, nil
 		}
-		var p apigen.LinkCtlGithubPrepareReportParams
-		_ = json.Unmarshal(params, &p)
-		reports <- p
-		return apigen.LinkCtlOkResult{Ok: true}, true, nil
+		return nil, false, nil
 	}
 	call := func(p orbsock.GithubPrepareParams) (PrepareResult, error) {
 		t.Helper()
@@ -107,28 +179,45 @@ func TestGithubPrepareSock(t *testing.T) {
 		require.NoError(t, json.Unmarshal(raw, &res))
 		return res, nil
 	}
+	checkOutput := func(res PrepareResult) string {
+		t.Helper()
+		for _, s := range res.Steps {
+			if s.Name == "check" {
+				return s.Output
+			}
+		}
+		t.Fatalf("没有运行检查命令：%+v", res.Steps)
+		return ""
+	}
 
 	res, err := call(orbsock.GithubPrepareParams{ThreadID: libThread, Level: "push"})
 	require.NoError(t, err)
 	require.True(t, res.OK, "%+v", res)
 	assert.Equal(t, head, res.SHA)
 	assert.False(t, res.Skipped)
-	var checked bool
-	for _, s := range res.Steps {
-		if s.Name == "check" {
-			checked = true
-			assert.Contains(t, s.Output, "checked")
-		}
-	}
-	assert.True(t, checked, "运行了下发的检查命令：%+v", res.Steps)
+	assert.Contains(t, checkOutput(res), "checked", "运行控制面现查到的检查命令")
+	assert.NotContains(t, checkOutput(res), "stale-setup")
+	require.Equal(t, 1, fg.queryCount())
+	q := fg.lastQuery()
+	assert.Equal(t, libThread, q.ThreadID)
+	assert.Equal(t, map[string]any{}, q.Params, "不带 agent 的任何参数")
 	rep := recvReport(t, reports)
 	assert.Equal(t, libThread, rep.ThreadID)
 	assert.Equal(t, head, rep.Sha)
 	assert.EqualValues(t, "push", rep.Level)
 	assert.False(t, rep.Skipped)
 	assert.Nil(t, rep.Reason)
+	assert.Equal(t, hashA, rep.GatesHash)
 
-	// 跳过检查：带 reason 上报 skipped
+	// 项目门禁被 PATCH：运行中的 orb 下一次 prepare 就跑新命令、带新哈希上报（不用等 setup / resume）
+	fg.set(apigen.GitHubGates{Push: true, CheckCmd: new("echo patched")}, hashB)
+	res, err = call(orbsock.GithubPrepareParams{ThreadID: libThread, Level: "push"})
+	require.NoError(t, err)
+	require.True(t, res.OK, "%+v", res)
+	assert.Contains(t, checkOutput(res), "patched")
+	assert.Equal(t, hashB, recvReport(t, reports).GatesHash)
+
+	// 跳过检查：带 reason 与门禁哈希上报 skipped
 	res, err = call(orbsock.GithubPrepareParams{ThreadID: libThread, Level: "pr", SkipChecks: true, Reason: "docs only"})
 	require.NoError(t, err)
 	require.True(t, res.OK, "%+v", res)
@@ -138,9 +227,20 @@ func TestGithubPrepareSock(t *testing.T) {
 	assert.True(t, rep.Skipped)
 	require.NotNil(t, rep.Reason)
 	assert.Equal(t, "docs only", *rep.Reason)
+	assert.Equal(t, hashB, rep.GatesHash)
+
+	// prepare 与上报之间门禁又被改：上报的是这次实际所用配置（B）的哈希，不是改后的 C
+	fg.mu.Lock()
+	fg.after = func() { fg.set(apigen.GitHubGates{Push: true, CheckCmd: new("echo third")}, hashC) }
+	fg.mu.Unlock()
+	res, err = call(orbsock.GithubPrepareParams{ThreadID: libThread, Level: "push"})
+	require.NoError(t, err)
+	require.True(t, res.OK, "%+v", res)
+	assert.Contains(t, checkOutput(res), "patched")
+	assert.Equal(t, hashB, recvReport(t, reports).GatesHash)
 
 	// 检查失败：回失败结果，不上报
-	setGates(apigen.GitHubGates{Push: true, CheckCmd: new("echo boom; exit 3")})
+	fg.set(apigen.GitHubGates{Push: true, CheckCmd: new("echo boom; exit 3")}, hashC)
 	res, err = call(orbsock.GithubPrepareParams{ThreadID: libThread, Level: "push"})
 	require.NoError(t, err)
 	assert.False(t, res.OK)
@@ -151,7 +251,7 @@ func TestGithubPrepareSock(t *testing.T) {
 	rt.envMu.Lock()
 	rt.gitIdentity = &apigen.GitIdentity{Name: "Someone Else", Email: "else@example.com"}
 	rt.envMu.Unlock()
-	setGates(apigen.GitHubGates{Push: true})
+	fg.set(apigen.GitHubGates{Push: true}, hashC)
 	res, err = call(orbsock.GithubPrepareParams{ThreadID: libThread, Level: "push"})
 	require.NoError(t, err)
 	assert.False(t, res.OK)
@@ -169,6 +269,92 @@ func TestGithubPrepareSock(t *testing.T) {
 	assert.Empty(t, reports, "失败与无效参数都不上报")
 }
 
+// M15：现查项目门禁失败（控制面回错、不认识 github_gates、答复畸形）时 github.prepare 直接失败，错误说明原因；不回落到
+// setup 时下发的门禁，不执行任何命令（包括 skipChecks），不上报。
+func TestGithubPrepareGatesQueryFails(t *testing.T) {
+	repo := newPrepRepo(t)
+	repo.commit("a.txt", "feat: a")
+	cp := newFakeCP(t)
+	rt := startRuntime(t, cp, nil)
+	cp.waitNotif(t, 0, "hello", nil)
+	setWorkdir(rt, repo.dir)
+	marker := filepath.Join(t.TempDir(), "ran")
+	touch := "touch " + marker
+	rt.envMu.Lock()
+	rt.githubGates = &apigen.GitHubGates{Push: true, FixCmd: &touch, CheckCmd: &touch}
+	rt.envMu.Unlock()
+	fg := &fakeGates{}
+	fg.set(apigen.GitHubGates{Push: true, FixCmd: &touch, CheckCmd: &touch}, hashA)
+	var reports atomic.Int32
+	cp.extra = func(method string, params json.RawMessage) (any, bool, error) {
+		switch method {
+		case string(apigen.MethodGithubCall):
+			return fg.handle(params)
+		case string(apigen.MethodGithubPrepareReport):
+			reports.Add(1)
+			return apigen.LinkCtlOkResult{Ok: true}, true, nil
+		}
+		return nil, false, nil
+	}
+
+	cases := []struct {
+		name, code, msg string
+		apply           func()
+	}{
+		{"ctl 错误", "internal", "database is locked", func() { fg.err = &link.CtlError{Code: "internal", Message: "database is locked"} }},
+		{"线程不属于 orb", "forbidden", "not belong", func() { fg.err = &link.CtlError{Code: "forbidden", Message: "thread does not belong to this orb"} }},
+		{"控制面不认识", orbsock.CodeMethodNotFound, "", func() { fg.missing = true }},
+		{"缺 gates", orbsock.CodeInternal, "malformed", func() {
+			fg.reply = apigen.LinkCtlGithubCallResult{Text: "x", Details: map[string]any{"gatesHash": hashA}}
+		}},
+		{"缺哈希", orbsock.CodeInternal, "malformed", func() {
+			fg.reply = apigen.LinkCtlGithubCallResult{Text: "x", Details: map[string]any{"gates": nil}}
+		}},
+		{"哈希形状不对", orbsock.CodeInternal, "malformed", func() {
+			fg.reply = apigen.LinkCtlGithubCallResult{Text: "x", Details: map[string]any{"gates": nil, "gatesHash": "abc"}}
+		}},
+		{"gates 形状不对", orbsock.CodeInternal, "malformed gates", func() {
+			fg.reply = apigen.LinkCtlGithubCallResult{Text: "x", Details: map[string]any{"gates": []int{1}, "gatesHash": hashA}}
+		}},
+	}
+	for _, c := range cases {
+		for _, p := range []orbsock.GithubPrepareParams{
+			{ThreadID: libThread, Level: "push"},
+			{ThreadID: libThread, Level: "pr", SkipChecks: true, Reason: "docs only"},
+		} {
+			fg.mu.Lock()
+			fg.err, fg.missing, fg.reply = nil, false, nil
+			c.apply()
+			fg.mu.Unlock()
+			before := fg.queryCount()
+			_, err := sockCall(t, rt, orbsock.MethodGithubPrepare, p, nil)
+			var se *orbsock.Error
+			require.ErrorAs(t, err, &se, c.name)
+			if c.code != orbsock.CodeMethodNotFound {
+				assert.Equal(t, c.code, se.Code, c.name)
+			}
+			assert.Contains(t, se.Message, "current gate configuration", c.name)
+			assert.Contains(t, se.Message, "nothing was run", c.name)
+			assert.Contains(t, se.Message, c.msg, c.name)
+			assert.Equal(t, before+1, fg.queryCount(), c.name)
+		}
+	}
+	assert.NoFileExists(t, marker, "没有执行任何门禁命令")
+	assert.Zero(t, reports.Load(), "不上报")
+
+	// 控制面恢复后照常执行
+	fg.mu.Lock()
+	fg.err, fg.missing, fg.reply = nil, false, nil
+	fg.mu.Unlock()
+	raw, err := sockCall(t, rt, orbsock.MethodGithubPrepare, orbsock.GithubPrepareParams{ThreadID: libThread, Level: "push"}, nil)
+	require.NoError(t, err)
+	var res PrepareResult
+	require.NoError(t, json.Unmarshal(raw, &res))
+	assert.True(t, res.OK, "%+v", res)
+	assert.FileExists(t, marker)
+	assert.EqualValues(t, 1, reports.Load())
+}
+
 // M15 v4：github.prepare 的发布类别只取控制面。orbd 先以同一线程 id 发 ctl github.call（github_release_status，brief）：
 // 进行中的发布线程在默认分支上通过并上报；不是发布线程、查询出错、控制面没有该方法、发布已结束时在默认分支上被拒、
 // 不上报；agent 在 sock 参数里自称发布线程不起作用。
@@ -180,9 +366,8 @@ func TestGithubPrepareReleaseCategory(t *testing.T) {
 	rt := startRuntime(t, cp, nil)
 	cp.waitNotif(t, 0, "hello", nil)
 	setWorkdir(rt, repo.dir)
-	rt.envMu.Lock()
-	rt.githubGates = &apigen.GitHubGates{Push: true}
-	rt.envMu.Unlock()
+	fg := &fakeGates{}
+	fg.set(apigen.GitHubGates{Push: true}, hashA)
 
 	var mode atomic.Value // fixing | awaiting_ci | green | not_release | error | missing
 	queries := make(chan apigen.LinkCtlGithubCallParams, 16)
@@ -190,6 +375,9 @@ func TestGithubPrepareReleaseCategory(t *testing.T) {
 	cp.extra = func(method string, params json.RawMessage) (any, bool, error) {
 		switch method {
 		case string(apigen.MethodGithubCall):
+			if res, ok, err := fg.handle(params); ok {
+				return res, true, err
+			}
 			var p apigen.LinkCtlGithubCallParams
 			_ = json.Unmarshal(params, &p)
 			queries <- p
