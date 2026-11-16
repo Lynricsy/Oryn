@@ -41,8 +41,8 @@ func (s *Service) toolArtifact(ctx context.Context, c toolCtx, op string) thread
 		return failResult(err)
 	}
 	switch op {
-	case artifacts.OpRead, artifacts.OpList, artifacts.OpListVersions:
-		// 标题、文件内容与作者名来自别的 agent（orb 内线程写的 artifact）
+	case artifacts.OpRead, artifacts.OpList, artifacts.OpListVersions, artifacts.OpReadComments:
+		// 标题、文件内容与作者名来自别的 agent（orb 内线程写的 artifact）；评论锚点里的元素文本与页名来自页面
 		return threads.HostToolResult{Text: wrapUntrustedText(res.Text), Details: res.Details}
 	}
 	return threads.HostToolResult{Text: res.Text, Details: res.Details}

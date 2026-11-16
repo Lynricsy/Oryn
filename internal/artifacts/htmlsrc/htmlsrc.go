@@ -213,3 +213,34 @@ func PlainText(src []byte, from, maxBytes int) string {
 	})
 	return strings.Join(strings.Fields(b.String()), " ")
 }
+
+// anchorWindow 是 FindAnchor 比对文本时从起始标签往后看的字节数。
+const anchorWindow = 2000
+
+// FindAnchor 在 src 里重新定位一个评论锚点：候选是名为 tag 的起始标签，且从它开始 anchorWindow 字节内的
+// PlainText 以 text（先折叠空白）开头；取离 oldOffset 最近的一个（同样近时取靠前的）。text 为空时只有 oldOffset
+// 处仍是名为 tag 的起始标签才算找到。
+func FindAnchor(src []byte, tag, text string, oldOffset int) (offset int, ok bool) {
+	text = strings.Join(strings.Fields(text), " ")
+	if text == "" {
+		t, found := StartTagAt(src, oldOffset)
+		if !found || t.Name != tag {
+			return 0, false
+		}
+		return t.Start, true
+	}
+	best, bestDist := 0, -1
+	for _, t := range StartTags(src) {
+		if t.Name != tag || !strings.HasPrefix(PlainText(src, t.Start, anchorWindow), text) {
+			continue
+		}
+		d := t.Start - oldOffset
+		if d < 0 {
+			d = -d
+		}
+		if bestDist < 0 || d < bestDist {
+			best, bestDist = t.Start, d
+		}
+	}
+	return best, bestDist >= 0
+}

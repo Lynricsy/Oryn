@@ -109,3 +109,32 @@ func TestPlainText(t *testing.T) {
 	assert.Equal(t, "中文", got)
 	assert.Equal(t, "", PlainText(src, len(src), 10))
 }
+
+func TestFindAnchor(t *testing.T) {
+	src := []byte("<h2>概览</h2><p>一</p><h2>细节  说明</h2><p>二</p><h2>概览</h2>")
+	first := bytes.Index(src, []byte("<h2>概览"))
+	second := bytes.Index(src, []byte("<h2>细节"))
+	third := bytes.LastIndex(src, []byte("<h2>概览"))
+
+	// 文本前缀匹配（空白折叠），同名多个时取离旧偏移最近的
+	off, ok := FindAnchor(src, "h2", "细节 说明", 0)
+	require.True(t, ok)
+	assert.Equal(t, second, off)
+	off, ok = FindAnchor(src, "h2", "概览", third-3)
+	require.True(t, ok)
+	assert.Equal(t, third, off)
+	off, ok = FindAnchor(src, "h2", "概览", 0)
+	require.True(t, ok)
+	assert.Equal(t, first, off)
+	// 标签名不同或文本不在都找不到
+	_, ok = FindAnchor(src, "h3", "概览", 0)
+	assert.False(t, ok)
+	_, ok = FindAnchor(src, "h2", "没有的", 0)
+	assert.False(t, ok)
+	// 文本为空：只认旧偏移处的同名标签
+	off, ok = FindAnchor(src, "p", "", bytes.Index(src, []byte("<p>")))
+	require.True(t, ok)
+	assert.Equal(t, bytes.Index(src, []byte("<p>")), off)
+	_, ok = FindAnchor(src, "p", "", second)
+	assert.False(t, ok)
+}

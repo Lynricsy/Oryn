@@ -21,12 +21,18 @@ type fakeHub struct {
 	mu       sync.Mutex
 	changed  int
 	versions []string
+	comments []string
 }
 
 func (h *fakeHub) ArtifactsChanged() { h.mu.Lock(); h.changed++; h.mu.Unlock() }
 func (h *fakeHub) ArtifactVersion(id string, v int) {
 	h.mu.Lock()
 	h.versions = append(h.versions, id+"@"+string(rune('0'+v)))
+	h.mu.Unlock()
+}
+func (h *fakeHub) ArtifactComments(id string) {
+	h.mu.Lock()
+	h.comments = append(h.comments, id)
 	h.mu.Unlock()
 }
 

@@ -118,6 +118,8 @@ type Hub interface {
 	ArtifactsChanged()
 	// ArtifactVersion 通知正在观看该 artifact 的连接：有了新版本。
 	ArtifactVersion(id string, version int)
+	// ArtifactComments 通知正在观看该 artifact 的连接：评论有变化。
+	ArtifactComments(id string)
 }
 
 // Config 是服务配置。Now 为空时用 time.Now。

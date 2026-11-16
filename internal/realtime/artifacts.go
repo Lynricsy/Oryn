@@ -35,6 +35,11 @@ func (h *Hub) ArtifactVersion(id string, version int) {
 	h.ToWatchers(id, apigen.WsServerArtifactVersion{Type: apigen.WsServerArtifactVersionTypeArtifactVersion, ID: id, Version: version})
 }
 
+// ArtifactComments 实现 artifacts.Hub：某个 artifact 的评论有变化，只发给正在观看它的连接。
+func (h *Hub) ArtifactComments(id string) {
+	h.ToWatchers(id, apigen.WsServerArtifactComments{Type: apigen.WsServerArtifactCommentsTypeArtifactComments, ID: id})
+}
+
 // ToWatchers 把消息发给正在观看 artifact id 的全部连接。
 func (h *Hub) ToWatchers(id string, msg any) {
 	b, err := json.Marshal(msg)
