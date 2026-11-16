@@ -10,7 +10,9 @@
  *   画参考线）；锁定的对象不能移动或缩放。双击画框进入「内部」：覆盖层放行指针，可以和页面交互，`Esc` 或点画框外退出。
  * - 评论工具：点画框里的元素，经 `select-pick` 让那个画框的运行时回报选中，`onComment` 交出选中与带画框序号的锚点上下文。
  * - 只读：看旧版本或 `compact` 断点（手机上只能平移、缩放与评论）。
- * 图层与属性面板、完整的工具条外观在 6.4 接入（整页查看器才显示）；这里的工具条只够切换工具、画布页与缩放。
+ * - 6.4：工具条（Toolbar.tsx）、图层面板（LayersPanel.tsx）、属性面板（PropsPanel.tsx）、画框名称行（FrameLabel.tsx）。
+ *   图层与属性面板只在整页查看器里出现（右面板里隐藏），窗口窄于 900 时覆盖在画布上（同一时间只显示一个）；
+ *   只读时不显示编辑类控件。
  */
 import {
 	type CSSProperties,
@@ -23,6 +25,7 @@ import {
 	useMemo,
 	useRef,
 	useState,
+	useSyncExternalStore,
 } from "react";
 import { useTranslation } from "react-i18next";
 import type {
@@ -35,6 +38,7 @@ import {
 	closeArtifactFrame,
 	openArtifactFrame,
 	useArtifact,
+	useArtifactCapabilities,
 } from "../../../api/artifact-queries";
 import {
 	applyCanvasOps,
@@ -51,14 +55,12 @@ import {
 	parseCanvasDoc,
 	type ShapeKind,
 	STICKY_WIDTH,
-	STROKE,
 	TEXT_SIZE,
 } from "../../../lib/artifacts/canvas-doc";
 import { useBreakpoint } from "../../../lib/viewport";
 import { realtime, watchArtifact } from "../../../realtime/socket";
 import { showToast } from "../../../state/toasts";
-import type { IconName } from "../../ui/icons";
-import { Button, describeError, IconButton } from "../../ui/primitives";
+import { Button, describeError } from "../../ui/primitives";
 import type { FrameLink } from "../frame-link";
 import { FrameErrorState, ViewerLoading } from "../viewer-states";
 import {
@@ -67,6 +69,7 @@ import {
 	IDENTITY,
 	type Point,
 	panBy,
+	reveal,
 	stepZoom,
 	toScreen,
 	toWorld,
@@ -76,6 +79,12 @@ import {
 	zoomAt,
 } from "./camera";
 import {
+	downloadFramePng,
+	FrameLabel,
+	LABEL_GAP,
+	LABEL_HEIGHT,
+} from "./FrameLabel";
+import {
 	CanvasFrame,
 	type FileVersions,
 	fileVersions,
@@ -84,8 +93,10 @@ import {
 	type PageContent,
 	pageUrl,
 } from "./frames";
-import { isTypingTarget, keyAction, TOOL_KEYS, type Tool } from "./keys";
+import { isTypingTarget, keyAction, type Tool, type ZoomTarget } from "./keys";
+import { LayersPanel } from "./LayersPanel";
 import { NotesLayer } from "./notes";
+import { PropsPanel } from "./PropsPanel";
 import {
 	attachAt,
 	type CanvasItem,
@@ -106,6 +117,14 @@ import {
 	resizeOps,
 } from "./selection";
 import { type Guide, SNAP_PX, snapBox } from "./snapping";
+import {
+	DEFAULT_STYLES,
+	type DrawFamily,
+	type DrawStyle,
+	type PenKind,
+	SHAPES,
+	Toolbar,
+} from "./Toolbar";
 import { useCanvasDoc } from "./use-canvas-doc";
 import "./canvas.css";
 
@@ -134,6 +153,8 @@ export interface CanvasEditorProps {
 	onComment?(target: CanvasCommentTarget): void;
 	/** 某个画框文件上要画的评论图钉。 */
 	pins?(path: string): SelectPin[];
+	/** 从某个画框开始演示（6.8，演示器在查看器里）；不给时画框名称行没有「从这页演示」。 */
+	onPresent?(pageId: string): void;
 }
 
 /** 拖动途中提交中间态的间隔（别的窗口跟着动）。 */
@@ -150,10 +171,6 @@ const CLICK_FRAME = { width: 1440, height: 900 } as const;
 const PICK_WAIT_MS = 1500;
 /** 笔迹相邻两点的最小间距（屏幕像素）。 */
 const PEN_STEP_PX = 1.5;
-const PEN_WIDTH = { pen: STROKE.default, marker: 6 } as const;
-const SHAPES: readonly ShapeKind[] = ["rect", "ellipse", "line", "arrow"];
-
-type PenKind = "pen" | "marker";
 
 type Gesture =
 	| { kind: "pan"; sx: number; sy: number; cam: Camera }
@@ -207,21 +224,6 @@ interface Editing {
 	original: string;
 }
 
-const TOOL_ICON: Record<Exclude<Tool, "pen" | "shape">, IconName> = {
-	move: "cursor",
-	hand: "hand",
-	frame: "frameCorners",
-	text: "textT",
-	sticky: "note",
-	comment: "message",
-};
-const SHAPE_ICON: Record<ShapeKind, IconName> = {
-	rect: "rectangle",
-	ellipse: "circle",
-	line: "lineSegment",
-	arrow: "arrowUpRight",
-};
-
 function brandColor(): string {
 	const v = getComputedStyle(document.documentElement)
 		.getPropertyValue("--brand")
@@ -231,6 +233,22 @@ function brandColor(): string {
 
 function round2(v: number): number {
 	return Math.round(v * 100) / 100;
+}
+
+/** 窗口窄于这个宽度时，图层与属性面板覆盖在画布上。 */
+const PANEL_OVERLAY_BELOW = 900;
+
+function subscribeResize(cb: () => void) {
+	window.addEventListener("resize", cb);
+	return () => window.removeEventListener("resize", cb);
+}
+
+function useNarrowWindow(): boolean {
+	return useSyncExternalStore(
+		subscribeResize,
+		() => window.innerWidth < PANEL_OVERLAY_BELOW,
+		() => false,
+	);
 }
 
 /** 当前画布页上全部对象的包围盒。 */
@@ -245,9 +263,12 @@ export function CanvasEditor({
 	title,
 	onComment,
 	pins,
+	onPresent,
 }: CanvasEditorProps): ReactNode {
 	const { t, i18n } = useTranslation();
 	const compact = useBreakpoint() === "compact";
+	const narrow = useNarrowWindow();
+	const caps = useArtifactCapabilities();
 	const pinned = version !== undefined;
 	const live = !pinned;
 	const readOnly = pinned || compact;
@@ -351,6 +372,8 @@ export function CanvasEditor({
 	const [editing, setEditing] = useState<Editing | null>(null);
 	const [space, setSpace] = useState(false);
 	const [accent] = useState(brandColor);
+	const [styles, setStyles] = useState(DEFAULT_STYLES);
+	const [layersOpen, setLayersOpen] = useState(false);
 
 	const baseDoc = live ? snapshot.doc : pinnedDoc;
 	const doc = preview?.doc ?? baseDoc;
@@ -754,11 +777,11 @@ export function CanvasEditor({
 		id: "draft",
 		canvas: canvasKey,
 		kind: "pen",
-		color: penKind === "marker" ? "yellow" : "ink",
+		color: styles[penKind].color,
 		locked: false,
 		by: null,
 		points,
-		width: PEN_WIDTH[penKind],
+		width: styles[penKind].width,
 		marker: penKind === "marker",
 	});
 
@@ -766,14 +789,14 @@ export function CanvasEditor({
 		id: "draft",
 		canvas: canvasKey,
 		kind: shape,
-		color: "ink",
+		color: styles.shape.color,
 		locked: false,
 		by: null,
 		x1: round2(a.x),
 		y1: round2(a.y),
 		x2: round2(b.x),
 		y2: round2(b.y),
-		width: STROKE.default,
+		width: styles.shape.width,
 		from: null,
 		to: null,
 	});
@@ -992,7 +1015,7 @@ export function CanvasEditor({
 	};
 
 	// ------------------------------------------------------------ 键盘
-	const zoomTo = (to: "fit" | "selection" | "actual" | "in" | "out") => {
+	const zoomTo = (to: ZoomTarget) => {
 		const d = state.current.doc;
 		const { width, height } = size;
 		switch (to) {
@@ -1038,9 +1061,27 @@ export function CanvasEditor({
 		setTool(next);
 	};
 
-	const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+	const switchCanvas = (id: string) => {
+		setCanvasSel(id);
+		setSelected([]);
+		setInside(null);
+	};
+
+	/** 图层面板与名称行：选中并把镜头移到 focus 上。 */
+	const selectAndReveal = (ids: string[], focus: string) => {
+		setSelected(ids);
+		const d = state.current.doc;
+		const it = d ? findItem(d, focus) : null;
+		if (d && it)
+			setCam((c) => reveal(c, itemBox(d, it), size.width, size.height));
+	};
+
+	const onKeyDown = (e: ReactKeyboardEvent<HTMLElement>) => {
+		// 门户里的对话框（改名、删页确认）冒泡上来的按键不归画布
+		if (!e.currentTarget.contains(e.target as Node)) return;
 		if (e.defaultPrevented || isTypingTarget(e.target)) return;
-		if (e.key === " ") {
+		// 空格在按钮上是点击；只有画布区获得焦点时才是按住平移
+		if (e.key === " " && e.target === stageRef.current) {
 			if (!e.repeat) setSpace(true);
 			e.preventDefault();
 			return;
@@ -1141,56 +1182,23 @@ export function CanvasEditor({
 	const sizeLabel = preview?.size
 		? toScreen(cam, preview.size.x, preview.size.y + preview.size.height)
 		: null;
-	const toolButtons: { tool: Tool; icon: IconName; label: string }[] = [
-		{
-			tool: "move",
-			icon: TOOL_ICON.move,
-			label: t("artifacts.canvas.tools.move"),
-		},
-		{
-			tool: "hand",
-			icon: TOOL_ICON.hand,
-			label: t("artifacts.canvas.tools.hand"),
-		},
-		...(readOnly
-			? []
-			: [
-					{
-						tool: "frame" as const,
-						icon: TOOL_ICON.frame,
-						label: t("artifacts.canvas.tools.frame"),
-					},
-					{
-						tool: "text" as const,
-						icon: TOOL_ICON.text,
-						label: t("artifacts.canvas.tools.text"),
-					},
-					{
-						tool: "sticky" as const,
-						icon: TOOL_ICON.sticky,
-						label: t("artifacts.canvas.tools.sticky"),
-					},
-					{
-						tool: "pen" as const,
-						icon: (penKind === "pen" ? "penNib" : "highlighter") as IconName,
-						label: t(`artifacts.canvas.tools.${penKind}`),
-					},
-					{
-						tool: "shape" as const,
-						icon: SHAPE_ICON[shape],
-						label: t(`artifacts.canvas.tools.${shape}`),
-					},
-				]),
-		...(commentable
-			? [
-					{
-						tool: "comment" as const,
-						icon: TOOL_ICON.comment,
-						label: t("artifacts.canvas.tools.comment"),
-					},
-				]
-			: []),
-	];
+	// 图层与属性面板只在整页查看器、非手机断点里出现；属性面板只在可编辑且有选中时出现。
+	// 窄窗口里两者都覆盖在画布上，放不下两个：图层面板开着时属性面板让位
+	const showPanels = variant === "page" && !compact;
+	const showLayers = showPanels && layersOpen;
+	const showProps =
+		showPanels && !readOnly && items.length > 0 && !(narrow && showLayers);
+	const shown = viewBox(cam, size.width, size.height);
+	const labelPad = (LABEL_HEIGHT + LABEL_GAP) / z;
+	const labelled = pagesOnCanvas.filter(
+		(p) =>
+			p.x <= shown.x + shown.width &&
+			p.x + p.width >= shown.x &&
+			p.y - labelPad <= shown.y + shown.height &&
+			p.y >= shown.y,
+	);
+	const selectedIds = items.map((it) => it.value.id);
+	const render = caps.data?.render === true;
 
 	return (
 		<section
@@ -1198,260 +1206,283 @@ export function CanvasEditor({
 			data-testid="canvas-editor"
 			data-variant={variant}
 			data-readonly={readOnly ? "" : undefined}
-			className="canvas-editor relative h-full overflow-hidden rounded-lg border border-border"
+			className="canvas-editor relative flex h-full overflow-hidden rounded-lg border border-border"
 			onKeyDown={onKeyDown}
 			onKeyUp={onKeyUp}
 		>
-			<div
-				ref={stageRef}
-				// biome-ignore lint/a11y/noNoninteractiveTabindex: 画布区接管键盘快捷键，需要能获得焦点
-				tabIndex={0}
-				role="application"
-				aria-label={t("artifacts.canvas.stage", { title })}
-				className="canvas-stage absolute inset-0"
-				onPointerDownCapture={(e) => {
-					if (!inside) return;
-					const el = e.target as HTMLElement;
-					if (!el.closest?.(`[data-page="${inside}"]`)) setInside(null);
-				}}
-			>
-				<div className="canvas-world" style={worldStyle}>
-					{pagesOnCanvas.map((p) => (
-						<CanvasFrame
-							key={p.id}
-							page={p}
-							content={contentOf(p)}
-							title={t("artifacts.canvas.frameTitle", { name: p.name })}
-							inside={inside === p.id}
-							mode={mode}
-							accent={accent}
-							pins={live && pins ? pins(p.file) : []}
-							onLink={onLink}
-							onStale={onStale}
-							onReady={onReady}
-							detectStale={live}
-							reloadNonce={consentReloads}
+			{showLayers && (
+				<LayersPanel
+					doc={doc}
+					canvasKey={canvasKey}
+					selected={selectedIds}
+					overlay={narrow}
+					onSelect={selectAndReveal}
+					onRename={
+						readOnly
+							? undefined
+							: (id, name) =>
+									commit([{ op: "set", id, key: "name", value: name }])
+					}
+					onClose={() => setLayersOpen(false)}
+				/>
+			)}
+			<div className="relative min-w-0 flex-1 overflow-hidden">
+				<div
+					ref={stageRef}
+					// biome-ignore lint/a11y/noNoninteractiveTabindex: 画布区接管键盘快捷键，需要能获得焦点
+					tabIndex={0}
+					role="application"
+					aria-label={t("artifacts.canvas.stage", { title })}
+					className="canvas-stage absolute inset-0"
+					onPointerDownCapture={(e) => {
+						if (!inside) return;
+						const el = e.target as HTMLElement;
+						if (!el.closest?.(`[data-page="${inside}"]`)) setInside(null);
+					}}
+				>
+					<div className="canvas-world" style={worldStyle}>
+						{pagesOnCanvas.map((p) => (
+							<CanvasFrame
+								key={p.id}
+								page={p}
+								content={contentOf(p)}
+								title={t("artifacts.canvas.frameTitle", { name: p.name })}
+								inside={inside === p.id}
+								mode={mode}
+								accent={accent}
+								pins={live && pins ? pins(p.file) : []}
+								onLink={onLink}
+								onStale={onStale}
+								onReady={onReady}
+								detectStale={live}
+								reloadNonce={consentReloads}
+							/>
+						))}
+						<NotesLayer
+							doc={doc}
+							canvas={canvasKey}
+							editing={editing?.id ?? null}
+							draft={preview?.draft ?? null}
 						/>
-					))}
-					<NotesLayer
-						doc={doc}
-						canvas={canvasKey}
-						editing={editing?.id ?? null}
-						draft={preview?.draft ?? null}
-					/>
-					<svg className="canvas-layer canvas-chrome" aria-hidden="true">
-						{items.map((it) => {
-							const b = itemBox(doc, it);
-							return (
+						<svg className="canvas-layer canvas-chrome" aria-hidden="true">
+							{items.map((it) => {
+								const b = itemBox(doc, it);
+								return (
+									<rect
+										key={it.value.id}
+										className="sel"
+										x={b.x}
+										y={b.y}
+										width={b.width}
+										height={b.height}
+									/>
+								);
+							})}
+							{handles &&
+								(
+									[
+										[handles.x, handles.y],
+										[handles.x + handles.width, handles.y],
+										[handles.x, handles.y + handles.height],
+										[handles.x + handles.width, handles.y + handles.height],
+									] as const
+								).map(([hx, hy]) => (
+									<rect
+										key={`${hx}:${hy}`}
+										className="handle"
+										x={hx - 4 / z}
+										y={hy - 4 / z}
+										width={8 / z}
+										height={8 / z}
+									/>
+								))}
+							{preview?.guides?.map((g) =>
+								g.axis === "x" ? (
+									<line
+										key={`x${g.pos}`}
+										className="guide"
+										x1={g.pos}
+										x2={g.pos}
+										y1={g.from}
+										y2={g.to}
+									/>
+								) : (
+									<line
+										key={`y${g.pos}`}
+										className="guide"
+										y1={g.pos}
+										y2={g.pos}
+										x1={g.from}
+										x2={g.to}
+									/>
+								),
+							)}
+							{preview?.marquee && (
 								<rect
-									key={it.value.id}
-									className="sel"
-									x={b.x}
-									y={b.y}
-									width={b.width}
-									height={b.height}
+									className="marquee"
+									x={preview.marquee.x}
+									y={preview.marquee.y}
+									width={preview.marquee.width}
+									height={preview.marquee.height}
+								/>
+							)}
+							{preview?.frame && (
+								<rect
+									className="draft"
+									x={preview.frame.x}
+									y={preview.frame.y}
+									width={preview.frame.width}
+									height={preview.frame.height}
+								/>
+							)}
+						</svg>
+					</div>
+					{/* biome-ignore lint/a11y/noStaticElementInteractions: 指针覆盖层；键盘操作由外层获得焦点的画布区处理 */}
+					<div
+						data-testid="canvas-overlay"
+						className="absolute inset-0"
+						style={{ cursor, pointerEvents: inside ? "none" : "auto" }}
+						onPointerDown={onPointerDown}
+						onPointerMove={onPointerMove}
+						onPointerUp={onPointerUp}
+						onPointerCancel={onPointerCancel}
+						onPointerLeave={() => {
+							if (!gesture.current && tool === "comment") hoverComment(null);
+						}}
+						onDoubleClick={onDoubleClick}
+					/>
+					<div
+						data-testid="canvas-frame-labels"
+						className="pointer-events-none absolute inset-0"
+					>
+						{labelled.map((p) => {
+							const s = toScreen(cam, p.x, p.y);
+							return (
+								<FrameLabel
+									key={p.id}
+									page={p}
+									left={s.x}
+									top={s.y}
+									width={p.width * z}
+									selected={selectedIds.includes(p.id)}
+									onSelect={(additive) => {
+										setSelected((cur) =>
+											!additive
+												? [p.id]
+												: cur.includes(p.id)
+													? cur.filter((x) => x !== p.id)
+													: [...cur, p.id],
+										);
+										stageRef.current?.focus({ preventScroll: true });
+									}}
+									onDownloadPng={
+										render
+											? () => void downloadFramePng(artifactId, p, version, t)
+											: undefined
+									}
+									onPresent={onPresent ? () => onPresent(p.id) : undefined}
 								/>
 							);
 						})}
-						{handles &&
-							(
-								[
-									[handles.x, handles.y],
-									[handles.x + handles.width, handles.y],
-									[handles.x, handles.y + handles.height],
-									[handles.x + handles.width, handles.y + handles.height],
-								] as const
-							).map(([hx, hy]) => (
-								<rect
-									key={`${hx}:${hy}`}
-									className="handle"
-									x={hx - 4 / z}
-									y={hy - 4 / z}
-									width={8 / z}
-									height={8 / z}
-								/>
-							))}
-						{preview?.guides?.map((g) =>
-							g.axis === "x" ? (
-								<line
-									key={`x${g.pos}`}
-									className="guide"
-									x1={g.pos}
-									x2={g.pos}
-									y1={g.from}
-									y2={g.to}
-								/>
-							) : (
-								<line
-									key={`y${g.pos}`}
-									className="guide"
-									y1={g.pos}
-									y2={g.pos}
-									x1={g.from}
-									x2={g.to}
-								/>
-							),
-						)}
-						{preview?.marquee && (
-							<rect
-								className="marquee"
-								x={preview.marquee.x}
-								y={preview.marquee.y}
-								width={preview.marquee.width}
-								height={preview.marquee.height}
+					</div>
+					{editing && (
+						<div
+							className="canvas-world"
+							style={{ ...worldStyle, pointerEvents: "none" }}
+						>
+							<EditBox
+								editing={editing}
+								onChange={(text) =>
+									setEditing((ed) => (ed ? { ...ed, text } : ed))
+								}
+								onDone={finishEditing}
 							/>
-						)}
-						{preview?.frame && (
-							<rect
-								className="draft"
-								x={preview.frame.x}
-								y={preview.frame.y}
-								width={preview.frame.width}
-								height={preview.frame.height}
-							/>
-						)}
-					</svg>
+						</div>
+					)}
+					{sizeLabel && preview?.size && (
+						<span
+							className="canvas-size"
+							style={{ left: sizeLabel.x, top: sizeLabel.y + 6 }}
+						>
+							{Math.round(preview.size.width)} ×{" "}
+							{Math.round(preview.size.height)}
+						</span>
+					)}
 				</div>
-				{/* biome-ignore lint/a11y/noStaticElementInteractions: 指针覆盖层；键盘操作由外层获得焦点的画布区处理 */}
-				<div
-					data-testid="canvas-overlay"
-					className="absolute inset-0"
-					style={{ cursor, pointerEvents: inside ? "none" : "auto" }}
-					onPointerDown={onPointerDown}
-					onPointerMove={onPointerMove}
-					onPointerUp={onPointerUp}
-					onPointerCancel={onPointerCancel}
-					onPointerLeave={() => {
-						if (!gesture.current && tool === "comment") hoverComment(null);
-					}}
-					onDoubleClick={onDoubleClick}
-				/>
-				{editing && (
-					<div
-						className="canvas-world"
-						style={{ ...worldStyle, pointerEvents: "none" }}
-					>
-						<EditBox
-							editing={editing}
-							onChange={(text) =>
-								setEditing((ed) => (ed ? { ...ed, text } : ed))
-							}
-							onDone={finishEditing}
-						/>
+				{pagesOnCanvas.length === 0 && (
+					<div className="pointer-events-none absolute inset-x-0 top-1/3 flex flex-col items-center gap-2 text-sm text-muted">
+						<span>{t("artifacts.canvas.emptyCanvas")}</span>
+						{!readOnly && (
+							<Button
+								size="sm"
+								icon="frameCorners"
+								className="pointer-events-auto"
+								onClick={() => chooseTool("frame")}
+							>
+								{t("artifacts.canvas.frameTool")}
+							</Button>
+						)}
 					</div>
 				)}
-				{sizeLabel && preview?.size && (
-					<span
-						className="canvas-size"
-						style={{ left: sizeLabel.x, top: sizeLabel.y + 6 }}
+				{frameError !== null && (
+					<div
+						role="status"
+						className="absolute inset-x-2 top-2 flex items-center gap-2 rounded-md border border-border bg-panel px-3 py-1.5 text-sm shadow-sm"
 					>
-						{Math.round(preview.size.width)} × {Math.round(preview.size.height)}
-					</span>
-				)}
-			</div>
-			{pagesOnCanvas.length === 0 && (
-				<div className="pointer-events-none absolute inset-x-0 top-1/3 flex flex-col items-center gap-2 text-sm text-muted">
-					<span>{t("artifacts.canvas.emptyCanvas")}</span>
-					{!readOnly && (
-						<Button
-							size="sm"
-							icon="frameCorners"
-							className="pointer-events-auto"
-							onClick={() => chooseTool("frame")}
-						>
-							{t("artifacts.canvas.frameTool")}
-						</Button>
-					)}
-				</div>
-			)}
-			{frameError !== null && (
-				<div
-					role="status"
-					className="absolute inset-x-2 top-2 flex items-center gap-2 rounded-md border border-border bg-panel px-3 py-1.5 text-sm shadow-sm"
-				>
-					<span className="min-w-0 flex-1 truncate">
-						{t("artifacts.canvas.frameFailed", {
-							reason: describeError(frameError, t),
-						})}
-					</span>
-					<Button size="sm" onClick={() => setAttempt((n) => n + 1)}>
-						{t("artifacts.viewer.retry")}
-					</Button>
-				</div>
-			)}
-			{inside && (
-				<div className="pointer-events-none absolute inset-x-0 top-2 flex justify-center">
-					<span className="rounded-full border border-border bg-panel px-2.5 py-0.5 text-muted text-xs shadow-sm">
-						{t("artifacts.canvas.inside")}
-					</span>
-				</div>
-			)}
-			<div
-				role="toolbar"
-				aria-label={t("artifacts.canvas.toolbar")}
-				className="absolute inset-x-0 bottom-2 flex justify-center px-2"
-			>
-				<div className="flex max-w-full items-center gap-0.5 overflow-x-auto rounded-xl border border-border bg-panel p-1 shadow-md">
-					{doc.canvases.length > 1 && (
-						<>
-							{doc.canvases.map((c) => (
-								<button
-									key={c.id}
-									type="button"
-									aria-pressed={c.id === canvasKey}
-									onClick={() => {
-										setCanvasSel(c.id);
-										setSelected([]);
-										setInside(null);
-									}}
-									className={`h-7 max-w-32 shrink-0 truncate rounded-md px-2 text-xs ${c.id === canvasKey ? "bg-active text-fg" : "text-muted hover:bg-hover hover:text-fg"}`}
-								>
-									{c.name}
-								</button>
-							))}
-							<span className="mx-1 h-5 w-px shrink-0 bg-border" />
-						</>
-					)}
-					{toolButtons.map((b) => (
-						<IconButton
-							key={b.tool}
-							icon={b.icon}
-							box="sm"
-							size={15}
-							active={tool === b.tool}
-							data-testid={`canvas-tool-${b.tool}`}
-							label={t("artifacts.canvas.toolKey", {
-								name: b.label,
-								key: TOOL_KEYS[b.tool],
+						<span className="min-w-0 flex-1 truncate">
+							{t("artifacts.canvas.frameFailed", {
+								reason: describeError(frameError, t),
 							})}
-							onClick={() => chooseTool(b.tool)}
-						/>
-					))}
-					<span className="mx-1 h-5 w-px shrink-0 bg-border" />
-					<IconButton
-						icon="zoomOut"
-						box="sm"
-						size={15}
-						label={t("artifacts.canvas.zoomOut")}
-						onClick={() => zoomTo("out")}
-					/>
-					<button
-						type="button"
-						title={t("artifacts.canvas.zoomFit")}
-						onClick={() => zoomTo("fit")}
-						className="h-7 w-12 shrink-0 rounded-md text-muted text-xs tabular-nums hover:bg-hover hover:text-fg"
-					>
-						{Math.round(z * 100)}%
-					</button>
-					<IconButton
-						icon="zoomIn"
-						box="sm"
-						size={15}
-						label={t("artifacts.canvas.zoomIn")}
-						onClick={() => zoomTo("in")}
-					/>
-				</div>
+						</span>
+						<Button size="sm" onClick={() => setAttempt((n) => n + 1)}>
+							{t("artifacts.viewer.retry")}
+						</Button>
+					</div>
+				)}
+				{inside && (
+					<div className="pointer-events-none absolute inset-x-0 top-2 flex justify-center">
+						<span className="rounded-full border border-border bg-panel px-2.5 py-0.5 text-muted text-xs shadow-sm">
+							{t("artifacts.canvas.inside")}
+						</span>
+					</div>
+				)}
+				<Toolbar
+					doc={doc}
+					canvasKey={canvasKey}
+					readOnly={readOnly}
+					commentable={commentable}
+					tool={tool}
+					penKind={penKind}
+					shape={shape}
+					styles={styles}
+					onTool={chooseTool}
+					onPenKind={setPenKind}
+					onShape={setShape}
+					onStyle={(family: DrawFamily, patch: Partial<DrawStyle>) =>
+						setStyles((s) => ({ ...s, [family]: { ...s[family], ...patch } }))
+					}
+					onCanvas={switchCanvas}
+					commit={(ops) => commit(ops)}
+					zoom={z}
+					hasSelection={items.length > 0}
+					onZoom={zoomTo}
+					layers={
+						showPanels
+							? { open: layersOpen, onToggle: () => setLayersOpen((o) => !o) }
+							: undefined
+					}
+				/>
 			</div>
+			{showProps && (
+				<PropsPanel
+					doc={doc}
+					selected={selectedIds}
+					threads={detail.data?.threads ?? []}
+					overlay={narrow}
+					commit={(ops) => commit(ops)}
+					onSelect={setSelected}
+				/>
+			)}
 		</section>
 	);
 }

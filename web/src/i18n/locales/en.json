@@ -2021,7 +2021,108 @@
 			"editText": "Edit text",
 			"editSticky": "Edit sticky note",
 			"rejected": "Canvas change wasn't saved: {{reason}}",
-			"frameFailed": "Frames can't be shown right now: {{reason}}"
+			"frameFailed": "Frames can't be shown right now: {{reason}}",
+			"zoomMenu": "Zoom: {{percent}}%",
+			"zoomSelection": "Fit selection",
+			"zoomActual": "100%",
+			"sheets": {
+				"menu": "Page: {{name}}",
+				"frames_one": "{{count}} frame",
+				"frames_other": "{{count}} frames",
+				"add": "New page",
+				"rename": "Rename…",
+				"copy": "Duplicate this page",
+				"delete": "Delete page",
+				"lastOne": "The last page can't be deleted",
+				"newName": "Page {{n}}",
+				"copyName": "{{name}} copy",
+				"copyFailed": "Couldn't duplicate this page: it would exceed the frame or annotation limit",
+				"renameTitle": "Rename page",
+				"nameLabel": "Page name",
+				"save": "Save",
+				"cancel": "Cancel",
+				"deleteTitle": "Delete page “{{name}}”?",
+				"deleteBody": "Its {{frames}} frames and {{notes}} annotations will be deleted too. You can undo this (⌘Z / Ctrl+Z).",
+				"deleteConfirm": "Delete"
+			},
+			"style": {
+				"kind": "Style",
+				"width": "Thickness",
+				"widthPx": "{{n}} px",
+				"color": "Color",
+				"colors": {
+					"ink": "Ink",
+					"red": "Red",
+					"orange": "Orange",
+					"yellow": "Yellow",
+					"green": "Green",
+					"blue": "Blue",
+					"violet": "Violet"
+				}
+			},
+			"layers": {
+				"title": "Layers",
+				"toggle": "Layers panel",
+				"close": "Close layers panel",
+				"frames": "Frames",
+				"notes": "Annotations",
+				"empty": "This page is empty",
+				"noteText": "{{kind}}: {{text}}",
+				"locked": "Locked",
+				"rename": "Frame name"
+			},
+			"props": {
+				"title": "Properties panel",
+				"tabs": {
+					"props": "Properties",
+					"tweaks": "Tweaks"
+				},
+				"tweaksEmpty": "Frames on this page have no tweakable parameters yet. Ask the agent to add some, like a theme, accent color, or density.",
+				"tweaksPick": "Select a frame to tweak its parameters.",
+				"selected_one": "{{count}} item selected",
+				"selected_other": "{{count}} items selected",
+				"name": "Name",
+				"size": "Size",
+				"presets": {
+					"desktop": "Desktop · {{width}}×{{height}}",
+					"laptop": "Laptop · {{width}}×{{height}}",
+					"tablet": "Tablet · {{width}}×{{height}}",
+					"phone": "Phone · {{width}}×{{height}}",
+					"custom": "Custom"
+				},
+				"width": "Width",
+				"height": "Height",
+				"lockedHint": "Locked: unlock it to change its position or size.",
+				"fontSize": "Font size",
+				"done": "Handled",
+				"doneBy": "Handled by {{agent}}",
+				"agent": "Agent",
+				"arrange": "Arrange",
+				"align": {
+					"left": "Align left",
+					"centerH": "Center horizontally",
+					"right": "Align right",
+					"top": "Align top",
+					"centerV": "Center vertically",
+					"bottom": "Align bottom"
+				},
+				"distributeH": "Distribute horizontally",
+				"distributeV": "Distribute vertically",
+				"duplicate": "Duplicate",
+				"lock": "Lock",
+				"unlock": "Unlock",
+				"bringFront": "Bring to front",
+				"sendBack": "Send to back",
+				"delete": "Delete"
+			},
+			"frameLabel": {
+				"select": "Select frame “{{name}}”",
+				"tweaks": "Tweaks",
+				"handOff": "Hand to agent",
+				"png": "Download PNG",
+				"present": "Present from here",
+				"focus": "Focus"
+			}
 		},
 		"home": {
 			"recent": "Recent artifacts",

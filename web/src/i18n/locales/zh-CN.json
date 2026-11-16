@@ -2021,7 +2021,108 @@
 			"editText": "编辑文字",
 			"editSticky": "编辑便签",
 			"rejected": "画布的改动没有保存：{{reason}}",
-			"frameFailed": "画框暂时无法显示：{{reason}}"
+			"frameFailed": "画框暂时无法显示：{{reason}}",
+			"zoomMenu": "缩放：{{percent}}%",
+			"zoomSelection": "适合选中",
+			"zoomActual": "100%",
+			"sheets": {
+				"menu": "页面：{{name}}",
+				"frames_one": "{{count}} 个画框",
+				"frames_other": "{{count}} 个画框",
+				"add": "新建页面",
+				"rename": "改名…",
+				"copy": "复制这个页面",
+				"delete": "删除页面",
+				"lastOne": "最后一个页面不能删",
+				"newName": "页面 {{n}}",
+				"copyName": "{{name}} 副本",
+				"copyFailed": "没能复制这个页面：画框或标注会超出上限",
+				"renameTitle": "给页面改名",
+				"nameLabel": "页面名字",
+				"save": "保存",
+				"cancel": "取消",
+				"deleteTitle": "删除页面「{{name}}」？",
+				"deleteBody": "它上面的 {{frames}} 个画框和 {{notes}} 个标注会一起删除。删除后可以撤销（⌘Z / Ctrl+Z）。",
+				"deleteConfirm": "删除"
+			},
+			"style": {
+				"kind": "样式",
+				"width": "粗细",
+				"widthPx": "{{n}} 像素",
+				"color": "颜色",
+				"colors": {
+					"ink": "墨色",
+					"red": "红色",
+					"orange": "橙色",
+					"yellow": "黄色",
+					"green": "绿色",
+					"blue": "蓝色",
+					"violet": "紫色"
+				}
+			},
+			"layers": {
+				"title": "图层",
+				"toggle": "图层面板",
+				"close": "关闭图层面板",
+				"frames": "画框",
+				"notes": "标注",
+				"empty": "这个页面还是空的",
+				"noteText": "{{kind}}：{{text}}",
+				"locked": "已锁定",
+				"rename": "画框名字"
+			},
+			"props": {
+				"title": "属性面板",
+				"tabs": {
+					"props": "属性",
+					"tweaks": "调节"
+				},
+				"tweaksEmpty": "这一页的画框还没有可调节的参数。可以让 Agent 加上，比如主题、强调色或密度。",
+				"tweaksPick": "选中一个画框来调节它的参数。",
+				"selected_one": "已选 {{count}} 项",
+				"selected_other": "已选 {{count}} 项",
+				"name": "名字",
+				"size": "尺寸",
+				"presets": {
+					"desktop": "桌面 · {{width}}×{{height}}",
+					"laptop": "笔记本 · {{width}}×{{height}}",
+					"tablet": "平板 · {{width}}×{{height}}",
+					"phone": "手机 · {{width}}×{{height}}",
+					"custom": "自定义"
+				},
+				"width": "宽",
+				"height": "高",
+				"lockedHint": "已锁定：解锁后才能改位置和尺寸。",
+				"fontSize": "字号",
+				"done": "已处理",
+				"doneBy": "{{agent}} 已处理",
+				"agent": "Agent",
+				"arrange": "排列",
+				"align": {
+					"left": "左对齐",
+					"centerH": "水平居中",
+					"right": "右对齐",
+					"top": "顶对齐",
+					"centerV": "垂直居中",
+					"bottom": "底对齐"
+				},
+				"distributeH": "水平等距",
+				"distributeV": "垂直等距",
+				"duplicate": "复制",
+				"lock": "锁定",
+				"unlock": "解锁",
+				"bringFront": "移到最前",
+				"sendBack": "移到最后",
+				"delete": "删除"
+			},
+			"frameLabel": {
+				"select": "选中画框「{{name}}」",
+				"tweaks": "调节",
+				"handOff": "交给 Agent",
+				"png": "下载 PNG",
+				"present": "从这页演示",
+				"focus": "聚焦"
+			}
 		},
 		"home": {
 			"recent": "最近的 Artifacts",

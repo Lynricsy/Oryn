@@ -1,5 +1,11 @@
 /** 图标：Phosphor（MIT）按名映射，逐个深导入避免桶导入。 */
 import type { Icon as PhosphorIcon } from "@phosphor-icons/react";
+import { AlignBottom } from "@phosphor-icons/react/dist/csr/AlignBottom";
+import { AlignCenterHorizontal } from "@phosphor-icons/react/dist/csr/AlignCenterHorizontal";
+import { AlignCenterVertical } from "@phosphor-icons/react/dist/csr/AlignCenterVertical";
+import { AlignLeft } from "@phosphor-icons/react/dist/csr/AlignLeft";
+import { AlignRight } from "@phosphor-icons/react/dist/csr/AlignRight";
+import { AlignTop } from "@phosphor-icons/react/dist/csr/AlignTop";
 import { Archive } from "@phosphor-icons/react/dist/csr/Archive";
 import { ArrowClockwise } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
 import { ArrowDown } from "@phosphor-icons/react/dist/csr/ArrowDown";
@@ -8,8 +14,10 @@ import { ArrowLineDown } from "@phosphor-icons/react/dist/csr/ArrowLineDown";
 import { ArrowRight } from "@phosphor-icons/react/dist/csr/ArrowRight";
 import { ArrowSquareOut } from "@phosphor-icons/react/dist/csr/ArrowSquareOut";
 import { ArrowsClockwise } from "@phosphor-icons/react/dist/csr/ArrowsClockwise";
+import { ArrowsHorizontal } from "@phosphor-icons/react/dist/csr/ArrowsHorizontal";
 import { ArrowsInSimple } from "@phosphor-icons/react/dist/csr/ArrowsInSimple";
 import { ArrowsOutSimple } from "@phosphor-icons/react/dist/csr/ArrowsOutSimple";
+import { ArrowsVertical } from "@phosphor-icons/react/dist/csr/ArrowsVertical";
 import { ArrowUp } from "@phosphor-icons/react/dist/csr/ArrowUp";
 import { ArrowUpRight } from "@phosphor-icons/react/dist/csr/ArrowUpRight";
 import { Bell } from "@phosphor-icons/react/dist/csr/Bell";
@@ -85,6 +93,7 @@ import { Link } from "@phosphor-icons/react/dist/csr/Link";
 import { List } from "@phosphor-icons/react/dist/csr/List";
 import { ListChecks } from "@phosphor-icons/react/dist/csr/ListChecks";
 import { LockSimple } from "@phosphor-icons/react/dist/csr/LockSimple";
+import { LockSimpleOpen } from "@phosphor-icons/react/dist/csr/LockSimpleOpen";
 import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
 import { MagnifyingGlassMinus } from "@phosphor-icons/react/dist/csr/MagnifyingGlassMinus";
 import { MagnifyingGlassPlus } from "@phosphor-icons/react/dist/csr/MagnifyingGlassPlus";
@@ -111,6 +120,8 @@ import { Quotes } from "@phosphor-icons/react/dist/csr/Quotes";
 import { Rectangle } from "@phosphor-icons/react/dist/csr/Rectangle";
 import { Robot } from "@phosphor-icons/react/dist/csr/Robot";
 import { RocketLaunch } from "@phosphor-icons/react/dist/csr/RocketLaunch";
+import { SelectionBackground } from "@phosphor-icons/react/dist/csr/SelectionBackground";
+import { SelectionForeground } from "@phosphor-icons/react/dist/csr/SelectionForeground";
 import { Shapes } from "@phosphor-icons/react/dist/csr/Shapes";
 import { ShareNetwork } from "@phosphor-icons/react/dist/csr/ShareNetwork";
 import { ShippingContainer } from "@phosphor-icons/react/dist/csr/ShippingContainer";
@@ -314,6 +325,19 @@ const ICONS = {
 	arrowUpRight: ArrowUpRight,
 	zoomIn: MagnifyingGlassPlus,
 	zoomOut: MagnifyingGlassMinus,
+	/** 画布编辑器的工具条、图层与属性面板（M14 6.4）：图层、解锁（锁定用 `lock`）、六种对齐、两种等距、移到最前 / 最后 */
+	stack: Stack,
+	lockOpen: LockSimpleOpen,
+	alignLeft: AlignLeft,
+	alignCenterH: AlignCenterHorizontal,
+	alignRight: AlignRight,
+	alignTop: AlignTop,
+	alignCenterV: AlignCenterVertical,
+	alignBottom: AlignBottom,
+	distributeH: ArrowsHorizontal,
+	distributeV: ArrowsVertical,
+	bringFront: SelectionForeground,
+	sendBack: SelectionBackground,
 } satisfies Record<string, PhosphorIcon>;
 
 export type IconName = keyof typeof ICONS;

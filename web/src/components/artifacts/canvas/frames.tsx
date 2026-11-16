@@ -173,7 +173,6 @@ export function CanvasFrame({
 				height: page.height,
 			}}
 		>
-			<div className="canvas-label">{page.name}</div>
 			{content.kind === "frame" ? (
 				<FrameIframe
 					pageId={page.id}
