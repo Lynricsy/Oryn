@@ -349,3 +349,35 @@ func TestDockerPidsLimit(t *testing.T) {
 	_, err = load("  pids_limit: many\n")
 	assert.Error(t, err, "非整数报错")
 }
+
+// M14：github 上游地址的默认值、校验与结尾斜杠处理。
+func TestGitHubConfig(t *testing.T) {
+	d := DefaultOrynd()
+	assert.Equal(t, "https://api.github.com", d.GitHub.APIURL)
+	assert.Equal(t, "https://github.com", d.GitHub.WebURL)
+
+	base := func() Orynd {
+		c := DefaultOrynd()
+		c.PublicURL = "https://oryn.example.com"
+		return c
+	}
+	for name, mod := range map[string]func(*Orynd){
+		"api_url 为空":      func(c *Orynd) { c.GitHub.APIURL = "" },
+		"api_url 非 http":  func(c *Orynd) { c.GitHub.APIURL = "ftp://x" },
+		"web_url 无 host":  func(c *Orynd) { c.GitHub.WebURL = "https://" },
+		"web_url 带 query": func(c *Orynd) { c.GitHub.WebURL = "https://github.com/?a=1" },
+		"api_url 带片段":     func(c *Orynd) { c.GitHub.APIURL = "https://api.github.com#x" },
+	} {
+		c := base()
+		mod(&c)
+		assert.Error(t, c.Validate(), name)
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "orynd.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("public_url: https://oryn.example.com\ndata_dir: data\ngithub:\n  api_url: http://127.0.0.1:7630/\n  web_url: http://127.0.0.1:7630//\n"), 0o600))
+	c, err := LoadOrynd(path)
+	require.NoError(t, err)
+	assert.Equal(t, "http://127.0.0.1:7630", c.GitHub.APIURL)
+	assert.Equal(t, "http://127.0.0.1:7630", c.GitHub.WebURL)
+}

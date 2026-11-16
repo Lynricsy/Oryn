@@ -199,6 +199,24 @@ type Pool struct {
 	ActiveWindow Duration `yaml:"active_window"`
 }
 
+// GitHub 是 GitHub 集成的上游地址（M14）；默认 github.com，测试与验收脚本指向假服务。
+type GitHub struct {
+	APIURL string `yaml:"api_url"`
+	WebURL string `yaml:"web_url"`
+}
+
+// validate 要求两者都是带 scheme（http/https）与 host 的绝对地址，不带 query 与 fragment。
+func (g GitHub) validate() []error {
+	var errs []error
+	for _, f := range []struct{ key, v string }{{"api_url", g.APIURL}, {"web_url", g.WebURL}} {
+		u, err := url.Parse(f.v)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.RawQuery != "" || u.Fragment != "" || u.ForceQuery {
+			errs = append(errs, fmt.Errorf("github.%s %q 不是合法的 http(s) 地址", f.key, f.v))
+		}
+	}
+	return errs
+}
+
 // Orynd 对应 /etc/oryn/orynd.yaml。
 type Orynd struct {
 	Listen       []string    `yaml:"listen"`
@@ -215,6 +233,7 @@ type Orynd struct {
 	Snapshots    Snapshots   `yaml:"snapshots"`
 	Pool         Pool        `yaml:"pool"`
 	OrbTLS       OrbTLS      `yaml:"orb_tls"`
+	GitHub       GitHub      `yaml:"github"`
 }
 
 // CoordinatorDir 返回协调宿主目录（未配置时为 <data_dir>/coordinator）。
@@ -253,7 +272,8 @@ func DefaultOrynd() Orynd {
 			MinSetup:   Duration(10 * time.Second),
 			MaxTotalGB: 40,
 		},
-		Pool: Pool{MaxTotal: 2, MaxAge: Duration(12 * time.Hour), ActiveWindow: Duration(72 * time.Hour)},
+		Pool:   Pool{MaxTotal: 2, MaxAge: Duration(12 * time.Hour), ActiveWindow: Duration(72 * time.Hour)},
+		GitHub: GitHub{APIURL: "https://api.github.com", WebURL: "https://github.com"},
 	}
 }
 
@@ -263,6 +283,8 @@ func LoadOrynd(path string) (Orynd, error) {
 	if err := decodeStrict(path, &c); err != nil {
 		return c, err
 	}
+	c.GitHub.APIURL = strings.TrimRight(c.GitHub.APIURL, "/")
+	c.GitHub.WebURL = strings.TrimRight(c.GitHub.WebURL, "/")
 	if err := c.Validate(); err != nil {
 		return c, fmt.Errorf("%s: %w", path, err)
 	}
@@ -301,6 +323,7 @@ func (c Orynd) Validate() error {
 	if c.DataDir == "" {
 		errs = append(errs, errors.New("data_dir 不能为空"))
 	}
+	errs = append(errs, c.GitHub.validate()...)
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error":
 	default:

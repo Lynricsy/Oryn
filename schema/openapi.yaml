@@ -80,6 +80,8 @@ tags:
     description: runner（M11b：用户自己的机器以 `orbd run --runner` 接入，作为一台常驻的执行位置）
   - name: orb-link
     description: orb / runner → 控制面的非 WebSocket 端点（M11b；由手写处理器服务，不进入 ServerInterface）
+  - name: github
+    description: GitHub 集成（M14）
 
 paths:
   /healthz:
@@ -3438,6 +3440,361 @@ paths:
         '204': { description: 已删除 }
         default: { $ref: '#/components/responses/Error' }
 
+  # ---------------------------------------------------------------- github（M14）
+  /api/v1/github:
+    get:
+      tags: [github]
+      operationId: getGitHubStatus
+      summary: GitHub 集成状态（App、两个身份槽位、安装、自动化身份、最近投递）
+      responses:
+        '200':
+          description: 当前状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubStatus' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/github/app/manifest:
+    post:
+      tags: [github]
+      operationId: beginGitHubAppManifest
+      summary: 开始按 manifest 创建 GitHub App（返回跳转地址；已有 App → 409 `conflict`）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GitHubManifestRequest' }
+      responses:
+        '200':
+          description: 浏览器应跳转到的地址
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubRedirect' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/github/app:
+    delete:
+      tags: [github]
+      operationId: deleteGitHubApp
+      summary: 删除 GitHub 连接（App、身份、安装记录；不删 GitHub 上的 App）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已删除 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/github/identities/{slot}/authorize:
+    parameters:
+      - { $ref: '#/components/parameters/GitHubIdentitySlotPath' }
+    post:
+      tags: [github]
+      operationId: authorizeGitHubIdentity
+      summary: 开始连接身份槽位（返回 GitHub 授权地址，10 分钟内有效；没有 App → 409 `github_not_connected`）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '200':
+          description: 授权地址
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubRedirect' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/github/identities/{slot}:
+    parameters:
+      - { $ref: '#/components/parameters/GitHubIdentitySlotPath' }
+    delete:
+      tags: [github]
+      operationId: deleteGitHubIdentity
+      summary: 断开身份槽位（断开 Agent 账号时自动化身份回到我的账号）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已断开 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/github/settings:
+    put:
+      tags: [github]
+      operationId: putGitHubSettings
+      summary: 设置自动化任务的 GitHub 身份（Agent 未连接时选 `agent` → 409 `github_agent_required`）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GitHubSettings' }
+      responses:
+        '200':
+          description: 写入后的状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubStatus' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/github/installations/sync:
+    post:
+      tags: [github]
+      operationId: syncGitHubInstallations
+      summary: 从 GitHub 重新拉取 App 的安装列表并重新绑定项目
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '200':
+          description: 同步后的状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubStatus' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/github/repos:
+    get:
+      tags: [github]
+      operationId: listGitHubRepos
+      summary: 我的账号经 App 可访问的仓库（按最近推送倒序，至多 50 个；我的账号未连接 → 409 `github_identity_required`）
+      parameters:
+        - name: q
+          in: query
+          description: 按 `owner/name` 子串过滤（忽略大小写）
+          schema: { type: string, maxLength: 100 }
+      responses:
+        '200':
+          description: 仓库列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubRepoList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/projects/{id}/github/triggers:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectIdPath' }
+    get:
+      tags: [github]
+      operationId: listGitHubTriggers
+      summary: 项目的 GitHub 触发规则
+      responses:
+        '200':
+          description: 规则列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubTriggerList' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [github]
+      operationId: createGitHubTrigger
+      summary: 新建触发规则（项目未绑定 → 409 `github_not_bound`；`mention` 规则要求 Agent 已连接 → 409 `github_agent_required`）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GitHubTriggerInput' }
+      responses:
+        '201':
+          description: 已创建
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubTrigger' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/github/triggers/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/GitHubTriggerIdPath' }
+    patch:
+      tags: [github]
+      operationId: updateGitHubTrigger
+      summary: 修改触发规则（只改出现的字段）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GitHubTriggerPatch' }
+      responses:
+        '200':
+          description: 修改后的规则
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubTrigger' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [github]
+      operationId: deleteGitHubTrigger
+      summary: 删除触发规则
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已删除 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/projects/{id}/github/refs:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectIdPath' }
+    get:
+      tags: [github]
+      operationId: listGitHubRefs
+      summary: 输入框 `#` 引用的 issue / PR 候选（项目未绑定 → 409 `github_not_bound`）
+      parameters:
+        - name: q
+          in: query
+          description: 空 = 最近更新的打开项；纯数字 = 按编号；其它 = 搜索
+          schema: { type: string, maxLength: 100 }
+      responses:
+        '200':
+          description: 候选
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubRefList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/projects/{id}/github/refs/{number}/attachment:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectIdPath' }
+      - { $ref: '#/components/parameters/GitHubNumberPath' }
+    post:
+      tags: [github]
+      operationId: attachGitHubRef
+      summary: 把 issue / PR（含评论）渲染成 Markdown 附件（未绑定线程，随消息绑定）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '201':
+          description: 已保存的附件
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Attachment' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/threads/{id}/github/pulls/{number}:
+    parameters:
+      - { $ref: '#/components/parameters/ThreadIdPath' }
+      - { $ref: '#/components/parameters/GitHubNumberPath' }
+    put:
+      tags: [github]
+      operationId: putThreadPull
+      summary: 暂停 / 恢复关联 PR 的事件回流（恢复时 CI 轮数清零）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ThreadPullPatch' }
+      responses:
+        '200':
+          description: 修改后的线程
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Thread' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [github]
+      operationId: deleteThreadPull
+      summary: 取消线程与 PR 的关联（之后不会自动重连）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '200':
+          description: 修改后的线程
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Thread' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/public/github/webhook:
+    post:
+      tags: [public]
+      operationId: receiveGitHubWebhook
+      summary: GitHub App webhook 入口（按 `X-Hub-Signature-256` 校验；同一 `X-GitHub-Delivery` 只处理一次）
+      security: [{}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '202': { description: 已受理 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/public/github/manifest/start:
+    get:
+      tags: [public]
+      operationId: startGitHubManifest
+      summary: 自动提交 manifest 到 GitHub 的中转页（state 一次性、10 分钟内有效）
+      security: [{}]
+      parameters:
+        - name: state
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: 含提交表单的页面
+          content:
+            text/html:
+              schema: { type: string }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/public/github/manifest/callback:
+    get:
+      tags: [public]
+      operationId: finishGitHubManifest
+      summary: GitHub 创建 App 后的回调（302 回设置页，`?created=1` 或 `?error=<code>`）
+      security: [{}]
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema: { type: string }
+        - name: state
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '302':
+          description: 回到设置页
+          headers:
+            Location:
+              schema: { type: string }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/public/github/oauth/callback:
+    get:
+      tags: [public]
+      operationId: finishGitHubOAuth
+      summary: 身份授权回调（302 回设置页，`?connected=<slot>` 或 `?error=<code>`）
+      security: [{}]
+      parameters:
+        - name: code
+          in: query
+          schema: { type: string }
+        - name: state
+          in: query
+          schema: { type: string }
+        - name: error
+          in: query
+          schema: { type: string }
+      responses:
+        '302':
+          description: 回到设置页
+          headers:
+            Location:
+              schema: { type: string }
+        default: { $ref: '#/components/responses/Error' }
+
   # ---------------------------------------------------------------- public（M5，匿名只读）
   /api/v1/public/shares/{slug}:
     parameters:
@@ -3972,6 +4329,26 @@ components:
       in: path
       required: true
       schema: { $ref: '#/components/schemas/ScheduleId' }
+    GitHubIdentitySlotPath:
+      name: slot
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/GitHubIdentitySlot' }
+    GitHubTriggerIdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^ght_[0-9A-Z]{26}$'
+    GitHubNumberPath:
+      name: number
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
 
   responses:
     Error:
@@ -4112,6 +4489,8 @@ components:
             M11b（runner，HTTP 状态见 docs/protocol.md）：`runner_offline`（409）、`runner_unsupported`（409，runner 的 orb 不支持冻结 / 停机 / 删除 / 快照 / 连环境 fork）、
             `dir_not_served`（400；经 orb 文件 / 改动代理时为 orbd 的 403）、`dir_in_use`（409，体为 `DirInUseConflict`）、`thread_required`（400）、
             `worktree_failed`（400）、`worktree_dirty`（409）。
+            M14（GitHub）：`github_not_connected`（409，尚未创建 App）、`github_identity_required`（409，所需身份未连接或需要重新授权）、
+            `github_agent_required`（409，Agent 账号未连接）、`github_not_bound`（409，项目未绑定 GitHub 仓库）、`github_upstream`（502，GitHub 请求失败）。
         message:
           type: string
     HealthResponse:
@@ -4393,6 +4772,10 @@ components:
           minimum: 0
           maximum: 3
           description: 预热池里为本项目常备的 orb 数（M11a；缺省 0 = 不预热）
+        github:
+          allOf:
+            - $ref: '#/components/schemas/ProjectGitHub'
+          description: GitHub 仓库绑定（M14）；仓库地址从未解析出 GitHub 仓库 id 时省略
     ProjectList:
       type: object
       required: [projects]
@@ -4467,6 +4850,10 @@ components:
           minimum: 0
           maximum: 3
           description: 预热 orb 数（M11a）；越界 → 400 `invalid_request`
+        githubListen:
+          allOf:
+            - $ref: '#/components/schemas/GitHubListen'
+          description: GitHub 事件回流开关（M14）
     ProjectSnapshotState:
       type: string
       description: '`building` 正在提交镜像；`ready` 可被新 orb 使用（同键至多一个）；`retired` 已退役、等待回收器删除镜像'
@@ -4538,6 +4925,235 @@ components:
       type: object
       properties:
         identity: { $ref: '#/components/schemas/GitIdentity' }
+
+    # ============================================================ GitHub（M14）
+    GitHubIdentitySlot:
+      type: string
+      description: '`user` = 我的账号；`agent` = Agent 账号'
+      enum: [user, agent]
+    GitHubIdentity:
+      type: object
+      required: [login, githubId, avatarUrl, status, connectedAt]
+      properties:
+        login: { type: string }
+        githubId: { type: integer, format: int64 }
+        name: { type: string }
+        avatarUrl: { type: string }
+        status:
+          type: string
+          description: '`reauth` = 刷新令牌失效，需要重新授权'
+          enum: [ok, reauth]
+        connectedAt: { $ref: '#/components/schemas/TimestampMs' }
+    GitHubApp:
+      type: object
+      required: [appId, slug, name, htmlUrl, ownerLogin, public, installUrl]
+      properties:
+        appId: { type: integer, format: int64 }
+        slug: { type: string }
+        name: { type: string }
+        htmlUrl: { type: string }
+        ownerLogin: { type: string }
+        public: { type: boolean }
+        installUrl: { type: string }
+    GitHubInstallation:
+      type: object
+      required: [id, accountLogin, accountType, repositorySelection, suspended]
+      properties:
+        id: { type: integer, format: int64 }
+        accountLogin: { type: string }
+        accountType: { type: string }
+        repositorySelection:
+          type: string
+          description: '`all` 或 `selected`'
+        suspended: { type: boolean }
+    GitHubIdentities:
+      type: object
+      properties:
+        user: { $ref: '#/components/schemas/GitHubIdentity' }
+        agent: { $ref: '#/components/schemas/GitHubIdentity' }
+    GitHubStatus:
+      type: object
+      required: [identities, installations, automationIdentity, webhookUrl]
+      properties:
+        app:
+          allOf:
+            - $ref: '#/components/schemas/GitHubApp'
+          description: 尚未创建 App 时省略
+        identities: { $ref: '#/components/schemas/GitHubIdentities' }
+        installations:
+          type: array
+          items: { $ref: '#/components/schemas/GitHubInstallation' }
+        automationIdentity: { $ref: '#/components/schemas/GitHubIdentitySlot' }
+        webhookUrl:
+          type: string
+          description: App 的 webhook 地址；尚未创建 App 时为默认地址
+        lastDeliveryAt: { $ref: '#/components/schemas/TimestampMs' }
+        lastDeliverySource:
+          type: string
+          enum: [webhook, poll]
+    GitHubManifestRequest:
+      type: object
+      required: [public]
+      properties:
+        public:
+          type: boolean
+          description: 公开 App（允许安装到其它账号）
+        org:
+          type: string
+          minLength: 1
+          maxLength: 39
+          pattern: '^[A-Za-z0-9-]+$'
+          description: 在该组织下创建；缺省 = 当前登录的个人账号
+        webhookUrl:
+          type: string
+          format: uri
+          description: 覆盖默认 webhook 地址（须 https）
+    GitHubRedirect:
+      type: object
+      required: [url]
+      properties:
+        url: { type: string }
+    GitHubSettings:
+      type: object
+      required: [automationIdentity]
+      properties:
+        automationIdentity: { $ref: '#/components/schemas/GitHubIdentitySlot' }
+    GitHubRepo:
+      type: object
+      required: [id, fullName, private, defaultBranch]
+      properties:
+        id: { type: integer, format: int64 }
+        fullName: { type: string }
+        private: { type: boolean }
+        defaultBranch: { type: string }
+        description: { type: string }
+        pushedAt: { $ref: '#/components/schemas/TimestampMs' }
+    GitHubRepoList:
+      type: object
+      required: [repos]
+      properties:
+        repos:
+          type: array
+          items: { $ref: '#/components/schemas/GitHubRepo' }
+    GitHubListen:
+      type: object
+      required: [reviews, comments, ci]
+      properties:
+        reviews: { type: boolean }
+        comments: { type: boolean }
+        ci: { type: boolean }
+    ProjectGitHub:
+      type: object
+      required: [repoId, fullName, bound, listen]
+      properties:
+        repoId: { type: integer, format: int64 }
+        fullName:
+          type: string
+          description: '`owner/repo`（取自仓库地址）'
+        bound:
+          type: boolean
+          description: App 可访问该仓库（已安装）
+        listen: { $ref: '#/components/schemas/GitHubListen' }
+    ThreadPull:
+      type: object
+      required: [repo, number, title, state, draft, url, listening]
+      properties:
+        repo:
+          type: string
+          description: '`owner/repo`'
+        number: { type: integer, format: int64 }
+        title: { type: string }
+        state:
+          type: string
+          enum: [open, closed, merged]
+        draft: { type: boolean }
+        url: { type: string }
+        checks:
+          type: string
+          description: 头提交的 CI 汇总；尚未汇总时省略
+          enum: [pending, success, failure]
+        listening:
+          type: boolean
+          description: 是否回流该 PR 的事件
+    ThreadPullPatch:
+      type: object
+      required: [listening]
+      properties:
+        listening: { type: boolean }
+    GitHubTriggerEvent:
+      type: string
+      enum: [issue_opened, issue_labeled, mention]
+    GitHubTrigger:
+      type: object
+      required: [id, projectId, name, event, prompt, enabled, announce, runCount, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          pattern: '^ght_[0-9A-Z]{26}$'
+        projectId: { $ref: '#/components/schemas/ProjectId' }
+        name: { type: string }
+        event: { $ref: '#/components/schemas/GitHubTriggerEvent' }
+        label: { type: string }
+        prompt: { type: string }
+        enabled: { type: boolean }
+        announce:
+          type: boolean
+          description: 在 issue 下回帖新线程的链接
+        runCount: { type: integer, format: int64 }
+        lastRunAt: { $ref: '#/components/schemas/TimestampMs' }
+        createdAt: { $ref: '#/components/schemas/TimestampMs' }
+        updatedAt: { $ref: '#/components/schemas/TimestampMs' }
+    GitHubTriggerInput:
+      type: object
+      required: [name, event, prompt]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        event: { $ref: '#/components/schemas/GitHubTriggerEvent' }
+        label:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: '`issue_labeled` 必填；其它事件忽略'
+        prompt: { type: string, minLength: 1, maxLength: 20000 }
+        enabled: { type: boolean }
+        announce: { type: boolean }
+    GitHubTriggerPatch:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        event: { $ref: '#/components/schemas/GitHubTriggerEvent' }
+        label: { type: string, minLength: 1, maxLength: 100 }
+        prompt: { type: string, minLength: 1, maxLength: 20000 }
+        enabled: { type: boolean }
+        announce: { type: boolean }
+    GitHubTriggerList:
+      type: object
+      required: [triggers]
+      properties:
+        triggers:
+          type: array
+          items: { $ref: '#/components/schemas/GitHubTrigger' }
+    GitHubRef:
+      type: object
+      required: [number, kind, title, state, url, updatedAt]
+      properties:
+        number: { type: integer, format: int64 }
+        kind:
+          type: string
+          enum: [issue, pull]
+        title: { type: string }
+        state:
+          type: string
+          enum: [open, closed, merged]
+        url: { type: string }
+        updatedAt: { $ref: '#/components/schemas/TimestampMs' }
+    GitHubRefList:
+      type: object
+      required: [refs]
+      properties:
+        refs:
+          type: array
+          items: { $ref: '#/components/schemas/GitHubRef' }
     AvatarIdentity:
       type: object
       description: 头像（用户头像；也是 role 头像等只含头像字段的通用形状）；两个字段至多出现一个，都省略表示默认
@@ -5111,6 +5727,10 @@ components:
           allOf:
             - $ref: '#/components/schemas/ThreadWorktree'
           description: Oryn 为该线程建的 worktree（M11b）；没有或已移除则省略
+        pulls:
+          type: array
+          description: 关联的 GitHub PR（M14）；没有则省略
+          items: { $ref: '#/components/schemas/ThreadPull' }
     ThreadError:
       type: object
       description: |
@@ -5330,6 +5950,9 @@ components:
             orbd 的特性（同 `LinkCtlHelloParams.features`，M11b）：有活动 link 时取其 hello；没有时 runner 取最近一次上报的，普通 orb 省略。
             客户端据此决定右面板标签：`changes` 需要 `git`、`files` 需要 `fs`、`terminal` 需要 `terminal`；省略时保持 M3 的行为。
           items: { type: string }
+        githubLogin:
+          type: string
+          description: orb 内 git / gh 使用的 GitHub 账号（M14）；项目未绑定或身份未连接时省略
     OrbKind:
       type: string
       description: '`orb` = provider 创建的 orb；`runner` = runner 的常驻 orb（M11b）'
@@ -7644,6 +8267,7 @@ components:
         - $ref: '#/components/schemas/WsServerNotification'
         - $ref: '#/components/schemas/WsServerNotificationsRead'
         - $ref: '#/components/schemas/WsServerSchedulesChanged'
+        - $ref: '#/components/schemas/WsServerGitHubChanged'
       discriminator:
         propertyName: type
         mapping:
@@ -7665,6 +8289,7 @@ components:
           notification: '#/components/schemas/WsServerNotification'
           notifications.read: '#/components/schemas/WsServerNotificationsRead'
           schedules.changed: '#/components/schemas/WsServerSchedulesChanged'
+          github.changed: '#/components/schemas/WsServerGitHubChanged'
     WsServerIndex:
       type: object
       description: 线程摘要全量（连接建立后首条）
@@ -7878,6 +8503,12 @@ components:
       properties:
         type: { type: string, enum: [schedules.changed], x-enum-varnames: [WsServerSchedulesChangedTypeSchedulesChanged] }
         scheduleId: { $ref: '#/components/schemas/ScheduleId' }
+    WsServerGitHubChanged:
+      type: object
+      description: GitHub 集成状态变了（App、身份、安装、项目绑定、触发规则）；发给全部私有连接。客户端据此让 GitHub 相关查询与项目列表失效
+      required: [type]
+      properties:
+        type: { type: string, enum: [github.changed], x-enum-varnames: [WsServerGitHubChangedTypeGitHubChanged] }
 
     # ============================================================ 匿名分享 WebSocket（M5）
     WsPublicServerMessage:
@@ -8614,6 +9245,10 @@ components:
           description: |
             M11a：工作目录已有检出时 `git fetch` 基线并移动到最新；HEAD 变化则删掉完成标记、重跑 setup 脚本。fetch 失败只记日志、沿用现有检出。
             只用于 agent 从未运行过的 orb（来自项目快照的新 orb，或刚被认领的预热池 orb）；只在 hello 的 `features` 含 `repo-update` 时置位。
+        previousUrls:
+          type: array
+          description: 仓库改名 / 转移前的地址（M14）；工作目录的 origin 等于其中之一时改到 `url`
+          items: { type: string }
     LinkCtlSetupScripts:
       type: object
       properties:
@@ -8653,6 +9288,12 @@ components:
         files:
           type: array
           items: { $ref: '#/components/schemas/LinkCtlOmpHomeFile' }
+    LinkCtlSetupGh:
+      type: object
+      description: orb 内 `gh` 的登录信息（M14）；令牌由出站代理注入，orb 内只有占位值
+      required: [login]
+      properties:
+        login: { type: string }
     LinkCtlSetupRunParams:
       type: object
       required: [workdir, gitHosts, scripts, ompHome, env]
@@ -8676,6 +9317,10 @@ components:
         gitIdentity:
           $ref: '#/components/schemas/GitIdentity'
           description: 写入 `git config --global user.name / user.email`（项目覆盖 > 所有者默认）；缺省时不改动现有配置
+        gh:
+          allOf:
+            - $ref: '#/components/schemas/LinkCtlSetupGh'
+          description: 缺省 = 项目未连接 GitHub：orbd 删除 `$HOME/.oryn/gh`
         deferResume:
           type: boolean
           description: |

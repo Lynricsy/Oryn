@@ -496,6 +496,120 @@ func (e GitFileDiffKind) Valid() bool {
 	}
 }
 
+// Defines values for GitHubIdentityStatus.
+const (
+	Ok     GitHubIdentityStatus = "ok"
+	Reauth GitHubIdentityStatus = "reauth"
+)
+
+// Valid indicates whether the value is a known member of the GitHubIdentityStatus enum.
+func (e GitHubIdentityStatus) Valid() bool {
+	switch e {
+	case Ok:
+		return true
+	case Reauth:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GitHubIdentitySlot.
+const (
+	GitHubIdentitySlotAgent GitHubIdentitySlot = "agent"
+	GitHubIdentitySlotUser  GitHubIdentitySlot = "user"
+)
+
+// Valid indicates whether the value is a known member of the GitHubIdentitySlot enum.
+func (e GitHubIdentitySlot) Valid() bool {
+	switch e {
+	case GitHubIdentitySlotAgent:
+		return true
+	case GitHubIdentitySlotUser:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GitHubRefKind.
+const (
+	Issue GitHubRefKind = "issue"
+	Pull  GitHubRefKind = "pull"
+)
+
+// Valid indicates whether the value is a known member of the GitHubRefKind enum.
+func (e GitHubRefKind) Valid() bool {
+	switch e {
+	case Issue:
+		return true
+	case Pull:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GitHubRefState.
+const (
+	GitHubRefStateClosed GitHubRefState = "closed"
+	GitHubRefStateMerged GitHubRefState = "merged"
+	GitHubRefStateOpen   GitHubRefState = "open"
+)
+
+// Valid indicates whether the value is a known member of the GitHubRefState enum.
+func (e GitHubRefState) Valid() bool {
+	switch e {
+	case GitHubRefStateClosed:
+		return true
+	case GitHubRefStateMerged:
+		return true
+	case GitHubRefStateOpen:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GitHubStatusLastDeliverySource.
+const (
+	GitHubStatusLastDeliverySourcePoll    GitHubStatusLastDeliverySource = "poll"
+	GitHubStatusLastDeliverySourceWebhook GitHubStatusLastDeliverySource = "webhook"
+)
+
+// Valid indicates whether the value is a known member of the GitHubStatusLastDeliverySource enum.
+func (e GitHubStatusLastDeliverySource) Valid() bool {
+	switch e {
+	case GitHubStatusLastDeliverySourcePoll:
+		return true
+	case GitHubStatusLastDeliverySourceWebhook:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GitHubTriggerEvent.
+const (
+	IssueLabeled GitHubTriggerEvent = "issue_labeled"
+	IssueOpened  GitHubTriggerEvent = "issue_opened"
+	Mention      GitHubTriggerEvent = "mention"
+)
+
+// Valid indicates whether the value is a known member of the GitHubTriggerEvent enum.
+func (e GitHubTriggerEvent) Valid() bool {
+	switch e {
+	case IssueLabeled:
+		return true
+	case IssueOpened:
+		return true
+	case Mention:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GitScope.
 const (
 	All         GitScope = "all"
@@ -798,13 +912,13 @@ func (e LinkCtlSetupLogParamsStream) Valid() bool {
 
 // Defines values for LinkStreamAgentT.
 const (
-	Agent LinkStreamAgentT = "agent"
+	LinkStreamAgentTAgent LinkStreamAgentT = "agent"
 )
 
 // Valid indicates whether the value is a known member of the LinkStreamAgentT enum.
 func (e LinkStreamAgentT) Valid() bool {
 	switch e {
-	case Agent:
+	case LinkStreamAgentTAgent:
 		return true
 	default:
 		return false
@@ -1975,6 +2089,48 @@ func (e ThreadKind) Valid() bool {
 	}
 }
 
+// Defines values for ThreadPullChecks.
+const (
+	ThreadPullChecksFailure ThreadPullChecks = "failure"
+	ThreadPullChecksPending ThreadPullChecks = "pending"
+	ThreadPullChecksSuccess ThreadPullChecks = "success"
+)
+
+// Valid indicates whether the value is a known member of the ThreadPullChecks enum.
+func (e ThreadPullChecks) Valid() bool {
+	switch e {
+	case ThreadPullChecksFailure:
+		return true
+	case ThreadPullChecksPending:
+		return true
+	case ThreadPullChecksSuccess:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ThreadPullState.
+const (
+	ThreadPullStateClosed ThreadPullState = "closed"
+	ThreadPullStateMerged ThreadPullState = "merged"
+	ThreadPullStateOpen   ThreadPullState = "open"
+)
+
+// Valid indicates whether the value is a known member of the ThreadPullState enum.
+func (e ThreadPullState) Valid() bool {
+	switch e {
+	case ThreadPullStateClosed:
+		return true
+	case ThreadPullStateMerged:
+		return true
+	case ThreadPullStateOpen:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ThreadState.
 const (
 	ThreadStateAwaitingInput ThreadState = "awaiting_input"
@@ -2293,6 +2449,21 @@ const (
 func (e WsServerFrameType) Valid() bool {
 	switch e {
 	case Frame:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WsServerGitHubChangedType.
+const (
+	WsServerGitHubChangedTypeGitHubChanged WsServerGitHubChangedType = "github.changed"
+)
+
+// Valid indicates whether the value is a known member of the WsServerGitHubChangedType enum.
+func (e WsServerGitHubChangedType) Valid() bool {
+	switch e {
+	case WsServerGitHubChangedTypeGitHubChanged:
 		return true
 	default:
 		return false
@@ -3356,6 +3527,8 @@ type Error struct {
 	// M11b（runner，HTTP 状态见 docs/protocol.md）：`runner_offline`（409）、`runner_unsupported`（409，runner 的 orb 不支持冻结 / 停机 / 删除 / 快照 / 连环境 fork）、
 	// `dir_not_served`（400；经 orb 文件 / 改动代理时为 orbd 的 403）、`dir_in_use`（409，体为 `DirInUseConflict`）、`thread_required`（400）、
 	// `worktree_failed`（400）、`worktree_dirty`（409）。
+	// M14（GitHub）：`github_not_connected`（409，尚未创建 App）、`github_identity_required`（409，所需身份未连接或需要重新授权）、
+	// `github_agent_required`（409，Agent 账号未连接）、`github_not_bound`（409，项目未绑定 GitHub 仓库）、`github_upstream`（502，GitHub 请求失败）。
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
@@ -3524,6 +3697,200 @@ type GitFileDiff struct {
 
 // GitFileDiffKind `text` 有 patch；`binary` 二进制（patch 为空）；`large` 未跟踪且 >4MiB（patch 为空）
 type GitFileDiffKind string
+
+// GitHubApp defines model for GitHubApp.
+type GitHubApp struct {
+	AppID      int64  `json:"appId"`
+	HTMLURL    string `json:"htmlUrl"`
+	InstallURL string `json:"installUrl"`
+	Name       string `json:"name"`
+	OwnerLogin string `json:"ownerLogin"`
+	Public     bool   `json:"public"`
+	Slug       string `json:"slug"`
+}
+
+// GitHubIdentities defines model for GitHubIdentities.
+type GitHubIdentities struct {
+	Agent *GitHubIdentity `json:"agent,omitempty"`
+	User  *GitHubIdentity `json:"user,omitempty"`
+}
+
+// GitHubIdentity defines model for GitHubIdentity.
+type GitHubIdentity struct {
+	AvatarURL string `json:"avatarUrl"`
+
+	// ConnectedAt UTC 毫秒时间戳
+	ConnectedAt TimestampMs `json:"connectedAt"`
+	GithubID    int64       `json:"githubId"`
+	Login       string      `json:"login"`
+	Name        *string     `json:"name,omitempty"`
+
+	// Status `reauth` = 刷新令牌失效，需要重新授权
+	Status GitHubIdentityStatus `json:"status"`
+}
+
+// GitHubIdentityStatus `reauth` = 刷新令牌失效，需要重新授权
+type GitHubIdentityStatus string
+
+// GitHubIdentitySlot `user` = 我的账号；`agent` = Agent 账号
+type GitHubIdentitySlot string
+
+// GitHubInstallation defines model for GitHubInstallation.
+type GitHubInstallation struct {
+	AccountLogin string `json:"accountLogin"`
+	AccountType  string `json:"accountType"`
+	ID           int64  `json:"id"`
+
+	// RepositorySelection `all` 或 `selected`
+	RepositorySelection string `json:"repositorySelection"`
+	Suspended           bool   `json:"suspended"`
+}
+
+// GitHubListen defines model for GitHubListen.
+type GitHubListen struct {
+	Ci       bool `json:"ci"`
+	Comments bool `json:"comments"`
+	Reviews  bool `json:"reviews"`
+}
+
+// GitHubManifestRequest defines model for GitHubManifestRequest.
+type GitHubManifestRequest struct {
+	// Org 在该组织下创建；缺省 = 当前登录的个人账号
+	Org *string `json:"org,omitempty"`
+
+	// Public 公开 App（允许安装到其它账号）
+	Public bool `json:"public"`
+
+	// WebhookURL 覆盖默认 webhook 地址（须 https）
+	WebhookURL *string `json:"webhookUrl,omitempty"`
+}
+
+// GitHubRedirect defines model for GitHubRedirect.
+type GitHubRedirect struct {
+	URL string `json:"url"`
+}
+
+// GitHubRef defines model for GitHubRef.
+type GitHubRef struct {
+	Kind   GitHubRefKind  `json:"kind"`
+	Number int64          `json:"number"`
+	State  GitHubRefState `json:"state"`
+	Title  string         `json:"title"`
+
+	// UpdatedAt UTC 毫秒时间戳
+	UpdatedAt TimestampMs `json:"updatedAt"`
+	URL       string      `json:"url"`
+}
+
+// GitHubRefKind defines model for GitHubRef.Kind.
+type GitHubRefKind string
+
+// GitHubRefState defines model for GitHubRef.State.
+type GitHubRefState string
+
+// GitHubRefList defines model for GitHubRefList.
+type GitHubRefList struct {
+	Refs []GitHubRef `json:"refs"`
+}
+
+// GitHubRepo defines model for GitHubRepo.
+type GitHubRepo struct {
+	DefaultBranch string  `json:"defaultBranch"`
+	Description   *string `json:"description,omitempty"`
+	FullName      string  `json:"fullName"`
+	ID            int64   `json:"id"`
+	Private       bool    `json:"private"`
+
+	// PushedAt UTC 毫秒时间戳
+	PushedAt *TimestampMs `json:"pushedAt,omitempty"`
+}
+
+// GitHubRepoList defines model for GitHubRepoList.
+type GitHubRepoList struct {
+	Repos []GitHubRepo `json:"repos"`
+}
+
+// GitHubSettings defines model for GitHubSettings.
+type GitHubSettings struct {
+	// AutomationIdentity `user` = 我的账号；`agent` = Agent 账号
+	AutomationIdentity GitHubIdentitySlot `json:"automationIdentity"`
+}
+
+// GitHubStatus defines model for GitHubStatus.
+type GitHubStatus struct {
+	// App 尚未创建 App 时省略
+	App *GitHubApp `json:"app,omitempty"`
+
+	// AutomationIdentity `user` = 我的账号；`agent` = Agent 账号
+	AutomationIdentity GitHubIdentitySlot   `json:"automationIdentity"`
+	Identities         GitHubIdentities     `json:"identities"`
+	Installations      []GitHubInstallation `json:"installations"`
+
+	// LastDeliveryAt UTC 毫秒时间戳
+	LastDeliveryAt     *TimestampMs                    `json:"lastDeliveryAt,omitempty"`
+	LastDeliverySource *GitHubStatusLastDeliverySource `json:"lastDeliverySource,omitempty"`
+
+	// WebhookURL App 的 webhook 地址；尚未创建 App 时为默认地址
+	WebhookURL string `json:"webhookUrl"`
+}
+
+// GitHubStatusLastDeliverySource defines model for GitHubStatus.LastDeliverySource.
+type GitHubStatusLastDeliverySource string
+
+// GitHubTrigger defines model for GitHubTrigger.
+type GitHubTrigger struct {
+	// Announce 在 issue 下回帖新线程的链接
+	Announce bool `json:"announce"`
+
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt TimestampMs        `json:"createdAt"`
+	Enabled   bool               `json:"enabled"`
+	Event     GitHubTriggerEvent `json:"event"`
+	ID        string             `json:"id"`
+	Label     *string            `json:"label,omitempty"`
+
+	// LastRunAt UTC 毫秒时间戳
+	LastRunAt *TimestampMs `json:"lastRunAt,omitempty"`
+	Name      string       `json:"name"`
+
+	// ProjectID `prj_<ulid>`
+	ProjectID ProjectID `json:"projectId"`
+	Prompt    string    `json:"prompt"`
+	RunCount  int64     `json:"runCount"`
+
+	// UpdatedAt UTC 毫秒时间戳
+	UpdatedAt TimestampMs `json:"updatedAt"`
+}
+
+// GitHubTriggerEvent defines model for GitHubTriggerEvent.
+type GitHubTriggerEvent string
+
+// GitHubTriggerInput defines model for GitHubTriggerInput.
+type GitHubTriggerInput struct {
+	Announce *bool              `json:"announce,omitempty"`
+	Enabled  *bool              `json:"enabled,omitempty"`
+	Event    GitHubTriggerEvent `json:"event"`
+
+	// Label `issue_labeled` 必填；其它事件忽略
+	Label  *string `json:"label,omitempty"`
+	Name   string  `json:"name"`
+	Prompt string  `json:"prompt"`
+}
+
+// GitHubTriggerList defines model for GitHubTriggerList.
+type GitHubTriggerList struct {
+	Triggers []GitHubTrigger `json:"triggers"`
+}
+
+// GitHubTriggerPatch defines model for GitHubTriggerPatch.
+type GitHubTriggerPatch struct {
+	Announce *bool               `json:"announce,omitempty"`
+	Enabled  *bool               `json:"enabled,omitempty"`
+	Event    *GitHubTriggerEvent `json:"event,omitempty"`
+	Label    *string             `json:"label,omitempty"`
+	Name     *string             `json:"name,omitempty"`
+	Prompt   *string             `json:"prompt,omitempty"`
+}
 
 // GitIdentity orb 内 `git config --global user.name / user.email`；不得含换行或控制字符
 type GitIdentity struct {
@@ -4164,6 +4531,11 @@ type LinkCtlServicesStateParams struct {
 	Services []OrbService `json:"services"`
 }
 
+// LinkCtlSetupGh orb 内 `gh` 的登录信息（M14）；令牌由出站代理注入，orb 内只有占位值
+type LinkCtlSetupGh struct {
+	Login string `json:"login"`
+}
+
 // LinkCtlSetupLogParams defines model for LinkCtlSetupLogParams.
 type LinkCtlSetupLogParams struct {
 	Data   string                      `json:"data"`
@@ -4179,8 +4551,11 @@ type LinkCtlSetupLogParamsStream string
 
 // LinkCtlSetupRepo defines model for LinkCtlSetupRepo.
 type LinkCtlSetupRepo struct {
-	Branch  *string `json:"branch,omitempty"`
-	Shallow bool    `json:"shallow"`
+	Branch *string `json:"branch,omitempty"`
+
+	// PreviousUrls 仓库改名 / 转移前的地址（M14）；工作目录的 origin 等于其中之一时改到 `url`
+	PreviousUrls []string `json:"previousUrls,omitempty"`
+	Shallow      bool     `json:"shallow"`
 
 	// Update M11a：工作目录已有检出时 `git fetch` 基线并移动到最新；HEAD 变化则删掉完成标记、重跑 setup 脚本。fetch 失败只记日志、沿用现有检出。
 	// 只用于 agent 从未运行过的 orb（来自项目快照的新 orb，或刚被认领的预热池 orb）；只在 hello 的 `features` 含 `repo-update` 时置位。
@@ -4222,6 +4597,9 @@ type LinkCtlSetupRunParams struct {
 	// 控制面随后单独调 `resume.run`。只在 hello 的 `features` 含 `setup-defer-resume` 时置位；`resume.run` 忽略此字段。
 	DeferResume *bool             `json:"deferResume,omitempty"`
 	Env         map[string]string `json:"env"`
+
+	// Gh 缺省 = 项目未连接 GitHub：orbd 删除 `$HOME/.oryn/gh`
+	Gh *LinkCtlSetupGh `json:"gh,omitempty"`
 
 	// GitHosts 为每个主机写 git `url."http://127.0.0.1:7811/git/<host>/".insteadOf "https://<host>/"`
 	GitHosts []string `json:"gitHosts"`
@@ -4766,6 +5144,9 @@ type Orb struct {
 	// Features orbd 的特性（同 `LinkCtlHelloParams.features`，M11b）：有活动 link 时取其 hello；没有时 runner 取最近一次上报的，普通 orb 省略。
 	// 客户端据此决定右面板标签：`changes` 需要 `git`、`files` 需要 `fs`、`terminal` 需要 `terminal`；省略时保持 M3 的行为。
 	Features []string `json:"features,omitempty"`
+
+	// GithubLogin orb 内 git / gh 使用的 GitHub 账号（M14）；项目未绑定或身份未连接时省略
+	GithubLogin *string `json:"githubLogin,omitempty"`
 
 	// ID `orb-<26 位小写 ULID>`（同时是容器名与 hostname）
 	//
@@ -5410,6 +5791,9 @@ type Project struct {
 	// GitAuthorName 本项目 orb 的 git 提交身份覆盖（与 gitAuthorEmail 同时存在或同时缺省）
 	GitAuthorName *string `json:"gitAuthorName,omitempty"`
 
+	// Github GitHub 仓库绑定（M14）；仓库地址从未解析出 GitHub 仓库 id 时省略
+	Github *ProjectGitHub `json:"github,omitempty"`
+
 	// Icon 项目图标：单个字形（Nerd Font 私有区字符或 emoji）。未设置时省略；线程自动标题带卡片图标且项目尚无图标时由控制面自动填入一次
 	Icon *string `json:"icon,omitempty"`
 
@@ -5462,6 +5846,17 @@ type ProjectCreate struct {
 	WarmOrbs *int `json:"warmOrbs,omitempty"`
 }
 
+// ProjectGitHub defines model for ProjectGitHub.
+type ProjectGitHub struct {
+	// Bound App 可访问该仓库（已安装）
+	Bound bool `json:"bound"`
+
+	// FullName `owner/repo`（取自仓库地址）
+	FullName string       `json:"fullName"`
+	Listen   GitHubListen `json:"listen"`
+	RepoID   int64        `json:"repoId"`
+}
+
 // ProjectID `prj_<ulid>`
 type ProjectID = string
 
@@ -5484,6 +5879,9 @@ type ProjectPatch struct {
 
 	// GitAuthorName 须与 gitAuthorEmail 同时给出；两者都传空串表示清除项目覆盖
 	GitAuthorName *string `json:"gitAuthorName,omitempty"`
+
+	// GithubListen GitHub 事件回流开关（M14）
+	GithubListen *GitHubListen `json:"githubListen,omitempty"`
 
 	// Icon 单个字形（一个字素，≤16 字节）；空串表示清除（之后可再被自动标题的卡片图标填入）
 	Icon         *string `json:"icon,omitempty"`
@@ -6556,6 +6954,9 @@ type Thread struct {
 	// PublicShares 未撤销的公开分享数；为 0 时省略
 	PublicShares *int `json:"publicShares,omitempty"`
 
+	// Pulls 关联的 GitHub PR（M14）；没有则省略
+	Pulls []ThreadPull `json:"pulls,omitempty"`
+
 	// Schedule 该线程的线程内定时（M9）；没有则省略
 	Schedule *ThreadScheduleSummary `json:"schedule,omitempty"`
 
@@ -6701,6 +7102,34 @@ type ThreadPatch struct {
 	SpaceID *string `json:"spaceId,omitempty"`
 	Title   *string `json:"title,omitempty"`
 	Unread  *bool   `json:"unread,omitempty"`
+}
+
+// ThreadPull defines model for ThreadPull.
+type ThreadPull struct {
+	// Checks 头提交的 CI 汇总；尚未汇总时省略
+	Checks *ThreadPullChecks `json:"checks,omitempty"`
+	Draft  bool              `json:"draft"`
+
+	// Listening 是否回流该 PR 的事件
+	Listening bool  `json:"listening"`
+	Number    int64 `json:"number"`
+
+	// Repo `owner/repo`
+	Repo  string          `json:"repo"`
+	State ThreadPullState `json:"state"`
+	Title string          `json:"title"`
+	URL   string          `json:"url"`
+}
+
+// ThreadPullChecks 头提交的 CI 汇总；尚未汇总时省略
+type ThreadPullChecks string
+
+// ThreadPullState defines model for ThreadPull.State.
+type ThreadPullState string
+
+// ThreadPullPatch defines model for ThreadPullPatch.
+type ThreadPullPatch struct {
+	Listening bool `json:"listening"`
 }
 
 // ThreadScheduleRun 该线程由「新建线程」定时的第 `run` 次运行创建
@@ -7172,6 +7601,14 @@ type WsServerFrame struct {
 // WsServerFrameType defines model for WsServerFrame.Type.
 type WsServerFrameType string
 
+// WsServerGitHubChanged GitHub 集成状态变了（App、身份、安装、项目绑定、触发规则）；发给全部私有连接。客户端据此让 GitHub 相关查询与项目列表失效
+type WsServerGitHubChanged struct {
+	Type WsServerGitHubChangedType `json:"type"`
+}
+
+// WsServerGitHubChangedType defines model for WsServerGitHubChanged.Type.
+type WsServerGitHubChangedType string
+
 // WsServerIndex 线程摘要全量（连接建立后首条）
 type WsServerIndex struct {
 	Rev     int64             `json:"rev"`
@@ -7416,6 +7853,15 @@ type GitDiffOldPathQuery = string
 // GitDiffPathQuery defines model for GitDiffPathQuery.
 type GitDiffPathQuery = string
 
+// GitHubIdentitySlotPath `user` = 我的账号；`agent` = Agent 账号
+type GitHubIdentitySlotPath = GitHubIdentitySlot
+
+// GitHubNumberPath defines model for GitHubNumberPath.
+type GitHubNumberPath = int64
+
+// GitHubTriggerIDPath defines model for GitHubTriggerIdPath.
+type GitHubTriggerIDPath = string
+
 // GitRootQuery defines model for GitRootQuery.
 type GitRootQuery = string
 
@@ -7563,6 +8009,12 @@ type ListAutomationActionsParams struct {
 	// Thread 只返回该线程作为发起方或目标的记录
 	Thread *ThreadID `form:"thread,omitempty" json:"thread,omitempty"`
 	Limit  *int      `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ListGitHubReposParams defines parameters for ListGitHubRepos.
+type ListGitHubReposParams struct {
+	// Q 按 `owner/name` 子串过滤（忽略大小写）
+	Q *string `form:"q,omitempty" json:"q,omitempty"`
 }
 
 // GetModelCatalogParams defines parameters for GetModelCatalog.
@@ -7823,11 +8275,38 @@ type PutProjectAgentConfigFileParams struct {
 	Mode *int `form:"mode,omitempty" json:"mode,omitempty"`
 }
 
+// ListGitHubRefsParams defines parameters for ListGitHubRefs.
+type ListGitHubRefsParams struct {
+	// Q 空 = 最近更新的打开项；纯数字 = 按编号；其它 = 搜索
+	Q *string `form:"q,omitempty" json:"q,omitempty"`
+}
+
 // DeleteProjectSnapshotsParams defines parameters for DeleteProjectSnapshots.
 type DeleteProjectSnapshotsParams struct {
 	// Type 只退役该 orb 类型的快照；缺省 = 全部类型
 	Type *string `form:"type,omitempty" json:"type,omitempty"`
 }
+
+// FinishGitHubManifestParams defines parameters for FinishGitHubManifest.
+type FinishGitHubManifestParams struct {
+	Code  string `form:"code" json:"code"`
+	State string `form:"state" json:"state"`
+}
+
+// StartGitHubManifestParams defines parameters for StartGitHubManifest.
+type StartGitHubManifestParams struct {
+	State string `form:"state" json:"state"`
+}
+
+// FinishGitHubOAuthParams defines parameters for FinishGitHubOAuth.
+type FinishGitHubOAuthParams struct {
+	Code  *string `form:"code,omitempty" json:"code,omitempty"`
+	State *string `form:"state,omitempty" json:"state,omitempty"`
+	Error *string `form:"error,omitempty" json:"error,omitempty"`
+}
+
+// ReceiveGitHubWebhookJSONBody defines parameters for ReceiveGitHubWebhook.
+type ReceiveGitHubWebhookJSONBody map[string]interface{}
 
 // ListPublicShareEntriesParams defines parameters for ListPublicShareEntries.
 type ListPublicShareEntriesParams struct {
@@ -8095,6 +8574,15 @@ type DevicePairPollJSONRequestBody = DevicePairPollRequest
 // DevicePairStartJSONRequestBody defines body for DevicePairStart for application/json ContentType.
 type DevicePairStartJSONRequestBody = DevicePairStartRequest
 
+// BeginGitHubAppManifestJSONRequestBody defines body for BeginGitHubAppManifest for application/json ContentType.
+type BeginGitHubAppManifestJSONRequestBody = GitHubManifestRequest
+
+// PutGitHubSettingsJSONRequestBody defines body for PutGitHubSettings for application/json ContentType.
+type PutGitHubSettingsJSONRequestBody = GitHubSettings
+
+// UpdateGitHubTriggerJSONRequestBody defines body for UpdateGitHubTrigger for application/json ContentType.
+type UpdateGitHubTriggerJSONRequestBody = GitHubTriggerPatch
+
 // CreateNotificationChannelJSONRequestBody defines body for CreateNotificationChannel for application/json ContentType.
 type CreateNotificationChannelJSONRequestBody = NotificationChannelInput
 
@@ -8146,8 +8634,14 @@ type CreateProjectJSONRequestBody = ProjectCreate
 // UpdateProjectJSONRequestBody defines body for UpdateProject for application/json ContentType.
 type UpdateProjectJSONRequestBody = ProjectPatch
 
+// CreateGitHubTriggerJSONRequestBody defines body for CreateGitHubTrigger for application/json ContentType.
+type CreateGitHubTriggerJSONRequestBody = GitHubTriggerInput
+
 // CreateProviderJSONRequestBody defines body for CreateProvider for application/json ContentType.
 type CreateProviderJSONRequestBody = ProviderCreateRequest
+
+// ReceiveGitHubWebhookJSONRequestBody defines body for ReceiveGitHubWebhook for application/json ContentType.
+type ReceiveGitHubWebhookJSONRequestBody ReceiveGitHubWebhookJSONBody
 
 // CreatePushSubscriptionJSONRequestBody defines body for CreatePushSubscription for application/json ContentType.
 type CreatePushSubscriptionJSONRequestBody = PushSubscriptionInput
@@ -8205,6 +8699,9 @@ type UpdateThreadJSONRequestBody = ThreadPatch
 
 // ForkThreadJSONRequestBody defines body for ForkThread for application/json ContentType.
 type ForkThreadJSONRequestBody = ForkThreadRequest
+
+// PutThreadPullJSONRequestBody defines body for PutThreadPull for application/json ContentType.
+type PutThreadPullJSONRequestBody = ThreadPullPatch
 
 // PutThreadScheduleJSONRequestBody defines body for PutThreadSchedule for application/json ContentType.
 type PutThreadScheduleJSONRequestBody = ScheduleInput
@@ -9888,6 +10385,40 @@ func (t *WsServerMessage) MergeWsServerSchedulesChanged(v WsServerSchedulesChang
 	return err
 }
 
+// AsWsServerGitHubChanged returns the union data inside the WsServerMessage as a WsServerGitHubChanged
+func (t WsServerMessage) AsWsServerGitHubChanged() (WsServerGitHubChanged, error) {
+	var body WsServerGitHubChanged
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsServerGitHubChanged overwrites any union data inside the WsServerMessage as the provided WsServerGitHubChanged
+func (t *WsServerMessage) FromWsServerGitHubChanged(v WsServerGitHubChanged) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"github.changed"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsServerGitHubChanged performs a merge with any union data inside the WsServerMessage, using the provided WsServerGitHubChanged
+func (t *WsServerMessage) MergeWsServerGitHubChanged(v WsServerGitHubChanged) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"github.changed"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 func (t WsServerMessage) Discriminator() (string, error) {
 	var discriminator struct {
 		Discriminator string `json:"type"`
@@ -9908,6 +10439,8 @@ func (t WsServerMessage) ValueByDiscriminator() (interface{}, error) {
 		return t.AsWsServerError()
 	case "frame":
 		return t.AsWsServerFrame()
+	case "github.changed":
+		return t.AsWsServerGitHubChanged()
 	case "index":
 		return t.AsWsServerIndex()
 	case "index.patch":
@@ -10167,6 +10700,36 @@ type ServerInterface interface {
 	// RevokeDevice 吊销设备（之后该令牌请求返回 401）
 	// (DELETE /api/v1/devices/{id})
 	RevokeDevice(w http.ResponseWriter, r *http.Request, id DeviceIDPath)
+	// GetGitHubStatus GitHub 集成状态（App、两个身份槽位、安装、自动化身份、最近投递）
+	// (GET /api/v1/github)
+	GetGitHubStatus(w http.ResponseWriter, r *http.Request)
+	// DeleteGitHubApp 删除 GitHub 连接（App、身份、安装记录；不删 GitHub 上的 App）
+	// (DELETE /api/v1/github/app)
+	DeleteGitHubApp(w http.ResponseWriter, r *http.Request)
+	// BeginGitHubAppManifest 开始按 manifest 创建 GitHub App（返回跳转地址；已有 App → 409 `conflict`）
+	// (POST /api/v1/github/app/manifest)
+	BeginGitHubAppManifest(w http.ResponseWriter, r *http.Request)
+	// DeleteGitHubIdentity 断开身份槽位（断开 Agent 账号时自动化身份回到我的账号）
+	// (DELETE /api/v1/github/identities/{slot})
+	DeleteGitHubIdentity(w http.ResponseWriter, r *http.Request, slot GitHubIdentitySlotPath)
+	// AuthorizeGitHubIdentity 开始连接身份槽位（返回 GitHub 授权地址，10 分钟内有效；没有 App → 409 `github_not_connected`）
+	// (POST /api/v1/github/identities/{slot}/authorize)
+	AuthorizeGitHubIdentity(w http.ResponseWriter, r *http.Request, slot GitHubIdentitySlotPath)
+	// SyncGitHubInstallations 从 GitHub 重新拉取 App 的安装列表并重新绑定项目
+	// (POST /api/v1/github/installations/sync)
+	SyncGitHubInstallations(w http.ResponseWriter, r *http.Request)
+	// ListGitHubRepos 我的账号经 App 可访问的仓库（按最近推送倒序，至多 50 个；我的账号未连接 → 409 `github_identity_required`）
+	// (GET /api/v1/github/repos)
+	ListGitHubRepos(w http.ResponseWriter, r *http.Request, params ListGitHubReposParams)
+	// PutGitHubSettings 设置自动化任务的 GitHub 身份（Agent 未连接时选 `agent` → 409 `github_agent_required`）
+	// (PUT /api/v1/github/settings)
+	PutGitHubSettings(w http.ResponseWriter, r *http.Request)
+	// DeleteGitHubTrigger 删除触发规则
+	// (DELETE /api/v1/github/triggers/{id})
+	DeleteGitHubTrigger(w http.ResponseWriter, r *http.Request, id GitHubTriggerIDPath)
+	// UpdateGitHubTrigger 修改触发规则（只改出现的字段）
+	// (PATCH /api/v1/github/triggers/{id})
+	UpdateGitHubTrigger(w http.ResponseWriter, r *http.Request, id GitHubTriggerIDPath)
 	// GetMe 当前身份
 	// (GET /api/v1/me)
 	GetMe(w http.ResponseWriter, r *http.Request)
@@ -10341,6 +10904,18 @@ type ServerInterface interface {
 	// ImportProjectAgentConfig 导入项目级 omp 配置 tar 包（M12.2；`oryn config push --project` 使用）
 	// (POST /api/v1/projects/{id}/agent-config/import)
 	ImportProjectAgentConfig(w http.ResponseWriter, r *http.Request, id ProjectIDPath)
+	// ListGitHubRefs 输入框 `#` 引用的 issue / PR 候选（项目未绑定 → 409 `github_not_bound`）
+	// (GET /api/v1/projects/{id}/github/refs)
+	ListGitHubRefs(w http.ResponseWriter, r *http.Request, id ProjectIDPath, params ListGitHubRefsParams)
+	// AttachGitHubRef 把 issue / PR（含评论）渲染成 Markdown 附件（未绑定线程，随消息绑定）
+	// (POST /api/v1/projects/{id}/github/refs/{number}/attachment)
+	AttachGitHubRef(w http.ResponseWriter, r *http.Request, id ProjectIDPath, number GitHubNumberPath)
+	// ListGitHubTriggers 项目的 GitHub 触发规则
+	// (GET /api/v1/projects/{id}/github/triggers)
+	ListGitHubTriggers(w http.ResponseWriter, r *http.Request, id ProjectIDPath)
+	// CreateGitHubTrigger 新建触发规则（项目未绑定 → 409 `github_not_bound`；`mention` 规则要求 Agent 已连接 → 409 `github_agent_required`）
+	// (POST /api/v1/projects/{id}/github/triggers)
+	CreateGitHubTrigger(w http.ResponseWriter, r *http.Request, id ProjectIDPath)
 	// DeleteProjectSnapshots 清除项目快照（M11a；把匹配的 ready 快照退役，原因 `manual`；镜像由回收器异步删除）
 	// (DELETE /api/v1/projects/{id}/snapshots)
 	DeleteProjectSnapshots(w http.ResponseWriter, r *http.Request, id ProjectIDPath, params DeleteProjectSnapshotsParams)
@@ -10356,6 +10931,18 @@ type ServerInterface interface {
 	// DeleteProvider 删除（停用）provider，其令牌立即失效
 	// (DELETE /api/v1/providers/{id})
 	DeleteProvider(w http.ResponseWriter, r *http.Request, id ProviderIDPath)
+	// FinishGitHubManifest GitHub 创建 App 后的回调（302 回设置页，`?created=1` 或 `?error=<code>`）
+	// (GET /api/v1/public/github/manifest/callback)
+	FinishGitHubManifest(w http.ResponseWriter, r *http.Request, params FinishGitHubManifestParams)
+	// StartGitHubManifest 自动提交 manifest 到 GitHub 的中转页（state 一次性、10 分钟内有效）
+	// (GET /api/v1/public/github/manifest/start)
+	StartGitHubManifest(w http.ResponseWriter, r *http.Request, params StartGitHubManifestParams)
+	// FinishGitHubOAuth 身份授权回调（302 回设置页，`?connected=<slot>` 或 `?error=<code>`）
+	// (GET /api/v1/public/github/oauth/callback)
+	FinishGitHubOAuth(w http.ResponseWriter, r *http.Request, params FinishGitHubOAuthParams)
+	// ReceiveGitHubWebhook GitHub App webhook 入口（按 `X-Hub-Signature-256` 校验；同一 `X-GitHub-Delivery` 只处理一次）
+	// (POST /api/v1/public/github/webhook)
+	ReceiveGitHubWebhook(w http.ResponseWriter, r *http.Request)
 	// GetPublicShare 公开分享的元数据（不含线程 id、orb、项目、标签、模型配置）
 	// (GET /api/v1/public/shares/{slug})
 	GetPublicShare(w http.ResponseWriter, r *http.Request, slug ShareSlugPath)
@@ -10551,6 +11138,12 @@ type ServerInterface interface {
 	// ForkThread fork 线程（共用 orb 或连环境分叉）
 	// (POST /api/v1/threads/{id}/fork)
 	ForkThread(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
+	// DeleteThreadPull 取消线程与 PR 的关联（之后不会自动重连）
+	// (DELETE /api/v1/threads/{id}/github/pulls/{number})
+	DeleteThreadPull(w http.ResponseWriter, r *http.Request, id ThreadIDPath, number GitHubNumberPath)
+	// PutThreadPull 暂停 / 恢复关联 PR 的事件回流（恢复时 CI 轮数清零）
+	// (PUT /api/v1/threads/{id}/github/pulls/{number})
+	PutThreadPull(w http.ResponseWriter, r *http.Request, id ThreadIDPath, number GitHubNumberPath)
 	// DeleteThreadSchedule 删除线程内定时（没有 → 404 `schedule_not_found`）
 	// (DELETE /api/v1/threads/{id}/schedule)
 	DeleteThreadSchedule(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
@@ -10815,6 +11408,66 @@ func (_ Unimplemented) GetDevicePairing(w http.ResponseWriter, r *http.Request, 
 // RevokeDevice 吊销设备（之后该令牌请求返回 401）
 // (DELETE /api/v1/devices/{id})
 func (_ Unimplemented) RevokeDevice(w http.ResponseWriter, r *http.Request, id DeviceIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetGitHubStatus GitHub 集成状态（App、两个身份槽位、安装、自动化身份、最近投递）
+// (GET /api/v1/github)
+func (_ Unimplemented) GetGitHubStatus(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteGitHubApp 删除 GitHub 连接（App、身份、安装记录；不删 GitHub 上的 App）
+// (DELETE /api/v1/github/app)
+func (_ Unimplemented) DeleteGitHubApp(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// BeginGitHubAppManifest 开始按 manifest 创建 GitHub App（返回跳转地址；已有 App → 409 `conflict`）
+// (POST /api/v1/github/app/manifest)
+func (_ Unimplemented) BeginGitHubAppManifest(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteGitHubIdentity 断开身份槽位（断开 Agent 账号时自动化身份回到我的账号）
+// (DELETE /api/v1/github/identities/{slot})
+func (_ Unimplemented) DeleteGitHubIdentity(w http.ResponseWriter, r *http.Request, slot GitHubIdentitySlotPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// AuthorizeGitHubIdentity 开始连接身份槽位（返回 GitHub 授权地址，10 分钟内有效；没有 App → 409 `github_not_connected`）
+// (POST /api/v1/github/identities/{slot}/authorize)
+func (_ Unimplemented) AuthorizeGitHubIdentity(w http.ResponseWriter, r *http.Request, slot GitHubIdentitySlotPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SyncGitHubInstallations 从 GitHub 重新拉取 App 的安装列表并重新绑定项目
+// (POST /api/v1/github/installations/sync)
+func (_ Unimplemented) SyncGitHubInstallations(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListGitHubRepos 我的账号经 App 可访问的仓库（按最近推送倒序，至多 50 个；我的账号未连接 → 409 `github_identity_required`）
+// (GET /api/v1/github/repos)
+func (_ Unimplemented) ListGitHubRepos(w http.ResponseWriter, r *http.Request, params ListGitHubReposParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutGitHubSettings 设置自动化任务的 GitHub 身份（Agent 未连接时选 `agent` → 409 `github_agent_required`）
+// (PUT /api/v1/github/settings)
+func (_ Unimplemented) PutGitHubSettings(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteGitHubTrigger 删除触发规则
+// (DELETE /api/v1/github/triggers/{id})
+func (_ Unimplemented) DeleteGitHubTrigger(w http.ResponseWriter, r *http.Request, id GitHubTriggerIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// UpdateGitHubTrigger 修改触发规则（只改出现的字段）
+// (PATCH /api/v1/github/triggers/{id})
+func (_ Unimplemented) UpdateGitHubTrigger(w http.ResponseWriter, r *http.Request, id GitHubTriggerIDPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -11166,6 +11819,30 @@ func (_ Unimplemented) ImportProjectAgentConfig(w http.ResponseWriter, r *http.R
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// ListGitHubRefs 输入框 `#` 引用的 issue / PR 候选（项目未绑定 → 409 `github_not_bound`）
+// (GET /api/v1/projects/{id}/github/refs)
+func (_ Unimplemented) ListGitHubRefs(w http.ResponseWriter, r *http.Request, id ProjectIDPath, params ListGitHubRefsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// AttachGitHubRef 把 issue / PR（含评论）渲染成 Markdown 附件（未绑定线程，随消息绑定）
+// (POST /api/v1/projects/{id}/github/refs/{number}/attachment)
+func (_ Unimplemented) AttachGitHubRef(w http.ResponseWriter, r *http.Request, id ProjectIDPath, number GitHubNumberPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListGitHubTriggers 项目的 GitHub 触发规则
+// (GET /api/v1/projects/{id}/github/triggers)
+func (_ Unimplemented) ListGitHubTriggers(w http.ResponseWriter, r *http.Request, id ProjectIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateGitHubTrigger 新建触发规则（项目未绑定 → 409 `github_not_bound`；`mention` 规则要求 Agent 已连接 → 409 `github_agent_required`）
+// (POST /api/v1/projects/{id}/github/triggers)
+func (_ Unimplemented) CreateGitHubTrigger(w http.ResponseWriter, r *http.Request, id ProjectIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // DeleteProjectSnapshots 清除项目快照（M11a；把匹配的 ready 快照退役，原因 `manual`；镜像由回收器异步删除）
 // (DELETE /api/v1/projects/{id}/snapshots)
 func (_ Unimplemented) DeleteProjectSnapshots(w http.ResponseWriter, r *http.Request, id ProjectIDPath, params DeleteProjectSnapshotsParams) {
@@ -11193,6 +11870,30 @@ func (_ Unimplemented) CreateProvider(w http.ResponseWriter, r *http.Request) {
 // DeleteProvider 删除（停用）provider，其令牌立即失效
 // (DELETE /api/v1/providers/{id})
 func (_ Unimplemented) DeleteProvider(w http.ResponseWriter, r *http.Request, id ProviderIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// FinishGitHubManifest GitHub 创建 App 后的回调（302 回设置页，`?created=1` 或 `?error=<code>`）
+// (GET /api/v1/public/github/manifest/callback)
+func (_ Unimplemented) FinishGitHubManifest(w http.ResponseWriter, r *http.Request, params FinishGitHubManifestParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// StartGitHubManifest 自动提交 manifest 到 GitHub 的中转页（state 一次性、10 分钟内有效）
+// (GET /api/v1/public/github/manifest/start)
+func (_ Unimplemented) StartGitHubManifest(w http.ResponseWriter, r *http.Request, params StartGitHubManifestParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// FinishGitHubOAuth 身份授权回调（302 回设置页，`?connected=<slot>` 或 `?error=<code>`）
+// (GET /api/v1/public/github/oauth/callback)
+func (_ Unimplemented) FinishGitHubOAuth(w http.ResponseWriter, r *http.Request, params FinishGitHubOAuthParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ReceiveGitHubWebhook GitHub App webhook 入口（按 `X-Hub-Signature-256` 校验；同一 `X-GitHub-Delivery` 只处理一次）
+// (POST /api/v1/public/github/webhook)
+func (_ Unimplemented) ReceiveGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -11583,6 +12284,18 @@ func (_ Unimplemented) ListThreadEntries(w http.ResponseWriter, r *http.Request,
 // ForkThread fork 线程（共用 orb 或连环境分叉）
 // (POST /api/v1/threads/{id}/fork)
 func (_ Unimplemented) ForkThread(w http.ResponseWriter, r *http.Request, id ThreadIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteThreadPull 取消线程与 PR 的关联（之后不会自动重连）
+// (DELETE /api/v1/threads/{id}/github/pulls/{number})
+func (_ Unimplemented) DeleteThreadPull(w http.ResponseWriter, r *http.Request, id ThreadIDPath, number GitHubNumberPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutThreadPull 暂停 / 恢复关联 PR 的事件回流（恢复时 CI 轮数清零）
+// (PUT /api/v1/threads/{id}/github/pulls/{number})
+func (_ Unimplemented) PutThreadPull(w http.ResponseWriter, r *http.Request, id ThreadIDPath, number GitHubNumberPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -12526,6 +13239,213 @@ func (siw *ServerInterfaceWrapper) RevokeDevice(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RevokeDevice(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetGitHubStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetGitHubStatus(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetGitHubStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteGitHubApp operation middleware
+func (siw *ServerInterfaceWrapper) DeleteGitHubApp(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteGitHubApp(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// BeginGitHubAppManifest operation middleware
+func (siw *ServerInterfaceWrapper) BeginGitHubAppManifest(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.BeginGitHubAppManifest(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteGitHubIdentity operation middleware
+func (siw *ServerInterfaceWrapper) DeleteGitHubIdentity(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "slot" -------------
+	var slot GitHubIdentitySlotPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "slot", chi.URLParam(r, "slot"), &slot, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "slot", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteGitHubIdentity(w, r, slot)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AuthorizeGitHubIdentity operation middleware
+func (siw *ServerInterfaceWrapper) AuthorizeGitHubIdentity(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "slot" -------------
+	var slot GitHubIdentitySlotPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "slot", chi.URLParam(r, "slot"), &slot, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "slot", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AuthorizeGitHubIdentity(w, r, slot)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SyncGitHubInstallations operation middleware
+func (siw *ServerInterfaceWrapper) SyncGitHubInstallations(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SyncGitHubInstallations(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListGitHubRepos operation middleware
+func (siw *ServerInterfaceWrapper) ListGitHubRepos(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListGitHubReposParams
+
+	// ------------- Optional query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListGitHubRepos(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutGitHubSettings operation middleware
+func (siw *ServerInterfaceWrapper) PutGitHubSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutGitHubSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteGitHubTrigger operation middleware
+func (siw *ServerInterfaceWrapper) DeleteGitHubTrigger(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id GitHubTriggerIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteGitHubTrigger(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateGitHubTrigger operation middleware
+func (siw *ServerInterfaceWrapper) UpdateGitHubTrigger(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id GitHubTriggerIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateGitHubTrigger(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -14850,6 +15770,135 @@ func (siw *ServerInterfaceWrapper) ImportProjectAgentConfig(w http.ResponseWrite
 	handler.ServeHTTP(w, r)
 }
 
+// ListGitHubRefs operation middleware
+func (siw *ServerInterfaceWrapper) ListGitHubRefs(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProjectIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListGitHubRefsParams
+
+	// ------------- Optional query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListGitHubRefs(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AttachGitHubRef operation middleware
+func (siw *ServerInterfaceWrapper) AttachGitHubRef(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProjectIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "number" -------------
+	var number GitHubNumberPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "number", chi.URLParam(r, "number"), &number, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "number", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AttachGitHubRef(w, r, id, number)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListGitHubTriggers operation middleware
+func (siw *ServerInterfaceWrapper) ListGitHubTriggers(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProjectIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListGitHubTriggers(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateGitHubTrigger operation middleware
+func (siw *ServerInterfaceWrapper) CreateGitHubTrigger(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProjectIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateGitHubTrigger(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeleteProjectSnapshots operation middleware
 func (siw *ServerInterfaceWrapper) DeleteProjectSnapshots(w http.ResponseWriter, r *http.Request) {
 
@@ -14963,6 +16012,158 @@ func (siw *ServerInterfaceWrapper) DeleteProvider(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DeleteProvider(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// FinishGitHubManifest operation middleware
+func (siw *ServerInterfaceWrapper) FinishGitHubManifest(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params FinishGitHubManifestParams
+
+	// ------------- Required query parameter "code" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "code", r.URL.Query(), &params.Code, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "code"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "code", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "state" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "state", r.URL.Query(), &params.State, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "state"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "state", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.FinishGitHubManifest(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartGitHubManifest operation middleware
+func (siw *ServerInterfaceWrapper) StartGitHubManifest(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params StartGitHubManifestParams
+
+	// ------------- Required query parameter "state" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "state", r.URL.Query(), &params.State, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "state"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "state", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartGitHubManifest(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// FinishGitHubOAuth operation middleware
+func (siw *ServerInterfaceWrapper) FinishGitHubOAuth(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params FinishGitHubOAuthParams
+
+	// ------------- Optional query parameter "code" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "code", r.URL.Query(), &params.Code, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "code"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "code", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "state" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "state", r.URL.Query(), &params.State, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "state"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "state", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "error" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "error", r.URL.Query(), &params.Error, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "error"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "error", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.FinishGitHubOAuth(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReceiveGitHubWebhook operation middleware
+func (siw *ServerInterfaceWrapper) ReceiveGitHubWebhook(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReceiveGitHubWebhook(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -17126,6 +18327,76 @@ func (siw *ServerInterfaceWrapper) ForkThread(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// DeleteThreadPull operation middleware
+func (siw *ServerInterfaceWrapper) DeleteThreadPull(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ThreadIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "number" -------------
+	var number GitHubNumberPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "number", chi.URLParam(r, "number"), &number, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "number", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteThreadPull(w, r, id, number)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutThreadPull operation middleware
+func (siw *ServerInterfaceWrapper) PutThreadPull(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ThreadIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "number" -------------
+	var number GitHubNumberPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "number", chi.URLParam(r, "number"), &number, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "number", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutThreadPull(w, r, id, number)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeleteThreadSchedule operation middleware
 func (siw *ServerInterfaceWrapper) DeleteThreadSchedule(w http.ResponseWriter, r *http.Request) {
 
@@ -18023,6 +19294,66 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/api/v1/threads/{id}/schedule", wrapper.PutThreadSchedule)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/github", wrapper.GetGitHubStatus)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/github/app/manifest", wrapper.BeginGitHubAppManifest)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/github/app", wrapper.DeleteGitHubApp)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/github/identities/{slot}/authorize", wrapper.AuthorizeGitHubIdentity)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/github/identities/{slot}", wrapper.DeleteGitHubIdentity)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/github/settings", wrapper.PutGitHubSettings)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/github/installations/sync", wrapper.SyncGitHubInstallations)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/github/repos", wrapper.ListGitHubRepos)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/projects/{id}/github/triggers", wrapper.ListGitHubTriggers)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/projects/{id}/github/triggers", wrapper.CreateGitHubTrigger)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/github/triggers/{id}", wrapper.DeleteGitHubTrigger)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/v1/github/triggers/{id}", wrapper.UpdateGitHubTrigger)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/projects/{id}/github/refs", wrapper.ListGitHubRefs)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/projects/{id}/github/refs/{number}/attachment", wrapper.AttachGitHubRef)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/threads/{id}/github/pulls/{number}", wrapper.DeleteThreadPull)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/threads/{id}/github/pulls/{number}", wrapper.PutThreadPull)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/public/github/webhook", wrapper.ReceiveGitHubWebhook)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/public/github/manifest/start", wrapper.StartGitHubManifest)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/public/github/manifest/callback", wrapper.FinishGitHubManifest)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/public/github/oauth/callback", wrapper.FinishGitHubOAuth)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/public/shares/{slug}", wrapper.GetPublicShare)

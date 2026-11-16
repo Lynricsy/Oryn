@@ -2773,6 +2773,314 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/github": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GitHub 集成状态（App、两个身份槽位、安装、自动化身份、最近投递） */
+        get: operations["getGitHubStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/app/manifest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 开始按 manifest 创建 GitHub App（返回跳转地址；已有 App → 409 `conflict`） */
+        post: operations["beginGitHubAppManifest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/app": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 删除 GitHub 连接（App、身份、安装记录；不删 GitHub 上的 App） */
+        delete: operations["deleteGitHubApp"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/identities/{slot}/authorize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slot: components["parameters"]["GitHubIdentitySlotPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 开始连接身份槽位（返回 GitHub 授权地址，10 分钟内有效；没有 App → 409 `github_not_connected`） */
+        post: operations["authorizeGitHubIdentity"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/identities/{slot}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slot: components["parameters"]["GitHubIdentitySlotPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 断开身份槽位（断开 Agent 账号时自动化身份回到我的账号） */
+        delete: operations["deleteGitHubIdentity"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** 设置自动化任务的 GitHub 身份（Agent 未连接时选 `agent` → 409 `github_agent_required`） */
+        put: operations["putGitHubSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/installations/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 从 GitHub 重新拉取 App 的安装列表并重新绑定项目 */
+        post: operations["syncGitHubInstallations"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/repos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 我的账号经 App 可访问的仓库（按最近推送倒序，至多 50 个；我的账号未连接 → 409 `github_identity_required`） */
+        get: operations["listGitHubRepos"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/github/triggers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 项目的 GitHub 触发规则 */
+        get: operations["listGitHubTriggers"];
+        put?: never;
+        /** 新建触发规则（项目未绑定 → 409 `github_not_bound`；`mention` 规则要求 Agent 已连接 → 409 `github_agent_required`） */
+        post: operations["createGitHubTrigger"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/triggers/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["GitHubTriggerIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 删除触发规则 */
+        delete: operations["deleteGitHubTrigger"];
+        options?: never;
+        head?: never;
+        /** 修改触发规则（只改出现的字段） */
+        patch: operations["updateGitHubTrigger"];
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/github/refs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 输入框 `#` 引用的 issue / PR 候选（项目未绑定 → 409 `github_not_bound`） */
+        get: operations["listGitHubRefs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/github/refs/{number}/attachment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+                number: components["parameters"]["GitHubNumberPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 把 issue / PR（含评论）渲染成 Markdown 附件（未绑定线程，随消息绑定） */
+        post: operations["attachGitHubRef"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/threads/{id}/github/pulls/{number}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+                number: components["parameters"]["GitHubNumberPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** 暂停 / 恢复关联 PR 的事件回流（恢复时 CI 轮数清零） */
+        put: operations["putThreadPull"];
+        post?: never;
+        /** 取消线程与 PR 的关联（之后不会自动重连） */
+        delete: operations["deleteThreadPull"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/public/github/webhook": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** GitHub App webhook 入口（按 `X-Hub-Signature-256` 校验；同一 `X-GitHub-Delivery` 只处理一次） */
+        post: operations["receiveGitHubWebhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/public/github/manifest/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 自动提交 manifest 到 GitHub 的中转页（state 一次性、10 分钟内有效） */
+        get: operations["startGitHubManifest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/public/github/manifest/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GitHub 创建 App 后的回调（302 回设置页，`?created=1` 或 `?error=<code>`） */
+        get: operations["finishGitHubManifest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/public/github/oauth/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 身份授权回调（302 回设置页，`?connected=<slot>` 或 `?error=<code>`） */
+        get: operations["finishGitHubOAuth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/public/shares/{slug}": {
         parameters: {
             query?: never;
@@ -3132,6 +3440,8 @@ export interface components {
              *     M11b（runner，HTTP 状态见 docs/protocol.md）：`runner_offline`（409）、`runner_unsupported`（409，runner 的 orb 不支持冻结 / 停机 / 删除 / 快照 / 连环境 fork）、
              *     `dir_not_served`（400；经 orb 文件 / 改动代理时为 orbd 的 403）、`dir_in_use`（409，体为 `DirInUseConflict`）、`thread_required`（400）、
              *     `worktree_failed`（400）、`worktree_dirty`（409）。
+             *     M14（GitHub）：`github_not_connected`（409，尚未创建 App）、`github_identity_required`（409，所需身份未连接或需要重新授权）、
+             *     `github_agent_required`（409，Agent 账号未连接）、`github_not_bound`（409，项目未绑定 GitHub 仓库）、`github_upstream`（502，GitHub 请求失败）。
              */
             code: string;
             message: string;
@@ -3324,6 +3634,8 @@ export interface components {
             snapshots: boolean;
             /** @description 预热池里为本项目常备的 orb 数（M11a；缺省 0 = 不预热） */
             warmOrbs: number;
+            /** @description GitHub 仓库绑定（M14）；仓库地址从未解析出 GitHub 仓库 id 时省略 */
+            github?: components["schemas"]["ProjectGitHub"];
         };
         ProjectList: {
             projects: components["schemas"]["Project"][];
@@ -3375,6 +3687,8 @@ export interface components {
             snapshots?: boolean;
             /** @description 预热 orb 数（M11a）；越界 → 400 `invalid_request` */
             warmOrbs?: number;
+            /** @description GitHub 事件回流开关（M14） */
+            githubListen?: components["schemas"]["GitHubListen"];
         };
         /**
          * @description `building` 正在提交镜像；`ready` 可被新 orb 使用（同键至多一个）；`retired` 已退役、等待回收器删除镜像
@@ -3429,6 +3743,175 @@ export interface components {
         };
         GitIdentitySettings: {
             identity?: components["schemas"]["GitIdentity"];
+        };
+        /**
+         * @description `user` = 我的账号；`agent` = Agent 账号
+         * @enum {string}
+         */
+        GitHubIdentitySlot: "user" | "agent";
+        GitHubIdentity: {
+            login: string;
+            /** Format: int64 */
+            githubId: number;
+            name?: string;
+            avatarUrl: string;
+            /**
+             * @description `reauth` = 刷新令牌失效，需要重新授权
+             * @enum {string}
+             */
+            status: "ok" | "reauth";
+            connectedAt: components["schemas"]["TimestampMs"];
+        };
+        GitHubApp: {
+            /** Format: int64 */
+            appId: number;
+            slug: string;
+            name: string;
+            htmlUrl: string;
+            ownerLogin: string;
+            public: boolean;
+            installUrl: string;
+        };
+        GitHubInstallation: {
+            /** Format: int64 */
+            id: number;
+            accountLogin: string;
+            accountType: string;
+            /** @description `all` 或 `selected` */
+            repositorySelection: string;
+            suspended: boolean;
+        };
+        GitHubIdentities: {
+            user?: components["schemas"]["GitHubIdentity"];
+            agent?: components["schemas"]["GitHubIdentity"];
+        };
+        GitHubStatus: {
+            /** @description 尚未创建 App 时省略 */
+            app?: components["schemas"]["GitHubApp"];
+            identities: components["schemas"]["GitHubIdentities"];
+            installations: components["schemas"]["GitHubInstallation"][];
+            automationIdentity: components["schemas"]["GitHubIdentitySlot"];
+            /** @description App 的 webhook 地址；尚未创建 App 时为默认地址 */
+            webhookUrl: string;
+            lastDeliveryAt?: components["schemas"]["TimestampMs"];
+            /** @enum {string} */
+            lastDeliverySource?: "webhook" | "poll";
+        };
+        GitHubManifestRequest: {
+            /** @description 公开 App（允许安装到其它账号） */
+            public: boolean;
+            /** @description 在该组织下创建；缺省 = 当前登录的个人账号 */
+            org?: string;
+            /**
+             * Format: uri
+             * @description 覆盖默认 webhook 地址（须 https）
+             */
+            webhookUrl?: string;
+        };
+        GitHubRedirect: {
+            url: string;
+        };
+        GitHubSettings: {
+            automationIdentity: components["schemas"]["GitHubIdentitySlot"];
+        };
+        GitHubRepo: {
+            /** Format: int64 */
+            id: number;
+            fullName: string;
+            private: boolean;
+            defaultBranch: string;
+            description?: string;
+            pushedAt?: components["schemas"]["TimestampMs"];
+        };
+        GitHubRepoList: {
+            repos: components["schemas"]["GitHubRepo"][];
+        };
+        GitHubListen: {
+            reviews: boolean;
+            comments: boolean;
+            ci: boolean;
+        };
+        ProjectGitHub: {
+            /** Format: int64 */
+            repoId: number;
+            /** @description `owner/repo`（取自仓库地址） */
+            fullName: string;
+            /** @description App 可访问该仓库（已安装） */
+            bound: boolean;
+            listen: components["schemas"]["GitHubListen"];
+        };
+        ThreadPull: {
+            /** @description `owner/repo` */
+            repo: string;
+            /** Format: int64 */
+            number: number;
+            title: string;
+            /** @enum {string} */
+            state: "open" | "closed" | "merged";
+            draft: boolean;
+            url: string;
+            /**
+             * @description 头提交的 CI 汇总；尚未汇总时省略
+             * @enum {string}
+             */
+            checks?: "pending" | "success" | "failure";
+            /** @description 是否回流该 PR 的事件 */
+            listening: boolean;
+        };
+        ThreadPullPatch: {
+            listening: boolean;
+        };
+        /** @enum {string} */
+        GitHubTriggerEvent: "issue_opened" | "issue_labeled" | "mention";
+        GitHubTrigger: {
+            id: string;
+            projectId: components["schemas"]["ProjectId"];
+            name: string;
+            event: components["schemas"]["GitHubTriggerEvent"];
+            label?: string;
+            prompt: string;
+            enabled: boolean;
+            /** @description 在 issue 下回帖新线程的链接 */
+            announce: boolean;
+            /** Format: int64 */
+            runCount: number;
+            lastRunAt?: components["schemas"]["TimestampMs"];
+            createdAt: components["schemas"]["TimestampMs"];
+            updatedAt: components["schemas"]["TimestampMs"];
+        };
+        GitHubTriggerInput: {
+            name: string;
+            event: components["schemas"]["GitHubTriggerEvent"];
+            /** @description `issue_labeled` 必填；其它事件忽略 */
+            label?: string;
+            prompt: string;
+            enabled?: boolean;
+            announce?: boolean;
+        };
+        GitHubTriggerPatch: {
+            name?: string;
+            event?: components["schemas"]["GitHubTriggerEvent"];
+            label?: string;
+            prompt?: string;
+            enabled?: boolean;
+            announce?: boolean;
+        };
+        GitHubTriggerList: {
+            triggers: components["schemas"]["GitHubTrigger"][];
+        };
+        GitHubRef: {
+            /** Format: int64 */
+            number: number;
+            /** @enum {string} */
+            kind: "issue" | "pull";
+            title: string;
+            /** @enum {string} */
+            state: "open" | "closed" | "merged";
+            url: string;
+            updatedAt: components["schemas"]["TimestampMs"];
+        };
+        GitHubRefList: {
+            refs: components["schemas"]["GitHubRef"][];
         };
         /** @description 头像（用户头像；也是 role 头像等只含头像字段的通用形状）；两个字段至多出现一个，都省略表示默认 */
         AvatarIdentity: {
@@ -3804,6 +4287,8 @@ export interface components {
             cwd?: string;
             /** @description Oryn 为该线程建的 worktree（M11b）；没有或已移除则省略 */
             worktree?: components["schemas"]["ThreadWorktree"];
+            /** @description 关联的 GitHub PR（M14）；没有则省略 */
+            pulls?: components["schemas"]["ThreadPull"][];
         };
         /**
          * @description `state=error` 的原因（均可 `POST threads/{id}/wake` 重试）：
@@ -3956,6 +4441,8 @@ export interface components {
              *     客户端据此决定右面板标签：`changes` 需要 `git`、`files` 需要 `fs`、`terminal` 需要 `terminal`；省略时保持 M3 的行为。
              */
             features?: string[];
+            /** @description orb 内 git / gh 使用的 GitHub 账号（M14）；项目未绑定或身份未连接时省略 */
+            githubLogin?: string;
         };
         /**
          * @description `orb` = provider 创建的 orb；`runner` = runner 的常驻 orb（M11b）
@@ -5604,7 +6091,7 @@ export interface components {
             on: boolean;
         };
         /** @description 服务端 → 客户端 WS 消息 */
-        WsServerMessage: components["schemas"]["WsServerIndex"] | components["schemas"]["WsServerIndexPatch"] | components["schemas"]["WsServerThreadSnapshot"] | components["schemas"]["WsServerEntries"] | components["schemas"]["WsServerFrame"] | components["schemas"]["WsServerRes"] | components["schemas"]["WsServerUiResolved"] | components["schemas"]["WsServerLiveReset"] | components["schemas"]["WsServerTranscriptReset"] | components["schemas"]["WsServerPlanResolved"] | components["schemas"]["WsServerOrb"] | components["schemas"]["WsServerError"] | components["schemas"]["WsServerPong"] | components["schemas"]["WsServerTermLagged"] | components["schemas"]["WsServerTermResized"] | components["schemas"]["WsServerNotification"] | components["schemas"]["WsServerNotificationsRead"] | components["schemas"]["WsServerSchedulesChanged"];
+        WsServerMessage: components["schemas"]["WsServerIndex"] | components["schemas"]["WsServerIndexPatch"] | components["schemas"]["WsServerThreadSnapshot"] | components["schemas"]["WsServerEntries"] | components["schemas"]["WsServerFrame"] | components["schemas"]["WsServerRes"] | components["schemas"]["WsServerUiResolved"] | components["schemas"]["WsServerLiveReset"] | components["schemas"]["WsServerTranscriptReset"] | components["schemas"]["WsServerPlanResolved"] | components["schemas"]["WsServerOrb"] | components["schemas"]["WsServerError"] | components["schemas"]["WsServerPong"] | components["schemas"]["WsServerTermLagged"] | components["schemas"]["WsServerTermResized"] | components["schemas"]["WsServerNotification"] | components["schemas"]["WsServerNotificationsRead"] | components["schemas"]["WsServerSchedulesChanged"] | components["schemas"]["WsServerGitHubChanged"];
         /** @description 线程摘要全量（连接建立后首条） */
         WsServerIndex: {
             /**
@@ -5828,6 +6315,14 @@ export interface components {
              */
             type: "schedules.changed";
             scheduleId: components["schemas"]["ScheduleId"];
+        };
+        /** @description GitHub 集成状态变了（App、身份、安装、项目绑定、触发规则）；发给全部私有连接。客户端据此让 GitHub 相关查询与项目列表失效 */
+        WsServerGitHubChanged: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "github.changed";
         };
         /**
          * @description `GET /api/v1/public/shares/{slug}/ws` 上服务端 → 匿名客户端的消息（都不带 `threadId`）。
@@ -6354,6 +6849,8 @@ export interface components {
              *     只用于 agent 从未运行过的 orb（来自项目快照的新 orb，或刚被认领的预热池 orb）；只在 hello 的 `features` 含 `repo-update` 时置位。
              */
             update?: boolean;
+            /** @description 仓库改名 / 转移前的地址（M14）；工作目录的 origin 等于其中之一时改到 `url` */
+            previousUrls?: string[];
         };
         LinkCtlSetupScripts: {
             setup?: string;
@@ -6381,6 +6878,10 @@ export interface components {
         LinkCtlProjectConfig: {
             files: components["schemas"]["LinkCtlOmpHomeFile"][];
         };
+        /** @description orb 内 `gh` 的登录信息（M14）；令牌由出站代理注入，orb 内只有占位值 */
+        LinkCtlSetupGh: {
+            login: string;
+        };
         LinkCtlSetupRunParams: {
             workdir: string;
             repo?: components["schemas"]["LinkCtlSetupRepo"];
@@ -6395,6 +6896,8 @@ export interface components {
             projectConfig?: components["schemas"]["LinkCtlProjectConfig"];
             /** @description 写入 `git config --global user.name / user.email`（项目覆盖 > 所有者默认）；缺省时不改动现有配置 */
             gitIdentity?: components["schemas"]["GitIdentity"];
+            /** @description 缺省 = 项目未连接 GitHub：orbd 删除 `$HOME/.oryn/gh` */
+            gh?: components["schemas"]["LinkCtlSetupGh"];
             /**
              * @description M11a 审查修复：true = 只跑 setup（clone / `repo.update` / setup 脚本），**不**跑 resume 脚本、**不**启动受管服务；
              *     控制面随后单独调 `resume.run`。只在 hello 的 `features` 含 `setup-defer-resume` 时置位；`resume.run` 忽略此字段。
@@ -6766,6 +7269,9 @@ export interface components {
         BrowserProfileIdPath: components["schemas"]["BrowserProfileId"];
         SpaceIdPath: components["schemas"]["SpaceId"];
         ScheduleIdPath: components["schemas"]["ScheduleId"];
+        GitHubIdentitySlotPath: components["schemas"]["GitHubIdentitySlot"];
+        GitHubTriggerIdPath: string;
+        GitHubNumberPath: number;
     };
     requestBodies: never;
     headers: never;
@@ -11175,6 +11681,480 @@ export interface operations {
             /** @description 已删除 */
             204: {
                 headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getGitHubStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    beginGitHubAppManifest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitHubManifestRequest"];
+            };
+        };
+        responses: {
+            /** @description 浏览器应跳转到的地址 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubRedirect"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteGitHubApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    authorizeGitHubIdentity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slot: components["parameters"]["GitHubIdentitySlotPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 授权地址 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubRedirect"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteGitHubIdentity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slot: components["parameters"]["GitHubIdentitySlotPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已断开 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putGitHubSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitHubSettings"];
+            };
+        };
+        responses: {
+            /** @description 写入后的状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    syncGitHubInstallations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 同步后的状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listGitHubRepos: {
+        parameters: {
+            query?: {
+                /** @description 按 `owner/name` 子串过滤（忽略大小写） */
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 仓库列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubRepoList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listGitHubTriggers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 规则列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubTriggerList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createGitHubTrigger: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitHubTriggerInput"];
+            };
+        };
+        responses: {
+            /** @description 已创建 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubTrigger"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteGitHubTrigger: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["GitHubTriggerIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateGitHubTrigger: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["GitHubTriggerIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitHubTriggerPatch"];
+            };
+        };
+        responses: {
+            /** @description 修改后的规则 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubTrigger"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listGitHubRefs: {
+        parameters: {
+            query?: {
+                /** @description 空 = 最近更新的打开项；纯数字 = 按编号；其它 = 搜索 */
+                q?: string;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 候选 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubRefList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    attachGitHubRef: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+                number: components["parameters"]["GitHubNumberPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已保存的附件 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Attachment"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putThreadPull: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+                number: components["parameters"]["GitHubNumberPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ThreadPullPatch"];
+            };
+        };
+        responses: {
+            /** @description 修改后的线程 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Thread"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteThreadPull: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+                number: components["parameters"]["GitHubNumberPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 修改后的线程 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Thread"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    receiveGitHubWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description 已受理 */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startGitHubManifest: {
+        parameters: {
+            query: {
+                state: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 含提交表单的页面 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    finishGitHubManifest: {
+        parameters: {
+            query: {
+                code: string;
+                state: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 回到设置页 */
+            302: {
+                headers: {
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    finishGitHubOAuth: {
+        parameters: {
+            query?: {
+                code?: string;
+                state?: string;
+                error?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 回到设置页 */
+            302: {
+                headers: {
+                    Location?: string;
                     [name: string]: unknown;
                 };
                 content?: never;
