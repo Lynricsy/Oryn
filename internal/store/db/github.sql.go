@@ -35,6 +35,73 @@ func (q *Queries) BumpGithubTrigger(ctx context.Context, arg BumpGithubTriggerPa
 	return err
 }
 
+const bumpThreadIssueReminders = `-- name: BumpThreadIssueReminders :one
+UPDATE thread_issues SET reminders = reminders + 1 WHERE thread_id = ?1 RETURNING reminders
+`
+
+func (q *Queries) BumpThreadIssueReminders(ctx context.Context, threadID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, bumpThreadIssueReminders, threadID)
+	var reminders int64
+	err := row.Scan(&reminders)
+	return reminders, err
+}
+
+const cancelGithubAutoclose = `-- name: CancelGithubAutoclose :execrows
+UPDATE github_autoclose SET state = 'cancelled', outcome = ?1
+WHERE repo_id = ?2 AND number = ?3 AND state = 'pending'
+`
+
+type CancelGithubAutocloseParams struct {
+	Outcome *string `json:"outcome"`
+	RepoID  int64   `json:"repoId"`
+	Number  int64   `json:"number"`
+}
+
+func (q *Queries) CancelGithubAutoclose(ctx context.Context, arg CancelGithubAutocloseParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, cancelGithubAutoclose, arg.Outcome, arg.RepoID, arg.Number)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const claimDueGithubAutocloses = `-- name: ClaimDueGithubAutocloses :many
+UPDATE github_autoclose SET state = 'claimed' WHERE state = 'pending' AND due_at <= ?1 RETURNING repo_id, number, thread_id, comment_id, author, due_at, state, outcome
+`
+
+// Atomic claim: each entry runs at most once.
+func (q *Queries) ClaimDueGithubAutocloses(ctx context.Context, now int64) ([]GithubAutoclose, error) {
+	rows, err := q.db.QueryContext(ctx, claimDueGithubAutocloses, now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GithubAutoclose{}
+	for rows.Next() {
+		var i GithubAutoclose
+		if err := rows.Scan(
+			&i.RepoID,
+			&i.Number,
+			&i.ThreadID,
+			&i.CommentID,
+			&i.Author,
+			&i.DueAt,
+			&i.State,
+			&i.Outcome,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const clearAllProjectGithubInstallations = `-- name: ClearAllProjectGithubInstallations :exec
 UPDATE projects SET github_installation_id = NULL WHERE github_installation_id IS NOT NULL
 `
@@ -81,6 +148,23 @@ func (q *Queries) CountGithubOutboxSince(ctx context.Context, arg CountGithubOut
 		arg.Number,
 		arg.Since,
 	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countGithubSenderRunsSince = `-- name: CountGithubSenderRunsSince :one
+SELECT COUNT(*) FROM github_sender_runs WHERE rule_id = ?1 AND sender = ?2 AND at >= ?3
+`
+
+type CountGithubSenderRunsSinceParams struct {
+	RuleID string `json:"ruleId"`
+	Sender string `json:"sender"`
+	Since  int64  `json:"since"`
+}
+
+func (q *Queries) CountGithubSenderRunsSince(ctx context.Context, arg CountGithubSenderRunsSinceParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countGithubSenderRunsSince, arg.RuleID, arg.Sender, arg.Since)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -137,12 +221,51 @@ func (q *Queries) DeleteGithubApp(ctx context.Context) error {
 	return err
 }
 
+const deleteGithubAuditBefore = `-- name: DeleteGithubAuditBefore :exec
+DELETE FROM github_audit WHERE at < ?1
+`
+
+func (q *Queries) DeleteGithubAuditBefore(ctx context.Context, before int64) error {
+	_, err := q.db.ExecContext(ctx, deleteGithubAuditBefore, before)
+	return err
+}
+
+const deleteGithubAutoclosesBefore = `-- name: DeleteGithubAutoclosesBefore :exec
+DELETE FROM github_autoclose WHERE state IN ('done','cancelled') AND due_at < ?1
+`
+
+func (q *Queries) DeleteGithubAutoclosesBefore(ctx context.Context, before int64) error {
+	_, err := q.db.ExecContext(ctx, deleteGithubAutoclosesBefore, before)
+	return err
+}
+
 const deleteGithubDeliveriesBefore = `-- name: DeleteGithubDeliveriesBefore :exec
 DELETE FROM github_deliveries WHERE received_at < ?1
 `
 
 func (q *Queries) DeleteGithubDeliveriesBefore(ctx context.Context, before int64) error {
 	_, err := q.db.ExecContext(ctx, deleteGithubDeliveriesBefore, before)
+	return err
+}
+
+const deleteGithubHook = `-- name: DeleteGithubHook :execrows
+DELETE FROM github_hooks WHERE repo_id = ?1
+`
+
+func (q *Queries) DeleteGithubHook(ctx context.Context, repoID int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteGithubHook, repoID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteGithubHooks = `-- name: DeleteGithubHooks :exec
+DELETE FROM github_hooks
+`
+
+func (q *Queries) DeleteGithubHooks(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, deleteGithubHooks)
 	return err
 }
 
@@ -195,12 +318,78 @@ func (q *Queries) DeleteGithubInstallationsExcept(ctx context.Context, ids []int
 	return err
 }
 
+const deleteGithubOAuthApp = `-- name: DeleteGithubOAuthApp :exec
+DELETE FROM github_oauth_app WHERE id = 1
+`
+
+func (q *Queries) DeleteGithubOAuthApp(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, deleteGithubOAuthApp)
+	return err
+}
+
 const deleteGithubOutboxBefore = `-- name: DeleteGithubOutboxBefore :exec
 DELETE FROM github_outbox WHERE delivered_at IS NOT NULL AND delivered_at < ?1
 `
 
 func (q *Queries) DeleteGithubOutboxBefore(ctx context.Context, before *int64) error {
 	_, err := q.db.ExecContext(ctx, deleteGithubOutboxBefore, before)
+	return err
+}
+
+const deleteGithubPrepareBefore = `-- name: DeleteGithubPrepareBefore :exec
+DELETE FROM github_prepare WHERE at < ?1
+`
+
+func (q *Queries) DeleteGithubPrepareBefore(ctx context.Context, before int64) error {
+	_, err := q.db.ExecContext(ctx, deleteGithubPrepareBefore, before)
+	return err
+}
+
+const deleteGithubReleasesBefore = `-- name: DeleteGithubReleasesBefore :exec
+DELETE FROM github_releases WHERE state IN ('green','failed','superseded') AND updated_at < ?1
+`
+
+func (q *Queries) DeleteGithubReleasesBefore(ctx context.Context, before int64) error {
+	_, err := q.db.ExecContext(ctx, deleteGithubReleasesBefore, before)
+	return err
+}
+
+const deleteGithubRepoWatch = `-- name: DeleteGithubRepoWatch :execrows
+DELETE FROM github_repo_watches WHERE repo_id = ?1
+`
+
+func (q *Queries) DeleteGithubRepoWatch(ctx context.Context, repoID int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteGithubRepoWatch, repoID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteGithubSelfKeysBefore = `-- name: DeleteGithubSelfKeysBefore :exec
+DELETE FROM github_self_keys WHERE created_at < ?1
+`
+
+func (q *Queries) DeleteGithubSelfKeysBefore(ctx context.Context, before int64) error {
+	_, err := q.db.ExecContext(ctx, deleteGithubSelfKeysBefore, before)
+	return err
+}
+
+const deleteGithubSelfWritesBefore = `-- name: DeleteGithubSelfWritesBefore :exec
+DELETE FROM github_self_writes WHERE created_at < ?1
+`
+
+func (q *Queries) DeleteGithubSelfWritesBefore(ctx context.Context, before int64) error {
+	_, err := q.db.ExecContext(ctx, deleteGithubSelfWritesBefore, before)
+	return err
+}
+
+const deleteGithubSenderRunsBefore = `-- name: DeleteGithubSenderRunsBefore :exec
+DELETE FROM github_sender_runs WHERE at < ?1
+`
+
+func (q *Queries) DeleteGithubSenderRunsBefore(ctx context.Context, before int64) error {
+	_, err := q.db.ExecContext(ctx, deleteGithubSenderRunsBefore, before)
 	return err
 }
 
@@ -228,8 +417,100 @@ func (q *Queries) DeleteGithubTrigger(ctx context.Context, id string) (int64, er
 	return result.RowsAffected()
 }
 
+const deleteGithubWatch = `-- name: DeleteGithubWatch :execrows
+DELETE FROM github_watches WHERE kind = ?1 AND full_name = ?2 AND number = ?3
+`
+
+type DeleteGithubWatchParams struct {
+	Kind     string `json:"kind"`
+	FullName string `json:"fullName"`
+	Number   int64  `json:"number"`
+}
+
+func (q *Queries) DeleteGithubWatch(ctx context.Context, arg DeleteGithubWatchParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteGithubWatch, arg.Kind, arg.FullName, arg.Number)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteRetiredGithubWatches = `-- name: DeleteRetiredGithubWatches :exec
+DELETE FROM github_watches
+WHERE (done_at IS NOT NULL AND done_at < ?1)
+   OR thread_id IN (SELECT id FROM threads WHERE archived_at IS NOT NULL)
+`
+
+// Retirement: terminal for long enough, or the thread is archived.
+func (q *Queries) DeleteRetiredGithubWatches(ctx context.Context, doneBefore *int64) error {
+	_, err := q.db.ExecContext(ctx, deleteRetiredGithubWatches, doneBefore)
+	return err
+}
+
+const findGithubPrepare = `-- name: FindGithubPrepare :one
+SELECT sha, orb_id, level, skipped, reason, at FROM github_prepare
+WHERE sha = ?1 AND orb_id = ?2 AND level IN (/*SLICE:levels*/?)
+ORDER BY skipped, at DESC
+LIMIT 1
+`
+
+type FindGithubPrepareParams struct {
+	Sha    string   `json:"sha"`
+	OrbID  string   `json:"orbId"`
+	Levels []string `json:"levels"`
+}
+
+// Best pass record among the accepted levels: an unskipped one wins.
+func (q *Queries) FindGithubPrepare(ctx context.Context, arg FindGithubPrepareParams) (GithubPrepare, error) {
+	query := findGithubPrepare
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.Sha)
+	queryParams = append(queryParams, arg.OrbID)
+	if len(arg.Levels) > 0 {
+		for _, v := range arg.Levels {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:levels*/?", strings.Repeat(",?", len(arg.Levels))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:levels*/?", "NULL", 1)
+	}
+	row := q.db.QueryRowContext(ctx, query, queryParams...)
+	var i GithubPrepare
+	err := row.Scan(
+		&i.Sha,
+		&i.OrbID,
+		&i.Level,
+		&i.Skipped,
+		&i.Reason,
+		&i.At,
+	)
+	return i, err
+}
+
+const finishGithubAutoclose = `-- name: FinishGithubAutoclose :exec
+UPDATE github_autoclose SET state = ?1, outcome = ?2
+WHERE repo_id = ?3 AND number = ?4 AND state = 'claimed'
+`
+
+type FinishGithubAutocloseParams struct {
+	State   string  `json:"state"`
+	Outcome *string `json:"outcome"`
+	RepoID  int64   `json:"repoId"`
+	Number  int64   `json:"number"`
+}
+
+func (q *Queries) FinishGithubAutoclose(ctx context.Context, arg FinishGithubAutocloseParams) error {
+	_, err := q.db.ExecContext(ctx, finishGithubAutoclose,
+		arg.State,
+		arg.Outcome,
+		arg.RepoID,
+		arg.Number,
+	)
+	return err
+}
+
 const finishGithubDelivery = `-- name: FinishGithubDelivery :exec
-UPDATE github_deliveries SET outcome = ?1, payload = NULL WHERE guid = ?2
+UPDATE github_deliveries SET outcome = ?1 WHERE guid = ?2
 `
 
 type FinishGithubDeliveryParams struct {
@@ -274,6 +555,31 @@ func (q *Queries) GetGithubApp(ctx context.Context) (GithubApp, error) {
 	return i, err
 }
 
+const getGithubAutoclose = `-- name: GetGithubAutoclose :one
+SELECT repo_id, number, thread_id, comment_id, author, due_at, state, outcome FROM github_autoclose WHERE repo_id = ?1 AND number = ?2
+`
+
+type GetGithubAutocloseParams struct {
+	RepoID int64 `json:"repoId"`
+	Number int64 `json:"number"`
+}
+
+func (q *Queries) GetGithubAutoclose(ctx context.Context, arg GetGithubAutocloseParams) (GithubAutoclose, error) {
+	row := q.db.QueryRowContext(ctx, getGithubAutoclose, arg.RepoID, arg.Number)
+	var i GithubAutoclose
+	err := row.Scan(
+		&i.RepoID,
+		&i.Number,
+		&i.ThreadID,
+		&i.CommentID,
+		&i.Author,
+		&i.DueAt,
+		&i.State,
+		&i.Outcome,
+	)
+	return i, err
+}
+
 const getGithubDelivery = `-- name: GetGithubDelivery :one
 SELECT guid, event, source, payload, outcome, attempts, received_at FROM github_deliveries WHERE guid = ?1
 `
@@ -293,9 +599,59 @@ func (q *Queries) GetGithubDelivery(ctx context.Context, guid string) (GithubDel
 	return i, err
 }
 
+const getGithubHook = `-- name: GetGithubHook :one
+
+SELECT repo_id, full_name, hook_id, secret_enc, status, error, delivery_cursor, deliveries_etag, last_delivery_at, last_delivery_src, last_webhook_at, updated_at FROM github_hooks WHERE repo_id = ?1
+`
+
+// ---------- repository hooks ----------
+func (q *Queries) GetGithubHook(ctx context.Context, repoID int64) (GithubHook, error) {
+	row := q.db.QueryRowContext(ctx, getGithubHook, repoID)
+	var i GithubHook
+	err := row.Scan(
+		&i.RepoID,
+		&i.FullName,
+		&i.HookID,
+		&i.SecretEnc,
+		&i.Status,
+		&i.Error,
+		&i.DeliveryCursor,
+		&i.DeliveriesEtag,
+		&i.LastDeliveryAt,
+		&i.LastDeliverySrc,
+		&i.LastWebhookAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getGithubHookByHookID = `-- name: GetGithubHookByHookID :one
+SELECT repo_id, full_name, hook_id, secret_enc, status, error, delivery_cursor, deliveries_etag, last_delivery_at, last_delivery_src, last_webhook_at, updated_at FROM github_hooks WHERE hook_id = ?1
+`
+
+func (q *Queries) GetGithubHookByHookID(ctx context.Context, hookID *int64) (GithubHook, error) {
+	row := q.db.QueryRowContext(ctx, getGithubHookByHookID, hookID)
+	var i GithubHook
+	err := row.Scan(
+		&i.RepoID,
+		&i.FullName,
+		&i.HookID,
+		&i.SecretEnc,
+		&i.Status,
+		&i.Error,
+		&i.DeliveryCursor,
+		&i.DeliveriesEtag,
+		&i.LastDeliveryAt,
+		&i.LastDeliverySrc,
+		&i.LastWebhookAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getGithubIdentity = `-- name: GetGithubIdentity :one
 
-SELECT slot, github_id, login, name, avatar_url, access_token_enc, access_expires_at, refresh_token_enc, refresh_expires_at, status, connected_at, updated_at FROM github_identities WHERE slot = ?1
+SELECT slot, github_id, login, name, avatar_url, access_token_enc, access_expires_at, refresh_token_enc, refresh_expires_at, status, connected_at, updated_at, scopes FROM github_identities WHERE slot = ?1
 `
 
 // ---------- identities ----------
@@ -315,6 +671,26 @@ func (q *Queries) GetGithubIdentity(ctx context.Context, slot string) (GithubIde
 		&i.Status,
 		&i.ConnectedAt,
 		&i.UpdatedAt,
+		&i.Scopes,
+	)
+	return i, err
+}
+
+const getGithubOAuthApp = `-- name: GetGithubOAuthApp :one
+
+SELECT id, client_id, client_secret_enc, webhook_base, created_at FROM github_oauth_app WHERE id = 1
+`
+
+// ---------- OAuth App ----------
+func (q *Queries) GetGithubOAuthApp(ctx context.Context) (GithubOauthApp, error) {
+	row := q.db.QueryRowContext(ctx, getGithubOAuthApp)
+	var i GithubOauthApp
+	err := row.Scan(
+		&i.ID,
+		&i.ClientID,
+		&i.ClientSecretEnc,
+		&i.WebhookBase,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -352,6 +728,73 @@ func (q *Queries) GetGithubPull(ctx context.Context, arg GetGithubPullParams) (G
 	return i, err
 }
 
+const getGithubRelease = `-- name: GetGithubRelease :one
+
+SELECT repo_id, version, sha, tag_oid, thread_id, state, rounds, updated_at FROM github_releases WHERE repo_id = ?1 AND version = ?2
+`
+
+type GetGithubReleaseParams struct {
+	RepoID  int64  `json:"repoId"`
+	Version string `json:"version"`
+}
+
+// ---------- releases ----------
+func (q *Queries) GetGithubRelease(ctx context.Context, arg GetGithubReleaseParams) (GithubRelease, error) {
+	row := q.db.QueryRowContext(ctx, getGithubRelease, arg.RepoID, arg.Version)
+	var i GithubRelease
+	err := row.Scan(
+		&i.RepoID,
+		&i.Version,
+		&i.Sha,
+		&i.TagOid,
+		&i.ThreadID,
+		&i.State,
+		&i.Rounds,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getGithubReleaseByThread = `-- name: GetGithubReleaseByThread :one
+SELECT repo_id, version, sha, tag_oid, thread_id, state, rounds, updated_at FROM github_releases WHERE thread_id = ?1 ORDER BY updated_at DESC LIMIT 1
+`
+
+func (q *Queries) GetGithubReleaseByThread(ctx context.Context, threadID *string) (GithubRelease, error) {
+	row := q.db.QueryRowContext(ctx, getGithubReleaseByThread, threadID)
+	var i GithubRelease
+	err := row.Scan(
+		&i.RepoID,
+		&i.Version,
+		&i.Sha,
+		&i.TagOid,
+		&i.ThreadID,
+		&i.State,
+		&i.Rounds,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getGithubRepoWatch = `-- name: GetGithubRepoWatch :one
+SELECT repo_id, full_name, etag_issues, etag_comments, etag_pulls, etag_runs, since_at, updated_at FROM github_repo_watches WHERE repo_id = ?1
+`
+
+func (q *Queries) GetGithubRepoWatch(ctx context.Context, repoID int64) (GithubRepoWatch, error) {
+	row := q.db.QueryRowContext(ctx, getGithubRepoWatch, repoID)
+	var i GithubRepoWatch
+	err := row.Scan(
+		&i.RepoID,
+		&i.FullName,
+		&i.EtagIssues,
+		&i.EtagComments,
+		&i.EtagPulls,
+		&i.EtagRuns,
+		&i.SinceAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getGithubState = `-- name: GetGithubState :one
 SELECT state_hash, kind, slot, manifest, action_url, public, webhook_url, expires_at FROM github_oauth_states WHERE state_hash = ?1
 `
@@ -373,7 +816,7 @@ func (q *Queries) GetGithubState(ctx context.Context, stateHash string) (GithubO
 }
 
 const getGithubTrigger = `-- name: GetGithubTrigger :one
-SELECT id, project_id, name, event, label, prompt, enabled, announce, run_count, last_run_at, created_at, updated_at FROM github_triggers WHERE id = ?1
+SELECT id, project_id, name, event, label, prompt, enabled, announce, run_count, last_run_at, created_at, updated_at, drivers, maintainers, reviewer_bots, models, thinking, impl_auth, comment_only_reviews, autoclose_hours, max_duration_sec, completion_reminders, release_prefix FROM github_triggers WHERE id = ?1
 `
 
 func (q *Queries) GetGithubTrigger(ctx context.Context, id string) (GithubTrigger, error) {
@@ -392,6 +835,48 @@ func (q *Queries) GetGithubTrigger(ctx context.Context, id string) (GithubTrigge
 		&i.LastRunAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Drivers,
+		&i.Maintainers,
+		&i.ReviewerBots,
+		&i.Models,
+		&i.Thinking,
+		&i.ImplAuth,
+		&i.CommentOnlyReviews,
+		&i.AutocloseHours,
+		&i.MaxDurationSec,
+		&i.CompletionReminders,
+		&i.ReleasePrefix,
+	)
+	return i, err
+}
+
+const getGithubWatch = `-- name: GetGithubWatch :one
+SELECT kind, repo_id, full_name, number, thread_id, slot, etag_issue, etag_comments, etag_reviews, etag_review_comments, etag_checks, last_seen_at, done_at FROM github_watches WHERE kind = ?1 AND full_name = ?2 AND number = ?3
+`
+
+type GetGithubWatchParams struct {
+	Kind     string `json:"kind"`
+	FullName string `json:"fullName"`
+	Number   int64  `json:"number"`
+}
+
+func (q *Queries) GetGithubWatch(ctx context.Context, arg GetGithubWatchParams) (GithubWatch, error) {
+	row := q.db.QueryRowContext(ctx, getGithubWatch, arg.Kind, arg.FullName, arg.Number)
+	var i GithubWatch
+	err := row.Scan(
+		&i.Kind,
+		&i.RepoID,
+		&i.FullName,
+		&i.Number,
+		&i.ThreadID,
+		&i.Slot,
+		&i.EtagIssue,
+		&i.EtagComments,
+		&i.EtagReviews,
+		&i.EtagReviewComments,
+		&i.EtagChecks,
+		&i.LastSeenAt,
+		&i.DoneAt,
 	)
 	return i, err
 }
@@ -426,7 +911,8 @@ func (q *Queries) GetOwnerGithubAutomation(ctx context.Context) (string, error) 
 
 const getThreadIssue = `-- name: GetThreadIssue :one
 
-SELECT ti.repo_id, ti.number, ti.thread_id, ti.trigger_id, ti.created_at, t.archived_at, t.project_id
+SELECT ti.repo_id, ti.number, ti.thread_id, ti.trigger_id, ti.created_at, ti.state, ti.classification, ti.impl_authorized,
+       ti.review_only, ti.rule_id, ti.deadline_at, ti.reminders, t.archived_at, t.project_id
 FROM thread_issues ti JOIN threads t ON t.id = ti.thread_id
 WHERE ti.repo_id = ?1 AND ti.number = ?2
 `
@@ -437,13 +923,20 @@ type GetThreadIssueParams struct {
 }
 
 type GetThreadIssueRow struct {
-	RepoID     int64   `json:"repoId"`
-	Number     int64   `json:"number"`
-	ThreadID   string  `json:"threadId"`
-	TriggerID  *string `json:"triggerId"`
-	CreatedAt  int64   `json:"createdAt"`
-	ArchivedAt *int64  `json:"archivedAt"`
-	ProjectID  *string `json:"projectId"`
+	RepoID         int64   `json:"repoId"`
+	Number         int64   `json:"number"`
+	ThreadID       string  `json:"threadId"`
+	TriggerID      *string `json:"triggerId"`
+	CreatedAt      int64   `json:"createdAt"`
+	State          string  `json:"state"`
+	Classification *string `json:"classification"`
+	ImplAuthorized bool    `json:"implAuthorized"`
+	ReviewOnly     bool    `json:"reviewOnly"`
+	RuleID         *string `json:"ruleId"`
+	DeadlineAt     *int64  `json:"deadlineAt"`
+	Reminders      int64   `json:"reminders"`
+	ArchivedAt     *int64  `json:"archivedAt"`
+	ProjectID      *string `json:"projectId"`
 }
 
 // ---------- issue <-> thread ----------
@@ -456,8 +949,40 @@ func (q *Queries) GetThreadIssue(ctx context.Context, arg GetThreadIssueParams) 
 		&i.ThreadID,
 		&i.TriggerID,
 		&i.CreatedAt,
+		&i.State,
+		&i.Classification,
+		&i.ImplAuthorized,
+		&i.ReviewOnly,
+		&i.RuleID,
+		&i.DeadlineAt,
+		&i.Reminders,
 		&i.ArchivedAt,
 		&i.ProjectID,
+	)
+	return i, err
+}
+
+const getThreadIssueByThread = `-- name: GetThreadIssueByThread :one
+SELECT repo_id, number, thread_id, trigger_id, created_at, state, classification, impl_authorized, review_only, rule_id, deadline_at, reminders FROM thread_issues WHERE thread_id = ?1 ORDER BY created_at DESC LIMIT 1
+`
+
+// Latest issue task of a thread.
+func (q *Queries) GetThreadIssueByThread(ctx context.Context, threadID string) (ThreadIssue, error) {
+	row := q.db.QueryRowContext(ctx, getThreadIssueByThread, threadID)
+	var i ThreadIssue
+	err := row.Scan(
+		&i.RepoID,
+		&i.Number,
+		&i.ThreadID,
+		&i.TriggerID,
+		&i.CreatedAt,
+		&i.State,
+		&i.Classification,
+		&i.ImplAuthorized,
+		&i.ReviewOnly,
+		&i.RuleID,
+		&i.DeadlineAt,
+		&i.Reminders,
 	)
 	return i, err
 }
@@ -468,6 +993,27 @@ SELECT EXISTS (SELECT 1 FROM github_deliveries WHERE guid = ?1)
 
 func (q *Queries) GithubDeliveryExists(ctx context.Context, guid string) (bool, error) {
 	row := q.db.QueryRowContext(ctx, githubDeliveryExists, guid)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const githubSelfKeyExists = `-- name: GithubSelfKeyExists :one
+SELECT EXISTS (SELECT 1 FROM github_self_keys WHERE key IN (/*SLICE:keys*/?))
+`
+
+func (q *Queries) GithubSelfKeyExists(ctx context.Context, keys []string) (bool, error) {
+	query := githubSelfKeyExists
+	var queryParams []interface{}
+	if len(keys) > 0 {
+		for _, v := range keys {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:keys*/?", strings.Repeat(",?", len(keys))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:keys*/?", "NULL", 1)
+	}
+	row := q.db.QueryRowContext(ctx, query, queryParams...)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
@@ -509,6 +1055,42 @@ func (q *Queries) InsertGithubApp(ctx context.Context, arg InsertGithubAppParams
 		arg.ClientSecretEnc,
 		arg.WebhookSecretEnc,
 		arg.CreatedAt,
+	)
+	return err
+}
+
+const insertGithubAudit = `-- name: InsertGithubAudit :exec
+
+INSERT INTO github_audit (at, thread_id, orb_id, slot, method, op, repo, status, gate, body_sha256)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+`
+
+type InsertGithubAuditParams struct {
+	At         int64   `json:"at"`
+	ThreadID   *string `json:"threadId"`
+	OrbID      string  `json:"orbId"`
+	Slot       string  `json:"slot"`
+	Method     string  `json:"method"`
+	Op         string  `json:"op"`
+	Repo       string  `json:"repo"`
+	Status     int64   `json:"status"`
+	Gate       string  `json:"gate"`
+	BodySha256 *string `json:"bodySha256"`
+}
+
+// ---------- audit ----------
+func (q *Queries) InsertGithubAudit(ctx context.Context, arg InsertGithubAuditParams) error {
+	_, err := q.db.ExecContext(ctx, insertGithubAudit,
+		arg.At,
+		arg.ThreadID,
+		arg.OrbID,
+		arg.Slot,
+		arg.Method,
+		arg.Op,
+		arg.Repo,
+		arg.Status,
+		arg.Gate,
+		arg.BodySha256,
 	)
 	return err
 }
@@ -577,6 +1159,63 @@ func (q *Queries) InsertGithubOutbox(ctx context.Context, arg InsertGithubOutbox
 		arg.CreatedAt,
 		arg.DeliverAfter,
 	)
+	return err
+}
+
+const insertGithubSelfKey = `-- name: InsertGithubSelfKey :exec
+INSERT OR IGNORE INTO github_self_keys (key, created_at) VALUES (?1, ?2)
+`
+
+type InsertGithubSelfKeyParams struct {
+	Key       string `json:"key"`
+	CreatedAt int64  `json:"createdAt"`
+}
+
+func (q *Queries) InsertGithubSelfKey(ctx context.Context, arg InsertGithubSelfKeyParams) error {
+	_, err := q.db.ExecContext(ctx, insertGithubSelfKey, arg.Key, arg.CreatedAt)
+	return err
+}
+
+const insertGithubSelfWrite = `-- name: InsertGithubSelfWrite :exec
+
+INSERT INTO github_self_writes (slot, category, target, body_sha256, created_at)
+VALUES (?1, ?2, ?3, ?4, ?5)
+`
+
+type InsertGithubSelfWriteParams struct {
+	Slot       string  `json:"slot"`
+	Category   string  `json:"category"`
+	Target     string  `json:"target"`
+	BodySha256 *string `json:"bodySha256"`
+	CreatedAt  int64   `json:"createdAt"`
+}
+
+// ---------- self writes ----------
+func (q *Queries) InsertGithubSelfWrite(ctx context.Context, arg InsertGithubSelfWriteParams) error {
+	_, err := q.db.ExecContext(ctx, insertGithubSelfWrite,
+		arg.Slot,
+		arg.Category,
+		arg.Target,
+		arg.BodySha256,
+		arg.CreatedAt,
+	)
+	return err
+}
+
+const insertGithubSenderRun = `-- name: InsertGithubSenderRun :exec
+
+INSERT INTO github_sender_runs (rule_id, sender, at) VALUES (?1, ?2, ?3)
+`
+
+type InsertGithubSenderRunParams struct {
+	RuleID string `json:"ruleId"`
+	Sender string `json:"sender"`
+	At     int64  `json:"at"`
+}
+
+// ---------- sender rate limit ----------
+func (q *Queries) InsertGithubSenderRun(ctx context.Context, arg InsertGithubSenderRunParams) error {
+	_, err := q.db.ExecContext(ctx, insertGithubSenderRun, arg.RuleID, arg.Sender, arg.At)
 	return err
 }
 
@@ -673,6 +1312,73 @@ func (q *Queries) LinkThreadPull(ctx context.Context, arg LinkThreadPullParams) 
 	return result.RowsAffected()
 }
 
+const linkThreadPullViaEgress = `-- name: LinkThreadPullViaEgress :execrows
+INSERT INTO thread_pulls (thread_id, repo_id, number, linked_at, created_via_egress)
+VALUES (?1, ?2, ?3, ?4, 1)
+ON CONFLICT (thread_id, repo_id, number) DO UPDATE SET created_via_egress = 1
+`
+
+type LinkThreadPullViaEgressParams struct {
+	ThreadID string `json:"threadId"`
+	RepoID   int64  `json:"repoId"`
+	Number   int64  `json:"number"`
+	LinkedAt int64  `json:"linkedAt"`
+}
+
+// A PR this thread created through egress: link it and mark the origin (an unlinked tombstone stays unlinked).
+func (q *Queries) LinkThreadPullViaEgress(ctx context.Context, arg LinkThreadPullViaEgressParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, linkThreadPullViaEgress,
+		arg.ThreadID,
+		arg.RepoID,
+		arg.Number,
+		arg.LinkedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const listActiveGithubHooks = `-- name: ListActiveGithubHooks :many
+SELECT repo_id, full_name, hook_id, secret_enc, status, error, delivery_cursor, deliveries_etag, last_delivery_at, last_delivery_src, last_webhook_at, updated_at FROM github_hooks WHERE status = 'active' AND hook_id IS NOT NULL ORDER BY repo_id
+`
+
+func (q *Queries) ListActiveGithubHooks(ctx context.Context) ([]GithubHook, error) {
+	rows, err := q.db.QueryContext(ctx, listActiveGithubHooks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GithubHook{}
+	for rows.Next() {
+		var i GithubHook
+		if err := rows.Scan(
+			&i.RepoID,
+			&i.FullName,
+			&i.HookID,
+			&i.SecretEnc,
+			&i.Status,
+			&i.Error,
+			&i.DeliveryCursor,
+			&i.DeliveriesEtag,
+			&i.LastDeliveryAt,
+			&i.LastDeliverySrc,
+			&i.LastWebhookAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDueGithubOutbox = `-- name: ListDueGithubOutbox :many
 SELECT id, thread_id, repo_id, number, is_pull, title, url, kind, item, created_at, deliver_after, delivered_at FROM github_outbox
 WHERE delivered_at IS NULL AND deliver_after <= ?1
@@ -715,8 +1421,51 @@ func (q *Queries) ListDueGithubOutbox(ctx context.Context, now int64) ([]GithubO
 	return items, nil
 }
 
+const listDueThreadIssueDeadlines = `-- name: ListDueThreadIssueDeadlines :many
+SELECT repo_id, number, thread_id, trigger_id, created_at, state, classification, impl_authorized, review_only, rule_id, deadline_at, reminders FROM thread_issues
+WHERE deadline_at IS NOT NULL AND deadline_at <= ?1 AND state NOT IN ('merged','closed','abandoned')
+ORDER BY deadline_at
+`
+
+// Due deadlines of non-terminal tasks.
+func (q *Queries) ListDueThreadIssueDeadlines(ctx context.Context, now *int64) ([]ThreadIssue, error) {
+	rows, err := q.db.QueryContext(ctx, listDueThreadIssueDeadlines, now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ThreadIssue{}
+	for rows.Next() {
+		var i ThreadIssue
+		if err := rows.Scan(
+			&i.RepoID,
+			&i.Number,
+			&i.ThreadID,
+			&i.TriggerID,
+			&i.CreatedAt,
+			&i.State,
+			&i.Classification,
+			&i.ImplAuthorized,
+			&i.ReviewOnly,
+			&i.RuleID,
+			&i.DeadlineAt,
+			&i.Reminders,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEnabledGithubTriggersByRepo = `-- name: ListEnabledGithubTriggersByRepo :many
-SELECT gt.id, gt.project_id, gt.name, gt.event, gt.label, gt.prompt, gt.enabled, gt.announce, gt.run_count, gt.last_run_at, gt.created_at, gt.updated_at FROM github_triggers gt JOIN projects p ON p.id = gt.project_id
+SELECT gt.id, gt.project_id, gt.name, gt.event, gt.label, gt.prompt, gt.enabled, gt.announce, gt.run_count, gt.last_run_at, gt.created_at, gt.updated_at, gt.drivers, gt.maintainers, gt.reviewer_bots, gt.models, gt.thinking, gt.impl_auth, gt.comment_only_reviews, gt.autoclose_hours, gt.max_duration_sec, gt.completion_reminders, gt.release_prefix FROM github_triggers gt JOIN projects p ON p.id = gt.project_id
 WHERE p.github_repo_id = ?1 AND p.github_installation_id IS NOT NULL AND p.archived_at IS NULL
   AND gt.enabled = 1 AND gt.event = ?2
 ORDER BY gt.created_at, gt.id
@@ -749,6 +1498,110 @@ func (q *Queries) ListEnabledGithubTriggersByRepo(ctx context.Context, arg ListE
 			&i.LastRunAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Drivers,
+			&i.Maintainers,
+			&i.ReviewerBots,
+			&i.Models,
+			&i.Thinking,
+			&i.ImplAuth,
+			&i.CommentOnlyReviews,
+			&i.AutocloseHours,
+			&i.MaxDurationSec,
+			&i.CompletionReminders,
+			&i.ReleasePrefix,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGithubAudit = `-- name: ListGithubAudit :many
+SELECT id, at, thread_id, orb_id, slot, method, op, repo, status, gate, body_sha256 FROM github_audit
+WHERE (CAST(?1 AS TEXT) IS NULL OR thread_id = CAST(?1 AS TEXT))
+  AND (CAST(?2 AS TEXT) IS NULL OR repo = CAST(?2 AS TEXT))
+  AND at < ?3
+ORDER BY at DESC, id DESC
+LIMIT ?4
+`
+
+type ListGithubAuditParams struct {
+	ThreadID *string `json:"threadId"`
+	Repo     *string `json:"repo"`
+	Before   int64   `json:"before"`
+	Limit    int64   `json:"limit"`
+}
+
+// thread_id / repo NULL = no filter. Newest first; page with @before (exclusive).
+func (q *Queries) ListGithubAudit(ctx context.Context, arg ListGithubAuditParams) ([]GithubAudit, error) {
+	rows, err := q.db.QueryContext(ctx, listGithubAudit,
+		arg.ThreadID,
+		arg.Repo,
+		arg.Before,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GithubAudit{}
+	for rows.Next() {
+		var i GithubAudit
+		if err := rows.Scan(
+			&i.ID,
+			&i.At,
+			&i.ThreadID,
+			&i.OrbID,
+			&i.Slot,
+			&i.Method,
+			&i.Op,
+			&i.Repo,
+			&i.Status,
+			&i.Gate,
+			&i.BodySha256,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGithubAutoclosesByThread = `-- name: ListGithubAutoclosesByThread :many
+SELECT repo_id, number, thread_id, comment_id, author, due_at, state, outcome FROM github_autoclose WHERE thread_id = ?1 ORDER BY due_at
+`
+
+func (q *Queries) ListGithubAutoclosesByThread(ctx context.Context, threadID string) ([]GithubAutoclose, error) {
+	rows, err := q.db.QueryContext(ctx, listGithubAutoclosesByThread, threadID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GithubAutoclose{}
+	for rows.Next() {
+		var i GithubAutoclose
+		if err := rows.Scan(
+			&i.RepoID,
+			&i.Number,
+			&i.ThreadID,
+			&i.CommentID,
+			&i.Author,
+			&i.DueAt,
+			&i.State,
+			&i.Outcome,
 		); err != nil {
 			return nil, err
 		}
@@ -764,7 +1617,7 @@ func (q *Queries) ListEnabledGithubTriggersByRepo(ctx context.Context, arg ListE
 }
 
 const listGithubCandidateProjects = `-- name: ListGithubCandidateProjects :many
-SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_owner_id, github_installation_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci FROM projects WHERE archived_at IS NULL AND repo_url LIKE 'https://github.com/%' ORDER BY created_at
+SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_owner_id, github_installation_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci, github_bind_status, github_gates FROM projects WHERE archived_at IS NULL AND repo_url LIKE 'https://github.com/%' ORDER BY created_at
 `
 
 func (q *Queries) ListGithubCandidateProjects(ctx context.Context) ([]Project, error) {
@@ -803,6 +1656,48 @@ func (q *Queries) ListGithubCandidateProjects(ctx context.Context) ([]Project, e
 			&i.GithubListenReviews,
 			&i.GithubListenComments,
 			&i.GithubListenCi,
+			&i.GithubBindStatus,
+			&i.GithubGates,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGithubHooks = `-- name: ListGithubHooks :many
+SELECT repo_id, full_name, hook_id, secret_enc, status, error, delivery_cursor, deliveries_etag, last_delivery_at, last_delivery_src, last_webhook_at, updated_at FROM github_hooks ORDER BY full_name, repo_id
+`
+
+func (q *Queries) ListGithubHooks(ctx context.Context) ([]GithubHook, error) {
+	rows, err := q.db.QueryContext(ctx, listGithubHooks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GithubHook{}
+	for rows.Next() {
+		var i GithubHook
+		if err := rows.Scan(
+			&i.RepoID,
+			&i.FullName,
+			&i.HookID,
+			&i.SecretEnc,
+			&i.Status,
+			&i.Error,
+			&i.DeliveryCursor,
+			&i.DeliveriesEtag,
+			&i.LastDeliveryAt,
+			&i.LastDeliverySrc,
+			&i.LastWebhookAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -818,7 +1713,7 @@ func (q *Queries) ListGithubCandidateProjects(ctx context.Context) ([]Project, e
 }
 
 const listGithubIdentities = `-- name: ListGithubIdentities :many
-SELECT slot, github_id, login, name, avatar_url, access_token_enc, access_expires_at, refresh_token_enc, refresh_expires_at, status, connected_at, updated_at FROM github_identities ORDER BY slot
+SELECT slot, github_id, login, name, avatar_url, access_token_enc, access_expires_at, refresh_token_enc, refresh_expires_at, status, connected_at, updated_at, scopes FROM github_identities ORDER BY slot
 `
 
 func (q *Queries) ListGithubIdentities(ctx context.Context) ([]GithubIdentity, error) {
@@ -843,6 +1738,7 @@ func (q *Queries) ListGithubIdentities(ctx context.Context) ([]GithubIdentity, e
 			&i.Status,
 			&i.ConnectedAt,
 			&i.UpdatedAt,
+			&i.Scopes,
 		); err != nil {
 			return nil, err
 		}
@@ -893,9 +1789,159 @@ func (q *Queries) ListGithubInstallations(ctx context.Context) ([]GithubInstalla
 	return items, nil
 }
 
+const listGithubReleases = `-- name: ListGithubReleases :many
+SELECT repo_id, version, sha, tag_oid, thread_id, state, rounds, updated_at FROM github_releases ORDER BY updated_at DESC, repo_id, version
+`
+
+func (q *Queries) ListGithubReleases(ctx context.Context) ([]GithubRelease, error) {
+	rows, err := q.db.QueryContext(ctx, listGithubReleases)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GithubRelease{}
+	for rows.Next() {
+		var i GithubRelease
+		if err := rows.Scan(
+			&i.RepoID,
+			&i.Version,
+			&i.Sha,
+			&i.TagOid,
+			&i.ThreadID,
+			&i.State,
+			&i.Rounds,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGithubReleasesByRepo = `-- name: ListGithubReleasesByRepo :many
+SELECT repo_id, version, sha, tag_oid, thread_id, state, rounds, updated_at FROM github_releases WHERE repo_id = ?1 ORDER BY updated_at DESC, version
+`
+
+func (q *Queries) ListGithubReleasesByRepo(ctx context.Context, repoID int64) ([]GithubRelease, error) {
+	rows, err := q.db.QueryContext(ctx, listGithubReleasesByRepo, repoID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GithubRelease{}
+	for rows.Next() {
+		var i GithubRelease
+		if err := rows.Scan(
+			&i.RepoID,
+			&i.Version,
+			&i.Sha,
+			&i.TagOid,
+			&i.ThreadID,
+			&i.State,
+			&i.Rounds,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGithubRepoWatches = `-- name: ListGithubRepoWatches :many
+SELECT repo_id, full_name, etag_issues, etag_comments, etag_pulls, etag_runs, since_at, updated_at FROM github_repo_watches ORDER BY repo_id
+`
+
+func (q *Queries) ListGithubRepoWatches(ctx context.Context) ([]GithubRepoWatch, error) {
+	rows, err := q.db.QueryContext(ctx, listGithubRepoWatches)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GithubRepoWatch{}
+	for rows.Next() {
+		var i GithubRepoWatch
+		if err := rows.Scan(
+			&i.RepoID,
+			&i.FullName,
+			&i.EtagIssues,
+			&i.EtagComments,
+			&i.EtagPulls,
+			&i.EtagRuns,
+			&i.SinceAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGithubSelfWrites = `-- name: ListGithubSelfWrites :many
+SELECT id, slot, category, target, body_sha256, created_at FROM github_self_writes
+WHERE target = ?1 AND category = ?2 AND created_at >= ?3
+ORDER BY id
+`
+
+type ListGithubSelfWritesParams struct {
+	Target   string `json:"target"`
+	Category string `json:"category"`
+	Since    int64  `json:"since"`
+}
+
+func (q *Queries) ListGithubSelfWrites(ctx context.Context, arg ListGithubSelfWritesParams) ([]GithubSelfWrite, error) {
+	rows, err := q.db.QueryContext(ctx, listGithubSelfWrites, arg.Target, arg.Category, arg.Since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GithubSelfWrite{}
+	for rows.Next() {
+		var i GithubSelfWrite
+		if err := rows.Scan(
+			&i.ID,
+			&i.Slot,
+			&i.Category,
+			&i.Target,
+			&i.BodySha256,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listGithubTriggers = `-- name: ListGithubTriggers :many
 
-SELECT id, project_id, name, event, label, prompt, enabled, announce, run_count, last_run_at, created_at, updated_at FROM github_triggers WHERE project_id = ?1 ORDER BY created_at, id
+SELECT id, project_id, name, event, label, prompt, enabled, announce, run_count, last_run_at, created_at, updated_at, drivers, maintainers, reviewer_bots, models, thinking, impl_auth, comment_only_reviews, autoclose_hours, max_duration_sec, completion_reminders, release_prefix FROM github_triggers WHERE project_id = ?1 ORDER BY created_at, id
 `
 
 // ---------- triggers ----------
@@ -921,6 +1967,140 @@ func (q *Queries) ListGithubTriggers(ctx context.Context, projectID string) ([]G
 			&i.LastRunAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Drivers,
+			&i.Maintainers,
+			&i.ReviewerBots,
+			&i.Models,
+			&i.Thinking,
+			&i.ImplAuth,
+			&i.CommentOnlyReviews,
+			&i.AutocloseHours,
+			&i.MaxDurationSec,
+			&i.CompletionReminders,
+			&i.ReleasePrefix,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGithubWatches = `-- name: ListGithubWatches :many
+SELECT kind, repo_id, full_name, number, thread_id, slot, etag_issue, etag_comments, etag_reviews, etag_review_comments, etag_checks, last_seen_at, done_at FROM github_watches ORDER BY kind, full_name, number
+`
+
+func (q *Queries) ListGithubWatches(ctx context.Context) ([]GithubWatch, error) {
+	rows, err := q.db.QueryContext(ctx, listGithubWatches)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GithubWatch{}
+	for rows.Next() {
+		var i GithubWatch
+		if err := rows.Scan(
+			&i.Kind,
+			&i.RepoID,
+			&i.FullName,
+			&i.Number,
+			&i.ThreadID,
+			&i.Slot,
+			&i.EtagIssue,
+			&i.EtagComments,
+			&i.EtagReviews,
+			&i.EtagReviewComments,
+			&i.EtagChecks,
+			&i.LastSeenAt,
+			&i.DoneAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGithubWatchesByRepo = `-- name: ListGithubWatchesByRepo :many
+SELECT kind, repo_id, full_name, number, thread_id, slot, etag_issue, etag_comments, etag_reviews, etag_review_comments, etag_checks, last_seen_at, done_at FROM github_watches WHERE repo_id = ?1 ORDER BY kind, number
+`
+
+func (q *Queries) ListGithubWatchesByRepo(ctx context.Context, repoID int64) ([]GithubWatch, error) {
+	rows, err := q.db.QueryContext(ctx, listGithubWatchesByRepo, repoID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GithubWatch{}
+	for rows.Next() {
+		var i GithubWatch
+		if err := rows.Scan(
+			&i.Kind,
+			&i.RepoID,
+			&i.FullName,
+			&i.Number,
+			&i.ThreadID,
+			&i.Slot,
+			&i.EtagIssue,
+			&i.EtagComments,
+			&i.EtagReviews,
+			&i.EtagReviewComments,
+			&i.EtagChecks,
+			&i.LastSeenAt,
+			&i.DoneAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGithubWatchesByThread = `-- name: ListGithubWatchesByThread :many
+SELECT kind, repo_id, full_name, number, thread_id, slot, etag_issue, etag_comments, etag_reviews, etag_review_comments, etag_checks, last_seen_at, done_at FROM github_watches WHERE thread_id = ?1 ORDER BY kind, full_name, number
+`
+
+func (q *Queries) ListGithubWatchesByThread(ctx context.Context, threadID string) ([]GithubWatch, error) {
+	rows, err := q.db.QueryContext(ctx, listGithubWatchesByThread, threadID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GithubWatch{}
+	for rows.Next() {
+		var i GithubWatch
+		if err := rows.Scan(
+			&i.Kind,
+			&i.RepoID,
+			&i.FullName,
+			&i.Number,
+			&i.ThreadID,
+			&i.Slot,
+			&i.EtagIssue,
+			&i.EtagComments,
+			&i.EtagReviews,
+			&i.EtagReviewComments,
+			&i.EtagChecks,
+			&i.LastSeenAt,
+			&i.DoneAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1107,7 +2287,7 @@ func (q *Queries) ListPendingGithubOutboxByKey(ctx context.Context, arg ListPend
 }
 
 const listProjectsByGithubRepo = `-- name: ListProjectsByGithubRepo :many
-SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_owner_id, github_installation_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci FROM projects
+SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_owner_id, github_installation_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci, github_bind_status, github_gates FROM projects
 WHERE github_repo_id = ?1 AND github_installation_id IS NOT NULL AND archived_at IS NULL
 ORDER BY created_at
 `
@@ -1149,6 +2329,8 @@ func (q *Queries) ListProjectsByGithubRepo(ctx context.Context, repoID *int64) (
 			&i.GithubListenReviews,
 			&i.GithubListenComments,
 			&i.GithubListenCi,
+			&i.GithubBindStatus,
+			&i.GithubGates,
 		); err != nil {
 			return nil, err
 		}
@@ -1164,7 +2346,7 @@ func (q *Queries) ListProjectsByGithubRepo(ctx context.Context, repoID *int64) (
 }
 
 const listProjectsByGithubRepoAny = `-- name: ListProjectsByGithubRepoAny :many
-SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_owner_id, github_installation_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci FROM projects WHERE github_repo_id = ?1 ORDER BY created_at
+SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_owner_id, github_installation_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci, github_bind_status, github_gates FROM projects WHERE github_repo_id = ?1 ORDER BY created_at
 `
 
 // Every project that ever recorded this repo id (rename following).
@@ -1204,6 +2386,8 @@ func (q *Queries) ListProjectsByGithubRepoAny(ctx context.Context, repoID *int64
 			&i.GithubListenReviews,
 			&i.GithubListenComments,
 			&i.GithubListenCi,
+			&i.GithubBindStatus,
+			&i.GithubGates,
 		); err != nil {
 			return nil, err
 		}
@@ -1244,6 +2428,46 @@ func (q *Queries) ListSamplingCandidates(ctx context.Context, arg ListSamplingCa
 			return nil, err
 		}
 		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listThreadIssues = `-- name: ListThreadIssues :many
+SELECT repo_id, number, thread_id, trigger_id, created_at, state, classification, impl_authorized, review_only, rule_id, deadline_at, reminders FROM thread_issues ORDER BY created_at DESC, repo_id, number
+`
+
+func (q *Queries) ListThreadIssues(ctx context.Context) ([]ThreadIssue, error) {
+	rows, err := q.db.QueryContext(ctx, listThreadIssues)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ThreadIssue{}
+	for rows.Next() {
+		var i ThreadIssue
+		if err := rows.Scan(
+			&i.RepoID,
+			&i.Number,
+			&i.ThreadID,
+			&i.TriggerID,
+			&i.CreatedAt,
+			&i.State,
+			&i.Classification,
+			&i.ImplAuthorized,
+			&i.ReviewOnly,
+			&i.RuleID,
+			&i.DeadlineAt,
+			&i.Reminders,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -1449,6 +2673,25 @@ func (q *Queries) PullsForThreadCommits(ctx context.Context, threadID string) ([
 	return items, nil
 }
 
+const replayGithubDelivery = `-- name: ReplayGithubDelivery :execrows
+UPDATE github_deliveries SET outcome = 'pending', attempts = 0
+WHERE guid = ?1 AND outcome <> 'pending' AND received_at >= ?2 AND payload IS NOT NULL
+`
+
+type ReplayGithubDeliveryParams struct {
+	Guid  string `json:"guid"`
+	Since int64  `json:"since"`
+}
+
+// Replay: only finished deliveries received since @since whose payload is still kept go back to pending.
+func (q *Queries) ReplayGithubDelivery(ctx context.Context, arg ReplayGithubDeliveryParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, replayGithubDelivery, arg.Guid, arg.Since)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const resetGithubPullCIRounds = `-- name: ResetGithubPullCIRounds :exec
 UPDATE thread_pulls SET ci_rounds = 0 WHERE repo_id = ?1 AND number = ?2 AND ci_rounds <> 0
 `
@@ -1469,6 +2712,72 @@ UPDATE github_app SET hook_cursor = ?1 WHERE id = 1
 
 func (q *Queries) SetGithubHookCursor(ctx context.Context, hookCursor int64) error {
 	_, err := q.db.ExecContext(ctx, setGithubHookCursor, hookCursor)
+	return err
+}
+
+const setGithubHookDeliveryCursor = `-- name: SetGithubHookDeliveryCursor :exec
+UPDATE github_hooks SET delivery_cursor = ?1, deliveries_etag = ?2
+WHERE repo_id = ?3
+`
+
+type SetGithubHookDeliveryCursorParams struct {
+	DeliveryCursor int64   `json:"deliveryCursor"`
+	DeliveriesEtag *string `json:"deliveriesEtag"`
+	RepoID         int64   `json:"repoId"`
+}
+
+func (q *Queries) SetGithubHookDeliveryCursor(ctx context.Context, arg SetGithubHookDeliveryCursorParams) error {
+	_, err := q.db.ExecContext(ctx, setGithubHookDeliveryCursor, arg.DeliveryCursor, arg.DeliveriesEtag, arg.RepoID)
+	return err
+}
+
+const setGithubHookStatus = `-- name: SetGithubHookStatus :exec
+UPDATE github_hooks SET status = ?1, error = ?2, updated_at = ?3 WHERE repo_id = ?4
+`
+
+type SetGithubHookStatusParams struct {
+	Status    string  `json:"status"`
+	Error     *string `json:"error"`
+	UpdatedAt int64   `json:"updatedAt"`
+	RepoID    int64   `json:"repoId"`
+}
+
+func (q *Queries) SetGithubHookStatus(ctx context.Context, arg SetGithubHookStatusParams) error {
+	_, err := q.db.ExecContext(ctx, setGithubHookStatus,
+		arg.Status,
+		arg.Error,
+		arg.UpdatedAt,
+		arg.RepoID,
+	)
+	return err
+}
+
+const setGithubHooksRepoName = `-- name: SetGithubHooksRepoName :exec
+UPDATE github_hooks SET full_name = ?1 WHERE repo_id = ?2
+`
+
+type SetGithubHooksRepoNameParams struct {
+	FullName string `json:"fullName"`
+	RepoID   int64  `json:"repoId"`
+}
+
+func (q *Queries) SetGithubHooksRepoName(ctx context.Context, arg SetGithubHooksRepoNameParams) error {
+	_, err := q.db.ExecContext(ctx, setGithubHooksRepoName, arg.FullName, arg.RepoID)
+	return err
+}
+
+const setGithubIdentityScopes = `-- name: SetGithubIdentityScopes :exec
+UPDATE github_identities SET scopes = ?1, updated_at = ?2 WHERE slot = ?3
+`
+
+type SetGithubIdentityScopesParams struct {
+	Scopes    string `json:"scopes"`
+	UpdatedAt int64  `json:"updatedAt"`
+	Slot      string `json:"slot"`
+}
+
+func (q *Queries) SetGithubIdentityScopes(ctx context.Context, arg SetGithubIdentityScopesParams) error {
+	_, err := q.db.ExecContext(ctx, setGithubIdentityScopes, arg.Scopes, arg.UpdatedAt, arg.Slot)
 	return err
 }
 
@@ -1552,6 +2861,196 @@ func (q *Queries) SetGithubPullsRepoName(ctx context.Context, arg SetGithubPulls
 	return err
 }
 
+const setGithubReleaseState = `-- name: SetGithubReleaseState :exec
+UPDATE github_releases SET state = ?1, rounds = ?2, updated_at = ?3
+WHERE repo_id = ?4 AND version = ?5
+`
+
+type SetGithubReleaseStateParams struct {
+	State     string `json:"state"`
+	Rounds    int64  `json:"rounds"`
+	UpdatedAt int64  `json:"updatedAt"`
+	RepoID    int64  `json:"repoId"`
+	Version   string `json:"version"`
+}
+
+func (q *Queries) SetGithubReleaseState(ctx context.Context, arg SetGithubReleaseStateParams) error {
+	_, err := q.db.ExecContext(ctx, setGithubReleaseState,
+		arg.State,
+		arg.Rounds,
+		arg.UpdatedAt,
+		arg.RepoID,
+		arg.Version,
+	)
+	return err
+}
+
+const setGithubReleaseThread = `-- name: SetGithubReleaseThread :exec
+UPDATE github_releases SET thread_id = ?1, updated_at = ?2
+WHERE repo_id = ?3 AND version = ?4
+`
+
+type SetGithubReleaseThreadParams struct {
+	ThreadID  *string `json:"threadId"`
+	UpdatedAt int64   `json:"updatedAt"`
+	RepoID    int64   `json:"repoId"`
+	Version   string  `json:"version"`
+}
+
+func (q *Queries) SetGithubReleaseThread(ctx context.Context, arg SetGithubReleaseThreadParams) error {
+	_, err := q.db.ExecContext(ctx, setGithubReleaseThread,
+		arg.ThreadID,
+		arg.UpdatedAt,
+		arg.RepoID,
+		arg.Version,
+	)
+	return err
+}
+
+const setGithubRepoWatchState = `-- name: SetGithubRepoWatchState :exec
+UPDATE github_repo_watches
+SET etag_issues = ?1, etag_comments = ?2, etag_pulls = ?3,
+    etag_runs = ?4, since_at = ?5, updated_at = ?6
+WHERE repo_id = ?7
+`
+
+type SetGithubRepoWatchStateParams struct {
+	EtagIssues   *string `json:"etagIssues"`
+	EtagComments *string `json:"etagComments"`
+	EtagPulls    *string `json:"etagPulls"`
+	EtagRuns     *string `json:"etagRuns"`
+	SinceAt      *int64  `json:"sinceAt"`
+	UpdatedAt    int64   `json:"updatedAt"`
+	RepoID       int64   `json:"repoId"`
+}
+
+func (q *Queries) SetGithubRepoWatchState(ctx context.Context, arg SetGithubRepoWatchStateParams) error {
+	_, err := q.db.ExecContext(ctx, setGithubRepoWatchState,
+		arg.EtagIssues,
+		arg.EtagComments,
+		arg.EtagPulls,
+		arg.EtagRuns,
+		arg.SinceAt,
+		arg.UpdatedAt,
+		arg.RepoID,
+	)
+	return err
+}
+
+const setGithubTriggerOptions = `-- name: SetGithubTriggerOptions :exec
+UPDATE github_triggers
+SET drivers = ?1, maintainers = ?2, reviewer_bots = ?3, models = ?4,
+    thinking = ?5, impl_auth = ?6, comment_only_reviews = ?7,
+    autoclose_hours = ?8, max_duration_sec = ?9,
+    completion_reminders = ?10, release_prefix = ?11, updated_at = ?12
+WHERE id = ?13
+`
+
+type SetGithubTriggerOptionsParams struct {
+	Drivers             string  `json:"drivers"`
+	Maintainers         string  `json:"maintainers"`
+	ReviewerBots        string  `json:"reviewerBots"`
+	Models              string  `json:"models"`
+	Thinking            *string `json:"thinking"`
+	ImplAuth            bool    `json:"implAuth"`
+	CommentOnlyReviews  bool    `json:"commentOnlyReviews"`
+	AutocloseHours      *int64  `json:"autocloseHours"`
+	MaxDurationSec      *int64  `json:"maxDurationSec"`
+	CompletionReminders bool    `json:"completionReminders"`
+	ReleasePrefix       *string `json:"releasePrefix"`
+	UpdatedAt           int64   `json:"updatedAt"`
+	ID                  string  `json:"id"`
+}
+
+func (q *Queries) SetGithubTriggerOptions(ctx context.Context, arg SetGithubTriggerOptionsParams) error {
+	_, err := q.db.ExecContext(ctx, setGithubTriggerOptions,
+		arg.Drivers,
+		arg.Maintainers,
+		arg.ReviewerBots,
+		arg.Models,
+		arg.Thinking,
+		arg.ImplAuth,
+		arg.CommentOnlyReviews,
+		arg.AutocloseHours,
+		arg.MaxDurationSec,
+		arg.CompletionReminders,
+		arg.ReleasePrefix,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	return err
+}
+
+const setGithubWatchDone = `-- name: SetGithubWatchDone :exec
+UPDATE github_watches SET done_at = ?1 WHERE kind = ?2 AND full_name = ?3 AND number = ?4
+`
+
+type SetGithubWatchDoneParams struct {
+	DoneAt   *int64 `json:"doneAt"`
+	Kind     string `json:"kind"`
+	FullName string `json:"fullName"`
+	Number   int64  `json:"number"`
+}
+
+func (q *Queries) SetGithubWatchDone(ctx context.Context, arg SetGithubWatchDoneParams) error {
+	_, err := q.db.ExecContext(ctx, setGithubWatchDone,
+		arg.DoneAt,
+		arg.Kind,
+		arg.FullName,
+		arg.Number,
+	)
+	return err
+}
+
+const setGithubWatchState = `-- name: SetGithubWatchState :exec
+UPDATE github_watches
+SET etag_issue = ?1, etag_comments = ?2, etag_reviews = ?3,
+    etag_review_comments = ?4, etag_checks = ?5,
+    last_seen_at = ?6
+WHERE kind = ?7 AND full_name = ?8 AND number = ?9
+`
+
+type SetGithubWatchStateParams struct {
+	EtagIssue          *string `json:"etagIssue"`
+	EtagComments       *string `json:"etagComments"`
+	EtagReviews        *string `json:"etagReviews"`
+	EtagReviewComments *string `json:"etagReviewComments"`
+	EtagChecks         *string `json:"etagChecks"`
+	LastSeenAt         *int64  `json:"lastSeenAt"`
+	Kind               string  `json:"kind"`
+	FullName           string  `json:"fullName"`
+	Number             int64   `json:"number"`
+}
+
+func (q *Queries) SetGithubWatchState(ctx context.Context, arg SetGithubWatchStateParams) error {
+	_, err := q.db.ExecContext(ctx, setGithubWatchState,
+		arg.EtagIssue,
+		arg.EtagComments,
+		arg.EtagReviews,
+		arg.EtagReviewComments,
+		arg.EtagChecks,
+		arg.LastSeenAt,
+		arg.Kind,
+		arg.FullName,
+		arg.Number,
+	)
+	return err
+}
+
+const setGithubWatchesRepoName = `-- name: SetGithubWatchesRepoName :exec
+UPDATE github_watches SET full_name = ?1 WHERE repo_id = ?2
+`
+
+type SetGithubWatchesRepoNameParams struct {
+	FullName string `json:"fullName"`
+	RepoID   int64  `json:"repoId"`
+}
+
+func (q *Queries) SetGithubWatchesRepoName(ctx context.Context, arg SetGithubWatchesRepoNameParams) error {
+	_, err := q.db.ExecContext(ctx, setGithubWatchesRepoName, arg.FullName, arg.RepoID)
+	return err
+}
+
 const setOwnerGithubAutomation = `-- name: SetOwnerGithubAutomation :execrows
 UPDATE owner SET github_automation_identity = ?1 WHERE id = 1
 `
@@ -1586,6 +3085,35 @@ func (q *Queries) SetProjectGithub(ctx context.Context, arg SetProjectGithubPara
 		arg.GithubInstallationID,
 		arg.ID,
 	)
+	return err
+}
+
+const setProjectGithubBindStatus = `-- name: SetProjectGithubBindStatus :exec
+UPDATE projects SET github_bind_status = ?1 WHERE id = ?2
+`
+
+type SetProjectGithubBindStatusParams struct {
+	GithubBindStatus *string `json:"githubBindStatus"`
+	ID               string  `json:"id"`
+}
+
+func (q *Queries) SetProjectGithubBindStatus(ctx context.Context, arg SetProjectGithubBindStatusParams) error {
+	_, err := q.db.ExecContext(ctx, setProjectGithubBindStatus, arg.GithubBindStatus, arg.ID)
+	return err
+}
+
+const setProjectGithubGates = `-- name: SetProjectGithubGates :exec
+UPDATE projects SET github_gates = ?1, updated_at = ?2 WHERE id = ?3
+`
+
+type SetProjectGithubGatesParams struct {
+	GithubGates *string `json:"githubGates"`
+	UpdatedAt   int64   `json:"updatedAt"`
+	ID          string  `json:"id"`
+}
+
+func (q *Queries) SetProjectGithubGates(ctx context.Context, arg SetProjectGithubGatesParams) error {
+	_, err := q.db.ExecContext(ctx, setProjectGithubGates, arg.GithubGates, arg.UpdatedAt, arg.ID)
 	return err
 }
 
@@ -1631,6 +3159,97 @@ func (q *Queries) SetProjectRepoURL(ctx context.Context, arg SetProjectRepoURLPa
 		arg.GithubPrevUrls,
 		arg.UpdatedAt,
 		arg.ID,
+	)
+	return err
+}
+
+const setThreadIssueClassification = `-- name: SetThreadIssueClassification :execrows
+UPDATE thread_issues SET classification = ?1 WHERE thread_id = ?2
+`
+
+type SetThreadIssueClassificationParams struct {
+	Classification *string `json:"classification"`
+	ThreadID       string  `json:"threadId"`
+}
+
+func (q *Queries) SetThreadIssueClassification(ctx context.Context, arg SetThreadIssueClassificationParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setThreadIssueClassification, arg.Classification, arg.ThreadID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setThreadIssueDeadline = `-- name: SetThreadIssueDeadline :exec
+UPDATE thread_issues SET deadline_at = ?1 WHERE thread_id = ?2
+`
+
+type SetThreadIssueDeadlineParams struct {
+	DeadlineAt *int64 `json:"deadlineAt"`
+	ThreadID   string `json:"threadId"`
+}
+
+func (q *Queries) SetThreadIssueDeadline(ctx context.Context, arg SetThreadIssueDeadlineParams) error {
+	_, err := q.db.ExecContext(ctx, setThreadIssueDeadline, arg.DeadlineAt, arg.ThreadID)
+	return err
+}
+
+const setThreadIssueImplAuthorized = `-- name: SetThreadIssueImplAuthorized :execrows
+UPDATE thread_issues SET impl_authorized = ?1 WHERE repo_id = ?2 AND number = ?3
+`
+
+type SetThreadIssueImplAuthorizedParams struct {
+	ImplAuthorized bool  `json:"implAuthorized"`
+	RepoID         int64 `json:"repoId"`
+	Number         int64 `json:"number"`
+}
+
+func (q *Queries) SetThreadIssueImplAuthorized(ctx context.Context, arg SetThreadIssueImplAuthorizedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setThreadIssueImplAuthorized, arg.ImplAuthorized, arg.RepoID, arg.Number)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setThreadIssueState = `-- name: SetThreadIssueState :execrows
+UPDATE thread_issues SET state = ?1 WHERE thread_id = ?2
+`
+
+type SetThreadIssueStateParams struct {
+	State    string `json:"state"`
+	ThreadID string `json:"threadId"`
+}
+
+func (q *Queries) SetThreadIssueState(ctx context.Context, arg SetThreadIssueStateParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setThreadIssueState, arg.State, arg.ThreadID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setThreadIssueTask = `-- name: SetThreadIssueTask :exec
+UPDATE thread_issues SET rule_id = ?1, review_only = ?2, deadline_at = ?3
+WHERE repo_id = ?4 AND number = ?5
+`
+
+type SetThreadIssueTaskParams struct {
+	RuleID     *string `json:"ruleId"`
+	ReviewOnly bool    `json:"reviewOnly"`
+	DeadlineAt *int64  `json:"deadlineAt"`
+	RepoID     int64   `json:"repoId"`
+	Number     int64   `json:"number"`
+}
+
+// Task options fixed when a rule creates the thread.
+func (q *Queries) SetThreadIssueTask(ctx context.Context, arg SetThreadIssueTaskParams) error {
+	_, err := q.db.ExecContext(ctx, setThreadIssueTask,
+		arg.RuleID,
+		arg.ReviewOnly,
+		arg.DeadlineAt,
+		arg.RepoID,
+		arg.Number,
 	)
 	return err
 }
@@ -1684,6 +3303,51 @@ func (q *Queries) SetThreadPullListening(ctx context.Context, arg SetThreadPullL
 	return result.RowsAffected()
 }
 
+const supersedeGithubReleases = `-- name: SupersedeGithubReleases :many
+UPDATE github_releases SET state = 'superseded', updated_at = ?1
+WHERE repo_id = ?2 AND version <> ?3 AND state IN ('awaiting_ci','fixing')
+RETURNING repo_id, version, sha, tag_oid, thread_id, state, rounds, updated_at
+`
+
+type SupersedeGithubReleasesParams struct {
+	UpdatedAt int64  `json:"updatedAt"`
+	RepoID    int64  `json:"repoId"`
+	Version   string `json:"version"`
+}
+
+// A newer version of the same repo supersedes every unfinished older one.
+func (q *Queries) SupersedeGithubReleases(ctx context.Context, arg SupersedeGithubReleasesParams) ([]GithubRelease, error) {
+	rows, err := q.db.QueryContext(ctx, supersedeGithubReleases, arg.UpdatedAt, arg.RepoID, arg.Version)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GithubRelease{}
+	for rows.Next() {
+		var i GithubRelease
+		if err := rows.Scan(
+			&i.RepoID,
+			&i.Version,
+			&i.Sha,
+			&i.TagOid,
+			&i.ThreadID,
+			&i.State,
+			&i.Rounds,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const threadByCommit = `-- name: ThreadByCommit :one
 SELECT tc.thread_id FROM thread_commits tc
 JOIN threads t ON t.id = tc.thread_id JOIN projects p ON p.id = t.project_id
@@ -1715,6 +3379,35 @@ type TouchGithubDeliveryParams struct {
 
 func (q *Queries) TouchGithubDelivery(ctx context.Context, arg TouchGithubDeliveryParams) error {
 	_, err := q.db.ExecContext(ctx, touchGithubDelivery, arg.LastDeliveryAt, arg.LastDeliverySrc)
+	return err
+}
+
+const touchGithubHookDelivery = `-- name: TouchGithubHookDelivery :exec
+UPDATE github_hooks SET last_delivery_at = ?1, last_delivery_src = ?2 WHERE repo_id = ?3
+`
+
+type TouchGithubHookDeliveryParams struct {
+	LastDeliveryAt  *int64  `json:"lastDeliveryAt"`
+	LastDeliverySrc *string `json:"lastDeliverySrc"`
+	RepoID          int64   `json:"repoId"`
+}
+
+func (q *Queries) TouchGithubHookDelivery(ctx context.Context, arg TouchGithubHookDeliveryParams) error {
+	_, err := q.db.ExecContext(ctx, touchGithubHookDelivery, arg.LastDeliveryAt, arg.LastDeliverySrc, arg.RepoID)
+	return err
+}
+
+const touchGithubHookWebhook = `-- name: TouchGithubHookWebhook :exec
+UPDATE github_hooks SET last_webhook_at = ?1 WHERE repo_id = ?2
+`
+
+type TouchGithubHookWebhookParams struct {
+	LastWebhookAt *int64 `json:"lastWebhookAt"`
+	RepoID        int64  `json:"repoId"`
+}
+
+func (q *Queries) TouchGithubHookWebhook(ctx context.Context, arg TouchGithubHookWebhookParams) error {
+	_, err := q.db.ExecContext(ctx, touchGithubHookWebhook, arg.LastWebhookAt, arg.RepoID)
 	return err
 }
 
@@ -1765,6 +3458,72 @@ func (q *Queries) UpdateGithubTrigger(ctx context.Context, arg UpdateGithubTrigg
 		arg.Announce,
 		arg.UpdatedAt,
 		arg.ID,
+	)
+	return err
+}
+
+const upsertGithubAutoclose = `-- name: UpsertGithubAutoclose :exec
+
+INSERT INTO github_autoclose (repo_id, number, thread_id, comment_id, author, due_at)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+ON CONFLICT (repo_id, number) DO UPDATE SET
+    thread_id = excluded.thread_id, comment_id = excluded.comment_id, author = excluded.author,
+    due_at = excluded.due_at, state = 'pending', outcome = NULL
+`
+
+type UpsertGithubAutocloseParams struct {
+	RepoID    int64  `json:"repoId"`
+	Number    int64  `json:"number"`
+	ThreadID  string `json:"threadId"`
+	CommentID int64  `json:"commentId"`
+	Author    string `json:"author"`
+	DueAt     int64  `json:"dueAt"`
+}
+
+// ---------- autoclose ----------
+// Re-scheduling restarts the entry.
+func (q *Queries) UpsertGithubAutoclose(ctx context.Context, arg UpsertGithubAutocloseParams) error {
+	_, err := q.db.ExecContext(ctx, upsertGithubAutoclose,
+		arg.RepoID,
+		arg.Number,
+		arg.ThreadID,
+		arg.CommentID,
+		arg.Author,
+		arg.DueAt,
+	)
+	return err
+}
+
+const upsertGithubHook = `-- name: UpsertGithubHook :exec
+INSERT INTO github_hooks (repo_id, full_name, hook_id, secret_enc, status, error, updated_at)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+ON CONFLICT (repo_id) DO UPDATE SET
+    full_name = excluded.full_name, hook_id = excluded.hook_id, secret_enc = excluded.secret_enc,
+    status = excluded.status, error = excluded.error, updated_at = excluded.updated_at,
+    delivery_cursor = CASE WHEN github_hooks.hook_id IS excluded.hook_id THEN github_hooks.delivery_cursor ELSE 0 END,
+    deliveries_etag = CASE WHEN github_hooks.hook_id IS excluded.hook_id THEN github_hooks.deliveries_etag ELSE NULL END
+`
+
+type UpsertGithubHookParams struct {
+	RepoID    int64   `json:"repoId"`
+	FullName  string  `json:"fullName"`
+	HookID    *int64  `json:"hookId"`
+	SecretEnc []byte  `json:"secretEnc"`
+	Status    string  `json:"status"`
+	Error     *string `json:"error"`
+	UpdatedAt int64   `json:"updatedAt"`
+}
+
+// A different hook id starts a new delivery log: drop the cursor and ETag.
+func (q *Queries) UpsertGithubHook(ctx context.Context, arg UpsertGithubHookParams) error {
+	_, err := q.db.ExecContext(ctx, upsertGithubHook,
+		arg.RepoID,
+		arg.FullName,
+		arg.HookID,
+		arg.SecretEnc,
+		arg.Status,
+		arg.Error,
+		arg.UpdatedAt,
 	)
 	return err
 }
@@ -1841,6 +3600,59 @@ func (q *Queries) UpsertGithubInstallation(ctx context.Context, arg UpsertGithub
 	return err
 }
 
+const upsertGithubOAuthApp = `-- name: UpsertGithubOAuthApp :exec
+INSERT INTO github_oauth_app (id, client_id, client_secret_enc, webhook_base, created_at)
+VALUES (1, ?1, ?2, ?3, ?4)
+ON CONFLICT (id) DO UPDATE SET
+    client_id = excluded.client_id, client_secret_enc = excluded.client_secret_enc, webhook_base = excluded.webhook_base
+`
+
+type UpsertGithubOAuthAppParams struct {
+	ClientID        string  `json:"clientId"`
+	ClientSecretEnc []byte  `json:"clientSecretEnc"`
+	WebhookBase     *string `json:"webhookBase"`
+	CreatedAt       int64   `json:"createdAt"`
+}
+
+func (q *Queries) UpsertGithubOAuthApp(ctx context.Context, arg UpsertGithubOAuthAppParams) error {
+	_, err := q.db.ExecContext(ctx, upsertGithubOAuthApp,
+		arg.ClientID,
+		arg.ClientSecretEnc,
+		arg.WebhookBase,
+		arg.CreatedAt,
+	)
+	return err
+}
+
+const upsertGithubPrepare = `-- name: UpsertGithubPrepare :exec
+
+INSERT INTO github_prepare (sha, orb_id, level, skipped, reason, at)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+ON CONFLICT (sha, orb_id, level) DO UPDATE SET skipped = excluded.skipped, reason = excluded.reason, at = excluded.at
+`
+
+type UpsertGithubPrepareParams struct {
+	Sha     string  `json:"sha"`
+	OrbID   string  `json:"orbId"`
+	Level   string  `json:"level"`
+	Skipped bool    `json:"skipped"`
+	Reason  *string `json:"reason"`
+	At      int64   `json:"at"`
+}
+
+// ---------- prepare ----------
+func (q *Queries) UpsertGithubPrepare(ctx context.Context, arg UpsertGithubPrepareParams) error {
+	_, err := q.db.ExecContext(ctx, upsertGithubPrepare,
+		arg.Sha,
+		arg.OrbID,
+		arg.Level,
+		arg.Skipped,
+		arg.Reason,
+		arg.At,
+	)
+	return err
+}
+
 const upsertGithubPull = `-- name: UpsertGithubPull :exec
 
 INSERT INTO github_pulls (repo_id, number, repo_full_name, title, state, draft, same_repo, head_ref, head_sha,
@@ -1891,6 +3703,83 @@ func (q *Queries) UpsertGithubPull(ctx context.Context, arg UpsertGithubPullPara
 		arg.HtmlUrl,
 		arg.MergedAt,
 		arg.UpdatedAt,
+	)
+	return err
+}
+
+const upsertGithubRelease = `-- name: UpsertGithubRelease :exec
+INSERT INTO github_releases (repo_id, version, sha, tag_oid, state, updated_at)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+ON CONFLICT (repo_id, version) DO UPDATE SET
+    sha = excluded.sha, tag_oid = excluded.tag_oid, state = excluded.state, updated_at = excluded.updated_at
+`
+
+type UpsertGithubReleaseParams struct {
+	RepoID    int64   `json:"repoId"`
+	Version   string  `json:"version"`
+	Sha       string  `json:"sha"`
+	TagOid    *string `json:"tagOid"`
+	State     string  `json:"state"`
+	UpdatedAt int64   `json:"updatedAt"`
+}
+
+// Seeing a version again refreshes the run snapshot but keeps the thread and the round counter.
+func (q *Queries) UpsertGithubRelease(ctx context.Context, arg UpsertGithubReleaseParams) error {
+	_, err := q.db.ExecContext(ctx, upsertGithubRelease,
+		arg.RepoID,
+		arg.Version,
+		arg.Sha,
+		arg.TagOid,
+		arg.State,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
+const upsertGithubRepoWatch = `-- name: UpsertGithubRepoWatch :exec
+
+INSERT INTO github_repo_watches (repo_id, full_name, updated_at) VALUES (?1, ?2, ?3)
+ON CONFLICT (repo_id) DO UPDATE SET full_name = excluded.full_name, updated_at = excluded.updated_at
+`
+
+type UpsertGithubRepoWatchParams struct {
+	RepoID    int64  `json:"repoId"`
+	FullName  string `json:"fullName"`
+	UpdatedAt int64  `json:"updatedAt"`
+}
+
+// ---------- REST watches ----------
+// Re-registering keeps the ETags and the since cursor.
+func (q *Queries) UpsertGithubRepoWatch(ctx context.Context, arg UpsertGithubRepoWatchParams) error {
+	_, err := q.db.ExecContext(ctx, upsertGithubRepoWatch, arg.RepoID, arg.FullName, arg.UpdatedAt)
+	return err
+}
+
+const upsertGithubWatch = `-- name: UpsertGithubWatch :exec
+INSERT INTO github_watches (kind, repo_id, full_name, number, thread_id, slot)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+ON CONFLICT (kind, full_name, number) DO UPDATE SET
+    repo_id = excluded.repo_id, thread_id = excluded.thread_id, slot = excluded.slot
+`
+
+type UpsertGithubWatchParams struct {
+	Kind     string `json:"kind"`
+	RepoID   int64  `json:"repoId"`
+	FullName string `json:"fullName"`
+	Number   int64  `json:"number"`
+	ThreadID string `json:"threadId"`
+	Slot     string `json:"slot"`
+}
+
+// Re-registering keeps the ETags, the cursor and done_at.
+func (q *Queries) UpsertGithubWatch(ctx context.Context, arg UpsertGithubWatchParams) error {
+	_, err := q.db.ExecContext(ctx, upsertGithubWatch,
+		arg.Kind,
+		arg.RepoID,
+		arg.FullName,
+		arg.Number,
+		arg.ThreadID,
+		arg.Slot,
 	)
 	return err
 }

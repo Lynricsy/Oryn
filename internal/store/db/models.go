@@ -256,6 +256,31 @@ type GithubApp struct {
 	CreatedAt        int64   `json:"createdAt"`
 }
 
+type GithubAudit struct {
+	ID         int64   `json:"id"`
+	At         int64   `json:"at"`
+	ThreadID   *string `json:"threadId"`
+	OrbID      string  `json:"orbId"`
+	Slot       string  `json:"slot"`
+	Method     string  `json:"method"`
+	Op         string  `json:"op"`
+	Repo       string  `json:"repo"`
+	Status     int64   `json:"status"`
+	Gate       string  `json:"gate"`
+	BodySha256 *string `json:"bodySha256"`
+}
+
+type GithubAutoclose struct {
+	RepoID    int64   `json:"repoId"`
+	Number    int64   `json:"number"`
+	ThreadID  string  `json:"threadId"`
+	CommentID int64   `json:"commentId"`
+	Author    string  `json:"author"`
+	DueAt     int64   `json:"dueAt"`
+	State     string  `json:"state"`
+	Outcome   *string `json:"outcome"`
+}
+
 type GithubDelivery struct {
 	Guid       string `json:"guid"`
 	Event      string `json:"event"`
@@ -264,6 +289,21 @@ type GithubDelivery struct {
 	Outcome    string `json:"outcome"`
 	Attempts   int64  `json:"attempts"`
 	ReceivedAt int64  `json:"receivedAt"`
+}
+
+type GithubHook struct {
+	RepoID          int64   `json:"repoId"`
+	FullName        string  `json:"fullName"`
+	HookID          *int64  `json:"hookId"`
+	SecretEnc       []byte  `json:"secretEnc"`
+	Status          string  `json:"status"`
+	Error           *string `json:"error"`
+	DeliveryCursor  int64   `json:"deliveryCursor"`
+	DeliveriesEtag  *string `json:"deliveriesEtag"`
+	LastDeliveryAt  *int64  `json:"lastDeliveryAt"`
+	LastDeliverySrc *string `json:"lastDeliverySrc"`
+	LastWebhookAt   *int64  `json:"lastWebhookAt"`
+	UpdatedAt       int64   `json:"updatedAt"`
 }
 
 type GithubIdentity struct {
@@ -279,6 +319,7 @@ type GithubIdentity struct {
 	Status           string  `json:"status"`
 	ConnectedAt      int64   `json:"connectedAt"`
 	UpdatedAt        int64   `json:"updatedAt"`
+	Scopes           string  `json:"scopes"`
 }
 
 type GithubInstallation struct {
@@ -288,6 +329,14 @@ type GithubInstallation struct {
 	RepositorySelection string `json:"repositorySelection"`
 	Suspended           bool   `json:"suspended"`
 	UpdatedAt           int64  `json:"updatedAt"`
+}
+
+type GithubOauthApp struct {
+	ID              int64   `json:"id"`
+	ClientID        string  `json:"clientId"`
+	ClientSecretEnc []byte  `json:"clientSecretEnc"`
+	WebhookBase     *string `json:"webhookBase"`
+	CreatedAt       int64   `json:"createdAt"`
 }
 
 type GithubOauthState struct {
@@ -316,6 +365,15 @@ type GithubOutbox struct {
 	DeliveredAt  *int64 `json:"deliveredAt"`
 }
 
+type GithubPrepare struct {
+	Sha     string  `json:"sha"`
+	OrbID   string  `json:"orbId"`
+	Level   string  `json:"level"`
+	Skipped bool    `json:"skipped"`
+	Reason  *string `json:"reason"`
+	At      int64   `json:"at"`
+}
+
 type GithubPull struct {
 	RepoID       int64   `json:"repoId"`
 	Number       int64   `json:"number"`
@@ -335,19 +393,88 @@ type GithubPull struct {
 	UpdatedAt    int64   `json:"updatedAt"`
 }
 
-type GithubTrigger struct {
-	ID        string  `json:"id"`
-	ProjectID string  `json:"projectId"`
-	Name      string  `json:"name"`
-	Event     string  `json:"event"`
-	Label     *string `json:"label"`
-	Prompt    string  `json:"prompt"`
-	Enabled   bool    `json:"enabled"`
-	Announce  bool    `json:"announce"`
-	RunCount  int64   `json:"runCount"`
-	LastRunAt *int64  `json:"lastRunAt"`
-	CreatedAt int64   `json:"createdAt"`
+type GithubRelease struct {
+	RepoID    int64   `json:"repoId"`
+	Version   string  `json:"version"`
+	Sha       string  `json:"sha"`
+	TagOid    *string `json:"tagOid"`
+	ThreadID  *string `json:"threadId"`
+	State     string  `json:"state"`
+	Rounds    int64   `json:"rounds"`
 	UpdatedAt int64   `json:"updatedAt"`
+}
+
+type GithubRepoWatch struct {
+	RepoID       int64   `json:"repoId"`
+	FullName     string  `json:"fullName"`
+	EtagIssues   *string `json:"etagIssues"`
+	EtagComments *string `json:"etagComments"`
+	EtagPulls    *string `json:"etagPulls"`
+	EtagRuns     *string `json:"etagRuns"`
+	SinceAt      *int64  `json:"sinceAt"`
+	UpdatedAt    int64   `json:"updatedAt"`
+}
+
+type GithubSelfKey struct {
+	Key       string `json:"key"`
+	CreatedAt int64  `json:"createdAt"`
+}
+
+type GithubSelfWrite struct {
+	ID         int64   `json:"id"`
+	Slot       string  `json:"slot"`
+	Category   string  `json:"category"`
+	Target     string  `json:"target"`
+	BodySha256 *string `json:"bodySha256"`
+	CreatedAt  int64   `json:"createdAt"`
+}
+
+type GithubSenderRun struct {
+	RuleID string `json:"ruleId"`
+	Sender string `json:"sender"`
+	At     int64  `json:"at"`
+}
+
+type GithubTrigger struct {
+	ID                  string  `json:"id"`
+	ProjectID           string  `json:"projectId"`
+	Name                string  `json:"name"`
+	Event               string  `json:"event"`
+	Label               *string `json:"label"`
+	Prompt              string  `json:"prompt"`
+	Enabled             bool    `json:"enabled"`
+	Announce            bool    `json:"announce"`
+	RunCount            int64   `json:"runCount"`
+	LastRunAt           *int64  `json:"lastRunAt"`
+	CreatedAt           int64   `json:"createdAt"`
+	UpdatedAt           int64   `json:"updatedAt"`
+	Drivers             string  `json:"drivers"`
+	Maintainers         string  `json:"maintainers"`
+	ReviewerBots        string  `json:"reviewerBots"`
+	Models              string  `json:"models"`
+	Thinking            *string `json:"thinking"`
+	ImplAuth            bool    `json:"implAuth"`
+	CommentOnlyReviews  bool    `json:"commentOnlyReviews"`
+	AutocloseHours      *int64  `json:"autocloseHours"`
+	MaxDurationSec      *int64  `json:"maxDurationSec"`
+	CompletionReminders bool    `json:"completionReminders"`
+	ReleasePrefix       *string `json:"releasePrefix"`
+}
+
+type GithubWatch struct {
+	Kind               string  `json:"kind"`
+	RepoID             int64   `json:"repoId"`
+	FullName           string  `json:"fullName"`
+	Number             int64   `json:"number"`
+	ThreadID           string  `json:"threadId"`
+	Slot               string  `json:"slot"`
+	EtagIssue          *string `json:"etagIssue"`
+	EtagComments       *string `json:"etagComments"`
+	EtagReviews        *string `json:"etagReviews"`
+	EtagReviewComments *string `json:"etagReviewComments"`
+	EtagChecks         *string `json:"etagChecks"`
+	LastSeenAt         *int64  `json:"lastSeenAt"`
+	DoneAt             *int64  `json:"doneAt"`
 }
 
 type Job struct {
@@ -522,8 +649,8 @@ type Owner struct {
 	AssistantAvatarIcon      *string `json:"assistantAvatarIcon"`
 	AssistantAvatarImage     *string `json:"assistantAvatarImage"`
 	NewThreadTarget          string  `json:"newThreadTarget"`
-	GithubAutomationIdentity string  `json:"githubAutomationIdentity"`
 	AutoPublishArtifacts     int64   `json:"autoPublishArtifacts"`
+	GithubAutomationIdentity string  `json:"githubAutomationIdentity"`
 }
 
 type Passkey struct {
@@ -579,6 +706,8 @@ type Project struct {
 	GithubListenReviews     bool    `json:"githubListenReviews"`
 	GithubListenComments    bool    `json:"githubListenComments"`
 	GithubListenCi          bool    `json:"githubListenCi"`
+	GithubBindStatus        *string `json:"githubBindStatus"`
+	GithubGates             *string `json:"githubGates"`
 }
 
 type ProjectSnapshot struct {
@@ -806,11 +935,18 @@ type ThreadCommit struct {
 }
 
 type ThreadIssue struct {
-	RepoID    int64   `json:"repoId"`
-	Number    int64   `json:"number"`
-	ThreadID  string  `json:"threadId"`
-	TriggerID *string `json:"triggerId"`
-	CreatedAt int64   `json:"createdAt"`
+	RepoID         int64   `json:"repoId"`
+	Number         int64   `json:"number"`
+	ThreadID       string  `json:"threadId"`
+	TriggerID      *string `json:"triggerId"`
+	CreatedAt      int64   `json:"createdAt"`
+	State          string  `json:"state"`
+	Classification *string `json:"classification"`
+	ImplAuthorized bool    `json:"implAuthorized"`
+	ReviewOnly     bool    `json:"reviewOnly"`
+	RuleID         *string `json:"ruleId"`
+	DeadlineAt     *int64  `json:"deadlineAt"`
+	Reminders      int64   `json:"reminders"`
 }
 
 type ThreadLabel struct {
@@ -819,13 +955,14 @@ type ThreadLabel struct {
 }
 
 type ThreadPull struct {
-	ThreadID  string `json:"threadId"`
-	RepoID    int64  `json:"repoId"`
-	Number    int64  `json:"number"`
-	Listening bool   `json:"listening"`
-	Unlinked  bool   `json:"unlinked"`
-	CiRounds  int64  `json:"ciRounds"`
-	LinkedAt  int64  `json:"linkedAt"`
+	ThreadID         string `json:"threadId"`
+	RepoID           int64  `json:"repoId"`
+	Number           int64  `json:"number"`
+	Listening        bool   `json:"listening"`
+	Unlinked         bool   `json:"unlinked"`
+	CiRounds         int64  `json:"ciRounds"`
+	LinkedAt         int64  `json:"linkedAt"`
+	CreatedViaEgress bool   `json:"createdViaEgress"`
 }
 
 type ThreadReport struct {
