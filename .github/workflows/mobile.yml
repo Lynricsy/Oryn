@@ -146,6 +146,9 @@ jobs:
       ORG_GRADLE_PROJECT_orynDistribution: ${{ matrix.dist }}
       LABEL: ${{ needs.prepare.outputs.label }}
       DIST: ${{ matrix.dist }}
+      # 版本只写在 Cargo.toml：tauri 的移动端构建只认配置里的 version（缺省时 Android 1.0 / versionCode 1、iOS 1.0.0），
+      # 各 build 命令用 --config 把它合并进去
+      ORYN_VERSION_CONFIG: '{"version":"${{ needs.prepare.outputs.version }}"}'
     steps: &android-steps
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -234,7 +237,7 @@ jobs:
       - name: 构建 debug APK
         if: steps.plan.outputs.build == 'true'
         working-directory: web
-        run: bun run tauri android build --debug --apk --target aarch64 x86_64 --ci
+        run: bun run tauri android build --debug --apk --target aarch64 x86_64 --config "$ORYN_VERSION_CONFIG" --ci
 
       - name: 收集 debug APK
         if: steps.plan.outputs.build == 'true'
@@ -271,7 +274,7 @@ jobs:
             echo "password=$KEYSTORE_PASSWORD"
             echo "storeFile=$dir/release.jks"
           } > "$props"
-          bun run tauri android build --apk --aab --target aarch64 armv7 x86_64 --ci
+          bun run tauri android build --apk --aab --target aarch64 armv7 x86_64 --config "$ORYN_VERSION_CONFIG" --ci
           out=src-tauri/gen/android/app/build/outputs
           cp "$out/apk/universal/release/app-universal-release.apk" "../dist/Oryn_${LABEL}_android-${DIST}.apk"
           cp "$out/bundle/universalRelease/app-universal-release.aab" "../dist/Oryn_${LABEL}_android-${DIST}.aab"
@@ -281,6 +284,7 @@ jobs:
         shell: bash
         env:
           SIGNED: ${{ steps.plan.outputs.sign }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
           # 失败时指出是哪条命令（zipalign / aapt2 / grep 无匹配都会让 -e 静默退出）
@@ -296,6 +300,8 @@ jobs:
             badging=$("$BUILD_TOOLS/aapt2" dump badging "$apk")
             pkg=$(grep -oP "^package: name='\K[^']+" <<<"$badging")
             vc=$(grep -oP "versionCode='\K[^']+" <<<"$badging")
+            vn=$(grep -oP "versionName='\K[^']+" <<<"$badging")
+            if [[ "$vn" != "$VERSION" ]]; then echo "::error::$apk 的 versionName 是 ${vn}，应为 Cargo.toml 的 ${VERSION}"; exit 1; fi
             # aapt2 badging 输出的是 `minSdkVersion:'33'`（本机 build-tools 36 对 Oryn 包实测），没有 `sdkVersion:` 行
             sdk=$(grep -oP "^minSdkVersion:'\K[^']+" <<<"$badging" || true)
             target=$(grep -oP "^targetSdkVersion:'\K[^']+" <<<"$badging" || true)
@@ -306,7 +312,7 @@ jobs:
             fi
             if [[ "$pkg" != "com.lynricsy.oryn" ]]; then echo "::error::$apk 包名是 $pkg"; exit 1; fi
             cert=$("$BUILD_TOOLS/apksigner" verify --print-certs "$apk" | grep -m1 'certificate SHA-256 digest' | awk '{print $NF}')
-            echo "$(basename "$apk")  package=$pkg versionCode=$vc sdk=$sdk target=$target cert-sha256=$cert" >> "$GITHUB_STEP_SUMMARY"
+            echo "$(basename "$apk")  package=$pkg versionName=$vn versionCode=$vc sdk=$sdk target=$target cert-sha256=$cert" >> "$GITHUB_STEP_SUMMARY"
           done
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
@@ -349,6 +355,7 @@ jobs:
       ORG_GRADLE_PROJECT_orynDistribution: ${{ matrix.dist }}
       LABEL: ${{ needs.prepare.outputs.label }}
       DIST: ${{ matrix.dist }}
+      ORYN_VERSION_CONFIG: '{"version":"${{ needs.prepare.outputs.version }}"}'
     steps: *android-steps
 
   # 冒烟：模拟器里装 foss debug 包并启动，90 秒内事件日志出现 launcher.ready 即过
@@ -407,6 +414,8 @@ jobs:
     runs-on: macos-latest
     permissions:
       contents: read
+    env:
+      ORYN_VERSION_CONFIG: '{"version":"${{ needs.prepare.outputs.version }}"}'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -452,7 +461,7 @@ jobs:
 
       - name: 不签名编译模拟器包
         working-directory: web
-        run: bun run tauri ios build --debug --target aarch64-sim --no-sign --ci
+        run: bun run tauri ios build --debug --target aarch64-sim --no-sign --config "$ORYN_VERSION_CONFIG" --ci
 
       - name: 断言产物
         id: app
@@ -536,6 +545,8 @@ jobs:
     runs-on: macos-latest
     permissions:
       contents: read
+    env:
+      ORYN_VERSION_CONFIG: '{"version":"${{ needs.prepare.outputs.version }}"}'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -606,11 +617,13 @@ jobs:
         run: |
           set -euo pipefail
           if (( RUN_ATTEMPT > 99 )); then echo "::error::同一次运行重跑超过 99 次，请重新打 tag"; exit 1; fi
-          bun run tauri ios build --export-method app-store-connect --build-number $(( RUN_NUMBER * 100 + RUN_ATTEMPT )) --ci
+          bun run tauri ios build --export-method app-store-connect --build-number $(( RUN_NUMBER * 100 + RUN_ATTEMPT )) --config "$ORYN_VERSION_CONFIG" --ci
 
       - name: 校验 IPA
         id: ipa
         shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
           ipa=$(find web/src-tauri/gen/apple/build -name '*.ipa' | head -1)
@@ -624,6 +637,7 @@ jobs:
           ver=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")
           build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist")
           if [[ "$bid" != "com.lynricsy.oryn" ]]; then echo "::error::包名 $bid 不是 com.lynricsy.oryn"; exit 1; fi
+          if [[ "$ver" != "$VERSION" ]]; then echo "::error::CFBundleShortVersionString 是 ${ver}，应为 Cargo.toml 的 ${VERSION}"; exit 1; fi
           signer=$(codesign -dvv "$app" 2>&1 | sed -n 's/^Authority=//p' | head -1)
           if [[ "$signer" != Apple\ Distribution:* && "$signer" != iPhone\ Distribution:* ]]; then
             echo "::error::签名者「${signer}」不是分发证书"
@@ -651,7 +665,12 @@ jobs:
 
   publish:
     needs: [prepare, android-release, android-smoke, ios-check, ios-release]
-    if: needs.prepare.outputs.is_release == 'true'
+    # 显式列出各依赖的结果：android-smoke 依赖的 debug 矩阵（android）在发布运行里是跳过的，
+    # 默认的隐式 success() 会因这条跳过的传递依赖把 publish 也跳过（mobile-v0.1.0-rc.1 就停在了草稿）
+    if: >-
+      ${{ !cancelled() && needs.prepare.outputs.is_release == 'true'
+      && needs.android-release.result == 'success' && needs.android-smoke.result == 'success'
+      && needs.ios-check.result == 'success' && needs.ios-release.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
