@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/egress"
@@ -39,11 +40,37 @@ func (r egressResolver) SecretByID(id string) (string, []string, bool) {
 	return r.s.secrets.SecretByID(id)
 }
 
+// GitToken 返回 git 主机的令牌：github.com 且这台 orb 归 GitHub App 管时用按仓库收窄的令牌（拿不到即失败，
+// 不回落到 PAT）；否则用密钥库的 git/<host>/token。
 func (r egressResolver) GitToken(host string) (string, bool) {
+	if strings.EqualFold(host, "github.com") && r.s.github != nil {
+		tok, st := r.githubToken()
+		switch st {
+		case GitHubTokenOK:
+			return tok, true
+		case GitHubTokenUnavailable:
+			return "", false
+		}
+	}
 	if r.s.secrets == nil {
 		return "", false
 	}
 	return r.s.secrets.GitToken(host)
+}
+
+// GitHubToken 返回 GitHub API 令牌（M14）：只有这台 orb 归 GitHub App 管且签发成功时可用。
+func (r egressResolver) GitHubToken() (string, bool) {
+	if r.s.github == nil {
+		return "", false
+	}
+	tok, st := r.githubToken()
+	return tok, st == GitHubTokenOK
+}
+
+func (r egressResolver) githubToken() (string, GitHubTokenState) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return r.s.github.OrbToken(ctx, r.orbID)
 }
 
 // policyFor 返回 orb 的出站策略；缓存缺失（如 orynd 重启后）时按当前配置重新生成。

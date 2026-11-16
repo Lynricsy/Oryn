@@ -2,11 +2,13 @@ package egress
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +21,7 @@ type fakeR struct {
 	pol     Policy
 	secrets map[string][2]string // id → 值, 允许主机（逗号分隔）
 	git     map[string]string
+	gh      string // 非空时 GitHubToken 返回它
 }
 
 func (f fakeR) Policy() Policy { return f.pol }
@@ -34,6 +37,7 @@ func (f fakeR) SecretByID(id string) (string, []string, bool) {
 	return v[0], hosts, true
 }
 func (f fakeR) GitToken(h string) (string, bool) { v, ok := f.git[h]; return v, ok }
+func (f fakeR) GitHubToken() (string, bool)      { return f.gh, f.gh != "" }
 
 func do(t *testing.T, method, url string, hdr map[string]string) *http.Response {
 	t.Helper()
@@ -274,4 +278,137 @@ func TestRedactReaderSplitAcrossChunks(t *testing.T) {
 	b, err := io.ReadAll(rr)
 	require.NoError(t, err)
 	assert.Equal(t, "abc oryn-ph-x def\n\n", string(b))
+}
+
+// M14：/gh/api.github.com/… 带收窄令牌转发，保留路径里的 %2F，响应回显的令牌被抹掉。
+func TestGitHubRoute(t *testing.T) {
+	var gotPath, gotAuth string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotAuth = r.URL.EscapedPath(), r.Header.Get("Authorization")
+		fmt.Fprint(w, "echo "+r.Header.Get("Authorization"))
+	}))
+	defer up.Close()
+	gh := &GitHubAccess{APIOrigin: up.URL, GitOrigin: "https://github.com"}
+	srv := httptest.NewServer(NewHandler("orb-x", fakeR{gh: "T0KEN", pol: Policy{GitHub: gh}}))
+	defer srv.Close()
+	r := do(t, "GET", srv.URL+"/gh/api.github.com/repos/a/b/contents/x%2Fy", nil)
+	body, _ := io.ReadAll(r.Body)
+	r.Body.Close()
+	require.Equal(t, http.StatusOK, r.StatusCode)
+	assert.Equal(t, "/repos/a/b/contents/x%2Fy", gotPath)
+	assert.Equal(t, "Bearer T0KEN", gotAuth)
+	assert.Equal(t, "echo Bearer oryn-redacted", string(body))
+
+	for name, c := range map[string]struct {
+		r    fakeR
+		path string
+		code int
+	}{
+		"未开放 GitHub": {fakeR{gh: "T0KEN"}, "/gh/api.github.com/user", http.StatusForbidden},
+		"其它主机":       {fakeR{gh: "T0KEN", pol: Policy{GitHub: gh}}, "/gh/uploads.github.com/x", http.StatusNotFound},
+		"令牌不可用":      {fakeR{pol: Policy{GitHub: gh}}, "/gh/api.github.com/user", http.StatusBadGateway},
+	} {
+		s := httptest.NewServer(NewHandler("orb-x", c.r))
+		resp := do(t, "GET", s.URL+c.path, nil)
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		s.Close()
+		assert.Equal(t, c.code, resp.StatusCode, name)
+		if c.code == http.StatusBadGateway {
+			assert.Contains(t, string(b), "GitHub 令牌不可用", name)
+		}
+	}
+}
+
+// M14：GitOrigin 把 github.com 的 git 上游指向别处（测试与验收用的假 GitHub）。
+func TestGitHubGitOrigin(t *testing.T) {
+	var gotPath, gotAuth string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotAuth = r.URL.Path, r.Header.Get("Authorization")
+	}))
+	defer up.Close()
+	h := NewHandler("orb-x", fakeR{git: map[string]string{"github.com": "tok"}, pol: Policy{GitHub: &GitHubAccess{APIOrigin: up.URL, GitOrigin: up.URL}}})
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+	r := do(t, "GET", srv.URL+"/git/github.com/a/b/info/refs?service=git-upload-pack", nil)
+	r.Body.Close()
+	require.Equal(t, http.StatusOK, r.StatusCode)
+	assert.Equal(t, "/a/b/info/refs", gotPath)
+	assert.Equal(t, "Basic eC1hY2Nlc3MtdG9rZW46dG9r", gotAuth)
+}
+
+// M14：agent 经 /gh/ 发出的 JSON 正文追加 AgentMarker；其它请求原样透传。
+func TestGitHubAgentMarker(t *testing.T) {
+	var gotBody []byte
+	var gotLen int64
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		gotLen = r.ContentLength
+		if cl := r.Header.Get("Content-Length"); cl != "" {
+			n, err := strconv.ParseInt(cl, 10, 64)
+			require.NoError(t, err)
+			gotLen = n
+		}
+	}))
+	defer up.Close()
+	srv := httptest.NewServer(NewHandler("orb-x", fakeR{gh: "T", pol: Policy{GitHub: &GitHubAccess{APIOrigin: up.URL}}}))
+	defer srv.Close()
+	send := func(method, ctype, body string) {
+		t.Helper()
+		req, err := http.NewRequest(method, srv.URL+"/gh/api.github.com/repos/a/b/issues/1/comments", strings.NewReader(body))
+		require.NoError(t, err)
+		if ctype != "" {
+			req.Header.Set("Content-Type", ctype)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+	}
+	field := func(path ...any) any {
+		t.Helper()
+		var v any
+		require.NoError(t, json.Unmarshal(gotBody, &v))
+		for _, k := range path {
+			switch k := k.(type) {
+			case string:
+				v = v.(map[string]any)[k]
+			case int:
+				v = v.([]any)[k]
+			}
+		}
+		return v
+	}
+	const marked = "hi\n\n" + AgentMarker
+
+	send("POST", "application/json", `{"body":"hi"}`)
+	assert.Equal(t, marked, field("body"))
+	assert.EqualValues(t, len(gotBody), gotLen, "Content-Length 与新正文一致")
+	assert.Contains(t, string(gotBody), AgentMarker, "标记不做 HTML 转义")
+
+	send("POST", "application/json; charset=utf-8", `{"query":"mutation…","variables":{"input":{"subjectId":"x","body":"hi"}}}`)
+	assert.Equal(t, marked, field("variables", "input", "body"))
+	assert.Equal(t, "x", field("variables", "input", "subjectId"))
+
+	send("POST", "application/json", `{"event":"COMMENT","comments":[{"path":"a","body":"x"},{"path":"b","body":"y"}]}`)
+	assert.Equal(t, "x\n\n"+AgentMarker, field("comments", 0, "body"))
+	assert.Equal(t, "y\n\n"+AgentMarker, field("comments", 1, "body"))
+	assert.Equal(t, "COMMENT", field("event"))
+
+	send("PATCH", "application/json", `{"body":"`+"hi\\n\\n"+AgentMarker+`"}`)
+	assert.Equal(t, marked, field("body"), "已含标记的不重复追加")
+
+	big := `{"id":12345678901234567890,"body":"hi"}`
+	send("POST", "application/json", big)
+	assert.Contains(t, string(gotBody), "12345678901234567890", "其它字段原样保留（大整数不丢精度）")
+
+	for _, c := range []struct{ method, ctype, body string }{
+		{"GET", "application/json", `{"body":"hi"}`},
+		{"POST", "text/plain", `{"body":"hi"}`},
+		{"POST", "application/json", `{"body":"` + strings.Repeat("a", markBodyMax) + `"}`},
+		{"POST", "application/json", `not json`},
+	} {
+		send(c.method, c.ctype, c.body)
+		assert.Equal(t, c.body, string(gotBody), "%s %s", c.method, c.ctype)
+	}
 }

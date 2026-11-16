@@ -41,6 +41,8 @@ func (p policyResolver) Policy() egress.Policy { return egress.Policy{Routes: p.
 
 func (policyResolver) GitToken(string) (string, bool) { return "", false }
 
+func (policyResolver) GitHubToken() (string, bool) { return "", false }
+
 // serveEgress 在 ln 上提供 egress 代理；调用方负责 Close 返回的 server（同时关闭 ln）。
 func serveEgress(ln net.Listener, r vaultResolver, routes map[string]egress.Route) *http.Server {
 	srv := &http.Server{

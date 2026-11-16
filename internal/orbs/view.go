@@ -63,6 +63,16 @@ func View(ctx context.Context, q *db.Queries, o db.Orb) (apigen.Orb, error) {
 	case PoolWarming, PoolIdle, PoolClaimed:
 		v.Pool = new(apigen.OrbPoolState(ps))
 	}
+	// GitHub 账号（M14）：项目已绑定且 orb 的身份槽位已连接时给出；runner 与协调 orb 不归 GitHub App 管
+	if o.ProjectID != nil && !IsRunner(o) && !o.Coordinator {
+		login, err := q.GetOrbGithubLogin(ctx, o.ID)
+		switch {
+		case err == nil:
+			v.GithubLogin = &login
+		case !errors.Is(err, sql.ErrNoRows):
+			return apigen.Orb{}, err
+		}
+	}
 	if o.SnapshotOf != nil && *o.SnapshotOf != "" {
 		kind := apigen.OrbSnapshotKindFork
 		if _, err := q.GetProjectSnapshot(ctx, *o.SnapshotOf); err == nil {

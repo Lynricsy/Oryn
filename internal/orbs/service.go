@@ -162,7 +162,9 @@ type Service struct {
 	jobs    *jobs.Queue
 	setup   SetupSource
 	secrets EgressSecrets
-	now     func() time.Time
+	// github 是 GitHub 集成（M14，SetGitHub 在服务对外可用之前设置；nil = 未启用）。
+	github GitHub
+	now    func() time.Time
 
 	mu      sync.Mutex
 	links   map[string]*orbLink
@@ -285,6 +287,9 @@ func (s *Service) SetQuiescence(fn QuiesceFunc) {
 	s.quiescent = fn
 	s.hmu.Unlock()
 }
+
+// SetGitHub 设置 GitHub 集成（M14）；须在服务对外可用之前调用。
+func (s *Service) SetGitHub(g GitHub) { s.github = g }
 
 // tryQuiesce 经闸门执行 commit；未设置闸门时直接执行。
 func (s *Service) tryQuiesce(orbID string, commit func() bool) bool {

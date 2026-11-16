@@ -1,4 +1,4 @@
-// Package egress 是控制面侧的出站代理：orb 内 agent 的模型 / git 请求经 link 的 egress 流到达这里，
+// Package egress 是控制面侧的出站代理：orb 内 agent 的模型 / git / GitHub API 请求经 link 的 egress 流到达这里，
 // 在此把占位令牌替换为真实密钥后转发到上游。真实密钥从不进入 orb。
 //
 // 安全约束（orb 内代码可任意构造请求，并能看到全部占位符）：
@@ -7,6 +7,8 @@
 //     以及 hosts 非空且与路由上游主机匹配的其它密钥；git 路由不接受任何占位符；
 //   - git 路由只放行 smart-HTTP 端点；有项目仓库时只放行该仓库（读写），否则任意仓库只读；
 //     路径含 `.`、`..`、空段或不是规范形式的一律 400；
+//   - GitHub API 路由（/gh/api.github.com/…，M14）只在策略开放时可用，注入按项目仓库收窄的令牌，
+//     并给 JSON 写请求的正文追加 AgentMarker；
 //   - 响应头与响应体中出现的真实值会被换回占位符，防止上游回显泄露（101 升级后的字节流只脱敏响应头，
 //     改写升级后的协议帧会破坏其分帧）。
 package egress
@@ -14,16 +16,25 @@ package egress
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"path"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 )
+
+// AgentMarker 由出站代理追加到 agent 发往 GitHub 的正文末尾（GitHub 渲染时不可见），控制面据此识别 agent 自己的评论（M14）。
+const AgentMarker = "<!-- oryn-agent -->"
+
+// markBodyMax 是追加 AgentMarker 时读入的请求正文上限；更大的请求原样透传。
+const markBodyMax = 1 << 20
 
 // Route 是一条模型路由：上游前缀与允许在该路由上使用的密钥 id。
 type Route struct {
@@ -45,6 +56,14 @@ type Policy struct {
 	GitRepos map[string][]string
 	// NoGit 为真时 /git/… 一律 403（协调宿主没有任何 git 访问）。
 	NoGit bool
+	// GitHub 非 nil 时放行 /gh/api.github.com/…（M14）。
+	GitHub *GitHubAccess
+}
+
+// GitHubAccess 是 orb 的 GitHub 访问：非 nil 时放行 `/gh/api.github.com/…`；GitOrigin 是 `github.com` 的 git 上游，
+// 默认 https://github.com，只有测试会指向别处。
+type GitHubAccess struct {
+	APIOrigin, GitOrigin string
 }
 
 // Resolver 提供策略与密钥查询。
@@ -55,6 +74,8 @@ type Resolver interface {
 	SecretByID(id string) (value string, hosts []string, ok bool)
 	// GitToken 返回 git 主机的访问令牌（密钥 git/<host>/token）。
 	GitToken(host string) (token string, ok bool)
+	// GitHubToken 返回这台 orb 的 GitHub API 令牌（M14；按仓库收窄）；不归 GitHub App 管或拿不到时 ok 为假。
+	GitHubToken() (token string, ok bool)
 }
 
 var placeholderRe = regexp.MustCompile(`oryn-ph-([A-Za-z0-9_]+)`)
@@ -81,7 +102,9 @@ func NewHandler(orbID string, r Resolver) *Handler { return &Handler{OrbID: orbI
 
 type target struct {
 	url       *url.URL
-	auth      string   // 非空时覆盖 Authorization（git）
+	auth      string   // 非空时覆盖 Authorization（git、gh）
+	redact    []string // 要从响应里抹掉的真实值（换成 oryn-redacted）
+	mark      bool     // 给请求正文追加 AgentMarker（gh）
 	own       []string // 路由自己的 apiKey 密钥 id
 	hostBound []string // 须 hosts 匹配的其它密钥 id
 }
@@ -90,8 +113,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	t, status := h.resolve(r)
 	if status != http.StatusOK {
 		msg := "oryn egress: 未知或不允许的路由"
-		if status == http.StatusBadRequest {
+		switch status {
+		case http.StatusBadRequest:
 			msg = "oryn egress: 路径不是规范形式"
+		case http.StatusBadGateway:
+			msg = "oryn egress: GitHub 令牌不可用（身份未连接或签发失败）"
 		}
 		http.Error(w, msg, status)
 		return
@@ -101,17 +127,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "oryn egress: 占位符位置无效或不允许用于该路由", http.StatusForbidden)
 		return
 	}
-	secretsUsed := make([][2]string, 0, len(used)+1) // 真实值 → 占位符，用于响应脱敏
+	secretsUsed := make([][2]string, 0, len(used)+len(t.redact)) // 真实值 → 占位符，用于响应脱敏
 	for id, v := range used {
 		secretsUsed = append(secretsUsed, [2]string{v, "oryn-ph-" + id})
 	}
-	if t.auth != "" {
-		tok := strings.TrimPrefix(t.auth, "Basic ")
-		secretsUsed = append(secretsUsed, [2]string{tok, "oryn-redacted"})
-		if raw, err := base64.StdEncoding.DecodeString(tok); err == nil {
-			if _, pw, ok := strings.Cut(string(raw), ":"); ok {
-				secretsUsed = append(secretsUsed, [2]string{pw, "oryn-redacted"})
-			}
+	for _, v := range t.redact {
+		secretsUsed = append(secretsUsed, [2]string{v, "oryn-redacted"})
+	}
+	if t.mark {
+		if err := markRequest(r); err != nil {
+			http.Error(w, "oryn egress: 读取请求正文失败", http.StatusBadRequest)
+			return
 		}
 	}
 	p := &httputil.ReverseProxy{
@@ -120,8 +146,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			pr.Out.URL.Scheme = t.url.Scheme
 			pr.Out.URL.Host = t.url.Host
 			pr.Out.URL.Path = t.url.Path
-			pr.Out.URL.RawPath = ""
-			pr.Out.URL.RawQuery = pr.In.URL.RawQuery
+			pr.Out.URL.RawPath = t.url.RawPath
 			pr.Out.Host = t.url.Host
 			pr.Out.Header.Del("X-Forwarded-For")
 			if t.auth != "" {
@@ -155,7 +180,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.ServeHTTP(w, r)
 }
 
-// resolve 把 /llm/<key>/… 或 /git/<host>/… 映射为上游；返回 HTTP 状态（200 = 放行）。
+// resolve 把 /llm/<key>/…、/git/<host>/… 或 /gh/api.github.com/… 映射为上游；返回 HTTP 状态（200 = 放行）。
 func (h *Handler) resolve(r *http.Request) (target, int) {
 	parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 3)
 	if len(parts) < 2 {
@@ -204,9 +229,140 @@ func (h *Handler) resolve(r *http.Request) (target, int) {
 			return target{}, http.StatusNotFound
 		}
 		auth := "Basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:"+tok))
-		return target{url: &url.URL{Scheme: "https", Host: host, Path: rest}, auth: auth}, http.StatusOK
+		up := &url.URL{Scheme: "https", Host: host, Path: rest}
+		if host == "github.com" && pol.GitHub != nil && pol.GitHub.GitOrigin != "" {
+			o, err := url.Parse(pol.GitHub.GitOrigin)
+			if err != nil || o.Host == "" {
+				return target{}, http.StatusNotFound
+			}
+			up.Scheme, up.Host = o.Scheme, o.Host
+		}
+		return target{url: up, auth: auth, redact: []string{strings.TrimPrefix(auth, "Basic "), tok}}, http.StatusOK
+	case "gh":
+		// GitHub API（M14）：令牌已按项目仓库收窄，这里不做路径白名单；保留原始转义（如 contents 路径里的 %2F）。
+		if pol.GitHub == nil {
+			return target{}, http.StatusForbidden
+		}
+		if strings.ToLower(parts[1]) != "api.github.com" {
+			return target{}, http.StatusNotFound
+		}
+		o, err := url.Parse(pol.GitHub.APIOrigin)
+		if err != nil || o.Host == "" {
+			return target{}, http.StatusNotFound
+		}
+		tok, ok := h.R.GitHubToken()
+		if !ok {
+			return target{}, http.StatusBadGateway
+		}
+		up := &url.URL{
+			Scheme:  o.Scheme,
+			Host:    o.Host,
+			Path:    o.Path + rest,
+			RawPath: o.Path + strings.TrimPrefix(r.URL.EscapedPath(), "/gh/"+parts[1]),
+		}
+		return target{url: up, auth: "Bearer " + tok, redact: []string{tok}, mark: true}, http.StatusOK
 	}
 	return target{}, http.StatusNotFound
+}
+
+// markRequest 给 JSON 写请求的正文追加 AgentMarker（见 markAgentBodies），并同步 ContentLength 与 Content-Length 头。
+// 非 POST / PATCH / PUT、非 JSON、没有正文或超过 markBodyMax 的请求原样透传。读正文失败返回错误。
+func markRequest(r *http.Request) error {
+	switch r.Method {
+	case http.MethodPost, http.MethodPatch, http.MethodPut:
+	default:
+		return nil
+	}
+	mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mt != "application/json" || r.ContentLength <= 0 || r.ContentLength > markBodyMax {
+		return nil
+	}
+	b, err := io.ReadAll(io.LimitReader(r.Body, r.ContentLength))
+	_ = r.Body.Close()
+	if err != nil {
+		return err
+	}
+	nb := markAgentBodies(b)
+	r.Body = io.NopCloser(bytes.NewReader(nb))
+	r.ContentLength = int64(len(nb))
+	r.Header.Set("Content-Length", strconv.Itoa(len(nb)))
+	return nil
+}
+
+// markAgentBodies 给 JSON 请求里的正文字段追加 AgentMarker：顶层 "body"、顶层 "comments" 数组各元素的 "body"、
+// "variables"."input"."body"。只处理字符串且尚未含标记的值；解析失败或没有可改的字段时原样返回。
+func markAgentBodies(b []byte) []byte {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(b, &top) != nil || top == nil {
+		return b
+	}
+	changed := markField(top, "body")
+	if raw, ok := top["comments"]; ok {
+		var cs []map[string]json.RawMessage
+		if json.Unmarshal(raw, &cs) == nil {
+			hit := false
+			for _, c := range cs {
+				if c != nil && markField(c, "body") {
+					hit = true
+				}
+			}
+			if hit && setRaw(top, "comments", cs) {
+				changed = true
+			}
+		}
+	}
+	if raw, ok := top["variables"]; ok {
+		var vars map[string]json.RawMessage
+		if json.Unmarshal(raw, &vars) == nil && vars != nil {
+			var input map[string]json.RawMessage
+			if in, ok := vars["input"]; ok && json.Unmarshal(in, &input) == nil && input != nil && markField(input, "body") &&
+				setRaw(vars, "input", input) && setRaw(top, "variables", vars) {
+				changed = true
+			}
+		}
+	}
+	if !changed {
+		return b
+	}
+	out, err := encodeJSON(top)
+	if err != nil {
+		return b
+	}
+	return out
+}
+
+// markField 在 m[key] 是不含 AgentMarker 的字符串时追加标记；返回是否改动。
+func markField(m map[string]json.RawMessage, key string) bool {
+	raw, ok := m[key]
+	if !ok {
+		return false
+	}
+	var s string
+	if json.Unmarshal(raw, &s) != nil || strings.Contains(s, AgentMarker) {
+		return false
+	}
+	return setRaw(m, key, s+"\n\n"+AgentMarker)
+}
+
+// setRaw 把 v 编码后写回 m[key]；编码失败返回 false。
+func setRaw(m map[string]json.RawMessage, key string, v any) bool {
+	b, err := encodeJSON(v)
+	if err != nil {
+		return false
+	}
+	m[key] = b
+	return true
+}
+
+// encodeJSON 编码 v，不转义 HTML 字符（标记里的 `<` `>` 原样保留），去掉结尾换行。
+func encodeJSON(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
 }
 
 // canonicalPath 报告 p（以 / 开头）不含 `.`、`..` 与空段，且与 path.Clean 的结果一致。

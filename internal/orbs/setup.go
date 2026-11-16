@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -69,6 +70,8 @@ type DefaultSetup struct {
 	CoordinatorEgressAddr string
 	// Projects 是项目级 omp 配置；可为 nil（不下发项目级配置）。
 	Projects ProjectConfigs
+	// GitHub 是 GitHub 集成（M14）；可为 nil（不下发 gh 配置，github.com 只走 PAT）。
+	GitHub GitHub
 }
 
 // coordinatorFiles 是下发给协调宿主的 omp-home 文件：只有模型与基本设置，其余（mcp.json、extensions/、skills/、
@@ -168,7 +171,7 @@ func (d *DefaultSetup) Plan(ctx context.Context, orb db.Orb) (SetupPlan, error) 
 		if err != nil {
 			return SetupPlan{}, fmt.Errorf("读取密钥修改时间: %w", err)
 		}
-		plan, err := d.plan(ctx, prj)
+		plan, err := d.plan(ctx, prj, orb)
 		if err != nil {
 			return plan, err
 		}
@@ -187,8 +190,8 @@ func (d *DefaultSetup) Plan(ctx context.Context, orb db.Orb) (SetupPlan, error) 
 	return SetupPlan{}, errors.New("生成 setup 参数期间密钥反复变化")
 }
 
-// plan 由给定的项目行（可为 nil）与当前密钥生成参数。
-func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project) (SetupPlan, error) {
+// plan 由给定的项目行（可为 nil）、orb 与当前密钥生成参数。
+func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project, orb db.Orb) (SetupPlan, error) {
 	plan := SetupPlan{
 		Params: apigen.LinkCtlSetupRunParams{
 			GitHosts: []string{}, OmpHome: []apigen.LinkCtlOmpHomeFile{}, Env: map[string]string{},
@@ -205,6 +208,9 @@ func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project) (SetupPlan, er
 				repo.Branch = prj.BaseBranch
 			}
 			p.Repo = repo
+			if prev := prevURLs(prj.GithubPrevUrls); len(prev) > 0 {
+				repo.PreviousUrls = prev
+			}
 			if host, path, ok := httpsRepo(*prj.RepoUrl); ok {
 				projectRepo = &gitRepo{host: host, path: path}
 			}
@@ -223,6 +229,7 @@ func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project) (SetupPlan, er
 		p.GitIdentity = gitIdentity(row.GitName, row.GitEmail)
 	}
 	var resolver agentcfg.Resolver = emptyResolver{}
+	var hosts []string
 	if d.Vault != nil {
 		resolver = d.Vault
 		env, err := d.Vault.EnvSecrets()
@@ -232,12 +239,26 @@ func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project) (SetupPlan, er
 		for k, v := range env {
 			p.Env[k] = v
 		}
-		hosts, err := d.Vault.GitHosts()
+		hosts, err = d.Vault.GitHosts()
 		if err != nil {
 			return plan, fmt.Errorf("读取 git 主机: %w", err)
 		}
-		p.GitHosts = gitInsteadOf(projectRepo, hosts)
 	}
+	// GitHub App（M14）：项目仓库在 github.com 且这台 orb 归 App 管时，git 与 gh 都经出站代理用按仓库收窄的令牌，
+	// 不需要 PAT；agent 身份的提交作者固定为 Agent 账号，user 身份只在项目与所有者都没设时用 GitHub 账号推出的身份。
+	if prj != nil && d.GitHub != nil && projectRepo != nil && projectRepo.host == "github.com" {
+		if gs, ok := d.GitHub.OrbSetup(ctx, orb, *prj); ok {
+			p.Gh = &apigen.LinkCtlSetupGh{Login: gs.Login}
+			plan.Egress.GitHub = &egress.GitHubAccess{APIOrigin: gs.APIOrigin, GitOrigin: gs.GitOrigin}
+			if !slices.ContainsFunc(hosts, func(h string) bool { return strings.EqualFold(h, "github.com") }) {
+				hosts = append(slices.Clip(hosts), "github.com")
+			}
+			if gs.Agent || p.GitIdentity == nil {
+				p.GitIdentity = &gs.GitIdentity
+			}
+		}
+	}
+	p.GitHosts = gitInsteadOf(projectRepo, hosts)
 	// git 出站策略（契约 §5）：有 https 项目仓库的 orb 只放行该仓库（读写）；否则任意仓库只读（GitRepos 为空）。
 	if projectRepo != nil {
 		plan.Egress.GitRepos[projectRepo.host] = []string{egress.NormalizeRepo(projectRepo.path)}
@@ -394,4 +415,13 @@ func nonEmpty(s *string) *string {
 		return nil
 	}
 	return s
+}
+
+// prevURLs 解析项目的 github_prev_urls（JSON 字符串数组，M14）；解析失败或为空时返回 nil。
+func prevURLs(raw string) []string {
+	var out []string
+	if json.Unmarshal([]byte(raw), &out) != nil || len(out) == 0 {
+		return nil
+	}
+	return out
 }

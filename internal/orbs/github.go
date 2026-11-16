@@ -18,9 +18,9 @@ const (
 
 // GitHubSetup 是一台 orb 的 GitHub 下发参数。
 type GitHubSetup struct {
-	Login       string
-	GitIdentity apigen.GitIdentity
-	Agent       bool // 身份为 agent：GitIdentity 覆盖项目与所有者设置
+	Login                string
+	GitIdentity          apigen.GitIdentity
+	Agent                bool // 身份为 agent：GitIdentity 覆盖项目与所有者设置
 	APIOrigin, GitOrigin string
 }
 

@@ -232,7 +232,9 @@ func (s *Service) SetProfiles(p Profiles) { s.profiles = p }
 func (s *Service) SetAfterSpacePrecheck(fn func()) { s.afterSpacePrecheck = fn }
 
 // GitHub 给线程服务解析自动化身份（M14）。
-type GitHub interface{ AutomationIdentity(ctx context.Context) string }
+type GitHub interface {
+	AutomationIdentity(ctx context.Context) string
+}
 
 // SetGitHub 设置 GitHub 集成（M14）；须在服务对外可用之前调用。
 func (s *Service) SetGitHub(g GitHub) { s.gh = g }
