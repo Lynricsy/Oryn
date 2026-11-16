@@ -79,7 +79,9 @@ type runtimeCap struct {
 
 // runtimeCaps 是运行时端点认得的能力表。
 func (h *Host) runtimeCaps() map[string]runtimeCap {
-	return map[string]runtimeCap{"content": h.contentCap(), "db": h.dbCap(), "files": h.filesCap()}
+	return map[string]runtimeCap{
+		"content": h.contentCap(), "db": h.dbCap(), "files": h.filesCap(), "sample": h.sampleCap(),
+	}
 }
 
 // frameOrigin 返回帧自己的源（scheme://host[:port]）。

@@ -5,6 +5,7 @@
 
 import {
 	type Capability,
+	capabilityError,
 	createTransport,
 	type Transport,
 	type TransportNatives,
@@ -98,9 +99,87 @@ const watchAdapter: StreamAdapter =
 		return () => ctl.abort();
 	};
 
+/** 像 AbortSignal 的对象（页面传来的值不可信，只做鸭子类型判断）。 */
+function asSignal(v: unknown): AbortSignal | null {
+	if (typeof v !== "object" || v === null) return null;
+	const s = v as Partial<AbortSignal>;
+	return typeof s.aborted === "boolean" &&
+		typeof s.addEventListener === "function" &&
+		typeof s.removeEventListener === "function"
+		? (s as AbortSignal)
+		: null;
+}
+
+/**
+ * `sample.ask(prompt, {format, images, onText, signal}?)`：返回 `{text, json?}`。只有 format 与 images 发给服务端；
+ * 回答的增量逐段交给 onText（页面回调自己的异常不影响提问）；signal 中止时中止请求，并以 `signal.reason` 拒绝。
+ */
+const askAdapter: StreamAdapter =
+	(t, n, cap, op) =>
+	async (...args) => {
+		const [prompt, opts] = args;
+		const o =
+			typeof opts === "object" && opts !== null
+				? (opts as Record<string, unknown>)
+				: {};
+		const onText = o.onText;
+		if (onText !== undefined && typeof onText !== "function")
+			throw new n.Error(`${cap}.${op} 的 onText 要是函数`);
+		const signal = o.signal === undefined ? null : asSignal(o.signal);
+		if (o.signal !== undefined && !signal)
+			throw new n.Error(`${cap}.${op} 的 signal 要是 AbortSignal`);
+		const wire: Record<string, unknown> = {};
+		if (o.format !== undefined) wire.format = o.format;
+		if (o.images !== undefined) wire.images = o.images;
+		const aborted = () =>
+			signal?.reason ?? capabilityError(n, "failed", "提问已取消");
+		if (signal?.aborted) throw aborted();
+		const ctl = new n.AbortController();
+		const onAbort = () => ctl.abort();
+		signal?.addEventListener("abort", onAbort);
+		let answer: { text: string; json?: unknown } | null = null;
+		try {
+			await t.stream(
+				cap,
+				op,
+				[prompt, wire],
+				(event) => {
+					if (typeof event !== "object" || event === null) return;
+					const ev = event as {
+						type?: unknown;
+						text?: unknown;
+						json?: unknown;
+					};
+					if (typeof ev.text !== "string") return;
+					if (ev.type === "answer") {
+						answer =
+							"json" in ev
+								? { text: ev.text, json: ev.json }
+								: { text: ev.text };
+					} else if (ev.type === "text" && typeof onText === "function") {
+						try {
+							onText(ev.text);
+						} catch {
+							// 页面回调自己的异常不影响提问
+						}
+					}
+				},
+				ctl.signal,
+			);
+		} finally {
+			signal?.removeEventListener("abort", onAbort);
+		}
+		if (ctl.signal.aborted) throw aborted();
+		if (!answer) throw capabilityError(n, "failed", "没有收到回答");
+		return n.freeze(answer);
+	};
+
 const STREAM_ADAPTERS: Readonly<
 	Record<string, Readonly<Record<string, StreamAdapter>>>
-> = Object.freeze({ db: Object.freeze({ watch: watchAdapter }) });
+> = Object.freeze({
+	db: Object.freeze({ watch: watchAdapter }),
+	sample: Object.freeze({ ask: askAdapter }),
+});
 
 /**
  * 构造 `oryn.use`：`endpoint` 是运行时端点的绝对地址，为 `null` 时（旧版本的帧、配置不全）任何能力都不可用。

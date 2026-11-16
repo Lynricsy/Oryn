@@ -130,19 +130,17 @@ describe("oryn.use 的命名空间", () => {
 	});
 
 	it("没有适配的流式操作不暴露", async () => {
-		const fetchMock = vi
-			.fn()
-			.mockResolvedValue(
-				reply({
-					v: 1,
-					id: "u",
-					ok: true,
-					value: {
-						ops: ["ask", "constructor"],
-						streams: ["ask", "constructor"],
-					},
-				}),
-			);
+		const fetchMock = vi.fn().mockResolvedValue(
+			reply({
+				v: 1,
+				id: "u",
+				ok: true,
+				value: {
+					ops: ["ask", "constructor"],
+					streams: ["ask", "constructor"],
+				},
+			}),
+		);
 		const cap = await createUse(ENDPOINT, testNatives(fetchMock))("db");
 		expect(cap).toEqual({});
 	});
@@ -278,5 +276,121 @@ describe("db.watch", () => {
 		const db = await createUse(ENDPOINT, testNatives(fetchMock))("db");
 		expect(() => db?.watch?.(["todos"])).toThrow();
 		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+});
+
+const SAMPLE_OPS = {
+	v: 1,
+	id: "u",
+	ok: true,
+	value: { ops: ["ask"], streams: ["ask"] },
+};
+
+describe("sample.ask", () => {
+	it("增量交给 onText，answer 作为结果；只把 format 与 images 发给服务端", async () => {
+		const live = liveStream();
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(reply(SAMPLE_OPS))
+			.mockImplementationOnce((_u: string, init: RequestInit) =>
+				live.respond(init),
+			);
+		const sample = await createUse(ENDPOINT, testNatives(fetchMock))("sample");
+		const parts: string[] = [];
+		const pending = sample?.ask?.("总结一下", {
+			format: "json",
+			images: ["data:image/png;base64,AA=="],
+			onText: (s: string) => {
+				parts.push(s);
+				throw new Error("page bug");
+			},
+			signal: new AbortController().signal,
+		}) as Promise<unknown>;
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+		expect(sentBody(fetchMock, 1)).toMatchObject({
+			kind: "stream",
+			cap: "sample",
+			op: "ask",
+			args: [
+				"总结一下",
+				{ format: "json", images: ["data:image/png;base64,AA=="] },
+			],
+		});
+		live.push({ v: 1, id: "s", event: { type: "text", text: '{"a"' } });
+		live.push({ v: 1, id: "s", event: { type: "text", text: ":1}" } });
+		live.push({
+			v: 1,
+			id: "s",
+			event: { type: "answer", text: '{"a":1}', json: { a: 1 } },
+		});
+		live.push({ v: 1, id: "s", done: true });
+		live.close();
+		const answer = await pending;
+		expect(answer).toEqual({ text: '{"a":1}', json: { a: 1 } });
+		expect(Object.isFrozen(answer)).toBe(true);
+		expect(parts).toEqual(['{"a"', ":1}"]);
+	});
+
+	it("没有 json 时结果只有 text；流以错误结束时拒绝并带 code", async () => {
+		const ok = liveStream();
+		const bad = liveStream();
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(reply(SAMPLE_OPS))
+			.mockImplementationOnce((_u: string, init: RequestInit) =>
+				ok.respond(init),
+			)
+			.mockImplementationOnce((_u: string, init: RequestInit) =>
+				bad.respond(init),
+			);
+		const sample = await createUse(ENDPOINT, testNatives(fetchMock))("sample");
+		const first = sample?.ask?.("hi") as Promise<unknown>;
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+		expect(sentBody(fetchMock, 1).args).toEqual(["hi", {}]);
+		ok.push({ v: 1, id: "s", event: { type: "answer", text: "你好" } });
+		ok.push({ v: 1, id: "s", done: true });
+		ok.close();
+		await expect(first).resolves.toEqual({ text: "你好" });
+
+		const second = sample?.ask?.("hi") as Promise<unknown>;
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+		bad.push({
+			v: 1,
+			id: "s",
+			ok: false,
+			error: { code: "rate_limited", message: "太多了" },
+		});
+		bad.close();
+		await expect(second).rejects.toMatchObject({ code: "rate_limited" });
+	});
+
+	it("signal 中止时中止请求并以 reason 拒绝；已中止的 signal 不发请求", async () => {
+		const live = liveStream();
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(reply(SAMPLE_OPS))
+			.mockImplementationOnce((_u: string, init: RequestInit) =>
+				live.respond(init),
+			);
+		const sample = await createUse(ENDPOINT, testNatives(fetchMock))("sample");
+		const ctl = new AbortController();
+		const onText = vi.fn();
+		const pending = sample?.ask?.("hi", {
+			onText,
+			signal: ctl.signal,
+		}) as Promise<unknown>;
+		await vi.waitFor(() => expect(live.signal()).toBeDefined());
+		ctl.abort();
+		expect(live.signal()?.aborted).toBe(true);
+		await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+		expect(onText).not.toHaveBeenCalled();
+
+		await expect(
+			sample?.ask?.("hi", { signal: ctl.signal }) as Promise<unknown>,
+		).rejects.toMatchObject({ name: "AbortError" });
+		await expect(
+			sample?.ask?.("hi", { onText: 1 }) as Promise<unknown>,
+		).rejects.toThrow();
+		expect(fetchMock).toHaveBeenCalledTimes(2);
 	});
 });

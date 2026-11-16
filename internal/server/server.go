@@ -15,6 +15,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/api"
 	"github.com/Lynricsy/Oryn/internal/artifacts"
 	"github.com/Lynricsy/Oryn/internal/artifacts/render"
+	"github.com/Lynricsy/Oryn/internal/artifacts/sample"
 	"github.com/Lynricsy/Oryn/internal/attachments"
 	"github.com/Lynricsy/Oryn/internal/auth"
 	"github.com/Lynricsy/Oryn/internal/cfgsync"
@@ -223,6 +224,8 @@ func (s *Server) init(ctx context.Context) error {
 	s.Artifacts.AttachConsentHub(artifactViewers{s.Hub})
 	// files 能力（步骤 7.4）：经 orb 本机 API 只读地取创建线程的工作目录
 	s.Artifacts.AttachOrbFS(s.Orbs)
+	// sample 能力（步骤 7.5）：控制面用钉住的 Core（coordinator.omp_path）一次性回答页面的问题，不经过 orb
+	s.Artifacts.AttachSampler(sample.New(sample.Config{OmpPath: cfg.Coordinator.OmpPath, Home: s.Home, Vault: s.Vault}))
 	// artifact.call（orb / Runner 内 agent 的 artifact 工具）：须在 orb 服务接受 link 之前注册
 	s.Artifacts.RegisterOrbMethod(s.Orbs, s.LibrarySync)
 	s.Notify, err = notify.New(notify.Config{

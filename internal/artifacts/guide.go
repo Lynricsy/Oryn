@@ -152,14 +152,20 @@ db 是这个 artifact 自己的 JSON 文档存储，按集合（collection）组
 
 ## sample：向用户的模型提问（需要用户同意）
 
-把一个问题交给用户自己的模型，在一个没有任何工具的一次性会话里回答。第一次使用时 Oryn 会问用户是否同意。
+把一个问题交给用户自己的模型，在一个没有任何工具的一次性会话里回答：模型看不到页面、文件和对话历史，只看到你给的 prompt 与图片。第一次使用时 Oryn 会问用户是否同意；没同意之前、或者控制面没有可用的模型时，oryn.use("sample") 是 null。
 
-- ask(prompt, {format: "text" | "json", images, onText, signal}?)：返回 {text, json?}。format: "json" 时要求模型只回一个 JSON 值并解析好放在 json 里；images 最多 4 张 data:image/... 的 base64 图片；onText 逐段收到回答；signal 可以取消。
+  const sample = await oryn.use("sample");
+  if (!sample) { hideAskButton(); return; }
+  const {text} = await sample.ask("用一句话总结：" + input, {onText: (t) => out.append(t)});
+  const {json} = await sample.ask("列出三个关键词，回一个字符串数组", {format: "json"});
 
-同一个 artifact 同时最多 2 个问题、每分钟最多 10 个；prompt 不超过 100000 个字符。
+- ask(prompt, {format: "text" | "json", images, onText, signal}?)：返回 {text, json?}。text 是完整回答。format: "json" 时要求模型只回一个 JSON 值，解析好放在 json 里（模型没回合法 JSON 时报 failed，可以换个问法再试）。images 最多 %d 张 data:image/png、jpeg、gif 或 webp 的 base64 地址，每张不超过 %d MiB。onText 逐段收到回答的增量。signal 是 AbortSignal，中止后 ask 以 signal.reason 拒绝。
+
+prompt 不能为空、不超过 %d 个字符（超出报 too_large）。同一个 artifact 同时最多 %d 个问题、每分钟最多 %d 个，超出报 rate_limited。模型报错或在两分钟内没回答完时报 failed，message 说明原因。
 `, runtimeRate, runtimeBurst, maxRuntimeCalls, maxRuntimeStreams, MaxDataFilters, maxFieldSegments,
 	MaxDocBytes>>20, MaxDocDepth, MaxDataBytes>>20, DataListDefault, DataListMax, MaxDataResultBytes>>20,
-	MaxProjectList, MaxProjectFileBytes>>20, MaxProjectPathChars, MaxProjectReads)
+	MaxProjectList, MaxProjectFileBytes>>20, MaxProjectPathChars, MaxProjectReads,
+	MaxSampleImages, MaxSampleImageBytes>>20, MaxSamplePromptChars, MaxSampleRunning, MaxSamplePerMinute)
 
 // guideCanvas 是 canvas 主题：canvas.json 的格式、改布局的方式、用户的标注与画框的调节参数。
 var guideCanvas = fmt.Sprintf(`# 画布 artifact

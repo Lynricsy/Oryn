@@ -274,6 +274,8 @@ type Service struct {
 	consent consentSet
 	// files 是页面 files 能力的 orb 出口与读取并发（cap_files.go）。
 	files filesSet
+	// samples 是页面 sample 能力的执行端与提问限额（cap_sample.go）。
+	samples sampleSet
 }
 
 // holdContent 取内容存储的读锁并返回释放函数。凡是先把内容落进存储、再在事务里插引用行的写入路径，

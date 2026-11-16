@@ -453,13 +453,13 @@ func (s *Server) ExportArtifact(w http.ResponseWriter, r *http.Request, id apige
 }
 
 // GetArtifactCapabilities 对应 `GET artifacts/capabilities`。render 反映渲染自检的结果（不可用时带原因）；
-// sample 能力（步骤 7.5）还没有接入，固定为 false。
+// sample 反映页面的 sample 能力是否可用（coordinator.omp_path 指向的 Core 在，步骤 7.5）。
 func (s *Server) GetArtifactCapabilities(w http.ResponseWriter, _ *http.Request) {
 	host, ok := s.artifactsHost(w)
 	if !ok {
 		return
 	}
-	out := apigen.ArtifactCapabilities{Frames: apigen.ArtifactCapabilitiesFrames(host.Mode())}
+	out := apigen.ArtifactCapabilities{Frames: apigen.ArtifactCapabilitiesFrames(host.Mode()), Sample: s.Artifacts.Service.SampleAvailable()}
 	if s.Artifacts.Render != nil {
 		var reason string
 		if out.Render, reason = s.Artifacts.Render.Status(); !out.Render {
