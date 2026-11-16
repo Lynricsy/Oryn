@@ -156,6 +156,8 @@ func (r *Runtime) handleSock(ctx context.Context, method string, params json.Raw
 		return r.handleDesktopSock(ctx, method)
 	case orbsock.MethodLibraryPut:
 		return r.libraryPut(ctx, params)
+	case orbsock.MethodArtifactCall:
+		return r.artifactCall(ctx, params)
 	default:
 		if res, ok, err := r.handleThreadSock(ctx, method, params); ok {
 			return res, err

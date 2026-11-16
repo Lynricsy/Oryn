@@ -62,6 +62,11 @@ const (
 	// 文件库（M13）：library.put → ctl library.put（LinkCtlLibraryPutParams → AssistantFile），path 为 orb 内文件的绝对路径。
 	// orbd 在转发期间允许控制面经 library.fetch 取回该路径；文件以「库内共享」存入全局助手文件库。
 	MethodLibraryPut = "library.put"
+
+	// Artifacts（M14）：artifact.call → ctl artifact.call（LinkCtlArtifactCallParams → LinkCtlArtifactCallResult），
+	// threadId 恒为调用方线程。params.files[*].source 必须是 orb 内文件的绝对路径；orbd 在转发期间允许控制面经
+	// library.fetch 取回这些路径。
+	MethodArtifactCall = "artifact.call"
 )
 
 // 消息类型。
