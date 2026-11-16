@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -480,4 +481,175 @@ func TestReleaseAbortTask(t *testing.T) {
 	assert.Contains(t, posts[0], "aborted by the release thread")
 	assert.Equal(t, "task_finished", codeOf(abort()))
 	assert.Empty(t, e.fake.CallsTo("POST", "/repos/acme/widgets/*"))
+}
+
+// awaitingWithThread 走到「有发布线程、修复提交 CI 全部通过、Release 仍是草稿」：版本停在 awaiting_ci，线程仍享有例外。
+func (e *releaseEnv) awaitingWithThread() (thr, orb string, rel *githubtest.Release) {
+	e.t.Helper()
+	e.publish("1.2.3", relSHA(1))
+	require.Equal(e.t, "handled", e.fire(e.addRun(relSHA(1), bump, "completed", "failure", failingJob("test", "boom"))))
+	thr = e.ct.last()
+	orb = threadOrb(e.t, e, thr)
+	rel = e.fake.AddRelease(githubtest.Release{RepoID: 42, TagName: "v1.2.3", Draft: true})
+	e.publish("1.2.3", relSHA(2))
+	require.Equal(e.t, "handled", e.fire(e.addRun(relSHA(2), bump+": fix", "completed", "success")))
+	require.Equal(e.t, releaseAwaitingCI, e.release("1.2.3").State)
+	require.True(e.t, e.s.ReleaseThread(e.ctx, orb))
+	return thr, orb, rel
+}
+
+func (e *releaseEnv) systemPosts() []string { return e.n.systemPosts() }
+
+// scan 一轮：Release 仍是草稿时只读（只发 GET、发布行不变）；Release 被手动发布后 scan 置 green，线程失去发布例外。
+func TestReleaseScanPublishedGoesGreen(t *testing.T) {
+	e := newReleaseEnv(t)
+	thr, orb, rel := e.awaitingWithThread()
+	before := e.release("1.2.3")
+	e.clock.Add(time.Hour)
+	e.fake.ResetCalls()
+	e.s.scan(e.ctx)
+	assert.Equal(t, before, e.release("1.2.3"), "未到期且没有结论：发布行不变")
+	e.fake.Lock()
+	calls := append([]githubtest.Call(nil), e.fake.Calls...)
+	e.fake.Unlock()
+	require.NotEmpty(t, calls)
+	for _, c := range calls {
+		assert.Equal(t, "GET", c.Method, c.Path)
+	}
+	assert.True(t, e.s.ReleaseThread(e.ctx, orb))
+	assert.Empty(t, e.posts())
+
+	e.fake.Lock()
+	rel.Draft = false
+	e.fake.Unlock()
+	e.s.scan(e.ctx)
+	assert.Equal(t, releaseGreen, e.release("1.2.3").State)
+	assert.False(t, e.s.ReleaseThread(e.ctx, orb), "green 之后不再享有默认分支例外")
+	posts := e.posts()
+	require.Len(t, posts, 1)
+	assert.True(t, strings.HasPrefix(posts[0], thr+"\ndone\n"), posts[0])
+	assert.Empty(t, e.fake.CallsTo("POST", "/repos/acme/widgets/*"), "终态不在 GitHub 上发言")
+}
+
+// 一直是草稿：同一提交上不断到来的 run 结论不续长等待期；越过 releaseAwaitMax 后 scan 置 failed、通知所有者，例外消失。
+func TestReleaseScanAwaitExpires(t *testing.T) {
+	e := newReleaseEnv(t)
+	thr, orb, _ := e.awaitingWithThread()
+	e.clock.Add(releaseAwaitMax - time.Hour)
+	require.Equal(t, "handled", e.fire(e.addRun(relSHA(2), bump+": fix", "completed", "skipped")))
+	e.s.scan(e.ctx)
+	assert.Equal(t, releaseAwaitingCI, e.release("1.2.3").State)
+	assert.True(t, e.s.ReleaseThread(e.ctx, orb))
+
+	e.clock.Add(2 * time.Hour)
+	e.s.scan(e.ctx)
+	assert.Equal(t, releaseFailed, e.release("1.2.3").State)
+	assert.False(t, e.s.ReleaseThread(e.ctx, orb), "failed 之后不再享有默认分支例外")
+	posts := e.posts()
+	require.Len(t, posts, 1)
+	assert.True(t, strings.HasPrefix(posts[0], thr+"\nerror\n"), posts[0])
+	assert.Contains(t, posts[0], "no published (non-draft) GitHub Release")
+	e.s.scan(e.ctx)
+	assert.Len(t, e.posts(), 1, "终态之后不再处理")
+
+	// 没有线程的版本（从未阻塞）到期：发一条无线程通知
+	e.publish("1.3.0", relSHA(3))
+	require.Equal(t, "handled", e.fire(e.addRun(relSHA(3), "chore: bump version to 1.3.0", "completed", "success")))
+	e.clock.Add(releaseAwaitMax + time.Minute)
+	e.s.scan(e.ctx)
+	assert.Equal(t, releaseFailed, e.release("1.3.0").State)
+	sys := e.systemPosts()
+	require.Len(t, sys, 1)
+	assert.Contains(t, sys[0], "Release acme/widgets v1.3.0 is failed")
+}
+
+// 阻塞 job 在 job 列表第二页（前 100 个成功）：报告里有它的失败步骤与日志末尾，没有截断标记。
+func TestReleaseJobsPaged(t *testing.T) {
+	e := newReleaseEnv(t)
+	e.publish("1.2.3", relSHA(1))
+	jobs := make([]githubtest.WorkflowJob, 0, 101)
+	for i := range 100 {
+		jobs = append(jobs, githubtest.WorkflowJob{Name: fmt.Sprintf("ok%d", i), Conclusion: "success"})
+	}
+	jobs = append(jobs, failingJob("matrix-101", "tail of job 101"))
+	require.Equal(t, "handled", e.fire(e.addRun(relSHA(1), bump, "completed", "failure", jobs...)))
+	p := e.ct.created()[0].Prompt
+	assert.Contains(t, p, `"name":"matrix-101"`)
+	assert.Contains(t, p, "Run matrix-101")
+	assert.Contains(t, p, "tail of job 101")
+	assert.NotContains(t, p, "truncated")
+}
+
+// job 列表超过 releaseJobPages 页：报告标明截断（prompt 与 github_release_status 都能看到），run 本身仍列为阻塞。
+func TestReleaseJobsTruncated(t *testing.T) {
+	e := newReleaseEnv(t)
+	e.publish("1.2.3", relSHA(1))
+	jobs := make([]githubtest.WorkflowJob, 0, releaseJobPages*100+1)
+	for i := range releaseJobPages * 100 {
+		jobs = append(jobs, githubtest.WorkflowJob{Name: fmt.Sprintf("ok%d", i), Conclusion: "success"})
+	}
+	jobs = append(jobs, failingJob("hidden", "never read"))
+	run := e.addRun(relSHA(1), bump, "completed", "failure", jobs...)
+	require.Equal(t, "handled", e.fire(run))
+	thr := e.ct.last()
+	p := e.ct.created()[0].Prompt
+	assert.Contains(t, p, `"truncated":[`)
+	assert.Contains(t, p, fmt.Sprintf("the job list of run %d (CI) stopped after %d pages", run.ID, releaseJobPages))
+	assert.NotContains(t, p, "never read")
+	assert.Contains(t, p, fmt.Sprintf(`"runId":%d`, run.ID), "run 级阻塞项仍在")
+
+	res, err := e.s.Call(e.ctx, threadOrb(t, e, thr), thr, apigen.LinkCtlGithubCallParams{ThreadID: thr, Tool: "github_release_status", Params: map[string]any{}})
+	require.NoError(t, err)
+	assert.Contains(t, res.Text, "TRUNCATED: the job list of run")
+	assert.NotEmpty(t, res.Details["truncated"])
+}
+
+// run 列表超过 releaseRunPages 页、失败的 run 在最后一页：事件与 scan 都不判 green，保持 awaiting_ci。
+func TestReleaseRunsTruncatedNotGreen(t *testing.T) {
+	e := newReleaseEnv(t)
+	sha := relSHA(1)
+	e.publish("1.2.3", sha)
+	e.fake.AddRelease(githubtest.Release{RepoID: 42, TagName: "v1.2.3"})
+	e.fake.AddRun(githubtest.WorkflowRun{
+		RepoID: 42, Name: "old", Conclusion: "failure", HeadSHA: sha, Message: bump, UpdatedAt: time.Now().Add(-time.Hour).UTC().Truncate(time.Second),
+	})
+	var last *githubtest.WorkflowRun
+	for range releaseRunPages * 100 {
+		last = e.addRun(sha, bump, "completed", "success")
+	}
+	require.Equal(t, "handled", e.fire(last))
+	assert.Equal(t, releaseAwaitingCI, e.release("1.2.3").State)
+	e.s.scan(e.ctx)
+	assert.Equal(t, releaseAwaitingCI, e.release("1.2.3").State)
+	assert.Empty(t, e.ct.created())
+}
+
+// cleanup 只删保留期之外的终态行；进行中的版本（awaiting_ci / fixing）再旧也保留。
+func TestReleaseCleanup(t *testing.T) {
+	e := newEnv(t)
+	now := e.clock.Now()
+	old := now.Add(-releaseRetention - time.Hour).UnixMilli()
+	recent := now.Add(-releaseRetention + time.Hour).UnixMilli()
+	rows := []struct {
+		ver, state string
+		at         int64
+		keep       bool
+	}{
+		{"1.0.0", releaseGreen, old, false}, {"1.0.1", releaseFailed, old, false}, {"1.0.2", releaseSuperseded, old, false},
+		{"1.0.3", releaseGreen, recent, true}, {"1.0.4", releaseAwaitingCI, old, true}, {"1.0.5", releaseFixing, old, true},
+	}
+	for _, r := range rows {
+		require.NoError(t, e.st.Q.UpsertGithubRelease(e.ctx, db.UpsertGithubReleaseParams{
+			RepoID: 42, Version: r.ver, Sha: relSHA(1), State: r.state, UpdatedAt: r.at,
+		}))
+	}
+	e.s.cleanup(e.ctx)
+	for _, r := range rows {
+		_, err := e.st.Q.GetGithubRelease(e.ctx, db.GetGithubReleaseParams{RepoID: 42, Version: r.ver})
+		if r.keep {
+			assert.NoError(t, err, r.ver)
+		} else {
+			assert.True(t, isNoRows(err), r.ver)
+		}
+	}
 }

@@ -283,7 +283,8 @@ func (s *Service) Run(ctx context.Context) {
 	}
 }
 
-// cleanup 是每小时的清理：过期的一次性 state、超过保留期的投递记录、已投递的回流行、自身写入记录与审计、按人限流记录。
+// cleanup 是每小时的清理：过期的一次性 state、超过保留期的投递记录、已投递的回流行、自身写入记录与审计、按人限流记录、
+// 终态的发布行（进行中的版本不删，见 DeleteGithubReleasesBefore 的 WHERE）。
 func (s *Service) cleanup(ctx context.Context) {
 	now := s.now()
 	if err := s.st.Q.DeleteExpiredGithubStates(ctx, now.UnixMilli()); err != nil && ctx.Err() == nil {
@@ -298,6 +299,9 @@ func (s *Service) cleanup(ctx context.Context) {
 	}
 	s.cleanupSelfWrites(ctx, now)
 	s.cleanupSenderRuns(ctx, now)
+	if err := s.st.Q.DeleteGithubReleasesBefore(ctx, now.Add(-releaseRetention).UnixMilli()); err != nil && ctx.Err() == nil {
+		slog.Warn("github: 清理发布记录失败", "err", err)
+	}
 }
 
 // ---------- 本步的处理器 ----------

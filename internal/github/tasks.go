@@ -365,11 +365,12 @@ func (s *Service) taskComment(ctx context.Context, ev hookEvent, threadID, kind 
 
 // ---------- 任务时限与完成提醒（R25） ----------
 
-// scan 是每 scanInterval 一轮的扫描：到点的任务时限、到期的问题自动关闭（autoclose.go）。
+// scan 是每 scanInterval 一轮的扫描：到点的任务时限、到期的问题自动关闭（autoclose.go）、等待中的发布（release.go）。
 func (s *Service) scan(ctx context.Context) {
 	s.scanDeadlines(ctx)
 	s.scanAutoclose(ctx)
 	s.scanFreezeAfterTurn(ctx)
+	s.scanReleases(ctx)
 }
 
 // scanDeadlines 处理到点的任务时限：清掉时限（每个只处理一次）、中止当前回合并通知。
