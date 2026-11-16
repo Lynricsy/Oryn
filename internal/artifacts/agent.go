@@ -76,7 +76,12 @@ type Result struct {
 type obj = map[string]any
 
 // Call 执行一个 agent 操作；params 是 camelCase 的 JSON 对象（未知字段报 invalid）。业务错误是 *OpError。
-func (s *Service) Call(ctx context.Context, c Caller, op string, params json.RawMessage) (Result, error) {
+func (s *Service) Call(ctx context.Context, c Caller, op string, params json.RawMessage) (res Result, err error) {
+	defer func() {
+		if err == nil {
+			s.recordActivity(ctx, c, op, params, res)
+		}
+	}()
 	if c.Scope == ScopeProject && (c.ProjectID == nil || *c.ProjectID == "") {
 		c.Scope = ScopeThread
 	}

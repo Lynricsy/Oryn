@@ -217,6 +217,8 @@ func (s *Server) init(ctx context.Context) error {
 	// 实时画布：观看者变化与 artifact.canvas 经 Hub；关停时把未落版本的画布操作写成版本（在关库之前）
 	s.Artifacts.AttachCanvasHub(s.Hub)
 	s.closers = append(s.closers, s.Artifacts.FlushCanvases)
+	// 在场（步骤 6.7）：观看者与 agent 活动合并成 artifact.activity 发给观看者；回合结束的清理在 RunActivity 里
+	s.Artifacts.AttachActivityHub(artifactViewers{s.Hub})
 	// artifact.call（orb / Runner 内 agent 的 artifact 工具）：须在 orb 服务接受 link 之前注册
 	s.Artifacts.RegisterOrbMethod(s.Orbs, s.LibrarySync)
 	s.Notify, err = notify.New(notify.Config{
@@ -260,6 +262,7 @@ func (s *Server) init(ctx context.Context) error {
 	}, s.Store, s.Orbs, s.Notify)
 	s.GitHub.SetSampler(s.Stats)
 	s.Threads.AddObserver(s.Stats)
+	s.Threads.AddObserver(s.Artifacts.TurnObserver())
 	home := s.Home
 	s.Share = share.New(share.Config{PublicURL: cfg.PublicURL, RoleNames: func() map[string]string {
 		// 分享页 role 的显示名（config.yml 的 modelTags.<role>.name）；config.yml 解析失败时不给名字
@@ -284,6 +287,7 @@ func (s *Server) init(ctx context.Context) error {
 	go s.Attachments.Run(runCtx)
 	go s.Library.Run(runCtx)
 	go s.Artifacts.Run(runCtx)
+	go s.Artifacts.RunActivity(runCtx)
 	go s.LibrarySync.Run(runCtx)
 	go s.Notify.Run(runCtx)
 	go s.Host.Run(runCtx)

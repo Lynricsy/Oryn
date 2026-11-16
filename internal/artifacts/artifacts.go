@@ -262,6 +262,8 @@ type Service struct {
 	// versionHooks 是新版本监听者（OnVersion）。
 	versionMu    sync.Mutex
 	versionHooks []func(id string, n int)
+	// act 是在场信息（activity.go）。
+	act activitySet
 }
 
 // holdContent 取内容存储的读锁并返回释放函数。凡是先把内容落进存储、再在事务里插引用行的写入路径，

@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/Lynricsy/Oryn/internal/artifacts"
 	"github.com/Lynricsy/Oryn/internal/auth"
 	"github.com/Lynricsy/Oryn/internal/link"
 	"github.com/Lynricsy/Oryn/internal/orbs"
+	"github.com/Lynricsy/Oryn/internal/realtime"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
 )
@@ -45,4 +47,16 @@ func (r revocations) Subscribe(fn func(kind, id string)) { _ = r.s.Subscribe(fn)
 
 func (a orbsAdapter) SetQuiescence(fn func(orbID string, commit func() bool) bool) {
 	a.Service.SetQuiescence(fn)
+}
+
+// artifactViewers 让 *realtime.Hub 满足 artifacts.ActivityHub（观看者换成 artifacts 包自己的类型）。
+type artifactViewers struct{ *realtime.Hub }
+
+func (h artifactViewers) Viewers(id string) []artifacts.Viewer {
+	ws := h.Watchers(id)
+	out := make([]artifacts.Viewer, len(ws))
+	for i, w := range ws {
+		out[i] = artifacts.Viewer{Conn: w.Conn, Page: w.Page}
+	}
+	return out
 }
