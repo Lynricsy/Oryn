@@ -25,6 +25,10 @@ const (
 	textSniffBytes = 8 << 10
 )
 
+// ConfinedHeader 是 fs/list 与 fs/file 在带 confine 时回的响应头（值为 1）：控制面据此确认 orbd 认得 confine，
+// 不认得它的旧 orbd 的应答一律不用（不回落到不受限的读取）。
+const ConfinedHeader = "X-Oryn-Confined"
+
 // etagFor 返回文件的 ETag：`"<mtimeUnixNano>-<size>"`（含引号，可直接用作 If-Match）。
 func etagFor(fi fs.FileInfo) string {
 	return fmt.Sprintf(`"%d-%d"`, fi.ModTime().UnixNano(), fi.Size())
@@ -104,10 +108,22 @@ func (r *Runtime) handleFsList(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	confine, err := confineDir(req)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	abs, real, err := r.userPath(root, req.URL.Query().Get("path"), true)
 	if err != nil {
 		writeErr(w, err)
 		return
+	}
+	if confine != "" {
+		if !confined(real, confine) {
+			writeErr(w, outsideConfine(abs))
+			return
+		}
+		w.Header().Set(ConfinedHeader, "1")
 	}
 	st, err := os.Stat(real)
 	if err != nil {
@@ -130,7 +146,11 @@ func (r *Runtime) handleFsList(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			continue // 列目录与 Lstat 之间被删除
 		}
-		entries = append(entries, r.entryFor(root, p, fi))
+		e := r.entryFor(root, p, fi)
+		if confine != "" && !confineEntry(&e, filepath.Join(real, de.Name()), fi, confine) {
+			continue
+		}
+		entries = append(entries, e)
 	}
 	slices.SortFunc(entries, func(a, b apigen.FsEntry) int {
 		if da, db := isDirEntry(a), isDirEntry(b); da != db {
@@ -220,10 +240,22 @@ func (r *Runtime) handleFsRead(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	confine, err := confineDir(req)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	abs, real, err := r.userPath(root, req.URL.Query().Get("path"), true)
 	if err != nil {
 		writeErr(w, err)
 		return
+	}
+	if confine != "" {
+		if !confined(real, confine) {
+			writeErr(w, outsideConfine(abs))
+			return
+		}
+		w.Header().Set(ConfinedHeader, "1")
 	}
 	st, err := os.Stat(real)
 	if err != nil {
@@ -500,6 +532,73 @@ func entryPath(abs string) (string, error) {
 func within(p, dir string) bool {
 	rel, err := filepath.Rel(dir, p)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
+}
+
+// confineDir 解析 fs/list 与 fs/file 可选的 confine 查询参数（artifact 的 files 能力用的只读视图）：必须是已存在
+// 目录的绝对路径，返回展开符号链接后的真实路径；没给时回空串（不额外限制）。
+func confineDir(req *http.Request) (string, error) {
+	c := req.URL.Query().Get("confine")
+	if c == "" {
+		return "", nil
+	}
+	if !filepath.IsAbs(c) || strings.ContainsRune(c, 0) {
+		return "", badRequest("confine must be an absolute directory: %q", c)
+	}
+	real, err := filepath.EvalSymlinks(c)
+	if err != nil {
+		return "", fsError(err)
+	}
+	st, err := os.Stat(real)
+	if err != nil {
+		return "", fsError(err)
+	}
+	if !st.IsDir() {
+		return "", errf(http.StatusConflict, "not_a_directory", "confine %s is not a directory", c)
+	}
+	return real, nil
+}
+
+// confined 报告真实路径 real 是否在 confine 的范围里：等于 confine 或在其下（按路径段比较，`/w/ab` 不在 `/w/a` 里），
+// 且相对 confine 的任何一段都不是 `.git`（不分大小写）。
+func confined(real, confine string) bool {
+	if !within(real, confine) {
+		return false
+	}
+	rel, _ := filepath.Rel(confine, real)
+	for _, seg := range strings.Split(rel, string(filepath.Separator)) {
+		if strings.EqualFold(seg, ".git") {
+			return false
+		}
+	}
+	return true
+}
+
+// confineEntry 判定 confine 下目录列表里的一项是否保留：real 是它在已展开的父目录下的路径（目录项本身不展开）。
+// 符号链接须指向范围之内（悬空的不保留），指向文件时 size 改为目标文件的大小。
+func confineEntry(e *apigen.FsEntry, real string, fi fs.FileInfo, confine string) bool {
+	if !confined(real, confine) {
+		return false
+	}
+	if fi.Mode()&fs.ModeSymlink == 0 {
+		return true
+	}
+	target, err := filepath.EvalSymlinks(real)
+	if err != nil || !confined(target, confine) {
+		return false
+	}
+	st, err := os.Stat(target)
+	if err != nil {
+		return false
+	}
+	if st.Mode().IsRegular() {
+		e.Size = st.Size()
+	}
+	return true
+}
+
+// outsideConfine 是 confine 范围之外的路径的应答：与不存在一样回 404。
+func outsideConfine(abs string) *apiError {
+	return errf(http.StatusNotFound, "not_found", "%s: no such file or directory", abs)
 }
 
 func (r *Runtime) handleFsMkdir(w http.ResponseWriter, req *http.Request) {

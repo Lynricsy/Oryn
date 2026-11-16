@@ -221,6 +221,8 @@ func (s *Server) init(ctx context.Context) error {
 	s.Artifacts.AttachActivityHub(artifactViewers{s.Hub})
 	// 用户同意（步骤 7.3）：files / sample 的同意请求发给观看者；没人在看时直接按拒绝处理
 	s.Artifacts.AttachConsentHub(artifactViewers{s.Hub})
+	// files 能力（步骤 7.4）：经 orb 本机 API 只读地取创建线程的工作目录
+	s.Artifacts.AttachOrbFS(s.Orbs)
 	// artifact.call（orb / Runner 内 agent 的 artifact 工具）：须在 orb 服务接受 link 之前注册
 	s.Artifacts.RegisterOrbMethod(s.Orbs, s.LibrarySync)
 	s.Notify, err = notify.New(notify.Config{

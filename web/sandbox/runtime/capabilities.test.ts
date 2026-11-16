@@ -1,10 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { createUse } from "./capabilities";
-import type { TransportNatives } from "./transport";
+import { type CapabilityNatives, createUse } from "./capabilities";
 
 const ENDPOINT = "https://a-token.example/_oryn/v1";
 
-function testNatives(fetchImpl: unknown): TransportNatives {
+function testNatives(fetchImpl: unknown): CapabilityNatives {
 	return {
 		fetch: fetchImpl as typeof fetch,
 		parse: JSON.parse,
@@ -15,6 +14,8 @@ function testNatives(fetchImpl: unknown): TransportNatives {
 		AbortController,
 		TextDecoder,
 		Error,
+		atob: (s) => window.atob(s),
+		Uint8Array,
 	};
 }
 
@@ -144,6 +145,28 @@ describe("oryn.use 的命名空间", () => {
 			);
 		const cap = await createUse(ENDPOINT, testNatives(fetchMock))("db");
 		expect(cap).toEqual({});
+	});
+
+	it('files.read 带 {as: "bytes"} 时把 base64 转成 Uint8Array，按文本读时原样返回', async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				reply({ v: 1, id: "u", ok: true, value: { ops: ["list", "read"] } }),
+			)
+			.mockResolvedValueOnce(reply({ v: 1, id: "c", ok: true, value: "AP8Q" }))
+			.mockResolvedValueOnce(reply({ v: 1, id: "c", ok: true, value: "AP8Q" }))
+			.mockResolvedValueOnce(reply({ v: 1, id: "c", ok: true, value: [] }));
+		const files = await createUse(ENDPOINT, testNatives(fetchMock))("files");
+		const bytes = await files?.read?.("bin.dat", { as: "bytes" });
+		expect(bytes).toBeInstanceOf(Uint8Array);
+		expect(bytes).toEqual(new Uint8Array([0x00, 0xff, 0x10]));
+		expect(sentBody(fetchMock, 1)).toMatchObject({
+			cap: "files",
+			op: "read",
+			args: ["bin.dat", { as: "bytes" }],
+		});
+		await expect(files?.read?.("a.txt")).resolves.toBe("AP8Q");
+		await expect(files?.list?.()).resolves.toEqual([]);
 	});
 });
 

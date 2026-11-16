@@ -137,12 +137,18 @@ db 是这个 artifact 自己的 JSON 文档存储，按集合（collection）组
 
 ## files：读项目文件（需要用户同意）
 
-只读地列出与读取创建这个 artifact 的线程的工作目录。第一次使用时 Oryn 会问用户是否同意；没同意之前 oryn.use("files") 是 null。
+只读地列出与读取创建这个 artifact 的线程的工作目录，不能写。第一次使用时 Oryn 会问用户是否同意；没同意之前 oryn.use("files") 是 null。导入的 artifact、创建它的线程或 orb 已不在时，files 也是 null。
 
-- list(path?)：返回 [{name, path, type: "file" | "folder", size}]，文件夹在前。
-- read(path, {as: "bytes"}?)：文本文件返回字符串；as: "bytes" 时返回 Uint8Array。
+  const files = await oryn.use("files");
+  if (!files) { showUnavailable(); return; }
+  const entries = await files.list("src");          // [{name, path, type, size}]
+  const text = await files.read("src/main.go");
+  const png = await files.read("logo.png", {as: "bytes"});   // Uint8Array
 
-路径是相对工作目录的路径；不能含 .. 或 .git；单个文件不超过 20 MiB。
+- list(path?)：列出一个文件夹，返回 [{name, path, type: "file" | "folder", size}]，文件夹在前、按名排序，最多 %d 项；path 缺省是工作目录本身。返回的 path 可以直接交给 read 或 list。
+- read(path, {as: "bytes"}?)：文本文件返回字符串（不是 UTF-8 文本时报 invalid）；as: "bytes" 时返回 Uint8Array。单个文件不超过 %d MiB（超出报 too_large），不存在报 not_found。
+
+路径是相对工作目录的路径，用 / 分隔，不超过 %d 个字符：不能以 / 开头，不能含 \ 、冒号或控制字符，不能有空段、. 或 ..，每一段不能以点或空格结尾；不能读 .git 里的任何东西（列表里也没有它）。指到工作目录之外或 .git 里的符号链接读不到、也不出现在列表里。每个 artifact 同时最多 %d 个 list / read，多出的报 rate_limited。
 
 ## sample：向用户的模型提问（需要用户同意）
 
@@ -152,7 +158,8 @@ db 是这个 artifact 自己的 JSON 文档存储，按集合（collection）组
 
 同一个 artifact 同时最多 2 个问题、每分钟最多 10 个；prompt 不超过 100000 个字符。
 `, runtimeRate, runtimeBurst, maxRuntimeCalls, maxRuntimeStreams, MaxDataFilters, maxFieldSegments,
-	MaxDocBytes>>20, MaxDocDepth, MaxDataBytes>>20, DataListDefault, DataListMax, MaxDataResultBytes>>20)
+	MaxDocBytes>>20, MaxDocDepth, MaxDataBytes>>20, DataListDefault, DataListMax, MaxDataResultBytes>>20,
+	MaxProjectList, MaxProjectFileBytes>>20, MaxProjectPathChars, MaxProjectReads)
 
 // guideCanvas 是 canvas 主题：canvas.json 的格式、改布局的方式、用户的标注与画框的调节参数。
 var guideCanvas = fmt.Sprintf(`# 画布 artifact

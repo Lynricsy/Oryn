@@ -272,6 +272,8 @@ type Service struct {
 	data dataSet
 	// consent 是页面能力的用户同意（consent.go）。
 	consent consentSet
+	// files 是页面 files 能力的 orb 出口与读取并发（cap_files.go）。
+	files filesSet
 }
 
 // holdContent 取内容存储的读锁并返回释放函数。凡是先把内容落进存储、再在事务里插引用行的写入路径，

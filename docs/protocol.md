@@ -133,13 +133,15 @@ M3 只新增两条通道：终端走现有 agent 流（WS `cmd` / `frame` 透传
 |路由|实现要点|
 |---|---|
 |`GET /fs/roots`|`{home, workdir}`|
-|`GET /fs/list?path=`|`os.ReadDir` + `Lstat`；符号链接带 `target` 与 `targetType`；目录在前、按名不分大小写排序；≤5000 条|
+|`GET /fs/list?path=&confine=`|`os.ReadDir` + `Lstat`；符号链接带 `target` 与 `targetType`；目录在前、按名不分大小写排序；≤5000 条。`confine` 见下|
 |`GET /fs/stat?path=`|`FsEntry` + `mime`（`mime.TypeByExtension`，缺省 `http.DetectContentType`）+ `text`（前 8KiB 无 NUL 且为合法 UTF-8，允许末尾截断的码点）|
-|`GET /fs/file?path=`|目录 → 409 `is_a_directory`；`http.ServeContent`（Range），头 `ETag`|
+|`GET /fs/file?path=&confine=`|目录 → 409 `is_a_directory`；`http.ServeContent`（Range），头 `ETag`。`confine` 见下|
 |`PUT /fs/file?path=&overwrite=`|父目录须存在；已存在且 `overwrite=false` → 409 `exists`；`If-Match` 不符（含文件不存在）→ 412 `modified`；`http.MaxBytesReader(512MiB)`；写到 `$HOME/.oryn/tmp/up-<rand>`，`Sync`，沿用原文件权限（新文件 0644），`rename`（跨设备时复制后删除）；目标是符号链接时写入其指向的文件；任何失败删除临时文件；`ENOSPC` → 507。启动时清空 `$HOME/.oryn/tmp`；不做断点续传|
 |`POST /fs/mkdir`|`FsPathRequest`；`os.MkdirAll(0o755)`|
 |`POST /fs/rename`|`FsRenameRequest`；目标存在且未 `overwrite` → 409 `exists`|
 |`POST /fs/delete`|`FsPathRequest`；`os.RemoveAll`|
+
+`confine=<绝对目录>`（可选，只有 `fs/list` 与 `fs/file` 认；控制面的 artifact `files` 能力总是带上线程工作目录）：先把它展开符号链接（必须是已存在的目录，否则 400 / 404 / 409），之后请求路径展开符号链接后的真实路径必须等于它或在它之下（按路径段比较，`/w/ab` 不在 `/w/a` 里），且相对它的任何一段都不是 `.git`（不分大小写），否则与不存在一样回 404 `not_found`。列表里不满足这一条的项（含指到范围之外或悬空的符号链接）直接略去；保留下来的指向文件的符号链接，`size` 是目标文件的大小。认得 `confine` 的 orbd 在这类应答里带头 `X-Oryn-Confined: 1`；控制面收到没有这个头的 200 应答时按「orbd 太旧」处理，不使用其内容。
 
 改动（`git` 特性）：`exec git -C <top> -c core.quotepath=off -c color.ui=false …`，环境追加 `GIT_OPTIONAL_LOCKS=0 GIT_TERMINAL_PROMPT=0 LC_ALL=C`，每次调用 20s 超时。路径参数一律放在 `--` 之后并加 `:(literal)` 前缀；`commit` 须匹配 `^[0-9a-f]{7,40}$`，`base` 须匹配 `^[A-Za-z0-9][A-Za-z0-9._/-]{0,200}$`；`paths[]` 拒绝空串、NUL、绝对路径与 `..` 段。
 

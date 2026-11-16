@@ -26,7 +26,8 @@ export interface RuntimeConfig {
 
 /**
  * 页面加载前缓存的原生引用：页面脚本之后改写这些全局不影响运行时。
- * `parse`、`fetch`、计时器、`AbortController` 与 `TextDecoder` 给能力调用的传输层用。
+ * `parse`、`fetch`、计时器、`AbortController` 与 `TextDecoder` 给能力调用的传输层用；`atob` 与 `Uint8Array`
+ * 把 `files.read(path, {as: "bytes"})` 的 base64 转成字节。
  */
 export const natives = Object.freeze({
 	freeze: Object.freeze,
@@ -41,6 +42,8 @@ export const natives = Object.freeze({
 	AbortController,
 	TextDecoder,
 	Error,
+	atob: window.atob.bind(window),
+	Uint8Array,
 });
 
 const MARK_PATTERN = /^[a-z0-9]{8}$/;

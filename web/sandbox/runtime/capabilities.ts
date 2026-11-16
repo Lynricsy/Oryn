@@ -1,6 +1,7 @@
 // 能力的命名空间：`oryn.use(cap)` 按服务端给的操作表构造页面拿到的对象。
-// 普通操作一律是「按位置传参、返回 Promise」的函数；流式操作没有统一的形状，各自在 STREAM_ADAPTERS 里登记
-// 怎么暴露（例如 `db.watch(collections, onChange, onError?)` 返回取消函数）。没登记的流式操作不暴露。
+// 普通操作一律是「按位置传参、返回 Promise」的函数，个别需要改写返回值的在 CALL_ADAPTERS 里登记（例如
+// `files.read(path, {as: "bytes"})` 把 base64 转成 Uint8Array）；流式操作没有统一的形状，各自在 STREAM_ADAPTERS
+// 里登记怎么暴露（例如 `db.watch(collections, onChange, onError?)` 返回取消函数）。没登记的流式操作不暴露。
 
 import {
 	type Capability,
@@ -9,12 +10,57 @@ import {
 	type TransportNatives,
 } from "./transport";
 
+/** 构造命名空间要用的原生引用：传输层的那些，加上解 base64 用的 `atob` 与 `Uint8Array`。 */
+export interface CapabilityNatives extends TransportNatives {
+	atob(data: string): string;
+	Uint8Array: Uint8ArrayConstructor;
+}
+
 type StreamAdapter = (
 	t: Transport,
-	n: TransportNatives,
+	n: CapabilityNatives,
 	cap: string,
 	op: string,
 ) => (...args: unknown[]) => unknown;
+
+type CallAdapter = (
+	t: Transport,
+	n: CapabilityNatives,
+	cap: string,
+	op: string,
+) => (...args: unknown[]) => Promise<unknown>;
+
+/** `files.read(path, {as: "bytes"})`：服务端回 base64，这里转成 `Uint8Array`；按文本读时原样返回字符串。 */
+const bytesReadAdapter: CallAdapter =
+	(t, n, cap, op) =>
+	async (...args) => {
+		const opts = args[1];
+		const bytes =
+			typeof opts === "object" &&
+			opts !== null &&
+			"as" in opts &&
+			opts.as === "bytes";
+		const value = await t.call(cap, op, args);
+		if (!bytes || typeof value !== "string") return value;
+		const bin = n.atob(value);
+		const out = new n.Uint8Array(bin.length);
+		for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+		return out;
+	};
+
+const CALL_ADAPTERS: Readonly<
+	Record<string, Readonly<Record<string, CallAdapter>>>
+> = Object.freeze({ files: Object.freeze({ read: bytesReadAdapter }) });
+
+/** 在适配表里查 `cap.op`（只认自有属性，`constructor` 之类的名字查不到）。 */
+function adapterOf<A>(
+	table: Readonly<Record<string, Readonly<Record<string, A>>>>,
+	cap: string,
+	op: string,
+): A | undefined {
+	const ops = Object.hasOwn(table, cap) ? table[cap] : undefined;
+	return ops && Object.hasOwn(ops, op) ? ops[op] : undefined;
+}
 
 /**
  * `db.watch(collections, onChange, onError?)`：collections 是集合名、集合名数组或 null（全部集合），也可以省略
@@ -62,7 +108,7 @@ const STREAM_ADAPTERS: Readonly<
  */
 export function createUse(
 	endpoint: string | null,
-	n: TransportNatives,
+	n: CapabilityNatives,
 ): (cap: string) => Promise<Capability | null> {
 	const t = createTransport(endpoint, n);
 	return async (cap: string) => {
@@ -71,13 +117,13 @@ export function createUse(
 		const ns: Record<string, (...args: unknown[]) => unknown> = {};
 		for (const op of info.ops) {
 			if (info.streams.indexOf(op) < 0) {
-				ns[op] = (...args: unknown[]) => t.call(cap, op, args);
+				const adapt = adapterOf(CALL_ADAPTERS, cap, op);
+				ns[op] = adapt
+					? adapt(t, n, cap, op)
+					: (...args: unknown[]) => t.call(cap, op, args);
 				continue;
 			}
-			const table = Object.hasOwn(STREAM_ADAPTERS, cap)
-				? STREAM_ADAPTERS[cap]
-				: undefined;
-			const adapt = table && Object.hasOwn(table, op) ? table[op] : undefined;
+			const adapt = adapterOf(STREAM_ADAPTERS, cap, op);
 			if (adapt) ns[op] = adapt(t, n, cap, op);
 		}
 		return n.freeze(ns);
