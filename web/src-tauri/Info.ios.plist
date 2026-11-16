@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- tauri ios build 把本文件合并进生成的 Info.plist（只在 iOS 上）。
+	     相机：连接页扫电脑上显示的配对二维码（barcode-scanner 插件），输入区「拍照」附件（capture）。
+	     缺这个键 App Store Connect 会以 ITMS-90683 退回构建。 -->
+	<key>NSCameraUsageDescription</key>
+	<string>Oryn uses the camera to scan the pairing QR code shown on your computer and to take photos you attach to messages.</string>
+</dict>
+</plist>

@@ -197,4 +197,6 @@ Team ID（`XDPWT9ABRD`）写在 `tauri.conf.json` 的 `bundle.iOS.developmentTea
 
 首次上传后，App Store Connect 的 TestFlight 页会要求回答出口合规问题（构建显示「缺少合规证明」）。iOS 包里的 Rust 网络栈用 rustls 自带的 TLS 实现，不只是系统加密，所以 `ITSAppUsesNonExemptEncryption` 没有预先写死，由发布者按实际情况作答。
 
+iOS 专用的 Info.plist 键写在 `web/src-tauri/Info.ios.plist`，`tauri ios build` 会合并进生成的 Info.plist。目前只有 `NSCameraUsageDescription`（连接页扫配对二维码、输入区拍照附件）；缺了它 App Store Connect 会以 ITMS-90683 退回构建。`ios-check` 与 `ios-release` 都会断言这个键在、且 `CFBundleShortVersionString` 等于 Cargo.toml 的版本。以后用到其它受保护能力（麦克风、定位、相册写入等）时，同样把用途说明加在这个文件里。
+
 尚未完成：APNs 推送（服务端 `pushSenders["apns"]`、`PushSubscriptionInput` 增加 `kind: apns`）；Share Extension（App Group 容器 + 同一条上传预填流程）；Universal Links（`/.well-known/apple-app-site-association`）；Keychain 令牌存储的真机验证；iPhone / iPad 真机验收。
