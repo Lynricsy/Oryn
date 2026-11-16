@@ -120,6 +120,65 @@ describe("FileViewer HTML 与音视频", () => {
 	});
 });
 
+describe("FileViewer 渲染视图", () => {
+	it("超过编辑上限的 Markdown：整份读取较慢时仍等到结果并渲染", async () => {
+		const { src, readBlob } = memSource(
+			{ name: "big.md", size: 3 * 1024 * 1024, text: true },
+			"# 截断的开头",
+		);
+		readBlob.mockImplementation(
+			() =>
+				new Promise((resolve) =>
+					setTimeout(() => resolve(new Blob(["# 完整标题\n\n正文"])), 50),
+				),
+		);
+		render(<FileViewer source={src} path="/r/big.md" />);
+		expect(
+			await screen.findByRole("heading", { name: "完整标题" }),
+		).toBeTruthy();
+		expect(readBlob).toHaveBeenCalledTimes(1);
+	});
+
+	it("结构损坏的 Notebook 显示无法解析，返回按钮仍可用", async () => {
+		const { src } = memSource(
+			{ name: "a.ipynb", text: true },
+			'{"cells":[null]}',
+		);
+		const onBack = vi.fn();
+		render(<FileViewer source={src} path="/r/a.ipynb" onBack={onBack} />);
+		expect(await screen.findByText(/cell 1 is not an object/)).toBeTruthy();
+		await userEvent.click(
+			screen.getByRole("button", { name: i18n.t("files.viewer.back") }),
+		);
+		expect(onBack).toHaveBeenCalled();
+	});
+
+	it("字段形状不对的 Notebook 单元按缺省渲染，不抛错", async () => {
+		const nb = {
+			cells: [
+				{
+					cell_type: "code",
+					source: 5,
+					outputs: [
+						{ output_type: "error", traceback: "x", ename: "E", evalue: "v" },
+						{ output_type: "stream", text: { a: 1 } },
+						null,
+					],
+				},
+				{ cell_type: "markdown", source: ["## 小节"] },
+			],
+			metadata: { kernelspec: "python" },
+		};
+		const { src } = memSource(
+			{ name: "b.ipynb", text: true },
+			JSON.stringify(nb),
+		);
+		render(<FileViewer source={src} path="/r/b.ipynb" />);
+		expect(await screen.findByRole("heading", { name: "小节" })).toBeTruthy();
+		expect(screen.getByText("E: v")).toBeTruthy();
+	});
+});
+
 describe("lockdownHtml", () => {
 	it("CSP meta 放在 doctype 之后、任何内容之前", () => {
 		const out = lockdownHtml("<!DOCTYPE html><html><img src=/x>");

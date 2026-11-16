@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
 	listArchive,
 	listTar,
+	listTgz,
 	listZip,
 	MAX_ARCHIVE_ENTRIES,
 } from "./archive-list";
@@ -233,5 +234,45 @@ describe("listArchive", () => {
 	it("不支持的类型与损坏的 gzip 抛错", () => {
 		expect(() => listArchive("a.rar", tar)).toThrow();
 		expect(() => listArchive("a.tgz", tar)).toThrow();
+	});
+
+	it("tgz 流式解压：头部、pax 与长文件名跨解压块边界时结果与整份 tar 一致", () => {
+		const parts: Uint8Array[] = [];
+		for (let i = 0; i < 300; i++) {
+			const long = `${"d".repeat(120)}/file-${i}.txt`;
+			const pax = strToU8(paxRecord("path", long));
+			parts.push(
+				tarHeader("PaxHeader", pax.length, { type: "x" }),
+				tarData(pax),
+				tarFile(`short-${i}`, "x".repeat(i)),
+			);
+		}
+		const tar = concat(...parts, END);
+		// level 0 = 存储块，压缩后体积与原文相当，保证解压输出被切成很多块
+		const tgz = gzipSync(tar, { level: 0 });
+		expect(tgz.length).toBeGreaterThan(100 * 1024);
+		expect(listArchive("a.tgz", tgz)).toEqual(listTar(tar));
+	});
+
+	it("tgz 解压量超过上限时停止解压，只列出此前的条目并标记 partial", () => {
+		// 高压缩比的包：8MiB 的零展开自几 KiB 的压缩数据
+		const big = 8 << 20;
+		const tgz = gzipSync(
+			concat(
+				tarHeader("big.bin", big),
+				new Uint8Array(big),
+				tarFile("after.txt", "x"),
+				END,
+			),
+		);
+		expect(tgz.length).toBeLessThan(64 * 1024);
+
+		const capped = listTgz(tgz, 1 << 20);
+		expect(capped.partial).toBe(true);
+		expect(capped.entries.map((e) => e.path)).toEqual(["big.bin"]);
+
+		const full = listTgz(tgz, 16 << 20);
+		expect(full.partial).toBeUndefined();
+		expect(full.entries.map((e) => e.path)).toEqual(["big.bin", "after.txt"]);
 	});
 });

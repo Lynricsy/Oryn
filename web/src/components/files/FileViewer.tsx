@@ -59,6 +59,7 @@ import {
 import { type RetryWait, withWakeRetry } from "./hooks";
 import { InertFrame } from "./preview/InertFrame";
 import MediaPreview from "./preview/MediaPreview";
+import { PreviewBoundary } from "./preview/PreviewBoundary";
 
 const CodeEditor = lazy(() => import("../editor/CodeEditor"));
 const ImagePreview = lazy(() => import("./preview/ImagePreview"));
@@ -284,10 +285,11 @@ export function FileViewer({
 		text.truncated &&
 		text.entry.size <= MAX_PREVIEW_BLOB_BYTES;
 
+	// 「已加载」只看结果是否到达：读取开始时不写状态，否则状态变化会让本 effect 重跑、清理掉仍在途的读取
+	const fullLoaded = fullText?.key === key;
 	useEffect(() => {
-		if (!needFull || fullText?.key === key) return;
+		if (!needFull || fullLoaded) return;
 		let cancelled = false;
-		setFullText({ key });
 		void withWakeRetry(
 			() => source.readBlob(path),
 			(w) => !cancelled && setWait(w),
@@ -300,7 +302,7 @@ export function FileViewer({
 		return () => {
 			cancelled = true;
 		};
-	}, [needFull, fullText?.key, key, source, path]);
+	}, [needFull, fullLoaded, key, source, path]);
 
 	const onChange = useCallback(
 		(value: string) => {
@@ -496,11 +498,13 @@ export function FileViewer({
 									) : previewText === null ? (
 										loading
 									) : (
-										<TextView
-											render={loaded.render}
-											text={previewText}
-											name={namePart}
-										/>
+										<PreviewBoundary key={key}>
+											<TextView
+												render={loaded.render}
+												text={previewText}
+												name={namePart}
+											/>
+										</PreviewBoundary>
 									)
 								) : (
 									<CodeEditor
@@ -515,15 +519,23 @@ export function FileViewer({
 						</Suspense>
 					</div>
 				) : loaded.kind === "blob" ? (
-					<Suspense fallback={loading}>
-						<BlobView
-							viewer={loaded.viewer}
-							blob={loaded.blob}
+					<PreviewBoundary key={key}>
+						<Suspense fallback={loading}>
+							<BlobView
+								viewer={loaded.viewer}
+								blob={loaded.blob}
+								name={namePart}
+							/>
+						</Suspense>
+					</PreviewBoundary>
+				) : loaded.kind === "media" ? (
+					<PreviewBoundary key={key}>
+						<MediaPreview
+							src={loaded.src}
+							media={loaded.media}
 							name={namePart}
 						/>
-					</Suspense>
-				) : loaded.kind === "media" ? (
-					<MediaPreview src={loaded.src} media={loaded.media} name={namePart} />
+					</PreviewBoundary>
 				) : (
 					<div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-sm">
 						<span className="grid h-11 w-11 place-items-center rounded-full bg-inset">

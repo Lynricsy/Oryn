@@ -10,6 +10,7 @@ import {
 	type ArchiveListing,
 	listArchive,
 	MAX_ARCHIVE_ENTRIES,
+	MAX_TGZ_EXPANDED_BYTES,
 } from "../../../lib/archive-list";
 import { formatBytes, formatDateTime } from "../../../lib/format";
 import { Icon } from "../../ui/icons";
@@ -145,6 +146,14 @@ export default function ArchivePreview({
 				<p className="flex shrink-0 items-center gap-1.5 bg-warn/8 px-3 py-1.5 text-warn text-xs">
 					<Icon name="info" size={13} className="shrink-0" />
 					{t("files.preview.archive.truncated", { max: MAX_ARCHIVE_ENTRIES })}
+				</p>
+			)}
+			{state.listing.partial && (
+				<p className="flex shrink-0 items-center gap-1.5 bg-warn/8 px-3 py-1.5 text-warn text-xs">
+					<Icon name="info" size={13} className="shrink-0" />
+					{t("files.preview.archive.partial", {
+						max: formatBytes(MAX_TGZ_EXPANDED_BYTES),
+					})}
 				</p>
 			)}
 			{sorted.length === 0 ? (

@@ -2305,6 +2305,7 @@
 			"tooLargeToPreview": "超过 {{max}}，不在浏览器中预览"
 		},
 		"preview": {
+			"crashed": "预览出错，可以切换到源码查看或下载文件",
 			"zoomIn": "放大",
 			"zoomOut": "缩小",
 			"zoomReset": "在适应窗口与实际大小之间切换",
@@ -2343,6 +2344,7 @@
 				"failed": "无法读取归档",
 				"summary": "{{files}} 个文件，{{dirs}} 个目录 · 解压后共 {{size}}",
 				"truncated": "条目过多，仅列出前 {{max}} 项",
+				"partial": "解压后超过 {{max}}，只列出了这之前的条目",
 				"empty": "归档为空",
 				"path": "路径",
 				"size": "大小",

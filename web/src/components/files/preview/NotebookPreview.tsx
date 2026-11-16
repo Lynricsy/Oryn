@@ -46,10 +46,88 @@ function joined(v: MultiLine | undefined): string {
 	return Array.isArray(v) ? v.join("") : (v ?? "");
 }
 
+function isObject(v: unknown): v is Record<string, unknown> {
+	return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/** 字符串或字符串数组；其它形状（数字、对象、混入非字符串的数组）一律视为缺省。 */
+function multiLine(v: unknown): MultiLine | undefined {
+	if (typeof v === "string") return v;
+	if (Array.isArray(v) && v.every((s) => typeof s === "string")) return v;
+	return undefined;
+}
+
+function optString(v: unknown): string | undefined {
+	return typeof v === "string" ? v : undefined;
+}
+
+function optCount(v: unknown): number | null | undefined {
+	return typeof v === "number" || v === null ? v : undefined;
+}
+
+function parseOutput(v: unknown): NbOutput | undefined {
+	if (!isObject(v)) return undefined;
+	const type = v.output_type;
+	if (
+		type !== "stream" &&
+		type !== "execute_result" &&
+		type !== "display_data" &&
+		type !== "error"
+	)
+		return undefined;
+	const traceback = v.traceback;
+	return {
+		output_type: type,
+		name: optString(v.name),
+		text: multiLine(v.text),
+		data: isObject(v.data)
+			? (v.data as Record<string, MultiLine | object>)
+			: undefined,
+		ename: optString(v.ename),
+		evalue: optString(v.evalue),
+		traceback:
+			Array.isArray(traceback) && traceback.every((s) => typeof s === "string")
+				? traceback
+				: undefined,
+		execution_count: optCount(v.execution_count),
+	};
+}
+
+/**
+ * 解析并规范化 nbformat 4：文件内容不可信，渲染只依赖这里产出的形状。单元不是对象或类型未知时整本判为无效；
+ * 字段形状不对的按缺省处理，无法识别的输出丢弃。
+ */
 function parseNotebook(text: string): Notebook {
-	const nb = JSON.parse(text) as Partial<Notebook>;
-	if (!Array.isArray(nb.cells)) throw new Error("not an nbformat 4 notebook");
-	return nb as Notebook;
+	const raw: unknown = JSON.parse(text);
+	if (!isObject(raw) || !Array.isArray(raw.cells))
+		throw new Error("not an nbformat 4 notebook");
+	const cells = raw.cells.map((c, i): NbCell => {
+		if (!isObject(c)) throw new Error(`cell ${i + 1} is not an object`);
+		const type = c.cell_type;
+		if (type !== "markdown" && type !== "code" && type !== "raw")
+			throw new Error(`cell ${i + 1} has an unknown cell_type`);
+		return {
+			cell_type: type,
+			source: multiLine(c.source) ?? "",
+			outputs: Array.isArray(c.outputs)
+				? c.outputs.flatMap((o) => parseOutput(o) ?? [])
+				: undefined,
+			execution_count: optCount(c.execution_count),
+		};
+	});
+	const meta = isObject(raw.metadata) ? raw.metadata : {};
+	const ks = isObject(meta.kernelspec) ? meta.kernelspec : {};
+	const li = isObject(meta.language_info) ? meta.language_info : {};
+	return {
+		cells,
+		metadata: {
+			kernelspec: {
+				language: optString(ks.language),
+				display_name: optString(ks.display_name),
+			},
+			language_info: { name: optString(li.name) },
+		},
+	};
 }
 
 const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];

@@ -1,12 +1,12 @@
 /**
- * 归档目录列举（纯函数，不解压条目数据）：
+ * 归档目录列举（纯函数，只读目录结构）：
  * - ZIP 系（zip/jar/apk/whl…）：从文件尾的 End-of-central-directory 定位中央目录，逐条读取；支持 ZIP64 尺寸与偏移、
  *   Info-ZIP Unicode 路径（0x7075）与扩展时间戳（0x5455）。
  * - tar：ustar / GNU（`L` 长文件名、base-256 大尺寸）/ pax（`x` 头的 path、size、mtime）。
- * - tgz / tar.gz：先用 fflate 整体解压再按 tar 列举。
+ * - tgz / tar.gz：fflate 流式解压，边解压边扫描 tar 头部；解压量封顶 {@link MAX_TGZ_EXPANDED_BYTES}，超出时 `partial` 为 true。
  * 条目数封顶 {@link MAX_ARCHIVE_ENTRIES}，超出时 `truncated` 为 true。输入来自沙箱，所有读取都做越界检查，结构损坏时抛错。
  */
-import { gunzipSync } from "fflate";
+import { Gunzip } from "fflate";
 
 export interface ArchiveEntry {
 	/** 归档内路径，统一用 `/` 分隔；目录以 `/` 结尾与否保持原样 */
@@ -22,6 +22,8 @@ export interface ArchiveListing {
 	entries: ArchiveEntry[];
 	/** 条目数超过上限、只列出了前 {@link MAX_ARCHIVE_ENTRIES} 条 */
 	truncated: boolean;
+	/** tgz 解压量超过 {@link MAX_TGZ_EXPANDED_BYTES}，只列出了这之前的条目 */
+	partial?: boolean;
 }
 
 export const MAX_ARCHIVE_ENTRIES = 5000;
@@ -44,9 +46,8 @@ const ZIP_EXTS: Record<string, true> = {
 /** 按文件名分派：ZIP 系 → {@link listZip}；tar → {@link listTar}；tgz / tar.gz → 解压后 {@link listTar}；其余抛错。 */
 export function listArchive(name: string, bytes: Uint8Array): ArchiveListing {
 	const lower = name.toLowerCase();
-	if (lower.endsWith(".tar.gz") || lower.endsWith(".tgz")) {
-		return listTar(gunzipSync(bytes));
-	}
+	if (lower.endsWith(".tar.gz") || lower.endsWith(".tgz"))
+		return listTgz(bytes);
 	if (lower.endsWith(".tar")) return listTar(bytes);
 	const dot = lower.lastIndexOf(".");
 	if (dot >= 0 && Object.hasOwn(ZIP_EXTS, lower.slice(dot + 1))) {
@@ -318,60 +319,135 @@ function normalizeTarPath(p: string): string {
 	return s;
 }
 
-/** 逐个 512 字节头部读取 tar 目录，遇到两个连续全零块（或数据结束）停止。 */
-export function listTar(bytes: Uint8Array): ArchiveListing {
-	const entries: ArchiveEntry[] = [];
-	let off = 0;
-	let longName: string | undefined;
-	let pax: Map<string, string> | undefined;
-	let truncated = false;
-	let headers = 0;
+/** `L` / `x` 元数据头内容的上限：超出视为损坏（正常的长文件名与 pax 记录远小于此）。 */
+const MAX_TAR_META_BYTES = 1 << 20;
 
-	while (off + BLOCK <= bytes.length) {
-		if (isZeroBlock(bytes, off)) {
-			// 归档结束标记是两个全零块；单个全零块后若还有内容，跳过继续读
-			if (off + 2 * BLOCK > bytes.length || isZeroBlock(bytes, off + BLOCK))
-				break;
-			off += BLOCK;
-			continue;
+/**
+ * 流式 tar 目录扫描：逐块喂入字节，只解析 512 字节头部与元数据头的内容，跳过文件数据，内存占用与归档大小无关。
+ * 遇到两个连续全零块或条目达到上限后 `done` 为 true，之后的输入一律忽略。
+ */
+class TarScanner {
+	readonly entries: ArchiveEntry[] = [];
+	truncated = false;
+	done = false;
+	private readonly head = new Uint8Array(BLOCK);
+	private headLen = 0;
+	/** 还要跳过的字节数（文件数据与块对齐的填充） */
+	private skip = 0;
+	/** 正在收集的元数据头内容 */
+	private meta:
+		| { type: string; buf: Uint8Array; len: number; pad: number }
+		| undefined;
+	private longName: string | undefined;
+	private pax: Map<string, string> | undefined;
+	private headers = 0;
+	private zeroPending = false;
+
+	push(chunk: Uint8Array): void {
+		let i = 0;
+		while (i < chunk.length && !this.done) {
+			if (this.skip > 0) {
+				const n = Math.min(this.skip, chunk.length - i);
+				this.skip -= n;
+				i += n;
+				continue;
+			}
+			const meta = this.meta;
+			if (meta) {
+				const n = Math.min(meta.buf.length - meta.len, chunk.length - i);
+				meta.buf.set(chunk.subarray(i, i + n), meta.len);
+				meta.len += n;
+				i += n;
+				if (meta.len === meta.buf.length) this.applyMeta();
+				continue;
+			}
+			const n = Math.min(BLOCK - this.headLen, chunk.length - i);
+			this.head.set(chunk.subarray(i, i + n), this.headLen);
+			this.headLen += n;
+			i += n;
+			if (this.headLen === BLOCK) {
+				this.headLen = 0;
+				this.header(this.head);
+			}
 		}
-		if (!checksumOk(bytes, off)) throw tarError("header checksum mismatch");
-		headers++;
+	}
 
-		const type = String.fromCharCode(bytes[off + 156] ?? 0);
-		let size = tarNumber(bytes, off + 124, 12);
+	/** 输入结束：元数据头内容不完整或开头就不是 tar 时抛错；文件数据被截断的归档保留已读到的条目。 */
+	finish(): ArchiveListing {
+		if (this.meta) throw tarError("metadata extends past end");
+		// 不足一个块、但全是零的输入（空归档被截短）不算损坏
+		if (
+			this.headers === 0 &&
+			this.head.subarray(0, this.headLen).some((b) => b !== 0)
+		) {
+			throw tarError("no valid header");
+		}
+		return this.listing();
+	}
+
+	/** 当前已列出的条目（不做结束校验，用于提前停止读取的场合）。 */
+	listing(): ArchiveListing {
+		return { entries: this.entries, truncated: this.truncated };
+	}
+
+	private applyMeta(): void {
+		const meta = this.meta;
+		if (!meta) return;
+		this.meta = undefined;
+		if (meta.type === "L") this.longName = cstr(meta.buf, 0, meta.buf.length);
+		else if (meta.type === "x") this.pax = parsePax(meta.buf);
+		this.skip = meta.pad;
+	}
+
+	private header(b: Uint8Array): void {
+		if (isZeroBlock(b, 0)) {
+			// 归档结束标记是两个全零块；单个全零块后若还有内容，跳过继续读
+			if (this.zeroPending) this.done = true;
+			this.zeroPending = true;
+			return;
+		}
+		this.zeroPending = false;
+		if (!checksumOk(b, 0)) throw tarError("header checksum mismatch");
+		this.headers++;
+
+		const type = String.fromCharCode(b[156] ?? 0);
+		let size = tarNumber(b, 124, 12);
 		if (Number.isNaN(size)) throw tarError("bad size field");
-		const paxSize = pax?.get("size");
+		const paxSize = this.pax?.get("size");
 		if (paxSize !== undefined && /^\d+$/.test(paxSize)) size = Number(paxSize);
-		const dataStart = off + BLOCK;
-		const dataEnd = dataStart + size;
-		const next = dataStart + Math.ceil(size / BLOCK) * BLOCK;
+		const padded = Math.ceil(size / BLOCK) * BLOCK;
 
 		if (type === "L" || type === "x" || type === "g" || type === "K") {
-			// 元数据头：内容作用于下一个真实条目（全局 pax `g` 与长链接名 `K` 对列表无意义，直接跳过）
-			if (dataEnd > bytes.length) throw tarError("metadata extends past end");
-			const data = bytes.subarray(dataStart, dataEnd);
-			if (type === "L") longName = cstr(data, 0, data.length);
-			else if (type === "x") pax = parsePax(data);
-			off = next;
-			continue;
+			// 元数据头：内容作用于下一个真实条目（全局 pax `g` 与长链接名 `K` 对列表无意义，读完即丢）
+			if (size > MAX_TAR_META_BYTES)
+				throw tarError("metadata header too large");
+			this.meta = {
+				type,
+				buf: new Uint8Array(size),
+				len: 0,
+				pad: padded - size,
+			};
+			if (size === 0) this.applyMeta();
+			return;
 		}
 
-		if (entries.length >= MAX_ARCHIVE_ENTRIES) {
-			truncated = true;
-			break;
+		if (this.entries.length >= MAX_ARCHIVE_ENTRIES) {
+			this.truncated = true;
+			this.done = true;
+			return;
 		}
 
+		const pax = this.pax;
 		let path: string;
 		const paxPath = pax?.get("path");
 		if (paxPath !== undefined) path = paxPath;
-		else if (longName !== undefined) path = longName;
+		else if (this.longName !== undefined) path = this.longName;
 		else {
-			path = cstr(bytes, off, 100);
+			path = cstr(b, 0, 100);
 			// POSIX ustar（magic 为 "ustar\0"）才有 prefix 字段；GNU 格式（"ustar  "）在同一位置放的是别的数据
-			const magic = cstr(bytes, off + 257, 6);
-			if (magic === "ustar" && bytes[off + 262] === 0) {
-				const prefix = cstr(bytes, off + 345, 155);
+			const magic = cstr(b, 257, 6);
+			if (magic === "ustar" && b[262] === 0) {
+				const prefix = cstr(b, 345, 155);
 				if (prefix) path = `${prefix}/${path}`;
 			}
 		}
@@ -382,37 +458,65 @@ export function listTar(bytes: Uint8Array): ArchiveListing {
 		if (paxMtime !== undefined && Number.isFinite(Number(paxMtime))) {
 			mtime = Math.round(Number(paxMtime) * 1000);
 		} else {
-			const m = tarNumber(bytes, off + 136, 12);
+			const m = tarNumber(b, 136, 12);
 			if (!Number.isNaN(m) && m > 0) mtime = m * 1000;
 		}
-		longName = undefined;
-		pax = undefined;
+		this.longName = undefined;
+		this.pax = undefined;
 
 		if (path) {
 			const dir = type === "5" || path.endsWith("/");
 			// 只有普通文件（'0'、旧式 NUL、连续文件 '7'）的尺寸是内容长度；链接、设备等记为 0
 			const isFile = type === "0" || type === "\0" || type === "7";
-			entries.push({
+			this.entries.push({
 				path,
 				size: dir || !isFile ? 0 : size,
 				dir,
 				...(mtime !== undefined ? { mtime } : {}),
 			});
 		}
-		// 内容被截断的归档：保留已读到的条目，到此为止
-		if (dataEnd > bytes.length) break;
-		off = next;
+		this.skip = padded;
 	}
-
-	if (headers === 0 && bytes.length > 0 && !isZeroPrefix(bytes)) {
-		throw tarError("no valid header");
-	}
-	return { entries, truncated };
 }
 
-/** 不足一个块、但全是零的输入（空归档被截短）不算损坏。 */
-function isZeroPrefix(b: Uint8Array): boolean {
-	const n = Math.min(b.length, BLOCK);
-	for (let i = 0; i < n; i++) if (b[i] !== 0) return false;
-	return true;
+/** 逐个 512 字节头部读取 tar 目录，遇到两个连续全零块（或数据结束）停止。 */
+export function listTar(bytes: Uint8Array): ArchiveListing {
+	const scan = new TarScanner();
+	scan.push(bytes);
+	return scan.finish();
+}
+
+/** tgz 解压后最多处理的字节数：高压缩比的包不会在主线程上展开成 GiB 级数据。 */
+export const MAX_TGZ_EXPANDED_BYTES = 256 * 1024 * 1024;
+/** 每次喂给解压器的压缩字节数：deflate 最多约 1032 倍膨胀，单次输出不超过约 16MiB。 */
+const GZ_CHUNK = 16 * 1024;
+
+/**
+ * 流式解压 tgz，边解压边扫描 tar 头部，不保留解压结果。列满条目上限即停止解压；
+ * 解压量超过 `maxExpanded`（缺省 {@link MAX_TGZ_EXPANDED_BYTES}）时停止，返回已列出的条目并置 `partial`。
+ */
+export function listTgz(
+	bytes: Uint8Array,
+	maxExpanded = MAX_TGZ_EXPANDED_BYTES,
+): ArchiveListing {
+	const scan = new TarScanner();
+	let total = 0;
+	let over = false;
+	const gz = new Gunzip((chunk) => {
+		if (scan.done || over) return;
+		const room = maxExpanded - total;
+		total += chunk.length;
+		if (chunk.length > room) {
+			scan.push(chunk.subarray(0, room));
+			over = true;
+		} else scan.push(chunk);
+	});
+	let off = 0;
+	do {
+		const end = Math.min(off + GZ_CHUNK, bytes.length);
+		gz.push(bytes.subarray(off, end), end === bytes.length);
+		off = end;
+	} while (off < bytes.length && !scan.done && !over);
+	if (over) return { ...scan.listing(), partial: true };
+	return scan.done ? scan.listing() : scan.finish();
 }

@@ -2305,6 +2305,7 @@
 			"tooLargeToPreview": "Larger than {{max}}; not previewed in the browser"
 		},
 		"preview": {
+			"crashed": "The preview failed. Switch to the source view or download the file.",
 			"zoomIn": "Zoom in",
 			"zoomOut": "Zoom out",
 			"zoomReset": "Toggle between fit and actual size",
@@ -2343,6 +2344,7 @@
 				"failed": "Couldn't read archive",
 				"summary": "{{files}} files, {{dirs}} folders · {{size}} uncompressed",
 				"truncated": "Too many entries; showing the first {{max}}",
+				"partial": "Expands to more than {{max}}; showing only the entries before that point",
 				"empty": "Archive is empty",
 				"path": "Path",
 				"size": "Size",
