@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -32,6 +34,7 @@ func projectJSON(p db.Project, hook *db.GithubHook) apigen.Project {
 		out.GitAuthorName, out.GitAuthorEmail = &id.Name, &id.Email
 	}
 	out.Github = github.ProjectGitHubAPI(p, hook)
+	out.GithubGates = orbs.ParseGitHubGates(p.GithubGates)
 	return out
 }
 
@@ -221,11 +224,24 @@ func (s *Server) GetProject(w http.ResponseWriter, r *http.Request, id apigen.Pr
 	s.writeProject(w, r, http.StatusOK, p)
 }
 
-// UpdateProject 只修改出现的字段；可选字符串传空串清除。
+// UpdateProject 只修改出现的字段；可选字符串传空串清除。githubGates 整体替换（null 同省略），规整后什么都没配置时存 NULL。
 func (s *Server) UpdateProject(w http.ResponseWriter, r *http.Request, id apigen.ProjectIDPath) {
-	var req apigen.ProjectPatch
+	var req struct {
+		apigen.ProjectPatch
+		// GithubGates 保留原始 JSON：契约要求 push / pr 必填，生成类型的布尔零值分不出「未给出」
+		GithubGates json.RawMessage `json:"githubGates"`
+	}
 	if !decodeJSON(w, r, &req) {
 		return
+	}
+	gatesSet := len(req.GithubGates) > 0 && !bytes.Equal(req.GithubGates, []byte("null"))
+	var gates *string
+	if gatesSet {
+		var err error
+		if gates, err = orbs.EncodeGitHubGates(req.GithubGates); err != nil {
+			writeErr(w, r, errInvalid(err.Error()))
+			return
+		}
 	}
 	gitName, gitEmail, gitSet, err := projectGitIdentity(req.GitAuthorName, req.GitAuthorEmail)
 	if err != nil {
@@ -334,6 +350,12 @@ func (s *Server) UpdateProject(w http.ResponseWriter, r *http.Request, id apigen
 				return err
 			}
 		}
+		if gatesSet {
+			// 未绑定 GitHub 的项目同样保存：绑定后即生效
+			if err := q.SetProjectGithubGates(ctx, db.SetProjectGithubGatesParams{GithubGates: gates, UpdatedAt: u.UpdatedAt, ID: id}); err != nil {
+				return err
+			}
+		}
 		if req.Snapshots != nil && !*req.Snapshots && p.Snapshots {
 			// 关闭项目快照（S-P2-2）：就绪的退役，在建的同时作废（构建者发布时看到作废会自行清理镜像）
 			if err := q.RetireProjectSnapshotsByProject(ctx, db.RetireProjectSnapshotsByProjectParams{
@@ -362,6 +384,10 @@ func (s *Server) UpdateProject(w http.ResponseWriter, r *http.Request, id apigen
 		if err := s.GitHub.Service.ReleaseHook(ctx, *oldRepoID); err != nil {
 			slog.Warn("删除 GitHub 仓库 hook 失败", "project", id, "err", err)
 		}
+	}
+	// 门禁是出站代理强制的安全边界：作废该项目各 orb 缓存的出站策略，下一个出站请求按新门禁重建
+	if gatesSet && s.Orbs != nil && s.Orbs.Service != nil {
+		s.Orbs.Service.InvalidateProjectPolicies(ctx, id)
 	}
 	// 预热台数、快照开关、setup 脚本、仓库、分支、默认 provider / 类型或归档变化都会改变预热池的目标或配置哈希
 	if req.WarmOrbs != nil || req.Snapshots != nil || req.SetupScript != nil || req.RepoURL != nil || req.BaseBranch != nil ||
