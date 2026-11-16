@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"html"
 	"net/http"
 	"regexp"
 	"slices"
@@ -18,11 +19,13 @@ import (
 // runtimeAsset 是页面运行时在嵌入的 Web 构建产物里的路径。
 const runtimeAsset = "sandbox/runtime.js"
 
-// runtimeConfig 是注入页面的 `__orynStart(<配置>)` 的参数。
+// runtimeConfig 是注入页面的 `__orynStart(<配置>)` 的参数。Root 是帧根（以 / 结尾），运行时端点在
+// `<root>_oryn/v1`。
 type runtimeConfig struct {
 	V       int    `json:"v"`
 	Mark    string `json:"mark"`
 	Path    string `json:"path"`
+	Root    string `json:"root"`
 	Runtime bool   `json:"runtime"`
 }
 
@@ -46,24 +49,69 @@ func inlineScript(js []byte) []byte {
 }
 
 // servedHTML 返回帧里提供的 HTML：给每个起始标签加源码标记，再在 InsertionPoint 处插入内联的页面运行时
-// 与 `__orynStart(<配置>)`。runtimeJS 为空（没跑过 make web）时只标记、不注入。
-func servedHTML(src []byte, path string, runtime bool, runtimeJS []byte) []byte {
+// 与 `__orynStart(<配置>)`。root 是帧根。runtimeJS 为空（没跑过 make web）时只标记、不注入。
+func servedHTML(src []byte, path, root string, runtime bool, runtimeJS []byte) []byte {
 	mark := newMark()
 	out := htmlsrc.MarkSources(src, mark)
+	return injectRuntime(out, runtimeConfig{V: 1, Mark: mark, Path: path, Root: root, Runtime: runtime}, runtimeJS)
+}
+
+// injectRuntime 在 InsertionPoint 处插入内联的页面运行时与 `__orynStart(<cfg>)`；runtimeJS 为空时原样返回。
+func injectRuntime(page []byte, cfg runtimeConfig, runtimeJS []byte) []byte {
 	if len(runtimeJS) == 0 {
-		return out
+		return page
 	}
-	cfg, _ := json.Marshal(runtimeConfig{V: 1, Mark: mark, Path: path, Runtime: runtime}) // json 把 < > & 转义成 \u00XX
-	at := htmlsrc.InsertionPoint(out)
+	c, _ := json.Marshal(cfg) // json 把 < > & 转义成 \u00XX
+	at := htmlsrc.InsertionPoint(page)
 	var b bytes.Buffer
-	b.Grow(len(out) + len(runtimeJS) + len(cfg) + 48)
-	b.Write(out[:at])
+	b.Grow(len(page) + len(runtimeJS) + len(c) + 48)
+	b.Write(page[:at])
 	b.WriteString("<script>")
 	b.Write(runtimeJS)
 	b.WriteString("\n__orynStart(")
-	b.Write(cfg)
+	b.Write(c)
 	b.WriteString(");</script>")
-	b.Write(out[at:])
+	b.Write(page[at:])
+	return b.Bytes()
+}
+
+// viewerAssets 是类型化 artifact 查看器的构建产物（在嵌入的 Web 构建产物的 sandbox/viewers/ 下），
+// 帧根下经 `_oryn/viewer/<名字>` 提供；值是 Content-Type。
+var viewerAssets = map[string]string{
+	"document.js":  "text/javascript; charset=utf-8",
+	"document.css": "text/css; charset=utf-8",
+	"slides.js":    "text/javascript; charset=utf-8",
+	"slides.css":   "text/css; charset=utf-8",
+}
+
+// viewerConfig 是查看器页里 `<script type="application/json" id="oryn-viewer">` 的内容。Entry 是相对路径：
+// 查看器按页面地址解析它与 images/，所以读到的是页面所在的那个版本。Root 是帧根（运行时端点与查看器资源都在它下面）。
+type viewerConfig struct {
+	Type    string `json:"type"`
+	Format  int    `json:"format"`
+	Version int    `json:"version"`
+	Head    int    `json:"head"`
+	Entry   string `json:"entry"`
+	Locale  string `json:"locale,omitempty"`
+	Root    string `json:"root"`
+}
+
+// viewerPage 生成类型化 artifact 的查看器页：样式、配置、模块脚本与挂载点 #root。查看器资源从
+// `<root>_oryn/viewer/<type>.{css,js}` 加载；`?view=thumbnail|print` 留在页面地址里由查看器自己读取。
+func viewerPage(c viewerConfig) []byte {
+	data, _ := json.Marshal(c) // < > & 被转义，配置里不可能出现 </script>
+	asset := html.EscapeString(c.Root + ReservedPrefix + "/viewer/" + c.Type)
+	var b bytes.Buffer
+	b.WriteString("<!doctype html>\n<html")
+	if c.Locale != "" {
+		b.WriteString(` lang="` + html.EscapeString(c.Locale) + `"`)
+	}
+	b.WriteString(`><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">`)
+	b.WriteString(`<link rel="stylesheet" href="` + asset + `.css">`)
+	b.WriteString(`<script type="application/json" id="oryn-viewer">`)
+	b.Write(data)
+	b.WriteString(`</script><script type="module" src="` + asset + `.js"></script>`)
+	b.WriteString("</head><body><div id=\"root\"></div></body></html>\n")
 	return b.Bytes()
 }
 

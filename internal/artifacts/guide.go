@@ -21,8 +21,10 @@ var guideTopics = []string{GuideFiles, GuideCanvas, GuideRuntime, GuideDocument,
 
 // guides 是已写好的教程；合法但不在这里的主题在当前版本不可用。
 var guides = map[string]string{
-	GuideFiles:  guideFiles,
-	GuideCanvas: guideCanvas,
+	GuideFiles:    guideFiles,
+	GuideCanvas:   guideCanvas,
+	GuideDocument: guideDocument,
+	GuideSlides:   guideSlides,
 }
 
 // guideFiles 是 files 主题：artifact 的文件、上限、沙箱与改动流程。

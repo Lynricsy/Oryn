@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base32"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -37,7 +38,9 @@ type frame struct {
 	strict bool
 	// ancestors 是 frame-ancestors 的值（申请帧的 API 请求的 Origin；顶层帧为 'none'）。
 	ancestors string
-	usedAt    time.Time
+	// locale 是类型化 artifact 查看器的界面语言（申请帧时给出；空 = 由查看器自己决定）。
+	locale string
+	usedAt time.Time
 }
 
 func (f *frame) idle() time.Duration {
@@ -99,24 +102,35 @@ func (h *Host) checkOpen(ctx context.Context, id string, version int) error {
 
 // OpenFrame 为查看器申请一个帧，返回令牌与帧根地址。version 为 0 时跟随最新版本（带页面运行时），否则钉住
 // 该版本（只读）。origin 是申请请求的 Origin 头，成为帧的 frame-ancestors；缺省或不合法时用 public_url 的源。
-func (h *Host) OpenFrame(ctx context.Context, id string, version int, origin string) (token, url string, err error) {
+// locale 是类型化 artifact 查看器的界面语言（不合法时忽略）。
+func (h *Host) OpenFrame(ctx context.Context, id string, version int, origin, locale string) (token, url string, err error) {
 	if err := h.checkOpen(ctx, id, version); err != nil {
 		return "", "", err
 	}
 	token = h.add(&frame{
 		artifactID: id, version: version, runtime: version == 0,
-		ancestors: ancestorOrigin(origin, h.base.Origin),
+		ancestors: ancestorOrigin(origin, h.base.Origin), locale: cleanLocale(locale),
 	})
 	return token, h.frameURL(token), nil
 }
 
 // OpenLink 为「在浏览器中打开」申请一个顶层帧，返回地址（自带令牌，不需要登录态）。
-func (h *Host) OpenLink(ctx context.Context, id string, version int) (string, error) {
+func (h *Host) OpenLink(ctx context.Context, id string, version int, locale string) (string, error) {
 	if err := h.checkOpen(ctx, id, version); err != nil {
 		return "", err
 	}
-	token := h.add(&frame{artifactID: id, version: version, topLevel: true, ancestors: "'none'"})
+	token := h.add(&frame{artifactID: id, version: version, topLevel: true, ancestors: "'none'", locale: cleanLocale(locale)})
 	return h.frameURL(token), nil
+}
+
+var localeRe = regexp.MustCompile(`^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8}){0,3}$`)
+
+// cleanLocale 只保留 BCP 47 形态的语言标签（会写进查看器页的 lang 属性与配置）；其它一律当作没给。
+func cleanLocale(l string) string {
+	if localeRe.MatchString(l) {
+		return l
+	}
+	return ""
 }
 
 // CloseFrame 关闭一个帧（不存在时什么也不做）。

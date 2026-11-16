@@ -33,6 +33,8 @@ func TestArtifactCallForward(t *testing.T) {
 	logo := filepath.Join(dir, "logo.svg")
 	require.NoError(t, os.WriteFile(page, []byte("<h1>hi</h1>"), 0o644))
 	require.NoError(t, os.WriteFile(logo, []byte("<svg/>"), 0o644))
+	htmlTmp := filepath.Join(dir, "html-param")
+	require.NoError(t, os.WriteFile(htmlTmp, []byte("<p>html</p>"), 0o600))
 
 	type call struct {
 		params  apigen.LinkCtlArtifactCallParams
@@ -50,11 +52,16 @@ func TestArtifactCallForward(t *testing.T) {
 		}
 		c := call{fetched: map[string][]byte{}}
 		_ = json.Unmarshal(params, &c.params)
-		for i, f := range c.params.Params["files"].([]any) {
-			src, ok := f.(map[string]any)["source"].(string)
-			if !ok {
-				continue
+		var srcs []string
+		if s, ok := c.params.Params["htmlSource"].(string); ok {
+			srcs = append(srcs, s)
+		}
+		for _, f := range c.params.Params["files"].([]any) {
+			if s, ok := f.(map[string]any)["source"].(string); ok {
+				srcs = append(srcs, s)
 			}
+		}
+		for i, src := range srcs {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			var res apigen.LinkCtlLibraryFetchResult
 			c.err = ctl.Call(ctx, string(apigen.MethodLibraryFetch), apigen.LinkCtlLibraryFetchParams{ID: fmt.Sprintf("art-%d", i), Path: src}, &res)
@@ -82,8 +89,9 @@ func TestArtifactCallForward(t *testing.T) {
 	assert.Equal(t, "not_found", ctlCode(err), "转发之前不能取回")
 
 	params := map[string]any{
-		"title": "报告",
-		"note":  "首版",
+		"title":      "报告",
+		"note":       "首版",
+		"htmlSource": dir + "/../site/html-param",
 		"files": []any{
 			map[string]any{"path": "index.html", "source": dir + "/./index.html"},
 			map[string]any{"path": "logo.svg", "source": logo},
@@ -104,8 +112,9 @@ func TestArtifactCallForward(t *testing.T) {
 	assert.Equal(t, libThread, c.params.ThreadID)
 	assert.Equal(t, "create_artifact", c.params.Op)
 	want := map[string]any{
-		"title": "报告",
-		"note":  "首版",
+		"title":      "报告",
+		"note":       "首版",
+		"htmlSource": htmlTmp,
 		"files": []any{
 			map[string]any{"path": "index.html", "source": page},
 			map[string]any{"path": "logo.svg", "source": logo},
@@ -113,10 +122,10 @@ func TestArtifactCallForward(t *testing.T) {
 			map[string]any{"path": "old.css", "remove": true},
 		},
 	}
-	assert.Equal(t, want, c.params.Params, "参数原样到达，只有 source 被 Clean")
-	assert.Equal(t, map[string][]byte{page: []byte("<h1>hi</h1>"), logo: []byte("<svg/>")}, c.fetched)
+	assert.Equal(t, want, c.params.Params, "参数原样到达，只有 htmlSource 与 source 被 Clean")
+	assert.Equal(t, map[string][]byte{htmlTmp: []byte("<p>html</p>"), page: []byte("<h1>hi</h1>"), logo: []byte("<svg/>")}, c.fetched)
 
-	for _, p := range []string{page, logo} {
+	for _, p := range []string{htmlTmp, page, logo} {
 		err = cp.call(t, string(apigen.MethodLibraryFetch), apigen.LinkCtlLibraryFetchParams{ID: "late", Path: p}, nil)
 		assert.Equal(t, "not_found", ctlCode(err), "转发结束后不能再取回 %s", p)
 	}
@@ -145,6 +154,14 @@ func TestArtifactCallForward(t *testing.T) {
 		var se *orbsock.Error
 		require.ErrorAs(t, err, &se, name)
 		assert.Equal(t, orbsock.CodeInvalidParams, se.Code, name)
+	}
+	for name, src := range map[string]any{"html relative": "html-param", "html not string": true, "html dir": dir} {
+		_, err := orbsock.Call(ctx, sock, orbsock.MethodArtifactCall, apigen.LinkCtlArtifactCallParams{ThreadID: libThread, Op: "create_artifact",
+			Params: map[string]any{"title": "x", "htmlSource": src}}, nil)
+		var se *orbsock.Error
+		require.ErrorAs(t, err, &se, name)
+		assert.Equal(t, orbsock.CodeInvalidParams, se.Code, name)
+		assert.Contains(t, se.Message, "htmlSource", name)
 	}
 	assert.Empty(t, calls, "被拒的请求没有转发")
 

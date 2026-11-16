@@ -86,7 +86,7 @@ func TestHostWildcard(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "NEXT") })
 	mw := h.Middleware(next)
 
-	token, url, err := h.OpenFrame(ctx, a.ID, 0, "")
+	token, url, err := h.OpenFrame(ctx, a.ID, 0, "", "")
 	require.NoError(t, err)
 	assert.Regexp(t, `^[a-z2-7]{26}$`, token)
 	assert.Equal(t, "http://a-"+token+".localhost:7600/", url)
@@ -115,16 +115,16 @@ func TestHostWildcard(t *testing.T) {
 	assert.Contains(t, body, `var s="<\/script>";`, "运行时里的 </script 被转义")
 	m := configRe.FindStringSubmatch(body)
 	require.NotNil(t, m, body)
-	assert.Regexp(t, `^\{"v":1,"mark":"[a-z0-9]{8}","path":"index.html","runtime":true\}$`, m[1])
+	assert.Regexp(t, `^\{"v":1,"mark":"[a-z0-9]{8}","path":"index.html","root":"/","runtime":true\}$`, m[1])
 	assert.Less(t, strings.Index(body, "<script>"), strings.Index(body, "<title"), "运行时在页面自己的内容之前")
 	assert.Greater(t, strings.Index(body, "<script>"), strings.Index(body, "<head"))
 
 	// 申请帧时带 Origin（vite 开发服务器）→ frame-ancestors 用它；不合法的 Origin 回落到 public_url
-	t2, _, err := h.OpenFrame(ctx, a.ID, 0, "http://localhost:5173")
+	t2, _, err := h.OpenFrame(ctx, a.ID, 0, "http://localhost:5173", "")
 	require.NoError(t, err)
 	assert.Contains(t, do(mw, hostReq{host: "a-" + t2 + ".localhost:7600", path: "/"}).Header().Get("Content-Security-Policy"),
 		"frame-ancestors http://localhost:5173")
-	t3, _, err := h.OpenFrame(ctx, a.ID, 0, "http://evil; script-src *")
+	t3, _, err := h.OpenFrame(ctx, a.ID, 0, "http://evil; script-src *", "")
 	require.NoError(t, err)
 	assert.True(t, strings.HasSuffix(do(mw, hostReq{host: "a-" + t3 + ".localhost:7600", path: "/"}).Header().Get("Content-Security-Policy"),
 		"frame-ancestors http://localhost:7600"))
@@ -158,7 +158,7 @@ func TestHostVersions(t *testing.T) {
 	_, err := e.s.Write(ctx, WriteParams{ID: a.ID, BaseVersion: 1, Files: []FileChange{put("index.html", "<p>v2</p>")}})
 	require.NoError(t, err)
 	mw := h.Middleware(http.NotFoundHandler())
-	token, _, err := h.OpenFrame(ctx, a.ID, 0, "")
+	token, _, err := h.OpenFrame(ctx, a.ID, 0, "", "")
 	require.NoError(t, err)
 	host := "a-" + token + ".localhost:7600"
 
@@ -171,18 +171,18 @@ func TestHostVersions(t *testing.T) {
 		assert.Equal(t, http.StatusNotFound, do(mw, hostReq{host: host, path: p}).Code, p)
 	}
 
-	pinned, _, err := h.OpenFrame(ctx, a.ID, 1, "")
+	pinned, _, err := h.OpenFrame(ctx, a.ID, 1, "", "")
 	require.NoError(t, err)
 	body := do(mw, hostReq{host: "a-" + pinned + ".localhost:7600", path: "/"}).Body.String()
 	assert.Contains(t, body, "你好")
 	assert.Contains(t, body, `"runtime":false`)
-	_, _, err = h.OpenFrame(ctx, a.ID, 5, "")
+	_, _, err = h.OpenFrame(ctx, a.ID, 5, "", "")
 	assert.Equal(t, CodeNotFound, code(err))
 
 	_, err = e.s.Delete(ctx, a.ID)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusGone, do(mw, hostReq{host: host, path: "/"}).Code)
-	_, _, err = h.OpenFrame(ctx, a.ID, 0, "")
+	_, _, err = h.OpenFrame(ctx, a.ID, 0, "", "")
 	assert.Equal(t, CodeDeleted, code(err))
 }
 
@@ -205,7 +205,7 @@ func TestHostFollowPinsLoadToOneVersion(t *testing.T) {
 			ctx := context.Background()
 			h := newHost(t, e, mode.domain, fakeRuntime)
 			a := mkPage(t, e)
-			token, _, err := h.OpenFrame(ctx, a.ID, 0, "")
+			token, _, err := h.OpenFrame(ctx, a.ID, 0, "", "")
 			require.NoError(t, err)
 			srv := mode.handler(h)
 			host, root := mode.host, mode.root
@@ -244,7 +244,7 @@ func TestHostFollowRedirectEncodesPath(t *testing.T) {
 	ctx := context.Background()
 	h := newHost(t, e, "localhost", fakeRuntime)
 	a := mkPage(t, e, put("index.html", page), put("a#b.html", "hash"), put("100%.html", "percent"), put("x y/z.css", "space"))
-	token, _, err := h.OpenFrame(ctx, a.ID, 0, "")
+	token, _, err := h.OpenFrame(ctx, a.ID, 0, "", "")
 	require.NoError(t, err)
 	mw := h.Middleware(http.NotFoundHandler())
 	host := "a-" + token + ".localhost:7600"
@@ -268,7 +268,7 @@ func TestHostFallbackPath(t *testing.T) {
 	h := newHost(t, e, "", fakeRuntime)
 	assert.Equal(t, FramesPath, h.Mode())
 	a := mkPage(t, e)
-	token, url, err := h.OpenFrame(context.Background(), a.ID, 0, "")
+	token, url, err := h.OpenFrame(context.Background(), a.ID, 0, "", "")
 	require.NoError(t, err)
 	root := "http://localhost:7600/_af/" + token + "/"
 	assert.Equal(t, root, url)
@@ -295,7 +295,7 @@ func TestHostTopLevel(t *testing.T) {
 	e := newEnv(t)
 	h := newHost(t, e, "localhost", fakeRuntime)
 	a := mkPage(t, e)
-	url, err := h.OpenLink(context.Background(), a.ID, 0)
+	url, err := h.OpenLink(context.Background(), a.ID, 0, "")
 	require.NoError(t, err)
 	token := strings.TrimSuffix(strings.TrimPrefix(url, "http://a-"), ".localhost:7600/")
 	mw := h.Middleware(http.NotFoundHandler())
@@ -316,7 +316,7 @@ func TestHostWithoutRuntimeAsset(t *testing.T) {
 	e := newEnv(t)
 	h := newHost(t, e, "localhost", noAsset)
 	a := mkPage(t, e)
-	token, _, err := h.OpenFrame(context.Background(), a.ID, 0, "")
+	token, _, err := h.OpenFrame(context.Background(), a.ID, 0, "", "")
 	require.NoError(t, err)
 	body := do(h.Middleware(http.NotFoundHandler()), hostReq{host: "a-" + token + ".localhost:7600", path: "/"}).Body.String()
 	assert.Contains(t, body, "data-oryn-src=")
@@ -330,7 +330,7 @@ func TestHostStrictPolicy(t *testing.T) {
 	h := newHost(t, e, "localhost", fakeRuntime)
 	a, err := e.s.Create(ctx, CreateParams{Title: "页", Files: []FileChange{put("index.html", page)}, Capabilities: []string{"db"}})
 	require.NoError(t, err)
-	token, _, err := h.OpenFrame(ctx, a.ID, 0, "")
+	token, _, err := h.OpenFrame(ctx, a.ID, 0, "", "")
 	require.NoError(t, err)
 	mw := h.Middleware(http.NotFoundHandler())
 	cspOf := func() string {
@@ -353,17 +353,17 @@ func TestFrameTable(t *testing.T) {
 	ctx := context.Background()
 	h := newHost(t, e, "localhost", noAsset)
 	a := mkPage(t, e)
-	first, _, err := h.OpenFrame(ctx, a.ID, 0, "")
+	first, _, err := h.OpenFrame(ctx, a.ID, 0, "", "")
 	require.NoError(t, err)
 	e.clk.add(time.Second)
-	second, _, err := h.OpenFrame(ctx, a.ID, 0, "")
+	second, _, err := h.OpenFrame(ctx, a.ID, 0, "", "")
 	require.NoError(t, err)
 	e.clk.add(time.Second)
 	_, ok := h.use(first) // first 刚用过，second 成为最久未用
 	require.True(t, ok)
 	for range maxFrames - 1 {
 		e.clk.add(time.Millisecond)
-		_, _, err := h.OpenFrame(ctx, a.ID, 0, "")
+		_, _, err := h.OpenFrame(ctx, a.ID, 0, "", "")
 		require.NoError(t, err)
 	}
 	assert.Len(t, h.frames, maxFrames)

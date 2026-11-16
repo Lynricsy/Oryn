@@ -17,23 +17,6 @@ import (
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
-// 类型化 artifact 的类型。
-const (
-	TypeDocument = "document"
-	TypeSlides   = "slides"
-)
-
-// TypeEntry 返回类型化 artifact 的入口文件；plain 与未知类型返回空串。
-func TypeEntry(typ string) string {
-	switch typ {
-	case TypeDocument:
-		return "document.md"
-	case TypeSlides:
-		return "slides.json"
-	}
-	return ""
-}
-
 // 能力名（页面运行时 `oryn.use`）。
 var capabilityOrder = []string{"db", "files", "sample"}
 
@@ -95,9 +78,10 @@ type staged struct {
 	removes []string
 }
 
-// keepBytes 报告写入时是否要在内存里保留该文件的字节（HTML 的 UTF-8 校验、画布与类型化内容的解析）。
+// keepBytes 报告写入时是否要在内存里保留该文件的字节（HTML 的 UTF-8 校验、canvas.json 与类型化入口文件的解析）。
+// 类型化 artifact 的图片只校验文件头，不整体留在内存里。
 func keepBytes(path, typ string) bool {
-	return IsHTML(path) || path == EntryCanvas || typ != ""
+	return IsHTML(path) || path == EntryCanvas || (typ != "" && path == TypeEntry(typ))
 }
 
 // stage 校验路径并把新文件落进内容存储（事务之外，流式）。
@@ -227,6 +211,50 @@ func (s *Service) fileBytes(st staged, m manifest, path string) ([]byte, error) 
 	return s.c.read(e.sha)
 }
 
+// headBytes 返回清单里某个文件的前 n 个字节（文件更短时是全部）：本次写入且留在内存里的直接截取，其余从内容存储读。
+func (s *Service) headBytes(st staged, m manifest, path string, n int) ([]byte, error) {
+	if w, ok := st.writes[path]; ok && w.data != nil {
+		return w.data[:min(n, len(w.data))], nil
+	}
+	f, err := s.c.open(m[path].sha)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	buf := make([]byte, n)
+	k, err := io.ReadFull(f, buf)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	return buf[:k], nil
+}
+
+// validateTyped 按类型规格校验类型化 artifact 的清单：入口文件给完整内容，其余文件给文件头。
+func (s *Service) validateTyped(typ string, m manifest, st staged) (shape, error) {
+	spec, ok := LookupType(typ)
+	if !ok {
+		return shape{}, opErr(CodeInvalid, "未知的类型 %q；只能是 document 或 slides。", typ)
+	}
+	files := make(map[string][]byte, len(m))
+	for p := range m {
+		var b []byte
+		var err error
+		if p == spec.Entry {
+			b, err = s.fileBytes(st, m, p)
+		} else {
+			b, err = s.headBytes(st, m, p, sniffBytes)
+		}
+		if err != nil {
+			return shape{}, err
+		}
+		files[p] = b
+	}
+	if ps := spec.Validate(files); len(ps) > 0 {
+		return shape{}, typedInvalid(typ, ps)
+	}
+	return shape{kind: typ, pages: spec.Pages(files[spec.Entry]), format: spec.Format}, nil
+}
+
 // validate 校验一个版本的清单并算出它的形态。
 func (s *Service) validate(typ string, m manifest, st staged) (shape, error) {
 	if len(m) == 0 {
@@ -246,7 +274,7 @@ func (s *Service) validate(typ string, m manifest, st staged) (shape, error) {
 		return shape{}, opErr(CodeInvalid, "路径 %s 与另一个文件只差大小写；同一版本里不能有这样的两个文件。", p)
 	}
 	if typ != "" {
-		return shape{}, opErr(CodeInvalid, "这个版本还不支持类型化 artifact（type=%s）。", typ)
+		return s.validateTyped(typ, m, st)
 	}
 	_, hasHTML := m[EntryHTML]
 	_, hasCanvas := m[EntryCanvas]

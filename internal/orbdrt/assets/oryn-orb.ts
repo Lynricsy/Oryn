@@ -113,10 +113,11 @@ function desktopEnabled(): boolean {
 // ---- Artifacts（M14）：agent 产出的版本化交付物 ----
 // 工具与控制面的操作表同名同参（internal/artifacts/agent.go）；每次调用经 ORYN_ARTIFACT_SOCK（orbd 本地控制口的
 // JSON 行协议，internal/orbsock）发 artifact.call，由 orbd 转给控制面。html 与内联 content 先写进临时文件、
-// 换成绝对路径的 source（请求行有大小上限；控制面经 library.fetch 取回这些字节）。
+// 换成绝对路径（html → htmlSource，content → source；请求行有大小上限，控制面经 library.fetch 取回这些字节）。
 
 const ARTIFACT_GUIDE = `Artifacts：要给用户看的成品（报告、原型、设计稿、文档、幻灯片这类）做成 artifact，不要只写进回复或工作区文件。
 - 第一次做之前先调 read_artifact_guide（topic: "files"）读文件规则与限制。
+- 文档与幻灯片：create_artifact 带 type（"document" 写 document.md，"slides" 写 slides.json），不给 html；先读同名主题的教程。
 - 改已有的 artifact 之前先 read_artifact 读到当前内容与版本号，update_artifact 时带上 baseVersion；报 conflict 就重新读取，在新版本上再改。
 - 页面显示在隔离的沙箱里：不能用 localStorage / cookie / IndexedDB，访问不了你所在环境里的服务，外部资源只能来自教程里列出的 CDN。
 - 用户对 artifact 的评论会作为消息发到这个线程里：用 read_artifact_comments 读评论串，改完用 reply_artifact_comment 说明做了什么，再用 resolve_artifact_comment 标为已解决。`;
@@ -191,15 +192,19 @@ function artifactSockCall(sock: string, request: unknown, signal: AbortSignal | 
 	return promise;
 }
 
-// toSources 把 html 与内联 content 写进临时目录（第一次需要时建在 tmp.dir，0700）并换成绝对路径的 source
-// （html 变成 files 的第一项 index.html，与控制面的处理顺序一致），相对的 source 按 cwd 转成绝对路径。
+// toSources 把 html 与内联 content 写进临时目录（第一次需要时建在 tmp.dir，0700）并换成绝对路径：html 换成
+// htmlSource（控制面据此仍能认出「传了 html」，类型化 artifact 会拒绝它），content 换成 source；相对的 source
+// 按 cwd 转成绝对路径。
 async function toSources(params: Record<string, unknown>, cwd: string, tmp: { dir?: string }): Promise<Record<string, unknown>> {
 	const out: Record<string, unknown> = { ...params };
-	const files: ArtifactFileParam[] = Array.isArray(params.files) ? [...(params.files as ArtifactFileParam[])] : [];
 	if (typeof params.html === "string") {
-		files.unshift({ path: "index.html", content: params.html });
+		tmp.dir ??= await mkdtemp(join(tmpdir(), "oryn-artifact-"));
+		const file = join(tmp.dir, "html");
+		await writeFile(file, params.html, { mode: 0o600 });
+		out.htmlSource = file;
 		delete out.html;
 	}
+	const files: ArtifactFileParam[] = Array.isArray(params.files) ? (params.files as ArtifactFileParam[]) : [];
 	if (files.length === 0) {
 		return out;
 	}
@@ -282,16 +287,17 @@ function registerArtifacts(pi: ExtensionAPI): boolean {
 				.optional()
 				.describe("你环境里一个文件的路径（相对路径按当前工作目录解析），用于大文件或二进制文件，单文件不超过 20 MiB；与 content 恰好给一个"),
 		};
-		// 参数逐字段对应控制面的解码结构（未知字段会被拒）；capabilities、type 等后续阶段的参数在接入时再加。
+		// 参数逐字段对应控制面的解码结构（未知字段会被拒）；capabilities 等后续阶段的参数在接入时再加。
 		const tools: Pick<ToolDefinition, "name" | "label" | "description" | "parameters" | "loadMode">[] = [
 			{
 				name: "create_artifact",
 				label: "创建 artifact",
 				description:
-					"新建一个 artifact（给用户看的成品：页面、报告、原型等），产生版本 1。单页给 html 即可；多文件用 files，并包含入口 index.html。返回 {id, version, pages, kind, url}。第一次做之前先读 read_artifact_guide（topic: files）。",
+					"新建一个 artifact（给用户看的成品：页面、报告、原型、文档、幻灯片等），产生版本 1。单页给 html 即可；多文件用 files，并包含入口 index.html（画布是 canvas.json）。文档带 type: \"document\" 并在 files 里写 document.md，幻灯片带 type: \"slides\" 并写 slides.json，这两种不接受 html。返回 {id, version, pages, kind, url}。第一次做之前先读 read_artifact_guide（topic: files；文档、幻灯片读同名主题）。",
 				parameters: z.object({
 					title: z.string().min(1).max(120).describe("标题（不超过 120 字）"),
-					html: z.string().optional().describe("入口 index.html 的内容；等价于 files 里的一项 {path: \"index.html\", content}"),
+					type: z.enum(["document", "slides"]).optional().describe("类型化 artifact：document（Markdown 文档）或 slides（幻灯片）；普通页面与画布不给"),
+					html: z.string().optional().describe("入口 index.html 的内容；等价于 files 里的一项 {path: \"index.html\", content}；文档与幻灯片不能用"),
 					files: z.array(z.object(fileFields)).optional().describe("文件列表；html 与 files 至少给一个"),
 					note: z.string().max(200).optional().describe("这个版本的备注（不超过 200 字）"),
 				}),
@@ -397,7 +403,7 @@ function registerArtifacts(pi: ExtensionAPI): boolean {
 				name: "read_artifact_guide",
 				label: "artifact 教程",
 				description:
-					"读取做 artifact 的教程：files（文件规则、上限、可用的 CDN、沙箱限制、并发与冲突处理）。做第一个 artifact 之前先读 files。",
+					"读取做 artifact 的教程：files（文件规则、上限、可用的 CDN、沙箱限制、并发与冲突处理）、canvas（画布）、document（Markdown 文档）、slides（幻灯片）。做第一个 artifact 之前先读 files。",
 				parameters: z.object({
 					topic: z.enum(["files", "canvas", "runtime", "document", "slides"]).describe("教程主题"),
 				}),

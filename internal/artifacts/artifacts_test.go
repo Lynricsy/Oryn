@@ -140,7 +140,7 @@ func TestCreateValidation(t *testing.T) {
 		"case clash":  {Title: "x", Files: []FileChange{put("index.html", "x"), put("A.html", "x"), put("a.html", "y")}},
 		"not utf8":    {Title: "x", Files: []FileChange{put("index.html", "\xff\xfe")}},
 		"empty title": {Title: "  ", Files: []FileChange{put("index.html", "x")}},
-		"typed":       {Title: "x", Type: "document", Files: []FileChange{put("document.md", "# x")}},
+		"typed html":  {Title: "x", Type: "document", Files: []FileChange{put("document.md", "# x"), put("index.html", "x")}},
 		"bad cap":     {Title: "x", Files: []FileChange{put("index.html", "x")}, Capabilities: []string{"net"}},
 	}
 	for name, p := range cases {

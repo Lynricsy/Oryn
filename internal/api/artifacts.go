@@ -332,7 +332,7 @@ func (s *Server) OpenArtifactFrame(w http.ResponseWriter, r *http.Request, id ap
 	if !ok {
 		return
 	}
-	token, url, err := host.OpenFrame(r.Context(), id, version, r.Header.Get("Origin"))
+	token, url, err := host.OpenFrame(r.Context(), id, version, r.Header.Get("Origin"), deref(req.Locale))
 	if err != nil {
 		writeArtifactErr(w, r, err)
 		return
@@ -364,7 +364,7 @@ func (s *Server) OpenArtifactLink(w http.ResponseWriter, r *http.Request, id api
 	if !ok {
 		return
 	}
-	url, err := host.OpenLink(r.Context(), id, version)
+	url, err := host.OpenLink(r.Context(), id, version, deref(req.Locale))
 	if err != nil {
 		writeArtifactErr(w, r, err)
 		return

@@ -210,14 +210,37 @@ type pending struct {
 	remove bool
 }
 
+// htmlArgs 是 html 参数的两种形式：html 是内联的 index.html；htmlSource 是 orb 扩展把 html 参数写成的临时文件
+// （绝对路径，经 Fetch 取回）。两者等价、至多给一个；分开传是为了让类型化 artifact 能认出「传了 html」。
+type htmlArgs struct {
+	HTML       *string `json:"html"`
+	HTMLSource *string `json:"htmlSource"`
+}
+
+func (h htmlArgs) given() bool { return h.HTML != nil || h.HTMLSource != nil }
+
+// typedHTMLErr 是类型化 artifact 收到 html 时的错误。
+func typedHTMLErr(typ string) *OpError {
+	return opErr(CodeInvalid, "文档 / 幻灯片 artifact 不接受 html：%s 类型的入口是 %s，把内容写进 files 里的 %s（改已有的可以用 edits）。格式见 read_artifact_guide 的 %s 主题。",
+		typ, TypeEntry(typ), TypeEntry(typ), typ)
+}
+
 // collectFiles 把 html 与 files 整理成按出现顺序的待写文件；allowRemove 为假时不接受 remove。
-func collectFiles(c Caller, html *string, files []fileParam, allowRemove bool) ([]*pending, error) {
+func collectFiles(c Caller, html htmlArgs, files []fileParam, allowRemove bool) ([]*pending, error) {
 	var out []*pending
-	if html != nil {
-		if len(*html) > MaxInlineBytes {
+	switch {
+	case html.HTML != nil && html.HTMLSource != nil:
+		return nil, opErr(CodeInvalid, "html 与 htmlSource 只能给一个。")
+	case html.HTML != nil:
+		if len(*html.HTML) > MaxInlineBytes {
 			return nil, inlineTooLarge(EntryHTML)
 		}
-		out = append(out, &pending{path: EntryHTML, data: []byte(*html)})
+		out = append(out, &pending{path: EntryHTML, data: []byte(*html.HTML)})
+	case html.HTMLSource != nil:
+		if c.Fetch == nil || *html.HTMLSource == "" {
+			return nil, opErr(CodeInvalid, "这里不能用 htmlSource，请直接给 html。")
+		}
+		out = append(out, &pending{path: EntryHTML, source: *html.HTMLSource})
 	}
 	for i, f := range files {
 		if f.Path == "" {
@@ -360,9 +383,9 @@ func changes(ctx context.Context, c Caller, ps []*pending) ([]FileChange, func()
 }
 
 type createArgs struct {
+	htmlArgs
 	Title        string          `json:"title"`
 	Type         string          `json:"type"`
-	HTML         *string         `json:"html"`
 	Files        []fileParam     `json:"files"`
 	Capabilities json.RawMessage `json:"capabilities"`
 	Note         string          `json:"note"`
@@ -377,8 +400,11 @@ func (s *Service) agentCreate(ctx context.Context, c Caller, params json.RawMess
 	if len(p.Capabilities) > 0 {
 		return Result{}, opErr(CodeInvalid, "当前版本还不支持 capabilities（页面能力声明）。去掉这个参数再试。")
 	}
-	if p.HTML == nil && len(p.Files) == 0 {
-		return Result{}, opErr(CodeInvalid, "html 与 files 至少要给一个。单页可以只给 html；多文件用 files，并包含入口 index.html。")
+	if p.Type != "" && TypeEntry(p.Type) != "" && p.given() {
+		return Result{}, typedHTMLErr(p.Type)
+	}
+	if !p.given() && len(p.Files) == 0 {
+		return Result{}, opErr(CodeInvalid, "html 与 files 至少要给一个。单页可以只给 html；多文件用 files，并包含入口 index.html；文档与幻灯片用 files 写入口文件。")
 	}
 	project := c.ProjectID
 	if p.ProjectID != nil {
@@ -394,7 +420,7 @@ func (s *Service) agentCreate(ctx context.Context, c Caller, params json.RawMess
 		}
 		project = p.ProjectID
 	}
-	ps, err := collectFiles(c, p.HTML, p.Files, false)
+	ps, err := collectFiles(c, p.htmlArgs, p.Files, false)
 	if err != nil {
 		return Result{}, err
 	}
@@ -534,10 +560,10 @@ type editArg struct {
 }
 
 type updateArgs struct {
+	htmlArgs
 	ID           string          `json:"id"`
 	BaseVersion  *int            `json:"baseVersion"`
 	Title        *string         `json:"title"`
-	HTML         *string         `json:"html"`
 	Files        []fileParam     `json:"files"`
 	Edits        []editArg       `json:"edits"`
 	Capabilities json.RawMessage `json:"capabilities"`
@@ -555,7 +581,7 @@ func (s *Service) agentUpdate(ctx context.Context, c Caller, params json.RawMess
 		return Result{}, err
 	}
 	hasCaps, hasCanvas := len(p.Capabilities) > 0, len(p.Canvas) > 0
-	content := p.HTML != nil || len(p.Files) > 0 || len(p.Edits) > 0 || hasCaps || hasCanvas
+	content := p.given() || len(p.Files) > 0 || len(p.Edits) > 0 || hasCaps || hasCanvas
 	if p.Title != nil {
 		if content || p.Note != nil {
 			return Result{}, opErr(CodeInvalid, "title 不能和其它改动一起给：改名不产生版本。先单独改名，再另调一次 update_artifact 改内容。")
@@ -583,13 +609,13 @@ func (s *Service) agentUpdate(ctx context.Context, c Caller, params json.RawMess
 		return Result{}, &OpError{Code: CodeInvalid, State: &State{Version: a.Version},
 			Message: fmt.Sprintf("baseVersion %d 不存在；%s 现在是版本 %d。先 read_artifact 拿到最新版本号。", base, a.ID, a.Version)}
 	}
-	if p.HTML != nil && a.Type != "" {
-		return Result{}, opErr(CodeInvalid, "%s 是 %s 类型，不接受 html。改入口文件 %s 请用 files 或 edits。", a.ID, a.Type, a.Entry())
+	if p.given() && a.Type != "" {
+		return Result{}, typedHTMLErr(a.Type)
 	}
 	if len(p.Edits) > MaxEdits {
 		return Result{}, opErr(CodeInvalid, "edits 最多 %d 条，这次给了 %d 条。分几次改，或者用 files 整体替换文件。", MaxEdits, len(p.Edits))
 	}
-	ps, err := collectFiles(c, p.HTML, p.Files, true)
+	ps, err := collectFiles(c, p.htmlArgs, p.Files, true)
 	if err != nil {
 		return Result{}, err
 	}
