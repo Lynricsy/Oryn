@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 // Defines values for AgentAvatarSource.
@@ -79,6 +80,24 @@ func (e ArtifactAccess) Valid() bool {
 	}
 }
 
+// Defines values for ArtifactCapabilitiesFrames.
+const (
+	ArtifactFramesHost ArtifactCapabilitiesFrames = "host"
+	ArtifactFramesPath ArtifactCapabilitiesFrames = "path"
+)
+
+// Valid indicates whether the value is a known member of the ArtifactCapabilitiesFrames enum.
+func (e ArtifactCapabilitiesFrames) Valid() bool {
+	switch e {
+	case ArtifactFramesHost:
+		return true
+	case ArtifactFramesPath:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ArtifactCapability.
 const (
 	ArtifactCapabilityDB     ArtifactCapability = "db"
@@ -94,6 +113,24 @@ func (e ArtifactCapability) Valid() bool {
 	case ArtifactCapabilityFiles:
 		return true
 	case ArtifactCapabilitySample:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ArtifactExportFormat.
+const (
+	ArtifactExportHTML ArtifactExportFormat = "html"
+	ArtifactExportZip  ArtifactExportFormat = "zip"
+)
+
+// Valid indicates whether the value is a known member of the ArtifactExportFormat enum.
+func (e ArtifactExportFormat) Valid() bool {
+	switch e {
+	case ArtifactExportHTML:
+		return true
+	case ArtifactExportZip:
 		return true
 	default:
 		return false
@@ -3159,6 +3196,24 @@ type Artifact struct {
 // ArtifactAccess 发布的访问级别：`private` 只有登录的所有者；`code` 凭链接与访问码；`public` 凭链接
 type ArtifactAccess string
 
+// ArtifactCapabilities defines model for ArtifactCapabilities.
+type ArtifactCapabilities struct {
+	// Frames `host` 泛域名（配置了 `portal_domain`）；`path` 主域回退路径
+	Frames ArtifactCapabilitiesFrames `json:"frames"`
+
+	// Render 控制面能否渲染（缩略图、PNG、PDF）
+	Render bool `json:"render"`
+
+	// RenderReason `render = false` 时的原因
+	RenderReason *string `json:"renderReason,omitempty"`
+
+	// Sample 页面能否用 `sample` 能力向模型提问
+	Sample bool `json:"sample"`
+}
+
+// ArtifactCapabilitiesFrames `host` 泛域名（配置了 `portal_domain`）；`path` 主域回退路径
+type ArtifactCapabilitiesFrames string
+
 // ArtifactCapability 页面运行时能力（`oryn.use(name)`）
 type ArtifactCapability string
 
@@ -3188,6 +3243,9 @@ type ArtifactDetail struct {
 	Version int `json:"version"`
 }
 
+// ArtifactExportFormat defines model for ArtifactExportFormat.
+type ArtifactExportFormat string
+
 // ArtifactFile defines model for ArtifactFile.
 type ArtifactFile struct {
 	Mime string `json:"mime"`
@@ -3198,6 +3256,27 @@ type ArtifactFile struct {
 	Size   int64  `json:"size"`
 }
 
+// ArtifactFrame defines model for ArtifactFrame.
+type ArtifactFrame struct {
+	// Token 帧令牌（16 个随机字节的小写无填充 base32）
+	Token ArtifactFrameToken `json:"token"`
+
+	// URL 帧根地址（泛域名模式 `a-<令牌>.<portal_domain>`，回退模式 `<public_url>/_af/<令牌>/`）
+	URL string `json:"url"`
+}
+
+// ArtifactFrameRequest defines model for ArtifactFrameRequest.
+type ArtifactFrameRequest struct {
+	// Locale 类型化 artifact 查看器用的界面语言（如 `zh-CN`）
+	Locale *string `json:"locale,omitempty"`
+
+	// Version 钉住某个版本（只读，不带页面运行时能力）；缺省 = 跟随最新版本
+	Version *int `json:"version,omitempty"`
+}
+
+// ArtifactFrameToken 帧令牌（16 个随机字节的小写无填充 base32）
+type ArtifactFrameToken = string
+
 // ArtifactID `art_<ulid>`（M14 artifact）
 type ArtifactID = string
 
@@ -3207,6 +3286,11 @@ type ArtifactKind string
 // ArtifactList defines model for ArtifactList.
 type ArtifactList struct {
 	Artifacts []Artifact `json:"artifacts"`
+}
+
+// ArtifactOpenLink defines model for ArtifactOpenLink.
+type ArtifactOpenLink struct {
+	URL string `json:"url"`
 }
 
 // ArtifactOrigin defines model for ArtifactOrigin.
@@ -8464,6 +8548,17 @@ type ListArtifactsParams struct {
 	ProjectID *ProjectID `form:"projectId,omitempty" json:"projectId,omitempty"`
 }
 
+// ImportArtifactMultipartBody defines parameters for ImportArtifact.
+type ImportArtifactMultipartBody map[string]openapi_types.File
+
+// ImportArtifactParams defines parameters for ImportArtifact.
+type ImportArtifactParams struct {
+	ProjectID *ProjectID `form:"projectId,omitempty" json:"projectId,omitempty"`
+
+	// Name 上传时的文件名或文件夹名（没有 `<title>` 时作标题）
+	Name *string `form:"name,omitempty" json:"name,omitempty"`
+}
+
 // DeleteArtifactParams defines parameters for DeleteArtifact.
 type DeleteArtifactParams struct {
 	Permanent *bool `form:"permanent,omitempty" json:"permanent,omitempty"`
@@ -8473,6 +8568,13 @@ type DeleteArtifactParams struct {
 type GetArtifactParams struct {
 	// Version 缺省 = 最新版本
 	Version *int `form:"version,omitempty" json:"version,omitempty"`
+}
+
+// ExportArtifactParams defines parameters for ExportArtifact.
+type ExportArtifactParams struct {
+	// Version 缺省 = 最新版本
+	Version *int                 `form:"version,omitempty" json:"version,omitempty"`
+	Format  ArtifactExportFormat `form:"format" json:"format"`
 }
 
 // GetArtifactFileParams defines parameters for GetArtifactFile.
@@ -9054,8 +9156,17 @@ type ListThreadEntriesParams struct {
 	Limit *int   `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// ImportArtifactMultipartRequestBody defines body for ImportArtifact for multipart/form-data ContentType.
+type ImportArtifactMultipartRequestBody ImportArtifactMultipartBody
+
 // PatchArtifactJSONRequestBody defines body for PatchArtifact for application/json ContentType.
 type PatchArtifactJSONRequestBody = ArtifactPatch
+
+// OpenArtifactFrameJSONRequestBody defines body for OpenArtifactFrame for application/json ContentType.
+type OpenArtifactFrameJSONRequestBody = ArtifactFrameRequest
+
+// OpenArtifactLinkJSONRequestBody defines body for OpenArtifactLink for application/json ContentType.
+type OpenArtifactLinkJSONRequestBody = ArtifactFrameRequest
 
 // RestoreArtifactVersionJSONRequestBody defines body for RestoreArtifactVersion for application/json ContentType.
 type RestoreArtifactVersionJSONRequestBody = ArtifactRestoreVersion
@@ -11309,9 +11420,18 @@ type ServerInterface interface {
 	// RestartAgentConfigSessions 重启需重启才能让配置生效的会话（M13）
 	// (POST /api/v1/agent-config/restart-sessions)
 	RestartAgentConfigSessions(w http.ResponseWriter, r *http.Request)
+	// CloseArtifactFrame 关闭渲染帧（查看器卸载时调用；不存在也回 204）
+	// (DELETE /api/v1/artifact-frames/{token})
+	CloseArtifactFrame(w http.ResponseWriter, r *http.Request, token ArtifactFrameToken)
 	// ListArtifacts 列出 artifact（最近更新的在前）
 	// (GET /api/v1/artifacts)
 	ListArtifacts(w http.ResponseWriter, r *http.Request, params ListArtifactsParams)
+	// GetArtifactCapabilities 本控制面的 artifact 能力（帧的寻址方式、能否渲染、能否向模型提问）
+	// (GET /api/v1/artifacts/capabilities)
+	GetArtifactCapabilities(w http.ResponseWriter, r *http.Request)
+	// ImportArtifact 导入一个 HTML 文件或带 index.html / canvas.json 的文件夹（每个 part 的字段名是相对路径）
+	// (POST /api/v1/artifacts/import)
+	ImportArtifact(w http.ResponseWriter, r *http.Request, params ImportArtifactParams)
 	// DeleteArtifact 移到「最近删除」（保留 30 天）；`permanent=true` 永久删除回收站里的 artifact
 	// (DELETE /api/v1/artifacts/{id})
 	DeleteArtifact(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, params DeleteArtifactParams)
@@ -11321,9 +11441,18 @@ type ServerInterface interface {
 	// PatchArtifact 重命名（不产生版本；回收站里的不能改）
 	// (PATCH /api/v1/artifacts/{id})
 	PatchArtifact(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
+	// ExportArtifact 导出某个版本（`html` 只对单文件版本可用；`zip` 打包全部文件）
+	// (GET /api/v1/artifacts/{id}/export)
+	ExportArtifact(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, params ExportArtifactParams)
 	// GetArtifactFile 下载某个版本里的一个文件（栅格图 inline，其余一律 attachment；带 `Content-Security-Policy: sandbox`，主域上从不把 HTML 当页面渲染）
 	// (GET /api/v1/artifacts/{id}/file)
 	GetArtifactFile(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, params GetArtifactFileParams)
+	// OpenArtifactFrame 申请一个渲染帧（独立源里的沙箱页面）；帧令牌就是访问凭证，orynd 重启后全部失效
+	// (POST /api/v1/artifacts/{id}/frames)
+	OpenArtifactFrame(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
+	// OpenArtifactLink 申请「在浏览器中打开」的顶层地址（短时有效的顶层帧，地址自带令牌、不需要登录态）
+	// (POST /api/v1/artifacts/{id}/open-link)
+	OpenArtifactLink(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
 	// MarkArtifactOpened 记一次「打开」（总览页按最近打开排序、首屏最近项用；存服务端，换设备一致）
 	// (POST /api/v1/artifacts/{id}/opened)
 	MarkArtifactOpened(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
@@ -11957,9 +12086,27 @@ func (_ Unimplemented) RestartAgentConfigSessions(w http.ResponseWriter, r *http
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// CloseArtifactFrame 关闭渲染帧（查看器卸载时调用；不存在也回 204）
+// (DELETE /api/v1/artifact-frames/{token})
+func (_ Unimplemented) CloseArtifactFrame(w http.ResponseWriter, r *http.Request, token ArtifactFrameToken) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // ListArtifacts 列出 artifact（最近更新的在前）
 // (GET /api/v1/artifacts)
 func (_ Unimplemented) ListArtifacts(w http.ResponseWriter, r *http.Request, params ListArtifactsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetArtifactCapabilities 本控制面的 artifact 能力（帧的寻址方式、能否渲染、能否向模型提问）
+// (GET /api/v1/artifacts/capabilities)
+func (_ Unimplemented) GetArtifactCapabilities(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ImportArtifact 导入一个 HTML 文件或带 index.html / canvas.json 的文件夹（每个 part 的字段名是相对路径）
+// (POST /api/v1/artifacts/import)
+func (_ Unimplemented) ImportArtifact(w http.ResponseWriter, r *http.Request, params ImportArtifactParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -11981,9 +12128,27 @@ func (_ Unimplemented) PatchArtifact(w http.ResponseWriter, r *http.Request, id 
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// ExportArtifact 导出某个版本（`html` 只对单文件版本可用；`zip` 打包全部文件）
+// (GET /api/v1/artifacts/{id}/export)
+func (_ Unimplemented) ExportArtifact(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, params ExportArtifactParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // GetArtifactFile 下载某个版本里的一个文件（栅格图 inline，其余一律 attachment；带 `Content-Security-Policy: sandbox`，主域上从不把 HTML 当页面渲染）
 // (GET /api/v1/artifacts/{id}/file)
 func (_ Unimplemented) GetArtifactFile(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, params GetArtifactFileParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// OpenArtifactFrame 申请一个渲染帧（独立源里的沙箱页面）；帧令牌就是访问凭证，orynd 重启后全部失效
+// (POST /api/v1/artifacts/{id}/frames)
+func (_ Unimplemented) OpenArtifactFrame(w http.ResponseWriter, r *http.Request, id ArtifactIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// OpenArtifactLink 申请「在浏览器中打开」的顶层地址（短时有效的顶层帧，地址自带令牌、不需要登录态）
+// (POST /api/v1/artifacts/{id}/open-link)
+func (_ Unimplemented) OpenArtifactLink(w http.ResponseWriter, r *http.Request, id ArtifactIDPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -13316,6 +13481,32 @@ func (siw *ServerInterfaceWrapper) RestartAgentConfigSessions(w http.ResponseWri
 	handler.ServeHTTP(w, r)
 }
 
+// CloseArtifactFrame operation middleware
+func (siw *ServerInterfaceWrapper) CloseArtifactFrame(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "token" -------------
+	var token ArtifactFrameToken
+
+	err = runtime.BindStyledParameterWithOptions("simple", "token", chi.URLParam(r, "token"), &token, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CloseArtifactFrame(w, r, token)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListArtifacts operation middleware
 func (siw *ServerInterfaceWrapper) ListArtifacts(w http.ResponseWriter, r *http.Request) {
 
@@ -13366,6 +13557,66 @@ func (siw *ServerInterfaceWrapper) ListArtifacts(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListArtifacts(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetArtifactCapabilities operation middleware
+func (siw *ServerInterfaceWrapper) GetArtifactCapabilities(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetArtifactCapabilities(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ImportArtifact operation middleware
+func (siw *ServerInterfaceWrapper) ImportArtifact(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ImportArtifactParams
+
+	// ------------- Optional query parameter "projectId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "projectId", r.URL.Query(), &params.ProjectID, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "projectId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "name" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "name", r.URL.Query(), &params.Name, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "name"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ImportArtifact(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -13485,6 +13736,61 @@ func (siw *ServerInterfaceWrapper) PatchArtifact(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// ExportArtifact operation middleware
+func (siw *ServerInterfaceWrapper) ExportArtifact(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ExportArtifactParams
+
+	// ------------- Optional query parameter "version" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "version", r.URL.Query(), &params.Version, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "version"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "version", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "format" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "format", r.URL.Query(), &params.Format, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "format"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "format", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ExportArtifact(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetArtifactFile operation middleware
 func (siw *ServerInterfaceWrapper) GetArtifactFile(w http.ResponseWriter, r *http.Request) {
 
@@ -13531,6 +13837,58 @@ func (siw *ServerInterfaceWrapper) GetArtifactFile(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetArtifactFile(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// OpenArtifactFrame operation middleware
+func (siw *ServerInterfaceWrapper) OpenArtifactFrame(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.OpenArtifactFrame(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// OpenArtifactLink operation middleware
+func (siw *ServerInterfaceWrapper) OpenArtifactLink(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.OpenArtifactLink(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -20393,6 +20751,24 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/artifacts/{id}/file", wrapper.GetArtifactFile)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/artifacts/{id}/frames", wrapper.OpenArtifactFrame)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/artifact-frames/{token}", wrapper.CloseArtifactFrame)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/artifacts/{id}/open-link", wrapper.OpenArtifactLink)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/artifacts/import", wrapper.ImportArtifact)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/artifacts/{id}/export", wrapper.ExportArtifact)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/artifacts/capabilities", wrapper.GetArtifactCapabilities)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/coordinator", wrapper.GetCoordinator)

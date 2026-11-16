@@ -2706,6 +2706,116 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/artifacts/{id}/frames": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 申请一个渲染帧（独立源里的沙箱页面）；帧令牌就是访问凭证，orynd 重启后全部失效 */
+        post: operations["openArtifactFrame"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifact-frames/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: components["schemas"]["ArtifactFrameToken"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 关闭渲染帧（查看器卸载时调用；不存在也回 204） */
+        delete: operations["closeArtifactFrame"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifacts/{id}/open-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 申请「在浏览器中打开」的顶层地址（短时有效的顶层帧，地址自带令牌、不需要登录态） */
+        post: operations["openArtifactLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifacts/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 导入一个 HTML 文件或带 index.html / canvas.json 的文件夹（每个 part 的字段名是相对路径） */
+        post: operations["importArtifact"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifacts/{id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 导出某个版本（`html` 只对单文件版本可用；`zip` 打包全部文件） */
+        get: operations["exportArtifact"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifacts/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 本控制面的 artifact 能力（帧的寻址方式、能否渲染、能否向模型提问） */
+        get: operations["getArtifactCapabilities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/coordinator": {
         parameters: {
             query?: never;
@@ -4296,6 +4406,37 @@ export interface components {
         };
         ArtifactRestoreVersion: {
             baseVersion: number;
+        };
+        /** @description 帧令牌（16 个随机字节的小写无填充 base32） */
+        ArtifactFrameToken: string;
+        ArtifactFrameRequest: {
+            /** @description 钉住某个版本（只读，不带页面运行时能力）；缺省 = 跟随最新版本 */
+            version?: number;
+            /** @description 类型化 artifact 查看器用的界面语言（如 `zh-CN`） */
+            locale?: string;
+        };
+        ArtifactFrame: {
+            /** @description 帧根地址（泛域名模式 `a-<令牌>.<portal_domain>`，回退模式 `<public_url>/_af/<令牌>/`） */
+            url: string;
+            token: components["schemas"]["ArtifactFrameToken"];
+        };
+        ArtifactOpenLink: {
+            url: string;
+        };
+        /** @enum {string} */
+        ArtifactExportFormat: "html" | "zip";
+        ArtifactCapabilities: {
+            /**
+             * @description `host` 泛域名（配置了 `portal_domain`）；`path` 主域回退路径
+             * @enum {string}
+             */
+            frames: "host" | "path";
+            /** @description 控制面能否渲染（缩略图、PNG、PDF） */
+            render: boolean;
+            /** @description `render = false` 时的原因 */
+            renderReason?: string;
+            /** @description 页面能否用 `sample` 能力向模型提问 */
+            sample: boolean;
         };
         /** @description 新助手对话的第一条用户消息；全部省略 = 空对话 */
         CreateAssistantConversationRequest: {
@@ -11915,6 +12056,168 @@ export interface operations {
                 };
                 content: {
                     "*/*": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    openArtifactFrame: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArtifactFrameRequest"];
+            };
+        };
+        responses: {
+            /** @description 帧 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactFrame"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    closeArtifactFrame: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: components["schemas"]["ArtifactFrameToken"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已关闭 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    openArtifactLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArtifactFrameRequest"];
+            };
+        };
+        responses: {
+            /** @description 地址 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactOpenLink"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    importArtifact: {
+        parameters: {
+            query?: {
+                projectId?: components["schemas"]["ProjectId"];
+                /** @description 上传时的文件名或文件夹名（没有 `<title>` 时作标题） */
+                name?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    [key: string]: string;
+                };
+            };
+        };
+        responses: {
+            /** @description 已导入 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Artifact"];
+                };
+            };
+            /** @description 错误；导入特有的错误码：`too_large`、`too_many`（413）、`no_index`、`bad_canvas`、`bad_name`、`not_utf8`（400） */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    exportArtifact: {
+        parameters: {
+            query: {
+                /** @description 缺省 = 最新版本 */
+                version?: number;
+                format: components["schemas"]["ArtifactExportFormat"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 文件（`Content-Disposition: attachment`） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getArtifactCapabilities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 能力 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactCapabilities"];
                 };
             };
             default: components["responses"]["Error"];

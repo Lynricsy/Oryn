@@ -3352,6 +3352,141 @@ paths:
             '*/*':
               schema: { type: string, format: binary }
         default: { $ref: '#/components/responses/Error' }
+  /api/v1/artifacts/{id}/frames:
+    parameters:
+      - { $ref: '#/components/parameters/ArtifactIdPath' }
+    post:
+      tags: [artifacts]
+      operationId: openArtifactFrame
+      summary: 申请一个渲染帧（独立源里的沙箱页面）；帧令牌就是访问凭证，orynd 重启后全部失效
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ArtifactFrameRequest' }
+      responses:
+        '201':
+          description: 帧
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtifactFrame' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/artifact-frames/{token}:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/ArtifactFrameToken' }
+    delete:
+      tags: [artifacts]
+      operationId: closeArtifactFrame
+      summary: 关闭渲染帧（查看器卸载时调用；不存在也回 204）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已关闭 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/artifacts/{id}/open-link:
+    parameters:
+      - { $ref: '#/components/parameters/ArtifactIdPath' }
+    post:
+      tags: [artifacts]
+      operationId: openArtifactLink
+      summary: 申请「在浏览器中打开」的顶层地址（短时有效的顶层帧，地址自带令牌、不需要登录态）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ArtifactFrameRequest' }
+      responses:
+        '200':
+          description: 地址
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtifactOpenLink' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/artifacts/import:
+    post:
+      tags: [artifacts]
+      operationId: importArtifact
+      summary: 导入一个 HTML 文件或带 index.html / canvas.json 的文件夹（每个 part 的字段名是相对路径）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      parameters:
+        - name: projectId
+          in: query
+          schema: { $ref: '#/components/schemas/ProjectId' }
+        - name: name
+          in: query
+          description: 上传时的文件名或文件夹名（没有 `<title>` 时作标题）
+          schema: { type: string, maxLength: 1024 }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties:
+                type: string
+                format: binary
+      responses:
+        '201':
+          description: 已导入
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Artifact' }
+        default:
+          description: 错误；导入特有的错误码：`too_large`、`too_many`（413）、`no_index`、`bad_canvas`、`bad_name`、`not_utf8`（400）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/v1/artifacts/{id}/export:
+    parameters:
+      - { $ref: '#/components/parameters/ArtifactIdPath' }
+    get:
+      tags: [artifacts]
+      operationId: exportArtifact
+      summary: 导出某个版本（`html` 只对单文件版本可用；`zip` 打包全部文件）
+      parameters:
+        - name: version
+          in: query
+          description: 缺省 = 最新版本
+          schema: { type: integer, minimum: 1 }
+        - name: format
+          in: query
+          required: true
+          schema: { $ref: '#/components/schemas/ArtifactExportFormat' }
+      responses:
+        '200':
+          description: '文件（`Content-Disposition: attachment`）'
+          content:
+            '*/*':
+              schema: { type: string, format: binary }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/artifacts/capabilities:
+    get:
+      tags: [artifacts]
+      operationId: getArtifactCapabilities
+      summary: 本控制面的 artifact 能力（帧的寻址方式、能否渲染、能否向模型提问）
+      responses:
+        '200':
+          description: 能力
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtifactCapabilities' }
+        default: { $ref: '#/components/responses/Error' }
   /api/v1/coordinator:
     get:
       tags: [automation]
@@ -5714,6 +5849,56 @@ components:
       required: [baseVersion]
       properties:
         baseVersion: { type: integer, minimum: 1 }
+    ArtifactFrameToken:
+      type: string
+      pattern: '^[a-z2-7]{26}$'
+      description: 帧令牌（16 个随机字节的小写无填充 base32）
+    ArtifactFrameRequest:
+      type: object
+      properties:
+        version:
+          type: integer
+          minimum: 1
+          description: 钉住某个版本（只读，不带页面运行时能力）；缺省 = 跟随最新版本
+        locale:
+          type: string
+          maxLength: 16
+          description: 类型化 artifact 查看器用的界面语言（如 `zh-CN`）
+    ArtifactFrame:
+      type: object
+      required: [url, token]
+      properties:
+        url:
+          type: string
+          description: 帧根地址（泛域名模式 `a-<令牌>.<portal_domain>`，回退模式 `<public_url>/_af/<令牌>/`）
+        token: { $ref: '#/components/schemas/ArtifactFrameToken' }
+    ArtifactOpenLink:
+      type: object
+      required: [url]
+      properties:
+        url: { type: string }
+    ArtifactExportFormat:
+      type: string
+      enum: [html, zip]
+      x-enum-varnames: [ArtifactExportHTML, ArtifactExportZip]
+    ArtifactCapabilities:
+      type: object
+      required: [frames, render, sample]
+      properties:
+        frames:
+          type: string
+          enum: [host, path]
+          x-enum-varnames: [ArtifactFramesHost, ArtifactFramesPath]
+          description: '`host` 泛域名（配置了 `portal_domain`）；`path` 主域回退路径'
+        render:
+          type: boolean
+          description: 控制面能否渲染（缩略图、PNG、PDF）
+        renderReason:
+          type: string
+          description: '`render = false` 时的原因'
+        sample:
+          type: boolean
+          description: 页面能否用 `sample` 能力向模型提问
     CreateAssistantConversationRequest:
       type: object
       description: 新助手对话的第一条用户消息；全部省略 = 空对话
