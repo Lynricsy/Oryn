@@ -30,8 +30,8 @@ var selfWriteCategories = map[string]bool{
 	egress.CatReviewComment: true,
 }
 
-// GitHubWriteBegin 实现 orbs.GitHub：出站代理转发 orb 的 GitHub 写操作之前预登记防回流记录。
-// 返回非空表示拒绝（门禁，步骤 5.4 接入；w.Unparsed 时门禁开启须拒绝）；目前恒放行。
+// GitHubWriteBegin 实现 orbs.GitHub：出站代理转发 orb 的 GitHub 写操作之前预登记防回流记录。门禁由出站代理在调用之前执行
+// （egress/gate.go 经 GateLookup 现查本包 gates.go 的状态），被门禁拒绝的写操作不会走到这里，所以恒放行。
 func (s *Service) GitHubWriteBegin(ctx context.Context, orbID string, w egress.GitHubWrite) string {
 	slot := s.orbSlot(ctx, orbID)
 	s.trackSelfWrite(slot, 1)
@@ -50,8 +50,13 @@ func (s *Service) GitHubWriteBegin(ctx context.Context, orbID string, w egress.G
 }
 
 // GitHubWriteEnd 实现 orbs.GitHub：记下成功写操作的补充键，并写审计；成功创建的 PR 交给 pullCreated 关联到 orb 的线程（步骤 3.2）。
+// 被出站代理门禁拒绝（Rejected，没有 Begin）的写操作只记审计。
 func (s *Service) GitHubWriteEnd(ctx context.Context, orbID string, w egress.GitHubWrite, status int, respKeys []string) {
 	slot := s.orbSlot(ctx, orbID)
+	if w.Rejected {
+		s.audit(ctx, orbID, slot, w, status)
+		return
+	}
 	if status/100 == 2 {
 		s.rememberSelfKeys(ctx, respKeys)
 		if w.Category == egress.CatPRCreate {

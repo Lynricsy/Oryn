@@ -56,6 +56,7 @@ type GitHubOp struct {
 	// 门禁所需
 	HeadRef, BaseRef string // pr.create：REST head/base；GraphQL headRefName/baseRefName
 	HeadRepoID       string // GraphQL headRepositoryId
+	HeadRepo         string // REST head_repo（head 仓库名，同组织的跨仓库 PR 用）
 	RepositoryID     string // GraphQL repositoryId
 	ReviewEvent      string // review.submit：大写 APPROVE/REQUEST_CHANGES/COMMENT；空 = 待提交
 	SHA              string // ref.update：新 SHA（REST git/refs 的 sha；GraphQL updateRef/createRef 的 oid）
@@ -347,7 +348,10 @@ func fillPRCreate(op *GitHubOp, obj ghObject, _ map[string]string) (err error) {
 	if op.HeadRef, err = obj.require("head"); err != nil {
 		return err
 	}
-	op.BaseRef, err = obj.require("base")
+	if op.BaseRef, err = obj.require("base"); err != nil {
+		return err
+	}
+	op.HeadRepo, _, err = obj.str("head_repo")
 	return err
 }
 

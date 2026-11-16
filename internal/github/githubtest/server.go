@@ -50,6 +50,8 @@ type Repo struct {
 	// Restricted 模拟 OAuth App 的组织限制：org_restricted（403 + 访问限制 message）或 sso_required（403 + X-GitHub-SSO）；
 	// 只作用于用户令牌对仓库与仓库 hook 的请求。空串 = 不限制。
 	Restricted string
+	// Refs 是 git ref → 提交 sha，键形如 heads/main、tags/v1（GET …/git/ref/{ref}）。
+	Refs map[string]string
 }
 
 // Call 是假服务收到的一次请求。
@@ -238,6 +240,7 @@ func (s *Server) handler() http.Handler {
 	s.issueRoutes(mux)
 	s.hookRoutes(mux)
 	s.watchRoutes(mux)
+	s.refRoutes(mux)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		r.Body = io.NopCloser(bytes.NewReader(body))

@@ -42,6 +42,13 @@ type GitHub interface {
 	// Begin 预登记并返回门禁结论（非空 = 拒绝原因），End 记补充键与审计。
 	GitHubWriteBegin(ctx context.Context, orbID string, w egress.GitHubWrite) (gate string)
 	GitHubWriteEnd(ctx context.Context, orbID string, w egress.GitHubWrite, status int, respKeys []string)
+	// 以下承接出站代理门禁的现查（egress.GateLookup，M15 步骤 5.4），都以 orb 自己的线程与身份槽位为准；查询失败返回不放行的结果。
+	PrepareOK(ctx context.Context, orbID, sha, level string) (ok, skipped bool)
+	ImplAuthorized(ctx context.Context, orbID string) bool
+	HeadSHA(ctx context.Context, orbID, repo, ref string) (string, error)
+	DefaultBranch(ctx context.Context, orbID, repo string) (string, error)
+	IsOrynHook(ctx context.Context, repo string, id int64) bool
+	ReleaseThread(ctx context.Context, orbID string) bool
 }
 
 // CtlCoded 由带错误码的领域错误实现（如 github.Error）：ctl 请求按其错误码与文案回给 orbd。

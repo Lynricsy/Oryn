@@ -93,6 +93,74 @@ func (r egressResolver) GitHubWriteEnd(w egress.GitHubWrite, status int, respKey
 	r.s.github.GitHubWriteEnd(ctx, r.orbID, w, status, respKeys)
 }
 
+// errNoGitHub 是 GitHub 集成未启用时门禁现查的错误（门禁据此拒绝）。
+var errNoGitHub = errors.New("orbs: GitHub 集成未启用")
+
+// gateCtx 是门禁现查的超时（HeadSHA / DefaultBranch 会访问 GitHub）。
+func gateCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 15*time.Second)
+}
+
+// PrepareOK 实现 egress.GateLookup：sha 在 level 上是否有本 orb 的 github_prepare 通过记录。
+func (r egressResolver) PrepareOK(sha, level string) (bool, bool) {
+	if r.s.github == nil {
+		return false, false
+	}
+	ctx, cancel := gateCtx()
+	defer cancel()
+	return r.s.github.PrepareOK(ctx, r.orbID, sha, level)
+}
+
+// ImplAuthorized 实现 egress.GateLookup：本 orb 线程的任务是否已获实现授权（每次现查，分类会在线程期间变化）。
+func (r egressResolver) ImplAuthorized() bool {
+	if r.s.github == nil {
+		return false
+	}
+	ctx, cancel := gateCtx()
+	defer cancel()
+	return r.s.github.ImplAuthorized(ctx, r.orbID)
+}
+
+// HeadSHA 实现 egress.GateLookup：以本 orb 的槽位查询分支指向的提交。
+func (r egressResolver) HeadSHA(repo, ref string) (string, error) {
+	if r.s.github == nil {
+		return "", errNoGitHub
+	}
+	ctx, cancel := gateCtx()
+	defer cancel()
+	return r.s.github.HeadSHA(ctx, r.orbID, repo, ref)
+}
+
+// DefaultBranch 实现 egress.GateLookup：以本 orb 的槽位查询仓库默认分支（出站代理缓存）。
+func (r egressResolver) DefaultBranch(repo string) (string, error) {
+	if r.s.github == nil {
+		return "", errNoGitHub
+	}
+	ctx, cancel := gateCtx()
+	defer cancel()
+	return r.s.github.DefaultBranch(ctx, r.orbID, repo)
+}
+
+// IsOrynHook 实现 egress.GateLookup：id 是否是 Oryn 管理的仓库 hook；集成未启用时按是处理（只多拒绝）。
+func (r egressResolver) IsOrynHook(repo string, id int64) bool {
+	if r.s.github == nil {
+		return true
+	}
+	ctx, cancel := gateCtx()
+	defer cancel()
+	return r.s.github.IsOrynHook(ctx, repo, id)
+}
+
+// ReleaseThread 实现 egress.GateLookup：本 orb 的线程是否为进行中的发布任务。
+func (r egressResolver) ReleaseThread() bool {
+	if r.s.github == nil {
+		return false
+	}
+	ctx, cancel := gateCtx()
+	defer cancel()
+	return r.s.github.ReleaseThread(ctx, r.orbID)
+}
+
 // policyFor 返回 orb 的出站策略；缓存缺失（如 orynd 重启后）时按当前配置重新生成。
 func (s *Service) policyFor(orbID string) egress.Policy {
 	s.mu.Lock()

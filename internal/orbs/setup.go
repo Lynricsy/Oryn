@@ -252,7 +252,10 @@ func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project, orb db.Orb) (S
 		if gs, ok := d.GitHub.OrbSetup(ctx, orb); ok {
 			uploads := true
 			p.Gh = &apigen.LinkCtlSetupGh{Login: gs.Login, Uploads: &uploads}
-			plan.Egress.GitHub = &egress.GitHubAccess{APIOrigin: gs.APIOrigin, GitOrigin: gs.GitOrigin}
+			plan.Egress.GitHub = &egress.GitHubAccess{APIOrigin: gs.APIOrigin, GitOrigin: gs.GitOrigin, Gates: gateConfig(p.GithubGates)}
+			if err := d.threadGates(ctx, orb, plan.Egress.GitHub); err != nil {
+				return plan, err
+			}
 			if gs.Agent || p.GitIdentity == nil {
 				p.GitIdentity = &gs.GitIdentity
 			}
@@ -454,4 +457,62 @@ func githubGates(raw *string) *apigen.GitHubGates {
 		return nil
 	}
 	return &g
+}
+
+// gateConfig 把项目的 github_gates 转成出站代理的门禁配置；推送、PR 门禁都关闭时为 nil（等于没有门禁）。
+func gateConfig(g *apigen.GitHubGates) *egress.GateConfig {
+	if g == nil || (!g.Push && !g.Pr) {
+		return nil
+	}
+	return &egress.GateConfig{
+		Push: g.Push, PR: g.Pr, PRHeadings: g.PrHeadings,
+		RequireClosingRef: g.RequireClosingRef != nil && *g.RequireClosingRef,
+	}
+}
+
+// threadGates 按 orb 线程的任务填写门禁的线程限制（M15 步骤 5.4）：thread_issues.review_only，以及建立任务的触发规则的
+// impl_auth / comment_only_reviews。orb 没有唯一的未归档工作线程、线程没有任务时不加限制。实现授权、是否发布任务
+// 会在线程期间变化，不在这里固定，由出站代理每次写请求经 GateLookup 现查。
+func (d *DefaultSetup) threadGates(ctx context.Context, orb db.Orb, ga *egress.GitHubAccess) error {
+	ths, err := d.Store.Q.ListThreadsByOrb(ctx, &orb.ID)
+	if err != nil {
+		return fmt.Errorf("读取 orb 的线程: %w", err)
+	}
+	var tid string
+	for _, th := range ths {
+		if th.Kind != threadKindWork || th.ArchivedAt != nil {
+			continue
+		}
+		if tid != "" {
+			return nil
+		}
+		tid = th.ID
+	}
+	if tid == "" {
+		return nil
+	}
+	ti, err := d.Store.Q.GetThreadIssueByThread(ctx, tid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("读取线程任务: %w", err)
+	}
+	ga.ReviewOnly = ti.ReviewOnly
+	rule := ti.RuleID
+	if rule == nil {
+		rule = ti.TriggerID
+	}
+	if rule == nil {
+		return nil
+	}
+	trig, err := d.Store.Q.GetGithubTrigger(ctx, *rule)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("读取触发规则: %w", err)
+	}
+	ga.ImplAuth, ga.CommentOnlyReviews = trig.ImplAuth, trig.CommentOnlyReviews
+	return nil
 }

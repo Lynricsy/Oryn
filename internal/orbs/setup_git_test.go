@@ -84,6 +84,14 @@ func (s stubGitHub) PrepareReport(context.Context, string, apigen.LinkCtlGithubP
 }
 func (s stubGitHub) GitHubWriteBegin(context.Context, string, egress.GitHubWrite) string       { return "" }
 func (s stubGitHub) GitHubWriteEnd(context.Context, string, egress.GitHubWrite, int, []string) {}
+func (s stubGitHub) PrepareOK(context.Context, string, string, string) (bool, bool) {
+	return false, false
+}
+func (s stubGitHub) ImplAuthorized(context.Context, string) bool                     { return false }
+func (s stubGitHub) HeadSHA(context.Context, string, string, string) (string, error) { return "", nil }
+func (s stubGitHub) DefaultBranch(context.Context, string, string) (string, error)   { return "", nil }
+func (s stubGitHub) IsOrynHook(context.Context, string, int64) bool                  { return true }
+func (s stubGitHub) ReleaseThread(context.Context, string) bool                      { return false }
 
 // M15 2.1：身份槽位可用的工作 orb（有没有项目、项目在哪个主机都一样）下发 gh 登录名（含 uploads）、/gh/ 路由与整个
 // github.com 主机的 insteadOf，不需要 PAT；runner 与协调宿主不下发。
@@ -191,6 +199,81 @@ func TestPlanGitHub(t *testing.T) {
 	assert.Equal(t, []string{"https://github.com/acme/widgets"}, p.Params.Repo.PreviousUrls)
 	p = plan(d, withIdent)
 	assert.Nil(t, p.Params.Repo.PreviousUrls)
+}
+
+// M15 5.4：门禁策略按项目的 github_gates 与 orb 线程的任务填写；推送、PR 门禁都关闭等于没有门禁；实现授权与发布任务
+// 不进策略（出站代理现查）。
+func TestPlanGitHubGates(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	gh := stubGitHub{ok: true, gs: GitHubSetup{Login: "oryn-bot", APIOrigin: "https://api.github.com", GitOrigin: "https://github.com"}}
+	d := &DefaultSetup{Store: st, GitHub: gh}
+	require.NoError(t, st.Q.CreateProvider(ctx, db.CreateProviderParams{ID: "prov_1", Name: "local", TokenHash: "h", CreatedAt: 1}))
+	prj := ids.New("prj")
+	repo := "https://github.com/acme/widgets"
+	require.NoError(t, st.Q.CreateProject(ctx, db.CreateProjectParams{ID: prj, Name: prj, RepoUrl: &repo, CreatedAt: 1, UpdatedAt: 1}))
+	newOrb := func() db.Orb {
+		t.Helper()
+		id := "orb-" + ids.New("x")[2:]
+		require.NoError(t, st.Q.CreateOrb(ctx, db.CreateOrbParams{ID: id, ProviderID: "prov_1", Type: "small", Image: "img", State: "ready",
+			TokenHash: ids.Token("h"), CreatedAt: 1, ProjectID: &prj}))
+		o, err := st.Q.GetOrb(ctx, id)
+		require.NoError(t, err)
+		return o
+	}
+	newThread := func(orbID string) string {
+		t.Helper()
+		id := ids.New("thr")
+		require.NoError(t, st.Q.CreateThread(ctx, db.CreateThreadParams{ID: id, ProjectID: &prj, OrbID: &orbID, Title: "t", TitleSource: "auto",
+			State: "idle", SessionDir: "d", CreatedAt: 1, UpdatedAt: 1, Kind: "work"}))
+		return id
+	}
+	ga := func(orb db.Orb) *egress.GitHubAccess {
+		t.Helper()
+		p, err := d.Plan(ctx, orb)
+		require.NoError(t, err)
+		require.NotNil(t, p.Egress.GitHub)
+		return p.Egress.GitHub
+	}
+	setGates := func(raw string) {
+		t.Helper()
+		require.NoError(t, st.Q.SetProjectGithubGates(ctx, db.SetProjectGithubGatesParams{GithubGates: &raw, UpdatedAt: 2, ID: prj}))
+	}
+
+	plain := newOrb()
+	g := ga(plain)
+	assert.Nil(t, g.Gates, "项目没有门禁")
+	assert.False(t, g.ReviewOnly || g.CommentOnlyReviews || g.ImplAuth, "没有线程任务")
+	assert.Nil(t, ga(db.Orb{ID: "orb-noproject"}).Gates, "无项目 orb 没有门禁")
+
+	setGates(`{"push":false,"pr":false,"checkCmd":"make check"}`)
+	assert.Nil(t, ga(plain).Gates, "两个门禁都关闭")
+	setGates(`{"push":true,"pr":true,"prHeadings":["Summary"],"requireClosingRef":true}`)
+	assert.Equal(t, &egress.GateConfig{Push: true, PR: true, PRHeadings: []string{"Summary"}, RequireClosingRef: true}, ga(plain).Gates)
+
+	// 评审线程：review_only 与规则的 comment_only_reviews / impl_auth
+	orb := newOrb()
+	thr := newThread(orb.ID)
+	rule := ids.New("trg")
+	require.NoError(t, st.Q.InsertGithubTrigger(ctx, db.InsertGithubTriggerParams{ID: rule, ProjectID: prj, Name: "r", Event: "pull_request_opened",
+		Prompt: "p", Enabled: true, CreatedAt: 1, UpdatedAt: 1}))
+	require.NoError(t, st.Q.SetGithubTriggerOptions(ctx, db.SetGithubTriggerOptionsParams{Drivers: "anyone", Maintainers: "[]", ReviewerBots: "[]",
+		Models: "[]", ImplAuth: true, CommentOnlyReviews: true, UpdatedAt: 2, ID: rule}))
+	require.NoError(t, st.Q.UpsertThreadIssue(ctx, db.UpsertThreadIssueParams{RepoID: 42, Number: 5, ThreadID: thr, TriggerID: &rule, CreatedAt: 1}))
+	g = ga(orb)
+	assert.False(t, g.ReviewOnly)
+	assert.True(t, g.CommentOnlyReviews, "规则取自 trigger_id")
+	assert.True(t, g.ImplAuth)
+	require.NoError(t, st.Q.SetThreadIssueTask(ctx, db.SetThreadIssueTaskParams{RuleID: &rule, ReviewOnly: true, RepoID: 42, Number: 5}))
+	assert.True(t, ga(orb).ReviewOnly)
+	assert.NotNil(t, ga(orb).Gates, "项目门禁照样生效")
+
+	// 同一 orb 上不止一个未归档工作线程：无法确定任务，不加线程限制
+	newThread(orb.ID)
+	g = ga(orb)
+	assert.False(t, g.ReviewOnly || g.CommentOnlyReviews || g.ImplAuth)
 }
 
 // M15 2.1：有 github.com 项目的 orb 经出站代理可读写任意 github.com 仓库，但不能读其它 PAT 主机上的非项目仓库。

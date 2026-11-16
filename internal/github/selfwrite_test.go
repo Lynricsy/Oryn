@@ -280,16 +280,34 @@ func TestSelfWriteCleanup(t *testing.T) {
 	assert.Zero(t, count("github_audit"))
 }
 
-// svcResolver 把出站代理接到 GitHub 服务上（端到端：orb → egress → 假 GitHub，回调进 GitHubWriteBegin / End）。
+// svcResolver 把出站代理接到 GitHub 服务上（端到端：orb → egress → 假 GitHub，回调进 GitHubWriteBegin / End 与门禁现查）。
+// ga 是策略里的门禁部分（origin 由 Policy 填）。
 type svcResolver struct {
 	e     *testEnv
 	orbID string
 	tok   string
+	ga    egress.GitHubAccess
 }
 
 func (r svcResolver) Policy() egress.Policy {
-	return egress.Policy{GitHub: &egress.GitHubAccess{APIOrigin: r.e.fake.URL(), GitOrigin: r.e.fake.URL()}}
+	ga := r.ga
+	ga.APIOrigin, ga.GitOrigin = r.e.fake.URL(), r.e.fake.URL()
+	return egress.Policy{GitHub: &ga}
 }
+func (r svcResolver) PrepareOK(sha, level string) (bool, bool) {
+	return r.e.s.PrepareOK(r.e.ctx, r.orbID, sha, level)
+}
+func (r svcResolver) ImplAuthorized() bool { return r.e.s.ImplAuthorized(r.e.ctx, r.orbID) }
+func (r svcResolver) HeadSHA(repo, ref string) (string, error) {
+	return r.e.s.HeadSHA(r.e.ctx, r.orbID, repo, ref)
+}
+func (r svcResolver) DefaultBranch(repo string) (string, error) {
+	return r.e.s.DefaultBranch(r.e.ctx, r.orbID, repo)
+}
+func (r svcResolver) IsOrynHook(repo string, id int64) bool {
+	return r.e.s.IsOrynHook(r.e.ctx, repo, id)
+}
+func (r svcResolver) ReleaseThread() bool                      { return r.e.s.ReleaseThread(r.e.ctx, r.orbID) }
 func (svcResolver) SecretByID(string) (string, []string, bool) { return "", nil, false }
 func (svcResolver) GitToken(string) (string, bool)             { return "", false }
 func (r svcResolver) GitHubToken() (string, bool)              { return r.tok, true }

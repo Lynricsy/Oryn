@@ -34,7 +34,8 @@ func (r vaultResolver) SecretByID(id string) (string, []string, bool) {
 // policyResolver 是一次目录运行的 egress.Resolver：只放行本次渲染出的模型路由，没有任何 git 访问。
 type policyResolver struct {
 	vaultResolver
-	routes map[string]egress.Route
+	egress.NoGateLookup // 没有 GitHub 路由，门禁查询不会被调用
+	routes              map[string]egress.Route
 }
 
 func (p policyResolver) Policy() egress.Policy { return egress.Policy{Routes: p.routes, NoGit: true} }

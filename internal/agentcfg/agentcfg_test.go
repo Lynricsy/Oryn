@@ -239,6 +239,7 @@ func TestModelBaseURLOnOtherHostAuthenticates(t *testing.T) {
 
 type policyResolver struct {
 	fakeResolver
+	egress.NoGateLookup
 	pol egress.Policy
 }
 
