@@ -192,8 +192,8 @@ func (s *Server) PatchArtifact(w http.ResponseWriter, r *http.Request, id apigen
 	WriteJSON(w, http.StatusOK, a.API())
 }
 
-// DeleteArtifact 对应 `DELETE artifacts/{id}?permanent=`：缺省移到「最近删除」；permanent=true 永久删除
-// 回收站里的 artifact（不在回收站里的回 400）。
+// DeleteArtifact 对应 `DELETE artifacts/{id}?permanent=&unpublish=`：缺省移到「最近删除」（unpublish=true 时在同一事务里
+// 取消发布）；permanent=true 永久删除回收站里的 artifact（不在回收站里的回 400；发布记录随级联删除）。
 func (s *Server) DeleteArtifact(w http.ResponseWriter, r *http.Request, id apigen.ArtifactIDPath, params apigen.DeleteArtifactParams) {
 	svc, ok := s.artifactsSvc(w)
 	if !ok {
@@ -202,6 +202,8 @@ func (s *Server) DeleteArtifact(w http.ResponseWriter, r *http.Request, id apige
 	var err error
 	if params.Permanent != nil && *params.Permanent {
 		err = svc.Erase(r.Context(), id)
+	} else if params.Unpublish != nil && *params.Unpublish {
+		_, err = svc.DeleteAndUnpublish(r.Context(), id)
 	} else {
 		_, err = svc.Delete(r.Context(), id)
 	}

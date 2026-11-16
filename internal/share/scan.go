@@ -178,6 +178,32 @@ func scanText(id, text string, needles []vaultNeedle) []apigen.ShareFinding {
 	})
 }
 
+// ScanContent 用同一套规则（规则表与密钥库）扫描一组文件内容（M14 发布 artifact 前用）：每个文件算一个条目，
+// 命中项的 entryId 是文件路径、seq 为 0；按路径顺序扫描，命中超过 MaxFindings 时截断。
+func (s *Service) ScanContent(ctx context.Context, files map[string][]byte) apigen.ShareScan {
+	res := apigen.ShareScan{Findings: []apigen.ShareFinding{}}
+	needles := s.vaultNeedles(ctx)
+	paths := make([]string, 0, len(files))
+	for p := range files {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		res.Scanned++
+		for _, f := range scanBytes(files[p], needles, func(f apigen.ShareFinding) apigen.ShareFinding {
+			f.EntryID = p
+			return f
+		}) {
+			if len(res.Findings) >= MaxFindings {
+				res.Truncated = true
+				break
+			}
+			res.Findings = append(res.Findings, f)
+		}
+	}
+	return res
+}
+
 // scanBytes 对 p 跑 vault_secret 与规则表，每条命中的规则经 locate 补上位置信息后返回。
 func scanBytes(p []byte, needles []vaultNeedle, locate func(apigen.ShareFinding) apigen.ShareFinding) []apigen.ShareFinding {
 	var out []apigen.ShareFinding

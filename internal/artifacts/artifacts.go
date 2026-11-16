@@ -138,6 +138,8 @@ type Artifact struct {
 	Pages                   int
 	CreatedAt, UpdatedAt    time.Time
 	OpenedAt, DeletedAt     time.Time
+	// Published 是发布的访问级别；未发布（或调用方没有取）时为空。只有 Get / List 填。
+	Published string
 }
 
 // Deleted 报告是否在「最近删除」里。
@@ -178,6 +180,11 @@ func (a Artifact) API() apigen.Artifact {
 	if !a.DeletedAt.IsZero() {
 		v := a.DeletedAt.UnixMilli()
 		out.DeletedAt = &v
+	}
+	if a.Published != "" {
+		out.Published = &struct {
+			Access apigen.ArtifactAccess `json:"access"`
+		}{Access: apigen.ArtifactAccess(a.Published)}
 	}
 	return out
 }
@@ -246,6 +253,8 @@ type Service struct {
 	// 只给测试用的交错钩子；生产为 nil。
 	afterStage   func()
 	gcBeforeLock func(sha string)
+	// pub 是发布配置（ConfigurePublishing）；nil = 发布未配置。
+	pub *PublishConfig
 }
 
 // holdContent 取内容存储的读锁并返回释放函数。凡是先把内容落进存储、再在事务里插引用行的写入路径，
@@ -359,7 +368,15 @@ func (s *Service) Get(ctx context.Context, id string) (Artifact, error) {
 	if err != nil {
 		return Artifact{}, err
 	}
-	return fromRow(r), nil
+	a := fromRow(r)
+	pr, err := s.st.Q.GetArtifactPublication(ctx, id)
+	switch {
+	case err == nil:
+		a.Published = pr.Access
+	case !errors.Is(err, sql.ErrNoRows):
+		return Artifact{}, err
+	}
+	return a, nil
 }
 
 // List 按最近更新列出 artifact。
@@ -372,9 +389,19 @@ func (s *Service) List(ctx context.Context, f Filter) ([]Artifact, error) {
 	if err != nil {
 		return nil, err
 	}
+	acc, err := s.st.Q.ListArtifactPublishedAccess(ctx)
+	if err != nil {
+		return nil, err
+	}
+	published := make(map[string]string, len(acc))
+	for _, x := range acc {
+		published[x.ArtifactID] = x.Access
+	}
 	out := make([]Artifact, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, fromRow(r))
+		a := fromRow(r)
+		a.Published = published[r.ID]
+		out = append(out, a)
 	}
 	return out, nil
 }

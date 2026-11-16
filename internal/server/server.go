@@ -272,6 +272,8 @@ func (s *Server) init(ctx context.Context) error {
 		}
 		return names
 	}, RoleKeySecret: share.DeriveRoleKeySecret(key)}, s.Store, s.Threads, s.Hub, s.Attachments, s.Orbs, s.Vault)
+	// M14 发布（步骤 8.1）：授权令牌用 orb 令牌主密钥派生的密钥签名；发布为 code / public 前用分享的密钥扫描规则
+	s.Artifacts.ConfigurePublishing(artifacts.PublishConfig{Base: base, GrantKey: artifacts.DeriveGrantKey(key), Scan: s.Share.ScanContent})
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	go s.Jobs.Run(runCtx)
 	go s.Orbs.Run(runCtx)

@@ -9,6 +9,19 @@ import (
 	"context"
 )
 
+const artifactPublicationUsage = `-- name: ArtifactPublicationUsage :one
+SELECT CAST(COALESCE(SUM(v.size), 0) AS INTEGER) AS bytes FROM artifact_publications p
+JOIN artifact_versions v ON v.artifact_id = p.artifact_id AND v.n = p.version
+`
+
+// Total size of all published versions.
+func (q *Queries) ArtifactPublicationUsage(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, artifactPublicationUsage)
+	var bytes int64
+	err := row.Scan(&bytes)
+	return bytes, err
+}
+
 const deleteArtifactPublication = `-- name: DeleteArtifactPublication :execrows
 DELETE FROM artifact_publications WHERE artifact_id = ?1
 `
@@ -199,6 +212,39 @@ func (q *Queries) ListArtifactPublications(ctx context.Context) ([]ListArtifactP
 			&i.Artifact.OpenedAt,
 			&i.Artifact.DeletedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listArtifactPublishedAccess = `-- name: ListArtifactPublishedAccess :many
+SELECT artifact_id, access FROM artifact_publications
+`
+
+type ListArtifactPublishedAccessRow struct {
+	ArtifactID string `json:"artifactId"`
+	Access     string `json:"access"`
+}
+
+// Access level of every published artifact (fills Artifact.published in lists).
+func (q *Queries) ListArtifactPublishedAccess(ctx context.Context) ([]ListArtifactPublishedAccessRow, error) {
+	rows, err := q.db.QueryContext(ctx, listArtifactPublishedAccess)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListArtifactPublishedAccessRow{}
+	for rows.Next() {
+		var i ListArtifactPublishedAccessRow
+		if err := rows.Scan(&i.ArtifactID, &i.Access); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

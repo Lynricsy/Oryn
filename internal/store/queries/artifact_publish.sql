@@ -40,3 +40,12 @@ SELECT auto_publish_artifacts FROM owner WHERE id = 1;
 
 -- name: SetArtifactAutoPublish :execrows
 UPDATE owner SET auto_publish_artifacts = @auto_publish_artifacts WHERE id = 1;
+
+-- Access level of every published artifact (fills Artifact.published in lists).
+-- name: ListArtifactPublishedAccess :many
+SELECT artifact_id, access FROM artifact_publications;
+
+-- Total size of all published versions.
+-- name: ArtifactPublicationUsage :one
+SELECT CAST(COALESCE(SUM(v.size), 0) AS INTEGER) AS bytes FROM artifact_publications p
+JOIN artifact_versions v ON v.artifact_id = p.artifact_id AND v.n = p.version;
