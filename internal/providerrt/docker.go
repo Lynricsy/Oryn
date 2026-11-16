@@ -41,6 +41,9 @@ type Docker struct {
 	baseMu sync.Mutex
 	baseID string
 	baseAt time.Time
+
+	// offline 缓存停机 orb 的文件索引（只读预览，见 offlinefs_docker.go）。
+	offline indexCache
 }
 
 // NewDocker 创建 docker 驱动。
@@ -55,7 +58,7 @@ func NewDocker(cfg config.Docker) *Docker {
 func (d *Docker) Info() Info {
 	return Info{
 		Driver:       apigen.Docker,
-		Capabilities: apigen.ProviderCapabilities{Freeze: true, Snapshot: true},
+		Capabilities: apigen.ProviderCapabilities{Freeze: true, Snapshot: true, OfflineFs: new(true)},
 		Types:        typeInfos(d.Cfg.Types),
 		DefaultType:  d.Cfg.DefaultType,
 		BaseImageID:  d.baseImageID(),
@@ -588,6 +591,63 @@ func (d *Docker) execIn(ctx context.Context, stdin io.Reader, stdout, out io.Wri
 		return &cmdError{args: args, err: err, stderr: stderr.String()}
 	}
 	return nil
+}
+
+// streamCmd 是以流方式读取标准输出的 docker 命令（见 execStream）。
+type streamCmd struct {
+	io.Reader
+	cmd    *exec.Cmd
+	cancel context.CancelFunc
+	stderr *tailBuffer
+	args   []string
+	once   sync.Once
+	err    error
+}
+
+// execStream 启动 docker 命令并返回其标准输出的读端（不缓冲）。读完后调用 Wait 取退出结果；
+// 提前放弃时调用 Close 结束进程。两者都可重复调用，只等待进程一次。
+func (d *Docker) execStream(ctx context.Context, args ...string) (*streamCmd, error) {
+	bin := d.Bin
+	if bin == "" {
+		bin = "docker"
+	}
+	cctx, cancel := context.WithCancel(ctx)
+	cmd := exec.CommandContext(cctx, bin, args...)
+	s := &streamCmd{cmd: cmd, cancel: cancel, stderr: newTailBuffer(4096), args: args}
+	cmd.Stderr = s.stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		cancel()
+		return nil, &cmdError{args: args, err: err}
+	}
+	s.Reader = stdout
+	return s, nil
+}
+
+func (s *streamCmd) wait() error {
+	s.once.Do(func() {
+		if err := s.cmd.Wait(); err != nil {
+			s.err = &cmdError{args: s.args, err: err, stderr: s.stderr.String()}
+		}
+		s.cancel()
+	})
+	return s.err
+}
+
+// Wait 丢弃剩余输出并等待进程退出；非零退出返回 *cmdError（带 stderr）。
+func (s *streamCmd) Wait() error {
+	_, _ = io.Copy(io.Discard, s.Reader)
+	return s.wait()
+}
+
+// Close 结束进程并回收。
+func (s *streamCmd) Close() error {
+	s.cancel()
+	return s.wait()
 }
 
 // isNoSuch 判断错误是否为「对象不存在」。

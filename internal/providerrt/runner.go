@@ -134,6 +134,18 @@ func (r *Runner) Run(ctx context.Context) error {
 			}
 		}()
 	}
+	// 驱动支持停机 orb 只读预览时，另起 fsWorkers 个 worker 长轮询只读文件请求。
+	if fsd, ok := r.Driver.(OfflineFS); ok {
+		for range fsWorkers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if err := r.fsWorker(runCtx, jobCtx, fsd); err != nil {
+					fail(err)
+				}
+			}()
+		}
+	}
 	wg.Wait()
 	if runErr != nil {
 		slog.Error("provider 停止：不可重试的错误", "err", runErr)
