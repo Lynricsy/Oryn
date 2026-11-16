@@ -29,6 +29,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/portalhost"
 	"github.com/Lynricsy/Oryn/internal/realtime"
 	"github.com/Lynricsy/Oryn/internal/schedule"
+	"github.com/Lynricsy/Oryn/internal/search"
 	"github.com/Lynricsy/Oryn/internal/secrets"
 	"github.com/Lynricsy/Oryn/internal/share"
 	"github.com/Lynricsy/Oryn/internal/stats"
@@ -259,6 +260,12 @@ func (s *Server) init(ctx context.Context) error {
 			slog.Warn("统计事实行回填失败", "err", err)
 		}
 	}()
+	// 对话内容索引版本不符时在后台回填（可中断，下次启动从游标续作）；期间新条目照常由触发器入索引
+	go func() {
+		if err := search.Backfill(runCtx, s.Store); err != nil && runCtx.Err() == nil {
+			slog.Warn("对话内容索引回填失败", "err", err)
+		}
+	}()
 	// orb link 与 whoami（M11b）在同一路由组：明文监听与只放行 /orb/v1/* 的 TLS 监听都可达
 	mounts := map[string]http.Handler{"/orb/v1/link": s.Orbs.LinkHandler(), "/orb/v1/whoami": s.Orbs.WhoamiHandler(), api.WSPath: s.Hub}
 	// 公开面（M5）：匿名 WS、分享页与 .md 导出、公开文件；均不经 /api/v1 的鉴权组
@@ -302,6 +309,7 @@ func (s *Server) init(ctx context.Context) error {
 	s.API.Coord = &api.CoordDeps{Service: s.Coord, Host: s.Host}
 	s.API.Schedules = &api.ScheduleDeps{Service: s.Schedules}
 	s.API.Stats = &api.StatsDeps{Service: s.Stats}
+	s.API.Search = &api.SearchDeps{Service: search.New(s.Store)}
 	if s.Portal != nil {
 		s.API.PortalShares = &api.PortalDeps{Service: s.Portal}
 	}

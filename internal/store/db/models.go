@@ -491,6 +491,33 @@ type ScheduleRun struct {
 	Error        *string `json:"error"`
 }
 
+type SearchDoc struct {
+	ID       int64  `json:"id"`
+	ThreadID string `json:"threadId"`
+	Seq      int64  `json:"seq"`
+	EntryID  string `json:"entryId"`
+	Ts       int64  `json:"ts"`
+	Role     string `json:"role"`
+}
+
+type SearchFt struct {
+	Body string `json:"body"`
+}
+
+type SearchSource struct {
+	ThreadID string      `json:"threadId"`
+	Seq      int64       `json:"seq"`
+	EntryID  string      `json:"entryId"`
+	Ts       int64       `json:"ts"`
+	Role     interface{} `json:"role"`
+	Body     interface{} `json:"body"`
+}
+
+type SearchState struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
 type Secret struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`

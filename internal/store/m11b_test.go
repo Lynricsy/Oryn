@@ -168,6 +168,7 @@ func TestM11bMigrationDownUp(t *testing.T) {
 	require.NoError(t, s.DB.QueryRowContext(ctx, m11b).Scan(&n))
 	assert.Equal(t, 4, n)
 
+	downTo(ctx, t, p, 25)
 	r, err := p.Down(ctx)
 	require.NoError(t, err)
 	assert.EqualValues(t, 25, r.Source.Version)
@@ -234,6 +235,7 @@ func TestM11bMigrationDownRunners(t *testing.T) {
 	require.NoError(t, err)
 	p, err := goose.NewProvider(database.DialectSQLite3, s.DB, sub)
 	require.NoError(t, err)
+	downTo(ctx, t, p, 25)
 	r, err := p.Down(ctx)
 	require.NoError(t, err)
 	require.EqualValues(t, 25, r.Source.Version)

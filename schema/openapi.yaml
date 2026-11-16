@@ -52,6 +52,8 @@ tags:
     description: omp 文本配置（omp-home）
   - name: settings
     description: 所有者级设置（如 orb 内的 git 提交身份）
+  - name: search
+    description: 对话内容全文搜索
   - name: stats
     description: 统计
   - name: realtime
@@ -2442,6 +2444,39 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AgentConfigRestartResult' }
+        default: { $ref: '#/components/responses/Error' }
+
+  # ---------------------------------------------------------------- search（对话内容全文搜索）
+  /api/v1/search:
+    get:
+      tags: [search]
+      operationId: searchMessages
+      summary: 对话内容全文搜索
+      description: |
+        在全部线程（含已归档，结果里标出）主会话的 user / assistant 消息正文里搜索，按消息时间从新到旧排列。
+        `q` 按空白切成词，全部命中才算命中（AND），不区分大小写；≥3 个字符的词走 trigram 全文索引（同时忽略变音符），
+        更短的词对正文做子串过滤（只折叠 ASCII 大小写）。fork 拷贝来的同一条消息只返回一次（归最早的线程），
+        `copies` 给出持有它的线程数。口径见 docs/protocol.md「对话内容搜索」。
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: 搜索词，1–200 个字符，至多 8 个词
+          schema: { type: string, minLength: 1, maxLength: 200 }
+        - name: limit
+          in: query
+          description: 每页条数，缺省 20，上限 50
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - name: cursor
+          in: query
+          description: 上一页的 `nextCursor`（不透明）
+          schema: { type: string }
+      responses:
+        '200':
+          description: 命中的消息
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SearchResults' }
         default: { $ref: '#/components/responses/Error' }
 
   # ---------------------------------------------------------------- stats（M10）
@@ -5094,6 +5129,58 @@ components:
       required: [thread]
       properties:
         thread: { $ref: '#/components/schemas/Thread' }
+    SearchResults:
+      type: object
+      required: [hits, indexing]
+      properties:
+        hits:
+          type: array
+          items: { $ref: '#/components/schemas/SearchHit' }
+        nextCursor:
+          type: string
+          description: 还有下一页时给出，原样传回 `cursor`
+        indexing:
+          type: boolean
+          description: 历史消息仍在后台建索引，结果可能不全
+    SearchHit:
+      type: object
+      required: [threadId, threadTitle, threadKind, archived, entryId, seq, role, ts, snippet, highlights, copies]
+      properties:
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        threadTitle: { type: string }
+        threadKind: { $ref: '#/components/schemas/ThreadKind' }
+        archived:
+          type: boolean
+          description: 线程已归档
+        entryId: { type: string }
+        seq:
+          type: integer
+          format: int64
+          description: 条目在线程内的序号（定位用）
+        role:
+          type: string
+          enum: [user, assistant]
+          x-enum-varnames: [SearchHitRoleUser, SearchHitRoleAssistant]
+        ts:
+          type: integer
+          format: int64
+          description: 消息时间（Unix 毫秒；条目没有时间时为 0）
+        snippet:
+          type: string
+          description: 命中附近的一段正文（空白折叠为单个空格，截断处带 `…`）
+        highlights:
+          type: array
+          description: '`snippet` 里命中的区间，按 UTF-16 码元计的 `[start, end)`，升序且互不重叠'
+          items: { $ref: '#/components/schemas/TextRange' }
+        copies:
+          type: integer
+          description: 持有这条消息的线程数（源线程与 fork 拷贝合计；没有 fork 时为 1）
+    TextRange:
+      type: object
+      required: [start, end]
+      properties:
+        start: { type: integer }
+        end: { type: integer }
     ThreadList:
       type: object
       required: [threads]

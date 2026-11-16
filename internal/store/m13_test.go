@@ -90,6 +90,7 @@ func TestM13MigrationDownUp(t *testing.T) {
 	require.NoError(t, s.DB.QueryRowContext(ctx, m13).Scan(&n))
 	assert.Equal(t, 2, n)
 
+	downTo(ctx, t, p, 25)
 	r, err := p.Down(ctx)
 	require.NoError(t, err)
 	assert.EqualValues(t, 25, r.Source.Version)
@@ -144,6 +145,7 @@ func TestAssistantFilesMigration(t *testing.T) {
 	require.NoError(t, err)
 	const exists = `SELECT COUNT(*) FROM sqlite_master WHERE name IN ('assistant_files', 'assistant_files_thread')`
 	var c int
+	downTo(ctx, t, p, 25)
 	r, err := p.Down(ctx)
 	require.NoError(t, err)
 	assert.EqualValues(t, 25, r.Source.Version)

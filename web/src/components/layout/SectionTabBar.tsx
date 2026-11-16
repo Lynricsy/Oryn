@@ -41,8 +41,8 @@ export function tabBarHeight(
 	return `calc(${PILL} + 0.375rem + ${bottom})`;
 }
 
-/** 快捷键提示：macOS / iOS 用 ⌘n，其余 Ctrl+n。 */
-const MAC =
+/** 快捷键提示：macOS / iOS 用 ⌘n，其余 Ctrl+n（侧栏的命令面板按钮同用）。 */
+export const MAC =
 	typeof navigator !== "undefined" &&
 	/^(Mac|iPhone|iPad|iPod)/.test(navigator.platform);
 

@@ -24,6 +24,8 @@ type area struct {
 	Stats *StatsDeps
 	// Library 是 M13 的全局助手文件库（library.go）；nil 时文件库接口回 501。
 	Library *LibraryDeps
+	// Search 是对话内容全文搜索（search.go）；nil 时回 501。
+	Search *SearchDeps
 }
 
 // PortalDeps 是 portal 限时公开接口（portals.go）的依赖。

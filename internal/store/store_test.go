@@ -19,12 +19,14 @@ import (
 // M9：spaces、schedules、schedule_runs、thread_reports、coord_actions；
 // M9.6：role_avatars、thread_share_identities；
 // M10：turns、thread_commits、stats_state、budget、budget_alerts，以及 15 分钟汇总 usage_q、tool_q、turn_q；
-// M11a：project_snapshots；M11b：runners；M13：agent_avatars、assistant_files）。
+// M11a：project_snapshots；M11b：runners；M13：agent_avatars、assistant_files；
+// 对话内容搜索：search_docs、search_state 与 FTS5 表 search_fts 及其影子表）。
 var m2Tables = []string{
 	"agent_avatars", "assistant_files", "attachments", "blobs", "browser_profile_events", "browser_profiles", "budget", "budget_alerts", "coord_actions", "device_pairings",
 	"devices", "entries", "entry_cursors", "jobs", "notification_channels", "notification_deliveries", "notifications", "orb_desktops",
 	"orb_events", "orb_samples", "orb_services", "orb_setup_runs", "orbs", "owner", "passkeys", "portal_sessions", "portal_shares",
 	"project_snapshots", "projects", "providers", "published_files", "push_subscriptions", "recovery_codes", "role_avatars", "runners", "schedule_runs", "schedules",
+	"search_docs", "search_fts", "search_fts_config", "search_fts_content", "search_fts_data", "search_fts_docsize", "search_fts_idx", "search_state",
 	"secrets", "spaces", "stats_state", "thread_commits", "thread_labels", "thread_reports", "thread_share_entries",
 	"thread_share_identities", "thread_shares", "threads", "tool_calls", "tool_q", "turn_q", "turns", "usage_q", "usage_records", "web_sessions",
 }

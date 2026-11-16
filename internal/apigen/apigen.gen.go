@@ -1681,6 +1681,24 @@ func (e ScheduleRunTrigger) Valid() bool {
 	}
 }
 
+// Defines values for SearchHitRole.
+const (
+	SearchHitRoleAssistant SearchHitRole = "assistant"
+	SearchHitRoleUser      SearchHitRole = "user"
+)
+
+// Valid indicates whether the value is a known member of the SearchHitRole enum.
+func (e SearchHitRole) Valid() bool {
+	switch e {
+	case SearchHitRoleAssistant:
+		return true
+	case SearchHitRoleUser:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SecretMode.
 const (
 	Env   SecretMode = "env"
@@ -6178,6 +6196,53 @@ type ScheduleRunStatus string
 // ScheduleRunTrigger `schedule` 按时；`catchup` 迟到 60 秒以上（含重启补跑，错过的合并为一次）；`manual` 手动触发
 type ScheduleRunTrigger string
 
+// SearchHit defines model for SearchHit.
+type SearchHit struct {
+	// Archived 线程已归档
+	Archived bool `json:"archived"`
+
+	// Copies 持有这条消息的线程数（源线程与 fork 拷贝合计；没有 fork 时为 1）
+	Copies  int    `json:"copies"`
+	EntryID string `json:"entryId"`
+
+	// Highlights `snippet` 里命中的区间，按 UTF-16 码元计的 `[start, end)`，升序且互不重叠
+	Highlights []TextRange   `json:"highlights"`
+	Role       SearchHitRole `json:"role"`
+
+	// Seq 条目在线程内的序号（定位用）
+	Seq int64 `json:"seq"`
+
+	// Snippet 命中附近的一段正文（空白折叠为单个空格，截断处带 `…`）
+	Snippet string `json:"snippet"`
+
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID ThreadID `json:"threadId"`
+
+	// ThreadKind 线程种类：`work` 普通工作线程；`space` Space 的协调聊天；`assistant` 全局助手对话。
+	// 后两者合称「协调对话」：跑在控制面宿主的协调宿主里，没有工作区，只有 Oryn 宿主工具。
+	ThreadKind  ThreadKind `json:"threadKind"`
+	ThreadTitle string     `json:"threadTitle"`
+
+	// TS 消息时间（Unix 毫秒；条目没有时间时为 0）
+	TS int64 `json:"ts"`
+}
+
+// SearchHitRole defines model for SearchHit.Role.
+type SearchHitRole string
+
+// SearchResults defines model for SearchResults.
+type SearchResults struct {
+	Hits []SearchHit `json:"hits"`
+
+	// Indexing 历史消息仍在后台建索引，结果可能不全
+	Indexing bool `json:"indexing"`
+
+	// NextCursor 还有下一页时给出，原样传回 `cursor`
+	NextCursor *string `json:"nextCursor,omitempty"`
+}
+
 // SecretList defines model for SecretList.
 type SecretList struct {
 	Secrets []SecretMeta `json:"secrets"`
@@ -6418,6 +6483,12 @@ type TelegramLink struct {
 
 	// ExpiresAt UTC 毫秒时间戳
 	ExpiresAt TimestampMs `json:"expiresAt"`
+}
+
+// TextRange defines model for TextRange.
+type TextRange struct {
+	End   int `json:"end"`
+	Start int `json:"start"`
 }
 
 // Thread defines model for Thread.
@@ -7782,6 +7853,18 @@ type ListSchedulesParams struct {
 // ListScheduleRunsParams defines parameters for ListScheduleRuns.
 type ListScheduleRunsParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// SearchMessagesParams defines parameters for SearchMessages.
+type SearchMessagesParams struct {
+	// Q 搜索词，1–200 个字符，至多 8 个词
+	Q string `form:"q" json:"q"`
+
+	// Limit 每页条数，缺省 20，上限 50
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor 上一页的 `nextCursor`（不透明）
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
 // ListSpacesParams defines parameters for ListSpaces.
@@ -10339,6 +10422,9 @@ type ServerInterface interface {
 	// ListScheduleRuns 最近的运行记录（新的在前；每个定时保留最近 200 条）
 	// (GET /api/v1/schedules/{id}/runs)
 	ListScheduleRuns(w http.ResponseWriter, r *http.Request, id ScheduleIDPath, params ListScheduleRunsParams)
+	// SearchMessages 对话内容全文搜索
+	// (GET /api/v1/search)
+	SearchMessages(w http.ResponseWriter, r *http.Request, params SearchMessagesParams)
 	// ListSecrets 密钥列表（仅名称与元数据）
 	// (GET /api/v1/secrets)
 	ListSecrets(w http.ResponseWriter, r *http.Request)
@@ -11239,6 +11325,12 @@ func (_ Unimplemented) RunSchedule(w http.ResponseWriter, r *http.Request, id Sc
 // ListScheduleRuns 最近的运行记录（新的在前；每个定时保留最近 200 条）
 // (GET /api/v1/schedules/{id}/runs)
 func (_ Unimplemented) ListScheduleRuns(w http.ResponseWriter, r *http.Request, id ScheduleIDPath, params ListScheduleRunsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SearchMessages 对话内容全文搜索
+// (GET /api/v1/search)
+func (_ Unimplemented) SearchMessages(w http.ResponseWriter, r *http.Request, params SearchMessagesParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -15468,6 +15560,65 @@ func (siw *ServerInterfaceWrapper) ListScheduleRuns(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// SearchMessages operation middleware
+func (siw *ServerInterfaceWrapper) SearchMessages(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SearchMessagesParams
+
+	// ------------- Required query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SearchMessages(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListSecrets operation middleware
 func (siw *ServerInterfaceWrapper) ListSecrets(w http.ResponseWriter, r *http.Request) {
 
@@ -17722,6 +17873,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/agent-config/restart-sessions", wrapper.RestartAgentConfigSessions)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/search", wrapper.SearchMessages)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/stats/meta", wrapper.GetStatsMeta)

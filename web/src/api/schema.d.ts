@@ -2047,6 +2047,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 对话内容全文搜索
+         * @description 在全部线程（含已归档，结果里标出）主会话的 user / assistant 消息正文里搜索，按消息时间从新到旧排列。
+         *     `q` 按空白切成词，全部命中才算命中（AND），不区分大小写；≥3 个字符的词走 trigram 全文索引（同时忽略变音符），
+         *     更短的词对正文做子串过滤（只折叠 ASCII 大小写）。fork 拷贝来的同一条消息只返回一次（归最早的线程），
+         *     `copies` 给出持有它的线程数。口径见 docs/protocol.md「对话内容搜索」。
+         */
+        get: operations["searchMessages"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/stats/meta": {
         parameters: {
             query?: never;
@@ -3795,6 +3818,43 @@ export interface components {
         };
         ThreadEnvelope: {
             thread: components["schemas"]["Thread"];
+        };
+        SearchResults: {
+            hits: components["schemas"]["SearchHit"][];
+            /** @description 还有下一页时给出，原样传回 `cursor` */
+            nextCursor?: string;
+            /** @description 历史消息仍在后台建索引，结果可能不全 */
+            indexing: boolean;
+        };
+        SearchHit: {
+            threadId: components["schemas"]["ThreadId"];
+            threadTitle: string;
+            threadKind: components["schemas"]["ThreadKind"];
+            /** @description 线程已归档 */
+            archived: boolean;
+            entryId: string;
+            /**
+             * Format: int64
+             * @description 条目在线程内的序号（定位用）
+             */
+            seq: number;
+            /** @enum {string} */
+            role: "user" | "assistant";
+            /**
+             * Format: int64
+             * @description 消息时间（Unix 毫秒；条目没有时间时为 0）
+             */
+            ts: number;
+            /** @description 命中附近的一段正文（空白折叠为单个空格，截断处带 `…`） */
+            snippet: string;
+            /** @description `snippet` 里命中的区间，按 UTF-16 码元计的 `[start, end)`，升序且互不重叠 */
+            highlights: components["schemas"]["TextRange"][];
+            /** @description 持有这条消息的线程数（源线程与 fork 拷贝合计；没有 fork 时为 1） */
+            copies: number;
+        };
+        TextRange: {
+            start: number;
+            end: number;
         };
         ThreadList: {
             threads: components["schemas"]["Thread"][];
@@ -9815,6 +9875,34 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentConfigRestartResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    searchMessages: {
+        parameters: {
+            query: {
+                /** @description 搜索词，1–200 个字符，至多 8 个词 */
+                q: string;
+                /** @description 每页条数，缺省 20，上限 50 */
+                limit?: number;
+                /** @description 上一页的 `nextCursor`（不透明） */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 命中的消息 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchResults"];
                 };
             };
             default: components["responses"]["Error"];

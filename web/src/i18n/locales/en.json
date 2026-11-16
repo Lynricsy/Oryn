@@ -919,6 +919,41 @@
 		"empty": "Nothing to show",
 		"summary": "Skills {{skills}} · MCP {{connected}}/{{total}}"
 	},
+	"palette": {
+		"title": "Command palette",
+		"open": "Search and commands",
+		"placeholder": "Search threads, conversations, settings and actions…",
+		"groups": {
+			"recent": "Recent threads",
+			"threads": "Threads",
+			"content": "Conversations",
+			"projects": "Projects",
+			"spaces": "Spaces",
+			"settings": "Settings",
+			"actions": "Actions"
+		},
+		"showAll": "Show all {{count}}",
+		"moreContent": "Show more conversation matches",
+		"back": "Back to all results",
+		"empty": "No matches",
+		"indexing": "Older messages are still being indexed; results may be incomplete",
+		"searchFailed": "Conversation search failed: {{error}}",
+		"archived": "Archived",
+		"forks_one": "{{count}} more fork",
+		"forks_other": "{{count}} more forks",
+		"hints": {
+			"navigate": "Select",
+			"open": "Open",
+			"close": "Close"
+		},
+		"actions": {
+			"newThread": "New thread",
+			"inbox": "Open inbox",
+			"stats": "Open stats",
+			"settings": "Open settings",
+			"theme": "Toggle light / dark"
+		}
+	},
 	"panel": {
 		"capabilities": "Capabilities",
 		"tools": "Tools",

@@ -12,10 +12,11 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
 import { uiStore } from "../../state/ui";
 import { NotificationBell } from "../notify/NotificationBell";
+import { openPalette } from "../palette/palette-state";
 import { Icon } from "../ui/icons";
 import { Button, IconButton } from "../ui/primitives";
 import { SectionPanes } from "./SectionPanes";
-import { SectionTabBar, tabBarHeight } from "./SectionTabBar";
+import { MAC, SectionTabBar, tabBarHeight } from "./SectionTabBar";
 import { SidebarBrandRow, SidebarChromeRow } from "./WindowControls";
 
 export function Sidebar({
@@ -37,6 +38,15 @@ export function Sidebar({
 		>
 			{!floating && <SidebarChromeRow />}
 			<SidebarBrandRow>
+				{/* 命令面板入口：全端都在（手机没有 Ctrl/⌘+K） */}
+				<IconButton
+					icon="search"
+					box="sm"
+					label={t("palette.open")}
+					title={`${t("palette.open")} (${MAC ? "⌘K" : "Ctrl+K"})`}
+					aria-keyshortcuts="Control+K Meta+K"
+					onClick={openPalette}
+				/>
 				<NotificationBell />
 				<IconButton
 					icon="sidebar"

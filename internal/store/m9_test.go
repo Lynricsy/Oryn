@@ -389,6 +389,7 @@ func TestM9MigrationDownUp(t *testing.T) {
 	m10Rollup := `SELECT COUNT(*) FROM sqlite_master WHERE name IN ('usage_q', 'tool_q', 'turn_q')
 		OR (type = 'trigger' AND tbl_name IN ('usage_records', 'tool_calls', 'turns'))`
 
+	downTo(ctx, t, p, 25)
 	r, err := p.Down(ctx)
 	require.NoError(t, err)
 	assert.EqualValues(t, 25, r.Source.Version)

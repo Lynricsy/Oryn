@@ -1,5 +1,5 @@
 /**
- * 在转录里定位某条条目（分享前的密钥扫描命中 →「定位」）。线程页的 Transcript 按线程登记定位函数；
+ * 在转录里定位某条条目（分享前的密钥扫描命中 →「定位」、命令面板的对话内容命中）。线程页的 Transcript 按线程登记定位函数；
  * 调用方同步拿到是否找到：条目不在活动分支上、被折叠隐藏，或该线程没有挂载转录时为 false。
  * 工具输出（`toolResult` 条目）不是独立的转录行，定位到承载对应工具卡的助手消息，并标出那张卡。
  */
@@ -68,4 +68,30 @@ export function registerRevealer(threadId: string, fn: Revealer): () => void {
 /** 滚动到目标条目并短暂标出；返回是否找到。 */
 export function revealEntry(threadId: string, target: RevealTarget): boolean {
 	return revealers.get(threadId)?.(target) ?? false;
+}
+
+/** revealWhenReady 的重试间隔与默认时限 */
+const RETRY_MS = 120;
+const RETRY_LIMIT_MS = 10_000;
+
+/** 正在等待的定位（同一时间只等一个：新的请求取代旧的） */
+let pending: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * 跳到线程后再定位（命令面板的对话内容命中）：转录挂载、条目经 WS 到齐之前，定位函数还没登记或找不到目标，
+ * 每 120ms 重试一次，直到找到或超过时限（条目不在活动分支上时永远找不到，到时限放弃）。
+ */
+export function revealWhenReady(
+	threadId: string,
+	target: RevealTarget,
+	limitMs = RETRY_LIMIT_MS,
+): void {
+	clearTimeout(pending);
+	const deadline = Date.now() + limitMs;
+	const attempt = () => {
+		pending = undefined;
+		if (revealEntry(threadId, target) || Date.now() >= deadline) return;
+		pending = setTimeout(attempt, RETRY_MS);
+	};
+	pending = setTimeout(attempt, 0);
 }

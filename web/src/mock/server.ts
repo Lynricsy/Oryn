@@ -65,6 +65,7 @@ import {
 import { MockLibrary } from "./library";
 import { handleNotifyFetch } from "./notify";
 import { handleOrbFetch } from "./orbfs";
+import { handleSearchFetch } from "./search";
 import { handleStatsFetch } from "./stats";
 
 type Json = Record<string, unknown>;
@@ -1290,6 +1291,11 @@ export class MockServer {
 			orbs: () => [...this.orbs.values()],
 		});
 		if (statsRes) return statsRes;
+		const searchRes = handleSearchFetch(p, m, url, {
+			threads: () => [...this.threads.values()],
+			entries: (id) => this.entries.get(id) ?? [],
+		});
+		if (searchRes) return searchRes;
 		if (p === "me")
 			return json({
 				displayName: "owner",

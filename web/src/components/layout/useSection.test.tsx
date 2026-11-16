@@ -211,14 +211,18 @@ describe("Ctrl/⌘+/ 与 Ctrl/⌘+K", () => {
 		expect(where()).toBe("/assistant/T-b");
 	});
 
-	it("Ctrl+K 在 /settings/x 上先回线程分区再聚焦搜索框", async () => {
-		mount("/settings/devices");
+	it("Ctrl+K 开关命令面板：不改路由，输入框里同样生效，关闭后焦点回到打开前的元素", async () => {
+		mount("/t/T-1");
 		await settle();
-		press({ key: "k", code: "KeyK", ctrlKey: true });
-		expect(where()).toBe("/");
-		expect(document.activeElement).toBe(
-			screen.getByRole("textbox", { name: "搜索线程" }),
-		);
+		const filter = screen.getByRole("textbox", { name: "搜索线程" });
+		act(() => filter.focus());
+		press({ key: "k", code: "KeyK", ctrlKey: true }, filter);
+		const input = await screen.findByRole("combobox");
+		expect(where()).toBe("/t/T-1");
+		expect(document.activeElement).toBe(input);
+		press({ key: "k", code: "KeyK", metaKey: true }, input);
+		expect(screen.queryByRole("combobox")).toBeNull();
+		expect(document.activeElement).toBe(filter);
 	});
 });
 

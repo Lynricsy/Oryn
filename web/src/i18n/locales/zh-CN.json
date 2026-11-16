@@ -919,6 +919,41 @@
 		"empty": "没有可显示的扩展",
 		"summary": "技能 {{skills}} · MCP {{connected}}/{{total}}"
 	},
+	"palette": {
+		"title": "命令面板",
+		"open": "搜索与命令",
+		"placeholder": "搜索线程、对话内容、设置与操作…",
+		"groups": {
+			"recent": "最近线程",
+			"threads": "线程",
+			"content": "对话内容",
+			"projects": "项目",
+			"spaces": "空间",
+			"settings": "设置",
+			"actions": "操作"
+		},
+		"showAll": "显示全部 {{count}} 项",
+		"moreContent": "显示更多对话内容",
+		"back": "返回全部结果",
+		"empty": "没有匹配的结果",
+		"indexing": "历史消息仍在建立索引，结果可能不全",
+		"searchFailed": "对话内容搜索失败：{{error}}",
+		"archived": "已归档",
+		"forks_one": "另有 {{count}} 个 fork",
+		"forks_other": "另有 {{count}} 个 fork",
+		"hints": {
+			"navigate": "选择",
+			"open": "打开",
+			"close": "关闭"
+		},
+		"actions": {
+			"newThread": "新建线程",
+			"inbox": "打开收件箱",
+			"stats": "打开统计",
+			"settings": "打开设置",
+			"theme": "切换明暗"
+		}
+	},
 	"panel": {
 		"capabilities": "能力",
 		"tools": "工具",

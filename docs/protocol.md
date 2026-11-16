@@ -1673,3 +1673,47 @@ Space 协调者的工具表里没有这三个工具，也没有 `create_thread.f
 - `oryn library put <文件> [--name <库内文件名>] [--json]`：只在 orb 内可用（`ORYN_ORB=1` 且没有 `ORYN_API_TOKEN`），调用方线程取 `ORYN_THREAD_ID`；相对路径按当前目录解析，目录或不存在 → 退出码 2。经 `orbd.sock` 方法 `library.put`（参数 `LinkCtlLibraryPutParams{threadId, path, name?}`，结果 `AssistantFile`）。
 - orbd 校验普通文件、≤100MiB 后把路径登记为可取回，转发 ctl `library.put`（orbd→orynd，上限 10 分钟）；控制面校验调用方（属于本 orb、`kind = work`、未归档，否则 `forbidden`；`path` 不是绝对路径 → `invalid_params`），对同一 orb 发 `library.fetch` 取回字节，存为 `scope = shared`、`source = orb`、`sourceThreadId` = 调用方、不属于任何对话——所有助手对话都能读。
 - 技能 `oryn-library` 与 `oryn-setup` 一样写到 `~/.agents/skills/oryn-library/SKILL.md`（orbd 每次启动覆盖）。
+
+## 对话内容搜索
+
+Web 的命令面板（Ctrl/⌘+K）里「对话内容」一组的数据源。规格见 `schema/openapi.yaml` 的 `searchMessages`（tag `search`），实现在 `internal/search`。
+
+### REST
+
+`GET /api/v1/search?q=&limit=&cursor=` → `SearchResults{hits: SearchHit[], nextCursor?, indexing}`。
+
+- `SearchHit{threadId, threadTitle, threadKind, archived, entryId, seq, role, ts, snippet, highlights, copies}`：`role` 只有 `user` / `assistant`；`ts` 为消息时间（毫秒，条目没有时间时为 0）；`entryId` + `seq` 即 Web 定位条目用的 `RevealTarget`。
+- 排序：按 `(ts, 索引行 id)` 从新到旧；`nextCursor` 是不透明的 `"<ts>.<id>"`，下一页取严格更旧的行（键集翻页，翻页期间新入库的消息不会让结果错位）。`limit` 缺省 20、上限 50，只有返回满一页时才给 `nextCursor`。
+- `snippet`：正文的空白（含换行）折叠为单个空格后，取第一个命中前 32 个字符起、共至多 160 个字符，两端被截断处补 `…`；`highlights` 是 `snippet` 里全部命中的 `[start, end)`，按 **UTF-16 码元**计（浏览器字符串下标），升序、互不重叠（相交或相邻的命中合并）。高亮与匹配同口径折叠：小写 + 去变音符（NFD 取基字符），一个字符恰好折叠成一个字符。
+- `archived`：线程已归档也照样返回，由客户端标出。`copies`：持有这条消息的线程数（源线程 + fork 拷贝；没有 fork 时为 1）。
+- `indexing`：历史条目的后台回填尚未完成，结果可能不全。
+- 错误：`q` 去首尾空白后为空、超过 200 个字符或多于 8 个词、`cursor` 无法解析、`limit` 不在 1–50 → 400 `invalid_request`。
+
+### 匹配口径
+
+- 索引范围：主会话（`file` 不含 `/`）里 `stale = 0` 的 `type = message` 条目，`message.role ∈ {user, assistant}`；正文取 `message.content` 的全部 `text` 块（`content` 为字符串时即该串）以换行连接，`thinking`、`toolCall`、图片与工具结果（`toolResult` 等其它 role）都不进索引，正文全为空白的消息不进索引。
+- `q` 按空白切词、去重（按折叠后的形式），**全部词都命中**才算命中（AND）；每个词按普通文字处理，FTS5 语法字符（`"`、`OR`、`NEAR(`…）没有特殊含义。
+- 分词用 FTS5 的 `trigram`（`case_sensitive 0 remove_diacritics 1`）：按 3 个 Unicode 字符切片做子串匹配，中文、日文与代码标识符不依赖空格分词都能搜到（`unicode61` 把整段连续汉字当成一个词，搜不到其中的词）。≥3 个字符的词走全文索引（忽略大小写与变音符）；不足 3 个字符的词（如两个汉字「部署」）没有 trigram 可查，改为对正文 `instr(lower(body), lower(词))` 子串过滤——只折叠 ASCII 大小写、不忽略变音符；全部词都短于 3 个字符时不走索引，按 `ts` 从新到旧扫描正文直到凑满一页。
+- fork 去重：同一去重键 `(entryId, ts)`（与统计事实行的 `ukey` 同义；`ts = 0` 的条目不去重）的多个索引行只返回一个——所在线程 `(created_at, id)` 最小的那个（源线程先于 fork 创建），同线程再取索引行 id 最小者。去重在查询时做：源线程删除后，fork 里的拷贝自动成为命中。
+
+### 同步与回填
+
+- 索引由 `entries` 上的触发器维护（`0027_search.sql`），与条目写入同一事务：新条目入库即入索引；`entries.reset` 把条目标为 stale 时移出索引，重发清除 stale 或改写内容时按新内容重建（内容、`stale`、`type`、`file` 都没变的重发不动索引）；`reset_done` / `dropFile` 删条目与删线程（级联删条目）经外键级联删掉索引行，再由 `search_docs` 的删除触发器删掉全文行。
+- 「条目 → 可索引正文」只在视图 `search_source` 里定义一次，触发器与回填共用。`payload` 先 `CAST` 为 TEXT 再交给 JSON 函数（BLOB 会被当成 JSONB）；不是合法 JSON 的行按 `{}` 处理，不会挡住条目入库。
+- 回填：`search_state.index_version` 不是当前 `search.IndexVersion` 时，orynd 启动后在后台按线程 id 升序、每线程按 `seq` 每 500 条一个事务补索引（`INSERT OR IGNORE`，与触发器写过的行不冲突），游标 `backfill_cursor = "<thread_id>:<seq>"` 与目标版本 `backfill_target` 随同一事务推进；可被中断，下次启动从游标续作（仅当 `backfill_target` 等于当前版本，否则从头）。库里已有其它版本的索引时先清空再重建。完成后写 `index_version` 并删除进度键。回填期间 `indexing = true`。
+
+### 存储
+
+`0027_search.sql`：
+
+- 视图 `search_source(thread_id, seq, entry_id, ts, role, body)`（`ts` 缺失为 0）。
+- `search_docs(id INTEGER PRIMARY KEY, thread_id, seq, entry_id, ts, role, UNIQUE(thread_id, seq), FK(thread_id, seq) → entries ON DELETE CASCADE)`，索引 `search_docs_ts(ts, id)`（排序与短词扫描）、`search_docs_ukey(entry_id, ts)`（fork 去重与 `copies`）。
+- FTS5 表 `search_fts(body)`，`rowid = search_docs.id`，分词 `trigram case_sensitive 0 remove_diacritics 1`（自带内容存储，供片段计算读正文）。
+- `search_state(key, value)`：`index_version`、`backfill_cursor`、`backfill_target`。
+- 触发器：`search_entries_ai`（`AFTER INSERT ON entries`）、`search_entries_au`（`AFTER UPDATE OF payload, stale, type, file ON entries`）、`search_docs_ad`（`AFTER DELETE ON search_docs` → 删全文行）。
+- Down：删三个触发器、`search_state`、`search_fts`、`search_docs` 与视图。
+
+### Web
+
+- 命令面板（`web/src/components/palette`，独立分块按需加载）：Ctrl/⌘+K 在 AppShell 内任何位置开关（输入框里同样生效），侧栏顶部的搜索按钮是所有宽度下（含手机）的入口。数据源：线程索引（标题、项目名、标签、worktree 分支；协调对话不列）、项目、Space、设置分区、操作（新建线程、收件箱、统计、设置、切换明暗）与本接口。本地匹配 `lib/palette-match.ts`：多词 AND、大小写与变音符折叠，折叠串逐码元记下原文来源区间，高亮落回原文。
+- 内容搜索在输入停顿 200ms 后请求（每组 3 条时 `limit = 4` 用来判断「更多」；展开后 `limit = 50`），查询变化时经 `AbortSignal` 取消在途请求。选中命中：跳到 `/t/<threadId>`（协调对话照常重定向到 Space / 助手页），再由 `transcript/reveal.ts` 的 `revealWhenReady` 每 120ms 重试定位，直到转录挂载、条目到齐并找到该条目（10 秒后放弃）。

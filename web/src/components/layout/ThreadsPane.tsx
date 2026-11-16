@@ -27,7 +27,7 @@ import { SpaceDialog } from "../space/SpaceDialog";
 import { hueVar, threadHue } from "../thread/ThreadHeader";
 import { nameHue, ProjectBadge } from "../ui/data";
 import { Icon } from "../ui/icons";
-import { IconButton, Kbd, ThreadStateIcon } from "../ui/primitives";
+import { IconButton, ThreadStateIcon } from "../ui/primitives";
 import {
 	CountPill,
 	closeOnCompact,
@@ -651,7 +651,8 @@ export function ThreadsPane({ active }: { active: boolean }): ReactNode {
 						aria-label={t("sidebar.search")}
 						className="h-full min-w-0 flex-1 bg-transparent text-fg text-sm outline-none placeholder:text-faint focus-visible:outline-none"
 					/>
-					{q ? (
+					{/* 这里只是线程过滤；Ctrl/⌘+K 开的是命令面板（侧栏顶部的搜索按钮），不在这里标快捷键 */}
+					{q && (
 						<button
 							type="button"
 							aria-label={t("common.clear")}
@@ -660,10 +661,6 @@ export function ThreadsPane({ active }: { active: boolean }): ReactNode {
 						>
 							<Icon name="close" size={12} />
 						</button>
-					) : (
-						<span className="hidden pr-0.5 lg:inline-flex">
-							<Kbd>Ctrl K</Kbd>
-						</span>
 					)}
 				</div>
 			</div>

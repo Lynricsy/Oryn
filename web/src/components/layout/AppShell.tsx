@@ -5,8 +5,8 @@
  * Viewport Segments 双段时是同材质的悬浮抽屉（四角都圆、四周留 8px 与安全区，背后整屏模糊并轻度压暗）。壁纸见 index.css 的 `.shell-wash`。
  * 收起 / 展开是连续动画：外层列宽与右侧缝一起收到 0，内层玻璃保持固定宽度、同步左移并淡出（不挤扁内容）。
  * 右侧信息面板由线程页自行处理。分区（M9.6）：侧栏底部是底栏 `SectionTabBar`，当前分区由路由决定，`useSectionTracker` 记下
- * 各分区最近的路径；快捷键 Ctrl/⌘+1…4 切分区、Ctrl/⌘+/ 进助手分区、Ctrl/⌘+K 回线程分区并聚焦搜索（都不展开已收起的侧栏，
- * Ctrl/⌘+K 为了聚焦除外）。
+ * 各分区最近的路径；快捷键 Ctrl/⌘+1…4 切分区、Ctrl/⌘+/ 进助手分区（都不展开已收起的侧栏），Ctrl/⌘+K 开关命令面板
+ * （`PaletteHost`，焦点在输入框里同样生效）。
  * 通知（M5）：连接建立 / 重连后拉一次最近通知；鉴权通过后（非 mock 模式）注册 service worker 并作为应用接收器
  * 应答它的探询，它发来的 `oryn.navigate` 与系统通知的点击都走 react-router 跳转；toast 挂在这里。
  * 桌面壳（M6）：挂载时 `host.ready` 握手（壳里待开的路径随返回值交出），壳推来的 `navigate` 走路由跳转；
@@ -40,6 +40,8 @@ import { shareIntakeStore } from "../../state/share-intake";
 import { connectionStore, indexStore, useConnection } from "../../state/stores";
 import { uiStore, useSidebarShown, useUi } from "../../state/ui";
 import { NotificationToasts } from "../notify/NotificationToasts";
+import { PaletteHost } from "../palette/PaletteHost";
+import { togglePalette } from "../palette/palette-state";
 import { ServerErrors } from "../ServerErrors";
 import { ActionError } from "../ui/ActionError";
 import { Button, Spinner } from "../ui/primitives";
@@ -141,8 +143,7 @@ function useGlobalShortcuts() {
 			const digit = /^Digit([1-4])$/.exec(e.code)?.[1];
 			if (mod && key === "k") {
 				e.preventDefault();
-				switchSection("threads");
-				uiStore.getState().focusSearch();
+				togglePalette();
 			} else if (mod && e.shiftKey && key === "o") {
 				e.preventDefault();
 				navigate("/");
@@ -298,6 +299,7 @@ export function AppShell(): ReactNode {
 				<SinkLayout sidebar={<Sidebar sink />}>{main}</SinkLayout>
 				<ServerErrors />
 				<NotificationToasts />
+				<PaletteHost />
 			</>
 		);
 
@@ -354,6 +356,7 @@ export function AppShell(): ReactNode {
 			{main}
 			<ServerErrors />
 			<NotificationToasts />
+			<PaletteHost />
 		</div>
 	);
 }

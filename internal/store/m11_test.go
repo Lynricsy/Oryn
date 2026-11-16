@@ -165,6 +165,7 @@ func TestM11MigrationDownUp(t *testing.T) {
 	require.NoError(t, s.DB.QueryRowContext(ctx, m11fix).Scan(&nf))
 	assert.Equal(t, 1, nf)
 
+	downTo(ctx, t, p, 25)
 	r, err := p.Down(ctx)
 	require.NoError(t, err)
 	assert.EqualValues(t, 25, r.Source.Version)

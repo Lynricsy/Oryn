@@ -52,7 +52,8 @@ const SharePage = lazy(() =>
 	import("./pages/SharePage").then((m) => ({ default: m.SharePage })),
 );
 
-const SETTINGS: SettingsSection[] = [
+/** 设置分区（路由与命令面板的「设置」组共用这一份） */
+export const SETTINGS: SettingsSection[] = [
 	"devices",
 	"providers",
 	"runners",
