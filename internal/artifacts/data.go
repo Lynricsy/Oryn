@@ -3,6 +3,7 @@ package artifacts
 import (
 	"bytes"
 	"cmp"
+	"container/heap"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -407,7 +408,40 @@ func (s *Service) DeleteData(ctx context.Context, id, coll, docID string, base *
 	return deleted, nil
 }
 
-// ListData 按 id 顺序列出集合里 after（不含）之后的至多 limit 个文档；还有更多时 next 是下一页的 after。
+// list 与 query 的扫描与返回上限：集合里的文档逐批读（单批最多 dataScanBatch 个，即至多 dataScanBatch MiB），
+// 只留结果需要的部分，所以一次调用的内存与集合大小无关；返回的文档 JSON 合计不超过 MaxDataResultBytes（至少一个）。
+const (
+	dataScanBatch      = 16
+	MaxDataResultBytes = 8 << 20
+)
+
+// docCost 是文档计入返回上限的字节数。
+func docCost(d DataDoc) int { return len(d.Value) + len(d.Collection) + len(d.ID) + 80 }
+
+// scanDocs 按 id 顺序逐批读集合里 after（不含）之后的文档，对每个调 f；f 回假时停止。
+func (s *Service) scanDocs(ctx context.Context, id, coll, after string, f func(db.ArtifactDatum) bool) error {
+	for {
+		rows, err := s.st.Q.ListArtifactDocs(ctx, db.ListArtifactDocsParams{ArtifactID: id, Collection: coll, After: after, Lim: dataScanBatch})
+		if err != nil {
+			return err
+		}
+		if s.data.onScan != nil {
+			s.data.onScan(len(rows))
+		}
+		for _, r := range rows {
+			if !f(r) {
+				return nil
+			}
+		}
+		if len(rows) < dataScanBatch {
+			return nil
+		}
+		after = rows[len(rows)-1].DocID
+	}
+}
+
+// ListData 按 id 顺序列出集合里 after（不含）之后的至多 limit 个文档（合计不超过 MaxDataResultBytes）；
+// 还有更多时 next 是下一页的 after。
 func (s *Service) ListData(ctx context.Context, id, coll, after string, limit int) (docs []DataDoc, next string, err error) {
 	if err := CheckCollection(coll); err != nil {
 		return nil, "", err
@@ -420,21 +454,52 @@ func (s *Service) ListData(ctx context.Context, id, coll, after string, limit in
 	if limit, err = CheckDataLimit(limit); err != nil {
 		return nil, "", err
 	}
-	rows, err := s.st.Q.ListArtifactDocs(ctx, db.ListArtifactDocsParams{ArtifactID: id, Collection: coll, After: after, Lim: int64(limit) + 1})
+	docs = []DataDoc{}
+	size := 0
+	err = s.scanDocs(ctx, id, coll, after, func(r db.ArtifactDatum) bool {
+		d := docOf(r)
+		if len(docs) == limit || (len(docs) > 0 && size+docCost(d) > MaxDataResultBytes) {
+			next = docs[len(docs)-1].ID
+			return false
+		}
+		size += docCost(d)
+		docs = append(docs, d)
+		return true
+	})
 	if err != nil {
 		return nil, "", err
-	}
-	docs = make([]DataDoc, 0, min(len(rows), limit))
-	for _, r := range rows[:min(len(rows), limit)] {
-		docs = append(docs, docOf(r))
-	}
-	if len(rows) > limit {
-		next = docs[len(docs)-1].ID
 	}
 	return docs, next, nil
 }
 
-// QueryData 在内存里对集合的全部文档按 where 过滤、按 orderBy 排序（同值按 id），取前 limit 个。
+// objectKey 是对象与数组作排序键时的占位：它们之间视为相等（同 compareValues），不必留着整个值。
+var objectKey = struct{}{}
+
+// queryCand 是有排序的 query 的候选：只留 id 与排序键，文档在选定后再读。
+type queryCand struct {
+	id  string
+	key any
+}
+
+// candHeap 是至多 limit 个候选的堆，堆顶是排在最后的那个（新候选比它靠前才替换它）。
+type candHeap struct {
+	cs     []queryCand
+	before func(a, b queryCand) bool
+}
+
+func (h *candHeap) Len() int           { return len(h.cs) }
+func (h *candHeap) Less(i, j int) bool { return h.before(h.cs[j], h.cs[i]) }
+func (h *candHeap) Swap(i, j int)      { h.cs[i], h.cs[j] = h.cs[j], h.cs[i] }
+func (h *candHeap) Push(x any)         { h.cs = append(h.cs, x.(queryCand)) }
+func (h *candHeap) Pop() any {
+	c := h.cs[len(h.cs)-1]
+	h.cs = h.cs[:len(h.cs)-1]
+	return c
+}
+
+// QueryData 对集合的文档按 where 过滤、按 orderBy 排序（同值按 id），取前 limit 个（合计不超过
+// MaxDataResultBytes，至少一个）。逐批扫描：没有 orderBy 时按 id 顺序取够即停；有 orderBy 时只留前 limit 个候选的
+// id 与排序键，扫完再按顺序读回文档（读回时文档已被删或改得不再符合条件的跳过）。
 // 缺少的字段按 null 处理；不同类型的值之间 == 为假、!= 为真、大小比较为假。
 func (s *Service) QueryData(ctx context.Context, id, coll string, where []DataFilter, order *DataOrder, limit int) ([]DataDoc, error) {
 	if err := CheckCollection(coll); err != nil {
@@ -450,41 +515,86 @@ func (s *Service) QueryData(ctx context.Context, id, coll string, where []DataFi
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.st.Q.ListArtifactCollectionDocs(ctx, db.ListArtifactCollectionDocsParams{ArtifactID: id, Collection: coll})
+	matches := func(r db.ArtifactDatum) (any, bool) {
+		var v any
+		if json.Unmarshal([]byte(r.Json), &v) != nil {
+			return nil, false
+		}
+		return v, !slices.ContainsFunc(where, func(f DataFilter) bool { return !matchFilter(fieldOf(v, f.Field), f) })
+	}
+	out := []DataDoc{}
+	size := 0
+	// add 按返回上限追加一个文档，回是否还要继续
+	add := func(d DataDoc) bool {
+		if len(out) > 0 && size+docCost(d) > MaxDataResultBytes {
+			return false
+		}
+		size += docCost(d)
+		out = append(out, d)
+		return len(out) < limit
+	}
+	if order == nil {
+		err := s.scanDocs(ctx, id, coll, "", func(r db.ArtifactDatum) bool {
+			if _, ok := matches(r); !ok {
+				return true
+			}
+			return add(docOf(r))
+		})
+		if err != nil {
+			return nil, err
+		}
+		return out, nil
+	}
+	desc := order.Direction == "desc"
+	h := &candHeap{before: func(a, b queryCand) bool {
+		c := compareValues(a.key, b.key)
+		if desc {
+			c = -c
+		}
+		return cmp.Or(c, strings.Compare(a.id, b.id)) < 0
+	}}
+	err = s.scanDocs(ctx, id, coll, "", func(r db.ArtifactDatum) bool {
+		v, ok := matches(r)
+		if !ok {
+			return true
+		}
+		key := fieldOf(v, order.Field)
+		if valueRank(key) == 4 {
+			key = objectKey
+		}
+		c := queryCand{id: r.DocID, key: key}
+		switch {
+		case h.Len() < limit:
+			heap.Push(h, c)
+		case h.before(c, h.cs[0]):
+			h.cs[0] = c
+			heap.Fix(h, 0)
+		}
+		return true
+	})
 	if err != nil {
 		return nil, err
 	}
-	type hit struct {
-		doc DataDoc
-		key any
-	}
-	hits := make([]hit, 0, len(rows))
-	for _, r := range rows {
-		var v any
-		if json.Unmarshal([]byte(r.Json), &v) != nil {
+	slices.SortFunc(h.cs, func(a, b queryCand) int {
+		if h.before(a, b) {
+			return -1
+		}
+		return 1
+	})
+	for _, c := range h.cs {
+		r, err := getDoc(ctx, s.st.Q, id, coll, c.id)
+		if err != nil {
+			return nil, err
+		}
+		if r == nil {
 			continue
 		}
-		if !slices.ContainsFunc(where, func(f DataFilter) bool { return !matchFilter(fieldOf(v, f.Field), f) }) {
-			h := hit{doc: docOf(r)}
-			if order != nil {
-				h.key = fieldOf(v, order.Field)
-			}
-			hits = append(hits, h)
+		if _, ok := matches(*r); !ok {
+			continue
 		}
-	}
-	if order != nil {
-		desc := order.Direction == "desc"
-		slices.SortStableFunc(hits, func(a, b hit) int {
-			c := compareValues(a.key, b.key)
-			if desc {
-				c = -c
-			}
-			return cmp.Or(c, strings.Compare(a.doc.ID, b.doc.ID))
-		})
-	}
-	out := make([]DataDoc, 0, min(len(hits), limit))
-	for _, h := range hits[:min(len(hits), limit)] {
-		out = append(out, h.doc)
+		if !add(docOf(*r)) {
+			break
+		}
 	}
 	return out, nil
 }
@@ -589,6 +699,8 @@ type dataSet struct {
 	mu       sync.Mutex
 	watchers map[string]map[*DataWatch]struct{}
 	lim      *limiter
+	// onScan 在 list / query 每读一批文档后被调用（测试用：确认扫描是分批的、取够即停）。
+	onScan func(rows int)
 }
 
 // DataWatch 是一个监听：C 送出变化；监听跟不上（缓冲满）时 C 被关闭。用完调 Stop。
@@ -692,7 +804,7 @@ type readDataArgs struct {
 func budgetDocs(docs []DataDoc) ([]DataDoc, bool) {
 	total := 0
 	for i, d := range docs {
-		total += len(d.Value) + len(d.Collection) + len(d.ID) + 80
+		total += docCost(d)
 		if i > 0 && total > agentDataBudget {
 			return docs[:i], true
 		}

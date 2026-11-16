@@ -17,10 +17,6 @@ SELECT * FROM artifact_data
 WHERE artifact_id = @artifact_id AND collection = @collection AND doc_id > @after
 ORDER BY doc_id LIMIT @lim;
 
--- All documents of one collection (in-memory query; per-artifact data is bounded).
--- name: ListArtifactCollectionDocs :many
-SELECT * FROM artifact_data WHERE artifact_id = @artifact_id AND collection = @collection ORDER BY doc_id;
-
 -- name: ListArtifactCollections :many
 SELECT collection, COUNT(*) AS docs, SUM(size) AS bytes FROM artifact_data
 WHERE artifact_id = @artifact_id GROUP BY collection ORDER BY collection;

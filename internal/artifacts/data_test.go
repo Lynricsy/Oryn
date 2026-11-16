@@ -135,6 +135,86 @@ func TestDataQuery(t *testing.T) {
 	}
 }
 
+// 大集合、小 limit：query 与 list 分批扫描，内存与集合大小无关——没有 orderBy 时取够即停，有 orderBy 时扫完但
+// 每批不超过 dataScanBatch 个；返回合计不超过 MaxDataResultBytes。
+func TestDataQueryBoundedScan(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	a := mkPage(t, e)
+	const n = 10*dataScanBatch + 3
+	for i := range n {
+		putDoc(t, e.s, a.ID, "big", fmt.Sprintf("d%03d", i), fmt.Sprintf(`{"n":%d,"obj":{"x":%d}}`, i, i))
+	}
+	var batches []int
+	e.s.data.onScan = func(rows int) { batches = append(batches, rows) }
+	scanned := func() (total, peak int) {
+		for _, b := range batches {
+			total += b
+			peak = max(peak, b)
+		}
+		batches = nil
+		return
+	}
+
+	out, err := e.s.QueryData(ctx, a.ID, "big", nil, nil, 1)
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	assert.Equal(t, "d000", out[0].ID)
+	total, _ := scanned()
+	assert.Equal(t, dataScanBatch, total, "没有 orderBy 时取够即停")
+
+	out, err = e.s.QueryData(ctx, a.ID, "big", []DataFilter{{Field: "n", Op: ">=", Value: 5.0}}, &DataOrder{Field: "n", Direction: "desc"}, 2)
+	require.NoError(t, err)
+	require.Len(t, out, 2)
+	assert.Equal(t, []string{fmt.Sprintf("d%03d", n-1), fmt.Sprintf("d%03d", n-2)}, []string{out[0].ID, out[1].ID})
+	total, peak := scanned()
+	assert.Equal(t, n, total, "有 orderBy 时扫完全部")
+	assert.LessOrEqual(t, peak, dataScanBatch, "每批不超过 dataScanBatch 个")
+
+	// 对象作排序键时彼此相等，按 id
+	out, err = e.s.QueryData(ctx, a.ID, "big", nil, &DataOrder{Field: "obj"}, 2)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"d000", "d001"}, []string{out[0].ID, out[1].ID})
+	scanned()
+
+	docs, next, err := e.s.ListData(ctx, a.ID, "big", "", 3)
+	require.NoError(t, err)
+	assert.Len(t, docs, 3)
+	assert.Equal(t, "d002", next)
+	total, _ = scanned()
+	assert.Equal(t, dataScanBatch, total, "list 取够即停")
+	e.s.data.onScan = nil
+}
+
+// list / query 一次返回的文档合计不超过 MaxDataResultBytes：list 给出 next 接着取，query 只回装得下的前缀。
+func TestDataResultBytesCap(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	a := mkPage(t, e)
+	body := `"` + strings.Repeat("x", MaxDocBytes-1024) + `"`
+	const n = 10
+	for i := range n {
+		putDoc(t, e.s, a.ID, "fat", fmt.Sprintf("f%02d", i), body)
+	}
+	per := len(body) + len("fat") + len("f00") + 80
+	fit := MaxDataResultBytes / per
+	require.Less(t, fit, n)
+
+	docs, next, err := e.s.ListData(ctx, a.ID, "fat", "", DataListMax)
+	require.NoError(t, err)
+	assert.Len(t, docs, fit)
+	assert.Equal(t, fmt.Sprintf("f%02d", fit-1), next)
+	rest, next, err := e.s.ListData(ctx, a.ID, "fat", next, DataListMax)
+	require.NoError(t, err)
+	assert.Len(t, rest, n-fit)
+	assert.Empty(t, next)
+
+	out, err := e.s.QueryData(ctx, a.ID, "fat", nil, &DataOrder{Field: "n"}, DataListMax)
+	require.NoError(t, err)
+	assert.Len(t, out, fit)
+	assert.Equal(t, "f00", out[0].ID)
+}
+
 // 监听：只收所监听集合的变化；跟不上时被结束。
 func TestDataWatch(t *testing.T) {
 	e := newEnv(t)

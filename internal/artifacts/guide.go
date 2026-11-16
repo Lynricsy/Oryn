@@ -133,7 +133,7 @@ db 是这个 artifact 自己的 JSON 文档存储，按集合（collection）组
 
 乐观并发：写入时带 {baseVersion: 读到的 version}，文档在那之后被别处改过就报 conflict，重新读取再写；baseVersion: 0 表示「文档必须还不存在」，用来防止覆盖。不带 baseVersion 就直接覆盖。每次写入后文档的 version 都会变大（同一 artifact 里不会重复）。
 
-规则与上限：集合名 1–64 个字母、数字或 _ . -，以字母、数字或 _ 开头；文档 id 1–200 个字母、数字或 _ . : @ + -，以字母、数字或 _ 开头；单个文档写成 JSON 不超过 %d MiB、嵌套不超过 %d 层；每个 artifact 的数据合计不超过 %d MiB；list 与 query 的 limit 缺省 %d、最大 %d。
+规则与上限：集合名 1–64 个字母、数字或 _ . -，以字母、数字或 _ 开头；文档 id 1–200 个字母、数字或 _ . : @ + -，以字母、数字或 _ 开头；单个文档写成 JSON 不超过 %d MiB、嵌套不超过 %d 层；每个 artifact 的数据合计不超过 %d MiB；list 与 query 的 limit 缺省 %d、最大 %d，一次返回的文档合计不超过 %d MiB（超出时 list 用 next 接着取，query 只返回排在前面、装得下的那些，需要更多就缩小条件或改用 list 分页）。
 
 ## files：读项目文件（需要用户同意）
 
@@ -152,7 +152,7 @@ db 是这个 artifact 自己的 JSON 文档存储，按集合（collection）组
 
 同一个 artifact 同时最多 2 个问题、每分钟最多 10 个；prompt 不超过 100000 个字符。
 `, runtimeRate, runtimeBurst, maxRuntimeCalls, maxRuntimeStreams, MaxDataFilters, maxFieldSegments,
-	MaxDocBytes>>20, MaxDocDepth, MaxDataBytes>>20, DataListDefault, DataListMax)
+	MaxDocBytes>>20, MaxDocDepth, MaxDataBytes>>20, DataListDefault, DataListMax, MaxDataResultBytes>>20)
 
 // guideCanvas 是 canvas 主题：canvas.json 的格式、改布局的方式、用户的标注与画框的调节参数。
 var guideCanvas = fmt.Sprintf(`# 画布 artifact

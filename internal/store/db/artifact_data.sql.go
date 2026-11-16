@@ -110,47 +110,6 @@ func (q *Queries) GetArtifactDoc(ctx context.Context, arg GetArtifactDocParams) 
 	return i, err
 }
 
-const listArtifactCollectionDocs = `-- name: ListArtifactCollectionDocs :many
-SELECT artifact_id, collection, doc_id, json, size, version, updated_at FROM artifact_data WHERE artifact_id = ?1 AND collection = ?2 ORDER BY doc_id
-`
-
-type ListArtifactCollectionDocsParams struct {
-	ArtifactID string `json:"artifactId"`
-	Collection string `json:"collection"`
-}
-
-// All documents of one collection (in-memory query; per-artifact data is bounded).
-func (q *Queries) ListArtifactCollectionDocs(ctx context.Context, arg ListArtifactCollectionDocsParams) ([]ArtifactDatum, error) {
-	rows, err := q.db.QueryContext(ctx, listArtifactCollectionDocs, arg.ArtifactID, arg.Collection)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ArtifactDatum{}
-	for rows.Next() {
-		var i ArtifactDatum
-		if err := rows.Scan(
-			&i.ArtifactID,
-			&i.Collection,
-			&i.DocID,
-			&i.Json,
-			&i.Size,
-			&i.Version,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listArtifactCollections = `-- name: ListArtifactCollections :many
 SELECT collection, COUNT(*) AS docs, SUM(size) AS bytes FROM artifact_data
 WHERE artifact_id = ?1 GROUP BY collection ORDER BY collection
