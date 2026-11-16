@@ -142,3 +142,50 @@ export function useSyncGitHubInstallations() {
 		onSuccess: () => invalidate(),
 	});
 }
+
+/** 暂停 / 恢复某个关联 PR 的事件回流（M14）；线程随 `index.patch` 更新，不需要失效查询。 */
+export function setThreadPullListening(
+	threadId: string,
+	number: number,
+	listening: boolean,
+) {
+	return unwrap(
+		api.PUT("/api/v1/threads/{id}/github/pulls/{number}", {
+			params: { path: { id: threadId, number } },
+			body: { listening },
+		}),
+	);
+}
+
+/** 取消线程与 PR 的关联（服务端留墓碑，不会自动重连）。 */
+export function unlinkThreadPull(threadId: string, number: number) {
+	return unwrap(
+		api.DELETE("/api/v1/threads/{id}/github/pulls/{number}", {
+			params: { path: { id: threadId, number } },
+		}),
+	);
+}
+
+/** 输入框 `#` 引用的候选（M14）：已绑定项目仓库的 issue / PR；`q` 为空时是最近更新的打开项，纯数字时只查该编号。 */
+export function useGitHubRefs(projectId: string, q: string, enabled: boolean) {
+	return useQuery({
+		queryKey: githubKeys.refs(projectId, q),
+		enabled: enabled && projectId !== "",
+		queryFn: () =>
+			unwrap(
+				api.GET("/api/v1/projects/{id}/github/refs", {
+					params: { path: { id: projectId }, query: q ? { q } : {} },
+				}),
+			),
+		staleTime: 15_000,
+	});
+}
+
+/** 把一个 issue / PR 渲染成 Markdown 附件（未绑定线程），供本条消息带上。 */
+export function attachGitHubRef(projectId: string, number: number) {
+	return unwrap(
+		api.POST("/api/v1/projects/{id}/github/refs/{number}/attachment", {
+			params: { path: { id: projectId, number } },
+		}),
+	);
+}

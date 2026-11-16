@@ -56,6 +56,7 @@ import {
 	readChangesRoot,
 	setStaged,
 } from "./git";
+import { ShipButton } from "./ShipButton";
 
 /**
  * 「同步 ▾」：复制在本地检出里运行的 `oryn sync` 命令（持续镜像 / 一次性应用）。
@@ -532,6 +533,7 @@ export default function ChangesPanel({
 							</button>
 						)}
 					</div>
+					<ShipButton threadId={threadId} base={status?.base?.name ?? base} />
 					<SyncMenu threadId={threadId} />
 				</div>
 			)}

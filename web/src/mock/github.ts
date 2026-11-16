@@ -5,9 +5,11 @@
  * `localStorage["oryn.mock.github"] = "none"` 时初始为未连接（截图与验收用）。
  * 跳转类接口（创建 App、连接账号）不会真的去 GitHub：创建 App 清掉 `none` 标记并回到 `?created=1`（整页刷新后即为已连接）；
  * 连接账号给出一个 GitHub 授权地址的样子，要在 mock 里连上 Agent 账号用 `connectAgent()`。
+ * 线程 ↔ PR 关联（步骤 5.4）：`PUT / DELETE threads/{id}/github/pulls/{n}` 改线程的 `pulls` 后经 `upsertThread` 广播；
+ * `setChecks()` 模拟 CI 汇总变化。
  * 仓库列表（步骤 2.3）：`GET github/repos` 给 6 个仓库（支持 `q`）；`projectGitHub(repoUrl)` 供项目新建 / 编辑时补上绑定字段。
  */
-import type { Schemas } from "../api/client";
+import type { Schemas, Thread } from "../api/client";
 
 type Json = Record<string, unknown>;
 type Status = Schemas["GitHubStatus"];
@@ -19,6 +21,10 @@ const MOCK_KEY = "oryn.mock.github";
 export interface GitHubDeps {
 	/** GitHub 集成状态变了：推送 WS `github.changed` */
 	changed(): void;
+	/** 线程表（只读；改动经 `upsertThread`） */
+	threads: ReadonlyMap<string, Thread>;
+	/** 写回线程并广播 `index.patch` */
+	upsertThread(t: Thread): void;
 }
 
 function json(body: unknown, status = 200): Response {
@@ -305,7 +311,43 @@ export class MockGitHub {
 					({ ago, ...r }) => ({ ...r, pushedAt: now - ago }),
 				),
 			});
+		const pr = /^threads\/([^/]+)\/github\/pulls\/(\d+)$/.exec(p);
+		if (pr && (m === "PUT" || m === "DELETE")) {
+			const t = this.deps.threads.get(pr[1] ?? "");
+			const n = Number(pr[2]);
+			if (!t?.pulls?.some((x) => x.number === n))
+				return error(404, "not_found", "pull request not linked");
+			let pulls: Schemas["ThreadPull"][];
+			if (m === "PUT") {
+				const b = (await body()) as Json;
+				if (typeof b.listening !== "boolean")
+					return error(400, "invalid_request", "listening 必须是布尔值");
+				const listening = b.listening;
+				pulls = t.pulls.map((x) => (x.number === n ? { ...x, listening } : x));
+			} else pulls = t.pulls.filter((x) => x.number !== n);
+			const { pulls: _old, ...rest } = t;
+			const next: Thread = pulls.length > 0 ? { ...rest, pulls } : rest;
+			this.deps.upsertThread(next);
+			return json(next);
 		}
 		return null;
+	}
+
+	/** 改线程上某个关联 PR 的 CI 汇总（截图与验收用）；省略 `checks` 表示尚未汇总。 */
+	setChecks(
+		threadId: string,
+		number: number,
+		checks: Schemas["ThreadPull"]["checks"],
+	): void {
+		const t = this.deps.threads.get(threadId);
+		if (!t?.pulls) return;
+		this.deps.upsertThread({
+			...t,
+			pulls: t.pulls.map((x) => {
+				if (x.number !== number) return x;
+				const { checks: _old, ...rest } = x;
+				return checks ? { ...rest, checks } : rest;
+			}),
+		});
 	}
 }

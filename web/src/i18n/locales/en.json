@@ -148,6 +148,7 @@
 		"spaces": "Spaces",
 		"assistant": "Assistant",
 		"scheduled": "Scheduled",
+		"pullRequest": "Linked GitHub pull request",
 		"scheduledRuns": "Scheduled runs",
 		"allRuns": "All runs",
 		"projectFilter": "Project: {{name}}",
@@ -457,7 +458,25 @@
 		"schedule": "Schedule…",
 		"scheduleNext": "Schedule: next {{when}}",
 		"schedulePaused": "Schedule paused",
-		"scheduleRun": "Created by run #{{run}} of the schedule “{{name}}”"
+		"scheduleRun": "Created by run #{{run}} of the schedule “{{name}}”",
+		"pr": {
+			"label": "PR #{{number}} · {{status}}",
+			"state": {
+				"open": "Open",
+				"draft": "Draft",
+				"closed": "Closed",
+				"merged": "Merged"
+			},
+			"checks": {
+				"pending": "CI running",
+				"success": "CI passed",
+				"failure": "CI failed"
+			},
+			"open": "Open on GitHub",
+			"pause": "Pause event delivery",
+			"resume": "Resume event delivery",
+			"unlink": "Unlink"
+		}
 	},
 	"color": {
 		"none": "None",
@@ -1743,6 +1762,10 @@
 		"noBase": "No base branch found; showing uncommitted changes",
 		"summary": "{{n}} files",
 		"resetRoot": "Back to working directory",
+		"ship": {
+			"open": "Push and open PR",
+			"update": "Push update"
+		},
 		"stageAll": "Stage all",
 		"unstageAll": "Unstage all",
 		"stageFile": "Stage {{path}}",

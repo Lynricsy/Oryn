@@ -504,6 +504,8 @@ export class MockServer {
 	/** GitHub 集成（M14）。 */
 	readonly github = new MockGitHub({
 		changed: () => this.broadcast({ type: "github.changed" }),
+		threads: this.threads,
+		upsertThread: (t) => this.upsertThread(t),
 	});
 	gitIdentity: Schemas["GitIdentity"] | undefined = {
 		name: "Oryn Owner",

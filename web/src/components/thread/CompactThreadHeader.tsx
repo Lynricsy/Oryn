@@ -3,7 +3,7 @@
  * 标题胶囊两行：标题（标题卡图标 / 线程色）+ 一行状态（Space、项目、orb / runner、定时、公开）。线程的状态再多也只挤在这一行，
  * 页头的按钮不随功能增多；全部操作都在点标题打开的标题菜单里。
  *
- * 标题菜单：顶部三个常用操作（归档、分享、会话树）；然后是带说明的状态行（运行环境、定时、公开链接），只在线程真有这些状态时出现；
+ * 标题菜单：顶部三个常用操作（归档、分享、会话树）；然后是带说明的状态行（运行环境、定时、公开链接、关联的 GitHub PR），只在线程真有这些状态时出现；
  * 最后是其余操作，按「整理 / 派生 / 危险」分组。带子菜单的项在菜单里原地换页（顶部「返回」）。
  * 打开时页头下方铺一层遮罩，标题胶囊留在遮罩之上；点遮罩、按 Esc 或选中一项后关闭，焦点回到标题胶囊。
  */
@@ -22,6 +22,7 @@ import { parseTitleCard } from "../../lib/title";
 import { useThread } from "../../state/stores";
 import { uiStore } from "../../state/ui";
 import { useSessionCost } from "../composer/ComposerMeta";
+import { openPull, prIcon, prStatusText } from "../github/PrChip";
 import { ChromeLead, WindowControls } from "../layout/WindowControls";
 import { nameHue, ProjectBadge, StatusDot } from "../ui/data";
 import { Icon } from "../ui/icons";
@@ -178,6 +179,14 @@ export function CompactThreadHeader({
 			sub: t("titleMenu.publicLinks", { count: shares }),
 			onSelect: () => uiStore.getState().open({ kind: "share" }),
 		});
+	for (const p of thread?.pulls ?? [])
+		status.push({
+			key: `pr-${p.number}`,
+			icon: prIcon(p),
+			label: `#${p.number} ${p.title}`,
+			sub: prStatusText(p, t),
+			onSelect: () => openPull(p),
+		});
 
 	const costItem = byKey.get("costUsage");
 	const groups: MenuItem[][] = [
@@ -242,6 +251,9 @@ export function CompactThreadHeader({
 		),
 		scheduleRun && <Icon key="run" name="repeat" size={11} />,
 		shares > 0 && <Icon key="public" name="globe" size={11} />,
+		(thread?.pulls?.length ?? 0) > 0 && (
+			<Icon key="pr" name="pullRequest" size={11} />
+		),
 	].filter(Boolean);
 	if (marks.length > 0)
 		meta.push(

@@ -60,6 +60,8 @@ import { GitBranch } from "@phosphor-icons/react/dist/csr/GitBranch";
 import { GitDiff } from "@phosphor-icons/react/dist/csr/GitDiff";
 import { GitFork } from "@phosphor-icons/react/dist/csr/GitFork";
 import { GithubLogo } from "@phosphor-icons/react/dist/csr/GithubLogo";
+import { GitMerge } from "@phosphor-icons/react/dist/csr/GitMerge";
+import { GitPullRequest } from "@phosphor-icons/react/dist/csr/GitPullRequest";
 import { Globe } from "@phosphor-icons/react/dist/csr/Globe";
 import { HandPalm } from "@phosphor-icons/react/dist/csr/HandPalm";
 import { HardDrives } from "@phosphor-icons/react/dist/csr/HardDrives";
@@ -233,6 +235,9 @@ const ICONS = {
 	camera: Camera,
 	/** 把 orb 的改动同步到本地检出（改动面板「同步 ▾」） */
 	pull: ArrowLineDown,
+	/** GitHub PR（M14）：打开 / 草稿 / 关闭用 `pullRequest`，已合并用 `merge`；`pull` 是同步的下载箭头，别混用 */
+	pullRequest: GitPullRequest,
+	merge: GitMerge,
 	/** 通知：等待作答 */
 	question: Question,
 	/** 通知渠道：Telegram / Webhook / ntfy / Bark（iOS 推送） */

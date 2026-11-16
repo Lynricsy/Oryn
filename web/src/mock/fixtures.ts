@@ -819,6 +819,19 @@ export const threads: Thread[] = [
 		color: "blue",
 		childCount: 2,
 		childDoneCount: 1,
+		// M14：线程 orb 的提交成了 PR #128 的头提交
+		pulls: [
+			{
+				repo: "oryn-demo/webapp",
+				number: 128,
+				title: "修复登录重定向循环",
+				state: "open",
+				draft: false,
+				url: "https://github.com/oryn-demo/webapp/pull/128",
+				checks: "success",
+				listening: true,
+			},
+		],
 	}),
 	thread({
 		id: "T-0193a1b2-0000-7000-8000-00000000a002",
@@ -836,6 +849,20 @@ export const threads: Thread[] = [
 		projectId: projects[0]?.id,
 		parentThreadId: MAIN_THREAD,
 		orbId: "orb-01jcz8m3w4x5y6z7a8b9c0d1e3",
+		// M14：关联的 PR 已合并，线程随之标为已交付（不归档）
+		pulls: [
+			{
+				repo: "oryn-demo/webapp",
+				number: 121,
+				title: "快照恢复后重放未完成的 setup",
+				state: "merged",
+				draft: false,
+				url: "https://github.com/oryn-demo/webapp/pull/121",
+				checks: "success",
+				listening: true,
+			},
+		],
+		shippedAt: NOW - 40 * MIN,
 	}),
 	thread({
 		id: "T-0193a1b2-0000-7000-8000-00000000a0f1",

@@ -148,6 +148,7 @@
 		"spaces": "空间",
 		"assistant": "全局助手",
 		"scheduled": "有定时",
+		"pullRequest": "关联了 GitHub PR",
 		"scheduledRuns": "定时运行",
 		"allRuns": "全部运行",
 		"projectFilter": "项目：{{name}}",
@@ -457,7 +458,25 @@
 		"schedule": "定时…",
 		"scheduleNext": "定时：下次 {{when}}",
 		"schedulePaused": "定时已暂停",
-		"scheduleRun": "由定时「{{name}}」第 {{run}} 次运行建出"
+		"scheduleRun": "由定时「{{name}}」第 {{run}} 次运行建出",
+		"pr": {
+			"label": "PR #{{number}} · {{status}}",
+			"state": {
+				"open": "打开",
+				"draft": "草稿",
+				"closed": "已关闭",
+				"merged": "已合并"
+			},
+			"checks": {
+				"pending": "CI 运行中",
+				"success": "CI 通过",
+				"failure": "CI 失败"
+			},
+			"open": "在 GitHub 打开",
+			"pause": "暂停事件回流",
+			"resume": "恢复事件回流",
+			"unlink": "取消关联"
+		}
 	},
 	"color": {
 		"none": "无",
@@ -1743,6 +1762,10 @@
 		"noBase": "未找到基线分支，显示未提交的改动",
 		"summary": "{{n}} 个文件",
 		"resetRoot": "改回工作目录",
+		"ship": {
+			"open": "推送并开 PR",
+			"update": "推送更新"
+		},
 		"stageAll": "全部暂存",
 		"unstageAll": "全部取消暂存",
 		"stageFile": "暂存 {{path}}",

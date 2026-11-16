@@ -696,6 +696,59 @@ function m9Screens(): Screen[] {
 	];
 }
 
+/** M14：GitHub 设置页（已连接 / 未连接）、线程页头的 PR 徽标与手机标题菜单的 PR 行、改动面板的「推送并开 PR」、项目页 GitHub 卡片。 */
+function m14Screens(): Screen[] {
+	return [
+		{
+			name: "m14-settings-github",
+			prepare: ({ page }) => open(page, "/settings/github", "main", 1200),
+		},
+		{
+			name: "m14-settings-github-empty",
+			init: `localStorage.setItem("oryn.mock.github","none");`,
+			prepare: ({ page }) => open(page, "/settings/github", "main", 1200),
+		},
+		{
+			name: "m14-thread-pr",
+			prepare: async ({ page, width }) => {
+				await openThread(page, MAIN_THREAD);
+				if (width >= 600) await page.getByTestId("pr-chip").first().waitFor();
+			},
+		},
+		{
+			name: "m14-thread-pr-menu",
+			prepare: async ({ page, width }) => {
+				await openThread(page, MAIN_THREAD);
+				if (width >= 600) {
+					await page.getByTestId("pr-chip").first().click();
+					await page.getByRole("menu").first().waitFor();
+				} else {
+					await page.getByTestId("thread-title").click();
+					await page.getByRole("menuitem", { name: /#128/ }).first().waitFor();
+				}
+				await settle(page, 400);
+			},
+		},
+		{
+			name: "m14-changes-ship",
+			prepare: async ({ page }) => {
+				await openThread(page, MAIN_THREAD);
+				await openPanel(page, "changes");
+				await page
+					.getByTestId("ship-button")
+					.first()
+					.waitFor({ timeout: 15_000 });
+				await settle(page, 400);
+			},
+		},
+		{
+			name: "m14-project-github",
+			prepare: ({ page }) =>
+				open(page, `/projects/${projects[0]?.id}`, "main", 1200),
+		},
+	];
+}
+
 const SETTINGS_SECTIONS = [
 	"devices",
 	"providers",
@@ -1317,6 +1370,7 @@ const SCREENS: Screen[] = [
 		},
 	},
 	...m9Screens(),
+	...m14Screens(),
 	// 手机线程页的视图菜单（对话 / 改动 / 文件 / 终端 … / 信息），展开状态
 	{
 		name: "thread-compact-views",

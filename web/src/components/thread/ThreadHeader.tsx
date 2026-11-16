@@ -3,6 +3,7 @@
  * 手机是 `CompactThreadHeader`（另一个文件），两者共用这里的 `useThreadActions`（全部线程操作与对话框）。
  * 桌面 App 无系统标题栏：整条页头是拖动区（按钮、标题等可交互元素除外）；`chromeLeft` / `chromeRight` 时两端放窗口控件。
  * 定时（M9）：线程内定时显示 `ScheduleChip`，「每次新建线程」定时建出的线程显示 `ScheduleRunChip`，More Actions 有「定时…」；
+ * GitHub（M14）：线程关联的 PR 显示 `PrChip`（最多两枚），在定时胶囊之后、orb 胶囊之前；
  * 归档旁有「归档为已交付」（Space 进度图的 Shipped）。
  */
 import type { TFunction } from "i18next";
@@ -24,6 +25,7 @@ import {
 } from "../../state/actions";
 import { useIndex, useThread } from "../../state/stores";
 import { uiStore, useUi } from "../../state/ui";
+import { PrChip } from "../github/PrChip";
 import { ChromeLead, WindowControls } from "../layout/WindowControls";
 import { ScheduleChip, ScheduleRunChip } from "../schedule/ScheduleChip";
 import { ScheduleDialog } from "../schedule/ScheduleDialog";
@@ -658,6 +660,10 @@ export function ThreadHeader({
 					}
 				/>
 			)}
+			{editing === null &&
+				thread?.pulls
+					?.slice(0, 2)
+					.map((p) => <PrChip key={p.number} threadId={threadId} pull={p} />)}
 			{editing === null &&
 				orb &&
 				(isRunner ? (

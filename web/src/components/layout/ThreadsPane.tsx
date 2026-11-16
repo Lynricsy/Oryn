@@ -280,6 +280,26 @@ export function ThreadRow({
 							<Icon name="clock" size={12} aria-hidden />
 						</span>
 					)}
+					{thread.pulls?.length ? (
+						// 关联的 GitHub PR（M14）：打开的 PR 有 CI 失败时错误色；全部已合并时用合并图标
+						<span
+							role="img"
+							data-pr=""
+							aria-label={t("sidebar.pullRequest")}
+							title={t("sidebar.pullRequest")}
+							className={`inline-flex shrink-0 ${thread.pulls.some((p) => p.checks === "failure" && p.state === "open") ? "text-err" : "text-faint"}`}
+						>
+							<Icon
+								name={
+									thread.pulls.every((p) => p.state === "merged")
+										? "merge"
+										: "pullRequest"
+								}
+								size={12}
+								aria-hidden
+							/>
+						</span>
+					) : null}
 					{thread.childCount ? (
 						<span
 							data-count={`${thread.childDoneCount ?? 0}/${thread.childCount}`}

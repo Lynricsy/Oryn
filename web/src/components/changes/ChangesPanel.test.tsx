@@ -1,18 +1,34 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
 	act,
 	fireEvent,
-	render,
+	render as rtlRender,
 	screen,
 	waitFor,
 	within,
 } from "@testing-library/react";
+import type { ReactElement, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Orb } from "../../api/client";
+import { qk } from "../../api/queries";
 import i18n from "../../i18n";
 import { handleOrbFetch, resetOrbFs } from "../../mock/orbfs";
 import { getThreadStore } from "../../state/stores";
 import ChangesPanel, { POLL_MS } from "./ChangesPanel";
 import { GIT_REQUEST_TIMEOUT_MS } from "./git";
+
+/**
+ * 改动面板里的「推送并开 PR」（M14）要读项目列表：包一层 QueryClient，预先放好（空的）项目列表，
+ * 保鲜期内不发 `/api/v1/projects` 请求，不影响这里对 orb 请求的计数。
+ */
+function render(ui: ReactElement) {
+	const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	qc.setQueryData(qk.projects, { projects: [] });
+	const wrapper = ({ children }: { children: ReactNode }) => (
+		<QueryClientProvider client={qc}>{children}</QueryClientProvider>
+	);
+	return rtlRender(ui, { wrapper });
+}
 
 vi.mock("../../state/terminals", () => ({
 	terminalHub: { onExit: vi.fn(() => () => {}) },
