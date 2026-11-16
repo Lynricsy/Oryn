@@ -349,6 +349,8 @@ type txn struct {
 	orb db.Orb
 	// signal 表示入队了任务（提交后唤醒 provider 长轮询）；kick 表示令牌已轮换（提交后关闭旧 link）。
 	signal, kick bool
+	// job 是最近一次 enqueueIn 入队的任务 id。
+	job string
 }
 
 // change 是已提交、待发布的状态变化。
@@ -367,6 +369,9 @@ type transitionOpts struct {
 	guard func(db.Orb) bool
 	// then 在状态变化成功后于同一事务内执行（入队任务等）；返回错误则整个事务回滚。
 	then func(t *txn) error
+	// spawnJob 为真时把 then 入队的任务 id 记进这次 orb_events 的 detail.spawnJob：之后结束的任务据此认出
+	// 自己是不是这次变化入队的（stopSpawn），不靠时间先后。
+	spawnJob bool
 }
 
 // transitionTx 在一个事务里以比较并交换的方式把 orb 从 from 移到 to、写 orb_events，并执行 opts.then；
@@ -375,7 +380,6 @@ func (s *Service) transitionTx(ctx context.Context, orbID, from, to string, deta
 	if detail == nil {
 		detail = map[string]any{}
 	}
-	raw, _ := json.Marshal(detail)
 	now := s.nowMs()
 	var ch *change
 	err := s.st.Tx(ctx, func(q *db.Queries) error {
@@ -397,10 +401,6 @@ func (s *Service) transitionTx(ctx context.Context, orbID, from, to string, deta
 				return err
 			}
 		}
-		seq, err := q.InsertOrbEventSeq(ctx, db.InsertOrbEventSeqParams{OrbID: orbID, Ts: now, FromState: from, ToState: to, Detail: string(raw)})
-		if err != nil {
-			return err
-		}
 		t := &txn{ctx: ctx, q: q, now: now}
 		if opts.then != nil {
 			if t.orb, err = q.GetOrb(ctx, orbID); err != nil {
@@ -409,6 +409,14 @@ func (s *Service) transitionTx(ctx context.Context, orbID, from, to string, deta
 			if err := opts.then(t); err != nil {
 				return err
 			}
+		}
+		if opts.spawnJob && t.job != "" {
+			detail["spawnJob"] = t.job
+		}
+		raw, _ := json.Marshal(detail)
+		seq, err := q.InsertOrbEventSeq(ctx, db.InsertOrbEventSeqParams{OrbID: orbID, Ts: now, FromState: from, ToState: to, Detail: string(raw)})
+		if err != nil {
+			return err
 		}
 		orb, err := q.GetOrb(ctx, orbID)
 		if err != nil {
@@ -460,10 +468,11 @@ func (s *Service) transitionThen(ctx context.Context, orbID, from, to string, de
 
 // enqueueIn 在事务内为 t.orb 入队任务。
 func (s *Service) enqueueIn(t *txn, op string, params any) error {
-	if _, err := s.jobs.EnqueueTx(t.ctx, t.q, t.now, t.orb.ProviderID, t.orb.ID, op, params); err != nil {
+	j, err := s.jobs.EnqueueTx(t.ctx, t.q, t.now, t.orb.ProviderID, t.orb.ID, op, params)
+	if err != nil {
 		return err
 	}
-	t.signal = true
+	t.signal, t.job = true, j.ID
 	return nil
 }
 
@@ -986,7 +995,7 @@ func (s *Service) freezeTx(ctx context.Context, orbID, reason string, guard func
 func (s *Service) stopTx(ctx context.Context, orbID, from, reason string, guard func(db.Orb) bool) (*change, error) {
 	opts := transitionOpts{guard: guard}
 	if from == StateFrozen {
-		opts.then = s.spawnIn
+		opts.then, opts.spawnJob = s.spawnIn, true
 	}
 	return s.transitionTx(ctx, orbID, from, StateStopping, map[string]any{"reason": reason}, opts)
 }
@@ -1001,6 +1010,25 @@ func (s *Service) afterStop(ch *change) {
 		orbID := ch.orb.ID
 		s.goBG(func() { s.shutdownThenPauseStop(orbID, 0) })
 	}
+}
+
+// stopSpawn 报告 spawn 任务是否就是这次停机要等的那一次：orb 最近一次状态变化是 frozen → stopping，且这次变化在同一事务里
+// 入队、记进 detail.spawnJob 的就是这个任务。之前入队、在 stopping 期间才结束的 spawn（如快照后送达新令牌的那次），
+// 以及 ready → stopping（根本不入队 spawn）期间结束的 spawn 都不算：它成功会再发一遍 shutdown 与 pause{stop}，失败会把
+// 正常停机误判为 failed。按任务标识认，不比较时间：两个事务可以落在同一毫秒。
+func (s *Service) stopSpawn(ctx context.Context, job db.Job, orb db.Orb) bool {
+	ev, err := s.st.Q.GetLatestOrbStateChange(ctx, orb.ID)
+	if err != nil {
+		slog.Warn("读取 orb 最近一次状态变化失败", "orb", orb.ID, "err", err)
+		return false
+	}
+	if ev.FromState != StateFrozen || ev.ToState != StateStopping {
+		return false
+	}
+	var detail struct {
+		SpawnJob string `json:"spawnJob"`
+	}
+	return json.Unmarshal([]byte(ev.Detail), &detail) == nil && detail.SpawnJob != "" && detail.SpawnJob == job.ID
 }
 
 // shutdownThenPauseStop 等待 link（至多 wait）后发 shutdown，再在 orb 仍处于 stopping 时入队 pause{stop}。
@@ -1245,6 +1273,10 @@ func (s *Service) onJobFinished(ctx context.Context, job db.Job, ok bool) {
 				s.advance(orbID)
 			}
 		case StateStopping:
+			if !s.stopSpawn(ctx, job, orb) {
+				slog.Info("忽略不属于这次停机的 spawn", "orb", orbID, "job", job.ID)
+				return
+			}
 			if ok {
 				s.goBG(func() { s.shutdownThenPauseStop(orbID, s.cfg.ConnectTimeout/2) })
 			} else {
@@ -1406,7 +1438,10 @@ func (s *Service) reconcile(ctx context.Context, orb db.Orb) error {
 	case StateFreezing:
 		j = latest(true, op(jobs.OpPause))
 	case StateStopping:
-		j = latest(true, op(jobs.OpSpawn, jobs.OpPause))
+		// 不属于这次停机的 spawn（stopSpawn）不算：否则会把它的终态当作停机进度重放，而不是补发 shutdown → pause{stop}
+		j = latest(true, func(j db.Job) bool {
+			return op(jobs.OpPause)(j) || (j.Op == jobs.OpSpawn && s.stopSpawn(ctx, j, orb))
+		})
 	case StateDeleting:
 		j = latest(true, op(jobs.OpDelete))
 	}

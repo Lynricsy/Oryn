@@ -55,6 +55,11 @@ RETURNING id;
 -- name: MaxOrbEventID :one
 SELECT CAST(COALESCE(MAX(id), 0) AS INTEGER) FROM orb_events WHERE orb_id = @orb_id;
 
+-- The orb's latest state change (the one that moved it into its current state); same-state info events
+-- (pool, project_scripts_set) are skipped.
+-- name: GetLatestOrbStateChange :one
+SELECT * FROM orb_events WHERE orb_id = @orb_id AND from_state <> to_state ORDER BY id DESC LIMIT 1;
+
 -- Rotates the orb token (compare-and-swap on the current generation).
 -- name: RotateOrbToken :execrows
 UPDATE orbs SET token_gen = token_gen + 1, token_hash = @token_hash WHERE id = @id AND token_gen = @token_gen;

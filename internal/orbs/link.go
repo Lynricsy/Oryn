@@ -308,8 +308,9 @@ func (s *Service) attach(orb db.Orb, sess *link.Session, remote string, recheck 
 		_ = old.sess.Close()
 	}
 	if l.rejected {
-		_ = sess.Close()
+		// 先从 links 撤下再关会话：对端一看到会话关闭，控制面就已不再把这条被拒的 link 当作在线（Ctl / Connected）。
 		s.onLinkDown(l)
+		_ = sess.Close()
 		return
 	}
 	slog.Info("orb link 已连接", "orb", orb.ID, "remote", remote)

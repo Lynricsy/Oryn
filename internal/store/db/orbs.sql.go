@@ -180,6 +180,26 @@ func (q *Queries) GetCoordinatorOrb(ctx context.Context) (Orb, error) {
 	return i, err
 }
 
+const getLatestOrbStateChange = `-- name: GetLatestOrbStateChange :one
+SELECT id, orb_id, ts, from_state, to_state, detail FROM orb_events WHERE orb_id = ?1 AND from_state <> to_state ORDER BY id DESC LIMIT 1
+`
+
+// The orb's latest state change (the one that moved it into its current state); same-state info events
+// (pool, project_scripts_set) are skipped.
+func (q *Queries) GetLatestOrbStateChange(ctx context.Context, orbID string) (OrbEvent, error) {
+	row := q.db.QueryRowContext(ctx, getLatestOrbStateChange, orbID)
+	var i OrbEvent
+	err := row.Scan(
+		&i.ID,
+		&i.OrbID,
+		&i.Ts,
+		&i.FromState,
+		&i.ToState,
+		&i.Detail,
+	)
+	return i, err
+}
+
 const getOrb = `-- name: GetOrb :one
 SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at, base_image_id, kind, github_identity FROM orbs WHERE id = ?1
 `

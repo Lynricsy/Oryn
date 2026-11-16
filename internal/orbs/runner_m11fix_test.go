@@ -131,7 +131,8 @@ func TestRunnerRevokedBeforeFirstCtl(t *testing.T) {
 	st, err := sess.Open(dctx, link.StreamHeader{T: link.StreamCtl})
 	require.NoError(t, err)
 	ctl := link.NewCtl(st, link.CtlHandlers{})
-	require.NoError(t, ctl.Notify(string(apigen.MethodMetricsSample), apigen.OrbMetricSample{TS: 1, CPUPct: 50}))
+	// 控制面复核失败后随时可能关掉会话，通知写不出去也是正常结果；要验证的是写出去的也不被处理（见下方断言）。
+	_ = ctl.Notify(string(apigen.MethodMetricsSample), apigen.OrbMetricSample{TS: 1, CPUPct: 50})
 	err = ctl.Call(dctx, string(apigen.MethodEntriesCursors), map[string]any{"threadId": "thr_x"}, nil)
 	assert.Error(t, err, "吊销之后的会话不处理请求")
 	_ = ctl.Notify(string(apigen.MethodHello), apigen.LinkCtlHelloParams{OrbdVersion: "x", Threads: []apigen.LinkCtlHelloThread{}})

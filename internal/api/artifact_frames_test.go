@@ -168,7 +168,13 @@ func TestArtifactImportExportREST(t *testing.T) {
 	assert.Equal(t, apigen.ArtifactOrigin("import"), a.Origin)
 	assert.Nil(t, a.ThreadID)
 
+	// 单独一个 HTML 文件（不叫 index.html）就是页面本身（K13）
 	body, ct = multipartBody(t, "page.html", "<p>x</p>")
+	resp, b = send(t, "POST", importURL, body, map[string]string{"X-Test-Auth": "ok", "Content-Type": ct})
+	assert.Equal(t, http.StatusCreated, resp.StatusCode, string(b))
+
+	// 多个文件里没有 index.html / canvas.json：缺入口
+	body, ct = multipartBody(t, "page.html", "<p>x</p>", "style.css", "p{}")
 	resp, b = send(t, "POST", importURL, body, map[string]string{"X-Test-Auth": "ok", "Content-Type": ct})
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assert.Equal(t, "no_index", decodeAs[map[string]any](t, b)["code"])
