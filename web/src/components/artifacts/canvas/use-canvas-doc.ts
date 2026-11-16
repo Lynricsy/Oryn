@@ -363,6 +363,31 @@ const EMPTY: CanvasSnapshot = {
 const noSubscribe = () => () => {};
 const emptySnapshot = () => EMPTY;
 
+/** `connectCanvas` 用到的实时连接接口（`realtime` 的子集，测试可替换）。 */
+export type CanvasRealtime = Pick<
+	typeof realtime,
+	"onArtifact" | "onArtifactWatchesResumed"
+>;
+
+/**
+ * 把画布同步接到实时连接上：转交 `artifact.canvas`；连接重新建立后重新取整份状态——服务端重新登记观看时不回放
+ * 画布，断线期间别处的改动之后若没有新广播，就只能靠这一步补回。返回断开函数。
+ */
+export function connectCanvas(
+	sync: CanvasSync,
+	artifactId: string,
+	rt: CanvasRealtime = realtime,
+): () => void {
+	const offMsg = rt.onArtifact(artifactId, (msg) => {
+		if (msg.type === "artifact.canvas") sync.receive(msg);
+	});
+	const offResumed = rt.onArtifactWatchesResumed(() => sync.resync());
+	return () => {
+		offMsg();
+		offResumed();
+	};
+}
+
 /**
  * 某个画布 artifact 的实时文档。`enabled` 为假（看旧版本、只读）时不连接。
  * 调用方另外负责 `watchArtifact`（查看器已经在看）。
@@ -384,9 +409,7 @@ export function useCanvasDoc(
 		const s = new CanvasSync(restTransport(artifactId), (err) =>
 			rejectRef.current(err),
 		);
-		const off = realtime.onArtifact(artifactId, (msg) => {
-			if (msg.type === "artifact.canvas") s.receive(msg);
-		});
+		const off = connectCanvas(s, artifactId);
 		s.resync();
 		setSync(s);
 		return () => {

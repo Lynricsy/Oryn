@@ -165,6 +165,8 @@ export class RealtimeClient {
 
 	/** artifact 列表变更的监听者（M14）：收到 `artifacts.changed` 与每次连接建立时调用。 */
 	private readonly artifactsListeners = new Set<() => void>();
+	/** 连接（重新）建立、artifact 观看已重发之后调用：断线期间错过的实时状态（画布等）靠它补回。 */
+	private readonly watchesResumedListeners = new Set<() => void>();
 	/** 按 artifact id 分发 `artifact.version` / `artifact.activity` / `artifact.canvas`。 */
 	private readonly artifactListeners = new Map<
 		string,
@@ -224,6 +226,17 @@ export class RealtimeClient {
 
 	private emitArtifactsChanged() {
 		for (const cb of [...this.artifactsListeners]) cb();
+	}
+
+	/**
+	 * 订阅「连接（重新）建立、artifact 观看已重发」：服务端重新登记观看时不回放实时状态（如画布），断线期间
+	 * 别处的改动要由订阅者自己重新取。返回取消订阅。
+	 */
+	onArtifactWatchesResumed(cb: () => void): () => void {
+		this.watchesResumedListeners.add(cb);
+		return () => {
+			this.watchesResumedListeners.delete(cb);
+		};
 	}
 
 	/** 订阅某个 artifact 的观看者消息（需另外 `watchArtifact` 才会收到）。返回取消订阅。 */
@@ -429,6 +442,7 @@ export class RealtimeClient {
 			for (const [id, w] of this.artifactWatches)
 				this.sendArtifactWatch(id, w.page);
 			this.emitArtifactsChanged();
+			for (const cb of [...this.watchesResumedListeners]) cb();
 		};
 		ws.onmessage = (ev) => {
 			if (this.ws !== ws || typeof ev.data !== "string") return;

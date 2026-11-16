@@ -3,8 +3,10 @@ import type { CanvasDoc, CanvasOp } from "../../../lib/artifacts/canvas-doc";
 import {
 	ACK_WAIT_MS,
 	type CanvasMessage,
+	type CanvasRealtime,
 	CanvasSync,
 	type CanvasTransport,
+	connectCanvas,
 } from "./use-canvas-doc";
 
 const DOC = {
@@ -241,5 +243,61 @@ describe("CanvasSync", () => {
 		vi.advanceTimersByTime(ACK_WAIT_MS);
 		await flush();
 		expect(fetchState).toHaveBeenCalledTimes(2);
+	});
+});
+
+describe("connectCanvas", () => {
+	function fakeRealtime() {
+		const onMsg = new Set<(msg: CanvasMessage) => void>();
+		const onResumed = new Set<() => void>();
+		const rt = {
+			onArtifact: (_id: string, cb: (msg: CanvasMessage) => void) => {
+				onMsg.add(cb);
+				return () => onMsg.delete(cb);
+			},
+			onArtifactWatchesResumed: (cb: () => void) => {
+				onResumed.add(cb);
+				return () => onResumed.delete(cb);
+			},
+		} as unknown as CanvasRealtime;
+		return {
+			rt,
+			broadcast: (m: CanvasMessage) => {
+				for (const cb of onMsg) cb(m);
+			},
+			reconnect: () => {
+				for (const cb of onResumed) cb();
+			},
+			listeners: () => onMsg.size + onResumed.size,
+		};
+	}
+
+	it("断线期间别处改了、恢复后没有新广播：重连时重新取状态，待确认的仍压在上面", async () => {
+		const { sync, setState, fetchState } = setup();
+		const fake = fakeRealtime();
+		const off = connectCanvas(sync, "art_X", fake.rt);
+		sync.resync();
+		await flush();
+		fake.broadcast(opsMsg(11, [setX("b", 50)]));
+		expect(page(sync.doc, "b")?.x).toBe(50);
+		sync.commit([setX("a", 100)]);
+
+		// 断线期间另一个窗口把 b 挪到 4000（广播没收到），之后再没有任何广播
+		setState({
+			version: 1,
+			seq: 30,
+			doc: {
+				...DOC,
+				pages: [DOC.pages[0], { ...DOC.pages[1], x: 4000 }],
+			},
+		});
+		fake.reconnect();
+		await flush();
+		expect(fetchState).toHaveBeenCalledTimes(2);
+		expect(page(sync.doc, "b")?.x).toBe(4000);
+		expect(page(sync.doc, "a")?.x).toBe(100);
+
+		off();
+		expect(fake.listeners()).toBe(0);
 	});
 });
