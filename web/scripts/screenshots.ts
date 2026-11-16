@@ -36,6 +36,7 @@ import {
 	TOOL_ZOO_THREAD,
 } from "../src/mock/fixtures";
 import { MOCK_SHARE_SLUGS } from "../src/mock/server";
+import { type BrowserNetns, startBrowserNetns } from "./browser-netns";
 
 const ARGS = process.argv.slice(2);
 const flag = (name: string) => ARGS.includes(name);
@@ -223,6 +224,8 @@ interface Screen {
 	init?: string;
 	/** 触屏设备（`hasTouch` + `isMobile`，`(pointer: coarse)` 成立）；同样在独立的 context 里截。 */
 	touch?: boolean;
+	/** 在全新的 context 里截，不继承流水线里前一个界面留下的会话与历史记录。 */
+	fresh?: boolean;
 }
 
 /**
@@ -1213,8 +1216,11 @@ const SCREENS: Screen[] = [
 		},
 	},
 	{
-		// 应用内 toast：与 socket 收到 WS `notification` 走同一个 store 入口
+		// 应用内 toast：与 socket 收到 WS `notification` 走同一个 store 入口。
+		// 前一个 notify-bell 在窄屏打开过侧栏抽屉与通知弹层，同一 context 里重新加载 `/` 会被弹层的历史记录带回
+		// about:blank，所以在全新 context 里截
 		name: "notify-toast",
+		fresh: true,
 		prepare: async ({ page }) => {
 			await open(page, "/", "textarea");
 			await page.evaluate(async (threadId) => {
@@ -1992,7 +1998,7 @@ async function shootLane(
 		if (!(screen.widths ?? DEFAULT_WIDTHS).includes(size.width)) continue;
 		const id = `${screen.name}-${size.width}-${scheme}`;
 		const isolated =
-			screen.init || screen.touch
+			screen.init || screen.touch || screen.fresh
 				? await browser.newContext({
 						viewport: { width: size.width, height: size.height },
 						deviceScaleFactor: 2,
@@ -2065,13 +2071,25 @@ async function shootAll(browser: Browser): Promise<boolean> {
 }
 
 let ok = true;
+let netns: BrowserNetns | undefined;
 try {
 	await waitForServer(BASE, 30_000);
 	await mkdir(OUT, { recursive: true });
+	// 以 root 运行时 Chromium 放进只有回环的网络命名空间：本机 Docker orb 的 veth 变化会让它中止在途请求
+	// （net::ERR_NETWORK_CHANGED），截图随机超时（见 browser-netns.ts）；非 root（如 CI）照常启动
+	const chromiumPath = process.env.CHROMIUM ?? "/usr/bin/chromium";
+	netns =
+		!process.env.WEBKIT && process.getuid?.() === 0
+			? await startBrowserNetns({
+					name: `oryn-shots-${process.pid}`,
+					ports: [PORT],
+					chromium: chromiumPath,
+				})
+			: undefined;
 	const browser = process.env.WEBKIT
 		? await webkit.launch({ executablePath: process.env.WEBKIT })
 		: await chromium.launch({
-				executablePath: process.env.CHROMIUM ?? "/usr/bin/chromium",
+				executablePath: netns?.executablePath ?? chromiumPath,
 				// 软件合成器下模拟 DPR（deviceScaleFactor）时 backdrop-filter 会部分失效，改走 SwiftShader 的 GPU 合成
 				args: ["--use-gl=angle", "--use-angle=swiftshader"],
 			});
@@ -2083,5 +2101,6 @@ try {
 	await browser.close();
 } finally {
 	server.kill();
+	netns?.stop();
 }
 if (!ok) process.exit(1);

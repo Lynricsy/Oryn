@@ -1,6 +1,5 @@
 #!/usr/bin/env bun
 import {
-	chmodSync,
 	copyFileSync,
 	existsSync,
 	mkdirSync,
@@ -11,7 +10,6 @@ import {
 	rmSync,
 	writeFileSync,
 } from "node:fs";
-import { connect, createServer, type Server, type Socket } from "node:net";
 import { resolve } from "node:path";
 /**
  * M13 验收（docs/plan-m13.md「需求」R1–R31，步骤 6.7）：分两部分逐条走界面上能观察到的项，截图存进 `.dev/m13/`，
@@ -61,6 +59,7 @@ import {
 	GENERIC_AGENT_GLYPH,
 	ROLE_DEFAULT_GLYPHS,
 } from "../src/lib/avatar-defaults";
+import { type BrowserNetns, startBrowserNetns } from "./browser-netns";
 
 // ---------------------------------------------------------------- 参数
 
@@ -257,94 +256,21 @@ const pageErrors: string[] = [];
 /** 控制台报错、5xx 应答与失败的请求：本身不判失败（有意的 401 / 404 也会报），只在条目失败时附上，供排查白屏。 */
 const pageDiag: string[] = [];
 
+let netns: BrowserNetns | undefined;
+
 async function getBrowser(): Promise<Browser> {
+	// 浏览器放进只有回环的网络命名空间：本机 Docker orb 的 veth 变化会让 Chromium 中止在途请求（见 browser-netns.ts）
+	netns ??= await startBrowserNetns({
+		name: `oryn-m13-${RUN}`,
+		ports: [MOCK_PORT, REAL_UI_PORT, REAL_PORT],
+		chromium: CHROMIUM,
+	});
 	browser ??= await chromium.launch({
-		executablePath: await browserNetns(),
+		executablePath: netns.executablePath,
 		headless: true,
 		args: ["--no-sandbox", "--use-gl=angle", "--use-angle=swiftshader"],
 	});
 	return browser;
-}
-
-/**
- * 浏览器跑在只有回环的独立网络命名空间里。Chromium 监听内核 netlink 的网卡 / 地址变化，一有变化就中止全部在途请求
- * （net::ERR_NETWORK_CHANGED）；本机别的负载不停创建、销毁 Docker orb 的 veth，模块图加载到一半被中止，页面白屏。
- * 命名空间里看不到宿主的网卡变化。浏览器要访问的端口经文件系统 unix 套接字转发（这类套接字跨网络命名空间可用）：
- * 命名空间内的转发进程在 127.0.0.1 / ::1 上监听同样的端口并连到套接字，本进程把套接字连到宿主的 127.0.0.1。
- */
-const NETNS = `oryn-m13-${RUN}`;
-const NETNS_DIR = `/run/oryn-m13-${RUN}`;
-const NETNS_PORTS = [MOCK_PORT, REAL_UI_PORT, REAL_PORT];
-let netnsForward: Subprocess | undefined;
-const netnsServers: Server[] = [];
-
-/** 双向接上两条连接，任一端出错或关闭时两端一起关。 */
-function splice(a: Socket, b: Socket) {
-	a.pipe(b);
-	b.pipe(a);
-	const end = () => {
-		a.destroy();
-		b.destroy();
-	};
-	a.on("error", end).on("close", end);
-	b.on("error", end).on("close", end);
-}
-
-/** 建好命名空间与端口转发，返回启动 Chromium 的包装脚本路径。 */
-async function browserNetns(): Promise<string> {
-	mkdirSync(NETNS_DIR, { recursive: true });
-	for (const cmd of [
-		["ip", "netns", "add", NETNS],
-		["ip", "-n", NETNS, "link", "set", "lo", "up"],
-	]) {
-		const r = Bun.spawnSync(cmd, { stderr: "pipe" });
-		if (r.exitCode !== 0)
-			throw new Error(`${cmd.join(" ")}：${r.stderr.toString().trim()}`);
-	}
-	for (const port of NETNS_PORTS)
-		netnsServers.push(
-			createServer((c) => splice(c, connect(port, "127.0.0.1"))).listen(
-				`${NETNS_DIR}/${port}.sock`,
-			),
-		);
-	const fwd = `${NETNS_DIR}/forward.mjs`;
-	writeFileSync(
-		fwd,
-		`import { connect, createServer } from "node:net";
-for (const port of ${JSON.stringify(NETNS_PORTS)})
-	for (const host of ["127.0.0.1", "::1"])
-		createServer((c) => {
-			const u = connect(${JSON.stringify(NETNS_DIR)} + "/" + port + ".sock");
-			c.pipe(u);
-			u.pipe(c);
-			const end = () => { c.destroy(); u.destroy(); };
-			c.on("error", end).on("close", end);
-			u.on("error", end).on("close", end);
-		}).listen(port, host);
-console.log("ready");
-`,
-	);
-	netnsForward = Bun.spawn(["ip", "netns", "exec", NETNS, "bun", fwd], {
-		stdout: "pipe",
-		stderr: "inherit",
-	});
-	const first = await netnsForward.stdout.getReader().read();
-	if (!new TextDecoder().decode(first.value).includes("ready"))
-		throw new Error("浏览器网络命名空间的端口转发没有就绪");
-	const wrapper = `${NETNS_DIR}/chromium.sh`;
-	writeFileSync(
-		wrapper,
-		`#!/bin/sh\nexec nsenter --net=/run/netns/${NETNS} ${CHROMIUM} "$@"\n`,
-	);
-	chmodSync(wrapper, 0o755);
-	return wrapper;
-}
-
-function stopBrowserNetns() {
-	for (const s of netnsServers.splice(0)) s.close();
-	netnsForward?.kill("SIGTERM");
-	Bun.spawnSync(["ip", "netns", "del", NETNS], { stderr: "ignore" });
-	rmSync(NETNS_DIR, { recursive: true, force: true });
 }
 
 /**
@@ -4068,7 +3994,7 @@ const selected = (r: string) => !ONLY || ONLY.has(r);
 async function cleanup() {
 	await closeAll();
 	await browser?.close().catch(() => {});
-	stopBrowserNetns();
+	netns?.stop();
 	if (mockVite && mockVite.exitCode === null) mockVite.kill("SIGTERM");
 	await stopReal();
 }
