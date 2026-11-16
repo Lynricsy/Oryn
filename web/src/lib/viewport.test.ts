@@ -3,11 +3,12 @@
  * `useViewportSegments` 按值缓存，值不变时引用不变（useSyncExternalStore 要求）。
  */
 import { act, renderHook } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	installNoFocusZoom,
 	installViewportTracking,
 	readSegments,
+	useSafeTop,
 	useViewportSegments,
 } from "./viewport";
 
@@ -187,5 +188,26 @@ describe("installNoFocusZoom", () => {
 			maxTouchPoints: 5,
 		});
 		expect(content(doc)).toBe(`${BASE}, maximum-scale=2`);
+	});
+});
+
+describe("useSafeTop", () => {
+	afterEach(() => vi.restoreAllMocks());
+
+	it("卸载期间转屏、安全区变了，再挂载读到新值（不沿用离开前的高度）", () => {
+		let pad = "47px";
+		const real = window.getComputedStyle.bind(window);
+		vi.spyOn(window, "getComputedStyle").mockImplementation((el, pseudo) => {
+			const s = real(el, pseudo);
+			return (el as HTMLElement).style?.cssText.includes("safe-area-inset-top")
+				? ({ ...s, paddingTop: pad } as CSSStyleDeclaration)
+				: s;
+		});
+		const first = renderHook(() => useSafeTop());
+		expect(first.result.current).toBe(47);
+		first.unmount();
+		pad = "0px"; // 转到横屏：这时没有订阅者在场
+		const second = renderHook(() => useSafeTop());
+		expect(second.result.current).toBe(0);
 	});
 });
