@@ -305,7 +305,7 @@ func TestGitHubRoute(t *testing.T) {
 		code int
 	}{
 		"未开放 GitHub": {fakeR{gh: "T0KEN"}, "/gh/api.github.com/user", http.StatusForbidden},
-		"其它主机":       {fakeR{gh: "T0KEN", pol: Policy{GitHub: gh}}, "/gh/uploads.github.com/x", http.StatusNotFound},
+		"其它主机":       {fakeR{gh: "T0KEN", pol: Policy{GitHub: gh}}, "/gh/gist.github.com/x", http.StatusNotFound},
 		"令牌不可用":      {fakeR{pol: Policy{GitHub: gh}}, "/gh/api.github.com/user", http.StatusBadGateway},
 	} {
 		s := httptest.NewServer(NewHandler("orb-x", c.r))
@@ -335,6 +335,53 @@ func TestGitHubGitOrigin(t *testing.T) {
 	require.Equal(t, http.StatusOK, r.StatusCode)
 	assert.Equal(t, "/a/b/info/refs", gotPath)
 	assert.Equal(t, "Basic eC1hY2Nlc3MtdG9rZW46dG9r", gotAuth)
+}
+
+// M15：uploads.github.com 同样注入令牌（gh release upload），上游取 UploadsOrigin；客户端的 Accept-Encoding 被去掉，
+// 由 Transport 自己协商解压，响应脱敏读到明文。
+func TestGitHubUploadsAndEncoding(t *testing.T) {
+	var gotPath, gotAuth, gotEnc string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotAuth, gotEnc = r.URL.Path, r.Header.Get("Authorization"), r.Header.Get("Accept-Encoding")
+		fmt.Fprint(w, "echo "+r.Header.Get("Authorization"))
+	}))
+	defer up.Close()
+	srv := httptest.NewServer(NewHandler("orb-x", fakeR{gh: "T0KEN", pol: Policy{GitHub: &GitHubAccess{APIOrigin: "https://api.invalid", UploadsOrigin: up.URL}}}))
+	defer srv.Close()
+	r := do(t, "POST", srv.URL+"/gh/uploads.github.com/repos/a/b/releases/1/assets?name=x.tgz", map[string]string{"Accept-Encoding": "br"})
+	body, _ := io.ReadAll(r.Body)
+	r.Body.Close()
+	require.Equal(t, http.StatusOK, r.StatusCode)
+	assert.Equal(t, "/repos/a/b/releases/1/assets", gotPath)
+	assert.Equal(t, "Bearer T0KEN", gotAuth)
+	assert.NotEqual(t, "br", gotEnc, "客户端的 Accept-Encoding 不应透传")
+	assert.Equal(t, "echo Bearer oryn-redacted", string(body))
+}
+
+// M15：开放 GitHub 时 github.com 的 git 不按仓库限制（任意仓库可推送）；其它 PAT 主机仍按项目仓库白名单。
+func TestGitHubGitOpen(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer up.Close()
+	toks := map[string]string{"github.com": "tok", "gitlab.example.com": "tok2"}
+	pol := Policy{
+		GitRepos: map[string][]string{"gitlab.example.com": {"team/proj"}},
+		GitHub:   &GitHubAccess{APIOrigin: up.URL, GitOrigin: up.URL},
+	}
+	srv := httptest.NewServer(NewHandler("orb-x", fakeR{git: toks, pol: pol}))
+	defer srv.Close()
+	for path, code := range map[string]int{
+		"/git/github.com/someone/else/git-receive-pack":                        http.StatusOK,
+		"/git/github.com/someone/else/info/refs?service=git-receive-pack":      http.StatusOK,
+		"/git/gitlab.example.com/other/repo/info/refs?service=git-upload-pack": http.StatusForbidden,
+	} {
+		method := "GET"
+		if strings.HasSuffix(path, "git-receive-pack") {
+			method = "POST"
+		}
+		r := do(t, method, srv.URL+path, nil)
+		r.Body.Close()
+		assert.Equal(t, code, r.StatusCode, path)
+	}
 }
 
 // M14：agent 经 /gh/ 发出的 JSON 正文追加 AgentMarker；其它请求原样透传。

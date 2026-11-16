@@ -2,8 +2,8 @@ package githubtest
 
 import (
 	"encoding/json"
-	"io"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/cgi"
 	"os"

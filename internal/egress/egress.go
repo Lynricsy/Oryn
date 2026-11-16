@@ -15,6 +15,7 @@ package egress
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -56,15 +57,19 @@ type Policy struct {
 	GitRepos map[string][]string
 	// NoGit 为真时 /git/… 一律 403（协调宿主没有任何 git 访问）。
 	NoGit bool
-	// GitHub 非 nil 时放行 /gh/api.github.com/…（M14）。
+	// GitHub 非 nil 时放行 /gh/api.github.com/… 与 /gh/uploads.github.com/…（M14/M15），并对 github.com 的 git 不按仓库限制（M15）。
 	GitHub *GitHubAccess
 }
 
-// GitHubAccess 是 orb 的 GitHub 访问：非 nil 时放行 `/gh/api.github.com/…`；GitOrigin 是 `github.com` 的 git 上游，
-// 默认 https://github.com，只有测试会指向别处。
+// GitHubAccess 是 orb 的 GitHub 访问：非 nil 时放行 `/gh/api.github.com/…`、`/gh/uploads.github.com/…`；
+// GitOrigin 是 `github.com` 的 git 上游，默认 https://github.com；UploadsOrigin 是上传主机的上游，空 = https://uploads.github.com。
+// 两者只有测试会指向别处。
 type GitHubAccess struct {
-	APIOrigin, GitOrigin string
+	APIOrigin, GitOrigin, UploadsOrigin string
 }
+
+// defaultUploadsOrigin 是 GitHub 上传 API（release 附件）的上游。
+const defaultUploadsOrigin = "https://uploads.github.com"
 
 // Resolver 提供策略与密钥查询。
 type Resolver interface {
@@ -101,12 +106,14 @@ type Handler struct {
 func NewHandler(orbID string, r Resolver) *Handler { return &Handler{OrbID: orbID, R: r} }
 
 type target struct {
-	url       *url.URL
-	auth      string   // 非空时覆盖 Authorization（git、gh）
-	redact    []string // 要从响应里抹掉的真实值（换成 oryn-redacted）
-	mark      bool     // 给请求正文追加 AgentMarker（gh）
-	own       []string // 路由自己的 apiKey 密钥 id
-	hostBound []string // 须 hosts 匹配的其它密钥 id
+	url    *url.URL
+	auth   string   // 非空时覆盖 Authorization（git、gh）
+	redact []string // 要从响应里抹掉的真实值（换成 oryn-redacted）
+	mark   bool     // 给请求正文追加 AgentMarker（gh）
+	// stripEncoding 为真时去掉客户端的 Accept-Encoding，让 Transport 自己协商并解压（M15：上游 gzip 时响应脱敏与写操作识别读到的是明文）。
+	stripEncoding bool
+	own           []string // 路由自己的 apiKey 密钥 id
+	hostBound     []string // 须 hosts 匹配的其它密钥 id
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -151,6 +158,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			pr.Out.Header.Del("X-Forwarded-For")
 			if t.auth != "" {
 				pr.Out.Header.Set("Authorization", t.auth)
+			}
+			if t.stripEncoding {
+				pr.Out.Header.Del("Accept-Encoding")
 			}
 		},
 		ModifyResponse: func(resp *http.Response) error {
@@ -217,12 +227,17 @@ func (h *Handler) resolve(r *http.Request) (target, int) {
 		if !ok {
 			return target{}, http.StatusNotFound
 		}
-		if len(pol.GitRepos) > 0 {
-			if !slices.ContainsFunc(pol.GitRepos[host], func(a string) bool { return NormalizeRepo(a) == repo }) {
+		// M15：github.com 改由 OAuth 用户令牌注入，能做什么取决于账号自身权限，不再按仓库限制；
+		// 其它主机（PAT）维持 M2 规则：有项目时只放行项目仓库，无项目时任意仓库只读。
+		githubOpen := host == "github.com" && pol.GitHub != nil
+		if !githubOpen {
+			if len(pol.GitRepos) > 0 {
+				if !slices.ContainsFunc(pol.GitRepos[host], func(a string) bool { return NormalizeRepo(a) == repo }) {
+					return target{}, http.StatusForbidden
+				}
+			} else if write {
 				return target{}, http.StatusForbidden
 			}
-		} else if write {
-			return target{}, http.StatusForbidden
 		}
 		tok, ok := h.R.GitToken(host)
 		if !ok {
@@ -239,14 +254,19 @@ func (h *Handler) resolve(r *http.Request) (target, int) {
 		}
 		return target{url: up, auth: auth, redact: []string{strings.TrimPrefix(auth, "Basic "), tok}}, http.StatusOK
 	case "gh":
-		// GitHub API（M14）：令牌已按项目仓库收窄，这里不做路径白名单；保留原始转义（如 contents 路径里的 %2F）。
+		// GitHub API（M14/M15）：令牌由出站代理注入，这里不做路径白名单；保留原始转义（如 contents 路径里的 %2F）。
 		if pol.GitHub == nil {
 			return target{}, http.StatusForbidden
 		}
-		if strings.ToLower(parts[1]) != "api.github.com" {
+		origin := pol.GitHub.APIOrigin
+		switch strings.ToLower(parts[1]) {
+		case "api.github.com":
+		case "uploads.github.com":
+			origin = cmp.Or(pol.GitHub.UploadsOrigin, defaultUploadsOrigin)
+		default:
 			return target{}, http.StatusNotFound
 		}
-		o, err := url.Parse(pol.GitHub.APIOrigin)
+		o, err := url.Parse(origin)
 		if err != nil || o.Host == "" {
 			return target{}, http.StatusNotFound
 		}
@@ -260,7 +280,7 @@ func (h *Handler) resolve(r *http.Request) (target, int) {
 			Path:    o.Path + rest,
 			RawPath: o.Path + strings.TrimPrefix(r.URL.EscapedPath(), "/gh/"+parts[1]),
 		}
-		return target{url: up, auth: "Bearer " + tok, redact: []string{tok}, mark: true}, http.StatusOK
+		return target{url: up, auth: "Bearer " + tok, redact: []string{tok}, mark: true, stripEncoding: true}, http.StatusOK
 	}
 	return target{}, http.StatusNotFound
 }

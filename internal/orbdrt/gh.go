@@ -54,8 +54,9 @@ func (r *Runtime) serveGh(ctx context.Context) {
 	_ = os.Remove(path)
 }
 
-// ghProxy 处理 gh 经 unix 套接字发来的明文 HTTP 请求。api.github.com 转给本机 egress 的 `/gh/` 路由（保留原始编码的路径）；
-// 其它主机（如 API 返回的 302 下载地址）按 https 原样直连——这些请求不带任何凭据，orb 本来就能直连它们。
+// ghProxy 处理 gh 经 unix 套接字发来的明文 HTTP 请求。api.github.com 与 uploads.github.com（M15：`gh release upload`）
+// 转给本机 egress 的 `/gh/<host>/` 路由（保留原始编码的路径）；其它主机（如 API 返回的 302 下载地址）按 https
+// 原样直连——这些请求不带任何凭据，orb 本来就能直连它们。
 func (r *Runtime) ghProxy() http.Handler {
 	return &httputil.ReverseProxy{
 		FlushInterval: -1,
@@ -64,7 +65,7 @@ func (r *Runtime) ghProxy() http.Handler {
 			if h, _, err := net.SplitHostPort(host); err == nil {
 				host = h
 			}
-			if host == "api.github.com" {
+			if host == "api.github.com" || host == "uploads.github.com" {
 				egress := r.EgressAddr()
 				pr.Out.URL.Scheme = "http"
 				pr.Out.URL.Host = egress

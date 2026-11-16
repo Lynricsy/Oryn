@@ -109,15 +109,15 @@ func TestGhProxyRoutesToEgress(t *testing.T) {
 		var d net.Dialer
 		return d.DialContext(ctx, "unix", sock)
 	}}}
-	for _, p := range []string{"/user", "/repos/a/b/contents/x%2Fy"} {
-		resp, err := client.Get("http://api.github.com" + p)
+	for _, u := range []string{"http://api.github.com/user", "http://api.github.com/repos/a/b/contents/x%2Fy", "http://uploads.github.com/repos/a/b/releases/1/assets"} {
+		resp, err := client.Get(u)
 		require.NoError(t, err)
 		_ = resp.Body.Close()
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	assert.Equal(t, []string{"GET /gh/api.github.com/user", "GET /gh/api.github.com/repos/a/b/contents/x%2Fy"}, got)
+	assert.Equal(t, []string{"GET /gh/api.github.com/user", "GET /gh/api.github.com/repos/a/b/contents/x%2Fy", "GET /gh/uploads.github.com/repos/a/b/releases/1/assets"}, got)
 }
 
 // 真实 gh 读 hosts.yml 并经套接字发明文 HTTP（找不到 gh 时跳过）。
