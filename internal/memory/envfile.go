@@ -329,14 +329,16 @@ func deployedRerank(st db.MemorySetting) (mode apigen.MemoryEndpointsRerankMode,
 	return apigen.MemoryRerankCohere, true, nil
 }
 
-// rerankSnippet 是重排模式变化、需要重启 Hindsight 时要改进 `.env` 的行：切到 rrf 只改 provider 一行；
-// 切到 cohere 连同三行 cohere 配置一起给出（密钥写成「<保持原值>」）。
-func (s *Service) rerankSnippet(mode apigen.MemoryEndpointsRerankMode) string {
-	lines := rerankLines(envInput{publicURL: s.cfg.PublicURL, rerank: mode})
-	if mode != apigen.MemoryRerankCohere {
-		lines = lines[:1]
+// pendingRerank 返回待部署的重排模式：生成过 `.env` 且当前模式与已部署的不同时为当前模式，否则为空。
+func pendingRerank(st db.MemorySetting, eps []db.MemoryEndpoint) (apigen.MemoryEndpointsRerankMode, error) {
+	deployed, generated, err := deployedRerank(st)
+	if err != nil || !generated {
+		return "", err
 	}
-	return renderEnv(lines, true)
+	if mode := rerankModeOf(eps); mode != deployed {
+		return mode, nil
+	}
+	return "", nil
 }
 
 // GenerateEnvFile 轮换 Hindsight API key 与中转令牌（旧值立即失效），返回完整的 `.env`（R3）。
@@ -392,14 +394,16 @@ func (s *Service) GenerateEnvFile(ctx context.Context) (apigen.MemoryEnvFile, er
 	return apigen.MemoryEnvFile{Content: header + renderEnv(envLines(in), false), GeneratedAt: now}, nil
 }
 
-// EnvSnippet 返回给定用途按当前选定协议类型应写进 `.env` 的行，密钥写成「<保持原值>」。
-// 用于模型协议变化、需要重启 Hindsight 时提示主人改哪几行。
-func (s *Service) EnvSnippet(ctx context.Context, purposes []apigen.MemoryPurpose) (string, error) {
+// EnvSnippet 返回需要重启 Hindsight 时要改进 `.env` 的行，密钥写成「<保持原值>」：purposes 是协议类型变了的用途，
+// 各给出整组 LLM 配置；rerank 非空表示重排模式变了，切到 rrf 只改 provider 一行，切到 cohere 连同三行 cohere 配置。
+// 「我已重启」（ConfirmDeployed）把各用途的协议类型与重排模式一起记为已部署，所以模型卡与接口卡都给出这份完整片段，
+// 否则只按其中一张卡改了 `.env` 就确认，会把另一部分尚未部署的变化一起标成已部署。
+func (s *Service) EnvSnippet(ctx context.Context, purposes []apigen.MemoryPurpose, rerank apigen.MemoryEndpointsRerankMode) (string, error) {
 	fams, err := s.families(ctx)
 	if err != nil {
 		return "", err
 	}
-	in := envInput{publicURL: s.cfg.PublicURL, families: fams}
+	in := envInput{publicURL: s.cfg.PublicURL, families: fams, rerank: rerank}
 	var lines []envLine
 	for _, p := range Purposes {
 		for _, want := range purposes {
@@ -408,6 +412,13 @@ func (s *Service) EnvSnippet(ctx context.Context, purposes []apigen.MemoryPurpos
 				break
 			}
 		}
+	}
+	if rerank != "" {
+		rl := rerankLines(in)
+		if rerank != apigen.MemoryRerankCohere {
+			rl = rl[:1]
+		}
+		lines = append(lines, rl...)
 	}
 	return renderEnv(lines, true), nil
 }

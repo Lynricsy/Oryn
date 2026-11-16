@@ -471,6 +471,55 @@ describe("EndpointsCard", () => {
 		expect(snippet).toMatch(/HINDSIGHT_API_RERANKER_PROVIDER=cohere/);
 		expect(snippet).toMatch(/HINDSIGHT_API_RERANKER_COHERE_API_KEY=<保持原值>/);
 	});
+
+	it("协议与重排同时待部署：接口卡的片段也带上 LLM 行（「我已重启」会一起确认）", async () => {
+		const { container } = mount(
+			<>
+				<ModelsCard />
+				<EndpointsCard />
+			</>,
+		);
+		const retain = await purposeSelect(container, "retain");
+		fireEvent.change(retain, {
+			target: {
+				value: JSON.stringify(["openrouter", "deepseek/deepseek-v3.2"]),
+			},
+		});
+		expect(screen.queryByTestId("memory-env-snippet")).toBeNull();
+		const [saveModels] = screen.getAllByRole("button", {
+			name: T("common.save"),
+		});
+		if (!saveModels) throw new Error("models save button missing");
+		fireEvent.click(saveModels);
+		expect(
+			(await screen.findByTestId("memory-env-snippet")).textContent,
+		).toMatch(/HINDSIGHT_API_RETAIN_LLM_PROVIDER=openai/);
+		fireEvent.click(
+			await screen.findByRole("button", {
+				name: T("memoryPage.endpoints.rerank.delete"),
+			}),
+		);
+		fireEvent.click(
+			screen.getByRole("button", {
+				name: T("memoryPage.endpoints.rerank.deleteConfirm"),
+			}),
+		);
+		const rerankSnippet = await screen.findByTestId(
+			"memory-rerank-env-snippet",
+		);
+		expect(rerankSnippet.textContent).toMatch(
+			/HINDSIGHT_API_RETAIN_LLM_PROVIDER=openai/,
+		);
+		expect(rerankSnippet.textContent).toMatch(
+			/HINDSIGHT_API_RERANKER_PROVIDER=rrf/,
+		);
+		// 删除重排后模型卡重新取：它的片段同样带上重排行
+		await waitFor(() =>
+			expect(screen.getByTestId("memory-env-snippet").textContent).toMatch(
+				/HINDSIGHT_API_RERANKER_PROVIDER=rrf/,
+			),
+		);
+	});
 });
 
 describe("CandidatesCard", () => {

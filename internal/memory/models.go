@@ -43,21 +43,51 @@ func (s *Service) familyOfModel(ctx context.Context, providerKey, modelID string
 // Models 返回五种用途的生效模型、协议类型与是否需要重启 Hindsight，以及可选模型（R16、T1、U2）。
 // catalog 为 nil 表示目录不可用，此时 options 为空。
 func (s *Service) Models(ctx context.Context, catalog []CatalogModel) (apigen.MemoryModels, error) {
-	rows, err := s.cfg.Q.ListMemoryModels(ctx)
+	items, restart, err := s.modelChoices(ctx)
 	if err != nil {
 		return apigen.MemoryModels{}, err
+	}
+	out := apigen.MemoryModels{Items: items, Options: make([]apigen.MemoryModelOption, 0, len(catalog))}
+	if len(restart) > 0 {
+		rerank, err := s.rerankPendingNow(ctx)
+		if err != nil {
+			return apigen.MemoryModels{}, err
+		}
+		snippet, err := s.EnvSnippet(ctx, restart, rerank)
+		if err != nil {
+			return apigen.MemoryModels{}, err
+		}
+		out.EnvSnippet = &snippet
+	}
+	for _, c := range catalog {
+		opt := apigen.MemoryModelOption{ProviderKey: c.ProviderKey, ModelID: c.ModelID, Name: c.Name}
+		if fam, reason := s.familyOfModel(ctx, c.ProviderKey, c.ModelID); reason == "" {
+			opt.Family = &fam
+		} else {
+			opt.Reason = &reason
+		}
+		out.Options = append(out.Options, opt)
+	}
+	return out, nil
+}
+
+// modelChoices 返回五种用途的生效模型与协议类型，以及协议类型与已部署的不同、需要重启 Hindsight 的用途。
+func (s *Service) modelChoices(ctx context.Context) ([]apigen.MemoryModelChoice, []apigen.MemoryPurpose, error) {
+	rows, err := s.cfg.Q.ListMemoryModels(ctx)
+	if err != nil {
+		return nil, nil, err
 	}
 	own := make(map[apigen.MemoryPurpose]bool, len(rows))
 	for _, r := range rows {
 		own[apigen.MemoryPurpose(r.Purpose)] = true
 	}
-	out := apigen.MemoryModels{Items: make([]apigen.MemoryModelChoice, 0, len(Purposes)), Options: make([]apigen.MemoryModelOption, 0, len(catalog))}
+	items := make([]apigen.MemoryModelChoice, 0, len(Purposes))
 	var restart []apigen.MemoryPurpose
 	for _, p := range Purposes {
 		item := apigen.MemoryModelChoice{Purpose: p, FollowsDefault: p != apigen.MemoryPurposeDefault && !own[p]}
 		m, ok, err := s.selectedModel(ctx, p)
 		if err != nil {
-			return apigen.MemoryModels{}, err
+			return nil, nil, err
 		}
 		fam := apigen.MemoryFamilyOpenai
 		known := true
@@ -72,7 +102,7 @@ func (s *Service) Models(ctx context.Context, catalog []CatalogModel) (apigen.Me
 		}
 		deployed, err := s.deployedFamily(ctx, p)
 		if err != nil {
-			return apigen.MemoryModels{}, err
+			return nil, nil, err
 		}
 		item.DeployedFamily = &deployed
 		if known {
@@ -82,23 +112,22 @@ func (s *Service) Models(ctx context.Context, catalog []CatalogModel) (apigen.Me
 		if item.NeedsRestart {
 			restart = append(restart, p)
 		}
-		out.Items = append(out.Items, item)
+		items = append(items, item)
 	}
-	if len(restart) > 0 {
-		if snippet, err := s.EnvSnippet(ctx, restart); err == nil {
-			out.EnvSnippet = &snippet
-		}
+	return items, restart, nil
+}
+
+// rerankPendingNow 读出设置与接口配置，返回待部署的重排模式（见 pendingRerank）。
+func (s *Service) rerankPendingNow(ctx context.Context) (apigen.MemoryEndpointsRerankMode, error) {
+	st, err := s.loadSettings(ctx)
+	if err != nil {
+		return "", err
 	}
-	for _, c := range catalog {
-		opt := apigen.MemoryModelOption{ProviderKey: c.ProviderKey, ModelID: c.ModelID, Name: c.Name}
-		if fam, reason := s.familyOfModel(ctx, c.ProviderKey, c.ModelID); reason == "" {
-			opt.Family = &fam
-		} else {
-			opt.Reason = &reason
-		}
-		out.Options = append(out.Options, opt)
+	eps, err := s.cfg.Q.ListMemoryEndpoints(ctx)
+	if err != nil {
+		return "", err
 	}
-	return out, nil
+	return pendingRerank(st, eps)
 }
 
 // PutModels 修改各用途的模型：未列出或不带 providerKey 的用途跟随 default，default 必须指定。
@@ -191,7 +220,7 @@ func endpointView(e db.MemoryEndpoint) *apigen.MemoryEndpoint {
 }
 
 // Endpoints 返回嵌入与重排的远端接口（key 只回报是否已设置），以及重排模式：与 `.env` 里已部署的不同时
-// needsRestart 为真，并给出要改的 `.env` 片段（v5）。
+// needsRestart 为真，并给出要改的 `.env` 片段（v5）。片段同时带上协议类型待部署的用途（见 EnvSnippet）。
 func (s *Service) Endpoints(ctx context.Context) (apigen.MemoryEndpoints, error) {
 	st, err := s.loadSettings(ctx)
 	if err != nil {
@@ -210,13 +239,20 @@ func (s *Service) Endpoints(ctx context.Context) (apigen.MemoryEndpoints, error)
 			out.Rerank = endpointView(e)
 		}
 	}
-	deployed, generated, err := deployedRerank(st)
+	rerank, err := pendingRerank(st, rows)
 	if err != nil {
 		return apigen.MemoryEndpoints{}, err
 	}
-	if generated && deployed != out.RerankMode {
+	if rerank != "" {
+		_, restart, err := s.modelChoices(ctx)
+		if err != nil {
+			return apigen.MemoryEndpoints{}, err
+		}
+		snippet, err := s.EnvSnippet(ctx, restart, rerank)
+		if err != nil {
+			return apigen.MemoryEndpoints{}, err
+		}
 		out.NeedsRestart = true
-		snippet := s.rerankSnippet(out.RerankMode)
 		out.EnvSnippet = &snippet
 	}
 	return out, nil

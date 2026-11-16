@@ -1968,7 +1968,7 @@ M14 用 GitHub App 连接，下列契约已在 M15 删除，不再存在：`POST
 - 设置与状态：`settings`、`status`、`env-file`
 - 开关：`projects`、`projects/{id}`
 - 模型：`models`、`models/deployed`
-- 嵌入与重排：`endpoints`、`endpoints/{kind}`（PUT 修改；DELETE 只允许 `rerank`）。应答带 `rerankMode`（cohere/rrf）；与 `.env` 里已部署的重排模式（记在 `deployed_families` 的 `rerank` 键，缺省按 cohere）不同时 `needsRestart` 为真并给出 `envSnippet`，确认重启沿用 `models/deployed`。
+- 嵌入与重排：`endpoints`、`endpoints/{kind}`（PUT 修改；DELETE 只允许 `rerank`）。应答带 `rerankMode`（cohere/rrf）；与 `.env` 里已部署的重排模式（记在 `deployed_families` 的 `rerank` 键，缺省按 cohere）不同时 `needsRestart` 为真并给出 `envSnippet`，确认重启沿用 `models/deployed`。`models/deployed` 会把各用途的协议类型和重排模式一起记为已部署，所以 `models` 与 `endpoints` 的 `envSnippet` 都覆盖全部待部署的行：协议类型变了的用途加上变了的重排模式。
 - 用量：`usage`
 - 浏览与遗忘：`documents`、`documents/{documentId}`、`search`、`threads/{id}/forget`
 - 候选：`candidates`、`candidates/{candidateId}`、`candidates/{candidateId}/approve`

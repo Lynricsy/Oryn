@@ -162,12 +162,19 @@ export function useMemoryModels() {
 	});
 }
 
+/**
+ * 模型卡与接口卡的 `.env` 片段都覆盖全部待部署的变化（各用途协议类型 + 重排模式，「我已重启」一起确认），
+ * 所以改了其中一边，另一边的片段也要重新取。
+ */
 export function usePutMemoryModels() {
 	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: (body: MemoryModelsUpdate) =>
 			unwrap(api.PUT("/api/v1/memory/models", { body })),
-		onSuccess: (data) => qc.setQueryData(memoryQk.models, data),
+		onSuccess: (data) => {
+			qc.setQueryData(memoryQk.models, data);
+			void qc.invalidateQueries({ queryKey: memoryQk.endpoints });
+		},
 	});
 }
 
@@ -206,7 +213,10 @@ export function usePutMemoryEndpoint() {
 					body,
 				}),
 			),
-		onSuccess: (data) => qc.setQueryData(memoryQk.endpoints, data),
+		onSuccess: (data) => {
+			qc.setQueryData(memoryQk.endpoints, data);
+			void qc.invalidateQueries({ queryKey: memoryQk.models });
+		},
 	});
 }
 
@@ -220,7 +230,10 @@ export function useDeleteMemoryRerank() {
 					params: { path: { kind: "rerank" } },
 				}),
 			),
-		onSuccess: (data) => qc.setQueryData(memoryQk.endpoints, data),
+		onSuccess: (data) => {
+			qc.setQueryData(memoryQk.endpoints, data);
+			void qc.invalidateQueries({ queryKey: memoryQk.models });
+		},
 	});
 }
 

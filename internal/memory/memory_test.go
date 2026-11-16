@@ -415,7 +415,7 @@ func TestEnvFileFamiliesAndSnippet(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, row.DeployedFamilies, `"rerank":"cohere"`)
 
-	snip, err := svc.EnvSnippet(ctx, []apigen.MemoryPurpose{apigen.MemoryPurposeReflect})
+	snip, err := svc.EnvSnippet(ctx, []apigen.MemoryPurpose{apigen.MemoryPurposeReflect}, "")
 	require.NoError(t, err)
 	assert.Equal(t, "HINDSIGHT_API_REFLECT_LLM_PROVIDER=anthropic\n"+
 		"HINDSIGHT_API_REFLECT_LLM_MODEL=oryn-reflect\n"+

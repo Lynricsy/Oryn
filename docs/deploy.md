@@ -780,6 +780,7 @@ docker compose -f deploy/hindsight/compose.yaml up -d
 
 - `.env` 每种用途（default / retain / reflect / consolidation / mental model）只写一个固定的别名模型和协议类型（openai / anthropic / gemini）。在同一协议内换模型立即生效。换了协议类型时，管理页会给出要替换的几行，并提示重启 Hindsight（`docker compose -f deploy/hindsight/compose.yaml up -d api`）；在点「我已重启」之前，该用途的中转一律返回 409。
 - 重排是可选的：管理页没配重排接口时 `.env` 写 `HINDSIGHT_API_RERANKER_PROVIDER=rrf`（Hindsight 自带，只按 RRF 分融合排序，不调用模型），配了才走 Cohere 兼容中转；cohere 的三行总是写出，rrf 下被忽略。之后添加或删除重排接口时，管理页同样给出要改的那一行（切到 cohere 时连同三行 cohere 配置），重启 Hindsight 后点「我已重启」。
+- 「我已重启」会把所有待部署的变化（各用途的协议类型和重排模式）一起确认。所以协议类型和重排模式同时变了时，模型卡和接口卡给出的是同一份完整片段，按其中任何一份改完 `.env` 再确认都可以。
 - 中文检索依赖 pgroonga（`HINDSIGHT_API_TEXT_SEARCH_EXTENSION=pgroonga`）。输出语言固定为简体中文。
 - `HINDSIGHT_DB_PASSWORD` 只在数据卷首次初始化时生效，之后改它会导致 API 连不上库。数据库只在 compose 的内部网络里，所以默认值可以接受；要改就在首次 `up` 之前改。
 - 开关、单项目关闭、生成 `.env` 之后，正在运行的线程会出现在 Agent 页的「需要重启」里，下一个会话（或点「重启」之后）才会生效。
@@ -814,18 +815,6 @@ compose 里的镜像按 digest 固定。Oryn 只对一个小版本（当前是 1
 
 **必须停机迁移。** Hindsight 按 `provider:model:dimension` 识别嵌入模型（`embeddings.py` 的 `embedding_model_id`），而 Oryn 对它只暴露一个别名 `oryn-embed`，所有请求都经同一个中转。中转一旦切到新模型，仍在运行的 API 和 worker 会立即用新模型生成查询向量与写入向量，与库里的旧向量混在一起。维度相同时 Hindsight 的写保护也认不出模型已换，所以官方文档里那种「边运行边迁移」的流程在这里不成立。迁移期间记忆不可用：agent 的 recall 会失败并给出提示，自动写入留在各 orb 的 Core outbox 里，Hindsight 恢复后补发（outbox 最多保留 7 天）。
 
-bank 里已有记忆时，管理页的嵌入模型与维度只读。只有勾选「换嵌入模型（reembed）」的保存才会被接受，而且 orynd 会先探测 Hindsight：还能连上时返回 409 `hindsight_running`，保证第 3 步发生在停机之后。步骤（下文 `dc` 代表 `docker compose -f deploy/hindsight/compose.yaml`）：
-
-1. 先备份（见上文「备份」）；
-2. 停 API（worker 跑在同一个容器里，会一起停）：`dc stop api`。Postgres 保持运行；
-3. 在管理页把嵌入接口改成新模型和新维度，并勾选「换嵌入模型」后保存；
-4. 维度有变化时，把 `.env` 里的 `HINDSIGHT_API_EMBEDDINGS_OPENAI_DIMENSIONS` 改成新维度；
-5. 用一次性容器执行迁移，它读的是同一份 `.env` 与数据库地址，不发布端口：`dc run --rm --no-deps api hindsight-admin reembed --all-schemas`。每个 schema 显示 `swapped` 即完成。中途中断时重跑同一条命令，会从断点继续；在它完成之前不要启动 API；
-6. 启动 API：`dc up -d api`。等管理页状态回到「正常」；
-7. 解除写保护：`dc run --rm --no-deps api hindsight-admin reembed --all-schemas --finish`。
-**必须停机迁移。** Hindsight 按 `provider:model:dimension` 识别嵌入模型（`embeddings.py` 的 `embedding_model_id`），而 Oryn 对它只暴露一个别名 `oryn-embed`，所有请求都经同一个中转。中转一旦切到新模型，仍在运行的 API 和 worker 会立即用新模型生成查询向量与写入向量，与库里的旧向量混在一起。维度相同时 Hindsight 的写保护也认不出模型已换，所以官方文档里那种「边运行边迁移」的流程在这里不成立。迁移期间记忆不可用：agent 的 recall 会失败并给出提示，自动写入留在各 orb 的 Core outbox 里，Hindsight 恢复后补发（outbox 最多保留 7 天）。
-
-迁移失败、想退回旧模型时：保持 API 停止，把备份目录挂进一次性容器执行恢复：`dc run --rm --no-deps -v /var/backups/oryn:/backups:ro api hindsight-admin restore /backups/<文件>.zip --yes`。然后把管理页的嵌入改回旧模型（同样要勾选「换嵌入模型」），`.env` 的维度也改回旧值，再启动。
 bank 里已有记忆时，管理页的嵌入模型与维度只读。只有勾选「换嵌入模型（reembed）」的保存才会被接受，而且 orynd 会先探测 Hindsight：还能连上时返回 409 `hindsight_running`，保证第 3 步发生在停机之后。步骤（下文 `dc` 代表 `docker compose -f deploy/hindsight/compose.yaml`）：
 
 1. 先备份（见上文「备份」）；

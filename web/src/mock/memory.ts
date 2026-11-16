@@ -269,17 +269,31 @@ export class MockMemory {
 		return {
 			items,
 			options: this.data.options,
-			...(stale.length > 0
-				? {
-						envSnippet: stale
-							.map((i) => {
-								const p = envPrefix(i.purpose);
-								return `${p}_PROVIDER=${i.family}\n${p}_MODEL=oryn-${i.purpose.replace("_", "-")}\n${p}_BASE_URL=${relayUrl(i.purpose, i.family)}`;
-							})
-							.join("\n"),
-					}
-				: {}),
+			...(stale.length > 0 ? { envSnippet: this.restartSnippet(stale) } : {}),
 		};
+	}
+
+	/**
+	 * 与 orynd 同格式：协议类型待部署的用途各自的 LLM 行，加上重排模式待部署时的重排行（切到 cohere 连同三行
+	 * cohere 配置）。「我已重启」一起确认两部分，所以模型卡与接口卡共用这一份片段。
+	 */
+	private restartSnippet(stale: Schemas["MemoryModelChoice"][]): string {
+		const llm = stale
+			.map((i) => {
+				const p = envPrefix(i.purpose);
+				return `${p}_PROVIDER=${i.family}\n${p}_MODEL=oryn-${i.purpose.replace("_", "-")}\n${p}_BASE_URL=${relayUrl(i.purpose, i.family)}\n`;
+			})
+			.join("");
+		if (!this.rerankPending()) return llm;
+		return this.rerankMode() === "cohere"
+			? `${llm}HINDSIGHT_API_RERANKER_PROVIDER=cohere\nHINDSIGHT_API_RERANKER_COHERE_BASE_URL=${RERANK_RELAY_URL}\nHINDSIGHT_API_RERANKER_COHERE_API_KEY=<保持原值>\nHINDSIGHT_API_RERANKER_COHERE_MODEL=oryn-rerank\n`
+			: `${llm}HINDSIGHT_API_RERANKER_PROVIDER=rrf\n`;
+	}
+
+	private rerankPending(): boolean {
+		return (
+			this.settings.keysGenerated && this.rerankMode() !== this.deployedRerank
+		);
 	}
 
 	private envFile(): string {
@@ -323,21 +337,16 @@ export class MockMemory {
 		return this.endpoints.rerank ? "cohere" : "rrf";
 	}
 
-	/** 与 orynd 同格式：重排模式与已部署的不同时给出要改的 `.env` 行（切到 cohere 连同三行 cohere 配置）。 */
+	/** 与 orynd 同格式：重排模式与已部署的不同时 needsRestart，片段见 restartSnippet。 */
 	private endpointsView(): Schemas["MemoryEndpoints"] {
-		const rerankMode = this.rerankMode();
-		const needsRestart =
-			this.settings.keysGenerated && rerankMode !== this.deployedRerank;
-		const snippet =
-			rerankMode === "cohere"
-				? `HINDSIGHT_API_RERANKER_PROVIDER=cohere\nHINDSIGHT_API_RERANKER_COHERE_BASE_URL=${RERANK_RELAY_URL}\nHINDSIGHT_API_RERANKER_COHERE_API_KEY=<保持原值>\nHINDSIGHT_API_RERANKER_COHERE_MODEL=oryn-rerank\n`
-				: "HINDSIGHT_API_RERANKER_PROVIDER=rrf\n";
+		const needsRestart = this.rerankPending();
+		const stale = this.models().items.filter((i) => i.needsRestart);
 		return {
 			...this.endpoints,
 			embedLocked: this.memoryCount() > 0,
-			rerankMode,
+			rerankMode: this.rerankMode(),
 			needsRestart,
-			...(needsRestart ? { envSnippet: snippet } : {}),
+			...(needsRestart ? { envSnippet: this.restartSnippet(stale) } : {}),
 		};
 	}
 
