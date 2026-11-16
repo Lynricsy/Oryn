@@ -23,8 +23,8 @@ export const MAX_FILE_BYTES = 512 * 1024 * 1024;
 export const MAX_EDIT_BYTES = 2 * 1024 * 1024;
 /** 超过编辑上限时只读预览的字节数。 */
 export const PREVIEW_BYTES = 256 * 1024;
-/** 图片预览的上限：更大的图片只显示信息与下载按钮，读取时也最多收这么多字节。 */
-export const MAX_IMAGE_PREVIEW_BYTES = 32 * 1024 * 1024;
+/** 整份读入预览（图片、PDF、Office、字体、压缩包、3D 模型）的上限：更大的文件只显示信息与下载按钮，读取时也最多收这么多字节。 */
+export const MAX_PREVIEW_BLOB_BYTES = 64 * 1024 * 1024;
 
 export interface WriteOptions {
 	/** 期望的当前 etag；不符 → 412 `modified` */
@@ -96,11 +96,6 @@ const IMAGE_MIME: Record<string, string> = {
 	bmp: "image/bmp",
 	svg: "image/svg+xml",
 };
-
-/** 可在预览里以 `<img>` 显示的类型。 */
-export function isPreviewImage(mime: string | undefined): boolean {
-	return mime !== undefined && Object.values(IMAGE_MIME).includes(mime);
-}
 
 const BINARY_EXT: Record<string, true> = {
 	zip: true,
@@ -204,9 +199,9 @@ export function isDirEntry(e: FileEntry): boolean {
 	return e.type === "dir" || (e.type === "symlink" && e.targetType === "dir");
 }
 
-/** 图片预览用的整份内容；超过 32MiB 即停止读取并报 413 `too_large`。 */
+/** 预览用的整份内容；超过 `MAX_PREVIEW_BLOB_BYTES` 即停止读取并报 413 `too_large`。 */
 async function cappedBlob(res: Response): Promise<Blob> {
-	const { bytes, over } = await readCapped(res, MAX_IMAGE_PREVIEW_BYTES);
+	const { bytes, over } = await readCapped(res, MAX_PREVIEW_BLOB_BYTES);
 	if (over) throw new ApiError(413, "too_large", "file too large to preview");
 	return new Blob([bytes]);
 }

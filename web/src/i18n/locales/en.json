@@ -2283,7 +2283,80 @@
 			"previewTruncated": "Large file ({{size}}); showing the first {{shown}} read-only.",
 			"binaryInfo": "{{mime}} · {{size}}",
 			"discard": "Discard changes",
-			"draftStale": "This file changed on disk after you started editing. Saving will ask whether to overwrite."
+			"draftStale": "This file changed on disk after you started editing. Saving will ask whether to overwrite.",
+			"tooLargeToPreview": "Larger than {{max}}; not previewed in the browser"
+		},
+		"preview": {
+			"zoomIn": "Zoom in",
+			"zoomOut": "Zoom out",
+			"zoomReset": "Toggle between fit and actual size",
+			"fit": "Fit",
+			"prevPage": "Previous page",
+			"nextPage": "Next page",
+			"pageOf": "{{n}} / {{total}}",
+			"image": {
+				"decoding": "Decoding…"
+			},
+			"media": {
+				"unsupported": "The browser can't play this file's codec. Download it and open it in a local player."
+			},
+			"table": {
+				"rowsCapped": "Showing the first {{n}} rows",
+				"empty": "Empty sheet",
+				"sheets": "Sheets"
+			},
+			"notebook": {
+				"invalid": "Couldn't parse the notebook: {{reason}}",
+				"empty": "No cells",
+				"output": "Output of cell {{n}}"
+			},
+			"pdf": {
+				"loading": "Loading PDF…",
+				"empty": "This PDF is empty",
+				"password": "This PDF is password-protected and can't be previewed",
+				"invalid": "Not a valid PDF, or the file is corrupted",
+				"pageNumber": "Page number",
+				"zoomIn": "Zoom in",
+				"zoomOut": "Zoom out",
+				"fitWidth": "Fit width",
+				"pageError": "Couldn't render page {{page}}"
+			},
+			"archive": {
+				"failed": "Couldn't read archive",
+				"summary": "{{files}} files, {{dirs}} folders · {{size}} uncompressed",
+				"truncated": "Too many entries; showing the first {{max}}",
+				"empty": "Archive is empty",
+				"path": "Path",
+				"size": "Size",
+				"modified": "Modified"
+			},
+			"font": {
+				"invalid": "Couldn't load this font file",
+				"format": {
+					"truetype": "TrueType",
+					"opentype": "OpenType (CFF)",
+					"woff": "WOFF",
+					"woff2": "WOFF2"
+				},
+				"glyphCount_one": "{{count}} glyph",
+				"glyphCount_other": "{{count}} glyphs",
+				"designer": "Designed by {{name}}",
+				"sample": "Sample text",
+				"samplePlaceholder": "Type text to preview",
+				"glyphs": "Glyphs"
+			},
+			"slides": {
+				"empty": "No slides to show. The file may be incomplete or use an unsupported format."
+			},
+			"model": {
+				"webglUnavailable": "WebGL isn't available, so 3D models can't be previewed",
+				"externalBuffer": "This glTF references external data files; only embedded glTF or GLB is supported",
+				"failed": "Couldn't load model",
+				"resetView": "Reset view",
+				"wireframe": "Wireframe",
+				"missingTextures": "External textures weren't loaded",
+				"stats": "{{vertices}} vertices · {{triangles}} triangles"
+			}
 		},
 		"conflict": {
 			"title": "File changed",

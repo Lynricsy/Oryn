@@ -29,6 +29,7 @@ import { Bug } from "@phosphor-icons/react/dist/csr/Bug";
 import { Camera } from "@phosphor-icons/react/dist/csr/Camera";
 import { Cards } from "@phosphor-icons/react/dist/csr/Cards";
 import { CaretDown } from "@phosphor-icons/react/dist/csr/CaretDown";
+import { CaretLeft } from "@phosphor-icons/react/dist/csr/CaretLeft";
 import { CaretRight } from "@phosphor-icons/react/dist/csr/CaretRight";
 import { CaretUp } from "@phosphor-icons/react/dist/csr/CaretUp";
 import { ChartBar } from "@phosphor-icons/react/dist/csr/ChartBar";
@@ -103,6 +104,7 @@ import { Minus } from "@phosphor-icons/react/dist/csr/Minus";
 import { MinusCircle } from "@phosphor-icons/react/dist/csr/MinusCircle";
 import { Monitor } from "@phosphor-icons/react/dist/csr/Monitor";
 import { Moon } from "@phosphor-icons/react/dist/csr/Moon";
+import { MusicNotes } from "@phosphor-icons/react/dist/csr/MusicNotes";
 import { Note } from "@phosphor-icons/react/dist/csr/Note";
 import { Palette } from "@phosphor-icons/react/dist/csr/Palette";
 import { Paperclip } from "@phosphor-icons/react/dist/csr/Paperclip";
@@ -166,6 +168,7 @@ const ICONS = {
 	sidebar: SidebarSimple,
 	chevronDown: CaretDown,
 	chevronRight: CaretRight,
+	chevronLeft: CaretLeft,
 	chevronUp: CaretUp,
 	close: X,
 	pin: PushPin,
@@ -325,6 +328,7 @@ const ICONS = {
 	arrowUpRight: ArrowUpRight,
 	zoomIn: MagnifyingGlassPlus,
 	zoomOut: MagnifyingGlassMinus,
+	music: MusicNotes,
 	/** 画布编辑器的工具条、图层与属性面板（M14 6.4）：图层、解锁（锁定用 `lock`）、六种对齐、两种等距、移到最前 / 最后 */
 	stack: Stack,
 	lockOpen: LockSimpleOpen,

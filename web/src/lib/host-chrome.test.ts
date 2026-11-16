@@ -3,13 +3,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { relativeLuminance, toHexColor, watchChrome } from "./host-chrome";
 
 describe("toHexColor", () => {
-	it("rgb / rgba / 短长十六进制直接换算；无法换算时为 null（jsdom 无画布）", () => {
+	it("rgb / rgba / 短长十六进制直接换算；没有可用画布时其它写法为 null", () => {
 		expect(toHexColor("rgb(238, 240, 244)")).toBe("#eef0f4");
 		expect(toHexColor("rgba(16, 17, 18, 0.5)")).toBe("#101112");
 		expect(toHexColor("#ABC")).toBe("#aabbcc");
 		expect(toHexColor("#0a0b0c")).toBe("#0a0b0c");
-		vi.spyOn(console, "error").mockImplementation(() => {});
-		expect(toHexColor("oklch(0.2 0.01 250)")).toBeNull();
+		// jsdom 是否带画布取决于是否装了可选的 @napi-rs/canvas（pdfjs-dist 的可选依赖），这里显式给一个没有 2d 上下文的文档
+		const noCanvas = {
+			createElement: () => ({ getContext: () => null }),
+		} as unknown as Document;
+		expect(toHexColor("oklch(0.2 0.01 250)", noCanvas)).toBeNull();
 	});
 });
 

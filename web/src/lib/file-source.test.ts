@@ -315,8 +315,8 @@ describe("读取上限：服务端无视 Range 回整个大文件时不整份读
 		expect(stats.cancelled).toBe(true);
 	});
 
-	it("readBlob（图片预览）超过 32MiB → 413 too_large，并取消读取", async () => {
-		const { stats, body } = oversized(1024 * 1024, 48);
+	it("readBlob（整份预览）超过 64MiB → 413 too_large，并取消读取", async () => {
+		const { stats, body } = oversized(1024 * 1024, 80);
 		vi.stubGlobal(
 			"fetch",
 			vi.fn(async () => new Response(body, { status: 200 })),
@@ -325,7 +325,7 @@ describe("读取上限：服务端无视 Range 回整个大文件时不整份读
 			orbFileSource("orb-cap00000000000000000000001", "T-1").readBlob("/x.png"),
 		).rejects.toMatchObject({ status: 413, code: "too_large" });
 		expect(stats.cancelled).toBe(true);
-		expect(stats.pulls).toBeLessThan(40);
+		expect(stats.pulls).toBeLessThan(72);
 	});
 });
 

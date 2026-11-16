@@ -18,7 +18,7 @@ import { fileIcon } from "../../lib/file-icon";
 import {
 	type FileSource,
 	MAX_EDIT_BYTES,
-	MAX_IMAGE_PREVIEW_BYTES,
+	MAX_PREVIEW_BLOB_BYTES,
 	readCapped,
 } from "../../lib/file-source";
 import { formatBytes, formatDateTime } from "../../lib/format";
@@ -87,7 +87,7 @@ function libraryFileSource(file: AssistantFile): FileSource {
 		async readBlob() {
 			const { bytes, over } = await readCapped(
 				await rawFetch(url),
-				MAX_IMAGE_PREVIEW_BYTES,
+				MAX_PREVIEW_BLOB_BYTES,
 			);
 			if (over)
 				throw new ApiError(413, "too_large", "file too large to preview");

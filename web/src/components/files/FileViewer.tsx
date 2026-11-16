@@ -1,10 +1,13 @@
 /**
- * 文件预览 / 编辑：`stat` 后分流——
- * - 文本且 ≤2MiB：CodeMirror 编辑器（懒加载）；`.md` 另有「预览 / 源码」切换；
- * - 文本但更大：只读显示前 256KiB；
- * - 常见图片（≤32MiB）：`readBlob` → `<img>`（不用 iframe，也不直接导航到接口地址）；
- *   位图用 object URL，SVG 用 `data:` URL（不透明源，SVG 里的脚本与外链拿不到本站的源）；
- * - 其它：类型、大小与下载按钮。
+ * 文件预览 / 编辑：`stat` 后按 `previewKind`（扩展名优先，其次 MIME 与 `text` 嗅探）分流——
+ * - 文本且 ≤2MiB：CodeMirror 编辑器（懒加载）；更大：只读显示前 256KiB；
+ *   Markdown、CSV/TSV、HTML、Notebook、mermaid、SVG 另有「预览 / 源码」切换，缺省显示预览（有草稿时显示源码），
+ *   预览跟随未保存的草稿；源码被截断时预览改读整份文件（≤64MiB）；
+ * - 整份读入的预览（≤64MiB）：图片（含 HEIC / TIFF / PSD 本地解码）、PDF、Word、电子表格、演示文稿、字体、压缩包目录、3D 模型；
+ * - 音视频：下载地址直接作 `<video>` / `<audio>` 的 src，按 Range 流式播放；
+ * - 其它或超过上限：类型、大小与下载按钮。
+ * 不可信内容的边界：HTML 类内容只进惰性 iframe（不执行脚本、不发请求，见 InertFrame）；图片只经 `<img>`；
+ * 表格、压缩包目录等一律作为文本交给 React 转义。
  * 保存带 `etag`；412 `modified` → 对话框「覆盖 / 重新加载」。
  * 草稿存在 `drafts` store（按来源 + 路径），换文件、关面板、换线程回来后仍在；
  * 保存期间继续编辑时，保存完成只把基线前移，不覆盖较新的草稿。
@@ -15,6 +18,7 @@ import {
 	Suspense,
 	useCallback,
 	useEffect,
+	useMemo,
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
@@ -23,12 +27,16 @@ import { fileIcon } from "../../lib/file-icon";
 import {
 	type FileEntry,
 	type FileSource,
-	isPreviewImage,
 	MAX_EDIT_BYTES,
-	MAX_IMAGE_PREVIEW_BYTES,
+	MAX_PREVIEW_BLOB_BYTES,
 	PREVIEW_BYTES,
 } from "../../lib/file-source";
 import { formatBytes, formatDateTime } from "../../lib/format";
+import {
+	type BlobViewer,
+	previewKind,
+	type TextRender,
+} from "../../lib/preview-kind";
 import { Markdown } from "../markdown/Markdown";
 import { Badge } from "../ui/data";
 import { Icon } from "../ui/icons";
@@ -47,18 +55,20 @@ import {
 	markSaved,
 	useDraft,
 } from "./drafts";
+import { InertFrame } from "./preview/InertFrame";
+import MediaPreview from "./preview/MediaPreview";
 
 const CodeEditor = lazy(() => import("../editor/CodeEditor"));
-
-/** Blob → `data:<type>;base64,…`。 */
-function dataUrl(blob: Blob): Promise<string> {
-	return new Promise((resolve, reject) => {
-		const r = new FileReader();
-		r.onload = () => resolve(String(r.result));
-		r.onerror = () => reject(r.error);
-		r.readAsDataURL(blob);
-	});
-}
+const ImagePreview = lazy(() => import("./preview/ImagePreview"));
+const PdfPreview = lazy(() => import("./preview/PdfPreview"));
+const DocxPreview = lazy(() => import("./preview/DocxPreview"));
+const SheetPreview = lazy(() => import("./preview/SheetPreview"));
+const SlidesPreview = lazy(() => import("./preview/SlidesPreview"));
+const FontPreview = lazy(() => import("./preview/FontPreview"));
+const ArchivePreview = lazy(() => import("./preview/ArchivePreview"));
+const ModelPreview = lazy(() => import("./preview/ModelPreview"));
+const CsvPreview = lazy(() => import("./preview/CsvPreview"));
+const NotebookPreview = lazy(() => import("./preview/NotebookPreview"));
 
 type Loaded =
 	| {
@@ -69,9 +79,87 @@ type Loaded =
 			/** 只显示了前 `PREVIEW_BYTES`（太大或读取被截断） */
 			truncated: boolean;
 			readOnly: boolean;
+			render?: TextRender;
 	  }
-	| { kind: "image"; entry: FileEntry; url: string }
-	| { kind: "binary"; entry: FileEntry };
+	| { kind: "blob"; entry: FileEntry; viewer: BlobViewer; blob: Blob }
+	| { kind: "media"; entry: FileEntry; media: "video" | "audio"; src: string }
+	| {
+			kind: "binary";
+			entry: FileEntry;
+			/** 有预览方式但超过 `MAX_PREVIEW_BLOB_BYTES` */
+			tooLarge: boolean;
+	  };
+
+function BlobView({
+	viewer,
+	blob,
+	name,
+}: {
+	viewer: BlobViewer;
+	blob: Blob;
+	name: string;
+}): ReactNode {
+	switch (viewer) {
+		case "image":
+		case "heic":
+		case "tiff":
+		case "psd":
+			return <ImagePreview blob={blob} name={name} decoder={viewer} />;
+		case "pdf":
+			return <PdfPreview blob={blob} name={name} />;
+		case "docx":
+			return <DocxPreview blob={blob} name={name} />;
+		case "sheet":
+			return <SheetPreview blob={blob} name={name} />;
+		case "slides":
+			return <SlidesPreview blob={blob} name={name} />;
+		case "font":
+			return <FontPreview blob={blob} name={name} />;
+		case "archive":
+			return <ArchivePreview blob={blob} name={name} />;
+		case "model":
+			return <ModelPreview blob={blob} name={name} />;
+	}
+}
+
+/** 文本的渲染视图；`text` 为当前内容（含未保存的草稿）。 */
+function TextView({
+	render,
+	text,
+	name,
+}: {
+	render: TextRender;
+	text: string;
+	name: string;
+}): ReactNode {
+	// SVG 以 Blob 交给图片查看器（`data:` URL 显示）；只随内容变化重建
+	const svg = useMemo(
+		() => (render === "svg" ? new Blob([text]) : null),
+		[render, text],
+	);
+	switch (render) {
+		case "markdown":
+			return (
+				<div className="h-full overflow-y-auto px-4 py-3">
+					<Markdown text={text} />
+				</div>
+			);
+		case "mermaid":
+			return (
+				<div className="h-full overflow-auto px-4 py-3">
+					<Markdown text={`\`\`\`mermaid\n${text}\n\`\`\``} />
+				</div>
+			);
+		case "table":
+			return <CsvPreview text={text} name={name} />;
+		case "html":
+			return <InertFrame html={text} title={name} />;
+		case "notebook":
+			return <NotebookPreview text={text} />;
+		case "svg":
+			return svg && <ImagePreview blob={svg} name={name} decoder="image" />;
+	}
+}
 
 export function FileViewer({
 	source,
@@ -98,35 +186,61 @@ export function FileViewer({
 	const [saving, setSaving] = useState(false);
 	const [saveError, setSaveError] = useState<unknown>(null);
 	const [conflict, setConflict] = useState(false);
-	const [mdPreview, setMdPreview] = useState(false);
+	/** 用户为某个文件选的视图；没选过时缺省显示预览，有草稿或文件为空（如刚新建）时显示源码 */
+	const [viewChoice, setViewChoice] = useState<{
+		key: string;
+		source: boolean;
+	} | null>(null);
+	/** 源码被截断时预览用的整份文本 */
+	const [fullText, setFullText] = useState<{
+		key: string;
+		text?: string;
+		error?: unknown;
+	} | null>(null);
 	const [reloadKey, setReloadKey] = useState(0);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: reloadKey 触发重新加载
 	useEffect(() => {
 		let cancelled = false;
-		let url: string | null = null;
 		setLoaded(null);
 		setLoadError(null);
 		setSaveError(null);
-		(async () => {
+		setFullText(null);
+		(async (): Promise<Loaded> => {
 			const entry = await source.stat(path);
-			if (isPreviewImage(entry.mime) && entry.size <= MAX_IMAGE_PREVIEW_BYTES) {
-				// 下载接口一律回 application/octet-stream；类型取自 stat，否则 SVG 无法在 <img> 中显示
-				const blob = new Blob([await source.readBlob(path)], {
-					type: entry.mime,
-				});
-				if (entry.mime === "image/svg+xml")
-					return { kind: "image", entry, url: await dataUrl(blob) } as const;
-				url = URL.createObjectURL(blob);
-				return { kind: "image", entry, url } as const;
+			const kind = previewKind(path, entry.mime, entry.text);
+			// 超出编辑上限的 SVG 截断后无法显示，整份当图片读
+			const big = entry.size > MAX_EDIT_BYTES;
+			if (kind.kind === "text" && kind.render === "svg" && big)
+				return entry.size > MAX_PREVIEW_BLOB_BYTES
+					? { kind: "binary", entry, tooLarge: true }
+					: {
+							kind: "blob",
+							entry,
+							viewer: "image",
+							blob: await source.readBlob(path),
+						};
+			if (kind.kind === "blob") {
+				if (entry.size > MAX_PREVIEW_BLOB_BYTES)
+					return { kind: "binary", entry, tooLarge: true };
+				return {
+					kind: "blob",
+					entry,
+					viewer: kind.viewer,
+					blob: await source.readBlob(path),
+				};
 			}
-			if (entry.text) {
-				const editable = entry.size <= MAX_EDIT_BYTES;
+			if (kind.kind === "media") {
+				const src = source.downloadUrl(path);
+				if (src) return { kind: "media", entry, media: kind.media, src };
+				return { kind: "binary", entry, tooLarge: false };
+			}
+			if (kind.kind === "text") {
 				const r = await source.readText(
 					path,
-					editable ? MAX_EDIT_BYTES : PREVIEW_BYTES,
+					big ? PREVIEW_BYTES : MAX_EDIT_BYTES,
 				);
-				const truncated = !editable || r.truncated;
+				const truncated = big || r.truncated;
 				return {
 					kind: "text",
 					entry,
@@ -134,24 +248,16 @@ export function FileViewer({
 					etag: r.etag ?? entry.etag,
 					truncated,
 					readOnly: readOnly || truncated,
-				} as const;
+					render: kind.render,
+				};
 			}
-			return { kind: "binary", entry } as const;
+			return { kind: "binary", entry, tooLarge: false };
 		})().then(
-			(l) => {
-				if (cancelled) {
-					if (url) URL.revokeObjectURL(url);
-					return;
-				}
-				setLoaded(l);
-			},
-			(e) => {
-				if (!cancelled) setLoadError(e);
-			},
+			(l) => !cancelled && setLoaded(l),
+			(e) => !cancelled && setLoadError(e),
 		);
 		return () => {
 			cancelled = true;
-			if (url) URL.revokeObjectURL(url);
 		};
 	}, [source, path, readOnly, reloadKey]);
 
@@ -160,6 +266,32 @@ export function FileViewer({
 	// 草稿开始之后磁盘上的文件又变了：保存会触发 412 再让用户选择
 	const draftStale =
 		dirty && text.etag !== undefined && draft.etag !== text.etag;
+	const showSource =
+		!text?.render ||
+		(viewChoice?.key === key
+			? viewChoice.source
+			: draft !== undefined || text.entry.size === 0);
+	const needFull =
+		text !== null &&
+		!showSource &&
+		text.truncated &&
+		text.entry.size <= MAX_PREVIEW_BLOB_BYTES;
+
+	useEffect(() => {
+		if (!needFull || fullText?.key === key) return;
+		let cancelled = false;
+		setFullText({ key });
+		source
+			.readBlob(path)
+			.then((b) => b.text())
+			.then(
+				(s) => !cancelled && setFullText({ key, text: s }),
+				(e) => !cancelled && setFullText({ key, error: e }),
+			);
+		return () => {
+			cancelled = true;
+		};
+	}, [needFull, fullText?.key, key, source, path]);
 
 	const onChange = useCallback(
 		(value: string) => {
@@ -193,11 +325,26 @@ export function FileViewer({
 		[source, path, key, text, draft, onSaved],
 	);
 
-	const isMarkdown = /\.(md|markdown)$/i.test(path);
 	const entry = loaded?.entry;
 	const cut = path.lastIndexOf("/") + 1;
 	const dirPart = path.slice(0, cut);
 	const namePart = path.slice(cut);
+	const loading = (
+		<div className="p-3">
+			<Spinner />
+		</div>
+	);
+
+	let previewText: string | null = null;
+	let previewError: unknown = null;
+	if (text && !showSource) {
+		if (dirty) previewText = draft.text;
+		else if (!needFull) previewText = text.text;
+		else if (fullText?.key === key) {
+			previewText = fullText.text ?? null;
+			previewError = fullText.error ?? null;
+		}
+	}
 
 	return (
 		<div className="flex h-full min-h-0 flex-col">
@@ -244,23 +391,23 @@ export function FileViewer({
 						<Badge>{formatBytes(entry.size)}</Badge>
 					</span>
 				)}
-				{text && isMarkdown && (
+				{text?.render && (
 					<div className="flex shrink-0 items-center gap-0.5">
 						<button
 							type="button"
-							aria-pressed={!mdPreview}
-							className={`${tabClass(!mdPreview)} ${!mdPreview ? "bg-hover" : ""}`}
-							onClick={() => setMdPreview(false)}
+							aria-pressed={!showSource}
+							className={`${tabClass(!showSource)} ${!showSource ? "bg-hover" : ""}`}
+							onClick={() => setViewChoice({ key, source: false })}
 						>
-							{t("files.viewer.source")}
+							{t("files.viewer.preview")}
 						</button>
 						<button
 							type="button"
-							aria-pressed={mdPreview}
-							className={`${tabClass(mdPreview)} ${mdPreview ? "bg-hover" : ""}`}
-							onClick={() => setMdPreview(true)}
+							aria-pressed={showSource}
+							className={`${tabClass(showSource)} ${showSource ? "bg-hover" : ""}`}
+							onClick={() => setViewChoice({ key, source: true })}
 						>
-							{t("files.viewer.preview")}
+							{t("files.viewer.source")}
 						</button>
 					</div>
 				)}
@@ -304,9 +451,7 @@ export function FileViewer({
 						<ErrorText error={loadError} />
 					</div>
 				) : !loaded ? (
-					<div className="p-3">
-						<Spinner />
-					</div>
+					loading
 				) : loaded.kind === "text" ? (
 					<div className="flex h-full min-h-0 flex-col">
 						{draftStale && (
@@ -315,7 +460,7 @@ export function FileViewer({
 								{t("files.viewer.draftStale")}
 							</p>
 						)}
-						{loaded.truncated && (
+						{loaded.truncated && (showSource || !needFull) && (
 							<p className="flex shrink-0 items-center gap-1.5 bg-warn/8 px-3 py-1.5 text-warn text-xs">
 								<Icon name="info" size={13} className="shrink-0" />
 								{t("files.viewer.previewTruncated", {
@@ -324,19 +469,29 @@ export function FileViewer({
 								})}
 							</p>
 						)}
-						{isMarkdown && mdPreview ? (
-							<div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-								<Markdown text={dirty ? draft.text : loaded.text} />
-							</div>
-						) : (
-							<Suspense
-								fallback={
-									<div className="p-3 text-faint text-xs">
-										{t("editor.loading")}
-									</div>
-								}
-							>
-								<div className="min-h-0 flex-1">
+						<Suspense
+							fallback={
+								<div className="p-3 text-faint text-xs">
+									{t("editor.loading")}
+								</div>
+							}
+						>
+							<div className="min-h-0 flex-1">
+								{!showSource && loaded.render ? (
+									previewError ? (
+										<div className="p-3">
+											<ErrorText error={previewError} />
+										</div>
+									) : previewText === null ? (
+										loading
+									) : (
+										<TextView
+											render={loaded.render}
+											text={previewText}
+											name={namePart}
+										/>
+									)
+								) : (
 									<CodeEditor
 										value={dirty ? draft.text : loaded.text}
 										path={path}
@@ -344,18 +499,20 @@ export function FileViewer({
 										onChange={onChange}
 										onSave={() => void save(false)}
 									/>
-								</div>
-							</Suspense>
-						)}
+								)}
+							</div>
+						</Suspense>
 					</div>
-				) : loaded.kind === "image" ? (
-					<div className="flex h-full items-center justify-center overflow-auto bg-inset p-3">
-						<img
-							src={loaded.url}
-							alt={loaded.entry.name}
-							className="max-h-full max-w-full object-contain"
+				) : loaded.kind === "blob" ? (
+					<Suspense fallback={loading}>
+						<BlobView
+							viewer={loaded.viewer}
+							blob={loaded.blob}
+							name={namePart}
 						/>
-					</div>
+					</Suspense>
+				) : loaded.kind === "media" ? (
+					<MediaPreview src={loaded.src} media={loaded.media} name={namePart} />
 				) : (
 					<div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-sm">
 						<span className="grid h-11 w-11 place-items-center rounded-full bg-inset">
@@ -374,6 +531,13 @@ export function FileViewer({
 								size: formatBytes(loaded.entry.size),
 							})}
 						</div>
+						{loaded.tooLarge && (
+							<div className="text-muted text-xs">
+								{t("files.viewer.tooLargeToPreview", {
+									max: formatBytes(MAX_PREVIEW_BLOB_BYTES),
+								})}
+							</div>
+						)}
 						<div className="text-faint text-xs tabular-nums">
 							{formatDateTime(loaded.entry.mtime)}
 						</div>

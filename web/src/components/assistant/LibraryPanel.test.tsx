@@ -188,10 +188,10 @@ describe("LibraryPanel", () => {
 		fireEvent.click(
 			within(row("周报-11月第2周.md")).getByRole("button", { name: "预览" }),
 		);
-		// Markdown 读完后出现「源码 / 预览」切换
-		fireEvent.click(
-			await screen.findByRole("button", { name: "预览", pressed: false }),
-		);
+		// Markdown 缺省显示预览，同时给出「预览 / 源码」切换
+		expect(
+			await screen.findByRole("button", { name: "预览", pressed: true }),
+		).toBeVisible();
 		expect(await screen.findByRole("heading", { name: "周报" })).toBeVisible();
 		expect(screen.queryByRole("button", { name: "保存" })).toBeNull();
 		expect(

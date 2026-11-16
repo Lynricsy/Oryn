@@ -2283,7 +2283,80 @@
 			"previewTruncated": "文件较大（{{size}}），只读显示前 {{shown}}。",
 			"binaryInfo": "{{mime}} · {{size}}",
 			"discard": "放弃改动",
-			"draftStale": "开始编辑之后，磁盘上的文件又被修改过；保存时会询问是否覆盖。"
+			"draftStale": "开始编辑之后，磁盘上的文件又被修改过；保存时会询问是否覆盖。",
+			"tooLargeToPreview": "超过 {{max}}，不在浏览器中预览"
+		},
+		"preview": {
+			"zoomIn": "放大",
+			"zoomOut": "缩小",
+			"zoomReset": "在适应窗口与实际大小之间切换",
+			"fit": "适应",
+			"prevPage": "上一页",
+			"nextPage": "下一页",
+			"pageOf": "{{n}} / {{total}}",
+			"image": {
+				"decoding": "正在解码…"
+			},
+			"media": {
+				"unsupported": "浏览器无法播放这个文件的编码，可下载后用本地播放器打开。"
+			},
+			"table": {
+				"rowsCapped": "只显示前 {{n}} 行",
+				"empty": "空表",
+				"sheets": "工作表"
+			},
+			"notebook": {
+				"invalid": "无法解析 Notebook：{{reason}}",
+				"empty": "没有单元格",
+				"output": "单元格 {{n}} 的输出"
+			},
+			"pdf": {
+				"loading": "正在加载 PDF…",
+				"empty": "PDF 为空，没有可显示的页面",
+				"password": "该 PDF 受密码保护，无法预览",
+				"invalid": "不是有效的 PDF，或文件已损坏",
+				"pageNumber": "页码",
+				"zoomIn": "放大",
+				"zoomOut": "缩小",
+				"fitWidth": "适应宽度",
+				"pageError": "第 {{page}} 页渲染失败"
+			},
+			"archive": {
+				"failed": "无法读取归档",
+				"summary": "{{files}} 个文件，{{dirs}} 个目录 · 解压后共 {{size}}",
+				"truncated": "条目过多，仅列出前 {{max}} 项",
+				"empty": "归档为空",
+				"path": "路径",
+				"size": "大小",
+				"modified": "修改时间"
+			},
+			"font": {
+				"invalid": "无法解析该字体文件",
+				"format": {
+					"truetype": "TrueType",
+					"opentype": "OpenType (CFF)",
+					"woff": "WOFF",
+					"woff2": "WOFF2"
+				},
+				"glyphCount_one": "{{count}} 个字形",
+				"glyphCount_other": "{{count}} 个字形",
+				"designer": "设计：{{name}}",
+				"sample": "样张文本",
+				"samplePlaceholder": "输入要预览的文字",
+				"glyphs": "字形"
+			},
+			"slides": {
+				"empty": "没有可显示的幻灯片，文件可能不完整或格式不受支持。"
+			},
+			"model": {
+				"webglUnavailable": "当前环境不支持 WebGL，无法预览 3D 模型",
+				"externalBuffer": "该 glTF 引用了外部数据文件，仅支持内嵌数据的 glTF 或 GLB",
+				"failed": "无法加载模型",
+				"resetView": "重置视角",
+				"wireframe": "线框",
+				"missingTextures": "外部纹理未加载",
+				"stats": "{{vertices}} 个顶点 · {{triangles}} 个三角面"
+			}
 		},
 		"conflict": {
 			"title": "文件已被修改",
