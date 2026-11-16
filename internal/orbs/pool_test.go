@@ -216,6 +216,36 @@ func TestPoolClaimFrozen(t *testing.T) {
 	assert.True(t, *calls[2].Repo.Update)
 }
 
+// M14 3.1：认领 ready 池 orb 时写入请求的 GitHub 身份；请求 agent 身份时不认领 user 身份的 warming 池 orb。
+func TestPoolClaimGithubIdentity(t *testing.T) {
+	e := newPoolEnv(t, nil)
+	ctx := context.Background()
+	prj := e.warmProject("app", 1, nil)
+	p := e.warmOne(prj)
+	assert.Equal(t, "user", p.GithubIdentity)
+	got, ok := e.svc.ClaimPool(ctx, CreateParams{ProjectID: prj, GithubIdentity: "agent"})
+	require.True(t, ok)
+	assert.Equal(t, p.ID, got.ID)
+	assert.Equal(t, "agent", mustOrb(t, e, p.ID).GithubIdentity)
+	e.waitState(p.ID, StateReady, 10*time.Second)
+
+	// warming 的池 orb（user 身份）：agent 请求不认领，user 请求可认领
+	block := make(chan struct{})
+	e.block.Store(block)
+	defer close(block)
+	e.svc.poolReconcile(ctx)
+	pool := e.pool(prj)
+	require.Len(t, pool, 1)
+	id := pool[0].ID
+	e.waitState(id, StateSettingUp, 10*time.Second)
+	_, ok = e.svc.ClaimPool(ctx, CreateParams{ProjectID: prj, GithubIdentity: "agent"})
+	assert.False(t, ok, "身份不同的 warming 池 orb 不可认领")
+	got, ok = e.svc.ClaimPool(ctx, CreateParams{ProjectID: prj})
+	require.True(t, ok)
+	assert.Equal(t, id, got.ID)
+	assert.Equal(t, "user", got.GithubIdentity)
+}
+
 // 不走池：请求了浏览器 Profile、指定了快照、没有项目、配置哈希不匹配。
 func TestPoolClaimPreconditions(t *testing.T) {
 	e := newPoolEnv(t, nil)

@@ -944,6 +944,7 @@ func TestNewThreadCreatesThread(t *testing.T) {
 	assert.Equal(t, "tick · 11-14 17:01", c.Title)
 	assert.Equal(t, s.ID, c.ScheduleID)
 	assert.EqualValues(t, 1, c.ScheduleRun)
+	assert.True(t, c.Automation, "项目级定时创建的线程按自动化身份取 GitHub 身份（M14）")
 	assert.Equal(t, "[Oryn scheduled run \"tick\" #1 · scheduled for 2026-11-14T17:01:00+08:00 (Asia/Shanghai)]\nonly reply run 1", c.Prompt)
 	assert.Empty(t, f.th.Delivers())
 

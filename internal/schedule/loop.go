@@ -452,7 +452,7 @@ func (s *Service) createThread(ctx context.Context, fp fireParams, loc *time.Loc
 		ProjectID: deref(sc.ProjectID), Prompt: text, Provider: deref(sc.Provider), Type: deref(sc.OrbType),
 		Model: parseModel(sc.Model), ThinkingLevel: deref(sc.ThinkingLevel), SpaceID: deref(sc.SpaceID),
 		Title:      sc.Name + " · " + time.UnixMilli(fp.scheduledFor).In(loc).Format("01-02 15:04"),
-		ScheduleID: sc.ID, ScheduleRun: fp.run, Tag: fp.runID,
+		ScheduleID: sc.ID, ScheduleRun: fp.run, Tag: fp.runID, Automation: true,
 	}
 	s.mu.Lock()
 	s.creating++

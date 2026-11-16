@@ -106,6 +106,8 @@ type Service struct {
 	cfgSyncTimeout time.Duration
 	// cfgSchema 是 omp 设置 schema（M13 6.3，SetConfigSchema 在服务对外可用之前设置；nil = 未知，键变化按需重启处理）。
 	cfgSchema ConfigSchema
+	// gh 解析自动化线程的 GitHub 身份（M14，SetGitHub 在服务对外可用之前设置；nil = 一律 user）。
+	gh GitHub
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -228,6 +230,12 @@ func (s *Service) SetProfiles(p Profiles) { s.profiles = p }
 // SetAfterSpacePrecheck 设置 Create / Patch 在 Space 预检之后、写引用的事务之前调用的钩子（仅测试：其它包的回归测试
 // 在这里同步执行完整的 DeleteSpace，契约 C4）。须在服务对外可用之前调用。
 func (s *Service) SetAfterSpacePrecheck(fn func()) { s.afterSpacePrecheck = fn }
+
+// GitHub 给线程服务解析自动化身份（M14）。
+type GitHub interface{ AutomationIdentity(ctx context.Context) string }
+
+// SetGitHub 设置 GitHub 集成（M14）；须在服务对外可用之前调用。
+func (s *Service) SetGitHub(g GitHub) { s.gh = g }
 
 func (s *Service) out() Sink { return s.sink.Load().Sink }
 

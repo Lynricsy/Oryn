@@ -232,7 +232,12 @@ func (s *Service) runForkCopy(ctx context.Context, t *thread, op forkOp) {
 	// 重启前可能已建好 orb 但没来得及绑定：复用它，不再建第二台（新 orb 的 snapshot_of 与 image 都是快照 id）
 	o, err := s.st.Q.FindUnboundSnapshotOrb(ctx, op.SnapshotID)
 	if err != nil {
-		o, err = s.orbs.Create(ctx, OrbCreate{Type: op.Type, ProjectID: op.ProjectID, SnapshotOf: op.SrcOrb, SnapshotID: op.SnapshotID})
+		req := OrbCreate{Type: op.Type, ProjectID: op.ProjectID, SnapshotOf: op.SrcOrb, SnapshotID: op.SnapshotID}
+		// 副本沿用源 orb 的 GitHub 身份（M14）
+		if src, gerr := s.st.Q.GetOrb(ctx, op.SrcOrb); gerr == nil {
+			req.GithubIdentity = src.GithubIdentity
+		}
+		o, err = s.orbs.Create(ctx, req)
 		if err != nil {
 			if ctx.Err() != nil {
 				return

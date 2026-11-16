@@ -66,9 +66,14 @@ func poolDead(state string) bool {
 // ClaimPool 认领一台与 p 匹配（项目、provider、类型、配置哈希全等）的预热池 orb（M11a 3.2）。顺序：idle 且 ready →
 // idle 且冻结中 / 已冻结 → warming（创建早的在前）；第一个比较并交换成功的即返回。没有可认领的返回 false。
 // 请求了浏览器 Profile、指定了快照的不走池（Profile 须在 ready 之前装载）。
+// 认领时把 orb 的 GitHub 身份改为 p.GithubIdentity（M14）；warming 的 orb 认领后不再重跑 setup，只认领身份相同的。
 func (s *Service) ClaimPool(ctx context.Context, p CreateParams) (db.Orb, bool) {
 	if s.cfg.Pool.MaxTotal <= 0 || p.ProjectID == "" || p.SnapshotID != "" || p.BrowserProfileID != "" || p.Coordinator || p.Pool {
 		return db.Orb{}, false
+	}
+	ident := p.GithubIdentity
+	if ident == "" {
+		ident = "user"
 	}
 	t, err := s.resolveTarget(ctx, p)
 	if err != nil || t.prj == nil {
@@ -89,7 +94,7 @@ func (s *Service) ClaimPool(ctx context.Context, p CreateParams) (db.Orb, bool) 
 			return 0
 		case derefStr(o.PoolState) == PoolIdle && (o.State == StateFrozen || o.State == StateFreezing):
 			return 1
-		case derefStr(o.PoolState) == PoolWarming && !poolDead(o.State):
+		case derefStr(o.PoolState) == PoolWarming && !poolDead(o.State) && o.GithubIdentity == ident:
 			return 2
 		}
 		return -1
@@ -105,11 +110,11 @@ func (s *Service) ClaimPool(ctx context.Context, p CreateParams) (db.Orb, bool) 
 		var ok bool
 		switch rank(o) {
 		case 0:
-			ok = s.claimReady(ctx, o.ID)
+			ok = s.claimReady(ctx, o.ID, ident)
 		case 1:
-			ok = s.claimFrozen(ctx, o.ID)
+			ok = s.claimFrozen(ctx, o.ID, ident)
 		case 2:
-			ok = s.claimWarming(ctx, o.ID)
+			ok = s.claimWarming(ctx, o.ID, ident)
 		}
 		if !ok {
 			continue
@@ -127,8 +132,8 @@ func (s *Service) ClaimPool(ctx context.Context, p CreateParams) (db.Orb, bool) 
 }
 
 // claimWarming 认领尚未就绪的池 orb：直接离开池（pool_state = NULL）；它照常走完 setup 进入 ready，不需要额外刷新。
-func (s *Service) claimWarming(ctx context.Context, orbID string) bool {
-	n, err := s.st.Q.ClaimPoolOrb(ctx, db.ClaimPoolOrbParams{PoolState: nil, ClaimedAt: s.nowMs(), ID: orbID, Seen: PoolWarming})
+func (s *Service) claimWarming(ctx context.Context, orbID, ident string) bool {
+	n, err := s.st.Q.ClaimPoolOrb(ctx, db.ClaimPoolOrbParams{PoolState: nil, ClaimedAt: s.nowMs(), ID: orbID, Seen: PoolWarming, GithubIdentity: &ident})
 	if err != nil || n == 0 {
 		return false
 	}
@@ -138,11 +143,11 @@ func (s *Service) claimWarming(ctx context.Context, orbID string) bool {
 
 // claimReady 认领就绪的池 orb：ready → connecting（守卫 pool_state = idle，同一事务 idle → claimed，并轮换令牌、
 // 入队 spawn，S-P2-3），随后由新令牌重连的 link 触发 runPhase，以带 repo.update 的 setup.run 刷新、回到 ready 时离开池。
-func (s *Service) claimReady(ctx context.Context, orbID string) bool {
+func (s *Service) claimReady(ctx context.Context, orbID, ident string) bool {
 	ch, err := s.transitionTx(ctx, orbID, StateReady, StateConnecting, map[string]any{"reason": "pool claim"}, transitionOpts{
 		guard: func(o db.Orb) bool { return derefStr(o.PoolState) == PoolIdle },
 		then: func(t *txn) error {
-			n, err := t.q.ClaimPoolOrb(t.ctx, db.ClaimPoolOrbParams{PoolState: new(PoolClaimed), ClaimedAt: t.now, ID: orbID, Seen: PoolIdle})
+			n, err := t.q.ClaimPoolOrb(t.ctx, db.ClaimPoolOrbParams{PoolState: new(PoolClaimed), ClaimedAt: t.now, ID: orbID, Seen: PoolIdle, GithubIdentity: &ident})
 			if err == nil && n == 0 {
 				err = errPoolMoved
 			}
@@ -181,8 +186,8 @@ func (s *Service) refreshClaimed(ctx context.Context, orbID, from string, detail
 }
 
 // claimFrozen 认领冻结的池 orb：先 idle → claimed，再唤醒（唤醒失败只记录：线程自己的唤醒逻辑会重试）。
-func (s *Service) claimFrozen(ctx context.Context, orbID string) bool {
-	n, err := s.st.Q.ClaimPoolOrb(ctx, db.ClaimPoolOrbParams{PoolState: new(PoolClaimed), ClaimedAt: s.nowMs(), ID: orbID, Seen: PoolIdle})
+func (s *Service) claimFrozen(ctx context.Context, orbID, ident string) bool {
+	n, err := s.st.Q.ClaimPoolOrb(ctx, db.ClaimPoolOrbParams{PoolState: new(PoolClaimed), ClaimedAt: s.nowMs(), ID: orbID, Seen: PoolIdle, GithubIdentity: &ident})
 	if err != nil || n == 0 {
 		return false
 	}
