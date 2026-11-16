@@ -25,12 +25,14 @@ import (
 // thread_pulls、github_triggers、thread_issues、github_outbox；artifacts、artifact_versions、artifact_files、
 // artifact_comment_threads、artifact_comments、artifact_data、artifact_data_totals、artifact_consents、artifact_publications；
 // M15：github_oauth_app、github_hooks、github_repo_watches、github_watches、github_self_writes、github_self_keys、github_audit、
-// github_prepare、github_autoclose、github_releases、github_sender_runs）。
+// github_prepare、github_autoclose、github_releases、github_sender_runs；
+// M16：memory_settings、memory_models、memory_endpoints、memory_projects、memory_candidates、memory_documents、memory_usage、memory_tombstones）。
 var m2Tables = []string{
 	"agent_avatars", "artifact_comment_threads", "artifact_comments", "artifact_consents", "artifact_data", "artifact_data_totals", "artifact_files", "artifact_publications", "artifact_versions", "artifacts", "assistant_files", "attachments", "blobs", "browser_profile_events", "browser_profiles", "budget", "budget_alerts", "coord_actions", "device_pairings",
 	"devices", "entries", "entry_cursors", "github_audit", "github_autoclose", "github_deliveries", "github_hooks", "github_identities",
 	"github_oauth_app", "github_oauth_states", "github_outbox", "github_prepare", "github_pulls", "github_releases", "github_repo_watches", "github_self_keys",
-	"github_self_writes", "github_sender_runs", "github_triggers", "github_watches", "jobs", "notification_channels", "notification_deliveries", "notifications", "orb_desktops",
+	"github_self_writes", "github_sender_runs", "github_triggers", "github_watches", "jobs", "memory_candidates", "memory_documents", "memory_endpoints",
+	"memory_models", "memory_projects", "memory_settings", "memory_tombstones", "memory_usage", "notification_channels", "notification_deliveries", "notifications", "orb_desktops",
 	"orb_events", "orb_samples", "orb_services", "orb_setup_runs", "orbs", "owner", "passkeys", "portal_sessions", "portal_shares",
 	"project_snapshots", "projects", "providers", "published_files", "push_subscriptions", "recovery_codes", "role_avatars", "runners", "schedule_runs", "schedules",
 	"search_docs", "search_fts", "search_fts_config", "search_fts_content", "search_fts_data", "search_fts_docsize", "search_fts_idx", "search_state",

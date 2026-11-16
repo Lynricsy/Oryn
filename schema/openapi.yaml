@@ -84,6 +84,8 @@ tags:
     description: GitHub 集成（M14）
   - name: artifacts
     description: Artifacts（M14：agent 产出的版本化交付物——页面、画布、文档、幻灯片）
+  - name: memory
+    description: 内置 Hindsight 记忆（M16：同项目共享、全局候选、模型中转）
 
 paths:
   /healthz:
@@ -3915,6 +3917,449 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ArtifactPrefs' }
         default: { $ref: '#/components/responses/Error' }
+  # ---------------------------------------------------------------- memory (M16)
+  /api/v1/memory/settings:
+    get:
+      tags: [memory]
+      operationId: getMemorySettings
+      summary: 记忆的连接与全局开关
+      responses:
+        '200':
+          description: 设置
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemorySettings' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [memory]
+      operationId: putMemorySettings
+      summary: 修改连接地址与全局开关
+      description: |
+        `hindsightUrl` 的主机不是 `127.0.0.1`、`localhost`、`::1` 或私有网段地址时必须用 `https://`，否则 400 `insecure_url`。
+        全局开关变化时，运行中且需重启的线程进入 apply-status 的待重启列表（原因 `memory`）。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MemorySettingsUpdate' }
+      responses:
+        '200':
+          description: 修改后的设置
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemorySettings' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/memory/status:
+    get:
+      tags: [memory]
+      operationId: getMemoryStatus
+      summary: Hindsight 的连接状态、版本与记忆数（实时探测，最多 10 秒）
+      responses:
+        '200':
+          description: 状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemoryStatus' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/memory/env-file:
+    post:
+      tags: [memory]
+      operationId: createMemoryEnvFile
+      summary: 生成 Hindsight 的 .env（同时轮换 Hindsight API key 与中转令牌，旧值立即失效）
+      description: 返回的两个密钥只在这一次出现；之后的 `.env` 片段（模型协议变化时）用占位文本代替它们。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '200':
+          description: 完整的 .env 内容
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemoryEnvFile' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/memory/projects:
+    get:
+      tags: [memory]
+      operationId: listMemoryProjects
+      summary: 各项目的记忆开关（未单独设置的跟随全局）
+      responses:
+        '200':
+          description: 全部未归档项目
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemoryProjectList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/memory/projects/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectIdPath' }
+    put:
+      tags: [memory]
+      operationId: putMemoryProject
+      summary: 设置项目的记忆开关
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MemoryProjectUpdate' }
+      responses:
+        '200':
+          description: 修改后的开关
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemoryProjectToggle' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/memory/models:
+    get:
+      tags: [memory]
+      operationId: getMemoryModels
+      summary: 每种用途选定的模型、协议类型与是否需要重启 Hindsight
+      responses:
+        '200':
+          description: 五种用途，顺序固定
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemoryModels' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [memory]
+      operationId: putMemoryModels
+      summary: 修改各用途的模型（未列出或不带 providerKey 的用途跟随 default；default 必须指定）
+      description: 模型必须在中央模型目录里，且 provider 的协议属于 openai 兼容、anthropic 或 gemini 之一，否则 400 `unsupported_model`。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MemoryModelsUpdate' }
+      responses:
+        '200':
+          description: 修改后的选择
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemoryModels' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/memory/models/deployed:
+    post:
+      tags: [memory]
+      operationId: confirmMemoryModelsDeployed
+      summary: 主人已按新 .env 重启 Hindsight：把各用途已部署的协议类型更新为当前选择
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '200':
+          description: 更新后的选择（needsRestart 全部为 false）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemoryModels' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/memory/endpoints:
+    get:
+      tags: [memory]
+      operationId: getMemoryEndpoints
+      summary: 嵌入与重排的远端接口
+      responses:
+        '200':
+          description: 接口配置（key 只回报是否已设置）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemoryEndpoints' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/memory/endpoints/{kind}:
+    parameters:
+      - name: kind
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/MemoryEndpointKind' }
+    put:
+      tags: [memory]
+      operationId: putMemoryEndpoint
+      summary: 修改嵌入或重排接口
+      description: bank 已有记忆（`embedLocked`）时，修改嵌入的 `model` 或 `dimensions` 返回 409 `embed_locked`；地址与 key 仍可改。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MemoryEndpointUpdate' }
+      responses:
+        '200':
+          description: 修改后的接口
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemoryEndpoints' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/memory/usage:
+    get:
+      tags: [memory]
+      operationId: getMemoryUsage
+      summary: 中转计数：各用途最近 24 小时与 7 天的调用次数和 token 数
+      responses:
+        '200':
+          description: 用量
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemoryUsage' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/memory/documents:
+    get:
+      tags: [memory]
+      operationId: listMemoryDocuments
+      summary: 按项目或全局列出记忆 document（按更新时间倒序）
+      parameters:
+        - { name: projectId, in: query, schema: { $ref: '#/components/schemas/ProjectId' }, description: 与 `global` 二选一 }
+        - { name: global, in: query, schema: { type: boolean }, description: 为真时列全局记忆 }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 30 } }
+      responses:
+        '200':
+          description: 一页
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemoryDocumentList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/memory/documents/{documentId}:
+    parameters:
+      - { $ref: '#/components/parameters/MemoryDocumentIdPath' }
+    delete:
+      tags: [memory]
+      operationId: deleteMemoryDocument
+      summary: 删除一个 document（连同 Hindsight 从它派生的记忆）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已删除 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/memory/search:
+    get:
+      tags: [memory]
+      operationId: searchMemory
+      summary: 在项目（含全局）或仅全局范围内召回
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 1, maxLength: 800 } }
+        - { name: projectId, in: query, schema: { $ref: '#/components/schemas/ProjectId' }, description: 省略 = 只搜全局 }
+      responses:
+        '200':
+          description: 召回结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemorySearchResult' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/memory/threads/{id}/forget:
+    parameters:
+      - { $ref: '#/components/parameters/ThreadIdPath' }
+    post:
+      tags: [memory]
+      operationId: forgetMemoryThread
+      summary: 按线程遗忘：删除该线程写入的全部 document
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '200':
+          description: 删除结果（失败的进入重试队列，计入 pending）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemoryForgetResult' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/memory/candidates:
+    get:
+      tags: [memory]
+      operationId: listMemoryCandidates
+      summary: 待批准的全局记忆候选（新的在前）
+      responses:
+        '200':
+          description: 候选
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemoryCandidateList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/memory/candidates/{candidateId}:
+    parameters:
+      - { $ref: '#/components/parameters/MemoryCandidateIdPath' }
+    delete:
+      tags: [memory]
+      operationId: rejectMemoryCandidate
+      summary: 拒绝候选（直接删除）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已删除 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/memory/candidates/{candidateId}/approve:
+    parameters:
+      - { $ref: '#/components/parameters/MemoryCandidateIdPath' }
+    post:
+      tags: [memory]
+      operationId: approveMemoryCandidate
+      summary: 批准候选（可先改写内容），写入 Hindsight 成为全局记忆
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MemoryCandidateApprove' }
+      responses:
+        '200':
+          description: 新建的全局记忆
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemoryDocument' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/memory/global:
+    post:
+      tags: [memory]
+      operationId: createGlobalMemory
+      summary: 新建全局记忆
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MemoryContent' }
+      responses:
+        '201':
+          description: 新建的全局记忆
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemoryDocument' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/memory/global/{documentId}:
+    parameters:
+      - { $ref: '#/components/parameters/MemoryDocumentIdPath' }
+    put:
+      tags: [memory]
+      operationId: updateGlobalMemory
+      summary: 改写全局记忆（同一 document 替换内容）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MemoryContent' }
+      responses:
+        '200':
+          description: 改写后的全局记忆
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemoryDocument' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/memory/mental-models:
+    get:
+      tags: [memory]
+      operationId: listMemoryMentalModels
+      summary: 项目或全局的 mental models
+      parameters:
+        - { name: projectId, in: query, schema: { $ref: '#/components/schemas/ProjectId' }, description: 省略 = 全局（user-preferences） }
+      responses:
+        '200':
+          description: mental models
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemoryMentalModelList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/memory/mental-models/{modelId}/refresh:
+    parameters:
+      - name: modelId
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[A-Za-z0-9._-]{1,128}$' }
+    post:
+      tags: [memory]
+      operationId: refreshMemoryMentalModel
+      summary: 手动刷新一个 mental model（异步）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '202': { description: 已提交刷新 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/memory/pending-deletes:
+    get:
+      tags: [memory]
+      operationId: listMemoryPendingDeletes
+      summary: 删除失败、等待重试的 document
+      responses:
+        '200':
+          description: 重试队列
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemoryPendingDeleteList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/memory/exports:
+    post:
+      tags: [memory]
+      operationId: createMemoryExport
+      summary: 导出 bank（异步）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '202':
+          description: 已开始
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemoryExport' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/memory/exports/{exportId}:
+    parameters:
+      - { $ref: '#/components/parameters/MemoryExportIdPath' }
+    get:
+      tags: [memory]
+      operationId: getMemoryExport
+      summary: 导出进度
+      responses:
+        '200':
+          description: 进度
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemoryExport' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/memory/exports/{exportId}/download:
+    parameters:
+      - { $ref: '#/components/parameters/MemoryExportIdPath' }
+    get:
+      tags: [memory]
+      operationId: downloadMemoryExport
+      summary: 下载导出的归档（state 为 done 之前 409 `export_not_ready`）
+      responses:
+        '200':
+          description: '归档字节，带 `Content-Disposition: attachment`'
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        default: { $ref: '#/components/responses/Error' }
   /api/v1/coordinator:
     get:
       tags: [automation]
@@ -5011,6 +5456,21 @@ components:
       in: path
       required: true
       schema: { $ref: '#/components/schemas/ThreadId' }
+    MemoryDocumentIdPath:
+      name: documentId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/MemoryDocumentId' }
+    MemoryCandidateIdPath:
+      name: candidateId
+      in: path
+      required: true
+      schema: { type: string, pattern: '^mcd_[0-9A-Z]{26}$' }
+    MemoryExportIdPath:
+      name: exportId
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[A-Za-z0-9._-]{1,128}$' }
     OrbIdPath:
       name: id
       in: path
@@ -7012,6 +7472,289 @@ components:
         autoPublish:
           type: boolean
           description: 把新建的 artifact 以私有方式发布，并跟着最新版本更新
+    # ============================================================ memory（M16）
+    MemoryPurpose:
+      type: string
+      description: 'Hindsight 调用模型的用途；未单独指定的用途跟随 `default`'
+      enum: [default, retain, reflect, consolidation, mental_model]
+      x-enum-varnames: [MemoryPurposeDefault, MemoryPurposeRetain, MemoryPurposeReflect, MemoryPurposeConsolidation, MemoryPurposeMentalModel]
+    MemoryFamily:
+      type: string
+      description: 写进 Hindsight .env 的协议类型（`openai` = OpenAI 兼容 chat completions）
+      enum: [openai, anthropic, gemini]
+      x-enum-varnames: [MemoryFamilyOpenai, MemoryFamilyAnthropic, MemoryFamilyGemini]
+    MemoryEndpointKind:
+      type: string
+      enum: [embed, rerank]
+      x-enum-varnames: [MemoryEndpointEmbed, MemoryEndpointRerank]
+    MemoryDocumentId:
+      type: string
+      pattern: '^[A-Za-z0-9._:-]{1,200}$'
+      description: Hindsight 的 document id（自动写入是会话 id，工具写入是 `omp-retain-<hex>`，管理页写入是 `oryn-<ulid>`）
+    MemorySettings:
+      type: object
+      required: [enabled, keysGenerated, outputLanguage]
+      properties:
+        enabled: { type: boolean, description: 全局总开关 }
+        hindsightUrl: { type: string, description: Hindsight API 根地址；省略 = 未配置 }
+        keysGenerated: { type: boolean, description: 是否已生成过 .env（Hindsight API key 与中转令牌） }
+        keysGeneratedAt: { type: integer, format: int64, description: 最近一次生成 .env 的时间（Unix 秒） }
+        outputLanguage: { type: string, description: 记忆的输出语言（固定为简体中文，只读） }
+    MemorySettingsUpdate:
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+        hindsightUrl: { type: string, description: 省略 = 清空 }
+    MemoryStatus:
+      type: object
+      required: [state, testedMinor, versionMismatch, pendingDeletes, candidates, embedLocked, checkedAt]
+      properties:
+        state:
+          type: string
+          description: |
+            `unconfigured`（未填地址）、`no_keys`（未生成 .env）、`disabled`（总开关关闭，其余字段照常探测）、`ok`、
+            `unreachable`（连不上或超时）、`unauthorized`（API key 不对）、`not_ready`（`/health/ready` 非 200）、
+            `suspect_empty`（上次有记忆、这次记忆数为 0：多半是 Hindsight 换成了空库，见 deploy.md）。
+          enum: [unconfigured, no_keys, disabled, ok, unreachable, unauthorized, not_ready, suspect_empty]
+          x-enum-varnames: [MemoryStateUnconfigured, MemoryStateNoKeys, MemoryStateDisabled, MemoryStateOk, MemoryStateUnreachable, MemoryStateUnauthorized, MemoryStateNotReady, MemoryStateSuspectEmpty]
+        version: { type: string, description: Hindsight `/version` 报告的版本 }
+        testedMinor: { type: string, description: Oryn 已验证的小版本线，如 `1.2` }
+        versionMismatch: { type: boolean, description: 服务端小版本与 testedMinor 不同 }
+        memoryCount: { type: integer, format: int64, description: bank `oryn` 的记忆数 }
+        pendingDeletes: { type: integer, description: 删除失败等待重试的 document 数 }
+        candidates: { type: integer, description: 待批准的全局候选数 }
+        embedLocked: { type: boolean, description: bank 已有记忆，嵌入模型与维度只读 }
+        checkedAt: { type: integer, format: int64 }
+        error: { type: string, description: 失败时给人看的原因 }
+    MemoryEnvFile:
+      type: object
+      required: [content, generatedAt]
+      properties:
+        content: { type: string, description: 完整的 .env 文本（含只显示这一次的两个密钥） }
+        generatedAt: { type: integer, format: int64 }
+    MemoryProjectToggle:
+      type: object
+      required: [projectId, name, enabled, overridden]
+      properties:
+        projectId: { $ref: '#/components/schemas/ProjectId' }
+        name: { type: string }
+        enabled: { type: boolean, description: 生效值（未单独设置时等于全局开关） }
+        overridden: { type: boolean, description: 是否单独设置过 }
+    MemoryProjectList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/MemoryProjectToggle' }
+    MemoryProjectUpdate:
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+    MemoryModelChoice:
+      type: object
+      required: [purpose, followsDefault, needsRestart]
+      properties:
+        purpose: { $ref: '#/components/schemas/MemoryPurpose' }
+        followsDefault: { type: boolean }
+        providerKey: { type: string, description: 生效的 provider（跟随 default 时是 default 的） }
+        modelId: { type: string }
+        family: { $ref: '#/components/schemas/MemoryFamily' }
+        deployedFamily: { $ref: '#/components/schemas/MemoryFamily' }
+        needsRestart: { type: boolean, description: 生效协议与 .env 里已部署的不同；确认重启前该用途的中转返回 409 `family_mismatch` }
+    MemoryModels:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/MemoryModelChoice' }
+        envSnippet: { type: string, description: 有用途需要重启时，要改进 .env 的那几行 }
+    MemoryModelsUpdate:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [purpose]
+            properties:
+              purpose: { $ref: '#/components/schemas/MemoryPurpose' }
+              providerKey: { type: string, description: 省略 = 跟随 default（default 不可省略） }
+              modelId: { type: string }
+    MemoryEndpoint:
+      type: object
+      required: [kind, baseUrl, model, hasKey]
+      properties:
+        kind: { $ref: '#/components/schemas/MemoryEndpointKind' }
+        baseUrl: { type: string, description: OpenAI 兼容（embed）或 Cohere 兼容（rerank）接口根地址 }
+        model: { type: string }
+        dimensions: { type: integer, description: 只对 embed 有意义 }
+        hasKey: { type: boolean }
+    MemoryEndpoints:
+      type: object
+      required: [embedLocked]
+      properties:
+        embed: { $ref: '#/components/schemas/MemoryEndpoint' }
+        rerank: { $ref: '#/components/schemas/MemoryEndpoint' }
+        embedLocked: { type: boolean }
+    MemoryEndpointUpdate:
+      type: object
+      required: [baseUrl, model]
+      properties:
+        baseUrl: { type: string }
+        model: { type: string }
+        dimensions: { type: integer, minimum: 1 }
+        apiKey: { type: string, description: 省略 = 保留原值 }
+        clearKey: { type: boolean, description: 为真时删除已存的 key }
+    MemoryUsageCounts:
+      type: object
+      required: [calls, inputTokens, outputTokens]
+      properties:
+        calls: { type: integer, format: int64 }
+        inputTokens: { type: integer, format: int64 }
+        outputTokens: { type: integer, format: int64 }
+    MemoryUsage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [purpose, day, week]
+            properties:
+              purpose: { type: string, description: MemoryPurpose 的取值，另有 `embed`、`rerank` }
+              day: { $ref: '#/components/schemas/MemoryUsageCounts' }
+              week: { $ref: '#/components/schemas/MemoryUsageCounts' }
+    MemoryDocument:
+      type: object
+      required: [id, preview, createdAt, updatedAt]
+      properties:
+        id: { $ref: '#/components/schemas/MemoryDocumentId' }
+        projectId: { $ref: '#/components/schemas/ProjectId' }
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        threadTitle: { type: string }
+        preview: { type: string, description: 原文开头（最多 400 字） }
+        content: { type: string, description: 全局记忆的完整内容（只在全局列表与写接口里返回） }
+        createdAt: { type: integer, format: int64 }
+        updatedAt: { type: integer, format: int64 }
+    MemoryDocumentList:
+      type: object
+      required: [items, hasMore]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/MemoryDocument' }
+        hasMore: { type: boolean }
+    MemorySearchHit:
+      type: object
+      required: [text]
+      properties:
+        text: { type: string }
+        type: { type: string, description: Hindsight 的记忆类型（world / experience / observation …） }
+        mentionedAt: { type: string }
+        documentId: { $ref: '#/components/schemas/MemoryDocumentId' }
+        global: { type: boolean }
+    MemorySearchResult:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/MemorySearchHit' }
+    MemoryForgetResult:
+      type: object
+      required: [deleted, pending]
+      properties:
+        deleted: { type: integer }
+        pending: { type: integer, description: 删除失败、进入重试队列的个数 }
+    MemoryCandidate:
+      type: object
+      required: [id, content, createdAt]
+      properties:
+        id: { type: string }
+        content: { type: string }
+        context: { type: string }
+        sourceThreadId: { $ref: '#/components/schemas/ThreadId' }
+        sourceThreadTitle: { type: string }
+        sourceProjectId: { $ref: '#/components/schemas/ProjectId' }
+        createdAt: { type: integer, format: int64 }
+    MemoryCandidateList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/MemoryCandidate' }
+    MemoryCandidateApprove:
+      type: object
+      properties:
+        content: { type: string, minLength: 1, maxLength: 4000, description: 省略 = 原样批准 }
+    MemoryContent:
+      type: object
+      required: [content]
+      properties:
+        content: { type: string, minLength: 1, maxLength: 4000 }
+    MemoryMentalModel:
+      type: object
+      required: [id, name, global]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        global: { type: boolean }
+        projectId: { $ref: '#/components/schemas/ProjectId' }
+        content: { type: string }
+        sourceQuery: { type: string }
+        lastRefreshedAt: { type: string }
+    MemoryMentalModelList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/MemoryMentalModel' }
+    MemoryPendingDelete:
+      type: object
+      required: [documentId, attempts, nextAttemptAt]
+      properties:
+        documentId: { $ref: '#/components/schemas/MemoryDocumentId' }
+        projectId: { $ref: '#/components/schemas/ProjectId' }
+        attempts: { type: integer }
+        nextAttemptAt: { type: integer, format: int64 }
+        lastError: { type: string }
+    MemoryPendingDeleteList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/MemoryPendingDelete' }
+    MemoryExport:
+      type: object
+      required: [id, state, createdAt]
+      properties:
+        id: { type: string }
+        state:
+          type: string
+          enum: [running, done, failed]
+          x-enum-varnames: [MemoryExportRunning, MemoryExportDone, MemoryExportFailed]
+        error: { type: string }
+        createdAt: { type: integer, format: int64 }
+    LinkCtlAgentMemory:
+      type: object
+      description: |
+        M16：本次 agent 启用 Hindsight 记忆（字段缺省 = 不启用）。orbd 写 `--config` 覆盖文件（`memory.backend: hindsight`、
+        `hindsight.globalScope: true`），注入 `HINDSIGHT_API_URL=http://127.0.0.1:7811/memory/t/<threadId>`、`HINDSIGHT_BANK_ID=oryn`、
+        `HINDSIGHT_SCOPING=per-project-tagged`、`NO_PROXY`；有 `project` 时注入 `ORYN_HINDSIGHT_PROJECT`，`autoRetain` 为假时注入
+        `HINDSIGHT_AUTO_RETAIN=false`。只有 hello 含 `memory` 的 orbd 会收到。
+      required: [autoRetain]
+      properties:
+        project: { type: string, pattern: '^[a-z0-9_]{1,64}$', description: 项目 ID 转小写；省略 = 无项目线程 }
+        autoRetain: { type: boolean }
     CreateAssistantConversationRequest:
       type: object
       description: 新助手对话的第一条用户消息；全部省略 = 空对话
@@ -10989,6 +11732,7 @@ components:
             `metrics`（上报 `metrics.sample`）。runner 形态上报 `fs`、`attachments`、`metrics`，`git` 在 PATH 里时加 `git`。
             M13 起：`omphome-apply`（认识 `omphome.apply`；普通 orbd 与协调宿主上报，runner 不上报）、
             `library`（认识 `library.sync`、`library.fetch` 与同步用的 `library` 流；只由协调宿主上报，此时特性表恰为 `["coordinator", "omphome-apply", "library"]`）。
+            M16 起：`memory`（认识 `agent.start` 的 `memory`，并为记忆开出站通道 `/memory/`；普通 orbd 与 runner 上报，协调宿主不上报）。
             缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync / 桌面请求回 409 `orbd_outdated`。
           items: { type: string }
     LinkRunnerInfo:
@@ -11385,6 +12129,7 @@ components:
         systemPrompt:
           type: string
           description: M9 协调档的系统提示词（以字面量传给 omp `--system-prompt`，必须含换行，否则 `invalid_params`）；只有协调宿主接受
+        memory: { $ref: '#/components/schemas/LinkCtlAgentMemory' }
     LinkCtlAgentStartResult:
       type: object
       required: [pid]

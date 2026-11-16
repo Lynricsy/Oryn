@@ -1463,6 +1463,129 @@ func (e MeAuthKind) Valid() bool {
 	}
 }
 
+// Defines values for MemoryEndpointKind.
+const (
+	MemoryEndpointEmbed  MemoryEndpointKind = "embed"
+	MemoryEndpointRerank MemoryEndpointKind = "rerank"
+)
+
+// Valid indicates whether the value is a known member of the MemoryEndpointKind enum.
+func (e MemoryEndpointKind) Valid() bool {
+	switch e {
+	case MemoryEndpointEmbed:
+		return true
+	case MemoryEndpointRerank:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for MemoryExportState.
+const (
+	MemoryExportDone    MemoryExportState = "done"
+	MemoryExportFailed  MemoryExportState = "failed"
+	MemoryExportRunning MemoryExportState = "running"
+)
+
+// Valid indicates whether the value is a known member of the MemoryExportState enum.
+func (e MemoryExportState) Valid() bool {
+	switch e {
+	case MemoryExportDone:
+		return true
+	case MemoryExportFailed:
+		return true
+	case MemoryExportRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for MemoryFamily.
+const (
+	MemoryFamilyAnthropic MemoryFamily = "anthropic"
+	MemoryFamilyGemini    MemoryFamily = "gemini"
+	MemoryFamilyOpenai    MemoryFamily = "openai"
+)
+
+// Valid indicates whether the value is a known member of the MemoryFamily enum.
+func (e MemoryFamily) Valid() bool {
+	switch e {
+	case MemoryFamilyAnthropic:
+		return true
+	case MemoryFamilyGemini:
+		return true
+	case MemoryFamilyOpenai:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for MemoryPurpose.
+const (
+	MemoryPurposeConsolidation MemoryPurpose = "consolidation"
+	MemoryPurposeDefault       MemoryPurpose = "default"
+	MemoryPurposeMentalModel   MemoryPurpose = "mental_model"
+	MemoryPurposeReflect       MemoryPurpose = "reflect"
+	MemoryPurposeRetain        MemoryPurpose = "retain"
+)
+
+// Valid indicates whether the value is a known member of the MemoryPurpose enum.
+func (e MemoryPurpose) Valid() bool {
+	switch e {
+	case MemoryPurposeConsolidation:
+		return true
+	case MemoryPurposeDefault:
+		return true
+	case MemoryPurposeMentalModel:
+		return true
+	case MemoryPurposeReflect:
+		return true
+	case MemoryPurposeRetain:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for MemoryStatusState.
+const (
+	MemoryStateDisabled     MemoryStatusState = "disabled"
+	MemoryStateNoKeys       MemoryStatusState = "no_keys"
+	MemoryStateNotReady     MemoryStatusState = "not_ready"
+	MemoryStateOk           MemoryStatusState = "ok"
+	MemoryStateSuspectEmpty MemoryStatusState = "suspect_empty"
+	MemoryStateUnauthorized MemoryStatusState = "unauthorized"
+	MemoryStateUnconfigured MemoryStatusState = "unconfigured"
+	MemoryStateUnreachable  MemoryStatusState = "unreachable"
+)
+
+// Valid indicates whether the value is a known member of the MemoryStatusState enum.
+func (e MemoryStatusState) Valid() bool {
+	switch e {
+	case MemoryStateDisabled:
+		return true
+	case MemoryStateNoKeys:
+		return true
+	case MemoryStateNotReady:
+		return true
+	case MemoryStateOk:
+		return true
+	case MemoryStateSuspectEmpty:
+		return true
+	case MemoryStateUnauthorized:
+		return true
+	case MemoryStateUnconfigured:
+		return true
+	case MemoryStateUnreachable:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for NotificationChannelKind.
 const (
 	NotificationChannelKindBark     NotificationChannelKind = "bark"
@@ -5409,6 +5532,17 @@ type LinkCtlAgentGapParams struct {
 	ThreadID ThreadID `json:"threadId"`
 }
 
+// LinkCtlAgentMemory M16：本次 agent 启用 Hindsight 记忆（字段缺省 = 不启用）。orbd 写 `--config` 覆盖文件（`memory.backend: hindsight`、
+// `hindsight.globalScope: true`），注入 `HINDSIGHT_API_URL=http://127.0.0.1:7811/memory/t/<threadId>`、`HINDSIGHT_BANK_ID=oryn`、
+// `HINDSIGHT_SCOPING=per-project-tagged`、`NO_PROXY`；有 `project` 时注入 `ORYN_HINDSIGHT_PROJECT`，`autoRetain` 为假时注入
+// `HINDSIGHT_AUTO_RETAIN=false`。只有 hello 含 `memory` 的 orbd 会收到。
+type LinkCtlAgentMemory struct {
+	AutoRetain bool `json:"autoRetain"`
+
+	// Project 项目 ID 转小写；省略 = 无项目线程
+	Project *string `json:"project,omitempty"`
+}
+
 // LinkCtlAgentStartParams defines model for LinkCtlAgentStartParams.
 type LinkCtlAgentStartParams struct {
 	// Cwd runner 形态（M11b）必填，且须在声明的目录或已登记的 worktree 之内（否则 `dir_not_served`）；`sessionDir` 须在 `$HOME/.oryn/threads/` 之下
@@ -5417,6 +5551,12 @@ type LinkCtlAgentStartParams struct {
 
 	// InitFrames `ready` 并完成 `negotiate_protocol` 后依次发送的 omp 命令帧
 	InitFrames []OmpFrame `json:"initFrames"`
+
+	// Memory M16：本次 agent 启用 Hindsight 记忆（字段缺省 = 不启用）。orbd 写 `--config` 覆盖文件（`memory.backend: hindsight`、
+	// `hindsight.globalScope: true`），注入 `HINDSIGHT_API_URL=http://127.0.0.1:7811/memory/t/<threadId>`、`HINDSIGHT_BANK_ID=oryn`、
+	// `HINDSIGHT_SCOPING=per-project-tagged`、`NO_PROXY`；有 `project` 时注入 `ORYN_HINDSIGHT_PROJECT`，`autoRetain` 为假时注入
+	// `HINDSIGHT_AUTO_RETAIN=false`。只有 hello 含 `memory` 的 orbd 会收到。
+	Memory *LinkCtlAgentMemory `json:"memory,omitempty"`
 
 	// Profile M9：`coordinator` = 协调档（无代码工具、独立 HOME 与设置覆盖层、从零构造的环境，`cwd` 由 orbd 决定）。
 	// **只有协调宿主接受**：普通 orbd 收到非空 `profile` → `invalid_params`；协调宿主收到其它值或省略 → `invalid_params`。
@@ -5681,6 +5821,7 @@ type LinkCtlHelloParams struct {
 	// `metrics`（上报 `metrics.sample`）。runner 形态上报 `fs`、`attachments`、`metrics`，`git` 在 PATH 里时加 `git`。
 	// M13 起：`omphome-apply`（认识 `omphome.apply`；普通 orbd 与协调宿主上报，runner 不上报）、
 	// `library`（认识 `library.sync`、`library.fetch` 与同步用的 `library` 流；只由协调宿主上报，此时特性表恰为 `["coordinator", "omphome-apply", "library"]`）。
+	// M16 起：`memory`（认识 `agent.start` 的 `memory`，并为记忆开出站通道 `/memory/`；普通 orbd 与 runner 上报，协调宿主不上报）。
 	// 缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync / 桌面请求回 409 `orbd_outdated`。
 	Features    []string `json:"features,omitempty"`
 	OrbdVersion string   `json:"orbdVersion"`
@@ -6363,6 +6504,335 @@ type Me struct {
 
 // MeAuthKind defines model for Me.Auth.Kind.
 type MeAuthKind string
+
+// MemoryCandidate defines model for MemoryCandidate.
+type MemoryCandidate struct {
+	Content   string  `json:"content"`
+	Context   *string `json:"context,omitempty"`
+	CreatedAt int64   `json:"createdAt"`
+	ID        string  `json:"id"`
+
+	// SourceProjectID `prj_<ulid>`
+	SourceProjectID *ProjectID `json:"sourceProjectId,omitempty"`
+
+	// SourceThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	SourceThreadID    *ThreadID `json:"sourceThreadId,omitempty"`
+	SourceThreadTitle *string   `json:"sourceThreadTitle,omitempty"`
+}
+
+// MemoryCandidateApprove defines model for MemoryCandidateApprove.
+type MemoryCandidateApprove struct {
+	// Content 省略 = 原样批准
+	Content *string `json:"content,omitempty"`
+}
+
+// MemoryCandidateList defines model for MemoryCandidateList.
+type MemoryCandidateList struct {
+	Items []MemoryCandidate `json:"items"`
+}
+
+// MemoryContent defines model for MemoryContent.
+type MemoryContent struct {
+	Content string `json:"content"`
+}
+
+// MemoryDocument defines model for MemoryDocument.
+type MemoryDocument struct {
+	// Content 全局记忆的完整内容（只在全局列表与写接口里返回）
+	Content   *string `json:"content,omitempty"`
+	CreatedAt int64   `json:"createdAt"`
+
+	// ID Hindsight 的 document id（自动写入是会话 id，工具写入是 `omp-retain-<hex>`，管理页写入是 `oryn-<ulid>`）
+	ID MemoryDocumentID `json:"id"`
+
+	// Preview 原文开头（最多 400 字）
+	Preview string `json:"preview"`
+
+	// ProjectID `prj_<ulid>`
+	ProjectID *ProjectID `json:"projectId,omitempty"`
+
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID    *ThreadID `json:"threadId,omitempty"`
+	ThreadTitle *string   `json:"threadTitle,omitempty"`
+	UpdatedAt   int64     `json:"updatedAt"`
+}
+
+// MemoryDocumentID Hindsight 的 document id（自动写入是会话 id，工具写入是 `omp-retain-<hex>`，管理页写入是 `oryn-<ulid>`）
+type MemoryDocumentID = string
+
+// MemoryDocumentList defines model for MemoryDocumentList.
+type MemoryDocumentList struct {
+	HasMore bool             `json:"hasMore"`
+	Items   []MemoryDocument `json:"items"`
+}
+
+// MemoryEndpoint defines model for MemoryEndpoint.
+type MemoryEndpoint struct {
+	// BaseURL OpenAI 兼容（embed）或 Cohere 兼容（rerank）接口根地址
+	BaseURL string `json:"baseUrl"`
+
+	// Dimensions 只对 embed 有意义
+	Dimensions *int               `json:"dimensions,omitempty"`
+	HasKey     bool               `json:"hasKey"`
+	Kind       MemoryEndpointKind `json:"kind"`
+	Model      string             `json:"model"`
+}
+
+// MemoryEndpointKind defines model for MemoryEndpointKind.
+type MemoryEndpointKind string
+
+// MemoryEndpointUpdate defines model for MemoryEndpointUpdate.
+type MemoryEndpointUpdate struct {
+	// APIKey 省略 = 保留原值
+	APIKey  *string `json:"apiKey,omitempty"`
+	BaseURL string  `json:"baseUrl"`
+
+	// ClearKey 为真时删除已存的 key
+	ClearKey   *bool  `json:"clearKey,omitempty"`
+	Dimensions *int   `json:"dimensions,omitempty"`
+	Model      string `json:"model"`
+}
+
+// MemoryEndpoints defines model for MemoryEndpoints.
+type MemoryEndpoints struct {
+	Embed       *MemoryEndpoint `json:"embed,omitempty"`
+	EmbedLocked bool            `json:"embedLocked"`
+	Rerank      *MemoryEndpoint `json:"rerank,omitempty"`
+}
+
+// MemoryEnvFile defines model for MemoryEnvFile.
+type MemoryEnvFile struct {
+	// Content 完整的 .env 文本（含只显示这一次的两个密钥）
+	Content     string `json:"content"`
+	GeneratedAt int64  `json:"generatedAt"`
+}
+
+// MemoryExport defines model for MemoryExport.
+type MemoryExport struct {
+	CreatedAt int64             `json:"createdAt"`
+	Error     *string           `json:"error,omitempty"`
+	ID        string            `json:"id"`
+	State     MemoryExportState `json:"state"`
+}
+
+// MemoryExportState defines model for MemoryExport.State.
+type MemoryExportState string
+
+// MemoryFamily 写进 Hindsight .env 的协议类型（`openai` = OpenAI 兼容 chat completions）
+type MemoryFamily string
+
+// MemoryForgetResult defines model for MemoryForgetResult.
+type MemoryForgetResult struct {
+	Deleted int `json:"deleted"`
+
+	// Pending 删除失败、进入重试队列的个数
+	Pending int `json:"pending"`
+}
+
+// MemoryMentalModel defines model for MemoryMentalModel.
+type MemoryMentalModel struct {
+	Content         *string `json:"content,omitempty"`
+	Global          bool    `json:"global"`
+	ID              string  `json:"id"`
+	LastRefreshedAt *string `json:"lastRefreshedAt,omitempty"`
+	Name            string  `json:"name"`
+
+	// ProjectID `prj_<ulid>`
+	ProjectID   *ProjectID `json:"projectId,omitempty"`
+	SourceQuery *string    `json:"sourceQuery,omitempty"`
+}
+
+// MemoryMentalModelList defines model for MemoryMentalModelList.
+type MemoryMentalModelList struct {
+	Items []MemoryMentalModel `json:"items"`
+}
+
+// MemoryModelChoice defines model for MemoryModelChoice.
+type MemoryModelChoice struct {
+	// DeployedFamily 写进 Hindsight .env 的协议类型（`openai` = OpenAI 兼容 chat completions）
+	DeployedFamily *MemoryFamily `json:"deployedFamily,omitempty"`
+
+	// Family 写进 Hindsight .env 的协议类型（`openai` = OpenAI 兼容 chat completions）
+	Family         *MemoryFamily `json:"family,omitempty"`
+	FollowsDefault bool          `json:"followsDefault"`
+	ModelID        *string       `json:"modelId,omitempty"`
+
+	// NeedsRestart 生效协议与 .env 里已部署的不同；确认重启前该用途的中转返回 409 `family_mismatch`
+	NeedsRestart bool `json:"needsRestart"`
+
+	// ProviderKey 生效的 provider（跟随 default 时是 default 的）
+	ProviderKey *string `json:"providerKey,omitempty"`
+
+	// Purpose Hindsight 调用模型的用途；未单独指定的用途跟随 `default`
+	Purpose MemoryPurpose `json:"purpose"`
+}
+
+// MemoryModels defines model for MemoryModels.
+type MemoryModels struct {
+	// EnvSnippet 有用途需要重启时，要改进 .env 的那几行
+	EnvSnippet *string             `json:"envSnippet,omitempty"`
+	Items      []MemoryModelChoice `json:"items"`
+}
+
+// MemoryModelsUpdate defines model for MemoryModelsUpdate.
+type MemoryModelsUpdate struct {
+	Items []struct {
+		ModelID *string `json:"modelId,omitempty"`
+
+		// ProviderKey 省略 = 跟随 default（default 不可省略）
+		ProviderKey *string `json:"providerKey,omitempty"`
+
+		// Purpose Hindsight 调用模型的用途；未单独指定的用途跟随 `default`
+		Purpose MemoryPurpose `json:"purpose"`
+	} `json:"items"`
+}
+
+// MemoryPendingDelete defines model for MemoryPendingDelete.
+type MemoryPendingDelete struct {
+	Attempts int `json:"attempts"`
+
+	// DocumentID Hindsight 的 document id（自动写入是会话 id，工具写入是 `omp-retain-<hex>`，管理页写入是 `oryn-<ulid>`）
+	DocumentID    MemoryDocumentID `json:"documentId"`
+	LastError     *string          `json:"lastError,omitempty"`
+	NextAttemptAt int64            `json:"nextAttemptAt"`
+
+	// ProjectID `prj_<ulid>`
+	ProjectID *ProjectID `json:"projectId,omitempty"`
+}
+
+// MemoryPendingDeleteList defines model for MemoryPendingDeleteList.
+type MemoryPendingDeleteList struct {
+	Items []MemoryPendingDelete `json:"items"`
+}
+
+// MemoryProjectList defines model for MemoryProjectList.
+type MemoryProjectList struct {
+	Items []MemoryProjectToggle `json:"items"`
+}
+
+// MemoryProjectToggle defines model for MemoryProjectToggle.
+type MemoryProjectToggle struct {
+	// Enabled 生效值（未单独设置时等于全局开关）
+	Enabled bool   `json:"enabled"`
+	Name    string `json:"name"`
+
+	// Overridden 是否单独设置过
+	Overridden bool `json:"overridden"`
+
+	// ProjectID `prj_<ulid>`
+	ProjectID ProjectID `json:"projectId"`
+}
+
+// MemoryProjectUpdate defines model for MemoryProjectUpdate.
+type MemoryProjectUpdate struct {
+	Enabled bool `json:"enabled"`
+}
+
+// MemoryPurpose Hindsight 调用模型的用途；未单独指定的用途跟随 `default`
+type MemoryPurpose string
+
+// MemorySearchHit defines model for MemorySearchHit.
+type MemorySearchHit struct {
+	// DocumentID Hindsight 的 document id（自动写入是会话 id，工具写入是 `omp-retain-<hex>`，管理页写入是 `oryn-<ulid>`）
+	DocumentID  *MemoryDocumentID `json:"documentId,omitempty"`
+	Global      *bool             `json:"global,omitempty"`
+	MentionedAt *string           `json:"mentionedAt,omitempty"`
+	Text        string            `json:"text"`
+
+	// Type Hindsight 的记忆类型（world / experience / observation …）
+	Type *string `json:"type,omitempty"`
+}
+
+// MemorySearchResult defines model for MemorySearchResult.
+type MemorySearchResult struct {
+	Items []MemorySearchHit `json:"items"`
+}
+
+// MemorySettings defines model for MemorySettings.
+type MemorySettings struct {
+	// Enabled 全局总开关
+	Enabled bool `json:"enabled"`
+
+	// HindsightURL Hindsight API 根地址；省略 = 未配置
+	HindsightURL *string `json:"hindsightUrl,omitempty"`
+
+	// KeysGenerated 是否已生成过 .env（Hindsight API key 与中转令牌）
+	KeysGenerated bool `json:"keysGenerated"`
+
+	// KeysGeneratedAt 最近一次生成 .env 的时间（Unix 秒）
+	KeysGeneratedAt *int64 `json:"keysGeneratedAt,omitempty"`
+
+	// OutputLanguage 记忆的输出语言（固定为简体中文，只读）
+	OutputLanguage string `json:"outputLanguage"`
+}
+
+// MemorySettingsUpdate defines model for MemorySettingsUpdate.
+type MemorySettingsUpdate struct {
+	Enabled bool `json:"enabled"`
+
+	// HindsightURL 省略 = 清空
+	HindsightURL *string `json:"hindsightUrl,omitempty"`
+}
+
+// MemoryStatus defines model for MemoryStatus.
+type MemoryStatus struct {
+	// Candidates 待批准的全局候选数
+	Candidates int   `json:"candidates"`
+	CheckedAt  int64 `json:"checkedAt"`
+
+	// EmbedLocked bank 已有记忆，嵌入模型与维度只读
+	EmbedLocked bool `json:"embedLocked"`
+
+	// Error 失败时给人看的原因
+	Error *string `json:"error,omitempty"`
+
+	// MemoryCount bank `oryn` 的记忆数
+	MemoryCount *int64 `json:"memoryCount,omitempty"`
+
+	// PendingDeletes 删除失败等待重试的 document 数
+	PendingDeletes int `json:"pendingDeletes"`
+
+	// State `unconfigured`（未填地址）、`no_keys`（未生成 .env）、`disabled`（总开关关闭，其余字段照常探测）、`ok`、
+	// `unreachable`（连不上或超时）、`unauthorized`（API key 不对）、`not_ready`（`/health/ready` 非 200）、
+	// `suspect_empty`（上次有记忆、这次记忆数为 0：多半是 Hindsight 换成了空库，见 deploy.md）。
+	State MemoryStatusState `json:"state"`
+
+	// TestedMinor Oryn 已验证的小版本线，如 `1.2`
+	TestedMinor string `json:"testedMinor"`
+
+	// Version Hindsight `/version` 报告的版本
+	Version *string `json:"version,omitempty"`
+
+	// VersionMismatch 服务端小版本与 testedMinor 不同
+	VersionMismatch bool `json:"versionMismatch"`
+}
+
+// MemoryStatusState `unconfigured`（未填地址）、`no_keys`（未生成 .env）、`disabled`（总开关关闭，其余字段照常探测）、`ok`、
+// `unreachable`（连不上或超时）、`unauthorized`（API key 不对）、`not_ready`（`/health/ready` 非 200）、
+// `suspect_empty`（上次有记忆、这次记忆数为 0：多半是 Hindsight 换成了空库，见 deploy.md）。
+type MemoryStatusState string
+
+// MemoryUsage defines model for MemoryUsage.
+type MemoryUsage struct {
+	Items []struct {
+		Day MemoryUsageCounts `json:"day"`
+
+		// Purpose MemoryPurpose 的取值，另有 `embed`、`rerank`
+		Purpose string            `json:"purpose"`
+		Week    MemoryUsageCounts `json:"week"`
+	} `json:"items"`
+}
+
+// MemoryUsageCounts defines model for MemoryUsageCounts.
+type MemoryUsageCounts struct {
+	Calls        int64 `json:"calls"`
+	InputTokens  int64 `json:"inputTokens"`
+	OutputTokens int64 `json:"outputTokens"`
+}
 
 // ModelCatalog defines model for ModelCatalog.
 type ModelCatalog struct {
@@ -9561,6 +10031,15 @@ type GitRootQuery = string
 // `uncommitted` HEAD → 工作区；`commit` 单个提交（`<sha>^1` → `<sha>`，须带 `commit`）。
 type GitScopeQuery = GitScope
 
+// MemoryCandidateIDPath defines model for MemoryCandidateIdPath.
+type MemoryCandidateIDPath = string
+
+// MemoryDocumentIDPath Hindsight 的 document id（自动写入是会话 id，工具写入是 `omp-retain-<hex>`，管理页写入是 `oryn-<ulid>`）
+type MemoryDocumentIDPath = MemoryDocumentID
+
+// MemoryExportIDPath defines model for MemoryExportIdPath.
+type MemoryExportIDPath = string
+
 // NotificationChannelIDPath `nch_<ulid>`
 type NotificationChannelIDPath = NotificationChannelID
 
@@ -9787,6 +10266,31 @@ type ListGitHubAuditParams struct {
 type ListGitHubReposParams struct {
 	// Q 按 `owner/name` 子串过滤（忽略大小写）
 	Q *string `form:"q,omitempty" json:"q,omitempty"`
+}
+
+// ListMemoryDocumentsParams defines parameters for ListMemoryDocuments.
+type ListMemoryDocumentsParams struct {
+	// ProjectID 与 `global` 二选一
+	ProjectID *ProjectID `form:"projectId,omitempty" json:"projectId,omitempty"`
+
+	// Global 为真时列全局记忆
+	Global *bool `form:"global,omitempty" json:"global,omitempty"`
+	Offset *int  `form:"offset,omitempty" json:"offset,omitempty"`
+	Limit  *int  `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ListMemoryMentalModelsParams defines parameters for ListMemoryMentalModels.
+type ListMemoryMentalModelsParams struct {
+	// ProjectID 省略 = 全局（user-preferences）
+	ProjectID *ProjectID `form:"projectId,omitempty" json:"projectId,omitempty"`
+}
+
+// SearchMemoryParams defines parameters for SearchMemory.
+type SearchMemoryParams struct {
+	Q string `form:"q" json:"q"`
+
+	// ProjectID 省略 = 只搜全局
+	ProjectID *ProjectID `form:"projectId,omitempty" json:"projectId,omitempty"`
 }
 
 // GetModelCatalogParams defines parameters for GetModelCatalog.
@@ -10424,6 +10928,27 @@ type TriageGitHubIssueJSONRequestBody = GitHubTriageRequest
 
 // UpdateGitHubTriggerJSONRequestBody defines body for UpdateGitHubTrigger for application/json ContentType.
 type UpdateGitHubTriggerJSONRequestBody = GitHubTriggerPatch
+
+// ApproveMemoryCandidateJSONRequestBody defines body for ApproveMemoryCandidate for application/json ContentType.
+type ApproveMemoryCandidateJSONRequestBody = MemoryCandidateApprove
+
+// PutMemoryEndpointJSONRequestBody defines body for PutMemoryEndpoint for application/json ContentType.
+type PutMemoryEndpointJSONRequestBody = MemoryEndpointUpdate
+
+// CreateGlobalMemoryJSONRequestBody defines body for CreateGlobalMemory for application/json ContentType.
+type CreateGlobalMemoryJSONRequestBody = MemoryContent
+
+// UpdateGlobalMemoryJSONRequestBody defines body for UpdateGlobalMemory for application/json ContentType.
+type UpdateGlobalMemoryJSONRequestBody = MemoryContent
+
+// PutMemoryModelsJSONRequestBody defines body for PutMemoryModels for application/json ContentType.
+type PutMemoryModelsJSONRequestBody = MemoryModelsUpdate
+
+// PutMemoryProjectJSONRequestBody defines body for PutMemoryProject for application/json ContentType.
+type PutMemoryProjectJSONRequestBody = MemoryProjectUpdate
+
+// PutMemorySettingsJSONRequestBody defines body for PutMemorySettings for application/json ContentType.
+type PutMemorySettingsJSONRequestBody = MemorySettingsUpdate
 
 // CreateNotificationChannelJSONRequestBody defines body for CreateNotificationChannel for application/json ContentType.
 type CreateNotificationChannelJSONRequestBody = NotificationChannelInput
@@ -13031,6 +13556,87 @@ type ServerInterface interface {
 	// GetMe 当前身份
 	// (GET /api/v1/me)
 	GetMe(w http.ResponseWriter, r *http.Request)
+	// ListMemoryCandidates 待批准的全局记忆候选（新的在前）
+	// (GET /api/v1/memory/candidates)
+	ListMemoryCandidates(w http.ResponseWriter, r *http.Request)
+	// RejectMemoryCandidate 拒绝候选（直接删除）
+	// (DELETE /api/v1/memory/candidates/{candidateId})
+	RejectMemoryCandidate(w http.ResponseWriter, r *http.Request, candidateID MemoryCandidateIDPath)
+	// ApproveMemoryCandidate 批准候选（可先改写内容），写入 Hindsight 成为全局记忆
+	// (POST /api/v1/memory/candidates/{candidateId}/approve)
+	ApproveMemoryCandidate(w http.ResponseWriter, r *http.Request, candidateID MemoryCandidateIDPath)
+	// ListMemoryDocuments 按项目或全局列出记忆 document（按更新时间倒序）
+	// (GET /api/v1/memory/documents)
+	ListMemoryDocuments(w http.ResponseWriter, r *http.Request, params ListMemoryDocumentsParams)
+	// DeleteMemoryDocument 删除一个 document（连同 Hindsight 从它派生的记忆）
+	// (DELETE /api/v1/memory/documents/{documentId})
+	DeleteMemoryDocument(w http.ResponseWriter, r *http.Request, documentID MemoryDocumentIDPath)
+	// GetMemoryEndpoints 嵌入与重排的远端接口
+	// (GET /api/v1/memory/endpoints)
+	GetMemoryEndpoints(w http.ResponseWriter, r *http.Request)
+	// PutMemoryEndpoint 修改嵌入或重排接口
+	// (PUT /api/v1/memory/endpoints/{kind})
+	PutMemoryEndpoint(w http.ResponseWriter, r *http.Request, kind MemoryEndpointKind)
+	// CreateMemoryEnvFile 生成 Hindsight 的 .env（同时轮换 Hindsight API key 与中转令牌，旧值立即失效）
+	// (POST /api/v1/memory/env-file)
+	CreateMemoryEnvFile(w http.ResponseWriter, r *http.Request)
+	// CreateMemoryExport 导出 bank（异步）
+	// (POST /api/v1/memory/exports)
+	CreateMemoryExport(w http.ResponseWriter, r *http.Request)
+	// GetMemoryExport 导出进度
+	// (GET /api/v1/memory/exports/{exportId})
+	GetMemoryExport(w http.ResponseWriter, r *http.Request, exportID MemoryExportIDPath)
+	// DownloadMemoryExport 下载导出的归档（state 为 done 之前 409 `export_not_ready`）
+	// (GET /api/v1/memory/exports/{exportId}/download)
+	DownloadMemoryExport(w http.ResponseWriter, r *http.Request, exportID MemoryExportIDPath)
+	// CreateGlobalMemory 新建全局记忆
+	// (POST /api/v1/memory/global)
+	CreateGlobalMemory(w http.ResponseWriter, r *http.Request)
+	// UpdateGlobalMemory 改写全局记忆（同一 document 替换内容）
+	// (PUT /api/v1/memory/global/{documentId})
+	UpdateGlobalMemory(w http.ResponseWriter, r *http.Request, documentID MemoryDocumentIDPath)
+	// ListMemoryMentalModels 项目或全局的 mental models
+	// (GET /api/v1/memory/mental-models)
+	ListMemoryMentalModels(w http.ResponseWriter, r *http.Request, params ListMemoryMentalModelsParams)
+	// RefreshMemoryMentalModel 手动刷新一个 mental model（异步）
+	// (POST /api/v1/memory/mental-models/{modelId}/refresh)
+	RefreshMemoryMentalModel(w http.ResponseWriter, r *http.Request, modelID string)
+	// GetMemoryModels 每种用途选定的模型、协议类型与是否需要重启 Hindsight
+	// (GET /api/v1/memory/models)
+	GetMemoryModels(w http.ResponseWriter, r *http.Request)
+	// PutMemoryModels 修改各用途的模型（未列出或不带 providerKey 的用途跟随 default；default 必须指定）
+	// (PUT /api/v1/memory/models)
+	PutMemoryModels(w http.ResponseWriter, r *http.Request)
+	// ConfirmMemoryModelsDeployed 主人已按新 .env 重启 Hindsight：把各用途已部署的协议类型更新为当前选择
+	// (POST /api/v1/memory/models/deployed)
+	ConfirmMemoryModelsDeployed(w http.ResponseWriter, r *http.Request)
+	// ListMemoryPendingDeletes 删除失败、等待重试的 document
+	// (GET /api/v1/memory/pending-deletes)
+	ListMemoryPendingDeletes(w http.ResponseWriter, r *http.Request)
+	// ListMemoryProjects 各项目的记忆开关（未单独设置的跟随全局）
+	// (GET /api/v1/memory/projects)
+	ListMemoryProjects(w http.ResponseWriter, r *http.Request)
+	// PutMemoryProject 设置项目的记忆开关
+	// (PUT /api/v1/memory/projects/{id})
+	PutMemoryProject(w http.ResponseWriter, r *http.Request, id ProjectIDPath)
+	// SearchMemory 在项目（含全局）或仅全局范围内召回
+	// (GET /api/v1/memory/search)
+	SearchMemory(w http.ResponseWriter, r *http.Request, params SearchMemoryParams)
+	// GetMemorySettings 记忆的连接与全局开关
+	// (GET /api/v1/memory/settings)
+	GetMemorySettings(w http.ResponseWriter, r *http.Request)
+	// PutMemorySettings 修改连接地址与全局开关
+	// (PUT /api/v1/memory/settings)
+	PutMemorySettings(w http.ResponseWriter, r *http.Request)
+	// GetMemoryStatus Hindsight 的连接状态、版本与记忆数（实时探测，最多 10 秒）
+	// (GET /api/v1/memory/status)
+	GetMemoryStatus(w http.ResponseWriter, r *http.Request)
+	// ForgetMemoryThread 按线程遗忘：删除该线程写入的全部 document
+	// (POST /api/v1/memory/threads/{id}/forget)
+	ForgetMemoryThread(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
+	// GetMemoryUsage 中转计数：各用途最近 24 小时与 7 天的调用次数和 token 数
+	// (GET /api/v1/memory/usage)
+	GetMemoryUsage(w http.ResponseWriter, r *http.Request)
 	// GetModelCatalog 中央模型目录（控制面用钉住的 Oryn Core 运行 `omp models --json --kind all` 得到，不唤醒任何 orb）
 	// (GET /api/v1/models/catalog)
 	GetModelCatalog(w http.ResponseWriter, r *http.Request, params GetModelCatalogParams)
@@ -14024,6 +14630,168 @@ func (_ Unimplemented) UpdateGitHubTrigger(w http.ResponseWriter, r *http.Reques
 // GetMe 当前身份
 // (GET /api/v1/me)
 func (_ Unimplemented) GetMe(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListMemoryCandidates 待批准的全局记忆候选（新的在前）
+// (GET /api/v1/memory/candidates)
+func (_ Unimplemented) ListMemoryCandidates(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RejectMemoryCandidate 拒绝候选（直接删除）
+// (DELETE /api/v1/memory/candidates/{candidateId})
+func (_ Unimplemented) RejectMemoryCandidate(w http.ResponseWriter, r *http.Request, candidateID MemoryCandidateIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ApproveMemoryCandidate 批准候选（可先改写内容），写入 Hindsight 成为全局记忆
+// (POST /api/v1/memory/candidates/{candidateId}/approve)
+func (_ Unimplemented) ApproveMemoryCandidate(w http.ResponseWriter, r *http.Request, candidateID MemoryCandidateIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListMemoryDocuments 按项目或全局列出记忆 document（按更新时间倒序）
+// (GET /api/v1/memory/documents)
+func (_ Unimplemented) ListMemoryDocuments(w http.ResponseWriter, r *http.Request, params ListMemoryDocumentsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteMemoryDocument 删除一个 document（连同 Hindsight 从它派生的记忆）
+// (DELETE /api/v1/memory/documents/{documentId})
+func (_ Unimplemented) DeleteMemoryDocument(w http.ResponseWriter, r *http.Request, documentID MemoryDocumentIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetMemoryEndpoints 嵌入与重排的远端接口
+// (GET /api/v1/memory/endpoints)
+func (_ Unimplemented) GetMemoryEndpoints(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutMemoryEndpoint 修改嵌入或重排接口
+// (PUT /api/v1/memory/endpoints/{kind})
+func (_ Unimplemented) PutMemoryEndpoint(w http.ResponseWriter, r *http.Request, kind MemoryEndpointKind) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateMemoryEnvFile 生成 Hindsight 的 .env（同时轮换 Hindsight API key 与中转令牌，旧值立即失效）
+// (POST /api/v1/memory/env-file)
+func (_ Unimplemented) CreateMemoryEnvFile(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateMemoryExport 导出 bank（异步）
+// (POST /api/v1/memory/exports)
+func (_ Unimplemented) CreateMemoryExport(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetMemoryExport 导出进度
+// (GET /api/v1/memory/exports/{exportId})
+func (_ Unimplemented) GetMemoryExport(w http.ResponseWriter, r *http.Request, exportID MemoryExportIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DownloadMemoryExport 下载导出的归档（state 为 done 之前 409 `export_not_ready`）
+// (GET /api/v1/memory/exports/{exportId}/download)
+func (_ Unimplemented) DownloadMemoryExport(w http.ResponseWriter, r *http.Request, exportID MemoryExportIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateGlobalMemory 新建全局记忆
+// (POST /api/v1/memory/global)
+func (_ Unimplemented) CreateGlobalMemory(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// UpdateGlobalMemory 改写全局记忆（同一 document 替换内容）
+// (PUT /api/v1/memory/global/{documentId})
+func (_ Unimplemented) UpdateGlobalMemory(w http.ResponseWriter, r *http.Request, documentID MemoryDocumentIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListMemoryMentalModels 项目或全局的 mental models
+// (GET /api/v1/memory/mental-models)
+func (_ Unimplemented) ListMemoryMentalModels(w http.ResponseWriter, r *http.Request, params ListMemoryMentalModelsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RefreshMemoryMentalModel 手动刷新一个 mental model（异步）
+// (POST /api/v1/memory/mental-models/{modelId}/refresh)
+func (_ Unimplemented) RefreshMemoryMentalModel(w http.ResponseWriter, r *http.Request, modelID string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetMemoryModels 每种用途选定的模型、协议类型与是否需要重启 Hindsight
+// (GET /api/v1/memory/models)
+func (_ Unimplemented) GetMemoryModels(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutMemoryModels 修改各用途的模型（未列出或不带 providerKey 的用途跟随 default；default 必须指定）
+// (PUT /api/v1/memory/models)
+func (_ Unimplemented) PutMemoryModels(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ConfirmMemoryModelsDeployed 主人已按新 .env 重启 Hindsight：把各用途已部署的协议类型更新为当前选择
+// (POST /api/v1/memory/models/deployed)
+func (_ Unimplemented) ConfirmMemoryModelsDeployed(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListMemoryPendingDeletes 删除失败、等待重试的 document
+// (GET /api/v1/memory/pending-deletes)
+func (_ Unimplemented) ListMemoryPendingDeletes(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListMemoryProjects 各项目的记忆开关（未单独设置的跟随全局）
+// (GET /api/v1/memory/projects)
+func (_ Unimplemented) ListMemoryProjects(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutMemoryProject 设置项目的记忆开关
+// (PUT /api/v1/memory/projects/{id})
+func (_ Unimplemented) PutMemoryProject(w http.ResponseWriter, r *http.Request, id ProjectIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SearchMemory 在项目（含全局）或仅全局范围内召回
+// (GET /api/v1/memory/search)
+func (_ Unimplemented) SearchMemory(w http.ResponseWriter, r *http.Request, params SearchMemoryParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetMemorySettings 记忆的连接与全局开关
+// (GET /api/v1/memory/settings)
+func (_ Unimplemented) GetMemorySettings(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutMemorySettings 修改连接地址与全局开关
+// (PUT /api/v1/memory/settings)
+func (_ Unimplemented) PutMemorySettings(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetMemoryStatus Hindsight 的连接状态、版本与记忆数（实时探测，最多 10 秒）
+// (GET /api/v1/memory/status)
+func (_ Unimplemented) GetMemoryStatus(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ForgetMemoryThread 按线程遗忘：删除该线程写入的全部 document
+// (POST /api/v1/memory/threads/{id}/forget)
+func (_ Unimplemented) ForgetMemoryThread(w http.ResponseWriter, r *http.Request, id ThreadIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetMemoryUsage 中转计数：各用途最近 24 小时与 7 天的调用次数和 token 数
+// (GET /api/v1/memory/usage)
+func (_ Unimplemented) GetMemoryUsage(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -17304,6 +18072,613 @@ func (siw *ServerInterfaceWrapper) GetMe(w http.ResponseWriter, r *http.Request)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetMe(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListMemoryCandidates operation middleware
+func (siw *ServerInterfaceWrapper) ListMemoryCandidates(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListMemoryCandidates(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RejectMemoryCandidate operation middleware
+func (siw *ServerInterfaceWrapper) RejectMemoryCandidate(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "candidateId" -------------
+	var candidateID MemoryCandidateIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "candidateId", chi.URLParam(r, "candidateId"), &candidateID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "candidateId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RejectMemoryCandidate(w, r, candidateID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ApproveMemoryCandidate operation middleware
+func (siw *ServerInterfaceWrapper) ApproveMemoryCandidate(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "candidateId" -------------
+	var candidateID MemoryCandidateIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "candidateId", chi.URLParam(r, "candidateId"), &candidateID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "candidateId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ApproveMemoryCandidate(w, r, candidateID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListMemoryDocuments operation middleware
+func (siw *ServerInterfaceWrapper) ListMemoryDocuments(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListMemoryDocumentsParams
+
+	// ------------- Optional query parameter "projectId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "projectId", r.URL.Query(), &params.ProjectID, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "projectId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "global" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "global", r.URL.Query(), &params.Global, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "global"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "global", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListMemoryDocuments(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteMemoryDocument operation middleware
+func (siw *ServerInterfaceWrapper) DeleteMemoryDocument(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "documentId" -------------
+	var documentID MemoryDocumentIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "documentId", chi.URLParam(r, "documentId"), &documentID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "documentId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteMemoryDocument(w, r, documentID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMemoryEndpoints operation middleware
+func (siw *ServerInterfaceWrapper) GetMemoryEndpoints(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMemoryEndpoints(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutMemoryEndpoint operation middleware
+func (siw *ServerInterfaceWrapper) PutMemoryEndpoint(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "kind" -------------
+	var kind MemoryEndpointKind
+
+	err = runtime.BindStyledParameterWithOptions("simple", "kind", chi.URLParam(r, "kind"), &kind, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutMemoryEndpoint(w, r, kind)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateMemoryEnvFile operation middleware
+func (siw *ServerInterfaceWrapper) CreateMemoryEnvFile(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateMemoryEnvFile(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateMemoryExport operation middleware
+func (siw *ServerInterfaceWrapper) CreateMemoryExport(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateMemoryExport(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMemoryExport operation middleware
+func (siw *ServerInterfaceWrapper) GetMemoryExport(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "exportId" -------------
+	var exportID MemoryExportIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "exportId", chi.URLParam(r, "exportId"), &exportID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "exportId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMemoryExport(w, r, exportID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DownloadMemoryExport operation middleware
+func (siw *ServerInterfaceWrapper) DownloadMemoryExport(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "exportId" -------------
+	var exportID MemoryExportIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "exportId", chi.URLParam(r, "exportId"), &exportID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "exportId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DownloadMemoryExport(w, r, exportID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateGlobalMemory operation middleware
+func (siw *ServerInterfaceWrapper) CreateGlobalMemory(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateGlobalMemory(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateGlobalMemory operation middleware
+func (siw *ServerInterfaceWrapper) UpdateGlobalMemory(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "documentId" -------------
+	var documentID MemoryDocumentIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "documentId", chi.URLParam(r, "documentId"), &documentID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "documentId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateGlobalMemory(w, r, documentID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListMemoryMentalModels operation middleware
+func (siw *ServerInterfaceWrapper) ListMemoryMentalModels(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListMemoryMentalModelsParams
+
+	// ------------- Optional query parameter "projectId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "projectId", r.URL.Query(), &params.ProjectID, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "projectId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListMemoryMentalModels(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RefreshMemoryMentalModel operation middleware
+func (siw *ServerInterfaceWrapper) RefreshMemoryMentalModel(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "modelId" -------------
+	var modelID string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "modelId", chi.URLParam(r, "modelId"), &modelID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "modelId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RefreshMemoryMentalModel(w, r, modelID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMemoryModels operation middleware
+func (siw *ServerInterfaceWrapper) GetMemoryModels(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMemoryModels(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutMemoryModels operation middleware
+func (siw *ServerInterfaceWrapper) PutMemoryModels(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutMemoryModels(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ConfirmMemoryModelsDeployed operation middleware
+func (siw *ServerInterfaceWrapper) ConfirmMemoryModelsDeployed(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ConfirmMemoryModelsDeployed(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListMemoryPendingDeletes operation middleware
+func (siw *ServerInterfaceWrapper) ListMemoryPendingDeletes(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListMemoryPendingDeletes(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListMemoryProjects operation middleware
+func (siw *ServerInterfaceWrapper) ListMemoryProjects(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListMemoryProjects(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutMemoryProject operation middleware
+func (siw *ServerInterfaceWrapper) PutMemoryProject(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProjectIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutMemoryProject(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SearchMemory operation middleware
+func (siw *ServerInterfaceWrapper) SearchMemory(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SearchMemoryParams
+
+	// ------------- Required query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "projectId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "projectId", r.URL.Query(), &params.ProjectID, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "projectId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SearchMemory(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMemorySettings operation middleware
+func (siw *ServerInterfaceWrapper) GetMemorySettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMemorySettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutMemorySettings operation middleware
+func (siw *ServerInterfaceWrapper) PutMemorySettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutMemorySettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMemoryStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetMemoryStatus(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMemoryStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ForgetMemoryThread operation middleware
+func (siw *ServerInterfaceWrapper) ForgetMemoryThread(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ThreadIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ForgetMemoryThread(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMemoryUsage operation middleware
+func (siw *ServerInterfaceWrapper) GetMemoryUsage(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMemoryUsage(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -23273,6 +24648,87 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/api/v1/settings/artifacts", wrapper.PutArtifactPrefs)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/memory/settings", wrapper.GetMemorySettings)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/memory/settings", wrapper.PutMemorySettings)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/memory/status", wrapper.GetMemoryStatus)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/memory/env-file", wrapper.CreateMemoryEnvFile)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/memory/projects", wrapper.ListMemoryProjects)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/memory/projects/{id}", wrapper.PutMemoryProject)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/memory/models", wrapper.GetMemoryModels)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/memory/models", wrapper.PutMemoryModels)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/memory/models/deployed", wrapper.ConfirmMemoryModelsDeployed)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/memory/endpoints", wrapper.GetMemoryEndpoints)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/memory/endpoints/{kind}", wrapper.PutMemoryEndpoint)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/memory/usage", wrapper.GetMemoryUsage)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/memory/documents", wrapper.ListMemoryDocuments)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/memory/documents/{documentId}", wrapper.DeleteMemoryDocument)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/memory/search", wrapper.SearchMemory)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/memory/threads/{id}/forget", wrapper.ForgetMemoryThread)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/memory/candidates", wrapper.ListMemoryCandidates)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/memory/candidates/{candidateId}", wrapper.RejectMemoryCandidate)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/memory/candidates/{candidateId}/approve", wrapper.ApproveMemoryCandidate)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/memory/global", wrapper.CreateGlobalMemory)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/memory/global/{documentId}", wrapper.UpdateGlobalMemory)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/memory/mental-models", wrapper.ListMemoryMentalModels)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/memory/mental-models/{modelId}/refresh", wrapper.RefreshMemoryMentalModel)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/memory/pending-deletes", wrapper.ListMemoryPendingDeletes)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/memory/exports", wrapper.CreateMemoryExport)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/memory/exports/{exportId}", wrapper.GetMemoryExport)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/memory/exports/{exportId}/download", wrapper.DownloadMemoryExport)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/coordinator", wrapper.GetCoordinator)

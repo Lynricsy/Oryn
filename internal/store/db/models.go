@@ -459,6 +459,75 @@ type Job struct {
 	Result     *string `json:"result"`
 }
 
+type MemoryCandidate struct {
+	ID              string  `json:"id"`
+	Content         string  `json:"content"`
+	Context         *string `json:"context"`
+	SourceThreadID  *string `json:"sourceThreadId"`
+	SourceProjectID *string `json:"sourceProjectId"`
+	CreatedAt       int64   `json:"createdAt"`
+}
+
+type MemoryDocument struct {
+	DocumentID string  `json:"documentId"`
+	ProjectID  *string `json:"projectId"`
+	ThreadID   *string `json:"threadId"`
+	CreatedAt  int64   `json:"createdAt"`
+	UpdatedAt  int64   `json:"updatedAt"`
+}
+
+type MemoryEndpoint struct {
+	Kind       string `json:"kind"`
+	BaseUrl    string `json:"baseUrl"`
+	Model      string `json:"model"`
+	Dimensions *int64 `json:"dimensions"`
+	ApiKeyEnc  []byte `json:"apiKeyEnc"`
+	UpdatedAt  int64  `json:"updatedAt"`
+}
+
+type MemoryModel struct {
+	Purpose     string `json:"purpose"`
+	ProviderKey string `json:"providerKey"`
+	ModelID     string `json:"modelId"`
+	UpdatedAt   int64  `json:"updatedAt"`
+}
+
+type MemoryProject struct {
+	ProjectID string `json:"projectId"`
+	Enabled   int64  `json:"enabled"`
+	UpdatedAt int64  `json:"updatedAt"`
+}
+
+type MemorySetting struct {
+	ID               int64   `json:"id"`
+	Enabled          int64   `json:"enabled"`
+	HindsightUrl     *string `json:"hindsightUrl"`
+	HindsightKeyEnc  []byte  `json:"hindsightKeyEnc"`
+	RelayTokenHash   *string `json:"relayTokenHash"`
+	DeployedFamilies string  `json:"deployedFamilies"`
+	EmbedLocked      int64   `json:"embedLocked"`
+	LastMemoryCount  *int64  `json:"lastMemoryCount"`
+	KeysRotatedAt    *int64  `json:"keysRotatedAt"`
+	UpdatedAt        int64   `json:"updatedAt"`
+}
+
+type MemoryTombstone struct {
+	DocumentID    string  `json:"documentId"`
+	ProjectID     *string `json:"projectId"`
+	Attempts      int64   `json:"attempts"`
+	NextAttemptAt int64   `json:"nextAttemptAt"`
+	LastError     *string `json:"lastError"`
+	CreatedAt     int64   `json:"createdAt"`
+}
+
+type MemoryUsage struct {
+	Hour         int64  `json:"hour"`
+	Purpose      string `json:"purpose"`
+	Calls        int64  `json:"calls"`
+	InputTokens  int64  `json:"inputTokens"`
+	OutputTokens int64  `json:"outputTokens"`
+}
+
 type Notification struct {
 	ID         string  `json:"id"`
 	ThreadID   *string `json:"threadId"`

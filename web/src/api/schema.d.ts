@@ -3141,6 +3141,466 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/memory/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 记忆的连接与全局开关 */
+        get: operations["getMemorySettings"];
+        /**
+         * 修改连接地址与全局开关
+         * @description `hindsightUrl` 的主机不是 `127.0.0.1`、`localhost`、`::1` 或私有网段地址时必须用 `https://`，否则 400 `insecure_url`。
+         *     全局开关变化时，运行中且需重启的线程进入 apply-status 的待重启列表（原因 `memory`）。
+         */
+        put: operations["putMemorySettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memory/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Hindsight 的连接状态、版本与记忆数（实时探测，最多 10 秒） */
+        get: operations["getMemoryStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memory/env-file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 生成 Hindsight 的 .env（同时轮换 Hindsight API key 与中转令牌，旧值立即失效）
+         * @description 返回的两个密钥只在这一次出现；之后的 `.env` 片段（模型协议变化时）用占位文本代替它们。
+         */
+        post: operations["createMemoryEnvFile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memory/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 各项目的记忆开关（未单独设置的跟随全局） */
+        get: operations["listMemoryProjects"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memory/projects/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** 设置项目的记忆开关 */
+        put: operations["putMemoryProject"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memory/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 每种用途选定的模型、协议类型与是否需要重启 Hindsight */
+        get: operations["getMemoryModels"];
+        /**
+         * 修改各用途的模型（未列出或不带 providerKey 的用途跟随 default；default 必须指定）
+         * @description 模型必须在中央模型目录里，且 provider 的协议属于 openai 兼容、anthropic 或 gemini 之一，否则 400 `unsupported_model`。
+         */
+        put: operations["putMemoryModels"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memory/models/deployed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 主人已按新 .env 重启 Hindsight：把各用途已部署的协议类型更新为当前选择 */
+        post: operations["confirmMemoryModelsDeployed"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memory/endpoints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 嵌入与重排的远端接口 */
+        get: operations["getMemoryEndpoints"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memory/endpoints/{kind}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: components["schemas"]["MemoryEndpointKind"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 修改嵌入或重排接口
+         * @description bank 已有记忆（`embedLocked`）时，修改嵌入的 `model` 或 `dimensions` 返回 409 `embed_locked`；地址与 key 仍可改。
+         */
+        put: operations["putMemoryEndpoint"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memory/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 中转计数：各用途最近 24 小时与 7 天的调用次数和 token 数 */
+        get: operations["getMemoryUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memory/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 按项目或全局列出记忆 document（按更新时间倒序） */
+        get: operations["listMemoryDocuments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memory/documents/{documentId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                documentId: components["parameters"]["MemoryDocumentIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 删除一个 document（连同 Hindsight 从它派生的记忆） */
+        delete: operations["deleteMemoryDocument"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memory/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 在项目（含全局）或仅全局范围内召回 */
+        get: operations["searchMemory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memory/threads/{id}/forget": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 按线程遗忘：删除该线程写入的全部 document */
+        post: operations["forgetMemoryThread"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memory/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 待批准的全局记忆候选（新的在前） */
+        get: operations["listMemoryCandidates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memory/candidates/{candidateId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                candidateId: components["parameters"]["MemoryCandidateIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 拒绝候选（直接删除） */
+        delete: operations["rejectMemoryCandidate"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memory/candidates/{candidateId}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                candidateId: components["parameters"]["MemoryCandidateIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 批准候选（可先改写内容），写入 Hindsight 成为全局记忆 */
+        post: operations["approveMemoryCandidate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memory/global": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 新建全局记忆 */
+        post: operations["createGlobalMemory"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memory/global/{documentId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                documentId: components["parameters"]["MemoryDocumentIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** 改写全局记忆（同一 document 替换内容） */
+        put: operations["updateGlobalMemory"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memory/mental-models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 项目或全局的 mental models */
+        get: operations["listMemoryMentalModels"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memory/mental-models/{modelId}/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                modelId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 手动刷新一个 mental model（异步） */
+        post: operations["refreshMemoryMentalModel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memory/pending-deletes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 删除失败、等待重试的 document */
+        get: operations["listMemoryPendingDeletes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memory/exports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 导出 bank（异步） */
+        post: operations["createMemoryExport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memory/exports/{exportId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exportId: components["parameters"]["MemoryExportIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 导出进度 */
+        get: operations["getMemoryExport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memory/exports/{exportId}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exportId: components["parameters"]["MemoryExportIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 下载导出的归档（state 为 done 之前 409 `export_not_ready`） */
+        get: operations["downloadMemoryExport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/coordinator": {
         parameters: {
             query?: never;
@@ -5197,6 +5657,249 @@ export interface components {
         ArtifactPrefs: {
             /** @description 把新建的 artifact 以私有方式发布，并跟着最新版本更新 */
             autoPublish: boolean;
+        };
+        /**
+         * @description Hindsight 调用模型的用途；未单独指定的用途跟随 `default`
+         * @enum {string}
+         */
+        MemoryPurpose: "default" | "retain" | "reflect" | "consolidation" | "mental_model";
+        /**
+         * @description 写进 Hindsight .env 的协议类型（`openai` = OpenAI 兼容 chat completions）
+         * @enum {string}
+         */
+        MemoryFamily: "openai" | "anthropic" | "gemini";
+        /** @enum {string} */
+        MemoryEndpointKind: "embed" | "rerank";
+        /** @description Hindsight 的 document id（自动写入是会话 id，工具写入是 `omp-retain-<hex>`，管理页写入是 `oryn-<ulid>`） */
+        MemoryDocumentId: string;
+        MemorySettings: {
+            /** @description 全局总开关 */
+            enabled: boolean;
+            /** @description Hindsight API 根地址；省略 = 未配置 */
+            hindsightUrl?: string;
+            /** @description 是否已生成过 .env（Hindsight API key 与中转令牌） */
+            keysGenerated: boolean;
+            /**
+             * Format: int64
+             * @description 最近一次生成 .env 的时间（Unix 秒）
+             */
+            keysGeneratedAt?: number;
+            /** @description 记忆的输出语言（固定为简体中文，只读） */
+            outputLanguage: string;
+        };
+        MemorySettingsUpdate: {
+            enabled: boolean;
+            /** @description 省略 = 清空 */
+            hindsightUrl?: string;
+        };
+        MemoryStatus: {
+            /**
+             * @description `unconfigured`（未填地址）、`no_keys`（未生成 .env）、`disabled`（总开关关闭，其余字段照常探测）、`ok`、
+             *     `unreachable`（连不上或超时）、`unauthorized`（API key 不对）、`not_ready`（`/health/ready` 非 200）、
+             *     `suspect_empty`（上次有记忆、这次记忆数为 0：多半是 Hindsight 换成了空库，见 deploy.md）。
+             * @enum {string}
+             */
+            state: "unconfigured" | "no_keys" | "disabled" | "ok" | "unreachable" | "unauthorized" | "not_ready" | "suspect_empty";
+            /** @description Hindsight `/version` 报告的版本 */
+            version?: string;
+            /** @description Oryn 已验证的小版本线，如 `1.2` */
+            testedMinor: string;
+            /** @description 服务端小版本与 testedMinor 不同 */
+            versionMismatch: boolean;
+            /**
+             * Format: int64
+             * @description bank `oryn` 的记忆数
+             */
+            memoryCount?: number;
+            /** @description 删除失败等待重试的 document 数 */
+            pendingDeletes: number;
+            /** @description 待批准的全局候选数 */
+            candidates: number;
+            /** @description bank 已有记忆，嵌入模型与维度只读 */
+            embedLocked: boolean;
+            /** Format: int64 */
+            checkedAt: number;
+            /** @description 失败时给人看的原因 */
+            error?: string;
+        };
+        MemoryEnvFile: {
+            /** @description 完整的 .env 文本（含只显示这一次的两个密钥） */
+            content: string;
+            /** Format: int64 */
+            generatedAt: number;
+        };
+        MemoryProjectToggle: {
+            projectId: components["schemas"]["ProjectId"];
+            name: string;
+            /** @description 生效值（未单独设置时等于全局开关） */
+            enabled: boolean;
+            /** @description 是否单独设置过 */
+            overridden: boolean;
+        };
+        MemoryProjectList: {
+            items: components["schemas"]["MemoryProjectToggle"][];
+        };
+        MemoryProjectUpdate: {
+            enabled: boolean;
+        };
+        MemoryModelChoice: {
+            purpose: components["schemas"]["MemoryPurpose"];
+            followsDefault: boolean;
+            /** @description 生效的 provider（跟随 default 时是 default 的） */
+            providerKey?: string;
+            modelId?: string;
+            family?: components["schemas"]["MemoryFamily"];
+            deployedFamily?: components["schemas"]["MemoryFamily"];
+            /** @description 生效协议与 .env 里已部署的不同；确认重启前该用途的中转返回 409 `family_mismatch` */
+            needsRestart: boolean;
+        };
+        MemoryModels: {
+            items: components["schemas"]["MemoryModelChoice"][];
+            /** @description 有用途需要重启时，要改进 .env 的那几行 */
+            envSnippet?: string;
+        };
+        MemoryModelsUpdate: {
+            items: {
+                purpose: components["schemas"]["MemoryPurpose"];
+                /** @description 省略 = 跟随 default（default 不可省略） */
+                providerKey?: string;
+                modelId?: string;
+            }[];
+        };
+        MemoryEndpoint: {
+            kind: components["schemas"]["MemoryEndpointKind"];
+            /** @description OpenAI 兼容（embed）或 Cohere 兼容（rerank）接口根地址 */
+            baseUrl: string;
+            model: string;
+            /** @description 只对 embed 有意义 */
+            dimensions?: number;
+            hasKey: boolean;
+        };
+        MemoryEndpoints: {
+            embed?: components["schemas"]["MemoryEndpoint"];
+            rerank?: components["schemas"]["MemoryEndpoint"];
+            embedLocked: boolean;
+        };
+        MemoryEndpointUpdate: {
+            baseUrl: string;
+            model: string;
+            dimensions?: number;
+            /** @description 省略 = 保留原值 */
+            apiKey?: string;
+            /** @description 为真时删除已存的 key */
+            clearKey?: boolean;
+        };
+        MemoryUsageCounts: {
+            /** Format: int64 */
+            calls: number;
+            /** Format: int64 */
+            inputTokens: number;
+            /** Format: int64 */
+            outputTokens: number;
+        };
+        MemoryUsage: {
+            items: {
+                /** @description MemoryPurpose 的取值，另有 `embed`、`rerank` */
+                purpose: string;
+                day: components["schemas"]["MemoryUsageCounts"];
+                week: components["schemas"]["MemoryUsageCounts"];
+            }[];
+        };
+        MemoryDocument: {
+            id: components["schemas"]["MemoryDocumentId"];
+            projectId?: components["schemas"]["ProjectId"];
+            threadId?: components["schemas"]["ThreadId"];
+            threadTitle?: string;
+            /** @description 原文开头（最多 400 字） */
+            preview: string;
+            /** @description 全局记忆的完整内容（只在全局列表与写接口里返回） */
+            content?: string;
+            /** Format: int64 */
+            createdAt: number;
+            /** Format: int64 */
+            updatedAt: number;
+        };
+        MemoryDocumentList: {
+            items: components["schemas"]["MemoryDocument"][];
+            hasMore: boolean;
+        };
+        MemorySearchHit: {
+            text: string;
+            /** @description Hindsight 的记忆类型（world / experience / observation …） */
+            type?: string;
+            mentionedAt?: string;
+            documentId?: components["schemas"]["MemoryDocumentId"];
+            global?: boolean;
+        };
+        MemorySearchResult: {
+            items: components["schemas"]["MemorySearchHit"][];
+        };
+        MemoryForgetResult: {
+            deleted: number;
+            /** @description 删除失败、进入重试队列的个数 */
+            pending: number;
+        };
+        MemoryCandidate: {
+            id: string;
+            content: string;
+            context?: string;
+            sourceThreadId?: components["schemas"]["ThreadId"];
+            sourceThreadTitle?: string;
+            sourceProjectId?: components["schemas"]["ProjectId"];
+            /** Format: int64 */
+            createdAt: number;
+        };
+        MemoryCandidateList: {
+            items: components["schemas"]["MemoryCandidate"][];
+        };
+        MemoryCandidateApprove: {
+            /** @description 省略 = 原样批准 */
+            content?: string;
+        };
+        MemoryContent: {
+            content: string;
+        };
+        MemoryMentalModel: {
+            id: string;
+            name: string;
+            global: boolean;
+            projectId?: components["schemas"]["ProjectId"];
+            content?: string;
+            sourceQuery?: string;
+            lastRefreshedAt?: string;
+        };
+        MemoryMentalModelList: {
+            items: components["schemas"]["MemoryMentalModel"][];
+        };
+        MemoryPendingDelete: {
+            documentId: components["schemas"]["MemoryDocumentId"];
+            projectId?: components["schemas"]["ProjectId"];
+            attempts: number;
+            /** Format: int64 */
+            nextAttemptAt: number;
+            lastError?: string;
+        };
+        MemoryPendingDeleteList: {
+            items: components["schemas"]["MemoryPendingDelete"][];
+        };
+        MemoryExport: {
+            id: string;
+            /** @enum {string} */
+            state: "running" | "done" | "failed";
+            error?: string;
+            /** Format: int64 */
+            createdAt: number;
+        };
+        /**
+         * @description M16：本次 agent 启用 Hindsight 记忆（字段缺省 = 不启用）。orbd 写 `--config` 覆盖文件（`memory.backend: hindsight`、
+         *     `hindsight.globalScope: true`），注入 `HINDSIGHT_API_URL=http://127.0.0.1:7811/memory/t/<threadId>`、`HINDSIGHT_BANK_ID=oryn`、
+         *     `HINDSIGHT_SCOPING=per-project-tagged`、`NO_PROXY`；有 `project` 时注入 `ORYN_HINDSIGHT_PROJECT`，`autoRetain` 为假时注入
+         *     `HINDSIGHT_AUTO_RETAIN=false`。只有 hello 含 `memory` 的 orbd 会收到。
+         */
+        LinkCtlAgentMemory: {
+            /** @description 项目 ID 转小写；省略 = 无项目线程 */
+            project?: string;
+            autoRetain: boolean;
         };
         /** @description 新助手对话的第一条用户消息；全部省略 = 空对话 */
         CreateAssistantConversationRequest: {
@@ -8073,6 +8776,7 @@ export interface components {
              *     `metrics`（上报 `metrics.sample`）。runner 形态上报 `fs`、`attachments`、`metrics`，`git` 在 PATH 里时加 `git`。
              *     M13 起：`omphome-apply`（认识 `omphome.apply`；普通 orbd 与协调宿主上报，runner 不上报）、
              *     `library`（认识 `library.sync`、`library.fetch` 与同步用的 `library` 流；只由协调宿主上报，此时特性表恰为 `["coordinator", "omphome-apply", "library"]`）。
+             *     M16 起：`memory`（认识 `agent.start` 的 `memory`，并为记忆开出站通道 `/memory/`；普通 orbd 与 runner 上报，协调宿主不上报）。
              *     缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync / 桌面请求回 409 `orbd_outdated`。
              */
             features?: string[];
@@ -8355,6 +9059,7 @@ export interface components {
             profile?: "coordinator";
             /** @description M9 协调档的系统提示词（以字面量传给 omp `--system-prompt`，必须含换行，否则 `invalid_params`）；只有协调宿主接受 */
             systemPrompt?: string;
+            memory?: components["schemas"]["LinkCtlAgentMemory"];
         };
         LinkCtlAgentStartResult: {
             pid: number;
@@ -8608,6 +9313,9 @@ export interface components {
         ProjectIdPath: components["schemas"]["ProjectId"];
         ProviderIdPath: components["schemas"]["ProviderId"];
         ThreadIdPath: components["schemas"]["ThreadId"];
+        MemoryDocumentIdPath: components["schemas"]["MemoryDocumentId"];
+        MemoryCandidateIdPath: string;
+        MemoryExportIdPath: string;
         OrbIdPath: components["schemas"]["OrbId"];
         AttachmentIdPath: components["schemas"]["AttachmentId"];
         AssistantFileIdPath: components["schemas"]["AssistantFileId"];
@@ -13744,6 +14452,629 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ArtifactPrefs"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getMemorySettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 设置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemorySettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putMemorySettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemorySettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description 修改后的设置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemorySettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getMemoryStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createMemoryEnvFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 完整的 .env 内容 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryEnvFile"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listMemoryProjects: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 全部未归档项目 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryProjectList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putMemoryProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryProjectUpdate"];
+            };
+        };
+        responses: {
+            /** @description 修改后的开关 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryProjectToggle"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getMemoryModels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 五种用途，顺序固定 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryModels"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putMemoryModels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryModelsUpdate"];
+            };
+        };
+        responses: {
+            /** @description 修改后的选择 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryModels"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    confirmMemoryModelsDeployed: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 更新后的选择（needsRestart 全部为 false） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryModels"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getMemoryEndpoints: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 接口配置（key 只回报是否已设置） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryEndpoints"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putMemoryEndpoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: components["schemas"]["MemoryEndpointKind"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryEndpointUpdate"];
+            };
+        };
+        responses: {
+            /** @description 修改后的接口 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryEndpoints"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getMemoryUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 用量 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryUsage"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listMemoryDocuments: {
+        parameters: {
+            query?: {
+                /** @description 与 `global` 二选一 */
+                projectId?: components["schemas"]["ProjectId"];
+                /** @description 为真时列全局记忆 */
+                global?: boolean;
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 一页 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryDocumentList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteMemoryDocument: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                documentId: components["parameters"]["MemoryDocumentIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    searchMemory: {
+        parameters: {
+            query: {
+                q: string;
+                /** @description 省略 = 只搜全局 */
+                projectId?: components["schemas"]["ProjectId"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 召回结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemorySearchResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    forgetMemoryThread: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 删除结果（失败的进入重试队列，计入 pending） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryForgetResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listMemoryCandidates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 候选 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryCandidateList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    rejectMemoryCandidate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                candidateId: components["parameters"]["MemoryCandidateIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    approveMemoryCandidate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                candidateId: components["parameters"]["MemoryCandidateIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["MemoryCandidateApprove"];
+            };
+        };
+        responses: {
+            /** @description 新建的全局记忆 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryDocument"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createGlobalMemory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryContent"];
+            };
+        };
+        responses: {
+            /** @description 新建的全局记忆 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryDocument"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateGlobalMemory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                documentId: components["parameters"]["MemoryDocumentIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryContent"];
+            };
+        };
+        responses: {
+            /** @description 改写后的全局记忆 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryDocument"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listMemoryMentalModels: {
+        parameters: {
+            query?: {
+                /** @description 省略 = 全局（user-preferences） */
+                projectId?: components["schemas"]["ProjectId"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description mental models */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryMentalModelList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    refreshMemoryMentalModel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                modelId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已提交刷新 */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listMemoryPendingDeletes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 重试队列 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryPendingDeleteList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createMemoryExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已开始 */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryExport"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getMemoryExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exportId: components["parameters"]["MemoryExportIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 进度 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryExport"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    downloadMemoryExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exportId: components["parameters"]["MemoryExportIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 归档字节，带 `Content-Disposition: attachment` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
                 };
             };
             default: components["responses"]["Error"];
