@@ -23,6 +23,7 @@ import {
 	stringifyCanvasDoc,
 } from "../lib/artifacts/canvas-doc";
 import { cleanStyle, sourceTextAt } from "../lib/artifacts/editable";
+import { MockArtifactActivity } from "./artifact-activity";
 import { MockArtifactPublish } from "./artifact-publish";
 import {
 	ARTIFACT_IDS,
@@ -449,6 +450,11 @@ export class MockArtifacts {
 	private seq = 0;
 	/** 发布（8.1、8.4 的 mock）。 */
 	private readonly publish: MockArtifactPublish;
+	/** 在场（6.7 的 mock）：有人在看时演一个在改的 agent。 */
+	private readonly activity = new MockArtifactActivity({
+		watchers: (id) => this.watchers.get(id) ?? new Set(),
+		targets: (id) => this.activityTargets(id),
+	});
 
 	constructor(threads: Map<string, Thread>, hub: ArtifactsHub) {
 		this.threads = threads;
@@ -545,19 +551,38 @@ export class MockArtifacts {
 			this.watchers.set(id, set);
 		}
 		set.add(socket);
+		this.activity.changed(id);
 	}
 
 	unwatch(socket: MockSocket, id: unknown) {
 		if (typeof id === "string") this.watchers.get(id)?.delete(socket);
+		if (typeof id === "string") this.activity.changed(id);
 	}
 
 	/** 连接断开等于全部 unwatch。 */
 	drop(socket: MockSocket) {
 		for (const set of this.watchers.values()) set.delete(socket);
+		for (const id of this.watchers.keys()) this.activity.changed(id);
 	}
 
 	private toWatchers(id: string, msg: Record<string, unknown>) {
 		for (const s of this.watchers.get(id) ?? []) s.deliver(msg);
+	}
+
+	/** 在场演示的目标：画布是当前文档（有实时文档取实时的）里的各画框，其余是入口文件。 */
+	private activityTargets(id: string): { path: string; page?: string }[] {
+		const a = this.items.get(id);
+		const head = a?.versions[a.versions.length - 1];
+		if (!a || !head) return [];
+		if (a.meta.kind !== "canvas") {
+			const [path] = [...head.files.keys()];
+			return path ? [{ path }] : [];
+		}
+		const raw = head.files.get("canvas.json");
+		const doc =
+			this.canvasLive.get(id)?.doc ??
+			(raw ? parseCanvasDoc(new TextDecoder().decode(raw.data)) : null);
+		return (doc?.pages ?? []).map((p) => ({ path: p.file, page: p.id }));
 	}
 
 	// ------------------------------------------------------------ 写入

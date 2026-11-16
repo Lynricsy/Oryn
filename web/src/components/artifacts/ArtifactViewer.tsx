@@ -53,6 +53,7 @@ import { CommentsPanel } from "./CommentsPanel";
 import { CanvasEditor } from "./canvas/CanvasEditor";
 import { EditPanel } from "./EditPanel";
 import { type FramePost, PageFrame, type PageSelectMessage } from "./PageFrame";
+import { PresenceFaces } from "./PresenceFaces";
 import { ShareControl } from "./SharePopover";
 import { VersionHistory } from "./VersionHistory";
 import {
@@ -583,6 +584,11 @@ export function ArtifactViewer({
 				<span className="flex-1" />
 				{live && (
 					<>
+						<PresenceFaces
+							artifactId={artifactId}
+							threads={detail.data?.threads}
+							canFollow={artifact.kind === "canvas" && !pinnedVersion}
+						/>
 						{canSelect && (
 							<>
 								<IconButton

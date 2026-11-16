@@ -63,6 +63,7 @@ import { showToast } from "../../../state/toasts";
 import { Button, describeError } from "../../ui/primitives";
 import type { FrameLink } from "../frame-link";
 import { FrameErrorState, ViewerLoading } from "../viewer-states";
+import { AgentPointers, FollowBar, useAgentPresence } from "./AgentPointer";
 import {
 	type Camera,
 	fitBox,
@@ -1067,6 +1068,18 @@ export function CanvasEditor({
 		setInside(null);
 	};
 
+	// 在场（6.7）：各线程的指针、工作中的画框与「跟随 {线程}」
+	const presence = useAgentPresence({
+		artifactId,
+		live,
+		doc: baseDoc,
+		canvasKey,
+		cam,
+		size,
+		setCam,
+		switchCanvas,
+	});
+
 	/** 图层面板与名称行：选中并把镜头移到 focus 上。 */
 	const selectAndReveal = (ids: string[], focus: string) => {
 		setSelected(ids);
@@ -1385,6 +1398,7 @@ export function CanvasEditor({
 							);
 						})}
 					</div>
+					<AgentPointers presence={presence} />
 					{editing && (
 						<div
 							className="canvas-world"
@@ -1446,6 +1460,7 @@ export function CanvasEditor({
 						</span>
 					</div>
 				)}
+				<FollowBar presence={presence} />
 				<Toolbar
 					doc={doc}
 					canvasKey={canvasKey}

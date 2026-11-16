@@ -1699,6 +1699,31 @@
 			"meta": "{{kind}} · v{{version}} · {{when}}",
 			"open": "Open “{{title}}”"
 		},
+		"presence": {
+			"writing": "Writing…",
+			"face": "{{thread}}: {{doing}}",
+			"doing": {
+				"read": "reading",
+				"write": "editing",
+				"draw": "drawing",
+				"move": "moving"
+			},
+			"moreTitle_one": "{{count}} more thread",
+			"moreTitle_other": "{{count}} more threads",
+			"openIn_one": "Open in {{count}} place",
+			"openIn_other": "Open in {{count}} places",
+			"unknownThread": "A thread",
+			"openThread": "Open thread",
+			"follow": "Follow {{thread}}",
+			"stopFollow": "Stop following",
+			"following": "Following {{thread}}",
+			"pointer": {
+				"read": "Viewing “{{name}}”",
+				"write": "Editing “{{name}}”",
+				"draw": "Drawing “{{name}}”",
+				"move": "Moving “{{name}}”"
+			}
+		},
 		"tool": {
 			"created": "{{kind}} · created · v{{version}}",
 			"updated": "updated · v{{from}}→v{{to}}",

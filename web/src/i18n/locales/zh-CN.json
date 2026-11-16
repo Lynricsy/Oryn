@@ -1699,6 +1699,31 @@
 			"meta": "{{kind}} · v{{version}} · {{when}}",
 			"open": "打开「{{title}}」"
 		},
+		"presence": {
+			"writing": "正在写入…",
+			"face": "{{thread}}：{{doing}}",
+			"doing": {
+				"read": "在读",
+				"write": "正在改",
+				"draw": "正在画",
+				"move": "正在挪"
+			},
+			"moreTitle_one": "还有 {{count}} 个线程",
+			"moreTitle_other": "还有 {{count}} 个线程",
+			"openIn_one": "在 {{count}} 处打开",
+			"openIn_other": "在 {{count}} 处打开",
+			"unknownThread": "一个线程",
+			"openThread": "打开线程",
+			"follow": "跟随 {{thread}}",
+			"stopFollow": "停止跟随",
+			"following": "正在跟随 {{thread}}",
+			"pointer": {
+				"read": "在看「{{name}}」",
+				"write": "正在改「{{name}}」",
+				"draw": "正在画「{{name}}」",
+				"move": "正在挪「{{name}}」"
+			}
+		},
 		"tool": {
 			"created": "{{kind}} · 已创建 · v{{version}}",
 			"updated": "已更新 · v{{from}}→v{{to}}",
