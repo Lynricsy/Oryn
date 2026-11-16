@@ -683,6 +683,51 @@ func (e GitFileDiffKind) Valid() bool {
 	}
 }
 
+// Defines values for GitHubHookLastDeliverySource.
+const (
+	GitHubHookLastDeliverySourcePoll    GitHubHookLastDeliverySource = "poll"
+	GitHubHookLastDeliverySourceWebhook GitHubHookLastDeliverySource = "webhook"
+)
+
+// Valid indicates whether the value is a known member of the GitHubHookLastDeliverySource enum.
+func (e GitHubHookLastDeliverySource) Valid() bool {
+	switch e {
+	case GitHubHookLastDeliverySourcePoll:
+		return true
+	case GitHubHookLastDeliverySourceWebhook:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GitHubHookStatus.
+const (
+	GitHubHookActive        GitHubHookStatus = "active"
+	GitHubHookError         GitHubHookStatus = "error"
+	GitHubHookNoAdmin       GitHubHookStatus = "no_admin"
+	GitHubHookOrgRestricted GitHubHookStatus = "org_restricted"
+	GitHubHookSsoRequired   GitHubHookStatus = "sso_required"
+)
+
+// Valid indicates whether the value is a known member of the GitHubHookStatus enum.
+func (e GitHubHookStatus) Valid() bool {
+	switch e {
+	case GitHubHookActive:
+		return true
+	case GitHubHookError:
+		return true
+	case GitHubHookNoAdmin:
+		return true
+	case GitHubHookOrgRestricted:
+		return true
+	case GitHubHookSsoRequired:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GitHubIdentityStatus.
 const (
 	Ok     GitHubIdentityStatus = "ok"
@@ -713,6 +758,27 @@ func (e GitHubIdentitySlot) Valid() bool {
 	case GitHubIdentitySlotAgent:
 		return true
 	case GitHubIdentitySlotUser:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GitHubPresetID.
+const (
+	GitHubPresetRobompRelease GitHubPresetID = "robomp_release"
+	GitHubPresetRobompReview  GitHubPresetID = "robomp_review"
+	GitHubPresetRobompTriage  GitHubPresetID = "robomp_triage"
+)
+
+// Valid indicates whether the value is a known member of the GitHubPresetID enum.
+func (e GitHubPresetID) Valid() bool {
+	switch e {
+	case GitHubPresetRobompRelease:
+		return true
+	case GitHubPresetRobompReview:
+		return true
+	case GitHubPresetRobompTriage:
 		return true
 	default:
 		return false
@@ -758,6 +824,33 @@ func (e GitHubRefState) Valid() bool {
 	}
 }
 
+// Defines values for GitHubReleaseState.
+const (
+	GitHubReleaseAwaitingCi GitHubReleaseState = "awaiting_ci"
+	GitHubReleaseFailed     GitHubReleaseState = "failed"
+	GitHubReleaseFixing     GitHubReleaseState = "fixing"
+	GitHubReleaseGreen      GitHubReleaseState = "green"
+	GitHubReleaseSuperseded GitHubReleaseState = "superseded"
+)
+
+// Valid indicates whether the value is a known member of the GitHubReleaseState enum.
+func (e GitHubReleaseState) Valid() bool {
+	switch e {
+	case GitHubReleaseAwaitingCi:
+		return true
+	case GitHubReleaseFailed:
+		return true
+	case GitHubReleaseFixing:
+		return true
+	case GitHubReleaseGreen:
+		return true
+	case GitHubReleaseSuperseded:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GitHubStatusLastDeliverySource.
 const (
 	GitHubStatusLastDeliverySourcePoll    GitHubStatusLastDeliverySource = "poll"
@@ -776,11 +869,110 @@ func (e GitHubStatusLastDeliverySource) Valid() bool {
 	}
 }
 
+// Defines values for GitHubTaskKind.
+const (
+	GitHubTaskKindIssue   GitHubTaskKind = "issue"
+	GitHubTaskKindRelease GitHubTaskKind = "release"
+)
+
+// Valid indicates whether the value is a known member of the GitHubTaskKind enum.
+func (e GitHubTaskKind) Valid() bool {
+	switch e {
+	case GitHubTaskKindIssue:
+		return true
+	case GitHubTaskKindRelease:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GitHubTaskState.
+const (
+	GitHubTaskAbandoned   GitHubTaskState = "abandoned"
+	GitHubTaskClosed      GitHubTaskState = "closed"
+	GitHubTaskFixing      GitHubTaskState = "fixing"
+	GitHubTaskMerged      GitHubTaskState = "merged"
+	GitHubTaskNeedsInfo   GitHubTaskState = "needs_info"
+	GitHubTaskNew         GitHubTaskState = "new"
+	GitHubTaskOpened      GitHubTaskState = "opened"
+	GitHubTaskReproducing GitHubTaskState = "reproducing"
+	GitHubTaskReviewing   GitHubTaskState = "reviewing"
+)
+
+// Valid indicates whether the value is a known member of the GitHubTaskState enum.
+func (e GitHubTaskState) Valid() bool {
+	switch e {
+	case GitHubTaskAbandoned:
+		return true
+	case GitHubTaskClosed:
+		return true
+	case GitHubTaskFixing:
+		return true
+	case GitHubTaskMerged:
+		return true
+	case GitHubTaskNeedsInfo:
+		return true
+	case GitHubTaskNew:
+		return true
+	case GitHubTaskOpened:
+		return true
+	case GitHubTaskReproducing:
+		return true
+	case GitHubTaskReviewing:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GitHubThreadTaskKind.
+const (
+	GitHubThreadTaskKindIssue   GitHubThreadTaskKind = "issue"
+	GitHubThreadTaskKindRelease GitHubThreadTaskKind = "release"
+)
+
+// Valid indicates whether the value is a known member of the GitHubThreadTaskKind enum.
+func (e GitHubThreadTaskKind) Valid() bool {
+	switch e {
+	case GitHubThreadTaskKindIssue:
+		return true
+	case GitHubThreadTaskKindRelease:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GitHubTriggerDrivers.
+const (
+	GitHubDriversAnyone           GitHubTriggerDrivers = "anyone"
+	GitHubDriversWriters          GitHubTriggerDrivers = "writers"
+	GitHubDriversWritersAndAuthor GitHubTriggerDrivers = "writers_and_author"
+)
+
+// Valid indicates whether the value is a known member of the GitHubTriggerDrivers enum.
+func (e GitHubTriggerDrivers) Valid() bool {
+	switch e {
+	case GitHubDriversAnyone:
+		return true
+	case GitHubDriversWriters:
+		return true
+	case GitHubDriversWritersAndAuthor:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GitHubTriggerEvent.
 const (
-	IssueLabeled GitHubTriggerEvent = "issue_labeled"
-	IssueOpened  GitHubTriggerEvent = "issue_opened"
-	Mention      GitHubTriggerEvent = "mention"
+	IssueLabeled         GitHubTriggerEvent = "issue_labeled"
+	IssueOpened          GitHubTriggerEvent = "issue_opened"
+	IssueReopened        GitHubTriggerEvent = "issue_reopened"
+	Mention              GitHubTriggerEvent = "mention"
+	PullRequestOpened    GitHubTriggerEvent = "pull_request_opened"
+	WorkflowRunCompleted GitHubTriggerEvent = "workflow_run_completed"
 )
 
 // Valid indicates whether the value is a known member of the GitHubTriggerEvent enum.
@@ -790,7 +982,13 @@ func (e GitHubTriggerEvent) Valid() bool {
 		return true
 	case IssueOpened:
 		return true
+	case IssueReopened:
+		return true
 	case Mention:
+		return true
+	case PullRequestOpened:
+		return true
+	case WorkflowRunCompleted:
 		return true
 	default:
 		return false
@@ -920,48 +1118,68 @@ func (e LinkCtlAgentStatusParamsStatus) Valid() bool {
 	}
 }
 
+// Defines values for LinkCtlGithubPrepareReportParamsLevel.
+const (
+	GitHubPrepareLevelPr   LinkCtlGithubPrepareReportParamsLevel = "pr"
+	GitHubPrepareLevelPush LinkCtlGithubPrepareReportParamsLevel = "push"
+)
+
+// Valid indicates whether the value is a known member of the LinkCtlGithubPrepareReportParamsLevel enum.
+func (e LinkCtlGithubPrepareReportParamsLevel) Valid() bool {
+	switch e {
+	case GitHubPrepareLevelPr:
+		return true
+	case GitHubPrepareLevelPush:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for LinkCtlMethod.
 const (
-	MethodAgentGap          LinkCtlMethod = "agent.gap"
-	MethodAgentStart        LinkCtlMethod = "agent.start"
-	MethodAgentStatus       LinkCtlMethod = "agent.status"
-	MethodAgentStop         LinkCtlMethod = "agent.stop"
-	MethodArtifactCall      LinkCtlMethod = "artifact.call"
-	MethodBlobFetch         LinkCtlMethod = "blob.fetch"
-	MethodDesktopState      LinkCtlMethod = "desktop.state"
-	MethodEntriesAppend     LinkCtlMethod = "entries.append"
-	MethodEntriesCursors    LinkCtlMethod = "entries.cursors"
-	MethodEntriesReset      LinkCtlMethod = "entries.reset"
-	MethodEntriesResetDone  LinkCtlMethod = "entries.reset_done"
-	MethodFsCopyTree        LinkCtlMethod = "fs.copyTree"
-	MethodFsMove            LinkCtlMethod = "fs.move"
-	MethodHello             LinkCtlMethod = "hello"
-	MethodLibraryFetch      LinkCtlMethod = "library.fetch"
-	MethodLibraryPut        LinkCtlMethod = "library.put"
-	MethodLibrarySync       LinkCtlMethod = "library.sync"
-	MethodMetricsSample     LinkCtlMethod = "metrics.sample"
-	MethodOmpHomeApply      LinkCtlMethod = "omphome.apply"
-	MethodPortalConfigure   LinkCtlMethod = "portal.configure"
-	MethodProfileMode       LinkCtlMethod = "profile.mode"
-	MethodProjectScriptsGet LinkCtlMethod = "project.scripts.get"
-	MethodProjectScriptsSet LinkCtlMethod = "project.scripts.set"
-	MethodResumeRun         LinkCtlMethod = "resume.run"
-	MethodScheduleDelete    LinkCtlMethod = "schedule.delete"
-	MethodScheduleEnable    LinkCtlMethod = "schedule.enable"
-	MethodScheduleGet       LinkCtlMethod = "schedule.get"
-	MethodSchedulePut       LinkCtlMethod = "schedule.put"
-	MethodServicesState     LinkCtlMethod = "services.state"
-	MethodSetupLog          LinkCtlMethod = "setup.log"
-	MethodSetupResult       LinkCtlMethod = "setup.result"
-	MethodSetupRun          LinkCtlMethod = "setup.run"
-	MethodShutdown          LinkCtlMethod = "shutdown"
-	MethodSnapshotPrepare   LinkCtlMethod = "snapshot.prepare"
-	MethodTerminalGap       LinkCtlMethod = "terminal.gap"
-	MethodThreadCreate      LinkCtlMethod = "thread.create"
-	MethodThreadGet         LinkCtlMethod = "thread.get"
-	MethodThreadSend        LinkCtlMethod = "thread.send"
-	MethodWorktreeAdd       LinkCtlMethod = "worktree.add"
-	MethodWorktreeRemove    LinkCtlMethod = "worktree.remove"
+	MethodAgentGap            LinkCtlMethod = "agent.gap"
+	MethodAgentStart          LinkCtlMethod = "agent.start"
+	MethodAgentStatus         LinkCtlMethod = "agent.status"
+	MethodAgentStop           LinkCtlMethod = "agent.stop"
+	MethodArtifactCall        LinkCtlMethod = "artifact.call"
+	MethodBlobFetch           LinkCtlMethod = "blob.fetch"
+	MethodDesktopState        LinkCtlMethod = "desktop.state"
+	MethodEntriesAppend       LinkCtlMethod = "entries.append"
+	MethodEntriesCursors      LinkCtlMethod = "entries.cursors"
+	MethodEntriesReset        LinkCtlMethod = "entries.reset"
+	MethodEntriesResetDone    LinkCtlMethod = "entries.reset_done"
+	MethodFsCopyTree          LinkCtlMethod = "fs.copyTree"
+	MethodFsMove              LinkCtlMethod = "fs.move"
+	MethodGithubCall          LinkCtlMethod = "github.call"
+	MethodGithubPrepareReport LinkCtlMethod = "github.prepare.report"
+	MethodHello               LinkCtlMethod = "hello"
+	MethodLibraryFetch        LinkCtlMethod = "library.fetch"
+	MethodLibraryPut          LinkCtlMethod = "library.put"
+	MethodLibrarySync         LinkCtlMethod = "library.sync"
+	MethodMetricsSample       LinkCtlMethod = "metrics.sample"
+	MethodOmpHomeApply        LinkCtlMethod = "omphome.apply"
+	MethodPortalConfigure     LinkCtlMethod = "portal.configure"
+	MethodProfileMode         LinkCtlMethod = "profile.mode"
+	MethodProjectScriptsGet   LinkCtlMethod = "project.scripts.get"
+	MethodProjectScriptsSet   LinkCtlMethod = "project.scripts.set"
+	MethodResumeRun           LinkCtlMethod = "resume.run"
+	MethodScheduleDelete      LinkCtlMethod = "schedule.delete"
+	MethodScheduleEnable      LinkCtlMethod = "schedule.enable"
+	MethodScheduleGet         LinkCtlMethod = "schedule.get"
+	MethodSchedulePut         LinkCtlMethod = "schedule.put"
+	MethodServicesState       LinkCtlMethod = "services.state"
+	MethodSetupLog            LinkCtlMethod = "setup.log"
+	MethodSetupResult         LinkCtlMethod = "setup.result"
+	MethodSetupRun            LinkCtlMethod = "setup.run"
+	MethodShutdown            LinkCtlMethod = "shutdown"
+	MethodSnapshotPrepare     LinkCtlMethod = "snapshot.prepare"
+	MethodTerminalGap         LinkCtlMethod = "terminal.gap"
+	MethodThreadCreate        LinkCtlMethod = "thread.create"
+	MethodThreadGet           LinkCtlMethod = "thread.get"
+	MethodThreadSend          LinkCtlMethod = "thread.send"
+	MethodWorktreeAdd         LinkCtlMethod = "worktree.add"
+	MethodWorktreeRemove      LinkCtlMethod = "worktree.remove"
 )
 
 // Valid indicates whether the value is a known member of the LinkCtlMethod enum.
@@ -992,6 +1210,10 @@ func (e LinkCtlMethod) Valid() bool {
 	case MethodFsCopyTree:
 		return true
 	case MethodFsMove:
+		return true
+	case MethodGithubCall:
+		return true
+	case MethodGithubPrepareReport:
 		return true
 	case MethodHello:
 		return true
@@ -1355,6 +1577,24 @@ func (e NotificationLocale) Valid() bool {
 	case NotificationLocaleEn:
 		return true
 	case NotificationLocaleZhCN:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for NotificationQuickOptionRole.
+const (
+	No  NotificationQuickOptionRole = "no"
+	Yes NotificationQuickOptionRole = "yes"
+)
+
+// Valid indicates whether the value is a known member of the NotificationQuickOptionRole enum.
+func (e NotificationQuickOptionRole) Valid() bool {
+	switch e {
+	case No:
+		return true
+	case Yes:
 		return true
 	default:
 		return false
@@ -1742,6 +1982,27 @@ const (
 func (e ProfileInUseConflictCode) Valid() bool {
 	switch e {
 	case ProfileInUseConflictCodeProfileInUse:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ProjectGitHubBindStatus.
+const (
+	GitHubBindNotFound      ProjectGitHubBindStatus = "not_found"
+	GitHubBindOrgRestricted ProjectGitHubBindStatus = "org_restricted"
+	GitHubBindSsoRequired   ProjectGitHubBindStatus = "sso_required"
+)
+
+// Valid indicates whether the value is a known member of the ProjectGitHubBindStatus enum.
+func (e ProjectGitHubBindStatus) Valid() bool {
+	switch e {
+	case GitHubBindNotFound:
+		return true
+	case GitHubBindOrgRestricted:
+		return true
+	case GitHubBindSsoRequired:
 		return true
 	default:
 		return false
@@ -4537,6 +4798,86 @@ type GitHubApp struct {
 	Slug       string `json:"slug"`
 }
 
+// GitHubAuditEntry defines model for GitHubAuditEntry.
+type GitHubAuditEntry struct {
+	// At UTC 毫秒时间戳
+	At         TimestampMs `json:"at"`
+	BodySha256 *string     `json:"bodySha256,omitempty"`
+
+	// Gate 门禁结论（放行、跳过检查或拒绝原因）；未经门禁时省略
+	Gate   *string `json:"gate,omitempty"`
+	ID     int64   `json:"id"`
+	Method string  `json:"method"`
+
+	// Op REST 路径模板、GraphQL mutation 名或 `git-receive-pack <ref>`
+	Op string `json:"op"`
+
+	// OrbID `orb-<26 位小写 ULID>`（同时是容器名与 hostname）
+	//
+	// Example: orb-01jcz8m3w4x5y6z7a8b9c0d1e2
+	OrbID *OrbID  `json:"orbId,omitempty"`
+	Repo  *string `json:"repo,omitempty"`
+
+	// Slot `user` = 我的账号；`agent` = Agent 账号
+	Slot   GitHubIdentitySlot `json:"slot"`
+	Status int                `json:"status"`
+
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID *ThreadID `json:"threadId,omitempty"`
+}
+
+// GitHubAuditList defines model for GitHubAuditList.
+type GitHubAuditList struct {
+	Entries []GitHubAuditEntry `json:"entries"`
+
+	// NextBefore 还有更早的记录时给出，作为下一页的 `before`
+	NextBefore *int64 `json:"nextBefore,omitempty"`
+}
+
+// GitHubGates 推送 / 开 PR 门禁（M15），由出站代理强制执行
+type GitHubGates struct {
+	CheckCmd *string `json:"checkCmd,omitempty"`
+	FixCmd   *string `json:"fixCmd,omitempty"`
+	Pr       bool    `json:"pr"`
+
+	// PrHeadings PR 正文必需的二级标题（不含 `## `）
+	PrHeadings []string `json:"prHeadings,omitempty"`
+	Push       bool     `json:"push"`
+
+	// RequireClosingRef PR 正文须含 `Fixes|Closes|Resolves
+	RequireClosingRef *bool   `json:"requireClosingRef,omitempty"`
+	TestCmd           *string `json:"testCmd,omitempty"`
+}
+
+// GitHubHook defines model for GitHubHook.
+type GitHubHook struct {
+	Error    *string `json:"error,omitempty"`
+	FullName string  `json:"fullName"`
+	HookID   *int64  `json:"hookId,omitempty"`
+
+	// LastDeliveryAt UTC 毫秒时间戳
+	LastDeliveryAt     *TimestampMs                  `json:"lastDeliveryAt,omitempty"`
+	LastDeliverySource *GitHubHookLastDeliverySource `json:"lastDeliverySource,omitempty"`
+	RepoID             int64                         `json:"repoId"`
+	Status             GitHubHookStatus              `json:"status"`
+
+	// UpdatedAt UTC 毫秒时间戳
+	UpdatedAt TimestampMs `json:"updatedAt"`
+}
+
+// GitHubHookLastDeliverySource defines model for GitHubHook.LastDeliverySource.
+type GitHubHookLastDeliverySource string
+
+// GitHubHookList defines model for GitHubHookList.
+type GitHubHookList struct {
+	Hooks []GitHubHook `json:"hooks"`
+}
+
+// GitHubHookStatus defines model for GitHubHookStatus.
+type GitHubHookStatus string
+
 // GitHubIdentities defines model for GitHubIdentities.
 type GitHubIdentities struct {
 	Agent *GitHubIdentity `json:"agent,omitempty"`
@@ -4551,7 +4892,13 @@ type GitHubIdentity struct {
 	ConnectedAt TimestampMs `json:"connectedAt"`
 	GithubID    int64       `json:"githubId"`
 	Login       string      `json:"login"`
-	Name        *string     `json:"name,omitempty"`
+
+	// MissingScopes 相对所需 scope 缺少的项（M15）；非空时需要重新授权
+	MissingScopes []string `json:"missingScopes,omitempty"`
+	Name          *string  `json:"name,omitempty"`
+
+	// Scopes 实际授予的 OAuth scope（M15，取自 `X-OAuth-Scopes`）
+	Scopes []string `json:"scopes,omitempty"`
 
 	// Status `reauth` = 刷新令牌失效，需要重新授权
 	Status GitHubIdentityStatus `json:"status"`
@@ -4593,6 +4940,41 @@ type GitHubManifestRequest struct {
 	WebhookURL *string `json:"webhookUrl,omitempty"`
 }
 
+// GitHubOAuthApp defines model for GitHubOAuthApp.
+type GitHubOAuthApp struct {
+	// CallbackURL 需要在 GitHub 的 OAuth App 设置里登记的回调地址
+	CallbackURL string `json:"callbackUrl"`
+	ClientID    string `json:"clientId"`
+}
+
+// GitHubOAuthAppInput defines model for GitHubOAuthAppInput.
+type GitHubOAuthAppInput struct {
+	ClientID string `json:"clientId"`
+
+	// ClientSecret 首次保存必填；之后缺省 = 沿用已存的值
+	ClientSecret *string `json:"clientSecret,omitempty"`
+
+	// WebhookBase 仓库 webhook 的基址；缺省 = public_url
+	WebhookBase *string `json:"webhookBase,omitempty"`
+}
+
+// GitHubPreset defines model for GitHubPreset.
+type GitHubPreset struct {
+	// Gates 推送 / 开 PR 门禁（M15），由出站代理强制执行
+	Gates   *GitHubGates       `json:"gates,omitempty"`
+	ID      GitHubPresetID     `json:"id"`
+	Name    string             `json:"name"`
+	Trigger GitHubTriggerInput `json:"trigger"`
+}
+
+// GitHubPresetID defines model for GitHubPreset.ID.
+type GitHubPresetID string
+
+// GitHubPresetList defines model for GitHubPresetList.
+type GitHubPresetList struct {
+	Presets []GitHubPreset `json:"presets"`
+}
+
 // GitHubRedirect defines model for GitHubRedirect.
 type GitHubRedirect struct {
 	URL string `json:"url"`
@@ -4620,6 +5002,9 @@ type GitHubRefState string
 type GitHubRefList struct {
 	Refs []GitHubRef `json:"refs"`
 }
+
+// GitHubReleaseState defines model for GitHubReleaseState.
+type GitHubReleaseState string
 
 // GitHubRepo defines model for GitHubRepo.
 type GitHubRepo struct {
@@ -4658,6 +5043,12 @@ type GitHubStatus struct {
 	LastDeliveryAt     *TimestampMs                    `json:"lastDeliveryAt,omitempty"`
 	LastDeliverySource *GitHubStatusLastDeliverySource `json:"lastDeliverySource,omitempty"`
 
+	// OauthApp OAuth App 配置（M15）；未配置时省略
+	OauthApp *GitHubOAuthApp `json:"oauthApp,omitempty"`
+
+	// WebhookBase 仓库 webhook 的基址（M15；默认等于 public_url）
+	WebhookBase *string `json:"webhookBase,omitempty"`
+
 	// WebhookURL App 的 webhook 地址；尚未创建 App 时为默认地址
 	WebhookURL string `json:"webhookUrl"`
 }
@@ -4665,44 +5056,146 @@ type GitHubStatus struct {
 // GitHubStatusLastDeliverySource defines model for GitHubStatus.LastDeliverySource.
 type GitHubStatusLastDeliverySource string
 
+// GitHubTask defines model for GitHubTask.
+type GitHubTask struct {
+	Classification *string        `json:"classification,omitempty"`
+	Kind           GitHubTaskKind `json:"kind"`
+
+	// Number issue 编号（`kind=issue`）
+	Number *int64 `json:"number,omitempty"`
+
+	// Repo `owner/repo`
+	Repo string `json:"repo"`
+
+	// Rounds 发布哨兵已用的修复轮数
+	Rounds *int `json:"rounds,omitempty"`
+
+	// State `kind=issue` 取 `GitHubTaskState`，`kind=release` 取 `GitHubReleaseState`
+	State string `json:"state"`
+
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID *ThreadID `json:"threadId,omitempty"`
+
+	// UpdatedAt UTC 毫秒时间戳
+	UpdatedAt TimestampMs `json:"updatedAt"`
+
+	// Version 版本号（`kind=release`）
+	Version *string `json:"version,omitempty"`
+}
+
+// GitHubTaskKind defines model for GitHubTask.Kind.
+type GitHubTaskKind string
+
+// GitHubTaskList defines model for GitHubTaskList.
+type GitHubTaskList struct {
+	Tasks []GitHubTask `json:"tasks"`
+}
+
+// GitHubTaskRef defines model for GitHubTaskRef.
+type GitHubTaskRef struct {
+	Number int64  `json:"number"`
+	Repo   string `json:"repo"`
+}
+
+// GitHubTaskState defines model for GitHubTaskState.
+type GitHubTaskState string
+
+// GitHubThreadTask defines model for GitHubThreadTask.
+type GitHubThreadTask struct {
+	Kind    GitHubThreadTaskKind `json:"kind"`
+	Number  *int64               `json:"number,omitempty"`
+	Repo    string               `json:"repo"`
+	State   string               `json:"state"`
+	Version *string              `json:"version,omitempty"`
+}
+
+// GitHubThreadTaskKind defines model for GitHubThreadTask.Kind.
+type GitHubThreadTaskKind string
+
+// GitHubTriageRequest defines model for GitHubTriageRequest.
+type GitHubTriageRequest struct {
+	Number int64   `json:"number"`
+	Repo   string  `json:"repo"`
+	RuleID *string `json:"ruleId,omitempty"`
+}
+
+// GitHubTriageResult defines model for GitHubTriageResult.
+type GitHubTriageResult struct {
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID ThreadID `json:"threadId"`
+}
+
 // GitHubTrigger defines model for GitHubTrigger.
 type GitHubTrigger struct {
 	// Announce 在 issue 下回帖新线程的链接
-	Announce bool `json:"announce"`
+	Announce            bool  `json:"announce"`
+	AutocloseHours      *int  `json:"autocloseHours,omitempty"`
+	CommentOnlyReviews  *bool `json:"commentOnlyReviews,omitempty"`
+	CompletionReminders *bool `json:"completionReminders,omitempty"`
 
 	// CreatedAt UTC 毫秒时间戳
-	CreatedAt TimestampMs        `json:"createdAt"`
-	Enabled   bool               `json:"enabled"`
-	Event     GitHubTriggerEvent `json:"event"`
-	ID        string             `json:"id"`
-	Label     *string            `json:"label,omitempty"`
+	CreatedAt TimestampMs `json:"createdAt"`
+
+	// Drivers 谁的发言能驱动 agent（M15）：`writers` 仅写权限者；`writers_and_author` 另加 issue / PR 作者；`anyone` 任何人（按人限流）
+	Drivers  *GitHubTriggerDrivers `json:"drivers,omitempty"`
+	Enabled  bool                  `json:"enabled"`
+	Event    GitHubTriggerEvent    `json:"event"`
+	ID       string                `json:"id"`
+	ImplAuth *bool                 `json:"implAuth,omitempty"`
+	Label    *string               `json:"label,omitempty"`
 
 	// LastRunAt UTC 毫秒时间戳
-	LastRunAt *TimestampMs `json:"lastRunAt,omitempty"`
-	Name      string       `json:"name"`
+	LastRunAt      *TimestampMs `json:"lastRunAt,omitempty"`
+	Maintainers    []string     `json:"maintainers,omitempty"`
+	MaxDurationSec *int         `json:"maxDurationSec,omitempty"`
+	Models         []ModelRef   `json:"models,omitempty"`
+	Name           string       `json:"name"`
 
 	// ProjectID `prj_<ulid>`
-	ProjectID ProjectID `json:"projectId"`
-	Prompt    string    `json:"prompt"`
-	RunCount  int64     `json:"runCount"`
+	ProjectID     ProjectID `json:"projectId"`
+	Prompt        string    `json:"prompt"`
+	ReleasePrefix *string   `json:"releasePrefix,omitempty"`
+	ReviewerBots  []string  `json:"reviewerBots,omitempty"`
+	RunCount      int64     `json:"runCount"`
+	Thinking      *string   `json:"thinking,omitempty"`
 
 	// UpdatedAt UTC 毫秒时间戳
 	UpdatedAt TimestampMs `json:"updatedAt"`
 }
+
+// GitHubTriggerDrivers 谁的发言能驱动 agent（M15）：`writers` 仅写权限者；`writers_and_author` 另加 issue / PR 作者；`anyone` 任何人（按人限流）
+type GitHubTriggerDrivers string
 
 // GitHubTriggerEvent defines model for GitHubTriggerEvent.
 type GitHubTriggerEvent string
 
 // GitHubTriggerInput defines model for GitHubTriggerInput.
 type GitHubTriggerInput struct {
-	Announce *bool              `json:"announce,omitempty"`
-	Enabled  *bool              `json:"enabled,omitempty"`
-	Event    GitHubTriggerEvent `json:"event"`
+	Announce            *bool `json:"announce,omitempty"`
+	AutocloseHours      *int  `json:"autocloseHours,omitempty"`
+	CommentOnlyReviews  *bool `json:"commentOnlyReviews,omitempty"`
+	CompletionReminders *bool `json:"completionReminders,omitempty"`
+
+	// Drivers 谁的发言能驱动 agent（M15）：`writers` 仅写权限者；`writers_and_author` 另加 issue / PR 作者；`anyone` 任何人（按人限流）
+	Drivers  *GitHubTriggerDrivers `json:"drivers,omitempty"`
+	Enabled  *bool                 `json:"enabled,omitempty"`
+	Event    GitHubTriggerEvent    `json:"event"`
+	ImplAuth *bool                 `json:"implAuth,omitempty"`
 
 	// Label `issue_labeled` 必填；其它事件忽略
-	Label  *string `json:"label,omitempty"`
-	Name   string  `json:"name"`
-	Prompt string  `json:"prompt"`
+	Label          *string    `json:"label,omitempty"`
+	Maintainers    []string   `json:"maintainers,omitempty"`
+	MaxDurationSec *int       `json:"maxDurationSec,omitempty"`
+	Models         []ModelRef `json:"models,omitempty"`
+	Name           string     `json:"name"`
+	Prompt         string     `json:"prompt"`
+	ReleasePrefix  *string    `json:"releasePrefix,omitempty"`
+	ReviewerBots   []string   `json:"reviewerBots,omitempty"`
+	Thinking       *string    `json:"thinking,omitempty"`
 }
 
 // GitHubTriggerList defines model for GitHubTriggerList.
@@ -4712,12 +5205,25 @@ type GitHubTriggerList struct {
 
 // GitHubTriggerPatch defines model for GitHubTriggerPatch.
 type GitHubTriggerPatch struct {
-	Announce *bool               `json:"announce,omitempty"`
-	Enabled  *bool               `json:"enabled,omitempty"`
-	Event    *GitHubTriggerEvent `json:"event,omitempty"`
-	Label    *string             `json:"label,omitempty"`
-	Name     *string             `json:"name,omitempty"`
-	Prompt   *string             `json:"prompt,omitempty"`
+	Announce            *bool `json:"announce,omitempty"`
+	AutocloseHours      *int  `json:"autocloseHours,omitempty"`
+	CommentOnlyReviews  *bool `json:"commentOnlyReviews,omitempty"`
+	CompletionReminders *bool `json:"completionReminders,omitempty"`
+
+	// Drivers 谁的发言能驱动 agent（M15）：`writers` 仅写权限者；`writers_and_author` 另加 issue / PR 作者；`anyone` 任何人（按人限流）
+	Drivers        *GitHubTriggerDrivers `json:"drivers,omitempty"`
+	Enabled        *bool                 `json:"enabled,omitempty"`
+	Event          *GitHubTriggerEvent   `json:"event,omitempty"`
+	ImplAuth       *bool                 `json:"implAuth,omitempty"`
+	Label          *string               `json:"label,omitempty"`
+	Maintainers    []string              `json:"maintainers,omitempty"`
+	MaxDurationSec *int                  `json:"maxDurationSec,omitempty"`
+	Models         []ModelRef            `json:"models,omitempty"`
+	Name           *string               `json:"name,omitempty"`
+	Prompt         *string               `json:"prompt,omitempty"`
+	ReleasePrefix  *string               `json:"releasePrefix,omitempty"`
+	ReviewerBots   []string              `json:"reviewerBots,omitempty"`
+	Thinking       *string               `json:"thinking,omitempty"`
 }
 
 // GitIdentity orb 内 `git config --global user.name / user.email`；不得含换行或控制字符
@@ -5084,6 +5590,43 @@ type LinkCtlFsMoveParams struct {
 	To   string `json:"to"`
 }
 
+// LinkCtlGithubCallParams M15（orbd→orynd）：orb 内 agent 的 GitHub 工具调用。控制面校验调用方线程属于本 orb、`kind = work`、未归档。
+type LinkCtlGithubCallParams struct {
+	Params map[string]interface{} `json:"params"`
+
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID ThreadID `json:"threadId"`
+
+	// Tool 工具名（`github_classify_issue`、`github_task_state`、`github_autoclose`、`github_release_status`、`github_abort_task`）
+	Tool string `json:"tool"`
+}
+
+// LinkCtlGithubCallResult defines model for LinkCtlGithubCallResult.
+type LinkCtlGithubCallResult struct {
+	Details map[string]interface{} `json:"details,omitempty"`
+
+	// Text 给 agent 的文本结果
+	Text string `json:"text"`
+}
+
+// LinkCtlGithubPrepareReportParams M15（orbd→orynd）：`github_prepare` 通过后上报，控制面据此在出站代理放行该 SHA
+type LinkCtlGithubPrepareReportParams struct {
+	Level   LinkCtlGithubPrepareReportParamsLevel `json:"level"`
+	Reason  *string                               `json:"reason,omitempty"`
+	Sha     string                                `json:"sha"`
+	Skipped bool                                  `json:"skipped"`
+
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID ThreadID `json:"threadId"`
+}
+
+// LinkCtlGithubPrepareReportParamsLevel defines model for LinkCtlGithubPrepareReportParams.Level.
+type LinkCtlGithubPrepareReportParamsLevel string
+
 // LinkCtlHelloParams defines model for LinkCtlHelloParams.
 type LinkCtlHelloParams struct {
 	AgentVersion string `json:"agentVersion"`
@@ -5188,7 +5731,10 @@ type LinkCtlLibrarySyncResult struct {
 // `library.sync`（orynd→协调宿主请求，M13，参数 `LinkCtlLibrarySyncParams`，结果 `LinkCtlLibrarySyncResult`；只在 hello 含 `library` 时发送）、
 // `library.fetch`（orynd→orbd 请求，M13，参数 `LinkCtlLibraryFetchParams`，结果 `LinkCtlLibraryFetchResult`，字节经 orbd 另开的 `library` 流回传）、
 // `library.put`（orbd→orynd 请求，M13，由 orb 内 `oryn library put` 经 `orbd.sock` 转来，参数 `LinkCtlLibraryPutParams`，结果 `AssistantFile`）；
-// `artifact.call`（orbd→orynd 请求，M14，由 orb / Runner 内 agent 的 artifact 工具转来，参数 `LinkCtlArtifactCallParams`，结果 `LinkCtlArtifactCallResult`）。
+// `artifact.call`（orbd→orynd 请求，M14，由 orb / Runner 内 agent 的 artifact 工具转来，参数 `LinkCtlArtifactCallParams`，结果 `LinkCtlArtifactCallResult`）；
+// `github.call`（orbd→orynd 请求，M15，由 orb 内 agent 的 GitHub 工具转来，参数 `LinkCtlGithubCallParams`，结果 `LinkCtlGithubCallResult`）、
+// `github.prepare.report`（orbd→orynd 请求，M15，`github_prepare` 通过后上报，参数 `LinkCtlGithubPrepareReportParams`，结果 `LinkCtlOkResult`）；
+// runner 的 link 拒绝这两个方法。
 type LinkCtlMethod string
 
 // LinkCtlMetricsSampleParams defines model for LinkCtlMetricsSampleParams.
@@ -5212,7 +5758,10 @@ type LinkCtlNotification struct {
 	// `library.sync`（orynd→协调宿主请求，M13，参数 `LinkCtlLibrarySyncParams`，结果 `LinkCtlLibrarySyncResult`；只在 hello 含 `library` 时发送）、
 	// `library.fetch`（orynd→orbd 请求，M13，参数 `LinkCtlLibraryFetchParams`，结果 `LinkCtlLibraryFetchResult`，字节经 orbd 另开的 `library` 流回传）、
 	// `library.put`（orbd→orynd 请求，M13，由 orb 内 `oryn library put` 经 `orbd.sock` 转来，参数 `LinkCtlLibraryPutParams`，结果 `AssistantFile`）；
-	// `artifact.call`（orbd→orynd 请求，M14，由 orb / Runner 内 agent 的 artifact 工具转来，参数 `LinkCtlArtifactCallParams`，结果 `LinkCtlArtifactCallResult`）。
+	// `artifact.call`（orbd→orynd 请求，M14，由 orb / Runner 内 agent 的 artifact 工具转来，参数 `LinkCtlArtifactCallParams`，结果 `LinkCtlArtifactCallResult`）；
+	// `github.call`（orbd→orynd 请求，M15，由 orb 内 agent 的 GitHub 工具转来，参数 `LinkCtlGithubCallParams`，结果 `LinkCtlGithubCallResult`）、
+	// `github.prepare.report`（orbd→orynd 请求，M15，`github_prepare` 通过后上报，参数 `LinkCtlGithubPrepareReportParams`，结果 `LinkCtlOkResult`）；
+	// runner 的 link 拒绝这两个方法。
 	Method LinkCtlMethod `json:"method"`
 
 	// Params 见 `LinkCtl<Method>Params`
@@ -5326,7 +5875,10 @@ type LinkCtlRequest struct {
 	// `library.sync`（orynd→协调宿主请求，M13，参数 `LinkCtlLibrarySyncParams`，结果 `LinkCtlLibrarySyncResult`；只在 hello 含 `library` 时发送）、
 	// `library.fetch`（orynd→orbd 请求，M13，参数 `LinkCtlLibraryFetchParams`，结果 `LinkCtlLibraryFetchResult`，字节经 orbd 另开的 `library` 流回传）、
 	// `library.put`（orbd→orynd 请求，M13，由 orb 内 `oryn library put` 经 `orbd.sock` 转来，参数 `LinkCtlLibraryPutParams`，结果 `AssistantFile`）；
-	// `artifact.call`（orbd→orynd 请求，M14，由 orb / Runner 内 agent 的 artifact 工具转来，参数 `LinkCtlArtifactCallParams`，结果 `LinkCtlArtifactCallResult`）。
+	// `artifact.call`（orbd→orynd 请求，M14，由 orb / Runner 内 agent 的 artifact 工具转来，参数 `LinkCtlArtifactCallParams`，结果 `LinkCtlArtifactCallResult`）；
+	// `github.call`（orbd→orynd 请求，M15，由 orb 内 agent 的 GitHub 工具转来，参数 `LinkCtlGithubCallParams`，结果 `LinkCtlGithubCallResult`）、
+	// `github.prepare.report`（orbd→orynd 请求，M15，`github_prepare` 通过后上报，参数 `LinkCtlGithubPrepareReportParams`，结果 `LinkCtlOkResult`）；
+	// runner 的 link 拒绝这两个方法。
 	Method LinkCtlMethod `json:"method"`
 
 	// Params 见 `LinkCtl<Method>Params`
@@ -5393,6 +5945,9 @@ type LinkCtlServicesStateParams struct {
 // LinkCtlSetupGh orb 内 `gh` 的登录信息（M14）；令牌由出站代理注入，orb 内只有占位值
 type LinkCtlSetupGh struct {
 	Login string `json:"login"`
+
+	// Uploads M15：orbd 的 gh 代理同时把 `uploads.github.com` 转到出站代理
+	Uploads *bool `json:"uploads,omitempty"`
 }
 
 // LinkCtlSetupLogParams defines model for LinkCtlSetupLogParams.
@@ -5464,7 +6019,10 @@ type LinkCtlSetupRunParams struct {
 	GitHosts []string `json:"gitHosts"`
 
 	// GitIdentity orb 内 `git config --global user.name / user.email`；不得含换行或控制字符
-	GitIdentity *GitIdentity         `json:"gitIdentity,omitempty"`
+	GitIdentity *GitIdentity `json:"gitIdentity,omitempty"`
+
+	// GithubGates M15：项目门禁配置，供 `github_prepare` 读取修复 / 检查 / 测试命令；缺省 = 未配置
+	GithubGates *GitHubGates         `json:"githubGates,omitempty"`
 	OmpHome     []LinkCtlOmpHomeFile `json:"ompHome"`
 
 	// ProjectConfig 项目级 omp 配置（M12.2）。出现即表示 orb 属于某个项目：orbd 把 `$HOME/.oryn/project-config/.omp/` 镜像成 `files`，目录里不在其中的文件一律删除
@@ -5801,6 +6359,11 @@ type Notification struct {
 	// Kind `done` 回合完成、`input` 等待作答、`error` 出错、`budget` 预算告警（不属于任何线程）；也是渠道 `events` 的元素
 	Kind NotificationKind `json:"kind"`
 
+	// QuickAnswer 仅未解决、属于线程、可一触作答的 `input`（判定同 `POST notifications/{id}/answer`）：完整问题与选项，
+	// 客户端可就地以选项作答。不受推送正文 300 字符上限约束（站内能显示完整问题）。
+	// 请求在别处作答后已加载的列表不会收到更新：客户端应结合线程状态判断是否仍待作答，作答得 409 `input_resolved` 时提示已在别处作答。
+	QuickAnswer *NotificationQuickAnswer `json:"quickAnswer,omitempty"`
+
 	// ReadAt UTC 毫秒时间戳
 	ReadAt *TimestampMs `json:"readAt,omitempty"`
 
@@ -5951,6 +6514,27 @@ type NotificationList struct {
 
 // NotificationLocale 渠道消息的固定文案语言
 type NotificationLocale string
+
+// NotificationQuickAnswer defines model for NotificationQuickAnswer.
+type NotificationQuickAnswer struct {
+	Options []NotificationQuickOption `json:"options"`
+
+	// Question 完整问题（保留多行；confirm 附上说明）
+	Question string `json:"question"`
+}
+
+// NotificationQuickOption defines model for NotificationQuickOption.
+type NotificationQuickOption struct {
+	// I 选项序号（从 0 起），作答时作为 `option` 回传
+	I     int    `json:"i"`
+	Label string `json:"label"`
+
+	// Role 仅 confirm：客户端按界面语言显示「是 / 否」
+	Role *NotificationQuickOptionRole `json:"role,omitempty"`
+}
+
+// NotificationQuickOptionRole 仅 confirm：客户端按界面语言显示「是 / 否」
+type NotificationQuickOptionRole string
 
 // NotificationTestResult defines model for NotificationTestResult.
 type NotificationTestResult struct {
@@ -6653,6 +7237,9 @@ type Project struct {
 	// Github GitHub 仓库绑定（M14）；仓库地址从未解析出 GitHub 仓库 id 时省略
 	Github *ProjectGitHub `json:"github,omitempty"`
 
+	// GithubGates 推送 / 开 PR 门禁（M15）；未配置时省略
+	GithubGates *GitHubGates `json:"githubGates,omitempty"`
+
 	// Icon 项目图标：单个字形（Nerd Font 私有区字符或 emoji）。未设置时省略；线程自动标题带卡片图标且项目尚无图标时由控制面自动填入一次
 	Icon *string `json:"icon,omitempty"`
 
@@ -6707,14 +7294,21 @@ type ProjectCreate struct {
 
 // ProjectGitHub defines model for ProjectGitHub.
 type ProjectGitHub struct {
+	// BindStatus 未绑定的原因（M15）；已绑定时省略
+	BindStatus *ProjectGitHubBindStatus `json:"bindStatus,omitempty"`
+
 	// Bound App 可访问该仓库（已安装）
 	Bound bool `json:"bound"`
 
 	// FullName `owner/repo`（取自仓库地址）
-	FullName string       `json:"fullName"`
-	Listen   GitHubListen `json:"listen"`
-	RepoID   int64        `json:"repoId"`
+	FullName   string            `json:"fullName"`
+	HookStatus *GitHubHookStatus `json:"hookStatus,omitempty"`
+	Listen     GitHubListen      `json:"listen"`
+	RepoID     int64             `json:"repoId"`
 }
+
+// ProjectGitHubBindStatus 未绑定的原因（M15）；已绑定时省略
+type ProjectGitHubBindStatus string
 
 // ProjectID `prj_<ulid>`
 type ProjectID = string
@@ -6738,6 +7332,9 @@ type ProjectPatch struct {
 
 	// GitAuthorName 须与 gitAuthorEmail 同时给出；两者都传空串表示清除项目覆盖
 	GitAuthorName *string `json:"gitAuthorName,omitempty"`
+
+	// GithubGates 推送 / 开 PR 门禁（M15）
+	GithubGates *GitHubGates `json:"githubGates,omitempty"`
 
 	// GithubListen GitHub 事件回流开关（M14）
 	GithubListen *GitHubListen `json:"githubListen,omitempty"`
@@ -7818,6 +8415,9 @@ type Thread struct {
 	//   （例如 runner 拒绝不在其服务目录内的 cwd：`dir_not_served: …`）；只在控制面内存中维护。
 	Error             *ThreadError `json:"error,omitempty"`
 	ForkedFromEntryID *string      `json:"forkedFromEntryId,omitempty"`
+
+	// GithubTask 触发规则建立的 issue 任务或发布哨兵状态（M15）；没有则省略
+	GithubTask *GitHubThreadTask `json:"githubTask,omitempty"`
 
 	// ID `T-<uuidv7>`
 	//
@@ -9107,6 +9707,18 @@ type ListAutomationActionsParams struct {
 	Limit  *int      `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// ListGitHubAuditParams defines parameters for ListGitHubAudit.
+type ListGitHubAuditParams struct {
+	Thread *ThreadID `form:"thread,omitempty" json:"thread,omitempty"`
+
+	// Repo `owner/repo`
+	Repo *string `form:"repo,omitempty" json:"repo,omitempty"`
+
+	// Before 只返回 id 小于该值的记录（分页游标）
+	Before *int64 `form:"before,omitempty" json:"before,omitempty"`
+	Limit  *int   `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // ListGitHubReposParams defines parameters for ListGitHubRepos.
 type ListGitHubReposParams struct {
 	// Q 按 `owner/name` 子串过滤（忽略大小写）
@@ -9748,8 +10360,17 @@ type DevicePairStartJSONRequestBody = DevicePairStartRequest
 // BeginGitHubAppManifestJSONRequestBody defines body for BeginGitHubAppManifest for application/json ContentType.
 type BeginGitHubAppManifestJSONRequestBody = GitHubManifestRequest
 
+// SetGitHubOAuthAppJSONRequestBody defines body for SetGitHubOAuthApp for application/json ContentType.
+type SetGitHubOAuthAppJSONRequestBody = GitHubOAuthAppInput
+
 // PutGitHubSettingsJSONRequestBody defines body for PutGitHubSettings for application/json ContentType.
 type PutGitHubSettingsJSONRequestBody = GitHubSettings
+
+// CleanupGitHubTaskJSONRequestBody defines body for CleanupGitHubTask for application/json ContentType.
+type CleanupGitHubTaskJSONRequestBody = GitHubTaskRef
+
+// TriageGitHubIssueJSONRequestBody defines body for TriageGitHubIssue for application/json ContentType.
+type TriageGitHubIssueJSONRequestBody = GitHubTriageRequest
 
 // UpdateGitHubTriggerJSONRequestBody defines body for UpdateGitHubTrigger for application/json ContentType.
 type UpdateGitHubTriggerJSONRequestBody = GitHubTriggerPatch
@@ -12282,6 +12903,15 @@ type ServerInterface interface {
 	// BeginGitHubAppManifest 开始按 manifest 创建 GitHub App（返回跳转地址；已有 App → 409 `conflict`）
 	// (POST /api/v1/github/app/manifest)
 	BeginGitHubAppManifest(w http.ResponseWriter, r *http.Request)
+	// ListGitHubAudit GitHub 写操作审计（M15；按时间倒序，保留 30 天）
+	// (GET /api/v1/github/audit)
+	ListGitHubAudit(w http.ResponseWriter, r *http.Request, params ListGitHubAuditParams)
+	// ReplayGitHubDelivery 重放 7 天内已结束的投递（M15）
+	// (POST /api/v1/github/deliveries/{guid}/replay)
+	ReplayGitHubDelivery(w http.ResponseWriter, r *http.Request, guid string)
+	// ListGitHubHooks Oryn 管理的仓库 webhook 及其状态（M15）
+	// (GET /api/v1/github/hooks)
+	ListGitHubHooks(w http.ResponseWriter, r *http.Request)
 	// DeleteGitHubIdentity 断开身份槽位（断开 Agent 账号时自动化身份回到我的账号）
 	// (DELETE /api/v1/github/identities/{slot})
 	DeleteGitHubIdentity(w http.ResponseWriter, r *http.Request, slot GitHubIdentitySlotPath)
@@ -12291,12 +12921,30 @@ type ServerInterface interface {
 	// SyncGitHubInstallations 从 GitHub 重新拉取 App 的安装列表并重新绑定项目
 	// (POST /api/v1/github/installations/sync)
 	SyncGitHubInstallations(w http.ResponseWriter, r *http.Request)
+	// DeleteGitHubOAuthApp 删除 OAuth App 配置（M15；先删除 Oryn 建的全部仓库 hook，再断开两个身份）
+	// (DELETE /api/v1/github/oauth-app)
+	DeleteGitHubOAuthApp(w http.ResponseWriter, r *http.Request)
+	// SetGitHubOAuthApp 保存 OAuth App 的 Client ID / Secret 与 webhook 基址（M15；`clientSecret` 缺省时沿用已存的值）
+	// (PUT /api/v1/github/oauth-app)
+	SetGitHubOAuthApp(w http.ResponseWriter, r *http.Request)
+	// ListGitHubPresets 触发规则预设（M15：robomp 分诊 / PR 评审 / 发布哨兵）
+	// (GET /api/v1/github/presets)
+	ListGitHubPresets(w http.ResponseWriter, r *http.Request)
 	// ListGitHubRepos 我的账号经 App 可访问的仓库（按最近推送倒序，至多 50 个；我的账号未连接 → 409 `github_identity_required`）
 	// (GET /api/v1/github/repos)
 	ListGitHubRepos(w http.ResponseWriter, r *http.Request, params ListGitHubReposParams)
 	// PutGitHubSettings 设置自动化任务的 GitHub 身份（Agent 未连接时选 `agent` → 409 `github_agent_required`）
 	// (PUT /api/v1/github/settings)
 	PutGitHubSettings(w http.ResponseWriter, r *http.Request)
+	// ListGitHubTasks 触发规则建立的 issue 线程与发布哨兵的状态（M15）
+	// (GET /api/v1/github/tasks)
+	ListGitHubTasks(w http.ResponseWriter, r *http.Request)
+	// CleanupGitHubTask 把 issue 线程置为 `abandoned` 并冻结其 orb（M15；不改动远端）
+	// (POST /api/v1/github/tasks/cleanup)
+	CleanupGitHubTask(w http.ResponseWriter, r *http.Request)
+	// TriageGitHubIssue 拉取线上 issue，合成 `issues.opened` 交给触发规则（M15）
+	// (POST /api/v1/github/triage)
+	TriageGitHubIssue(w http.ResponseWriter, r *http.Request)
 	// DeleteGitHubTrigger 删除触发规则
 	// (DELETE /api/v1/github/triggers/{id})
 	DeleteGitHubTrigger(w http.ResponseWriter, r *http.Request, id GitHubTriggerIDPath)
@@ -13224,6 +13872,24 @@ func (_ Unimplemented) BeginGitHubAppManifest(w http.ResponseWriter, r *http.Req
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// ListGitHubAudit GitHub 写操作审计（M15；按时间倒序，保留 30 天）
+// (GET /api/v1/github/audit)
+func (_ Unimplemented) ListGitHubAudit(w http.ResponseWriter, r *http.Request, params ListGitHubAuditParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ReplayGitHubDelivery 重放 7 天内已结束的投递（M15）
+// (POST /api/v1/github/deliveries/{guid}/replay)
+func (_ Unimplemented) ReplayGitHubDelivery(w http.ResponseWriter, r *http.Request, guid string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListGitHubHooks Oryn 管理的仓库 webhook 及其状态（M15）
+// (GET /api/v1/github/hooks)
+func (_ Unimplemented) ListGitHubHooks(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // DeleteGitHubIdentity 断开身份槽位（断开 Agent 账号时自动化身份回到我的账号）
 // (DELETE /api/v1/github/identities/{slot})
 func (_ Unimplemented) DeleteGitHubIdentity(w http.ResponseWriter, r *http.Request, slot GitHubIdentitySlotPath) {
@@ -13242,6 +13908,24 @@ func (_ Unimplemented) SyncGitHubInstallations(w http.ResponseWriter, r *http.Re
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// DeleteGitHubOAuthApp 删除 OAuth App 配置（M15；先删除 Oryn 建的全部仓库 hook，再断开两个身份）
+// (DELETE /api/v1/github/oauth-app)
+func (_ Unimplemented) DeleteGitHubOAuthApp(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SetGitHubOAuthApp 保存 OAuth App 的 Client ID / Secret 与 webhook 基址（M15；`clientSecret` 缺省时沿用已存的值）
+// (PUT /api/v1/github/oauth-app)
+func (_ Unimplemented) SetGitHubOAuthApp(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListGitHubPresets 触发规则预设（M15：robomp 分诊 / PR 评审 / 发布哨兵）
+// (GET /api/v1/github/presets)
+func (_ Unimplemented) ListGitHubPresets(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // ListGitHubRepos 我的账号经 App 可访问的仓库（按最近推送倒序，至多 50 个；我的账号未连接 → 409 `github_identity_required`）
 // (GET /api/v1/github/repos)
 func (_ Unimplemented) ListGitHubRepos(w http.ResponseWriter, r *http.Request, params ListGitHubReposParams) {
@@ -13251,6 +13935,24 @@ func (_ Unimplemented) ListGitHubRepos(w http.ResponseWriter, r *http.Request, p
 // PutGitHubSettings 设置自动化任务的 GitHub 身份（Agent 未连接时选 `agent` → 409 `github_agent_required`）
 // (PUT /api/v1/github/settings)
 func (_ Unimplemented) PutGitHubSettings(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListGitHubTasks 触发规则建立的 issue 线程与发布哨兵的状态（M15）
+// (GET /api/v1/github/tasks)
+func (_ Unimplemented) ListGitHubTasks(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CleanupGitHubTask 把 issue 线程置为 `abandoned` 并冻结其 orb（M15；不改动远端）
+// (POST /api/v1/github/tasks/cleanup)
+func (_ Unimplemented) CleanupGitHubTask(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// TriageGitHubIssue 拉取线上 issue，合成 `issues.opened` 交给触发规则（M15）
+// (POST /api/v1/github/triage)
+func (_ Unimplemented) TriageGitHubIssue(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -16237,6 +16939,118 @@ func (siw *ServerInterfaceWrapper) BeginGitHubAppManifest(w http.ResponseWriter,
 	handler.ServeHTTP(w, r)
 }
 
+// ListGitHubAudit operation middleware
+func (siw *ServerInterfaceWrapper) ListGitHubAudit(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListGitHubAuditParams
+
+	// ------------- Optional query parameter "thread" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "thread", r.URL.Query(), &params.Thread, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "thread"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "thread", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "repo" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "repo", r.URL.Query(), &params.Repo, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "repo"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "before" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "before", r.URL.Query(), &params.Before, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "before"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "before", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListGitHubAudit(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReplayGitHubDelivery operation middleware
+func (siw *ServerInterfaceWrapper) ReplayGitHubDelivery(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "guid" -------------
+	var guid string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "guid", chi.URLParam(r, "guid"), &guid, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "guid", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReplayGitHubDelivery(w, r, guid)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListGitHubHooks operation middleware
+func (siw *ServerInterfaceWrapper) ListGitHubHooks(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListGitHubHooks(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeleteGitHubIdentity operation middleware
 func (siw *ServerInterfaceWrapper) DeleteGitHubIdentity(w http.ResponseWriter, r *http.Request) {
 
@@ -16303,6 +17117,48 @@ func (siw *ServerInterfaceWrapper) SyncGitHubInstallations(w http.ResponseWriter
 	handler.ServeHTTP(w, r)
 }
 
+// DeleteGitHubOAuthApp operation middleware
+func (siw *ServerInterfaceWrapper) DeleteGitHubOAuthApp(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteGitHubOAuthApp(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetGitHubOAuthApp operation middleware
+func (siw *ServerInterfaceWrapper) SetGitHubOAuthApp(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetGitHubOAuthApp(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListGitHubPresets operation middleware
+func (siw *ServerInterfaceWrapper) ListGitHubPresets(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListGitHubPresets(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListGitHubRepos operation middleware
 func (siw *ServerInterfaceWrapper) ListGitHubRepos(w http.ResponseWriter, r *http.Request) {
 
@@ -16341,6 +17197,48 @@ func (siw *ServerInterfaceWrapper) PutGitHubSettings(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PutGitHubSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListGitHubTasks operation middleware
+func (siw *ServerInterfaceWrapper) ListGitHubTasks(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListGitHubTasks(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CleanupGitHubTask operation middleware
+func (siw *ServerInterfaceWrapper) CleanupGitHubTask(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CleanupGitHubTask(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// TriageGitHubIssue operation middleware
+func (siw *ServerInterfaceWrapper) TriageGitHubIssue(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.TriageGitHubIssue(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -22524,6 +23422,33 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/github/repos", wrapper.ListGitHubRepos)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/github/oauth-app", wrapper.DeleteGitHubOAuthApp)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/github/oauth-app", wrapper.SetGitHubOAuthApp)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/github/hooks", wrapper.ListGitHubHooks)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/github/audit", wrapper.ListGitHubAudit)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/github/tasks", wrapper.ListGitHubTasks)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/github/tasks/cleanup", wrapper.CleanupGitHubTask)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/github/triage", wrapper.TriageGitHubIssue)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/github/deliveries/{guid}/replay", wrapper.ReplayGitHubDelivery)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/github/presets", wrapper.ListGitHubPresets)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/projects/{id}/github/triggers", wrapper.ListGitHubTriggers)

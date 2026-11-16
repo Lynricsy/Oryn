@@ -3482,6 +3482,145 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/github/oauth-app": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** 保存 OAuth App 的 Client ID / Secret 与 webhook 基址（M15；`clientSecret` 缺省时沿用已存的值） */
+        put: operations["setGitHubOAuthApp"];
+        post?: never;
+        /** 删除 OAuth App 配置（M15；先删除 Oryn 建的全部仓库 hook，再断开两个身份） */
+        delete: operations["deleteGitHubOAuthApp"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/hooks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Oryn 管理的仓库 webhook 及其状态（M15） */
+        get: operations["listGitHubHooks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** GitHub 写操作审计（M15；按时间倒序，保留 30 天） */
+        get: operations["listGitHubAudit"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 触发规则建立的 issue 线程与发布哨兵的状态（M15） */
+        get: operations["listGitHubTasks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/tasks/cleanup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 把 issue 线程置为 `abandoned` 并冻结其 orb（M15；不改动远端） */
+        post: operations["cleanupGitHubTask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/triage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 拉取线上 issue，合成 `issues.opened` 交给触发规则（M15） */
+        post: operations["triageGitHubIssue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/deliveries/{guid}/replay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                guid: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 重放 7 天内已结束的投递（M15） */
+        post: operations["replayGitHubDelivery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/github/presets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 触发规则预设（M15：robomp 分诊 / PR 评审 / 发布哨兵） */
+        get: operations["listGitHubPresets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/github/triggers": {
         parameters: {
             query?: never;
@@ -4252,6 +4391,8 @@ export interface components {
             warmOrbs: number;
             /** @description GitHub 仓库绑定（M14）；仓库地址从未解析出 GitHub 仓库 id 时省略 */
             github?: components["schemas"]["ProjectGitHub"];
+            /** @description 推送 / 开 PR 门禁（M15）；未配置时省略 */
+            githubGates?: components["schemas"]["GitHubGates"];
         };
         ProjectList: {
             projects: components["schemas"]["Project"][];
@@ -4305,6 +4446,8 @@ export interface components {
             warmOrbs?: number;
             /** @description GitHub 事件回流开关（M14） */
             githubListen?: components["schemas"]["GitHubListen"];
+            /** @description 推送 / 开 PR 门禁（M15） */
+            githubGates?: components["schemas"]["GitHubGates"];
         };
         /**
          * @description `building` 正在提交镜像；`ready` 可被新 orb 使用（同键至多一个）；`retired` 已退役、等待回收器删除镜像
@@ -4377,6 +4520,10 @@ export interface components {
              */
             status: "ok" | "reauth";
             connectedAt: components["schemas"]["TimestampMs"];
+            /** @description 实际授予的 OAuth scope（M15，取自 `X-OAuth-Scopes`） */
+            scopes?: string[];
+            /** @description 相对所需 scope 缺少的项（M15）；非空时需要重新授权 */
+            missingScopes?: string[];
         };
         GitHubApp: {
             /** Format: int64 */
@@ -4412,6 +4559,10 @@ export interface components {
             lastDeliveryAt?: components["schemas"]["TimestampMs"];
             /** @enum {string} */
             lastDeliverySource?: "webhook" | "poll";
+            /** @description OAuth App 配置（M15）；未配置时省略 */
+            oauthApp?: components["schemas"]["GitHubOAuthApp"];
+            /** @description 仓库 webhook 的基址（M15；默认等于 public_url） */
+            webhookBase?: string;
         };
         GitHubManifestRequest: {
             /** @description 公开 App（允许安装到其它账号） */
@@ -4455,6 +4606,12 @@ export interface components {
             /** @description App 可访问该仓库（已安装） */
             bound: boolean;
             listen: components["schemas"]["GitHubListen"];
+            /**
+             * @description 未绑定的原因（M15）；已绑定时省略
+             * @enum {string}
+             */
+            bindStatus?: "not_found" | "org_restricted" | "sso_required";
+            hookStatus?: components["schemas"]["GitHubHookStatus"];
         };
         ThreadPull: {
             /** @description `owner/repo` */
@@ -4478,7 +4635,7 @@ export interface components {
             listening: boolean;
         };
         /** @enum {string} */
-        GitHubTriggerEvent: "issue_opened" | "issue_labeled" | "mention";
+        GitHubTriggerEvent: "issue_opened" | "issue_reopened" | "issue_labeled" | "mention" | "pull_request_opened" | "workflow_run_completed";
         GitHubTrigger: {
             id: string;
             projectId: components["schemas"]["ProjectId"];
@@ -4494,6 +4651,17 @@ export interface components {
             lastRunAt?: components["schemas"]["TimestampMs"];
             createdAt: components["schemas"]["TimestampMs"];
             updatedAt: components["schemas"]["TimestampMs"];
+            drivers?: components["schemas"]["GitHubTriggerDrivers"];
+            maintainers?: string[];
+            reviewerBots?: string[];
+            models?: components["schemas"]["ModelRef"][];
+            thinking?: string;
+            implAuth?: boolean;
+            commentOnlyReviews?: boolean;
+            autocloseHours?: number;
+            maxDurationSec?: number;
+            completionReminders?: boolean;
+            releasePrefix?: string;
         };
         GitHubTriggerInput: {
             name: string;
@@ -4503,6 +4671,17 @@ export interface components {
             prompt: string;
             enabled?: boolean;
             announce?: boolean;
+            drivers?: components["schemas"]["GitHubTriggerDrivers"];
+            maintainers?: string[];
+            reviewerBots?: string[];
+            models?: components["schemas"]["ModelRef"][];
+            thinking?: string;
+            implAuth?: boolean;
+            commentOnlyReviews?: boolean;
+            autocloseHours?: number;
+            maxDurationSec?: number;
+            completionReminders?: boolean;
+            releasePrefix?: string;
         };
         GitHubTriggerPatch: {
             name?: string;
@@ -4511,6 +4690,151 @@ export interface components {
             prompt?: string;
             enabled?: boolean;
             announce?: boolean;
+            drivers?: components["schemas"]["GitHubTriggerDrivers"];
+            maintainers?: string[];
+            reviewerBots?: string[];
+            models?: components["schemas"]["ModelRef"][];
+            thinking?: string;
+            implAuth?: boolean;
+            commentOnlyReviews?: boolean;
+            autocloseHours?: number;
+            maxDurationSec?: number;
+            completionReminders?: boolean;
+            releasePrefix?: string;
+        };
+        /**
+         * @description 谁的发言能驱动 agent（M15）：`writers` 仅写权限者；`writers_and_author` 另加 issue / PR 作者；`anyone` 任何人（按人限流）
+         * @enum {string}
+         */
+        GitHubTriggerDrivers: "writers" | "writers_and_author" | "anyone";
+        /** @description 推送 / 开 PR 门禁（M15），由出站代理强制执行 */
+        GitHubGates: {
+            push: boolean;
+            pr: boolean;
+            fixCmd?: string;
+            checkCmd?: string;
+            testCmd?: string;
+            /** @description PR 正文必需的二级标题（不含 `## `） */
+            prHeadings?: string[];
+            /** @description PR 正文须含 `Fixes|Closes|Resolves */
+            requireClosingRef?: boolean;
+        };
+        GitHubOAuthApp: {
+            clientId: string;
+            /** @description 需要在 GitHub 的 OAuth App 设置里登记的回调地址 */
+            callbackUrl: string;
+        };
+        GitHubOAuthAppInput: {
+            clientId: string;
+            /** @description 首次保存必填；之后缺省 = 沿用已存的值 */
+            clientSecret?: string;
+            /**
+             * Format: uri
+             * @description 仓库 webhook 的基址；缺省 = public_url
+             */
+            webhookBase?: string;
+        };
+        /** @enum {string} */
+        GitHubHookStatus: "active" | "no_admin" | "org_restricted" | "sso_required" | "error";
+        GitHubHook: {
+            /** Format: int64 */
+            repoId: number;
+            fullName: string;
+            /** Format: int64 */
+            hookId?: number;
+            status: components["schemas"]["GitHubHookStatus"];
+            error?: string;
+            lastDeliveryAt?: components["schemas"]["TimestampMs"];
+            /** @enum {string} */
+            lastDeliverySource?: "webhook" | "poll";
+            updatedAt: components["schemas"]["TimestampMs"];
+        };
+        GitHubHookList: {
+            hooks: components["schemas"]["GitHubHook"][];
+        };
+        GitHubAuditEntry: {
+            /** Format: int64 */
+            id: number;
+            at: components["schemas"]["TimestampMs"];
+            threadId?: components["schemas"]["ThreadId"];
+            orbId?: components["schemas"]["OrbId"];
+            slot: components["schemas"]["GitHubIdentitySlot"];
+            method: string;
+            /** @description REST 路径模板、GraphQL mutation 名或 `git-receive-pack <ref>` */
+            op: string;
+            repo?: string;
+            status: number;
+            /** @description 门禁结论（放行、跳过检查或拒绝原因）；未经门禁时省略 */
+            gate?: string;
+            bodySha256?: string;
+        };
+        GitHubAuditList: {
+            entries: components["schemas"]["GitHubAuditEntry"][];
+            /**
+             * Format: int64
+             * @description 还有更早的记录时给出，作为下一页的 `before`
+             */
+            nextBefore?: number;
+        };
+        /** @enum {string} */
+        GitHubTaskState: "new" | "reproducing" | "fixing" | "reviewing" | "opened" | "needs_info" | "merged" | "closed" | "abandoned";
+        /** @enum {string} */
+        GitHubReleaseState: "awaiting_ci" | "fixing" | "green" | "failed" | "superseded";
+        GitHubTask: {
+            /** @enum {string} */
+            kind: "issue" | "release";
+            /** @description `owner/repo` */
+            repo: string;
+            /**
+             * Format: int64
+             * @description issue 编号（`kind=issue`）
+             */
+            number?: number;
+            /** @description 版本号（`kind=release`） */
+            version?: string;
+            threadId?: components["schemas"]["ThreadId"];
+            /** @description `kind=issue` 取 `GitHubTaskState`，`kind=release` 取 `GitHubReleaseState` */
+            state: string;
+            classification?: string;
+            /** @description 发布哨兵已用的修复轮数 */
+            rounds?: number;
+            updatedAt: components["schemas"]["TimestampMs"];
+        };
+        GitHubTaskList: {
+            tasks: components["schemas"]["GitHubTask"][];
+        };
+        GitHubTaskRef: {
+            repo: string;
+            /** Format: int64 */
+            number: number;
+        };
+        GitHubTriageRequest: {
+            repo: string;
+            /** Format: int64 */
+            number: number;
+            ruleId?: string;
+        };
+        GitHubTriageResult: {
+            threadId: components["schemas"]["ThreadId"];
+        };
+        GitHubThreadTask: {
+            /** @enum {string} */
+            kind: "issue" | "release";
+            repo: string;
+            /** Format: int64 */
+            number?: number;
+            version?: string;
+            state: string;
+        };
+        GitHubPreset: {
+            /** @enum {string} */
+            id: "robomp_triage" | "robomp_review" | "robomp_release";
+            name: string;
+            trigger: components["schemas"]["GitHubTriggerInput"];
+            gates?: components["schemas"]["GitHubGates"];
+        };
+        GitHubPresetList: {
+            presets: components["schemas"]["GitHubPreset"][];
         };
         GitHubTriggerList: {
             triggers: components["schemas"]["GitHubTrigger"][];
@@ -5228,6 +5552,8 @@ export interface components {
             worktree?: components["schemas"]["ThreadWorktree"];
             /** @description 关联的 GitHub PR（M14）；没有则省略 */
             pulls?: components["schemas"]["ThreadPull"][];
+            /** @description 触发规则建立的 issue 任务或发布哨兵状态（M15）；没有则省略 */
+            githubTask?: components["schemas"]["GitHubThreadTask"];
         };
         /**
          * @description `state=error` 的原因（均可 `POST threads/{id}/wake` 重试）：
@@ -6737,6 +7063,27 @@ export interface components {
             /** @description 仅 `input`：请求已被作答 / 取消 / 随 agent 重启消失 */
             resolvedAt?: components["schemas"]["TimestampMs"];
             deliveries: components["schemas"]["NotificationDelivery"][];
+            /**
+             * @description 仅未解决、属于线程、可一触作答的 `input`（判定同 `POST notifications/{id}/answer`）：完整问题与选项，
+             *     客户端可就地以选项作答。不受推送正文 300 字符上限约束（站内能显示完整问题）。
+             *     请求在别处作答后已加载的列表不会收到更新：客户端应结合线程状态判断是否仍待作答，作答得 409 `input_resolved` 时提示已在别处作答。
+             */
+            quickAnswer?: components["schemas"]["NotificationQuickAnswer"];
+        };
+        NotificationQuickAnswer: {
+            /** @description 完整问题（保留多行；confirm 附上说明） */
+            question: string;
+            options: components["schemas"]["NotificationQuickOption"][];
+        };
+        NotificationQuickOption: {
+            /** @description 选项序号（从 0 起），作答时作为 `option` 回传 */
+            i: number;
+            label: string;
+            /**
+             * @description 仅 confirm：客户端按界面语言显示「是 / 否」
+             * @enum {string}
+             */
+            role?: "yes" | "no";
         };
         NotificationList: {
             notifications: components["schemas"]["Notification"][];
@@ -7741,10 +8088,13 @@ export interface components {
          *     `library.sync`（orynd→协调宿主请求，M13，参数 `LinkCtlLibrarySyncParams`，结果 `LinkCtlLibrarySyncResult`；只在 hello 含 `library` 时发送）、
          *     `library.fetch`（orynd→orbd 请求，M13，参数 `LinkCtlLibraryFetchParams`，结果 `LinkCtlLibraryFetchResult`，字节经 orbd 另开的 `library` 流回传）、
          *     `library.put`（orbd→orynd 请求，M13，由 orb 内 `oryn library put` 经 `orbd.sock` 转来，参数 `LinkCtlLibraryPutParams`，结果 `AssistantFile`）；
-         *     `artifact.call`（orbd→orynd 请求，M14，由 orb / Runner 内 agent 的 artifact 工具转来，参数 `LinkCtlArtifactCallParams`，结果 `LinkCtlArtifactCallResult`）。
+         *     `artifact.call`（orbd→orynd 请求，M14，由 orb / Runner 内 agent 的 artifact 工具转来，参数 `LinkCtlArtifactCallParams`，结果 `LinkCtlArtifactCallResult`）；
+         *     `github.call`（orbd→orynd 请求，M15，由 orb 内 agent 的 GitHub 工具转来，参数 `LinkCtlGithubCallParams`，结果 `LinkCtlGithubCallResult`）、
+         *     `github.prepare.report`（orbd→orynd 请求，M15，`github_prepare` 通过后上报，参数 `LinkCtlGithubPrepareReportParams`，结果 `LinkCtlOkResult`）；
+         *     runner 的 link 拒绝这两个方法。
          * @enum {string}
          */
-        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap" | "services.state" | "portal.configure" | "desktop.state" | "profile.mode" | "thread.create" | "thread.send" | "thread.get" | "schedule.get" | "schedule.put" | "schedule.delete" | "schedule.enable" | "snapshot.prepare" | "worktree.add" | "worktree.remove" | "omphome.apply" | "library.sync" | "library.fetch" | "library.put" | "artifact.call";
+        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap" | "services.state" | "portal.configure" | "desktop.state" | "profile.mode" | "thread.create" | "thread.send" | "thread.get" | "schedule.get" | "schedule.put" | "schedule.delete" | "schedule.enable" | "snapshot.prepare" | "worktree.add" | "worktree.remove" | "omphome.apply" | "library.sync" | "library.fetch" | "library.put" | "artifact.call" | "github.call" | "github.prepare.report";
         LinkCtlRequest: {
             /**
              * Format: int64
@@ -7967,6 +8317,8 @@ export interface components {
         /** @description orb 内 `gh` 的登录信息（M14）；令牌由出站代理注入，orb 内只有占位值 */
         LinkCtlSetupGh: {
             login: string;
+            /** @description M15：orbd 的 gh 代理同时把 `uploads.github.com` 转到出站代理 */
+            uploads?: boolean;
         };
         LinkCtlSetupRunParams: {
             workdir: string;
@@ -7989,6 +8341,33 @@ export interface components {
              *     控制面随后单独调 `resume.run`。只在 hello 的 `features` 含 `setup-defer-resume` 时置位；`resume.run` 忽略此字段。
              */
             deferResume?: boolean;
+            /** @description M15：项目门禁配置，供 `github_prepare` 读取修复 / 检查 / 测试命令；缺省 = 未配置 */
+            githubGates?: components["schemas"]["GitHubGates"];
+        };
+        /** @description M15（orbd→orynd）：orb 内 agent 的 GitHub 工具调用。控制面校验调用方线程属于本 orb、`kind = work`、未归档。 */
+        LinkCtlGithubCallParams: {
+            threadId: components["schemas"]["ThreadId"];
+            /** @description 工具名（`github_classify_issue`、`github_task_state`、`github_autoclose`、`github_release_status`、`github_abort_task`） */
+            tool: string;
+            params: {
+                [key: string]: unknown;
+            };
+        };
+        LinkCtlGithubCallResult: {
+            /** @description 给 agent 的文本结果 */
+            text: string;
+            details?: {
+                [key: string]: unknown;
+            };
+        };
+        /** @description M15（orbd→orynd）：`github_prepare` 通过后上报，控制面据此在出站代理放行该 SHA */
+        LinkCtlGithubPrepareReportParams: {
+            threadId: components["schemas"]["ThreadId"];
+            sha: string;
+            /** @enum {string} */
+            level: "push" | "pr";
+            skipped: boolean;
+            reason?: string;
         };
         LinkCtlSetupRunResult: {
             /** @description setup 脚本失败（含超时）时为 false；orb 仍可使用，agent 照常启动以便修复脚本 */
@@ -13991,6 +14370,212 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GitHubRepoList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    setGitHubOAuthApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitHubOAuthAppInput"];
+            };
+        };
+        responses: {
+            /** @description 写入后的状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteGitHubOAuthApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listGitHubHooks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description hook 列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubHookList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listGitHubAudit: {
+        parameters: {
+            query?: {
+                thread?: components["schemas"]["ThreadId"];
+                /** @description `owner/repo` */
+                repo?: string;
+                /** @description 只返回 id 小于该值的记录（分页游标） */
+                before?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 审计记录 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAuditList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listGitHubTasks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 任务列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubTaskList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    cleanupGitHubTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitHubTaskRef"];
+            };
+        };
+        responses: {
+            /** @description 修改后的任务 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubTask"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    triageGitHubIssue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitHubTriageRequest"];
+            };
+        };
+        responses: {
+            /** @description 新建或已关联的线程 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubTriageResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    replayGitHubDelivery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                guid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已重新入队 */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listGitHubPresets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 预设列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubPresetList"];
                 };
             };
             default: components["responses"]["Error"];

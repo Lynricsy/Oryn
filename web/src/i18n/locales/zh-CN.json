@@ -3921,6 +3921,9 @@
 				"issue_opened": "新 issue",
 				"issue_labeled": "打指定标签",
 				"mention": "@Agent 账号",
+				"issue_reopened": "issue 被重新打开",
+				"pull_request_opened": "外部 PR（评审）",
+				"workflow_run_completed": "发布 CI 结束（发布哨兵）",
 				"labeledWith": "打标签"
 			},
 			"label": "标签",

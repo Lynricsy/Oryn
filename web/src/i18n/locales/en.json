@@ -3921,6 +3921,9 @@
 				"issue_opened": "New issue",
 				"issue_labeled": "Label added",
 				"mention": "@Agent account",
+				"issue_reopened": "Issue reopened",
+				"pull_request_opened": "External PR (review)",
+				"workflow_run_completed": "Release CI finished (release sentinel)",
 				"labeledWith": "Labeled"
 			},
 			"label": "Label",

@@ -4318,6 +4318,160 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/GitHubRepoList' }
         default: { $ref: '#/components/responses/Error' }
+  /api/v1/github/oauth-app:
+    put:
+      tags: [github]
+      operationId: setGitHubOAuthApp
+      summary: 保存 OAuth App 的 Client ID / Secret 与 webhook 基址（M15；`clientSecret` 缺省时沿用已存的值）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GitHubOAuthAppInput' }
+      responses:
+        '200':
+          description: 写入后的状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubStatus' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [github]
+      operationId: deleteGitHubOAuthApp
+      summary: 删除 OAuth App 配置（M15；先删除 Oryn 建的全部仓库 hook，再断开两个身份）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已删除 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/github/hooks:
+    get:
+      tags: [github]
+      operationId: listGitHubHooks
+      summary: Oryn 管理的仓库 webhook 及其状态（M15）
+      responses:
+        '200':
+          description: hook 列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubHookList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/github/audit:
+    get:
+      tags: [github]
+      operationId: listGitHubAudit
+      summary: GitHub 写操作审计（M15；按时间倒序，保留 30 天）
+      parameters:
+        - name: thread
+          in: query
+          schema: { $ref: '#/components/schemas/ThreadId' }
+        - name: repo
+          in: query
+          description: '`owner/repo`'
+          schema: { type: string, maxLength: 200 }
+        - name: before
+          in: query
+          description: 只返回 id 小于该值的记录（分页游标）
+          schema: { type: integer, format: int64 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        '200':
+          description: 审计记录
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubAuditList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/github/tasks:
+    get:
+      tags: [github]
+      operationId: listGitHubTasks
+      summary: 触发规则建立的 issue 线程与发布哨兵的状态（M15）
+      responses:
+        '200':
+          description: 任务列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubTaskList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/github/tasks/cleanup:
+    post:
+      tags: [github]
+      operationId: cleanupGitHubTask
+      summary: 把 issue 线程置为 `abandoned` 并冻结其 orb（M15；不改动远端）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GitHubTaskRef' }
+      responses:
+        '200':
+          description: 修改后的任务
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubTask' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/github/triage:
+    post:
+      tags: [github]
+      operationId: triageGitHubIssue
+      summary: 拉取线上 issue，合成 `issues.opened` 交给触发规则（M15）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GitHubTriageRequest' }
+      responses:
+        '200':
+          description: 新建或已关联的线程
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubTriageResult' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/github/deliveries/{guid}/replay:
+    parameters:
+      - name: guid
+        in: path
+        required: true
+        schema: { type: string, minLength: 1, maxLength: 200 }
+    post:
+      tags: [github]
+      operationId: replayGitHubDelivery
+      summary: 重放 7 天内已结束的投递（M15）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '202': { description: 已重新入队 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/github/presets:
+    get:
+      tags: [github]
+      operationId: listGitHubPresets
+      summary: 触发规则预设（M15：robomp 分诊 / PR 评审 / 发布哨兵）
+      responses:
+        '200':
+          description: 预设列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitHubPresetList' }
+        default: { $ref: '#/components/responses/Error' }
   /api/v1/projects/{id}/github/triggers:
     parameters:
       - { $ref: '#/components/parameters/ProjectIdPath' }
@@ -5616,6 +5770,10 @@ components:
           allOf:
             - $ref: '#/components/schemas/ProjectGitHub'
           description: GitHub 仓库绑定（M14）；仓库地址从未解析出 GitHub 仓库 id 时省略
+        githubGates:
+          allOf:
+            - $ref: '#/components/schemas/GitHubGates'
+          description: 推送 / 开 PR 门禁（M15）；未配置时省略
     ProjectList:
       type: object
       required: [projects]
@@ -5694,6 +5852,10 @@ components:
           allOf:
             - $ref: '#/components/schemas/GitHubListen'
           description: GitHub 事件回流开关（M14）
+        githubGates:
+          allOf:
+            - $ref: '#/components/schemas/GitHubGates'
+          description: 推送 / 开 PR 门禁（M15）
     ProjectSnapshotState:
       type: string
       description: '`building` 正在提交镜像；`ready` 可被新 orb 使用（同键至多一个）；`retired` 已退役、等待回收器删除镜像'
@@ -5784,6 +5946,14 @@ components:
           description: '`reauth` = 刷新令牌失效，需要重新授权'
           enum: [ok, reauth]
         connectedAt: { $ref: '#/components/schemas/TimestampMs' }
+        scopes:
+          type: array
+          description: 实际授予的 OAuth scope（M15，取自 `X-OAuth-Scopes`）
+          items: { type: string }
+        missingScopes:
+          type: array
+          description: 相对所需 scope 缺少的项（M15）；非空时需要重新授权
+          items: { type: string }
     GitHubApp:
       type: object
       required: [appId, slug, name, htmlUrl, ownerLogin, public, installUrl]
@@ -5831,6 +6001,13 @@ components:
         lastDeliverySource:
           type: string
           enum: [webhook, poll]
+        oauthApp:
+          allOf:
+            - $ref: '#/components/schemas/GitHubOAuthApp'
+          description: OAuth App 配置（M15）；未配置时省略
+        webhookBase:
+          type: string
+          description: 仓库 webhook 的基址（M15；默认等于 public_url）
     GitHubManifestRequest:
       type: object
       required: [public]
@@ -5894,6 +6071,12 @@ components:
           type: boolean
           description: App 可访问该仓库（已安装）
         listen: { $ref: '#/components/schemas/GitHubListen' }
+        bindStatus:
+          type: string
+          description: 未绑定的原因（M15）；已绑定时省略
+          enum: [not_found, org_restricted, sso_required]
+          x-enum-varnames: [GitHubBindNotFound, GitHubBindOrgRestricted, GitHubBindSsoRequired]
+        hookStatus: { $ref: '#/components/schemas/GitHubHookStatus' }
     ThreadPull:
       type: object
       required: [repo, number, title, state, draft, url, listening]
@@ -5922,7 +6105,7 @@ components:
         listening: { type: boolean }
     GitHubTriggerEvent:
       type: string
-      enum: [issue_opened, issue_labeled, mention]
+      enum: [issue_opened, issue_reopened, issue_labeled, mention, pull_request_opened, workflow_run_completed]
     GitHubTrigger:
       type: object
       required: [id, projectId, name, event, prompt, enabled, announce, runCount, createdAt, updatedAt]
@@ -5943,6 +6126,23 @@ components:
         lastRunAt: { $ref: '#/components/schemas/TimestampMs' }
         createdAt: { $ref: '#/components/schemas/TimestampMs' }
         updatedAt: { $ref: '#/components/schemas/TimestampMs' }
+        drivers: { $ref: '#/components/schemas/GitHubTriggerDrivers' }
+        maintainers:
+          type: array
+          items: { type: string }
+        reviewerBots:
+          type: array
+          items: { type: string }
+        models:
+          type: array
+          items: { $ref: '#/components/schemas/ModelRef' }
+        thinking: { type: string }
+        implAuth: { type: boolean }
+        commentOnlyReviews: { type: boolean }
+        autocloseHours: { type: integer, minimum: 1, maximum: 720 }
+        maxDurationSec: { type: integer, minimum: 0 }
+        completionReminders: { type: boolean }
+        releasePrefix: { type: string }
     GitHubTriggerInput:
       type: object
       required: [name, event, prompt]
@@ -5957,6 +6157,26 @@ components:
         prompt: { type: string, minLength: 1, maxLength: 20000 }
         enabled: { type: boolean }
         announce: { type: boolean }
+        drivers: { $ref: '#/components/schemas/GitHubTriggerDrivers' }
+        maintainers:
+          type: array
+          maxItems: 50
+          items: { type: string, minLength: 1, maxLength: 39 }
+        reviewerBots:
+          type: array
+          maxItems: 50
+          items: { type: string, minLength: 1, maxLength: 64 }
+        models:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/ModelRef' }
+        thinking: { type: string, maxLength: 16 }
+        implAuth: { type: boolean }
+        commentOnlyReviews: { type: boolean }
+        autocloseHours: { type: integer, minimum: 1, maximum: 720 }
+        maxDurationSec: { type: integer, minimum: 0, maximum: 604800 }
+        completionReminders: { type: boolean }
+        releasePrefix: { type: string, minLength: 1, maxLength: 200 }
     GitHubTriggerPatch:
       type: object
       properties:
@@ -5966,6 +6186,218 @@ components:
         prompt: { type: string, minLength: 1, maxLength: 20000 }
         enabled: { type: boolean }
         announce: { type: boolean }
+        drivers: { $ref: '#/components/schemas/GitHubTriggerDrivers' }
+        maintainers:
+          type: array
+          maxItems: 50
+          items: { type: string, minLength: 1, maxLength: 39 }
+        reviewerBots:
+          type: array
+          maxItems: 50
+          items: { type: string, minLength: 1, maxLength: 64 }
+        models:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/ModelRef' }
+        thinking: { type: string, maxLength: 16 }
+        implAuth: { type: boolean }
+        commentOnlyReviews: { type: boolean }
+        autocloseHours: { type: integer, minimum: 1, maximum: 720 }
+        maxDurationSec: { type: integer, minimum: 0, maximum: 604800 }
+        completionReminders: { type: boolean }
+        releasePrefix: { type: string, minLength: 1, maxLength: 200 }
+    GitHubTriggerDrivers:
+      type: string
+      description: '谁的发言能驱动 agent（M15）：`writers` 仅写权限者；`writers_and_author` 另加 issue / PR 作者；`anyone` 任何人（按人限流）'
+      enum: [writers, writers_and_author, anyone]
+      x-enum-varnames: [GitHubDriversWriters, GitHubDriversWritersAndAuthor, GitHubDriversAnyone]
+    GitHubGates:
+      type: object
+      description: 推送 / 开 PR 门禁（M15），由出站代理强制执行
+      required: [push, pr]
+      properties:
+        push: { type: boolean }
+        pr: { type: boolean }
+        fixCmd: { type: string, maxLength: 2000 }
+        checkCmd: { type: string, maxLength: 2000 }
+        testCmd: { type: string, maxLength: 2000 }
+        prHeadings:
+          type: array
+          description: PR 正文必需的二级标题（不含 `## `）
+          maxItems: 20
+          items: { type: string, minLength: 1, maxLength: 100 }
+        requireClosingRef:
+          type: boolean
+          description: PR 正文须含 `Fixes|Closes|Resolves #N`
+    GitHubOAuthApp:
+      type: object
+      required: [clientId, callbackUrl]
+      properties:
+        clientId: { type: string }
+        callbackUrl:
+          type: string
+          description: 需要在 GitHub 的 OAuth App 设置里登记的回调地址
+    GitHubOAuthAppInput:
+      type: object
+      required: [clientId]
+      properties:
+        clientId: { type: string, minLength: 1, maxLength: 100 }
+        clientSecret:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: 首次保存必填；之后缺省 = 沿用已存的值
+        webhookBase:
+          type: string
+          format: uri
+          description: 仓库 webhook 的基址；缺省 = public_url
+    GitHubHookStatus:
+      type: string
+      enum: [active, no_admin, org_restricted, sso_required, error]
+      x-enum-varnames: [GitHubHookActive, GitHubHookNoAdmin, GitHubHookOrgRestricted, GitHubHookSsoRequired, GitHubHookError]
+    GitHubHook:
+      type: object
+      required: [repoId, fullName, status, updatedAt]
+      properties:
+        repoId: { type: integer, format: int64 }
+        fullName: { type: string }
+        hookId: { type: integer, format: int64 }
+        status: { $ref: '#/components/schemas/GitHubHookStatus' }
+        error: { type: string }
+        lastDeliveryAt: { $ref: '#/components/schemas/TimestampMs' }
+        lastDeliverySource:
+          type: string
+          enum: [webhook, poll]
+        updatedAt: { $ref: '#/components/schemas/TimestampMs' }
+    GitHubHookList:
+      type: object
+      required: [hooks]
+      properties:
+        hooks:
+          type: array
+          items: { $ref: '#/components/schemas/GitHubHook' }
+    GitHubAuditEntry:
+      type: object
+      required: [id, at, slot, method, op, status]
+      properties:
+        id: { type: integer, format: int64 }
+        at: { $ref: '#/components/schemas/TimestampMs' }
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        orbId: { $ref: '#/components/schemas/OrbId' }
+        slot: { $ref: '#/components/schemas/GitHubIdentitySlot' }
+        method: { type: string }
+        op:
+          type: string
+          description: REST 路径模板、GraphQL mutation 名或 `git-receive-pack <ref>`
+        repo: { type: string }
+        status: { type: integer }
+        gate:
+          type: string
+          description: 门禁结论（放行、跳过检查或拒绝原因）；未经门禁时省略
+        bodySha256: { type: string }
+    GitHubAuditList:
+      type: object
+      required: [entries]
+      properties:
+        entries:
+          type: array
+          items: { $ref: '#/components/schemas/GitHubAuditEntry' }
+        nextBefore:
+          type: integer
+          format: int64
+          description: 还有更早的记录时给出，作为下一页的 `before`
+    GitHubTaskState:
+      type: string
+      enum: [new, reproducing, fixing, reviewing, opened, needs_info, merged, closed, abandoned]
+      x-enum-varnames: [GitHubTaskNew, GitHubTaskReproducing, GitHubTaskFixing, GitHubTaskReviewing, GitHubTaskOpened, GitHubTaskNeedsInfo, GitHubTaskMerged, GitHubTaskClosed, GitHubTaskAbandoned]
+    GitHubReleaseState:
+      type: string
+      enum: [awaiting_ci, fixing, green, failed, superseded]
+      x-enum-varnames: [GitHubReleaseAwaitingCi, GitHubReleaseFixing, GitHubReleaseGreen, GitHubReleaseFailed, GitHubReleaseSuperseded]
+    GitHubTask:
+      type: object
+      required: [kind, repo, state, updatedAt]
+      properties:
+        kind:
+          type: string
+          enum: [issue, release]
+          x-enum-varnames: [GitHubTaskKindIssue, GitHubTaskKindRelease]
+        repo:
+          type: string
+          description: '`owner/repo`'
+        number:
+          type: integer
+          format: int64
+          description: issue 编号（`kind=issue`）
+        version:
+          type: string
+          description: 版本号（`kind=release`）
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        state:
+          type: string
+          description: '`kind=issue` 取 `GitHubTaskState`，`kind=release` 取 `GitHubReleaseState`'
+        classification: { type: string }
+        rounds:
+          type: integer
+          description: 发布哨兵已用的修复轮数
+        updatedAt: { $ref: '#/components/schemas/TimestampMs' }
+    GitHubTaskList:
+      type: object
+      required: [tasks]
+      properties:
+        tasks:
+          type: array
+          items: { $ref: '#/components/schemas/GitHubTask' }
+    GitHubTaskRef:
+      type: object
+      required: [repo, number]
+      properties:
+        repo: { type: string, minLength: 3, maxLength: 200 }
+        number: { type: integer, format: int64, minimum: 1 }
+    GitHubTriageRequest:
+      type: object
+      required: [repo, number]
+      properties:
+        repo: { type: string, minLength: 3, maxLength: 200 }
+        number: { type: integer, format: int64, minimum: 1 }
+        ruleId:
+          type: string
+          pattern: '^ght_[0-9A-Z]{26}$'
+    GitHubTriageResult:
+      type: object
+      required: [threadId]
+      properties:
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+    GitHubThreadTask:
+      type: object
+      required: [kind, repo, state]
+      properties:
+        kind:
+          type: string
+          enum: [issue, release]
+          x-enum-varnames: [GitHubThreadTaskKindIssue, GitHubThreadTaskKindRelease]
+        repo: { type: string }
+        number: { type: integer, format: int64 }
+        version: { type: string }
+        state: { type: string }
+    GitHubPreset:
+      type: object
+      required: [id, name, trigger]
+      properties:
+        id:
+          type: string
+          enum: [robomp_triage, robomp_review, robomp_release]
+          x-enum-varnames: [GitHubPresetRobompTriage, GitHubPresetRobompReview, GitHubPresetRobompRelease]
+        name: { type: string }
+        trigger: { $ref: '#/components/schemas/GitHubTriggerInput' }
+        gates: { $ref: '#/components/schemas/GitHubGates' }
+    GitHubPresetList:
+      type: object
+      required: [presets]
+      properties:
+        presets:
+          type: array
+          items: { $ref: '#/components/schemas/GitHubPreset' }
     GitHubTriggerList:
       type: object
       required: [triggers]
@@ -7068,6 +7500,10 @@ components:
           type: array
           description: 关联的 GitHub PR（M14）；没有则省略
           items: { $ref: '#/components/schemas/ThreadPull' }
+        githubTask:
+          allOf:
+            - $ref: '#/components/schemas/GitHubThreadTask'
+          description: 触发规则建立的 issue 任务或发布哨兵状态（M15）；没有则省略
     ThreadError:
       type: object
       description: |
@@ -10431,7 +10867,10 @@ components:
         `library.sync`（orynd→协调宿主请求，M13，参数 `LinkCtlLibrarySyncParams`，结果 `LinkCtlLibrarySyncResult`；只在 hello 含 `library` 时发送）、
         `library.fetch`（orynd→orbd 请求，M13，参数 `LinkCtlLibraryFetchParams`，结果 `LinkCtlLibraryFetchResult`，字节经 orbd 另开的 `library` 流回传）、
         `library.put`（orbd→orynd 请求，M13，由 orb 内 `oryn library put` 经 `orbd.sock` 转来，参数 `LinkCtlLibraryPutParams`，结果 `AssistantFile`）；
-        `artifact.call`（orbd→orynd 请求，M14，由 orb / Runner 内 agent 的 artifact 工具转来，参数 `LinkCtlArtifactCallParams`，结果 `LinkCtlArtifactCallResult`）。
+        `artifact.call`（orbd→orynd 请求，M14，由 orb / Runner 内 agent 的 artifact 工具转来，参数 `LinkCtlArtifactCallParams`，结果 `LinkCtlArtifactCallResult`）；
+        `github.call`（orbd→orynd 请求，M15，由 orb 内 agent 的 GitHub 工具转来，参数 `LinkCtlGithubCallParams`，结果 `LinkCtlGithubCallResult`）、
+        `github.prepare.report`（orbd→orynd 请求，M15，`github_prepare` 通过后上报，参数 `LinkCtlGithubPrepareReportParams`，结果 `LinkCtlOkResult`）；
+        runner 的 link 拒绝这两个方法。
       enum:
         - hello
         - entries.cursors
@@ -10473,6 +10912,8 @@ components:
         - library.fetch
         - library.put
         - artifact.call
+        - github.call
+        - github.prepare.report
       x-enum-varnames:
         - MethodHello
         - MethodEntriesCursors
@@ -10514,6 +10955,8 @@ components:
         - MethodLibraryFetch
         - MethodLibraryPut
         - MethodArtifactCall
+        - MethodGithubCall
+        - MethodGithubPrepareReport
     LinkCtlRequest:
       type: object
       required: [id, method, params]
@@ -10813,6 +11256,9 @@ components:
       required: [login]
       properties:
         login: { type: string }
+        uploads:
+          type: boolean
+          description: M15：orbd 的 gh 代理同时把 `uploads.github.com` 转到出站代理
     LinkCtlSetupRunParams:
       type: object
       required: [workdir, gitHosts, scripts, ompHome, env]
@@ -10845,6 +11291,47 @@ components:
           description: |
             M11a 审查修复：true = 只跑 setup（clone / `repo.update` / setup 脚本），**不**跑 resume 脚本、**不**启动受管服务；
             控制面随后单独调 `resume.run`。只在 hello 的 `features` 含 `setup-defer-resume` 时置位；`resume.run` 忽略此字段。
+        githubGates:
+          allOf:
+            - $ref: '#/components/schemas/GitHubGates'
+          description: M15：项目门禁配置，供 `github_prepare` 读取修复 / 检查 / 测试命令；缺省 = 未配置
+    LinkCtlGithubCallParams:
+      type: object
+      description: M15（orbd→orynd）：orb 内 agent 的 GitHub 工具调用。控制面校验调用方线程属于本 orb、`kind = work`、未归档。
+      required: [threadId, tool, params]
+      properties:
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        tool:
+          type: string
+          description: 工具名（`github_classify_issue`、`github_task_state`、`github_autoclose`、`github_release_status`、`github_abort_task`）
+        params:
+          type: object
+          additionalProperties: true
+    LinkCtlGithubCallResult:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          description: 给 agent 的文本结果
+        details:
+          type: object
+          additionalProperties: true
+    LinkCtlGithubPrepareReportParams:
+      type: object
+      description: M15（orbd→orynd）：`github_prepare` 通过后上报，控制面据此在出站代理放行该 SHA
+      required: [threadId, sha, level, skipped]
+      properties:
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        sha:
+          type: string
+          pattern: '^[0-9a-f]{40}([0-9a-f]{24})?$'
+        level:
+          type: string
+          enum: [push, pr]
+          x-enum-varnames: [GitHubPrepareLevelPush, GitHubPrepareLevelPr]
+        skipped: { type: boolean }
+        reason: { type: string, maxLength: 2000 }
     LinkCtlSetupRunResult:
       type: object
       required: [ok, setupRan, durationMs]
