@@ -7,6 +7,7 @@ import {
 	waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Orb } from "../../api/client";
 import i18n from "../../i18n";
 import { handleOrbFetch, resetOrbFs } from "../../mock/orbfs";
 import { getThreadStore } from "../../state/stores";
@@ -20,12 +21,19 @@ vi.mock("../../state/terminals", () => ({
 const t = (k: string, o: Record<string, unknown> = {}) =>
 	i18n.t(k as "common.save", o);
 const ORB = "orb-files00000000000000000001";
+/** 停机预览对这台 orb 回 409 `offline_unsupported`（provider 不支持） */
+const ORB_NO_OFFLINE = "orb-nooff00000000000000000001";
 let listCalls: string[];
+/** 带 `offline` 的 orb 文件请求 */
+let offlineCalls: string[];
+let wakeCalls: string[];
 
 beforeEach(() => {
 	resetOrbFs();
 	localStorage.clear();
 	listCalls = [];
+	offlineCalls = [];
+	wakeCalls = [];
 	vi.stubGlobal(
 		"fetch",
 		vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -36,6 +44,20 @@ beforeEach(() => {
 			const url = new URL(req.url);
 			if (url.pathname.endsWith("/fs/list"))
 				listCalls.push(url.searchParams.get("path") ?? "");
+			if (url.searchParams.has("offline")) offlineCalls.push(url.pathname);
+			const wake = /^\/api\/v1\/threads\/([^/]+)\/wake$/.exec(url.pathname);
+			if (wake && req.method === "POST") {
+				wakeCalls.push(wake[1] ?? "");
+				return new Response(null, { status: 202 });
+			}
+			if (
+				url.pathname.startsWith(`/api/v1/orbs/${ORB_NO_OFFLINE}/`) &&
+				url.searchParams.has("offline")
+			)
+				return Response.json(
+					{ code: "offline_unsupported", message: "provider 不支持停机预览" },
+					{ status: 409 },
+				);
 			if (url.pathname === "/api/v1/projects/prj_a/agent-config/files")
 				return Response.json({
 					files: [
@@ -148,5 +170,61 @@ describe("FilesPanel", () => {
 			await vi.advanceTimersByTimeAsync(20);
 		});
 		expect(listCalls).toHaveLength(2);
+	});
+
+	describe("orb 停机：只读预览", () => {
+		const setOrbState = (threadId: string, orbId: string, state: string) =>
+			getThreadStore(threadId)
+				.getState()
+				.patchLocal({ orb: { id: orbId, state } as Orb });
+
+		it("带 offline 读取、显示提示条，隐藏一切写入口；离开停机后换回在线来源", async () => {
+			setOrbState("T-off1", ORB, "stopped");
+			renderPanel("T-off1", ORB);
+			expect(
+				await screen.findByText(t("files.offline.banner")),
+			).toBeInTheDocument();
+			expect(await screen.findByText("README.md")).toBeInTheDocument();
+			expect(offlineCalls).toContain(`/api/v1/orbs/${ORB}/fs/roots`);
+			expect(offlineCalls).toContain(`/api/v1/orbs/${ORB}/fs/list`);
+			for (const key of [
+				"files.actions.newFile",
+				"files.actions.newFolder",
+				"files.actions.upload",
+			])
+				expect(screen.queryByRole("button", { name: t(key) })).toBeNull();
+
+			act(() => setOrbState("T-off1", ORB, "starting"));
+			await waitFor(() =>
+				expect(screen.queryByText(t("files.offline.banner"))).toBeNull(),
+			);
+			expect(
+				await screen.findByRole("button", { name: t("files.actions.newFile") }),
+			).toBeInTheDocument();
+			const before = offlineCalls.length;
+			expect(await screen.findByText("README.md")).toBeInTheDocument();
+			expect(offlineCalls).toHaveLength(before);
+		});
+
+		it("「唤醒以编辑」唤醒该线程的 orb", async () => {
+			setOrbState("T-off2", ORB, "stopped");
+			renderPanel("T-off2", ORB);
+			fireEvent.click(
+				await screen.findByRole("button", { name: t("files.offline.wake") }),
+			);
+			await waitFor(() => expect(wakeCalls).toEqual(["T-off2"]));
+		});
+
+		it("provider 不支持停机预览：就地提示并给出唤醒按钮，Agent 配置仍可用", async () => {
+			setOrbState("T-off3", ORB_NO_OFFLINE, "stopped");
+			renderPanel("T-off3", ORB_NO_OFFLINE);
+			expect(
+				await screen.findByText(t("files.offline.unsupported")),
+			).toBeInTheDocument();
+			expect(
+				screen.getAllByRole("button", { name: t("files.offline.wake") }),
+			).toHaveLength(2);
+			expect(await tab("files.roots.agentConfig")).toBeInTheDocument();
+		});
 	});
 });

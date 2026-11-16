@@ -46,7 +46,13 @@ function Harness({
 			expanded={expanded}
 			selectedPath={null}
 			dirtyPaths={dirtyPaths}
-			caps={{ mkdir: true, rename: true, upload: true, download: true }}
+			caps={{
+				write: true,
+				mkdir: true,
+				rename: true,
+				upload: true,
+				download: true,
+			}}
 			onToggle={(e) => {
 				onToggle(e.path);
 				setExpanded((x) => ({ ...x, [e.path]: !x[e.path] }));
@@ -153,7 +159,13 @@ describe("FileTree 键盘", () => {
 });
 
 describe("actionsFor 发布", () => {
-	const caps = { mkdir: true, rename: true, upload: true, download: true };
+	const caps = {
+		write: true,
+		mkdir: true,
+		rename: true,
+		upload: true,
+		download: true,
+	};
 	const file = {
 		name: "a.txt",
 		path: "/home/user/a.txt",
@@ -166,5 +178,12 @@ describe("actionsFor 发布", () => {
 		expect(actionsFor(dir, { ...caps, publish: true })).not.toContain(
 			"publish",
 		);
+	});
+
+	it("不可写的来源只剩下载、复制路径与发布；根上没有任何操作", () => {
+		const ro = { ...caps, write: false, publish: true };
+		expect(actionsFor(file, ro)).toEqual(["download", "publish", "copyPath"]);
+		expect(actionsFor(dir, ro)).toEqual(["copyPath"]);
+		expect(actionsFor(null, ro)).toEqual([]);
 	});
 });

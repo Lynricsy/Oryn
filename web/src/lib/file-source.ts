@@ -1,6 +1,7 @@
 /**
  * 文件来源抽象：线程 Files 面板（orb 的 `$HOME`）、设置页与项目页的 agent 文本配置共用同一个文件浏览器。
  * - orb：`/api/v1/orbs/{id}/fs/*`，路径一律为绝对路径；写入用 XHR 以获得上传进度。
+ *   orb 停机时可用只读的停机预览（`offline=1`，由 provider 读取已停止的容器，不唤醒 orb）。
  * - agent 配置：全局 `/api/v1/agent-config/files*`（相对 omp-home 根）与项目级
  *   `/api/v1/projects/{id}/agent-config/files*`（相对项目配置根，同仓库里的 `.omp/`），根为 `""`；
  *   服务端只有扁平的文件列表，目录树在客户端合成，不支持新建文件夹与重命名。
@@ -38,7 +39,17 @@ export interface WriteOptions {
 export interface FileSource {
 	/** `"orb:<orbId>"` | `"agent-config"` */
 	id: string;
-	caps: { mkdir: boolean; rename: boolean; upload: boolean; download: boolean };
+	/**
+	 * `write`：可写入（新建、上传、重命名、删除、保存）；为 false 时一切变更入口都隐藏，其余各项随之失效。
+	 * `mkdir` / `rename` / `upload` 只在可写时有意义。
+	 */
+	caps: {
+		write: boolean;
+		mkdir: boolean;
+		rename: boolean;
+		upload: boolean;
+		download: boolean;
+	};
 	/** `label` 为 i18n 键（`files.roots.*`）。 */
 	roots(): Promise<{ label: string; path: string }[]>;
 	list(path: string): Promise<FileEntry[]>;
@@ -302,19 +313,42 @@ export function xhrUpload<T>({
 /**
  * `threadId`：当前线程，所有请求都带 `thread`——runner 的 orb 必须带（范围是该线程的工作目录），普通 orb 由控制面校验后照旧。
  * runner 线程的 `workdir` 与 `home` 是同一个目录（线程的工作目录），此时只给一个根。
+ * `offline`：orb 已停机时的只读预览——roots / list / stat / 文件读取都带 `offline=1`（不唤醒 orb），
+ * 一切写操作直接以 409 `read_only` 拒绝。来源 `id` 不变，草稿仍按同一个键保存。
  */
-export function orbFileSource(orbId: string, threadId: string): FileSource {
+export function orbFileSource(
+	orbId: string,
+	threadId: string,
+	opts: { offline?: boolean } = {},
+): FileSource {
+	const offline = opts.offline === true;
 	const id = { id: orbId };
 	const thread = { thread: threadId };
+	// 只读请求的查询参数：停机预览多带 `offline`（服务端按布尔解析，`1` / `true` 等价）
+	const readQuery = offline ? { ...thread, offline: true } : thread;
 	const fileUrl = (path: string) =>
-		`/api/v1/orbs/${encodeURIComponent(orbId)}/fs/file?thread=${encodeURIComponent(threadId)}&path=${encodeURIComponent(path)}`;
-	return {
+		`/api/v1/orbs/${encodeURIComponent(orbId)}/fs/file?thread=${encodeURIComponent(threadId)}${offline ? "&offline=1" : ""}&path=${encodeURIComponent(path)}`;
+	const source: FileSource = {
 		id: `orb:${orbId}`,
-		caps: { mkdir: true, rename: true, upload: true, download: true },
+		caps: offline
+			? {
+					write: false,
+					mkdir: false,
+					rename: false,
+					upload: false,
+					download: true,
+				}
+			: {
+					write: true,
+					mkdir: true,
+					rename: true,
+					upload: true,
+					download: true,
+				},
 		async roots() {
 			const r = await unwrap(
 				api.GET("/api/v1/orbs/{id}/fs/roots", {
-					params: { path: id, query: thread },
+					params: { path: id, query: readQuery },
 				}),
 			);
 			const workspace = { label: "files.roots.workspace", path: r.workdir };
@@ -325,7 +359,7 @@ export function orbFileSource(orbId: string, threadId: string): FileSource {
 		async list(path) {
 			const r = await unwrap(
 				api.GET("/api/v1/orbs/{id}/fs/list", {
-					params: { path: id, query: { ...thread, path } },
+					params: { path: id, query: { ...readQuery, path } },
 				}),
 			);
 			return r.entries;
@@ -333,7 +367,7 @@ export function orbFileSource(orbId: string, threadId: string): FileSource {
 		stat(path) {
 			return unwrap(
 				api.GET("/api/v1/orbs/{id}/fs/stat", {
-					params: { path: id, query: { ...thread, path } },
+					params: { path: id, query: { ...readQuery, path } },
 				}),
 			);
 		},
@@ -399,6 +433,18 @@ export function orbFileSource(orbId: string, threadId: string): FileSource {
 			);
 		},
 		downloadUrl: fileUrl,
+	};
+	if (!offline) return source;
+	const readOnly = (): Promise<never> =>
+		Promise.reject(
+			new ApiError(409, "read_only", "orb is stopped; files are read-only"),
+		);
+	return {
+		...source,
+		write: readOnly,
+		mkdir: readOnly,
+		rename: readOnly,
+		remove: readOnly,
 	};
 }
 
@@ -466,7 +512,13 @@ function configSource(
 	const agentUrl = spec.fileUrl;
 	return {
 		id: spec.id,
-		caps: { mkdir: false, rename: false, upload: true, download: true },
+		caps: {
+			write: true,
+			mkdir: false,
+			rename: false,
+			upload: true,
+			download: true,
+		},
 		async roots() {
 			return [{ label: spec.rootLabel, path: "" }];
 		},

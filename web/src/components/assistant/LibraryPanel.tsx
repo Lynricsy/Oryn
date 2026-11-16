@@ -61,7 +61,13 @@ function libraryFileSource(file: AssistantFile): FileSource {
 	};
 	return {
 		id: `library:${file.id}`,
-		caps: { mkdir: false, rename: false, upload: false, download: true },
+		caps: {
+			write: false,
+			mkdir: false,
+			rename: false,
+			upload: false,
+			download: true,
+		},
 		roots: async () => [],
 		list: async () => [],
 		stat: async () => entry,

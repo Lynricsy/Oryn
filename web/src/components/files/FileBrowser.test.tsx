@@ -23,15 +23,18 @@ vi.mock("../editor/CodeEditor", () => ({
 	default: ({
 		value,
 		path,
+		readOnly,
 		onChange,
 	}: {
 		value: string;
 		path: string;
+		readOnly?: boolean;
 		onChange?(v: string): void;
 	}) => (
 		<textarea
 			aria-label={`editor:${path}`}
 			value={value}
+			readOnly={readOnly}
 			onChange={(e) => onChange?.(e.target.value)}
 		/>
 	),
@@ -71,7 +74,13 @@ function memorySource() {
 	};
 	const src: FileSource = {
 		id: "mem",
-		caps: { mkdir: true, rename: true, upload: true, download: false },
+		caps: {
+			write: true,
+			mkdir: true,
+			rename: true,
+			upload: true,
+			download: false,
+		},
 		roots: async () => [{ label: "files.roots.workspace", path: "/r" }],
 		list: async (dir) =>
 			[...dirs, ...files.keys()]
@@ -561,5 +570,91 @@ describe("FileBrowser 过期的目录应答", () => {
 			).toHaveValue(PUBLIC_URL);
 			expect(screen.queryByText(t("publish.orbFileDone"))).toBeNull();
 		});
+	});
+});
+
+describe("FileBrowser 只读来源（停机 orb 的预览）", () => {
+	beforeEach(() => {
+		localStorage.clear();
+		draftStore.setState({ drafts: {} });
+		mem = memorySource();
+		mem.files.set("/r/a.txt", { text: "alpha", v: 1 });
+		mem.dirs.add("/r/sub");
+	});
+
+	const readOnlySource = (): FileSource => ({
+		...mem.src,
+		caps: {
+			write: false,
+			mkdir: false,
+			rename: false,
+			upload: false,
+			download: true,
+		},
+		downloadUrl: (p) => `/dl${p}`,
+	});
+
+	it("隐藏新建 / 上传 / 重命名 / 删除，不接受拖放；文件以只读打开，没有保存", async () => {
+		const src = readOnlySource();
+		const write = vi.spyOn(src, "write");
+		render(<FileBrowser sources={[src]} storageKey="ro" />);
+		await screen.findByText("a.txt");
+		for (const key of [
+			"files.actions.newFile",
+			"files.actions.newFolder",
+			"files.actions.upload",
+		])
+			expect(screen.queryByRole("button", { name: t(key) })).toBeNull();
+		expect(
+			screen.getByRole("button", { name: t("files.actions.refresh") }),
+		).toBeInTheDocument();
+
+		const menu = await openMenu("a.txt");
+		const items = within(menu)
+			.getAllByRole("menuitem")
+			.map((el) => el.textContent);
+		expect(items).toEqual([
+			t("files.actions.download"),
+			t("files.actions.copyPath"),
+		]);
+		fireEvent.keyDown(menu, { key: "Escape" });
+
+		// 拖放上传：只读时不拦截 dragover（默认行为未被阻止）
+		expect(
+			fireEvent.dragOver(screen.getByRole("tree"), {
+				dataTransfer: { types: ["Files"] },
+			}),
+		).toBe(true);
+
+		fireEvent.click(screen.getByText("a.txt"));
+		const editor = await screen.findByLabelText("editor:/r/a.txt");
+		expect(editor).toHaveValue("alpha");
+		expect(editor).toHaveAttribute("readonly");
+		expect(screen.queryByRole("button", { name: t("common.save") })).toBeNull();
+		expect(write).not.toHaveBeenCalled();
+	});
+
+	it("索引构建中（503 offline_indexing）：提示正在读取索引，按 Retry-After 重试后显示目录", async () => {
+		const src = readOnlySource();
+		const realRoots = src.roots;
+		let calls = 0;
+		src.roots = async () => {
+			if (++calls < 3)
+				throw new ApiError(
+					503,
+					"offline_indexing",
+					"indexing: 12 entries scanned",
+					0.1,
+				);
+			return realRoots();
+		};
+		render(<FileBrowser sources={[src]} storageKey="ro-idx" />);
+		expect(
+			await screen.findByText(t("files.offline.indexing")),
+		).toBeInTheDocument();
+		expect(screen.queryByText(t("files.waking"))).toBeNull();
+		expect(await screen.findByText("a.txt")).toBeInTheDocument();
+		expect(calls).toBe(3);
+		expect(screen.queryByText(t("files.offline.indexing"))).toBeNull();
 	});
 });

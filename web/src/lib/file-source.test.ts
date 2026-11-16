@@ -439,3 +439,82 @@ describe("orbFileSource.write（XHR）", () => {
 		});
 	});
 });
+
+describe("orbFileSource 停机预览（offline）", () => {
+	const orb = "orb-test0000000000000000000001";
+	let urls: URL[];
+	beforeEach(() => {
+		resetOrbFs();
+		urls = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+				const req =
+					input instanceof Request
+						? input
+						: new Request(new URL(String(input), location.origin), init);
+				urls.push(new URL(req.url));
+				return (
+					(await handleOrbFetch(req)) ?? new Response(null, { status: 404 })
+				);
+			}),
+		);
+	});
+	afterEach(() => vi.unstubAllGlobals());
+
+	const offlineFlag = (u: URL | string) =>
+		new URL(String(u), location.origin).searchParams.get("offline");
+
+	it("roots / list / stat / 读取 / 下载地址都带 offline，来源 id 不变", async () => {
+		const s = orbFileSource(orb, "T-1", { offline: true });
+		expect(s.id).toBe(`orb:${orb}`);
+		await s.roots();
+		await s.list("/home/user");
+		await s.stat("/home/user/notes.txt");
+		await s.readText("/home/user/notes.txt");
+		await s.readBlob("/home/user/notes.txt");
+		expect(urls.map((u) => u.pathname.split("/").pop())).toEqual([
+			"roots",
+			"list",
+			"stat",
+			"file",
+			"file",
+		]);
+		for (const u of urls) {
+			expect(["1", "true"]).toContain(offlineFlag(u));
+			expect(u.searchParams.get("thread")).toBe("T-1");
+		}
+		expect(offlineFlag(s.downloadUrl("/home/user/notes.txt") ?? "")).toBe("1");
+	});
+
+	it("在线来源不带 offline", async () => {
+		const s = orbFileSource(orb, "T-1");
+		await s.list("/home/user");
+		expect(offlineFlag(urls[0] ?? "")).toBeNull();
+		expect(offlineFlag(s.downloadUrl("/home/user/notes.txt") ?? "")).toBeNull();
+		expect(s.caps.write).toBe(true);
+	});
+
+	it("只读：caps 全关（可下载），写操作以 409 read_only 拒绝且不发请求", async () => {
+		const s = orbFileSource(orb, "T-1", { offline: true });
+		expect(s.caps).toEqual({
+			write: false,
+			mkdir: false,
+			rename: false,
+			upload: false,
+			download: true,
+		});
+		const ops = [
+			s.write("/home/user/a.txt", "x"),
+			s.mkdir("/home/user/d"),
+			s.rename("/home/user/notes.txt", "/home/user/n2.txt"),
+			s.remove("/home/user/notes.txt"),
+		];
+		for (const op of ops)
+			await expect(op).rejects.toMatchObject({
+				status: 409,
+				code: "read_only",
+			});
+		expect(urls).toEqual([]);
+	});
+});

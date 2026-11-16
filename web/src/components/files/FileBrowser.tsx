@@ -3,10 +3,12 @@
  * 线程 Files 面板（orb + agent 配置）与设置页的 agent 配置共用。
  * 容器宽 ≥720px 时左树右内容，否则列表 → 详情两级。
  * 刷新时机：展开目录、手动刷新、自己的变更之后、`refreshKey` 变化（由上层在 agent 活动后防抖触发）。
+ * 来源不可写（`caps.write` 为 false，如停机 orb 的只读预览）时隐藏一切变更入口，文件以只读方式打开。
  * 目录请求按「来源 + 根」的代次与每个目录的请求序号校验，过期的结果（旧 orb、同目录更早的请求）一律丢弃。
  * 未保存的草稿在 `drafts` store 里，不随查看器卸载丢失；树上以圆点标出。
  */
 import {
+	Fragment,
 	type ReactNode,
 	useCallback,
 	useEffect,
@@ -41,7 +43,12 @@ import {
 import { dropDrafts, moveDrafts, useDraftPaths } from "./drafts";
 import { type DirState, type FileAction, FileTree } from "./FileTree";
 import { FileViewer } from "./FileViewer";
-import { isOrbdOutdated, useElementWidth, withWakeRetry } from "./hooks";
+import {
+	isOrbdOutdated,
+	type RetryWait,
+	useElementWidth,
+	withWakeRetry,
+} from "./hooks";
 import {
 	batchFromDrop,
 	batchFromFiles,
@@ -107,12 +114,15 @@ export function FileBrowser({
 	storageKey,
 	refreshKey = 0,
 	publisher,
+	renderError,
 }: {
 	sources: FileSource[];
 	storageKey: string;
 	/** 变化时刷新已展开的目录 */
 	refreshKey?: number;
 	publisher?: FilePublisher;
+	/** 来源取根失败时的自定义提示（如停机预览不可用时附带唤醒按钮）；返回 null 则用缺省的错误文案 */
+	renderError?(error: unknown, retry: () => void): ReactNode;
 }): ReactNode {
 	const { t } = useTranslation();
 	const hostRef = useRef<HTMLDivElement>(null);
@@ -120,7 +130,7 @@ export function FileBrowser({
 	const split = width >= SPLIT_MIN_WIDTH;
 
 	const [sourceRoots, setSourceRoots] = useState<SourceRoots[] | null>(null);
-	const [waking, setWaking] = useState(false);
+	const [wait, setWait] = useState<RetryWait | null>(null);
 	const [persisted, setPersisted] = useState<Persisted>(() =>
 		readPersisted(storageKey),
 	);
@@ -152,7 +162,7 @@ export function FileBrowser({
 					const roots = await withWakeRetry(
 						() => source.roots(),
 						(w) => {
-							if (!cancelled) setWaking(w);
+							if (!cancelled) setWait(w);
 						},
 					);
 					return {
@@ -223,7 +233,7 @@ export function FileBrowser({
 				const entries = await withWakeRetry(
 					() => source.list(path),
 					(w) => {
-						if (gen === generation.current) setWaking(w);
+						if (gen === generation.current) setWait(w);
 					},
 				);
 				if (current())
@@ -422,13 +432,15 @@ export function FileBrowser({
 			</div>
 			{source && rootPath !== undefined && (
 				<div className="flex shrink-0 items-center">
-					<IconButton
-						icon="filePlus"
-						size={15}
-						label={t("files.actions.newFile")}
-						onClick={() => onAction("newFile", null)}
-					/>
-					{source.caps.mkdir && (
+					{source.caps.write && (
+						<IconButton
+							icon="filePlus"
+							size={15}
+							label={t("files.actions.newFile")}
+							onClick={() => onAction("newFile", null)}
+						/>
+					)}
+					{source.caps.write && source.caps.mkdir && (
 						<IconButton
 							icon="folderPlus"
 							size={15}
@@ -436,7 +448,7 @@ export function FileBrowser({
 							onClick={() => onAction("newFolder", null)}
 						/>
 					)}
-					{source.caps.upload && (
+					{source.caps.write && source.caps.upload && (
 						<IconButton
 							icon="upload"
 							size={15}
@@ -495,6 +507,7 @@ export function FileBrowser({
 				path={selected}
 				onBack={split ? undefined : () => select(null)}
 				onDownload={download}
+				readOnly={!source.caps.write}
 				onSaved={() => void loadDir(parentPath(selected) || (rootPath ?? ""))}
 			/>
 		) : (
@@ -503,12 +516,16 @@ export function FileBrowser({
 			</div>
 		);
 
+	const waitText =
+		wait === "indexing" ? t("files.offline.indexing") : t("files.waking");
+	const retryRoots = () => setRootsKey((k) => k + 1);
+
 	let body: ReactNode;
 	if (!sourceRoots) {
 		body = (
 			<div className="flex items-center gap-2 p-3 text-muted text-sm">
 				<Spinner />
-				{waking && t("files.waking")}
+				{wait && waitText}
 			</div>
 		);
 	} else if (!root) {
@@ -516,16 +533,14 @@ export function FileBrowser({
 		body = isOrbdOutdated(e) ? (
 			<EmptyState icon="alert" title={t("files.outdated")} />
 		) : (
-			<div className="p-3">
-				<ErrorText error={e} />
-				<Button
-					size="sm"
-					className="mt-2"
-					onClick={() => setRootsKey((k) => k + 1)}
-				>
-					{t("files.retry")}
-				</Button>
-			</div>
+			(renderError?.(e, retryRoots) ?? (
+				<div className="p-3">
+					<ErrorText error={e} />
+					<Button size="sm" className="mt-2" onClick={retryRoots}>
+						{t("files.retry")}
+					</Button>
+				</div>
+			))
 		);
 	} else if (split) {
 		body = (
@@ -547,10 +562,10 @@ export function FileBrowser({
 	return (
 		<div ref={hostRef} className="flex h-full min-h-0 flex-col">
 			{header}
-			{waking && sourceRoots && (
+			{wait && sourceRoots && (
 				<p className="flex shrink-0 items-center gap-1.5 bg-warn/8 px-3 py-1.5 text-warn text-xs">
 					<Spinner size={12} />
-					{t("files.waking")}
+					{waitText}
 				</p>
 			)}
 			{failed.length > 0 && root && (
@@ -565,7 +580,11 @@ export function FileBrowser({
 								{t("files.outdated")}
 							</p>
 						) : (
-							<ErrorText key={f.source.id} error={f.error} />
+							<Fragment key={f.source.id}>
+								{renderError?.(f.error, retryRoots) ?? (
+									<ErrorText error={f.error} />
+								)}
+							</Fragment>
 						),
 					)}
 				</div>

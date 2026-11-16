@@ -2257,6 +2257,13 @@
 		"orbDeleted": "orb 已删除，只能查看 Agent 配置。",
 		"agentConfigSaved": "已保存。Agent 配置对新 orb 与下次唤醒生效。",
 		"waking": "正在唤醒 orb…",
+		"offline": {
+			"banner": "orb 已停机：只读浏览，不会唤醒。",
+			"wake": "唤醒以编辑",
+			"indexing": "正在读取停机 orb 的文件索引…",
+			"unsupported": "这台 orb 的 provider 不支持停机预览；唤醒后可浏览文件。",
+			"providerUnavailable": "provider 不在线，暂时无法读取停机的 orb。"
+		},
 		"outdated": "这台 orb 创建于旧版本，不支持文件面板；新建线程即可。",
 		"retry": "重试",
 		"pick": "选择一个文件查看。",

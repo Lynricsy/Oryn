@@ -36,6 +36,8 @@ export type FileAction =
 	| "publish";
 
 export interface TreeCaps {
+	/** 可写；为 false 时只剩下载、复制路径与发布，也不接受拖放上传 */
+	write: boolean;
 	mkdir: boolean;
 	rename: boolean;
 	upload: boolean;
@@ -51,16 +53,17 @@ export function actionsFor(
 ): FileAction[] {
 	const dir = entry === null || isDirEntry(entry);
 	const out: FileAction[] = [];
-	if (dir) {
+	if (dir && caps.write) {
 		out.push("newFile");
 		if (caps.mkdir) out.push("newFolder");
 		if (caps.upload) out.push("upload");
 	}
 	if (entry) {
-		if (caps.rename) out.push("rename");
+		if (caps.write && caps.rename) out.push("rename");
 		if (!dir && caps.download) out.push("download");
 		if (!dir && caps.publish) out.push("publish");
-		out.push("copyPath", "delete");
+		out.push("copyPath");
+		if (caps.write) out.push("delete");
 	}
 	return out;
 }
@@ -172,8 +175,10 @@ export function FileTree({
 		rows.current.get(path)?.focus();
 	};
 
-	const openMenu = (entry: FileEntry | null, x: number, y: number) =>
-		setMenu({ entry, x, y });
+	// 没有可用操作（只读来源的根）时不弹出空菜单
+	const openMenu = (entry: FileEntry | null, x: number, y: number) => {
+		if (actionsFor(entry, caps).length > 0) setMenu({ entry, x, y });
+	};
 
 	const activate = (e: FileEntry) => (isDirEntry(e) ? onToggle(e) : onOpen(e));
 
@@ -237,7 +242,7 @@ export function FileTree({
 			: dirtyPaths.includes(e.path);
 
 	const dropProps = (dir: string) =>
-		caps.upload
+		caps.write && caps.upload
 			? {
 					onDragOver: (e: DragEvent) => {
 						if (!e.dataTransfer.types.includes("Files")) return;

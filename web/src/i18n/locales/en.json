@@ -2257,6 +2257,13 @@
 		"orbDeleted": "The orb has been deleted; only the agent config is available.",
 		"agentConfigSaved": "Saved. Agent config applies to new orbs and on the next wake.",
 		"waking": "Waking the orb…",
+		"offline": {
+			"banner": "The orb is stopped: browsing read-only without waking it.",
+			"wake": "Wake to edit",
+			"indexing": "Reading the stopped orb's file index…",
+			"unsupported": "This orb's provider can't preview a stopped orb. Wake it to browse files.",
+			"providerUnavailable": "The provider is offline, so the stopped orb can't be read right now."
+		},
 		"outdated": "This orb was created by an older version and has no file panel. Start a new thread to use it.",
 		"retry": "Retry",
 		"pick": "Select a file to view.",

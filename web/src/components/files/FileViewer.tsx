@@ -8,7 +8,8 @@
  * - 其它或超过上限：类型、大小与下载按钮。
  * 不可信内容的边界：HTML 类内容只进惰性 iframe（不执行脚本、不发请求，见 InertFrame）；图片只经 `<img>`；
  * 表格、压缩包目录等一律作为文本交给 React 转义。
- * 保存带 `etag`；412 `modified` → 对话框「覆盖 / 重新加载」。
+ * 保存带 `etag`；412 `modified` → 对话框「覆盖 / 重新加载」。只读（`readOnly`，如停机 orb 的预览）时不可编辑、保存或丢弃草稿。
+ * 读取遇到唤醒超时或停机预览的索引构建中时按 `withWakeRetry` 等待重试。
  * 草稿存在 `drafts` store（按来源 + 路径），换文件、关面板、换线程回来后仍在；
  * 保存期间继续编辑时，保存完成只把基线前移，不覆盖较新的草稿。
  */
@@ -55,6 +56,7 @@ import {
 	markSaved,
 	useDraft,
 } from "./drafts";
+import { type RetryWait, withWakeRetry } from "./hooks";
 import { InertFrame } from "./preview/InertFrame";
 import MediaPreview from "./preview/MediaPreview";
 
@@ -175,7 +177,7 @@ export function FileViewer({
 	/** 窄布局下返回列表 */
 	onBack?(): void;
 	onDownload?(path: string): void;
-	/** 只预览不编辑（来源不支持写入，如助手文件库） */
+	/** 只预览不编辑（来源不支持写入，如助手文件库、停机的 orb） */
 	readOnly?: boolean;
 }): ReactNode {
 	const { t } = useTranslation();
@@ -198,6 +200,7 @@ export function FileViewer({
 		error?: unknown;
 	} | null>(null);
 	const [reloadKey, setReloadKey] = useState(0);
+	const [wait, setWait] = useState<RetryWait | null>(null);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: reloadKey 触发重新加载
 	useEffect(() => {
@@ -206,53 +209,57 @@ export function FileViewer({
 		setLoadError(null);
 		setSaveError(null);
 		setFullText(null);
-		(async (): Promise<Loaded> => {
-			const entry = await source.stat(path);
-			const kind = previewKind(path, entry.mime, entry.text);
-			// 超出编辑上限的 SVG 截断后无法显示，整份当图片读
-			const big = entry.size > MAX_EDIT_BYTES;
-			if (kind.kind === "text" && kind.render === "svg" && big)
-				return entry.size > MAX_PREVIEW_BLOB_BYTES
-					? { kind: "binary", entry, tooLarge: true }
-					: {
-							kind: "blob",
-							entry,
-							viewer: "image",
-							blob: await source.readBlob(path),
-						};
-			if (kind.kind === "blob") {
-				if (entry.size > MAX_PREVIEW_BLOB_BYTES)
-					return { kind: "binary", entry, tooLarge: true };
-				return {
-					kind: "blob",
-					entry,
-					viewer: kind.viewer,
-					blob: await source.readBlob(path),
-				};
-			}
-			if (kind.kind === "media") {
-				const src = source.downloadUrl(path);
-				if (src) return { kind: "media", entry, media: kind.media, src };
+		setWait(null);
+		void withWakeRetry(
+			async (): Promise<Loaded> => {
+				const entry = await source.stat(path);
+				const kind = previewKind(path, entry.mime, entry.text);
+				// 超出编辑上限的 SVG 截断后无法显示，整份当图片读
+				const big = entry.size > MAX_EDIT_BYTES;
+				if (kind.kind === "text" && kind.render === "svg" && big)
+					return entry.size > MAX_PREVIEW_BLOB_BYTES
+						? { kind: "binary", entry, tooLarge: true }
+						: {
+								kind: "blob",
+								entry,
+								viewer: "image",
+								blob: await source.readBlob(path),
+							};
+				if (kind.kind === "blob") {
+					if (entry.size > MAX_PREVIEW_BLOB_BYTES)
+						return { kind: "binary", entry, tooLarge: true };
+					return {
+						kind: "blob",
+						entry,
+						viewer: kind.viewer,
+						blob: await source.readBlob(path),
+					};
+				}
+				if (kind.kind === "media") {
+					const src = source.downloadUrl(path);
+					if (src) return { kind: "media", entry, media: kind.media, src };
+					return { kind: "binary", entry, tooLarge: false };
+				}
+				if (kind.kind === "text") {
+					const r = await source.readText(
+						path,
+						big ? PREVIEW_BYTES : MAX_EDIT_BYTES,
+					);
+					const truncated = big || r.truncated;
+					return {
+						kind: "text",
+						entry,
+						text: r.text,
+						etag: r.etag ?? entry.etag,
+						truncated,
+						readOnly: readOnly || truncated,
+						render: kind.render,
+					};
+				}
 				return { kind: "binary", entry, tooLarge: false };
-			}
-			if (kind.kind === "text") {
-				const r = await source.readText(
-					path,
-					big ? PREVIEW_BYTES : MAX_EDIT_BYTES,
-				);
-				const truncated = big || r.truncated;
-				return {
-					kind: "text",
-					entry,
-					text: r.text,
-					etag: r.etag ?? entry.etag,
-					truncated,
-					readOnly: readOnly || truncated,
-					render: kind.render,
-				};
-			}
-			return { kind: "binary", entry, tooLarge: false };
-		})().then(
+			},
+			(w) => !cancelled && setWait(w),
+		).then(
 			(l) => !cancelled && setLoaded(l),
 			(e) => !cancelled && setLoadError(e),
 		);
@@ -281,8 +288,10 @@ export function FileViewer({
 		if (!needFull || fullText?.key === key) return;
 		let cancelled = false;
 		setFullText({ key });
-		source
-			.readBlob(path)
+		void withWakeRetry(
+			() => source.readBlob(path),
+			(w) => !cancelled && setWait(w),
+		)
 			.then((b) => b.text())
 			.then(
 				(s) => !cancelled && setFullText({ key, text: s }),
@@ -330,8 +339,10 @@ export function FileViewer({
 	const dirPart = path.slice(0, cut);
 	const namePart = path.slice(cut);
 	const loading = (
-		<div className="p-3">
+		<div className="flex items-center gap-2 p-3 text-muted text-sm">
 			<Spinner />
+			{wait &&
+				t(wait === "indexing" ? "files.offline.indexing" : "files.waking")}
 		</div>
 	);
 
@@ -411,7 +422,7 @@ export function FileViewer({
 						</button>
 					</div>
 				)}
-				{draft && (
+				{draft && !readOnly && (
 					<Button
 						size="sm"
 						variant="ghost"

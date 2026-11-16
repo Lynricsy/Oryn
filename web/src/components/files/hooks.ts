@@ -64,24 +64,55 @@ export function useWorkspaceActivity(
 
 /** `orb_unavailable`（唤醒超时）后重试前的等待。 */
 export const WAKE_RETRY_MS = 3000;
+/** `offline_indexing` 未带 `Retry-After` 时的重试间隔。 */
+export const INDEXING_RETRY_MS = 2000;
+/** `offline_indexing` 的累计等待上限：provider 首次为停机的 orb 建文件索引，大仓库也应在此之内完成。 */
+export const INDEXING_WAIT_MAX_MS = 3 * 60_000;
 
-/** 唤醒超时（503 `orb_unavailable`）时提示「正在唤醒」并在 3s 后重试一次。 */
+/** 请求重试期间在等什么：唤醒 orb，或 provider 读取停机 orb 的文件索引。 */
+export type RetryWait = "waking" | "indexing";
+
+/**
+ * 文件请求的等待重试：
+ * - 唤醒超时（503 `orb_unavailable`）：提示「正在唤醒」，3s 后重试一次；
+ * - 停机预览的索引构建中（503 `offline_indexing`）：提示「正在读取文件索引」，
+ *   按 `Retry-After`（缺省 2s）反复重试，累计等待超过 `indexingMaxMs` 仍未就绪则抛出最后一次的错误。
+ * `onWait` 在开始等待时收到原因，结束（成功或放弃）时收到 `null`。
+ */
 export async function withWakeRetry<T>(
 	fn: () => Promise<T>,
-	onWaking: (waking: boolean) => void,
-	delayMs = WAKE_RETRY_MS,
+	onWait: (wait: RetryWait | null) => void,
+	{
+		wakeDelayMs = WAKE_RETRY_MS,
+		indexingMaxMs = INDEXING_WAIT_MAX_MS,
+	}: { wakeDelayMs?: number; indexingMaxMs?: number } = {},
 ): Promise<T> {
+	let woke = false;
+	let indexingWaited = 0;
+	let waiting = false;
 	try {
-		return await fn();
-	} catch (e) {
-		if (!(e instanceof ApiError) || e.code !== "orb_unavailable") throw e;
-	}
-	onWaking(true);
-	try {
-		await new Promise((r) => setTimeout(r, delayMs));
-		return await fn();
+		for (;;) {
+			try {
+				return await fn();
+			} catch (e) {
+				if (!(e instanceof ApiError)) throw e;
+				let delay: number;
+				if (e.code === "orb_unavailable" && !woke) {
+					woke = true;
+					delay = wakeDelayMs;
+					onWait("waking");
+				} else if (e.code === "offline_indexing") {
+					delay = e.retryAfter ? e.retryAfter * 1000 : INDEXING_RETRY_MS;
+					if (indexingWaited + delay > indexingMaxMs) throw e;
+					indexingWaited += delay;
+					onWait("indexing");
+				} else throw e;
+				waiting = true;
+				await new Promise((r) => setTimeout(r, delay));
+			}
+		}
 	} finally {
-		onWaking(false);
+		if (waiting) onWait(null);
 	}
 }
 
