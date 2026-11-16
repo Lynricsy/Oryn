@@ -174,3 +174,17 @@ func (s *Server) ProviderBye(w http.ResponseWriter, r *http.Request) {
 		svc.Jobs().Bye(w, r)
 	}
 }
+
+// ProviderClaimFs 实现 POST /provider/v1/fs/claim。
+func (s *Server) ProviderClaimFs(w http.ResponseWriter, r *http.Request) {
+	if svc, ok := s.orbsSvc(w); ok {
+		svc.Jobs().ClaimFsHTTP(w, r)
+	}
+}
+
+// ProviderReplyFs 实现 POST /provider/v1/fs/{id}/reply。
+func (s *Server) ProviderReplyFs(w http.ResponseWriter, r *http.Request, id string, params apigen.ProviderReplyFsParams) {
+	if svc, ok := s.orbsSvc(w); ok {
+		svc.Jobs().ReplyFsHTTP(w, r, id, params.XOrynStatus)
+	}
+}

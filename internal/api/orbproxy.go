@@ -134,6 +134,7 @@ func (s *Server) proxyOrb(w http.ResponseWriter, r *http.Request, orbID, upstrea
 		return
 	}
 	q.Del("bg")
+	q.Del("offline")
 	if opt.injectBase && q.Get("base") == "" {
 		q.Del("base")
 		if base := s.orbBaseBranch(clientCtx, orbID); base != "" {
@@ -332,21 +333,33 @@ func bgFlag(p *apigen.OrbBackgroundQuery) bool { return p != nil && *p }
 
 // GetOrbFsRoots 实现 GET /api/v1/orbs/{id}/fs/roots。
 func (s *Server) GetOrbFsRoots(w http.ResponseWriter, r *http.Request, id apigen.OrbIDPath, params apigen.GetOrbFsRootsParams) {
+	if offlineFlag(params.Offline) && s.serveOfflineFs(w, r, id, apigen.Roots, "") {
+		return
+	}
 	s.proxyOrb(w, r, id, "/fs/roots", orbProxyOpt{bg: bgFlag(params.Bg)})
 }
 
 // ListOrbFs 实现 GET /api/v1/orbs/{id}/fs/list。
 func (s *Server) ListOrbFs(w http.ResponseWriter, r *http.Request, id apigen.OrbIDPath, params apigen.ListOrbFsParams) {
+	if offlineFlag(params.Offline) && s.serveOfflineFs(w, r, id, apigen.List, params.Path) {
+		return
+	}
 	s.proxyOrb(w, r, id, "/fs/list", orbProxyOpt{bg: bgFlag(params.Bg)})
 }
 
 // StatOrbFs 实现 GET /api/v1/orbs/{id}/fs/stat。
 func (s *Server) StatOrbFs(w http.ResponseWriter, r *http.Request, id apigen.OrbIDPath, params apigen.StatOrbFsParams) {
+	if offlineFlag(params.Offline) && s.serveOfflineFs(w, r, id, apigen.Stat, params.Path) {
+		return
+	}
 	s.proxyOrb(w, r, id, "/fs/stat", orbProxyOpt{bg: bgFlag(params.Bg)})
 }
 
 // ReadOrbFile 实现 GET /api/v1/orbs/{id}/fs/file（支持 Range）。
 func (s *Server) ReadOrbFile(w http.ResponseWriter, r *http.Request, id apigen.OrbIDPath, params apigen.ReadOrbFileParams) {
+	if offlineFlag(params.Offline) && s.serveOfflineFs(w, r, id, apigen.Read, params.Path) {
+		return
+	}
 	s.proxyOrb(w, r, id, "/fs/file", orbProxyOpt{raw: true, filename: path.Base(params.Path)})
 }
 

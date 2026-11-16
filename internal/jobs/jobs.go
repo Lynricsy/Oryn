@@ -84,6 +84,9 @@ type Queue struct {
 	mu      sync.Mutex
 	signals map[string]chan struct{} // providerID → 有新任务时关闭并替换
 	waiters map[string][]chan db.Job // jobID → 等待终态的调用方
+
+	// fs 是停机 orb 的只读文件中继（纯内存，与任务表无关）。
+	fs *FSRelay
 }
 
 // New 创建队列。回调用 SetHooks 设置（orbs 服务构造时注册）。
@@ -95,6 +98,7 @@ func New(st *store.Store) *Queue {
 		MaxAttempts: DefaultMaxAttempts,
 		signals:     map[string]chan struct{}{},
 		waiters:     map[string][]chan db.Job{},
+		fs:          NewFSRelay(),
 	}
 }
 

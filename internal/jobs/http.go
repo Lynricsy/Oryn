@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -188,6 +189,15 @@ func (q *Queue) Handler() http.Handler {
 		q.CompleteHTTP(w, r, chi.URLParam(r, "id"))
 	})
 	r.Post("/provider/v1/bye", q.Bye)
+	r.Post("/provider/v1/fs/claim", q.ClaimFsHTTP)
+	r.Post("/provider/v1/fs/{id}/reply", func(w http.ResponseWriter, r *http.Request) {
+		status, err := strconv.Atoi(r.Header.Get("X-Oryn-Status"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "X-Oryn-Status 无效")
+			return
+		}
+		q.ReplyFsHTTP(w, r, chi.URLParam(r, "id"), status)
+	})
 	return r
 }
 

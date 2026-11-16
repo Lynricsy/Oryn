@@ -1796,6 +1796,30 @@ func (e ProviderDriver) Valid() bool {
 	}
 }
 
+// Defines values for ProviderFsRequestOp.
+const (
+	List  ProviderFsRequestOp = "list"
+	Read  ProviderFsRequestOp = "read"
+	Roots ProviderFsRequestOp = "roots"
+	Stat  ProviderFsRequestOp = "stat"
+)
+
+// Valid indicates whether the value is a known member of the ProviderFsRequestOp enum.
+func (e ProviderFsRequestOp) Valid() bool {
+	switch e {
+	case List:
+		return true
+	case Read:
+		return true
+	case Roots:
+		return true
+	case Stat:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PushSubscriptionInputKind.
 const (
 	PushSubscriptionInputKindFcm     PushSubscriptionInputKind = "fcm"
@@ -6824,8 +6848,11 @@ type ProviderByeRequest struct {
 
 // ProviderCapabilities defines model for ProviderCapabilities.
 type ProviderCapabilities struct {
-	Freeze   bool `json:"freeze"`
-	Snapshot bool `json:"snapshot"`
+	Freeze bool `json:"freeze"`
+
+	// OfflineFs 能经 `/provider/v1/fs/*` 只读读取停机 orb 的文件（缺省 false）
+	OfflineFs *bool `json:"offlineFs,omitempty"`
+	Snapshot  bool  `json:"snapshot"`
 }
 
 // ProviderClaimRequest defines model for ProviderClaimRequest.
@@ -6871,6 +6898,45 @@ type ProviderCreateResponse struct {
 
 // ProviderDriver `runner`（M11b）= runner 的 provider 行（由 `createRunner` 建立，不经 provider 进程，不出现在 `listProviders` 中）
 type ProviderDriver string
+
+// ProviderFsClaimRequest defines model for ProviderFsClaimRequest.
+type ProviderFsClaimRequest struct {
+	InstanceID string `json:"instanceId"`
+
+	// WaitSeconds Example: 30
+	WaitSeconds int `json:"waitSeconds"`
+}
+
+// ProviderFsClaimResponse defines model for ProviderFsClaimResponse.
+type ProviderFsClaimResponse struct {
+	// Request 停机 orb 的只读文件请求。路径规则同 `FsPathQuery`（绝对路径或 `~/…`，跟随符号链接后须位于 `$HOME` 之下，否则 403 `outside_home`）；
+	// `$HOME/.oryn` 不出现在列表里，直接访问回 403 `protected_path`。orb 容器不处于停机状态 → 409 `orb_not_stopped`。
+	Request ProviderFsRequest `json:"request"`
+}
+
+// ProviderFsRequest 停机 orb 的只读文件请求。路径规则同 `FsPathQuery`（绝对路径或 `~/…`，跟随符号链接后须位于 `$HOME` 之下，否则 403 `outside_home`）；
+// `$HOME/.oryn` 不出现在列表里，直接访问回 403 `protected_path`。orb 容器不处于停机状态 → 409 `orb_not_stopped`。
+type ProviderFsRequest struct {
+	ID string              `json:"id"`
+	Op ProviderFsRequestOp `json:"op"`
+
+	// OrbID `orb-<26 位小写 ULID>`（同时是容器名与 hostname）
+	//
+	// Example: orb-01jcz8m3w4x5y6z7a8b9c0d1e2
+	OrbID OrbID `json:"orbId"`
+
+	// Path `list` / `stat` / `read` 的路径
+	Path *string `json:"path,omitempty"`
+
+	// Range `read` 的 `Range` 请求头原文（单区间）
+	Range *string `json:"range,omitempty"`
+
+	// Workdirs `roots` 的工作目录候选（按序取第一个存在的目录；都不存在时为 `$HOME`）
+	Workdirs []string `json:"workdirs,omitempty"`
+}
+
+// ProviderFsRequestOp defines model for ProviderFsRequest.Op.
+type ProviderFsRequestOp string
 
 // ProviderHelloRequest defines model for ProviderHelloRequest.
 type ProviderHelloRequest struct {
@@ -8845,6 +8911,9 @@ type OrbBackgroundQuery = bool
 // Example: orb-01jcz8m3w4x5y6z7a8b9c0d1e2
 type OrbIDPath = OrbID
 
+// OrbOfflineQuery defines model for OrbOfflineQuery.
+type OrbOfflineQuery = bool
+
 // OrbThreadQuery `T-<uuidv7>`
 //
 // Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
@@ -9078,6 +9147,12 @@ type DeleteOrbFsParams struct {
 
 // ReadOrbFileParams defines parameters for ReadOrbFile.
 type ReadOrbFileParams struct {
+	// Offline 只读预览停机的 orb：orb 处于 `stopped` 时不唤醒，由 provider 直接读取停机容器的文件（只读；`$HOME/.oryn` 不可见）；
+	// 其它状态与不带此参数相同。provider 不支持（runner、旧版 provider、非 docker 驱动）→ 409 `offline_unsupported`；
+	// provider 不在线 → 503 `provider_unavailable`；首次读取某次停机的文件索引期间 → 503 `offline_indexing`（带 `Retry-After`）。
+	// 接受 `1` / `true`
+	Offline *OrbOfflineQuery `form:"offline,omitempty" json:"offline,omitempty"`
+
 	// Thread 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
 	// 控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
 	// runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
@@ -9118,6 +9193,12 @@ type ListOrbFsParams struct {
 	// Bg 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true`
 	Bg *OrbBackgroundQuery `form:"bg,omitempty" json:"bg,omitempty"`
 
+	// Offline 只读预览停机的 orb：orb 处于 `stopped` 时不唤醒，由 provider 直接读取停机容器的文件（只读；`$HOME/.oryn` 不可见）；
+	// 其它状态与不带此参数相同。provider 不支持（runner、旧版 provider、非 docker 驱动）→ 409 `offline_unsupported`；
+	// provider 不在线 → 503 `provider_unavailable`；首次读取某次停机的文件索引期间 → 503 `offline_indexing`（带 `Retry-After`）。
+	// 接受 `1` / `true`
+	Offline *OrbOfflineQuery `form:"offline,omitempty" json:"offline,omitempty"`
+
 	// Thread 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
 	// 控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
 	// runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
@@ -9145,6 +9226,12 @@ type GetOrbFsRootsParams struct {
 	// Bg 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true`
 	Bg *OrbBackgroundQuery `form:"bg,omitempty" json:"bg,omitempty"`
 
+	// Offline 只读预览停机的 orb：orb 处于 `stopped` 时不唤醒，由 provider 直接读取停机容器的文件（只读；`$HOME/.oryn` 不可见）；
+	// 其它状态与不带此参数相同。provider 不支持（runner、旧版 provider、非 docker 驱动）→ 409 `offline_unsupported`；
+	// provider 不在线 → 503 `provider_unavailable`；首次读取某次停机的文件索引期间 → 503 `offline_indexing`（带 `Retry-After`）。
+	// 接受 `1` / `true`
+	Offline *OrbOfflineQuery `form:"offline,omitempty" json:"offline,omitempty"`
+
 	// Thread 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
 	// 控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
 	// runner 的 orb 必须带（否则 400 `thread_required`）；普通 orb 可省略，行为与 M3 相同。
@@ -9159,6 +9246,12 @@ type StatOrbFsParams struct {
 
 	// Bg 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true`
 	Bg *OrbBackgroundQuery `form:"bg,omitempty" json:"bg,omitempty"`
+
+	// Offline 只读预览停机的 orb：orb 处于 `stopped` 时不唤醒，由 provider 直接读取停机容器的文件（只读；`$HOME/.oryn` 不可见）；
+	// 其它状态与不带此参数相同。provider 不支持（runner、旧版 provider、非 docker 驱动）→ 409 `offline_unsupported`；
+	// provider 不在线 → 503 `provider_unavailable`；首次读取某次停机的文件索引期间 → 503 `offline_indexing`（带 `Retry-After`）。
+	// 接受 `1` / `true`
+	Offline *OrbOfflineQuery `form:"offline,omitempty" json:"offline,omitempty"`
 
 	// Thread 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
 	// 控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
@@ -9568,6 +9661,15 @@ type ListThreadEntriesParams struct {
 	Limit *int   `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// ProviderReplyFsJSONBody defines parameters for ProviderReplyFs.
+type ProviderReplyFsJSONBody = interface{}
+
+// ProviderReplyFsParams defines parameters for ProviderReplyFs.
+type ProviderReplyFsParams struct {
+	// XOrynStatus 用户请求的 HTTP 状态码（200 / 206 / 400 / 403 / 404 / 409 / 416 / 500 / 503）
+	XOrynStatus int `json:"X-Oryn-Status"`
+}
+
 // AnswerArtifactConsentJSONRequestBody defines body for AnswerArtifactConsent for application/json ContentType.
 type AnswerArtifactConsentJSONRequestBody = ArtifactConsentAnswer
 
@@ -9783,6 +9885,12 @@ type CreateThreadShareJSONRequestBody = CreateThreadShareRequest
 
 // ProviderByeJSONRequestBody defines body for ProviderBye for application/json ContentType.
 type ProviderByeJSONRequestBody = ProviderByeRequest
+
+// ProviderClaimFsJSONRequestBody defines body for ProviderClaimFs for application/json ContentType.
+type ProviderClaimFsJSONRequestBody = ProviderFsClaimRequest
+
+// ProviderReplyFsJSONRequestBody defines body for ProviderReplyFs for application/json ContentType.
+type ProviderReplyFsJSONRequestBody = ProviderReplyFsJSONBody
 
 // ProviderHelloJSONRequestBody defines body for ProviderHello for application/json ContentType.
 type ProviderHelloJSONRequestBody = ProviderHelloRequest
@@ -12645,6 +12753,12 @@ type ServerInterface interface {
 	// ProviderBye provider 实例下线，释放租约
 	// (POST /provider/v1/bye)
 	ProviderBye(w http.ResponseWriter, r *http.Request)
+	// ProviderClaimFs 长轮询认领停机 orb 的只读文件请求（同时续租）
+	// (POST /provider/v1/fs/claim)
+	ProviderClaimFs(w http.ResponseWriter, r *http.Request)
+	// ProviderReplyFs 回应一个已认领的只读文件请求（请求体即响应体，流式转给浏览器）
+	// (POST /provider/v1/fs/{id}/reply)
+	ProviderReplyFs(w http.ResponseWriter, r *http.Request, id string, params ProviderReplyFsParams)
 	// ProviderHello provider 实例上线并取得租约
 	// (POST /provider/v1/hello)
 	ProviderHello(w http.ResponseWriter, r *http.Request)
@@ -14049,6 +14163,18 @@ func (_ Unimplemented) GetHealthz(w http.ResponseWriter, r *http.Request) {
 // ProviderBye provider 实例下线，释放租约
 // (POST /provider/v1/bye)
 func (_ Unimplemented) ProviderBye(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ProviderClaimFs 长轮询认领停机 orb 的只读文件请求（同时续租）
+// (POST /provider/v1/fs/claim)
+func (_ Unimplemented) ProviderClaimFs(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ProviderReplyFs 回应一个已认领的只读文件请求（请求体即响应体，流式转给浏览器）
+// (POST /provider/v1/fs/{id}/reply)
+func (_ Unimplemented) ProviderReplyFs(w http.ResponseWriter, r *http.Request, id string, params ProviderReplyFsParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -16842,6 +16968,19 @@ func (siw *ServerInterfaceWrapper) ReadOrbFile(w http.ResponseWriter, r *http.Re
 	// Parameter object where we will unmarshal all parameters from the context
 	var params ReadOrbFileParams
 
+	// ------------- Optional query parameter "offline" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offline", r.URL.Query(), &params.Offline, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offline"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offline", Err: err})
+		}
+		return
+	}
+
 	// ------------- Optional query parameter "thread" -------------
 
 	err = runtime.BindQueryParameterWithOptions("form", true, false, "thread", r.URL.Query(), &params.Thread, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
@@ -17033,6 +17172,19 @@ func (siw *ServerInterfaceWrapper) ListOrbFs(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// ------------- Optional query parameter "offline" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offline", r.URL.Query(), &params.Offline, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offline"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offline", Err: err})
+		}
+		return
+	}
+
 	// ------------- Optional query parameter "thread" -------------
 
 	err = runtime.BindQueryParameterWithOptions("form", true, false, "thread", r.URL.Query(), &params.Thread, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
@@ -17198,6 +17350,19 @@ func (siw *ServerInterfaceWrapper) GetOrbFsRoots(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// ------------- Optional query parameter "offline" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offline", r.URL.Query(), &params.Offline, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offline"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offline", Err: err})
+		}
+		return
+	}
+
 	// ------------- Optional query parameter "thread" -------------
 
 	err = runtime.BindQueryParameterWithOptions("form", true, false, "thread", r.URL.Query(), &params.Thread, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
@@ -17262,6 +17427,19 @@ func (siw *ServerInterfaceWrapper) StatOrbFs(w http.ResponseWriter, r *http.Requ
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "bg"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bg", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "offline" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offline", r.URL.Query(), &params.Offline, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offline"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offline", Err: err})
 		}
 		return
 	}
@@ -21470,6 +21648,74 @@ func (siw *ServerInterfaceWrapper) ProviderBye(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
+// ProviderClaimFs operation middleware
+func (siw *ServerInterfaceWrapper) ProviderClaimFs(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ProviderClaimFs(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ProviderReplyFs operation middleware
+func (siw *ServerInterfaceWrapper) ProviderReplyFs(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ProviderReplyFsParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Oryn-Status" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Oryn-Status")]; found {
+		var XOrynStatus int
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Oryn-Status", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Oryn-Status", valueList[0], &XOrynStatus, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Oryn-Status", Err: err})
+			return
+		}
+
+		params.XOrynStatus = XOrynStatus
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Oryn-Status is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Oryn-Status", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ProviderReplyFs(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ProviderHello operation middleware
 func (siw *ServerInterfaceWrapper) ProviderHello(w http.ResponseWriter, r *http.Request) {
 
@@ -22341,6 +22587,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/provider/v1/bye", wrapper.ProviderBye)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/provider/v1/fs/claim", wrapper.ProviderClaimFs)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/provider/v1/fs/{id}/reply", wrapper.ProviderReplyFs)
 	})
 
 	return r

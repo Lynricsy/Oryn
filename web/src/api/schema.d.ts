@@ -3871,6 +3871,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/provider/v1/fs/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 长轮询认领停机 orb 的只读文件请求（同时续租）
+         * @description 只有 hello 声明了 `capabilities.offlineFs` 的 provider 会收到请求。请求只在内存中排队，不落库、不重试：
+         *     控制面 10s 内无人认领即判 503 `provider_unavailable`；认领后须在 60s 内以 `fs/{id}/reply` 回应。
+         */
+        post: operations["providerClaimFs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/provider/v1/fs/{id}/reply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 回应一个已认领的只读文件请求（请求体即响应体，流式转给浏览器）
+         * @description 请求体原样成为用户请求的响应体：`roots` / `list` / `stat` 与所有错误为 JSON（`FsRoots` / `FsListing` / `FsEntry` / `Error`），
+         *     `read` 成功时为文件字节。状态码经 `X-Oryn-Status` 给出；`read` 另带 `Content-Range`（206）、`Content-Length`（已知时）与 `ETag`。
+         *     控制面把请求体转完（或浏览器断开）后才回 204。
+         */
+        post: operations["providerReplyFs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/orb/v1/link": {
         parameters: {
             query?: never;
@@ -4957,6 +5002,8 @@ export interface components {
         ProviderCapabilities: {
             freeze: boolean;
             snapshot: boolean;
+            /** @description 能经 `/provider/v1/fs/*` 只读读取停机 orb 的文件（缺省 false） */
+            offlineFs?: boolean;
         };
         Provider: {
             id: components["schemas"]["ProviderId"];
@@ -7497,6 +7544,30 @@ export interface components {
         ProviderByeRequest: {
             instanceId: string;
         };
+        ProviderFsClaimRequest: {
+            instanceId: string;
+            /** @example 30 */
+            waitSeconds: number;
+        };
+        ProviderFsClaimResponse: {
+            request: components["schemas"]["ProviderFsRequest"];
+        };
+        /**
+         * @description 停机 orb 的只读文件请求。路径规则同 `FsPathQuery`（绝对路径或 `~/…`，跟随符号链接后须位于 `$HOME` 之下，否则 403 `outside_home`）；
+         *     `$HOME/.oryn` 不出现在列表里，直接访问回 403 `protected_path`。orb 容器不处于停机状态 → 409 `orb_not_stopped`。
+         */
+        ProviderFsRequest: {
+            id: string;
+            orbId: components["schemas"]["OrbId"];
+            /** @enum {string} */
+            op: "roots" | "list" | "stat" | "read";
+            /** @description `list` / `stat` / `read` 的路径 */
+            path?: string;
+            /** @description `read` 的 `Range` 请求头原文（单区间） */
+            range?: string;
+            /** @description `roots` 的工作目录候选（按序取第一个存在的目录；都不存在时为 `$HOME`） */
+            workdirs?: string[];
+        };
         JobSpawnEnv: {
             ORYN_URL: string;
             ORYN_ORB_ID: string;
@@ -8257,6 +8328,13 @@ export interface components {
         FsPathQuery: string;
         /** @description 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true` */
         OrbBackgroundQuery: boolean;
+        /**
+         * @description 只读预览停机的 orb：orb 处于 `stopped` 时不唤醒，由 provider 直接读取停机容器的文件（只读；`$HOME/.oryn` 不可见）；
+         *     其它状态与不带此参数相同。provider 不支持（runner、旧版 provider、非 docker 驱动）→ 409 `offline_unsupported`；
+         *     provider 不在线 → 503 `provider_unavailable`；首次读取某次停机的文件索引期间 → 503 `offline_indexing`（带 `Retry-After`）。
+         *     接受 `1` / `true`
+         */
+        OrbOfflineQuery: boolean;
         /**
          * @description 发起请求的线程（M11b）：须是该 orb 上的线程（否则 400 `invalid_request`）；该线程有工作目录（`Thread.cwd`）时，
          *     控制面以请求头 `X-Oryn-Workdir` 把它转给 orbd，文件与改动的范围、`root` 的缺省值随之改为该目录。
@@ -9640,6 +9718,13 @@ export interface operations {
                 thread?: components["parameters"]["OrbThreadQuery"];
                 /** @description 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true` */
                 bg?: components["parameters"]["OrbBackgroundQuery"];
+                /**
+                 * @description 只读预览停机的 orb：orb 处于 `stopped` 时不唤醒，由 provider 直接读取停机容器的文件（只读；`$HOME/.oryn` 不可见）；
+                 *     其它状态与不带此参数相同。provider 不支持（runner、旧版 provider、非 docker 驱动）→ 409 `offline_unsupported`；
+                 *     provider 不在线 → 503 `provider_unavailable`；首次读取某次停机的文件索引期间 → 503 `offline_indexing`（带 `Retry-After`）。
+                 *     接受 `1` / `true`
+                 */
+                offline?: components["parameters"]["OrbOfflineQuery"];
             };
             header?: never;
             path: {
@@ -9677,6 +9762,13 @@ export interface operations {
                 path: components["parameters"]["FsPathQuery"];
                 /** @description 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true` */
                 bg?: components["parameters"]["OrbBackgroundQuery"];
+                /**
+                 * @description 只读预览停机的 orb：orb 处于 `stopped` 时不唤醒，由 provider 直接读取停机容器的文件（只读；`$HOME/.oryn` 不可见）；
+                 *     其它状态与不带此参数相同。provider 不支持（runner、旧版 provider、非 docker 驱动）→ 409 `offline_unsupported`；
+                 *     provider 不在线 → 503 `provider_unavailable`；首次读取某次停机的文件索引期间 → 503 `offline_indexing`（带 `Retry-After`）。
+                 *     接受 `1` / `true`
+                 */
+                offline?: components["parameters"]["OrbOfflineQuery"];
             };
             header?: never;
             path: {
@@ -9714,6 +9806,13 @@ export interface operations {
                 path: components["parameters"]["FsPathQuery"];
                 /** @description 后台请求（轮询用）：orb 不可用时直接 409 `orb_not_ready`，不唤醒、不计用户交互。接受 `1` / `true` */
                 bg?: components["parameters"]["OrbBackgroundQuery"];
+                /**
+                 * @description 只读预览停机的 orb：orb 处于 `stopped` 时不唤醒，由 provider 直接读取停机容器的文件（只读；`$HOME/.oryn` 不可见）；
+                 *     其它状态与不带此参数相同。provider 不支持（runner、旧版 provider、非 docker 驱动）→ 409 `offline_unsupported`；
+                 *     provider 不在线 → 503 `provider_unavailable`；首次读取某次停机的文件索引期间 → 503 `offline_indexing`（带 `Retry-After`）。
+                 *     接受 `1` / `true`
+                 */
+                offline?: components["parameters"]["OrbOfflineQuery"];
             };
             header?: never;
             path: {
@@ -9749,6 +9848,13 @@ export interface operations {
                  *     runner 的 orb（M11b）：范围改为 `thread` 线程的工作目录（越界 → 403 `dir_not_served`）。
                  */
                 path: components["parameters"]["FsPathQuery"];
+                /**
+                 * @description 只读预览停机的 orb：orb 处于 `stopped` 时不唤醒，由 provider 直接读取停机容器的文件（只读；`$HOME/.oryn` 不可见）；
+                 *     其它状态与不带此参数相同。provider 不支持（runner、旧版 provider、非 docker 驱动）→ 409 `offline_unsupported`；
+                 *     provider 不在线 → 503 `provider_unavailable`；首次读取某次停机的文件索引期间 → 503 `offline_indexing`（带 `Retry-After`）。
+                 *     接受 `1` / `true`
+                 */
+                offline?: components["parameters"]["OrbOfflineQuery"];
             };
             header?: {
                 /** @description 标准 HTTP Range（单区间） */
@@ -14469,6 +14575,85 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    providerClaimFs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderFsClaimRequest"];
+            };
+        };
+        responses: {
+            /** @description 认领到请求 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderFsClaimResponse"];
+                };
+            };
+            /** @description 等待超时，无请求 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 另一实例持有租约（`code:"provider_already_connected"`） */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    providerReplyFs: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 用户请求的 HTTP 状态码（200 / 206 / 400 / 403 / 404 / 409 / 416 / 500 / 503） */
+                "X-Oryn-Status": number;
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": string;
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            /** @description 已转交 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 请求不存在、已超时或不属于该 provider（`code:"not_found"`） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
             };
             default: components["responses"]["Error"];
         };
