@@ -31,6 +31,9 @@ func (s *Server) hookRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /app/hook/deliveries", s.listDeliveries)
 	mux.HandleFunc("GET /app/hook/deliveries/{id}", s.getDelivery)
 	mux.HandleFunc("GET /repos/{owner}/{repo}/collaborators/{login}/permission", s.collaboratorPermission)
+	mux.HandleFunc("POST /repos/{owner}/{repo}/issues/{number}/reactions", s.createReaction)
+	mux.HandleFunc("POST /repos/{owner}/{repo}/issues/comments/{id}/reactions", s.createReaction)
+	mux.HandleFunc("POST /repos/{owner}/{repo}/issues/{number}/comments", s.createIssueComment)
 }
 
 // Sign 按假 App 的 webhook secret 给 body 签名，返回 X-Hub-Signature-256 的值。
@@ -198,4 +201,64 @@ func (s *Server) collaboratorPermission(w http.ResponseWriter, r *http.Request) 
 		perm = "none"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"permission": perm, "role_name": perm, "user": map[string]any{"login": login, "type": "User"}})
+}
+
+// writer 返回能写该仓库的用户令牌（含收窄令牌）对应的用户；失败时已写出响应。调用方持锁。
+func (s *Server) writer(w http.ResponseWriter, r *http.Request, tail string) (*Repo, *User) {
+	rp, to := s.lookupRepo(r.PathValue("owner"), r.PathValue("repo"))
+	if to != "" {
+		s.redirectRepo(w, r, to, tail)
+		return nil, nil
+	}
+	u := s.userOf(bearer(r))
+	if rp == nil || u == nil || !s.canRead(bearer(r), rp) {
+		fail(w, http.StatusNotFound, "Not Found")
+		return nil, nil
+	}
+	return rp, u
+}
+
+// createReaction 接受 issue 或评论上的反应（只记进 Calls，不保存）。
+func (s *Server) createReaction(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rp, u := s.writer(w, r, strings.TrimPrefix(r.URL.Path, "/repos/"+r.PathValue("owner")+"/"+r.PathValue("repo")))
+	if rp == nil {
+		return
+	}
+	var in struct {
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.Content == "" {
+		fail(w, http.StatusUnprocessableEntity, "Validation Failed")
+		return
+	}
+	s.seq++
+	writeJSON(w, http.StatusCreated, map[string]any{"id": s.seq, "content": in.Content, "user": map[string]any{"login": u.Login}})
+}
+
+// createIssueComment 以令牌对应的用户在 issue / PR 下发一条会话评论。
+func (s *Server) createIssueComment(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	number, _ := strconv.ParseInt(r.PathValue("number"), 10, 64)
+	rp, u := s.writer(w, r, fmt.Sprintf("/issues/%d/comments", number))
+	if rp == nil {
+		return
+	}
+	var in struct {
+		Body string `json:"body"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.Body == "" {
+		fail(w, http.StatusUnprocessableEntity, "Validation Failed")
+		return
+	}
+	s.seq++
+	c := &Comment{ID: 1000 + s.seq, RepoID: rp.ID, Number: number, Author: u.Login, Body: in.Body, CreatedAt: time.Now().UTC().Truncate(time.Second)}
+	s.Comments = append(s.Comments, c)
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"id": c.ID, "body": c.Body, "user": map[string]any{"login": u.Login, "type": "User"},
+		"html_url": fmt.Sprintf("%s/%s/issues/%d#issuecomment-%d", s.baseURL(r), rp.FullName, number, c.ID),
+		"created_at": c.CreatedAt.Format(time.RFC3339),
+	})
 }

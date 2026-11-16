@@ -333,3 +333,66 @@ func (s *Server) ReceiveGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(svc.HandleWebhook(r.Context(), r.Header, body))
 }
+
+// ListGitHubTriggers 对应 `GET /api/v1/projects/{id}/github/triggers`。
+func (s *Server) ListGitHubTriggers(w http.ResponseWriter, r *http.Request, id apigen.ProjectIDPath) {
+	svc, ok := s.githubSvc(w)
+	if !ok {
+		return
+	}
+	list, err := svc.ListTriggers(r.Context(), id)
+	if err != nil {
+		writeGitHubErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, apigen.GitHubTriggerList{Triggers: list})
+}
+
+// CreateGitHubTrigger 对应 `POST /api/v1/projects/{id}/github/triggers`。
+func (s *Server) CreateGitHubTrigger(w http.ResponseWriter, r *http.Request, id apigen.ProjectIDPath) {
+	svc, ok := s.githubSvc(w)
+	if !ok {
+		return
+	}
+	var req apigen.GitHubTriggerInput
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	t, err := svc.CreateTrigger(r.Context(), id, req)
+	if err != nil {
+		writeGitHubErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusCreated, t)
+}
+
+// UpdateGitHubTrigger 对应 `PATCH /api/v1/github/triggers/{id}`。
+func (s *Server) UpdateGitHubTrigger(w http.ResponseWriter, r *http.Request, id apigen.GitHubTriggerIDPath) {
+	svc, ok := s.githubSvc(w)
+	if !ok {
+		return
+	}
+	var req apigen.GitHubTriggerPatch
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	t, err := svc.UpdateTrigger(r.Context(), id, req)
+	if err != nil {
+		writeGitHubErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, t)
+}
+
+// DeleteGitHubTrigger 对应 `DELETE /api/v1/github/triggers/{id}`。
+func (s *Server) DeleteGitHubTrigger(w http.ResponseWriter, r *http.Request, id apigen.GitHubTriggerIDPath) {
+	svc, ok := s.githubSvc(w)
+	if !ok {
+		return
+	}
+	if err := svc.DeleteTrigger(r.Context(), id); err != nil {
+		writeGitHubErr(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

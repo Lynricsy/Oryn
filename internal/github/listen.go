@@ -200,11 +200,6 @@ func (s *Service) onIssueComment(ctx context.Context, action string, body []byte
 	return s.listen(ctx, ev, tgt, "comment", ev.Issue, ev.Issue.isPull(), outboxItem{Body: ev.Comment.Body})
 }
 
-// onUntargetedComment 处理没有目标线程的评论（步骤 7.1 接上提及触发）。
-func (s *Service) onUntargetedComment(context.Context, hookEvent) (string, error) {
-	return "ignored:no_thread", nil
-}
-
 // listen 对一条评审 / 评论做准入，通过后写进回流队列。subject 是载荷里的 PR 或 issue。
 func (s *Service) listen(ctx context.Context, ev hookEvent, tgt listenTarget, kind string, subject *hookIssue, isPull bool, it outboxItem) (string, error) {
 	th, err := s.st.Q.GetThread(ctx, tgt.threadID)
