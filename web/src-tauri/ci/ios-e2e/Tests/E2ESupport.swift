@@ -87,7 +87,8 @@ extension E2ECase {
   }
 
   /// 等脚本处理完某一步，返回它回传的 JSON；脚本报错时带着原因失败。
-  func ack(_ step: String, timeout: TimeInterval = 120) throws -> [String: Any] {
+  /// 默认等 600 秒：CI 机器整机卡顿时脚本一步（等停稳 + 限时截图）曾超过 120 秒。
+  func ack(_ step: String, timeout: TimeInterval = 600) throws -> [String: Any] {
     let ok = sync.appendingPathComponent("\(step).ok")
     let fail = sync.appendingPathComponent("\(step).fail")
     var reply: [String: Any]?

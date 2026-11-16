@@ -105,7 +105,8 @@ sim_shot() {
   return 1
 }
 
-# shot_settled <文件>：每秒截一张，直到相邻两张在顶部与底部横条里一致（最多 10 轮，每张限时 30 秒）。
+# shot_settled <文件>：每秒截一张，直到相邻两张在顶部与底部横条里基本一致（差异 ≤ 0.003，与「隐藏」判定同一阈值；
+# 最多 10 轮，每张限时 30 秒）。允许一点差异：页头里运行中的 orb 小球在呼吸（约 0.06%）；没画完的壁纸差几十个百分点。
 # 中间一段不比：连接页品牌标的插入符在闪；顶部有状态栏时钟，跨分钟时多截一轮即可。
 shot_settled() {
   local f=$1 prev="$work/settle-prev.png" w h top=- bottom=-
@@ -120,7 +121,7 @@ shot_settled() {
       h=$(sips -g pixelHeight "$f" | awk '/pixelHeight/ { print $2 }')
       top=$("$work/region-diff" "$prev" "$f" 0 0 "$w" $((h * 15 / 100)))
       bottom=$("$work/region-diff" "$prev" "$f" 0 $((h * 55 / 100)) "$w" $((h * 45 / 100)))
-      if [[ $top == 0.000000 && $bottom == 0.000000 ]]; then return 0; fi
+      if awk -v a="$top" -v b="$bottom" 'BEGIN { exit !(a <= 0.003 && b <= 0.003) }'; then return 0; fi
     fi
     cp "$f" "$prev"
     sleep 1
