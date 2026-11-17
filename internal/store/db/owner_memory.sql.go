@@ -36,6 +36,19 @@ func (q *Queries) CountOwnerMemoryBackfillThreads(ctx context.Context, since *in
 	return count, err
 }
 
+const countOwnerMemoryExplicitPending = `-- name: CountOwnerMemoryExplicitPending :one
+
+SELECT COUNT(*) FROM owner_memory_explicit WHERE status = 'pending'
+`
+
+// ---------- explicit ----------
+func (q *Queries) CountOwnerMemoryExplicitPending(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countOwnerMemoryExplicitPending)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countOwnerMemorySourcesFailing = `-- name: CountOwnerMemorySourcesFailing :one
 SELECT COUNT(*) FROM owner_memory_sources WHERE last_error IS NOT NULL
 `
@@ -167,7 +180,7 @@ func (q *Queries) GetOwnerMemoryExplicit(ctx context.Context, id string) (OwnerM
 const getOwnerMemorySettings = `-- name: GetOwnerMemorySettings :one
 
 
-SELECT id, enabled, owner_names, decide_base_url, decide_model, decide_key_enc, backfill_since, backfill_total, backfill_done, config_hash, last_curated_at, last_curation, updated_at FROM owner_memory_settings WHERE id = 1
+SELECT id, enabled, owner_names, decide_base_url, decide_model, decide_key_enc, backfill_since, config_hash, last_curated_at, last_curation, updated_at FROM owner_memory_settings WHERE id = 1
 `
 
 // M17: owner memory for the global assistant (Hindsight bank oryn-owner).
@@ -183,8 +196,6 @@ func (q *Queries) GetOwnerMemorySettings(ctx context.Context) (OwnerMemorySettin
 		&i.DecideModel,
 		&i.DecideKeyEnc,
 		&i.BackfillSince,
-		&i.BackfillTotal,
-		&i.BackfillDone,
 		&i.ConfigHash,
 		&i.LastCuratedAt,
 		&i.LastCuration,
@@ -375,6 +386,37 @@ func (q *Queries) ListDueOwnerMemoryThreads(ctx context.Context, arg ListDueOwne
 	return items, nil
 }
 
+const listExcludedOwnerMemorySources = `-- name: ListExcludedOwnerMemorySources :many
+SELECT s.thread_id FROM owner_memory_sources s JOIN threads t ON t.id = s.thread_id
+WHERE EXISTS (SELECT 1 FROM owner_memory_exclusions e WHERE e.kind = 'thread' AND e.target_id = t.id)
+    OR EXISTS (SELECT 1 FROM owner_memory_exclusions e WHERE e.kind = 'project' AND e.target_id = t.project_id)
+LIMIT ?1
+`
+
+// Sources that became excluded (the thread or its project): their documents must be forgotten.
+func (q *Queries) ListExcludedOwnerMemorySources(ctx context.Context, lim int64) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listExcludedOwnerMemorySources, lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var thread_id string
+		if err := rows.Scan(&thread_id); err != nil {
+			return nil, err
+		}
+		items = append(items, thread_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOrphanOwnerMemorySources = `-- name: ListOrphanOwnerMemorySources :many
 SELECT s.thread_id FROM owner_memory_sources s
 WHERE NOT EXISTS (SELECT 1 FROM threads t WHERE t.id = s.thread_id)
@@ -472,11 +514,9 @@ func (q *Queries) ListOwnerMemoryExclusions(ctx context.Context) ([]OwnerMemoryE
 }
 
 const listOwnerMemoryExplicit = `-- name: ListOwnerMemoryExplicit :many
-
 SELECT id, content, owner_quote, source_thread_id, status, created_at, updated_at FROM owner_memory_explicit ORDER BY status DESC, created_at DESC
 `
 
-// ---------- explicit ----------
 func (q *Queries) ListOwnerMemoryExplicit(ctx context.Context) ([]OwnerMemoryExplicit, error) {
 	rows, err := q.db.QueryContext(ctx, listOwnerMemoryExplicit)
 	if err != nil {
@@ -770,19 +810,11 @@ func (q *Queries) MarkOwnerMemorySourceRetained(ctx context.Context, arg MarkOwn
 }
 
 const setOwnerMemoryBackfill = `-- name: SetOwnerMemoryBackfill :exec
-UPDATE owner_memory_settings SET backfill_since = ?1, backfill_total = ?2,
-    backfill_done = ?3
-WHERE id = 1
+UPDATE owner_memory_settings SET backfill_since = ?1 WHERE id = 1
 `
 
-type SetOwnerMemoryBackfillParams struct {
-	BackfillSince *int64 `json:"backfillSince"`
-	BackfillTotal int64  `json:"backfillTotal"`
-	BackfillDone  int64  `json:"backfillDone"`
-}
-
-func (q *Queries) SetOwnerMemoryBackfill(ctx context.Context, arg SetOwnerMemoryBackfillParams) error {
-	_, err := q.db.ExecContext(ctx, setOwnerMemoryBackfill, arg.BackfillSince, arg.BackfillTotal, arg.BackfillDone)
+func (q *Queries) SetOwnerMemoryBackfill(ctx context.Context, backfillSince *int64) error {
+	_, err := q.db.ExecContext(ctx, setOwnerMemoryBackfill, backfillSince)
 	return err
 }
 

@@ -740,8 +740,6 @@ type OwnerMemorySetting struct {
 	DecideModel   *string `json:"decideModel"`
 	DecideKeyEnc  []byte  `json:"decideKeyEnc"`
 	BackfillSince *int64  `json:"backfillSince"`
-	BackfillTotal int64   `json:"backfillTotal"`
-	BackfillDone  int64   `json:"backfillDone"`
 	ConfigHash    *string `json:"configHash"`
 	LastCuratedAt *int64  `json:"lastCuratedAt"`
 	LastCuration  *string `json:"lastCuration"`

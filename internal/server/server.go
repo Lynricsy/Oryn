@@ -34,6 +34,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/notify"
 	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/orbtls"
+	"github.com/Lynricsy/Oryn/internal/ownermem"
 	"github.com/Lynricsy/Oryn/internal/portal"
 	"github.com/Lynricsy/Oryn/internal/portalhost"
 	"github.com/Lynricsy/Oryn/internal/realtime"
@@ -106,9 +107,9 @@ type Server struct {
 	Memory *memory.Service
 	// OwnerMemory 是 M17 全局助手的主人记忆（bank `oryn-owner`，连接与 key 与 Memory 共用）。
 	OwnerMemory *ownermem.Service
-	Hub    *realtime.Hub
-	Notify *notify.Service
-	Share  *share.Service
+	Hub         *realtime.Hub
+	Notify      *notify.Service
+	Share       *share.Service
 	// Portal 是 portal 数据面；未配置 portal_domain 时为 nil。
 	Portal  *portal.Service
 	API     *api.Server
