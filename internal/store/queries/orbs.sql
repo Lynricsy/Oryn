@@ -6,10 +6,12 @@
 -- kind: orb | runner (M11b); NULL = 'orb'.
 -- name: CreateOrb :exec
 INSERT INTO orbs (id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at,
-                  token_hash, snapshot_of, created_at, coordinator, pool_state, config_hash, base_image_id, kind, github_identity)
+                  token_hash, snapshot_of, created_at, coordinator, pool_state, config_hash, base_image_id, kind, github_identity,
+                  computer)
 VALUES (@id, @provider_id, @type, @cpus, @memory_mb, @image, @project_id, @state, @state_changed_at,
         @token_hash, @snapshot_of, @created_at, @coordinator, sqlc.narg(pool_state), sqlc.narg(config_hash), @base_image_id,
-        COALESCE(CAST(sqlc.narg(kind) AS TEXT), 'orb'), COALESCE(CAST(sqlc.narg(github_identity) AS TEXT), 'user'));
+        COALESCE(CAST(sqlc.narg(kind) AS TEXT), 'orb'), COALESCE(CAST(sqlc.narg(github_identity) AS TEXT), 'user'),
+        COALESCE(CAST(sqlc.narg(computer) AS INTEGER), 0));
 
 -- name: GetOrb :one
 SELECT * FROM orbs WHERE id = @id;

@@ -107,6 +107,19 @@ type ArtifactVersion struct {
 	CreatedAt      int64   `json:"createdAt"`
 }
 
+type AssistantConfirmation struct {
+	ID        string  `json:"id"`
+	ThreadID  string  `json:"threadId"`
+	Action    string  `json:"action"`
+	Target    string  `json:"target"`
+	Summary   string  `json:"summary"`
+	Params    string  `json:"params"`
+	State     string  `json:"state"`
+	Error     *string `json:"error"`
+	CreatedAt int64   `json:"createdAt"`
+	DecidedAt *int64  `json:"decidedAt"`
+}
+
 type AssistantFile struct {
 	ID             string  `json:"id"`
 	Name           string  `json:"name"`
@@ -119,6 +132,32 @@ type AssistantFile struct {
 	SourceThreadID *string `json:"sourceThreadId"`
 	Bound          int64   `json:"bound"`
 	CreatedAt      int64   `json:"createdAt"`
+}
+
+type AssistantInbox struct {
+	ID          string  `json:"id"`
+	Kind        string  `json:"kind"`
+	SourceID    string  `json:"sourceId"`
+	SourceName  string  `json:"sourceName"`
+	ThreadID    string  `json:"threadId"`
+	Outcome     string  `json:"outcome"`
+	Body        string  `json:"body"`
+	Error       *string `json:"error"`
+	CreatedAt   int64   `json:"createdAt"`
+	DeliveredAt *int64  `json:"deliveredAt"`
+}
+
+type AssistantSetting struct {
+	ID                   int64   `json:"id"`
+	WebAccess            int64   `json:"webAccess"`
+	DisabledMcp          string  `json:"disabledMcp"`
+	ComputerProvider     *string `json:"computerProvider"`
+	ComputerOrbType      *string `json:"computerOrbType"`
+	ComputerTools        *string `json:"computerTools"`
+	ComputerToolsVersion *string `json:"computerToolsVersion"`
+	MainNotes            string  `json:"mainNotes"`
+	MainNotesUpdatedAt   *int64  `json:"mainNotesUpdatedAt"`
+	UpdatedAt            int64   `json:"updatedAt"`
 }
 
 type Attachment struct {
@@ -424,6 +463,7 @@ type GithubTrigger struct {
 	MaxDurationSec      *int64  `json:"maxDurationSec"`
 	CompletionReminders bool    `json:"completionReminders"`
 	ReleasePrefix       *string `json:"releasePrefix"`
+	HandToAssistant     int64   `json:"handToAssistant"`
 }
 
 type GithubWatch struct {
@@ -617,6 +657,7 @@ type Orb struct {
 	BaseImageID           string  `json:"baseImageId"`
 	Kind                  string  `json:"kind"`
 	GithubIdentity        string  `json:"githubIdentity"`
+	Computer              int64   `json:"computer"`
 }
 
 type OrbDesktop struct {
@@ -919,34 +960,35 @@ type Runner struct {
 }
 
 type Schedule struct {
-	ID            string  `json:"id"`
-	Mode          string  `json:"mode"`
-	ThreadID      *string `json:"threadId"`
-	ProjectID     *string `json:"projectId"`
-	SpaceID       *string `json:"spaceId"`
-	Name          string  `json:"name"`
-	Kind          string  `json:"kind"`
-	Spec          string  `json:"spec"`
-	Timezone      string  `json:"timezone"`
-	RunAt         *int64  `json:"runAt"`
-	EndsAt        *int64  `json:"endsAt"`
-	Prompt        string  `json:"prompt"`
-	Enabled       bool    `json:"enabled"`
-	PausedReason  *string `json:"pausedReason"`
-	NextRunAt     *int64  `json:"nextRunAt"`
-	LastRunAt     *int64  `json:"lastRunAt"`
-	RunCount      int64   `json:"runCount"`
-	Failures      int64   `json:"failures"`
-	CreatedBy     string  `json:"createdBy"`
-	CreatedAt     int64   `json:"createdAt"`
-	UpdatedAt     int64   `json:"updatedAt"`
-	Model         *string `json:"model"`
-	ThinkingLevel *string `json:"thinkingLevel"`
-	Provider      *string `json:"provider"`
-	OrbType       *string `json:"orbType"`
-	Overlap       string  `json:"overlap"`
-	KeepLast      int64   `json:"keepLast"`
-	Rev           int64   `json:"rev"`
+	ID              string  `json:"id"`
+	Mode            string  `json:"mode"`
+	ThreadID        *string `json:"threadId"`
+	ProjectID       *string `json:"projectId"`
+	SpaceID         *string `json:"spaceId"`
+	Name            string  `json:"name"`
+	Kind            string  `json:"kind"`
+	Spec            string  `json:"spec"`
+	Timezone        string  `json:"timezone"`
+	RunAt           *int64  `json:"runAt"`
+	EndsAt          *int64  `json:"endsAt"`
+	Prompt          string  `json:"prompt"`
+	Enabled         bool    `json:"enabled"`
+	PausedReason    *string `json:"pausedReason"`
+	NextRunAt       *int64  `json:"nextRunAt"`
+	LastRunAt       *int64  `json:"lastRunAt"`
+	RunCount        int64   `json:"runCount"`
+	Failures        int64   `json:"failures"`
+	CreatedBy       string  `json:"createdBy"`
+	CreatedAt       int64   `json:"createdAt"`
+	UpdatedAt       int64   `json:"updatedAt"`
+	Model           *string `json:"model"`
+	ThinkingLevel   *string `json:"thinkingLevel"`
+	Provider        *string `json:"provider"`
+	OrbType         *string `json:"orbType"`
+	Overlap         string  `json:"overlap"`
+	KeepLast        int64   `json:"keepLast"`
+	Rev             int64   `json:"rev"`
+	HandToAssistant int64   `json:"handToAssistant"`
 }
 
 type ScheduleRun struct {
@@ -1050,6 +1092,7 @@ type Thread struct {
 	ScheduleRun       *int64  `json:"scheduleRun"`
 	Cwd               *string `json:"cwd"`
 	Worktree          *string `json:"worktree"`
+	Main              int64   `json:"main"`
 }
 
 type ThreadCommit struct {

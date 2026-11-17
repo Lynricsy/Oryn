@@ -5,10 +5,11 @@
 -- name: CreateThread :exec
 INSERT INTO threads (id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id,
                      forked_from_entry_id, session_dir, model, thinking_level, color, created_at, updated_at, short_code,
-                     kind, space_id, schedule_id, schedule_run, cwd, worktree)
+                     kind, space_id, schedule_id, schedule_run, cwd, worktree, main)
 VALUES (@id, @project_id, @orb_id, @title, @title_source, @state, @state_changed_at, @parent_thread_id,
         @forked_from_entry_id, @session_dir, @model, @thinking_level, @color, @created_at, @updated_at, @short_code,
-        @kind, @space_id, @schedule_id, @schedule_run, sqlc.narg(cwd), sqlc.narg(worktree));
+        @kind, @space_id, @schedule_id, @schedule_run, sqlc.narg(cwd), sqlc.narg(worktree),
+        COALESCE(CAST(sqlc.narg(main) AS INTEGER), 0));
 
 -- name: GetThread :one
 SELECT * FROM threads WHERE id = @id;

@@ -137,7 +137,7 @@ func (q *Queries) DeleteThreadReportGen(ctx context.Context, arg DeleteThreadRep
 }
 
 const getSchedule = `-- name: GetSchedule :one
-SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last, rev FROM schedules WHERE id = ?1
+SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last, rev, hand_to_assistant FROM schedules WHERE id = ?1
 `
 
 func (q *Queries) GetSchedule(ctx context.Context, id string) (Schedule, error) {
@@ -172,12 +172,13 @@ func (q *Queries) GetSchedule(ctx context.Context, id string) (Schedule, error) 
 		&i.Overlap,
 		&i.KeepLast,
 		&i.Rev,
+		&i.HandToAssistant,
 	)
 	return i, err
 }
 
 const getScheduleByProjectName = `-- name: GetScheduleByProjectName :one
-SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last, rev FROM schedules
+SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last, rev, hand_to_assistant FROM schedules
 WHERE mode = 'new_thread' AND name = ?1
   AND ((project_id IS NULL AND CAST(?2 AS TEXT) IS NULL)
        OR project_id = CAST(?2 AS TEXT))
@@ -222,12 +223,13 @@ func (q *Queries) GetScheduleByProjectName(ctx context.Context, arg GetScheduleB
 		&i.Overlap,
 		&i.KeepLast,
 		&i.Rev,
+		&i.HandToAssistant,
 	)
 	return i, err
 }
 
 const getScheduleByThread = `-- name: GetScheduleByThread :one
-SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last, rev FROM schedules WHERE thread_id = CAST(?1 AS TEXT)
+SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last, rev, hand_to_assistant FROM schedules WHERE thread_id = CAST(?1 AS TEXT)
 `
 
 // The thread-mode schedule of a thread.
@@ -263,6 +265,7 @@ func (q *Queries) GetScheduleByThread(ctx context.Context, threadID string) (Sch
 		&i.Overlap,
 		&i.KeepLast,
 		&i.Rev,
+		&i.HandToAssistant,
 	)
 	return i, err
 }
@@ -438,7 +441,7 @@ func (q *Queries) InsertScheduleRun(ctx context.Context, arg InsertScheduleRunPa
 }
 
 const listDueSchedules = `-- name: ListDueSchedules :many
-SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last, rev FROM schedules
+SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last, rev, hand_to_assistant FROM schedules
 WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= CAST(?1 AS INTEGER)
 ORDER BY next_run_at, id
 LIMIT 100
@@ -482,6 +485,7 @@ func (q *Queries) ListDueSchedules(ctx context.Context, now int64) ([]Schedule, 
 			&i.Overlap,
 			&i.KeepLast,
 			&i.Rev,
+			&i.HandToAssistant,
 		); err != nil {
 			return nil, err
 		}
@@ -622,7 +626,7 @@ func (q *Queries) ListScheduleSummaries(ctx context.Context) ([]ListScheduleSumm
 }
 
 const listSchedules = `-- name: ListSchedules :many
-SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last, rev FROM schedules
+SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last, rev, hand_to_assistant FROM schedules
 WHERE (CAST(?1 AS TEXT) IS NULL OR mode = CAST(?1 AS TEXT))
   AND (CAST(?2 AS TEXT) IS NULL OR project_id = CAST(?2 AS TEXT))
   AND (CAST(?3 AS TEXT) IS NULL
@@ -689,6 +693,7 @@ func (q *Queries) ListSchedules(ctx context.Context, arg ListSchedulesParams) ([
 			&i.Overlap,
 			&i.KeepLast,
 			&i.Rev,
+			&i.HandToAssistant,
 		); err != nil {
 			return nil, err
 		}

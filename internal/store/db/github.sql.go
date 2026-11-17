@@ -721,7 +721,7 @@ func (q *Queries) GetGithubState(ctx context.Context, stateHash string) (GithubO
 }
 
 const getGithubTrigger = `-- name: GetGithubTrigger :one
-SELECT id, project_id, name, event, label, prompt, enabled, announce, run_count, last_run_at, created_at, updated_at, drivers, maintainers, reviewer_bots, models, thinking, impl_auth, comment_only_reviews, autoclose_hours, max_duration_sec, completion_reminders, release_prefix FROM github_triggers WHERE id = ?1
+SELECT id, project_id, name, event, label, prompt, enabled, announce, run_count, last_run_at, created_at, updated_at, drivers, maintainers, reviewer_bots, models, thinking, impl_auth, comment_only_reviews, autoclose_hours, max_duration_sec, completion_reminders, release_prefix, hand_to_assistant FROM github_triggers WHERE id = ?1
 `
 
 func (q *Queries) GetGithubTrigger(ctx context.Context, id string) (GithubTrigger, error) {
@@ -751,6 +751,7 @@ func (q *Queries) GetGithubTrigger(ctx context.Context, id string) (GithubTrigge
 		&i.MaxDurationSec,
 		&i.CompletionReminders,
 		&i.ReleasePrefix,
+		&i.HandToAssistant,
 	)
 	return i, err
 }
@@ -1373,7 +1374,7 @@ func (q *Queries) ListDueThreadIssueDeadlines(ctx context.Context, now *int64) (
 }
 
 const listEnabledGithubTriggersByRepo = `-- name: ListEnabledGithubTriggersByRepo :many
-SELECT gt.id, gt.project_id, gt.name, gt.event, gt.label, gt.prompt, gt.enabled, gt.announce, gt.run_count, gt.last_run_at, gt.created_at, gt.updated_at, gt.drivers, gt.maintainers, gt.reviewer_bots, gt.models, gt.thinking, gt.impl_auth, gt.comment_only_reviews, gt.autoclose_hours, gt.max_duration_sec, gt.completion_reminders, gt.release_prefix FROM github_triggers gt JOIN projects p ON p.id = gt.project_id
+SELECT gt.id, gt.project_id, gt.name, gt.event, gt.label, gt.prompt, gt.enabled, gt.announce, gt.run_count, gt.last_run_at, gt.created_at, gt.updated_at, gt.drivers, gt.maintainers, gt.reviewer_bots, gt.models, gt.thinking, gt.impl_auth, gt.comment_only_reviews, gt.autoclose_hours, gt.max_duration_sec, gt.completion_reminders, gt.release_prefix, gt.hand_to_assistant FROM github_triggers gt JOIN projects p ON p.id = gt.project_id
 WHERE p.github_repo_id = ?1 AND p.archived_at IS NULL
   AND gt.enabled = 1 AND gt.event = ?2
 ORDER BY gt.created_at, gt.id
@@ -1417,6 +1418,7 @@ func (q *Queries) ListEnabledGithubTriggersByRepo(ctx context.Context, arg ListE
 			&i.MaxDurationSec,
 			&i.CompletionReminders,
 			&i.ReleasePrefix,
+			&i.HandToAssistant,
 		); err != nil {
 			return nil, err
 		}
@@ -1912,7 +1914,7 @@ func (q *Queries) ListGithubSelfWrites(ctx context.Context, arg ListGithubSelfWr
 
 const listGithubTriggers = `-- name: ListGithubTriggers :many
 
-SELECT id, project_id, name, event, label, prompt, enabled, announce, run_count, last_run_at, created_at, updated_at, drivers, maintainers, reviewer_bots, models, thinking, impl_auth, comment_only_reviews, autoclose_hours, max_duration_sec, completion_reminders, release_prefix FROM github_triggers WHERE project_id = ?1 ORDER BY created_at, id
+SELECT id, project_id, name, event, label, prompt, enabled, announce, run_count, last_run_at, created_at, updated_at, drivers, maintainers, reviewer_bots, models, thinking, impl_auth, comment_only_reviews, autoclose_hours, max_duration_sec, completion_reminders, release_prefix, hand_to_assistant FROM github_triggers WHERE project_id = ?1 ORDER BY created_at, id
 `
 
 // ---------- triggers ----------
@@ -1949,6 +1951,7 @@ func (q *Queries) ListGithubTriggers(ctx context.Context, projectID string) ([]G
 			&i.MaxDurationSec,
 			&i.CompletionReminders,
 			&i.ReleasePrefix,
+			&i.HandToAssistant,
 		); err != nil {
 			return nil, err
 		}

@@ -31,7 +31,10 @@ func TestSearchMigrationDownUp(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, s.DB.QueryRowContext(ctx, objects).Scan(&n))
 	assert.Zero(t, n, "0027 回滚后对象都消失")
-	require.NoError(t, s.Q.CreateThread(ctx, db.CreateThreadParams{ID: "T-1", TitleSource: "auto", State: "idle", SessionDir: "d", CreatedAt: 1, UpdatedAt: 1, Kind: "work"}))
+	// 回滚后的表结构比当前代码旧：直接写 SQL，不经随新列变化的 CreateThread。
+	_, err = s.DB.ExecContext(ctx, `INSERT INTO threads (id, title_source, state, state_changed_at, session_dir, created_at, updated_at, kind)
+		VALUES ('T-1', 'auto', 'idle', 0, 'd', 1, 1, 'work')`)
+	require.NoError(t, err)
 	upsert := func(id, text string) {
 		_, err := s.Q.UpsertEntry(ctx, db.UpsertEntryParams{ThreadID: "T-1", File: "s.jsonl", EntryID: id, Type: "message",
 			Payload: []byte(`{"type":"message","id":"` + id + `","message":{"role":"user","content":"` + text + `"}}`)})

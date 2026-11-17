@@ -84,6 +84,24 @@ func (q *Queries) GetEntryCursor(ctx context.Context, arg GetEntryCursorParams) 
 	return i, err
 }
 
+const getTailStartSeq = `-- name: GetTailStartSeq :one
+SELECT CAST(CASE WHEN COUNT(*) < CAST(?1 AS INTEGER) THEN 0 ELSE MIN(seq) - 1 END AS INTEGER) AS start_seq
+FROM (SELECT seq FROM entries WHERE thread_id = ?2 ORDER BY seq DESC LIMIT CAST(?1 AS INTEGER))
+`
+
+type GetTailStartSeqParams struct {
+	N        int64  `json:"n"`
+	ThreadID string `json:"threadId"`
+}
+
+// Tail window start (M19): the smallest seq among the newest n rows minus one; 0 when the thread has fewer than n rows.
+func (q *Queries) GetTailStartSeq(ctx context.Context, arg GetTailStartSeqParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getTailStartSeq, arg.N, arg.ThreadID)
+	var start_seq int64
+	err := row.Scan(&start_seq)
+	return start_seq, err
+}
+
 const listEntriesAfter = `-- name: ListEntriesAfter :many
 SELECT thread_id, seq, file, entry_id, parent_id, type, ts, payload, stale FROM entries WHERE thread_id = ?1 AND seq > ?2 ORDER BY seq LIMIT ?3
 `
@@ -96,6 +114,50 @@ type ListEntriesAfterParams struct {
 
 func (q *Queries) ListEntriesAfter(ctx context.Context, arg ListEntriesAfterParams) ([]Entry, error) {
 	rows, err := q.db.QueryContext(ctx, listEntriesAfter, arg.ThreadID, arg.AfterSeq, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Entry{}
+	for rows.Next() {
+		var i Entry
+		if err := rows.Scan(
+			&i.ThreadID,
+			&i.Seq,
+			&i.File,
+			&i.EntryID,
+			&i.ParentID,
+			&i.Type,
+			&i.Ts,
+			&i.Payload,
+			&i.Stale,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEntriesBefore = `-- name: ListEntriesBefore :many
+SELECT thread_id, seq, file, entry_id, parent_id, type, ts, payload, stale FROM entries WHERE thread_id = ?1 AND seq < ?2 ORDER BY seq DESC LIMIT ?3
+`
+
+type ListEntriesBeforeParams struct {
+	ThreadID  string `json:"threadId"`
+	BeforeSeq int64  `json:"beforeSeq"`
+	Limit     int64  `json:"limit"`
+}
+
+// Earlier page (M19): rows before before_seq, newest first; the service reverses them.
+func (q *Queries) ListEntriesBefore(ctx context.Context, arg ListEntriesBeforeParams) ([]Entry, error) {
+	rows, err := q.db.QueryContext(ctx, listEntriesBefore, arg.ThreadID, arg.BeforeSeq, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
