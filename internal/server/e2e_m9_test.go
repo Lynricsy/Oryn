@@ -309,7 +309,8 @@ func TestE2EM9Coordinator(t *testing.T) {
 	assert.NotContains(t, probe.Args, "-e")
 	assert.Contains(t, probe.Args, "--system-prompt")
 	assert.Contains(t, probe.Args, "--config")
-	allowed := []string{"HOME", "PATH", "LANG", "TMPDIR", "PI_RPC_EMIT_TITLE", "PI_NOTIFICATIONS", "OTEL_SDK_DISABLED", "PI_FILE_LOCK_BACKEND", "ORYN_THREAD_ID"}
+	// M19 1.3：助手沙箱经 orynd 的正向代理联网（PI_PROXY）
+	allowed := []string{"HOME", "PATH", "LANG", "TMPDIR", "PI_RPC_EMIT_TITLE", "PI_NOTIFICATIONS", "OTEL_SDK_DISABLED", "PI_FILE_LOCK_BACKEND", "ORYN_THREAD_ID", "PI_PROXY"}
 	for _, k := range probe.EnvKeys {
 		assert.Contains(t, allowed, k, "协调 agent 的环境变量只有白名单")
 	}

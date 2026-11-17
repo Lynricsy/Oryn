@@ -146,6 +146,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		subLevel:       "off",
 		uiWait:         map[string]chan json.RawMessage{},
 		hostWait:       map[string]chan json.RawMessage{},
+		hostCalls:      map[string]hostInflight{},
 		prompts:        make(chan promptReq, 100),
 		terms:          newTerminals(),
 		tools:          toolExec{inflight: map[string]context.CancelFunc{}},
@@ -185,10 +186,12 @@ type server struct {
 	pending        int // 已接受但尚未结束的 prompt 数（含进行中的一个）
 	messageCount   int
 	cancelTurn     context.CancelFunc
-	// 宿主工具（M9）：set_host_tools 注册的工具；hostWait 是等待 host_tool_result 的调用（按 host_tool_call 的 id）。
+	// 宿主工具（M9）：set_host_tools 注册的工具；hostWait 是等待 host_tool_result 的调用（按 host_tool_call 的 id）；
+	// hostCalls 是这些调用对应的工具调用（M19：host_tool_update 转成该调用的 tool_execution_update）。
 	hostDescs []hostTool
 	hostSeq   int
 	hostWait  map[string]chan json.RawMessage
+	hostCalls map[string]hostInflight
 
 	prompts chan promptReq
 	terms   *terminals

@@ -185,6 +185,9 @@ type wsMsg struct {
 	Orb       json.RawMessage   `json:"orb"`
 	// ID 是 notifications.read 的通知 id（M10）。
 	ID string `json:"id"`
+	// WindowStart / LastSeq 是 thread.snapshot 的补发窗口起点（M19 tail 订阅）与当前最大 seq。
+	WindowStart int64 `json:"windowStart"`
+	LastSeq     int64 `json:"lastSeq"`
 }
 
 func (m wsMsg) frameType() string {

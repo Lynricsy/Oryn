@@ -55,7 +55,7 @@ var evalInterval time.Duration
 // notifyDoneDelay / notifyInputDelay 是通知去抖时长；0 = notify 默认（3s / 2s）。测试可调小。
 var notifyDoneDelay, notifyInputDelay time.Duration
 
-// scheduleNow / scheduleAfterFunc 是定时（与协调层限速、进度图）的时钟；零值 = 真实时钟。e2e 注入。
+// scheduleNow / scheduleAfterFunc 是定时（与协调层限速、进度图、主线的静止与收件合并定时器）的时钟；零值 = 真实时钟。e2e 注入。
 var (
 	scheduleNow       func() time.Time
 	scheduleAfterFunc func(d time.Duration, f func()) (stop func())
@@ -260,7 +260,7 @@ func (s *Server) init(ctx context.Context) error {
 		// M19 3.3：交给助手的运行结果进主线（coord 晚于 schedule 构造，用闭包）
 		HandOff: func(ctx context.Context, h schedule.HandOff) { s.Coord.PostToMain(ctx, h) },
 	}, s.Store, s.Threads, s.Orbs, s.Notify)
-	s.Coord = coord.New(coord.Config{Now: scheduleNow, Model: cfg.Coordinator.Model, PublicURL: cfg.PublicURL},
+	s.Coord = coord.New(coord.Config{Now: scheduleNow, AfterFunc: scheduleAfterFunc, Model: cfg.Coordinator.Model, PublicURL: cfg.PublicURL},
 		s.Store, s.Threads, s.Orbs, s.Host, s.Schedules)
 	s.Coord.SetLibrary(s.Library, s.LibrarySync)
 	s.Coord.SetArtifacts(s.Artifacts)
