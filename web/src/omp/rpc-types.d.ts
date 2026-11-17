@@ -5595,6 +5595,62 @@ type OrynUiParityRpcResponse = {
 	success: true;
 	data: OrynCancelJobResult;
 };
+interface OrynToolDef {
+	name: string;
+	description: string;
+	parameters: unknown;
+}
+interface OrynToolCallResult {
+	content: (TextContent | ImageContent)[];
+	details?: unknown;
+	isError?: boolean;
+}
+/** 工具运行中推送的部分结果。 */
+export interface OrynToolUpdateFrame {
+	type: "oryn_tool_update";
+	callId: string;
+	partialResult: OrynToolCallResult;
+}
+type OrynToolExecRpcCommand = {
+	id?: string;
+	type: "oryn_tool_defs";
+	names?: string[];
+} | {
+	id?: string;
+	type: "oryn_tool_call";
+	callId: string;
+	toolName: string;
+	arguments?: Record<string, unknown>;
+} | {
+	id?: string;
+	type: "oryn_tool_cancel";
+	callId: string;
+};
+type OrynToolExecRpcResponse = {
+	id?: string;
+	type: "response";
+	command: "oryn_tool_defs";
+	success: true;
+	data: {
+		tools: OrynToolDef[];
+	};
+} | {
+	id?: string;
+	type: "response";
+	command: "oryn_tool_call";
+	success: true;
+	data: {
+		result: OrynToolCallResult;
+	};
+} | {
+	id?: string;
+	type: "response";
+	command: "oryn_tool_cancel";
+	success: true;
+	data: {
+		cancelled: boolean;
+	};
+};
 /** 预测变化时推送的帧；`choices` 按可能性从高到低，空数组表示当前没有预测。 */
 export interface OrynComposerPredictionFrame {
 	type: "oryn_composer_prediction";
@@ -6564,7 +6620,7 @@ export type RpcCommand = {
 } | {
 	id?: string;
 	type: "get_btw_history";
-} | OrynRpcCommand | OrynUiParityRpcCommand;
+} | OrynRpcCommand | OrynUiParityRpcCommand | OrynToolExecRpcCommand;
 export interface RpcSessionState {
 	collab?: RpcCollabState;
 	model?: Model;
@@ -9594,7 +9650,7 @@ export type RpcResponse = {
 	data: {
 		records: readonly RpcBtwHistoryRecord[];
 	};
-} | OrynRpcResponse | OrynUiParityRpcResponse | {
+} | OrynRpcResponse | OrynUiParityRpcResponse | OrynToolExecRpcResponse | {
 	id?: string;
 	type: "response";
 	command: string;
