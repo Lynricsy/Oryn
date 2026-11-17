@@ -188,9 +188,10 @@ func TestCoordinatorAgentStart(t *testing.T) {
 	cwd := filepath.Join(rt.home, ".oryn", "coordinator", "cwd")
 	overlay := filepath.Join(rt.home, ".oryn", "coordinator", "overlay.yml")
 	promptFile := filepath.Join(rt.home, ".oryn", "coordinator", "prompts", thread+".md")
+	// 不带 web（Space 协调者，D10）：内置工具只有 read / write，没有 PI_PROXY 与 MCP 地址前缀，生图关闭
 	assert.Equal(t, []string{
 		"--mode", "rpc-ui", "--cwd", cwd, "--session-dir", filepath.Join(rt.home, ".oryn", "threads", thread),
-		"--no-tools", "--tools", "read,write,web_search,generate_image", "--no-skills", "--no-extensions", "--no-rules", "--no-context-files", "--no-lsp",
+		"--no-tools", "--tools", "read,write", "--no-skills", "--no-extensions", "--no-rules", "--no-context-files", "--no-lsp",
 		"--config", overlay, "--system-prompt", promptFile,
 	}, rec.Args)
 	// L4：argv 只带路径，不含提示词正文；omp 按文件读到的正文与下发的一致。
@@ -209,13 +210,42 @@ func TestCoordinatorAgentStart(t *testing.T) {
 	assert.Equal(t, map[string]string{
 		"HOME": rt.home, "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "TMPDIR": filepath.Join(rt.home, "tmp"),
 		"PI_RPC_EMIT_TITLE": "1", "PI_NOTIFICATIONS": "off", "OTEL_SDK_DISABLED": "true", "PI_FILE_LOCK_BACKEND": "sidecar",
-		"ORYN_THREAD_ID": thread, "PI_PROXY": "http://" + rt.egressLn.Addr().String(),
+		"ORYN_THREAD_ID": thread,
 	}, rec.Env)
 	ov, err := os.ReadFile(overlay)
 	require.NoError(t, err)
-	assert.Equal(t, coordinatorOverlay, string(ov))
+	assert.Equal(t, coordinatorOverlay(false), string(ov))
 	assert.Contains(t, string(ov), `autoUpdate: "off"`)
+	assert.Contains(t, string(ov), "generate_image: { enabled: false }")
+
+	// web（全局助手，M19 第一层）：多 web_search / generate_image、PI_PROXY 与 ORYN_MCP_BASE，覆盖层另写一份且生图打开
+	const thread2 = "T-01932f6e-8d1a-7c3b-9f2e-0123456789ac"
+	dump2 := filepath.Join(rt.home, "dump2.json")
+	prompt2 := "#dump " + dump2 + "\nYou are the Oryn assistant.\nKeep replies short."
+	web := true
+	p2 := apigen.LinkCtlAgentStartParams{ThreadID: thread2, SessionDir: "~/.oryn/threads/" + thread2, Profile: &coord, SystemPrompt: &prompt2, Web: &web}
+	p2.InitFrames = []apigen.OmpFrame{{"type": "open_session", "sessionDir": "~/.oryn/threads/" + thread2}}
+	require.NoError(t, cp.call(t, "agent.start", p2, &res))
+	cp.waitNotif(t, 0, "agent.status", statusIs(thread2, "ready"))
+	b, err = os.ReadFile(dump2)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(b, &rec))
+	webOverlay := filepath.Join(rt.home, ".oryn", "coordinator", "overlay-web.yml")
+	assert.Equal(t, []string{
+		"--mode", "rpc-ui", "--cwd", cwd, "--session-dir", filepath.Join(rt.home, ".oryn", "threads", thread2),
+		"--no-tools", "--tools", "read,write,web_search,generate_image", "--no-skills", "--no-extensions", "--no-rules", "--no-context-files", "--no-lsp",
+		"--config", webOverlay, "--system-prompt", filepath.Join(rt.home, ".oryn", "coordinator", "prompts", thread2+".md"),
+	}, rec.Args)
+	egress := "http://" + rt.egressLn.Addr().String()
+	assert.Equal(t, egress, rec.Env["PI_PROXY"])
+	assert.Equal(t, egress, rec.Env["ORYN_MCP_BASE"])
+	ov, err = os.ReadFile(webOverlay)
+	require.NoError(t, err)
+	assert.Equal(t, coordinatorOverlay(true), string(ov))
 	assert.Contains(t, string(ov), "generate_image: { enabled: true }")
+	ov, err = os.ReadFile(overlay)
+	require.NoError(t, err)
+	assert.Contains(t, string(ov), "generate_image: { enabled: false }", "Space 的覆盖层不被覆盖")
 	entries, err := os.ReadDir(cwd)
 	require.NoError(t, err)
 	assert.Empty(t, entries, "the coordinator cwd stays empty")

@@ -17,12 +17,15 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router";
 import {
 	useAssistantIdentity,
 	useIdentity,
 	useRoleIdentities,
 } from "../../api/identity-queries";
+import { createAssistantConversation } from "../../api/space-queries";
 import { BUILTIN_ROLE_NAMES, type BuiltinRole } from "../../lib/model-roles";
+import { describeOrynHeader, parseOrynMessage } from "../../lib/oryn-message";
 import {
 	type ModelSourceRecord,
 	type RoleFace,
@@ -39,6 +42,7 @@ import { Badge } from "../ui/data";
 import { IdentityAvatar } from "../ui/IdentityAvatar";
 import { Icon, type IconName } from "../ui/icons";
 import { ModelLogo } from "../ui/ModelLogo";
+import { describeError } from "../ui/primitives";
 import { type TurnIdentities, useTranscriptContext } from "./context";
 import {
 	assistantEdges,
@@ -52,9 +56,11 @@ import {
 	summarizeTurn,
 	ToolCard,
 	type TurnUsage,
+	textOfContent,
 	USER_BUBBLE_TEXT,
 	UserBubble,
 } from "./MessageView";
+import { foldMainline, type MainlineFold, type MainlineRow } from "./mainline";
 import { describeModeChange } from "./mode-change";
 import { type KnownModel, modelLabel } from "./model-label";
 import { NoticeLine } from "./NoticeLine";
@@ -170,12 +176,14 @@ function ItemView({
 	turn,
 	turnStart,
 }: {
-	item: TranscriptItem;
+	item: MainlineRow;
 	turn?: TurnUsage;
 	turnStart: boolean;
 }): ReactNode {
 	const { t } = useTranslation();
 	switch (item.kind) {
+		case "fold":
+			return <FoldRow fold={item} />;
 		case "session_divider":
 			return (
 				<div className="flex items-center gap-3 py-2">
@@ -214,14 +222,110 @@ function ItemView({
 	}
 }
 
+/**
+ * 主线折叠行（M19）：一行文案（幕后来料 / 沉默的理由）+ 展开箭头；展开后原样渲染被收起的各行。
+ */
+function FoldRow({ fold }: { fold: MainlineFold }): ReactNode {
+	const { t, i18n } = useTranslation();
+	const [open, setOpen] = useState(false);
+	const msg = parseOrynMessage(fold.source);
+	const label =
+		fold.fold === "silent"
+			? fold.reason
+				? t("mainline.silentReason", { reason: fold.reason })
+				: t("mainline.silent")
+			: t("mainline.behind", {
+					source: msg ? describeOrynHeader(msg, t, i18n.language) : "",
+				});
+	return (
+		<div data-testid="mainline-fold" data-fold={fold.fold}>
+			<button
+				type="button"
+				className="group/fold flex h-7 w-full min-w-0 items-center gap-2 rounded-md text-left text-[12.5px] text-muted hover:text-fg"
+				onClick={() => setOpen((v) => !v)}
+				aria-expanded={open}
+			>
+				<Icon
+					name={fold.fold === "silent" ? "minusCircle" : "bell"}
+					size={14}
+					className="shrink-0 text-faint"
+				/>
+				<span className="min-w-0 flex-1 truncate">{label}</span>
+				<Icon
+					name="chevronRight"
+					size={12}
+					className={`shrink-0 text-ghost transition-transform duration-150 group-hover/fold:text-faint ${open ? "rotate-90" : ""}`}
+				/>
+			</button>
+			{open && (
+				<div className="mt-1.5 flex flex-col gap-3 border-border border-l-2 pl-3">
+					{fold.items.map((it) => (
+						<div key={it.key} className={isUserRow(it) ? "pr-10" : undefined}>
+							<ItemView item={it} turnStart={isUserRow(it)} />
+						</div>
+					))}
+				</div>
+			)}
+		</div>
+	);
+}
+
+/** 回合里最后一段助手正文（主线「在新对话中继续」带出的引用）。 */
+function turnFinalText(turn: TurnUsage): string {
+	for (let i = turn.messages.length - 1; i >= 0; i--) {
+		const text = textOfContent(turn.messages[i]?.content).trim();
+		if (text) return text;
+	}
+	return "";
+}
+
+/** 主线助手回合下的「在新对话中继续」：新建助手对话，把这段话作为引用带进它的输入区，再跳过去。 */
+function ContinueInNew({ text }: { text: string }): ReactNode {
+	const { t } = useTranslation();
+	const navigate = useNavigate();
+	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState<unknown>(null);
+	return (
+		<div className="mt-1 flex min-w-0 items-center gap-2">
+			<button
+				type="button"
+				disabled={busy}
+				className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-muted text-xs hover:bg-hover hover:text-fg disabled:opacity-60"
+				onClick={() => {
+					setBusy(true);
+					setError(null);
+					createAssistantConversation().then(
+						(th) => {
+							patchComposerDraft(th.id, { quote: { text } });
+							navigate(`/assistant/${th.id}`);
+						},
+						(e: unknown) => {
+							setBusy(false);
+							setError(e);
+						},
+					);
+				}}
+			>
+				<Icon name="chats" size={13} aria-hidden className="text-faint" />
+				{t("mainline.continue")}
+			</button>
+			{error !== null && (
+				<span role="alert" className="min-w-0 truncate text-err text-xs">
+					{describeError(error, t)}
+				</span>
+			)}
+		</div>
+	);
+}
+
 /** 属于 agent 回合的行：助手消息与独立的运行中工具卡。 */
-function isAgentRow(item: TranscriptItem | undefined): boolean {
+function isAgentRow(item: MainlineRow | undefined): boolean {
 	if (!item) return false;
 	if (item.kind === "tool") return true;
 	return item.kind === "message" && item.message.role === "assistant";
 }
 
-function isUserRow(item: TranscriptItem): boolean {
+function isUserRow(item: MainlineRow): boolean {
 	return item.kind === "message" && item.message.role === "user";
 }
 
@@ -260,7 +364,7 @@ function cachedTurnUsage(messages: readonly JsonRecord[]): TurnUsage {
  * `openStart` 是最后一个助手回合的起点，且其后再没有用户消息 / 会话分隔（线程工作中时就是正在进行的回合）。
  * 流式时每个增量都会重跑：已结束回合的汇总走 `cachedTurnUsage`，引用保持不变。
  */
-export function layoutTurns(items: readonly TranscriptItem[]): {
+export function layoutTurns(items: readonly MainlineRow[]): {
 	starts: Set<number>;
 	userStarts: Set<number>;
 	footers: Map<number, TurnUsage>;
@@ -292,7 +396,8 @@ export function layoutTurns(items: readonly TranscriptItem[]): {
 			openStart = undefined;
 			return;
 		}
-		if (it.kind === "session_divider") {
+		// 主线的折叠行与会话分隔一样是回合边界：其后的助手正文另起一个回合（带头像）
+		if (it.kind === "session_divider" || it.kind === "fold") {
 			close();
 			openStart = undefined;
 			return;
@@ -331,7 +436,7 @@ const DOCK_GAP = 16;
 /** 行首 / 行尾的节奏类别；`turn` 是不属于 agent 过程流的行。 */
 type Edge = FlowKind | "turn";
 
-function rowEdges(item: TranscriptItem, hasFooter: boolean): [Edge, Edge] {
+function rowEdges(item: MainlineRow, hasFooter: boolean): [Edge, Edge] {
 	if (item.kind === "tool") return ["proc", "proc"];
 	if (item.kind === "message" && item.message.role === "assistant")
 		return assistantEdges(item.message, item.live, hasFooter);
@@ -345,7 +450,7 @@ function rowEdges(item: TranscriptItem, hasFooter: boolean): [Edge, Edge] {
  * 所以按 `GAP_TURN` / `GAP_FLOW` 取值，与行首块的类别无关。
  */
 export function rowGaps(
-	items: readonly TranscriptItem[],
+	items: readonly MainlineRow[],
 	footers: ReadonlyMap<number, TurnUsage>,
 ): number[] {
 	let prev: Edge | null = null;
@@ -509,6 +614,7 @@ export function Transcript({
 	trayTop: trayTopOverride,
 	hasEarlier = false,
 	onLoadEarlier,
+	mainline = false,
 }: {
 	items: TranscriptItem[];
 	footer?: ReactNode;
@@ -529,6 +635,8 @@ export function Transcript({
 	hasEarlier?: boolean;
 	/** 加载更早的一页；条目并入后保持阅读位置不动。 */
 	onLoadEarlier?: () => Promise<void>;
+	/** 主线对话（M19）：自动来料与幕后过程、沉默的回合各折叠成一行，助手回合下有「在新对话中继续」。 */
+	mainline?: boolean;
 }): ReactNode {
 	const { t } = useTranslation();
 	const { threadId, readOnly } = useTranscriptContext();
@@ -539,7 +647,12 @@ export function Transcript({
 		if (hasUser && pending !== undefined) clearPendingPrompt(threadId);
 	}, [hasUser, pending, threadId]);
 	const pendingText = hasUser ? undefined : pending;
-	const turns = useMemo(() => layoutTurns(items), [items]);
+	// 显示行：主线把自动来料与沉默的回合折叠起来，其余转录原样
+	const rows = useMemo<MainlineRow[]>(
+		() => (mainline ? foldMainline(items) : items),
+		[mainline, items],
+	);
+	const turns = useMemo(() => layoutTurns(rows), [rows]);
 	const identities = useTurnIdentities();
 	// 线程工作中时，只有正在进行的那个助手回合的头像闪（历史回合一律静止）。
 	// 状态以线程索引为准；不在索引里的线程（分享页）取线程 store 自己的摘要
@@ -548,7 +661,7 @@ export function Transcript({
 	const working = (indexState ?? ownState) === "working";
 	const liveStart = working ? turns.openStart : undefined;
 	const sessionModel = useThread(threadId, (s) => s.state?.model);
-	const gaps = useMemo(() => rowGaps(items, turns.footers), [items, turns]);
+	const gaps = useMemo(() => rowGaps(rows, turns.footers), [rows, turns]);
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const [atBottom, setAtBottom] = useState(true);
 	const stick = useRef(!startAtTop);
@@ -564,7 +677,7 @@ export function Transcript({
 	const travel = useRef({ dir: 0, px: 0 });
 	const onReadRef = useRef(onReadDirection);
 	onReadRef.current = onReadDirection;
-	const count = items.length + 1; // 末尾一项放 footer（工作中指示等）
+	const count = rows.length + 1; // 末尾一项放 footer（工作中指示等）
 	const virtualizer = useVirtualizer({
 		count,
 		getScrollElement: () => scrollRef.current,
@@ -572,7 +685,7 @@ export function Transcript({
 		overscan: 6,
 		paddingStart: insetTop + (hasEarlier ? EARLIER_H : 0),
 		paddingEnd: insetBottom,
-		getItemKey: (i) => (i < items.length ? (items[i]?.key ?? i) : "__footer__"),
+		getItemKey: (i) => (i < rows.length ? (rows[i]?.key ?? i) : "__footer__"),
 	});
 	const total = virtualizer.getTotalSize();
 
@@ -748,6 +861,8 @@ export function Transcript({
 	useEffect(
 		() =>
 			registerRevealer(threadId, (target) => {
+				// 主线不能对外分享，用不到定位；折叠后的显示行与条目也不再一一对应
+				if (mainline) return false;
 				const list = itemsRef.current;
 				const hit = findRevealHit(
 					list,
@@ -762,7 +877,7 @@ export function Transcript({
 				setRevealed({ key: item.key, toolCallId: hit.toolCallId });
 				return true;
 			}),
-		[threadId, virtualizer],
+		[threadId, virtualizer, mainline],
 	);
 	useEffect(() => {
 		if (!revealed) return;
@@ -796,7 +911,9 @@ export function Transcript({
 	const rendered = useMemo(
 		() =>
 			virtualItems.map((v) => {
-				const item = v.index < items.length ? items[v.index] : undefined;
+				const item = v.index < rows.length ? rows[v.index] : undefined;
+				const turn = turns.footers.get(v.index);
+				const quote = mainline && turn ? turnFinalText(turn) : "";
 				// 会话分隔线与 agent 各块都铺满正文列；用户气泡右侧让出头像列（pr-10）
 				const userRow = item !== undefined && isUserRow(item);
 				return (
@@ -838,13 +955,16 @@ export function Transcript({
 								/>
 							)}
 							{item ? (
-								<ItemView
-									item={item}
-									turn={turns.footers.get(v.index)}
-									turnStart={
-										turns.starts.has(v.index) || turns.userStarts.has(v.index)
-									}
-								/>
+								<>
+									<ItemView
+										item={item}
+										turn={turn}
+										turnStart={
+											turns.starts.has(v.index) || turns.userStarts.has(v.index)
+										}
+									/>
+									{quote && <ContinueInNew text={quote} />}
+								</>
 							) : (
 								<>
 									{pendingText !== undefined && (
@@ -859,7 +979,8 @@ export function Transcript({
 			}),
 		[
 			virtualItems,
-			items,
+			rows,
+			mainline,
 			footer,
 			virtualizer.measureElement,
 			turns,

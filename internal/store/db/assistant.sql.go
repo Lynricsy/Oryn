@@ -427,6 +427,48 @@ func (q *Queries) ListPendingAssistantInbox(ctx context.Context, lim int64) ([]A
 	return items, nil
 }
 
+const listRecentMainMessagesTs = `-- name: ListRecentMainMessagesTs :many
+SELECT seq, ts, payload FROM entries
+WHERE thread_id = ?1 AND type = 'message' AND instr(file, '/') = 0
+ORDER BY seq DESC
+LIMIT ?2
+`
+
+type ListRecentMainMessagesTsParams struct {
+	ThreadID string `json:"threadId"`
+	Limit    int64  `json:"limit"`
+}
+
+type ListRecentMainMessagesTsRow struct {
+	Seq     int64  `json:"seq"`
+	Ts      *int64 `json:"ts"`
+	Payload []byte `json:"payload"`
+}
+
+// Newest main-session message entries with their time (main conversation brief).
+func (q *Queries) ListRecentMainMessagesTs(ctx context.Context, arg ListRecentMainMessagesTsParams) ([]ListRecentMainMessagesTsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listRecentMainMessagesTs, arg.ThreadID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRecentMainMessagesTsRow{}
+	for rows.Next() {
+		var i ListRecentMainMessagesTsRow
+		if err := rows.Scan(&i.Seq, &i.Ts, &i.Payload); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markAssistantInboxDelivered = `-- name: MarkAssistantInboxDelivered :exec
 UPDATE assistant_inbox SET delivered_at = ?1 WHERE id = ?2
 `

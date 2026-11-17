@@ -64,7 +64,7 @@ func triggerAPI(t db.GithubTrigger) apigen.GitHubTrigger {
 	out := apigen.GitHubTrigger{
 		ID: t.ID, ProjectID: t.ProjectID, Name: t.Name, Event: apigen.GitHubTriggerEvent(t.Event), Label: t.Label,
 		Prompt: t.Prompt, Enabled: t.Enabled, Announce: t.Announce, RunCount: t.RunCount, LastRunAt: t.LastRunAt,
-		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
+		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt, HandToAssistant: t.HandToAssistant != 0,
 		Drivers: new(apigen.GitHubTriggerDrivers(r.drivers)), Maintainers: r.maintainers, ReviewerBots: r.reviewerBots,
 		Models: modelsOf(t), Thinking: t.Thinking, ImplAuth: new(t.ImplAuth), CommentOnlyReviews: new(t.CommentOnlyReviews),
 		CompletionReminders: new(t.CompletionReminders), ReleasePrefix: t.ReleasePrefix,
@@ -278,6 +278,9 @@ func (s *Service) CreateTrigger(ctx context.Context, projectID string, in apigen
 		Enabled: in.Enabled == nil || *in.Enabled, Announce: in.Announce == nil || *in.Announce, CreatedAt: now, UpdatedAt: now,
 		Drivers: driversWritersAndAuthor, Maintainers: "[]", ReviewerBots: "[]", Models: "[]",
 	}
+	if in.HandToAssistant != nil && *in.HandToAssistant {
+		t.HandToAssistant = 1
+	}
 	opts := triggerOptions{
 		drivers: in.Drivers, maintainers: in.Maintainers, reviewerBots: in.ReviewerBots, models: in.Models, thinking: in.Thinking,
 		implAuth: in.ImplAuth, commentOnlyReviews: in.CommentOnlyReviews, reminders: in.CompletionReminders,
@@ -292,7 +295,8 @@ func (s *Service) CreateTrigger(ctx context.Context, projectID string, in apigen
 	if err := s.st.Tx(ctx, func(q *db.Queries) error {
 		if err := q.InsertGithubTrigger(ctx, db.InsertGithubTriggerParams{
 			ID: t.ID, ProjectID: t.ProjectID, Name: t.Name, Event: t.Event, Label: t.Label, Prompt: t.Prompt,
-			Enabled: t.Enabled, Announce: t.Announce, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
+			Enabled: t.Enabled, Announce: t.Announce, HandToAssistant: t.HandToAssistant, CreatedAt: t.CreatedAt,
+			UpdatedAt: t.UpdatedAt,
 		}); err != nil {
 			return err
 		}
@@ -344,6 +348,12 @@ func (s *Service) UpdateTrigger(ctx context.Context, id string, p apigen.GitHubT
 	if p.Announce != nil {
 		t.Announce = *p.Announce
 	}
+	if p.HandToAssistant != nil {
+		t.HandToAssistant = 0
+		if *p.HandToAssistant {
+			t.HandToAssistant = 1
+		}
+	}
 	opts := triggerOptions{
 		drivers: p.Drivers, maintainers: p.Maintainers, reviewerBots: p.ReviewerBots, models: p.Models, thinking: p.Thinking,
 		implAuth: p.ImplAuth, commentOnlyReviews: p.CommentOnlyReviews, reminders: p.CompletionReminders,
@@ -359,7 +369,7 @@ func (s *Service) UpdateTrigger(ctx context.Context, id string, p apigen.GitHubT
 	if err := s.st.Tx(ctx, func(q *db.Queries) error {
 		if err := q.UpdateGithubTrigger(ctx, db.UpdateGithubTriggerParams{
 			Name: t.Name, Event: t.Event, Label: t.Label, Prompt: t.Prompt, Enabled: t.Enabled, Announce: t.Announce,
-			UpdatedAt: t.UpdatedAt, ID: t.ID,
+			HandToAssistant: t.HandToAssistant, UpdatedAt: t.UpdatedAt, ID: t.ID,
 		}); err != nil {
 			return err
 		}

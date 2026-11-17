@@ -232,7 +232,8 @@ export class MockAutomation {
 
 	private setThreadSummary(threadId: string) {
 		const t = this.deps.threads.get(threadId);
-		if (!t) return;
+		// 主线可有多条提醒，线程摘要里不带 schedule（同 orynd）
+		if (!t || t.main) return;
 		const s = this.schedules.find(
 			(x) => x.mode === "thread" && x.threadId === threadId,
 		);
@@ -274,12 +275,30 @@ export class MockAutomation {
 		const name = (b.name ?? "").trim();
 		if (mode === "new_thread" && !name)
 			return error(400, "invalid_schedule", "new_thread 模式须给 name");
+		if (mode === "thread" && b.handToAssistant)
+			return error(
+				400,
+				"invalid_schedule",
+				"handToAssistant 只用于 new_thread 模式",
+			);
 		if (!b.prompt?.trim())
 			return error(400, "invalid_schedule", "prompt 不能为空");
 		if (mode === "thread") {
 			const t = threadId ? this.deps.threads.get(threadId) : undefined;
 			if (!t) return error(404, "not_found", "thread");
 			if (t.archivedAt) return error(409, "thread_archived", "thread archived");
+			if (t.main) {
+				// 主线上的提醒：名字必填、在主线内唯一，新建时至多 50 条（同 orynd 的 checkMainSchedule）
+				if (!name)
+					return error(400, "invalid_schedule", "主线上的提醒须给 name");
+				const mine = this.schedules.filter(
+					(s) => s.threadId === t.id && s.id !== existing?.id,
+				);
+				if (mine.some((s) => s.name === name))
+					return error(409, "schedule_name_taken", `主线上已有提醒「${name}」`);
+				if (!existing && mine.length >= 50)
+					return error(409, "schedule_limit", "主线至多 50 条提醒");
+			}
 		}
 		const projectId =
 			mode === "new_thread"
@@ -326,6 +345,10 @@ export class MockAutomation {
 			...(mode === "new_thread" && b.orbType ? { orbType: b.orbType } : {}),
 			overlap: mode === "new_thread" ? (b.overlap ?? "skip") : "skip",
 			keepLast: mode === "new_thread" ? (b.keepLast ?? 5) : 5,
+			handToAssistant:
+				mode === "new_thread"
+					? (b.handToAssistant ?? existing?.handToAssistant ?? false)
+					: false,
 			...(enabled ? {} : { pausedReason: "user" as const }),
 			...(enabled && next[0] !== undefined ? { nextRunAt: next[0] } : {}),
 			...(existing?.lastRunAt !== undefined
@@ -580,6 +603,7 @@ export class MockAutomation {
 				if (!b.mode) return error(400, "invalid_schedule", "必须给 mode");
 				if (
 					b.mode === "thread" &&
+					!(b.threadId && this.deps.threads.get(b.threadId)?.main) &&
 					this.schedules.some((s) => s.threadId === b.threadId)
 				)
 					return error(409, "conflict", "该线程已有定时");
@@ -592,6 +616,12 @@ export class MockAutomation {
 		const threadSchedule = /^threads\/([^/]+)\/schedule$/.exec(p);
 		if (threadSchedule) {
 			const threadId = threadSchedule[1] ?? "";
+			if (this.deps.threads.get(threadId)?.main)
+				return error(
+					409,
+					"conflict",
+					"主线可有多条提醒，须按 id 经 /schedules 管理",
+				);
 			const cur = this.schedules.find(
 				(s) => s.mode === "thread" && s.threadId === threadId,
 			);

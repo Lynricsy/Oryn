@@ -106,7 +106,8 @@ type responseHead struct {
 // （terminal_configure：pty:true 的命令与 agent 的 terminal 工具落到 omp 的终端宿主，由 Terminal 面板作答）。
 // terminal 为假时（M11b：runner 没上报 terminal 特性）不发 terminal_configure。
 // 协调线程（prof 非 nil）只有 open_session、set_event_filter、set_host_tools 与可选的思考级别：不开 ask 对话框、
-// 子 agent 订阅与终端。
+// 子 agent 订阅与终端。主线（M19）在 open_session 之后先 clear_context：每次启动都是新的一段，模型只看到
+// reset_boundary 之后的内容（转录保留），跨段要记的事在系统提示词的「主线近况」里。
 func initFrames(t *thread, prof *AgentProfile, terminal bool) []apigen.OmpFrame {
 	open := apigen.OmpFrame{"type": "open_session", "sessionDir": t.sessionDir}
 	if m := parseModel(t.model); m != nil {
@@ -118,11 +119,14 @@ func initFrames(t *thread, prof *AgentProfile, terminal bool) []apigen.OmpFrame 
 		if tools == nil {
 			tools = []apigen.OmpFrame{}
 		}
-		frames = []apigen.OmpFrame{
-			open,
-			{"type": "set_event_filter", "events": nil, "messageUpdates": "delta"},
-			{"type": "set_host_tools", "tools": tools},
+		frames = []apigen.OmpFrame{open}
+		if t.main {
+			frames = append(frames, apigen.OmpFrame{"type": "clear_context"})
 		}
+		frames = append(frames,
+			apigen.OmpFrame{"type": "set_event_filter", "events": nil, "messageUpdates": "delta"},
+			apigen.OmpFrame{"type": "set_host_tools", "tools": tools},
+		)
 	} else {
 		frames = []apigen.OmpFrame{
 			open,
@@ -206,6 +210,10 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 	if prof != nil {
 		profile := apigen.AgentProfileCoordinator
 		params.Profile, params.SystemPrompt = &profile, &prof.SystemPrompt
+		if prof.Web {
+			web := true
+			params.Web = &web
+		}
 	}
 	t.mu.Unlock()
 	if prof != nil && !s.prepareCoordinator(ctx, ctl, t, orbID, prof) {
@@ -398,7 +406,7 @@ func (s *Service) onAgentStatus(ctx context.Context, orbID string, params json.R
 		t.lastYield = nil
 		s.resetLiveLocked(t)
 		s.broadcastLiveResetLocked(t)
-		t.autoActive = false
+		t.autoActive, t.segMsgs = false, false
 		cancelHostCallsLocked(t)
 		resetConfigMarksLocked(t) // 新进程读的就是新配置（M13 6.3）
 		switch {
@@ -673,7 +681,7 @@ func (s *Service) onFrame(ctx context.Context, t *thread, orbID string, line []b
 		t.settled = false
 	case "session_settled":
 		t.settled = true
-		t.autoActive = false
+		t.autoActive, t.segMsgs = false, false
 		if t.refresh {
 			s.stopForRefreshLocked(t)
 		}
@@ -797,6 +805,11 @@ func (s *Service) onResponse(ctx context.Context, t *thread, env omprpc.Envelope
 	s.recompute(ctx, t)
 	s.deliver(p, frame)
 	s.settleResponseLocked(t, p, env, r)
+	// 静止时等着重启（refreshLocked）但当时还有在途命令（如 session_settled 触发的 get_state）：最后一条应答到了就停，
+	// 不能等到下一回合的 session_settled，否则下一条消息仍由旧 agent（旧的 AgentProfile）处理。
+	if t.refresh {
+		s.stopIfQuiescentLocked(t)
+	}
 }
 
 // ---- 命令下发 ----
@@ -817,12 +830,23 @@ func (s *Service) dispatchLocked(t *thread, frame []byte) {
 		}
 		return
 	}
+	auto := false
 	if p := t.pending[h.ID]; p != nil {
 		p.sent = true
+		auto = p.origin == originAuto
 		if p.origin == originAuto && messageCommands[h.Type] {
 			// 自动化消息开启（或并入）的这段活动：宿主工具调用记为 auto 来源
 			t.autoActive = true
 		}
+	}
+	if messageCommands[h.Type] {
+		// 静止后的第一条消息决定 autoOnly，其后的逐条取与；任何新消息都让此前的 stay_silent 失效
+		if t.segMsgs {
+			t.autoOnly = t.autoOnly && auto
+		} else {
+			t.autoOnly, t.segMsgs = auto, true
+		}
+		t.quiet = false
 	}
 	switch h.Type {
 	case "prompt", "abort_and_prompt":

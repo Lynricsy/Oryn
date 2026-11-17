@@ -5832,12 +5832,15 @@ type GitHubTrigger struct {
 	CreatedAt TimestampMs `json:"createdAt"`
 
 	// Drivers 谁的发言能驱动 agent（M15）：`writers` 仅写权限者；`writers_and_author` 另加 issue / PR 作者；`anyone` 任何人（按人限流）
-	Drivers  *GitHubTriggerDrivers `json:"drivers,omitempty"`
-	Enabled  bool                  `json:"enabled"`
-	Event    GitHubTriggerEvent    `json:"event"`
-	ID       string                `json:"id"`
-	ImplAuth *bool                 `json:"implAuth,omitempty"`
-	Label    *string               `json:"label,omitempty"`
+	Drivers *GitHubTriggerDrivers `json:"drivers,omitempty"`
+	Enabled bool                  `json:"enabled"`
+	Event   GitHubTriggerEvent    `json:"event"`
+
+	// HandToAssistant 交给助手：每次运行的结果合并进助手的主线，由助手决定是否告诉主人；该运行的完成通知不再单独推送
+	HandToAssistant bool    `json:"handToAssistant"`
+	ID              string  `json:"id"`
+	ImplAuth        *bool   `json:"implAuth,omitempty"`
+	Label           *string `json:"label,omitempty"`
 
 	// LastRunAt UTC 毫秒时间戳
 	LastRunAt   *TimestampMs `json:"lastRunAt,omitempty"`
@@ -5878,10 +5881,11 @@ type GitHubTriggerInput struct {
 	CompletionReminders *bool `json:"completionReminders,omitempty"`
 
 	// Drivers 谁的发言能驱动 agent（M15）：`writers` 仅写权限者；`writers_and_author` 另加 issue / PR 作者；`anyone` 任何人（按人限流）
-	Drivers  *GitHubTriggerDrivers `json:"drivers,omitempty"`
-	Enabled  *bool                 `json:"enabled,omitempty"`
-	Event    GitHubTriggerEvent    `json:"event"`
-	ImplAuth *bool                 `json:"implAuth,omitempty"`
+	Drivers         *GitHubTriggerDrivers `json:"drivers,omitempty"`
+	Enabled         *bool                 `json:"enabled,omitempty"`
+	Event           GitHubTriggerEvent    `json:"event"`
+	HandToAssistant *bool                 `json:"handToAssistant,omitempty"`
+	ImplAuth        *bool                 `json:"implAuth,omitempty"`
 
 	// Label `issue_labeled` 必填；其它事件忽略
 	Label       *string  `json:"label,omitempty"`
@@ -5914,12 +5918,13 @@ type GitHubTriggerPatch struct {
 	CompletionReminders *bool `json:"completionReminders,omitempty"`
 
 	// Drivers 谁的发言能驱动 agent（M15）：`writers` 仅写权限者；`writers_and_author` 另加 issue / PR 作者；`anyone` 任何人（按人限流）
-	Drivers     *GitHubTriggerDrivers `json:"drivers,omitempty"`
-	Enabled     *bool                 `json:"enabled,omitempty"`
-	Event       *GitHubTriggerEvent   `json:"event,omitempty"`
-	ImplAuth    *bool                 `json:"implAuth,omitempty"`
-	Label       *string               `json:"label,omitempty"`
-	Maintainers []string              `json:"maintainers,omitempty"`
+	Drivers         *GitHubTriggerDrivers `json:"drivers,omitempty"`
+	Enabled         *bool                 `json:"enabled,omitempty"`
+	Event           *GitHubTriggerEvent   `json:"event,omitempty"`
+	HandToAssistant *bool                 `json:"handToAssistant,omitempty"`
+	ImplAuth        *bool                 `json:"implAuth,omitempty"`
+	Label           *string               `json:"label,omitempty"`
+	Maintainers     []string              `json:"maintainers,omitempty"`
 
 	// MaxDurationSec 任务时限（秒）；0 = 清除（不限时）
 	MaxDurationSec *int       `json:"maxDurationSec,omitempty"`
@@ -6118,6 +6123,10 @@ type LinkCtlAgentStartParams struct {
 	//
 	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
 	ThreadID ThreadID `json:"threadId"`
+
+	// Web M19：协调档是否打开第一层（内置 `web_search` 与 `generate_image`、`read` 读 URL、环境带 `PI_PROXY` 走 orynd 的正向代理）。
+	// 只给全局助手的对话；Space 协调者省略（= false），工具与环境同 M19 之前（D10）。只有协调宿主接受。
+	Web *bool `json:"web,omitempty"`
 }
 
 // LinkCtlAgentStartParamsProfile M9：`coordinator` = 协调档（无代码工具、独立 HOME 与设置覆盖层、从零构造的环境，`cwd` 由 orbd 决定）。
@@ -9334,6 +9343,9 @@ type Schedule struct {
 	// Failures 连续失败次数
 	Failures int `json:"failures"`
 
+	// HandToAssistant 交给助手（只对 `new_thread` 有意义）
+	HandToAssistant bool `json:"handToAssistant"`
+
 	// ID `sch_<ulid>`（M9）
 	ID       ScheduleID `json:"id"`
 	KeepLast int        `json:"keepLast"`
@@ -9417,6 +9429,9 @@ type ScheduleInput struct {
 
 	// Every Example: 30m
 	Every *string `json:"every,omitempty"`
+
+	// HandToAssistant 仅 `new_thread`：交给助手——每次运行的结果合并进助手的主线，该运行的完成通知不单独推送；`thread` 模式带 true 即 400 `invalid_schedule`；缺省 false
+	HandToAssistant *bool `json:"handToAssistant,omitempty"`
 
 	// IfRev 仅 `PUT /schedules/{id}` 与 `PUT /threads/{id}/schedule` 使用（其它入口忽略）：给出时只在定时当前 `rev` 等于它时才替换，否则 409 `schedule_conflict`。
 	// 线程内定时：`0` = 只在该线程没有定时时新建；线程没有定时而给了非 0 值同样 409。省略 = 不做版本检查。

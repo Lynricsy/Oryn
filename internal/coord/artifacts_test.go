@@ -125,7 +125,7 @@ func TestArtifactToolsAssistantOnly(t *testing.T) {
 
 	names := func(inSpace bool) map[string]bool {
 		out := map[string]bool{}
-		for _, d := range ToolDefs(inSpace, false) {
+		for _, d := range ToolDefs(ToolSet{InSpace: inSpace}) {
 			out[d["name"].(string)] = true
 		}
 		return out
@@ -141,7 +141,7 @@ func TestArtifactToolsAssistantOnly(t *testing.T) {
 	for _, n := range []string{ToolScreenshotArtifact, ToolExportArtifact, ToolImportArtifact, ToolListDeletedArtifacts, ToolRestoreArtifact} {
 		errText(t, e.call(chat, n, `{"id":"art_x"}`, true), "unknown_tool")
 	}
-	for _, d := range ToolDefs(false, false) {
+	for _, d := range ToolDefs(ToolSet{}) {
 		if d["name"] == ToolCreateArtifact {
 			props := d["parameters"].(obj)["properties"].(obj)
 			assert.Contains(t, props, "projectId")

@@ -464,8 +464,11 @@ export class MockServer {
 	readonly artifacts = new MockArtifacts(this.threads, {
 		changed: () => this.broadcast({ type: "artifacts.changed" }),
 	});
-	/** 全局助手设置与 MCP 列表（M19）。 */
-	readonly assistant = new MockAssistant();
+	/** 全局助手设置、MCP 列表与助手的电脑（M19）。 */
+	readonly assistant = new MockAssistant({
+		orbs: this.orbs,
+		setOrb: (orb) => this.setOrb(orb),
+	});
 	/** Space、助手对话、定时、操作记录与协调宿主状态（M9）。 */
 	readonly automation = new MockAutomation({
 		threads: this.threads,

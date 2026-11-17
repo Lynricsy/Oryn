@@ -21,6 +21,7 @@ import {
 import { imageSrc } from "../../lib/image-src";
 import {
 	describeOrynHeader,
+	type OrynAutomationItem,
 	type OrynHeader,
 	parseOrynMessage,
 } from "../../lib/oryn-message";
@@ -316,15 +317,90 @@ function MessageMenu({
 	);
 }
 
-/** 首行小签的图标：定时用时钟，线程报告用列表，GitHub 回流 / 触发用 GitHub 标志，确认卡结果用对勾圈，其余（agent 发来的消息）用机器人。 */
+/** 首行小签的图标：定时用时钟，线程报告用列表，GitHub 回流 / 触发用 GitHub 标志，确认卡结果用对勾圈，交给助手的运行结果用铃铛，其余（agent 发来的消息）用机器人。 */
 const ORYN_ICON: Record<OrynHeader["kind"], IconName> = {
 	schedule: "clock",
 	report: "list",
 	message: "robot",
 	github: "github",
 	confirmation: "checkCircle",
+	automation: "bell",
 	unknown: "robot",
 };
+
+/** 运行结果的结局 → 徽标色调；认不出的按中性。 */
+const OUTCOME_TONE: Record<string, "ok" | "err" | "neutral" | "accent"> = {
+	completed: "ok",
+	failed: "err",
+	error: "err",
+	aborted: "neutral",
+	needs_input: "accent",
+};
+
+/**
+ * 交给助手的运行结果（M19）：逐项一张卡片——来源（定时 / 触发规则的名字）、线程胶囊（索引里的当前标题，
+ * 否则用结果里的标题快照，链到该线程）、结局徽标、回复引用块（Markdown）与出错原因。
+ */
+function AutomationResults({ items }: { items: OrynAutomationItem[] }) {
+	const { t } = useTranslation();
+	const titles = useIndex((s) => s.threads);
+	return (
+		<ul
+			data-testid="automation-results"
+			className="flex min-w-0 flex-col gap-2"
+		>
+			{items.map((it, i) => {
+				const thread = titles[it.threadId];
+				const name =
+					(thread && parseTitleCard(thread.title).text) ||
+					it.title ||
+					t("thread.untitled");
+				return (
+					<li
+						// biome-ignore lint/suspicious/noArrayIndexKey: 同一线程可能出现多次，按位置区分
+						key={i}
+						data-testid="automation-item"
+						className="flex min-w-0 flex-col gap-1.5 rounded-md border border-border bg-panel/60 px-2.5 py-2"
+					>
+						<span className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
+							{it.name && (
+								<span className="inline-flex min-w-0 items-center gap-1 text-muted">
+									<Icon
+										name={it.kind === "trigger" ? "github" : "clock"}
+										size={12}
+										className="shrink-0 text-faint"
+									/>
+									<span className="truncate">{it.name}</span>
+								</span>
+							)}
+							<Badge tone={OUTCOME_TONE[it.outcome] ?? "neutral"}>
+								{t(`oryn.outcome.${it.outcome}`, { defaultValue: it.outcome })}
+							</Badge>
+						</span>
+						<Link
+							to={`/t/${it.threadId}`}
+							className="inline-flex h-7 max-w-full items-center gap-1.5 self-start rounded-full border border-border bg-panel/70 pr-2.5 pl-2 font-medium text-fg text-xs transition-colors duration-150 hover:bg-hover"
+						>
+							{thread && <ThreadStateIcon state={thread.state} size={13} />}
+							<span className="min-w-0 truncate">{name}</span>
+						</Link>
+						{it.reply?.trim() && (
+							<blockquote className="min-w-0 border-border-strong border-l-2 pl-3 text-muted">
+								<Markdown text={it.reply} />
+							</blockquote>
+						)}
+						{it.error && (
+							<p className="flex min-w-0 items-start gap-1.5 break-words text-err text-xs">
+								<Icon name="alert" size={13} className="mt-px shrink-0" />
+								<span className="min-w-0">{it.error}</span>
+							</p>
+						)}
+					</li>
+				);
+			})}
+		</ul>
+	);
+}
 
 /**
  * 线程报告（M9）：一枚可点的线程胶囊（索引里的当前标题 + 状态，链到该线程）+ 引用块里的回复正文（Markdown）
@@ -457,6 +533,7 @@ function UserMessage({
 						error={oryn.report.error}
 					/>
 				)}
+				{oryn?.automation && <AutomationResults items={oryn.automation} />}
 				{quoted ? (
 					<>
 						<blockquote

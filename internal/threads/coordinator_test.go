@@ -119,6 +119,9 @@ type fakeCoord struct {
 	res   HostToolResult
 	// answers 收到 UIAnswered 的请求 id 与应答帧（nil = 丢弃）。
 	answers chan uiAnswer
+	// timeouts 是 HostToolTimeout 按工具名的返回值（缺省 0）；deadlines 非 nil 时收到每次调用 ctx 的截止时间。
+	timeouts  map[string]time.Duration
+	deadlines chan time.Time
 }
 
 type uiAnswer struct {
@@ -134,6 +137,10 @@ func (c *fakeCoord) EnsureOrb(context.Context) (string, error) {
 func (c *fakeCoord) AgentProfile(context.Context, string) (AgentProfile, error) { return c.prof, nil }
 
 func (c *fakeCoord) HostToolCall(ctx context.Context, call HostToolCall) HostToolResult {
+	if c.deadlines != nil {
+		d, _ := ctx.Deadline()
+		c.deadlines <- d
+	}
 	c.calls <- call
 	if c.block {
 		<-ctx.Done()
@@ -142,6 +149,8 @@ func (c *fakeCoord) HostToolCall(ctx context.Context, call HostToolCall) HostToo
 	}
 	return c.res
 }
+
+func (c *fakeCoord) HostToolTimeout(name string) time.Duration { return c.timeouts[name] }
 
 func (c *fakeCoord) UIAnswered(_ context.Context, threadID, id string, frame json.RawMessage) {
 	if c.answers != nil {
@@ -188,6 +197,11 @@ func TestCoordinatorInitFrames(t *testing.T) {
 	assert.Equal(t, prof.Tools, frames[2]["tools"])
 	work := f.thread(f.orb("ready"), StateIdle)
 	assert.Contains(t, frameTypes(initFrames(work, nil, true)), "terminal_configure", "工作线程不变")
+	// M19 3.2：主线在 open_session 之后先 clear_context，普通助手对话不发
+	th.mu.Lock()
+	th.main = true
+	th.mu.Unlock()
+	assert.Equal(t, []string{"open_session", "clear_context", "set_event_filter", "set_host_tools"}, frameTypes(initFrames(th, prof, false)))
 }
 
 // 协调线程的 agent.start 带协调档与系统提示词；所在 orb 没有 coordinator 特性时线程进入 error、不发 agent.start。
@@ -287,6 +301,30 @@ func TestHostToolCallDispatch(t *testing.T) {
 	<-coord.done
 	f.s.Close() // 等后台的工具调用返回
 	assert.Empty(t, sent(a), "取消的调用不写回结果")
+}
+
+// M19 2.4：宿主工具的调用上限按工具名取 Coordinator.HostToolTimeout，0 时用缺省的 60 秒。
+func TestHostToolTimeoutPerTool(t *testing.T) {
+	f := newFixture(t, Config{})
+	coord := newFakeCoord()
+	coord.timeouts = map[string]time.Duration{"fetch_thread_file": 5 * time.Minute}
+	coord.deadlines = make(chan time.Time, 2)
+	f.s.SetCoordinator(coord)
+	th := f.coordThread(f.orb("ready"), KindAssistant, StateIdle)
+	a := fakeAgent(16)
+	attach(th, a, apigen.AgentStatusReady)
+
+	for _, tc := range []struct {
+		tool string
+		want time.Duration
+	}{{"fetch_thread_file", 5 * time.Minute}, {"list_threads", hostToolTimeout}} {
+		start := time.Now()
+		f.s.onFrame(f.ctx, th, th.orbID, []byte(`{"type":"host_tool_call","id":"h-`+tc.tool+`","toolCallId":"tc","toolName":"`+tc.tool+`","arguments":{}}`))
+		d := <-coord.deadlines
+		<-coord.calls
+		assert.WithinDuration(t, start.Add(tc.want), d, 5*time.Second, tc.tool)
+		assert.Equal(t, "host_tool_result", recvJSON(t, a)["type"])
+	}
 }
 
 // M19 1.5：结果里的图片作为 image 块跟在 text 块之后；出错时不带图。
@@ -501,6 +539,27 @@ func TestRefreshAgentStopsAfterSettled(t *testing.T) {
 	assert.NotEqual(t, StateError, th.state, "主动停止不是故障")
 	assert.False(t, th.stopping)
 	assert.Equal(t, apigen.AgentStatusExited, th.agentStatus)
+}
+
+// RefreshAgent 落在静止之后、仍有在途命令时（如 session_settled 触发的 get_state）：最后一条应答到了就停，
+// 不等下一回合（M19 真机验收：主线换段后的下一条消息仍由旧 agent 处理）。
+func TestRefreshAgentStopsWhenPendingDrains(t *testing.T) {
+	f := newFixture(t, Config{})
+	o := newCtlOrbs(t, f.orbs)
+	f.s.orbs = o
+	th := f.coordThread(f.orb("ready"), KindAssistant, StateIdle)
+	attach(th, fakeAgent(16), apigen.AgentStatusReady)
+	th.mu.Lock()
+	th.settled = true
+	th.pending["internal-9"] = &pendingCmd{cmdType: "get_state", id: "internal-9", sent: true}
+	th.mu.Unlock()
+	f.s.RefreshAgent(f.ctx, th.id)
+	o.mu.Lock()
+	assert.Empty(t, o.calls, "还有在途命令：先不停")
+	o.mu.Unlock()
+	f.s.onFrame(f.ctx, th, th.orbID, []byte(`{"type":"response","id":"internal-9","command":"get_state","success":true,"data":{}}`))
+	c := o.nextCall(t)
+	assert.Equal(t, "agent.stop", c.method)
 }
 
 // 列表默认只有工作线程；kind=all 含协调对话；space 过滤；Thread.schedule 来自线程内定时。

@@ -79,7 +79,11 @@ describe("设置 → 自动化：定时任务", () => {
 			]),
 		);
 		const threadSec = screen.getByTestId("automation-thread-schedules");
-		expect(rowNames(threadSec)).toEqual([M9_IDS.threadSchedule]);
+		// 主线上的提醒（M19）同样是线程内定时
+		expect(rowNames(threadSec)).toEqual([
+			M9_IDS.threadSchedule,
+			M9_IDS.mainReminder,
+		]);
 		expect(threadSec).toHaveTextContent("每天早上同步上游并跑测试");
 		const patrol = projectSec.querySelector(
 			`[data-schedule="${M9_IDS.spaceSchedule}"]`,

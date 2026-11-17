@@ -21,6 +21,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/artifacts"
+	"github.com/Lynricsy/Oryn/internal/github"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/library"
 	"github.com/Lynricsy/Oryn/internal/link"
@@ -44,6 +45,8 @@ type Config struct {
 	Model string
 	// PublicURL 用于线程链接（<public_url>/t/<id>）。
 	PublicURL string
+	// AfterFunc 默认 time.AfterFunc（M19 主线的静止定时器）；测试注入以手动触发。
+	AfterFunc func(d time.Duration, f func()) (stop func())
 }
 
 // Scheduler 是定时服务（*schedule.Service 实现）。
@@ -113,6 +116,15 @@ type Service struct {
 	refreshPolicy func(ctx context.Context, orbID string) error
 	// machines 是 orb 与 Runner 的操作入口（M19，SetMachines 设置）；nil 时依赖它的助手工具回 coordinator_unavailable。
 	machines Machines
+	// comp 是助手的电脑的单飞锁与在途调用（M19 第二层）。
+	comp computerState
+	// projects / triggers 是项目与 GitHub 触发规则的操作入口（M19，SetProjects / SetTriggers 设置）；nil 时对应的助手工具
+	// 回 coordinator_unavailable。
+	projects Projects
+	triggers Triggers
+	// shares / portals 是线程分享与 Portal 公开的入口（M19，SetShares 设置）；portals 为 nil 表示没有配置 Portal。
+	shares  ThreadShares
+	portals PortalShares
 
 	ensureMu sync.Mutex
 	// createMu 串行化 orb 内 thread.create 的「计数 + Create」（契约 C6.1）：并发请求不能都通过额度检查。
@@ -129,6 +141,12 @@ type Service struct {
 	// recheck 是有非 tagged 登记、上次 RecoveredOutcome 为 !ok 的线程：条目入库后重查（契约 C1.7）。
 	recheck   map[string]bool
 	questions map[string]string
+	// mainID / mainEp 是主线 id 与当前一段的计数和静止定时器（M19；Observer 回调据此识别主线，不读库）。
+	mainID string
+	mainEp mainEpisode
+	// inbox 是主线收件（交给助手的运行结果）的合并定时器（M19 步骤 3.3，mu 保护）；inboxMu 串行化投递。
+	inbox   inboxState
+	inboxMu sync.Mutex
 	wake      chan struct{}
 	// confirmers 是确认卡动作 → 主人批准后的执行函数（onConfirm 在 New 里登记，之后只读）。
 	confirmers map[string]confirmExec
@@ -137,6 +155,10 @@ type Service struct {
 
 	// afterReport（仅测试）在一次回报处理完之后调用。
 	afterReport func(threadID string)
+	// afterEpisode（仅测试）在主线一段结束、调用 RefreshAgent 之前调用（reason 为 idle / turns）。
+	afterEpisode func(threadID, reason string)
+	// sentInbox（仅测试）在一条合并的收件消息投递成功、标记已投递之后调用。
+	sentInbox func(mainID, text string)
 	// afterSend（仅测试）在 send_message 的 Deliver 成功返回之后、释放 repMu 之前调用。
 	afterSend func()
 	// sentReport（仅测试）在一条回报投递成功之后调用（持 repMu）。
@@ -152,6 +174,12 @@ func New(cfg Config, st *store.Store, th *threads.Service, o *orbs.Service, host
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+	if cfg.AfterFunc == nil {
+		cfg.AfterFunc = func(d time.Duration, f func()) func() {
+			t := time.AfterFunc(d, f)
+			return func() { t.Stop() }
+		}
+	}
 	s := &Service{
 		cfg: cfg, st: st, th: th, orbs: o, host: host, sched: sched,
 		lim: newLimiter(), questions: map[string]string{}, armed: map[string]armedReport{}, recheck: map[string]bool{},
@@ -159,6 +187,14 @@ func New(cfg Config, st *store.Store, th *threads.Service, o *orbs.Service, host
 	}
 	// 确认卡的执行函数（M19）
 	s.onConfirm(ToolDeleteThread, s.confirmDeleteThread)
+	s.onConfirm(ToolDeleteProject, s.confirmDeleteProject)
+	s.onConfirm(ToolDeleteSpace, s.confirmDeleteSpace)
+	s.onConfirm(ToolDeleteTrigger, s.confirmDeleteTrigger)
+	s.onConfirm(ToolDeleteOrb, s.confirmDeleteOrb)
+	s.onConfirm(string(apigen.ActionDeleteSchedule), s.confirmDeleteSchedule)
+	s.onConfirm(ToolShareThread, s.confirmShareThread)
+	s.onConfirm(ToolSharePortal, s.confirmSharePortal)
+	s.onConfirm(ToolPublishArtifact, s.confirmPublishArtifact)
 	if o != nil {
 		s.registerOrbMethods(o.HandleRequest)
 		s.refreshPolicy = func(ctx context.Context, orbID string) error {
@@ -166,6 +202,8 @@ func New(cfg Config, st *store.Store, th *threads.Service, o *orbs.Service, host
 			return err
 		}
 	}
+	// 主线 id 在构造时读出：Observer 回调（主线分段）不读库
+	s.loadMainID(context.Background())
 	return s
 }
 
@@ -184,6 +222,8 @@ func (s *Service) Run(ctx context.Context) {
 	defer trim.Stop()
 	sweep := time.NewTicker(confirmSweepEvery)
 	defer sweep.Stop()
+	inbox := time.NewTicker(inboxRetryEvery)
+	defer inbox.Stop()
 	for {
 		s.processReports(ctx)
 		select {
@@ -194,6 +234,8 @@ func (s *Service) Run(ctx context.Context) {
 			s.trimActions(ctx)
 		case <-sweep.C:
 			s.expireConfirmations(ctx)
+		case <-inbox.C:
+			s.retryInbox(ctx)
 		}
 	}
 }
@@ -320,8 +362,18 @@ func errCode(err error) string {
 	if errors.As(err, &le) {
 		return le.Code
 	}
+	var ge *github.Error
+	if errors.As(err, &ge) {
+		return ge.Code
+	}
 	if oe, ok := artifacts.AsOpError(err); ok {
 		return oe.Code
+	}
+	if code := cfgErrCode(err); code != "" {
+		return code
+	}
+	if code := shareErrCode(err); code != "" {
+		return code
 	}
 	if code := orbErrCode(err); code != "" {
 		return code
@@ -368,8 +420,15 @@ func errMessage(err error) string {
 	if errors.As(err, &le) {
 		return le.Message
 	}
+	var ge *github.Error
+	if errors.As(err, &ge) {
+		return ge.Message
+	}
 	if oe, ok := artifacts.AsOpError(err); ok {
 		return oe.Message
+	}
+	if msg := shareErrMessage(err); msg != "" {
+		return msg
 	}
 	if orbErrCode(err) != "" {
 		// orbs 的错误文本带 "orbs: " 前缀

@@ -1,8 +1,9 @@
 /**
- * 设置 → 全局助手（M19 步骤 1.6）：两张卡片。
+ * 设置 → 全局助手（M19 步骤 1.6 / 4.4）：三张卡片。
  * 1. 联网：助手沙箱经 orynd 代理访问公网的总开关（关掉后 `web_search` 与读网页失败）。
  * 2. MCP 服务器：全局 `mcp.json` 里的服务器——名字、主机、传输方式、不可用的原因，可用的逐个开关。
- * 两处都整体 PUT 设置；请求进行中先显示要改成的值。改动后助手对话在静止时用新配置重启。
+ * 3. 助手的电脑：创建它时用的 provider 与 orb 类型（都留空走 orb 的默认解析）；只影响下一次创建。
+ * 都整体 PUT 设置；请求进行中先显示要改成的值。改动后助手对话在静止时用新配置重启。
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -13,9 +14,17 @@ import {
 	useAssistantSettings,
 	usePutAssistantSettings,
 } from "../../api/assistant-queries";
+import { useProviders } from "../../api/queries";
 import { Badge, Card, ListRow } from "../../components/ui/data";
 import { Icon } from "../../components/ui/icons";
-import { ErrorText, Spinner, Toggle } from "../../components/ui/primitives";
+import { typeHasDocker } from "../../components/ui/OrbBadges";
+import {
+	ErrorText,
+	Field,
+	Select,
+	Spinner,
+	Toggle,
+} from "../../components/ui/primitives";
 
 function ServerRow({
 	server,
@@ -77,6 +86,7 @@ export default function AssistantSettings(): ReactNode {
 	const settings = useAssistantSettings();
 	const servers = useAssistantMcpServers();
 	const put = usePutAssistantSettings();
+	const providers = useProviders();
 	// 请求进行中先显示要改成的值
 	const current: Settings | undefined = put.isPending
 		? put.variables
@@ -89,6 +99,10 @@ export default function AssistantSettings(): ReactNode {
 		const rest = current.disabledMcpServers.filter((n) => n !== name);
 		save({ disabledMcpServers: on ? rest : [...rest, name] });
 	};
+	const computer = current?.computer ?? {};
+	const provider = providers.data?.providers.find(
+		(p) => p.name === computer.provider,
+	);
 	return (
 		<>
 			<Card title={t("assistantSettings.webTitle")} icon="globe">
@@ -137,6 +151,67 @@ export default function AssistantSettings(): ReactNode {
 							/>
 						))}
 					</ul>
+				)}
+			</Card>
+			<Card title={t("assistantSettings.computerTitle")} icon="laptop">
+				<p className="text-faint text-xs">
+					{t("assistantSettings.computerHint")}
+				</p>
+				{settings.isPending ? (
+					<Spinner />
+				) : (
+					<div className="mt-2 grid gap-3 sm:grid-cols-2">
+						<Field label={t("assistantSettings.computerProvider")}>
+							<Select
+								data-testid="computer-provider"
+								value={computer.provider ?? ""}
+								disabled={put.isPending || !current}
+								onChange={(e) =>
+									// 换 provider 时类型回到默认（各 provider 的类型表不同）
+									save({
+										computer: e.target.value
+											? { provider: e.target.value }
+											: {},
+									})
+								}
+							>
+								<option value="">
+									{t("assistantSettings.computerDefault")}
+								</option>
+								{providers.data?.providers.map((p) => (
+									<option key={p.id} value={p.name}>
+										{p.name}
+									</option>
+								))}
+							</Select>
+						</Field>
+						<Field label={t("assistantSettings.computerOrbType")}>
+							<Select
+								data-testid="computer-orb-type"
+								value={computer.orbType ?? ""}
+								disabled={put.isPending || !current}
+								onChange={(e) =>
+									save({
+										computer: {
+											...computer,
+											orbType: e.target.value || undefined,
+										},
+									})
+								}
+							>
+								<option value="">
+									{t("assistantSettings.computerDefault")}
+								</option>
+								{(provider?.orbTypes ?? []).map((ot) => (
+									<option key={ot.name} value={ot.name}>
+										{typeHasDocker(ot)
+											? `${ot.name} · ${t("accel.docker")}`
+											: ot.name}
+									</option>
+								))}
+							</Select>
+						</Field>
+					</div>
 				)}
 			</Card>
 		</>

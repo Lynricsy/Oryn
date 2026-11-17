@@ -4,8 +4,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
+	"github.com/Lynricsy/Oryn/internal/agentcfg"
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/link"
 )
@@ -19,23 +21,29 @@ import (
 var ErrNoRedial = errors.New("orbdrt: link cannot be redialed")
 
 // coordinatorOverlay 是协调档 omp 的设置覆盖层（--config）：强制关闭会读写工作区文件或执行代码的功能。
-// 生图开着（M19 第一层）：结果写进 TMPDIR（~/tmp/），出站与搜索一样经 orynd 的代理。
-const coordinatorOverlay = `autolearn: { enabled: false }
+// web（M19 第一层，只给全局助手）时生图开着：结果写进 TMPDIR（~/tmp/），出站与搜索一样经 orynd 的代理；
+// Space 协调者（D10）生图保持关闭。
+func coordinatorOverlay(web bool) string {
+	return `autolearn: { enabled: false }
 memory: { backend: "off" }
 checkpoint: { enabled: false }
 compaction: { experimentalContextManagement: false }
 goal: { enabled: false }
 plan: { enabled: false }
-generate_image: { enabled: true }
+generate_image: { enabled: ` + strconv.FormatBool(web) + ` }
 lsp: { enabled: false }
 mcp: { enableProjectConfig: false }
 marketplace: { autoUpdate: "off" }
 startup: { checkUpdate: false }
 bash: { direnv: "off" }
 `
+}
 
-// coordinatorTools 是协调档 omp 开的内置工具（--tools）。
-const coordinatorTools = "read,write,web_search,generate_image"
+// 协调档 omp 开的内置工具（--tools）：Space 协调者只有 read / write（M13）；全局助手（web）另有 web_search 与 generate_image。
+const (
+	coordinatorTools    = "read,write"
+	coordinatorWebTools = "read,write,web_search,generate_image"
+)
 
 // coordinatorMethods 是协调宿主接受的 ctl 方法；其余一律 method_not_found。
 var coordinatorMethods = map[string]bool{
@@ -81,8 +89,13 @@ func (r *Runtime) coordinatorAgentSpec(p apigen.LinkCtlAgentStartParams, dir str
 			return nil, "", nil, ctlErr("failed", "%v", err)
 		}
 	}
-	overlay := filepath.Join(base, "overlay.yml")
-	if err := writeFileAtomic(overlay, []byte(coordinatorOverlay), 0o600); err != nil {
+	// 两种覆盖层分文件写：全局助手与 Space 协调者的 agent 可能同时启动
+	web := p.Web != nil && *p.Web
+	overlay, tools := filepath.Join(base, "overlay.yml"), coordinatorTools
+	if web {
+		overlay, tools = filepath.Join(base, "overlay-web.yml"), coordinatorWebTools
+	}
+	if err := writeFileAtomic(overlay, []byte(coordinatorOverlay(web)), 0o600); err != nil {
 		return nil, "", nil, ctlErr("failed", "write overlay: %v", err)
 	}
 	// 系统提示词写成文件、argv 只带路径（M9 L4）：同 uid 的进程与 /proc/<pid>/cmdline 看不到正文。omp 对不含换行的
@@ -91,11 +104,11 @@ func (r *Runtime) coordinatorAgentSpec(p apigen.LinkCtlAgentStartParams, dir str
 	if err := writeFileAtomic(promptFile, []byte(*p.SystemPrompt), 0o600); err != nil {
 		return nil, "", nil, ctlErr("failed", "write system prompt: %v", err)
 	}
-	// 内置工具（M13 起 read / write：读文件库、写 ~/library/out/；M19 第一层加 web_search 与 generate_image，read 也能读 URL）：
-	// --no-tools 先关掉全部，--tools 再精确列出。MCP 与宿主工具不受 --tools 限制。
+	// 内置工具（M13 起 read / write：读文件库、写 ~/library/out/；M19 第一层给全局助手加 web_search 与 generate_image，
+	// read 也能读 URL）：--no-tools 先关掉全部，--tools 再精确列出。MCP 与宿主工具不受 --tools 限制。
 	args = []string{
 		"--mode", "rpc-ui", "--cwd", cwd, "--session-dir", dir,
-		"--no-tools", "--tools", coordinatorTools, "--no-skills", "--no-extensions", "--no-rules", "--no-context-files", "--no-lsp",
+		"--no-tools", "--tools", tools, "--no-skills", "--no-extensions", "--no-rules", "--no-context-files", "--no-lsp",
 		"--config", overlay, "--system-prompt", promptFile,
 	}
 	env = map[string]string{
@@ -110,10 +123,13 @@ func (r *Runtime) coordinatorAgentSpec(p apigen.LinkCtlAgentStartParams, dir str
 		"PI_FILE_LOCK_BACKEND": "sidecar",
 		"ORYN_THREAD_ID":       p.ThreadID,
 	}
-	// 出站（M19）：omp 的全局 fetch 经 PI_PROXY 走 orynd 的正向代理（https 用 CONNECT），回环与内网地址由 omp 直连
-	// （沙箱里只有回环 7811 连得通）；是否放行、放行哪些目标由控制面的出站策略决定。
-	if r.egressLn != nil {
-		env["PI_PROXY"] = "http://" + r.egressLn.Addr().String()
+	// 出站（M19，只给全局助手）：omp 的全局 fetch 经 PI_PROXY 走 orynd 的正向代理（https 用 CONNECT），回环与内网地址
+	// 由 omp 直连（沙箱里只有回环 7811 连得通）；是否放行、放行哪些目标由控制面的出站策略决定。MCP 服务器的地址前缀
+	// 也只给全局助手（mcp.json 里写的是 ${ORYN_MCP_BASE}/mcp/m<i>）。Space 协调者两者都没有：连不到公网、没有 MCP（D10）。
+	if web && r.egressLn != nil {
+		base := "http://" + r.egressLn.Addr().String()
+		env["PI_PROXY"] = base
+		env[agentcfg.MCPBaseEnv] = base
 	}
 	return args, cwd, env, nil
 }

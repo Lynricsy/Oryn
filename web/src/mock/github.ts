@@ -428,6 +428,7 @@ export class MockGitHub {
 					prompt: TRIGGER_PRESETS[0].prompt,
 					enabled: true,
 					announce: true,
+					handToAssistant: false,
 					drivers: "writers_and_author",
 					maintainers: ["oryn-owner"],
 					models: [{ provider: "anthropic", id: "claude-sonnet-4-5" }],
@@ -928,6 +929,7 @@ export class MockGitHub {
 				prompt: String(b.prompt ?? ""),
 				enabled: b.enabled ?? true,
 				announce: b.announce ?? true,
+				handToAssistant: b.handToAssistant ?? false,
 				drivers: "writers_and_author",
 				autocloseHours: 4,
 				...m15Fields(b),
@@ -969,6 +971,9 @@ export class MockGitHub {
 				...(b.prompt !== undefined ? { prompt: b.prompt } : {}),
 				...(b.enabled !== undefined ? { enabled: b.enabled } : {}),
 				...(b.announce !== undefined ? { announce: b.announce } : {}),
+				...(b.handToAssistant !== undefined
+					? { handToAssistant: b.handToAssistant }
+					: {}),
 				...m15Fields(b),
 				updatedAt: Date.now(),
 			};

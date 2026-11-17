@@ -212,7 +212,7 @@ orb 内的 git 请求经 orbd 的本机代理（`127.0.0.1:7811`）到达控制�
 
 ## 8. 协调宿主（Space 与全局助手）
 
-Space 协调者与全局助手的 agent 不跑在 orb 里，而是跑在控制面这台机器上：orynd 内置一个名为 `@host` 的 provider（在 provider 列表里看不到），需要时拉起子进程 `orynd coordinator-host`，子进程先把自己关进操作系统沙箱，再以无工具的协调档启动 omp（每个协调对话一个进程）。子进程唯一的对外通道是 orynd 交给它的 socketpair；模型请求经它内部的代理端口回到 orynd，由 orynd 注入真实密钥，协调 agent 拿不到任何密钥。
+Space 协调者与全局助手的 agent 不跑在 orb 里，而是跑在控制面这台机器上：orynd 内置一个名为 `@host` 的 provider（在 provider 列表里看不到），需要时拉起子进程 `orynd coordinator-host`，子进程先把自己关进操作系统沙箱，再以协调档启动 omp（每个协调对话一个进程）。子进程唯一的对外通道是 orynd 交给它的 socketpair；模型请求经它内部的代理端口回到 orynd，由 orynd 注入真实密钥，协调 agent 拿不到任何密钥。全局助手（不含 Space 协调者）的联网与 MCP 也走同一个代理端口，由 orynd 的正向代理放行公网目标，见下文「全局助手联网与 MCP（M19）」。
 
 ### 安装 omp
 
@@ -237,9 +237,10 @@ coordinator:
   egress_port: 7811                     # 沙箱内模型代理监听的回环端口
   verify_omp: true
   model: ""                             # 协调对话的默认模型（provider/id）；空 = omp 配置的默认模型
+  web_allow_hosts: []                   # M19：全局助手联网时额外允许连接的非公网目标（小写 host 或 host:port），见下文
 ```
 
-`dir` 下的内容：`bin/omp`（`omp_path` 的 0555 副本，源文件大小或 mtime 变了才重拷）、`homes/`（0755，属于 orynd）与其下每个协调 orb 一个的 `homes/<orb id>/`（0700，属于降权账号，协调 agent 唯一可写的目录：会话文件、`.omp/agent/` 里下发的 `models.yml` 与 `config.yml`、natives 缓存、`.oryn/coordinator/prompts/<线程 id>.md` 系统提示词）、`host.log`（子进程的 stderr，超过 5 MiB 轮转为 `host.log.1`）。`dir` 必须属于 orynd 的运行用户，且不能被组或其他人写。
+`dir` 下的内容：`bin/omp`（`omp_path` 的 0555 副本，源文件大小或 mtime 变了才重拷）、`homes/`（0755，属于 orynd）与其下每个协调 orb 一个的 `homes/<orb id>/`（0700，属于降权账号，协调 agent 唯一可写的目录：会话文件、`.omp/agent/` 里下发的 `models.yml` 与 `config.yml`（有助手可用的 MCP 服务器时还有 `mcp.json`）、natives 缓存、`.oryn/coordinator/prompts/<线程 id>.md` 系统提示词、`.oryn/coordinator/overlay.yml` 与 `overlay-web.yml` 两份覆盖层、生图结果所在的 `tmp/`）、`host.log`（子进程的 stderr，超过 5 MiB 轮转为 `host.log.1`）。`dir` 必须属于 orynd 的运行用户，且不能被组或其他人写。
 
 每个协调 orb 有自己的 HOME：删除一个协调 orb 只删它自己的 `homes/<orb id>/`；拉起新一代协调 orb 之前先停掉旧一代的子进程，所以同一时刻至多一个协调宿主子进程。旧版本的 `<dir>/home`（所有协调 orb 共用）在 orynd 启动时迁到 `homes/<当前协调 orb>/`，没有协调 orb 时删除。
 
@@ -272,8 +273,8 @@ orynd 以 root 运行时，沙箱降权到一个只属于这个 Oryn 实例的�
 
 | 层 | 内容 |
 |---|---|
-| 启动开关 | omp 以 `--no-tools --tools read,write --no-skills --no-extensions --no-rules --no-context-files --no-lsp` 启动（内置工具只有 `read` / `write`，供全局助手读文件库、写 `~/library/out/`），带一份强制关闭 autolearn、memory、checkpoint、goal、plan、generate_image、lsp、项目 MCP、marketplace 自动更新、启动检查更新、direnv 的覆盖层；环境变量从零构造，只有 `HOME PATH LANG TMPDIR PI_RPC_EMIT_TITLE PI_NOTIFICATIONS OTEL_SDK_DISABLED PI_FILE_LOCK_BACKEND ORYN_THREAD_ID`（`PI_FILE_LOCK_BACKEND=sidecar` 让 omp 的原生文件锁改用 home 里的旁路文件加 OFD 锁，不再用 abstract unix socket） |
-| 文件 | 只下发 `models.yml` 与 `config.yml`（`models.yml` 里只有占位密钥），每次协调 agent 启动前重写一遍（助手用 `write` 改过的会被还原）；全局助手文件库同步到 `~/library/{shared,threads}/`（只读）。`write` 能写 HOME 里任何地方，系统提示要求助手只写 `~/library/out/`；cwd 是空目录 |
+| 启动开关 | omp 以 `--no-tools --tools <内置工具> --no-skills --no-extensions --no-rules --no-context-files --no-lsp` 启动。Space 协调者的内置工具只有 `read,write`；全局助手的是 `read,write,web_search,generate_image`（`read` 也能读 URL）。两者各带一份覆盖层：强制关闭 autolearn、memory、checkpoint、goal、plan、lsp、项目 MCP、marketplace 自动更新、启动检查更新、direnv；`generate_image` 只在全局助手的覆盖层（`overlay-web.yml`）里打开，生成的图片写进 `~/tmp/`。环境变量从零构造，只有 `HOME PATH LANG TMPDIR PI_RPC_EMIT_TITLE PI_NOTIFICATIONS OTEL_SDK_DISABLED PI_FILE_LOCK_BACKEND ORYN_THREAD_ID`（`PI_FILE_LOCK_BACKEND=sidecar` 让 omp 的原生文件锁改用 home 里的旁路文件加 OFD 锁，不再用 abstract unix socket）；全局助手另有 `PI_PROXY` 与 `ORYN_MCP_BASE`，两者都是 `http://127.0.0.1:<egress_port>` |
+| 文件 | 下发 `models.yml` 与 `config.yml`（`models.yml` 里只有占位密钥），有助手可用的 MCP 服务器时再加一份 `mcp.json`（只有类型与代理地址，不含任何请求头）；每次协调 agent 启动前重写一遍（助手用 `write` 改过的会被还原）。全局助手文件库同步到 `~/library/{shared,threads}/`（只读）。`write` 能写 HOME 里任何地方，系统提示要求助手只写 `~/library/out/`；能存进文件库的只有 `~/library/out/` 与 `~/tmp/` 下的文件；cwd 是空目录 |
 | 控制面 | 协调线程的 RPC 命令走白名单；`bash`、`eval`、终端、设置写入等命令到不了 omp |
 | Landlock | 只有本 orb 的 `<dir>/homes/<orb id>` 可写（不可执行）；可执行的只有 omp 本体与它的 ELF 解释器；只读可见 `/usr/lib`、`/lib*`、`/usr/share/zoneinfo`、`/proc`、`/sys/devices/system/cpu`、`/sys/fs/cgroup` 与少量 `/etc` 文件（清单见 `docs/protocol.md`「M9」）；ABI ≥ 4 时 TCP 只能 connect `egress_port`、不能 bind 任何端口（代理端口由子进程在施加沙箱之前监听好再交给 orbd）；ABI ≥ 6 时信号不出沙箱 |
 | seccomp | 非本机架构与 x32 调用直接杀进程；`clone3` 回 `ENOSYS`；`socket` 只放行 TCP（`AF_INET` / `AF_INET6` 的 `SOCK_STREAM`），`AF_UNIX` 一律拒绝，netlink、UDP、MPTCP 等也拒绝；`socketpair` 只放行 `AF_UNIX` + `SOCK_STREAM`（Bun 启动时要建一对，拒绝会直接 abort；这对 socket 生来已连接，connect / sendto 别处都失败），datagram 与 seqpacket 拒绝；`prlimit64`、`sched_setaffinity`、`sched_setscheduler`、`sched_setparam`、`sched_setattr` 只能作用于自身（pid 为 0），`setpriority` 只能 `PRIO_PROCESS` + 自身，`ioprio_set` 只能 `IOPRIO_WHO_PROCESS` + 自身（同一用户时改不了 orynd 等进程的资源上限与调度）；带 `CLONE_NEW*` 的 `clone`、`unshare` / `setns` / 挂载族、`ptrace` 与跨进程内存访问、按路径的 `truncate`、`bpf`、`io_uring`、`keyctl`、内核模块、SysV IPC 等一律拒绝 |
@@ -298,8 +299,41 @@ omp 的原生文件锁（会话所有权租约等）在 Linux 上默认 bind 一
 
 root 或 Docker 部署：`coordinator.dir` 放在降权账号进得去的地方（容器里挂一个卷），`data_dir` 保持 0700。专用账号建在容器里时，重建容器后会再建一次（uid 可能不同，HOME 属主随之改过来）。
 
+### 全局助手联网与 MCP（M19）
+
+全局助手的对话（含主线）启动 agent 时，orynd 在 `agent.start` 里带 `web`。只有带了它，协调宿主才给这个 omp 打开 `web_search` 与 `generate_image`、用 `overlay-web.yml`，并在环境里设 `PI_PROXY` 与 `ORYN_MCP_BASE`。Space 协调者的 agent 不带 `web`：内置工具仍只有 `read` / `write`，生图关闭，环境里没有这两个变量，所以连不到公网，也没有 MCP 工具，与 M19 之前相同。
+
+**出站路径**：沙箱里仍然只能连回环上的 `egress_port`。omp 的全局 `fetch` 按 `PI_PROXY` 把请求交给这个端口：https 目标发 `CONNECT host:port` 建隧道，http 目标发代理形式的请求（`GET http://host/…`）。请求经 link 回到 orynd 的出站代理，由 orynd 解析域名、连接上游。代理不解密 TLS：https 的证书由沙箱里的 omp 用 Bun 自带的根证书校验。`web_search`（grounded 搜索）与 `generate_image` 调用的模型按全局 omp 配置的模型角色选择，模型请求照常经模型路由注入密钥。
+
+**公网判定**：orynd 在建立连接的那一刻对实际要连的 IP 做判定（`net.Dialer.Control`），不对域名做。以下地址一律拒绝，回 403 `destination is not a public address`，并以 Info 级记一条带目标主机的日志：
+
+- 回环、私网（`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、`fc00::/7`）；
+- 链路本地（`169.254.0.0/16`，含云厂商元数据地址；`fe80::/10`）；
+- 组播、未指定地址、`0.0.0.0/8`、CGNAT `100.64.0.0/10`、基准测试网段 `198.18.0.0/15`。
+
+因为判定针对实际连接的 IP，解析到内网的域名（例如 `127.0.0.1.nip.io`）和 DNS 重绑定同样被拒。直接写内网或回环的字面 IP 时，omp 的代理包装层不走代理、直接连接，这在沙箱里本来就连不通。其它拨号错误回 502，拨号超时 10 秒。
+
+**`coordinator.web_allow_hosts`**：公网判定的例外清单，元素是小写的 `host` 或 `host:port`，与请求里的主机名比较。命中的目标不做公网判定，用来放行主人明确想让助手访问的内网服务（如内网 wiki）。它只对域名有意义（字面 IP 不经代理，见上）。只在 orynd 启动时读取，改动后重启 orynd。清单里的服务对助手完全可达：网页内容里的注入指令同样能让助手去读它们，只放你愿意让助手读到的地址。
+
+**联网总开关**：「设置 → 全局助手 → 联网」（`PUT /api/v1/settings/assistant` 的 `webAccess`，缺省开）。关闭后出站代理对一切 CONNECT 与代理形式的请求回 403 `web access is turned off`，`web_search` 与读网页随之失败，系统提示词也会告诉助手联网已关。保存后 orynd 立刻刷新协调宿主的出站策略，并让所有未归档的助手对话在静止后用新配置重启 agent。总开关不管 MCP，MCP 服务器在同一页面逐个开关。
+
+**MCP 路由**：助手用的 MCP 服务器来自全局 omp 配置里的 `mcp.json`（「设置 → Agent」或 `oryn config push`），orynd 解析它：
+
+- 可用：传输是 HTTP 或 SSE、请求头能由 orynd 注入的服务器。头里的 `${VAR}` 与 `${VAR:-默认}` 按 env 模式的密钥展开。
+- 不可用，并在设置页标出原因：stdio（本地进程型）、需要 OAuth（`auth` / `oauth` 字段）、头的值由命令生成（以 `!` 开头）、头引用了不存在的变量、地址无效。
+
+可用且没被关掉的服务器按名字排序后依次得到路由键 `m0`、`m1`……。下发到沙箱的 `mcp.json` 每项只有 `{"type": "http" | "sse", "url": "${ORYN_MCP_BASE}/mcp/m<i>"}`，不含任何头；omp 展开地址里的环境变量，所以只有带 `ORYN_MCP_BASE` 的全局助手连得上（Space 协调者没有这个变量，地址保持字面量，连不上）。出站代理收到 `/mcp/m<i>/…` 后转发到原地址：先丢掉入站的 `Authorization`，再注入配置的头；名字含 auth、token、key、secret、cookie 的头，其值若出现在响应里会被抹掉。MCP 路由不做公网判定（主人配置的地址可以在内网），也不受联网总开关约束。全局 `mcp.json` 变化后，助手对话在静止后重启并重新下发。
+
+### 助手的电脑（M19）
+
+助手的电脑是一台普通 orb，不在协调宿主里：provider 与类型取「设置 → 全局助手」里的选择，留空按默认解析；全库至多一台（库里 `orbs.computer = 1`），不进预热池、不参与项目快照，线程不能挂上去（`orb_is_computer`）。它的网络、出站策略与密钥下发和无项目的普通 orb 相同，第 7 节「网络隔离」同样适用。orbd 在里面惰性拉起一个 `omp --mode rpc --no-session` 当工具执行器，不调模型（只有 `find` 会用 judge 模型角色）。执行器连续 30 分钟没有调用就退出，下次调用再拉起；orb 本身照常空闲冻结，助手调用前由 orynd 唤醒，等待就绪最多 90 秒。`/assistant/computer` 页面的「重置」删除这台 orb，里面的文件随之丢失，下次用到时重建。
+
+`computer_*` 调用不写审计（同 artifact 工具：操作只落在助手自己的电脑上）。但电脑里能执行任意命令、能联网，助手读到的不可信内容可以经它产生外部副作用；不希望这样时，在网络隔离上收紧这台 orb，或不要让助手用电脑处理不可信内容。
+
 ### 残余风险
 
+- 出站策略按协调宿主（一台协调 orb）生效，不按 agent 区分：Space 协调者与全局助手的 omp 连的是同一个代理端口。Space 协调者连不到公网、没有 MCP，靠的是它的 omp 没有 `PI_PROXY` 与 `ORYN_MCP_BASE`、内置工具只有 `read` / `write`，而不是代理按调用方拒绝。
+- 全局助手会读网页、搜索结果、MCP 返回与工作线程的输出。这些内容都以不可信数据交给它，但注入的指令仍可能诱导它做事：给工作线程或 Runner 线程发消息、读写线程文件、在自己的电脑上执行命令、经联网把读到的内容发出去。删除与对外公开要主人点确认卡；新建、修改、归档、发消息等写类宿主工具直接执行并写审计，可在自动化操作记录里查看；联网、MCP、`computer_*` 以及 artifact 的创建与修改不写审计，只在对话转录里留下工具卡。
 - 没有网络命名空间时，沙箱内进程能向**任意地址**的 `egress_port` 端口发起 TCP 连接（Landlock 只按端口管）。
 - `/proc` 只读可见，其它进程的命令行可读（环境与内存读不到）。
 - 不防资源耗尽（内存、磁盘、CPU）。
@@ -427,7 +461,7 @@ runner 是你自己的机器（笔记本、工作站、NAS）。在那台机器�
 
 - **runner 完全信任控制面。** 能操作 orynd 的人（网页会话、设备令牌、或攻破了 orynd 的人），都能以 runner 进程的系统用户在那台机器上执行任意命令。agent 本身不受目录限制，`--dir` 约束的只是面板能看到什么、线程能选什么。所以：只在你信任 orynd 的机器上运行 runner；用一个权限有限的普通用户运行；`orbd` 以 root 运行时会直接拒绝（`--allow-root` 才放行）；`ORYN_URL` 是非回环的 `http://` 时会告警，请走 HTTPS。
 - **反方向不信任：控制面的密钥不去 runner。** orynd 不往 runner 下发 omp 配置、env 密钥、模型 key，也不改那台机器的 git 配置。唯一的出站通道是记忆（第 14 节）：记忆开着时，runner 在 `127.0.0.1:7811` 上开一个本地端口，orynd 只放行 `/memory/` 网关的路径，其余路径一律 403；Hindsight 的 key 由 orynd 注入，不进 runner。runner 的 link 只接受转录同步（`entries.cursors` / `entries.append`）、artifact 工具调用（`artifact.call`，runner 线程只看得到自己建过或写过的 artifact）和状态类通知，`thread.create`、`schedule.*` 等其余请求一律回 `runner_unsupported`，所以 runner 也没法借别的线程把密钥绕回来；hello 里的主机名、目录、特性等字段有长度和数量上限，超出的部分截掉。orbd 在 runner 上只写自己目录下的 `~/.oryn/orbd/extensions/oryn-orb.ts`（只注册 artifact 工具）与记忆开着时的 `~/.oryn/memory-overlay.yml`，前者以 `-e`、后者以 `--config` 加载，不碰 `~/.agents/skills` 与你自己的 omp 扩展。
-- **助手不碰 runner 线程。** 助手（协调者）的 send_message、read_thread、归档、定时等工具对 runner 线程一律回 `runner_unsupported`：普通 orb 里产出的内容不能经助手转成你机器上的指令。runner 线程只能由你自己发消息。
+- **谁能操作 runner 线程。** 除了你自己，只有全局助手（M19）：它可以像你一样在 runner 上新建线程（指定目录、worktree 或共用目录），给 runner 线程发消息、读取、归档、中止、改模型、fork（只能共用环境）、设线程内定时，读写线程目录里的文件、查看改动；删除要你点确认卡。Space 协调者的 send_message、read_thread、归档、定时等工具对 runner 线程仍一律回 `runner_unsupported`，orb 内 agent 只能联系自己的父子线程：普通 orb 里产出的内容不能经它们转成你机器上的指令。全局助手会读网页与工作线程的输出，注入的指令有可能经它到达 runner 线程（见第 8 节「残余风险」）。
 - **面板按声明收窄**：Files / Changes 只能看到线程工作目录里面的内容；线程的目录必须落在 `--dir` 声明的目录里（或 Oryn 在它旁边建的 worktree）；终端只有带 `--terminal` 才开。runner 上没有 Portal、受管服务、Desktop、`oryn sync`、项目快照，不能冻结、删除或「连环境 fork」，也不能绑浏览器 Profile。
 - runner 令牌（`ort_…`）库里只存哈希。在「设置 → Runner」里删除 runner 即吊销，已连着的 link 会被断开。
 
@@ -843,8 +877,8 @@ bank 里已有记忆时，管理页的嵌入模型与维度只读。只有勾选
 
 | 环节 | 实测 |
 |---|---|
-| 回填 78 个会话（116 个文档、443 条记忆）：写入 + 整理 | 约 130 万 token |
-| 首次主题整理：一次 reflect + 12 个主题全量生成 | 约 395 万 token（每个主题约 32 万，输入约一半命中缓存） |
+| 回填 79 个会话（117 个文档、453 条记忆）：写入 + 整理 | 约 135 万 token |
+| 首次主题整理：一次 reflect + 9 个主题全量生成 | 约 293 万 token（每个主题约 31 万，输入约一半命中缓存） |
 | 之后的日常 | 只刷新有新事实的主题（增量），同一主题间隔不少于 20 小时，「主人画像」每周至少刷新一次 |
 | 每次 `recall_memory` 的判断模型重排（50 条候选） | 探查时按发布价约 $0.0008 |
 

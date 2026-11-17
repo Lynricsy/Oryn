@@ -207,9 +207,10 @@ func TestPlanCoordinatorMCPAndWeb(t *testing.T) {
 		MCPServers map[string]map[string]any `json:"mcpServers"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(got), &doc))
+	// 地址前缀是 ${ORYN_MCP_BASE}：协调宿主只给全局助手的 agent 设置它（D10）
 	assert.Equal(t, map[string]map[string]any{
-		"events": {"type": "sse", "url": "http://127.0.0.1:9911/mcp/m0"},
-		"search": {"type": "http", "url": "http://127.0.0.1:9911/mcp/m1"},
+		"events": {"type": "sse", "url": "${ORYN_MCP_BASE}/mcp/m0"},
+		"search": {"type": "http", "url": "${ORYN_MCP_BASE}/mcp/m1"},
 	}, doc.MCPServers, "按名字排序取路由键；stdio 与关掉的不下发")
 	assert.NotContains(t, got, "npm-real")
 	assert.NotContains(t, got, "Authorization")

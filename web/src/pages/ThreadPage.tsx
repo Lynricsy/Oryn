@@ -69,7 +69,12 @@ import {
 } from "../lib/viewport";
 import { realtime } from "../realtime/socket";
 import { useComposerDraft } from "../state/composer-drafts";
-import { useConnection, useIndex, useThread } from "../state/stores";
+import {
+	loadEarlierEntries,
+	useConnection,
+	useIndex,
+	useThread,
+} from "../state/stores";
 import { terminalHub } from "../state/terminals";
 import { buildTranscript } from "../state/transcript";
 import { PANEL_MIN_WIDTH, uiStore, useSidebarShown, useUi } from "../state/ui";
@@ -175,6 +180,8 @@ export function ThreadScreen({
 	subheader,
 	disabled = false,
 	dockNotice,
+	mainline = false,
+	tail,
 }: {
 	threadId: string;
 	/** `coordinator`：协调对话（Space 聊天、助手对话）——没有右面板与面板开关，页头由 `header` 给，输入区为协调档 */
@@ -188,6 +195,10 @@ export function ThreadScreen({
 	disabled?: boolean;
 	/** 输入坞托盘里、输入区之上的一节提示 */
 	dockNotice?: ReactNode;
+	/** 主线对话（M19）：转录用主线模式（自动来料与沉默的回合折叠、「在新对话中继续」） */
+	mainline?: boolean;
+	/** 尾部订阅（M19）：从头补发时只收最近这么多条，更早的在转录顶部逐页加载 */
+	tail?: number;
 }): ReactNode {
 	const coordinator = variant === "coordinator";
 	const { t } = useTranslation();
@@ -212,6 +223,11 @@ export function ThreadScreen({
 	const pendingUi = useThread(threadId, (s) => s.pendingUi);
 	const plan = useThread(threadId, (s) => s.planProposal);
 	const snapshotReceived = useThread(threadId, (s) => s.snapshotReceived);
+	const hasEarlier = useThread(threadId, (s) => s.windowStart > 0);
+	const loadEarlier = useCallback(
+		() => loadEarlierEntries(threadId),
+		[threadId],
+	);
 	const orbGone = useThread(
 		threadId,
 		(s) => s.snapshotReceived && !s.thread?.orbId,
@@ -221,14 +237,17 @@ export function ThreadScreen({
 		if (!threadId) return;
 		// 先挂终端跟踪再订阅：快照到达时 terminalHub 已就位
 		const detach = terminalHub.attach(threadId);
-		const unsub = realtime.subscribe(threadId);
+		const unsub = realtime.subscribe(
+			threadId,
+			tail !== undefined ? { tail } : undefined,
+		);
 		realtime.focus(threadId);
 		return () => {
 			detach();
 			unsub();
 			realtime.focus(null);
 		};
-	}, [threadId]);
+	}, [threadId, tail]);
 
 	// 切换线程（或从别处进入线程）时关闭上一线程的对话框，窄屏回到对话标签。布局跨断点（如手机 ↔ 平板）时外壳换了
 	// 一套结构，线程页会在同一次提交里卸载再挂载：同一线程不算进入，打开的对话框与当前标签保持不变
@@ -439,6 +458,10 @@ export function ThreadScreen({
 									insetBottom={dockH + 16}
 									onReadDirection={collapsible ? onReadDirection : undefined}
 									trayTop={mini && miniH > 0 ? miniH : undefined}
+									mainline={mainline}
+									{...(tail !== undefined
+										? { hasEarlier, onLoadEarlier: loadEarlier }
+										: {})}
 								/>
 							)}
 						</div>

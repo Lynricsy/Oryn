@@ -75,6 +75,13 @@ DELETE FROM assistant_inbox WHERE delivered_at IS NOT NULL AND delivered_at < @b
 -- name: GetMainThread :one
 SELECT * FROM threads WHERE main = 1;
 
+-- Newest main-session message entries with their time (main conversation brief).
+-- name: ListRecentMainMessagesTs :many
+SELECT seq, ts, payload FROM entries
+WHERE thread_id = @thread_id AND type = 'message' AND instr(file, '/') = 0
+ORDER BY seq DESC
+LIMIT @limit;
+
 -- name: GetComputerOrb :one
 SELECT * FROM orbs WHERE computer = 1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1;
 

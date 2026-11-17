@@ -67,6 +67,8 @@ type OrbCreate struct {
 	Coordinator bool
 	// Pool 对应 orbs.CreateParams.Pool（M11a 预热池 orb；本包从不置位）。
 	Pool bool
+	// Computer 对应 orbs.CreateParams.Computer（M19 助手的电脑；本包从不置位）。
+	Computer bool
 	// GithubIdentity 对应 orbs.CreateParams.GithubIdentity（M14：user / agent；空串等同 user）。
 	GithubIdentity string
 	// Automation 对应 orbs.CreateParams.Automation（M18：新 orb 是否标为全自动）。
@@ -75,6 +77,9 @@ type OrbCreate struct {
 
 // CodeOrbIsPooled 是把线程挂到预热池 orb 上（executor.kind = orb 指向池 orb）的错误码（M11a，HTTP 409）。
 const CodeOrbIsPooled = "orb_is_pooled"
+
+// CodeOrbIsComputer 是把线程挂到助手的电脑上的错误码（M19，HTTP 409）：那台 orb 只给全局助手遥控。
+const CodeOrbIsComputer = "orb_is_computer"
 
 // Profiles 决定新 orb 选用的浏览器 Profile（internal/desktop.Service 实现）。
 type Profiles interface {

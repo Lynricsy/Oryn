@@ -25,7 +25,7 @@
 import type { TFunction } from "i18next";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { Orb } from "../../api/client";
+import type { Orb, Schemas } from "../../api/client";
 import {
 	useOrbBrowser,
 	useOrbDesktopControl,
@@ -124,11 +124,11 @@ function StageCover({
 }
 
 function OrbCover({
-	threadId,
 	orb,
+	onWake,
 }: {
-	threadId: string;
 	orb: Orb;
+	onWake: () => Promise<unknown>;
 }): ReactNode {
 	const { t } = useTranslation();
 	const [busy, setBusy] = useState(false);
@@ -152,7 +152,7 @@ function OrbCover({
 						setBusy(true);
 						setError(null);
 						try {
-							await wakeThread(threadId);
+							await onWake();
 						} catch (e) {
 							setError(e);
 							setBusy(false);
@@ -235,11 +235,13 @@ function closedText(
 }
 
 function DesktopView({
-	threadId,
 	orb,
+	onWake,
+	onAnswerAsk,
 }: {
-	threadId: string;
 	orb: Orb & { desktop: NonNullable<Orb["desktop"]> };
+	onWake: () => Promise<unknown>;
+	onAnswerAsk?: (ask: Schemas["OrbDesktopAsk"], value: string) => boolean;
 }): ReactNode {
 	const { t } = useTranslation();
 	const desktop = orb.desktop;
@@ -376,15 +378,8 @@ function DesktopView({
 	};
 	const answerAsk = (value: string) => {
 		const ask = ctl.ask;
-		if (!ask) return;
-		if (
-			answerUi(ask.threadId, {
-				type: "extension_ui_response",
-				id: ask.requestId,
-				value,
-			})
-		)
-			setAnswered(ask.requestId);
+		if (!ask || !onAnswerAsk) return;
+		if (onAnswerAsk(ask, value)) setAnswered(ask.requestId);
 	};
 
 	// 舞台的键盘：Ctrl/⌘+V 让浏览器照常粘贴（不交给 noVNC），单独按一下 Ctrl+Alt 交还焦点。
@@ -643,14 +638,14 @@ function DesktopView({
 							size="sm"
 							variant="primary"
 							icon="check"
-							disabled={done}
+							disabled={done || !onAnswerAsk}
 							onClick={() => answerAsk(DESKTOP_ASK_DONE)}
 						>
 							{t("deskPanel.control.done")}
 						</Button>
 						<Button
 							size="sm"
-							disabled={done}
+							disabled={done || !onAnswerAsk}
 							onClick={() => answerAsk(DESKTOP_ASK_SKIP)}
 						>
 							{t("deskPanel.control.skip")}
@@ -889,7 +884,7 @@ function DesktopView({
 						</span>
 					)}
 					{orb.state !== "ready" || !desktop.displayReady ? (
-						<OrbCover threadId={threadId} orb={orb} />
+						<OrbCover orb={orb} onWake={onWake} />
 					) : showClosed ? (
 						<StageCover testId="desktop-closed">
 							<span className="grid h-11 w-11 place-items-center rounded-full bg-inset">
@@ -947,14 +942,20 @@ function DesktopView({
 	);
 }
 
-export default function DesktopPanel({
-	threadId,
+/**
+ * 以 orb 为参数的桌面内核（M19）：线程页的 {@link DesktopPanel} 与助手的电脑页共用。
+ * `onWake`：orb 冻结 / 停机时遮罩上「唤醒」的动作；`onAnswerAsk`：作答 agent 的桌面请求，省略时作答按钮禁用。
+ */
+export function OrbDesktop({
+	orb,
+	onWake,
+	onAnswerAsk,
 }: {
-	threadId: string;
-	orbId?: string;
+	orb: Orb | undefined;
+	onWake: () => Promise<unknown>;
+	onAnswerAsk?: (ask: Schemas["OrbDesktopAsk"], value: string) => boolean;
 }): ReactNode {
 	const { t } = useTranslation();
-	const orb = useOrbOf(threadId);
 	if (!orb || orb.state === "deleted")
 		return (
 			<EmptyState icon="monitor" title={t("deskPanel.orbGone")}>
@@ -971,8 +972,31 @@ export default function DesktopPanel({
 		// 换 orb 即重建：会话、重试计数与剪贴板都属于这台 orb
 		<DesktopView
 			key={orb.id}
-			threadId={threadId}
 			orb={orb as Orb & { desktop: NonNullable<Orb["desktop"]> }}
+			onWake={onWake}
+			onAnswerAsk={onAnswerAsk}
+		/>
+	);
+}
+
+export default function DesktopPanel({
+	threadId,
+}: {
+	threadId: string;
+	orbId?: string;
+}): ReactNode {
+	const orb = useOrbOf(threadId);
+	return (
+		<OrbDesktop
+			orb={orb}
+			onWake={() => wakeThread(threadId)}
+			onAnswerAsk={(ask, value) =>
+				answerUi(ask.threadId, {
+					type: "extension_ui_response",
+					id: ask.requestId,
+					value,
+				})
+			}
 		/>
 	);
 }

@@ -1161,21 +1161,24 @@ func (q *Queries) InsertGithubState(ctx context.Context, arg InsertGithubStatePa
 }
 
 const insertGithubTrigger = `-- name: InsertGithubTrigger :exec
-INSERT INTO github_triggers (id, project_id, name, event, label, prompt, enabled, announce, created_at, updated_at)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+INSERT INTO github_triggers (id, project_id, name, event, label, prompt, enabled, announce, hand_to_assistant,
+                             created_at, updated_at)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
+        ?10, ?11)
 `
 
 type InsertGithubTriggerParams struct {
-	ID        string  `json:"id"`
-	ProjectID string  `json:"projectId"`
-	Name      string  `json:"name"`
-	Event     string  `json:"event"`
-	Label     *string `json:"label"`
-	Prompt    string  `json:"prompt"`
-	Enabled   bool    `json:"enabled"`
-	Announce  bool    `json:"announce"`
-	CreatedAt int64   `json:"createdAt"`
-	UpdatedAt int64   `json:"updatedAt"`
+	ID              string  `json:"id"`
+	ProjectID       string  `json:"projectId"`
+	Name            string  `json:"name"`
+	Event           string  `json:"event"`
+	Label           *string `json:"label"`
+	Prompt          string  `json:"prompt"`
+	Enabled         bool    `json:"enabled"`
+	Announce        bool    `json:"announce"`
+	HandToAssistant int64   `json:"handToAssistant"`
+	CreatedAt       int64   `json:"createdAt"`
+	UpdatedAt       int64   `json:"updatedAt"`
 }
 
 func (q *Queries) InsertGithubTrigger(ctx context.Context, arg InsertGithubTriggerParams) error {
@@ -1188,6 +1191,7 @@ func (q *Queries) InsertGithubTrigger(ctx context.Context, arg InsertGithubTrigg
 		arg.Prompt,
 		arg.Enabled,
 		arg.Announce,
+		arg.HandToAssistant,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
@@ -3444,19 +3448,20 @@ func (q *Queries) UnlinkThreadPull(ctx context.Context, arg UnlinkThreadPullPara
 const updateGithubTrigger = `-- name: UpdateGithubTrigger :exec
 UPDATE github_triggers
 SET name = ?1, event = ?2, label = ?3, prompt = ?4, enabled = ?5, announce = ?6,
-    updated_at = ?7
-WHERE id = ?8
+    hand_to_assistant = ?7, updated_at = ?8
+WHERE id = ?9
 `
 
 type UpdateGithubTriggerParams struct {
-	Name      string  `json:"name"`
-	Event     string  `json:"event"`
-	Label     *string `json:"label"`
-	Prompt    string  `json:"prompt"`
-	Enabled   bool    `json:"enabled"`
-	Announce  bool    `json:"announce"`
-	UpdatedAt int64   `json:"updatedAt"`
-	ID        string  `json:"id"`
+	Name            string  `json:"name"`
+	Event           string  `json:"event"`
+	Label           *string `json:"label"`
+	Prompt          string  `json:"prompt"`
+	Enabled         bool    `json:"enabled"`
+	Announce        bool    `json:"announce"`
+	HandToAssistant int64   `json:"handToAssistant"`
+	UpdatedAt       int64   `json:"updatedAt"`
+	ID              string  `json:"id"`
 }
 
 func (q *Queries) UpdateGithubTrigger(ctx context.Context, arg UpdateGithubTriggerParams) error {
@@ -3467,6 +3472,7 @@ func (q *Queries) UpdateGithubTrigger(ctx context.Context, arg UpdateGithubTrigg
 		arg.Prompt,
 		arg.Enabled,
 		arg.Announce,
+		arg.HandToAssistant,
 		arg.UpdatedAt,
 		arg.ID,
 	)

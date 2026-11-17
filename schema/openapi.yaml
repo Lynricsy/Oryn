@@ -7449,7 +7449,7 @@ components:
       enum: [issue_opened, issue_reopened, issue_labeled, mention, pull_request_opened, workflow_run_completed]
     GitHubTrigger:
       type: object
-      required: [id, projectId, name, event, prompt, enabled, announce, runCount, createdAt, updatedAt]
+      required: [id, projectId, name, event, prompt, enabled, announce, handToAssistant, runCount, createdAt, updatedAt]
       properties:
         id:
           type: string
@@ -7463,6 +7463,9 @@ components:
         announce:
           type: boolean
           description: 在 issue 下回帖新线程的链接
+        handToAssistant:
+          type: boolean
+          description: 交给助手：每次运行的结果合并进助手的主线，由助手决定是否告诉主人；该运行的完成通知不再单独推送
         runCount: { type: integer, format: int64 }
         lastRunAt: { $ref: '#/components/schemas/TimestampMs' }
         createdAt: { $ref: '#/components/schemas/TimestampMs' }
@@ -7505,6 +7508,7 @@ components:
         prompt: { type: string, minLength: 1, maxLength: 20000 }
         enabled: { type: boolean }
         announce: { type: boolean }
+        handToAssistant: { type: boolean }
         drivers: { $ref: '#/components/schemas/GitHubTriggerDrivers' }
         maintainers:
           type: array
@@ -7545,6 +7549,7 @@ components:
         prompt: { type: string, minLength: 1, maxLength: 20000 }
         enabled: { type: boolean }
         announce: { type: boolean }
+        handToAssistant: { type: boolean }
         drivers: { $ref: '#/components/schemas/GitHubTriggerDrivers' }
         maintainers:
           type: array
@@ -10614,6 +10619,9 @@ components:
           minimum: 1
           maximum: 50
           description: 仅 `new_thread`：只保留最近 N 个未归档的运行线程，更早且已静止、未置顶的自动归档（缺省 5）
+        handToAssistant:
+          type: boolean
+          description: 仅 `new_thread`：交给助手——每次运行的结果合并进助手的主线，该运行的完成通知不单独推送；`thread` 模式带 true 即 400 `invalid_schedule`；缺省 false
         ifRev:
           type: integer
           format: int64
@@ -10623,7 +10631,7 @@ components:
     Schedule:
       type: object
       description: 定时（两种模式共用）。`thread` 模式下 `overlap` 恒为 `skip`、`keepLast` 恒为 5（无意义）
-      required: [id, mode, name, kind, timezone, prompt, enabled, runCount, failures, createdBy, createdAt, updatedAt, overlap, keepLast, openRuns, rev]
+      required: [id, mode, name, kind, timezone, prompt, enabled, handToAssistant, runCount, failures, createdBy, createdAt, updatedAt, overlap, keepLast, openRuns, rev]
       properties:
         id: { $ref: '#/components/schemas/ScheduleId' }
         mode: { $ref: '#/components/schemas/ScheduleMode' }
@@ -10655,6 +10663,9 @@ components:
         orbType: { type: string }
         overlap: { $ref: '#/components/schemas/ScheduleOverlap' }
         keepLast: { type: integer }
+        handToAssistant:
+          type: boolean
+          description: 交给助手（只对 `new_thread` 有意义）
         pausedReason: { $ref: '#/components/schemas/SchedulePausedReason' }
         nextRunAt:
           allOf:
@@ -13847,6 +13858,11 @@ components:
         systemPrompt:
           type: string
           description: M9 协调档的系统提示词（以字面量传给 omp `--system-prompt`，必须含换行，否则 `invalid_params`）；只有协调宿主接受
+        web:
+          type: boolean
+          description: |
+            M19：协调档是否打开第一层（内置 `web_search` 与 `generate_image`、`read` 读 URL、环境带 `PI_PROXY` 走 orynd 的正向代理）。
+            只给全局助手的对话；Space 协调者省略（= false），工具与环境同 M19 之前（D10）。只有协调宿主接受。
         memory: { $ref: '#/components/schemas/LinkCtlAgentMemory' }
     LinkCtlAgentStartResult:
       type: object

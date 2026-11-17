@@ -339,23 +339,24 @@ async function readTextRange(
 // ---------------------------------------------------------------- orb
 
 /**
- * `threadId`：当前线程，所有请求都带 `thread`——runner 的 orb 必须带（范围是该线程的工作目录），普通 orb 由控制面校验后照旧。
+ * `threadId`：当前线程，给出时所有请求都带 `thread`——runner 的 orb 必须带（范围是该线程的工作目录），普通 orb 由控制面校验后照旧；
+ * 省略时（M19 助手的电脑，不属于任何线程）请求不带 `thread`。
  * runner 线程的 `workdir` 与 `home` 是同一个目录（线程的工作目录），此时只给一个根。
  * `offline`：orb 已停机时的只读预览——roots / list / stat / 文件读取都带 `offline=1`（不唤醒 orb），
  * 一切写操作直接以 409 `read_only` 拒绝。来源 `id` 不变，草稿仍按同一个键保存。
  */
 export function orbFileSource(
 	orbId: string,
-	threadId: string,
+	threadId?: string,
 	opts: { offline?: boolean } = {},
 ): FileSource {
 	const offline = opts.offline === true;
 	const id = { id: orbId };
-	const thread = { thread: threadId };
+	const thread: { thread?: string } = threadId ? { thread: threadId } : {};
 	// 只读请求的查询参数：停机预览多带 `offline`（服务端按布尔解析，`1` / `true` 等价）
 	const readQuery = offline ? { ...thread, offline: true } : thread;
 	const fileUrl = (path: string) =>
-		`/api/v1/orbs/${encodeURIComponent(orbId)}/fs/file?thread=${encodeURIComponent(threadId)}${offline ? "&offline=1" : ""}&path=${encodeURIComponent(path)}`;
+		`/api/v1/orbs/${encodeURIComponent(orbId)}/fs/file?${threadId ? `thread=${encodeURIComponent(threadId)}&` : ""}${offline ? "offline=1&" : ""}path=${encodeURIComponent(path)}`;
 	const source: FileSource = {
 		id: `orb:${orbId}`,
 		caps: offline

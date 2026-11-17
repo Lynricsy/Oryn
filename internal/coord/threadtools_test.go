@@ -2,6 +2,7 @@ package coord
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -32,6 +33,15 @@ func (f *fakeMachines) Do(context.Context, string, *http.Request) (*http.Respons
 	return nil, http.ErrNotSupported
 }
 func (f *fakeMachines) ScheduleOmpApply(string) {}
+func (f *fakeMachines) CreateComputer(context.Context, string, string) (apigen.Orb, error) {
+	return apigen.Orb{}, http.ErrNotSupported
+}
+func (f *fakeMachines) Computer(context.Context) (apigen.Orb, bool, error) { return apigen.Orb{}, false, nil }
+func (f *fakeMachines) TouchAgent(context.Context, string)                  {}
+func (f *fakeMachines) ComputerCall(context.Context, string, string, any, any) error {
+	return http.ErrNotSupported
+}
+func (f *fakeMachines) OnComputerUpdate(func(string, string, json.RawMessage)) {}
 
 func errCodeOf(t *testing.T, r threads.HostToolResult) string {
 	t.Helper()
@@ -259,7 +269,7 @@ func TestThreadToolDefs(t *testing.T) {
 		}
 		return out
 	}
-	space, asst := names(ToolDefs(true, false)), names(ToolDefs(false, false))
+	space, asst := names(ToolDefs(ToolSet{InSpace: true})), names(ToolDefs(ToolSet{}))
 	for _, n := range []string{ToolUpdateThread, ToolAbortThread, ToolSetThreadModel, ToolForkThread, ToolWakeThread, ToolListRunners, ToolDeleteThread} {
 		assert.Contains(t, asst, n)
 		assert.NotContains(t, space, n)

@@ -78,8 +78,8 @@ func parseOptions(args []string, getenv func(string) string, stderr io.Writer) (
 	// omp 的设置覆盖层（M8：桌面启用时 orbd 以 `--config <desktop.yml>` 注入；M9 协调档的 overlay.yml）：接受并忽略。
 	var configs multiFlag
 	fs.Var(&configs, "config", "设置覆盖层文件（忽略，可重复）")
-	// M9 协调档的开关：接受并忽略（参数本身经转储与 `probe args` 供测试断言）。
-	for _, name := range []string{"no-tools", "no-skills", "no-extensions", "no-rules", "no-context-files", "no-lsp"} {
+	// M9 协调档的开关与 M19 工具执行器的 --no-session：接受并忽略（参数本身经转储与 `probe args` 供测试断言）。
+	for _, name := range []string{"no-tools", "no-skills", "no-extensions", "no-rules", "no-context-files", "no-lsp", "no-session"} {
 		fs.Bool(name, false, "忽略")
 	}
 	// M13 协调档的内置工具白名单（`--tools read,write`）：接受并忽略。
@@ -146,8 +146,10 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		subLevel:       "off",
 		uiWait:         map[string]chan json.RawMessage{},
 		hostWait:       map[string]chan json.RawMessage{},
+		hostCalls:      map[string]hostInflight{},
 		prompts:        make(chan promptReq, 100),
 		terms:          newTerminals(),
+		tools:          toolExec{inflight: map[string]context.CancelFunc{}},
 	}
 	return s.serve(ctx, stdin, stderr)
 }
@@ -184,13 +186,17 @@ type server struct {
 	pending        int // 已接受但尚未结束的 prompt 数（含进行中的一个）
 	messageCount   int
 	cancelTurn     context.CancelFunc
-	// 宿主工具（M9）：set_host_tools 注册的工具；hostWait 是等待 host_tool_result 的调用（按 host_tool_call 的 id）。
+	// 宿主工具（M9）：set_host_tools 注册的工具；hostWait 是等待 host_tool_result 的调用（按 host_tool_call 的 id）；
+	// hostCalls 是这些调用对应的工具调用（M19：host_tool_update 转成该调用的 tool_execution_update）。
 	hostDescs []hostTool
 	hostSeq   int
 	hostWait  map[string]chan json.RawMessage
+	hostCalls map[string]hostInflight
 
 	prompts chan promptReq
 	terms   *terminals
+	// tools 是在途的 oryn_tool_call（M19，见 toolexec.go）。
+	tools toolExec
 }
 
 func (s *server) serve(ctx context.Context, stdin io.Reader, stderr io.Writer) int {
@@ -498,6 +504,10 @@ func (s *server) handle(line []byte) {
 		s.mu.Unlock()
 		s.ok(id, env.Type, map[string]string{"level": c.Level})
 
+	case "clear_context":
+		// M19 主线每段开头发送：真 omp 在会话文件追加 reset_boundary；这里只确认（转录不变）
+		s.ok(id, env.Type, nil)
+
 	case "set_thinking_level":
 		var c struct {
 			Level string `json:"level"`
@@ -639,7 +649,7 @@ func (s *server) handle(line []byte) {
 		}
 
 	default:
-		if s.handleTerminal(env.Type, id, line) || s.handleHost(env.Type, id, line) {
+		if s.handleTerminal(env.Type, id, line) || s.handleHost(env.Type, id, line) || s.handleToolExec(env.Type, id, line) {
 			return
 		}
 		cmd := env.Type

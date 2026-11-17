@@ -2,6 +2,8 @@
  * 全局助手页（M9）：`/assistant` 跳到最近的对话、没有就新建；页头动作菜单（新对话 / 归档此对话，M9.6 起切换对话只在侧栏；
  * M17 起助手记忆可用时多一个「不进助手记忆」切换）；
  * 页头小头像跟随助手的生效头像（圆形）；协调宿主不可用时不创建对话、显示原因与指向设置 → 关于，已有对话只读。
+ * M19 主线：落点不选主线；页头标题是助手的名字、菜单只有「新对话」，有「备忘」（字数与超长提示）与「提醒」；
+ * 订阅带 tail、转录用主线模式。
  * `ThreadScreen` 换成桩。数据走 mock 后端，身份接口由本文件的桩应答。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -37,18 +39,24 @@ vi.mock("./ThreadPage", async (orig) => ({
 		header,
 		disabled,
 		dockNotice,
+		mainline,
+		tail,
 	}: {
 		threadId: string;
 		variant: string;
 		header?: (l: ThreadPageModule.ScreenHeaderLayout) => ReactNode;
 		disabled?: boolean;
 		dockNotice?: ReactNode;
+		mainline?: boolean;
+		tail?: number;
 	}) => (
 		<div
 			data-testid="screen"
 			data-thread={threadId}
 			data-variant={variant}
 			data-disabled={String(Boolean(disabled))}
+			data-mainline={String(Boolean(mainline))}
+			data-tail={tail ?? ""}
 		>
 			{header?.({
 				sidebarToggle: false,
@@ -344,5 +352,107 @@ describe("AssistantPage", () => {
 		).toBeVisible();
 		act(() => go("/assistant/T-elsewhere"));
 		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+	});
+});
+
+describe("AssistantPage：主线（M19）", () => {
+	it("/assistant 不落到主线：主线最近有动静也落到普通对话", async () => {
+		const main = indexStore.getState().threads[M9_IDS.main];
+		if (main)
+			indexStore
+				.getState()
+				.upsertThread({ ...main, lastMessageAt: Date.now() + 60_000 });
+		mount("/assistant");
+		await waitFor(() =>
+			expect(screen.getByTestId("where")).toHaveTextContent(
+				`/assistant/${M9_IDS.assistant}`,
+			),
+		);
+	});
+
+	it("只有主线时：新建一个普通对话，而不是进主线", async () => {
+		indexStore.getState().setAll(
+			fixtureThreads.filter(
+				(t) => !t.archivedAt && (t.kind !== "assistant" || t.main),
+			),
+			1,
+		);
+		mount("/assistant");
+		await waitFor(() =>
+			expect(screen.getByTestId("where").textContent).toMatch(
+				/^\/assistant\/T-mock-coord-/,
+			),
+		);
+	});
+
+	it("页头：标题是助手的名字，菜单只有「新对话」；订阅带 tail、转录用主线模式", async () => {
+		identities.assistant = { name: "小管家" };
+		mount(`/assistant/${M9_IDS.main}`);
+		const s = await screen.findByTestId("screen");
+		expect(s).toHaveAttribute("data-mainline", "true");
+		expect(s).toHaveAttribute("data-tail", "600");
+		expect(
+			await within(s).findByRole("heading", { name: "小管家" }),
+		).toBeVisible();
+		fireEvent.click(screen.getByRole("button", { name: "对话操作" }));
+		expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
+			"新对话",
+		]);
+		expect(screen.queryByRole("menuitemradio")).toBeNull();
+	});
+
+	it("普通对话：没有备忘与提醒按钮，订阅不带 tail", async () => {
+		mount(`/assistant/${M9_IDS.assistant}`);
+		const s = await screen.findByTestId("screen");
+		expect(s).toHaveAttribute("data-mainline", "false");
+		expect(s).toHaveAttribute("data-tail", "");
+		expect(screen.queryByRole("button", { name: "备忘" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "提醒" })).toBeNull();
+	});
+
+	it("备忘：带出现有内容与字数；超过 1500 字提示压缩、不能保存；保存后写回服务端", async () => {
+		mount(`/assistant/${M9_IDS.main}`);
+		fireEvent.click(await screen.findByRole("button", { name: "备忘" }));
+		const dialog = await screen.findByRole("dialog", { name: "备忘" });
+		const box = await within(dialog).findByRole("textbox", { name: "备忘" });
+		expect((box as HTMLTextAreaElement).value).toBe(
+			server.assistant.notes.text,
+		);
+		const save = within(dialog).getByRole("button", { name: "保存" });
+		// 没改动不能保存
+		expect(save).toBeDisabled();
+		fireEvent.change(box, { target: { value: "字".repeat(1501) } });
+		expect(within(dialog).getByTestId("notes-count")).toHaveTextContent(
+			"1501 / 1500",
+		);
+		expect(within(dialog).getByRole("alert")).toHaveTextContent(
+			"超过 1500 字，请压缩后再保存",
+		);
+		expect(save).toBeDisabled();
+		fireEvent.change(box, { target: { value: "- 周五提醒写周报" } });
+		expect(within(dialog).queryByRole("alert")).toBeNull();
+		fireEvent.click(save);
+		await waitFor(() =>
+			expect(screen.queryByRole("dialog", { name: "备忘" })).toBeNull(),
+		);
+		expect(server.assistant.notes.text).toBe("- 周五提醒写周报");
+	});
+
+	it("提醒：列出主线上的提醒，可暂停；「新建提醒」打开定时对话框（名称必填）", async () => {
+		mount(`/assistant/${M9_IDS.main}`);
+		fireEvent.click(await screen.findByRole("button", { name: "提醒" }));
+		const dialog = await screen.findByRole("dialog", { name: "提醒" });
+		expect(await within(dialog).findByText("早间简报")).toBeVisible();
+		fireEvent.click(within(dialog).getByRole("checkbox"));
+		await waitFor(() =>
+			expect(
+				server.automation.schedules.find((s) => s.id === M9_IDS.mainReminder)
+					?.enabled,
+			).toBe(false),
+		);
+		fireEvent.click(within(dialog).getByRole("button", { name: "新建提醒" }));
+		const form = await screen.findByRole("dialog", { name: "定时" });
+		expect(within(form).getByText("名称")).toBeVisible();
+		expect(screen.queryByRole("dialog", { name: "提醒" })).toBeNull();
 	});
 });

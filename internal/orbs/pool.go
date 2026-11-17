@@ -69,7 +69,7 @@ func poolDead(state string) bool {
 // 认领时把 orb 的 GitHub 身份改为 p.GithubIdentity（M14）、全自动标记改为 p.Automation（M18）；warming 的 orb 认领后
 // 不再重跑 setup，只认领身份与全自动标记都相同的。
 func (s *Service) ClaimPool(ctx context.Context, p CreateParams) (db.Orb, bool) {
-	if s.cfg.Pool.MaxTotal <= 0 || p.ProjectID == "" || p.SnapshotID != "" || p.BrowserProfileID != "" || p.Coordinator || p.Pool {
+	if s.cfg.Pool.MaxTotal <= 0 || p.ProjectID == "" || p.SnapshotID != "" || p.BrowserProfileID != "" || p.Coordinator || p.Pool || p.Computer {
 		return db.Orb{}, false
 	}
 	ident := p.GithubIdentity

@@ -331,37 +331,38 @@ const insertSchedule = `-- name: InsertSchedule :exec
 
 INSERT INTO schedules (id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt,
                        enabled, paused_reason, next_run_at, created_by, created_at, updated_at, model, thinking_level,
-                       provider, orb_type, overlap, keep_last)
+                       provider, orb_type, overlap, keep_last, hand_to_assistant)
 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
         ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20,
-        ?21, ?22, ?23, ?24)
+        ?21, ?22, ?23, ?24, ?25)
 `
 
 type InsertScheduleParams struct {
-	ID            string  `json:"id"`
-	Mode          string  `json:"mode"`
-	ThreadID      *string `json:"threadId"`
-	ProjectID     *string `json:"projectId"`
-	SpaceID       *string `json:"spaceId"`
-	Name          string  `json:"name"`
-	Kind          string  `json:"kind"`
-	Spec          string  `json:"spec"`
-	Timezone      string  `json:"timezone"`
-	RunAt         *int64  `json:"runAt"`
-	EndsAt        *int64  `json:"endsAt"`
-	Prompt        string  `json:"prompt"`
-	Enabled       bool    `json:"enabled"`
-	PausedReason  *string `json:"pausedReason"`
-	NextRunAt     *int64  `json:"nextRunAt"`
-	CreatedBy     string  `json:"createdBy"`
-	CreatedAt     int64   `json:"createdAt"`
-	UpdatedAt     int64   `json:"updatedAt"`
-	Model         *string `json:"model"`
-	ThinkingLevel *string `json:"thinkingLevel"`
-	Provider      *string `json:"provider"`
-	OrbType       *string `json:"orbType"`
-	Overlap       string  `json:"overlap"`
-	KeepLast      int64   `json:"keepLast"`
+	ID              string  `json:"id"`
+	Mode            string  `json:"mode"`
+	ThreadID        *string `json:"threadId"`
+	ProjectID       *string `json:"projectId"`
+	SpaceID         *string `json:"spaceId"`
+	Name            string  `json:"name"`
+	Kind            string  `json:"kind"`
+	Spec            string  `json:"spec"`
+	Timezone        string  `json:"timezone"`
+	RunAt           *int64  `json:"runAt"`
+	EndsAt          *int64  `json:"endsAt"`
+	Prompt          string  `json:"prompt"`
+	Enabled         bool    `json:"enabled"`
+	PausedReason    *string `json:"pausedReason"`
+	NextRunAt       *int64  `json:"nextRunAt"`
+	CreatedBy       string  `json:"createdBy"`
+	CreatedAt       int64   `json:"createdAt"`
+	UpdatedAt       int64   `json:"updatedAt"`
+	Model           *string `json:"model"`
+	ThinkingLevel   *string `json:"thinkingLevel"`
+	Provider        *string `json:"provider"`
+	OrbType         *string `json:"orbType"`
+	Overlap         string  `json:"overlap"`
+	KeepLast        int64   `json:"keepLast"`
+	HandToAssistant int64   `json:"handToAssistant"`
 }
 
 // Schedules (M9): one table, two delivery modes.
@@ -396,6 +397,7 @@ func (q *Queries) InsertSchedule(ctx context.Context, arg InsertScheduleParams) 
 		arg.OrbType,
 		arg.Overlap,
 		arg.KeepLast,
+		arg.HandToAssistant,
 	)
 	return err
 }
@@ -829,31 +831,33 @@ UPDATE schedules SET name = ?1, kind = ?2, spec = ?3, timezone = ?4, run_at = ?5
     ends_at = ?6, prompt = ?7, enabled = ?8, paused_reason = ?9,
     next_run_at = ?10, failures = 0, space_id = ?11, model = ?12,
     thinking_level = ?13, provider = ?14, orb_type = ?15, overlap = ?16,
-    keep_last = ?17, created_by = ?18, updated_at = ?19, rev = rev + 1
-WHERE id = ?20
+    keep_last = ?17, hand_to_assistant = ?18, created_by = ?19, updated_at = ?20,
+    rev = rev + 1
+WHERE id = ?21
 `
 
 type UpdateScheduleDefParams struct {
-	Name          string  `json:"name"`
-	Kind          string  `json:"kind"`
-	Spec          string  `json:"spec"`
-	Timezone      string  `json:"timezone"`
-	RunAt         *int64  `json:"runAt"`
-	EndsAt        *int64  `json:"endsAt"`
-	Prompt        string  `json:"prompt"`
-	Enabled       bool    `json:"enabled"`
-	PausedReason  *string `json:"pausedReason"`
-	NextRunAt     *int64  `json:"nextRunAt"`
-	SpaceID       *string `json:"spaceId"`
-	Model         *string `json:"model"`
-	ThinkingLevel *string `json:"thinkingLevel"`
-	Provider      *string `json:"provider"`
-	OrbType       *string `json:"orbType"`
-	Overlap       string  `json:"overlap"`
-	KeepLast      int64   `json:"keepLast"`
-	CreatedBy     string  `json:"createdBy"`
-	UpdatedAt     int64   `json:"updatedAt"`
-	ID            string  `json:"id"`
+	Name            string  `json:"name"`
+	Kind            string  `json:"kind"`
+	Spec            string  `json:"spec"`
+	Timezone        string  `json:"timezone"`
+	RunAt           *int64  `json:"runAt"`
+	EndsAt          *int64  `json:"endsAt"`
+	Prompt          string  `json:"prompt"`
+	Enabled         bool    `json:"enabled"`
+	PausedReason    *string `json:"pausedReason"`
+	NextRunAt       *int64  `json:"nextRunAt"`
+	SpaceID         *string `json:"spaceId"`
+	Model           *string `json:"model"`
+	ThinkingLevel   *string `json:"thinkingLevel"`
+	Provider        *string `json:"provider"`
+	OrbType         *string `json:"orbType"`
+	Overlap         string  `json:"overlap"`
+	KeepLast        int64   `json:"keepLast"`
+	HandToAssistant int64   `json:"handToAssistant"`
+	CreatedBy       string  `json:"createdBy"`
+	UpdatedAt       int64   `json:"updatedAt"`
+	ID              string  `json:"id"`
 }
 
 // Replaces the definition; the target (mode, thread_id, project_id), id, run_count and last_run_at stay.
@@ -878,6 +882,7 @@ func (q *Queries) UpdateScheduleDef(ctx context.Context, arg UpdateScheduleDefPa
 		arg.OrbType,
 		arg.Overlap,
 		arg.KeepLast,
+		arg.HandToAssistant,
 		arg.CreatedBy,
 		arg.UpdatedAt,
 		arg.ID,

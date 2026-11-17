@@ -57,7 +57,7 @@ var evalInterval time.Duration
 // notifyDoneDelay / notifyInputDelay 是通知去抖时长；0 = notify 默认（3s / 2s）。测试可调小。
 var notifyDoneDelay, notifyInputDelay time.Duration
 
-// scheduleNow / scheduleAfterFunc 是定时（与协调层限速、进度图）的时钟；零值 = 真实时钟。e2e 注入。
+// scheduleNow / scheduleAfterFunc 是定时（与协调层限速、进度图、主线的静止与收件合并定时器）的时钟；零值 = 真实时钟。e2e 注入。
 var (
 	scheduleNow       func() time.Time
 	scheduleAfterFunc func(d time.Duration, f func()) (stop func())
@@ -276,8 +276,10 @@ func (s *Server) init(ctx context.Context) error {
 		Now: scheduleNow, AfterFunc: scheduleAfterFunc,
 		DeliverTimeout: cfg.Schedule.DeliverTimeout.D(), MaxFailures: cfg.Schedule.MaxFailures,
 		Changed: s.Hub.SchedulesChanged,
+		// M19 3.3：交给助手的运行结果进主线（coord 晚于 schedule 构造，用闭包）
+		HandOff: func(ctx context.Context, h schedule.HandOff) { s.Coord.PostToMain(ctx, h) },
 	}, s.Store, s.Threads, s.Orbs, s.Notify)
-	s.Coord = coord.New(coord.Config{Now: scheduleNow, Model: cfg.Coordinator.Model, PublicURL: cfg.PublicURL},
+	s.Coord = coord.New(coord.Config{Now: scheduleNow, AfterFunc: scheduleAfterFunc, Model: cfg.Coordinator.Model, PublicURL: cfg.PublicURL},
 		s.Store, s.Threads, s.Orbs, s.Host, s.Schedules)
 	s.Coord.SetLibrary(s.Library, s.LibrarySync)
 	s.Coord.SetArtifacts(s.Artifacts)
@@ -290,8 +292,11 @@ func (s *Server) init(ctx context.Context) error {
 	// M14：GitHub 集成（webhook、轮询、回流在 Run 里；线程按自动化身份给新 orb 取 GitHub 身份）
 	s.GitHub = github.New(github.Config{
 		PublicURL: cfg.PublicURL, APIURL: cfg.GitHub.APIURL, WebURL: cfg.GitHub.WebURL, Box: box, Changed: s.Hub.GitHubChanged,
+		HandOff: func(ctx context.Context, h schedule.HandOff) { s.Coord.PostToMain(ctx, h) },
 	}, s.Store, s.Threads, s.Notify, s.Attachments)
 	s.Threads.SetGitHub(s.GitHub)
+	// M19 第三层：全局助手的触发规则工具
+	s.Coord.SetTriggers(s.GitHub)
 	// orb 的 setup 计划与出站代理：工作 orb 下发 gh 登录名、提交身份，出站代理注入身份槽位的 OAuth 令牌
 	setup.GitHub = s.GitHub
 	s.Orbs.SetGitHub(s.GitHub)
@@ -465,6 +470,14 @@ func (s *Server) init(ctx context.Context) error {
 	if s.Portal != nil {
 		s.API.PortalShares = &api.PortalDeps{Service: s.Portal}
 	}
+	// M19 第三层：全局助手的项目工具与 REST 共用同一套校验与副作用（依赖上面装好的 GitHub、Orbs、Auth、Memory）
+	s.Coord.SetProjects(api.ProjectOps{S: s.API})
+	// M19 第三层：全局助手的对外分享工具；没有配置 portal_domain 时不给 Portal（避免把 nil 指针装进接口）
+	var portals coord.PortalShares
+	if s.Portal != nil {
+		portals = s.Portal
+	}
+	s.Coord.SetShares(s.Share, portals)
 	s.Handler = api.NewRouter(s.API)
 	return nil
 }

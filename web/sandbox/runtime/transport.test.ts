@@ -74,19 +74,17 @@ describe("transport.use", () => {
 		const cases = [
 			vi.fn().mockRejectedValue(new TypeError("network")),
 			vi.fn().mockResolvedValue(new Response("<html>", { status: 502 })),
-			vi
-				.fn()
-				.mockResolvedValue(
-					reply(
-						{
-							v: 1,
-							id: "",
-							ok: false,
-							error: { code: "invalid", message: "x" },
-						},
-						400,
-					),
+			vi.fn().mockResolvedValue(
+				reply(
+					{
+						v: 1,
+						id: "",
+						ok: false,
+						error: { code: "invalid", message: "x" },
+					},
+					400,
 				),
+			),
 			vi
 				.fn()
 				.mockResolvedValue(reply({ v: 1, id: "x", ok: true, value: null })),

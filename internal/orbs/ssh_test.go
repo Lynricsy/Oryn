@@ -20,7 +20,9 @@ type fakeSSH struct {
 	err error
 }
 
-func (f fakeSSH) OrbConfig(context.Context, db.Orb) (*apigen.LinkCtlSSHConfig, error) { return f.cfg, f.err }
+func (f fakeSSH) OrbConfig(context.Context, db.Orb) (*apigen.LinkCtlSSHConfig, error) {
+	return f.cfg, f.err
+}
 
 var testSSHConfig = &apigen.LinkCtlSSHConfig{HostKey: "ssh-ed25519 AAAA", Hosts: []apigen.LinkCtlSSHHost{{Name: "web", Description: "root@h:22"}}}
 

@@ -14,6 +14,12 @@ const SpacePage = lazy(() =>
 const AssistantPage = lazy(() =>
 	import("./pages/AssistantPage").then((m) => ({ default: m.AssistantPage })),
 );
+// 助手的电脑（M19）：状态、文件与桌面
+const AssistantComputerPage = lazy(() =>
+	import("./pages/AssistantComputerPage").then((m) => ({
+		default: m.AssistantComputerPage,
+	})),
+);
 
 // 项目页（M9.6）：项目分区的主区
 const ProjectsIndexPage = lazy(() =>
@@ -119,6 +125,10 @@ export function App(): ReactNode {
 						<Route path="t/:threadId" element={<ThreadPage />} />
 						<Route path="space/:spaceId" element={<SpacePage />} />
 						<Route path="assistant" element={<AssistantPage />} />
+						<Route
+							path="assistant/computer"
+							element={<AssistantComputerPage />}
+						/>
 						<Route path="assistant/:threadId" element={<AssistantPage />} />
 						<Route path="projects" element={<ProjectsIndexPage />} />
 						<Route path="projects/new" element={<ProjectPage create />} />

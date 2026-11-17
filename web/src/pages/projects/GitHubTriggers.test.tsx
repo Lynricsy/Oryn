@@ -61,6 +61,7 @@ const TRIGGER: GitHubTrigger = {
 	lastRunAt: Date.now() - 60_000,
 	createdAt: 1,
 	updatedAt: 1,
+	handToAssistant: false,
 };
 
 const PRESETS: GitHubPreset[] = [
@@ -103,6 +104,7 @@ const DEFAULTS = {
 	autocloseHours: 4,
 	maxDurationSec: 0,
 	completionReminders: false,
+	handToAssistant: false,
 };
 
 /** 无障碍名以某个文案开头（Field 的名字里还带着说明）。 */
@@ -336,7 +338,7 @@ describe("GitHubTriggers", () => {
 		).toBeChecked();
 	});
 
-	it("保存 M15 字段：驱动者、维护者（去 @ 去重）、评审机器人、思考级别、时限分钟换算秒、发布前缀", async () => {
+	it("保存 M15 字段：驱动者、维护者（去 @ 去重）、评审机器人、思考级别、时限分钟换算秒、发布前缀；M19 的「交给助手」", async () => {
 		renderList([]);
 		await openNew();
 		fireEvent.change(
@@ -381,6 +383,11 @@ describe("GitHubTriggers", () => {
 				name: T("github.triggers.completionReminders"),
 			}),
 		);
+		fireEvent.click(
+			screen.getByRole("checkbox", {
+				name: T("github.triggers.handToAssistant"),
+			}),
+		);
 		fireEvent.change(
 			screen.getByRole("spinbutton", {
 				name: starts("github.triggers.autocloseHours"),
@@ -412,6 +419,7 @@ describe("GitHubTriggers", () => {
 			thinking: "xhigh",
 			implAuth: true,
 			completionReminders: true,
+			handToAssistant: true,
 			autocloseHours: 6,
 			maxDurationSec: 5400,
 			releasePrefix: "release: v",

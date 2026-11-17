@@ -331,6 +331,13 @@ type thread struct {
 	// autoActive 为真表示当前这段活动里下发过自动化消息（宿主工具调用的 OwnerTurn = !autoActive，只用于审计）；
 	// session_settled 或 agent 退出时清零。
 	autoActive bool
+	// segMsgs 为真表示自上次 session_settled（或 agent 退出）以来已下发过消息命令；autoOnly 据此判断“静止后的第一条”。
+	segMsgs bool
+	// autoOnly 为真表示这段活动里下发的消息全是自动化投递（静止后的第一条取其来源，其后逐条取与）；quiet 为真表示
+	// 助手在这段自动化活动里调用了 stay_silent（MarkQuiet）：离开 working 时不置未读、不排完成通知。两者只在下一条
+	// 消息下发时改写，因此 working→idle 的 StateEvent 带的仍是刚结束那一段的值（M19 步骤 3.3）。
+	autoOnly bool
+	quiet    bool
 	// hostCalls 是在途的宿主工具调用：omp 的调用 id → 取消函数（协调线程）。
 	hostCalls map[string]context.CancelFunc
 	// hostUI 是控制面发起的待答请求（RequestUI，M19 确认卡）：请求 id → extension_ui_request 帧。它们不来自 agent，
@@ -547,11 +554,13 @@ func (s *Service) recompute(ctx context.Context, t *thread) bool {
 		slog.Warn("threads: 写入线程状态失败", "thread", t.id, "err", err)
 	}
 	focused := s.Focused(t.id)
-	if prev == StateWorking && st != StateWorking && st != StateProvisioning && !t.unread && !focused {
+	// 助手在自动化回合里选择沉默（MarkQuiet）：结束时不置未读；出错仍照常
+	silent := t.quiet && st != StateError
+	if prev == StateWorking && st != StateWorking && st != StateProvisioning && !t.unread && !focused && !silent {
 		t.unread = true
 		_ = s.st.Q.SetThreadUnread(ctx, db.SetThreadUnreadParams{Unread: true, ID: t.id})
 	}
-	ev := StateEvent{ThreadID: t.id, Prev: prev, State: st, Focused: focused}
+	ev := StateEvent{ThreadID: t.id, Prev: prev, State: st, Focused: focused, Quiet: silent, Auto: t.autoOnly}
 	if st == StateError {
 		ev.Reason = s.errorReason(ctx, t)
 		// 原因只是 prompt_result 报错：线程未失败、orb 不是 failed、agent 重启未耗尽（契约 C1）
@@ -559,6 +568,22 @@ func (s *Service) recompute(ctx context.Context, t *thread) bool {
 	}
 	s.observer().StateChanged(ev)
 	s.publish(ctx, t.id)
+	return true
+}
+
+// MarkQuiet 记下助手在这段活动里选择沉默（主线的 stay_silent，M19 步骤 3.3）：只在这段活动的消息全是自动化投递时
+// 生效并返回真；主人亲自发过消息的回合返回假，照常结束。生效后离开 working 不置未读、StateEvent 带 Quiet。
+func (s *Service) MarkQuiet(ctx context.Context, threadID string) bool {
+	t, err := s.get(ctx, threadID)
+	if err != nil {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.autoOnly {
+		return false
+	}
+	t.quiet = true
 	return true
 }
 

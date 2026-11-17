@@ -36,6 +36,10 @@ type StateEvent struct {
 	// PromptError 为真表示 State == error 的原因只是 prompt_result 报错（线程未失败、orb 不是 failed、
 	// agent 重启未耗尽）：带标签投递的消费方据此等待 TurnEnded（契约 C1）。
 	PromptError bool
+	// Quiet 为真表示助手在这段自动化活动里调用了 stay_silent（MarkQuiet）：不置未读、不发完成通知（State == error 时恒假）。
+	Quiet bool
+	// Auto 为真表示这段活动里下发的消息全是自动化投递（没有主人亲自发的消息）。
+	Auto bool
 }
 
 // InputEvent 是一个新的待答请求。

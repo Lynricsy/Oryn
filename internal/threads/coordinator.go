@@ -57,15 +57,20 @@ type HostToolCall struct {
 	Args                     json.RawMessage
 	// OwnerTurn 为真表示这段活动里没有下发过自动化消息（只用于审计的 origin，不参与放行判断）。
 	OwnerTurn bool
+	// Update 把一份流式部分结果（`{content, details?}`）作为 host_tool_update 发给 omp（M19）；调用已结束或 agent 不在线时
+	// 丢弃。可在任意 goroutine 调用。
+	Update func(partial json.RawMessage)
 }
 
 // HostToolResult 是宿主工具的结果：Text 写进 content，Details 原样作为 details；Images 跟在 text 块之后
-// （M19，出错时不带图）。
+// （M19，出错时不带图）。Raw 非空时原样作为 result（M19：助手的电脑里的工具结果透传），其 isError 决定帧的 isError，
+// 其余字段忽略。
 type HostToolResult struct {
 	Text    string
 	Details any
 	IsError bool
 	Images  []HostToolImage
+	Raw     json.RawMessage
 }
 
 // HostToolImage 是宿主工具结果里的一张图片（Data 为 base64）。
@@ -80,6 +85,9 @@ type AgentProfile struct {
 	// Setup 非 nil 时，每次 agent.start 之前先以它对协调宿主执行一次 setup.run（M13 4.5）：还原受管的 omp 文件
 	// （models.yml、config.yml），助手在上一次运行里用 write 改过的会被覆盖回来。
 	Setup *apigen.LinkCtlSetupRunParams
+	// Web 为真时 agent.start 带 web（M19 第一层：内置联网与生图、PI_PROXY、MCP 地址前缀）；只给全局助手，
+	// Space 协调者为假（D10）。
+	Web bool
 }
 
 // Coordinator 由 internal/coord 实现。
@@ -89,6 +97,8 @@ type Coordinator interface {
 	AgentProfile(ctx context.Context, threadID string) (AgentProfile, error)
 	// HostToolCall 执行一次宿主工具调用；ctx 在 omp 取消调用或超时时结束。
 	HostToolCall(ctx context.Context, c HostToolCall) HostToolResult
+	// HostToolTimeout 返回工具 name 的单次调用上限；0 表示缺省的 hostToolTimeout。
+	HostToolTimeout(name string) time.Duration
 	// UIAnswered 收到主人对控制面发起的待答请求（RequestUI）的应答；response 是 extension_ui_response 帧。
 	// 在后台调用，每个请求至多一次。
 	UIAnswered(ctx context.Context, threadID, requestID string, response json.RawMessage)
@@ -227,10 +237,16 @@ func (s *Service) refreshLocked(t *thread, reason string) bool {
 		slog.Debug("threads: 线程将在静止后重启 agent", "thread", t.id, "reason", reason)
 	}
 	t.refresh = true
+	s.stopIfQuiescentLocked(t)
+	return true
+}
+
+// stopIfQuiescentLocked 在会话静止、已同步且没有排队或在途命令时停掉 agent（refreshLocked 与在途命令的最后一条
+// 应答都会调用）。调用方持有 t.mu。
+func (s *Service) stopIfQuiescentLocked(t *thread) {
 	if t.settled && !t.unsynced && len(t.queue) == 0 && len(t.pending) == 0 {
 		s.stopForRefreshLocked(t)
 	}
-	return true
 }
 
 // stopForRefreshLocked 在后台停掉线程的 agent（refreshLocked）。调用方持有 t.mu。
@@ -428,14 +444,21 @@ func (s *Service) hostToolCallLocked(t *thread, line []byte) {
 		// orbd 在新流上重放的同一调用：已在执行
 		return
 	}
-	ctx, cancel := context.WithTimeout(s.ctx, hostToolTimeout)
+	coord := s.coord
+	timeout := hostToolTimeout
+	if coord != nil {
+		if d := coord.HostToolTimeout(f.ToolName); d > 0 {
+			timeout = d
+		}
+	}
+	ctx, cancel := context.WithTimeout(s.ctx, timeout)
 	t.hostCalls[f.ID] = cancel
 	call := HostToolCall{
 		ThreadID: t.id, Kind: t.kind, SpaceID: t.spaceID,
 		CallID: f.ID, ToolCallID: f.ToolCallID, Name: f.ToolName, Args: f.Arguments,
 		OwnerTurn: !t.autoActive,
+		Update:    func(partial json.RawMessage) { s.hostToolUpdate(t, f.ID, partial) },
 	}
-	coord := s.coord
 	s.go_(func(context.Context) {
 		defer cancel()
 		res := HostToolResult{Text: "coordinator_unavailable: coordinator is not configured", IsError: true}
@@ -463,8 +486,34 @@ func (s *Service) hostToolCallLocked(t *thread, line []byte) {
 	})
 }
 
+// hostToolUpdate 把一次在途宿主工具调用的部分结果写给 omp：调用已结束（结果已写回或已取消）或 agent 不在线时丢弃。
+func (s *Service) hostToolUpdate(t *thread, id string, partial json.RawMessage) {
+	if len(partial) == 0 {
+		return
+	}
+	frame, err := json.Marshal(map[string]any{"type": "host_tool_update", "id": id, "partialResult": partial})
+	if err != nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if _, live := t.hostCalls[id]; !live || t.agent == nil {
+		return
+	}
+	t.agent.send(frame)
+}
+
 // hostToolResultFrame 构造 host_tool_result 帧。
 func hostToolResultFrame(id string, r HostToolResult) ([]byte, error) {
+	if len(r.Raw) > 0 {
+		var flag struct {
+			IsError bool `json:"isError"`
+		}
+		if err := json.Unmarshal(r.Raw, &flag); err != nil {
+			return nil, err
+		}
+		return json.Marshal(map[string]any{"type": "host_tool_result", "id": id, "result": r.Raw, "isError": flag.IsError})
+	}
 	content := []map[string]string{{"type": "text", "text": r.Text}}
 	if !r.IsError {
 		for _, img := range r.Images {

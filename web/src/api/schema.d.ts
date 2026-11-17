@@ -5792,6 +5792,8 @@ export interface components {
             enabled: boolean;
             /** @description 在 issue 下回帖新线程的链接 */
             announce: boolean;
+            /** @description 交给助手：每次运行的结果合并进助手的主线，由助手决定是否告诉主人；该运行的完成通知不再单独推送 */
+            handToAssistant: boolean;
             /** Format: int64 */
             runCount: number;
             lastRunAt?: components["schemas"]["TimestampMs"];
@@ -5820,6 +5822,7 @@ export interface components {
             prompt: string;
             enabled?: boolean;
             announce?: boolean;
+            handToAssistant?: boolean;
             drivers?: components["schemas"]["GitHubTriggerDrivers"];
             maintainers?: string[];
             reviewerBots?: string[];
@@ -5842,6 +5845,7 @@ export interface components {
             prompt?: string;
             enabled?: boolean;
             announce?: boolean;
+            handToAssistant?: boolean;
             drivers?: components["schemas"]["GitHubTriggerDrivers"];
             maintainers?: string[];
             reviewerBots?: string[];
@@ -8020,6 +8024,8 @@ export interface components {
             overlap?: components["schemas"]["ScheduleOverlap"];
             /** @description 仅 `new_thread`：只保留最近 N 个未归档的运行线程，更早且已静止、未置顶的自动归档（缺省 5） */
             keepLast?: number;
+            /** @description 仅 `new_thread`：交给助手——每次运行的结果合并进助手的主线，该运行的完成通知不单独推送；`thread` 模式带 true 即 400 `invalid_schedule`；缺省 false */
+            handToAssistant?: boolean;
             /**
              * Format: int64
              * @description 仅 `PUT /schedules/{id}` 与 `PUT /threads/{id}/schedule` 使用（其它入口忽略）：给出时只在定时当前 `rev` 等于它时才替换，否则 409 `schedule_conflict`。
@@ -8053,6 +8059,8 @@ export interface components {
             orbType?: string;
             overlap: components["schemas"]["ScheduleOverlap"];
             keepLast: number;
+            /** @description 交给助手（只对 `new_thread` 有意义） */
+            handToAssistant: boolean;
             pausedReason?: components["schemas"]["SchedulePausedReason"];
             /** @description 省略 = 不会再触发（暂停或已结束） */
             nextRunAt?: components["schemas"]["TimestampMs"];
@@ -10388,6 +10396,11 @@ export interface components {
             profile?: "coordinator";
             /** @description M9 协调档的系统提示词（以字面量传给 omp `--system-prompt`，必须含换行，否则 `invalid_params`）；只有协调宿主接受 */
             systemPrompt?: string;
+            /**
+             * @description M19：协调档是否打开第一层（内置 `web_search` 与 `generate_image`、`read` 读 URL、环境带 `PI_PROXY` 走 orynd 的正向代理）。
+             *     只给全局助手的对话；Space 协调者省略（= false），工具与环境同 M19 之前（D10）。只有协调宿主接受。
+             */
+            web?: boolean;
             memory?: components["schemas"]["LinkCtlAgentMemory"];
         };
         LinkCtlAgentStartResult: {

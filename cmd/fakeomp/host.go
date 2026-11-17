@@ -96,6 +96,12 @@ type hostTool struct {
 	Description string `json:"description"`
 }
 
+// hostInflight 是一次在途宿主工具调用对应的工具调用（host_tool_update 据此发 tool_execution_update）。
+type hostInflight struct {
+	toolCallID, name string
+	args             map[string]any
+}
+
 // handleHost 处理宿主工具相关的命令与侧通道帧；不是这类命令时返回 false。
 func (s *server) handleHost(typ, id string, line []byte) bool {
 	switch typ {
@@ -127,12 +133,23 @@ func (s *server) handleHost(typ, id string, line []byte) bool {
 		s.mu.Lock()
 		ch := s.hostWait[id]
 		delete(s.hostWait, id)
+		delete(s.hostCalls, id)
 		s.mu.Unlock()
 		if ch != nil {
 			ch <- json.RawMessage(line)
 		}
 	case "host_tool_update":
-		// 部分结果：只确认收到，不影响回合。
+		// 部分结果（M19）：照 omp 转成在途工具调用的 tool_execution_update；调用已结束的丢弃。
+		var u struct {
+			PartialResult json.RawMessage `json:"partialResult"`
+		}
+		_ = json.Unmarshal(line, &u)
+		s.mu.Lock()
+		ref, ok := s.hostCalls[id]
+		s.mu.Unlock()
+		if ok {
+			s.emitEvent(map[string]any{"type": "tool_execution_update", "toolCallId": ref.toolCallID, "toolName": ref.name, "args": ref.args, "partialResult": u.PartialResult})
+		}
 	default:
 		return false
 	}
@@ -208,6 +225,7 @@ func (t *turn) hostCall(st specialStep) (string, bool) {
 	id := "h-" + strconv.Itoa(t.s.hostSeq)
 	ch := make(chan json.RawMessage, 1)
 	t.s.hostWait[id] = ch
+	t.s.hostCalls[id] = hostInflight{toolCallID: callID, name: st.name, args: st.args}
 	t.s.mu.Unlock()
 	t.s.emit(map[string]any{"type": "host_tool_call", "id": id, "toolCallId": callID, "toolName": st.name, "arguments": st.args})
 
@@ -217,6 +235,7 @@ func (t *turn) hostCall(st specialStep) (string, bool) {
 	case <-t.ctx.Done():
 		t.s.mu.Lock()
 		delete(t.s.hostWait, id)
+		delete(t.s.hostCalls, id)
 		t.s.mu.Unlock()
 		t.s.emit(map[string]any{"type": "host_tool_cancel", "id": "h-cancel-" + id, "targetId": id})
 		aborted := map[string]any{"content": []any{map[string]any{"type": "text", "text": "aborted"}}, "details": map[string]any{}}

@@ -188,6 +188,9 @@ type wsMsg struct {
 	ID string `json:"id"`
 	// Code 是 error 消息的错误码。
 	Code string `json:"code"`
+	// WindowStart / LastSeq 是 thread.snapshot 的补发窗口起点（M19 tail 订阅）与当前最大 seq。
+	WindowStart int64 `json:"windowStart"`
+	LastSeq     int64 `json:"lastSeq"`
 }
 
 func (m wsMsg) frameType() string {

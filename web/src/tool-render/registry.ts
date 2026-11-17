@@ -109,9 +109,33 @@ export function ownLookup<T>(
 	return Object.hasOwn(table, name) ? table[name] : undefined;
 }
 
-export function resolveToolRenderer(name: string): ToolRenderer {
+/** 助手的电脑（M19）遥控的工具名前缀：`computer_bash` 等与 orb 里的同名内置工具共用卡片。 */
+const COMPUTER_PREFIX = "computer_";
+/** 带前缀但不是遥控工具、按自己的名字显示的宿主工具。 */
+const COMPUTER_OWN_TOOLS: Record<string, true> = {
+	computer_status: true,
+	computer_upload: true,
+	computer_download: true,
+};
+
+/** 是否是助手在自己的电脑上遥控执行的工具（`computer_<内置工具>`）。 */
+export function isComputerTool(name: string): boolean {
 	return (
-		ownLookup(RENDERERS, name) ??
-		(isMcpToolName(name) ? mcpRenderer : genericRenderer)
+		name.startsWith(COMPUTER_PREFIX) &&
+		name.length > COMPUTER_PREFIX.length &&
+		!Object.hasOwn(COMPUTER_OWN_TOOLS, name)
+	);
+}
+
+/** 查渲染器、图标与类别用的名字：`computer_<x>` 去掉前缀成 `<x>`，其余原样。 */
+export function baseToolName(name: string): string {
+	return isComputerTool(name) ? name.slice(COMPUTER_PREFIX.length) : name;
+}
+
+export function resolveToolRenderer(name: string): ToolRenderer {
+	const base = baseToolName(name);
+	return (
+		ownLookup(RENDERERS, base) ??
+		(isMcpToolName(base) ? mcpRenderer : genericRenderer)
 	);
 }
