@@ -8550,6 +8550,8 @@ export interface components {
             displayUi?: components["schemas"]["OmpFrame"][];
             /** @description 未决的 `plan_proposal` 帧 */
             planProposal?: components["schemas"]["OmpFrame"];
+            /** @description 最近一次 `oryn_composer_prediction` 帧的 `choices`（下一条消息预测，按可能性从高到低）；没有预测、新回合开始（`agent_start`）、agent 重启或 `live.reset` 时省略 */
+            composerPrediction?: string[];
             /** @description 各子 agent 最新的 `subagent_lifecycle` / `subagent_progress` 帧 */
             subagents: components["schemas"]["OmpFrame"][];
             /** @description 在途消息（`openMessage`）与运行中工具（`openTools`）的帧，按到达顺序 */

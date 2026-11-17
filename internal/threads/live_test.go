@@ -125,3 +125,23 @@ func TestLiveSubagentsKeyedByID(t *testing.T) {
 	l.ApplyEntry("message", raw(`{"message":{"role":"toolResult","toolCallId":"c1","timestamp":1}}`))
 	assert.Empty(t, l.Subagents())
 }
+
+// 下一条消息预测只保留最新一帧的 choices；撤回帧、新回合与 live.reset 都清掉，快照里便不会出现过期预测。
+func TestLiveComposerPrediction(t *testing.T) {
+	l := NewLive()
+	l.AgentReady()
+	l.ApplyFrame(raw(`{"type":"oryn_composer_prediction","choices":["run the tests","ship it"]}`))
+	assert.Equal(t, []string{"run the tests", "ship it"}, l.ComposerPrediction)
+	assert.Equal(t, StateIdle, l.Status(true), "预测不改变线程状态")
+
+	l.ApplyFrame(raw(`{"type":"oryn_composer_prediction","choices":[]}`))
+	assert.Empty(t, l.ComposerPrediction, "空 choices 是撤回")
+
+	l.ApplyFrame(raw(`{"type":"oryn_composer_prediction","choices":["ship it"]}`))
+	l.ApplyFrame(raw(`{"type":"agent_start"}`))
+	assert.Empty(t, l.ComposerPrediction, "新回合开始即失效，不等 Core 的撤回帧")
+
+	l.ApplyFrame(raw(`{"type":"oryn_composer_prediction","choices":["ship it"]}`))
+	l.Reset()
+	assert.Empty(t, l.ComposerPrediction)
+}

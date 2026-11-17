@@ -857,8 +857,10 @@ type AgentSnapshot struct {
 	PendingUI    []json.RawMessage  `json:"pendingUi"`
 	DisplayUI    []json.RawMessage  `json:"displayUi"`
 	PlanProposal json.RawMessage    `json:"planProposal,omitempty"`
-	Subagents    []json.RawMessage  `json:"subagents"`
-	Live         []json.RawMessage  `json:"live"`
+	// ComposerPrediction 为空时省略（规格：没有预测）。
+	ComposerPrediction []string          `json:"composerPrediction,omitempty"`
+	Subagents          []json.RawMessage `json:"subagents"`
+	Live               []json.RawMessage `json:"live"`
 }
 
 // Subscribe 在持有线程锁时构造快照并交给 fn（fn 必须在返回前完成订阅登记，
@@ -891,7 +893,8 @@ func (s *Service) Subscribe(ctx context.Context, id string, fn func(Snapshot)) e
 	l := t.live
 	snap.Agent = AgentSnapshot{
 		Status: t.agentStatus, State: l.State, Queue: l.Queue, PlanProposal: l.PlanProposal,
-		PendingUI: nonNilFrames(l.PendingUI()), DisplayUI: nonNilFrames(l.DisplayUI()),
+		ComposerPrediction: l.ComposerPrediction,
+		PendingUI:          nonNilFrames(l.PendingUI()), DisplayUI: nonNilFrames(l.DisplayUI()),
 		Subagents: nonNilFrames(l.Subagents()), Live: nonNilFrames(l.LiveFrames()),
 	}
 	fn(snap)

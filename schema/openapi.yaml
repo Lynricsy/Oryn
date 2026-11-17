@@ -11444,6 +11444,10 @@ components:
           allOf:
             - $ref: '#/components/schemas/OmpFrame'
           description: 未决的 `plan_proposal` 帧
+        composerPrediction:
+          type: array
+          description: 最近一次 `oryn_composer_prediction` 帧的 `choices`（下一条消息预测，按可能性从高到低）；没有预测、新回合开始（`agent_start`）、agent 重启或 `live.reset` 时省略
+          items: { type: string }
         subagents:
           type: array
           description: 各子 agent 最新的 `subagent_lifecycle` / `subagent_progress` 帧

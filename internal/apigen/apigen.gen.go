@@ -3851,6 +3851,9 @@ type AgentIdentity struct {
 
 // AgentLiveState 线程实时缓冲（只含未被条目覆盖的部分）
 type AgentLiveState struct {
+	// ComposerPrediction 最近一次 `oryn_composer_prediction` 帧的 `choices`（下一条消息预测，按可能性从高到低）；没有预测、新回合开始（`agent_start`）、agent 重启或 `live.reset` 时省略
+	ComposerPrediction []string `json:"composerPrediction,omitempty"`
+
 	// DisplayUI 扩展当前的展示类 UI：`setStatus` / `setWidget` 每个 key 最新的 `extension_ui_request` 帧，按到达顺序（空内容的 key 已移除）；agent 重启或 `live.reset` 时清空
 	DisplayUI []OmpFrame `json:"displayUi,omitempty"`
 

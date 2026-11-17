@@ -74,7 +74,9 @@ type Live struct {
 
 	PlanProposal json.RawMessage
 	Queue        json.RawMessage
-	State        json.RawMessage
+	// ComposerPrediction 是最近一次 oryn_composer_prediction 帧的 choices（空表示没有预测），进快照供迟到的客户端显示。
+	ComposerPrediction []string
+	State              json.RawMessage
 
 	agentEverReady   bool
 	working          bool
@@ -231,9 +233,18 @@ func (l *Live) ApplyFrame(frame json.RawMessage) Effect {
 		l.PlanProposal = frame
 	case "queue_update":
 		l.Queue = frame
+	case "oryn_composer_prediction":
+		var p struct {
+			Choices []string `json:"choices"`
+		}
+		if json.Unmarshal(frame, &p) == nil {
+			l.ComposerPrediction = p.Choices
+		}
 	case "agent_start":
 		l.working = true
 		l.promptError = false
+		// 新回合让旧预测失效；Core 也会推撤回帧，这里不依赖它的先后。
+		l.ComposerPrediction = nil
 	case "agent_end":
 		if h.IsTerminal == nil || *h.IsTerminal {
 			l.working = false
@@ -389,6 +400,7 @@ func (l *Live) Reset() {
 	l.pendingUI = map[string]uiSlot{}
 	l.displays = map[string]uiSlot{}
 	l.PlanProposal = nil
+	l.ComposerPrediction = nil
 	l.working = false
 }
 
