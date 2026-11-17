@@ -518,6 +518,9 @@ func (s *Service) Patch(ctx context.Context, id string, p apigen.ThreadPatch) (a
 	if err != nil {
 		return apigen.Thread{}, err
 	}
+	if t.main && ((p.Archived != nil && *p.Archived) || (p.Shipped != nil && *p.Shipped)) {
+		return apigen.Thread{}, errf(CodeMainConversation, "the main conversation cannot be archived")
+	}
 	var newSpace *string // p.SpaceID 给出时的新值（nil = 移出）
 	if p.SpaceID != nil {
 		if t.kind != KindWork {
@@ -672,8 +675,11 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if t.kind == KindSpace {
+	switch {
+	case t.kind == KindSpace:
 		return errf("space_thread", "delete the Space instead of its chat thread")
+	case t.main:
+		return errf(CodeMainConversation, "the main conversation cannot be deleted")
 	}
 	return s.deleteThread(ctx, t, nil)
 }

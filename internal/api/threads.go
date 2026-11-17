@@ -42,6 +42,8 @@ var threadErrStatus = map[string]int{
 	threads.CodeWorktreeFailed:    http.StatusBadRequest,
 	threads.CodeWorktreeDirty:     http.StatusConflict,
 	"conflict":                    http.StatusConflict,
+	// M19：主线对话不能归档、标记已交付或删除
+	threads.CodeMainConversation: http.StatusConflict,
 }
 
 func writeThreadErr(w http.ResponseWriter, err error) {

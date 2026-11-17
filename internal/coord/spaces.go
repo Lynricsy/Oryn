@@ -260,6 +260,30 @@ func (s *Service) CreateConversation(ctx context.Context, p threads.CoordinatorP
 	})
 }
 
+// EnsureMain 返回全局助手的主线对话，没有则创建（M19；全库唯一，只由这里创建）。持 createMu：并发调用只建一行。
+// 主线带固定标题（title_source = user），omp 不会改名。
+func (s *Service) EnsureMain(ctx context.Context) (apigen.Thread, error) {
+	s.createMu.Lock()
+	defer s.createMu.Unlock()
+	row, err := s.st.Q.GetMainThread(ctx)
+	if err == nil {
+		return s.th.Get(ctx, row.ID)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return apigen.Thread{}, err
+	}
+	if err := s.checkHost(ctx); err != nil {
+		return apigen.Thread{}, err
+	}
+	orbID, err := s.EnsureOrb(ctx)
+	if err != nil {
+		return apigen.Thread{}, err
+	}
+	return s.th.CreateCoordinator(ctx, threads.CoordinatorParams{
+		Kind: threads.KindAssistant, Main: true, OrbID: orbID, Model: s.cfg.Model, Title: "Main",
+	})
+}
+
 // Progress 返回 Space 近 days 天（含今天，按 loc 的自然日）的进度：shipped = 当日标记为已交付；
 // archived = 当日归档且未标记已交付；open = 当日结束时已创建且未归档。
 func (s *Service) Progress(ctx context.Context, id string, days int, loc *time.Location) (apigen.SpaceProgress, error) {

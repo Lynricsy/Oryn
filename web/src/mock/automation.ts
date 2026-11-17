@@ -1,5 +1,6 @@
 /**
- * mock 后端的 M9 部分：Space、全局助手对话、定时（线程内 / 每次新建线程）及其运行记录、操作记录、协调宿主状态，
+ * mock 后端的 M9 部分：Space、全局助手对话（含 M19 的主线 `GET assistant/main`）、定时（线程内 / 每次新建线程）及其运行记录、
+ * 操作记录、协调宿主状态，
  * 格式与 orynd 一致。`MockServer.handleFetch` 开头先调 `handle`，不归这里的请求返回 null。
  * 协调宿主默认可用；`localStorage["oryn.mock.coordinator"] = "down"` 时模拟不可用（版本钉不符），新建 Space 与助手对话回 409。
  * 预览只认 cron 的数字 / `*` / 区间 / 列表 / 步长（够 mock 用），时区按浏览器本地时间算。
@@ -441,6 +442,20 @@ export class MockAutomation {
 				{ thread: this.coordinatorThread("assistant", "新对话") },
 				201,
 			);
+		}
+		if (p === "assistant/main" && m === "GET") {
+			// 同 orynd 的 EnsureMain：有则返回，没有则在协调宿主可用时新建（主线由夹具预置）
+			for (const t of this.deps.threads.values())
+				if (t.main) return json({ thread: t });
+			const c = this.coordinator();
+			if (!c.available)
+				return error(409, "coordinator_unavailable", c.reason ?? "unavailable");
+			return json({
+				thread: this.coordinatorThread("assistant", "Main", {
+					main: true,
+					titleSource: "user",
+				}),
+			});
 		}
 		if (p === "spaces") {
 			if (m === "GET") {

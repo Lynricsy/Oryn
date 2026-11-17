@@ -276,6 +276,8 @@ type thread struct {
 	sessionDir string
 	// kind 是线程种类（work / space / assistant，创建后不变）。
 	kind string
+	// main 为真表示全局助手的主线对话（threads.main，M19；创建后不变）。
+	main bool
 	// cwd 是 runner 线程的工作目录（threads.cwd，创建后不变；空 = orb 线程，由 orbd 决定）。
 	cwd string
 
@@ -417,6 +419,7 @@ func newThread(row db.Thread) *thread {
 		settled: true, state: row.State, unread: row.Unread, leaf: row.LeafEntryID, lastSeq: row.LastSeq,
 		model: row.Model, thinking: row.ThinkingLevel, hostCalls: map[string]context.CancelFunc{},
 	}
+	t.main = row.Main == 1
 	if t.kind == "" {
 		t.kind = KindWork
 	}

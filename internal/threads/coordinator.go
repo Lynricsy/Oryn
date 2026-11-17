@@ -25,6 +25,9 @@ const (
 // CodeCoordinatorRestricted 是协调线程不允许的操作（命令、附件、fork、分享、挂到协调 orb）的错误码。
 const CodeCoordinatorRestricted = "coordinator_restricted"
 
+// CodeMainConversation 是主线对话不允许的操作（归档、标记已交付、删除；M19）的错误码。
+const CodeMainConversation = "main_conversation"
+
 // hostToolTimeout 是单次宿主工具调用的上限。
 const hostToolTimeout = 60 * time.Second
 
@@ -105,7 +108,9 @@ type CoordinatorParams struct {
 	Prompt string
 	Images []apigen.ImageContent
 	Files  []string
-	Extra  func(q *db.Queries, threadID string) error
+	// Main 为真时新建的是全局助手的主线对话（只允许 kind = assistant；全库唯一，由 coord.EnsureMain 创建）。
+	Main  bool
+	Extra func(q *db.Queries, threadID string) error
 }
 
 // CreateCoordinator 新建一个协调对话（kind = space | assistant），挂到协调 orb 上并唤醒它。
@@ -115,6 +120,9 @@ func (s *Service) CreateCoordinator(ctx context.Context, p CoordinatorParams) (a
 	}
 	if p.OrbID == "" {
 		return apigen.Thread{}, errf("invalid", "coordinator orb required")
+	}
+	if p.Main && p.Kind != KindAssistant {
+		return apigen.Thread{}, errf("invalid", "only assistant conversations can be the main conversation")
 	}
 	first := strings.TrimSpace(p.Prompt) != "" || len(p.Images) > 0 || len(p.Files) > 0
 	if first && p.Kind != KindAssistant {
@@ -142,6 +150,9 @@ func (s *Service) CreateCoordinator(ctx context.Context, p CoordinatorParams) (a
 	}
 	if p.ThinkingLevel != "" {
 		row.ThinkingLevel = &p.ThinkingLevel
+	}
+	if p.Main {
+		row.Main = new(int64(1))
 	}
 	extra := func(q *db.Queries) error {
 		if p.Extra != nil {

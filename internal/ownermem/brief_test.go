@@ -63,7 +63,7 @@ func TestBriefTopicsBudget(t *testing.T) {
 }
 
 // TestBriefRecent:块二按项目分组列出最近 14 天的助手对话与工作线程（状态、交付、PR），不超过 30 行，
-// 不含当前对话、更早的线程与被排除的线程。
+// 不含当前对话、主线对话（M19）、更早的线程与被排除的线程。
 func TestBriefRecent(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t, true)
@@ -76,6 +76,8 @@ func TestBriefRecent(t *testing.T) {
 	e.thread(t, "w2", "work", "idle", 0, 3*time.Hour)
 	e.thread(t, "old", "work", "idle", 0, 15*24*time.Hour)
 	e.thread(t, "hidden", "work", "idle", 0, time.Hour)
+	e.thread(t, "mainline", "assistant", "idle", 0, time.Minute)
+	e.exec(t, `UPDATE threads SET main = 1 WHERE id = 'mainline'`)
 	e.exec(t, `UPDATE threads SET project_id = 'p' WHERE id IN ('w1','w2')`)
 	e.exec(t, `UPDATE threads SET shipped_at = 1 WHERE id = 'w2'`)
 	require.NoError(t, e.st.Q.InsertOwnerMemoryExclusion(ctx, db.InsertOwnerMemoryExclusionParams{Kind: "thread", TargetID: "hidden", CreatedAt: 1}))
@@ -85,7 +87,7 @@ func TestBriefRecent(t *testing.T) {
 	day := e.now.Format("2006-01-02")
 	assert.Contains(t, out, "助手对话：\n- 「标题chat」（"+day+"）")
 	assert.Contains(t, out, "项目「Oryn」：\n- 「标题w1」（进行中 · 最后活动 "+day+"）\n- 「标题w2」（已交付 · 最后活动 "+day+"）")
-	for _, id := range []string{"标题cur", "标题old", "标题hidden"} {
+	for _, id := range []string{"标题cur", "标题old", "标题hidden", "标题mainline"} {
 		assert.NotContains(t, out, id)
 	}
 
