@@ -13,7 +13,7 @@
 
 </div>
 
-本机生产实例的入口、端口、数据目录与维护方式见[部署文档第 16 节](docs/deploy.md#16-developserverus-本机生产实例)。
+本机生产实例的入口、端口、数据目录与维护方式见[部署文档第 16 节](docs/deploy.md#16-developserverus-本机生产实例)。Gemini Decisions 重排使用随项目构建的 `gemini-rerank` 适配器。
 
 ## 核心能力
 

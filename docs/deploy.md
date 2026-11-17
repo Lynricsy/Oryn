@@ -914,7 +914,7 @@ ORYN_OWNERMEM_EVAL_DECIDE_KEY=<判断模型 key> ORYN_OWNERMEM_EVAL_BANK=oryn-ow
 
 ## 16. DevelopServerUS 本机生产实例
 
-2026-11-17 部署于 `/root/Oryn`，运行源码固定为 `def2968507297a0b38fec9197af955f5c81a262e`。生产源码在独立克隆 `src/` 构建，未覆盖本仓库的开发二进制、数据、服务或 `oryn-orb:dev` 镜像。
+初始部署源码为 `def2968507297a0b38fec9197af955f5c81a262e`；Gemini 记忆升级的控制面与重排适配器从提交 `22b4f6ac88` 构建，provider 与 Orb 镜像保持初始版本。生产产物在 `/root/Oryn/src` 独立克隆构建，未覆盖本仓库的开发二进制、数据、服务或 `oryn-orb:dev` 镜像。
 
 ### 入口与端口
 
@@ -927,7 +927,7 @@ ORYN_OWNERMEM_EVAL_DECIDE_KEY=<判断模型 key> ORYN_OWNERMEM_EVAL_BANK=oryn-ow
 | Orb link TLS | `172.30.240.1:20433`，仅生产专用网桥可访问 |
 | 协调沙箱出站代理 | `18549`，由协调宿主按需在自己的网络命名空间内监听 |
 | Hindsight API | `127.0.0.1:22004` |
-| 本地嵌入接口 | `127.0.0.1:22005/v1` |
+| Gemini Decisions 重排适配器 | `127.0.0.1:27183/v1/rerank`，仅回环 |
 
 AliDNS 的 `oryn`、`oyrn`、`*.oryn` 均仅使用 default 线路 A 记录指向 `64.20.45.163`，TTL 600；不配置国内分流。1Panel 站点 12 承载主域名及通配域名，站点 13 承载别名。证书 5 覆盖三个名称，启用自动续期；面板每六小时检查，剩余有效期不足 30 天时续签并自动发布到绑定站点。部署时已演练一次重新签发和双站点自动发布。
 
@@ -942,14 +942,14 @@ AliDNS 的 `oryn`、`oyrn`、`*.oryn` 均仅使用 default 线路 A 记录指向
 | `cli/credentials.json` | root-only 的「本机生产运维」设备凭据；与开发 CLI 登录状态分离 |
 | `systemd/` | 生产服务单元，链接到 `/etc/systemd/system/` |
 | `hindsight/data/` | PostgreSQL bind mount，无新增命名数据卷 |
-| `hindsight/embed-data/` | 独立嵌入模型缓存 bind mount，不依赖评测容器 |
+| `backups/gemini-memory-before/` | 切换 Gemini 前的控制面在线备份、Hindsight 导出及旧部署配置，均受限访问 |
 | `hindsight/.env`、`hindsight/db.env` | 分离保存中转密钥与数据库密码，均为 0600 |
 | `ops/` | 构建清单、网络脚本、无密钥 DNS 回滚记录及 TLS 验收证据 |
 
 以下命令只操作生产实例：
 
 ```bash
-systemctl status oryn-prod.service oryn-prod-provider.service oryn-prod-network.service
+systemctl status oryn-prod.service oryn-prod-provider.service oryn-prod-network.service oryn-prod-rerank.service
 /root/Oryn/oryn provider ls
 /root/Oryn/hindsight/dc ps
 curl --fail https://oryn.ling.plus/healthz
@@ -963,11 +963,17 @@ curl --fail https://oryn.ling.plus/healthz
 
 ### 模型、记忆与初始化
 
-生产配置导入了宿主的模型凭据与角色，不导入仅适用于宿主路径的扩展、技能仓库或 MCP 配置。模型目录不等于上游的实时可用性：`google/gemini-4-hydrogen` 返回无授权分组，`axonhub/gpt-5.4-mini` 返回 503 `no_available_providers`。因此生产的 `tiny`、`memory` 角色与 Hindsight 默认用途改用直接调用已验证成功的 `anthropic/claude-sonnet-5-5`。其他命名角色保持宿主配置，可在管理页调整。
+生产配置导入了宿主的模型凭据与角色，不导入仅适用于宿主路径的扩展、技能仓库或 MCP 配置。CodeHub 补齐模型后，`google/gemini-4-hydrogen` 的真实请求已返回成功；生产的 `tiny`、`memory` 角色与 Hindsight 默认用途恢复为 Hydrogen，经控制面代理走 CodeHub，不把新的 Google 官方密钥用于普通对话模型。其他命名角色保持宿主配置，可在管理页调整。
 
 `exa`、`typesafe` 沿用宿主没有 `baseUrl` 的配置，导入时会产生 `env_fallback` 提示：这两个 provider 的真实密钥按现有实现以环境变量下发到 Orb，而不是由模型代理注入。不要把带这些凭据的 Orb 交给不可信用户。
 
-记忆服务使用独立 Compose 项目 `oryn-prod-hindsight`：Hindsight 1.2.1、pgroonga / pgvector PostgreSQL、本地 CPU `Qwen/Qwen3-Embedding-0.6B`（1024 维）。外部模型请求经控制面中转；重排使用 RRF。嵌入服务内存上限为 6 GiB：首次加载和预热曾超过 3 GiB 并被 cgroup OOM 终止，不能将「容器正在运行」当成模型已经就绪。
+记忆服务使用独立 Compose 项目 `oryn-prod-hindsight`：Hindsight 1.2.1 与 pgroonga / pgvector PostgreSQL。工程记忆 bank `oryn`、助手主人记忆 bank `oryn-owner` 共用 `gemini-embedding-2`，通过 Google 官方 OpenAI 兼容接口 `/v1beta/openai` 调用，固定 1536 维。切换时已停记忆 API、备份并执行全 schema `reembed`；即使事实表为空，也要迁移 mental model 等其它向量列。旧本地 Qwen 嵌入服务不再运行。助手记忆的全局开关保持原值，不因换模型自动开启。
+
+工程记忆使用 `gemini-decision-1` 重排。Hindsight 继续走已有 Cohere 兼容协议，中转目标为本机 `gemini-rerank` 适配器；适配器与助手记忆复用 `internal/geminidecision` 的原生 Decisions 客户端。助手记忆自己的判断模型也配置为 `gemini-decision-1`；它召回时关闭 Hindsight 重排，避免重复判定。
+
+适配器只监听回环，固定调用 Google `/v1beta/decisions`，以动态非特权账号运行，不能读取控制面数据、配置、CLI 凭据或数据库目录。Google key 只由控制面从加密存储注入当前请求，再转换为 `x-goog-api-key`，适配器不落盘、不记录密钥或记忆正文、不跟随重定向、不重试。候选的 0–3 期望分映射为 0–1 分数，同分保持原序；缺分、越界或上游失败使整批明确失败，不返回伪造结果。Google 嵌入和判断请求按官方账户计费。
+
+`gemini-rerank` 随 `make build` 生成，通用 systemd 模板在 `deploy/systemd/oryn-gemini-rerank.service`；本机实际单元位于 `/root/Oryn/systemd/oryn-prod-rerank.service`。适配器无上游地址参数，不能用来代理任意 URL。Hindsight 的管理页会显示 Cohere 兼容传输与实际模型名 `gemini-decision-1`，并非调用 Cohere 的模型。
 
 首次所有者必须由本人在正式域名的初始化页面注册 Passkey，并保存一次性显示的恢复码；初始化链接不得写入本说明或任务日志。「本机生产运维」设备拥有完整管理权限，完成部署后可在设备管理中吊销；吊销后本机 CLI 需重新配对。GitHub OAuth、可选 FCM、外部 SSH 主机等个人集成需各自授权，部署不代建这些身份。
 

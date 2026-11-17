@@ -20,8 +20,8 @@ const (
 	// recallKeep 是最多给出的条数。
 	recallKeep = 20
 	// directScore、partialScore 是分档阈值：≥2.0 正常给出，1.5–2.0 标注部分相关，<1.5 不给。
-	directScore   = 2.0
-	partialScore  = 1.5
+	directScore  = 2.0
+	partialScore = 1.5
 )
 
 // decideInput 是共享 input（{today}、{query} 处替换）。
