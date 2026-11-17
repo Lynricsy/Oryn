@@ -34,6 +34,11 @@ const CYCLE_ORDER: Path = ["cycleOrder"];
 const MODEL_TAGS: Path = ["modelTags"];
 const TASK_DISABLED_AGENTS: Path = ["task", "disabledAgents"];
 const TASK_AGENT_MODEL_OVERRIDES: Path = ["task", "agentModelOverrides"];
+const COMPOSER_PREDICTIONS: Path = ["composer", "predictions"];
+const COMPOSER_PREDICTION_ALTERNATIVES: Path = [
+	"composer",
+	"predictionAlternatives",
+];
 
 /** 解析 config.yml；空文本得到空文档。 */
 export function readConfigDoc(text: string): Document {
@@ -249,6 +254,42 @@ export function setAgentModelOverride(
 	const path = [...TASK_AGENT_MODEL_OVERRIDES, agent];
 	if (selector === null) removePath(doc, path);
 	else setPath(doc, path, selector);
+}
+
+/** 输入框预测的两个布尔设置（`composer.predictions`、`composer.predictionAlternatives`，Core 默认都为 false）。 */
+export interface ComposerPredictionSettings {
+	predictions: boolean;
+	alternatives: boolean;
+}
+
+/** 同 Core `parseBoolean`：布尔值，或去空白、不分大小写的 "true"；其余（含缺失）按默认值 false。 */
+function flagAt(doc: Document | undefined, path: Path): boolean {
+	const v: unknown = doc?.getIn(path);
+	if (typeof v === "boolean") return v;
+	return typeof v === "string" && v.trim().toLowerCase() === "true";
+}
+
+export function composerPredictionSettings(
+	doc: Document | undefined,
+): ComposerPredictionSettings {
+	return {
+		predictions: flagAt(doc, COMPOSER_PREDICTIONS),
+		alternatives: flagAt(doc, COMPOSER_PREDICTION_ALTERNATIVES),
+	};
+}
+
+/** 开关输入框预测设置项；关闭即删除该键（回到 Core 默认 false），`composer` 变空时一并删除。 */
+export function setComposerPredictionSetting(
+	doc: Document,
+	key: keyof ComposerPredictionSettings,
+	on: boolean,
+): void {
+	const path =
+		key === "predictions"
+			? COMPOSER_PREDICTIONS
+			: COMPOSER_PREDICTION_ALTERNATIVES;
+	if (on) setPath(doc, path, true);
+	else removePath(doc, path);
 }
 
 // ── 启停键：与 Core 各 capability 的 `toExtensionId` 一致（`packages/coding-agent/src/capability/*.ts`） ──

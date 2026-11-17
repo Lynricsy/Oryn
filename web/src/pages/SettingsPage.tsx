@@ -83,6 +83,7 @@ import { uiStore, useSidebarShown, useSidebarToggleShown } from "../state/ui";
 import { AppIconPicker } from "./settings/AppIconPicker";
 import AutomationsSettings from "./settings/AutomationsSettings";
 import CollectionsPage from "./settings/agent/CollectionsPage";
+import ComposerPage from "./settings/agent/ComposerPage";
 import ExtensionsPage from "./settings/agent/ExtensionsPage";
 import MemoryPage from "./settings/agent/MemoryPage";
 import PromptsPage from "./settings/agent/PromptsPage";
@@ -113,6 +114,7 @@ export type SettingsSection =
 	| "agent-commands"
 	| "agent-extensions"
 	| "agent-memory"
+	| "agent-composer"
 	| "agent-config"
 	| "identity"
 	| "appearance"
@@ -1265,6 +1267,7 @@ export function SettingsPage({
 					{section === "agent-commands" && <CollectionsPage />}
 					{section === "agent-extensions" && <ExtensionsPage />}
 					{section === "agent-memory" && <MemoryPage />}
+					{section === "agent-composer" && <ComposerPage />}
 					{section === "agent-config" && <AgentConfigSettings />}
 					{section === "identity" && <IdentitySettings />}
 					{section === "appearance" && <ThemeSettings />}

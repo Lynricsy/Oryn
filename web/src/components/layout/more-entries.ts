@@ -98,6 +98,13 @@ export const MORE_ENTRIES: readonly MoreEntry[] = [
 		to: "/settings/agent-memory",
 	},
 	{
+		key: "agent-composer",
+		group: "agent",
+		icon: "keyboard",
+		labelKey: "settings.agent-composer",
+		to: "/settings/agent-composer",
+	},
+	{
 		key: "agent-config",
 		group: "agent",
 		icon: "file",

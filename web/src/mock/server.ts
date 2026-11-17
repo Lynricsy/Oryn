@@ -1,7 +1,8 @@
 /**
  * 浏览器内 mock 服务端：实现足够的 REST 与 WS（计划 C3）让界面无需后端即可体验。
  * 发送提示词时按 fakeomp 的帧序列回放：agent_start → 用户消息 → 流式 assistant（思考 / 文本 / 工具调用）→
- * bash 工具生命周期 → 最终回答 → agent_end → prompt_result → session_settled，期间按序复制条目。
+ * bash 工具生命周期 → 最终回答 → agent_end → prompt_result → session_settled，期间按序复制条目；
+ * 回合结束稍后再推一帧 `oryn_composer_prediction`（下一条消息预测）。
  * 提示词含 `ask` 时发一个 ask 对话框并等待作答；含 `plan` 时发计划提案并等待审批。
  * 环境（M2.5）：orb 带 `lastSetup` / `lastResume`，提供 setup-runs 与日志接口；failed orb 的线程 `wake` 后恢复；
  * 提示词点名 `oryn-setup` 技能时，回合结束后补一条手动重跑成功的记录（模拟 agent 修好环境）。
@@ -430,6 +431,8 @@ export class MockServer {
 	/** 受管服务日志（服务名 → 文本）。 */
 	readonly serviceLogs = new Map<string, string>(Object.entries(serviceLogs));
 	readonly planProposals = new Map<string, Json>();
+	/** 最近一次非空的输入框预测（同控制面缓存，进 `thread.snapshot` 的 `agent.composerPrediction`）。 */
+	readonly predictions = new Map<string, string[]>();
 	/** 快照 `agent.live` 里的在途帧（按线程）。 */
 	readonly liveFrames = new Map<string, Json[]>();
 	/** 首次订阅（afterSeq=0）时按位置插在条目之间投递的帧（按线程）。 */
@@ -2852,6 +2855,7 @@ export class MockServer {
 						planProposal: this.planProposals.get(threadId),
 						subagents: [],
 						live: this.liveFrames.get(threadId) ?? [],
+						composerPrediction: this.predictions.get(threadId),
 					},
 					leafEntryId: last?.entryId,
 					lastSeq: last?.seq ?? 0,
@@ -3472,6 +3476,8 @@ export class MockServer {
 		if (!t) return;
 		this.upsertThread({ ...t, state: "working", lastMessageAt: Date.now() });
 		this.frame(threadId, { type: "agent_start" });
+		// 同控制面：新一轮开始时作废缓存的输入框预测
+		this.predictions.delete(threadId);
 		this.desktop.turn(t.orbId, true);
 		const userMsg = { role: "user", content: text, timestamp: Date.now() };
 		this.frame(threadId, {
@@ -3753,5 +3759,17 @@ export class MockServer {
 			this.upsertThread({ ...cur, state: "idle", lastMessageAt: Date.now() });
 		if (cur?.orbId && text.includes("oryn-setup"))
 			this.recordManualSetup(cur.orbId);
+		// 同 omp `composer.predictions`：一轮完成后再发一次请求预测下一条消息（这里固定给 4 个候选，
+		// 首条是第二条的前缀，便于在开发模式下试前缀匹配与 Tab 轮换）
+		await sleep(d * 4);
+		if (this.threads.get(threadId)?.state !== "idle") return;
+		const choices = [
+			"再看一下磁盘占用",
+			"再看一下磁盘占用和内存",
+			"把结果整理成表格",
+			"接着跑一遍测试",
+		];
+		this.predictions.set(threadId, choices);
+		this.frame(threadId, { type: "oryn_composer_prediction", choices });
 	}
 }

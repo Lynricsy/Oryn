@@ -5595,6 +5595,11 @@ type OrynUiParityRpcResponse = {
 	success: true;
 	data: OrynCancelJobResult;
 };
+/** 预测变化时推送的帧；`choices` 按可能性从高到低，空数组表示当前没有预测。 */
+export interface OrynComposerPredictionFrame {
+	type: "oryn_composer_prediction";
+	choices: string[];
+}
 /** Structured provenance preserved for GUI settings persistence/source displays. */
 export interface RpcSettingProvenance {
 	layers: ("global" | "project" | "overlay" | "runtime")[];

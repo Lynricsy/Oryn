@@ -1984,3 +1984,27 @@ M14 用 GitHub App 连接，下列契约已在 M15 删除，不再存在：`POST
 `0036_memory.sql` 新增以下表：`memory_settings`（单行）、`memory_models`、`memory_endpoints`、`memory_projects`、`memory_candidates`、`memory_documents`、`memory_usage`、`memory_tombstones`。
 
 敏感值经 `secrets.Box` 加密后存在本表列里，AAD 分别是 `memory/hindsight-key` 和 `memory/endpoint/<kind>/api-key`。中转令牌只存 SHA-256。
+
+## 下一条消息预测（Core `oryn-v18.19.0-12`）
+
+omp 的 `composer.predictions`：回合正常结束后用当前模型跑一次旁路请求，预测用户的下一条消息，显示成空输入框里的灰色提示字。上游只在 TUI 里接了这个功能，Oryn Core 把它接进 RPC 模式（`docs/rpc.md`「Oryn: composer next-message prediction」）。
+
+### 帧
+
+`{ type: "oryn_composer_prediction", choices: string[] }`，按可能性从高到低排列；`composer.predictionAlternatives` 打开时最多 4 条。预测有变化就推送完整列表，空数组表示撤回。以下情况会撤回：`agent_start`、自动压缩开始、关闭设置、对话推进越过了预测时所在的那条消息。最后这项判定在每条命令处理完后也会跑一次，所以 `clear_context`、`navigate_tree`、`switch_leaf`、`compact`、`handoff` 这类不发会话事件就改写上下文的命令，会在应答之前推出撤回帧。只有终结的 `agent_end`（不是续跑）才会发起预测，并且最后一条助手消息不能出错或中止、也不能有待执行的自动重试。每次预测都会多发一个按整段对话计费的请求，用量记为 `model_usage`，purpose 是 `composer-prediction`。Core 看不到客户端的草稿，草稿规则由客户端执行。
+
+### 控制面
+
+- 实时缓冲（`threads.Live.ComposerPrediction`）只保留最新一帧的 `choices`。撤回帧、`agent_start`、`live.reset`、agent 重启都会清空它。
+- `thread.snapshot` 的 `agent.composerPrediction`（`AgentLiveState.composerPrediction`，可选的字符串数组）带上当前值，刷新页面或重连后还能看到预测。orbd 的待答重放槽不保留这个帧，所以控制面重启或 agent 断档后预测会丢失，下一个回合会重新生成。
+- 这个帧和其它未知帧一样会转发给线程订阅者。公开分享连接的白名单不包含它。
+
+### 设置
+
+两个开关都写在全局 omp `config.yml` 里（`composer.predictions`、`composer.predictionAlternatives`，默认都是 false），由 设置 › Agent › 输入框（`/settings/agent-composer`）通过 agent 配置文件接口写入，再随 `omphome.apply` 下发。关闭时删除该键。项目层的 `config.yml` 可以覆盖。
+
+### Web
+
+- 线程状态 `composerPrediction` 取自帧和快照，`agent_start` 与 `live.reset` 时清空。
+- 显示规则在 `lib/composer-prediction.ts`，与 omp TUI 编辑器一致：草稿必须是单行、光标在末尾，并且是某条候选的严格前缀（区分大小写），这时取第一条这样的候选，在草稿后面叠一层灰色的剩余部分。以下情况不显示：菜单打开、输入法正在组字、线程忙、正在发送、输入框禁用。
+- Tab 或 →（无修饰键）插入完整候选，不发送；触屏点灰色文字也会插入。有 2 条以上候选时，刚插入的草稿不会再被更长的候选延伸，改为按 Tab 轮换到下一条，页脚显示 `⇥ 序号/总数`。

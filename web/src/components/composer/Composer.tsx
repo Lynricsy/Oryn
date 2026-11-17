@@ -5,10 +5,13 @@
  * 协调对话里只有全局助手对话（M13）有附件：文件传进助手文件库，以 `orynFiles` 携带；Space 聊天没有附件。
  * 线程的项目已绑定 GitHub 时（M14），键入 `#` 弹出该仓库的 issue / PR 候选（`RefMenu`），选中即作为 Markdown 附件加入；
  * `/` 命令菜单打开时（整段以 `/` 开头）与协调对话里不启用。
+ * omp 推来下一条消息预测时（`composerPrediction`，规则见 `lib/composer-prediction.ts`）在草稿后叠一层灰色幽灵字：
+ * Tab / → 或点一下插入（从不发送），有多个候选时插入后再按 Tab 轮换。
  */
 import {
 	type ReactNode,
 	useEffect,
+	useId,
 	useLayoutEffect,
 	useRef,
 	useState,
@@ -18,6 +21,7 @@ import { useNavigate } from "react-router";
 import { chatModels, fetchModelCatalog } from "../../api/model-catalog-queries";
 import { selectionPrompt } from "../../lib/artifacts/prompt";
 import { composerKeyAction, parseComposerInput } from "../../lib/composer";
+import { predictionView } from "../../lib/composer-prediction";
 import { selectModel } from "../../lib/model-select";
 import { composeQuoted } from "../../lib/quote";
 import {
@@ -78,10 +82,12 @@ export function Composer({
 	const busy = useThread(threadId, isThreadBusy);
 	const commands = useThread(threadId, (s) => s.commands);
 	const editorText = useThread(threadId, (s) => s.editorText);
+	const prediction = useThread(threadId, (s) => s.composerPrediction);
 	// 草稿与错误行存在组件外（按线程）：跨 compact 断点、切线程重新挂载时不丢
 	const text = useComposerDraft(threadId, (d) => d.text);
 	const error = useComposerDraft(threadId, (d) => d.error);
 	const quote = useComposerDraft(threadId, (d) => d.quote);
+	const inFlight = useComposerDraft(threadId, (d) => d.inFlight);
 	const setText = (next: string) =>
 		patchComposerDraft(threadId, { text: next });
 	const setError = (next: unknown) =>
@@ -126,6 +132,40 @@ export function Composer({
 		},
 		onAttached: (a) => att.addUploaded([a]),
 	});
+	const [composing, setComposing] = useState(false);
+	/** 最近一次从预测插入的文本（轮换用）；之后的任何其他编辑都清掉它。 */
+	const [inserted, setInserted] = useState<string | null>(null);
+	const ghostRef = useRef<HTMLDivElement>(null);
+	const ghostHintId = useId();
+	const predicted = predictionView({
+		choices: prediction,
+		draft: text,
+		caret,
+		// 菜单、输入法组字、agent 工作中、发送途中都不显示
+		enabled:
+			!disabled &&
+			!busy &&
+			!inFlight &&
+			!composing &&
+			!menuOpen &&
+			!refMenu.open,
+		inserted,
+	});
+	const ghost = predicted.ghost;
+
+	/** 接受预测：草稿换成完整候选、光标放到末尾；从不发送。 */
+	const acceptPrediction = (choice: string) => {
+		setText(choice);
+		setInserted(choice);
+		setCaret(choice.length);
+		setMenuDismissed(false);
+		const el = ref.current;
+		if (!el) return;
+		el.focus({ preventScroll: true });
+		requestAnimationFrame(() =>
+			el.setSelectionRange(choice.length, choice.length),
+		);
+	};
 
 	// omp 的 set_editor_text / 会话树跳转带回的草稿；同一份只并入一次（重新挂载时 store 里仍是它）
 	// biome-ignore lint/correctness/useExhaustiveDependencies: 只由新的 editorText 触发
@@ -174,13 +214,18 @@ export function Composer({
 		};
 	}, [threadId]);
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: 文本变化后按内容高度自适应
+	// biome-ignore lint/correctness/useExhaustiveDependencies: 文本或幽灵字变化后按内容高度自适应
 	useLayoutEffect(() => {
 		const el = ref.current;
 		if (!el) return;
 		el.style.height = "auto";
-		el.style.height = `${Math.min(el.scrollHeight, Math.round(window.innerHeight * 0.4))}px`;
-	}, [text]);
+		// 幽灵字可能比已输入的文字多占几行：取两者较高者
+		const content = Math.max(
+			el.scrollHeight,
+			ghostRef.current?.scrollHeight ?? 0,
+		);
+		el.style.height = `${Math.min(content, Math.round(window.innerHeight * 0.4))}px`;
+	}, [text, ghost?.suffix]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: 候选数变化时重置高亮项
 	useEffect(() => {
@@ -566,6 +611,31 @@ export function Composer({
 			else clearSelection();
 			return;
 		}
+		// 下一条消息预测：在菜单之后处理（菜单先吃掉 Tab），只认无修饰键的 Tab / →，从不发送
+		if (
+			!e.nativeEvent.isComposing &&
+			!e.shiftKey &&
+			!e.altKey &&
+			!e.ctrlKey &&
+			!e.metaKey
+		) {
+			if (e.key === "Tab" && predicted.cycle) {
+				e.preventDefault();
+				acceptPrediction(predicted.cycle.next);
+				return;
+			}
+			const el = e.currentTarget;
+			if (
+				(e.key === "Tab" || e.key === "ArrowRight") &&
+				ghost &&
+				el.selectionStart === el.selectionEnd &&
+				el.selectionEnd >= el.value.length
+			) {
+				e.preventDefault();
+				acceptPrediction(ghost.choice);
+				return;
+			}
+		}
 		const decision = composerKeyAction(
 			e.nativeEvent,
 			busy,
@@ -632,42 +702,82 @@ export function Composer({
 				/>
 			)}
 			{canAttach && <AttachmentStrip items={att.items} onRemove={att.remove} />}
-			<textarea
-				onDragOver={(e) => {
-					if (canAttach && e.dataTransfer.types.includes("Files"))
+			{/* 幽灵字叠在输入框上方，排版与输入框一致；只有灰色部分接收点击（触屏没有 Tab，点一下插入） */}
+			<div className="relative">
+				<textarea
+					onDragOver={(e) => {
+						if (canAttach && e.dataTransfer.types.includes("Files"))
+							e.preventDefault();
+					}}
+					onDrop={(e) => {
+						if (!canAttach || e.dataTransfer.files.length === 0) return;
 						e.preventDefault();
-				}}
-				onDrop={(e) => {
-					if (!canAttach || e.dataTransfer.files.length === 0) return;
-					e.preventDefault();
-					void att.addFiles(e.dataTransfer.files);
-				}}
-				ref={ref}
-				rows={1}
-				value={text}
-				disabled={disabled}
-				aria-label={t("composer.label")}
-				placeholder={
-					busy ? t("composer.placeholderBusy") : t("composer.placeholder")
-				}
-				// 与首页托盘同一套内边距：文字离边 20px（32px 大圆角下不贴弧线），工具行图标中心、页脚读数都对齐这条线
-				className="block max-h-[40vh] min-h-[52px] w-full resize-none bg-transparent px-5 pt-4 pb-1.5 text-[14px] leading-5 outline-none placeholder:text-faint focus-visible:outline-none"
-				onChange={(e) => {
-					setText(e.target.value);
-					setCaret(e.target.selectionStart);
-					setMenuDismissed(false);
-				}}
-				onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
-				onKeyUp={(e) => setCaret(e.currentTarget.selectionStart)}
-				onKeyDown={onKeyDown}
-				onPaste={(e) => {
-					const files = canAttach ? [...e.clipboardData.files] : [];
-					if (files.length > 0) {
-						e.preventDefault();
-						void att.addFiles(files);
+						void att.addFiles(e.dataTransfer.files);
+					}}
+					ref={ref}
+					rows={1}
+					value={text}
+					disabled={disabled}
+					aria-label={t("composer.label")}
+					aria-describedby={ghost ? ghostHintId : undefined}
+					placeholder={
+						ghost && text === ""
+							? ""
+							: busy
+								? t("composer.placeholderBusy")
+								: t("composer.placeholder")
 					}
-				}}
-			/>
+					// 与首页托盘同一套内边距：文字离边 20px（32px 大圆角下不贴弧线），工具行图标中心、页脚读数都对齐这条线
+					className="block max-h-[40vh] min-h-[52px] w-full resize-none bg-transparent px-5 pt-4 pb-1.5 text-[14px] leading-5 outline-none placeholder:text-faint focus-visible:outline-none"
+					onChange={(e) => {
+						setText(e.target.value);
+						setCaret(e.target.selectionStart);
+						setMenuDismissed(false);
+						setInserted(null);
+					}}
+					onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+					onKeyUp={(e) => setCaret(e.currentTarget.selectionStart)}
+					onKeyDown={onKeyDown}
+					onCompositionStart={() => setComposing(true)}
+					onCompositionEnd={() => setComposing(false)}
+					onScroll={(e) => {
+						if (ghostRef.current)
+							ghostRef.current.scrollTop = e.currentTarget.scrollTop;
+					}}
+					onPaste={(e) => {
+						const files = canAttach ? [...e.clipboardData.files] : [];
+						if (files.length > 0) {
+							e.preventDefault();
+							void att.addFiles(files);
+						}
+					}}
+				/>
+				{ghost && (
+					<div
+						ref={ghostRef}
+						aria-hidden
+						data-testid="composer-ghost"
+						className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-5 pt-4 pb-1.5 text-[14px] leading-5"
+					>
+						<span className="invisible">{text}</span>
+						{/* biome-ignore lint/a11y/useKeyWithClickEvents: 键盘用 Tab / → 接受，这里只给指针与触屏 */}
+						{/* biome-ignore lint/a11y/noStaticElementInteractions: 同上，幽灵字本身对辅助技术隐藏，说明见 aria-describedby */}
+						<span
+							className="pointer-events-auto cursor-text text-faint"
+							// 不抢输入框焦点
+							onMouseDown={(e) => e.preventDefault()}
+							onClick={() => acceptPrediction(ghost.choice)}
+						>
+							{ghost.suffix}
+						</span>
+					</div>
+				)}
+				{ghost && (
+					<span id={ghostHintId} className="sr-only">
+						{t("composer.prediction", { text: ghost.choice })}
+					</span>
+				)}
+			</div>
 			{/*
 			 * 工具行：附件 + 分隔、可换行的选项（模式、模型）、停止 + 发送。停止与发送始终在第一行最右；
 			 * ModeStrip 是 flex-1（基准 0）先让出空间、自己收进「更多」，仍放不下的选项才在容器里折到下一行。
@@ -746,6 +856,17 @@ export function Composer({
 			<div className="flex min-h-8 items-center gap-3.5 border-[var(--glass-line)] border-t px-5 py-[7px] text-2xs text-faint leading-4">
 				{!coordinator && <ModeStatus threadId={threadId} />}
 				<span className="flex-1" />
+				{predicted.cycle && (
+					<span
+						role="status"
+						className="shrink-0 tabular-nums"
+						title={t("composer.predictionCycle")}
+					>
+						<span aria-hidden>⇥ </span>
+						{predicted.cycle.index + 1}/{predicted.cycle.total}
+						<span className="sr-only"> {t("composer.predictionCycle")}</span>
+					</span>
+				)}
 				<SessionReadout threadId={threadId} />
 			</div>
 		</div>

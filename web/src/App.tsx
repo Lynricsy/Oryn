@@ -83,6 +83,7 @@ export const SETTINGS: SettingsSection[] = [
 	"agent-commands",
 	"agent-extensions",
 	"agent-memory",
+	"agent-composer",
 	"agent-config",
 	"identity",
 	"appearance",

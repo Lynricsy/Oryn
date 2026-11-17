@@ -233,6 +233,8 @@ export interface ThreadViewState {
 	lastPromptResult: RpcPromptResultFrame | null;
 	/** omp 侧 `set_editor_text` 请求；nonce 变化时输入区应用之。 */
 	editorText: { text: string; prepend: boolean; nonce: number } | null;
+	/** 下一条用户消息的预测（`oryn_composer_prediction`），按可能性从高到低；空数组表示无预测。是否显示由输入区按草稿决定。 */
+	composerPrediction: string[];
 	snapshotReceived: boolean;
 	debug: DebugFrame[];
 	noticeSeq: number;
@@ -282,6 +284,7 @@ export function initialThreadState(threadId: string): ThreadViewState {
 		vibeEnabled: null,
 		lastPromptResult: null,
 		editorText: null,
+		composerPrediction: [],
 		snapshotReceived: false,
 		debug: [],
 		noticeSeq: 0,
@@ -586,7 +589,13 @@ export function applyFrame(
 	switch (frame.type) {
 		// ---- 会话事件（33 种） ----
 		case "agent_start":
-			return { ...s, running: true, lastPromptResult: null };
+			// 新一轮开始：上一轮的输入预测作废
+			return {
+				...s,
+				running: true,
+				lastPromptResult: null,
+				composerPrediction: [],
+			};
 		case "agent_end":
 			// isTerminal === false：仍有续跑或异步投递
 			return f.isTerminal !== false ? { ...s, running: false, retry: null } : s;
@@ -934,6 +943,8 @@ export function applyFrame(
 					? (f.state as unknown as RpcLoopModeState)
 					: null,
 			};
+		case "oryn_composer_prediction":
+			return { ...s, composerPrediction: predictionChoices(f.choices) };
 		default:
 			if (IGNORED_FRAME_TYPES[frame.type]) return s;
 			return pushDebug(s, "frame", frame);
@@ -960,6 +971,7 @@ export function applyLiveReset(s: ThreadViewState): ThreadViewState {
 		subagents: {},
 		compaction: null,
 		retry: null,
+		composerPrediction: [],
 	};
 }
 
@@ -993,6 +1005,7 @@ export function applySnapshot(
 		loopMode: s.loopMode,
 		vibeEnabled: s.vibeEnabled,
 		editorText: s.editorText,
+		composerPrediction: predictionChoices(snap.agent.composerPrediction),
 		thread: snap.thread,
 		orb: snap.orb,
 		agentStatus: snap.agent.status,
@@ -1042,6 +1055,13 @@ export function applySnapshot(
 			next = { ...next, liveMessage: null };
 	}
 	return removeTools(next, covered);
+}
+
+/** 预测候选：只保留非空字符串（帧与快照共用）。 */
+function predictionChoices(v: unknown): string[] {
+	return Array.isArray(v)
+		? v.filter((c): c is string => typeof c === "string" && c.length > 0)
+		: [];
 }
 
 /** 收到 `thread.snapshot` 后需要主动拉取的数据：agent 就绪时补 state、命令表，以及恢复的队列的可编辑条目。 */

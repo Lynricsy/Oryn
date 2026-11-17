@@ -275,7 +275,9 @@
 		"steer": "Steer",
 		"coordinatorUnavailable": "“{{name}}” isn't available in coordinator chats",
 		"quoting": "Quoting: ",
-		"removeQuote": "Remove quote"
+		"removeQuote": "Remove quote",
+		"prediction": "Suggested next message: {{text}}. Press Tab or → to insert it.",
+		"predictionCycle": "Press Tab for the next suggestion"
 	},
 	"slash": {
 		"desc": {
@@ -1136,6 +1138,7 @@
 		"agent-commands": "Commands & rules",
 		"agent-extensions": "Extensions & tools",
 		"agent-memory": "Memory",
+		"agent-composer": "Composer",
 		"about": "About",
 		"notifications": "Notifications",
 		"shares": "Public sharing",
@@ -1581,6 +1584,14 @@
 	"agentPages": {
 		"scope": "Changes are pushed to orbs after saving. They don't apply to the global assistant.",
 		"scopeConfig": "Saved to config.yml and pushed to orbs and to the global assistant.",
+		"composer": {
+			"title": "Next-message predictions",
+			"predictions": "Predict my next message",
+			"predictionsHint": "After each completed turn, the active model guesses what you'll send next and shows it as gray text in the empty composer. Tab or → inserts it without sending; on touch screens, tap it. Extra usage: every completed turn sends one more billed request that carries the whole conversation.",
+			"alternatives": "Offer alternatives",
+			"alternativesHint": "Ask for up to four different predictions, most likely first. After inserting one, press Tab again to switch to the next. Still a single request, with a few more output tokens.",
+			"alternativesNeedsPredictions": "Turn on predictions first."
+		},
 		"apply": {
 			"pushing": "Pushing to running orbs…",
 			"pushed": "Pushed. Idle sessions pick it up now; sessions mid-turn pick it up when the turn ends.",

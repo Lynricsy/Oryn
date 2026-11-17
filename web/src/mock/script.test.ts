@@ -70,5 +70,8 @@ describe("mock 帧序列", () => {
 		expect(
 			last?.kind === "message" && JSON.stringify(last.message.content),
 		).toContain("Linux");
+		// 回合结束后推一帧下一条消息预测（开发模式下输入框据此显示幽灵字）
+		expect(c.frames.at(-1)).toBe("oryn_composer_prediction");
+		expect(c.state.composerPrediction.length).toBeGreaterThan(0);
 	});
 });

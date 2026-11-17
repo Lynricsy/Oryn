@@ -275,7 +275,9 @@
 		"steer": "引导",
 		"coordinatorUnavailable": "协调对话里不能用「{{name}}」",
 		"quoting": "引用：",
-		"removeQuote": "移除引用"
+		"removeQuote": "移除引用",
+		"prediction": "预测的下一条消息：{{text}}。按 Tab 或 → 插入。",
+		"predictionCycle": "按 Tab 换下一条预测"
 	},
 	"slash": {
 		"desc": {
@@ -1136,6 +1138,7 @@
 		"agent-commands": "命令与规则",
 		"agent-extensions": "扩展与工具",
 		"agent-memory": "记忆",
+		"agent-composer": "输入框",
 		"about": "关于",
 		"notifications": "通知",
 		"shares": "公开分享",
@@ -1581,6 +1584,14 @@
 	"agentPages": {
 		"scope": "保存后下发到 orb，不作用于全局助手。",
 		"scopeConfig": "保存后写进 config.yml，下发到 orb，也下发给全局助手。",
+		"composer": {
+			"title": "下一条消息预测",
+			"predictions": "预测我的下一条消息",
+			"predictionsHint": "每轮完成后，由当前模型猜你接下来要发的消息，以灰色文字显示在空输入框里。按 Tab 或 → 插入，不会发送；触屏上点一下灰色文字。额外用量：每完成一轮就多发一次计费请求，请求带着整段对话。",
+			"alternatives": "提供多个候选",
+			"alternativesHint": "一次给出至多四条不同的预测，最可能的在前。插入一条后再按 Tab 换成下一条。仍是同一次请求，只多一些输出 token。",
+			"alternativesNeedsPredictions": "先开启消息预测。"
+		},
 		"apply": {
 			"pushing": "正在下发到运行中的 orb……",
 			"pushed": "已下发：空闲的会话随即生效，正在跑回合的会话在回合结束后生效。",
