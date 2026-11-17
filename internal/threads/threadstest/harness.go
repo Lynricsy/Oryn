@@ -51,6 +51,9 @@ type Orbs struct {
 	provID  string
 	closeCh chan struct{}
 
+	// starting 在 mu 下登记；Close 先禁止新启动，再等已登记的启动结束。
+	starting sync.WaitGroup
+
 	mu       sync.Mutex
 	reqs     map[string]func(context.Context, string, json.RawMessage) (any, error)
 	notifies map[string]func(context.Context, string, json.RawMessage)
@@ -139,7 +142,10 @@ func NewOrbs(st *store.Store, fakeompBin, home string, env ...string) (*Orbs, er
 
 // Close 关闭全部 link 与 agent 进程。
 func (o *Orbs) Close() {
+	o.mu.Lock()
 	close(o.closeCh)
+	o.mu.Unlock()
+	o.starting.Wait()
 	o.mu.Lock()
 	orbds := make([]*Orbd, 0, len(o.orbds))
 	for _, d := range o.orbds {
@@ -306,6 +312,16 @@ func (o *Orbs) OpenBlob(ctx context.Context, orbID, sha string, data []byte) err
 }
 
 func (o *Orbs) startOrbd(orbID string) {
+	o.mu.Lock()
+	select {
+	case <-o.closeCh:
+		o.mu.Unlock()
+		return
+	default:
+		o.starting.Add(1)
+	}
+	o.mu.Unlock()
+	defer o.starting.Done()
 	time.Sleep(20 * time.Millisecond)
 	o.setState(orbID, "connecting")
 	d, err := dialOrbd(o, orbID)
@@ -636,8 +652,12 @@ type Orbd struct {
 	ctx   context.Context
 	stop  context.CancelFunc
 
+	// requests 在 mu 下登记，关闭后不再接受请求；Close 等已接收的文件操作完成。
+	requests sync.WaitGroup
+
 	mu     sync.Mutex
 	agents map[string]*agentProc
+	closed bool
 }
 
 type agentProc struct {
@@ -678,6 +698,7 @@ func dialOrbd(o *Orbs, orbID string) (*Orbd, error) {
 // Close 结束全部 agent 并断开 link。
 func (d *Orbd) Close() {
 	d.mu.Lock()
+	d.closed = true
 	agents := d.agents
 	d.agents = map[string]*agentProc{}
 	d.mu.Unlock()
@@ -686,6 +707,7 @@ func (d *Orbd) Close() {
 	}
 	d.stop()
 	_ = d.sess.Close()
+	d.requests.Wait()
 }
 
 func (a *agentProc) kill() {
@@ -711,6 +733,14 @@ func (d *Orbd) resolve(p string) string {
 }
 
 func (d *Orbd) onRequest(ctx context.Context, method string, params json.RawMessage) (any, error) {
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		return nil, context.Canceled
+	}
+	d.requests.Add(1)
+	d.mu.Unlock()
+	defer d.requests.Done()
 	d.o.mu.Lock()
 	d.o.calls = append(d.o.calls, method)
 	g := d.o.gates[method]
@@ -743,6 +773,8 @@ func (d *Orbd) onRequest(ctx context.Context, method string, params json.RawMess
 		if a != nil {
 			a.kill()
 		}
+		// 真实 orbd 在有意停止后也会上报 exited；控制面据此结束 stopping，并唤醒排队命令。
+		_ = d.ctl.Notify("agent.status", apigen.LinkCtlAgentStatusParams{ThreadID: p.ThreadID, Status: "exited", ExitCode: new(0)})
 		return apigen.LinkCtlAgentStopResult{ExitCode: 0}, nil
 	case "fs.copyTree", "fs.move":
 		var p apigen.LinkCtlFsMoveParams
@@ -805,6 +837,10 @@ func (d *Orbd) onRequest(ctx context.Context, method string, params json.RawMess
 
 func (d *Orbd) agentStart(p apigen.LinkCtlAgentStartParams) (any, error) {
 	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		return nil, context.Canceled
+	}
 	if a := d.agents[p.ThreadID]; a != nil {
 		d.mu.Unlock()
 		// 幂等：已在运行
