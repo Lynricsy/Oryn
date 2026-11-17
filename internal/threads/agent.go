@@ -210,6 +210,10 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 	if prof != nil {
 		profile := apigen.AgentProfileCoordinator
 		params.Profile, params.SystemPrompt = &profile, &prof.SystemPrompt
+		if prof.Web {
+			web := true
+			params.Web = &web
+		}
 	}
 	t.mu.Unlock()
 	if prof != nil && !s.prepareCoordinator(ctx, ctl, t, orbID, prof) {

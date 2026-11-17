@@ -9808,6 +9808,11 @@ export interface components {
             profile?: "coordinator";
             /** @description M9 协调档的系统提示词（以字面量传给 omp `--system-prompt`，必须含换行，否则 `invalid_params`）；只有协调宿主接受 */
             systemPrompt?: string;
+            /**
+             * @description M19：协调档是否打开第一层（内置 `web_search` 与 `generate_image`、`read` 读 URL、环境带 `PI_PROXY` 走 orynd 的正向代理）。
+             *     只给全局助手的对话；Space 协调者省略（= false），工具与环境同 M19 之前（D10）。只有协调宿主接受。
+             */
+            web?: boolean;
             memory?: components["schemas"]["LinkCtlAgentMemory"];
         };
         LinkCtlAgentStartResult: {

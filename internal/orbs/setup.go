@@ -198,10 +198,6 @@ func (d *DefaultSetup) coordinatorMCP(plan *SetupPlan, content []byte, disabled 
 		slog.Warn("orbs: 全局 mcp.json 无法解析，全局助手不使用 MCP", "err", err)
 		return nil
 	}
-	addr := d.CoordinatorEgressAddr
-	if addr == "" {
-		addr = agentcfg.EgressAddr
-	}
 	out := map[string]map[string]string{}
 	for _, srv := range servers {
 		if !srv.Usable || disabled[srv.Name] {
@@ -212,7 +208,9 @@ func (d *DefaultSetup) coordinatorMCP(plan *SetupPlan, content []byte, disabled 
 			plan.Egress.MCP = map[string]egress.MCPRoute{}
 		}
 		plan.Egress.MCP[key] = egress.MCPRoute{URL: srv.URL, Headers: srv.Headers}
-		out[srv.Name] = map[string]string{"type": srv.Transport, "url": "http://" + addr + "/mcp/" + key}
+		// 地址前缀由环境变量 ORYN_MCP_BASE 给出（omp 展开 url 里的 ${VAR}）：协调宿主只给全局助手的 agent 设置它；
+		// Space 协调者的 agent 没有这个变量，url 保持字面量、连不上，于是没有 MCP 工具（D10）。
+		out[srv.Name] = map[string]string{"type": srv.Transport, "url": "${" + agentcfg.MCPBaseEnv + "}/mcp/" + key}
 	}
 	if len(out) == 0 {
 		return nil

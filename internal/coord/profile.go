@@ -153,7 +153,12 @@ func (s *Service) AgentProfile(ctx context.Context, threadID string) (threads.Ag
 		computer = s.computerDefs(ctx)
 	}
 	tools := ToolDefs(ToolSet{InSpace: space != nil, Memory: memOn, Main: main, Computer: computer})
-	prof := threads.AgentProfile{SystemPrompt: SystemPrompt(space, project, threadID, space != nil || s.webAccess(ctx)), Tools: tools}
+	// Web：第一层（内置联网与生图、MCP）只给全局助手，Space 协调者不变（D10）；联网总开关由出站策略执行
+	prof := threads.AgentProfile{
+		SystemPrompt: SystemPrompt(space, project, threadID, space != nil || s.webAccess(ctx)),
+		Tools:        tools,
+		Web:          space == nil,
+	}
 	// M17：助手记忆运行时，全局助手的系统提示词末尾接记忆段与记忆工具用法；记忆段生成失败不阻止启动（只是这次没有记忆）
 	if memOn {
 		brief, err := s.mem.Brief(ctx, threadID)

@@ -5982,6 +5982,10 @@ type LinkCtlAgentStartParams struct {
 	//
 	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
 	ThreadID ThreadID `json:"threadId"`
+
+	// Web M19：协调档是否打开第一层（内置 `web_search` 与 `generate_image`、`read` 读 URL、环境带 `PI_PROXY` 走 orynd 的正向代理）。
+	// 只给全局助手的对话；Space 协调者省略（= false），工具与环境同 M19 之前（D10）。只有协调宿主接受。
+	Web *bool `json:"web,omitempty"`
 }
 
 // LinkCtlAgentStartParamsProfile M9：`coordinator` = 协调档（无代码工具、独立 HOME 与设置覆盖层、从零构造的环境，`cwd` 由 orbd 决定）。
