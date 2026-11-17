@@ -178,6 +178,16 @@ func ParseMessage(e Entry) (Message, bool) {
 	return m, true
 }
 
+// automatedPrefix 是控制面代发的 user 消息的头行前缀（线程回报、定时运行、GitHub 事件等，
+// 见 coord/reports.go、schedule/loop.go、github/message.go）。
+const automatedPrefix = "[Oryn "
+
+// IsAutomatedUserText 报告一条 user 消息的正文是否是控制面代发的自动消息：去掉开头空白后以 `[Oryn ` 开头。
+// 这是全仓库判定「不是主人亲手输入」的唯一口径；新增代发消息时头行必须沿用该前缀。
+func IsAutomatedUserText(text string) bool {
+	return strings.HasPrefix(strings.TrimSpace(text), automatedPrefix)
+}
+
 // LineText 返回消息条目的角色与单段文本（`oryn thread show --entries` 的输出）：
 // text 块原样、toolCall 写成 `<tool 名 参数>`、image 写成 `<image>`，按 "\n" 连接；
 // toolResult 的角色带工具名（`toolResult:bash`）。非消息条目返回空角色。

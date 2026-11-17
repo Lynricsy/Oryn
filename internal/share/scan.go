@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"regexp"
 	"sort"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
@@ -225,4 +226,57 @@ func scanBytes(p []byte, needles []vaultNeedle, locate func(apigen.ShareFinding)
 		}
 	}
 	return out
+}
+
+// RedactPlaceholder 是 RedactText 替换命中片段用的占位符。
+const RedactPlaceholder = "〔已脱敏〕"
+
+// RedactText 用同一套规则（密钥库与规则表）把纯文本 text 里命中的片段替换成 RedactPlaceholder，返回替换后的文本与替换处数
+// （M17 写入主人记忆前用）。bounded 规则只替换捕获组（前面的边界字符保留）；相互重叠的命中合并成一处。
+// 密钥库未配置（零值 Service）时只用规则表。
+func (s *Service) RedactText(ctx context.Context, text string) (string, int) {
+	if text == "" {
+		return text, 0
+	}
+	type span struct{ from, to int }
+	var spans []span
+	for _, nd := range s.vaultNeedles(ctx) {
+		for _, needle := range [][]byte{nd.raw, nd.escaped} {
+			if len(needle) == 0 {
+				continue
+			}
+			n := string(needle)
+			for i := 0; ; {
+				j := strings.Index(text[i:], n)
+				if j < 0 {
+					break
+				}
+				spans = append(spans, span{i + j, i + j + len(n)})
+				i += j + len(n)
+			}
+		}
+	}
+	for _, r := range scanRules {
+		for _, m := range r.re.FindAllStringSubmatchIndex(text, -1) {
+			spans = append(spans, span{m[2*r.group], m[2*r.group+1]})
+		}
+	}
+	if len(spans) == 0 {
+		return text, 0
+	}
+	sort.Slice(spans, func(i, j int) bool { return spans[i].from < spans[j].from })
+	var b strings.Builder
+	count, last := 0, 0
+	for i := 0; i < len(spans); {
+		from, to := spans[i].from, spans[i].to
+		for i++; i < len(spans) && spans[i].from < to; i++ {
+			to = max(to, spans[i].to)
+		}
+		b.WriteString(text[last:from])
+		b.WriteString(RedactPlaceholder)
+		last = to
+		count++
+	}
+	b.WriteString(text[last:])
+	return b.String(), count
 }

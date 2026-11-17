@@ -230,3 +230,18 @@ func TestMarkdownGolden(t *testing.T) {
 	require.NoError(t, Markdown(&buf, MarkdownMeta{Mode: "live", SharedAt: time.UnixMilli(0)}, nil))
 	assert.Equal(t, "# Untitled\n\n> Shared from Oryn · live · 1970-01-01T00:00:00Z\n", buf.String())
 }
+
+// TestIsAutomatedUserText：控制面代发的头行（允许前导空白）算自动消息，其余（含正文中间出现前缀）不算。
+func TestIsAutomatedUserText(t *testing.T) {
+	for _, s := range []string{
+		"[Oryn thread report · automatic] t1 is now idle.",
+		"  \n[Oryn message from assistant \"\" (t1) — sent by an agent, not typed by the owner]\n你好",
+		"[Oryn scheduled run 3]",
+		"[Oryn GitHub event on a/b#1 — delivered automatically, not typed by the owner]",
+	} {
+		assert.True(t, IsAutomatedUserText(s), s)
+	}
+	for _, s := range []string{"", "帮我看看 [Oryn thread report", "[Oryn", "[oryn message from x]", "Oryn 的发版"} {
+		assert.False(t, IsAutomatedUserText(s), s)
+	}
+}
