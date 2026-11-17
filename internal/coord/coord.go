@@ -120,6 +120,9 @@ type Service struct {
 	// 回 coordinator_unavailable。
 	projects Projects
 	triggers Triggers
+	// shares / portals 是线程分享与 Portal 公开的入口（M19，SetShares 设置）；portals 为 nil 表示没有配置 Portal。
+	shares  ThreadShares
+	portals PortalShares
 
 	ensureMu sync.Mutex
 	// createMu 串行化 orb 内 thread.create 的「计数 + Create」（契约 C6.1）：并发请求不能都通过额度检查。
@@ -182,6 +185,9 @@ func New(cfg Config, st *store.Store, th *threads.Service, o *orbs.Service, host
 	s.onConfirm(ToolDeleteTrigger, s.confirmDeleteTrigger)
 	s.onConfirm(ToolDeleteOrb, s.confirmDeleteOrb)
 	s.onConfirm(string(apigen.ActionDeleteSchedule), s.confirmDeleteSchedule)
+	s.onConfirm(ToolShareThread, s.confirmShareThread)
+	s.onConfirm(ToolSharePortal, s.confirmSharePortal)
+	s.onConfirm(ToolPublishArtifact, s.confirmPublishArtifact)
 	if o != nil {
 		s.registerOrbMethods(o.HandleRequest)
 		s.refreshPolicy = func(ctx context.Context, orbID string) error {
@@ -355,6 +361,9 @@ func errCode(err error) string {
 	if code := cfgErrCode(err); code != "" {
 		return code
 	}
+	if code := shareErrCode(err); code != "" {
+		return code
+	}
 	if code := orbErrCode(err); code != "" {
 		return code
 	}
@@ -406,6 +415,9 @@ func errMessage(err error) string {
 	}
 	if oe, ok := artifacts.AsOpError(err); ok {
 		return oe.Message
+	}
+	if msg := shareErrMessage(err); msg != "" {
+		return msg
 	}
 	if orbErrCode(err) != "" {
 		// orbs 的错误文本带 "orbs: " 前缀

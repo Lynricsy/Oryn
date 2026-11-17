@@ -120,6 +120,9 @@ func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) thre
 		ToolListProjectConfig, ToolReadProjectConfig, ToolWriteProjectConfig, ToolDeleteProjectConfig:
 		// M19 第三层：线程文件与项目 Agent 配置（只给全局助手）
 		return s.fileTool(ctx, tc)
+	case ToolShareThread, ToolListShares, ToolRevokeShare, ToolSharePortal, ToolUnsharePortal, ToolPublishArtifact, ToolUnpublishArtifact:
+		// M19 第三层：对外分享（只给全局助手）
+		return s.shareTool(ctx, tc)
 	default:
 		err = errf("unknown_tool", "no tool named %q", c.Name)
 	}

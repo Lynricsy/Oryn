@@ -366,6 +366,7 @@ func ToolDefs(o ToolSet) []apigen.OmpFrame {
 	defs = append(defs, threadToolDefs()...)
 	defs = append(defs, adminToolDefs()...)
 	defs = append(defs, fileToolDefs()...)
+	defs = append(defs, shareToolDefs()...)
 	if o.Memory {
 		defs = append(defs, memoryToolDefs()...)
 	}

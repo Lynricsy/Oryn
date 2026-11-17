@@ -447,6 +447,12 @@ func (s *Server) init(ctx context.Context) error {
 	}
 	// M19 第三层：全局助手的项目工具与 REST 共用同一套校验与副作用（依赖上面装好的 GitHub、Orbs、Auth、Memory）
 	s.Coord.SetProjects(api.ProjectOps{S: s.API})
+	// M19 第三层：全局助手的对外分享工具；没有配置 portal_domain 时不给 Portal（避免把 nil 指针装进接口）
+	var portals coord.PortalShares
+	if s.Portal != nil {
+		portals = s.Portal
+	}
+	s.Coord.SetShares(s.Share, portals)
 	s.Handler = api.NewRouter(s.API)
 	return nil
 }
