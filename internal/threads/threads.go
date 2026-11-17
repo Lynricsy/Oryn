@@ -481,7 +481,10 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]apigen.Thread, erro
 		if n := shares[t.ID]; n > 0 {
 			api.PublicShares = &n
 		}
-		api.Schedule = schedules[t.ID]
+		if t.Main == 0 {
+			// 主线有多条提醒，单数的 schedule 摘要不适用
+			api.Schedule = schedules[t.ID]
+		}
 		api.Pulls = pulls[t.ID]
 		api.GithubTask = tasks[t.ID]
 		out = append(out, api)

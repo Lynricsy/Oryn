@@ -99,6 +99,8 @@ const (
 	maxEnabledSchedules  = 200
 	// maxAgentEnabledSchedules 是 agent 定义的启用中定时上限（契约 C6.2）。
 	maxAgentEnabledSchedules = 20
+	// maxMainSchedules 是主线上线程内定时（提醒）的条数上限；其余线程至多一条。
+	maxMainSchedules = 50
 	// minAgentNewThreadGap 是 agent 定义的 new_thread 定时相邻两次触发的最小间隔（契约 C6.2）。
 	minAgentNewThreadGap = 15 * time.Minute
 	// agentCronSamples 是校验 agent 定义的 cron 间隔时取的触发次数。
@@ -296,7 +298,7 @@ func (s *Service) Put(ctx context.Context, id string, in Input, createdBy string
 	return s.updateLocked(ctx, id, in, createdBy)
 }
 
-// PutForThread 设置线程的线程内定时（至多一个）：已有则替换，否则新建。
+// PutForThread 设置线程的线程内定时（至多一个）：已有则替换，否则新建。主线可有多条提醒，回 conflict（改用 /schedules）。
 // IfRev（契约 C7.1）：0 = 只在线程没有定时时新建；非 0 = 只在现有定时的 rev 等于它时替换（没有定时同样冲突）。
 func (s *Service) PutForThread(ctx context.Context, threadID string, in Input, createdBy string) (apigen.Schedule, error) {
 	if in.Mode != "" && in.Mode != ModeThread {
@@ -308,6 +310,9 @@ func (s *Service) PutForThread(ctx context.Context, threadID string, in Input, c
 	in.Mode, in.ThreadID = ModeThread, threadID
 	s.loopMu.Lock()
 	defer s.loopMu.Unlock()
+	if err := s.rejectMain(ctx, threadID); err != nil {
+		return apigen.Schedule{}, err
+	}
 	cur, err := s.st.Q.GetScheduleByThread(ctx, threadID)
 	switch {
 	case err == nil:
@@ -387,7 +392,16 @@ func (s *Service) createLocked(ctx context.Context, in Input, createdBy string) 
 			}
 		}
 		if norm.Mode == ModeThread {
-			if _, err := q.GetScheduleByThread(ctx, norm.ThreadID); err == nil {
+			// 库里的索引不唯一：每线程一条（主线按名字多条）由这里判定，定义的写入都在 loopMu 下，不会并发
+			main, err := isMainThread(ctx, q, norm.ThreadID)
+			if err != nil {
+				return err
+			}
+			if main {
+				if err := checkMainSchedule(ctx, q, norm.ThreadID, norm.Name, ""); err != nil {
+					return err
+				}
+			} else if _, err := q.GetScheduleByThread(ctx, norm.ThreadID); err == nil {
 				return errf(CodeConflict, "the thread already has a schedule")
 			} else if !errors.Is(err, sql.ErrNoRows) {
 				return err
@@ -498,6 +512,12 @@ func (s *Service) updateLocked(ctx context.Context, id string, in Input, created
 		}
 		if cur.Mode == ModeNewThread {
 			if err := checkName(ctx, q, norm.Name, cur.ProjectID, id); err != nil {
+				return err
+			}
+		} else if main, err := isMainThread(ctx, q, norm.ThreadID); err != nil {
+			return err
+		} else if main {
+			if err := checkMainSchedule(ctx, q, norm.ThreadID, norm.Name, id); err != nil {
 				return err
 			}
 		}
@@ -641,6 +661,50 @@ func checkName(ctx context.Context, q *db.Queries, name string, projectID *strin
 	return nil
 }
 
+// isMainThread 报告线程是否是主线（线程不存在按否处理，由调用方各自报 not_found）。
+func isMainThread(ctx context.Context, q *db.Queries, threadID string) (bool, error) {
+	t, err := q.GetThread(ctx, threadID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return t.Main == 1, nil
+}
+
+// checkMainSchedule 检查主线上的提醒：名字必填且在主线内唯一，新建时条数不超过 maxMainSchedules；self 是正在更新的定时。
+func checkMainSchedule(ctx context.Context, q *db.Queries, threadID, name, self string) error {
+	if name == "" {
+		return invalid("reminders on the main conversation need a name")
+	}
+	rows, err := q.ListSchedules(ctx, db.ListSchedulesParams{ThreadID: &threadID})
+	if err != nil {
+		return err
+	}
+	for _, r := range rows {
+		if r.ID != self && r.Name == name {
+			return errf(CodeNameTaken, "a reminder named %q already exists on the main conversation", name)
+		}
+	}
+	if self == "" && len(rows) >= maxMainSchedules {
+		return errf(CodeScheduleLimit, "the main conversation can have at most %d reminders", maxMainSchedules)
+	}
+	return nil
+}
+
+// rejectMain 让按线程取单条定时的接口拒绝主线：主线有多条提醒，须按定时 id 经 /schedules 管理。
+func (s *Service) rejectMain(ctx context.Context, threadID string) error {
+	main, err := isMainThread(ctx, s.st.Q, threadID)
+	if err != nil {
+		return err
+	}
+	if main {
+		return errf(CodeConflict, "the main conversation can have several reminders; manage them by id through /schedules")
+	}
+	return nil
+}
+
 // Get 返回定时。
 func (s *Service) Get(ctx context.Context, id string) (apigen.Schedule, error) {
 	row, err := s.getRow(ctx, id)
@@ -650,8 +714,11 @@ func (s *Service) Get(ctx context.Context, id string) (apigen.Schedule, error) {
 	return s.toAPI(ctx, row)
 }
 
-// GetByThread 返回线程的线程内定时。
+// GetByThread 返回线程的线程内定时（主线回 conflict）。
 func (s *Service) GetByThread(ctx context.Context, threadID string) (apigen.Schedule, error) {
+	if err := s.rejectMain(ctx, threadID); err != nil {
+		return apigen.Schedule{}, err
+	}
 	row, err := s.st.Q.GetScheduleByThread(ctx, threadID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return apigen.Schedule{}, errScheduleNotFound
@@ -690,10 +757,13 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-// DeleteByThread 删除线程的线程内定时。
+// DeleteByThread 删除线程的线程内定时（主线回 conflict）。
 func (s *Service) DeleteByThread(ctx context.Context, threadID string) error {
 	s.loopMu.Lock()
 	defer s.loopMu.Unlock()
+	if err := s.rejectMain(ctx, threadID); err != nil {
+		return err
+	}
 	row, err := s.st.Q.GetScheduleByThread(ctx, threadID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return errScheduleNotFound

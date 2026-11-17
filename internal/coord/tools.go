@@ -603,15 +603,18 @@ func (s *Service) toolSetSchedule(ctx context.Context, c toolCtx) (any, error) {
 		err = errf(CodeRateLimited, "set_schedule limit reached (10 per 10 minutes, 40 per 24 hours per conversation)")
 		return nil, err
 	}
-	// thread 模式的目标：缺省 = 本对话；给了别的线程则必须是工作线程
-	threadTarget := func() (string, error) {
+	threadTarget := func() (tid string, main bool, err error) {
 		if a.ThreadID == "" || a.ThreadID == c.ThreadID {
-			return c.ThreadID, nil
+			row, err := s.st.Q.GetThread(ctx, c.ThreadID)
+			if err != nil {
+				return "", false, err
+			}
+			return c.ThreadID, row.Main == 1, nil
 		}
 		if _, err := s.resolveTarget(ctx, a.ThreadID); err != nil {
-			return "", err
+			return "", false, err
 		}
-		return a.ThreadID, nil
+		return a.ThreadID, false, nil
 	}
 	switch a.Action {
 	case "set":
@@ -619,9 +622,13 @@ func (s *Service) toolSetSchedule(ctx context.Context, c toolCtx) (any, error) {
 	case "pause", "resume", "delete":
 		id := a.ScheduleID
 		if id == "" {
-			tid, terr := threadTarget()
+			tid, main, terr := threadTarget()
 			if terr != nil {
 				err = terr
+				return nil, err
+			}
+			if main {
+				err = errf(CodeInvalid, "the main conversation can have several reminders: pass scheduleId (list_schedules shows them)")
 				return nil, err
 			}
 			cur, gerr := s.sched.GetByThread(ctx, tid)
@@ -663,7 +670,7 @@ func (s *Service) toolSetSchedule(ctx context.Context, c toolCtx) (any, error) {
 }
 
 // putSchedule 处理 set_schedule{action: set}。
-func (s *Service) putSchedule(ctx context.Context, c toolCtx, a setScheduleArgs, threadTarget func() (string, error)) (apigen.Schedule, string, error) {
+func (s *Service) putSchedule(ctx context.Context, c toolCtx, a setScheduleArgs, threadTarget func() (string, bool, error)) (apigen.Schedule, string, error) {
 	mode := a.Mode
 	if mode == "" {
 		mode = string(apigen.ScheduleModeThread)
@@ -674,13 +681,21 @@ func (s *Service) putSchedule(ctx context.Context, c toolCtx, a setScheduleArgs,
 	}
 	switch mode {
 	case string(apigen.ScheduleModeThread):
-		tid, err := threadTarget()
+		tid, main, err := threadTarget()
 		if err != nil {
 			return apigen.Schedule{}, "", err
 		}
+		in.ThreadID = tid
 		if a.ScheduleID != "" {
-			in.ThreadID = tid
 			sc, err := s.sched.Put(ctx, a.ScheduleID, in, "agent")
+			return sc, tid, err
+		}
+		if main {
+			// 主线可有多条提醒：不带 scheduleId 一律新建，按名字区分
+			if strings.TrimSpace(a.Name) == "" {
+				return apigen.Schedule{}, "", errf(CodeInvalidSchedule, "reminders on the main conversation need a name; to change one, pass its scheduleId")
+			}
+			sc, err := s.sched.Put(ctx, "", in, "agent")
 			return sc, tid, err
 		}
 		sc, err := s.sched.PutForThread(ctx, tid, in, "agent")

@@ -904,6 +904,60 @@ func TestScheduleDefinitionRules(t *testing.T) {
 	requireCode(t, err, CodeInvalidSchedule)
 }
 
+// 主线（M19 步骤 3.4）：可有多条按名字区分的提醒；单数的按线程接口回 conflict。
+func TestMainScheduleRules(t *testing.T) {
+	f := newFixture(t)
+	main := ids.Thread()
+	require.NoError(t, f.st.Q.CreateThread(f.ctx, db.CreateThreadParams{Kind: "assistant", ID: main, Title: "Main", Main: new(int64(1)),
+		TitleSource: "user", State: string(apigen.ThreadStateIdle), SessionDir: "~/.oryn/threads/" + main, CreatedAt: 1, UpdatedAt: 1}))
+	put := func(name string) (apigen.Schedule, error) {
+		return f.s.Put(f.ctx, "", Input{Mode: ModeThread, ThreadID: main, Name: name, Kind: KindEvery, Every: "1h", Prompt: "p"}, "user")
+	}
+	var made []apigen.Schedule
+	for _, name := range []string{"a", "b", "c"} {
+		s, err := put(name)
+		require.NoError(t, err)
+		made = append(made, s)
+	}
+	_, err := put("b")
+	requireCode(t, err, CodeNameTaken)
+	_, err = put("  ")
+	requireCode(t, err, CodeInvalidSchedule)
+	// 改名：撞名被拒，保留原名或换新名都可以
+	_, err = f.s.Put(f.ctx, made[1].ID, Input{Name: "a", Kind: KindEvery, Every: "1h", Prompt: "p"}, "user")
+	requireCode(t, err, CodeNameTaken)
+	_, err = f.s.Put(f.ctx, made[1].ID, Input{Name: "b", Kind: KindEvery, Every: "2h", Prompt: "p"}, "user")
+	require.NoError(t, err)
+	_, err = f.s.Put(f.ctx, made[1].ID, Input{Kind: KindEvery, Every: "2h", Prompt: "p"}, "user")
+	requireCode(t, err, CodeInvalidSchedule)
+
+	for i := len(made); i < maxMainSchedules; i++ {
+		_, err := put(fmt.Sprintf("r%d", i))
+		require.NoError(t, err)
+	}
+	_, err = put("over")
+	requireCode(t, err, CodeScheduleLimit)
+	list, err := f.s.List(f.ctx, Filter{ThreadID: main})
+	require.NoError(t, err)
+	assert.Len(t, list, maxMainSchedules)
+
+	// 单数接口对主线回 conflict
+	_, err = f.s.PutForThread(f.ctx, main, Input{Kind: KindEvery, Every: "1h", Prompt: "p"}, "user")
+	requireCode(t, err, CodeConflict)
+	_, err = f.s.GetByThread(f.ctx, main)
+	requireCode(t, err, CodeConflict)
+	requireCode(t, f.s.DeleteByThread(f.ctx, main), CodeConflict)
+	require.NoError(t, f.s.Delete(f.ctx, made[0].ID))
+	_, err = put("a")
+	require.NoError(t, err, "删掉一条后可以再建")
+
+	// 普通线程仍至多一条
+	th := f.thread()
+	f.putThread(th, Input{Kind: KindEvery, Every: "1h", Prompt: "p"})
+	_, err = f.s.Put(f.ctx, "", Input{Mode: ModeThread, ThreadID: th, Name: "x", Kind: KindEvery, Every: "1h", Prompt: "p"}, "user")
+	requireCode(t, err, CodeConflict)
+}
+
 func TestEnabledLimit(t *testing.T) {
 	f := newFixture(t)
 	p := f.project("p")
