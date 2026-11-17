@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -198,7 +199,10 @@ func TestDesktopControlAutoRelease(t *testing.T) {
 		e.rt.desk.takeControl() // 续期
 		e.wait("released", controlIs(apigen.OrbDesktopControlStateAgent, false))
 		assert.GreaterOrEqual(t, time.Since(start), 600*time.Millisecond, "续期把自动交还推迟到最后一次续期之后")
-		assert.Equal(t, []string{steerUserTook, steerAutoReleased}, stdin.steers(t))
+		// 状态先上报，steer 随后才写入；等通知本身送达，不能把状态上报当成写入屏障。
+		assert.Eventually(t, func() bool {
+			return slices.Equal([]string{steerUserTook, steerAutoReleased}, stdin.steers(t))
+		}, time.Second, 10*time.Millisecond)
 	})
 	t.Run("viewers", func(t *testing.T) {
 		e := newDeskEnv(t, func(c *Config) {

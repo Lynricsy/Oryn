@@ -126,9 +126,9 @@ func buildFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 
-	// 设备：0:0 whiteout、旧编码 1:3、需新编码的 259:300000。
-	if err := unix.Mknod(filepath.Join(src, "wh"), unix.S_IFCHR|0o600, 0); err == nil {
-		must(unix.Mknod(filepath.Join(src, "null"), unix.S_IFCHR|0o666, int(unix.Mkdev(1, 3))))
+	// 先用普通设备探测权限：Linux 允许无 CAP_MKNOD 创建 0:0 whiteout，不能用它判断其余设备是否可建。
+	if err := unix.Mknod(filepath.Join(src, "null"), unix.S_IFCHR|0o666, int(unix.Mkdev(1, 3))); err == nil {
+		must(unix.Mknod(filepath.Join(src, "wh"), unix.S_IFCHR|0o600, 0))
 		must(unix.Mknod(filepath.Join(src, "bigdev"), unix.S_IFBLK|0o600, int(unix.Mkdev(259, 300000))))
 		fx.mknod = true
 	} else if !errors.Is(err, unix.EPERM) {

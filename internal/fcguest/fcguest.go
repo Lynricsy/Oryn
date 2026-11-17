@@ -179,6 +179,10 @@ func Call(ctx context.Context, udsPath string, req Request) error {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return fmt.Errorf("fcguest %s: %w", req.Op, ctxErr)
 		}
+		// socket 的 deadline 与 context 的定时器独立；前者可能先返回，此时 ctx.Err() 尚未更新。
+		if dl, ok := ctx.Deadline(); ok && !time.Now().Before(dl) {
+			return fmt.Errorf("fcguest %s: %w", req.Op, context.DeadlineExceeded)
+		}
 		return fmt.Errorf("fcguest %s: %w", req.Op, err)
 	}
 	if !resp.OK {
