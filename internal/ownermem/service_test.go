@@ -271,6 +271,8 @@ func TestBankConfig(t *testing.T) {
 	assert.Equal(t, ownermem.ProfileTopicID, e.hs.models[0]["id"])
 	assert.EqualValues(t, 400, e.hs.models[0]["max_tokens"])
 	assert.Contains(t, e.hs.models[0]["source_query"], "完成状态")
+	// reflect 不读 mental model：否则会照抄本主题的旧占位内容（真实数据验收发现）
+	assert.Equal(t, true, e.hs.models[0]["trigger"].(map[string]any)["exclude_mental_models"])
 
 	_, err = e.svc.Status(ctx)
 	require.NoError(t, err)
