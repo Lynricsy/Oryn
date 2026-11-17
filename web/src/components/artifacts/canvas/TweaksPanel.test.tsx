@@ -4,6 +4,7 @@
  */
 import {
 	act,
+	cleanup,
 	fireEvent,
 	render,
 	renderHook,
@@ -55,7 +56,7 @@ const post = (b: ParentMessageBody) => {
 };
 
 beforeEach(() => {
-	vi.useFakeTimers({ shouldAdvanceTime: true });
+	vi.useFakeTimers();
 	bodies = [];
 	posts = [];
 	failNext = false;
@@ -87,7 +88,10 @@ beforeEach(() => {
 	);
 });
 
-afterEach(() => {
+afterEach(async () => {
+	// 卸载会立即排队保存草稿；等请求与回滚结束后才能恢复 mock，避免串到下一个用例。
+	cleanup();
+	await act(() => vi.advanceTimersByTimeAsync(0));
 	vi.useRealTimers();
 	vi.unstubAllGlobals();
 });
