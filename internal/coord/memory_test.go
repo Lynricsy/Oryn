@@ -80,7 +80,7 @@ func TestProfileOwnerMemory(t *testing.T) {
 	conv := e.assistant()
 	before, err := e.c.AgentProfile(e.ctx, conv.ID)
 	require.NoError(t, err)
-	assert.Equal(t, SystemPrompt(nil, "", conv.ID), before.SystemPrompt)
+	assert.Equal(t, SystemPrompt(nil, "", conv.ID, true), before.SystemPrompt)
 
 	mem := &fakeOwnerMemory{brief: "Memory（记忆）：\n## 关于主人\n主人住在新加坡"}
 	e.c.SetOwnerMemory(mem, nil)
@@ -226,7 +226,7 @@ func TestSearchHistoryTool(t *testing.T) {
 	assert.True(t, strings.HasPrefix(r.Text, CodeInvalid+":"), r.Text)
 }
 
-// TestReadThreadSeq：全局助手可以读别的助手对话；aroundSeq / beforeSeq 读指定位置，每条带 seq；Space 对话不可读。
+// TestReadThreadSeq：全局助手可以读别的助手对话；aroundSeq / beforeSeq 读指定位置，每条带 seq；M19 起 Space 对话也可读。
 func TestReadThreadSeq(t *testing.T) {
 	e := newEnv(t, true)
 	conv := e.assistant()
@@ -259,7 +259,7 @@ func TestReadThreadSeq(t *testing.T) {
 
 	sp := e.space("s", "")
 	r := e.call(conv, ToolReadThread, `{"threadId":"`+sp.ThreadID+`"}`, true)
-	assert.True(t, strings.HasPrefix(r.Text, CodeInvalidTarget+":"), r.Text)
+	assert.False(t, r.IsError, r.Text)
 	// Space 协调者仍只能读工作线程
 	r = e.call(e.spaceChat(sp), ToolReadThread, `{"threadId":"`+other.ID+`"}`, true)
 	assert.True(t, strings.HasPrefix(r.Text, CodeInvalidTarget+":"), r.Text)

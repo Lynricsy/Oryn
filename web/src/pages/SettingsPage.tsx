@@ -81,6 +81,7 @@ import {
 } from "../state/theme";
 import { uiStore, useSidebarShown, useSidebarToggleShown } from "../state/ui";
 import { AppIconPicker } from "./settings/AppIconPicker";
+import AssistantSettings from "./settings/AssistantSettings";
 import AutomationsSettings from "./settings/AutomationsSettings";
 import CollectionsPage from "./settings/agent/CollectionsPage";
 import ComposerPage from "./settings/agent/ComposerPage";
@@ -119,6 +120,7 @@ export type SettingsSection =
 	| "agent-composer"
 	| "agent-config"
 	| "identity"
+	| "assistant"
 	| "appearance"
 	| "notifications"
 	| "shares"
@@ -1273,6 +1275,7 @@ export function SettingsPage({
 					{section === "agent-composer" && <ComposerPage />}
 					{section === "agent-config" && <AgentConfigSettings />}
 					{section === "identity" && <IdentitySettings />}
+					{section === "assistant" && <AssistantSettings />}
 					{section === "appearance" && <ThemeSettings />}
 					{section === "notifications" && <NotificationsSettings />}
 					{section === "shares" && <SharesSettings />}

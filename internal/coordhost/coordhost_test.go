@@ -891,7 +891,8 @@ func probesInsideSandbox(t *testing.T, portMode bool) {
 			assert.Equal(t, filepath.Join(e.h.homeDir(e.orbID), ".oryn", "coordinator", "prompts", coordThread+".md"), got.Args[i+1])
 		}
 	}
-	assert.ElementsMatch(t, []string{"HOME", "PATH", "LANG", "TMPDIR", "PI_RPC_EMIT_TITLE", "PI_NOTIFICATIONS", "OTEL_SDK_DISABLED", "PI_FILE_LOCK_BACKEND", "ORYN_THREAD_ID"}, got.EnvKeys)
+	// M19：PI_PROXY 指向沙箱内唯一可连的回环出站监听（正向代理由控制面策略放行或拒绝）。
+	assert.ElementsMatch(t, []string{"HOME", "PATH", "LANG", "TMPDIR", "PI_RPC_EMIT_TITLE", "PI_NOTIFICATIONS", "OTEL_SDK_DISABLED", "PI_FILE_LOCK_BACKEND", "ORYN_THREAD_ID", "PI_PROXY"}, got.EnvKeys)
 	if os.Geteuid() == 0 {
 		assert.Equal(t, accountUID(t, e.cfg.Dir), got.UID)
 		assert.NotEqual(t, 65534, got.UID)
@@ -913,7 +914,7 @@ func fakeLLM(t *testing.T, l net.Listener, reply string) *[]string {
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		mu.Lock()
-		paths = append(paths, r.Method+" "+r.URL.Path+" auth="+r.Header.Get("Authorization"))
+		paths = append(paths, r.Method+" "+r.Host+r.URL.Path+" auth="+r.Header.Get("Authorization"))
 		mu.Unlock()
 		if !strings.HasSuffix(r.URL.Path, "/chat/completions") {
 			http.NotFound(w, r)
@@ -1042,7 +1043,8 @@ func realOmpTurn(t *testing.T, portMode bool, maxABI int) {
 	for _, tl := range last["data"].(map[string]any)["tools"].([]any) {
 		names = append(names, tl.(map[string]any)["name"].(string))
 	}
-	assert.ElementsMatch(t, []string{"create_thread", "read", "write"}, names)
+	// M19 第一层：内置 web_search 与 generate_image 也开着
+	assert.ElementsMatch(t, []string{"create_thread", "read", "write", "web_search", "generate_image"}, names)
 
 	a.send(map[string]any{"id": "p1", "type": "prompt", "message": "Say pong."})
 	frames := a.until("agent_end", typeIs("agent_end"))
@@ -1073,11 +1075,18 @@ func realOmpTurn(t *testing.T, portMode bool, maxABI int) {
 	require.NoError(t, err, "sidecar 文件锁后端没有生效")
 	assert.NotEmpty(t, owners)
 	assert.NotEmpty(t, *paths)
+	model := 0
 	for _, p := range *paths {
+		// M19：omp 经 PI_PROXY 发起的公网连接（CONNECT）走正向代理，由控制面策略放行或拒绝；这里只看模型请求
+		if strings.HasPrefix(p, "CONNECT ") {
+			continue
+		}
+		model++
 		assert.Contains(t, p, "/llm/fake/v1/", p)
 		assert.Contains(t, p, "auth=Bearer oryn-ph-test", "the agent only ever sees the placeholder key")
 	}
-	t.Logf("model requests: %v", *paths)
+	assert.Positive(t, model)
+	t.Logf("egress requests: %v", *paths)
 }
 
 // 没有网络命名空间时出站代理端口落在宿主回环上：被别的进程占着时 Check / Status 立刻报不可用并写明原因，spawn 任务

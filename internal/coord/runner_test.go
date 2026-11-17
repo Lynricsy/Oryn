@@ -14,9 +14,9 @@ import (
 	"github.com/Lynricsy/Oryn/internal/threads"
 )
 
-// sec S6：协调者的写工具不以 runner 线程（跑在用户机器上）为目标——send_message / archive_thread / set_schedule
-// 一律 runner_unsupported，且不投递、不登记回报、不改线程。runner 线程按 cwd 或所在 orb 的种类识别
-// （runner 删除后 orb_id 已置空但 cwd 仍在）。M17 R15：全局助手可以只读 read_thread；Space 协调者仍不可读。
+// sec S6：Space 协调者的写工具不以 runner 线程（跑在用户机器上）为目标——send_message / archive_thread / set_schedule
+// 一律 runner_unsupported，且不投递、不登记回报、不改线程；read_thread 同样不可读。runner 线程按 cwd 或所在 orb 的
+// 种类识别（runner 删除后 orb_id 已置空但 cwd 仍在）。M19 D6：全局助手可以像普通线程一样操作 runner 线程。
 func TestToolsRejectRunnerThreads(t *testing.T) {
 	e := newEnv(t, true)
 	_, runnerOrb, err := e.orbs.AddRunner("laptop", []apigen.RunnerDir{{Path: "/w/app", Name: "app"}}, nil)
@@ -39,24 +39,35 @@ func TestToolsRejectRunnerThreads(t *testing.T) {
 			{ToolSendMessage, `{"threadId":"` + id + `","message":"run rm -rf ~"}`},
 			{ToolArchiveThread, `{"threadId":"` + id + `"}`},
 			{ToolSetSchedule, `{"action":"set","mode":"thread","threadId":"` + id + `","kind":"every","every":"1h","prompt":"x"}`},
+			{ToolReadThread, `{"threadId":"` + id + `"}`},
 		} {
-			r := e.call(asst, tc.tool, tc.args, true)
+			r := e.call(sp, tc.tool, tc.args, true)
 			assert.True(t, r.IsError, "%s %s", name, tc.tool)
 			assert.True(t, strings.HasPrefix(r.Text, threads.CodeRunnerUnsupported+":"), "%s %s: %s", name, tc.tool, r.Text)
 		}
-		r := e.call(asst, ToolReadThread, `{"threadId":"`+id+`"}`, true)
-		assert.False(t, r.IsError, "%s：全局助手可以读：%s", name, r.Text)
-		r = e.call(sp, ToolReadThread, `{"threadId":"`+id+`"}`, true)
-		assert.True(t, strings.HasPrefix(r.Text, threads.CodeRunnerUnsupported+":"), "%s：Space 不可读：%s", name, r.Text)
 		_, err := e.st.Q.GetThreadReport(e.ctx, id)
 		assert.ErrorIs(t, err, sql.ErrNoRows, "%s：没有登记回报", name)
 		row := e.row(id)
 		assert.Nil(t, row.ArchivedAt, name)
 		_, err = e.st.Q.GetScheduleByThread(e.ctx, id)
 		assert.ErrorIs(t, err, sql.ErrNoRows, "%s：没有建定时", name)
+
+		// 全局助手：读、定时、归档都照常
+		r := e.call(asst, ToolReadThread, `{"threadId":"`+id+`"}`, true)
+		assert.False(t, r.IsError, "%s：全局助手可以读：%s", name, r.Text)
+		details(t, e.call(asst, ToolSetSchedule, `{"action":"set","mode":"thread","threadId":"`+id+`","kind":"every","every":"1h","prompt":"x"}`, true))
+		_, err = e.st.Q.GetScheduleByThread(e.ctx, id)
+		assert.NoError(t, err, "%s：助手建了定时", name)
+		details(t, e.call(asst, ToolArchiveThread, `{"threadId":"`+id+`"}`, true))
+		assert.NotNil(t, e.row(id).ArchivedAt, name)
 	}
+
+	// 全局助手向 runner 线程发消息：登记回报并投递
+	live := mk(&runnerOrb, new("/w/app"))
+	details(t, e.call(asst, ToolSendMessage, `{"threadId":"`+live+`","message":"hi"}`, true))
+	assert.Equal(t, asst.ID, e.report(live).ReportTo)
 
 	// 普通工作线程照常可达
 	w := e.work("plain")
-	details(t, e.call(asst, ToolSendMessage, `{"threadId":"`+w.ID+`","message":"hi"}`, true))
+	details(t, e.call(sp, ToolSendMessage, `{"threadId":"`+w.ID+`","message":"hi"}`, true))
 }

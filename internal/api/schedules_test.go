@@ -195,6 +195,31 @@ func TestScheduleRoutes(t *testing.T) {
 	assert.Equal(t, schedule.CodeThreadArchived, errCode(b))
 }
 
+// 主线（M19 步骤 3.4）：按名字经 /schedules 建多条提醒；单数的线程定时接口回 409 conflict。
+func TestMainScheduleRoutes(t *testing.T) {
+	e, mkThread := newScheduleEnv(t)
+	main := mkThread()
+	_, err := e.st.DB.Exec(`UPDATE threads SET kind = 'assistant', main = 1 WHERE id = ?`, main)
+	require.NoError(t, err)
+	for _, name := range []string{"a", "b"} {
+		code, b := e.do(http.MethodPost, "/api/v1/schedules", map[string]any{"mode": "thread", "threadId": main, "name": name, "kind": "every", "every": "1h", "prompt": "p"})
+		require.Equal(t, http.StatusCreated, code, string(b))
+	}
+	code, b := e.do(http.MethodPost, "/api/v1/schedules", map[string]any{"mode": "thread", "threadId": main, "name": "a", "kind": "every", "every": "1h", "prompt": "p"})
+	assert.Equal(t, http.StatusConflict, code)
+	assert.Equal(t, schedule.CodeNameTaken, errCode(b))
+
+	code, b = e.do(http.MethodGet, "/api/v1/threads/"+main+"/schedule", nil)
+	assert.Equal(t, http.StatusConflict, code)
+	assert.Equal(t, schedule.CodeConflict, errCode(b))
+	code, b = e.do(http.MethodPut, "/api/v1/threads/"+main+"/schedule", map[string]any{"kind": "every", "every": "1h", "prompt": "p"})
+	assert.Equal(t, http.StatusConflict, code)
+	assert.Equal(t, schedule.CodeConflict, errCode(b))
+	code, b = e.do(http.MethodDelete, "/api/v1/threads/"+main+"/schedule", nil)
+	assert.Equal(t, http.StatusConflict, code)
+	assert.Equal(t, schedule.CodeConflict, errCode(b))
+}
+
 func TestScheduleRoutesNotConfigured(t *testing.T) {
 	e := newNotifyEnv(t)
 	code, _ := e.do(http.MethodGet, "/api/v1/schedules", nil)

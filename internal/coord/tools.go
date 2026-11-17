@@ -98,6 +98,13 @@ func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) thre
 	case ToolExportArtifact, ToolImportArtifact, ToolListDeletedArtifacts, ToolRestoreArtifact:
 		// M19：artifact 的补充工具（只给全局助手），coord 自己实现
 		return s.toolArtifactExtra(ctx, tc)
+	case ToolUpdateThread, ToolAbortThread, ToolSetThreadModel, ToolForkThread, ToolWakeThread, ToolListRunners, ToolDeleteThread:
+		// M19 第三层：线程全生命周期（只给全局助手）
+		if c.Kind != threads.KindAssistant {
+			err = errf("unknown_tool", "no tool named %q", c.Name)
+			break
+		}
+		v, err = s.threadTool(ctx, tc)
 	default:
 		err = errf("unknown_tool", "no tool named %q", c.Name)
 	}
@@ -105,7 +112,7 @@ func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) thre
 		return failResult(err)
 	}
 	switch c.Name {
-	case ToolListThreads, ToolListSchedules, ToolGetStats, ToolListFiles:
+	case ToolListThreads, ToolListSchedules, ToolGetStats, ToolListFiles, ToolListRunners:
 		// list_files 的文件名可能来自 orb 内的 agent（oryn library put）
 		return threads.HostToolResult{Text: wrapUntrusted("", v), Details: v}
 	}
@@ -127,10 +134,51 @@ func decodeArgs(raw json.RawMessage, v any) error {
 	return nil
 }
 
-// resolveTarget 是宿主工具唯一的目标校验：线程必须存在且是工作线程。协调对话之间不能互相发消息、归档、读取——
+// resolveTarget 是 Space 协调者写工具的目标校验：线程必须存在且是工作线程。协调对话之间不能互相发消息、归档、读取——
 // 这是防止协调者互相唤醒成环的结构规则，不是权限。runner 线程（跑在用户自己的机器上）一律不作目标：协调者读到的
-// orb 内容可能带注入的指令，不能经它转成用户机器上的操作（sec S6）→ runner_unsupported。
+// orb 内容可能带注入的指令，不能经它转成用户机器上的操作（sec S6）→ runner_unsupported。全局助手走 resolveActTarget。
 func (s *Service) resolveTarget(ctx context.Context, threadID string) (db.Thread, error) {
+	t, err := s.getTarget(ctx, threadID)
+	if err != nil {
+		return db.Thread{}, err
+	}
+	if t.Kind != threads.KindWork {
+		return db.Thread{}, errf(CodeInvalidTarget, "%s is a coordinator conversation, not a work thread", threadID)
+	}
+	runner, err := s.isRunnerThread(ctx, t)
+	if err != nil {
+		return db.Thread{}, err
+	}
+	if runner {
+		return db.Thread{}, errf(threads.CodeRunnerUnsupported, "%s runs on a runner; coordinator tools cannot act on runner threads", threadID)
+	}
+	return t, nil
+}
+
+// resolveActTarget 是写工具的目标校验（M19 D6 / D10）。Space 协调者调用时等同 resolveTarget；全局助手可以操作任何工作线程
+// （含 Runner 线程），allowSpace 为真时还可以以 Space 的协调对话为目标（send_message、线程内定时）。助手对话之间
+// 仍不能互相操作（防止成环）。
+func (s *Service) resolveActTarget(ctx context.Context, c toolCtx, threadID string, allowSpace bool) (db.Thread, error) {
+	if c.Kind != threads.KindAssistant {
+		return s.resolveTarget(ctx, threadID)
+	}
+	t, err := s.getTarget(ctx, threadID)
+	if err != nil {
+		return db.Thread{}, err
+	}
+	switch {
+	case t.Kind == threads.KindWork:
+		return t, nil
+	case t.Kind == threads.KindSpace && allowSpace:
+		return t, nil
+	case t.Kind == threads.KindSpace:
+		return db.Thread{}, errf(CodeInvalidTarget, "%s is a Space conversation; manage the Space instead", threadID)
+	}
+	return db.Thread{}, errf(CodeInvalidTarget, "%s is an assistant conversation, not a work thread", threadID)
+}
+
+// getTarget 按 id 取线程；空 id → invalid_request，不存在 → not_found。
+func (s *Service) getTarget(ctx context.Context, threadID string) (db.Thread, error) {
 	if threadID == "" {
 		return db.Thread{}, errf(CodeInvalid, "threadId is required")
 	}
@@ -138,24 +186,25 @@ func (s *Service) resolveTarget(ctx context.Context, threadID string) (db.Thread
 	if errors.Is(err, sql.ErrNoRows) {
 		return db.Thread{}, errf(CodeNotFound, "thread %s not found", threadID)
 	}
+	return t, err
+}
+
+// isRunnerThread 报告线程是否跑在 runner 上：有 cwd（runner 删除后 orb_id 置空但 cwd 仍在），或所在 orb 是 runner 的常驻 orb。
+func (s *Service) isRunnerThread(ctx context.Context, t db.Thread) (bool, error) {
+	if t.Cwd != nil {
+		return true, nil
+	}
+	if t.OrbID == nil {
+		return false, nil
+	}
+	o, err := s.st.Q.GetOrb(ctx, *t.OrbID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
 	if err != nil {
-		return db.Thread{}, err
+		return false, err
 	}
-	if t.Kind != threads.KindWork {
-		return db.Thread{}, errf(CodeInvalidTarget, "%s is a coordinator conversation, not a work thread", threadID)
-	}
-	runner := t.Cwd != nil
-	if !runner && t.OrbID != nil {
-		o, err := s.st.Q.GetOrb(ctx, *t.OrbID)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return db.Thread{}, err
-		}
-		runner = err == nil && orbs.IsRunner(o)
-	}
-	if runner {
-		return db.Thread{}, errf(threads.CodeRunnerUnsupported, "%s runs on a runner; coordinator tools cannot act on runner threads", threadID)
-	}
-	return t, nil
+	return orbs.IsRunner(o), nil
 }
 
 // projectByName 按名称取项目；不存在 → not_found。
@@ -306,23 +355,10 @@ func (s *Service) toolReadThread(ctx context.Context, c toolCtx) threads.HostToo
 	return threads.HostToolResult{Text: wrapUntrusted(t.ID, v), Details: v}
 }
 
-// resolveReadTarget 是全局助手 read_thread 的目标校验（R15）：除工作线程外，还可以只读访问主人的其他助手对话
-// 与 Runner 线程。读不会唤醒任何线程，也不会经它在 Runner 上执行操作；写操作仍走 resolveTarget。Space 协调线程不可读。
+// resolveReadTarget 是全局助手 read_thread 的目标校验（R15 / M19）：除工作线程（含 Runner 线程）外，还可以读取主人的
+// 其他助手对话与 Space 的协调对话。读不会唤醒任何线程。
 func (s *Service) resolveReadTarget(ctx context.Context, threadID string) (db.Thread, error) {
-	if threadID == "" {
-		return db.Thread{}, errf(CodeInvalid, "threadId is required")
-	}
-	t, err := s.st.Q.GetThread(ctx, threadID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return db.Thread{}, errf(CodeNotFound, "thread %s not found", threadID)
-	}
-	if err != nil {
-		return db.Thread{}, err
-	}
-	if t.Kind != threads.KindWork && t.Kind != threads.KindAssistant {
-		return db.Thread{}, errf(CodeInvalidTarget, "%s is a Space conversation", threadID)
-	}
-	return t, nil
+	return s.getTarget(ctx, threadID)
 }
 
 // ---- create_thread ----
@@ -336,6 +372,8 @@ type createThreadArgs struct {
 	OrbType       string `json:"orbType"`
 	// Files 是要带给新线程的文件库 id（M13 4.4，只有全局助手可用）：逐个复制成附件，随首条提示词投递进新线程的 orb。
 	Files []string `json:"files"`
+	// M19：执行位置、Space、role 与标签，只有全局助手可用（Space 协调者传了也忽略）。
+	assistantCreateArgs
 }
 
 func (s *Service) toolCreateThread(ctx context.Context, c toolCtx) (any, error) {
@@ -378,6 +416,8 @@ func (s *Service) toolCreateThread(ctx context.Context, c toolCtx) (any, error) 
 	}
 	if c.inSpace() {
 		p.SpaceID = c.space.ID
+	} else if err = s.applyAssistantCreate(ctx, a.assistantCreateArgs, &p, &projectName); err != nil {
+		return nil, err
 	}
 	if !s.lim.allow(c.ThreadID+"|create_thread", s.cfg.Now(), createThreadRules) {
 		err = errf(CodeRateLimited, "create_thread limit reached (10 per 10 minutes, 40 per 24 hours per conversation)")
@@ -412,8 +452,10 @@ func (s *Service) toolCreateThread(ctx context.Context, c toolCtx) (any, error) 
 
 type sendMessageArgs struct {
 	ThreadID string `json:"threadId"`
-	Message  string `json:"message"`
-	Steer    bool   `json:"steer"`
+	// Space 是 Space 名字（M19，只有全局助手可用；与 threadId 二选一）：消息发给该 Space 的协调对话。
+	Space   string `json:"space"`
+	Message string `json:"message"`
+	Steer   bool   `json:"steer"`
 }
 
 // sourceLine 是协调者发出的消息（send_message、create_thread 的首条提示词）的来源头行（C9.3）：Space 用其名称
@@ -461,7 +503,18 @@ func (s *Service) toolSendMessage(ctx context.Context, c toolCtx) (any, error) {
 		err = errf(CodeInvalid, "message is required")
 		return nil, err
 	}
-	if _, err = s.resolveTarget(ctx, a.ThreadID); err != nil {
+	if !c.inSpace() && a.Space != "" {
+		if a.ThreadID != "" {
+			err = errf(CodeInvalid, "give threadId or space, not both")
+			return nil, err
+		}
+		var sp db.Space
+		if sp, err = s.spaceByName(ctx, a.Space); err != nil {
+			return nil, err
+		}
+		a.ThreadID = sp.ThreadID
+	}
+	if _, err = s.resolveActTarget(ctx, c, a.ThreadID, true); err != nil {
 		return nil, err
 	}
 	if !s.lim.allow(c.ThreadID+"|send_message", s.cfg.Now(), sendMessageRules) {
@@ -518,7 +571,7 @@ func (s *Service) toolArchiveThread(ctx context.Context, c toolCtx) (any, error)
 		err = errf(CodeInvalid, "outcome must be shipped or archived")
 		return nil, err
 	}
-	if _, err = s.resolveTarget(ctx, a.ThreadID); err != nil {
+	if _, err = s.resolveActTarget(ctx, c, a.ThreadID, false); err != nil {
 		return nil, err
 	}
 	if a.Outcome == "shipped" {
@@ -603,15 +656,19 @@ func (s *Service) toolSetSchedule(ctx context.Context, c toolCtx) (any, error) {
 		err = errf(CodeRateLimited, "set_schedule limit reached (10 per 10 minutes, 40 per 24 hours per conversation)")
 		return nil, err
 	}
-	// thread 模式的目标：缺省 = 本对话；给了别的线程则必须是工作线程
-	threadTarget := func() (string, error) {
+	// thread 模式的目标：缺省 = 本对话；给了别的线程则按 resolveActTarget 校验（助手还可指向 Runner 线程与 Space 对话）。main 表示目标是主线（只可能是本对话）
+	threadTarget := func() (tid string, main bool, err error) {
 		if a.ThreadID == "" || a.ThreadID == c.ThreadID {
-			return c.ThreadID, nil
+			row, err := s.st.Q.GetThread(ctx, c.ThreadID)
+			if err != nil {
+				return "", false, err
+			}
+			return c.ThreadID, row.Main == 1, nil
 		}
-		if _, err := s.resolveTarget(ctx, a.ThreadID); err != nil {
-			return "", err
+		if _, err := s.resolveActTarget(ctx, c, a.ThreadID, true); err != nil {
+			return "", false, err
 		}
-		return a.ThreadID, nil
+		return a.ThreadID, false, nil
 	}
 	switch a.Action {
 	case "set":
@@ -619,9 +676,13 @@ func (s *Service) toolSetSchedule(ctx context.Context, c toolCtx) (any, error) {
 	case "pause", "resume", "delete":
 		id := a.ScheduleID
 		if id == "" {
-			tid, terr := threadTarget()
+			tid, main, terr := threadTarget()
 			if terr != nil {
 				err = terr
+				return nil, err
+			}
+			if main {
+				err = errf(CodeInvalid, "the main conversation can have several reminders: pass scheduleId (list_schedules shows them)")
 				return nil, err
 			}
 			cur, gerr := s.sched.GetByThread(ctx, tid)
@@ -635,7 +696,7 @@ func (s *Service) toolSetSchedule(ctx context.Context, c toolCtx) (any, error) {
 			return nil, err
 		}
 		if sc.ThreadID != nil && *sc.ThreadID != c.ThreadID {
-			if _, err = s.resolveTarget(ctx, *sc.ThreadID); err != nil {
+			if _, err = s.resolveActTarget(ctx, c, *sc.ThreadID, true); err != nil {
 				return nil, err
 			}
 		}
@@ -663,7 +724,7 @@ func (s *Service) toolSetSchedule(ctx context.Context, c toolCtx) (any, error) {
 }
 
 // putSchedule 处理 set_schedule{action: set}。
-func (s *Service) putSchedule(ctx context.Context, c toolCtx, a setScheduleArgs, threadTarget func() (string, error)) (apigen.Schedule, string, error) {
+func (s *Service) putSchedule(ctx context.Context, c toolCtx, a setScheduleArgs, threadTarget func() (string, bool, error)) (apigen.Schedule, string, error) {
 	mode := a.Mode
 	if mode == "" {
 		mode = string(apigen.ScheduleModeThread)
@@ -674,13 +735,21 @@ func (s *Service) putSchedule(ctx context.Context, c toolCtx, a setScheduleArgs,
 	}
 	switch mode {
 	case string(apigen.ScheduleModeThread):
-		tid, err := threadTarget()
+		tid, main, err := threadTarget()
 		if err != nil {
 			return apigen.Schedule{}, "", err
 		}
+		in.ThreadID = tid
 		if a.ScheduleID != "" {
-			in.ThreadID = tid
 			sc, err := s.sched.Put(ctx, a.ScheduleID, in, "agent")
+			return sc, tid, err
+		}
+		if main {
+			// 主线可有多条提醒：不带 scheduleId 一律新建，按名字区分
+			if strings.TrimSpace(a.Name) == "" {
+				return apigen.Schedule{}, "", errf(CodeInvalidSchedule, "reminders on the main conversation need a name; to change one, pass its scheduleId")
+			}
+			sc, err := s.sched.Put(ctx, "", in, "agent")
 			return sc, tid, err
 		}
 		sc, err := s.sched.PutForThread(ctx, tid, in, "agent")

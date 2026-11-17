@@ -347,11 +347,11 @@ func (s *Service) artifactCaller(ctx context.Context, threadID string) (artifact
 	return c, nil
 }
 
-// fetchOut 从协调 orb 取回 ~/library/out/ 下的文件；路径不合规与取不到时回给 agent 看的 *artifacts.OpError。
+// fetchOut 从协调 orb 取回 ~/library/out/ 或 ~/tmp/ 下的文件；路径不合规与取不到时回给 agent 看的 *artifacts.OpError。
 func (s *Service) fetchOut(ctx context.Context, orbID *string, p string) (io.ReadCloser, int64, error) {
-	if _, err := outPath(p); err != nil || !strings.HasPrefix(strings.TrimSpace(p), "~/library/out/") {
+	if _, err := outPath(p); err != nil || !inFetchRoot(strings.TrimSpace(p)) {
 		return nil, 0, &artifacts.OpError{Code: artifacts.CodeInvalid,
-			Message: "source " + p + " 不在 ~/library/out/ 下。先用 write 把文件写到 ~/library/out/，再把那个路径（~/library/out/…）作为 source。"}
+			Message: "source " + p + " 不在 ~/library/out/ 或 ~/tmp/ 下。先用 write 把文件写到 ~/library/out/（生图结果在 ~/tmp/），再把那个路径作为 source。"}
 	}
 	if orbID == nil {
 		return nil, 0, errf(CodeCoordinatorUnavailable, "the conversation has no coordinator orb")
@@ -364,7 +364,7 @@ func (s *Service) fetchOut(ctx context.Context, orbID *string, p string) (io.Rea
 			Message: fmt.Sprintf("source %s 超过单文件上限 %d MiB。请拆小或压缩后再写入。", p, artifacts.MaxFileBytes>>20)}
 	case errors.As(err, &ce):
 		return nil, 0, &artifacts.OpError{Code: artifacts.CodeInvalid,
-			Message: "取不到 source " + p + "（" + ce.Message + "）。确认它是 ~/library/out/ 下存在的普通文件，路径写对。"}
+			Message: "取不到 source " + p + "（" + ce.Message + "）。确认它是 ~/library/out/ 或 ~/tmp/ 下存在的普通文件，路径写对。"}
 	case err != nil:
 		return nil, 0, err
 	}

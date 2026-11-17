@@ -217,7 +217,7 @@ func (s *Server) ListScheduleRuns(w http.ResponseWriter, r *http.Request, id api
 	WriteJSON(w, http.StatusOK, apigen.ScheduleRunList{Runs: runs})
 }
 
-// GetThreadSchedule 对应 `GET threads/{id}/schedule`。
+// GetThreadSchedule 对应 `GET threads/{id}/schedule`。以下三个单数接口对主线回 409 conflict（主线的提醒经 /schedules 管理）。
 func (s *Server) GetThreadSchedule(w http.ResponseWriter, r *http.Request, id apigen.ThreadIDPath) {
 	svc, ok := s.scheduleSvc(w)
 	if !ok {

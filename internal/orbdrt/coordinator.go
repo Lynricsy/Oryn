@@ -18,20 +18,24 @@ import (
 // ErrNoRedial 由 Config.Connect 返回，表示 link 不能重建：linkLoop 随即返回，Run 结束。
 var ErrNoRedial = errors.New("orbdrt: link cannot be redialed")
 
-// coordinatorOverlay 是协调档 omp 的设置覆盖层（--config）：强制关闭会读写文件、联网或执行代码的功能。
+// coordinatorOverlay 是协调档 omp 的设置覆盖层（--config）：强制关闭会读写工作区文件或执行代码的功能。
+// 生图开着（M19 第一层）：结果写进 TMPDIR（~/tmp/），出站与搜索一样经 orynd 的代理。
 const coordinatorOverlay = `autolearn: { enabled: false }
 memory: { backend: "off" }
 checkpoint: { enabled: false }
 compaction: { experimentalContextManagement: false }
 goal: { enabled: false }
 plan: { enabled: false }
-generate_image: { enabled: false }
+generate_image: { enabled: true }
 lsp: { enabled: false }
 mcp: { enableProjectConfig: false }
 marketplace: { autoUpdate: "off" }
 startup: { checkUpdate: false }
 bash: { direnv: "off" }
 `
+
+// coordinatorTools 是协调档 omp 开的内置工具（--tools）。
+const coordinatorTools = "read,write,web_search,generate_image"
 
 // coordinatorMethods 是协调宿主接受的 ctl 方法；其余一律 method_not_found。
 var coordinatorMethods = map[string]bool{
@@ -87,10 +91,11 @@ func (r *Runtime) coordinatorAgentSpec(p apigen.LinkCtlAgentStartParams, dir str
 	if err := writeFileAtomic(promptFile, []byte(*p.SystemPrompt), 0o600); err != nil {
 		return nil, "", nil, ctlErr("failed", "write system prompt: %v", err)
 	}
-	// 内置工具只开 read / write（M13：读文件库、写 ~/library/out/）：--no-tools 先关掉全部，--tools 再精确列出。
+	// 内置工具（M13 起 read / write：读文件库、写 ~/library/out/；M19 第一层加 web_search 与 generate_image，read 也能读 URL）：
+	// --no-tools 先关掉全部，--tools 再精确列出。MCP 与宿主工具不受 --tools 限制。
 	args = []string{
 		"--mode", "rpc-ui", "--cwd", cwd, "--session-dir", dir,
-		"--no-tools", "--tools", "read,write", "--no-skills", "--no-extensions", "--no-rules", "--no-context-files", "--no-lsp",
+		"--no-tools", "--tools", coordinatorTools, "--no-skills", "--no-extensions", "--no-rules", "--no-context-files", "--no-lsp",
 		"--config", overlay, "--system-prompt", promptFile,
 	}
 	env = map[string]string{
@@ -104,6 +109,11 @@ func (r *Runtime) coordinatorAgentSpec(p apigen.LinkCtlAgentStartParams, dir str
 		// omp 的原生文件锁改用 home 里的旁路文件（OFD 锁）：沙箱禁止一切 AF_UNIX，默认的 abstract socket 锁用不了。
 		"PI_FILE_LOCK_BACKEND": "sidecar",
 		"ORYN_THREAD_ID":       p.ThreadID,
+	}
+	// 出站（M19）：omp 的全局 fetch 经 PI_PROXY 走 orynd 的正向代理（https 用 CONNECT），回环与内网地址由 omp 直连
+	// （沙箱里只有回环 7811 连得通）；是否放行、放行哪些目标由控制面的出站策略决定。
+	if r.egressLn != nil {
+		env["PI_PROXY"] = "http://" + r.egressLn.Addr().String()
 	}
 	return args, cwd, env, nil
 }

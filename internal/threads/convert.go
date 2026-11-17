@@ -197,6 +197,10 @@ func (s *Service) threadAPI(ctx context.Context, t db.Thread) (apigen.Thread, er
 		return apigen.Thread{}, err
 	}
 	out.GithubTask = task
+	if t.Main == 1 {
+		// 主线有多条提醒，单数的 schedule 摘要不适用
+		return out, nil
+	}
 	sum, err := s.st.Q.GetScheduleSummary(ctx, t.ID)
 	switch {
 	case err == nil:

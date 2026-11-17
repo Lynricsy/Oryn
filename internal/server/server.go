@@ -282,6 +282,7 @@ func (s *Server) init(ctx context.Context) error {
 	s.Coord.SetLibrary(s.Library, s.LibrarySync)
 	s.Coord.SetArtifacts(s.Artifacts)
 	s.Coord.SetAgentConfig(s.Home, s.ProjectHomes, s.Vault)
+	s.Coord.SetMachines(coord.OrbMachines{Service: s.Orbs, Q: s.Store.Q})
 	s.Threads.SetCoordinator(s.Coord)
 	s.Threads.AddObserver(s.Notify)
 	s.Threads.AddObserver(s.Schedules)
