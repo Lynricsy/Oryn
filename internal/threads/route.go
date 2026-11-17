@@ -112,25 +112,43 @@ func RouteCommand(frame json.RawMessage) (route, cmdType string) {
 	return RoutePass, typ
 }
 
-// managedSlash 报告 prompt 帧的 message 是否是 managedSlashCommands 里的内置斜杠命令，返回 `/名字[ 子命令]`。
-// 与 omp 的判定逐字一致（executeAcpBuiltinSlashCommand → parseSlashCommand / parseSubcommand）：只认精确的 `message` 键；
-// 正文必须以 "/" 开头（不去前导空白）；命令名截到第一个空白或 ":"，大小写敏感；参数去首尾空白后，子命令截到第一个空白、
-// 转小写比较，其后不得有余参。空白按 JS 正则 `\s`（jsSpace）。只有 prompt 执行内置命令，steer / follow_up / abort_and_prompt
-// 不执行；扩展的 input 钩子可能先改写正文，这在路由层看不到。
-func managedSlash(frame json.RawMessage) (string, bool) {
+// parseSlash 按 omp 的判定（executeAcpBuiltinSlashCommand → parseSlashCommand）解析 prompt 帧正文里的内置斜杠命令：
+// 只认精确的 `message` 键；正文必须以 "/" 开头（不去前导空白）；命令名截到第一个空白或 ":"，大小写敏感；
+// 参数去首尾空白。空白按 JS 正则 `\s`（jsSpace）。
+func parseSlash(frame json.RawMessage) (name, args string, ok bool) {
 	var m map[string]json.RawMessage
 	var msg string
 	if json.Unmarshal(frame, &m) != nil || json.Unmarshal(m["message"], &msg) != nil {
-		return "", false
+		return "", "", false
 	}
-	body, ok := strings.CutPrefix(msg, "/")
-	if !ok || body == "" {
-		return "", false
+	body, has := strings.CutPrefix(msg, "/")
+	if !has || body == "" {
+		return "", "", false
 	}
-	name, args := body, ""
+	name = body
 	if i := strings.IndexFunc(body, func(r rune) bool { return r == ':' || jsSpace(r) }); i >= 0 {
 		_, size := utf8.DecodeRuneInString(body[i:])
 		name, args = body[:i], strings.TrimFunc(body[i+size:], jsSpace)
+	}
+	return name, args, true
+}
+
+// splitVerb 把斜杠命令的参数拆成子命令（截到第一个空白）与去首尾空白的余参（同 omp 的 parseSubcommand）。
+func splitVerb(args string) (verb, rest string) {
+	verb = args
+	if i := strings.IndexFunc(args, jsSpace); i >= 0 {
+		verb, rest = args[:i], strings.TrimFunc(args[i:], jsSpace)
+	}
+	return verb, rest
+}
+
+// managedSlash 报告 prompt 帧的 message 是否是 managedSlashCommands 里的内置斜杠命令，返回 `/名字[ 子命令]`。
+// 解析见 parseSlash；子命令转小写比较，其后不得有余参。只有 prompt 执行内置命令，steer / follow_up / abort_and_prompt
+// 不执行；扩展的 input 钩子可能先改写正文，这在路由层看不到。
+func managedSlash(frame json.RawMessage) (string, bool) {
+	name, args, ok := parseSlash(frame)
+	if !ok {
+		return "", false
 	}
 	sub, has := managedSlashCommands[name]
 	if !has {
@@ -139,14 +157,32 @@ func managedSlash(frame json.RawMessage) (string, bool) {
 	if sub == "" {
 		return "/" + name, true
 	}
-	verb, rest := args, ""
-	if i := strings.IndexFunc(args, jsSpace); i >= 0 {
-		verb, rest = args[:i], strings.TrimFunc(args[i:], jsSpace)
-	}
+	verb, rest := splitVerb(args)
 	if strings.ToLower(verb) != sub || rest != "" {
 		return "", false
 	}
 	return "/" + name + " " + sub, true
+}
+
+// sshManageCommand 报告命令是否会改动 omp 的 SSH 主机目录（ssh.json）：`ssh_manage` RPC，或 prompt 正文是
+// `/ssh add|remove|rm …`（子命令不分大小写，其后可以有余参）。orb 线程的主机由 Oryn 集中管理（M18），这类命令要拦下；
+// 只读的 get_ssh_hosts、ssh_test、`/ssh list`、`/ssh help` 照常直通。
+func sshManageCommand(cmdType string, frame json.RawMessage) bool {
+	switch cmdType {
+	case "ssh_manage":
+		return true
+	case "prompt":
+		name, args, ok := parseSlash(frame)
+		if !ok || name != "ssh" {
+			return false
+		}
+		verb, _ := splitVerb(args)
+		switch strings.ToLower(verb) {
+		case "add", "remove", "rm":
+			return true
+		}
+	}
+	return false
 }
 
 // jsSpace 报告 r 是否属于 JS 正则 `\s`（也是 String.prototype.trim 去掉的字符集）；它与 unicode.IsSpace 不同：

@@ -1,9 +1,13 @@
 package threads
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/Lynricsy/Oryn/internal/apigen"
 )
 
 // 会换会话文件的命令：破坏线程↔会话绑定、Oryn 跟随不了的拦下；Oryn 能跟随或原地改动的放行。

@@ -1057,6 +1057,18 @@ func (s *Service) Abort(ctx context.Context, threadID string) error {
 	return err
 }
 
+// onRunner 报告线程当前的 orb 是否是 runner 的常驻 orb；没有 orb 或读不到 orb 行时按非 runner 处理。
+func (s *Service) onRunner(ctx context.Context, t *thread) bool {
+	t.mu.Lock()
+	orbID := t.orbID
+	t.mu.Unlock()
+	if orbID == "" {
+		return false
+	}
+	o, err := s.st.Q.GetOrb(ctx, orbID)
+	return err == nil && orbs.IsRunner(o)
+}
+
 // command 是 Command 与 Deliver 的共同主体。originAuto（自动化投递）不清未读、不通知 Seen、不记用户交互
 // （记 agent 活动），唤醒逻辑相同。tag 是带标签投递的标签（只由 Deliver 给出）；帧上的 orynTag 一律删除丢弃。
 // 返回已登记的未决命令（只读查询与带附件的命令返回 nil）。
@@ -1102,6 +1114,11 @@ func (s *Service) command(ctx context.Context, threadID string, frame json.RawMe
 		}
 	} else if len(files) > 0 {
 		return nil, errf("invalid", orynFilesKey+" is only accepted in assistant conversations")
+	}
+	// M18：orb 线程的 SSH 主机由 Oryn 集中管理并下发，agent 自己改 ssh.json 会被下一次下发覆盖；
+	// runner 线程管理的是那台机器自己的 ssh.json，照常放行。
+	if t.kind == KindWork && sshManageCommand(cmdType, frame) && !s.onRunner(ctx, t) {
+		return nil, errf(RouteManaged, "SSH 主机由 Oryn 集中管理：请到 设置 → SSH 主机 里添加或修改")
 	}
 	if len(ids) > 0 {
 		return nil, s.commandWithAttachments(ctx, t, cmdType, frame, ids, reply)
