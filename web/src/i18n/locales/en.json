@@ -2128,6 +2128,7 @@
 		"moreLines_one": "⋯ {{count}} more line",
 		"moreLines_other": "⋯ {{count}} more lines",
 		"running": "Running",
+		"computer": "Computer",
 		"args": "Arguments",
 		"ida": {
 			"code": "Code",
@@ -4752,6 +4753,33 @@
 			"command_header": "Headers come from a command, not supported yet",
 			"unresolved_env": "A header uses an environment variable that does not exist",
 			"invalid_url": "Invalid URL"
+		},
+		"computerTitle": "Assistant's computer",
+		"computerHint": "The provider and type used to create the assistant's computer; leave empty for the defaults. Only the next creation is affected: reset the existing computer on the “Assistant's computer” page to switch.",
+		"computerProvider": "Provider",
+		"computerOrbType": "Type",
+		"computerDefault": "Default"
+	},
+	"assistantComputer": {
+		"title": "Assistant's computer",
+		"noneTitle": "The assistant has no computer yet",
+		"noneHint": "An orb that belongs to the global assistant, shared by the main conversation and every conversation. The assistant runs commands, works with files and uses a browser in it; it freezes when idle and wakes when needed. It is created the first time the assistant needs it, or you can start it now.",
+		"start": "Start",
+		"starting": "Starting…",
+		"statusTitle": "Status",
+		"state": "State",
+		"provider": "Provider",
+		"type": "Type",
+		"toolsPending": "The computer's tools are not ready yet: after the first wake, the assistant can use them from its next turn.",
+		"wake": "Wake",
+		"pause": "Pause",
+		"reset": "Reset",
+		"resetTitle": "Reset the assistant's computer?",
+		"resetBody": "This deletes the orb and every file in it. The next time the assistant needs it, a fresh computer is created.",
+		"filesAsleep": "The computer is not running; wake it to browse files",
+		"tabs": {
+			"files": "Files",
+			"desktop": "Desktop"
 		}
 	}
 }

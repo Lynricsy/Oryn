@@ -105,4 +105,29 @@ describe("设置 → 全局助手", () => {
 			screen.queryByRole("checkbox", { name: "助手使用 filesystem" }),
 		).toBeNull();
 	});
+	it("助手的电脑：provider 与类型进设置，换 provider 时类型回到默认", async () => {
+		mount();
+		const providerSel = (await screen.findByTestId(
+			"computer-provider",
+		)) as HTMLSelectElement;
+		await screen.findByRole("option", { name: "local" });
+		fireEvent.change(providerSel, { target: { value: "local" } });
+		await waitFor(() =>
+			expect(server.assistant.settings.computer).toEqual({ provider: "local" }),
+		);
+		const typeSel = screen.getByTestId(
+			"computer-orb-type",
+		) as HTMLSelectElement;
+		await waitFor(() => expect(typeSel).toBeEnabled());
+		fireEvent.change(typeSel, { target: { value: "large" } });
+		await waitFor(() =>
+			expect(server.assistant.settings.computer).toEqual({
+				provider: "local",
+				orbType: "large",
+			}),
+		);
+		await waitFor(() => expect(providerSel).toBeEnabled());
+		fireEvent.change(providerSel, { target: { value: "" } });
+		await waitFor(() => expect(server.assistant.settings.computer).toEqual({}));
+	});
 });

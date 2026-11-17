@@ -2128,6 +2128,7 @@
 		"moreLines_one": "⋯ 还有 {{count}} 行",
 		"moreLines_other": "⋯ 还有 {{count}} 行",
 		"running": "运行中",
+		"computer": "电脑",
 		"args": "参数",
 		"ida": {
 			"code": "代码",
@@ -4752,6 +4753,33 @@
 			"command_header": "请求头由命令生成，暂不支持",
 			"unresolved_env": "请求头引用了不存在的环境变量",
 			"invalid_url": "地址无效"
+		},
+		"computerTitle": "助手的电脑",
+		"computerHint": "创建助手的电脑时用的 provider 与类型，留空走默认。只影响下一次创建：已有的电脑要在「助手的电脑」页重置后才会换。",
+		"computerProvider": "Provider",
+		"computerOrbType": "类型",
+		"computerDefault": "默认"
+	},
+	"assistantComputer": {
+		"title": "助手的电脑",
+		"noneTitle": "助手还没有电脑",
+		"noneHint": "这是一台属于全局助手的 orb，主线与所有对话共用。助手在里面跑命令、处理文件、用浏览器；空闲时自动冻结，用到时唤醒。助手第一次用到时会自动创建，也可以现在启动。",
+		"start": "启动",
+		"starting": "启动中…",
+		"statusTitle": "状态",
+		"state": "状态",
+		"provider": "Provider",
+		"type": "类型",
+		"toolsPending": "电脑里的工具还没就绪：第一次唤醒后，助手从下一轮起就能用它们。",
+		"wake": "唤醒",
+		"pause": "暂停",
+		"reset": "重置",
+		"resetTitle": "重置助手的电脑？",
+		"resetBody": "这会删除这台 orb 和里面的全部文件。下次助手用到时会重新创建一台空白的电脑。",
+		"filesAsleep": "电脑没在运行，唤醒后可以浏览文件",
+		"tabs": {
+			"files": "文件",
+			"desktop": "桌面"
 		}
 	}
 }

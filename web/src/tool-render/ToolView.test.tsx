@@ -1,6 +1,67 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { baseToolName, resolveToolRenderer } from "./registry";
 import { ToolView } from "./ToolView";
+
+describe("助手的电脑的工具卡（M19 步骤 4.4）", () => {
+	it("baseToolName 去掉 computer_ 前缀；status / upload / download 保留自己的名字", () => {
+		expect(baseToolName("computer_bash")).toBe("bash");
+		expect(baseToolName("computer_ast_grep")).toBe("ast_grep");
+		expect(baseToolName("computer_status")).toBe("computer_status");
+		expect(baseToolName("computer_upload")).toBe("computer_upload");
+		expect(baseToolName("computer_download")).toBe("computer_download");
+		expect(baseToolName("computer_")).toBe("computer_");
+		expect(baseToolName("bash")).toBe("bash");
+		expect(resolveToolRenderer("computer_bash")).toBe(
+			resolveToolRenderer("bash"),
+		);
+		expect(resolveToolRenderer("computer_read")).toBe(
+			resolveToolRenderer("read"),
+		);
+	});
+
+	it("computer_bash 用 bash 的卡片（图标、类别、命令行），头部带「电脑」小标", () => {
+		const { container } = render(
+			<ToolView
+				name="computer_bash"
+				args={{ command: "uname -a" }}
+				defaultOpen
+				result={{ content: [{ type: "text", text: "Linux orb 6.1.0" }] }}
+			/>,
+		);
+		const { container: plain } = render(
+			<ToolView
+				name="bash"
+				args={{ command: "uname -a" }}
+				defaultOpen
+				result={{ content: [{ type: "text", text: "Linux orb 6.1.0" }] }}
+			/>,
+		);
+		expect(container.querySelector(".tv-cat")?.className).toBe(
+			plain.querySelector(".tv-cat")?.className,
+		);
+		expect(container.querySelector(".tv-cat")?.innerHTML).toBe(
+			plain.querySelector(".tv-cat")?.innerHTML,
+		);
+		expect(container.querySelector(".tv-cmd-text")).toHaveTextContent(
+			"uname -a",
+		);
+		expect(container.querySelector(".tv-name")).toHaveTextContent("bash");
+		expect(container.querySelector(".tv-name")).toHaveAttribute(
+			"title",
+			"computer_bash",
+		);
+		expect(screen.getByTestId("tool-computer-badge")).toHaveTextContent("电脑");
+		expect(
+			plain.querySelector('[data-testid="tool-computer-badge"]'),
+		).toBeNull();
+	});
+
+	it("computer_status 不当作遥控工具：没有小标", () => {
+		render(<ToolView name="computer_status" args={{}} />);
+		expect(screen.queryByTestId("tool-computer-badge")).toBeNull();
+	});
+});
 
 describe("工具卡片的结构化部分结果（M12 步骤 5）", () => {
 	it("运行中的 task 用 details.progress 渲染进度行，不输出文本尾巴", () => {

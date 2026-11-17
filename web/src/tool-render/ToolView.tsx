@@ -6,7 +6,12 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Icon, type IconName } from "../components/ui/icons";
-import { ownLookup, resolveToolRenderer } from "./registry";
+import {
+	baseToolName,
+	isComputerTool,
+	ownLookup,
+	resolveToolRenderer,
+} from "./registry";
 import { ARTIFACT_TOOLS, ARTIFACT_WRITE_TOOLS } from "./tools/artifact";
 import {
 	isMcpToolName,
@@ -172,7 +177,10 @@ export function ToolView(props: ToolViewProps): ReactNode {
 		partialResult: props.partialResult,
 	});
 	const intent = props.intent?.trim() || argIntent || xdev?.intent;
-	const name = xdev?.tool ?? props.name;
+	const wireName = xdev?.tool ?? props.name;
+	// 助手的电脑（M19）：`computer_<x>` 的卡片与 `<x>` 相同（渲染器、图标、类别），头部多一个「电脑」小标
+	const computer = isComputerTool(wireName);
+	const name = baseToolName(wireName);
 	const unwrap = (r: ToolResultLike | undefined) =>
 		xdev?.unwrap ? unwrapXdevResult(r) : r;
 	const result = unwrap(props.result);
@@ -235,7 +243,14 @@ export function ToolView(props: ToolViewProps): ReactNode {
 						{mcp.tool}
 					</span>
 				) : (
-					<span className="tv-name">{label}</span>
+					<span className="tv-name" title={computer ? wireName : undefined}>
+						{label}
+					</span>
+				)}
+				{computer && (
+					<span className="tv-badge" data-testid="tool-computer-badge">
+						{t("toolRender.computer")}
+					</span>
 				)}
 				<span className="tv-sum">
 					<renderer.Summary {...renderProps} />
