@@ -78,6 +78,10 @@ type Service struct {
 
 	mu   sync.Mutex
 	live map[*live]struct{}
+	// gen 每次 invalidate 加一；invalidated 记每台主机最近一次失效时的 gen。
+	// 连接在拨号前取 gen 快照，登记时若链上有主机在快照之后失效，就当作过期连接立即关掉。
+	gen         uint64
+	invalidated map[string]uint64
 }
 
 // New 读取或生成网关主机密钥并构造服务。
@@ -101,7 +105,9 @@ func New(cfg Config, st *store.Store, orbs Orbs) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Service{cfg: cfg, st: st, orbs: orbs, signer: signer, live: map[*live]struct{}{}}, nil
+	return &Service{
+		cfg: cfg, st: st, orbs: orbs, signer: signer, live: map[*live]struct{}{}, invalidated: map[string]uint64{},
+	}, nil
 }
 
 // loadOrCreateHostKey 读取网关主机密钥；不存在时生成 ed25519 并 0600 原子写入。解析失败直接报错，
@@ -177,22 +183,42 @@ func (s *Service) pruneAudit(ctx context.Context) {
 
 func (s *Service) now() int64 { return s.cfg.Now().UnixMilli() }
 
-// track 登记一条活动连接，返回注销函数。
-func (s *Service) track(hostIDs []string, closeFn func()) (untrack func()) {
+// snapshot 返回当前的失效代数，供之后的 track 判断拨号期间链上主机是否被改过。
+func (s *Service) snapshot() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.gen
+}
+
+// track 登记一条活动连接。since 是拨号前的 snapshot：链上任一主机在那之后失效过，就不登记并返回 ok=false，
+// 由调用方关闭连接。登记与校验在同一把锁内完成，不会漏掉并发的 invalidate。
+func (s *Service) track(hostIDs []string, since uint64, closeFn func()) (untrack func(), ok bool) {
 	l := &live{hostIDs: hostIDs, close: closeFn}
 	s.mu.Lock()
+	for _, id := range hostIDs {
+		if s.invalidated[id] > since {
+			s.mu.Unlock()
+			return func() {}, false
+		}
+	}
 	s.live[l] = struct{}{}
 	s.mu.Unlock()
 	return func() {
 		s.mu.Lock()
 		delete(s.live, l)
 		s.mu.Unlock()
-	}
+	}, true
 }
 
-// invalidate 关闭链上含 hostID 的全部活动连接（主机被改、删、停用、重置指纹，或它是别人的跳板时）。
+// errStale 是拨号期间链上主机被修改的连接。
+var errStale = errors.New("主机配置刚被修改，请重试")
+
+// invalidate 关闭链上含 hostID 的全部活动连接（主机被改、删、停用、重置指纹，或它是别人的跳板时），
+// 并让拨号中、尚未登记的连接在登记时失败。
 func (s *Service) invalidate(hostID string) {
 	s.mu.Lock()
+	s.gen++
+	s.invalidated[hostID] = s.gen
 	var victims []*live
 	for l := range s.live {
 		if slices.Contains(l.hostIDs, hostID) {
