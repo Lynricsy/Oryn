@@ -376,6 +376,7 @@
 		"forkHere": "从这里分叉",
 		"ircFrom": "来自 {{from}}",
 		"jumpToEnd": "回到底部",
+		"loadEarlier": "加载更早的消息",
 		"quoteReply": "引用回复",
 		"quoteDismiss": "关闭引用回复",
 		"label": "加标签",

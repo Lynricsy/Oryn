@@ -1779,6 +1779,37 @@ export class MockServer {
 			if (desktop instanceof Response) return desktop;
 			return json({ thread: this.createThread(b, desktop) }, 201);
 		}
+		const entriesMatch = /^threads\/([^/]+)\/entries$/.exec(p);
+		if (entriesMatch && m === "GET") {
+			const list = this.entries.get(entriesMatch[1] ?? "");
+			if (!list) return json({ code: "not_found", message: "thread" }, 404);
+			const q = url.searchParams;
+			if (q.has("after") && q.has("before"))
+				return json(
+					{ code: "invalid_request", message: "after and before" },
+					400,
+				);
+			const limit = Math.min(500, Math.max(1, Number(q.get("limit") ?? 200)));
+			const last = list[list.length - 1];
+			let page: Entry[];
+			let hasMore: boolean;
+			if (q.has("before")) {
+				// M19 向前翻页：seq < before 的最近 limit 条，升序
+				const earlier = list.filter((e) => e.seq < Number(q.get("before")));
+				page = earlier.slice(-limit);
+				hasMore = earlier.length > limit;
+			} else {
+				const rest = list.filter((e) => e.seq > Number(q.get("after") ?? 0));
+				page = rest.slice(0, limit);
+				hasMore = rest.length > limit;
+			}
+			return json({
+				entries: page,
+				hasMore,
+				lastSeq: last?.seq ?? 0,
+				leafEntryId: last?.entryId,
+			});
+		}
 		const threadMatch = /^threads\/([^/]+)(?:\/(fork|wake))?$/.exec(p);
 		if (threadMatch) {
 			const id = threadMatch[1] ?? "";
@@ -2849,7 +2880,15 @@ export class MockServer {
 					return;
 				}
 				const list = this.entries.get(threadId) ?? [];
-				const after = typeof msg.afterSeq === "number" ? msg.afterSeq : 0;
+				let after = typeof msg.afterSeq === "number" ? msg.afterSeq : 0;
+				// M19 sub.tail：从 seq 0 补发时只补最近 tail 条（夹到 50–2000）
+				let windowStart = 0;
+				if (after === 0 && typeof msg.tail === "number") {
+					const tail = Math.min(2000, Math.max(50, msg.tail));
+					if (list.length >= tail)
+						windowStart = (list[list.length - tail]?.seq ?? 1) - 1;
+					after = windowStart;
+				}
 				const orb = t.orbId ? this.orbs.get(t.orbId) : undefined;
 				const last = list[list.length - 1];
 				socket.deliver({
@@ -2870,6 +2909,7 @@ export class MockServer {
 					lastSeq: last?.seq ?? 0,
 					transcriptRev: 0,
 					fullReplay: false,
+					...(windowStart > 0 ? { windowStart } : {}),
 				});
 				const rest = list.filter((e) => e.seq > after);
 				// 重放帧只在首次订阅时投递，续传（afterSeq>0）不重复

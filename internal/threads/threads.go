@@ -819,6 +819,42 @@ func (s *Service) Entries(ctx context.Context, id string, after int64, limit int
 	return page, nil
 }
 
+// EntriesBefore 返回 seq < before 的最近至多 limit 条（1–500，默认 200），按 seq 升序；
+// HasMore 表示还有更早的条目（M19 向前翻页）。
+func (s *Service) EntriesBefore(ctx context.Context, id string, before int64, limit int) (EntryPage, error) {
+	if limit <= 0 {
+		limit = entriesBatch
+	}
+	limit = min(limit, 500)
+	row, err := s.st.Q.GetThread(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return EntryPage{}, ErrNotFound
+	}
+	if err != nil {
+		return EntryPage{}, err
+	}
+	rows, err := s.st.Q.ListEntriesBefore(ctx, db.ListEntriesBeforeParams{ThreadID: id, BeforeSeq: before, Limit: int64(limit + 1)})
+	if err != nil {
+		return EntryPage{}, err
+	}
+	page := EntryPage{LastSeq: row.LastSeq, LeafEntryID: row.LeafEntryID}
+	if len(rows) > limit {
+		page.HasMore = true
+		rows = rows[:limit]
+	}
+	page.Entries = make([]Entry, len(rows))
+	for i, e := range rows {
+		page.Entries[len(rows)-1-i] = entryFromDB(e)
+	}
+	return page, nil
+}
+
+// TailStart 返回最后 n 条条目里最小的 seq 减一（订阅窗口起点）；不足 n 条返回 0。
+// 只查库、不取线程锁（hub 在 Subscribe 的回调里调用它）。
+func (s *Service) TailStart(ctx context.Context, id string, n int) (int64, error) {
+	return s.st.Q.GetTailStartSeq(ctx, db.GetTailStartSeqParams{ThreadID: id, N: int64(n)})
+}
+
 // EntriesRange 返回 after < seq ≤ upTo 的条目（WS 订阅补发用）。
 func (s *Service) EntriesRange(ctx context.Context, id string, after, upTo int64, limit int) ([]Entry, error) {
 	rows, err := s.st.Q.ListEntriesAfter(ctx, db.ListEntriesAfterParams{ThreadID: id, AfterSeq: after, Limit: int64(limit)})
@@ -847,6 +883,8 @@ type Snapshot struct {
 	// TranscriptRev 是当前转录版本；FullReplay 由 hub 按客户端的版本决定（见 realtime.subscribe）。
 	TranscriptRev int64 `json:"transcriptRev"`
 	FullReplay    bool  `json:"fullReplay"`
+	// WindowStart 是带 tail 订阅时的补发窗口起点（M19）：只补发 seq > WindowStart 的条目；0 = 没有开窗。
+	WindowStart int64 `json:"windowStart,omitempty"`
 }
 
 // AgentSnapshot 对应规格 AgentLiveState（帧保持原始字节）。

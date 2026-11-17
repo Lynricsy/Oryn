@@ -110,6 +110,8 @@ export class RealtimeClient {
 	private awaitingPong = false;
 	private networkBound = false;
 	private readonly subs = new Map<string, number>();
+	/** 带 `tail` 订阅的线程 → 窗口条数（M19）。 */
+	private readonly tails = new Map<string, number>();
 	/** 想看的线程（线程页挂载时设置）；实际发出的见 `effectiveFocus`。 */
 	private focused: string | null = null;
 	/** 最近一次发出的 focus（`undefined` = 本连接尚未发过）。 */
@@ -538,11 +540,15 @@ export class RealtimeClient {
 		const st = peekThreadStore(threadId)?.getState();
 		const afterSeq = st?.lastSeq ?? 0;
 		const transcriptRev = st?.transcriptRev;
-		this.send(
-			transcriptRev != null
-				? { type: "sub", threadId, afterSeq, transcriptRev }
-				: { type: "sub", threadId, afterSeq },
-		);
+		const tail = this.tails.get(threadId);
+		// tail 只在服务端实际从 seq 0 补发（本地没有条目或需要全量重放）时生效，续传时它被忽略
+		this.send({
+			type: "sub",
+			threadId,
+			afterSeq,
+			...(transcriptRev != null ? { transcriptRev } : {}),
+			...(tail != null ? { tail } : {}),
+		});
 	}
 
 	/** 重新订阅一个线程（拿权威快照恢复待答 UI 等状态）；未订阅则无操作。 */
@@ -552,16 +558,22 @@ export class RealtimeClient {
 		this.sendSub(threadId);
 	}
 
-	/** 订阅线程（引用计数）；连接恢复后自动以 afterSeq 补拉。 */
-	subscribe(threadId: string): () => void {
+	/**
+	 * 订阅线程（引用计数）；连接恢复后自动以 afterSeq 补拉。
+	 * `tail`（M19）：从头补发时只补最近 tail 条，更早的经 `loadEarlierEntries` 翻页；以首个带它的订阅为准。
+	 */
+	subscribe(threadId: string, opts?: { tail?: number }): () => void {
 		const n = this.subs.get(threadId) ?? 0;
 		this.subs.set(threadId, n + 1);
+		if (opts?.tail != null && !this.tails.has(threadId))
+			this.tails.set(threadId, opts.tail);
 		if (n === 0) this.sendSub(threadId);
 		return () => {
 			const left = (this.subs.get(threadId) ?? 1) - 1;
 			if (left > 0) this.subs.set(threadId, left);
 			else {
 				this.subs.delete(threadId);
+				this.tails.delete(threadId);
 				this.send({ type: "unsub", threadId });
 			}
 		};

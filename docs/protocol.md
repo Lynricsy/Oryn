@@ -2008,3 +2008,14 @@ omp 的 `composer.predictions`：回合正常结束后用当前模型跑一次�
 - 线程状态 `composerPrediction` 取自帧和快照，`agent_start` 与 `live.reset` 时清空。
 - 显示规则在 `lib/composer-prediction.ts`，与 omp TUI 编辑器一致：草稿必须是单行、光标在末尾，并且是某条候选的严格前缀（区分大小写），这时取第一条这样的候选，在草稿后面叠一层灰色的剩余部分。以下情况不显示：菜单打开、输入法正在组字、线程忙、正在发送、输入框禁用。
 - Tab 或 →（无修饰键）插入完整候选，不发送；触屏点灰色文字也会插入。有 2 条以上候选时，刚插入的草稿不会再被更长的候选延伸，改为按 Tab 轮换到下一条，页脚显示 `⇥ 序号/总数`。
+
+## M19：全局助手三层执行与主线对话
+
+### 尾部订阅与向前翻页
+
+主线对话没有尽头，订阅时不补发整条转录，只补最近一段，更早的按需翻页。
+
+- `sub.tail`（可选整数，越界夹到 50–2000）：只在服务端实际从 seq 0 补发时生效（`afterSeq` 为 0，或因 `transcriptRev` 不一致改为全量重放）。这时补发窗口的起点是最后 `tail` 条里最小的 seq 减一，不足 `tail` 条时不开窗。带着有效 `afterSeq` 续传时忽略它。
+- `thread.snapshot.windowStart`（可选）：开窗时给出窗口起点，服务端只补发 `seq > windowStart` 的条目；省略或 0 表示没有开窗。
+- `GET /threads/{id}/entries?before=<seq>&limit=`：返回 `seq < before` 的最近至多 `limit` 条（1–500，默认 200），按 seq 升序；`hasMore` 表示还有更早的。`before` 与 `after` 同时给出时回 400。
+- Web：`realtime.subscribe(threadId, {tail})`；线程状态 `windowStart` 来自快照，`loadEarlierEntries` 以 `before = windowStart + 1` 每次取 500 条，并入后把 `windowStart` 前移到页内最小 seq 减一，翻到头时置 0。续传游标 `lastSeq` 不受翻页影响。只有主线页面带 `tail: 600`。

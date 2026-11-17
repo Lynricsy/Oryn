@@ -4,7 +4,15 @@
  */
 import { useStore } from "zustand";
 import { createStore, type StoreApi } from "zustand/vanilla";
-import type { Orb, Thread, WsEntries, WsThreadSnapshot } from "../api/client";
+import {
+	api,
+	type Entry,
+	type Orb,
+	type Thread,
+	unwrap,
+	type WsEntries,
+	type WsThreadSnapshot,
+} from "../api/client";
 import type { SessionState } from "../omp/types";
 import {
 	applyEntries,
@@ -16,6 +24,7 @@ import {
 	applyUiResolved,
 	initialThreadState,
 	type OmpFrame,
+	prependEntries,
 	type ThreadViewState,
 } from "./thread-reducer";
 
@@ -125,6 +134,7 @@ export type ThreadMessage =
 			type: "entries";
 			msg: Pick<WsEntries, "entries" | "leafEntryId">;
 	  }
+	| { type: "entries.earlier"; page: { entries: Entry[]; hasMore: boolean } }
 	| { type: "frame"; frame: OmpFrame }
 	| { type: "ui.resolved"; requestId: string }
 	| { type: "live.reset" }
@@ -149,6 +159,8 @@ export function reduceThread(
 			return applySnapshot(s, m.snapshot);
 		case "entries":
 			return applyEntries(s, m.msg);
+		case "entries.earlier":
+			return prependEntries(s, m.page);
 		case "frame":
 			return applyFrame(s, m.frame);
 		case "ui.resolved":
@@ -221,6 +233,29 @@ export function agentQueryable(s: ThreadViewState): boolean {
 		s.agentStatus === "ready" &&
 		(s.orb === undefined || s.orb.state === "ready")
 	);
+}
+
+/** 向前翻页每页条数（M19）。 */
+export const EARLIER_PAGE_SIZE = 500;
+
+/** 加载 `windowStart` 之前的一页条目并入线程 store（M19 向前翻页）；没有开窗时不发请求。 */
+export async function loadEarlierEntries(threadId: string): Promise<void> {
+	const store = getThreadStore(threadId);
+	const { windowStart, transcriptRev } = store.getState();
+	if (windowStart <= 0) return;
+	const page = await unwrap(
+		api.GET("/api/v1/threads/{id}/entries", {
+			params: {
+				path: { id: threadId },
+				query: { before: windowStart + 1, limit: EARLIER_PAGE_SIZE },
+			},
+		}),
+	);
+	// 请求在途期间转录被重置或窗口已前移：丢弃过期的页
+	const now = store.getState();
+	if (now.windowStart !== windowStart || now.transcriptRev !== transcriptRev)
+		return;
+	store.getState().apply([{ type: "entries.earlier", page }]);
 }
 
 /** 仅测试用：清空所有线程 store。 */

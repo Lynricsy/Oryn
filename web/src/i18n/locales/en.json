@@ -376,6 +376,7 @@
 		"forkHere": "Fork from here",
 		"ircFrom": "From {{from}}",
 		"jumpToEnd": "Jump to latest",
+		"loadEarlier": "Load earlier messages",
 		"quoteReply": "Quote reply",
 		"quoteDismiss": "Dismiss quote reply",
 		"label": "Label",

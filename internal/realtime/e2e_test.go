@@ -101,6 +101,7 @@ type msg struct {
 	// thread.snapshot / transcript.reset
 	TranscriptRev int64 `json:"transcriptRev"`
 	FullReplay    bool  `json:"fullReplay"`
+	WindowStart   int64 `json:"windowStart"`
 	Upsert        []struct {
 		ID    string `json:"id"`
 		State string `json:"state"`

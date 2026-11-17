@@ -259,15 +259,15 @@ func (s *Server) DeleteThread(w http.ResponseWriter, r *http.Request, id apigen.
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ListThreadEntries 对应 `GET threads/{id}/entries?after=&limit=`。
+// ListThreadEntries 对应 `GET threads/{id}/entries?after=&before=&limit=`；after 与 before 互斥。
 func (s *Server) ListThreadEntries(w http.ResponseWriter, r *http.Request, id apigen.ThreadIDPath, params apigen.ListThreadEntriesParams) {
 	svc, ok := s.threadsSvc(w)
 	if !ok {
 		return
 	}
-	var after int64
-	if params.After != nil {
-		after = *params.After
+	if params.After != nil && params.Before != nil {
+		WriteError(w, http.StatusBadRequest, "invalid_request", "after and before are mutually exclusive")
+		return
 	}
 	limit := 0
 	if params.Limit != nil {
@@ -277,7 +277,17 @@ func (s *Server) ListThreadEntries(w http.ResponseWriter, r *http.Request, id ap
 		}
 		limit = *params.Limit
 	}
-	page, err := svc.Entries(r.Context(), id, after, limit)
+	var page threads.EntryPage
+	var err error
+	if params.Before != nil {
+		page, err = svc.EntriesBefore(r.Context(), id, *params.Before, limit)
+	} else {
+		var after int64
+		if params.After != nil {
+			after = *params.After
+		}
+		page, err = svc.Entries(r.Context(), id, after, limit)
+	}
 	if err != nil {
 		writeThreadErr(w, err)
 		return
