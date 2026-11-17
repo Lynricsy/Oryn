@@ -199,7 +199,7 @@ func (q *Queries) GetMemorySettings(ctx context.Context) (MemorySetting, error) 
 }
 
 const getMemoryStaleModel = `-- name: GetMemoryStaleModel :one
-SELECT model_id, project_id, refresh_op, attempts, next_attempt_at, last_error, created_at, token FROM memory_stale_models WHERE model_id = ?1
+SELECT model_id, project_id, refresh_op, attempts, next_attempt_at, last_error, created_at, token, bank FROM memory_stale_models WHERE model_id = ?1
 `
 
 func (q *Queries) GetMemoryStaleModel(ctx context.Context, modelID string) (MemoryStaleModel, error) {
@@ -214,12 +214,13 @@ func (q *Queries) GetMemoryStaleModel(ctx context.Context, modelID string) (Memo
 		&i.LastError,
 		&i.CreatedAt,
 		&i.Token,
+		&i.Bank,
 	)
 	return i, err
 }
 
 const getRefreshableMemoryStaleModel = `-- name: GetRefreshableMemoryStaleModel :one
-SELECT m.model_id, m.project_id, m.refresh_op, m.attempts, m.next_attempt_at, m.last_error, m.created_at, m.token FROM memory_stale_models m
+SELECT m.model_id, m.project_id, m.refresh_op, m.attempts, m.next_attempt_at, m.last_error, m.created_at, m.token, m.bank FROM memory_stale_models m
 WHERE m.model_id = ?1 AND NOT EXISTS (SELECT 1 FROM memory_stale_holds h WHERE h.model_id = m.model_id)
 `
 
@@ -236,6 +237,7 @@ func (q *Queries) GetRefreshableMemoryStaleModel(ctx context.Context, modelID st
 		&i.LastError,
 		&i.CreatedAt,
 		&i.Token,
+		&i.Bank,
 	)
 	return i, err
 }
@@ -340,7 +342,7 @@ func (q *Queries) ListAllMemoryDocumentIDsByProject(ctx context.Context, project
 }
 
 const listDueMemoryStaleModels = `-- name: ListDueMemoryStaleModels :many
-SELECT m.model_id, m.project_id, m.refresh_op, m.attempts, m.next_attempt_at, m.last_error, m.created_at, m.token FROM memory_stale_models m
+SELECT m.model_id, m.project_id, m.refresh_op, m.attempts, m.next_attempt_at, m.last_error, m.created_at, m.token, m.bank FROM memory_stale_models m
 WHERE m.next_attempt_at <= ?1 AND NOT EXISTS (SELECT 1 FROM memory_stale_holds h WHERE h.model_id = m.model_id)
 ORDER BY m.next_attempt_at, m.model_id
 `
@@ -363,6 +365,7 @@ func (q *Queries) ListDueMemoryStaleModels(ctx context.Context, now int64) ([]Me
 			&i.LastError,
 			&i.CreatedAt,
 			&i.Token,
+			&i.Bank,
 		); err != nil {
 			return nil, err
 		}
@@ -378,7 +381,7 @@ func (q *Queries) ListDueMemoryStaleModels(ctx context.Context, now int64) ([]Me
 }
 
 const listDueMemoryTombstones = `-- name: ListDueMemoryTombstones :many
-SELECT document_id, project_id, attempts, next_attempt_at, last_error, created_at FROM memory_tombstones WHERE next_attempt_at <= ?1 ORDER BY next_attempt_at LIMIT ?2
+SELECT document_id, project_id, attempts, next_attempt_at, last_error, created_at, bank FROM memory_tombstones WHERE next_attempt_at <= ?1 ORDER BY next_attempt_at LIMIT ?2
 `
 
 type ListDueMemoryTombstonesParams struct {
@@ -402,6 +405,7 @@ func (q *Queries) ListDueMemoryTombstones(ctx context.Context, arg ListDueMemory
 			&i.NextAttemptAt,
 			&i.LastError,
 			&i.CreatedAt,
+			&i.Bank,
 		); err != nil {
 			return nil, err
 		}
@@ -660,7 +664,7 @@ func (q *Queries) ListMemoryProjects(ctx context.Context) ([]MemoryProject, erro
 }
 
 const listMemoryStaleModels = `-- name: ListMemoryStaleModels :many
-SELECT model_id, project_id, refresh_op, attempts, next_attempt_at, last_error, created_at, token FROM memory_stale_models ORDER BY created_at, model_id
+SELECT model_id, project_id, refresh_op, attempts, next_attempt_at, last_error, created_at, token, bank FROM memory_stale_models ORDER BY created_at, model_id
 `
 
 func (q *Queries) ListMemoryStaleModels(ctx context.Context) ([]MemoryStaleModel, error) {
@@ -681,6 +685,7 @@ func (q *Queries) ListMemoryStaleModels(ctx context.Context) ([]MemoryStaleModel
 			&i.LastError,
 			&i.CreatedAt,
 			&i.Token,
+			&i.Bank,
 		); err != nil {
 			return nil, err
 		}
@@ -696,7 +701,7 @@ func (q *Queries) ListMemoryStaleModels(ctx context.Context) ([]MemoryStaleModel
 }
 
 const listMemoryTombstones = `-- name: ListMemoryTombstones :many
-SELECT document_id, project_id, attempts, next_attempt_at, last_error, created_at FROM memory_tombstones ORDER BY created_at
+SELECT document_id, project_id, attempts, next_attempt_at, last_error, created_at, bank FROM memory_tombstones ORDER BY created_at
 `
 
 func (q *Queries) ListMemoryTombstones(ctx context.Context) ([]MemoryTombstone, error) {
@@ -715,6 +720,7 @@ func (q *Queries) ListMemoryTombstones(ctx context.Context) ([]MemoryTombstone, 
 			&i.NextAttemptAt,
 			&i.LastError,
 			&i.CreatedAt,
+			&i.Bank,
 		); err != nil {
 			return nil, err
 		}

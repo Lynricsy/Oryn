@@ -527,6 +527,7 @@ type MemoryStaleModel struct {
 	LastError     *string `json:"lastError"`
 	CreatedAt     int64   `json:"createdAt"`
 	Token         string  `json:"token"`
+	Bank          string  `json:"bank"`
 }
 
 type MemoryTombstone struct {
@@ -536,6 +537,7 @@ type MemoryTombstone struct {
 	NextAttemptAt int64   `json:"nextAttemptAt"`
 	LastError     *string `json:"lastError"`
 	CreatedAt     int64   `json:"createdAt"`
+	Bank          string  `json:"bank"`
 }
 
 type MemoryUsage struct {
@@ -702,6 +704,81 @@ type Owner struct {
 	NewThreadTarget          string  `json:"newThreadTarget"`
 	AutoPublishArtifacts     int64   `json:"autoPublishArtifacts"`
 	GithubAutomationIdentity string  `json:"githubAutomationIdentity"`
+}
+
+type OwnerMemoryChunk struct {
+	ThreadID   string `json:"threadId"`
+	Idx        int64  `json:"idx"`
+	DocumentID string `json:"documentId"`
+	Hash       string `json:"hash"`
+	SeqFrom    int64  `json:"seqFrom"`
+	SeqTo      int64  `json:"seqTo"`
+	RetainedAt int64  `json:"retainedAt"`
+}
+
+type OwnerMemoryExclusion struct {
+	Kind      string `json:"kind"`
+	TargetID  string `json:"targetId"`
+	CreatedAt int64  `json:"createdAt"`
+}
+
+type OwnerMemoryExplicit struct {
+	ID             string  `json:"id"`
+	Content        string  `json:"content"`
+	OwnerQuote     *string `json:"ownerQuote"`
+	SourceThreadID *string `json:"sourceThreadId"`
+	Status         string  `json:"status"`
+	CreatedAt      int64   `json:"createdAt"`
+	UpdatedAt      int64   `json:"updatedAt"`
+}
+
+type OwnerMemorySetting struct {
+	ID            int64   `json:"id"`
+	Enabled       int64   `json:"enabled"`
+	OwnerNames    string  `json:"ownerNames"`
+	DecideBaseUrl *string `json:"decideBaseUrl"`
+	DecideModel   *string `json:"decideModel"`
+	DecideKeyEnc  []byte  `json:"decideKeyEnc"`
+	BackfillSince *int64  `json:"backfillSince"`
+	BackfillTotal int64   `json:"backfillTotal"`
+	BackfillDone  int64   `json:"backfillDone"`
+	ConfigHash    *string `json:"configHash"`
+	LastCuratedAt *int64  `json:"lastCuratedAt"`
+	LastCuration  *string `json:"lastCuration"`
+	UpdatedAt     int64   `json:"updatedAt"`
+}
+
+type OwnerMemorySnapshot struct {
+	ThreadID    string `json:"threadId"`
+	Content     string `json:"content"`
+	GeneratedAt int64  `json:"generatedAt"`
+}
+
+type OwnerMemorySource struct {
+	ThreadID      string  `json:"threadId"`
+	Kind          string  `json:"kind"`
+	LastMessageAt *int64  `json:"lastMessageAt"`
+	TranscriptRev int64   `json:"transcriptRev"`
+	Chunks        int64   `json:"chunks"`
+	RetainedAt    *int64  `json:"retainedAt"`
+	NextAttemptAt *int64  `json:"nextAttemptAt"`
+	Attempts      int64   `json:"attempts"`
+	LastError     *string `json:"lastError"`
+	CreatedAt     int64   `json:"createdAt"`
+	UpdatedAt     int64   `json:"updatedAt"`
+}
+
+type OwnerMemoryTopic struct {
+	ModelID       string `json:"modelId"`
+	Name          string `json:"name"`
+	Scope         string `json:"scope"`
+	Seed          int64  `json:"seed"`
+	Status        string `json:"status"`
+	Position      int64  `json:"position"`
+	LastRefreshAt *int64 `json:"lastRefreshAt"`
+	LastHitAt     *int64 `json:"lastHitAt"`
+	CreatedAt     int64  `json:"createdAt"`
+	UpdatedAt     int64  `json:"updatedAt"`
 }
 
 type Passkey struct {

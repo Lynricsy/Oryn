@@ -27,14 +27,17 @@ import (
 // M15：github_oauth_app、github_hooks、github_repo_watches、github_watches、github_self_writes、github_self_keys、github_audit、
 // github_prepare、github_autoclose、github_releases、github_sender_runs；
 // M16：memory_settings、memory_models、memory_endpoints、memory_projects、memory_candidates、memory_documents、memory_usage、memory_tombstones、
-// memory_stale_models、memory_stale_holds）。
+// memory_stale_models、memory_stale_holds；
+// M17：owner_memory_settings、owner_memory_sources、owner_memory_chunks、owner_memory_exclusions、owner_memory_topics、
+// owner_memory_explicit、owner_memory_snapshots）。
 var m2Tables = []string{
 	"agent_avatars", "artifact_comment_threads", "artifact_comments", "artifact_consents", "artifact_data", "artifact_data_totals", "artifact_files", "artifact_publications", "artifact_versions", "artifacts", "assistant_files", "attachments", "blobs", "browser_profile_events", "browser_profiles", "budget", "budget_alerts", "coord_actions", "device_pairings",
 	"devices", "entries", "entry_cursors", "github_audit", "github_autoclose", "github_deliveries", "github_hooks", "github_identities",
 	"github_oauth_app", "github_oauth_states", "github_outbox", "github_prepare", "github_pulls", "github_releases", "github_repo_watches", "github_self_keys",
 	"github_self_writes", "github_sender_runs", "github_triggers", "github_watches", "jobs", "memory_candidates", "memory_documents", "memory_endpoints",
 	"memory_models", "memory_projects", "memory_settings", "memory_stale_holds", "memory_stale_models", "memory_tombstones", "memory_usage", "notification_channels", "notification_deliveries", "notifications", "orb_desktops",
-	"orb_events", "orb_samples", "orb_services", "orb_setup_runs", "orbs", "owner", "passkeys", "portal_sessions", "portal_shares",
+	"orb_events", "orb_samples", "orb_services", "orb_setup_runs", "orbs", "owner", "owner_memory_chunks", "owner_memory_exclusions", "owner_memory_explicit",
+	"owner_memory_settings", "owner_memory_snapshots", "owner_memory_sources", "owner_memory_topics", "passkeys", "portal_sessions", "portal_shares",
 	"project_snapshots", "projects", "providers", "published_files", "push_subscriptions", "recovery_codes", "role_avatars", "runners", "schedule_runs", "schedules",
 	"search_docs", "search_fts", "search_fts_config", "search_fts_content", "search_fts_data", "search_fts_docsize", "search_fts_idx", "search_state",
 	"secrets", "spaces", "stats_state", "thread_commits", "thread_issues", "thread_labels", "thread_pulls", "thread_reports", "thread_share_entries",

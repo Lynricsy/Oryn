@@ -3608,6 +3608,306 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/owner-memory/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 助手记忆的开关、主人的名字与别名、判断模型接口 */
+        get: operations["getOwnerMemorySettings"];
+        /**
+         * 修改助手记忆开关与主人的名字和别名
+         * @description 首次开启时定下回填起点（30 天前）。名字或别名变化时，下一次写入前重写 bank 配置。
+         *     关闭后写入、主题整理、注入与检索全部停止，已有数据保留。
+         */
+        put: operations["putOwnerMemorySettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/owner-memory/decide-endpoint": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 配置判断模型接口（Google Decisions API，用于召回重排）
+         * @description 远端地址必须用 `https://`，否则 400 `insecure_url`。key 加密保存，之后只返回 `hasKey`。
+         */
+        put: operations["putOwnerMemoryDecideEndpoint"];
+        post?: never;
+        /** 删除判断模型接口（召回改按 RRF 顺序给出并标注未经重排） */
+        delete: operations["deleteOwnerMemoryDecideEndpoint"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/owner-memory/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 助手记忆的运行状态：bank 统计、回填进度、写入失败数、最近主题整理与用量 */
+        get: operations["getOwnerMemoryStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/owner-memory/topics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 主题（注入「关于主人」的那部分）与最近一次主题整理的结果 */
+        get: operations["listOwnerMemoryTopics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/owner-memory/topics/{topicId}/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topicId: components["parameters"]["OwnerMemoryTopicIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 立即刷新一个主题（不受刷新间隔限制） */
+        post: operations["refreshOwnerMemoryTopic"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/owner-memory/curate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 立即运行一次主题整理（新增、归档主题） */
+        post: operations["curateOwnerMemoryTopics"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/owner-memory/brief": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 注入预览：助手对话启动时追加到系统提示词的记忆段 */
+        get: operations["getOwnerMemoryBrief"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/owner-memory/facts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 浏览或召回主人记忆里的事实（带出处） */
+        get: operations["listOwnerMemoryFacts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/owner-memory/facts/{factId}/state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                factId: components["parameters"]["OwnerMemoryFactIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 让一条 world 事实失效或恢复（observation 不能直接失效，只能失效它的来源事实）
+         * @description 失效后，全部活跃主题在刷新完成前不进入注入（遗忘保护）。
+         */
+        put: operations["setOwnerMemoryFactState"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/owner-memory/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 已写入（或写入失败）的来源对话与线程（按最近更新倒序） */
+        get: operations["listOwnerMemorySources"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/owner-memory/sources/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 按来源遗忘：删除该对话或线程写入的全部 document（之后有新内容仍会再写入，除非设了排除） */
+        delete: operations["forgetOwnerMemorySource"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/owner-memory/exclusions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 不进助手记忆的对话与项目 */
+        get: operations["listOwnerMemoryExclusions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/owner-memory/exclusions/{kind}/{targetId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: components["schemas"]["OwnerMemoryExclusionKind"];
+                targetId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** 设为不进助手记忆（已写入的随之遗忘） */
+        put: operations["putOwnerMemoryExclusion"];
+        post?: never;
+        /** 取消排除（之后有新内容时重新写入） */
+        delete: operations["deleteOwnerMemoryExclusion"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/owner-memory/explicit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 明确记忆（待确认的在前） */
+        get: operations["listOwnerMemoryExplicit"];
+        put?: never;
+        /** 新建一条明确记忆（直接生效） */
+        post: operations["createOwnerMemoryExplicit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/owner-memory/explicit/{explicitId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                explicitId: components["parameters"]["OwnerMemoryExplicitIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 删除（已生效的连同 document 一起删除；待确认的即拒绝） */
+        delete: operations["deleteOwnerMemoryExplicit"];
+        options?: never;
+        head?: never;
+        /** 修改内容（已生效的随之重写 document） */
+        patch: operations["updateOwnerMemoryExplicit"];
+        trace?: never;
+    };
+    "/api/v1/owner-memory/explicit/{explicitId}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                explicitId: components["parameters"]["OwnerMemoryExplicitIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 批准待确认的明确记忆（可先改写内容），写入 bank */
+        post: operations["approveOwnerMemoryExplicit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/coordinator": {
         parameters: {
             query?: never;
@@ -5925,6 +6225,184 @@ export interface components {
             error?: string;
             /** Format: int64 */
             createdAt: number;
+        };
+        OwnerMemoryDecideEndpoint: {
+            /** @description Decisions API 根地址（不含 `/v1beta`） */
+            baseUrl: string;
+            /** @description 如 `gemini-decision-1` */
+            model: string;
+            hasKey: boolean;
+        };
+        OwnerMemoryDecideUpdate: {
+            baseUrl: string;
+            model: string;
+            /** @description 省略 = 保留原值 */
+            apiKey?: string;
+        };
+        OwnerMemorySettings: {
+            /** @description 助手记忆开关 */
+            enabled: boolean;
+            /** @description M16 记忆已启用且已配置；为假时助手记忆不运行 */
+            available: boolean;
+            /** @description 主人的名字与别名，写入时这些名字一律归为「主人」 */
+            ownerNames: string[];
+            decide?: components["schemas"]["OwnerMemoryDecideEndpoint"];
+        };
+        OwnerMemorySettingsUpdate: {
+            enabled: boolean;
+            ownerNames: string[];
+        };
+        OwnerMemoryStatus: {
+            /**
+             * @description `unavailable`（M16 记忆未启用或未配置）、`disabled`（助手记忆关闭）、`ok`、`error`（连不上 Hindsight 等，见 error）。
+             * @enum {string}
+             */
+            state: "unavailable" | "disabled" | "ok" | "error";
+            /**
+             * Format: int64
+             * @description bank `oryn-owner` 的记忆数
+             */
+            memoryCount?: number;
+            /** Format: int64 */
+            documentCount?: number;
+            /**
+             * Format: int64
+             * @description 回填起点（Unix 毫秒）
+             */
+            backfillSince?: number;
+            backfillTotal: number;
+            backfillDone: number;
+            /** @description 写入失败、等待重试的来源数 */
+            failingSources: number;
+            /** @description 待确认的明确记忆数 */
+            pendingExplicit: number;
+            /** Format: int64 */
+            lastCuratedAt?: number;
+            usageDay?: components["schemas"]["MemoryUsageCounts"];
+            usageWeek?: components["schemas"]["MemoryUsageCounts"];
+            error?: string;
+        };
+        OwnerMemoryTopic: {
+            id: string;
+            name: string;
+            /** @description 范围说明 */
+            scope: string;
+            /** @description 固定种子（owner-profile），不会被归档 */
+            seed: boolean;
+            /** @enum {string} */
+            status: "active" | "archived";
+            /** @description 当前内容（注入的就是它） */
+            content?: string;
+            /** @description 遗忘后等待刷新，期间不进入注入 */
+            stale: boolean;
+            /** Format: int64 */
+            lastRefreshedAt?: number;
+        };
+        OwnerMemoryCuration: {
+            /** Format: int64 */
+            at: number;
+            /** @description 新建的主题名 */
+            created: string[];
+            archived: string[];
+            kept: string[];
+            error?: string;
+        };
+        OwnerMemoryTopicList: {
+            items: components["schemas"]["OwnerMemoryTopic"][];
+            lastCuration?: components["schemas"]["OwnerMemoryCuration"];
+        };
+        OwnerMemoryBrief: {
+            /** @description 追加到系统提示词的记忆段；助手记忆关闭时为空串 */
+            content: string;
+            /** Format: int64 */
+            generatedAt: number;
+            /** @description 来自该对话的快照 */
+            cached: boolean;
+        };
+        OwnerMemoryProvenance: {
+            /**
+             * @description `owner`（来源只含主人消息）、`mixed`（含助手或 agent 消息，角色未确认）、`explicit`（明确记忆）、`unknown`（无法回溯）
+             * @enum {string}
+             */
+            kind: "owner" | "mixed" | "explicit" | "unknown";
+            threadId?: components["schemas"]["ThreadId"];
+            threadTitle?: string;
+            threadKind?: string;
+            /** Format: int64 */
+            seqFrom?: number;
+            /** Format: int64 */
+            seqTo?: number;
+            documentId?: string;
+        };
+        OwnerMemoryFact: {
+            id: string;
+            /** @description `world` 或 `observation` */
+            type: string;
+            text: string;
+            /** @enum {string} */
+            state: "valid" | "invalidated";
+            mentionedAt?: string;
+            provenance: components["schemas"]["OwnerMemoryProvenance"];
+        };
+        OwnerMemoryFactList: {
+            items: components["schemas"]["OwnerMemoryFact"][];
+            hasMore: boolean;
+        };
+        OwnerMemoryFactStateUpdate: {
+            /** @enum {string} */
+            state: "valid" | "invalidated";
+            reason?: string;
+        };
+        OwnerMemorySource: {
+            threadId: components["schemas"]["ThreadId"];
+            threadTitle?: string;
+            threadKind?: string;
+            projectId?: components["schemas"]["ProjectId"];
+            /** @enum {string} */
+            kind: "conv" | "thread";
+            chunks: number;
+            /** Format: int64 */
+            retainedAt?: number;
+            attempts: number;
+            /** Format: int64 */
+            nextAttemptAt?: number;
+            lastError?: string;
+            /** @description 线程已删除，document 待清理 */
+            missing: boolean;
+        };
+        OwnerMemorySourceList: {
+            items: components["schemas"]["OwnerMemorySource"][];
+            hasMore: boolean;
+        };
+        /** @enum {string} */
+        OwnerMemoryExclusionKind: "thread" | "project";
+        OwnerMemoryExclusion: {
+            kind: components["schemas"]["OwnerMemoryExclusionKind"];
+            targetId: string;
+            /** @description 对话标题或项目名 */
+            name?: string;
+            /** Format: int64 */
+            createdAt: number;
+        };
+        OwnerMemoryExclusionList: {
+            items: components["schemas"]["OwnerMemoryExclusion"][];
+        };
+        OwnerMemoryExplicit: {
+            id: string;
+            content: string;
+            /** @description 助手调用 remember 时给出的主人原话 */
+            ownerQuote?: string;
+            sourceThreadId?: components["schemas"]["ThreadId"];
+            sourceThreadTitle?: string;
+            /** @enum {string} */
+            status: "pending" | "active";
+            /** Format: int64 */
+            createdAt: number;
+            /** Format: int64 */
+            updatedAt: number;
+        };
+        OwnerMemoryExplicitList: {
+            items: components["schemas"]["OwnerMemoryExplicit"][];
         };
         /**
          * @description M16：本次 agent 启用 Hindsight 记忆（字段缺省 = 不启用）。orbd 写 `--config` 覆盖文件（`memory.backend: hindsight`、
@@ -9352,6 +9830,9 @@ export interface components {
         MemoryDocumentIdPath: components["schemas"]["MemoryDocumentId"];
         MemoryCandidateIdPath: string;
         MemoryExportIdPath: string;
+        OwnerMemoryTopicIdPath: string;
+        OwnerMemoryFactIdPath: string;
+        OwnerMemoryExplicitIdPath: string;
         OrbIdPath: components["schemas"]["OrbId"];
         AttachmentIdPath: components["schemas"]["AttachmentId"];
         AssistantFileIdPath: components["schemas"]["AssistantFileId"];
@@ -15134,6 +15615,493 @@ export interface operations {
                 };
                 content: {
                     "application/octet-stream": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getOwnerMemorySettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 设置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerMemorySettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putOwnerMemorySettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OwnerMemorySettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description 修改后的设置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerMemorySettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putOwnerMemoryDecideEndpoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OwnerMemoryDecideUpdate"];
+            };
+        };
+        responses: {
+            /** @description 修改后的设置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerMemorySettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteOwnerMemoryDecideEndpoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 修改后的设置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerMemorySettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getOwnerMemoryStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerMemoryStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listOwnerMemoryTopics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 主题 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerMemoryTopicList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    refreshOwnerMemoryTopic: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topicId: components["parameters"]["OwnerMemoryTopicIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已提交刷新 */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    curateOwnerMemoryTopics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 整理结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerMemoryCuration"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getOwnerMemoryBrief: {
+        parameters: {
+            query?: {
+                /** @description 给出时返回该对话的快照（没有或过期时现生成，不写入）；省略 = 现生成 */
+                threadId?: components["schemas"]["ThreadId"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 记忆段 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerMemoryBrief"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listOwnerMemoryFacts: {
+        parameters: {
+            query?: {
+                /** @description 给出时按召回排序（不分页），否则按时间倒序列出 */
+                q?: string;
+                type?: "world" | "observation";
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 一页 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerMemoryFactList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    setOwnerMemoryFactState: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                factId: components["parameters"]["OwnerMemoryFactIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OwnerMemoryFactStateUpdate"];
+            };
+        };
+        responses: {
+            /** @description 已修改 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listOwnerMemorySources: {
+        parameters: {
+            query?: {
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 一页 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerMemorySourceList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    forgetOwnerMemorySource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 删除结果（失败的进入重试队列，计入 pending） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryForgetResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listOwnerMemoryExclusions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 排除项 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerMemoryExclusionList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putOwnerMemoryExclusion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: components["schemas"]["OwnerMemoryExclusionKind"];
+                targetId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 遗忘结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryForgetResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteOwnerMemoryExclusion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: components["schemas"]["OwnerMemoryExclusionKind"];
+                targetId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已取消 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listOwnerMemoryExplicit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 明确记忆 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerMemoryExplicitList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createOwnerMemoryExplicit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryContent"];
+            };
+        };
+        responses: {
+            /** @description 新建的记忆 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerMemoryExplicit"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteOwnerMemoryExplicit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                explicitId: components["parameters"]["OwnerMemoryExplicitIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateOwnerMemoryExplicit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                explicitId: components["parameters"]["OwnerMemoryExplicitIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryContent"];
+            };
+        };
+        responses: {
+            /** @description 修改后的记忆 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerMemoryExplicit"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    approveOwnerMemoryExplicit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                explicitId: components["parameters"]["OwnerMemoryExplicitIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["MemoryCandidateApprove"];
+            };
+        };
+        responses: {
+            /** @description 生效后的记忆 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerMemoryExplicit"];
                 };
             };
             default: components["responses"]["Error"];

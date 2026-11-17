@@ -86,6 +86,8 @@ tags:
     description: Artifacts（M14：agent 产出的版本化交付物——页面、画布、文档、幻灯片）
   - name: memory
     description: 内置 Hindsight 记忆（M16：同项目共享、全局候选、模型中转）
+  - name: owner-memory
+    description: 全局助手的主人记忆（M17：Hindsight bank `oryn-owner`，只由控制面访问）
 
 paths:
   /healthz:
@@ -4380,6 +4382,353 @@ paths:
             application/octet-stream:
               schema: { type: string, format: binary }
         default: { $ref: '#/components/responses/Error' }
+  # ---------------------------------------------------------------- owner memory (M17)
+  /api/v1/owner-memory/settings:
+    get:
+      tags: [owner-memory]
+      operationId: getOwnerMemorySettings
+      summary: 助手记忆的开关、主人的名字与别名、判断模型接口
+      responses:
+        '200':
+          description: 设置
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OwnerMemorySettings' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [owner-memory]
+      operationId: putOwnerMemorySettings
+      summary: 修改助手记忆开关与主人的名字和别名
+      description: |
+        首次开启时定下回填起点（30 天前）。名字或别名变化时，下一次写入前重写 bank 配置。
+        关闭后写入、主题整理、注入与检索全部停止，已有数据保留。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OwnerMemorySettingsUpdate' }
+      responses:
+        '200':
+          description: 修改后的设置
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OwnerMemorySettings' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/owner-memory/decide-endpoint:
+    put:
+      tags: [owner-memory]
+      operationId: putOwnerMemoryDecideEndpoint
+      summary: 配置判断模型接口（Google Decisions API，用于召回重排）
+      description: 远端地址必须用 `https://`，否则 400 `insecure_url`。key 加密保存，之后只返回 `hasKey`。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OwnerMemoryDecideUpdate' }
+      responses:
+        '200':
+          description: 修改后的设置
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OwnerMemorySettings' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [owner-memory]
+      operationId: deleteOwnerMemoryDecideEndpoint
+      summary: 删除判断模型接口（召回改按 RRF 顺序给出并标注未经重排）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '200':
+          description: 修改后的设置
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OwnerMemorySettings' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/owner-memory/status:
+    get:
+      tags: [owner-memory]
+      operationId: getOwnerMemoryStatus
+      summary: 助手记忆的运行状态：bank 统计、回填进度、写入失败数、最近主题整理与用量
+      responses:
+        '200':
+          description: 状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OwnerMemoryStatus' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/owner-memory/topics:
+    get:
+      tags: [owner-memory]
+      operationId: listOwnerMemoryTopics
+      summary: 主题（注入「关于主人」的那部分）与最近一次主题整理的结果
+      responses:
+        '200':
+          description: 主题
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OwnerMemoryTopicList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/owner-memory/topics/{topicId}/refresh:
+    parameters:
+      - { $ref: '#/components/parameters/OwnerMemoryTopicIdPath' }
+    post:
+      tags: [owner-memory]
+      operationId: refreshOwnerMemoryTopic
+      summary: 立即刷新一个主题（不受刷新间隔限制）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '202': { description: 已提交刷新 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/owner-memory/curate:
+    post:
+      tags: [owner-memory]
+      operationId: curateOwnerMemoryTopics
+      summary: 立即运行一次主题整理（新增、归档主题）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '200':
+          description: 整理结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OwnerMemoryCuration' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/owner-memory/brief:
+    get:
+      tags: [owner-memory]
+      operationId: getOwnerMemoryBrief
+      summary: 注入预览：助手对话启动时追加到系统提示词的记忆段
+      parameters:
+        - { name: threadId, in: query, schema: { $ref: '#/components/schemas/ThreadId' }, description: 给出时返回该对话的快照（没有或过期时现生成，不写入）；省略 = 现生成 }
+      responses:
+        '200':
+          description: 记忆段
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OwnerMemoryBrief' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/owner-memory/facts:
+    get:
+      tags: [owner-memory]
+      operationId: listOwnerMemoryFacts
+      summary: 浏览或召回主人记忆里的事实（带出处）
+      parameters:
+        - { name: q, in: query, schema: { type: string, minLength: 1, maxLength: 800 }, description: 给出时按召回排序（不分页），否则按时间倒序列出 }
+        - { name: type, in: query, schema: { type: string, enum: [world, observation] } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 30 } }
+      responses:
+        '200':
+          description: 一页
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OwnerMemoryFactList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/owner-memory/facts/{factId}/state:
+    parameters:
+      - { $ref: '#/components/parameters/OwnerMemoryFactIdPath' }
+    put:
+      tags: [owner-memory]
+      operationId: setOwnerMemoryFactState
+      summary: 让一条 world 事实失效或恢复（observation 不能直接失效，只能失效它的来源事实）
+      description: 失效后，全部活跃主题在刷新完成前不进入注入（遗忘保护）。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OwnerMemoryFactStateUpdate' }
+      responses:
+        '204': { description: 已修改 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/owner-memory/sources:
+    get:
+      tags: [owner-memory]
+      operationId: listOwnerMemorySources
+      summary: 已写入（或写入失败）的来源对话与线程（按最近更新倒序）
+      parameters:
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 30 } }
+      responses:
+        '200':
+          description: 一页
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OwnerMemorySourceList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/owner-memory/sources/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/ThreadIdPath' }
+    delete:
+      tags: [owner-memory]
+      operationId: forgetOwnerMemorySource
+      summary: 按来源遗忘：删除该对话或线程写入的全部 document（之后有新内容仍会再写入，除非设了排除）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '200':
+          description: 删除结果（失败的进入重试队列，计入 pending）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemoryForgetResult' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/owner-memory/exclusions:
+    get:
+      tags: [owner-memory]
+      operationId: listOwnerMemoryExclusions
+      summary: 不进助手记忆的对话与项目
+      responses:
+        '200':
+          description: 排除项
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OwnerMemoryExclusionList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/owner-memory/exclusions/{kind}/{targetId}:
+    parameters:
+      - name: kind
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/OwnerMemoryExclusionKind' }
+      - name: targetId
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,64}$' }
+    put:
+      tags: [owner-memory]
+      operationId: putOwnerMemoryExclusion
+      summary: 设为不进助手记忆（已写入的随之遗忘）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '200':
+          description: 遗忘结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemoryForgetResult' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [owner-memory]
+      operationId: deleteOwnerMemoryExclusion
+      summary: 取消排除（之后有新内容时重新写入）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已取消 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/owner-memory/explicit:
+    get:
+      tags: [owner-memory]
+      operationId: listOwnerMemoryExplicit
+      summary: 明确记忆（待确认的在前）
+      responses:
+        '200':
+          description: 明确记忆
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OwnerMemoryExplicitList' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [owner-memory]
+      operationId: createOwnerMemoryExplicit
+      summary: 新建一条明确记忆（直接生效）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MemoryContent' }
+      responses:
+        '200':
+          description: 新建的记忆
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OwnerMemoryExplicit' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/owner-memory/explicit/{explicitId}:
+    parameters:
+      - { $ref: '#/components/parameters/OwnerMemoryExplicitIdPath' }
+    patch:
+      tags: [owner-memory]
+      operationId: updateOwnerMemoryExplicit
+      summary: 修改内容（已生效的随之重写 document）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MemoryContent' }
+      responses:
+        '200':
+          description: 修改后的记忆
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OwnerMemoryExplicit' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [owner-memory]
+      operationId: deleteOwnerMemoryExplicit
+      summary: 删除（已生效的连同 document 一起删除；待确认的即拒绝）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已删除 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/owner-memory/explicit/{explicitId}/approve:
+    parameters:
+      - { $ref: '#/components/parameters/OwnerMemoryExplicitIdPath' }
+    post:
+      tags: [owner-memory]
+      operationId: approveOwnerMemoryExplicit
+      summary: 批准待确认的明确记忆（可先改写内容），写入 bank
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MemoryCandidateApprove' }
+      responses:
+        '200':
+          description: 生效后的记忆
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OwnerMemoryExplicit' }
+        default: { $ref: '#/components/responses/Error' }
   /api/v1/coordinator:
     get:
       tags: [automation]
@@ -5495,6 +5844,21 @@ components:
       in: path
       required: true
       schema: { type: string, pattern: '^[A-Za-z0-9._-]{1,128}$' }
+    OwnerMemoryTopicIdPath:
+      name: topicId
+      in: path
+      required: true
+      schema: { type: string, pattern: '^owner-[a-z0-9-]{1,64}$' }
+    OwnerMemoryFactIdPath:
+      name: factId
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[A-Za-z0-9-]{1,64}$' }
+    OwnerMemoryExplicitIdPath:
+      name: explicitId
+      in: path
+      required: true
+      schema: { type: string, pattern: '^ome_[0-9A-Z]{26}$' }
     OrbIdPath:
       name: id
       in: path
@@ -7793,6 +8157,212 @@ components:
           x-enum-varnames: [MemoryExportRunning, MemoryExportDone, MemoryExportFailed]
         error: { type: string }
         createdAt: { type: integer, format: int64 }
+    # ============================================================ owner memory（M17）
+    OwnerMemoryDecideEndpoint:
+      type: object
+      required: [baseUrl, model, hasKey]
+      properties:
+        baseUrl: { type: string, description: Decisions API 根地址（不含 `/v1beta`） }
+        model: { type: string, description: 如 `gemini-decision-1` }
+        hasKey: { type: boolean }
+    OwnerMemoryDecideUpdate:
+      type: object
+      required: [baseUrl, model]
+      properties:
+        baseUrl: { type: string }
+        model: { type: string, minLength: 1, maxLength: 128 }
+        apiKey: { type: string, description: 省略 = 保留原值 }
+    OwnerMemorySettings:
+      type: object
+      required: [enabled, available, ownerNames]
+      properties:
+        enabled: { type: boolean, description: 助手记忆开关 }
+        available: { type: boolean, description: M16 记忆已启用且已配置；为假时助手记忆不运行 }
+        ownerNames:
+          type: array
+          description: 主人的名字与别名，写入时这些名字一律归为「主人」
+          items: { type: string, minLength: 1, maxLength: 64 }
+        decide: { $ref: '#/components/schemas/OwnerMemoryDecideEndpoint' }
+    OwnerMemorySettingsUpdate:
+      type: object
+      required: [enabled, ownerNames]
+      properties:
+        enabled: { type: boolean }
+        ownerNames:
+          type: array
+          maxItems: 16
+          items: { type: string, minLength: 1, maxLength: 64 }
+    OwnerMemoryStatus:
+      type: object
+      required: [state, backfillTotal, backfillDone, failingSources, pendingExplicit]
+      properties:
+        state:
+          type: string
+          description: |
+            `unavailable`（M16 记忆未启用或未配置）、`disabled`（助手记忆关闭）、`ok`、`error`（连不上 Hindsight 等，见 error）。
+          enum: [unavailable, disabled, ok, error]
+          x-enum-varnames: [OwnerMemoryStateUnavailable, OwnerMemoryStateDisabled, OwnerMemoryStateOk, OwnerMemoryStateError]
+        memoryCount: { type: integer, format: int64, description: bank `oryn-owner` 的记忆数 }
+        documentCount: { type: integer, format: int64 }
+        backfillSince: { type: integer, format: int64, description: 回填起点（Unix 毫秒） }
+        backfillTotal: { type: integer }
+        backfillDone: { type: integer }
+        failingSources: { type: integer, description: 写入失败、等待重试的来源数 }
+        pendingExplicit: { type: integer, description: 待确认的明确记忆数 }
+        lastCuratedAt: { type: integer, format: int64 }
+        usageDay: { $ref: '#/components/schemas/MemoryUsageCounts' }
+        usageWeek: { $ref: '#/components/schemas/MemoryUsageCounts' }
+        error: { type: string }
+    OwnerMemoryTopic:
+      type: object
+      required: [id, name, scope, seed, status, stale]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        scope: { type: string, description: 范围说明 }
+        seed: { type: boolean, description: 固定种子（owner-profile），不会被归档 }
+        status:
+          type: string
+          enum: [active, archived]
+          x-enum-varnames: [OwnerMemoryTopicActive, OwnerMemoryTopicArchived]
+        content: { type: string, description: 当前内容（注入的就是它） }
+        stale: { type: boolean, description: 遗忘后等待刷新，期间不进入注入 }
+        lastRefreshedAt: { type: integer, format: int64 }
+    OwnerMemoryCuration:
+      type: object
+      required: [at, created, archived, kept]
+      properties:
+        at: { type: integer, format: int64 }
+        created: { type: array, items: { type: string }, description: 新建的主题名 }
+        archived: { type: array, items: { type: string } }
+        kept: { type: array, items: { type: string } }
+        error: { type: string }
+    OwnerMemoryTopicList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OwnerMemoryTopic' }
+        lastCuration: { $ref: '#/components/schemas/OwnerMemoryCuration' }
+    OwnerMemoryBrief:
+      type: object
+      required: [content, generatedAt, cached]
+      properties:
+        content: { type: string, description: 追加到系统提示词的记忆段；助手记忆关闭时为空串 }
+        generatedAt: { type: integer, format: int64 }
+        cached: { type: boolean, description: 来自该对话的快照 }
+    OwnerMemoryProvenance:
+      type: object
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          description: '`owner`（来源只含主人消息）、`mixed`（含助手或 agent 消息，角色未确认）、`explicit`（明确记忆）、`unknown`（无法回溯）'
+          enum: [owner, mixed, explicit, unknown]
+          x-enum-varnames: [OwnerMemoryProvenanceOwner, OwnerMemoryProvenanceMixed, OwnerMemoryProvenanceExplicit, OwnerMemoryProvenanceUnknown]
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        threadTitle: { type: string }
+        threadKind: { type: string }
+        seqFrom: { type: integer, format: int64 }
+        seqTo: { type: integer, format: int64 }
+        documentId: { type: string }
+    OwnerMemoryFact:
+      type: object
+      required: [id, type, text, state, provenance]
+      properties:
+        id: { type: string }
+        type: { type: string, description: '`world` 或 `observation`' }
+        text: { type: string }
+        state:
+          type: string
+          enum: [valid, invalidated]
+          x-enum-varnames: [OwnerMemoryFactValid, OwnerMemoryFactInvalidated]
+        mentionedAt: { type: string }
+        provenance: { $ref: '#/components/schemas/OwnerMemoryProvenance' }
+    OwnerMemoryFactList:
+      type: object
+      required: [items, hasMore]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OwnerMemoryFact' }
+        hasMore: { type: boolean }
+    OwnerMemoryFactStateUpdate:
+      type: object
+      required: [state]
+      properties:
+        state:
+          type: string
+          enum: [valid, invalidated]
+        reason: { type: string, maxLength: 400 }
+    OwnerMemorySource:
+      type: object
+      required: [threadId, kind, chunks, attempts, missing]
+      properties:
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        threadTitle: { type: string }
+        threadKind: { type: string }
+        projectId: { $ref: '#/components/schemas/ProjectId' }
+        kind:
+          type: string
+          enum: [conv, thread]
+          x-enum-varnames: [OwnerMemorySourceConv, OwnerMemorySourceThread]
+        chunks: { type: integer }
+        retainedAt: { type: integer, format: int64 }
+        attempts: { type: integer }
+        nextAttemptAt: { type: integer, format: int64 }
+        lastError: { type: string }
+        missing: { type: boolean, description: 线程已删除，document 待清理 }
+    OwnerMemorySourceList:
+      type: object
+      required: [items, hasMore]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OwnerMemorySource' }
+        hasMore: { type: boolean }
+    OwnerMemoryExclusionKind:
+      type: string
+      enum: [thread, project]
+      x-enum-varnames: [OwnerMemoryExclusionThread, OwnerMemoryExclusionProject]
+    OwnerMemoryExclusion:
+      type: object
+      required: [kind, targetId, createdAt]
+      properties:
+        kind: { $ref: '#/components/schemas/OwnerMemoryExclusionKind' }
+        targetId: { type: string }
+        name: { type: string, description: 对话标题或项目名 }
+        createdAt: { type: integer, format: int64 }
+    OwnerMemoryExclusionList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OwnerMemoryExclusion' }
+    OwnerMemoryExplicit:
+      type: object
+      required: [id, content, status, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        content: { type: string }
+        ownerQuote: { type: string, description: 助手调用 remember 时给出的主人原话 }
+        sourceThreadId: { $ref: '#/components/schemas/ThreadId' }
+        sourceThreadTitle: { type: string }
+        status:
+          type: string
+          enum: [pending, active]
+          x-enum-varnames: [OwnerMemoryExplicitPending, OwnerMemoryExplicitActive]
+        createdAt: { type: integer, format: int64 }
+        updatedAt: { type: integer, format: int64 }
+    OwnerMemoryExplicitList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OwnerMemoryExplicit' }
     LinkCtlAgentMemory:
       type: object
       description: |

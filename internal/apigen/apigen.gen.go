@@ -2072,6 +2072,162 @@ func (e OutputGroupBy) Valid() bool {
 	}
 }
 
+// Defines values for OwnerMemoryExclusionKind.
+const (
+	OwnerMemoryExclusionProject OwnerMemoryExclusionKind = "project"
+	OwnerMemoryExclusionThread  OwnerMemoryExclusionKind = "thread"
+)
+
+// Valid indicates whether the value is a known member of the OwnerMemoryExclusionKind enum.
+func (e OwnerMemoryExclusionKind) Valid() bool {
+	switch e {
+	case OwnerMemoryExclusionProject:
+		return true
+	case OwnerMemoryExclusionThread:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OwnerMemoryExplicitStatus.
+const (
+	OwnerMemoryExplicitActive  OwnerMemoryExplicitStatus = "active"
+	OwnerMemoryExplicitPending OwnerMemoryExplicitStatus = "pending"
+)
+
+// Valid indicates whether the value is a known member of the OwnerMemoryExplicitStatus enum.
+func (e OwnerMemoryExplicitStatus) Valid() bool {
+	switch e {
+	case OwnerMemoryExplicitActive:
+		return true
+	case OwnerMemoryExplicitPending:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OwnerMemoryFactState.
+const (
+	OwnerMemoryFactInvalidated OwnerMemoryFactState = "invalidated"
+	OwnerMemoryFactValid       OwnerMemoryFactState = "valid"
+)
+
+// Valid indicates whether the value is a known member of the OwnerMemoryFactState enum.
+func (e OwnerMemoryFactState) Valid() bool {
+	switch e {
+	case OwnerMemoryFactInvalidated:
+		return true
+	case OwnerMemoryFactValid:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OwnerMemoryFactStateUpdateState.
+const (
+	Invalidated OwnerMemoryFactStateUpdateState = "invalidated"
+	Valid       OwnerMemoryFactStateUpdateState = "valid"
+)
+
+// Valid indicates whether the value is a known member of the OwnerMemoryFactStateUpdateState enum.
+func (e OwnerMemoryFactStateUpdateState) Valid() bool {
+	switch e {
+	case Invalidated:
+		return true
+	case Valid:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OwnerMemoryProvenanceKind.
+const (
+	OwnerMemoryProvenanceExplicit OwnerMemoryProvenanceKind = "explicit"
+	OwnerMemoryProvenanceMixed    OwnerMemoryProvenanceKind = "mixed"
+	OwnerMemoryProvenanceOwner    OwnerMemoryProvenanceKind = "owner"
+	OwnerMemoryProvenanceUnknown  OwnerMemoryProvenanceKind = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the OwnerMemoryProvenanceKind enum.
+func (e OwnerMemoryProvenanceKind) Valid() bool {
+	switch e {
+	case OwnerMemoryProvenanceExplicit:
+		return true
+	case OwnerMemoryProvenanceMixed:
+		return true
+	case OwnerMemoryProvenanceOwner:
+		return true
+	case OwnerMemoryProvenanceUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OwnerMemorySourceKind.
+const (
+	OwnerMemorySourceConv   OwnerMemorySourceKind = "conv"
+	OwnerMemorySourceThread OwnerMemorySourceKind = "thread"
+)
+
+// Valid indicates whether the value is a known member of the OwnerMemorySourceKind enum.
+func (e OwnerMemorySourceKind) Valid() bool {
+	switch e {
+	case OwnerMemorySourceConv:
+		return true
+	case OwnerMemorySourceThread:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OwnerMemoryStatusState.
+const (
+	OwnerMemoryStateDisabled    OwnerMemoryStatusState = "disabled"
+	OwnerMemoryStateError       OwnerMemoryStatusState = "error"
+	OwnerMemoryStateOk          OwnerMemoryStatusState = "ok"
+	OwnerMemoryStateUnavailable OwnerMemoryStatusState = "unavailable"
+)
+
+// Valid indicates whether the value is a known member of the OwnerMemoryStatusState enum.
+func (e OwnerMemoryStatusState) Valid() bool {
+	switch e {
+	case OwnerMemoryStateDisabled:
+		return true
+	case OwnerMemoryStateError:
+		return true
+	case OwnerMemoryStateOk:
+		return true
+	case OwnerMemoryStateUnavailable:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OwnerMemoryTopicStatus.
+const (
+	OwnerMemoryTopicActive   OwnerMemoryTopicStatus = "active"
+	OwnerMemoryTopicArchived OwnerMemoryTopicStatus = "archived"
+)
+
+// Valid indicates whether the value is a known member of the OwnerMemoryTopicStatus enum.
+func (e OwnerMemoryTopicStatus) Valid() bool {
+	switch e {
+	case OwnerMemoryTopicActive:
+		return true
+	case OwnerMemoryTopicArchived:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PauseMode.
 const (
 	Freeze PauseMode = "freeze"
@@ -3500,6 +3656,24 @@ const (
 func (e WsServerUIResolvedType) Valid() bool {
 	switch e {
 	case UIResolved:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListOwnerMemoryFactsParamsType.
+const (
+	Observation ListOwnerMemoryFactsParamsType = "observation"
+	World       ListOwnerMemoryFactsParamsType = "world"
+)
+
+// Valid indicates whether the value is a known member of the ListOwnerMemoryFactsParamsType enum.
+func (e ListOwnerMemoryFactsParamsType) Valid() bool {
+	switch e {
+	case Observation:
+		return true
+	case World:
 		return true
 	default:
 		return false
@@ -7740,6 +7914,247 @@ type OutputStats struct {
 	Tz    string      `json:"tz"`
 }
 
+// OwnerMemoryBrief defines model for OwnerMemoryBrief.
+type OwnerMemoryBrief struct {
+	// Cached 来自该对话的快照
+	Cached bool `json:"cached"`
+
+	// Content 追加到系统提示词的记忆段；助手记忆关闭时为空串
+	Content     string `json:"content"`
+	GeneratedAt int64  `json:"generatedAt"`
+}
+
+// OwnerMemoryCuration defines model for OwnerMemoryCuration.
+type OwnerMemoryCuration struct {
+	Archived []string `json:"archived"`
+	At       int64    `json:"at"`
+
+	// Created 新建的主题名
+	Created []string `json:"created"`
+	Error   *string  `json:"error,omitempty"`
+	Kept    []string `json:"kept"`
+}
+
+// OwnerMemoryDecideEndpoint defines model for OwnerMemoryDecideEndpoint.
+type OwnerMemoryDecideEndpoint struct {
+	// BaseURL Decisions API 根地址（不含 `/v1beta`）
+	BaseURL string `json:"baseUrl"`
+	HasKey  bool   `json:"hasKey"`
+
+	// Model 如 `gemini-decision-1`
+	Model string `json:"model"`
+}
+
+// OwnerMemoryDecideUpdate defines model for OwnerMemoryDecideUpdate.
+type OwnerMemoryDecideUpdate struct {
+	// APIKey 省略 = 保留原值
+	APIKey  *string `json:"apiKey,omitempty"`
+	BaseURL string  `json:"baseUrl"`
+	Model   string  `json:"model"`
+}
+
+// OwnerMemoryExclusion defines model for OwnerMemoryExclusion.
+type OwnerMemoryExclusion struct {
+	CreatedAt int64                    `json:"createdAt"`
+	Kind      OwnerMemoryExclusionKind `json:"kind"`
+
+	// Name 对话标题或项目名
+	Name     *string `json:"name,omitempty"`
+	TargetID string  `json:"targetId"`
+}
+
+// OwnerMemoryExclusionKind defines model for OwnerMemoryExclusionKind.
+type OwnerMemoryExclusionKind string
+
+// OwnerMemoryExclusionList defines model for OwnerMemoryExclusionList.
+type OwnerMemoryExclusionList struct {
+	Items []OwnerMemoryExclusion `json:"items"`
+}
+
+// OwnerMemoryExplicit defines model for OwnerMemoryExplicit.
+type OwnerMemoryExplicit struct {
+	Content   string `json:"content"`
+	CreatedAt int64  `json:"createdAt"`
+	ID        string `json:"id"`
+
+	// OwnerQuote 助手调用 remember 时给出的主人原话
+	OwnerQuote *string `json:"ownerQuote,omitempty"`
+
+	// SourceThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	SourceThreadID    *ThreadID                 `json:"sourceThreadId,omitempty"`
+	SourceThreadTitle *string                   `json:"sourceThreadTitle,omitempty"`
+	Status            OwnerMemoryExplicitStatus `json:"status"`
+	UpdatedAt         int64                     `json:"updatedAt"`
+}
+
+// OwnerMemoryExplicitStatus defines model for OwnerMemoryExplicit.Status.
+type OwnerMemoryExplicitStatus string
+
+// OwnerMemoryExplicitList defines model for OwnerMemoryExplicitList.
+type OwnerMemoryExplicitList struct {
+	Items []OwnerMemoryExplicit `json:"items"`
+}
+
+// OwnerMemoryFact defines model for OwnerMemoryFact.
+type OwnerMemoryFact struct {
+	ID          string                `json:"id"`
+	MentionedAt *string               `json:"mentionedAt,omitempty"`
+	Provenance  OwnerMemoryProvenance `json:"provenance"`
+	State       OwnerMemoryFactState  `json:"state"`
+	Text        string                `json:"text"`
+
+	// Type `world` 或 `observation`
+	Type string `json:"type"`
+}
+
+// OwnerMemoryFactState defines model for OwnerMemoryFact.State.
+type OwnerMemoryFactState string
+
+// OwnerMemoryFactList defines model for OwnerMemoryFactList.
+type OwnerMemoryFactList struct {
+	HasMore bool              `json:"hasMore"`
+	Items   []OwnerMemoryFact `json:"items"`
+}
+
+// OwnerMemoryFactStateUpdate defines model for OwnerMemoryFactStateUpdate.
+type OwnerMemoryFactStateUpdate struct {
+	Reason *string                         `json:"reason,omitempty"`
+	State  OwnerMemoryFactStateUpdateState `json:"state"`
+}
+
+// OwnerMemoryFactStateUpdateState defines model for OwnerMemoryFactStateUpdate.State.
+type OwnerMemoryFactStateUpdateState string
+
+// OwnerMemoryProvenance defines model for OwnerMemoryProvenance.
+type OwnerMemoryProvenance struct {
+	DocumentID *string `json:"documentId,omitempty"`
+
+	// Kind `owner`（来源只含主人消息）、`mixed`（含助手或 agent 消息，角色未确认）、`explicit`（明确记忆）、`unknown`（无法回溯）
+	Kind    OwnerMemoryProvenanceKind `json:"kind"`
+	SeqFrom *int64                    `json:"seqFrom,omitempty"`
+	SeqTo   *int64                    `json:"seqTo,omitempty"`
+
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID    *ThreadID `json:"threadId,omitempty"`
+	ThreadKind  *string   `json:"threadKind,omitempty"`
+	ThreadTitle *string   `json:"threadTitle,omitempty"`
+}
+
+// OwnerMemoryProvenanceKind `owner`（来源只含主人消息）、`mixed`（含助手或 agent 消息，角色未确认）、`explicit`（明确记忆）、`unknown`（无法回溯）
+type OwnerMemoryProvenanceKind string
+
+// OwnerMemorySettings defines model for OwnerMemorySettings.
+type OwnerMemorySettings struct {
+	// Available M16 记忆已启用且已配置；为假时助手记忆不运行
+	Available bool                       `json:"available"`
+	Decide    *OwnerMemoryDecideEndpoint `json:"decide,omitempty"`
+
+	// Enabled 助手记忆开关
+	Enabled bool `json:"enabled"`
+
+	// OwnerNames 主人的名字与别名，写入时这些名字一律归为「主人」
+	OwnerNames []string `json:"ownerNames"`
+}
+
+// OwnerMemorySettingsUpdate defines model for OwnerMemorySettingsUpdate.
+type OwnerMemorySettingsUpdate struct {
+	Enabled    bool     `json:"enabled"`
+	OwnerNames []string `json:"ownerNames"`
+}
+
+// OwnerMemorySource defines model for OwnerMemorySource.
+type OwnerMemorySource struct {
+	Attempts  int                   `json:"attempts"`
+	Chunks    int                   `json:"chunks"`
+	Kind      OwnerMemorySourceKind `json:"kind"`
+	LastError *string               `json:"lastError,omitempty"`
+
+	// Missing 线程已删除，document 待清理
+	Missing       bool   `json:"missing"`
+	NextAttemptAt *int64 `json:"nextAttemptAt,omitempty"`
+
+	// ProjectID `prj_<ulid>`
+	ProjectID  *ProjectID `json:"projectId,omitempty"`
+	RetainedAt *int64     `json:"retainedAt,omitempty"`
+
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID    ThreadID `json:"threadId"`
+	ThreadKind  *string  `json:"threadKind,omitempty"`
+	ThreadTitle *string  `json:"threadTitle,omitempty"`
+}
+
+// OwnerMemorySourceKind defines model for OwnerMemorySource.Kind.
+type OwnerMemorySourceKind string
+
+// OwnerMemorySourceList defines model for OwnerMemorySourceList.
+type OwnerMemorySourceList struct {
+	HasMore bool                `json:"hasMore"`
+	Items   []OwnerMemorySource `json:"items"`
+}
+
+// OwnerMemoryStatus defines model for OwnerMemoryStatus.
+type OwnerMemoryStatus struct {
+	BackfillDone int `json:"backfillDone"`
+
+	// BackfillSince 回填起点（Unix 毫秒）
+	BackfillSince *int64  `json:"backfillSince,omitempty"`
+	BackfillTotal int     `json:"backfillTotal"`
+	DocumentCount *int64  `json:"documentCount,omitempty"`
+	Error         *string `json:"error,omitempty"`
+
+	// FailingSources 写入失败、等待重试的来源数
+	FailingSources int    `json:"failingSources"`
+	LastCuratedAt  *int64 `json:"lastCuratedAt,omitempty"`
+
+	// MemoryCount bank `oryn-owner` 的记忆数
+	MemoryCount *int64 `json:"memoryCount,omitempty"`
+
+	// PendingExplicit 待确认的明确记忆数
+	PendingExplicit int `json:"pendingExplicit"`
+
+	// State `unavailable`（M16 记忆未启用或未配置）、`disabled`（助手记忆关闭）、`ok`、`error`（连不上 Hindsight 等，见 error）。
+	State     OwnerMemoryStatusState `json:"state"`
+	UsageDay  *MemoryUsageCounts     `json:"usageDay,omitempty"`
+	UsageWeek *MemoryUsageCounts     `json:"usageWeek,omitempty"`
+}
+
+// OwnerMemoryStatusState `unavailable`（M16 记忆未启用或未配置）、`disabled`（助手记忆关闭）、`ok`、`error`（连不上 Hindsight 等，见 error）。
+type OwnerMemoryStatusState string
+
+// OwnerMemoryTopic defines model for OwnerMemoryTopic.
+type OwnerMemoryTopic struct {
+	// Content 当前内容（注入的就是它）
+	Content         *string `json:"content,omitempty"`
+	ID              string  `json:"id"`
+	LastRefreshedAt *int64  `json:"lastRefreshedAt,omitempty"`
+	Name            string  `json:"name"`
+
+	// Scope 范围说明
+	Scope string `json:"scope"`
+
+	// Seed 固定种子（owner-profile），不会被归档
+	Seed bool `json:"seed"`
+
+	// Stale 遗忘后等待刷新，期间不进入注入
+	Stale  bool                   `json:"stale"`
+	Status OwnerMemoryTopicStatus `json:"status"`
+}
+
+// OwnerMemoryTopicStatus defines model for OwnerMemoryTopic.Status.
+type OwnerMemoryTopicStatus string
+
+// OwnerMemoryTopicList defines model for OwnerMemoryTopicList.
+type OwnerMemoryTopicList struct {
+	Items        []OwnerMemoryTopic   `json:"items"`
+	LastCuration *OwnerMemoryCuration `json:"lastCuration,omitempty"`
+}
+
 // PauseMode defines model for PauseMode.
 type PauseMode string
 
@@ -10110,6 +10525,15 @@ type OrbOfflineQuery = bool
 // Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
 type OrbThreadQuery = ThreadID
 
+// OwnerMemoryExplicitIDPath defines model for OwnerMemoryExplicitIdPath.
+type OwnerMemoryExplicitIDPath = string
+
+// OwnerMemoryFactIDPath defines model for OwnerMemoryFactIdPath.
+type OwnerMemoryFactIDPath = string
+
+// OwnerMemoryTopicIDPath defines model for OwnerMemoryTopicIdPath.
+type OwnerMemoryTopicIDPath = string
+
 // PortalPortPath defines model for PortalPortPath.
 type PortalPortPath = int
 
@@ -10611,6 +11035,30 @@ type GetOrbTimelineParams struct {
 	To *ToQuery `form:"to,omitempty" json:"to,omitempty"`
 }
 
+// GetOwnerMemoryBriefParams defines parameters for GetOwnerMemoryBrief.
+type GetOwnerMemoryBriefParams struct {
+	// ThreadID 给出时返回该对话的快照（没有或过期时现生成，不写入）；省略 = 现生成
+	ThreadID *ThreadID `form:"threadId,omitempty" json:"threadId,omitempty"`
+}
+
+// ListOwnerMemoryFactsParams defines parameters for ListOwnerMemoryFacts.
+type ListOwnerMemoryFactsParams struct {
+	// Q 给出时按召回排序（不分页），否则按时间倒序列出
+	Q      *string                         `form:"q,omitempty" json:"q,omitempty"`
+	Type   *ListOwnerMemoryFactsParamsType `form:"type,omitempty" json:"type,omitempty"`
+	Offset *int                            `form:"offset,omitempty" json:"offset,omitempty"`
+	Limit  *int                            `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ListOwnerMemoryFactsParamsType defines parameters for ListOwnerMemoryFacts.
+type ListOwnerMemoryFactsParamsType string
+
+// ListOwnerMemorySourcesParams defines parameters for ListOwnerMemorySources.
+type ListOwnerMemorySourcesParams struct {
+	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+	Limit  *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // ListProjectsParams defines parameters for ListProjects.
 type ListProjectsParams struct {
 	// Archived 为 true 时只返回已归档项目；缺省只返回未归档
@@ -11042,6 +11490,24 @@ type SetOrbPortalShareJSONRequestBody = PortalShareRequest
 
 // PrepareOrbSyncJSONRequestBody defines body for PrepareOrbSync for application/json ContentType.
 type PrepareOrbSyncJSONRequestBody = OrbSyncPrepareRequest
+
+// PutOwnerMemoryDecideEndpointJSONRequestBody defines body for PutOwnerMemoryDecideEndpoint for application/json ContentType.
+type PutOwnerMemoryDecideEndpointJSONRequestBody = OwnerMemoryDecideUpdate
+
+// CreateOwnerMemoryExplicitJSONRequestBody defines body for CreateOwnerMemoryExplicit for application/json ContentType.
+type CreateOwnerMemoryExplicitJSONRequestBody = MemoryContent
+
+// UpdateOwnerMemoryExplicitJSONRequestBody defines body for UpdateOwnerMemoryExplicit for application/json ContentType.
+type UpdateOwnerMemoryExplicitJSONRequestBody = MemoryContent
+
+// ApproveOwnerMemoryExplicitJSONRequestBody defines body for ApproveOwnerMemoryExplicit for application/json ContentType.
+type ApproveOwnerMemoryExplicitJSONRequestBody = MemoryCandidateApprove
+
+// SetOwnerMemoryFactStateJSONRequestBody defines body for SetOwnerMemoryFactState for application/json ContentType.
+type SetOwnerMemoryFactStateJSONRequestBody = OwnerMemoryFactStateUpdate
+
+// PutOwnerMemorySettingsJSONRequestBody defines body for PutOwnerMemorySettings for application/json ContentType.
+type PutOwnerMemorySettingsJSONRequestBody = OwnerMemorySettingsUpdate
 
 // CreateProjectJSONRequestBody defines body for CreateProject for application/json ContentType.
 type CreateProjectJSONRequestBody = ProjectCreate
@@ -13829,6 +14295,69 @@ type ServerInterface interface {
 	// GetOrbTimeline 单台 orb 的状态时间线（相邻同状态合并；≤2000 段，超出置 `truncated`）；orb 不存在 → 404 `not_found`
 	// (GET /api/v1/orbs/{id}/timeline)
 	GetOrbTimeline(w http.ResponseWriter, r *http.Request, id OrbIDPath, params GetOrbTimelineParams)
+	// GetOwnerMemoryBrief 注入预览：助手对话启动时追加到系统提示词的记忆段
+	// (GET /api/v1/owner-memory/brief)
+	GetOwnerMemoryBrief(w http.ResponseWriter, r *http.Request, params GetOwnerMemoryBriefParams)
+	// CurateOwnerMemoryTopics 立即运行一次主题整理（新增、归档主题）
+	// (POST /api/v1/owner-memory/curate)
+	CurateOwnerMemoryTopics(w http.ResponseWriter, r *http.Request)
+	// DeleteOwnerMemoryDecideEndpoint 删除判断模型接口（召回改按 RRF 顺序给出并标注未经重排）
+	// (DELETE /api/v1/owner-memory/decide-endpoint)
+	DeleteOwnerMemoryDecideEndpoint(w http.ResponseWriter, r *http.Request)
+	// PutOwnerMemoryDecideEndpoint 配置判断模型接口（Google Decisions API，用于召回重排）
+	// (PUT /api/v1/owner-memory/decide-endpoint)
+	PutOwnerMemoryDecideEndpoint(w http.ResponseWriter, r *http.Request)
+	// ListOwnerMemoryExclusions 不进助手记忆的对话与项目
+	// (GET /api/v1/owner-memory/exclusions)
+	ListOwnerMemoryExclusions(w http.ResponseWriter, r *http.Request)
+	// DeleteOwnerMemoryExclusion 取消排除（之后有新内容时重新写入）
+	// (DELETE /api/v1/owner-memory/exclusions/{kind}/{targetId})
+	DeleteOwnerMemoryExclusion(w http.ResponseWriter, r *http.Request, kind OwnerMemoryExclusionKind, targetID string)
+	// PutOwnerMemoryExclusion 设为不进助手记忆（已写入的随之遗忘）
+	// (PUT /api/v1/owner-memory/exclusions/{kind}/{targetId})
+	PutOwnerMemoryExclusion(w http.ResponseWriter, r *http.Request, kind OwnerMemoryExclusionKind, targetID string)
+	// ListOwnerMemoryExplicit 明确记忆（待确认的在前）
+	// (GET /api/v1/owner-memory/explicit)
+	ListOwnerMemoryExplicit(w http.ResponseWriter, r *http.Request)
+	// CreateOwnerMemoryExplicit 新建一条明确记忆（直接生效）
+	// (POST /api/v1/owner-memory/explicit)
+	CreateOwnerMemoryExplicit(w http.ResponseWriter, r *http.Request)
+	// DeleteOwnerMemoryExplicit 删除（已生效的连同 document 一起删除；待确认的即拒绝）
+	// (DELETE /api/v1/owner-memory/explicit/{explicitId})
+	DeleteOwnerMemoryExplicit(w http.ResponseWriter, r *http.Request, explicitID OwnerMemoryExplicitIDPath)
+	// UpdateOwnerMemoryExplicit 修改内容（已生效的随之重写 document）
+	// (PATCH /api/v1/owner-memory/explicit/{explicitId})
+	UpdateOwnerMemoryExplicit(w http.ResponseWriter, r *http.Request, explicitID OwnerMemoryExplicitIDPath)
+	// ApproveOwnerMemoryExplicit 批准待确认的明确记忆（可先改写内容），写入 bank
+	// (POST /api/v1/owner-memory/explicit/{explicitId}/approve)
+	ApproveOwnerMemoryExplicit(w http.ResponseWriter, r *http.Request, explicitID OwnerMemoryExplicitIDPath)
+	// ListOwnerMemoryFacts 浏览或召回主人记忆里的事实（带出处）
+	// (GET /api/v1/owner-memory/facts)
+	ListOwnerMemoryFacts(w http.ResponseWriter, r *http.Request, params ListOwnerMemoryFactsParams)
+	// SetOwnerMemoryFactState 让一条 world 事实失效或恢复（observation 不能直接失效，只能失效它的来源事实）
+	// (PUT /api/v1/owner-memory/facts/{factId}/state)
+	SetOwnerMemoryFactState(w http.ResponseWriter, r *http.Request, factID OwnerMemoryFactIDPath)
+	// GetOwnerMemorySettings 助手记忆的开关、主人的名字与别名、判断模型接口
+	// (GET /api/v1/owner-memory/settings)
+	GetOwnerMemorySettings(w http.ResponseWriter, r *http.Request)
+	// PutOwnerMemorySettings 修改助手记忆开关与主人的名字和别名
+	// (PUT /api/v1/owner-memory/settings)
+	PutOwnerMemorySettings(w http.ResponseWriter, r *http.Request)
+	// ListOwnerMemorySources 已写入（或写入失败）的来源对话与线程（按最近更新倒序）
+	// (GET /api/v1/owner-memory/sources)
+	ListOwnerMemorySources(w http.ResponseWriter, r *http.Request, params ListOwnerMemorySourcesParams)
+	// ForgetOwnerMemorySource 按来源遗忘：删除该对话或线程写入的全部 document（之后有新内容仍会再写入，除非设了排除）
+	// (DELETE /api/v1/owner-memory/sources/{id})
+	ForgetOwnerMemorySource(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
+	// GetOwnerMemoryStatus 助手记忆的运行状态：bank 统计、回填进度、写入失败数、最近主题整理与用量
+	// (GET /api/v1/owner-memory/status)
+	GetOwnerMemoryStatus(w http.ResponseWriter, r *http.Request)
+	// ListOwnerMemoryTopics 主题（注入「关于主人」的那部分）与最近一次主题整理的结果
+	// (GET /api/v1/owner-memory/topics)
+	ListOwnerMemoryTopics(w http.ResponseWriter, r *http.Request)
+	// RefreshOwnerMemoryTopic 立即刷新一个主题（不受刷新间隔限制）
+	// (POST /api/v1/owner-memory/topics/{topicId}/refresh)
+	RefreshOwnerMemoryTopic(w http.ResponseWriter, r *http.Request, topicID OwnerMemoryTopicIDPath)
 	// ListProjects 项目列表
 	// (GET /api/v1/projects)
 	ListProjects(w http.ResponseWriter, r *http.Request, params ListProjectsParams)
@@ -15131,6 +15660,132 @@ func (_ Unimplemented) PrepareOrbSync(w http.ResponseWriter, r *http.Request, id
 // GetOrbTimeline 单台 orb 的状态时间线（相邻同状态合并；≤2000 段，超出置 `truncated`）；orb 不存在 → 404 `not_found`
 // (GET /api/v1/orbs/{id}/timeline)
 func (_ Unimplemented) GetOrbTimeline(w http.ResponseWriter, r *http.Request, id OrbIDPath, params GetOrbTimelineParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetOwnerMemoryBrief 注入预览：助手对话启动时追加到系统提示词的记忆段
+// (GET /api/v1/owner-memory/brief)
+func (_ Unimplemented) GetOwnerMemoryBrief(w http.ResponseWriter, r *http.Request, params GetOwnerMemoryBriefParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CurateOwnerMemoryTopics 立即运行一次主题整理（新增、归档主题）
+// (POST /api/v1/owner-memory/curate)
+func (_ Unimplemented) CurateOwnerMemoryTopics(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteOwnerMemoryDecideEndpoint 删除判断模型接口（召回改按 RRF 顺序给出并标注未经重排）
+// (DELETE /api/v1/owner-memory/decide-endpoint)
+func (_ Unimplemented) DeleteOwnerMemoryDecideEndpoint(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutOwnerMemoryDecideEndpoint 配置判断模型接口（Google Decisions API，用于召回重排）
+// (PUT /api/v1/owner-memory/decide-endpoint)
+func (_ Unimplemented) PutOwnerMemoryDecideEndpoint(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListOwnerMemoryExclusions 不进助手记忆的对话与项目
+// (GET /api/v1/owner-memory/exclusions)
+func (_ Unimplemented) ListOwnerMemoryExclusions(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteOwnerMemoryExclusion 取消排除（之后有新内容时重新写入）
+// (DELETE /api/v1/owner-memory/exclusions/{kind}/{targetId})
+func (_ Unimplemented) DeleteOwnerMemoryExclusion(w http.ResponseWriter, r *http.Request, kind OwnerMemoryExclusionKind, targetID string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutOwnerMemoryExclusion 设为不进助手记忆（已写入的随之遗忘）
+// (PUT /api/v1/owner-memory/exclusions/{kind}/{targetId})
+func (_ Unimplemented) PutOwnerMemoryExclusion(w http.ResponseWriter, r *http.Request, kind OwnerMemoryExclusionKind, targetID string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListOwnerMemoryExplicit 明确记忆（待确认的在前）
+// (GET /api/v1/owner-memory/explicit)
+func (_ Unimplemented) ListOwnerMemoryExplicit(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateOwnerMemoryExplicit 新建一条明确记忆（直接生效）
+// (POST /api/v1/owner-memory/explicit)
+func (_ Unimplemented) CreateOwnerMemoryExplicit(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteOwnerMemoryExplicit 删除（已生效的连同 document 一起删除；待确认的即拒绝）
+// (DELETE /api/v1/owner-memory/explicit/{explicitId})
+func (_ Unimplemented) DeleteOwnerMemoryExplicit(w http.ResponseWriter, r *http.Request, explicitID OwnerMemoryExplicitIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// UpdateOwnerMemoryExplicit 修改内容（已生效的随之重写 document）
+// (PATCH /api/v1/owner-memory/explicit/{explicitId})
+func (_ Unimplemented) UpdateOwnerMemoryExplicit(w http.ResponseWriter, r *http.Request, explicitID OwnerMemoryExplicitIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ApproveOwnerMemoryExplicit 批准待确认的明确记忆（可先改写内容），写入 bank
+// (POST /api/v1/owner-memory/explicit/{explicitId}/approve)
+func (_ Unimplemented) ApproveOwnerMemoryExplicit(w http.ResponseWriter, r *http.Request, explicitID OwnerMemoryExplicitIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListOwnerMemoryFacts 浏览或召回主人记忆里的事实（带出处）
+// (GET /api/v1/owner-memory/facts)
+func (_ Unimplemented) ListOwnerMemoryFacts(w http.ResponseWriter, r *http.Request, params ListOwnerMemoryFactsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SetOwnerMemoryFactState 让一条 world 事实失效或恢复（observation 不能直接失效，只能失效它的来源事实）
+// (PUT /api/v1/owner-memory/facts/{factId}/state)
+func (_ Unimplemented) SetOwnerMemoryFactState(w http.ResponseWriter, r *http.Request, factID OwnerMemoryFactIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetOwnerMemorySettings 助手记忆的开关、主人的名字与别名、判断模型接口
+// (GET /api/v1/owner-memory/settings)
+func (_ Unimplemented) GetOwnerMemorySettings(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutOwnerMemorySettings 修改助手记忆开关与主人的名字和别名
+// (PUT /api/v1/owner-memory/settings)
+func (_ Unimplemented) PutOwnerMemorySettings(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListOwnerMemorySources 已写入（或写入失败）的来源对话与线程（按最近更新倒序）
+// (GET /api/v1/owner-memory/sources)
+func (_ Unimplemented) ListOwnerMemorySources(w http.ResponseWriter, r *http.Request, params ListOwnerMemorySourcesParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ForgetOwnerMemorySource 按来源遗忘：删除该对话或线程写入的全部 document（之后有新内容仍会再写入，除非设了排除）
+// (DELETE /api/v1/owner-memory/sources/{id})
+func (_ Unimplemented) ForgetOwnerMemorySource(w http.ResponseWriter, r *http.Request, id ThreadIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetOwnerMemoryStatus 助手记忆的运行状态：bank 统计、回填进度、写入失败数、最近主题整理与用量
+// (GET /api/v1/owner-memory/status)
+func (_ Unimplemented) GetOwnerMemoryStatus(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListOwnerMemoryTopics 主题（注入「关于主人」的那部分）与最近一次主题整理的结果
+// (GET /api/v1/owner-memory/topics)
+func (_ Unimplemented) ListOwnerMemoryTopics(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RefreshOwnerMemoryTopic 立即刷新一个主题（不受刷新间隔限制）
+// (POST /api/v1/owner-memory/topics/{topicId}/refresh)
+func (_ Unimplemented) RefreshOwnerMemoryTopic(w http.ResponseWriter, r *http.Request, topicID OwnerMemoryTopicIDPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -20826,6 +21481,523 @@ func (siw *ServerInterfaceWrapper) GetOrbTimeline(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// GetOwnerMemoryBrief operation middleware
+func (siw *ServerInterfaceWrapper) GetOwnerMemoryBrief(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetOwnerMemoryBriefParams
+
+	// ------------- Optional query parameter "threadId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "threadId", r.URL.Query(), &params.ThreadID, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "threadId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "threadId", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOwnerMemoryBrief(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CurateOwnerMemoryTopics operation middleware
+func (siw *ServerInterfaceWrapper) CurateOwnerMemoryTopics(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CurateOwnerMemoryTopics(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteOwnerMemoryDecideEndpoint operation middleware
+func (siw *ServerInterfaceWrapper) DeleteOwnerMemoryDecideEndpoint(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteOwnerMemoryDecideEndpoint(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutOwnerMemoryDecideEndpoint operation middleware
+func (siw *ServerInterfaceWrapper) PutOwnerMemoryDecideEndpoint(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutOwnerMemoryDecideEndpoint(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListOwnerMemoryExclusions operation middleware
+func (siw *ServerInterfaceWrapper) ListOwnerMemoryExclusions(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListOwnerMemoryExclusions(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteOwnerMemoryExclusion operation middleware
+func (siw *ServerInterfaceWrapper) DeleteOwnerMemoryExclusion(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "kind" -------------
+	var kind OwnerMemoryExclusionKind
+
+	err = runtime.BindStyledParameterWithOptions("simple", "kind", chi.URLParam(r, "kind"), &kind, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "targetId" -------------
+	var targetID string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "targetId", chi.URLParam(r, "targetId"), &targetID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "targetId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteOwnerMemoryExclusion(w, r, kind, targetID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutOwnerMemoryExclusion operation middleware
+func (siw *ServerInterfaceWrapper) PutOwnerMemoryExclusion(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "kind" -------------
+	var kind OwnerMemoryExclusionKind
+
+	err = runtime.BindStyledParameterWithOptions("simple", "kind", chi.URLParam(r, "kind"), &kind, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "targetId" -------------
+	var targetID string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "targetId", chi.URLParam(r, "targetId"), &targetID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "targetId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutOwnerMemoryExclusion(w, r, kind, targetID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListOwnerMemoryExplicit operation middleware
+func (siw *ServerInterfaceWrapper) ListOwnerMemoryExplicit(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListOwnerMemoryExplicit(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateOwnerMemoryExplicit operation middleware
+func (siw *ServerInterfaceWrapper) CreateOwnerMemoryExplicit(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateOwnerMemoryExplicit(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteOwnerMemoryExplicit operation middleware
+func (siw *ServerInterfaceWrapper) DeleteOwnerMemoryExplicit(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "explicitId" -------------
+	var explicitID OwnerMemoryExplicitIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "explicitId", chi.URLParam(r, "explicitId"), &explicitID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "explicitId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteOwnerMemoryExplicit(w, r, explicitID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateOwnerMemoryExplicit operation middleware
+func (siw *ServerInterfaceWrapper) UpdateOwnerMemoryExplicit(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "explicitId" -------------
+	var explicitID OwnerMemoryExplicitIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "explicitId", chi.URLParam(r, "explicitId"), &explicitID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "explicitId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateOwnerMemoryExplicit(w, r, explicitID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ApproveOwnerMemoryExplicit operation middleware
+func (siw *ServerInterfaceWrapper) ApproveOwnerMemoryExplicit(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "explicitId" -------------
+	var explicitID OwnerMemoryExplicitIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "explicitId", chi.URLParam(r, "explicitId"), &explicitID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "explicitId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ApproveOwnerMemoryExplicit(w, r, explicitID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListOwnerMemoryFacts operation middleware
+func (siw *ServerInterfaceWrapper) ListOwnerMemoryFacts(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListOwnerMemoryFactsParams
+
+	// ------------- Optional query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "type" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "type", r.URL.Query(), &params.Type, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "type"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "type", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListOwnerMemoryFacts(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetOwnerMemoryFactState operation middleware
+func (siw *ServerInterfaceWrapper) SetOwnerMemoryFactState(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "factId" -------------
+	var factID OwnerMemoryFactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "factId", chi.URLParam(r, "factId"), &factID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "factId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetOwnerMemoryFactState(w, r, factID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetOwnerMemorySettings operation middleware
+func (siw *ServerInterfaceWrapper) GetOwnerMemorySettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOwnerMemorySettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutOwnerMemorySettings operation middleware
+func (siw *ServerInterfaceWrapper) PutOwnerMemorySettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutOwnerMemorySettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListOwnerMemorySources operation middleware
+func (siw *ServerInterfaceWrapper) ListOwnerMemorySources(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListOwnerMemorySourcesParams
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListOwnerMemorySources(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ForgetOwnerMemorySource operation middleware
+func (siw *ServerInterfaceWrapper) ForgetOwnerMemorySource(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ThreadIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ForgetOwnerMemorySource(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetOwnerMemoryStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetOwnerMemoryStatus(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOwnerMemoryStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListOwnerMemoryTopics operation middleware
+func (siw *ServerInterfaceWrapper) ListOwnerMemoryTopics(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListOwnerMemoryTopics(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RefreshOwnerMemoryTopic operation middleware
+func (siw *ServerInterfaceWrapper) RefreshOwnerMemoryTopic(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "topicId" -------------
+	var topicID OwnerMemoryTopicIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "topicId", chi.URLParam(r, "topicId"), &topicID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "topicId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RefreshOwnerMemoryTopic(w, r, topicID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListProjects operation middleware
 func (siw *ServerInterfaceWrapper) ListProjects(w http.ResponseWriter, r *http.Request) {
 
@@ -24815,6 +25987,69 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/memory/exports/{exportId}/download", wrapper.DownloadMemoryExport)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/owner-memory/settings", wrapper.GetOwnerMemorySettings)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/owner-memory/settings", wrapper.PutOwnerMemorySettings)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/owner-memory/decide-endpoint", wrapper.DeleteOwnerMemoryDecideEndpoint)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/owner-memory/decide-endpoint", wrapper.PutOwnerMemoryDecideEndpoint)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/owner-memory/status", wrapper.GetOwnerMemoryStatus)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/owner-memory/topics", wrapper.ListOwnerMemoryTopics)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/owner-memory/topics/{topicId}/refresh", wrapper.RefreshOwnerMemoryTopic)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/owner-memory/curate", wrapper.CurateOwnerMemoryTopics)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/owner-memory/brief", wrapper.GetOwnerMemoryBrief)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/owner-memory/facts", wrapper.ListOwnerMemoryFacts)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/owner-memory/facts/{factId}/state", wrapper.SetOwnerMemoryFactState)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/owner-memory/sources", wrapper.ListOwnerMemorySources)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/owner-memory/sources/{id}", wrapper.ForgetOwnerMemorySource)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/owner-memory/exclusions", wrapper.ListOwnerMemoryExclusions)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/owner-memory/exclusions/{kind}/{targetId}", wrapper.DeleteOwnerMemoryExclusion)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/owner-memory/exclusions/{kind}/{targetId}", wrapper.PutOwnerMemoryExclusion)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/owner-memory/explicit", wrapper.ListOwnerMemoryExplicit)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/owner-memory/explicit", wrapper.CreateOwnerMemoryExplicit)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/owner-memory/explicit/{explicitId}", wrapper.DeleteOwnerMemoryExplicit)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/v1/owner-memory/explicit/{explicitId}", wrapper.UpdateOwnerMemoryExplicit)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/owner-memory/explicit/{explicitId}/approve", wrapper.ApproveOwnerMemoryExplicit)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/coordinator", wrapper.GetCoordinator)
