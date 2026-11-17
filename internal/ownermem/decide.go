@@ -5,15 +5,13 @@ package ownermem
 // 每条候选一个 score 题，只带短标签。分数是 0–3 的期望分。
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Lynricsy/Oryn/internal/geminidecision"
 )
 
 const (
@@ -24,8 +22,6 @@ const (
 	// directScore、partialScore 是分档阈值：≥2.0 正常给出，1.5–2.0 标注部分相关，<1.5 不给。
 	directScore   = 2.0
 	partialScore  = 1.5
-	decideTimeout = 30 * time.Second
-	maxDecideBody = 1 << 20
 )
 
 // decideInput 是共享 input（{today}、{query} 处替换）。
@@ -60,55 +56,15 @@ func (s *Service) decideScores(ctx context.Context, query string, facts []string
 	if !ok {
 		return nil, errDecideUnset
 	}
-	questions := make(map[string]any, len(facts))
+	questions := make([]geminidecision.Question, len(facts))
 	for i, f := range facts {
-		questions[fmt.Sprintf("f%d", i)] = map[string]any{
-			"type": "score", "instructions": strings.Replace(decideQuestion, "{fact}", f, 1), "criteria": decideCriteria,
+		questions[i] = geminidecision.Question{
+			Instructions: strings.Replace(decideQuestion, "{fact}", f, 1),
+			Criteria:     decideCriteria,
 		}
 	}
 	input := strings.NewReplacer("{today}", now.Format("2006-01-02"), "{query}", query).Replace(decideInput)
-	model := ep.model
-	if !strings.HasPrefix(model, "models/") {
-		model = "models/" + model
-	}
-	raw, _ := json.Marshal(map[string]any{"model": model, "input": input, "questions": questions})
-	ctx, cancel := context.WithTimeout(ctx, decideTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(ep.base, "/")+"/v1beta/decisions", bytes.NewReader(raw))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-goog-api-key", ep.key)
-	resp, err := s.cfg.HTTP.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxDecideBody))
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("判断模型返回 %d：%s", resp.StatusCode, truncate(string(body), 300))
-	}
-	var out struct {
-		Answers map[string]struct {
-			Score *float64 `json:"score"`
-		} `json:"answers"`
-	}
-	if err := json.Unmarshal(body, &out); err != nil {
-		return nil, fmt.Errorf("解析判断模型应答失败：%w", err)
-	}
-	scores := make([]float64, len(facts))
-	for i := range facts {
-		a, ok := out.Answers[fmt.Sprintf("f%d", i)]
-		if !ok || a.Score == nil {
-			return nil, fmt.Errorf("判断模型应答缺少 f%d 的分数", i)
-		}
-		scores[i] = *a.Score
-	}
-	return scores, nil
+	return geminidecision.Scores(ctx, s.cfg.HTTP, ep.base, ep.key, ep.model, input, questions)
 }
 
 // rankedFact 是重排后给出的一条事实；Partial 表示 1.5–2.0 档（部分相关，可能是旧状态或属于别的对象）。

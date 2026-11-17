@@ -5,7 +5,7 @@ BUN     ?= bun
 SQLC    ?= $(shell command -v sqlc 2>/dev/null || echo $(shell $(GO) env GOPATH)/bin/sqlc)
 VERSION ?= $(shell git describe --tags --exclude 'desktop-v*' --exclude 'mobile-v*' --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/Lynricsy/Oryn/internal/version.Version=$(VERSION)
-BINS    := orynd orbd oryn fakeomp
+BINS    := orynd orbd oryn fakeomp gemini-rerank
 
 .PHONY: all gen gen-go gen-sqlc gen-web check-gen lint-spec build test web desktop android image fc-artifacts dev
 
@@ -37,7 +37,7 @@ lint-spec:
 	$(BUN) x --bun @redocly/cli@latest lint schema/openapi.yaml \
 		--skip-rule operation-4xx-response --skip-rule no-unused-components
 
-## build：静态链接的四个二进制输出到 bin/
+## build：静态链接的二进制输出到 bin/
 build:
 	@mkdir -p bin
 	@for b in $(BINS); do \
