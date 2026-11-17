@@ -96,3 +96,8 @@ func TestApplySSHState(t *testing.T) {
 		assert.NotEqual(t, "ssh.json", f.Path, "摘要不下发")
 	}
 }
+
+// M18 8.1：runner 的 link 不放行 ssh.call（runner 不接入网关）。
+func TestRunnerCtlRejectsSSHCall(t *testing.T) {
+	assert.False(t, runnerRequestAllowed(string(apigen.MethodSSHCall)))
+}
