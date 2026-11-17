@@ -46,6 +46,11 @@ func (s *Service) Run(ctx context.Context) {
 		if _, err := s.Scan(ctx); err != nil && ctx.Err() == nil {
 			slog.Warn("助手记忆写入扫描失败", "err", err)
 		}
+		if s.Enabled(ctx) {
+			if err := s.daily(ctx); err != nil && ctx.Err() == nil {
+				slog.Warn("助手记忆主题整理失败", "err", err)
+			}
+		}
 		select {
 		case <-ctx.Done():
 			return

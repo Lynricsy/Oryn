@@ -33,6 +33,11 @@ type fakeHS struct {
 	deletes    []string           // 删除的 document id
 	down       bool
 	failRetain bool
+	// 主题：reflect 返回的 topics、recall 结果的 mentioned_at（空串 = 无结果）、提交的刷新
+	curated   []map[string]any
+	reflects  int
+	mentioned string
+	refreshes []string
 }
 
 // retainedDocs 返回第 i 次 retain 请求涉及的 document id（去重，保持顺序）。
@@ -92,7 +97,26 @@ func (f *fakeHS) serve(w http.ResponseWriter, r *http.Request) {
 		f.deletes = append(f.deletes, strings.TrimPrefix(r.URL.Path, root+"/documents/"))
 		_, _ = w.Write([]byte(`{}`))
 	case r.Method == http.MethodGet && r.URL.Path == root+"/mental-models":
-		_, _ = w.Write([]byte(`{"items":[]}`))
+		var items []map[string]any
+		for _, m := range f.models {
+			items = append(items, map[string]any{"id": m["id"], "content": "内容:" + m["name"].(string)})
+		}
+		raw, _ := json.Marshal(map[string]any{"items": items})
+		_, _ = w.Write(raw)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, root+"/mental-models/") && strings.HasSuffix(r.URL.Path, "/refresh"):
+		f.refreshes = append(f.refreshes, strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, root+"/mental-models/"), "/refresh"))
+		_, _ = w.Write([]byte(`{"operation_id":"op"}`))
+	case r.Method == http.MethodPost && r.URL.Path == root+"/reflect":
+		f.reflects++
+		raw, _ := json.Marshal(map[string]any{"text": "x", "structured_output": map[string]any{"topics": f.curated}})
+		_, _ = w.Write(raw)
+	case r.Method == http.MethodPost && r.URL.Path == root+"/memories/recall":
+		results := []map[string]any{}
+		if f.mentioned != "" {
+			results = append(results, map[string]any{"id": "m", "text": "t", "mentioned_at": f.mentioned})
+		}
+		raw, _ := json.Marshal(map[string]any{"results": results})
+		_, _ = w.Write(raw)
 	case r.Method == http.MethodGet && r.URL.Path == root+"/stats":
 		_, _ = w.Write([]byte(`{"total_nodes":42,"total_documents":7}`))
 	case r.Method == http.MethodGet && r.URL.Path == root+"/llm-requests/stats":
