@@ -72,6 +72,22 @@ func TestM19Queries(t *testing.T) {
 	handed, err = q.IsThreadHandedToAssistant(ctx, "T-run")
 	require.NoError(t, err)
 	assert.True(t, handed)
+	// 触发规则：只看该线程自己的 thread_issues
+	for _, q := range []string{
+		`INSERT INTO projects (id, name, shallow_clone, created_at, updated_at) VALUES ('prj_1', 'p1', 1, 1, 1)`,
+		`INSERT INTO github_triggers (id, project_id, name, event, prompt, created_at, updated_at, hand_to_assistant)
+			VALUES ('ght_1', 'prj_1', 'r', 'issue_opened', 'x', 1, 1, 1)`,
+		`INSERT INTO thread_issues (repo_id, number, thread_id, created_at, rule_id) VALUES (1, 7, 'T-a', 1, 'ght_1')`,
+	} {
+		_, err = s.DB.ExecContext(ctx, q)
+		require.NoError(t, err)
+	}
+	handed, err = q.IsThreadHandedToAssistant(ctx, "T-a")
+	require.NoError(t, err)
+	assert.True(t, handed)
+	handed, err = q.IsThreadHandedToAssistant(ctx, "T-m")
+	require.NoError(t, err)
+	assert.False(t, handed, "别的线程的触发规则不算")
 
 	// 确认：只能从 pending 决定一次。
 	require.NoError(t, q.InsertAssistantConfirmation(ctx, db.InsertAssistantConfirmationParams{ID: "cfm_1", ThreadID: "T-a",

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/egress"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/link"
 	"github.com/Lynricsy/Oryn/internal/store"
@@ -157,6 +158,8 @@ func TestPlanCoordinator(t *testing.T) {
 	assert.Nil(t, plan.Params.Scripts.Setup)
 	assert.True(t, plan.Egress.NoGit)
 	assert.Contains(t, plan.Egress.Routes, "anthropic")
+	require.NotNil(t, plan.Egress.Web, "没有助手设置时联网缺省开")
+	assert.Empty(t, plan.Egress.MCP, "mcp.json 里没有服务器时不下发 mcp.json、没有 MCP 路由")
 
 	// 对照：同样的配置给普通 orb 时 7811、git 主机与 env 密钥都在
 	normal, err := d.Plan(ctx, db.Orb{ID: "orb-n", ProjectID: &prj})
@@ -164,6 +167,64 @@ func TestPlanCoordinator(t *testing.T) {
 	assert.False(t, normal.Egress.NoGit)
 	assert.NotEmpty(t, normal.Params.Env)
 	assert.Greater(t, len(normal.Params.OmpHome), 2)
+}
+
+// M19 1.2：全局 mcp.json 里助手可用的 HTTP / SSE 服务器经 /mcp/m<i> 下发（沙箱里的 mcp.json 不含头，头只在出站路由里）；
+// 助手设置关掉的服务器不下发；关闭联网后 Egress.Web 为 nil；放行表来自 coordinator.web_allow_hosts。
+func TestPlanCoordinatorMCPAndWeb(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	mcp := `{"mcpServers": {
+		"search": {"type": "http", "url": "https://mcp.example.com/v1", "headers": {"Authorization": "Bearer ${NPM_TOKEN}"}},
+		"events": {"type": "sse", "url": "http://10.0.0.2:8080/sse"},
+		"local": {"command": "npx"},
+		"off": {"type": "http", "url": "https://off.example.com"}
+	}}`
+	d := &DefaultSetup{
+		Store: st, Vault: coordVault{}, CoordinatorEgressAddr: "127.0.0.1:9911", CoordinatorWebAllow: []string{"intra.example.com"},
+		Home: coordHome{"models.yml": []byte("providers: {}\n"), "config.yml": []byte("theme: dark\n"), "mcp.json": []byte(mcp)},
+	}
+	sandboxMCP := func(p SetupPlan) string {
+		for _, f := range p.Params.OmpHome {
+			if f.Path == "mcp.json" {
+				assert.Equal(t, 0o600, f.Mode)
+				b, err := base64.StdEncoding.DecodeString(f.ContentB64)
+				require.NoError(t, err)
+				return string(b)
+			}
+		}
+		return ""
+	}
+	require.NoError(t, st.Q.UpsertAssistantSettings(ctx, db.UpsertAssistantSettingsParams{WebAccess: 1, DisabledMcp: `["off"]`, UpdatedAt: 1}))
+	plan, err := d.Plan(ctx, db.Orb{ID: "orb-c", Coordinator: true})
+	require.NoError(t, err)
+	require.NotNil(t, plan.Egress.Web)
+	assert.Equal(t, []string{"intra.example.com"}, plan.Egress.Web.AllowHosts)
+	got := sandboxMCP(plan)
+	var doc struct {
+		MCPServers map[string]map[string]any `json:"mcpServers"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(got), &doc))
+	assert.Equal(t, map[string]map[string]any{
+		"events": {"type": "sse", "url": "http://127.0.0.1:9911/mcp/m0"},
+		"search": {"type": "http", "url": "http://127.0.0.1:9911/mcp/m1"},
+	}, doc.MCPServers, "按名字排序取路由键；stdio 与关掉的不下发")
+	assert.NotContains(t, got, "npm-real")
+	assert.NotContains(t, got, "Authorization")
+	assert.Equal(t, map[string]egress.MCPRoute{
+		"m0": {URL: "http://10.0.0.2:8080/sse", Headers: map[string]string{}},
+		"m1": {URL: "https://mcp.example.com/v1", Headers: map[string]string{"Authorization": "Bearer npm-real"}},
+	}, plan.Egress.MCP, "鉴权头只在出站路由里（env 模式密钥展开）")
+
+	// 关闭联网、关掉全部服务器：没有正向代理，也不下发 mcp.json
+	require.NoError(t, st.Q.UpsertAssistantSettings(ctx, db.UpsertAssistantSettingsParams{WebAccess: 0, DisabledMcp: `["off","search","events"]`, UpdatedAt: 2}))
+	plan, err = d.Plan(ctx, db.Orb{ID: "orb-c", Coordinator: true})
+	require.NoError(t, err)
+	assert.Nil(t, plan.Egress.Web)
+	assert.Empty(t, sandboxMCP(plan))
+	assert.Empty(t, plan.Egress.MCP)
 }
 
 // H6：ServeConn 只服务处于可接 link 状态的协调 orb；成功时走与 WebSocket link 相同的 hello / setup 流程，

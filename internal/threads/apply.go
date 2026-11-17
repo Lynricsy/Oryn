@@ -79,7 +79,8 @@ func configEffectOf(changed []string, before, after []byte, coordinator bool, re
 		case p == configFile:
 			configYmlEffect(&e, before, after, coordinator, restartKey)
 		case coordinator:
-			if p == agentcfg.ModelsFile {
+			// 协调宿主只下发 models.yml、config.yml 与按全局配置生成的 mcp.json（M19）
+			if p == agentcfg.ModelsFile || p == agentcfg.MCPFile {
 				e.addRestart(p)
 			}
 		case strings.HasPrefix(p, "agents/"):

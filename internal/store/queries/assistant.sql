@@ -85,4 +85,5 @@ SELECT CAST(EXISTS (
     WHERE t.id = @thread_id AND s.hand_to_assistant = 1
 ) OR EXISTS (
     SELECT 1 FROM thread_issues ti JOIN github_triggers g ON g.id = COALESCE(ti.rule_id, ti.trigger_id)
+    WHERE ti.thread_id = @thread_id AND g.hand_to_assistant = 1
 ) AS BOOLEAN) AS handed;

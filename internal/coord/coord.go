@@ -104,6 +104,12 @@ type Service struct {
 	// mem / eng 是 M17 主人记忆与 M16 工程记忆（SetOwnerMemory 设置）；mem 为 nil 时全局助手不注入记忆段、没有记忆工具。
 	mem OwnerMemory
 	eng EngineeringMemory
+	// home / projectCfg / envSecrets 是全局与项目级 omp 配置、env 模式密钥（M19，SetAgentConfig 设置）。
+	home       GlobalConfig
+	projectCfg ProjectConfigs
+	envSecrets EnvSecrets
+	// refreshPolicy 以当前设置刷新协调宿主的出站策略（M19；orbs 为 nil 时为 nil，测试可替换）。
+	refreshPolicy func(ctx context.Context, orbID string) error
 
 	ensureMu sync.Mutex
 	// createMu 串行化 orb 内 thread.create 的「计数 + Create」（契约 C6.1）：并发请求不能都通过额度检查。
@@ -150,6 +156,10 @@ func New(cfg Config, st *store.Store, th *threads.Service, o *orbs.Service, host
 	}
 	if o != nil {
 		s.registerOrbMethods(o.HandleRequest)
+		s.refreshPolicy = func(ctx context.Context, orbID string) error {
+			_, err := o.CoordinatorSetup(ctx, orbID)
+			return err
+		}
 	}
 	return s
 }
