@@ -65,7 +65,10 @@ func TestComputerStartReturnsDefs(t *testing.T) {
 	require.NoError(t, err)
 	var d agentDump
 	require.NoError(t, json.Unmarshal(b, &d))
-	assert.Equal(t, []string{"--mode", "rpc", "--no-session", "--no-skills", "--no-extensions", "--no-rules", "--no-context-files", "--cwd", rt.home}, d.Args)
+	assert.Equal(t, []string{"--mode", "rpc", "--no-session", "--no-skills", "--no-extensions", "--no-rules", "--no-context-files", "--cwd", rt.home, "--config", rt.computerOverlayPath()}, d.Args)
+	overlay, err := os.ReadFile(rt.computerOverlayPath())
+	require.NoError(t, err)
+	assert.Equal(t, computerOverlay, string(overlay))
 	assert.Equal(t, rt.home, d.Env["HOME"])
 	assert.Equal(t, "off", d.Env["PI_NOTIFICATIONS"])
 	assert.Equal(t, "orb-test", d.Env["ORYN_ORB_ID"])

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -39,6 +40,18 @@ const (
 	// computerIDPrefix 是 orbd 发给执行器的命令 id 前缀。
 	computerIDPrefix = "cmp-"
 )
+
+// computerOverlay 是执行器的设置覆盖层（--config）：打开默认会话里关着的 ast_grep 与 find
+// （find 用 judge 模型角色判断，orb 的 omp 配置里没有可用模型时调用会以 isError 失败）。
+const computerOverlay = `# 由 orbd 生成：助手的电脑里的工具执行器打开 ast_grep 与 find。
+astGrep: { enabled: true }
+find: { enabled: "on" }
+`
+
+// computerOverlayPath 是 computerOverlay 的位置（writeAgentAssets 写出）。
+func (r *Runtime) computerOverlayPath() string {
+	return filepath.Join(r.home, ".oryn", "core", "computer.yml")
+}
 
 // computer.* 的错误码。
 const (
@@ -192,8 +205,8 @@ func (c *computer) ensure(ctx context.Context) (*computerProc, error) {
 	return p, nil
 }
 
-// spawn 启动执行器进程。环境与普通线程的 agent 相同（基础环境 + setup 环境 + 登录 shell），
-// 桌面启用时加桌面覆盖层，让 eval 的浏览器 prelude 连到本机 CDP 前门。调用方持 c.mu。
+// spawn 启动执行器进程。环境与普通线程的 agent 相同（基础环境 + setup 环境 + 登录 shell）；
+// 设置覆盖层之后，桌面启用时再加桌面覆盖层，让 eval 的浏览器 prelude 连到本机 CDP 前门。调用方持 c.mu。
 func (c *computer) spawn() (*computerProc, error) {
 	r := c.r
 	env := r.baseEnv()
@@ -204,7 +217,7 @@ func (c *computer) spawn() (*computerProc, error) {
 	env["PI_NOTIFICATIONS"] = "off"
 	args := []string{
 		"--mode", "rpc", "--no-session", "--no-skills", "--no-extensions", "--no-rules", "--no-context-files",
-		"--cwd", r.home,
+		"--cwd", r.home, "--config", r.computerOverlayPath(),
 	}
 	if r.desk != nil {
 		args = append(args, "--config", r.desktopOverlayPath())

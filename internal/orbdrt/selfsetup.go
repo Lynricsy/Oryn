@@ -268,10 +268,13 @@ func (r *Runtime) librarySkillPath() string {
 	return filepath.Join(r.home, ".agents", "skills", "oryn-library", "SKILL.md")
 }
 
-// writeAgentAssets 写出内嵌的扩展与技能（每次启动覆盖，保持与 orbd 版本一致）；桌面启用时另写给 omp 的
+// writeAgentAssets 写出内嵌的扩展与技能（每次启动覆盖，保持与 orbd 版本一致）与工具执行器的设置覆盖层；桌面启用时另写给 omp 的
 // 设置覆盖层（地址取 CDP 前门的实际地址）与 openbox 配置，未启用时删除残留的覆盖层。
 func (r *Runtime) writeAgentAssets() error {
-	files := map[string][]byte{r.extensionPath(): orbExtension, r.skillPath(): setupSkill, r.librarySkillPath(): librarySkill}
+	files := map[string][]byte{
+		r.extensionPath(): orbExtension, r.skillPath(): setupSkill, r.librarySkillPath(): librarySkill,
+		r.computerOverlayPath(): []byte(computerOverlay),
+	}
 	if d := r.desk; d != nil {
 		files[r.desktopOverlayPath()] = desktopOverlay(d.cdpAddr())
 		files[d.rcPath()] = openboxRC
