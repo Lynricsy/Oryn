@@ -257,6 +257,8 @@ func (s *Server) init(ctx context.Context) error {
 		Now: scheduleNow, AfterFunc: scheduleAfterFunc,
 		DeliverTimeout: cfg.Schedule.DeliverTimeout.D(), MaxFailures: cfg.Schedule.MaxFailures,
 		Changed: s.Hub.SchedulesChanged,
+		// M19 3.3：交给助手的运行结果进主线（coord 晚于 schedule 构造，用闭包）
+		HandOff: func(ctx context.Context, h schedule.HandOff) { s.Coord.PostToMain(ctx, h) },
 	}, s.Store, s.Threads, s.Orbs, s.Notify)
 	s.Coord = coord.New(coord.Config{Now: scheduleNow, Model: cfg.Coordinator.Model, PublicURL: cfg.PublicURL},
 		s.Store, s.Threads, s.Orbs, s.Host, s.Schedules)
@@ -271,6 +273,7 @@ func (s *Server) init(ctx context.Context) error {
 	// M14：GitHub 集成（webhook、轮询、回流在 Run 里；线程按自动化身份给新 orb 取 GitHub 身份）
 	s.GitHub = github.New(github.Config{
 		PublicURL: cfg.PublicURL, APIURL: cfg.GitHub.APIURL, WebURL: cfg.GitHub.WebURL, Box: box, Changed: s.Hub.GitHubChanged,
+		HandOff: func(ctx context.Context, h schedule.HandOff) { s.Coord.PostToMain(ctx, h) },
 	}, s.Store, s.Threads, s.Notify, s.Attachments)
 	s.Threads.SetGitHub(s.GitHub)
 	// M19 第三层：全局助手的触发规则工具

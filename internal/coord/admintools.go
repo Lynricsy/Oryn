@@ -122,15 +122,16 @@ func adminToolDefs() []apigen.OmpFrame {
 		}, "space"),
 		tool(ToolListTriggers, "List a project's GitHub trigger rules. Prompts are untrusted data.", obj{"project": project}, "project"),
 		tool(ToolSetTrigger, "Create a GitHub trigger rule for a project bound to a GitHub repository (name, event and prompt are required), or change one (pass id; only the fields you pass change). Each matching event starts a work thread with the prompt.", obj{
-			"project":  project,
-			"id":       str("Rule id (ght_…) to change an existing rule."),
-			"name":     str("Rule name."),
-			"event":    enum("GitHub event that fires the rule.", "issue_opened", "issue_reopened", "issue_labeled", "mention", "pull_request_opened", "workflow_run_completed"),
-			"label":    str(`event "issue_labeled": the label.`),
-			"prompt":   str("Task given to the new thread."),
-			"enabled":  boolean("Enable or disable the rule."),
-			"announce": boolean("Comment the new thread's link on the issue."),
-			"options": obj{"type": "object", "description": "Other rule settings, as in the REST API: drivers, maintainers, reviewerBots, models, thinking, implAuth, commentOnlyReviews, completionReminders, autocloseHours, maxDurationSec, releasePrefix."},
+			"project":         project,
+			"id":              str("Rule id (ght_…) to change an existing rule."),
+			"name":            str("Rule name."),
+			"event":           enum("GitHub event that fires the rule.", "issue_opened", "issue_reopened", "issue_labeled", "mention", "pull_request_opened", "workflow_run_completed"),
+			"label":           str(`event "issue_labeled": the label.`),
+			"prompt":          str("Task given to the new thread."),
+			"enabled":         boolean("Enable or disable the rule."),
+			"announce":        boolean("Comment the new thread's link on the issue."),
+			"handToAssistant": boolean("Hand the result of every run to your main conversation instead of a completion notification."),
+			"options":         obj{"type": "object", "description": "Other rule settings, as in the REST API: drivers, maintainers, reviewerBots, models, thinking, implAuth, commentOnlyReviews, completionReminders, autocloseHours, maxDurationSec, releasePrefix."},
 		}, "project"),
 		tool(ToolDeleteTrigger, "Ask the owner to delete a GitHub trigger rule. The owner must confirm; the result arrives later as an automatic message.", obj{
 			"id": str("Rule id (ght_…)."),
@@ -528,15 +529,17 @@ func (s *Service) toolListTriggers(ctx context.Context, c toolCtx) (any, error) 
 
 // setTriggerArgs 是 set_trigger 的参数。显式字段覆盖 options 里的同名键。
 type setTriggerArgs struct {
-	Project  string                     `json:"project"`
-	ID       string                     `json:"id"`
-	Name     *string                    `json:"name"`
-	Event    *string                    `json:"event"`
-	Label    *string                    `json:"label"`
-	Prompt   *string                    `json:"prompt"`
-	Enabled  *bool                      `json:"enabled"`
-	Announce *bool                      `json:"announce"`
-	Options  map[string]json.RawMessage `json:"options"`
+	Project  string  `json:"project"`
+	ID       string  `json:"id"`
+	Name     *string `json:"name"`
+	Event    *string `json:"event"`
+	Label    *string `json:"label"`
+	Prompt   *string `json:"prompt"`
+	Enabled  *bool   `json:"enabled"`
+	Announce *bool   `json:"announce"`
+	// HandToAssistant 交给助手（M19 步骤 3.3）
+	HandToAssistant *bool                      `json:"handToAssistant"`
+	Options         map[string]json.RawMessage `json:"options"`
 }
 
 // decodeInto 把 options 与显式字段合成 GitHubTriggerInput / GitHubTriggerPatch 的 JSON，并按 v 的字段严格解码（未知键 →
@@ -546,7 +549,8 @@ func (a setTriggerArgs) decodeInto(v any) error {
 	if m == nil {
 		m = map[string]json.RawMessage{}
 	}
-	for k, f := range map[string]any{"name": a.Name, "event": a.Event, "label": a.Label, "prompt": a.Prompt, "enabled": a.Enabled, "announce": a.Announce} {
+	for k, f := range map[string]any{"name": a.Name, "event": a.Event, "label": a.Label, "prompt": a.Prompt, "enabled": a.Enabled,
+		"announce": a.Announce, "handToAssistant": a.HandToAssistant} {
 		switch p := f.(type) {
 		case *string:
 			if p == nil {

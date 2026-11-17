@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/schedule"
 	"github.com/Lynricsy/Oryn/internal/secrets"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/store/db"
@@ -122,6 +123,9 @@ type Config struct {
 	AfterFunc func(d time.Duration, f func()) (stop func())
 	// Changed 在状态变化后广播；nil = 不广播。
 	Changed func()
+	// HandOff 在开着“交给助手”的触发规则线程的一个 GitHub 回合结束（任何终态）时调用（M19 步骤 3.3，在任务队列里）；
+	// nil = 不交接。
+	HandOff func(ctx context.Context, h schedule.HandOff)
 }
 
 // Error 是 GitHub 服务的领域错误；Status 为 0 时由调用方按 Code 映射。

@@ -402,7 +402,7 @@ func (s *Service) onAgentStatus(ctx context.Context, orbID string, params json.R
 		t.lastYield = nil
 		s.resetLiveLocked(t)
 		s.broadcastLiveResetLocked(t)
-		t.autoActive = false
+		t.autoActive, t.segMsgs = false, false
 		cancelHostCallsLocked(t)
 		resetConfigMarksLocked(t) // 新进程读的就是新配置（M13 6.3）
 		switch {
@@ -677,7 +677,7 @@ func (s *Service) onFrame(ctx context.Context, t *thread, orbID string, line []b
 		t.settled = false
 	case "session_settled":
 		t.settled = true
-		t.autoActive = false
+		t.autoActive, t.segMsgs = false, false
 		if t.refresh {
 			s.stopForRefreshLocked(t)
 		}
@@ -821,12 +821,23 @@ func (s *Service) dispatchLocked(t *thread, frame []byte) {
 		}
 		return
 	}
+	auto := false
 	if p := t.pending[h.ID]; p != nil {
 		p.sent = true
+		auto = p.origin == originAuto
 		if p.origin == originAuto && messageCommands[h.Type] {
 			// 自动化消息开启（或并入）的这段活动：宿主工具调用记为 auto 来源
 			t.autoActive = true
 		}
+	}
+	if messageCommands[h.Type] {
+		// 静止后的第一条消息决定 autoOnly，其后的逐条取与；任何新消息都让此前的 stay_silent 失效
+		if t.segMsgs {
+			t.autoOnly = t.autoOnly && auto
+		} else {
+			t.autoOnly, t.segMsgs = auto, true
+		}
+		t.quiet = false
 	}
 	switch h.Type {
 	case "prompt", "abort_and_prompt":

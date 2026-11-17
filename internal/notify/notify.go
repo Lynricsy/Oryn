@@ -153,6 +153,8 @@ type pendingTimer struct {
 	reason string          // error
 	frame  json.RawMessage // input
 	plan   bool
+	// auto（done）：这段活动只由自动化投递引起；emit 时若线程是“交给助手”的运行则不发（由助手在主线里决定）
+	auto bool
 }
 
 type eventKind int
@@ -316,7 +318,12 @@ func (s *Service) StateChanged(ev threads.StateEvent) {
 	switch {
 	case ev.State == threads.StateIdle && (ev.Prev == threads.StateWorking || ev.Prev == threads.StateAwaitingInput) && !ev.Focused:
 		s.cancelLocked(ev.ThreadID, errk)
-		s.armLocked(ev.ThreadID, done, s.cfg.DoneDelay, &pendingTimer{})
+		if ev.Quiet {
+			// 助手在主线的自动化回合里选择沉默（stay_silent）：不发完成通知
+			s.cancelLocked(ev.ThreadID, done)
+			return
+		}
+		s.armLocked(ev.ThreadID, done, s.cfg.DoneDelay, &pendingTimer{auto: ev.Auto})
 	case ev.State == threads.StateError && ev.Prev != threads.StateError && !ev.Focused:
 		s.cancelLocked(ev.ThreadID, done)
 		s.armLocked(ev.ThreadID, errk, s.cfg.DoneDelay, &pendingTimer{reason: ev.Reason})
@@ -466,6 +473,13 @@ func (s *Service) emit(ctx context.Context, threadID string, key timerKey, pt *p
 	if th.ArchivedAt != nil {
 		s.dropUnreadIfNone(ctx, threadID)
 		return
+	}
+	// 交给助手的定时 / 触发规则运行：完成由助手在主线里决定说不说（M19 步骤 3.3）；主人亲自发过消息的回合照常通知
+	if key.kind == KindDone && pt.auto {
+		if handed, err := s.st.Q.IsThreadHandedToAssistant(ctx, threadID); err == nil && handed {
+			s.dropUnreadIfNone(ctx, threadID)
+			return
+		}
 	}
 	title := th.Title
 	if th.Main != nil && *th.Main {

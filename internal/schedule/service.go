@@ -39,6 +39,17 @@ type Config struct {
 	MaxFailures int
 	// Changed 在某个定时的定义或运行记录变化后调用（契约 C7.2，调用时不持 mu）；nil = 不推送。
 	Changed func(scheduleID string)
+	// HandOff 在开着“交给助手”的 new_thread 运行结束（完成、出错、被中断；投递失败除外）时调用（M19 步骤 3.3，
+	// 调用时不持 mu）；nil = 不交接。
+	HandOff func(ctx context.Context, h HandOff)
+}
+
+// HandOff 是一次交给助手的运行结果（定时与 GitHub 触发规则共用，由 coord.PostToMain 收进主线）。
+type HandOff struct {
+	// Kind 是 schedule 或 trigger；SourceID / SourceName 是定时或触发规则的 id 与名字。
+	Kind, SourceID, SourceName string
+	// ThreadID 是运行线程；Outcome 是 completed / failed / aborted；Text 是该回合的最终回复（可空，收件时补取）。
+	ThreadID, Outcome, Text, Error string
 }
 
 // Threads 是调度器需要的线程能力（*threads.Service 实现）。
@@ -73,6 +84,8 @@ type Input struct {
 	ProjectID, SpaceID, ThinkingLevel, Provider, OrbType, Overlap string
 	Model                                                         *apigen.ModelRef
 	KeepLast                                                      *int
+	// HandToAssistant 仅 new_thread：运行结果交给助手的主线；更新时 nil = 沿用现值。
+	HandToAssistant *bool
 	// IfRev 非 nil 时只在定时当前 rev 等于它时才替换（契约 C7.1，仅 REST 的两个 PUT 使用）；nil = 不做版本检查。
 	IfRev *int64
 }
@@ -265,7 +278,7 @@ func InputFromAPI(in apigen.ScheduleInput) Input {
 		Prompt: in.Prompt, At: in.At, EndsAt: in.EndsAt, Enabled: in.Enabled, ThreadID: deref(in.ThreadID),
 		ProjectID: deref(in.ProjectID), SpaceID: deref(in.SpaceID), ThinkingLevel: deref(in.ThinkingLevel),
 		Provider: deref(in.Provider), OrbType: deref(in.OrbType), Model: in.Model, KeepLast: in.KeepLast,
-		IfRev: in.IfRev,
+		IfRev: in.IfRev, HandToAssistant: in.HandToAssistant,
 	}
 	if in.Mode != nil {
 		out.Mode = string(*in.Mode)
@@ -380,6 +393,9 @@ func (s *Service) createLocked(ctx context.Context, in Input, createdBy string) 
 		p.Model, p.ThinkingLevel = modelStr(norm.Model), optStr(norm.ThinkingLevel)
 		p.Provider, p.OrbType = optStr(norm.Provider), optStr(norm.OrbType)
 		p.Overlap, p.KeepLast = norm.Overlap, int64(*norm.KeepLast)
+		if norm.HandToAssistant != nil && *norm.HandToAssistant {
+			p.HandToAssistant = 1
+		}
 	}
 	err = s.st.Tx(ctx, func(q *db.Queries) error {
 		// Space 的存在性在写引用的事务里复核：与删除 Space 的事务串行，不留悬空引用（契约 C4）
@@ -494,6 +510,14 @@ func (s *Service) updateLocked(ctx context.Context, id string, in Input, created
 		p.SpaceID, p.Model, p.ThinkingLevel = optStr(norm.SpaceID), modelStr(norm.Model), optStr(norm.ThinkingLevel)
 		p.Provider, p.OrbType = optStr(norm.Provider), optStr(norm.OrbType)
 		p.Overlap, p.KeepLast = norm.Overlap, int64(*norm.KeepLast)
+		// 交给助手：nil = 沿用现值
+		p.HandToAssistant = cur.HandToAssistant
+		if norm.HandToAssistant != nil {
+			p.HandToAssistant = 0
+			if *norm.HandToAssistant {
+				p.HandToAssistant = 1
+			}
+		}
 	}
 	err = s.st.Tx(ctx, func(q *db.Queries) error {
 		if err := checkSpaceTx(ctx, q, norm.SpaceID); err != nil {
@@ -969,6 +993,7 @@ func (s *Service) toAPI(ctx context.Context, r db.Schedule) (apigen.Schedule, er
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, Overlap: apigen.ScheduleOverlap(r.Overlap), KeepLast: int(r.KeepLast),
 		OpenRuns: int(open), Rev: r.Rev, ThreadID: r.ThreadID, ProjectID: r.ProjectID, SpaceID: r.SpaceID,
 		ThinkingLevel: r.ThinkingLevel, Provider: r.Provider, OrbType: r.OrbType, Model: parseModel(r.Model),
+		HandToAssistant: r.HandToAssistant != 0,
 	}
 	switch r.Kind {
 	case KindCron:

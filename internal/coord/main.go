@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
@@ -11,6 +12,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/ids"
+	"github.com/Lynricsy/Oryn/internal/schedule"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
 	"github.com/Lynricsy/Oryn/internal/transcript"
@@ -19,7 +22,7 @@ import (
 // 主线（M19）：全局助手的永久对话。每段上下文很短：agent 每次启动先 clear_context，系统提示词末尾带「主线近况」
 // （备忘 + 最近的对话）；主线静止一段时间或一段内回合数满了，agent 在静止时停掉，下一段重新开始。
 
-// 主线专属工具名。stay_silent 由步骤 3.3 实现；近况按它的名字识别沉默的回合。
+// 主线专属工具名。近况按 stay_silent 的名字识别沉默的回合。
 const (
 	ToolUpdateNotes = "update_notes"
 	ToolStaySilent  = "stay_silent"
@@ -47,6 +50,9 @@ func mainToolDefs() []apigen.OmpFrame {
 		essentialTool(ToolUpdateNotes, "Rewrite the main conversation's notes as a whole (at most 1500 characters). The notes are shown at the start of every episode; keep there what you must remember across episodes. Compress when it gets long.", obj{
 			"text": str("The complete new notes."),
 		}, "text"),
+		essentialTool(ToolStaySilent, "End this turn without telling the owner anything: no unread mark, no notification. Use it when the automatic messages in this turn are not worth the owner's attention. Only works in turns started by automatic messages; when the owner is talking to you, answer normally.", obj{
+			"reason": str("One short line on why nothing needs to be said (shown to the owner folded)."),
+		}, "reason"),
 	}
 }
 
@@ -55,6 +61,7 @@ const mainGuide = `## This is the main conversation
 
 - This is your permanent conversation with the owner. You speak here on your own initiative: results of schedules and trigger rules that were handed to you, reports of threads you started from here, and reminders you set here arrive as automatic messages whose first line starts with "[Oryn ".
 - Combine several results into one short message. Say only what the owner would want to know or must decide.
+- Speak only when the incoming material is worth the owner's attention or needs the owner's decision; otherwise call stay_silent with a short reason and say nothing.
 - Every episode starts with a short context: only the notes and the recent messages below. Write what you must remember across episodes into the notes with update_notes (it rewrites the notes as a whole).
 - To look further back, use read_thread with this conversation's id and search_history.
 - When the owner wants to dig into one thing, suggest "Continue in a new conversation" in the interface; you cannot start conversations yourself.`
@@ -110,6 +117,23 @@ func (s *Service) toolUpdateNotes(ctx context.Context, c toolCtx) (any, error) {
 		return nil, err
 	}
 	return map[string]any{"ok": true, "characters": utf8.RuneCountInString(n.Text)}, nil
+}
+
+// toolStaySilent 是主线的 stay_silent：只在自动化消息开启的回合里生效（MarkQuiet），该回合结束不置未读、不推送。
+func (s *Service) toolStaySilent(ctx context.Context, c toolCtx) (any, error) {
+	if c.Kind != threads.KindAssistant || !s.isMain(ctx, c.ThreadID) {
+		return nil, errf("unknown_tool", "no tool named %q", c.Name)
+	}
+	var a struct {
+		Reason string `json:"reason"`
+	}
+	if err := decodeArgs(c.Args, &a); err != nil {
+		return nil, err
+	}
+	if !s.th.MarkQuiet(ctx, c.ThreadID) {
+		return map[string]any{"ok": false, "note": "The owner is talking to you in this turn, so staying silent does not apply: answer the owner normally."}, nil
+	}
+	return map[string]any{"ok": true}, nil
 }
 
 // ---- 近况 ----
@@ -298,4 +322,148 @@ func (s *Service) mainProfile(ctx context.Context, threadID string, prompt strin
 		return prompt
 	}
 	return prompt + "\n\n" + brief
+}
+
+// ---- 收件：交给助手的运行结果 ----
+
+// 收件的固定值。
+const (
+	// inboxDebounce 是来料合并窗口：第一条到达后这么久投递一次，期间到达的并进同一条自动消息。
+	inboxDebounce = 15 * time.Second
+	// inboxBatch 是一条自动消息最多带的结果数；更多的再排一次。
+	inboxBatch = 20
+	// inboxReplyMax 是每项回复的字数上限。
+	inboxReplyMax = 4000
+	// inboxRetryEvery 是 Run 循环重试未投递收件的间隔；inboxMaxAge 之前的未投递收件丢弃，已投递的也在那之后删除。
+	inboxRetryEvery = time.Minute
+	inboxMaxAge     = 24 * time.Hour
+)
+
+// inboxStatusHeader 是合并后的自动消息的头行（Web 的 parseOrynMessage 认它）。
+const inboxStatusHeader = "[Oryn automation results · automatic]"
+
+// inboxState 是收件的合并定时器（s.mu 保护）。
+type inboxState struct {
+	stop func()
+}
+
+// PostToMain 收下一次交给助手的运行结果（定时与 GitHub 触发规则的 HandOff 回调）：写进 assistant_inbox，并在没有
+// 待发的合并定时器时排一个；到点由 flushInbox 合并成一条自动消息投进主线。不阻塞、不调用线程服务。
+func (s *Service) PostToMain(ctx context.Context, h schedule.HandOff) {
+	p := db.InsertAssistantInboxParams{
+		ID: ids.New("inb"), Kind: h.Kind, SourceID: h.SourceID, SourceName: h.SourceName, ThreadID: h.ThreadID,
+		Outcome: h.Outcome, Body: truncRunes(strings.TrimSpace(h.Text), inboxReplyMax), CreatedAt: s.nowMs(),
+	}
+	if h.Error != "" {
+		p.Error = &h.Error
+	}
+	if err := s.st.Q.InsertAssistantInbox(ctx, p); err != nil {
+		slog.Warn("coord: 写入主线收件失败", "thread", h.ThreadID, "source", h.SourceID, "err", err)
+		return
+	}
+	s.armInbox()
+}
+
+// armInbox 在没有待发的合并定时器时排一个（已有则不重排：合并窗口从第一条算起）。
+func (s *Service) armInbox() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.inbox.stop != nil {
+		return
+	}
+	s.inbox.stop = s.cfg.AfterFunc(inboxDebounce, func() {
+		s.mu.Lock()
+		s.inbox.stop = nil
+		s.mu.Unlock()
+		s.flushInbox(context.Background())
+	})
+}
+
+// inboxItem 是自动消息里的一项结果。
+type inboxItem struct {
+	Kind     string `json:"kind"`
+	Name     string `json:"name"`
+	ThreadID string `json:"threadId"`
+	Title    string `json:"title"`
+	Outcome  string `json:"outcome"`
+	Reply    string `json:"reply,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
+// flushInbox 把最早的至多 inboxBatch 条未投递收件合并成一条自动消息投进主线（没有则先建主线），成功后标为已投递；
+// 还有剩余就再排一次。宿主不可用或投递失败时收件原样留着，由 Run 循环每分钟重试。
+func (s *Service) flushInbox(ctx context.Context) {
+	s.inboxMu.Lock()
+	defer s.inboxMu.Unlock()
+	rows, err := s.st.Q.ListPendingAssistantInbox(ctx, inboxBatch+1)
+	if err != nil {
+		slog.Warn("coord: 读取主线收件失败", "err", err)
+		return
+	}
+	if len(rows) == 0 {
+		return
+	}
+	more := len(rows) > inboxBatch
+	if more {
+		rows = rows[:inboxBatch]
+	}
+	main, err := s.EnsureMain(ctx)
+	if err != nil {
+		slog.Info("coord: 主线暂不可用，收件稍后重试", "pending", len(rows), "err", err)
+		return
+	}
+	items := make([]inboxItem, 0, len(rows))
+	for _, r := range rows {
+		it := inboxItem{Kind: r.Kind, Name: r.SourceName, ThreadID: r.ThreadID, Outcome: r.Outcome, Reply: r.Body}
+		if r.Error != nil {
+			it.Error = *r.Error
+		}
+		if t, err := s.st.Q.GetThread(ctx, r.ThreadID); err == nil {
+			it.Title = t.Title
+			if it.Reply == "" {
+				// 回合结束时没拿到回复文本（控制面重启、没看到 agent_end）：按转录补
+				it.Reply, _ = s.lastAssistantText(ctx, t, inboxReplyMax)
+			}
+		}
+		items = append(items, it)
+	}
+	text := fmt.Sprintf("%s %d result(s).\n", inboxStatusHeader, len(items)) + wrapUntrusted("", map[string]any{"items": items})
+	if _, err := s.th.Deliver(ctx, main.ID, threads.AutoMessage{Text: text}, nil); err != nil {
+		slog.Info("coord: 主线收件投递失败，稍后重试", "pending", len(rows), "err", err)
+		return
+	}
+	now := s.nowMs()
+	for _, r := range rows {
+		if err := s.st.Q.MarkAssistantInboxDelivered(ctx, db.MarkAssistantInboxDeliveredParams{DeliveredAt: &now, ID: r.ID}); err != nil {
+			slog.Warn("coord: 标记主线收件已投递失败", "inbox", r.ID, "err", err)
+		}
+	}
+	if s.sentInbox != nil {
+		s.sentInbox(main.ID, text)
+	}
+	if more {
+		s.armInbox()
+	}
+}
+
+// retryInbox 是 Run 循环的收件维护：丢弃超过 inboxMaxAge 仍未投递的（记日志）、删除早已投递的，然后在没有待发的
+// 合并定时器时重试投递。
+func (s *Service) retryInbox(ctx context.Context) {
+	before := s.cfg.Now().Add(-inboxMaxAge).UnixMilli()
+	stale, err := s.st.Q.DeleteStaleAssistantInbox(ctx, before)
+	if err != nil && ctx.Err() == nil {
+		slog.Warn("coord: 清理过期主线收件失败", "err", err)
+	}
+	for _, r := range stale {
+		slog.Warn("coord: 主线收件超过 24 小时未能投递，已丢弃", "inbox", r.ID, "kind", r.Kind, "source", r.SourceID, "thread", r.ThreadID)
+	}
+	if _, err := s.st.Q.DeleteDeliveredAssistantInbox(ctx, &before); err != nil && ctx.Err() == nil {
+		slog.Warn("coord: 删除已投递的主线收件失败", "err", err)
+	}
+	s.mu.Lock()
+	armed := s.inbox.stop != nil
+	s.mu.Unlock()
+	if !armed {
+		s.flushInbox(ctx)
+	}
 }

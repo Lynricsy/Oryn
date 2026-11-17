@@ -518,13 +518,15 @@ ORDER BY gt.created_at, gt.id;
 SELECT * FROM github_triggers WHERE id = @id;
 
 -- name: InsertGithubTrigger :exec
-INSERT INTO github_triggers (id, project_id, name, event, label, prompt, enabled, announce, created_at, updated_at)
-VALUES (@id, @project_id, @name, @event, sqlc.narg(label), @prompt, @enabled, @announce, @created_at, @updated_at);
+INSERT INTO github_triggers (id, project_id, name, event, label, prompt, enabled, announce, hand_to_assistant,
+                             created_at, updated_at)
+VALUES (@id, @project_id, @name, @event, sqlc.narg(label), @prompt, @enabled, @announce, @hand_to_assistant,
+        @created_at, @updated_at);
 
 -- name: UpdateGithubTrigger :exec
 UPDATE github_triggers
 SET name = @name, event = @event, label = sqlc.narg(label), prompt = @prompt, enabled = @enabled, announce = @announce,
-    updated_at = @updated_at
+    hand_to_assistant = @hand_to_assistant, updated_at = @updated_at
 WHERE id = @id;
 
 -- name: DeleteGithubTrigger :execrows

@@ -660,8 +660,10 @@ func (s *Service) settle(ctx context.Context, run db.ScheduleRun, threadID strin
 		if err := s.st.Q.SetScheduleFailures(ctx, db.SetScheduleFailuresParams{ID: run.ScheduleID, Failures: 0}); err != nil {
 			slog.Warn("schedule: 清零失败次数失败", "schedule", run.ScheduleID, "err", err)
 		}
+		s.handOff(ctx, run.ScheduleID, threadID, "completed", ev, "")
 	case threads.TurnAborted:
 		s.finishRun(ctx, run.ScheduleID, run.ID, runFailed, "aborted")
+		s.handOff(ctx, run.ScheduleID, threadID, "aborted", ev, "aborted")
 	case threads.TurnError:
 		reason := ev.Error
 		if reason == "" {
@@ -675,9 +677,26 @@ func (s *Service) settle(ctx context.Context, run db.ScheduleRun, threadID strin
 		}
 		s.finishRun(ctx, run.ScheduleID, run.ID, runFailed, reason)
 		s.countFailure(ctx, run.ScheduleID)
+		s.handOff(ctx, run.ScheduleID, threadID, "failed", ev, reason)
 	default:
 		s.finishRun(ctx, run.ScheduleID, run.ID, runFailed, "outcome_unknown")
 	}
+}
+
+// handOff 把开着“交给助手”的 new_thread 运行的结果交给 Config.HandOff（M19 步骤 3.3）。
+func (s *Service) handOff(ctx context.Context, scheduleID, threadID, outcome string, ev threads.TurnEvent, errText string) {
+	if s.cfg.HandOff == nil || threadID == "" {
+		return
+	}
+	sc, err := s.st.Q.GetSchedule(ctx, scheduleID)
+	if err != nil || sc.Mode != ModeNewThread || sc.HandToAssistant == 0 {
+		return
+	}
+	h := HandOff{Kind: "schedule", SourceID: sc.ID, SourceName: sc.Name, ThreadID: threadID, Outcome: outcome, Error: errText}
+	if ev.HasText {
+		h.Text = ev.Text
+	}
+	s.cfg.HandOff(ctx, h)
 }
 
 // tryRecovered 用转录推断恢复运行的终态（补充契约 C1.6）：推断得出就结算；推断不出（转录复制没赶上、回合未结束）

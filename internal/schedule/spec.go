@@ -122,6 +122,9 @@ func Validate(in Input, now time.Time) (Input, *time.Location, error) {
 			norm.OrbType != "" || norm.Overlap != "" || norm.Model != nil || norm.KeepLast != nil {
 			return Input{}, nil, invalid("projectId, spaceId, model, thinkingLevel, provider, orbType, overlap and keepLast are only for mode new_thread")
 		}
+		if norm.HandToAssistant != nil && *norm.HandToAssistant {
+			return Input{}, nil, invalid("handToAssistant is only for mode new_thread")
+		}
 	case ModeNewThread:
 		if norm.ThreadID != "" {
 			return Input{}, nil, invalid("threadId is only for mode thread")

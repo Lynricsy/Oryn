@@ -89,6 +89,9 @@ func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) thre
 	case ToolUpdateNotes:
 		// M19 3.2：主线专属（toolUpdateNotes 自己核对是主线）
 		v, err = s.toolUpdateNotes(ctx, tc)
+	case ToolStaySilent:
+		// M19 3.3：主线专属（toolStaySilent 自己核对是主线）
+		v, err = s.toolStaySilent(ctx, tc)
 	case ToolRecallMemory, ToolSearchHistory, ToolRecallEngineering, ToolRemember:
 		// 记忆工具只属于助手记忆正在运行的全局助手
 		return s.toolMemory(ctx, tc)
@@ -637,6 +640,8 @@ type setScheduleArgs struct {
 	OrbType       string `json:"orbType"`
 	Overlap       string `json:"overlap"`
 	KeepLast      *int   `json:"keepLast"`
+	// HandToAssistant 仅全局助手（M19 步骤 3.3）：new_thread 的运行结果交给主线
+	HandToAssistant *bool `json:"handToAssistant"`
 }
 
 func (s *Service) toolSetSchedule(ctx context.Context, c toolCtx) (any, error) {
@@ -768,6 +773,10 @@ func (s *Service) putSchedule(ctx context.Context, c toolCtx, a setScheduleArgs,
 	in := schedule.Input{
 		Name: a.Name, Kind: a.Kind, Cron: a.Cron, Every: a.Every, Timezone: a.Timezone, Prompt: a.Prompt,
 		At: a.At, EndsAt: a.EndsAt, Enabled: a.Enabled, Mode: mode,
+	}
+	if c.Kind == threads.KindAssistant {
+		// 交给助手只给全局助手；thread 模式带 true 由 Validate 拒绝（invalid_schedule）
+		in.HandToAssistant = a.HandToAssistant
 	}
 	switch mode {
 	case string(apigen.ScheduleModeThread):

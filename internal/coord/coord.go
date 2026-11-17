@@ -144,6 +144,9 @@ type Service struct {
 	// mainID / mainEp 是主线 id 与当前一段的计数和静止定时器（M19；Observer 回调据此识别主线，不读库）。
 	mainID string
 	mainEp mainEpisode
+	// inbox 是主线收件（交给助手的运行结果）的合并定时器（M19 步骤 3.3，mu 保护）；inboxMu 串行化投递。
+	inbox   inboxState
+	inboxMu sync.Mutex
 	wake      chan struct{}
 	// confirmers 是确认卡动作 → 主人批准后的执行函数（onConfirm 在 New 里登记，之后只读）。
 	confirmers map[string]confirmExec
@@ -154,6 +157,8 @@ type Service struct {
 	afterReport func(threadID string)
 	// afterEpisode（仅测试）在主线一段结束、调用 RefreshAgent 之前调用（reason 为 idle / turns）。
 	afterEpisode func(threadID, reason string)
+	// sentInbox（仅测试）在一条合并的收件消息投递成功、标记已投递之后调用。
+	sentInbox func(mainID, text string)
 	// afterSend（仅测试）在 send_message 的 Deliver 成功返回之后、释放 repMu 之前调用。
 	afterSend func()
 	// sentReport（仅测试）在一条回报投递成功之后调用（持 repMu）。
@@ -217,6 +222,8 @@ func (s *Service) Run(ctx context.Context) {
 	defer trim.Stop()
 	sweep := time.NewTicker(confirmSweepEvery)
 	defer sweep.Stop()
+	inbox := time.NewTicker(inboxRetryEvery)
+	defer inbox.Stop()
 	for {
 		s.processReports(ctx)
 		select {
@@ -227,6 +234,8 @@ func (s *Service) Run(ctx context.Context) {
 			s.trimActions(ctx)
 		case <-sweep.C:
 			s.expireConfirmations(ctx)
+		case <-inbox.C:
+			s.retryInbox(ctx)
 		}
 	}
 }

@@ -127,6 +127,11 @@ func (s *Service) queueStartupFrameLocked(t *thread, f json.RawMessage, hold boo
 	// 「未送达」重排时从原帧 f 再取一次，交给新的未决命令。
 	tag, frame := takeTag(f)
 	p := &pendingCmd{cmdType: typ, tag: tag}
+	if tag != "" {
+		// 带投递标签的首条提示词只来自自动化（定时、GitHub 触发规则建的线程）：记为自动化来源，
+		// 完成通知据此判断这段活动是否“交给助手”（M19 步骤 3.3）
+		p.origin = originAuto
+	}
 	p.after = func(t *thread, env omprpc.Envelope, _ json.RawMessage) {
 		if undelivered(env) {
 			// 标签随原帧转给重排的命令：这一条不结算

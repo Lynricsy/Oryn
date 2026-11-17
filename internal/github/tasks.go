@@ -12,6 +12,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/egress"
 	"github.com/Lynricsy/Oryn/internal/ids"
+	"github.com/Lynricsy/Oryn/internal/schedule"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
 )
@@ -408,9 +409,43 @@ type turnObserver struct{ s *Service }
 var _ threads.Observer = turnObserver{}
 
 func (o turnObserver) TurnEnded(ev threads.TurnEvent) {
-	if strings.HasPrefix(ev.Tag, turnTagPrefix) && ev.Status == threads.TurnCompleted {
+	if !strings.HasPrefix(ev.Tag, turnTagPrefix) {
+		return
+	}
+	if ev.Status == threads.TurnCompleted {
 		o.s.OnTurnEnded(ev.ThreadID)
 	}
+	if !ev.Local && o.s.cfg.HandOff != nil {
+		if !o.s.enqueue(func(ctx context.Context) { o.s.handOff(ctx, ev) }) {
+			slog.Warn("github: 任务队列已满，跳过交给助手", "thread", ev.ThreadID)
+		}
+	}
+}
+
+// handOff 把开着“交给助手”的触发规则线程的一个回合结果交给 Config.HandOff（M19 步骤 3.3）。
+func (s *Service) handOff(ctx context.Context, ev threads.TurnEvent) {
+	trig, ok, err := s.threadRule(ctx, ev.ThreadID)
+	if err != nil || !ok || trig.HandToAssistant == 0 {
+		return
+	}
+	h := schedule.HandOff{Kind: "trigger", SourceID: trig.ID, SourceName: trig.Name, ThreadID: ev.ThreadID}
+	switch ev.Status {
+	case threads.TurnCompleted:
+		h.Outcome = "completed"
+	case threads.TurnAborted:
+		h.Outcome, h.Error = "aborted", "aborted"
+	case threads.TurnError:
+		h.Outcome, h.Error = "failed", ev.Error
+		if h.Error == "" {
+			h.Error = "thread_error"
+		}
+	default:
+		h.Outcome, h.Error = "failed", "outcome_unknown"
+	}
+	if ev.HasText {
+		h.Text = ev.Text
+	}
+	s.cfg.HandOff(ctx, h)
 }
 
 // StateChanged 只看「离开 working」：agent 已收到本回合全部工具结果、回合结束（转为 idle、awaiting_input 或 error）。
