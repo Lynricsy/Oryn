@@ -222,8 +222,8 @@ func TestCoordinatorAgentStart(t *testing.T) {
 	const thread2 = "T-01932f6e-8d1a-7c3b-9f2e-0123456789ac"
 	dump2 := filepath.Join(rt.home, "dump2.json")
 	prompt2 := "#dump " + dump2 + "\nYou are the Oryn assistant.\nKeep replies short."
-	web := true
-	p2 := apigen.LinkCtlAgentStartParams{ThreadID: thread2, SessionDir: "~/.oryn/threads/" + thread2, Profile: &coord, SystemPrompt: &prompt2, Web: &web}
+	web, mcpTok := true, "mcp-secret-token"
+	p2 := apigen.LinkCtlAgentStartParams{ThreadID: thread2, SessionDir: "~/.oryn/threads/" + thread2, Profile: &coord, SystemPrompt: &prompt2, Web: &web, McpToken: &mcpTok}
 	p2.InitFrames = []apigen.OmpFrame{{"type": "open_session", "sessionDir": "~/.oryn/threads/" + thread2}}
 	require.NoError(t, cp.call(t, "agent.start", p2, &res))
 	cp.waitNotif(t, 0, "agent.status", statusIs(thread2, "ready"))
@@ -239,6 +239,10 @@ func TestCoordinatorAgentStart(t *testing.T) {
 	egress := "http://" + rt.egressLn.Addr().String()
 	assert.Equal(t, egress, rec.Env["PI_PROXY"])
 	assert.Equal(t, egress, rec.Env["ORYN_MCP_BASE"])
+	assert.Equal(t, mcpTok, rec.Env["ORYN_MCP_TOKEN"])
+	for _, a := range rec.Args {
+		assert.NotContains(t, a, mcpTok, "凭据不进 argv")
+	}
 	ov, err = os.ReadFile(webOverlay)
 	require.NoError(t, err)
 	assert.Equal(t, coordinatorOverlay(true), string(ov))

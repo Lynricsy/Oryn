@@ -47,6 +47,9 @@ type Config struct {
 	PublicURL string
 	// AfterFunc 默认 time.AfterFunc（M19 主线的静止定时器）；测试注入以手动触发。
 	AfterFunc func(d time.Duration, f func()) (stop func())
+	// MCPToken 是协调宿主 /mcp/ 路由的凭据（M19 D10，与 orbs.DefaultSetup.CoordinatorMCPToken 相同）：只放进全局助手的
+	// AgentProfile；空 = 全局助手也用不了 MCP。
+	MCPToken string
 }
 
 // Scheduler 是定时服务（*schedule.Service 实现）。

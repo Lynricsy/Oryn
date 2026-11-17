@@ -213,6 +213,10 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 		if prof.Web {
 			web := true
 			params.Web = &web
+			if prof.MCPToken != "" {
+				tok := prof.MCPToken
+				params.McpToken = &tok
+			}
 		}
 	}
 	t.mu.Unlock()

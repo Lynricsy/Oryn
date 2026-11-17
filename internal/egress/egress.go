@@ -23,6 +23,7 @@ package egress
 import (
 	"bytes"
 	"cmp"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -65,6 +66,9 @@ type Policy struct {
 	Web *WebPolicy
 	// MCP 是 MCP 路由键 → 路由（`/mcp/<key>/…`，M19）。
 	MCP map[string]MCPRoute
+	// MCPToken 是 /mcp/ 路由要求的凭据（请求头 MCPTokenHeader，M19 D10）：只有全局助手的 agent 持有，Space 协调者
+	// 没有；为空时 /mcp/ 一律 403。转发前去掉该头。
+	MCPToken string
 }
 
 // GitHubAccess 是 orb 的 GitHub 访问：非 nil 时放行 `/gh/api.github.com/…`、`/gh/uploads.github.com/…`；
@@ -260,6 +264,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			pr.Out.URL.RawPath = t.url.RawPath
 			pr.Out.Host = t.url.Host
 			pr.Out.Header.Del("X-Forwarded-For")
+			pr.Out.Header.Del(MCPTokenHeader)
 			if t.auth != "" {
 				pr.Out.Header.Set("Authorization", t.auth)
 			}
@@ -420,6 +425,11 @@ func (h *Handler) resolve(r *http.Request) (target, int) {
 		}, http.StatusOK
 	case "mcp":
 		// MCP（M19）：主人配置的地址可以是内网，按普通方式拨号；请求路径在 /mcp/<key> 之后的部分追加到上游路径之后。
+		// 先核对只有全局助手持有的凭据（D10）：任何方法、任何子路径（含 SSE 的 GET）都要带对，否则 403，不暴露路由是否存在。
+		got := r.Header.Get(MCPTokenHeader)
+		if pol.MCPToken == "" || subtle.ConstantTimeCompare([]byte(got), []byte(pol.MCPToken)) != 1 {
+			return target{deny: "MCP 只对全局助手开放"}, http.StatusForbidden
+		}
 		rt, ok := pol.MCP[parts[1]]
 		if !ok {
 			return target{}, http.StatusNotFound

@@ -10401,6 +10401,11 @@ export interface components {
              *     只给全局助手的对话；Space 协调者省略（= false），工具与环境同 M19 之前（D10）。只有协调宿主接受。
              */
             web?: boolean;
+            /**
+             * @description M19：协调宿主 /mcp/ 路由的凭据，只在 `web` 为真时生效：orbd 以环境变量 `ORYN_MCP_TOKEN` 交给该 agent，mcp.json 的
+             *     `X-Oryn-MCP-Token` 请求头引用它，出站代理逐个请求核对（D10：Space 协调者没有它，直接请求 /mcp/ 一律 403）。只有协调宿主接受。
+             */
+            mcpToken?: string;
             memory?: components["schemas"]["LinkCtlAgentMemory"];
         };
         LinkCtlAgentStartResult: {

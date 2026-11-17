@@ -27,6 +27,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/coordhost"
 	"github.com/Lynricsy/Oryn/internal/desktop"
 	"github.com/Lynricsy/Oryn/internal/github"
+	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/jobs"
 	"github.com/Lynricsy/Oryn/internal/library"
 	"github.com/Lynricsy/Oryn/internal/link"
@@ -182,10 +183,13 @@ func (s *Server) init(ctx context.Context) error {
 			return err
 		}
 	}
+	// 协调宿主 /mcp/ 路由的凭据（M19 D10）：每次启动随机生成，只交给全局助手的 agent（协调宿主随 orynd 一起重启）
+	mcpToken := ids.Token("mcp")
 	setup := &orbs.DefaultSetup{
 		Store: s.Store, Home: s.Home, Vault: s.Vault, Projects: s.ProjectHomes,
 		CoordinatorEgressAddr: fmt.Sprintf("127.0.0.1:%d", cfg.Coordinator.EgressPort),
 		CoordinatorWebAllow:   lowerAll(cfg.Coordinator.WebAllowHosts),
+		CoordinatorMCPToken:   mcpToken,
 	}
 	s.Orbs = orbs.New(orbs.Config{
 		Idle: cfg.Idle, Defaults: cfg.OrbDefaults, PublicURL: cfg.PublicURL, TokenKey: key, EvalInterval: evalInterval,
@@ -279,7 +283,7 @@ func (s *Server) init(ctx context.Context) error {
 		// M19 3.3：交给助手的运行结果进主线（coord 晚于 schedule 构造，用闭包）
 		HandOff: func(ctx context.Context, h schedule.HandOff) { s.Coord.PostToMain(ctx, h) },
 	}, s.Store, s.Threads, s.Orbs, s.Notify)
-	s.Coord = coord.New(coord.Config{Now: scheduleNow, AfterFunc: scheduleAfterFunc, Model: cfg.Coordinator.Model, PublicURL: cfg.PublicURL},
+	s.Coord = coord.New(coord.Config{Now: scheduleNow, AfterFunc: scheduleAfterFunc, Model: cfg.Coordinator.Model, PublicURL: cfg.PublicURL, MCPToken: mcpToken},
 		s.Store, s.Threads, s.Orbs, s.Host, s.Schedules)
 	s.Coord.SetLibrary(s.Library, s.LibrarySync)
 	s.Coord.SetArtifacts(s.Artifacts)
