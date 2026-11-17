@@ -2,6 +2,8 @@
  * 「助手」分区侧栏（M9.6）：会话按最近活动排列、未读点；首行「新对话」（协调宿主不可用时禁用并提示）；
  * 归档当前对话后回到 /assistant（按完成那一刻的路由判断）；链接的 textContent 只等于标题；「已归档」折叠组按
  * kind=assistant 拉取，归档后立即同步。
+ * M19：最上面是主线的置顶行（助手的名字与头像、未读点），主线不在对话列表里；索引里还没有主线时调一次
+ * `GET assistant/main` 让服务端建出来（协调宿主不可用时不调）。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -41,6 +43,8 @@ function Where() {
 }
 
 let available = true;
+/** 助手身份的名字（`GET settings/assistant-identity`）；空串 = 没设 */
+let assistantName = "";
 const requests: { method: string; url: URL; body?: unknown }[] = [];
 /** 非空时，下一个 PATCH 先等它放行（手动 resolve）。 */
 let holdPatch: Promise<void> | null = null;
@@ -76,6 +80,7 @@ const newButton = () => screen.getByRole("button", { name: "新对话" });
 
 beforeEach(() => {
 	available = true;
+	assistantName = "";
 	holdPatch = null;
 	archivedNow.length = 0;
 	requests.length = 0;
@@ -110,6 +115,18 @@ beforeEach(() => {
 						? { available: true }
 						: { available: false, reason: "缺 omp" },
 				);
+			if (url.pathname === "/api/v1/settings/assistant-identity")
+				return Response.json(assistantName ? { name: assistantName } : {});
+			if (url.pathname === "/api/v1/assistant/main")
+				return Response.json({
+					thread: th("M-main", {
+						title: "Main",
+						titleSource: "user",
+						main: true,
+						unread: true,
+						lastMessageAt: 60,
+					}),
+				});
 			if (url.pathname === "/api/v1/assistant/conversations")
 				return Response.json(
 					{ thread: th("A-created", { title: "", lastMessageAt: 50 }) },
@@ -153,7 +170,15 @@ afterEach(() => {
 const convLinks = () =>
 	within(pane())
 		.getAllByRole("link")
-		.filter((a) => a.getAttribute("href")?.startsWith("/assistant/"));
+		.filter(
+			(a) =>
+				a.getAttribute("href")?.startsWith("/assistant/") &&
+				a.dataset.testid !== "assistant-main-row" &&
+				a.dataset.testid !== "assistant-computer-row",
+		);
+const mainRow = () => screen.getByTestId("assistant-main-row");
+const mainRequests = () =>
+	requests.filter((r) => r.url.pathname === "/api/v1/assistant/main");
 
 describe("AssistantPane", () => {
 	it("只列未归档的助手对话、最近活动在前；链接文字只等于标题；未读的带未读点", () => {
@@ -175,9 +200,46 @@ describe("AssistantPane", () => {
 		expect(links[2]).toHaveAttribute("aria-current", "page");
 	});
 
-	it("没有分区标题行：第一行就是「新对话」", () => {
+	it("没有分区标题行：第一行是主线，其下是「助手的电脑」，再下是「新对话」", async () => {
 		mount();
-		expect(pane().firstElementChild).toBe(newButton());
+		await waitFor(() => expect(pane().firstElementChild).toBe(mainRow()));
+		const computerRow = screen.getByTestId("assistant-computer-row");
+		expect(mainRow().nextElementSibling).toBe(computerRow);
+		expect(computerRow).toHaveAttribute("href", "/assistant/computer");
+		expect(computerRow).toHaveTextContent("助手的电脑");
+		expect(computerRow.nextElementSibling).toBe(newButton());
+	});
+
+	it("主线：索引里没有时调一次 GET assistant/main；置顶行带助手的名字与未读点，不在对话列表里", async () => {
+		assistantName = "小管家";
+		mount();
+		await waitFor(() => expect(mainRow()).toHaveTextContent("小管家"));
+		expect(mainRequests()).toHaveLength(1);
+		expect(mainRow()).toHaveAttribute("href", "/assistant/M-main");
+		expect(within(mainRow()).getByRole("img", { name: "未读" })).toBeTruthy();
+		expect(convLinks().map((a) => a.getAttribute("href"))).not.toContain(
+			"/assistant/M-main",
+		);
+	});
+
+	it("主线：没设名字时用「全局助手」；已在索引里时不请求", async () => {
+		indexStore
+			.getState()
+			.upsertThread(
+				th("M-main", { title: "Main", main: true, lastMessageAt: 60 }),
+			);
+		mount();
+		expect(mainRow()).toHaveTextContent("全局助手");
+		await waitFor(() => expect(newButton()).toBeEnabled());
+		expect(mainRequests()).toHaveLength(0);
+	});
+
+	it("主线：协调宿主不可用时不建", async () => {
+		available = false;
+		mount();
+		await waitFor(() => expect(newButton()).toBeDisabled());
+		expect(mainRequests()).toHaveLength(0);
+		expect(screen.queryByTestId("assistant-main-row")).toBeNull();
 	});
 
 	it("新建：创建后跳到新对话、列表多一行", async () => {

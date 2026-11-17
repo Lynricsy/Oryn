@@ -1,7 +1,7 @@
 /**
  * mock 的全局助手设置（M19，与控制面同形）：`GET / PUT /settings/assistant` 与 `GET /assistant/mcp-servers`。
  * 全局 `mcp.json` 用内置的四台服务器代替：两台可用（HTTP / SSE），一台 stdio、一台需要 OAuth；
- * `enabled` 随禁用表变化。PUT 的校验与去重同服务端。
+ * `enabled` 随禁用表变化。PUT 的校验与去重同服务端。主线备忘 `GET / PUT /assistant/main/notes` 也在这里（上限同服务端）。
  */
 import type { Schemas } from "../api/client";
 
@@ -10,6 +10,7 @@ type McpServer = Schemas["AssistantMcpServer"];
 
 const MAX_DISABLED = 200;
 const MAX_NAME = 200;
+const MAX_NOTES = 1500;
 
 /** 全局 `mcp.json` 解析后的服务器（按名字排序，同服务端）。 */
 export const MOCK_MCP_SERVERS: readonly Omit<McpServer, "enabled">[] = [
@@ -51,6 +52,11 @@ export class MockAssistant {
 		disabledMcpServers: [],
 		computer: {},
 	};
+	/** 主线备忘（M19）：`GET / PUT /assistant/main/notes`，上限 1500 个 Unicode 字符。 */
+	notes: Schemas["AssistantNotes"] = {
+		text: "- 主人早上 9 点前不看消息，简报放到 9 点后\n- 周五提醒写周报",
+		updatedAt: Date.now() - 2 * 3600_000,
+	};
 
 	async handle(req: Request, p: string, m: string): Promise<Response | null> {
 		if (p === "settings/assistant") {
@@ -65,6 +71,16 @@ export class MockAssistant {
 					enabled: !this.settings.disabledMcpServers.includes(s.name),
 				})),
 			});
+		if (p === "assistant/main/notes") {
+			if (m === "GET") return json(this.notes);
+			if (m !== "PUT") return null;
+			const b = (await req.json()) as Schemas["AssistantNotes"];
+			const text = typeof b.text === "string" ? b.text : "";
+			if ([...text].length > MAX_NOTES)
+				return invalid(`notes must be at most ${MAX_NOTES} characters`);
+			this.notes = { text, updatedAt: Date.now() };
+			return json(this.notes);
+		}
 		return null;
 	}
 

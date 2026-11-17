@@ -97,6 +97,16 @@ describe("通知 store", () => {
 		expect(s().unread).toBe(1);
 	});
 
+	it("正停在该助手对话页 /assistant/<id> 时同样不弹 toast；停在别的对话上照弹（M19）", () => {
+		history.replaceState(null, "", `/assistant/${TID}`);
+		s().onNotification(note());
+		expect(s().toasts).toEqual([]);
+		history.replaceState(null, "", "/assistant/T-other");
+		s().onNotification(note({ id: "b" }));
+		expect(s().toasts.map((n) => n.id)).toEqual(["b"]);
+		expect(s().unread).toBe(2);
+	});
+
 	it("同一条通知重复到达只算一次", () => {
 		const n = note();
 		s().onNotification(n);

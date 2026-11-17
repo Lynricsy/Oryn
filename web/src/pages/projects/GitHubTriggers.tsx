@@ -103,6 +103,8 @@ interface TriggerForm {
 	maxDurationMin: string;
 	completionReminders: boolean;
 	releasePrefix: string;
+	/** 运行结果交给助手（M19）：进主线，完成时不单独通知 */
+	handToAssistant: boolean;
 }
 
 /** 已有规则或预设 → 表单；都没有时是新建规则的默认值。 */
@@ -124,6 +126,7 @@ function formOf(src?: GitHubTriggerInput): TriggerForm {
 		maxDurationMin: src?.maxDurationSec ? String(src.maxDurationSec / 60) : "",
 		completionReminders: src?.completionReminders ?? false,
 		releasePrefix: src?.releasePrefix ?? DEFAULT_RELEASE_PREFIX,
+		handToAssistant: src?.handToAssistant ?? false,
 	};
 }
 
@@ -146,6 +149,7 @@ function bodyOf(f: TriggerForm): GitHubTriggerInput {
 		autocloseHours: Number(f.autocloseHours),
 		maxDurationSec: f.maxDurationMin.trim() ? Math.round(minutes * 60) : 0,
 		completionReminders: f.completionReminders,
+		handToAssistant: f.handToAssistant,
 		...(f.event === "workflow_run_completed"
 			? { releasePrefix: f.releasePrefix }
 			: {}),
@@ -664,6 +668,14 @@ export function TriggerDialog({
 				/>
 				<p className="-mt-2 text-faint text-xs">
 					{t("github.triggers.completionRemindersHint")}
+				</p>
+				<Toggle
+					checked={f.handToAssistant}
+					onChange={(v) => set("handToAssistant", v)}
+					label={t("github.triggers.handToAssistant")}
+				/>
+				<p className="-mt-2 text-faint text-xs">
+					{t("github.triggers.handToAssistantHint")}
 				</p>
 				<div className="grid gap-3 sm:grid-cols-2">
 					<Field

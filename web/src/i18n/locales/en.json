@@ -3990,6 +3990,9 @@
 		"nameOptional": "Name (optional)",
 		"nameHint": "Unique within the project; also prefixes new thread titles",
 		"nameOptionalHint": "Defaults to the thread title",
+		"mainNameHint": "The main conversation can have several reminders; names tell them apart",
+		"handToAssistant": "Hand to the assistant",
+		"handToAssistantHint": "Each run's result goes to the global assistant, which decides in the main conversation whether to tell you; no separate notification when a run completes.",
 		"nameTaken": "This project already has a schedule with that name",
 		"project": "Project",
 		"model": "Model: {{model}}",
@@ -4117,6 +4120,33 @@
 			"rejected": "Declined by you · {{action}} {{target}}",
 			"failed": "Confirmed but failed ({{error}}) · {{action}} {{target}}",
 			"expired": "Confirmation expired · {{action}} {{target}}"
+		},
+		"automation_one": "{{count}} run result · handed to the assistant",
+		"automation_other": "{{count}} run results · handed to the assistant",
+		"outcome": {
+			"completed": "Completed",
+			"failed": "Failed",
+			"error": "Error",
+			"aborted": "Aborted",
+			"needs_input": "Needs you",
+			"unknown": "Unknown"
+		}
+	},
+	"mainline": {
+		"behind": "Behind the scenes · {{source}}",
+		"silent": "The assistant looked and didn't disturb you",
+		"silentReason": "The assistant looked and didn't disturb you: {{reason}}",
+		"continue": "Continue in a new conversation",
+		"notes": {
+			"title": "Notes",
+			"hint": "The assistant reads these notes at the start of every stretch and rewrites them itself.",
+			"tooLong": "Over {{limit}} characters — shorten it before saving"
+		},
+		"reminders": {
+			"title": "Reminders",
+			"hint": "Reminders on the main conversation; when one is due, the assistant tells you here.",
+			"new": "New reminder",
+			"empty": "No reminders yet"
 		}
 	},
 	"sections": {
@@ -4124,7 +4154,8 @@
 	},
 	"assistantPane": {
 		"empty": "No conversations yet",
-		"archiveOne": "Archive “{{title}}”"
+		"archiveOne": "Archive “{{title}}”",
+		"computer": "Assistant's computer"
 	},
 	"projectsPane": {
 		"filterThreads": "Show only threads in {{name}}",
@@ -4590,6 +4621,8 @@
 			"commentOnlyReviewsHint": "APPROVE and REQUEST_CHANGES reviews are refused.",
 			"completionReminders": "Completion reminders",
 			"completionRemindersHint": "If the task hasn't moved on when a turn ends, remind the agent to continue (at most twice).",
+			"handToAssistant": "Hand to the assistant",
+			"handToAssistantHint": "The task's result goes to the global assistant, which decides in the main conversation whether to tell you; no separate notification on completion.",
 			"autocloseHours": "Auto-close wait (hours)",
 			"autocloseHoursHint": "After the agent schedules an auto-close, the issue closes if its author hasn't reacted 👎 by then.",
 			"maxDuration": "Time limit (minutes)",

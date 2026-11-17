@@ -1,22 +1,29 @@
 /**
  * 「助手」分区侧栏：全局助手的会话列表。不设分区标题行（底栏选中态已表明分区）。
- * 首行「新对话」（协调宿主不可用时禁用，下面一条警告）；会话行 = 状态图标 + 标题 + 未读点或相对时间，悬停 / 聚焦时
- * 行尾出现归档按钮；末尾折叠组「已归档」展开才拉取。链接的 textContent 只等于标题（时间走 `data-time` 伪元素）。
+ * 最上面是主线（M19）的置顶行：助手的头像与名字（没设名字用「全局助手」）+ 未读点或相对时间；索引加载完、协调宿主可用
+ * 而索引里还没有主线时，调一次 `GET assistant/main` 让服务端建出来。其下是「新对话」（协调宿主不可用时禁用，下面一条警告）；
+ * 会话行 = 状态图标 + 标题 + 未读点或相对时间，悬停 / 聚焦时行尾出现归档按钮；末尾折叠组「已归档」展开才拉取。
+ * 链接的 textContent 只等于标题（时间走 `data-time` 伪元素）。主线不在对话列表里。主线行下面是「助手的电脑」（M19，`/assistant/computer`）。
  */
 import { useQuery } from "@tanstack/react-query";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink, useNavigate } from "react-router";
 import { api, type Thread, unwrap } from "../../api/client";
 import { useCoordinatorStatus } from "../../api/coordinator-queries";
+import { useAssistantIdentity } from "../../api/identity-queries";
 import { createAssistantConversation } from "../../api/space-queries";
 import {
 	archivedAssistantKey,
+	ensureAssistantMain,
 	useArchiveAssistantConversation,
 	useAssistantConversations,
+	useAssistantMain,
 } from "../../lib/assistant-conversations";
 import { formatRelative } from "../../lib/format";
 import { parseTitleCard } from "../../lib/title";
+import { useIndex } from "../../state/stores";
+import { AssistantMark } from "../assistant/AssistantMark";
 import { Callout } from "../ui/data";
 import { Icon } from "../ui/icons";
 import { describeError, IconButton, ThreadStateIcon } from "../ui/primitives";
@@ -79,6 +86,39 @@ function ConversationRow({
 	);
 }
 
+/** 主线的置顶行：助手的头像与名字，未读时是未读点，否则是最近活动的相对时间。 */
+function MainRow({ thread, now }: { thread: Thread; now: number }): ReactNode {
+	const { t } = useTranslation();
+	const { name } = useAssistantIdentity();
+	const stamp = formatRelative(thread.lastMessageAt ?? thread.updatedAt, now);
+	return (
+		<NavLink
+			to={`/assistant/${thread.id}`}
+			onClick={closeOnCompact}
+			data-testid="assistant-main-row"
+			className={NAV_ROW}
+		>
+			<span className="grid h-[22px] w-[22px] shrink-0 place-items-center">
+				<AssistantMark size={20} />
+			</span>
+			<span
+				className={`min-w-0 flex-1 truncate ${thread.unread ? "font-medium" : ""}`}
+			>
+				{name || t("tabBar.assistant")}
+			</span>
+			{thread.unread ? (
+				<UnreadDot />
+			) : (
+				<span
+					aria-hidden
+					data-time={stamp}
+					className="shrink-0 font-normal text-2xs text-faint tabular-nums after:content-[attr(data-time)]"
+				/>
+			)}
+		</NavLink>
+	);
+}
+
 /** 已归档的助手对话：`GET threads` 缺省只列工作线程，这里显式带 `kind=assistant`。 */
 function ArchivedConversations({ now }: { now: number }): ReactNode {
 	const { t } = useTranslation();
@@ -116,6 +156,8 @@ export function AssistantPane(): ReactNode {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const conversations = useAssistantConversations();
+	const main = useAssistantMain();
+	const loaded = useIndex((s) => s.loaded);
 	// 宿主是常驻的侧栏 pane（行归档后即卸载）：完成时按最新路由判断是否回 landing
 	const archive = useArchiveAssistantConversation();
 	const status = useCoordinatorStatus();
@@ -123,6 +165,14 @@ export function AssistantPane(): ReactNode {
 	const [error, setError] = useState<unknown>(null);
 	const [creating, setCreating] = useState(false);
 	const unavailable = status.data?.available === false;
+	const available = status.data?.available === true;
+	// 还没有主线时让服务端建一条（只试一次；失败时侧栏照常，只是没有主线行）
+	const ensured = useRef(false);
+	useEffect(() => {
+		if (!loaded || main || !available || ensured.current) return;
+		ensured.current = true;
+		ensureAssistantMain().catch(() => undefined);
+	}, [loaded, main, available]);
 	const create = () => {
 		setCreating(true);
 		setError(null);
@@ -140,6 +190,20 @@ export function AssistantPane(): ReactNode {
 	};
 	return (
 		<div data-testid="sidebar-assistant" className={PANE_SCROLL}>
+			{main && <MainRow thread={main} now={now} />}
+			<NavLink
+				to="/assistant/computer"
+				onClick={closeOnCompact}
+				data-testid="assistant-computer-row"
+				className={NAV_ROW}
+			>
+				<span className="grid h-[22px] w-[22px] shrink-0 place-items-center">
+					<Icon name="laptop" size={16} aria-hidden className="text-muted" />
+				</span>
+				<span className="min-w-0 flex-1 truncate">
+					{t("assistantPane.computer")}
+				</span>
+			</NavLink>
 			<button
 				type="button"
 				className={`${LIST_ROW} disabled:opacity-50 disabled:hover:bg-transparent`}

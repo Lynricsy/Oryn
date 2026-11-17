@@ -3,9 +3,11 @@
  * - 公共：三段切换（重复 cron / 间隔 / 一次）、cron 预设、时区、截止时间、提示词（列出占位符）、防抖预览接下来 5 次、
  *   启用开关、「立即运行」、「删除」、最近 20 次运行（`new_thread` 的每行带所建线程的链接；失败行显示 `error`）。
  * - `new_thread` 专有：名称（必填）、项目（含「无项目」；`lockProject` 或编辑时只读——目标不可改）、模型与思考级别、
- *   orb 类型（不含 `@host`）、重叠策略、保留数（1–50）。
+ *   orb 类型（不含 `@host`）、重叠策略、保留数（1–50）、「交给助手」（M19：运行结果进主线，完成时不单独通知）。
  * 保存：新建走 `POST schedules`（线程内定时走 `PUT threads/{id}/schedule`），编辑走 `PUT schedules/{id}`；
  * 409 `schedule_name_taken` 标在名称框上。
+ * - 主线（M19）：目标线程是主线时可有多条提醒，按 id 管理——名称必填，新建走 `POST schedules`（`mode: "thread"`），
+ *   编辑走 `PUT schedules/{id}`，不用按线程取单条定时的接口（服务端对主线回 409）。
  *
  * M9 审查修复：
  * - 版本条件（W1）：打开时记下定义版本 `baseRev`，保存带 `ifRev`（线程内定时此前没有时为 0）。编辑期间查询刷新带来
@@ -137,6 +139,8 @@ interface FormState {
 	executor: string;
 	overlap: Schemas["ScheduleOverlap"];
 	keepLast: number;
+	/** 运行结果交给助手（只用于 `new_thread`） */
+	handToAssistant: boolean;
 }
 
 function initialState(
@@ -171,6 +175,7 @@ function initialState(
 				: (existing?.provider ?? ""),
 		overlap: existing?.overlap ?? "skip",
 		keepLast: existing?.keepLast ?? 5,
+		handToAssistant: existing?.handToAssistant ?? false,
 	};
 }
 
@@ -193,11 +198,15 @@ function timing(s: FormState): ScheduleInput {
 	};
 }
 
-/** 表单 → 请求体。线程内定时不带 mode / threadId（`PUT threads/{id}/schedule` 隐含）；编辑时目标字段与现值相同。 */
+/**
+ * 表单 → 请求体。线程内定时不带 mode / threadId（`PUT threads/{id}/schedule` 隐含）；主线的提醒走 `/schedules`，
+ * 带 `mode: "thread"`、`threadId` 与必填的名称；编辑时目标字段与现值相同。
+ */
 export function scheduleBody(
 	s: FormState,
 	target: ScheduleTarget,
 	existing: Schedule | undefined,
+	main = false,
 ): ScheduleInput {
 	const base: ScheduleInput = {
 		...timing(s),
@@ -205,7 +214,15 @@ export function scheduleBody(
 		enabled: s.enabled,
 		...(s.name.trim() ? { name: s.name.trim() } : {}),
 	};
-	if (target.mode === "thread") return base;
+	if (target.mode === "thread")
+		return main
+			? {
+					...base,
+					mode: "thread",
+					threadId: target.threadId,
+					name: s.name.trim(),
+				}
+			: base;
 	const slash = s.model.indexOf("/");
 	const exec = s.executor.indexOf("/");
 	const spaceId = existing?.spaceId ?? target.spaceId;
@@ -234,6 +251,7 @@ export function scheduleBody(
 			: {}),
 		overlap: s.overlap,
 		keepLast: Math.min(50, Math.max(1, Math.round(s.keepLast))),
+		handToAssistant: s.handToAssistant,
 	};
 }
 
@@ -305,7 +323,12 @@ export function ScheduleDialog({
 	onClose: () => void;
 }): ReactNode {
 	const { t } = useTranslation();
-	const threadMode = target.mode === "thread";
+	// 主线的提醒按 id 管理（可有多条），不走按线程取单条定时的接口
+	const main = useIndex(
+		(st) =>
+			target.mode === "thread" && st.threads[target.threadId]?.main === true,
+	);
+	const threadMode = target.mode === "thread" && !main;
 	const threadSchedule = useThreadSchedule(
 		threadMode ? target.threadId : "",
 		threadMode,
@@ -377,6 +400,7 @@ export function ScheduleDialog({
 	return (
 		<ScheduleForm
 			target={target}
+			main={main}
 			existing={existing}
 			refreshing={q?.fetching ?? false}
 			onClose={onClose}
@@ -386,11 +410,14 @@ export function ScheduleDialog({
 
 function ScheduleForm({
 	target,
+	main,
 	existing,
 	refreshing,
 	onClose,
 }: {
 	target: ScheduleTarget;
+	/** 目标是主线：名称必填，经 `/schedules` 按 id 新建与保存 */
+	main: boolean;
 	/** 最新的定义（查询刷新后随之更新；表单草稿不跟着变） */
 	existing: Schedule | undefined;
 	/** 定义查询正在重新读取 */
@@ -407,8 +434,10 @@ function ScheduleForm({
 	);
 	const onThinking = useCallback((v: string) => set("thinking", v), [set]);
 	const newThread = target.mode === "new_thread";
-	// 版本：线程内定时「还没有」记作 0（`ifRev: 0` = 只在线程没有定时时新建）；新建「每次新建线程」定时不做版本检查
-	const latestRev = existing?.rev ?? (newThread ? undefined : 0);
+	// 名称必填：每次新建线程的定时与主线的提醒
+	const named = newThread || main;
+	// 版本：线程内定时「还没有」记作 0（`ifRev: 0` = 只在线程没有定时时新建）；按 id 新建的定时不做版本检查
+	const latestRev = existing?.rev ?? (named ? undefined : 0);
 	const [baseRev, setBaseRev] = useState(latestRev);
 	// 保存回了 409 schedule_conflict
 	const [rejected, setRejected] = useState(false);
@@ -484,12 +513,12 @@ function ScheduleForm({
 
 	const save = async (ifRev: number | undefined) => {
 		const body: ScheduleInput = {
-			...scheduleBody(s, target, existing),
+			...scheduleBody(s, target, existing, main),
 			...(ifRev !== undefined ? { ifRev } : {}),
 		};
 		setSubmitting(true);
 		try {
-			if (target.mode === "thread") await putThread.mutateAsync(body);
+			if (target.mode === "thread" && !main) await putThread.mutateAsync(body);
 			else if (existing) await putOne.mutateAsync(body);
 			else await create.mutateAsync(body);
 		} catch (e) {
@@ -522,7 +551,7 @@ function ScheduleForm({
 		!saving &&
 		!conflict &&
 		s.prompt.trim() !== "" &&
-		(!newThread || s.name.trim() !== "") &&
+		(!named || s.name.trim() !== "") &&
 		(s.kind !== "cron" || s.cron.trim() !== "") &&
 		(s.kind !== "once" || fromLocalInput(s.at) !== undefined);
 
@@ -615,13 +644,15 @@ function ScheduleForm({
 					<Callout tone="neutral">{t("schedule.pausedArchived")}</Callout>
 				)}
 				<Field
-					label={newThread ? t("schedule.name") : t("schedule.nameOptional")}
+					label={named ? t("schedule.name") : t("schedule.nameOptional")}
 					hint={
 						nameTaken
 							? undefined
 							: newThread
 								? t("schedule.nameHint")
-								: t("schedule.nameOptionalHint")
+								: main
+									? t("schedule.mainNameHint")
+									: t("schedule.nameOptionalHint")
 					}
 				>
 					<TextInput
@@ -871,6 +902,14 @@ function ScheduleForm({
 								/>
 							</Field>
 						</div>
+						<Toggle
+							checked={s.handToAssistant}
+							onChange={(v) => set("handToAssistant", v)}
+							label={t("schedule.handToAssistant")}
+						/>
+						<p className="-mt-2 text-faint text-xs">
+							{t("schedule.handToAssistantHint")}
+						</p>
 					</>
 				)}
 				<Toggle

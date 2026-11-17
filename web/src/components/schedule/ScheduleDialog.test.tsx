@@ -520,3 +520,81 @@ describe("ScheduleDialog：浏览器本地时间（M9 审查 W5）", () => {
 		expect(typeof body?.at).toBe("number");
 	});
 });
+
+describe("ScheduleDialog：交给助手与主线的提醒（M19）", () => {
+	it("每次新建线程：「交给助手」开关进请求体", async () => {
+		const onClose = mount({ mode: "new_thread", projectId: null });
+		await ready();
+		const hand = within(dialog()).getByRole("checkbox", { name: "交给助手" });
+		expect(hand).not.toBeChecked();
+		fireEvent.change(field("名称"), { target: { value: "inbox" } });
+		fireEvent.change(field("提示词"), { target: { value: "读邮件" } });
+		fireEvent.click(hand);
+		fireEvent.click(save());
+		await waitFor(() => expect(onClose).toHaveBeenCalled());
+		expect(writes()[0]).toMatchObject({
+			method: "POST",
+			path: "/api/v1/schedules",
+			body: { mode: "new_thread", name: "inbox", handToAssistant: true },
+		});
+	});
+
+	it("线程内定时没有「交给助手」", async () => {
+		mount({ mode: "thread", threadId: M9_IDS.spaceIdle });
+		await ready();
+		expect(
+			within(dialog()).queryByRole("checkbox", { name: "交给助手" }),
+		).toBeNull();
+	});
+
+	it("主线：名称必填，新建走 POST schedules（mode thread + threadId），不碰按线程的接口", async () => {
+		const onClose = mount({ mode: "thread", threadId: M9_IDS.main });
+		await ready();
+		expect(field("名称")).toHaveValue("");
+		fireEvent.change(field("提示词"), { target: { value: "提醒我看周报" } });
+		expect(save()).toBeDisabled();
+		fireEvent.change(field("名称"), { target: { value: "周报" } });
+		fireEvent.click(save());
+		await waitFor(() => expect(onClose).toHaveBeenCalled());
+		expect(calls.some((c) => c.path.endsWith("/schedule"))).toBe(false);
+		const [post] = writes();
+		expect(post).toMatchObject({
+			method: "POST",
+			path: "/api/v1/schedules",
+			body: {
+				mode: "thread",
+				threadId: M9_IDS.main,
+				name: "周报",
+				prompt: "提醒我看周报",
+			},
+		});
+		expect(post?.body).not.toHaveProperty("ifRev");
+		expect(post?.body).not.toHaveProperty("handToAssistant");
+		// 主线上原有一条提醒，新建的是第二条
+		expect(
+			server.automation.schedules.filter((s) => s.threadId === M9_IDS.main),
+		).toHaveLength(2);
+	});
+
+	it("主线：编辑已有提醒走 PUT schedules/{id}", async () => {
+		const onClose = mount(
+			{ mode: "thread", threadId: M9_IDS.main },
+			M9_IDS.mainReminder,
+		);
+		await ready();
+		expect(field("名称")).toHaveValue("早间简报");
+		fireEvent.change(field("提示词"), { target: { value: "只说要紧的" } });
+		fireEvent.click(save());
+		await waitFor(() => expect(onClose).toHaveBeenCalled());
+		expect(writes()[0]).toMatchObject({
+			method: "PUT",
+			path: `/api/v1/schedules/${M9_IDS.mainReminder}`,
+			body: {
+				mode: "thread",
+				name: "早间简报",
+				prompt: "只说要紧的",
+				ifRev: 1,
+			},
+		});
+	});
+});

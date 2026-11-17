@@ -160,6 +160,8 @@ export const M9_IDS = {
 	threadSchedule: "sch_01JD0000000000000000SCH003",
 	/** 连续失败后自动暂停的项目定时 */
 	failingSchedule: "sch_01JD0000000000000000SCH004",
+	/** 主线上的提醒（M19，主线可有多条，按名字区分） */
+	mainReminder: "sch_01JD0000000000000000SCH005",
 } as const;
 
 /**
@@ -1143,6 +1145,7 @@ function schedule(
 		enabled: true,
 		overlap: "skip",
 		keepLast: 5,
+		handToAssistant: false,
 		runCount: runs.length,
 		failures: 0,
 		createdBy: "user",
@@ -1212,6 +1215,17 @@ export const schedules: Schemas["Schedule"][] = [
 		enabled: false,
 		pausedReason: "failures",
 		failures: 3,
+	}),
+	schedule({
+		id: M9_IDS.mainReminder,
+		mode: "thread",
+		threadId: M9_IDS.main,
+		name: "早间简报",
+		kind: "cron",
+		cron: "0 8 * * *",
+		prompt: "看一下今天有哪些线程在等我，挑要紧的说。",
+		createdBy: "agent",
+		nextRunAt: NOW + 10 * HOUR,
 	}),
 ];
 
@@ -2815,9 +2829,83 @@ export function buildM9Transcripts(): Record<string, Entry[]> {
 			assistant: "上游有 3 个新提交，已合并，没有冲突；`bun run check` 通过。",
 		},
 	]);
+	// 主线（M19）：自动化结果的来料（助手查过后说出口）、一段沉默的回合、主人的一问一答
+	const automation = (items: Record<string, unknown>[]) =>
+		`[Oryn automation results · automatic] ${items.length} result(s).\n${wrapUntrusted("", { items })}`;
+	const nightly = {
+		kind: "schedule",
+		name: "nightly",
+		threadId: M9_IDS.run1,
+		title: "nightly · 11-14 03:00",
+		outcome: "completed",
+		reply:
+			"`make test` 与 `bun run test` 全部通过；`internal/schedule` 的覆盖率从 71% 升到 78%。",
+	};
+	const triage = {
+		kind: "trigger",
+		name: "分诊带 oryn 标签的 issue",
+		threadId: M9_IDS.run2,
+		title: "分诊 #128",
+		outcome: "error",
+		error: "provider quota exceeded",
+	};
+	const readRun = {
+		threadId: M9_IDS.run1,
+		state: "idle",
+		messages: [{ role: "assistant", text: nightly.reply }],
+	};
+	const main = scriptTranscript("m", NOW - 3 * HOUR, [
+		{ user: automation([nightly, triage]) },
+		{
+			assistant: "",
+			calls: [
+				{
+					name: "read_thread",
+					args: { threadId: M9_IDS.run1, tail: 2 },
+					text: wrapUntrusted(M9_IDS.run1, readRun),
+					details: readRun,
+				},
+			],
+		},
+		{
+			assistant:
+				"夜间测试通过了，覆盖率还涨了一点。分诊 #128 那次因为额度用完没跑起来——要我换个模型重跑吗？",
+		},
+		{ user: automation([{ ...nightly, title: "nightly · 11-14 09:00" }]) },
+		{
+			assistant: "",
+			calls: [
+				{
+					name: "stay_silent",
+					args: { reason: "例行的夜间测试，和上一次一样全部通过" },
+					text: toolJson({ ok: true }),
+					details: { ok: true },
+				},
+			],
+		},
+		{ user: "先不用重跑。明早提醒我看一下发布说明。" },
+		{
+			assistant: "好，明早 9 点半提醒你。",
+			calls: [
+				{
+					name: "set_schedule",
+					args: {
+						action: "set",
+						name: "看发布说明",
+						kind: "once",
+						prompt: "提醒主人看一下本周的发布说明草稿。",
+					},
+					text: toolJson({ ok: true }),
+					details: { ok: true },
+				},
+			],
+		},
+		{ assistant: "已设好明早 9:30 的提醒「看发布说明」。" },
+	]);
 	return {
 		[M9_IDS.spaceChat]: space,
 		[M9_IDS.assistant]: helper,
+		[M9_IDS.main]: main,
 		[M9_IDS.scheduledThread]: scheduled,
 	};
 }

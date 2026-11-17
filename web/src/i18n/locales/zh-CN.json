@@ -3990,6 +3990,9 @@
 		"nameOptional": "名称（可选）",
 		"nameHint": "同一项目内不能重名；也是新线程标题的前缀",
 		"nameOptionalHint": "留空时用线程标题",
+		"mainNameHint": "主线可以有多条提醒，用名字区分",
+		"handToAssistant": "交给助手",
+		"handToAssistantHint": "每次运行的结果交给全局助手，由它在主线里决定要不要告诉你；运行完成时不再单独通知。",
 		"nameTaken": "这个项目里已有同名的定时任务",
 		"project": "项目",
 		"model": "模型：{{model}}",
@@ -4117,6 +4120,33 @@
 			"rejected": "你已拒绝 · {{action}} {{target}}",
 			"failed": "已确认但执行失败（{{error}}）· {{action}} {{target}}",
 			"expired": "确认已过期 · {{action}} {{target}}"
+		},
+		"automation_one": "{{count}} 条运行结果 · 交给助手",
+		"automation_other": "{{count}} 条运行结果 · 交给助手",
+		"outcome": {
+			"completed": "完成",
+			"failed": "失败",
+			"error": "出错",
+			"aborted": "已中止",
+			"needs_input": "等你处理",
+			"unknown": "未知"
+		}
+	},
+	"mainline": {
+		"behind": "幕后 · {{source}}",
+		"silent": "助手看过，没有打扰你",
+		"silentReason": "助手看过，没有打扰你：{{reason}}",
+		"continue": "在新对话中继续",
+		"notes": {
+			"title": "备忘",
+			"hint": "助手每一段对话开头都会读到这份备忘，它也会自己改写。",
+			"tooLong": "超过 {{limit}} 字，请压缩后再保存"
+		},
+		"reminders": {
+			"title": "提醒",
+			"hint": "主线上的定时提醒，到点后由助手在这里跟你说。",
+			"new": "新建提醒",
+			"empty": "还没有提醒"
 		}
 	},
 	"sections": {
@@ -4124,7 +4154,8 @@
 	},
 	"assistantPane": {
 		"empty": "还没有对话",
-		"archiveOne": "归档「{{title}}」"
+		"archiveOne": "归档「{{title}}」",
+		"computer": "助手的电脑"
 	},
 	"projectsPane": {
 		"filterThreads": "只看「{{name}}」的线程",
@@ -4590,6 +4621,8 @@
 			"commentOnlyReviewsHint": "拒绝 APPROVE 与 REQUEST_CHANGES 两种 review。",
 			"completionReminders": "完成提醒",
 			"completionRemindersHint": "回合结束时任务还没推进到下一阶段，就提醒 agent 继续（最多 2 次）。",
+			"handToAssistant": "交给助手",
+			"handToAssistantHint": "任务的结果交给全局助手，由它在主线里决定要不要告诉你；完成时不再单独通知。",
 			"autocloseHours": "自动关闭等待（小时）",
 			"autocloseHoursHint": "agent 发起自动关闭后，等这么久没有作者的 👎 就关闭 issue。",
 			"maxDuration": "任务时限（分钟）",

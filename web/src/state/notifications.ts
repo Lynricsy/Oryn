@@ -1,7 +1,8 @@
 /**
  * 应用内通知（M5 计划 6.2）：最近通知、未读数与 toast。
  * - `load()`：`GET notifications?limit=50`（连接建立 / 重连后各一次，见 AppShell）。
- * - WS `notification` → `onNotification`：页面在前台（`host.isForeground()`）→ toast（6s 自动消失；正停在该线程页时不弹）；
+ * - WS `notification` → `onNotification`：页面在前台（`host.isForeground()`）→ toast（6s 自动消失；正停在该线程页或
+ *   该助手对话页 `/assistant/<id>` 时不弹）；
  *   浏览器里不在前台 → 有通知权限且本浏览器没有推送订阅时弹系统通知（有订阅时交给 service worker，页面不重复弹）；
  *   没有权限时什么都不弹，回到页面后在铃铛里看到。
  *   桌面壳（M6）里不在前台 → `host.notify` 交给壳弹系统通知（点击直达线程），不碰 `Notification` 与推送订阅。
@@ -164,7 +165,12 @@ export const notificationsStore = createStore<NotificationsState>(
 					unread: n.readAt ? s.unread : s.unread + 1,
 				});
 				if (host.isForeground()) {
-					if (n.threadId && location.pathname === `/t/${n.threadId}`) return;
+					if (
+						n.threadId &&
+						(location.pathname === `/t/${n.threadId}` ||
+							location.pathname === `/assistant/${n.threadId}`)
+					)
+						return;
 					set({ toasts: [...get().toasts, n].slice(-MAX_TOASTS) });
 					toastTimers.set(
 						n.id,
