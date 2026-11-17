@@ -21,6 +21,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/artifacts"
+	"github.com/Lynricsy/Oryn/internal/github"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/library"
 	"github.com/Lynricsy/Oryn/internal/link"
@@ -113,6 +114,10 @@ type Service struct {
 	refreshPolicy func(ctx context.Context, orbID string) error
 	// machines 是 orb 与 Runner 的操作入口（M19，SetMachines 设置）；nil 时依赖它的助手工具回 coordinator_unavailable。
 	machines Machines
+	// projects / triggers 是项目与 GitHub 触发规则的操作入口（M19，SetProjects / SetTriggers 设置）；nil 时对应的助手工具
+	// 回 coordinator_unavailable。
+	projects Projects
+	triggers Triggers
 
 	ensureMu sync.Mutex
 	// createMu 串行化 orb 内 thread.create 的「计数 + Create」（契约 C6.1）：并发请求不能都通过额度检查。
@@ -159,6 +164,11 @@ func New(cfg Config, st *store.Store, th *threads.Service, o *orbs.Service, host
 	}
 	// 确认卡的执行函数（M19）
 	s.onConfirm(ToolDeleteThread, s.confirmDeleteThread)
+	s.onConfirm(ToolDeleteProject, s.confirmDeleteProject)
+	s.onConfirm(ToolDeleteSpace, s.confirmDeleteSpace)
+	s.onConfirm(ToolDeleteTrigger, s.confirmDeleteTrigger)
+	s.onConfirm(ToolDeleteOrb, s.confirmDeleteOrb)
+	s.onConfirm(string(apigen.ActionDeleteSchedule), s.confirmDeleteSchedule)
 	if o != nil {
 		s.registerOrbMethods(o.HandleRequest)
 		s.refreshPolicy = func(ctx context.Context, orbID string) error {
@@ -320,6 +330,10 @@ func errCode(err error) string {
 	if errors.As(err, &le) {
 		return le.Code
 	}
+	var ge *github.Error
+	if errors.As(err, &ge) {
+		return ge.Code
+	}
 	if oe, ok := artifacts.AsOpError(err); ok {
 		return oe.Code
 	}
@@ -370,6 +384,10 @@ func errMessage(err error) string {
 	var le *link.CtlError
 	if errors.As(err, &le) {
 		return le.Message
+	}
+	var ge *github.Error
+	if errors.As(err, &ge) {
+		return ge.Message
 	}
 	if oe, ok := artifacts.AsOpError(err); ok {
 		return oe.Message

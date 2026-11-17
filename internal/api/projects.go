@@ -38,19 +38,28 @@ func projectJSON(p db.Project, hook *db.GithubHook) apigen.Project {
 	return out
 }
 
-// writeProject 以 status 写出单个项目的 API 视图：已绑定时至多查一次所绑仓库的 hook 行。
+// writeProject 以 status 写出单个项目的 API 视图。
 func (s *Server) writeProject(w http.ResponseWriter, r *http.Request, status int, p db.Project) {
+	v, err := s.projectView(r.Context(), p)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	WriteJSON(w, status, v)
+}
+
+// projectView 是单个项目的 API 视图：已绑定时至多查一次所绑仓库的 hook 行。
+func (s *Server) projectView(ctx context.Context, p db.Project) (apigen.Project, error) {
 	var hook *db.GithubHook
 	if p.GithubRepoID != nil {
-		h, err := s.Store.Q.GetGithubHook(r.Context(), *p.GithubRepoID)
+		h, err := s.Store.Q.GetGithubHook(ctx, *p.GithubRepoID)
 		if err == nil {
 			hook = &h
 		} else if !errors.Is(err, sql.ErrNoRows) {
-			writeErr(w, r, err)
-			return
+			return apigen.Project{}, err
 		}
 	}
-	WriteJSON(w, status, projectJSON(p, hook))
+	return projectJSON(p, hook), nil
 }
 
 func sameOptStr(a, b *string) bool {
@@ -149,35 +158,38 @@ func (s *Server) CreateProject(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	row, err := s.createProject(r.Context(), req)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	s.writeProject(w, r, http.StatusCreated, row)
+}
+
+// createProject 校验并新建项目，绑定其 GitHub 仓库、按需触发预热池对账；REST 与全局助手（ProjectOps）共用。
+func (s *Server) createProject(ctx context.Context, req apigen.ProjectCreate) (db.Project, error) {
 	name := strings.TrimSpace(req.Name)
 	if !validProjectName(name) {
-		WriteError(w, http.StatusBadRequest, "invalid_request", "项目名长度须为 1–100")
-		return
+		return db.Project{}, errInvalid("项目名长度须为 1–100")
 	}
 	warm, err := checkWarmOrbs(req.WarmOrbs)
 	if err != nil {
-		writeErr(w, r, err)
-		return
+		return db.Project{}, err
 	}
 	gitName, gitEmail, _, err := projectGitIdentity(req.GitAuthorName, req.GitAuthorEmail)
 	if err != nil {
-		writeErr(w, r, err)
-		return
+		return db.Project{}, err
 	}
 	icon, err := projectIcon(req.Icon)
 	if err != nil {
-		writeErr(w, r, err)
-		return
+		return db.Project{}, err
 	}
-	ctx := r.Context()
 	if err := s.checkProviderName(ctx, optStr(req.DefaultProvider)); err != nil {
-		writeErr(w, r, err)
-		return
+		return db.Project{}, err
 	}
 	profileID, err := s.checkBrowserProfile(ctx, req.DefaultBrowserProfileID)
 	if err != nil {
-		writeErr(w, r, err)
-		return
+		return db.Project{}, err
 	}
 	now := time.Now().UnixMilli()
 	p := db.CreateProjectParams{
@@ -189,11 +201,9 @@ func (s *Server) CreateProject(w http.ResponseWriter, r *http.Request) {
 		Snapshots: req.Snapshots, WarmOrbs: warm,
 	}
 	if err := s.Store.Q.CreateProject(ctx, p); isUniqueViolation(err) {
-		WriteError(w, http.StatusConflict, "conflict", "已有同名项目")
-		return
+		return db.Project{}, errConflict("已有同名项目")
 	} else if err != nil {
-		writeErr(w, r, err)
-		return
+		return db.Project{}, err
 	}
 	if s.GitHub != nil && s.GitHub.Service != nil {
 		if err := s.GitHub.Service.BindProject(ctx, p.ID); err != nil {
@@ -202,13 +212,12 @@ func (s *Server) CreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	row, err := s.Store.Q.GetProject(ctx, p.ID)
 	if err != nil {
-		writeErr(w, r, err)
-		return
+		return db.Project{}, err
 	}
 	if row.WarmOrbs > 0 {
 		s.poolKick(row.ID)
 	}
-	s.writeProject(w, r, http.StatusCreated, row)
+	return row, nil
 }
 
 // GetProject 返回项目详情。
@@ -234,41 +243,45 @@ func (s *Server) UpdateProject(w http.ResponseWriter, r *http.Request, id apigen
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	gatesSet := len(req.GithubGates) > 0 && !bytes.Equal(req.GithubGates, []byte("null"))
+	out, err := s.updateProject(r.Context(), id, req.ProjectPatch, req.GithubGates)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	s.writeProject(w, r, http.StatusOK, out)
+}
+
+// updateProject 修改项目（req.GithubGates 不用，门禁取 gates 的原始 JSON；空或 null = 不改），随后处理仓库重新绑定、
+// hook 释放、出站策略作废与预热池对账；REST 与全局助手（ProjectOps）共用。
+func (s *Server) updateProject(ctx context.Context, id string, req apigen.ProjectPatch, gatesRaw json.RawMessage) (db.Project, error) {
+	gatesSet := len(gatesRaw) > 0 && !bytes.Equal(gatesRaw, []byte("null"))
 	var gates *string
 	if gatesSet {
 		var err error
-		if gates, err = orbs.EncodeGitHubGates(req.GithubGates); err != nil {
-			writeErr(w, r, errInvalid(err.Error()))
-			return
+		if gates, err = orbs.EncodeGitHubGates(gatesRaw); err != nil {
+			return db.Project{}, errInvalid(err.Error())
 		}
 	}
 	gitName, gitEmail, gitSet, err := projectGitIdentity(req.GitAuthorName, req.GitAuthorEmail)
 	if err != nil {
-		writeErr(w, r, err)
-		return
+		return db.Project{}, err
 	}
 	icon, err := projectIcon(req.Icon)
 	if err != nil {
-		writeErr(w, r, err)
-		return
+		return db.Project{}, err
 	}
-	ctx := r.Context()
 	if req.DefaultProvider != nil {
 		if err := s.checkProviderName(ctx, optStr(req.DefaultProvider)); err != nil {
-			writeErr(w, r, err)
-			return
+			return db.Project{}, err
 		}
 	}
 	profileID, err := s.checkBrowserProfile(ctx, req.DefaultBrowserProfileID)
 	if err != nil {
-		writeErr(w, r, err)
-		return
+		return db.Project{}, err
 	}
 	warm, err := checkWarmOrbs(req.WarmOrbs)
 	if err != nil {
-		writeErr(w, r, err)
-		return
+		return db.Project{}, err
 	}
 	var out db.Project
 	var oldRepoID *int64 // 改仓库、归档后可能不再有项目绑定的 GitHub 仓库
@@ -368,16 +381,14 @@ func (s *Server) UpdateProject(w http.ResponseWriter, r *http.Request, id apigen
 		return err
 	})
 	if err != nil {
-		writeErr(w, r, err)
-		return
+		return db.Project{}, err
 	}
 	if repoChanged && s.GitHub != nil && s.GitHub.Service != nil {
 		if err := s.GitHub.Service.BindProject(ctx, id); err != nil {
 			slog.Warn("绑定项目的 GitHub 仓库失败", "project", id, "err", err)
 		}
 		if out, err = s.Store.Q.GetProject(ctx, id); err != nil {
-			writeErr(w, r, err)
-			return
+			return db.Project{}, err
 		}
 	}
 	if oldRepoID != nil && s.GitHub != nil && s.GitHub.Service != nil {
@@ -394,12 +405,20 @@ func (s *Server) UpdateProject(w http.ResponseWriter, r *http.Request, id apigen
 		req.ShallowClone != nil || req.DefaultProvider != nil || req.DefaultOrbType != nil || req.Archived != nil {
 		s.poolKick(id)
 	}
-	s.writeProject(w, r, http.StatusOK, out)
+	return out, nil
 }
 
 // DeleteProject 删除项目（线程保留，project_id 置空）。
 func (s *Server) DeleteProject(w http.ResponseWriter, r *http.Request, id apigen.ProjectIDPath) {
-	ctx := r.Context()
+	if err := s.deleteProject(r.Context(), id); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// deleteProject 删除项目并清理其仓库 hook、项目级 omp 配置、记忆与预热池；不存在 → not_found。REST 与全局助手共用。
+func (s *Server) deleteProject(ctx context.Context, id string) error {
 	var n int64
 	var repoID *int64
 	err := s.Store.Tx(ctx, func(q *db.Queries) error {
@@ -419,12 +438,10 @@ func (s *Server) DeleteProject(w http.ResponseWriter, r *http.Request, id apigen
 		return err
 	})
 	if err != nil {
-		writeErr(w, r, err)
-		return
+		return err
 	}
 	if n == 0 {
-		WriteError(w, http.StatusNotFound, "not_found", "项目不存在")
-		return
+		return errNotFound("项目不存在")
 	}
 	// 最后一个绑定该仓库的项目删除后，删除 Oryn 的仓库 hook
 	if repoID != nil && s.GitHub != nil && s.GitHub.Service != nil {
@@ -446,7 +463,7 @@ func (s *Server) DeleteProject(w http.ResponseWriter, r *http.Request, id apigen
 	}
 	// 该项目的预热池 orb 由对账回收
 	s.poolKick(id)
-	w.WriteHeader(http.StatusNoContent)
+	return nil
 }
 
 // poolKick 在影响预热池的项目设置变化后立即触发一次对账（未注入 orb 服务时无操作）。

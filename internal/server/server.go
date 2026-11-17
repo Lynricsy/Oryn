@@ -273,6 +273,8 @@ func (s *Server) init(ctx context.Context) error {
 		PublicURL: cfg.PublicURL, APIURL: cfg.GitHub.APIURL, WebURL: cfg.GitHub.WebURL, Box: box, Changed: s.Hub.GitHubChanged,
 	}, s.Store, s.Threads, s.Notify, s.Attachments)
 	s.Threads.SetGitHub(s.GitHub)
+	// M19 第三层：全局助手的触发规则工具
+	s.Coord.SetTriggers(s.GitHub)
 	// orb 的 setup 计划与出站代理：工作 orb 下发 gh 登录名、提交身份，出站代理注入身份槽位的 OAuth 令牌
 	setup.GitHub = s.GitHub
 	s.Orbs.SetGitHub(s.GitHub)
@@ -443,6 +445,8 @@ func (s *Server) init(ctx context.Context) error {
 	if s.Portal != nil {
 		s.API.PortalShares = &api.PortalDeps{Service: s.Portal}
 	}
+	// M19 第三层：全局助手的项目工具与 REST 共用同一套校验与副作用（依赖上面装好的 GitHub、Orbs、Auth、Memory）
+	s.Coord.SetProjects(api.ProjectOps{S: s.API})
 	s.Handler = api.NewRouter(s.API)
 	return nil
 }

@@ -69,7 +69,7 @@ func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) thre
 	case ToolListSchedules:
 		v, err = s.toolListSchedules(ctx, tc)
 	case ToolListProjects:
-		v, err = s.toolListProjects(ctx)
+		v, err = s.toolListProjects(ctx, tc)
 	case ToolGetStats:
 		v, err = s.toolGetStats(ctx, tc)
 	case ToolSaveFile, ToolListFiles, ToolShareFile:
@@ -105,6 +105,14 @@ func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) thre
 			break
 		}
 		v, err = s.threadTool(ctx, tc)
+	case ToolCreateProject, ToolUpdateProject, ToolDeleteProject, ToolListSpaces, ToolCreateSpace, ToolUpdateSpace, ToolDeleteSpace,
+		ToolListTriggers, ToolSetTrigger, ToolDeleteTrigger, ToolListOrbs, ToolPauseOrb, ToolWakeOrb, ToolDeleteOrb:
+		// M19 第三层：项目、Space、触发规则与 orb（只给全局助手）
+		if c.Kind != threads.KindAssistant {
+			err = errf("unknown_tool", "no tool named %q", c.Name)
+			break
+		}
+		v, err = s.adminTool(ctx, tc)
 	case ToolListThreadFiles, ToolReadThreadFile, ToolWriteThreadFile, ToolFetchThreadFile, ToolPutThreadFile, ToolGetThreadChanges,
 		ToolListProjectConfig, ToolReadProjectConfig, ToolWriteProjectConfig, ToolDeleteProjectConfig:
 		// M19 第三层：线程文件与项目 Agent 配置（只给全局助手）
@@ -116,7 +124,7 @@ func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) thre
 		return failResult(err)
 	}
 	switch c.Name {
-	case ToolListThreads, ToolListSchedules, ToolGetStats, ToolListFiles, ToolListRunners:
+	case ToolListThreads, ToolListSchedules, ToolGetStats, ToolListFiles, ToolListRunners, ToolListSpaces, ToolListTriggers:
 		// list_files 的文件名可能来自 orb 内的 agent（oryn library put）
 		return threads.HostToolResult{Text: wrapUntrusted("", v), Details: v}
 	}
@@ -627,8 +635,13 @@ func (s *Service) toolSetSchedule(ctx context.Context, c toolCtx) (any, error) {
 	var (
 		sc     apigen.Schedule
 		target string
+		// pending：全局助手的删除已挂上确认卡，审计在主人作答、真正执行后写
+		pending bool
 	)
 	defer func() {
+		if pending {
+			return
+		}
 		action := string(apigen.ActionSetSchedule)
 		if a.Action == "delete" {
 			action = string(apigen.ActionDeleteSchedule)
@@ -706,6 +719,15 @@ func (s *Service) toolSetSchedule(ctx context.Context, c toolCtx) (any, error) {
 		}
 		switch a.Action {
 		case "delete":
+			if !c.inSpace() {
+				// 全局助手删除定时要主人确认（M19 D7）；Space 协调者仍直接删除
+				var v any
+				if v, err = s.requestDeleteSchedule(ctx, c, sc); err != nil {
+					return nil, err
+				}
+				pending = true
+				return v, nil
+			}
 			if err = s.sched.Delete(ctx, id); err != nil {
 				return nil, err
 			}
@@ -842,17 +864,36 @@ type projectItem struct {
 	RepoURL         *string `json:"repoUrl,omitempty"`
 	DefaultProvider *string `json:"defaultProvider,omitempty"`
 	DefaultOrbType  *string `json:"defaultOrbType,omitempty"`
+	// Archived 只在全局助手的结果里出现（M19；Space 协调者的结果不变）。
+	Archived *bool `json:"archived,omitempty"`
 }
 
-func (s *Service) toolListProjects(ctx context.Context) (any, error) {
+// toolListProjects 列出未归档的项目；全局助手传 archived=true 时含已归档的，每项带 archived。
+func (s *Service) toolListProjects(ctx context.Context, c toolCtx) (any, error) {
+	var a struct {
+		Archived bool `json:"archived"`
+	}
+	if !c.inSpace() {
+		if err := decodeArgs(c.Args, &a); err != nil {
+			return nil, err
+		}
+	}
 	no := false
-	rows, err := s.st.Q.ListProjects(ctx, &no)
+	filter := &no
+	if a.Archived {
+		filter = nil
+	}
+	rows, err := s.st.Q.ListProjects(ctx, filter)
 	if err != nil {
 		return nil, err
 	}
 	items := make([]projectItem, 0, len(rows))
 	for _, p := range rows {
-		items = append(items, projectItem{ID: p.ID, Name: p.Name, RepoURL: p.RepoUrl, DefaultProvider: p.DefaultProvider, DefaultOrbType: p.DefaultOrbType})
+		it := projectItem{ID: p.ID, Name: p.Name, RepoURL: p.RepoUrl, DefaultProvider: p.DefaultProvider, DefaultOrbType: p.DefaultOrbType}
+		if !c.inSpace() {
+			it.Archived = new(p.ArchivedAt != nil)
+		}
+		items = append(items, it)
 	}
 	return map[string]any{"projects": items}, nil
 }

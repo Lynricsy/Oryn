@@ -58,7 +58,9 @@ const assistantLimits = "- Deleting anything and making anything public needs th
 const assistantHowTo = `
 - Runner threads run on the owner's own machines: start one with create_thread's runner and dir (list_runners shows the runners and their directories); send_message, read_thread, archive_thread and schedules work on them like on any thread.
 - To talk to a Space's coordinator, call send_message with space (the Space's name); you get a report when its turn ends. read_thread reads Space conversations too.
-- update_thread changes a thread's title, labels, pin, snooze, unread mark or Space; abort_thread stops its current turn; wake_thread wakes a frozen thread; set_thread_model switches its model from the next turn; fork_thread branches a thread to try another direction (forks do not report back).`
+- update_thread changes a thread's title, labels, pin, snooze, unread mark or Space; abort_thread stops its current turn; wake_thread wakes a frozen thread; set_thread_model switches its model from the next turn; fork_thread branches a thread to try another direction (forks do not report back).
+- To look at a thread's work yourself: list_thread_files, read_thread_file and get_thread_changes read its orb (or runner directory); fetch_thread_file saves a file from it into the library, put_thread_file and write_thread_file put files into it. The project's agent configuration (AGENTS.md, rules, skills, config.yml) is edited with the *_project_config tools.
+- You can manage projects (create_project, update_project), Spaces (list_spaces, create_space, update_space), a project's GitHub trigger rules (list_triggers, set_trigger) and orbs (list_orbs, pause_orb, wake_orb); list_projects with archived also shows archived projects.`
 
 const assistantScope = "You are the owner's global assistant. You can see and direct every thread."
 
@@ -288,6 +290,7 @@ func ToolDefs(o ToolSet) []apigen.OmpFrame {
 		"steer":    boolean("Deliver as a steer if the thread is working (otherwise it is queued after the current turn)."),
 	}
 	sendRequired := []string{"threadId", "message"}
+	listProjectsProps := obj{}
 	if !inSpace {
 		createProps["files"] = obj{"type": "array", "items": obj{"type": "string"},
 			"description": "Library file ids (afl_…) to attach to the first message; the new thread can read them in its orb."}
@@ -297,6 +300,7 @@ func ToolDefs(o ToolSet) []apigen.OmpFrame {
 		sendProps["threadId"] = str("Thread id (T-…); omit when passing space.")
 		sendProps["space"] = str("Space name: send to that Space's coordinator conversation.")
 		sendRequired = []string{"message"}
+		listProjectsProps["archived"] = boolean("Also list archived projects.")
 	}
 	defs := []apigen.OmpFrame{
 		tool(ToolListThreads, "List work threads with their state.", obj{
@@ -321,7 +325,7 @@ func ToolDefs(o ToolSet) []apigen.OmpFrame {
 		}, "threadId"),
 		tool(ToolSetSchedule, "Create, update, pause, resume or delete a schedule.", scheduleProps, "action"),
 		tool(ToolListSchedules, "List schedules.", obj{"scope": scope}),
-		tool(ToolListProjects, "List projects.", obj{}),
+		tool(ToolListProjects, "List projects.", listProjectsProps),
 		tool(ToolGetStats, statsDesc(inSpace), obj{
 			"kind":    enum(statsKindDesc(inSpace), statsKinds(inSpace)...),
 			"groupBy": str(`usage: total | hour | day | week | month | model (default) | thread | project | space | purpose. orbs: type (default) | day | week | month | project | orb. output: day (default) | week | month | project | space. Not used by tools.`),
@@ -355,6 +359,7 @@ func ToolDefs(o ToolSet) []apigen.OmpFrame {
 	)
 	defs = append(defs, artifactToolDefs()...)
 	defs = append(defs, threadToolDefs()...)
+	defs = append(defs, adminToolDefs()...)
 	defs = append(defs, fileToolDefs()...)
 	if o.Memory {
 		defs = append(defs, memoryToolDefs()...)
