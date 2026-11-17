@@ -203,6 +203,10 @@ type target struct {
 	// 拼在入站查询串之前。
 	headers map[string]string
 	query   string
+	// mcpKey / mcpBase 非空时是 MCP 路由：上游的重定向经 mcpRedirect 处理（同源且在路由路径下的改写回 /mcp/<key>/…，
+	// 其余拦成 502），客户端不会带着 MCP 凭据头直接跳到别的服务器。
+	mcpKey  string
+	mcpBase *url.URL
 	// deny 非空时是 resolve 拒绝（非 200）的原因，代替按状态码给出的通用文案。
 	deny string
 }
@@ -289,6 +293,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			aud.response(resp)
 			if resp.StatusCode == http.StatusUnauthorized && t.ghToken != "" {
 				h.R.GitHubTokenRejected(t.ghToken)
+			}
+			if t.mcpKey != "" {
+				mcpRedirect(resp, t.mcpKey, t.mcpBase)
 			}
 			if len(secretsUsed) == 0 {
 				return nil
@@ -438,6 +445,7 @@ func (h *Handler) resolve(r *http.Request) (target, int) {
 		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 			return target{}, http.StatusNotFound
 		}
+		base := *u
 		if len(parts) == 3 {
 			u.Path = strings.TrimSuffix(u.Path, "/") + rest
 			u.RawPath = ""
@@ -446,7 +454,7 @@ func (h *Handler) resolve(r *http.Request) (target, int) {
 		if hdr == nil {
 			hdr = map[string]string{}
 		}
-		return target{url: u, headers: hdr, query: u.RawQuery, redact: mcpRedact(rt.Headers)}, http.StatusOK
+		return target{url: u, headers: hdr, query: u.RawQuery, redact: mcpRedact(rt.Headers), mcpKey: parts[1], mcpBase: &base}, http.StatusOK
 	}
 	return target{}, http.StatusNotFound
 }

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/netip"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -61,6 +62,49 @@ func mcpRedact(headers map[string]string) []string {
 		}
 	}
 	return out
+}
+
+// mcpRedirect 处理 MCP 上游的重定向（3xx 带 Location）。客户端（omp 的 fetch）会跟随重定向且保留自定义请求头：
+// 若原样转交 Location，跨源跳转会把 X-Oryn-MCP-Token 带到别的服务器，同源的绝对地址也会让客户端绕过代理直连上游。
+// 因此：解析后与路由同源（scheme + host）且路径在路由路径之下的，改写成 /mcp/<key>/… 继续走代理；其余一律改成 502、
+// 去掉 Location。
+func mcpRedirect(resp *http.Response, key string, base *url.URL) {
+	if resp.StatusCode < 300 || resp.StatusCode > 399 {
+		return
+	}
+	loc := resp.Header.Get("Location")
+	if loc == "" {
+		return
+	}
+	ref := base
+	if resp.Request != nil && resp.Request.URL != nil {
+		ref = resp.Request.URL
+	}
+	basePath := strings.TrimSuffix(base.Path, "/")
+	u, err := ref.Parse(loc)
+	if err == nil && u.User == nil && strings.EqualFold(u.Scheme, base.Scheme) && strings.EqualFold(u.Host, base.Host) &&
+		(u.Path == basePath || strings.HasPrefix(u.Path, basePath+"/")) {
+		out := "/mcp/" + key + strings.TrimPrefix(u.Path, basePath)
+		// 代理转发时会把路由自带的查询串拼在前面：这里去掉重复的那一段
+		q := u.RawQuery
+		if base.RawQuery != "" {
+			q = strings.TrimPrefix(strings.TrimPrefix(q, base.RawQuery), "&")
+		}
+		if q != "" {
+			out += "?" + q
+		}
+		resp.Header.Set("Location", out)
+		return
+	}
+	slog.Warn("egress: 拦截 MCP 上游的路由外重定向", "route", key, "location", loc)
+	const msg = "oryn egress: MCP 上游重定向到路由之外，已拦截\n"
+	_ = resp.Body.Close()
+	resp.Header.Del("Location")
+	resp.StatusCode, resp.Status = http.StatusBadGateway, "502 Bad Gateway"
+	resp.Body = io.NopCloser(strings.NewReader(msg))
+	resp.ContentLength = int64(len(msg))
+	resp.Header.Set("Content-Length", strconv.Itoa(len(msg)))
+	resp.Header.Set("Content-Type", "text/plain; charset=utf-8")
 }
 
 // errNotPublic 是正向代理拒绝非公网目标的错误；文案也是回给沙箱的 403 正文。

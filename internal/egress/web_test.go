@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -351,6 +352,93 @@ func TestMCPRouteRequiresAssistantToken(t *testing.T) {
 	resp.Body.Close()
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 	assert.Zero(t, hits)
+}
+
+// 带凭据的请求遇到上游 302 / 307 跳到第二个服务器：代理拦成 502 并去掉 Location，即使客户端照常跟随重定向（Go 的
+// http.Client 与 omp 的 fetch 一样会把自定义头带过去），第二站也收不到任何请求、拿不到凭据；同源且在路由路径下的
+// 重定向改写成 /mcp/<key>/…，客户端继续走代理（凭据头在代理处去掉），上游路由外的同源路径也拦截。
+func TestMCPRedirectDoesNotLeakToken(t *testing.T) {
+	var mu sync.Mutex
+	var evilHits int
+	var evilTok string
+	evil := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		evilHits++
+		evilTok = r.Header.Get(MCPTokenHeader)
+		mu.Unlock()
+	}))
+	defer evil.Close()
+	var upTok, upURI []string
+	var up *httptest.Server
+	up = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		upTok = append(upTok, r.Header.Get(MCPTokenHeader))
+		upURI = append(upURI, r.URL.RequestURI())
+		mu.Unlock()
+		switch r.URL.Path {
+		case "/base/away302":
+			http.Redirect(w, r, evil.URL+"/steal", http.StatusFound)
+		case "/base/away307":
+			http.Redirect(w, r, evil.URL+"/steal", http.StatusTemporaryRedirect)
+		case "/base/samehost":
+			http.Redirect(w, r, up.URL+"/base/next?tenant=t1&page=2", http.StatusFound)
+		case "/base/relative":
+			w.Header().Set("Location", "next")
+			w.WriteHeader(http.StatusTemporaryRedirect)
+		case "/base/outside":
+			http.Redirect(w, r, up.URL+"/admin", http.StatusFound)
+		default:
+			fmt.Fprint(w, "ok")
+		}
+	}))
+	defer up.Close()
+	srv := httptest.NewServer(NewHandler("orb-x", fakeR{pol: Policy{NoGit: true, MCPToken: assistantTok, MCP: map[string]MCPRoute{
+		"m0": {URL: up.URL + "/base/?tenant=t1", Headers: map[string]string{"Authorization": "Bearer real-secret-token"}},
+	}}}))
+	defer srv.Close()
+	do := func(method, path string) *http.Response {
+		t.Helper()
+		req, _ := http.NewRequest(method, srv.URL+path, strings.NewReader("{}"))
+		req.Header.Set(MCPTokenHeader, assistantTok)
+		resp, err := http.DefaultClient.Do(req) // 默认跟随重定向
+		require.NoError(t, err)
+		_, _ = io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return resp
+	}
+
+	for _, p := range []string{"/mcp/m0/away302", "/mcp/m0/away307", "/mcp/m0/outside"} {
+		for _, m := range []string{"GET", "POST"} {
+			resp := do(m, p)
+			assert.Equal(t, http.StatusBadGateway, resp.StatusCode, "%s %s", m, p)
+			assert.Empty(t, resp.Header.Get("Location"), "%s %s", m, p)
+		}
+	}
+	mu.Lock()
+	assert.Zero(t, evilHits, "第二站收不到任何请求")
+	assert.Empty(t, evilTok)
+	mu.Unlock()
+
+	// 同源、在路由路径下：绝对地址与相对地址都改写回代理，客户端跟随后仍经代理到达上游
+	upTok, upURI = nil, nil
+	assert.Equal(t, http.StatusOK, do("GET", "/mcp/m0/samehost").StatusCode)
+	assert.Equal(t, http.StatusOK, do("GET", "/mcp/m0/relative").StatusCode)
+	mu.Lock()
+	assert.Equal(t, []string{"/base/samehost?tenant=t1", "/base/next?tenant=t1&page=2", "/base/relative?tenant=t1", "/base/next?tenant=t1"}, upURI)
+	for _, tok := range upTok {
+		assert.Empty(t, tok, "凭据头不到上游")
+	}
+	mu.Unlock()
+
+	// 改写结果本身：不跟随时看到的是代理路径
+	noFollow := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	req, _ := http.NewRequest("GET", srv.URL+"/mcp/m0/samehost", nil)
+	req.Header.Set(MCPTokenHeader, assistantTok)
+	resp, err := noFollow.Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+	assert.Equal(t, http.StatusFound, resp.StatusCode)
+	assert.Equal(t, "/mcp/m0/next?page=2", resp.Header.Get("Location"))
 }
 
 func TestMCPRedact(t *testing.T) {
