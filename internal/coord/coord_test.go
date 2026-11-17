@@ -98,7 +98,7 @@ func newEnv(t *testing.T, hold bool) *env {
 	dir := t.TempDir()
 	st, err := store.Open(ctx, filepath.Join(dir, "data"))
 	require.NoError(t, err)
-	o, err := threadstest.NewOrbs(st, fakeomp(t), filepath.Join(dir, "orbs"), "FAKEOMP_DELAY_MS=1")
+	o, err := threadstest.NewOrbs(st, fakeomp(t), filepath.Join(dir, "orbs"), "FAKEOMP_DELAY_MS=1", "FAKEOMP_FORK=1")
 	require.NoError(t, err)
 	o.SetFeature("coordinator", true)
 	o.Hold(hold)
@@ -582,7 +582,8 @@ func TestSetScheduleTool(t *testing.T) {
 
 	w := e.work("w")
 	details(t, e.call(asst, ToolSetSchedule, `{"action":"set","threadId":"`+w.ID+`","kind":"every","every":"2h","prompt":"poke"}`, true))
-	r := e.call(asst, ToolSetSchedule, `{"action":"set","threadId":"`+chat.ID+`","kind":"every","every":"2h","prompt":"poke"}`, true)
+	// 助手对话之间不能互相挂定时（M19 起助手可以把线程内定时挂在 Space 对话上，见 TestActTargetRules）
+	r := e.call(asst, ToolSetSchedule, `{"action":"set","threadId":"`+e.assistant().ID+`","kind":"every","every":"2h","prompt":"poke"}`, true)
 	assert.True(t, strings.HasPrefix(r.Text, CodeInvalidTarget+":"), r.Text)
 
 	m = details(t, e.call(asst, ToolSetSchedule, `{"action":"pause"}`, true))

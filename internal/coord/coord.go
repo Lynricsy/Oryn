@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"strings"
 	"sync"
@@ -110,6 +111,8 @@ type Service struct {
 	envSecrets EnvSecrets
 	// refreshPolicy 以当前设置刷新协调宿主的出站策略（M19；orbs 为 nil 时为 nil，测试可替换）。
 	refreshPolicy func(ctx context.Context, orbID string) error
+	// machines 是 orb 与 Runner 的操作入口（M19，SetMachines 设置）；nil 时依赖它的助手工具回 coordinator_unavailable。
+	machines Machines
 
 	ensureMu sync.Mutex
 	// createMu 串行化 orb 内 thread.create 的「计数 + Create」（契约 C6.1）：并发请求不能都通过额度检查。
@@ -154,6 +157,8 @@ func New(cfg Config, st *store.Store, th *threads.Service, o *orbs.Service, host
 		lim: newLimiter(), questions: map[string]string{}, armed: map[string]armedReport{}, recheck: map[string]bool{},
 		wake: make(chan struct{}, 1), confirmers: map[string]confirmExec{},
 	}
+	// 确认卡的执行函数（M19）
+	s.onConfirm(ToolDeleteThread, s.confirmDeleteThread)
 	if o != nil {
 		s.registerOrbMethods(o.HandleRequest)
 		s.refreshPolicy = func(ctx context.Context, orbID string) error {
@@ -318,7 +323,31 @@ func errCode(err error) string {
 	if oe, ok := artifacts.AsOpError(err); ok {
 		return oe.Code
 	}
+	if code := orbErrCode(err); code != "" {
+		return code
+	}
 	return "internal_error"
+}
+
+// orbErrCode 把 orbs 的哨兵错误与 fs.ErrNotExist 映射成工具错误码；不认识的返回空串。
+func orbErrCode(err error) string {
+	switch {
+	case errors.Is(err, orbs.ErrNotFound), errors.Is(err, fs.ErrNotExist):
+		return CodeNotFound
+	case errors.Is(err, orbs.ErrInvalidState):
+		return "invalid_state"
+	case errors.Is(err, orbs.ErrRunnerOffline):
+		return "runner_offline"
+	case errors.Is(err, orbs.ErrRunnerUnsupported):
+		return threads.CodeRunnerUnsupported
+	case errors.Is(err, orbs.ErrOrbNotReady):
+		return "orb_not_ready"
+	case errors.Is(err, orbs.ErrOrbGone):
+		return "orb_gone"
+	case errors.Is(err, orbs.ErrOrbdOutdated):
+		return "orbd_outdated"
+	}
+	return ""
 }
 
 // errMessage 是错误的人类可读部分（去掉与码重复的前缀）。
@@ -341,6 +370,10 @@ func errMessage(err error) string {
 	}
 	if oe, ok := artifacts.AsOpError(err); ok {
 		return oe.Message
+	}
+	if orbErrCode(err) != "" {
+		// orbs 的错误文本带 "orbs: " 前缀
+		return strings.TrimPrefix(err.Error(), "orbs: ")
 	}
 	return err.Error()
 }

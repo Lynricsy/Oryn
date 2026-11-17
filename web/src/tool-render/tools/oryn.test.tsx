@@ -76,8 +76,18 @@ describe("detailThreadIds", () => {
 });
 
 describe("宿主工具渲染器", () => {
-	it("九个工具都注册到同一个渲染器", () => {
+	it("全部宿主工具（含 M19 的线程工具）都注册到同一个渲染器", () => {
 		for (const name of ORYN_TOOLS)
+			expect(resolveToolRenderer(name)).toBe(orynRenderer);
+		for (const name of [
+			"update_thread",
+			"abort_thread",
+			"set_thread_model",
+			"fork_thread",
+			"wake_thread",
+			"delete_thread",
+			"list_runners",
+		])
 			expect(resolveToolRenderer(name)).toBe(orynRenderer);
 	});
 
@@ -108,6 +118,39 @@ describe("宿主工具渲染器", () => {
 		expect(container).toHaveTextContent("补截图");
 		expect(container).toHaveTextContent("先做汇总状态");
 		expect(container).toHaveTextContent("steer");
+	});
+
+	it("M19：发给 Space 的消息显示 Space 名；线程工具的摘要把线程 id 显示成标题", () => {
+		const send = wrap(
+			<ToolView
+				name="send_message"
+				args={{ space: "Alpha", message: "进度如何" }}
+			/>,
+		);
+		expect(send.container).toHaveTextContent("Alpha");
+		send.unmount();
+		const model = wrap(
+			<ToolView
+				name="set_thread_model"
+				args={{
+					threadId: "T-a",
+					model: "anthropic/claude",
+					thinkingLevel: "high",
+				}}
+			/>,
+		);
+		expect(model.container).toHaveTextContent("重构重连");
+		expect(model.container).toHaveTextContent("anthropic/claude");
+		model.unmount();
+		const del = wrap(
+			<ToolView
+				name="delete_thread"
+				args={{ threadId: "T-b" }}
+				result={result({ status: "awaiting_owner", confirmationId: "cfm_1" })}
+				defaultOpen
+			/>,
+		);
+		expect(del.container).toHaveTextContent("补截图");
 	});
 
 	it.each<[string, Record<string, unknown>, ToolResultLike | undefined]>([

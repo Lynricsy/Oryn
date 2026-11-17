@@ -1,6 +1,7 @@
 /**
  * Oryn 宿主工具（M9，协调对话里的 `create_thread` / `send_message` / `archive_thread` / `list_threads` /
- * `read_thread` / `set_schedule` / `list_schedules` / `get_stats` / `list_projects`）。
+ * `read_thread` / `set_schedule` / `list_schedules` / `get_stats` / `list_projects`；M19 加上全局助手的
+ * `update_thread` / `abort_thread` / `set_thread_model` / `fork_thread` / `wake_thread` / `delete_thread` / `list_runners`）。
  * 摘要行只用调用参数；正文里 `details.threadIds` / `details.threads` / `details.thread` 指向的线程渲染成实时的
  * `ThreadCard`（数据取线程索引），卡片只是补充：下面始终是通用渲染的完整参数与原始结果（`read_thread` 读到的
  * 消息、`send_message` 的全文都在这里，M9 审查 W7）。卡片超过 12 张时 `+N` 可展开其余。
@@ -62,8 +63,8 @@ function Summary({ name, args }: ToolRenderProps): ReactNode {
 	const tags: string[] = [];
 	switch (name) {
 		case "create_thread":
-			if (str(a.project)) tags.push(str(a.project) as string);
-			if (str(a.orbType)) tags.push(str(a.orbType) as string);
+			for (const k of ["project", "space", "runner", "orbType"] as const)
+				if (str(a[k])) tags.push(str(a[k]) as string);
 			return (
 				<>
 					<Text value={a.title ?? a.prompt} />
@@ -74,7 +75,11 @@ function Summary({ name, args }: ToolRenderProps): ReactNode {
 			if (a.steer === true) tags.push("steer");
 			return (
 				<>
-					{threadId && <ThreadRef id={threadId} />}
+					{threadId ? (
+						<ThreadRef id={threadId} />
+					) : (
+						str(a.space) && <span className="tv-path">{str(a.space)}</span>
+					)}
 					<span className="text-faint"> ← </span>
 					<Text value={a.message} max={60} />
 					<Badges items={tags} />
@@ -93,6 +98,29 @@ function Summary({ name, args }: ToolRenderProps): ReactNode {
 							]}
 						/>
 					)}
+				</>
+			);
+		case "update_thread":
+		case "abort_thread":
+		case "wake_thread":
+		case "delete_thread":
+			for (const k of ["title", "space"] as const)
+				if (str(a[k])) tags.push(str(a[k]) as string);
+			if (a.pinned === true) tags.push("pinned");
+			return (
+				<>
+					{threadId && <ThreadRef id={threadId} />}
+					<Badges items={tags} />
+				</>
+			);
+		case "set_thread_model":
+		case "fork_thread":
+			for (const k of ["model", "thinkingLevel", "env"] as const)
+				if (str(a[k])) tags.push(str(a[k]) as string);
+			return (
+				<>
+					{threadId && <ThreadRef id={threadId} />}
+					<Badges items={tags} />
 				</>
 			);
 		case "read_thread":
@@ -185,4 +213,11 @@ export const ORYN_TOOLS = [
 	"list_schedules",
 	"get_stats",
 	"list_projects",
+	"update_thread",
+	"abort_thread",
+	"set_thread_model",
+	"fork_thread",
+	"wake_thread",
+	"delete_thread",
+	"list_runners",
 ] as const;
