@@ -1,0 +1,26 @@
+{
+  "_comment": "M17 R23：来自主人真实数据的回归用例（设计文档 §7.1 的 5 条负例、P8 的 10 个召回问题、§7.2 的 4 个陷阱问题）。匹配条件写成「与-或」：groups 里每一组至少命中一个子串。bank 省略时用 ORYN_OWNERMEM_EVAL_BANK。",
+  "recall": [
+    {"name": "P8-1 审核被拒", "query": "Oryn 应用提交 Apple 审核被拒的原因和修复", "relevant": [["ITMS-90683", "NSCameraUsageDescription", "审核被拒", "Guideline", "App Review"]], "expect": "top1"},
+    {"name": "P8-2 ITMS-90683", "query": "ITMS-90683", "relevant": [["ITMS-90683", "NSCameraUsageDescription"]], "expect": "top1"},
+    {"name": "P8-3 HR 面准备", "query": "我的 HR 面准备得怎么样了", "relevant": [["HR"]], "expect": "top1"},
+    {"name": "P8-4 会话列表要求", "query": "全局助手的会话列表我有什么要求", "relevant": [["会话"], ["主动", "自动创建", "污染"]], "expect": "top1"},
+    {"name": "P8-5 通知渠道", "query": "我对通知渠道是什么态度", "relevant": [["第三方通知", "全平台"]], "expect": "top1"},
+    {"name": "P8-6 圆角规范", "query": "界面圆角用什么规范", "relevant": [["superellipse", "超椭圆"]], "expect": "top1"},
+    {"name": "P8-7 GitHub 授权", "query": "GitHub 授权最后决定用哪种方式", "relevant": [["OAuth App"]], "expect": "top1"},
+    {"name": "P8-8 论文报告频率", "query": "NotionAgent 论文报告多久跑一次", "relevant": [["3 天", "每3天", "三天"]], "expect": "top1"},
+    {"name": "P8-9 手机", "query": "我手机是什么型号和系统", "relevant": [["EMUI", "港版"]], "expect": "top1"},
+    {"name": "P8-10 LingSubAPI", "query": "LingSubAPI 最近合并上游的情况", "relevant": [["LingSubAPI"], ["上游", "合并"]], "expect": "top1"},
+    {"name": "陷阱-时区（对象不一致，负例 1）", "query": "我在哪个时区", "trap": [["时间基准"]], "expect": "noDirect"},
+    {"name": "陷阱-HR 面结果（状态）", "query": "我的 HR 面考完了吗", "relevant": [["HR"]], "expect": "partial"},
+    {"name": "陷阱-iOS 进度（新旧状态）", "bank": "omem-p3", "query": "Oryn 的 iOS 客户端现在是什么进度", "relevant": [["TestFlight"]], "trap": [["打算"]], "expect": "top1"},
+    {"name": "陷阱-主力电脑（新旧状态）", "bank": "omem-p3", "query": "我现在的主力电脑是什么", "relevant": [["Mac Studio"]], "expect": "top1"},
+    {"name": "负例 5 事实缺主语", "query": "任务的时间基准", "mustNot": ["该任务时间基准", "该任务的时间基准", "这个任务的时间基准"], "expect": "clean"},
+    {"name": "负例 4 实体拆分", "query": "Ling 是谁", "mustNot": ["Ling（学生）"], "expect": "clean"}
+  ],
+  "topics": [
+    {"name": "负例 1 时区归属", "mustNotMatch": ["主人[^；\\n]{0,20}(位于|在|身处)新加坡时区", "主人[^；\\n]{0,8}时区[^；\\n]{0,6}新加坡"]},
+    {"name": "负例 2 完成状态", "mustNotMatch": ["HR 面试?[^；\\n]{0,12}(已完成|已结束|考完|已通过)"]},
+    {"name": "负例 3 场景泛化", "requireWith": [{"trigger": "不需要人工确认", "also": ["GitHub"]}, {"trigger": "免人工确认", "also": ["GitHub"]}]}
+  ]
+}

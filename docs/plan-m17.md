@@ -282,9 +282,9 @@ Accept：`cd web && bun run check && bun run test -- memory` 通过；新增测�
 ### 步骤 6.1：真实数据回归用例
 
 Depends on：4.2。
-Files：新建 `internal/ownermem/eval/`（`cases.json` + `eval_test.go`，构建标签 `ownermem_eval`）。
-Do：按 R23 收录用例；连接 `ORYN_OWNERMEM_EVAL_URL` 指向的 Hindsight 与判断模型；每题输出排名、分数、通过与否。
-Accept：`go test -tags ownermem_eval ./internal/ownermem/eval/ -run Eval -v` 在探查栈上运行，输出每题结果；不带标签时 `go test ./...` 不运行它。
+Files：`internal/ownermem/eval_test.go`（构建标签 `ownermem_eval`）+ `internal/ownermem/testdata/eval/cases.json`。放在 `ownermem` 包内而不是单独的 `eval/` 包：回归要走生产代码里未导出的重排与分档（`rerank`），不为测试新增导出接口。
+Do：按 R23 收录用例；连接 `ORYN_OWNERMEM_EVAL_URL` / `ORYN_OWNERMEM_EVAL_KEY` 指向的 Hindsight 与 `ORYN_OWNERMEM_EVAL_DECIDE_KEY` 的判断模型；每题输出排名、分数、通过与否。
+Accept：`go test -tags ownermem_eval ./internal/ownermem/ -run Eval -v` 在探查栈上运行，输出每题结果；不带标签时 `go test ./...` 不运行它。
 
 ### 步骤 6.2：文档与验收
 
