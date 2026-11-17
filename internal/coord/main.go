@@ -208,10 +208,21 @@ func (s *Service) mainBrief(ctx context.Context, threadID string) (string, error
 
 // ---- 分段 ----
 
-// mainEpisode 是主线当前一段的计数与静止定时器（s.mu 保护）。
+// mainEpisode 是主线当前一段的计数与静止定时器（s.mu 保护）。gen 是定时器的代次：每次取消或重排都加一，
+// 已经开始执行的旧回调（Stop 拦不住）持 s.mu 核对代次不符就什么都不做，不会清掉新一段的计数或误停 agent。
 type mainEpisode struct {
 	turns int
 	stop  func()
+	gen   uint64
+}
+
+// cancelTimer 取消静止定时器并让已排的回调失效。调用方持 s.mu。
+func (ep *mainEpisode) cancelTimer() {
+	ep.gen++
+	if ep.stop != nil {
+		ep.stop()
+		ep.stop = nil
+	}
 }
 
 // setMainID 记下主线 id（Observer 回调据此识别主线，不读库）。
@@ -243,25 +254,26 @@ func (s *Service) mainStateChanged(ev threads.StateEvent) {
 	ep := &s.mainEp
 	switch {
 	case ev.State == threads.StateWorking:
-		if ep.stop != nil {
-			ep.stop()
-			ep.stop = nil
-		}
+		ep.cancelTimer()
 	case ev.Prev == threads.StateWorking && ev.State == threads.StateIdle:
 		ep.turns++
-		if ep.stop != nil {
-			ep.stop()
-			ep.stop = nil
-		}
+		ep.cancelTimer()
 		id := ev.ThreadID
 		if ep.turns >= mainEpisodeTurns {
 			ep.turns = 0
 			go s.endMainEpisode(id, "turns")
 			return
 		}
+		gen := ep.gen
 		ep.stop = s.cfg.AfterFunc(mainIdleStop, func() {
 			s.mu.Lock()
+			if s.mainEp.gen != gen {
+				// 已被取消或被新的定时器取代
+				s.mu.Unlock()
+				return
+			}
 			s.mainEp.turns, s.mainEp.stop = 0, nil
+			s.mainEp.gen++
 			s.mu.Unlock()
 			s.endMainEpisode(id, "idle")
 		})

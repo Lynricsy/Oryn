@@ -18,10 +18,11 @@ import (
 
 // 主线分段与近况（M19 步骤 3.2）。
 
-// fakeAfter 记下排的定时器，测试手动触发。
+// fakeAfter 记下排的定时器，测试手动触发。orig 保留每个回调本身（Stop 之后也在），用来模拟「Stop 时回调已经开始执行」。
 type fakeAfter struct {
 	mu    sync.Mutex
 	fns   []func()
+	orig  []func()
 	durs  []time.Duration
 	stops int
 }
@@ -31,6 +32,7 @@ func (f *fakeAfter) AfterFunc(d time.Duration, fn func()) func() {
 	defer f.mu.Unlock()
 	i := len(f.fns)
 	f.fns = append(f.fns, fn)
+	f.orig = append(f.orig, fn)
 	f.durs = append(f.durs, d)
 	return func() {
 		f.mu.Lock()
@@ -230,4 +232,53 @@ func TestMainEpisodeEnds(t *testing.T) {
 	n := len(fa.durs)
 	e.c.StateChanged(threads.StateEvent{ThreadID: other.ID, Prev: threads.StateWorking, State: threads.StateIdle})
 	assert.Len(t, fa.durs, n)
+}
+
+// 旧定时器的回调在 Stop 时已经开始执行（time.AfterFunc 的 Stop 拦不住）：它在新一段的定时器排下之后才拿到锁，
+// 必须什么都不做——不清计数、不结束一段；新定时器照常生效。
+func TestMainEpisodeStaleTimer(t *testing.T) {
+	e := newEnv(t, true)
+	main, err := e.c.EnsureMain(e.ctx)
+	require.NoError(t, err)
+	fa := &fakeAfter{}
+	e.c.cfg.AfterFunc = fa.AfterFunc
+	ended := make(chan string, 4)
+	e.c.afterEpisode = func(id, reason string) { ended <- id + " " + reason }
+	turn := func() {
+		e.c.StateChanged(threads.StateEvent{ThreadID: main.ID, Prev: threads.StateIdle, State: threads.StateWorking})
+		e.c.StateChanged(threads.StateEvent{ThreadID: main.ID, Prev: threads.StateWorking, State: threads.StateIdle})
+	}
+	turn()
+	require.Len(t, fa.orig, 1)
+	stale := fa.orig[0]
+	turn() // 进入 working 取消旧定时器，回到 idle 排新定时器
+	require.Len(t, fa.orig, 2)
+
+	stale()
+	select {
+	case got := <-ended:
+		t.Fatalf("旧回调结束了一段：%s", got)
+	default:
+	}
+	e.c.mu.Lock()
+	turns, hasTimer := e.c.mainEp.turns, e.c.mainEp.stop != nil
+	e.c.mu.Unlock()
+	assert.Equal(t, 2, turns, "旧回调不清计数")
+	assert.True(t, hasTimer, "新定时器仍在")
+
+	require.True(t, fa.fireLast())
+	assert.Equal(t, main.ID+" idle", <-ended)
+	// 进入 working 后才执行的旧回调同样无效
+	turn()
+	stale2 := fa.orig[len(fa.orig)-1]
+	e.c.StateChanged(threads.StateEvent{ThreadID: main.ID, Prev: threads.StateIdle, State: threads.StateWorking})
+	stale2()
+	select {
+	case got := <-ended:
+		t.Fatalf("working 中的旧回调结束了一段：%s", got)
+	default:
+	}
+	e.c.mu.Lock()
+	assert.Equal(t, 1, e.c.mainEp.turns)
+	e.c.mu.Unlock()
 }
