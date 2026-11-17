@@ -49,6 +49,7 @@ const ctx: SlashContext = {
 	agentsPaused: false,
 	fastModeEnabled: false,
 	slowModeEnabled: false,
+	sshManaged: false,
 	commands: COMMANDS,
 };
 
@@ -283,6 +284,31 @@ describe("斜杠命令拦截映射", () => {
 		});
 		expect(resolve("/session pin x")).toMatchObject({ kind: "prompt" });
 		expect(resolve("/session")).toMatchObject({ kind: "report" });
+	});
+
+	it("orb 线程的 /ssh add|remove|rm 不可用（主机由 Oryn 管），list 与 runner 线程放行", () => {
+		const managed = { ...ctx, sshManaged: true };
+		expect(resolve("/ssh add web --host 10.0.0.2", managed)).toEqual({
+			kind: "unavailable",
+			name: "ssh",
+			reason: "sshManaged",
+		});
+		expect(resolve("/ssh RM web", managed)).toMatchObject({
+			reason: "sshManaged",
+		});
+		expect(resolve("/ssh remove web", managed)).toMatchObject({
+			reason: "sshManaged",
+		});
+		expect(resolve("/ssh list", managed)).toEqual({
+			kind: "prompt",
+			text: "/ssh list",
+			attach: false,
+		});
+		expect(resolve("/ssh add web --host 10.0.0.2")).toEqual({
+			kind: "prompt",
+			text: "/ssh add web --host 10.0.0.2",
+			attach: false,
+		});
 	});
 
 	it("omp 标为只能在 TUI 执行的命令（含别名）不发给模型", () => {

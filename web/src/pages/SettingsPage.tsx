@@ -89,6 +89,7 @@ import MemoryPage from "./settings/agent/MemoryPage";
 import PromptsPage from "./settings/agent/PromptsPage";
 import RolesPage from "./settings/agent/RolesPage";
 import SkillsPage from "./settings/agent/SkillsPage";
+import SshPage from "./settings/agent/SshPage";
 import SubagentsPage from "./settings/agent/SubagentsPage";
 import BrowserProfilesSettings from "./settings/BrowserProfilesSettings";
 import { CoordinatorAbout } from "./settings/CoordinatorAbout";
@@ -114,6 +115,7 @@ export type SettingsSection =
 	| "agent-commands"
 	| "agent-extensions"
 	| "agent-memory"
+	| "agent-ssh"
 	| "agent-composer"
 	| "agent-config"
 	| "identity"
@@ -1267,6 +1269,7 @@ export function SettingsPage({
 					{section === "agent-commands" && <CollectionsPage />}
 					{section === "agent-extensions" && <ExtensionsPage />}
 					{section === "agent-memory" && <MemoryPage />}
+					{section === "agent-ssh" && <SshPage />}
 					{section === "agent-composer" && <ComposerPage />}
 					{section === "agent-config" && <AgentConfigSettings />}
 					{section === "identity" && <IdentitySettings />}

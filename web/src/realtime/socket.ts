@@ -163,6 +163,21 @@ export class RealtimeClient {
 		for (const cb of [...this.githubListeners]) cb();
 	}
 
+	/** SSH 主机与钥匙变更的监听者（M18）：收到 `ssh.changed` 与每次连接建立时调用。 */
+	private readonly sshListeners = new Set<() => void>();
+
+	/** 订阅「SSH 主机、钥匙、指纹或测试结果可能变了」；连接（重新）建立时也通知。返回取消订阅。 */
+	onSshChanged(cb: () => void): () => void {
+		this.sshListeners.add(cb);
+		return () => {
+			this.sshListeners.delete(cb);
+		};
+	}
+
+	private emitSshChanged() {
+		for (const cb of [...this.sshListeners]) cb();
+	}
+
 	/** artifact 列表变更的监听者（M14）：收到 `artifacts.changed` 与每次连接建立时调用。 */
 	private readonly artifactsListeners = new Set<() => void>();
 	/** 连接（重新）建立、artifact 观看已重发之后调用：断线期间错过的实时状态（画布等）靠它补回。 */
@@ -439,6 +454,7 @@ export class RealtimeClient {
 			}, PING_INTERVAL_MS);
 			this.emitSchedulesChanged();
 			this.emitGitHubChanged();
+			this.emitSshChanged();
 			for (const [id, w] of this.artifactWatches)
 				this.sendArtifactWatch(id, w.page);
 			this.emitArtifactsChanged();
@@ -733,6 +749,9 @@ export class RealtimeClient {
 				return;
 			case "github.changed":
 				this.emitGitHubChanged();
+				return;
+			case "ssh.changed":
+				this.emitSshChanged();
 				return;
 			case "artifacts.changed":
 				this.emitArtifactsChanged();

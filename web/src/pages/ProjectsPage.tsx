@@ -52,6 +52,7 @@ import {
 	RepoScriptText,
 } from "./projects/ProjectEditor";
 import { ProjectGitHubCard } from "./projects/ProjectGitHub";
+import { ProjectSshCard } from "./projects/ProjectSsh";
 import { ProjectSchedules } from "./settings/ProjectSchedules";
 
 /** 服务卡最多汇总的 orb 数（按最近活动）。 */
@@ -276,6 +277,7 @@ function ProjectDetail({ project }: { project: Project }): ReactNode {
 			</Card>
 			<ProjectAgentConfigCard project={project} />
 			<ProjectGitHubCard project={project} />
+			<ProjectSshCard project={project} />
 			<EnvironmentCard orb={setupOrb} />
 			<AccelCard project={project} />
 			<ServicesCard orbs={mine} />

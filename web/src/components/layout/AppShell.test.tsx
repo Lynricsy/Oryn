@@ -31,6 +31,7 @@ vi.mock("../../realtime/socket", () => ({
 		send: vi.fn(),
 		onSchedulesChanged: vi.fn(() => () => undefined),
 		onGitHubChanged: vi.fn(() => () => undefined),
+		onSshChanged: vi.fn(() => () => undefined),
 		onArtifactsChanged: vi.fn(() => () => undefined),
 		onArtifactConsent: vi.fn(() => () => undefined),
 		onArtifactWatchesChanged: vi.fn(() => () => undefined),

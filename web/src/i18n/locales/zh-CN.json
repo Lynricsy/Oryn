@@ -322,7 +322,8 @@
 			"workspace": "/{{name}} 会直接改 agent 的工作目录，Oryn 跟不上线程和工作区的对应关系，所以这里不能用。要在别的目录工作，请新建线程。",
 			"stats": "/stats 会在 orb 里启动本地仪表盘，浏览器打不开。看会话统计请用 /session。",
 			"export": "/export 会把会话导出成 orb 里的 HTML 文件，Oryn 还没有下载入口，暂时不能用。",
-			"sessionDelete": "/session delete 会删掉线程绑定的会话文件，Oryn 里不能这样删。要删除这段对话，请在线程标题栏的「更多操作」里选「删除线程」；只想从列表收起，选「归档」。"
+			"sessionDelete": "/session delete 会删掉线程绑定的会话文件，Oryn 里不能这样删。要删除这段对话，请在线程标题栏的「更多操作」里选「删除线程」；只想从列表收起，选「归档」。",
+			"sshManaged": "SSH 主机由 Oryn 集中管理：到 设置 → SSH 主机 里添加或修改。"
 		},
 		"result": {
 			"shake": "精简上下文：{{summary}}",
@@ -1041,7 +1042,8 @@
 		"todos": "待办",
 		"uptime": "已运行 {{d}}",
 		"subagentsRunning": "{{n}} 个运行中",
-		"subagentsTotal": "共 {{n}} 个"
+		"subagentsTotal": "共 {{n}} 个",
+		"ssh": "SSH 主机"
 	},
 	"todo": {
 		"status": {
@@ -1138,6 +1140,7 @@
 		"agent-commands": "命令与规则",
 		"agent-extensions": "扩展与工具",
 		"agent-memory": "记忆",
+		"agent-ssh": "SSH 主机",
 		"agent-composer": "输入框",
 		"about": "关于",
 		"notifications": "通知",
@@ -1579,6 +1582,154 @@
 			"download": "下载归档（{{when}}开始）",
 			"failed": "导出失败",
 			"failedNext": "确认 Hindsight 状态正常后重新导出；一直失败请查看 docker compose logs hindsight。"
+		}
+	},
+	"sshPage": {
+		"scope": "这里登记的主机经控制面网关连接，私钥与密码不进 orb；目标机须对控制面可达。Runner 线程用那台机器自己的 SSH 配置。",
+		"status": {
+			"untested": "还没测试过",
+			"ok": "{{at}} 测试成功",
+			"failed": "{{at}} 测试失败：{{error}}"
+		},
+		"test": {
+			"ok": "连接成功",
+			"failed": "连接失败",
+			"latency": "{{ms}} ms",
+			"fingerprint": "主机指纹",
+			"load": "负载",
+			"memory": "内存"
+		},
+		"hosts": {
+			"title": "全局主机",
+			"add": "添加主机",
+			"empty": "还没有主机。先在「钥匙」里生成或导入一把钥匙，把公钥加到目标机的 ~/.ssh/authorized_keys，再添加主机；也可以用密码登录。",
+			"deleteTitle": "删除主机「{{name}}」？",
+			"deleteHint": "orb 里的同名主机会在下次下发时消失，正在进行的连接会被断开。审计记录保留。",
+			"filesTitle": "{{name}} 的文件"
+		},
+		"row": {
+			"disabled": "已停用",
+			"automation": "全自动可用",
+			"forward": "端口转发",
+			"via": "经 {{name}}",
+			"test": "测试",
+			"terminal": "终端",
+			"files": "文件",
+			"resetHostKey": "重置指纹",
+			"noHostKey": "还没有固定指纹（首次连接成功时固定）",
+			"enable": "启用",
+			"disable": "停用",
+			"actions": "{{name}} 的操作"
+		},
+		"hostDialog": {
+			"createTitle": "添加主机",
+			"editTitle": "编辑主机「{{name}}」",
+			"create": "添加",
+			"name": "名称",
+			"nameHint": "orb 里用这个名字连接（ssh <名称>、ssh://<名称>/）。字母、数字与 _ . -，最长 64。",
+			"address": "地址",
+			"port": "端口",
+			"username": "登录用户",
+			"authType": "认证方式",
+			"authKey": "钥匙",
+			"authPassword": "密码",
+			"key": "钥匙",
+			"pickKey": "选择钥匙…",
+			"newKey": "新建钥匙",
+			"password": "密码",
+			"passwordKeep": "留空则沿用原密码",
+			"jump": "跳板",
+			"jumpHint": "经另一台已登记的主机连过去（最多 5 级）。",
+			"compat": "兼容模式",
+			"compatHint": "omp 的 compat 开关；默认 = 不写，由 omp 自行判断。",
+			"compatDefault": "默认",
+			"compatOn": "开",
+			"compatOff": "关",
+			"description": "描述",
+			"tags": "标签",
+			"tagsHint": "用逗号分隔，最多 16 个。",
+			"enabled": "启用",
+			"allowAutomation": "允许全自动线程使用（定时、GitHub 触发等无人值守的线程）",
+			"allowForward": "允许本地端口转发（ssh -L）"
+		},
+		"keys": {
+			"title": "钥匙",
+			"generate": "生成钥匙",
+			"import": "导入私钥",
+			"generateTitle": "生成钥匙",
+			"importTitle": "导入私钥",
+			"name": "名称",
+			"nameHint": "字母、数字、空格与 _ . -，最长 64。",
+			"privateKey": "私钥",
+			"passphrase": "口令",
+			"passphraseHint": "私钥没有口令就留空。口令只用来解开私钥，不会保存。",
+			"createdHint": "把这一行加到目标机的 ~/.ssh/authorized_keys：",
+			"done": "完成",
+			"empty": "还没有钥匙。",
+			"hostCount_one": "{{count}} 台主机在用",
+			"hostCount_other": "{{count}} 台主机在用",
+			"copyPublic": "复制公钥",
+			"rename": "重命名",
+			"renameTitle": "重命名钥匙",
+			"deleteTitle": "删除钥匙「{{name}}」？",
+			"deleteHint": "私钥会从控制面删除，无法恢复。还有主机在用这把钥匙时不能删除。",
+			"actions": "{{name}} 的操作"
+		},
+		"audit": {
+			"title": "网关审计",
+			"intro": "orb 经网关的连接与命令、页面上的测试、终端与文件操作、agent 的批量执行。保留 30 天。",
+			"hostFilter": "按主机筛选",
+			"allHosts": "全部主机",
+			"empty": "还没有记录。",
+			"more": "加载更多",
+			"col": {
+				"time": "时间",
+				"source": "来源",
+				"host": "主机",
+				"kind": "类型",
+				"detail": "详情",
+				"exit": "退出码",
+				"duration": "耗时"
+			},
+			"source": {
+				"orb": "orb",
+				"owner": "页面",
+				"tool": "工具"
+			}
+		},
+		"terminal": {
+			"title": "{{name}} — 终端",
+			"connecting": "连接中…",
+			"open": "已连接",
+			"closed": "已断开",
+			"reconnect": "重新连接",
+			"ended": "会话已结束",
+			"revoked": "登录已失效，或主机已被修改",
+			"tooMany": "同时打开的终端太多（最多 8 个）",
+			"unreachable": "连不上主机：{{reason}}",
+			"closedCode": "连接关闭（{{code}}）",
+			"mock": "(mock) 已连接 {{name}}"
+		}
+	},
+	"sshPanel": {
+		"summary_one": "{{count}} 台",
+		"summary_other": "{{count}} 台",
+		"automationBlocked": "全自动不可用",
+		"copyCommand": "复制 ssh {{name}}",
+		"test": "测试 {{name}}",
+		"manage": "管理主机",
+		"runner": {
+			"hint": "这是 Runner 那台机器自己的 SSH 配置，不经 Oryn 网关。",
+			"noSsh": "这台机器没有装 ssh。",
+			"empty": "这台机器上没有登记 SSH 主机。",
+			"add": "添加主机",
+			"addTitle": "添加主机",
+			"editTitle": "编辑主机「{{name}}」",
+			"edit": "编辑 {{name}}",
+			"delete": "删除 {{name}}",
+			"host": "主机",
+			"keyPath": "私钥路径",
+			"scope": "作用域"
 		}
 	},
 	"agentPages": {
@@ -2618,7 +2769,8 @@
 			"workspace": "工作区",
 			"home": "主目录",
 			"agentConfig": "Agent 配置",
-			"projectAgentConfig": "项目 Agent 配置"
+			"projectAgentConfig": "项目 Agent 配置",
+			"fsRoot": "根目录"
 		},
 		"orbDeleted": "orb 已删除，只能查看 Agent 配置。",
 		"agentConfigSaved": "已保存。Agent 配置对新 orb 与下次唤醒生效。",
@@ -3867,6 +4019,10 @@
 			"hint": "只对本项目的 orb 生效，目录结构与仓库里的 .omp/ 相同（rules/、skills/、mcp.json、config.yml、agents/、prompts/ 等）。同名项优先于仓库自带的 .omp/ 和全局 Agent 配置；对新 orb 与下次唤醒生效。",
 			"secretHint": "不要把令牌直接写进文件：在「密钥」里建一个环境变量模式的密钥，然后在 mcp.json 里写 ${变量名}。",
 			"pushHint": "用 oryn config push --project <项目名> 从本机目录导入。"
+		},
+		"ssh": {
+			"title": "SSH 主机",
+			"hint": "只对这个项目的 orb 可见；与全局主机同名时以这里为准。"
 		}
 	},
 	"uiRequest": {

@@ -102,6 +102,9 @@ export async function fetchSetupRunLog(
 
 export function slashContextOf(threadId: string): SlashContext {
 	const s = getThreadStore(threadId).getState();
+	const index = indexStore.getState();
+	const thread = s.thread ?? index.threads[threadId];
+	const orb = (thread?.orbId && index.orbs[thread.orbId]) || s.orb;
 	return {
 		planModeEnabled: s.state?.planModeEnabled ?? false,
 		vibeEnabled: s.vibeEnabled ?? false,
@@ -110,6 +113,8 @@ export function slashContextOf(threadId: string): SlashContext {
 		fastModeEnabled: s.state?.fastModeEnabled ?? false,
 		slowModeEnabled: s.state?.slowModeEnabled ?? false,
 		commands: s.commands ?? [],
+		// orb 上的工作线程：SSH 主机由 Oryn 下发；runner 用那台机器自己的 ssh.json
+		sshManaged: (thread?.kind ?? "work") === "work" && orb?.kind !== "runner",
 	};
 }
 

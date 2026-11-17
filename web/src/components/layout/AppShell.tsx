@@ -26,6 +26,7 @@ import { ApiError, UNAUTHORIZED_EVENT } from "../../api/client";
 import { useRealtimeGitHubSync } from "../../api/github-queries";
 import { useMe } from "../../api/queries";
 import { useRealtimeScheduleSync } from "../../api/schedule-queries";
+import { useRealtimeSshSync } from "../../api/ssh-queries";
 import { host } from "../../lib/host";
 import { watchChrome } from "../../lib/host-chrome";
 import { computeHostStatus } from "../../lib/host-status";
@@ -197,6 +198,7 @@ export function AppShell(): ReactNode {
 	useRealtimeScheduleSync();
 	// GitHub 集成状态（M14）同理
 	useRealtimeGitHubSync();
+	useRealtimeSshSync();
 	// Artifacts 列表（M14）同理
 	useRealtimeArtifactSync();
 	const here = useRef("");

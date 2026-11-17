@@ -98,6 +98,13 @@ export const MORE_ENTRIES: readonly MoreEntry[] = [
 		to: "/settings/agent-memory",
 	},
 	{
+		key: "agent-ssh",
+		group: "agent",
+		icon: "hardDrives",
+		labelKey: "settings.agent-ssh",
+		to: "/settings/agent-ssh",
+	},
+	{
 		key: "agent-composer",
 		group: "agent",
 		icon: "keyboard",

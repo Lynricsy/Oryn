@@ -71,6 +71,7 @@ import { handleNotifyFetch } from "./notify";
 import { handleOrbFetch } from "./orbfs";
 import { handleSearchFetch } from "./search";
 import { redact, SHARE_RULES } from "./share-scan";
+import { MockSsh } from "./ssh";
 import { handleStatsFetch } from "./stats";
 
 type Json = Record<string, unknown>;
@@ -477,6 +478,12 @@ export class MockServer {
 		},
 		schedulesChanged: (scheduleId) =>
 			this.broadcast({ type: "schedules.changed", scheduleId }),
+	});
+	/** SSH 主机与网关（M18）。 */
+	readonly ssh = new MockSsh({
+		changed: () => this.broadcast({ type: "ssh.changed" }),
+		threads: this.threads,
+		orbs: this.orbs,
 	});
 	/** GitHub 集成（M14）。 */
 	readonly github = new MockGitHub({
@@ -1554,6 +1561,8 @@ export class MockServer {
 		}
 		const githubRes = await this.github.handle(p, m, body, url);
 		if (githubRes) return githubRes;
+		const sshRes = await this.ssh.handle(req, p, m, url);
+		if (sshRes) return sshRes;
 		const memoryRes = await this.memory.handle(p, m, body, url);
 		if (memoryRes) return memoryRes;
 		const runnerRes = await this.handleRunnerFetch(p, m, body);
@@ -3460,6 +3469,28 @@ export class MockServer {
 					undefined,
 					"use_oryn_fork",
 				);
+			// runner 那台机器自己的 SSH 主机（M18）；orb 线程的同名命令在真实控制面里被拦或直通，mock 不区分
+			case "get_ssh_hosts":
+			case "ssh_manage":
+			case "ssh_test":
+				try {
+					return this.respond(
+						socket,
+						threadId,
+						id,
+						type,
+						this.ssh.runnerCmd(type, frame),
+					);
+				} catch (e) {
+					return this.respond(
+						socket,
+						threadId,
+						id,
+						type,
+						undefined,
+						e instanceof Error ? e.message : String(e),
+					);
+				}
 			default:
 				return this.respond(socket, threadId, id, type, {});
 		}

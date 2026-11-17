@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../api/client";
 import { handleOrbFetch, resetOrbFs } from "../mock/orbfs";
+import { MockSsh } from "../mock/ssh";
 import {
 	agentConfigListing,
 	agentConfigSource,
 	orbFileSource,
 	projectAgentConfigSource,
+	sshHostFileSource,
 } from "./file-source";
 
 const f = (path: string, size = 1, updatedAt = 1) => ({
@@ -516,5 +518,130 @@ describe("orbFileSource 停机预览（offline）", () => {
 				code: "read_only",
 			});
 		expect(urls).toEqual([]);
+	});
+});
+
+describe("sshHostFileSource（对 mock SSH 主机）", () => {
+	const host = "ssh_mock_prodweb";
+	let ssh: MockSsh;
+	let urls: string[];
+
+	/** 把请求交给 mock 的 SSH 后端（它再改写到内存文件树）。 */
+	async function route(req: Request): Promise<Response> {
+		const u = new URL(req.url);
+		urls.push(`${req.method} ${u.pathname}${u.search}`);
+		const p = u.pathname.slice("/api/v1/".length);
+		return (
+			(await ssh.handle(req, p, req.method.toUpperCase(), u)) ??
+			new Response(null, { status: 404 })
+		);
+	}
+
+	/** 写入走 XHR：转成 Request 交给同一个后端。 */
+	class RoutedXhr {
+		upload: { onprogress: ((e: ProgressEvent) => void) | null } = {
+			onprogress: null,
+		};
+		status = 0;
+		responseText = "";
+		withCredentials = false;
+		onload: (() => void) | null = null;
+		onerror: (() => void) | null = null;
+		onabort: (() => void) | null = null;
+		private method = "";
+		private url = "";
+		private headers: Record<string, string> = {};
+		open(method: string, url: string) {
+			this.method = method;
+			this.url = url;
+		}
+		setRequestHeader(k: string, v: string) {
+			this.headers[k] = v;
+		}
+		getResponseHeader() {
+			return null;
+		}
+		send(body: BodyInit) {
+			void route(
+				new Request(new URL(this.url, location.origin), {
+					method: this.method,
+					headers: this.headers,
+					body,
+				}),
+			).then(async (res) => {
+				this.status = res.status;
+				this.responseText = await res.text();
+				this.onload?.();
+			});
+		}
+		abort() {
+			this.onabort?.();
+		}
+	}
+
+	beforeEach(() => {
+		resetOrbFs();
+		urls = [];
+		ssh = new MockSsh({
+			changed: () => {},
+			threads: new Map(),
+			orbs: new Map(),
+		});
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+				route(
+					input instanceof Request
+						? input
+						: new Request(new URL(String(input), location.origin), init),
+				),
+			),
+		);
+		vi.stubGlobal("XMLHttpRequest", RoutedXhr);
+	});
+	afterEach(() => vi.unstubAllGlobals());
+
+	it("roots：主目录在前、根目录在后；全部请求走 ssh/hosts/{id}/fs，不带 thread", async () => {
+		const s = sshHostFileSource(host);
+		expect(s.id).toBe(`ssh:${host}`);
+		expect(s.caps).toEqual({
+			write: true,
+			mkdir: true,
+			rename: true,
+			upload: true,
+			download: true,
+		});
+		expect(await s.roots()).toEqual([
+			{ label: "files.roots.home", path: "/home/user" },
+			{ label: "files.roots.fsRoot", path: "/" },
+		]);
+		expect(urls).toEqual([`GET /api/v1/ssh/hosts/${host}/fs/roots`]);
+	});
+
+	it("写后读一致；etag 不符 → 412 modified；overwrite=false 且已存在 → 409 exists", async () => {
+		const s = sshHostFileSource(host);
+		const entry = await s.write("/home/user/a.txt", "hello");
+		expect(entry).toMatchObject({ name: "a.txt", type: "file", size: 5 });
+		const read = await s.readText("/home/user/a.txt");
+		expect(read).toMatchObject({ text: "hello", truncated: false });
+		expect(read.etag).toBe(entry.etag);
+		expect((await s.list("/home/user")).some((e) => e.name === "a.txt")).toBe(
+			true,
+		);
+		await expect(
+			s.write("/home/user/a.txt", "x", { etag: '"1-1"' }),
+		).rejects.toMatchObject({ status: 412, code: "modified" });
+		await expect(
+			s.write("/home/user/a.txt", "x", { overwrite: false }),
+		).rejects.toMatchObject({ status: 409, code: "exists" });
+		expect(urls).toContain(
+			`PUT /api/v1/ssh/hosts/${host}/fs/file?path=%2Fhome%2Fuser%2Fa.txt&overwrite=true`,
+		);
+	});
+
+	it("主机不存在 → 404 not_found", async () => {
+		await expect(
+			sshHostFileSource("ssh_missing").roots(),
+		).rejects.toMatchObject({ status: 404, code: "not_found" });
 	});
 });

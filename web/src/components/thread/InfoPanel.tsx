@@ -1,7 +1,7 @@
 /**
  * 右侧信息面板：orb 状态、规格与 CPU / 内存迷你曲线（`GET orbs/{id}/metrics`）、环境（最近 setup / resume）、浏览器 Profile（M8）、受管服务（M4）、
  * 上下文占用（主动请求上下文报告，分消息 / 工具定义 / 系统提示词三段）、todo（可编辑，`set_todos`）、子 agent 列表
- * （含已入库、agent 离线时仍可看的子 agent 会话）、能力（只读，`CapabilitiesSection`），
+ * （含已入库、agent 离线时仍可看的子 agent 会话）、能力（只读，`CapabilitiesSection`）、SSH 主机（M18，`SshSection`），
  * 以及报告 / btw 入口。外观以 D 稿（`.dev/design/explore/d.html` 的右栏）为准。
  */
 import { useQuery } from "@tanstack/react-query";
@@ -40,6 +40,7 @@ import { ContextBar, ContextLegend, useContextParts } from "./ContextBreakdown";
 import { openSubagent, useSubagentTree } from "./Dialogs";
 import { EnvRuns } from "./EnvBanner";
 import { ServicesSection } from "./ServicesSection";
+import { SshSection } from "./SshSection";
 import { useOrbOf } from "./ThreadHeader";
 
 // 稳定的空数组，避免 zustand 选择器每次返回新引用
@@ -989,6 +990,7 @@ export function InfoPanel({ threadId }: { threadId: string }): ReactNode {
 			<TodoSection threadId={threadId} />
 			<SubagentSection threadId={threadId} />
 			<CapabilitiesSection threadId={threadId} />
+			<SshSection threadId={threadId} />
 			<ToolsSection />
 		</aside>
 	);

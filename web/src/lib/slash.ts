@@ -31,7 +31,8 @@ export type UnavailableReason =
 	| "workspace"
 	| "stats"
 	| "export"
-	| "sessionDelete";
+	| "sessionDelete"
+	| "sshManaged";
 
 /**
  * 有文本实现、但在 Oryn 里执行会出问题的命令，客户端先行拦下并说明原因：
@@ -94,6 +95,8 @@ export interface SlashContext {
 	slowModeEnabled: boolean;
 	/** omp 公布的命令（`get_available_commands`）；尚未拿到时为空。 */
 	commands: readonly RpcAvailableSlashCommand[];
+	/** 线程的 SSH 主机由 Oryn 集中管理（orb 上的工作线程）：`/ssh add|remove|rm` 不可用。 */
+	sshManaged: boolean;
 }
 
 export interface ParsedSlash {
@@ -234,6 +237,13 @@ export function resolveSlash(
 	// `/session delete` 删掉线程绑定的会话文件（控制面同样拦 drop_session）：指向线程菜单的删除 / 归档
 	if (name === "session" && lower.trim() === "delete")
 		return { kind: "unavailable", name, reason: "sessionDelete" };
+	// orb 线程的 SSH 主机由控制面下发（控制面同样拦）：增删指到设置页；`/ssh list|help` 照常交给 omp
+	if (
+		name === "ssh" &&
+		ctx.sshManaged &&
+		["add", "remove", "rm"].includes(lower.split(/\s+/)[0] ?? "")
+	)
+		return { kind: "unavailable", name, reason: "sshManaged" };
 	const text = args ? `/${name} ${args}` : `/${name}`;
 	const bad = (): SlashAction => ({
 		kind: "bad_args",

@@ -322,7 +322,8 @@
 			"workspace": "/{{name}} changes the agent's working directory behind Oryn's back, so threads and workspaces would fall out of sync. To work in another directory, start a new thread.",
 			"stats": "/stats starts a local dashboard inside the orb that the browser can't reach. Use /session for session stats.",
 			"export": "/export writes the session as an HTML file inside the orb and Oryn has no download for it yet, so it's unavailable for now.",
-			"sessionDelete": "/session delete removes the session file this thread is bound to, so Oryn doesn't allow it. To delete this conversation, open “More actions” in the thread header and choose “Delete thread”; to just hide it from the list, choose “Archive”."
+			"sessionDelete": "/session delete removes the session file this thread is bound to, so Oryn doesn't allow it. To delete this conversation, open “More actions” in the thread header and choose “Delete thread”; to just hide it from the list, choose “Archive”.",
+			"sshManaged": "SSH hosts are managed centrally by Oryn: add or change them in Settings → SSH hosts."
 		},
 		"result": {
 			"shake": "Shake: {{summary}}",
@@ -1041,7 +1042,8 @@
 		"todos": "Todos",
 		"uptime": "Up {{d}}",
 		"subagentsRunning": "{{n}} running",
-		"subagentsTotal": "{{n}} total"
+		"subagentsTotal": "{{n}} total",
+		"ssh": "SSH hosts"
 	},
 	"todo": {
 		"status": {
@@ -1138,6 +1140,7 @@
 		"agent-commands": "Commands & rules",
 		"agent-extensions": "Extensions & tools",
 		"agent-memory": "Memory",
+		"agent-ssh": "SSH hosts",
 		"agent-composer": "Composer",
 		"about": "About",
 		"notifications": "Notifications",
@@ -1579,6 +1582,154 @@
 			"download": "Download archive (started {{when}})",
 			"failed": "Export failed",
 			"failedNext": "Make sure Hindsight is healthy and export again; if it keeps failing, check docker compose logs hindsight."
+		}
+	},
+	"sshPage": {
+		"scope": "Hosts registered here connect through the control plane's gateway; private keys and passwords never enter an orb. Targets must be reachable from the control plane. Runner threads use that machine's own SSH configuration.",
+		"status": {
+			"untested": "Not tested yet",
+			"ok": "Test passed at {{at}}",
+			"failed": "Test failed at {{at}}: {{error}}"
+		},
+		"test": {
+			"ok": "Connected",
+			"failed": "Connection failed",
+			"latency": "{{ms}} ms",
+			"fingerprint": "Host key",
+			"load": "Load",
+			"memory": "Memory"
+		},
+		"hosts": {
+			"title": "Global hosts",
+			"add": "Add host",
+			"empty": "No hosts yet. Generate or import a key under “Keys”, add its public key to ~/.ssh/authorized_keys on the target, then add the host. Password login works too.",
+			"deleteTitle": "Delete host “{{name}}”?",
+			"deleteHint": "The host disappears from orbs at the next sync and open connections are closed. Audit records are kept.",
+			"filesTitle": "Files on {{name}}"
+		},
+		"row": {
+			"disabled": "Disabled",
+			"automation": "Automation allowed",
+			"forward": "Port forwarding",
+			"via": "via {{name}}",
+			"test": "Test",
+			"terminal": "Terminal",
+			"files": "Files",
+			"resetHostKey": "Reset host key",
+			"noHostKey": "No host key pinned yet (pinned on the first successful connection)",
+			"enable": "Enable",
+			"disable": "Disable",
+			"actions": "Actions for {{name}}"
+		},
+		"hostDialog": {
+			"createTitle": "Add host",
+			"editTitle": "Edit host “{{name}}”",
+			"create": "Add",
+			"name": "Name",
+			"nameHint": "Orbs connect by this name (ssh <name>, ssh://<name>/). Letters, digits and _ . -, up to 64.",
+			"address": "Address",
+			"port": "Port",
+			"username": "Login user",
+			"authType": "Authentication",
+			"authKey": "Key",
+			"authPassword": "Password",
+			"key": "Key",
+			"pickKey": "Choose a key…",
+			"newKey": "New key",
+			"password": "Password",
+			"passwordKeep": "Leave blank to keep the current password",
+			"jump": "Jump host",
+			"jumpHint": "Connect through another registered host (up to 5 hops).",
+			"compat": "Compat mode",
+			"compatHint": "omp's compat switch; Default leaves it unset so omp decides.",
+			"compatDefault": "Default",
+			"compatOn": "On",
+			"compatOff": "Off",
+			"description": "Description",
+			"tags": "Tags",
+			"tagsHint": "Comma-separated, up to 16.",
+			"enabled": "Enabled",
+			"allowAutomation": "Allow fully automated threads (schedules, GitHub triggers and other unattended threads)",
+			"allowForward": "Allow local port forwarding (ssh -L)"
+		},
+		"keys": {
+			"title": "Keys",
+			"generate": "Generate key",
+			"import": "Import private key",
+			"generateTitle": "Generate key",
+			"importTitle": "Import private key",
+			"name": "Name",
+			"nameHint": "Letters, digits, spaces and _ . -, up to 64.",
+			"privateKey": "Private key",
+			"passphrase": "Passphrase",
+			"passphraseHint": "Leave blank if the key has none. It is only used to unlock the key and is not stored.",
+			"createdHint": "Add this line to ~/.ssh/authorized_keys on the target:",
+			"done": "Done",
+			"empty": "No keys yet.",
+			"hostCount_one": "used by {{count}} host",
+			"hostCount_other": "used by {{count}} hosts",
+			"copyPublic": "Copy public key",
+			"rename": "Rename",
+			"renameTitle": "Rename key",
+			"deleteTitle": "Delete key “{{name}}”?",
+			"deleteHint": "The private key is removed from the control plane for good. Keys still used by a host can't be deleted.",
+			"actions": "Actions for {{name}}"
+		},
+		"audit": {
+			"title": "Gateway audit",
+			"intro": "Connections and commands from orbs through the gateway, tests, terminals and file operations from this page, and agents' batch runs. Kept for 30 days.",
+			"hostFilter": "Filter by host",
+			"allHosts": "All hosts",
+			"empty": "No records yet.",
+			"more": "Load more",
+			"col": {
+				"time": "Time",
+				"source": "Source",
+				"host": "Host",
+				"kind": "Kind",
+				"detail": "Detail",
+				"exit": "Exit",
+				"duration": "Duration"
+			},
+			"source": {
+				"orb": "orb",
+				"owner": "page",
+				"tool": "tool"
+			}
+		},
+		"terminal": {
+			"title": "{{name}} — terminal",
+			"connecting": "Connecting…",
+			"open": "Connected",
+			"closed": "Disconnected",
+			"reconnect": "Reconnect",
+			"ended": "The session ended",
+			"revoked": "Your sign-in expired, or the host was changed",
+			"tooMany": "Too many terminals open (at most 8)",
+			"unreachable": "Can't reach the host: {{reason}}",
+			"closedCode": "Connection closed ({{code}})",
+			"mock": "(mock) connected to {{name}}"
+		}
+	},
+	"sshPanel": {
+		"summary_one": "{{count}} host",
+		"summary_other": "{{count}} hosts",
+		"automationBlocked": "Not for automation",
+		"copyCommand": "Copy ssh {{name}}",
+		"test": "Test {{name}}",
+		"manage": "Manage hosts",
+		"runner": {
+			"hint": "This is the runner machine's own SSH configuration; it doesn't go through Oryn's gateway.",
+			"noSsh": "ssh isn't installed on this machine.",
+			"empty": "No SSH hosts on this machine.",
+			"add": "Add host",
+			"addTitle": "Add host",
+			"editTitle": "Edit host “{{name}}”",
+			"edit": "Edit {{name}}",
+			"delete": "Delete {{name}}",
+			"host": "Host",
+			"keyPath": "Private key path",
+			"scope": "Scope"
 		}
 	},
 	"agentPages": {
@@ -2618,7 +2769,8 @@
 			"workspace": "Workspace",
 			"home": "Home",
 			"agentConfig": "Agent config",
-			"projectAgentConfig": "Project agent config"
+			"projectAgentConfig": "Project agent config",
+			"fsRoot": "Root"
 		},
 		"orbDeleted": "The orb has been deleted; only the agent config is available.",
 		"agentConfigSaved": "Saved. Agent config applies to new orbs and on the next wake.",
@@ -3867,6 +4019,10 @@
 			"hint": "Applies only to this project's orbs; the layout matches a repo's .omp/ (rules/, skills/, mcp.json, config.yml, agents/, prompts/, …). Entries here win over the repo's own .omp/ and the global agent config with the same name; changes apply to new orbs and on the next wake.",
 			"secretHint": "Don't put tokens in files directly: create an environment-mode secret under Secrets, then write ${VARIABLE_NAME} in mcp.json.",
 			"pushHint": "Import from a local directory with `oryn config push --project <project name>`."
+		},
+		"ssh": {
+			"title": "SSH hosts",
+			"hint": "Visible only to this project's orbs; overrides a global host with the same name."
 		}
 	},
 	"uiRequest": {

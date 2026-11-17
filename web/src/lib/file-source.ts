@@ -5,6 +5,7 @@
  * - agent 配置：全局 `/api/v1/agent-config/files*`（相对 omp-home 根）与项目级
  *   `/api/v1/projects/{id}/agent-config/files*`（相对项目配置根，同仓库里的 `.omp/`），根为 `""`；
  *   服务端只有扁平的文件列表，目录树在客户端合成，不支持新建文件夹与重命名。
+ * - SSH 主机（M18）：`/api/v1/ssh/hosts/{id}/fs/*`，控制面经 SFTP 代为读写，接口形状同 orb（不带 `thread` / `offline`）。
  */
 import {
 	ApiError,
@@ -37,7 +38,7 @@ export interface WriteOptions {
 }
 
 export interface FileSource {
-	/** `"orb:<orbId>"` | `"agent-config"` */
+	/** `"orb:<orbId>"` | `"ssh:<hostId>"` | `"agent-config"` */
 	id: string;
 	/**
 	 * `write`：可写入（新建、上传、重命名、删除、保存）；为 false 时一切变更入口都隐藏，其余各项随之失效。
@@ -308,6 +309,33 @@ export function xhrUpload<T>({
 	});
 }
 
+/** 用 `Range` 读文件开头至多 `maxBytes` 字节并按 UTF-8 解码（orb 与 SSH 主机的 `fs/file` 共用）。 */
+async function readTextRange(
+	url: string,
+	maxBytes: number,
+): Promise<{ text: string; etag?: string; truncated: boolean }> {
+	let res: Response;
+	try {
+		res = await rawFetch(url, {
+			headers: { Range: `bytes=0-${maxBytes - 1}` },
+		});
+	} catch (e) {
+		// 空文件上的 Range 请求按 RFC 9110 回 416
+		if (e instanceof ApiError && e.status === 416)
+			return { text: "", truncated: false };
+		throw e;
+	}
+	// 206：Content-Range 给出总长；200：服务端忽略了 Range，读满上限即停
+	const { bytes, over } = await readCapped(res, maxBytes);
+	const total = Number(res.headers.get("Content-Range")?.split("/")[1]);
+	const truncated = over || (Number.isFinite(total) && total > maxBytes);
+	return {
+		text: decodeUtf8(bytes, truncated),
+		etag: res.headers.get("ETag") ?? undefined,
+		truncated,
+	};
+}
+
 // ---------------------------------------------------------------- orb
 
 /**
@@ -371,27 +399,8 @@ export function orbFileSource(
 				}),
 			);
 		},
-		async readText(path, maxBytes = MAX_EDIT_BYTES) {
-			let res: Response;
-			try {
-				res = await rawFetch(fileUrl(path), {
-					headers: { Range: `bytes=0-${maxBytes - 1}` },
-				});
-			} catch (e) {
-				// 空文件上的 Range 请求按 RFC 9110 回 416
-				if (e instanceof ApiError && e.status === 416)
-					return { text: "", truncated: false };
-				throw e;
-			}
-			// 206：Content-Range 给出总长；200：服务端忽略了 Range，读满上限即停
-			const { bytes, over } = await readCapped(res, maxBytes);
-			const total = Number(res.headers.get("Content-Range")?.split("/")[1]);
-			const truncated = over || (Number.isFinite(total) && total > maxBytes);
-			return {
-				text: decodeUtf8(bytes, truncated),
-				etag: res.headers.get("ETag") ?? undefined,
-				truncated,
-			};
+		readText(path, maxBytes = MAX_EDIT_BYTES) {
+			return readTextRange(fileUrl(path), maxBytes);
 		},
 		async readBlob(path) {
 			return cappedBlob(await rawFetch(fileUrl(path)));
@@ -445,6 +454,95 @@ export function orbFileSource(
 		mkdir: readOnly,
 		rename: readOnly,
 		remove: readOnly,
+	};
+}
+
+// ---------------------------------------------------------------- SSH 主机（M18）
+
+/**
+ * 主人侧的 SSH 主机文件浏览：`/api/v1/ssh/hosts/{id}/fs/*`，由控制面经 SFTP 代为读写目标机；路径一律为绝对路径。
+ * 根是登录用户的主目录与 `/`（主目录就是 `/` 时只给一个）。
+ */
+export function sshHostFileSource(hostId: string): FileSource {
+	const id = { id: hostId };
+	const fileUrl = (path: string) =>
+		`/api/v1/ssh/hosts/${encodeURIComponent(hostId)}/fs/file?path=${encodeURIComponent(path)}`;
+	return {
+		id: `ssh:${hostId}`,
+		caps: {
+			write: true,
+			mkdir: true,
+			rename: true,
+			upload: true,
+			download: true,
+		},
+		async roots() {
+			const { home } = await unwrap(
+				api.GET("/api/v1/ssh/hosts/{id}/fs/roots", { params: { path: id } }),
+			);
+			const root = { label: "files.roots.fsRoot", path: "/" };
+			return home === "/"
+				? [root]
+				: [{ label: "files.roots.home", path: home }, root];
+		},
+		async list(path) {
+			const r = await unwrap(
+				api.GET("/api/v1/ssh/hosts/{id}/fs/list", {
+					params: { path: id, query: { path } },
+				}),
+			);
+			return r.entries;
+		},
+		stat(path) {
+			return unwrap(
+				api.GET("/api/v1/ssh/hosts/{id}/fs/stat", {
+					params: { path: id, query: { path } },
+				}),
+			);
+		},
+		readText(path, maxBytes = MAX_EDIT_BYTES) {
+			return readTextRange(fileUrl(path), maxBytes);
+		},
+		async readBlob(path) {
+			return cappedBlob(await rawFetch(fileUrl(path)));
+		},
+		write(path, body, opts = {}) {
+			const headers: Record<string, string> = {};
+			if (opts.etag) headers["If-Match"] = opts.etag;
+			const overwrite = opts.overwrite ?? true;
+			return xhrUpload<FileEntry>({
+				url: `${fileUrl(path)}&overwrite=${overwrite}`,
+				body,
+				headers,
+				signal: opts.signal,
+				onProgress: opts.onProgress,
+			});
+		},
+		async mkdir(path) {
+			await unwrap(
+				api.POST("/api/v1/ssh/hosts/{id}/fs/mkdir", {
+					params: { path: id },
+					body: { path },
+				}),
+			);
+		},
+		async rename(from, to) {
+			await unwrap(
+				api.POST("/api/v1/ssh/hosts/{id}/fs/rename", {
+					params: { path: id },
+					body: { from, to, overwrite: false },
+				}),
+			);
+		},
+		async remove(path) {
+			await unwrap(
+				api.POST("/api/v1/ssh/hosts/{id}/fs/delete", {
+					params: { path: id },
+					body: { path },
+				}),
+			);
+		},
+		downloadUrl: fileUrl,
 	};
 }
 
