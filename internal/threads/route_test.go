@@ -88,3 +88,61 @@ func TestRoutePromptSlashCommands(t *testing.T) {
 		assert.Equal(t, c.cmdType, typ, c.frame)
 	}
 }
+
+// M18：改动 SSH 主机目录的命令（ssh_manage、`/ssh add|remove|rm`）可识别；只读的查询与测试不算。
+func TestSSHManageCommand(t *testing.T) {
+	cases := []struct {
+		cmdType, frame string
+		want           bool
+	}{
+		{"prompt", `{"type":"prompt","message":"/ssh add a --host b"}`, true},
+		{"prompt", `{"type":"prompt","message":"/ssh RM a"}`, true},
+		{"prompt", `{"type":"prompt","message":"/ssh remove a"}`, true},
+		{"prompt", `{"type":"prompt","message":"/ssh add"}`, true},
+		{"prompt", `{"type":"prompt","message":"/ssh  Add\ta"}`, true},
+		{"prompt", `{"type":"prompt","message":"/ssh list"}`, false},
+		{"prompt", `{"type":"prompt","message":"/ssh help"}`, false},
+		{"prompt", `{"type":"prompt","message":"/ssh"}`, false},
+		{"prompt", `{"type":"prompt","message":"/sshx add"}`, false},
+		{"prompt", `{"type":"prompt","message":"/SSH add a"}`, false}, // 命令名大小写敏感
+		{"prompt", `{"type":"prompt","message":"/ssh adder"}`, false},
+		{"prompt", `{"type":"prompt","message":" /ssh add a"}`, false},
+		{"steer", `{"type":"steer","message":"/ssh add a"}`, false}, // 只有 prompt 执行内置命令
+		{"ssh_manage", `{"type":"ssh_manage","action":"create"}`, true},
+		{"ssh_test", `{"type":"ssh_test","host":{"name":"a"}}`, false},
+		{"get_ssh_hosts", `{"type":"get_ssh_hosts"}`, false},
+	}
+	for _, c := range cases {
+		assert.Equal(t, c.want, sshManageCommand(c.cmdType, json.RawMessage(c.frame)), c.frame)
+	}
+}
+
+// orb 线程改 SSH 主机目录的命令 → managed_by_oryn，不写进 agent 流；查询照常直通。runner 线程放行。
+func TestSSHManageRoutedByOrb(t *testing.T) {
+	f := newFixture(t, Config{})
+	th := f.thread(f.orb("ready"), StateIdle)
+	a := fakeAgent(8)
+	attach(th, a, apigen.AgentStatusReady)
+	for _, frame := range []string{`{"type":"ssh_manage","action":"create","scope":"user","name":"x","host":"y"}`, `{"type":"prompt","message":"/ssh add x --host y"}`} {
+		err := f.s.Command(f.ctx, th.id, json.RawMessage(frame), noReply)
+		var te *Error
+		require.ErrorAs(t, err, &te, frame)
+		assert.Equal(t, RouteManaged, te.Code, frame)
+		assert.Contains(t, te.Message, "设置 → SSH 主机", frame)
+	}
+	assert.Empty(t, sent(a), "被拒的命令不写进 agent 流")
+	require.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(`{"type":"ssh_test","host":{"name":"x","host":"y"}}`), noReply))
+	require.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(`{"type":"prompt","message":"/ssh list"}`), noReply))
+	assert.Len(t, sent(a), 2)
+
+	_, runnerOrb := f.runner("box", "ready")
+	rt := f.thread(runnerOrb, StateIdle)
+	ra := fakeAgent(8)
+	attach(rt, ra, apigen.AgentStatusReady)
+	require.NoError(t, f.s.Command(f.ctx, rt.id, json.RawMessage(`{"type":"ssh_manage","action":"create","scope":"user","name":"x","host":"y"}`), noReply))
+	require.NoError(t, f.s.Command(f.ctx, rt.id, json.RawMessage(`{"type":"prompt","message":"/ssh rm x"}`), noReply))
+	frames := sent(ra)
+	require.Len(t, frames, 2)
+	assert.Contains(t, frames[0], `"ssh_manage"`)
+	assert.Contains(t, frames[1], `/ssh rm x`)
+}

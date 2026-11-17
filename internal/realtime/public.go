@@ -400,3 +400,8 @@ func (h *Hub) SchedulesChanged(scheduleID string) {
 func (h *Hub) GitHubChanged() {
 	h.toAll(apigen.WsServerGitHubChanged{Type: apigen.WsServerGitHubChangedTypeGitHubChanged})
 }
+
+// SshChanged 实现 sshgw.Config.Changed：SSH 主机、钥匙、指纹或测试结果变了，广播给全部私有连接（M18）。
+func (h *Hub) SshChanged() {
+	h.toAll(apigen.WsServerSSHChanged{Type: apigen.WsServerSSHChangedTypeSSHChanged})
+}

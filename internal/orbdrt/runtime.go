@@ -54,7 +54,7 @@ type Config struct {
 	SSHAddr string
 	// SSHListener 非 nil 时就是 SSH 网关的监听（测试注入）。
 	SSHListener net.Listener
-	Version        string // orbd 版本（hello.orbdVersion）
+	Version     string // orbd 版本（hello.orbdVersion）
 
 	MetricsInterval time.Duration // 默认 15s
 	PollInterval    time.Duration // tailer 轮询兜底间隔，默认 2s
@@ -143,7 +143,7 @@ func ConfigFromEnv(version string) (Config, error) {
 		EgressAddr: os.Getenv("ORYN_EGRESS_ADDR"),
 		// ORYN_SSH_ADDR 同样仅供测试（同机并行多个 orbd）。
 		SSHAddr: os.Getenv("ORYN_SSH_ADDR"),
-		Version:    version,
+		Version: version,
 	}
 	var missing []string
 	for k, v := range map[string]string{"ORYN_URL": cfg.URL, "ORYN_ORB_ID": cfg.OrbID} {

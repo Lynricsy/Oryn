@@ -64,6 +64,10 @@ var (
 // Excluded 判断相对路径（以 / 分隔）是否应排除在导入之外。
 func Excluded(rel string) bool {
 	rel = strings.TrimPrefix(path.Clean("/"+rel), "/")
+	// M18：orb 内的 ssh.json 由 SSH 网关生成（主机在 设置 → SSH 主机 登记）；只拦根目录这一个文件
+	if rel == "ssh.json" {
+		return true
+	}
 	first, _, _ := strings.Cut(rel, "/")
 	for _, d := range excludedDirs {
 		if first == d {

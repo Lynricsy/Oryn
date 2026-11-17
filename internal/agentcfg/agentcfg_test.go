@@ -155,6 +155,7 @@ func TestExcluded(t *testing.T) {
 		"auth.json": true, "history.db": true, "config.yml": false, "skills/sessions/x": false,
 		"skill-repositories/x/.git/objects/pack/p.pack": true, "extensions/a/node_modules/b/index.js": true,
 		"ssh-keys/id_ed25519": true, "remote-pairing.json": true, "models.yml.bak.20260714-220351": true,
+		"ssh.json": true, "skills/a/ssh.json": false,
 	} {
 		assert.Equal(t, want, Excluded(p), p)
 	}

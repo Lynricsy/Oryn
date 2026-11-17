@@ -51,7 +51,7 @@ func tarOf(t *testing.T, files map[string]string) *bytes.Buffer {
 }
 
 func TestProjectExcluded(t *testing.T) {
-	for _, p := range []string{"models.yml", "plans/a.md", "plans", "sessions/x.jsonl", "auth.json"} {
+	for _, p := range []string{"models.yml", "plans/a.md", "plans", "sessions/x.jsonl", "auth.json", "ssh.json"} {
 		assert.True(t, agentcfg.ProjectExcluded(p), p)
 	}
 	for _, p := range []string{"rules/a.md", "config.yml", "mcp.json", "skills/plans/SKILL.md", "rules/models.yml"} {

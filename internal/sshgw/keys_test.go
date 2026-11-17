@@ -10,7 +10,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh"
-
 )
 
 func TestCreateKeyGenerate(t *testing.T) {

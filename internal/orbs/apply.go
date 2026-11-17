@@ -48,6 +48,9 @@ type OmpApplyConfig struct {
 	Dir string
 	// Debounce 是防抖时长；0 = 1 秒。
 	Debounce time.Duration
+	// SSHState 返回一层（"" = 全局）SSH 主机的摘要（M18）；nil = 没有 SSH。它以 ssh.json 之名并进这一层的文件参与比较，
+	// 不会被下发：主机一变，这一层的 Changed 里就有 ssh.json，线程据此 reload_plugins。
+	SSHState func(projectID string) ([]byte, error)
 }
 
 // OrbApply 是一台 orb 的下发结果。
@@ -301,7 +304,7 @@ func (s *Service) applyOrb(ctx context.Context, orb db.Orb) OrbApply {
 	}
 	cctx, cancel := context.WithTimeout(ctx, ompApplyTimeout)
 	defer cancel()
-	params := apigen.LinkCtlOmpHomeApplyParams{OmpHome: plan.Params.OmpHome, ProjectConfig: plan.Params.ProjectConfig}
+	params := apigen.LinkCtlOmpHomeApplyParams{OmpHome: plan.Params.OmpHome, ProjectConfig: plan.Params.ProjectConfig, SSH: plan.Params.SSH}
 	var out apigen.LinkCtlOkResult
 	if err := ctl.Call(cctx, string(apigen.MethodOmpHomeApply), params, &out); err != nil {
 		res.Err = err.Error()
@@ -320,8 +323,24 @@ func (a *ompApplier) layerDir(projectID string) string {
 	return filepath.Join(a.cfg.Dir, "projects", projectID)
 }
 
-// load 读这一层当前的原始文件。
+// load 读这一层当前的原始文件；有 SSH 时并入合成的 ssh.json 摘要（只用于比较）。
 func (a *ompApplier) load(projectID string) (map[string][]byte, error) {
+	files, err := a.loadFiles(projectID)
+	if err != nil || a.cfg.SSHState == nil {
+		return files, err
+	}
+	state, err := a.cfg.SSHState(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("读取 SSH 主机: %w", err)
+	}
+	if files == nil {
+		files = map[string][]byte{}
+	}
+	files["ssh.json"] = state
+	return files, nil
+}
+
+func (a *ompApplier) loadFiles(projectID string) (map[string][]byte, error) {
 	if projectID == "" {
 		if a.cfg.Home == nil {
 			return map[string][]byte{}, nil

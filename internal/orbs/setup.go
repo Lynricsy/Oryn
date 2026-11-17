@@ -72,6 +72,13 @@ type DefaultSetup struct {
 	Projects ProjectConfigs
 	// GitHub 是 GitHub 集成（M14）；可为 nil（不下发 gh 配置，github.com 只走 PAT）。
 	GitHub GitHub
+	// SSH 是 SSH 主机目录（M18）；可为 nil（不下发 orb 内的 SSH 配置）。
+	SSH SSH
+}
+
+// SSH 给出一台 orb 的 SSH 配置（M18）；runner 与协调 orb 返回 nil（不动 orb 内的 SSH 配置）。
+type SSH interface {
+	OrbConfig(ctx context.Context, orb db.Orb) (*apigen.LinkCtlSSHConfig, error)
 }
 
 // coordinatorFiles 是下发给协调宿主的 omp-home 文件：只有模型与基本设置，其余（mcp.json、extensions/、skills/、
@@ -274,6 +281,7 @@ func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project, orb db.Orb) (S
 		if err != nil {
 			return plan, fmt.Errorf("读取 omp-home: %w", err)
 		}
+		delete(files, "ssh.json") // M18：orb 内的 ssh.json 由 SSH 网关生成；旧部署可能在中央配置里存过原始文件
 		modes, err := d.Home.Modes()
 		if err != nil {
 			return plan, fmt.Errorf("读取 omp-home 权限: %w", err)
@@ -299,6 +307,13 @@ func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project, orb db.Orb) (S
 			return plan, fmt.Errorf("读取项目 omp 配置: %w", err)
 		}
 		p.ProjectConfig = &apigen.LinkCtlProjectConfig{Files: ompFiles(files, modes)}
+	}
+	if d.SSH != nil {
+		cfg, err := d.SSH.OrbConfig(ctx, orb)
+		if err != nil {
+			return plan, fmt.Errorf("读取 SSH 主机: %w", err)
+		}
+		p.SSH = cfg
 	}
 	if err := checkDeliverable(p); err != nil {
 		return plan, err

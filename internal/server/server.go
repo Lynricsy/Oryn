@@ -28,6 +28,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/github"
 	"github.com/Lynricsy/Oryn/internal/jobs"
 	"github.com/Lynricsy/Oryn/internal/library"
+	"github.com/Lynricsy/Oryn/internal/link"
 	"github.com/Lynricsy/Oryn/internal/memory"
 	"github.com/Lynricsy/Oryn/internal/memory/relayroute"
 	"github.com/Lynricsy/Oryn/internal/modelcat"
@@ -42,6 +43,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/search"
 	"github.com/Lynricsy/Oryn/internal/secrets"
 	"github.com/Lynricsy/Oryn/internal/share"
+	"github.com/Lynricsy/Oryn/internal/sshgw"
 	"github.com/Lynricsy/Oryn/internal/stats"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/threads"
@@ -103,6 +105,8 @@ type Server struct {
 	Stats *stats.Service
 	// GitHub 是 M14 的 GitHub 集成。
 	GitHub *github.Service
+	// SSH 是 M18 的 SSH 主机目录与控制面 SSH 网关。
+	SSH *sshgw.Service
 	// Memory 是 M16 的内置 Hindsight 记忆（连接设置、状态与 .env 生成）。
 	Memory *memory.Service
 	// OwnerMemory 是 M17 全局助手的主人记忆（bank `oryn-owner`，连接与 key 与 Memory 共用）。
@@ -189,6 +193,17 @@ func (s *Server) init(ctx context.Context) error {
 	s.Threads = threads.New(threads.Config{
 		DataDir: cfg.DataDir, WakeOnFocus: cfg.Idle.WakeOnFocus, PortalURLTemplate: threadPortalTemplate, Memory: lazyMemory{s},
 	}, s.Store, orbsAdapter{s.Orbs})
+	// M18：SSH 主机与网关。主机变化经 omp 下发链路推到 orb（ssh.json 摘要参与比较，线程据此 reload_plugins）；
+	// 回调在被调用时才取 s.Orbs / s.Hub（s.Hub 在后面才构造）
+	if s.SSH, err = sshgw.New(sshgw.Config{
+		Box: box, DataDir: cfg.DataDir,
+		Apply:   func(projectID string) { s.Orbs.ScheduleOmpApply(projectID) },
+		Changed: func() { s.Hub.SshChanged() },
+	}, s.Store, s.Orbs); err != nil {
+		return err
+	}
+	setup.SSH = s.SSH
+	s.Orbs.HandleStream(link.StreamSSH, s.SSH.ServeStream)
 	if s.Attachments, err = attachments.New(s.Store, cfg.DataDir, s.Orbs); err != nil {
 		return err
 	}
@@ -201,6 +216,7 @@ func (s *Server) init(ctx context.Context) error {
 	// M13：agent-config 写入后防抖下发到运行中的 orb，再按变化让会话 reload_plugins 或标为需重启
 	if err := s.Orbs.EnableOmpApply(orbs.OmpApplyConfig{
 		Home: s.Home, Projects: s.ProjectHomes, Dir: filepath.Join(cfg.DataDir, "omp-home-applied"),
+		SSHState: s.SSH.LayerState,
 	}); err != nil {
 		return err
 	}
@@ -314,7 +330,7 @@ func (s *Server) init(ctx context.Context) error {
 			}
 		}
 		return names
-	}, RoleKeySecret: share.DeriveRoleKeySecret(key)}, s.Store, s.Threads, s.Hub, s.Attachments, s.Orbs, s.Vault)
+	}, RoleKeySecret: share.DeriveRoleKeySecret(key)}, s.Store, s.Threads, s.Hub, s.Attachments, s.Orbs, shareSecrets{s.Vault, s.SSH})
 	// M14 artifact 渲染帧与发布页（步骤 2.1、8.2）：配置了 portal_domain 时在 a-<令牌> / p-<slug>.<portal_domain>
 	// （包在 portal 中间件外层分流），否则挂在主域的 /_af/<令牌>/ 与 /p/<slug>/（帧请求不带 cookie，令牌就是凭证；
 	// 发布页的访问由访问级别与授权段决定），SPA 的 CSP 相应放行 frame-src 'self'
@@ -343,6 +359,7 @@ func (s *Server) init(ctx context.Context) error {
 	go s.Coord.Run(runCtx)
 	go s.Stats.Run(runCtx)
 	go s.GitHub.Run(runCtx)
+	go s.SSH.Run(runCtx)
 	// M16：重试删除失败的 Hindsight 记忆，并在记忆启用时保证 user-preferences 存在
 	go s.Memory.RunTombstones(runCtx)
 	// M17：主人记忆写入循环（助手对话与线程空闲 30 分钟、归档或交付后写入 bank oryn-owner）

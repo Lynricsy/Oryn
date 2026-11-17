@@ -62,9 +62,10 @@ var (
 
 // reloadDirs / restartDirs 是按目录分类的文件；reloadFiles / restartFiles 是按文件名分类的根文件。
 var (
-	reloadDirs   = []string{"skills/", "commands/", "rules/", "prompts/", "instructions/"}
-	restartDirs  = []string{"hooks/", "extensions/", "tools/"}
-	reloadFiles  = map[string]bool{"AGENTS.md": true, "RULES.md": true, "mcp.json": true}
+	reloadDirs  = []string{"skills/", "commands/", "rules/", "prompts/", "instructions/"}
+	restartDirs = []string{"hooks/", "extensions/", "tools/"}
+	// ssh.json（M18）：控制面 SSH 主机变化合成的摘要；Core 的文件缓存要 reload_plugins 才清
+	reloadFiles  = map[string]bool{"AGENTS.md": true, "RULES.md": true, "mcp.json": true, "ssh.json": true}
 	restartFiles = map[string]bool{"SYSTEM.md": true, "APPEND_SYSTEM.md": true, "PERSONALITY.md": true, agentcfg.ModelsFile: true}
 )
 

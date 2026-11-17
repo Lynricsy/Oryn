@@ -10,6 +10,8 @@ import (
 	"github.com/Lynricsy/Oryn/internal/link"
 	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/realtime"
+	"github.com/Lynricsy/Oryn/internal/secrets"
+	"github.com/Lynricsy/Oryn/internal/sshgw"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
 )
@@ -71,4 +73,25 @@ func (m lazyMemory) AgentMemory(ctx context.Context, threadID string, projectID 
 		return nil, nil
 	}
 	return m.s.Memory.AgentMemory(ctx, threadID, projectID)
+}
+
+// shareSecrets 是分享前密钥扫描的取值来源：密钥库的全部值，加上 SSH 密码登录主机的密码（M18）。
+type shareSecrets struct {
+	vault *secrets.Vault
+	ssh   *sshgw.Service
+}
+
+func (s shareSecrets) All(ctx context.Context) (map[string]string, error) {
+	out, err := s.vault.All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pw, err := s.ssh.Secrets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range pw {
+		out[k] = v
+	}
+	return out, nil
 }
