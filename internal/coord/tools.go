@@ -124,6 +124,10 @@ func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) thre
 		// M19 第三层：对外分享（只给全局助手）
 		return s.shareTool(ctx, tc)
 	default:
+		if strings.HasPrefix(c.Name, computerToolPrefix) {
+			// M19 第二层：助手的电脑（只给全局助手）
+			return s.computerTool(ctx, tc)
+		}
 		err = errf("unknown_tool", "no tool named %q", c.Name)
 	}
 	if err != nil {

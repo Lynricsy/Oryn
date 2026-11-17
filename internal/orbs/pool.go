@@ -68,7 +68,7 @@ func poolDead(state string) bool {
 // 请求了浏览器 Profile、指定了快照的不走池（Profile 须在 ready 之前装载）。
 // 认领时把 orb 的 GitHub 身份改为 p.GithubIdentity（M14）；warming 的 orb 认领后不再重跑 setup，只认领身份相同的。
 func (s *Service) ClaimPool(ctx context.Context, p CreateParams) (db.Orb, bool) {
-	if s.cfg.Pool.MaxTotal <= 0 || p.ProjectID == "" || p.SnapshotID != "" || p.BrowserProfileID != "" || p.Coordinator || p.Pool {
+	if s.cfg.Pool.MaxTotal <= 0 || p.ProjectID == "" || p.SnapshotID != "" || p.BrowserProfileID != "" || p.Coordinator || p.Pool || p.Computer {
 		return db.Orb{}, false
 	}
 	ident := p.GithubIdentity

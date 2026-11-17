@@ -39,6 +39,12 @@ var coordErrStatus = map[string]int{
 	coord.CodeSpaceNameTaken:         http.StatusConflict,
 	coord.CodeInvalid:                http.StatusBadRequest,
 	coord.CodeNotFound:               http.StatusNotFound,
+	// M19：助手的电脑在等待时长内没有就绪；电脑的 orb 状态不允许该操作、已删除、orbd 过旧或未就绪
+	coord.CodeComputerStarting: http.StatusConflict,
+	"invalid_state":            http.StatusConflict,
+	"orb_gone":                 http.StatusConflict,
+	"orbd_outdated":            http.StatusConflict,
+	"orb_not_ready":            http.StatusConflict,
 }
 
 // writeCoordErr 写出协调层的错误：*coord.Error 按码映射，线程服务的错误按线程映射，其余按通用映射。

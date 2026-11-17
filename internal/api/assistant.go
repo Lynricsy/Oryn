@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/coord"
 )
 
 // 全局助手的设置与 MCP 列表（M19）。
@@ -79,6 +81,42 @@ func (s *Server) PutAssistantNotes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out, err := svc.PutNotes(r.Context(), in.Text)
+	if err != nil {
+		writeCoordErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, out)
+}
+
+// 助手的电脑（M19 第二层）。
+
+// GetAssistantComputer 对应 `GET assistant/computer`：还没有电脑时 orbId 省略。
+func (s *Server) GetAssistantComputer(w http.ResponseWriter, r *http.Request) {
+	s.assistantComputer(w, r, (*coord.Service).ComputerStatus)
+}
+
+// WakeAssistantComputer 对应 `POST assistant/computer/wake`：没有则创建，等到就绪（超时 409 computer_starting）。
+func (s *Server) WakeAssistantComputer(w http.ResponseWriter, r *http.Request) {
+	s.assistantComputer(w, r, (*coord.Service).WakeComputer)
+}
+
+// PauseAssistantComputer 对应 `POST assistant/computer/pause`：冻结（没有 → 404）。
+func (s *Server) PauseAssistantComputer(w http.ResponseWriter, r *http.Request) {
+	s.assistantComputer(w, r, (*coord.Service).PauseComputer)
+}
+
+// ResetAssistantComputer 对应 `POST assistant/computer/reset`：删除，下次用到时重新创建（没有时幂等）。
+func (s *Server) ResetAssistantComputer(w http.ResponseWriter, r *http.Request) {
+	s.assistantComputer(w, r, (*coord.Service).ResetComputer)
+}
+
+func (s *Server) assistantComputer(w http.ResponseWriter, r *http.Request,
+	op func(*coord.Service, context.Context) (apigen.AssistantComputer, error)) {
+	svc, ok := s.coordSvc(w)
+	if !ok {
+		return
+	}
+	out, err := op(svc, r.Context())
 	if err != nil {
 		writeCoordErr(w, r, err)
 		return

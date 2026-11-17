@@ -134,7 +134,7 @@ func (s *Service) isProjectSnapshot(ctx context.Context, q *db.Queries, id strin
 // pickProjectSnapshot 计算新 orb 的配置哈希，并按 M11a 2.2 选用就绪的项目快照：哈希不等 → 退役（config_changed）；
 // 血统超过 max_age → 退役（expired）；否则命中（由 insertOrb 在同一事务里登记使用）。
 func (s *Service) pickProjectSnapshot(ctx context.Context, p CreateParams, t target) snapPick {
-	if t.prj == nil || p.Coordinator {
+	if t.prj == nil || p.Coordinator || p.Computer {
 		return snapPick{}
 	}
 	hash, err := s.configHash(ctx, s.st.Q, *t.prj, t.prov, t.typ)
@@ -263,7 +263,7 @@ func (s *Service) firstSpawn(ctx context.Context, orbID string) bool {
 // 它只在 provider 确认实际用了快照时保留，见 onJobFinished），不看 orbd 自报的 prepared。ok=false 表示不参与：
 // 无项目、协调 orb、快照未开启，或 orb 来自连环境 fork 的快照（用过快照的 orb 永远不开新血统）。
 func (s *Service) snapshotSource(ctx context.Context, orb db.Orb) (prj db.Project, prov db.Provider, src *db.ProjectSnapshot, ok bool) {
-	if orb.ProjectID == nil || orb.Coordinator || !s.cfg.Snapshots.Enabled {
+	if orb.ProjectID == nil || orb.Coordinator || orb.Computer == 1 || !s.cfg.Snapshots.Enabled {
 		return prj, prov, nil, false
 	}
 	var err error

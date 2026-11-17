@@ -71,12 +71,15 @@ const (
 	transferToolTimeout = 5 * time.Minute
 )
 
-// HostToolTimeout 实现 threads.Coordinator：整文件传输类工具（取回、放入线程文件，导出、导入 artifact）5 分钟，
-// 其余返回 0（缺省 60 秒）。
+// HostToolTimeout 实现 threads.Coordinator：整文件传输类工具（取回、放入线程文件，导出、导入 artifact，电脑的上传与下载）
+// 5 分钟，助手的电脑里的工具（computer_*）30 分钟，其余返回 0（缺省 60 秒）。
 func (s *Service) HostToolTimeout(name string) time.Duration {
 	switch name {
-	case ToolFetchThreadFile, ToolPutThreadFile, ToolExportArtifact, ToolImportArtifact:
+	case ToolFetchThreadFile, ToolPutThreadFile, ToolExportArtifact, ToolImportArtifact, ToolComputerUpload, ToolComputerDownload:
 		return transferToolTimeout
+	}
+	if strings.HasPrefix(name, computerToolPrefix) {
+		return computerCallTimeout
 	}
 	return 0
 }
@@ -232,11 +235,16 @@ type orbRequest struct {
 // orbDo 向线程 t 的 orb 发一次 orbd 本机 API 请求：先确认 orb 可用（必要时唤醒，至多 fileOrbWait），Runner 线程带
 // 工作目录头。非 2xx 应答转成 orbd 给的错误码；成功时调用方负责关闭 Body。
 func (s *Service) orbDo(ctx context.Context, m Machines, t db.Thread, r orbRequest) (*http.Response, error) {
+	return s.orbDoAt(ctx, m, *t.OrbID, t.Cwd, r)
+}
+
+// orbDoAt 同 orbDo，按 orb id 与工作目录（空 = 不带工作目录头）发请求。
+func (s *Service) orbDoAt(ctx context.Context, m Machines, orbID string, cwd *string, r orbRequest) (*http.Response, error) {
 	feature := orbs.FeatureFS
 	if strings.HasPrefix(r.path, "/git/") {
 		feature = orbs.FeatureGit
 	}
-	if err := m.EnsureUsable(ctx, *t.OrbID, feature, true, fileOrbWait); err != nil {
+	if err := m.EnsureUsable(ctx, orbID, feature, true, fileOrbWait); err != nil {
 		return nil, err
 	}
 	u := url.URL{Scheme: "http", Host: "orbd", Path: r.path, RawQuery: r.query.Encode()}
@@ -247,8 +255,8 @@ func (s *Service) orbDo(ctx context.Context, m Machines, t db.Thread, r orbReque
 	if r.body != nil && r.size >= 0 {
 		req.ContentLength = r.size
 	}
-	orbs.SetWorkdir(req.Header, t.Cwd)
-	res, err := m.Do(ctx, *t.OrbID, req)
+	orbs.SetWorkdir(req.Header, cwd)
+	res, err := m.Do(ctx, orbID, req)
 	if err != nil {
 		return nil, err
 	}

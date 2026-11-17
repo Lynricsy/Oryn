@@ -169,6 +169,9 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 			// 池 orb 只能经认领进入线程（认领会刷新仓库并让它离开池）；直接挂上去会与对账回收竞争
 			return apigen.Thread{}, errf(CodeOrbIsPooled, "orb belongs to the warm pool")
 		}
+		if o.Computer == 1 {
+			return apigen.Thread{}, errf(CodeOrbIsComputer, "orb is the assistant's computer; threads cannot run on it")
+		}
 	default:
 		var profileID string
 		switch {

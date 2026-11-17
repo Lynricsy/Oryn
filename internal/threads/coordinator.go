@@ -57,15 +57,20 @@ type HostToolCall struct {
 	Args                     json.RawMessage
 	// OwnerTurn 为真表示这段活动里没有下发过自动化消息（只用于审计的 origin，不参与放行判断）。
 	OwnerTurn bool
+	// Update 把一份流式部分结果（`{content, details?}`）作为 host_tool_update 发给 omp（M19）；调用已结束或 agent 不在线时
+	// 丢弃。可在任意 goroutine 调用。
+	Update func(partial json.RawMessage)
 }
 
 // HostToolResult 是宿主工具的结果：Text 写进 content，Details 原样作为 details；Images 跟在 text 块之后
-// （M19，出错时不带图）。
+// （M19，出错时不带图）。Raw 非空时原样作为 result（M19：助手的电脑里的工具结果透传），其 isError 决定帧的 isError，
+// 其余字段忽略。
 type HostToolResult struct {
 	Text    string
 	Details any
 	IsError bool
 	Images  []HostToolImage
+	Raw     json.RawMessage
 }
 
 // HostToolImage 是宿主工具结果里的一张图片（Data 为 base64）。
@@ -443,6 +448,7 @@ func (s *Service) hostToolCallLocked(t *thread, line []byte) {
 		ThreadID: t.id, Kind: t.kind, SpaceID: t.spaceID,
 		CallID: f.ID, ToolCallID: f.ToolCallID, Name: f.ToolName, Args: f.Arguments,
 		OwnerTurn: !t.autoActive,
+		Update:    func(partial json.RawMessage) { s.hostToolUpdate(t, f.ID, partial) },
 	}
 	s.go_(func(context.Context) {
 		defer cancel()
@@ -471,8 +477,34 @@ func (s *Service) hostToolCallLocked(t *thread, line []byte) {
 	})
 }
 
+// hostToolUpdate 把一次在途宿主工具调用的部分结果写给 omp：调用已结束（结果已写回或已取消）或 agent 不在线时丢弃。
+func (s *Service) hostToolUpdate(t *thread, id string, partial json.RawMessage) {
+	if len(partial) == 0 {
+		return
+	}
+	frame, err := json.Marshal(map[string]any{"type": "host_tool_update", "id": id, "partialResult": partial})
+	if err != nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if _, live := t.hostCalls[id]; !live || t.agent == nil {
+		return
+	}
+	t.agent.send(frame)
+}
+
 // hostToolResultFrame 构造 host_tool_result 帧。
 func hostToolResultFrame(id string, r HostToolResult) ([]byte, error) {
+	if len(r.Raw) > 0 {
+		var flag struct {
+			IsError bool `json:"isError"`
+		}
+		if err := json.Unmarshal(r.Raw, &flag); err != nil {
+			return nil, err
+		}
+		return json.Marshal(map[string]any{"type": "host_tool_result", "id": id, "result": r.Raw, "isError": flag.IsError})
+	}
 	content := []map[string]string{{"type": "text", "text": r.Text}}
 	if !r.IsError {
 		for _, img := range r.Images {

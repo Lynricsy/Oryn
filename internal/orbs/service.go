@@ -133,6 +133,8 @@ type CreateParams struct {
 	Coordinator bool
 	// Pool 为真时建预热池 orb（M11a）：pool_state = warming；须有项目，且与 SnapshotID、BrowserProfileID 互斥。
 	Pool bool
+	// Computer 为真时建助手的电脑（M19）：无项目、不进预热池、不参与项目快照；全库至多一台未删除的。
+	Computer bool
 	// GithubIdentity 是 orb 的 GitHub 身份槽位（M14：user / agent）；空串等同 user。
 	GithubIdentity string
 }
@@ -768,6 +770,9 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (_ db.Orb, err err
 	if p.Pool && (p.ProjectID == "" || p.SnapshotID != "" || p.BrowserProfileID != "") {
 		return db.Orb{}, fmt.Errorf("%w: 预热池 orb 须属于项目，且不能指定快照或浏览器 Profile", ErrInvalidState)
 	}
+	if p.Computer && (p.Pool || p.ProjectID != "" || p.SnapshotID != "" || p.SnapshotOf != "") {
+		return db.Orb{}, fmt.Errorf("%w: 助手的电脑不属于项目，不能来自快照或预热池", ErrInvalidState)
+	}
 	if p.SnapshotOf != "" {
 		if src, err := s.st.Q.GetOrb(ctx, p.SnapshotOf); err == nil && IsRunner(src) {
 			// runner 的目录是用户机器上的，没有可拍的环境
@@ -822,6 +827,9 @@ func (s *Service) insertOrb(ctx context.Context, p CreateParams, t target, pick 
 	if p.GithubIdentity != "" {
 		base.GithubIdentity = &p.GithubIdentity
 	}
+	if p.Computer {
+		base.Computer = new(int64(1))
+	}
 	// orb、requested 事件与首个 spawn 任务同一事务提交：不存在「有 orb 没任务」的中间状态。
 	var ch *change
 	var params db.CreateOrbParams
@@ -845,6 +853,16 @@ func (s *Service) insertOrb(ctx context.Context, p CreateParams, t target, pick 
 			}
 		}
 		raw, _ := json.Marshal(detail)
+		if p.Computer {
+			// 全库至多一台未删除的助手的电脑（M19 R23）：与插入同一事务复核
+			cur, err := q.GetComputerOrb(ctx)
+			if err == nil && cur.State != StateDeleting && cur.State != StateDeleted {
+				return fmt.Errorf("%w: 助手的电脑已存在（%s）", ErrInvalidState, cur.ID)
+			}
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+		}
 		if err := q.CreateOrb(ctx, params); err != nil {
 			return err
 		}

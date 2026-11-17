@@ -116,6 +116,8 @@ type Service struct {
 	refreshPolicy func(ctx context.Context, orbID string) error
 	// machines 是 orb 与 Runner 的操作入口（M19，SetMachines 设置）；nil 时依赖它的助手工具回 coordinator_unavailable。
 	machines Machines
+	// comp 是助手的电脑的单飞锁与在途调用（M19 第二层）。
+	comp computerState
 	// projects / triggers 是项目与 GitHub 触发规则的操作入口（M19，SetProjects / SetTriggers 设置）；nil 时对应的助手工具
 	// 回 coordinator_unavailable。
 	projects Projects

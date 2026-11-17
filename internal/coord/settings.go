@@ -141,6 +141,11 @@ func (s *Service) refreshAssistants(ctx context.Context) {
 			slog.Warn("coord: 刷新协调宿主出站策略失败", "orb", o.ID, "err", err)
 		}
 	}
+	s.refreshConversations(ctx)
+}
+
+// refreshConversations 让全部未归档的助手对话在静止后重启 agent（下次启动取新的系统提示词与工具表）。
+func (s *Service) refreshConversations(ctx context.Context) {
 	kind, archived := threads.KindAssistant, false
 	rows, err := s.st.Q.ListThreads(ctx, db.ListThreadsParams{Kind: &kind, Archived: &archived})
 	if err != nil {
