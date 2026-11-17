@@ -85,6 +85,9 @@ func ThreadToAPI(t db.Thread, labels []string) apigen.Thread {
 		k := apigen.ThreadKind(t.Kind)
 		out.Kind = &k
 	}
+	if t.Main == 1 {
+		out.Main = new(true)
+	}
 	if t.ScheduleID != nil && t.ScheduleRun != nil {
 		out.ScheduleRun = &apigen.ThreadScheduleRun{ScheduleID: *t.ScheduleID, Run: *t.ScheduleRun}
 	}

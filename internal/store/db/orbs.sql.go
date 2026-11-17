@@ -76,11 +76,11 @@ const createOrb = `-- name: CreateOrb :exec
 
 INSERT INTO orbs (id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at,
                   token_hash, snapshot_of, created_at, coordinator, pool_state, config_hash, base_image_id, kind, github_identity,
-                  automation)
+                  automation, computer)
 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
         ?10, ?11, ?12, ?13, ?14, ?15, ?16,
         COALESCE(CAST(?17 AS TEXT), 'orb'), COALESCE(CAST(?18 AS TEXT), 'user'),
-        COALESCE(CAST(?19 AS BOOLEAN), 0))
+        COALESCE(CAST(?19 AS BOOLEAN), 0), COALESCE(CAST(?20 AS INTEGER), 0))
 `
 
 type CreateOrbParams struct {
@@ -103,6 +103,7 @@ type CreateOrbParams struct {
 	Kind           *string `json:"kind"`
 	GithubIdentity *string `json:"githubIdentity"`
 	Automation     *bool   `json:"automation"`
+	Computer       *int64  `json:"computer"`
 }
 
 // Orbs, lifecycle events, metric samples.
@@ -131,6 +132,7 @@ func (q *Queries) CreateOrb(ctx context.Context, arg CreateOrbParams) error {
 		arg.Kind,
 		arg.GithubIdentity,
 		arg.Automation,
+		arg.Computer,
 	)
 	return err
 }
@@ -148,7 +150,7 @@ func (q *Queries) DeleteOrbSamplesBefore(ctx context.Context, before int64) (int
 }
 
 const getCoordinatorOrb = `-- name: GetCoordinatorOrb :one
-SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at, base_image_id, kind, github_identity, automation FROM orbs
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at, base_image_id, kind, github_identity, computer, automation FROM orbs
 WHERE coordinator = 1 AND deleted_at IS NULL AND state NOT IN ('deleting', 'deleted')
 ORDER BY created_at DESC LIMIT 1
 `
@@ -183,6 +185,7 @@ func (q *Queries) GetCoordinatorOrb(ctx context.Context) (Orb, error) {
 		&i.BaseImageID,
 		&i.Kind,
 		&i.GithubIdentity,
+		&i.Computer,
 		&i.Automation,
 	)
 	return i, err
@@ -209,7 +212,7 @@ func (q *Queries) GetLatestOrbStateChange(ctx context.Context, orbID string) (Or
 }
 
 const getOrb = `-- name: GetOrb :one
-SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at, base_image_id, kind, github_identity, automation FROM orbs WHERE id = ?1
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at, base_image_id, kind, github_identity, computer, automation FROM orbs WHERE id = ?1
 `
 
 func (q *Queries) GetOrb(ctx context.Context, id string) (Orb, error) {
@@ -241,13 +244,14 @@ func (q *Queries) GetOrb(ctx context.Context, id string) (Orb, error) {
 		&i.BaseImageID,
 		&i.Kind,
 		&i.GithubIdentity,
+		&i.Computer,
 		&i.Automation,
 	)
 	return i, err
 }
 
 const getOrbByTokenHash = `-- name: GetOrbByTokenHash :one
-SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at, base_image_id, kind, github_identity, automation FROM orbs WHERE token_hash = ?1
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at, base_image_id, kind, github_identity, computer, automation FROM orbs WHERE token_hash = ?1
 `
 
 func (q *Queries) GetOrbByTokenHash(ctx context.Context, tokenHash string) (Orb, error) {
@@ -279,6 +283,7 @@ func (q *Queries) GetOrbByTokenHash(ctx context.Context, tokenHash string) (Orb,
 		&i.BaseImageID,
 		&i.Kind,
 		&i.GithubIdentity,
+		&i.Computer,
 		&i.Automation,
 	)
 	return i, err
@@ -480,7 +485,7 @@ func (q *Queries) ListOrbSamples(ctx context.Context, arg ListOrbSamplesParams) 
 }
 
 const listOrbs = `-- name: ListOrbs :many
-SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at, base_image_id, kind, github_identity, automation FROM orbs
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at, base_image_id, kind, github_identity, computer, automation FROM orbs
 WHERE (CAST(?1 AS BOOLEAN) = 1 OR deleted_at IS NULL)
 ORDER BY created_at DESC
 `
@@ -520,6 +525,7 @@ func (q *Queries) ListOrbs(ctx context.Context, includeDeleted *bool) ([]Orb, er
 			&i.BaseImageID,
 			&i.Kind,
 			&i.GithubIdentity,
+			&i.Computer,
 			&i.Automation,
 		); err != nil {
 			return nil, err
@@ -536,7 +542,7 @@ func (q *Queries) ListOrbs(ctx context.Context, includeDeleted *bool) ([]Orb, er
 }
 
 const listOrbsByState = `-- name: ListOrbsByState :many
-SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at, base_image_id, kind, github_identity, automation FROM orbs WHERE state = ?1 ORDER BY created_at
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at, base_image_id, kind, github_identity, computer, automation FROM orbs WHERE state = ?1 ORDER BY created_at
 `
 
 func (q *Queries) ListOrbsByState(ctx context.Context, state string) ([]Orb, error) {
@@ -574,6 +580,7 @@ func (q *Queries) ListOrbsByState(ctx context.Context, state string) ([]Orb, err
 			&i.BaseImageID,
 			&i.Kind,
 			&i.GithubIdentity,
+			&i.Computer,
 			&i.Automation,
 		); err != nil {
 			return nil, err
@@ -590,7 +597,7 @@ func (q *Queries) ListOrbsByState(ctx context.Context, state string) ([]Orb, err
 }
 
 const listPoolOrbs = `-- name: ListPoolOrbs :many
-SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at, base_image_id, kind, github_identity, automation FROM orbs
+SELECT id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at, token_hash, snapshot_of, last_agent_activity_at, last_user_interaction_at, orbd_version, agent_version, created_at, deleted_at, token_gen, coordinator, pool_state, config_hash, claimed_at, base_image_id, kind, github_identity, computer, automation FROM orbs
 WHERE pool_state IS NOT NULL AND deleted_at IS NULL
   AND (CAST(?1 AS TEXT) IS NULL OR project_id = CAST(?1 AS TEXT))
 ORDER BY created_at, id
@@ -632,6 +639,7 @@ func (q *Queries) ListPoolOrbs(ctx context.Context, projectID *string) ([]Orb, e
 			&i.BaseImageID,
 			&i.Kind,
 			&i.GithubIdentity,
+			&i.Computer,
 			&i.Automation,
 		); err != nil {
 			return nil, err

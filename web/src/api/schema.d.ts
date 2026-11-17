@@ -542,7 +542,11 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** 分页读取已复制条目（按 `seq` 升序） */
+        /**
+         * 分页读取已复制条目（按 `seq` 升序）
+         * @description `after` 向后翻、`before` 向前翻（M19）：给了 `before` 时返回 `seq < before` 的最新 `limit` 条（结果仍按 `seq` 升序），
+         *     `hasMore` 表示还有更早的。`after` 与 `before` 同时给出 → 400 `invalid_request`。
+         */
         get: operations["listThreadEntries"];
         put?: never;
         post?: never;
@@ -1814,6 +1818,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/settings/assistant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 全局助手的设置（M19：联网总开关、关掉的 MCP 服务器、助手的电脑） */
+        get: operations["getAssistantSettings"];
+        /**
+         * 设置全局助手（整体替换）
+         * @description `disabledMcpServers` 每项 1–200 字符、至多 200 项，否则 400 `invalid_request`。保存后立即刷新协调宿主的出站策略，
+         *     并让全部未归档的助手对话在静止后用新配置重启 agent。`computer` 只影响下一次创建助手的电脑。
+         */
+        put: operations["putAssistantSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/settings/role-identities": {
         parameters: {
             query?: never;
@@ -2509,6 +2535,134 @@ export interface paths {
          *     `images` 时新对话以它们作为第一条用户消息（`files` 是文件库里的文件 id，绑定到新对话）。
          */
         post: operations["createAssistantConversation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/assistant/mcp-servers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 全局 `mcp.json` 里的服务器及其对全局助手是否可用（M19）
+         * @description 解析全局配置的 `mcp.json`（已停用的条目不列）。只有 HTTP / SSE 传输、鉴权头可由 orynd 注入的服务器可以给助手用；
+         *     其余标 `usable: false` 并给出原因。解析失败 → 200 空列表。
+         */
+        get: operations["listAssistantMcpServers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/assistant/main": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 全局助手的主线对话（M19；没有则创建）
+         * @description 主线是 `kind = assistant`、`main = true` 的单例，不能归档或删除，不出现在助手对话列表里。
+         *     需要新建而协调宿主不可用时 409 `coordinator_unavailable`。
+         */
+        get: operations["getAssistantMain"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/assistant/main/notes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 主线备忘（M19） */
+        get: operations["getAssistantNotes"];
+        /** 改写主线备忘（整体替换，上限 1500 字，超出 → 400 `invalid_request`） */
+        put: operations["putAssistantNotes"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/assistant/computer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 助手的电脑（M19）：还没有时 `orbId` 省略 */
+        get: operations["getAssistantComputer"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/assistant/computer/wake": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 唤醒助手的电脑（没有则创建），等到就绪（至多 90 秒，超时 409 `computer_starting`） */
+        post: operations["wakeAssistantComputer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/assistant/computer/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 冻结助手的电脑（没有 → 404 `not_found`） */
+        post: operations["pauseAssistantComputer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/assistant/computer/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 删除助手的电脑；下次用到时重新创建（没有 → 200，幂等） */
+        post: operations["resetAssistantComputer"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6957,6 +7111,54 @@ export interface components {
             model?: components["schemas"]["ModelRef"];
             thinkingLevel?: string;
         };
+        /** @description 全局助手的设置（M19） */
+        AssistantSettings: {
+            /** @description 联网总开关：关闭时协调宿主的正向代理拒绝一切 CONNECT 与转发（`web_search`、读网页随之失败） */
+            webAccess: boolean;
+            /** @description 全局 `mcp.json` 里助手不用的服务器名 */
+            disabledMcpServers: string[];
+            computer: components["schemas"]["AssistantComputerSettings"];
+        };
+        /** @description 助手的电脑下一次创建时用的 provider 与 orb 类型；省略 = 默认解析 */
+        AssistantComputerSettings: {
+            provider?: string;
+            orbType?: string;
+        };
+        AssistantMcpServer: {
+            name: string;
+            /** @enum {string} */
+            transport: "http" | "sse" | "stdio";
+            /** @description URL 的主机（HTTP / SSE） */
+            host?: string;
+            /** @description 助手能否使用（传输与鉴权方式受支持） */
+            usable: boolean;
+            /**
+             * @description `usable: false` 的原因：`stdio` 本地进程型；`oauth` 需要 OAuth；`command_header` 头由命令生成；`unresolved_env` 头引用了不存在的环境变量；`invalid_url` 地址无效
+             * @enum {string}
+             */
+            reason?: "stdio" | "oauth" | "command_header" | "unresolved_env" | "invalid_url";
+            /** @description 不在助手设置的禁用表里 */
+            enabled: boolean;
+        };
+        AssistantMcpServerList: {
+            servers: components["schemas"]["AssistantMcpServer"][];
+        };
+        /** @description 主线备忘（M19，助手每段开头带上） */
+        AssistantNotes: {
+            /** @description 上限 1500 字（按 Unicode 字符计） */
+            text: string;
+            readonly updatedAt?: components["schemas"]["TimestampMs"];
+        };
+        /** @description 助手的电脑（M19） */
+        AssistantComputer: {
+            /** @description 还没有电脑时省略 */
+            orbId?: components["schemas"]["OrbId"];
+            state?: components["schemas"]["OrbState"];
+            providerName?: string;
+            type?: string;
+            /** @description 电脑里的工具定义已缓存（`computer_*` 工具从下一轮起可用） */
+            toolsReady: boolean;
+        };
         OrbType: {
             name: string;
             cpus: number;
@@ -7195,6 +7397,8 @@ export interface components {
             pulls?: components["schemas"]["ThreadPull"][];
             /** @description 触发规则建立的 issue 任务或发布哨兵状态（M15）；没有则省略 */
             githubTask?: components["schemas"]["GitHubThreadTask"];
+            /** @description 是否为全局助手的主线对话（M19，`kind = assistant` 的单例）；不是则省略 */
+            main?: boolean;
         };
         /**
          * @description `state=error` 的原因（均可 `POST threads/{id}/wake` 重试）：
@@ -7361,6 +7565,8 @@ export interface components {
             githubLogin?: string;
             /** @description M18：这台 orb 由全自动入口（定时、GitHub 触发等）建立；为真时只能用放开了「允许全自动线程使用」的 SSH 主机。缺省 = false */
             readonly automation?: boolean;
+            /** @description 助手的电脑（M19，全库至多一台，线程不能挂上去）；为 false 时省略 */
+            computer?: boolean;
         };
         /**
          * @description `orb` = provider 创建的 orb；`runner` = runner 的常驻 orb（M11b）
@@ -7936,8 +8142,11 @@ export interface components {
              * @enum {string}
              */
             origin: "owner" | "auto";
-            /** @enum {string} */
-            action: "create_thread" | "send_message" | "archive_thread" | "set_schedule" | "delete_schedule";
+            /**
+             * @description 工具名（M19 起全局助手有更多写类工具；经确认卡执行的记 `origin = owner`）
+             * @enum {string}
+             */
+            action: "create_thread" | "send_message" | "archive_thread" | "set_schedule" | "delete_schedule" | "update_thread" | "abort_thread" | "set_thread_model" | "fork_thread" | "wake_thread" | "delete_thread" | "create_project" | "update_project" | "delete_project" | "create_space" | "update_space" | "delete_space" | "set_trigger" | "delete_trigger" | "pause_orb" | "wake_orb" | "delete_orb" | "write_thread_file" | "put_thread_file" | "write_project_config" | "delete_project_config" | "share_thread" | "revoke_share" | "share_portal" | "unshare_portal" | "publish_artifact" | "unpublish_artifact";
             targetThreadId?: components["schemas"]["ThreadId"];
             scheduleId?: components["schemas"]["ScheduleId"];
             /** @description 消息 / 提示词的前 200 字符；定时为 `<name> · <kind> <spec> · <mode>` */
@@ -8972,6 +9181,11 @@ export interface components {
              *     或缺省但 `afterSeq > 0` 且服务端版本 > 0 时，服务端忽略 `afterSeq` 从头补发，并在快照中置 `fullReplay: true`。
              */
             transcriptRev?: number;
+            /**
+             * @description 只补发最近的 `tail` 条（M19，主线页面用）：仅在实际从 seq 0 补发时生效，快照的 `windowStart` 给出窗口起点，
+             *     更早的条目经 `GET /threads/{id}/entries?before=` 翻页。越界值夹到 50–2000。
+             */
+            tail?: number;
         };
         WsClientUnsub: {
             /**
@@ -9117,6 +9331,12 @@ export interface components {
             transcriptRev: number;
             /** @description 为真时服务端从 seq 0 补发：客户端须先丢弃该线程已缓存的全部条目 */
             fullReplay: boolean;
+            /**
+             * Format: int64
+             * @description 带 `tail` 订阅时补发窗口的起点（M19）：只补发 `seq > windowStart` 的条目，更早的经 REST `before` 翻页；
+             *     省略或 0 = 没有开窗
+             */
+            windowStart?: number;
         };
         WsServerEntries: {
             /**
@@ -9777,9 +9997,13 @@ export interface components {
          *     `github.prepare.report`（orbd→orynd 请求，M15，`github_prepare` 通过后上报，参数 `LinkCtlGithubPrepareReportParams`，结果 `LinkCtlOkResult`）；
          *     runner 的 link 拒绝这两个方法。
          *     `ssh.call`（orbd→orynd 请求，M18，由 orb 内 agent 的 `ssh_exec_many` 工具转来，参数 `LinkCtlSshCallParams`，结果 `LinkCtlSshCallResult`；runner 的 link 拒绝）。
+         *     `computer.start`、`computer.call`、`computer.cancel`、`computer.stop`（orynd→orbd 请求，M19，助手的电脑里的工具执行器：参数分别为
+         *     `LinkCtlComputerStartParams` / `LinkCtlComputerCallParams` / `LinkCtlComputerCancelParams` / 无参数，结果分别为
+         *     `LinkCtlComputerStartResult` / `LinkCtlComputerCallResult` / `LinkCtlOkResult` / `LinkCtlOkResult`；只在 hello 含 `computer` 时发送，
+         *     runner 与协调宿主回 `not_supported`）、`computer.update`（orbd→orynd 通知，M19，参数 `LinkCtlComputerUpdateParams`，在途工具的流式输出）。
          * @enum {string}
          */
-        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap" | "services.state" | "portal.configure" | "desktop.state" | "profile.mode" | "thread.create" | "thread.send" | "thread.get" | "schedule.get" | "schedule.put" | "schedule.delete" | "schedule.enable" | "snapshot.prepare" | "worktree.add" | "worktree.remove" | "omphome.apply" | "library.sync" | "library.fetch" | "library.put" | "artifact.call" | "github.call" | "github.prepare.report" | "ssh.call";
+        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap" | "services.state" | "portal.configure" | "desktop.state" | "profile.mode" | "thread.create" | "thread.send" | "thread.get" | "schedule.get" | "schedule.put" | "schedule.delete" | "schedule.enable" | "snapshot.prepare" | "worktree.add" | "worktree.remove" | "omphome.apply" | "library.sync" | "library.fetch" | "library.put" | "artifact.call" | "github.call" | "github.prepare.report" | "ssh.call" | "computer.start" | "computer.call" | "computer.cancel" | "computer.stop" | "computer.update";
         LinkCtlRequest: {
             /**
              * Format: int64
@@ -9846,6 +10070,7 @@ export interface components {
              *     `library`（认识 `library.sync`、`library.fetch` 与同步用的 `library` 流；只由协调宿主上报，此时特性表恰为 `["coordinator", "omphome-apply", "library"]`）。
              *     M16 起：`memory`（认识 `agent.start` 的 `memory`，并为记忆开出站通道 `/memory/`；普通 orbd 与 runner 上报，协调宿主不上报）。
              *     M18 起：`ssh`（orbd 监听本机 SSH 网关端口并认识 `setup.run` / `omphome.apply` 的 `ssh`；runner 与协调宿主不上报）。
+             *     M19 起：`computer`（认识 `computer.*`：惰性拉起不调模型的 omp 当工具执行器；只由普通 orbd 上报）。
              *     缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync / 桌面请求回 409 `orbd_outdated`。
              */
             features?: string[];
@@ -10257,6 +10482,42 @@ export interface components {
                 mimeType: string;
                 /** @description base64 */
                 data: string;
+            };
+        };
+        /** @description M19（orynd→orbd）：确保工具执行器在跑，返回所列工具的定义（取不到的名字跳过） */
+        LinkCtlComputerStartParams: {
+            names: string[];
+        };
+        LinkCtlComputerStartResult: {
+            /** @description 工具定义（`{name, description, parameters}`，与宿主工具定义同形） */
+            tools: components["schemas"]["OmpFrame"][];
+            /** @description 执行器 omp 的版本 */
+            agentVersion: string;
+        };
+        /** @description M19（orynd→orbd）：在工具执行器里直接执行一个内置工具；到时发取消并回错误 `timeout` */
+        LinkCtlComputerCallParams: {
+            /** @description 调用 id（流式通知与取消按它配对） */
+            callId: string;
+            tool: string;
+            args: {
+                [key: string]: unknown;
+            };
+            timeoutSec: number;
+        };
+        LinkCtlComputerCallResult: {
+            /** @description 工具结果 `{content, details?, isError?}`（content 可含 image 块） */
+            result: {
+                [key: string]: unknown;
+            };
+        };
+        LinkCtlComputerCancelParams: {
+            callId: string;
+        };
+        /** @description M19（orbd→orynd 通知）：在途工具的流式部分结果 */
+        LinkCtlComputerUpdateParams: {
+            callId: string;
+            partialResult: {
+                [key: string]: unknown;
             };
         };
         LinkCtlFsCopyTreeParams: {
@@ -11449,6 +11710,8 @@ export interface operations {
             query?: {
                 /** @description 只返回 `seq > after` 的条目 */
                 after?: number;
+                /** @description 只返回 `seq < before` 的条目（M19，向前翻页） */
+                before?: number;
                 limit?: number;
             };
             header?: never;
@@ -13277,6 +13540,52 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    getAssistantSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前设置（没有存过 = 默认：联网开、无禁用项） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putAssistantSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssistantSettings"];
+            };
+        };
+        responses: {
+            /** @description 写入后的设置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     listRoleIdentities: {
         parameters: {
             query?: never;
@@ -14449,6 +14758,178 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ThreadEnvelope"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listAssistantMcpServers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 服务器列表（按名字排序） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantMcpServerList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getAssistantMain: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 主线 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThreadEnvelope"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getAssistantNotes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 备忘 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantNotes"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putAssistantNotes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssistantNotes"];
+            };
+        };
+        responses: {
+            /** @description 写入后的备忘 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantNotes"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getAssistantComputer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantComputer"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    wakeAssistantComputer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantComputer"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    pauseAssistantComputer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantComputer"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    resetAssistantComputer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 重置后的状态（`orbId` 省略） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantComputer"];
                 };
             };
             default: components["responses"]["Error"];

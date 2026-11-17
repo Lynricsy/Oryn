@@ -203,7 +203,7 @@ SELECT t.id, t.kind, t.title, t.state, t.project_id, p.name AS project_name, t.a
     t.last_message_at, t.created_at,
     CAST(COALESCE((SELECT group_concat(tp.number, ',') FROM thread_pulls tp WHERE tp.thread_id = t.id AND tp.unlinked = 0), '') AS TEXT) AS pulls
 FROM threads t LEFT JOIN projects p ON p.id = t.project_id
-WHERE t.kind IN ('assistant','work') AND t.last_message_at IS NOT NULL AND t.last_message_at >= @since
+WHERE t.kind IN ('assistant','work') AND t.main = 0 AND t.last_message_at IS NOT NULL AND t.last_message_at >= @since
     AND NOT EXISTS (SELECT 1 FROM owner_memory_exclusions e WHERE e.kind = 'thread' AND e.target_id = t.id)
     AND NOT EXISTS (SELECT 1 FROM owner_memory_exclusions e WHERE e.kind = 'project' AND e.target_id = t.project_id)
 ORDER BY t.last_message_at DESC

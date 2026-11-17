@@ -408,3 +408,38 @@ describe("GitHub 自动消息首行（M14）", () => {
 		}
 	});
 });
+
+describe("确认卡结果首行（M19）", () => {
+	const head = "[Oryn confirmation · automatic] delete_thread thr_01";
+
+	it.each([
+		["approved and done.", { outcome: "approved" }],
+		["rejected by the owner.", { outcome: "rejected" }],
+		["expired without an answer.", { outcome: "expired" }],
+		[
+			"approved but failed: secrets_found.",
+			{ outcome: "failed", error: "secrets_found" },
+		],
+	])("%s", (tail, want) => {
+		expect(parseOrynHeader(`${head}: ${tail}`)).toEqual({
+			kind: "confirmation",
+			action: "delete_thread",
+			target: "thr_01",
+			...want,
+		});
+	});
+
+	it("结局段认不出 → unknown", () => {
+		expect(parseOrynHeader(`${head}: approved.`)).toEqual({ kind: "unknown" });
+	});
+
+	it("详情进正文；中文标签", () => {
+		const m = parseOrynMessage(
+			`${head}: approved but failed: not_found.\n\nthread is gone`,
+		);
+		expect(m?.body).toBe("thread is gone");
+		expect(m && describeOrynHeader(m, t, "zh-CN")).toBe(
+			"已确认但执行失败（not_found）· delete_thread thr_01",
+		);
+	});
+});

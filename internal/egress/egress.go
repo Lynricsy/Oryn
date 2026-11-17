@@ -13,7 +13,11 @@
 //   - 响应头与响应体中出现的真实值会被换回占位符，防止上游回显泄露（101 升级后的字节流只脱敏响应头，
 //     改写升级后的协议帧会破坏其分帧）；
 //   - 记忆路由（/memory/t/<threadId>/…，M16）不走占位符替换，线程归属经 Resolver.Caller 校验后交给记忆网关
-//     （internal/memory/gateway.go），由网关强制 bank、标签与放行清单并注入 Hindsight key。
+//     （internal/memory/gateway.go），由网关强制 bank、标签与放行清单并注入 Hindsight key；
+//   - 正向代理（M19，web.go）只给协调宿主（NoGit）：策略带 Web 时放行 CONNECT 与 http 的 absolute-form 请求，
+//     在连接建立时按实际连接的 IP 只放行公网地址（AllowHosts 例外）；没有 Web 时一律 403；
+//   - MCP 路由（/mcp/<key>/…，M19）转发到主人配置的 MCP 服务器：丢掉入站的 Authorization 后注入路由的请求头，
+//     凭据类请求头的值从响应里抹掉。
 package egress
 
 import (
@@ -57,6 +61,10 @@ type Policy struct {
 	NoGit bool
 	// GitHub 非 nil 时放行 /gh/api.github.com/… 与 /gh/uploads.github.com/…（M14/M15），并对 github.com 的 git 不按仓库限制（M15）。
 	GitHub *GitHubAccess
+	// Web 非 nil 时（只用于协调宿主）正向代理放行公网访问（M19，web.go）；nil 时 CONNECT 与转发一律 403。
+	Web *WebPolicy
+	// MCP 是 MCP 路由键 → 路由（`/mcp/<key>/…`，M19）。
+	MCP map[string]MCPRoute
 }
 
 // GitHubAccess 是 orb 的 GitHub 访问：非 nil 时放行 `/gh/api.github.com/…`、`/gh/uploads.github.com/…`；
@@ -187,16 +195,31 @@ type target struct {
 	receivePack       bool
 	repo              string
 	ghAccess          *GitHubAccess
+	// headers 非 nil 时（MCP 路由）先删掉入站的 Authorization，再逐个设置这些请求头；query 是上游地址自带的查询串，
+	// 拼在入站查询串之前。
+	headers map[string]string
+	query   string
 	// deny 非空时是 resolve 拒绝（非 200）的原因，代替按状态码给出的通用文案。
 	deny string
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// 按请求形式分开路由：absolute-form（代理形式，r.URL.Host 非空）只走 git 路由（resolve），记忆、模型与 /gh/ 都只认
-	// origin-form。同一个路径不会按两种语义解析，owner 叫 memory 的仓库也能经代理形式访问。
+	// 按请求形式分开路由：absolute-form（代理形式，r.URL.Host 非空）在普通 orb 上只走 git 路由（resolve），在协调宿主（NoGit）上
+	// 是正向代理（serveForward）；记忆、模型、/gh/ 与 /mcp/ 都只认 origin-form。同一个路径不会按两种语义解析，owner 叫 memory 的
+	// 仓库也能经代理形式访问。CONNECT 的 r.URL.Host 也非空，先于 absolute-form 分流。
 	if r.URL.Host == "" && strings.HasPrefix(r.URL.Path, "/memory/") {
 		h.serveMemory(w, r)
 		return
+	}
+	if r.Method == http.MethodConnect {
+		h.serveConnect(w, r)
+		return
+	}
+	if r.URL.Host != "" {
+		if pol := h.R.Policy(); pol.NoGit {
+			h.serveForward(w, r, pol.Web)
+			return
+		}
 	}
 	t, status := h.resolve(r)
 	if status != http.StatusOK {
@@ -239,6 +262,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			pr.Out.Header.Del("X-Forwarded-For")
 			if t.auth != "" {
 				pr.Out.Header.Set("Authorization", t.auth)
+			}
+			if t.headers != nil {
+				pr.Out.Header.Del("Authorization")
+				for k, v := range t.headers {
+					pr.Out.Header.Set(k, v)
+				}
+			}
+			if t.query != "" {
+				q := t.query
+				if pr.Out.URL.RawQuery != "" {
+					q += "&" + pr.Out.URL.RawQuery
+				}
+				pr.Out.URL.RawQuery = q
 			}
 			if t.stripEncoding {
 				pr.Out.Header.Del("Accept-Encoding")
@@ -313,7 +349,7 @@ func (h *Handler) serveMemory(w http.ResponseWriter, r *http.Request) {
 	gw.ServeHTTP(w, r2)
 }
 
-// resolve 把 /llm/<key>/…、/git/<host>/… 或 /gh/api.github.com/… 映射为上游；返回 HTTP 状态（200 = 放行）。
+// resolve 把 /llm/<key>/…、/git/<host>/…、/gh/api.github.com/… 或 /mcp/<key>/… 映射为上游；返回 HTTP 状态（200 = 放行）。
 // 代理形式的请求（`GET http://<host>/<owner>/<repo>/… HTTP/1.1`，orb 内 git 经 `http.<url>.proxy` 发来）只走 git 路由，
 // 等同于 /git/<host>/<owner>/<repo>/…：不是 http 绝对地址或路径不规范回 400，不是 git smart-HTTP 端点回 403。
 func (h *Handler) resolve(r *http.Request) (target, int) {
@@ -382,6 +418,25 @@ func (h *Handler) resolve(r *http.Request) (target, int) {
 			url: up, auth: "Bearer " + tok, ghToken: tok, redact: []string{tok}, stripEncoding: true,
 			gh: true, ghUpload: upload, ghPath: rest, ghRawPath: rawRest, ghAccess: pol.GitHub,
 		}, http.StatusOK
+	case "mcp":
+		// MCP（M19）：主人配置的地址可以是内网，按普通方式拨号；请求路径在 /mcp/<key> 之后的部分追加到上游路径之后。
+		rt, ok := pol.MCP[parts[1]]
+		if !ok {
+			return target{}, http.StatusNotFound
+		}
+		u, err := url.Parse(rt.URL)
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+			return target{}, http.StatusNotFound
+		}
+		if len(parts) == 3 {
+			u.Path = strings.TrimSuffix(u.Path, "/") + rest
+			u.RawPath = ""
+		}
+		hdr := rt.Headers
+		if hdr == nil {
+			hdr = map[string]string{}
+		}
+		return target{url: u, headers: hdr, query: u.RawQuery, redact: mcpRedact(rt.Headers)}, http.StatusOK
 	}
 	return target{}, http.StatusNotFound
 }

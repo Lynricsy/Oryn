@@ -1,6 +1,12 @@
 package coord
 
 import (
+	"archive/zip"
+	"bytes"
+	"context"
+	"encoding/base64"
+	"image"
+	"image/png"
 	"io"
 	"path/filepath"
 	"strings"
@@ -11,6 +17,8 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/artifacts"
+	"github.com/Lynricsy/Oryn/internal/artifacts/render"
+	"github.com/Lynricsy/Oryn/internal/library"
 )
 
 // withArtifacts 给 env 接上真实的 artifact 服务（不发实时通知）。
@@ -106,8 +114,8 @@ func TestArtifactAssistantTools(t *testing.T) {
 	errText(t, e.call(asst, ToolUpdateArtifact, `{"id":"`+id+`","baseVersion":3,"html":"<p>x</p>"}`, true), artifacts.CodeDeleted)
 }
 
-// M14 1.8：Space 协调者没有 artifact 工具（调用回 unknown_tool，工具表与系统提示里都没有）；助手的工具表有阶段 1 的
-// 八个工具、没有 screenshot_artifact；list_projects 给出项目 id 供 projectId 使用。
+// M14 1.8 / M19 1.5：Space 协调者没有 artifact 工具（调用回 unknown_tool，工具表与系统提示里都没有）；助手的工具表有
+// 全部 artifact 工具（含截图与 M19 的补充工具）；list_projects 给出项目 id 供 projectId 使用。
 func TestArtifactToolsAssistantOnly(t *testing.T) {
 	e := newEnv(t, true)
 	e.withArtifacts()
@@ -123,13 +131,16 @@ func TestArtifactToolsAssistantOnly(t *testing.T) {
 		return out
 	}
 	all := []string{ToolCreateArtifact, ToolReadArtifact, ToolUpdateArtifact, ToolListArtifacts, ToolDeleteArtifact,
-		ToolListArtifactVersions, ToolRestoreArtifactVersion, ToolReadArtifactGuide, ToolReadArtifactData, ToolWriteArtifactData}
+		ToolListArtifactVersions, ToolRestoreArtifactVersion, ToolReadArtifactGuide, ToolReadArtifactData, ToolWriteArtifactData,
+		ToolScreenshotArtifact, ToolExportArtifact, ToolImportArtifact, ToolListDeletedArtifacts, ToolRestoreArtifact}
 	asst, space := names(false), names(true)
 	for _, n := range all {
 		assert.True(t, asst[n], n)
 		assert.False(t, space[n], n)
 	}
-	assert.False(t, asst["screenshot_artifact"])
+	for _, n := range []string{ToolScreenshotArtifact, ToolExportArtifact, ToolImportArtifact, ToolListDeletedArtifacts, ToolRestoreArtifact} {
+		errText(t, e.call(chat, n, `{"id":"art_x"}`, true), "unknown_tool")
+	}
 	for _, d := range ToolDefs(false, false) {
 		if d["name"] == ToolCreateArtifact {
 			props := d["parameters"].(obj)["properties"].(obj)
@@ -145,4 +156,111 @@ func TestArtifactToolsAssistantOnly(t *testing.T) {
 	r := e.call(e.assistant(), ToolListProjects, `{}`, true)
 	require.False(t, r.IsError, r.Text)
 	assert.Contains(t, r.Text, `"id":"`+prj+`"`)
+}
+
+// pngRenderer 是假的渲染器：按作业尺寸画一张空白 PNG。
+type pngRenderer struct{}
+
+func (pngRenderer) Status() (bool, string) { return true, "" }
+func (pngRenderer) Run(_ context.Context, j render.Job) ([]byte, error) {
+	var b bytes.Buffer
+	if err := png.Encode(&b, image.NewRGBA(image.Rect(0, 0, j.Width, j.Height))); err != nil {
+		return nil, err
+	}
+	return b.Bytes(), nil
+}
+
+// M19 1.5：截图带图片块；导出物进文件库（同步到协调宿主，超过上限报 too_large）；zip 与单个 HTML 导入成新 artifact；
+// 最近删除可列出与恢复。
+func TestArtifactExtraTools(t *testing.T) {
+	e := newEnv(t, true)
+	lib, _, host := e.withLibrary()
+	arts := e.withArtifacts()
+	arts.UseRenderer(e.ctx, pngRenderer{})
+	asst := e.assistant()
+	id := details(t, e.call(asst, ToolCreateArtifact, `{"title":"报告","html":"<h1>hi</h1>"}`, true))["id"].(string)
+
+	// screenshot_artifact：结果带一张 PNG
+	r := e.call(asst, ToolScreenshotArtifact, `{"id":"`+id+`","width":200,"height":100}`, true)
+	require.False(t, r.IsError, r.Text)
+	require.Len(t, r.Images, 1)
+	assert.Equal(t, "image/png", r.Images[0].MimeType)
+	raw, err := base64.StdEncoding.DecodeString(r.Images[0].Data)
+	require.NoError(t, err)
+	img, err := png.Decode(bytes.NewReader(raw))
+	require.NoError(t, err)
+	assert.Equal(t, image.Rect(0, 0, 200, 100), img.Bounds())
+
+	// export_artifact：html 导出进文件库，属于本对话，随后同步到协调宿主
+	r = e.call(asst, ToolExportArtifact, `{"id":"`+id+`","format":"html"}`, true)
+	f := details(t, r)
+	assert.Equal(t, "报告.html", f["name"])
+	assert.Equal(t, "conversation", f["scope"])
+	got, err := lib.Get(e.ctx, f["id"].(string))
+	require.NoError(t, err)
+	assert.Equal(t, asst.ID, got.ThreadID)
+	assert.Equal(t, []string{e.coordOrb}, host.syncs)
+	// zip 导出后再导入，得到含全部文件的新 artifact
+	r = e.call(asst, ToolUpdateArtifact, `{"id":"`+id+`","baseVersion":1,"files":[{"path":"style.css","content":"h1{}"}]}`, true)
+	require.False(t, r.IsError, r.Text)
+	zf := details(t, e.call(asst, ToolExportArtifact, `{"id":"`+id+`","format":"zip","shared":true}`, true))
+	assert.Equal(t, "shared", zf["scope"])
+	rc, _, err := lib.Open(e.ctx, zf["id"].(string))
+	require.NoError(t, err)
+	zipBytes, err := io.ReadAll(rc)
+	require.NoError(t, rc.Close())
+	require.NoError(t, err)
+	host.files["~/library/out/site.zip"] = zipBytes
+	imp := details(t, e.call(asst, ToolImportArtifact, `{"source":"~/library/out/site.zip"}`, true))
+	files, err := arts.Files(e.ctx, imp["id"].(string), 0)
+	require.NoError(t, err)
+	var paths []string
+	for _, f := range files {
+		paths = append(paths, f.Path)
+	}
+	assert.ElementsMatch(t, []string{"index.html", "style.css"}, paths)
+	// 带顶层目录的 zip 去掉这层目录
+	var zb bytes.Buffer
+	zw := zip.NewWriter(&zb)
+	for name, body := range map[string]string{"site/index.html": "<p>x</p>", "site/a/b.css": "p{}"} {
+		w, err := zw.Create(name)
+		require.NoError(t, err)
+		_, err = w.Write([]byte(body))
+		require.NoError(t, err)
+	}
+	_, err = zw.Create("site/empty/")
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+	host.files["~/library/out/top.zip"] = zb.Bytes()
+	imp = details(t, e.call(asst, ToolImportArtifact, `{"source":"~/library/out/top.zip","name":"顶层"}`, true))
+	assert.Equal(t, "<p>x</p>", artifactBody(t, e, arts, imp["id"].(string), "index.html"))
+	assert.Equal(t, "p{}", artifactBody(t, e, arts, imp["id"].(string), "a/b.css"))
+	// 单个 HTML：就是页面本身
+	host.files["~/library/out/周报.html"] = []byte("<title>周报</title><p>w</p>")
+	imp = details(t, e.call(asst, ToolImportArtifact, `{"source":"~/library/out/周报.html"}`, true))
+	assert.Equal(t, "周报", imp["title"])
+	assert.Contains(t, artifactBody(t, e, arts, imp["id"].(string), "index.html"), "<p>w</p>")
+	errText(t, e.call(asst, ToolImportArtifact, `{"source":"~/library/out/a.txt"}`, true), CodeInvalid)
+	errText(t, e.call(asst, ToolImportArtifact, `{"source":"~/library/shared/x.zip"}`, true), artifacts.CodeInvalid)
+
+	// 超过上限：too_large，文件库里不留记录
+	before, err := lib.List(e.ctx, library.Filter{})
+	require.NoError(t, err)
+	e.c.xferMax = 8
+	errText(t, e.call(asst, ToolExportArtifact, `{"id":"`+id+`","format":"zip"}`, true), CodeTooLarge)
+	after, err := lib.List(e.ctx, library.Filter{})
+	require.NoError(t, err)
+	assert.Len(t, after, len(before))
+	e.c.xferMax = 0
+
+	// 最近删除：列出（不可信包裹）与恢复
+	details(t, e.call(asst, ToolDeleteArtifact, `{"id":"`+id+`"}`, true))
+	r = e.call(asst, ToolListDeletedArtifacts, `{}`, true)
+	deleted := details(t, r)["artifacts"].([]any)
+	require.Len(t, deleted, 1)
+	assert.Equal(t, id, deleted[0].(map[string]any)["id"])
+	assert.Equal(t, id, details(t, e.call(asst, ToolRestoreArtifact, `{"id":"`+id+`"}`, true))["id"])
+	a, err := arts.Get(e.ctx, id)
+	require.NoError(t, err)
+	assert.False(t, a.Deleted())
 }

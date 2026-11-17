@@ -377,6 +377,7 @@
 		"forkHere": "从这里分叉",
 		"ircFrom": "来自 {{from}}",
 		"jumpToEnd": "回到底部",
+		"loadEarlier": "加载更早的消息",
 		"quoteReply": "引用回复",
 		"quoteDismiss": "关闭引用回复",
 		"label": "加标签",
@@ -1279,7 +1280,28 @@
 			"loadMentalModels": "读取 mental models",
 			"refreshMentalModel": "刷新 mental model",
 			"createExport": "开始导出",
-			"loadExport": "查询导出进度"
+			"loadExport": "查询导出进度",
+			"ownerLoadSettings": "读取助手记忆设置",
+			"ownerSaveSettings": "保存助手记忆设置",
+			"ownerSaveDecide": "保存判断模型接口",
+			"ownerDeleteDecide": "删除判断模型接口",
+			"ownerLoadStatus": "读取助手记忆状态",
+			"ownerLoadTopics": "读取主题",
+			"ownerRefreshTopic": "刷新主题",
+			"ownerCurate": "整理主题",
+			"ownerLoadBrief": "生成注入预览",
+			"ownerLoadFacts": "读取事实",
+			"ownerSetFactState": "修改事实状态",
+			"ownerLoadSources": "读取来源",
+			"ownerForgetSource": "按来源遗忘",
+			"ownerLoadExclusions": "读取排除项",
+			"ownerSaveExclusion": "设置排除",
+			"ownerDeleteExclusion": "取消排除",
+			"ownerLoadExplicit": "读取明确记忆",
+			"ownerCreateExplicit": "新建明确记忆",
+			"ownerUpdateExplicit": "保存明确记忆",
+			"ownerDeleteExplicit": "删除明确记忆",
+			"ownerApproveExplicit": "批准明确记忆"
 		},
 		"errors": {
 			"insecure_url": {
@@ -1309,6 +1331,18 @@
 			"memory_disabled": {
 				"why": "记忆总开关是关闭的。",
 				"next": "在「连接」卡里打开总开关后重试。"
+			},
+			"owner_memory_disabled": {
+				"why": "助手记忆是关闭的，或上面的工程记忆不可用。",
+				"next": "在「助手记忆 › 设置」里打开开关后重试。"
+			},
+			"memory_upstream": {
+				"why": "Hindsight 没有正常响应。",
+				"next": "在上面的「状态」卡确认 Hindsight 正常后重试；一直失败请查看 docker compose logs hindsight。"
+			},
+			"not_pending": {
+				"why": "这条记忆已经生效，不需要再批准。",
+				"next": "刷新页面查看最新状态。"
 			},
 			"not_implemented": {
 				"why": "当前的 orynd 还不支持这项记忆操作。",
@@ -1582,6 +1616,198 @@
 			"download": "下载归档（{{when}}开始）",
 			"failed": "导出失败",
 			"failedNext": "确认 Hindsight 状态正常后重新导出；一直失败请查看 docker compose logs hindsight。"
+		},
+		"owner": {
+			"title": "助手记忆",
+			"scope": "全局助手关于主人的长期记忆（bank oryn-owner）：从助手对话与工作线程里提炼主人的身份、偏好与近况，助手对话启动时附加到系统提示词。与上面的工程记忆分开存放。",
+			"unavailable": "助手记忆依赖上面的工程记忆：先启用并配置好「连接」卡（Hindsight 地址、.env 与总开关），这里的设置才会出现。",
+			"settings": {
+				"title": "设置",
+				"enabled": "开启助手记忆",
+				"enabledHint": "首次开启时回填最近 30 天的对话；关闭后写入、主题整理、注入与检索全部停止，已有数据保留。",
+				"names": "主人的名字与别名",
+				"namesHint": "写入记忆时这些名字一律归为「主人」。最多 {{max}} 个，每个不超过 {{chars}} 字。",
+				"namePlaceholder": "输入名字或别名，回车添加",
+				"addName": "添加",
+				"nameProblem": {
+					"tooLong": "每个名字不超过 {{chars}} 字。",
+					"duplicate": "这个名字已经在列表里了。",
+					"tooMany": "最多 {{max}} 个名字与别名。"
+				},
+				"noNames": "还没有设置名字。",
+				"removeName": "删除「{{name}}」",
+				"saveNames": "保存名字"
+			},
+			"decide": {
+				"title": "判断模型（召回重排）",
+				"optional": "可选",
+				"configuredHint": "召回结果由判断模型打分重排；删除接口后改按 RRF 顺序给出并标注未经重排。",
+				"unsetHint": "未配置：召回结果按 RRF 顺序给出并标注未经重排。默认使用 Google Decisions API。",
+				"baseUrl": "地址",
+				"model": "模型",
+				"apiKey": "key",
+				"keySet": "已设置。留空保存会保留原 key。",
+				"keyUnset": "未设置",
+				"keyKeep": "已设置（留空保留）",
+				"keyEmpty": "粘贴 key",
+				"clearKey": "清除 key",
+				"clearKeyConfirm": "确认清除 key",
+				"delete": "删除接口",
+				"deleteConfirm": "确认删除接口"
+			},
+			"state": {
+				"unavailable": {
+					"label": "不可用",
+					"action": "上面的工程记忆未启用或未配置，助手记忆不运行。"
+				},
+				"disabled": {
+					"label": "已关闭",
+					"action": "助手记忆已关闭：不写入、不整理、不注入，已有数据保留。在「设置」卡里打开开关即可恢复。"
+				},
+				"ok": {
+					"label": "正常",
+					"action": "助手记忆运行正常。"
+				},
+				"error": {
+					"label": "出错",
+					"action": "读不到 bank oryn-owner：先在上面的「状态」卡确认 Hindsight 正常，再点右上角重新检查。"
+				}
+			},
+			"status": {
+				"title": "助手记忆状态",
+				"backfill": "回填进度",
+				"backfillProgress": "{{done}} / {{total}}",
+				"backfillSince": "从 {{when}} 起",
+				"failingSources": "写入失败的来源",
+				"pendingExplicit": "待确认的明确记忆",
+				"bank": "bank 统计",
+				"bankCounts": "{{memories}} 条记忆 · {{documents}} 个 document",
+				"lastCurated": "最近一次主题整理",
+				"usageDay": "24 小时用量",
+				"usageWeek": "7 天用量",
+				"usage": "{{calls}} 次调用 · 输入 {{input}} · 输出 {{output}}"
+			},
+			"brief": {
+				"open": "注入预览",
+				"title": "注入预览",
+				"intro": "助手对话启动时追加到系统提示词的记忆段。填一个对话 id 可以看它将得到的内容（有快照时用快照）；不填则现生成。",
+				"threadId": "对话 id（可选）",
+				"threadIdHint": "留空 = 按当前记忆现生成，不写入快照。",
+				"generate": "预览",
+				"generatedAt": "生成于 {{when}}",
+				"cached": "来自对话快照",
+				"fresh": "现生成",
+				"empty": "助手记忆未开启，不附加记忆段。"
+			},
+			"topics": {
+				"title": "主题",
+				"curate": "立即整理",
+				"hint": "注入「关于主人」的就是各活跃主题的当前内容。整理会按近况新建或归档主题，固定种子不会被归档。",
+				"empty": "还没有主题。",
+				"seed": "固定",
+				"status": {
+					"active": "活跃",
+					"archived": "已归档"
+				},
+				"stale": "遗忘后等待刷新，暂不注入",
+				"refresh": "立即刷新",
+				"scope": "范围：{{scope}}",
+				"showContent": "查看内容",
+				"hideContent": "收起内容",
+				"lastCuration": "最近一次整理：{{when}}",
+				"curation": {
+					"created": "新建：{{names}}",
+					"kept": "保留：{{names}}",
+					"archived": "归档：{{names}}"
+				}
+			},
+			"facts": {
+				"title": "事实",
+				"hint": "world 是关于主人的事实，observation 是从多条事实归纳出的观察。world 事实可以设为失效；observation 只能通过失效它的来源事实来纠正。",
+				"type": "类型",
+				"allTypes": "全部类型",
+				"types": {
+					"world": "world",
+					"observation": "observation"
+				},
+				"searchPlaceholder": "按关键词召回（按相关度排序）",
+				"search": "搜索",
+				"empty": "还没有事实。",
+				"disabled": "助手记忆关闭时不能浏览事实。",
+				"invalidated": "已失效",
+				"restore": "恢复",
+				"invalidate": "设为失效",
+				"invalidateHint": "失效后，全部主题在刷新完成前不进入注入。",
+				"reasonPlaceholder": "原因（可选），如：已经不用旧工作站了",
+				"reason": "失效原因",
+				"invalidateConfirm": "确认失效",
+				"provenance": {
+					"owner": {
+						"label": "主人陈述",
+						"hint": "来源只含主人的消息"
+					},
+					"mixed": {
+						"label": "含助手消息",
+						"hint": "来源含助手或 agent 的消息，说话人未确认"
+					},
+					"explicit": {
+						"label": "明确记忆",
+						"hint": "来自主人明确要求记住的内容"
+					},
+					"unknown": {
+						"label": "来源未确认",
+						"hint": "无法回溯到具体对话"
+					}
+				},
+				"seqRange": "第 {{from}}–{{to}} 条消息",
+				"seq": "第 {{seq}} 条消息"
+			},
+			"sources": {
+				"title": "来源",
+				"hint": "已写入（或写入失败、等待重试）的助手对话与工作线程，按最近更新排列。按来源遗忘会删除它写入的全部 document；之后有新内容仍会再写入，除非设为排除。",
+				"forgotten": "已删除 {{n}} 个 document。",
+				"empty": "还没有写入任何来源。",
+				"forgetTitle": "按来源遗忘",
+				"forgetConfirm": "遗忘",
+				"forgetBody": "删除「{{name}}」写入助手记忆的全部 {{n}} 块内容。受影响的主题在刷新完成前不进入注入。",
+				"missing": "线程已删除",
+				"kind": {
+					"conv": "助手对话",
+					"thread": "工作线程"
+				},
+				"failed": "失败 {{n}} 次",
+				"forget": "按来源遗忘",
+				"chunks": "{{n}} 块",
+				"notRetained": "尚未写入",
+				"retainedAt": "{{when}}写入",
+				"nextAttempt": "下次重试 {{when}}"
+			},
+			"exclusions": {
+				"title": "排除项",
+				"hint": "这些对话与项目不进助手记忆，设为排除时已写入的随之遗忘。单个助手对话在它的菜单里切换「不进助手记忆」。",
+				"empty": "没有排除项。",
+				"project": "要排除的项目",
+				"pickProject": "选择项目…",
+				"excludeProject": "排除项目",
+				"kind": {
+					"thread": "对话",
+					"project": "项目"
+				},
+				"remove": "取消排除"
+			},
+			"explicit": {
+				"title": "明确记忆",
+				"add": "新建",
+				"hint": "主人明确要求记住的内容。助手记下时若没能在对话里核实主人原话，会先进入待确认；在这里新建的直接生效。",
+				"empty": "还没有明确记忆。",
+				"newLabel": "新的明确记忆",
+				"editLabel": "编辑明确记忆",
+				"approve": "批准",
+				"pending": "待确认",
+				"quote": "主人原话：「{{text}}」",
+				"reject": "拒绝",
+				"rejectConfirm": "确认拒绝"
+			}
 		}
 	},
 	"sshPage": {
@@ -2261,6 +2487,8 @@
 			"renamed": "已改名",
 			"restored": "已恢复 · v{{version}}",
 			"deleted": "已删除",
+			"imported": "已导入 · v{{version}}",
+			"undeleted": "已从最近删除恢复",
 			"names": {
 				"create_artifact": "创建 artifact",
 				"read_artifact": "读取 artifact",
@@ -2275,7 +2503,11 @@
 				"resolve_artifact_comment": "解决评论",
 				"screenshot_artifact": "截图",
 				"read_artifact_data": "读取页面数据",
-				"write_artifact_data": "写入页面数据"
+				"write_artifact_data": "写入页面数据",
+				"export_artifact": "导出 artifact",
+				"import_artifact": "导入 artifact",
+				"list_deleted_artifacts": "查看最近删除",
+				"restore_artifact": "恢复 artifact"
 			}
 		},
 		"page": {
@@ -3725,7 +3957,19 @@
 		"new": "新对话",
 		"archive": "归档此对话",
 		"conversations": "对话",
-		"createFailed": "没能创建助手对话"
+		"createFailed": "没能创建助手对话",
+		"ownerMemoryExclude": "不进助手记忆",
+		"confirm": {
+			"delete_thread": "删除线程「{{targetLabel}}」？",
+			"delete_project": "删除项目「{{targetLabel}}」？",
+			"delete_space": "删除 Space「{{targetLabel}}」？",
+			"delete_trigger": "删除触发规则「{{targetLabel}}」？",
+			"delete_orb": "删除 orb「{{targetLabel}}」？",
+			"delete_schedule": "删除定时「{{targetLabel}}」？",
+			"share_thread": "为「{{targetLabel}}」创建公开分享链接？",
+			"share_portal": "为「{{targetLabel}}」开启公开的 Portal 预览？",
+			"publish_artifact": "对外发布 artifact「{{targetLabel}}」？"
+		}
 	},
 	"library": {
 		"title": "文件库",
@@ -3811,7 +4055,34 @@
 			"send_message": "发送消息",
 			"archive_thread": "归档线程",
 			"set_schedule": "设置定时",
-			"delete_schedule": "删除定时"
+			"delete_schedule": "删除定时",
+			"update_thread": "修改线程",
+			"abort_thread": "中止线程",
+			"set_thread_model": "切换线程模型",
+			"fork_thread": "fork 线程",
+			"wake_thread": "唤醒线程",
+			"delete_thread": "删除线程",
+			"create_project": "新建项目",
+			"update_project": "修改项目",
+			"delete_project": "删除项目",
+			"create_space": "新建 Space",
+			"update_space": "修改 Space",
+			"delete_space": "删除 Space",
+			"set_trigger": "设置触发规则",
+			"delete_trigger": "删除触发规则",
+			"pause_orb": "暂停 orb",
+			"wake_orb": "唤醒 orb",
+			"delete_orb": "删除 orb",
+			"write_thread_file": "写线程文件",
+			"put_thread_file": "上传线程文件",
+			"write_project_config": "写项目 Agent 配置",
+			"delete_project_config": "删除项目 Agent 配置",
+			"share_thread": "分享线程",
+			"revoke_share": "撤销分享",
+			"share_portal": "公开 Portal 预览",
+			"unshare_portal": "取消 Portal 公开",
+			"publish_artifact": "发布 artifact",
+			"unpublish_artifact": "取消发布 artifact"
 		}
 	},
 	"schedule": {
@@ -3991,6 +4262,12 @@
 		"github": {
 			"event": "GitHub 事件 · {{repo}}#{{number}}",
 			"trigger": "GitHub 触发「{{name}}」· {{repo}}#{{number}}"
+		},
+		"confirmation": {
+			"approved": "已确认并执行 · {{action}} {{target}}",
+			"rejected": "你已拒绝 · {{action}} {{target}}",
+			"failed": "已确认但执行失败（{{error}}）· {{action}} {{target}}",
+			"expired": "确认已过期 · {{action}} {{target}}"
 		}
 	},
 	"sections": {

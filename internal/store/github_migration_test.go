@@ -82,7 +82,7 @@ func TestGitHubOAuthMigrationDownUp(t *testing.T) {
 	assert.Equal(t, 7, queryInt(ctx, t, s, projectGithubCols))
 	assert.Equal(t, 12, cols("thread_issues"))
 	assert.Equal(t, 8, cols("thread_pulls"))
-	assert.Equal(t, 23, cols("github_triggers"))
+	assert.Equal(t, 24, cols("github_triggers")) // M19 加 hand_to_assistant
 	assert.Equal(t, 1, queryInt(ctx, t, s, `SELECT COUNT(*) FROM pragma_table_info('github_identities') WHERE name = 'scopes'`))
 	assert.Equal(t, "'agent'", columnDefault(ctx, t, s, "owner", "github_automation_identity"))
 	assert.Equal(t, "'writers_and_author'", columnDefault(ctx, t, s, "github_triggers", "drivers"))
@@ -128,7 +128,7 @@ func TestGitHubOAuthMigrationDownUp(t *testing.T) {
 	_, err = p.Up(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, 19, queryInt(ctx, t, s, githubTables))
-	assert.Equal(t, 23, cols("github_triggers"))
+	assert.Equal(t, 24, cols("github_triggers"))
 	assert.Equal(t, 2, queryInt(ctx, t, s, rebuiltIndexes))
 	ident, err = s.Q.GetOwnerGithubAutomation(ctx)
 	require.NoError(t, err)

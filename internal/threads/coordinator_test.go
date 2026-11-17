@@ -117,6 +117,13 @@ type fakeCoord struct {
 	block bool
 	done  chan struct{}
 	res   HostToolResult
+	// answers 收到 UIAnswered 的请求 id 与应答帧（nil = 丢弃）。
+	answers chan uiAnswer
+}
+
+type uiAnswer struct {
+	threadID, id string
+	frame        json.RawMessage
 }
 
 func (c *fakeCoord) EnsureOrb(context.Context) (string, error) {
@@ -134,6 +141,12 @@ func (c *fakeCoord) HostToolCall(ctx context.Context, call HostToolCall) HostToo
 		return HostToolResult{Text: "late"}
 	}
 	return c.res
+}
+
+func (c *fakeCoord) UIAnswered(_ context.Context, threadID, id string, frame json.RawMessage) {
+	if c.answers != nil {
+		c.answers <- uiAnswer{threadID, id, frame}
+	}
 }
 
 func newFakeCoord() *fakeCoord {
@@ -274,6 +287,25 @@ func TestHostToolCallDispatch(t *testing.T) {
 	<-coord.done
 	f.s.Close() // 等后台的工具调用返回
 	assert.Empty(t, sent(a), "取消的调用不写回结果")
+}
+
+// M19 1.5：结果里的图片作为 image 块跟在 text 块之后；出错时不带图。
+func TestHostToolResultFrameImages(t *testing.T) {
+	decode := func(r HostToolResult) map[string]any {
+		b, err := hostToolResultFrame("h-1", r)
+		require.NoError(t, err)
+		var m map[string]any
+		require.NoError(t, json.Unmarshal(b, &m))
+		return m["result"].(map[string]any)
+	}
+	img := HostToolImage{MimeType: "image/png", Data: "iVBORw0KGgo="}
+	got := decode(HostToolResult{Text: "shot", Images: []HostToolImage{img}})
+	assert.Equal(t, []any{
+		map[string]any{"type": "text", "text": "shot"},
+		map[string]any{"type": "image", "data": "iVBORw0KGgo=", "mimeType": "image/png"},
+	}, got["content"])
+	got = decode(HostToolResult{Text: "invalid: x", IsError: true, Images: []HostToolImage{img}})
+	assert.Equal(t, []any{map[string]any{"type": "text", "text": "invalid: x"}}, got["content"])
 }
 
 // 工作线程的 host_tool_call 不交给协调层。

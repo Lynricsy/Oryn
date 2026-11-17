@@ -3,7 +3,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Thread } from "../api/client";
 import { threads as fixtureThreads } from "../mock/fixtures";
 import { indexStore } from "../state/stores";
-import { useAssistantConversations } from "./assistant-conversations";
+import {
+	useAssistantConversations,
+	useAssistantMain,
+} from "./assistant-conversations";
 
 const base = fixtureThreads[0] as Thread;
 
@@ -58,5 +61,33 @@ describe("useAssistantConversations", () => {
 			indexStore.getState().upsertThread(thread("T-a2", "assistant", 20));
 		});
 		expect(result.current.map((t) => t.id)).toEqual(["T-a2", "T-a1"]);
+	});
+});
+
+describe("主线对话（M19）", () => {
+	it("不进对话列表：即使它最近活动，列表第一项（`/assistant` 落点）也不是主线", () => {
+		indexStore
+			.getState()
+			.setAll(
+				[
+					thread("T-a1", "assistant", 10),
+					thread("T-main", "assistant", 99, { main: true }),
+				],
+				1,
+			);
+		const { result } = renderHook(() => useAssistantConversations());
+		expect(result.current.map((t) => t.id)).toEqual(["T-a1"]);
+	});
+
+	it("useAssistantMain 从索引取主线；没有时为 undefined", () => {
+		indexStore.getState().setAll([thread("T-a1", "assistant", 10)], 1);
+		const { result } = renderHook(() => useAssistantMain());
+		expect(result.current).toBeUndefined();
+		act(() => {
+			indexStore
+				.getState()
+				.upsertThread(thread("T-main", "assistant", 20, { main: true }));
+		});
+		expect(result.current?.id).toBe("T-main");
 	});
 });

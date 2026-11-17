@@ -49,6 +49,9 @@ const (
 	MaxMessageBytes = 16 << 20
 	writeTimeout    = 30 * time.Second
 	entriesBatch    = 200
+	// minTail / maxTail 是 sub.tail 的夹取范围（M19）。
+	minTail = 50
+	maxTail = 2000
 )
 
 // Hub 是客户端 WS hub，同时实现 threads.Sink。
@@ -366,13 +369,15 @@ func (c *conn) close(code websocket.StatusCode, reason string) {
 // ---- 读方向 ----
 
 type clientMsg struct {
-	Type          string          `json:"type"`
-	ThreadID      *string         `json:"threadId"`
-	ID            string          `json:"id"`
-	AfterSeq      *int64          `json:"afterSeq"`
-	TranscriptRev *int64          `json:"transcriptRev"`
-	Frame         json.RawMessage `json:"frame"`
-	On            *bool           `json:"on"`
+	Type          string  `json:"type"`
+	ThreadID      *string `json:"threadId"`
+	ID            string  `json:"id"`
+	AfterSeq      *int64  `json:"afterSeq"`
+	TranscriptRev *int64  `json:"transcriptRev"`
+	// Tail 是 sub 的补发窗口（M19）：从 seq 0 补发时只补最近 Tail 条，夹到 50–2000。
+	Tail  *int            `json:"tail"`
+	Frame json.RawMessage `json:"frame"`
+	On    *bool           `json:"on"`
 	// Page 是 artifact.watch 的画布页 id。
 	Page *string `json:"page"`
 }
@@ -438,7 +443,11 @@ func (c *conn) handle(m clientMsg) {
 		if m.AfterSeq != nil {
 			after = *m.AfterSeq
 		}
-		if err := c.h.subscribe(c, tid, after, m.TranscriptRev); err != nil {
+		tail := 0
+		if m.Tail != nil {
+			tail = min(max(*m.Tail, minTail), maxTail)
+		}
+		if err := c.h.subscribe(c, tid, after, m.TranscriptRev, tail); err != nil {
 			c.fail(err, m.ThreadID, "")
 		}
 	case "unsub":
@@ -491,14 +500,24 @@ func (c *conn) handle(m clientMsg) {
 
 // subscribe：快照（与订阅登记在线程锁内原子完成）→ 补发 (afterSeq, lastSeq] 的条目 → 放出缓冲的实时事件。
 // 客户端的转录版本与当前不同（或缺省但 afterSeq > 0 且线程已被重写过）时从头补发并置 fullReplay（CP11）。
+// tail > 0 且实际从 seq 0 补发时只补最近 tail 条，快照的 windowStart 给出窗口起点（M19）。
 // 每批补发的 lastSeq 只到该批实际覆盖的 seq（CP2）：在两批之间断线的客户端以它续传，不会跳过后续条目。
-func (h *Hub) subscribe(c *conn, threadID string, afterSeq int64, clientRev *int64) error {
+func (h *Hub) subscribe(c *conn, threadID string, afterSeq int64, clientRev *int64, tail int) error {
 	var snap threads.Snapshot
 	var mine *sub
+	var tailErr error
 	after := afterSeq
 	err := h.svc.Subscribe(c.ctx, threadID, func(s threads.Snapshot) {
 		if (clientRev != nil && *clientRev != s.TranscriptRev) || (clientRev == nil && afterSeq > 0 && s.TranscriptRev > 0) {
 			s.FullReplay, after = true, 0
+		}
+		if tail > 0 && after == 0 {
+			start, err := h.svc.TailStart(c.ctx, threadID, tail)
+			if err != nil {
+				tailErr = err
+				return
+			}
+			s.WindowStart, after = start, start
 		}
 		snap = s
 		mine = &sub{buffering: true}
@@ -517,6 +536,9 @@ func (h *Hub) subscribe(c *conn, threadID string, afterSeq int64, clientRev *int
 		h.mu.Unlock()
 		c.send(s)
 	})
+	if err == nil {
+		err = tailErr
+	}
 	if err != nil {
 		return err
 	}

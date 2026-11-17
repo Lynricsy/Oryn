@@ -316,12 +316,13 @@ function MessageMenu({
 	);
 }
 
-/** 首行小签的图标：定时用时钟，线程报告用列表，GitHub 回流 / 触发用 GitHub 标志，其余（agent 发来的消息）用机器人。 */
+/** 首行小签的图标：定时用时钟，线程报告用列表，GitHub 回流 / 触发用 GitHub 标志，确认卡结果用对勾圈，其余（agent 发来的消息）用机器人。 */
 const ORYN_ICON: Record<OrynHeader["kind"], IconName> = {
 	schedule: "clock",
 	report: "list",
 	message: "robot",
 	github: "github",
+	confirmation: "checkCircle",
 	unknown: "robot",
 };
 

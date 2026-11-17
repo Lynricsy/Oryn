@@ -69,6 +69,7 @@ const (
 	CodeForbidden              = "forbidden"
 	CodeInvalidSchedule        = "invalid_schedule"
 	CodeThreadArchived         = "thread_archived"
+	CodeTooLarge               = "too_large"
 )
 
 // Error 是协调层的业务错误。
@@ -103,6 +104,12 @@ type Service struct {
 	// mem / eng 是 M17 主人记忆与 M16 工程记忆（SetOwnerMemory 设置）；mem 为 nil 时全局助手不注入记忆段、没有记忆工具。
 	mem OwnerMemory
 	eng EngineeringMemory
+	// home / projectCfg / envSecrets 是全局与项目级 omp 配置、env 模式密钥（M19，SetAgentConfig 设置）。
+	home       GlobalConfig
+	projectCfg ProjectConfigs
+	envSecrets EnvSecrets
+	// refreshPolicy 以当前设置刷新协调宿主的出站策略（M19；orbs 为 nil 时为 nil，测试可替换）。
+	refreshPolicy func(ctx context.Context, orbID string) error
 
 	ensureMu sync.Mutex
 	// createMu 串行化 orb 内 thread.create 的「计数 + Create」（契约 C6.1）：并发请求不能都通过额度检查。
@@ -120,6 +127,10 @@ type Service struct {
 	recheck   map[string]bool
 	questions map[string]string
 	wake      chan struct{}
+	// confirmers 是确认卡动作 → 主人批准后的执行函数（onConfirm 在 New 里登记，之后只读）。
+	confirmers map[string]confirmExec
+	// sentConfirm（仅测试）在一条确认结果投递成功之后调用。
+	sentConfirm func(threadID, text string)
 
 	// afterReport（仅测试）在一次回报处理完之后调用。
 	afterReport func(threadID string)
@@ -129,6 +140,8 @@ type Service struct {
 	sentReport func(reportTo, text string)
 	// afterQuotaCheck（仅测试）在 thread.create 的三项计数之后、Create 之前调用（仍持 createMu）。
 	afterQuotaCheck func()
+	// xferMax（仅测试）覆盖整文件传输的单文件上限；0 = transferMaxBytes。
+	xferMax int64
 }
 
 // New 创建协调服务，并向 orbs 注册 orb 内的八个 ctl 方法。orbs 为 nil 时不注册（单测）。
@@ -139,10 +152,14 @@ func New(cfg Config, st *store.Store, th *threads.Service, o *orbs.Service, host
 	s := &Service{
 		cfg: cfg, st: st, th: th, orbs: o, host: host, sched: sched,
 		lim: newLimiter(), questions: map[string]string{}, armed: map[string]armedReport{}, recheck: map[string]bool{},
-		wake: make(chan struct{}, 1),
+		wake: make(chan struct{}, 1), confirmers: map[string]confirmExec{},
 	}
 	if o != nil {
 		s.registerOrbMethods(o.HandleRequest)
+		s.refreshPolicy = func(ctx context.Context, orbID string) error {
+			_, err := o.CoordinatorSetup(ctx, orbID)
+			return err
+		}
 	}
 	return s
 }
@@ -152,11 +169,16 @@ func (s *Service) nowMs() int64 { return s.cfg.Now().UnixMilli() }
 // Host 返回可用性检查（API 的 GET coordinator 用）。
 func (s *Service) Host() HostChecker { return s.host }
 
-// Run 处理线程回报，并每天裁剪一次 90 天前的审计记录，直到 ctx 结束。
+// Run 处理线程回报，并每天裁剪一次 90 天前的审计记录、每小时让超过 24 小时未答的确认卡过期，直到 ctx 结束。
+// 启动时先把仍待答的确认卡放回各自的对话（线程服务的待答请求只在内存里）。
 func (s *Service) Run(ctx context.Context) {
+	s.expireConfirmations(ctx)
+	s.restoreConfirmations(ctx)
 	s.trimActions(ctx)
 	trim := time.NewTicker(24 * time.Hour)
 	defer trim.Stop()
+	sweep := time.NewTicker(confirmSweepEvery)
+	defer sweep.Stop()
 	for {
 		s.processReports(ctx)
 		select {
@@ -165,6 +187,8 @@ func (s *Service) Run(ctx context.Context) {
 		case <-s.wake:
 		case <-trim.C:
 			s.trimActions(ctx)
+		case <-sweep.C:
+			s.expireConfirmations(ctx)
 		}
 	}
 }
@@ -291,6 +315,9 @@ func errCode(err error) string {
 	if errors.As(err, &le) {
 		return le.Code
 	}
+	if oe, ok := artifacts.AsOpError(err); ok {
+		return oe.Code
+	}
 	return "internal_error"
 }
 
@@ -311,6 +338,9 @@ func errMessage(err error) string {
 	var le *link.CtlError
 	if errors.As(err, &le) {
 		return le.Message
+	}
+	if oe, ok := artifacts.AsOpError(err); ok {
+		return oe.Message
 	}
 	return err.Error()
 }

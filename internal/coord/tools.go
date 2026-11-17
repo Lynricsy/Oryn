@@ -92,9 +92,12 @@ func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) thre
 	case ToolCreateArtifact, ToolReadArtifact, ToolUpdateArtifact, ToolListArtifacts, ToolDeleteArtifact,
 		ToolListArtifactVersions, ToolRestoreArtifactVersion, ToolReadArtifactGuide,
 		ToolReadArtifactComments, ToolReplyArtifactComment, ToolResolveArtifactComment,
-		ToolReadArtifactData, ToolWriteArtifactData:
+		ToolReadArtifactData, ToolWriteArtifactData, ToolScreenshotArtifact:
 		// artifact 工具只属于全局助手；工具名就是 artifacts 的操作名
 		return s.toolArtifact(ctx, tc, c.Name)
+	case ToolExportArtifact, ToolImportArtifact, ToolListDeletedArtifacts, ToolRestoreArtifact:
+		// M19：artifact 的补充工具（只给全局助手），coord 自己实现
+		return s.toolArtifactExtra(ctx, tc)
 	default:
 		err = errf("unknown_tool", "no tool named %q", c.Name)
 	}

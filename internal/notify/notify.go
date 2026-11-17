@@ -467,7 +467,11 @@ func (s *Service) emit(ctx context.Context, threadID string, key timerKey, pt *p
 		s.dropUnreadIfNone(ctx, threadID)
 		return
 	}
-	p := db.InsertNotificationParams{ID: ids.New("ntf"), ThreadID: &threadID, Kind: key.kind, Title: th.Title, CreatedAt: s.now()}
+	title := th.Title
+	if th.Main != nil && *th.Main {
+		title = s.assistantName(ctx)
+	}
+	p := db.InsertNotificationParams{ID: ids.New("ntf"), ThreadID: &threadID, Kind: key.kind, Title: title, CreatedAt: s.now()}
 	switch key.kind {
 	case KindDone:
 		p.Body = s.lastAssistantText(ctx, threadID)
@@ -489,6 +493,17 @@ func (s *Service) emit(ctx context.Context, threadID string, key timerKey, pt *p
 		slog.Warn("notify: 写入通知失败", "thread", threadID, "kind", key.kind, "err", err)
 		s.dropUnreadIfNone(ctx, threadID)
 	}
+}
+
+// assistantName 是主线通知的标题：全局助手身份的名字；未设置时跟随 agent 身份（与客户端的回落一致），都没有则为 Assistant。
+func (s *Service) assistantName(ctx context.Context) string {
+	if a, err := s.st.Q.GetOwnerAssistantIdentity(ctx); err == nil && a.AssistantName != nil && *a.AssistantName != "" {
+		return *a.AssistantName
+	}
+	if g, err := s.st.Q.GetOwnerAgentIdentity(ctx); err == nil && g.AgentName != nil && *g.AgentName != "" {
+		return *g.AgentName
+	}
+	return "Assistant"
 }
 
 // errDuplicate 表示同一未决请求的通知已存在（InsertNotification 忽略了重复行）。

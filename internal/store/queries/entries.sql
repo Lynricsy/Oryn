@@ -25,6 +25,15 @@ DELETE FROM entries WHERE thread_id = @thread_id AND file = @file AND stale = 1;
 -- name: ListEntriesAfter :many
 SELECT * FROM entries WHERE thread_id = @thread_id AND seq > @after_seq ORDER BY seq LIMIT @limit;
 
+-- Earlier page (M19): rows before before_seq, newest first; the service reverses them.
+-- name: ListEntriesBefore :many
+SELECT * FROM entries WHERE thread_id = @thread_id AND seq < @before_seq ORDER BY seq DESC LIMIT @limit;
+
+-- Tail window start (M19): the smallest seq among the newest n rows minus one; 0 when the thread has fewer than n rows.
+-- name: GetTailStartSeq :one
+SELECT CAST(CASE WHEN COUNT(*) < CAST(@n AS INTEGER) THEN 0 ELSE MIN(seq) - 1 END AS INTEGER) AS start_seq
+FROM (SELECT seq FROM entries WHERE thread_id = @thread_id ORDER BY seq DESC LIMIT CAST(@n AS INTEGER));
+
 -- name: GetEntry :one
 SELECT * FROM entries WHERE thread_id = @thread_id AND file = @file AND entry_id = @entry_id;
 

@@ -79,6 +79,9 @@ type Coordinator struct {
 	VerifyOmp *bool `yaml:"verify_omp"`
 	// Model 是协调对话的默认模型（"provider/id"）；空 = omp 配置的默认模型。
 	Model string `yaml:"model"`
+	// WebAllowHosts 是全局助手联网时允许连接的非公网目标（M19）：小写的 host 或 host:port，只对域名有意义；
+	// 不在表里的目标若解析到回环、私网、链路本地等地址，正向代理一律拒绝。
+	WebAllowHosts []string `yaml:"web_allow_hosts"`
 }
 
 // Verify 报告是否校验 omp 的版本钉（缺省 true）。

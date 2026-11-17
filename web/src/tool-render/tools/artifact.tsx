@@ -30,6 +30,10 @@ export const ARTIFACT_TOOLS = [
 	"screenshot_artifact",
 	"read_artifact_data",
 	"write_artifact_data",
+	"export_artifact",
+	"import_artifact",
+	"list_deleted_artifacts",
+	"restore_artifact",
 ] as const;
 
 /** 会写入的工具（工具图标的类别色调用）。 */
@@ -41,6 +45,8 @@ export const ARTIFACT_WRITE_TOOLS: readonly string[] = [
 	"reply_artifact_comment",
 	"resolve_artifact_comment",
 	"write_artifact_data",
+	"import_artifact",
+	"restore_artifact",
 ];
 
 /** 正文里带卡片的工具。 */
@@ -48,6 +54,8 @@ const CARD_TOOLS: readonly string[] = [
 	"create_artifact",
 	"update_artifact",
 	"restore_artifact_version",
+	"import_artifact",
+	"restore_artifact",
 ];
 
 /** 转录卡片的数据：从 `details` 里取，字段残缺时为 null。 */
@@ -118,6 +126,12 @@ function Summary(props: ToolRenderProps): ReactNode {
 				state = t("artifacts.tool.restored", {
 					version: card.fromVersion ?? num(props.args?.version) ?? card.version,
 				});
+				break;
+			case "import_artifact":
+				state = t("artifacts.tool.imported", { version: card.version });
+				break;
+			case "restore_artifact":
+				state = t("artifacts.tool.undeleted");
 				break;
 		}
 	if (

@@ -377,6 +377,7 @@
 		"forkHere": "Fork from here",
 		"ircFrom": "From {{from}}",
 		"jumpToEnd": "Jump to latest",
+		"loadEarlier": "Load earlier messages",
 		"quoteReply": "Quote reply",
 		"quoteDismiss": "Dismiss quote reply",
 		"label": "Label",
@@ -1279,7 +1280,28 @@
 			"loadMentalModels": "Loading mental models",
 			"refreshMentalModel": "Refreshing the mental model",
 			"createExport": "Starting the export",
-			"loadExport": "Checking export progress"
+			"loadExport": "Checking export progress",
+			"ownerLoadSettings": "Loading assistant memory settings",
+			"ownerSaveSettings": "Saving assistant memory settings",
+			"ownerSaveDecide": "Saving the decision model endpoint",
+			"ownerDeleteDecide": "Deleting the decision model endpoint",
+			"ownerLoadStatus": "Loading assistant memory status",
+			"ownerLoadTopics": "Loading topics",
+			"ownerRefreshTopic": "Refreshing the topic",
+			"ownerCurate": "Curating topics",
+			"ownerLoadBrief": "Generating the injection preview",
+			"ownerLoadFacts": "Loading facts",
+			"ownerSetFactState": "Changing the fact's state",
+			"ownerLoadSources": "Loading sources",
+			"ownerForgetSource": "Forgetting the source",
+			"ownerLoadExclusions": "Loading exclusions",
+			"ownerSaveExclusion": "Adding the exclusion",
+			"ownerDeleteExclusion": "Removing the exclusion",
+			"ownerLoadExplicit": "Loading explicit memories",
+			"ownerCreateExplicit": "Creating the explicit memory",
+			"ownerUpdateExplicit": "Saving the explicit memory",
+			"ownerDeleteExplicit": "Deleting the explicit memory",
+			"ownerApproveExplicit": "Approving the explicit memory"
 		},
 		"errors": {
 			"insecure_url": {
@@ -1309,6 +1331,18 @@
 			"memory_disabled": {
 				"why": "The memory master switch is off.",
 				"next": "Turn it on in the Connection card and retry."
+			},
+			"owner_memory_disabled": {
+				"why": "Assistant memory is off, or the engineering memory above isn't available.",
+				"next": "Turn it on under Assistant memory › Settings and retry."
+			},
+			"memory_upstream": {
+				"why": "Hindsight didn't respond normally.",
+				"next": "Check that Hindsight is healthy in the Status card above and retry; if it keeps failing, check docker compose logs hindsight."
+			},
+			"not_pending": {
+				"why": "This memory is already active and doesn't need approval.",
+				"next": "Refresh the page to see its current state."
 			},
 			"not_implemented": {
 				"why": "This orynd doesn't support this memory operation yet.",
@@ -1582,6 +1616,198 @@
 			"download": "Download archive (started {{when}})",
 			"failed": "Export failed",
 			"failedNext": "Make sure Hindsight is healthy and export again; if it keeps failing, check docker compose logs hindsight."
+		},
+		"owner": {
+			"title": "Assistant memory",
+			"scope": "The global assistant's long-term memory about you (bank oryn-owner): your identity, preferences and recent work, distilled from assistant conversations and work threads and appended to the system prompt when an assistant conversation starts. Stored separately from the engineering memory above.",
+			"unavailable": "Assistant memory builds on the engineering memory above: enable and configure the Connection card first (Hindsight URL, .env and master switch), then these settings appear.",
+			"settings": {
+				"title": "Settings",
+				"enabled": "Turn on assistant memory",
+				"enabledHint": "The first time it's turned on, the last 30 days of conversations are backfilled. Turning it off stops writing, topic curation, injection and recall; existing data is kept.",
+				"names": "Your names and aliases",
+				"namesHint": "When writing memories, these names are all treated as you. Up to {{max}}, each at most {{chars}} characters.",
+				"namePlaceholder": "Type a name or alias, press Enter to add",
+				"addName": "Add",
+				"nameProblem": {
+					"tooLong": "Each name can be at most {{chars}} characters.",
+					"duplicate": "This name is already in the list.",
+					"tooMany": "At most {{max}} names and aliases."
+				},
+				"noNames": "No names yet.",
+				"removeName": "Remove “{{name}}”",
+				"saveNames": "Save names"
+			},
+			"decide": {
+				"title": "Decision model (recall reranking)",
+				"optional": "Optional",
+				"configuredHint": "Recall results are scored and reranked by the decision model. Without it they come back in RRF order, marked as not reranked.",
+				"unsetHint": "Not configured: recall results come back in RRF order, marked as not reranked. Defaults to the Google Decisions API.",
+				"baseUrl": "URL",
+				"model": "Model",
+				"apiKey": "Key",
+				"keySet": "Set. Saving with this empty keeps the current key.",
+				"keyUnset": "Not set",
+				"keyKeep": "Set (leave empty to keep)",
+				"keyEmpty": "Paste a key",
+				"clearKey": "Clear key",
+				"clearKeyConfirm": "Confirm clear key",
+				"delete": "Delete endpoint",
+				"deleteConfirm": "Confirm delete endpoint"
+			},
+			"state": {
+				"unavailable": {
+					"label": "Unavailable",
+					"action": "The engineering memory above isn't enabled or configured, so assistant memory isn't running."
+				},
+				"disabled": {
+					"label": "Off",
+					"action": "Assistant memory is off: nothing is written, curated or injected; existing data is kept. Turn it back on in the Settings card."
+				},
+				"ok": {
+					"label": "OK",
+					"action": "Assistant memory is running normally."
+				},
+				"error": {
+					"label": "Error",
+					"action": "Couldn't read bank oryn-owner: check Hindsight in the Status card above, then recheck here."
+				}
+			},
+			"status": {
+				"title": "Assistant memory status",
+				"backfill": "Backfill",
+				"backfillProgress": "{{done}} / {{total}}",
+				"backfillSince": "since {{when}}",
+				"failingSources": "Failing sources",
+				"pendingExplicit": "Explicit memories to review",
+				"bank": "Bank",
+				"bankCounts": "{{memories}} memories · {{documents}} documents",
+				"lastCurated": "Last topic curation",
+				"usageDay": "Last 24 hours",
+				"usageWeek": "Last 7 days",
+				"usage": "{{calls}} calls · {{input}} in · {{output}} out"
+			},
+			"brief": {
+				"open": "Injection preview",
+				"title": "Injection preview",
+				"intro": "The memory section appended to the system prompt when an assistant conversation starts. Enter a conversation id to see what it will get (its snapshot, if any); leave it empty to generate one now.",
+				"threadId": "Conversation id (optional)",
+				"threadIdHint": "Empty = generate from current memory without saving a snapshot.",
+				"generate": "Preview",
+				"generatedAt": "Generated {{when}}",
+				"cached": "From the conversation's snapshot",
+				"fresh": "Freshly generated",
+				"empty": "Assistant memory is off, so no memory section is appended."
+			},
+			"topics": {
+				"title": "Topics",
+				"curate": "Curate now",
+				"hint": "The “about you” injection is the current content of each active topic. Curation creates or archives topics based on recent activity; the pinned seed is never archived.",
+				"empty": "No topics yet.",
+				"seed": "Pinned",
+				"status": {
+					"active": "Active",
+					"archived": "Archived"
+				},
+				"stale": "Waiting for refresh after forgetting; not injected",
+				"refresh": "Refresh now",
+				"scope": "Scope: {{scope}}",
+				"showContent": "Show content",
+				"hideContent": "Hide content",
+				"lastCuration": "Last curation: {{when}}",
+				"curation": {
+					"created": "Created: {{names}}",
+					"kept": "Kept: {{names}}",
+					"archived": "Archived: {{names}}"
+				}
+			},
+			"facts": {
+				"title": "Facts",
+				"hint": "World facts are about you; observations are generalized from several facts. World facts can be invalidated; to correct an observation, invalidate its source facts.",
+				"type": "Type",
+				"allTypes": "All types",
+				"types": {
+					"world": "world",
+					"observation": "observation"
+				},
+				"searchPlaceholder": "Recall by keywords (sorted by relevance)",
+				"search": "Search",
+				"empty": "No facts yet.",
+				"disabled": "Facts can't be browsed while assistant memory is off.",
+				"invalidated": "Invalidated",
+				"restore": "Restore",
+				"invalidate": "Invalidate",
+				"invalidateHint": "After invalidating, no topic is injected until it has been refreshed.",
+				"reasonPlaceholder": "Reason (optional), e.g. no longer using the old workstation",
+				"reason": "Reason for invalidating",
+				"invalidateConfirm": "Confirm invalidate",
+				"provenance": {
+					"owner": {
+						"label": "Your words",
+						"hint": "The source only contains your messages"
+					},
+					"mixed": {
+						"label": "Includes assistant messages",
+						"hint": "The source includes assistant or agent messages; the speaker isn't confirmed"
+					},
+					"explicit": {
+						"label": "Explicit memory",
+						"hint": "From something you explicitly asked to remember"
+					},
+					"unknown": {
+						"label": "Unconfirmed source",
+						"hint": "Can't be traced back to a conversation"
+					}
+				},
+				"seqRange": "messages {{from}}–{{to}}",
+				"seq": "message {{seq}}"
+			},
+			"sources": {
+				"title": "Sources",
+				"hint": "Assistant conversations and work threads that were written (or failed and are waiting to retry), most recent first. Forgetting a source deletes every document it wrote; new content will be written again unless it's excluded.",
+				"forgotten": "Deleted {{n}} documents.",
+				"empty": "Nothing has been written yet.",
+				"forgetTitle": "Forget source",
+				"forgetConfirm": "Forget",
+				"forgetBody": "Delete all {{n}} chunks that “{{name}}” wrote to assistant memory. Affected topics aren't injected until they've been refreshed.",
+				"missing": "Thread deleted",
+				"kind": {
+					"conv": "Assistant conversation",
+					"thread": "Work thread"
+				},
+				"failed": "Failed {{n}} times",
+				"forget": "Forget source",
+				"chunks": "{{n}} chunks",
+				"notRetained": "not written yet",
+				"retainedAt": "written {{when}}",
+				"nextAttempt": "next retry {{when}}"
+			},
+			"exclusions": {
+				"title": "Exclusions",
+				"hint": "These conversations and projects stay out of assistant memory; whatever they already wrote is forgotten when excluded. Toggle a single assistant conversation from its menu.",
+				"empty": "No exclusions.",
+				"project": "Project to exclude",
+				"pickProject": "Pick a project…",
+				"excludeProject": "Exclude project",
+				"kind": {
+					"thread": "Conversation",
+					"project": "Project"
+				},
+				"remove": "Remove exclusion"
+			},
+			"explicit": {
+				"title": "Explicit memories",
+				"add": "New",
+				"hint": "Things you explicitly asked to remember. If the assistant couldn't verify your words in the conversation, it waits here for review; ones created here take effect immediately.",
+				"empty": "No explicit memories yet.",
+				"newLabel": "New explicit memory",
+				"editLabel": "Edit explicit memory",
+				"approve": "Approve",
+				"pending": "To review",
+				"quote": "Your words: “{{text}}”",
+				"reject": "Reject",
+				"rejectConfirm": "Confirm reject"
+			}
 		}
 	},
 	"sshPage": {
@@ -2261,6 +2487,8 @@
 			"renamed": "renamed",
 			"restored": "restored · v{{version}}",
 			"deleted": "deleted",
+			"imported": "imported · v{{version}}",
+			"undeleted": "restored from Recently deleted",
 			"names": {
 				"create_artifact": "Create artifact",
 				"read_artifact": "Read artifact",
@@ -2275,7 +2503,11 @@
 				"resolve_artifact_comment": "Resolve comment",
 				"screenshot_artifact": "Screenshot",
 				"read_artifact_data": "Read page data",
-				"write_artifact_data": "Write page data"
+				"write_artifact_data": "Write page data",
+				"export_artifact": "Export artifact",
+				"import_artifact": "Import artifact",
+				"list_deleted_artifacts": "List recently deleted",
+				"restore_artifact": "Restore artifact"
 			}
 		},
 		"page": {
@@ -3725,7 +3957,19 @@
 		"new": "New conversation",
 		"archive": "Archive this conversation",
 		"conversations": "Conversations",
-		"createFailed": "Couldn't start an assistant conversation"
+		"createFailed": "Couldn't start an assistant conversation",
+		"ownerMemoryExclude": "Keep out of assistant memory",
+		"confirm": {
+			"delete_thread": "Delete thread “{{targetLabel}}”?",
+			"delete_project": "Delete project “{{targetLabel}}”?",
+			"delete_space": "Delete Space “{{targetLabel}}”?",
+			"delete_trigger": "Delete trigger rule “{{targetLabel}}”?",
+			"delete_orb": "Delete orb “{{targetLabel}}”?",
+			"delete_schedule": "Delete schedule “{{targetLabel}}”?",
+			"share_thread": "Create a public share link for “{{targetLabel}}”?",
+			"share_portal": "Open a public Portal preview for “{{targetLabel}}”?",
+			"publish_artifact": "Publish artifact “{{targetLabel}}” for people outside Oryn?"
+		}
 	},
 	"library": {
 		"title": "File library",
@@ -3811,7 +4055,34 @@
 			"send_message": "Sent a message",
 			"archive_thread": "Archived a thread",
 			"set_schedule": "Set a schedule",
-			"delete_schedule": "Deleted a schedule"
+			"delete_schedule": "Deleted a schedule",
+			"update_thread": "Updated a thread",
+			"abort_thread": "Aborted a thread",
+			"set_thread_model": "Changed a thread's model",
+			"fork_thread": "Forked a thread",
+			"wake_thread": "Woke a thread",
+			"delete_thread": "Deleted a thread",
+			"create_project": "Created a project",
+			"update_project": "Updated a project",
+			"delete_project": "Deleted a project",
+			"create_space": "Created a Space",
+			"update_space": "Updated a Space",
+			"delete_space": "Deleted a Space",
+			"set_trigger": "Set a trigger rule",
+			"delete_trigger": "Deleted a trigger rule",
+			"pause_orb": "Paused an orb",
+			"wake_orb": "Woke an orb",
+			"delete_orb": "Deleted an orb",
+			"write_thread_file": "Wrote a thread file",
+			"put_thread_file": "Uploaded a thread file",
+			"write_project_config": "Wrote project agent config",
+			"delete_project_config": "Deleted project agent config",
+			"share_thread": "Shared a thread",
+			"revoke_share": "Revoked a share",
+			"share_portal": "Made a portal public",
+			"unshare_portal": "Ended a public portal",
+			"publish_artifact": "Published an artifact",
+			"unpublish_artifact": "Unpublished an artifact"
 		}
 	},
 	"schedule": {
@@ -3991,6 +4262,12 @@
 		"github": {
 			"event": "GitHub event · {{repo}}#{{number}}",
 			"trigger": "GitHub trigger “{{name}}” · {{repo}}#{{number}}"
+		},
+		"confirmation": {
+			"approved": "Confirmed and done · {{action}} {{target}}",
+			"rejected": "Declined by you · {{action}} {{target}}",
+			"failed": "Confirmed but failed ({{error}}) · {{action}} {{target}}",
+			"expired": "Confirmation expired · {{action}} {{target}}"
 		}
 	},
 	"sections": {

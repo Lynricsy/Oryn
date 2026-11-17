@@ -36,7 +36,28 @@ export type MemoryStep =
 	| "loadMentalModels"
 	| "refreshMentalModel"
 	| "createExport"
-	| "loadExport";
+	| "loadExport"
+	| "ownerLoadSettings"
+	| "ownerSaveSettings"
+	| "ownerSaveDecide"
+	| "ownerDeleteDecide"
+	| "ownerLoadStatus"
+	| "ownerLoadTopics"
+	| "ownerRefreshTopic"
+	| "ownerCurate"
+	| "ownerLoadBrief"
+	| "ownerLoadFacts"
+	| "ownerSetFactState"
+	| "ownerLoadSources"
+	| "ownerForgetSource"
+	| "ownerLoadExclusions"
+	| "ownerSaveExclusion"
+	| "ownerDeleteExclusion"
+	| "ownerLoadExplicit"
+	| "ownerCreateExplicit"
+	| "ownerUpdateExplicit"
+	| "ownerDeleteExplicit"
+	| "ownerApproveExplicit";
 
 /** 有专门原因与建议的错误码；文案在 `memoryPage.errors.<code>.why / .next`。 */
 const KNOWN_CODES = [
@@ -47,6 +68,9 @@ const KNOWN_CODES = [
 	"family_mismatch",
 	"export_not_ready",
 	"memory_disabled",
+	"owner_memory_disabled",
+	"memory_upstream",
+	"not_pending",
 	"not_implemented",
 	"not_found",
 	"invalid_request",

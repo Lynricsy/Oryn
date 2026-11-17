@@ -25,6 +25,9 @@ const (
 // CodeCoordinatorRestricted 是协调线程不允许的操作（命令、附件、fork、分享、挂到协调 orb）的错误码。
 const CodeCoordinatorRestricted = "coordinator_restricted"
 
+// CodeMainConversation 是主线对话不允许的操作（归档、标记已交付、删除；M19）的错误码。
+const CodeMainConversation = "main_conversation"
+
 // hostToolTimeout 是单次宿主工具调用的上限。
 const hostToolTimeout = 60 * time.Second
 
@@ -56,11 +59,18 @@ type HostToolCall struct {
 	OwnerTurn bool
 }
 
-// HostToolResult 是宿主工具的结果：Text 写进 content，Details 原样作为 details。
+// HostToolResult 是宿主工具的结果：Text 写进 content，Details 原样作为 details；Images 跟在 text 块之后
+// （M19，出错时不带图）。
 type HostToolResult struct {
 	Text    string
 	Details any
 	IsError bool
+	Images  []HostToolImage
+}
+
+// HostToolImage 是宿主工具结果里的一张图片（Data 为 base64）。
+type HostToolImage struct {
+	MimeType, Data string
 }
 
 // AgentProfile 是协调线程启动 agent 时的系统提示词与宿主工具表（set_host_tools 的 tools）。
@@ -79,6 +89,9 @@ type Coordinator interface {
 	AgentProfile(ctx context.Context, threadID string) (AgentProfile, error)
 	// HostToolCall 执行一次宿主工具调用；ctx 在 omp 取消调用或超时时结束。
 	HostToolCall(ctx context.Context, c HostToolCall) HostToolResult
+	// UIAnswered 收到主人对控制面发起的待答请求（RequestUI）的应答；response 是 extension_ui_response 帧。
+	// 在后台调用，每个请求至多一次。
+	UIAnswered(ctx context.Context, threadID, requestID string, response json.RawMessage)
 }
 
 // SetCoordinator 设置协调服务；须在服务对外可用之前调用。
@@ -95,7 +108,9 @@ type CoordinatorParams struct {
 	Prompt string
 	Images []apigen.ImageContent
 	Files  []string
-	Extra  func(q *db.Queries, threadID string) error
+	// Main 为真时新建的是全局助手的主线对话（只允许 kind = assistant；全库唯一，由 coord.EnsureMain 创建）。
+	Main  bool
+	Extra func(q *db.Queries, threadID string) error
 }
 
 // CreateCoordinator 新建一个协调对话（kind = space | assistant），挂到协调 orb 上并唤醒它。
@@ -105,6 +120,9 @@ func (s *Service) CreateCoordinator(ctx context.Context, p CoordinatorParams) (a
 	}
 	if p.OrbID == "" {
 		return apigen.Thread{}, errf("invalid", "coordinator orb required")
+	}
+	if p.Main && p.Kind != KindAssistant {
+		return apigen.Thread{}, errf("invalid", "only assistant conversations can be the main conversation")
 	}
 	first := strings.TrimSpace(p.Prompt) != "" || len(p.Images) > 0 || len(p.Files) > 0
 	if first && p.Kind != KindAssistant {
@@ -132,6 +150,9 @@ func (s *Service) CreateCoordinator(ctx context.Context, p CoordinatorParams) (a
 	}
 	if p.ThinkingLevel != "" {
 		row.ThinkingLevel = &p.ThinkingLevel
+	}
+	if p.Main {
+		row.Main = new(int64(1))
 	}
 	extra := func(q *db.Queries) error {
 		if p.Extra != nil {
@@ -444,7 +465,13 @@ func (s *Service) hostToolCallLocked(t *thread, line []byte) {
 
 // hostToolResultFrame 构造 host_tool_result 帧。
 func hostToolResultFrame(id string, r HostToolResult) ([]byte, error) {
-	result := map[string]any{"content": []map[string]string{{"type": "text", "text": r.Text}}}
+	content := []map[string]string{{"type": "text", "text": r.Text}}
+	if !r.IsError {
+		for _, img := range r.Images {
+			content = append(content, map[string]string{"type": "image", "data": img.Data, "mimeType": img.MimeType})
+		}
+	}
+	result := map[string]any{"content": content}
 	if r.Details != nil {
 		result["details"] = r.Details
 	}

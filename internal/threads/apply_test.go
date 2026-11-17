@@ -242,4 +242,6 @@ func TestConfigEffectOf(t *testing.T) {
 
 	e = configEffectOf([]string{"skills/a/SKILL.md", "config.yml"}, nil, []byte("disabledExtensions: [hook:pre:x:x.ts]\n"), true, restart)
 	assert.True(t, e.empty(), "协调宿主不加载技能与 hook")
+	e = configEffectOf([]string{"mcp.json", "models.yml"}, nil, nil, true, restart)
+	assert.Equal(t, []string{"mcp.json", "models.yml"}, e.restart, "M19：协调宿主的 mcp.json 由全局配置生成，变化时重启助手")
 }

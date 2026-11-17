@@ -6,6 +6,7 @@
 import type { ParseKeys } from "i18next";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import i18n from "../../i18n";
 import { coreLabelKey, OMFG_SAVE_TITLE } from "../../lib/core-labels";
 import {
 	DESKTOP_ASK_DONE,
@@ -668,6 +669,24 @@ function titleOf(req: ExtensionUiRequest, t: (k: ParseKeys) => string): string {
 	return t("ui.askTitle");
 }
 
+/**
+ * 控制面发起的确认卡（M19：助手的删除与对外公开动作）的标题：帧带 `oryn: {action, targetLabel}` 时用语言包
+ * `assistant.confirm.<action>`；没有对应文案时返回 null，回落到帧的英文 `title`。
+ */
+function orynConfirmTitle(req: ExtensionUiRequest): string | null {
+	if (req.method !== "confirm" || !("oryn" in req)) return null;
+	const oryn = req.oryn;
+	if (typeof oryn !== "object" || oryn === null) return null;
+	if (!("action" in oryn) || !("targetLabel" in oryn)) return null;
+	const { action, targetLabel } = oryn;
+	if (typeof action !== "string" || typeof targetLabel !== "string")
+		return null;
+	const key = `assistant.confirm.${action}`;
+	return i18n.exists(key)
+		? i18n.t(key as "assistant.confirm.delete_thread", { targetLabel })
+		: null;
+}
+
 /** Core `approvalHeader`（tools/approval.ts）在工具名之后的固定行。 */
 const APPROVAL_ROW_RE = /^(Origin|Reason): (.+)$/;
 
@@ -786,7 +805,7 @@ export function UiRequestCard({
 			? t("deskPanel.control.askTitle", {
 					kind: t(`deskPanel.control.kind.${desk.kind}`),
 				})
-			: titleOf(req, t)
+			: (orynConfirmTitle(req) ?? titleOf(req, t))
 	).split("\n");
 	const detail = more
 		.join("\n")

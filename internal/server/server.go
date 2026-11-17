@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/agentcfg"
@@ -184,6 +185,7 @@ func (s *Server) init(ctx context.Context) error {
 	setup := &orbs.DefaultSetup{
 		Store: s.Store, Home: s.Home, Vault: s.Vault, Projects: s.ProjectHomes,
 		CoordinatorEgressAddr: fmt.Sprintf("127.0.0.1:%d", cfg.Coordinator.EgressPort),
+		CoordinatorWebAllow:   lowerAll(cfg.Coordinator.WebAllowHosts),
 	}
 	s.Orbs = orbs.New(orbs.Config{
 		Idle: cfg.Idle, Defaults: cfg.OrbDefaults, PublicURL: cfg.PublicURL, TokenKey: key, EvalInterval: evalInterval,
@@ -279,6 +281,7 @@ func (s *Server) init(ctx context.Context) error {
 		s.Store, s.Threads, s.Orbs, s.Host, s.Schedules)
 	s.Coord.SetLibrary(s.Library, s.LibrarySync)
 	s.Coord.SetArtifacts(s.Artifacts)
+	s.Coord.SetAgentConfig(s.Home, s.ProjectHomes, s.Vault)
 	s.Threads.SetCoordinator(s.Coord)
 	s.Threads.AddObserver(s.Notify)
 	s.Threads.AddObserver(s.Schedules)
@@ -506,4 +509,15 @@ type githubOrbs struct{ o *orbs.Service }
 
 func (g githubOrbs) Freeze(ctx context.Context, orbID string) error {
 	return g.o.Pause(ctx, orbID, orbs.PauseFreeze)
+}
+
+// lowerAll 把主机名表转成小写（出站代理按小写比较放行表）。
+func lowerAll(hosts []string) []string {
+	out := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		if h = strings.ToLower(strings.TrimSpace(h)); h != "" {
+			out = append(out, h)
+		}
+	}
+	return out
 }

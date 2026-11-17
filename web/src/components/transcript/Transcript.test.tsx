@@ -539,6 +539,65 @@ describe("贴底跟随", () => {
 		expect(m.top).toBe(0);
 		expect(jump()).not.toBeNull();
 	});
+
+	it("加载更早的消息（M19）：按钮触发回调，条目从上方并入后距底距离不变", async () => {
+		vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(
+			4000,
+		);
+		vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
+		const client = new QueryClient({
+			defaultOptions: {
+				queries: { retry: false, staleTime: Number.POSITIVE_INFINITY },
+			},
+		});
+		client.setQueryData(qk.agentIdentity, {});
+		client.setQueryData(qk.userIdentity, {});
+		client.setQueryData(qk.gitIdentity, {});
+		const later = base.map((it) =>
+			it.kind === "message" ? msg(it.seq + 10, it.message) : it,
+		);
+		let resolveLoad = () => {};
+		const onLoadEarlier = vi.fn(
+			() =>
+				new Promise<void>((r) => {
+					resolveLoad = r;
+				}),
+		);
+		const tree = (list: TranscriptItem[], hasEarlier: boolean) => (
+			<QueryClientProvider client={client}>
+				<TranscriptContext.Provider value={ctx}>
+					<Transcript
+						items={list}
+						hasEarlier={hasEarlier}
+						onLoadEarlier={onLoadEarlier}
+					/>
+				</TranscriptContext.Provider>
+			</QueryClientProvider>
+		);
+		const r = render(tree(later, true));
+		const el = screen.getByTestId("transcript");
+		const m = scrollModel(el);
+		// 读者往上翻到顶部附近
+		fireEvent.wheel(el, { deltaY: -120 });
+		m.top = 120;
+		fireEvent.scroll(el);
+		const btn = screen.getByRole("button", { name: "加载更早的消息" });
+		fireEvent.click(btn);
+		expect(onLoadEarlier).toHaveBeenCalledTimes(1);
+		expect(
+			(
+				screen.getByRole("button", {
+					name: "加载更早的消息",
+				}) as HTMLButtonElement
+			).disabled,
+		).toBe(true);
+		// 更早的 4 条并入：内容长高 800px，距底距离（1000 - 120）保持
+		m.height = 1800;
+		r.rerender(tree([...base, ...later], false));
+		expect(m.top).toBe(920);
+		await act(async () => resolveLoad());
+		expect(screen.queryByRole("button", { name: "加载更早的消息" })).toBeNull();
+	});
 });
 
 describe("定位条目", () => {

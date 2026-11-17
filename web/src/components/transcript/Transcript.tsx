@@ -78,6 +78,8 @@ const DOWN_KEYS: Record<string, true> = {
 };
 /** 用户朝同一方向连续翻过多少像素才报告阅读方向（`onReadDirection`），过滤手指的细小抖动。 */
 const READ_TRAVEL = 24;
+/** 顶部「加载更早的消息」按钮占的高度（px）。 */
+const EARLIER_H = 44;
 /** 定位条目后描边的时长与寻找工具卡的最多帧数。 */
 const REVEAL_MS = 2400;
 const REVEAL_TRIES = 30;
@@ -505,6 +507,8 @@ export function Transcript({
 	startAtTop = false,
 	onReadDirection,
 	trayTop: trayTopOverride,
+	hasEarlier = false,
+	onLoadEarlier,
 }: {
 	items: TranscriptItem[];
 	footer?: ReactNode;
@@ -521,6 +525,10 @@ export function Transcript({
 	onReadDirection?: (dir: "back" | "forward") => void;
 	/** 输入坞托盘顶边离底部的距离（px），「回到底部」悬在它上方；默认按 `insetBottom` 推算。输入坞收成胶囊时托盘比留白矮，由调用方给出。 */
 	trayTop?: number;
+	/** 还有更早的条目未加载（M19 尾部订阅）：顶部显示「加载更早的消息」。 */
+	hasEarlier?: boolean;
+	/** 加载更早的一页；条目并入后保持阅读位置不动。 */
+	onLoadEarlier?: () => Promise<void>;
 }): ReactNode {
 	const { t } = useTranslation();
 	const { threadId, readOnly } = useTranscriptContext();
@@ -562,7 +570,7 @@ export function Transcript({
 		getScrollElement: () => scrollRef.current,
 		estimateSize: () => 96,
 		overscan: 6,
-		paddingStart: insetTop,
+		paddingStart: insetTop + (hasEarlier ? EARLIER_H : 0),
 		paddingEnd: insetBottom,
 		getItemKey: (i) => (i < items.length ? (items[i]?.key ?? i) : "__footer__"),
 	});
@@ -695,6 +703,33 @@ export function Transcript({
 	useLayoutEffect(() => {
 		if (stick.current && !hold.current) scrollToEnd();
 	}, [items, total, insetBottom, scrollToEnd]);
+
+	// 向前翻页：点击时记下距底距离，更早的条目并入后恢复它（内容从上方长出，阅读位置不动）
+	const [loadingEarlier, setLoadingEarlier] = useState(false);
+	const restore = useRef<{ fromBottom: number; count: number } | null>(null);
+	const loadEarlier = useCallback(() => {
+		const el = scrollRef.current;
+		if (!el || !onLoadEarlier) return;
+		restore.current = {
+			fromBottom: el.scrollHeight - el.scrollTop,
+			count: items.length,
+		};
+		stick.current = false;
+		setLoadingEarlier(true);
+		onLoadEarlier()
+			.catch(() => {
+				restore.current = null;
+			})
+			.finally(() => setLoadingEarlier(false));
+	}, [onLoadEarlier, items.length]);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: items、total 变化即需要检查是否该恢复位置
+	useLayoutEffect(() => {
+		const r = restore.current;
+		const el = scrollRef.current;
+		if (!r || !el || items.length === r.count) return;
+		restore.current = null;
+		el.scrollTop = el.scrollHeight - r.fromBottom;
+	}, [items, total]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: 只在挂载时定一次起始位置
 	useEffect(() => {
@@ -857,6 +892,21 @@ export function Transcript({
 					className="relative w-full"
 					style={{ height: total }}
 				>
+					{hasEarlier && (
+						<div
+							className="absolute left-0 flex w-full items-center justify-center"
+							style={{ top: insetTop, height: EARLIER_H }}
+						>
+							<button
+								type="button"
+								disabled={loadingEarlier}
+								onClick={loadEarlier}
+								className="glass rounded-full px-3 py-1 text-muted text-sm hover:text-fg disabled:opacity-60"
+							>
+								{t("transcript.loadEarlier")}
+							</button>
+						</div>
+					)}
 					{rendered}
 					{selection.quote && !quoteBar && (
 						<QuoteChip quote={selection.quote} onTake={selection.take} />

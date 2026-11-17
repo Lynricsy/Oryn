@@ -39,8 +39,8 @@ const FACTS_PER_DOC = 7;
 /** 导出从开始到完成的时长。 */
 const EXPORT_MS = 2_000;
 
-/** 与服务端 `insecure_url` 判定一致：本机、`::1` 与私有网段可以用 http。 */
-function insecureUrl(raw: string): boolean {
+/** 与服务端 `insecure_url` 判定一致：本机、`::1` 与私有网段可以用 http。助手记忆的判断模型接口（M17）同样用它。 */
+export function insecureUrl(raw: string): boolean {
 	let u: URL;
 	try {
 		u = new URL(raw);
@@ -159,6 +159,15 @@ export class MockMemory {
 				modelId: "deepseek/deepseek-v3.2",
 			});
 		}
+	}
+
+	/** 工程记忆已启用且已配置（有地址、已生成 .env）：助手记忆（M17）的前提。 */
+	ready(): boolean {
+		return (
+			this.settings.enabled &&
+			Boolean(this.settings.hindsightUrl) &&
+			this.settings.keysGenerated
+		);
 	}
 
 	private flag(): string | null {

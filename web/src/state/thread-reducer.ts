@@ -200,6 +200,11 @@ export interface ThreadViewState {
 	lastSeq: number;
 	/** 服务端转录版本（`thread.snapshot.transcriptRev`）；未知为 null。重订阅时带上，不一致则服务端全量重放。 */
 	transcriptRev: number | null;
+	/**
+	 * 带 `tail` 订阅的补发窗口起点（`thread.snapshot.windowStart`，M19）：seq ≤ windowStart 的条目尚未加载，
+	 * 经 REST `before` 向前翻页；0 = 没有开窗或已加载到最早一条。
+	 */
+	windowStart: number;
 	leafEntryId?: string;
 	liveMessage: LiveMessage | null;
 	liveTools: Record<string, LiveTool>;
@@ -261,6 +266,7 @@ export function initialThreadState(threadId: string): ThreadViewState {
 		entries: [],
 		lastSeq: 0,
 		transcriptRev: null,
+		windowStart: 0,
 		liveMessage: null,
 		liveTools: {},
 		liveToolOrder: [],
@@ -464,12 +470,27 @@ export function applyEntries(
 	};
 }
 
+/**
+ * 并入更早的一页条目（REST `entries?before=`，M19）。`lastSeq` 不变（续传游标只看补发进度）；
+ * `windowStart` 更新为页内最小 seq 减一，翻到头（`hasMore` 为假）时置 0。
+ */
+export function prependEntries(
+	s: ThreadViewState,
+	page: { entries: Entry[]; hasMore: boolean },
+): ThreadViewState {
+	const next = mergeEntries(s, page.entries);
+	let windowStart = 0;
+	if (page.hasMore && page.entries.length > 0)
+		windowStart = Math.min(...page.entries.map((e) => e.seq)) - 1;
+	return { ...next, windowStart };
+}
+
 /** `transcript.reset`：服务端重写了转录，丢弃本地条目，随后以 `afterSeq=0` 重新订阅。 */
 export function applyTranscriptReset(
 	s: ThreadViewState,
 	transcriptRev: number,
 ): ThreadViewState {
-	return { ...s, entries: [], lastSeq: 0, transcriptRev };
+	return { ...s, entries: [], lastSeq: 0, transcriptRev, windowStart: 0 };
 }
 
 /** `plan.resolved`：计划提案已被任一客户端处理。 */
@@ -996,6 +1017,8 @@ export function applySnapshot(
 		entries: keepEntries ? s.entries : [],
 		lastSeq: keepEntries ? s.lastSeq : 0,
 		transcriptRev: snap.transcriptRev,
+		// 服务端开窗时（只在从 seq 0 补发时）以它为准；续传沿用本地的窗口
+		windowStart: snap.windowStart || (keepEntries ? s.windowStart : 0),
 		notices: s.notices,
 		noticeSeq: s.noticeSeq,
 		debug: s.debug,

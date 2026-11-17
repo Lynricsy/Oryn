@@ -1,0 +1,208 @@
+package coord
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"io/fs"
+	"log/slog"
+	"net/url"
+	"os"
+	"unicode/utf8"
+
+	"github.com/Lynricsy/Oryn/internal/agentcfg"
+	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/store/db"
+	"github.com/Lynricsy/Oryn/internal/threads"
+)
+
+// 全局助手的设置（M19）：联网总开关、关掉的 MCP 服务器、助手的电脑的 provider 与类型。变更后立即刷新协调宿主的
+// 出站策略，并让未归档的助手对话在静止后用新配置重启 agent。
+
+// 设置的上限。
+const (
+	maxDisabledMCP    = 200
+	maxMCPNameRunes   = 200
+	maxComputerString = 200
+)
+
+// GlobalConfig 是全局 omp 配置（*agentcfg.Home 实现）。
+type GlobalConfig interface {
+	Get(p string) ([]byte, agentcfg.FileInfo, error)
+}
+
+// ProjectConfigs 是项目级 omp 配置（*agentcfg.ProjectHomes 实现）。
+type ProjectConfigs interface {
+	For(projectID string) (*agentcfg.Home, error)
+}
+
+// EnvSecrets 提供 env 模式的密钥（*secrets.Vault 实现），用于展开 MCP 头里的变量。
+type EnvSecrets interface {
+	EnvSecrets() (map[string]string, error)
+}
+
+// SetAgentConfig 设置全局与项目级 omp 配置、env 模式密钥；须在服务对外可用之前调用。任一为 nil 时相应能力不可用。
+func (s *Service) SetAgentConfig(home GlobalConfig, projects ProjectConfigs, env EnvSecrets) {
+	s.home, s.projectCfg, s.envSecrets = home, projects, env
+}
+
+// assistantSettings 是解析后的设置行；没有行时为默认值（联网开、无禁用项）。
+type assistantSettings struct {
+	webAccess        bool
+	disabled         []string
+	provider, orbTyp *string
+}
+
+func (s *Service) loadSettings(ctx context.Context) (assistantSettings, error) {
+	out := assistantSettings{webAccess: true, disabled: []string{}}
+	row, err := s.st.Q.GetAssistantSettings(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return out, nil
+	}
+	if err != nil {
+		return out, err
+	}
+	out.webAccess = row.WebAccess == 1
+	if err := json.Unmarshal([]byte(row.DisabledMcp), &out.disabled); err != nil || out.disabled == nil {
+		out.disabled = []string{}
+	}
+	out.provider, out.orbTyp = row.ComputerProvider, row.ComputerOrbType
+	return out, nil
+}
+
+func (a assistantSettings) api() apigen.AssistantSettings {
+	return apigen.AssistantSettings{
+		WebAccess: a.webAccess, DisabledMcpServers: a.disabled,
+		Computer: apigen.AssistantComputerSettings{Provider: a.provider, OrbType: a.orbTyp},
+	}
+}
+
+// Settings 返回全局助手的设置。
+func (s *Service) Settings(ctx context.Context) (apigen.AssistantSettings, error) {
+	a, err := s.loadSettings(ctx)
+	if err != nil {
+		return apigen.AssistantSettings{}, err
+	}
+	return a.api(), nil
+}
+
+// PutSettings 整体替换全局助手的设置，随后刷新协调宿主的出站策略并让助手对话按新配置重启。
+func (s *Service) PutSettings(ctx context.Context, in apigen.AssistantSettings) (apigen.AssistantSettings, error) {
+	if len(in.DisabledMcpServers) > maxDisabledMCP {
+		return apigen.AssistantSettings{}, errf(CodeInvalid, "at most %d disabled MCP servers", maxDisabledMCP)
+	}
+	disabled := make([]string, 0, len(in.DisabledMcpServers))
+	seen := map[string]bool{}
+	for _, n := range in.DisabledMcpServers {
+		if n == "" || utf8.RuneCountInString(n) > maxMCPNameRunes {
+			return apigen.AssistantSettings{}, errf(CodeInvalid, "MCP server names must be 1–%d characters", maxMCPNameRunes)
+		}
+		if !seen[n] {
+			seen[n] = true
+			disabled = append(disabled, n)
+		}
+	}
+	norm := func(p *string) *string {
+		if p == nil || *p == "" {
+			return nil
+		}
+		return p
+	}
+	provider, orbType := norm(in.Computer.Provider), norm(in.Computer.OrbType)
+	for _, v := range []*string{provider, orbType} {
+		if v != nil && utf8.RuneCountInString(*v) > maxComputerString {
+			return apigen.AssistantSettings{}, errf(CodeInvalid, "computer provider and type must be at most %d characters", maxComputerString)
+		}
+	}
+	b, err := json.Marshal(disabled)
+	if err != nil {
+		return apigen.AssistantSettings{}, err
+	}
+	web := int64(0)
+	if in.WebAccess {
+		web = 1
+	}
+	if err := s.st.Q.UpsertAssistantSettings(ctx, db.UpsertAssistantSettingsParams{
+		WebAccess: web, DisabledMcp: string(b), ComputerProvider: provider, ComputerOrbType: orbType,
+		UpdatedAt: s.cfg.Now().UnixMilli(),
+	}); err != nil {
+		return apigen.AssistantSettings{}, err
+	}
+	s.refreshAssistants(ctx)
+	return assistantSettings{webAccess: in.WebAccess, disabled: disabled, provider: provider, orbTyp: orbType}.api(), nil
+}
+
+// refreshAssistants 立即以新设置刷新协调宿主的出站策略（联网开关当场生效），并让全部未归档的助手对话在静止后重启
+// agent（工具表、系统提示词与下发的 mcp.json 随之更新）。
+func (s *Service) refreshAssistants(ctx context.Context) {
+	if o, err := s.st.Q.GetCoordinatorOrb(ctx); err == nil && s.refreshPolicy != nil {
+		if err := s.refreshPolicy(ctx, o.ID); err != nil {
+			slog.Warn("coord: 刷新协调宿主出站策略失败", "orb", o.ID, "err", err)
+		}
+	}
+	kind, archived := threads.KindAssistant, false
+	rows, err := s.st.Q.ListThreads(ctx, db.ListThreadsParams{Kind: &kind, Archived: &archived})
+	if err != nil {
+		slog.Warn("coord: 列出助手对话失败", "err", err)
+		return
+	}
+	for _, t := range rows {
+		s.th.RefreshAgent(ctx, t.ID)
+	}
+}
+
+// webAccess 报告全局助手联网是否开启（读设置失败按开启处理：真正的放行由出站代理按同一行决定）。
+func (s *Service) webAccess(ctx context.Context) bool {
+	a, err := s.loadSettings(ctx)
+	return err != nil || a.webAccess
+}
+
+// MCPServers 列出全局 mcp.json 里的服务器及其对助手是否可用、是否开启。解析失败返回空表。
+func (s *Service) MCPServers(ctx context.Context) ([]apigen.AssistantMcpServer, error) {
+	out := []apigen.AssistantMcpServer{}
+	if s.home == nil {
+		return out, nil
+	}
+	content, _, err := s.home.Get(agentcfg.MCPFile)
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, os.ErrNotExist) {
+		return out, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var env map[string]string
+	if s.envSecrets != nil {
+		if env, err = s.envSecrets.EnvSecrets(); err != nil {
+			return nil, err
+		}
+	}
+	servers, err := agentcfg.ParseMCP(content, env)
+	if err != nil {
+		slog.Warn("coord: 全局 mcp.json 无法解析", "err", err)
+		return out, nil
+	}
+	settings, err := s.loadSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	disabled := map[string]bool{}
+	for _, n := range settings.disabled {
+		disabled[n] = true
+	}
+	for _, srv := range servers {
+		item := apigen.AssistantMcpServer{
+			Name: srv.Name, Transport: apigen.AssistantMcpServerTransport(srv.Transport), Usable: srv.Usable, Enabled: !disabled[srv.Name],
+		}
+		if srv.Reason != "" {
+			r := apigen.AssistantMcpServerReason(srv.Reason)
+			item.Reason = &r
+		}
+		if u, err := url.Parse(srv.URL); err == nil && u.Host != "" {
+			h := u.Hostname()
+			item.Host = &h
+		}
+		out = append(out, item)
+	}
+	return out, nil
+}

@@ -1,10 +1,10 @@
-/** 全局助手的对话列表（M9.6）：助手页与「助手」分区侧栏共用。 */
+/** 全局助手的对话列表（M9.6）：助手页与「助手」分区侧栏共用。主线对话（M19）不在列表里，单独取。 */
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useLocation, useNavigate } from "react-router";
-import type { Schemas, Thread } from "../api/client";
+import { api, type Schemas, type Thread, unwrap } from "../api/client";
 import { patchThread } from "../state/actions";
-import { useIndex } from "../state/stores";
+import { indexStore, useIndex } from "../state/stores";
 
 /** 「已归档」折叠组的查询键：`GET threads?archived=true&kind=assistant`。 */
 export const archivedAssistantKey = [
@@ -12,19 +12,34 @@ export const archivedAssistantKey = [
 	{ archived: true, kind: "assistant" },
 ] as const;
 
-/** 未归档的助手对话，最近活动的在前。 */
+/** 未归档的助手对话（不含主线），最近活动的在前；`/assistant` 落点取它的第一项，因此不会落到主线。 */
 export function useAssistantConversations(): Thread[] {
 	const threads = useIndex((s) => s.threads);
 	return useMemo(
 		() =>
 			Object.values(threads)
-				.filter((t) => t.kind === "assistant" && !t.archivedAt)
+				.filter((t) => t.kind === "assistant" && !t.main && !t.archivedAt)
 				.sort(
 					(a, b) =>
 						(b.lastMessageAt ?? b.updatedAt) - (a.lastMessageAt ?? a.updatedAt),
 				),
 		[threads],
 	);
+}
+
+/** 线程索引里的主线对话（全库至多一条）；还没有时为 undefined，由 {@link ensureAssistantMain} 创建。 */
+export function useAssistantMain(): Thread | undefined {
+	return useIndex((s) => {
+		for (const t of Object.values(s.threads)) if (t.main) return t;
+		return undefined;
+	});
+}
+
+/** `GET assistant/main`：取主线对话，没有则由服务端创建；结果并入线程索引。 */
+export async function ensureAssistantMain(): Promise<Thread> {
+	const res = await unwrap(api.GET("/api/v1/assistant/main"));
+	indexStore.getState().upsertThread(res.thread);
+	return res.thread;
 }
 
 /**

@@ -805,11 +805,18 @@ paths:
       tags: [threads]
       operationId: listThreadEntries
       summary: 分页读取已复制条目（按 `seq` 升序）
+      description: |
+        `after` 向后翻、`before` 向前翻（M19）：给了 `before` 时返回 `seq < before` 的最新 `limit` 条（结果仍按 `seq` 升序），
+        `hasMore` 表示还有更早的。`after` 与 `before` 同时给出 → 400 `invalid_request`。
       parameters:
         - name: after
           in: query
           description: 只返回 `seq > after` 的条目
           schema: { type: integer, format: int64, minimum: 0, default: 0 }
+        - name: before
+          in: query
+          description: 只返回 `seq < before` 的条目（M19，向前翻页）
+          schema: { type: integer, format: int64, minimum: 1 }
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
@@ -2155,6 +2162,42 @@ paths:
               schema: { $ref: '#/components/schemas/AgentIdentity' }
         default: { $ref: '#/components/responses/Error' }
 
+  /api/v1/settings/assistant:
+    get:
+      tags: [settings]
+      operationId: getAssistantSettings
+      summary: 全局助手的设置（M19：联网总开关、关掉的 MCP 服务器、助手的电脑）
+      responses:
+        '200':
+          description: 当前设置（没有存过 = 默认：联网开、无禁用项）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssistantSettings' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [settings]
+      operationId: putAssistantSettings
+      summary: 设置全局助手（整体替换）
+      description: |
+        `disabledMcpServers` 每项 1–200 字符、至多 200 项，否则 400 `invalid_request`。保存后立即刷新协调宿主的出站策略，
+        并让全部未归档的助手对话在静止后用新配置重启 agent。`computer` 只影响下一次创建助手的电脑。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AssistantSettings' }
+      responses:
+        '200':
+          description: 写入后的设置
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssistantSettings' }
+        default: { $ref: '#/components/responses/Error' }
+
   /api/v1/settings/role-identities:
     get:
       tags: [settings]
@@ -3073,6 +3116,132 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ThreadEnvelope' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/assistant/mcp-servers:
+    get:
+      tags: [spaces]
+      operationId: listAssistantMcpServers
+      summary: 全局 `mcp.json` 里的服务器及其对全局助手是否可用（M19）
+      description: |
+        解析全局配置的 `mcp.json`（已停用的条目不列）。只有 HTTP / SSE 传输、鉴权头可由 orynd 注入的服务器可以给助手用；
+        其余标 `usable: false` 并给出原因。解析失败 → 200 空列表。
+      responses:
+        '200':
+          description: 服务器列表（按名字排序）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssistantMcpServerList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/assistant/main:
+    get:
+      tags: [spaces]
+      operationId: getAssistantMain
+      summary: 全局助手的主线对话（M19；没有则创建）
+      description: |
+        主线是 `kind = assistant`、`main = true` 的单例，不能归档或删除，不出现在助手对话列表里。
+        需要新建而协调宿主不可用时 409 `coordinator_unavailable`。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '200':
+          description: 主线
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ThreadEnvelope' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/assistant/main/notes:
+    get:
+      tags: [spaces]
+      operationId: getAssistantNotes
+      summary: 主线备忘（M19）
+      responses:
+        '200':
+          description: 备忘
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssistantNotes' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [spaces]
+      operationId: putAssistantNotes
+      summary: 改写主线备忘（整体替换，上限 1500 字，超出 → 400 `invalid_request`）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AssistantNotes' }
+      responses:
+        '200':
+          description: 写入后的备忘
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssistantNotes' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/assistant/computer:
+    get:
+      tags: [spaces]
+      operationId: getAssistantComputer
+      summary: 助手的电脑（M19）：还没有时 `orbId` 省略
+      responses:
+        '200':
+          description: 状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssistantComputer' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/assistant/computer/wake:
+    post:
+      tags: [spaces]
+      operationId: wakeAssistantComputer
+      summary: 唤醒助手的电脑（没有则创建），等到就绪（至多 90 秒，超时 409 `computer_starting`）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '200':
+          description: 状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssistantComputer' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/assistant/computer/pause:
+    post:
+      tags: [spaces]
+      operationId: pauseAssistantComputer
+      summary: 冻结助手的电脑（没有 → 404 `not_found`）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '200':
+          description: 状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssistantComputer' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/assistant/computer/reset:
+    post:
+      tags: [spaces]
+      operationId: resetAssistantComputer
+      summary: 删除助手的电脑；下次用到时重新创建（没有 → 200，幂等）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '200':
+          description: 重置后的状态（`orbId` 省略）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssistantComputer' }
         default: { $ref: '#/components/responses/Error' }
   /api/v1/assistant/files:
     get:
@@ -9118,6 +9287,83 @@ components:
           items: { $ref: '#/components/schemas/ImageContent' }
         model: { $ref: '#/components/schemas/ModelRef' }
         thinkingLevel: { type: string }
+    AssistantSettings:
+      type: object
+      description: 全局助手的设置（M19）
+      required: [webAccess, disabledMcpServers, computer]
+      properties:
+        webAccess:
+          type: boolean
+          description: 联网总开关：关闭时协调宿主的正向代理拒绝一切 CONNECT 与转发（`web_search`、读网页随之失败）
+        disabledMcpServers:
+          type: array
+          maxItems: 200
+          description: 全局 `mcp.json` 里助手不用的服务器名
+          items: { type: string, minLength: 1, maxLength: 200 }
+        computer: { $ref: '#/components/schemas/AssistantComputerSettings' }
+    AssistantComputerSettings:
+      type: object
+      description: 助手的电脑下一次创建时用的 provider 与 orb 类型；省略 = 默认解析
+      properties:
+        provider: { type: string }
+        orbType: { type: string }
+    AssistantMcpServer:
+      type: object
+      required: [name, transport, usable, enabled]
+      properties:
+        name: { type: string }
+        transport:
+          type: string
+          enum: [http, sse, stdio]
+          x-enum-varnames: [McpTransportHttp, McpTransportSse, McpTransportStdio]
+        host:
+          type: string
+          description: URL 的主机（HTTP / SSE）
+        usable:
+          type: boolean
+          description: 助手能否使用（传输与鉴权方式受支持）
+        reason:
+          type: string
+          description: '`usable: false` 的原因：`stdio` 本地进程型；`oauth` 需要 OAuth；`command_header` 头由命令生成；`unresolved_env` 头引用了不存在的环境变量；`invalid_url` 地址无效'
+          enum: [stdio, oauth, command_header, unresolved_env, invalid_url]
+          x-enum-varnames: [McpReasonStdio, McpReasonOauth, McpReasonCommandHeader, McpReasonUnresolvedEnv, McpReasonInvalidUrl]
+        enabled:
+          type: boolean
+          description: 不在助手设置的禁用表里
+    AssistantMcpServerList:
+      type: object
+      required: [servers]
+      properties:
+        servers:
+          type: array
+          items: { $ref: '#/components/schemas/AssistantMcpServer' }
+    AssistantNotes:
+      type: object
+      description: 主线备忘（M19，助手每段开头带上）
+      required: [text]
+      properties:
+        text:
+          type: string
+          description: 上限 1500 字（按 Unicode 字符计）
+        updatedAt:
+          allOf:
+            - $ref: '#/components/schemas/TimestampMs'
+          readOnly: true
+    AssistantComputer:
+      type: object
+      description: 助手的电脑（M19）
+      required: [toolsReady]
+      properties:
+        orbId:
+          allOf:
+            - $ref: '#/components/schemas/OrbId'
+          description: 还没有电脑时省略
+        state: { $ref: '#/components/schemas/OrbState' }
+        providerName: { type: string }
+        type: { type: string }
+        toolsReady:
+          type: boolean
+          description: 电脑里的工具定义已缓存（`computer_*` 工具从下一轮起可用）
 
     # ============================================================ provider（客户端视图）
     OrbType:
@@ -9489,6 +9735,9 @@ components:
           allOf:
             - $ref: '#/components/schemas/GitHubThreadTask'
           description: 触发规则建立的 issue 任务或发布哨兵状态（M15）；没有则省略
+        main:
+          type: boolean
+          description: 是否为全局助手的主线对话（M19，`kind = assistant` 的单例）；不是则省略
     ThreadError:
       type: object
       description: |
@@ -9726,6 +9975,9 @@ components:
           type: boolean
           readOnly: true
           description: M18：这台 orb 由全自动入口（定时、GitHub 触发等）建立；为真时只能用放开了「允许全自动线程使用」的 SSH 主机。缺省 = false
+        computer:
+          type: boolean
+          description: 助手的电脑（M19，全库至多一台，线程不能挂上去）；为 false 时省略
     OrbKind:
       type: string
       description: '`orb` = provider 创建的 orb；`runner` = runner 的常驻 orb（M11b）'
@@ -10531,8 +10783,18 @@ components:
           x-enum-varnames: [OriginOwner, OriginAuto]
         action:
           type: string
-          enum: [create_thread, send_message, archive_thread, set_schedule, delete_schedule]
-          x-enum-varnames: [ActionCreateThread, ActionSendMessage, ActionArchiveThread, ActionSetSchedule, ActionDeleteSchedule]
+          description: 工具名（M19 起全局助手有更多写类工具；经确认卡执行的记 `origin = owner`）
+          enum: [create_thread, send_message, archive_thread, set_schedule, delete_schedule, update_thread, abort_thread,
+            set_thread_model, fork_thread, wake_thread, delete_thread, create_project, update_project, delete_project,
+            create_space, update_space, delete_space, set_trigger, delete_trigger, pause_orb, wake_orb, delete_orb,
+            write_thread_file, put_thread_file, write_project_config, delete_project_config, share_thread, revoke_share,
+            share_portal, unshare_portal, publish_artifact, unpublish_artifact]
+          x-enum-varnames: [ActionCreateThread, ActionSendMessage, ActionArchiveThread, ActionSetSchedule, ActionDeleteSchedule,
+            ActionUpdateThread, ActionAbortThread, ActionSetThreadModel, ActionForkThread, ActionWakeThread, ActionDeleteThread,
+            ActionCreateProject, ActionUpdateProject, ActionDeleteProject, ActionCreateSpace, ActionUpdateSpace, ActionDeleteSpace,
+            ActionSetTrigger, ActionDeleteTrigger, ActionPauseOrb, ActionWakeOrb, ActionDeleteOrb, ActionWriteThreadFile,
+            ActionPutThreadFile, ActionWriteProjectConfig, ActionDeleteProjectConfig, ActionShareThread, ActionRevokeShare,
+            ActionSharePortal, ActionUnsharePortal, ActionPublishArtifact, ActionUnpublishArtifact]
         targetThreadId: { $ref: '#/components/schemas/ThreadId' }
         scheduleId: { $ref: '#/components/schemas/ScheduleId' }
         summary:
@@ -12006,6 +12268,13 @@ components:
           description: |
             客户端缓存条目所属的转录版本（来自 `thread.snapshot` / `transcript.reset`）。与服务端当前版本不同，
             或缺省但 `afterSeq > 0` 且服务端版本 > 0 时，服务端忽略 `afterSeq` 从头补发，并在快照中置 `fullReplay: true`。
+        tail:
+          type: integer
+          minimum: 50
+          maximum: 2000
+          description: |
+            只补发最近的 `tail` 条（M19，主线页面用）：仅在实际从 seq 0 补发时生效，快照的 `windowStart` 给出窗口起点，
+            更早的条目经 `GET /threads/{id}/entries?before=` 翻页。越界值夹到 50–2000。
     WsClientUnsub:
       type: object
       required: [type, threadId]
@@ -12216,6 +12485,12 @@ components:
         fullReplay:
           type: boolean
           description: 为真时服务端从 seq 0 补发：客户端须先丢弃该线程已缓存的全部条目
+        windowStart:
+          type: integer
+          format: int64
+          description: |
+            带 `tail` 订阅时补发窗口的起点（M19）：只补发 `seq > windowStart` 的条目，更早的经 REST `before` 翻页；
+            省略或 0 = 没有开窗
     WsServerEntries:
       type: object
       required: [type, threadId, entries, lastSeq]
@@ -12937,6 +13212,10 @@ components:
         `github.prepare.report`（orbd→orynd 请求，M15，`github_prepare` 通过后上报，参数 `LinkCtlGithubPrepareReportParams`，结果 `LinkCtlOkResult`）；
         runner 的 link 拒绝这两个方法。
         `ssh.call`（orbd→orynd 请求，M18，由 orb 内 agent 的 `ssh_exec_many` 工具转来，参数 `LinkCtlSshCallParams`，结果 `LinkCtlSshCallResult`；runner 的 link 拒绝）。
+        `computer.start`、`computer.call`、`computer.cancel`、`computer.stop`（orynd→orbd 请求，M19，助手的电脑里的工具执行器：参数分别为
+        `LinkCtlComputerStartParams` / `LinkCtlComputerCallParams` / `LinkCtlComputerCancelParams` / 无参数，结果分别为
+        `LinkCtlComputerStartResult` / `LinkCtlComputerCallResult` / `LinkCtlOkResult` / `LinkCtlOkResult`；只在 hello 含 `computer` 时发送，
+        runner 与协调宿主回 `not_supported`）、`computer.update`（orbd→orynd 通知，M19，参数 `LinkCtlComputerUpdateParams`，在途工具的流式输出）。
       enum:
         - hello
         - entries.cursors
@@ -12981,6 +13260,11 @@ components:
         - github.call
         - github.prepare.report
         - ssh.call
+        - computer.start
+        - computer.call
+        - computer.cancel
+        - computer.stop
+        - computer.update
       x-enum-varnames:
         - MethodHello
         - MethodEntriesCursors
@@ -13025,6 +13309,11 @@ components:
         - MethodGithubCall
         - MethodGithubPrepareReport
         - MethodSshCall
+        - MethodComputerStart
+        - MethodComputerCall
+        - MethodComputerCancel
+        - MethodComputerStop
+        - MethodComputerUpdate
     LinkCtlRequest:
       type: object
       required: [id, method, params]
@@ -13109,6 +13398,7 @@ components:
             `library`（认识 `library.sync`、`library.fetch` 与同步用的 `library` 流；只由协调宿主上报，此时特性表恰为 `["coordinator", "omphome-apply", "library"]`）。
             M16 起：`memory`（认识 `agent.start` 的 `memory`，并为记忆开出站通道 `/memory/`；普通 orbd 与 runner 上报，协调宿主不上报）。
             M18 起：`ssh`（orbd 监听本机 SSH 网关端口并认识 `setup.run` / `omphome.apply` 的 `ssh`；runner 与协调宿主不上报）。
+            M19 起：`computer`（认识 `computer.*`：惰性拉起不调模型的 omp 当工具执行器；只由普通 orbd 上报）。
             缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync / 桌面请求回 409 `orbd_outdated`。
           items: { type: string }
     LinkRunnerInfo:
@@ -13691,6 +13981,63 @@ components:
             data:
               type: string
               description: base64
+    LinkCtlComputerStartParams:
+      type: object
+      description: M19（orynd→orbd）：确保工具执行器在跑，返回所列工具的定义（取不到的名字跳过）
+      required: [names]
+      properties:
+        names:
+          type: array
+          items: { type: string }
+    LinkCtlComputerStartResult:
+      type: object
+      required: [tools, agentVersion]
+      properties:
+        tools:
+          type: array
+          description: 工具定义（`{name, description, parameters}`，与宿主工具定义同形）
+          items: { $ref: '#/components/schemas/OmpFrame' }
+        agentVersion:
+          type: string
+          description: 执行器 omp 的版本
+    LinkCtlComputerCallParams:
+      type: object
+      description: M19（orynd→orbd）：在工具执行器里直接执行一个内置工具；到时发取消并回错误 `timeout`
+      required: [callId, tool, args, timeoutSec]
+      properties:
+        callId:
+          type: string
+          description: 调用 id（流式通知与取消按它配对）
+        tool: { type: string }
+        args:
+          type: object
+          additionalProperties: true
+        timeoutSec:
+          type: integer
+          minimum: 1
+          maximum: 1800
+    LinkCtlComputerCallResult:
+      type: object
+      required: [result]
+      properties:
+        result:
+          type: object
+          additionalProperties: true
+          description: 工具结果 `{content, details?, isError?}`（content 可含 image 块）
+    LinkCtlComputerCancelParams:
+      type: object
+      required: [callId]
+      properties:
+        callId: { type: string }
+    LinkCtlComputerUpdateParams:
+      type: object
+      description: M19（orbd→orynd 通知）：在途工具的流式部分结果
+      required: [callId, partialResult]
+      properties:
+        callId: { type: string }
+        partialResult:
+          type: object
+          additionalProperties: true
     LinkCtlFsCopyTreeParams:
       type: object
       required: [from, to]

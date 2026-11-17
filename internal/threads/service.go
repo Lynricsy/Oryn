@@ -276,6 +276,8 @@ type thread struct {
 	sessionDir string
 	// kind 是线程种类（work / space / assistant，创建后不变）。
 	kind string
+	// main 为真表示全局助手的主线对话（threads.main，M19；创建后不变）。
+	main bool
 	// cwd 是 runner 线程的工作目录（threads.cwd，创建后不变；空 = orb 线程，由 orbd 决定）。
 	cwd string
 
@@ -331,6 +333,9 @@ type thread struct {
 	autoActive bool
 	// hostCalls 是在途的宿主工具调用：omp 的调用 id → 取消函数（协调线程）。
 	hostCalls map[string]context.CancelFunc
+	// hostUI 是控制面发起的待答请求（RequestUI，M19 确认卡）：请求 id → extension_ui_request 帧。它们不来自 agent，
+	// 主人的应答不写 agent 流而交给 Coordinator.UIAnswered；实时缓冲重置后重新放回；不挡冻结闸门。
+	hostUI map[string]json.RawMessage
 	// refresh 为真时，线程在静止后停掉 agent，下一条命令经唤醒路径重新启动（refreshLocked：协调线程取新的
 	// AgentProfile；工作线程让需重启的 omp 配置生效）。
 	refresh bool
@@ -414,6 +419,7 @@ func newThread(row db.Thread) *thread {
 		settled: true, state: row.State, unread: row.Unread, leaf: row.LeafEntryID, lastSeq: row.LastSeq,
 		model: row.Model, thinking: row.ThinkingLevel, hostCalls: map[string]context.CancelFunc{},
 	}
+	t.main = row.Main == 1
 	if t.kind == "" {
 		t.kind = KindWork
 	}
@@ -614,7 +620,7 @@ func (s *Service) TryQuiesce(orbID string, commit func() bool) bool {
 		if !t.quiescentLocked() {
 			slog.Debug("threads: 冻结闸门未通过", "orb", orbID, "thread", t.id,
 				"settled", t.settled, "unsynced", t.unsynced, "starting", t.starting,
-				"deliveries", t.deliveries, "msgOrder", len(t.msgOrder), "liveQuiescent", t.live.Quiescent(),
+				"deliveries", t.deliveries, "msgOrder", len(t.msgOrder), "liveQuiescent", t.liveQuiescentLocked(),
 				"queue", len(t.queue), "pending", len(t.pending), "cfgSyncs", t.cfgSyncs)
 			return false
 		}
@@ -632,7 +638,21 @@ func (s *Service) TryQuiesce(orbID string, commit func() bool) bool {
 
 // quiescentLocked 报告线程是否静止（冻结 / 停机的前提）。调用方持有 t.mu。
 func (t *thread) quiescentLocked() bool {
-	return t.settled && !t.unsynced && !t.starting && t.deliveries == 0 && len(t.msgOrder) == 0 && t.live.Quiescent() && len(t.queue) == 0 && len(t.pending) == 0 && t.cfgSyncs == 0
+	return t.settled && !t.unsynced && !t.starting && t.deliveries == 0 && len(t.msgOrder) == 0 && t.liveQuiescentLocked() && len(t.queue) == 0 && len(t.pending) == 0 && t.cfgSyncs == 0
+}
+
+// liveQuiescentLocked 同 Live.Quiescent，但不把控制面发起的待答请求（hostUI）算作阻塞：它们的应答不经 agent，
+// 冻结后照样能作答，实时缓冲重置后也会重新放回。调用方持有 t.mu。
+func (t *thread) liveQuiescentLocked() bool {
+	if t.live.PlanProposal != nil || t.live.working {
+		return false
+	}
+	for id := range t.live.pendingUI {
+		if _, ok := t.hostUI[id]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // touchAgent 节流地记录 agent 活动（每 orb 至多 5s 一次）。
@@ -766,7 +786,7 @@ func (s *Service) handleOrbEvent(ctx context.Context, ev OrbEvent) {
 			t.unsynced = false
 			s.resetLiveLocked(t)
 			_ = s.st.Q.SetThreadOrb(ctx, db.SetThreadOrbParams{OrbID: nil, UpdatedAt: s.now(), ID: t.id})
-			s.out().LiveReset(t.id)
+			s.broadcastLiveResetLocked(t)
 			s.publish(ctx, t.id)
 		case ev.Kind == OrbEventLinkDown:
 			// agent 仍在 orbd 中运行；重连后 agent.start 会重新上报 ready

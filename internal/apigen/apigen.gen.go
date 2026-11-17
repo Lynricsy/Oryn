@@ -284,27 +284,156 @@ func (e AssistantFileScope) Valid() bool {
 	}
 }
 
+// Defines values for AssistantMcpServerReason.
+const (
+	McpReasonCommandHeader AssistantMcpServerReason = "command_header"
+	McpReasonInvalidURL    AssistantMcpServerReason = "invalid_url"
+	McpReasonOauth         AssistantMcpServerReason = "oauth"
+	McpReasonStdio         AssistantMcpServerReason = "stdio"
+	McpReasonUnresolvedEnv AssistantMcpServerReason = "unresolved_env"
+)
+
+// Valid indicates whether the value is a known member of the AssistantMcpServerReason enum.
+func (e AssistantMcpServerReason) Valid() bool {
+	switch e {
+	case McpReasonCommandHeader:
+		return true
+	case McpReasonInvalidURL:
+		return true
+	case McpReasonOauth:
+		return true
+	case McpReasonStdio:
+		return true
+	case McpReasonUnresolvedEnv:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AssistantMcpServerTransport.
+const (
+	McpTransportHTTP  AssistantMcpServerTransport = "http"
+	McpTransportSse   AssistantMcpServerTransport = "sse"
+	McpTransportStdio AssistantMcpServerTransport = "stdio"
+)
+
+// Valid indicates whether the value is a known member of the AssistantMcpServerTransport enum.
+func (e AssistantMcpServerTransport) Valid() bool {
+	switch e {
+	case McpTransportHTTP:
+		return true
+	case McpTransportSse:
+		return true
+	case McpTransportStdio:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AutomationActionAction.
 const (
-	ActionArchiveThread  AutomationActionAction = "archive_thread"
-	ActionCreateThread   AutomationActionAction = "create_thread"
-	ActionDeleteSchedule AutomationActionAction = "delete_schedule"
-	ActionSendMessage    AutomationActionAction = "send_message"
-	ActionSetSchedule    AutomationActionAction = "set_schedule"
+	ActionAbortThread         AutomationActionAction = "abort_thread"
+	ActionArchiveThread       AutomationActionAction = "archive_thread"
+	ActionCreateProject       AutomationActionAction = "create_project"
+	ActionCreateSpace         AutomationActionAction = "create_space"
+	ActionCreateThread        AutomationActionAction = "create_thread"
+	ActionDeleteOrb           AutomationActionAction = "delete_orb"
+	ActionDeleteProject       AutomationActionAction = "delete_project"
+	ActionDeleteProjectConfig AutomationActionAction = "delete_project_config"
+	ActionDeleteSchedule      AutomationActionAction = "delete_schedule"
+	ActionDeleteSpace         AutomationActionAction = "delete_space"
+	ActionDeleteThread        AutomationActionAction = "delete_thread"
+	ActionDeleteTrigger       AutomationActionAction = "delete_trigger"
+	ActionForkThread          AutomationActionAction = "fork_thread"
+	ActionPauseOrb            AutomationActionAction = "pause_orb"
+	ActionPublishArtifact     AutomationActionAction = "publish_artifact"
+	ActionPutThreadFile       AutomationActionAction = "put_thread_file"
+	ActionRevokeShare         AutomationActionAction = "revoke_share"
+	ActionSendMessage         AutomationActionAction = "send_message"
+	ActionSetSchedule         AutomationActionAction = "set_schedule"
+	ActionSetThreadModel      AutomationActionAction = "set_thread_model"
+	ActionSetTrigger          AutomationActionAction = "set_trigger"
+	ActionSharePortal         AutomationActionAction = "share_portal"
+	ActionShareThread         AutomationActionAction = "share_thread"
+	ActionUnpublishArtifact   AutomationActionAction = "unpublish_artifact"
+	ActionUnsharePortal       AutomationActionAction = "unshare_portal"
+	ActionUpdateProject       AutomationActionAction = "update_project"
+	ActionUpdateSpace         AutomationActionAction = "update_space"
+	ActionUpdateThread        AutomationActionAction = "update_thread"
+	ActionWakeOrb             AutomationActionAction = "wake_orb"
+	ActionWakeThread          AutomationActionAction = "wake_thread"
+	ActionWriteProjectConfig  AutomationActionAction = "write_project_config"
+	ActionWriteThreadFile     AutomationActionAction = "write_thread_file"
 )
 
 // Valid indicates whether the value is a known member of the AutomationActionAction enum.
 func (e AutomationActionAction) Valid() bool {
 	switch e {
+	case ActionAbortThread:
+		return true
 	case ActionArchiveThread:
+		return true
+	case ActionCreateProject:
+		return true
+	case ActionCreateSpace:
 		return true
 	case ActionCreateThread:
 		return true
+	case ActionDeleteOrb:
+		return true
+	case ActionDeleteProject:
+		return true
+	case ActionDeleteProjectConfig:
+		return true
 	case ActionDeleteSchedule:
+		return true
+	case ActionDeleteSpace:
+		return true
+	case ActionDeleteThread:
+		return true
+	case ActionDeleteTrigger:
+		return true
+	case ActionForkThread:
+		return true
+	case ActionPauseOrb:
+		return true
+	case ActionPublishArtifact:
+		return true
+	case ActionPutThreadFile:
+		return true
+	case ActionRevokeShare:
 		return true
 	case ActionSendMessage:
 		return true
 	case ActionSetSchedule:
+		return true
+	case ActionSetThreadModel:
+		return true
+	case ActionSetTrigger:
+		return true
+	case ActionSharePortal:
+		return true
+	case ActionShareThread:
+		return true
+	case ActionUnpublishArtifact:
+		return true
+	case ActionUnsharePortal:
+		return true
+	case ActionUpdateProject:
+		return true
+	case ActionUpdateSpace:
+		return true
+	case ActionUpdateThread:
+		return true
+	case ActionWakeOrb:
+		return true
+	case ActionWakeThread:
+		return true
+	case ActionWriteProjectConfig:
+		return true
+	case ActionWriteThreadFile:
 		return true
 	default:
 		return false
@@ -1144,6 +1273,11 @@ const (
 	MethodAgentStop           LinkCtlMethod = "agent.stop"
 	MethodArtifactCall        LinkCtlMethod = "artifact.call"
 	MethodBlobFetch           LinkCtlMethod = "blob.fetch"
+	MethodComputerCall        LinkCtlMethod = "computer.call"
+	MethodComputerCancel      LinkCtlMethod = "computer.cancel"
+	MethodComputerStart       LinkCtlMethod = "computer.start"
+	MethodComputerStop        LinkCtlMethod = "computer.stop"
+	MethodComputerUpdate      LinkCtlMethod = "computer.update"
 	MethodDesktopState        LinkCtlMethod = "desktop.state"
 	MethodEntriesAppend       LinkCtlMethod = "entries.append"
 	MethodEntriesCursors      LinkCtlMethod = "entries.cursors"
@@ -1197,6 +1331,16 @@ func (e LinkCtlMethod) Valid() bool {
 	case MethodArtifactCall:
 		return true
 	case MethodBlobFetch:
+		return true
+	case MethodComputerCall:
+		return true
+	case MethodComputerCancel:
+		return true
+	case MethodComputerStart:
+		return true
+	case MethodComputerStop:
+		return true
+	case MethodComputerUpdate:
 		return true
 	case MethodDesktopState:
 		return true
@@ -4510,6 +4654,26 @@ type ArtifactVersionRef struct {
 	Version int `json:"version"`
 }
 
+// AssistantComputer 助手的电脑（M19）
+type AssistantComputer struct {
+	// OrbID 还没有电脑时省略
+	OrbID        *OrbID  `json:"orbId,omitempty"`
+	ProviderName *string `json:"providerName,omitempty"`
+
+	// State orb 状态机（计划 E 节）
+	State *OrbState `json:"state,omitempty"`
+
+	// ToolsReady 电脑里的工具定义已缓存（`computer_*` 工具从下一轮起可用）
+	ToolsReady bool    `json:"toolsReady"`
+	Type       *string `json:"type,omitempty"`
+}
+
+// AssistantComputerSettings 助手的电脑下一次创建时用的 provider 与 orb 类型；省略 = 默认解析
+type AssistantComputerSettings struct {
+	OrbType  *string `json:"orbType,omitempty"`
+	Provider *string `json:"provider,omitempty"`
+}
+
 // AssistantFile defines model for AssistantFile.
 type AssistantFile struct {
 	// CreatedAt UTC 毫秒时间戳
@@ -4558,6 +4722,53 @@ type AssistantFilePatch struct {
 
 // AssistantFileScope `conversation` 只有所属助手对话可见；`shared` 所有助手对话可见
 type AssistantFileScope string
+
+// AssistantMcpServer defines model for AssistantMcpServer.
+type AssistantMcpServer struct {
+	// Enabled 不在助手设置的禁用表里
+	Enabled bool `json:"enabled"`
+
+	// Host URL 的主机（HTTP / SSE）
+	Host *string `json:"host,omitempty"`
+	Name string  `json:"name"`
+
+	// Reason `usable: false` 的原因：`stdio` 本地进程型；`oauth` 需要 OAuth；`command_header` 头由命令生成；`unresolved_env` 头引用了不存在的环境变量；`invalid_url` 地址无效
+	Reason    *AssistantMcpServerReason   `json:"reason,omitempty"`
+	Transport AssistantMcpServerTransport `json:"transport"`
+
+	// Usable 助手能否使用（传输与鉴权方式受支持）
+	Usable bool `json:"usable"`
+}
+
+// AssistantMcpServerReason `usable: false` 的原因：`stdio` 本地进程型；`oauth` 需要 OAuth；`command_header` 头由命令生成；`unresolved_env` 头引用了不存在的环境变量；`invalid_url` 地址无效
+type AssistantMcpServerReason string
+
+// AssistantMcpServerTransport defines model for AssistantMcpServer.Transport.
+type AssistantMcpServerTransport string
+
+// AssistantMcpServerList defines model for AssistantMcpServerList.
+type AssistantMcpServerList struct {
+	Servers []AssistantMcpServer `json:"servers"`
+}
+
+// AssistantNotes 主线备忘（M19，助手每段开头带上）
+type AssistantNotes struct {
+	// Text 上限 1500 字（按 Unicode 字符计）
+	Text      string       `json:"text"`
+	UpdatedAt *TimestampMs `json:"updatedAt,omitempty"`
+}
+
+// AssistantSettings 全局助手的设置（M19）
+type AssistantSettings struct {
+	// Computer 助手的电脑下一次创建时用的 provider 与 orb 类型；省略 = 默认解析
+	Computer AssistantComputerSettings `json:"computer"`
+
+	// DisabledMcpServers 全局 `mcp.json` 里助手不用的服务器名
+	DisabledMcpServers []string `json:"disabledMcpServers"`
+
+	// WebAccess 联网总开关：关闭时协调宿主的正向代理拒绝一切 CONNECT 与转发（`web_search`、读网页随之失败）
+	WebAccess bool `json:"webAccess"`
+}
 
 // Attachment defines model for Attachment.
 type Attachment struct {
@@ -4639,6 +4850,7 @@ type AuthSetupFinishResponse struct {
 
 // AutomationAction 一条操作记录（协调者的宿主工具调用，或 orb 内 agent 经 `oryn` CLI 的调用；无论成败都记）
 type AutomationAction struct {
+	// Action 工具名（M19 起全局助手有更多写类工具；经确认卡执行的记 `origin = owner`）
 	Action    AutomationActionAction    `json:"action"`
 	ActorKind AutomationActionActorKind `json:"actorKind"`
 
@@ -4670,7 +4882,7 @@ type AutomationAction struct {
 	TS TimestampMs `json:"ts"`
 }
 
-// AutomationActionAction defines model for AutomationAction.Action.
+// AutomationActionAction 工具名（M19 起全局助手有更多写类工具；经确认卡执行的记 `origin = owner`）
 type AutomationActionAction string
 
 // AutomationActionActorKind defines model for AutomationAction.ActorKind.
@@ -5991,6 +6203,47 @@ type LinkCtlBlobFetchResult struct {
 	Found bool `json:"found"`
 }
 
+// LinkCtlComputerCallParams M19（orynd→orbd）：在工具执行器里直接执行一个内置工具；到时发取消并回错误 `timeout`
+type LinkCtlComputerCallParams struct {
+	Args map[string]interface{} `json:"args"`
+
+	// CallID 调用 id（流式通知与取消按它配对）
+	CallID     string `json:"callId"`
+	TimeoutSec int    `json:"timeoutSec"`
+	Tool       string `json:"tool"`
+}
+
+// LinkCtlComputerCallResult defines model for LinkCtlComputerCallResult.
+type LinkCtlComputerCallResult struct {
+	// Result 工具结果 `{content, details?, isError?}`（content 可含 image 块）
+	Result map[string]interface{} `json:"result"`
+}
+
+// LinkCtlComputerCancelParams defines model for LinkCtlComputerCancelParams.
+type LinkCtlComputerCancelParams struct {
+	CallID string `json:"callId"`
+}
+
+// LinkCtlComputerStartParams M19（orynd→orbd）：确保工具执行器在跑，返回所列工具的定义（取不到的名字跳过）
+type LinkCtlComputerStartParams struct {
+	Names []string `json:"names"`
+}
+
+// LinkCtlComputerStartResult defines model for LinkCtlComputerStartResult.
+type LinkCtlComputerStartResult struct {
+	// AgentVersion 执行器 omp 的版本
+	AgentVersion string `json:"agentVersion"`
+
+	// Tools 工具定义（`{name, description, parameters}`，与宿主工具定义同形）
+	Tools []OmpFrame `json:"tools"`
+}
+
+// LinkCtlComputerUpdateParams M19（orbd→orynd 通知）：在途工具的流式部分结果
+type LinkCtlComputerUpdateParams struct {
+	CallID        string                 `json:"callId"`
+	PartialResult map[string]interface{} `json:"partialResult"`
+}
+
 // LinkCtlDesktopStateParams orbd→orynd 通知（M8）：桌面全量状态。发送时机：`displayReady`、`browser`、标记里的 `profileId` / `profileMode`、`dirty`、`control`
 // 任一变化，以及 link 建立后（脏标记 + 单发送者，断连时丢弃、重连必补发）。控制面写入 `orb_desktops` 镜像并经 WS `orb` 消息推送。
 type LinkCtlDesktopStateParams struct {
@@ -6161,6 +6414,7 @@ type LinkCtlHelloParams struct {
 	// `library`（认识 `library.sync`、`library.fetch` 与同步用的 `library` 流；只由协调宿主上报，此时特性表恰为 `["coordinator", "omphome-apply", "library"]`）。
 	// M16 起：`memory`（认识 `agent.start` 的 `memory`，并为记忆开出站通道 `/memory/`；普通 orbd 与 runner 上报，协调宿主不上报）。
 	// M18 起：`ssh`（orbd 监听本机 SSH 网关端口并认识 `setup.run` / `omphome.apply` 的 `ssh`；runner 与协调宿主不上报）。
+	// M19 起：`computer`（认识 `computer.*`：惰性拉起不调模型的 omp 当工具执行器；只由普通 orbd 上报）。
 	// 缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync / 桌面请求回 409 `orbd_outdated`。
 	Features    []string `json:"features,omitempty"`
 	OrbdVersion string   `json:"orbdVersion"`
@@ -6254,6 +6508,10 @@ type LinkCtlLibrarySyncResult struct {
 // `github.prepare.report`（orbd→orynd 请求，M15，`github_prepare` 通过后上报，参数 `LinkCtlGithubPrepareReportParams`，结果 `LinkCtlOkResult`）；
 // runner 的 link 拒绝这两个方法。
 // `ssh.call`（orbd→orynd 请求，M18，由 orb 内 agent 的 `ssh_exec_many` 工具转来，参数 `LinkCtlSshCallParams`，结果 `LinkCtlSshCallResult`；runner 的 link 拒绝）。
+// `computer.start`、`computer.call`、`computer.cancel`、`computer.stop`（orynd→orbd 请求，M19，助手的电脑里的工具执行器：参数分别为
+// `LinkCtlComputerStartParams` / `LinkCtlComputerCallParams` / `LinkCtlComputerCancelParams` / 无参数，结果分别为
+// `LinkCtlComputerStartResult` / `LinkCtlComputerCallResult` / `LinkCtlOkResult` / `LinkCtlOkResult`；只在 hello 含 `computer` 时发送，
+// runner 与协调宿主回 `not_supported`）、`computer.update`（orbd→orynd 通知，M19，参数 `LinkCtlComputerUpdateParams`，在途工具的流式输出）。
 type LinkCtlMethod string
 
 // LinkCtlMetricsSampleParams defines model for LinkCtlMetricsSampleParams.
@@ -6282,6 +6540,10 @@ type LinkCtlNotification struct {
 	// `github.prepare.report`（orbd→orynd 请求，M15，`github_prepare` 通过后上报，参数 `LinkCtlGithubPrepareReportParams`，结果 `LinkCtlOkResult`）；
 	// runner 的 link 拒绝这两个方法。
 	// `ssh.call`（orbd→orynd 请求，M18，由 orb 内 agent 的 `ssh_exec_many` 工具转来，参数 `LinkCtlSshCallParams`，结果 `LinkCtlSshCallResult`；runner 的 link 拒绝）。
+	// `computer.start`、`computer.call`、`computer.cancel`、`computer.stop`（orynd→orbd 请求，M19，助手的电脑里的工具执行器：参数分别为
+	// `LinkCtlComputerStartParams` / `LinkCtlComputerCallParams` / `LinkCtlComputerCancelParams` / 无参数，结果分别为
+	// `LinkCtlComputerStartResult` / `LinkCtlComputerCallResult` / `LinkCtlOkResult` / `LinkCtlOkResult`；只在 hello 含 `computer` 时发送，
+	// runner 与协调宿主回 `not_supported`）、`computer.update`（orbd→orynd 通知，M19，参数 `LinkCtlComputerUpdateParams`，在途工具的流式输出）。
 	Method LinkCtlMethod `json:"method"`
 
 	// Params 见 `LinkCtl<Method>Params`
@@ -6403,6 +6665,10 @@ type LinkCtlRequest struct {
 	// `github.prepare.report`（orbd→orynd 请求，M15，`github_prepare` 通过后上报，参数 `LinkCtlGithubPrepareReportParams`，结果 `LinkCtlOkResult`）；
 	// runner 的 link 拒绝这两个方法。
 	// `ssh.call`（orbd→orynd 请求，M18，由 orb 内 agent 的 `ssh_exec_many` 工具转来，参数 `LinkCtlSshCallParams`，结果 `LinkCtlSshCallResult`；runner 的 link 拒绝）。
+	// `computer.start`、`computer.call`、`computer.cancel`、`computer.stop`（orynd→orbd 请求，M19，助手的电脑里的工具执行器：参数分别为
+	// `LinkCtlComputerStartParams` / `LinkCtlComputerCallParams` / `LinkCtlComputerCancelParams` / 无参数，结果分别为
+	// `LinkCtlComputerStartResult` / `LinkCtlComputerCallResult` / `LinkCtlOkResult` / `LinkCtlOkResult`；只在 hello 含 `computer` 时发送，
+	// runner 与协调宿主回 `not_supported`）、`computer.update`（orbd→orynd 通知，M19，参数 `LinkCtlComputerUpdateParams`，在途工具的流式输出）。
 	Method LinkCtlMethod `json:"method"`
 
 	// Params 见 `LinkCtl<Method>Params`
@@ -7500,6 +7766,9 @@ type Orb struct {
 
 	// Automation M18：这台 orb 由全自动入口（定时、GitHub 触发等）建立；为真时只能用放开了「允许全自动线程使用」的 SSH 主机。缺省 = false
 	Automation *bool `json:"automation,omitempty"`
+
+	// Computer 助手的电脑（M19，全库至多一台，线程不能挂上去）；为 false 时省略
+	Computer *bool `json:"computer,omitempty"`
 
 	// Coordinator 协调 orb（M9，provider `@host`，跑在控制面宿主上的协调宿主）；为 false 时省略
 	Coordinator *bool   `json:"coordinator,omitempty"`
@@ -9865,7 +10134,10 @@ type Thread struct {
 	// LastMessageAt UTC 毫秒时间戳
 	LastMessageAt *TimestampMs `json:"lastMessageAt,omitempty"`
 	LeafEntryID   *string      `json:"leafEntryId,omitempty"`
-	Model         *ModelRef    `json:"model,omitempty"`
+
+	// Main 是否为全局助手的主线对话（M19，`kind = assistant` 的单例）；不是则省略
+	Main  *bool     `json:"main,omitempty"`
+	Model *ModelRef `json:"model,omitempty"`
 
 	// OrbID 所在 orb；orb 被删除后省略（只读浏览）
 	OrbID *OrbID `json:"orbId,omitempty"`
@@ -10380,6 +10652,10 @@ type WsClientSub struct {
 	// AfterSeq 客户端已有条目的可续传游标（最近一条 `entries` 消息的 `lastSeq`）；缺省 0 = 全量
 	AfterSeq *int64 `json:"afterSeq,omitempty"`
 
+	// Tail 只补发最近的 `tail` 条（M19，主线页面用）：仅在实际从 seq 0 补发时生效，快照的 `windowStart` 给出窗口起点，
+	// 更早的条目经 `GET /threads/{id}/entries?before=` 翻页。越界值夹到 50–2000。
+	Tail *int `json:"tail,omitempty"`
+
 	// ThreadID `T-<uuidv7>`
 	//
 	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
@@ -10886,6 +11162,10 @@ type WsServerThreadSnapshot struct {
 	// TranscriptRev 当前转录版本；之后的 `sub` 应带上它
 	TranscriptRev int64                      `json:"transcriptRev"`
 	Type          WsServerThreadSnapshotType `json:"type"`
+
+	// WindowStart 带 `tail` 订阅时补发窗口的起点（M19）：只补发 `seq > windowStart` 的条目，更早的经 REST `before` 翻页；
+	// 省略或 0 = 没有开窗
+	WindowStart *int64 `json:"windowStart,omitempty"`
 }
 
 // WsServerThreadSnapshotType defines model for WsServerThreadSnapshot.Type.
@@ -11868,7 +12148,10 @@ type CreateThread409JSONResponseBody struct {
 type ListThreadEntriesParams struct {
 	// After 只返回 `seq > after` 的条目
 	After *int64 `form:"after,omitempty" json:"after,omitempty"`
-	Limit *int   `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Before 只返回 `seq < before` 的条目（M19，向前翻页）
+	Before *int64 `form:"before,omitempty" json:"before,omitempty"`
+	Limit  *int   `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // ProviderReplyFsJSONBody defines parameters for ProviderReplyFs.
@@ -11927,6 +12210,9 @@ type CreateAssistantConversationJSONRequestBody = CreateAssistantConversationReq
 
 // PatchAssistantFileJSONRequestBody defines body for PatchAssistantFile for application/json ContentType.
 type PatchAssistantFileJSONRequestBody = AssistantFilePatch
+
+// PutAssistantNotesJSONRequestBody defines body for PutAssistantNotes for application/json ContentType.
+type PutAssistantNotesJSONRequestBody = AssistantNotes
 
 // AuthLoginFinishJSONRequestBody defines body for AuthLoginFinish for application/json ContentType.
 type AuthLoginFinishJSONRequestBody = AuthLoginFinishRequest
@@ -12095,6 +12381,9 @@ type PutAgentIdentityJSONRequestBody = AgentIdentity
 
 // PutArtifactPrefsJSONRequestBody defines body for PutArtifactPrefs for application/json ContentType.
 type PutArtifactPrefsJSONRequestBody = ArtifactPrefs
+
+// PutAssistantSettingsJSONRequestBody defines body for PutAssistantSettings for application/json ContentType.
+type PutAssistantSettingsJSONRequestBody = AssistantSettings
 
 // PutAssistantIdentityJSONRequestBody defines body for PutAssistantIdentity for application/json ContentType.
 type PutAssistantIdentityJSONRequestBody = AgentIdentity
@@ -14567,6 +14856,18 @@ type ServerInterface interface {
 	// RestoreArtifactVersion 把旧版本复制成新的最新版本（作者是用户）
 	// (POST /api/v1/artifacts/{id}/versions/{n}/restore)
 	RestoreArtifactVersion(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, n ArtifactVersionPath)
+	// GetAssistantComputer 助手的电脑（M19）：还没有时 `orbId` 省略
+	// (GET /api/v1/assistant/computer)
+	GetAssistantComputer(w http.ResponseWriter, r *http.Request)
+	// PauseAssistantComputer 冻结助手的电脑（没有 → 404 `not_found`）
+	// (POST /api/v1/assistant/computer/pause)
+	PauseAssistantComputer(w http.ResponseWriter, r *http.Request)
+	// ResetAssistantComputer 删除助手的电脑；下次用到时重新创建（没有 → 200，幂等）
+	// (POST /api/v1/assistant/computer/reset)
+	ResetAssistantComputer(w http.ResponseWriter, r *http.Request)
+	// WakeAssistantComputer 唤醒助手的电脑（没有则创建），等到就绪（至多 90 秒，超时 409 `computer_starting`）
+	// (POST /api/v1/assistant/computer/wake)
+	WakeAssistantComputer(w http.ResponseWriter, r *http.Request)
 	// CreateAssistantConversation 新建一个全局助手对话（`kind = assistant` 的线程；标题由 agent 自动生成）
 	// (POST /api/v1/assistant/conversations)
 	CreateAssistantConversation(w http.ResponseWriter, r *http.Request)
@@ -14585,6 +14886,18 @@ type ServerInterface interface {
 	// GetAssistantFileContent 下载文件库里的文件（支持 `Range`；响应头规则同 `getAttachmentContent`）
 	// (GET /api/v1/assistant/files/{id}/content)
 	GetAssistantFileContent(w http.ResponseWriter, r *http.Request, id AssistantFileIDPath, params GetAssistantFileContentParams)
+	// GetAssistantMain 全局助手的主线对话（M19；没有则创建）
+	// (GET /api/v1/assistant/main)
+	GetAssistantMain(w http.ResponseWriter, r *http.Request)
+	// GetAssistantNotes 主线备忘（M19）
+	// (GET /api/v1/assistant/main/notes)
+	GetAssistantNotes(w http.ResponseWriter, r *http.Request)
+	// PutAssistantNotes 改写主线备忘（整体替换，上限 1500 字，超出 → 400 `invalid_request`）
+	// (PUT /api/v1/assistant/main/notes)
+	PutAssistantNotes(w http.ResponseWriter, r *http.Request)
+	// ListAssistantMcpServers 全局 `mcp.json` 里的服务器及其对全局助手是否可用（M19）
+	// (GET /api/v1/assistant/mcp-servers)
+	ListAssistantMcpServers(w http.ResponseWriter, r *http.Request)
 	// UploadAttachment 上传附件（单文件 ≤100MiB；可先于线程创建上传，24h 内未绑定线程即被清理）
 	// (POST /api/v1/attachments)
 	UploadAttachment(w http.ResponseWriter, r *http.Request, params UploadAttachmentParams)
@@ -15155,6 +15468,12 @@ type ServerInterface interface {
 	// PutArtifactPrefs 修改 Artifacts 设置
 	// (PUT /api/v1/settings/artifacts)
 	PutArtifactPrefs(w http.ResponseWriter, r *http.Request)
+	// GetAssistantSettings 全局助手的设置（M19：联网总开关、关掉的 MCP 服务器、助手的电脑）
+	// (GET /api/v1/settings/assistant)
+	GetAssistantSettings(w http.ResponseWriter, r *http.Request)
+	// PutAssistantSettings 设置全局助手（整体替换）
+	// (PUT /api/v1/settings/assistant)
+	PutAssistantSettings(w http.ResponseWriter, r *http.Request)
 	// GetAssistantIdentity 全局助手身份（原始值）
 	// (GET /api/v1/settings/assistant-identity)
 	GetAssistantIdentity(w http.ResponseWriter, r *http.Request)
@@ -15632,6 +15951,30 @@ func (_ Unimplemented) RestoreArtifactVersion(w http.ResponseWriter, r *http.Req
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// GetAssistantComputer 助手的电脑（M19）：还没有时 `orbId` 省略
+// (GET /api/v1/assistant/computer)
+func (_ Unimplemented) GetAssistantComputer(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PauseAssistantComputer 冻结助手的电脑（没有 → 404 `not_found`）
+// (POST /api/v1/assistant/computer/pause)
+func (_ Unimplemented) PauseAssistantComputer(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ResetAssistantComputer 删除助手的电脑；下次用到时重新创建（没有 → 200，幂等）
+// (POST /api/v1/assistant/computer/reset)
+func (_ Unimplemented) ResetAssistantComputer(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// WakeAssistantComputer 唤醒助手的电脑（没有则创建），等到就绪（至多 90 秒，超时 409 `computer_starting`）
+// (POST /api/v1/assistant/computer/wake)
+func (_ Unimplemented) WakeAssistantComputer(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // CreateAssistantConversation 新建一个全局助手对话（`kind = assistant` 的线程；标题由 agent 自动生成）
 // (POST /api/v1/assistant/conversations)
 func (_ Unimplemented) CreateAssistantConversation(w http.ResponseWriter, r *http.Request) {
@@ -15665,6 +16008,30 @@ func (_ Unimplemented) PatchAssistantFile(w http.ResponseWriter, r *http.Request
 // GetAssistantFileContent 下载文件库里的文件（支持 `Range`；响应头规则同 `getAttachmentContent`）
 // (GET /api/v1/assistant/files/{id}/content)
 func (_ Unimplemented) GetAssistantFileContent(w http.ResponseWriter, r *http.Request, id AssistantFileIDPath, params GetAssistantFileContentParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetAssistantMain 全局助手的主线对话（M19；没有则创建）
+// (GET /api/v1/assistant/main)
+func (_ Unimplemented) GetAssistantMain(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetAssistantNotes 主线备忘（M19）
+// (GET /api/v1/assistant/main/notes)
+func (_ Unimplemented) GetAssistantNotes(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutAssistantNotes 改写主线备忘（整体替换，上限 1500 字，超出 → 400 `invalid_request`）
+// (PUT /api/v1/assistant/main/notes)
+func (_ Unimplemented) PutAssistantNotes(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListAssistantMcpServers 全局 `mcp.json` 里的服务器及其对全局助手是否可用（M19）
+// (GET /api/v1/assistant/mcp-servers)
+func (_ Unimplemented) ListAssistantMcpServers(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -16805,6 +17172,18 @@ func (_ Unimplemented) GetArtifactPrefs(w http.ResponseWriter, r *http.Request) 
 // PutArtifactPrefs 修改 Artifacts 设置
 // (PUT /api/v1/settings/artifacts)
 func (_ Unimplemented) PutArtifactPrefs(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetAssistantSettings 全局助手的设置（M19：联网总开关、关掉的 MCP 服务器、助手的电脑）
+// (GET /api/v1/settings/assistant)
+func (_ Unimplemented) GetAssistantSettings(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutAssistantSettings 设置全局助手（整体替换）
+// (PUT /api/v1/settings/assistant)
+func (_ Unimplemented) PutAssistantSettings(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -18533,6 +18912,62 @@ func (siw *ServerInterfaceWrapper) RestoreArtifactVersion(w http.ResponseWriter,
 	handler.ServeHTTP(w, r)
 }
 
+// GetAssistantComputer operation middleware
+func (siw *ServerInterfaceWrapper) GetAssistantComputer(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAssistantComputer(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PauseAssistantComputer operation middleware
+func (siw *ServerInterfaceWrapper) PauseAssistantComputer(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PauseAssistantComputer(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ResetAssistantComputer operation middleware
+func (siw *ServerInterfaceWrapper) ResetAssistantComputer(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResetAssistantComputer(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// WakeAssistantComputer operation middleware
+func (siw *ServerInterfaceWrapper) WakeAssistantComputer(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.WakeAssistantComputer(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // CreateAssistantConversation operation middleware
 func (siw *ServerInterfaceWrapper) CreateAssistantConversation(w http.ResponseWriter, r *http.Request) {
 
@@ -18724,6 +19159,62 @@ func (siw *ServerInterfaceWrapper) GetAssistantFileContent(w http.ResponseWriter
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetAssistantFileContent(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAssistantMain operation middleware
+func (siw *ServerInterfaceWrapper) GetAssistantMain(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAssistantMain(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAssistantNotes operation middleware
+func (siw *ServerInterfaceWrapper) GetAssistantNotes(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAssistantNotes(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutAssistantNotes operation middleware
+func (siw *ServerInterfaceWrapper) PutAssistantNotes(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutAssistantNotes(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListAssistantMcpServers operation middleware
+func (siw *ServerInterfaceWrapper) ListAssistantMcpServers(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAssistantMcpServers(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -24244,6 +24735,34 @@ func (siw *ServerInterfaceWrapper) PutArtifactPrefs(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// GetAssistantSettings operation middleware
+func (siw *ServerInterfaceWrapper) GetAssistantSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAssistantSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutAssistantSettings operation middleware
+func (siw *ServerInterfaceWrapper) PutAssistantSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutAssistantSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetAssistantIdentity operation middleware
 func (siw *ServerInterfaceWrapper) GetAssistantIdentity(w http.ResponseWriter, r *http.Request) {
 
@@ -26216,6 +26735,19 @@ func (siw *ServerInterfaceWrapper) ListThreadEntries(w http.ResponseWriter, r *h
 		return
 	}
 
+	// ------------- Optional query parameter "before" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "before", r.URL.Query(), &params.Before, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "before"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "before", Err: err})
+		}
+		return
+	}
+
 	// ------------- Optional query parameter "limit" -------------
 
 	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
@@ -27131,6 +27663,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Put(options.BaseURL+"/api/v1/settings/assistant-identity", wrapper.PutAssistantIdentity)
 	})
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/settings/assistant", wrapper.GetAssistantSettings)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/settings/assistant", wrapper.PutAssistantSettings)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/settings/role-identities", wrapper.ListRoleIdentities)
 	})
 	r.Group(func(r chi.Router) {
@@ -27267,6 +27805,30 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/assistant/conversations", wrapper.CreateAssistantConversation)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/assistant/mcp-servers", wrapper.ListAssistantMcpServers)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/assistant/main", wrapper.GetAssistantMain)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/assistant/main/notes", wrapper.GetAssistantNotes)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/assistant/main/notes", wrapper.PutAssistantNotes)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/assistant/computer", wrapper.GetAssistantComputer)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/assistant/computer/wake", wrapper.WakeAssistantComputer)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/assistant/computer/pause", wrapper.PauseAssistantComputer)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/assistant/computer/reset", wrapper.ResetAssistantComputer)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/assistant/files", wrapper.ListAssistantFiles)

@@ -12,6 +12,8 @@
  *   [Oryn thread report · automatic] <threadId> is now <state>.
  *   [Oryn GitHub event on <owner>/<repo>#<n> — delivered automatically, not typed by the owner]   PR / issue 事件回流（M14）
  *   [Oryn GitHub trigger "<name>" on <owner>/<repo>#<n> — started automatically, not typed by the owner]   触发规则建的线程
+ *   [Oryn confirmation · automatic] <action> <target>: approved and done.   确认卡结果（M19，`internal/coord/confirm.go`）
+ *   …结局段另有 `rejected by the owner.`、`approved but failed: <code>.`、`expired without an answer.`；正文是可选的详情
  *   <untrusted-thread-content thread="<threadId>">
  *   {"title":"…","outcome":"completed|aborted|error|unknown|needs_input","reply":"…","error":"…","question":"…"}
  *   </untrusted-thread-content>
@@ -53,7 +55,18 @@ export type OrynHeader =
 			number: number;
 			name?: string;
 	  }
+	/** 确认卡的结果（M19）：`action` 是工具名，`target` 是目标 id，`error` 只在 `failed` 时有 */
+	| {
+			kind: "confirmation";
+			action: string;
+			target: string;
+			outcome: ConfirmationOutcome;
+			error?: string;
+	  }
 	| { kind: "unknown" };
+
+/** 确认卡的结局。 */
+type ConfirmationOutcome = "approved" | "rejected" | "failed" | "expired";
 
 /** 线程报告的包裹内容。 */
 export interface OrynReport {
@@ -89,6 +102,16 @@ const GITHUB_EVENT_RE =
 	/^\[Oryn GitHub event on ([\w.-]+\/[\w.-]+)#(\d+) — delivered automatically, not typed by the owner\]$/;
 const GITHUB_TRIGGER_RE =
 	/^\[Oryn GitHub trigger "([^"]*)" on ([\w.-]+\/[\w.-]+)#(\d+) — started automatically, not typed by the owner\]$/;
+const CONFIRMATION_RE =
+	/^\[Oryn confirmation · automatic\] ([a-z_]+) (\S+): (approved and done|rejected by the owner|approved but failed: ([a-z_]+)|expired without an answer)\.$/;
+
+/** 确认卡结果首行的结局段 → 结局。 */
+function confirmationOutcome(text: string): ConfirmationOutcome {
+	if (text === "approved and done") return "approved";
+	if (text === "rejected by the owner") return "rejected";
+	if (text === "expired without an answer") return "expired";
+	return "failed";
+}
 
 const OPEN_RE = /^<untrusted-thread-content thread="([^"]*)">\n/;
 const CLOSE = "\n</untrusted-thread-content>";
@@ -156,6 +179,15 @@ export function parseOrynHeader(line: string): OrynHeader {
 			name: gt[1] ?? "",
 			repo: gt[2] ?? "",
 			number: Number(gt[3]),
+		};
+	const cf = CONFIRMATION_RE.exec(line);
+	if (cf)
+		return {
+			kind: "confirmation",
+			action: cf[1] ?? "",
+			target: cf[2] ?? "",
+			outcome: confirmationOutcome(cf[3] ?? ""),
+			...(cf[4] !== undefined ? { error: cf[4] } : {}),
 		};
 	return { kind: "unknown" };
 }
@@ -266,6 +298,12 @@ export function describeOrynHeader(
 						repo: h.repo,
 						number: h.number,
 					});
+		case "confirmation":
+			return t(`oryn.confirmation.${h.outcome}`, {
+				action: h.action,
+				target: h.target,
+				error: h.error ?? "",
+			});
 		default:
 			return msg.line;
 	}

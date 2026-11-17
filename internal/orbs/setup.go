@@ -68,6 +68,8 @@ type DefaultSetup struct {
 	// CoordinatorEgressAddr 是协调宿主内模型代理的监听地址（127.0.0.1:<coordinator.egress_port>）；
 	// 空 = agentcfg.EgressAddr。
 	CoordinatorEgressAddr string
+	// CoordinatorWebAllow 是全局助手联网时放行的非公网目标（M19，coordinator.web_allow_hosts，已转小写）。
+	CoordinatorWebAllow []string
 	// Projects 是项目级 omp 配置；可为 nil（不下发项目级配置）。
 	Projects ProjectConfigs
 	// GitHub 是 GitHub 集成（M14）；可为 nil（不下发 gh 配置，github.com 只走 PAT）。
@@ -81,18 +83,27 @@ type SSH interface {
 	OrbConfig(ctx context.Context, orb db.Orb) (*apigen.LinkCtlSSHConfig, error)
 }
 
-// coordinatorFiles 是下发给协调宿主的 omp-home 文件：只有模型与基本设置，其余（mcp.json、extensions/、skills/、
-// agents/、commands/、AGENTS.md…）一律不下发。
+// coordinatorFiles 是下发给协调宿主的 omp-home 文件：只有模型与基本设置，其余（extensions/、skills/、agents/、
+// commands/、AGENTS.md…）一律不下发。mcp.json 不原样下发：M19 起由 planCoordinator 按全局配置生成只含 orynd 代理
+// 地址的版本（鉴权头由出站代理注入，不进沙箱）。
 var coordinatorFiles = map[string]bool{agentcfg.ModelsFile: true, "config.yml": true}
 
 // planCoordinator 是协调 orb 的 setup 参数：不取项目、不下发 git 身份 / GitHosts / env 模式密钥，omp-home 只有
-// models.yml 与 config.yml（模型地址改写到协调宿主的代理端口），环境变量降级的模型密钥丢弃，git 出站一律拒绝。
-func (d *DefaultSetup) planCoordinator(orb db.Orb) (SetupPlan, error) {
+// models.yml 与 config.yml（模型地址改写到协调宿主的代理端口），以及助手可用的 HTTP MCP（M19，有才下发）；
+// 环境变量降级的模型密钥丢弃，git 出站一律拒绝；助手联网开着时放行公网正向代理（M19）。
+func (d *DefaultSetup) planCoordinator(ctx context.Context, orb db.Orb) (SetupPlan, error) {
 	plan := SetupPlan{
 		Params: apigen.LinkCtlSetupRunParams{
 			GitHosts: []string{}, OmpHome: []apigen.LinkCtlOmpHomeFile{}, Env: map[string]string{},
 		},
 		Egress: egress.Policy{Routes: map[string]egress.Route{}, GitRepos: map[string][]string{}, NoGit: true},
+	}
+	web, disabled, err := d.assistantSettings(ctx)
+	if err != nil {
+		return plan, err
+	}
+	if web {
+		plan.Egress.Web = &egress.WebPolicy{AllowHosts: d.CoordinatorWebAllow}
 	}
 	if d.Home == nil {
 		return plan, nil
@@ -150,7 +161,77 @@ func (d *DefaultSetup) planCoordinator(orb db.Orb) (SetupPlan, error) {
 	for k, v := range rendered.Routes {
 		plan.Egress.Routes[k] = v
 	}
+	if err := d.coordinatorMCP(&plan, files[agentcfg.MCPFile], disabled); err != nil {
+		return plan, err
+	}
 	return plan, nil
+}
+
+// assistantSettings 读全局助手的联网开关与关掉的 MCP 服务器（M19）；没有设置行时按默认（联网开、无禁用项）。
+func (d *DefaultSetup) assistantSettings(ctx context.Context) (web bool, disabled map[string]bool, err error) {
+	disabled = map[string]bool{}
+	if d.Store == nil {
+		return true, disabled, nil
+	}
+	row, err := d.Store.Q.GetAssistantSettings(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return true, disabled, nil
+	}
+	if err != nil {
+		return false, nil, fmt.Errorf("读取全局助手设置: %w", err)
+	}
+	var names []string
+	if err := json.Unmarshal([]byte(row.DisabledMcp), &names); err != nil {
+		slog.Warn("orbs: 全局助手设置里的 disabled_mcp 无法解析，按空处理", "err", err)
+	}
+	for _, n := range names {
+		disabled[n] = true
+	}
+	return row.WebAccess == 1, disabled, nil
+}
+
+// coordinatorMCP 把全局 mcp.json 里助手可用、未被关掉的 HTTP / SSE 服务器写进出站路由（/mcp/m<i>，带鉴权头），
+// 并生成协调宿主的 mcp.json（只有类型与 orynd 代理地址，不含任何头）。没有可用服务器时不下发该文件；解析失败只记日志。
+func (d *DefaultSetup) coordinatorMCP(plan *SetupPlan, content []byte, disabled map[string]bool) error {
+	var env map[string]string
+	if d.Vault != nil {
+		var err error
+		if env, err = d.Vault.EnvSecrets(); err != nil {
+			return fmt.Errorf("读取 env 密钥: %w", err)
+		}
+	}
+	servers, err := agentcfg.ParseMCP(content, env)
+	if err != nil {
+		slog.Warn("orbs: 全局 mcp.json 无法解析，全局助手不使用 MCP", "err", err)
+		return nil
+	}
+	addr := d.CoordinatorEgressAddr
+	if addr == "" {
+		addr = agentcfg.EgressAddr
+	}
+	out := map[string]map[string]string{}
+	for _, srv := range servers {
+		if !srv.Usable || disabled[srv.Name] {
+			continue
+		}
+		key := fmt.Sprintf("m%d", len(out))
+		if plan.Egress.MCP == nil {
+			plan.Egress.MCP = map[string]egress.MCPRoute{}
+		}
+		plan.Egress.MCP[key] = egress.MCPRoute{URL: srv.URL, Headers: srv.Headers}
+		out[srv.Name] = map[string]string{"type": srv.Transport, "url": "http://" + addr + "/mcp/" + key}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	b, err := json.MarshalIndent(map[string]any{"mcpServers": out}, "", "  ")
+	if err != nil {
+		return err
+	}
+	plan.Params.OmpHome = append(plan.Params.OmpHome, apigen.LinkCtlOmpHomeFile{
+		Path: agentcfg.MCPFile, Mode: 0o600, ContentB64: base64.StdEncoding.EncodeToString(b),
+	})
+	return nil
 }
 
 // planStampRetries 是 Plan 读密钥值前后修改时间不一致时的重读次数上限。
@@ -159,7 +240,7 @@ const planStampRetries = 3
 // Plan 实现 SetupSource。workdir 留空，由 orbd 按有无仓库取 $HOME/workspace[/repo]。
 func (d *DefaultSetup) Plan(ctx context.Context, orb db.Orb) (SetupPlan, error) {
 	if orb.Coordinator {
-		return d.planCoordinator(orb)
+		return d.planCoordinator(ctx, orb)
 	}
 	var prj *db.Project
 	if orb.ProjectID != nil {

@@ -162,6 +162,34 @@ describe("RealtimeClient", () => {
 		]);
 	});
 
+	it("tail 订阅（M19）：sub 带 tail，快照的 windowStart 落地；重连续传仍带 tail，退订后清除", async () => {
+		const ws = await connected(client);
+		const unsub = client.subscribe(TID, { tail: 600 });
+		expect(ws.subs()).toEqual([
+			{ type: "sub", threadId: TID, afterSeq: 0, tail: 600 },
+		]);
+		ws.recv(snapshot({ lastSeq: 1000, windowStart: 400 }));
+		ws.recv({
+			type: "entries",
+			threadId: TID,
+			entries: [entry(999), entry(1000)],
+			lastSeq: 1000,
+		});
+		client.flush();
+		expect(getThreadStore(TID).getState().windowStart).toBe(400);
+		client.resync(TID);
+		expect(ws.subs().at(-1)).toEqual({
+			type: "sub",
+			threadId: TID,
+			afterSeq: 1000,
+			transcriptRev: 1,
+			tail: 600,
+		});
+		unsub();
+		client.subscribe(TID);
+		expect(ws.subs().at(-1)).not.toHaveProperty("tail");
+	});
+
 	it("fullReplay 快照先丢弃缓存条目", async () => {
 		const ws = await connected(client);
 		client.subscribe(TID);

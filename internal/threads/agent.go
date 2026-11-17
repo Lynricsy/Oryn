@@ -397,7 +397,7 @@ func (s *Service) onAgentStatus(ctx context.Context, orbID string, params json.R
 		s.endAllTurnsLocked(t, TurnError, "agent_exited")
 		t.lastYield = nil
 		s.resetLiveLocked(t)
-		s.out().LiveReset(t.id)
+		s.broadcastLiveResetLocked(t)
 		t.autoActive = false
 		cancelHostCallsLocked(t)
 		resetConfigMarksLocked(t) // 新进程读的就是新配置（M13 6.3）
@@ -465,7 +465,7 @@ func (s *Service) onAgentGap(ctx context.Context, orbID string, params json.RawM
 	// 已下发的带标签消息仍在 agent 里执行：转为等 prompt_result / 重新同步，不按失败结算
 	s.trackLostLocked(t)
 	s.failPendingLocked(t, "agent frames lost while disconnected", false)
-	s.out().LiveReset(t.id)
+	s.broadcastLiveResetLocked(t)
 	s.recompute(ctx, t)
 	t.mu.Unlock()
 	s.refreshState(t)
@@ -1635,15 +1635,21 @@ func (s *Service) UIResponse(ctx context.Context, threadID string, frame json.Ra
 		return errf(CodeCoordinatorRestricted, typ+" is not accepted in coordinator conversations")
 	}
 	t.mu.Lock()
-	orbID := t.orbID
-	if orbID == "" {
-		t.mu.Unlock()
-		return errf("no_orb", "thread has no orb")
-	}
 	isUI := typ == "extension_ui_response"
 	if isUI && !t.live.HasUI(id) {
 		t.mu.Unlock()
 		return ErrUIResolved
+	}
+	if _, ok := t.hostUI[id]; isUI && ok {
+		// 控制面发起的请求（M19 确认卡）：应答交给协调层，不写 agent 流，也不需要 orb
+		s.answerHostUILocked(ctx, t, id, frame)
+		t.mu.Unlock()
+		return nil
+	}
+	orbID := t.orbID
+	if orbID == "" {
+		t.mu.Unlock()
+		return errf("no_orb", "thread has no orb")
 	}
 	orbState := s.orbState(orbID)
 	needWake := false

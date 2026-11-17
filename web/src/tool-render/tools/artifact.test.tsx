@@ -31,7 +31,7 @@ function card(op: string, extra: Record<string, unknown> = {}) {
 
 describe("artifact 工具渲染器", () => {
 	it("「agent 工具」表里的全部工具都注册到它", () => {
-		expect(ARTIFACT_TOOLS).toHaveLength(14);
+		expect(ARTIFACT_TOOLS).toHaveLength(18);
 		for (const name of ARTIFACT_TOOLS)
 			expect(resolveToolRenderer(name)).toBe(artifactRenderer);
 	});
@@ -58,6 +58,8 @@ describe("artifact 工具渲染器", () => {
 				"已恢复 · v1",
 			],
 			["delete_artifact", card("delete_artifact"), {}, "已删除"],
+			["import_artifact", card("import_artifact"), {}, "已导入 · v1"],
+			["restore_artifact", card("restore_artifact"), {}, "已从最近删除恢复"],
 		];
 		for (const [name, details, args, want] of cases) {
 			const { unmount } = render(

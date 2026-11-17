@@ -145,6 +145,8 @@ export const M9_IDS = {
 	spaceWorking: "T-0193a1b2-0000-7000-8000-00000000b003",
 	spaceIdle: "T-0193a1b2-0000-7000-8000-00000000b004",
 	assistant: "T-0193a1b2-0000-7000-8000-00000000b010",
+	/** 全局助手的主线对话（M19，单例；不进对话列表） */
+	main: "T-0193a1b2-0000-7000-8000-00000000b011",
 	scheduledThread: "T-0193a1b2-0000-7000-8000-00000000b020",
 	run1: "T-0193a1b2-0000-7000-8000-00000000b031",
 	run2: "T-0193a1b2-0000-7000-8000-00000000b032",
@@ -780,6 +782,15 @@ function m9Threads(): Thread[] {
 			kind: "assistant",
 			orbId: M9_IDS.coordOrb,
 			lastMessageAt: NOW - 12 * MIN,
+		}),
+		thread({
+			id: M9_IDS.main,
+			title: "Main",
+			titleSource: "user",
+			kind: "assistant",
+			main: true,
+			orbId: M9_IDS.coordOrb,
+			lastMessageAt: NOW - 40 * MIN,
 		}),
 		thread({
 			id: M9_IDS.scheduledThread,

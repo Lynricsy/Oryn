@@ -83,9 +83,12 @@ func sourceQuery(name, scope string) string {
 }
 
 // topicSpec 是创建主题 mental model 的请求体。刷新由 orynd 触发（R9），关闭 Hindsight 的整理后自动刷新。
+// exclude_mental_models：reflect 不读任何 mental model（含本主题旧内容），只从事实与 observation 整理。
+// 否则 reflect 会反复 search_mental_models、照抄自己的旧内容：首次生成时事实还不全写出的占位内容会一直延续，
+// 别的主题的内容也会串进来（真实数据验收时观察到：主人画像 9 次只搜 mental model，全部写成「待确认」）。
 func topicSpec(id, name, scope string) map[string]any {
 	return map[string]any{
 		"id": id, "name": name, "source_query": sourceQuery(name, scope), "max_tokens": topicMaxTokens,
-		"trigger": map[string]any{"mode": "delta", "refresh_after_consolidation": false},
+		"trigger": map[string]any{"mode": "delta", "refresh_after_consolidation": false, "exclude_mental_models": true},
 	}
 }
