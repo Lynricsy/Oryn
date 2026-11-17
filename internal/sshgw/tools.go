@@ -167,8 +167,9 @@ func (s *Service) execMany(ctx context.Context, orb db.Orb, threadID string, a e
 }
 
 // execOne 在一台主机上执行命令（合并 stdout 与 stderr），并记一行审计。
-func (s *Service) execOne(ctx context.Context, orb db.Orb, threadID, name, command string, timeout time.Duration) execResult {
-	res := execResult{Host: name}
+// 返回值是命名的：defer 里补的耗时与审计字段要落到返回给调用方的结果上。
+func (s *Service) execOne(ctx context.Context, orb db.Orb, threadID, name, command string, timeout time.Duration) (res execResult) {
+	res = execResult{Host: name}
 	h, deny, err := s.resolve(ctx, orb, name)
 	if err == nil && deny != "" {
 		res.Error = deny

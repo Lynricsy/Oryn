@@ -133,6 +133,12 @@ func TestExecManyTimeoutAndElision(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, res.Text, "## web — 超时（1s）")
 	assert.Contains(t, res.Text, "started")
+	assert.GreaterOrEqual(t, resultDuration(t, res), int64(1000), "超时结果带耗时")
+
+	res, err = e.call(t, th, toolExecMany, map[string]any{"hosts": []string{"web"}, "command": "sleep 0.3"})
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, resultDuration(t, res), int64(300), "正常退出的结果带耗时")
+	assert.NotContains(t, res.Text, "（0.0s）")
 
 	res, err = e.call(t, th, toolExecMany, map[string]any{"hosts": []string{"web"}, "command": "head -c 10000 /dev/zero | tr '\\0' a; echo; echo END"})
 	require.NoError(t, err)
@@ -140,6 +146,17 @@ func TestExecManyTimeoutAndElision(t *testing.T) {
 	assert.Contains(t, res.Text, "…（省略 ")
 	assert.Contains(t, res.Text, "END")
 	assert.Less(t, len(res.Text), 4096+200)
+}
+
+// resultDuration 取 details.results 里唯一一台主机的 durationMs。
+func resultDuration(t *testing.T, res apigen.LinkCtlSSHCallResult) int64 {
+	t.Helper()
+	b, err := json.Marshal(res.Details["results"])
+	require.NoError(t, err)
+	var rs []execResult
+	require.NoError(t, json.Unmarshal(b, &rs))
+	require.Len(t, rs, 1)
+	return rs[0].DurationMs
 }
 
 func TestHeadTail(t *testing.T) {
