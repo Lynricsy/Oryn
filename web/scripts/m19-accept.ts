@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import {
+	copyFileSync,
 	existsSync,
 	mkdirSync,
 	openSync,
@@ -13,20 +14,24 @@ import type { Server, Subprocess } from "bun";
 
 /**
  * M19 真机验收（docs/plan-m19.md 步骤 1.4 起步，步骤 5.1 补全）：钉住的 Core（build/core/x64/omp）跑在协调宿主的
- * 沙箱里，真实模型驱动全局助手对话，逐项记录检查结果。宿主工具的细节、确认卡、主线等由 Go 端到端覆盖：
- * `go test ./internal/server/ -run TestE2EM19`。
+ * 沙箱与 docker orb 里，真实模型驱动全局助手对话，逐项记录检查结果。宿主工具的细节、确认卡、主线等的确定性覆盖在
+ * Go 端到端：`go test ./internal/server/ -run TestE2EM19`。
  *
  * 用法（web/ 目录）：bun run accept:m19 [-- --only <前缀>[,<前缀>…]] [-- --help]
  *   `--only L1` 只跑 id 以 L1 开头的检查；不给则全部跑。
  *
  * 自建一套隔离环境（全部在 /var/tmp/oryn-m19-<run>/ 下，结束时删除；M19_KEEP=1 保留，日志在 logs/）：
- *   - orynd（data_dir 全新）只听 127.0.0.1:$M19_PORT（缺省 7690）；不起 provider：本批检查只用协调宿主。
+ *   - orynd（data_dir 全新）听 127.0.0.1:$M19_PORT（缺省 7690）与 docker0 网关地址的同一端口（orb 的 link 走它）。
  *   - 协调宿主：`omp_path` 指向钉住的 Core（校验 sha256），目录固定为 $M19_COORD_DIR（root 运行时宿主账号按目录派生，
  *     每次开跑与收尾时清空），助手对话的模型是 $M19_MODEL（缺省 claude-pro/claude-sonnet-5-5）。
- *   - Agent 配置：把 $M19_MODELS（缺省 ~/.omp/agent/models.yml）原样 PUT 成全局配置的 models.yml（密钥由 orynd 抽取）。
+ *   - provider `local`（driver docker）：镜像是在 $M19_BASE_IMAGE（缺省 oryn-orb:dev）上只替换 orbd / oryn / omp 的薄层
+ *     `oryn-orb:m19accept-<run>`，结束时删除；工作线程、定时运行线程与助手的电脑都是这个 provider 上的 orb。
+ *   - Agent 配置：把 $M19_MODELS（缺省 ~/.omp/agent/models.yml）原样 PUT 成全局配置的 models.yml（密钥由 orynd 抽取）；
+ *     全局 config.yml 只写 modelRoles：default = $M19_MODEL，image 取本机 ~/.omp/agent/config.yml 的同名角色（没有则
+ *     L1-image 跳过）。
  *
- * agent 的不确定性：提示词点名要调用的工具与参数；断言看转录里的工具结果（不看措辞）。没按要求调用工具时，同一对话补发
- * 一次提示。
+ * agent 的不确定性：提示词点名要调用的工具与参数；断言看转录里的工具结果与 REST 状态（不看措辞）。没按要求调用工具时，
+ * 同一对话补发一次提示。
  *
  * 每条打印 `M19 <id> PASS|FAIL|SKIP（秒）` 与证据行，最后汇总。没有 FAIL 时退出码 0；SKIP 逐条写明原因（未验证，
  * 不等于通过）。
@@ -35,6 +40,7 @@ import type { Server, Subprocess } from "bun";
 const USAGE = `用法：bun scripts/m19-accept.ts [--only <前缀>[,<前缀>…]] [--help]
   环境变量：M19_BIN（缺省 <仓库>/bin）、M19_KEEP=1（保留临时目录）、M19_PORT（缺省 7690）、
   M19_MODELS（缺省 ~/.omp/agent/models.yml）、M19_MODEL（缺省 claude-pro/claude-sonnet-5-5）、
+  M19_OMP_CONFIG（缺省 ~/.omp/agent/config.yml，只取 modelRoles.image）、M19_BASE_IMAGE（缺省 oryn-orb:dev）、
   M19_COORD_DIR（缺省 /var/tmp/oryn-m19-coord）、M19_COORD_EGRESS（缺省 7937）。`;
 const argv = process.argv.slice(2);
 if (argv.includes("--help") || argv.includes("-h")) {
@@ -66,10 +72,19 @@ const MODELS_SRC =
 	process.env.M19_MODELS ??
 	`${process.env.HOME ?? "/root"}/.omp/agent/models.yml`;
 const MODEL = process.env.M19_MODEL ?? "claude-pro/claude-sonnet-5-5";
+const MODEL_PROVIDER = MODEL.slice(0, MODEL.indexOf("/"));
+const MODEL_ID = MODEL.slice(MODEL.indexOf("/") + 1);
+const OMP_CONFIG_SRC =
+	process.env.M19_OMP_CONFIG ??
+	`${process.env.HOME ?? "/root"}/.omp/agent/config.yml`;
+const BASE_IMAGE = process.env.M19_BASE_IMAGE ?? "oryn-orb:dev";
+const IMAGE = `oryn-orb:m19accept-${RUN}`;
 const COORD_DIR = process.env.M19_COORD_DIR ?? "/var/tmp/oryn-m19-coord";
 const COORD_EGRESS = Number(process.env.M19_COORD_EGRESS ?? 7937);
 /** 回合等待上限（真实模型，含协调宿主冷启动）。 */
 const TURN_TIMEOUT = 600_000;
+/** 首回合要先建 docker orb 的线程的等待上限。 */
+const ORB_TURN_TIMEOUT = 1_200_000;
 
 // ---------------------------------------------------------------- 工具
 
@@ -274,12 +289,21 @@ async function rjson<T>(
 	return r.json as T;
 }
 
-const cli = (args: string) =>
-	sh(`${q(`${BIN}/oryn`)} ${args}`, {
-		...process.env,
-		ORYN_API_URL: API,
-		ORYN_API_TOKEN: token,
+/** 跑 oryn CLI（异步：等待期间事件循环照常，Ctrl-C 能收尾）。 */
+async function cli(args: string[]): Promise<{ code: number; out: string }> {
+	const p = Bun.spawn([`${BIN}/oryn`, ...args], {
+		cwd: ROOT,
+		env: { ...process.env, ORYN_API_URL: API, ORYN_API_TOKEN: token },
+		stdout: "pipe",
+		stderr: "pipe",
 	});
+	const [out, err, code] = await Promise.all([
+		new Response(p.stdout).text(),
+		new Response(p.stderr).text(),
+		p.exited,
+	]);
+	return { code, out: (out + err).trim() };
+}
 
 // ---------------------------------------------------------------- 线程与转录
 
@@ -430,7 +454,7 @@ async function newAssistant(tag: string, prompt: string): Promise<ThreadView> {
 /** 同一对话补发一条消息并等回合结束。 */
 async function say(tid: string, msg: string) {
 	const before = (await entries(tid)).at(-1)?.seq ?? 0;
-	const r = cli(`thread send ${tid} ${q(msg)}`);
+	const r = await cli(["thread", "send", tid, msg]);
 	if (r.code !== 0)
 		throw new Error(`oryn thread send：${clip(oneLine(r.out))}`);
 	await waitTurn(tid, before, TURN_TIMEOUT);
@@ -572,10 +596,16 @@ function clearCoordDir() {
 		rmSync(`${COORD_DIR}/${f}`, { recursive: true, force: true });
 }
 
+let gateway = "";
+let imageBuilt = false;
+/** 本机 omp 配置里的生图模型角色（空 = 没有，L1-image 跳过）。 */
+let imageRole = "";
+
 async function setup() {
-	for (const b of ["orynd", "oryn"])
+	for (const b of ["orynd", "orbd", "oryn"])
 		if (!existsSync(`${BIN}/${b}`))
 			throw new Error(`缺少 ${BIN}/${b}：先 make build（或设 M19_BIN）`);
+	if (sh("command -v docker").code !== 0) throw new Error("本机缺少 docker");
 	if (!existsSync(MODELS_SRC))
 		throw new Error(
 			`缺少 ${MODELS_SRC}（设 M19_MODELS 指向含真实模型的 models.yml）`,
@@ -593,12 +623,44 @@ async function setup() {
 		sh(`ss -Hltn 'sport = :${API_PORT}'`).stdout === "",
 		`127.0.0.1:${API_PORT} 空闲（设 M19_PORT 换端口）`,
 	);
+	gateway = sh(
+		"docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}'",
+	).stdout;
+	check(/^\d+\.\d+\.\d+\.\d+$/.test(gateway), `docker0 网关地址 ${gateway}`);
 
 	clearCoordDir();
 	mkdirSync(LOGS, { recursive: true });
+	// orb 镜像：基础镜像 + 本次的三个二进制
+	mkdirSync(`${TMP}/image`, { recursive: true });
+	for (const [src, name] of [
+		[OMP, "omp"],
+		[`${BIN}/orbd`, "orbd"],
+		[`${BIN}/oryn`, "oryn"],
+	] as const)
+		copyFileSync(src, `${TMP}/image/${name}`);
+	writeFileSync(
+		`${TMP}/image/Dockerfile`,
+		`FROM ${BASE_IMAGE}
+USER root
+COPY --chmod=0755 omp orbd oryn /usr/local/bin/
+USER user
+RUN omp --version && omp --smoke-test && rm -rf /home/user/.omp/logs /home/user/.omp/run
+`,
+	);
+	const t0 = Date.now();
+	const built = sh(
+		`docker build -q -t ${IMAGE} ${q(`${TMP}/image`)} > ${q(`${LOGS}/image.log`)} 2>&1`,
+	);
+	imageBuilt = built.code === 0;
+	check(
+		imageBuilt,
+		`构建 orb 镜像 ${IMAGE}（基于 ${BASE_IMAGE}，${sec(Date.now() - t0)}）${built.code ? `：${clip(readFileSync(`${LOGS}/image.log`, "utf8").slice(-400))}` : ""}`,
+	);
+	rmSync(`${TMP}/image`, { recursive: true, force: true });
+
 	writeFileSync(
 		`${TMP}/orynd.yaml`,
-		`listen: ["127.0.0.1:${API_PORT}"]
+		`listen: ["127.0.0.1:${API_PORT}", "${gateway}:${API_PORT}"]
 public_url: "http://localhost:${API_PORT}"
 portal_domain: ""
 data_dir: "${TMP}/data"
@@ -623,6 +685,43 @@ coordinator: { omp_path: "${OMP}", dir: "${COORD_DIR}", egress_port: ${COORD_EGR
 	);
 	token = dev.stdout.split("\n").at(-1) ?? "";
 
+	const prov = await rjson<{ token: string }>("POST", "/api/v1/providers", {
+		name: "local",
+	});
+	writeFileSync(`${TMP}/provider.token`, `${prov.token}\n`, { mode: 0o600 });
+	writeFileSync(
+		`${TMP}/provider.yaml`,
+		`url: "${API}"
+token_file: "${TMP}/provider.token"
+orb_url: "http://${gateway}:${API_PORT}"
+driver: docker
+docker:
+  image: "${IMAGE}"
+`,
+	);
+	bg("provider", [
+		`${BIN}/oryn`,
+		"provider",
+		"run",
+		"--config",
+		`${TMP}/provider.yaml`,
+	]);
+	await waitFor(
+		"provider 在线",
+		async () =>
+			(
+				await rjson<{ providers: { name: string; online: boolean }[] }>(
+					"GET",
+					"/api/v1/providers",
+				)
+			).providers.some((p) => p.name === "local" && p.online),
+		60_000,
+		500,
+	);
+	note(
+		`orynd ${API}（另听 ${gateway}:${API_PORT}），provider local（docker）在线`,
+	);
+
 	const put = await api(
 		"PUT",
 		"/api/v1/agent-config/files/models.yml?mode=384",
@@ -631,6 +730,22 @@ coordinator: { omp_path: "${OMP}", dir: "${COORD_DIR}", egress_port: ${COORD_EGR
 	check(
 		put.status === 200,
 		`全局配置 models.yml ← ${MODELS_SRC}（${put.status}${put.status === 200 && isRecord(put.json) && Array.isArray(put.json.extractedSecrets) ? `，抽取 ${put.json.extractedSecrets.length} 个密钥` : `：${clip(put.text)}`}）`,
+	);
+	if (existsSync(OMP_CONFIG_SRC)) {
+		const local = Bun.YAML.parse(readFileSync(OMP_CONFIG_SRC, "utf8"));
+		const roles =
+			isRecord(local) && isRecord(local.modelRoles) ? local.modelRoles : {};
+		if (typeof roles.image === "string") imageRole = roles.image;
+	}
+	const rolesYml = `modelRoles:\n  default: "${MODEL}"\n${imageRole ? `  image: "${imageRole}"\n` : ""}`;
+	const cfg = await api(
+		"PUT",
+		"/api/v1/agent-config/files/config.yml",
+		rolesYml,
+	);
+	check(
+		cfg.status === 200,
+		`全局配置 config.yml：modelRoles default=${MODEL}${imageRole ? `、image=${imageRole}（取自 ${OMP_CONFIG_SRC}）` : "（本机没有 image 角色）"}（${cfg.status}${cfg.status === 200 ? "" : `：${clip(cfg.text)}`}）`,
 	);
 	await api("GET", "/api/v1/models/catalog?refresh=true");
 	const cat = await waitFor(
@@ -816,8 +931,710 @@ async function l1Mcp() {
 		/\/mcp\/m\d+/.test(content) && !content.includes(mcp.url),
 		"沙箱 mcp.json 指向 orynd 的 /mcp/<key> 路由，不含真实地址",
 	);
-	check(!content.includes(MCP_TOKEN), `沙箱 mcp.json 不含 ${MCP_TOKEN}`);
-	check(!/"headers"|authorization/i.test(content), "沙箱 mcp.json 不含任何头");
+	check(
+		!content.includes(MCP_TOKEN),
+		`沙箱 mcp.json 不含主人配置的 ${MCP_TOKEN}`,
+	);
+	check(!/authorization/i.test(content), "沙箱 mcp.json 不含 Authorization 头");
+	// 每个服务器只带一个模板头 X-Oryn-MCP-Token: ${ORYN_MCP_TOKEN}（凭据值由 orynd 只放进全局助手 omp 的环境）
+	const parsed = JSON.parse(content) as {
+		mcpServers: Record<string, { headers?: Record<string, string> }>;
+	};
+	const tmpl = `\${ORYN_MCP_TOKEN}`;
+	check(
+		Object.values(parsed.mcpServers).every(
+			(s) =>
+				JSON.stringify(s.headers ?? {}) ===
+				JSON.stringify({ "X-Oryn-MCP-Token": tmpl }),
+		),
+		`每个服务器只带 X-Oryn-MCP-Token: ${tmpl} 这一个模板头`,
+	);
+
+	// 沙箱里这个对话的 omp 进程：凭据值不在 mcp.json 里；不带凭据直接请求 /mcp/m0 得 403
+	const proc = sandboxProc(th.id);
+	check(
+		!!proc,
+		`找到对话 ${th.id} 在沙箱里的 omp 进程（pid ${proc?.pid ?? "无"}）`,
+	);
+	const token = proc?.env.ORYN_MCP_TOKEN ?? "";
+	const base = proc?.env.ORYN_MCP_BASE ?? "";
+	check(
+		token.length >= 16 && !content.includes(token),
+		`omp 环境里有 ORYN_MCP_TOKEN（${token.length} 字符），mcp.json 不含凭据值本身`,
+	);
+	const key = /\/mcp\/(m\d+)/.exec(content)?.[1] ?? "m0";
+	// 异步跑：带正确凭据的请求会经 orynd 回到本进程里的 MCP 服务，同步 spawn 会卡住事件循环
+	const curl = async (headers: string[]) => {
+		const p = Bun.spawn(
+			[
+				"nsenter",
+				"-t",
+				String(proc?.pid),
+				"-n",
+				"curl",
+				"-s",
+				"--max-time",
+				"20",
+				"-o",
+				"/dev/null",
+				"-w",
+				"%{http_code}",
+				"-X",
+				"POST",
+				"-H",
+				"Content-Type: application/json",
+				...headers.flatMap((h) => ["-H", h]),
+				"--data",
+				'{"jsonrpc":"2.0","id":1,"method":"ping"}',
+				`${base}/mcp/${key}`,
+			],
+			{ stdout: "pipe", stderr: "ignore" },
+		);
+		const out = await new Response(p.stdout).text();
+		await p.exited;
+		return out.trim();
+	};
+	const bare = await curl([]);
+	check(bare === "403", `沙箱网络里不带凭据 POST ${base}/mcp/${key} → ${bare}`);
+	const forged = await curl(["X-Oryn-MCP-Token: forged-token-value"]);
+	check(forged === "403", `带伪造凭据 → ${forged}`);
+	const ok = await curl([`X-Oryn-MCP-Token: ${token}`]);
+	note(`带正确凭据 → ${ok}`);
+	expect(ok === "200", "带正确凭据经 orynd 到达 MCP 服务（200）");
+}
+
+/** 协调宿主沙箱里某个对话的 omp 进程（按环境变量 ORYN_THREAD_ID 找）及其环境。 */
+function sandboxProc(
+	tid: string,
+): { pid: number; env: Record<string, string> } | undefined {
+	for (const pid of readdirSync("/proc")) {
+		if (!/^\d+$/.test(pid)) continue;
+		try {
+			const raw = readFileSync(`/proc/${pid}/environ`, "utf8");
+			if (!raw.includes(`ORYN_THREAD_ID=${tid}\0`)) continue;
+			const env = Object.fromEntries(
+				raw
+					.split("\0")
+					.filter(Boolean)
+					.map((kv) => [
+						kv.slice(0, kv.indexOf("=")),
+						kv.slice(kv.indexOf("=") + 1),
+					]),
+			);
+			return { pid: Number(pid), env };
+		} catch {
+			// 已退出或无权限
+		}
+	}
+	return undefined;
+}
+
+// ---------------------------------------------------------------- 步骤 5.1 的辅助
+
+interface AuditRow {
+	action: string;
+	origin: string;
+	ok: boolean;
+	actorThreadId?: string;
+	targetThreadId?: string;
+	summary: string;
+	error?: string;
+}
+const auditOf = async (tid: string) =>
+	(
+		await rjson<{ actions: AuditRow[] }>(
+			"GET",
+			`/api/v1/automation/actions?thread=${tid}&limit=200`,
+		)
+	).actions;
+
+interface NotificationView {
+	id: string;
+	kind: string;
+	threadId?: string;
+	title: string;
+	body: string;
+	resolvedAt?: number;
+	quickAnswer?: {
+		question: string;
+		options: { i: number; label: string; role?: string }[];
+	};
+}
+const notifications = async () =>
+	(
+		await rjson<{ notifications: NotificationView[] }>(
+			"GET",
+			"/api/v1/notifications?limit=100",
+		)
+	).notifications;
+
+/** 用户消息的文本（自动消息也是 user 消息）。 */
+function userText(e: Entry): string | undefined {
+	const m = e.type === "message" ? e.payload.message : undefined;
+	return isRecord(m) && m.role === "user" ? textOf(m.content) : undefined;
+}
+
+/** 等 afterSeq 之后出现满足 pred 的用户消息，返回该条目。 */
+async function waitUserMsg(
+	tid: string,
+	what: string,
+	pred: (text: string) => boolean,
+	afterSeq: number,
+	timeoutMs: number,
+	intervalMs = 1_000,
+): Promise<Entry> {
+	return waitFor(
+		`线程 ${tid} 出现${what}`,
+		async () =>
+			(await entries(tid, afterSeq)).find((e) => {
+				const t = userText(e);
+				return t !== undefined && pred(t);
+			}),
+		timeoutMs,
+		intervalMs,
+	);
+}
+
+/** 等线程回到静止（idle / awaiting_input）且没有排队中的回合；返回线程。 */
+const waitSettled = (tid: string, timeoutMs: number) =>
+	waitFor(
+		`线程 ${tid} 静止`,
+		async () => {
+			const t = await getThread(tid);
+			if (t.state === "error") throw new Error(`线程 ${tid} 停在 error`);
+			return SETTLED[t.state] ? t : null;
+		},
+		timeoutMs,
+		2_000,
+	);
+
+const lastSeq = async (tid: string) => (await entries(tid)).at(-1)?.seq ?? 0;
+
+let mainId = "";
+async function ensureMain(): Promise<string> {
+	if (mainId) return mainId;
+	const r = await rjson<{ thread: ThreadView & { main?: boolean } }>(
+		"GET",
+		"/api/v1/assistant/main",
+	);
+	check(
+		r.thread.main === true,
+		`GET /assistant/main → ${r.thread.id}（main=true）`,
+	);
+	mainId = r.thread.id;
+	return mainId;
+}
+
+// ---------------------------------------------------------------- 第一层（续）
+
+/** L1-search：内置 web_search 经正向代理有结果。 */
+async function l1Search() {
+	if (!(await hostOnline())) skip("本机没有公网，web_search 无法验证");
+	const got = (t: Transcript) =>
+		t.results.some(
+			(r) =>
+				r.tool === "web_search" && !r.isError && /https?:\/\/\S+/.test(r.text),
+		);
+	const { t } = await askUntil(
+		"L1-search",
+		"请调用 web_search 工具搜索「Bun JavaScript runtime official site」，然后用一句话告诉我第一条结果的标题与网址。只用 web_search，不要用别的工具。",
+		"请现在调用 web_search，query 填 Bun JavaScript runtime official site，然后告诉我第一条结果的标题与网址。",
+		got,
+	);
+	for (const r of t.results.filter((r) => r.tool === "web_search"))
+		note(
+			`web_search 结果（isError=${r.isError}）：${clip(oneLine(r.text), 240)}`,
+		);
+	check(got(t), "web_search 的工具结果不是错误且含网址");
+}
+
+/** L1-image：generate_image 后 save_file，文件库里多一个图片。 */
+async function l1Image() {
+	if (!imageRole)
+		skip(
+			`本机 omp 配置（${OMP_CONFIG_SRC}）没有 modelRoles.image，没有生图模型`,
+		);
+	note(`生图角色 image=${imageRole}`);
+	type FileRow = { id: string; name: string; mime: string; size: number };
+	const files = async () =>
+		(await rjson<{ files: FileRow[] }>("GET", "/api/v1/assistant/files")).files;
+	const before = new Set((await files()).map((f) => f.id));
+	const name = `m19-${RUN}.png`;
+	const saved = (t: Transcript) =>
+		t.results.some((r) => r.tool === "save_file" && !r.isError);
+	const { t } = await askUntil(
+		"L1-image",
+		`请先调用 generate_image 生成一张很简单的小图：白色背景上一个红色实心圆。生成后调用 save_file，path 填 generate_image 结果里给出的图片文件路径，name 填 ${name}。最后告诉我文件库里的文件 id。`,
+		`请调用 save_file，path 填刚才 generate_image 结果里的图片文件路径（若还没生成，先调用 generate_image），name 填 ${name}。`,
+		saved,
+	);
+	for (const r of t.results.filter(
+		(r) => r.tool === "generate_image" || r.tool === "save_file",
+	))
+		note(
+			`${r.tool} 结果（isError=${r.isError}）：${clip(oneLine(r.text), 240)}`,
+		);
+	check(
+		t.results.some((r) => r.tool === "generate_image" && !r.isError),
+		"generate_image 成功",
+	);
+	check(saved(t), "save_file 成功");
+	const added = (await files()).filter((f) => !before.has(f.id));
+	note(
+		`文件库新增：${added.map((f) => `${f.id} ${f.name} ${f.mime} ${f.size}B`).join("；") || "无"}`,
+	);
+	check(
+		added.some((f) => f.mime.startsWith("image/") && f.size > 0),
+		"文件库里多了一个图片",
+	);
+}
+
+// ---------------------------------------------------------------- 第三层
+
+/** L3-project 开出的工作线程（L3-confirm 删除它）。 */
+let projectThread = "";
+
+/** L3-project：助手新建项目并在其中开线程，线程在 docker orb 里跑完首回合。 */
+async function l3Project() {
+	const pname = `m19-p-${RUN}`;
+	const done = (t: Transcript) =>
+		t.results.some((r) => r.tool === "create_project" && !r.isError) &&
+		t.results.some((r) => r.tool === "create_thread" && !r.isError);
+	const { th, t } = await askUntil(
+		"L3-project",
+		`请调用 create_project 新建一个项目，name 为 ${pname}（不要仓库，其它参数都不填）。成功后调用 create_thread 在这个项目里开一个工作线程：project 填 ${pname}，title 填 m19 项目线程，prompt 填「只回复 OK 两个字母，不要调用任何工具。」。开完线程就结束这一轮，不用等它回报。`,
+		`请调用 create_thread：project 填 ${pname}，title 填 m19 项目线程，prompt 填「只回复 OK 两个字母，不要调用任何工具。」（项目若还没有，先调用 create_project 建 ${pname}）。`,
+		done,
+	);
+	for (const r of t.results.filter(
+		(r) => r.tool === "create_project" || r.tool === "create_thread",
+	))
+		note(
+			`${r.tool} 结果（isError=${r.isError}）：${clip(oneLine(r.text), 200)}`,
+		);
+	check(done(t), "create_project 与 create_thread 都成功");
+	const projects = await rjson<{ projects: { id: string; name: string }[] }>(
+		"GET",
+		"/api/v1/projects",
+	);
+	const p = projects.projects.find((x) => x.name === pname);
+	check(!!p, `GET /projects 有 ${pname}（${p?.id ?? "无"}）`);
+	const audit = await auditOf(th.id);
+	const created = audit.find(
+		(a) => a.action === "create_thread" && a.ok && a.targetThreadId,
+	);
+	check(
+		!!created,
+		`审计有助手的 create_thread（目标 ${created?.targetThreadId ?? "无"}）`,
+	);
+	expect(
+		audit.some((a) => a.action === "create_project" && a.ok),
+		"审计有 create_project",
+	);
+	const wid = created?.targetThreadId ?? "";
+	const w = await rjson<ThreadView & { projectId?: string; kind?: string }>(
+		"GET",
+		`/api/v1/threads/${wid}`,
+	);
+	check(
+		w.projectId === p?.id,
+		`线程 ${wid} 属于项目 ${pname}（projectId=${w.projectId ?? "无"}）`,
+	);
+	await waitTurn(wid, 0, ORB_TURN_TIMEOUT);
+	const wt = await transcript(wid);
+	note(
+		`工作线程 ${wid}（orb ${(await getThread(wid)).orbId ?? "?"}）回复：${lastReply(wt)}`,
+	);
+	check(
+		/OK/i.test(wt.replies.join("\n")),
+		"工作线程在 orb 里跑完首回合并回复 OK",
+	);
+	projectThread = wid;
+}
+
+/** L3-confirm：删线程走确认卡：对话 awaiting_input、通知带是 / 否；作答“是”后线程被删、对话收到确认结果、审计 origin=owner。 */
+async function l3Confirm() {
+	const wid = projectThread;
+	const asked = (t: Transcript) =>
+		t.results.some((r) => r.tool === "delete_thread");
+	const { th, t } = await askUntil(
+		"L3-confirm",
+		`请调用 delete_thread 删除线程 ${wid}。调用之后告诉我结果即可，不要做别的。`,
+		`请现在调用 delete_thread，threadId 填 ${wid}。`,
+		asked,
+	);
+	for (const r of t.results.filter((r) => r.tool === "delete_thread"))
+		note(
+			`delete_thread 结果（isError=${r.isError}）：${clip(oneLine(r.text), 240)}`,
+		);
+	check(
+		t.results.some(
+			(r) => r.tool === "delete_thread" && /awaiting_owner/.test(r.text),
+		),
+		"delete_thread 返回 awaiting_owner（没有直接执行）",
+	);
+	check(
+		(await api("GET", `/api/v1/threads/${wid}`)).status === 200,
+		`确认之前线程 ${wid} 仍在`,
+	);
+	const st = await getThread(th.id);
+	check(
+		st.state === "awaiting_input",
+		`助手对话处于 awaiting_input（${st.state}）`,
+	);
+	const n = await waitFor(
+		"确认卡的 input 通知",
+		async () =>
+			(await notifications()).find(
+				(x) => x.kind === "input" && x.threadId === th.id && !x.resolvedAt,
+			),
+		30_000,
+		1_000,
+	);
+	const opts = n.quickAnswer?.options ?? [];
+	note(
+		`通知 ${n.id}：${clip(oneLine(`${n.title} / ${n.body}`), 200)}；选项 ${opts.map((o) => `${o.i}:${o.label}${o.role ? `(${o.role})` : ""}`).join(" ")}`,
+	);
+	const yes = opts.find((o) => o.role === "yes");
+	check(
+		!!yes && opts.some((o) => o.role === "no"),
+		"通知可一触作答且带“是 / 否”",
+	);
+	const seq = await lastSeq(th.id);
+	const ans = await api("POST", `/api/v1/notifications/${n.id}/answer`, {
+		option: yes?.i,
+	});
+	check(
+		ans.status === 200,
+		`作答“是”→ ${ans.status}${ans.status === 200 ? "" : ` ${clip(ans.text)}`}`,
+	);
+	const msg = await waitUserMsg(
+		th.id,
+		"确认结果自动消息",
+		(s) => s.startsWith("[Oryn confirmation · automatic]"),
+		seq,
+		120_000,
+	);
+	const text = userText(msg) ?? "";
+	note(`自动消息：${clip(oneLine(text), 240)}`);
+	check(
+		/delete_thread/.test(text) && /approved and done\./.test(text),
+		"对话收到 [Oryn confirmation · automatic] delete_thread … approved and done.",
+	);
+	const gone = await api("GET", `/api/v1/threads/${wid}`);
+	check(gone.status === 404, `线程 ${wid} 已删除（GET → ${gone.status}）`);
+	const row = (await auditOf(th.id)).find((a) => a.action === "delete_thread");
+	note(`审计：${JSON.stringify(row ?? null)}`);
+	check(
+		row?.origin === "owner" && row.ok,
+		"审计里 delete_thread 的 origin=owner 且成功",
+	);
+	await waitSettled(th.id, TURN_TIMEOUT);
+}
+
+/** L3-space：助手新建 Space，向其协调对话发话，Space 那一轮结束后回报到达助手对话。 */
+async function l3Space() {
+	const sname = `m19-s-${RUN}`;
+	const sent = (t: Transcript) =>
+		t.results.some((r) => r.tool === "create_space" && !r.isError) &&
+		t.results.some((r) => r.tool === "send_message" && !r.isError);
+	const { th, t } = await askUntil(
+		"L3-space",
+		`请调用 create_space 新建一个 Space：name 为 ${sname}，goal 为「M19 验收」。成功后调用 send_message，space 参数填 ${sname}，message 填「请只回复 PONG 这个词，不要调用任何工具。」。发完就结束这一轮，等它的回报。`,
+		`请调用 send_message：space 填 ${sname}，message 填「请只回复 PONG 这个词，不要调用任何工具。」（Space 若还没有，先调用 create_space 建 ${sname}）。`,
+		sent,
+	);
+	for (const r of t.results.filter(
+		(r) => r.tool === "create_space" || r.tool === "send_message",
+	))
+		note(
+			`${r.tool} 结果（isError=${r.isError}）：${clip(oneLine(r.text), 200)}`,
+		);
+	check(sent(t), "create_space 与 send_message 都成功");
+	const spaces = await rjson<{
+		spaces: { id: string; name: string; threadId: string }[];
+	}>("GET", "/api/v1/spaces");
+	const sp = spaces.spaces.find((s) => s.name === sname);
+	check(!!sp, `GET /spaces 有 ${sname}（协调对话 ${sp?.threadId ?? "无"}）`);
+	const sid = sp?.threadId ?? "";
+	await waitUserMsg(
+		sid,
+		"助手发来的消息",
+		(s) => s.includes("PONG"),
+		0,
+		60_000,
+	);
+	const report = await waitUserMsg(
+		th.id,
+		"Space 的回报",
+		(s) => s.startsWith("[Oryn thread report") && s.includes(sid),
+		0,
+		TURN_TIMEOUT,
+		2_000,
+	);
+	const st = await transcript(sid);
+	note(`Space 协调对话回复：${lastReply(st)}`);
+	note(`回报：${clip(oneLine(userText(report) ?? ""), 240)}`);
+	// Space 协调者会把助手发来的话当作其它 agent 的消息（不可信），可能不照做；R8 只要求那一轮结束后回报到达
+	check(st.replies.length > 0, "Space 协调对话那一轮有回复");
+	expect(
+		/"outcome":"completed"/.test(userText(report) ?? ""),
+		"回报的 outcome 是 completed，带着 Space 的回复",
+	);
+	await waitSettled(th.id, TURN_TIMEOUT);
+}
+
+// ---------------------------------------------------------------- 主线
+
+/** MAIN-handoff：每分钟、开着“交给助手”的定时运行结束 → 约 15 秒内主线收到合并结果，助手说话或沉默；该运行没有 done 通知。 */
+async function mainHandoff() {
+	const main = await ensureMain();
+	const seq0 = await lastSeq(main);
+	const sch = await rjson<{ id: string; handToAssistant: boolean }>(
+		"POST",
+		"/api/v1/schedules",
+		{
+			mode: "new_thread",
+			name: `m19-h-${RUN}`,
+			kind: "every",
+			every: "1m",
+			prompt: "只回复一句：M19 定时检查一切正常。不要调用任何工具。",
+			provider: "local",
+			model: { provider: MODEL_PROVIDER, id: MODEL_ID },
+			handToAssistant: true,
+		},
+	);
+	check(
+		sch.handToAssistant,
+		`定时 ${sch.id}：every 1m、new_thread、handToAssistant=true`,
+	);
+	try {
+		const run = await waitFor(
+			"第一次运行建出线程",
+			async () =>
+				(
+					await rjson<{ runs: { threadId?: string; status: string }[] }>(
+						"GET",
+						`/api/v1/schedules/${sch.id}/runs`,
+					)
+				).runs.find((r) => r.threadId),
+			150_000,
+			2_000,
+		);
+		// 只要一次运行：拿到第一次就暂停
+		await rjson("POST", `/api/v1/schedules/${sch.id}/pause`);
+		const rid = run.threadId ?? "";
+		note(`第一次运行线程 ${rid}；定时已暂停`);
+		await waitTurn(rid, 0, ORB_TURN_TIMEOUT);
+		const ended = Date.now();
+		const msg = await waitUserMsg(
+			main,
+			"[Oryn automation results",
+			(s) => s.startsWith("[Oryn automation results") && s.includes(rid),
+			seq0,
+			180_000,
+		);
+		const delay = Date.now() - ended;
+		note(
+			`主线收到自动消息（运行结束后约 ${sec(delay)}）：${clip(oneLine(userText(msg) ?? ""), 240)}`,
+		);
+		expect(
+			delay <= 45_000,
+			"运行结束后 45 秒内到达（合并窗口 15 秒，含轮询间隔）",
+		);
+		await waitSettled(main, TURN_TIMEOUT);
+		const after = transcriptOf(await entries(main, msg.seq));
+		const silent = after.calls.some((c) => c.name === "stay_silent");
+		note(
+			`主线这一回合：${silent ? `stay_silent ${JSON.stringify(after.calls.find((c) => c.name === "stay_silent")?.args ?? {})}` : `助手说：${lastReply(after)}`}`,
+		);
+		check(
+			silent || after.replies.length > 0,
+			"主线出现一条助手消息或一条沉默记录",
+		);
+		const done = (await notifications()).filter(
+			(n) => n.kind === "done" && n.threadId === rid,
+		);
+		check(
+			done.length === 0,
+			`运行线程 ${rid} 没有 done 通知（${done.length} 条）`,
+		);
+	} finally {
+		await api("DELETE", `/api/v1/schedules/${sch.id}`);
+	}
+}
+
+/** MAIN-episode：主线一段满 8 个回合后停 agent，下一段的系统提示词带上一段的消息，转录里有 reset_boundary。 */
+async function mainEpisode() {
+	const main = await ensureMain();
+	const marker = `琥珀-${RUN}-${Math.random().toString(36).slice(2, 6)}`;
+	const logFrom = orynLog().length;
+	const seq0 = await lastSeq(main);
+	// 近况只带最近 12 条：口令放进这一段的每条消息，换段时无论落在哪个回合都在近况里
+	const ended = () => /主线一段结束/.test(orynLog().slice(logFrom));
+	for (let i = 1; i <= 9 && !ended(); i++) {
+		await say(
+			main,
+			`第 ${i} 条测试消息，口令是 ${marker}。只回复 OK，不要调用任何工具。`,
+		);
+		await sleep(2_000);
+	}
+	const line = orynLog()
+		.slice(logFrom)
+		.split("\n")
+		.find((l) => l.includes("主线一段结束"));
+	check(
+		!!line,
+		`orynd 日志：${clip(oneLine(line ?? "没有「主线一段结束」"), 200)}`,
+	);
+	await say(
+		main,
+		"我之前让你记住的口令是什么？只根据系统提示词里的「主线近况」回答，原样写出口令，不要调用任何工具。",
+	);
+	const prompt = sh(
+		`find ${q(COORD_DIR)} -path '*/prompts/*' -name ${q(`${main}.md`)} | head -1`,
+	).stdout;
+	check(!!prompt, `主线的系统提示词文件 ${prompt || "（没找到）"}`);
+	const body = readFileSync(prompt, "utf8");
+	const brief = body.slice(body.indexOf("## 主线近况"));
+	note(`主线近况：${clip(oneLine(brief), 300)}`);
+	check(body.includes("## 主线近况"), "系统提示词带「主线近况」");
+	check(
+		brief.includes(marker),
+		`第二段的系统提示词含上一段的消息（口令 ${marker}）`,
+	);
+	const es = await entries(main, seq0);
+	const resets = es.filter((e) => e.type === "reset_boundary");
+	check(
+		resets.length > 0,
+		`转录里有 reset_boundary（本检查期间 ${resets.length} 个，seq ${resets.map((e) => e.seq).join(",")}）`,
+	);
+	const t = transcriptOf(es.slice(es.indexOf(resets.at(-1) as Entry)));
+	note(`第二段的回答：${lastReply(t)}`);
+	expect(t.replies.join("\n").includes(marker), "第二段的回答原样写出了口令");
+}
+
+// ---------------------------------------------------------------- 第二层
+
+interface ComputerView {
+	orbId?: string;
+	state?: string;
+	toolsReady: boolean;
+}
+const computer = () => rjson<ComputerView>("GET", "/api/v1/assistant/computer");
+
+/** 唤醒（必要时创建）助手的电脑，直到 ready 且工具定义已缓存。 */
+async function wakeComputer(): Promise<ComputerView> {
+	return waitFor(
+		"助手的电脑就绪",
+		async () => {
+			const r = await api("POST", "/api/v1/assistant/computer/wake");
+			if (r.status >= 300) {
+				note(
+					`POST /assistant/computer/wake → ${r.status} ${clip(oneLine(r.text), 160)}`,
+				);
+				return null;
+			}
+			const c = await computer();
+			return c.state === "ready" && c.toolsReady ? c : null;
+		},
+		900_000,
+		10_000,
+	);
+}
+
+/** 在新的助手对话里要求调用一个电脑工具，返回该工具的结果。 */
+async function onComputer(
+	tag: string,
+	tool: string,
+	prompt: string,
+	nudge: string,
+	ok: (text: string) => boolean,
+) {
+	const got = (t: Transcript) =>
+		t.results.some((r) => r.tool === tool && !r.isError && ok(r.text));
+	const { t } = await askUntil(tag, prompt, nudge, got);
+	for (const r of t.results.filter((r) => r.tool.startsWith("computer_")))
+		note(
+			`${r.tool} 结果（isError=${r.isError}）：${clip(oneLine(r.text), 240)}`,
+		);
+	check(got(t), `${tool} 的结果符合预期`);
+}
+
+/** L2-bash：computer_bash 执行 uname -a，结果含内核版本（docker orb 与宿主同一内核）。 */
+async function l2Bash() {
+	const t0 = Date.now();
+	const c = await wakeComputer();
+	note(
+		`助手的电脑 ${c.orbId}：${c.state}，工具已缓存（${sec(Date.now() - t0)}）`,
+	);
+	const orbs = await rjson<{ orbs: { id: string; computer?: boolean }[] }>(
+		"GET",
+		"/api/v1/orbs",
+	);
+	check(
+		orbs.orbs
+			.filter((o) => o.computer)
+			.map((o) => o.id)
+			.join(",") === c.orbId,
+		"全库只有这一台 computer=true 的 orb",
+	);
+	const kernel = sh("uname -r").stdout;
+	await onComputer(
+		"L2-bash",
+		"computer_bash",
+		"请调用 computer_bash 执行命令 uname -a（在你的电脑上），然后把输出原样告诉我。",
+		"请现在调用 computer_bash，command 填 uname -a。",
+		(s) => s.includes("Linux") && s.includes(kernel),
+	);
+}
+
+/** L2-eval：computer_eval 跑一段 Python。 */
+async function l2Eval() {
+	await onComputer(
+		"L2-eval",
+		"computer_eval",
+		"请调用 computer_eval 在你的电脑上跑一段 Python（language 用 py）：print(sum(range(1, 101)) * 3)，然后告诉我输出。",
+		"请现在调用 computer_eval，language 填 py，code 填 print(sum(range(1, 101)) * 3)。",
+		(s) => s.includes("15150"),
+	);
+}
+
+/** L2-freeze：暂停电脑后再调用，调用先唤醒再返回。 */
+async function l2Freeze() {
+	const before = await computer();
+	const p = await api("POST", "/api/v1/assistant/computer/pause");
+	check(p.status < 300, `POST /assistant/computer/pause → ${p.status}`);
+	const frozen = await waitFor(
+		"电脑冻结",
+		async () => {
+			const c = await computer();
+			return c.state === "frozen" ? c : null;
+		},
+		120_000,
+		2_000,
+	);
+	note(`电脑 ${frozen.orbId}：${frozen.state}`);
+	const nonce = `m19-freeze-${RUN}`;
+	await onComputer(
+		"L2-freeze",
+		"computer_bash",
+		`请调用 computer_bash 在你的电脑上执行 echo ${nonce}，然后把输出告诉我。`,
+		`请现在调用 computer_bash，command 填 echo ${nonce}。`,
+		(s) => s.includes(nonce),
+	);
+	const after = await computer();
+	note(`调用后电脑 ${after.orbId}：${after.state}`);
+	check(
+		after.orbId === before.orbId && after.state === "ready",
+		"同一台电脑被唤醒回 ready",
+	);
+	const woke = orynLog()
+		.split("\n")
+		.filter((l) => l.includes(before.orbId ?? "?") && /wake|唤醒/i.test(l));
+	note(
+		`orynd 日志里该 orb 的唤醒记录 ${woke.length} 条${woke.length ? `：${clip(oneLine(woke.at(-1) ?? ""), 200)}` : ""}`,
+	);
 }
 
 const CHECKS: Check[] = [
@@ -828,6 +1645,47 @@ const CHECKS: Check[] = [
 		title: "第一层：HTTP MCP 工具经 orynd 注入鉴权头",
 		run: l1Mcp,
 	},
+	{ id: "L1-search", title: "第一层：web_search 有结果", run: l1Search },
+	{
+		id: "L1-image",
+		title: "第一层：generate_image 后存进文件库",
+		run: l1Image,
+	},
+	{ id: "L3-project", title: "第三层：新建项目并在其中开线程", run: l3Project },
+	{
+		id: "L3-confirm",
+		title: "第三层：删除线程走确认卡，主人确认后执行",
+		needs: ["L3-project"],
+		run: l3Confirm,
+	},
+	{
+		id: "L3-space",
+		title: "第三层：新建 Space、向其协调对话发话并收到回报",
+		run: l3Space,
+	},
+	{
+		id: "MAIN-handoff",
+		title: "主线：交给助手的定时结果进主线",
+		run: mainHandoff,
+	},
+	{
+		id: "MAIN-episode",
+		title: "主线：分段、近况与 reset_boundary",
+		run: mainEpisode,
+	},
+	{ id: "L2-bash", title: "第二层：computer_bash 执行 uname -a", run: l2Bash },
+	{
+		id: "L2-eval",
+		title: "第二层：computer_eval 跑 Python",
+		needs: ["L2-bash"],
+		run: l2Eval,
+	},
+	{
+		id: "L2-freeze",
+		title: "第二层：暂停电脑后再调用先唤醒",
+		needs: ["L2-bash"],
+		run: l2Freeze,
+	},
 ];
 
 // ---------------------------------------------------------------- 收尾
@@ -837,7 +1695,8 @@ function killStragglers() {
 		if (!/^\d+$/.test(pid) || Number(pid) === process.pid) continue;
 		try {
 			const cwd = readlinkSync(`/proc/${pid}/cwd`);
-			if (cwd.startsWith(TMP) || cwd.startsWith(COORD_DIR))
+			const cmd = readFileSync(`/proc/${pid}/cmdline`, "utf8");
+			if ([cwd, cmd].some((s) => s.includes(TMP) || s.includes(COORD_DIR)))
 				process.kill(Number(pid), "SIGKILL");
 		} catch {
 			// 已退出或无权限
@@ -845,12 +1704,42 @@ function killStragglers() {
 	}
 }
 
-let cleaned = false;
-async function cleanup() {
-	if (cleaned) return;
-	cleaned = true;
+let cleaning: Promise<void> | undefined;
+/** 收尾只做一次；再次 Ctrl-C 时等同一次收尾做完。 */
+const cleanup = () => {
+	cleaning ??= doCleanup();
+	return cleaning;
+};
+async function doCleanup() {
 	console.log("M19 收尾");
 	mcp?.server.stop(true);
+	// orb：经 REST 删除（provider 还在）；删不掉的按镜像 docker rm -f
+	if (token) {
+		const list = await api("GET", "/api/v1/orbs").catch(() => undefined);
+		const ids =
+			isRecord(list?.json) && Array.isArray(list.json.orbs)
+				? list.json.orbs
+						.filter((o) => isRecord(o) && o.coordinator !== true)
+						.map((o) => String((o as Record<string, unknown>).id))
+				: [];
+		for (const id of ids) {
+			const r = await api("DELETE", `/api/v1/orbs/${id}`).catch(
+				() => undefined,
+			);
+			note(`DELETE orb ${id} → ${r?.status ?? "失败"}`);
+		}
+		if (ids.length)
+			await waitFor(
+				"orb 容器删除",
+				() => sh(`docker ps -aq --filter ancestor=${IMAGE}`).stdout === "",
+				120_000,
+				2_000,
+			).catch(() => note("部分 orb 容器未按时删除，改为 docker rm -f"));
+	}
+	if (imageBuilt)
+		sh(
+			`docker ps -aq --filter ancestor=${IMAGE} | xargs -r docker rm -f >/dev/null 2>&1`,
+		);
 	for (const b of [...bgs].reverse()) {
 		if (b.proc.exitCode === null && b.proc.signalCode === null) {
 			b.proc.kill("SIGTERM");
@@ -862,6 +1751,7 @@ async function cleanup() {
 		}
 	}
 	killStragglers();
+	if (imageBuilt) sh(`docker rmi ${IMAGE} >/dev/null 2>&1`);
 	if (!existsSync(TMP)) return;
 	if (KEEP) console.log(`保留 ${TMP}（日志在 logs/）与 ${COORD_DIR}`);
 	else {
