@@ -121,6 +121,10 @@ type Service struct {
 	recheck   map[string]bool
 	questions map[string]string
 	wake      chan struct{}
+	// confirmers 是确认卡动作 → 主人批准后的执行函数（onConfirm 在 New 里登记，之后只读）。
+	confirmers map[string]confirmExec
+	// sentConfirm（仅测试）在一条确认结果投递成功之后调用。
+	sentConfirm func(threadID, text string)
 
 	// afterReport（仅测试）在一次回报处理完之后调用。
 	afterReport func(threadID string)
@@ -142,7 +146,7 @@ func New(cfg Config, st *store.Store, th *threads.Service, o *orbs.Service, host
 	s := &Service{
 		cfg: cfg, st: st, th: th, orbs: o, host: host, sched: sched,
 		lim: newLimiter(), questions: map[string]string{}, armed: map[string]armedReport{}, recheck: map[string]bool{},
-		wake: make(chan struct{}, 1),
+		wake: make(chan struct{}, 1), confirmers: map[string]confirmExec{},
 	}
 	if o != nil {
 		s.registerOrbMethods(o.HandleRequest)
@@ -155,11 +159,16 @@ func (s *Service) nowMs() int64 { return s.cfg.Now().UnixMilli() }
 // Host 返回可用性检查（API 的 GET coordinator 用）。
 func (s *Service) Host() HostChecker { return s.host }
 
-// Run 处理线程回报，并每天裁剪一次 90 天前的审计记录，直到 ctx 结束。
+// Run 处理线程回报，并每天裁剪一次 90 天前的审计记录、每小时让超过 24 小时未答的确认卡过期，直到 ctx 结束。
+// 启动时先把仍待答的确认卡放回各自的对话（线程服务的待答请求只在内存里）。
 func (s *Service) Run(ctx context.Context) {
+	s.expireConfirmations(ctx)
+	s.restoreConfirmations(ctx)
 	s.trimActions(ctx)
 	trim := time.NewTicker(24 * time.Hour)
 	defer trim.Stop()
+	sweep := time.NewTicker(confirmSweepEvery)
+	defer sweep.Stop()
 	for {
 		s.processReports(ctx)
 		select {
@@ -168,6 +177,8 @@ func (s *Service) Run(ctx context.Context) {
 		case <-s.wake:
 		case <-trim.C:
 			s.trimActions(ctx)
+		case <-sweep.C:
+			s.expireConfirmations(ctx)
 		}
 	}
 }

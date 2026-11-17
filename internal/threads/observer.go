@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"maps"
 	"slices"
 
 	"github.com/Lynricsy/Oryn/internal/orbs"
@@ -110,7 +111,8 @@ func (s *Service) Publish(ctx context.Context, threadID string) {
 	t.mu.Unlock()
 }
 
-// resetLiveLocked 丢弃实时缓冲，并对随之消失的待答请求与计划提案（含 gap 后尚未核对的）逐个发 InputResolved。调用方持有 t.mu。
+// resetLiveLocked 丢弃实时缓冲，并对随之消失的待答请求与计划提案（含 gap 后尚未核对的）逐个发 InputResolved。
+// 控制面发起的待答请求（hostUI）不随之消失：立即放回实时缓冲，不发 InputResolved。调用方持有 t.mu。
 func (s *Service) resetLiveLocked(t *thread) {
 	ids := t.live.PendingUIIDs()
 	if t.live.PlanProposal != nil {
@@ -123,28 +125,48 @@ func (s *Service) resetLiveLocked(t *thread) {
 		}
 	}
 	t.gapUI = nil
+	s.reapplyHostUILocked(t)
 	o := s.observer()
 	for _, id := range ids {
-		o.InputResolved(t.id, id)
+		if _, ok := t.hostUI[id]; !ok {
+			o.InputResolved(t.id, id)
+		}
 	}
 }
 
 // suspendLiveLocked 是 agent.gap 时的实时缓冲丢弃：仍待答的请求只记入 gapUI、不发 InputResolved——同一进程会在新流上
-// 重放它们，提前解决会让通知被标为已处理、重放后又生成一条。调用方持有 t.mu。
+// 重放它们，提前解决会让通知被标为已处理、重放后又生成一条。hostUI 不经 agent，立即放回、不记入 gapUI。调用方持有 t.mu。
 func (s *Service) suspendLiveLocked(t *thread) {
 	ids := t.live.PendingUIIDs()
 	if t.live.PlanProposal != nil {
 		ids = append(ids, PlanRequestID)
 	}
 	t.live.Reset()
-	if len(ids) == 0 {
-		return
-	}
-	if t.gapUI == nil {
-		t.gapUI = make(map[string]bool, len(ids))
-	}
+	s.reapplyHostUILocked(t)
 	for _, id := range ids {
+		if _, ok := t.hostUI[id]; ok {
+			continue
+		}
+		if t.gapUI == nil {
+			t.gapUI = make(map[string]bool, len(ids))
+		}
 		t.gapUI[id] = true
+	}
+}
+
+// reapplyHostUILocked 把 hostUI 按 id 顺序放回实时缓冲（Reset 之后）。调用方持有 t.mu。
+func (s *Service) reapplyHostUILocked(t *thread) {
+	for _, id := range slices.Sorted(maps.Keys(t.hostUI)) {
+		t.live.ApplyFrame(t.hostUI[id])
+	}
+}
+
+// broadcastLiveResetLocked 向客户端广播 live.reset，随后重发 hostUI 的请求帧：客户端在 live.reset 时清空待答请求，
+// 而 hostUI 在服务端已放回。调用方持有 t.mu。
+func (s *Service) broadcastLiveResetLocked(t *thread) {
+	s.out().LiveReset(t.id)
+	for _, id := range slices.Sorted(maps.Keys(t.hostUI)) {
+		s.out().Frame(t.id, t.hostUI[id])
 	}
 }
 

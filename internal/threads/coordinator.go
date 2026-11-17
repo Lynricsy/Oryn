@@ -86,6 +86,9 @@ type Coordinator interface {
 	AgentProfile(ctx context.Context, threadID string) (AgentProfile, error)
 	// HostToolCall 执行一次宿主工具调用；ctx 在 omp 取消调用或超时时结束。
 	HostToolCall(ctx context.Context, c HostToolCall) HostToolResult
+	// UIAnswered 收到主人对控制面发起的待答请求（RequestUI）的应答；response 是 extension_ui_response 帧。
+	// 在后台调用，每个请求至多一次。
+	UIAnswered(ctx context.Context, threadID, requestID string, response json.RawMessage)
 }
 
 // SetCoordinator 设置协调服务；须在服务对外可用之前调用。

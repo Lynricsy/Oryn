@@ -3806,7 +3806,18 @@
 		"archive": "归档此对话",
 		"conversations": "对话",
 		"createFailed": "没能创建助手对话",
-		"ownerMemoryExclude": "不进助手记忆"
+		"ownerMemoryExclude": "不进助手记忆",
+		"confirm": {
+			"delete_thread": "删除线程「{{targetLabel}}」？",
+			"delete_project": "删除项目「{{targetLabel}}」？",
+			"delete_space": "删除 Space「{{targetLabel}}」？",
+			"delete_trigger": "删除触发规则「{{targetLabel}}」？",
+			"delete_orb": "删除 orb「{{targetLabel}}」？",
+			"delete_schedule": "删除定时「{{targetLabel}}」？",
+			"share_thread": "为「{{targetLabel}}」创建公开分享链接？",
+			"share_portal": "为「{{targetLabel}}」开启公开的 Portal 预览？",
+			"publish_artifact": "对外发布 artifact「{{targetLabel}}」？"
+		}
 	},
 	"library": {
 		"title": "文件库",
@@ -4099,6 +4110,12 @@
 		"github": {
 			"event": "GitHub 事件 · {{repo}}#{{number}}",
 			"trigger": "GitHub 触发「{{name}}」· {{repo}}#{{number}}"
+		},
+		"confirmation": {
+			"approved": "已确认并执行 · {{action}} {{target}}",
+			"rejected": "你已拒绝 · {{action}} {{target}}",
+			"failed": "已确认但执行失败（{{error}}）· {{action}} {{target}}",
+			"expired": "确认已过期 · {{action}} {{target}}"
 		}
 	},
 	"sections": {

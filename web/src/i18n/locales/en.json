@@ -3806,7 +3806,18 @@
 		"archive": "Archive this conversation",
 		"conversations": "Conversations",
 		"createFailed": "Couldn't start an assistant conversation",
-		"ownerMemoryExclude": "Keep out of assistant memory"
+		"ownerMemoryExclude": "Keep out of assistant memory",
+		"confirm": {
+			"delete_thread": "Delete thread “{{targetLabel}}”?",
+			"delete_project": "Delete project “{{targetLabel}}”?",
+			"delete_space": "Delete Space “{{targetLabel}}”?",
+			"delete_trigger": "Delete trigger rule “{{targetLabel}}”?",
+			"delete_orb": "Delete orb “{{targetLabel}}”?",
+			"delete_schedule": "Delete schedule “{{targetLabel}}”?",
+			"share_thread": "Create a public share link for “{{targetLabel}}”?",
+			"share_portal": "Open a public Portal preview for “{{targetLabel}}”?",
+			"publish_artifact": "Publish artifact “{{targetLabel}}” for people outside Oryn?"
+		}
 	},
 	"library": {
 		"title": "File library",
@@ -4099,6 +4110,12 @@
 		"github": {
 			"event": "GitHub event · {{repo}}#{{number}}",
 			"trigger": "GitHub trigger “{{name}}” · {{repo}}#{{number}}"
+		},
+		"confirmation": {
+			"approved": "Confirmed and done · {{action}} {{target}}",
+			"rejected": "Declined by you · {{action}} {{target}}",
+			"failed": "Confirmed but failed ({{error}}) · {{action}} {{target}}",
+			"expired": "Confirmation expired · {{action}} {{target}}"
 		}
 	},
 	"sections": {

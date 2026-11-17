@@ -117,6 +117,13 @@ type fakeCoord struct {
 	block bool
 	done  chan struct{}
 	res   HostToolResult
+	// answers 收到 UIAnswered 的请求 id 与应答帧（nil = 丢弃）。
+	answers chan uiAnswer
+}
+
+type uiAnswer struct {
+	threadID, id string
+	frame        json.RawMessage
 }
 
 func (c *fakeCoord) EnsureOrb(context.Context) (string, error) {
@@ -134,6 +141,12 @@ func (c *fakeCoord) HostToolCall(ctx context.Context, call HostToolCall) HostToo
 		return HostToolResult{Text: "late"}
 	}
 	return c.res
+}
+
+func (c *fakeCoord) UIAnswered(_ context.Context, threadID, id string, frame json.RawMessage) {
+	if c.answers != nil {
+		c.answers <- uiAnswer{threadID, id, frame}
+	}
 }
 
 func newFakeCoord() *fakeCoord {

@@ -190,3 +190,40 @@ describe("UiRequestCard：desktop_ask_user", () => {
 		expect(screen.queryByTestId("desktop-ask-card")).toBeNull();
 	});
 });
+
+describe("UiRequestCard：助手的确认卡（M19）", () => {
+	const base = {
+		type: "extension_ui_request",
+		method: "confirm",
+		title: 'Delete thread "Fix login" (thr_1)?',
+		message: "The thread and its orb will be deleted.",
+	} as const;
+
+	it("带 oryn.action 时标题用语言包文案，作答照常回传", () => {
+		const req = {
+			...base,
+			id: "cfm_1",
+			oryn: { action: "delete_thread", targetLabel: "Fix login" },
+		};
+		const { container } = card(req);
+		expect(container.querySelector("h3")?.textContent).toBe(
+			"删除线程「Fix login」？",
+		);
+		fireEvent.click(screen.getByRole("button", { name: "是" }));
+		expect(answerUi).toHaveBeenCalledWith("T-ui", {
+			type: "extension_ui_response",
+			id: "cfm_1",
+			confirmed: true,
+		});
+	});
+
+	it("没有对应文案的动作回落到帧的 title", () => {
+		const req = {
+			...base,
+			id: "cfm_2",
+			oryn: { action: "launch_rocket", targetLabel: "x" },
+		};
+		const { container } = card(req);
+		expect(container.querySelector("h3")?.textContent).toBe(base.title);
+	});
+});
