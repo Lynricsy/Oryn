@@ -159,6 +159,9 @@ func (s *Service) AgentProfile(ctx context.Context, threadID string) (threads.Ag
 		Tools:        tools,
 		Web:          space == nil,
 	}
+	if space == nil {
+		prof.MCPToken = s.cfg.MCPToken
+	}
 	// M17：助手记忆运行时，全局助手的系统提示词末尾接记忆段与记忆工具用法；记忆段生成失败不阻止启动（只是这次没有记忆）
 	if memOn {
 		brief, err := s.mem.Brief(ctx, threadID)

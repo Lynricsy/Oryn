@@ -36,8 +36,10 @@ func (f *fakeMachines) ScheduleOmpApply(string) {}
 func (f *fakeMachines) CreateComputer(context.Context, string, string) (apigen.Orb, error) {
 	return apigen.Orb{}, http.ErrNotSupported
 }
-func (f *fakeMachines) Computer(context.Context) (apigen.Orb, bool, error) { return apigen.Orb{}, false, nil }
-func (f *fakeMachines) TouchAgent(context.Context, string)                  {}
+func (f *fakeMachines) Computer(context.Context) (apigen.Orb, bool, error) {
+	return apigen.Orb{}, false, nil
+}
+func (f *fakeMachines) TouchAgent(context.Context, string) {}
 func (f *fakeMachines) ComputerCall(context.Context, string, string, any, any) error {
 	return http.ErrNotSupported
 }

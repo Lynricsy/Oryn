@@ -124,12 +124,16 @@ func (r *Runtime) coordinatorAgentSpec(p apigen.LinkCtlAgentStartParams, dir str
 		"ORYN_THREAD_ID":       p.ThreadID,
 	}
 	// 出站（M19，只给全局助手）：omp 的全局 fetch 经 PI_PROXY 走 orynd 的正向代理（https 用 CONNECT），回环与内网地址
-	// 由 omp 直连（沙箱里只有回环 7811 连得通）；是否放行、放行哪些目标由控制面的出站策略决定。MCP 服务器的地址前缀
-	// 也只给全局助手（mcp.json 里写的是 ${ORYN_MCP_BASE}/mcp/m<i>）。Space 协调者两者都没有：连不到公网、没有 MCP（D10）。
+	// 由 omp 直连（沙箱里只有回环 7811 连得通）；是否放行、放行哪些目标由控制面的出站策略决定。MCP 的地址前缀与凭据
+	// 也只给全局助手（mcp.json 里是 ${ORYN_MCP_BASE}/mcp/m<i> 与 X-Oryn-MCP-Token: ${ORYN_MCP_TOKEN}，出站代理核对凭据）。
+	// Space 协调者都没有：连不到公网、用不了 MCP（D10）。
 	if web && r.egressLn != nil {
 		base := "http://" + r.egressLn.Addr().String()
 		env["PI_PROXY"] = base
 		env[agentcfg.MCPBaseEnv] = base
+		if p.McpToken != nil && *p.McpToken != "" {
+			env[agentcfg.MCPTokenEnv] = *p.McpToken
+		}
 	}
 	return args, cwd, env, nil
 }

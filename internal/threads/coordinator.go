@@ -85,9 +85,10 @@ type AgentProfile struct {
 	// Setup 非 nil 时，每次 agent.start 之前先以它对协调宿主执行一次 setup.run（M13 4.5）：还原受管的 omp 文件
 	// （models.yml、config.yml），助手在上一次运行里用 write 改过的会被覆盖回来。
 	Setup *apigen.LinkCtlSetupRunParams
-	// Web 为真时 agent.start 带 web（M19 第一层：内置联网与生图、PI_PROXY、MCP 地址前缀）；只给全局助手，
-	// Space 协调者为假（D10）。
-	Web bool
+	// Web 为真时 agent.start 带 web（M19 第一层：内置联网与生图、PI_PROXY、MCP 地址前缀）与 MCPToken（/mcp/ 路由的
+	// 凭据）；只给全局助手，Space 协调者两者都没有（D10）。
+	Web      bool
+	MCPToken string
 }
 
 // Coordinator 由 internal/coord 实现。

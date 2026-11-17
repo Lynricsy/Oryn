@@ -124,3 +124,20 @@ func TestAssistantMCPServers(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, got, "解析失败时为空")
 }
+
+// D10：第一层（web）与 MCP 凭据只进全局助手的 AgentProfile；Space 协调者两者都没有。
+func TestAgentProfileWebAndMCPTokenOnlyForAssistant(t *testing.T) {
+	e := newEnv(t, true)
+	e.c.cfg.MCPToken = "mcp-secret-token"
+	asst, err := e.c.AgentProfile(e.ctx, e.assistant().ID)
+	require.NoError(t, err)
+	assert.True(t, asst.Web)
+	assert.Equal(t, "mcp-secret-token", asst.MCPToken)
+	assert.NotContains(t, asst.SystemPrompt, "mcp-secret-token", "凭据不进系统提示词")
+
+	chat := e.spaceChat(e.space("Alpha", ""))
+	sp, err := e.c.AgentProfile(e.ctx, chat.ID)
+	require.NoError(t, err)
+	assert.False(t, sp.Web)
+	assert.Empty(t, sp.MCPToken)
+}

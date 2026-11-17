@@ -33,6 +33,9 @@ type MCPRoute struct {
 	Headers map[string]string
 }
 
+// MCPTokenHeader 是 /mcp/ 路由的凭据请求头（M19 D10）：值须等于 Policy.MCPToken，只有全局助手的 agent 持有。
+const MCPTokenHeader = "X-Oryn-MCP-Token"
+
 // mcpRedactMin 是 MCP 凭据值参与响应脱敏的最短长度：更短的值几乎必然误伤正文，也不算有效凭据。
 const mcpRedactMin = 8
 

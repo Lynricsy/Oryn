@@ -250,7 +250,7 @@ func (s *Service) confirmShareThread(ctx context.Context, _ db.AssistantConfirma
 	if errors.As(err, &se) {
 		n := len(se.Scan.Findings)
 		return fmt.Sprintf("The secret scan found %d secret-like string(s) in the transcript, so nothing was shared. "+
-			"Tell the owner; share again with acknowledgeFindings only if the owner says so.", n),
+				"Tell the owner; share again with acknowledgeFindings only if the owner says so.", n),
 			errf(CodeSecretsFound, "%d secret-like string(s) found", n)
 	}
 	if err != nil {
@@ -412,7 +412,9 @@ func (s *Service) confirmSharePortal(ctx context.Context, _ db.AssistantConfirma
 
 func (s *Service) toolUnsharePortal(ctx context.Context, c toolCtx) (v any, err error) {
 	var a portalArgs
-	defer func() { s.audit(ctx, c.Kind, c.ThreadID, c.OwnerTurn, c.Name, a.ThreadID, "", fmt.Sprintf("port %d", a.Port), err) }()
+	defer func() {
+		s.audit(ctx, c.Kind, c.ThreadID, c.OwnerTurn, c.Name, a.ThreadID, "", fmt.Sprintf("port %d", a.Port), err)
+	}()
 	if err = decodeArgs(c.Args, &a); err != nil {
 		return nil, err
 	}
@@ -521,7 +523,7 @@ func (s *Service) confirmPublishArtifact(ctx context.Context, _ db.AssistantConf
 	if errors.As(err, &se) {
 		n := len(se.Scan.Findings)
 		return fmt.Sprintf("The secret scan found %d secret-like string(s) in this version, so it was not published. "+
-			"Tell the owner; publish again with acknowledgeFindings only if the owner says so.", n),
+				"Tell the owner; publish again with acknowledgeFindings only if the owner says so.", n),
 			errf(CodeSecretsFound, "%d secret-like string(s) found", n)
 	}
 	if err != nil {

@@ -6105,6 +6105,10 @@ type LinkCtlAgentStartParams struct {
 	// InitFrames `ready` 并完成 `negotiate_protocol` 后依次发送的 omp 命令帧
 	InitFrames []OmpFrame `json:"initFrames"`
 
+	// McpToken M19：协调宿主 /mcp/ 路由的凭据，只在 `web` 为真时生效：orbd 以环境变量 `ORYN_MCP_TOKEN` 交给该 agent，mcp.json 的
+	// `X-Oryn-MCP-Token` 请求头引用它，出站代理逐个请求核对（D10：Space 协调者没有它，直接请求 /mcp/ 一律 403）。只有协调宿主接受。
+	McpToken *string `json:"mcpToken,omitempty"`
+
 	// Memory M16：本次 agent 启用 Hindsight 记忆（字段缺省 = 不启用）。orbd 写 `--config` 覆盖文件（`memory.backend: hindsight`、
 	// `hindsight.globalScope: true`），注入 `HINDSIGHT_API_URL=http://127.0.0.1:7811/memory/t/<threadId>`、`HINDSIGHT_BANK_ID=oryn`、
 	// `HINDSIGHT_SCOPING=per-project-tagged`、`NO_PROXY`；有 `project` 时注入 `ORYN_HINDSIGHT_PROJECT`，`autoRetain` 为假时注入

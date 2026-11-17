@@ -12,9 +12,12 @@ import (
 // MCPFile 是 omp-home 里的 MCP 服务器配置文件。
 const MCPFile = "mcp.json"
 
-// MCPBaseEnv 是协调宿主 mcp.json 里服务器地址的前缀变量（M19，D10）：只有全局助手的 agent 环境里有它
-// （值为出站代理地址 http://127.0.0.1:<port>），Space 协调者没有，因而连不上 MCP。
-const MCPBaseEnv = "ORYN_MCP_BASE"
+// MCPBaseEnv / MCPTokenEnv 是协调宿主 mcp.json 里服务器地址前缀与凭据请求头的变量（M19，D10）：只有全局助手的 agent
+// 环境里有它们（地址为出站代理 http://127.0.0.1:<port>，凭据由出站代理逐个请求核对），Space 协调者没有。
+const (
+	MCPBaseEnv  = "ORYN_MCP_BASE"
+	MCPTokenEnv = "ORYN_MCP_TOKEN"
+)
 
 // MCP 传输方式。
 const (

@@ -273,8 +273,8 @@ orynd 以 root 运行时，沙箱降权到一个只属于这个 Oryn 实例的�
 
 | 层 | 内容 |
 |---|---|
-| 启动开关 | omp 以 `--no-tools --tools <内置工具> --no-skills --no-extensions --no-rules --no-context-files --no-lsp` 启动。Space 协调者的内置工具只有 `read,write`；全局助手的是 `read,write,web_search,generate_image`（`read` 也能读 URL）。两者各带一份覆盖层：强制关闭 autolearn、memory、checkpoint、goal、plan、lsp、项目 MCP、marketplace 自动更新、启动检查更新、direnv；`generate_image` 只在全局助手的覆盖层（`overlay-web.yml`）里打开，生成的图片写进 `~/tmp/`。环境变量从零构造，只有 `HOME PATH LANG TMPDIR PI_RPC_EMIT_TITLE PI_NOTIFICATIONS OTEL_SDK_DISABLED PI_FILE_LOCK_BACKEND ORYN_THREAD_ID`（`PI_FILE_LOCK_BACKEND=sidecar` 让 omp 的原生文件锁改用 home 里的旁路文件加 OFD 锁，不再用 abstract unix socket）；全局助手另有 `PI_PROXY` 与 `ORYN_MCP_BASE`，两者都是 `http://127.0.0.1:<egress_port>` |
-| 文件 | 下发 `models.yml` 与 `config.yml`（`models.yml` 里只有占位密钥），有助手可用的 MCP 服务器时再加一份 `mcp.json`（只有类型与代理地址，不含任何请求头）；每次协调 agent 启动前重写一遍（助手用 `write` 改过的会被还原）。全局助手文件库同步到 `~/library/{shared,threads}/`（只读）。`write` 能写 HOME 里任何地方，系统提示要求助手只写 `~/library/out/`；能存进文件库的只有 `~/library/out/` 与 `~/tmp/` 下的文件；cwd 是空目录 |
+| 启动开关 | omp 以 `--no-tools --tools <内置工具> --no-skills --no-extensions --no-rules --no-context-files --no-lsp` 启动。Space 协调者的内置工具只有 `read,write`；全局助手的是 `read,write,web_search,generate_image`（`read` 也能读 URL）。两者各带一份覆盖层：强制关闭 autolearn、memory、checkpoint、goal、plan、lsp、项目 MCP、marketplace 自动更新、启动检查更新、direnv；`generate_image` 只在全局助手的覆盖层（`overlay-web.yml`）里打开，生成的图片写进 `~/tmp/`。环境变量从零构造，只有 `HOME PATH LANG TMPDIR PI_RPC_EMIT_TITLE PI_NOTIFICATIONS OTEL_SDK_DISABLED PI_FILE_LOCK_BACKEND ORYN_THREAD_ID`（`PI_FILE_LOCK_BACKEND=sidecar` 让 omp 的原生文件锁改用 home 里的旁路文件加 OFD 锁，不再用 abstract unix socket）；全局助手另有 `PI_PROXY` 与 `ORYN_MCP_BASE`（都是 `http://127.0.0.1:<egress_port>`），以及 MCP 路由凭据 `ORYN_MCP_TOKEN` |
+| 文件 | 下发 `models.yml` 与 `config.yml`（`models.yml` 里只有占位密钥），有助手可用的 MCP 服务器时再加一份 `mcp.json`（只有类型、代理地址与引用 `${ORYN_MCP_TOKEN}` 的凭据头模板，不含上游的任何请求头）；每次协调 agent 启动前重写一遍（助手用 `write` 改过的会被还原）。全局助手文件库同步到 `~/library/{shared,threads}/`（只读）。`write` 能写 HOME 里任何地方，系统提示要求助手只写 `~/library/out/`；能存进文件库的只有 `~/library/out/` 与 `~/tmp/` 下的文件；cwd 是空目录 |
 | 控制面 | 协调线程的 RPC 命令走白名单；`bash`、`eval`、终端、设置写入等命令到不了 omp |
 | Landlock | 只有本 orb 的 `<dir>/homes/<orb id>` 可写（不可执行）；可执行的只有 omp 本体与它的 ELF 解释器；只读可见 `/usr/lib`、`/lib*`、`/usr/share/zoneinfo`、`/proc`、`/sys/devices/system/cpu`、`/sys/fs/cgroup` 与少量 `/etc` 文件（清单见 `docs/protocol.md`「M9」）；ABI ≥ 4 时 TCP 只能 connect `egress_port`、不能 bind 任何端口（代理端口由子进程在施加沙箱之前监听好再交给 orbd）；ABI ≥ 6 时信号不出沙箱 |
 | seccomp | 非本机架构与 x32 调用直接杀进程；`clone3` 回 `ENOSYS`；`socket` 只放行 TCP（`AF_INET` / `AF_INET6` 的 `SOCK_STREAM`），`AF_UNIX` 一律拒绝，netlink、UDP、MPTCP 等也拒绝；`socketpair` 只放行 `AF_UNIX` + `SOCK_STREAM`（Bun 启动时要建一对，拒绝会直接 abort；这对 socket 生来已连接，connect / sendto 别处都失败），datagram 与 seqpacket 拒绝；`prlimit64`、`sched_setaffinity`、`sched_setscheduler`、`sched_setparam`、`sched_setattr` 只能作用于自身（pid 为 0），`setpriority` 只能 `PRIO_PROCESS` + 自身，`ioprio_set` 只能 `IOPRIO_WHO_PROCESS` + 自身（同一用户时改不了 orynd 等进程的资源上限与调度）；带 `CLONE_NEW*` 的 `clone`、`unshare` / `setns` / 挂载族、`ptrace` 与跨进程内存访问、按路径的 `truncate`、`bpf`、`io_uring`、`keyctl`、内核模块、SysV IPC 等一律拒绝 |
@@ -301,7 +301,7 @@ root 或 Docker 部署：`coordinator.dir` 放在降权账号进得去的地方�
 
 ### 全局助手联网与 MCP（M19）
 
-全局助手的对话（含主线）启动 agent 时，orynd 在 `agent.start` 里带 `web`。只有带了它，协调宿主才给这个 omp 打开 `web_search` 与 `generate_image`、用 `overlay-web.yml`，并在环境里设 `PI_PROXY` 与 `ORYN_MCP_BASE`。Space 协调者的 agent 不带 `web`：内置工具仍只有 `read` / `write`，生图关闭，环境里没有这两个变量，所以连不到公网，也没有 MCP 工具，与 M19 之前相同。
+全局助手的对话（含主线）启动 agent 时，orynd 在 `agent.start` 里带 `web` 与 `mcpToken`。只有带了 `web`，协调宿主才给这个 omp 打开 `web_search` 与 `generate_image`、用 `overlay-web.yml`，并在环境里设 `PI_PROXY`、`ORYN_MCP_BASE` 与 `ORYN_MCP_TOKEN`（取 `mcpToken`）。Space 协调者的 agent 两者都不带：内置工具仍只有 `read` / `write`，生图关闭，环境里没有这三个变量，所以不联网，也没有 MCP 工具，与 M19 之前相同。
 
 **出站路径**：沙箱里仍然只能连回环上的 `egress_port`。omp 的全局 `fetch` 按 `PI_PROXY` 把请求交给这个端口：https 目标发 `CONNECT host:port` 建隧道，http 目标发代理形式的请求（`GET http://host/…`）。请求经 link 回到 orynd 的出站代理，由 orynd 解析域名、连接上游。代理不解密 TLS：https 的证书由沙箱里的 omp 用 Bun 自带的根证书校验。`web_search`（grounded 搜索）与 `generate_image` 调用的模型按全局 omp 配置的模型角色选择，模型请求照常经模型路由注入密钥。
 
@@ -322,7 +322,11 @@ root 或 Docker 部署：`coordinator.dir` 放在降权账号进得去的地方�
 - 可用：传输是 HTTP 或 SSE、请求头能由 orynd 注入的服务器。头里的 `${VAR}` 与 `${VAR:-默认}` 按 env 模式的密钥展开。
 - 不可用，并在设置页标出原因：stdio（本地进程型）、需要 OAuth（`auth` / `oauth` 字段）、头的值由命令生成（以 `!` 开头）、头引用了不存在的变量、地址无效。
 
-可用且没被关掉的服务器按名字排序后依次得到路由键 `m0`、`m1`……。下发到沙箱的 `mcp.json` 每项只有 `{"type": "http" | "sse", "url": "${ORYN_MCP_BASE}/mcp/m<i>"}`，不含任何头；omp 展开地址里的环境变量，所以只有带 `ORYN_MCP_BASE` 的全局助手连得上（Space 协调者没有这个变量，地址保持字面量，连不上）。出站代理收到 `/mcp/m<i>/…` 后转发到原地址：先丢掉入站的 `Authorization`，再注入配置的头；名字含 auth、token、key、secret、cookie 的头，其值若出现在响应里会被抹掉。MCP 路由不做公网判定（主人配置的地址可以在内网），也不受联网总开关约束。全局 `mcp.json` 变化后，助手对话在静止后重启并重新下发。
+可用且没被关掉的服务器按名字排序后依次得到路由键 `m0`、`m1`……。下发到沙箱的 `mcp.json` 每项只有 `{"type": "http" | "sse", "url": "${ORYN_MCP_BASE}/mcp/m<i>", "headers": {"X-Oryn-MCP-Token": "${ORYN_MCP_TOKEN}"}}`，不含上游的任何头；omp 展开地址与头里的环境变量。
+
+**MCP 路由凭据**：orynd 每次启动随机生成一个凭据，放进协调宿主的出站策略，并只经 `agent.start` 的 `mcpToken` 交给全局助手的 agent（orbd 以 `ORYN_MCP_TOKEN` 注入）。出站代理对 `/mcp/` 下的每个请求（任何方法、任何子路径，含 SSE 的 GET）先核对请求头 `X-Oryn-MCP-Token`（常量时间比较）：头缺失、值不对，或策略里没有凭据，一律 403，并且这一步在路由查找之前，不暴露某个路由键是否存在。核对通过后去掉该头再转发。所以 Space 协调者既不会自动连上 MCP（没有 `ORYN_MCP_BASE`），直接请求 `/mcp/m<i>` 也会被拒（没有凭据）。协调宿主随 orynd 一起重启，凭据随之更换。
+
+出站代理把请求转发到原地址：先丢掉入站的 `Authorization`，再注入配置的头；名字含 auth、token、key、secret、cookie 的头，其值若出现在响应里会被抹掉。MCP 路由不做公网判定（主人配置的地址可以在内网），也不受联网总开关约束。全局 `mcp.json` 变化后，助手对话在静止后重启并重新下发。
 
 ### 助手的电脑（M19）
 
@@ -332,10 +336,11 @@ root 或 Docker 部署：`coordinator.dir` 放在降权账号进得去的地方�
 
 ### 残余风险
 
-- 出站策略按协调宿主（一台协调 orb）生效，不按 agent 区分：Space 协调者与全局助手的 omp 连的是同一个代理端口。Space 协调者连不到公网、没有 MCP，靠的是它的 omp 没有 `PI_PROXY` 与 `ORYN_MCP_BASE`、内置工具只有 `read` / `write`，而不是代理按调用方拒绝。
+- 联网（CONNECT 与代理形式的转发）按协调宿主（一台协调 orb）只有一份策略，不按 agent 区分：Space 协调者与全局助手的 omp 连的是同一个代理端口。Space 协调者不联网，靠的是它的 omp 没有 `PI_PROXY`、内置工具里没有 `web_search` 与生图，而不是代理按调用方拒绝。MCP 不同：出站代理对 `/mcp/` 的每个请求核对只有全局助手持有的凭据（见上文「MCP 路由凭据」）。
+- 协调宿主里的各个 agent（全局助手与 Space 协调者）运行在同一个沙箱里：同一个 uid、共享 HOME，`/proc` 可读。同宿主的 agent 能读到别的 agent 进程的环境变量（含 `ORYN_MCP_TOKEN`）和 HOME 里的文件，这是协调宿主既有隔离边界的限制：沙箱隔开的是协调宿主与宿主机其它部分，不是同一宿主里的各个协调 agent。
 - 全局助手会读网页、搜索结果、MCP 返回与工作线程的输出。这些内容都以不可信数据交给它，但注入的指令仍可能诱导它做事：给工作线程或 Runner 线程发消息、读写线程文件、在自己的电脑上执行命令、经联网把读到的内容发出去。删除与对外公开要主人点确认卡；新建、修改、归档、发消息等写类宿主工具直接执行并写审计，可在自动化操作记录里查看；联网、MCP、`computer_*` 以及 artifact 的创建与修改不写审计，只在对话转录里留下工具卡。
 - 没有网络命名空间时，沙箱内进程能向**任意地址**的 `egress_port` 端口发起 TCP 连接（Landlock 只按端口管）。
-- `/proc` 只读可见，其它进程的命令行可读（环境与内存读不到）。
+- `/proc` 只读可见，沙箱外其它进程的命令行可读（环境与内存读不到；同一沙箱里的协调 agent 之间见本节第二条）。
 - 不防资源耗尽（内存、磁盘、CPU）。
 - root 部署、没有 PID 命名空间且 ABI < 6 时，沙箱能给同为降权账号的其它协调宿主进程发信号（同一所有者，不出信任域）。
 - 没有网络命名空间时，放行的 stream `socketpair` 的一端可以 `bind` 到宿主上一个尚未被占用的 abstract unix 名字（seccomp 看不到地址）：只能抢占名字，不能借它连接或收发任何东西（这对 socket 已互相连接，不能 `listen`）。

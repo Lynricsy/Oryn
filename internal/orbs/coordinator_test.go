@@ -184,6 +184,7 @@ func TestPlanCoordinatorMCPAndWeb(t *testing.T) {
 	}}`
 	d := &DefaultSetup{
 		Store: st, Vault: coordVault{}, CoordinatorEgressAddr: "127.0.0.1:9911", CoordinatorWebAllow: []string{"intra.example.com"},
+		CoordinatorMCPToken: "mcp-secret-token",
 		Home: coordHome{"models.yml": []byte("providers: {}\n"), "config.yml": []byte("theme: dark\n"), "mcp.json": []byte(mcp)},
 	}
 	sandboxMCP := func(p SetupPlan) string {
@@ -207,13 +208,16 @@ func TestPlanCoordinatorMCPAndWeb(t *testing.T) {
 		MCPServers map[string]map[string]any `json:"mcpServers"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(got), &doc))
-	// 地址前缀是 ${ORYN_MCP_BASE}：协调宿主只给全局助手的 agent 设置它（D10）
+	// 地址前缀与凭据头都引用环境变量：协调宿主只给全局助手的 agent 设置它们，出站代理核对凭据（D10）
+	tokHdr := map[string]any{"X-Oryn-MCP-Token": "${ORYN_MCP_TOKEN}"}
 	assert.Equal(t, map[string]map[string]any{
-		"events": {"type": "sse", "url": "${ORYN_MCP_BASE}/mcp/m0"},
-		"search": {"type": "http", "url": "${ORYN_MCP_BASE}/mcp/m1"},
+		"events": {"type": "sse", "url": "${ORYN_MCP_BASE}/mcp/m0", "headers": tokHdr},
+		"search": {"type": "http", "url": "${ORYN_MCP_BASE}/mcp/m1", "headers": tokHdr},
 	}, doc.MCPServers, "按名字排序取路由键；stdio 与关掉的不下发")
 	assert.NotContains(t, got, "npm-real")
 	assert.NotContains(t, got, "Authorization")
+	assert.NotContains(t, got, "mcp-secret-token", "凭据本身不进沙箱里的文件")
+	assert.Equal(t, "mcp-secret-token", plan.Egress.MCPToken)
 	assert.Equal(t, map[string]egress.MCPRoute{
 		"m0": {URL: "http://10.0.0.2:8080/sse", Headers: map[string]string{}},
 		"m1": {URL: "https://mcp.example.com/v1", Headers: map[string]string{"Authorization": "Bearer npm-real"}},

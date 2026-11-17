@@ -228,10 +228,11 @@ func TestWebForward(t *testing.T) {
 
 func TestMCPRoute(t *testing.T) {
 	release := make(chan struct{})
-	var gotPath, gotQuery, gotAuth, gotExtra string
+	var gotPath, gotQuery, gotAuth, gotExtra, gotTok string
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
 		gotAuth, gotExtra = r.Header.Get("Authorization"), r.Header.Get("X-Extra")
+		gotTok = r.Header.Get(MCPTokenHeader)
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, "data: one\n\n")
 		w.(http.Flusher).Flush()
@@ -239,7 +240,7 @@ func TestMCPRoute(t *testing.T) {
 		fmt.Fprint(w, "data: echo Bearer real-secret-token end\n\n")
 	}))
 	defer up.Close()
-	h := NewHandler("orb-x", fakeR{pol: Policy{NoGit: true, MCP: map[string]MCPRoute{
+	h := NewHandler("orb-x", fakeR{pol: Policy{NoGit: true, MCPToken: assistantTok, MCP: map[string]MCPRoute{
 		"m0": {URL: up.URL + "/base/?tenant=t1", Headers: map[string]string{"Authorization": "Bearer real-secret-token", "X-Extra": "x"}},
 		"m1": {URL: up.URL + "/plain"},
 	}}})
@@ -248,6 +249,7 @@ func TestMCPRoute(t *testing.T) {
 
 	req, _ := http.NewRequest("POST", srv.URL+"/mcp/m0/sub/path?x=1", strings.NewReader("{}"))
 	req.Header.Set("Authorization", "Bearer from-sandbox")
+	req.Header.Set(MCPTokenHeader, assistantTok)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -265,14 +267,16 @@ func TestMCPRoute(t *testing.T) {
 	assert.Equal(t, "tenant=t1&x=1", gotQuery)
 	assert.Equal(t, "Bearer real-secret-token", gotAuth, "入站 Authorization 被覆盖")
 	assert.Equal(t, "x", gotExtra)
+	assert.Empty(t, gotTok, "助手凭据头不转发到上游")
 
 	// 没有配置头的路由：入站 Authorization 照样丢掉；没有后续路径时上游路径不变
 	gotAuth = "unset"
-	tg, st := h.resolve(httptest.NewRequest("GET", "/mcp/m1", nil))
+	tg, st := h.resolve(withTok(httptest.NewRequest("GET", "/mcp/m1", nil)))
 	require.Equal(t, http.StatusOK, st)
 	assert.Equal(t, up.URL+"/plain", tg.url.String())
 	req, _ = http.NewRequest("GET", srv.URL+"/mcp/m1", nil)
 	req.Header.Set("Authorization", "Bearer from-sandbox")
+	req.Header.Set(MCPTokenHeader, assistantTok)
 	resp2, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	_, _ = io.ReadAll(resp2.Body)
@@ -281,14 +285,72 @@ func TestMCPRoute(t *testing.T) {
 	assert.Empty(t, gotAuth)
 
 	// 未知路由键 404；占位符不允许出现在 MCP 路由上
-	_, st = h.resolve(httptest.NewRequest("GET", "/mcp/m9/x", nil))
+	_, st = h.resolve(withTok(httptest.NewRequest("GET", "/mcp/m9/x", nil)))
 	assert.Equal(t, http.StatusNotFound, st)
 	req, _ = http.NewRequest("GET", srv.URL+"/mcp/m1", nil)
 	req.Header.Set("Authorization", "Bearer oryn-ph-s1")
+	req.Header.Set(MCPTokenHeader, assistantTok)
 	resp3, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	resp3.Body.Close()
 	assert.Equal(t, http.StatusForbidden, resp3.StatusCode)
+}
+
+// assistantTok 是测试里全局助手持有的 MCP 凭据。
+const assistantTok = "mcp-assistant-token-0123456789"
+
+func withTok(r *http.Request) *http.Request {
+	r.Header.Set(MCPTokenHeader, assistantTok)
+	return r
+}
+
+// D10：没有助手凭据的请求（Space 协调者直接 GET 受保护的 SSE 端点或任意子路径）一律 403，上游收不到任何请求；
+// 策略里没有凭据时连带对了头也拒绝（fail closed）。
+func TestMCPRouteRequiresAssistantToken(t *testing.T) {
+	hits := 0
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: leaked\n\n")
+	}))
+	defer up.Close()
+	routes := map[string]MCPRoute{"m0": {URL: up.URL + "/sse", Headers: map[string]string{"Authorization": "Bearer real-secret-token"}}}
+	srv := httptest.NewServer(NewHandler("orb-x", fakeR{pol: Policy{NoGit: true, MCPToken: assistantTok, MCP: routes}}))
+	defer srv.Close()
+	for name, tc := range map[string]struct {
+		method, path, tok string
+	}{
+		"SSE GET 无凭据":  {"GET", "/mcp/m0", ""},
+		"子路径 GET 无凭据":  {"GET", "/mcp/m0/messages?sessionId=1", ""},
+		"POST 无凭据":     {"POST", "/mcp/m0", ""},
+		"错误凭据":         {"GET", "/mcp/m0", "mcp-assistant-token-0123456780"},
+		"凭据前缀":         {"GET", "/mcp/m0", assistantTok[:10]},
+		"未知路由键也不暴露存在性": {"GET", "/mcp/m9", ""},
+	} {
+		req, _ := http.NewRequest(tc.method, srv.URL+tc.path, nil)
+		req.Header.Set("Accept", "text/event-stream")
+		if tc.tok != "" {
+			req.Header.Set(MCPTokenHeader, tc.tok)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err, name)
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode, name)
+		assert.NotContains(t, string(body), "leaked", name)
+	}
+	assert.Zero(t, hits, "没有任何请求到达上游")
+
+	// 策略没有凭据（未配置）：带什么头都拒绝
+	srv2 := httptest.NewServer(NewHandler("orb-x", fakeR{pol: Policy{NoGit: true, MCP: routes}}))
+	defer srv2.Close()
+	req, _ := http.NewRequest("GET", srv2.URL+"/mcp/m0", nil)
+	req.Header.Set(MCPTokenHeader, "")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	assert.Zero(t, hits)
 }
 
 func TestMCPRedact(t *testing.T) {

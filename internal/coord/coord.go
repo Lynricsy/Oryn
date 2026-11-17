@@ -47,6 +47,9 @@ type Config struct {
 	PublicURL string
 	// AfterFunc 默认 time.AfterFunc（M19 主线的静止定时器）；测试注入以手动触发。
 	AfterFunc func(d time.Duration, f func()) (stop func())
+	// MCPToken 是协调宿主 /mcp/ 路由的凭据（M19 D10，与 orbs.DefaultSetup.CoordinatorMCPToken 相同）：只放进全局助手的
+	// AgentProfile；空 = 全局助手也用不了 MCP。
+	MCPToken string
 }
 
 // Scheduler 是定时服务（*schedule.Service 实现）。
@@ -147,7 +150,7 @@ type Service struct {
 	// inbox 是主线收件（交给助手的运行结果）的合并定时器（M19 步骤 3.3，mu 保护）；inboxMu 串行化投递。
 	inbox   inboxState
 	inboxMu sync.Mutex
-	wake      chan struct{}
+	wake    chan struct{}
 	// confirmers 是确认卡动作 → 主人批准后的执行函数（onConfirm 在 New 里登记，之后只读）。
 	confirmers map[string]confirmExec
 	// sentConfirm（仅测试）在一条确认结果投递成功之后调用。

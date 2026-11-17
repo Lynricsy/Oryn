@@ -13863,6 +13863,11 @@ components:
           description: |
             M19：协调档是否打开第一层（内置 `web_search` 与 `generate_image`、`read` 读 URL、环境带 `PI_PROXY` 走 orynd 的正向代理）。
             只给全局助手的对话；Space 协调者省略（= false），工具与环境同 M19 之前（D10）。只有协调宿主接受。
+        mcpToken:
+          type: string
+          description: |
+            M19：协调宿主 /mcp/ 路由的凭据，只在 `web` 为真时生效：orbd 以环境变量 `ORYN_MCP_TOKEN` 交给该 agent，mcp.json 的
+            `X-Oryn-MCP-Token` 请求头引用它，出站代理逐个请求核对（D10：Space 协调者没有它，直接请求 /mcp/ 一律 403）。只有协调宿主接受。
         memory: { $ref: '#/components/schemas/LinkCtlAgentMemory' }
     LinkCtlAgentStartResult:
       type: object

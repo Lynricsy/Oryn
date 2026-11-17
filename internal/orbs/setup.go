@@ -70,6 +70,9 @@ type DefaultSetup struct {
 	CoordinatorEgressAddr string
 	// CoordinatorWebAllow 是全局助手联网时放行的非公网目标（M19，coordinator.web_allow_hosts，已转小写）。
 	CoordinatorWebAllow []string
+	// CoordinatorMCPToken 是协调宿主 /mcp/ 路由的凭据（M19 D10）：只经 agent.start 交给全局助手的 agent，出站代理逐个
+	// 请求核对；空 = 协调宿主不放行 MCP。
+	CoordinatorMCPToken string
 	// Projects 是项目级 omp 配置；可为 nil（不下发项目级配置）。
 	Projects ProjectConfigs
 	// GitHub 是 GitHub 集成（M14）；可为 nil（不下发 gh 配置，github.com 只走 PAT）。
@@ -96,7 +99,7 @@ func (d *DefaultSetup) planCoordinator(ctx context.Context, orb db.Orb) (SetupPl
 		Params: apigen.LinkCtlSetupRunParams{
 			GitHosts: []string{}, OmpHome: []apigen.LinkCtlOmpHomeFile{}, Env: map[string]string{},
 		},
-		Egress: egress.Policy{Routes: map[string]egress.Route{}, GitRepos: map[string][]string{}, NoGit: true},
+		Egress: egress.Policy{Routes: map[string]egress.Route{}, GitRepos: map[string][]string{}, NoGit: true, MCPToken: d.CoordinatorMCPToken},
 	}
 	web, disabled, err := d.assistantSettings(ctx)
 	if err != nil {
@@ -205,7 +208,7 @@ func (d *DefaultSetup) coordinatorMCP(plan *SetupPlan, content []byte, disabled 
 		slog.Warn("orbs: 全局 mcp.json 无法解析，全局助手不使用 MCP", "err", err)
 		return nil
 	}
-	out := map[string]map[string]string{}
+	out := map[string]map[string]any{}
 	for _, srv := range servers {
 		if !srv.Usable || disabled[srv.Name] {
 			continue
@@ -215,9 +218,13 @@ func (d *DefaultSetup) coordinatorMCP(plan *SetupPlan, content []byte, disabled 
 			plan.Egress.MCP = map[string]egress.MCPRoute{}
 		}
 		plan.Egress.MCP[key] = egress.MCPRoute{URL: srv.URL, Headers: srv.Headers}
-		// 地址前缀由环境变量 ORYN_MCP_BASE 给出（omp 展开 url 里的 ${VAR}）：协调宿主只给全局助手的 agent 设置它；
-		// Space 协调者的 agent 没有这个变量，url 保持字面量、连不上，于是没有 MCP 工具（D10）。
-		out[srv.Name] = map[string]string{"type": srv.Transport, "url": "${" + agentcfg.MCPBaseEnv + "}/mcp/" + key}
+		// 地址前缀与凭据都由环境变量给出（omp 展开 url / headers 里的 ${VAR}）：协调宿主只给全局助手的 agent 设置它们；
+		// Space 协调者既不会自动连上，直接请求 /mcp/ 也因缺凭据被出站代理拒绝（D10）。
+		out[srv.Name] = map[string]any{
+			"type":    srv.Transport,
+			"url":     "${" + agentcfg.MCPBaseEnv + "}/mcp/" + key,
+			"headers": map[string]string{egress.MCPTokenHeader: "${" + agentcfg.MCPTokenEnv + "}"},
+		}
 	}
 	if len(out) == 0 {
 		return nil
