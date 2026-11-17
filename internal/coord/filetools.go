@@ -424,7 +424,9 @@ func (s *Service) toolReadThreadFile(ctx context.Context, c toolCtx) (any, strin
 func (s *Service) toolWriteThreadFile(ctx context.Context, c toolCtx) (v any, err error) {
 	var a threadFileArgs
 	summary := ""
-	defer func() { s.audit(ctx, c.Kind, c.ThreadID, c.OwnerTurn, ToolWriteThreadFile, a.ThreadID, "", summary, err) }()
+	defer func() {
+		s.audit(ctx, c.Kind, c.ThreadID, c.OwnerTurn, ToolWriteThreadFile, a.ThreadID, "", summary, err)
+	}()
 	if err = decodeArgs(c.Args, &a); err != nil {
 		return nil, err
 	}

@@ -150,7 +150,7 @@ type Service struct {
 	// inbox 是主线收件（交给助手的运行结果）的合并定时器（M19 步骤 3.3，mu 保护）；inboxMu 串行化投递。
 	inbox   inboxState
 	inboxMu sync.Mutex
-	wake      chan struct{}
+	wake    chan struct{}
 	// confirmers 是确认卡动作 → 主人批准后的执行函数（onConfirm 在 New 里登记，之后只读）。
 	confirmers map[string]confirmExec
 	// sentConfirm（仅测试）在一条确认结果投递成功之后调用。
