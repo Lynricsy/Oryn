@@ -805,6 +805,11 @@ func (s *Service) onResponse(ctx context.Context, t *thread, env omprpc.Envelope
 	s.recompute(ctx, t)
 	s.deliver(p, frame)
 	s.settleResponseLocked(t, p, env, r)
+	// 静止时等着重启（refreshLocked）但当时还有在途命令（如 session_settled 触发的 get_state）：最后一条应答到了就停，
+	// 不能等到下一回合的 session_settled，否则下一条消息仍由旧 agent（旧的 AgentProfile）处理。
+	if t.refresh {
+		s.stopIfQuiescentLocked(t)
+	}
 }
 
 // ---- 命令下发 ----

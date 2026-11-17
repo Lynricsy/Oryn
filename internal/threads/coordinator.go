@@ -237,10 +237,16 @@ func (s *Service) refreshLocked(t *thread, reason string) bool {
 		slog.Debug("threads: 线程将在静止后重启 agent", "thread", t.id, "reason", reason)
 	}
 	t.refresh = true
+	s.stopIfQuiescentLocked(t)
+	return true
+}
+
+// stopIfQuiescentLocked 在会话静止、已同步且没有排队或在途命令时停掉 agent（refreshLocked 与在途命令的最后一条
+// 应答都会调用）。调用方持有 t.mu。
+func (s *Service) stopIfQuiescentLocked(t *thread) {
 	if t.settled && !t.unsynced && len(t.queue) == 0 && len(t.pending) == 0 {
 		s.stopForRefreshLocked(t)
 	}
-	return true
 }
 
 // stopForRefreshLocked 在后台停掉线程的 agent（refreshLocked）。调用方持有 t.mu。

@@ -541,6 +541,27 @@ func TestRefreshAgentStopsAfterSettled(t *testing.T) {
 	assert.Equal(t, apigen.AgentStatusExited, th.agentStatus)
 }
 
+// RefreshAgent 落在静止之后、仍有在途命令时（如 session_settled 触发的 get_state）：最后一条应答到了就停，
+// 不等下一回合（M19 真机验收：主线换段后的下一条消息仍由旧 agent 处理）。
+func TestRefreshAgentStopsWhenPendingDrains(t *testing.T) {
+	f := newFixture(t, Config{})
+	o := newCtlOrbs(t, f.orbs)
+	f.s.orbs = o
+	th := f.coordThread(f.orb("ready"), KindAssistant, StateIdle)
+	attach(th, fakeAgent(16), apigen.AgentStatusReady)
+	th.mu.Lock()
+	th.settled = true
+	th.pending["internal-9"] = &pendingCmd{cmdType: "get_state", id: "internal-9", sent: true}
+	th.mu.Unlock()
+	f.s.RefreshAgent(f.ctx, th.id)
+	o.mu.Lock()
+	assert.Empty(t, o.calls, "还有在途命令：先不停")
+	o.mu.Unlock()
+	f.s.onFrame(f.ctx, th, th.orbID, []byte(`{"type":"response","id":"internal-9","command":"get_state","success":true,"data":{}}`))
+	c := o.nextCall(t)
+	assert.Equal(t, "agent.stop", c.method)
+}
+
 // 列表默认只有工作线程；kind=all 含协调对话；space 过滤；Thread.schedule 来自线程内定时。
 func TestListKindSpaceAndSchedule(t *testing.T) {
 	f := newFixture(t, Config{})
