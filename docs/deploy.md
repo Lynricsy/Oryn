@@ -826,3 +826,36 @@ bank 里已有记忆时，管理页的嵌入模型与维度只读。只有勾选
 7. 解除写保护：`dc run --rm --no-deps api hindsight-admin reembed --all-schemas --finish`。
 
 迁移失败、想退回旧模型时：保持 API 停止，把备份目录挂进一次性容器执行恢复：`dc run --rm --no-deps -v /var/backups/oryn:/backups:ro api hindsight-admin restore /backups/<文件>.zip --yes`。然后把管理页的嵌入改回旧模型（同样要勾选「换嵌入模型」），`.env` 的维度也改回旧值，再启动。
+
+### 全局助手的主人记忆（M17）
+
+主人记忆是全局助手专用的第二个 bank `oryn-owner`，与工程记忆共用同一个 Hindsight、同一把 key 和同一个模型中转，不需要额外部署。前提是工程记忆已经启用并连上（管理页状态「正常」）；否则「助手记忆」分区只显示提示。
+
+**开启**：在「更多 → Agent → 记忆 → 助手记忆」打开开关，填写主人的名字与别名（写进 bank 的抽取说明，抽取时统一写成「主人」；别名填不全时，同一个人会被拆成两个实体）。首次开启回填最近 30 天内有活动的对话与线程，进度显示在状态卡里。
+
+**写什么、什么时候写**：orynd 每 5 分钟扫描一次。助手对话在最后一条主人消息之后空闲 30 分钟或被归档时写入；工作线程（含 Space 子线程与 Runner 线程）在 idle 且空闲 30 分钟、归档或交付后写入。按回合写：主人的话加 agent 的最后一条回复（截到 600 字），工具调用、工具结果、thinking 与超过 8 行的代码块不写。写入前用发布与分享的同一套密钥扫描规则和密钥库里的明文值做脱敏，命中处替换成「〔已脱敏〕」。被排除的对话或项目不写入，已写入的随之遗忘。
+
+**主题与注入**：每天一次主题整理，保留固定的「主人画像」，另有至多 12 个动态主题。主题生成时只读事实与 observation，不读其他主题（否则会照抄自己的旧内容）。助手启动时把主题（合计约 8,000 字）与最近 14 天的活动附在系统提示词末尾，按对话存快照，1 小时内重新拉起沿用快照。
+
+**判断模型接口**：`recall_memory` 先在 Hindsight 召回前 50 条（关掉 Hindsight 自带的重排），再交给判断模型逐条打 0–3 分：≥ 2.0 正常给出，1.5–2.0 标注「部分相关」，< 1.5 不给。默认用 Google Gemini Decisions API 的 `gemini-decision-1`（地址 `https://generativelanguage.googleapis.com`），key 只写不读。没有配置、超时或返回 429 时，退回 Hindsight 的原始排序并标注「未经重排」，召回不会因此失败。
+
+**成本**（2026-11-17 用主人 16 天的真实会话实测，抽取与主题模型为 `gemini-3.5-flash-lite`；按 token 计，价格以所用模型的发布价换算）：
+
+| 环节 | 实测 |
+|---|---|
+| 回填 78 个会话（116 个文档、443 条记忆）：写入 + 整理 | 约 130 万 token |
+| 首次主题整理：一次 reflect + 12 个主题全量生成 | 约 395 万 token（每个主题约 32 万，输入约一半命中缓存） |
+| 之后的日常 | 只刷新有新事实的主题（增量），同一主题间隔不少于 20 小时，「主人画像」每周至少刷新一次 |
+| 每次 `recall_memory` 的判断模型重排（50 条候选） | 探查时按发布价约 $0.0008 |
+
+24 小时与 7 天的用量在状态卡里按 Hindsight 的 `llm-requests` 统计显示。
+
+**真实数据回归**：改抽取说明、主题约束、换模型或换判断模型之后，对一个已写入真实数据的 bank 跑一次回归（`internal/ownermem/testdata/eval/cases.json`）：
+
+```bash
+ORYN_OWNERMEM_EVAL_URL=http://127.0.0.1:8888 ORYN_OWNERMEM_EVAL_KEY=<Hindsight key> \
+ORYN_OWNERMEM_EVAL_DECIDE_KEY=<判断模型 key> ORYN_OWNERMEM_EVAL_BANK=oryn-owner \
+  go test -tags ownermem_eval ./internal/ownermem/ -run Eval -v
+```
+
+不带构建标签时 `go test ./...` 不运行它。

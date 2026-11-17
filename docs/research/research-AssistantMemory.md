@@ -1,6 +1,7 @@
 # 全局助手的"主人记忆"：用 Hindsight 复刻 ChatGPT 式记忆
 
 > 日期：2026-11-16。性质：设计构思，不是实施计划；落地前按 `docs/plan-m*.md` 的格式另写计划，并先做第 7 节的探查。
+> **已落地（M17，2026-11-17）**：按 [`docs/plan-m17.md`](../plan-m17.md) 实现了来源 A/B/C 的写入、主题整理与注入、`recall_memory` 的判断模型重排、`search_history` / `read_thread` 扩展 / `recall_engineering` / `remember` 与「助手记忆」管理页（实现在 `internal/ownermem/`、`internal/coord/memory.go`）。与本文不同的地方：主题刷新时 reflect 不读其他 mental model（`exclude_mental_models`，见 §9）；部署与成本见 [`docs/deploy.md`](../deploy.md)「全局助手的主人记忆」。
 > 上游：[research-SuperAgent.md](research-SuperAgent.md) §3.6；工程记忆现状：[`docs/plan-m16.md`](../plan-m16.md) 与附录 A / B。
 
 ---
@@ -278,3 +279,14 @@ criteria：["无关", "不能用", "部分有用", "直接可用"]
 | Q2 | 后台写入（来源 A、B）是否需要主人逐条确认 | **自动写入**，靠出处标注、可查看、可遗忘兜底；来源 C 里助手自己发起、核验不通过的写入仍走候选（0065） |
 | Q3 | 主题如何产生 | **固定种子 + 每日整理出的动态主题，上限 12** |
 | Q4 | "最近在做什么"的时间窗 | **14 天** |
+
+---
+
+## 9. 生产路径验收（2026-11-17）
+
+用生产写入路径（`ownermem.Service`，脱敏与 orynd 相同）把主人 2026-11-02 起的 78 个 omp 会话写进 `oryn-owner`，跑一次主题整理后做回归与 P6 问答。开发主人记忆本身的 2 个会话没有写入，因为里面有回归用例的期望答案。
+
+- **主题照抄旧内容（已修复）**：主人画像整份都是「待确认」。reflect 的 trace 显示它 9 次都只调 `search_mental_models`，读到自己首次生成时的占位内容就照抄，从没查过事实。主题的 trigger 加上 `exclude_mental_models: true` 后，同一个 bank 复测时 reflect 改调 `search_observations` 和 `recall`，画像写对了（学生、Asia/Singapore、港版 EMUI 手机、偏好用 ask 提问）。这样也避免了别的主题内容串进来。
+- **回归**：16 题过 14 题，3 条主题检查全部通过。没过的 P8-4（会话列表要求）与 P8-5（通知渠道），原话只出现在没写入的那 2 个会话里。
+- **P6 问答**：只给注入段时，7 题答对 3 题，其余 4 题回答「不知道」。加一次 `recall_memory` 后答对 5 题（App Store 答出 ITMS-90683 与缺少 `NSCameraUsageDescription`，HR 面答「技术面已通过，HR 面结果未知」）。剩下 2 题的原话同样只在没写入的会话里，回答「不知道」。所有回答都没有编造。
+- **两处只在验收脚本里出现的差异**：一是线程没有项目时，事实里只剩「当前项目」，生产的块上下文行带项目名；二是本机 omp 的第二个进程退出时，会把 `session_exit` 挂在过期的父条目上，让「最后一行 = 叶子」丢掉后半段对话，生产每个线程只有一个 Core，叶子由 `activeLeafId` 维护。
