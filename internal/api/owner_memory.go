@@ -333,3 +333,17 @@ func (s *Server) ApproveOwnerMemoryExplicit(w http.ResponseWriter, r *http.Reque
 	}
 	WriteJSON(w, http.StatusOK, out)
 }
+
+// GetOwnerMemoryBrief 对应 `GET /api/v1/owner-memory/brief`。
+func (s *Server) GetOwnerMemoryBrief(w http.ResponseWriter, r *http.Request, params apigen.GetOwnerMemoryBriefParams) {
+	svc, ok := s.ownerMemorySvc(w)
+	if !ok {
+		return
+	}
+	out, err := svc.Preview(r.Context(), params.ThreadID)
+	if err != nil {
+		writeOwnerMemoryErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, out)
+}

@@ -327,6 +327,7 @@ func (s *Server) init(ctx context.Context) error {
 	s.Artifacts.SetActivityVisitors(frames.ArtifactVisitors)
 	// M17：主人记忆。写入与工具输出先用分享的密钥扫描规则与密钥库值脱敏
 	s.OwnerMemory = ownermem.New(ownermem.Config{Q: s.Store.Q, Box: box, Memory: s.Memory, Redact: s.Share.RedactText})
+	s.Coord.SetOwnerMemory(s.OwnerMemory)
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	go s.Jobs.Run(runCtx)
 	go s.Orbs.Run(runCtx)

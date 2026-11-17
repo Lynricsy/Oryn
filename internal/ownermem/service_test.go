@@ -42,7 +42,8 @@ type fakeHS struct {
 	facts       map[string]map[string]any
 	factOrder   []string
 	factPatches []map[string]any
-	recallHits  []map[string]any // 非空时 recall 直接返回它们
+	recallHits  []map[string]any  // 非空时 recall 直接返回它们
+	contents    map[string]string // 主题 id -> 内容（默认「内容:<名称>」）
 }
 
 // retainedDocs 返回第 i 次 retain 请求涉及的 document id（去重，保持顺序）。
@@ -104,7 +105,11 @@ func (f *fakeHS) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && r.URL.Path == root+"/mental-models":
 		var items []map[string]any
 		for _, m := range f.models {
-			items = append(items, map[string]any{"id": m["id"], "content": "内容:" + m["name"].(string)})
+			c := "内容:" + m["name"].(string)
+			if v, ok := f.contents[m["id"].(string)]; ok {
+				c = v
+			}
+			items = append(items, map[string]any{"id": m["id"], "content": c})
 		}
 		raw, _ := json.Marshal(map[string]any{"items": items})
 		_, _ = w.Write(raw)

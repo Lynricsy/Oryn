@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"strings"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
@@ -105,6 +106,15 @@ func (s *Service) AgentProfile(ctx context.Context, threadID string) (threads.Ag
 		}
 	}
 	prof := threads.AgentProfile{SystemPrompt: SystemPrompt(space, project, threadID), Tools: ToolDefs(space != nil)}
+	// M17：全局助手的记忆段接在系统提示词末尾；生成失败不阻止启动（只是这次没有记忆）
+	if space == nil && s.mem != nil {
+		brief, err := s.mem.Brief(ctx, threadID)
+		if err != nil {
+			slog.Warn("生成助手记忆段失败", "thread", threadID, "err", err)
+		} else if brief != "" {
+			prof.SystemPrompt += "\n\n" + brief
+		}
+	}
 	if s.orbs != nil && row.OrbID != nil {
 		setup, err := s.orbs.CoordinatorSetup(ctx, *row.OrbID)
 		if err != nil {
