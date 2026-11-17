@@ -452,6 +452,7 @@ func (s *Server) init(ctx context.Context) error {
 	s.API.GitHub = &api.GitHubDeps{Service: s.GitHub}
 	s.API.Memory = &api.MemoryDeps{Service: s.Memory}
 	s.API.OwnerMemory = &api.OwnerMemoryDeps{Service: s.OwnerMemory}
+	s.API.SSH = &api.SSHDeps{Service: s.SSH}
 	s.API.Artifacts = &api.ArtifactsDeps{Service: s.Artifacts, Host: frames, Render: renderer}
 	if s.Portal != nil {
 		s.API.PortalShares = &api.PortalDeps{Service: s.Portal}

@@ -34,6 +34,8 @@ type area struct {
 	Memory *MemoryDeps
 	// OwnerMemory 是 M17 全局助手的主人记忆（owner_memory.go）；nil 时回 501 owner_memory_unavailable。
 	OwnerMemory *OwnerMemoryDeps
+	// SSH 是 M18 的 SSH 主机与网关（ssh.go）；nil 时回 501。
+	SSH *SSHDeps
 }
 
 // PortalDeps 是 portal 限时公开接口（portals.go）的依赖。
