@@ -10,7 +10,7 @@ import (
 )
 
 const clearSshHostKey = `-- name: ClearSshHostKey :execrows
-UPDATE ssh_hosts SET host_key = NULL, host_key_at = NULL, updated_at = ?1 WHERE id = ?2
+UPDATE ssh_hosts SET host_key = NULL, host_key_at = NULL, updated_at = ?1, rev = rev + 1 WHERE id = ?2
 `
 
 type ClearSshHostKeyParams struct {
@@ -93,7 +93,7 @@ func (q *Queries) DeleteSshKey(ctx context.Context, id string) (int64, error) {
 }
 
 const getSshHost = `-- name: GetSshHost :one
-SELECT id, project_id, name, address, port, username, auth_type, key_id, password_enc, jump_host_id, description, tags, enabled, allow_automation, allow_forward, compat, host_key, host_key_at, last_test_at, last_test_ok, last_test_error, last_test_os, created_at, updated_at FROM ssh_hosts WHERE id = ?1
+SELECT id, project_id, name, address, port, username, auth_type, key_id, password_enc, jump_host_id, description, tags, enabled, allow_automation, allow_forward, compat, host_key, host_key_at, last_test_at, last_test_ok, last_test_error, last_test_os, rev, created_at, updated_at FROM ssh_hosts WHERE id = ?1
 `
 
 func (q *Queries) GetSshHost(ctx context.Context, id string) (SshHost, error) {
@@ -122,6 +122,7 @@ func (q *Queries) GetSshHost(ctx context.Context, id string) (SshHost, error) {
 		&i.LastTestOk,
 		&i.LastTestError,
 		&i.LastTestOs,
+		&i.Rev,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -327,7 +328,7 @@ func (q *Queries) ListSshAudit(ctx context.Context, arg ListSshAuditParams) ([]S
 
 const listSshHosts = `-- name: ListSshHosts :many
 
-SELECT id, project_id, name, address, port, username, auth_type, key_id, password_enc, jump_host_id, description, tags, enabled, allow_automation, allow_forward, compat, host_key, host_key_at, last_test_at, last_test_ok, last_test_error, last_test_os, created_at, updated_at FROM ssh_hosts ORDER BY project_id IS NOT NULL, project_id, name
+SELECT id, project_id, name, address, port, username, auth_type, key_id, password_enc, jump_host_id, description, tags, enabled, allow_automation, allow_forward, compat, host_key, host_key_at, last_test_at, last_test_ok, last_test_error, last_test_os, rev, created_at, updated_at FROM ssh_hosts ORDER BY project_id IS NOT NULL, project_id, name
 `
 
 // ---------- hosts ----------
@@ -364,6 +365,7 @@ func (q *Queries) ListSshHosts(ctx context.Context) ([]SshHost, error) {
 			&i.LastTestOk,
 			&i.LastTestError,
 			&i.LastTestOs,
+			&i.Rev,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -428,18 +430,25 @@ func (q *Queries) ListSshKeys(ctx context.Context) ([]ListSshKeysRow, error) {
 }
 
 const pinSshHostKey = `-- name: PinSshHostKey :execrows
-UPDATE ssh_hosts SET host_key = ?1, host_key_at = ?2 WHERE id = ?3 AND host_key IS NULL
+UPDATE ssh_hosts SET host_key = ?1, host_key_at = ?2 WHERE id = ?3 AND host_key IS NULL AND rev = ?4
 `
 
 type PinSshHostKeyParams struct {
 	HostKey *string `json:"hostKey"`
 	At      *int64  `json:"at"`
 	ID      string  `json:"id"`
+	Rev     int64   `json:"rev"`
 }
 
-// First successful connection pins the key; 0 rows = someone else pinned it first.
+// First successful connection pins the key. CAS on rev: 0 rows = someone else pinned it first, or the host was
+// changed / reset while dialing (the dial used a stale snapshot and must not write its key back).
 func (q *Queries) PinSshHostKey(ctx context.Context, arg PinSshHostKeyParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, pinSshHostKey, arg.HostKey, arg.At, arg.ID)
+	result, err := q.db.ExecContext(ctx, pinSshHostKey,
+		arg.HostKey,
+		arg.At,
+		arg.ID,
+		arg.Rev,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -495,7 +504,7 @@ UPDATE ssh_hosts
 SET name = ?1, address = ?2, port = ?3, username = ?4, auth_type = ?5,
     key_id = ?6, password_enc = ?7, jump_host_id = ?8,
     description = ?9, tags = ?10, enabled = ?11, allow_automation = ?12,
-    allow_forward = ?13, compat = ?14, updated_at = ?15
+    allow_forward = ?13, compat = ?14, updated_at = ?15, rev = rev + 1
 WHERE id = ?16
 `
 

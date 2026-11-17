@@ -5,6 +5,8 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -154,6 +156,62 @@ func TestDialThroughJumps(t *testing.T) {
 	require.NoError(t, err)
 	_, err = e.svc.dial(ctx, e.row(t, ht.ID))
 	require.ErrorContains(t, err, `跳板 "b1"：连不上 127.0.0.1:1`)
+}
+
+// 拨号期间主机被改目标地址或被重置指纹：旧拨号握手成功也不得把它看到的公钥写回。
+func TestDialStaleSnapshotDoesNotPin(t *testing.T) {
+	for _, tc := range []string{"address", "reset"} {
+		t.Run(tc, func(t *testing.T) {
+			entered, release := make(chan struct{}), make(chan struct{})
+			var armed sync.Once
+			e := newEnv(t, func(c *Config) {
+				c.Dial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+					armed.Do(func() { close(entered); <-release })
+					return (&net.Dialer{}).DialContext(ctx, network, addr)
+				}
+			})
+			ctx := context.Background()
+			k := e.key(t, "k")
+			auth := []ssh.PublicKey{authorizedKey(t, k)}
+			oldT := sshgwtest.NewFakeSSHD(t, sshgwtest.Options{AuthorizedKeys: auth})
+			newT := sshgwtest.NewFakeSSHD(t, sshgwtest.Options{AuthorizedKeys: auth})
+			h := e.fakeHost(t, "web", k, oldT)
+			snap := e.row(t, h.ID)
+
+			errc := make(chan error, 1)
+			go func() {
+				up, err := e.svc.dial(ctx, snap)
+				if up != nil {
+					up.Close()
+				}
+				errc <- err
+			}()
+			<-entered
+			if tc == "address" {
+				_, port := newT.Addr()
+				_, err := e.svc.UpdateHost(ctx, h.ID, HostPatch{SSHHostUpdate: apigen.SSHHostUpdate{Port: &port}})
+				require.NoError(t, err)
+			} else {
+				_, err := e.svc.ResetHostKey(ctx, h.ID)
+				require.NoError(t, err)
+			}
+			close(release)
+			require.ErrorIs(t, <-errc, errStale)
+			require.Nil(t, e.row(t, h.ID).HostKey, "旧拨号不得固定公钥")
+
+			// 用新快照拨号：固定的是当前目标机的公钥
+			want := oldT
+			if tc == "address" {
+				want = newT
+			}
+			up, err := e.svc.dial(ctx, e.row(t, h.ID))
+			require.NoError(t, err)
+			up.Close()
+			got, err := e.svc.GetHost(ctx, h.ID)
+			require.NoError(t, err)
+			require.Equal(t, want.HostKeyFingerprint(), got.HostKey.Fingerprint)
+		})
+	}
 }
 
 func TestDialHandshakeTimeout(t *testing.T) {

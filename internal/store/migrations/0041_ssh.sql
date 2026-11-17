@@ -33,6 +33,7 @@ CREATE TABLE ssh_hosts (
     last_test_ok     BOOLEAN,
     last_test_error  TEXT,
     last_test_os     TEXT,
+    rev              INTEGER NOT NULL DEFAULT 0,       -- 每次修改或重置指纹加一；固定指纹时据此 CAS，拨号期间被改的连接不能写回旧公钥
     created_at       INTEGER NOT NULL,
     updated_at       INTEGER NOT NULL
 );

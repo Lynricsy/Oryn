@@ -1050,6 +1050,7 @@ type SshHost struct {
 	LastTestOk      *bool   `json:"lastTestOk"`
 	LastTestError   *string `json:"lastTestError"`
 	LastTestOs      *string `json:"lastTestOs"`
+	Rev             int64   `json:"rev"`
 	CreatedAt       int64   `json:"createdAt"`
 	UpdatedAt       int64   `json:"updatedAt"`
 }

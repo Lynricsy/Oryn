@@ -43,7 +43,7 @@ UPDATE ssh_hosts
 SET name = @name, address = @address, port = @port, username = @username, auth_type = @auth_type,
     key_id = sqlc.narg(key_id), password_enc = sqlc.narg(password_enc), jump_host_id = sqlc.narg(jump_host_id),
     description = @description, tags = @tags, enabled = @enabled, allow_automation = @allow_automation,
-    allow_forward = @allow_forward, compat = sqlc.narg(compat), updated_at = @updated_at
+    allow_forward = @allow_forward, compat = sqlc.narg(compat), updated_at = @updated_at, rev = rev + 1
 WHERE id = @id;
 
 -- name: DeleteSshHost :execrows
@@ -55,12 +55,13 @@ SELECT COUNT(*) FROM ssh_hosts WHERE jump_host_id = @id;
 -- name: CountEnabledSshHostsByJump :one
 SELECT COUNT(*) FROM ssh_hosts WHERE jump_host_id = @id AND enabled;
 
--- First successful connection pins the key; 0 rows = someone else pinned it first.
+-- First successful connection pins the key. CAS on rev: 0 rows = someone else pinned it first, or the host was
+-- changed / reset while dialing (the dial used a stale snapshot and must not write its key back).
 -- name: PinSshHostKey :execrows
-UPDATE ssh_hosts SET host_key = @host_key, host_key_at = @at WHERE id = @id AND host_key IS NULL;
+UPDATE ssh_hosts SET host_key = @host_key, host_key_at = @at WHERE id = @id AND host_key IS NULL AND rev = @rev;
 
 -- name: ClearSshHostKey :execrows
-UPDATE ssh_hosts SET host_key = NULL, host_key_at = NULL, updated_at = @at WHERE id = @id;
+UPDATE ssh_hosts SET host_key = NULL, host_key_at = NULL, updated_at = @at, rev = rev + 1 WHERE id = @id;
 
 -- name: SetSshHostTest :exec
 UPDATE ssh_hosts

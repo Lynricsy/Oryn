@@ -166,10 +166,11 @@ func (s *Service) dialHop(ctx context.Context, h db.SshHost, via *ssh.Client) (*
 	return client, nil
 }
 
-// pin 首次成功连接后固定主机公钥；并发下别人先固定了就按别人的比较。
+// pin 首次成功连接后固定主机公钥。按拨号所用快照的 rev 做 CAS：拨号期间主机被改或指纹被重置，
+// 旧连接不得把它看到的公钥写回；并发下别人以同一 rev 先固定了，就按别人的比较。
 func (s *Service) pin(ctx context.Context, h db.SshHost, key ssh.PublicKey) error {
 	line := trimNL(string(ssh.MarshalAuthorizedKey(key)))
-	n, err := s.st.Q.PinSshHostKey(ctx, db.PinSshHostKeyParams{HostKey: &line, At: new(s.now()), ID: h.ID})
+	n, err := s.st.Q.PinSshHostKey(ctx, db.PinSshHostKeyParams{HostKey: &line, At: new(s.now()), ID: h.ID, Rev: h.Rev})
 	if err != nil {
 		return fmt.Errorf("固定主机指纹：%w", err)
 	}
@@ -181,8 +182,8 @@ func (s *Service) pin(ctx context.Context, h db.SshHost, key ssh.PublicKey) erro
 	if err != nil {
 		return fmt.Errorf("固定主机指纹：%w", err)
 	}
-	if cur.HostKey == nil {
-		return nil // 刚被重置；下次连接再固定
+	if cur.Rev != h.Rev || cur.HostKey == nil {
+		return errStale
 	}
 	pinned, _, _, _, err := ssh.ParseAuthorizedKey([]byte(*cur.HostKey))
 	if err != nil {
