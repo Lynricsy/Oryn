@@ -105,6 +105,10 @@ func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) thre
 			break
 		}
 		v, err = s.threadTool(ctx, tc)
+	case ToolListThreadFiles, ToolReadThreadFile, ToolWriteThreadFile, ToolFetchThreadFile, ToolPutThreadFile, ToolGetThreadChanges,
+		ToolListProjectConfig, ToolReadProjectConfig, ToolWriteProjectConfig, ToolDeleteProjectConfig:
+		// M19 第三层：线程文件与项目 Agent 配置（只给全局助手）
+		return s.fileTool(ctx, tc)
 	default:
 		err = errf("unknown_tool", "no tool named %q", c.Name)
 	}

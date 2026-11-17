@@ -119,6 +119,9 @@ type fakeCoord struct {
 	res   HostToolResult
 	// answers 收到 UIAnswered 的请求 id 与应答帧（nil = 丢弃）。
 	answers chan uiAnswer
+	// timeouts 是 HostToolTimeout 按工具名的返回值（缺省 0）；deadlines 非 nil 时收到每次调用 ctx 的截止时间。
+	timeouts  map[string]time.Duration
+	deadlines chan time.Time
 }
 
 type uiAnswer struct {
@@ -134,6 +137,10 @@ func (c *fakeCoord) EnsureOrb(context.Context) (string, error) {
 func (c *fakeCoord) AgentProfile(context.Context, string) (AgentProfile, error) { return c.prof, nil }
 
 func (c *fakeCoord) HostToolCall(ctx context.Context, call HostToolCall) HostToolResult {
+	if c.deadlines != nil {
+		d, _ := ctx.Deadline()
+		c.deadlines <- d
+	}
 	c.calls <- call
 	if c.block {
 		<-ctx.Done()
@@ -142,6 +149,8 @@ func (c *fakeCoord) HostToolCall(ctx context.Context, call HostToolCall) HostToo
 	}
 	return c.res
 }
+
+func (c *fakeCoord) HostToolTimeout(name string) time.Duration { return c.timeouts[name] }
 
 func (c *fakeCoord) UIAnswered(_ context.Context, threadID, id string, frame json.RawMessage) {
 	if c.answers != nil {
@@ -287,6 +296,30 @@ func TestHostToolCallDispatch(t *testing.T) {
 	<-coord.done
 	f.s.Close() // 等后台的工具调用返回
 	assert.Empty(t, sent(a), "取消的调用不写回结果")
+}
+
+// M19 2.4：宿主工具的调用上限按工具名取 Coordinator.HostToolTimeout，0 时用缺省的 60 秒。
+func TestHostToolTimeoutPerTool(t *testing.T) {
+	f := newFixture(t, Config{})
+	coord := newFakeCoord()
+	coord.timeouts = map[string]time.Duration{"fetch_thread_file": 5 * time.Minute}
+	coord.deadlines = make(chan time.Time, 2)
+	f.s.SetCoordinator(coord)
+	th := f.coordThread(f.orb("ready"), KindAssistant, StateIdle)
+	a := fakeAgent(16)
+	attach(th, a, apigen.AgentStatusReady)
+
+	for _, tc := range []struct {
+		tool string
+		want time.Duration
+	}{{"fetch_thread_file", 5 * time.Minute}, {"list_threads", hostToolTimeout}} {
+		start := time.Now()
+		f.s.onFrame(f.ctx, th, th.orbID, []byte(`{"type":"host_tool_call","id":"h-`+tc.tool+`","toolCallId":"tc","toolName":"`+tc.tool+`","arguments":{}}`))
+		d := <-coord.deadlines
+		<-coord.calls
+		assert.WithinDuration(t, start.Add(tc.want), d, 5*time.Second, tc.tool)
+		assert.Equal(t, "host_tool_result", recvJSON(t, a)["type"])
+	}
 }
 
 // M19 1.5：结果里的图片作为 image 块跟在 text 块之后；出错时不带图。

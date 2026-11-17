@@ -89,6 +89,8 @@ type Coordinator interface {
 	AgentProfile(ctx context.Context, threadID string) (AgentProfile, error)
 	// HostToolCall 执行一次宿主工具调用；ctx 在 omp 取消调用或超时时结束。
 	HostToolCall(ctx context.Context, c HostToolCall) HostToolResult
+	// HostToolTimeout 返回工具 name 的单次调用上限；0 表示缺省的 hostToolTimeout。
+	HostToolTimeout(name string) time.Duration
 	// UIAnswered 收到主人对控制面发起的待答请求（RequestUI）的应答；response 是 extension_ui_response 帧。
 	// 在后台调用，每个请求至多一次。
 	UIAnswered(ctx context.Context, threadID, requestID string, response json.RawMessage)
@@ -428,14 +430,20 @@ func (s *Service) hostToolCallLocked(t *thread, line []byte) {
 		// orbd 在新流上重放的同一调用：已在执行
 		return
 	}
-	ctx, cancel := context.WithTimeout(s.ctx, hostToolTimeout)
+	coord := s.coord
+	timeout := hostToolTimeout
+	if coord != nil {
+		if d := coord.HostToolTimeout(f.ToolName); d > 0 {
+			timeout = d
+		}
+	}
+	ctx, cancel := context.WithTimeout(s.ctx, timeout)
 	t.hostCalls[f.ID] = cancel
 	call := HostToolCall{
 		ThreadID: t.id, Kind: t.kind, SpaceID: t.spaceID,
 		CallID: f.ID, ToolCallID: f.ToolCallID, Name: f.ToolName, Args: f.Arguments,
 		OwnerTurn: !t.autoActive,
 	}
-	coord := s.coord
 	s.go_(func(context.Context) {
 		defer cancel()
 		res := HostToolResult{Text: "coordinator_unavailable: coordinator is not configured", IsError: true}

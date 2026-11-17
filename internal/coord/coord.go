@@ -323,6 +323,9 @@ func errCode(err error) string {
 	if oe, ok := artifacts.AsOpError(err); ok {
 		return oe.Code
 	}
+	if code := cfgErrCode(err); code != "" {
+		return code
+	}
 	if code := orbErrCode(err); code != "" {
 		return code
 	}
