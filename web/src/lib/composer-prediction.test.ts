@@ -98,4 +98,10 @@ describe("predictionView：插入后的轮换", () => {
 			view({ draft: "Ship it", inserted: "Ship it", enabled: false }).cycle,
 		).toBeNull();
 	});
+
+	it("光标离开末尾后不轮换（同幽灵字）", () => {
+		expect(
+			view({ draft: "Ship it", inserted: "Ship it", caret: 3 }).cycle,
+		).toBeNull();
+	});
 });

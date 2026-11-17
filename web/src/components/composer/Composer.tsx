@@ -16,6 +16,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { flushSync } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
 import { chatModels, fetchModelCatalog } from "../../api/model-catalog-queries";
@@ -155,16 +156,18 @@ export function Composer({
 
 	/** 接受预测：草稿换成完整候选、光标放到末尾；从不发送。 */
 	const acceptPrediction = (choice: string) => {
-		setText(choice);
-		setInserted(choice);
-		setCaret(choice.length);
-		setMenuDismissed(false);
+		// 同步提交新草稿，再同步放光标：同一次按键里 React 的 onSelect 读到的已是新值的末尾，
+		// 不会把 caret 改回旧位置（否则轮换序号与下一次 Tab 会失效）
+		flushSync(() => {
+			setText(choice);
+			setInserted(choice);
+			setCaret(choice.length);
+			setMenuDismissed(false);
+		});
 		const el = ref.current;
 		if (!el) return;
 		el.focus({ preventScroll: true });
-		requestAnimationFrame(() =>
-			el.setSelectionRange(choice.length, choice.length),
-		);
+		el.setSelectionRange(choice.length, choice.length);
 	};
 
 	// omp 的 set_editor_text / 会话树跳转带回的草稿；同一份只并入一次（重新挂载时 store 里仍是它）
@@ -611,26 +614,24 @@ export function Composer({
 			else clearSelection();
 			return;
 		}
-		// 下一条消息预测：在菜单之后处理（菜单先吃掉 Tab），只认无修饰键的 Tab / →，从不发送
+		// 下一条消息预测：在菜单之后处理（菜单先吃掉 Tab），只认无修饰键的 Tab / →，从不发送。
+		// 按键时再以输入框为准确认光标折叠在末尾（caret 状态在 keyup 后才更新，且不含选区）。
+		const el = e.currentTarget;
 		if (
 			!e.nativeEvent.isComposing &&
 			!e.shiftKey &&
 			!e.altKey &&
 			!e.ctrlKey &&
-			!e.metaKey
+			!e.metaKey &&
+			el.selectionStart === el.selectionEnd &&
+			el.selectionEnd >= el.value.length
 		) {
 			if (e.key === "Tab" && predicted.cycle) {
 				e.preventDefault();
 				acceptPrediction(predicted.cycle.next);
 				return;
 			}
-			const el = e.currentTarget;
-			if (
-				(e.key === "Tab" || e.key === "ArrowRight") &&
-				ghost &&
-				el.selectionStart === el.selectionEnd &&
-				el.selectionEnd >= el.value.length
-			) {
+			if ((e.key === "Tab" || e.key === "ArrowRight") && ghost) {
 				e.preventDefault();
 				acceptPrediction(ghost.choice);
 				return;

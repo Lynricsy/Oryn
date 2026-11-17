@@ -162,6 +162,25 @@ describe("Composer：下一条消息预测", () => {
 		expect(ghost()).toBe("Run the tests and fix failures");
 	});
 
+	it("插入后把光标移到中间或选中文字，Tab 不再整段替换", () => {
+		mount();
+		predict(["Run the tests", "Ship it"]);
+		key("Tab");
+		expect(box().value).toBe("Run the tests");
+		expect(screen.getByRole("status")).toHaveTextContent("1/2");
+
+		box().setSelectionRange(3, 3);
+		fireEvent.select(box());
+		expect(screen.queryByRole("status")).toBeNull();
+		key("Tab");
+		expect(box().value).toBe("Run the tests");
+
+		box().setSelectionRange(4, 13);
+		fireEvent.select(box());
+		key("Tab");
+		expect(box().value).toBe("Run the tests");
+	});
+
 	it("撤回或新一轮开始时隐藏", () => {
 		mount();
 		predict(["Run the tests"]);

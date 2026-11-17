@@ -44,6 +44,8 @@ const NONE: PredictionView = { ghost: null, cycle: null };
 export function predictionView(input: PredictionInput): PredictionView {
 	const { choices, draft, caret, enabled, inserted } = input;
 	if (!enabled || choices.length === 0) return NONE;
+	// 幽灵字与轮换都只在单行草稿、光标在末尾时生效（同 TUI）；选区由调用方在按键时另行检查
+	if (draft.includes("\n") || caret < draft.length) return NONE;
 	// 刚插入的候选：不再延伸，有多个候选时可轮换
 	if (inserted !== null && draft === inserted) {
 		const index = choices.indexOf(draft);
@@ -59,7 +61,6 @@ export function predictionView(input: PredictionInput): PredictionView {
 			};
 		}
 	}
-	if (draft.includes("\n") || caret < draft.length) return NONE;
 	const choice = choices.find(
 		(c) => c.length > draft.length && c.startsWith(draft),
 	);
