@@ -199,37 +199,19 @@ func (s *Service) execOne(ctx context.Context, orb db.Orb, threadID, name, comma
 		return res
 	}
 	defer up.Close()
-	sess, err := up.client.NewSession()
-	if err != nil {
-		res.Error = "开会话失败：" + err.Error()
-		return res
-	}
-	defer sess.Close()
+	dctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	out := &headTail{}
-	sess.Stdout, sess.Stderr = out, out
-	if err := sess.Start(command); err != nil {
-		res.Error = "执行失败：" + err.Error()
-		return res
-	}
-	done := make(chan error, 1)
-	go func() { done <- sess.Wait() }()
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	select {
-	case err = <-done:
-	case <-timer.C:
-		res.TimedOut = true
-	case <-ctx.Done():
-		res.Error = "调用已取消"
-	}
-	if res.TimedOut || res.Error != "" {
-		_ = sess.Signal(ssh.SIGKILL)
-		_ = sess.Close()
-		<-done
-		res.output = out.String()
-		return res
-	}
+	expired, err := runBounded(dctx, up.client, up.Close, func(sess *ssh.Session) { sess.Stdout, sess.Stderr = out, out }, command)
 	res.output = out.String()
+	if expired {
+		if ctx.Err() != nil {
+			res.Error = "调用已取消"
+		} else {
+			res.TimedOut = true
+		}
+		return res
+	}
 	var ee *ssh.ExitError
 	switch {
 	case err == nil:
@@ -239,9 +221,45 @@ func (s *Service) execOne(ctx context.Context, orb db.Orb, threadID, name, comma
 		res.ExitCode = new(ee.ExitStatus())
 		res.OK = true
 	default:
-		res.Error = "连接中断，未拿到退出码：" + err.Error()
+		res.Error = "执行失败：" + err.Error()
 	}
 	return res
+}
+
+// killGrace 是截止后发了 SIGKILL 与会话 close 帧、仍等对端回应的时长；过了就直接关掉上游连接。
+const killGrace = 2 * time.Second
+
+// runBounded 在 c 上开会话、用 setup 接好输出、执行 cmd 并等它结束，整个过程受 dctx 约束（含开会话与 Start）。
+// dctx 结束时先尽力 SIGKILL 并关会话；对端不回话时这两步都换不来返回（SSH 的 close 需要对端确认），
+// 所以 killGrace 后调用 closeConn 关掉整条上游 TCP 连接，开会话、Start、Wait 才保证返回。
+// expired 为真表示结束原因是 dctx（超时或取消），不是命令自己退出。
+func runBounded(dctx context.Context, c *ssh.Client, closeConn func(), setup func(*ssh.Session), cmd string) (expired bool, err error) {
+	var mu sync.Mutex
+	var sess *ssh.Session
+	stop := context.AfterFunc(dctx, func() {
+		time.AfterFunc(killGrace, closeConn) // 先排上兜底：下面的 Signal 写传输层也可能卡住
+		mu.Lock()
+		s := sess
+		mu.Unlock()
+		if s != nil {
+			_ = s.Signal(ssh.SIGKILL)
+			_ = s.Close()
+		}
+	})
+	s, err := c.NewSession()
+	if err != nil {
+		return !stop(), err
+	}
+	defer s.Close()
+	mu.Lock()
+	sess = s
+	mu.Unlock()
+	setup(s)
+	if err := s.Start(cmd); err != nil {
+		return !stop(), err
+	}
+	err = s.Wait()
+	return !stop(), err
 }
 
 // headTail 并发安全地收集输出：只留头 execOutputHalf 字节与尾 execOutputHalf 字节，记下总长。

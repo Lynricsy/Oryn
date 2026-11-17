@@ -44,7 +44,7 @@ func (s *Service) Test(ctx context.Context, id string) (apigen.SSHTestResult, er
 				res.HostKeyFingerprint = new(ssh.FingerprintSHA256(pub))
 			}
 		}
-		if out, ok := runProbe(up.client); ok {
+		if out, ok := runProbe(ctx, up); ok {
 			osName, snap := parseSnapshot(out)
 			if osName != "" {
 				res.Os = &osName
@@ -69,30 +69,19 @@ func (s *Service) Test(ctx context.Context, id string) (apigen.SSHTestResult, er
 	return res, nil
 }
 
-// runProbe 在新会话里跑采样脚本（probeTimeout 内）；失败或超时返回 ok=false。
-func runProbe(c *ssh.Client) (string, bool) {
-	sess, err := c.NewSession()
-	if err != nil {
-		return "", false
-	}
-	defer sess.Close()
+// runProbe 在新会话里跑采样脚本（probeTimeout 内，含开会话）；失败或超时返回 ok=false。
+// 对端不回话时由 runBounded 关掉上游连接兜底，不会无限等待。
+func runProbe(ctx context.Context, up *upstream) (string, bool) {
+	dctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
 	var out bytes.Buffer
-	sess.Stdout = &out
-	done := make(chan error, 1)
-	go func() { done <- sess.Run(probeScript) }()
-	select {
-	case err := <-done:
-		// 脚本以非零退出（比如 df 部分失败）时输出仍然可用。
-		var exitErr *ssh.ExitError
-		if err != nil && !errors.As(err, &exitErr) {
-			return "", false
-		}
-		return out.String(), true
-	case <-time.After(probeTimeout):
-		_ = sess.Close()
-		<-done
+	expired, err := runBounded(dctx, up.client, up.Close, func(sess *ssh.Session) { sess.Stdout = &out }, probeScript)
+	// 脚本以非零退出（比如 df 部分失败）时输出仍然可用。
+	var exitErr *ssh.ExitError
+	if expired || (err != nil && !errors.As(err, &exitErr)) {
 		return "", false
 	}
+	return out.String(), true
 }
 
 // parseSnapshot 解析采样脚本的输出：返回系统名（linux / macos / uname -s 的小写）与快照；什么都没采到时快照为 nil。
