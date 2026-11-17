@@ -86,6 +86,9 @@ func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) thre
 		default:
 			v, err = s.toolShareFile(ctx, tc)
 		}
+	case ToolUpdateNotes:
+		// M19 3.2：主线专属（toolUpdateNotes 自己核对是主线）
+		v, err = s.toolUpdateNotes(ctx, tc)
 	case ToolRecallMemory, ToolSearchHistory, ToolRecallEngineering, ToolRemember:
 		// 记忆工具只属于助手记忆正在运行的全局助手
 		return s.toolMemory(ctx, tc)

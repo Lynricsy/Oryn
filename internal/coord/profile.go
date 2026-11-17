@@ -145,7 +145,8 @@ func (s *Service) AgentProfile(ctx context.Context, threadID string) (threads.Ag
 		}
 	}
 	memOn := space == nil && s.memoryOn(ctx, row.Kind)
-	tools := ToolDefs(ToolSet{InSpace: space != nil, Memory: memOn})
+	main := row.Main == 1
+	tools := ToolDefs(ToolSet{InSpace: space != nil, Memory: memOn, Main: main})
 	prof := threads.AgentProfile{SystemPrompt: SystemPrompt(space, project, threadID, space != nil || s.webAccess(ctx)), Tools: tools}
 	// M17：助手记忆运行时，全局助手的系统提示词末尾接记忆段与记忆工具用法；记忆段生成失败不阻止启动（只是这次没有记忆）
 	if memOn {
@@ -156,6 +157,10 @@ func (s *Service) AgentProfile(ctx context.Context, threadID string) (threads.Ag
 			prof.SystemPrompt += "\n\n" + brief
 		}
 		prof.SystemPrompt += "\n\n" + memoryGuide
+	}
+	// M19 3.2：主线在记忆段之后接固定说明与「主线近况」
+	if main {
+		prof.SystemPrompt = s.mainProfile(ctx, threadID, prof.SystemPrompt)
 	}
 	if s.orbs != nil && row.OrbID != nil {
 		setup, err := s.orbs.CoordinatorSetup(ctx, *row.OrbID)

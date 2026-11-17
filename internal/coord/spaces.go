@@ -267,6 +267,7 @@ func (s *Service) EnsureMain(ctx context.Context) (apigen.Thread, error) {
 	defer s.createMu.Unlock()
 	row, err := s.st.Q.GetMainThread(ctx)
 	if err == nil {
+		s.setMainID(row.ID)
 		return s.th.Get(ctx, row.ID)
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -279,9 +280,13 @@ func (s *Service) EnsureMain(ctx context.Context) (apigen.Thread, error) {
 	if err != nil {
 		return apigen.Thread{}, err
 	}
-	return s.th.CreateCoordinator(ctx, threads.CoordinatorParams{
+	t, err := s.th.CreateCoordinator(ctx, threads.CoordinatorParams{
 		Kind: threads.KindAssistant, Main: true, OrbID: orbID, Model: s.cfg.Model, Title: "Main",
 	})
+	if err == nil {
+		s.setMainID(t.ID)
+	}
+	return t, err
 }
 
 // Progress 返回 Space 近 days 天（含今天，按 loc 的自然日）的进度：shipped = 当日标记为已交付；

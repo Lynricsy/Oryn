@@ -63,8 +63,9 @@ func (s *Service) push(e repEvent) {
 }
 
 // StateChanged 实现 threads.Observer：只入队（回调持线程锁）。进入 error（任意前态），或由 working 进入 idle /
-// awaiting_input 的变化才可能产生回报。
+// awaiting_input 的变化才可能产生回报。主线（M19）的分段计数与静止定时器也在这里维护（只动内存与定时器）。
 func (s *Service) StateChanged(ev threads.StateEvent) {
+	s.mainStateChanged(ev)
 	switch {
 	case ev.State == threads.StateError:
 	case ev.Prev == threads.StateWorking && (ev.State == threads.StateIdle || ev.State == threads.StateAwaitingInput):

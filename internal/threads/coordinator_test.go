@@ -197,6 +197,11 @@ func TestCoordinatorInitFrames(t *testing.T) {
 	assert.Equal(t, prof.Tools, frames[2]["tools"])
 	work := f.thread(f.orb("ready"), StateIdle)
 	assert.Contains(t, frameTypes(initFrames(work, nil, true)), "terminal_configure", "工作线程不变")
+	// M19 3.2：主线在 open_session 之后先 clear_context，普通助手对话不发
+	th.mu.Lock()
+	th.main = true
+	th.mu.Unlock()
+	assert.Equal(t, []string{"open_session", "clear_context", "set_event_filter", "set_host_tools"}, frameTypes(initFrames(th, prof, false)))
 }
 
 // 协调线程的 agent.start 带协调档与系统提示词；所在 orb 没有 coordinator 特性时线程进入 error、不发 agent.start。

@@ -501,6 +501,10 @@ func (s *server) handle(line []byte) {
 		s.mu.Unlock()
 		s.ok(id, env.Type, map[string]string{"level": c.Level})
 
+	case "clear_context":
+		// M19 主线每段开头发送：真 omp 在会话文件追加 reset_boundary；这里只确认（转录不变）
+		s.ok(id, env.Type, nil)
+
 	case "set_thinking_level":
 		var c struct {
 			Level string `json:"level"`

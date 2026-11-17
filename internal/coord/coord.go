@@ -45,6 +45,8 @@ type Config struct {
 	Model string
 	// PublicURL 用于线程链接（<public_url>/t/<id>）。
 	PublicURL string
+	// AfterFunc 默认 time.AfterFunc（M19 主线的静止定时器）；测试注入以手动触发。
+	AfterFunc func(d time.Duration, f func()) (stop func())
 }
 
 // Scheduler 是定时服务（*schedule.Service 实现）。
@@ -134,6 +136,9 @@ type Service struct {
 	// recheck 是有非 tagged 登记、上次 RecoveredOutcome 为 !ok 的线程：条目入库后重查（契约 C1.7）。
 	recheck   map[string]bool
 	questions map[string]string
+	// mainID / mainEp 是主线 id 与当前一段的计数和静止定时器（M19；Observer 回调据此识别主线，不读库）。
+	mainID string
+	mainEp mainEpisode
 	wake      chan struct{}
 	// confirmers 是确认卡动作 → 主人批准后的执行函数（onConfirm 在 New 里登记，之后只读）。
 	confirmers map[string]confirmExec
@@ -142,6 +147,8 @@ type Service struct {
 
 	// afterReport（仅测试）在一次回报处理完之后调用。
 	afterReport func(threadID string)
+	// afterEpisode（仅测试）在主线一段结束、调用 RefreshAgent 之前调用（reason 为 idle / turns）。
+	afterEpisode func(threadID, reason string)
 	// afterSend（仅测试）在 send_message 的 Deliver 成功返回之后、释放 repMu 之前调用。
 	afterSend func()
 	// sentReport（仅测试）在一条回报投递成功之后调用（持 repMu）。
@@ -156,6 +163,12 @@ type Service struct {
 func New(cfg Config, st *store.Store, th *threads.Service, o *orbs.Service, host HostChecker, sched Scheduler) *Service {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
+	}
+	if cfg.AfterFunc == nil {
+		cfg.AfterFunc = func(d time.Duration, f func()) func() {
+			t := time.AfterFunc(d, f)
+			return func() { t.Stop() }
+		}
 	}
 	s := &Service{
 		cfg: cfg, st: st, th: th, orbs: o, host: host, sched: sched,
@@ -176,6 +189,8 @@ func New(cfg Config, st *store.Store, th *threads.Service, o *orbs.Service, host
 			return err
 		}
 	}
+	// 主线 id 在构造时读出：Observer 回调（主线分段）不读库
+	s.loadMainID(context.Background())
 	return s
 }
 

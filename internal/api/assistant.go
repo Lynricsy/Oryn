@@ -53,3 +53,35 @@ func (s *Server) ListAssistantMcpServers(w http.ResponseWriter, r *http.Request)
 	}
 	WriteJSON(w, http.StatusOK, apigen.AssistantMcpServerList{Servers: servers})
 }
+
+// GetAssistantNotes 对应 `GET assistant/main/notes`：主线备忘（M19）。
+func (s *Server) GetAssistantNotes(w http.ResponseWriter, r *http.Request) {
+	svc, ok := s.coordSvc(w)
+	if !ok {
+		return
+	}
+	out, err := svc.Notes(r.Context())
+	if err != nil {
+		writeCoordErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, out)
+}
+
+// PutAssistantNotes 对应 `PUT assistant/main/notes`：整体改写，上限 1500 字（超出 400 `invalid_request`）。
+func (s *Server) PutAssistantNotes(w http.ResponseWriter, r *http.Request) {
+	svc, ok := s.coordSvc(w)
+	if !ok {
+		return
+	}
+	var in apigen.AssistantNotes
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	out, err := svc.PutNotes(r.Context(), in.Text)
+	if err != nil {
+		writeCoordErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, out)
+}

@@ -106,7 +106,8 @@ type responseHead struct {
 // （terminal_configure：pty:true 的命令与 agent 的 terminal 工具落到 omp 的终端宿主，由 Terminal 面板作答）。
 // terminal 为假时（M11b：runner 没上报 terminal 特性）不发 terminal_configure。
 // 协调线程（prof 非 nil）只有 open_session、set_event_filter、set_host_tools 与可选的思考级别：不开 ask 对话框、
-// 子 agent 订阅与终端。
+// 子 agent 订阅与终端。主线（M19）在 open_session 之后先 clear_context：每次启动都是新的一段，模型只看到
+// reset_boundary 之后的内容（转录保留），跨段要记的事在系统提示词的「主线近况」里。
 func initFrames(t *thread, prof *AgentProfile, terminal bool) []apigen.OmpFrame {
 	open := apigen.OmpFrame{"type": "open_session", "sessionDir": t.sessionDir}
 	if m := parseModel(t.model); m != nil {
@@ -118,11 +119,14 @@ func initFrames(t *thread, prof *AgentProfile, terminal bool) []apigen.OmpFrame 
 		if tools == nil {
 			tools = []apigen.OmpFrame{}
 		}
-		frames = []apigen.OmpFrame{
-			open,
-			{"type": "set_event_filter", "events": nil, "messageUpdates": "delta"},
-			{"type": "set_host_tools", "tools": tools},
+		frames = []apigen.OmpFrame{open}
+		if t.main {
+			frames = append(frames, apigen.OmpFrame{"type": "clear_context"})
 		}
+		frames = append(frames,
+			apigen.OmpFrame{"type": "set_event_filter", "events": nil, "messageUpdates": "delta"},
+			apigen.OmpFrame{"type": "set_host_tools", "tools": tools},
+		)
 	} else {
 		frames = []apigen.OmpFrame{
 			open,
