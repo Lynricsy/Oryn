@@ -86,7 +86,7 @@ func TestMainInitFramesAndTools(t *testing.T) {
 			assert.Equal(t, "essential", d["loadMode"])
 		}
 	}
-	assert.True(t, names[ToolUpdateNotes], "主线有 update_notes")
+	assert.True(t, names[ToolUpdateNotes], "主线有 update_main_notes")
 	assert.Contains(t, prof.SystemPrompt, "## This is the main conversation")
 	assert.Contains(t, prof.SystemPrompt, "## 主线近况")
 
@@ -101,7 +101,7 @@ func TestMainInitFramesAndTools(t *testing.T) {
 			assert.NotEqual(t, ToolStaySilent, d["name"])
 		}
 	}
-	// 普通助手对话调用 update_notes 回 unknown_tool
+	// 普通助手对话调用 update_main_notes 回 unknown_tool
 	errText(t, e.call(other, ToolUpdateNotes, `{"text":"x"}`, true), "unknown_tool")
 }
 

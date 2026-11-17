@@ -22,9 +22,10 @@ import (
 // 主线（M19）：全局助手的永久对话。每段上下文很短：agent 每次启动先 clear_context，系统提示词末尾带「主线近况」
 // （备忘 + 最近的对话）；主线静止一段时间或一段内回合数满了，agent 在静止时停掉，下一段重新开始。
 
-// 主线专属工具名。近况按 stay_silent 的名字识别沉默的回合。
+// 主线专属工具名。近况按 stay_silent 的名字识别沉默的回合。备忘工具不能叫 update_notes：Oryn Core 的 autoresearch
+// 扩展注册了同名工具，宿主工具与之重名时 set_host_tools 失败，主线的 agent 起不来。
 const (
-	ToolUpdateNotes = "update_notes"
+	ToolUpdateNotes = "update_main_notes"
 	ToolStaySilent  = "stay_silent"
 )
 
@@ -62,7 +63,7 @@ const mainGuide = `## This is the main conversation
 - This is your permanent conversation with the owner. You speak here on your own initiative: results of schedules and trigger rules that were handed to you, reports of threads you started from here, and reminders you set here arrive as automatic messages whose first line starts with "[Oryn ".
 - Combine several results into one short message. Say only what the owner would want to know or must decide.
 - Speak only when the incoming material is worth the owner's attention or needs the owner's decision; otherwise call stay_silent with a short reason and say nothing.
-- Every episode starts with a short context: only the notes and the recent messages below. Write what you must remember across episodes into the notes with update_notes (it rewrites the notes as a whole).
+- Every episode starts with a short context: only the notes and the recent messages below. Write what you must remember across episodes into the notes with update_main_notes (it rewrites the notes as a whole).
 - To look further back, use read_thread with this conversation's id and search_history.
 - When the owner wants to dig into one thing, suggest "Continue in a new conversation" in the interface; you cannot start conversations yourself.`
 
@@ -98,7 +99,7 @@ func (s *Service) PutNotes(ctx context.Context, text string) (apigen.AssistantNo
 	return apigen.AssistantNotes{Text: text, UpdatedAt: &now}, nil
 }
 
-// toolUpdateNotes 是主线的 update_notes。
+// toolUpdateNotes 是主线的 update_main_notes。
 func (s *Service) toolUpdateNotes(ctx context.Context, c toolCtx) (any, error) {
 	if c.Kind != threads.KindAssistant || !s.isMain(ctx, c.ThreadID) {
 		return nil, errf("unknown_tool", "no tool named %q", c.Name)
