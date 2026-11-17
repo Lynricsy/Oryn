@@ -111,3 +111,44 @@ func (s *Server) GetOwnerMemoryStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	WriteJSON(w, http.StatusOK, out)
 }
+
+// ListOwnerMemoryTopics 对应 `GET /api/v1/owner-memory/topics`。
+func (s *Server) ListOwnerMemoryTopics(w http.ResponseWriter, r *http.Request) {
+	svc, ok := s.ownerMemorySvc(w)
+	if !ok {
+		return
+	}
+	out, err := svc.Topics(r.Context())
+	if err != nil {
+		writeOwnerMemoryErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, out)
+}
+
+// RefreshOwnerMemoryTopic 对应 `POST /api/v1/owner-memory/topics/{topicId}/refresh`。
+func (s *Server) RefreshOwnerMemoryTopic(w http.ResponseWriter, r *http.Request, topicID apigen.OwnerMemoryTopicIDPath) {
+	svc, ok := s.ownerMemorySvc(w)
+	if !ok {
+		return
+	}
+	if err := svc.RefreshTopic(r.Context(), topicID); err != nil {
+		writeOwnerMemoryErr(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// CurateOwnerMemoryTopics 对应 `POST /api/v1/owner-memory/curate`。
+func (s *Server) CurateOwnerMemoryTopics(w http.ResponseWriter, r *http.Request) {
+	svc, ok := s.ownerMemorySvc(w)
+	if !ok {
+		return
+	}
+	out, err := svc.Curate(r.Context())
+	if err != nil {
+		writeOwnerMemoryErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, out)
+}
