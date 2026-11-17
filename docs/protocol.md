@@ -1985,6 +1985,56 @@ M14 用 GitHub App 连接，下列契约已在 M15 删除，不再存在：`POST
 
 敏感值经 `secrets.Box` 加密后存在本表列里，AAD 分别是 `memory/hindsight-key` 和 `memory/endpoint/<kind>/api-key`。中转令牌只存 SHA-256。
 
+## M18：SSH 主机与控制面 SSH 网关
+
+主人在控制面登记 SSH 主机（全局，或只对某个项目的 orb 可见）与钥匙。私钥和密码只经 `secrets.Box` 加密存在控制面（AAD `ssh/key/<id>`、`ssh/host/<id>/password`），从不进 orb。orb 里的 agent、bash 与 Core 的 `ssh://` 都连 orb 自己的回环端口，由控制面网关替它们拨到目标机。计划与设计决定见 `docs/plan-m18.md`。
+
+```
+orb 内 ssh 客户端 ──> orbd 127.0.0.1:7822 ──link 的 ssh 流──> orynd 网关（SSH 服务端）──[跳板…]──> 目标机
+```
+
+### orbd 侧
+
+- **监听**：orbd 在 `127.0.0.1:7822` 监听（`ORYN_SSH_ADDR` 可改，测试用 `127.0.0.1:0`）。每接一条 TCP 连接，就向控制面开一条 `ssh` 流（流头 `{"t":"ssh"}`），之后双向原样搬运 SSH 字节。监听失败时 orbd 照常启动，只是不上报下面的特性。runner 与协调宿主不监听。
+- **hello 特性** `ssh`：认识 `setup.run` / `omphome.apply` 的 `ssh` 参数，并在 agent 环境里设 `ORYN_SSH=1`。
+- **下发** `LinkCtlSSHConfig{hostKey, hosts[{name, description, compat?}]}`：随 `setup.run` 与 `omphome.apply` 的 `ssh` 字段到达，缺省表示不动 orb 里的 SSH 配置。orbd 把它并入 omp 配置的写入编号序列（`writeOmpConfigAt`，写在用户层与项目层之后），据此重写四处：
+  - `~/.omp/agent/ssh.json`：每台主机写成 `{host: "127.0.0.1", port: <监听端口>, username: <主机名>, description, compat?}`；描述变了或已删除的主机，顺手删掉 Core 的远端探测缓存 `~/.omp/remote-host/<名>.json`。
+  - `~/.oryn/ssh/config`：每台主机一个 `Host` 块，供 bash 里的裸 `ssh <名>` 使用。
+  - `~/.ssh/config`：确保第一行是 `Include ~/.oryn/ssh/config`，已有内容不动。
+  - `~/.ssh/known_hosts`：删掉旧的网关条目，追加 `[127.0.0.1]:<端口> <hostKey> oryn-ssh-gateway`。
+- **中央配置里的 `ssh.json`**：不再接受写入（`agentcfg.Excluded`），也不随 omp-home 下发。控制面把每层主机的规范化摘要合成为一个虚拟 `ssh.json` 放进下发基线，所以主机一变就走既有的 `omphome.apply` 与 `reload_plugins` 链路。
+- **orbd.sock `ssh.call`**：校验 `threadId` 形状与 `tool` 非空后，原样转成 ctl `ssh.call`（上限 11 分钟）。
+
+### 网关（控制面）
+
+- **主机密钥**：`<data_dir>/ssh-gateway.key`（ed25519，首次启动生成）。
+- **登录**：登录名就是 orb 内的主机名，客户端不需要认证（`NoClientAuthCallback`）。网关在认证阶段按 orb 可见性解析主机：启用的全局主机加本项目主机，同名时项目主机优先；全自动 orb（`orbs.automation = 1`）只能用 `allowAutomation` 的主机。随后拨通上游（含跳板链，每跳 10 秒、整链 20 秒）。拒绝原因经 SSH banner 送到客户端，OpenSSH 会打到标准错误。
+- **上游认证与指纹**：钥匙登录或密码登录（密码同时提供 `password` 与 `keyboard-interactive`，遇到多因素直接中止）。第一次成功连接时固定主机公钥，固定时按 `ssh_hosts.rev` 做 CAS，所以拨号期间被修改或重置的主机不会写回旧公钥；之后公钥不一致就拒绝，提示到设置页重置指纹。
+- **通道**：`session` 通道把 `pty-req`、`shell`、`exec`、`subsystem`、`env`、`window-change`、`signal`、`break` 转给上游，把 `exit-status`、`exit-signal` 回给 orb；`direct-tcpip`（`ssh -L`）只在主机开了 `allowForward` 时放行；`tcpip-forward`（`-R`）、agent 转发与 X11 一律拒绝。
+- **失效**：主机被修改、停用、删除或重置指纹时，经过它（包括作为跳板）的网关连接、终端与 SFTP 连接立即断开。
+- **runner**：runner 的 link 不接 `ssh` 流，也不放行 `ssh.call`。
+
+### ctl `ssh.call`（orbd→orynd 请求）
+
+参数 `LinkCtlSshCallParams{threadId, tool, params}`，结果 `LinkCtlSshCallResult{text, details?}`。调用方校验同 `github.call`，不通过回 `forbidden`。`tool` 只认 `ssh_exec_many`：
+
+- **参数**：`{hosts: string[]（1–32 个）, command: string（1–8000 字符）, timeout_s?: int（1–600，缺省 60）}`，不合规回 `invalid_params`。
+- **执行**：并发上限 16，合并 stdout 与 stderr；超时先发 `SIGKILL` 再关会话。每台的输出最多 4 KiB，超出时保留头尾各 2 KiB，中间插省略说明。
+- **结果**：`text` 按请求顺序给出 `## <名> — exit <码>（<秒>s）`、`## <名> — 超时（<n>s）`或 `## <名> — 失败：<原因>`，各接输出；`details.results[]` 为 `{host, ok, exitCode?, durationMs, timedOut?, error?}`。
+
+扩展（`oryn-orb.ts`）在 `ORYN_SSH=1` 时注册这个工具（`approval: exec`），并在系统提示里说明怎样使用 SSH 主机。
+
+### 主人侧
+
+- **REST**：`/api/v1/ssh/hosts`、`/ssh/keys`、`/ssh/audit`、`/threads/{id}/ssh-hosts`、`/ssh/hosts/{id}/test`、`/ssh/hosts/{id}/reset-host-key`、`/ssh/hosts/{id}/fs/*`。`fs/*` 经 SFTP 实现，响应形状与错误码同 orb 的文件接口。`PATCH` 里 `jumpHostId`、`compat` 为 `null` 表示清掉，缺省表示不改。
+- **网页终端** `GET /api/v1/ssh/hosts/{id}/terminal?ticket=&cols=&rows=`（WebSocket，一次性票据鉴权）：客户端发二进制帧作为输入，发文本帧 `{"type":"resize","cols","rows"}` 调整窗口；服务端只发二进制帧。关闭码：`1000` shell 退出，`4401` 主体被吊销或主机被修改，`4429` 超过 8 条，`4502` 拨号失败。
+- **realtime**：主机、钥匙、指纹或测试结果变化时广播 `{"type":"ssh.changed"}`。
+- **集中管理**：orb 线程（非 runner）里的 `ssh_manage` RPC 与 `/ssh add|remove|rm` 回 `managed_by_oryn`；只读的 `get_ssh_hosts`、`ssh_test`、`/ssh list` 照常直通。
+
+### 审计与存储
+
+`0041_ssh.sql` 新增 `ssh_keys`、`ssh_hosts`、`ssh_audit` 三张表，并给 `orbs` 加 `automation` 列。审计来源为 `orb`（网关）、`owner`（测试、终端、SFTP）、`tool`（`ssh_exec_many`），类型有 `connect`、`deny`、`exec`、`shell`、`subsystem`、`forward`、`test`、`sftp`。命令原文最多记 4096 字节，交互式会话不录内容，审计保留 30 天。
+
 ## 下一条消息预测（Core `oryn-v18.19.0-12`）
 
 omp 的 `composer.predictions`：回合正常结束后用当前模型跑一次旁路请求，预测用户的下一条消息，显示成空输入框里的灰色提示字。上游只在 TUI 里接了这个功能，Oryn Core 把它接进 RPC 模式（`docs/rpc.md`「Oryn: composer next-message prediction」）。

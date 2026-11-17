@@ -826,3 +826,16 @@ bank 里已有记忆时，管理页的嵌入模型与维度只读。只有勾选
 7. 解除写保护：`dc run --rm --no-deps api hindsight-admin reembed --all-schemas --finish`。
 
 迁移失败、想退回旧模型时：保持 API 停止，把备份目录挂进一次性容器执行恢复：`dc run --rm --no-deps -v /var/backups/oryn:/backups:ro api hindsight-admin restore /backups/<文件>.zip --yes`。然后把管理页的嵌入改回旧模型（同样要勾选「换嵌入模型」），`.env` 的维度也改回旧值，再启动。
+
+## 15. SSH 主机与控制面网关（M18）
+
+在「更多 → Agent → SSH 主机」（或 `oryn ssh …`）登记的主机，由 orynd 自己发起 SSH 连接；orb 里的 agent 只连 orb 内的 `127.0.0.1:7822`，经 link 交给 orynd 的网关。私钥和密码只存在 orynd 的数据库里（`secrets.Box` 加密），不进 orb。协议细节见 [protocol.md](protocol.md)「M18」。
+
+- **网络**：目标机（以及跳板）要能从 **orynd 所在的机器**访问，orb 能不能访问无所谓。orb 的网络隔离（第 7 节）不用为 SSH 开口子。
+- **网关主机密钥**：`<data_dir>/ssh-gateway.key`，首次启动时生成。备份数据目录时一并备份；换掉它之后，各 orb 会在下一次下发时拿到新的 known_hosts 条目，不用手工处理。
+- **授权钥匙**：在设置页生成钥匙，把公钥加到目标机用户的 `~/.ssh/authorized_keys`；也可以导入已有私钥（带口令的会在导入时解开，之后不再需要口令）。密码登录同样可用，遇到多因素认证会直接失败。
+- **指纹**：第一次成功连接时固定目标机的主机公钥。目标机重装或换密钥后，连接会被拒绝并提示「指纹变了」；确认无误后在设置页（或 `oryn ssh reset-host-key <名>`）重置。
+- **作用范围**：全局主机对所有工作 orb 可见，项目主机只对该项目的 orb 可见，同名时项目主机优先。触发规则、定时等无人值守入口建出来的全自动线程，只能用勾了「允许全自动线程使用」的主机。Runner 线程与协调宿主不接入网关：Runner 用的是那台机器自己的 SSH 配置。
+- **端口转发**：默认只允许执行命令、交互 shell 与 SFTP。勾选「允许本地端口转发」后才接受 `ssh -L`；远程转发、agent 转发与 X11 一律拒绝。
+- **审计**：网关上的每次连接与命令、设置页的测试 / 终端 / 文件操作、agent 的 `ssh_exec_many` 都记一行审计（命令原文最多 4096 字节，交互式会话不录内容），保留 30 天，在设置页与 `oryn ssh audit` 查看。
+- **反代**：网页终端走 `wss://<域名>/api/v1/ssh/hosts/<id>/terminal`，第 3 节反代示例里的 `Upgrade` / `Connection` 头已经覆盖，无需另加。

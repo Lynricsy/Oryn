@@ -60,6 +60,7 @@ Oryn 以 [Oryn Core](https://github.com/Lynricsy/oryn-core)（fork 自 [`can1357
   - **发布哨兵**：发布提交的 CI 被阻塞时开线程修复，至多 5 轮，直到版本变为 green 或 failed。
   - **审计**：agent 的每个 GitHub 写操作都记审计，保留 30 天。输入框键入 `#` 可以把 issue / PR 连同评论作为附件引用。
 - **内置 Hindsight 记忆，同项目共享、跨项目隔离**：orb 与 Runner 里的 agent 共用一个自托管的 [Hindsight](https://github.com/vectorize-io/hindsight) 记忆库，回合结束自动写入，下一轮自动召回。控制面网关替 agent 填写项目标签：同一项目的各个线程共享记忆，不同项目互不可见。写进全局层的内容（个人偏好、跨项目经验）先进候选队列，主人批准后才对所有项目生效。Hindsight 自己调用的模型、嵌入与重排全部经控制面中转，可在同一协议内随时换模型。「更多 → Agent → 记忆」可以浏览、搜索、按线程遗忘、审核候选、刷新 mental model、查看用量和导出；删除项目时，它的记忆一并删除。部署见 [docs/deploy.md](docs/deploy.md) 第 14 节。
+- **SSH 主机经控制面网关接入，私钥不进 orb**：在「更多 → Agent → SSH 主机」登记目标机（全局，或只对某个项目可见）与钥匙，orb 里的 agent 直接用主机名访问：`ssh://<名>/<路径>` 读写文件、终端工具里 `ssh <名>`、`ssh_exec_many` 一次在多台机器上并发执行。连接都由控制面网关代拨（支持跳板链、首次连接固定指纹），每条命令记审计；全自动线程只能用明确放行的主机。设置页还能测试连接并查看负载、CPU、内存与磁盘快照，直接打开网页终端或浏览远端文件。部署见 [docs/deploy.md](docs/deploy.md) 第 15 节。
 
 ### 2. Space 多线程协调、定时巡检与全量统计
 
@@ -195,6 +196,9 @@ oryn config push --project myproj                            # 在仓库根目�
 oryn config pull --project myproj                            # 把项目的 Agent 配置拉回 ./.omp
 oryn secrets set git/github.com/token                        # 写入 Git 令牌（只写不读，由出站代理按需注入）
 oryn git-identity set --name "Ada" --email ada@example.com   # 设置 orb 内 Git 提交身份的全局默认值
+oryn ssh key gen main                                        # 生成 SSH 钥匙，公钥打印到标准输出（加到目标机的 authorized_keys）
+oryn ssh add web1 --host 10.0.0.5 --user deploy --key main   # 登记主机并立即测试连接（--project 限定到项目，--jump 走跳板）
+oryn ssh ls --all && oryn ssh audit --host web1             # 列出主机与最近测试结果；查看网关审计
 
 # ── 执行后端（Provider 与个人机器 Runner）──
 oryn provider create prod-fc > provider.token                # 创建 Provider（令牌仅在标准输出显示一次）
@@ -272,7 +276,7 @@ docker run --rm --platform linux/arm64 --network none --entrypoint bash oryn-orb
 
 | 文档 | 内容 |
 |---|---|
-| **[`docs/deploy.md`](docs/deploy.md)** | 生产部署全指南：OpenResty 反代、Portal 通配证书、容器网络隔离、宿主协调沙箱、统计保留期、项目快照/预热池、Sysbox DinD、本机 Runner、Firecracker microVM 与 Hindsight 记忆服务 |
+| **[`docs/deploy.md`](docs/deploy.md)** | 生产部署全指南：OpenResty 反代、Portal 通配证书、容器网络隔离、宿主协调沙箱、统计保留期、项目快照/预热池、Sysbox DinD、本机 Runner、Firecracker microVM、Hindsight 记忆服务与 SSH 网关 |
 | **[`docs/desktop.md`](docs/desktop.md)** | Windows / macOS / Linux 桌面客户端安装、Passkey 配对、无边框窗口控件、系统托盘、全局快捷键、签名自动更新，以及各端 [App 图标](docs/desktop.md#app-图标)（黑白，macOS 26 随浅色 / 深色 / 着色切换）的生成与打包 |
 | **[`docs/mobile.md`](docs/mobile.md)** | Android 客户端（`foss` 与 `gms` 双包）安装校验、扫码配对、UnifiedPush / FCM 端到端加密推送与省电策略；iOS 经 TestFlight 分发（[附录 A](docs/mobile.md#附录-aios)），App 图标随系统浅色 / 深色 / 着色切换，可在「设置 → 外观 → App 图标」换成品牌色版本 |
 | **[`docs/protocol.md`](docs/protocol.md)** | 以 [`schema/openapi.yaml`](schema/openapi.yaml) 为唯一源的 C1 Provider、C2 Orb Link、C3 REST/WebSocket 协议索引与状态机说明 |
