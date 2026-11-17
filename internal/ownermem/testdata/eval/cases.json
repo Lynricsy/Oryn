@@ -11,15 +11,15 @@
     {"name": "P8-8 论文报告频率", "query": "NotionAgent 论文报告多久跑一次", "relevant": [["3 天", "每3天", "三天"]], "expect": "top1"},
     {"name": "P8-9 手机", "query": "我手机是什么型号和系统", "relevant": [["EMUI", "港版"]], "expect": "top1"},
     {"name": "P8-10 LingSubAPI", "query": "LingSubAPI 最近合并上游的情况", "relevant": [["LingSubAPI"], ["上游", "合并"]], "expect": "top1"},
-    {"name": "陷阱-时区（对象不一致，负例 1）", "query": "我在哪个时区", "trap": [["时间基准"]], "expect": "noDirect"},
+    {"name": "陷阱-时区（对象不一致，负例 1）", "query": "我在哪个时区", "relevant": [["Asia/Singapore"], ["学生", "身份", "主人"]], "trap": [["时间基准"]], "expect": "top1"},
     {"name": "陷阱-HR 面结果（状态）", "query": "我的 HR 面考完了吗", "relevant": [["HR"]], "expect": "partial"},
     {"name": "陷阱-iOS 进度（新旧状态）", "bank": "omem-p3", "query": "Oryn 的 iOS 客户端现在是什么进度", "relevant": [["TestFlight"]], "trap": [["打算"]], "expect": "top1"},
     {"name": "陷阱-主力电脑（新旧状态）", "bank": "omem-p3", "query": "我现在的主力电脑是什么", "relevant": [["Mac Studio"]], "expect": "top1"},
     {"name": "负例 5 事实缺主语", "query": "任务的时间基准", "mustNot": ["该任务时间基准", "该任务的时间基准", "这个任务的时间基准"], "expect": "clean"},
-    {"name": "负例 4 实体拆分", "query": "Ling 是谁", "mustNot": ["Ling（学生）"], "expect": "clean"}
+    {"name": "负例 4 别名合并（Ling 是主人）", "query": "Ling 是谁", "mustNot": ["Ling（学生）", "Ling(学生)"], "expect": "clean"}
   ],
   "topics": [
-    {"name": "负例 1 时区归属", "mustNotMatch": ["主人[^；\\n]{0,20}(位于|在|身处)新加坡时区", "主人[^；\\n]{0,8}时区[^；\\n]{0,6}新加坡"]},
+    {"name": "负例 1 时区归属", "mustNotMatch": ["主人[^；\\n]{0,12}时间基准", "时区[^；\\n]{0,20}(Honolulu|檀香山)"]},
     {"name": "负例 2 完成状态", "mustNotMatch": ["HR 面试?[^；\\n]{0,12}(已完成|已结束|考完|已通过)"]},
     {"name": "负例 3 场景泛化", "requireWith": [{"trigger": "不需要人工确认", "also": ["GitHub"]}, {"trigger": "免人工确认", "also": ["GitHub"]}]}
   ]

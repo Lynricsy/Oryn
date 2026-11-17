@@ -291,4 +291,4 @@ Accept：`go test -tags ownermem_eval ./internal/ownermem/ -run Eval -v` 在探�
 Depends on：5.1、6.1。
 Files：`README.md`、`docs/deploy.md`、设计文档。
 Do：R24；在真实栈上开启助手记忆，跑完回填与一次主题整理，用新对话问设计文档 P6 的 7 个问题，记录结果。
-Accept：验收记录写进 `.agent-logs`；6 道真实题答对，时区题答「不知道」。
+Accept：验收记录写进 `.agent-logs`；6 道真实题答对；时区题依据主人自述答 Asia/Singapore（主人 2026-11-17 确认 Ling 是主人、时区属实），不能以论文任务的时间基准为依据。
