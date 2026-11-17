@@ -186,6 +186,8 @@ type wsMsg struct {
 	Orb       json.RawMessage   `json:"orb"`
 	// ID 是 notifications.read 的通知 id（M10）。
 	ID string `json:"id"`
+	// Code 是 error 消息的错误码。
+	Code string `json:"code"`
 }
 
 func (m wsMsg) frameType() string {
