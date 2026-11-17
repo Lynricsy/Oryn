@@ -23,7 +23,7 @@ func (s *Server) sshSvc(w http.ResponseWriter) (*sshgw.Service, bool) {
 	return s.SSH.Service, true
 }
 
-// writeSSHErr 写出 SSH 服务的错误：*sshgw.Error 按码映射为 400 / 404 / 409 并原样输出文案，其余按通用映射。
+// writeSSHErr 写出 SSH 服务的错误：*sshgw.Error 按码映射 HTTP 状态并原样输出文案（未列出的码一律 400），其余按通用映射。
 func writeSSHErr(w http.ResponseWriter, r *http.Request, err error) {
 	var se *sshgw.Error
 	if errors.As(err, &se) {
@@ -31,13 +31,33 @@ func writeSSHErr(w http.ResponseWriter, r *http.Request, err error) {
 		switch se.Code {
 		case "not_found":
 			status = http.StatusNotFound
-		case "conflict":
+		case "conflict", "exists", "is_a_directory", "not_a_directory":
 			status = http.StatusConflict
+		case "forbidden", "protected_path":
+			status = http.StatusForbidden
+		case "modified":
+			status = http.StatusPreconditionFailed
+		case "ssh_unreachable":
+			status = http.StatusBadGateway
 		}
 		WriteError(w, status, se.Code, se.Message)
 		return
 	}
 	writeErr(w, r, err)
+}
+
+// TestSSHHost 对应 `POST /api/v1/ssh/hosts/{id}/test`：连接失败同样回 200（`ok=false`）。
+func (s *Server) TestSSHHost(w http.ResponseWriter, r *http.Request, id apigen.SSHHostIDPath) {
+	svc, ok := s.sshSvc(w)
+	if !ok {
+		return
+	}
+	res, err := svc.Test(r.Context(), id)
+	if err != nil {
+		writeSSHErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, res)
 }
 
 // ListSSHHosts 对应 `GET /api/v1/ssh/hosts`。

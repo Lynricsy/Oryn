@@ -204,6 +204,8 @@ func (s *Server) init(ctx context.Context) error {
 	}
 	setup.SSH = s.SSH
 	s.Orbs.HandleStream(link.StreamSSH, s.SSH.ServeStream)
+	// ssh.call：orb 内 agent 的 ssh_exec_many（runner 的 link 不放行，见 orbs.runnerRequests）
+	s.Orbs.HandleRequest(string(apigen.MethodSSHCall), s.SSH.OnCall)
 	if s.Attachments, err = attachments.New(s.Store, cfg.DataDir, s.Orbs); err != nil {
 		return err
 	}
@@ -234,6 +236,7 @@ func (s *Server) init(ctx context.Context) error {
 	s.closers = append(s.closers, s.Desktop.Close)
 	s.Threads.SetProfiles(s.Desktop)
 	s.Auth.Subscribe(s.Desktop.Revoke)
+	s.Auth.Subscribe(s.SSH.Revoke)
 	// 吊销时同时作废该主体未兑换的 WS 票据，连接登记后再向库复核一次主体（H3）
 	s.Auth.Subscribe(s.Tickets.Revoke)
 	s.Hub = realtime.New(s.Threads, s.Tickets, revocations{s.Auth}, s.Auth)
@@ -383,6 +386,7 @@ func (s *Server) init(ctx context.Context) error {
 	mounts["/s/*"] = s.Share.PageHandler(webui.Handler(base.FrameSrc()))
 	mounts["/f/*"] = s.Share.FileHandler()
 	mounts[desktop.WSPath] = s.Desktop.WSHandler()
+	mounts[sshgw.TerminalWSPath] = s.SSH.TerminalHandler(s.Tickets, s.Auth)
 	// M16 模型中转：Hindsight 凭中转令牌调用，不经 /api/v1 的鉴权组
 	mounts[memory.RelayPathPrefix+"*"] = s.Memory.RelayHandler()
 	frameSrc := base.FrameSrc()

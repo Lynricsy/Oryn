@@ -82,6 +82,12 @@ type Service struct {
 	// 连接在拨号前取 gen 快照，登记时若链上有主机在快照之后失效，就当作过期连接立即关掉。
 	gen         uint64
 	invalidated map[string]uint64
+
+	// terms 是在线的网页终端（上限 maxTerminals）。
+	terms map[*termConn]struct{}
+	// fsConns 是按主机缓存的 SFTP 连接（fsMu 保护；Run 回收闲置的）。
+	fsMu    sync.Mutex
+	fsConns map[string]*fsConn
 }
 
 // New 读取或生成网关主机密钥并构造服务。
@@ -107,6 +113,7 @@ func New(cfg Config, st *store.Store, orbs Orbs) (*Service, error) {
 	}
 	return &Service{
 		cfg: cfg, st: st, orbs: orbs, signer: signer, live: map[*live]struct{}{}, invalidated: map[string]uint64{},
+		terms: map[*termConn]struct{}{}, fsConns: map[string]*fsConn{},
 	}, nil
 }
 
@@ -158,11 +165,14 @@ func loadOrCreateHostKey(p string) (ssh.Signer, error) {
 	return ssh.NewSignerFromKey(priv)
 }
 
-// Run 做周期维护：每小时清理 30 天前的审计；ctx 结束时关掉全部活动连接。
+// Run 做周期维护：每小时清理 30 天前的审计、每 30 秒回收闲置的 SFTP 连接；
+// ctx 结束时关掉全部活动连接（网关会话、网页终端、SFTP 连接）。
 func (s *Service) Run(ctx context.Context) {
 	s.pruneAudit(ctx)
 	hourly := time.NewTicker(time.Hour)
 	defer hourly.Stop()
+	reap := time.NewTicker(fsReapEvery)
+	defer reap.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -170,6 +180,8 @@ func (s *Service) Run(ctx context.Context) {
 			return
 		case <-hourly.C:
 			s.pruneAudit(ctx)
+		case <-reap.C:
+			s.reapFs()
 		}
 	}
 }
@@ -213,8 +225,8 @@ func (s *Service) track(hostIDs []string, since uint64, closeFn func()) (untrack
 // errStale 是拨号期间链上主机被修改的连接。
 var errStale = errors.New("主机配置刚被修改，请重试")
 
-// invalidate 关闭链上含 hostID 的全部活动连接（主机被改、删、停用、重置指纹，或它是别人的跳板时），
-// 并让拨号中、尚未登记的连接在登记时失败。
+// invalidate 关闭链上含 hostID 的全部活动连接（网关会话、网页终端、SFTP 连接；主机被改、删、停用、重置指纹，
+// 或它是别人的跳板时），并让拨号中、尚未登记的连接在登记时失败。
 func (s *Service) invalidate(hostID string) {
 	s.mu.Lock()
 	s.gen++
