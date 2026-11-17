@@ -168,7 +168,7 @@ Depends on：0.1。
 Files：
 
 - 新建 `internal/store/migrations/0040_owner_memory.sql`（编号现取）：
-  - `owner_memory_settings`：单行，`enabled`、`owner_names`（JSON 数组）、`decide_base_url`、`decide_model`、`decide_key_enc`（AAD `owner-memory/decide-key`）、`backfill_since`、`backfill_total`、`backfill_done`、`config_hash`（已写入 bank 的配置哈希）、`last_curated_at`、`last_curation`（JSON）、`updated_at`；
+  - `owner_memory_settings`：单行，`enabled`、`owner_names`（JSON 数组）、`decide_base_url`、`decide_model`、`decide_key_enc`（AAD `owner-memory/decide-key`）、`backfill_since`（回填进度按 `owner_memory_sources` 与 `threads` 现算，不存计数）、`config_hash`（已写入 bank 的配置哈希）、`last_curated_at`、`last_curation`（JSON）、`updated_at`；
   - `owner_memory_sources`：`thread_id` 主键、`kind`（`conv|thread`）、`transcript_rev`（已写入时的版本）、`chunks`、`retained_at`、`next_attempt_at`、`attempts`、`last_error`；
   - `owner_memory_chunks`：`(thread_id, idx)` 主键、`document_id`、`hash`、`seq_from`、`seq_to`、`retained_at`；
   - `owner_memory_exclusions`：`(kind thread|project, target_id)` 主键、`created_at`；

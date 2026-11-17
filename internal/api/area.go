@@ -32,6 +32,8 @@ type area struct {
 	Artifacts *ArtifactsDeps
 	// Memory 是 M16 的内置 Hindsight 记忆（memory.go）；nil 时回 501 memory_unavailable。
 	Memory *MemoryDeps
+	// OwnerMemory 是 M17 全局助手的主人记忆（owner_memory.go）；nil 时回 501 owner_memory_unavailable。
+	OwnerMemory *OwnerMemoryDeps
 }
 
 // PortalDeps 是 portal 限时公开接口（portals.go）的依赖。

@@ -19,9 +19,7 @@ ON CONFLICT (id) DO UPDATE SET
     decide_key_enc = excluded.decide_key_enc, updated_at = excluded.updated_at;
 
 -- name: SetOwnerMemoryBackfill :exec
-UPDATE owner_memory_settings SET backfill_since = sqlc.narg(backfill_since), backfill_total = @backfill_total,
-    backfill_done = @backfill_done
-WHERE id = 1;
+UPDATE owner_memory_settings SET backfill_since = sqlc.narg(backfill_since) WHERE id = 1;
 
 -- name: SetOwnerMemoryConfigHash :exec
 UPDATE owner_memory_settings SET config_hash = sqlc.narg(config_hash) WHERE id = 1;
@@ -94,6 +92,13 @@ SELECT s.thread_id FROM owner_memory_sources s
 WHERE NOT EXISTS (SELECT 1 FROM threads t WHERE t.id = s.thread_id)
 LIMIT @lim;
 
+-- Sources that became excluded (the thread or its project): their documents must be forgotten.
+-- name: ListExcludedOwnerMemorySources :many
+SELECT s.thread_id FROM owner_memory_sources s JOIN threads t ON t.id = s.thread_id
+WHERE EXISTS (SELECT 1 FROM owner_memory_exclusions e WHERE e.kind = 'thread' AND e.target_id = t.id)
+    OR EXISTS (SELECT 1 FROM owner_memory_exclusions e WHERE e.kind = 'project' AND e.target_id = t.project_id)
+LIMIT @lim;
+
 -- name: DeleteOwnerMemorySource :exec
 DELETE FROM owner_memory_sources WHERE thread_id = @thread_id;
 
@@ -158,6 +163,9 @@ UPDATE owner_memory_topics SET last_hit_at = @last_hit_at WHERE model_id = @mode
 DELETE FROM owner_memory_topics WHERE model_id = @model_id;
 
 -- ---------- explicit ----------
+
+-- name: CountOwnerMemoryExplicitPending :one
+SELECT COUNT(*) FROM owner_memory_explicit WHERE status = 'pending';
 
 -- name: ListOwnerMemoryExplicit :many
 SELECT * FROM owner_memory_explicit ORDER BY status DESC, created_at DESC;

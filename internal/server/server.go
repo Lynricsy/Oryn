@@ -104,6 +104,8 @@ type Server struct {
 	GitHub *github.Service
 	// Memory 是 M16 的内置 Hindsight 记忆（连接设置、状态与 .env 生成）。
 	Memory *memory.Service
+	// OwnerMemory 是 M17 全局助手的主人记忆（bank `oryn-owner`，连接与 key 与 Memory 共用）。
+	OwnerMemory *ownermem.Service
 	Hub    *realtime.Hub
 	Notify *notify.Service
 	Share  *share.Service
@@ -322,6 +324,8 @@ func (s *Server) init(ctx context.Context) error {
 		Base: base, GrantKey: artifacts.DeriveGrantKey(key), Scan: s.Share.ScanContent, Visitors: frames.Visitors,
 	})
 	s.Artifacts.SetActivityVisitors(frames.ArtifactVisitors)
+	// M17：主人记忆。写入与工具输出先用分享的密钥扫描规则与密钥库值脱敏
+	s.OwnerMemory = ownermem.New(ownermem.Config{Q: s.Store.Q, Box: box, Memory: s.Memory, Redact: s.Share.RedactText})
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	go s.Jobs.Run(runCtx)
 	go s.Orbs.Run(runCtx)
@@ -339,6 +343,8 @@ func (s *Server) init(ctx context.Context) error {
 	go s.GitHub.Run(runCtx)
 	// M16：重试删除失败的 Hindsight 记忆，并在记忆启用时保证 user-preferences 存在
 	go s.Memory.RunTombstones(runCtx)
+	// M17：主人记忆写入循环（助手对话与线程空闲 30 分钟、归档或交付后写入 bank oryn-owner）
+	go s.OwnerMemory.Run(runCtx)
 	// 事实行版本不符时在后台回填（可中断，下次启动从游标续作）
 	go func() {
 		if err := threads.BackfillFacts(runCtx, s.Store, nil, false); err != nil && runCtx.Err() == nil {
@@ -426,6 +432,7 @@ func (s *Server) init(ctx context.Context) error {
 	s.API.Search = &api.SearchDeps{Service: search.New(s.Store)}
 	s.API.GitHub = &api.GitHubDeps{Service: s.GitHub}
 	s.API.Memory = &api.MemoryDeps{Service: s.Memory}
+	s.API.OwnerMemory = &api.OwnerMemoryDeps{Service: s.OwnerMemory}
 	s.API.Artifacts = &api.ArtifactsDeps{Service: s.Artifacts, Host: frames, Render: renderer}
 	if s.Portal != nil {
 		s.API.PortalShares = &api.PortalDeps{Service: s.Portal}

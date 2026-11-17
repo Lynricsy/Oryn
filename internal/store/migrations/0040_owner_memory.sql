@@ -10,9 +10,7 @@ CREATE TABLE owner_memory_settings (
     decide_base_url TEXT,                           -- 判断模型接口地址；NULL = 未配置（召回按 RRF 顺序给出）
     decide_model    TEXT,
     decide_key_enc  BLOB,                           -- AAD "owner-memory/decide-key"
-    backfill_since  INTEGER,                        -- 首次开启时定下的回填起点（Unix 毫秒）；NULL = 尚未开启过
-    backfill_total  INTEGER NOT NULL DEFAULT 0,
-    backfill_done   INTEGER NOT NULL DEFAULT 0,
+    backfill_since  INTEGER,                        -- 首次开启时定下的回填起点（Unix 毫秒）；NULL = 尚未开启过（进度按库现算）
     config_hash     TEXT,                           -- 已写入 bank 配置（mission 等）的哈希；变化时重写
     last_curated_at INTEGER,
     last_curation   TEXT,                           -- JSON：最近一次主题整理的结果
