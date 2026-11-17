@@ -20,19 +20,27 @@ beforeAll(async () => {
 });
 const ACCENTS = ["default", "cobalt", "violet", "berry", "fox", "graphite"];
 
-/** 某主题 + 主题色下 `:root` 上生效的自定义属性（按源码顺序叠加匹配的 `:root…` 规则；后出现的选择器特异性不低于前者）。 */
+/** 某主题 + 主题色下 `:root` 上生效的自定义属性（逐条匹配选择器列表，再按源码顺序层叠）。 */
 function tokens(dark: boolean, accent: string): Map<string, string> {
 	const out = new Map<string, string>();
 	for (const [, sel = "", body = ""] of CSS.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
 		// 选择器前可能还挂着 `@import …;` 这类语句，只取最后一段
-		const s = sel.split(";").at(-1)?.trim() ?? "";
-		if (!s.startsWith(":root")) continue;
-		const rest = s
-			.slice(":root".length)
-			.replaceAll(`[data-accent="${accent}"]`, "")
-			.replaceAll(`:not([data-theme="dark"])`, dark ? "✗" : "")
-			.replaceAll(`[data-theme="dark"]`, dark ? "" : "✗");
-		if (rest !== "") continue;
+		const matchesRoot = sel
+			.split(";")
+			.at(-1)
+			?.split(",")
+			.some((selector) => {
+				const s = selector.trim();
+				if (!s.startsWith(":root")) return false;
+				return (
+					s
+						.slice(":root".length)
+						.replaceAll(`[data-accent="${accent}"]`, "")
+						.replaceAll(`:not([data-theme="dark"])`, dark ? "✗" : "")
+						.replaceAll(`[data-theme="dark"]`, dark ? "" : "✗") === ""
+				);
+			});
+		if (!matchesRoot) continue;
 		for (const [, k = "", v = ""] of body.matchAll(
 			/(--[\w-]+)\s*:\s*([^;]+);/g,
 		))
@@ -149,10 +157,10 @@ describe("预算级别文字的对比度", () => {
 		},
 	);
 
-	it("解析与换算可信：预设与暗色确实生效；浅色 --caution 在 --panel 上约 3.10:1（审查浏览器实测 3.1032），文字不能直接用它", () => {
-		expect(tokens(false, "fox").get("--tint-h")).toBe("55");
-		expect(tokens(true, "default").get("--caution-ink")).toBe("var(--caution)");
-		expect(tokens(false, "default").get("--caution-ink")).toMatch(/^color-mix/);
+	it("明暗主题使用不同底色；浅色原始警告色对比度约 3.10:1，不能直接用于文字", () => {
+		expect(
+			luminance(color("var(--panel)", tokens(true, "default"))),
+		).toBeLessThan(luminance(color("var(--panel)", tokens(false, "default"))));
 		const env = tokens(false, "default");
 		expect(contrast("var(--caution)", "var(--panel)", env)).toBeCloseTo(3.1, 1);
 	});

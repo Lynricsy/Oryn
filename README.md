@@ -306,6 +306,8 @@ make android        # 构建 Android APK（DIST=foss 或 DIST=gms）
 make fc-artifacts   # 构建锁定摘要的 Firecracker 二进制、vmlinux 内核与 ext4 根盘
 ```
 
+Web 的 CI 校验入口为 `cd web && bun run check && bun run test && bun run build`；`check` 同时运行 Biome 与 TypeScript。预算文字的对比度回归覆盖 6 个主题色的明暗两套主题，要求至少达到 4.5:1。
+
 ### Artifacts 端到端验收
 
 ```bash

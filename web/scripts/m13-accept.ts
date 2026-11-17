@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+// biome-ignore-all lint/performance/useDomNodeTextContent: 这里调用的是 Playwright Locator.innerText()，用于断言可见文本；换成 textContent() 会把隐藏内容算入结果。
 import {
 	copyFileSync,
 	existsSync,
