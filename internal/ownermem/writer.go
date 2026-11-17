@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/memory"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/transcript"
@@ -278,7 +279,7 @@ func (s *Service) forgetStale(ctx context.Context, b *memory.Bank) error {
 		return err
 	}
 	for _, id := range append(orphans, excluded...) {
-		if err := s.forgetSource(ctx, b, id); err != nil {
+		if _, err := s.forgetSource(ctx, b, id); err != nil {
 			return err
 		}
 	}
@@ -286,25 +287,26 @@ func (s *Service) forgetStale(ctx context.Context, b *memory.Bank) error {
 }
 
 // forgetSource 删除一个来源在 bank 里的全部 document（遗忘保护：刷新完成前相关主题不再给出），
-// 并清掉本地的块与进度。删除失败的 document 进入 M16 的重试队列。
-func (s *Service) forgetSource(ctx context.Context, b *memory.Bank, threadID string) error {
+// 并清掉本地的块与进度。删除失败的 document 进入 M16 的重试队列（计入 Pending）。
+func (s *Service) forgetSource(ctx context.Context, b *memory.Bank, threadID string) (apigen.MemoryForgetResult, error) {
+	var out apigen.MemoryForgetResult
 	chunks, err := s.cfg.Q.ListOwnerMemoryChunks(ctx, threadID)
 	if err != nil {
-		return err
+		return out, err
 	}
 	ids := make([]string, 0, len(chunks))
 	for _, c := range chunks {
 		ids = append(ids, c.DocumentID)
 	}
 	if len(ids) > 0 {
-		if _, _, err := b.DeleteDocuments(ctx, ids); err != nil {
-			return err
+		if out.Deleted, out.Pending, err = b.DeleteDocuments(ctx, ids); err != nil {
+			return out, err
 		}
 	}
 	if err := s.cfg.Q.DeleteOwnerMemoryChunks(ctx, threadID); err != nil {
-		return err
+		return out, err
 	}
-	return s.cfg.Q.DeleteOwnerMemorySource(ctx, threadID)
+	return out, s.cfg.Q.DeleteOwnerMemorySource(ctx, threadID)
 }
 
 // truncate 按字符截断。

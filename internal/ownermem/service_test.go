@@ -38,6 +38,11 @@ type fakeHS struct {
 	reflects  int
 	mentioned string
 	refreshes []string
+	// 事实：id -> 单条记忆（GET /memories/{id} 原样返回），列表按 factOrder；PATCH 记录在 factPatches
+	facts       map[string]map[string]any
+	factOrder   []string
+	factPatches []map[string]any
+	recallHits  []map[string]any // 非空时 recall 直接返回它们
 }
 
 // retainedDocs 返回第 i 次 retain 请求涉及的 document id（去重，保持顺序）。
@@ -112,10 +117,31 @@ func (f *fakeHS) serve(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(raw)
 	case r.Method == http.MethodPost && r.URL.Path == root+"/memories/recall":
 		results := []map[string]any{}
-		if f.mentioned != "" {
+		if f.recallHits != nil {
+			results = f.recallHits
+		} else if f.mentioned != "" {
 			results = append(results, map[string]any{"id": "m", "text": "t", "mentioned_at": f.mentioned})
 		}
 		raw, _ := json.Marshal(map[string]any{"results": results})
+		_, _ = w.Write(raw)
+	case r.Method == http.MethodGet && r.URL.Path == root+"/memories/list":
+		items := []map[string]any{}
+		for _, id := range f.factOrder {
+			m := f.facts[id]
+			if typ := r.URL.Query().Get("type"); typ == "" || typ == m["type"] {
+				items = append(items, map[string]any{"id": id, "text": m["text"], "fact_type": m["type"],
+					"document_id": m["document_id"], "metadata": m["metadata"], "state": m["state"]})
+			}
+		}
+		raw, _ := json.Marshal(map[string]any{"items": items})
+		_, _ = w.Write(raw)
+	case strings.HasPrefix(r.URL.Path, root+"/memories/") && f.facts[strings.TrimPrefix(r.URL.Path, root+"/memories/")] != nil:
+		m := f.facts[strings.TrimPrefix(r.URL.Path, root+"/memories/")]
+		if r.Method == http.MethodPatch {
+			f.factPatches = append(f.factPatches, body)
+			m["state"] = body["state"]
+		}
+		raw, _ := json.Marshal(m)
 		_, _ = w.Write(raw)
 	case r.Method == http.MethodGet && r.URL.Path == root+"/stats":
 		_, _ = w.Write([]byte(`{"total_nodes":42,"total_documents":7}`))

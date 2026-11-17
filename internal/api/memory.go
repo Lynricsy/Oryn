@@ -294,20 +294,28 @@ func (s *Server) ApproveMemoryCandidate(w http.ResponseWriter, r *http.Request, 
 	if !ok {
 		return
 	}
-	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxJSONBody))
-	if err != nil {
-		WriteError(w, http.StatusBadRequest, "invalid_request", "读取请求体失败: "+err.Error())
-		return
-	}
 	var in apigen.MemoryCandidateApprove
-	if len(bytes.TrimSpace(raw)) > 0 {
-		if err := json.Unmarshal(raw, &in); err != nil {
-			WriteError(w, http.StatusBadRequest, "invalid_request", "请求体不是有效 JSON: "+err.Error())
-			return
-		}
+	if !decodeOptionalJSON(w, r, &in) {
+		return
 	}
 	out, err := svc.ApproveCandidate(r.Context(), candidateID, in.Content)
 	memoryReply(w, r, http.StatusOK, out, err)
+}
+
+// decodeOptionalJSON 解析可省略的请求体：空体保留 v 的零值。失败时已写出 400，返回 false。
+func decodeOptionalJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxJSONBody))
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "invalid_request", "读取请求体失败: "+err.Error())
+		return false
+	}
+	if len(bytes.TrimSpace(raw)) > 0 {
+		if err := json.Unmarshal(raw, v); err != nil {
+			WriteError(w, http.StatusBadRequest, "invalid_request", "请求体不是有效 JSON: "+err.Error())
+			return false
+		}
+	}
+	return true
 }
 
 // CreateGlobalMemory 对应 `POST /api/v1/memory/global`。
