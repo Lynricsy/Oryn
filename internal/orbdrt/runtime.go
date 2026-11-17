@@ -123,6 +123,8 @@ type Config struct {
 	Runner *RunnerConfig
 	// ProcStat 是 /proc 指标源读取的 CPU 计数文件（默认 /proc/stat；测试可替换）。
 	ProcStat string
+	// ComputerIdleExit 是工具执行器（M19 助手的电脑）没有调用后停掉进程的时长，默认 DefaultComputerIdleExit（测试可调小）。
+	ComputerIdleExit time.Duration
 }
 
 // ConfigFromEnv 从环境变量读取 orbd 配置。ORYN_ORB_TOKEN 可缺省：$HOME/.oryn/orb-token 存在时以它为准
@@ -269,6 +271,9 @@ type Runtime struct {
 
 	// runner 是 runner 形态的状态（声明的目录、实例锁、worktree 登记）；orb 形态为 nil。
 	runner *runnerState
+
+	// comp 是工具执行器（M19 助手的电脑，见 computer.go）；runner 与协调宿主为 nil。
+	comp *computer
 }
 
 // conn 是一条已建立并发过 hello 的 link。
@@ -447,6 +452,7 @@ func New(cfg Config) (_ *Runtime, err error) {
 		// 协调宿主没有桌面，也不写 orb 扩展与技能（协调档的 omp 以 --no-extensions --no-skills 启动）；
 		// runner 同样不碰用户机器上的 ~/.agents/skills 与 ~/.oryn/core（它只写自带的扩展，见上），也没有桌面与嵌套 Docker。
 		r.desk = newDesktop(r)
+		r.comp = newComputer(r)
 		if cfg.NestedDocker {
 			r.dockerd = newDockerd(r)
 		}
@@ -568,6 +574,9 @@ func (r *Runtime) Shutdown(grace time.Duration) {
 	})
 	if d := r.desk; d != nil {
 		wg.Go(func() { d.stopBrowser(min(grace, browserStopGrace)) })
+	}
+	if c := r.comp; c != nil {
+		wg.Go(func() { c.stop(min(grace, computerStopGrace)) })
 	}
 	r.stopAllAgents(grace)
 	wg.Wait()
@@ -789,8 +798,8 @@ func (r *Runtime) hello() apigen.LinkCtlHelloParams {
 		}
 	}
 	// terminal（终端面板）与 metrics（metrics.sample）是 M11b 才有名字的既有能力，orb 一直具备。
-	// memory（M16）：agent.start 接受 memory 参数。
-	features := []string{"fs", "git", "attachments", "services", "portal", "sync", "threads", "repo-update", "setup-defer-resume", "terminal", "metrics", "omphome-apply", "memory"}
+	// memory（M16）：agent.start 接受 memory 参数。computer（M19）：认识 computer.*（工具执行器）。
+	features := []string{"fs", "git", "attachments", "services", "portal", "sync", "threads", "repo-update", "setup-defer-resume", "terminal", "metrics", "omphome-apply", "memory", "computer"}
 	if r.desk != nil {
 		features = append(features, "desktop")
 	}
@@ -833,9 +842,12 @@ func decode[T any](params json.RawMessage) (T, error) {
 	return v, nil
 }
 
-func (r *Runtime) onRequest(_ context.Context, c *conn, method string, params json.RawMessage) (any, error) {
+func (r *Runtime) onRequest(reqCtx context.Context, c *conn, method string, params json.RawMessage) (any, error) {
 	// 长操作使用运行时 ctx：link 断开不应中断 setup 或 agent 停止。
 	ctx := r.ctx
+	if computerMethods[method] && r.comp == nil {
+		return nil, ctlErr(CodeNotSupported, "%s is only available on an orb", method)
+	}
 	if r.cfg.Coordinator && !coordinatorMethods[method] {
 		return nil, link.ErrMethodNotFound
 	}
@@ -959,6 +971,27 @@ func (r *Runtime) onRequest(_ context.Context, c *conn, method string, params js
 			return nil, err
 		}
 		return r.worktreeRemove(ctx, p)
+	case string(apigen.MethodComputerStart):
+		p, err := decode[apigen.LinkCtlComputerStartParams](params)
+		if err != nil {
+			return nil, err
+		}
+		return r.comp.start(ctx, p)
+	case string(apigen.MethodComputerCall):
+		p, err := decode[apigen.LinkCtlComputerCallParams](params)
+		if err != nil {
+			return nil, err
+		}
+		// 调用跟着 link：控制面那头已经断开时取消工具，不让它跑到时限。
+		return r.comp.call(reqCtx, p)
+	case string(apigen.MethodComputerCancel):
+		p, err := decode[apigen.LinkCtlComputerCancelParams](params)
+		if err != nil {
+			return nil, err
+		}
+		return r.comp.cancel(p)
+	case string(apigen.MethodComputerStop):
+		return r.comp.stop(computerStopGrace), nil
 	default:
 		return nil, link.ErrMethodNotFound
 	}
