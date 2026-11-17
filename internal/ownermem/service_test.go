@@ -171,7 +171,7 @@ type env struct {
 }
 
 // newEnv 构造服务；m16 为真时 M16 记忆已启用并配置到假 Hindsight。
-func newEnv(t *testing.T, m16 bool) *env {
+func newEnv(t *testing.T, m16 bool, mods ...func(*ownermem.Config)) *env {
 	t.Helper()
 	ctx := context.Background()
 	st, err := store.Open(ctx, t.TempDir())
@@ -182,7 +182,11 @@ func newEnv(t *testing.T, m16 bool) *env {
 	e := &env{st: st, hs: newFakeHS(t), now: time.UnixMilli(1_800_000_000_000)}
 	now := func() time.Time { return e.now }
 	e.mem = memory.New(memory.Config{Q: st.Q, Box: box, PublicURL: "https://oryn.test/", Now: now})
-	e.svc = ownermem.New(ownermem.Config{Q: st.Q, Box: box, Memory: e.mem, Now: now})
+	cfg := ownermem.Config{Q: st.Q, Box: box, Memory: e.mem, Now: now}
+	for _, m := range mods {
+		m(&cfg)
+	}
+	e.svc = ownermem.New(cfg)
 	if m16 {
 		u := e.hs.srv.URL
 		_, err := e.mem.PutSettings(ctx, apigen.MemorySettingsUpdate{Enabled: true, HindsightURL: &u})
