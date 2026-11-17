@@ -43,15 +43,41 @@ func staleBackoff(attempts int64) time.Duration {
 	return min(d, staleBackoffMax)
 }
 
-// forgetScopes 是一次遗忘影响的范围：键是范围标签（`project:<P>` 或 `oryn:global`），值是项目 ID
-// （全局或无法确定项目时为 nil，只用于展示）。
+// forgetScopes 是一次遗忘影响的范围：键是范围标签（`project:<P>` 或 `oryn:global`；主人记忆用 allModelsScope），
+// 值是项目 ID（全局或无法确定项目时为 nil，只用于展示）。
 type forgetScopes map[string]*string
 
 func (fs forgetScopes) add(projectID *string) { fs[scopeTag(projectID)] = projectID }
 
+// allModelsScope 表示 bank 里的全部 mental model：主人记忆的主题不带标签、从全部事实提炼，任何遗忘都可能影响每一个。
+const allModelsScope = "*"
+
+// scopesFor 是在 bank 里删除这些 document 时要标记的范围：工程记忆按项目或全局标签，其他 bank 一律全部模型。
+func scopesFor(bank string, docs []tombstoneTarget) forgetScopes {
+	scopes := forgetScopes{}
+	if bank != BankID {
+		scopes[allModelsScope] = nil
+		return scopes
+	}
+	for _, d := range docs {
+		scopes.add(d.projectID)
+	}
+	return scopes
+}
+
 // scopeModels 列出范围内内容可能含有被遗忘事实的模型：项目范围是带 `project:<P>` 的模型；
-// 全局范围是带 `oryn:global` 的模型，再加上 user-preferences（即使它的标签不对）。
+// 全局范围是带 `oryn:global` 的模型，再加上 user-preferences（即使它的标签不对）；allModelsScope 是 bank 里的全部模型。
 func (c adminClient) scopeModels(ctx context.Context, tag string) ([]hsMentalModel, error) {
+	if tag == allModelsScope {
+		var out struct {
+			Items []hsMentalModel `json:"items"`
+		}
+		q := url.Values{"detail": {"metadata"}, "limit": {"1000"}}
+		if err := c.call(ctx, http.MethodGet, c.root()+"/mental-models?"+q.Encode(), nil, &out); err != nil {
+			return nil, err
+		}
+		return out.Items, nil
+	}
 	models, err := c.listMentalModels(ctx, tag, "metadata")
 	if err != nil || tag != GlobalTag {
 		return models, err
@@ -62,7 +88,7 @@ func (c adminClient) scopeModels(ctx context.Context, tag string) ([]hsMentalMod
 		}
 	}
 	var m hsMentalModel
-	err = c.call(ctx, http.MethodGet, mmPath(UserPrefsModelID), nil, &m)
+	err = c.call(ctx, http.MethodGet, c.mmPath(UserPrefsModelID), nil, &m)
 	switch {
 	case statusOf(err) == http.StatusNotFound:
 		return models, nil
@@ -118,7 +144,7 @@ func (s *Service) markStale(ctx context.Context, c adminClient, scopes forgetSco
 			}
 			marks = append(marks, staleMark{id: m.ID, hold: hold})
 			if err := s.cfg.Q.UpsertMemoryStaleModel(lctx, db.UpsertMemoryStaleModelParams{
-				ModelID: m.ID, ProjectID: projectID, Now: now, Token: token,
+				ModelID: m.ID, ProjectID: projectID, Now: now, Token: token, Bank: c.bank,
 			}); err != nil {
 				return fail(err)
 			}
@@ -205,7 +231,7 @@ func (c adminClient) refreshOpStatus(ctx context.Context, op string) (string, st
 		Status       string  `json:"status"`
 		ErrorMessage *string `json:"error_message"`
 	}
-	err := c.call(ctx, http.MethodGet, adminBank+"/operations/"+url.PathEscape(op), nil, &resp)
+	err := c.call(ctx, http.MethodGet, c.root()+"/operations/"+url.PathEscape(op), nil, &resp)
 	if statusOf(err) == http.StatusNotFound {
 		return "not_found", "", nil
 	}
@@ -231,8 +257,7 @@ func (s *Service) RetryStaleModels(ctx context.Context) (int, error) {
 	if err != nil || len(rows) == 0 {
 		return 0, err
 	}
-	c, err := s.admin(ctx)
-	if err != nil {
+	if _, err := s.Client(ctx); err != nil {
 		if errors.Is(err, ErrNotConfigured) {
 			return 0, nil
 		}
@@ -240,10 +265,18 @@ func (s *Service) RetryStaleModels(ctx context.Context) (int, error) {
 	}
 	hctx, cancel := context.WithTimeout(ctx, purgeTimeout)
 	defer cancel()
+	clients := map[string]adminClient{}
 	cleared := 0
 	for _, row := range rows {
+		c, ok := clients[row.Bank]
+		if !ok {
+			if c, err = s.adminFor(ctx, row.Bank); err != nil {
+				return cleared, err
+			}
+			clients[row.Bank] = c
+		}
 		var hm hsMentalModel
-		err := c.call(hctx, http.MethodGet, mmPath(row.ModelID), nil, &hm)
+		err := c.call(hctx, http.MethodGet, c.mmPath(row.ModelID), nil, &hm)
 		if statusOf(err) == http.StatusNotFound {
 			if s.clearStale(hctx, row) {
 				cleared++
@@ -281,15 +314,19 @@ func (s *Service) RetryStaleModels(ctx context.Context) (int, error) {
 	return cleared, nil
 }
 
-// StaleModelIDs 返回仍在等待遗忘后刷新的模型 id（不论删除是否已结束），网关据此隐藏内容、在 reflect 里排除。
+// StaleModelIDs 返回 bank `oryn` 里仍在等待遗忘后刷新的模型 id（不论删除是否已结束），网关据此隐藏内容、在 reflect 里排除。
 func (s *Service) StaleModelIDs(ctx context.Context) (map[string]bool, error) {
-	rows, err := s.cfg.Q.ListMemoryStaleModels(ctx)
+	return s.staleModelIDs(ctx, BankID)
+}
+
+func (s *Service) staleModelIDs(ctx context.Context, bank string) (map[string]bool, error) {
+	ids, err := s.cfg.Q.ListMemoryStaleModelIDsByBank(ctx, bank)
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[string]bool, len(rows))
-	for _, r := range rows {
-		out[r.ModelID] = true
+	out := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		out[id] = true
 	}
 	return out, nil
 }

@@ -34,8 +34,8 @@ const (
 	userPrefsQuery     = "What does the user prefer in coding style, tooling, communication, and review? Capture only durable preferences expressed across sessions, not one-off requests."
 	userPrefsMaxTokens = 600
 
-	// adminBank 是 bank `oryn` 的 API 前缀。
-	adminBank = "/v1/default/banks/" + BankID
+	// bankPrefix 是 Hindsight bank API 的公共前缀，后接 bank id。
+	bankPrefix = "/v1/default/banks/"
 	// previewRunes 是 document 预览的最大字数。
 	previewRunes = 400
 	// adminTimeout 是一次管理操作访问 Hindsight 的总时限；同步 retain 要等 LLM 抽取事实，给得宽一些。
@@ -66,16 +66,28 @@ func errUpstream(what string, err error) error {
 	return &Error{Status: http.StatusBadGateway, Code: "memory_upstream", Message: fmt.Sprintf("%s失败：%v", what, err)}
 }
 
-// adminClient 是管理接口用到的 Hindsight 端点（只在本文件与 purge.go 里使用）。
-type adminClient struct{ *Hindsight }
+// adminClient 是 orynd 直接访问某个 bank 的 Hindsight 端点：管理接口与删除联动用 bank `oryn`，
+// M17 主人记忆经 Bank 用 `oryn-owner`。
+type adminClient struct {
+	*Hindsight
+	bank string
+}
 
-// admin 按当前设置构造 Hindsight 客户端；未配置时返回 ErrNotConfigured。
+// root 是这个 bank 的 API 前缀。
+func (c adminClient) root() string { return bankPrefix + c.bank }
+
+// admin 按当前设置构造访问 bank `oryn` 的客户端；未配置时返回 ErrNotConfigured。
 func (s *Service) admin(ctx context.Context) (adminClient, error) {
+	return s.adminFor(ctx, BankID)
+}
+
+// adminFor 按当前设置构造访问指定 bank 的客户端；未配置时返回 ErrNotConfigured。
+func (s *Service) adminFor(ctx context.Context, bank string) (adminClient, error) {
 	h, err := s.Client(ctx)
 	if err != nil {
 		return adminClient{}, err
 	}
-	return adminClient{h}, nil
+	return adminClient{Hindsight: h, bank: bank}, nil
 }
 
 // hsDocument 是 Hindsight document 里 orynd 关心的字段。
@@ -93,23 +105,23 @@ func (c adminClient) listDocuments(ctx context.Context, tag string, offset, limi
 		Items []hsDocument `json:"items"`
 		Total int          `json:"total"`
 	}
-	if err := c.call(ctx, http.MethodGet, adminBank+"/documents?"+q.Encode(), nil, &out); err != nil {
+	if err := c.call(ctx, http.MethodGet, c.root()+"/documents?"+q.Encode(), nil, &out); err != nil {
 		return nil, 0, err
 	}
 	return out.Items, out.Total, nil
 }
 
-func docPath(id string) string { return adminBank + "/documents/" + url.PathEscape(id) }
+func (c adminClient) docPath(id string) string { return c.root() + "/documents/" + url.PathEscape(id) }
 
 func (c adminClient) getDocument(ctx context.Context, id string) (hsDocument, error) {
 	var out hsDocument
-	err := c.call(ctx, http.MethodGet, docPath(id), nil, &out)
+	err := c.call(ctx, http.MethodGet, c.docPath(id), nil, &out)
 	return out, err
 }
 
 // deleteDocument 删除 document；Hindsight 里已经没有它（404）也算成功。
 func (c adminClient) deleteDocument(ctx context.Context, id string) error {
-	err := c.call(ctx, http.MethodDelete, docPath(id), nil, nil)
+	err := c.call(ctx, http.MethodDelete, c.docPath(id), nil, nil)
 	if statusOf(err) == http.StatusNotFound {
 		return nil
 	}
@@ -126,7 +138,7 @@ func (c adminClient) retainGlobal(ctx context.Context, docID, content string, co
 		item["context"] = *context_
 	}
 	body := map[string]any{"items": []any{item}, "document_tags": []string{GlobalTag}, "async": false}
-	return c.call(ctx, http.MethodPost, adminBank+"/memories", body, nil)
+	return c.call(ctx, http.MethodPost, c.root()+"/memories", body, nil)
 }
 
 // hsMentalModel 是 Hindsight mental model 里 orynd 关心的字段。
@@ -140,7 +152,9 @@ type hsMentalModel struct {
 	Trigger         json.RawMessage `json:"trigger"`
 }
 
-func mmPath(id string) string { return adminBank + "/mental-models/" + url.PathEscape(id) }
+func (c adminClient) mmPath(id string) string {
+	return c.root() + "/mental-models/" + url.PathEscape(id)
+}
 
 // listMentalModels 列出带 tag 的 mental model，并在客户端再按 tags 过滤一遍（Hindsight 的 all 匹配会带上无标签的模型）。
 func (c adminClient) listMentalModels(ctx context.Context, tag string, detail string) ([]hsMentalModel, error) {
@@ -148,7 +162,7 @@ func (c adminClient) listMentalModels(ctx context.Context, tag string, detail st
 	var out struct {
 		Items []hsMentalModel `json:"items"`
 	}
-	if err := c.call(ctx, http.MethodGet, adminBank+"/mental-models?"+q.Encode(), nil, &out); err != nil {
+	if err := c.call(ctx, http.MethodGet, c.root()+"/mental-models?"+q.Encode(), nil, &out); err != nil {
 		return nil, err
 	}
 	items := out.Items[:0]
@@ -170,13 +184,13 @@ func (c adminClient) refreshMentalModel(ctx context.Context, id string, full boo
 	var resp struct {
 		OperationID string `json:"operation_id"`
 	}
-	err := c.call(ctx, http.MethodPost, mmPath(id)+"/refresh", body, &resp)
+	err := c.call(ctx, http.MethodPost, c.mmPath(id)+"/refresh", body, &resp)
 	return resp.OperationID, err
 }
 
 // deleteMentalModel 删除 mental model；不存在（404）也算成功。
 func (c adminClient) deleteMentalModel(ctx context.Context, id string) error {
-	err := c.call(ctx, http.MethodDelete, mmPath(id), nil, nil)
+	err := c.call(ctx, http.MethodDelete, c.mmPath(id), nil, nil)
 	if statusOf(err) == http.StatusNotFound {
 		return nil
 	}
@@ -195,11 +209,11 @@ func userPrefsSpec() map[string]any {
 // 标签或匹配方式不对（例如早先由 Core 按无标签种子创建）时改回来。返回是否新建。
 func (c adminClient) ensureUserPrefs(ctx context.Context) (bool, error) {
 	var cur hsMentalModel
-	err := c.call(ctx, http.MethodGet, mmPath(UserPrefsModelID), nil, &cur)
+	err := c.call(ctx, http.MethodGet, c.mmPath(UserPrefsModelID), nil, &cur)
 	if statusOf(err) == http.StatusNotFound {
 		body := userPrefsSpec()
 		body["id"] = UserPrefsModelID
-		if err := c.call(ctx, http.MethodPost, adminBank+"/mental-models", body, nil); err != nil {
+		if err := c.call(ctx, http.MethodPost, c.root()+"/mental-models", body, nil); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -214,7 +228,7 @@ func (c adminClient) ensureUserPrefs(ctx context.Context) (bool, error) {
 	if len(cur.Tags) == 1 && cur.Tags[0] == GlobalTag && trig.TagsMatch != nil && *trig.TagsMatch == "all_strict" {
 		return false, nil
 	}
-	return false, c.call(ctx, http.MethodPatch, mmPath(UserPrefsModelID), userPrefsSpec(), nil)
+	return false, c.call(ctx, http.MethodPatch, c.mmPath(UserPrefsModelID), userPrefsSpec(), nil)
 }
 
 func hasTag(tags []string, tag string) bool {
@@ -378,7 +392,7 @@ func (s *Service) Search(ctx context.Context, q string, projectID *string) (apig
 			Tags        []string `json:"tags"`
 		} `json:"results"`
 	}
-	if err := c.call(ctx, http.MethodPost, adminBank+"/memories/recall",
+	if err := c.call(ctx, http.MethodPost, c.root()+"/memories/recall",
 		map[string]any{"query": q, "tags": tags, "tags_match": "any_strict"}, &resp); err != nil {
 		return apigen.MemorySearchResult{}, errUpstream("召回", err)
 	}
@@ -694,7 +708,7 @@ func (s *Service) StartExport(ctx context.Context) (apigen.MemoryExport, error) 
 	var resp struct {
 		OperationID string `json:"operation_id"`
 	}
-	if err := c.call(ctx, http.MethodPost, adminBank+"/transfer/export", nil, &resp); err != nil {
+	if err := c.call(ctx, http.MethodPost, c.root()+"/transfer/export", nil, &resp); err != nil {
 		return apigen.MemoryExport{}, errUpstream("开始导出", err)
 	}
 	if !exportIDRe.MatchString(resp.OperationID) {
@@ -709,7 +723,7 @@ func (s *Service) exportOp(ctx context.Context, c adminClient, id string) (hsOpe
 		return hsOperation{}, errNotFound("导出不存在")
 	}
 	var op hsOperation
-	if err := c.call(ctx, http.MethodGet, adminBank+"/operations/"+url.PathEscape(id), nil, &op); err != nil {
+	if err := c.call(ctx, http.MethodGet, c.root()+"/operations/"+url.PathEscape(id), nil, &op); err != nil {
 		if statusOf(err) == http.StatusNotFound {
 			return hsOperation{}, errNotFound("导出不存在")
 		}
@@ -798,11 +812,11 @@ func (s *Service) OpenExport(ctx context.Context, id string) (ExportArchive, err
 // ListPendingDeletes 列出删除失败、等待重试的条目（R23），以及遗忘之后仍在等待全量刷新的 mental model
 // （documentId 为 `mental-model-refresh:<模型 id>`）：它们在列表里说明遗忘尚未彻底完成。
 func (s *Service) ListPendingDeletes(ctx context.Context) (apigen.MemoryPendingDeleteList, error) {
-	rows, err := s.cfg.Q.ListMemoryTombstones(ctx)
+	rows, err := s.cfg.Q.ListMemoryTombstones(ctx, BankID)
 	if err != nil {
 		return apigen.MemoryPendingDeleteList{}, err
 	}
-	stale, err := s.cfg.Q.ListMemoryStaleModels(ctx)
+	stale, err := s.cfg.Q.ListMemoryStaleModels(ctx, BankID)
 	if err != nil {
 		return apigen.MemoryPendingDeleteList{}, err
 	}

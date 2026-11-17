@@ -193,7 +193,7 @@ func (s *Service) Status(ctx context.Context) (apigen.MemoryStatus, error) {
 		return apigen.MemoryStatus{}, err
 	}
 	out := apigen.MemoryStatus{TestedMinor: TestedMinor, CheckedAt: s.cfg.Now().Unix(), EmbedLocked: st.EmbedLocked != 0}
-	tombs, err := s.cfg.Q.ListMemoryTombstones(ctx)
+	tombs, err := s.cfg.Q.ListMemoryTombstones(ctx, BankID)
 	if err != nil {
 		return apigen.MemoryStatus{}, err
 	}
@@ -202,7 +202,7 @@ func (s *Service) Status(ctx context.Context) (apigen.MemoryStatus, error) {
 		return apigen.MemoryStatus{}, err
 	}
 	// 遗忘后等待刷新的 mental model 也算未完成的删除（与 pending-deletes 列表一致）
-	stale, err := s.cfg.Q.ListMemoryStaleModels(ctx)
+	stale, err := s.cfg.Q.ListMemoryStaleModels(ctx, BankID)
 	if err != nil {
 		return apigen.MemoryStatus{}, err
 	}

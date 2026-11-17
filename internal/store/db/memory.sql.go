@@ -289,8 +289,8 @@ func (q *Queries) InsertMemoryStaleHold(ctx context.Context, arg InsertMemorySta
 
 const insertMemoryTombstone = `-- name: InsertMemoryTombstone :exec
 
-INSERT INTO memory_tombstones (document_id, project_id, attempts, next_attempt_at, last_error, created_at)
-VALUES (?1, ?2, 0, ?3, ?4, ?5)
+INSERT INTO memory_tombstones (document_id, project_id, attempts, next_attempt_at, last_error, created_at, bank)
+VALUES (?1, ?2, 0, ?3, ?4, ?5, ?6)
 ON CONFLICT (document_id) DO NOTHING
 `
 
@@ -300,6 +300,7 @@ type InsertMemoryTombstoneParams struct {
 	NextAttemptAt int64   `json:"nextAttemptAt"`
 	LastError     *string `json:"lastError"`
 	CreatedAt     int64   `json:"createdAt"`
+	Bank          string  `json:"bank"`
 }
 
 // ---------- tombstones ----------
@@ -310,6 +311,7 @@ func (q *Queries) InsertMemoryTombstone(ctx context.Context, arg InsertMemoryTom
 		arg.NextAttemptAt,
 		arg.LastError,
 		arg.CreatedAt,
+		arg.Bank,
 	)
 	return err
 }
@@ -663,12 +665,39 @@ func (q *Queries) ListMemoryProjects(ctx context.Context) ([]MemoryProject, erro
 	return items, nil
 }
 
-const listMemoryStaleModels = `-- name: ListMemoryStaleModels :many
-SELECT model_id, project_id, refresh_op, attempts, next_attempt_at, last_error, created_at, token, bank FROM memory_stale_models ORDER BY created_at, model_id
+const listMemoryStaleModelIDsByBank = `-- name: ListMemoryStaleModelIDsByBank :many
+SELECT model_id FROM memory_stale_models WHERE bank = ?1 ORDER BY model_id
 `
 
-func (q *Queries) ListMemoryStaleModels(ctx context.Context) ([]MemoryStaleModel, error) {
-	rows, err := q.db.QueryContext(ctx, listMemoryStaleModels)
+func (q *Queries) ListMemoryStaleModelIDsByBank(ctx context.Context, bank string) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listMemoryStaleModelIDsByBank, bank)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var model_id string
+		if err := rows.Scan(&model_id); err != nil {
+			return nil, err
+		}
+		items = append(items, model_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMemoryStaleModels = `-- name: ListMemoryStaleModels :many
+SELECT model_id, project_id, refresh_op, attempts, next_attempt_at, last_error, created_at, token, bank FROM memory_stale_models WHERE bank = ?1 ORDER BY created_at, model_id
+`
+
+func (q *Queries) ListMemoryStaleModels(ctx context.Context, bank string) ([]MemoryStaleModel, error) {
+	rows, err := q.db.QueryContext(ctx, listMemoryStaleModels, bank)
 	if err != nil {
 		return nil, err
 	}
@@ -701,11 +730,11 @@ func (q *Queries) ListMemoryStaleModels(ctx context.Context) ([]MemoryStaleModel
 }
 
 const listMemoryTombstones = `-- name: ListMemoryTombstones :many
-SELECT document_id, project_id, attempts, next_attempt_at, last_error, created_at, bank FROM memory_tombstones ORDER BY created_at
+SELECT document_id, project_id, attempts, next_attempt_at, last_error, created_at, bank FROM memory_tombstones WHERE bank = ?1 ORDER BY created_at
 `
 
-func (q *Queries) ListMemoryTombstones(ctx context.Context) ([]MemoryTombstone, error) {
-	rows, err := q.db.QueryContext(ctx, listMemoryTombstones)
+func (q *Queries) ListMemoryTombstones(ctx context.Context, bank string) ([]MemoryTombstone, error) {
+	rows, err := q.db.QueryContext(ctx, listMemoryTombstones, bank)
 	if err != nil {
 		return nil, err
 	}
@@ -1004,11 +1033,11 @@ func (q *Queries) UpsertMemorySettings(ctx context.Context, arg UpsertMemorySett
 
 const upsertMemoryStaleModel = `-- name: UpsertMemoryStaleModel :exec
 
-INSERT INTO memory_stale_models (model_id, project_id, refresh_op, attempts, next_attempt_at, last_error, created_at, token)
-VALUES (?1, ?2, NULL, 0, ?3, NULL, ?3, ?4)
+INSERT INTO memory_stale_models (model_id, project_id, refresh_op, attempts, next_attempt_at, last_error, created_at, token, bank)
+VALUES (?1, ?2, NULL, 0, ?3, NULL, ?3, ?4, ?5)
 ON CONFLICT (model_id) DO UPDATE SET
     project_id = excluded.project_id, refresh_op = NULL, attempts = 0,
-    next_attempt_at = excluded.next_attempt_at, last_error = NULL, token = excluded.token
+    next_attempt_at = excluded.next_attempt_at, last_error = NULL, token = excluded.token, bank = excluded.bank
 `
 
 type UpsertMemoryStaleModelParams struct {
@@ -1016,6 +1045,7 @@ type UpsertMemoryStaleModelParams struct {
 	ProjectID *string `json:"projectId"`
 	Now       int64   `json:"now"`
 	Token     string  `json:"token"`
+	Bank      string  `json:"bank"`
 }
 
 // ---------- stale mental models ----------
@@ -1026,6 +1056,7 @@ func (q *Queries) UpsertMemoryStaleModel(ctx context.Context, arg UpsertMemorySt
 		arg.ProjectID,
 		arg.Now,
 		arg.Token,
+		arg.Bank,
 	)
 	return err
 }

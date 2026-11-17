@@ -38,10 +38,18 @@ func tombstoneBackoff(attempts int64) time.Duration {
 	return min(d, tombstoneBackoffMax)
 }
 
-// tombstoneTarget 是一个待删除的 document（或 mental model 标记）及其项目。
+// tombstoneTarget 是一个待删除的 document（或 mental model 标记）及其项目。bank 为空时按 bank `oryn`。
 type tombstoneTarget struct {
 	id        string
 	projectID *string
+	bank      string
+}
+
+func (t tombstoneTarget) bankID() string {
+	if t.bank == "" {
+		return BankID
+	}
+	return t.bank
 }
 
 // tombstone 把删除失败的条目写进重试队列（已在队列里的保持原样）。用不受调用方超时影响的 context 落库。
@@ -50,27 +58,31 @@ func (s *Service) tombstone(ctx context.Context, t tombstoneTarget, cause error)
 	now := s.cfg.Now()
 	return s.cfg.Q.InsertMemoryTombstone(context.WithoutCancel(ctx), db.InsertMemoryTombstoneParams{
 		DocumentID: t.id, ProjectID: t.projectID, NextAttemptAt: now.Add(tombstoneBackoff(0)).Unix(),
-		LastError: &msg, CreatedAt: now.Unix(),
+		LastError: &msg, CreatedAt: now.Unix(), Bank: t.bankID(),
 	})
 }
 
-// deleteDocuments 逐个删除 document：成功的删掉 memory_documents 行；失败的（含未配置、Hindsight 不可用）写进重试队列后
-// 也删掉行，由墓碑接管。删除之前先把受影响范围的 mental model 标为待刷新，标记失败时一个都不删（全部进重试队列，
-// 重试时再标记）。refresh 为真时，有删除成功就立即对标记的模型提交全量刷新。返回删除数与进入队列数。
+// deleteDocuments 在 bank `oryn` 里删除 document，见 deleteDocumentsIn。
 func (s *Service) deleteDocuments(ctx context.Context, docs []tombstoneTarget, refresh bool) (int, int, error) {
+	return s.deleteDocumentsIn(ctx, BankID, docs, refresh)
+}
+
+// deleteDocumentsIn 逐个删除 bank 里的 document：成功的删掉 memory_documents 行；失败的（含未配置、Hindsight 不可用）
+// 写进重试队列后也删掉行，由墓碑接管。删除之前先把受影响范围的 mental model 标为待刷新，标记失败时一个都不删（全部进
+// 重试队列，重试时再标记）。refresh 为真时，有删除成功就立即对标记的模型提交全量刷新。返回删除数与进入队列数。
+func (s *Service) deleteDocumentsIn(ctx context.Context, bank string, docs []tombstoneTarget, refresh bool) (int, int, error) {
 	if len(docs) == 0 {
 		return 0, 0, nil
 	}
-	c, cerr := s.admin(ctx)
+	for i := range docs {
+		docs[i].bank = bank
+	}
+	c, cerr := s.adminFor(ctx, bank)
 	hctx, cancel := context.WithTimeout(ctx, purgeTimeout)
 	defer cancel()
 	var marks []staleMark
 	if cerr == nil {
-		scopes := forgetScopes{}
-		for _, d := range docs {
-			scopes.add(d.projectID)
-		}
-		marks, cerr = s.markStale(hctx, c, scopes)
+		marks, cerr = s.markStale(hctx, c, scopesFor(bank, docs))
 	}
 	// 删除全部结束（成功或失败）才释放 hold；defer 兜底，任何返回路径都释放
 	defer s.releaseStale(ctx, marks)
@@ -87,6 +99,9 @@ func (s *Service) deleteDocuments(ctx context.Context, docs []tombstoneTarget, r
 			pending++
 		} else {
 			deleted++
+		}
+		if bank != BankID {
+			continue
 		}
 		if _, err := s.cfg.Q.DeleteMemoryDocument(context.WithoutCancel(ctx), d.id); err != nil {
 			return deleted, pending, err
@@ -173,7 +188,7 @@ func (c adminClient) deleteOwnedModel(ctx context.Context, t tombstoneTarget) er
 	}
 	id := strings.TrimPrefix(t.id, mentalModelTombstonePrefix)
 	var m hsMentalModel
-	err := c.call(ctx, http.MethodGet, mmPath(id), nil, &m)
+	err := c.call(ctx, http.MethodGet, c.mmPath(id), nil, &m)
 	if statusOf(err) == http.StatusNotFound {
 		return nil
 	}
@@ -187,13 +202,13 @@ func (c adminClient) deleteOwnedModel(ctx context.Context, t tombstoneTarget) er
 }
 
 // RetryTombstones 重试到期的删除：成功的移出队列，失败的按退避推迟。document 删除之前同样先把受影响范围的
-// mental model 标为待刷新（标记失败时本轮不删），删除成功后提交全量刷新。未配置时不重试、不计次数。返回本轮成功的条数。
+// mental model 标为待刷新（标记失败时本轮不删），删除成功后提交全量刷新。各 bank 分开处理。未配置时不重试、不计次数。
+// 返回本轮成功的条数。
 func (s *Service) RetryTombstones(ctx context.Context) (int, error) {
-	c, err := s.admin(ctx)
-	if errors.Is(err, ErrNotConfigured) {
-		return 0, nil
-	}
-	if err != nil {
+	if _, err := s.Client(ctx); err != nil {
+		if errors.Is(err, ErrNotConfigured) {
+			return 0, nil
+		}
 		return 0, err
 	}
 	now := s.cfg.Now()
@@ -201,27 +216,49 @@ func (s *Service) RetryTombstones(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if len(due) == 0 {
-		return 0, nil
+	byBank := map[string][]db.MemoryTombstone{}
+	var banks []string
+	for _, t := range due {
+		if _, ok := byBank[t.Bank]; !ok {
+			banks = append(banks, t.Bank)
+		}
+		byBank[t.Bank] = append(byBank[t.Bank], t)
 	}
+	done := 0
+	for _, bank := range banks {
+		n, err := s.retryTombstonesIn(ctx, bank, byBank[bank])
+		done += n
+		if err != nil {
+			return done, err
+		}
+	}
+	return done, nil
+}
+
+func (s *Service) retryTombstonesIn(ctx context.Context, bank string, due []db.MemoryTombstone) (int, error) {
+	c, err := s.adminFor(ctx, bank)
+	if err != nil {
+		return 0, err
+	}
+	now := s.cfg.Now()
 	hctx, cancel := context.WithTimeout(ctx, purgeTimeout)
 	defer cancel()
-	scopes := forgetScopes{}
+	var docs []tombstoneTarget
 	for _, t := range due {
 		if !strings.HasPrefix(t.DocumentID, mentalModelTombstonePrefix) {
-			scopes.add(t.ProjectID)
+			docs = append(docs, tombstoneTarget{id: t.DocumentID, projectID: t.ProjectID, bank: bank})
 		}
 	}
 	var marks []staleMark
 	var markErr error
-	if len(scopes) > 0 {
-		marks, markErr = s.markStale(hctx, c, scopes)
+	if len(docs) > 0 {
+		marks, markErr = s.markStale(hctx, c, scopesFor(bank, docs))
 	}
 	// 本轮删除全部结束才释放 hold；defer 兜底
 	defer s.releaseStale(ctx, marks)
 	done, docsDeleted := 0, 0
 	for _, t := range due {
-		target := tombstoneTarget{id: t.DocumentID, projectID: t.ProjectID}
+		target := tombstoneTarget{id: t.DocumentID, projectID: t.ProjectID, bank: bank}
 		isModel := strings.HasPrefix(t.DocumentID, mentalModelTombstonePrefix)
 		var derr error
 		switch {
@@ -244,8 +281,10 @@ func (s *Service) RetryTombstones(ctx context.Context) (int, error) {
 		if err := s.cfg.Q.DeleteMemoryTombstone(ctx, t.DocumentID); err != nil {
 			return done, err
 		}
-		if _, err := s.cfg.Q.DeleteMemoryDocument(ctx, t.DocumentID); err != nil {
-			return done, err
+		if bank == BankID {
+			if _, err := s.cfg.Q.DeleteMemoryDocument(ctx, t.DocumentID); err != nil {
+				return done, err
+			}
 		}
 		done++
 		if !isModel {

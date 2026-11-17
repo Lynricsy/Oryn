@@ -1527,7 +1527,7 @@ func TestMemoryAdminStaleRecoverAfterRestart(t *testing.T) {
 	const mm = "project-conventions-prj_a"
 	f.addModel(mm, memory.ProjectTag(p))
 	require.NoError(t, e.st.Q.InsertMemoryStaleHold(ctx, db.InsertMemoryStaleHoldParams{HoldID: "leftover", ModelID: mm, CreatedAt: e.now.Unix()}))
-	require.NoError(t, e.st.Q.UpsertMemoryStaleModel(ctx, db.UpsertMemoryStaleModelParams{ModelID: mm, ProjectID: &p, Now: e.now.Unix(), Token: "t0"}))
+	require.NoError(t, e.st.Q.UpsertMemoryStaleModel(ctx, db.UpsertMemoryStaleModelParams{ModelID: mm, ProjectID: &p, Now: e.now.Unix(), Token: "t0", Bank: memory.BankID}))
 
 	e.now = e.now.Add(time.Hour)
 	assert.Zero(t, retryOnce(t, e))

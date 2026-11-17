@@ -127,15 +127,15 @@ DELETE FROM memory_usage WHERE hour < @before;
 -- ---------- tombstones ----------
 
 -- name: InsertMemoryTombstone :exec
-INSERT INTO memory_tombstones (document_id, project_id, attempts, next_attempt_at, last_error, created_at)
-VALUES (@document_id, sqlc.narg(project_id), 0, @next_attempt_at, sqlc.narg(last_error), @created_at)
+INSERT INTO memory_tombstones (document_id, project_id, attempts, next_attempt_at, last_error, created_at, bank)
+VALUES (@document_id, sqlc.narg(project_id), 0, @next_attempt_at, sqlc.narg(last_error), @created_at, @bank)
 ON CONFLICT (document_id) DO NOTHING;
 
 -- name: ListDueMemoryTombstones :many
 SELECT * FROM memory_tombstones WHERE next_attempt_at <= @now ORDER BY next_attempt_at LIMIT @lim;
 
 -- name: ListMemoryTombstones :many
-SELECT * FROM memory_tombstones ORDER BY created_at;
+SELECT * FROM memory_tombstones WHERE bank = @bank ORDER BY created_at;
 
 -- name: RetryMemoryTombstone :exec
 UPDATE memory_tombstones SET attempts = attempts + 1, next_attempt_at = @next_attempt_at, last_error = @last_error
@@ -148,11 +148,11 @@ DELETE FROM memory_tombstones WHERE document_id = @document_id;
 
 -- Forget starts: store this forget's fresh token and drop any earlier refresh op.
 -- name: UpsertMemoryStaleModel :exec
-INSERT INTO memory_stale_models (model_id, project_id, refresh_op, attempts, next_attempt_at, last_error, created_at, token)
-VALUES (@model_id, sqlc.narg(project_id), NULL, 0, @now, NULL, @now, @token)
+INSERT INTO memory_stale_models (model_id, project_id, refresh_op, attempts, next_attempt_at, last_error, created_at, token, bank)
+VALUES (@model_id, sqlc.narg(project_id), NULL, 0, @now, NULL, @now, @token, @bank)
 ON CONFLICT (model_id) DO UPDATE SET
     project_id = excluded.project_id, refresh_op = NULL, attempts = 0,
-    next_attempt_at = excluded.next_attempt_at, last_error = NULL, token = excluded.token;
+    next_attempt_at = excluded.next_attempt_at, last_error = NULL, token = excluded.token, bank = excluded.bank;
 
 -- A delete in flight for this model: no refresh, write-back or clear while any hold exists.
 -- name: InsertMemoryStaleHold :exec
@@ -175,7 +175,10 @@ SELECT m.* FROM memory_stale_models m
 WHERE m.model_id = @model_id AND NOT EXISTS (SELECT 1 FROM memory_stale_holds h WHERE h.model_id = m.model_id);
 
 -- name: ListMemoryStaleModels :many
-SELECT * FROM memory_stale_models ORDER BY created_at, model_id;
+SELECT * FROM memory_stale_models WHERE bank = @bank ORDER BY created_at, model_id;
+
+-- name: ListMemoryStaleModelIDsByBank :many
+SELECT model_id FROM memory_stale_models WHERE bank = @bank ORDER BY model_id;
 
 -- name: ListDueMemoryStaleModels :many
 SELECT m.* FROM memory_stale_models m

@@ -13,8 +13,9 @@ import (
 	"unicode/utf8"
 )
 
-// maxHindsightBody 是 orynd 自己解析的 Hindsight 响应体上限（版本、健康、统计都很小）。
-const maxHindsightBody = 1 << 20
+// maxHindsightBody 是 orynd 自己解析的 Hindsight 响应体上限：召回与记忆列表（M17 主人记忆）可能有几百 KB，
+// 超出会被截断成无法解析的 JSON。
+const maxHindsightBody = 8 << 20
 
 // bankMission 是 orynd 创建 bank `oryn` 时写入的 reflect mission。orb 发来的建 bank 请求一律丢弃 body，
 // 共享 bank 的 mission 只由这里决定。
