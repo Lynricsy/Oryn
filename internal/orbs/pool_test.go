@@ -246,6 +246,40 @@ func TestPoolClaimGithubIdentity(t *testing.T) {
 	assert.Equal(t, "user", got.GithubIdentity)
 }
 
+// M18 6.5：认领 idle 池 orb 时写入请求的全自动标记；全自动请求不认领普通的 warming 池 orb。
+func TestPoolClaimAutomation(t *testing.T) {
+	e := newPoolEnv(t, nil)
+	ctx := context.Background()
+	prj := e.warmProject("app", 1, nil)
+	p := e.warmOne(prj)
+	assert.False(t, p.Automation)
+	got, ok := e.svc.ClaimPool(ctx, CreateParams{ProjectID: prj, Automation: true})
+	require.True(t, ok)
+	assert.Equal(t, p.ID, got.ID)
+	assert.True(t, mustOrb(t, e, p.ID).Automation)
+	e.waitState(p.ID, StateReady, 10*time.Second)
+	v, err := View(ctx, e.st.Q, mustOrb(t, e, p.ID))
+	require.NoError(t, err)
+	require.NotNil(t, v.Automation)
+	assert.True(t, *v.Automation)
+
+	// warming 的普通池 orb：全自动请求不认领，普通请求可认领
+	block := make(chan struct{})
+	e.block.Store(block)
+	defer close(block)
+	e.svc.poolReconcile(ctx)
+	pool := e.pool(prj)
+	require.Len(t, pool, 1)
+	id := pool[0].ID
+	e.waitState(id, StateSettingUp, 10*time.Second)
+	_, ok = e.svc.ClaimPool(ctx, CreateParams{ProjectID: prj, Automation: true})
+	assert.False(t, ok, "全自动标记不同的 warming 池 orb 不可认领")
+	got, ok = e.svc.ClaimPool(ctx, CreateParams{ProjectID: prj})
+	require.True(t, ok)
+	assert.Equal(t, id, got.ID)
+	assert.False(t, got.Automation)
+}
+
 // 不走池：请求了浏览器 Profile、指定了快照、没有项目、配置哈希不匹配。
 func TestPoolClaimPreconditions(t *testing.T) {
 	e := newPoolEnv(t, nil)

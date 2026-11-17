@@ -233,9 +233,10 @@ func (s *Service) runForkCopy(ctx context.Context, t *thread, op forkOp) {
 	o, err := s.st.Q.FindUnboundSnapshotOrb(ctx, op.SnapshotID)
 	if err != nil {
 		req := OrbCreate{Type: op.Type, ProjectID: op.ProjectID, SnapshotOf: op.SrcOrb, SnapshotID: op.SnapshotID}
-		// 副本沿用源 orb 的 GitHub 身份（M14）
+		// 副本沿用源 orb 的 GitHub 身份（M14）与全自动标记（M18）
 		if src, gerr := s.st.Q.GetOrb(ctx, op.SrcOrb); gerr == nil {
 			req.GithubIdentity = src.GithubIdentity
+			req.Automation = src.Automation
 		}
 		o, err = s.orbs.Create(ctx, req)
 		if err != nil {

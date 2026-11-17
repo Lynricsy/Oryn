@@ -35,6 +35,9 @@ func View(ctx context.Context, q *db.Queries, o db.Orb) (apigen.Orb, error) {
 		yes := true
 		v.Coordinator = &yes
 	}
+	if o.Automation {
+		v.Automation = new(true)
+	}
 	if IsRunner(o) {
 		v.Kind = new(apigen.OrbKindRunner)
 		r, err := q.GetRunnerByOrb(ctx, o.ID)

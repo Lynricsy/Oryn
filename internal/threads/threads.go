@@ -89,6 +89,20 @@ func (s *Service) githubIdentity(ctx context.Context, p CreateParams) (slot, not
 	return "user", "", nil
 }
 
+// orbAutomation 决定新 orb 是否标为全自动（M18 D3）：orb 内派生的子线程沿用父线程 orb 的标记，其余取 p.Automation。
+// 子线程本身带了 Automation 时同样标为全自动（只会更严）。
+func (s *Service) orbAutomation(ctx context.Context, p CreateParams) bool {
+	if p.ParentThreadID != "" {
+		parent, err := s.st.Q.GetThread(ctx, p.ParentThreadID)
+		if err == nil && parent.OrbID != nil {
+			if o, err := s.st.Q.GetOrb(ctx, *parent.OrbID); err == nil && o.Automation {
+				return true
+			}
+		}
+	}
+	return p.Automation
+}
+
 // Create 按 H4.3 新建线程：建线程（provisioning）→ 需要时建 orb 并入队 spawn → orb ready 后 agent.start → 首条 prompt。
 func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, error) {
 	if strings.TrimSpace(p.Prompt) == "" && len(p.Images) == 0 && len(p.Attachments) == 0 {
@@ -190,7 +204,7 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 		}
 		req := OrbCreate{
 			Provider: p.Provider, Type: p.Type, ProjectID: p.ProjectID, BrowserProfileID: profileID, ProfileMode: string(p.ProfileMode),
-			GithubIdentity: slot,
+			GithubIdentity: slot, Automation: s.orbAutomation(ctx, p),
 		}
 		// 预热池（M11a）：只给有项目、不选浏览器 Profile 的线程认领（Profile 须在 ready 之前装载，池 orb 早已过了那一步）
 		var claimed bool

@@ -69,6 +69,8 @@ type OrbCreate struct {
 	Pool bool
 	// GithubIdentity 对应 orbs.CreateParams.GithubIdentity（M14：user / agent；空串等同 user）。
 	GithubIdentity string
+	// Automation 对应 orbs.CreateParams.Automation（M18：新 orb 是否标为全自动）。
+	Automation bool
 }
 
 // CodeOrbIsPooled 是把线程挂到预热池 orb 上（executor.kind = orb 指向池 orb）的错误码（M11a，HTTP 409）。

@@ -135,6 +135,8 @@ type CreateParams struct {
 	Pool bool
 	// GithubIdentity 是 orb 的 GitHub 身份槽位（M14：user / agent）；空串等同 user。
 	GithubIdentity string
+	// Automation 为真时新 orb 标为全自动（M18 D3）：SSH 网关只放行允许全自动线程使用的主机。
+	Automation bool
 }
 
 // 内置协调宿主 provider（M9 协调宿主分册 H6）。名称 `@host` 不满足 API 的 provider 名称正则，用户建不出同名行。
@@ -821,6 +823,9 @@ func (s *Service) insertOrb(ctx context.Context, p CreateParams, t target, pick 
 	}
 	if p.GithubIdentity != "" {
 		base.GithubIdentity = &p.GithubIdentity
+	}
+	if p.Automation {
+		base.Automation = new(true)
 	}
 	// orb、requested 事件与首个 spawn 任务同一事务提交：不存在「有 orb 没任务」的中间状态。
 	var ch *change
