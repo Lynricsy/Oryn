@@ -1593,7 +1593,10 @@ const orbSh = (orbId: string, cmd: string, extraEnv = "") =>
 	);
 /** orb 的出站代理地址：setup 写的 `http.http://github.com/.proxy`；读不到时回落到老 orbd 的 `/git/` insteadOf。 */
 function orbEgress(orbId: string): string {
-	let r = orbSh(orbId, "git config --global --get http.http://github.com/.proxy");
+	let r = orbSh(
+		orbId,
+		"git config --global --get http.http://github.com/.proxy",
+	);
 	if (!r.stdout) r = orbSh(orbId, "git config --global --get-regexp '^url\\.'");
 	const m = /http:\/\/127\.0\.0\.1:\d+/.exec(r.stdout);
 	if (!m) throw new Error(`读不出 orb ${orbId} 的出站代理地址：${clip(r.out)}`);
