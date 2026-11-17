@@ -259,7 +259,7 @@ func TestThreadToolDefs(t *testing.T) {
 		}
 		return out
 	}
-	space, asst := names(ToolDefs(true, false)), names(ToolDefs(false, false))
+	space, asst := names(ToolDefs(ToolSet{InSpace: true})), names(ToolDefs(ToolSet{}))
 	for _, n := range []string{ToolUpdateThread, ToolAbortThread, ToolSetThreadModel, ToolForkThread, ToolWakeThread, ToolListRunners, ToolDeleteThread} {
 		assert.Contains(t, asst, n)
 		assert.NotContains(t, space, n)

@@ -47,7 +47,7 @@ func TestArtifactCommentTools(t *testing.T) {
 	errText(t, e.call(asst, ToolReplyArtifactComment, `{"id":"`+id+`","thread":"`+th.ID+`","text":"再说一句"}`, true), artifacts.CodeInvalid)
 
 	names := map[string]bool{}
-	for _, d := range ToolDefs(true, false) {
+	for _, d := range ToolDefs(ToolSet{InSpace: true}) {
 		names[d["name"].(string)] = true
 	}
 	for _, n := range []string{ToolReadArtifactComments, ToolReplyArtifactComment, ToolResolveArtifactComment} {
