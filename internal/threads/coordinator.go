@@ -56,11 +56,18 @@ type HostToolCall struct {
 	OwnerTurn bool
 }
 
-// HostToolResult 是宿主工具的结果：Text 写进 content，Details 原样作为 details。
+// HostToolResult 是宿主工具的结果：Text 写进 content，Details 原样作为 details；Images 跟在 text 块之后
+// （M19，出错时不带图）。
 type HostToolResult struct {
 	Text    string
 	Details any
 	IsError bool
+	Images  []HostToolImage
+}
+
+// HostToolImage 是宿主工具结果里的一张图片（Data 为 base64）。
+type HostToolImage struct {
+	MimeType, Data string
 }
 
 // AgentProfile 是协调线程启动 agent 时的系统提示词与宿主工具表（set_host_tools 的 tools）。
@@ -444,7 +451,13 @@ func (s *Service) hostToolCallLocked(t *thread, line []byte) {
 
 // hostToolResultFrame 构造 host_tool_result 帧。
 func hostToolResultFrame(id string, r HostToolResult) ([]byte, error) {
-	result := map[string]any{"content": []map[string]string{{"type": "text", "text": r.Text}}}
+	content := []map[string]string{{"type": "text", "text": r.Text}}
+	if !r.IsError {
+		for _, img := range r.Images {
+			content = append(content, map[string]string{"type": "image", "data": img.Data, "mimeType": img.MimeType})
+		}
+	}
+	result := map[string]any{"content": content}
 	if r.Details != nil {
 		result["details"] = r.Details
 	}

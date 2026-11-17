@@ -2335,6 +2335,8 @@
 			"renamed": "renamed",
 			"restored": "restored · v{{version}}",
 			"deleted": "deleted",
+			"imported": "imported · v{{version}}",
+			"undeleted": "restored from Recently deleted",
 			"names": {
 				"create_artifact": "Create artifact",
 				"read_artifact": "Read artifact",
@@ -2349,7 +2351,11 @@
 				"resolve_artifact_comment": "Resolve comment",
 				"screenshot_artifact": "Screenshot",
 				"read_artifact_data": "Read page data",
-				"write_artifact_data": "Write page data"
+				"write_artifact_data": "Write page data",
+				"export_artifact": "Export artifact",
+				"import_artifact": "Import artifact",
+				"list_deleted_artifacts": "List recently deleted",
+				"restore_artifact": "Restore artifact"
 			}
 		},
 		"page": {

@@ -2335,6 +2335,8 @@
 			"renamed": "已改名",
 			"restored": "已恢复 · v{{version}}",
 			"deleted": "已删除",
+			"imported": "已导入 · v{{version}}",
+			"undeleted": "已从最近删除恢复",
 			"names": {
 				"create_artifact": "创建 artifact",
 				"read_artifact": "读取 artifact",
@@ -2349,7 +2351,11 @@
 				"resolve_artifact_comment": "解决评论",
 				"screenshot_artifact": "截图",
 				"read_artifact_data": "读取页面数据",
-				"write_artifact_data": "写入页面数据"
+				"write_artifact_data": "写入页面数据",
+				"export_artifact": "导出 artifact",
+				"import_artifact": "导入 artifact",
+				"list_deleted_artifacts": "查看最近删除",
+				"restore_artifact": "恢复 artifact"
 			}
 		},
 		"page": {

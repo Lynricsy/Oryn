@@ -26,6 +26,14 @@ type fakeLibHost struct {
 	mu    sync.Mutex
 	files map[string][]byte
 	calls []string // orbID + " " + path
+	syncs []string // Sync 的 orbID
+}
+
+func (h *fakeLibHost) Sync(_ context.Context, orbID string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.syncs = append(h.syncs, orbID)
+	return nil
 }
 
 func (h *fakeLibHost) PutFrom(ctx context.Context, orbID, path string, p library.PutParams) (library.File, error) {

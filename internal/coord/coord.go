@@ -69,6 +69,7 @@ const (
 	CodeForbidden              = "forbidden"
 	CodeInvalidSchedule        = "invalid_schedule"
 	CodeThreadArchived         = "thread_archived"
+	CodeTooLarge               = "too_large"
 )
 
 // Error 是协调层的业务错误。
@@ -129,6 +130,8 @@ type Service struct {
 	sentReport func(reportTo, text string)
 	// afterQuotaCheck（仅测试）在 thread.create 的三项计数之后、Create 之前调用（仍持 createMu）。
 	afterQuotaCheck func()
+	// xferMax（仅测试）覆盖整文件传输的单文件上限；0 = transferMaxBytes。
+	xferMax int64
 }
 
 // New 创建协调服务，并向 orbs 注册 orb 内的八个 ctl 方法。orbs 为 nil 时不注册（单测）。
@@ -291,6 +294,9 @@ func errCode(err error) string {
 	if errors.As(err, &le) {
 		return le.Code
 	}
+	if oe, ok := artifacts.AsOpError(err); ok {
+		return oe.Code
+	}
 	return "internal_error"
 }
 
@@ -311,6 +317,9 @@ func errMessage(err error) string {
 	var le *link.CtlError
 	if errors.As(err, &le) {
 		return le.Message
+	}
+	if oe, ok := artifacts.AsOpError(err); ok {
+		return oe.Message
 	}
 	return err.Error()
 }
