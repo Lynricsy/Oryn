@@ -96,7 +96,7 @@ func overlayImages(t *testing.T) (lowerImg, upperImg string) {
 
 func TestOverlayIndexMerge(t *testing.T) {
 	lowerImg, upperImg := overlayImages(t)
-	ix, err := buildOverlayIndex(context.Background(), lowerImg, upperImg, nil)
+	ix, err := buildOverlayIndex(context.Background(), lowerImg, upperImg, nil, nil)
 	require.NoError(t, err)
 
 	names := func(p string) []string {
@@ -139,7 +139,7 @@ func TestOverlayIndexWithoutUpper(t *testing.T) {
 	lowerImg, upperImg := filepath.Join(dir, "l.ext4"), filepath.Join(dir, "u.ext4")
 	mkExt4(t, lower, lowerImg)
 	mkExt4(t, upper, upperImg)
-	ix, err := buildOverlayIndex(context.Background(), lowerImg, upperImg, nil)
+	ix, err := buildOverlayIndex(context.Background(), lowerImg, upperImg, nil, nil)
 	require.NoError(t, err)
 	l, err := ix.list("~")
 	require.NoError(t, err)
@@ -159,7 +159,7 @@ func TestOverlayIndexHomeWhitedOut(t *testing.T) {
 	lowerImg, upperImg := filepath.Join(dir, "l.ext4"), filepath.Join(dir, "u.ext4")
 	mkExt4(t, lower, lowerImg)
 	mkExt4(t, upper, upperImg)
-	ix, err := buildOverlayIndex(context.Background(), lowerImg, upperImg, nil)
+	ix, err := buildOverlayIndex(context.Background(), lowerImg, upperImg, nil, nil)
 	require.NoError(t, err)
 	l, err := ix.list("~")
 	require.NoError(t, err)
