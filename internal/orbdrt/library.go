@@ -288,9 +288,10 @@ func (r *Runtime) libraryMkdir(root, dir string) error {
 	return nil
 }
 
-// libraryOutPath 解析协调宿主上 library.fetch 的路径：`~/…`、绝对路径或相对 ~/library/out/ 的路径；
-// 含 `..` 段、解析符号链接后不在 ~/library/out/ 之下、或不是普通文件一律拒绝。返回解析后的真实路径。
-func (r *Runtime) libraryOutPath(p string) (string, error) {
+// libraryFetchPath 解析协调宿主上 library.fetch 的路径：`~/…`、绝对路径或相对 ~/library/out/ 的路径；
+// 含 `..` 段、解析符号链接后既不在 ~/library/out/ 也不在 ~/tmp/（协调档 omp 的 TMPDIR，M19：generate_image
+// 的结果在这里）之下、或不是普通文件一律拒绝。返回解析后的真实路径。
+func (r *Runtime) libraryFetchPath(p string) (string, error) {
 	if strings.TrimSpace(p) == "" {
 		return "", ctlErr(link.CodeInvalidParams, "path is required")
 	}
@@ -298,8 +299,11 @@ func (r *Runtime) libraryOutPath(p string) (string, error) {
 		return "", ctlErr(link.CodeInvalidParams, "path must not contain ..")
 	}
 	out := filepath.Join(r.libraryRoot(), "out")
-	if err := os.MkdirAll(out, 0o700); err != nil {
-		return "", ctlErr("failed", "%v", err)
+	tmp := filepath.Join(r.home, "tmp")
+	for _, d := range []string{out, tmp} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			return "", ctlErr("failed", "%v", err)
+		}
 	}
 	var abs string
 	switch {
@@ -308,10 +312,6 @@ func (r *Runtime) libraryOutPath(p string) (string, error) {
 	default:
 		abs = filepath.Join(out, p)
 	}
-	realOut, err := filepath.EvalSymlinks(out)
-	if err != nil {
-		return "", ctlErr("failed", "%v", err)
-	}
 	real, err := filepath.EvalSymlinks(abs)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -319,10 +319,16 @@ func (r *Runtime) libraryOutPath(p string) (string, error) {
 		}
 		return "", ctlErr(link.CodeInvalidParams, "%v", err)
 	}
-	if !strings.HasPrefix(real, realOut+string(filepath.Separator)) {
-		return "", ctlErr(link.CodeInvalidParams, "only files under ~/library/out/ can be saved")
+	for _, root := range []string{out, tmp} {
+		realRoot, err := filepath.EvalSymlinks(root)
+		if err != nil {
+			return "", ctlErr("failed", "%v", err)
+		}
+		if strings.HasPrefix(real, realRoot+string(filepath.Separator)) {
+			return real, nil
+		}
 	}
-	return real, nil
+	return "", ctlErr(link.CodeInvalidParams, "only files under ~/library/out/ or ~/tmp/ can be saved")
 }
 
 // libraryFetch 是 library.fetch：校验路径后在同一 link 上另开 library 流发送原始字节（流头带请求的 id）。
@@ -333,7 +339,7 @@ func (r *Runtime) libraryFetch(ctx context.Context, c *conn, p apigen.LinkCtlLib
 	var path string
 	if r.cfg.Coordinator {
 		var err error
-		if path, err = r.libraryOutPath(p.Path); err != nil {
+		if path, err = r.libraryFetchPath(p.Path); err != nil {
 			return apigen.LinkCtlLibraryFetchResult{}, err
 		}
 	} else {

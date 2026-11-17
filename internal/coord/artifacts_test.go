@@ -263,4 +263,12 @@ func TestArtifactExtraTools(t *testing.T) {
 	a, err := arts.Get(e.ctx, id)
 	require.NoError(t, err)
 	assert.False(t, a.Deleted())
+
+	// M19 1.3：~/tmp/ 下的生图结果可以存库，也可以作 artifact 的 source
+	host.files["~/tmp/img.png"] = []byte("\x89PNG\r\n\x1a\nfake")
+	saved := details(t, e.call(asst, ToolSaveFile, `{"path":"~/tmp/img.png"}`, true))
+	assert.Equal(t, "img.png", saved["name"])
+	r = e.call(asst, ToolCreateArtifact, `{"title":"图","files":[{"path":"index.html","content":"<img src=\"a.png\">"},{"path":"a.png","source":"~/tmp/img.png"}]}`, true)
+	require.False(t, r.IsError, r.Text)
+	errText(t, e.call(asst, ToolSaveFile, `{"path":"~/tmpx/img.png"}`, true), CodeInvalid)
 }

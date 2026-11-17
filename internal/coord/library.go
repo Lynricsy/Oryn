@@ -85,8 +85,8 @@ func (s *Service) visibleFile(ctx context.Context, threadID, id string) (library
 	return f, nil
 }
 
-// outPath 预检 save_file 的路径：不许 `..` 段；`~/` 开头时必须在 ~/library/out/ 之下。绝对路径与符号链接由协调宿主
-// 判定（library.fetch 只服务 ~/library/out/ 下的普通文件）。
+// outPath 预检 save_file 等取回沙箱文件的路径：不许 `..` 段；`~/` 开头时必须在 ~/library/out/ 或 ~/tmp/（M19：
+// generate_image 的结果）之下。绝对路径与符号链接由协调宿主判定（library.fetch 只服务这两处的普通文件）。
 func outPath(p string) (string, error) {
 	p = strings.TrimSpace(p)
 	if p == "" {
@@ -95,10 +95,15 @@ func outPath(p string) (string, error) {
 	if slices.Contains(strings.Split(p, "/"), "..") {
 		return "", errf(CodeInvalid, "path must not contain ..")
 	}
-	if strings.HasPrefix(p, "~") && !strings.HasPrefix(p, "~/library/out/") {
-		return "", errf(CodeInvalid, "only files under ~/library/out/ can be saved")
+	if strings.HasPrefix(p, "~") && !inFetchRoot(p) {
+		return "", errf(CodeInvalid, "only files under ~/library/out/ or ~/tmp/ can be saved")
 	}
 	return p, nil
+}
+
+// inFetchRoot 报告 `~/` 路径是否在可取回的两个目录之下。
+func inFetchRoot(p string) bool {
+	return strings.HasPrefix(p, "~/library/out/") || strings.HasPrefix(p, "~/tmp/")
 }
 
 // conversationOrb 返回协调对话所在的协调 orb。

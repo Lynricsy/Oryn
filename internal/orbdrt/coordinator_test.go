@@ -190,7 +190,7 @@ func TestCoordinatorAgentStart(t *testing.T) {
 	promptFile := filepath.Join(rt.home, ".oryn", "coordinator", "prompts", thread+".md")
 	assert.Equal(t, []string{
 		"--mode", "rpc-ui", "--cwd", cwd, "--session-dir", filepath.Join(rt.home, ".oryn", "threads", thread),
-		"--no-tools", "--tools", "read,write", "--no-skills", "--no-extensions", "--no-rules", "--no-context-files", "--no-lsp",
+		"--no-tools", "--tools", "read,write,web_search,generate_image", "--no-skills", "--no-extensions", "--no-rules", "--no-context-files", "--no-lsp",
 		"--config", overlay, "--system-prompt", promptFile,
 	}, rec.Args)
 	// L4：argv 只带路径，不含提示词正文；omp 按文件读到的正文与下发的一致。
@@ -209,12 +209,13 @@ func TestCoordinatorAgentStart(t *testing.T) {
 	assert.Equal(t, map[string]string{
 		"HOME": rt.home, "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "TMPDIR": filepath.Join(rt.home, "tmp"),
 		"PI_RPC_EMIT_TITLE": "1", "PI_NOTIFICATIONS": "off", "OTEL_SDK_DISABLED": "true", "PI_FILE_LOCK_BACKEND": "sidecar",
-		"ORYN_THREAD_ID": thread,
+		"ORYN_THREAD_ID": thread, "PI_PROXY": "http://" + rt.egressLn.Addr().String(),
 	}, rec.Env)
 	ov, err := os.ReadFile(overlay)
 	require.NoError(t, err)
 	assert.Equal(t, coordinatorOverlay, string(ov))
 	assert.Contains(t, string(ov), `autoUpdate: "off"`)
+	assert.Contains(t, string(ov), "generate_image: { enabled: true }")
 	entries, err := os.ReadDir(cwd)
 	require.NoError(t, err)
 	assert.Empty(t, entries, "the coordinator cwd stays empty")

@@ -140,7 +140,7 @@ func TestCoordinatorLibrarySync(t *testing.T) {
 }
 
 // M13 4.3：library.fetch 只服务 ~/library/out/ 下的普通文件（~/…、绝对路径、相对 out/ 的路径都可）；
-// `..`、out/ 之外、指向外面的符号链接一律拒绝。
+// `..`、out/ 与 ~/tmp/ 之外、指向外面的符号链接一律拒绝（M19：~/tmp/ 下的生图结果可以取回）。
 func TestCoordinatorLibraryFetch(t *testing.T) {
 	rt, cp, _, _ := startCoordinator(t)
 	cp.waitNotif(t, 0, "hello", nil)
@@ -148,6 +148,13 @@ func TestCoordinatorLibraryFetch(t *testing.T) {
 	out := filepath.Join(root, "out")
 	require.NoError(t, os.MkdirAll(filepath.Join(out, "sub"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(out, "report.md"), []byte("hello"), 0o644))
+	tmp := filepath.Join(rt.home, "tmp")
+	require.NoError(t, os.MkdirAll(tmp, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(tmp, "x.png"), []byte("hello"), 0o644))
+	agentDir := filepath.Join(rt.home, ".omp", "agent")
+	require.NoError(t, os.MkdirAll(agentDir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(agentDir, "models.yml"), []byte("x"), 0o600))
+	require.NoError(t, os.Symlink(filepath.Join(agentDir, "models.yml"), filepath.Join(tmp, "models.yml")))
 	shared := filepath.Join(root, "shared", ids.AssistantFile(), "a.txt")
 	require.NoError(t, os.MkdirAll(filepath.Dir(shared), 0o755))
 	require.NoError(t, os.WriteFile(shared, []byte("secret"), 0o644))
@@ -155,7 +162,7 @@ func TestCoordinatorLibraryFetch(t *testing.T) {
 	outside := filepath.Join(rt.home, "outside.txt")
 	require.NoError(t, os.WriteFile(outside, []byte("nope"), 0o644))
 
-	for i, p := range []string{"~/library/out/report.md", "report.md", filepath.Join(out, "report.md")} {
+	for i, p := range []string{"~/library/out/report.md", "report.md", filepath.Join(out, "report.md"), "~/tmp/x.png"} {
 		id := "f" + string(rune('0'+i))
 		var res apigen.LinkCtlLibraryFetchResult
 		require.NoError(t, cp.call(t, string(apigen.MethodLibraryFetch), apigen.LinkCtlLibraryFetchParams{ID: id, Path: p}, &res), p)
@@ -181,6 +188,9 @@ func TestCoordinatorLibraryFetch(t *testing.T) {
 		{"~/library/out/missing.md", "not_found"},
 		{"~/library/out/sub", "not_found"},
 		{"", link.CodeInvalidParams},
+		{"~/tmp/../.omp/agent/models.yml", link.CodeInvalidParams},
+		{"~/tmp/models.yml", link.CodeInvalidParams},
+		{"~/.omp/agent/models.yml", link.CodeInvalidParams},
 	} {
 		err := cp.call(t, string(apigen.MethodLibraryFetch), apigen.LinkCtlLibraryFetchParams{ID: "fx", Path: tc.path}, nil)
 		assert.Equal(t, tc.code, ctlCode(err), "%q: %v", tc.path, err)
