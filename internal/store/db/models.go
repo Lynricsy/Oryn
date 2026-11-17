@@ -617,6 +617,7 @@ type Orb struct {
 	BaseImageID           string  `json:"baseImageId"`
 	Kind                  string  `json:"kind"`
 	GithubIdentity        string  `json:"githubIdentity"`
+	Automation            bool    `json:"automation"`
 }
 
 type OrbDesktop struct {
@@ -1009,6 +1010,58 @@ type Space struct {
 	CreatedAt  int64   `json:"createdAt"`
 	UpdatedAt  int64   `json:"updatedAt"`
 	ArchivedAt *int64  `json:"archivedAt"`
+}
+
+type SshAudit struct {
+	ID         int64   `json:"id"`
+	At         int64   `json:"at"`
+	Source     string  `json:"source"`
+	OrbID      *string `json:"orbId"`
+	ThreadID   *string `json:"threadId"`
+	HostID     string  `json:"hostId"`
+	HostName   string  `json:"hostName"`
+	Kind       string  `json:"kind"`
+	Detail     string  `json:"detail"`
+	ExitCode   *int64  `json:"exitCode"`
+	DurationMs *int64  `json:"durationMs"`
+	Ok         bool    `json:"ok"`
+}
+
+type SshHost struct {
+	ID              string  `json:"id"`
+	ProjectID       *string `json:"projectId"`
+	Name            string  `json:"name"`
+	Address         string  `json:"address"`
+	Port            int64   `json:"port"`
+	Username        string  `json:"username"`
+	AuthType        string  `json:"authType"`
+	KeyID           *string `json:"keyId"`
+	PasswordEnc     []byte  `json:"passwordEnc"`
+	JumpHostID      *string `json:"jumpHostId"`
+	Description     string  `json:"description"`
+	Tags            string  `json:"tags"`
+	Enabled         bool    `json:"enabled"`
+	AllowAutomation bool    `json:"allowAutomation"`
+	AllowForward    bool    `json:"allowForward"`
+	Compat          *bool   `json:"compat"`
+	HostKey         *string `json:"hostKey"`
+	HostKeyAt       *int64  `json:"hostKeyAt"`
+	LastTestAt      *int64  `json:"lastTestAt"`
+	LastTestOk      *bool   `json:"lastTestOk"`
+	LastTestError   *string `json:"lastTestError"`
+	LastTestOs      *string `json:"lastTestOs"`
+	CreatedAt       int64   `json:"createdAt"`
+	UpdatedAt       int64   `json:"updatedAt"`
+}
+
+type SshKey struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	KeyType       string `json:"keyType"`
+	PublicKey     string `json:"publicKey"`
+	Fingerprint   string `json:"fingerprint"`
+	PrivateKeyEnc []byte `json:"privateKeyEnc"`
+	CreatedAt     int64  `json:"createdAt"`
 }
 
 type StatsState struct {

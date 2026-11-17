@@ -37,6 +37,12 @@ func ArtifactCommentThread() string { return New("act") }
 // ArtifactPublication 返回 apb_<ULID>（M14 artifact 发布记录）。
 func ArtifactPublication() string { return New("apb") }
 
+// SSHHost 返回 ssh_<ULID>（M18 SSH 主机）。
+func SSHHost() string { return New("ssh") }
+
+// SSHKey 返回 sshk_<ULID>（M18 SSH 钥匙）。
+func SSHKey() string { return New("sshk") }
+
 // New 返回 <prefix>_<ULID>，如 prj_01J…。
 func New(prefix string) string { return prefix + "_" + newULID() }
 

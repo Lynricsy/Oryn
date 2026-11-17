@@ -1164,6 +1164,7 @@ const (
 	MethodProjectScriptsGet   LinkCtlMethod = "project.scripts.get"
 	MethodProjectScriptsSet   LinkCtlMethod = "project.scripts.set"
 	MethodResumeRun           LinkCtlMethod = "resume.run"
+	MethodSSHCall             LinkCtlMethod = "ssh.call"
 	MethodScheduleDelete      LinkCtlMethod = "schedule.delete"
 	MethodScheduleEnable      LinkCtlMethod = "schedule.enable"
 	MethodScheduleGet         LinkCtlMethod = "schedule.get"
@@ -1236,6 +1237,8 @@ func (e LinkCtlMethod) Valid() bool {
 	case MethodProjectScriptsSet:
 		return true
 	case MethodResumeRun:
+		return true
+	case MethodSSHCall:
 		return true
 	case MethodScheduleDelete:
 		return true
@@ -1436,6 +1439,21 @@ const (
 func (e LinkStreamPortalT) Valid() bool {
 	switch e {
 	case Portal:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for LinkStreamSSHT.
+const (
+	SSH LinkStreamSSHT = "ssh"
+)
+
+// Valid indicates whether the value is a known member of the LinkStreamSSHT enum.
+func (e LinkStreamSSHT) Valid() bool {
+	switch e {
+	case SSH:
 		return true
 	default:
 		return false
@@ -2717,6 +2735,99 @@ func (e ShareScanConflictCode) Valid() bool {
 	}
 }
 
+// Defines values for SSHAuditEntryKind.
+const (
+	SSHAuditConnect   SSHAuditEntryKind = "connect"
+	SSHAuditDeny      SSHAuditEntryKind = "deny"
+	SSHAuditExec      SSHAuditEntryKind = "exec"
+	SSHAuditForward   SSHAuditEntryKind = "forward"
+	SSHAuditSftp      SSHAuditEntryKind = "sftp"
+	SSHAuditShell     SSHAuditEntryKind = "shell"
+	SSHAuditSubsystem SSHAuditEntryKind = "subsystem"
+	SSHAuditTest      SSHAuditEntryKind = "test"
+)
+
+// Valid indicates whether the value is a known member of the SSHAuditEntryKind enum.
+func (e SSHAuditEntryKind) Valid() bool {
+	switch e {
+	case SSHAuditConnect:
+		return true
+	case SSHAuditDeny:
+		return true
+	case SSHAuditExec:
+		return true
+	case SSHAuditForward:
+		return true
+	case SSHAuditSftp:
+		return true
+	case SSHAuditShell:
+		return true
+	case SSHAuditSubsystem:
+		return true
+	case SSHAuditTest:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SSHAuditEntrySource.
+const (
+	SSHAuditSourceOrb   SSHAuditEntrySource = "orb"
+	SSHAuditSourceOwner SSHAuditEntrySource = "owner"
+	SSHAuditSourceTool  SSHAuditEntrySource = "tool"
+)
+
+// Valid indicates whether the value is a known member of the SSHAuditEntrySource enum.
+func (e SSHAuditEntrySource) Valid() bool {
+	switch e {
+	case SSHAuditSourceOrb:
+		return true
+	case SSHAuditSourceOwner:
+		return true
+	case SSHAuditSourceTool:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SSHAuthType.
+const (
+	SSHAuthKey      SSHAuthType = "key"
+	SSHAuthPassword SSHAuthType = "password"
+)
+
+// Valid indicates whether the value is a known member of the SSHAuthType enum.
+func (e SSHAuthType) Valid() bool {
+	switch e {
+	case SSHAuthKey:
+		return true
+	case SSHAuthPassword:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SSHKeyCreateMode.
+const (
+	SSHKeyCreateGenerate SSHKeyCreateMode = "generate"
+	SSHKeyCreateImport   SSHKeyCreateMode = "import"
+)
+
+// Valid indicates whether the value is a known member of the SSHKeyCreateMode enum.
+func (e SSHKeyCreateMode) Valid() bool {
+	switch e {
+	case SSHKeyCreateGenerate:
+		return true
+	case SSHKeyCreateImport:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for StatsFormat.
 const (
 	StatsFormatCSV  StatsFormat = "csv"
@@ -2939,6 +3050,21 @@ func (e ThreadPullState) Valid() bool {
 	case ThreadPullStateMerged:
 		return true
 	case ThreadPullStateOpen:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ThreadSSHHostBlocked.
+const (
+	ThreadSSHHostBlockedAutomation ThreadSSHHostBlocked = "automation"
+)
+
+// Valid indicates whether the value is a known member of the ThreadSSHHostBlocked enum.
+func (e ThreadSSHHostBlocked) Valid() bool {
+	switch e {
+	case ThreadSSHHostBlockedAutomation:
 		return true
 	default:
 		return false
@@ -3581,6 +3707,21 @@ const (
 func (e WsServerSchedulesChangedType) Valid() bool {
 	switch e {
 	case WsServerSchedulesChangedTypeSchedulesChanged:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WsServerSSHChangedType.
+const (
+	WsServerSSHChangedTypeSSHChanged WsServerSSHChangedType = "ssh.changed"
+)
+
+// Valid indicates whether the value is a known member of the WsServerSSHChangedType enum.
+func (e WsServerSSHChangedType) Valid() bool {
+	switch e {
+	case WsServerSSHChangedTypeSSHChanged:
 		return true
 	default:
 		return false
@@ -6019,6 +6160,7 @@ type LinkCtlHelloParams struct {
 	// M13 起：`omphome-apply`（认识 `omphome.apply`；普通 orbd 与协调宿主上报，runner 不上报）、
 	// `library`（认识 `library.sync`、`library.fetch` 与同步用的 `library` 流；只由协调宿主上报，此时特性表恰为 `["coordinator", "omphome-apply", "library"]`）。
 	// M16 起：`memory`（认识 `agent.start` 的 `memory`，并为记忆开出站通道 `/memory/`；普通 orbd 与 runner 上报，协调宿主不上报）。
+	// M18 起：`ssh`（orbd 监听本机 SSH 网关端口并认识 `setup.run` / `omphome.apply` 的 `ssh`；runner 与协调宿主不上报）。
 	// 缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync / 桌面请求回 409 `orbd_outdated`。
 	Features    []string `json:"features,omitempty"`
 	OrbdVersion string   `json:"orbdVersion"`
@@ -6111,6 +6253,7 @@ type LinkCtlLibrarySyncResult struct {
 // `github.call`（orbd→orynd 请求，M15，由 orb 内 agent 的 GitHub 工具转来，参数 `LinkCtlGithubCallParams`，结果 `LinkCtlGithubCallResult`）、
 // `github.prepare.report`（orbd→orynd 请求，M15，`github_prepare` 通过后上报，参数 `LinkCtlGithubPrepareReportParams`，结果 `LinkCtlOkResult`）；
 // runner 的 link 拒绝这两个方法。
+// `ssh.call`（orbd→orynd 请求，M18，由 orb 内 agent 的 `ssh_exec_many` 工具转来，参数 `LinkCtlSshCallParams`，结果 `LinkCtlSshCallResult`；runner 的 link 拒绝）。
 type LinkCtlMethod string
 
 // LinkCtlMetricsSampleParams defines model for LinkCtlMetricsSampleParams.
@@ -6138,6 +6281,7 @@ type LinkCtlNotification struct {
 	// `github.call`（orbd→orynd 请求，M15，由 orb 内 agent 的 GitHub 工具转来，参数 `LinkCtlGithubCallParams`，结果 `LinkCtlGithubCallResult`）、
 	// `github.prepare.report`（orbd→orynd 请求，M15，`github_prepare` 通过后上报，参数 `LinkCtlGithubPrepareReportParams`，结果 `LinkCtlOkResult`）；
 	// runner 的 link 拒绝这两个方法。
+	// `ssh.call`（orbd→orynd 请求，M18，由 orb 内 agent 的 `ssh_exec_many` 工具转来，参数 `LinkCtlSshCallParams`，结果 `LinkCtlSshCallResult`；runner 的 link 拒绝）。
 	Method LinkCtlMethod `json:"method"`
 
 	// Params 见 `LinkCtl<Method>Params`
@@ -6158,6 +6302,9 @@ type LinkCtlOmpHomeApplyParams struct {
 
 	// ProjectConfig 项目级 omp 配置（M12.2）。出现即表示 orb 属于某个项目：orbd 把 `$HOME/.oryn/project-config/.omp/` 镜像成 `files`，目录里不在其中的文件一律删除
 	ProjectConfig *LinkCtlProjectConfig `json:"projectConfig,omitempty"`
+
+	// SSH M18：缺省 = 不动 orb 内的 SSH 配置
+	SSH *LinkCtlSSHConfig `json:"ssh,omitempty"`
 }
 
 // LinkCtlOmpHomeFile defines model for LinkCtlOmpHomeFile.
@@ -6255,6 +6402,7 @@ type LinkCtlRequest struct {
 	// `github.call`（orbd→orynd 请求，M15，由 orb 内 agent 的 GitHub 工具转来，参数 `LinkCtlGithubCallParams`，结果 `LinkCtlGithubCallResult`）、
 	// `github.prepare.report`（orbd→orynd 请求，M15，`github_prepare` 通过后上报，参数 `LinkCtlGithubPrepareReportParams`，结果 `LinkCtlOkResult`）；
 	// runner 的 link 拒绝这两个方法。
+	// `ssh.call`（orbd→orynd 请求，M18，由 orb 内 agent 的 `ssh_exec_many` 工具转来，参数 `LinkCtlSshCallParams`，结果 `LinkCtlSshCallResult`；runner 的 link 拒绝）。
 	Method LinkCtlMethod `json:"method"`
 
 	// Params 见 `LinkCtl<Method>Params`
@@ -6402,7 +6550,10 @@ type LinkCtlSetupRunParams struct {
 	ProjectConfig *LinkCtlProjectConfig `json:"projectConfig,omitempty"`
 	Repo          *LinkCtlSetupRepo     `json:"repo,omitempty"`
 	Scripts       LinkCtlSetupScripts   `json:"scripts"`
-	Workdir       string                `json:"workdir"`
+
+	// SSH M18：缺省 = 不动 orb 内的 SSH 配置
+	SSH     *LinkCtlSSHConfig `json:"ssh,omitempty"`
+	Workdir string            `json:"workdir"`
 }
 
 // LinkCtlSetupRunResult defines model for LinkCtlSetupRunResult.
@@ -6447,6 +6598,44 @@ type LinkCtlSnapshotPrepareParams = map[string]interface{}
 // LinkCtlSnapshotPrepareResult `snapshot.prepare` 的结果（M11a）：orbd 监督 dockerd 时已 `docker stop` 全部运行中的内层容器；未监督直接 `ok=true`
 type LinkCtlSnapshotPrepareResult struct {
 	Ok bool `json:"ok"`
+}
+
+// LinkCtlSSHCallParams M18（orbd→orynd）：orb 内 agent 的 SSH 工具调用。控制面校验调用方线程属于本 orb、`kind = work`、未归档。
+type LinkCtlSSHCallParams struct {
+	Params map[string]interface{} `json:"params"`
+
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID ThreadID `json:"threadId"`
+
+	// Tool 工具名（`ssh_exec_many`）
+	Tool string `json:"tool"`
+}
+
+// LinkCtlSSHCallResult defines model for LinkCtlSshCallResult.
+type LinkCtlSSHCallResult struct {
+	Details map[string]interface{} `json:"details,omitempty"`
+
+	// Text 给 agent 的文本结果
+	Text string `json:"text"`
+}
+
+// LinkCtlSSHConfig M18：orb 内的 SSH 主机。orbd 把每台主机写成 `~/.omp/agent/ssh.json` 里的 `<名>@127.0.0.1:<网关端口>`，
+// 并重写 `~/.oryn/ssh/config`、`~/.ssh/config` 的 `Include` 行与 `~/.ssh/known_hosts` 的网关条目。
+type LinkCtlSSHConfig struct {
+	// HostKey 网关主机公钥（authorized_keys 一行，无注释）
+	HostKey string           `json:"hostKey"`
+	Hosts   []LinkCtlSSHHost `json:"hosts"`
+}
+
+// LinkCtlSSHHost defines model for LinkCtlSshHost.
+type LinkCtlSSHHost struct {
+	Compat *bool `json:"compat,omitempty"`
+
+	// Description `<用户>@<地址>:<端口>`，再接描述与标签
+	Description string `json:"description"`
+	Name        string `json:"name"`
 }
 
 // LinkCtlTerminalGapParams orbd 帧缓冲 ≥8MiB 时丢弃了该线程的 `terminal_output` 帧，缓冲回落到 ≤1MiB 后发送一次（M3）。
@@ -6681,6 +6870,14 @@ type LinkStreamPortal struct {
 
 // LinkStreamPortalT defines model for LinkStreamPortal.T.
 type LinkStreamPortalT string
+
+// LinkStreamSSH orbd→orynd（M18）：orb 内到 SSH 网关的一条 TCP 连接，其后是裸 SSH 字节流；runner 与协调宿主不可用
+type LinkStreamSSH struct {
+	T LinkStreamSSHT `json:"t"`
+}
+
+// LinkStreamSSHT defines model for LinkStreamSSH.T.
+type LinkStreamSSHT string
 
 // Me defines model for Me.
 type Me struct {
@@ -7300,6 +7497,9 @@ type OmpFrame map[string]interface{}
 // Orb defines model for Orb.
 type Orb struct {
 	AgentVersion *string `json:"agentVersion,omitempty"`
+
+	// Automation M18：这台 orb 由全自动入口（定时、GitHub 触发等）建立；为真时只能用放开了「允许全自动线程使用」的 SSH 主机。缺省 = false
+	Automation *bool `json:"automation,omitempty"`
 
 	// Coordinator 协调 orb（M9，provider `@host`，跑在控制面宿主上的协调宿主）；为 false 时省略
 	Coordinator *bool   `json:"coordinator,omitempty"`
@@ -9293,6 +9493,266 @@ type SpaceProgressDay struct {
 	Shipped int    `json:"shipped"`
 }
 
+// SSHAuditEntry defines model for SshAuditEntry.
+type SSHAuditEntry struct {
+	// At UTC 毫秒时间戳
+	At TimestampMs `json:"at"`
+
+	// Detail exec 的命令原文（≤4096 字节）、子系统名、转发目标、拒绝原因或 SFTP 操作
+	Detail     string `json:"detail"`
+	DurationMs *int64 `json:"durationMs,omitempty"`
+	ExitCode   *int   `json:"exitCode,omitempty"`
+	HostID     string `json:"hostId"`
+
+	// HostName 记录时的主机名快照
+	HostName string            `json:"hostName"`
+	ID       int64             `json:"id"`
+	Kind     SSHAuditEntryKind `json:"kind"`
+	Ok       bool              `json:"ok"`
+
+	// OrbID `orb-<26 位小写 ULID>`（同时是容器名与 hostname）
+	//
+	// Example: orb-01jcz8m3w4x5y6z7a8b9c0d1e2
+	OrbID *OrbID `json:"orbId,omitempty"`
+
+	// Source `orb` = orb 内经网关；`owner` = 主人在页面或命令行；`tool` = agent 的 `ssh_exec_many`
+	Source SSHAuditEntrySource `json:"source"`
+
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID *ThreadID `json:"threadId,omitempty"`
+}
+
+// SSHAuditEntryKind defines model for SSHAuditEntry.Kind.
+type SSHAuditEntryKind string
+
+// SSHAuditEntrySource `orb` = orb 内经网关；`owner` = 主人在页面或命令行；`tool` = agent 的 `ssh_exec_many`
+type SSHAuditEntrySource string
+
+// SSHAuditList defines model for SshAuditList.
+type SSHAuditList struct {
+	Entries []SSHAuditEntry `json:"entries"`
+
+	// NextBefore 还有更早的记录时给出，作为下一页的 `before`
+	NextBefore *int64 `json:"nextBefore,omitempty"`
+}
+
+// SSHAuthType defines model for SshAuthType.
+type SSHAuthType string
+
+// SSHFsRoots defines model for SshFsRoots.
+type SSHFsRoots struct {
+	// Home 登录用户的主目录（取不到时为 `/`）
+	Home string `json:"home"`
+}
+
+// SSHHost defines model for SshHost.
+type SSHHost struct {
+	Address string `json:"address"`
+
+	// AllowAutomation 全自动线程（定时、GitHub 触发等无人值守入口建的 orb）是否可用
+	AllowAutomation bool `json:"allowAutomation"`
+
+	// AllowForward 是否允许经网关做本地端口转发（`direct-tcpip`）
+	AllowForward bool        `json:"allowForward"`
+	AuthType     SSHAuthType `json:"authType"`
+
+	// Compat Core 的 compat 开关；缺省 = 不写进 orb 内的 `ssh.json`
+	Compat *bool `json:"compat,omitempty"`
+
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt   TimestampMs `json:"createdAt"`
+	Description string      `json:"description"`
+	Enabled     bool        `json:"enabled"`
+	HasPassword bool        `json:"hasPassword"`
+
+	// HostKey 已固定的目标机主机公钥
+	HostKey *SSHHostKey `json:"hostKey,omitempty"`
+
+	// ID `ssh_<ULID>`
+	ID SSHHostID `json:"id"`
+
+	// JumpHostID `ssh_<ULID>`
+	JumpHostID *SSHHostID `json:"jumpHostId,omitempty"`
+
+	// KeyID `sshk_<ULID>`
+	KeyID *SSHKeyID `json:"keyId,omitempty"`
+
+	// LastTest 最近一次「测试」的结果
+	LastTest *SSHHostTest `json:"lastTest,omitempty"`
+
+	// Name orb 内的主机名与 `ssh <名字>` 别名
+	Name string `json:"name"`
+	Port int    `json:"port"`
+
+	// ProjectID 缺省 = 全局主机
+	ProjectID *ProjectID `json:"projectId,omitempty"`
+	Tags      []string   `json:"tags"`
+
+	// UpdatedAt UTC 毫秒时间戳
+	UpdatedAt TimestampMs `json:"updatedAt"`
+	Username  string      `json:"username"`
+}
+
+// SSHHostCreate defines model for SshHostCreate.
+type SSHHostCreate struct {
+	Address         string      `json:"address"`
+	AllowAutomation *bool       `json:"allowAutomation,omitempty"`
+	AllowForward    *bool       `json:"allowForward,omitempty"`
+	AuthType        SSHAuthType `json:"authType"`
+	Compat          *bool       `json:"compat,omitempty"`
+	Description     *string     `json:"description,omitempty"`
+	Enabled         *bool       `json:"enabled,omitempty"`
+
+	// JumpHostID `ssh_<ULID>`
+	JumpHostID *SSHHostID `json:"jumpHostId,omitempty"`
+
+	// KeyID `sshk_<ULID>`
+	KeyID    *SSHKeyID `json:"keyId,omitempty"`
+	Name     string    `json:"name"`
+	Password *string   `json:"password,omitempty"`
+	Port     *int      `json:"port,omitempty"`
+
+	// ProjectID 缺省 = 全局主机；建后不可改
+	ProjectID *ProjectID `json:"projectId,omitempty"`
+	Tags      []string   `json:"tags,omitempty"`
+	Username  string     `json:"username"`
+}
+
+// SSHHostID `ssh_<ULID>`
+type SSHHostID = string
+
+// SSHHostKey 已固定的目标机主机公钥
+type SSHHostKey struct {
+	// Fingerprint `SHA256:…`
+	Fingerprint string `json:"fingerprint"`
+
+	// PinnedAt UTC 毫秒时间戳
+	PinnedAt TimestampMs `json:"pinnedAt"`
+	Type     string      `json:"type"`
+}
+
+// SSHHostList defines model for SshHostList.
+type SSHHostList struct {
+	Hosts []SSHHost `json:"hosts"`
+}
+
+// SSHHostTest 最近一次「测试」的结果
+type SSHHostTest struct {
+	// At UTC 毫秒时间戳
+	At    TimestampMs `json:"at"`
+	Error *string     `json:"error,omitempty"`
+	Ok    bool        `json:"ok"`
+	Os    *string     `json:"os,omitempty"`
+}
+
+// SSHHostUpdate 只改给出的字段。`password` 缺省 = 沿用原密码。
+type SSHHostUpdate struct {
+	Address         *string      `json:"address,omitempty"`
+	AllowAutomation *bool        `json:"allowAutomation,omitempty"`
+	AllowForward    *bool        `json:"allowForward,omitempty"`
+	AuthType        *SSHAuthType `json:"authType,omitempty"`
+
+	// Compat `null` = 不写进 `ssh.json`
+	Compat      *bool   `json:"compat,omitempty"`
+	Description *string `json:"description,omitempty"`
+	Enabled     *bool   `json:"enabled,omitempty"`
+
+	// JumpHostID `null` = 取消跳板
+	JumpHostID *string `json:"jumpHostId,omitempty"`
+
+	// KeyID `sshk_<ULID>`
+	KeyID    *SSHKeyID `json:"keyId,omitempty"`
+	Name     *string   `json:"name,omitempty"`
+	Password *string   `json:"password,omitempty"`
+	Port     *int      `json:"port,omitempty"`
+	Tags     []string  `json:"tags,omitempty"`
+	Username *string   `json:"username,omitempty"`
+}
+
+// SSHKey defines model for SshKey.
+type SSHKey struct {
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt   TimestampMs `json:"createdAt"`
+	Fingerprint string      `json:"fingerprint"`
+
+	// HostCount 使用这把钥匙的主机数
+	HostCount int `json:"hostCount"`
+
+	// ID `sshk_<ULID>`
+	ID   SSHKeyID `json:"id"`
+	Name string   `json:"name"`
+
+	// PublicKey authorized_keys 一行，注释为钥匙名
+	PublicKey string `json:"publicKey"`
+
+	// Type `ssh-ed25519`、`ssh-rsa`、`ecdsa-sha2-nistp256` 等
+	Type string `json:"type"`
+}
+
+// SSHKeyCreate defines model for SshKeyCreate.
+type SSHKeyCreate struct {
+	Mode SSHKeyCreateMode `json:"mode"`
+	Name string           `json:"name"`
+
+	// Passphrase 私钥口令；只用于解开，不落库
+	Passphrase *string `json:"passphrase,omitempty"`
+
+	// PrivateKey `mode=import` 时必填：PEM / OpenSSH 格式私钥
+	PrivateKey *string `json:"privateKey,omitempty"`
+}
+
+// SSHKeyCreateMode defines model for SSHKeyCreate.Mode.
+type SSHKeyCreateMode string
+
+// SSHKeyID `sshk_<ULID>`
+type SSHKeyID = string
+
+// SSHKeyList defines model for SshKeyList.
+type SSHKeyList struct {
+	Keys []SSHKey `json:"keys"`
+}
+
+// SSHKeyRename defines model for SshKeyRename.
+type SSHKeyRename struct {
+	Name string `json:"name"`
+}
+
+// SSHSnapshot 测试时采的一次状态快照（Linux 的 `/proc` 与 `df`；取不到的字段省略）
+type SSHSnapshot struct {
+	CPUPct     *float32          `json:"cpuPct,omitempty"`
+	Disks      []SSHSnapshotDisk `json:"disks"`
+	Load1      *float32          `json:"load1,omitempty"`
+	MemTotalKb *int64            `json:"memTotalKb,omitempty"`
+	MemUsedKb  *int64            `json:"memUsedKb,omitempty"`
+}
+
+// SSHSnapshotDisk defines model for SshSnapshotDisk.
+type SSHSnapshotDisk struct {
+	Mount   string `json:"mount"`
+	TotalKb int64  `json:"totalKb"`
+	UsedKb  int64  `json:"usedKb"`
+}
+
+// SSHTestResult defines model for SshTestResult.
+type SSHTestResult struct {
+	// CheckedAt UTC 毫秒时间戳
+	CheckedAt          TimestampMs `json:"checkedAt"`
+	Error              *string     `json:"error,omitempty"`
+	HostKeyFingerprint *string     `json:"hostKeyFingerprint,omitempty"`
+
+	// LatencyMs 拨号（含跳板与登录）耗时
+	LatencyMs int  `json:"latencyMs"`
+	Ok        bool `json:"ok"`
+
+	// Os `linux`、`macos` 或 `uname -s` 的小写
+	Os *string `json:"os,omitempty"`
+
+	// Snapshot 测试时采的一次状态快照（Linux 的 `/proc` 与 `df`；取不到的字段省略）
+	Snapshot *SSHSnapshot `json:"snapshot,omitempty"`
+}
+
 // StatsBackfill 历史回填进度（线程数）；完成后不出现
 type StatsBackfill struct {
 	Done  int64 `json:"done"`
@@ -9670,6 +10130,27 @@ type ThreadShare struct {
 // ThreadShareList defines model for ThreadShareList.
 type ThreadShareList struct {
 	Shares []ThreadShare `json:"shares"`
+}
+
+// ThreadSSHHost defines model for ThreadSshHost.
+type ThreadSSHHost struct {
+	// Blocked `usable=false` 的原因：`automation` = 这台 orb 是全自动的，而主机未放开
+	Blocked *ThreadSSHHostBlocked `json:"blocked,omitempty"`
+	Host    SSHHost               `json:"host"`
+	Usable  bool                  `json:"usable"`
+}
+
+// ThreadSSHHostBlocked `usable=false` 的原因：`automation` = 这台 orb 是全自动的，而主机未放开
+type ThreadSSHHostBlocked string
+
+// ThreadSSHHosts defines model for ThreadSshHosts.
+type ThreadSSHHosts struct {
+	// Automation 这台 orb 是否全自动
+	Automation bool            `json:"automation"`
+	Hosts      []ThreadSSHHost `json:"hosts"`
+
+	// Managed false = Runner / 协调线程或没有 orb，主机不由 Oryn 管
+	Managed bool `json:"managed"`
 }
 
 // ThreadState 线程状态（全端统一，自上而下取首个成立）：
@@ -10344,6 +10825,14 @@ type WsServerSchedulesChanged struct {
 // WsServerSchedulesChangedType defines model for WsServerSchedulesChanged.Type.
 type WsServerSchedulesChangedType string
 
+// WsServerSSHChanged M18：SSH 主机、钥匙、指纹或测试结果变了；发给全部私有连接。客户端据此让 SSH 相关查询失效
+type WsServerSSHChanged struct {
+	Type WsServerSSHChangedType `json:"type"`
+}
+
+// WsServerSSHChangedType defines model for WsServerSSHChanged.Type.
+type WsServerSSHChangedType string
+
 // WsServerTermLagged 该线程的 `terminal_output` 有丢失（本连接待发超过阈值，或 orbd 帧缓冲溢出后的 `terminal.gap`）：
 // 客户端应以 `terminal_list` + `terminal_snapshot` 重同步，并重新 `term.watch{on:true}`。
 type WsServerTermLagged struct {
@@ -10569,6 +11058,15 @@ type ShareSlugPath = ShareSlug
 
 // SpaceIDPath `spc_<ulid>`（M9）
 type SpaceIDPath = SpaceID
+
+// SSHFsPathQuery defines model for SshFsPathQuery.
+type SSHFsPathQuery = string
+
+// SSHHostIDPath `ssh_<ULID>`
+type SSHHostIDPath = SSHHostID
+
+// SSHKeyIDPath `sshk_<ULID>`
+type SSHKeyIDPath = SSHKeyID
 
 // StatsDownloadQuery defines model for StatsDownloadQuery.
 type StatsDownloadQuery = bool
@@ -11148,6 +11646,50 @@ type GetSpaceProgressParams struct {
 	Tz *string `form:"tz,omitempty" json:"tz,omitempty"`
 }
 
+// ListSSHAuditParams defines parameters for ListSSHAudit.
+type ListSSHAuditParams struct {
+	// Host 主机 id
+	Host   *SSHHostID `form:"host,omitempty" json:"host,omitempty"`
+	Thread *ThreadID  `form:"thread,omitempty" json:"thread,omitempty"`
+
+	// Before 只返回 id 小于该值的记录（分页游标）
+	Before *int64 `form:"before,omitempty" json:"before,omitempty"`
+	Limit  *int   `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ReadSSHFileParams defines parameters for ReadSSHFile.
+type ReadSSHFileParams struct {
+	// Path 目标机上的绝对路径（`path.Clean` 之后必须以 `/` 开头）
+	Path SSHFsPathQuery `form:"path" json:"path"`
+
+	// Range 标准 HTTP Range（单区间）
+	Range *string `json:"Range,omitempty"`
+}
+
+// WriteSSHFileParams defines parameters for WriteSSHFile.
+type WriteSSHFileParams struct {
+	// Overwrite 目标已存在时是否覆盖
+	Overwrite *bool `form:"overwrite,omitempty" json:"overwrite,omitempty"`
+
+	// Path 目标机上的绝对路径（`path.Clean` 之后必须以 `/` 开头）
+	Path SSHFsPathQuery `form:"path" json:"path"`
+
+	// IfMatch 期望的当前 `etag`（`FsEntry.etag`）；不符 → 412 `modified`
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
+// ListSSHFsParams defines parameters for ListSSHFs.
+type ListSSHFsParams struct {
+	// Path 目标机上的绝对路径（`path.Clean` 之后必须以 `/` 开头）
+	Path SSHFsPathQuery `form:"path" json:"path"`
+}
+
+// StatSSHFsParams defines parameters for StatSSHFs.
+type StatSSHFsParams struct {
+	// Path 目标机上的绝对路径（`path.Clean` 之后必须以 `/` 开头）
+	Path SSHFsPathQuery `form:"path" json:"path"`
+}
+
 // GetOrbStatsParams defines parameters for GetOrbStats.
 type GetOrbStatsParams struct {
 	// GroupBy 缺省 = `type`
@@ -11575,6 +12117,27 @@ type CreateSpaceJSONRequestBody = SpaceCreate
 // UpdateSpaceJSONRequestBody defines body for UpdateSpace for application/json ContentType.
 type UpdateSpaceJSONRequestBody = SpacePatch
 
+// CreateSSHHostJSONRequestBody defines body for CreateSSHHost for application/json ContentType.
+type CreateSSHHostJSONRequestBody = SSHHostCreate
+
+// UpdateSSHHostJSONRequestBody defines body for UpdateSSHHost for application/json ContentType.
+type UpdateSSHHostJSONRequestBody = SSHHostUpdate
+
+// DeleteSSHFsJSONRequestBody defines body for DeleteSSHFs for application/json ContentType.
+type DeleteSSHFsJSONRequestBody = FsPathRequest
+
+// MkdirSSHFsJSONRequestBody defines body for MkdirSSHFs for application/json ContentType.
+type MkdirSSHFsJSONRequestBody = FsPathRequest
+
+// RenameSSHFsJSONRequestBody defines body for RenameSSHFs for application/json ContentType.
+type RenameSSHFsJSONRequestBody = FsRenameRequest
+
+// CreateSSHKeyJSONRequestBody defines body for CreateSSHKey for application/json ContentType.
+type CreateSSHKeyJSONRequestBody = SSHKeyCreate
+
+// RenameSSHKeyJSONRequestBody defines body for RenameSSHKey for application/json ContentType.
+type RenameSSHKeyJSONRequestBody = SSHKeyRename
+
 // PutBudgetJSONRequestBody defines body for PutBudget for application/json ContentType.
 type PutBudgetJSONRequestBody = Budget
 
@@ -11886,6 +12449,40 @@ func (t *LinkStreamHeader) MergeLinkStreamLibrary(v LinkStreamLibrary) error {
 	return err
 }
 
+// AsLinkStreamSSH returns the union data inside the LinkStreamHeader as a LinkStreamSSH
+func (t LinkStreamHeader) AsLinkStreamSSH() (LinkStreamSSH, error) {
+	var body LinkStreamSSH
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromLinkStreamSSH overwrites any union data inside the LinkStreamHeader as the provided LinkStreamSSH
+func (t *LinkStreamHeader) FromLinkStreamSSH(v LinkStreamSSH) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"t":"ssh"}`))
+	t.union = b
+	return err
+}
+
+// MergeLinkStreamSSH performs a merge with any union data inside the LinkStreamHeader, using the provided LinkStreamSSH
+func (t *LinkStreamHeader) MergeLinkStreamSSH(v LinkStreamSSH) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"t":"ssh"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 func (t LinkStreamHeader) Discriminator() (string, error) {
 	var discriminator struct {
 		Discriminator string `json:"t"`
@@ -11916,6 +12513,8 @@ func (t LinkStreamHeader) ValueByDiscriminator() (interface{}, error) {
 		return t.AsLinkStreamLibrary()
 	case "portal":
 		return t.AsLinkStreamPortal()
+	case "ssh":
+		return t.AsLinkStreamSSH()
 	default:
 		return nil, errors.New("unknown discriminator value: " + discriminator)
 	}
@@ -13418,6 +14017,40 @@ func (t *WsServerMessage) MergeWsServerGitHubChanged(v WsServerGitHubChanged) er
 	return err
 }
 
+// AsWsServerSSHChanged returns the union data inside the WsServerMessage as a WsServerSSHChanged
+func (t WsServerMessage) AsWsServerSSHChanged() (WsServerSSHChanged, error) {
+	var body WsServerSSHChanged
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsServerSSHChanged overwrites any union data inside the WsServerMessage as the provided WsServerSSHChanged
+func (t *WsServerMessage) FromWsServerSSHChanged(v WsServerSSHChanged) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"ssh.changed"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsServerSSHChanged performs a merge with any union data inside the WsServerMessage, using the provided WsServerSSHChanged
+func (t *WsServerMessage) MergeWsServerSSHChanged(v WsServerSSHChanged) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"ssh.changed"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 // AsWsServerArtifactsChanged returns the union data inside the WsServerMessage as a WsServerArtifactsChanged
 func (t WsServerMessage) AsWsServerArtifactsChanged() (WsServerArtifactsChanged, error) {
 	var body WsServerArtifactsChanged
@@ -13678,6 +14311,8 @@ func (t WsServerMessage) ValueByDiscriminator() (interface{}, error) {
 		return t.AsWsServerRes()
 	case "schedules.changed":
 		return t.AsWsServerSchedulesChanged()
+	case "ssh.changed":
+		return t.AsWsServerSSHChanged()
 	case "term.lagged":
 		return t.AsWsServerTermLagged()
 	case "term.resized":
@@ -14577,6 +15212,66 @@ type ServerInterface interface {
 	// GetSpaceProgress 近 N 天的 Shipped / Archived / Open 进度（按自然日，最早的一天在前）
 	// (GET /api/v1/spaces/{id}/progress)
 	GetSpaceProgress(w http.ResponseWriter, r *http.Request, id SpaceIDPath, params GetSpaceProgressParams)
+	// ListSSHAudit SSH 审计（按时间倒序，保留 30 天）
+	// (GET /api/v1/ssh/audit)
+	ListSSHAudit(w http.ResponseWriter, r *http.Request, params ListSSHAuditParams)
+	// ListSSHHosts 全部 SSH 主机（全局在前，再按项目、名称）
+	// (GET /api/v1/ssh/hosts)
+	ListSSHHosts(w http.ResponseWriter, r *http.Request)
+	// CreateSSHHost 登记 SSH 主机
+	// (POST /api/v1/ssh/hosts)
+	CreateSSHHost(w http.ResponseWriter, r *http.Request)
+	// DeleteSSHHost 删除 SSH 主机（被其他主机用作跳板时 409 `conflict`）
+	// (DELETE /api/v1/ssh/hosts/{id})
+	DeleteSSHHost(w http.ResponseWriter, r *http.Request, id SSHHostIDPath)
+	// GetSSHHost 单台 SSH 主机
+	// (GET /api/v1/ssh/hosts/{id})
+	GetSSHHost(w http.ResponseWriter, r *http.Request, id SSHHostIDPath)
+	// UpdateSSHHost 修改 SSH 主机（只改给出的字段；作用域建后不可改）
+	// (PATCH /api/v1/ssh/hosts/{id})
+	UpdateSSHHost(w http.ResponseWriter, r *http.Request, id SSHHostIDPath)
+	// DeleteSSHFs 删除文件或目录（递归；`/` 与登录用户主目录 → 403 `protected_path`）
+	// (POST /api/v1/ssh/hosts/{id}/fs/delete)
+	DeleteSSHFs(w http.ResponseWriter, r *http.Request, id SSHHostIDPath)
+	// ReadSSHFile 下载文件（支持 `Range`）
+	// (GET /api/v1/ssh/hosts/{id}/fs/file)
+	ReadSSHFile(w http.ResponseWriter, r *http.Request, id SSHHostIDPath, params ReadSSHFileParams)
+	// WriteSSHFile 写入文件（整文件覆盖，单文件 ≤512MiB）
+	// (PUT /api/v1/ssh/hosts/{id}/fs/file)
+	WriteSSHFile(w http.ResponseWriter, r *http.Request, id SSHHostIDPath, params WriteSSHFileParams)
+	// ListSSHFs 列出目录（目录在前、按名不分大小写排序；≤5000 条）
+	// (GET /api/v1/ssh/hosts/{id}/fs/list)
+	ListSSHFs(w http.ResponseWriter, r *http.Request, id SSHHostIDPath, params ListSSHFsParams)
+	// MkdirSSHFs 新建目录（含缺失的上级目录）
+	// (POST /api/v1/ssh/hosts/{id}/fs/mkdir)
+	MkdirSSHFs(w http.ResponseWriter, r *http.Request, id SSHHostIDPath)
+	// RenameSSHFs 移动 / 重命名（目标已存在且未 `overwrite` → 409 `exists`）
+	// (POST /api/v1/ssh/hosts/{id}/fs/rename)
+	RenameSSHFs(w http.ResponseWriter, r *http.Request, id SSHHostIDPath)
+	// GetSSHFsRoots 目标机上登录用户的主目录（经 SFTP）
+	// (GET /api/v1/ssh/hosts/{id}/fs/roots)
+	GetSSHFsRoots(w http.ResponseWriter, r *http.Request, id SSHHostIDPath)
+	// StatSSHFs 文件或目录元数据（含 `mime` 与 `text`）
+	// (GET /api/v1/ssh/hosts/{id}/fs/stat)
+	StatSSHFs(w http.ResponseWriter, r *http.Request, id SSHHostIDPath, params StatSSHFsParams)
+	// ResetSSHHostKey 清掉已固定的主机指纹（下次成功连接重新固定）
+	// (POST /api/v1/ssh/hosts/{id}/reset-host-key)
+	ResetSSHHostKey(w http.ResponseWriter, r *http.Request, id SSHHostIDPath)
+	// TestSSHHost 测试连接并采一次状态快照
+	// (POST /api/v1/ssh/hosts/{id}/test)
+	TestSSHHost(w http.ResponseWriter, r *http.Request, id SSHHostIDPath)
+	// ListSSHKeys SSH 钥匙（按名称；不含私钥）
+	// (GET /api/v1/ssh/keys)
+	ListSSHKeys(w http.ResponseWriter, r *http.Request)
+	// CreateSSHKey 生成 ed25519 钥匙，或导入私钥（带口令的私钥解开后转存为无口令格式，口令不落库）
+	// (POST /api/v1/ssh/keys)
+	CreateSSHKey(w http.ResponseWriter, r *http.Request)
+	// DeleteSSHKey 删除钥匙（仍有主机使用时 409 `conflict`）
+	// (DELETE /api/v1/ssh/keys/{id})
+	DeleteSSHKey(w http.ResponseWriter, r *http.Request, id SSHKeyIDPath)
+	// RenameSSHKey 重命名钥匙（公钥注释随之改写）
+	// (PATCH /api/v1/ssh/keys/{id})
+	RenameSSHKey(w http.ResponseWriter, r *http.Request, id SSHKeyIDPath)
 	// GetBudget 预算设置与当日 / 当月花费（未设置时 `enabled = false`、`warnPct = 80`、`timezone = UTC`）
 	// (GET /api/v1/stats/budget)
 	GetBudget(w http.ResponseWriter, r *http.Request)
@@ -14646,6 +15341,9 @@ type ServerInterface interface {
 	// CreateThreadShare 创建公开分享（快照 / 实时）
 	// (POST /api/v1/threads/{id}/shares)
 	CreateThreadShare(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
+	// ListThreadSSHHosts 线程所在 orb 可见的 SSH 主机
+	// (GET /api/v1/threads/{id}/ssh-hosts)
+	ListThreadSSHHosts(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
 	// WakeThread 唤醒线程所在 orb（异步）
 	// (POST /api/v1/threads/{id}/wake)
 	WakeThread(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
@@ -16224,6 +16922,126 @@ func (_ Unimplemented) GetSpaceProgress(w http.ResponseWriter, r *http.Request, 
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// ListSSHAudit SSH 审计（按时间倒序，保留 30 天）
+// (GET /api/v1/ssh/audit)
+func (_ Unimplemented) ListSSHAudit(w http.ResponseWriter, r *http.Request, params ListSSHAuditParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListSSHHosts 全部 SSH 主机（全局在前，再按项目、名称）
+// (GET /api/v1/ssh/hosts)
+func (_ Unimplemented) ListSSHHosts(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateSSHHost 登记 SSH 主机
+// (POST /api/v1/ssh/hosts)
+func (_ Unimplemented) CreateSSHHost(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteSSHHost 删除 SSH 主机（被其他主机用作跳板时 409 `conflict`）
+// (DELETE /api/v1/ssh/hosts/{id})
+func (_ Unimplemented) DeleteSSHHost(w http.ResponseWriter, r *http.Request, id SSHHostIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetSSHHost 单台 SSH 主机
+// (GET /api/v1/ssh/hosts/{id})
+func (_ Unimplemented) GetSSHHost(w http.ResponseWriter, r *http.Request, id SSHHostIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// UpdateSSHHost 修改 SSH 主机（只改给出的字段；作用域建后不可改）
+// (PATCH /api/v1/ssh/hosts/{id})
+func (_ Unimplemented) UpdateSSHHost(w http.ResponseWriter, r *http.Request, id SSHHostIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteSSHFs 删除文件或目录（递归；`/` 与登录用户主目录 → 403 `protected_path`）
+// (POST /api/v1/ssh/hosts/{id}/fs/delete)
+func (_ Unimplemented) DeleteSSHFs(w http.ResponseWriter, r *http.Request, id SSHHostIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ReadSSHFile 下载文件（支持 `Range`）
+// (GET /api/v1/ssh/hosts/{id}/fs/file)
+func (_ Unimplemented) ReadSSHFile(w http.ResponseWriter, r *http.Request, id SSHHostIDPath, params ReadSSHFileParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// WriteSSHFile 写入文件（整文件覆盖，单文件 ≤512MiB）
+// (PUT /api/v1/ssh/hosts/{id}/fs/file)
+func (_ Unimplemented) WriteSSHFile(w http.ResponseWriter, r *http.Request, id SSHHostIDPath, params WriteSSHFileParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListSSHFs 列出目录（目录在前、按名不分大小写排序；≤5000 条）
+// (GET /api/v1/ssh/hosts/{id}/fs/list)
+func (_ Unimplemented) ListSSHFs(w http.ResponseWriter, r *http.Request, id SSHHostIDPath, params ListSSHFsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// MkdirSSHFs 新建目录（含缺失的上级目录）
+// (POST /api/v1/ssh/hosts/{id}/fs/mkdir)
+func (_ Unimplemented) MkdirSSHFs(w http.ResponseWriter, r *http.Request, id SSHHostIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RenameSSHFs 移动 / 重命名（目标已存在且未 `overwrite` → 409 `exists`）
+// (POST /api/v1/ssh/hosts/{id}/fs/rename)
+func (_ Unimplemented) RenameSSHFs(w http.ResponseWriter, r *http.Request, id SSHHostIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetSSHFsRoots 目标机上登录用户的主目录（经 SFTP）
+// (GET /api/v1/ssh/hosts/{id}/fs/roots)
+func (_ Unimplemented) GetSSHFsRoots(w http.ResponseWriter, r *http.Request, id SSHHostIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// StatSSHFs 文件或目录元数据（含 `mime` 与 `text`）
+// (GET /api/v1/ssh/hosts/{id}/fs/stat)
+func (_ Unimplemented) StatSSHFs(w http.ResponseWriter, r *http.Request, id SSHHostIDPath, params StatSSHFsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ResetSSHHostKey 清掉已固定的主机指纹（下次成功连接重新固定）
+// (POST /api/v1/ssh/hosts/{id}/reset-host-key)
+func (_ Unimplemented) ResetSSHHostKey(w http.ResponseWriter, r *http.Request, id SSHHostIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// TestSSHHost 测试连接并采一次状态快照
+// (POST /api/v1/ssh/hosts/{id}/test)
+func (_ Unimplemented) TestSSHHost(w http.ResponseWriter, r *http.Request, id SSHHostIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListSSHKeys SSH 钥匙（按名称；不含私钥）
+// (GET /api/v1/ssh/keys)
+func (_ Unimplemented) ListSSHKeys(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateSSHKey 生成 ed25519 钥匙，或导入私钥（带口令的私钥解开后转存为无口令格式，口令不落库）
+// (POST /api/v1/ssh/keys)
+func (_ Unimplemented) CreateSSHKey(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteSSHKey 删除钥匙（仍有主机使用时 409 `conflict`）
+// (DELETE /api/v1/ssh/keys/{id})
+func (_ Unimplemented) DeleteSSHKey(w http.ResponseWriter, r *http.Request, id SSHKeyIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RenameSSHKey 重命名钥匙（公钥注释随之改写）
+// (PATCH /api/v1/ssh/keys/{id})
+func (_ Unimplemented) RenameSSHKey(w http.ResponseWriter, r *http.Request, id SSHKeyIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // GetBudget 预算设置与当日 / 当月花费（未设置时 `enabled = false`、`warnPct = 80`、`timezone = UTC`）
 // (GET /api/v1/stats/budget)
 func (_ Unimplemented) GetBudget(w http.ResponseWriter, r *http.Request) {
@@ -16359,6 +17177,12 @@ func (_ Unimplemented) ListThreadShares(w http.ResponseWriter, r *http.Request, 
 // CreateThreadShare 创建公开分享（快照 / 实时）
 // (POST /api/v1/threads/{id}/shares)
 func (_ Unimplemented) CreateThreadShare(w http.ResponseWriter, r *http.Request, id ThreadIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListThreadSSHHosts 线程所在 orb 可见的 SSH 主机
+// (GET /api/v1/threads/{id}/ssh-hosts)
+func (_ Unimplemented) ListThreadSSHHosts(w http.ResponseWriter, r *http.Request, id ThreadIDPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -23794,6 +24618,643 @@ func (siw *ServerInterfaceWrapper) GetSpaceProgress(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// ListSSHAudit operation middleware
+func (siw *ServerInterfaceWrapper) ListSSHAudit(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListSSHAuditParams
+
+	// ------------- Optional query parameter "host" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "host", r.URL.Query(), &params.Host, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "host"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "host", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "thread" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "thread", r.URL.Query(), &params.Thread, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "thread"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "thread", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "before" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "before", r.URL.Query(), &params.Before, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "before"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "before", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListSSHAudit(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListSSHHosts operation middleware
+func (siw *ServerInterfaceWrapper) ListSSHHosts(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListSSHHosts(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateSSHHost operation middleware
+func (siw *ServerInterfaceWrapper) CreateSSHHost(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateSSHHost(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteSSHHost operation middleware
+func (siw *ServerInterfaceWrapper) DeleteSSHHost(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id SSHHostIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteSSHHost(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSSHHost operation middleware
+func (siw *ServerInterfaceWrapper) GetSSHHost(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id SSHHostIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSSHHost(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateSSHHost operation middleware
+func (siw *ServerInterfaceWrapper) UpdateSSHHost(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id SSHHostIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateSSHHost(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteSSHFs operation middleware
+func (siw *ServerInterfaceWrapper) DeleteSSHFs(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id SSHHostIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteSSHFs(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReadSSHFile operation middleware
+func (siw *ServerInterfaceWrapper) ReadSSHFile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id SSHHostIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ReadSSHFileParams
+
+	// ------------- Required query parameter "path" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "path", r.URL.Query(), &params.Path, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "path"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "path", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "Range" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Range")]; found {
+		var Range string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Range", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Range", valueList[0], &Range, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Range", Err: err})
+			return
+		}
+
+		params.Range = &Range
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReadSSHFile(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// WriteSSHFile operation middleware
+func (siw *ServerInterfaceWrapper) WriteSSHFile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id SSHHostIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params WriteSSHFileParams
+
+	// ------------- Optional query parameter "overwrite" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "overwrite", r.URL.Query(), &params.Overwrite, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "overwrite"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "overwrite", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "path" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "path", r.URL.Query(), &params.Path, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "path"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "path", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "If-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-Match")]; found {
+		var IfMatch string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "If-Match", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-Match", valueList[0], &IfMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "If-Match", Err: err})
+			return
+		}
+
+		params.IfMatch = &IfMatch
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.WriteSSHFile(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListSSHFs operation middleware
+func (siw *ServerInterfaceWrapper) ListSSHFs(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id SSHHostIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListSSHFsParams
+
+	// ------------- Required query parameter "path" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "path", r.URL.Query(), &params.Path, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "path"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "path", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListSSHFs(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// MkdirSSHFs operation middleware
+func (siw *ServerInterfaceWrapper) MkdirSSHFs(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id SSHHostIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.MkdirSSHFs(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RenameSSHFs operation middleware
+func (siw *ServerInterfaceWrapper) RenameSSHFs(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id SSHHostIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RenameSSHFs(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSSHFsRoots operation middleware
+func (siw *ServerInterfaceWrapper) GetSSHFsRoots(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id SSHHostIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSSHFsRoots(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StatSSHFs operation middleware
+func (siw *ServerInterfaceWrapper) StatSSHFs(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id SSHHostIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params StatSSHFsParams
+
+	// ------------- Required query parameter "path" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "path", r.URL.Query(), &params.Path, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "path"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "path", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StatSSHFs(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ResetSSHHostKey operation middleware
+func (siw *ServerInterfaceWrapper) ResetSSHHostKey(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id SSHHostIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResetSSHHostKey(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// TestSSHHost operation middleware
+func (siw *ServerInterfaceWrapper) TestSSHHost(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id SSHHostIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.TestSSHHost(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListSSHKeys operation middleware
+func (siw *ServerInterfaceWrapper) ListSSHKeys(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListSSHKeys(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateSSHKey operation middleware
+func (siw *ServerInterfaceWrapper) CreateSSHKey(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateSSHKey(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteSSHKey operation middleware
+func (siw *ServerInterfaceWrapper) DeleteSSHKey(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id SSHKeyIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteSSHKey(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RenameSSHKey operation middleware
+func (siw *ServerInterfaceWrapper) RenameSSHKey(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id SSHKeyIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RenameSSHKey(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetBudget operation middleware
 func (siw *ServerInterfaceWrapper) GetBudget(w http.ResponseWriter, r *http.Request) {
 
@@ -25005,6 +26466,32 @@ func (siw *ServerInterfaceWrapper) CreateThreadShare(w http.ResponseWriter, r *h
 	handler.ServeHTTP(w, r)
 }
 
+// ListThreadSSHHosts operation middleware
+func (siw *ServerInterfaceWrapper) ListThreadSSHHosts(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ThreadIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListThreadSSHHosts(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // WakeThread operation middleware
 func (siw *ServerInterfaceWrapper) WakeThread(w http.ResponseWriter, r *http.Request) {
 
@@ -26170,6 +27657,69 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/public/github/oauth/callback", wrapper.FinishGitHubOAuth)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/ssh/hosts", wrapper.ListSSHHosts)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/ssh/hosts", wrapper.CreateSSHHost)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/ssh/hosts/{id}", wrapper.DeleteSSHHost)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/ssh/hosts/{id}", wrapper.GetSSHHost)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/v1/ssh/hosts/{id}", wrapper.UpdateSSHHost)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/ssh/hosts/{id}/test", wrapper.TestSSHHost)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/ssh/hosts/{id}/reset-host-key", wrapper.ResetSSHHostKey)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/ssh/keys", wrapper.ListSSHKeys)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/ssh/keys", wrapper.CreateSSHKey)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/ssh/keys/{id}", wrapper.DeleteSSHKey)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/v1/ssh/keys/{id}", wrapper.RenameSSHKey)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/ssh/audit", wrapper.ListSSHAudit)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/threads/{id}/ssh-hosts", wrapper.ListThreadSSHHosts)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/ssh/hosts/{id}/fs/roots", wrapper.GetSSHFsRoots)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/ssh/hosts/{id}/fs/list", wrapper.ListSSHFs)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/ssh/hosts/{id}/fs/stat", wrapper.StatSSHFs)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/ssh/hosts/{id}/fs/file", wrapper.ReadSSHFile)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/ssh/hosts/{id}/fs/file", wrapper.WriteSSHFile)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/ssh/hosts/{id}/fs/mkdir", wrapper.MkdirSSHFs)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/ssh/hosts/{id}/fs/rename", wrapper.RenameSSHFs)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/ssh/hosts/{id}/fs/delete", wrapper.DeleteSSHFs)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/public/shares/{slug}", wrapper.GetPublicShare)

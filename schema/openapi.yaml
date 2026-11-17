@@ -88,6 +88,8 @@ tags:
     description: 内置 Hindsight 记忆（M16：同项目共享、全局候选、模型中转）
   - name: owner-memory
     description: 全局助手的主人记忆（M17：Hindsight bank `oryn-owner`，只由控制面访问）
+  - name: ssh
+    description: SSH 主机、钥匙与网关审计（M18）
 
 paths:
   /healthz:
@@ -5424,6 +5426,444 @@ paths:
               schema: { type: string }
         default: { $ref: '#/components/responses/Error' }
 
+  # ---------------------------------------------------------------- ssh（M18：SSH 主机、钥匙与网关审计）
+  /api/v1/ssh/hosts:
+    get:
+      tags: [ssh]
+      operationId: listSshHosts
+      summary: 全部 SSH 主机（全局在前，再按项目、名称）
+      responses:
+        '200':
+          description: 主机列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SshHostList' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [ssh]
+      operationId: createSshHost
+      summary: 登记 SSH 主机
+      description: |
+        校验失败 → 400 `invalid_request`（`message` 为可直接展示的中文说明）；同作用域重名 → 409 `conflict`；项目不存在 → 404 `not_found`。
+        私钥与密码只存控制面；orb 内经 orbd 的回环端口连到控制面 SSH 网关，由网关代为登录。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SshHostCreate' }
+      responses:
+        '201':
+          description: 新主机
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SshHost' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/ssh/hosts/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/SshHostIdPath' }
+    get:
+      tags: [ssh]
+      operationId: getSshHost
+      summary: 单台 SSH 主机
+      responses:
+        '200':
+          description: 主机
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SshHost' }
+        default: { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [ssh]
+      operationId: updateSshHost
+      summary: 修改 SSH 主机（只改给出的字段；作用域建后不可改）
+      description: |
+        改地址或端口会清掉已固定的主机指纹；改动后经这台主机（含以它为跳板）的网关会话、终端与文件连接立即断开。
+        停用仍被启用中主机当作跳板的主机 → 409 `conflict`；启用跳板已停用的主机 → 409 `conflict`。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SshHostUpdate' }
+      responses:
+        '200':
+          description: 修改后的主机
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SshHost' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [ssh]
+      operationId: deleteSshHost
+      summary: 删除 SSH 主机（被其他主机用作跳板时 409 `conflict`）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已删除 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/ssh/hosts/{id}/test:
+    parameters:
+      - { $ref: '#/components/parameters/SshHostIdPath' }
+    post:
+      tags: [ssh]
+      operationId: testSshHost
+      summary: 测试连接并采一次状态快照
+      description: 连接失败同样回 200，`ok=false` 且带 `error`。首次成功连接会固定主机指纹。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '200':
+          description: 测试结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SshTestResult' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/ssh/hosts/{id}/reset-host-key:
+    parameters:
+      - { $ref: '#/components/parameters/SshHostIdPath' }
+    post:
+      tags: [ssh]
+      operationId: resetSshHostKey
+      summary: 清掉已固定的主机指纹（下次成功连接重新固定）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '200':
+          description: 重置后的主机
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SshHost' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/ssh/keys:
+    get:
+      tags: [ssh]
+      operationId: listSshKeys
+      summary: SSH 钥匙（按名称；不含私钥）
+      responses:
+        '200':
+          description: 钥匙列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SshKeyList' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [ssh]
+      operationId: createSshKey
+      summary: 生成 ed25519 钥匙，或导入私钥（带口令的私钥解开后转存为无口令格式，口令不落库）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SshKeyCreate' }
+      responses:
+        '201':
+          description: 新钥匙
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SshKey' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/ssh/keys/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/SshKeyIdPath' }
+    patch:
+      tags: [ssh]
+      operationId: renameSshKey
+      summary: 重命名钥匙（公钥注释随之改写）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SshKeyRename' }
+      responses:
+        '200':
+          description: 改名后的钥匙
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SshKey' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [ssh]
+      operationId: deleteSshKey
+      summary: 删除钥匙（仍有主机使用时 409 `conflict`）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已删除 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/ssh/audit:
+    get:
+      tags: [ssh]
+      operationId: listSshAudit
+      summary: SSH 审计（按时间倒序，保留 30 天）
+      parameters:
+        - name: host
+          in: query
+          description: 主机 id
+          schema: { $ref: '#/components/schemas/SshHostId' }
+        - name: thread
+          in: query
+          schema: { $ref: '#/components/schemas/ThreadId' }
+        - name: before
+          in: query
+          description: 只返回 id 小于该值的记录（分页游标）
+          schema: { type: integer, format: int64 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        '200':
+          description: 审计记录
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SshAuditList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/threads/{id}/ssh-hosts:
+    parameters:
+      - { $ref: '#/components/parameters/ThreadIdPath' }
+    get:
+      tags: [ssh]
+      operationId: listThreadSshHosts
+      summary: 线程所在 orb 可见的 SSH 主机
+      description: runner、协调线程与没有 orb 的线程 `managed=false`（主机不由 Oryn 管）。线程不存在 → 404。
+      responses:
+        '200':
+          description: 主机与可用性
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ThreadSshHosts' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/ssh/hosts/{id}/fs/roots:
+    parameters:
+      - { $ref: '#/components/parameters/SshHostIdPath' }
+    get:
+      tags: [ssh]
+      operationId: getSshFsRoots
+      summary: 目标机上登录用户的主目录（经 SFTP）
+      description: 拨号失败 → 502 `ssh_unreachable`（`message` 为连接错误）。
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SshFsRoots' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/ssh/hosts/{id}/fs/list:
+    parameters:
+      - { $ref: '#/components/parameters/SshHostIdPath' }
+    get:
+      tags: [ssh]
+      operationId: listSshFs
+      summary: 列出目录（目录在前、按名不分大小写排序；≤5000 条）
+      parameters:
+        - { $ref: '#/components/parameters/SshFsPathQuery' }
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FsListing' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/ssh/hosts/{id}/fs/stat:
+    parameters:
+      - { $ref: '#/components/parameters/SshHostIdPath' }
+    get:
+      tags: [ssh]
+      operationId: statSshFs
+      summary: 文件或目录元数据（含 `mime` 与 `text`）
+      parameters:
+        - { $ref: '#/components/parameters/SshFsPathQuery' }
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FsEntry' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/ssh/hosts/{id}/fs/file:
+    parameters:
+      - { $ref: '#/components/parameters/SshHostIdPath' }
+      - { $ref: '#/components/parameters/SshFsPathQuery' }
+    get:
+      tags: [ssh]
+      operationId: readSshFile
+      summary: 下载文件（支持 `Range`）
+      description: "一律以附件形式返回（`Content-Disposition: attachment`、`X-Content-Type-Options: nosniff`、`Content-Security-Policy: sandbox`、`Cache-Control: no-store`）；目录 → 409 `is_a_directory`。"
+      parameters:
+        - name: Range
+          in: header
+          description: 标准 HTTP Range（单区间）
+          schema: { type: string }
+      responses:
+        '200':
+          description: 文件字节
+          headers:
+            ETag:
+              description: '`"<mtimeUnixNano>-<size>"`'
+              schema: { type: string }
+            Content-Disposition:
+              schema: { type: string }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '206':
+          description: Range 请求的部分字节
+          headers:
+            ETag:
+              schema: { type: string }
+            Content-Range:
+              schema: { type: string }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [ssh]
+      operationId: writeSshFile
+      summary: 写入文件（整文件覆盖，单文件 ≤512MiB）
+      description: |
+        父目录须存在。已存在且 `overwrite=false` → 409 `exists`；带 `If-Match` 且与当前 `etag` 不符（含文件不存在）→ 412 `modified`；
+        超过 512MiB → 413 `too_large`。写同目录临时文件后原子替换，沿用原文件权限（新文件 0644）。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      parameters:
+        - name: overwrite
+          in: query
+          description: 目标已存在时是否覆盖
+          schema: { type: boolean, default: true }
+        - name: If-Match
+          in: header
+          description: 期望的当前 `etag`（`FsEntry.etag`）；不符 → 412 `modified`
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '200':
+          description: 写入后的文件元数据
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FsEntry' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/ssh/hosts/{id}/fs/mkdir:
+    parameters:
+      - { $ref: '#/components/parameters/SshHostIdPath' }
+    post:
+      tags: [ssh]
+      operationId: mkdirSshFs
+      summary: 新建目录（含缺失的上级目录）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FsPathRequest' }
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FsEntry' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/ssh/hosts/{id}/fs/rename:
+    parameters:
+      - { $ref: '#/components/parameters/SshHostIdPath' }
+    post:
+      tags: [ssh]
+      operationId: renameSshFs
+      summary: 移动 / 重命名（目标已存在且未 `overwrite` → 409 `exists`）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FsRenameRequest' }
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FsEntry' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/ssh/hosts/{id}/fs/delete:
+    parameters:
+      - { $ref: '#/components/parameters/SshHostIdPath' }
+    post:
+      tags: [ssh]
+      operationId: deleteSshFs
+      summary: 删除文件或目录（递归；`/` 与登录用户主目录 → 403 `protected_path`）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FsPathRequest' }
+      responses:
+        '204': { description: 成功 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/ssh/hosts/{id}/terminal:
+    parameters:
+      - { $ref: '#/components/parameters/SshHostIdPath' }
+    get:
+      tags: [websocket, ssh]
+      operationId: sshHostTerminal
+      summary: 主机网页终端（WebSocket；客户端二进制帧 = 输入字节，文本帧 = resize JSON；服务端只发二进制帧 = PTY 输出）
+      description: |
+        挂载方式同 `/api/v1/ws`（不经鉴权组，由一次性票据鉴权）。票据无效或已用过 → 升级前 HTTP 401；主机不存在 → 404。
+        文本帧 `{"type":"resize","cols":N,"rows":N}`。客户端单条消息 ≤1MiB；写超时 30s；同时在线 ≤8 条。
+        关闭码：`1000` shell 退出、`4401` 主体被吊销或主机被修改、`4429` 连接数已满、`4502` 连不上目标机（reason 为错误文案）。
+      security: [{}]
+      parameters:
+        - name: ticket
+          in: query
+          required: true
+          description: '`POST /api/v1/ws-ticket` 签发的票据'
+          schema: { type: string }
+        - name: cols
+          in: query
+          schema: { type: integer, minimum: 20, maximum: 500, default: 120 }
+        - name: rows
+          in: query
+          schema: { type: integer, minimum: 5, maximum: 200, default: 30 }
+      responses:
+        '101': { description: 切换到 WebSocket }
+        default: { $ref: '#/components/responses/Error' }
+
   # ---------------------------------------------------------------- public（M5，匿名只读）
   /api/v1/public/shares/{slug}:
     parameters:
@@ -5889,6 +6329,22 @@ components:
       in: path
       required: true
       schema: { $ref: '#/components/schemas/ArtifactCommentThreadId' }
+    SshHostIdPath:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/SshHostId' }
+    SshKeyIdPath:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/SshKeyId' }
+    SshFsPathQuery:
+      name: path
+      in: query
+      required: true
+      description: 目标机上的绝对路径（`path.Clean` 之后必须以 `/` 开头）
+      schema: { type: string, minLength: 1, maxLength: 4096 }
     FsPathQuery:
       name: path
       in: query
@@ -7048,6 +7504,279 @@ components:
           type: integer
           format: int64
           description: 还有更早的记录时给出，作为下一页的 `before`
+    # ---------------------------------------------------------------- ssh（M18）
+    SshHostId:
+      type: string
+      description: '`ssh_<ULID>`'
+    SshKeyId:
+      type: string
+      description: '`sshk_<ULID>`'
+    SshAuthType:
+      type: string
+      enum: [key, password]
+      x-enum-varnames: [SshAuthKey, SshAuthPassword]
+    SshHostKey:
+      type: object
+      description: 已固定的目标机主机公钥
+      required: [type, fingerprint, pinnedAt]
+      properties:
+        type: { type: string }
+        fingerprint:
+          type: string
+          description: '`SHA256:…`'
+        pinnedAt: { $ref: '#/components/schemas/TimestampMs' }
+    SshHostTest:
+      type: object
+      description: 最近一次「测试」的结果
+      required: [at, ok]
+      properties:
+        at: { $ref: '#/components/schemas/TimestampMs' }
+        ok: { type: boolean }
+        error: { type: string }
+        os: { type: string }
+    SshHost:
+      type: object
+      required: [id, name, address, port, username, authType, hasPassword, description, tags, enabled, allowAutomation, allowForward, createdAt, updatedAt]
+      properties:
+        id: { $ref: '#/components/schemas/SshHostId' }
+        projectId:
+          allOf:
+            - $ref: '#/components/schemas/ProjectId'
+          description: 缺省 = 全局主机
+        name:
+          type: string
+          description: orb 内的主机名与 `ssh <名字>` 别名
+        address: { type: string }
+        port: { type: integer }
+        username: { type: string }
+        authType: { $ref: '#/components/schemas/SshAuthType' }
+        keyId: { $ref: '#/components/schemas/SshKeyId' }
+        hasPassword: { type: boolean }
+        jumpHostId: { $ref: '#/components/schemas/SshHostId' }
+        description: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        enabled: { type: boolean }
+        allowAutomation:
+          type: boolean
+          description: 全自动线程（定时、GitHub 触发等无人值守入口建的 orb）是否可用
+        allowForward:
+          type: boolean
+          description: 是否允许经网关做本地端口转发（`direct-tcpip`）
+        compat:
+          type: boolean
+          description: Core 的 compat 开关；缺省 = 不写进 orb 内的 `ssh.json`
+        hostKey: { $ref: '#/components/schemas/SshHostKey' }
+        lastTest: { $ref: '#/components/schemas/SshHostTest' }
+        createdAt: { $ref: '#/components/schemas/TimestampMs' }
+        updatedAt: { $ref: '#/components/schemas/TimestampMs' }
+    SshHostList:
+      type: object
+      required: [hosts]
+      properties:
+        hosts:
+          type: array
+          items: { $ref: '#/components/schemas/SshHost' }
+    SshHostCreate:
+      type: object
+      required: [name, address, username, authType]
+      properties:
+        projectId:
+          allOf:
+            - $ref: '#/components/schemas/ProjectId'
+          description: 缺省 = 全局主机；建后不可改
+        name: { type: string, maxLength: 64 }
+        address: { type: string, maxLength: 255 }
+        port: { type: integer, minimum: 1, maximum: 65535, default: 22 }
+        username: { type: string, maxLength: 64 }
+        authType: { $ref: '#/components/schemas/SshAuthType' }
+        keyId: { $ref: '#/components/schemas/SshKeyId' }
+        password: { type: string, maxLength: 1024 }
+        jumpHostId: { $ref: '#/components/schemas/SshHostId' }
+        description: { type: string, maxLength: 500 }
+        tags:
+          type: array
+          items: { type: string }
+        enabled: { type: boolean, default: true }
+        allowAutomation: { type: boolean, default: false }
+        allowForward: { type: boolean, default: false }
+        compat: { type: boolean }
+    SshHostUpdate:
+      type: object
+      description: 只改给出的字段。`password` 缺省 = 沿用原密码。
+      properties:
+        name: { type: string, maxLength: 64 }
+        address: { type: string, maxLength: 255 }
+        port: { type: integer, minimum: 1, maximum: 65535 }
+        username: { type: string, maxLength: 64 }
+        authType: { $ref: '#/components/schemas/SshAuthType' }
+        keyId: { $ref: '#/components/schemas/SshKeyId' }
+        password: { type: string, maxLength: 1024 }
+        jumpHostId:
+          type: string
+          nullable: true
+          description: '`null` = 取消跳板'
+        description: { type: string, maxLength: 500 }
+        tags:
+          type: array
+          items: { type: string }
+        enabled: { type: boolean }
+        allowAutomation: { type: boolean }
+        allowForward: { type: boolean }
+        compat:
+          type: boolean
+          nullable: true
+          description: '`null` = 不写进 `ssh.json`'
+    SshSnapshotDisk:
+      type: object
+      required: [mount, usedKb, totalKb]
+      properties:
+        mount: { type: string }
+        usedKb: { type: integer, format: int64 }
+        totalKb: { type: integer, format: int64 }
+    SshSnapshot:
+      type: object
+      description: 测试时采的一次状态快照（Linux 的 `/proc` 与 `df`；取不到的字段省略）
+      required: [disks]
+      properties:
+        load1: { type: number }
+        cpuPct: { type: number }
+        memUsedKb: { type: integer, format: int64 }
+        memTotalKb: { type: integer, format: int64 }
+        disks:
+          type: array
+          items: { $ref: '#/components/schemas/SshSnapshotDisk' }
+    SshTestResult:
+      type: object
+      required: [ok, checkedAt, latencyMs]
+      properties:
+        ok: { type: boolean }
+        checkedAt: { $ref: '#/components/schemas/TimestampMs' }
+        latencyMs:
+          type: integer
+          description: 拨号（含跳板与登录）耗时
+        error: { type: string }
+        os:
+          type: string
+          description: '`linux`、`macos` 或 `uname -s` 的小写'
+        hostKeyFingerprint: { type: string }
+        snapshot: { $ref: '#/components/schemas/SshSnapshot' }
+    SshKey:
+      type: object
+      required: [id, name, type, publicKey, fingerprint, hostCount, createdAt]
+      properties:
+        id: { $ref: '#/components/schemas/SshKeyId' }
+        name: { type: string }
+        type:
+          type: string
+          description: '`ssh-ed25519`、`ssh-rsa`、`ecdsa-sha2-nistp256` 等'
+        publicKey:
+          type: string
+          description: authorized_keys 一行，注释为钥匙名
+        fingerprint: { type: string }
+        hostCount:
+          type: integer
+          description: 使用这把钥匙的主机数
+        createdAt: { $ref: '#/components/schemas/TimestampMs' }
+    SshKeyList:
+      type: object
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          items: { $ref: '#/components/schemas/SshKey' }
+    SshKeyCreate:
+      type: object
+      required: [name, mode]
+      properties:
+        name: { type: string, maxLength: 64 }
+        mode:
+          type: string
+          enum: [generate, import]
+          x-enum-varnames: [SshKeyCreateGenerate, SshKeyCreateImport]
+        privateKey:
+          type: string
+          maxLength: 65536
+          description: '`mode=import` 时必填：PEM / OpenSSH 格式私钥'
+        passphrase:
+          type: string
+          maxLength: 1024
+          description: 私钥口令；只用于解开，不落库
+    SshKeyRename:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, maxLength: 64 }
+    SshAuditEntry:
+      type: object
+      required: [id, at, source, hostId, hostName, kind, detail, ok]
+      properties:
+        id: { type: integer, format: int64 }
+        at: { $ref: '#/components/schemas/TimestampMs' }
+        source:
+          type: string
+          description: '`orb` = orb 内经网关；`owner` = 主人在页面或命令行；`tool` = agent 的 `ssh_exec_many`'
+          enum: [orb, owner, tool]
+          x-enum-varnames: [SshAuditSourceOrb, SshAuditSourceOwner, SshAuditSourceTool]
+        orbId: { $ref: '#/components/schemas/OrbId' }
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        hostId: { type: string }
+        hostName:
+          type: string
+          description: 记录时的主机名快照
+        kind:
+          type: string
+          enum: [connect, deny, exec, shell, subsystem, forward, test, sftp]
+          x-enum-varnames: [SshAuditConnect, SshAuditDeny, SshAuditExec, SshAuditShell, SshAuditSubsystem, SshAuditForward, SshAuditTest, SshAuditSftp]
+        detail:
+          type: string
+          description: exec 的命令原文（≤4096 字节）、子系统名、转发目标、拒绝原因或 SFTP 操作
+        exitCode: { type: integer }
+        durationMs: { type: integer, format: int64 }
+        ok: { type: boolean }
+    SshAuditList:
+      type: object
+      required: [entries]
+      properties:
+        entries:
+          type: array
+          items: { $ref: '#/components/schemas/SshAuditEntry' }
+        nextBefore:
+          type: integer
+          format: int64
+          description: 还有更早的记录时给出，作为下一页的 `before`
+    ThreadSshHost:
+      type: object
+      required: [host, usable]
+      properties:
+        host: { $ref: '#/components/schemas/SshHost' }
+        usable: { type: boolean }
+        blocked:
+          type: string
+          description: '`usable=false` 的原因：`automation` = 这台 orb 是全自动的，而主机未放开'
+          enum: [automation]
+          x-enum-varnames: [ThreadSshHostBlockedAutomation]
+    ThreadSshHosts:
+      type: object
+      required: [managed, automation, hosts]
+      properties:
+        managed:
+          type: boolean
+          description: false = Runner / 协调线程或没有 orb，主机不由 Oryn 管
+        automation:
+          type: boolean
+          description: 这台 orb 是否全自动
+        hosts:
+          type: array
+          items: { $ref: '#/components/schemas/ThreadSshHost' }
+    SshFsRoots:
+      type: object
+      required: [home]
+      properties:
+        home:
+          type: string
+          description: 登录用户的主目录（取不到时为 `/`）
     GitHubTaskState:
       type: string
       enum: [new, reproducing, fixing, reviewing, opened, needs_info, merged, closed, abandoned]
@@ -8993,6 +9722,10 @@ components:
         githubLogin:
           type: string
           description: orb 内 git / gh 使用的 GitHub 账号（M15）：工作 orb 的身份槽位已连接且可用时给出，与项目是否绑定无关；runner、协调宿主或槽位未连接 / 待重新授权时省略
+        automation:
+          type: boolean
+          readOnly: true
+          description: M18：这台 orb 由全自动入口（定时、GitHub 触发等）建立；为真时只能用放开了「允许全自动线程使用」的 SSH 主机。缺省 = false
     OrbKind:
       type: string
       description: '`orb` = provider 创建的 orb；`runner` = runner 的常驻 orb（M11b）'
@@ -11361,6 +12094,7 @@ components:
         - $ref: '#/components/schemas/WsServerNotificationsResolved'
         - $ref: '#/components/schemas/WsServerSchedulesChanged'
         - $ref: '#/components/schemas/WsServerGitHubChanged'
+        - $ref: '#/components/schemas/WsServerSshChanged'
         - $ref: '#/components/schemas/WsServerArtifactsChanged'
         - $ref: '#/components/schemas/WsServerArtifactVersion'
         - $ref: '#/components/schemas/WsServerArtifactActivity'
@@ -11390,6 +12124,7 @@ components:
           notifications.resolved: '#/components/schemas/WsServerNotificationsResolved'
           schedules.changed: '#/components/schemas/WsServerSchedulesChanged'
           github.changed: '#/components/schemas/WsServerGitHubChanged'
+          ssh.changed: '#/components/schemas/WsServerSshChanged'
           artifacts.changed: '#/components/schemas/WsServerArtifactsChanged'
           artifact.version: '#/components/schemas/WsServerArtifactVersion'
           artifact.activity: '#/components/schemas/WsServerArtifactActivity'
@@ -11631,6 +12366,12 @@ components:
       required: [type]
       properties:
         type: { type: string, enum: [github.changed], x-enum-varnames: [WsServerGitHubChangedTypeGitHubChanged] }
+    WsServerSshChanged:
+      type: object
+      description: M18：SSH 主机、钥匙、指纹或测试结果变了；发给全部私有连接。客户端据此让 SSH 相关查询失效
+      required: [type]
+      properties:
+        type: { type: string, enum: [ssh.changed], x-enum-varnames: [WsServerSshChangedTypeSshChanged] }
     WsServerArtifactsChanged:
       type: object
       description: artifact 列表变了（新建、新版本、改名、删除、恢复、清理、缩略图就绪）；发给全部私有连接。客户端据此让 artifact 列表查询失效，WS 每次重新 open 后也要自行失效一次
@@ -12045,6 +12786,7 @@ components:
         - $ref: '#/components/schemas/LinkStreamPortal'
         - $ref: '#/components/schemas/LinkStreamDesk'
         - $ref: '#/components/schemas/LinkStreamLibrary'
+        - $ref: '#/components/schemas/LinkStreamSsh'
       discriminator:
         propertyName: t
         mapping:
@@ -12056,6 +12798,7 @@ components:
           portal: '#/components/schemas/LinkStreamPortal'
           desk: '#/components/schemas/LinkStreamDesk'
           library: '#/components/schemas/LinkStreamLibrary'
+          ssh: '#/components/schemas/LinkStreamSsh'
     LinkStreamCtl:
       type: object
       description: orbd 建连后开的第一条且唯一的控制流
@@ -12128,6 +12871,12 @@ components:
           type: string
           description: '`ok=false` 时：`display_unavailable`（显示未就绪）、`failed`（连 Xvnc 的 socket 失败，5s）'
         message: { type: string }
+    LinkStreamSsh:
+      type: object
+      description: orbd→orynd（M18）：orb 内到 SSH 网关的一条 TCP 连接，其后是裸 SSH 字节流；runner 与协调宿主不可用
+      required: [t]
+      properties:
+        t: { type: string, enum: [ssh] }
     LinkStreamLibrary:
       type: object
       description: |
@@ -12187,6 +12936,7 @@ components:
         `github.call`（orbd→orynd 请求，M15，由 orb 内 agent 的 GitHub 工具转来，参数 `LinkCtlGithubCallParams`，结果 `LinkCtlGithubCallResult`）、
         `github.prepare.report`（orbd→orynd 请求，M15，`github_prepare` 通过后上报，参数 `LinkCtlGithubPrepareReportParams`，结果 `LinkCtlOkResult`）；
         runner 的 link 拒绝这两个方法。
+        `ssh.call`（orbd→orynd 请求，M18，由 orb 内 agent 的 `ssh_exec_many` 工具转来，参数 `LinkCtlSshCallParams`，结果 `LinkCtlSshCallResult`；runner 的 link 拒绝）。
       enum:
         - hello
         - entries.cursors
@@ -12230,6 +12980,7 @@ components:
         - artifact.call
         - github.call
         - github.prepare.report
+        - ssh.call
       x-enum-varnames:
         - MethodHello
         - MethodEntriesCursors
@@ -12273,6 +13024,7 @@ components:
         - MethodArtifactCall
         - MethodGithubCall
         - MethodGithubPrepareReport
+        - MethodSshCall
     LinkCtlRequest:
       type: object
       required: [id, method, params]
@@ -12356,6 +13108,7 @@ components:
             M13 起：`omphome-apply`（认识 `omphome.apply`；普通 orbd 与协调宿主上报，runner 不上报）、
             `library`（认识 `library.sync`、`library.fetch` 与同步用的 `library` 流；只由协调宿主上报，此时特性表恰为 `["coordinator", "omphome-apply", "library"]`）。
             M16 起：`memory`（认识 `agent.start` 的 `memory`，并为记忆开出站通道 `/memory/`；普通 orbd 与 runner 上报，协调宿主不上报）。
+            M18 起：`ssh`（orbd 监听本机 SSH 网关端口并认识 `setup.run` / `omphome.apply` 的 `ssh`；runner 与协调宿主不上报）。
             缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync / 桌面请求回 409 `orbd_outdated`。
           items: { type: string }
     LinkRunnerInfo:
@@ -12559,6 +13312,10 @@ components:
         projectConfig:
           $ref: '#/components/schemas/LinkCtlProjectConfig'
           description: 缺省 = 不动项目层（与 `setup.run` 不同：那里缺省表示删除项目层）
+        ssh:
+          allOf:
+            - $ref: '#/components/schemas/LinkCtlSshConfig'
+          description: M18：缺省 = 不动 orb 内的 SSH 配置
     LinkCtlProjectConfig:
       type: object
       description: 项目级 omp 配置（M12.2）。出现即表示 orb 属于某个项目：orbd 把 `$HOME/.oryn/project-config/.omp/` 镜像成 `files`，目录里不在其中的文件一律删除
@@ -12608,6 +13365,54 @@ components:
           description: |
             M11a 审查修复：true = 只跑 setup（clone / `repo.update` / setup 脚本），**不**跑 resume 脚本、**不**启动受管服务；
             控制面随后单独调 `resume.run`。只在 hello 的 `features` 含 `setup-defer-resume` 时置位；`resume.run` 忽略此字段。
+        ssh:
+          allOf:
+            - $ref: '#/components/schemas/LinkCtlSshConfig'
+          description: M18：缺省 = 不动 orb 内的 SSH 配置
+    LinkCtlSshConfig:
+      type: object
+      description: |
+        M18：orb 内的 SSH 主机。orbd 把每台主机写成 `~/.omp/agent/ssh.json` 里的 `<名>@127.0.0.1:<网关端口>`，
+        并重写 `~/.oryn/ssh/config`、`~/.ssh/config` 的 `Include` 行与 `~/.ssh/known_hosts` 的网关条目。
+      required: [hostKey, hosts]
+      properties:
+        hostKey:
+          type: string
+          description: 网关主机公钥（authorized_keys 一行，无注释）
+        hosts:
+          type: array
+          items: { $ref: '#/components/schemas/LinkCtlSshHost' }
+    LinkCtlSshHost:
+      type: object
+      required: [name, description]
+      properties:
+        name: { type: string }
+        description:
+          type: string
+          description: '`<用户>@<地址>:<端口>`，再接描述与标签'
+        compat: { type: boolean }
+    LinkCtlSshCallParams:
+      type: object
+      description: M18（orbd→orynd）：orb 内 agent 的 SSH 工具调用。控制面校验调用方线程属于本 orb、`kind = work`、未归档。
+      required: [threadId, tool, params]
+      properties:
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        tool:
+          type: string
+          description: 工具名（`ssh_exec_many`）
+        params:
+          type: object
+          additionalProperties: true
+    LinkCtlSshCallResult:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          description: 给 agent 的文本结果
+        details:
+          type: object
+          additionalProperties: true
     LinkCtlGithubCallParams:
       type: object
       description: M15（orbd→orynd）：orb 内 agent 的 GitHub 工具调用。控制面校验调用方线程属于本 orb、`kind = work`、未归档。

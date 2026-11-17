@@ -4476,6 +4476,342 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ssh/hosts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 全部 SSH 主机（全局在前，再按项目、名称） */
+        get: operations["listSshHosts"];
+        put?: never;
+        /**
+         * 登记 SSH 主机
+         * @description 校验失败 → 400 `invalid_request`（`message` 为可直接展示的中文说明）；同作用域重名 → 409 `conflict`；项目不存在 → 404 `not_found`。
+         *     私钥与密码只存控制面；orb 内经 orbd 的回环端口连到控制面 SSH 网关，由网关代为登录。
+         */
+        post: operations["createSshHost"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ssh/hosts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SshHostIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 单台 SSH 主机 */
+        get: operations["getSshHost"];
+        put?: never;
+        post?: never;
+        /** 删除 SSH 主机（被其他主机用作跳板时 409 `conflict`） */
+        delete: operations["deleteSshHost"];
+        options?: never;
+        head?: never;
+        /**
+         * 修改 SSH 主机（只改给出的字段；作用域建后不可改）
+         * @description 改地址或端口会清掉已固定的主机指纹；改动后经这台主机（含以它为跳板）的网关会话、终端与文件连接立即断开。
+         *     停用仍被启用中主机当作跳板的主机 → 409 `conflict`；启用跳板已停用的主机 → 409 `conflict`。
+         */
+        patch: operations["updateSshHost"];
+        trace?: never;
+    };
+    "/api/v1/ssh/hosts/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SshHostIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 测试连接并采一次状态快照
+         * @description 连接失败同样回 200，`ok=false` 且带 `error`。首次成功连接会固定主机指纹。
+         */
+        post: operations["testSshHost"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ssh/hosts/{id}/reset-host-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SshHostIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 清掉已固定的主机指纹（下次成功连接重新固定） */
+        post: operations["resetSshHostKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ssh/keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** SSH 钥匙（按名称；不含私钥） */
+        get: operations["listSshKeys"];
+        put?: never;
+        /** 生成 ed25519 钥匙，或导入私钥（带口令的私钥解开后转存为无口令格式，口令不落库） */
+        post: operations["createSshKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ssh/keys/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SshKeyIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 删除钥匙（仍有主机使用时 409 `conflict`） */
+        delete: operations["deleteSshKey"];
+        options?: never;
+        head?: never;
+        /** 重命名钥匙（公钥注释随之改写） */
+        patch: operations["renameSshKey"];
+        trace?: never;
+    };
+    "/api/v1/ssh/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** SSH 审计（按时间倒序，保留 30 天） */
+        get: operations["listSshAudit"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/threads/{id}/ssh-hosts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 线程所在 orb 可见的 SSH 主机
+         * @description runner、协调线程与没有 orb 的线程 `managed=false`（主机不由 Oryn 管）。线程不存在 → 404。
+         */
+        get: operations["listThreadSshHosts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ssh/hosts/{id}/fs/roots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SshHostIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 目标机上登录用户的主目录（经 SFTP）
+         * @description 拨号失败 → 502 `ssh_unreachable`（`message` 为连接错误）。
+         */
+        get: operations["getSshFsRoots"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ssh/hosts/{id}/fs/list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SshHostIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 列出目录（目录在前、按名不分大小写排序；≤5000 条） */
+        get: operations["listSshFs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ssh/hosts/{id}/fs/stat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SshHostIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 文件或目录元数据（含 `mime` 与 `text`） */
+        get: operations["statSshFs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ssh/hosts/{id}/fs/file": {
+        parameters: {
+            query: {
+                /** @description 目标机上的绝对路径（`path.Clean` 之后必须以 `/` 开头） */
+                path: components["parameters"]["SshFsPathQuery"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["SshHostIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 下载文件（支持 `Range`）
+         * @description 一律以附件形式返回（`Content-Disposition: attachment`、`X-Content-Type-Options: nosniff`、`Content-Security-Policy: sandbox`、`Cache-Control: no-store`）；目录 → 409 `is_a_directory`。
+         */
+        get: operations["readSshFile"];
+        /**
+         * 写入文件（整文件覆盖，单文件 ≤512MiB）
+         * @description 父目录须存在。已存在且 `overwrite=false` → 409 `exists`；带 `If-Match` 且与当前 `etag` 不符（含文件不存在）→ 412 `modified`；
+         *     超过 512MiB → 413 `too_large`。写同目录临时文件后原子替换，沿用原文件权限（新文件 0644）。
+         */
+        put: operations["writeSshFile"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ssh/hosts/{id}/fs/mkdir": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SshHostIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 新建目录（含缺失的上级目录） */
+        post: operations["mkdirSshFs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ssh/hosts/{id}/fs/rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SshHostIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 移动 / 重命名（目标已存在且未 `overwrite` → 409 `exists`） */
+        post: operations["renameSshFs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ssh/hosts/{id}/fs/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SshHostIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 删除文件或目录（递归；`/` 与登录用户主目录 → 403 `protected_path`） */
+        post: operations["deleteSshFs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ssh/hosts/{id}/terminal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SshHostIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 主机网页终端（WebSocket；客户端二进制帧 = 输入字节，文本帧 = resize JSON；服务端只发二进制帧 = PTY 输出）
+         * @description 挂载方式同 `/api/v1/ws`（不经鉴权组，由一次性票据鉴权）。票据无效或已用过 → 升级前 HTTP 401；主机不存在 → 404。
+         *     文本帧 `{"type":"resize","cols":N,"rows":N}`。客户端单条消息 ≤1MiB；写超时 30s；同时在线 ≤8 条。
+         *     关闭码：`1000` shell 退出、`4401` 主体被吊销或主机被修改、`4429` 连接数已满、`4502` 连不上目标机（reason 为错误文案）。
+         */
+        get: operations["sshHostTerminal"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/public/shares/{slug}": {
         parameters: {
             query?: never;
@@ -5438,6 +5774,203 @@ export interface components {
              * @description 还有更早的记录时给出，作为下一页的 `before`
              */
             nextBefore?: number;
+        };
+        /** @description `ssh_<ULID>` */
+        SshHostId: string;
+        /** @description `sshk_<ULID>` */
+        SshKeyId: string;
+        /** @enum {string} */
+        SshAuthType: "key" | "password";
+        /** @description 已固定的目标机主机公钥 */
+        SshHostKey: {
+            type: string;
+            /** @description `SHA256:…` */
+            fingerprint: string;
+            pinnedAt: components["schemas"]["TimestampMs"];
+        };
+        /** @description 最近一次「测试」的结果 */
+        SshHostTest: {
+            at: components["schemas"]["TimestampMs"];
+            ok: boolean;
+            error?: string;
+            os?: string;
+        };
+        SshHost: {
+            id: components["schemas"]["SshHostId"];
+            /** @description 缺省 = 全局主机 */
+            projectId?: components["schemas"]["ProjectId"];
+            /** @description orb 内的主机名与 `ssh <名字>` 别名 */
+            name: string;
+            address: string;
+            port: number;
+            username: string;
+            authType: components["schemas"]["SshAuthType"];
+            keyId?: components["schemas"]["SshKeyId"];
+            hasPassword: boolean;
+            jumpHostId?: components["schemas"]["SshHostId"];
+            description: string;
+            tags: string[];
+            enabled: boolean;
+            /** @description 全自动线程（定时、GitHub 触发等无人值守入口建的 orb）是否可用 */
+            allowAutomation: boolean;
+            /** @description 是否允许经网关做本地端口转发（`direct-tcpip`） */
+            allowForward: boolean;
+            /** @description Core 的 compat 开关；缺省 = 不写进 orb 内的 `ssh.json` */
+            compat?: boolean;
+            hostKey?: components["schemas"]["SshHostKey"];
+            lastTest?: components["schemas"]["SshHostTest"];
+            createdAt: components["schemas"]["TimestampMs"];
+            updatedAt: components["schemas"]["TimestampMs"];
+        };
+        SshHostList: {
+            hosts: components["schemas"]["SshHost"][];
+        };
+        SshHostCreate: {
+            /** @description 缺省 = 全局主机；建后不可改 */
+            projectId?: components["schemas"]["ProjectId"];
+            name: string;
+            address: string;
+            /** @default 22 */
+            port: number;
+            username: string;
+            authType: components["schemas"]["SshAuthType"];
+            keyId?: components["schemas"]["SshKeyId"];
+            password?: string;
+            jumpHostId?: components["schemas"]["SshHostId"];
+            description?: string;
+            tags?: string[];
+            /** @default true */
+            enabled: boolean;
+            /** @default false */
+            allowAutomation: boolean;
+            /** @default false */
+            allowForward: boolean;
+            compat?: boolean;
+        };
+        /** @description 只改给出的字段。`password` 缺省 = 沿用原密码。 */
+        SshHostUpdate: {
+            name?: string;
+            address?: string;
+            port?: number;
+            username?: string;
+            authType?: components["schemas"]["SshAuthType"];
+            keyId?: components["schemas"]["SshKeyId"];
+            password?: string;
+            /** @description `null` = 取消跳板 */
+            jumpHostId?: string | null;
+            description?: string;
+            tags?: string[];
+            enabled?: boolean;
+            allowAutomation?: boolean;
+            allowForward?: boolean;
+            /** @description `null` = 不写进 `ssh.json` */
+            compat?: boolean | null;
+        };
+        SshSnapshotDisk: {
+            mount: string;
+            /** Format: int64 */
+            usedKb: number;
+            /** Format: int64 */
+            totalKb: number;
+        };
+        /** @description 测试时采的一次状态快照（Linux 的 `/proc` 与 `df`；取不到的字段省略） */
+        SshSnapshot: {
+            load1?: number;
+            cpuPct?: number;
+            /** Format: int64 */
+            memUsedKb?: number;
+            /** Format: int64 */
+            memTotalKb?: number;
+            disks: components["schemas"]["SshSnapshotDisk"][];
+        };
+        SshTestResult: {
+            ok: boolean;
+            checkedAt: components["schemas"]["TimestampMs"];
+            /** @description 拨号（含跳板与登录）耗时 */
+            latencyMs: number;
+            error?: string;
+            /** @description `linux`、`macos` 或 `uname -s` 的小写 */
+            os?: string;
+            hostKeyFingerprint?: string;
+            snapshot?: components["schemas"]["SshSnapshot"];
+        };
+        SshKey: {
+            id: components["schemas"]["SshKeyId"];
+            name: string;
+            /** @description `ssh-ed25519`、`ssh-rsa`、`ecdsa-sha2-nistp256` 等 */
+            type: string;
+            /** @description authorized_keys 一行，注释为钥匙名 */
+            publicKey: string;
+            fingerprint: string;
+            /** @description 使用这把钥匙的主机数 */
+            hostCount: number;
+            createdAt: components["schemas"]["TimestampMs"];
+        };
+        SshKeyList: {
+            keys: components["schemas"]["SshKey"][];
+        };
+        SshKeyCreate: {
+            name: string;
+            /** @enum {string} */
+            mode: "generate" | "import";
+            /** @description `mode=import` 时必填：PEM / OpenSSH 格式私钥 */
+            privateKey?: string;
+            /** @description 私钥口令；只用于解开，不落库 */
+            passphrase?: string;
+        };
+        SshKeyRename: {
+            name: string;
+        };
+        SshAuditEntry: {
+            /** Format: int64 */
+            id: number;
+            at: components["schemas"]["TimestampMs"];
+            /**
+             * @description `orb` = orb 内经网关；`owner` = 主人在页面或命令行；`tool` = agent 的 `ssh_exec_many`
+             * @enum {string}
+             */
+            source: "orb" | "owner" | "tool";
+            orbId?: components["schemas"]["OrbId"];
+            threadId?: components["schemas"]["ThreadId"];
+            hostId: string;
+            /** @description 记录时的主机名快照 */
+            hostName: string;
+            /** @enum {string} */
+            kind: "connect" | "deny" | "exec" | "shell" | "subsystem" | "forward" | "test" | "sftp";
+            /** @description exec 的命令原文（≤4096 字节）、子系统名、转发目标、拒绝原因或 SFTP 操作 */
+            detail: string;
+            exitCode?: number;
+            /** Format: int64 */
+            durationMs?: number;
+            ok: boolean;
+        };
+        SshAuditList: {
+            entries: components["schemas"]["SshAuditEntry"][];
+            /**
+             * Format: int64
+             * @description 还有更早的记录时给出，作为下一页的 `before`
+             */
+            nextBefore?: number;
+        };
+        ThreadSshHost: {
+            host: components["schemas"]["SshHost"];
+            usable: boolean;
+            /**
+             * @description `usable=false` 的原因：`automation` = 这台 orb 是全自动的，而主机未放开
+             * @enum {string}
+             */
+            blocked?: "automation";
+        };
+        ThreadSshHosts: {
+            /** @description false = Runner / 协调线程或没有 orb，主机不由 Oryn 管 */
+            managed: boolean;
+            /** @description 这台 orb 是否全自动 */
+            automation: boolean;
+            hosts: components["schemas"]["ThreadSshHost"][];
+        };
+        SshFsRoots: {
+            /** @description 登录用户的主目录（取不到时为 `/`） */
+            home: string;
         };
         /** @enum {string} */
         GitHubTaskState: "new" | "reproducing" | "fixing" | "reviewing" | "opened" | "needs_info" | "merged" | "closed" | "abandoned";
@@ -6826,6 +7359,8 @@ export interface components {
             features?: string[];
             /** @description orb 内 git / gh 使用的 GitHub 账号（M15）：工作 orb 的身份槽位已连接且可用时给出，与项目是否绑定无关；runner、协调宿主或槽位未连接 / 待重新授权时省略 */
             githubLogin?: string;
+            /** @description M18：这台 orb 由全自动入口（定时、GitHub 触发等）建立；为真时只能用放开了「允许全自动线程使用」的 SSH 主机。缺省 = false */
+            readonly automation?: boolean;
         };
         /**
          * @description `orb` = provider 创建的 orb；`runner` = runner 的常驻 orb（M11b）
@@ -8514,7 +9049,7 @@ export interface components {
             id: components["schemas"]["ArtifactId"];
         };
         /** @description 服务端 → 客户端 WS 消息 */
-        WsServerMessage: components["schemas"]["WsServerIndex"] | components["schemas"]["WsServerIndexPatch"] | components["schemas"]["WsServerThreadSnapshot"] | components["schemas"]["WsServerEntries"] | components["schemas"]["WsServerFrame"] | components["schemas"]["WsServerRes"] | components["schemas"]["WsServerUiResolved"] | components["schemas"]["WsServerLiveReset"] | components["schemas"]["WsServerTranscriptReset"] | components["schemas"]["WsServerPlanResolved"] | components["schemas"]["WsServerOrb"] | components["schemas"]["WsServerError"] | components["schemas"]["WsServerPong"] | components["schemas"]["WsServerTermLagged"] | components["schemas"]["WsServerTermResized"] | components["schemas"]["WsServerNotification"] | components["schemas"]["WsServerNotificationsRead"] | components["schemas"]["WsServerNotificationsResolved"] | components["schemas"]["WsServerSchedulesChanged"] | components["schemas"]["WsServerGitHubChanged"] | components["schemas"]["WsServerArtifactsChanged"] | components["schemas"]["WsServerArtifactVersion"] | components["schemas"]["WsServerArtifactActivity"] | components["schemas"]["WsServerArtifactComments"] | components["schemas"]["WsServerArtifactCanvas"] | components["schemas"]["WsServerArtifactConsent"];
+        WsServerMessage: components["schemas"]["WsServerIndex"] | components["schemas"]["WsServerIndexPatch"] | components["schemas"]["WsServerThreadSnapshot"] | components["schemas"]["WsServerEntries"] | components["schemas"]["WsServerFrame"] | components["schemas"]["WsServerRes"] | components["schemas"]["WsServerUiResolved"] | components["schemas"]["WsServerLiveReset"] | components["schemas"]["WsServerTranscriptReset"] | components["schemas"]["WsServerPlanResolved"] | components["schemas"]["WsServerOrb"] | components["schemas"]["WsServerError"] | components["schemas"]["WsServerPong"] | components["schemas"]["WsServerTermLagged"] | components["schemas"]["WsServerTermResized"] | components["schemas"]["WsServerNotification"] | components["schemas"]["WsServerNotificationsRead"] | components["schemas"]["WsServerNotificationsResolved"] | components["schemas"]["WsServerSchedulesChanged"] | components["schemas"]["WsServerGitHubChanged"] | components["schemas"]["WsServerSshChanged"] | components["schemas"]["WsServerArtifactsChanged"] | components["schemas"]["WsServerArtifactVersion"] | components["schemas"]["WsServerArtifactActivity"] | components["schemas"]["WsServerArtifactComments"] | components["schemas"]["WsServerArtifactCanvas"] | components["schemas"]["WsServerArtifactConsent"];
         /** @description 线程摘要全量（连接建立后首条） */
         WsServerIndex: {
             /**
@@ -8761,6 +9296,14 @@ export interface components {
              * @enum {string}
              */
             type: "github.changed";
+        };
+        /** @description M18：SSH 主机、钥匙、指纹或测试结果变了；发给全部私有连接。客户端据此让 SSH 相关查询失效 */
+        WsServerSshChanged: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "ssh.changed";
         };
         /** @description artifact 列表变了（新建、新版本、改名、删除、恢复、清理、缩略图就绪）；发给全部私有连接。客户端据此让 artifact 列表查询失效，WS 每次重新 open 后也要自行失效一次 */
         WsServerArtifactsChanged: {
@@ -9089,7 +9632,7 @@ export interface components {
             snapshotUsed?: boolean;
         };
         /** @description yamux 流的第一行（JSON + `\n`）。 */
-        LinkStreamHeader: components["schemas"]["LinkStreamCtl"] | components["schemas"]["LinkStreamAgent"] | components["schemas"]["LinkStreamEgress"] | components["schemas"]["LinkStreamBlob"] | components["schemas"]["LinkStreamFs"] | components["schemas"]["LinkStreamPortal"] | components["schemas"]["LinkStreamDesk"] | components["schemas"]["LinkStreamLibrary"];
+        LinkStreamHeader: components["schemas"]["LinkStreamCtl"] | components["schemas"]["LinkStreamAgent"] | components["schemas"]["LinkStreamEgress"] | components["schemas"]["LinkStreamBlob"] | components["schemas"]["LinkStreamFs"] | components["schemas"]["LinkStreamPortal"] | components["schemas"]["LinkStreamDesk"] | components["schemas"]["LinkStreamLibrary"] | components["schemas"]["LinkStreamSsh"];
         /** @description orbd 建连后开的第一条且唯一的控制流 */
         LinkStreamCtl: {
             /**
@@ -9174,6 +9717,14 @@ export interface components {
             code?: string;
             message?: string;
         };
+        /** @description orbd→orynd（M18）：orb 内到 SSH 网关的一条 TCP 连接，其后是裸 SSH 字节流；runner 与协调宿主不可用 */
+        LinkStreamSsh: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            t: "ssh";
+        };
         /**
          * @description M13 全局助手文件库的字节流，两种用法：
          *     同步（orynd 打开，发往协调宿主）：`library.sync` 回报缺失的文件后，控制面为每个缺失文件开一条，`path` 为该次清单里的沙箱路径，
@@ -9225,9 +9776,10 @@ export interface components {
          *     `github.call`（orbd→orynd 请求，M15，由 orb 内 agent 的 GitHub 工具转来，参数 `LinkCtlGithubCallParams`，结果 `LinkCtlGithubCallResult`）、
          *     `github.prepare.report`（orbd→orynd 请求，M15，`github_prepare` 通过后上报，参数 `LinkCtlGithubPrepareReportParams`，结果 `LinkCtlOkResult`）；
          *     runner 的 link 拒绝这两个方法。
+         *     `ssh.call`（orbd→orynd 请求，M18，由 orb 内 agent 的 `ssh_exec_many` 工具转来，参数 `LinkCtlSshCallParams`，结果 `LinkCtlSshCallResult`；runner 的 link 拒绝）。
          * @enum {string}
          */
-        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap" | "services.state" | "portal.configure" | "desktop.state" | "profile.mode" | "thread.create" | "thread.send" | "thread.get" | "schedule.get" | "schedule.put" | "schedule.delete" | "schedule.enable" | "snapshot.prepare" | "worktree.add" | "worktree.remove" | "omphome.apply" | "library.sync" | "library.fetch" | "library.put" | "artifact.call" | "github.call" | "github.prepare.report";
+        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap" | "services.state" | "portal.configure" | "desktop.state" | "profile.mode" | "thread.create" | "thread.send" | "thread.get" | "schedule.get" | "schedule.put" | "schedule.delete" | "schedule.enable" | "snapshot.prepare" | "worktree.add" | "worktree.remove" | "omphome.apply" | "library.sync" | "library.fetch" | "library.put" | "artifact.call" | "github.call" | "github.prepare.report" | "ssh.call";
         LinkCtlRequest: {
             /**
              * Format: int64
@@ -9293,6 +9845,7 @@ export interface components {
              *     M13 起：`omphome-apply`（认识 `omphome.apply`；普通 orbd 与协调宿主上报，runner 不上报）、
              *     `library`（认识 `library.sync`、`library.fetch` 与同步用的 `library` 流；只由协调宿主上报，此时特性表恰为 `["coordinator", "omphome-apply", "library"]`）。
              *     M16 起：`memory`（认识 `agent.start` 的 `memory`，并为记忆开出站通道 `/memory/`；普通 orbd 与 runner 上报，协调宿主不上报）。
+             *     M18 起：`ssh`（orbd 监听本机 SSH 网关端口并认识 `setup.run` / `omphome.apply` 的 `ssh`；runner 与协调宿主不上报）。
              *     缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync / 桌面请求回 409 `orbd_outdated`。
              */
             features?: string[];
@@ -9443,6 +9996,8 @@ export interface components {
             ompHome: components["schemas"]["LinkCtlOmpHomeFile"][];
             /** @description 缺省 = 不动项目层（与 `setup.run` 不同：那里缺省表示删除项目层） */
             projectConfig?: components["schemas"]["LinkCtlProjectConfig"];
+            /** @description M18：缺省 = 不动 orb 内的 SSH 配置 */
+            ssh?: components["schemas"]["LinkCtlSshConfig"];
         };
         /** @description 项目级 omp 配置（M12.2）。出现即表示 orb 属于某个项目：orbd 把 `$HOME/.oryn/project-config/.omp/` 镜像成 `files`，目录里不在其中的文件一律删除 */
         LinkCtlProjectConfig: {
@@ -9475,6 +10030,39 @@ export interface components {
              *     控制面随后单独调 `resume.run`。只在 hello 的 `features` 含 `setup-defer-resume` 时置位；`resume.run` 忽略此字段。
              */
             deferResume?: boolean;
+            /** @description M18：缺省 = 不动 orb 内的 SSH 配置 */
+            ssh?: components["schemas"]["LinkCtlSshConfig"];
+        };
+        /**
+         * @description M18：orb 内的 SSH 主机。orbd 把每台主机写成 `~/.omp/agent/ssh.json` 里的 `<名>@127.0.0.1:<网关端口>`，
+         *     并重写 `~/.oryn/ssh/config`、`~/.ssh/config` 的 `Include` 行与 `~/.ssh/known_hosts` 的网关条目。
+         */
+        LinkCtlSshConfig: {
+            /** @description 网关主机公钥（authorized_keys 一行，无注释） */
+            hostKey: string;
+            hosts: components["schemas"]["LinkCtlSshHost"][];
+        };
+        LinkCtlSshHost: {
+            name: string;
+            /** @description `<用户>@<地址>:<端口>`，再接描述与标签 */
+            description: string;
+            compat?: boolean;
+        };
+        /** @description M18（orbd→orynd）：orb 内 agent 的 SSH 工具调用。控制面校验调用方线程属于本 orb、`kind = work`、未归档。 */
+        LinkCtlSshCallParams: {
+            threadId: components["schemas"]["ThreadId"];
+            /** @description 工具名（`ssh_exec_many`） */
+            tool: string;
+            params: {
+                [key: string]: unknown;
+            };
+        };
+        LinkCtlSshCallResult: {
+            /** @description 给 agent 的文本结果 */
+            text: string;
+            details?: {
+                [key: string]: unknown;
+            };
         };
         /** @description M15（orbd→orynd）：orb 内 agent 的 GitHub 工具调用。控制面校验调用方线程属于本 orb、`kind = work`、未归档。 */
         LinkCtlGithubCallParams: {
@@ -9841,6 +10429,10 @@ export interface components {
         ArtifactIdPath: components["schemas"]["ArtifactId"];
         ArtifactVersionPath: number;
         ArtifactCommentThreadIdPath: components["schemas"]["ArtifactCommentThreadId"];
+        SshHostIdPath: components["schemas"]["SshHostId"];
+        SshKeyIdPath: components["schemas"]["SshKeyId"];
+        /** @description 目标机上的绝对路径（`path.Clean` 之后必须以 `/` 开头） */
+        SshFsPathQuery: string;
         /**
          * @description orb 内路径：绝对路径或 `~/…`；跟随符号链接后必须位于 `$HOME` 之下（否则 403 `outside_home`）。响应中的路径一律为绝对路径。
          *     runner 的 orb（M11b）：范围改为 `thread` 线程的工作目录（越界 → 403 `dir_not_served`）。
@@ -17032,6 +17624,572 @@ export interface operations {
             302: {
                 headers: {
                     Location?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listSshHosts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 主机列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SshHostList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createSshHost: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SshHostCreate"];
+            };
+        };
+        responses: {
+            /** @description 新主机 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SshHost"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getSshHost: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SshHostIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 主机 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SshHost"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteSshHost: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SshHostIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateSshHost: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SshHostIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SshHostUpdate"];
+            };
+        };
+        responses: {
+            /** @description 修改后的主机 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SshHost"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    testSshHost: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SshHostIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 测试结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SshTestResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    resetSshHostKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SshHostIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 重置后的主机 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SshHost"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listSshKeys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 钥匙列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SshKeyList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createSshKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SshKeyCreate"];
+            };
+        };
+        responses: {
+            /** @description 新钥匙 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SshKey"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteSshKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SshKeyIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    renameSshKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SshKeyIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SshKeyRename"];
+            };
+        };
+        responses: {
+            /** @description 改名后的钥匙 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SshKey"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listSshAudit: {
+        parameters: {
+            query?: {
+                /** @description 主机 id */
+                host?: components["schemas"]["SshHostId"];
+                thread?: components["schemas"]["ThreadId"];
+                /** @description 只返回 id 小于该值的记录（分页游标） */
+                before?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 审计记录 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SshAuditList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listThreadSshHosts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 主机与可用性 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThreadSshHosts"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getSshFsRoots: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SshHostIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SshFsRoots"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listSshFs: {
+        parameters: {
+            query: {
+                /** @description 目标机上的绝对路径（`path.Clean` 之后必须以 `/` 开头） */
+                path: components["parameters"]["SshFsPathQuery"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["SshHostIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsListing"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    statSshFs: {
+        parameters: {
+            query: {
+                /** @description 目标机上的绝对路径（`path.Clean` 之后必须以 `/` 开头） */
+                path: components["parameters"]["SshFsPathQuery"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["SshHostIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsEntry"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    readSshFile: {
+        parameters: {
+            query: {
+                /** @description 目标机上的绝对路径（`path.Clean` 之后必须以 `/` 开头） */
+                path: components["parameters"]["SshFsPathQuery"];
+            };
+            header?: {
+                /** @description 标准 HTTP Range（单区间） */
+                Range?: string;
+            };
+            path: {
+                id: components["parameters"]["SshHostIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 文件字节 */
+            200: {
+                headers: {
+                    /** @description `"<mtimeUnixNano>-<size>"` */
+                    ETag?: string;
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description Range 请求的部分字节 */
+            206: {
+                headers: {
+                    ETag?: string;
+                    "Content-Range"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    writeSshFile: {
+        parameters: {
+            query: {
+                /** @description 目标机上的绝对路径（`path.Clean` 之后必须以 `/` 开头） */
+                path: components["parameters"]["SshFsPathQuery"];
+                /** @description 目标已存在时是否覆盖 */
+                overwrite?: boolean;
+            };
+            header?: {
+                /** @description 期望的当前 `etag`（`FsEntry.etag`）；不符 → 412 `modified` */
+                "If-Match"?: string;
+            };
+            path: {
+                id: components["parameters"]["SshHostIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description 写入后的文件元数据 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsEntry"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    mkdirSshFs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SshHostIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FsPathRequest"];
+            };
+        };
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsEntry"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    renameSshFs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SshHostIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FsRenameRequest"];
+            };
+        };
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FsEntry"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteSshFs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["SshHostIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FsPathRequest"];
+            };
+        };
+        responses: {
+            /** @description 成功 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    sshHostTerminal: {
+        parameters: {
+            query: {
+                /** @description `POST /api/v1/ws-ticket` 签发的票据 */
+                ticket: string;
+                cols?: number;
+                rows?: number;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["SshHostIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 切换到 WebSocket */
+            101: {
+                headers: {
                     [name: string]: unknown;
                 };
                 content?: never;

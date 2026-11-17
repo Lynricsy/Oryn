@@ -3,13 +3,15 @@
 -- coordinator = 1: the M9 coordinator orb on the built-in "@host" provider.
 -- pool_state 'warming' = a warm-pool orb (M11a); config_hash = project config hash at creation (pool matching);
 -- base_image_id = the provider's base image identity when the orb was created (M11a review fix).
--- kind: orb | runner (M11b); NULL = 'orb'.
+-- kind: orb | runner (M11b); NULL = 'orb'. automation (M18): created by an unattended entry point; NULL = 0.
 -- name: CreateOrb :exec
 INSERT INTO orbs (id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at,
-                  token_hash, snapshot_of, created_at, coordinator, pool_state, config_hash, base_image_id, kind, github_identity)
+                  token_hash, snapshot_of, created_at, coordinator, pool_state, config_hash, base_image_id, kind, github_identity,
+                  automation)
 VALUES (@id, @provider_id, @type, @cpus, @memory_mb, @image, @project_id, @state, @state_changed_at,
         @token_hash, @snapshot_of, @created_at, @coordinator, sqlc.narg(pool_state), sqlc.narg(config_hash), @base_image_id,
-        COALESCE(CAST(sqlc.narg(kind) AS TEXT), 'orb'), COALESCE(CAST(sqlc.narg(github_identity) AS TEXT), 'user'));
+        COALESCE(CAST(sqlc.narg(kind) AS TEXT), 'orb'), COALESCE(CAST(sqlc.narg(github_identity) AS TEXT), 'user'),
+        COALESCE(CAST(sqlc.narg(automation) AS BOOLEAN), 0));
 
 -- name: GetOrb :one
 SELECT * FROM orbs WHERE id = @id;
@@ -107,8 +109,12 @@ SELECT CAST(EXISTS (SELECT 1 FROM orb_events WHERE orb_id = @orb_id AND to_state
 -- 0 rows = claimed / retired by someone else.
 -- name: ClaimPoolOrb :execrows
 UPDATE orbs SET pool_state = sqlc.narg(pool_state), claimed_at = CAST(@claimed_at AS INTEGER),
-                github_identity = COALESCE(CAST(sqlc.narg(github_identity) AS TEXT), github_identity)
+                github_identity = COALESCE(CAST(sqlc.narg(github_identity) AS TEXT), github_identity),
+                automation = COALESCE(CAST(sqlc.narg(automation) AS BOOLEAN), automation)
 WHERE id = @id AND pool_state = CAST(@seen AS TEXT);
+
+-- name: SetOrbAutomation :exec
+UPDATE orbs SET automation = @automation WHERE id = @id;
 
 -- Warm-pool state CAS (warming -> idle, claimed -> NULL, -> retiring); 0 rows = the state moved elsewhere.
 -- name: SetOrbPoolState :execrows
