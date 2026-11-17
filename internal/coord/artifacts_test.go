@@ -149,8 +149,8 @@ func TestArtifactToolsAssistantOnly(t *testing.T) {
 		}
 	}
 
-	assert.Contains(t, SystemPrompt(nil, "", "T-1"), "create_artifact")
-	assert.NotContains(t, SystemPrompt(&apigen.Space{Name: "Alpha"}, "", "T-2"), "artifact")
+	assert.Contains(t, SystemPrompt(nil, "", "T-1", true), "create_artifact")
+	assert.NotContains(t, SystemPrompt(&apigen.Space{Name: "Alpha"}, "", "T-2", true), "artifact")
 
 	prj := e.project("Beta")
 	r := e.call(e.assistant(), ToolListProjects, `{}`, true)

@@ -119,6 +119,14 @@ export const MORE_ENTRIES: readonly MoreEntry[] = [
 		to: "/settings/identity",
 	},
 	{
+		// 全局助手（M19）：联网开关与 MCP 服务器
+		key: "assistant",
+		group: "settings",
+		icon: "globe",
+		labelKey: "settings.assistant",
+		to: "/settings/assistant",
+	},
+	{
 		key: "appearance",
 		group: "settings",
 		icon: "palette",

@@ -30,6 +30,7 @@ import { parseModelSource } from "../lib/turn-role";
 import type { RpcTerminalInfo, SessionState } from "../omp/types";
 import { activeBranch, isMainFile } from "../state/transcript";
 import { MockArtifacts } from "./artifacts";
+import { MockAssistant } from "./assistant";
 import { MockAutomation } from "./automation";
 import { MockDesktop } from "./desktop";
 import {
@@ -462,6 +463,8 @@ export class MockServer {
 	readonly artifacts = new MockArtifacts(this.threads, {
 		changed: () => this.broadcast({ type: "artifacts.changed" }),
 	});
+	/** 全局助手设置与 MCP 列表（M19）。 */
+	readonly assistant = new MockAssistant();
 	/** Space、助手对话、定时、操作记录与协调宿主状态（M9）。 */
 	readonly automation = new MockAutomation({
 		threads: this.threads,
@@ -1348,6 +1351,8 @@ export class MockServer {
 			entries: (id) => this.entries.get(id) ?? [],
 		});
 		if (searchRes) return searchRes;
+		const asstRes = await this.assistant.handle(req, p, m);
+		if (asstRes) return asstRes;
 		if (p === "me")
 			return json({
 				displayName: "owner",

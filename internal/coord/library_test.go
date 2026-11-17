@@ -208,13 +208,14 @@ func TestOrbLibraryPut(t *testing.T) {
 
 // M13 4.3：助手的系统提示写明可读目录、唯一可写目录与存库方法；Space 协调者没有文件库。
 func TestSystemPromptFiles(t *testing.T) {
-	p := SystemPrompt(nil, "", "T-1")
+	p := SystemPrompt(nil, "", "T-1", true)
 	assert.Contains(t, p, "~/library/threads/T-1/")
 	assert.Contains(t, p, "~/library/shared/")
 	assert.Contains(t, p, "The only place you may write is ~/library/out/")
 	assert.Contains(t, p, "save_file")
 	assert.NotContains(t, p, "<FILES>")
-	sp := SystemPrompt(&apigen.Space{Name: "Alpha"}, "", "T-2")
+	assert.Contains(t, p, "generate_image saves its images under ~/tmp/")
+	sp := SystemPrompt(&apigen.Space{Name: "Alpha"}, "", "T-2", true)
 	assert.NotContains(t, sp, "~/library")
 	assert.Contains(t, sp, "do not use the read or write tools")
 }

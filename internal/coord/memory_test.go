@@ -80,7 +80,7 @@ func TestProfileOwnerMemory(t *testing.T) {
 	conv := e.assistant()
 	before, err := e.c.AgentProfile(e.ctx, conv.ID)
 	require.NoError(t, err)
-	assert.Equal(t, SystemPrompt(nil, "", conv.ID), before.SystemPrompt)
+	assert.Equal(t, SystemPrompt(nil, "", conv.ID, true), before.SystemPrompt)
 
 	mem := &fakeOwnerMemory{brief: "Memory（记忆）：\n## 关于主人\n主人住在新加坡"}
 	e.c.SetOwnerMemory(mem, nil)

@@ -1147,7 +1147,8 @@
 		"desktop": "桌面应用",
 		"browser-profiles": "浏览器 Profile",
 		"automations": "自动化",
-		"identity": "身份与头像"
+		"identity": "身份与头像",
+		"assistant": "全局助手"
 	},
 	"devices": {
 		"pairQr": {
@@ -4696,6 +4697,28 @@
 				"status": "状态码",
 				"gate": "门禁"
 			}
+		}
+	},
+	"assistantSettings": {
+		"webTitle": "联网",
+		"webAccess": "允许助手联网",
+		"webHint": "助手经 Oryn 的代理访问公网，用于 web_search 与读网页；内网地址默认拒绝。关闭后这两项会失败。改动在助手对话空闲后生效。",
+		"mcpTitle": "MCP 服务器",
+		"mcpHint": "来自全局 mcp.json（Agent › 扩展与工具）。鉴权头由 Oryn 注入，不进助手的沙箱；只支持 HTTP 与 SSE 服务器。",
+		"mcpEmpty": "全局 mcp.json 里没有 MCP 服务器。",
+		"mcpToggle": "助手使用 {{name}}",
+		"unusable": "不可用",
+		"transport": {
+			"http": "HTTP",
+			"sse": "SSE",
+			"stdio": "stdio"
+		},
+		"reason": {
+			"stdio": "本地进程型服务器，助手的沙箱里无法运行",
+			"oauth": "需要 OAuth 登录，暂不支持",
+			"command_header": "请求头由命令生成，暂不支持",
+			"unresolved_env": "请求头引用了不存在的环境变量",
+			"invalid_url": "地址无效"
 		}
 	}
 }

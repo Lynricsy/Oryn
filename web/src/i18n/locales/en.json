@@ -1147,7 +1147,8 @@
 		"desktop": "Desktop app",
 		"browser-profiles": "Browser profiles",
 		"automations": "Automations",
-		"identity": "Identity & avatars"
+		"identity": "Identity & avatars",
+		"assistant": "Assistant"
 	},
 	"devices": {
 		"pairQr": {
@@ -4696,6 +4697,28 @@
 				"status": "Status",
 				"gate": "Gate"
 			}
+		}
+	},
+	"assistantSettings": {
+		"webTitle": "Web access",
+		"webAccess": "Let the assistant use the web",
+		"webHint": "The assistant reaches the public internet through Oryn's proxy for web_search and reading web pages; private addresses are refused by default. Both fail when this is off. Changes apply once the assistant's conversations are idle.",
+		"mcpTitle": "MCP servers",
+		"mcpHint": "From the global mcp.json (Agent › Extensions & tools). Oryn injects the auth headers; they never enter the assistant's sandbox. Only HTTP and SSE servers are supported.",
+		"mcpEmpty": "The global mcp.json has no MCP servers.",
+		"mcpToggle": "Assistant uses {{name}}",
+		"unusable": "Unavailable",
+		"transport": {
+			"http": "HTTP",
+			"sse": "SSE",
+			"stdio": "stdio"
+		},
+		"reason": {
+			"stdio": "Local process server; it cannot run in the assistant's sandbox",
+			"oauth": "Needs OAuth sign-in, not supported yet",
+			"command_header": "Headers come from a command, not supported yet",
+			"unresolved_env": "A header uses an environment variable that does not exist",
+			"invalid_url": "Invalid URL"
 		}
 	}
 }
