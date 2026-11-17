@@ -1,6 +1,7 @@
 // Oryn orb 环境说明（由 orbd 写出并以 `omp -e` 加载；每次 orbd 启动覆盖，请勿手改）。
 // 在 before_agent_start 向系统提示词追加一段 orb 生命周期约定，并附上最近一次 setup / resume 与受管服务的异常现状；
-// 启用了桌面时另注册 desktop_ask_user 工具；ORYN_ARTIFACT_SOCK 非空时注册 artifact 工具（M14）与 GitHub 任务工具（M15）。
+// 启用了桌面时另注册 desktop_ask_user 工具；ORYN_ARTIFACT_SOCK 非空时注册 artifact 工具（M14）与 GitHub 任务工具（M15），
+// 另有 ORYN_SSH=1 时注册 ssh_exec_many 并追加 SSH 指引（M18）。
 // Runner（ORYN_RUNNER=1）上 orbd 把同一文件写到 ~/.oryn/orbd/extensions/，此时只注册 artifact 工具与它的指引。
 import type {
 	AgentToolResult,
@@ -699,6 +700,50 @@ function registerGitHub(pi: ExtensionAPI) {
 	}
 }
 
+// ---- SSH 工具（M18）：ssh_exec_many 发 ssh.call（orbd 原样转给控制面，internal/sshgw/tools.go），控制面经 SSH 网关并发执行 ----
+// orbd 只在本机 SSH 网关端口监听成功时才给 agent 设 ORYN_SSH=1（runner 与协调宿主没有）。
+
+const SSH_GUIDE = `SSH hosts registered in Oryn are reachable by name: read or write ssh://<name>/<path>, open the terminal tool with host "<name>", or run ssh <name> in bash. They connect through Oryn's gateway on 127.0.0.1, so no keys or passwords are needed and none exist in this environment. Read ssh:// to list the hosts; each description shows the real user and address. Hosts cannot be added or changed from inside this environment.`;
+
+// registerSsh 注册 ssh_exec_many；ORYN_ARTIFACT_SOCK 为空或 ORYN_SSH 不是 "1" 时不注册。注册失败只记一行。
+function registerSsh(pi: ExtensionAPI) {
+	const sock = process.env.ORYN_ARTIFACT_SOCK ?? "";
+	if (!sock || process.env.ORYN_SSH !== "1") {
+		return;
+	}
+	try {
+		const z = pi.zod;
+		const threadId = process.env.ORYN_THREAD_ID ?? "";
+		const name = "ssh_exec_many";
+		pi.registerTool({
+			name: "ssh_exec_many",
+			label: "Run on SSH hosts",
+			description:
+				"Run one shell command on several registered SSH hosts in parallel (up to 32 hosts, 16 at a time) and get each host's exit code and output (4 KiB per host, middle elided). Host names are the ones listed by reading ssh://. For a single host, long-running or interactive work, use ssh://<name>/<path> or the terminal tool with host instead.",
+			parameters: z.object({
+				hosts: z.array(z.string().min(1)).min(1).max(32),
+				command: z.string().min(1).max(8000),
+				timeout_s: z.number().int().min(1).max(600).optional(),
+			}),
+			loadMode: "discoverable",
+			approval: "exec",
+			async execute(_toolCallId, params, signal) {
+				try {
+					const reply = await artifactSockCall(sock, { method: "ssh.call", params: { threadId, tool: name, params } }, signal);
+					if (!reply.ok) {
+						return sockError(name, reply.code, reply.message);
+					}
+					return { content: [{ type: "text", text: reply.result.text }], details: reply.result.details };
+				} catch (err) {
+					return sockError(name, "unavailable", err instanceof Error ? err.message : String(err));
+				}
+			},
+		});
+	} catch (err) {
+		console.error("oryn-orb: register SSH tools failed:", err);
+	}
+}
+
 // 嵌套 Docker（M11a）：只有带 Docker 的 orb 类型由 provider 注入 ORYN_NESTED_DOCKER=1，orbd 据此监督 dockerd。
 const DOCKER_GUIDE = `Docker：这台 orb 有自己的 Docker 守护进程，由 Oryn 托管（不要自己启动或重启 dockerd），日志在 ~/.cache/oryn/logs/dockerd.log；\`docker\` / \`docker compose\` 直接可用（user 在 docker 组，不需要 sudo）。setup 里拉取或构建的镜像会进入项目快照，新 orb 直接可用；setup 结束时不要留下运行中的容器（需要常驻的容器用受管服务启动）。`;
 const NO_DOCKER_GUIDE = `Docker：这台 orb 没有 Docker 守护进程（docker 命令存在但连不上），不要尝试自己安装或启动 dockerd；任务确实需要 Docker 时，请用户改用带 Docker 的 orb 类型新开线程。`;
@@ -770,6 +815,7 @@ export default function orynOrbExtension(pi: ExtensionAPI) {
 		return;
 	}
 	registerGitHub(pi);
+	registerSsh(pi);
 	if (desktopEnabled()) {
 		registerDesktopAsk(pi);
 	}
@@ -778,6 +824,9 @@ export default function orynOrbExtension(pi: ExtensionAPI) {
 		const guide = desktopEnabled() ? [GUIDE, docker, DESKTOP_GUIDE] : [GUIDE, docker];
 		if (artifacts) {
 			guide.push(ARTIFACT_GUIDE);
+		}
+		if (process.env.ORYN_SSH === "1") {
+			guide.push(SSH_GUIDE);
 		}
 		return { systemPrompt: [...event.systemPrompt, [...guide, ...statusLines()].join("\n")] };
 	});

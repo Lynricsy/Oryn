@@ -372,6 +372,9 @@ func TestAgentAssetsAndExtensionArg(t *testing.T) {
 	for _, name := range []string{"github_classify_issue", "github_task_state", "github_prepare", "github_autoclose", "github_release_status", "github_abort_task"} {
 		assert.Contains(t, string(b), `"`+name+`"`)
 	}
+	// M18：SSH 批量执行工具，只在 ORYN_SSH=1 时注册
+	assert.Contains(t, string(b), `"ssh_exec_many"`)
+	assert.Contains(t, string(b), "ORYN_SSH")
 	b, err = os.ReadFile(filepath.Join(rt.home, ".agents", "skills", "oryn-setup", "SKILL.md"))
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(string(b), "---\nname: oryn-setup\n"), "技能 frontmatter")

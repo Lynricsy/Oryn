@@ -162,6 +162,8 @@ func (r *Runtime) handleSock(ctx context.Context, method string, params json.Raw
 		return r.githubCall(ctx, params)
 	case orbsock.MethodGithubPrepare:
 		return r.githubPrepare(ctx, params)
+	case orbsock.MethodSshCall:
+		return r.sshCall(ctx, params)
 	default:
 		if res, ok, err := r.handleThreadSock(ctx, method, params); ok {
 			return res, err

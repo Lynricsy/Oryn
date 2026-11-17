@@ -73,6 +73,10 @@ const (
 	// orbdrt.PrepareResult），通过后经 ctl github.prepare.report 上报。两者只在 orbd.sock 上，runner.sock 不提供。
 	MethodGithubCall    = "github.call"
 	MethodGithubPrepare = "github.prepare"
+
+	// SSH 工具（M18）：ssh.call → ctl ssh.call（LinkCtlSshCallParams → LinkCtlSshCallResult），threadId 恒为调用方线程；
+	// 控制面按调用方 orb 可见的主机执行（ssh_exec_many）。只在 orbd.sock 上，runner.sock 不提供。
+	MethodSshCall = "ssh.call"
 )
 
 // 消息类型。
