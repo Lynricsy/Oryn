@@ -50,6 +50,13 @@ services:
     # 官方 start 脚本关停时最多等 60s 让 worker 收尾，这里多留余量。
     stop_grace_period: 75s
     restart: unless-stopped
+    # 进程运行不等于 API 已就绪；让 compose up --wait 等待迁移与数据库连接完成。
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8888/health/ready', timeout=3).read()"]
+      interval: 3s
+      timeout: 5s
+      start_period: 10s
+      retries: 40
     depends_on:
       pgroonga-init: { condition: service_completed_successfully }
     ports:

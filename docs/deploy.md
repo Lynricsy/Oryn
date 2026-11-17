@@ -975,6 +975,8 @@ curl --fail https://oryn.ling.plus/healthz
 
 `gemini-rerank` 随 `make build` 生成，通用 systemd 模板在 `deploy/systemd/oryn-gemini-rerank.service`；本机实际单元位于 `/root/Oryn/systemd/oryn-prod-rerank.service`。适配器无上游地址参数，不能用来代理任意 URL。Hindsight 的管理页会显示 Cohere 兼容传输与实际模型名 `gemini-decision-1`，并非调用 Cohere 的模型。
 
+Hindsight API 的健康检查直接访问容器内 `/health/ready`，`dc up --wait` 会等待迁移与数据库连接就绪，不只检查进程是否运行。模型协议、嵌入维度和重排方式统一由管理页生成的 `.env` 提供，不在 Compose 中固定覆盖，避免后续换模型时出现配置不一致。
+
 首次所有者必须由本人在正式域名的初始化页面注册 Passkey，并保存一次性显示的恢复码；初始化链接不得写入本说明或任务日志。「本机生产运维」设备拥有完整管理权限，完成部署后可在设备管理中吊销；吊销后本机 CLI 需重新配对。GitHub OAuth、可选 FCM、外部 SSH 主机等个人集成需各自授权，部署不代建这些身份。
 
 ### 备份与撤销边界
