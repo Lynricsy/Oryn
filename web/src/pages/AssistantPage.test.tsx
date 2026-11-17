@@ -1,5 +1,6 @@
 /**
- * 全局助手页（M9）：`/assistant` 跳到最近的对话、没有就新建；页头动作菜单（新对话 / 归档此对话，M9.6 起切换对话只在侧栏）；
+ * 全局助手页（M9）：`/assistant` 跳到最近的对话、没有就新建；页头动作菜单（新对话 / 归档此对话，M9.6 起切换对话只在侧栏；
+ * M17 起助手记忆可用时多一个「不进助手记忆」切换）；
  * 页头小头像跟随助手的生效头像（圆形）；协调宿主不可用时不创建对话、显示原因与指向设置 → 关于，已有对话只读。
  * `ThreadScreen` 换成桩。数据走 mock 后端，身份接口由本文件的桩应答。
  */
@@ -164,7 +165,7 @@ describe("AssistantPage", () => {
 		expect(created?.orbId).toBe(M9_IDS.coordOrb);
 	});
 
-	it("页头没有「对话」列表；动作菜单只有新对话与归档此对话", async () => {
+	it("页头没有「对话」列表；动作菜单是新对话、归档此对话与「不进助手记忆」切换", async () => {
 		mount(`/assistant/${M9_IDS.assistant}`);
 		await screen.findByTestId("screen");
 		expect(screen.queryByRole("button", { name: "对话" })).toBeNull();
@@ -173,7 +174,11 @@ describe("AssistantPage", () => {
 			"新对话",
 			"归档此对话",
 		]);
-		expect(screen.queryByRole("menuitemradio")).toBeNull();
+		// 助手记忆可用时才出现，是唯一的勾选项（不是对话列表）
+		expect(
+			await screen.findByRole("menuitemradio", { name: "不进助手记忆" }),
+		).toHaveAttribute("aria-checked", "false");
+		expect(screen.getAllByRole("menuitemradio")).toHaveLength(1);
 		fireEvent.click(screen.getByRole("menuitem", { name: "新对话" }));
 		await waitFor(() =>
 			expect(screen.getByTestId("where").textContent).toMatch(
@@ -191,6 +196,41 @@ describe("AssistantPage", () => {
 			expect(screen.getByTestId("where")).toHaveTextContent(
 				`/assistant/${M9_IDS.assistant}`,
 			),
+		);
+	});
+
+	it("「不进助手记忆」切换本对话的排除", async () => {
+		mount(`/assistant/${M9_IDS.assistant}`);
+		await screen.findByTestId("screen");
+		fireEvent.click(screen.getByRole("button", { name: "对话操作" }));
+		fireEvent.click(
+			await screen.findByRole("menuitemradio", { name: "不进助手记忆" }),
+		);
+		await waitFor(async () => {
+			const res = await server.handleFetch(
+				new Request("http://x/api/v1/owner-memory/exclusions"),
+			);
+			const body = (await res?.json()) as {
+				items: { kind: string; targetId: string }[];
+			};
+			expect(body.items).toContainEqual(
+				expect.objectContaining({ kind: "thread", targetId: M9_IDS.assistant }),
+			);
+		});
+		fireEvent.click(screen.getByRole("button", { name: "对话操作" }));
+		await waitFor(() =>
+			expect(
+				screen.getByRole("menuitemradio", { name: "不进助手记忆" }),
+			).toHaveAttribute("aria-checked", "true"),
+		);
+		fireEvent.click(
+			screen.getByRole("menuitemradio", { name: "不进助手记忆" }),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "对话操作" }));
+		await waitFor(() =>
+			expect(
+				screen.getByRole("menuitemradio", { name: "不进助手记忆" }),
+			).toHaveAttribute("aria-checked", "false"),
 		);
 	});
 

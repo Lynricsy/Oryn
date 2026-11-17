@@ -1,7 +1,7 @@
 /**
  * 全局助手页（M9，`Ctrl/Cmd+/`）：`/assistant` 跳到最近一个未归档的助手对话，没有就新建一个；
  * `/assistant/<id>` 是该对话（`ThreadScreen variant="coordinator"`）。页头是助手的圆形小头像 + 对话标题 +
- * 文件库按钮（M13，对话框里是 `LibraryPanel`）+ 动作菜单（新对话、归档此对话）；切换对话在侧栏的助手分区里做（M9.6）。协调宿主不可用（`GET coordinator` 的
+ * 文件库按钮（M13，对话框里是 `LibraryPanel`）+ 动作菜单（新对话、归档此对话；助手记忆可用时还有「不进助手记忆」切换，M17）；切换对话在侧栏的助手分区里做（M9.6）。协调宿主不可用（`GET coordinator` 的
  * `available === false`）时不创建对话：页面主体是「全局助手暂不可用」+ 原因 + 指向设置 → 关于；
  * 已有对话仍可只读浏览（输入区禁用，托盘里同样提示）。
  */
@@ -10,6 +10,12 @@ import { useTranslation } from "react-i18next";
 import { Link, Navigate, useNavigate, useParams } from "react-router";
 import { useCoordinatorStatus } from "../api/coordinator-queries";
 import { useAssistantIdentity } from "../api/identity-queries";
+import {
+	useDeleteOwnerMemoryExclusion,
+	useOwnerMemoryExclusions,
+	useOwnerMemorySettings,
+	usePutOwnerMemoryExclusion,
+} from "../api/owner-memory-queries";
 import { createAssistantConversation } from "../api/space-queries";
 import { LibraryPanel } from "../components/assistant/LibraryPanel";
 import { CoordinatorHeader } from "../components/thread/CoordinatorHeader";
@@ -154,6 +160,15 @@ function AssistantHeader({
 	const title = current
 		? parseTitleCard(current.title).text || t("assistant.untitled")
 		: t("assistant.title");
+	// 助手记忆（M17）：工程记忆可用时，菜单里可切换本对话「不进助手记忆」（已写入的随之遗忘）
+	const ownerMemory = useOwnerMemorySettings();
+	const ownerMemoryAvailable = ownerMemory.data?.available === true;
+	const exclusions = useOwnerMemoryExclusions(ownerMemoryAvailable);
+	const exclude = usePutOwnerMemoryExclusion();
+	const include = useDeleteOwnerMemoryExclusion();
+	const excluded = (exclusions.data?.items ?? []).some(
+		(e) => e.kind === "thread" && e.targetId === threadId,
+	);
 	const items: MenuItem[] = [
 		{
 			key: "new",
@@ -178,6 +193,23 @@ function AssistantHeader({
 				archive(threadId).catch(setError);
 			},
 		},
+		...(ownerMemoryAvailable && exclusions.data
+			? [
+					{
+						key: "owner-memory",
+						icon: "memory",
+						label: t("assistant.ownerMemoryExclude"),
+						checked: excluded,
+						disabled: exclude.isPending || include.isPending,
+						onSelect: () => {
+							setError(null);
+							const target = { kind: "thread", targetId: threadId } as const;
+							if (excluded) include.mutate(target, { onError: setError });
+							else exclude.mutate(target, { onError: setError });
+						},
+					} satisfies MenuItem,
+				]
+			: []),
 	];
 	return (
 		<CoordinatorHeader

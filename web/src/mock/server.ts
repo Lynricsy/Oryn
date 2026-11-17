@@ -69,6 +69,7 @@ import { MockLibrary } from "./library";
 import { MockMemory } from "./memory";
 import { handleNotifyFetch } from "./notify";
 import { handleOrbFetch } from "./orbfs";
+import { MockOwnerMemory } from "./owner-memory";
 import { handleSearchFetch } from "./search";
 import { redact, SHARE_RULES } from "./share-scan";
 import { handleStatsFetch } from "./stats";
@@ -510,6 +511,12 @@ export class MockServer {
 	readonly memory = new MockMemory({
 		restart: (reason) => this.noteRestartReason(reason),
 		threadTitle: (id) => this.threads.get(id)?.title,
+	});
+	/** 全局助手的主人记忆（M17）：以工程记忆已启用并配置为前提。 */
+	readonly ownerMemory = new MockOwnerMemory({
+		engineeringReady: () => this.memory.ready(),
+		thread: (id) => this.threads.get(id),
+		projectName: (id) => this.projects.find((x) => x.id === id)?.name,
 	});
 	gitIdentity: Schemas["GitIdentity"] | undefined = {
 		name: "Oryn Owner",
@@ -1556,6 +1563,8 @@ export class MockServer {
 		if (githubRes) return githubRes;
 		const memoryRes = await this.memory.handle(p, m, body, url);
 		if (memoryRes) return memoryRes;
+		const ownerMemoryRes = await this.ownerMemory.handle(p, m, body, url);
+		if (ownerMemoryRes) return ownerMemoryRes;
 		const runnerRes = await this.handleRunnerFetch(p, m, body);
 		if (runnerRes) return runnerRes;
 		if (p === "providers" && m === "GET") return json({ providers });
