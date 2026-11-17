@@ -138,13 +138,15 @@ JOIN threads t ON t.id = d.thread_id
 WHERE f.body MATCH ?1
   AND NOT EXISTS (SELECT 1 FROM json_each(?2) s WHERE instr(lower(f.body), lower(s.value)) = 0)
   AND (d.ts < ?3 OR (d.ts = ?3 AND d.id < ?4))
+  AND (?5 = '[]' OR t.kind IN (SELECT value FROM json_each(?5)))
+  AND (?6 = '' OR t.project_id = ?6)
   AND NOT EXISTS (
       SELECT 1 FROM search_docs o JOIN threads ot ON ot.id = o.thread_id
       WHERE d.ts > 0 AND o.entry_id = d.entry_id AND o.ts = d.ts AND o.id <> d.id
         AND (ot.created_at < t.created_at
              OR (ot.created_at = t.created_at AND (ot.id < t.id OR (ot.id = t.id AND o.id < d.id)))))
 ORDER BY d.ts DESC, d.id DESC
-LIMIT ?5
+LIMIT ?7
 `
 
 type SearchMessagesParams struct {
@@ -152,6 +154,8 @@ type SearchMessagesParams struct {
 	Short    interface{} `json:"short"`
 	BeforeTs int64       `json:"beforeTs"`
 	BeforeID int64       `json:"beforeId"`
+	Kinds    interface{} `json:"kinds"`
+	Project  interface{} `json:"project"`
 	Limit    int64       `json:"limit"`
 }
 
@@ -174,12 +178,15 @@ type SearchMessagesRow struct {
 // of the shorter terms, each of which must also occur in the body (instr over lower(), ASCII case folding only).
 // Fork dedupe: of the index rows sharing a key (entry_id, ts > 0), only the one in the earliest thread
 // (created_at, id; then the lowest row id) is returned; copies = number of threads holding the message.
+// @kinds is a JSON array of thread kinds ('[]' = any); @project is a project id (” = any).
 func (q *Queries) SearchMessages(ctx context.Context, arg SearchMessagesParams) ([]SearchMessagesRow, error) {
 	rows, err := q.db.QueryContext(ctx, searchMessages,
 		arg.Match,
 		arg.Short,
 		arg.BeforeTs,
 		arg.BeforeID,
+		arg.Kinds,
+		arg.Project,
 		arg.Limit,
 	)
 	if err != nil {
@@ -225,19 +232,23 @@ JOIN search_fts f ON f.rowid = d.id
 JOIN threads t ON t.id = d.thread_id
 WHERE NOT EXISTS (SELECT 1 FROM json_each(?1) s WHERE instr(lower(f.body), lower(s.value)) = 0)
   AND (d.ts < ?2 OR (d.ts = ?2 AND d.id < ?3))
+  AND (?4 = '[]' OR t.kind IN (SELECT value FROM json_each(?4)))
+  AND (?5 = '' OR t.project_id = ?5)
   AND NOT EXISTS (
       SELECT 1 FROM search_docs o JOIN threads ot ON ot.id = o.thread_id
       WHERE d.ts > 0 AND o.entry_id = d.entry_id AND o.ts = d.ts AND o.id <> d.id
         AND (ot.created_at < t.created_at
              OR (ot.created_at = t.created_at AND (ot.id < t.id OR (ot.id = t.id AND o.id < d.id)))))
 ORDER BY d.ts DESC, d.id DESC
-LIMIT ?4
+LIMIT ?6
 `
 
 type SearchMessagesShortParams struct {
 	Short    interface{} `json:"short"`
 	BeforeTs int64       `json:"beforeTs"`
 	BeforeID int64       `json:"beforeId"`
+	Kinds    interface{} `json:"kinds"`
+	Project  interface{} `json:"project"`
 	Limit    int64       `json:"limit"`
 }
 
@@ -262,6 +273,8 @@ func (q *Queries) SearchMessagesShort(ctx context.Context, arg SearchMessagesSho
 		arg.Short,
 		arg.BeforeTs,
 		arg.BeforeID,
+		arg.Kinds,
+		arg.Project,
 		arg.Limit,
 	)
 	if err != nil {

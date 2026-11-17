@@ -91,7 +91,7 @@ func TestGetStats(t *testing.T) {
 		inSpace bool
 		kinds   []string
 	}{{false, []string{"usage", "tools", "orbs", "output"}}, {true, []string{"usage", "tools", "output"}}} {
-		for _, d := range ToolDefs(tc.inSpace) {
+		for _, d := range ToolDefs(tc.inSpace, false) {
 			if d["name"] != ToolGetStats {
 				continue
 			}

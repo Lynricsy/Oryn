@@ -100,8 +100,9 @@ type Service struct {
 	libHost LibraryHost
 	// artifacts 是 M14 的 artifact 服务（SetArtifacts 设置）；nil 时 artifact 工具不可用。
 	artifacts *artifacts.Service
-	// mem 是 M17 主人记忆（SetOwnerMemory 设置）；nil 时全局助手不注入记忆段。
+	// mem / eng 是 M17 主人记忆与 M16 工程记忆（SetOwnerMemory 设置）；mem 为 nil 时全局助手不注入记忆段、没有记忆工具。
 	mem OwnerMemory
+	eng EngineeringMemory
 
 	ensureMu sync.Mutex
 	// createMu 串行化 orb 内 thread.create 的「计数 + Create」（契约 C6.1）：并发请求不能都通过额度检查。

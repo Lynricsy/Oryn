@@ -41,6 +41,7 @@ DELETE FROM search_docs;
 -- of the shorter terms, each of which must also occur in the body (instr over lower(), ASCII case folding only).
 -- Fork dedupe: of the index rows sharing a key (entry_id, ts > 0), only the one in the earliest thread
 -- (created_at, id; then the lowest row id) is returned; copies = number of threads holding the message.
+-- @kinds is a JSON array of thread kinds ('[]' = any); @project is a project id ('' = any).
 -- name: SearchMessages :many
 SELECT d.id, d.thread_id, d.seq, d.entry_id, d.ts, d.role, CAST(f.body AS TEXT) AS body,
        t.title, t.kind, t.archived_at,
@@ -52,6 +53,8 @@ JOIN threads t ON t.id = d.thread_id
 WHERE f.body MATCH @match
   AND NOT EXISTS (SELECT 1 FROM json_each(@short) s WHERE instr(lower(f.body), lower(s.value)) = 0)
   AND (d.ts < @before_ts OR (d.ts = @before_ts AND d.id < @before_id))
+  AND (@kinds = '[]' OR t.kind IN (SELECT value FROM json_each(@kinds)))
+  AND (@project = '' OR t.project_id = @project)
   AND NOT EXISTS (
       SELECT 1 FROM search_docs o JOIN threads ot ON ot.id = o.thread_id
       WHERE d.ts > 0 AND o.entry_id = d.entry_id AND o.ts = d.ts AND o.id <> d.id
@@ -72,6 +75,8 @@ JOIN search_fts f ON f.rowid = d.id
 JOIN threads t ON t.id = d.thread_id
 WHERE NOT EXISTS (SELECT 1 FROM json_each(@short) s WHERE instr(lower(f.body), lower(s.value)) = 0)
   AND (d.ts < @before_ts OR (d.ts = @before_ts AND d.id < @before_id))
+  AND (@kinds = '[]' OR t.kind IN (SELECT value FROM json_each(@kinds)))
+  AND (@project = '' OR t.project_id = @project)
   AND NOT EXISTS (
       SELECT 1 FROM search_docs o JOIN threads ot ON ot.id = o.thread_id
       WHERE d.ts > 0 AND o.entry_id = d.entry_id AND o.ts = d.ts AND o.id <> d.id

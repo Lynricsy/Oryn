@@ -117,7 +117,7 @@ func TestArtifactToolsAssistantOnly(t *testing.T) {
 
 	names := func(inSpace bool) map[string]bool {
 		out := map[string]bool{}
-		for _, d := range ToolDefs(inSpace) {
+		for _, d := range ToolDefs(inSpace, false) {
 			out[d["name"].(string)] = true
 		}
 		return out
@@ -130,7 +130,7 @@ func TestArtifactToolsAssistantOnly(t *testing.T) {
 		assert.False(t, space[n], n)
 	}
 	assert.False(t, asst["screenshot_artifact"])
-	for _, d := range ToolDefs(false) {
+	for _, d := range ToolDefs(false, false) {
 		if d["name"] == ToolCreateArtifact {
 			props := d["parameters"].(obj)["properties"].(obj)
 			assert.Contains(t, props, "projectId")

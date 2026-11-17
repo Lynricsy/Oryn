@@ -101,10 +101,15 @@ func parseCursor(s string) (cursor, error) {
 }
 
 // Params 是一次搜索的参数；Limit ≤ 0 取 DefaultLimit，超过 MaxLimit 截到 MaxLimit。
+// Kinds 非空时只搜这些种类的线程；ProjectID 非空时只搜该项目；Before > 0 时只要这个时间（Unix 毫秒）之前的消息
+// （有 Cursor 时以 Cursor 为准）。
 type Params struct {
-	Q      string
-	Limit  int
-	Cursor string
+	Q         string
+	Limit     int
+	Cursor    string
+	Kinds     []string
+	ProjectID string
+	Before    int64
 }
 
 // row 是两条查询共同的结果列。
@@ -135,6 +140,9 @@ func (s *Service) Search(ctx context.Context, p Params) (apigen.SearchResults, e
 	limit = min(limit, MaxLimit)
 	// 缺省游标取最大值：首页即全部行
 	cur := cursor{ts: 1<<63 - 1, id: 1<<63 - 1}
+	if p.Before > 0 {
+		cur.ts = p.Before - 1 // 严格早于 Before：ts = Before-1 的行在 id 上全部放行
+	}
 	if p.Cursor != "" {
 		if cur, err = parseCursor(p.Cursor); err != nil {
 			return apigen.SearchResults{}, err
@@ -144,11 +152,15 @@ func (s *Service) Search(ctx context.Context, p Params) (apigen.SearchResults, e
 	if err != nil {
 		return apigen.SearchResults{}, err
 	}
+	kindsJSON, err := json.Marshal(append([]string{}, p.Kinds...))
+	if err != nil {
+		return apigen.SearchResults{}, err
+	}
 	var rows []row
 	if len(qq.long) > 0 {
 		rs, err := s.st.Q.SearchMessages(ctx, db.SearchMessagesParams{
 			Match: strings.Join(qq.long, " AND "), Short: string(shortJSON),
-			BeforeTs: cur.ts, BeforeID: cur.id, Limit: int64(limit),
+			BeforeTs: cur.ts, BeforeID: cur.id, Kinds: string(kindsJSON), Project: p.ProjectID, Limit: int64(limit),
 		})
 		if err != nil {
 			return apigen.SearchResults{}, err
@@ -158,7 +170,8 @@ func (s *Service) Search(ctx context.Context, p Params) (apigen.SearchResults, e
 		}
 	} else {
 		rs, err := s.st.Q.SearchMessagesShort(ctx, db.SearchMessagesShortParams{
-			Short: string(shortJSON), BeforeTs: cur.ts, BeforeID: cur.id, Limit: int64(limit),
+			Short: string(shortJSON), BeforeTs: cur.ts, BeforeID: cur.id, Kinds: string(kindsJSON), Project: p.ProjectID,
+			Limit: int64(limit),
 		})
 		if err != nil {
 			return apigen.SearchResults{}, err

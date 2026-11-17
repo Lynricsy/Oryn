@@ -145,3 +145,46 @@ func TestDecideFallback(t *testing.T) {
 
 	check(newEnv(t, true).svc)
 }
+
+// TestRecallTiersAndSources：recall_memory 的结果带出处（主人陈述 / 角色未确认 / 明确记忆 / 来源未确认）与分档标注；
+// 判断模型不可用时整体标为未经重排。
+func TestRecallTiersAndSources(t *testing.T) {
+	ctx := context.Background()
+	e, d := decideEnv(t)
+	e.enable(t)
+	e.thread(t, "c1", "assistant", "idle", 0, time.Hour)
+	e.setFake(func(f *fakeHS) {
+		f.recallHits = []map[string]any{
+			{"id": "a", "text": "主人住在新加坡", "type": "world", "mentioned_at": "2026-11-07T00:00:00Z",
+				"document_id": "conv:c1:0", "metadata": map[string]any{"seqs": "3", "roles": "owner"}},
+			{"id": "b", "text": "NotionAgent 任务用新加坡时间", "type": "world",
+				"document_id": "thread:w9:1", "metadata": map[string]any{"seq_from": "10", "seq_to": "14", "roles": "owner,agent"}},
+			{"id": "c", "text": "主人的猫叫团子", "type": "world", "document_id": "explicit:ome_X"},
+			{"id": "d", "text": "无关", "type": "observation"},
+		}
+	})
+	d.mu.Lock()
+	d.scores = map[string]float64{"主人住在新加坡": 1.8, "NotionAgent 任务用新加坡时间": 1.6, "主人的猫叫团子": 1.9, "无关": 0.2}
+	d.mu.Unlock()
+
+	res, err := e.svc.Recall(ctx, "我在哪个时区")
+	require.NoError(t, err)
+	assert.Equal(t, "记忆里没有能直接回答的条目。", res.Note)
+	require.Len(t, res.Results, 3)
+	assert.Equal(t, "明确记忆（主人要求记住的）", res.Results[0].Source)
+	assert.Equal(t, "主人陈述（出自对话 c1「标题c1」 第 3 条）", res.Results[1].Source)
+	assert.Equal(t, "2026-11-07T00:00:00Z", res.Results[1].When)
+	assert.Equal(t, "出自线程 w9 第 10–14 条，角色未确认", res.Results[2].Source)
+	for _, h := range res.Results {
+		assert.Equal(t, "部分相关，可能是旧状态或属于别的对象", h.Note)
+	}
+
+	d.mu.Lock()
+	d.status = http.StatusTooManyRequests
+	d.mu.Unlock()
+	res, err = e.svc.Recall(ctx, "我在哪个时区")
+	require.NoError(t, err)
+	assert.Contains(t, res.Note, "未经重排")
+	require.Len(t, res.Results, 4)
+	assert.Equal(t, "来源未确认", res.Results[3].Source)
+}

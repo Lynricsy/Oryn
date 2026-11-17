@@ -22,8 +22,9 @@ const (
 	entryPage    = 500
 )
 
-// textMessage 是 read_thread 返回的一条消息（只取 user / assistant 的文本）。
+// textMessage 是 read_thread 返回的一条消息（只取 user / assistant 的文本）；Seq 可作为 aroundSeq / beforeSeq 再读。
 type textMessage struct {
+	Seq  int64  `json:"seq"`
 	Role string `json:"role"`
 	Text string `json:"text"`
 }
@@ -52,33 +53,64 @@ func (s *Service) activeBranch(ctx context.Context, t db.Thread) ([]transcript.E
 	return transcript.ActiveBranch(all, leaf), nil
 }
 
-// recentMessages 返回活动分支上最近 n 条 user / assistant 文本消息（时间正序）：单条截到 4000 字符，
-// 合计不超过 40000 字符（超出时丢弃更早的）。
+// recentMessages 返回活动分支上最近 n 条 user / assistant 文本消息（时间正序），见 readMessages。
 func (s *Service) recentMessages(ctx context.Context, t db.Thread, n int) ([]textMessage, error) {
+	return s.readMessages(ctx, t, n, nil, nil)
+}
+
+// readMessages 返回活动分支上的 n 条 user / assistant 文本消息（时间正序）：默认最近的 n 条；给了 before 时是
+// seq 小于它的最近 n 条；给了 around 时是以它为中心的 n 条（之前约一半）。单条截到 4000 字符，合计不超过
+// 40000 字符（超出时丢弃离锚点远的一端：默认与 before 丢更早的，around 丢更晚的）。
+func (s *Service) readMessages(ctx context.Context, t db.Thread, n int, around, before *int64) ([]textMessage, error) {
 	branch, err := s.activeBranch(ctx, t)
 	if err != nil {
 		return nil, err
 	}
-	var rev []textMessage
-	total := 0
-	for i := len(branch) - 1; i >= 0 && len(rev) < n; i-- {
-		m, ok := transcript.ParseMessage(branch[i])
+	var all []textMessage
+	for _, e := range branch {
+		m, ok := transcript.ParseMessage(e)
 		if !ok || (m.Role != "user" && m.Role != "assistant") || strings.TrimSpace(m.Text) == "" {
 			continue
 		}
-		text := truncRunes(m.Text, maxMessageRunes)
-		size := len([]rune(text))
-		if total+size > maxReadRunes {
+		all = append(all, textMessage{Seq: e.Seq, Role: m.Role, Text: truncRunes(m.Text, maxMessageRunes)})
+	}
+	size := func(m textMessage) int { return len([]rune(m.Text)) }
+	if around != nil {
+		lo := firstAtOrAfter(all, *around)
+		lo = max(0, lo-n/2)
+		hi := min(len(all), lo+n)
+		total := 0
+		for i := lo; i < hi; i++ {
+			if total += size(all[i]); total > maxReadRunes {
+				hi = i
+				break
+			}
+		}
+		return append([]textMessage{}, all[lo:hi]...), nil
+	}
+	hi := len(all)
+	if before != nil {
+		hi = firstAtOrAfter(all, *before)
+	}
+	lo := max(0, hi-n)
+	total := 0
+	for i := hi - 1; i >= lo; i-- {
+		if total += size(all[i]); total > maxReadRunes {
+			lo = i + 1
 			break
 		}
-		total += size
-		rev = append(rev, textMessage{Role: m.Role, Text: text})
 	}
-	out := make([]textMessage, 0, len(rev))
-	for i := len(rev) - 1; i >= 0; i-- {
-		out = append(out, rev[i])
+	return append([]textMessage{}, all[lo:hi]...), nil
+}
+
+// firstAtOrAfter 是第一条 seq ≥ seq 的消息下标（没有时为 len）。活动分支按会话文件拼接，不假定 seq 全局有序。
+func firstAtOrAfter(msgs []textMessage, seq int64) int {
+	for i, m := range msgs {
+		if m.Seq >= seq {
+			return i
+		}
 	}
-	return out, nil
+	return len(msgs)
 }
 
 // lastAssistantText 返回活动分支上最后一条有文本的 assistant 消息，截到 maxRunes 个字符。

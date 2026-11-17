@@ -7,6 +7,7 @@ import (
 	"testing"
 	"unicode/utf16"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
@@ -271,4 +272,38 @@ func TestBackfill(t *testing.T) {
 	visited = nil
 	require.NoError(t, Backfill(f.ctx, f.st))
 	require.Empty(t, visited)
+}
+
+// TestSearchHistoryFilters：按线程种类、项目与时间过滤（M17 search_history），长词与短词两条查询路径都生效。
+func TestSearchHistoryFilters(t *testing.T) {
+	f := newFixture(t)
+	require.NoError(t, f.st.Q.CreateProject(f.ctx, db.CreateProjectParams{ID: "p", Name: "P", CreatedAt: 1, UpdatedAt: 1}))
+	f.thread("w", 1)
+	f.thread("a", 2)
+	f.thread("s", 3)
+	_, err := f.st.DB.Exec(`UPDATE threads SET kind = 'assistant' WHERE id = 'a'`)
+	require.NoError(t, err)
+	_, err = f.st.DB.Exec(`UPDATE threads SET kind = 'space', project_id = 'p' WHERE id = 's'`)
+	require.NoError(t, err)
+	_, err = f.st.DB.Exec(`UPDATE threads SET project_id = 'p' WHERE id = 'w'`)
+	require.NoError(t, err)
+	f.msg("w", "s.jsonl", "w1", "user", 100, "部署 oryn 到 UltraServer go")
+	f.msg("w", "s.jsonl", "w2", "user", 300, "部署 oryn 第二次 go")
+	f.msg("a", "s.jsonl", "a1", "user", 200, "部署 oryn 的计划 go")
+	f.msg("s", "s.jsonl", "s1", "user", 250, "部署 oryn 空间 go")
+
+	run := func(q string, p Params) []string {
+		t.Helper()
+		p.Q = q
+		res, err := f.svc.Search(f.ctx, p)
+		require.NoError(t, err)
+		return entryIDs(res.Hits)
+	}
+	for _, q := range []string{"部署 oryn", "go"} {
+		assert.Equal(t, []string{"w2", "s1", "a1", "w1"}, run(q, Params{}), q)
+		assert.Equal(t, []string{"w2", "a1", "w1"}, run(q, Params{Kinds: []string{"assistant", "work"}}), q)
+		assert.Equal(t, []string{"a1"}, run(q, Params{Kinds: []string{"assistant"}}), q)
+		assert.Equal(t, []string{"w2", "s1", "w1"}, run(q, Params{ProjectID: "p"}), q)
+		assert.Equal(t, []string{"a1", "w1"}, run(q, Params{Kinds: []string{"assistant", "work"}, Before: 250}), q)
+	}
 }

@@ -121,7 +121,7 @@ func TestLibraryTools(t *testing.T) {
 	chat := e.spaceChat(e.space("Alpha", ""))
 	errText(t, e.call(chat, ToolListFiles, `{}`, true), "unknown_tool")
 	names := map[string]bool{}
-	for _, d := range ToolDefs(true) {
+	for _, d := range ToolDefs(true, false) {
 		names[d["name"].(string)] = true
 	}
 	assert.False(t, names[ToolSaveFile] || names[ToolListFiles] || names[ToolShareFile], "Space 协调者没有文件工具")

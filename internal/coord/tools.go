@@ -86,6 +86,9 @@ func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) thre
 		default:
 			v, err = s.toolShareFile(ctx, tc)
 		}
+	case ToolRecallMemory, ToolSearchHistory, ToolRecallEngineering, ToolRemember:
+		// 记忆工具只属于助手记忆正在运行的全局助手
+		return s.toolMemory(ctx, tc)
 	case ToolCreateArtifact, ToolReadArtifact, ToolUpdateArtifact, ToolListArtifacts, ToolDeleteArtifact,
 		ToolListArtifactVersions, ToolRestoreArtifactVersion, ToolReadArtifactGuide,
 		ToolReadArtifactComments, ToolReplyArtifactComment, ToolResolveArtifactComment,
@@ -262,8 +265,10 @@ func (s *Service) toolListThreads(ctx context.Context, c toolCtx) (any, error) {
 // ---- read_thread ----
 
 type readThreadArgs struct {
-	ThreadID string `json:"threadId"`
-	Tail     int    `json:"tail"`
+	ThreadID  string `json:"threadId"`
+	Tail      int    `json:"tail"`
+	AroundSeq *int64 `json:"aroundSeq"`
+	BeforeSeq *int64 `json:"beforeSeq"`
 }
 
 func (s *Service) toolReadThread(ctx context.Context, c toolCtx) threads.HostToolResult {
@@ -271,7 +276,14 @@ func (s *Service) toolReadThread(ctx context.Context, c toolCtx) threads.HostToo
 	if err := decodeArgs(c.Args, &a); err != nil {
 		return failResult(err)
 	}
-	t, err := s.resolveTarget(ctx, a.ThreadID)
+	if a.AroundSeq != nil && a.BeforeSeq != nil {
+		return failResult(errf(CodeInvalid, "give aroundSeq or beforeSeq, not both"))
+	}
+	resolve := s.resolveTarget
+	if c.Kind == threads.KindAssistant {
+		resolve = s.resolveReadTarget
+	}
+	t, err := resolve(ctx, a.ThreadID)
 	if err != nil {
 		return failResult(err)
 	}
@@ -280,15 +292,34 @@ func (s *Service) toolReadThread(ctx context.Context, c toolCtx) threads.HostToo
 		n = defaultReadTail
 	}
 	n = min(n, maxReadTail)
-	msgs, err := s.recentMessages(ctx, t, n)
+	msgs, err := s.readMessages(ctx, t, n, a.AroundSeq, a.BeforeSeq)
 	if err != nil {
 		return failResult(err)
 	}
 	v := map[string]any{
-		"thread":   map[string]any{"id": t.ID, "title": t.Title, "state": t.State},
+		"thread":   map[string]any{"id": t.ID, "title": t.Title, "state": t.State, "kind": t.Kind},
 		"messages": msgs,
 	}
 	return threads.HostToolResult{Text: wrapUntrusted(t.ID, v), Details: v}
+}
+
+// resolveReadTarget 是全局助手 read_thread 的目标校验（R15）：除工作线程外，还可以只读访问主人的其他助手对话
+// 与 Runner 线程。读不会唤醒任何线程，也不会经它在 Runner 上执行操作；写操作仍走 resolveTarget。Space 协调线程不可读。
+func (s *Service) resolveReadTarget(ctx context.Context, threadID string) (db.Thread, error) {
+	if threadID == "" {
+		return db.Thread{}, errf(CodeInvalid, "threadId is required")
+	}
+	t, err := s.st.Q.GetThread(ctx, threadID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return db.Thread{}, errf(CodeNotFound, "thread %s not found", threadID)
+	}
+	if err != nil {
+		return db.Thread{}, err
+	}
+	if t.Kind != threads.KindWork && t.Kind != threads.KindAssistant {
+		return db.Thread{}, errf(CodeInvalidTarget, "%s is a Space conversation", threadID)
+	}
+	return t, nil
 }
 
 // ---- create_thread ----
