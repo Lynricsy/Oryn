@@ -51,7 +51,7 @@ func (r *Runtime) coordinatorSetup(p apigen.LinkCtlSetupRunParams) (apigen.LinkC
 		return apigen.LinkCtlSetupRunResult{}, ctlErr(link.CodeInvalidParams,
 			"the coordinator host accepts only ompHome (no repo, scripts, git hosts, git identity or env)")
 	}
-	if _, _, err := r.writeOmpConfigAt(r.nextOmpSeq(), p.OmpHome, nil, false); err != nil {
+	if _, _, err := r.writeOmpConfigAt(r.nextOmpSeq(), p.OmpHome, nil, false, nil); err != nil {
 		return apigen.LinkCtlSetupRunResult{}, ctlErr("failed", "%v", err)
 	}
 	return apigen.LinkCtlSetupRunResult{Ok: true, SetupRan: false}, nil

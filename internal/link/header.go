@@ -19,6 +19,8 @@ const (
 	StreamDesk   = "desk"
 	// StreamLibrary 是全局助手文件库的字节流（M13）：控制面向协调宿主同步文件，或 orbd 应 library.fetch 回传文件。
 	StreamLibrary = "library"
+	// StreamSSH 是 orbd→orynd 的一条流（M18）：orb 内到 SSH 网关的一条 TCP 连接，其后是裸 SSH 字节流。
+	StreamSSH = "ssh"
 )
 
 // MaxHeaderBytes 是流头行（含换行）的上限。

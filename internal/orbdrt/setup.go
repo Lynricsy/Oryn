@@ -195,7 +195,7 @@ func (r *Runtime) runSetupLocked(ctx context.Context, p apigen.LinkCtlSetupRunPa
 	r.envMu.Unlock()
 
 	// 1. omp 文本配置：用户层 ~/.omp/agent，与项目层（M12.2，严格镜像到 ~/.oryn/project-config/.omp；不属于项目时删除整个目录）。
-	wroteHome, wroteProject, err := r.writeOmpConfigAt(ompSeq, p.OmpHome, p.ProjectConfig, true)
+	wroteHome, wroteProject, err := r.writeOmpConfigAt(ompSeq, p.OmpHome, p.ProjectConfig, true, p.SSH)
 	if err != nil {
 		lg.system(apigen.OmpHome, "error: "+err.Error())
 		return fail(ctlErr("failed", "%v", err))
@@ -574,10 +574,11 @@ func (r *Runtime) nextOmpSeq() uint64 {
 	return r.ompSeq
 }
 
-// writeOmpConfigAt 以编号 seq 写入 omp 文本配置：用户层 files，setProject 时连同项目层 project（nil = 删除项目层）。
-// 两层各自记已写入的最大编号，某层已有更晚到达的请求写过时跳过该层；返回两层各自是否写了。
+// writeOmpConfigAt 以编号 seq 写入 omp 文本配置：用户层 files，setProject 时连同项目层 project（nil = 删除项目层），
+// ssh 非 nil 时连同 orb 内的 SSH 配置（M18，nil = 不动）。
+// 各部分各自记已写入的最大编号，某部分已有更晚到达的请求写过时跳过；返回两层各自是否写了。
 // 写入全程持有 ompMu，几路写入不会交错，清单（manifest）始终与该层最后一次写入一致。
-func (r *Runtime) writeOmpConfigAt(seq uint64, files []apigen.LinkCtlOmpHomeFile, project *apigen.LinkCtlProjectConfig, setProject bool) (wroteHome, wroteProject bool, err error) {
+func (r *Runtime) writeOmpConfigAt(seq uint64, files []apigen.LinkCtlOmpHomeFile, project *apigen.LinkCtlProjectConfig, setProject bool, ssh *apigen.LinkCtlSSHConfig) (wroteHome, wroteProject bool, err error) {
 	r.ompMu.Lock()
 	defer r.ompMu.Unlock()
 	if seq > r.ompWritten {
@@ -591,6 +592,13 @@ func (r *Runtime) writeOmpConfigAt(seq uint64, files []apigen.LinkCtlOmpHomeFile
 			return wroteHome, false, fmt.Errorf("project omp config: %w", err)
 		}
 		r.projWritten, wroteProject = seq, true
+	}
+	// 写在用户层之后：用户层的清单清理不会删掉刚写的 ssh.json
+	if ssh != nil && seq > r.sshWritten {
+		if err := r.writeSSH(ssh); err != nil {
+			return wroteHome, wroteProject, fmt.Errorf("ssh config: %w", err)
+		}
+		r.sshWritten = seq
 	}
 	return wroteHome, wroteProject, nil
 }

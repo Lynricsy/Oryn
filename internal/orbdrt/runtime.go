@@ -28,6 +28,7 @@ import (
 // 计划中固定的默认值。
 const (
 	DefaultEgressAddr      = "127.0.0.1:7811"
+	DefaultSSHAddr         = "127.0.0.1:7822" // M18：orb 内 SSH 网关的回环端口
 	DefaultMetricsInterval = 15 * time.Second
 	DefaultPollInterval    = 2 * time.Second
 	// DefaultStopGrace 是 SIGTERM / shutdown 时等待 omp 退出的默认时长（C4 第 6 步）。
@@ -49,6 +50,10 @@ type Config struct {
 	// EgressListener 非 nil 时就是 egress 的监听（New 不再自己监听 EgressAddr）：协调宿主在施加沙箱之前建好它，
 	// 沙箱内因此不需要任何 bind 权限（M9 L3）。
 	EgressListener net.Listener
+	// SSHAddr 是 orb 内 SSH 网关的监听地址（M18），默认 127.0.0.1:7822；测试用 127.0.0.1:0。
+	SSHAddr string
+	// SSHListener 非 nil 时就是 SSH 网关的监听（测试注入）。
+	SSHListener net.Listener
 	Version        string // orbd 版本（hello.orbdVersion）
 
 	MetricsInterval time.Duration // 默认 15s
@@ -136,6 +141,8 @@ func ConfigFromEnv(version string) (Config, error) {
 		// ORYN_EGRESS_ADDR 仅供测试：同一主机上并行多个 process 驱动的 orbd 时设 127.0.0.1:0
 		// （git 的 `http.<url>.proxy` 按实际端口写；控制面下发的 models.yml 仍指向固定的 7811）。
 		EgressAddr: os.Getenv("ORYN_EGRESS_ADDR"),
+		// ORYN_SSH_ADDR 同样仅供测试（同机并行多个 orbd）。
+		SSHAddr: os.Getenv("ORYN_SSH_ADDR"),
 		Version:    version,
 	}
 	var missing []string
@@ -194,6 +201,8 @@ type Runtime struct {
 	agentVersion string
 	log          *slog.Logger
 	egressLn     net.Listener
+	// sshLn 是 orb 内 SSH 网关的本机监听（M18）；runner、协调宿主或监听失败时为 nil。
+	sshLn net.Listener
 	// memLn 是 runner 的记忆专用出站监听（M16）：第一个带 memory 的 agent.start 时由 memoryEgressAddr 建立，
 	// 之后所有线程共用；orb 形态不用（记忆走 egressLn）。memMu 保护它。
 	memMu sync.Mutex
@@ -225,6 +234,8 @@ type Runtime struct {
 	ompSeq      uint64
 	ompWritten  uint64
 	projWritten uint64
+	// sshWritten 是 orb 内 SSH 配置已写入的最大编号（M18，与 ompWritten 同一编号序列）。
+	sshWritten uint64
 	// 以下为最近一次 setup.run / resume.run 的参数（手动重跑用）。
 	envMu       sync.Mutex
 	setupEnv    map[string]string
@@ -311,6 +322,9 @@ func New(cfg Config) (_ *Runtime, err error) {
 	}
 	if cfg.EgressAddr == "" {
 		cfg.EgressAddr = DefaultEgressAddr
+	}
+	if cfg.SSHAddr == "" {
+		cfg.SSHAddr = DefaultSSHAddr
 	}
 	if cfg.MetricsInterval <= 0 {
 		cfg.MetricsInterval = DefaultMetricsInterval
@@ -458,6 +472,9 @@ func New(cfg Config) (_ *Runtime, err error) {
 			return nil, fmt.Errorf("orbdrt: %w", err)
 		}
 	}
+	if !cfg.Coordinator && rs == nil {
+		r.sshLn = r.listenSSH()
+	}
 	r.loadSetupStatus()
 	r.ctx, r.cancel = context.WithCancel(context.Background())
 	r.agentVersion = detectAgentVersion(r.bins, cfg.AgentBin)
@@ -515,6 +532,9 @@ func (r *Runtime) Run(ctx context.Context) error {
 	if r.egressLn != nil {
 		wg.Go(func() { r.serveEgress(ctx, r.egressLn) })
 	}
+	if r.sshLn != nil {
+		wg.Go(func() { r.serveSSH(ctx, r.sshLn) })
+	}
 	if !r.cfg.Coordinator {
 		wg.Go(func() { r.metricsLoop(ctx) })
 		wg.Go(func() { _ = r.localSrv.Serve(r.local) })
@@ -541,6 +561,9 @@ func (r *Runtime) Run(ctx context.Context) error {
 	r.svc.killAll()
 	if r.egressLn != nil {
 		_ = r.egressLn.Close()
+	}
+	if r.sshLn != nil {
+		_ = r.sshLn.Close()
 	}
 	_ = r.localSrv.Close()
 	_ = r.local.Close()
@@ -797,6 +820,9 @@ func (r *Runtime) hello() apigen.LinkCtlHelloParams {
 	if r.dockerd != nil {
 		features = append(features, "docker")
 	}
+	if r.sshLn != nil {
+		features = append(features, "ssh") // M18：本机 SSH 网关端口，认识 setup.run / omphome.apply 的 ssh
+	}
 	if r.cfg.Coordinator {
 		features = []string{"coordinator", "omphome-apply", "library"}
 	}
@@ -871,7 +897,7 @@ func (r *Runtime) onRequest(_ context.Context, c *conn, method string, params js
 		}
 		// 项目层只在请求带了 projectConfig 时写（缺省 = 不动项目层）；协调宿主没有项目层。
 		setProject := p.ProjectConfig != nil && !r.cfg.Coordinator
-		if _, _, err := r.writeOmpConfigAt(r.nextOmpSeq(), p.OmpHome, p.ProjectConfig, setProject); err != nil {
+		if _, _, err := r.writeOmpConfigAt(r.nextOmpSeq(), p.OmpHome, p.ProjectConfig, setProject, p.SSH); err != nil {
 			return nil, ctlErr("failed", "%v", err)
 		}
 		return apigen.LinkCtlOkResult{Ok: true}, nil

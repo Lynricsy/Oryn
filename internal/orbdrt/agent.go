@@ -613,6 +613,9 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 		env["PI_RPC_EMIT_TITLE"] = "1"
 		env["PI_NOTIFICATIONS"] = "off"
 		env["ORYN_THREAD_ID"] = p.ThreadID
+		if r.sshLn != nil {
+			env["ORYN_SSH"] = "1" // M18：orb 扩展据此注册 ssh_exec_many 与 SSH 提示
+		}
 		// artifact 工具（M14，oryn-orb.ts）经这个控制口发 artifact.call：orb 是 orbd.sock，runner 是只认这一个方法的 runner.sock。
 		sock := orbsock.Path(r.home)
 		if r.runner != nil {

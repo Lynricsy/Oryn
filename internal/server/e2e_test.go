@@ -108,6 +108,7 @@ func newStack(t *testing.T, idle config.Idle, opts ...func(*config.Orynd)) *stac
 	t.Setenv("FAKEOMP_DELAY_MS", "15")
 	// process 驱动的 orbd 都在宿主上：egress 不能监听固定的 7811（与同机并行的测试或本机服务相撞时 orbd 起不来，线程一直等）
 	t.Setenv("ORYN_EGRESS_ADDR", "127.0.0.1:0")
+	t.Setenv("ORYN_SSH_ADDR", "127.0.0.1:0") // M18：SSH 网关端口同理
 	cfg := config.DefaultOrynd()
 	cfg.DataDir = t.TempDir()
 	cfg.PublicURL = "http://localhost"

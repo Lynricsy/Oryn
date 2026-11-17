@@ -118,7 +118,9 @@ type fakeCP struct {
 	agents chan *link.Stream
 	blobs  chan *link.Stream
 	// libs 收到 orbd 应 library.fetch 打开的 library 流（M13）。
-	libs   chan *link.Stream
+	libs chan *link.Stream
+	// sshs 收到 orbd 为 orb 内 ssh 连接打开的 ssh 流（M18）。
+	sshs   chan *link.Stream
 	egress *streamListener
 	// egressH 非 nil（http.Handler）时代替内置的回显处理 egress 流上的请求。
 	egressH atomic.Value
@@ -140,6 +142,7 @@ func newFakeCPWith(t *testing.T, useTLS bool) *fakeCP {
 		agents:  make(chan *link.Stream, 16),
 		blobs:   make(chan *link.Stream, 4),
 		libs:    make(chan *link.Stream, 4),
+		sshs:    make(chan *link.Stream, 4),
 		egress:  &streamListener{ch: make(chan net.Conn, 16), done: make(chan struct{})},
 	}
 	cp.token.Store(testToken)
@@ -238,6 +241,8 @@ func (cp *fakeCP) serve(sess *link.Session) {
 			cp.libs <- s
 		case link.StreamEgress:
 			cp.egress.ch <- s
+		case link.StreamSSH:
+			cp.sshs <- s
 		default:
 			_ = s.Close()
 		}
@@ -427,6 +432,7 @@ func startRuntime(t *testing.T, cp *fakeCP, mutate func(*Config)) *Runtime {
 		Home:            t.TempDir(),
 		AgentBin:        fakeompBin,
 		EgressAddr:      "127.0.0.1:0",
+		SSHAddr:         "127.0.0.1:0",
 		Version:         "test-orbd",
 		PollInterval:    200 * time.Millisecond,
 		MetricsInterval: time.Hour,

@@ -57,13 +57,13 @@ func TestOmpHomeWriteOrder(t *testing.T) {
 	setupSeq := r.nextOmpSeq()
 	applySeq := r.nextOmpSeq()
 
-	home, project, err := r.writeOmpConfigAt(applySeq, []apigen.LinkCtlOmpHomeFile{ompFile("config.yml", "new")}, nil, false)
+	home, project, err := r.writeOmpConfigAt(applySeq, []apigen.LinkCtlOmpHomeFile{ompFile("config.yml", "new")}, nil, false, nil)
 	require.NoError(t, err)
 	assert.True(t, home)
 	assert.False(t, project)
 
 	home, project, err = r.writeOmpConfigAt(setupSeq, []apigen.LinkCtlOmpHomeFile{ompFile("config.yml", "old"), ompFile("stale.md", "s")},
-		&apigen.LinkCtlProjectConfig{Files: []apigen.LinkCtlOmpHomeFile{ompFile("AGENTS.md", "p")}}, true)
+		&apigen.LinkCtlProjectConfig{Files: []apigen.LinkCtlOmpHomeFile{ompFile("AGENTS.md", "p")}}, true, nil)
 	require.NoError(t, err)
 	assert.False(t, home, "用户层已有更新的内容")
 	assert.True(t, project, "apply 没碰项目层，setup 照常写")
@@ -72,7 +72,7 @@ func TestOmpHomeWriteOrder(t *testing.T) {
 	assert.Equal(t, "p", readFile(t, filepath.Join(proj, "AGENTS.md")))
 
 	// 之后到达的请求照常写入。
-	home, _, err = r.writeOmpConfigAt(r.nextOmpSeq(), []apigen.LinkCtlOmpHomeFile{ompFile("config.yml", "later")}, nil, false)
+	home, _, err = r.writeOmpConfigAt(r.nextOmpSeq(), []apigen.LinkCtlOmpHomeFile{ompFile("config.yml", "later")}, nil, false, nil)
 	require.NoError(t, err)
 	assert.True(t, home)
 }
