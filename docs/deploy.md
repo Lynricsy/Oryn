@@ -911,3 +911,70 @@ ORYN_OWNERMEM_EVAL_DECIDE_KEY=<判断模型 key> ORYN_OWNERMEM_EVAL_BANK=oryn-ow
 - **端口转发**：默认只允许执行命令、交互 shell 与 SFTP。勾选「允许本地端口转发」后才接受 `ssh -L`；远程转发、agent 转发与 X11 一律拒绝。
 - **审计**：网关上的每次连接与命令、设置页的测试 / 终端 / 文件操作、agent 的 `ssh_exec_many` 都记一行审计（命令原文最多 4096 字节，交互式会话不录内容），保留 30 天，在设置页与 `oryn ssh audit` 查看。
 - **反代**：网页终端走 `wss://<域名>/api/v1/ssh/hosts/<id>/terminal`，第 3 节反代示例里的 `Upgrade` / `Connection` 头已经覆盖，无需另加。
+
+## 16. DevelopServerUS 本机生产实例
+
+2026-11-17 部署于 `/root/Oryn`，运行源码固定为 `def2968507297a0b38fec9197af955f5c81a262e`。生产源码在独立克隆 `src/` 构建，未覆盖本仓库的开发二进制、数据、服务或 `oryn-orb:dev` 镜像。
+
+### 入口与端口
+
+| 用途 | 地址 |
+|---|---|
+| 正式入口 | `https://oryn.ling.plus` |
+| 原始拼写别名 | `https://oyrn.ling.plus`，301 跳转正式入口并保留路径与查询参数 |
+| Portal | `https://t-<线程短码>-p<端口>.oryn.ling.plus` |
+| 控制面 HTTP | `127.0.0.1:26934`，不对公网开放 |
+| Orb link TLS | `172.30.240.1:20433`，仅生产专用网桥可访问 |
+| 协调沙箱出站代理 | `18549`，由协调宿主按需在自己的网络命名空间内监听 |
+| Hindsight API | `127.0.0.1:22004` |
+| 本地嵌入接口 | `127.0.0.1:22005/v1` |
+
+AliDNS 的 `oryn`、`oyrn`、`*.oryn` 均仅使用 default 线路 A 记录指向 `64.20.45.163`，TTL 600；不配置国内分流。1Panel 站点 12 承载主域名及通配域名，站点 13 承载别名。证书 5 覆盖三个名称，启用自动续期；面板每六小时检查，剩余有效期不足 30 天时续签并自动发布到绑定站点。部署时已演练一次重新签发和双站点自动发布。
+
+反代复用现有 OpenResty，不新建或重启反代容器。配置在 `/opt/1panel/www/conf.d/oryn.ling.plus.conf` 与 `/opt/1panel/www/sites/oryn.ling.plus/proxy/root.conf`：WebSocket、Host 透传、3600 秒超时、600 MiB 上传上限、请求与响应禁缓冲、禁缓存、关闭 gzip。未复制 Sub2API 专属接口拦截与国内分流规则。
+
+### 运行目录与维护
+
+| 路径 | 内容与权限边界 |
+|---|---|
+| `bin/`、`lib/`、`src/`、`etc/` | root 管理的二进制、钉定 Core、独立源码、配置及 provider 令牌；控制面账号不能修改 |
+| `data/` | `oryn-prod` 专属的控制面数据库、加密主密钥、附件、协调宿主与渲染目录 |
+| `cli/credentials.json` | root-only 的「本机生产运维」设备凭据；与开发 CLI 登录状态分离 |
+| `systemd/` | 生产服务单元，链接到 `/etc/systemd/system/` |
+| `hindsight/data/` | PostgreSQL bind mount，无新增命名数据卷 |
+| `hindsight/embed-data/` | 独立嵌入模型缓存 bind mount，不依赖评测容器 |
+| `hindsight/.env`、`hindsight/db.env` | 分离保存中转密钥与数据库密码，均为 0600 |
+| `ops/` | 构建清单、网络脚本、无密钥 DNS 回滚记录及 TLS 验收证据 |
+
+以下命令只操作生产实例：
+
+```bash
+systemctl status oryn-prod.service oryn-prod-provider.service oryn-prod-network.service
+/root/Oryn/oryn provider ls
+/root/Oryn/hindsight/dc ps
+curl --fail https://oryn.ling.plus/healthz
+```
+
+`/root/Oryn/oryn` 固定使用生产专用 `ORYN_CREDENTIALS`；不要直接用默认凭据运行生产 CLI。`/root/Oryn/hindsight/dc` 固定读取 `db.env`，更新 Hindsight 的中转配置时不得修改数据库密码。
+
+控制面以无 Docker 权限的专用账号 `oryn-prod` 运行，systemd 保留 `NoNewPrivileges`、只读系统与 HOME，并屏蔽宿主 `.omp`、`.ssh`、`Projects`。协调宿主使用非特权命名空间、Landlock 和 seccomp。Docker provider 单独以 root 运行，默认规格为 2 CPU / 4 GiB，预热池总上限为 1。
+
+生产 Orb 使用 `oryn-prod-orbs` 网桥（`orynp0`，`172.30.240.0/24`），关闭 ICC。`oryn-prod-network.service` 只为该网桥安装自有防火墙规则：宿主仅放行 Orb TLS，转发阻断私网、CGNAT 与链路本地地址；不修改现有开发网桥、SSH 或默认防火墙策略。
+
+### 模型、记忆与初始化
+
+生产配置导入了宿主的模型凭据与角色，不导入仅适用于宿主路径的扩展、技能仓库或 MCP 配置。模型目录不等于上游的实时可用性：`google/gemini-4-hydrogen` 返回无授权分组，`axonhub/gpt-5.4-mini` 返回 503 `no_available_providers`。因此生产的 `tiny`、`memory` 角色与 Hindsight 默认用途改用直接调用已验证成功的 `anthropic/claude-sonnet-5-5`。其他命名角色保持宿主配置，可在管理页调整。
+
+`exa`、`typesafe` 沿用宿主没有 `baseUrl` 的配置，导入时会产生 `env_fallback` 提示：这两个 provider 的真实密钥按现有实现以环境变量下发到 Orb，而不是由模型代理注入。不要把带这些凭据的 Orb 交给不可信用户。
+
+记忆服务使用独立 Compose 项目 `oryn-prod-hindsight`：Hindsight 1.2.1、pgroonga / pgvector PostgreSQL、本地 CPU `Qwen/Qwen3-Embedding-0.6B`（1024 维）。外部模型请求经控制面中转；重排使用 RRF。嵌入服务内存上限为 6 GiB：首次加载和预热曾超过 3 GiB 并被 cgroup OOM 终止，不能将「容器正在运行」当成模型已经就绪。
+
+首次所有者必须由本人在正式域名的初始化页面注册 Passkey，并保存一次性显示的恢复码；初始化链接不得写入本说明或任务日志。「本机生产运维」设备拥有完整管理权限，完成部署后可在设备管理中吊销；吊销后本机 CLI 需重新配对。GitHub OAuth、可选 FCM、外部 SSH 主机等个人集成需各自授权，部署不代建这些身份。
+
+### 备份与撤销边界
+
+务必异机备份 `data/master.key`；失去主密钥后无法解密控制面保存的模型、GitHub 和 SSH 凭据。控制面数据库应使用 SQLite 在线备份或停机一致性备份，记忆库使用 `pg_dump` 或第 14 节的 Hindsight 备份流程。
+
+全部新增业务 bind mount 的源目录均位于 `/root/Oryn`。Docker 的镜像、Orb 可写层与项目快照仍由现有 Docker data-root 管理，**不包含在 `/root/Oryn` 的普通目录备份里**，也不能用 `docker prune` 清理。宿主服务链接、系统账号，以及复用的 1Panel 站点、证书和面板数据库仍在各自系统目录；本次未为它们新增容器挂载。
+
+停止本实例只操作 `oryn-prod*` 单元和 `/root/Oryn/hindsight/dc`；不要停止 `oryn-dev-*`、Docker 或 OpenResty。DNS 回滚工具 `/root/Oryn/ops/dns-manage.py rollback` 仅处理本次新增记录，并会拒绝覆盖后续修改。撤销 DNS 或站点前应先确认已无客户端与 Portal 使用这些域名。
