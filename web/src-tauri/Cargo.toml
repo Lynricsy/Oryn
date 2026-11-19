@@ -63,6 +63,12 @@ notify-rust = "=4.19.0"
 # 自绘标题栏按 GTK 的 gtk-decoration-layout 决定按钮左右与顺序（gtk 已随 tao / wry 在依赖图里，版本与之一致）
 gtk = "0.18"
 
+# 红绿灯校准与 unified 空工具栏（chrome.rs）：Tauri 没有对应 API，直接调 AppKit；三者已随 tao / wry 在依赖图里，版本与之一致
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.5"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "objc2-core-foundation", "NSGeometry", "NSProcessInfo", "NSString"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "objc2-core-foundation", "NSButton", "NSControl", "NSGraphics", "NSResponder", "NSToolbar", "NSView", "NSWindow"] }
+
 [dev-dependencies]
 wiremock = "0.6"
 tempfile = "3"

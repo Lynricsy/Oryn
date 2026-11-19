@@ -114,6 +114,7 @@ const LAUNCHER_PAGE: &str = "launcher.html";
 /// `remote` 为已开放的服务器 origin（Android 的导航白名单用）。
 pub fn create_main(app: &AppHandle, remote: &RemoteOrigin) -> tauri::Result<WebviewWindow> {
     let loader = app.clone();
+    // 第一次取会探测布局，macOS 上顺带在主线程校准红绿灯（`chrome::lights`），下面建窗要用校准出的 y
     #[cfg(desktop)]
     let chrome = serde_json::to_value(crate::chrome::current()).ok();
     #[cfg(mobile)]
@@ -176,7 +177,7 @@ pub fn create_main(app: &AppHandle, remote: &RemoteOrigin) -> tauri::Result<Webv
         .hidden_title(true)
         .traffic_light_position(tauri::LogicalPosition::new(
             crate::chrome::TRAFFIC_LIGHT_X,
-            crate::chrome::TRAFFIC_LIGHT_Y,
+            crate::chrome::lights().y,
         ));
     #[cfg(all(desktop, not(target_os = "macos")))]
     let builder = builder.decorations(false);
@@ -194,7 +195,11 @@ pub fn create_main(app: &AppHandle, remote: &RemoteOrigin) -> tauri::Result<Webv
     };
     #[cfg(target_os = "ios")]
     let _ = remote;
-    builder.build()
+    let window = builder.build()?;
+    // Tauri 没有工具栏的 builder 选项：建好后（仍在主线程）再挂，换上与 `chrome.radius` 对应的大圆角外框
+    #[cfg(target_os = "macos")]
+    crate::chrome::attach_toolbar(&window);
+    Ok(window)
 }
 
 /// 连接页的 URL：读刚建好的窗口。
