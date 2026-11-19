@@ -14,6 +14,7 @@ import {
 	type WindowAction,
 	type WindowButton,
 } from "../../lib/window-chrome";
+import { useUi } from "../../state/ui";
 import { BrandMark } from "../ui/data";
 import { Icon, type IconName } from "../ui/icons";
 
@@ -144,31 +145,39 @@ const LAYOUT_TRANSITION =
 /** 一次布局过渡开始后逐帧跟多久（ms）：侧栏 / 面板开合是 260ms，留足余量；transitionend 时会再算一次。 */
 const FOLLOW_MS = 600;
 
+/** 按页头（`el` 的父元素）此刻的布局位置写让位宽度；页头不在顶部标题行里时不让位。 */
+function placeLead(el: HTMLElement, inset: { left: number; top: number }) {
+	const host = el.parentElement;
+	if (!host) return;
+	const pad = Number.parseFloat(getComputedStyle(host).paddingLeft) || 0;
+	const [x, y] = layoutPos(host);
+	const width =
+		y < inset.top
+			? Math.max(0, Math.round(inset.left - (x + host.clientLeft + pad)))
+			: 0;
+	el.style.width = `${width}px`;
+	el.style.display = width > 0 ? "" : "none";
+}
+
 /**
  * 红绿灯让位：宽度 = inset.left − 所在页头内容区左缘在窗口里的横坐标；不需要让位时（页头在红绿灯右边，或不在顶部标题行里）
  * 不显示，也不占页头的 gap。侧栏 / 面板开合时页头跟着卡片滑动，过渡期间逐帧重算并直接写到元素上（不经 React 重渲染）：
  * 页头内容始终停在红绿灯右侧，不会先滑到红绿灯底下、过渡结束时再跳过去。量的是页头（父元素），不是让位块自己——它隐藏时量不到位置。
+ * 过渡事件不是唯一触发：减少动效时过渡时长为 0，一个过渡事件都没有，所以 `layout`（侧栏 / 面板状态与 `show`）每次提交后
+ * 也在 layout effect 里同步重算一次，绘制前就落位。
  */
 function useLightsLead(
 	ref: { current: HTMLElement | null },
 	inset: { left: number; top: number },
 	active: boolean,
+	layout: string,
 ): void {
-	const { left: insetLeft, top: insetTop } = inset;
+	const { left, top } = inset;
+	// 过渡跟随：transitionrun 起逐帧重算，resize / transitionend / transitioncancel 各算一次
 	useLayoutEffect(() => {
 		const el = ref.current;
-		const host = el?.parentElement;
-		if (!active || !el || !host) return;
-		const apply = () => {
-			const pad = Number.parseFloat(getComputedStyle(host).paddingLeft) || 0;
-			const [x, y] = layoutPos(host);
-			const width =
-				y < insetTop
-					? Math.max(0, Math.round(insetLeft - (x + host.clientLeft + pad)))
-					: 0;
-			el.style.width = `${width}px`;
-			el.style.display = width > 0 ? "" : "none";
-		};
+		if (!active || !el) return;
+		const apply = () => placeLead(el, { left, top });
 		let raf = 0;
 		let until = 0;
 		const tick = () => {
@@ -188,7 +197,6 @@ function useLightsLead(
 			until = performance.now() + FOLLOW_MS;
 			if (!raf) raf = requestAnimationFrame(tick);
 		};
-		apply();
 		const events = ["transitionrun", "transitionend", "transitioncancel"];
 		window.addEventListener("resize", apply);
 		for (const type of events) document.addEventListener(type, follow, true);
@@ -198,7 +206,13 @@ function useLightsLead(
 			for (const type of events)
 				document.removeEventListener(type, follow, true);
 		};
-	}, [ref, insetLeft, insetTop, active]);
+	}, [ref, left, top, active]);
+	// 每次布局状态提交后同步落位（含挂载）：没有过渡（减少动效）时这是唯一的触发
+	// biome-ignore lint/correctness/useExhaustiveDependencies: layout 变化 = 页头可能已挪位，需要重新量
+	useLayoutEffect(() => {
+		const el = ref.current;
+		if (active && el) placeLead(el, { left, top });
+	}, [ref, left, top, active, layout]);
 }
 
 /**
@@ -211,7 +225,12 @@ export function ChromeLead({ show }: { show: boolean }): ReactNode {
 	const ref = useRef<HTMLSpanElement>(null);
 	const native =
 		!!v && !v.flags.fullscreen && v.chrome.controls === "native-left";
-	useLightsLead(ref, v?.chrome.inset ?? { left: 0, top: 0 }, native);
+	// 会挪动页头横坐标的状态：侧栏展开 / 收起 / 抽屉、面板开合 / 最大化 / 宽度，以及页头自己是不是最左侧表面
+	const layout = useUi(
+		(s) =>
+			`${s.sidebarCollapsed}|${s.sidebarOpen}|${s.panelOpen}|${s.panelMax}|${s.panelWidth}|${show}`,
+	);
+	useLightsLead(ref, v?.chrome.inset ?? { left: 0, top: 0 }, native, layout);
 	if (!v) return null;
 	if (native)
 		return (

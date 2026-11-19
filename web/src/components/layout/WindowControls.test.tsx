@@ -22,6 +22,7 @@ import {
 	type WindowFlags,
 } from "../../lib/window-chrome";
 import { getThreadStore } from "../../state/stores";
+import { uiStore } from "../../state/ui";
 import { ThreadHeader } from "../thread/ThreadHeader";
 import {
 	ChromeBar,
@@ -168,6 +169,30 @@ describe("各 controls 取值", () => {
 		expect(document.querySelector("[data-chrome-lead=native]")).toHaveStyle({
 			width: "84px",
 		});
+	});
+
+	it("native-left：侧栏收起 / 展开没有过渡事件（减少动效）时，状态提交后同步重算让位", () => {
+		install("native-left");
+		uiStore.setState({ sidebarCollapsed: false });
+		// 侧栏展开时页头在 309px 处，收起后贴到 21px（侧栏列宽归 0，没有 transitionrun / transitionend）
+		const left = vi
+			.spyOn(HTMLElement.prototype, "offsetLeft", "get")
+			.mockImplementation(function (this: HTMLElement) {
+				if (this.tagName !== "HEADER") return 0;
+				return uiStore.getState().sidebarCollapsed ? 21 : 309;
+			});
+		render(
+			<header>
+				<ChromeLead show={false} />
+			</header>,
+		);
+		const lead = document.querySelector("[data-chrome-lead=native]");
+		expect(lead).toHaveStyle({ display: "none" });
+		act(() => uiStore.setState({ sidebarCollapsed: true }));
+		expect(lead).toHaveStyle({ width: "63px" });
+		act(() => uiStore.setState({ sidebarCollapsed: false }));
+		expect(lead).toHaveStyle({ display: "none" });
+		left.mockRestore();
 	});
 
 	it("浏览器（没有标题栏适配）与 controls=none：什么都不渲染", () => {
