@@ -2,16 +2,16 @@
  * 角形降级的样式表改写（纯 CSSOM 操作，无布局读取）：把所有 border-*-radius 声明改写成
  * `calc((原值) * var(--sq-s, 1))`。
  *
- * 级联、:hover、主题变量、过渡都照原样生效，只是最终半径多乘一个逐元素的系数 --sq-s：
- * 超椭圆表面由 index.css「角形」段落设为包络圆系数（ROUND_SCALE），正圆与胶囊为 1。
- * 这样 JS 只需从计算值反推原半径（计算值 ÷ --sq-s），不必覆盖任何作者样式。
+ * 级联、:hover、主题变量、过渡、@keyframes 都照原样生效，只是最终半径多乘一个逐元素的系数 --sq-s：
+ * 超椭圆表面取注册的初始值（包络圆系数 ROUND_SCALE），正圆与胶囊由 index.css「角形」段落设为 1。
+ * 不覆盖任何作者样式，也不需要逐元素的 JS。
  */
 
-/** 逐元素的半径系数（index.css 设默认值，被等比缩小的盒子由 JS 写在行内）。 */
+/** 逐元素的半径系数（squircle-fallback.ts 注册，index.css 给正圆与胶囊设 1）。 */
 export const SCALE_VAR = "--sq-s";
 
 /** 改写的属性：简写 + 物理与逻辑长手。 */
-export const RADIUS_PROPERTIES = [
+const RADIUS_PROPERTIES = [
 	"border-radius",
 	"border-top-left-radius",
 	"border-top-right-radius",
@@ -73,9 +73,8 @@ export function scaleRadiusValue(value: string): string | null {
 	return changed ? parts.join(" ") : null;
 }
 
-/** 改写一组声明（样式规则、关键帧或元素的行内样式）；返回是否有改动。 */
-export function patchDeclarations(style: CSSStyleDeclaration): boolean {
-	let changed = false;
+/** 改写一组声明（样式规则或关键帧）。 */
+export function patchDeclarations(style: CSSStyleDeclaration): void {
 	// 先改简写：其长手随之更新，下面读到的长手已带 --sq-s，会被跳过
 	for (const prop of RADIUS_PROPERTIES) {
 		const value = style.getPropertyValue(prop);
@@ -83,38 +82,17 @@ export function patchDeclarations(style: CSSStyleDeclaration): boolean {
 		const scaled = scaleRadiusValue(value);
 		if (scaled === null) continue;
 		style.setProperty(prop, scaled, style.getPropertyPriority(prop));
-		changed = true;
 	}
-	return changed;
 }
 
-/** 递归改写规则列表（@layer、@media、@supports、@container、嵌套规则、@keyframes 都下钻）；返回改动的声明块数。 */
-export function patchRules(rules: CSSRuleList): number {
-	let count = 0;
+/** 递归改写规则列表（@layer、@media、@supports、@container、嵌套规则、@keyframes 都下钻）。 */
+export function patchRules(rules: CSSRuleList): void {
 	for (const rule of Array.from(rules)) {
 		if ("style" in rule && rule.style instanceof CSSStyleDeclaration) {
-			if (patchDeclarations(rule.style)) count++;
+			patchDeclarations(rule.style);
 		}
 		if ("cssRules" in rule && rule.cssRules instanceof CSSRuleList) {
-			count += patchRules(rule.cssRules);
+			patchRules(rule.cssRules);
 		}
 	}
-	return count;
-}
-
-/**
- * 改写一张样式表；跨源样式表读不到规则时跳过。返回该表当前的顶层规则数（-1 表示读不到）与本次改写的声明块数
- * （0 表示这张表没有要改写的半径：调用方不必为它重扫整篇文档）。
- */
-export function patchSheet(sheet: CSSStyleSheet): {
-	ruleCount: number;
-	patched: number;
-} {
-	let rules: CSSRuleList;
-	try {
-		rules = sheet.cssRules;
-	} catch {
-		return { ruleCount: -1, patched: 0 };
-	}
-	return { ruleCount: rules.length, patched: patchRules(rules) };
 }

@@ -4,7 +4,7 @@
  * docs/design/web-guidelines.md「超椭圆角形」。
  */
 
-/** 当前引擎是否需要降级：不认 `corner-shape: superellipse(1.6)`（Firefox、WebKitGTK、旧版 Safari / WKWebView）。 */
+/** 当前引擎是否需要降级：不认 `corner-shape: superellipse(1.6)`（Firefox、WebKitGTK、Safari / WKWebView 27.3 以前）。 */
 export function needsSquircleFallback(
 	css: Pick<typeof CSS, "supports"> | undefined = globalThis.CSS,
 ): boolean {

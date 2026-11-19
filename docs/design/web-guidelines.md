@@ -55,15 +55,15 @@ M3.5 重设计之后的长期约定，目的是防止后续开发让设计变差
   - CSS 里用 `border-radius: 50%` 写的圆，要在**自己的规则里**声明 `corner-shape: round`（例如 `tool-render.css` 的 `.tv-spin`）；
   - OrbBead、Ring 是 SVG，不受这条规则影响。
 - 新增圆形元素（头像、状态点、转圈、小圆钮）时，在 Chromium 下截图确认它是正圆。
-- 浏览器支持：Chromium 139+ 原生支持。不认 `corner-shape` 的引擎（Firefox、WebKitGTK 桌面 App、旧版 Safari / WKWebView）由 `lib/squircle.ts` 在挂载前做特性检测（`CSS.supports('corner-shape', 'superellipse(1.6)')`），只在不支持时动态加载 `lib/squircle-fallback.ts`（独立分块，原生路径不下载）。降级画的是同一条 n = 2^1.6 的超椭圆，不是 Figma 式平滑圆角：
-  - 样式表里所有 `border-*-radius` 被改写成「原值 × `var(--sq-s, 1)`」。`--sq-s` 由引擎注册成不继承的自定义属性，初始值就是包络圆系数（≈0.698，即 `squircle-geometry.ts` 的 `ROUND_SCALE`），`index.css` 角形段落把正圆与胶囊设为 1。原生圆角因此缩成恰好包住超椭圆的圆，背景、投影、焦点环、玻璃模糊照常绘制和过渡；
-  - JS 再给每个盒子（含 `::before` / `::after`）加 `clip-path`，只挖掉圆与超椭圆之间的薄片；实色边框改由 SVG 环带（`border-image`）画，外缘、内缘都是超椭圆。它们写成引擎自己的构造样式表里的共享规则，元素上只挂一个 `data-sq<编号>` 属性，同一组声明只解析一次。环带是九宫格，与盒子尺寸无关；裁剪默认是按尺寸写死的 `path()`（样式重算最便宜），尺寸连续变化过的盒子（跟着侧栏变宽的卡片、流式增高的消息）改用百分比坐标的 `polygon()`，之后变尺寸不必重写；
-  - 层叠或模糊会被 `clip-path` 改变的盒子（透明玻璃宿主、包着 fixed / z-index 后代的元素、带遮罩的模糊层等）不剪，停在包络圆，偏差 ≤ 1.4% 半径。
-  - 尺寸连续变化（侧栏、面板开合，流式消息增高）期间，仍与尺寸有关的盒子（`path()` 裁剪、半径之和超过边长被等比缩小、贴边装不下九宫格的环带）退回包络圆，稳定 150ms 后补上；`polygon()` 裁剪与九宫格环带照常保留。边框色过渡与边框动画期间用原生边框。切换主题后的下一帧按新颜色换上环带（其间环带停在旧颜色一帧），其余属性之后每帧最多花 3ms 逐个重读。
-- **新元素不需要做任何事**：发现机制是 MutationObserver + ResizeObserver + 样式表扫描，新组件、新样式表、行内半径、悬停 / 聚焦 / 主题切换 / 半径过渡都会自动跟上。需要遵守的只有：
-  - 业务裁剪不要用 `clip-path` 圆角（作者写了 `clip-path` 的元素降级引擎不碰，会退回包络圆）；裁剪用 `overflow: hidden` + `border-radius`；
-  - 半径必须写在 `border-radius` 系列属性里（不要用 SVG 遮罩、`mask` 模拟圆角）；圆形用 `rounded-full` 或 `50%`；
-  - 不要手写 `--sq-s`，不要在组件里设 `border-image`（降级引擎用它画边框），也不要用 `data-sq<数字>` 形式的属性名。
+- 浏览器支持：Chromium 139+、Safari 27.3+ 原生支持。不认 `corner-shape` 的引擎（Firefox、WebKitGTK 桌面 App、Safari / WKWebView 27.3 以前，即当前的 macOS 桌面 App）由 `lib/squircle.ts` 在挂载前做特性检测（`CSS.supports('corner-shape', 'superellipse(1.6)')`），只在不支持时动态加载 `lib/squircle-fallback.ts`（独立分块，原生路径不下载；系统 WebKit 升到 27.3 后 macOS 桌面 App 自然走原生）。降级只画**包络圆**，不逐元素剪出超椭圆：
+  - 样式表里所有 `border-*-radius` 被改写成「原值 × `var(--sq-s, 1)`」。`--sq-s` 由引擎注册成不继承的自定义属性，初始值就是包络圆系数（≈0.698，即 `squircle-geometry.ts` 的 `ROUND_SCALE`），`index.css` 角形段落把正圆与胶囊设为 1。原生圆角因此缩成恰好包住超椭圆、在 45° 对角线上与它相切的圆，背景、边框、投影、焦点环、玻璃模糊照常绘制和过渡，都跟着同一个圆走。
+  - 为什么只用包络圆：它与 superellipse(1.6) 的最大法向偏差是 1.42% 半径（r = 36px 时 0.51px，r = 18px 时 0.26px），肉眼分不出。以前在此之上还用 `clip-path` 剪掉圆与超椭圆之间的薄片、用 SVG `border-image` 画超椭圆边框，只换来亚像素精度，却有两个实机问题：`clip-path` 只剪得到盒内，`box-shadow` 仍按包络圆画在盒外，薄片处漏出投影，看起来是「超椭圆下面还垫着一层普通圆角」；逐元素跟踪（ResizeObserver / MutationObserver / 共享规则属性切换）让侧栏与面板开合动画每帧的样式 + 布局耗时约翻 5 倍。现在带投影的盒子只有一层圆角，动画期间引擎什么都不做。
+  - 接受的差别：相邻半径之和超过边长时（CSS 等比缩小规则），浏览器按缩放后的包络圆半径等比缩小，近胶囊的形状比原生超椭圆略圆；行内样式（`style` 属性、React `style`、Web Animations 关键帧）里的半径不改写，停在原值的普通圆角（略圆于超椭圆）。目前行内半径只有 `DockPill` 变形动画的端点与头像裁剪框的百分比半径，两者都由计算值换算而来（已经乘过 `--sq-s`），本来就是包络圆，无需处理。
+  - 重扫时机只有样式表可能变化的时候：`<head>` 子树变动（`<style>` 增删与改文本，即 Vite 热更新、CodeMirror 主题）、`<link>` 加载完成（懒加载的 CSS 分块）、`<body>` 直接子节点里新增的 `<style>` / `<link>`；按顶层规则数跳过没变过的表。不读布局、不碰元素。
+- **新元素不需要做任何事**：新组件、新样式表、悬停 / 聚焦 / 主题切换 / 半径过渡都由浏览器在包络圆上照常处理。需要遵守的只有：
+  - 半径必须写在样式表的 `border-radius` 系列属性里（不要用 SVG 遮罩、`mask`、`clip-path` 模拟圆角，也不要把固定半径写进行内样式）；圆形用 `rounded-full` 或 `50%`；
+  - 动态插入的样式放进 `<head>`（各库默认如此）；深埋在 `<body>` 里的 `<style>` 要等下次重扫才会被改写；
+  - 不要手写 `--sq-s`。
   - 改动角形规则后用 `/tmp` 下的对比场景在 Chromium 原生 / 降级下截图对比。降级的模拟方式：让 `CSS.supports` 对 corner-shape 返回 false，并把产物 CSS 里的 `corner-shape` 声明删掉（与真实的不支持引擎一样，解析时丢弃）。
 
 ### 字号

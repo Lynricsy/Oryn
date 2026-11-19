@@ -3,15 +3,10 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { installSquircle, needsSquircleFallback } from "./squircle";
-import type * as Fallback from "./squircle-fallback";
-import { colorAlpha, styleChangeCascades } from "./squircle-fallback";
 import { patchDeclarations, scaleRadiusValue } from "./squircle-patch";
 
 const install = vi.hoisted(() => vi.fn());
-vi.mock("./squircle-fallback", async (importOriginal) => ({
-	...(await importOriginal<typeof Fallback>()),
-	installSquircleFallback: install,
-}));
+vi.mock("./squircle-fallback", () => ({ installSquircleFallback: install }));
 
 afterEach(() => {
 	vi.unstubAllGlobals();
@@ -81,7 +76,7 @@ describe("scaleRadiusValue", () => {
 		);
 	});
 
-	it("patchDeclarations 保留 !important，并报告是否改动", () => {
+	it("patchDeclarations 保留 !important，重复改写不再套一层", () => {
 		const values = new Map<string, [string, string]>([
 			["border-radius", ["12px", "important"]],
 			["border-top-left-radius", ["50%", ""]],
@@ -92,53 +87,12 @@ describe("scaleRadiusValue", () => {
 			setProperty: (p: string, v: string, prio: string) =>
 				values.set(p, [v, prio]),
 		} as unknown as CSSStyleDeclaration;
-		expect(patchDeclarations(style)).toBe(true);
+		patchDeclarations(style);
+		patchDeclarations(style);
 		expect(values.get("border-radius")).toEqual([
 			"calc((12px) * var(--sq-s, 1))",
 			"important",
 		]);
 		expect(values.get("border-top-left-radius")?.[0]).toBe("50%");
-		expect(patchDeclarations(style)).toBe(false);
-	});
-});
-
-describe("colorAlpha", () => {
-	it("读出计算值颜色的不透明度", () => {
-		expect(colorAlpha("transparent")).toBe(0);
-		expect(colorAlpha("rgb(1, 2, 3)")).toBe(1);
-		expect(colorAlpha("rgba(0, 0, 0, 0)")).toBe(0);
-		expect(colorAlpha("rgba(0, 0, 0, 0.5)")).toBe(0.5);
-		expect(colorAlpha("oklch(0.99 0.003 235)")).toBe(1);
-		expect(colorAlpha("oklch(0.99 0.003 235 / 0.4)")).toBe(0.4);
-		expect(colorAlpha("color(srgb 1 1 1 / 40%)")).toBe(0.4);
-	});
-});
-
-describe("styleChangeCascades：行内样式变化是否可能波及后代", () => {
-	const check = (old: string | null, now: string) => {
-		const el = document.createElement("div");
-		el.style.cssText = now;
-		return styleChangeCascades(
-			old,
-			el.style,
-			document.createElement("div").style,
-		);
-	};
-
-	it("只改不继承的属性（虚拟列表的 transform / top / 宽高）不波及", () => {
-		expect(
-			check(
-				"transform: translateY(10px); top: 0px; --gap: 4px",
-				"transform: translateY(80px); top: 3px; width: 10px; --gap: 4px",
-			),
-		).toBe(false);
-		expect(check(null, "height: 20px")).toBe(false);
-	});
-
-	it("自定义属性、color、font-size 变了，或增删了它们，都算波及", () => {
-		expect(check("--r: 8px", "--r: 12px")).toBe(true);
-		expect(check("--r: 8px", "")).toBe(true);
-		expect(check(null, "color: red")).toBe(true);
-		expect(check("font-size: 12px", "font-size: 14px")).toBe(true);
 	});
 });
