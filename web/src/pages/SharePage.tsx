@@ -436,7 +436,7 @@ function ShareView({
 				<AssetUrlContext.Provider value={assets}>
 					<TranscriptContext.Provider value={ctx}>
 						<div
-							className={`flex min-h-0 flex-1 flex-col overflow-hidden ${bp !== "compact" ? "rounded-[calc(var(--r-xl)-1px)]" : ""}`}
+							className={`flex min-h-0 flex-1 flex-col overflow-hidden ${bp !== "compact" ? "rounded-[calc(var(--sheet-r)-1px)]" : ""}`}
 						>
 							{ready ? (
 								<Transcript

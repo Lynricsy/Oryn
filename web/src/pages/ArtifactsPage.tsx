@@ -120,7 +120,7 @@ function TitleBar({ trash }: { trash: boolean }): ReactNode {
 			data-window-drag=""
 			className={`flex h-12 shrink-0 items-center gap-2 px-3 ${trash ? "border-border border-b" : ""}`}
 		>
-			{chromeLeft && <ChromeLead />}
+			<ChromeLead show={chromeLeft} />
 			{sidebarToggle && (
 				<IconButton
 					icon={bp === "expanded" ? "sidebar" : "menu"}
@@ -725,7 +725,7 @@ function OverviewScreen(): ReactNode {
 									type="button"
 									data-kind={k}
 									aria-pressed={view.kind === k}
-									className={`${tabClass(view.kind === k)} h-8 rounded-lg px-3 text-sm ${view.kind === k ? "bg-hover" : ""}`}
+									className={`${tabClass(view.kind === k)} h-8 px-3 text-sm ${view.kind === k ? "bg-hover" : ""}`}
 									onClick={() => setView((v) => ({ ...v, kind: k }))}
 								>
 									{k === "all" ? t("artifacts.page.all") : t(kindLabelKey(k))}

@@ -264,8 +264,9 @@ const LAUNCHER_SERVER = "https://oryn.example.com";
 
 /**
  * 无系统标题栏的假桌面壳（bridge 3）：`__ORYN_HOST__.chrome` 按平台给布局，`host_window` 应答窗口状态。
- * macOS 的红绿灯由系统画、浏览器里没有：这里在窗口坐标 (22, 24) 起画三个 12px 圆点占位（与 chrome.rs 的
- * trafficLightPosition 同一位置、按钮框 14×16、间距 20），只为看留白与对齐，不是页面的一部分。
+ * macOS 的红绿灯由系统画、浏览器里没有：这里在窗口坐标 (22, 24) 起画三个 12px 圆点占位（壳校准后的目标位置：按钮框 14×16、
+ * 竖直中线 32、间距 20），只为看留白与对齐，不是页面的一部分。macOS 按 26 起的系统给 `radius: 26`（挂了 unified 工具栏的窗口外框），
+ * 截图本身是直角的，看的是卡片按 26 − 8 同心后的圆角。
  * `collapsed`：侧栏收起（写 localStorage）；`launcher`：连接页（另应答 `launcher_state`）。
  */
 function chromeShell(
@@ -283,6 +284,7 @@ function chromeShell(
 					controls: "native-left",
 					buttons: [],
 					inset: { top: 48, left: 84, right: 0 },
+					radius: 26,
 				}
 			: {
 					platform: platform === "windows" ? "windows" : "linux",

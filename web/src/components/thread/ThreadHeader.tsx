@@ -621,7 +621,7 @@ export function ThreadHeader({
 				<i />
 				<i />
 			</div>
-			{chromeLeft && <ChromeLead />}
+			<ChromeLead show={chromeLeft} />
 			{(sidebarToggle || sidebarCollapsed) && (
 				<IconButton
 					icon={sidebarToggle ? "menu" : "sidebar"}

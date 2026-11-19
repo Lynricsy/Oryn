@@ -1,8 +1,10 @@
 /**
  * 桌面壳的自绘标题栏（无系统标题栏，bridge ≥ 3）：
- * - 布局取壳注入的 `__ORYN_HOST__.chrome = {platform, controls, buttons, inset}`（首帧前就在，页面直接按它留位置）。
+ * - 布局取壳注入的 `__ORYN_HOST__.chrome = {platform, controls, buttons, inset, radius}`（首帧前就在，页面直接按它留位置）。
  *   `controls`：`native-left` = macOS 原生红绿灯在左上（`inset.left` 是页头要让出的宽度）；`custom-left` / `custom-right` =
  *   页面在左 / 右自绘 `buttons`（按给出的顺序）；`none` 或没有 `chrome` = 什么都不做。
+ *   `radius`：窗口外框圆角（macOS 26 挂了 unified 工具栏时 26；0 = 未知）。大于 0 时写到根元素的 `--win-r` / `data-win-r`，
+ *   index.css 据此让三栏卡片与窗口同心。
  * - 窗口状态（最大化 / 全屏 / 聚焦）：挂载时 `host_window{action:"state"}` 取一次，之后壳经 `oryn:host` 的 `window` 事件推送。
  * - 动作：`host_window{action}`（minimize / toggleMaximize / close / startDrag）；关闭等同原生关闭（壳按「关闭时隐藏到托盘」处理）。
  * - 拖动区：带 `data-window-drag` 的元素整棵子树（`"false"` 关闭）。按住左键移动超过 3px 才开始拖动、双击切换最大化；
@@ -34,6 +36,8 @@ export interface HostChrome {
 	/** 自绘按钮从左到右的顺序；原生控件时为空。 */
 	buttons: WindowButton[];
 	inset: ChromeInset;
+	/** 窗口外框圆角（CSS px），0 = 未知，页面保持设计令牌。 */
+	radius: number;
 }
 
 export interface WindowFlags {
@@ -90,6 +94,7 @@ export function parseChrome(v: unknown): HostChrome | null {
 		controls,
 		buttons,
 		inset: { top: px(inset.top), left: px(inset.left), right: px(inset.right) },
+		radius: px(o.radius),
 	};
 }
 
@@ -197,6 +202,11 @@ export function createWindowChrome(win: Window): WindowChrome | null {
 	const invoke: Invoke | null = findInvoke(win);
 	const chrome = parseChrome(meta.chrome);
 	if (!invoke || !chrome || chrome.controls === "none") return null;
+	const root = win.document?.documentElement;
+	if (chrome.radius > 0 && root) {
+		root.style.setProperty("--win-r", `${chrome.radius}px`);
+		root.dataset.winR = "";
+	}
 
 	let flags: WindowFlags = {
 		maximized: false,

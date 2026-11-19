@@ -8,6 +8,7 @@
  */
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
+	memo,
 	type ReactNode,
 	useCallback,
 	useEffect,
@@ -604,7 +605,11 @@ function TurnHead({
 	);
 }
 
-export function Transcript({
+/**
+ * memo：线程页因页头 / 面板 / 侧栏开合等与转录无关的状态重渲染时（每次 260ms 开合的第一帧），不必重算整段虚拟列表；
+ * 条目变化时 `items` 换引用照常更新。调用方须让 `footer`、回调保持稳定（useMemo / useCallback）。
+ */
+export const Transcript = memo(function Transcript({
 	items,
 	footer,
 	insetTop = 0,
@@ -1060,4 +1065,4 @@ export function Transcript({
 			)}
 		</div>
 	);
-}
+});

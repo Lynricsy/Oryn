@@ -542,9 +542,12 @@ export function Radio({ className = "", ...props }: ComponentProps<"input">) {
 	);
 }
 
-/** 标签页按钮样式；不带滑块的场合选中再加 `bg-hover`。 */
+/**
+ * 标签页按钮样式；不带滑块的场合选中再加 `bg-hover`。胶囊形：标签条大多贴着纸面 / 面板的大圆角（32px 左右、内缩 8–10px），
+ * 同心的半径比 28px 高的按钮的一半还大，取胶囊才与外角同心（以前的 12px 圆角在角落里显得没处理）。
+ */
 export function tabClass(selected: boolean): string {
-	return `relative z-10 inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors duration-150 ${selected ? "text-fg" : "text-muted hover:text-fg"}`;
+	return `relative z-10 inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium transition-colors duration-150 ${selected ? "text-fg" : "text-muted hover:text-fg"}`;
 }
 
 /** SVG 迷你曲线；values 为 0..max。横向拉伸铺满容器宽度（描边不随拉伸变粗），下方渐隐填充，颜色取 currentColor。 */

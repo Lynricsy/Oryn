@@ -81,11 +81,19 @@ import { PANEL_MIN_WIDTH, uiStore, useSidebarShown, useUi } from "../state/ui";
 
 /** 面板列收起 / 展开的时长，与左栏（AppShell）一致 */
 const PANEL_ANIM_MS = 260;
+/**
+ * 面板列实际宽度：用户拖出的宽度（--pw），但给转录至少留 MAIN_MIN（窄窗口里面板开着时转录不被挤成一条）；
+ * 实在放不下时面板最窄到 PANEL_FLOOR。100cqw 是线程页根（@container）的宽度，内外两层用同一个值，
+ * 内层固定宽度、开合动画时不挤压面板内容。
+ */
+const PANEL_FLOOR = 300;
+const MAIN_MIN = 360;
+const PANEL_W = `min(var(--pw), max(${PANEL_FLOOR}px, calc(100cqw - ${MAIN_MIN + 8}px)))`;
 /** 窄屏同级标签条那一行的高度（px，medium）：转录顶部留白与页头纱都加上它。 */
 export const TAB_ROW = 40;
-/** 贴屏幕边缘表面的同心圆角（`index.css` 的 `.dc-*`）：纸面 / 托盘都是 xl 圆角。 */
+/** 贴屏幕边缘表面的同心圆角（`index.css` 的 `.dc-*`）：纸面是 --sheet-r（macOS 26 壳里与窗口外框同心），托盘是 xl 圆角。 */
 export const DC_SHEET_RIGHT =
-	"dc-tr dc-br [--dc-r:var(--r-xl)] [--dc-gap:0.5rem]";
+	"dc-tr dc-br [--dc-r:var(--sheet-r)] [--dc-gap:0.5rem]";
 const DC_DOCK_BOTTOM = "dc-bl dc-br [--dc-r:var(--r-xl)] [--dc-gap:0.75rem]";
 
 /** 面板左缘拖拽条：拖动改宽度（面板贴右缘，宽度 = 视口右缘 − 指针），方向键微调。 */
@@ -280,6 +288,11 @@ export function ThreadScreen({
 			}),
 		[entries, leaf, liveMessage, liveTools, liveToolOrder, notices],
 	);
+	// 转录是 memo 的：footer 每次新建元素会让它跟着页面的每次重渲染重算
+	const transcriptFooter = useMemo(
+		() => <WorkingFooter threadId={threadId} />,
+		[threadId],
+	);
 	const navigate = useNavigate();
 	const ctx: TranscriptContextValue = useMemo(
 		() => ({
@@ -334,6 +347,17 @@ export function ThreadScreen({
 	// 转录可见时它在最左；面板列展开时面板在最右，最大化时面板也在最左；窄屏切到面板标签时同级面板两端都占
 	const chromeLeft = !sidebarShown && !dual;
 	const transcriptShown = !panelFull && onAgent;
+	// RightPanel 是 memo 的：这几组 props 只在真正变化时换引用（面板列的 left 只在最大化时才跟侧栏有关）
+	const panelLeft = chromeLeft && panelFull;
+	const panelColumnChrome = useMemo(
+		() => ({ left: panelLeft, right: showPanelColumn }),
+		[panelLeft, showPanelColumn],
+	);
+	const peerChrome = useMemo(
+		() => ({ left: chromeLeft, right: true }),
+		[chromeLeft],
+	);
+	const closePanel = useCallback(() => uiStore.getState().setPanel(false), []);
 
 	// 输入坞高度（含软键盘内边距）→ 转录底部留白，最后一条消息不被玻璃托盘遮住。
 	// 收成胶囊时不改留白（改了会让内容高度跳动、把阅读位置推到底部又触发展开），只另记胶囊那一档的高度给「回到底部」定位
@@ -416,7 +440,7 @@ export function ThreadScreen({
 	}, [morph]);
 
 	return (
-		<div className="relative flex h-full min-w-0 flex-1">
+		<div className="@container relative flex h-full min-w-0 flex-1">
 			{/*
 			 * 对话纸面不做圆角裁剪（overflow-visible）：Chromium 里圆角 overflow 裁剪的后代 backdrop-filter 上的 mask-image
 			 * 会被忽略，页头渐进模糊就成了整条硬切的色带。圆角裁剪只给转录（下面的 morph-late 层），页头纱与输入坞渐隐各自收角。
@@ -440,7 +464,7 @@ export function ThreadScreen({
 					<TranscriptContext.Provider value={ctx}>
 						{/* morph-late：首条消息过渡时，气泡与「正在启动 agent…」在托盘走完约六成时淡入 */}
 						<div
-							className={`morph-late flex min-h-0 flex-1 flex-col overflow-hidden ${expanded ? "rounded-[calc(var(--r-xl)-1px)]" : ""} ${expanded && !showPanelColumn && edgeRight ? "dc-tr dc-br [--dc-r:calc(var(--r-xl)_-_1px)] [--dc-gap:calc(0.5rem_+_1px)]" : ""}`}
+							className={`morph-late flex min-h-0 flex-1 flex-col overflow-hidden ${expanded ? "rounded-[calc(var(--sheet-r)-1px)]" : ""} ${expanded && !showPanelColumn && edgeRight ? "dc-tr dc-br [--dc-r:calc(var(--sheet-r)_-_1px)] [--dc-gap:calc(0.5rem_+_1px)]" : ""}`}
 						>
 							{!snapshotReceived && entries.length === 0 ? (
 								<div className="flex flex-1 items-center justify-center text-muted">
@@ -453,7 +477,7 @@ export function ThreadScreen({
 							) : (
 								<Transcript
 									items={model.items}
-									footer={<WorkingFooter threadId={threadId} />}
+									footer={transcriptFooter}
 									insetTop={topInset + bleedTop}
 									insetBottom={dockH + 16}
 									onReadDirection={collapsible ? onReadDirection : undefined}
@@ -614,11 +638,7 @@ export function ThreadScreen({
 			</div>
 			{peer && !onAgent && (
 				<Sheet inset={false} className="h-full min-w-0 flex-1">
-					<RightPanel
-						threadId={threadId}
-						peer
-						chrome={{ left: chromeLeft, right: true }}
-					/>
+					<RightPanel threadId={threadId} peer chrome={peerChrome} />
 				</Sheet>
 			)}
 			{dual && (
@@ -644,23 +664,25 @@ export function ThreadScreen({
 							? "ml-0 w-0 shrink-0"
 							: panelFull
 								? "ml-2 flex-1"
-								: "ml-2 w-[var(--pw)] shrink-0"
+								: "ml-2 w-[var(--pw-eff)] shrink-0"
 					}`}
-					style={{ "--pw": `${panelWidth}px` } as CSSProperties}
+					style={
+						{
+							"--pw": `${panelWidth}px`,
+							"--pw-eff": PANEL_W,
+						} as CSSProperties
+					}
 				>
 					{column.shown && !panelFull && <PanelResizer />}
 					<div
-						className={`h-full transition-opacity duration-[260ms] ease-out ${panelFull ? "w-full" : "w-[var(--pw)]"} ${column.shown ? "opacity-100" : "opacity-0"}`}
+						className={`h-full transition-opacity duration-[260ms] ease-out ${panelFull ? "w-full" : "w-[var(--pw-eff)]"} ${column.shown ? "opacity-100" : "opacity-0"}`}
 					>
 						{/* 面板列是最右侧纸面：右上 / 右下角离屏幕边 8px */}
 						<Sheet inset className={`h-full ${DC_SHEET_RIGHT}`}>
 							<RightPanel
 								threadId={threadId}
-								onClose={() => uiStore.getState().setPanel(false)}
-								chrome={{
-									left: chromeLeft && panelFull,
-									right: showPanelColumn,
-								}}
+								onClose={closePanel}
+								chrome={panelColumnChrome}
 							/>
 						</Sheet>
 					</div>

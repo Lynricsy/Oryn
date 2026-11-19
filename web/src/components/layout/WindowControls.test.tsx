@@ -56,6 +56,7 @@ function install(
 				left: controls === "native-left" ? 84 : 0,
 				right: 0,
 			},
+			radius: 0,
 		},
 		getFlags: () => f,
 		subscribe: (cb) => {
@@ -93,7 +94,7 @@ function Shell() {
 		<>
 			<SidebarChromeRow />
 			<header>
-				<ChromeLead />
+				<ChromeLead show />
 			</header>
 			<ChromeBar />
 		</>
@@ -138,6 +139,32 @@ describe("各 controls 取值", () => {
 		expect(document.querySelector("[data-window-control]")).toBeNull();
 		expect(document.querySelector("[data-chrome-row=sidebar]")).toBeNull();
 		// jsdom 不做布局：页头左缘按 0 算，让出 inset.left 整段
+		expect(document.querySelector("[data-chrome-lead=native]")).toHaveStyle({
+			width: "84px",
+		});
+	});
+
+	it("native-left：页头不在顶部标题行里（下面板、对话框里的页头）时不让位", () => {
+		install("native-left");
+		const top = vi
+			.spyOn(HTMLElement.prototype, "offsetTop", "get")
+			.mockImplementation(function (this: HTMLElement) {
+				return this.tagName === "HEADER" ? 60 : 0;
+			});
+		render(<Shell />);
+		expect(document.querySelector("[data-chrome-lead=native]")).toHaveStyle({
+			display: "none",
+		});
+		top.mockRestore();
+	});
+
+	it("native-left：页头此刻不是最左侧表面（show=false）也挂着让位，开合途中滑过红绿灯时由它让开", () => {
+		install("native-left");
+		render(
+			<header>
+				<ChromeLead show={false} />
+			</header>,
+		);
 		expect(document.querySelector("[data-chrome-lead=native]")).toHaveStyle({
 			width: "84px",
 		});
@@ -281,14 +308,23 @@ describe("侧栏品牌行", () => {
 
 	it("macOS：与红绿灯同一行——48px 行高、左端让到 inset.left、侧栏贴着窗口上缘时补内边距对齐红绿灯中线", () => {
 		install("native-left");
-		// 侧栏玻璃离窗口上缘 8px（宽屏三栏）：行高正好 48，不补内边距
+		// 侧栏玻璃离窗口上缘 8px（宽屏三栏）：行高正好 48，不补内边距。位置按布局偏移量（offsetLeft / offsetTop）算
+		const top = vi
+			.spyOn(HTMLElement.prototype, "offsetTop", "get")
+			.mockImplementation(function (this: HTMLElement) {
+				return this.hasAttribute("data-brand-row") ? 8 : 0;
+			});
+		const left = vi
+			.spyOn(HTMLElement.prototype, "offsetLeft", "get")
+			.mockImplementation(function (this: HTMLElement) {
+				return this.hasAttribute("data-lights-reserve") ? 24 : 0;
+			});
+		// 侧栏收起时整块平移出屏，屏幕坐标是负的：让位不能跟着变宽（否则品牌行被推回屏幕里漏出来）
 		const rect = vi
 			.spyOn(HTMLElement.prototype, "getBoundingClientRect")
-			.mockImplementation(function (this: HTMLElement) {
-				const top = this.hasAttribute("data-brand-row") ? 8 : 0;
-				const left = this.hasAttribute("data-lights-reserve") ? 24 : 0;
-				return DOMRect.fromRect({ x: left, y: top, width: 10, height: 10 });
-			});
+			.mockReturnValue(
+				DOMRect.fromRect({ x: -300, y: 0, width: 10, height: 10 }),
+			);
 		const { row, shift } = brandRow();
 		expect(row).toHaveAttribute("data-brand-row", "lights");
 		expect(row).toHaveStyle({ height: "48px", paddingTop: "0px" });
@@ -296,6 +332,8 @@ describe("侧栏品牌行", () => {
 			width: "73px",
 		});
 		expect(shift).toHaveAttribute("data-brand-shift", "lights");
+		top.mockRestore();
+		left.mockRestore();
 		rect.mockRestore();
 		cleanup();
 		// 贴着窗口上缘（jsdom 默认 0）：补 8px，中线仍在 32

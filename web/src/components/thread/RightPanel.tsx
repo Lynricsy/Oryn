@@ -14,6 +14,7 @@
  */
 import {
 	lazy,
+	memo,
 	type ReactNode,
 	type RefObject,
 	Suspense,
@@ -436,7 +437,7 @@ export function ThreadTabStrip({
 			<span
 				ref={plateRef}
 				aria-hidden
-				className="absolute top-0 left-0 h-7 rounded-md bg-hover opacity-0 shadow-xs ring-1 ring-border transition-[left,width] duration-200 ease-out"
+				className="absolute top-0 left-0 h-7 rounded-full bg-hover opacity-0 shadow-xs ring-1 ring-border transition-[left,width] duration-200 ease-out"
 			/>
 			{tabs.map((id) => (
 				<button
@@ -568,8 +569,9 @@ export function ThreadViewMenu({
  * `peer`：窄屏线程页里与转录并列的面板（同级标签带 Agent，选 Agent 回到转录）；不能关闭、不能最大化。
  * medium 下标签条左侧放侧栏开关（转录页头此时隐藏）；手机（compact）下这一行是「返回对话 + 面板名 + 视图菜单」。
  * 不传 `onClose` 就没有关闭按钮（双段视口的右段常驻）；最大化只在 expanded 三栏里有。
+ * memo：线程页因转录流式更新、侧栏开合重渲染时面板不跟着重算（调用方让 `onClose`、`chrome` 保持稳定）。
  */
-export function RightPanel({
+export const RightPanel = memo(function RightPanel({
 	threadId,
 	onClose,
 	peer = false,
@@ -614,7 +616,7 @@ export function RightPanel({
 				}
 				className={`flex h-12 shrink-0 items-center gap-1 border-border border-b pr-2 ${peer ? "pl-2 sm:pl-3" : "pl-2.5"}`}
 			>
-				{chromeLeft && <ChromeLead />}
+				<ChromeLead show={chromeLeft} />
 				{viewMenu ? (
 					<>
 						<IconButton
@@ -713,4 +715,4 @@ export function RightPanel({
 			</div>
 		</aside>
 	);
-}
+});

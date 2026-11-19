@@ -202,6 +202,9 @@
 	--r-lg: 18px;
 	--r-xl: 32px;
 	--r-2xl: 36px;
+	/* 三栏卡片（纸面 .sheet、左栏玻璃 .glass-sidebar）的圆角；macOS 26 桌面壳按窗口外框同心改写（见下方「窗口圆角同心」） */
+	--sheet-r: var(--r-xl);
+	--side-r: var(--r-2xl);
 	--ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 	--sh-xs: 0 1px 1px oklch(var(--shadow-color) / calc(0.05 * var(--shadow-k)));
 	--sh-sm:
@@ -370,12 +373,33 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 		calc(var(--device-r-br) - var(--dc-gap, 0px))
 	);
 }
+/*
+ * 窗口圆角同心（macOS 26 桌面壳）：壳给主窗口挂了 unified 工具栏，窗口外框圆角 26pt（`__ORYN_HOST__.chrome.radius`，
+ * window-chrome.ts 写成根元素的 --win-r 与 data-win-r）。三栏卡片离窗口边 8px，四角统一取外框 − 8px，与窗口同心；
+ * 卡片里跟着纸面收角的纱、转录裁剪都读 --sheet-r，随之一起变。
+ */
+:root[data-win-r] {
+	--sheet-r: calc(var(--win-r) - 0.5rem);
+	--side-r: calc(var(--win-r) - 0.5rem);
+}
+/* 列侧栏底部的分区栏（胶囊，离侧栏边 8px）同理收成同心圆角，里面的选中块再内缩 4px（覆盖 rounded-full 与它的 round 角形） */
+:root[data-win-r] [data-tone="inset"] > [data-tabbar-slot] {
+	border-radius: calc(var(--side-r) - 0.5rem);
+	corner-shape: superellipse(1.6);
+}
+:root[data-win-r]
+	[data-tone="inset"]
+	> [data-tabbar-slot]
+	[data-testid="section-tabbar-plate"] {
+	border-radius: calc(var(--side-r) - 0.75rem);
+	corner-shape: superellipse(1.6);
+}
 /* 线程页头的纱（及无模糊回退时的不透明页头）贴着纸面顶边：纸面右上角同心时跟着收角（内缩 1px 描边） */
 .sheet.dc-tr .veil > i,
 .sheet.dc-tr .veil::after,
 .sheet.dc-tr header.veil-host {
 	border-top-right-radius: max(
-		calc(var(--r-xl) - 1px),
+		calc(var(--sheet-r) - 1px),
 		calc(var(--device-r-tr) - var(--dc-gap, 0px) - 1px)
 	);
 }
@@ -386,7 +410,7 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 	.sheet {
 		background: var(--panel);
 		border: 1px solid var(--line);
-		border-radius: var(--r-xl);
+		border-radius: var(--sheet-r);
 		box-shadow: var(--sh-sm);
 		overflow: hidden;
 	}
@@ -797,7 +821,7 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 	}
 	.sheet .veil > i,
 	.sheet .veil::after {
-		border-radius: calc(var(--r-xl) - 1px) calc(var(--r-xl) - 1px) 0 0;
+		border-radius: calc(var(--sheet-r) - 1px) calc(var(--sheet-r) - 1px) 0 0;
 	}
 	/*
 	 * 轻模糊的纱（data-band，页面铺到状态栏下面时）：最重 6px，着色也淡。手机线程页只盖安全区再 12px 渐隐
@@ -843,7 +867,7 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 		}
 		/* 纸面不裁剪，回退底色自己收顶角 */
 		.sheet .veil-host {
-			border-radius: calc(var(--r-xl) - 1px) calc(var(--r-xl) - 1px) 0 0;
+			border-radius: calc(var(--sheet-r) - 1px) calc(var(--sheet-r) - 1px) 0 0;
 		}
 	}
 	@media (prefers-reduced-transparency: reduce) {
@@ -855,7 +879,7 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 			border-bottom: 1px solid var(--line);
 		}
 		.sheet .veil-host {
-			border-radius: calc(var(--r-xl) - 1px) calc(var(--r-xl) - 1px) 0 0;
+			border-radius: calc(var(--sheet-r) - 1px) calc(var(--sheet-r) - 1px) 0 0;
 		}
 	}
 	/* 浮层进入：只做进入，退出不做动画 */
@@ -1015,7 +1039,7 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 	.glass-sidebar {
 		position: relative;
 		isolation: isolate;
-		border-radius: var(--r-2xl);
+		border-radius: var(--side-r);
 		box-shadow:
 			0 0 0 1px var(--sb-rim),
 			0 1px 2px oklch(var(--shadow-color) / calc(0.04 * var(--shadow-k))),
@@ -1079,7 +1103,7 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 	 * 并且随抽屉一起滑动。展开时颜色从透明过渡到遮罩色，与模糊层同时长。
 	 */
 	.drawer-spot {
-		border-radius: var(--r-2xl);
+		border-radius: var(--side-r);
 		box-shadow: 0 0 0 100vmax transparent;
 		transition:
 			translate 260ms ease-out,

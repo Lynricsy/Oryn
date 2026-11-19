@@ -321,8 +321,8 @@ export function AppShell(): ReactNode {
 		);
 
 	const expanded = bp === "expanded";
-	// 侧栏玻璃离屏幕左、上、下缘 8px：左两角取同心半径
-	const sidebarCorners = "dc-tl dc-bl [--dc-gap:0.5rem] [--dc-r:var(--r-2xl)]";
+	// 侧栏玻璃离屏幕左、上、下缘 8px：左两角取同心半径（--side-r 在 macOS 26 壳里按窗口外框同心）
+	const sidebarCorners = "dc-tl dc-bl [--dc-gap:0.5rem] [--dc-r:var(--side-r)]";
 	return (
 		<div
 			// 双段时不留外边距：线程页按段的视口坐标分窗格

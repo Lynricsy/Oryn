@@ -450,7 +450,7 @@ export function CompactThreadHeader({
 				<i data-k="good" style={{ color: "var(--good)" }} />
 				<i data-k="frost" style={{ color: "var(--frost)" }} />
 			</span>
-			{chromeLeft && <ChromeLead />}
+			<ChromeLead show={chromeLeft} />
 			<button
 				ref={leadRef}
 				type="button"

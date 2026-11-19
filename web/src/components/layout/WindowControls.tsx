@@ -95,9 +95,26 @@ export function WindowControls({
 }
 
 /**
- * 元素在窗口里的位置（`[left, top]`，CSS px）：`active` 时测量，窗口缩放、侧栏 / 面板列 260ms 的宽度过渡结束后重测
- * （过渡结束后位置才定下来）。
+ * 元素在窗口里的布局位置（`[left, top]`，CSS px）：沿 offsetParent 链累加 offsetLeft / offsetTop 与各级的边框宽，
+ * 不含 transform / translate。侧栏收起时只是整块平移出屏，按 getBoundingClientRect 量会得到负的横坐标，
+ * 让位宽度随之变成三百多像素、把品牌行推回屏幕里（收起后左上角漏出 logo 与第二个侧栏按钮）；按布局位置量，
+ * 开合途中与收起后都等于侧栏展开时的位置。`active` 时测量，窗口缩放、侧栏 / 面板列 260ms 的宽度过渡结束后重测。
  */
+function layoutPos(el: HTMLElement): [number, number] {
+	let x = 0;
+	let y = 0;
+	for (let n: HTMLElement | null = el; n; ) {
+		x += n.offsetLeft;
+		y += n.offsetTop;
+		const parent: Element | null = n.offsetParent;
+		if (!(parent instanceof HTMLElement)) break;
+		x += parent.clientLeft;
+		y += parent.clientTop;
+		n = parent;
+	}
+	return [x, y];
+}
+
 function useWindowPos(
 	ref: { current: HTMLElement | null },
 	active: boolean,
@@ -107,8 +124,8 @@ function useWindowPos(
 		const el = ref.current;
 		if (!active || !el) return;
 		const update = () => {
-			const r = el.getBoundingClientRect();
-			setPos((p) => (p[0] === r.left && p[1] === r.top ? p : [r.left, r.top]));
+			const [x, y] = layoutPos(el);
+			setPos((p) => (p[0] === x && p[1] === y ? p : [x, y]));
 		};
 		update();
 		window.addEventListener("resize", update);
@@ -121,16 +138,80 @@ function useWindowPos(
 	return pos;
 }
 
+/** 会挪动页头位置的过渡属性：侧栏 / 面板列的宽度与外边距、玻璃栏的平移。颜色、透明度、缩放不影响位置，不跟。 */
+const LAYOUT_TRANSITION =
+	/^(width|margin|translate|transform|left|right|inset|flex)/;
+/** 一次布局过渡开始后逐帧跟多久（ms）：侧栏 / 面板开合是 260ms，留足余量；transitionend 时会再算一次。 */
+const FOLLOW_MS = 600;
+
 /**
- * 页头最左端：原生红绿灯 → 让出到 `inset.left` 的空白（按自身在窗口里的横坐标算）；左侧自绘 → 按钮组。
+ * 红绿灯让位：宽度 = inset.left − 所在页头内容区左缘在窗口里的横坐标；不需要让位时（页头在红绿灯右边，或不在顶部标题行里）
+ * 不显示，也不占页头的 gap。侧栏 / 面板开合时页头跟着卡片滑动，过渡期间逐帧重算并直接写到元素上（不经 React 重渲染）：
+ * 页头内容始终停在红绿灯右侧，不会先滑到红绿灯底下、过渡结束时再跳过去。量的是页头（父元素），不是让位块自己——它隐藏时量不到位置。
+ */
+function useLightsLead(
+	ref: { current: HTMLElement | null },
+	inset: { left: number; top: number },
+	active: boolean,
+): void {
+	const { left: insetLeft, top: insetTop } = inset;
+	useLayoutEffect(() => {
+		const el = ref.current;
+		const host = el?.parentElement;
+		if (!active || !el || !host) return;
+		const apply = () => {
+			const pad = Number.parseFloat(getComputedStyle(host).paddingLeft) || 0;
+			const [x, y] = layoutPos(host);
+			const width =
+				y < insetTop
+					? Math.max(0, Math.round(insetLeft - (x + host.clientLeft + pad)))
+					: 0;
+			el.style.width = `${width}px`;
+			el.style.display = width > 0 ? "" : "none";
+		};
+		let raf = 0;
+		let until = 0;
+		const tick = () => {
+			apply();
+			raf = performance.now() < until ? requestAnimationFrame(tick) : 0;
+		};
+		const follow = (e: Event) => {
+			if (
+				e instanceof TransitionEvent &&
+				!LAYOUT_TRANSITION.test(e.propertyName)
+			)
+				return;
+			if (e.type !== "transitionrun") {
+				apply();
+				return;
+			}
+			until = performance.now() + FOLLOW_MS;
+			if (!raf) raf = requestAnimationFrame(tick);
+		};
+		apply();
+		const events = ["transitionrun", "transitionend", "transitioncancel"];
+		window.addEventListener("resize", apply);
+		for (const type of events) document.addEventListener(type, follow, true);
+		return () => {
+			cancelAnimationFrame(raf);
+			window.removeEventListener("resize", apply);
+			for (const type of events)
+				document.removeEventListener(type, follow, true);
+		};
+	}, [ref, insetLeft, insetTop, active]);
+}
+
+/**
+ * 页头最左端：原生红绿灯 → 让出到 `inset.left` 的空白（按页头在窗口里的横坐标算，见 `useLightsLead`），页头总是挂着它，
+ * 用不着时自己隐藏——侧栏开合途中页头从红绿灯底下滑过时也能一路让开；左侧自绘 → `show`（页头此刻是最左侧表面）时放按钮组。
  * 页头本身是拖动区，这块空白也能拖。
  */
-export function ChromeLead(): ReactNode {
+export function ChromeLead({ show }: { show: boolean }): ReactNode {
 	const v = useWindowChrome();
 	const ref = useRef<HTMLSpanElement>(null);
 	const native =
 		!!v && !v.flags.fullscreen && v.chrome.controls === "native-left";
-	const [x] = useWindowPos(ref, native);
+	useLightsLead(ref, v?.chrome.inset ?? { left: 0, top: 0 }, native);
 	if (!v) return null;
 	if (native)
 		return (
@@ -139,10 +220,9 @@ export function ChromeLead(): ReactNode {
 				aria-hidden
 				data-chrome-lead="native"
 				className="shrink-0"
-				style={{ width: Math.max(0, v.chrome.inset.left - x) }}
 			/>
 		);
-	return <WindowControls side="left" className="mr-1" />;
+	return show ? <WindowControls side="left" className="mr-1" /> : null;
 }
 
 /** 侧栏顶部的标题行：只给左侧自绘按钮（Linux 左侧布局，三个 32px 按钮与品牌行排不进 256px 宽的一行），整行可拖动。 */

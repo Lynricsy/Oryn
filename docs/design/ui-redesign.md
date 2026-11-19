@@ -49,7 +49,9 @@
 |`text-xs`(12)/`text-sm`(13)|界面正文；转录散文在 `.md` 里单独设 14.5px/1.7|
 |`shadow-xs/sm/md/lg/xl`|按钮与选中行 / 纸面 / 玻璃浮层 / 菜单弹层 toast / 对话框与抽屉|
 
-**角形**：带圆角的表面一律 `corner-shape: superellipse(1.6)`（`index.css` 的 `@layer base` 全局规则），半径随之整体加大一档（同半径下超椭圆更「收」）。这是主人在 6 种 demo（圆角 / squircle / 超椭圆 × 两档半径）里选定的「h」。正圆与胶囊（`rounded-full` 及其 `after:` 等变体、`.tv-spin`）保持 `round`；OrbBead、Ring 是 SVG，不受影响。Chromium 139+ 原生支持；Safari、Firefox 不认 `corner-shape`，自动退回普通圆角。
+**角形**：带圆角的表面一律 `corner-shape: superellipse(1.6)`（`index.css` 的 `@layer base` 全局规则），半径随之整体加大一档（同半径下超椭圆更「收」）。这是主人在 6 种 demo（圆角 / squircle / 超椭圆 × 两档半径）里选定的「h」。正圆与胶囊（`rounded-full` 及其 `after:` 等变体、`.tv-spin`）保持 `round`；OrbBead、Ring 是 SVG，不受影响。Chromium 139+ 与 Safari 27.3+ 原生支持；不认 `corner-shape` 的引擎（Firefox、WebKitGTK、旧 Safari / WKWebView）由 `lib/squircle-fallback.ts` 把样式表里的半径整体缩到包络圆（`--sq-s`，最大偏差 ≈1.4% 半径），仍是普通圆角，不做逐元素裁切（详见 `web-guidelines.md` 的「超椭圆角形」）。
+
+**窗口同心（macOS 26）**：桌面壳给主窗口挂空的 unified 工具栏，窗口外框圆角约 26，经 `__ORYN_HOST__.chrome.radius` 写到根元素 `--win-r` / `data-win-r`；贴窗口边 8px 的纸面与侧栏玻璃取 `--sheet-r` / `--side-r` = 26 − 8 = 18，侧栏底栏与其选中块再依次内缩。其它平台 `radius` 为 0，卡片保持 `--r-xl` / `--r-2xl`。
 
 **同心**：外层圆角里套内层表面时，贴近外角的内层半径 ≈ 外层半径 − 间距。对话框 32 − 内边距 20 → 输入框 12；菜单 18 − 4 → 菜单项 12；输入坞托盘 32 里第一节带色调底时取 `calc(var(--r-xl) - 1px)`；右面板纸面 32 − 8 内的卡片取 18（与全站卡片同一令牌，卡片不贴角，24 并不更协调）。
 

@@ -306,7 +306,7 @@ export function InboxPage(): ReactNode {
 				data-window-drag=""
 				className="flex h-12 shrink-0 items-center gap-2 border-border border-b px-3"
 			>
-				{chromeLeft && <ChromeLead />}
+				<ChromeLead show={chromeLeft} />
 				{sidebarToggle && (
 					<IconButton
 						icon={bp === "expanded" ? "sidebar" : "menu"}

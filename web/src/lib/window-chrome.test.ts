@@ -75,7 +75,9 @@ describe("判定", () => {
 			focused: false,
 		}));
 		const wc = createWindowChrome(f.win);
-		expect(wc?.chrome).toEqual(CHROME);
+		expect(wc?.chrome).toEqual({ ...CHROME, radius: 0 });
+		// 没有 radius：不改根元素，卡片保持设计令牌
+		expect(f.doc.documentElement.hasAttribute("data-win-r")).toBe(false);
 		expect(f.invoke).toHaveBeenCalledWith("host_window", { action: "state" });
 		await flush();
 		expect(wc?.getFlags()).toEqual({
@@ -83,6 +85,21 @@ describe("判定", () => {
 			fullscreen: false,
 			focused: false,
 		});
+	});
+
+	it("macOS 26 的窗口外框圆角写到根元素（--win-r / data-win-r），卡片据此同心", () => {
+		const f = fakeWindow(
+			desktop({
+				platform: "macos",
+				controls: "native-left",
+				inset: { top: 48, left: 84 },
+				radius: 26,
+			}),
+		);
+		expect(createWindowChrome(f.win)?.chrome.radius).toBe(26);
+		const root = f.doc.documentElement;
+		expect(root.hasAttribute("data-win-r")).toBe(true);
+		expect(root.style.getPropertyValue("--win-r")).toBe("26px");
 	});
 });
 
@@ -99,6 +116,7 @@ describe("parseChrome", () => {
 			controls: "custom-left",
 			buttons: ["close", "minimize"],
 			inset: { top: 0, left: 0, right: 0 },
+			radius: 0,
 		});
 		expect(
 			parseChrome({

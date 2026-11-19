@@ -536,7 +536,7 @@ export function HomePage(): ReactNode {
 					data-window-drag=""
 					className="flex h-12 shrink-0 items-center gap-1.5 px-2"
 				>
-					{chromeLeft && <ChromeLead />}
+					<ChromeLead show={chromeLeft} />
 					{sidebarToggle && (
 						<IconButton
 							icon={bp === "expanded" ? "sidebar" : "menu"}

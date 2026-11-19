@@ -547,7 +547,7 @@ export function ArtifactViewer({
 				data-window-drag={panel ? undefined : ""}
 				className={`flex shrink-0 items-center gap-1 border-border border-b px-2 ${panel ? "h-11" : "h-12 sm:px-3"}`}
 			>
-				{chromeLeft && <ChromeLead />}
+				<ChromeLead show={chromeLeft} />
 				{variant === "page" && onBack && (
 					<IconButton
 						icon="back"

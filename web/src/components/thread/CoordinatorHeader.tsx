@@ -45,7 +45,7 @@ export function CoordinatorHeader({
 				<i />
 				<i />
 			</div>
-			{layout.chromeLeft && <ChromeLead />}
+			<ChromeLead show={layout.chromeLeft} />
 			{(layout.sidebarToggle || sidebarCollapsed) && (
 				<IconButton
 					icon={layout.sidebarToggle ? "menu" : "sidebar"}
