@@ -9,6 +9,7 @@
  * Tab / → 或点一下插入（从不发送），有多个候选时插入后再按 Tab 轮换。
  */
 import {
+	memo,
 	type ReactNode,
 	useEffect,
 	useId,
@@ -59,6 +60,7 @@ import { getThreadStore, useIndex, useThread } from "../../state/stores";
 import { subagentFiles } from "../../state/subagent-entries";
 import { uiStore } from "../../state/ui";
 import { SelectionChip } from "../artifacts/SelectionChip";
+import { openPalette } from "../palette/palette-state";
 import { ModeStatus, ModeStrip } from "../thread/ModeBar";
 import { useThreadProject } from "../thread/ThreadHeader";
 import { Icon } from "../ui/icons";
@@ -69,7 +71,8 @@ import { ModelChip, SessionReadout } from "./ComposerMeta";
 import { RefMenu, useRefMenu } from "./RefMenu";
 import { RoleTrack, useRoleShortcut } from "./RoleTrack";
 
-export function Composer({
+/** memo：线程页因页头、面板、侧栏开合重渲染时输入区不跟着重算（props 都是原始值）。 */
+export const Composer = memo(function Composer({
 	threadId,
 	disabled,
 	coordinator = false,
@@ -431,7 +434,8 @@ export function Composer({
 				navigate("/");
 				return;
 			case "thread_search":
-				ui.focusSearch();
+				// 线程搜索在命令面板里（侧栏的搜索入口同样打开它）
+				openPalette();
 				return;
 			case "needs_args":
 				throw new Error(
@@ -872,7 +876,7 @@ export function Composer({
 			</div>
 		</div>
 	);
-}
+});
 
 /** 输入区上方的引用条：引用原文前两行 + 移除钮；发出时拼成引用块放在正文前面。 */
 function QuoteStrip({

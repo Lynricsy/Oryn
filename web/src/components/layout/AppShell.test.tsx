@@ -120,9 +120,11 @@ describe("侧栏收起（expanded）", () => {
 		expect(column()).toHaveAttribute("inert");
 		fireEvent.keyDown(window, { key: "B", metaKey: true });
 		expect(column()).not.toHaveAttribute("inert");
-		const search = screen.getByRole("textbox", { name: "搜索线程" });
-		fireEvent.keyDown(search, { key: "b", ctrlKey: true });
+		// 页面里的任何输入框：Ctrl+B 在里面是光标操作，不切侧栏
+		const field = document.body.appendChild(document.createElement("input"));
+		fireEvent.keyDown(field, { key: "b", ctrlKey: true });
 		expect(column()).not.toHaveAttribute("inert");
+		field.remove();
 	});
 
 	it("收起状态在重新挂载后保持", () => {

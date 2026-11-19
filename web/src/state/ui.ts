@@ -176,8 +176,6 @@ export interface UiState {
 	panelWidth: number;
 	/** 面板占满内容区（转录列隐藏）。 */
 	panelMax: boolean;
-	/** 每次请求聚焦侧边栏搜索时递增。 */
-	searchNonce: number;
 	/** 每次请求重新打开计划提案（`/plan-review`）时递增；PlanProposalDialog 据此从收起的胶囊回到对话框。 */
 	planReviewNonce: number;
 	reviewPlan(): void;
@@ -205,7 +203,6 @@ export interface UiState {
 	setThreadTab(tab: ThreadTab): void;
 	setPanelWidth(width: number): void;
 	togglePanelMax(): void;
-	focusSearch(): void;
 	changesSig: Record<string, ChangesSig>;
 	/** 记录后台检查得到的改动签名；`seen` 为真或该线程首次记录时同时记为已看（只提示之后的新改动）。 */
 	noteChanges(threadId: string, sig: string, seen: boolean): void;
@@ -248,7 +245,6 @@ export const uiStore = createStore<UiState>((set, get) => ({
 	threadTab: "agent",
 	panelWidth: loadPanelWidth(),
 	panelMax: false,
-	searchNonce: 0,
 	planReviewNonce: 0,
 	reviewPlan: () => set((s) => ({ planReviewNonce: s.planReviewNonce + 1 })),
 	open: (dialog) => set({ dialog }),
@@ -324,11 +320,6 @@ export const uiStore = createStore<UiState>((set, get) => ({
 		set({ panelWidth });
 	},
 	togglePanelMax: () => set((s) => ({ panelMax: !s.panelMax })),
-	focusSearch: () => {
-		// 侧栏收起时先展开，搜索框才可聚焦
-		if (get().sidebarCollapsed) get().setSidebarCollapsed(false);
-		set((s) => ({ searchNonce: s.searchNonce + 1, sidebarOpen: true }));
-	},
 	changesSig: {},
 	noteChanges: (threadId, sig, seen) =>
 		set((s) => {

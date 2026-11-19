@@ -1,5 +1,5 @@
 /**
- * 「线程」分区侧栏（按最新 Amp 布局）：搜索、项目过滤签、收件箱入口；分组 需要你 → 空间 → 已置顶 → 按项目分组的活跃线程 →
+ * 「线程」分区侧栏（按最新 Amp 布局）：项目过滤签、收件箱入口（搜索入口在侧栏外壳里，即命令面板）；分组 需要你 → 空间 → 已置顶 → 按项目分组的活跃线程 →
  * 72 小时未活动（一键归档）→ 稍后提醒 → 已归档。协调对话（Space 聊天、助手对话）不进任何线程分组（助手对话在「助手」分区）。
  * 「需要你」是置顶的跨项目分组：等待输入或出错的线程（含子线程，平铺）另在这里列一份，原分组里照常保留；空时不显示。
  * 线程行 = 状态图标 + 标题卡图标 + 标题 + 相对时间 / 子线程计数 / 未读点（标题前最多两个标记）；线程色是行左缘的一根细竖条，
@@ -9,7 +9,7 @@
  */
 
 import { useQueryClient } from "@tanstack/react-query";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink } from "react-router";
 import type { Project, Thread, ThreadState } from "../../api/client";
@@ -114,16 +114,10 @@ export function rollupState(
 /** 把线程索引分到侧边栏各分区（纯函数，便于测试）。 */
 export function groupThreads(
 	threads: readonly Thread[],
-	q: string,
 	now: number,
 ): SidebarGroups {
-	const query = q.trim().toLowerCase();
-	const match = (t: Thread) =>
-		!query ||
-		t.title.toLowerCase().includes(query) ||
-		t.labels.some((l) => l.toLowerCase().includes(query));
 	const visible = threads.filter(
-		(t) => !t.archivedAt && !isCoordinatorThread(t) && match(t),
+		(t) => !t.archivedAt && !isCoordinatorThread(t),
 	);
 	const ids = new Set(visible.map((t) => t.id));
 	const children = new Map<string, Thread[]>();
@@ -582,25 +576,12 @@ function InboxEntry({ now }: { now: number }): ReactNode {
 	);
 }
 
-/**
- * `active`：本分区此刻显示着。搜索框的聚焦请求（`searchNonce`）只在 active 时处理、每个 nonce 只处理一次：
- * 分区刚切过来时 pane 还是 inert，此时聚焦会落空，等它变成 active 再聚焦。
- */
-export function ThreadsPane({ active }: { active: boolean }): ReactNode {
+export function ThreadsPane(): ReactNode {
 	const { t } = useTranslation();
 	const threads = useIndex((s) => s.threads);
 	const projects = useProjects();
-	const searchNonce = useUi((s) => s.searchNonce);
 	const projectFilter = useUi((s) => s.projectFilter);
-	const [q, setQ] = useState("");
-	const searchRef = useRef<HTMLInputElement>(null);
-	const focusedNonce = useRef(0);
 	const now = useNow();
-	useEffect(() => {
-		if (!active || searchNonce === focusedNonce.current) return;
-		focusedNonce.current = searchNonce;
-		searchRef.current?.focus();
-	}, [searchNonce, active]);
 	// 项目变更没有实时推送：服务端会把带卡片的自动标题图标写进尚无图标的项目，
 	// 侧栏发现这样的线程（签名变化）时让项目列表失效一次，拉回新图标
 	const qc = useQueryClient();
@@ -624,12 +605,8 @@ export function ThreadsPane({ active }: { active: boolean }): ReactNode {
 	}, [iconlessSig, qc]);
 	const groups = useMemo(
 		() =>
-			groupThreads(
-				filterByProject(Object.values(threads), projectFilter),
-				q,
-				now,
-			),
-		[threads, projectFilter, q, now],
+			groupThreads(filterByProject(Object.values(threads), projectFilter), now),
+		[threads, projectFilter, now],
 	);
 	const hasStacks = groups.byProject.some((g) => g.stacks.length > 0);
 	const stackSchedules = useSchedules({ mode: "new_thread" }, hasStacks);
@@ -660,30 +637,6 @@ export function ThreadsPane({ active }: { active: boolean }): ReactNode {
 
 	return (
 		<>
-			<div className="shrink-0 px-2.5 pb-2">
-				<div className="flex h-8 items-center gap-2 rounded-lg border border-transparent bg-[var(--sb-field)] pr-1 pl-2.5 text-faint transition-colors duration-150 focus-within:border-accent/60">
-					<Icon name="search" size={14} aria-hidden className="shrink-0" />
-					<input
-						ref={searchRef}
-						value={q}
-						onChange={(e) => setQ(e.target.value)}
-						placeholder={t("sidebar.search")}
-						aria-label={t("sidebar.search")}
-						className="h-full min-w-0 flex-1 bg-transparent text-fg text-sm outline-none placeholder:text-faint focus-visible:outline-none"
-					/>
-					{/* 这里只是线程过滤；Ctrl/⌘+K 开的是命令面板（侧栏顶部的搜索按钮），不在这里标快捷键 */}
-					{q && (
-						<button
-							type="button"
-							aria-label={t("common.clear")}
-							onClick={() => setQ("")}
-							className="grid h-6 w-6 shrink-0 place-items-center rounded-sm hover:bg-[var(--sb-hover)] hover:text-fg"
-						>
-							<Icon name="close" size={12} />
-						</button>
-					)}
-				</div>
-			</div>
 			{projectFilter !== undefined && (
 				<ProjectFilterChip
 					filter={projectFilter}

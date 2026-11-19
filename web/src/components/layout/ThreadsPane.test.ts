@@ -39,7 +39,6 @@ describe("侧边栏分区", () => {
 				th("snoozed", { snoozedUntil: NOW + 1000 }),
 				th("archived", { archivedAt: NOW }),
 			],
-			"",
 			NOW,
 		);
 		expect(g.pinned.map((t) => t.id)).toEqual(["pinned"]);
@@ -53,21 +52,6 @@ describe("侧边栏分区", () => {
 		expect(g.inactive.map((t) => t.id)).toEqual(["old"]);
 		expect(g.snoozed.map((t) => t.id)).toEqual(["snoozed"]);
 	});
-
-	it("搜索匹配标题与标签", () => {
-		const g = groupThreads(
-			[
-				th("x", { title: "重连", labels: [] }),
-				th("y", { title: "z", labels: ["realtime"] }),
-				th("w"),
-			],
-			"real",
-			NOW,
-		);
-		expect(g.byProject.flatMap((x) => x.threads.map((t) => t.id))).toEqual([
-			"y",
-		]);
-	});
 });
 
 describe("侧边栏分区（M9）", () => {
@@ -79,7 +63,6 @@ describe("侧边栏分区（M9）", () => {
 				th("helper", { kind: "assistant", pinned: true }),
 				th("child", { kind: "work", parentThreadId: "chat" }),
 			],
-			"",
 			NOW,
 		);
 		expect(g.pinned).toEqual([]);
@@ -108,7 +91,6 @@ describe("侧边栏分区（M9）", () => {
 				run("snoozed", "sch_a", 5, { snoozedUntil: NOW + 1000 }),
 				th("nostack", { scheduleRun: { scheduleId: "sch_c", run: 1 } }),
 			],
-			"",
 			NOW,
 		);
 		const p1 = g.byProject.find((x) => x.projectId === "p1");
@@ -180,7 +162,6 @@ describe("「需要你」分组与状态上卷", () => {
 				th("pinnedErr", { pinned: true, state: "error" }),
 				th("busy", { state: "working" }),
 			],
-			"",
 			NOW,
 		);
 		expect(g.needsYou.map((t) => t.id)).toEqual([
@@ -194,7 +175,7 @@ describe("「需要你」分组与状态上卷", () => {
 		expect(g.pinned.map((t) => t.id)).toEqual(["pinnedErr"]);
 	});
 
-	it("已归档、协调对话不进；稍后提醒到期前不进，到期后进；搜索同样生效", () => {
+	it("已归档、协调对话不进；稍后提醒到期前不进，到期后进", () => {
 		const threads = [
 			th("archived", { state: "awaiting_input", archivedAt: NOW }),
 			th("chat", { kind: "space", state: "awaiting_input" }),
@@ -202,13 +183,10 @@ describe("「需要你」分组与状态上卷", () => {
 			th("woke", { state: "error", snoozedUntil: NOW - 1000 }),
 			th("other", { title: "zzz", state: "awaiting_input" }),
 		];
-		expect(groupThreads(threads, "", NOW).needsYou.map((t) => t.id)).toEqual([
+		expect(groupThreads(threads, NOW).needsYou.map((t) => t.id)).toEqual([
 			"other",
 			"woke",
 		]);
-		expect(groupThreads(threads, "wok", NOW).needsYou.map((t) => t.id)).toEqual(
-			["woke"],
-		);
 	});
 
 	it("子孙的等待输入 / 出错上卷到父行；工作中不上卷；自身更紧要时取自身；数据成环不死循环", () => {
@@ -222,7 +200,6 @@ describe("「需要你」分组与状态上卷", () => {
 				th("waiting", { state: "awaiting_input" }),
 				th("errKid", { parentThreadId: "waiting", state: "error" }),
 			],
-			"",
 			NOW,
 		);
 		const byId = (id: string) =>
@@ -250,7 +227,6 @@ describe("「需要你」分组与状态上卷", () => {
 				th("run", { scheduleRun: { scheduleId: "s", run: 1 } }),
 				th("kid", { parentThreadId: "run", state: "awaiting_input" }),
 			],
-			"",
 			NOW,
 		);
 		const runs = g.byProject[0]?.stacks[0]?.threads ?? [];

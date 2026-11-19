@@ -217,18 +217,34 @@ describe("Ctrl/⌘+/ 与 Ctrl/⌘+K", () => {
 	});
 
 	it("Ctrl+K 开关命令面板：不改路由，输入框里同样生效，关闭后焦点回到打开前的元素", async () => {
-		mount("/t/T-1");
+		mount(
+			"/t/T-1",
+			<>
+				<FakeThread />
+				<input aria-label="草稿" />
+			</>,
+		);
 		await settle();
-		const filter = screen.getByRole("textbox", { name: "搜索线程" });
-		act(() => filter.focus());
-		press({ key: "k", code: "KeyK", ctrlKey: true }, filter);
+		const field = screen.getByRole("textbox", { name: "草稿" });
+		act(() => field.focus());
+		press({ key: "k", code: "KeyK", ctrlKey: true }, field);
 		// 命令面板是按需加载的分块：全量并行跑时加载可能超过默认的 1 秒
 		const input = await screen.findByRole("combobox", {}, { timeout: 5000 });
 		expect(where()).toBe("/t/T-1");
 		expect(document.activeElement).toBe(input);
 		press({ key: "k", code: "KeyK", metaKey: true }, input);
 		expect(screen.queryByRole("combobox")).toBeNull();
-		expect(document.activeElement).toBe(filter);
+		expect(document.activeElement).toBe(field);
+	});
+
+	it("侧栏的搜索入口不只在线程分区：在设置分区点它同样打开命令面板", async () => {
+		mount("/settings");
+		await settle();
+		fireEvent.click(screen.getByRole("button", { name: "搜索与命令" }));
+		expect(
+			await screen.findByRole("combobox", {}, { timeout: 5000 }),
+		).toBeInTheDocument();
+		expect(where()).toBe("/settings");
 	});
 });
 

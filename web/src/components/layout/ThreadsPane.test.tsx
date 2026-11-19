@@ -4,7 +4,6 @@
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
-	act,
 	fireEvent,
 	render,
 	screen,
@@ -54,7 +53,6 @@ describe("侧边栏线程树", () => {
 				th("child", { parentThreadId: "parent" }),
 				th("grandchild", { parentThreadId: "child" }),
 			],
-			"",
 			NOW,
 		);
 		const root = g.byProject[0]?.threads[0] as Thread;
@@ -87,7 +85,6 @@ describe("侧边栏线程树", () => {
 				}),
 				th("c", { title: "fork：共用 orb", parentThreadId: "p", unread: true }),
 			],
-			"",
 			NOW,
 		);
 		const root = g.byProject[0]?.threads[0] as Thread;
@@ -146,14 +143,14 @@ describe("线程分区（M9 / M9.6）", () => {
 		uiStore.setState({ projectFilter: undefined });
 	});
 
-	function mount(active = true) {
+	function mount() {
 		const qc = new QueryClient({
 			defaultOptions: { queries: { retry: false } },
 		});
 		return render(
 			<QueryClientProvider client={qc}>
 				<MemoryRouter>
-					<ThreadsPane active={active} />
+					<ThreadsPane />
 				</MemoryRouter>
 			</QueryClientProvider>,
 		);
@@ -261,34 +258,6 @@ describe("线程分区（M9 / M9.6）", () => {
 		expect(screen.getByTestId("project-filter")).toHaveTextContent(
 			"项目：无项目",
 		);
-	});
-
-	it("搜索聚焦请求：非当前分区时不聚焦，变成当前分区后聚焦一次", () => {
-		uiStore.setState({ searchNonce: 0 });
-		const qc = new QueryClient({
-			defaultOptions: { queries: { retry: false } },
-		});
-		const pane = (active: boolean) => (
-			<QueryClientProvider client={qc}>
-				<MemoryRouter>
-					<ThreadsPane active={active} />
-				</MemoryRouter>
-			</QueryClientProvider>
-		);
-		const view = render(pane(false));
-		const search = screen.getByRole("textbox", { name: "搜索线程" });
-		act(() => uiStore.setState({ searchNonce: 1 }));
-		expect(document.activeElement).not.toBe(search);
-		view.rerender(pane(true));
-		expect(document.activeElement).toBe(search);
-		// 同一个 nonce 只处理一次：切走再切回不再抢焦点
-		act(() => search.blur());
-		view.rerender(pane(false));
-		view.rerender(pane(true));
-		expect(document.activeElement).not.toBe(search);
-		// 新的请求在当前分区上立即聚焦
-		act(() => uiStore.setState({ searchNonce: 2 }));
-		expect(document.activeElement).toBe(search);
 	});
 
 	it("「需要你」分组在最上、子线程平铺；父行状态图标上卷；收件箱入口角标", () => {

@@ -74,12 +74,6 @@ describe("侧栏收起", () => {
 		window.innerWidth = 1024;
 	});
 
-	it("聚焦搜索时先展开收起的侧栏", () => {
-		uiStore.getState().setSidebarCollapsed(true);
-		uiStore.getState().focusSearch();
-		expect(uiStore.getState().sidebarCollapsed).toBe(false);
-	});
-
 	it("重新加载模块（刷新页面）时同步读回收起状态", async () => {
 		localStorage.setItem(SIDEBAR_COLLAPSED_KEY, "1");
 		vi.resetModules();
