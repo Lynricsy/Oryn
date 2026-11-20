@@ -611,7 +611,8 @@ function TodoSection({ threadId }: { threadId: string }) {
 							return (
 								<li
 									key={tk}
-									className={`group relative flex items-start gap-2.5 rounded-md py-[7px] pr-8 pl-3.5 text-sm transition-colors duration-150 ${now ? "bg-accent-soft" : "hover:bg-raised"}`}
+									// 右侧给删除钮留位；触屏上删除钮常显、点击区外扩 8px，再多留 12px，免得点到「进行中」或正文时误删
+									className={`group relative flex items-start gap-2.5 rounded-md py-[7px] pr-8 pl-3.5 text-sm transition-colors duration-150 pointer-coarse:pr-11 ${now ? "bg-accent-soft" : "hover:bg-raised"}`}
 								>
 									<button
 										type="button"
@@ -636,14 +637,15 @@ function TodoSection({ threadId }: { threadId: string }) {
 										{task.content}
 									</span>
 									{now && (
-										// 右缘与标题行的进度对齐；悬停时让位给删除钮
-										<span className="-mr-[18px] mt-px shrink-0 font-semibold text-accent-ink text-xs transition-opacity duration-150 group-hover:opacity-0 group-has-[:focus-visible]:opacity-0">
+										// 有悬停的设备上右缘与标题行的进度对齐、悬停时让位给删除钮；触屏上删除钮常显，标签排在它左边
+										<span className="pointer-fine:-mr-[18px] mt-px shrink-0 font-semibold text-accent-ink text-xs transition-opacity duration-150 pointer-fine:group-hover:opacity-0 pointer-fine:group-has-[:focus-visible]:opacity-0">
 											{t("todo.status.in_progress")}
 										</span>
 									)}
+									{/* 隐藏时不接收点击（透明按钮叠在「进行中」上会被误点）；触屏没有悬停，常显并放大点击区 */}
 									<button
 										type="button"
-										className="absolute top-[11px] right-3.5 text-faint opacity-0 transition-opacity duration-150 hover:text-err focus-visible:opacity-100 group-hover:opacity-100"
+										className="absolute top-[11px] right-3.5 text-faint transition-opacity duration-150 after:absolute after:-inset-2 after:content-[''] hover:text-err pointer-fine:pointer-events-none pointer-fine:opacity-0 pointer-fine:group-hover:pointer-events-auto pointer-fine:group-hover:opacity-100 pointer-fine:focus-visible:pointer-events-auto pointer-fine:focus-visible:opacity-100"
 										aria-label={t("common.delete")}
 										onClick={() => void save(update(pi, ti, null))}
 									>
