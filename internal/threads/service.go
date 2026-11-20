@@ -326,8 +326,13 @@ type thread struct {
 	starting bool
 	// statusSinceStart 为真表示最近一次发起 agent.start 之后收到过 starting / ready（M21）：之后到达的「监督器结束」才属于
 	// 当前监督器，才注销 runner 线程的 SSH 公钥。旧监督器的 exited 由 orbd 在处理新 agent.start 之前发出，即使晚于其应答
-	// 到达，也排在新监督器的 starting / ready 之前——此时它为假，不误删新登记的公钥。
+	// 到达，也排在新监督器的 starting / ready 之前——此时它为假，不误删新登记的公钥。agent.start 的应答带回的公钥等于
+	// sshKey（同一代监督器，orbd 不重报状态）时恢复发起前的值。exitSkipped / exitDropped 记下发起 agent.start 之后、
+	// 处理其应答之前到达的终止结束（因它为假而跳过 / 当场注销），应答处理据此不把已结束的一代登记回去。
 	statusSinceStart bool
+	exitSkipped      bool
+	exitDropped      bool
+	sshKey           string // 最近一次 agent.start 应答的 runner 线程 SSH 公钥：每代监督器一把，用来认出同一代
 	failed           bool
 	model            *string
 	thinking         *string

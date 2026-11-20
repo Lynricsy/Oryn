@@ -221,9 +221,74 @@ func TestRunnerThreadKeyLifecycle(t *testing.T) {
 	assert.Equal(t, "ssh-ed25519 AAAAkey2", ra.key(th.id))
 	f.s.handleOrbEvent(f.ctx, OrbEvent{OrbID: runner, Kind: OrbEventState, From: "ready", To: "stopped", Seq: 1 << 40})
 	assert.Empty(t, ra.key(th.id))
+	// 归档：注销（网关随之关闭经它认证的连接）；agent 仍在运行时取消归档，幂等 agent.start 取回同一把公钥重新登记
+	yes, no := true, false
+	start()
+	status("starting", nil)
+	status("ready", nil)
+	_, err := f.s.Patch(f.ctx, th.id, apigen.ThreadPatch{Archived: &yes})
+	require.NoError(t, err)
+	assert.Empty(t, ra.key(th.id), "归档即注销")
+	_, err = f.s.Patch(f.ctx, th.id, apigen.ThreadPatch{Archived: &no})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return ra.key(th.id) == o.startPub }, 5*time.Second, 10*time.Millisecond, "取消归档后重新登记")
+	// 幂等 agent.start 时 orbd 只唤醒现有监督器、不重报 starting / ready：它之后的结束仍归这一代，照常注销
+	require.Eventually(t, func() bool { th.mu.Lock(); defer th.mu.Unlock(); return !th.starting }, 5*time.Second, 10*time.Millisecond)
+	status("exited", nil)
+	assert.Empty(t, ra.key(th.id), "取消归档重新登记后，同一代监督器的结束仍注销公钥")
+	// 标记已交付顺带归档：同样注销
+	o.startPub = "ssh-ed25519 AAAAkey5"
+	start()
+	status("starting", nil)
+	status("ready", nil)
+	_, err = f.s.Patch(f.ctx, th.id, apigen.ThreadPatch{Shipped: &yes})
+	require.NoError(t, err)
+	assert.Empty(t, ra.key(th.id), "已交付顺带归档即注销")
 
 	// 线程删除：注销
 	require.NoError(t, ra.RegisterThreadKey(th.id, runner, "ssh-ed25519 AAAAkey3"))
 	require.NoError(t, f.s.Delete(f.ctx, th.id))
 	assert.Empty(t, ra.key(th.id))
+}
+
+// M21：orbd 在应答 agent.start 之前就发出的终止结束（与应答处理竞争）——新一代报过 starting 后就结束、同一代（幂等
+// agent.start，不重报状态）结束时，应答都不能把已结束的一代登记回去；旧一代迟到的结束不妨碍新一代登记。
+func TestRunnerThreadKeyExitBeforeStartReply(t *testing.T) {
+	f := newFixture(t, Config{})
+	f.projectWithID("prj_a")
+	o := newCtlOrbs(t, f.orbs)
+	mo := &memOrbs{Orbs: o, kinds: map[string]string{}, feats: map[string][]string{}}
+	f.s.orbs = mo
+	ra := newFakeRunnerAgent()
+	f.s.SetRunnerAgent(ra)
+	runner := f.orb("ready")
+	mo.kinds[runner], mo.feats[runner] = orbs.KindRunner, []string{"fs", orbs.FeatureOmpHomeApply, "ssh"}
+	th := f.threadIn(runner, "prj_a")
+	status := func(st string, left *int) {
+		b, err := json.Marshal(apigen.LinkCtlAgentStatusParams{ThreadID: th.id, Status: apigen.LinkCtlAgentStatusParamsStatus(st), RestartsLeft: left})
+		require.NoError(t, err)
+		f.s.onAgentStatus(f.ctx, runner, b)
+	}
+	startWith := func(pub string, hook func()) {
+		t.Helper()
+		o.mu.Lock()
+		o.startPub, o.startHook = pub, hook
+		o.mu.Unlock()
+		startParams(t, f, o, th)
+	}
+
+	// 新一代报过 starting 就结束，应答随后才处理：不登记
+	startWith("ssh-ed25519 AAAAgen1", func() { status("starting", nil); status("exited", nil) })
+	assert.Empty(t, ra.key(th.id), "已结束的新一代不登记")
+
+	// 同一代：正常登记并就绪后，幂等 agent.start 期间它结束（orbd 不重报 starting / ready）：不登记回去
+	startWith("ssh-ed25519 AAAAgen2", func() { status("starting", nil); status("ready", nil) })
+	assert.Equal(t, "ssh-ed25519 AAAAgen2", ra.key(th.id))
+	startWith("ssh-ed25519 AAAAgen2", func() { status("exited", nil) })
+	assert.Empty(t, ra.key(th.id), "已结束的同一代不登记回去")
+
+	// 旧一代迟到的结束（新一代报 starting 之前）：新一代照常登记
+	startWith("ssh-ed25519 AAAAgen3", func() { status("starting", nil); status("ready", nil) })
+	startWith("ssh-ed25519 AAAAgen4", func() { status("exited", new(0)); status("starting", nil) })
+	assert.Equal(t, "ssh-ed25519 AAAAgen4", ra.key(th.id), "旧一代迟到的结束不妨碍新一代登记")
 }

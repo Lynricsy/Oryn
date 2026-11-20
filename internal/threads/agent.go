@@ -258,7 +258,9 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 		}
 	}
 	t.mu.Lock()
-	t.statusSinceStart = false // 此后到达的 starting / ready 才属于这次 agent.start 的监督器（见 onAgentStatus）
+	// 此后到达的 starting / ready 才属于这次 agent.start 的监督器（见 onAgentStatus）；应答表明仍是原监督器时恢复
+	prevSince := t.statusSinceStart
+	t.statusSinceStart, t.exitSkipped, t.exitDropped = false, false, false
 	t.mu.Unlock()
 	var res apigen.LinkCtlAgentStartResult
 	if err := ctl.Call(cctx, "agent.start", params, &res); err != nil {
@@ -269,10 +271,23 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 		return
 	}
 	if res.SSHPublicKey != nil && s.runnerAgent != nil {
-		// M21：runner 线程的 SSH 公钥（同一监督器幂等返回同一把，重复登记即同值刷新）
-		if err := s.runnerAgent.RegisterThreadKey(t.id, orbID, *res.SSHPublicKey); err != nil {
+		// M21：runner 线程的 SSH 公钥。每代监督器一把，幂等的 agent.start 对同一监督器返回同一把（同值刷新）——此时
+		// orbd 只唤醒现有监督器、不会重报 starting / ready，要恢复发起前的归属，否则它之后的结束会被当成旧监督器迟到的
+		// 结束而不注销。等待应答期间这一代若已结束（新一代：报过 starting / ready 之后的结束；同一代：任何结束），不再
+		// 登记。判定与登记 / 注销都在 t.mu 内，与 onAgentStatus 的注销互斥。
+		key := *res.SSHPublicKey
+		t.mu.Lock()
+		same := key == t.sshKey
+		t.sshKey = key
+		if same {
+			t.statusSinceStart = t.statusSinceStart || prevSince
+		}
+		if t.exitDropped || (same && t.exitSkipped) {
+			s.dropThreadKey(t.id)
+		} else if err := s.runnerAgent.RegisterThreadKey(t.id, orbID, key); err != nil {
 			slog.Warn("threads: 登记 runner 线程的 SSH 公钥失败", "thread", t.id, "orb", orbID, "err", err)
 		}
+		t.mu.Unlock()
 	}
 	slog.Debug("threads: agent 已启动", "thread", t.id, "pid", res.Pid)
 }
@@ -434,11 +449,16 @@ func (s *Service) onAgentStatus(ctx context.Context, orbID string, params json.R
 		t.autoActive, t.segMsgs = false, false
 		cancelHostCallsLocked(t)
 		resetConfigMarksLocked(t) // 新进程读的就是新配置（M13 6.3）
-		if (p.RestartsLeft == nil || *p.RestartsLeft <= 0) && t.statusSinceStart {
-			// orbd 的监督器已结束（停止，或重启次数用尽）：私钥随之删除，runner 线程的 SSH 公钥失效（M21）。
-			// 还会重启的崩溃不动：自重启沿用同一把密钥。最近一次 agent.start 之后还没收到过 starting / ready 时，
-			// 这是旧监督器迟到的结束（见 thread.statusSinceStart），不动可能已登记的新公钥。
-			s.dropThreadKey(t.id)
+		if p.RestartsLeft == nil || *p.RestartsLeft <= 0 {
+			if t.statusSinceStart {
+				// orbd 的监督器已结束（停止，或重启次数用尽）：私钥随之删除，runner 线程的 SSH 公钥失效（M21）。
+				// 还会重启的崩溃不动：自重启沿用同一把密钥。最近一次 agent.start 之后还没收到过 starting / ready 时，
+				// 这是旧监督器迟到的结束（见 thread.statusSinceStart），不动可能已登记的新公钥。
+				s.dropThreadKey(t.id)
+				t.exitDropped = true
+			} else {
+				t.exitSkipped = true
+			}
 		}
 		switch {
 		case t.stopping || p.RestartsLeft == nil:

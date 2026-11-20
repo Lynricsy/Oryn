@@ -55,6 +55,7 @@ func newGwEnvCfg(t *testing.T, cfgMod func(*Config), opts sshgwtest.Options, mod
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
+	orbID := e.orb.ID // 测试会把 e.orb 换成同 ID 的 runner：接入协程只读这份拷贝，每条连接按 ID 取当前行
 	var wg sync.WaitGroup
 	t.Cleanup(func() { cancel(); _ = ln.Close(); wg.Wait() })
 	wg.Go(func() {
@@ -64,7 +65,7 @@ func newGwEnvCfg(t *testing.T, cfgMod func(*Config), opts sshgwtest.Options, mod
 				return
 			}
 			wg.Go(func() {
-				orb, err := e.orbs.Get(ctx, e.orb.ID)
+				orb, err := e.orbs.Get(ctx, orbID)
 				if err != nil {
 					_ = c.Close()
 					return

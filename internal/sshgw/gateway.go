@@ -116,15 +116,11 @@ func (s *Service) serveConn(ctx context.Context, orb db.Orb, c net.Conn) {
 				return nil, &ssh.BannerError{Err: err, Message: "oryn: " + err.Error() + "\n"}
 			}
 			// 挂到公钥下：该公钥之后被注销或被同线程新公钥替换时，这条连接随之关闭。挂上在拨通之后（g.up 已写入，
-			// 关闭方经 keys.mu 看得到它）；认证到这里之间公钥已失效则作废刚拨通的上游。
+			// 关闭方经 keys.mu 看得到它）；认证到这里之间公钥已失效则整条关掉。g.up 已随 track 发布给主机失效回调
+			// （service.invalidate 在锁外调用 g.close），此处不再改写它，摘除交给 serveConn 的 defer。
 			untrack, ok := s.trackKeyConn(key, t.ID, g.close)
 			if !ok {
-				if g.untrack != nil {
-					g.untrack()
-					g.untrack = nil
-				}
-				g.up.Close()
-				g.up = nil
+				g.close()
 				return nil, errUnknownKey
 			}
 			g.untrackKey = untrack
