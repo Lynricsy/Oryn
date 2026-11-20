@@ -262,7 +262,7 @@ export function SinkLayout({
 		const here = (): SinkRest => (openRef.current ? "open" : "closed");
 		// 程序化开合（平滑或一步落位）一律经原生，期间关掉吸附直到提交：途中的重排会让浏览器重新吸附到原目标；
 		// 手指拖动之后网页自己发起的落位会被 WebKit 按原生侧记着的吸附位置拉回（M20 探针 C2 第 4–5 轮）。
-		// 提交（停稳 SINK_REST_MS 之后）或手指按下时恢复。
+		// 提交（停稳 SINK_REST_MS 之后）、手指按下或请求宽限到期（release）时恢复。
 		const snap = (on: boolean) =>
 			on
 				? root.style.removeProperty("scroll-snap-type")
@@ -276,6 +276,7 @@ export function SinkLayout({
 					nativeSink.show(to === "open", smooth);
 				},
 				pull: jump,
+				release: () => snap(true),
 				setTimeout: (cb, ms) => window.setTimeout(cb, ms),
 				clearTimeout: (id) => window.clearTimeout(id),
 			},

@@ -150,6 +150,8 @@ export interface SinkScrollEnv {
 	scrollTo(to: SinkRest, smooth: boolean): void;
 	/** 拉回已提交的静止位（非本页引起的位移）：网页 instant 即可，目标就是原生侧记着的吸附位置。 */
 	pull(to: SinkRest): void;
+	/** 放弃本页请求（宽限到期）：恢复吸附，停在中途的根交给系统吸附到一端，到位后照常提交。 */
+	release(): void;
 	setTimeout(cb: () => void, ms: number): number;
 	clearTimeout(id: number): void;
 }
@@ -173,7 +175,7 @@ export interface SinkScroll {
  * 本页请求的目的地（`target`）在提交或手指接管前一直有效：根不在目的地（还没起步、停在中途或仍在另一端）都继续等，
  * 主线程忙时原生动画可能晚起步、scroll 事件可能隔一百多毫秒才来一条，这时按静止提交会把开合反过来。
  * 等满 SINK_REQUEST_MS 仍未到位就再发一次一步落位（经原生，也是异步的），目的地保留、再给一个 SINK_REQUEST_MS 的宽限；
- * 宽限到了仍未到位就放弃目的地，按实际位置提交（不再重发）。
+ * 宽限到了仍未到位就放弃目的地、恢复吸附（`release`），按实际位置提交（不再重发）。
  */
 export function createSinkScroll(
 	env: SinkScrollEnv,
@@ -204,8 +206,10 @@ export function createSinkScroll(
 		deadline = null;
 		if (target === null || touching || env.rest() === target) return;
 		if (fallen) {
-			// 兜底落位也没到（原生没动或被拉回）：放弃目的地，按实际位置收场
+			// 兜底落位也没到（原生没动或被拉回）：放弃目的地；吸附是发命令时关的，这里恢复，
+			// 否则停在中途时没有人收场（settle 对中途只等系统吸附）
 			drop();
+			env.release();
 			arm(SINK_REST_MS);
 			return;
 		}
