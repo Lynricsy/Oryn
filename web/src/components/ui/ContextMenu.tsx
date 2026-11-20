@@ -104,22 +104,31 @@ function MenuBody({
 	const live = useRef({ items, active, sub, choose, back });
 	live.current = { items, active, sub, choose, back };
 
-	// 浮动菜单量过实际尺寸后夹进视口：放不下就翻到触发点上方。换页（`sub`）后高度变了，要重量
+	// 浮动菜单量过实际尺寸后夹进视口：放不下就翻到触发点上方。换页（`sub`）、挪位后重排（贴边时
+	// 可用宽度变了）等尺寸变化都要重量，交给 ResizeObserver
 	// biome-ignore lint/correctness/useExhaustiveDependencies: sub 只用作重量的触发
 	useLayoutEffect(() => {
 		const el = panelRef.current;
 		if (sheet || !el) return;
-		const w = el.offsetWidth;
-		const h = el.offsetHeight;
-		const left = Math.min(
-			Math.max(menu.x, EDGE),
-			Math.max(EDGE, window.innerWidth - w - EDGE),
-		);
-		const top =
-			menu.y + h > window.innerHeight - EDGE
-				? Math.max(EDGE, menu.y - h)
-				: menu.y;
-		setPos({ left, top });
+		const place = () => {
+			const w = el.offsetWidth;
+			const h = el.offsetHeight;
+			const left = Math.min(
+				Math.max(menu.x, EDGE),
+				Math.max(EDGE, window.innerWidth - w - EDGE),
+			);
+			// 放不下就翻到触发点上方；触发点本身贴着底边时再整体上提，下沿也留出 EDGE
+			const below = menu.y + h <= window.innerHeight - EDGE;
+			const top = below
+				? menu.y
+				: Math.max(EDGE, Math.min(menu.y - h, window.innerHeight - h - EDGE));
+			setPos((p) => (p.left === left && p.top === top ? p : { left, top }));
+		};
+		place();
+		if (typeof ResizeObserver === "undefined") return;
+		const ro = new ResizeObserver(place);
+		ro.observe(el);
+		return () => ro.disconnect();
 	}, [sheet, menu.x, menu.y, sub]);
 
 	useLayoutEffect(() => {
