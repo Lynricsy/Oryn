@@ -47,6 +47,7 @@ import {
 	useThreadTabs,
 } from "../components/thread/RightPanel";
 import { RunnerOfflineNotice } from "../components/thread/RunnerOfflineNotice";
+import { SideAskHost } from "../components/thread/SideAskCard";
 import {
 	COMPACT_HEADER_VEIL,
 	HEADER_VEIL,
@@ -694,6 +695,7 @@ export function ThreadScreen({
 				</div>
 			)}
 			<ThreadDialogs threadId={threadId} />
+			<SideAskHost threadId={threadId} />
 		</div>
 	);
 }
