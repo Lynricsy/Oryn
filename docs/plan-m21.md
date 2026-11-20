@@ -64,7 +64,7 @@ Rollback point：步骤 1–2（Core 加 macOS 构建与隔离开关、钉新版
 ## Step 1 — oryn-core：macOS 构建与用户级发现隔离，发布新版
 
 Depends on：步骤 0（已完成）。
-Files：modify `.github/workflows/oryn-release.yml`（matrix 加 `macos-14` / `bun-darwin-arm64` / `omp-darwin-arm64` 与 `macos-13` / `bun-darwin-x64` / `omp-darwin-x64`，mac 上的 natives 依赖用 brew 装 cmake、ninja）；create `packages/coding-agent/src/capability/oryn-user-isolation.ts`、`packages/coding-agent/test/oryn-user-isolation.test.ts`；modify `packages/coding-agent/src/capability/index.ts`（`isUserSourceEnabled` 开头 1 行调用）；modify `ORYN.md`（例外清单与「发布」节的产物列表）。
+Files：modify `.github/workflows/oryn-release.yml`（matrix 加 `macos-15` / `bun-darwin-arm64` / `omp-darwin-arm64` 与 `macos-15-intel` / `bun-darwin-x64` / `omp-darwin-x64`，构建前分别断言 `uname -m` 为 `arm64` / `x86_64`；mac 上的 natives 依赖用 brew 装 cmake、ninja。修订：初稿写的 `macos-14` / `macos-13` 已退役，见 actions/runner-images README）；create `packages/coding-agent/src/capability/oryn-user-isolation.ts`、`packages/coding-agent/test/oryn-user-isolation.test.ts`；modify `packages/coding-agent/src/capability/index.ts`（`isUserSourceEnabled` 开头 1 行调用）；modify `ORYN.md`（例外清单与「发布」节的产物列表）。
 Produces：Release 资产 `omp-linux-x64`、`omp-linux-arm64`、`omp-darwin-arm64`、`omp-darwin-x64`、`omp-rpc-types.d.ts`、`SHA256SUMS`；环境变量 `ORYN_ISOLATE_USER_SOURCES=1`：`isUserSourceEnabled` 对一切非 `omp` / `native` 的源返回 false（项目级不受影响），并核对直接用 `os.homedir()` 的 provider（`discovery/*.ts`）是否都经过该判断，没有经过的在新文件里列出并一并屏蔽。
 Do：mac 作业与 linux 一样跑 `omp --smoke-test` 与 `scripts/oryn/smoke-rpc.mjs`；arm64 产物不能运行时加 `codesign -s - <产物>`（A3）。推送 `oryn`，打 `oryn-v18.19.0-16`。
 Accept：`bun test packages/coding-agent/test/oryn-user-isolation.test.ts` 通过；用步骤 0 的探针（真实 HOME 含 `~/.agents/skills`、仓库含 `.claude/skills`）以 `PI_CONFIG_DIR=.oryn/omp ORYN_ISOLATE_USER_SOURCES=1` 运行，`get_skills` 只列出仓库内技能；`gh release view oryn-v18.19.0-16 --repo Lynricsy/oryn-core --json assets -q '.assets[].name'` → 恰好上述 6 个名字；四个构建作业的 smoke 步骤都输出 `VERDICT PASS`。
@@ -146,3 +146,17 @@ Accept：`rg -n '确保 .omp. 与 .git. 在 PATH|那台机器自己的 omp 配�
 | 仓库内 `.claude/skills`、`AGENTS.md` | 读 | 读 | 项目级，应保留（`instructionFilesTokens` 只有仓库那份的大小） |
 
 修订（相对初稿）：A1 由「`PI_CODING_AGENT_DIR` 足够」改为「用 `PI_CONFIG_DIR=.oryn/omp`」——前者漏掉 `~/.omp/plugins`；Runner 的 omp 目录因此从 `~/.oryn/omp-agent` 改为 `~/.oryn/omp/agent`（步骤 4）；步骤 1 的隔离开关由「按需」改为必做，名称定为 `ORYN_ISOLATE_USER_SOURCES`。
+
+## 执行中修订（2026-11-20）
+
+- 步骤 1：mac 作业改用 `macos-15`（arm64）与 `macos-15-intel`（x64）并断言 `uname -m`——`macos-14` 已于 2026-11-02 退役、`macos-13` 更早下线。
+- 步骤 4 / 5 / D3：`oryn-library` 不能原样复制到 Runner（它要求运行 `oryn library put`，Runner 上没有 `oryn` CLI、不监听 `orbd.sock`，orynd 也不放行 `library.put`）。保留需求，按最小开放实现：Runner 扩展注册工具 `oryn_library_put{path, name?}` → `runner.sock` 只多认 `library.put`（路径须在线程工作目录内、是普通文件，用 `stageLibraryPaths` 只登记该文件，结束后撤销）→ ctl `library.put`；orynd 的 `runnerRequests` 只加 `library.put`，`library.fetch` 仍只服务显式登记的路径，其它文件库操作不开放。Runner 写 runner 版技能 `~/.oryn/omp/agent/skills/oryn-library/SKILL.md`（存入方式写成调用该工具；不进 manifest）。`oryn-setup` 是 orb setup 专用，不写。验收：步骤 8 增加「Runner 线程经 `oryn_library_put` 存入文件，文件库里出现该文件，来源为该线程」。
+- 步骤 1 增项：隔离开关打开时，Core 发起的 ssh 加 `-o UserKnownHostsFile=<配置根>/ssh/known_hosts`，不写用户的 `~/.ssh/known_hosts`（Core 默认 `StrictHostKeyChecking=accept-new` 会追加该文件）。
+- 步骤 4 / 5 / D3 项目层：Runner 的常驻 orb 行不带 project_id，项目在线程行上，一台 Runner 同时服务多个项目，不能用一份 omp-home 表达。改为按线程交付：`LinkCtlAgentStartParams` 增加可选 `projectId`、`projectConfig`（复用 `LinkCtlProjectConfig`，改 schema 并重新生成），orynd 只对属于有项目层的项目的 Runner 线程填写；orbd 写到按内容寻址的 `$HOME/.oryn/project-config/<projectId>-<sha12>/.omp`（原子写入、复用，无运行中 agent 引用的旧版本清理），该 agent 的 `ORYN_CENTRAL_CONFIG` / `ORYN_PROJECT_CONFIG_ROOT` / `--config` 照 orb 的 `applyProjectConfig`。项目层变更沿用 `threads/apply.go` 的生效判定。初稿「项目层仍是 `$HOME/.oryn/project-config/.omp`、经 omphome.apply」作废。
+- 项目级 SSH 主机（主人决定本轮补上，2026-11-20）：网关此前只知道连接来自哪台 Runner（流头不带线程，服务端 `NoClientAuth`），一台 Runner 服务多个项目时无法按项目放行。方案——每线程一把密钥，私钥不离开 Runner，不新增 ctl 方法：
+  - orbd 在 Runner 上每次 `agent.start` 为该线程生成 ed25519 密钥对，私钥写 `$HOME/.oryn/threads/<线程>/ssh/id_ed25519`（0600，目录 0700），agent env 设 `ORYN_SSH_KEY=<该路径>`；公钥（authorized_keys 格式）随 `LinkCtlAgentStartResult` 新增的可选字段 `sshPublicKey` 回给 orynd。
+  - orbd 把 Core 用的 `<配置根>/ssh/config`（Core 隔离模式的 `-F`）与 bash 用的 `~/.oryn/ssh/config` 写成同一份内容：每个网关主机的 `Host` 块，以及一个 `Host 127.0.0.1` 块（Core 以 ssh.json 的显式 host / port / user 连接时按它匹配），都带 `IdentityFile ${ORYN_SSH_KEY}`、`IdentitiesOnly yes`、`UserKnownHostsFile <配置根>/ssh/known_hosts`（OpenSSH ≥ 8.4 展开 `${ENV}`）。
+  - orynd 记录「线程 → 公钥」（内存表；`agent.start` 成功时登记，agent 退出、线程停止、Runner 断线时注销）；网关对 Runner 的流改为必须公钥认证，`PublicKeyCallback` 按公钥找到线程、核对线程的 `orb_id` 等于这条流的 orb，再按该线程的项目与自动化标记套用与 orb 相同的可见性规则（全局 + 本项目主机；全自动线程只用允许的主机）。orb 的流仍 `NoClientAuth`，行为不变。
+  - 局限：同一系统用户下的进程都能读到别的线程的私钥文件。它防的是 agent 误用别的项目的主机，不防恶意本机进程——与「Runner 完全信任控制面、机器归用户」的边界一致，文档写明。
+  - 测试：两个项目的 Runner 线程各自只能连本项目与全局主机；无公钥、未登记公钥、属于别的 Runner 的线程的公钥一律拒绝；全自动线程只用允许的主机；orb 不受影响。
+- 发布（主人决定，2026-11-20）：oryn-core 本地已被另一会话合并到 omp 19.0.1，等该会话完成 19 的同步验证后再发布 Core 并钉版本（tag 将是 `oryn-v19.0.1-<序号>`，不是上文的 `-16`）。在此之前步骤 8 的端到端验收以 `ORYN_AGENT_BIN` 指向本地源码的 Core 运行（下载、校验、缓存由步骤 3 的单测覆盖），发布后再用真实下载补跑一次。

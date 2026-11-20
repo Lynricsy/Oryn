@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Lynricsy/Oryn/core"
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/link"
 	"github.com/Lynricsy/Oryn/internal/orbsock"
@@ -45,7 +46,7 @@ type Config struct {
 	Token string // ORYN_ORB_TOKEN（oot_…）
 
 	Home       string // 默认 $HOME
-	AgentBin   string // 默认 ORYN_AGENT_BIN，再缺省为 "omp"
+	AgentBin   string // 默认 ORYN_AGENT_BIN；再缺省时 orb 为 "omp"，runner 为下载校验后的 Oryn Core（M21，见 corefetch.go）
 	EgressAddr string // 默认 127.0.0.1:7811；测试用 127.0.0.1:0
 	// EgressListener 非 nil 时就是 egress 的监听（New 不再自己监听 EgressAddr）：协调宿主在施加沙箱之前建好它，
 	// 沙箱内因此不需要任何 bind 权限（M9 L3）。
@@ -124,7 +125,7 @@ type Config struct {
 	OrbCAPEM string
 
 	// Runner 非 nil 时以 runner 形态运行（M11b，`orbd run --runner`，见 runner.go）：用户自己的机器与真实 $HOME，
-	// 只服务声明的目录；不开 egress / orbd.sock / 受管服务 / 桌面，不写 agent 资产。OrbID 为空时 New 经 whoami 取得。
+	// 只服务声明的目录；不开 orbd.sock / 受管服务 / 桌面，不写技能。OrbID 为空时 New 经 whoami 取得。
 	Runner *RunnerConfig
 	// ProcStat 是 /proc 指标源读取的 CPU 计数文件（默认 /proc/stat；测试可替换）。
 	ProcStat string
@@ -203,12 +204,12 @@ type Runtime struct {
 	agentVersion string
 	log          *slog.Logger
 	egressLn     net.Listener
-	// sshLn 是 orb 内 SSH 网关的本机监听（M18）；runner、协调宿主或监听失败时为 nil。
+	// sshLn 是 SSH 网关的本机监听（M18；M21 起 runner 也有）；协调宿主或监听失败时为 nil。
 	sshLn net.Listener
-	// memLn 是 runner 的记忆专用出站监听（M16）：第一个带 memory 的 agent.start 时由 memoryEgressAddr 建立，
-	// 之后所有线程共用；orb 形态不用（记忆走 egressLn）。memMu 保护它。
-	memMu sync.Mutex
-	memLn net.Listener
+	// projPending 是 runner 上正在启动、已选定项目层目录但尚未被 agent 引用的目录计数（M21，runnerproject.go）；
+	// projMu 保护它，并串行化清理。
+	projMu      sync.Mutex
+	projPending map[string]int
 
 	// ctx 是运行时寿命：New 创建，Run 的 ctx 结束时取消。后台 goroutine 一律挂在它上面。
 	ctx    context.Context
@@ -322,11 +323,16 @@ func New(cfg Config) (_ *Runtime, err error) {
 	case !cfg.Coordinator && cfg.Token == "" && readTokenFile(home) == "":
 		return nil, errors.New("orbdrt: Token is required (ORYN_ORB_TOKEN or $HOME/.oryn/orb-token)")
 	}
-	if cfg.AgentBin == "" {
+	if cfg.AgentBin == "" && cfg.Runner == nil {
 		cfg.AgentBin = "omp"
 	}
 	if cfg.EgressAddr == "" {
 		cfg.EgressAddr = DefaultEgressAddr
+	}
+	if cfg.Runner != nil && cfg.EgressListener == nil {
+		if err := checkRunnerEgressAddr(cfg.EgressAddr); err != nil {
+			return nil, fmt.Errorf("orbdrt: %w", err)
+		}
 	}
 	if cfg.SSHAddr == "" {
 		cfg.SSHAddr = DefaultSSHAddr
@@ -404,6 +410,16 @@ func New(cfg Config) (_ *Runtime, err error) {
 		if cfg.DiskPath == "" {
 			cfg.DiskPath = rs.dirs[0]
 		}
+		// M21：agent 一律是钉住的 Oryn Core（下载并校验，不回退 PATH 里的 omp）；ORYN_AGENT_BIN 只留给开发与测试。
+		if cfg.AgentBin == "" {
+			fctx, cancel := context.WithTimeout(context.Background(), coreFetchTimeout)
+			bin, ferr := ensureCore(fctx, home, core.Source(), nil)
+			cancel()
+			if ferr != nil {
+				return nil, fmt.Errorf("orbdrt: %w", ferr)
+			}
+			cfg.AgentBin = bin
+		}
 	}
 	if err := os.MkdirAll(filepath.Join(home, ".oryn", "threads"), 0o755); err != nil {
 		return nil, fmt.Errorf("orbdrt: %w", err)
@@ -412,28 +428,31 @@ func New(cfg Config) (_ *Runtime, err error) {
 	if err := resetDir(filepath.Join(home, ".oryn", "tmp")); err != nil {
 		return nil, fmt.Errorf("orbdrt: %w", err)
 	}
-	// runner 只写 orbd 自带的扩展（只注册 artifact 工具）到 orbd 自己的目录，仍不碰 ~/.agents/skills 与 ~/.oryn/core。
+	// runner 只写 orbd 自带的扩展（ORYN_RUNNER=1 时只注册 artifact / 文件库工具与 Runner 的指引）到 orbd 自己的目录，
+	// 以及 runner 版的 oryn-library 技能到自己的 agent 目录（M21；oryn-setup 只用于 orb 的 setup，不写）。
 	if rs != nil {
-		if err := writeFileAtomic(runnerExtensionPath(home), orbExtension, 0o644); err != nil {
-			return nil, fmt.Errorf("orbdrt: write %s: %w", runnerExtensionPath(home), err)
-		}
-	}
-	// runner 不开常驻 egress：控制面的密钥不去用户机器（agent 用那台机器自己的模型配置与 git 凭据）；
-	// 记忆专用的通道按需开启（M16，memory.go）。
-	var ln net.Listener
-	if cfg.Runner == nil {
-		if ln = cfg.EgressListener; ln == nil {
-			if ln, err = net.Listen("tcp", cfg.EgressAddr); err != nil {
-				return nil, fmt.Errorf("orbdrt: egress listen %s: %w", cfg.EgressAddr, err)
+		for path, data := range map[string][]byte{runnerExtensionPath(home): orbExtension, runnerLibrarySkillPath(home): runnerLibrarySkill} {
+			if err := writeFileAtomic(path, data, 0o644); err != nil {
+				return nil, fmt.Errorf("orbdrt: write %s: %w", path, err)
 			}
 		}
 	}
-	// 可信 PATH 去掉 $HOME 之下的项是 orb 的纵深防御（agent 可能在 ~/.local/bin 放同名程序）；runner 上 agent
-	// 本就以该用户身份运行，而 omp / git 常装在 ~/.bun/bin、~/.local/bin，因此保留 PATH 里的全部绝对路径项。
-	binHome := home
-	if rs != nil {
-		binHome = ""
+	// 出站通道常驻（M21 起 runner 也是）：控制面在其上注入密钥，runner 只被放行模型中转与记忆。
+	// 协调宿主由调用方给好监听（EgressListener）。
+	ln := cfg.EgressListener
+	if ln == nil {
+		if ln, err = net.Listen("tcp", cfg.EgressAddr); err != nil {
+			if rs != nil {
+				return nil, fmt.Errorf("orbdrt: egress listen %s: %w (another process holds the port; set ORYN_EGRESS_ADDR to another address)", cfg.EgressAddr, err)
+			}
+			return nil, fmt.Errorf("orbdrt: egress listen %s: %w", cfg.EgressAddr, err)
+		}
 	}
+	defer func() {
+		if err != nil {
+			_ = ln.Close()
+		}
+	}()
 	r := &Runtime{
 		cfg:      cfg,
 		home:     home,
@@ -450,7 +469,7 @@ func New(cfg Config) (_ *Runtime, err error) {
 		maxFileBytes:       MaxFileBytes,
 		maxAttachmentBytes: MaxAttachmentBytes,
 
-		bins:       newBinResolver(os.Getenv("PATH"), binHome),
+		bins:       newBinResolver(os.Getenv("PATH"), home),
 		httpClient: hc,
 		runner:     rs,
 	}
@@ -464,21 +483,20 @@ func New(cfg Config) (_ *Runtime, err error) {
 	r.svc = newServiceSupervisor(r)
 	if !cfg.Coordinator && rs == nil {
 		// 协调宿主没有桌面，也不写 orb 扩展与技能（协调档的 omp 以 --no-extensions --no-skills 启动）；
-		// runner 同样不碰用户机器上的 ~/.agents/skills 与 ~/.oryn/core（它只写自带的扩展，见上），也没有桌面与嵌套 Docker。
+		// runner 的扩展与技能见上，也没有桌面、工具执行器与嵌套 Docker。
 		r.desk = newDesktop(r)
 		r.comp = newComputer(r)
 		if cfg.NestedDocker {
 			r.dockerd = newDockerd(r)
 		}
 		if err := r.writeAgentAssets(); err != nil {
-			_ = ln.Close()
 			if r.desk != nil {
 				_ = r.desk.cdpLn.Close()
 			}
 			return nil, fmt.Errorf("orbdrt: %w", err)
 		}
 	}
-	if !cfg.Coordinator && rs == nil {
+	if !cfg.Coordinator {
 		r.sshLn = r.listenSSH()
 	}
 	r.loadSetupStatus()
@@ -487,19 +505,8 @@ func New(cfg Config) (_ *Runtime, err error) {
 	return r, nil
 }
 
-// EgressAddr 返回 egress 实际监听地址；runner 形态返回记忆专用通道的地址，尚未开启时为空串。
-func (r *Runtime) EgressAddr() string {
-	ln := r.egressLn
-	if r.runner != nil {
-		r.memMu.Lock()
-		ln = r.memLn
-		r.memMu.Unlock()
-	}
-	if ln == nil {
-		return ""
-	}
-	return ln.Addr().String()
-}
+// EgressAddr 返回 egress 实际监听地址。
+func (r *Runtime) EgressAddr() string { return r.egressLn.Addr().String() }
 
 // AgentVersion 返回 `<agent> --version` 的输出（探测失败为空）。
 func (r *Runtime) AgentVersion() string { return r.agentVersion }
@@ -519,8 +526,7 @@ func detectAgentVersion(bins binResolver, bin string) string {
 // Run 运行到 ctx 结束：恢复已登记线程的 tailer、egress、指标与 link 重连循环。
 // 优雅退出（停 agent、冲刷 tailer）由调用方在取消 ctx 之前调用 Shutdown 完成。
 // 协调宿主模式只起 egress 与 tailer；link 断开（Connect 返回 ErrNoRedial）后即返回。
-// runner 形态不起常驻 egress（记忆专用通道按需开启）、orbd.sock 与受管服务的上报，另起只认 artifact.call 的
-// runner.sock；返回时释放实例锁。
+// runner 形态不起 orbd.sock 与受管服务的上报，另起只认 artifact.call 的 runner.sock；返回时释放实例锁。
 func (r *Runtime) Run(ctx context.Context) error {
 	stop := context.AfterFunc(ctx, r.cancel)
 	defer stop()
@@ -907,8 +913,9 @@ func (r *Runtime) onRequest(reqCtx context.Context, c *conn, method string, para
 		if err != nil {
 			return nil, err
 		}
-		// 项目层只在请求带了 projectConfig 时写（缺省 = 不动项目层）；协调宿主没有项目层。
-		setProject := p.ProjectConfig != nil && !r.cfg.Coordinator
+		// 项目层只在请求带了 projectConfig 时写（缺省 = 不动项目层）；协调宿主没有项目层，runner 的项目层按线程随
+		// agent.start 下发（M21，runnerproject.go），这里忽略。
+		setProject := p.ProjectConfig != nil && !r.cfg.Coordinator && r.runner == nil
 		if _, _, err := r.writeOmpConfigAt(r.nextOmpSeq(), p.OmpHome, p.ProjectConfig, setProject, p.SSH); err != nil {
 			return nil, ctlErr("failed", "%v", err)
 		}

@@ -269,7 +269,8 @@ func (s *Service) applyLayerLocked(ctx context.Context, a *ompApplier, projectID
 	return rep, nil
 }
 
-// applyTargets 返回这一层要下发的 orb：ready、有带 omphome-apply 特性的活动 link；项目层只取该项目的 orb。
+// applyTargets 返回这一层要下发的 orb：ready、有带 omphome-apply 特性的活动 link（含在线的 runner，M21）；项目层只取
+// 该项目的 orb——runner 的常驻 orb 不属于任何项目，只收全局层。
 func (s *Service) applyTargets(ctx context.Context, projectID string) ([]db.Orb, error) {
 	orbs, err := s.st.Q.ListOrbsByState(ctx, StateReady)
 	if err != nil {

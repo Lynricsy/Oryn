@@ -6120,8 +6120,14 @@ type LinkCtlAgentStartParams struct {
 
 	// Profile M9：`coordinator` = 协调档（无代码工具、独立 HOME 与设置覆盖层、从零构造的环境，`cwd` 由 orbd 决定）。
 	// **只有协调宿主接受**：普通 orbd 收到非空 `profile` → `invalid_params`；协调宿主收到其它值或省略 → `invalid_params`。
-	Profile    *LinkCtlAgentStartParamsProfile `json:"profile,omitempty"`
-	SessionDir string                          `json:"sessionDir"`
+	Profile *LinkCtlAgentStartParamsProfile `json:"profile,omitempty"`
+
+	// ProjectConfig 项目级 omp 配置（M12.2）。出现即表示 orb 属于某个项目：orbd 把 `$HOME/.oryn/project-config/.omp/` 镜像成 `files`，目录里不在其中的文件一律删除
+	ProjectConfig *LinkCtlProjectConfig `json:"projectConfig,omitempty"`
+
+	// ProjectID `prj_<ulid>`
+	ProjectID  *ProjectID `json:"projectId,omitempty"`
+	SessionDir string     `json:"sessionDir"`
 
 	// SystemPrompt M9 协调档的系统提示词（以字面量传给 omp `--system-prompt`，必须含换行，否则 `invalid_params`）；只有协调宿主接受
 	SystemPrompt *string `json:"systemPrompt,omitempty"`

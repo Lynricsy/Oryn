@@ -559,6 +559,8 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 		args []string
 		cwd  string
 		env  map[string]string
+		// projID / projDir：runner 上本线程项目层的项目 id 与按内容寻址的目录（M21；不带 projectConfig 时为空）。
+		projID, projDir string
 	)
 	switch {
 	case r.cfg.Coordinator:
@@ -567,6 +569,10 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 			return apigen.LinkCtlAgentStartResult{}, err
 		}
 	case r.runner != nil:
+		// M21：首个 omphome.apply 之前不起 agent（否则它会以空的 ~/.oryn/omp/agent 运行、没有模型）。
+		if !r.ompHomeApplied() {
+			return apigen.LinkCtlAgentStartResult{}, ctlErr(CodeConfigPending, "等待控制面下发 omp 配置")
+		}
 		// runner：cwd 必填且在声明的目录或已登记的 worktree 之内；会话目录只能在 $HOME/.oryn/threads 之下。
 		if p.Cwd == "" {
 			return apigen.LinkCtlAgentStartResult{}, ctlErr(CodeDirNotServed, "cwd is required on a runner")
@@ -577,6 +583,17 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 		cwd = filepath.Clean(p.Cwd)
 		if _, err := r.underThreads(dir); err != nil {
 			return apigen.LinkCtlAgentStartResult{}, ctlErr(link.CodeInvalidParams, "sessionDir: %v", err)
+		}
+		if p.ProjectConfig != nil {
+			if p.ProjectID != nil {
+				projID = *p.ProjectID
+			}
+			var release func()
+			var err error
+			if projDir, release, err = r.runnerProjectDir(projID, p.ProjectConfig); err != nil {
+				return apigen.LinkCtlAgentStartResult{}, err
+			}
+			defer release()
 		}
 	default:
 		cwd = r.currentWorkdir()
@@ -631,11 +648,26 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 		if r.runner == nil {
 			// orb 环境说明扩展。
 			args = append(args, "-e", r.extensionPath())
-			// 项目级中央配置（M12.2，C1）：在 p.Env 之后设置，env 密钥不能覆盖；--config 排在桌面覆盖层之前。
-			args = r.applyProjectConfig(env, args)
 		} else {
-			// runner 只加载 orbd 自带的扩展（ORYN_RUNNER=1 时只注册 artifact 工具），其余扩展与技能用那台机器自己的。
+			// runner 只加载 orbd 自带的扩展（ORYN_RUNNER=1 时只注册 artifact / 文件库工具与 Runner 的指引）。
 			args = append(args, "-e", runnerExtensionPath(r.home))
+			// M21：独立的 omp 配置根（与用户自己的 ~/.omp 无关）并屏蔽用户级发现源（~/.agents、~/.claude 等）；
+			// 在 p.Env 之后设置，env 模式的密钥覆盖不了。会改 agent 目录或 profile 的变量一律去掉。
+			env["PI_CONFIG_DIR"] = runnerOmpConfigDir
+			env["ORYN_ISOLATE_USER_SOURCES"] = "1"
+			for _, k := range []string{"PI_CODING_AGENT_DIR", "PI_PROFILE", "OMP_PROFILE"} {
+				delete(env, k)
+			}
+		}
+		if r.runner == nil {
+			// 项目级中央配置（M12.2，C1）：在 p.Env 之后设置，env 密钥不能覆盖；--config 排在记忆与桌面覆盖层之前。
+			args = r.applyProjectConfig(env, args)
+		} else if projDir != "" {
+			// runner（M21）：本线程项目的那一版项目层（按内容寻址的目录，见 runnerproject.go），规则同 orb。
+			args = r.applyProjectRoot(env, args, projDir)
+		} else {
+			delete(env, envCentralConfig)
+			delete(env, envProjectConfigRoot)
 		}
 		if memOverlay != "" {
 			args = append(args, "--config", memOverlay)
@@ -650,7 +682,12 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 		cwd:        cwd,
 		env:        envList(env),
 		initFrames: frames,
+		projectDir: projDir,
 	})
+	if projID != "" {
+		// 同一项目没有运行中 agent 引用的旧版本（本次的目录仍在启动名单里，不会被删）。
+		r.pruneRunnerProject(projID)
+	}
 	if err != nil {
 		return apigen.LinkCtlAgentStartResult{}, ctlErr("failed", "start agent: %v", err)
 	}
@@ -701,11 +738,23 @@ func (r *Runtime) agentStop(p apigen.LinkCtlAgentStopParams) (apigen.LinkCtlAgen
 	return apigen.LinkCtlAgentStopResult{ExitCode: t.stopAgent(grace)}, nil
 }
 
+// cwd 返回线程最近一次启动 agent 的工作目录；本进程里还没启动过时为空串。
+func (t *thread) cwd() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.sup == nil {
+		return ""
+	}
+	return t.sup.spec.cwd
+}
+
 type startSpec struct {
 	args       []string
 	cwd        string
 	env        []string
 	initFrames [][]byte
+	// projectDir 是 runner 上这个 agent 所用的项目层目录（M21，清理时据此保留）；orb 为空。
+	projectDir string
 }
 
 // start 拉起监督器；已有活动监督器时幂等返回当前 pid。

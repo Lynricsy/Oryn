@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -253,4 +254,38 @@ func (s *Service) terminalEnabled(orbID string) bool {
 		}
 	}
 	return false
+}
+
+// runnerProjectConfig 返回 runner 线程 agent.start 的项目层（M21）：runner 一台机器可同时跑多个项目的线程，项目层按线程
+// 交付，内容与 orb 收到的相同（原样，不经变换）。只对 hello 含 omphome-apply 的 runner 给出（旧版 orbd 用那台机器自己的
+// omp 配置）；线程不属于项目、项目已删除或项目没有项目层时返回 nil。orb 线程返回 nil（orb 的项目层经 setup /
+// omphome.apply 下发）。
+func (s *Service) runnerProjectConfig(ctx context.Context, threadID, orbID string) (*apigen.ProjectID, *apigen.LinkCtlProjectConfig, error) {
+	if s.cfg.Projects == nil {
+		return nil, nil, nil
+	}
+	if kind, feats := s.orbs.Features(orbID); kind != orbs.KindRunner || !slices.Contains(feats, orbs.FeatureOmpHomeApply) {
+		return nil, nil, nil
+	}
+	row, err := s.st.Q.GetThread(ctx, threadID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if row.ProjectID == nil || *row.ProjectID == "" {
+		return nil, nil, nil
+	}
+	if _, err := s.st.Q.GetProject(ctx, *row.ProjectID); errors.Is(err, sql.ErrNoRows) {
+		return nil, nil, nil
+	} else if err != nil {
+		return nil, nil, err
+	}
+	cfg, err := orbs.ProjectConfigOf(s.cfg.Projects, *row.ProjectID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(cfg.Files) == 0 {
+		return nil, nil, nil
+	}
+	pid := *row.ProjectID
+	return &pid, cfg, nil
 }

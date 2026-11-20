@@ -13888,6 +13888,11 @@ components:
             M19：协调宿主 /mcp/ 路由的凭据，只在 `web` 为真时生效：orbd 以环境变量 `ORYN_MCP_TOKEN` 交给该 agent，mcp.json 的
             `X-Oryn-MCP-Token` 请求头引用它，出站代理逐个请求核对（D10：Space 协调者没有它，直接请求 /mcp/ 一律 403）。只有协调宿主接受。
         memory: { $ref: '#/components/schemas/LinkCtlAgentMemory' }
+        # M21：projectId / projectConfig 只对 runner 线程给出（同时出现）：runner 一台机器可同时跑多个项目的线程，项目层按线程
+        # 随 agent.start 交付（原样不经变换，与 orb 相同；线程不属于项目或项目没有项目层时省略）。orb 线程不带（orb 的项目层经
+        # setup.run / omphome.apply 下发）。
+        projectId: { $ref: '#/components/schemas/ProjectId' }
+        projectConfig: { $ref: '#/components/schemas/LinkCtlProjectConfig' }
     LinkCtlAgentStartResult:
       type: object
       required: [pid]

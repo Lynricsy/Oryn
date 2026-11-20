@@ -167,30 +167,37 @@ func TestMemoryEgressCallerScopes(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, code)
 }
 
-// runner 的通道只开记忆网关：origin-form 的 `/memory/` 交给下一层；其余路径与 absolute-form（代理形式，出站代理只交给
-// git 路由）一律 403 memory_forbidden，包括路径以 `/memory/` 开头的代理形式 git 请求。
-func TestMemoryOnlyHandler(t *testing.T) {
+// M21：runner 的通道只开模型中转与记忆网关：origin-form 的 `/llm/`、`/memory/` 交给下一层；`/git/`、`/gh/`、`/mcp/`、
+// CONNECT 与 absolute-form（代理形式，出站代理只交给 git 路由）一律 403 runner_forbidden，包括路径以 `/llm/`、
+// `/memory/` 开头的代理形式请求。
+func TestRunnerEgressHandler(t *testing.T) {
 	var reached []string
-	h := memoryOnlyHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := runnerEgressHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reached = append(reached, r.URL.String())
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	for _, c := range []struct {
-		target string
-		code   int
+		method, target string
+		code           int
 	}{
-		{"/memory/t/T-1/v1/default/banks", http.StatusNoContent},
-		{"http://github.com/memory/a/b/info/refs?service=git-upload-pack", http.StatusForbidden},
-		{"http://127.0.0.1:9/memory/t/T-1/v1/default/banks", http.StatusForbidden},
-		{"/git/github.com/memory/a/b/info/refs", http.StatusForbidden},
-		{"/gh/api.github.com/user", http.StatusForbidden},
+		{http.MethodPost, "/memory/t/T-1/v1/default/banks", http.StatusNoContent},
+		{http.MethodPost, "/llm/anthropic/v1/messages", http.StatusNoContent},
+		{http.MethodGet, "http://github.com/memory/a/b/info/refs?service=git-upload-pack", http.StatusForbidden},
+		{http.MethodGet, "http://github.com/llm/a/info/refs?service=git-upload-pack", http.StatusForbidden},
+		{http.MethodGet, "http://127.0.0.1:9/memory/t/T-1/v1/default/banks", http.StatusForbidden},
+		{http.MethodPost, "http://api.anthropic.com/llm/anthropic/v1/messages", http.StatusForbidden},
+		{http.MethodConnect, "api.anthropic.com:443", http.StatusForbidden},
+		{http.MethodGet, "/git/github.com/memory/a/b/info/refs", http.StatusForbidden},
+		{http.MethodGet, "/gh/api.github.com/user", http.StatusForbidden},
+		{http.MethodPost, "/mcp/m0/", http.StatusForbidden},
+		{http.MethodGet, "/llmx/a", http.StatusForbidden},
 	} {
 		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, c.target, nil))
+		h.ServeHTTP(rec, httptest.NewRequest(c.method, c.target, nil))
 		assert.Equal(t, c.code, rec.Code, c.target)
 		if c.code == http.StatusForbidden {
-			assert.Contains(t, rec.Body.String(), "memory_forbidden", c.target)
+			assert.Contains(t, rec.Body.String(), "runner_forbidden", c.target)
 		}
 	}
-	assert.Equal(t, []string{"/memory/t/T-1/v1/default/banks"}, reached)
+	assert.Equal(t, []string{"/memory/t/T-1/v1/default/banks", "/llm/anthropic/v1/messages"}, reached)
 }

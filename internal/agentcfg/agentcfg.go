@@ -293,18 +293,36 @@ type Rendered struct {
 
 // Render 为一台 orb 生成 omp-home 文件（模型代理地址为 orb 内的 EgressAddr）。
 func Render(files map[string][]byte, r Resolver) (Rendered, error) {
-	return RenderAt(files, r, EgressAddr)
+	return RenderWith(files, r, RenderOptions{})
 }
 
 // RenderAt 同 Render，但模型 baseUrl 改写到 egressAddr（host:port）；协调宿主的代理端口来自配置。
 func RenderAt(files map[string][]byte, r Resolver, egressAddr string) (Rendered, error) {
+	return RenderWith(files, r, RenderOptions{EgressAddr: egressAddr})
+}
+
+// RenderOptions 是 RenderWith 的选项；零值即 Render 的行为。
+type RenderOptions struct {
+	// EgressAddr 是模型 baseUrl 改写到的代理地址（host:port）；空 = EgressAddr。
+	EgressAddr string
+	// NoEnvFallback 为真时关闭环境变量降级（M21：runner 是用户自己的机器，下发的文件与环境里不得有 vault 明文）：
+	// 没有 baseUrl 的 provider 的 apiKey 换成占位符、不进 Env、不绑定路由——这类 provider 在该宿主上不可用，
+	// 模型目录照常显示。
+	NoEnvFallback bool
+}
+
+// RenderWith 按 opts 生成 omp-home 文件。
+func RenderWith(files map[string][]byte, r Resolver, opts RenderOptions) (Rendered, error) {
+	if opts.EgressAddr == "" {
+		opts.EgressAddr = EgressAddr
+	}
 	out := Rendered{Files: map[string][]byte{}, Routes: map[string]egress.Route{}, Env: map[string]string{}}
 	for p, content := range files {
 		if p != ModelsFile {
 			out.Files[p] = content
 			continue
 		}
-		b, err := renderModels(content, r, egressAddr, &out)
+		b, err := renderModels(content, r, opts, &out)
 		if err != nil {
 			return out, fmt.Errorf("%s: %w", p, err)
 		}
@@ -315,10 +333,11 @@ func RenderAt(files map[string][]byte, r Resolver, egressAddr string) (Rendered,
 
 // renderModels 改写 models.yml 并生成 egress 路由。密钥绑定规则（防止改 models.yml 把密钥带出控制面）：
 //   - apiKey 只能引用本 provider 自己的密钥（checkRefs）；它绑定到本 provider 的全部路由；
-//   - 环境变量降级只用于该密钥，且仅当它没有绑定上游主机（绑定了主机的密钥只能经代理使用）；
+//   - 环境变量降级只用于该密钥，且仅当它没有绑定上游主机（绑定了主机的密钥只能经代理使用）；opts.NoEnvFallback 时不降级；
 //   - provider 子树里的其它引用必须属于 hosts 非空的密钥，且只绑定到上游主机与 hosts 匹配的路由；
 //   - providers 之外的引用换成占位符但不绑定任何路由（egress 拒绝使用）；任何位置都不能引用 git/* 密钥。
-func renderModels(content []byte, r Resolver, egressAddr string, out *Rendered) ([]byte, error) {
+func renderModels(content []byte, r Resolver, opts RenderOptions, out *Rendered) ([]byte, error) {
+	egressAddr := opts.EgressAddr
 	doc, providers, err := parseModels(content)
 	if err != nil {
 		return content, err
@@ -345,7 +364,13 @@ func renderModels(content []byte, r Resolver, egressAddr string, out *Rendered) 
 			}
 			base := providerBase(key, prov)
 			bu := mapGet(prov, "baseUrl")
-			if base == "" {
+			switch {
+			case base == "" && opts.NoEnvFallback:
+				// 不降级：占位符既不是环境变量名也不绑定路由，真实密钥不离开控制面
+				ak.Value = Placeholder(id)
+				ak.Style = yaml.DoubleQuotedStyle
+				out.Warnings = append(out.Warnings, fmt.Sprintf("provider %s 没有 baseUrl 且不在内置表中，在不下发密钥的宿主上不可用", key))
+			case base == "":
 				// 环境变量降级：omp 先把 apiKey 当环境变量名解析
 				if _, hosts, _ := r.SecretByID(id); len(hosts) > 0 {
 					return nil, fmt.Errorf("provider %s 没有 baseUrl，而密钥 %s 已绑定上游主机（%s），不能以环境变量下发到 orb",
@@ -356,7 +381,7 @@ func renderModels(content []byte, r Resolver, egressAddr string, out *Rendered) 
 				ak.Style = 0
 				out.Env[env] = value
 				out.Warnings = append(out.Warnings, fmt.Sprintf("provider %s 没有 baseUrl 且不在内置表中，真实密钥以环境变量 %s 进入 orb", key, env))
-			} else {
+			default:
 				local, origin, err := rewriteBase(base, key, egressAddr)
 				if err != nil {
 					return nil, fmt.Errorf("provider %s baseUrl: %w", key, err)

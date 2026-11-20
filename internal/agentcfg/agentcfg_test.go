@@ -149,6 +149,41 @@ func TestRenderAtEgressAddr(t *testing.T) {
 	assert.Equal(t, def.Routes, at.Routes, "路由只与上游有关，与代理地址无关")
 }
 
+// M21：NoEnvFallback 关闭环境变量降级——没有 baseUrl 的 provider 拿到占位符（不绑定路由、不进 Env），绑定了主机的
+// 密钥也不再因此报错；其余 provider 与 Render 相同。
+func TestRenderNoEnvFallback(t *testing.T) {
+	res, err := Import(map[string][]byte{"models.yml": []byte(sampleModels)})
+	require.NoError(t, err)
+	r := fakeResolver{
+		"omp/models/custom/apiKey":    {"sec1", "sk-literal-custom-0123456789", "llm.example.com,alt.example.com"},
+		"omp/models/anthropic/apiKey": {"sec2", "sk-ant-literal-abcdef", "api.anthropic.com"},
+		"omp/models/exa/apiKey":       {"sec3", "exa-literal-xyz", ""},
+	}
+	out, err := RenderWith(res.Files, r, RenderOptions{NoEnvFallback: true})
+	require.NoError(t, err)
+	models := string(out.Files["models.yml"])
+	assert.Empty(t, out.Env)
+	assert.NotContains(t, models, "ORYN_MODEL_KEY_")
+	for _, v := range []string{"exa-literal-xyz", "sk-literal", "sk-ant-literal"} {
+		assert.NotContains(t, models, v)
+	}
+	assert.Contains(t, models, `apiKey: "oryn-ph-sec3"`)
+	assert.NotContains(t, out.Routes, "exa", "降级 provider 不绑定路由")
+	def, err := Render(res.Files, r)
+	require.NoError(t, err)
+	assert.Equal(t, def.Routes, out.Routes)
+	require.Len(t, out.Warnings, 1)
+	assert.Contains(t, out.Warnings[0], "exa")
+
+	// 绑定了主机的密钥：Render 报错（不能以环境变量下发），NoEnvFallback 时只换成占位符
+	r["omp/models/exa/apiKey"] = [3]string{"sec3", "exa-literal-xyz", "api.exa.ai"}
+	_, err = Render(res.Files, r)
+	require.Error(t, err)
+	out, err = RenderWith(res.Files, r, RenderOptions{NoEnvFallback: true})
+	require.NoError(t, err)
+	assert.Contains(t, string(out.Files["models.yml"]), `apiKey: "oryn-ph-sec3"`)
+}
+
 func TestExcluded(t *testing.T) {
 	for p, want := range map[string]bool{
 		"sessions/a.jsonl": true, "blobs/x": true, "agent.db": true, "agent.db-wal": true,

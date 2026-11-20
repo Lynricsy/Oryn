@@ -14,12 +14,13 @@ import (
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
-// visible 返回这台 orb 能用的主机（按名排序）与因全自动被挡下的主机。runner / 协调 orb 返回 managed=false。
-// 取启用的全局主机与本项目主机，同名时项目主机盖过全局主机。
+// visible 返回这台 orb 能用的主机（按名排序）与因全自动被挡下的主机。协调 orb 返回 managed=false。
+// 取启用的全局主机与本项目主机，同名时项目主机盖过全局主机。runner（M21）规则相同，但只有全局主机（hostScope）。
 func (s *Service) visible(ctx context.Context, orb db.Orb) (usable, blocked []db.SshHost, managed bool, err error) {
-	if orbs.IsRunner(orb) || orb.Coordinator {
+	if orb.Coordinator {
 		return nil, nil, false, nil
 	}
+	scope := hostScope(orb)
 	rows, err := s.st.Q.ListSshHosts(ctx)
 	if err != nil {
 		return nil, nil, true, err
@@ -30,9 +31,9 @@ func (s *Service) visible(ctx context.Context, orb db.Orb) (usable, blocked []db
 			byName[h.Name] = h
 		}
 	}
-	if orb.ProjectID != nil {
+	if scope != nil {
 		for _, h := range rows {
-			if h.Enabled && h.ProjectID != nil && *h.ProjectID == *orb.ProjectID {
+			if h.Enabled && h.ProjectID != nil && *h.ProjectID == *scope {
 				byName[h.Name] = h
 			}
 		}
@@ -70,18 +71,29 @@ func (s *Service) resolve(ctx context.Context, orb db.Orb, name string) (h db.Ss
 		}
 	}
 	if managed {
+		scope := hostScope(orb)
 		rows, err := s.st.Q.ListSshHosts(ctx)
 		if err != nil {
 			return db.SshHost{}, "", err
 		}
 		for _, h := range rows {
-			inScope := h.ProjectID == nil || (orb.ProjectID != nil && *h.ProjectID == *orb.ProjectID)
+			inScope := h.ProjectID == nil || (scope != nil && *h.ProjectID == *scope)
 			if inScope && h.Name == name && !h.Enabled {
 				return h, fmt.Sprintf("主机 %q 已停用", name), nil
 			}
 		}
 	}
 	return db.SshHost{}, fmt.Sprintf("主机 %q 未登记，或对这台 orb 不可见", name), nil
+}
+
+// hostScope 返回 orb 可见的项目主机所属项目；nil = 只有全局主机。runner（M21）恒为 nil：网关收到的是 runner 本机
+// 127.0.0.1:7822 上的连接，只能归属到 runner 的常驻 orb，认不出发起连接的线程，而同一台 runner 上可以同时跑多个项目的
+// 线程——项目级主机对 runner 一律不可见（即便 orb 行意外带了 project_id）。
+func hostScope(orb db.Orb) *string {
+	if orbs.IsRunner(orb) {
+		return nil
+	}
+	return orb.ProjectID
 }
 
 // hostDescription 拼 orb 内 ssh.json 的描述：真实用户与地址，再接描述与标签。
@@ -100,7 +112,7 @@ func hostDescription(h db.SshHost) string {
 	return b.String()
 }
 
-// OrbConfig 返回下发给 orb 的 SSH 配置；runner / 协调 orb 返回 nil（不动 orb 内的 SSH 配置）。
+// OrbConfig 返回下发给 orb（含 runner）的 SSH 配置；协调 orb 返回 nil（不动 orb 内的 SSH 配置）。
 func (s *Service) OrbConfig(ctx context.Context, orb db.Orb) (*apigen.LinkCtlSSHConfig, error) {
 	usable, _, managed, err := s.visible(ctx, orb)
 	if err != nil || !managed {
@@ -143,7 +155,7 @@ func (s *Service) LayerState(projectID string) ([]byte, error) {
 	return json.Marshal(state)
 }
 
-// ThreadHosts 返回线程所在 orb 可见的主机。线程不存在 → not_found；没有 orb、runner 或协调线程 → managed=false。
+// ThreadHosts 返回线程所在 orb 可见的主机。线程不存在 → not_found；没有 orb 或协调线程 → managed=false。
 func (s *Service) ThreadHosts(ctx context.Context, threadID string) (apigen.ThreadSSHHosts, error) {
 	out := apigen.ThreadSSHHosts{Hosts: []apigen.ThreadSSHHost{}}
 	t, err := s.st.Q.GetThread(ctx, threadID)

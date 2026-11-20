@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
@@ -66,6 +67,8 @@ type Config struct {
 	PortalURLTemplate func(threadID string) string
 	// Memory 决定 agent.start 是否启用内置记忆（M16）；nil = 不启用。
 	Memory MemoryStarter
+	// Projects 是项目级 omp 配置（M21：runner 线程的项目层随 agent.start 交付）；nil = 不交付。
+	Projects orbs.ProjectConfigs
 }
 
 // DeliveredAttachment 是已投递到 orb 的附件（Path 为 orb 内绝对路径）。

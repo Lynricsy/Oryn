@@ -2,7 +2,9 @@
 // 在 before_agent_start 向系统提示词追加一段 orb 生命周期约定，并附上最近一次 setup / resume 与受管服务的异常现状；
 // 启用了桌面时另注册 desktop_ask_user 工具；ORYN_ARTIFACT_SOCK 非空时注册 artifact 工具（M14）与 GitHub 任务工具（M15），
 // 另有 ORYN_SSH=1 时注册 ssh_exec_many 并追加 SSH 指引（M18）。
-// Runner（ORYN_RUNNER=1）上 orbd 把同一文件写到 ~/.oryn/orbd/extensions/，此时只注册 artifact 工具与它的指引。
+// Runner（ORYN_RUNNER=1）上 orbd 把同一文件写到 ~/.oryn/orbd/extensions/，此时只注册 artifact 工具、文件库工具
+// oryn_library_put（M21）与 Runner 的指引（模型与 SSH 主机由 Oryn 下发）；orb 专有的 setup、服务、Portal、Docker、
+// 桌面、GitHub 与 ssh_exec_many 都不注册。
 // orb 与 Runner 都注册一个 bash 的 tool_result 钩子：用 omp 原生 ShellVisualization 把执行轨迹渲染成 details.orynPseudo，
 // 供 Web 的 bash 卡片显示 Pseudo 视图。
 import type {
@@ -703,9 +705,12 @@ function registerGitHub(pi: ExtensionAPI) {
 }
 
 // ---- SSH 工具（M18）：ssh_exec_many 发 ssh.call（orbd 原样转给控制面，internal/sshgw/tools.go），控制面经 SSH 网关并发执行 ----
-// orbd 只在本机 SSH 网关端口监听成功时才给 agent 设 ORYN_SSH=1（runner 与协调宿主没有）。
+// orbd 只在本机 SSH 网关端口监听成功时才给 agent 设 ORYN_SSH=1（协调宿主没有；M21 起 runner 也有，但只追加 RUNNER_SSH_GUIDE）。
 
 const SSH_GUIDE = `SSH hosts registered in Oryn are reachable by name: read or write ssh://<name>/<path>, open the terminal tool with host "<name>", or run ssh <name> in bash. They connect through Oryn's gateway on 127.0.0.1, so no keys or passwords are needed and none exist in this environment. Read ssh:// to list the hosts; each description shows the real user and address. Hosts cannot be added or changed from inside this environment.`;
+
+// Runner 上 orbd 不改用户的 ~/.ssh，bash 里的 ssh 要显式带上 Oryn 的配置文件；也没有 ssh_exec_many。
+const RUNNER_SSH_GUIDE = `SSH hosts registered in Oryn are reachable by name: read or write ssh://<name>/<path>, open the terminal tool with host "<name>", or run ssh -F ~/.oryn/ssh/config <name> in bash (plain ssh <name> uses this machine's own SSH config, not Oryn's). They connect through Oryn's gateway on 127.0.0.1, so no keys or passwords are needed. Read ssh:// to list the hosts; each description shows the real user and address. Hosts cannot be added or changed from this machine.`;
 
 // registerSsh 注册 ssh_exec_many；ORYN_ARTIFACT_SOCK 为空或 ORYN_SSH 不是 "1" 时不注册。注册失败只记一行。
 function registerSsh(pi: ExtensionAPI) {
@@ -743,6 +748,59 @@ function registerSsh(pi: ExtensionAPI) {
 		});
 	} catch (err) {
 		console.error("oryn-orb: register SSH tools failed:", err);
+	}
+}
+
+// ---- Runner（M21）：指引与文件库工具 ----
+// Runner 上 agent 是 Oryn Core，配置根为 ~/.oryn/omp（与这台机器上用户自己的 omp 配置无关），模型、配置与 SSH 主机
+// 由 Oryn 下发；oryn_library_put 经 ORYN_ARTIFACT_SOCK（runner.sock）发 library.put，orbd 只收本线程工作目录内的文件。
+
+const RUNNER_GUIDE = `# Oryn Runner
+你运行在用户自己的机器上（Oryn Runner），直接在用户声明的目录里工作。可用的模型与 SSH 主机由 Oryn 下发，模型请求经 Oryn 中转，这台机器上没有也不需要模型密钥；Oryn 的 omp 配置在 ~/.oryn/omp，与这台机器上用户自己的 omp 配置（~/.omp、~/.agents 等）无关，不要修改其中任何一处来更换模型或主机，需要时请用户在 Oryn 设置里调整。
+git 与其它命令行工具用的是这台机器本身的环境与凭据；这里没有 orb 的 setup、受管服务、Portal、Docker 与桌面，也没有 \`oryn\` 命令。
+要把文件交给全局助手或放进文件库时，用 oryn_library_put 工具（见 oryn-library 技能）。`;
+
+// registerRunnerLibrary 注册 oryn_library_put；ORYN_ARTIFACT_SOCK 为空时不注册。注册失败只记一行。
+function registerRunnerLibrary(pi: ExtensionAPI) {
+	const sock = process.env.ORYN_ARTIFACT_SOCK ?? "";
+	if (!sock) {
+		return;
+	}
+	try {
+		const z = pi.zod;
+		const threadId = process.env.ORYN_THREAD_ID ?? "";
+		const name = "oryn_library_put";
+		pi.registerTool({
+			name,
+			label: "存入文件库",
+			description:
+				"把本线程工作目录里的一个普通文件存进 Oryn 全局助手文件库（库内共享，来源记为本线程），单个文件不超过 100 MiB；目录先打包再存。返回文件库 id、文件名与大小。同一个文件再存一次会得到一条新记录。",
+			parameters: z.object({
+				path: z.string().min(1).describe("要存的文件，须在本线程的工作目录之内；相对路径按当前工作目录解析"),
+				name: z.string().min(1).max(255).optional().describe("库内文件名，缺省取路径的最后一段"),
+			}),
+			loadMode: "discoverable",
+			approval: "read",
+			async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+				const path = isAbsolute(params.path) ? params.path : resolve(ctx?.cwd || process.cwd(), params.path);
+				try {
+					const reply = await artifactSockCall(
+						sock,
+						{ method: "library.put", params: { threadId, path, ...(params.name ? { name: params.name } : {}) } },
+						signal,
+					);
+					if (!reply.ok) {
+						return sockError(name, reply.code, reply.message);
+					}
+					const f = reply.result as unknown as { id: string; name: string; size: number };
+					return textResult(`${f.id}\t${f.name}\t${f.size} 字节\t库内共享`);
+				} catch (err) {
+					return sockError(name, "unavailable", err instanceof Error ? err.message : String(err));
+				}
+			},
+		});
+	} catch (err) {
+		console.error("oryn-orb: register library tool failed:", err);
 	}
 }
 
@@ -952,12 +1010,18 @@ export default function orynOrbExtension(pi: ExtensionAPI) {
 	registerShellPseudo(pi);
 	const artifacts = registerArtifacts(pi);
 	if (process.env.ORYN_RUNNER === "1") {
-		// Runner（用户自己的机器，M14 步骤 1.7）：只有 artifact 工具与它的指引，没有 orb 环境、Docker 与桌面段落。
-		if (artifacts) {
-			pi.on("before_agent_start", async (event: BeforeAgentStartEvent): Promise<BeforeAgentStartEventResult> => {
-				return { systemPrompt: [...event.systemPrompt, ARTIFACT_GUIDE] };
-			});
-		}
+		// Runner（用户自己的机器，M14 步骤 1.7 / M21）：artifact 与文件库工具、Runner 指引；没有 orb 环境、Docker 与桌面段落。
+		registerRunnerLibrary(pi);
+		pi.on("before_agent_start", async (event: BeforeAgentStartEvent): Promise<BeforeAgentStartEventResult> => {
+			const guide = [RUNNER_GUIDE];
+			if (artifacts) {
+				guide.push(ARTIFACT_GUIDE);
+			}
+			if (process.env.ORYN_SSH === "1") {
+				guide.push(RUNNER_SSH_GUIDE);
+			}
+			return { systemPrompt: [...event.systemPrompt, guide.join("\n")] };
+		});
 		return;
 	}
 	registerGitHub(pi);

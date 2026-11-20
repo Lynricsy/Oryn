@@ -4,7 +4,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -160,29 +159,24 @@ func freeAddr(t *testing.T) string {
 	return addr
 }
 
-// runner：不带 memory 的 agent.start 不监听；第一个带 memory 的才在 EgressAddr 上开记忆通道，请求原样经 egress 流
-// 转给控制面；之后的线程共用同一个地址。
+// runner：记忆走启动即常驻的出站通道（M21），带 memory 的 agent.start 指向它；请求原样经 egress 流转给控制面。
 func TestRunnerMemoryEgress(t *testing.T) {
 	f := newRunnerHome(t)
 	egress := freeAddr(t)
 	startRunnerRT(t, f, func(c *Config) { c.EgressAddr = egress })
 	helloOf(t, f.cp)
+	assert.Equal(t, egress, f.rt.EgressAddr(), "不等带记忆的 agent.start")
 	dump := filepath.Join(f.home, "dump")
 	env := map[string]string{"FAKEOMP_DUMP_DIR": dump}
 
 	startAgentMem(t, f.cp, thread1, f.work, env, nil)
 	f.cp.waitNotif(t, 0, "agent.status", statusIs(thread1, "ready"))
 	assertNoMemory(t, f.rt, setupDump(t, dump, thread1))
-	assert.Empty(t, f.rt.EgressAddr())
-	probe, err := net.Listen("tcp", egress)
-	require.NoError(t, err, "no listener without memory")
-	require.NoError(t, probe.Close())
 
 	proj := "prj_r"
 	startAgentMem(t, f.cp, projThread2, f.work, env, &apigen.LinkCtlAgentMemory{Project: &proj, AutoRetain: true})
 	f.cp.waitNotif(t, 0, "agent.status", statusIs(projThread2, "ready"))
 	rec := setupDump(t, dump, projThread2)
-	assert.Equal(t, egress, f.rt.EgressAddr())
 	assert.Equal(t, "http://"+egress+"/memory/t/"+projThread2, rec.Env["HINDSIGHT_API_URL"])
 	assert.Equal(t, proj, rec.Env["ORYN_HINDSIGHT_PROJECT"])
 	assert.Equal(t, []string{f.rt.memoryOverlayPath()}, configArgs(rec.Args))
@@ -195,27 +189,6 @@ func TestRunnerMemoryEgress(t *testing.T) {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	assert.Equal(t, "egress GET /memory/t/"+projThread2+"/v1/default/banks/x runner", string(body))
-
-	addr, err := f.rt.memoryEgressAddr()
-	require.NoError(t, err)
-	assert.Equal(t, egress, addr, "所有线程共用一个监听")
-}
-
-// runner 的记忆通道绑不上（端口被占）：agent 照常启动，不带记忆。
-func TestRunnerMemoryEgressBindFailure(t *testing.T) {
-	f := newRunnerHome(t)
-	busy, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = busy.Close() })
-	startRunnerRT(t, f, func(c *Config) { c.EgressAddr = busy.Addr().String() })
-	helloOf(t, f.cp)
-	dump := filepath.Join(f.home, "dump")
-	startAgentMem(t, f.cp, thread1, f.work, map[string]string{"FAKEOMP_DUMP_DIR": dump}, &apigen.LinkCtlAgentMemory{AutoRetain: true})
-	f.cp.waitNotif(t, 0, "agent.status", statusIs(thread1, "ready"))
-	assertNoMemory(t, f.rt, setupDump(t, dump, thread1))
-	assert.Empty(t, f.rt.EgressAddr())
-	_, err = os.Stat(f.rt.memoryOverlayPath())
-	assert.ErrorIs(t, err, os.ErrNotExist)
 }
 
 func TestMemoryMergeNoProxy(t *testing.T) {

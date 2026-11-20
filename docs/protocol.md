@@ -1913,6 +1913,10 @@ M14 用 GitHub App 连接，下列契约已在 M15 删除，不再存在：`POST
 
 记忆存放在一个独立部署的 Hindsight 服务里（`deploy/hindsight/`，部署与升级见 deploy.md「Hindsight 记忆服务」）。orb 和 runner 里的 omp 只能通过 orynd 的记忆网关访问它；Hindsight 调用模型时，也通过 orynd 的模型中转。Hindsight 的 API key 和中转令牌都只保存在控制面。
 
+### agent.start：`projectId` / `projectConfig`（M21）
+
+- `LinkCtlAgentStartParams.projectId?: ProjectId`、`projectConfig?: LinkCtlProjectConfig`：runner 线程的项目层按线程交付（一台 runner 可同时跑多个项目的线程，omp-home 只有一份，`omphome.apply` 对 runner 不带项目层）。orynd 只对 hello 含 `omphome-apply` 的 runner 上的线程填写，项目取线程的 `project_id`，内容与 orb 收到的项目层相同（原样，不经变换）；线程不属于项目或项目没有项目层时两者都省略，orb 线程不带。项目层变化后，该项目在 runner 上 agent 在跑的线程按 orb 的分类处理，但一律记为需重启（新内容随下次 agent.start 交付）。
+
 ### agent.start：`memory`
 
 - **参数**：`LinkCtlAgentStartParams.memory: LinkCtlAgentMemory{project?, autoRetain}`，缺省表示本次不启用记忆。只有 hello 的 `features` 含 `memory` 的 orbd 会收到。普通 orbd 和 runner 上报这个特性，协调宿主不上报，收到时返回 `invalid_params`。

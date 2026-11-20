@@ -262,6 +262,12 @@ func runnerExtensionPath(home string) string {
 	return filepath.Join(home, ".oryn", "orbd", "extensions", "oryn-orb.ts")
 }
 
+// runnerLibrarySkillPath 是 runner 写出 oryn-library 技能的位置（M21）：runner 的 agent 目录 ~/.oryn/omp/agent 之下。
+// 每次启动覆盖；不进 omp-home 清单，下发配置的清理不会删它。
+func runnerLibrarySkillPath(home string) string {
+	return filepath.Join(home, filepath.FromSlash(runnerOmpConfigDir), "agent", "skills", "oryn-library", "SKILL.md")
+}
+
 func (r *Runtime) skillPath() string {
 	return filepath.Join(r.home, ".agents", "skills", "oryn-setup", "SKILL.md")
 }

@@ -1,6 +1,7 @@
 package orbdrt
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,16 +17,19 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Lynricsy/Oryn/internal/agentcfg"
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/link"
 	"github.com/Lynricsy/Oryn/internal/orbsock"
 )
 
 // runner 形态（M11b 计划 7.2）：用户自己的机器以 `orbd run --runner --dir <目录> …` 主动接入，线程直接跑在
-// 声明的目录里。runner 完全信任控制面（能以本用户身份执行任意命令），但控制面的密钥不来这里：不开常驻 egress
-// （M16 的记忆专用通道只在 agent 启用记忆时开启，只转发记忆请求，鉴权由控制面注入）、
-// 不写技能与 ~/.oryn/core、不改 git 配置；只在 orbd 自己的目录写自带的扩展（只注册 artifact 工具，M14）并监听
-// 只认 artifact.call 的 runner.sock；本机 API 只看得到线程的工作目录（X-Oryn-Workdir）。
+// 声明的目录里。runner 完全信任控制面（能以本用户身份执行任意命令），但控制面的密钥不来这里。M21 起 agent 是 orbd
+// 下载校验的 Oryn Core（~/.oryn/core/<tag>/omp），以独立的配置根 ~/.oryn/omp（PI_CONFIG_DIR）运行、屏蔽用户级发现源，
+// 配置由控制面经 omphome.apply 下发（只有占位符，密钥由常驻 egress 注入；控制面对 runner 只放行模型中转与记忆）；
+// SSH 网关照 orb 接入，但不碰用户的 ~/.ssh。不改 git 配置；只写自带的扩展（orbd 自己的目录）与 runner 版 oryn-library
+// 技能（自己的 agent 目录），并监听只认 artifact.call 与 library.put 的 runner.sock；本机 API 只看得到线程的工作目录
+// （X-Oryn-Workdir）。
 
 // RunnerTokenPrefix 是 runner 令牌的前缀。
 const RunnerTokenPrefix = "ort_"
@@ -33,11 +37,13 @@ const RunnerTokenPrefix = "ort_"
 // WorkdirHeader 是控制面转给 runner 本机 API 的线程工作目录（runner 形态必填）。
 const WorkdirHeader = "X-Oryn-Workdir"
 
-// ctl 错误码（M11b）。
+// ctl 错误码（M11b；config_pending 为 M21）。
 const (
 	CodeNotSupported  = "not_supported"
 	CodeDirNotServed  = "dir_not_served"
 	CodeWorktreeDirty = "worktree_dirty"
+	// CodeConfigPending：runner 还没收到首个 omphome.apply，拒绝 agent.start（控制面在 hello 后、ready 前先下发）。
+	CodeConfigPending = "config_pending"
 )
 
 // whoamiTimeout 是启动时 GET /orb/v1/whoami 的上限。
@@ -70,16 +76,16 @@ var runnerUnsupported = map[string]bool{
 	string(apigen.MethodShutdown):          true,
 	string(apigen.MethodPortalConfigure):   true,
 	string(apigen.MethodProfileMode):       true,
-	string(apigen.MethodOmpHomeApply):      true,
 }
 
 // RunnerConfigFromEnv 读取 runner 形态的配置：ORYN_URL 必填；令牌取 ORYN_RUNNER_TOKEN，否则读令牌文件，
-// 必须以 ort_ 开头。orb id 不在这里取得（New 经 whoami）。
+// 必须以 ort_ 开头。orb id 不在这里取得（New 经 whoami）。ORYN_AGENT_BIN 只供开发与测试，缺省时 New 下载 Core。
 func RunnerConfigFromEnv(version string, opts RunnerOptions) (Config, error) {
 	cfg := Config{
 		URL:      os.Getenv("ORYN_URL"),
 		AgentBin: os.Getenv("ORYN_AGENT_BIN"),
-		// ORYN_EGRESS_ADDR 覆盖记忆专用通道的监听地址（缺省 127.0.0.1:7811，M16）。
+		// ORYN_EGRESS_ADDR 覆盖常驻出站通道的监听地址（缺省 127.0.0.1:7811；只能是回环地址，见 checkRunnerEgressAddr；
+		// 端口被占用时启动失败）。下发的 models.yml 随之改写到这个地址。
 		EgressAddr: os.Getenv("ORYN_EGRESS_ADDR"),
 		Version:    version,
 		OrbCAPEM:   os.Getenv("ORYN_ORB_CA_PEM"),
@@ -123,6 +129,33 @@ func runnerToken(tokenFile string) (string, error) {
 		return "", fmt.Errorf("the runner token must start with %q", RunnerTokenPrefix)
 	}
 	return tok, nil
+}
+
+// checkRunnerEgressAddr 要求 runner 的出站通道监听回环地址（127.0.0.0/8 或 ::1，带端口）：模型中转与记忆只给本机的
+// agent 用，不能开到其它网卡上；下发的 models.yml 也按这个地址改写（见 runnerModelsContent）。
+func checkRunnerEgressAddr(addr string) error {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("ORYN_EGRESS_ADDR %q: %w", addr, err)
+	}
+	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("ORYN_EGRESS_ADDR %q must be a loopback address with a port (127.0.0.0/8 or [::1])", addr)
+	}
+	return nil
+}
+
+// runnerModelsContent 是 runner 上 omp-home 文件 path 实际写入的内容：控制面按默认出站地址（agentcfg.EgressAddr）渲染
+// models.yml 的模型 baseUrl（http://<地址>/llm/<路由>…），runner 经 ORYN_EGRESS_ADDR 改了监听地址时把这一确切前缀
+// 改写为实际地址，其余内容与其它文件原样返回。
+func (r *Runtime) runnerModelsContent(path string, data []byte) []byte {
+	if r.runner == nil || path != agentcfg.ModelsFile {
+		return data
+	}
+	addr := r.EgressAddr()
+	if addr == agentcfg.EgressAddr {
+		return data
+	}
+	return bytes.ReplaceAll(data, []byte("http://"+agentcfg.EgressAddr+"/llm/"), []byte("http://"+addr+"/llm/"))
 }
 
 // plainRemoteURL 报告 u 是否为明文（http / ws）且主机不是回环地址。
@@ -337,14 +370,18 @@ func (r *Runtime) underThreads(p string) (string, error) {
 	return abs, nil
 }
 
-// runnerFeatures 是 runner 的 hello 特性：fs、attachments、metrics、memory；PATH 里有 git 时加 git，--terminal 时加 terminal。
+// runnerFeatures 是 runner 的 hello 特性：fs、attachments、metrics、memory、omphome-apply；PATH 里有 git 时加 git，
+// --terminal 时加 terminal，SSH 网关端口监听成功时加 ssh。
 func (r *Runtime) runnerFeatures() []string {
-	features := []string{"fs", "attachments", "metrics", "memory"}
+	features := []string{"fs", "attachments", "metrics", "memory", "omphome-apply"}
 	if _, err := r.bins.look("git"); err == nil {
 		features = append(features, "git")
 	}
 	if r.runner.terminal {
 		features = append(features, "terminal")
+	}
+	if r.sshLn != nil {
+		features = append(features, "ssh")
 	}
 	return features
 }
@@ -361,7 +398,8 @@ func (r *Runtime) runnerInfo() *apigen.LinkRunnerInfo {
 }
 
 // serveRunnerSocket 在 runner.sock（0600）上服务到 ctx 结束，只认 artifact.call（M14，runner 上 agent 的 artifact
-// 工具经它转给控制面），其余方法回 method_not_found；监听失败只记日志（不影响 runner 其它功能）。
+// 工具经它转给控制面）与 library.put（M21，oryn_library_put 工具，只收线程工作目录内的文件），其余方法回
+// method_not_found；监听失败只记日志（不影响 runner 其它功能）。
 func (r *Runtime) serveRunnerSocket(ctx context.Context) {
 	path := orbsock.RunnerPath(r.home)
 	ln, err := orbsock.Listen(path)
@@ -370,10 +408,13 @@ func (r *Runtime) serveRunnerSocket(ctx context.Context) {
 		return
 	}
 	orbsock.Serve(ctx, ln, func(ctx context.Context, method string, params json.RawMessage, _ *orbsock.Responder) (any, error) {
-		if method != orbsock.MethodArtifactCall {
-			return nil, orbsock.Errorf(orbsock.CodeMethodNotFound, "unknown method %q", method)
+		switch method {
+		case orbsock.MethodArtifactCall:
+			return r.artifactCall(ctx, params)
+		case orbsock.MethodLibraryPut:
+			return r.libraryPut(ctx, params)
 		}
-		return r.artifactCall(ctx, params)
+		return nil, orbsock.Errorf(orbsock.CodeMethodNotFound, "unknown method %q", method)
 	})
 	_ = os.Remove(path)
 }

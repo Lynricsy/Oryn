@@ -77,6 +77,14 @@ type stubOrbs struct {
 	// claims 记录 ClaimPool 的调用；poolOrb 非空时第一次认领返回它（之后返回 false）。
 	claims  []OrbCreate
 	poolOrb string
+	// feats 是 Features 报告的特性（按 orb id；种类同 nopOrbs 恒为 orb）。
+	feats map[string][]string
+}
+
+func (o *stubOrbs) Features(orbID string) (string, []string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return orbs.KindOrb, o.feats[orbID]
 }
 
 func (o *stubOrbs) ClaimPool(ctx context.Context, p OrbCreate) (db.Orb, bool) {

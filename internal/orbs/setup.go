@@ -81,7 +81,7 @@ type DefaultSetup struct {
 	SSH SSH
 }
 
-// SSH 给出一台 orb 的 SSH 配置（M18）；runner 与协调 orb 返回 nil（不动 orb 内的 SSH 配置）。
+// SSH 给出一台 orb 的 SSH 配置（M18）；协调 orb 返回 nil（不动 orb 内的 SSH 配置），runner 只有全局主机（M21）。
 type SSH interface {
 	OrbConfig(ctx context.Context, orb db.Orb) (*apigen.LinkCtlSSHConfig, error)
 }
@@ -247,6 +247,9 @@ func (d *DefaultSetup) Plan(ctx context.Context, orb db.Orb) (SetupPlan, error) 
 	if orb.Coordinator {
 		return d.planCoordinator(ctx, orb)
 	}
+	if IsRunner(orb) {
+		return d.planRunner(ctx, orb)
+	}
 	var prj *db.Project
 	if orb.ProjectID != nil {
 		v, err := d.Store.Q.GetProject(ctx, *orb.ProjectID)
@@ -341,9 +344,9 @@ func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project, orb db.Orb) (S
 		}
 	}
 	// GitHub（M15）：工作 orb 只要身份槽位可用就下发 gh 登录名（含 uploads.github.com）、/gh/ 路由与整个 github.com 主机的
-	// insteadOf，有没有项目、项目在哪个主机都一样；git 与 gh 都经出站代理注入 OAuth 令牌，不需要 PAT。runner 与协调宿主
-	// 不下发。agent 身份的提交作者固定为 Agent 账号，user 身份只在项目与所有者都没设时用 GitHub 账号推出的身份。
-	if d.GitHub != nil && !IsRunner(orb) {
+	// insteadOf，有没有项目、项目在哪个主机都一样；git 与 gh 都经出站代理注入 OAuth 令牌，不需要 PAT。runner（planRunner）
+	// 与协调宿主不下发。agent 身份的提交作者固定为 Agent 账号，user 身份只在项目与所有者都没设时用 GitHub 账号推出的身份。
+	if d.GitHub != nil {
 		if gs, ok := d.GitHub.OrbSetup(ctx, orb); ok {
 			uploads := true
 			p.Gh = &apigen.LinkCtlSetupGh{Login: gs.Login, Uploads: &uploads}
@@ -363,20 +366,11 @@ func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project, orb db.Orb) (S
 		plan.Egress.GitRepos[projectRepo.host] = []string{egress.NormalizeRepo(projectRepo.path)}
 	}
 	if d.Home != nil {
-		files, err := d.Home.LoadAll()
+		home, rendered, err := d.renderHome(resolver, agentcfg.RenderOptions{})
 		if err != nil {
-			return plan, fmt.Errorf("读取 omp-home: %w", err)
+			return plan, err
 		}
-		delete(files, "ssh.json") // M18：orb 内的 ssh.json 由 SSH 网关生成；旧部署可能在中央配置里存过原始文件
-		modes, err := d.Home.Modes()
-		if err != nil {
-			return plan, fmt.Errorf("读取 omp-home 权限: %w", err)
-		}
-		rendered, err := agentcfg.Render(files, resolver)
-		if err != nil {
-			return plan, fmt.Errorf("变换 omp-home: %w", err)
-		}
-		p.OmpHome = ompFiles(rendered.Files, modes)
+		p.OmpHome = home
 		// 环境变量降级的模型密钥优先于同名 env 密钥。
 		for k, v := range rendered.Env {
 			p.Env[k] = v
@@ -388,11 +382,83 @@ func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project, orb db.Orb) (S
 	// 项目级 omp 配置（M12.2）：属于项目即下发（没有文件也给空清单，orbd 据此清空镜像）；原样下发，不经
 	// agentcfg.Render（项目层没有 models.yml，也不解析 ${oryn:secret:…}）。
 	if prj != nil && d.Projects != nil {
-		files, modes, err := d.Projects.Load(prj.ID)
+		cfg, err := ProjectConfigOf(d.Projects, prj.ID)
 		if err != nil {
-			return plan, fmt.Errorf("读取项目 omp 配置: %w", err)
+			return plan, err
 		}
-		p.ProjectConfig = &apigen.LinkCtlProjectConfig{Files: ompFiles(files, modes)}
+		p.ProjectConfig = cfg
+	}
+	if d.SSH != nil {
+		cfg, err := d.SSH.OrbConfig(ctx, orb)
+		if err != nil {
+			return plan, fmt.Errorf("读取 SSH 主机: %w", err)
+		}
+		p.SSH = cfg
+	}
+	if err := checkDeliverable(p); err != nil {
+		return plan, err
+	}
+	return plan, nil
+}
+
+// ProjectConfigOf 读项目层并生成下发清单（按路径排序，没有文件时是非 nil 的空清单）。orb 随 setup.run / omphome.apply、
+// runner 线程随 agent.start（M21）都用它。
+func ProjectConfigOf(projects ProjectConfigs, projectID string) (*apigen.LinkCtlProjectConfig, error) {
+	files, modes, err := projects.Load(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("读取项目 omp 配置: %w", err)
+	}
+	return &apigen.LinkCtlProjectConfig{Files: ompFiles(files, modes)}, nil
+}
+
+// renderHome 读全局 omp-home 并按 opts 变换（models.yml 的密钥换成占位符、baseUrl 改写到出站代理），返回下发清单与
+// 变换结果（路由、降级的环境变量）。
+func (d *DefaultSetup) renderHome(resolver agentcfg.Resolver, opts agentcfg.RenderOptions) ([]apigen.LinkCtlOmpHomeFile, agentcfg.Rendered, error) {
+	files, err := d.Home.LoadAll()
+	if err != nil {
+		return nil, agentcfg.Rendered{}, fmt.Errorf("读取 omp-home: %w", err)
+	}
+	delete(files, "ssh.json") // M18：orb 内的 ssh.json 由 SSH 网关生成；旧部署可能在中央配置里存过原始文件
+	modes, err := d.Home.Modes()
+	if err != nil {
+		return nil, agentcfg.Rendered{}, fmt.Errorf("读取 omp-home 权限: %w", err)
+	}
+	rendered, err := agentcfg.RenderWith(files, resolver, opts)
+	if err != nil {
+		return nil, agentcfg.Rendered{}, fmt.Errorf("变换 omp-home: %w", err)
+	}
+	return ompFiles(rendered.Files, modes), rendered, nil
+}
+
+// planRunner 是 runner 的下发参数（M21，只经 omphome.apply 使用）：全局 omp-home（模型改写到 runner 本机常驻的出站
+// 通道 agentcfg.EgressAddr，关闭环境变量降级——runner 是用户自己的机器，下发的文件里不得有 vault 明文）与 SSH 主机；
+// 不带 GitHub、git 主机、git 身份、env 密钥与脚本。出站策略只有模型路由，git 一律拒绝（runner 的出站通道另由
+// runnerEgressHandler 只放 /llm/ 与 /memory/）。
+//
+// runner 的常驻 orb 不属于任何项目（project_id 恒为空），同一台 runner 上可以同时跑多个项目的线程，而一台 runner 只有
+// 一份 omp-home：项目层不在这里下发，而是按线程随 agent.start 交付（threads 的 runnerProjectConfig）；SSH 只有全局主机
+// （网关只能把连接归属到 orb，见 sshgw.visible）。
+func (d *DefaultSetup) planRunner(ctx context.Context, orb db.Orb) (SetupPlan, error) {
+	plan := SetupPlan{
+		Params: apigen.LinkCtlSetupRunParams{
+			GitHosts: []string{}, OmpHome: []apigen.LinkCtlOmpHomeFile{}, Env: map[string]string{},
+		},
+		Egress: egress.Policy{Routes: map[string]egress.Route{}, GitRepos: map[string][]string{}, NoGit: true},
+	}
+	p := &plan.Params
+	if d.Home != nil {
+		var resolver agentcfg.Resolver = emptyResolver{}
+		if d.Vault != nil {
+			resolver = d.Vault
+		}
+		home, rendered, err := d.renderHome(resolver, agentcfg.RenderOptions{NoEnvFallback: true})
+		if err != nil {
+			return plan, err
+		}
+		p.OmpHome = home
+		for k, v := range rendered.Routes {
+			plan.Egress.Routes[k] = v
+		}
 	}
 	if d.SSH != nil {
 		cfg, err := d.SSH.OrbConfig(ctx, orb)

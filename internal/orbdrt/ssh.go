@@ -74,7 +74,7 @@ func (r *Runtime) sshPort() int {
 	return 0
 }
 
-// sshJSONHost 是 Core 的 ~/.omp/agent/ssh.json 里的一台主机。
+// sshJSONHost 是 Core 的 <agent 目录>/ssh.json 里的一台主机。
 type sshJSONHost struct {
 	Host        string `json:"host"`
 	Port        int    `json:"port"`
@@ -83,8 +83,10 @@ type sshJSONHost struct {
 	Compat      *bool  `json:"compat,omitempty"`
 }
 
-// writeSSH 按下发的主机重写 orb 内的 SSH 配置：Core 的 ssh.json、~/.oryn/ssh/config、~/.ssh/config 的 Include 行
-// 与 ~/.ssh/known_hosts 的网关条目。调用方经 writeOmpConfigAt 串行化。
+// writeSSH 按下发的主机重写 SSH 配置：Core 的 ssh.json、~/.oryn/ssh/config 与网关的 known_hosts 条目。orb 上另在
+// ~/.ssh/config 最前面 Include 前者、把网关条目写进 ~/.ssh/known_hosts；runner 不碰用户的 ~/.ssh（M21）：known_hosts
+// 写到 <配置根>/ssh/known_hosts（Core 在隔离模式下以它为 UserKnownHostsFile），bash 里用 `ssh -F ~/.oryn/ssh/config <名>`。
+// 调用方经 writeOmpConfigAt 串行化。
 func (r *Runtime) writeSSH(cfg *apigen.LinkCtlSSHConfig) error {
 	port := r.sshPort()
 	if port == 0 {
@@ -108,7 +110,7 @@ func (r *Runtime) writeSSH(cfg *apigen.LinkCtlSSHConfig) error {
 	slices.Sort(names)
 
 	// 1. Core 的主机目录；描述变了或已删除的主机，顺手清掉 Core 的远端系统探测缓存
-	jsonPath := filepath.Join(r.home, ".omp", "agent", "ssh.json")
+	jsonPath := filepath.Join(r.ompAgentDir(), "ssh.json")
 	r.dropStaleHostInfo(jsonPath, hosts)
 	b, err := json.MarshalIndent(map[string]any{"hosts": hosts}, "", "  ")
 	if err != nil {
@@ -118,11 +120,15 @@ func (r *Runtime) writeSSH(cfg *apigen.LinkCtlSSHConfig) error {
 		return err
 	}
 
-	// 2. ~/.oryn/ssh/config：给 bash 里的裸 `ssh <名>` 用
+	// 2. ~/.oryn/ssh/config：给 bash 里的 `ssh <名>` 用（orb 经 ~/.ssh/config 的 Include，runner 经 ssh -F）
+	knownHosts := filepath.Join(r.ompConfigRoot(), "ssh", "known_hosts")
 	var cf strings.Builder
 	cf.WriteString("# 由 Oryn 生成，每次下发都会重写\n")
 	for _, n := range names {
 		fmt.Fprintf(&cf, "\nHost %s\n  HostName 127.0.0.1\n  Port %d\n  User %s\n", n, port, n)
+		if r.runner != nil {
+			fmt.Fprintf(&cf, "  UserKnownHostsFile %s\n", knownHosts)
+		}
 	}
 	orynSSH := filepath.Join(r.home, ".oryn", "ssh")
 	if err := os.MkdirAll(orynSSH, 0o700); err != nil {
@@ -130,6 +136,14 @@ func (r *Runtime) writeSSH(cfg *apigen.LinkCtlSSHConfig) error {
 	}
 	if err := writeFileAtomic(filepath.Join(orynSSH, "config"), []byte(cf.String()), 0o600); err != nil {
 		return err
+	}
+
+	if r.runner != nil {
+		// runner：网关公钥只进 Oryn 自己的 known_hosts。
+		if err := os.MkdirAll(filepath.Dir(knownHosts), 0o700); err != nil {
+			return err
+		}
+		return writeGatewayKnownHost(knownHosts, port, cfg.HostKey)
 	}
 
 	// 3. ~/.ssh/config 最前面 Include 上面的文件（已有就不动）
@@ -165,8 +179,12 @@ func (r *Runtime) writeSSH(cfg *apigen.LinkCtlSSHConfig) error {
 		}
 	}
 
-	// 4. known_hosts：去掉旧的网关条目（含端口变了的），追加当前的
-	khPath := filepath.Join(dotSSH, "known_hosts")
+	// 4. known_hosts
+	return writeGatewayKnownHost(filepath.Join(dotSSH, "known_hosts"), port, cfg.HostKey)
+}
+
+// writeGatewayKnownHost 重写 known_hosts 文件 khPath 里的网关条目：去掉旧的（含端口变了的），追加当前的。
+func writeGatewayKnownHost(khPath string, port int, hostKey string) error {
 	prefix := fmt.Sprintf("[127.0.0.1]:%d", port)
 	var kept []string
 	if data, err := os.ReadFile(khPath); err == nil {
@@ -180,12 +198,12 @@ func (r *Runtime) writeSSH(cfg *apigen.LinkCtlSSHConfig) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	kept = append(kept, prefix+" "+cfg.HostKey+" "+sshKnownComment)
+	kept = append(kept, prefix+" "+hostKey+" "+sshKnownComment)
 	return writeFileAtomic(khPath, []byte(strings.Join(kept, "\n")+"\n"), 0o600)
 }
 
 // dropStaleHostInfo 对旧 ssh.json 里描述变了或已不在的主机，尽力删掉 Core 的远端系统探测缓存
-// （~/.omp/remote-host/<名>.json）：同名可能已指向另一台机器。
+// （<配置根>/remote-host/<名>.json）：同名可能已指向另一台机器。
 func (r *Runtime) dropStaleHostInfo(jsonPath string, now map[string]sshJSONHost) {
 	data, err := os.ReadFile(jsonPath)
 	if err != nil {
@@ -204,7 +222,7 @@ func (r *Runtime) dropStaleHostInfo(jsonPath string, now map[string]sshJSONHost)
 		if !sshHostNameRe.MatchString(name) {
 			continue
 		}
-		_ = os.Remove(filepath.Join(r.home, ".omp", "remote-host", name+".json"))
+		_ = os.Remove(filepath.Join(r.ompConfigRoot(), "remote-host", name+".json"))
 	}
 }
 

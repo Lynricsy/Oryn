@@ -10417,6 +10417,8 @@ export interface components {
              */
             mcpToken?: string;
             memory?: components["schemas"]["LinkCtlAgentMemory"];
+            projectId?: components["schemas"]["ProjectId"];
+            projectConfig?: components["schemas"]["LinkCtlProjectConfig"];
         };
         LinkCtlAgentStartResult: {
             pid: number;

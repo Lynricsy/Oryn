@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -198,15 +199,24 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 	}
 	terminal := prof == nil && s.terminalEnabled(orbID)
 	var mem *apigen.LinkCtlAgentMemory
+	var projectID *apigen.ProjectID
+	var projectCfg *apigen.LinkCtlProjectConfig
 	if prof == nil {
 		// M16：协调对话不接入记忆；查询出错时不启用、照常启动
 		mem = s.agentMemory(ctx, t.id, orbID)
+		// M21：runner 线程的项目层随 agent.start 交付；读不到时不带着缺了项目层的配置启动
+		if projectID, projectCfg, err = s.runnerProjectConfig(ctx, t.id, orbID); err != nil {
+			slog.Warn("threads: 读取 runner 线程的项目层失败", "thread", t.id, "orb", orbID, "err", err)
+			s.markFailed(ctx, t, err)
+			return
+		}
 	}
 	t.mu.Lock()
 	params := apigen.LinkCtlAgentStartParams{ThreadID: t.id, SessionDir: t.sessionDir, Env: map[string]string{}, InitFrames: initFrames(t, prof, terminal)}
 	// runner 线程（M11b）：agent 在线程的工作目录里启动
 	params.Cwd = t.cwd
 	params.Memory = mem
+	params.ProjectID, params.ProjectConfig = projectID, projectCfg
 	if prof != nil {
 		profile := apigen.AgentProfileCoordinator
 		params.Profile, params.SystemPrompt = &profile, &prof.SystemPrompt
@@ -1085,8 +1095,9 @@ func (s *Service) Abort(ctx context.Context, threadID string) error {
 	return err
 }
 
-// onRunner 报告线程当前的 orb 是否是 runner 的常驻 orb；没有 orb 或读不到 orb 行时按非 runner 处理。
-func (s *Service) onRunner(ctx context.Context, t *thread) bool {
+// sshSelfManaged 报告线程当前的 orb 是否自管 SSH 主机：只有不支持 omphome-apply 的旧版 runner（用那台机器自己的
+// ssh.json）；M21 起支持它的 runner 与 orb 一样由 Oryn 下发。没有 orb 或读不到 orb 行时按受管处理。
+func (s *Service) sshSelfManaged(ctx context.Context, t *thread) bool {
 	t.mu.Lock()
 	orbID := t.orbID
 	t.mu.Unlock()
@@ -1094,7 +1105,11 @@ func (s *Service) onRunner(ctx context.Context, t *thread) bool {
 		return false
 	}
 	o, err := s.st.Q.GetOrb(ctx, orbID)
-	return err == nil && orbs.IsRunner(o)
+	if err != nil || !orbs.IsRunner(o) {
+		return false
+	}
+	_, feats := s.orbs.Features(orbID)
+	return !slices.Contains(feats, orbs.FeatureOmpHomeApply)
 }
 
 // command 是 Command 与 Deliver 的共同主体。originAuto（自动化投递）不清未读、不通知 Seen、不记用户交互
@@ -1144,8 +1159,8 @@ func (s *Service) command(ctx context.Context, threadID string, frame json.RawMe
 		return nil, errf("invalid", orynFilesKey+" is only accepted in assistant conversations")
 	}
 	// M18：orb 线程的 SSH 主机由 Oryn 集中管理并下发，agent 自己改 ssh.json 会被下一次下发覆盖；
-	// runner 线程管理的是那台机器自己的 ssh.json，照常放行。
-	if t.kind == KindWork && sshManageCommand(cmdType, frame) && !s.onRunner(ctx, t) {
+	// 旧版 runner 的线程管理的是那台机器自己的 ssh.json，照常放行。
+	if t.kind == KindWork && sshManageCommand(cmdType, frame) && !s.sshSelfManaged(ctx, t) {
 		return nil, errf(RouteManaged, "SSH 主机由 Oryn 集中管理：请到 设置 → SSH 主机 里添加或修改")
 	}
 	if len(ids) > 0 {

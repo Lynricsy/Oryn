@@ -603,9 +603,32 @@ func (r *Runtime) writeOmpConfigAt(seq uint64, files []apigen.LinkCtlOmpHomeFile
 	return wroteHome, wroteProject, nil
 }
 
-// writeOmpHome 把 files 写进 ~/.omp/agent/ 并清理上次下发、这次已不在清单里的文件。调用方经 writeOmpConfigAt 串行化。
+// runnerOmpConfigDir 是 runner 上 agent 的 omp 配置根（相对 $HOME，即 agent 环境的 PI_CONFIG_DIR，M21）：与那台机器上
+// 用户自己的 ~/.omp 互不相干。
+const runnerOmpConfigDir = ".oryn/omp"
+
+// ompConfigRoot 是 agent 的 omp 配置根：orb 与协调宿主为 ~/.omp，runner 为 ~/.oryn/omp。
+func (r *Runtime) ompConfigRoot() string {
+	if r.runner != nil {
+		return filepath.Join(r.home, filepath.FromSlash(runnerOmpConfigDir))
+	}
+	return filepath.Join(r.home, ".omp")
+}
+
+// ompAgentDir 是下发的 omp 用户层所在的 agent 目录（<配置根>/agent）。
+func (r *Runtime) ompAgentDir() string { return filepath.Join(r.ompConfigRoot(), "agent") }
+
+// ompHomeApplied 报告本进程是否已写入过控制面下发的用户层（runner 在此之前拒绝 agent.start，M21）。
+func (r *Runtime) ompHomeApplied() bool {
+	r.ompMu.Lock()
+	defer r.ompMu.Unlock()
+	return r.ompWritten > 0
+}
+
+// writeOmpHome 把 files 写进 agent 目录（见 ompAgentDir）并清理上次下发、这次已不在清单里的文件。调用方经 writeOmpConfigAt 串行化。
+// runner 的 models.yml 按实际出站地址改写后再写（见 runnerModelsContent）。
 func (r *Runtime) writeOmpHome(files []apigen.LinkCtlOmpHomeFile) error {
-	base := filepath.Join(r.home, ".omp", "agent")
+	base := r.ompAgentDir()
 	for _, f := range files {
 		path, err := relUnder(base, f.Path)
 		if err != nil {
@@ -619,7 +642,7 @@ func (r *Runtime) writeOmpHome(files []apigen.LinkCtlOmpHomeFile) error {
 		if mode == 0 {
 			mode = 0o644
 		}
-		if err := writeFileAtomic(path, data, mode); err != nil {
+		if err := writeFileAtomic(path, r.runnerModelsContent(f.Path, data), mode); err != nil {
 			return fmt.Errorf("%s: %w", f.Path, err)
 		}
 	}

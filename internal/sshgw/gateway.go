@@ -14,7 +14,6 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/Lynricsy/Oryn/internal/link"
-	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
@@ -32,15 +31,15 @@ var forwardToOrb = map[string]bool{
 }
 
 // ServeStream 服务 orb 发来的一条 `ssh` 流：它是 orb 内到网关的一条 TCP 连接，其后是裸 SSH 字节流。
-// runner 与协调宿主不接入网关。流由调用方关闭。
+// 协调宿主不接入网关；runner（M21）与 orb 相同，按 visible 的规则只用它可见的主机。流由调用方关闭。
 func (s *Service) ServeStream(ctx context.Context, orbID string, _ link.StreamHeader, st *link.Stream) {
 	orb, err := s.orbs.Get(ctx, orbID)
 	if err != nil {
 		slog.Warn("SSH 网关：读取 orb 失败", "orb", orbID, "err", err)
 		return
 	}
-	if orbs.IsRunner(orb) || orb.Coordinator {
-		slog.Warn("SSH 网关：runner 与协调宿主不可用", "orb", orbID)
+	if orb.Coordinator {
+		slog.Warn("SSH 网关：协调宿主不可用", "orb", orbID)
 		return
 	}
 	s.serveConn(ctx, orb, st)

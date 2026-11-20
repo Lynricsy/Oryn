@@ -198,6 +198,7 @@ func (s *Server) init(ctx context.Context) error {
 	// 线程服务须在 orb 服务接受 link / 发出事件之前构造：它在构造时注册 entries.* / agent.* 处理器
 	s.Threads = threads.New(threads.Config{
 		DataDir: cfg.DataDir, WakeOnFocus: cfg.Idle.WakeOnFocus, PortalURLTemplate: threadPortalTemplate, Memory: lazyMemory{s},
+		Projects: s.ProjectHomes,
 	}, s.Store, orbsAdapter{s.Orbs})
 	// M18：SSH 主机与网关。主机变化经 omp 下发链路推到 orb（ssh.json 摘要参与比较，线程据此 reload_plugins）；
 	// 回调在被调用时才取 s.Orbs / s.Hub（s.Hub 在后面才构造）

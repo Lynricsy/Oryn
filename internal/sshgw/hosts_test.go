@@ -294,12 +294,38 @@ func TestVisibleShadowingAndAutomation(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, deny, "未登记")
 
-	// runner / 协调宿主不受管
-	for _, o := range []db.Orb{{ID: "r", Kind: "runner"}, {ID: "c", Kind: "orb", Coordinator: true}} {
-		cfg, err := e.svc.OrbConfig(ctx, o)
-		require.NoError(t, err)
-		require.Nil(t, cfg)
-	}
+	// runner（M21）只有全局主机：网关只能把连接归属到 runner 的常驻 orb，认不出线程的项目——即便 orb 行带了 project_id，
+	// 项目里同名的 web 也不盖过全局的、只属于项目的主机一律不可见；全自动同样只用放开的主机
+	ponly := hostIn("ponly", k.ID)
+	ponly.ProjectID = &p
+	e.mustHost(t, ponly)
+	runner := db.Orb{ID: "r", Kind: "runner", ProjectID: &p}
+	rcfg, err := e.svc.OrbConfig(ctx, runner)
+	require.NoError(t, err)
+	require.NotNil(t, rcfg)
+	require.Equal(t, e.svc.gatewayPublicKey(), rcfg.HostKey)
+	require.Equal(t, []apigen.LinkCtlSSHHost{
+		{Name: "auto", Description: "root@10.0.0.1:22"},
+		{Name: "web", Description: "root@10.0.0.1:22 — global [a, b]"},
+	}, rcfg.Hosts)
+	_, deny, err = e.svc.resolve(ctx, runner, "ponly")
+	require.NoError(t, err)
+	require.Contains(t, deny, "未登记，或对这台 orb 不可见", "runner 连项目级主机一律拒绝")
+	pcfg, err := e.svc.OrbConfig(ctx, db.Orb{ID: "orb-1", ProjectID: &p, Kind: "orb"})
+	require.NoError(t, err)
+	require.Len(t, pcfg.Hosts, 3, "对照：同项目的 orb 看得到 ponly")
+	runner.Automation = true
+	usable, blocked, managed, err = e.svc.visible(ctx, runner)
+	require.NoError(t, err)
+	require.True(t, managed)
+	require.Len(t, usable, 1)
+	require.Equal(t, "auto", usable[0].Name)
+	require.Len(t, blocked, 1)
+
+	// 协调宿主不受管
+	cfg, err = e.svc.OrbConfig(ctx, db.Orb{ID: "c", Kind: "orb", Coordinator: true})
+	require.NoError(t, err)
+	require.Nil(t, cfg)
 }
 
 func TestLayerStateTracksVisibleContent(t *testing.T) {

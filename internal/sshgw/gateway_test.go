@@ -174,6 +174,31 @@ func TestGatewayRejects(t *testing.T) {
 	require.Equal(t, map[string]int{"deny": 2, "connect": 1}, kinds)
 }
 
+// M21：runner 的常驻 orb 与无项目的 orb 同一规则——全局主机可连，审计记在 runner 的 orb 上。
+func TestGatewayRunner(t *testing.T) {
+	e := newGwEnv(t, sshgwtest.Options{})
+	e.orb = db.Orb{ID: "orb-gw", Kind: "runner"}
+	e.orbs.put(e.orb)
+	c, _, err := e.connect(t, "web")
+	require.NoError(t, err)
+	sess, err := c.NewSession()
+	require.NoError(t, err)
+	out, err := sess.Output("echo runner")
+	require.NoError(t, err)
+	require.Equal(t, "runner\n", string(out))
+	_, banner, err := e.connect(t, "nope")
+	require.Error(t, err)
+	require.Contains(t, banner.String(), "未登记")
+	require.Eventually(t, func() bool {
+		for _, r := range e.auditRows(t) {
+			if r.Kind == "exec" && r.Detail == "echo runner" {
+				return r.OrbID != nil && *r.OrbID == e.orb.ID
+			}
+		}
+		return false
+	}, 5*time.Second, 20*time.Millisecond)
+}
+
 func TestGatewayForwarding(t *testing.T) {
 	echo, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)

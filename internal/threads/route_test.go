@@ -117,7 +117,8 @@ func TestSSHManageCommand(t *testing.T) {
 	}
 }
 
-// orb 线程改 SSH 主机目录的命令 → managed_by_oryn，不写进 agent 流；查询照常直通。runner 线程放行。
+// orb 线程改 SSH 主机目录的命令 → managed_by_oryn，不写进 agent 流；查询照常直通。旧版 runner 的线程放行；支持
+// omphome-apply 的 runner（M21，SSH 主机由 Oryn 下发）与 orb 相同。
 func TestSSHManageRoutedByOrb(t *testing.T) {
 	f := newFixture(t, Config{})
 	th := f.thread(f.orb("ready"), StateIdle)
@@ -145,4 +146,17 @@ func TestSSHManageRoutedByOrb(t *testing.T) {
 	require.Len(t, frames, 2)
 	assert.Contains(t, frames[0], `"ssh_manage"`)
 	assert.Contains(t, frames[1], `/ssh rm x`)
+
+	_, newRunner := f.runner("box2", "ready")
+	f.orbs.mu.Lock()
+	f.orbs.feats = map[string][]string{newRunner: {"fs", "omphome-apply", "ssh"}}
+	f.orbs.mu.Unlock()
+	nt := f.thread(newRunner, StateIdle)
+	na := fakeAgent(8)
+	attach(nt, na, apigen.AgentStatusReady)
+	err := f.s.Command(f.ctx, nt.id, json.RawMessage(`{"type":"ssh_manage","action":"create","scope":"user","name":"x","host":"y"}`), noReply)
+	var te *Error
+	require.ErrorAs(t, err, &te)
+	assert.Equal(t, RouteManaged, te.Code)
+	assert.Empty(t, sent(na))
 }
