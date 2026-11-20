@@ -214,13 +214,9 @@ function CardCell({
 			return items.length ? [{ key: "artifact", items }] : null;
 		},
 	});
-	// 菜单弹层在右上角按钮的容器里（带 backdrop-blur，自成层叠上下文），盖不过后面的卡片：菜单开着时把整格抬上来
+	// 菜单弹层进顶层（ui/Floating），不受格子层叠影响；按钮底座不能带 backdrop-filter，否则它成了 Backdrop Root，菜单的模糊只取得到底座内部
 	return (
-		<li
-			ref={ctxRef}
-			data-ctx-touch=""
-			className="group/cell relative min-w-0 [&:has([aria-expanded=true])]:z-20"
-		>
+		<li ref={ctxRef} data-ctx-touch="" className="group/cell relative min-w-0">
 			<ArtifactCard
 				artifact={artifact}
 				form="tile"
@@ -230,7 +226,7 @@ function CardCell({
 				onFocus={() => onFocusIdx(index)}
 				onKeyDown={(e) => onKey(e, index)}
 			/>
-			<div className="absolute top-2 right-2 rounded-md bg-panel/80 opacity-100 backdrop-blur-sm sm:opacity-0 sm:focus-within:opacity-100 sm:group-hover/cell:opacity-100 [&:has([aria-expanded=true])]:opacity-100">
+			<div className="absolute top-2 right-2 rounded-md bg-panel/90 opacity-100 sm:opacity-0 sm:focus-within:opacity-100 sm:group-hover/cell:opacity-100 [&:has([aria-expanded=true])]:opacity-100">
 				<ArtifactMenu
 					artifact={artifact}
 					place={trash ? "trash" : "card"}
