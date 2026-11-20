@@ -159,6 +159,18 @@ function thinkingLevels(): (string | null)[] | null {
 		: null;
 }
 
+/** 思考强度里选中的那一档（没有选中项时 undefined）。 */
+const checkedLevel = () =>
+	screen
+		.getAllByRole("radio")
+		.find((r) => r.getAttribute("aria-checked") === "true")?.textContent;
+
+/** 胶囊右下角思考级别角标画的级别（没有角标时 undefined；弹层里 role 行的级别图形不算）。 */
+const cornerLevel = () =>
+	document
+		.querySelector(".home-tray [role=img][data-level].absolute")
+		?.getAttribute("data-level") ?? undefined;
+
 function prompt(): HTMLTextAreaElement {
 	return screen.getByRole("textbox", {
 		name: i18n.t("newThread.prompt"),
@@ -166,36 +178,50 @@ function prompt(): HTMLTextAreaElement {
 }
 
 describe("首页思考强度按对象的模型能力列出", () => {
-	it("能力未知（role 没解析出模型）：只给「默认」，不假装全部级别可用", () => {
+	it("能力未知（role 没解析出模型）：只列实际生效的那一档（配置缺省 high），不写「默认」", () => {
 		renderHome();
-		expect(thinkingLevels()).toEqual(["默认"]);
+		expect(thinkingLevels()).toEqual(["高"]);
+		expect(checkedLevel()).toBe("高");
 	});
 
-	it("指定目录里的模型：列出它支持的级别（加自动）", async () => {
+	it("指定目录里的模型：列出它支持的级别（加自动），选中实际生效的那一档", async () => {
 		renderHome();
 		await pickModel("openai/gpt-x");
-		expect(thinkingLevels()).toEqual(["默认", "自动", "低", "高"]);
+		expect(thinkingLevels()).toEqual(["自动", "低", "高"]);
+		expect(checkedLevel()).toBe("高");
+		expect(cornerLevel()).toBe("high");
 	});
 
-	it("模型不能调节思考：没有思考强度一节", async () => {
+	it("模型不能调节思考：没有思考强度一节，也没有角标", async () => {
 		renderHome();
 		await pickModel("acme/plain");
 		expect(thinkingLevels()).toBeNull();
+		expect(cornerLevel()).toBeUndefined();
 	});
 
-	it("换模型时退回「默认」", async () => {
+	it("选别的档带上 thinking 并画成角标；换模型后回到新模型上实际生效的级别", async () => {
 		renderHome();
 		await pickModel("openai/gpt-x");
 		thinkingLevels();
-		fireEvent.click(screen.getByRole("radio", { name: "高" }));
-		expect(capsule()).toHaveTextContent("高");
+		fireEvent.click(screen.getByRole("radio", { name: "低" }));
+		expect(cornerLevel()).toBe("low");
+		expect(capsule()).not.toHaveTextContent("低");
+		// gpt-lite 只支持 low：配置的 high 收窄到 low
 		await pickModel("openai/gpt-lite");
-		expect(capsule()).not.toHaveTextContent("高");
-		expect(thinkingLevels()).toEqual(["默认", "自动", "低"]);
-		expect(screen.getByRole("radio", { name: "默认" })).toHaveAttribute(
-			"aria-checked",
-			"true",
-		);
+		expect(thinkingLevels()).toEqual(["自动", "低"]);
+		expect(checkedLevel()).toBe("低");
+	});
+
+	it("选回实际生效的那一档：请求不带 thinkingLevel", async () => {
+		renderHome();
+		await pickModel("openai/gpt-x");
+		thinkingLevels();
+		fireEvent.click(screen.getByRole("radio", { name: "低" }));
+		fireEvent.click(screen.getByRole("radio", { name: "高" }));
+		fireEvent.change(prompt(), { target: { value: "跑一下" } });
+		fireEvent.keyDown(prompt(), { key: "Enter" });
+		await waitFor(() => expect(posts).toHaveLength(1));
+		expect(posts[0]?.body).not.toHaveProperty("thinkingLevel");
 	});
 
 	it("首页没有单独的模型胶囊与思考级别圆圈", () => {

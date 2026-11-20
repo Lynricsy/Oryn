@@ -121,11 +121,38 @@ function DefaultDial({ size }: { size: number }): ReactNode {
 	);
 }
 
-/** 菜单项前的级别图形：auto 是闪光、空串是虚线空圈，其余同输入坞里的圆圈。 */
-function LevelGlyph({ level, size }: { level: string; size: number }) {
+/** 级别图形：auto 是闪光、空串是虚线空圈，其余同输入坞里的圆圈。 */
+export function LevelGlyph({ level, size }: { level: string; size: number }) {
 	if (level === "auto") return <Icon name="sparkle" size={size} />;
 	if (level === "") return <DefaultDial size={size} />;
 	return <ThinkingDial level={level} size={size} />;
+}
+
+/**
+ * 叠在胶囊右下角的思考级别角标（只读，不接点击）：底色圆垫住图形，压在胶囊描边上也看得清。父元素须 `relative`。
+ */
+export function CornerLevel({
+	level,
+	size = 10,
+}: {
+	level: string;
+	size?: number;
+}): ReactNode {
+	const { t } = useTranslation();
+	const label = t("model.levelLabel", {
+		level: t(`model.levels.${level as (typeof DIAL_LEVELS)[number] | "auto"}`),
+	});
+	return (
+		<span
+			role="img"
+			aria-label={label}
+			data-level={level}
+			style={{ width: size + 4, height: size + 4 }}
+			className="pointer-events-none absolute -right-1 -bottom-1 grid place-items-center rounded-full bg-panel text-muted leading-none"
+		>
+			<LevelGlyph level={level} size={size} />
+		</span>
+	);
 }
 
 /**

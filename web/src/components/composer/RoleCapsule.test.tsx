@@ -18,6 +18,8 @@ const chat = (provider: string, id: string, name: string) => ({
 
 /** `GET settings/role-identities` 的 roles（按 KnownRoles：cycleOrder 在前，其余已知 role inCycle=false）。 */
 let roleList: unknown[];
+/** 响应里的 `defaultThinkingLevel`；undefined = 不带（旧控制面） */
+let defaultThinking: string | undefined;
 
 beforeEach(() => {
 	window.innerWidth = 1280;
@@ -27,19 +29,26 @@ beforeEach(() => {
 		{ role: "Cyrene", name: "Cyrene", inCycle: true },
 		{ role: "old", inCycle: false, avatarIcon: "x" },
 	];
+	defaultThinking = undefined;
 	vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
 		const url = new URL(
 			typeof input === "object" && "url" in input ? input.url : String(input),
 			"http://x",
 		);
 		if (url.pathname === "/api/v1/settings/role-identities")
-			return Response.json({ roles: roleList });
+			return Response.json({
+				roles: roleList,
+				...(defaultThinking ? { defaultThinkingLevel: defaultThinking } : {}),
+			});
 		if (url.pathname === "/api/v1/models/catalog")
 			return Response.json({
 				models: [
 					{ ...chat("openai", "gpt-x", "GPT X"), thinking: ["low", "high"] },
 					chat("openai", "gpt-lite", "GPT Lite"),
-					chat("anthropic", "claude-opus-5-5", "Claude Opus 5.5"),
+					{
+						...chat("anthropic", "claude-opus-5-5", "Claude Opus 5.5"),
+						thinking: ["low", "medium", "high", "xhigh"],
+					},
 				],
 				fetchedAt: 0,
 				stale: false,
@@ -172,29 +181,33 @@ describe("RoleCapsule", () => {
 		});
 	});
 
-	it("思考强度：按对象的模型列出，选中后对象带上 thinking", async () => {
+	it("思考强度：选中实际生效的一档，不写「默认」；选别的档对象带上 thinking", async () => {
 		const changes = mount(true, {
 			kind: "model",
 			model: { provider: "openai", id: "gpt-x" },
 		});
 		openCapsule();
 		const group = await screen.findByRole("radiogroup", { name: "思考级别" });
-		// 目录读到之前能力未知，只有「默认」
 		await vi.waitFor(() =>
 			expect(
 				within(group)
 					.getAllByRole("radio")
 					.map((r) => r.textContent),
-			).toEqual(["默认", "自动", "低", "高"]),
+			).toEqual(["自动", "低", "高"]),
 		);
-		fireEvent.click(within(group).getByRole("radio", { name: "高" }));
+		// 配置没读到按 omp 缺省 high
+		expect(within(group).getByRole("radio", { name: "高" })).toHaveAttribute(
+			"aria-checked",
+			"true",
+		);
+		fireEvent.click(within(group).getByRole("radio", { name: "低" }));
 		expect(changes.at(-1)).toEqual({
 			kind: "model",
 			model: { provider: "openai", id: "gpt-x" },
-			thinking: "high",
+			thinking: "low",
 		});
 		// 弹层不关，选中项随之更新
-		expect(within(group).getByRole("radio", { name: "高" })).toHaveAttribute(
+		expect(within(group).getByRole("radio", { name: "低" })).toHaveAttribute(
 			"aria-checked",
 			"true",
 		);
@@ -252,5 +265,49 @@ describe("RoleCapsule", () => {
 			{ kind: "role", role: "Mare" },
 			{ kind: "role", role: "Cyrene" },
 		]);
+	});
+
+	/** 弹层里某个 role 行画的思考级别（没有图形时 undefined）。 */
+	const rowLevel = (name: RegExp) =>
+		screen
+			.getByRole("button", { name })
+			.querySelector("[data-level]")
+			?.getAttribute("data-level") ?? undefined;
+
+	it("role 行画出各自实际生效的思考级别：显式级别优先，其余跟 default 的显式级别并按模型能力收窄", async () => {
+		roleList = [
+			{
+				role: "Cyrene",
+				name: "昔涟",
+				inCycle: true,
+				selector: "anthropic/claude-opus-5-5:xhigh",
+			},
+			{ role: "Mare", inCycle: true, selector: "openai/gpt-x" },
+			{ role: "default", inCycle: false, selector: "@Cyrene" },
+		];
+		defaultThinking = "low";
+		mount(true, { kind: "role", role: "default" });
+		openCapsule();
+		await vi.waitFor(() => expect(rowLevel(/^昔涟/)).toBe("xhigh"));
+		// 新会话从 default（@Cyrene → xhigh）起步，gpt-x 只到 high
+		expect(rowLevel(/^Mare/)).toBe("high");
+		// 胶囊不写级别文字，右下角角标画 default 的级别
+		expect(
+			document
+				.querySelector("[role=img][data-level].absolute")
+				?.getAttribute("data-level"),
+		).toBe("xhigh");
+	});
+
+	it("default 没带显式级别：其余 role 从 config.yml 的 defaultThinkingLevel 起步", async () => {
+		roleList = [
+			{ role: "Mare", inCycle: true, selector: "openai/gpt-x" },
+			{ role: "default", inCycle: true, selector: "anthropic/claude-opus-5-5" },
+		];
+		defaultThinking = "low";
+		mount(true, { kind: "role", role: "default" });
+		openCapsule();
+		await vi.waitFor(() => expect(rowLevel(/^Mare/)).toBe("low"));
+		expect(rowLevel(/^默认/)).toBe("low");
 	});
 });

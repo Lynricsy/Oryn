@@ -289,6 +289,32 @@ export function resolveRoleValue(
 	return {};
 }
 
+/** 思考强度从低到高（omp THINKING_EFFORTS）。 */
+const EFFORT_ORDER = ["minimal", "low", "medium", "high", "xhigh", "max"];
+
+/**
+ * 把级别落到具体模型上（omp `resolveThinkingLevelForModel` → `clampThinkingLevelForModel`）：
+ * off、auto 原样；`supported`（目录里的级别，从低到高）未知时原样；模型不能调节思考（空数组）时 undefined；
+ * 模型不支持的级别取不超过它的最高一档，没有就取最低一档。
+ */
+export function clampThinking(
+	level: string | undefined,
+	supported: readonly string[] | undefined,
+): string | undefined {
+	if (level === undefined || supported === undefined) return level;
+	if (supported.length === 0) return undefined;
+	if (level === "off" || level === "auto" || supported.includes(level))
+		return level;
+	const at = EFFORT_ORDER.indexOf(level);
+	if (at < 0) return undefined;
+	let out: string | undefined;
+	for (const l of supported) {
+		if (EFFORT_ORDER.indexOf(l) > at) break;
+		out = l;
+	}
+	return out ?? supported[0];
+}
+
 /** `get_settings` 的 `cycleOrder` 值 → 角色顺序；不是字符串数组时用默认值。 */
 export function parseCycleOrder(value: unknown): string[] {
 	if (!Array.isArray(value)) return [...DEFAULT_CYCLE_ORDER];

@@ -19,6 +19,7 @@ import { modelBrand, shortModelName } from "../../lib/model-brand";
 import {
 	BUILTIN_ROLE_NAMES,
 	type BuiltinRole,
+	clampThinking,
 	DEFAULT_CYCLE_ORDER,
 	type ModelRef,
 	type RoleEntry,
@@ -26,17 +27,15 @@ import {
 	roleHue,
 } from "../../lib/model-roles";
 import { useBreakpoint } from "../../lib/viewport";
-import { useModelCaps } from "../../state/model-caps";
+import { modelCapsOf, useModelCaps } from "../../state/model-caps";
 import { useTheme } from "../../state/theme";
 import { IdentityAvatar } from "../ui/IdentityAvatar";
 import { Icon } from "../ui/icons";
 import { ModelLogo } from "../ui/ModelLogo";
-import {
-	ModelCatalogFooter,
-	newThreadThinkingOptions,
-} from "../ui/ModelSelect";
+import { ModelCatalogFooter } from "../ui/ModelSelect";
 import { Option, Popover, PopoverLabel } from "../ui/PickerPopover";
 import { Dialog } from "../ui/primitives";
+import { CornerLevel, LevelGlyph } from "../ui/ThinkingDial";
 import { ModelPickerBody } from "./ModelPickerBody";
 import { PillButton } from "./PillButton";
 import { roleLabel } from "./RoleTrack";
@@ -65,6 +64,10 @@ export interface RoleOption {
 	inCycle: boolean;
 	/** 选择器是 `@role` / `pi/role`（可带 `:level`）这样单纯指向另一个已知 role 时，那个 role */
 	alias?: RoleOption;
+	/** 选择器（经别名展开后）显式带的思考级别（`…:high`）；没带时省略 */
+	explicitThinking?: string;
+	/** 以这个 role 开新会话实际生效的思考级别（见 useRoleOptions）；模型不能调节思考时省略 */
+	thinking?: string;
 }
 
 /** `provider/id` 选择器。 */
@@ -84,6 +87,7 @@ function aliasTarget(selector: string | undefined): string | undefined {
  * cycleOrder 里的 role（按其顺序）与各自解析出的模型；`default` 不在 cycleOrder 里时补在末尾（首屏的缺省对象就是它，
  * 胶囊、托盘色相与思考档位要按它解析；它只是 cycle 里某个 role 的别名时弹层不单列，见 RoleCapsule）。
  * 别名按全部已知 role 解析（`default: '@Cyrene'` 这类配置）。
+ * 思考级别照 omp 新会话的取法：role 选择器显式带的级别，否则会话起始级别（`newSessionThinking`），再按模型能力收窄。
  * role 身份列表读失败或为空时用 omp 默认的 cycleOrder。
  */
 export function useRoleOptions(): RoleOption[] {
@@ -130,14 +134,16 @@ export function useRoleOptions(): RoleOption[] {
 			const glyph = roleDefaultGlyph(r.role);
 			const custom = !!(r.avatarIcon || r.avatarImage);
 			const own = custom || !!glyph;
+			const resolved = r.selector
+				? resolveRoleValue(r.selector, entries, pool, r.role)
+				: {};
 			return {
 				role: r.role,
 				name: roleLabel({ id: r.role, name: r.name || builtinName(r.role) }),
 				hue,
 				selector: r.selector,
-				model: r.selector
-					? resolveRoleValue(r.selector, entries, pool, r.role).model
-					: undefined,
+				model: resolved.model,
+				explicitThinking: resolved.thinkingLevel,
 				identity: own
 					? { avatarIcon: r.avatarIcon, avatarImage: r.avatarImage }
 					: agentAvatar,
@@ -149,7 +155,17 @@ export function useRoleOptions(): RoleOption[] {
 		const options = roles.map((r, i) =>
 			toOption(r, roleHue(r.role, i, accent)),
 		);
-		return options.map((o) => {
+		const start = newSessionThinking(options, identities.data);
+		const withThinking = (o: RoleOption): RoleOption => ({
+			...o,
+			thinking: clampThinking(
+				o.explicitThinking ?? start,
+				o.model
+					? modelCapsOf(catalog.data, modelSelector(o.model))?.thinking
+					: undefined,
+			),
+		});
+		return options.map(withThinking).map((o) => {
 			const to = aliasTarget(o.selector);
 			if (!to || to === o.role || !entries.has(to)) return o;
 			const listedTo = options.find((x) => x.role === to);
@@ -158,9 +174,24 @@ export function useRoleOptions(): RoleOption[] {
 				listedTo ??
 				(target ? toOption(target, roleHue(to, undefined, accent)) : undefined);
 			// 别名 role 与它指向的 role 同色（托盘光晕不随「换了个名字」变色）
-			return alias ? { ...o, alias, hue: alias.hue } : o;
+			return alias ? { ...o, alias: withThinking(alias), hue: alias.hue } : o;
 		});
 	}, [identities.data, catalog.data, agent, accent]);
+}
+
+/**
+ * 新会话的起始思考级别（omp `pickInitialThinkingLevel`）：default role 的选择器显式带了级别就用它，
+ * 否则用 config.yml 的 `defaultThinkingLevel`（列表没读到时按 omp 缺省值 high）。
+ */
+export function newSessionThinking(
+	roles: readonly RoleOption[],
+	list: Schemas["RoleIdentityList"] | undefined,
+): string {
+	return (
+		roles.find((r) => r.role === "default")?.explicitThinking ??
+		list?.defaultThinkingLevel ??
+		"high"
+	);
 }
 
 /** 对象实际用的模型（思考档位据此取）：role 取解析出的模型，指定模型与助手取所选模型。 */
@@ -240,12 +271,32 @@ export function RoleCapsule({
 	const assistantName = assistant.name || t("tabBar.assistant");
 	const current = targetModel(value, roles);
 	const caps = useModelCaps(current ? modelSelector(current) : "");
-	const levels = newThreadThinkingOptions(caps);
-	const thinking = value.thinking ?? "";
-	const levelLabel = (l: string) =>
-		l === ""
-			? t("newThread.defaultThinking")
-			: t(`model.levels.${l as "auto"}`);
+	const identities = useRoleIdentities();
+	// 不改思考级别时实际生效的级别：role 取它自己的（见 useRoleOptions），指定模型与助手从新会话的起始级别按模型能力收窄
+	const defaultLevel =
+		value.kind === "role"
+			? roles.find((r) => r.role === value.role)?.thinking
+			: clampThinking(
+					newSessionThinking(roles, identities.data),
+					caps?.thinking,
+				);
+	const shownLevel = value.thinking ?? defaultLevel;
+	// 可选级别：模型能力已知时是 auto 加目录里的级别（实际生效的级别不在其中时补在最前，如 off）；
+	// 能力未知时只列实际生效的那一档；模型不能调节思考时没有这一节
+	const levels: readonly string[] | null = caps
+		? caps.thinking.length === 0
+			? null
+			: [
+					...(shownLevel && !["auto", ...caps.thinking].includes(shownLevel)
+						? [shownLevel]
+						: []),
+					"auto",
+					...caps.thinking,
+				]
+		: shownLevel
+			? [shownLevel]
+			: null;
+	const levelLabel = (l: string) => t(`model.levels.${l as "auto"}`);
 
 	const role =
 		value.kind === "role"
@@ -303,7 +354,6 @@ export function RoleCapsule({
 		);
 		main = role?.name ?? value.role;
 	}
-	const badge = value.thinking ? levelLabel(value.thinking) : undefined;
 	const pickedModel =
 		value.kind === "model" || value.kind === "assistant"
 			? value.model
@@ -351,14 +401,22 @@ export function RoleCapsule({
 										: t("roles.unconfigured")))
 						}
 						trailing={
-							r.model ? (
-								<ModelLogo
-									model={r.model.id}
-									provider={r.model.provider}
-									size={12}
-									className="text-faint"
-								/>
-							) : undefined
+							// 思考级别与模型 logo 各占固定的一格：某一行缺其中一样时，其它行的两列照样对齐
+							<>
+								<span className="inline-flex w-3 justify-center">
+									{r.thinking && <LevelGlyph level={r.thinking} size={12} />}
+								</span>
+								<span className="inline-flex w-3 justify-center">
+									{r.model && (
+										<ModelLogo
+											model={r.model.id}
+											provider={r.model.provider}
+											size={12}
+											className="text-faint"
+										/>
+									)}
+								</span>
+							</>
 						}
 						onClick={() => {
 							if (pickedRole !== r.role)
@@ -388,17 +446,23 @@ export function RoleCapsule({
 						{levels.map((l) => (
 							// biome-ignore lint/a11y/useSemanticElements: 胶囊形的分段选择，原生 radio 画不出来；读屏语义由 role/aria-checked 提供
 							<button
-								key={l || "default"}
+								key={l}
 								type="button"
 								role="radio"
-								aria-checked={thinking === l}
+								aria-checked={shownLevel === l}
 								title={
-									l === "" && caps === undefined
+									caps === undefined
 										? t("newThread.thinkingUnknown")
 										: undefined
 								}
-								className={`h-7 rounded-full border px-2.5 text-xs transition-colors duration-150 ${thinking === l ? "border-border-strong bg-hover text-fg" : "border-border text-muted hover:bg-hover hover:text-fg"}`}
-								onClick={() => onChange({ ...value, thinking: l || undefined })}
+								className={`h-7 rounded-full border px-2.5 text-xs transition-colors duration-150 ${shownLevel === l ? "border-border-strong bg-hover text-fg" : "border-border text-muted hover:bg-hover hover:text-fg"}`}
+								// 选回实际生效的那一档即不再单独指定（与没动过时一样跟着 role / 配置走）
+								onClick={() =>
+									onChange({
+										...value,
+										thinking: l === defaultLevel ? undefined : l,
+									})
+								}
 							>
 								{levelLabel(l)}
 							</button>
@@ -451,13 +515,14 @@ export function RoleCapsule({
 				text={{
 					label: t("roleCapsule.label", { name: main }),
 					main,
-					badge,
 				}}
 				shortcut="Ctrl+S"
 				active={open}
 				onClick={() => (open ? close() : setOpen(true))}
 				shape={compactPill ? "circle" : "pill"}
 			/>
+			{/* 思考级别不写文字：实际生效的级别画成右下角的角标 */}
+			{levels && shownLevel && <CornerLevel level={shownLevel} />}
 			{open &&
 				(compact ? (
 					<Dialog open title={t("roleCapsule.title")} onClose={close}>

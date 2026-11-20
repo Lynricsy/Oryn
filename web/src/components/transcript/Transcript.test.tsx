@@ -148,6 +148,34 @@ describe("layoutTurns", () => {
 		]);
 	});
 
+	it("回合的思考级别取回合开始前最近一条 thinking_level_change（auto 下缺 thinkingLevel 时退回 configured）", () => {
+		const level = (seq: number, entry: JsonRecord): TranscriptItem => ({
+			kind: "meta",
+			key: `e${seq}`,
+			seq,
+			entry: { type: "thinking_level_change", ...entry },
+		});
+		const opus = { model: "claude-opus-5-5", provider: "anthropic" };
+		const turns = layoutTurns([
+			msg(1, assistant("a", u, opus)),
+			level(2, { thinkingLevel: "high" }),
+			user(3),
+			msg(4, assistant("b", u, opus)),
+			user(5),
+			level(6, { thinkingLevel: null, configured: "auto" }),
+			msg(7, assistant("c", u, opus)),
+		]);
+		expect(turns.thinkingSeen).toBe(true);
+		expect([...turns.models.values()].map((m) => m.thinking)).toEqual([
+			undefined,
+			"high",
+			"auto",
+		]);
+		expect(
+			layoutTurns([user(1), msg(2, assistant("a", u, opus))]).thinkingSeen,
+		).toBe(false);
+	});
+
 	it("流式增量只重算进行中的回合：历史回合的汇总对象引用不变，尾回合结束后汇总正确", () => {
 		// buildTranscript 每次都新建 item 包装，但历史条目的 message 对象引用稳定
 		const history = [

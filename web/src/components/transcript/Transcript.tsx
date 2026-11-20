@@ -44,6 +44,7 @@ import { IdentityAvatar } from "../ui/IdentityAvatar";
 import { Icon, type IconName } from "../ui/icons";
 import { ModelLogo } from "../ui/ModelLogo";
 import { describeError } from "../ui/primitives";
+import { CornerLevel } from "../ui/ThinkingDial";
 import { type TurnIdentities, useTranscriptContext } from "./context";
 import {
 	assistantEdges,
@@ -334,6 +335,8 @@ function isUserRow(item: MainlineRow): boolean {
 export interface TurnModel {
 	model: string;
 	provider: string;
+	/** 该回合开始时生效的思考级别（此前最近一条 thinking_level_change）；前面没有这类条目时省略 */
+	thinking?: string;
 }
 
 /**
@@ -372,6 +375,8 @@ export function layoutTurns(items: readonly MainlineRow[]): {
 	models: Map<number, TurnModel>;
 	trails: Map<number, SourceTrail>;
 	openStart: number | undefined;
+	/** 行里出现过 thinking_level_change：没出现过时各回合的级别就是会话当前级别 */
+	thinkingSeen: boolean;
 } {
 	const starts = new Set<number>();
 	const userStarts = new Set<number>();
@@ -389,7 +394,15 @@ export function layoutTurns(items: readonly MainlineRow[]): {
 		messages = [];
 		last = -1;
 	};
+	let level: string | undefined;
+	let thinkingSeen = false;
 	items.forEach((it, i) => {
+		if (it.kind === "meta" && it.entry.type === "thinking_level_change") {
+			// thinkingLevel 是实际生效的具体级别；auto 模式下它缺省时退回 configured
+			const v = it.entry.thinkingLevel ?? it.entry.configured;
+			level = typeof v === "string" && v ? v : undefined;
+			thinkingSeen = true;
+		}
 		if (isUserRow(it)) {
 			const prev = items[i - 1];
 			if (prev === undefined || !isUserRow(prev)) userStarts.add(i);
@@ -417,12 +430,21 @@ export function layoutTurns(items: readonly MainlineRow[]): {
 			models.set(start, {
 				model,
 				provider: typeof provider === "string" ? provider : "",
+				...(level ? { thinking: level } : {}),
 			});
 			if (it.trail) trails.set(start, it.trail);
 		}
 	});
 	close();
-	return { starts, userStarts, footers, models, trails, openStart };
+	return {
+		starts,
+		userStarts,
+		footers,
+		models,
+		trails,
+		openStart,
+		thinkingSeen,
+	};
 }
 
 /** 回合边界（用户气泡、会话分隔、提示行等非 agent 行）上下的间距。 */
@@ -539,6 +561,7 @@ function useTurnIdentities(): TurnIdentities {
 function TurnHead({
 	working,
 	model,
+	thinking,
 	known,
 	face,
 	identities,
@@ -546,6 +569,8 @@ function TurnHead({
 }: {
 	working: boolean;
 	model?: TurnModel;
+	/** 该回合的思考级别；不知道时省略（不画角标） */
+	thinking?: string;
 	known?: KnownModel;
 	face?: RoleFace;
 	identities: TurnIdentities;
@@ -588,17 +613,20 @@ function TurnHead({
 				</span>
 			)}
 			{model && label && (
+				// 模型放在胶囊里（同首页的模型胶囊），思考级别画成胶囊右下角的角标
 				<span
-					className="flex min-w-0 items-center gap-1.5 font-medium text-faint text-sm"
+					data-testid="turn-model"
+					className="relative flex h-6 min-w-0 items-center gap-1.5 rounded-full border border-border bg-panel/70 px-2.5 font-medium text-muted text-xs"
 					title={label.full}
 				>
 					<ModelLogo
 						model={model.model}
 						provider={model.provider || undefined}
-						size={16}
+						size={14}
 						className="shrink-0"
 					/>
 					<span className="min-w-0 truncate">{label.short}</span>
+					{thinking && <CornerLevel level={thinking} />}
 				</span>
 			)}
 		</div>
@@ -666,6 +694,7 @@ export const Transcript = memo(function Transcript({
 	const working = (indexState ?? ownState) === "working";
 	const liveStart = working ? turns.openStart : undefined;
 	const sessionModel = useThread(threadId, (s) => s.state?.model);
+	const sessionThinking = useThread(threadId, (s) => s.state?.thinkingLevel);
 	const gaps = useMemo(() => rowGaps(rows, turns.footers), [rows, turns]);
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const [atBottom, setAtBottom] = useState(true);
@@ -949,6 +978,11 @@ export const Transcript = memo(function Transcript({
 								<TurnHead
 									working={liveStart === v.index}
 									model={turns.models.get(v.index)}
+									// 行里没有 thinking_level_change 时，各回合的级别就是会话当前级别
+									thinking={
+										turns.models.get(v.index)?.thinking ??
+										(turns.thinkingSeen ? undefined : sessionThinking)
+									}
 									known={sessionModel}
 									face={resolveTurnRole(
 										turns.models.get(v.index),
@@ -993,6 +1027,7 @@ export const Transcript = memo(function Transcript({
 			pendingText,
 			liveStart,
 			sessionModel,
+			sessionThinking,
 			identities,
 			revealed,
 		],
