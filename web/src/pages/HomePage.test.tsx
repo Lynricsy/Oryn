@@ -1,6 +1,6 @@
 /**
  * 首页新建对话框：role 胶囊里的思考强度按对象的模型列出；首屏默认对象与全局助手（M13 5.4：三个胶囊随对象收起 / 展开、
- * 托盘 `data-target`、助手发送新建助手对话、普通发送带 role、Ctrl+S 打开 role 胶囊）；系统分享预填。
+ * 舞台 `data-target`、助手发送新建助手对话、普通发送带 role、Ctrl+S 打开 role 胶囊）；系统分享预填。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -152,7 +152,7 @@ function renderHome() {
 }
 
 const capsule = () => screen.getByRole("button", { name: /^对象：/ });
-const tray = () => document.querySelector(".home-tray") as HTMLElement;
+const stage = () => document.querySelector(".home-stage") as HTMLElement;
 const pills = () => screen.queryByTestId("home-pills");
 
 /** 打开 role 胶囊（没开时），点「指定模型…」，在目录里点该模型（目录读到后才有这一行）。 */
@@ -272,7 +272,7 @@ describe("首屏对象与全局助手（M13 5.4）", () => {
 	it("默认对象为 assistant：执行位置、项目、Profile 胶囊不在 DOM 中，托盘 data-target=assistant", async () => {
 		defaultTarget = "assistant";
 		renderHome();
-		await waitFor(() => expect(tray().dataset.target).toBe("assistant"));
+		await waitFor(() => expect(stage().dataset.target).toBe("assistant"));
 		expect(pills()).toBeNull();
 		expect(screen.queryByRole("button", { name: /^无项目/ })).toBeNull();
 		expect(capsule()).toHaveAccessibleName("对象：全局助手");
@@ -283,10 +283,10 @@ describe("首屏对象与全局助手（M13 5.4）", () => {
 		try {
 			defaultTarget = "assistant";
 			renderHome();
-			await waitFor(() => expect(tray().dataset.target).toBe("assistant"));
+			await waitFor(() => expect(stage().dataset.target).toBe("assistant"));
 			fireEvent.click(capsule());
 			fireEvent.click(screen.getByRole("button", { name: /^快速/ }));
-			expect(tray().dataset.target).toBe("role");
+			expect(stage().dataset.target).toBe("role");
 			expect(pills()).not.toBeNull();
 			expect(pills()?.className).toContain("home-pills-in");
 			expect(
@@ -295,7 +295,7 @@ describe("首屏对象与全局助手（M13 5.4）", () => {
 
 			fireEvent.click(capsule());
 			fireEvent.click(screen.getByRole("button", { name: /^全局助手/ }));
-			expect(tray().dataset.target).toBe("assistant");
+			expect(stage().dataset.target).toBe("assistant");
 			// leaving：先淡出，FADE_MS 后才离开 DOM
 			expect(pills()?.className).toContain("home-pills-out");
 			act(() => {
@@ -310,7 +310,7 @@ describe("首屏对象与全局助手（M13 5.4）", () => {
 	it("助手发送：POST assistant/conversations，请求体含 prompt，然后跳到 /assistant/:id", async () => {
 		defaultTarget = "assistant";
 		renderHome();
-		await waitFor(() => expect(tray().dataset.target).toBe("assistant"));
+		await waitFor(() => expect(stage().dataset.target).toBe("assistant"));
 		fireEvent.change(prompt(), { target: { value: "帮我整理下周计划" } });
 		fireEvent.keyDown(prompt(), { key: "Enter" });
 		await waitFor(() =>

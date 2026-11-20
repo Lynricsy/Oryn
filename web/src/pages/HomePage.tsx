@@ -3,14 +3,15 @@
  * 全局助手 / cycleOrder 里的 role / 指定模型，以及思考强度）、执行位置（Ctrl+M）、浏览器 Profile（Ctrl+B，M8；只在新 orb
  * 且至少有一个 Profile 时出现）、项目（Ctrl+J）、发送。初始对象取首屏偏好（`settings/composer` 的 `defaultTarget`）。
  * 选全局助手（M13 R14–R16）：执行位置、项目、Profile 三个胶囊收起（不在 DOM 里），附件传进助手文件库，发送即新建
- * 助手对话（首条消息、文件、图片、所选模型都带上）并跳到 `/assistant/:id`；托盘换成旋转流光描边、色场换成助手色相。
+ * 助手对话（首条消息、文件、图片、所选模型都带上）并跳到 `/assistant/:id`；点阵染上助手色并呼吸、两侧的线上有光流向托盘。
  * 普通对象：新线程以所选 role 开场（`role`），或用指定的模型（`model`）；省略 provider / 类型时由控制面依次取项目默认、
  * orb_defaults、provider 默认。胶囊不写「默认」：执行位置与 Profile 直接显示、选中按同样规则解析出的实际值
  * （没改过时请求仍不带这些字段，换项目后跟着新项目的默认走）。
  * 选的 Profile 被另一台运行中的 orb 占用（409 `profile_in_use`）时弹选择对话框，选「只读使用」或「接管」后带 `profileMode` 重发。
  * 执行位置的「Runners」分组（M11b）：选 runner 的目录（可带子路径、可新建 worktree）；目录已被别的线程占用
  * （409 `dir_in_use`）时弹对话框，选「新建 worktree」或「仍然共用」后重发。
- * 托盘背后是一层光场（.home-field），玻璃居中时也有东西可模糊；发送后托盘经 DockTray 连续变形到线程页底部输入坞。
+ * 托盘背后是一层光场（.home-field），玻璃居中时也有东西可模糊；托盘中线以上铺一层渐隐点阵，两侧各一条渐变的线止于托盘边缘
+ * （.home-horizon）。发送后托盘经 DockTray 连续变形到线程页底部输入坞。
  * 所选项目已绑定 GitHub 时（M14），键入 `#` 弹出该仓库的 issue / PR 候选，选中即作为 Markdown 附件加入（全局助手时不启用）。
  * iOS 26+ 的 App 里（下沉侧栏布局）左上角的侧栏钮由原生 Liquid Glass 接管（lib/native-header.ts，与线程页的侧栏圆钮同一枚）：
  * 这时网页钮排成线程页那枚 44px 圆钮的位置与样子，登记成只有侧栏钮的 spec（key `home`）；原生显示稳了网页钮透明（仍可命中，
@@ -619,7 +620,8 @@ export function HomePage(): ReactNode {
 					<WindowControls side="right" />
 				</header>
 			)}
-			<div className="flex flex-1 items-start justify-center overflow-y-auto overflow-x-hidden px-3 pt-[10vh] pb-keyboard sm:items-center sm:pt-0">
+			{/* relative：托盘地平线（点阵与两侧的线）横向以这里为包含块铺满；isolate：它们的 z-index -1 只压在这层内容之下 */}
+			<div className="relative isolate flex flex-1 items-start justify-center overflow-y-auto overflow-x-hidden px-3 pt-[10vh] pb-keyboard sm:items-center sm:pt-0">
 				<div className="w-full max-w-2xl">
 					<div className={`mb-3 flex justify-center ${rise("")}`}>
 						<BrandMark size={32} blink />
@@ -629,272 +631,290 @@ export function HomePage(): ReactNode {
 					>
 						{t("newThread.heading")}
 					</h1>
-					{/* 与线程页输入坞同一块 D 稿托盘：同一材质（glass-dock）、同样的分行；首页大一档圆角（18px） */}
+					{/*
+					 * 舞台：单格 grid，托盘与地平线锚点叠在同一格，锚点纵向居中（零高）。按对象换色（R15）：全局助手是助手色相，
+					 * 普通 role 是该 role 的色相；全局助手的点阵呼吸、线上流光，普通对象静止——没有包住托盘的描边特效。
+					 */}
 					<div
-						className={`home-tray relative isolate ${rise("delay-[120ms]")}`}
+						className="home-stage grid"
 						data-target={target.kind}
 						style={
 							trayHue ? ({ "--role-h": trayHue } as CSSProperties) : undefined
 						}
 					>
-						{/*
-						 * 托盘背后的光场：玻璃底下有东西可模糊，居中态也看得出是玻璃。按对象换色（R15）：全局助手是助手色相的色场
-						 * 加旋转流光描边（.home-tray::after），普通 role 是该 role 色相的静态光晕
-						 */}
-						<div aria-hidden className="home-field" />
-						{refMenu.open && (
-							<RefMenu
-								entries={refMenu.entries}
-								active={refMenu.active}
-								pending={refMenu.pending}
-								onPick={refMenu.pick}
-							/>
-						)}
-						<div ref={trayRef} className="glass glass-dock rounded-2xl">
-							<AttachmentStrip items={att.items} onRemove={att.remove} />
-							<textarea
-								onDragOver={(e) => {
-									if (e.dataTransfer.types.includes("Files"))
+						<div
+							aria-hidden
+							className="home-horizon col-start-1 row-start-1 self-center"
+							data-intro={intro || undefined}
+						>
+							<div className="home-dots" />
+							<div className="home-line home-line-l" />
+							<div className="home-line home-line-r" />
+						</div>
+						{/* 与线程页输入坞同一块 D 稿托盘：同一材质（glass-dock）、同样的分行；首页大一档圆角（18px） */}
+						<div
+							className={`home-tray relative isolate col-start-1 row-start-1 ${rise("delay-[120ms]")}`}
+						>
+							{/* 托盘背后的光场：玻璃底下有东西可模糊，居中态也看得出是玻璃；色相随舞台的对象 */}
+							<div aria-hidden className="home-field" />
+							{refMenu.open && (
+								<RefMenu
+									entries={refMenu.entries}
+									active={refMenu.active}
+									pending={refMenu.pending}
+									onPick={refMenu.pick}
+								/>
+							)}
+							<div ref={trayRef} className="glass glass-dock rounded-2xl">
+								<AttachmentStrip items={att.items} onRemove={att.remove} />
+								<textarea
+									onDragOver={(e) => {
+										if (e.dataTransfer.types.includes("Files"))
+											e.preventDefault();
+									}}
+									onDrop={(e) => {
+										if (e.dataTransfer.files.length === 0) return;
 										e.preventDefault();
-								}}
-								onDrop={(e) => {
-									if (e.dataTransfer.files.length === 0) return;
-									e.preventDefault();
-									void att.addFiles(e.dataTransfer.files);
-								}}
-								ref={ref}
-								rows={4}
-								value={prompt}
-								aria-label={t("newThread.prompt")}
-								placeholder={t("newThread.placeholder")}
-								// 托盘是 36px 大圆角：文字离边 20px，才不显得贴着弧线
-								className="block w-full resize-none bg-transparent px-5 pt-4 pb-1.5 text-[14px] leading-5 outline-none placeholder:text-faint focus-visible:outline-none"
-								onChange={(e) => {
-									setPrompt(e.target.value);
-									setCaret(e.target.selectionStart);
-								}}
-								onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
-								onKeyUp={(e) => setCaret(e.currentTarget.selectionStart)}
-								onPaste={(e) => {
-									const files = [...e.clipboardData.files];
-									if (files.length > 0) {
-										e.preventDefault();
-										void att.addFiles(files);
-									}
-								}}
-								onKeyDown={(e) => {
-									if (refMenu.onKeyDown(e)) return;
-									if (
-										e.key === "Enter" &&
-										!e.shiftKey &&
-										!e.nativeEvent.isComposing
-									) {
-										e.preventDefault();
-										void submit();
-									}
-								}}
-							/>
-							{/*
-							 * 工具行。宽屏一行：附件 + 分隔、选项胶囊（对象在最前，其余三个在选全局助手时收起）、发送钮。
-							 * 窄屏两行：附件与发送钮在第一行两端；分隔线下选项单独占第二行——对象、orb 是小圆圈，项目名拿剩下的宽度。
-							 */}
-							<div
-								className={`relative flex px-3 pb-3 ${compact ? "flex-wrap items-center gap-y-2" : "items-start gap-0.5"}`}
-							>
-								<div className="flex h-8 shrink-0 items-center">
-									<AttachButton onFiles={(files) => void att.addFiles(files)} />
-									{!compact && (
-										<span
-											aria-hidden
-											className="mx-1.5 h-[18px] w-px shrink-0 bg-[var(--glass-line)]"
-										/>
-									)}
-								</div>
+										void att.addFiles(e.dataTransfer.files);
+									}}
+									ref={ref}
+									rows={4}
+									value={prompt}
+									aria-label={t("newThread.prompt")}
+									placeholder={t("newThread.placeholder")}
+									// 托盘是 36px 大圆角：文字离边 20px，才不显得贴着弧线
+									className="block w-full resize-none bg-transparent px-5 pt-4 pb-1.5 text-[14px] leading-5 outline-none placeholder:text-faint focus-visible:outline-none"
+									onChange={(e) => {
+										setPrompt(e.target.value);
+										setCaret(e.target.selectionStart);
+									}}
+									onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+									onKeyUp={(e) => setCaret(e.currentTarget.selectionStart)}
+									onPaste={(e) => {
+										const files = [...e.clipboardData.files];
+										if (files.length > 0) {
+											e.preventDefault();
+											void att.addFiles(files);
+										}
+									}}
+									onKeyDown={(e) => {
+										if (refMenu.onKeyDown(e)) return;
+										if (
+											e.key === "Enter" &&
+											!e.shiftKey &&
+											!e.nativeEvent.isComposing
+										) {
+											e.preventDefault();
+											void submit();
+										}
+									}}
+								/>
+								{/*
+								 * 工具行。宽屏一行：附件 + 分隔、选项胶囊（对象在最前，其余三个在选全局助手时收起）、发送钮。
+								 * 窄屏两行：附件与发送钮在第一行两端；分隔线下选项单独占第二行——对象、orb 是小圆圈，项目名拿剩下的宽度。
+								 */}
 								<div
-									className={`flex min-h-8 min-w-0 items-center gap-1.5 ${compact ? "-mx-3 relative order-last w-[calc(100%+1.5rem)] border-[var(--glass-line)] border-t px-3 pt-2.5" : "flex-1"}`}
+									className={`relative flex px-3 pb-3 ${compact ? "flex-wrap items-center gap-y-2" : "items-start gap-0.5"}`}
 								>
-									<RoleCapsule
-										value={target}
-										onChange={choose}
-										allowAssistant
-										open={pill === "role"}
-										onOpenChange={(open) => setPill(open ? "role" : null)}
-										compactPill={compact}
-										shortcut="Ctrl+S"
-									/>
-									{pillsPhase !== "hidden" && (
-										<div
-											data-testid="home-pills"
-											className={`flex min-w-0 items-center gap-1.5 ${compact ? "flex-1" : ""} ${pillsAnim}`}
-										>
-											<PillButton
-												icon={runnerPick ? "laptop" : "box"}
-												text={executorText}
-												shortcut="Ctrl+M"
-												active={pill === "executor"}
-												onClick={() =>
-													setPill(pill === "executor" ? null : "executor")
-												}
-												shape={compact ? "circle" : "pill"}
+									<div className="flex h-8 shrink-0 items-center">
+										<AttachButton
+											onFiles={(files) => void att.addFiles(files)}
+										/>
+										{!compact && (
+											<span
+												aria-hidden
+												className="mx-1.5 h-[18px] w-px shrink-0 bg-[var(--glass-line)]"
 											/>
-											{showProfile && (
+										)}
+									</div>
+									<div
+										className={`flex min-h-8 min-w-0 items-center gap-1.5 ${compact ? "-mx-3 relative order-last w-[calc(100%+1.5rem)] border-[var(--glass-line)] border-t px-3 pt-2.5" : "flex-1"}`}
+									>
+										<RoleCapsule
+											value={target}
+											onChange={choose}
+											allowAssistant
+											open={pill === "role"}
+											onOpenChange={(open) => setPill(open ? "role" : null)}
+											compactPill={compact}
+											shortcut="Ctrl+S"
+										/>
+										{pillsPhase !== "hidden" && (
+											<div
+												data-testid="home-pills"
+												className={`flex min-w-0 items-center gap-1.5 ${compact ? "flex-1" : ""} ${pillsAnim}`}
+											>
 												<PillButton
-													icon="browser"
-													text={profileText}
-													shortcut="Ctrl+B"
-													active={pill === "profile"}
+													icon={runnerPick ? "laptop" : "box"}
+													text={executorText}
+													shortcut="Ctrl+M"
+													active={pill === "executor"}
 													onClick={() =>
-														setPill(pill === "profile" ? null : "profile")
+														setPill(pill === "executor" ? null : "executor")
 													}
 													shape={compact ? "circle" : "pill"}
 												/>
-											)}
-											<PillButton
-												icon="folder"
-												text={projectText}
-												shortcut="Ctrl+J"
-												active={pill === "project"}
-												onClick={() =>
-													setPill(pill === "project" ? null : "project")
-												}
-												grow={compact}
-											/>
-										</div>
-									)}
-								</div>
-								<button
-									type="button"
-									title={t("newThread.start")}
-									aria-label={t("composer.send")}
-									disabled={
-										busy || att.uploading || (!prompt.trim() && !att.hasFiles)
-									}
-									onClick={() => void submit()}
-									// 与线程页发送钮相同：强调色实心圆角方块，空态只降不透明度
-									className={`${compact ? "ml-auto" : "ml-1.5"} inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-fg shadow-xs transition-[scale,filter,opacity] duration-150 ease-out hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:opacity-45 disabled:shadow-none`}
-								>
-									{busy ? (
-										<Spinner size={14} />
-									) : (
-										<Icon name="send" size={16} weight="bold" />
-									)}
-								</button>
-								{pill === "executor" && !assistantTarget && (
-									<Popover onClose={() => setPill(null)}>
-										<PopoverLabel>{t("newThread.newOrb")}</PopoverLabel>
-										{(providers.data?.providers ?? [])
-											.filter((p) => p.name !== "@host")
-											.map((p) =>
-												p.orbTypes.map((ot) => (
-													<Option
-														key={`${p.id}-${ot.name}`}
-														selected={
-															!runnerPick &&
-															shownNewOrb?.provider === p.name &&
-															shownNewOrb.type === ot.name
+												{showProfile && (
+													<PillButton
+														icon="browser"
+														text={profileText}
+														shortcut="Ctrl+B"
+														active={pill === "profile"}
+														onClick={() =>
+															setPill(pill === "profile" ? null : "profile")
 														}
-														leading={<Icon name="cpu" size={14} />}
-														hint={ot.name}
-														trailing={
-															<>
-																<Badge>
-																	{t("panel.cores", { n: ot.cpus })}
-																</Badge>
-																<Badge>{formatMemoryMB(ot.memoryMB)}</Badge>
-																{typeHasDocker(ot) && <DockerBadge />}
-																{!p.online && (
-																	<Badge tone="warn">
-																		{t("providers.offline")}
+														shape={compact ? "circle" : "pill"}
+													/>
+												)}
+												<PillButton
+													icon="folder"
+													text={projectText}
+													shortcut="Ctrl+J"
+													active={pill === "project"}
+													onClick={() =>
+														setPill(pill === "project" ? null : "project")
+													}
+													grow={compact}
+												/>
+											</div>
+										)}
+									</div>
+									<button
+										type="button"
+										title={t("newThread.start")}
+										aria-label={t("composer.send")}
+										disabled={
+											busy || att.uploading || (!prompt.trim() && !att.hasFiles)
+										}
+										onClick={() => void submit()}
+										// 与线程页发送钮相同：强调色实心圆角方块，空态只降不透明度
+										className={`${compact ? "ml-auto" : "ml-1.5"} inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-fg shadow-xs transition-[scale,filter,opacity] duration-150 ease-out hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:opacity-45 disabled:shadow-none`}
+									>
+										{busy ? (
+											<Spinner size={14} />
+										) : (
+											<Icon name="send" size={16} weight="bold" />
+										)}
+									</button>
+									{pill === "executor" && !assistantTarget && (
+										<Popover onClose={() => setPill(null)}>
+											<PopoverLabel>{t("newThread.newOrb")}</PopoverLabel>
+											{(providers.data?.providers ?? [])
+												.filter((p) => p.name !== "@host")
+												.map((p) =>
+													p.orbTypes.map((ot) => (
+														<Option
+															key={`${p.id}-${ot.name}`}
+															selected={
+																!runnerPick &&
+																shownNewOrb?.provider === p.name &&
+																shownNewOrb.type === ot.name
+															}
+															leading={<Icon name="cpu" size={14} />}
+															hint={ot.name}
+															trailing={
+																<>
+																	<Badge>
+																		{t("panel.cores", { n: ot.cpus })}
 																	</Badge>
-																)}
-															</>
+																	<Badge>{formatMemoryMB(ot.memoryMB)}</Badge>
+																	{typeHasDocker(ot) && <DockerBadge />}
+																	{!p.online && (
+																		<Badge tone="warn">
+																			{t("providers.offline")}
+																		</Badge>
+																	)}
+																</>
+															}
+															onClick={() => {
+																// 选回默认落点即恢复「跟随默认」（不带 provider / 类型，换项目后跟着走）
+																setExecutor(
+																	newOrbDefault?.provider === p.name &&
+																		newOrbDefault.type === ot.name
+																		? { kind: "new_orb" }
+																		: {
+																				kind: "new_orb",
+																				provider: p.name,
+																				type: ot.name,
+																			},
+																);
+																setRunnerPick(null);
+																setPill(null);
+															}}
+														>
+															{p.name}
+														</Option>
+													)),
+												)}
+											<RunnerOptions
+												pick={runnerPick}
+												prompt={prompt}
+												onPick={setRunnerPick}
+											/>
+										</Popover>
+									)}
+									{pill === "profile" && showProfile && !assistantTarget && (
+										<Popover onClose={() => setPill(null)}>
+											<PopoverLabel>{t("newThread.profileTitle")}</PopoverLabel>
+											<Option
+												selected={shownProfile === ""}
+												leading={<Icon name="minusCircle" size={14} />}
+												onClick={() => pickProfile("")}
+											>
+												{t("newThread.profileNone")}
+											</Option>
+											{profileList.map((p) => (
+												<Option
+													key={p.id}
+													selected={shownProfile === p.id}
+													leading={<Icon name="browser" size={14} />}
+													trailing={
+														p.holder && (
+															<Badge tone="warn">
+																{t("newThread.profileInUse")}
+															</Badge>
+														)
+													}
+													onClick={() => pickProfile(p.id)}
+												>
+													{p.name}
+												</Option>
+											))}
+										</Popover>
+									)}
+									{pill === "project" && !assistantTarget && (
+										<Popover onClose={() => setPill(null)}>
+											<Option
+												selected={!projectId}
+												leading={<Icon name="folder" size={14} />}
+												onClick={() => {
+													setProjectId(undefined);
+													setPill(null);
+												}}
+											>
+												{t("newThread.noProject")}
+											</Option>
+											{(projects.data?.projects ?? [])
+												.filter((p) => !p.archivedAt)
+												.map((p) => (
+													<Option
+														key={p.id}
+														selected={projectId === p.id}
+														leading={
+															<ProjectBadge name={p.name} icon={p.icon} />
 														}
+														hint={p.repoUrl?.replace(/^https?:\/\//, "")}
 														onClick={() => {
-															// 选回默认落点即恢复「跟随默认」（不带 provider / 类型，换项目后跟着走）
-															setExecutor(
-																newOrbDefault?.provider === p.name &&
-																	newOrbDefault.type === ot.name
-																	? { kind: "new_orb" }
-																	: {
-																			kind: "new_orb",
-																			provider: p.name,
-																			type: ot.name,
-																		},
-															);
-															setRunnerPick(null);
+															setProjectId(p.id);
 															setPill(null);
 														}}
 													>
 														{p.name}
 													</Option>
-												)),
-											)}
-										<RunnerOptions
-											pick={runnerPick}
-											prompt={prompt}
-											onPick={setRunnerPick}
-										/>
-									</Popover>
-								)}
-								{pill === "profile" && showProfile && !assistantTarget && (
-									<Popover onClose={() => setPill(null)}>
-										<PopoverLabel>{t("newThread.profileTitle")}</PopoverLabel>
-										<Option
-											selected={shownProfile === ""}
-											leading={<Icon name="minusCircle" size={14} />}
-											onClick={() => pickProfile("")}
-										>
-											{t("newThread.profileNone")}
-										</Option>
-										{profileList.map((p) => (
-											<Option
-												key={p.id}
-												selected={shownProfile === p.id}
-												leading={<Icon name="browser" size={14} />}
-												trailing={
-													p.holder && (
-														<Badge tone="warn">
-															{t("newThread.profileInUse")}
-														</Badge>
-													)
-												}
-												onClick={() => pickProfile(p.id)}
-											>
-												{p.name}
-											</Option>
-										))}
-									</Popover>
-								)}
-								{pill === "project" && !assistantTarget && (
-									<Popover onClose={() => setPill(null)}>
-										<Option
-											selected={!projectId}
-											leading={<Icon name="folder" size={14} />}
-											onClick={() => {
-												setProjectId(undefined);
-												setPill(null);
-											}}
-										>
-											{t("newThread.noProject")}
-										</Option>
-										{(projects.data?.projects ?? [])
-											.filter((p) => !p.archivedAt)
-											.map((p) => (
-												<Option
-													key={p.id}
-													selected={projectId === p.id}
-													leading={<ProjectBadge name={p.name} icon={p.icon} />}
-													hint={p.repoUrl?.replace(/^https?:\/\//, "")}
-													onClick={() => {
-														setProjectId(p.id);
-														setPill(null);
-													}}
-												>
-													{p.name}
-												</Option>
-											))}
-									</Popover>
-								)}
+												))}
+										</Popover>
+									)}
+								</div>
 							</div>
 						</div>
 					</div>

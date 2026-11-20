@@ -626,18 +626,28 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 		}
 	}
 	/*
+	 * 首页舞台（.home-stage，包住托盘的单格 grid）按对象换色（M13 R15，`data-target`）：全局助手用助手色相（与 sparkle
+	 * 头像同为主题色，--accent-h）；普通 role 是该 role 的色相（--role-h，与 Ctrl+P 轨道同色），指定模型用 default role
+	 * 的色相。role 色相的彩度不跟主题色走（石墨主题几乎无彩，会看不出色相），取与角色色点相近的一档。
+	 * 光场、点阵、两侧的线都从这里取色；换对象时色相渐变过去（--field-h 已注册，可过渡）。
+	 */
+	.home-stage {
+		--stage-h: var(--accent-h);
+		--stage-c: var(--accent-c);
+	}
+	.home-stage:is([data-target="role"], [data-target="model"]) {
+		--stage-h: var(--role-h, var(--role-h-default));
+		--stage-c: 0.13;
+	}
+	/*
 	 * 首页居中托盘背后的光：不画环、不画光斑。一块与托盘同形的斜向渐变（左下对象色 → 右上邻近色，色相转 40°）
 	 * 垫在托盘正下方，整体模糊：托盘玻璃把它化成一层均匀过渡的底色，看得出是玻璃；托盘外只漏出贴着边缘的一圈柔光，
 	 * 底边略多一点（往下错 10px），像托盘浮在一盏灯上，没有任何轮廓。
-	 * 色相随对象（M13 R15，`.home-tray[data-target]`）：全局助手用助手色相（与 sparkle 头像同为主题色，--accent-h）；
-	 * 普通 role 是该 role 的色相（--role-h，与 Ctrl+P 轨道同色）形成静态光晕，指定模型用 default role 的色相。
-	 * 换对象时色相渐变过去（--field-h 已注册，可过渡）。
 	 */
 	.home-field {
 		--field-a: 26%;
 		--field-b: 0.2;
-		--field-h: var(--accent-h);
-		--field-c: var(--accent-c);
+		--field-h: var(--stage-h);
 		position: absolute;
 		inset: 10px 3% -10px;
 		z-index: -1;
@@ -646,13 +656,13 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 		background: linear-gradient(
 			200deg,
 			oklch(
-					var(--accent-l) var(--field-c) calc(var(--field-h) + 40) /
+					var(--accent-l) var(--stage-c) calc(var(--field-h) + 40) /
 					var(--field-b)
 				)
 				10%,
 			color-mix(
 					in oklab,
-					oklch(var(--accent-l) var(--field-c) var(--field-h)) var(--field-a),
+					oklch(var(--accent-l) var(--stage-c) var(--field-h)) var(--field-a),
 					transparent
 				)
 				90%
@@ -664,44 +674,98 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 		--field-a: 22%;
 		--field-b: 0.16;
 	}
-	/* role 色相的彩度不跟主题色走（石墨主题几乎无彩，role 光晕会看不出色相），取与角色色点相近的一档 */
-	.home-tray:is([data-target="role"], [data-target="model"]) > .home-field {
-		--field-h: var(--role-h, var(--role-h-default));
-		--field-c: 0.13;
-	}
 	/*
-	 * 全局助手：托盘外缘一圈旋转流光描边（1.5px 的锥形渐变环，主题色 → 邻近色，其余透明），4 秒一圈。
-	 * 画在托盘外壳（.home-tray，与玻璃同框）的 ::after 上：玻璃自己的 ::before / ::after 已用于模糊与焦点光。
-	 * 托盘获得焦点会上移 2px，描边跟着走。减少动态效果时改为静止的整圈描边（见文件末尾）。
+	 * 托盘的地平线（.home-horizon）：舞台里与托盘同格、纵向居中的零高锚点。锚点自己不定位，子元素绝对定位时
+	 * 纵向取静态位置（= 托盘中线），横向以首页滚动区（relative）为包含块，所以点阵与线铺满整页宽、又始终对齐托盘中线。
+	 * 都在 z-index -1（滚动区是 isolate 的层叠上下文）：压在品牌标、标题与托盘之下。
+	 * - 点阵（.home-dots）：中线以上 24rem 的 14px 点格，椭圆遮罩从中线中央向上、向两侧渐隐；
+	 * - 两侧的线（.home-line-l / -r）：从页边到托盘边缘，由透明渐变到对象色（左为对象色、右为邻近色，与光场同一对），
+	 *   恰好止于托盘边缘，不从玻璃底下透出来。宽度 = 滚动区左右 padding（px-3）与托盘最宽（max-w-2xl）推出的边距。
+	 * 用呈现形式区分对象：普通 role / 指定模型是中性灰点阵、静止的线；全局助手的点阵染上助手色并缓慢呼吸，
+	 * 线上有一束光从页边流向托盘。首次出场点阵淡入、线从托盘边缘向外长出。减少动态效果见文件末尾。
 	 */
-	.home-tray[data-target="assistant"]::after {
+	.home-dots {
+		position: absolute;
+		left: 0;
+		right: 0;
+		z-index: -1;
+		height: 24rem;
+		translate: 0 -100%;
+		pointer-events: none;
+		mask-image: radial-gradient(
+			ellipse 55% 100% at 50% 100%,
+			#000 25%,
+			transparent 100%
+		);
+	}
+	.home-dots::before {
+		--home-dot: color-mix(in oklab, var(--text) 24%, transparent);
 		content: "";
 		position: absolute;
 		inset: 0;
-		z-index: 1;
-		padding: 1.5px;
-		border-radius: var(--r-2xl);
-		pointer-events: none;
-		background: conic-gradient(
-			from var(--tray-angle),
-			transparent 0deg,
-			oklch(var(--accent-l) var(--accent-c) var(--accent-h) / 0.9) 70deg,
-			oklch(var(--accent-l) var(--accent-c) calc(var(--accent-h) + 40) / 0.9)
-				130deg,
-			transparent 200deg
-		);
-		-webkit-mask:
-			linear-gradient(#000 0 0) content-box,
-			linear-gradient(#000 0 0);
-		-webkit-mask-composite: xor;
-		mask:
-			linear-gradient(#000 0 0) content-box exclude,
-			linear-gradient(#000 0 0);
-		animation: tray-spin 4s linear infinite;
-		transition: translate 220ms var(--ease);
+		background:
+			radial-gradient(circle, var(--home-dot) 1px, transparent 1.5px) center
+			bottom / 14px 14px;
+		transition: --home-dot 400ms var(--ease);
 	}
-	.home-tray[data-target="assistant"]:has(textarea:focus)::after {
-		translate: 0 -2px;
+	:root[data-theme="dark"] .home-dots::before {
+		--home-dot: color-mix(in oklab, var(--text) 18%, transparent);
+	}
+	.home-stage[data-target="assistant"] .home-dots::before {
+		--home-dot: oklch(var(--accent-l) var(--stage-c) var(--stage-h) / 0.55);
+		animation: home-dots-breathe 3.2s ease-in-out infinite alternate;
+	}
+	.home-line {
+		--field-h: var(--line-h);
+		position: absolute;
+		z-index: -1;
+		width: max(calc(var(--spacing) * 3), 50% - var(--container-2xl) / 2);
+		height: 1px;
+		overflow: hidden;
+		pointer-events: none;
+		transition: --field-h 400ms var(--ease);
+	}
+	.home-line-l {
+		--line-h: var(--stage-h);
+		left: 0;
+		transform-origin: right center;
+		background: linear-gradient(
+			90deg,
+			transparent,
+			oklch(var(--accent-l) calc(var(--stage-c) + 0.04) var(--field-h) / 0.9)
+		);
+	}
+	.home-line-r {
+		--line-h: calc(var(--stage-h) + 40);
+		right: 0;
+		transform-origin: left center;
+		background: linear-gradient(
+			270deg,
+			transparent,
+			oklch(var(--accent-l) calc(var(--stage-c) + 0.04) var(--field-h) / 0.9)
+		);
+	}
+	/* 全局助手：一束光沿线从页边流向托盘（右侧反向播放，同样朝里） */
+	.home-stage[data-target="assistant"] .home-line::after {
+		content: "";
+		position: absolute;
+		inset: 0;
+		background: linear-gradient(
+			90deg,
+			transparent 38%,
+			oklch(var(--accent-l) calc(var(--stage-c) + 0.06) var(--line-h)) 50%,
+			transparent 62%
+		);
+		animation: home-line-flow 3.2s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+	}
+	.home-stage[data-target="assistant"] .home-line-r::after {
+		animation-direction: reverse;
+	}
+	.home-horizon[data-intro] > .home-dots {
+		animation: home-dots-in 900ms var(--ease) 120ms both;
+	}
+	.home-horizon[data-intro] > .home-line {
+		animation: home-line-in 700ms var(--ease) 240ms both;
 	}
 	/* 执行位置、项目、Profile 胶囊组随对象收起 / 展开（HomePage 的 hidden → shown → leaving，与 RoleTrack 同为 180ms） */
 	.home-pills-in {
@@ -1504,20 +1568,38 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 		var(--sh-xl);
 }
 
-/* 首页托盘（M13 R15）：流光描边的旋转角与色场色相注册成可插值的自定义属性（见 @layer components 的 .home-tray / .home-field） */
-@property --tray-angle {
-	syntax: "<angle>";
-	inherits: false;
-	initial-value: 0deg;
-}
+/* 首页舞台（M13 R15）：光场 / 线的色相与点阵颜色注册成可插值的自定义属性，换对象时渐变过去（见 @layer components 的 .home-stage） */
 @property --field-h {
 	syntax: "<number>";
 	inherits: false;
 	initial-value: 205;
 }
-@keyframes tray-spin {
+@property --home-dot {
+	syntax: "<color>";
+	inherits: false;
+	initial-value: transparent;
+}
+@keyframes home-dots-in {
+	from {
+		opacity: 0;
+	}
+}
+@keyframes home-dots-breathe {
+	from {
+		opacity: 0.5;
+	}
+}
+@keyframes home-line-in {
+	from {
+		scale: 0 1;
+	}
+}
+@keyframes home-line-flow {
+	from {
+		translate: -62% 0;
+	}
 	to {
-		--tray-angle: 360deg;
+		translate: 62% 0;
 	}
 }
 @keyframes home-pills-in {
@@ -1533,10 +1615,15 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 	}
 }
 @media (prefers-reduced-motion: reduce) {
-	/* 减少动态效果：流光不转，改为整圈静止描边（主题色，半透明） */
-	.home-tray[data-target="assistant"]::after {
+	/* 减少动态效果：助手点阵不呼吸、线上没有流光（只靠颜色区分对象）；线出场改为淡入 */
+	.home-stage[data-target="assistant"] .home-dots::before {
 		animation: none;
-		background: color-mix(in oklab, var(--brand) 70%, transparent);
+	}
+	.home-stage[data-target="assistant"] .home-line::after {
+		content: none;
+	}
+	.home-horizon[data-intro] > .home-line {
+		animation-name: home-dots-in;
 	}
 }
 
