@@ -30,7 +30,8 @@ export function PillButton({
 	/** 图标名，或现成的装饰节点（如头像） */
 	icon: IconName | ReactElement;
 	text: PillText;
-	shortcut: string;
+	/** 悬停提示里的快捷键；没有时只写名字 */
+	shortcut?: string;
 	onClick: () => void;
 	active: boolean;
 	shape?: "pill" | "circle";
@@ -45,7 +46,7 @@ export function PillButton({
 			onClick={onClick}
 			aria-expanded={active}
 			aria-label={text.label}
-			title={`${text.label} (${shortcut})`}
+			title={shortcut ? `${text.label} (${shortcut})` : text.label}
 			className={`inline-flex h-8 items-center rounded-full border text-xs shadow-xs transition-colors duration-150 ${circle ? "w-8 shrink-0 justify-center" : `min-w-0 shrink gap-1.5 px-3 ${grow ? "max-w-none" : "max-w-60"}`} ${active ? "border-border-strong bg-hover text-fg" : "border-border bg-panel/70 text-muted hover:bg-hover hover:text-fg"}`}
 		>
 			<span className="inline-flex shrink-0">

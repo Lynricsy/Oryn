@@ -720,6 +720,7 @@ export function HomePage(): ReactNode {
 										open={pill === "role"}
 										onOpenChange={(open) => setPill(open ? "role" : null)}
 										compactPill={compact}
+										shortcut="Ctrl+S"
 									/>
 									{pillsPhase !== "hidden" && (
 										<div

@@ -281,6 +281,8 @@ export class MockAutomation {
 				"invalid_schedule",
 				"handToAssistant 只用于 new_thread 模式",
 			);
+		if (mode === "new_thread" && b.role?.trim() && b.model)
+			return error(400, "invalid_schedule", "role 与 model 只能给一个");
 		if (!b.prompt?.trim())
 			return error(400, "invalid_schedule", "prompt 不能为空");
 		if (mode === "thread") {
@@ -337,6 +339,9 @@ export class MockAutomation {
 			...(b.endsAt !== undefined ? { endsAt: b.endsAt } : {}),
 			prompt: b.prompt,
 			enabled,
+			...(mode === "new_thread" && b.role?.trim()
+				? { role: b.role.trim() }
+				: {}),
 			...(mode === "new_thread" && b.model ? { model: b.model } : {}),
 			...(mode === "new_thread" && b.thinkingLevel
 				? { thinkingLevel: b.thinkingLevel }

@@ -60,8 +60,8 @@ import { MessageView } from "../transcript/MessageView";
 import { CopyButton } from "../ui/CopyButton";
 import { Badge, Callout, Meter, type Tone, thresholdTone } from "../ui/data";
 import { Icon, type IconName } from "../ui/icons";
+import { ModelCatalogFooter } from "../ui/ModelCatalogFooter";
 import { ModelLogo } from "../ui/ModelLogo";
-import { ModelCatalogFooter } from "../ui/ModelSelect";
 import {
 	Button,
 	Dialog,

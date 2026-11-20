@@ -37,8 +37,8 @@ import { modelCapsOf, useModelCaps } from "../../state/model-caps";
 import { useTheme } from "../../state/theme";
 import { IdentityAvatar } from "../ui/IdentityAvatar";
 import { Icon } from "../ui/icons";
+import { ModelCatalogFooter } from "../ui/ModelCatalogFooter";
 import { ModelLogo } from "../ui/ModelLogo";
-import { ModelCatalogFooter } from "../ui/ModelSelect";
 import { Option, Popover, PopoverLabel } from "../ui/PickerPopover";
 import { Dialog } from "../ui/primitives";
 import { CornerLevel, LevelGlyph } from "../ui/ThinkingDial";
@@ -263,6 +263,8 @@ export function RoleCapsule({
 	open: openProp,
 	onOpenChange,
 	compactPill = false,
+	shortcut,
+	side,
 }: {
 	value: Target;
 	onChange: (t: Target) => void;
@@ -273,6 +275,10 @@ export function RoleCapsule({
 	onOpenChange?: (open: boolean) => void;
 	/** 窄屏：胶囊只留头像圆圈 */
 	compactPill?: boolean;
+	/** 悬停提示里的快捷键（首屏 Ctrl+S）；没有快捷键的地方（定时对话框）不给 */
+	shortcut?: string;
+	/** 桌面弹层向上（首屏托盘下方没有空间，缺省）或向下（对话框里）展开 */
+	side?: "top" | "bottom";
 }): ReactNode {
 	const { t } = useTranslation();
 	const compact = useBreakpoint() === "compact";
@@ -551,7 +557,7 @@ export function RoleCapsule({
 					label: t("roleCapsule.label", { name: main }),
 					main,
 				}}
-				shortcut="Ctrl+S"
+				shortcut={shortcut}
 				active={open}
 				onClick={() => (open ? close() : setOpen(true))}
 				shape={compactPill ? "circle" : "pill"}
@@ -564,7 +570,7 @@ export function RoleCapsule({
 						<div data-testid="role-capsule-drawer">{body}</div>
 					</Dialog>
 				) : (
-					<Popover onClose={close}>
+					<Popover side={side} onClose={close}>
 						<div data-testid="role-capsule-popover">{body}</div>
 					</Popover>
 				))}

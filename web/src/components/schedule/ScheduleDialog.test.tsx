@@ -486,6 +486,65 @@ describe("ScheduleDialog：模型能力未知（M9 审查 W4）", () => {
 	});
 });
 
+describe("ScheduleDialog：对话对象（role 胶囊）", () => {
+	/** 打开对象胶囊，点弹层里名字以 `name` 开头的一项。 */
+	async function pick(name: RegExp) {
+		fireEvent.click(within(dialog()).getByRole("button", { name: /^对象：/ }));
+		const pop = await screen.findByTestId("role-capsule-popover");
+		fireEvent.click(await within(pop).findByRole("button", { name }));
+	}
+
+	it("指定模型的定义换成 role：请求体带 role、不再带 model；换对象后思考级别回到跟随", async () => {
+		const onClose = mount({ mode: "new_thread" }, M9_IDS.projectSchedule);
+		await ready();
+		await pick(/^Mare/);
+		fireEvent.click(save());
+		await waitFor(() => expect(onClose).toHaveBeenCalled());
+		const body = writes()[0]?.body;
+		expect(body).toMatchObject({ role: "Mare" });
+		expect(body).not.toHaveProperty("model");
+		expect(body).not.toHaveProperty("thinkingLevel");
+		expect(stored(M9_IDS.projectSchedule).role).toBe("Mare");
+	});
+
+	it("既没指定 role 也没指定模型：胶囊显示 default role，原样保存不多出 role / model", async () => {
+		Object.assign(stored(M9_IDS.projectSchedule), {
+			model: undefined,
+			thinkingLevel: undefined,
+		});
+		const onClose = mount({ mode: "new_thread" }, M9_IDS.projectSchedule);
+		await ready();
+		await waitFor(() =>
+			expect(
+				within(dialog()).getByRole("button", { name: /^对象：/ }),
+			).toHaveAccessibleName("对象：默认"),
+		);
+		fireEvent.click(save());
+		await waitFor(() => expect(onClose).toHaveBeenCalled());
+		const body = writes()[0]?.body;
+		expect(body).not.toHaveProperty("role");
+		expect(body).not.toHaveProperty("model");
+	});
+
+	it("已存的 role：打开时胶囊就是它，保存原样带回", async () => {
+		Object.assign(stored(M9_IDS.projectSchedule), {
+			role: "Mare",
+			model: undefined,
+		});
+		const onClose = mount({ mode: "new_thread" }, M9_IDS.projectSchedule);
+		await ready();
+		expect(
+			within(dialog()).getByRole("button", { name: /^对象：/ }),
+		).toHaveAccessibleName("对象：Mare");
+		fireEvent.click(save());
+		await waitFor(() => expect(onClose).toHaveBeenCalled());
+		expect(writes()[0]?.body).toMatchObject({
+			role: "Mare",
+			thinkingLevel: "high",
+		});
+	});
+});
+
 describe("ScheduleDialog：浏览器本地时间（M9 审查 W5）", () => {
 	it("浏览器 UTC、所选时区 Asia/Tokyo：绝对时间字段标明浏览器时区；「一次」没有时区选择，请求里是浏览器时区", async () => {
 		const real = Intl.DateTimeFormat.prototype.resolvedOptions;

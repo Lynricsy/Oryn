@@ -2,8 +2,9 @@
  * 定时对话框（M9）：两种模式共用。
  * - 公共：三段切换（重复 cron / 间隔 / 一次）、cron 预设、时区、截止时间、提示词（列出占位符）、防抖预览接下来 5 次、
  *   启用开关、「立即运行」、「删除」、最近 20 次运行（`new_thread` 的每行带所建线程的链接；失败行显示 `error`）。
- * - `new_thread` 专有：名称（必填）、项目（含「无项目」；`lockProject` 或编辑时只读——目标不可改）、模型与思考级别、
- *   orb 类型（不含 `@host`）、重叠策略、保留数（1–50）、「交给助手」（M19：运行结果进主线，完成时不单独通知）。
+ * - `new_thread` 专有：名称（必填）、项目（含「无项目」；`lockProject` 或编辑时只读——目标不可改）、对话对象（与首页同一个
+ *   role 胶囊：cycleOrder 里的 role 或指定模型，以及思考级别）、orb 类型（不含 `@host`）、重叠策略、保留数（1–50）、
+ *   「交给助手」（M19：运行结果进主线，完成时不单独通知）。
  * 保存：新建走 `POST schedules`（线程内定时走 `PUT threads/{id}/schedule`），编辑走 `PUT schedules/{id}`；
  * 409 `schedule_name_taken` 标在名称框上。
  * - 主线（M19）：目标线程是主线时可有多条提醒，按 id 管理——名称必填，新建走 `POST schedules`（`mode: "thread"`），
@@ -57,9 +58,16 @@ import {
 	splitEvery,
 } from "../../lib/schedule";
 import { parseTitleCard } from "../../lib/title";
+import { useModelCaps } from "../../state/model-caps";
 import { useIndex } from "../../state/stores";
+import {
+	modelSelector,
+	RoleCapsule,
+	type Target,
+	targetModel,
+	useRoleOptions,
+} from "../composer/RoleCapsule";
 import { Badge, Callout, type Tone } from "../ui/data";
-import { ModelSelect } from "../ui/ModelSelect";
 import {
 	Button,
 	Dialog,
@@ -133,8 +141,8 @@ interface FormState {
 	enabled: boolean;
 	name: string;
 	projectId: string;
-	model: string;
-	thinking: string;
+	/** 新线程的对象：role（`default` = 不指定，omp 的默认模型）或指定模型，各带可选的思考级别 */
+	target: Target;
 	/** `provider/type`；空串 = 按建线程的回退链 */
 	executor: string;
 	overlap: Schemas["ScheduleOverlap"];
@@ -165,10 +173,7 @@ function initialState(
 			(target.mode === "new_thread" && !existing
 				? (target.projectId ?? "")
 				: ""),
-		model: existing?.model
-			? `${existing.model.provider}/${existing.model.id}`
-			: "",
-		thinking: existing?.thinkingLevel ?? "",
+		target: scheduleTarget(existing),
 		executor:
 			existing?.provider && existing.orbType
 				? `${existing.provider}/${existing.orbType}`
@@ -177,6 +182,19 @@ function initialState(
 		keepLast: existing?.keepLast ?? 5,
 		handToAssistant: existing?.handToAssistant ?? false,
 	};
+}
+
+/** 已有定义 → 胶囊的对象：没指定 role 也没指定模型时就是 default role（新会话本来就以它的模型开场）。 */
+function scheduleTarget(existing: Schedule | undefined): Target {
+	const thinking = existing?.thinkingLevel || undefined;
+	if (existing?.role) return { kind: "role", role: existing.role, thinking };
+	if (existing?.model)
+		return {
+			kind: "model",
+			model: { provider: existing.model.provider, id: existing.model.id },
+			thinking,
+		};
+	return { kind: "role", role: "default", thinking };
 }
 
 /**
@@ -223,7 +241,7 @@ export function scheduleBody(
 					name: s.name.trim(),
 				}
 			: base;
-	const slash = s.model.indexOf("/");
+	const to = s.target;
 	const exec = s.executor.indexOf("/");
 	const spaceId = existing?.spaceId ?? target.spaceId;
 	return {
@@ -232,15 +250,12 @@ export function scheduleBody(
 		name: s.name.trim(),
 		...(s.projectId ? { projectId: s.projectId } : {}),
 		...(spaceId ? { spaceId } : {}),
-		...(slash > 0
-			? {
-					model: {
-						provider: s.model.slice(0, slash),
-						id: s.model.slice(slash + 1),
-					},
-				}
+		// default role 不单独写：与都不指定等价，旧定义原样保存时也不会多出 role
+		...(to.kind === "role" && to.role !== "default" ? { role: to.role } : {}),
+		...(to.kind === "model"
+			? { model: { provider: to.model.provider, id: to.model.id } }
 			: {}),
-		...(s.thinking ? { thinkingLevel: s.thinking } : {}),
+		...(to.thinking ? { thinkingLevel: to.thinking } : {}),
 		...(s.executor
 			? exec > 0
 				? {
@@ -253,6 +268,46 @@ export function scheduleBody(
 		keepLast: Math.min(50, Math.max(1, Math.round(s.keepLast))),
 		handToAssistant: s.handToAssistant,
 	};
+}
+
+/**
+ * 新线程的对象：与首页同一个 role 胶囊（弹层向下展开，没有快捷键）。模型目录认得对象实际用的模型时，它不支持的
+ * 思考级别退回默认；认不得时（目录还没读到、目录里没有该模型、role 解析不出模型）保留现有级别并标注——
+ * 清掉就成了悄悄改配置（M9 审查 W4）。
+ */
+function TargetField({
+	value,
+	onChange,
+}: {
+	value: Target;
+	onChange: (t: Target) => void;
+}): ReactNode {
+	const { t } = useTranslation();
+	const roles = useRoleOptions();
+	const model = targetModel(value, roles);
+	const caps = useModelCaps(model ? modelSelector(model) : "");
+	const unsupported =
+		!!caps &&
+		!!value.thinking &&
+		!["auto", ...caps.thinking].includes(value.thinking);
+	useEffect(() => {
+		if (unsupported) onChange({ ...value, thinking: undefined });
+	}, [unsupported, value, onChange]);
+	return (
+		<span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-x-2 gap-y-1">
+			<RoleCapsule
+				value={value}
+				onChange={onChange}
+				allowAssistant={false}
+				side="bottom"
+			/>
+			{!caps && value.thinking && (
+				<span data-testid="thinking-unknown" className="text-faint text-xs">
+					{t("schedule.thinkingUnknown")}
+				</span>
+			)}
+		</span>
+	);
 }
 
 const RUN_TONE: Record<Schemas["ScheduleRunStatus"], Tone> = {
@@ -432,7 +487,7 @@ function ScheduleForm({
 			setS((prev) => ({ ...prev, [k]: v })),
 		[],
 	);
-	const onThinking = useCallback((v: string) => set("thinking", v), [set]);
+	const onTarget = useCallback((v: Target) => set("target", v), [set]);
 	const newThread = target.mode === "new_thread";
 	// 名称必填：每次新建线程的定时与主线的提醒
 	const named = newThread || main;
@@ -870,12 +925,7 @@ function ScheduleForm({
 							<span className="font-medium text-muted text-xs">
 								{t("schedule.modelLabel")}
 							</span>
-							<ModelSelect
-								model={s.model}
-								thinking={s.thinking}
-								onModel={(m) => set("model", m)}
-								onThinking={onThinking}
-							/>
+							<TargetField value={s.target} onChange={onTarget} />
 						</div>
 						<div className="grid gap-3 sm:grid-cols-2">
 							<Field label={t("schedule.overlapLabel")}>
