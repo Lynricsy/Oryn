@@ -61,6 +61,8 @@ export interface RoleOption {
 	/** 头像的身份类型：自定义 role 没设头像时回落为默认 Agent 身份 */
 	of: "role" | "agent";
 	glyph?: string;
+	/** 是否在 cycleOrder 里（`default` 不在时由 useRoleOptions 补在末尾） */
+	inCycle: boolean;
 	/** 选择器是 `@role` / `pi/role`（可带 `:level`）这样单纯指向另一个已知 role 时，那个 role */
 	alias?: RoleOption;
 }
@@ -80,7 +82,8 @@ function aliasTarget(selector: string | undefined): string | undefined {
 
 /**
  * cycleOrder 里的 role（按其顺序）与各自解析出的模型；`default` 不在 cycleOrder 里时补在末尾（首屏的缺省对象就是它，
- * 胶囊与弹层要有它的身份、模型与选中项）。别名按全部已知 role 解析（`default: '@Cyrene'` 这类配置）。
+ * 胶囊、托盘色相与思考档位要按它解析；它只是 cycle 里某个 role 的别名时弹层不单列，见 RoleCapsule）。
+ * 别名按全部已知 role 解析（`default: '@Cyrene'` 这类配置）。
  * role 身份列表读失败或为空时用 omp 默认的 cycleOrder。
  */
 export function useRoleOptions(): RoleOption[] {
@@ -140,6 +143,7 @@ export function useRoleOptions(): RoleOption[] {
 					: agentAvatar,
 				of: own ? "role" : "agent",
 				glyph,
+				inCycle: r.inCycle,
 			};
 		};
 		const options = roles.map((r, i) =>
@@ -247,6 +251,20 @@ export function RoleCapsule({
 		value.kind === "role"
 			? roles.find((r) => r.role === value.role)
 			: undefined;
+	// default 不在 cycleOrder、只是 cycle 里某个 role 的别名（`default: '@Cyrene'`）：弹层不另列「默认」，
+	// 直接选中它指向的那个 role（请求仍按 default 发，模型相同）
+	const defaultOpt = roles.find((r) => r.role === "default");
+	const defaultTo = defaultOpt?.alias?.role;
+	const defaultAs =
+		defaultOpt && !defaultOpt.inCycle && roles.some((r) => r.role === defaultTo)
+			? defaultTo
+			: undefined;
+	const pickedRole =
+		value.kind !== "role"
+			? undefined
+			: value.role === "default" && defaultAs
+				? defaultAs
+				: value.role;
 	let face: ReactElement;
 	let main: string;
 	if (value.kind === "assistant") {
@@ -313,42 +331,44 @@ export function RoleCapsule({
 				</Option>
 			)}
 			<PopoverLabel>{t("model.roles")}</PopoverLabel>
-			{roles.map((r) => (
-				<Option
-					key={r.role}
-					selected={value.kind === "role" && value.role === r.role}
-					leading={<RoleFace option={r} size={18} />}
-					hint={
-						// 解析出的模型短名（别名前面加上它指向的 role）；解析不出时给原始选择器或「未配置」
-						// （default 未配置 = omp 的默认模型）
-						r.model
-							? r.alias
-								? `${r.alias.name} · ${modelShortName(r.model)}`
-								: modelShortName(r.model)
-							: (r.selector ??
-								(r.role === "default"
-									? t("newThread.defaultModel")
-									: t("roles.unconfigured")))
-					}
-					trailing={
-						r.model ? (
-							<ModelLogo
-								model={r.model.id}
-								provider={r.model.provider}
-								size={12}
-								className="text-faint"
-							/>
-						) : undefined
-					}
-					onClick={() => {
-						if (value.kind !== "role" || value.role !== r.role)
-							onChange({ kind: "role", role: r.role });
-						close();
-					}}
-				>
-					{r.name}
-				</Option>
-			))}
+			{roles
+				.filter((r) => !(defaultAs && r.role === "default"))
+				.map((r) => (
+					<Option
+						key={r.role}
+						selected={pickedRole === r.role}
+						leading={<RoleFace option={r} size={18} />}
+						hint={
+							// 解析出的模型短名（别名前面加上它指向的 role）；解析不出时给原始选择器或「未配置」
+							// （default 未配置 = omp 的默认模型）
+							r.model
+								? r.alias
+									? `${r.alias.name} · ${modelShortName(r.model)}`
+									: modelShortName(r.model)
+								: (r.selector ??
+									(r.role === "default"
+										? t("newThread.defaultModel")
+										: t("roles.unconfigured")))
+						}
+						trailing={
+							r.model ? (
+								<ModelLogo
+									model={r.model.id}
+									provider={r.model.provider}
+									size={12}
+									className="text-faint"
+								/>
+							) : undefined
+						}
+						onClick={() => {
+							if (pickedRole !== r.role)
+								onChange({ kind: "role", role: r.role });
+							close();
+						}}
+					>
+						{r.name}
+					</Option>
+				))}
 			<Option
 				selected={value.kind === "model"}
 				leading={<Icon name="cpu" size={14} />}

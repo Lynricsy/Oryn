@@ -212,7 +212,7 @@ describe("RoleCapsule", () => {
 		).toBeInTheDocument();
 	});
 
-	it("主人的配置形状（default: '@Cyrene'，default 不在 cycleOrder）：胶囊显示昔涟，弹层补上并选中默认项", async () => {
+	it("主人的配置形状（default: '@Cyrene'，default 不在 cycleOrder）：胶囊显示昔涟，弹层直接选中昔涟，不另列「默认」", async () => {
 		roleList = [
 			{
 				role: "Cyrene",
@@ -231,17 +231,26 @@ describe("RoleCapsule", () => {
 			).toHaveAccessibleName("对象：昔涟"),
 		);
 		openCapsule();
-		const row = await screen.findByRole("button", {
-			name: /^默认.*昔涟.*Opus/,
-		});
+		const row = await screen.findByRole("button", { name: /^昔涟.*Opus/ });
 		// 选中项：Option 选中时带实底 bg-hover（未选中只有 hover:bg-hover）
 		expect(row.className.split(/\s+/)).toContain("bg-hover");
 		expect(
-			screen.getByRole("button", { name: /^昔涟/ }).className.split(/\s+/),
+			screen.getByRole("button", { name: /^Mare/ }).className.split(/\s+/),
 		).not.toContain("bg-hover");
+		expect(screen.queryByRole("button", { name: /^默认/ })).toBeNull();
 		// 不在 cycleOrder 的其它 role 不列出
 		expect(screen.queryByRole("button", { name: /^快速/ })).toBeNull();
+		// 点已选中的昔涟：对象不变（仍按 default 发）
 		fireEvent.click(row);
 		expect(changes).toEqual([]);
+		// 换到 Mare 再点昔涟：才变成 Cyrene
+		openCapsule();
+		fireEvent.click(screen.getByRole("button", { name: /^Mare/ }));
+		openCapsule();
+		fireEvent.click(screen.getByRole("button", { name: /^昔涟/ }));
+		expect(changes).toEqual([
+			{ kind: "role", role: "Mare" },
+			{ kind: "role", role: "Cyrene" },
+		]);
 	});
 });
