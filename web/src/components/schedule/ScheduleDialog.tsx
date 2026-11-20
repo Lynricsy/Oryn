@@ -932,8 +932,11 @@ function ScheduleForm({
 				</Field>
 				{newThread && (
 					<>
-						{/* 在哪跑、和谁跑：两个都只占半行，并排放 */}
-						<div className="grid gap-3 sm:grid-cols-2">
+						{/*
+						 * 在哪跑、和谁跑：两个都只占半行，并排放。断点取 md 而不是 sm：右列的角色弹层从右列左缘起排、宽 20rem，
+						 * 640px 时右列离正文右缘不到 20rem，弹层会被对话框的滚动正文裁掉；md 起对话框到 max-w-3xl，右列放得下
+						 */}
+						<div className="grid gap-3 md:grid-cols-2">
 							<Field label={t("schedule.orbType")}>
 								<Select
 									value={s.executor}
