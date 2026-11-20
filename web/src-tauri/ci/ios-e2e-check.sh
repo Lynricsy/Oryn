@@ -611,6 +611,8 @@ echo "- appicon.set 顺序：${ids:-（无）}（期望 accent,default）" | tee
 if [[ $ids != "accent,default" ]]; then
   echo "::error::可替换图标没有按 品牌色 → 默认 切换：${ids:-（无）}"
   failed=1
+else
+  echo "- [OK] 可替换图标：品牌色 → 默认" >>"$summary"
 fi
 
 # 走到这里才写完成标记：工作流据此确认脚本跑完了全部断言，防止中途异常退出却返回 0

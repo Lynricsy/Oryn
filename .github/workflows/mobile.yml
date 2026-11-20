@@ -516,6 +516,12 @@ jobs:
         env:
           APP: ${{ steps.app.outputs.path }}
         run: |
+          # 发布同一份 Step Summary 到产物，便于下载后核对各阶段结果。
+          mkdir -p ios-shot/e2e
+          step_summary="$GITHUB_STEP_SUMMARY"
+          export GITHUB_STEP_SUMMARY="$PWD/ios-shot/e2e/summary.md"
+          : > "$GITHUB_STEP_SUMMARY"
+          trap 'cat "$GITHUB_STEP_SUMMARY" >> "$step_summary"' EXIT
           rm -f ios-shot/e2e/.complete
           bash web/src-tauri/ci/ios-e2e-check.sh "$APP" web/dist-e2e ios-shot/e2e
           [[ -f ios-shot/e2e/.complete ]] || { echo "::error::端到端检查没有跑完全部断言"; exit 1; }
