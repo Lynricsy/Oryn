@@ -724,16 +724,10 @@ function ScheduleForm({
 				{existing?.pausedReason === "archived" && (
 					<Callout tone="neutral">{t("schedule.pausedArchived")}</Callout>
 				)}
-				<Field
-					label={named ? t("schedule.name") : t("schedule.nameOptional")}
-					hint={
-						nameTaken
-							? undefined
-							: newThread
-								? t("schedule.nameHint")
-								: main
-									? t("schedule.mainNameHint")
-									: t("schedule.nameOptionalHint")
+				{/* 新建线程模式：目标（项目、Space）与名称同一行（宽屏两列），放在时间字段之前 */}
+				<div
+					className={
+						newThread ? "grid items-start gap-3 sm:grid-cols-2" : "contents"
 					}
 				>
 					<div className="flex min-w-0 flex-col gap-1">
