@@ -201,13 +201,7 @@ export function SectionTabBar({
 	const avatarPng = raster && raster.src === rasterSrc ? raster.png : null;
 
 	useEffect(() => {
-		if (
-			!sink ||
-			!frame ||
-			!paint?.bg ||
-			frame.width <= 0 ||
-			frame.height <= 0
-		)
+		if (!sink || !frame || !paint?.bg || frame.width <= 0 || frame.height <= 0)
 			return;
 		nativeTabBar.setSpec(
 			buildTabBarSpec({
@@ -267,9 +261,7 @@ export function SectionTabBar({
 			className={`pointer-events-none absolute inset-x-0 bottom-0 z-10 ${outer}`}
 		>
 			{sink && <span ref={inkRef} hidden className="text-accent-ink" />}
-			{sink && (
-				<span ref={bgRef} hidden style={{ background: "var(--bg)" }} />
-			)}
+			{sink && <span ref={bgRef} hidden style={{ background: "var(--bg)" }} />}
 			<div
 				ref={slotRef}
 				data-tabbar-slot

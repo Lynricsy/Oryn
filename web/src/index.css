@@ -1160,22 +1160,6 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 	.sink-card[data-instant] {
 		transition: none;
 	}
-	/* iOS 原生页头接管时（lib/native-header.ts）：原生页头跟着卡片走，原生那边按网页给的绝对时刻起步；
-	   卡片的非手势开合与松手吸附都晚 34ms 起步，给桥留出送达时间，两边从同一时刻出发。
-	   两个 :not 缺一不可：少了它们，拖动与减少动效时会变成「延迟 34ms 的瞬移」 */
-	.sink-card[data-native-head]:not([data-open]):not([data-dragging]):not(
-		[data-instant]
-	) {
-		transition:
-			translate 260ms var(--ease) 34ms,
-			border-radius 0s 294ms,
-			box-shadow 0s 294ms;
-	}
-	.sink-card[data-native-head][data-open]:not([data-dragging]):not(
-		[data-instant]
-	) {
-		transition: translate 260ms var(--ease) 34ms;
-	}
 	/*
 	 * iOS 原生底栏垫在 WebView 下面（lib/native-tab-bar.ts）：接管时页面底色交给原生垫底（同一个 --bg），
 	 * 页面本身透明，底栏从侧栏层透出来；卡片与一切网页弹层都画在它上面，遮挡由网页合成器逐像素保证。

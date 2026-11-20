@@ -1,32 +1,22 @@
 /**
  * iOS 原生底栏（iOS 26 系统 UITabBar）的网页侧控制器：原生是哑执行器，策略全在这里（网页随服务器更新，App 发版要走 TestFlight）。
  * - 层级：原生底栏垫在整张 WKWebView 之下，接管期间页面透明（`<html data-native-under>`，见 `index.css`），底色交给原生垫底
- *   （spec 的 `bg`，同一个 --bg）。卡片、菜单、弹层都是网页画的，天然压在原生底栏上面：哪里透出底栏由网页合成器逐像素决定，
- *   开合、拖动都不需要原生做任何动画，也就不存在两个进程各自插值、边缘对不齐的问题。
- * - 触摸：WebView 在上面，原生在 WebView 之上只盖底栏矩形放一块转交层。这里告诉它卡片左缘（`reveal`：吸附终点与拖动开始各一条）
- *   与底栏是否被网页内容压住（`setCovered`：侧栏里的菜单、弹层、错误提示、软键盘），两者都允许时转交层才把触摸交给 UITabBar。
- * - 回退：宿主没有原生底栏（浏览器、Android、桌面、bridge < 7）、`set` 被拒（iOS < 26、插件缺失）、或 `NATIVE_TAB_BAR`
+ *   （spec 的 `bg`，同一个 --bg）。卡片、菜单、弹层都是网页画的，天然压在原生底栏上面：哪里透出底栏由网页合成器逐像素决定。
+ * - 触摸：WebView 在上面，原生在 WebView 之上只盖底栏矩形放一块转交层。卡片左缘由原生从根滚动的 contentOffset 自己算
+ *   （`native-sink.ts`），这里只告诉它底栏是否被网页内容压住（`setCovered`：侧栏里的菜单、弹层、错误提示、软键盘），
+ *   两者都允许时转交层才把触摸交给 UITabBar。
+ * - 前提：根滚动跟随已接管（`SinkGate.engaged()`）；没接管时想要的 spec 一律当作 null，接管后补发（壳在 `host_sink_set`
+ *   生效前也会拒绝非空 spec）。
+ * - 回退：宿主没有原生底栏（浏览器、Android、桌面、bridge < 8）、`set` 被拒（iOS < 26、插件缺失）、或 `NATIVE_TAB_BAR`
  *   为 false 时，本页一直用网页底栏，行为与以前完全相同。改 `NATIVE_TAB_BAR` 并升级服务器即可全量回退，不需要发版。
  */
 import { useSyncExternalStore } from "react";
-import {
-	host,
-	type NativeTabBarHost,
-	type NativeTabBarReveal,
-	type NativeTabBarSpec,
-} from "./host";
+import { host, type NativeTabBarHost, type NativeTabBarSpec } from "./host";
+import { latest, nativeSink, type SinkGate } from "./native-sink";
 import { SECTION_ORDER, type SectionId } from "./sections";
 
 /** 总开关：false = 所有 App 都用网页底栏。 */
 export const NATIVE_TAB_BAR = true;
-/** 下沉卡片的开合时长（= `index.css` 里 `.sink-card` 的 `translate 260ms`）。 */
-export const SINK_MS = 260;
-/** 开合缓动（= `index.css` 的 `--ease`）。 */
-export const SINK_EASE: readonly [number, number, number, number] = [
-	0.2, 0.8, 0.2, 1,
-];
-/** 桥的送达余量：原生页头接管时卡片晚这么久起步（`index.css` 的 `.sink-card[data-native-head]`），两边从同一时刻出发。 */
-export const NATIVE_LAG_MS = 34;
 /** 侧栏打开且原生接管时遮挡探测的轮询间隔。 */
 export const COVER_POLL_MS = 250;
 
@@ -141,63 +131,32 @@ export interface NativeTabBar {
 	engaged(): boolean;
 	subscribe(cb: () => void): () => void;
 	setSpec(spec: NativeTabBarSpec | null): void;
-	/** 卡片左缘（视口 x）：吸附终点（打开 = 侧栏宽，关闭 = 0）与拖动开始（0）各报一次。 */
-	reveal(x: number): void;
 	/** 网页内容压在底栏位置上：原生底栏不接触摸（看得见的部分本来就由网页合成器决定）。 */
 	setCovered(covered: boolean): void;
 }
 
-/** 最新值覆盖、同时至多一个在途：桥慢的时候不排队。拒绝只记日志（`tag` 标明是哪个原生部件）。 */
-export function latest<T>(
-	send: (v: T) => Promise<unknown>,
-	tag: string,
-): (v: T) => void {
-	let busy = false;
-	let next: { v: T } | null = null;
-	const pump = () => {
-		if (busy || !next) return;
-		const { v } = next;
-		next = null;
-		busy = true;
-		void send(v)
-			.then(
-				() => undefined,
-				(e) => console.warn(`[host] ${tag}`, e),
-			)
-			.finally(() => {
-				busy = false;
-				pump();
-			});
-	};
-	return (v) => {
-		next = { v };
-		pump();
-	};
-}
-
 export function createNativeTabBar(
 	tabBar: NativeTabBarHost | null,
+	sink: SinkGate,
 ): NativeTabBar {
 	let disabled = tabBar === null; // set 被拒后本页不再尝试
-	let wanted = ""; // 想要的 spec 的 JSON；"" = 不要原生栏
+	let want: NativeTabBarSpec | null = null; // 页面想要的 spec（根滚动没接管时不发）
+	let wanted = ""; // 最近一次要求原生的 spec 的 JSON；"" = 不要原生栏
 	let engaged = false;
-	let x = 0;
 	let covered = false;
-	let sent = ""; // 最近一次发出的触摸状态；接管 / 撤栏时清空，下一次照发
+	let sent: boolean | null = null; // 最近一次发出的遮挡；接管 / 撤栏时清空，下一次照发
 	const subs = new Set<() => void>();
 	const notify = () => {
 		for (const cb of [...subs]) cb();
 	};
-	const sendReveal = latest<NativeTabBarReveal>(
-		(r) => (tabBar as NativeTabBarHost).reveal(r),
+	const sendCover = latest<boolean>(
+		(c) => (tabBar as NativeTabBarHost).cover(c),
 		"native tab bar",
 	);
 	const push = () => {
-		if (!engaged) return;
-		const key = `${x}|${covered}`;
-		if (key === sent) return;
-		sent = key;
-		sendReveal({ x, covered });
+		if (!engaged || sent === covered) return;
+		sent = covered;
+		sendCover(covered);
 	};
 	const sendSpec = latest<NativeTabBarSpec | null>(async (spec) => {
 		// 已回退：排在被拒那条之后的 spec 不再发（撤栏照发）
@@ -215,11 +174,25 @@ export function createNativeTabBar(
 		}
 		if (spec === null || wanted === "" || engaged) return;
 		engaged = true;
-		sent = "";
+		sent = null;
 		notify();
-		// 接管那一刻把当前开合与遮挡补给原生（此前的都没发）
+		// 接管那一刻把当前遮挡补给原生（此前的都没发）
 		push();
 	}, "native tab bar");
+	const sync = () => {
+		if (disabled) return;
+		const spec = sink.engaged() ? want : null;
+		const key = spec ? JSON.stringify(spec) : "";
+		if (key === wanted) return;
+		wanted = key;
+		if (!spec && engaged) {
+			engaged = false;
+			sent = null;
+			notify();
+		}
+		sendSpec(spec);
+	};
+	sink.subscribe(sync);
 	return {
 		engaged: () => engaged,
 		subscribe(cb) {
@@ -229,20 +202,8 @@ export function createNativeTabBar(
 			};
 		},
 		setSpec(spec) {
-			if (disabled) return;
-			const key = spec ? JSON.stringify(spec) : "";
-			if (key === wanted) return;
-			wanted = key;
-			if (!spec && engaged) {
-				engaged = false;
-				sent = "";
-				notify();
-			}
-			sendSpec(spec);
-		},
-		reveal(next) {
-			x = next;
-			push();
+			want = spec;
+			sync();
 		},
 		setCovered(next) {
 			covered = next;
@@ -254,6 +215,7 @@ export function createNativeTabBar(
 /** 本页的原生底栏控制器；没有原生能力时一切空操作。 */
 export const nativeTabBar: NativeTabBar = createNativeTabBar(
 	NATIVE_TAB_BAR ? (host.mobile?.tabBar ?? null) : null,
+	nativeSink,
 );
 
 /** 原生底栏已接管（网页胶囊隐藏、页面透明）。 */
