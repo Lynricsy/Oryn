@@ -23,6 +23,7 @@ import {
 	useNotifications,
 } from "../../state/notifications";
 import { uiStore } from "../../state/ui";
+import { Floating } from "../ui/Floating";
 import { Icon, type IconName } from "../ui/icons";
 import { Button, Dialog, EmptyState, IconButton } from "../ui/primitives";
 
@@ -217,15 +218,17 @@ export function NotificationBell(): ReactNode {
 						<Body onDone={() => setOpen(false)} heading={false} />
 					</Dialog>
 				) : (
-					<div
+					<Floating
 						ref={popRef}
 						role="dialog"
 						aria-label={t("notify.title")}
 						tabIndex={-1}
-						className="glass pop-in absolute top-full left-0 z-40 mt-1 flex max-h-[min(32rem,70dvh)] w-80 max-w-[calc(100vw-1rem)] flex-col rounded-lg p-1.5 outline-none"
+						bare
+						maxHeight={512}
+						className="w-80 max-w-[calc(100vw-1rem)] p-1.5 outline-none"
 					>
 						<Body onDone={() => setOpen(false)} heading />
-					</div>
+					</Floating>
 				))}
 		</div>
 	);

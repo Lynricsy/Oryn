@@ -17,6 +17,7 @@ import { useEndPortalShare, useSetPortalShare } from "../../api/queries";
 import { formatDateTime } from "../../lib/format";
 import { focusablesIn } from "../../lib/modal";
 import { useBreakpoint } from "../../lib/viewport";
+import { Floating } from "../ui/Floating";
 import { Icon, type IconName } from "../ui/icons";
 import { Button, Dialog, ErrorText, IconButton } from "../ui/primitives";
 import { formatRemaining } from "./portal-url";
@@ -292,16 +293,19 @@ export function AccessPopover({
 						<AccessBody orbId={orbId} portal={portal} />
 					</Dialog>
 				) : (
-					<div
+					<Floating
 						ref={popRef}
 						role="dialog"
 						aria-label={title}
 						tabIndex={-1}
-						className="glass pop-in outline-none absolute top-full right-0 z-40 mt-1 w-80 max-w-[calc(100vw-1rem)] rounded-lg p-3"
+						align="end"
+						maxHeight={560}
+						className="w-80 max-w-[calc(100vw-1rem)] outline-none"
+						bodyClassName="p-3"
 					>
 						<h2 className="mb-2.5 font-medium text-faint text-xs">{title}</h2>
 						<AccessBody orbId={orbId} portal={portal} />
-					</div>
+					</Floating>
 				))}
 		</div>
 	);

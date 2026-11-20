@@ -258,8 +258,70 @@ function seed(): State {
 			readAt: NOW - 25 * 3_600_000,
 			deliveries: [],
 		},
+		...olderNotifications(),
 	];
 	return { channels, subs, notifications, linkPolls: new Map() };
+}
+
+/**
+ * 更早的已读通知：让通知列表超过一屏（铃铛弹层与收件箱要能看到滚动、长标题截断与各 kind 的图标）。
+ * 都在一天以前且已读，不影响未读计数与「需要你」的提问。
+ */
+function olderNotifications(): Notification[] {
+	const rows: [Notification["kind"], string, string][] = [
+		[
+			"done",
+			"补 M9 截图矩阵",
+			"1920 / 1366 / 390 三档 × 明暗，共 214 张截图已更新。",
+		],
+		[
+			"error",
+			"接入 Postgres 测试数据库",
+			"setup: pg_isready 超时（30s），容器未就绪。",
+		],
+		[
+			"done",
+			"把订阅表换成引用计数，并在 onopen 时对每个仍被订阅的线程重发 sub{afterSeq}，顺带清理断线期间的在途命令",
+			"改动 6 个文件，新增 3 个单测；端到端重连用例 12/12 通过。",
+		],
+		["input", "修复登录重定向", "回调地址要不要带上原始查询串？"],
+		["done", "回合头按来源记录显示 role", "已按来源记录渲染 role 胶囊。"],
+		["budget", "Weekly budget warning", "$41.20 of $50.00 spent this week."],
+		[
+			"done",
+			"补全 CLI 的 shell 补全脚本",
+			"bash / zsh / fish 三种补全脚本已生成并加了安装说明。",
+		],
+		[
+			"error",
+			"比价并下单测试物料",
+			"浏览器 Profile 被另一台 orb 占用，无法登录商城。",
+		],
+		[
+			"done",
+			"每天早上同步上游并跑测试",
+			"上游 37 个提交已合并，测试全部通过。",
+		],
+		["done", "博客换成静态站点生成器", "已迁移 48 篇文章，构建产物 3.1 MB。"],
+		[
+			"error",
+			"在自己机器上排查登录页闪烁",
+			"runner 离线超过 10 分钟，回合已中止。",
+		],
+		["done", "旧 Core 上的线程（没有来源记录）", "回合已完成"],
+	];
+	return rows.map(([kind, title, body], i) => ({
+		id: `ntf_01JD00000000000000000001${String(i).padStart(2, "0")}`,
+		kind,
+		title,
+		body,
+		url: kind === "budget" ? "/stats/usage" : `/t/${MAIN_THREAD}`,
+		...(kind === "budget" ? {} : { threadId: MAIN_THREAD }),
+		createdAt: NOW - (30 + i * 9) * 3_600_000,
+		readAt: NOW - (29 + i * 9) * 3_600_000,
+		...(kind === "input" ? { resolvedAt: NOW - (29 + i * 9) * 3_600_000 } : {}),
+		deliveries: [],
+	}));
 }
 
 let state = seed();
