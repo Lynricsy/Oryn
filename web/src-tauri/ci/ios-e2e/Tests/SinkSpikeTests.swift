@@ -32,7 +32,7 @@ final class SinkSpikeTests: E2ECase {
       return out
     }
     func text(_ r: [String: Double]) -> String {
-      ["sx", "sy", "max", "vs", "n", "m", "sk", "sh", "rx"]
+      ["sx", "sy", "max", "vs", "n", "m", "sk", "sh", "rx", "rb", "rt"]
         .map { "\($0)=\(r[$0].map { String($0) } ?? "?")" }.joined(separator: " ")
         + (status.label.contains("err") ? "；\(status.label.components(separatedBy: "err").last ?? "")" : "")
     }
@@ -165,7 +165,7 @@ final class SinkSpikeTests: E2ECase {
     // C2p：手指拖开之后程序化关闭；手指拖回之后程序化打开（用户拖动留下的吸附索引与程序化落位的先后）。
     // 第 5 轮（守卫关着时触摸不再排定时器，干净对照）：逐帧原生（4，反例）、逐帧原生 + 关吸附（6）、原生一步落位 + 关吸附（8）、
     // 网页 instant + 关吸附（7，第 4 轮落到目的地后又被拉回）。
-    // sh = 页面发起 host_sink_show 的次数（每组应恰 +1）；rx = 恢复吸附那一刻的 scrollX（每次请求清为 -1）
+    // sh = 页面发起 host_sink_show 的次数（每组应恰 +1）；rx / rb = 写回吸附前一刻 / 再一帧后的 scrollX（每次请求清为 -1）
     for (i, name) in [(4, "native"), (6, "native-snapoff"), (8, "native-instant-snapoff"), (7, "instant-snapoff")] {
       ensureClosed()
       setMode(i)

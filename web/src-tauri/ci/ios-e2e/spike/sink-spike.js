@@ -46,6 +46,8 @@
 		const m = MODES[mode];
 		// 每次请求都清 rx：第 4 轮只在关吸附的方式里清，别的组读到的是上一组残留
 		rx = -1;
+		rb = -1;
+		seq++;
 		if (m.endsWith("snapoff") || m === "nosnap") {
 			root.style.scrollSnapType = "none";
 			restore = x;
@@ -62,17 +64,30 @@
 		}
 		scrollTo({ left: x, behavior: m.startsWith("instant") ? "instant" : "smooth" });
 	};
-	// 恢复吸附：nosnap（第 1 轮）到位或 scrollend 后恢复；native-snapoff 只在命中目标端点后恢复（逐帧落位途中也会有
-	// scrollend，第 3 轮在那时恢复等于中途重开吸附，实验不成立）。rx = 恢复那一刻的 scrollX，-1 = 还没恢复过
+	// 恢复吸附：nosnap（第 1 轮）到位或 scrollend 后恢复；其余关吸附的方式只在命中目标端点后恢复（逐帧落位途中也会有
+	// scrollend，第 3 轮在那时恢复等于中途重开吸附，实验不成立）。恢复写在下一帧：
+	// rx = 写回 scrollSnapType 前一刻（同一个 rAF 里）的 scrollX，rb = 写回之后再一帧的 scrollX；-1 = 还没恢复过。
+	// seq 防止上一次请求排下的 rAF 在新请求期间把吸附打开。
 	let rx = -1;
+	let rb = -1;
+	let rt = -1; // 写回吸附的时刻（Date.now() 毫秒），与 events.jsonl 里 sink.trace 的 ts 对齐
+	let seq = 0;
 	const maybeRestore = (end) => {
 		if (restore === null) return;
 		const at = Math.abs(scrollX - restore) <= 0.5;
 		if (!at && !(end && MODES[mode] === "nosnap")) return;
 		restore = null;
-		rx = r1(scrollX);
+		const mine = seq;
 		requestAnimationFrame(() => {
+			if (mine !== seq) return;
+			rx = r1(scrollX);
+			rt = Date.now();
 			root.style.scrollSnapType = MODES[mode] === "snapoff" ? "none" : "";
+			requestAnimationFrame(() => {
+				if (mine !== seq) return;
+				rb = r1(scrollX);
+				update();
+			});
 			update();
 		});
 	};
@@ -83,7 +98,7 @@
 		status.textContent =
 			`sx=${r1(scrollX)};sy=${r1(scrollY)};iw=${innerWidth};max=${r1(max())};` +
 			`vs=${v ? r1(v.scale) : -1};vy=${v ? r1(v.offsetTop) : -1};kb=${kb};` +
-			`vst=${Math.round(vs.scrollTop)};pre=${Math.round(pre.scrollLeft)};n=${n};g=${guard ? 1 : 0};m=${mode};sk=${sk};sh=${sh};rx=${rx}` +
+			`vst=${Math.round(vs.scrollTop)};pre=${Math.round(pre.scrollLeft)};n=${n};g=${guard ? 1 : 0};m=${mode};sk=${sk};sh=${sh};rx=${rx};rb=${rb};rt=${rt}` +
 			(error ? `;err ${error}` : "");
 	};
 
