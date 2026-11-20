@@ -208,7 +208,7 @@ no_bounce() {
     | map(select((.op == "jump" or .op == "start")
         and (if .x > .to then .x - .to else .to - .x end) > 0.5))')
   [[ $bad == "[]" ]] ||
-    fail "$step" "开合到位后卡片又离开终点、由程序化开合落回（回弹）：$bad；本步轨迹：$(step_traces)"
+    fail "$step" "开合到位后卡片又离开终点、由程序化开合落回（回弹）：${bad}；本步轨迹：$(step_traces)"
 }
 
 # pt → 截图像素（scale 在 loaded 步骤由基线截图算出）
