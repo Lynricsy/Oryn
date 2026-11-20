@@ -17,8 +17,8 @@
 #   open     点侧栏钮（此时网页钮已对读屏隐藏，点到的是原生钮）：等 header.event（op = lead、key = home）与
 #            tabbar.reveal 报 x = 侧栏宽，截图（无障碍树断言原生按钮在、网页胶囊隐藏、侧栏可交互在测试里）
 #   closed   点露出的卡片条：等 tabbar.reveal 报 x = 0，截图
-#   drag     从左缘拖到约一半并按住：拖动中的 tabbar.reveal 都是 ms 0，松手才有 ms > 0 的吸附；就绪看截图——
-#            底栏横条连拍两张一致（卡片停住）且揭示边左侧已与关闭基线不同，期间没有新的吸附（没松手）
+#   drag     从左缘拖到约一半并按住：拖动中的 tabbar.reveal 都是 ms 0，松手才有 ms > 0 的吸附；先等原生裁切跟到手指位置，
+#            再连拍到卡片一侧两张一致（卡片停住）且揭示边左侧已与关闭基线不同，期间没有新的吸附（没松手）
 #   projects 点原生底栏的「项目」：等 tabbar.tap 与网页回发的 tabbar.set（selected = projects），截图
 #   swipe    在原生底栏上按住「项目」横滑到第 1 项再松手（系统透镜换选中）：等 tabbar.tap 与 tabbar.set（selected = threads），截图
 #   final    再点已选中的第 1 项收起侧栏：等 tabbar.reveal 报 x = 0，截图
@@ -266,12 +266,13 @@ steady_shot closed1
 ok closed
 
 # 拖动：按住期间 tabbar.reveal 逐帧发（ms 0），松手才发 ms > 0 的吸附终点；
-# 就绪看截图：胶囊横条连拍两张一致（卡片停住了），且揭示边左侧与关闭基线不同（确实拖开了）。
-# 所以 req 之后吸附的条数一变就是已经松手。
-# 卡片的平移就是手指位移（sinkProgress：0 + dx / 侧栏宽，拖到约一半不会夹到 1），揭示边取 dx。
+# 所以 req 之后吸附的条数一变就是已经松手。卡片的平移就是手指位移（sinkProgress：0 + dx / 侧栏宽，拖到约一半不会夹到 1），揭示边取 dx。
+# 就绪：先等原生裁切到了手指位置（最后一条 tabbar.reveal 是 ms 0、x ≈ dx），再连拍到卡片一侧（揭示边右侧 6pt 起的横条）
+# 两张一致（卡片停住了），且揭示边左侧与关闭基线不同（确实拖开了）。停稳只看卡片一侧：玻璃本身可能有细微的动态，不拿它判停稳；
+# 揭示边两侧的像素断言照旧在后面做。
 # 按住 40 秒：判定用的两张截图都要落在按住期间，截完再确认没有新的吸附。
 # CI 的 macOS 机器会整机卡顿几十秒到几分钟（截图曾卡 3 分钟），没赶上就让测试收起侧栏重拖，最多 3 次；
-# 每次的步骤名带序号（drag1 / drag2 / drag3），交接文件不会与上一次混淆。
+# 每次的步骤名带序号（drag1 / drag2 / drag3），交接文件不会与上一次混淆。没赶上时留下最后一张候选图并分别记下原因。
 # 测试先发 req 再起手，XCUITest 起手前可能还要等 App 空闲，所以等 req 放宽
 for attempt in 1 2 3; do
   step="drag$attempt"
@@ -279,35 +280,61 @@ for attempt in 1 2 3; do
   edge=$(jq -r .dx <<<"$req")
   n=$(settles)
   prev=""
+  rm -f "$work/drag-candidate.png"
   state=timeout
+  shot_timeouts=0
+  frame_diff="-"
+  open_diff="-"
+  reached=no
   end=$((SECONDS + 180))
   while ((SECONDS < end)); do
-    # 截图限时 40 秒（与按住时长相同）：超时、截之前或截完发现已松手都算没赶上，重拖
-    if [[ $(settles) != "$n" ]] || ! sim_shot "$work/drag-next.png" 40 ||
-      [[ $(settles) != "$n" ]]; then
-      state=missed
+    if [[ $(settles) != "$n" ]]; then
+      state=released
       break
     fi
-    if [[ -n $prev ]] &&
-      at_most "$(strip_diff "$work/drag-next.png" "$prev" "$fx" "$fw")" 0.01 &&
-      ! at_most "$(strip_diff "$work/drag-next.png" "$out/e2e-closed0.png" "$fx" "$(calc "$edge - 72 - $fx")")" 0.01; then
-      mv "$work/drag-next.png" "$out/e2e-drag.png"
-      state=held
+    # 原生裁切还没跟到手指位置：先不截
+    if [[ $reached == no ]]; then
+      if last tabbar.reveal | jq -e --argjson d "$edge" '.ms == 0 and (.x - $d) >= -2 and (.x - $d) <= 2' >/dev/null 2>&1; then
+        reached=yes
+      else
+        sleep 0.25
+        continue
+      fi
+    fi
+    # 截图限时 40 秒（与按住时长相同）：超时就重拍；截完发现已松手算没赶上
+    if ! sim_shot "$work/drag-next.png" 40; then
+      shot_timeouts=$((shot_timeouts + 1))
+      continue
+    fi
+    if [[ $(settles) != "$n" ]]; then
+      state=released
       break
+    fi
+    cp "$work/drag-next.png" "$work/drag-candidate.png"
+    open_diff=$(strip_diff "$work/drag-next.png" "$out/e2e-closed0.png" "$fx" "$(calc "$edge - 72 - $fx")")
+    if [[ -n $prev ]]; then
+      frame_diff=$(strip_diff "$work/drag-next.png" "$prev" "$(calc "$edge + 6")" "$(calc "$fx + $fw - $edge - 6")")
+      if at_most "$frame_diff" 0.01 && ! at_most "$open_diff" 0.01; then
+        mv "$work/drag-next.png" "$out/e2e-drag.png"
+        state=held
+        break
+      fi
     fi
     mv "$work/drag-next.png" "$work/drag-prev.png"
     prev="$work/drag-prev.png"
   done
+  why="原生裁切到位：${reached}，截图超时 ${shot_timeouts} 次，卡片一侧连帧差 ${frame_diff}，揭示边左侧相对关闭基线 ${open_diff}"
   case $state in
   held)
-    echo "拖动揭示边：${edge}（= 手指位移，第 ${attempt} 次）"
+    echo "拖动揭示边：${edge}（= 手指位移，第 ${attempt} 次；${why}）"
     ok "$step"
     break
     ;;
-  timeout) fail "$step" "180 秒内胶囊横条没有在拖开后停稳（手指位移 ${edge}），也没有松手吸附" ;;
+  timeout) fail "$step" "180 秒内没有在拖开后停稳（手指位移 ${edge}），也没有松手吸附；${why}" ;;
   esac
-  ((attempt < 3)) || fail "$step" "连续 3 次都没能在按住期间连拍到停稳的两张图"
-  echo "::warning::第 ${attempt} 次拖动没赶在按住期间截图，收起后重拖"
+  if [[ -f $work/drag-candidate.png ]]; then mv "$work/drag-candidate.png" "$out/e2e-drag$attempt-candidate.png"; fi
+  ((attempt < 3)) || fail "$step" "连续 3 次都没能在按住期间连拍到停稳的两张图；第 3 次：${why}"
+  echo "::warning::第 ${attempt} 次拖动没赶在按住期间截到停稳的图（${why}），收起后重拖"
   ok "$step" '{"retry":true}'
 done
 
