@@ -285,6 +285,7 @@ export function Menu({
 	trigger: (props: {
 		onClick: () => void;
 		"aria-expanded": boolean;
+		"aria-haspopup": "menu";
 	}) => ReactNode;
 	items: MenuItem[];
 	align?: "left" | "right";
@@ -320,6 +321,7 @@ export function Menu({
 					setSub(null);
 				},
 				"aria-expanded": open,
+				"aria-haspopup": "menu",
 			})}
 			{open && (
 				<Floating

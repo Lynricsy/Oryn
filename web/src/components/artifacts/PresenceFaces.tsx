@@ -268,7 +268,6 @@ function ViewerFace({
 					data-thread={activity.threadId}
 					data-doing={activity.doing}
 					aria-label={label}
-					aria-haspopup="menu"
 					title={label}
 					className={btn}
 					{...p}
