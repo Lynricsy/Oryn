@@ -133,7 +133,8 @@ pageSurface("settings.agent-roles.others", "agent-roles", "其他角色");
 pageSurface("settings.agent-ssh.audit", "agent-ssh", "网关审计");
 pageSurface("settings.agent-memory.models", "agent-memory", /^模型$/);
 pageSurface("settings.agent-memory.browse", "agent-memory", /^浏览$/);
-pageSurface("settings.agent-memory.candidates", "agent-memory", "待批准");
+// 状态卡里也有一行「待批准」：锚在紧挨着的「全局记忆」卡片标题上，一屏里是全局记忆、待批准与 mental models
+pageSurface("settings.agent-memory.candidates", "agent-memory", /^全局记忆$/);
 pageSurface("settings.agent-memory.usage", "agent-memory", /^用量$/);
 pageSurface("settings.agent-memory.owner", "agent-memory", "助手记忆");
 pageSurface("settings.agent-memory.owner-facts", "agent-memory", /^事实$/);
@@ -228,16 +229,19 @@ shellSurface("settings.mobile.notifications", "notifications", "mobile");
 shellSurface("settings.mobile.appearance", "appearance", "mobile", "壁纸");
 shellSurface("settings.mobile.about", "about", "mobile");
 
-// 手机：分区导航在侧栏抽屉里
+// 手机：分区导航在侧栏抽屉里（抽屉是 <nav>，不是浮层；关抽屉要点遮罩，不做关掉重开）
 surface({
 	id: "settings.nav",
 	path: "/settings/devices",
 	ready: READY,
 	only: "mobile",
+	noReopen: true,
 	open: async (page) => {
 		await loaded(page);
-		await page.getByRole("button", { name: "侧栏" }).first().click();
-		return lastOverlay(page);
+		await page.getByRole("button", { name: "侧边栏", exact: true }).click();
+		const nav = page.getByRole("navigation", { name: "侧边栏" });
+		await nav.waitFor({ state: "visible" });
+		return nav;
 	},
 });
 
