@@ -36,7 +36,7 @@ const DESKTOP_HOST_PERMISSIONS: &[&str] = &[
     "allow-host-window",
 ];
 
-/// 移动端：没有托盘、快捷键与更新器的命令，另有推送、外链、分享确认、系统栏、原生底栏、原生页头、可替换图标等十四个。
+/// 移动端：没有托盘、快捷键与更新器的命令，另有推送、外链、分享确认、系统栏、下沉侧栏、原生底栏、原生页头、可替换图标等十六个。
 #[cfg_attr(desktop, allow(dead_code))]
 const MOBILE_HOST_PERMISSIONS: &[&str] = &[
     "allow-host-ready",
@@ -53,7 +53,9 @@ const MOBILE_HOST_PERMISSIONS: &[&str] = &[
     "allow-host-set-chrome",
     "allow-host-open-notification-settings",
     "allow-host-tab-bar-set",
-    "allow-host-tab-bar-reveal",
+    "allow-host-tab-bar-cover",
+    "allow-host-sink-set",
+    "allow-host-sink-show",
     "allow-host-header-set",
     "allow-host-header-show",
     "allow-host-header-menu",
@@ -139,6 +141,8 @@ pub fn create_main(app: &AppHandle, remote: &RemoteOrigin) -> tauri::Result<Webv
                     crate::mobile::tab_bar_reset(&loader);
                     #[cfg(target_os = "ios")]
                     crate::mobile::header_reset(&loader);
+                    #[cfg(target_os = "ios")]
+                    crate::mobile::sink_reset(&loader);
                 }
                 // 首个页面加载完时窗口已映射，外框才是恢复后的实际值（刚 build 时 GTK 上为 0×0）
                 PageLoadEvent::Finished => {
@@ -398,7 +402,7 @@ mod tests {
         assert!(s.starts_with("window.__ORYN_HOST__ = Object.freeze({"));
         assert!(s.contains("\"version\":\"9.8.7-rc.1\""));
         assert!(s.contains("\"kind\":\"tauri\""));
-        assert!(s.contains("\"bridge\":7"));
+        assert!(s.contains("\"bridge\":8"));
         assert!(!s.contains("chrome"));
         let s = init_script("1.0.0", Some(json!({"controls": "custom-right"})));
         assert!(s.contains("\"chrome\":{\"controls\":\"custom-right\"}"));
@@ -428,7 +432,7 @@ mod tests {
             &Url::parse("https://tauri.localhost/").unwrap()
         ));
         assert_eq!(DESKTOP_HOST_PERMISSIONS.len(), 11);
-        assert_eq!(MOBILE_HOST_PERMISSIONS.len(), 20);
+        assert_eq!(MOBILE_HOST_PERMISSIONS.len(), 22);
     }
 
     /// 两个平台的远程权限都对应 `build.rs` 里声明的命令；移动端连接页能力只在移动平台生效、

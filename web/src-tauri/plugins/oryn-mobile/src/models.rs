@@ -162,13 +162,26 @@ pub struct TabBarSpec {
     pub bg: String,
 }
 
-/// 卡片与底栏的相对位置（`tabBarReveal` 的载荷）：`x` = 卡片左缘（视口 x，CSS px），
-/// `covered` = 网页内容（菜单、弹层、软键盘）压在底栏位置上。只决定原生底栏接不接触摸：
-/// 看得见的部分由网页合成器决定（卡片与弹层都画在原生底栏之上），无需原生插值。
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct TabBarReveal {
-    pub x: f64,
+/// 网页内容（菜单、弹层、软键盘）是否压在底栏位置上（`tabBarCover` 的载荷）。原生底栏只在卡片左缘越过底栏右缘
+/// （原生自己从根滚动位移算出）且没被压住时接触摸；看得见的部分由网页合成器决定。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TabBarCover {
     pub covered: bool,
+}
+
+/// 下沉侧栏改由 WKWebView 的根滚动驱动（`sinkSet` 的载荷，bridge ≥ 8）：`on` 时原生按 `contentOffset` 跟随，
+/// 原生底栏与页头才允许接管。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SinkSet {
+    pub on: bool,
+}
+
+/// 程序化开合（`sinkShow` 的载荷）：原生把根滚动视图滚到打开位（`open`）或关闭位，`animated` 时用 UIKit 的滚动动画。
+/// 网页发起的 smooth 滚动在 WKWebView 的主框架上会被拉回（M20 探针），所以平滑开合由原生做。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SinkShow {
+    pub open: bool,
+    pub animated: bool,
 }
 
 /// 原生页头里各控件的矩形（CSS px）；与底栏同形。
@@ -359,22 +372,13 @@ pub struct HeaderSpec {
     pub trail: Option<HeaderTrail>,
 }
 
-/// 控件层的呈现状态（`headerShow` 的载荷）：`dx` 整层水平位移（CSS px，= 卡片左缘），`passive` 只显示不接触摸；
-/// `ms` 为 0 立即生效，否则按 `ease` 过渡 `ms` 毫秒。起步时刻：有 `at`（Unix 毫秒，与网页 `Date.now()` 同一时钟）
-/// 时按它对齐卡片的 CSS 过渡（bridge ≥ 7，送达比它晚就立即起步），没有时等 `delay` 毫秒。
+/// 控件层的呈现状态（`headerShow` 的载荷）：透明度；`ms` 为 0 立即生效，否则淡入淡出 `ms` 毫秒。
+/// 水平位移与是否接触摸由原生按根滚动位移自己算（bridge ≥ 8），网页不发。
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct HeaderShow {
     pub alpha: f64,
-    pub dx: f64,
-    pub passive: bool,
     #[serde(default)]
     pub ms: u32,
-    #[serde(default)]
-    pub delay: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ease: Option<[f64; 4]>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub at: Option<f64>,
 }
 
 /// 两个菜单。
@@ -463,6 +467,13 @@ pub enum Event {
         #[serde(default)]
         id: Option<String>,
     },
+    /// 根滚动跟随的程序化开合轨迹（iOS，`SinkFollow`）：`op` 为 start / jump / noop / done / cancel，
+    /// `x` 是当时的 contentOffset.x、`to` 是目的地。只供 debug 包的事件日志（CI 端到端据此判断原生动画跑没跑）。
+    Sink {
+        op: String,
+        x: f64,
+        to: f64,
+    },
 }
 
 /// `notify` 的参数。
@@ -492,7 +503,9 @@ mod tests {
     use serde_json::{json, Value};
 
     const SET: &str = include_str!("../fixtures/tab-bar-set.json");
-    const REVEAL: &str = include_str!("../fixtures/tab-bar-reveal.json");
+    const COVER: &str = include_str!("../fixtures/tab-bar-cover.json");
+    const SINK_SET: &str = include_str!("../fixtures/sink-set.json");
+    const SINK_SHOW: &str = include_str!("../fixtures/sink-show.json");
     const HEADER_SET: &str = include_str!("../fixtures/header-set.json");
     const HEADER_SHOW: &str = include_str!("../fixtures/header-show.json");
     const HEADER_MENU: &str = include_str!("../fixtures/header-menu.json");
@@ -530,11 +543,25 @@ mod tests {
     }
 
     #[test]
-    fn tab_bar_reveal_fixture_round_trips() {
-        let raw: Value = serde_json::from_str(REVEAL).unwrap();
-        let reveal: TabBarReveal = serde_json::from_value(raw.clone()).unwrap();
-        assert_eq!(reveal, TabBarReveal { x: 320.0, covered: false });
-        assert_eq!(norm(serde_json::to_value(reveal).unwrap()), norm(raw));
+    fn sink_and_cover_fixtures_round_trip() {
+        let raw: Value = serde_json::from_str(COVER).unwrap();
+        let cover: TabBarCover = serde_json::from_value(raw.clone()).unwrap();
+        assert_eq!(cover, TabBarCover { covered: true });
+        assert_eq!(serde_json::to_value(cover).unwrap(), raw);
+        let raw: Value = serde_json::from_str(SINK_SET).unwrap();
+        let set: SinkSet = serde_json::from_value(raw.clone()).unwrap();
+        assert_eq!(set, SinkSet { on: true });
+        assert_eq!(serde_json::to_value(set).unwrap(), raw);
+        let raw: Value = serde_json::from_str(SINK_SHOW).unwrap();
+        let show: SinkShow = serde_json::from_value(raw.clone()).unwrap();
+        assert_eq!(
+            show,
+            SinkShow {
+                open: true,
+                animated: true
+            }
+        );
+        assert_eq!(serde_json::to_value(show).unwrap(), raw);
     }
 
     #[test]
@@ -586,15 +613,11 @@ mod tests {
     fn header_show_fixture_round_trips() {
         let raw: Value = serde_json::from_str(HEADER_SHOW).unwrap();
         let show: HeaderShow = serde_json::from_value(raw.clone()).unwrap();
-        assert_eq!(
-            (show.alpha, show.dx, show.ms, show.delay, show.passive, show.at),
-            (1.0, 320.0, 260, 0, true, Some(1_795_000_000_026.0))
-        );
+        assert_eq!(show, HeaderShow { alpha: 1.0, ms: 120 });
         assert_eq!(norm(serde_json::to_value(show).unwrap()), norm(raw));
-        // ms / delay / ease / at 可省（旧网页不发 at）
-        let bare: HeaderShow =
-            serde_json::from_value(json!({"alpha": 0, "dx": 0, "passive": true})).unwrap();
-        assert_eq!((bare.ms, bare.delay, bare.ease, bare.at), (0, 0, None, None));
+        // ms 可省
+        let bare: HeaderShow = serde_json::from_value(json!({"alpha": 0})).unwrap();
+        assert_eq!(bare.ms, 0);
     }
 
     #[test]

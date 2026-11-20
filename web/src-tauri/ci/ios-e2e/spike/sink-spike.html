@@ -1,0 +1,180 @@
+<!doctype html>
+<!--
+  M20 阶段 1 探针页（ci/ios-sink-spike 分支专用，不合入）：WKWebView 的根滚动能不能承载下沉卡片。
+  结构与 plan-m20 步骤 3.2 的原生模式 CSS 一致：根元素横向可滚并强制吸附，侧栏 position: fixed 垫底且透明，
+  卡片在右侧 in-flow（left = 侧栏宽），保留 translate: 0px 0 让卡片内的 fixed 后代以卡片为包含块。
+  状态按钮的文字是读数（SinkSpikeTests.swift 读它的无障碍 label）。
+-->
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, viewport-fit=cover"
+		/>
+		<title>sink spike</title>
+		<style>
+			:root {
+				--sink-w: min(82vw, 20rem);
+				overflow-x: auto;
+				overflow-y: hidden;
+				scroll-snap-type: x mandatory;
+				scrollbar-width: none;
+				background: transparent;
+			}
+			:root::-webkit-scrollbar {
+				display: none;
+			}
+			html,
+			body {
+				margin: 0;
+				height: 100%;
+			}
+			body {
+				background: transparent;
+				font:
+					15px -apple-system,
+					system-ui,
+					sans-serif;
+				color: #222;
+			}
+			button {
+				font: inherit;
+				padding: 8px 12px;
+				border-radius: 8px;
+				border: 1px solid #888;
+				background: #eee;
+				color: #111;
+			}
+			.root {
+				position: relative;
+				height: 100%;
+				width: calc(var(--sink-w) + 100vw);
+				overflow: clip;
+			}
+			.root::before {
+				content: "";
+				position: absolute;
+				left: 0;
+				top: 0;
+				width: 1px;
+				height: 1px;
+				scroll-snap-align: start;
+			}
+			.sidebar {
+				position: fixed;
+				left: 0;
+				top: 0;
+				bottom: 0;
+				width: var(--sink-w);
+				background: transparent;
+			}
+			.card {
+				position: absolute;
+				top: 0;
+				bottom: 0;
+				left: var(--sink-w);
+				width: 100vw;
+				translate: 0px 0;
+				background: #fff;
+				scroll-snap-align: start;
+				overflow: clip;
+			}
+			.abs {
+				position: absolute;
+			}
+			#status {
+				position: fixed;
+				z-index: 10;
+				top: 96px;
+				left: 8px;
+				right: 8px;
+				font-size: 11px;
+				padding: 4px;
+				text-align: left;
+				background: #ffd;
+			}
+			#badge {
+				position: fixed;
+				top: 160px;
+				right: 16px;
+			}
+			#vs {
+				top: 220px;
+				left: 16px;
+				right: 16px;
+				height: 150px;
+				overflow-y: auto;
+				background: #f3f3f8;
+			}
+			#vs p {
+				margin: 0;
+				padding: 6px 8px;
+				border-bottom: 1px solid #ddd;
+			}
+			#pre {
+				top: 390px;
+				left: 16px;
+				right: 16px;
+				height: 64px;
+				margin: 0;
+				overflow-x: auto;
+				white-space: pre;
+				background: #222;
+				color: #9f9;
+				font: 13px ui-monospace, monospace;
+				padding: 8px;
+				box-sizing: border-box;
+			}
+			#ta {
+				top: 476px;
+				left: 16px;
+				width: 70%;
+				height: 56px;
+				font: inherit;
+			}
+			/* 底栏所在横条：每一列都不同的渐变 + 文字，像素比较才能认出平移量 */
+			.strip {
+				left: 0;
+				right: 0;
+				bottom: calc(env(safe-area-inset-bottom) + 0px);
+				height: 120px;
+				background: linear-gradient(90deg, #e33, #ec3, #3c5, #39e, #a3e);
+				color: #fff;
+				font-size: 22px;
+				font-weight: 700;
+				line-height: 120px;
+				padding-left: 20px;
+				white-space: nowrap;
+			}
+			#slot {
+				left: 12px;
+				right: 12px;
+				bottom: calc(env(safe-area-inset-bottom) + 24px);
+				height: 52px;
+			}
+		</style>
+	</head>
+	<body>
+		<button id="status" type="button">sx=</button>
+		<div class="root">
+			<aside class="sidebar">
+				<button id="close" class="abs" style="top: 160px; left: 16px" type="button">close</button>
+				<div id="slot" class="abs"></div>
+			</aside>
+			<main class="card">
+				<button id="open" class="abs" style="top: 160px; left: 16px" type="button">open</button>
+				<button id="tabbar" class="abs" style="top: 160px; left: 96px" type="button">tabbar</button>
+				<button id="mode" class="abs" style="top: 548px; left: 110px" type="button">mode</button>
+				<button id="reset" class="abs" style="top: 160px; left: 186px" type="button">reset</button>
+				<button id="guard" class="abs" style="top: 548px; left: 16px" type="button">guard</button>
+				<button id="badge" type="button">badge</button>
+				<div id="vs" class="abs"></div>
+				<pre id="pre" class="abs"></pre>
+				<textarea id="ta" class="abs" aria-label="ta"></textarea>
+				<div class="strip abs">ORYN · sink spike · 0123456789 ABCDEFGHIJ</div>
+			</main>
+		</div>
+		<script src="sink-spike.js"></script>
+	</body>
+</html>

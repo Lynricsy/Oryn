@@ -171,6 +171,19 @@ export function installNoFocusZoom(
 	if (meta) meta.content = withoutFocusZoom(meta.content);
 }
 
+const MIN_SCALE = /,?\s*minimum-scale\s*=\s*1\b/i;
+
+/**
+ * 下沉侧栏的根滚动模式（`lib/native-sink.ts`）里文档比视口宽（侧栏 + 卡片）：viewport 加 `minimum-scale=1`，
+ * 免得 WebKit 为了装下整个文档把页面缩小。退出时去掉。重复调用幂等。
+ */
+export function setMinScale(on: boolean, doc: Document = document): void {
+	const meta = doc.querySelector<HTMLMetaElement>('meta[name="viewport"]');
+	if (!meta) return;
+	const base = meta.content.replace(MIN_SCALE, "");
+	meta.content = on ? `${base}, minimum-scale=1` : base;
+}
+
 const COARSE = "(pointer: coarse)";
 
 function subscribeCoarse(cb: () => void) {

@@ -1,8 +1,8 @@
 // 线程页的原生页头（侧栏钮 / 标题胶囊 / 视图钮与两个菜单）：一张与 WKWebView 等大的透明宿主视图叠在它上面。
 // 平时只截落在三件控件矩形里的触摸，其余全部放行给网页；菜单开着时整屏接管（关闭区 + 面板）。
 // 放行不靠 SwiftUI 的命中结果：控件矩形是网页给的，这里直接比（判断错了整屏都点不动，所以要确定性的）。
-// 原生页头跟着下沉卡片走：网页给出卡片左缘作为整层位移 dx——拖动时逐帧给，吸附时只给终点、时长、缓动与绝对起步时刻，
-// 由这里自己插值，与卡片的 CSS 过渡从同一时刻出发（策略全在网页，lib/native-header.ts）。
+// 原生页头跟着下沉卡片走：卡片开合是 WKWebView 根滚动视图的横向滚动，SinkFollow 观察 contentOffset 并在同一次回调里
+// 调 follow(dx:) 平移整层（同进程同帧，不需要对时）；卡片离开关闭位时只显示不接触摸。网页只管透明度（show）。
 import SwiftUI
 import UIKit
 import WebKit
@@ -38,9 +38,6 @@ final class HeaderHostView: UIView {
 
 @available(iOS 26.0, *)
 final class HeaderOverlay {
-  /// 网页没给 ease 时的缓动（= `--ease`）。
-  static let defaultEase: [Double] = [0.2, 0.8, 0.2, 1]
-
   private let host = HeaderHostView()
   private let model: HeaderModel
   private let hosting: UIHostingController<HeaderRootView>
@@ -97,34 +94,32 @@ final class HeaderOverlay {
     return host.window != nil
   }
 
-  /// 打断在途过渡并停在当前呈现值；`ms == 0` 立即生效，否则等 `delay` 后按 `ease` 过渡 `ms` 毫秒。
+  /// 跟随卡片左缘（SinkFollow 的 dx）：整层平移；离开关闭位（dx > 0.5）时只显示不接触摸。
+  func follow(dx: CGFloat) {
+    host.dx = dx
+    host.passive = dx > 0.5
+    hosting.view.transform = CGAffineTransform(translationX: dx, y: 0)
+  }
+
+  /// 透明度：打断在途过渡并停在当前呈现值；`ms == 0` 立即生效，否则淡入淡出 `ms` 毫秒。
   /// alpha 为 0 时立即不可交互并收起菜单（不上报），过渡结束后隐藏。
-  func show(alpha: CGFloat, dx: CGFloat, passive: Bool, ms: Double, delay: Double, ease: [Double]?) {
+  func show(alpha: CGFloat, ms: Double) {
     if let running = animator, running.state == .active {
       // 不走完：视图停在此刻的呈现值，下一段从那里出发
       running.stopAnimation(true)
     }
     animator = nil
     let visible = alpha > 0
-    host.passive = passive
-    host.dx = dx
     host.shown = visible
     if !visible { model.setOpen(nil, page: nil, report: false) }
-    let move = CGAffineTransform(translationX: dx, y: 0)
     guard ms > 0 else {
       host.alpha = alpha
-      hosting.view.transform = move
       host.isHidden = !visible
       return
     }
     host.isHidden = false
-    let e = ease.flatMap { $0.count == 4 ? $0 : nil } ?? Self.defaultEase
-    let timing = UICubicTimingParameters(
-      controlPoint1: CGPoint(x: e[0], y: e[1]), controlPoint2: CGPoint(x: e[2], y: e[3]))
-    let next = UIViewPropertyAnimator(duration: ms / 1000, timingParameters: timing)
-    next.addAnimations {
+    let next = UIViewPropertyAnimator(duration: ms / 1000, curve: .easeOut) {
       self.host.alpha = alpha
-      self.hosting.view.transform = move
     }
     next.addCompletion { [weak self, weak next] position in
       guard let self = self else { return }
@@ -132,7 +127,7 @@ final class HeaderOverlay {
       if self.animator === next { self.animator = nil }
     }
     animator = next
-    next.startAnimation(afterDelay: delay / 1000)
+    next.startAnimation()
   }
 
   /// 网页 / 调试钩子要求打开或收起菜单：不产生 menu 事件。

@@ -58,9 +58,13 @@ extension E2ECase {
 
   /// 中心落在矩形里（四周放宽 2pt）的按钮，分组同 `allButtons`。
   func buttons(in rect: CGRect, of app: XCUIApplication) throws -> (native: [Snap], web: [Snap]) {
+    buttons(in: rect, among: try allButtons(of: app))
+  }
+
+  /// 同上，从已取的一次快照里筛（XCUITest 取快照在 CI 上很慢，一次轮询只取一次）。
+  func buttons(in rect: CGRect, among all: (native: [Snap], web: [Snap])) -> (native: [Snap], web: [Snap]) {
     let area = rect.insetBy(dx: -2, dy: -2)
     let inside = { (s: Snap) in area.contains(CGPoint(x: s.frame.midX, y: s.frame.midY)) }
-    let all = try allButtons(of: app)
     return (all.native.filter(inside), all.web.filter(inside))
   }
 
