@@ -255,6 +255,7 @@ export function Launcher(): ReactNode {
 					<Button
 						variant="danger"
 						disabled={busy}
+						data-testid="launcher-change-confirm"
 						onClick={() =>
 							void run("launcher_change_server", { confirm: true })
 						}
@@ -480,6 +481,7 @@ export function Launcher(): ReactNode {
 					<Button
 						variant="primary"
 						disabled={busy}
+						data-testid="launcher-retry"
 						onClick={() => void run("launcher_retry")}
 					>
 						{busy ? <Spinner /> : t("launcher.retry")}
