@@ -173,11 +173,11 @@ describe("GoalDialog", () => {
 		expect(within(set).queryByRole("textbox")).toBeNull();
 	});
 
-	it("没有目标：说明为空，设定目标带上预算，可以引导式设定", async () => {
+	it("没有目标：不单列空的「当前目标」，设定目标带上预算，可以引导式设定", async () => {
 		goal = { enabled: false };
 		open();
-		expect(await screen.findByText("当前没有目标。")).toBeTruthy();
 		const set = await section("设定目标");
+		expect(screen.queryByRole("heading", { name: "当前目标" })).toBeNull();
 		fireEvent.change(within(set).getByRole("textbox", { name: "目标" }), {
 			target: { value: "修好登录" },
 		});

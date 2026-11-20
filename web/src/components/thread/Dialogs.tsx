@@ -1098,8 +1098,9 @@ function GoalDialog({
 				/>
 			) : (
 				<div className="flex flex-col gap-5">
-					<ReportSection title={t("goal.current")}>
-						{hasGoal && g ? (
+					{/* 没有目标时不单列「当前目标 / 当前没有目标」：下面的设定表单本身就说明了空态 */}
+					{hasGoal && g ? (
+						<ReportSection title={t("goal.current")}>
 							<ReportCard className="flex flex-col gap-3">
 								<div className="flex items-start gap-2">
 									<Icon
@@ -1211,14 +1212,11 @@ function GoalDialog({
 								)}
 								{failed("pause", "resume", "drop")}
 							</ReportCard>
-						) : (
-							<>
-								<p className="px-0.5 text-muted text-sm">{t("goal.none")}</p>
-								{/* 重读后目标已不在（完成后被清掉、已放弃）：失败说明仍要留在原处 */}
-								{failed("pause", "resume", "drop")}
-							</>
-						)}
-					</ReportSection>
+						</ReportSection>
+					) : (
+						// 重读后目标已不在（完成后被清掉、已放弃）：失败说明仍要留在原处
+						failed("pause", "resume", "drop")
+					)}
 
 					{replacing && g && (
 						<ReportSection title={t("goal.budgetTitle")}>
@@ -1466,8 +1464,9 @@ export function LabelsDialog({
 	const [error, setError] = useState<unknown>(null);
 	return (
 		<Dialog open onClose={onClose} title={t("thread.labels")}>
+			{/* 与改名、消息标签对话框一致：输入框与保存同一行，保存钮底边对齐输入框 */}
 			<form
-				className="flex flex-col gap-2"
+				className="flex items-end gap-2"
 				onSubmit={async (e) => {
 					e.preventDefault();
 					const labels = text
@@ -1482,18 +1481,18 @@ export function LabelsDialog({
 					}
 				}}
 			>
-				<Field label={t("thread.labelsHint")}>
-					<TextInput
-						autoFocus
-						value={text}
-						onChange={(e) => setText(e.target.value)}
-					/>
-				</Field>
-				<div className="flex justify-end">
-					<Button type="submit" variant="primary">
-						{t("common.save")}
-					</Button>
+				<div className="min-w-0 flex-1">
+					<Field label={t("thread.labelsHint")}>
+						<TextInput
+							autoFocus
+							value={text}
+							onChange={(e) => setText(e.target.value)}
+						/>
+					</Field>
 				</div>
+				<Button type="submit" variant="primary">
+					{t("common.save")}
+				</Button>
 			</form>
 			<ErrorText error={error} />
 		</Dialog>
@@ -1751,10 +1750,12 @@ export function PlanProposalDialog({
 						/>
 					)}
 					<ErrorText error={error} />
-					<div className="flex flex-wrap justify-end gap-2">
+					{/* 手机上五个按钮一行放不下：主操作「执行」独占一行，其余两两成列，不留单个孤零零的折行按钮 */}
+					<div className="flex flex-wrap justify-end gap-2 max-sm:grid max-sm:grid-cols-2">
 						{options.map((o) => (
 							<Button
 								key={o}
+								className={o === "execute" ? "max-sm:col-span-2" : undefined}
 								variant={o === "execute" ? "accent" : "secondary"}
 								disabled={
 									busy || (choice === o && o === "refine" && !feedback.trim())
