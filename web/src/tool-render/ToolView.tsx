@@ -150,6 +150,8 @@ export interface ToolViewProps {
 	defaultOpen?: boolean;
 	/** Host capabilities (sub-session drill-down, …). */
 	host?: ToolRenderHost;
+	/** 卡片根元素的 ref（宿主在上面登记右键菜单）。 */
+	rootRef?: (el: HTMLDivElement | null) => void;
 }
 
 function normalizeArgs(raw: unknown): {
@@ -223,10 +225,14 @@ export function ToolView(props: ToolViewProps): ReactNode {
 			: "";
 
 	return (
-		<div className={`tv-card${isError ? " tv-card--error" : ""}`}>
+		<div
+			ref={props.rootRef}
+			className={`tv-card${isError ? " tv-card--error" : ""}`}
+		>
 			<button
 				type="button"
 				className="tv-head"
+				data-ctx-touch=""
 				aria-expanded={open}
 				onClick={() => setUserOpen(!open)}
 				title={intent || undefined}

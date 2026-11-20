@@ -54,7 +54,9 @@ import {
 	type InFlightDraft,
 	isInFlightDraft,
 	patchComposerDraft,
+	takeComposerFiles,
 	useComposerDraft,
+	useComposerPendingFiles,
 } from "../../state/composer-drafts";
 import { getThreadStore, useIndex, useThread } from "../../state/stores";
 import { subagentFiles } from "../../state/subagent-entries";
@@ -116,6 +118,14 @@ export const Composer = memo(function Composer({
 	const assistant = useIndex((s) => s.threads[threadId]?.kind) === "assistant";
 	const canAttach = !coordinator || assistant;
 	const att = useAttachments({ threadId, library: assistant });
+	// 右键菜单「引用到输入框」送来的图片：挂上后加入附件列表
+	const pendingFiles = useComposerPendingFiles(threadId);
+	const addFiles = att.addFiles;
+	useEffect(() => {
+		if (pendingFiles.length === 0) return;
+		const files = takeComposerFiles(threadId);
+		if (canAttach) void addFiles(files);
+	}, [pendingFiles, threadId, canAttach, addFiles]);
 	const menu = useCommandMenu(threadId, text, commands, coordinator);
 	const menuOpen = menu !== null && !menuDismissed;
 	const entries = menu?.entries ?? [];

@@ -18,6 +18,7 @@ import {
 	num,
 	resultTextOf,
 	shortenPath,
+	splitPathSel,
 	str,
 } from "../util";
 
@@ -45,22 +46,6 @@ function readDetails(details: Record<string, unknown> | null): ReadDetails {
 		conflictCount: details ? num(details.conflictCount) : null,
 		truncated: details ? isRecord(details.truncation) : false,
 	};
-}
-
-/** A trailing `:chunk` that reads as a selector: line ranges, `raw`, `conflicts`. */
-const SEL_CHUNK_RE = /^(raw|conflicts|\d+(?:[-+]\d*)?(?:,\d+(?:[-+]\d*)?)*)$/i;
-
-/** Split a `path:sel` argument (handles compound `:50-100:raw` selectors). */
-function splitPathSel(rawPath: string): { path: string; sel: string | null } {
-	let path = rawPath;
-	const chunks: string[] = [];
-	for (let i = 0; i < 2; i++) {
-		const idx = path.lastIndexOf(":");
-		if (idx <= 0 || !SEL_CHUNK_RE.test(path.slice(idx + 1))) break;
-		chunks.unshift(path.slice(idx + 1));
-		path = path.slice(0, idx);
-	}
-	return { path, sel: chunks.length > 0 ? chunks.join(":") : null };
 }
 
 interface ReadArgs {

@@ -114,9 +114,10 @@ export function composerMounted(threadId: string): boolean {
 	return mounted.has(threadId);
 }
 
-/** 仅测试用：清空所有草稿与挂载登记。 */
+/** 仅测试用：清空所有草稿、待加入的附件与挂载登记。 */
 export function resetComposerDrafts(): void {
 	drafts.setState({}, true);
+	pendingFiles.setState({}, true);
 	mounted.clear();
 }
 
@@ -124,4 +125,24 @@ export function resetComposerDrafts(): void {
 export function insertIntoComposer(threadId: string, text: string): void {
 	patchComposerDraft(threadId, { insert: { text } });
 	uiStore.getState().setThreadTab("agent");
+}
+
+/** 待加入输入区附件列表的文件（附件列表在输入区组件里，挂上后由它取走）。 */
+const pendingFiles = createStore<Record<string, File[]>>(() => ({}));
+const NO_FILES: File[] = [];
+
+export function enqueueComposerFiles(threadId: string, files: File[]): void {
+	const prev = pendingFiles.getState()[threadId] ?? [];
+	pendingFiles.setState({ [threadId]: [...prev, ...files] });
+}
+
+export function useComposerPendingFiles(threadId: string): File[] {
+	return useStore(pendingFiles, (s) => s[threadId] ?? NO_FILES);
+}
+
+/** 取出并清空这个线程待加入的文件。 */
+export function takeComposerFiles(threadId: string): File[] {
+	const files = pendingFiles.getState()[threadId] ?? [];
+	if (files.length > 0) pendingFiles.setState({ [threadId]: [] });
+	return files;
 }

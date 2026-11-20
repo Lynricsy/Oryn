@@ -12,9 +12,11 @@ import {
 	type MessageAttachment,
 	parseAttachmentBlock,
 } from "../../lib/attachments";
+import { imageGroup } from "../../lib/context-menu/image-actions";
 import { useContextTarget } from "../../lib/context-menu/registry";
 import { copyWithToast } from "../../lib/context-menu/selection-groups";
 import { fileIcon } from "../../lib/file-icon";
+import { joinPath } from "../../lib/file-source";
 import {
 	formatBytes,
 	formatCost,
@@ -32,10 +34,12 @@ import { normalizeQuote, splitLeadingQuote } from "../../lib/quote";
 import { parseTitleCard } from "../../lib/title";
 import { patchComposerDraft } from "../../state/composer-drafts";
 import type { JsonRecord } from "../../state/message-builder";
-import { useIndex } from "../../state/stores";
+import { locateEntry, runSideAsk, sideAskBusy } from "../../state/side-ask";
+import { useIndex, useThread } from "../../state/stores";
+import { uiStore } from "../../state/ui";
 import { ToolView } from "../../tool-render/ToolView";
 import type { ToolResultLike } from "../../tool-render/types";
-import { isRecord, resultTextOf } from "../../tool-render/util";
+import { isRecord, resultTextOf, toolSubject } from "../../tool-render/util";
 import { Markdown } from "../markdown/Markdown";
 import { Badge, Callout, Stat } from "../ui/data";
 import { ImageViewer } from "../ui/ImageViewer";
@@ -106,6 +110,14 @@ function Images({ content }: { content: unknown }): ReactNode {
 	const { t } = useTranslation();
 	const assets = useAssetUrls();
 	const [viewing, setViewing] = useState<string | null>(null);
+	const ctxRef = useContextTarget<HTMLDivElement>({
+		items: (req) => {
+			const img = req.target.closest("img");
+			return img
+				? [imageGroup(img.currentSrc || img.src, req.askThreadId)]
+				: null;
+		},
+	});
 	if (!Array.isArray(content)) return null;
 	const imgs = content.filter(
 		(b): b is { type: "image"; data: string; mimeType: string } =>
@@ -116,7 +128,7 @@ function Images({ content }: { content: unknown }): ReactNode {
 	);
 	if (imgs.length === 0) return null;
 	return (
-		<div className="mt-2 flex flex-wrap gap-2">
+		<div ref={ctxRef} className="mt-2 flex flex-wrap gap-2">
 			{imgs.map((img, i) => {
 				const src = imageSrc(img.data, img.mimeType, assets.blob);
 				if (!src)
@@ -135,6 +147,7 @@ function Images({ content }: { content: unknown }): ReactNode {
 						key={i}
 						type="button"
 						className="rounded-md"
+						data-ctx-touch=""
 						onClick={() => setViewing(src)}
 						aria-label={t("image.open", { n: i + 1 })}
 					>
@@ -688,7 +701,9 @@ export function ToolCard({
 	intent?: string;
 	streamingArgs?: boolean;
 }): ReactNode {
+	const { t } = useTranslation();
 	const ctx = useTranscriptContext();
+	const cwd = useThread(ctx.threadId, (s) => s.thread?.cwd);
 	// 当前一批调用默认展开，模型开始下一批或回合结束时收起（见 active-tools.ts）
 	const active = useToolCallActive(toolCallId);
 	const live = ctx.liveTools[toolCallId];
@@ -703,10 +718,97 @@ export function ToolCard({
 	const partialResult =
 		live && !live.ended ? toolResultLike(live.partialResult) : undefined;
 	const partial = resultTextOf(partialResult);
+	const toolName = live?.toolName ?? name;
+	const toolArgs = args ?? live?.args;
+	const cardRef = useRef<HTMLDivElement | null>(null);
+	const ctxRef = useContextTarget<HTMLDivElement>({
+		items: (req) => {
+			const subject = toolSubject(toolName, toolArgs);
+			const output = resultTextOf(result);
+			const items: MenuItem[] = [];
+			if (subject)
+				items.push({
+					key: "copySubject",
+					icon: "copy",
+					label:
+						subject.kind === "command"
+							? t("contextMenu.copyCommand")
+							: t("contextMenu.copyPath"),
+					onSelect: () => void copyWithToast(subject.text),
+				});
+			if (output)
+				items.push({
+					key: "copyOutput",
+					icon: "copy",
+					label: t("contextMenu.copyOutput"),
+					onSelect: () => void copyWithToast(output),
+				});
+			const abs =
+				subject?.kind !== "path"
+					? null
+					: subject.text.startsWith("/")
+						? subject.text
+						: cwd
+							? joinPath(cwd, subject.text)
+							: null;
+			if (abs && req.askThreadId)
+				items.push({
+					key: "openFile",
+					icon: "folderOpen",
+					label: t("contextMenu.openInFiles"),
+					onSelect: () => uiStore.getState().openFile(ctx.threadId, abs),
+				});
+			const threadId = req.askThreadId;
+			const el = cardRef.current;
+			if (threadId && el) {
+				const busy = sideAskBusy(threadId);
+				const r = el.getBoundingClientRect();
+				const entryId =
+					el.closest("[data-index]")?.getAttribute("data-entry-id") ??
+					undefined;
+				items.push({
+					key: "explain",
+					icon: "sparkle",
+					label: t("contextMenu.explainTool"),
+					disabled: busy,
+					title: busy ? t("sideAsk.busy") : undefined,
+					onSelect: () =>
+						void runSideAsk(
+							{ kind: "tool" },
+							{
+								threadId,
+								text: subject
+									? `${toolName}: ${subject.text}`
+									: `${toolName}: ${JSON.stringify(toolArgs ?? {}).slice(0, 300)}`,
+								before: "",
+								after: "",
+								source: {
+									kind: "tool",
+									toolName,
+									...locateEntry(ctx.threadId, entryId),
+									spans: false,
+								},
+								anchor: {
+									left: r.left,
+									top: r.top,
+									right: r.right,
+									bottom: r.bottom,
+								},
+							},
+						),
+				});
+			}
+			return items.length ? [{ key: "tool", items }] : null;
+		},
+	});
 	return (
 		<ToolView
-			name={live?.toolName ?? name}
-			args={args ?? live?.args}
+			rootRef={(el) => {
+				cardRef.current = el;
+				ctxRef(el);
+			}}
+			name={toolName}
+			args={toolArgs}
 			result={
 				result
 					? { ...result, isError: result.isError || live?.isError }

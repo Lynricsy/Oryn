@@ -20,10 +20,20 @@ import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+import i18n from "../../i18n";
 import { useAssetUrls } from "../../lib/asset-urls";
+import { imageGroup } from "../../lib/context-menu/image-actions";
+import { useContextTarget } from "../../lib/context-menu/registry";
+import { copyWithToast } from "../../lib/context-menu/selection-groups";
+import type {
+	ContextRequest,
+	MenuGroup,
+	SelectionSource,
+} from "../../lib/context-menu/types";
 import { cssColor } from "../../lib/css-color";
 import { splitFrontmatter } from "../../lib/frontmatter";
 import { useHighlighted } from "../../lib/highlight";
+import { locateEntry, runSideAsk, sideAskBusy } from "../../state/side-ask";
 import { THEME_EVENT } from "../../state/theme";
 import { CopyButton } from "../ui/CopyButton";
 import { FrontmatterFields } from "./Frontmatter";
@@ -244,6 +254,22 @@ function MermaidBlock({ code }: { code: string }): ReactNode {
 	return <SvgHost svg={svg} />;
 }
 
+/** 代码块的来源：在转录行里时带上消息与回合信息。 */
+function codeSource(el: Element, threadId: string): SelectionSource {
+	const row = el.closest("[data-index]");
+	const role = row?.getAttribute("data-role");
+	if (!row || (role !== "user" && role !== "assistant"))
+		return { kind: "other" };
+	return {
+		kind: "message",
+		role,
+		part: "text",
+		...locateEntry(threadId, row.getAttribute("data-entry-id") ?? undefined),
+		live: row.hasAttribute("data-live"),
+		spans: false,
+	};
+}
+
 export function CodeBlock({
 	code,
 	lang,
@@ -252,9 +278,59 @@ export function CodeBlock({
 	lang?: string | null;
 }): ReactNode {
 	const html = useHighlighted(code, lang);
+	const self = useRef<HTMLDivElement | null>(null);
+	const ctxRef = useContextTarget<HTMLDivElement>({
+		items: (req) => {
+			const items: MenuGroup["items"] = [
+				{
+					key: "copy",
+					icon: "copy",
+					label: i18n.t("contextMenu.copyCode"),
+					onSelect: () => void copyWithToast(code),
+				},
+			];
+			const threadId = req.askThreadId;
+			const el = self.current;
+			if (threadId && el) {
+				const busy = sideAskBusy(threadId);
+				const r = el.getBoundingClientRect();
+				items.push({
+					key: "explain",
+					icon: "sparkle",
+					label: i18n.t("contextMenu.explainCode"),
+					disabled: busy,
+					title: busy ? i18n.t("sideAsk.busy") : undefined,
+					onSelect: () =>
+						void runSideAsk(
+							{ kind: "explain" },
+							{
+								threadId,
+								text: code,
+								before: "",
+								after: "",
+								source: codeSource(el, threadId),
+								anchor: {
+									left: r.left,
+									top: r.top,
+									right: r.right,
+									bottom: r.bottom,
+								},
+							},
+						),
+				});
+			}
+			return [{ key: "code", items }];
+		},
+	});
 	return (
-		<div className="md-code group">
-			<div className="md-code-bar">
+		<div
+			ref={(el) => {
+				self.current = el;
+				ctxRef(el);
+			}}
+			className="md-code group"
+		>
+			<div className="md-code-bar" data-ctx-touch="">
 				<span>{lang ?? ""}</span>
 				<CopyButton text={code} />
 			</div>
@@ -341,6 +417,11 @@ export const Markdown = memo(function Markdown({
 	streaming = false,
 }: MarkdownProps): ReactNode {
 	const assets = useAssetUrls();
+	const root = useRef<HTMLDivElement | null>(null);
+	// 正文里的链接、图片、行内代码各有自己的菜单组
+	const ctxRef = useContextTarget<HTMLDivElement>({
+		items: (req) => markdownGroups(req, root.current),
+	});
 	const doc = splitFrontmatter(text);
 	const source = (doc ? doc.body : text).replace(BLOB_RE, (_, sha: string) =>
 		assets.blob(sha),
@@ -354,7 +435,13 @@ export const Markdown = memo(function Markdown({
 		? [[rehypeSanitize, schema], ...math.rehype]
 		: [[rehypeSanitize, schema]];
 	return (
-		<div className="md">
+		<div
+			ref={(el) => {
+				root.current = el;
+				ctxRef(el);
+			}}
+			className="md"
+		>
 			{doc && <FrontmatterFields fields={doc.fields} />}
 			<ReactMarkdown
 				remarkPlugins={remarkPlugins}
@@ -366,3 +453,52 @@ export const Markdown = memo(function Markdown({
 		</div>
 	);
 });
+
+function markdownGroups(
+	req: ContextRequest,
+	root: HTMLElement | null,
+): MenuGroup[] | null {
+	if (!root) return null;
+	const link = req.target.closest("a[href]");
+	if (link && root.contains(link)) {
+		const href = link.getAttribute("href") ?? "";
+		return [
+			{
+				key: "link",
+				items: [
+					{
+						key: "open",
+						icon: "external",
+						label: i18n.t("contextMenu.openLink"),
+						onSelect: () => window.open(href, "_blank", "noopener"),
+					},
+					{
+						key: "copyLink",
+						icon: "link",
+						label: i18n.t("contextMenu.copyLink"),
+						onSelect: () => void copyWithToast(href),
+					},
+				],
+			},
+		];
+	}
+	const img = req.target.closest("img");
+	if (img && root.contains(img))
+		return [imageGroup(img.currentSrc || img.src, req.askThreadId)];
+	const inline = req.target.closest("code.md-inline-code");
+	if (inline && root.contains(inline))
+		return [
+			{
+				key: "code",
+				items: [
+					{
+						key: "copy",
+						icon: "copy",
+						label: i18n.t("common.copy"),
+						onSelect: () => void copyWithToast(inline.textContent ?? ""),
+					},
+				],
+			},
+		];
+	return null;
+}

@@ -14,6 +14,42 @@ export function str(value: unknown): string | null {
 	return typeof value === "string" ? value : null;
 }
 
+/** A trailing `:chunk` that reads as a selector: line ranges, `raw`, `conflicts`. */
+const SEL_CHUNK_RE = /^(raw|conflicts|\d+(?:[-+]\d*)?(?:,\d+(?:[-+]\d*)?)*)$/i;
+
+/** Split a `path:sel` argument (handles compound `:50-100:raw` selectors). */
+export function splitPathSel(rawPath: string): {
+	path: string;
+	sel: string | null;
+} {
+	let path = rawPath;
+	const chunks: string[] = [];
+	for (let i = 0; i < 2; i++) {
+		const idx = path.lastIndexOf(":");
+		if (idx <= 0 || !SEL_CHUNK_RE.test(path.slice(idx + 1))) break;
+		chunks.unshift(path.slice(idx + 1));
+		path = path.slice(0, idx);
+	}
+	return { path, sel: chunks.length > 0 ? chunks.join(":") : null };
+}
+
+/**
+ * 工具调用的「主体」（右键菜单的复制命令 / 复制路径、在文件面板打开）：bash 取命令，带路径参数的取路径
+ * （`read` 的 `path:选择器` 去掉选择器）；其余为 null。
+ */
+export function toolSubject(
+	name: string,
+	args: unknown,
+): { kind: "command" | "path"; text: string } | null {
+	if (!isRecord(args)) return null;
+	const command = str(args.command);
+	if (name === "bash" && command) return { kind: "command", text: command };
+	const raw = str(args.path) ?? str(args.file_path);
+	if (!raw) return null;
+	const path = name === "read" ? splitPathSel(raw).path : raw;
+	return path ? { kind: "path", text: path } : null;
+}
+
 export function num(value: unknown): number | null {
 	return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
