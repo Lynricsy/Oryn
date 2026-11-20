@@ -530,15 +530,18 @@ function DesktopView({
 	const shownStatus: DesktopStatus = want ? status : "closed";
 	const running = desktop.browser === "running";
 	const moreItems: MenuItem[] = [
+		// 两个缩放项也带图标：与下面的动作项文字左缘对齐
 		{
 			key: "follow",
 			label: t("deskPanel.scale.follow"),
+			icon: "monitor",
 			checked: scale === "follow",
 			onSelect: () => uiStore.getState().setDesktopScale("follow"),
 		},
 		{
 			key: "fit",
 			label: t("deskPanel.scale.fit"),
+			icon: "minimize",
 			checked: scale === "fit",
 			onSelect: () => uiStore.getState().setDesktopScale("fit"),
 		},
