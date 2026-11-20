@@ -477,7 +477,7 @@
 		"moreActions": "More actions",
 		"notFound": "Thread not found",
 		"orb": "Orb",
-		"orbState": "State: {{state}}",
+		"orbState": "Orb state: {{state}}",
 		"orbStopped": "This orb is stopped, and opening the thread doesn't wake it. You can browse files read-only in the Files panel; send a message or click Wake to continue.",
 		"orbWake": "Wake",
 		"pin": "Pin",

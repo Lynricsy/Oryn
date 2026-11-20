@@ -20,7 +20,7 @@ import { ThreadHeader, useThreadActions } from "./ThreadHeader";
 
 const PROJECT = { id: "P-hdr", name: "oryn", icon: "" };
 
-function renderHeader(id: string, thread: Partial<Thread>) {
+function renderHeader(id: string, thread: Partial<Thread>, infoBeside = false) {
 	getThreadStore(id)
 		.getState()
 		.patchLocal({ thread: { id, ...thread } as Thread });
@@ -31,7 +31,7 @@ function renderHeader(id: string, thread: Partial<Thread>) {
 	render(
 		<QueryClientProvider client={client}>
 			<MemoryRouter>
-				<ThreadHeader threadId={id} sidebarToggle />
+				<ThreadHeader threadId={id} sidebarToggle infoBeside={infoBeside} />
 			</MemoryRouter>
 		</QueryClientProvider>,
 	);
@@ -89,7 +89,7 @@ describe("ThreadHeader orb 状态胶囊", () => {
 				} as Orb,
 			});
 		renderHeader(id, { title: "无图标的线程", orbId: `orb-${id}` });
-		return screen.getByRole("button", { name: /^状态：/ });
+		return screen.getByRole("button", { name: /^orb 状态：/ });
 	}
 
 	it("orb 就绪而最近 setup 失败时，胶囊报环境失败", () => {
@@ -97,7 +97,7 @@ describe("ThreadHeader orb 状态胶囊", () => {
 			state: "ready",
 			lastSetup: FAILED_SETUP as Orb["lastSetup"],
 		});
-		expect(chip).toHaveAccessibleName("状态：环境 setup 失败");
+		expect(chip).toHaveAccessibleName("orb 状态：环境 setup 失败");
 	});
 
 	it.each([
@@ -111,7 +111,22 @@ describe("ThreadHeader orb 状态胶囊", () => {
 			state,
 			lastSetup: FAILED_SETUP as Orb["lastSetup"],
 		});
-		expect(chip).toHaveAccessibleName(`状态：${label}`);
+		expect(chip).toHaveAccessibleName(`orb 状态：${label}`);
+	});
+
+	it("旁边正显示信息面板时不再显示胶囊（状态已在面板里）", () => {
+		const id = "T-orb-beside";
+		getThreadStore(id)
+			.getState()
+			.patchLocal({
+				orb: {
+					id: `orb-${id}`,
+					state: "ready",
+					stateChangedAt: "2026-01-01T00:00:00Z",
+				} as Orb,
+			});
+		renderHeader(id, { title: "无图标的线程", orbId: `orb-${id}` }, true);
+		expect(screen.queryByRole("button", { name: /^orb 状态：/ })).toBeNull();
 	});
 });
 

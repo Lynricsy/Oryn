@@ -554,6 +554,7 @@ export function ThreadScreen({
 								veil={topInset}
 								chromeLeft={chromeLeft && transcriptShown}
 								chromeRight={transcriptShown && !showPanelColumn && !dual}
+								infoBeside={(showPanelColumn || dual) && panelTab === "info"}
 							/>
 						)}
 						{subheader && (

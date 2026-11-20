@@ -123,6 +123,7 @@ function OrbChip({ orb, working }: { orb: Orb; working: boolean }): ReactNode {
 		<button
 			type="button"
 			aria-label={t("thread.orbState", { state })}
+			title={t("thread.orbState", { state })}
 			className={`ml-1.5 inline-flex h-[26px] shrink-0 items-center gap-[7px] rounded-full border px-2 font-medium text-xs transition-colors duration-150 @lg/header:pr-2.5 @lg/header:pl-[9px] ${failedRun ? "border-err/30 bg-err/5 text-err hover:bg-err/10" : "border-border bg-panel/60 text-fg hover:bg-hover"}`}
 			onClick={() => {
 				const ui = uiStore.getState();
@@ -522,6 +523,7 @@ export function ThreadHeader({
 	veil = HEADER_VEIL,
 	chromeLeft = false,
 	chromeRight = false,
+	infoBeside = false,
 }: {
 	threadId: string;
 	/** 非 expanded 宽度时在标题栏左侧显示侧边栏开关；expanded 下侧栏收起时也显示 */
@@ -532,6 +534,8 @@ export function ThreadHeader({
 	chromeLeft?: boolean;
 	/** 页头是窗口最右侧的标题行（右面板没展开）：右侧自绘按钮放这里 */
 	chromeRight?: boolean;
+	/** 旁边正显示着信息面板：orb / runner 的状态、规格都在那里，页头不再重复这枚胶囊 */
+	infoBeside?: boolean;
 }): ReactNode {
 	const { t } = useTranslation();
 	const thread = useThread(threadId, (s) => s.thread);
@@ -720,6 +724,7 @@ export function ThreadHeader({
 			)}
 			{editing === null &&
 				orb &&
+				!infoBeside &&
 				(isRunner ? (
 					<RunnerChip
 						orb={orb}

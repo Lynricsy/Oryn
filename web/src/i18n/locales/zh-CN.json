@@ -477,7 +477,7 @@
 		"moreActions": "更多操作",
 		"notFound": "找不到这个线程",
 		"orb": "orb",
-		"orbState": "状态：{{state}}",
+		"orbState": "orb 状态：{{state}}",
 		"orbStopped": "orb 已停机，打开线程不会唤醒它。文件面板可以只读浏览；发送消息或点「唤醒」后继续。",
 		"orbWake": "唤醒",
 		"pin": "置顶",
