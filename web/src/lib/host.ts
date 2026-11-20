@@ -170,7 +170,7 @@ export interface NativeTabBarHost {
 export interface NativeSinkHost {
 	/** `true`：原生按根滚动的 `contentOffset` 跟随，之后原生底栏 / 页头才允许接管；拒绝 = 不可用。 */
 	set(on: boolean): Promise<void>;
-	/** 原生把根滚动视图滚到打开位 / 关闭位（`animated` = UIKit 滚动动画；网页自己的 smooth 滚动会被 WKWebView 拉回）。 */
+	/** 原生根滚动视图开合：`animated` 时逐帧推进，否则一步落位。 */
 	show(open: boolean, animated: boolean): Promise<void>;
 }
 

@@ -229,7 +229,7 @@ mod native {
             self.call("sinkSet", SinkSet { on, trace })
         }
 
-        /// 把根滚动视图滚到打开位 / 关闭位（`animated` = UIKit 滚动动画）；还没 `sink_set(true)` 时是空操作。
+        /// 原生根滚动视图开合：`animated` 时逐帧推进，否则一步落位；还没 `sink_set(true)` 时是空操作。
         pub fn sink_show(&self, open: bool, animated: bool) -> Result<()> {
             self.call("sinkShow", SinkShow { open, animated })
         }

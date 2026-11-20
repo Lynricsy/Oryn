@@ -179,7 +179,7 @@ pub struct SinkSet {
     pub trace: bool,
 }
 
-/// 程序化开合（`sinkShow` 的载荷）：原生把根滚动视图滚到打开位（`open`）或关闭位，`animated` 时用 UIKit 的滚动动画。
+/// 程序化开合（`sinkShow` 的载荷）：滚到打开位（`open`）或关闭位；`animated` 时逐帧推进，否则一步落位。
 /// 网页发起的 smooth 滚动在 WKWebView 的主框架上会被拉回（M20 探针），所以平滑开合由原生做。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SinkShow {
@@ -625,7 +625,13 @@ mod tests {
     fn header_show_fixture_round_trips() {
         let raw: Value = serde_json::from_str(HEADER_SHOW).unwrap();
         let show: HeaderShow = serde_json::from_value(raw.clone()).unwrap();
-        assert_eq!(show, HeaderShow { alpha: 1.0, ms: 120 });
+        assert_eq!(
+            show,
+            HeaderShow {
+                alpha: 1.0,
+                ms: 120,
+            }
+        );
         assert_eq!(norm(serde_json::to_value(show).unwrap()), norm(raw));
         // ms 可省
         let bare: HeaderShow = serde_json::from_value(json!({"alpha": 0})).unwrap();

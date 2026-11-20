@@ -1450,7 +1450,7 @@ mod tests {
         assert!(valid_header_show(&HeaderShow { alpha: 0.0, ms: 0 }));
         assert!(valid_header_show(&HeaderShow {
             alpha: 1.0,
-            ms: 2000
+            ms: 2000,
         }));
         for (name, bad) in [
             ("alpha 1.1", HeaderShow { alpha: 1.1, ms: 0 }),

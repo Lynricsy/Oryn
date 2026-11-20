@@ -68,7 +68,7 @@ final class TabBarE2ETests: E2ECase {
     //    脚本在按住期间连拍截图，断言揭示边两侧。按住期间测试本身阻塞在手势里，取不了无障碍快照，卡片位置全看截图。
     //    按住 40 秒；CI 的 macOS 机器会整机卡顿（XCUITest 取快照一次 30-60 秒、截图曾卡 3 分钟），
     //    脚本没赶在按住期间截到停稳的图时回 retry：轻点卡片条收起后重拖（脚本最多给 3 次）。
-    //    过半松手：系统按 scroll-snap 吸附到打开
+    //    过半松手：原生滚动代理给出横向落点，UIKit 减速到打开位。
     let dx = (sink.width * 0.55).rounded()
     let y = (screen.height / 2).rounded()
     var attempt = 1
