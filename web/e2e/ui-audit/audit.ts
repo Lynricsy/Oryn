@@ -5,7 +5,6 @@
  * `docs/ui-audit/shots/<id>/<project>-<phase>.png`。浮层另做「滚到底再断言」与「关掉重开再断言」。
  * before 阶段（基线代码）只记录问题、不判失败，问题清单写进截图目录旁的 `<project>-before.json`。
  */
-import { mkdirSync, writeFileSync } from "node:fs";
 import {
 	test as base,
 	expect,
@@ -290,7 +289,7 @@ function record(info: TestInfo, id: string, issues: string[]) {
 	mkdirSync(dir, { recursive: true });
 	writeFileSync(
 		`${dir}${info.project.name}-${PHASE}.json`,
-		`${JSON.stringify({ id, project: info.project.name, phase: PHASE, issues }, null, "\t")}\n`,
+		`${JSON.stringify({ id, project: info.project.name, phase: PHASE, ...result }, null, "\t")}\n`,
 	);
 }
 
@@ -305,11 +304,13 @@ async function shoot(page: Page, info: TestInfo, id: string, suffix = "") {
 /** 登记一个界面用例。 */
 export function surface(s: Surface) {
 	test(s.id, async ({ page }, info) => {
-		test.skip(
+		clearPrevious(info, s.id);
+		const skip =
 			(s.only === "desktop" && isMobile(info)) ||
-				(s.only === "mobile" && !isMobile(info)),
-			`仅${s.only === "desktop" ? "桌面" : "手机"}`,
-		);
+			(s.only === "mobile" && !isMobile(info));
+		const reason = `仅${s.only === "desktop" ? "桌面" : "手机"}`;
+		if (skip) record(info, s.id, { status: "skipped", reason });
+		test.skip(skip, reason);
 		const issues: string[] = [];
 		if (s.init) await page.addInitScript({ content: s.init });
 		await go(page, s.path, s.ready);
@@ -356,7 +357,7 @@ export function surface(s: Surface) {
 			}
 		}
 		const unique = [...new Set(issues)];
-		record(info, s.id, unique);
+		record(info, s.id, { status: "done", issues: unique });
 		if (PHASE === "after") expect(unique, unique.join("\n")).toEqual([]);
 	});
 }
