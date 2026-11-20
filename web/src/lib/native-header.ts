@@ -674,13 +674,17 @@ export function createNativeHeader(
 				// 等起步时刻期间又吸附 / 起拖了：这条作废
 				if (seq !== settleSeq) return;
 				const from = begin ?? predicted;
+				// 静止的绝对截止 = 卡片起步 + 过渡 + 余量（REST_MS 已含 NATIVE_LAG_MS，从起步算要扣掉）；
+				// 换算成从现在起的剩余时长，等起步时刻花掉的时间不重复计
 				if (!next)
 					restTimer = env.setTimeout(
 						() => {
 							moving = false;
 							place();
 						},
-						instant ? 0 : REST_MS + Math.max(0, from - predicted),
+						instant
+							? 0
+							: Math.max(0, from - NATIVE_LAG_MS + REST_MS - env.now()),
 					);
 				if (!want) return;
 				if (instant) {

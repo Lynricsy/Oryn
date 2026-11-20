@@ -723,6 +723,10 @@ describe("控制器", () => {
 		await flush();
 		expect(s.api.show).not.toHaveBeenCalled();
 		const late = EPOCH + s.now() + NATIVE_LAG_MS + 100;
+		// 100ms 后 transitionrun 才到（卡片按 delay 再晚 34ms 起步）
+		s.advance(100);
+		await flush();
+		expect(s.api.show).not.toHaveBeenCalled();
 		begin(late);
 		await flush();
 		expect(s.shows()).toEqual([
@@ -737,7 +741,8 @@ describe("控制器", () => {
 			},
 		]);
 		s.api.show.mockClear();
-		s.advance(REST_MS + 99);
+		// 静止 = 起步 + REST_MS - NATIVE_LAG_MS：从 settle 算共晚 100ms，等待的 100ms 不重复计
+		s.advance(REST_MS - 1);
 		await flush();
 		expect(s.api.show).not.toHaveBeenCalled();
 		s.advance(1);
