@@ -244,7 +244,8 @@ function OrbSection({ threadId }: { threadId: string }) {
 				)
 			}
 		>
-			<div className="flex items-center gap-2.5">
+			{/* orb 编号只留在悬停提示里供排查：它是线程的执行环境，用户不需要认它 */}
+			<div className="flex items-center gap-2.5" title={orb.id}>
 				<OrbBead state={orb.state} active={working} size={20} />
 				<div className="min-w-0">
 					<div className="font-semibold text-sm leading-[18px]">
@@ -256,9 +257,6 @@ function OrbSection({ threadId }: { threadId: string }) {
 						</div>
 					)}
 				</div>
-				<span className="ml-auto self-start font-mono text-2xs text-faint leading-[18px]">
-					{orb.id.slice(0, 12)}
-				</span>
 			</div>
 			{runner ? (
 				// runner（M11b）：没有类型与规格，显示 runner 名、主机与线程的工作目录

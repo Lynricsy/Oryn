@@ -1,9 +1,10 @@
-/** 首页执行位置选择器（M11a）：预热池 orb 不出现在「已有 orb」里；带 Docker 的类型与 orb 显示「Docker」徽标。 */
+/** 首页执行位置选择器：新线程总是新 orb，运行中的 orb（含预热池）不供挑选、编号不出现；带 Docker 的类型显示「Docker」徽标。 */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Orb, Provider } from "../api/client";
+import i18n from "../i18n";
 import { HomePage } from "./HomePage";
 
 const PROVIDER: Provider = {
@@ -64,7 +65,7 @@ beforeEach(() => {
 
 afterEach(() => vi.unstubAllGlobals());
 
-it("预热池 orb 不在「已有 orb」里；Docker 类型与 orb 带徽标", async () => {
+it("运行中的 orb 不可选、编号不出现；只有声明 docker 的类型带徽标", async () => {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false } },
 	});
@@ -79,16 +80,11 @@ it("预热池 orb 不在「已有 orb」里；Docker 类型与 orb 带徽标", a
 	fireEvent.click(
 		await screen.findByRole("button", { name: "local · medium" }),
 	);
-	// 普通 orb 与 Docker orb 都在
-	const work = await screen.findByRole("button", {
-		name: /orb-work00000000/,
-	});
-	const dock = screen.getByRole("button", { name: /orb-dock00000000/ });
-	expect(work).not.toHaveTextContent("Docker");
-	expect(dock).toHaveTextContent("Docker");
-	// 池 orb（idle / warming）都不出现
-	expect(screen.queryByRole("button", { name: /orb-pool/ })).toBeNull();
-	expect(screen.queryByRole("button", { name: /orb-warm/ })).toBeNull();
+	// 已有 orb（普通、Docker、预热池）都不出现，编号也不出现
+	await screen.findAllByRole("button", { name: /^local/ });
+	for (const o of ORBS)
+		expect(screen.queryByText(new RegExp(o.id.slice(0, 12)))).toBeNull();
+	expect(screen.queryByText(i18n.t("newThread.newOrb"))).not.toBeNull();
 	// 新 orb 的类型：只有声明了 docker 特性的类型带徽标
 	const types = screen
 		.getAllByRole("button", { name: /^local/ })

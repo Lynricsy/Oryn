@@ -17,14 +17,7 @@ import { useSpaces } from "../../api/space-queries";
 import { isDark, markHex } from "../../lib/native-header";
 import { parseTitleCard, withTitleCard } from "../../lib/title";
 import { useBreakpoint, useViewportSegments } from "../../lib/viewport";
-import {
-	deleteOrb,
-	deleteThread,
-	patchThread,
-	pauseOrb,
-	renameThread,
-	wakeThread,
-} from "../../state/actions";
+import { deleteThread, patchThread, renameThread } from "../../state/actions";
 import { useIndex, useThread } from "../../state/stores";
 import { uiStore, useUi } from "../../state/ui";
 import { PrChip } from "../github/PrChip";
@@ -130,7 +123,6 @@ function OrbChip({ orb, working }: { orb: Orb; working: boolean }): ReactNode {
 		<button
 			type="button"
 			aria-label={t("thread.orbState", { state })}
-			title={orb.id}
 			className={`ml-1.5 inline-flex h-[26px] shrink-0 items-center gap-[7px] rounded-full border px-2 font-medium text-xs transition-colors duration-150 @lg/header:pr-2.5 @lg/header:pl-[9px] ${failedRun ? "border-err/30 bg-err/5 text-err hover:bg-err/10" : "border-border bg-panel/60 text-fg hover:bg-hover"}`}
 			onClick={() => {
 				const ui = uiStore.getState();
@@ -340,7 +332,6 @@ export function useThreadActions(threadId: string): {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const thread = useThread(threadId, (s) => s.thread);
-	const orb = useOrbOf(threadId);
 	const [error, setError] = useState<string | null>(null);
 	const [scheduleOpen, setScheduleOpen] = useState<ScheduleTarget | null>(null);
 	const act = (fn: () => Promise<unknown>) => () => {
@@ -349,7 +340,6 @@ export function useThreadActions(threadId: string): {
 			setError(e instanceof Error ? e.message : String(e)),
 		);
 	};
-	const isRunner = orb?.kind === "runner";
 	const { archive, dialog: archiveDialog } = useArchiveThread();
 	const items: MenuItem[] = [
 		{
@@ -480,53 +470,6 @@ export function useThreadActions(threadId: string): {
 			icon: "file",
 			label: t("attachments.title"),
 			onSelect: () => uiStore.getState().open({ kind: "attachments" }),
-		},
-		{
-			key: "orb",
-			icon: "box",
-			label: t("thread.orb"),
-			disabled: !thread?.orbId,
-			children: [
-				{
-					key: "state",
-					label: t("thread.orbState", {
-						state: orb ? t(`orbState.${orb.state}`) : "—",
-					}),
-					disabled: true,
-				},
-				// runner 不能冻结、不能删除（409 runner_unsupported）；runner 自己在那台机器上停
-				...(isRunner
-					? []
-					: [
-							{
-								key: "freeze",
-								icon: "pause" as const,
-								label: t("thread.orbFreeze"),
-								disabled: orb?.state !== "ready",
-								onSelect: act(() => pauseOrb(thread?.orbId ?? "", "freeze")),
-							},
-						]),
-				{
-					key: "wake",
-					icon: "play",
-					label: t("thread.orbWake"),
-					onSelect: act(() => wakeThread(threadId)),
-				},
-				...(isRunner
-					? []
-					: [
-							{
-								key: "delete",
-								icon: "trash" as const,
-								danger: true,
-								label: t("thread.orbDelete"),
-								onSelect: () => {
-									if (window.confirm(t("thread.orbDeleteConfirm")))
-										act(() => deleteOrb(thread?.orbId ?? ""))();
-								},
-							},
-						]),
-			],
 		},
 		{
 			key: "debug",

@@ -76,17 +76,6 @@ beforeEach(() => {
 						},
 					],
 				});
-			if (path === "/api/v1/orbs")
-				return Response.json({
-					orbs: [
-						{
-							id: "orb-live00000000000000000001",
-							state: "ready",
-							type: "medium",
-							threadIds: [],
-						},
-					],
-				});
 			if (path === "/api/v1/browser-profiles")
 				return Response.json({ profiles });
 			if (path === "/api/v1/threads" && req.method === "POST") {
@@ -256,20 +245,6 @@ describe("首页 Profile 胶囊", () => {
 		const { browserProfileId, profileMode, ...rest } = posts[1] ?? {};
 		expect([browserProfileId, profileMode]).toEqual([WORK, "takeover"]);
 		expect(rest).toEqual(posts[0]);
-	});
-
-	it("挂到已有 orb 时不出现，也不带 Profile 字段", async () => {
-		renderHome();
-		await pick(/^工作账号/);
-		fireEvent.click(
-			screen.getByRole("button", { name: i18n.t("newThread.newOrb") }),
-		);
-		fireEvent.click(await screen.findByRole("button", { name: /orb-live/ }));
-		expect(
-			screen.queryByRole("button", { name: /^浏览器 Profile：/ }),
-		).toBeNull();
-		await send();
-		expect(posts[0]).not.toHaveProperty("browserProfileId");
 	});
 
 	it("没有任何 Profile 时不出现", async () => {

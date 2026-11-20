@@ -32,14 +32,12 @@ export function profileConflictOf(e: unknown): ProfileConflict | null {
 	};
 }
 
-/** 持有者的线程名（去掉标题卡图标）；没有线程时退到 orb 短 id。 */
+/** 持有者的线程名（去掉标题卡图标）；没有线程时退到「另一台 orb」（不显示编号）。 */
 export function holderTitle(holder: ProfileHolder, t: TFunction): string {
 	const title = holder.threadTitle
 		? parseTitleCard(holder.threadTitle).text
 		: "";
-	return (
-		title || t("deskPanel.profile.otherOrb", { id: holder.orbId.slice(0, 12) })
-	);
+	return title || t("deskPanel.profile.otherOrb");
 }
 
 /** orb 上 Profile 状态的一句话（Desktop 面板与信息面板共用）及其色调。 */

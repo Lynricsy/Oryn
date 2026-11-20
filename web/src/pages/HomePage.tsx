@@ -25,12 +25,7 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
 import type { Schemas } from "../api/client";
 import { useComposerPrefs } from "../api/identity-queries";
-import {
-	useBrowserProfiles,
-	useOrbs,
-	useProjects,
-	useProviders,
-} from "../api/queries";
+import { useBrowserProfiles, useProjects, useProviders } from "../api/queries";
 import { createAssistantConversation } from "../api/space-queries";
 import {
 	AttachButton,
@@ -77,7 +72,6 @@ import { setPendingPrompt } from "../components/transcript/pending-prompt";
 import { Badge, BrandMark, ProjectBadge, Sheet } from "../components/ui/data";
 import { Icon } from "../components/ui/icons";
 import { DockerBadge, typeHasDocker } from "../components/ui/OrbBadges";
-import { OrbBead } from "../components/ui/OrbBead";
 import { Option, Popover, PopoverLabel } from "../components/ui/PickerPopover";
 import {
 	describeError,
@@ -97,7 +91,8 @@ import {
 
 type Pill = "executor" | "profile" | "project" | "role";
 
-type Executor = Schemas["ThreadExecutor"];
+/** 新线程总是得到一台新 orb（或 runner 目录）：已有 orb 是别的线程的执行环境，不供挑选。 */
+type Executor = Schemas["ThreadExecutorNewOrb"];
 
 /** 新线程的浏览器 Profile：`null` = 跟随项目默认（不带字段），`""` = 不使用，`bpf_…` = 指定。 */
 type ProfilePick = string | null;
@@ -153,7 +148,6 @@ export function HomePage(): ReactNode {
 	const header = sidebarToggle || chromeLeft || chrome.right !== null;
 	const providers = useProviders();
 	const projects = useProjects();
-	const orbs = useOrbs();
 	const profiles = useBrowserProfiles();
 	const [prompt, setPrompt] = useState("");
 	const [pill, setPill] = useState<Pill | null>(null);
@@ -275,9 +269,8 @@ export function HomePage(): ReactNode {
 	}, []);
 
 	const profileList = profiles.data?.profiles ?? [];
-	// Profile 胶囊：新 orb 且至少有一个 Profile 时出现（挂到已有 orb 时沿用那台 orb 的 Profile）
-	const showProfile =
-		executor.kind === "new_orb" && !runnerPick && profileList.length > 0;
+	// Profile 胶囊：新 orb 且至少有一个 Profile 时出现（runner 用那台机器自己的浏览器）
+	const showProfile = !runnerPick && profileList.length > 0;
 	const showProfileRef = useRef(showProfile);
 	showProfileRef.current = showProfile;
 	const project = projects.data?.projects.find((p) => p.id === projectId);
@@ -298,29 +291,10 @@ export function HomePage(): ReactNode {
 		setPill(null);
 	};
 	const newOrbDefault = defaultNewOrb(providers.data, project);
-	const shownNewOrb =
-		executor.kind !== "new_orb"
-			? undefined
-			: executor.provider
-				? { provider: executor.provider, type: executor.type }
-				: newOrbDefault;
-	// 协调 orb（M9，跑在控制面宿主上）不能挂工作线程，也不出现在执行位置里；
-	// 预热池 orb（M11a）由控制面在新建线程时自动认领，不能手动挂（服务端回 409 orb_is_pooled）
-	const liveOrbs = (orbs.data?.orbs ?? []).filter(
-		(o) =>
-			!o.coordinator &&
-			// runner 的常驻 orb（M11b）在「Runners」分组里按目录选，不作为已有 orb 挂
-			o.kind !== "runner" &&
-			!o.pool &&
-			o.state !== "deleted" &&
-			o.state !== "deleting" &&
-			o.state !== "failed",
-	);
+	const shownNewOrb = executor.provider
+		? { provider: executor.provider, type: executor.type }
+		: newOrbDefault;
 	// 胶囊的无障碍名保持原拼接字符串；视觉上把「·」后的部分拆成徽标
-	const existingOrbLabel =
-		executor.kind === "orb"
-			? t("newThread.existingOrb", { id: executor.orbId.slice(0, 12) })
-			: "";
 	const executorText: PillText = runnerPick
 		? {
 				label: `${runnerPick.runnerName} · ${runnerPickDir(runnerPick)}${runnerPick.mode === "worktree" ? ` · ${t("runner.modeWorktree")}` : ""}`,
@@ -330,15 +304,13 @@ export function HomePage(): ReactNode {
 						? t("runner.worktreeBadge")
 						: undefined,
 			}
-		: executor.kind === "orb"
-			? { label: existingOrbLabel, main: existingOrbLabel }
-			: shownNewOrb
-				? {
-						label: `${shownNewOrb.provider}${shownNewOrb.type ? ` · ${shownNewOrb.type}` : ""}`,
-						main: shownNewOrb.provider,
-						badge: shownNewOrb.type,
-					}
-				: { label: t("newThread.newOrb"), main: t("newThread.newOrb") };
+		: shownNewOrb
+			? {
+					label: `${shownNewOrb.provider}${shownNewOrb.type ? ` · ${shownNewOrb.type}` : ""}`,
+					main: shownNewOrb.provider,
+					badge: shownNewOrb.type,
+				}
+			: { label: t("newThread.newOrb"), main: t("newThread.newOrb") };
 	const projectName = projectId
 		? (project?.name ?? projectId)
 		: t("newThread.noProject");
@@ -417,7 +389,7 @@ export function HomePage(): ReactNode {
 							model: { provider: target.model.provider, id: target.model.id },
 						}),
 				...(target.thinking ? { thinkingLevel: target.thinking } : {}),
-				...(executor.kind === "new_orb" && !runnerPick && profilePick !== null
+				...(!runnerPick && profilePick !== null
 					? { browserProfileId: profilePick }
 					: {}),
 			},
@@ -784,34 +756,6 @@ export function HomePage(): ReactNode {
 											prompt={prompt}
 											onPick={setRunnerPick}
 										/>
-										{liveOrbs.length > 0 && (
-											<PopoverLabel>{t("newThread.existingOrbs")}</PopoverLabel>
-										)}
-										{liveOrbs.map((o) => (
-											<Option
-												key={o.id}
-												selected={
-													!runnerPick &&
-													executor.kind === "orb" &&
-													executor.orbId === o.id
-												}
-												leading={<OrbBead state={o.state} />}
-												mono
-												trailing={
-													<>
-														<Badge>{o.type}</Badge>
-														{o.nestedDocker && <DockerBadge />}
-													</>
-												}
-												onClick={() => {
-													setExecutor({ kind: "orb", orbId: o.id });
-													setRunnerPick(null);
-													setPill(null);
-												}}
-											>
-												{o.id.slice(0, 16)}
-											</Option>
-										))}
 									</Popover>
 								)}
 								{pill === "profile" && showProfile && !assistantTarget && (

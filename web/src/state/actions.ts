@@ -461,17 +461,6 @@ export async function wakeThread(threadId: string) {
 	);
 }
 
-export async function pauseOrb(orbId: string, mode: "freeze" | "stop") {
-	indexStore.getState().upsertOrb(
-		await unwrap(
-			api.POST("/api/v1/orbs/{id}/pause", {
-				params: { path: { id: orbId } },
-				body: { mode },
-			}),
-		),
-	);
-}
-
 export async function resumeOrb(orbId: string) {
 	indexStore.getState().upsertOrb(
 		await unwrap(
@@ -480,16 +469,6 @@ export async function resumeOrb(orbId: string) {
 			}),
 		),
 	);
-}
-
-export async function deleteOrb(orbId: string) {
-	indexStore
-		.getState()
-		.upsertOrb(
-			await unwrap(
-				api.DELETE("/api/v1/orbs/{id}", { params: { path: { id: orbId } } }),
-			),
-		);
 }
 
 export async function createThread(body: Schemas["CreateThreadRequest"]) {

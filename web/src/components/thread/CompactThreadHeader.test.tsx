@@ -1,6 +1,6 @@
 /**
  * 手机标题菜单：子菜单只存 key、每次从最新菜单项取；切线程（页头被复用）时菜单收起，
- * 之后的 orb 操作只能落到当前线程，不执行上一个线程缓存的回调。
+ * 之后的操作只能落到当前线程，不执行上一个线程缓存的回调。
  * iOS 原生页头的接入：三件登记成声明式 spec（路径 id、状态珠档位、copy），原生显示稳了网页三件换成透明，
  * 原生回传的 id 在最新的菜单项里找回调。
  */
@@ -18,12 +18,13 @@ import { getThreadStore, resetThreadStores } from "../../state/stores";
 import { uiStore } from "../../state/ui";
 import { CompactThreadHeader } from "./CompactThreadHeader";
 
-const { pauseOrb } = vi.hoisted(() => ({
-	pauseOrb: vi.fn(async (_orbId: string, _mode: string) => undefined),
+const { patchThread } = vi.hoisted(() => ({
+	patchThread: vi.fn(async (_threadId: string, _patch: unknown) => undefined),
 }));
 vi.mock("../../state/actions", async (orig) => ({
 	...(await orig<typeof Actions>()),
-	pauseOrb: (orbId: string, mode: string) => pauseOrb(orbId, mode),
+	patchThread: (threadId: string, patch: unknown) =>
+		patchThread(threadId, patch),
 }));
 
 const nh = vi.hoisted(() => ({
@@ -116,17 +117,17 @@ const item = (key: string) =>
 		`[data-testid="title-menu"] [data-menu-key="${key}"]`,
 	);
 
-function openEnvSubmenu() {
+function openColorSubmenu() {
 	fireEvent.click(capsule());
-	const env = item("env");
-	if (!env) throw new Error("没有运行环境行");
-	fireEvent.click(env);
+	const color = item("color");
+	if (!color) throw new Error("没有颜色项");
+	fireEvent.click(color);
 }
 
 describe("CompactThreadHeader 标题菜单", () => {
 	beforeEach(() => {
 		resetThreadStores();
-		pauseOrb.mockClear();
+		patchThread.mockClear();
 		vi.stubGlobal(
 			"fetch",
 			vi.fn(async () => Response.json({ code: "not_found" }, { status: 404 })),
@@ -138,31 +139,29 @@ describe("CompactThreadHeader 标题菜单", () => {
 		vi.unstubAllGlobals();
 	});
 
-	it("A 的运行环境子菜单开着时切到 B：菜单收起；再打开后冻结的是 B 的 orb", () => {
+	it("A 的颜色子菜单开着时切到 B：菜单收起；再打开后改的是 B 的颜色", () => {
 		const show = mount();
-		openEnvSubmenu();
-		expect(item("freeze")).not.toBeNull();
+		openColorSubmenu();
+		expect(item("red")).not.toBeNull();
 		show(B);
 		expect(capsule()).toHaveAttribute("aria-expanded", "false");
 		// 退出动画期间也不能再出现 A 的子菜单
-		expect(item("freeze")).toBeNull();
-		openEnvSubmenu();
-		const freeze = item("freeze");
-		if (!freeze) throw new Error("没有冻结项");
-		fireEvent.click(freeze);
-		expect(pauseOrb.mock.calls).toEqual([[ORB_B, "freeze"]]);
+		expect(item("red")).toBeNull();
+		openColorSubmenu();
+		const red = item("red");
+		if (!red) throw new Error("没有红色项");
+		fireEvent.click(red);
+		expect(patchThread.mock.calls).toEqual([[B, { color: "red" }]]);
 	});
 
-	it("子菜单开着时线程状态变化：子菜单项跟着最新状态（orb 冻结后「冻结」不可点）", () => {
+	it("运行环境子菜单只有「环境信息」：orb 由线程自动管理，没有手动冻结 / 删除", () => {
 		mount();
-		openEnvSubmenu();
-		expect(item("freeze")).toBeEnabled();
-		act(() => {
-			getThreadStore(A)
-				.getState()
-				.apply([{ type: "orb", orb: makeOrb(ORB_A, [A], "frozen") }]);
-		});
-		expect(item("freeze")).toBeDisabled();
+		fireEvent.click(capsule());
+		const env = item("env");
+		if (!env) throw new Error("没有运行环境行");
+		fireEvent.click(env);
+		expect(item("info")).not.toBeNull();
+		for (const k of ["freeze", "wake", "delete"]) expect(item(k), k).toBeNull();
 	});
 });
 
@@ -192,7 +191,7 @@ describe("CompactThreadHeader iOS 原生页头", () => {
 	const initialWidth = window.innerWidth;
 	beforeEach(() => {
 		resetThreadStores();
-		pauseOrb.mockClear();
+		patchThread.mockClear();
 		nh.setPart.mockClear();
 		nh.cover.mockClear();
 		nh.active = false;
@@ -231,12 +230,7 @@ describe("CompactThreadHeader iOS 原生页头", () => {
 		]);
 		const env = title.menu.status.find((i) => i.id === "env");
 		expect(env?.sub?.icon?.orb).toBe("ready");
-		expect(env?.children?.map((i) => i.id)).toEqual([
-			"env/info",
-			"env/freeze",
-			"env/wake",
-			"env/delete",
-		]);
+		expect(env?.children?.map((i) => i.id)).toEqual(["env/info"]);
 		// 胶囊第二行的运行环境段与菜单的说明行同一档位
 		expect(title.meta.at(-1)?.icon?.orb).toBe("ready");
 		const groups = title.menu.groups.flat();
@@ -291,19 +285,19 @@ describe("CompactThreadHeader iOS 原生页头", () => {
 		}
 	});
 
-	it("原生选中按路径在最新菜单项里找回调：切到 B 后（含上一份登记的 onSelect）只冻结 B 的 orb", () => {
+	it("原生选中按路径在最新菜单项里找回调：切到 B 后（含上一份登记的 onSelect）只改 B 的颜色", () => {
 		const { show } = mountNative();
-		act(() => part("title").onSelect("env/freeze"));
-		expect(pauseOrb.mock.calls).toEqual([[ORB_A, "freeze"]]);
+		act(() => part("title").onSelect("color/red"));
+		expect(patchThread.mock.calls).toEqual([[A, { color: "red" }]]);
 		const stale = part("title").onSelect;
-		pauseOrb.mockClear();
+		patchThread.mockClear();
 		show(B);
 		expect(part("title").key).toBe(B);
-		act(() => part("title").onSelect("env/freeze"));
-		act(() => stale("env/freeze"));
-		expect(pauseOrb.mock.calls).toEqual([
-			[ORB_B, "freeze"],
-			[ORB_B, "freeze"],
+		act(() => part("title").onSelect("color/red"));
+		act(() => stale("color/red"));
+		expect(patchThread.mock.calls).toEqual([
+			[B, { color: "red" }],
+			[B, { color: "red" }],
 		]);
 	});
 
@@ -316,19 +310,20 @@ describe("CompactThreadHeader iOS 原生页头", () => {
 		mountNative();
 		act(() => part("title").onSelect("link"));
 		expect(writeText).not.toHaveBeenCalled();
+		// 已归档的线程不能加定时：「定时」禁用
 		act(() => {
-			getThreadStore(A)
-				.getState()
-				.apply([{ type: "orb", orb: makeOrb(ORB_A, [A], "frozen") }]);
+			const s = getThreadStore(A).getState();
+			s.patchLocal({ thread: { ...s.thread, archivedAt: 1 } as Thread });
 		});
-		const freeze = part("title")
-			.menu.status.find((i) => i.id === "env")
-			?.children?.find((i) => i.id === "env/freeze");
-		expect(freeze?.disabled).toBe(true);
-		act(() => part("title").onSelect("env/freeze"));
-		act(() => part("title").onSelect("env"));
+		const schedule = part("title")
+			.menu.groups.flat()
+			.find((i) => i.id === "schedule");
+		expect(schedule?.disabled).toBe(true);
+		act(() => part("title").onSelect("schedule"));
+		expect(screen.queryByRole("dialog")).toBeNull();
+		act(() => part("title").onSelect("color"));
 		act(() => part("title").onSelect("nope/x"));
-		expect(pauseOrb).not.toHaveBeenCalled();
+		expect(patchThread).not.toHaveBeenCalled();
 	});
 
 	it("lead.onTap 开关侧栏", () => {

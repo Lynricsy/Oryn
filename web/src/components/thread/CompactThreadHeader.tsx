@@ -9,7 +9,7 @@
  * 打开时页头下方铺一层遮罩，标题胶囊留在遮罩之上；点遮罩、按 Esc 或选中一项后关闭，焦点回到标题胶囊。
  *
  * iOS 26+ 的 App 里这三件与两个菜单由原生 Liquid Glass 接管（lib/native-header.ts）：每次渲染把三件的矩形、内容与两棵菜单树
- * 登记成声明式 spec（菜单项 id 是路径，如 `env/freeze`），原生点击回传 id，这里在**最新**的菜单项里找回调执行。
+ * 登记成声明式 spec（菜单项 id 是路径，如 `color/red`），原生点击回传 id，这里在**最新**的菜单项里找回调执行。
  * 原生显示稳了（`useNativeHeaderActive`）网页三件换成透明（仍可命中：遮挡探测靠它们）；原生页头跟着下沉卡片走，开合途中不换回来。
  * 网页遮罩盖住页头、切到面板标签（`visible` 为假）时原生让位，网页三件当帧回来。网页标题菜单原样保留，让位期间点到的就是它。
  */
@@ -157,7 +157,6 @@ export function CompactThreadHeader({
 
 	const status: Row[] = [];
 	if (orb && env) {
-		const orbItem = byKey.get("orb");
 		// 说明行文字：网页与原生共用同一串
 		const envText = `${
 			runner
@@ -198,8 +197,6 @@ export function CompactThreadHeader({
 					label: t("titleMenu.envInfo"),
 					onSelect: () => uiStore.getState().setThreadTab("info"),
 				},
-				// orb 子菜单的第一项是不可点的状态行，这里已经在说明里写了
-				...(orbItem?.children ?? []).filter((c) => c.key !== "state"),
 			],
 		});
 	}
