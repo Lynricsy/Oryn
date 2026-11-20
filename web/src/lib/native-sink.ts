@@ -221,7 +221,8 @@ export function createSinkScroll(
 			} else arm(SINK_REST_MS);
 		},
 		request(to, smooth) {
-			if (env.rest() === to && committed === to) return;
+			// 已在目标位且已提交时不动；但有在途目标（另一端的动画还没起步或正在走）时照发，让原生停掉旧动画
+			if (target === null && env.rest() === to && committed === to) return;
 			free = true;
 			target = to;
 			waits = 0;

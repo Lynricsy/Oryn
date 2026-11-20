@@ -254,6 +254,19 @@ describe("createSinkScroll", () => {
 		expect(scrollTo).toHaveBeenLastCalledWith("closed", true);
 	});
 
+	it("T12 关闭位 request(open) 后、动画首帧前又 request(closed)：照发关闭（停掉旧动画），最终提交 closed 而不是重新打开", () => {
+		const { s, scrollTo, commit, scroll } = setup("closed");
+		s.request("open", true);
+		s.request("closed", true);
+		expect(scrollTo.mock.calls).toEqual([
+			["open", true],
+			["closed", true],
+		]);
+		scroll("closed");
+		vi.advanceTimersByTime(SINK_REQUEST_MS);
+		expect(commit.mock.calls).toEqual([["closed"]]);
+	});
+
 	it("提交之后恢复守卫：非本页引起的位移再次被拉回", () => {
 		const { s, scrollTo, commit, scroll } = setup();
 		s.request("open", true);
