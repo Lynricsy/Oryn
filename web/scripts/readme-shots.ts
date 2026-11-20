@@ -1755,6 +1755,21 @@ interface PageOpts {
 	mobile?: boolean;
 }
 
+/**
+ * vite 把这些路径代理给真实 orynd；mock 未命中的 `fetch` 会经 `realFetch` 落到这里，`xhrUpload` 的 XHR 本就不经 mock。
+ * 用正则而非函数匹配：函数匹配要把每个模块请求都送回 Node 判断一次。
+ */
+const PROXIED = new RegExp(
+	`^${new URL(BASE).origin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/(api|healthz|portal|f/|s/|_af/|p/)`,
+);
+const READ_METHODS: Record<string, true> = {
+	GET: true,
+	HEAD: true,
+	OPTIONS: true,
+};
+/** 被拦下的出网写请求（`方法 路径`）；主流程按组检查，非空即判该组失败。 */
+const blockedWrites: string[] = [];
+
 async function newPage(
 	opts: PageOpts,
 ): Promise<{ ctx: BrowserContext; page: Page }> {
@@ -1765,7 +1780,16 @@ async function newPage(
 		locale: "zh-CN",
 		timezoneId: "Asia/Shanghai",
 		reducedMotion: "reduce",
+		// Service Worker 发出的请求不经过 ctx.route，直接禁用
+		serviceWorkers: "block",
 		...(opts.mobile ? { isMobile: true, hasTouch: true } : {}),
+	});
+	// mock 应答的请求不出网、不经过这里；真正出网的写请求一律拒绝，免得经 vite 代理改动真实 orynd
+	await ctx.route(PROXIED, (route) => {
+		const req = route.request();
+		if (READ_METHODS[req.method()]) return route.fallback();
+		blockedWrites.push(`${req.method()} ${new URL(req.url()).pathname}`);
+		return route.abort("blockedbyclient");
 	});
 	await ctx.addInitScript(initScript(buildDemo(Date.now()), opts));
 	const page = await ctx.newPage();
@@ -2508,28 +2532,35 @@ async function waitForServer(
 
 /**
  * 确认 BASE 是 `VITE_MOCK=1` 的 mock 前端：页面里的 MockServer 构造后会给 `__orynMock` 赋值。
- * 截图流程会经页面发 POST / PUT（上传预览文件、接管桌面等），连到真实控制面会改动真实数据，所以认不出 mock 就直接退出。
+ * 出网写请求已由 `newPage` 的路由拦截；这里在预热、截图之前挡住整个服务器认错的情况。
+ * 只等到导航提交、不等 load：vite 冷启动时首页 load 可能超过 30 秒，判断依据只是这个标志。
+ * 依赖优化会整页重载、打断等待，所以重试几次。
  */
 async function assertMock() {
-	const { ctx, page } = await newPage({
-		scheme: "light",
-		width: 1280,
-		height: 800,
-	});
-	try {
-		await page.goto(BASE);
-		await page.waitForFunction(
-			() => Reflect.get(globalThis, "__orynMock") !== undefined,
-			undefined,
-			{ timeout: 30_000 },
-		);
-	} catch {
-		throw new Error(
-			`${BASE} 上没有初始化 window.__orynMock，不是 VITE_MOCK=1 的 mock 服务器；检查 ORYN_README_BASE 或端口 ${PORT} 是否被占用`,
-		);
-	} finally {
-		await ctx.close();
+	let last = "";
+	for (let attempt = 0; attempt < 3; attempt++) {
+		const { ctx, page } = await newPage({
+			scheme: "light",
+			width: 1280,
+			height: 800,
+		});
+		try {
+			await page.goto(BASE, { waitUntil: "commit" });
+			await page.waitForFunction(
+				() => Reflect.get(globalThis, "__orynMock") !== undefined,
+				undefined,
+				{ timeout: 30_000 },
+			);
+			return;
+		} catch (e) {
+			last = (e as Error).message.split("\n")[0];
+		} finally {
+			await ctx.close();
+		}
 	}
+	throw new Error(
+		`${BASE} 上没有初始化 window.__orynMock，不是 VITE_MOCK=1 的 mock 服务器；检查 ORYN_README_BASE 或端口 ${PORT} 是否被占用（${last}）`,
+	);
 }
 
 /** 预热：先把各页面的懒加载模块请求一遍，避免 vite 首次依赖优化时动态导入失败。 */
@@ -2580,12 +2611,22 @@ try {
 	await mkdir(OUT, { recursive: true });
 	await assertMock();
 	await warmUp();
+	if (blockedWrites.length > 0)
+		throw new Error(
+			`预热时拦下了未被 mock 应答的写请求：${blockedWrites.join("，")}`,
+		);
 	for (const group of GROUPS) {
 		if (ONLY && !ONLY.includes(group)) continue;
 		for (const scheme of SCHEMES) {
 			const file = `${OUT}/${group}-${scheme}.png`;
+			const blockedBefore = blockedWrites.length;
 			try {
 				const png = await SHOOTERS[group](scheme);
+				const blocked = blockedWrites.slice(blockedBefore);
+				if (blocked.length > 0)
+					throw new Error(
+						`拦下了未被 mock 应答的写请求：${blocked.join("，")}`,
+					);
 				if (png.length === 0) continue;
 				await rm(file, { force: true });
 				await Bun.write(file, png);
