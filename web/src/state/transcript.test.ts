@@ -186,6 +186,27 @@ describe("buildTranscript 的条目可见性", () => {
 		])
 			expect(kindsOf(type), type).toEqual([]);
 	});
+
+	it("在途的 display: false 注入消息（xd:// 设备挂载提示）不进转录，可显示的照常", () => {
+		const entries = chain("a.jsonl", [["message", user("go")]]);
+		const live = (display: boolean): LiveMessage => ({
+			messageId: "n1",
+			role: "custom",
+			timestamp: 999,
+			message: {
+				role: "custom",
+				customType: "xdev-mount-notice",
+				content:
+					"<system-notice>xd:// device inventory changed.</system-notice>",
+				display,
+				timestamp: 999,
+			},
+			partialJson: {},
+			ended: true,
+		});
+		expect(messages(build(entries, live(false)))).toHaveLength(1);
+		expect(messages(build(entries, live(true)))).toHaveLength(2);
+	});
 });
 
 describe("mode_change 带上前一条模式", () => {

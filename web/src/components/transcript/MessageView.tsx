@@ -1168,16 +1168,50 @@ function ExecutionMessage({ message }: { message: JsonRecord }) {
 	);
 }
 
+/** 超过这个行数或字数的扩展注入消息默认收成一行摘要（如把整份清单列给模型的启动提示），点开看全文。 */
+const CUSTOM_FOLD_LINES = 6;
+const CUSTOM_FOLD_CHARS = 480;
+
 function CustomMessage({ message }: { message: JsonRecord }) {
-	return (
-		<div className="rounded-lg border border-border-strong border-dashed px-3 py-2">
-			<div className="mb-1.5">
-				<Badge icon="message">
-					{String(message.customType ?? message.role ?? "")}
-				</Badge>
+	const text = textOfContent(message.content);
+	const lines = text.split("\n");
+	const long =
+		lines.length > CUSTOM_FOLD_LINES || text.length > CUSTOM_FOLD_CHARS;
+	const [open, setOpen] = useState(!long);
+	const label = String(message.customType ?? message.role ?? "");
+	if (!long)
+		return (
+			<div className="rounded-lg border border-border-strong border-dashed px-3 py-2">
+				<div className="mb-1.5">
+					<Badge icon="message">{label}</Badge>
+				</div>
+				<Markdown text={text} />
+				<Images content={message.content} />
 			</div>
-			<Markdown text={textOfContent(message.content)} />
-			<Images content={message.content} />
+		);
+	const first = lines.find((l) => l.trim())?.trim() ?? "";
+	return (
+		<div className="overflow-hidden rounded-lg border border-border-strong border-dashed">
+			<button
+				type="button"
+				aria-expanded={open}
+				onClick={() => setOpen((v) => !v)}
+				className="flex h-9 w-full min-w-0 items-center gap-2 px-3 text-left text-muted text-xs hover:bg-hover/60"
+			>
+				<Badge icon="message">{label}</Badge>
+				<span className="min-w-0 flex-1 truncate">{open ? "" : first}</span>
+				<Icon
+					name="chevronRight"
+					size={12}
+					className={`shrink-0 text-ghost transition-transform duration-150 ${open ? "rotate-90" : ""}`}
+				/>
+			</button>
+			{open && (
+				<div className="border-border border-t border-dashed px-3 py-2">
+					<Markdown text={text} />
+					<Images content={message.content} />
+				</div>
+			)}
 		</div>
 	);
 }

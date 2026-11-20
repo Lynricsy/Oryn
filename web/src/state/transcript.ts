@@ -182,14 +182,21 @@ function startupOnly(branch: readonly Entry[]): boolean {
 	);
 }
 
+/**
+ * 只给模型看的注入消息（`display: false` 的 custom / hook 消息，如 omp 的 `xdev-mount-notice`：
+ * 把新挂载的全部 xd:// 设备与文档一次列给模型）：落盘后与在途时都不进转录。
+ */
+function hiddenMessage(message: JsonRecord): boolean {
+	return (
+		(message.role === "custom" || message.role === "hookMessage") &&
+		message.display === false
+	);
+}
+
 function messageItem(e: Entry, message: JsonRecord): TranscriptItem | null {
 	const role = message.role;
 	if (role === "toolResult") return null; // 在对应 assistant 的工具卡片里渲染
-	if (
-		(role === "custom" || role === "hookMessage") &&
-		message.display === false
-	)
-		return null;
+	if (hiddenMessage(message)) return null;
 	return {
 		kind: "message",
 		key: `e${e.seq}`,
@@ -299,7 +306,11 @@ export function buildTranscript(
 	const lastSeq =
 		s.entries.length > 0 ? (s.entries[s.entries.length - 1]?.seq ?? 0) : 0;
 	const live = s.liveMessage;
-	if (live && !s.entries.some((e) => entryCoversMessage(e, live))) {
+	if (
+		live &&
+		!hiddenMessage(live.message) &&
+		!s.entries.some((e) => entryCoversMessage(e, live))
+	) {
 		items.push({
 			kind: "message",
 			key: `live-${live.messageId ?? live.timestamp ?? "m"}`,

@@ -35,7 +35,7 @@ import type {
 } from "../omp/types";
 import { activeBranch, isMainFile } from "../state/transcript";
 import { MockArtifacts } from "./artifacts";
-import { MockAssistant } from "./assistant";
+import { MockAssistant, xdevMountNotice } from "./assistant";
 import { MockAutomation } from "./automation";
 import { MockDesktop } from "./desktop";
 import {
@@ -3808,6 +3808,22 @@ export class MockServer {
 		});
 		await sleep(d);
 		this.appendEntry(threadId, userMsg);
+		// 助手对话：omp 随这一轮注入 xd:// 设备挂载提示（display: false），模型首个 token 前它是最后一条在途消息
+		if (t.kind === "assistant") {
+			const notice = xdevMountNotice(Date.now());
+			const nid = `m${this.idSeq++}`;
+			this.frame(threadId, {
+				type: "message_start",
+				messageId: nid,
+				message: notice,
+			});
+			this.frame(threadId, {
+				type: "message_end",
+				messageId: nid,
+				message: notice,
+			});
+			await sleep(Math.max(d, 2500));
+		}
 
 		const ts1 = Date.now();
 		const mid1 = `m${this.idSeq++}`;
