@@ -17,13 +17,14 @@
 # 开合到位由测试的无障碍断言先行（卡片条、页头侧栏按钮、原生侧栏钮的矩形，±1pt），脚本确认事件、连拍到停稳再比像素。
 # 底栏（TabBarE2ETests.swift，从首页 / 起步）：
 #   loaded   页面就绪：sink.set（on）早于第一条 tabbar.set，截关闭态基线，回传胶囊矩形（来自事件日志 tabbar.set）
-#   open     点页头的侧栏按钮：sink.show（open）= 原生推进，截图（卡片条左缘到侧栏宽、原生按钮在、网页胶囊隐藏在测试里断言）
-#   closed   点露出的卡片条：sink.show（关），截图
+#   open     点页头的侧栏按钮：sink.show（open）= 原生推进，到位后不回弹（no_bounce），截图（卡片条左缘到侧栏宽、原生按钮在、
+#            网页胶囊隐藏在测试里断言）
+#   closed   点露出的卡片条：sink.show（关），到位后不回弹，截图
 #   drag     卡片左缘内起手拖到 0.55 × 侧栏宽并按住：拖动是系统滚动，事件日志里没有信号（也不该有 sink.show）；就绪看截图——
 #            胶囊横条连拍两张一致（卡片停住）、与关闭基线不同、又不是打开态（没松手）
 #   projects 点原生底栏的「项目」：等 tabbar.tap 与网页回发的 tabbar.set（selected = projects），截图（侧栏保持打开在测试里断言）
 #   swipe    在原生底栏上按住「项目」横滑到第 1 项再松手（系统透镜换选中）：等 tabbar.tap 与 tabbar.set（selected = threads），截图
-#   final    再点已选中的第 1 项收起侧栏：sink.show（关），截图
+#   final    再点已选中的第 1 项收起侧栏（侧栏是 drag 拖开的）：sink.show（关），到位后不回弹，截图
 # 页头（HeaderE2ETests.swift，直接打开 mock 的线程页 /t/<MAIN_THREAD>）：
 #   h-loaded  sink.set（on）早于第一条 tabbar.set 与 header.set；header.set（key = 线程 id）与 header.show（alpha 1）：
 #             原生页头接管，回传三件矩形与侧栏宽
@@ -190,6 +191,25 @@ sink_first() {
 # sink_shown <true|false>：自上一步放行（$mark = 那时 sink.show 的条数）起有程序化开合请求、最后一条的 open 是给定值。
 # 按钮、卡片条、再点已选分区都经 host_sink_show 交给原生逐帧推进；手指拖动与松手吸附是系统滚动，不产生 sink.show
 sink_shown() { ev sink.show | tail -n "+$((mark + 1))" | jq -se --argjson o "$1" 'length > 0 and (last | .open == $o)'; }
+# 自上一步放行（$lines = 那时事件日志的行数）起的 sink.trace，单行 JSON 数组
+step_traces() { tail -n "+$((lines + 1))" "$log" | jq -sc 'map(select(.event == "sink.trace"))'; }
+trace_done() { step_traces | jq -e 'any(.op == "done")'; }
+# no_bounce <步骤>：原生开合动画走完（第一条 done）后，等过网页的截止兜底窗口（请求后 SINK_REQUEST_MS 一步落位、
+# 再一个 SINK_REQUEST_MS 宽限，CI 上定时器还会晚几百毫秒），期间不能再有从别处落回终点的 jump / start——
+# 那说明卡片到位后又被带走（如关闭时 history.back() 的滚动恢复把卡片弹回打开位），由兜底收场。
+# noop（已在终点）与起点就在终点的不算
+no_bounce() {
+  local step=$1 bad
+  until_ok "$step" 15 "原生开合动画走完（sink.trace done）" trace_done
+  sleep 4
+  bad=$(step_traces | jq -c '
+    (map(.op == "done") | index(true)) as $d
+    | .[$d + 1:]
+    | map(select((.op == "jump" or .op == "start")
+        and (if .x > .to then .x - .to else .to - .x end) > 0.5))')
+  [[ $bad == "[]" ]] ||
+    fail "$step" "开合到位后卡片又离开终点、由程序化开合落回（回弹）：$bad；本步轨迹：$(step_traces)"
+}
 
 # pt → 截图像素（scale 在 loaded 步骤由基线截图算出）
 px() { awk -v v="$1" -v s="$scale" 'BEGIN { printf "%d", v * s + 0.5 }'; }
@@ -248,6 +268,7 @@ ok() {
   local body='{}'
   if (($# > 1)); then body=$2; fi
   mark=$(count sink.show)
+  lines=$(cat "$log" 2>/dev/null | wc -l | tr -d ' ')
   printf '%s' "$body" >"$sync/$1.tmp"
   mv "$sync/$1.tmp" "$sync/$1.ok"
   echo "- ✅ $1" >>"$summary"
@@ -274,6 +295,7 @@ finish_runner() {
 
 req=""
 mark=0
+lines=0
 wait_req loaded 420
 until_ok loaded 30 "e2e.open" last_is e2e.open '.'
 last_is e2e.open '.ok' >/dev/null || fail loaded "ORYN_E2E_URL 没有打开：$(last e2e.open)"
@@ -294,11 +316,13 @@ ok loaded "{\"frame\":$frame}"
 
 wait_req open 120
 until_ok open 15 "点侧栏按钮打开：sink.show（open）交给原生推进" sink_shown true
+no_bounce open
 steady_shot open
 ok open
 
 wait_req closed 120
 until_ok closed 15 "点卡片条关闭：sink.show（关）交给原生推进" sink_shown false
+no_bounce closed
 steady_shot closed1
 ok closed
 
@@ -342,6 +366,7 @@ ok swipe
 
 wait_req final 120
 until_ok final 15 "再点已选中的第 1 项收起：sink.show（关）交给原生推进" sink_shown false
+no_bounce final
 steady_shot final
 ok final
 
