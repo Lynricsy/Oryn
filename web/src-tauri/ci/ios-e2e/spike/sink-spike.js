@@ -26,8 +26,9 @@
 	let sh = 0; // host_sink_show 调用次数（区分「没点到」与「点到了但没动 / 被拉回」）
 	// 程序化开合的方式：0 smooth；1 instant；2 nosnap；3 snapoff（第 1–3 轮）；
 	// 4 native = host_sink_show {animated: true}（预案 C2）；5 native-instant = host_sink_show {animated: false}；
-	// 6 native-snapoff = 动画期间根上 scroll-snap-type: none，到位后恢复（C2 第 3 轮）
-	const MODES = ["smooth", "instant", "nosnap", "snapoff", "native", "native-instant", "native-snapoff"];
+	// 6 native-snapoff = 动画期间根上 scroll-snap-type: none，命中端点后恢复（C2 第 3–4 轮）；
+	// 7 instant-snapoff = 网页 instant 落位，落位前关吸附、命中端点后恢复（C2 第 4 轮，减少动效的路径）
+	const MODES = ["smooth", "instant", "nosnap", "snapoff", "native", "native-instant", "native-snapoff", "instant-snapoff"];
 	let mode = 0;
 	let restore = null;
 	const go = (x) => {
@@ -37,6 +38,7 @@
 			if (m === "native-snapoff") {
 				root.style.scrollSnapType = "none";
 				restore = x;
+				rx = -1;
 			}
 			invoke?.("host_sink_show", { open: x === 0, animated: m !== "native-instant" }).catch((e) => {
 				error = `show ${e}`;
@@ -45,19 +47,25 @@
 			update();
 			return;
 		}
-		if (m === "nosnap") {
+		if (m === "nosnap" || m === "instant-snapoff") {
 			root.style.scrollSnapType = "none";
 			restore = x;
+			rx = -1;
 		}
-		scrollTo({ left: x, behavior: m === "instant" ? "instant" : "smooth" });
+		scrollTo({ left: x, behavior: m.startsWith("instant") ? "instant" : "smooth" });
 	};
-	// nosnap：到位（或 scrollend）后下一帧恢复吸附
+	// 恢复吸附：nosnap（第 1 轮）到位或 scrollend 后恢复；native-snapoff 只在命中目标端点后恢复（逐帧落位途中也会有
+	// scrollend，第 3 轮在那时恢复等于中途重开吸附，实验不成立）。rx = 恢复那一刻的 scrollX，-1 = 还没恢复过
+	let rx = -1;
 	const maybeRestore = (end) => {
 		if (restore === null) return;
-		if (!end && Math.abs(scrollX - restore) > 0.5) return;
+		const at = Math.abs(scrollX - restore) <= 0.5;
+		if (!at && !(end && MODES[mode] === "nosnap")) return;
 		restore = null;
+		rx = r1(scrollX);
 		requestAnimationFrame(() => {
 			root.style.scrollSnapType = MODES[mode] === "snapoff" ? "none" : "";
+			update();
 		});
 	};
 
@@ -67,7 +75,7 @@
 		status.textContent =
 			`sx=${r1(scrollX)};sy=${r1(scrollY)};iw=${innerWidth};max=${r1(max())};` +
 			`vs=${v ? r1(v.scale) : -1};vy=${v ? r1(v.offsetTop) : -1};kb=${kb};` +
-			`vst=${Math.round(vs.scrollTop)};pre=${Math.round(pre.scrollLeft)};n=${n};g=${guard ? 1 : 0};m=${mode};sk=${sk};sh=${sh}` +
+			`vst=${Math.round(vs.scrollTop)};pre=${Math.round(pre.scrollLeft)};n=${n};g=${guard ? 1 : 0};m=${mode};sk=${sk};sh=${sh};rx=${rx}` +
 			(error ? `;err ${error}` : "");
 	};
 
