@@ -107,7 +107,7 @@ function ProjectIconPicker({
 					{t("projects.iconAuto")}
 				</Button>
 				<span className="min-w-0 flex-1 text-faint text-xs">
-					{t("projects.iconAutoHint")}
+					{t("projects.iconAutoHintShort")}
 				</span>
 			</div>
 			<GlyphGrid

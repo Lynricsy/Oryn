@@ -1209,6 +1209,7 @@
 		"icon": "Project icon",
 		"iconAuto": "Auto",
 		"iconAutoHint": "Auto: uses the icon from the first thread's title card, else the name's first letter.",
+		"iconAutoHintShort": "Uses the icon from the first thread's title card, else the name's first letter.",
 		"title": "Projects",
 		"defaultBrowserProfile": "Default browser profile",
 		"defaultBrowserProfileHint": "New threads in this project load it by default (you can change it when starting a thread).",
