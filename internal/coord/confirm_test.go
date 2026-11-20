@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
 	"github.com/Lynricsy/Oryn/internal/uiprompt"
@@ -29,6 +30,12 @@ type confirmEnv struct {
 // newConfirmEnv 用真实拉起的 fakeomp：协调 orb 就绪后对话的状态才按待答请求推导（provisioning 优先）。
 func newConfirmEnv(t *testing.T) *confirmEnv {
 	ce := &confirmEnv{env: newEnv(t, false), results: make(chan string, 16)}
+	// 先等 Create 发起的 fake orbd 启动完成。否则打开对话可能在启动途中的 orb 上另发 Wake；
+	// 测试替身会启动第二个 orbd，失去对第一个的引用，清理时就收不到它的 agent 退出。
+	require.Eventually(t, func() bool {
+		orb, err := ce.st.Q.GetOrb(ce.ctx, ce.coordOrb)
+		return err == nil && orb.State == orbs.StateReady
+	}, 5*time.Second, 10*time.Millisecond, "协调 orb 就绪")
 	ce.register(ce.c)
 	ce.c.sentConfirm = func(_, text string) { ce.results <- text }
 	return ce
