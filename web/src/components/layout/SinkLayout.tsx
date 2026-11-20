@@ -253,6 +253,10 @@ export function SinkLayout({
 		const root = document.documentElement;
 		root.setAttribute("data-sink-native", "");
 		setMinScale(true);
+		// 根滚动位置就是开合状态，不能交给历史恢复：关闭时 history.back() 弹标记是同文档遍历，"auto" 会把根滚动
+		// 恢复到压标记那一刻（拖开时那一刻已在打开位），卡片在关上之后又弹回打开位（PR #3 ios-check final）
+		const restoration = window.history.scrollRestoration;
+		window.history.scrollRestoration = "manual";
 		const max = () => root.scrollWidth - window.innerWidth;
 		const jump = (to: SinkRest) =>
 			window.scrollTo({
@@ -316,6 +320,7 @@ export function SinkLayout({
 			root.removeAttribute("data-sink-native");
 			snap(true);
 			setMinScale(false);
+			window.history.scrollRestoration = restoration;
 			window.scrollTo(0, 0);
 		};
 	}, [native]);

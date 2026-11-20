@@ -344,11 +344,29 @@ async function run(browser: Browser) {
 			`scrollIntoView 后立即 scrollX=${moved.sx}，300ms 后 scrollX=${n4.sx}，data-open=${n4.open}`,
 		);
 
-		// N5：关上后转录区纵向滑动
+		// N5：拖开（N3）后 Esc 关上：到关闭位后不再离开（关闭时 history.back() 的同文档遍历不能把根滚动恢复到
+		// 拖开时记下的打开位）。减少动效下关闭是一步落位，恢复不会被逐帧动画盖住；之后转录区纵向滑动
 		await mark(page, "N5");
+		await page.evaluate(() => {
+			const bounce = { closed: false, left: -1 };
+			Object.assign(window, { __m20Bounce: bounce });
+			const max = () =>
+				document.documentElement.scrollWidth - window.innerWidth;
+			addEventListener("scroll", () => {
+				if (window.scrollX >= max() - 0.5) bounce.closed = true;
+				else if (bounce.closed && bounce.left < 0)
+					bounce.left = Math.round(window.scrollX);
+			});
+		});
+		await page.emulateMedia({ reducedMotion: "reduce" });
 		await page.keyboard.press("Escape");
 		await until(page, 2000, (s) => s.sx === s.max && !s.open);
-		await sleep(300);
+		await page.emulateMedia({ reducedMotion: null });
+		await sleep(1200);
+		const bounced = await page.evaluate(() => {
+			const b = Reflect.get(window, "__m20Bounce");
+			return b && typeof b === "object" && "left" in b ? Number(b.left) : -2;
+		});
 		const top0 = await page.evaluate(
 			() =>
 				document.querySelector('[data-testid="transcript"]')?.scrollTop ?? -1,
@@ -363,8 +381,8 @@ async function run(browser: Browser) {
 		const n5 = await state(page);
 		report(
 			"N5",
-			n5.sx === sx0 && top1 !== top0,
-			`scrollX ${sx0} -> ${n5.sx}；转录区 scrollTop ${top0} -> ${top1}`,
+			bounced === -1 && n5.sx === sx0 && top1 !== top0,
+			`关上后离开关闭位：${bounced === -1 ? "无" : `scrollX=${bounced}`}；scrollX ${sx0} -> ${n5.sx}；转录区 scrollTop ${top0} -> ${top1}`,
 		);
 
 		// N6：Esc 与返回键

@@ -261,7 +261,7 @@ Do：
 | N2 | 线程页点页头的侧栏钮：1s 内 `scrollX == 0`，侧栏不再 `inert` |
 | N3 | 关闭态慢拖 30% 回到 `max`；慢拖 70% 到 0 且 150ms 内 `sink-card` 带 `data-open` |
 | N4 | 打开态对卡片内元素执行 `scrollIntoView({block: "nearest"})`：300ms 后 `scrollX == 0` |
-| N5 | 转录区纵向滑动：`scrollX` 不变，转录区 `scrollTop` 变了 |
+| N5 | 拖开后在减少动效下 Esc 关上：到关闭位后 1.2s 内不再离开（关闭时 `history.back()` 不能经滚动恢复把卡片弹回打开位）；之后转录区纵向滑动：`scrollX` 不变，转录区 `scrollTop` 变了 |
 | N6 | 打开态按 Esc、再次打开后 `history.back()`：两次都回到 `scrollX == max` |
 | N7 | N2–N6 期间没有新的 `host_header_show` 调用；全程没有任何调用带 `dx`、`passive`、`at` |
 | N8 | 把注入的 `bridge` 改成 7 重开：无 `data-sink-native`，没有 `host_sink_set` / `host_tab_bar_set` / `host_header_set` 调用，慢拖 70% 后 `sink-card` 带 `data-open` |
