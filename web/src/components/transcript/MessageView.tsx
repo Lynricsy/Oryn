@@ -301,8 +301,9 @@ function messageMenuItems(o: {
 }
 
 /**
- * 消息操作菜单：行内渲染，悬停 / 聚焦时显现。打开时按可见空间选择向上或向下展开，
- * 展开后再把菜单滚进页头与输入坞之间（滚动容器带 scroll-padding），保证每一项都点得到。
+ * 消息操作菜单：行内渲染，悬停 / 聚焦时显现。打开时按可见空间（去掉页头与输入坞盖住的部分）选择向上或向下展开；
+ * 菜单在顶层按视口夹位、限高滚动，不再滚动转录去迁就它（滚动会把锚点连同菜单一起带走）。
+ * 显隐的透明度只加在「⋯」按钮上：菜单是外包元素的 DOM 后代，外包元素做 opacity 过渡时菜单的玻璃模糊会被截断。
  */
 function MessageMenu({
 	entryId,
@@ -335,28 +336,19 @@ function MessageMenu({
 	});
 	const itemCount = items.length;
 	return (
-		<div
-			ref={wrapRef}
-			className={`opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/msg:opacity-100 ${touchVisible ? "pointer-coarse:opacity-100" : "group-focus-within/msg:opacity-100"} ${className}`}
-		>
+		<div ref={wrapRef} className={`group/mm ${className}`}>
 			<Menu
 				side={side}
 				trigger={(p) => (
 					<button
 						type="button"
-						className="inline-grid h-6 w-6 place-items-center rounded-md text-ghost hover:bg-hover hover:text-fg"
+						className={`inline-grid h-6 w-6 place-items-center rounded-md text-ghost opacity-0 transition-opacity duration-150 hover:bg-hover hover:text-fg group-focus-within/mm:opacity-100 group-hover/msg:opacity-100 ${touchVisible ? "pointer-coarse:opacity-100" : "group-focus-within/msg:opacity-100"}`}
 						aria-label={t("transcript.messageActions")}
 						{...p}
 						onClick={() => {
-							const opening = !p["aria-expanded"];
-							if (opening) setSide(pickMenuSide(wrapRef.current, itemCount));
+							if (!p["aria-expanded"])
+								setSide(pickMenuSide(wrapRef.current, itemCount));
 							p.onClick();
-							if (!opening) return;
-							requestAnimationFrame(() =>
-								wrapRef.current
-									?.querySelector('[role="menu"]')
-									?.scrollIntoView({ block: "nearest" }),
-							);
 						}}
 					>
 						<Icon name="more" size={14} />

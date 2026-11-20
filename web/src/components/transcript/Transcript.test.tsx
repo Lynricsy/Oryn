@@ -366,8 +366,6 @@ describe("MessageView 回合脚注与消息菜单", () => {
 	it("中间的助手消息的菜单作用于它自己的 entry", () => {
 		const forkFrom = vi.fn();
 		const labelEntry = vi.fn();
-		// jsdom 没有 scrollIntoView；菜单打开后会调用它把弹层滚进可见区
-		Element.prototype.scrollIntoView = vi.fn();
 		const m = assistant("x", { input: 1, output: 1, cacheRead: 0, cost: 0 });
 		render(
 			<TranscriptContext.Provider value={{ ...ctx, forkFrom, labelEntry }}>
@@ -390,7 +388,6 @@ describe("MessageView 回合脚注与消息菜单", () => {
 			configurable: true,
 			value: { writeText },
 		});
-		Element.prototype.scrollIntoView = vi.fn();
 		const u = { input: 1, output: 1, cacheRead: 0, cost: 0 };
 		const turn = summarizeTurn([assistant("a", u), assistant("b", u)]);
 		render(
