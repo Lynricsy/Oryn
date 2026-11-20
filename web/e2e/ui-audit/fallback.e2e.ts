@@ -3,7 +3,7 @@
  * ui/Floating 在这里退回 fixed + z-60、留在原层叠树里；挑「对话框里」「隔离的托盘里」「手机下沉卡片里」三种最容易出事的位置验证。
  * 手机上首页模型选择走 Dialog、线程标题菜单不是 Floating，这两项只在桌面跑；手机改测下沉卡片平移时的执行位置下拉。
  */
-import { expect, lastOverlay, settle, surface } from "./audit";
+import { expect, lastOverlay, PHASE, settle, surface } from "./audit";
 
 const NO_POPOVER = `delete HTMLElement.prototype.showPopover; delete HTMLElement.prototype.hidePopover; delete HTMLElement.prototype.togglePopover;`;
 const MAIN_THREAD = "T-0193a1b2-0000-7000-8000-00000000a001";
@@ -82,6 +82,8 @@ surface({
 	init: SHIFT_SINK,
 	open: async (page) => {
 		await page.getByRole("button", { name: /^local/ }).click();
+		// 基线代码还没有 Floating（旧的 absolute 弹层），只截图记录、不做贴锚断言
+		if (PHASE === "before") return lastOverlay(page);
 		const overlay = page.locator("[data-floating]").last();
 		await overlay.waitFor();
 		// 进入动画带 scale/translate，量 getBoundingClientRect 前等它结束
