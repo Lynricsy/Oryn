@@ -144,8 +144,14 @@ export interface SinkScrollEnv {
 	rest(): SinkRest | null;
 	/** 停在中途时离得近的那一端。 */
 	nearer(): SinkRest;
-	/** 滚到一端：`smooth` 交给原生动画，否则网页 instant。 */
+	/**
+	 * 滚到另一端（本页请求、截止兜底、中途就近吸附）：`smooth` = 原生逐帧动画，否则原生一步落位。
+	 * 都要经原生、且期间关掉吸附直到提交：手指拖动之后，网页自己发起的落位会被 WebKit 按原生侧记着的吸附位置拉回
+	 * （M20 探针 C2 第 4–5 轮）。
+	 */
 	scrollTo(to: SinkRest, smooth: boolean): void;
+	/** 拉回已提交的静止位（非本页引起的位移）：网页 instant 即可，目标就是原生侧记着的吸附位置。 */
+	pull(to: SinkRest): void;
 	setTimeout(cb: () => void, ms: number): number;
 	clearTimeout(id: number): void;
 }
@@ -216,7 +222,7 @@ export function createSinkScroll(
 	return {
 		scrolled() {
 			if (!free && env.rest() !== committed) {
-				env.scrollTo(committed, false);
+				env.pull(committed);
 				return;
 			}
 			arm(SINK_REST_MS);

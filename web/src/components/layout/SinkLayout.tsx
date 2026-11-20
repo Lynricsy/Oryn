@@ -260,8 +260,9 @@ export function SinkLayout({
 				behavior: "instant",
 			});
 		const here = (): SinkRest => (openRef.current ? "open" : "closed");
-		// 程序化平滑开合期间关掉吸附：途中的任何重排（开合本身就会改 inert、圆角、关闭条）都会让浏览器
-		// 「重新吸附到当前吸附目标」，把正在进行的滚动拉回起点。提交或手指按下时恢复。
+		// 程序化开合（平滑或一步落位）一律经原生，期间关掉吸附直到提交：途中的重排会让浏览器重新吸附到原目标；
+		// 手指拖动之后网页自己发起的落位会被 WebKit 按原生侧记着的吸附位置拉回（M20 探针 C2 第 4–5 轮）。
+		// 提交（停稳 SINK_REST_MS 之后）或手指按下时恢复。
 		const snap = (on: boolean) =>
 			on
 				? root.style.removeProperty("scroll-snap-type")
@@ -272,10 +273,10 @@ export function SinkLayout({
 				rest: () => sinkRest(window),
 				nearer: () => (window.scrollX < max() / 2 ? "open" : "closed"),
 				scrollTo: (to, smooth) => {
-					if (!smooth) return jump(to);
 					snap(false);
-					nativeSink.show(to === "open", true);
+					nativeSink.show(to === "open", smooth);
 				},
+				pull: jump,
 				setTimeout: (cb, ms) => window.setTimeout(cb, ms),
 				clearTimeout: (id) => window.clearTimeout(id),
 			},

@@ -113,12 +113,14 @@ describe("createSinkScroll", () => {
 			nearer: "closed" as SinkRest,
 		};
 		const scrollTo = vi.fn();
+		const pull = vi.fn();
 		const commit = vi.fn();
 		const s = createSinkScroll(
 			{
 				rest: () => state.rest,
 				nearer: () => state.nearer,
 				scrollTo,
+				pull,
 				setTimeout: (cb, ms) => setTimeout(cb, ms) as unknown as number,
 				clearTimeout: (id) => clearTimeout(id),
 			},
@@ -130,7 +132,7 @@ describe("createSinkScroll", () => {
 			state.rest = rest;
 			s.scrolled();
 		};
-		return { s, state, scrollTo, commit, scroll };
+		return { s, state, scrollTo, pull, commit, scroll };
 	}
 
 	it("T1 按下、滚到 open、抬起：静止 SINK_REST_MS 后提交 open 恰一次", () => {
@@ -147,10 +149,11 @@ describe("createSinkScroll", () => {
 		expect(commit).toHaveBeenCalledTimes(1);
 	});
 
-	it("T2 无触摸无请求时根离开关闭位：立即 instant 拉回，不提交", () => {
-		const { scrollTo, commit, scroll } = setup();
+	it("T2 无触摸无请求时根离开关闭位：立即 pull 回已提交的位置（不经 scrollTo），不提交", () => {
+		const { scrollTo, pull, commit, scroll } = setup();
 		scroll(null);
-		expect(scrollTo.mock.calls).toEqual([["closed", false]]);
+		expect(pull.mock.calls).toEqual([["closed"]]);
+		expect(scrollTo).not.toHaveBeenCalled();
 		vi.advanceTimersByTime(1000);
 		expect(commit).not.toHaveBeenCalled();
 	});
@@ -318,14 +321,14 @@ describe("createSinkScroll", () => {
 		expect(commit.mock.calls).toEqual([["closed"]]);
 	});
 
-	it("提交之后恢复守卫：非本页引起的位移再次被拉回", () => {
-		const { s, scrollTo, commit, scroll } = setup();
+	it("提交之后恢复守卫：非本页引起的位移再次被 pull 回", () => {
+		const { s, pull, commit, scroll } = setup();
 		s.request("open", true);
 		scroll("open");
 		vi.advanceTimersByTime(SINK_REST_MS);
 		expect(commit.mock.calls).toEqual([["open"]]);
 		scroll(null);
-		expect(scrollTo.mock.calls.at(-1)).toEqual(["open", false]);
+		expect(pull.mock.calls).toEqual([["open"]]);
 	});
 
 	it("dispose 后不再提交", () => {

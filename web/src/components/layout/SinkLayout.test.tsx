@@ -526,7 +526,8 @@ describe("iOS 根滚动模式", () => {
 		expect(card()).not.toHaveAttribute("data-dragging");
 	});
 
-	it("减少动效：sidebarOpen 变真时网页 instant 落到 0，不调原生动画", () => {
+	it("减少动效：sidebarOpen 变真时请求原生一步落位（不带动画），网页自己不滚；期间关掉吸附，停稳提交后恢复", () => {
+		vi.useFakeTimers();
 		vi.stubGlobal("matchMedia", (q: string) => ({
 			matches: q === "(prefers-reduced-motion: reduce)",
 			addEventListener: () => {},
@@ -535,9 +536,15 @@ describe("iOS 根滚动模式", () => {
 		ns.engaged = true;
 		rootScroll(390);
 		mount();
+		scrollTo.mockClear();
 		act(() => uiStore.getState().setSidebar(true));
-		expect(scrollTo).toHaveBeenLastCalledWith({ left: 0, behavior: "instant" });
-		expect(ns.sink.show).not.toHaveBeenCalled();
+		expect(ns.sink.show.mock.calls).toEqual([[true, false]]);
+		expect(scrollTo).not.toHaveBeenCalled();
+		expect(root.style.getPropertyValue("scroll-snap-type")).toBe("none");
+		rootScroll(0);
+		fireEvent.scroll(window);
+		act(() => vi.advanceTimersByTime(100));
+		expect(root.style.getPropertyValue("scroll-snap-type")).toBe("");
 	});
 
 	it("手指拖开：touchmove 不被阻止、不写 --sink-p；抬起后停稳 SINK_REST_MS 才提交 sidebarOpen", () => {
