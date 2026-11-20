@@ -256,40 +256,56 @@ export function setAgentModelOverride(
 	else setPath(doc, path, selector);
 }
 
-/** 输入框预测的两个布尔设置（`composer.predictions`、`composer.predictionAlternatives`，Core 默认都为 false）。 */
+/** 输入框预测的两个布尔设置（`composer.predictions`、`composer.predictionAlternatives`）。 */
 export interface ComposerPredictionSettings {
 	predictions: boolean;
 	alternatives: boolean;
 }
 
-/** 同 Core `parseBoolean`：布尔值，或去空白、不分大小写的 "true"；其余（含缺失）按默认值 false。 */
-function flagAt(doc: Document | undefined, path: Path): boolean {
-	const v: unknown = doc?.getIn(path);
-	if (typeof v === "boolean") return v;
-	return typeof v === "string" && v.trim().toLowerCase() === "true";
+/** Core 的默认值：Core 19 起预测默认开启，多候选仍默认关闭。 */
+const COMPOSER_PREDICTION_DEFAULTS: ComposerPredictionSettings = {
+	predictions: true,
+	alternatives: false,
+};
+
+const COMPOSER_PREDICTION_PATHS: Record<
+	keyof ComposerPredictionSettings,
+	Path
+> = {
+	predictions: COMPOSER_PREDICTIONS,
+	alternatives: COMPOSER_PREDICTION_ALTERNATIVES,
+};
+
+/**
+ * 同 Core 设置注册表的 `accepts` / `compute`：只认 YAML 布尔值，其余（含缺失、字符串 "false"）按默认值
+ * （Core 记一条 invalid 警告后用默认值）。
+ */
+function flagAt(
+	doc: Document | undefined,
+	key: keyof ComposerPredictionSettings,
+): boolean {
+	const v: unknown = doc?.getIn(COMPOSER_PREDICTION_PATHS[key]);
+	return typeof v === "boolean" ? v : COMPOSER_PREDICTION_DEFAULTS[key];
 }
 
 export function composerPredictionSettings(
 	doc: Document | undefined,
 ): ComposerPredictionSettings {
 	return {
-		predictions: flagAt(doc, COMPOSER_PREDICTIONS),
-		alternatives: flagAt(doc, COMPOSER_PREDICTION_ALTERNATIVES),
+		predictions: flagAt(doc, "predictions"),
+		alternatives: flagAt(doc, "alternatives"),
 	};
 }
 
-/** 开关输入框预测设置项；关闭即删除该键（回到 Core 默认 false），`composer` 变空时一并删除。 */
+/** 开关输入框预测设置项；与 Core 默认值相同时删除该键，`composer` 变空时一并删除。 */
 export function setComposerPredictionSetting(
 	doc: Document,
 	key: keyof ComposerPredictionSettings,
 	on: boolean,
 ): void {
-	const path =
-		key === "predictions"
-			? COMPOSER_PREDICTIONS
-			: COMPOSER_PREDICTION_ALTERNATIVES;
-	if (on) setPath(doc, path, true);
-	else removePath(doc, path);
+	const path = COMPOSER_PREDICTION_PATHS[key];
+	if (on === COMPOSER_PREDICTION_DEFAULTS[key]) removePath(doc, path);
+	else setPath(doc, path, on);
 }
 
 // ── 启停键：与 Core 各 capability 的 `toExtensionId` 一致（`packages/coding-agent/src/capability/*.ts`） ──
