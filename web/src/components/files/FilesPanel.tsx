@@ -16,6 +16,7 @@ import {
 } from "../../lib/file-source";
 import { wakeThread } from "../../state/actions";
 import { useThread } from "../../state/stores";
+import { uiStore, useUi } from "../../state/ui";
 import { Icon } from "../ui/icons";
 import { Button, ErrorText, Spinner } from "../ui/primitives";
 import { FileBrowser, type FilePublisher } from "./FileBrowser";
@@ -113,6 +114,8 @@ export default function FilesPanel({
 		return null;
 	};
 	useWorkspaceActivity(orbId ? threadId : undefined, bump);
+	// 从转录 / 改动列表等处请求打开的文件（`uiStore.openFile`）
+	const openPath = useUi((s) => s.fileSel[threadId]);
 	return (
 		<div className="flex h-full min-h-0 flex-col">
 			{!orbId && (
@@ -150,6 +153,8 @@ export default function FilesPanel({
 					refreshKey={refreshKey}
 					publisher={publisher}
 					renderError={renderError}
+					openPath={openPath}
+					onOpened={() => uiStore.getState().clearFileSel(threadId)}
 				/>
 			</div>
 		</div>

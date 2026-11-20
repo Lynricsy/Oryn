@@ -349,6 +349,41 @@ describe("FileBrowser", () => {
 		expect(await screen.findByText("deep.txt")).toBeInTheDocument();
 		expect(list.mock.calls.map((c) => c[0])).toEqual(["/r", "/r/sub"]);
 	});
+
+	it("外部请求打开文件（openPath）：逐级展开父目录、打开文件后回调 onOpened；路径不在任何根下只回调", async () => {
+		mem.dirs.add("/r/sub");
+		mem.dirs.add("/r/sub/inner");
+		mem.files.set("/r/sub/inner/deep.txt", { text: "deep", v: 1 });
+		const onOpened = vi.fn();
+		const { rerender } = render(
+			<FileBrowser
+				sources={[mem.src]}
+				storageKey="test"
+				openPath={{ path: "/r/sub/inner/deep.txt", n: 1 }}
+				onOpened={onOpened}
+			/>,
+		);
+		expect(
+			await screen.findByLabelText("editor:/r/sub/inner/deep.txt"),
+		).toHaveValue("deep");
+		expect(
+			screen.getByRole("treeitem", { name: "deep.txt" }),
+		).toBeInTheDocument();
+		expect(onOpened).toHaveBeenCalledTimes(1);
+		rerender(
+			<FileBrowser
+				sources={[mem.src]}
+				storageKey="test"
+				openPath={{ path: "/elsewhere/x.txt", n: 2 }}
+				onOpened={onOpened}
+			/>,
+		);
+		await waitFor(() => expect(onOpened).toHaveBeenCalledTimes(2));
+		// 不在任何根下：当前打开的文件不变
+		expect(
+			await screen.findByLabelText("editor:/r/sub/inner/deep.txt"),
+		).toBeInTheDocument();
+	});
 });
 
 /** 清空微任务队列（过期请求的后续 await 链跑完），不依赖计时器。 */
