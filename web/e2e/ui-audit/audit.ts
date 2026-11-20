@@ -130,6 +130,12 @@ async function inspect(target: Locator): Promise<string[]> {
 		const R = Math.min(r.right, vw) - 6;
 		const B = Math.min(r.bottom, vh) - 6;
 		const foreign = new Map<string, number>();
+		// 悬停跟随类浮层（图表提示）是 pointer-events:none，elementFromPoint 会穿过它；采样期间临时让浮层可命中，采完恢复
+		const probe = document.createElement("style");
+		probe.textContent =
+			"[data-ua-probe], [data-ua-probe] * { pointer-events: auto !important; }";
+		document.head.append(probe);
+		root.setAttribute("data-ua-probe", "");
 		if (R > L && B > T) {
 			for (let i = 0; i < 5; i++)
 				for (let j = 0; j < 5; j++) {
@@ -179,6 +185,8 @@ async function inspect(target: Locator): Promise<string[]> {
 					foreign.set(key, (foreign.get(key) ?? 0) + 1);
 				}
 		}
+		root.removeAttribute("data-ua-probe");
+		probe.remove();
 		for (const [k, n] of foreign) issues.push(`${k}（${n}/25 个采样点）`);
 		// 玻璃一致性：浮层自身与后代里所有带 backdrop-filter 的元素
 		const reduced = matchMedia(
