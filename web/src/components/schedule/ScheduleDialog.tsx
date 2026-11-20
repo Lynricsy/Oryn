@@ -141,8 +141,13 @@ interface FormState {
 	enabled: boolean;
 	name: string;
 	projectId: string;
-	/** 新线程的对象：role（`default` = 不指定，omp 的默认模型）或指定模型，各带可选的思考级别 */
+	/** 新线程的对象：role 或指定模型，各带可选的思考级别 */
 	target: Target;
+	/**
+	 * 定义里既没有 role 也没有 model（新建或旧定义）：胶囊显示 default role，保存时两者都不写。
+	 * 与显式的 `role: "default"` 不同（那会在线程里写模型来源记录），换过对象后即为 false。
+	 */
+	unspecified: boolean;
 	/** `provider/type`；空串 = 按建线程的回退链 */
 	executor: string;
 	overlap: Schemas["ScheduleOverlap"];
@@ -174,6 +179,7 @@ function initialState(
 				? (target.projectId ?? "")
 				: ""),
 		target: scheduleTarget(existing),
+		unspecified: !existing?.role && !existing?.model,
 		executor:
 			existing?.provider && existing.orbType
 				? `${existing.provider}/${existing.orbType}`
@@ -250,8 +256,8 @@ export function scheduleBody(
 		name: s.name.trim(),
 		...(s.projectId ? { projectId: s.projectId } : {}),
 		...(spaceId ? { spaceId } : {}),
-		// default role 不单独写：与都不指定等价，旧定义原样保存时也不会多出 role
-		...(to.kind === "role" && to.role !== "default" ? { role: to.role } : {}),
+		// 未指定时不写 role：原样保存不会多出字段；显式的 default 照写
+		...(to.kind === "role" && !s.unspecified ? { role: to.role } : {}),
 		...(to.kind === "model"
 			? { model: { provider: to.model.provider, id: to.model.id } }
 			: {}),
@@ -487,7 +493,17 @@ function ScheduleForm({
 			setS((prev) => ({ ...prev, [k]: v })),
 		[],
 	);
-	const onTarget = useCallback((v: Target) => set("target", v), [set]);
+	// 只调思考级别（或 W4 退回默认）不算指定了对象；换到别的 role / 模型才算
+	const onTarget = useCallback(
+		(v: Target) =>
+			setS((prev) => ({
+				...prev,
+				target: v,
+				unspecified:
+					prev.unspecified && v.kind === "role" && v.role === "default",
+			})),
+		[],
+	);
 	const newThread = target.mode === "new_thread";
 	// 名称必填：每次新建线程的定时与主线的提醒
 	const named = newThread || main;

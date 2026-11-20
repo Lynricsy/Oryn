@@ -526,6 +526,22 @@ describe("ScheduleDialog：对话对象（role 胶囊）", () => {
 		expect(body).not.toHaveProperty("model");
 	});
 
+	it("显式的 role: default（CLI / API 存的）：只改提示词保存时原样带回，不被当成未指定", async () => {
+		Object.assign(stored(M9_IDS.projectSchedule), {
+			role: "default",
+			model: undefined,
+			thinkingLevel: undefined,
+		});
+		const onClose = mount({ mode: "new_thread" }, M9_IDS.projectSchedule);
+		await ready();
+		fireEvent.change(field("提示词"), { target: { value: "只改提示词" } });
+		fireEvent.click(save());
+		await waitFor(() => expect(onClose).toHaveBeenCalled());
+		const body = writes()[0]?.body;
+		expect(body).toMatchObject({ role: "default", prompt: "只改提示词" });
+		expect(body).not.toHaveProperty("model");
+	});
+
 	it("已存的 role：打开时胶囊就是它，保存原样带回", async () => {
 		Object.assign(stored(M9_IDS.projectSchedule), {
 			role: "Mare",
