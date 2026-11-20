@@ -179,6 +179,19 @@ function useGlobalShortcuts() {
 	}, [navigate, switchSection]);
 }
 
+/**
+ * 底部提示栏：服务端错误（靠右）与操作提示（居中）共用一个 fixed 列、上下排列。
+ * 两组以前各自 fixed 在同一条底边上，窄屏（手机、窄窗口）时宽度都接近整屏，互相压住。
+ */
+function BottomDock(): ReactNode {
+	return (
+		<div className="pointer-events-none fixed inset-x-0 bottom-3 z-[60] flex flex-col gap-2 px-3 pb-safe">
+			<ServerErrors />
+			<Toasts />
+		</div>
+	);
+}
+
 export function AppShell(): ReactNode {
 	const { t } = useTranslation();
 	const me = useMe();
@@ -316,9 +329,8 @@ export function AppShell(): ReactNode {
 		return (
 			<>
 				<SinkLayout sidebar={<Sidebar sink />}>{main}</SinkLayout>
-				<ServerErrors />
+				<BottomDock />
 				<NotificationToasts />
-				<Toasts />
 				<PaletteHost />
 				<ThreadRowDialogs />
 				<ConsentDialog />
@@ -376,9 +388,8 @@ export function AppShell(): ReactNode {
 				</div>
 			)}
 			{main}
-			<ServerErrors />
+			<BottomDock />
 			<NotificationToasts />
-			<Toasts />
 			<PaletteHost />
 			<ThreadRowDialogs />
 			<ConsentDialog />

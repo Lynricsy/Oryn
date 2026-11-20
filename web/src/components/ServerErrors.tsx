@@ -1,6 +1,8 @@
 /**
  * 全局提示：服务端 `error` 消息里没有对应在途命令的那些（订阅失败、侧通道应答被拒等）。
  * 带线程上下文时提供跳转与「重新同步」（重新订阅取回权威快照）。
+ * 与操作提示（`ui/Toasts`）同在 AppShell 的底部提示栏（`BottomDock`）里上下排列：本组靠右、在上，操作提示居中、在下，
+ * 窄屏上两组不再各自 fixed 在同一块底边上互相压住。
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -18,7 +20,7 @@ export function ServerErrors(): ReactNode {
 	return (
 		<section
 			aria-label={t("alerts.region")}
-			className="pointer-events-none fixed right-3 bottom-3 z-[60] flex w-[min(24rem,calc(100vw-1.5rem))] flex-col gap-2 pb-safe"
+			className="pointer-events-none flex w-[min(24rem,100%)] flex-col gap-2 self-end"
 		>
 			{errors.map((e) => {
 				const thread = e.threadId ? threads[e.threadId] : undefined;

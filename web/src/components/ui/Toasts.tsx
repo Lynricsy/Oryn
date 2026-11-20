@@ -1,6 +1,6 @@
 /**
  * 操作结果的轻提示（`state/toasts.ts`）：屏幕底部居中的一列玻璃条，带可选的操作按钮（撤销、重试）与关闭。
- * 与右上角的通知 toast 分开放，互不遮挡。挂在 AppShell。
+ * 与右上角的通知 toast 分开放，互不遮挡。挂在 AppShell 的底部提示栏（`BottomDock`），排在服务端错误提示下面。
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -58,7 +58,7 @@ export function Toasts(): ReactNode {
 	return (
 		<section
 			aria-label={t("toasts.region")}
-			className="pointer-events-none fixed inset-x-0 bottom-4 z-[60] flex flex-col items-center gap-2 px-3 pb-safe"
+			className="pointer-events-none flex w-full flex-col items-center gap-2"
 		>
 			{toasts.map((x) => (
 				<div key={x.id} className="w-[min(26rem,100%)]">
