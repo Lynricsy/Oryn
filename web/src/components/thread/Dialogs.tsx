@@ -1516,7 +1516,14 @@ function AttachmentsDialog({
 	threadId: string;
 	onClose: () => void;
 }) {
-	const { t } = useTranslation();
+	const { t, i18n } = useTranslation();
+	// 行内只写到分钟的短日期（「11月21日 00:56」），完整日期时间放在悬停提示里
+	const shortDate = new Intl.DateTimeFormat(i18n.language, {
+		month: "short",
+		day: "numeric",
+		hour: "2-digit",
+		minute: "2-digit",
+	});
 	const qc = useQueryClient();
 	const key = ["attachments", threadId];
 	const q = useQuery({
@@ -1539,21 +1546,35 @@ function AttachmentsDialog({
 			)}
 			<ul className="flex flex-col divide-y divide-border">
 				{list.map((a) => (
+					// 第一行文件名、第二行元信息（大小 · 时间 · 已公开）；操作在宽屏靠右，窄屏另起一行与文字左缘对齐
 					<li
 						key={a.id}
-						className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm"
+						className="grid grid-cols-[2rem_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5 py-2 text-sm sm:grid-cols-[2rem_minmax(0,1fr)_auto]"
 					>
-						<span className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-border bg-inset text-faint">
+						<span className="grid h-8 w-8 place-items-center rounded-md border border-border bg-inset text-faint">
 							<Icon name={attachmentIcon(a.mime)} size={15} aria-hidden />
 						</span>
-						<span className="min-w-0 flex-1">
-							<span className="block truncate font-medium">{a.name}</span>
-							<span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-faint text-xs tabular-nums">
-								<Badge>{formatBytes(a.size)}</Badge>
-								<span>{formatDateTime(a.createdAt)}</span>
+						<span className="min-w-0">
+							<span className="block truncate font-medium" title={a.name}>
+								{a.name}
+							</span>
+							<span className="mt-0.5 flex min-w-0 items-center gap-1.5 whitespace-nowrap text-faint text-xs tabular-nums">
+								<span>{formatBytes(a.size)}</span>
+								<span aria-hidden>·</span>
+								<time
+									dateTime={new Date(a.createdAt).toISOString()}
+									title={formatDateTime(a.createdAt)}
+									className="truncate"
+								>
+									{shortDate.format(a.createdAt)}
+								</time>
 								{a.publicUrl && (
 									<>
-										<Badge icon="globe">{t("publish.published")}</Badge>
+										<span aria-hidden>·</span>
+										<span className="inline-flex shrink-0 items-center gap-1 text-muted">
+											<Icon name="globe" size={12} aria-hidden />
+											{t("publish.published")}
+										</span>
 										<CopyButton
 											text={a.publicUrl}
 											ariaLabel={t("publish.copyUrl")}
@@ -1562,7 +1583,7 @@ function AttachmentsDialog({
 								)}
 							</span>
 						</span>
-						<span className="ml-auto flex shrink-0 items-center gap-1">
+						<span className="col-start-2 -ml-2 flex flex-wrap items-center gap-1 sm:col-start-3 sm:ml-0">
 							<AttachmentPublishButton
 								attachment={a}
 								published={overview.data?.files.find(

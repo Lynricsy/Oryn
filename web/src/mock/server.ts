@@ -925,6 +925,35 @@ export class MockServer {
 			data: new Blob(["ws open\nws close 1006\nretry in 500ms\n"]),
 		});
 		this.publishAttachment(meta.id, NOW - 90 * 60_000);
+		// 附件对话框的压力数据：超长文件名、图片、大文件、未发布（ui-audit thread.dlg.attachments）
+		for (const [i, name, mime, size, ago] of [
+			[
+				1,
+				"screenshot-2026-11-20-reconnect-backoff-timeline-full-page@2x.png",
+				"image/png",
+				1_482_331,
+				2,
+			],
+			[2, "afterSeq-replay-fixture.json", "application/json", 48_211, 26],
+			[
+				3,
+				"WebSocket 断线重连设计评审纪要（第二版，含时序图与回退方案）.pdf",
+				"application/pdf",
+				12_604_118,
+				50,
+			],
+		] as const) {
+			const extra: Schemas["Attachment"] = {
+				id: `att_01JCZ8MOCKRECONNECTEXTRA0${i}`,
+				threadId: MAIN_THREAD,
+				name,
+				mime,
+				size,
+				sha256: "0".repeat(64),
+				createdAt: NOW - ago * 3_600_000,
+			};
+			this.attachments.set(extra.id, { meta: extra, data: new Blob(["x"]) });
+		}
 	}
 
 	private origin(): string {
