@@ -540,7 +540,7 @@ mod ios {
         set_sink_on(false);
         let Some(p) = plugin(app) else { return };
         tauri::async_runtime::spawn(async move {
-            let _ = p.sink_set(false);
+            let _ = p.sink_set(false, false);
         });
     }
 
