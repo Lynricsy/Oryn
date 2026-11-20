@@ -291,6 +291,8 @@ Files：modify `docs/mobile.md`（附录 A 讲页头跟随与 `ios-check` 的两
 Do：按 R9 改写；写明「卡片开合是根滚动、原生按 `contentOffset` 跟随、旧壳用网页页头 / 底栏」，以及 4.1 之后 CI 覆盖与不覆盖的范围（运动途中的逐帧对齐不在 CI 里）。
 Accept：`rg -n '绝对起步时刻|host_tab_bar_reveal|34ms|passive' docs/mobile.md web/src/lib/host.ts` 无输出；`cd web && bun run check` 通过。合并 PR。
 
+合并门禁：Go 的 `TestDispatchWatch` 必须等服务端完成订阅再写入。NDJSON 响应头先发，不是订阅就绪信号；测试请求设期限，但取消消息发出后必须收到完成帧和正常 EOF，不能把超时当成正常结束。
+
 ### 步骤 4.3 — TestFlight 与真机验收
 
 Depends on：4.2 合入；主人的 iPhone（iOS 26+）与 TestFlight 内测资格（外部依赖，无日期）。
