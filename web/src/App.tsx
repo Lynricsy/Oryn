@@ -92,6 +92,7 @@ export const SETTINGS: SettingsSection[] = [
 	"agent-memory",
 	"agent-ssh",
 	"agent-composer",
+	"selection-actions",
 	"agent-config",
 	"identity",
 	"assistant",

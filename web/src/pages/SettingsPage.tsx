@@ -42,6 +42,7 @@ import { PairApproval } from "../components/PairApproval";
 import { ApplyStatusBanner } from "../components/settings/ApplyStatusBanner";
 import { ArtifactsSection } from "../components/settings/ArtifactsSection";
 import { radioKeys } from "../components/settings/GlyphGrid";
+import SelectionActionsSettings from "../components/settings/SelectionActionsSettings";
 import { useAsync } from "../components/settings/useAsync";
 import { CopyButton } from "../components/ui/CopyButton";
 import {
@@ -118,6 +119,7 @@ export type SettingsSection =
 	| "agent-memory"
 	| "agent-ssh"
 	| "agent-composer"
+	| "selection-actions"
 	| "agent-config"
 	| "identity"
 	| "assistant"
@@ -1273,6 +1275,7 @@ export function SettingsPage({
 					{section === "agent-memory" && <MemoryPage />}
 					{section === "agent-ssh" && <SshPage />}
 					{section === "agent-composer" && <ComposerPage />}
+					{section === "selection-actions" && <SelectionActionsSettings />}
 					{section === "agent-config" && <AgentConfigSettings />}
 					{section === "identity" && <IdentitySettings />}
 					{section === "assistant" && <AssistantSettings />}
