@@ -48,6 +48,9 @@ mkdir -p "$3"
 out=$(cd "$3" && pwd)
 bundle=com.lynricsy.oryn
 here=$(cd "$(dirname "$0")" && pwd)
+# ci/ios-sink-spike 分支（不合入）：探针页随 mock Web UI 一起由 vite preview 提供在 /spike/
+rm -rf "$dist/spike"
+cp -R "$here/ios-e2e/spike" "$dist/spike"
 web=$(cd "$here/../.." && pwd)
 summary=${GITHUB_STEP_SUMMARY:-/dev/null}
 port=47613
@@ -104,12 +107,11 @@ mkdir -p "$data/tmp"
 rm -f "$log"
 rm -rf "$out/e2e.xcresult" "$out/header.xcresult"
 
-# UI 测试在后台跑；TEST_RUNNER_ 前缀的变量由 xcodebuild 去掉前缀后交给测试进程。关掉并行测试：并行会克隆模拟器，克隆上没装 App。
-# 先只跑底栏测试；页头测试在底栏全部断言之后单独跑（见下方「原生页头」）
+# ci/ios-sink-spike 分支（不合入）：只跑根滚动探针（SinkSpikeTests），底栏 / 页头 / 图标三段不跑
 xlog="$out/xcodebuild.log"
 events=events.jsonl
-TEST_RUNNER_E2E_SYNC="$sync" TEST_RUNNER_E2E_URL="$origin/" TEST_RUNNER_E2E_LOG="$log" \
-  xcodebuild test-without-building "${xcb[@]}" -only-testing:OrynE2E/TabBarE2ETests -parallel-testing-enabled NO \
+TEST_RUNNER_E2E_SYNC="$sync" TEST_RUNNER_E2E_URL="$origin/spike/sink-spike.html" TEST_RUNNER_E2E_LOG="$log" \
+  xcodebuild test-without-building "${xcb[@]}" -only-testing:OrynE2E/SinkSpikeTests -parallel-testing-enabled NO \
   -resultBundlePath "$out/e2e.xcresult" >"$xlog" 2>&1 &
 runner=$!
 
@@ -228,6 +230,152 @@ finish_runner() {
 }
 
 # ---------------------------------------------------------------- 步骤
+
+# ---------------------------------------------------------------- 根滚动探针（ci/ios-sink-spike 分支专用，不合入）
+# plan-m20 步骤 1.1：S1–S4、S6–S8 由测试按无障碍树与状态按钮读数判定并回传 {probe, pass, detail}；
+# S5（按住拖动）与 S9（底栏透出）在这里按截图判定。任一探针不过不中断，全部跑完才写 .complete，退出码 = 有无 FAIL。
+echo >>"$summary"
+echo "### 根滚动探针（plan-m20 S1–S9）" >>"$summary"
+spike_failed=0
+# probe <探针> <PASS|FAIL|INFO> <读数>
+probe() {
+  echo "$1 $2：$3"
+  echo "- **$1 $2**：$3" >>"$summary"
+  if [[ $2 == FAIL ]]; then spike_failed=1; fi
+}
+# record：把测试回传的 {probe, pass, detail} 记下（pass 为 null = 只记录）
+record() {
+  local p v d
+  p=$(jq -r .probe <<<"$req")
+  v=$(jq -r 'if .pass == null then "INFO" elif .pass then "PASS" else "FAIL" end' <<<"$req")
+  d=$(jq -r .detail <<<"$req")
+  probe "$p" "$v" "$d"
+}
+# rd <图 a> <图 b> <x> <宽> [b 的 x]（pt，竖直范围是底栏横条）：给了 b 的 x 时在 ±2pt 内取最小差异
+rd() {
+  local bx=${5:-$3} reach=0 d r best=""
+  if [[ -n ${5:-} ]]; then reach=$(px 2); fi
+  for ((d = -reach; d <= reach; d++)); do
+    r=$("$work/region-diff" "$1" "$2" "$(px "$3")" "$(px "$fy")" "$(px "$4")" "$(px "$fh")" "$(($(px "$bx") + d))")
+    if [[ -z $best ]] || awk -v r="$r" -v b="$best" 'BEGIN { exit !(r < b) }'; then best=$r; fi
+  done
+  echo "$best"
+}
+# 卡片左缘（= max − sx）：探针页每帧把它经 host_tab_bar_reveal 发给壳，debug 包记为 tabbar.reveal
+edge_now() { last tabbar.reveal | jq -r '.x // empty'; }
+
+req=""
+wait_req s1 420
+until_ok s1 30 "e2e.open" last_is e2e.open '.'
+last_is e2e.open '.ok' >/dev/null || fail s1 "ORYN_E2E_URL 没有打开：$(last e2e.open)"
+record
+sleep 1
+shot bare
+pw=$(sips -g pixelWidth "$out/e2e-bare.png" | awk '/pixelWidth/ { print $2 }')
+scale=$(jq -r --argjson pw "$pw" '$pw / .width' <<<"$req")
+ok s1
+
+wait_req s9set 120
+until_ok s9set 30 "tabbar.set（探针页设了原生底栏）" last_is tabbar.set '.on and .frame != null'
+frame=$(last tabbar.set | jq -c .frame)
+read -r fx fy fw fh < <(jq -r '[.x, .y, .width, .height] | @tsv' <<<"$frame")
+sink_w=$(awk -v x="$fx" -v w="$fw" 'BEGIN { print 2 * x + w }')
+echo "底栏：${frame}，侧栏宽 ${sink_w}，缩放 ${scale}"
+sleep 1
+steady_shot closed
+ok s9set
+
+wait_req s2 120
+record
+steady_shot open
+ok s2
+
+wait_req s3 120
+record
+steady_shot closed2
+ok s3
+
+wait_req s4 300
+record
+ok s4
+
+# S5：按住期间连拍；两张横条一致、拍摄期间没有新的 tabbar.reveal、且左缘在中间（没松手吸附）才收下
+s5_done=0
+for attempt in 1 2 3; do
+  step="s5_$attempt"
+  wait_req "$step" 300
+  dx=$(jq -r .dx <<<"$req")
+  prev=""
+  moved=""
+  state=timeout
+  end=$((SECONDS + 180))
+  mid() { awk -v x="$1" -v w="$sink_w" 'BEGIN { exit !(x > 5 && x < w - 5) }'; }
+  while ((SECONDS < end)); do
+    c0=$(count tabbar.reveal)
+    x0=$(edge_now)
+    if ! sim_shot "$work/s5-next.png" 40; then
+      state=missed
+      break
+    fi
+    c1=$(count tabbar.reveal)
+    x1=$(edge_now)
+    if mid "$x1"; then
+      moved=1
+    elif [[ -n $moved ]]; then
+      # 拖开后又回到 0 或侧栏宽：已松手吸附
+      state=missed
+      break
+    fi
+    if [[ -n $prev && $c0 == "$c1" ]] && mid "$x0" &&
+      at_most "$(strip_diff "$work/s5-next.png" "$prev" "$fx" "$fw")" 0.01; then
+      mv "$work/s5-next.png" "$out/e2e-drag.png"
+      state=held
+      break
+    fi
+    mv "$work/s5-next.png" "$work/s5-prev.png"
+    prev="$work/s5-prev.png"
+  done
+  if [[ $state == held ]]; then
+    edge=$x0
+    left=$(rd "$out/e2e-drag.png" "$out/e2e-open.png" "$fx" "$(calc "$edge - 4 - $fx")")
+    right=$(rd "$out/e2e-drag.png" "$out/e2e-closed.png" "$(calc "$edge + 6")" "$(calc "$fx + $fw - $edge - 6")" 6)
+    sx_err=$(calc "$edge - $dx")
+    pass=FAIL
+    if at_most "$left" 0.01 && at_most "$right" 0.01 && awk -v e="$sx_err" 'BEGIN { exit !(e <= 2 && e >= -2) }'; then
+      pass=PASS
+    fi
+    probe S5 "$pass" "手指位移 ${dx}，按住时卡片左缘（max − sx）${edge}（差 ${sx_err}）；揭示边左侧 vs 打开态 ${left}（期望 ≤ 0.01），右侧 vs 关闭态平移 ${right}（期望 ≤ 0.01）；第 ${attempt} 次"
+    ok "$step"
+    s5_done=1
+    break
+  fi
+  ((attempt < 3)) || break
+  echo "::warning::S5 第 ${attempt} 次没赶在按住期间截到停稳的图（${state}），重拖"
+  ok "$step" '{"retry":true}'
+done
+if ((s5_done == 0)); then
+  probe S5 FAIL "连续 3 次没能在按住期间截到停稳的图（最后一次 ${state}，最后的左缘 $(edge_now)）"
+  ok "$step"
+fi
+
+for p in s6 s7a s7b s8 s8g; do
+  wait_req "$p" 300
+  record
+  ok "$p"
+done
+
+# S9：设了底栏后，打开态横条与关闭态不同（底栏从透明侧栏透出）；关闭态与未设底栏时一致（卡片盖住）
+open_vs_closed=$(rd "$out/e2e-open.png" "$out/e2e-closed.png" "$fx" "$fw")
+closed_vs_bare=$(rd "$out/e2e-closed.png" "$out/e2e-bare.png" "$fx" "$fw")
+pass=FAIL
+if ! at_most "$open_vs_closed" 0.01 && at_most "$closed_vs_bare" 0.01; then pass=PASS; fi
+probe S9 "$pass" "打开态 vs 关闭态 ${open_vs_closed}（期望 ≥ 0.01）；关闭态 vs 未设底栏 ${closed_vs_bare}（期望 ≤ 0.01）"
+
+wait_req end 120
+ok end
+finish_runner
+: >"$out/.complete"
+exit "$spike_failed"
 
 req=""
 wait_req loaded 420
