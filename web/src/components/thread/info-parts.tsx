@@ -196,7 +196,7 @@ export function InfoRow({
 		// 行常在纸面底部：展开后把明细滚进可视区，免得点了看不出变化
 		if (opening)
 			requestAnimationFrame(() =>
-				ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }),
+				ref.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" }),
 			);
 	};
 	return (
