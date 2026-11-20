@@ -16,7 +16,6 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/link"
-	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
 // ssh_exec_many 的限额（docs/plan-m18.md 步骤 8.1）。
@@ -57,7 +56,7 @@ func (s *Service) OnCall(ctx context.Context, orbID string, params json.RawMessa
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, &link.CtlError{Code: "invalid_params", Message: err.Error()}
 	}
-	orb, err := s.caller(ctx, orbID, p.ThreadID)
+	v, err := s.caller(ctx, orbID, p.ThreadID)
 	if err != nil {
 		return nil, err
 	}
@@ -68,30 +67,34 @@ func (s *Service) OnCall(ctx context.Context, orbID string, params json.RawMessa
 	if err != nil {
 		return nil, err
 	}
-	return s.execMany(ctx, orb, p.ThreadID, args, timeout), nil
+	return s.execMany(ctx, v, p.ThreadID, args, timeout), nil
 }
 
-// caller 校验调用方线程：存在、是工作线程、未归档、属于发起 link 的 orb（同 github.call）；返回该 orb。
-func (s *Service) caller(ctx context.Context, orbID, threadID string) (db.Orb, error) {
+// caller 校验调用方线程：存在、是工作线程、未归档、属于发起 link 的 orb（同 github.call）；返回其可见性主体
+// （runner 按线程的项目，M21）。
+func (s *Service) caller(ctx context.Context, orbID, threadID string) (viewer, error) {
 	forbidden := &link.CtlError{Code: "forbidden", Message: "调用方线程不存在、已归档，或不属于这台 orb。"}
 	if threadID == "" {
-		return db.Orb{}, forbidden
+		return viewer{}, forbidden
 	}
 	t, err := s.st.Q.GetThread(ctx, threadID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return db.Orb{}, forbidden
+		return viewer{}, forbidden
 	}
 	if err != nil {
-		return db.Orb{}, err
+		return viewer{}, err
 	}
 	if t.Kind != threadKindWork || t.ArchivedAt != nil || t.OrbID == nil || *t.OrbID != orbID {
-		return db.Orb{}, forbidden
+		return viewer{}, forbidden
 	}
 	orb, err := s.orbs.Get(ctx, orbID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return db.Orb{}, forbidden
+		return viewer{}, forbidden
 	}
-	return orb, err
+	if err != nil {
+		return viewer{}, err
+	}
+	return viewerOf(orb, t), nil
 }
 
 func parseExecMany(raw map[string]any) (execManyArgs, time.Duration, error) {
@@ -128,7 +131,7 @@ func parseExecMany(raw map[string]any) (execManyArgs, time.Duration, error) {
 }
 
 // execMany 在各主机上并发（至多 execManyParallel 台）执行同一条命令，结果按请求顺序拼成给 agent 的文本。
-func (s *Service) execMany(ctx context.Context, orb db.Orb, threadID string, a execManyArgs, timeout time.Duration) apigen.LinkCtlSSHCallResult {
+func (s *Service) execMany(ctx context.Context, v viewer, threadID string, a execManyArgs, timeout time.Duration) apigen.LinkCtlSSHCallResult {
 	results := make([]execResult, len(a.Hosts))
 	sem := make(chan struct{}, execManyParallel)
 	var wg sync.WaitGroup
@@ -136,7 +139,7 @@ func (s *Service) execMany(ctx context.Context, orb db.Orb, threadID string, a e
 		wg.Go(func() {
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			results[i] = s.execOne(ctx, orb, threadID, name, a.Command, timeout)
+			results[i] = s.execOne(ctx, v, threadID, name, a.Command, timeout)
 		})
 	}
 	wg.Wait()
@@ -168,12 +171,12 @@ func (s *Service) execMany(ctx context.Context, orb db.Orb, threadID string, a e
 
 // execOne 在一台主机上执行命令（合并 stdout 与 stderr），并记一行审计。
 // 返回值是命名的：defer 里补的耗时与审计字段要落到返回给调用方的结果上。
-func (s *Service) execOne(ctx context.Context, orb db.Orb, threadID, name, command string, timeout time.Duration) (res execResult) {
+func (s *Service) execOne(ctx context.Context, v viewer, threadID, name, command string, timeout time.Duration) (res execResult) {
 	res = execResult{Host: name}
-	h, deny, err := s.resolve(ctx, orb, name)
+	h, deny, err := s.resolve(ctx, v, name)
 	if err == nil && deny != "" {
 		res.Error = deny
-		s.audit(ctx, auditRow{source: srcTool, orbID: orb.ID, threadID: threadID, host: h, hostName: name, kind: "deny", detail: deny})
+		s.audit(ctx, auditRow{source: srcTool, orbID: v.orb.ID, threadID: threadID, host: h, hostName: name, kind: "deny", detail: deny})
 		return res
 	}
 	if err != nil {
@@ -181,7 +184,7 @@ func (s *Service) execOne(ctx context.Context, orb db.Orb, threadID, name, comma
 		return res
 	}
 	start := time.Now()
-	row := auditRow{source: srcTool, orbID: orb.ID, threadID: threadID, host: h, kind: "exec", detail: command}
+	row := auditRow{source: srcTool, orbID: v.orb.ID, threadID: threadID, host: h, kind: "exec", detail: command}
 	defer func() {
 		res.DurationMs = time.Since(start).Milliseconds()
 		row.durationMs = &res.DurationMs

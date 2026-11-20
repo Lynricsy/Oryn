@@ -244,7 +244,8 @@ func (s *Service) restartKeyFunc(ctx context.Context) func(string) bool {
 // （协调对话只看 config.yml 与 models.yml）；项目层只作用于该项目 orb 上的工作线程。下发失败、或 ready 却没收到
 // 下发（orbd 不支持）的 orb 上的线程不处理——它们的配置文件没变；冻结 / 停机等 orb 会在恢复时同步，照常处理。
 // runner 线程（M21）的项目层按线程项目随 agent.start 交付，不经下发：属于该项目、agent 在跑的线程要到下次 agent.start
-// 才拿到新内容，所以按 orb 的分类得出的变化一律记为需重启（项目层合成的 ssh.json 不算：runner 只有全局 SSH 主机）。
+// 才拿到新内容，所以按 orb 的分类得出的变化一律记为需重启（含项目主机变化合成的 ssh.json：runner 线程的项目主机也在
+// 项目层里交付）。
 func (s *Service) ConfigApplied(ctx context.Context, rep orbs.ApplyReport) {
 	if len(rep.Changed) == 0 {
 		return
@@ -330,14 +331,10 @@ func (s *Service) runnerProjectThread(ctx context.Context, threadID, orbID, proj
 }
 
 // runnerRestartEffect 是项目层变化对 runner 线程的作用：分类同 orb（configEffectOf），但 reload 类的变化也记为需重启
-// （原因为对应路径；disabledExtensions 引起的记为 config.yml）——文件要到下次 agent.start 才写到 runner 上。合成的
-// ssh.json 不参与。
+// （原因为对应路径；disabledExtensions 引起的记为 config.yml）——文件要到下次 agent.start 才写到 runner 上。
 func runnerRestartEffect(changed []string, before, after []byte, restartKey func(string) bool) configEffect {
 	var e configEffect
 	for _, p := range changed {
-		if p == "ssh.json" {
-			continue
-		}
 		one := configEffectOf([]string{p}, before, after, false, restartKey)
 		for _, r := range one.restart {
 			e.addRestart(r)

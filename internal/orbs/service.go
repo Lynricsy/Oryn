@@ -227,6 +227,9 @@ type Service struct {
 	hookPolicyRebuilt func(orbID string)
 	// runnerOffline 是各 runner orb 的离线定时器（受 mu 保护，见 runner.go）。
 	runnerOffline map[string]*runnerTimer
+	// runnerWithheld 是最近一次写进事件备注的「被扣下的文件」摘要，键为「runner orb/线程」（全局层线程为空；M21，受 mu
+	// 保护，见 NoteRunnerWithheld）。
+	runnerWithheld map[string]string
 	// closed 在 Close 之后为真（受 mu 保护）。
 	closed bool
 
@@ -270,7 +273,7 @@ func New(cfg Config, st *store.Store, q *jobs.Queue, setup SetupSource, secrets 
 		reqs:      map[string]RequestFunc{}, notifies: map[string]NotifyFunc{}, streams: map[string]StreamFunc{},
 		userTouched: map[string]*userTouch{},
 		poolKick:    make(chan struct{}, 1), poolBackoff: map[string]time.Time{},
-		runnerOffline: map[string]*runnerTimer{},
+		runnerOffline: map[string]*runnerTimer{}, runnerWithheld: map[string]string{},
 	}
 	s.reqs[string(apigen.MethodProjectScriptsGet)] = s.onProjectScriptsGet
 	s.reqs[string(apigen.MethodProjectScriptsSet)] = s.onProjectScriptsSet

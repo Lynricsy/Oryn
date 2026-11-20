@@ -278,28 +278,28 @@ func TestVisibleShadowingAndAutomation(t *testing.T) {
 
 	// 全自动 orb 只看到放开的主机
 	orb.Automation = true
-	usable, blocked, managed, err := e.svc.visible(ctx, orb)
+	usable, blocked, managed, err := e.svc.visible(ctx, orbViewer(orb))
 	require.NoError(t, err)
 	require.True(t, managed)
 	require.Len(t, usable, 1)
 	require.Equal(t, "auto", usable[0].Name)
 	require.Len(t, blocked, 1)
-	_, deny, err := e.svc.resolve(ctx, orb, "web")
+	_, deny, err := e.svc.resolve(ctx, orbViewer(orb), "web")
 	require.NoError(t, err)
 	require.Contains(t, deny, "不允许全自动线程使用")
-	_, deny, err = e.svc.resolve(ctx, orb, "off")
+	_, deny, err = e.svc.resolve(ctx, orbViewer(orb), "off")
 	require.NoError(t, err)
 	require.Contains(t, deny, "已停用")
-	_, deny, err = e.svc.resolve(ctx, orb, "nope")
+	_, deny, err = e.svc.resolve(ctx, orbViewer(orb), "nope")
 	require.NoError(t, err)
 	require.Contains(t, deny, "未登记")
 
-	// runner（M21）只有全局主机：网关只能把连接归属到 runner 的常驻 orb，认不出线程的项目——即便 orb 行带了 project_id，
-	// 项目里同名的 web 也不盖过全局的、只属于项目的主机一律不可见；全自动同样只用放开的主机
+	// runner（M21）：常驻 orb 不属于项目，全局下发只有全局主机；线程按自己的项目看到全局 + 本项目主机（项目的 web 盖过
+	// 全局的），全自动同样只用放开的主机
 	ponly := hostIn("ponly", k.ID)
 	ponly.ProjectID = &p
 	e.mustHost(t, ponly)
-	runner := db.Orb{ID: "r", Kind: "runner", ProjectID: &p}
+	runner := db.Orb{ID: "r", Kind: "runner"}
 	rcfg, err := e.svc.OrbConfig(ctx, runner)
 	require.NoError(t, err)
 	require.NotNil(t, rcfg)
@@ -308,19 +308,27 @@ func TestVisibleShadowingAndAutomation(t *testing.T) {
 		{Name: "auto", Description: "root@10.0.0.1:22"},
 		{Name: "web", Description: "root@10.0.0.1:22 — global [a, b]"},
 	}, rcfg.Hosts)
-	_, deny, err = e.svc.resolve(ctx, runner, "ponly")
+	_, deny, err = e.svc.resolve(ctx, orbViewer(runner), "ponly")
 	require.NoError(t, err)
-	require.Contains(t, deny, "未登记，或对这台 orb 不可见", "runner 连项目级主机一律拒绝")
-	pcfg, err := e.svc.OrbConfig(ctx, db.Orb{ID: "orb-1", ProjectID: &p, Kind: "orb"})
+	require.Contains(t, deny, "未登记，或对这台 orb 不可见", "认不出线程时项目级主机不可见")
+	tv := threadViewer(runner, db.Thread{ID: "T-r", ProjectID: &p})
+	h, deny, err := e.svc.resolve(ctx, tv, "ponly")
 	require.NoError(t, err)
-	require.Len(t, pcfg.Hosts, 3, "对照：同项目的 orb 看得到 ponly")
+	require.Empty(t, deny)
+	require.Equal(t, "ponly", h.Name)
+	h, _, err = e.svc.resolve(ctx, tv, "web")
+	require.NoError(t, err)
+	require.Equal(t, "10.9.9.9", h.Address, "项目主机盖过全局同名主机")
+	_, deny, err = e.svc.resolve(ctx, threadViewer(runner, db.Thread{ID: "T-r2"}), "ponly")
+	require.NoError(t, err)
+	require.Contains(t, deny, "对这个线程不可见")
 	runner.Automation = true
-	usable, blocked, managed, err = e.svc.visible(ctx, runner)
+	usable, blocked, managed, err = e.svc.visible(ctx, threadViewer(runner, db.Thread{ID: "T-r", ProjectID: &p}))
 	require.NoError(t, err)
 	require.True(t, managed)
 	require.Len(t, usable, 1)
 	require.Equal(t, "auto", usable[0].Name)
-	require.Len(t, blocked, 1)
+	require.Len(t, blocked, 2)
 
 	// 协调宿主不受管
 	cfg, err = e.svc.OrbConfig(ctx, db.Orb{ID: "c", Kind: "orb", Coordinator: true})

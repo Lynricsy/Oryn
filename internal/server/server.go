@@ -210,6 +210,10 @@ func (s *Server) init(ctx context.Context) error {
 		return err
 	}
 	setup.SSH = s.SSH
+	// M21：runner 的无密钥投递校验与分享前扫描同一来源；runner 线程的 SSH 身份与项目层附加交付
+	secretSrc := shareSecrets{s.Vault, s.SSH}
+	setup.KnownSecrets = secretSrc.All
+	s.Threads.SetRunnerAgent(runnerAgent{Service: s.SSH, orbs: s.Orbs, secrets: secretSrc})
 	s.Orbs.HandleStream(link.StreamSSH, s.SSH.ServeStream)
 	// ssh.call：orb 内 agent 的 ssh_exec_many（runner 的 link 不放行，见 orbs.runnerRequests）
 	s.Orbs.HandleRequest(string(apigen.MethodSSHCall), s.SSH.OnCall)
@@ -347,7 +351,7 @@ func (s *Server) init(ctx context.Context) error {
 			}
 		}
 		return names
-	}, RoleKeySecret: share.DeriveRoleKeySecret(key)}, s.Store, s.Threads, s.Hub, s.Attachments, s.Orbs, shareSecrets{s.Vault, s.SSH})
+	}, RoleKeySecret: share.DeriveRoleKeySecret(key)}, s.Store, s.Threads, s.Hub, s.Attachments, s.Orbs, secretSrc)
 	// M14 artifact 渲染帧与发布页（步骤 2.1、8.2）：配置了 portal_domain 时在 a-<令牌> / p-<slug>.<portal_domain>
 	// （包在 portal 中间件外层分流），否则挂在主域的 /_af/<令牌>/ 与 /p/<slug>/（帧请求不带 cookie，令牌就是凭证；
 	// 发布页的访问由访问级别与授权段决定），SPA 的 CSP 相应放行 frame-src 'self'

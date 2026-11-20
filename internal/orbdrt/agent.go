@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -561,6 +562,8 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 		env  map[string]string
 		// projID / projDir：runner 上本线程项目层的项目 id 与按内容寻址的目录（M21；不带 projectConfig 时为空）。
 		projID, projDir string
+		// sshKey：runner 上本线程 SSH 私钥的路径（M21；没有 SSH 网关时为空）。
+		sshKey string
 	)
 	switch {
 	case r.cfg.Coordinator:
@@ -660,6 +663,17 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 			for _, k := range []string{"PI_CODING_AGENT_DIR", "PI_PROFILE", "OMP_PROFILE"} {
 				delete(env, k)
 			}
+			// M21：线程自己的 SSH 密钥（网关据此认出线程）与本机网关端口，同样在 p.Env 之后设置、不可覆盖；
+			// 没有网关时一并去掉。
+			delete(env, envSSHKey)
+			delete(env, envSSHPort)
+			if port := r.sshPort(); port != 0 {
+				sshKey = r.threadSSHKeyPath(p.ThreadID)
+				env[envSSHKey], env[envSSHPort] = sshKey, strconv.Itoa(port)
+				if projDir != "" {
+					r.refreshRunnerSSHConfig() // 本项目的主机名进 bash 用的 SSH 配置
+				}
+			}
 		}
 		if r.runner == nil {
 			// 项目级中央配置（M12.2，C1）：在 p.Env 之后设置，env 密钥不能覆盖；--config 排在记忆与桌面覆盖层之前。
@@ -679,12 +693,13 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 			args = append(args, "--config", r.desktopOverlayPath())
 		}
 	}
-	pid, err := t.start(startSpec{
+	pid, sshPub, err := t.start(startSpec{
 		args:       args,
 		cwd:        cwd,
 		env:        envList(env),
 		initFrames: frames,
 		projectDir: projDir,
+		sshKey:     sshKey,
 	})
 	if projID != "" {
 		// 同一项目没有运行中 agent 引用的旧版本（本次的目录仍在启动名单里，不会被删）。
@@ -697,7 +712,11 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 	if !r.cfg.Coordinator && r.runner == nil {
 		go r.svc.refreshPublicURLs()
 	}
-	return apigen.LinkCtlAgentStartResult{Pid: pid}, nil
+	res := apigen.LinkCtlAgentStartResult{Pid: pid}
+	if sshPub != "" {
+		res.SSHPublicKey = &sshPub
+	}
+	return res, nil
 }
 
 // fixOpenSession 把 open_session 帧里 `~/…` 或相对形式的 sessionDir 换成本机绝对路径，
@@ -757,21 +776,34 @@ type startSpec struct {
 	initFrames [][]byte
 	// projectDir 是 runner 上这个 agent 所用的项目层目录（M21，清理时据此保留）；orb 为空。
 	projectDir string
+	// sshKey 非空时（M21，runner 且 SSH 网关在监听）监督器创建时在这里生成线程密钥，监督器彻底结束时删除；
+	// 崩溃自重启沿用同一把。
+	sshKey string
 }
 
-// start 拉起监督器；已有活动监督器时幂等返回当前 pid。
-func (t *thread) start(spec startSpec) (int, error) {
+// start 拉起监督器，返回 pid 与线程 SSH 公钥（没有时为空）；已有活动监督器时幂等返回当前 pid 与该监督器的公钥。
+func (t *thread) start(spec startSpec) (int, string, error) {
 	t.mu.Lock()
 	if s := t.sup; s != nil && !s.finished() {
 		pid := 0
 		if t.proc != nil {
 			pid = t.proc.pid
 		}
+		pub := s.sshPub
 		t.mu.Unlock()
 		t.wake() // 没有 agent 流时由转发器重开
-		return pid, nil
+		return pid, pub, nil
 	}
 	s := &supervisor{t: t, spec: spec, stopCh: make(chan struct{}), done: make(chan struct{})}
+	if spec.sshKey != "" {
+		// 在 t.mu 下生成：并发的 agent.start 要么看到带公钥的新监督器，要么自己创建
+		pub, err := writeThreadSSHKey(spec.sshKey)
+		if err != nil {
+			t.mu.Unlock()
+			return 0, "", fmt.Errorf("thread ssh key: %w", err)
+		}
+		s.sshPub = pub
+	}
 	t.sup = s
 	t.mu.Unlock()
 	p, err := s.spawn()
@@ -781,11 +813,12 @@ func (t *thread) start(spec startSpec) (int, error) {
 			t.sup = nil
 		}
 		t.mu.Unlock()
+		s.dropSSHKey()
 		close(s.done)
-		return 0, err
+		return 0, "", err
 	}
 	go s.run(p)
-	return p.pid, nil
+	return p.pid, s.sshPub, nil
 }
 
 // stopAgent 请求优雅停止并返回退出码；没有监督器时返回 0。
@@ -808,6 +841,18 @@ type supervisor struct {
 	stopCh   chan struct{}
 	done     chan struct{}
 	lastExit int
+	// sshPub 是监督器创建时生成的线程 SSH 公钥（spec.sshKey 为空时为空）；创建后不变。
+	sshPub string
+}
+
+// dropSSHKey 删掉监督器的线程私钥（监督器彻底结束时，先于关闭 done：下一个监督器写新密钥不会被它删掉）。
+func (s *supervisor) dropSSHKey() {
+	if s.spec.sshKey == "" {
+		return
+	}
+	if err := os.Remove(s.spec.sshKey); err != nil && !errors.Is(err, os.ErrNotExist) {
+		s.t.r.log.Warn("remove thread ssh key failed", "thread", s.t.id, "err", err)
+	}
 }
 
 func (s *supervisor) finished() bool {
@@ -852,6 +897,7 @@ func (s *supervisor) stop(grace time.Duration) int {
 func (s *supervisor) run(p *proc) {
 	t := s.t
 	defer func() {
+		s.dropSSHKey()
 		close(s.done)
 		t.wake()
 	}()

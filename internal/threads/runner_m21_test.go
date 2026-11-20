@@ -66,8 +66,8 @@ func TestRunnerAgentStartProjectConfig(t *testing.T) {
 }
 
 // M21：项目层变化对 runner 上属于该项目、agent 在跑的线程按 orb 的分类生效，但 reload 类也记为需重启（文件要到下次
-// agent.start 才交付）；合成的 ssh.json 不算（runner 只有全局 SSH 主机）。别的项目的 runner 线程不受影响；同项目 orb
-// 上的线程照旧 reload。
+// agent.start 才交付）；项目主机合成的 ssh.json 同样记为需重启（runner 线程的项目主机随项目层交付）。别的项目的 runner
+// 线程不受影响；同项目 orb 上的线程照旧 reload。
 func TestConfigAppliedRunnerProjectLayer(t *testing.T) {
 	f := newFixture(t, Config{})
 	f.projectWithID("prj_a")
@@ -85,18 +85,20 @@ func TestConfigAppliedRunnerProjectLayer(t *testing.T) {
 	}
 
 	f.s.ConfigApplied(f.ctx, orbs.ApplyReport{ProjectID: "prj_a", Orbs: []orbs.OrbApply{{OrbID: orbA, OK: true}}, Changed: []string{"ssh.json"}})
-	for _, th := range []*thread{ra, rb} {
-		th.mu.Lock()
-		assert.Empty(t, th.restartReasons, "项目层的 ssh.json 不作用于 runner 线程")
-		th.mu.Unlock()
-	}
+	ra.mu.Lock()
+	assert.Equal(t, []string{"ssh.json"}, ra.restartReasons, "本项目 runner 线程的项目主机要到下次 agent.start 才交付")
+	ra.restartReasons = nil
+	ra.mu.Unlock()
+	rb.mu.Lock()
+	assert.Empty(t, rb.restartReasons)
+	rb.mu.Unlock()
 
 	f.s.ConfigApplied(f.ctx, orbs.ApplyReport{
 		ProjectID: "prj_a", Orbs: []orbs.OrbApply{{OrbID: orbA, OK: true}},
 		Changed: []string{"hooks/pre.sh", "skills/x/SKILL.md", "ssh.json"},
 	})
 	ra.mu.Lock()
-	assert.Equal(t, []string{"hooks/pre.sh", "skills/x/SKILL.md"}, ra.restartReasons)
+	assert.Equal(t, []string{"hooks/pre.sh", "skills/x/SKILL.md", "ssh.json"}, ra.restartReasons)
 	assert.False(t, ra.reloadPending, "runner 线程不发 reload_plugins：文件还没交付")
 	ra.mu.Unlock()
 	rb.mu.Lock()

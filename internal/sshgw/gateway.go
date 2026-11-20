@@ -14,6 +14,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/Lynricsy/Oryn/internal/link"
+	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
@@ -31,7 +32,8 @@ var forwardToOrb = map[string]bool{
 }
 
 // ServeStream 服务 orb 发来的一条 `ssh` 流：它是 orb 内到网关的一条 TCP 连接，其后是裸 SSH 字节流。
-// 协调宿主不接入网关；runner（M21）与 orb 相同，按 visible 的规则只用它可见的主机。流由调用方关闭。
+// 协调宿主不接入网关。orb 不认证客户端，按 orb 可见的主机放行；runner（M21）只接受登记过的线程公钥，按该线程可见的
+// 主机放行（threadkeys.go）。流由调用方关闭。
 func (s *Service) ServeStream(ctx context.Context, orbID string, _ link.StreamHeader, st *link.Stream) {
 	orb, err := s.orbs.Get(ctx, orbID)
 	if err != nil {
@@ -47,9 +49,10 @@ func (s *Service) ServeStream(ctx context.Context, orbID string, _ link.StreamHe
 
 // gwConn 是一条网关连接：orb 侧的 SSH 服务端连接与上游的 SSH 客户端连接。
 type gwConn struct {
-	s        *Service
-	orb      db.Orb
-	threadID string
+	s *Service
+	// v 是这条连接的可见性主体：orb，或 runner 上经公钥认出的线程（认证成功前只有 orb）。
+	v        viewer
+	threadID string // 审计记的线程：runner 为认出的线程，orb 为其上恰好一条线程时的那条
 	c        net.Conn
 	host     db.SshHost
 	up       *upstream
@@ -67,24 +70,60 @@ func (g *gwConn) close() {
 	})
 }
 
+// permThread 是 runner 连接的 ssh.Permissions 里记认出的线程的扩展键。
+const permThread = "oryn-thread"
+
 // serveConn 在 c 上当 SSH 服务端：按登录名选主机、拨通上游后双向代理，任一侧结束即两侧全关。
 func (s *Service) serveConn(ctx context.Context, orb db.Orb, c net.Conn) {
-	g := &gwConn{s: s, orb: orb, threadID: s.threadOf(ctx, orb.ID), c: c}
+	g := &gwConn{s: s, v: orbViewer(orb), c: c}
 	defer func() {
 		if g.untrack != nil {
 			g.untrack()
 		}
 	}()
 	defer g.close()
-	cfg := &ssh.ServerConfig{ServerVersion: serverVersion, NoClientAuth: true}
-	cfg.NoClientAuthCallback = func(meta ssh.ConnMetadata) (*ssh.Permissions, error) {
-		if g.up != nil {
+	cfg := &ssh.ServerConfig{ServerVersion: serverVersion}
+	if orbs.IsRunner(orb) {
+		// runner：PublicKeyCallback 只按公钥认出线程（公钥查询时也会调用，不拨号）；客户端证明持有私钥之后才在
+		// VerifiedPublicKeyCallback 里按该线程可见的主机拨号。
+		cfg.PublicKeyCallback = func(meta ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+			t, err := s.runnerThread(ctx, orb, key)
+			if err != nil {
+				if !errors.Is(err, errUnknownKey) {
+					slog.Warn("SSH 网关：查线程失败", "orb", orb.ID, "err", err)
+				}
+				s.audit(ctx, auditRow{source: srcOrb, orbID: orb.ID, hostName: meta.User(), kind: "deny", detail: errUnknownKey.Error()})
+				return nil, errUnknownKey
+			}
+			return &ssh.Permissions{Extensions: map[string]string{permThread: t.ID}}, nil
+		}
+		cfg.VerifiedPublicKeyCallback = func(meta ssh.ConnMetadata, key ssh.PublicKey, perms *ssh.Permissions, _ string) (*ssh.Permissions, error) {
+			if g.up != nil {
+				return perms, nil
+			}
+			// 认出之后到这里之间线程可能已被归档或公钥已注销：再认一次，并以线程行的当前项目判定可见性
+			t, err := s.runnerThread(ctx, orb, key)
+			if err != nil || t.ID != perms.Extensions[permThread] {
+				return nil, errUnknownKey
+			}
+			g.v, g.threadID = threadViewer(orb, t), t.ID
+			if err := g.auth(ctx, meta.User()); err != nil {
+				return nil, &ssh.BannerError{Err: err, Message: "oryn: " + err.Error() + "\n"}
+			}
+			return perms, nil
+		}
+	} else {
+		g.threadID = s.threadOf(ctx, orb.ID)
+		cfg.NoClientAuth = true
+		cfg.NoClientAuthCallback = func(meta ssh.ConnMetadata) (*ssh.Permissions, error) {
+			if g.up != nil {
+				return &ssh.Permissions{}, nil
+			}
+			if err := g.auth(ctx, meta.User()); err != nil {
+				return nil, &ssh.BannerError{Err: err, Message: "oryn: " + err.Error() + "\n"}
+			}
 			return &ssh.Permissions{}, nil
 		}
-		if err := g.auth(ctx, meta.User()); err != nil {
-			return nil, &ssh.BannerError{Err: err, Message: "oryn: " + err.Error() + "\n"}
-		}
-		return &ssh.Permissions{}, nil
 	}
 	cfg.AddHostKey(s.signer)
 	_, chans, reqs, err := ssh.NewServerConn(c, cfg)
@@ -114,14 +153,15 @@ func (s *Service) serveConn(ctx context.Context, orb db.Orb, c net.Conn) {
 // auth 按登录名找主机并拨通上游；失败时记审计并返回给 orb 看的原因。
 func (g *gwConn) auth(ctx context.Context, name string) error {
 	s := g.s
+	orbID := g.v.orb.ID
 	since := s.snapshot() // 先取快照再读主机：之后的任何修改都会让登记失败
-	h, deny, err := s.resolve(ctx, g.orb, name)
+	h, deny, err := s.resolve(ctx, g.v, name)
 	if err != nil {
-		slog.Warn("SSH 网关：查主机失败", "orb", g.orb.ID, "err", err)
+		slog.Warn("SSH 网关：查主机失败", "orb", orbID, "err", err)
 		return errors.New("读取主机目录失败")
 	}
 	if deny != "" {
-		s.audit(ctx, auditRow{source: srcOrb, orbID: g.orb.ID, threadID: g.threadID, host: h, hostName: name,
+		s.audit(ctx, auditRow{source: srcOrb, orbID: orbID, threadID: g.threadID, host: h, hostName: name,
 			kind: "deny", detail: deny})
 		return errors.New(deny)
 	}
@@ -138,10 +178,10 @@ func (g *gwConn) auth(ctx context.Context, name string) error {
 		}
 	}
 	if err != nil {
-		s.audit(ctx, auditRow{source: srcOrb, orbID: g.orb.ID, threadID: g.threadID, host: h, kind: "connect", detail: err.Error()})
+		s.audit(ctx, auditRow{source: srcOrb, orbID: orbID, threadID: g.threadID, host: h, kind: "connect", detail: err.Error()})
 		return err
 	}
-	s.audit(ctx, auditRow{source: srcOrb, orbID: g.orb.ID, threadID: g.threadID, host: h, kind: "connect", ok: true})
+	s.audit(ctx, auditRow{source: srcOrb, orbID: orbID, threadID: g.threadID, host: h, kind: "connect", ok: true})
 	return nil
 }
 
@@ -272,7 +312,7 @@ func (g *gwConn) session(ctx context.Context, nc ssh.NewChannel) {
 		ok = *code == 0
 	}
 	g.s.audit(ctx, auditRow{
-		source: srcOrb, orbID: g.orb.ID, threadID: g.threadID, host: g.host, kind: k, detail: d,
+		source: srcOrb, orbID: g.v.orb.ID, threadID: g.threadID, host: g.host, kind: k, detail: d,
 		exitCode: code, durationMs: new(time.Since(start).Milliseconds()), ok: ok,
 	})
 }
@@ -289,7 +329,7 @@ func (g *gwConn) forward(ctx context.Context, nc ssh.NewChannel) {
 	if ssh.Unmarshal(nc.ExtraData(), &p) == nil {
 		target = net.JoinHostPort(p.Host, strconv.Itoa(int(p.Port)))
 	}
-	row := auditRow{source: srcOrb, orbID: g.orb.ID, threadID: g.threadID, host: g.host, kind: "forward", detail: target}
+	row := auditRow{source: srcOrb, orbID: g.v.orb.ID, threadID: g.threadID, host: g.host, kind: "forward", detail: target}
 	if !g.host.AllowForward {
 		msg := fmt.Sprintf("oryn: 主机 %s 未开启端口转发", g.host.Name)
 		_ = nc.Reject(ssh.Prohibited, msg)

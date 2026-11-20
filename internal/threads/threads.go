@@ -729,6 +729,7 @@ func (s *Service) deleteThread(ctx context.Context, t *thread, inTx func(q *db.Q
 	cancelHostCallsLocked(t)
 	t.queue = nil
 	t.mu.Unlock()
+	s.dropThreadKey(id) // M21：runner 线程的 SSH 公钥随线程删除失效
 	if ctl, ok := s.orbs.Ctl(orbID); ok && orbID != "" {
 		cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		if err := ctl.Call(cctx, "agent.stop", apigen.LinkCtlAgentStopParams{ThreadID: id, GraceSeconds: 5}, nil); err != nil {

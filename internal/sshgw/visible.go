@@ -14,13 +14,34 @@ import (
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
-// visible 返回这台 orb 能用的主机（按名排序）与因全自动被挡下的主机。协调 orb 返回 managed=false。
-// 取启用的全局主机与本项目主机，同名时项目主机盖过全局主机。runner（M21）规则相同，但只有全局主机（hostScope）。
-func (s *Service) visible(ctx context.Context, orb db.Orb) (usable, blocked []db.SshHost, managed bool, err error) {
-	if orb.Coordinator {
+// viewer 是可见性判定的主体：一台 orb，或 runner 上经公钥认出的一个线程（M21）。
+type viewer struct {
+	orb db.Orb
+	// threadID 非空 = runner 线程（拒绝原因里说「这个线程」）。
+	threadID string
+	// projectID 是可见的项目主机所属项目；nil = 只有全局主机。
+	projectID  *string
+	automation bool
+}
+
+// orbViewer 是 orb 本身：项目与全自动标记取 orb 行。runner 的常驻 orb 不属于任何项目，只看得到全局主机（runner 全局的
+// ssh.json 就按它生成）；runner 线程的项目主机经 threadViewer。
+func orbViewer(orb db.Orb) viewer {
+	return viewer{orb: orb, projectID: orb.ProjectID, automation: orb.Automation}
+}
+
+// threadViewer 是 runner 上的线程：项目取线程行。全自动标记沿用 runner orb 的——runner 线程没有全自动入口（GitHub
+// 触发、项目定时、发布哨兵都不建 runner 线程），线程行也没有自己的标记；规则与 orb 相同，日后有了入口只改这里。
+func threadViewer(orb db.Orb, t db.Thread) viewer {
+	return viewer{orb: orb, threadID: t.ID, projectID: t.ProjectID, automation: orb.Automation}
+}
+
+// visible 返回 v 能用的主机（按名排序）与因全自动被挡下的主机。协调 orb 返回 managed=false。
+// 取启用的全局主机与本项目主机，同名时项目主机盖过全局主机。
+func (s *Service) visible(ctx context.Context, v viewer) (usable, blocked []db.SshHost, managed bool, err error) {
+	if v.orb.Coordinator {
 		return nil, nil, false, nil
 	}
-	scope := hostScope(orb)
 	rows, err := s.st.Q.ListSshHosts(ctx)
 	if err != nil {
 		return nil, nil, true, err
@@ -31,9 +52,9 @@ func (s *Service) visible(ctx context.Context, orb db.Orb) (usable, blocked []db
 			byName[h.Name] = h
 		}
 	}
-	if scope != nil {
+	if v.projectID != nil {
 		for _, h := range rows {
-			if h.Enabled && h.ProjectID != nil && *h.ProjectID == *scope {
+			if h.Enabled && h.ProjectID != nil && *h.ProjectID == *v.projectID {
 				byName[h.Name] = h
 			}
 		}
@@ -45,7 +66,7 @@ func (s *Service) visible(ctx context.Context, orb db.Orb) (usable, blocked []db
 	slices.Sort(names)
 	for _, n := range names {
 		h := byName[n]
-		if orb.Automation && !h.AllowAutomation {
+		if v.automation && !h.AllowAutomation {
 			blocked = append(blocked, h)
 		} else {
 			usable = append(usable, h)
@@ -54,9 +75,9 @@ func (s *Service) visible(ctx context.Context, orb db.Orb) (usable, blocked []db
 	return usable, blocked, true, nil
 }
 
-// resolve 按 orb 内的主机名找主机；找不到时 deny 为给 orb 看的拒绝原因（与网关一致）。
-func (s *Service) resolve(ctx context.Context, orb db.Orb, name string) (h db.SshHost, deny string, err error) {
-	usable, blocked, managed, err := s.visible(ctx, orb)
+// resolve 按主机名找 v 能用的主机；找不到时 deny 为给 orb 看的拒绝原因（与网关一致）。
+func (s *Service) resolve(ctx context.Context, v viewer, name string) (h db.SshHost, deny string, err error) {
+	usable, blocked, managed, err := s.visible(ctx, v)
 	if err != nil {
 		return db.SshHost{}, "", err
 	}
@@ -71,29 +92,21 @@ func (s *Service) resolve(ctx context.Context, orb db.Orb, name string) (h db.Ss
 		}
 	}
 	if managed {
-		scope := hostScope(orb)
 		rows, err := s.st.Q.ListSshHosts(ctx)
 		if err != nil {
 			return db.SshHost{}, "", err
 		}
 		for _, h := range rows {
-			inScope := h.ProjectID == nil || (scope != nil && *h.ProjectID == *scope)
+			inScope := h.ProjectID == nil || (v.projectID != nil && *h.ProjectID == *v.projectID)
 			if inScope && h.Name == name && !h.Enabled {
 				return h, fmt.Sprintf("主机 %q 已停用", name), nil
 			}
 		}
 	}
-	return db.SshHost{}, fmt.Sprintf("主机 %q 未登记，或对这台 orb 不可见", name), nil
-}
-
-// hostScope 返回 orb 可见的项目主机所属项目；nil = 只有全局主机。runner（M21）恒为 nil：网关收到的是 runner 本机
-// 127.0.0.1:7822 上的连接，只能归属到 runner 的常驻 orb，认不出发起连接的线程，而同一台 runner 上可以同时跑多个项目的
-// 线程——项目级主机对 runner 一律不可见（即便 orb 行意外带了 project_id）。
-func hostScope(orb db.Orb) *string {
-	if orbs.IsRunner(orb) {
-		return nil
+	if v.threadID != "" {
+		return db.SshHost{}, fmt.Sprintf("主机 %q 未登记，或对这个线程不可见", name), nil
 	}
-	return orb.ProjectID
+	return db.SshHost{}, fmt.Sprintf("主机 %q 未登记，或对这台 orb 不可见", name), nil
 }
 
 // hostDescription 拼 orb 内 ssh.json 的描述：真实用户与地址，再接描述与标签。
@@ -112,9 +125,10 @@ func hostDescription(h db.SshHost) string {
 	return b.String()
 }
 
-// OrbConfig 返回下发给 orb（含 runner）的 SSH 配置；协调 orb 返回 nil（不动 orb 内的 SSH 配置）。
+// OrbConfig 返回下发给 orb（含 runner）的 SSH 配置；协调 orb 返回 nil（不动 orb 内的 SSH 配置）。runner 的常驻 orb 不属于
+// 项目，这里只有全局主机；其线程的项目主机随 agent.start 的项目层交付（RunnerProjectSSH）。
 func (s *Service) OrbConfig(ctx context.Context, orb db.Orb) (*apigen.LinkCtlSSHConfig, error) {
-	usable, _, managed, err := s.visible(ctx, orb)
+	usable, _, managed, err := s.visible(ctx, orbViewer(orb))
 	if err != nil || !managed {
 		return nil, err
 	}
@@ -123,6 +137,61 @@ func (s *Service) OrbConfig(ctx context.Context, orb db.Orb) (*apigen.LinkCtlSSH
 		cfg.Hosts = append(cfg.Hosts, apigen.LinkCtlSSHHost{Name: h.Name, Description: hostDescription(h), Compat: h.Compat})
 	}
 	return cfg, nil
+}
+
+// RunnerSSHPortRef 是 runner 项目层 ssh.json 里的端口：Core 读 ssh.json 时展开环境变量，orbd 给 runner 上的 agent 设
+// ORYN_SSH_PORT（本机网关实际端口）。项目层按内容寻址，不随端口变。
+const RunnerSSHPortRef = "${ORYN_SSH_PORT}"
+
+// runnerSSHHost 是 runner 项目层 `.omp/ssh.json` 里的一台主机（字段同 orbd 写的全局 ssh.json，端口引用环境变量）。
+type runnerSSHHost struct {
+	Host        string `json:"host"`
+	Port        string `json:"port"`
+	Username    string `json:"username"`
+	Description string `json:"description"`
+	Compat      *bool  `json:"compat,omitempty"`
+}
+
+// RunnerProjectSSH 返回 runner 线程项目层里的 ssh.json（M21）：该线程可用的、属于其项目的主机（全局主机已在 runner 全局
+// 的 ssh.json 里；同名时 Core 的项目层优先，与网关「项目主机盖过全局主机」一致）。不是 runner 线程、线程不属于项目或
+// 没有这样的主机时返回 nil。
+func (s *Service) RunnerProjectSSH(ctx context.Context, threadID string) ([]byte, error) {
+	t, err := s.st.Q.GetThread(ctx, threadID)
+	if err != nil {
+		return nil, err
+	}
+	if t.OrbID == nil || t.ProjectID == nil {
+		return nil, nil
+	}
+	orb, err := s.orbs.Get(ctx, *t.OrbID)
+	if err != nil {
+		return nil, err
+	}
+	if !orbs.IsRunner(orb) {
+		return nil, nil
+	}
+	usable, _, _, err := s.visible(ctx, threadViewer(orb, t))
+	if err != nil {
+		return nil, err
+	}
+	hosts := map[string]runnerSSHHost{}
+	for _, h := range usable {
+		if h.ProjectID == nil {
+			continue
+		}
+		hosts[h.Name] = runnerSSHHost{
+			Host: "127.0.0.1", Port: RunnerSSHPortRef, Username: h.Name, Description: strings.Join(strings.Fields(hostDescription(h)), " "),
+			Compat: h.Compat,
+		}
+	}
+	if len(hosts) == 0 {
+		return nil, nil
+	}
+	b, err := json.MarshalIndent(map[string]any{"hosts": hosts}, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(b, '\n'), nil
 }
 
 // LayerState 返回一层（"" = 全局，否则项目 id）主机的规范化摘要，只用作下发基线的比较输入：
@@ -155,7 +224,8 @@ func (s *Service) LayerState(projectID string) ([]byte, error) {
 	return json.Marshal(state)
 }
 
-// ThreadHosts 返回线程所在 orb 可见的主机。线程不存在 → not_found；没有 orb 或协调线程 → managed=false。
+// ThreadHosts 返回线程可见的主机：orb 线程按其 orb，runner 线程按线程的项目（M21）。线程不存在 → not_found；没有 orb 或
+// 协调线程 → managed=false。
 func (s *Service) ThreadHosts(ctx context.Context, threadID string) (apigen.ThreadSSHHosts, error) {
 	out := apigen.ThreadSSHHosts{Hosts: []apigen.ThreadSSHHost{}}
 	t, err := s.st.Q.GetThread(ctx, threadID)
@@ -175,7 +245,7 @@ func (s *Service) ThreadHosts(ctx context.Context, threadID string) (apigen.Thre
 	if err != nil {
 		return out, err
 	}
-	usable, blocked, managed, err := s.visible(ctx, orb)
+	usable, blocked, managed, err := s.visible(ctx, viewerOf(orb, t))
 	if err != nil {
 		return out, err
 	}
@@ -189,6 +259,14 @@ func (s *Service) ThreadHosts(ctx context.Context, threadID string) (apigen.Thre
 	}
 	slices.SortFunc(out.Hosts, func(a, b apigen.ThreadSSHHost) int { return strings.Compare(a.Host.Name, b.Host.Name) })
 	return out, nil
+}
+
+// viewerOf 返回线程 t（在 orb 上）的可见性主体：runner 按线程，其余按 orb。
+func viewerOf(orb db.Orb, t db.Thread) viewer {
+	if orbs.IsRunner(orb) {
+		return threadViewer(orb, t)
+	}
+	return orbViewer(orb)
 }
 
 // Secrets 返回每台密码登录主机的明文密码（分享前的密钥扫描用），键为 "ssh/host/<名>/password"。

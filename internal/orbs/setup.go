@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/url"
 	"os"
 	"regexp"
@@ -31,6 +32,8 @@ type SetupPlan struct {
 	// ConfigHash 是与 Params 出自同一份输入（同一次读到的项目行、与密钥值一致的修改时间、这台 orb 建立时的基础镜像
 	// 身份）的项目配置哈希（CP-1）；无项目或协调 orb 为空。快照发布与「已应用的配置」都只用它，不再另读当前配置。
 	ConfigHash string
+	// Withheld 是 runner 下发前因含形似密钥的内容被扣下、没有下发的全局 omp-home 文件（M21，见 planRunner）；orb 恒为空。
+	Withheld []agentcfg.Withheld
 }
 
 // SetupSource 为 orb 生成 setup / resume 参数。
@@ -79,6 +82,8 @@ type DefaultSetup struct {
 	GitHub GitHub
 	// SSH 是 SSH 主机目录（M18）；可为 nil（不下发 orb 内的 SSH 配置）。
 	SSH SSH
+	// KnownSecrets 是 runner 无密钥投递校验用的已知密钥（M21）；nil = 只查形似密钥的串。
+	KnownSecrets KnownSecrets
 }
 
 // SSH 给出一台 orb 的 SSH 配置（M18）；协调 orb 返回 nil（不动 orb 内的 SSH 配置），runner 只有全局主机（M21）。
@@ -366,7 +371,7 @@ func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project, orb db.Orb) (S
 		plan.Egress.GitRepos[projectRepo.host] = []string{egress.NormalizeRepo(projectRepo.path)}
 	}
 	if d.Home != nil {
-		home, rendered, err := d.renderHome(resolver, agentcfg.RenderOptions{})
+		home, rendered, _, err := d.renderHome(resolver, agentcfg.RenderOptions{}, nil)
 		if err != nil {
 			return plan, err
 		}
@@ -401,8 +406,8 @@ func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project, orb db.Orb) (S
 	return plan, nil
 }
 
-// ProjectConfigOf 读项目层并生成下发清单（按路径排序，没有文件时是非 nil 的空清单）。orb 随 setup.run / omphome.apply、
-// runner 线程随 agent.start（M21）都用它。
+// ProjectConfigOf 读项目层并生成下发清单（按路径排序，没有文件时是非 nil 的空清单）。orb 随 setup.run / omphome.apply
+// 下发；runner 线程用 RunnerProjectConfigOf。
 func ProjectConfigOf(projects ProjectConfigs, projectID string) (*apigen.LinkCtlProjectConfig, error) {
 	files, modes, err := projects.Load(projectID)
 	if err != nil {
@@ -411,33 +416,81 @@ func ProjectConfigOf(projects ProjectConfigs, projectID string) (*apigen.LinkCtl
 	return &apigen.LinkCtlProjectConfig{Files: ompFiles(files, modes)}, nil
 }
 
+// RunnerProjectConfigOf 是 runner 线程随 agent.start 交付的项目层（M21）：项目层文件并入 extra（如线程项目主机合成的
+// ssh.json，0600，同名覆盖），再过一遍 screen（无密钥投递校验，见 RunnerScreen），返回下发清单与扣下的文件。一个文件
+// 都不剩时清单为 nil（不带项目层）。
+func RunnerProjectConfigOf(projects ProjectConfigs, projectID string, extra map[string][]byte, screen func(map[string][]byte) []agentcfg.Withheld) (*apigen.LinkCtlProjectConfig, []agentcfg.Withheld, error) {
+	stored, storedModes, err := projects.Load(projectID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("读取项目 omp 配置: %w", err)
+	}
+	files, modes := maps.Clone(stored), maps.Clone(storedModes)
+	if files == nil {
+		files = map[string][]byte{}
+	}
+	if modes == nil {
+		modes = map[string]os.FileMode{}
+	}
+	for p, b := range extra {
+		files[p], modes[p] = b, 0o600
+	}
+	withheld := screen(files)
+	if len(files) == 0 {
+		return nil, withheld, nil
+	}
+	return &apigen.LinkCtlProjectConfig{Files: ompFiles(files, modes)}, withheld, nil
+}
+
 // renderHome 读全局 omp-home 并按 opts 变换（models.yml 的密钥换成占位符、baseUrl 改写到出站代理），返回下发清单与
-// 变换结果（路由、降级的环境变量）。
-func (d *DefaultSetup) renderHome(resolver agentcfg.Resolver, opts agentcfg.RenderOptions) ([]apigen.LinkCtlOmpHomeFile, agentcfg.Rendered, error) {
+// 变换结果（路由、降级的环境变量）。screen 非 nil 时（runner）对变换后的文件做无密钥投递校验，扣下的文件不进清单。
+func (d *DefaultSetup) renderHome(resolver agentcfg.Resolver, opts agentcfg.RenderOptions, screen func(map[string][]byte) []agentcfg.Withheld) ([]apigen.LinkCtlOmpHomeFile, agentcfg.Rendered, []agentcfg.Withheld, error) {
 	files, err := d.Home.LoadAll()
 	if err != nil {
-		return nil, agentcfg.Rendered{}, fmt.Errorf("读取 omp-home: %w", err)
+		return nil, agentcfg.Rendered{}, nil, fmt.Errorf("读取 omp-home: %w", err)
 	}
 	delete(files, "ssh.json") // M18：orb 内的 ssh.json 由 SSH 网关生成；旧部署可能在中央配置里存过原始文件
 	modes, err := d.Home.Modes()
 	if err != nil {
-		return nil, agentcfg.Rendered{}, fmt.Errorf("读取 omp-home 权限: %w", err)
+		return nil, agentcfg.Rendered{}, nil, fmt.Errorf("读取 omp-home 权限: %w", err)
 	}
 	rendered, err := agentcfg.RenderWith(files, resolver, opts)
 	if err != nil {
-		return nil, agentcfg.Rendered{}, fmt.Errorf("变换 omp-home: %w", err)
+		return nil, agentcfg.Rendered{}, nil, fmt.Errorf("变换 omp-home: %w", err)
 	}
-	return ompFiles(rendered.Files, modes), rendered, nil
+	var withheld []agentcfg.Withheld
+	if screen != nil {
+		withheld = screen(rendered.Files)
+	}
+	return ompFiles(rendered.Files, modes), rendered, withheld, nil
+}
+
+// KnownSecrets 返回已知密钥的明文（名 → 值），供 runner 的无密钥投递校验（agentcfg.ScreenSecrets）使用；与分享前的
+// 密钥扫描同一来源（密钥库全部值 + SSH 密码登录主机的密码）。
+type KnownSecrets func(ctx context.Context) (map[string]string, error)
+
+// RunnerScreen 返回 runner 下发前的无密钥投递校验（M21）：known 为 nil 时只查形似密钥的串。读已知密钥失败时返回错误，
+// 调用方不带着未经校验的文件下发。
+func RunnerScreen(ctx context.Context, known KnownSecrets) (func(map[string][]byte) []agentcfg.Withheld, error) {
+	var vals map[string]string
+	if known != nil {
+		v, err := known(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("读取已知密钥: %w", err)
+		}
+		vals = v
+	}
+	return func(files map[string][]byte) []agentcfg.Withheld { return agentcfg.ScreenSecrets(files, vals) }, nil
 }
 
 // planRunner 是 runner 的下发参数（M21，只经 omphome.apply 使用）：全局 omp-home（模型改写到 runner 本机常驻的出站
-// 通道 agentcfg.EgressAddr，关闭环境变量降级——runner 是用户自己的机器，下发的文件里不得有 vault 明文）与 SSH 主机；
-// 不带 GitHub、git 主机、git 身份、env 密钥与脚本。出站策略只有模型路由，git 一律拒绝（runner 的出站通道另由
-// runnerEgressHandler 只放 /llm/ 与 /memory/）。
+// 通道 agentcfg.EgressAddr，关闭环境变量降级）与 SSH 主机；不带 GitHub、git 主机、git 身份、env 密钥与脚本。出站策略
+// 只有模型路由，git 一律拒绝（runner 的出站通道另由 runnerEgressHandler 只放 /llm/ 与 /memory/）。runner 是用户自己的
+// 机器，下发的文件里不得有密钥明文：变换后的文件再过一遍无密钥投递校验（RunnerScreen），命中的扣下不发，记在
+// SetupPlan.Withheld（applyOrb 写进 orb 事件备注）。
 //
 // runner 的常驻 orb 不属于任何项目（project_id 恒为空），同一台 runner 上可以同时跑多个项目的线程，而一台 runner 只有
-// 一份 omp-home：项目层不在这里下发，而是按线程随 agent.start 交付（threads 的 runnerProjectConfig）；SSH 只有全局主机
-// （网关只能把连接归属到 orb，见 sshgw.visible）。
+// 一份 omp-home：项目层不在这里下发，而是按线程随 agent.start 交付（threads 的 runnerProjectConfig，含该线程项目的
+// SSH 主机）；这里的 SSH 只有全局主机。
 func (d *DefaultSetup) planRunner(ctx context.Context, orb db.Orb) (SetupPlan, error) {
 	plan := SetupPlan{
 		Params: apigen.LinkCtlSetupRunParams{
@@ -451,11 +504,15 @@ func (d *DefaultSetup) planRunner(ctx context.Context, orb db.Orb) (SetupPlan, e
 		if d.Vault != nil {
 			resolver = d.Vault
 		}
-		home, rendered, err := d.renderHome(resolver, agentcfg.RenderOptions{NoEnvFallback: true})
+		screen, err := RunnerScreen(ctx, d.KnownSecrets)
 		if err != nil {
 			return plan, err
 		}
-		p.OmpHome = home
+		home, rendered, withheld, err := d.renderHome(resolver, agentcfg.RenderOptions{NoEnvFallback: true}, screen)
+		if err != nil {
+			return plan, err
+		}
+		p.OmpHome, plan.Withheld = home, withheld
 		for k, v := range rendered.Routes {
 			plan.Egress.Routes[k] = v
 		}

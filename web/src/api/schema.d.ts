@@ -10452,6 +10452,12 @@ export interface components {
         };
         LinkCtlAgentStartResult: {
             pid: number;
+            /**
+             * @description M21：只有 runner 且 SSH 网关端口在监听时给出——orbd 为该线程的监督器生成的 ed25519 公钥（OpenSSH authorized_keys
+             *     单行）。私钥只在 runner 本机（`$HOME/.oryn/threads/<线程>/ssh/id_ed25519`，agent 环境 `ORYN_SSH_KEY`），随监督器
+             *     生灭：已有活动监督器时幂等返回同一把公钥。orynd 据此登记「公钥 → 线程」，SSH 网关对 runner 的 `ssh` 流按它认出线程。
+             */
+            sshPublicKey?: string;
         };
         LinkCtlAgentStopParams: {
             threadId: components["schemas"]["ThreadId"];

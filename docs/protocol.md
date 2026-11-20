@@ -1999,7 +1999,7 @@ orb 内 ssh 客户端 ──> orbd 127.0.0.1:7822 ──link 的 ssh 流──> 
 
 ### orbd 侧
 
-- **监听**：orbd 在 `127.0.0.1:7822` 监听（`ORYN_SSH_ADDR` 可改，测试用 `127.0.0.1:0`）。每接一条 TCP 连接，就向控制面开一条 `ssh` 流（流头 `{"t":"ssh"}`），之后双向原样搬运 SSH 字节。监听失败时 orbd 照常启动，只是不上报下面的特性。runner 与协调宿主不监听。
+- **监听**：orbd 在 `127.0.0.1:7822` 监听（`ORYN_SSH_ADDR` 可改，测试用 `127.0.0.1:0`）。每接一条 TCP 连接，就向控制面开一条 `ssh` 流（流头 `{"t":"ssh"}`），之后双向原样搬运 SSH 字节。监听失败时 orbd 照常启动，只是不上报下面的特性。协调宿主不监听；runner（M21）监听，认证见下文「runner 的流」。
 - **hello 特性** `ssh`：认识 `setup.run` / `omphome.apply` 的 `ssh` 参数，并在 agent 环境里设 `ORYN_SSH=1`。
 - **下发** `LinkCtlSSHConfig{hostKey, hosts[{name, description, compat?}]}`：随 `setup.run` 与 `omphome.apply` 的 `ssh` 字段到达，缺省表示不动 orb 里的 SSH 配置。orbd 把它并入 omp 配置的写入编号序列（`writeOmpConfigAt`，写在用户层与项目层之后），据此重写四处：
   - `~/.omp/agent/ssh.json`：每台主机写成 `{host: "127.0.0.1", port: <监听端口>, username: <主机名>, description, compat?}`；描述变了或已删除的主机，顺手删掉 Core 的远端探测缓存 `~/.omp/remote-host/<名>.json`。
@@ -2012,11 +2012,12 @@ orb 内 ssh 客户端 ──> orbd 127.0.0.1:7822 ──link 的 ssh 流──> 
 ### 网关（控制面）
 
 - **主机密钥**：`<data_dir>/ssh-gateway.key`（ed25519，首次启动生成）。
-- **登录**：登录名就是 orb 内的主机名，客户端不需要认证（`NoClientAuthCallback`）。网关在认证阶段按 orb 可见性解析主机：启用的全局主机加本项目主机，同名时项目主机优先；全自动 orb（`orbs.automation = 1`）只能用 `allowAutomation` 的主机。随后拨通上游（含跳板链，每跳 10 秒、整链 20 秒）。拒绝原因经 SSH banner 送到客户端，OpenSSH 会打到标准错误。
+- **登录**：登录名就是 orb 内的主机名。orb 的流不认证客户端（`NoClientAuthCallback`）。网关在认证阶段按 orb 可见性解析主机：启用的全局主机加本项目主机，同名时项目主机优先；全自动 orb（`orbs.automation = 1`）只能用 `allowAutomation` 的主机。随后拨通上游（含跳板链，每跳 10 秒、整链 20 秒）。拒绝原因经 SSH banner 送到客户端，OpenSSH 会打到标准错误。
+- **runner 的流（M21）**：只接受公钥认证。orbd 为每个线程的监督器生成一把 ed25519 密钥（私钥 `$HOME/.oryn/threads/<线程>/ssh/id_ed25519`，0600，目录 0700，agent 环境 `ORYN_SSH_KEY`；崩溃自重启沿用，监督器彻底结束时删除），公钥随 `agent.start` 结果的 `sshPublicKey` 回给 orynd，登记为「公钥 → 线程」（内存表）。`agent.status exited` 且 `restartsLeft > 0` 时保留；`restartsLeft = 0` 或不带 `restartsLeft`（监督器结束）、线程删除、runner 离线定时器到期（→ `stopped`）时注销；link 在宽限期内断开不清，重连后幂等的 `agent.start` 回同一把公钥。网关按公钥认出线程，核对登记的 runner 与线程行的 `orb_id` 都等于这条流的 orb、线程是未归档的工作线程（归档即失效），再按该线程的项目套用上面的可见性（全自动标记取 runner orb 的）；审计记这个线程。客户端证明持有私钥之后才拨上游（`VerifiedPublicKeyCallback`）。runner 的 `<配置根>/ssh/config`（Core 隔离模式的 `-F`）与 `~/.oryn/ssh/config` 内容相同：全局主机与各项目层 `ssh.json` 的主机各一个 `Host` 块外加 `Host 127.0.0.1`，都带 `IdentityFile ${ORYN_SSH_KEY}`、`IdentitiesOnly yes` 与 `UserKnownHostsFile`。线程的项目主机随 `agent.start` 的项目层交付（`.omp/ssh.json`，端口写 `${ORYN_SSH_PORT}`，由 Core 展开；需要 Core 的 `oryn-project` 代理 `ssh-json`，oryn-v19.0.1-2 起）。同一系统用户的本机进程都读得到各线程的私钥：它防的是 agent 误用别的项目的主机，不防恶意本机进程。
 - **上游认证与指纹**：钥匙登录或密码登录（密码同时提供 `password` 与 `keyboard-interactive`，遇到多因素直接中止）。第一次成功连接时固定主机公钥，固定时按 `ssh_hosts.rev` 做 CAS，所以拨号期间被修改或重置的主机不会写回旧公钥；之后公钥不一致就拒绝，提示到设置页重置指纹。
 - **通道**：`session` 通道把 `pty-req`、`shell`、`exec`、`subsystem`、`env`、`window-change`、`signal`、`break` 转给上游，把 `exit-status`、`exit-signal` 回给 orb；`direct-tcpip`（`ssh -L`）只在主机开了 `allowForward` 时放行；`tcpip-forward`（`-R`）、agent 转发与 X11 一律拒绝。
 - **失效**：主机被修改、停用、删除或重置指纹时，经过它（包括作为跳板）的网关连接、终端与 SFTP 连接立即断开。
-- **runner**：runner 的 link 不接 `ssh` 流，也不放行 `ssh.call`。
+- **runner**：runner 的 link 不放行 `ssh.call`（`ssh_exec_many` 不在 runner 上注册）。
 
 ### ctl `ssh.call`（orbd→orynd 请求）
 

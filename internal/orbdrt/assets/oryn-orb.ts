@@ -709,8 +709,9 @@ function registerGitHub(pi: ExtensionAPI) {
 
 const SSH_GUIDE = `SSH hosts registered in Oryn are reachable by name: read or write ssh://<name>/<path>, open the terminal tool with host "<name>", or run ssh <name> in bash. They connect through Oryn's gateway on 127.0.0.1, so no keys or passwords are needed and none exist in this environment. Read ssh:// to list the hosts; each description shows the real user and address. Hosts cannot be added or changed from inside this environment.`;
 
-// Runner 上 orbd 不改用户的 ~/.ssh，bash 里的 ssh 要显式带上 Oryn 的配置文件；也没有 ssh_exec_many。
-const RUNNER_SSH_GUIDE = `SSH hosts registered in Oryn are reachable by name: read or write ssh://<name>/<path>, open the terminal tool with host "<name>", or run ssh -F ~/.oryn/ssh/config <name> in bash (plain ssh <name> uses this machine's own SSH config, not Oryn's). They connect through Oryn's gateway on 127.0.0.1, so no keys or passwords are needed. Read ssh:// to list the hosts; each description shows the real user and address. Hosts cannot be added or changed from this machine.`;
+// Runner 上 orbd 不改用户的 ~/.ssh，bash 里的 ssh 要显式带上 Oryn 的配置文件；也没有 ssh_exec_many。网关按线程自己的
+// 密钥（ORYN_SSH_KEY，配置里引用它）认出线程，只放行本项目与全局主机（M21）。
+const RUNNER_SSH_GUIDE = `SSH hosts registered in Oryn for this thread's project (plus global ones) are reachable by name: read or write ssh://<name>/<path>, open the terminal tool with host "<name>", or run ssh -F ~/.oryn/ssh/config <name> in bash (plain ssh <name> uses this machine's own SSH config, not Oryn's). They connect through Oryn's gateway on 127.0.0.1, which identifies this thread by the key in $ORYN_SSH_KEY; keep that variable set and do not copy the key elsewhere. No other keys or passwords are needed. Read ssh:// to list the hosts; each description shows the real user and address. Hosts cannot be added or changed from this machine.`;
 
 // registerSsh 注册 ssh_exec_many；ORYN_ARTIFACT_SOCK 为空或 ORYN_SSH 不是 "1" 时不注册。注册失败只记一行。
 function registerSsh(pi: ExtensionAPI) {

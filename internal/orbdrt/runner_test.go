@@ -778,8 +778,10 @@ func TestRunnerOmpHomeApply(t *testing.T) {
 	fi, err := os.Stat(filepath.Dir(kh))
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o700), fi.Mode().Perm())
-	assert.Equal(t, fmt.Sprintf("# 由 Oryn 生成，每次下发都会重写\n\nHost web\n  HostName 127.0.0.1\n  Port %d\n  User web\n  UserKnownHostsFile %s\n", port, kh),
-		readFile(t, filepath.Join(f.home, ".oryn", "ssh", "config")))
+	auth := fmt.Sprintf("  IdentityFile ${ORYN_SSH_KEY}\n  IdentitiesOnly yes\n  UserKnownHostsFile \"%s\"\n", kh)
+	wantCfg := fmt.Sprintf("# 由 Oryn 生成，每次下发都会重写\n\nHost web\n  HostName 127.0.0.1\n  Port %d\n  User web\n%s\nHost 127.0.0.1\n%s", port, auth, auth)
+	assert.Equal(t, wantCfg, readFile(t, filepath.Join(f.home, ".oryn", "ssh", "config")))
+	assert.Equal(t, wantCfg, readFile(t, filepath.Join(f.home, ".oryn", "omp", "ssh", "config")), "Core 隔离模式的 -F 与 bash 用同一份")
 	assert.NoDirExists(t, filepath.Join(f.home, ".ssh"))
 
 	// omp 自己写的文件；第二次下发不再带 skills/x：只删它。

@@ -88,6 +88,8 @@ type Service struct {
 	// fsConns 是按主机缓存的 SFTP 连接（fsMu 保护；Run 回收闲置的）。
 	fsMu    sync.Mutex
 	fsConns map[string]*fsConn
+	// keys 是 runner 线程的「公钥 → 线程」登记（M21，threadkeys.go）。
+	keys *threadKeys
 }
 
 // New 读取或生成网关主机密钥并构造服务。
@@ -113,7 +115,7 @@ func New(cfg Config, st *store.Store, orbs Orbs) (*Service, error) {
 	}
 	return &Service{
 		cfg: cfg, st: st, orbs: orbs, signer: signer, live: map[*live]struct{}{}, invalidated: map[string]uint64{},
-		terms: map[*termConn]struct{}{}, fsConns: map[string]*fsConn{},
+		terms: map[*termConn]struct{}{}, fsConns: map[string]*fsConn{}, keys: newThreadKeys(),
 	}, nil
 }
 

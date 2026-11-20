@@ -257,6 +257,9 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 			return
 		}
 	}
+	t.mu.Lock()
+	t.statusSinceStart = false // 此后到达的 starting / ready 才属于这次 agent.start 的监督器（见 onAgentStatus）
+	t.mu.Unlock()
 	var res apigen.LinkCtlAgentStartResult
 	if err := ctl.Call(cctx, "agent.start", params, &res); err != nil {
 		slog.Warn("threads: agent.start 失败", "thread", t.id, "orb", orbID, "err", err)
@@ -264,6 +267,12 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 			s.markFailed(ctx, t, err)
 		}
 		return
+	}
+	if res.SSHPublicKey != nil && s.runnerAgent != nil {
+		// M21：runner 线程的 SSH 公钥（同一监督器幂等返回同一把，重复登记即同值刷新）
+		if err := s.runnerAgent.RegisterThreadKey(t.id, orbID, *res.SSHPublicKey); err != nil {
+			slog.Warn("threads: 登记 runner 线程的 SSH 公钥失败", "thread", t.id, "orb", orbID, "err", err)
+		}
 	}
 	slog.Debug("threads: agent 已启动", "thread", t.id, "pid", res.Pid)
 }
@@ -408,8 +417,10 @@ func (s *Service) onAgentStatus(ctx context.Context, orbID string, params json.R
 	switch p.Status {
 	case "starting":
 		t.agentStatus = apigen.AgentStatusStarting
+		t.statusSinceStart = true
 	case "ready":
 		t.agentStatus = apigen.AgentStatusReady
+		t.statusSinceStart = true
 		s.clearFailedLocked(t)
 		s.onReadyLocked(ctx, t)
 	case "exited":
@@ -423,6 +434,12 @@ func (s *Service) onAgentStatus(ctx context.Context, orbID string, params json.R
 		t.autoActive, t.segMsgs = false, false
 		cancelHostCallsLocked(t)
 		resetConfigMarksLocked(t) // 新进程读的就是新配置（M13 6.3）
+		if (p.RestartsLeft == nil || *p.RestartsLeft <= 0) && t.statusSinceStart {
+			// orbd 的监督器已结束（停止，或重启次数用尽）：私钥随之删除，runner 线程的 SSH 公钥失效（M21）。
+			// 还会重启的崩溃不动：自重启沿用同一把密钥。最近一次 agent.start 之后还没收到过 starting / ready 时，
+			// 这是旧监督器迟到的结束（见 thread.statusSinceStart），不动可能已登记的新公钥。
+			s.dropThreadKey(t.id)
+		}
 		switch {
 		case t.stopping || p.RestartsLeft == nil:
 			// 有意停止，不是故障：控制面的 agent.stop（RefreshAgent、删除线程、fork 回退），或 orbd 收到 shutdown /
@@ -436,7 +453,7 @@ func (s *Service) onAgentStatus(ctx context.Context, orbID string, params json.R
 				s.wake(t.id, t.orbID)
 			}
 		case p.RestartsLeft != nil && *p.RestartsLeft > 0:
-			// orbd 会重启它：重启后的 get_state 给出权威的运行 / 静止状态
+			// orbd 会重启它：重启后的 get_state 给出权威的运行 / 静止状态；监督器仍在，SSH 公钥照旧有效
 			t.unsynced = true
 		default:
 			// 不会再有进程：没有在跑的回合；排队等它就绪的只读查询随之结束

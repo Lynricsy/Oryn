@@ -239,6 +239,9 @@ type Runtime struct {
 	projWritten uint64
 	// sshWritten 是 orb 内 SSH 配置已写入的最大编号（M18，与 ompWritten 同一编号序列）。
 	sshWritten uint64
+	// sshGlobal 是 runner 最近一次下发的全局 SSH 主机名（M21，ompMu 保护；nil = 尚未下发）：重写 SSH 配置时与各项目层
+	// ssh.json 里的主机名合并（rewriteRunnerSSHConfig）。
+	sshGlobal []string
 	// 以下为最近一次 setup.run / resume.run 的参数（手动重跑用）。
 	envMu       sync.Mutex
 	setupEnv    map[string]string
