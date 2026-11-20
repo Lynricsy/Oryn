@@ -156,23 +156,29 @@ function Board({ phases }: { phases: unknown[] }): ReactNode {
 	return <div className="tv-todo">{rendered}</div>;
 }
 
-function Body({ args, result, partial }: ToolRenderProps): ReactNode {
-	const ops = toOps(args);
+/** 输入：本次请求的各项操作及其触及的任务/阶段——看板只给结果状态，看不出改了哪一项。 */
+function Input({ args }: ToolRenderProps): ReactNode {
+	const ops = toOps(args).filter(isRecord);
+	if (ops.length === 0) return null;
+	return <div className="tv-list">{ops.map(opRow)}</div>;
+}
+
+function Result({ result, partial }: ToolRenderProps): ReactNode {
 	// 运行中没有最终结果时，用结构化部分结果展示看板
 	const current = result ?? partial;
 	const rec = detailsRecord(current);
 	const phases =
 		rec && Array.isArray(rec.phases) && !current?.isError ? rec.phases : null;
-	return (
-		<>
-			{ops.length > 0 && <div className="tv-list">{ops.map(opRow)}</div>}
-			{phases !== null ? (
-				<Board phases={phases} />
-			) : (
-				<ResultText result={current} maxLines={8} />
-			)}
-		</>
+	return phases !== null ? (
+		<Board phases={phases} />
+	) : (
+		<ResultText result={current} maxLines={8} />
 	);
 }
 
-export const todoRenderer: ToolRenderer = { Summary, Body, livePartial: true };
+export const todoRenderer: ToolRenderer = {
+	Summary,
+	Input,
+	Result,
+	livePartial: true,
+};

@@ -215,9 +215,21 @@ function Summary({ args }: ToolRenderProps): ReactNode {
 	return <Badges items={items} />;
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
+function Input({ args }: ToolRenderProps): ReactNode {
 	const poll = pollIds(args);
 	const cancel = cancelIds(args);
+	if (args.list !== true && poll.length === 0 && cancel.length === 0)
+		return null;
+	return (
+		<div className="tv-list">
+			{args.list === true && <Row k="list">all jobs</Row>}
+			{poll.length > 0 && <Row k="poll">{poll.join(", ")}</Row>}
+			{cancel.length > 0 && <Row k="cancel">{cancel.join(", ")}</Row>}
+		</div>
+	);
+}
+
+function Result({ result }: ToolRenderProps): ReactNode {
 	const details = detailsRecord(result);
 	const jobs = jobsOf(details);
 	const badOutcomes = cancelOutcomesOf(details).filter(
@@ -243,13 +255,6 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 
 	return (
 		<>
-			{(args.list === true || poll.length > 0 || cancel.length > 0) && (
-				<div className="tv-list">
-					{args.list === true && <Row k="list">all jobs</Row>}
-					{poll.length > 0 && <Row k="poll">{poll.join(", ")}</Row>}
-					{cancel.length > 0 && <Row k="cancel">{cancel.join(", ")}</Row>}
-				</div>
-			)}
 			{jobs.length > 0 && (
 				<>
 					<Badges
@@ -301,4 +306,4 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	);
 }
 
-export const jobRenderer: ToolRenderer = { Summary, Body };
+export const jobRenderer: ToolRenderer = { Summary, Input, Result };

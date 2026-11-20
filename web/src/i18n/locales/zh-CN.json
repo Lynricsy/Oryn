@@ -2273,7 +2273,13 @@
 		"moreLines_other": "⋯ 还有 {{count}} 行",
 		"running": "运行中",
 		"computer": "电脑",
-		"args": "参数",
+		"input": "输入",
+		"output": "输出",
+		"shellView": {
+			"label": "命令视图",
+			"pseudo": "伪代码",
+			"raw": "原始"
+		},
 		"ida": {
 			"code": "代码",
 			"output": "输出",
@@ -2329,8 +2335,7 @@
 		},
 		"xdev": {
 			"docs": "文档",
-			"catalog": "设备目录",
-			"payload": "写入内容"
+			"catalog": "设备目录"
 		},
 		"checkpoint": {
 			"started": "开始于",

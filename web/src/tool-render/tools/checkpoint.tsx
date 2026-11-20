@@ -29,14 +29,16 @@ function CheckpointSummary({ args }: ToolRenderProps): ReactNode {
 	return <span className="tv-trunc">{truncate(normalizeWs(goal), 120)}</span>;
 }
 
-function CheckpointBody({ args, result }: ToolRenderProps): ReactNode {
+function CheckpointInput({ args, result }: ToolRenderProps): ReactNode {
+	const goal = str(detailsRecord(result)?.goal) ?? str(args.goal);
+	return goal ? <div className="tv-prose">{goal}</div> : null;
+}
+
+function CheckpointResult({ result }: ToolRenderProps): ReactNode {
 	const { t } = useTranslation();
-	const details = detailsRecord(result);
-	const goal = str(details?.goal) ?? str(args.goal);
-	const started = Date.parse(str(details?.startedAt) ?? "");
+	const started = Date.parse(str(detailsRecord(result)?.startedAt) ?? "");
 	return (
 		<>
-			{goal && <div className="tv-prose">{goal}</div>}
 			{Number.isFinite(started) && (
 				<KvGrid>
 					<Kv k={t("toolRender.checkpoint.started")}>
@@ -51,7 +53,8 @@ function CheckpointBody({ args, result }: ToolRenderProps): ReactNode {
 
 export const checkpointRenderer: ToolRenderer = {
 	Summary: CheckpointSummary,
-	Body: CheckpointBody,
+	Input: CheckpointInput,
+	Result: CheckpointResult,
 };
 
 function RewindSummary({ args, result }: ToolRenderProps): ReactNode {
@@ -70,17 +73,18 @@ function RewindSummary({ args, result }: ToolRenderProps): ReactNode {
 	);
 }
 
-function RewindBody({ args, result }: ToolRenderProps): ReactNode {
+function RewindInput({ args, result }: ToolRenderProps): ReactNode {
 	const report = str(detailsRecord(result)?.report) ?? str(args.report);
-	return (
-		<>
-			{report?.trim() && <CardMarkdown text={report.trim()} />}
-			{result?.isError && <ResultText result={result} maxLines={6} />}
-		</>
-	);
+	const text = report?.trim();
+	return text ? <CardMarkdown text={text} /> : null;
+}
+
+function RewindResult({ result }: ToolRenderProps): ReactNode {
+	return result?.isError ? <ResultText result={result} maxLines={6} /> : null;
 }
 
 export const rewindRenderer: ToolRenderer = {
 	Summary: RewindSummary,
-	Body: RewindBody,
+	Input: RewindInput,
+	Result: RewindResult,
 };

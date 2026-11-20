@@ -431,9 +431,19 @@ function hasStructured(details: Record<string, unknown> | null): boolean {
 	);
 }
 
-function Body(props: ToolRenderProps): ReactNode {
+function Input({ args, result }: ToolRenderProps): ReactNode {
+	const summary = str(args.validation_summary);
+	return (
+		<>
+			<ArgsGrid args={args} statusInMeta={!result?.isError} />
+			{summary && <div className="tv-prose">{normalizeWs(summary)}</div>}
+			<Evidence value={args.validation_evidence} />
+		</>
+	);
+}
+
+function Result({ args, result }: ToolRenderProps): ReactNode {
 	const { t } = useTranslation();
-	const { args, result } = props;
 	const details = detailsRecord(result);
 	const plan = rec(details?.plan);
 	const operation = rec(details?.operation);
@@ -443,13 +453,9 @@ function Body(props: ToolRenderProps): ReactNode {
 	const stats = rec(details?.cloudStats);
 	const cloudScan = rec(details?.cloudScan);
 	const imported = rec(details?.importedScan);
-	const summary = str(args.validation_summary);
 	const cloudRepo = cloudScan && str(cloudScan.repositoryUrl);
 	return (
 		<>
-			<ArgsGrid args={args} statusInMeta={!result?.isError} />
-			{summary && <div className="tv-prose">{normalizeWs(summary)}</div>}
-			<Evidence value={args.validation_evidence} />
 			{plan && (
 				<KvGrid>
 					<Kv k={t("toolRender.securityScan.plan")}>{str(plan.id)}</Kv>
@@ -485,4 +491,9 @@ function Body(props: ToolRenderProps): ReactNode {
 	);
 }
 
-export const securityScanRenderer: ToolRenderer = { Summary, Meta, Body };
+export const securityScanRenderer: ToolRenderer = {
+	Summary,
+	Meta,
+	Input,
+	Result,
+};

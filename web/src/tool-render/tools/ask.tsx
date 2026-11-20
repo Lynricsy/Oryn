@@ -1,6 +1,6 @@
 /** `ask` — an HTML form posed to the user mid-run, answered with its form data. */
 import type { ReactNode } from "react";
-import { Badge, InvalidArg, Note, ResultText, Row } from "../parts";
+import { Badge, InvalidArg, Note, Output, ResultText, Row } from "../parts";
 import type { ToolRenderer, ToolRenderProps } from "../types";
 import { detailsRecord, isRecord, normalizeWs, str, truncate } from "../util";
 
@@ -128,59 +128,66 @@ function Summary({ args, result }: ToolRenderProps): ReactNode {
 	);
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
-	const details = detailsRecord(result);
-	const answers = answersOf(details);
-	const notes = notesOf(details);
-	if (answers) {
-		return (
-			<>
-				<div className="tv-list">
-					{answers.map((entry, i) => (
-						<div key={i}>
-							<Row>{entry.question}</Row>
-							{entry.answer ? (
-								<Row k={<span className="tv-ok-text">✓</span>}>
-									<span>{entry.answer}</span>
-								</Row>
-							) : (
-								<Row k="—">
-									<span className="tv-faint">(no answer)</span>
-								</Row>
-							)}
-							{notes
-								.filter(
-									(note) =>
-										note.name === entry.name &&
-										note.question === entry.question,
-								)
-								.map((note, noteIndex) => (
-									<Note key={`${i}-${noteIndex}`}>
-										✎ {note.option}: {note.text}
-									</Note>
-								))}
-						</div>
-					))}
-				</div>
-				{details?.timedOut === true && (
-					<Note tone="warn">
-						auto-selected after timeout — not a user choice
-					</Note>
-				)}
-			</>
-		);
-	}
-	if (result) return <ResultText result={result} maxLines={10} />;
+/** 输入：表单的标题提纲 + 表单 HTML 原文（问题与选项都在里面）。 */
+function Input({ args, result }: ToolRenderProps): ReactNode {
 	const html = str(args.html);
-	if (html === null) return <InvalidArg what="html" />;
+	if (html === null) return result ? null : <InvalidArg what="html" />;
 	const { headings } = formOutline(html);
 	return (
-		<div className="tv-list">
-			{headings.map((heading, i) => (
-				<Row key={i}>{heading}</Row>
-			))}
-		</div>
+		<>
+			{headings.length > 0 && (
+				<div className="tv-list">
+					{headings.map((heading, i) => (
+						<Row key={i}>{heading}</Row>
+					))}
+				</div>
+			)}
+			{html.trim() !== "" && (
+				<Output text={html} lang="xml" variant="code" maxLines={8} />
+			)}
+		</>
 	);
 }
 
-export const askRenderer: ToolRenderer = { Summary, Body };
+/** 输出：用户逐题的回答与选项备注；没有结构化回答时给结果文本。 */
+function Result({ result }: ToolRenderProps): ReactNode {
+	const details = detailsRecord(result);
+	const answers = answersOf(details);
+	if (!answers) return <ResultText result={result} maxLines={10} />;
+	const notes = notesOf(details);
+	return (
+		<>
+			<div className="tv-list">
+				{answers.map((entry, i) => (
+					<div key={i}>
+						<Row>{entry.question}</Row>
+						{entry.answer ? (
+							<Row k={<span className="tv-ok-text">✓</span>}>
+								<span>{entry.answer}</span>
+							</Row>
+						) : (
+							<Row k="—">
+								<span className="tv-faint">(no answer)</span>
+							</Row>
+						)}
+						{notes
+							.filter(
+								(note) =>
+									note.name === entry.name && note.question === entry.question,
+							)
+							.map((note, noteIndex) => (
+								<Note key={`${i}-${noteIndex}`}>
+									✎ {note.option}: {note.text}
+								</Note>
+							))}
+					</div>
+				))}
+			</div>
+			{details?.timedOut === true && (
+				<Note tone="warn">auto-selected after timeout — not a user choice</Note>
+			)}
+		</>
+	);
+}
+
+export const askRenderer: ToolRenderer = { Summary, Input, Result };

@@ -2273,7 +2273,13 @@
 		"moreLines_other": "⋯ {{count}} more lines",
 		"running": "Running",
 		"computer": "Computer",
-		"args": "Arguments",
+		"input": "Input",
+		"output": "Output",
+		"shellView": {
+			"label": "Command view",
+			"pseudo": "Pseudo",
+			"raw": "Raw"
+		},
 		"ida": {
 			"code": "Code",
 			"output": "Output",
@@ -2329,8 +2335,7 @@
 		},
 		"xdev": {
 			"docs": "docs",
-			"catalog": "device catalog",
-			"payload": "Payload"
+			"catalog": "device catalog"
 		},
 		"checkpoint": {
 			"started": "Started",

@@ -84,38 +84,26 @@ const PROMPT_FIELDS = [
 	["image_size", "size"],
 ] as const;
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
+function Input({ args }: ToolRenderProps): ReactNode {
 	const changes = Array.isArray(args.changes) ? args.changes : null;
 	const inputs = Array.isArray(args.input) ? args.input : null;
-	const details = detailsRecord(result);
-	const provider = str(details?.provider);
-	const model = str(details?.model);
-	const revised = str(details?.revisedPrompt);
-	const paths: string[] = [];
-	if (details && Array.isArray(details.imagePaths)) {
-		for (const p of details.imagePaths) {
-			if (typeof p === "string") paths.push(p);
-		}
-	}
-	const merged = withDetailImages(result);
-	const hasImages = resultImagesOf(merged).length > 0;
+	// 比例已作为徽标写在折叠行里；主体在折叠行里只是摘要（会被截断），这里始终给出全文
+	const fields = PROMPT_FIELDS.filter(
+		([arg]) =>
+			args[arg] !== undefined &&
+			!(arg === "aspect_ratio" && str(args[arg]) !== null),
+	);
 	return (
 		<>
-			<KvGrid>
-				{PROMPT_FIELDS.map(([arg, label]) => {
-					const value = args[arg];
-					const text = str(value);
-					// 比例已作为徽标写在折叠行里；主体在折叠行里只是摘要（会被截断），这里始终给出全文
-					if (text !== null && arg === "aspect_ratio") return null;
-					return (
+			{fields.length > 0 && (
+				<KvGrid>
+					{fields.map(([arg, label]) => (
 						<Kv key={arg} k={label}>
-							{value === undefined
-								? null
-								: (str(value) ?? <InvalidArg what={label} />)}
+							{str(args[arg]) ?? <InvalidArg what={label} />}
 						</Kv>
-					);
-				})}
-			</KvGrid>
+					))}
+				</KvGrid>
+			)}
 			{changes && changes.length > 0 && (
 				<div className="tv-list">
 					{changes.map((change, i) => (
@@ -148,6 +136,25 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 					})}
 				</div>
 			)}
+		</>
+	);
+}
+
+function Result({ result }: ToolRenderProps): ReactNode {
+	const details = detailsRecord(result);
+	const provider = str(details?.provider);
+	const model = str(details?.model);
+	const revised = str(details?.revisedPrompt);
+	const paths: string[] = [];
+	if (details && Array.isArray(details.imagePaths)) {
+		for (const p of details.imagePaths) {
+			if (typeof p === "string") paths.push(p);
+		}
+	}
+	const merged = withDetailImages(result);
+	const hasImages = resultImagesOf(merged).length > 0;
+	return (
+		<>
 			{(provider || model) && <Badges items={[provider, model]} />}
 			{revised && <Note>revised: {truncate(revised, 400)}</Note>}
 			<ResultImages result={merged} />
@@ -165,4 +172,4 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	);
 }
 
-export const generateImageRenderer: ToolRenderer = { Summary, Body };
+export const generateImageRenderer: ToolRenderer = { Summary, Input, Result };

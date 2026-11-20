@@ -204,23 +204,12 @@ function Summary({ args, result }: ToolRenderProps): ReactNode {
 	return opBadge;
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
+/** 输入：动作与收发对象等参数徽标 + 要发送的消息全文。 */
+function Input({ args }: ToolRenderProps): ReactNode {
 	const op = str(args.op);
 	const to = str(args.to);
 	const from = str(args.from);
 	const message = str(args.message);
-	const d = detailsRecord(result);
-	const receipts = parseReceipts(d?.receipts);
-	const waited = parseInbox(d?.waited);
-	const timedOut = d ? d.waited === null : false;
-	const inbox = parseInbox(d?.inbox);
-	const peers = parsePeers(d?.peers);
-	const structured =
-		receipts.length > 0 ||
-		waited.length > 0 ||
-		timedOut ||
-		inbox.length > 0 ||
-		peers.length > 0;
 	return (
 		<>
 			<Badges
@@ -235,6 +224,26 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 				]}
 			/>
 			{message && <Note>{message}</Note>}
+		</>
+	);
+}
+
+/** 输出：投递回执、等到的回复、收件箱、对端列表；没有结构化内容（或出错）时给结果文本。 */
+function Result({ result }: ToolRenderProps): ReactNode {
+	const d = detailsRecord(result);
+	const receipts = parseReceipts(d?.receipts);
+	const waited = parseInbox(d?.waited);
+	const timedOut = d ? d.waited === null : false;
+	const inbox = parseInbox(d?.inbox);
+	const peers = parsePeers(d?.peers);
+	const structured =
+		receipts.length > 0 ||
+		waited.length > 0 ||
+		timedOut ||
+		inbox.length > 0 ||
+		peers.length > 0;
+	return (
+		<>
 			{receipts.length > 0 && (
 				<div className="tv-list">
 					{receipts.map((receipt, i) => (
@@ -311,4 +320,4 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	);
 }
 
-export const ircRenderer: ToolRenderer = { Summary, Body };
+export const ircRenderer: ToolRenderer = { Summary, Input, Result };

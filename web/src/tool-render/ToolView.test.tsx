@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { baseToolName, resolveToolRenderer } from "./registry";
 import { ToolView } from "./ToolView";
@@ -496,8 +496,8 @@ describe("xd:// 设备调用的卡片", () => {
 		expect(nameOf(container)).toBe("xd://grep");
 		// 不交给 grep 渲染器（它会显示「in <路径>」），原样展示写入内容
 		expect(summaryOf(container)).toBe("needle in src");
-		expect(container.querySelector(".tv-out-title")).toHaveTextContent(
-			"写入内容",
+		expect(screen.getByRole("region", { name: "输入" })).toHaveTextContent(
+			"needle in src",
 		);
 	});
 });
@@ -553,5 +553,165 @@ describe("从 xd:// URL 推断的设备名不命中 Object 原型（M12 审查 c
 			<ToolView name={name} args={{}} running defaultOpen />,
 		);
 		expect(container.querySelector(".tv-name")).toHaveTextContent(name);
+	});
+});
+
+describe("卡片头部的意图与展开体的输入 / 输出分段", () => {
+	const bashResult = {
+		content: [{ type: "text" as const, text: "a-1\nb-1" }],
+		details: { exitCode: 0 },
+	};
+
+	it("收起时头部显示意图而不是命令；展开后头部换回命令摘要", () => {
+		const { container } = render(
+			<ToolView
+				name="bash"
+				args={{ command: "make test", i: "跑单元测试" }}
+				result={bashResult}
+			/>,
+		);
+		expect(summaryOf(container)).toBe("跑单元测试");
+		fireEvent.click(container.querySelector(".tv-head") as HTMLElement);
+		expect(summaryOf(container)).toContain("make test");
+		expect(summaryOf(container)).not.toContain("跑单元测试");
+		expect(container.querySelector(".tv-intent")).toHaveTextContent(
+			"跑单元测试",
+		);
+	});
+
+	it("没有意图时收起的头部仍显示参数摘要", () => {
+		const { container } = render(
+			<ToolView name="bash" args={{ command: "make test" }} />,
+		);
+		expect(summaryOf(container)).toContain("make test");
+	});
+
+	it("命令在输入段、结果文本在输出段", () => {
+		const { container } = render(
+			<ToolView
+				name="bash"
+				args={{ command: "make test" }}
+				result={bashResult}
+				defaultOpen
+			/>,
+		);
+		const input = screen.getByRole("region", { name: "输入" });
+		const output = screen.getByRole("region", { name: "输出" });
+		expect(input).toHaveTextContent("make test");
+		expect(input).not.toHaveTextContent("a-1");
+		expect(output).toHaveTextContent("a-1");
+		expect(output).not.toHaveTextContent("make test");
+		expect(container.querySelectorAll(".tv-sec")).toHaveLength(2);
+	});
+
+	it("还没有结果时输出段内容为空（由 CSS 整段隐去）", () => {
+		const { container } = render(
+			<ToolView
+				name="bash"
+				args={{ command: "sleep 1" }}
+				running
+				defaultOpen
+			/>,
+		);
+		expect(
+			container.querySelector(".tv-sec--out .tv-sec-body"),
+		).toBeEmptyDOMElement();
+	});
+});
+
+describe("bash 的 Pseudo 视图（details.orynPseudo）", () => {
+	// 由 omp 原生 ShellVisualization 对 `for x in a b; do Y="$x-1"; echo "$Y"; done && ls /nonexistent-dir || echo fallback`
+	// 的真实轨迹渲染、再经 oryn-orb.ts 的 compactPseudo 压缩得到
+	const orynPseudo = {
+		v: 1,
+		rows: [
+			{
+				depth: 0,
+				segments: [
+					{ text: "for ", style: "kw" },
+					{ text: "x", style: "var def" },
+					{ text: " in ", style: "kw" },
+					{ text: "[", style: "op" },
+					{ text: '"a"', style: "str", state: "ok" },
+					{ text: ", ", style: "op" },
+					{ text: '"b"', style: "str", state: "ok" },
+					{ text: "]", style: "op" },
+					{ text: ":", style: "op" },
+				],
+				meta: "↻ 2",
+				annotations: [{ name: "x", value: "b" }],
+			},
+			{
+				depth: 1,
+				segments: [
+					{ text: "and ", style: "op" },
+					{ text: "ls", style: "cmd", state: "fail", failMark: true },
+					{ text: " ", state: "fail" },
+					{ text: "/nonexistent-dir", style: "arg", state: "fail" },
+				],
+				state: "fail",
+				meta: "exit 2 · 20ms",
+			},
+			{
+				depth: 1,
+				segments: [
+					{ text: "or ", style: "op" },
+					{ text: "print(", style: "fn", state: "skipped" },
+				],
+				state: "skipped",
+			},
+		],
+	};
+	const command =
+		'for x in a b; do Y="$x-1"; echo "$Y"; done && ls /nonexistent-dir || echo fallback';
+
+	it("默认显示 pseudo 行：关键字 / 命令按令牌着色、失败打 ×、跳过的行弱化、变量终值标注", () => {
+		const { container } = render(
+			<ToolView
+				name="bash"
+				args={{ command }}
+				result={{
+					content: [{ type: "text", text: "a-1\nb-1" }],
+					details: { exitCode: 0, orynPseudo },
+				}}
+				defaultOpen
+			/>,
+		);
+		const pseudo = screen.getByTestId("bash-pseudo");
+		const rows = pseudo.querySelectorAll(".tv-pseudo-row");
+		expect(rows).toHaveLength(3);
+		expect(rows[0]).toHaveTextContent('for x in ["a", "b"]:');
+		expect(rows[0]?.querySelector(".hljs-keyword")).toHaveTextContent("for");
+		expect(rows[0]?.querySelector(".tv-pseudo-ann")).toHaveTextContent(
+			'x = "b"',
+		);
+		expect(rows[1]?.querySelector(".tv-pseudo-fail")).toHaveTextContent("×");
+		expect(rows[1]?.querySelector(".hljs-title")).toHaveTextContent("ls");
+		expect(rows[2]).toHaveClass("tv-pseudo-row--skipped");
+		expect(container.querySelector(".tv-cmd")).toBeNull();
+	});
+
+	it("切到「原始」显示完整命令行，再切回 pseudo", () => {
+		const { container } = render(
+			<ToolView
+				name="bash"
+				args={{ command }}
+				result={{ content: [], details: { orynPseudo } }}
+				defaultOpen
+			/>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "原始" }));
+		expect(screen.queryByTestId("bash-pseudo")).toBeNull();
+		expect(container.querySelector(".tv-cmd-text")).toHaveTextContent(command);
+		fireEvent.click(screen.getByRole("button", { name: "伪代码" }));
+		expect(screen.getByTestId("bash-pseudo")).toBeInTheDocument();
+	});
+
+	it("没有 orynPseudo（运行中、旧会话）只显示原始命令，没有视图切换", () => {
+		const { container } = render(
+			<ToolView name="bash" args={{ command }} running defaultOpen />,
+		);
+		expect(container.querySelector(".tv-cmd-text")).toHaveTextContent(command);
+		expect(screen.queryByRole("button", { name: "原始" })).toBeNull();
 	});
 });

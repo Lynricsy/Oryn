@@ -2,6 +2,8 @@
 import type { ReactNode } from "react";
 import {
 	Badge,
+	Badges,
+	CodeBlock,
 	DiffBlock,
 	diffStats,
 	InvalidArg,
@@ -17,6 +19,7 @@ import type { ToolRenderer, ToolRenderProps } from "../types";
 import {
 	detailsRecord,
 	isRecord,
+	languageFromPath,
 	normalizeWs,
 	num,
 	str,
@@ -207,7 +210,11 @@ function FileSection({
 					)
 				: entry.diff !== null &&
 					entry.diff.length > 0 && (
-						<DiffBlock diff={entry.diff} maxLines={40} />
+						<DiffBlock
+							diff={entry.diff}
+							maxLines={40}
+							lang={path !== null ? languageFromPath(path) : null}
+						/>
 					)}
 			{diag?.summary && (
 				<Note tone={diag.errored ? "err" : "warn"}>{diag.summary}</Note>
@@ -219,49 +226,129 @@ function FileSection({
 	);
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
-	const input = str(args.input) ?? str(args._input);
-	const details = detailsRecord(result);
-	const perFile: FileEntry[] = [];
-	if (details && Array.isArray(details.perFileResults)) {
-		for (const f of details.perFileResults)
-			if (isRecord(f)) perFile.push(fileEntry(f));
-	}
-	const fallbackPath =
-		str(args.file_path) ??
-		str(args.path) ??
-		(input ? (inputPaths(input)[0] ?? null) : null);
+/** 输出段的形态：逐文件小节（perFileResults 或顶层 details 单文件），否则退回结果文本。 */
+interface Outcome {
+	sections: { entry: FileEntry; fallbackPath: string | null }[];
+	/** 没有小节时结果文本的折叠行数。 */
+	textLines: number;
+}
 
-	let outcome: ReactNode;
-	// 逐文件小节自己带路径行；其余文件在顶部补路径
-	const sectionPaths: string[] = [];
-	if (perFile.length > 0) {
-		outcome = perFile.map((f, i) => (
-			<FileSection key={`${f.path ?? ""}:${i}`} entry={f} />
-		));
-		for (const f of perFile) if (f.path) sectionPaths.push(f.path);
-	} else if (result?.isError === true) {
-		// Failed matches embed numbered file context — keep a generous window.
-		outcome = <ResultText result={result} maxLines={15} />;
-	} else if (details) {
-		const top = fileEntry(details);
-		const sectioned =
-			top.diff !== null || top.diagnostics !== null || top.move !== null;
-		outcome = sectioned ? (
-			<FileSection entry={top} fallbackPath={fallbackPath} />
-		) : (
-			<ResultText result={result} maxLines={8} />
-		);
-		const topPath = top.path ?? fallbackPath;
-		if (sectioned && topPath) sectionPaths.push(topPath);
-	} else {
-		outcome = <ResultText result={result} maxLines={8} />;
+function editOutcome(
+	args: Record<string, unknown>,
+	result: ToolRenderProps["result"],
+): Outcome {
+	const details = detailsRecord(result);
+	if (details && Array.isArray(details.perFileResults)) {
+		const sections: Outcome["sections"] = [];
+		for (const f of details.perFileResults)
+			if (isRecord(f))
+				sections.push({ entry: fileEntry(f), fallbackPath: null });
+		if (sections.length > 0) return { sections, textLines: 8 };
 	}
-	// 折叠行只写第一个文件（且窄屏会被省略号截断），展开体按文件给出完整路径；结果里可能是绝对路径
+	// Failed matches embed numbered file context — keep a generous window.
+	if (result?.isError === true) return { sections: [], textLines: 15 };
+	if (details) {
+		const top = fileEntry(details);
+		if (top.diff !== null || top.diagnostics !== null || top.move !== null) {
+			const input = str(args.input) ?? str(args._input);
+			const fallbackPath =
+				str(args.file_path) ??
+				str(args.path) ??
+				(input ? (inputPaths(input)[0] ?? null) : null);
+			return { sections: [{ entry: top, fallbackPath }], textLines: 8 };
+		}
+	}
+	return { sections: [], textLines: 8 };
+}
+
+/** 替换模式的 `old_string` / `new_string` 拼成一段 diff：旧文本整段删、新文本整段加。 */
+function replaceDiff(oldText: string, newText: string): string {
+	const rows: string[] = [];
+	if (oldText) for (const l of oldText.split("\n")) rows.push(`-${l}`);
+	if (newText) for (const l of newText.split("\n")) rows.push(`+${l}`);
+	return rows.join("\n");
+}
+
+/** 替换模式（顶层或批量项）的旧 / 新文本；两者都不是字符串时不渲染。 */
+function ReplaceBody({
+	edit,
+	lang,
+}: {
+	edit: Record<string, unknown>;
+	lang: string | null;
+}): ReactNode {
+	const oldText = str(edit.old_string);
+	const newText = str(edit.new_string);
+	if (oldText === null && newText === null) return null;
+	return (
+		<>
+			<Badges items={[edit.replace_all === true && "replace all"]} />
+			<DiffBlock
+				diff={replaceDiff(oldText ?? "", newText ?? "")}
+				maxLines={20}
+				lang={lang}
+			/>
+		</>
+	);
+}
+
+/** `edits[]` 的一项：patch 模式的 op / rename / diff，或替换批的旧 / 新文本。 */
+function EditEntry({
+	entry,
+	path,
+}: {
+	entry: unknown;
+	path: string | null;
+}): ReactNode {
+	if (!isRecord(entry))
+		return (
+			<KvGrid>
+				<Kv k="edit">
+					<InvalidArg what="edit" />
+				</Kv>
+			</KvGrid>
+		);
+	const op = str(entry.op);
+	const target =
+		str(entry.sel) ?? str(entry.path) ?? str(entry.rename) ?? str(entry.move);
+	const filePath = str(entry.path) ?? path;
+	const lang =
+		(filePath ? languageFromPath(filePath) : null) ??
+		languageFromPath(str(entry.rename) ?? "");
+	const diff = str(entry.diff);
+	return (
+		<div>
+			{(op !== null || target !== null) && (
+				<KvGrid>
+					<Kv k={op ?? "edit"}>{target ?? "?"}</Kv>
+				</KvGrid>
+			)}
+			{/* create 的 diff 就是新文件全文 */}
+			{diff ? (
+				op === "create" ? (
+					<CodeBlock code={diff} lang={lang} maxLines={12} />
+				) : (
+					<DiffBlock diff={diff} maxLines={20} lang={lang} />
+				)
+			) : null}
+			<ReplaceBody edit={entry} lang={lang} />
+		</div>
+	);
+}
+
+function Input({ args, result }: ToolRenderProps): ReactNode {
+	const input = str(args.input) ?? str(args._input);
+	const argPath = str(args.file_path) ?? str(args.path);
+	// 折叠行只写第一个文件（且窄屏会被省略号截断），输入段按文件给出完整路径；
+	// 输出段逐文件小节已带路径行的文件不再重复（结果里可能是绝对路径）
+	const sectionPaths: string[] = [];
+	for (const s of editOutcome(args, result).sections) {
+		const p = s.entry.path ?? s.fallbackPath;
+		if (p) sectionPaths.push(p);
+	}
 	const headPaths = editPaths(args, input).filter(
 		(p) => !sectionPaths.some((s) => s === p || s.endsWith(`/${p}`)),
 	);
-
 	return (
 		<>
 			{headPaths.length > 0 && (
@@ -273,28 +360,18 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 					))}
 				</KvGrid>
 			)}
-			{outcome}
-			{Array.isArray(args.edits) && args.edits.length > 0 && (
-				<KvGrid>
-					{args.edits.map((e, i) =>
-						isRecord(e) ? (
-							<Kv key={`${i}`} k={str(e.op) ?? "edit"}>
-								{str(e.sel) ??
-									str(e.path) ??
-									str(e.rename) ??
-									str(e.move) ??
-									"?"}
-							</Kv>
-						) : (
-							<Kv key={`${i}`} k="edit">
-								<InvalidArg what="edit" />
-							</Kv>
-						),
-					)}
-				</KvGrid>
-			)}
+			{Array.isArray(args.edits) &&
+				args.edits.map((e, i) => (
+					<EditEntry key={`${i}`} entry={e} path={argPath} />
+				))}
+			{/* 替换模式：顶层的 old_string / new_string */}
+			<ReplaceBody
+				edit={args}
+				lang={argPath ? languageFromPath(argPath) : null}
+			/>
+			{/* hashline / apply_patch 补丁：`+` 正文行、段头按 diff 语法着色 */}
 			{input !== null && input.length > 0 && (
-				<Output text={input} variant="code" maxLines={10} title="input" />
+				<Output text={input} lang="diff" variant="code" maxLines={10} />
 			)}
 			{input === null &&
 				(args.input !== undefined || args._input !== undefined) && (
@@ -302,6 +379,19 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 				)}
 		</>
 	);
+}
+
+function Result({ args, result }: ToolRenderProps): ReactNode {
+	const { sections, textLines } = editOutcome(args, result);
+	if (sections.length === 0)
+		return <ResultText result={result} maxLines={textLines} />;
+	return sections.map((s, i) => (
+		<FileSection
+			key={`${s.entry.path ?? ""}:${i}`}
+			entry={s.entry}
+			fallbackPath={s.fallbackPath}
+		/>
+	));
 }
 
 /** 右侧读数：本次改动的增删行数。 */
@@ -313,4 +403,4 @@ function Meta({ result }: ToolRenderProps): ReactNode {
 	return <MetaDiff added={added} removed={removed} />;
 }
 
-export const editRenderer: ToolRenderer = { Summary, Meta, Body };
+export const editRenderer: ToolRenderer = { Summary, Meta, Input, Result };

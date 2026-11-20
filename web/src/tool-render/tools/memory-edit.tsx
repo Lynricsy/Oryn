@@ -64,12 +64,38 @@ function Meta(props: ToolRenderProps): ReactNode {
 	);
 }
 
-function Body(props: ToolRenderProps): ReactNode {
+/** 输入：头部会被省略号截断，id、替代记忆、重要度与内容在这里完整给出。 */
+function Input({ args }: ToolRenderProps): ReactNode {
 	const { t } = useTranslation();
-	const { args, result } = props;
-	const details = detailsRecord(result);
 	const content = str(args.content);
+	const id = str(args.id);
+	const replacement = str(args.replacement_id);
 	const importance = num(args.importance);
+	if (!content && !id && !replacement && importance === null) return null;
+	return (
+		<>
+			{content && <div className="tv-prose">{content}</div>}
+			{(id || replacement || importance !== null) && (
+				<KvGrid>
+					<Kv k={t("toolRender.memoryEdit.id")}>
+						{id && <span className="tv-path">{id}</span>}
+					</Kv>
+					<Kv k={t("toolRender.memoryEdit.replacement")}>
+						{replacement && <span className="tv-path">{replacement}</span>}
+					</Kv>
+					<Kv k={t("toolRender.memoryEdit.importance")}>
+						{importance === null ? null : importance.toFixed(2)}
+					</Kv>
+				</KvGrid>
+			)}
+		</>
+	);
+}
+
+/** 输出：落在哪个记忆库；成功时读数已说明结果，找不到、只读与出错时给出工具原文（含下一步提示）。 */
+function Result(props: ToolRenderProps): ReactNode {
+	const { t } = useTranslation();
+	const details = detailsRecord(props.result);
 	const bank = str(details?.bank);
 	const store = str(details?.store);
 	const where = bank && (store ? `${bank} · ${store}` : bank);
@@ -78,26 +104,19 @@ function Body(props: ToolRenderProps): ReactNode {
 		status === "updated" || status === "deleted" || status === "invalidated";
 	return (
 		<>
-			{/* 头部会被省略号截断：id、替代记忆与内容在这里完整给出 */}
-			{content && <div className="tv-prose">{content}</div>}
-			<KvGrid>
-				<Kv k={t("toolRender.memoryEdit.id")}>
-					{str(args.id) && <span className="tv-path">{str(args.id)}</span>}
-				</Kv>
-				<Kv k={t("toolRender.memoryEdit.replacement")}>
-					{str(args.replacement_id) && (
-						<span className="tv-path">{str(args.replacement_id)}</span>
-					)}
-				</Kv>
-				<Kv k={t("toolRender.memoryEdit.importance")}>
-					{importance === null ? null : importance.toFixed(2)}
-				</Kv>
-				<Kv k={t("toolRender.memoryEdit.bank")}>{where}</Kv>
-			</KvGrid>
-			{/* 成功时读数已说明结果；找不到、只读与出错时给出工具原文（含下一步提示） */}
-			{!success && <ResultText result={result} maxLines={6} />}
+			{where && (
+				<KvGrid>
+					<Kv k={t("toolRender.memoryEdit.bank")}>{where}</Kv>
+				</KvGrid>
+			)}
+			{!success && <ResultText result={props.result} maxLines={6} />}
 		</>
 	);
 }
 
-export const memoryEditRenderer: ToolRenderer = { Summary, Meta, Body };
+export const memoryEditRenderer: ToolRenderer = {
+	Summary,
+	Meta,
+	Input,
+	Result,
+};

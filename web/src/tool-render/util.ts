@@ -2,6 +2,7 @@
  * Pure helpers shared by tool renderers. Host-agnostic; no DOM beyond
  * `globalThis` feature probes, no host package imports.
  */
+import { normalizeLanguage } from "../lib/highlight";
 import type { ToolResultImage, ToolResultLike } from "./types";
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -92,61 +93,76 @@ export function stripAnsi(s: string): string {
 	return s.replace(ANSI_RE, "");
 }
 
-const EXT_TO_LANG: Record<string, string> = {
-	ts: "typescript",
-	tsx: "typescript",
-	mts: "typescript",
-	cts: "typescript",
-	js: "javascript",
-	jsx: "javascript",
-	mjs: "javascript",
-	cjs: "javascript",
-	py: "python",
-	rb: "ruby",
-	rs: "rust",
-	go: "go",
-	java: "java",
-	kt: "kotlin",
-	swift: "swift",
-	c: "c",
-	h: "c",
-	cpp: "cpp",
-	cc: "cpp",
-	hpp: "cpp",
-	cs: "csharp",
-	php: "php",
-	sh: "bash",
-	bash: "bash",
-	zsh: "bash",
-	fish: "bash",
-	sql: "sql",
-	html: "html",
-	css: "css",
-	scss: "scss",
-	less: "less",
-	json: "json",
-	jsonc: "json",
-	json5: "json",
-	yaml: "yaml",
-	yml: "yaml",
-	toml: "ini",
-	ini: "ini",
-	xml: "xml",
-	svg: "xml",
-	md: "markdown",
-	mdx: "markdown",
+/** 没有（或不靠）扩展名识别的文件名。 */
+const BASENAME_TO_LANG: Record<string, string> = {
 	dockerfile: "dockerfile",
-	lua: "lua",
-	zig: "zig",
-	diff: "diff",
-	patch: "diff",
+	containerfile: "dockerfile",
+	makefile: "makefile",
+	gnumakefile: "makefile",
+	"cmakelists.txt": "cmake",
+	".bashrc": "bash",
+	".bash_profile": "bash",
+	".profile": "bash",
+	".zshrc": "bash",
+	".envrc": "bash",
+	pkgbuild: "bash",
+	".env": "properties",
+	".gitconfig": "ini",
+	".editorconfig": "ini",
+	gemfile: "ruby",
+	rakefile: "ruby",
+	"go.mod": "go",
+	"nginx.conf": "nginx",
+	"flake.lock": "json",
 };
 
+/** 由文件路径推断 highlight.js 语言（扩展名经 `normalizeLanguage` 的别名表归一）；未知返回 null。 */
 export function languageFromPath(filePath: string): string | null {
-	const base = filePath.split("/").pop() ?? "";
-	if (/^dockerfile$/i.test(base)) return "dockerfile";
-	const ext = base.split(".").pop()?.toLowerCase() ?? "";
-	return EXT_TO_LANG[ext] ?? null;
+	const base = (filePath.split("/").pop() ?? "").toLowerCase();
+	if (Object.hasOwn(BASENAME_TO_LANG, base))
+		return BASENAME_TO_LANG[base] ?? null;
+	if (base.startsWith("dockerfile.")) return "dockerfile";
+	if (base.startsWith(".env.")) return "properties";
+	const dot = base.lastIndexOf(".");
+	return dot > 0 ? normalizeLanguage(base.slice(dot + 1)) : null;
+}
+
+/** 路径末尾的读取选择器（`:50-100`、`:raw`）不属于文件名。 */
+const SEL_SUFFIX_RE = /:(?:\d[\d,+-]*|raw|conflicts)$/i;
+
+/**
+ * 一组路径共同的高亮语言（`;` 分隔的多路径逐个算）；任一路径认不出语言或语言不一时为 null：
+ * 混合语言的搜索输出不高亮。
+ */
+export function sharedLanguage(paths: readonly string[]): string | null {
+	let lang: string | null = null;
+	for (const entry of paths) {
+		for (const part of entry.split(";")) {
+			const p = part.trim().replace(SEL_SUFFIX_RE, "");
+			if (!p) continue;
+			const l = languageFromPath(p);
+			if (l === null || (lang !== null && l !== lang)) return null;
+			lang = l;
+		}
+	}
+	return lang;
+}
+
+/** 搜索结果命中的文件：`details.files`，否则 `details.fileMatches[].path`。 */
+export function resultFiles(result: ToolResultLike | undefined): string[] {
+	const details = detailsRecord(result);
+	if (!details) return [];
+	const files: string[] = [];
+	if (Array.isArray(details.files)) {
+		for (const f of details.files) if (typeof f === "string") files.push(f);
+	}
+	if (files.length === 0 && Array.isArray(details.fileMatches)) {
+		for (const m of details.fileMatches) {
+			const p = isRecord(m) ? str(m.path) : null;
+			if (p) files.push(p);
+		}
+	}
+	return files;
 }
 
 /** Joined text blocks of a tool result ("" when absent). */

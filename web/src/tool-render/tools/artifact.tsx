@@ -2,17 +2,27 @@
  * Artifacts 工具（M14，「agent 工具」表里的全部工具；orb / Runner 的扩展工具与全局助手的宿主工具同名）。
  * 摘要：`create_artifact` →「{类型} · 已创建 · v{n}」，`update_artifact` →「已更新 · v{from}→v{to}」（只改名时「已改名」），
  * `restore_artifact_version` →「已恢复 · v{被恢复的版本}」，`delete_artifact` →「已删除」；其余工具显示工具名与目标标题。
- * 正文：前三种渲染一张 `ArtifactCard form="row"`，数据只取 `result.details`（`{op, id, title, kind, version, fromVersion?}`），
- * 不再发请求；点击调 `host.openArtifact(id)`（只读的分享页不注入，卡片不可点，分享出去的转录只带标题、类型与版本号）。
- * 其余工具与出错的调用走通用渲染。`details` 残缺或类型不对时一律当作没有。
+ * 输入段是通用渲染的完整参数。输出段：前几种渲染一张 `ArtifactCard form="row"`，数据只取 `result.details`
+ * （`{op, id, title, kind, version, fromVersion?}`），不再发请求；点击调 `host.openArtifact(id)`（只读的分享页不注入，
+ * 卡片不可点，分享出去的转录只带标题、类型与版本号）。其余工具与出错的调用给原始结果（JSON 时按 JSON 高亮）。
+ * `details` 残缺或类型不对时一律当作没有。
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { ArtifactCard } from "../../components/artifacts/ArtifactCard";
 import { isArtifactKind, kindLabelKey } from "../../lib/artifacts/kinds";
 import { genericRenderer } from "../generic";
+import { CodeBlock, JsonResultText, Output, ResultImages } from "../parts";
 import type { ToolRenderer, ToolRenderProps } from "../types";
-import { detailsRecord, num, str, truncate } from "../util";
+import {
+	detailsRecord,
+	isRecord,
+	languageFromPath,
+	num,
+	resultTextOf,
+	str,
+	truncate,
+} from "../util";
 
 /** artifact 工具名（与「agent 工具」表、`internal/artifacts/agent.go` 的操作名一致）。 */
 export const ARTIFACT_TOOLS = [
@@ -161,10 +171,60 @@ function Summary(props: ToolRenderProps): ReactNode {
 	);
 }
 
-function Body(props: ToolRenderProps): ReactNode {
+/**
+ * `read_artifact` 的结果文本：一行 JSON 头（`{id, title, files, path, …}`，Go 紧凑编码不含换行）、空行、文件内容
+ * （`internal/artifacts/agent.go` 的 agentRead）。头不是带 `path` 的 JSON 对象时返回 null。
+ */
+function readEnvelope(
+	text: string,
+): { head: string; path: string; content: string } | null {
+	const sep = text.indexOf("\n\n");
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(sep === -1 ? text : text.slice(0, sep));
+	} catch {
+		return null;
+	}
+	const path = isRecord(parsed) ? str(parsed.path) : null;
+	if (path === null) return null;
+	return {
+		head: JSON.stringify(parsed, null, 2),
+		path,
+		content: sep === -1 ? "" : text.slice(sep + 2),
+	};
+}
+
+/** 读到的文件：头按 JSON 高亮，内容按返回的文件路径高亮。 */
+function ReadResult({ result }: Pick<ToolRenderProps, "result">): ReactNode {
+	const envelope = result?.isError ? null : readEnvelope(resultTextOf(result));
+	if (!envelope) return <JsonResultText result={result} />;
+	return (
+		<>
+			<Output text={envelope.head} lang="json" variant="code" maxLines={10} />
+			{envelope.content.trim() && (
+				<CodeBlock
+					code={envelope.content}
+					lang={languageFromPath(envelope.path)}
+					title={envelope.path}
+				/>
+			)}
+		</>
+	);
+}
+
+function Result(props: ToolRenderProps): ReactNode {
 	const card = CARD_TOOLS.includes(props.name) ? artifactCardOf(props) : null;
 	if (!card)
-		return genericRenderer.Body ? <genericRenderer.Body {...props} /> : null;
+		return (
+			<>
+				<ResultImages result={props.result} />
+				{props.name === "read_artifact" ? (
+					<ReadResult result={props.result} />
+				) : (
+					<JsonResultText result={props.result} />
+				)}
+			</>
+		);
 	const open = props.host?.openArtifact;
 	return (
 		<div data-testid="artifact-tool-card" className="p-2">
@@ -182,4 +242,8 @@ function Body(props: ToolRenderProps): ReactNode {
 	);
 }
 
-export const artifactRenderer: ToolRenderer = { Summary, Body };
+export const artifactRenderer: ToolRenderer = {
+	Summary,
+	Input: genericRenderer.Input,
+	Result,
+};

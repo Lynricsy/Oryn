@@ -1878,6 +1878,78 @@ const ZOO_GROUPS: { text: string; calls: ZooCall[] }[] = [
 				isError: true,
 			},
 			{
+				// orb 扩展用 omp 原生 ShellVisualization 渲染的 Pseudo 视图（真实轨迹压缩所得）
+				name: "bash",
+				args: {
+					command:
+						'for x in a b; do Y="$x-1"; echo "$Y"; done && ls /nonexistent-dir || echo fallback',
+					i: "试一下循环与失败回退",
+				},
+				text: "a-1\nb-1\nls: cannot access '/nonexistent-dir': No such file or directory\nfallback",
+				details: {
+					wallTimeMs: 31,
+					orynPseudo: {
+						v: 1,
+						rows: [
+							{
+								depth: 0,
+								segments: [
+									{ text: "for ", style: "kw" },
+									{ text: "x", style: "var def" },
+									{ text: " in ", style: "kw" },
+									{ text: "[", style: "op" },
+									{ text: '"a"', style: "str", state: "ok" },
+									{ text: ", ", style: "op" },
+									{ text: '"b"', style: "str", state: "ok" },
+									{ text: "]", style: "op" },
+									{ text: ":", style: "op" },
+								],
+								meta: "↻ 2",
+								annotations: [{ name: "x", value: "b" }],
+							},
+							{
+								depth: 1,
+								segments: [
+									{ text: 'Y = f"{x}-1"', style: "var def", state: "ok" },
+								],
+								state: "ok",
+								annotations: [{ name: "Y", value: "b-1" }],
+							},
+							{
+								depth: 1,
+								segments: [
+									{ text: "print(", style: "fn", state: "ok" },
+									{ text: 'f"{Y}"', style: "str", state: "ok" },
+									{ text: ")", style: "op", state: "ok" },
+								],
+								state: "ok",
+							},
+							{
+								depth: 1,
+								segments: [
+									{ text: "and ", style: "op" },
+									{ text: "ls", style: "cmd", state: "fail", failMark: true },
+									{ text: " ", state: "fail" },
+									{ text: "/nonexistent-dir", style: "arg", state: "fail" },
+								],
+								state: "fail",
+								meta: "exit 2 · 20ms",
+							},
+							{
+								depth: 1,
+								segments: [
+									{ text: "or ", style: "op" },
+									{ text: "print(", style: "fn", state: "ok" },
+									{ text: '"fallback"', style: "str", state: "ok" },
+									{ text: ")", style: "op", state: "ok" },
+								],
+								state: "ok",
+							},
+						],
+					},
+				},
+			},
+			{
 				name: "terminal",
 				args: { action: "run", command: "bun run dev:mock" },
 				text: "  VITE v8.0.0  ready in 412 ms\n\n  ➜  Local:   http://localhost:5173/",

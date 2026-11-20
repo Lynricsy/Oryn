@@ -6,14 +6,16 @@ import {
 	InvalidArg,
 	MetaCount,
 	Note,
-	ResultText,
+	SearchOutput,
 } from "../parts";
 import type { ToolRenderer, ToolRenderProps } from "../types";
 import {
 	detailsRecord,
 	num,
+	resultFiles,
 	resultTextOf,
 	scopePaths,
+	sharedLanguage,
 	shortenPath,
 	str,
 } from "../util";
@@ -55,12 +57,30 @@ function Summary({ args }: ToolRenderProps): ReactNode {
 	);
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
+/** 折叠行只是摘要（会被截断），输入段始终给出完整的模式、范围与选项。 */
+function Input({ args }: ToolRenderProps): ReactNode {
+	return (
+		<>
+			<div>
+				<Pattern args={args} /> <span className="tv-muted">in</span>{" "}
+				<span className="tv-path">{pathsOf(args).join(", ")}</span>
+			</div>
+			<Badges items={argBadges(args)} />
+		</>
+	);
+}
+
+function Result({ args, result }: ToolRenderProps): ReactNode {
 	const details = detailsRecord(result);
 	// 匹配数在头部读数里，这里只补文件数与截断
 	const fileCount = num(details?.fileCount);
 	const truncated = details?.truncated === true;
 	const error = str(details?.error);
+	// 没有文件头（单文件搜索）时的高亮语言：命中文件或搜索范围共同的语言
+	const files = resultFiles(result);
+	const fallbackLang = sharedLanguage(
+		files.length > 0 ? files : scopePaths(args),
+	);
 	const missing: string[] = [];
 	if (details && Array.isArray(details.missingPaths)) {
 		for (const p of details.missingPaths) {
@@ -76,14 +96,8 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 				truncated
 			</Badge>,
 		);
-	// 折叠行只是摘要（会被截断），展开体始终给出完整的模式与范围
-	const paths = pathsOf(args).join(", ");
 	return (
 		<>
-			<div>
-				<Pattern args={args} /> <span className="tv-muted">in</span>{" "}
-				<span className="tv-path">{paths}</span>
-			</div>
 			<Badges items={counts} />
 			{missing.length > 0 && (
 				<Note tone="warn">skipped missing: {missing.join(", ")}</Note>
@@ -91,7 +105,7 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 			{error !== null && !resultTextOf(result).trim() && (
 				<Note tone="err">{error}</Note>
 			)}
-			<ResultText result={result} maxLines={14} variant="code" />
+			<SearchOutput result={result} maxLines={14} lang={fallbackLang} />
 		</>
 	);
 }
@@ -109,4 +123,4 @@ function Meta({ result }: ToolRenderProps): ReactNode {
 	);
 }
 
-export const grepRenderer: ToolRenderer = { Summary, Meta, Body };
+export const grepRenderer: ToolRenderer = { Summary, Meta, Input, Result };

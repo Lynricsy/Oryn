@@ -219,8 +219,16 @@ function Summary({ args }: ToolRenderProps): ReactNode {
 	);
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
-	const details = detailsRecord(result);
+/** 有可列的参数（动作只在类型不对时列出；有文件时行号并入路径）。 */
+function hasArgRows(args: Record<string, unknown>): boolean {
+	if (args.action !== undefined && str(args.action) === null) return true;
+	if (args.line !== undefined && !str(args.file)) return true;
+	return ["file", "symbol", "query", "new_name", "apply", "timeout"].some(
+		(k) => args[k] !== undefined,
+	);
+}
+
+function Input({ args }: ToolRenderProps): ReactNode {
 	const file = str(args.file);
 	const line = num(args.line);
 	const symbol = str(args.symbol);
@@ -229,6 +237,107 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	const apply = typeof args.apply === "boolean" ? args.apply : null;
 	const timeout = num(args.timeout);
 	const payload = str(args.payload);
+	const invalidPayload = args.payload !== undefined && payload == null;
+
+	return (
+		<>
+			{/* 动作已在折叠行里；文件与符号 / 查询 / 新名字在折叠行里只是摘要（会被截断），这里始终给出全文 */}
+			{(hasArgRows(args) || invalidPayload) && (
+				<KvGrid>
+					<ArgKv
+						k="action"
+						raw={str(args.action) === null ? args.action : undefined}
+						val={null}
+					/>
+					<ArgKv
+						k="file"
+						raw={args.file}
+						val={
+							file === "*" ? (
+								"workspace"
+							) : file === null ? null : (
+								<PathText path={file} from={line} />
+							)
+						}
+					/>
+					{!file && <ArgKv k="line" raw={args.line} val={line} />}
+					<ArgKv k="symbol" raw={args.symbol} val={symbol} />
+					<ArgKv k="query" raw={args.query} val={query} />
+					<ArgKv k="new name" raw={args.new_name} val={newName} />
+					<ArgKv
+						k="apply"
+						raw={args.apply}
+						val={apply == null ? null : apply ? "yes" : "no"}
+					/>
+					<ArgKv
+						k="timeout"
+						raw={args.timeout}
+						val={timeout != null && `${timeout}s`}
+					/>
+					{invalidPayload && (
+						<Kv k="payload">
+							<InvalidArg what="payload" />
+						</Kv>
+					)}
+				</KvGrid>
+			)}
+			{payload && (
+				<Output
+					text={payload}
+					lang="json"
+					variant="code"
+					maxLines={8}
+					title="payload"
+				/>
+			)}
+		</>
+	);
+}
+
+/** `request` 的结果首行是 `<server> ← <method>:`，其后是 JSON 序列化的响应。 */
+const REQUEST_HEAD_RE = /^(.+ ← .+:)\n([\s\S]*)$/;
+
+/** 没有诊断 / 位置列表时的结果文本：hover 是 markdown，request 的响应是 JSON。 */
+function ResultBody({
+	action,
+	result,
+}: {
+	action: string | null;
+	result: ToolRenderProps["result"];
+}): ReactNode {
+	const ok = result !== undefined && !result.isError;
+	if (ok && action === "hover")
+		return (
+			<ResultText
+				result={result}
+				maxLines={12}
+				lang="markdown"
+				variant="plain"
+			/>
+		);
+	const request =
+		ok && action === "request"
+			? REQUEST_HEAD_RE.exec(resultTextOf(result).trim())
+			: null;
+	if (request) {
+		const body = request[2] ?? "";
+		return (
+			<>
+				<div className="tv-muted">{request[1]}</div>
+				<Output
+					text={body}
+					lang={/^[[{]|^(?:null|true|false|-?\d)/.test(body) ? "json" : null}
+					variant="code"
+					maxLines={12}
+				/>
+			</>
+		);
+	}
+	return <ResultText result={result} maxLines={12} />;
+}
+
+function Result({ args, result }: ToolRenderProps): ReactNode {
+	const details = detailsRecord(result);
 	const serverName = details ? str(details.serverName) : null;
 	const action = str(args.action) ?? (details ? str(details.action) : null);
 
@@ -244,63 +353,20 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 
 	return (
 		<>
-			{/* 动作已在折叠行里；文件与符号 / 查询 / 新名字在折叠行里只是摘要（会被截断），这里始终给出全文 */}
-			<KvGrid>
-				<ArgKv
-					k="action"
-					raw={str(args.action) === null ? args.action : undefined}
-					val={null}
-				/>
-				<ArgKv
-					k="file"
-					raw={args.file}
-					val={
-						file === "*" ? (
-							"workspace"
-						) : file === null ? null : (
-							<PathText path={file} from={line} />
-						)
-					}
-				/>
-				{!file && <ArgKv k="line" raw={args.line} val={line} />}
-				<ArgKv k="symbol" raw={args.symbol} val={symbol} />
-				<ArgKv k="query" raw={args.query} val={query} />
-				<ArgKv k="new name" raw={args.new_name} val={newName} />
-				<ArgKv
-					k="apply"
-					raw={args.apply}
-					val={apply == null ? null : apply ? "yes" : "no"}
-				/>
-				<ArgKv
-					k="timeout"
-					raw={args.timeout}
-					val={timeout != null && `${timeout}s`}
-				/>
-				{args.payload !== undefined && payload == null && (
-					<Kv k="payload">
-						<InvalidArg what="payload" />
-					</Kv>
-				)}
-				{serverName && <Kv k="server">{serverName}</Kv>}
-			</KvGrid>
-			{payload && (
-				<Output
-					text={payload}
-					lang="json"
-					variant="code"
-					maxLines={8}
-					title="payload"
-				/>
+			{serverName && (
+				<KvGrid>
+					<Kv k="server">{serverName}</Kv>
+				</KvGrid>
 			)}
 			{diags.length > 0 ? (
 				<DiagnosticRows text={text} rows={diags} />
 			) : locs.length > 0 ? (
 				<LocationRows text={text} rows={locs} />
 			) : (
-				<ResultText result={result} maxLines={12} />
+				<ResultBody action={action} result={result} />
 			)}
 		</>
 	);
 }
 
-export const lspRenderer: ToolRenderer = { Summary, Body };
+export const lspRenderer: ToolRenderer = { Summary, Input, Result };

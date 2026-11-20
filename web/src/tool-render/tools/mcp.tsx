@@ -5,8 +5,7 @@
  * 部分结果带 `progress: { progress, total?, message? }`；文本结果是 JSON 时按 JSON 显示，否则按 Markdown（同 TUI）。
  */
 import type { ReactNode } from "react";
-import { useTranslation } from "react-i18next";
-import { Output, ResultImages, ResultText } from "../parts";
+import { jsonText, Output, ResultImages, ResultText } from "../parts";
 import type { ToolRenderer, ToolRenderProps } from "../types";
 import {
 	argsDigest,
@@ -86,16 +85,6 @@ function Meta({ result, partial }: ToolRenderProps): ReactNode {
 	return text ? <span>{truncate(normalizeWs(text), 60)}</span> : null;
 }
 
-function jsonText(text: string): string | null {
-	const trimmed = text.trim();
-	if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return null;
-	try {
-		return JSON.stringify(JSON.parse(trimmed), null, 2);
-	} catch {
-		return null;
-	}
-}
-
 function ResultBody({ result }: Pick<ToolRenderProps, "result">): ReactNode {
 	const text = resultTextOf(result).trim();
 	if (!text) return null;
@@ -106,28 +95,22 @@ function ResultBody({ result }: Pick<ToolRenderProps, "result">): ReactNode {
 	return <CardMarkdown text={text} />;
 }
 
-function Body({ args, result, partial }: ToolRenderProps): ReactNode {
-	const { t } = useTranslation();
+function Input({ args }: ToolRenderProps): ReactNode {
+	if (Object.keys(args).length === 0) return null;
 	let argText = "";
-	if (Object.keys(args).length > 0) {
-		try {
-			argText = JSON.stringify(args, null, 2) ?? "";
-		} catch {
-			argText = String(args);
-		}
+	try {
+		argText = JSON.stringify(args, null, 2) ?? "";
+	} catch {
+		argText = String(args);
 	}
+	if (!argText) return null;
+	return <Output text={argText} lang="json" variant="code" maxLines={12} />;
+}
+
+function Result({ result, partial }: ToolRenderProps): ReactNode {
 	const progress = result ? null : progressText(partial);
 	return (
 		<>
-			{argText && (
-				<Output
-					text={argText}
-					lang="json"
-					variant="code"
-					maxLines={12}
-					title={t("toolRender.args")}
-				/>
-			)}
 			{progress && <div className="tv-prose">{progress}</div>}
 			<ResultImages result={result} />
 			<ResultBody result={result} />
@@ -138,6 +121,7 @@ function Body({ args, result, partial }: ToolRenderProps): ReactNode {
 export const mcpRenderer: ToolRenderer = {
 	Summary,
 	Meta,
-	Body,
+	Input,
+	Result,
 	livePartial: true,
 };

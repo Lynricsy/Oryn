@@ -1,9 +1,9 @@
 /**
  * Tool renderer contract.
  *
- * Every tool gets a renderer with two React components:
+ * Every tool gets a renderer:
  * - `Summary` — one-line inline header content (dense, truncated by the chrome).
- * - `Body` — expanded detail view (args, outputs, diffs, images).
+ * - `Input` / `Result` — 展开体的两段：调用参数（输入）与执行结果（输出），由 ToolView 分段排版。
  *
  * Renderers are host-agnostic: they run inside the collab-web React app and
  * inside the `<omp-tool-view>` web component bundled into HTML session exports.
@@ -82,15 +82,26 @@ export interface ToolRenderProps {
 }
 
 export interface ToolRenderer {
-	/** Inline single-line header summary. Must not render block elements. */
+	/**
+	 * 头部摘要：一行内联内容（不得渲染块级元素）。卡片收起且有意图（`i`）时头部显示意图，
+	 * 展开后才显示 Summary。
+	 */
 	Summary: ComponentType<ToolRenderProps>;
 	/**
 	 * 头部右侧的结果读数（行数、+N −M、匹配数、通过数与耗时……），用 `tv-meta-*` 类按语义着色。
-	 * 读数只在这里出现一次：Summary 与 Body 不再重复。Omit when there is nothing to read out.
+	 * 读数只在这里出现一次：Summary、Input、Result 不再重复。Omit when there is nothing to read out.
 	 */
 	Meta?: ComponentType<ToolRenderProps>;
-	/** Expanded body. Omit when the summary already says everything. */
-	Body?: ComponentType<ToolRenderProps>;
+	/**
+	 * 展开体「输入」段：调用参数的完整视图（命令、代码、路径、模式、选项）。
+	 * 只展示模型给出的参数；结果派生的信息放进 `Result`。渲染 null 时整段不出现。
+	 */
+	Input?: ComponentType<ToolRenderProps>;
+	/**
+	 * 展开体「输出」段：执行结果（输出文本、diff、图片、错误、运行中的结构化进度）。
+	 * 渲染 null 时整段不出现。
+	 */
+	Result?: ComponentType<ToolRenderProps>;
 	/** 为真时渲染器自己展示 partial，ToolView 不再输出文本尾巴。 */
 	livePartial?: boolean;
 }

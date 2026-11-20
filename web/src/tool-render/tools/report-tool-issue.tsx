@@ -16,15 +16,18 @@ function Summary({ args }: ToolRenderProps): ReactNode {
 	);
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
+function Input({ args }: ToolRenderProps): ReactNode {
 	const report = str(args.report);
-	return (
-		<>
-			{/* 折叠行只是摘要（会被截断），展开体始终给出完整报告 */}
-			{report && <Note tone="warn">{report}</Note>}
-			<ResultText result={result} maxLines={4} />
-		</>
-	);
+	// 折叠行只是摘要（会被截断），展开体始终给出完整报告
+	return report ? <Note tone="warn">{report}</Note> : null;
 }
 
-export const reportToolIssueRenderer: ToolRenderer = { Summary, Body };
+function Result({ result }: ToolRenderProps): ReactNode {
+	return <ResultText result={result} maxLines={4} />;
+}
+
+export const reportToolIssueRenderer: ToolRenderer = {
+	Summary,
+	Input,
+	Result,
+};

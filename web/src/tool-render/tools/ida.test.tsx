@@ -93,8 +93,10 @@ describe("ida 渲染器", () => {
 		expect(blocks[1]?.text).toBe("0x401000 aes_encrypt\n0x401200 aes_decrypt");
 		expect(blocks[2]?.text).toBe("2");
 		expect(body?.querySelector(".tv-pre--error")).toBeNull();
-		// 完整 db 路径与超时在参数网格里；解析出的库 id 与参数不同也列出
-		const kv = body?.querySelector(".tv-kv")?.textContent ?? "";
+		// 完整 db 路径与超时在输入段的参数网格里；解析出的库 id 与参数不同时在输出段列出
+		const kv = [...(body?.querySelectorAll(".tv-kv") ?? [])]
+			.map((el) => el.textContent)
+			.join("\n");
 		expect(kv).toContain("~/work/bin/server");
 		expect(kv).toContain("30s");
 		expect(kv).toContain("库 ID");

@@ -2,6 +2,7 @@
 import type { ReactNode } from "react";
 import {
 	Badge,
+	Badges,
 	CodeBlock,
 	ResultImages,
 	ResultText,
@@ -62,14 +63,11 @@ function actionTone(action: string): Tone | undefined {
 	}
 }
 
-/** Mirrors the TUI's `describeBrowser`: explicit app args win over reported mode. */
-function describeBrowser(
-	app: AppArg | null,
-	details: BrowserDetails,
-): string | null {
+/** Mirrors the TUI's `describeBrowser` for explicit app args; reported mode (details.browser) is the fallback. */
+function describeApp(app: AppArg | null): string | null {
 	if (app?.cdpUrl) return `connected ${app.cdpUrl}`;
 	if (app?.path) return `spawned ${shortenPath(app.path)}`;
-	return details.browser;
+	return null;
 }
 
 function Summary({ args, result }: ToolRenderProps): ReactNode {
@@ -92,13 +90,12 @@ function Summary({ args, result }: ToolRenderProps): ReactNode {
 	);
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
-	const details = detailsOf(result);
-	const action = str(args.action) ?? details.action;
+function Input({ args, result }: ToolRenderProps): ReactNode {
+	// 旧调用可能没写 action，回落到结果报告的动作，脚本照样在输入段给出
+	const action = str(args.action) ?? detailsOf(result).action;
 	const app = appOf(args);
-	const tab = details.name ?? str(args.name);
-	const url = details.url ?? str(args.url);
-	const browserDesc = describeBrowser(app, details);
+	const tab = str(args.name);
+	const url = str(args.url);
 	const viewport = isRecord(args.viewport) ? args.viewport : null;
 	const vpWidth = viewport ? num(viewport.width) : null;
 	const vpHeight = viewport ? num(viewport.height) : null;
@@ -106,27 +103,46 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	const code = str(args.code);
 	return (
 		<>
-			<span className="tv-badges">
-				{tab !== null && <Badge>tab {tab}</Badge>}
-				{url && <Badge tone="accent">{truncate(shortenPath(url), 120)}</Badge>}
-				{browserDesc && <Badge>{browserDesc}</Badge>}
-				{app?.target && <Badge>target {app.target}</Badge>}
-				{args.all === true && <Badge tone="warn">all</Badge>}
-				{args.kill === true && <Badge tone="err">kill</Badge>}
-				{vpWidth !== null && vpHeight !== null && (
-					<Badge>
-						{vpWidth}×{vpHeight}
-						{vpScale !== null ? `@${vpScale}x` : ""}
-					</Badge>
-				)}
-			</span>
+			<Badges
+				items={[
+					tab !== null && <Badge>tab {tab}</Badge>,
+					url && <Badge tone="accent">{truncate(shortenPath(url), 120)}</Badge>,
+					describeApp(app),
+					app?.target && `target ${app.target}`,
+					args.all === true && <Badge tone="warn">all</Badge>,
+					args.kill === true && <Badge tone="err">kill</Badge>,
+					vpWidth !== null &&
+						vpHeight !== null &&
+						`${vpWidth}×${vpHeight}${vpScale !== null ? `@${vpScale}x` : ""}`,
+				]}
+			/>
 			{action === "run" && code !== null && (
 				<CodeBlock code={code.replace(/\s+$/, "")} lang="javascript" />
 			)}
+		</>
+	);
+}
+
+function Result({ args, result }: ToolRenderProps): ReactNode {
+	const details = detailsOf(result);
+	// 结果报告的标签页、地址、浏览器只在与参数不同（或参数未给）时列出
+	const tab = details.name !== str(args.name) ? details.name : null;
+	const url = details.url !== str(args.url) ? details.url : null;
+	// 显式 app 参数优先于结果报告的浏览器模式
+	const browser = describeApp(appOf(args)) ? null : details.browser;
+	return (
+		<>
+			<Badges
+				items={[
+					tab !== null && <Badge>tab {tab}</Badge>,
+					url && <Badge tone="accent">{truncate(shortenPath(url), 120)}</Badge>,
+					browser,
+				]}
+			/>
 			<ResultImages result={result} />
 			<ResultText result={result} maxLines={10} />
 		</>
 	);
 }
 
-export const browserRenderer: ToolRenderer = { Summary, Body };
+export const browserRenderer: ToolRenderer = { Summary, Input, Result };

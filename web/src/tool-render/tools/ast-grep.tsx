@@ -10,14 +10,16 @@ import {
 	MetaCount,
 	Output,
 	PathText,
-	ResultText,
+	SearchOutput,
 } from "../parts";
 import type { ToolRenderer, ToolRenderProps } from "../types";
 import {
 	detailsRecord,
 	normalizeWs,
 	num,
+	resultFiles,
 	scopePaths,
+	sharedLanguage,
 	shortenPath,
 	str,
 	truncate,
@@ -52,14 +54,66 @@ function Summary({ args }: ToolRenderProps): ReactNode {
 	);
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
+/** 模式的高亮语言：`lang` 参数，否则命中文件（或搜索范围）共同的语言。 */
+function patternLanguage(
+	args: Record<string, unknown>,
+	result: ToolRenderProps["result"],
+): string | null {
+	const files = resultFiles(result);
+	return (
+		str(args.lang) ??
+		sharedLanguage(files.length > 0 ? files : scopePaths(args))
+	);
+}
+
+function Input({ args, result }: ToolRenderProps): ReactNode {
 	const patterns = patternsOf(args);
 	const paths = scopePaths(args);
-	const lang = str(args.lang);
 	const glob = str(args.glob);
 	const sel = str(args.sel);
 	const skip = num(args.skip);
+	const lang = patternLanguage(args, result);
+	// 语言在折叠行里；模式与路径在折叠行里只是摘要（会被截断），这里始终给出全文
+	return (
+		<>
+			<Badges
+				items={[
+					glob && <Badge key="glob">glob={glob}</Badge>,
+					sel && <Badge key="sel">sel={sel}</Badge>,
+					skip !== null && skip > 0 && <Badge key="skip">skip:{skip}</Badge>,
+				]}
+			/>
+			{patterns.length === 0 ? (
+				<InvalidArg what="pat" />
+			) : (
+				patterns.map((pat, i) => (
+					<CodeBlock
+						key={i}
+						code={pat}
+						lang={lang}
+						title={patterns.length > 1 ? `pattern ${i + 1}` : "pattern"}
+						maxLines={12}
+					/>
+				))
+			)}
+			{paths.length > 0 && (
+				<KvGrid>
+					<Kv k={paths.length === 1 ? "path" : "paths"}>
+						{paths.map((p, i) => (
+							<span key={i}>
+								{i > 0 && ", "}
+								<PathText path={p} />
+							</span>
+						))}
+					</Kv>
+				</KvGrid>
+			)}
+		</>
+	);
+}
 
+function Result({ args, result }: ToolRenderProps): ReactNode {
+	const paths = scopePaths(args);
 	const details = detailsRecord(result);
 	const fileCount = num(details?.fileCount);
 	const filesSearched = num(details?.filesSearched);
@@ -69,15 +123,6 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 		? details.parseErrors.filter((e): e is string => typeof e === "string")
 		: [];
 	const parseErrorsTotal = num(details?.parseErrorsTotal) ?? parseErrors.length;
-
-	// 语言在折叠行里；模式与路径在折叠行里只是摘要（会被截断），这里始终给出全文
-	const argBadges: ReactNode[] = [
-		glob && <Badge key="glob">glob={glob}</Badge>,
-		sel && <Badge key="sel">sel={sel}</Badge>,
-		skip !== null && skip > 0 && <Badge key="skip">skip:{skip}</Badge>,
-	];
-	const showPatterns = patterns.length > 0;
-	const showPaths = paths.length > 0;
 	const showScope =
 		scopePath !== null &&
 		(paths.length !== 1 || shortenPath(scopePath) !== shortenPath(paths[0]!));
@@ -103,38 +148,12 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 
 	return (
 		<>
-			<Badges items={[...argBadges, ...resultBadges]} />
-			{patterns.length === 0 ? (
-				<InvalidArg what="pat" />
-			) : (
-				showPatterns &&
-				patterns.map((pat, i) => (
-					<CodeBlock
-						key={i}
-						code={pat}
-						lang={lang ?? undefined}
-						title={patterns.length > 1 ? `pattern ${i + 1}` : "pattern"}
-						maxLines={12}
-					/>
-				))
-			)}
-			{(showPaths || showScope) && (
+			<Badges items={resultBadges} />
+			{showScope && scopePath && (
 				<KvGrid>
-					{showPaths && (
-						<Kv k={paths.length === 1 ? "path" : "paths"}>
-							{paths.map((p, i) => (
-								<span key={i}>
-									{i > 0 && ", "}
-									<PathText path={p} />
-								</span>
-							))}
-						</Kv>
-					)}
-					{showScope && scopePath && (
-						<Kv k="scope">
-							<PathText path={scopePath} />
-						</Kv>
-					)}
+					<Kv k="scope">
+						<PathText path={scopePath} />
+					</Kv>
 				</KvGrid>
 			)}
 			{parseErrors.length > 0 && (
@@ -148,7 +167,11 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 					}
 				/>
 			)}
-			<ResultText result={result} maxLines={12} />
+			<SearchOutput
+				result={result}
+				maxLines={12}
+				lang={patternLanguage(args, result)}
+			/>
 		</>
 	);
 }
@@ -166,4 +189,4 @@ function Meta({ result }: ToolRenderProps): ReactNode {
 	);
 }
 
-export const astGrepRenderer: ToolRenderer = { Summary, Meta, Body };
+export const astGrepRenderer: ToolRenderer = { Summary, Meta, Input, Result };

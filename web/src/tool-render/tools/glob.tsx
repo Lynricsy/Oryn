@@ -27,10 +27,32 @@ function Summary({ args }: ToolRenderProps): ReactNode {
 	return <span className="tv-pattern">{truncate(globs || "*", 120)}</span>;
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
-	const details = detailsRecord(result);
+/** 折叠行里的模式会被截断，输入段给出完整的模式与选项。 */
+function Input({ args }: ToolRenderProps): ReactNode {
 	const limit = num(args.limit);
 	const timeout = num(args.timeout);
+	const globs = scopePaths(args).map(shortenPath).join(", ");
+	return (
+		<>
+			{globs !== "" && (
+				<div>
+					<span className="tv-pattern">{globs}</span>
+				</div>
+			)}
+			<Badges
+				items={[
+					limit !== null && <Badge>limit {limit}</Badge>,
+					args.gitignore === false && <Badge>no-gitignore</Badge>,
+					args.hidden === false && <Badge>no-hidden</Badge>,
+					timeout !== null && <Badge>timeout {timeout}s</Badge>,
+				]}
+			/>
+		</>
+	);
+}
+
+function Result({ result }: ToolRenderProps): ReactNode {
+	const details = detailsRecord(result);
 	const resultLimit = num(details?.resultLimitReached);
 	const scopePath = str(details?.scopePath);
 	const error = str(details?.error);
@@ -50,10 +72,6 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 		<>
 			<Badges
 				items={[
-					limit !== null && <Badge>limit {limit}</Badge>,
-					args.gitignore === false && <Badge>no-gitignore</Badge>,
-					args.hidden === false && <Badge>no-hidden</Badge>,
-					timeout !== null && <Badge>timeout {timeout}s</Badge>,
 					scopePath !== null && <Badge>in {shortenPath(scopePath)}</Badge>,
 					truncated && (
 						<Badge tone="warn">
@@ -83,4 +101,4 @@ function Meta({ result }: ToolRenderProps): ReactNode {
 	);
 }
 
-export const globRenderer: ToolRenderer = { Summary, Meta, Body };
+export const globRenderer: ToolRenderer = { Summary, Meta, Input, Result };

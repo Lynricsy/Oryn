@@ -236,7 +236,12 @@ function AgentResult({
 			{warning && <Note tone="warn">{warning}</Note>}
 			{aborted && abortReason && <Note tone="err">{abortReason}</Note>}
 			{output.trim() !== "" && (
-				<Output text={output} maxLines={6} error={tone === "err"} />
+				<Output
+					text={output}
+					lang="markdown"
+					maxLines={6}
+					error={tone === "err"}
+				/>
 			)}
 			{error && !aborted && error !== abortReason && (
 				<Note tone={tone === "warn" ? "warn" : "err"}>{error}</Note>
@@ -308,11 +313,70 @@ function AgentProgressRow({
 	);
 }
 
-function Body({ args, result, partial, host }: ToolRenderProps): ReactNode {
-	// 运行中没有最终结果时，用结构化部分结果（details.progress）展示各子 agent 的进度
-	const current = result ?? partial;
+/** 输入：共享上下文 + 每个子 agent 的派工（名字、agent、任务正文/分步）。 */
+function Input({ args, host }: ToolRenderProps): ReactNode {
 	const context = str(args.context);
 	const tasks = taskItems(args);
+	if (!context && tasks.length === 0) return null;
+	return (
+		<>
+			{context && (
+				<Output text={context} lang="markdown" maxLines={4} title="context" />
+			)}
+			{tasks.length > 0 && (
+				<div className="tv-list">
+					{tasks.map((t, i) => (
+						<div key={t.name ?? i}>
+							<Row
+								k={
+									t.name ? (
+										<AgentLink id={t.name} host={host}>
+											{taskIdLabel(t.name)}
+										</AgentLink>
+									) : (
+										<Badge tone="accent">{`#${i + 1}`}</Badge>
+									)
+								}
+							>
+								{t.agent && (
+									<AgentTag agent={t.agent} state="unknown" host={host}>
+										<Badge>{t.agent}</Badge>
+									</AgentTag>
+								)}{" "}
+								{t.steps.length > 0 && (
+									<Badge>{`${t.steps.length} ${t.steps.length === 1 ? "step" : "steps"}`}</Badge>
+								)}{" "}
+								{t.isolated && <Badge>isolated</Badge>}
+							</Row>
+							{t.task && (
+								<Output
+									text={t.task}
+									lang="markdown"
+									maxLines={6}
+									title="task"
+								/>
+							)}
+							{t.steps.map((step, n) => (
+								<Output
+									key={n}
+									text={step}
+									lang="markdown"
+									maxLines={4}
+									title={`step ${n + 1}/${t.steps.length}`}
+								/>
+							))}
+						</div>
+					))}
+				</div>
+			)}
+		</>
+	);
+}
+
+/** 输出：各子 agent 的最终结果与汇总，运行中则是结构化进度；都没有时回落到结果文本。 */
+function Result({ result, partial, host }: ToolRenderProps): ReactNode {
+	// 运行中没有最终结果时，用结构化部分结果（details.progress）展示各子 agent 的进度
+	const current = result ?? partial;
 	const details = detailsRecord(current);
 	const results =
 		details && Array.isArray(details.results)
@@ -361,67 +425,31 @@ function Body({ args, result, partial, host }: ToolRenderProps): ReactNode {
 			(num(a.index) ?? 0) - (num(b.index) ?? 0),
 	);
 
-	return (
-		<>
-			{context && <Output text={context} maxLines={4} title="context" />}
-			{tasks.length > 0 && (
-				<div className="tv-list">
-					{tasks.map((t, i) => (
-						<div key={t.name ?? i}>
-							<Row
-								k={
-									t.name ? (
-										<AgentLink id={t.name} host={host}>
-											{taskIdLabel(t.name)}
-										</AgentLink>
-									) : (
-										<Badge tone="accent">{`#${i + 1}`}</Badge>
-									)
-								}
-							>
-								{t.agent && (
-									<AgentTag agent={t.agent} state="unknown" host={host}>
-										<Badge>{t.agent}</Badge>
-									</AgentTag>
-								)}{" "}
-								{t.steps.length > 0 && (
-									<Badge>{`${t.steps.length} ${t.steps.length === 1 ? "step" : "steps"}`}</Badge>
-								)}{" "}
-								{t.isolated && <Badge>isolated</Badge>}
-							</Row>
-							{t.task && <Output text={t.task} maxLines={6} title="task" />}
-							{t.steps.map((step, n) => (
-								<Output
-									key={n}
-									text={step}
-									maxLines={4}
-									title={`step ${n + 1}/${t.steps.length}`}
-								/>
-							))}
-						</div>
-					))}
-				</div>
-			)}
-			{ordered.length > 0 && (
-				<div className="tv-list">
-					{ordered.map((res, i) => (
-						<AgentResult key={str(res.id) ?? i} res={res} host={host} />
-					))}
-					{footer}
-				</div>
-			)}
-			{showProgress && (
-				<div className="tv-list">
-					{progress.map((p, i) => (
-						<AgentProgressRow key={str(p.id) ?? i} p={p} host={host} />
-					))}
-				</div>
-			)}
-			{ordered.length === 0 && !showProgress && (
-				<ResultText result={current} maxLines={12} />
-			)}
-		</>
-	);
+	if (ordered.length > 0) {
+		return (
+			<div className="tv-list">
+				{ordered.map((res, i) => (
+					<AgentResult key={str(res.id) ?? i} res={res} host={host} />
+				))}
+				{footer}
+			</div>
+		);
+	}
+	if (showProgress) {
+		return (
+			<div className="tv-list">
+				{progress.map((p, i) => (
+					<AgentProgressRow key={str(p.id) ?? i} p={p} host={host} />
+				))}
+			</div>
+		);
+	}
+	return <ResultText result={current} maxLines={12} />;
 }
 
-export const taskRenderer: ToolRenderer = { Summary, Body, livePartial: true };
+export const taskRenderer: ToolRenderer = {
+	Summary,
+	Input,
+	Result,
+	livePartial: true,
+};

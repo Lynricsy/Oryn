@@ -35,7 +35,7 @@ function DocsSummary({ args }: ToolRenderProps): ReactNode {
 	);
 }
 
-function DocsBody({ result }: ToolRenderProps): ReactNode {
+function DocsResult({ result }: ToolRenderProps): ReactNode {
 	const text = resultTextOf(result).trim();
 	if (!text) return null;
 	if (result?.isError) return <ResultText result={result} maxLines={12} />;
@@ -45,7 +45,7 @@ function DocsBody({ result }: ToolRenderProps): ReactNode {
 /** 设备文档：Markdown 渲染文档正文，失败时显示错误文本。 */
 export const xdevDocsRenderer: ToolRenderer = {
 	Summary: DocsSummary,
-	Body: DocsBody,
+	Result: DocsResult,
 };
 
 function DeviceSummary({ args, result }: ToolRenderProps): ReactNode {
@@ -60,26 +60,36 @@ function DeviceSummary({ args, result }: ToolRenderProps): ReactNode {
 	return payload ? <span>{truncate(normalizeWs(payload), 96)}</span> : null;
 }
 
-function DeviceBody({ args, result }: ToolRenderProps): ReactNode {
-	const { t } = useTranslation();
+/** 写入设备的原始内容；能解析成 JSON 时按 JSON 高亮（设备参数多为 JSON 对象）。 */
+function DeviceInput({ args }: ToolRenderProps): ReactNode {
 	const payload = str(args.payload);
+	if (!payload?.trim()) return null;
 	return (
-		<>
-			{payload?.trim() && (
-				<Output
-					text={payload}
-					variant="code"
-					maxLines={12}
-					title={t("toolRender.xdev.payload")}
-				/>
-			)}
-			<ResultText result={result} maxLines={16} />
-		</>
+		<Output
+			text={payload}
+			lang={isJson(payload) ? "json" : null}
+			variant="code"
+			maxLines={12}
+		/>
 	);
+}
+
+function isJson(text: string): boolean {
+	try {
+		JSON.parse(text);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function DeviceResult({ result }: ToolRenderProps): ReactNode {
+	return <ResultText result={result} maxLines={16} />;
 }
 
 /** 未派发的设备写入：错误首行（设备不存在、参数无效等）与写入的原始内容。 */
 export const xdevDeviceRenderer: ToolRenderer = {
 	Summary: DeviceSummary,
-	Body: DeviceBody,
+	Input: DeviceInput,
+	Result: DeviceResult,
 };

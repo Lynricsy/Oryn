@@ -49,49 +49,73 @@ function Meta({ result }: ToolRenderProps): ReactNode {
 	return bytes === null ? null : <span>{formatBytes(bytes)}</span>;
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
+function Input({ args, result }: ToolRenderProps): ReactNode {
 	const { t } = useTranslation();
-	const details = detailsRecord(result);
 	const text = str(args.text);
 	const requested = str(args.output_path);
+	// 实际写入路径与请求不同（本地后端把 .mp3 改写成 .wav）时，这里标为请求路径，实际路径在输出段
 	const saved = savedPath(result);
-	const output = saved ?? requested;
+	const redirected =
+		saved !== null && requested !== null && saved !== requested;
+	const voice = str(args.voice_id);
+	const language = str(args.language);
 	const sampleRate = num(args.sample_rate);
 	const bitRate = num(args.bit_rate);
-	const codec = str(details?.codec);
+	const format = [
+		sampleRate === null ? null : `${sampleRate} Hz`,
+		bitRate === null ? null : `${bitRate} bps`,
+	]
+		.filter(Boolean)
+		.join(" · ");
 	return (
 		<>
 			{/* 头部会被省略号截断：路径与全文都在这里完整给出 */}
 			{text && <div className="tv-prose">{text}</div>}
-			<KvGrid>
-				<Kv k={t("toolRender.tts.output")}>
-					{output && <PathText path={output} />}
-				</Kv>
-				{/* 实际路径与请求不同（本地后端把 .mp3 改写成 .wav）时，请求路径单独列出 */}
-				{saved && requested && saved !== requested && (
-					<Kv k={t("toolRender.tts.requested")}>
-						<PathText path={requested} />
+			{(requested || voice || language || format) && (
+				<KvGrid>
+					<Kv
+						k={t(
+							redirected ? "toolRender.tts.requested" : "toolRender.tts.output",
+						)}
+					>
+						{requested && <PathText path={requested} />}
 					</Kv>
-				)}
-				<Kv k={t("toolRender.tts.voice")}>
-					{str(details?.voiceId) ?? str(args.voice_id)}
-				</Kv>
-				<Kv k={t("toolRender.tts.language")}>{str(args.language)}</Kv>
-				<Kv k={t("toolRender.tts.format")}>
-					{[
-						codec,
-						sampleRate === null ? null : `${sampleRate} Hz`,
-						bitRate === null ? null : `${bitRate} bps`,
-					]
-						.filter(Boolean)
-						.join(" · ")}
-				</Kv>
-				<Kv k={t("toolRender.tts.backend")}>{str(details?.backend)}</Kv>
-			</KvGrid>
+					<Kv k={t("toolRender.tts.voice")}>{voice}</Kv>
+					<Kv k={t("toolRender.tts.language")}>{language}</Kv>
+					<Kv k={t("toolRender.tts.format")}>{format}</Kv>
+				</KvGrid>
+			)}
+		</>
+	);
+}
+
+function Result({ args, result }: ToolRenderProps): ReactNode {
+	const { t } = useTranslation();
+	const details = detailsRecord(result);
+	const requested = str(args.output_path);
+	// 实际路径与请求不同时单独列出
+	const saved = savedPath(result);
+	const movedTo = saved && saved !== requested ? saved : null;
+	const voiceId = str(details?.voiceId);
+	const voice = voiceId !== str(args.voice_id) ? voiceId : null;
+	const codec = str(details?.codec);
+	const backend = str(details?.backend);
+	return (
+		<>
+			{(movedTo || voice || codec || backend) && (
+				<KvGrid>
+					<Kv k={t("toolRender.tts.output")}>
+						{movedTo && <PathText path={movedTo} />}
+					</Kv>
+					<Kv k={t("toolRender.tts.voice")}>{voice}</Kv>
+					<Kv k={t("toolRender.tts.format")}>{codec}</Kv>
+					<Kv k={t("toolRender.tts.backend")}>{backend}</Kv>
+				</KvGrid>
+			)}
 			{/* 成功正文同样给出：实际路径、本地采样率与格式替换说明只在这里 */}
 			<ResultText result={result} maxLines={6} />
 		</>
 	);
 }
 
-export const ttsRenderer: ToolRenderer = { Summary, Meta, Body };
+export const ttsRenderer: ToolRenderer = { Summary, Meta, Input, Result };

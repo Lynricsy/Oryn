@@ -82,11 +82,29 @@ function SourceRow({
 	);
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
+function Input({ args }: ToolRenderProps): ReactNode {
 	const query = str(args.query);
 	const limit = num(args.limit);
 	const numResults = num(args.num_search_results);
+	// recency 已在折叠行里；查询在折叠行里只是摘要（会被截断），这里始终给出全文
+	return (
+		<>
+			<Badges
+				items={[
+					limit !== null && `limit=${limit}`,
+					numResults !== null && `results=${numResults}`,
+				]}
+			/>
+			{query !== null && (
+				<KvGrid>
+					<Kv k="query">{query}</Kv>
+				</KvGrid>
+			)}
+		</>
+	);
+}
 
+function Result({ result }: ToolRenderProps): ReactNode {
 	const details = detailsRecord(result);
 	const response =
 		details && isRecord(details.response) ? details.response : null;
@@ -118,20 +136,16 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 		if (searchReqs !== null) usageParts.push(`search ${searchReqs}`);
 	}
 
-	// recency 已在折叠行里；查询在折叠行里只是摘要（会被截断），这里始终给出全文
 	return (
 		<>
 			<Badges
 				items={[
-					limit !== null && `limit=${limit}`,
-					numResults !== null && `results=${numResults}`,
 					response &&
 						`${sources.length} source${sources.length === 1 ? "" : "s"}`,
 				]}
 			/>
-			{(query !== null || providerInfo || usageParts.length > 0) && (
+			{(providerInfo || usageParts.length > 0) && (
 				<KvGrid>
-					{query !== null && <Kv k="query">{query}</Kv>}
 					{providerInfo && <Kv k="provider">{providerInfo}</Kv>}
 					{usageParts.length > 0 && (
 						<Kv k="usage">
@@ -153,4 +167,4 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	);
 }
 
-export const webSearchRenderer: ToolRenderer = { Summary, Body };
+export const webSearchRenderer: ToolRenderer = { Summary, Input, Result };

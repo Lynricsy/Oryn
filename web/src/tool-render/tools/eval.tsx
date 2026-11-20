@@ -3,8 +3,8 @@
  * persistent kernel (py/js/rb/jl). Args arrive either as the modern single-cell
  * flat shape (`language`/`code`/`title`/`timeout`/`reset`), a legacy `cells`
  * array, or a legacy framed `input` string (`*** Cell`, `*** Begin LANG`,
- * `===== info =====`); all render as discrete highlighted cells. When the result
- * carries typed per-cell details, each cell's output is interleaved beneath its code.
+ * `===== info =====`); all render as discrete highlighted cells in the input
+ * section. Typed per-cell details render each cell's output in the result section.
  */
 import type { ReactNode } from "react";
 import { Markdown } from "../../components/markdown/Markdown";
@@ -564,21 +564,56 @@ function Summary({ name, args, result, partial }: ToolRenderProps): ReactNode {
 	);
 }
 
-function Body({ name, args, result, partial }: ToolRenderProps): ReactNode {
-	// 运行中没有最终结果时，用结构化部分结果（details.cells）逐格展示输出
-	const current = result ?? partial;
-	const details = detailsRecord(current);
-	const detailCells = detailCellsOf(details);
-	const cells = renderCells(args, name, detailCells);
+/** 单元格的标识：有标题用标题，多格且无标题时用序号，输入段与输出段共用以便对照。 */
+function cellLabel(title: string, index: number, total: number): string | null {
+	if (title) return title;
+	return total > 1 ? `#${index + 1}` : null;
+}
+
+function Input({ name, args }: ToolRenderProps): ReactNode {
+	// 只列模型给出的单元格；参数里没有、从结果 details 恢复的代码放在输出段
+	const cells = cellsFromArgs(args, name);
 
 	if (cells.length === 0) {
 		const badArgs =
 			!Array.isArray(args.cells) &&
 			str(args.input) === null &&
 			str(args.code) === null;
+		return badArgs ? <InvalidArg what="cells" /> : null;
+	}
+
+	return (
+		<div className="tv-cells">
+			{cells.map((cell, i) => {
+				const titleParts: string[] = [];
+				const label = cellLabel(cell.title, i, cells.length);
+				if (label) titleParts.push(label);
+				titleParts.push(cell.lang);
+				titleParts.push(...cell.attrs);
+				return (
+					<CodeBlock
+						key={`c${i}`}
+						code={cell.code}
+						lang={HLJS_LANG[cell.lang] ?? null}
+						title={titleParts.join(" · ")}
+					/>
+				);
+			})}
+		</div>
+	);
+}
+
+function Result({ name, args, result, partial }: ToolRenderProps): ReactNode {
+	// 运行中没有最终结果时，用结构化部分结果（details.cells）逐格展示输出
+	const current = result ?? partial;
+	const details = detailsRecord(current);
+	const detailCells = detailCellsOf(details);
+	const fromArgs = cellsFromArgs(args, name).length > 0;
+	const cells = renderCells(args, name, detailCells);
+
+	if (cells.length === 0) {
 		return (
 			<>
-				{badArgs && <InvalidArg what="cells" />}
 				<ResultImages result={current} />
 				<ResultText result={current} maxLines={12} />
 			</>
@@ -586,36 +621,38 @@ function Body({ name, args, result, partial }: ToolRenderProps): ReactNode {
 	}
 
 	const notice = str(details?.notice);
+	// 每格的输出连同耗时、状态放在输出段，标题与输入段的单元格对应；
+	// 参数里没有单元格时（代码只在 details 里），代码随输出一起放在这里
+	const outputs = cells.flatMap((cell, i) => {
+		const dc = detailCells.find((c) => c.index === i) ?? detailCells[i];
+		if (!dc) return [];
+		const titleParts: string[] = [];
+		const label = cellLabel(cell.title, i, cells.length);
+		if (label) titleParts.push(label);
+		if (!fromArgs) titleParts.push(cell.lang);
+		if (dc.durationMs !== null) titleParts.push(formatDuration(dc.durationMs));
+		if (dc.status === "error")
+			titleParts.push(
+				dc.exitCode !== null ? `error (exit ${dc.exitCode})` : "error",
+			);
+		const showCode = !fromArgs && cell.code !== "";
+		if (titleParts.length === 0 && dc.output === "" && !showCode) return [];
+		return [
+			<div className="tv-cell" key={`c${i}`}>
+				{titleParts.length > 0 && (
+					<div className="tv-cell-title">{titleParts.join(" · ")}</div>
+				)}
+				{showCode && (
+					<CodeBlock code={cell.code} lang={HLJS_LANG[cell.lang] ?? null} />
+				)}
+				{dc.output !== "" && <CellOutput cell={dc} />}
+			</div>,
+		];
+	});
 
 	return (
 		<>
-			<div className="tv-cells">
-				{cells.map((cell, i) => {
-					const dc = detailCells.find((c) => c.index === i) ?? detailCells[i];
-					const titleParts: string[] = [];
-					if (cell.title) titleParts.push(cell.title);
-					titleParts.push(cell.lang);
-					titleParts.push(...cell.attrs);
-					if (dc) {
-						if (dc.durationMs !== null)
-							titleParts.push(formatDuration(dc.durationMs));
-						if (dc.status === "error")
-							titleParts.push(
-								dc.exitCode !== null ? `error (exit ${dc.exitCode})` : "error",
-							);
-					}
-					return (
-						<div className="tv-cell" key={`c${i}`}>
-							<CodeBlock
-								code={cell.code}
-								lang={HLJS_LANG[cell.lang] ?? null}
-								title={titleParts.join(" · ")}
-							/>
-							{dc && dc.output !== "" && <CellOutput cell={dc} />}
-						</div>
-					);
-				})}
-			</div>
+			{outputs.length > 0 && <div className="tv-cells">{outputs}</div>}
 			{notice && <Note>{notice}</Note>}
 			<ResultImages result={current} />
 			{detailCells.length === 0 && (
@@ -625,4 +662,9 @@ function Body({ name, args, result, partial }: ToolRenderProps): ReactNode {
 	);
 }
 
-export const evalRenderer: ToolRenderer = { Summary, Body, livePartial: true };
+export const evalRenderer: ToolRenderer = {
+	Summary,
+	Input,
+	Result,
+	livePartial: true,
+};

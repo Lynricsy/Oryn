@@ -7,6 +7,7 @@ import {
 	KvGrid,
 	Note,
 	Output,
+	ResultImages,
 	ResultText,
 	Row,
 } from "../parts";
@@ -14,6 +15,7 @@ import type { ToolRenderer, ToolRenderProps } from "../types";
 import {
 	detailsRecord,
 	isRecord,
+	languageFromPath,
 	normalizeWs,
 	num,
 	resultTextOf,
@@ -393,24 +395,40 @@ function DetailsGrid({
 	return rows.length > 0 ? <KvGrid>{rows}</KvGrid> : null;
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
-	const details = detailsRecord(result);
-	const watch = details && isRecord(details.watch) ? details.watch : null;
-	const checkouts =
-		details && Array.isArray(details.checkouts) ? details.checkouts : null;
+function Input({ args }: ToolRenderProps): ReactNode {
 	const bodyText = str(args.body);
 	return (
 		<>
 			<ArgsGrid args={args} />
-			{bodyText && <Output text={bodyText} maxLines={8} title="body" />}
+			{bodyText && (
+				<Output text={bodyText} maxLines={8} title="body" lang="markdown" />
+			)}
+		</>
+	);
+}
+
+function Result({ args, result }: ToolRenderProps): ReactNode {
+	const details = detailsRecord(result);
+	const watch = details && isRecord(details.watch) ? details.watch : null;
+	const checkouts =
+		details && Array.isArray(details.checkouts) ? details.checkouts : null;
+	// file_read 的结果是仓库文件原文：按文件路径高亮；其余操作输出 Markdown
+	const path = str(args.op) === "file_read" ? str(args.path) : null;
+	return (
+		<>
 			{watch && <WatchView watch={watch} />}
 			{checkouts && checkouts.length > 0 && (
 				<CheckoutRows checkouts={checkouts} />
 			)}
 			{details && !watch && <DetailsGrid details={details} />}
-			<ResultText result={result} maxLines={12} lang="markdown" />
+			<ResultImages result={result} />
+			<ResultText
+				result={result}
+				maxLines={12}
+				lang={path ? languageFromPath(path) : "markdown"}
+			/>
 		</>
 	);
 }
 
-export const githubRenderer: ToolRenderer = { Summary, Body };
+export const githubRenderer: ToolRenderer = { Summary, Input, Result };

@@ -137,7 +137,7 @@ export interface ToolViewProps {
 	result?: ToolResultLike;
 	/** Tool is still executing (live collab view). */
 	running?: boolean;
-	/** Model-provided intent (`i`), shown atop the body. */
+	/** Model-provided intent (`i`): shown in the collapsed header instead of the summary, and atop the expanded body. */
 	intent?: string;
 	/** Streaming partial output tail while running. */
 	partial?: string;
@@ -252,8 +252,13 @@ export function ToolView(props: ToolViewProps): ReactNode {
 						{t("toolRender.computer")}
 					</span>
 				)}
+				{/* 收起时头部说「为什么调用」（意图），展开后头部才换成参数摘要，输入段给出完整参数 */}
 				<span className="tv-sum">
-					<renderer.Summary {...renderProps} />
+					{!open && intent ? (
+						<span className="tv-sum-intent">{intent}</span>
+					) : (
+						<renderer.Summary {...renderProps} />
+					)}
 				</span>
 				{renderer.Meta && (
 					<span className="tv-meta">
@@ -287,7 +292,16 @@ export function ToolView(props: ToolViewProps): ReactNode {
 			{open && (
 				<div className="tv-body">
 					{intent && <div className="tv-intent">{intent}</div>}
-					{renderer.Body ? <renderer.Body {...renderProps} /> : null}
+					{renderer.Input && (
+						<ToolSection kind="in" label={t("toolRender.input")}>
+							<renderer.Input {...renderProps} />
+						</ToolSection>
+					)}
+					{renderer.Result && (
+						<ToolSection kind="out" label={t("toolRender.output")}>
+							<renderer.Result {...renderProps} />
+						</ToolSection>
+					)}
 				</div>
 			)}
 			{partial && (
@@ -296,5 +310,28 @@ export function ToolView(props: ToolViewProps): ReactNode {
 				</pre>
 			)}
 		</div>
+	);
+}
+
+/**
+ * 展开体的一段（输入 / 输出）：小标题 + 内容。内容渲染为空时整段由 CSS 隐去
+ * （`.tv-sec:has(> .tv-sec-body:empty)`），渲染器不必预判自己是否有内容。
+ */
+function ToolSection({
+	kind,
+	label,
+	children,
+}: {
+	kind: "in" | "out";
+	label: string;
+	children: ReactNode;
+}): ReactNode {
+	return (
+		<section className={`tv-sec tv-sec--${kind}`} aria-label={label}>
+			<div className="tv-sec-label" aria-hidden="true">
+				{label}
+			</div>
+			<div className="tv-sec-body">{children}</div>
+		</section>
 	);
 }

@@ -1,13 +1,23 @@
 /** `debug` — DAP debugger sessions: launch/attach, breakpoints, stepping, evaluate. */
 import type { ReactNode } from "react";
-import { Badge, CodeBlock, Kv, KvGrid, PathText, ResultText } from "../parts";
+import {
+	Badge,
+	CodeBlock,
+	Kv,
+	KvGrid,
+	Output,
+	PathText,
+	ResultText,
+} from "../parts";
 import type { ToolRenderer, ToolRenderProps } from "../types";
 import {
 	detailsRecord,
 	display,
 	isRecord,
+	languageFromPath,
 	normalizeWs,
 	num,
+	resultTextOf,
 	str,
 	truncate,
 } from "../util";
@@ -119,7 +129,7 @@ const SCALAR_ARGS: ReadonlyArray<readonly [key: string, label: string]> = [
 	["timeout", "timeout"],
 ];
 
-function Body(props: ToolRenderProps): ReactNode {
+function Input(props: ToolRenderProps): ReactNode {
 	const { args, result } = props;
 	const program = str(args.program);
 	const file = str(args.file);
@@ -129,11 +139,10 @@ function Body(props: ToolRenderProps): ReactNode {
 		? args.args.filter((a) => typeof a === "string")
 		: [];
 
-	// 折叠行里的 program / file:line 只是摘要（会被截断），这里始终给出全文；
-	// 结果快照里已有同一个 program 时由快照那一行给出，不再重复
+	// 折叠行里的 program / file:line 只是摘要（会被截断），这里始终给出全文
 	const snapshot = snapshotOf(result);
 	const argRows: ReactNode[] = [];
-	if (program !== null && snapshot?.program !== program) {
+	if (program !== null) {
 		argRows.push(
 			<Kv key="program" k="program">
 				<PathText path={program} />
@@ -183,12 +192,23 @@ function Body(props: ToolRenderProps): ReactNode {
 			customArgsJson = "";
 		}
 	}
+	// 表达式按被调试源码的语言高亮：依次试断点文件、停住位置的源文件、被调试程序，取第一个认得出的
+	let exprLang: string | null = null;
+	for (const path of [file, snapshot?.sourcePath, program, snapshot?.program]) {
+		exprLang = path ? languageFromPath(path) : null;
+		if (exprLang) break;
+	}
 
 	return (
 		<>
 			{argRows.length > 0 && <KvGrid>{argRows}</KvGrid>}
 			{expression !== null && (
-				<CodeBlock code={expression} title="expression" maxLines={8} />
+				<CodeBlock
+					code={expression}
+					lang={exprLang}
+					title="expression"
+					maxLines={8}
+				/>
 			)}
 			{customArgsJson && (
 				<CodeBlock
@@ -198,6 +218,33 @@ function Body(props: ToolRenderProps): ReactNode {
 					maxLines={10}
 				/>
 			)}
+		</>
+	);
+}
+
+/** `custom_request` 的结果正文：`<command> response:` 一行加 JSON 序列化的响应体；解析不了时为 null。 */
+function customResponseOf(
+	result: ToolRenderProps["result"],
+): { heading: string; json: string } | null {
+	if (!result || result.isError) return null;
+	const text = resultTextOf(result).trim();
+	const nl = text.indexOf("\n");
+	if (nl < 0) return null;
+	const json = text.slice(nl + 1);
+	try {
+		JSON.parse(json);
+	} catch {
+		return null;
+	}
+	return { heading: text.slice(0, nl), json };
+}
+
+function Result({ args, result }: ToolRenderProps): ReactNode {
+	const snapshot = snapshotOf(result);
+	const action = str(args.action) ?? str(detailsRecord(result)?.action);
+	const custom = action === "custom_request" ? customResponseOf(result) : null;
+	return (
+		<>
 			{snapshot && (
 				<KvGrid>
 					{snapshot.id !== null && <Kv k="session">{snapshot.id}</Kv>}
@@ -209,11 +256,13 @@ function Body(props: ToolRenderProps): ReactNode {
 							</Badge>
 						</Kv>
 					)}
-					{snapshot.program !== null && (
-						<Kv k="program">
-							<PathText path={snapshot.program} />
-						</Kv>
-					)}
+					{/* 与参数里的 program 相同时输入段已给出，不再重复 */}
+					{snapshot.program !== null &&
+						snapshot.program !== str(args.program) && (
+							<Kv k="program">
+								<PathText path={snapshot.program} />
+							</Kv>
+						)}
 					{snapshot.stopReason !== null && (
 						<Kv k="stop reason">{snapshot.stopReason}</Kv>
 					)}
@@ -242,9 +291,19 @@ function Body(props: ToolRenderProps): ReactNode {
 					)}
 				</KvGrid>
 			)}
-			<ResultText result={result} maxLines={10} />
+			{custom ? (
+				<Output
+					text={custom.json}
+					lang="json"
+					variant="code"
+					title={custom.heading}
+					maxLines={10}
+				/>
+			) : (
+				<ResultText result={result} maxLines={10} />
+			)}
 		</>
 	);
 }
 
-export const debugRenderer: ToolRenderer = { Summary, Body };
+export const debugRenderer: ToolRenderer = { Summary, Input, Result };

@@ -86,8 +86,21 @@ function Summary(props: ToolRenderProps): ReactNode {
 	return <PathText path={path || "…"} from={from} to={to} sel={sel} />;
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
+/** 折叠行里的路径只是摘要（窄屏会被省略号截断），输入段始终给出完整路径与范围。 */
+function Input({ args }: ToolRenderProps): ReactNode {
 	const { path, sel, from, to } = readArgs(args);
+	if (!path) return null;
+	return (
+		<KvGrid>
+			<Kv k="path">
+				<PathText path={path} from={from} to={to} sel={sel} />
+			</Kv>
+		</KvGrid>
+	);
+}
+
+function Result({ args, result }: ToolRenderProps): ReactNode {
+	const { path } = readArgs(args);
 	const d = readDetails(detailsRecord(result));
 	const conflictBadge = d.conflictCount !== null && d.conflictCount > 0 && (
 		<Badge tone="warn">
@@ -106,16 +119,12 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 		raw !== null && path && (raw === path || raw.endsWith(`/${path}`))
 			? null
 			: raw;
+	// 请求路径没有可识别的扩展名时（如纠正后的路径、目录别名），退回解析后的路径取语言
+	const lang = languageFromPath(path) ?? (raw ? languageFromPath(raw) : null);
 	return (
 		<>
-			{/* 折叠行里的路径只是摘要（窄屏会被省略号截断），展开体顶部始终给出完整路径与范围 */}
-			{(path || resolved !== null || d.suffixFrom !== null) && (
+			{(resolved !== null || d.suffixFrom !== null) && (
 				<KvGrid>
-					{path && (
-						<Kv k="path">
-							<PathText path={path} from={from} to={to} sel={sel} />
-						</Kv>
-					)}
 					{resolved !== null && (
 						<Kv k="resolved">
 							<PathText path={resolved} />
@@ -128,12 +137,7 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 			)}
 			<Badges items={[conflictBadge, elidedBadge, truncatedBadge]} />
 			<ResultImages result={result} />
-			<ResultText
-				result={result}
-				maxLines={12}
-				lang={languageFromPath(path)}
-				variant="code"
-			/>
+			<ResultText result={result} maxLines={12} lang={lang} variant="code" />
 		</>
 	);
 }
@@ -147,4 +151,4 @@ function Meta({ result }: ToolRenderProps): ReactNode {
 	) : null;
 }
 
-export const readRenderer: ToolRenderer = { Summary, Meta, Body };
+export const readRenderer: ToolRenderer = { Summary, Meta, Input, Result };

@@ -2,15 +2,7 @@
 import type { ReactNode } from "react";
 import { formatDuration, formatTokens } from "../../lib/format";
 import type { Tone } from "../parts";
-import {
-	Badge,
-	InvalidArg,
-	Kv,
-	KvGrid,
-	Note,
-	Output,
-	ResultText,
-} from "../parts";
+import { InvalidArg, Kv, KvGrid, Note, Output, ResultText } from "../parts";
 import type { ToolRenderer, ToolRenderProps } from "../types";
 import {
 	detailsRecord,
@@ -92,7 +84,6 @@ function Summary({ args, result }: ToolRenderProps): ReactNode {
 			) : (
 				<span>{describeOp(op)}</span>
 			)}
-			{goal && <Badge tone={statusTone(goal.status)}>{goal.status}</Badge>}
 			{objective !== null && objective.trim() !== "" && (
 				<span className="tv-muted">
 					“{truncate(normalizeWs(objective), 64)}”
@@ -105,27 +96,58 @@ function Summary({ args, result }: ToolRenderProps): ReactNode {
 	);
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
+/** 右侧读数：结果里的目标状态（完成用成功色，预算受限用警告色）。 */
+function Meta({ result }: ToolRenderProps): ReactNode {
+	const goal = goalOf(detailsRecord(result));
+	if (!goal) return null;
+	const tone = statusTone(goal.status);
+	return (
+		<span
+			className={
+				tone === "ok" || tone === "warn" ? `tv-meta-${tone}` : undefined
+			}
+		>
+			{goal.status}
+		</span>
+	);
+}
+
+/** 输入：动作与预算参数已在头部；目标在头部只是摘要（会被截断），这里始终给出全文。 */
+function Input({ args }: ToolRenderProps): ReactNode {
+	const objective = str(args.objective)?.trim();
+	if (!objective) return null;
+	return (
+		<KvGrid>
+			<Kv k="objective">{objective}</Kv>
+		</KvGrid>
+	);
+}
+
+/** 输出：当前目标状态（参数里没写目标时给出结果里的目标）、用量、完成报告；无目标或出错时给结果文本。 */
+function Result({ args, result }: ToolRenderProps): ReactNode {
 	const details = detailsRecord(result);
 	const goal = goalOf(details);
-	// 动作、状态与预算参数已在折叠行里；目标在折叠行里只是摘要（会被截断），这里始终给出全文
-	const objective = goal?.objective ?? str(args.objective);
 	const report = str(details?.completionBudgetReport);
+	const objective = goal?.objective.trim() ?? "";
+	const showObjective =
+		objective !== "" && objective !== (str(args.objective)?.trim() ?? "");
 	const hasTokens =
 		goal !== null && (goal.tokensUsed !== null || goal.tokenBudget !== null);
+	const showElapsed =
+		goal !== null && goal.timeUsedSeconds !== null && goal.timeUsedSeconds > 0;
 	return (
 		<>
-			<KvGrid>
-				{objective !== null && objective.trim() !== "" && (
-					<Kv k="objective">{objective.trim()}</Kv>
-				)}
-				{hasTokens && goal && <Kv k="tokens">{tokensLine(goal)}</Kv>}
-				{goal !== null &&
-					goal.timeUsedSeconds !== null &&
-					goal.timeUsedSeconds > 0 && (
-						<Kv k="elapsed">{formatDuration(goal.timeUsedSeconds * 1000)}</Kv>
+			{goal && (showObjective || hasTokens || showElapsed) && (
+				<KvGrid>
+					{showObjective && <Kv k="objective">{objective}</Kv>}
+					{hasTokens && <Kv k="tokens">{tokensLine(goal)}</Kv>}
+					{showElapsed && (
+						<Kv k="elapsed">
+							{formatDuration((goal.timeUsedSeconds ?? 0) * 1000)}
+						</Kv>
 					)}
-			</KvGrid>
+				</KvGrid>
+			)}
 			{details !== null && goal === null && !result?.isError && (
 				<Note tone="warn">no active goal</Note>
 			)}
@@ -139,4 +161,4 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	);
 }
 
-export const goalRenderer: ToolRenderer = { Summary, Body };
+export const goalRenderer: ToolRenderer = { Summary, Meta, Input, Result };

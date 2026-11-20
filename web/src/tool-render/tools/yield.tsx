@@ -8,23 +8,20 @@ function Summary({ args }: ToolRenderProps): ReactNode {
 	return <span>{argsDigest(args.data ?? args)}</span>;
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
+function Input({ args }: ToolRenderProps): ReactNode {
+	if (args.data === undefined) return null;
 	let dataText = "";
-	if (args.data !== undefined) {
-		try {
-			dataText = JSON.stringify(args.data, null, 2) ?? "";
-		} catch {
-			dataText = String(args.data);
-		}
+	try {
+		dataText = JSON.stringify(args.data, null, 2) ?? "";
+	} catch {
+		dataText = String(args.data);
 	}
-	return (
-		<>
-			{dataText && (
-				<Output text={dataText} lang="json" variant="code" maxLines={12} />
-			)}
-			<ResultText result={result} maxLines={6} />
-		</>
-	);
+	if (!dataText) return null;
+	return <Output text={dataText} lang="json" variant="code" maxLines={12} />;
 }
 
-export const yieldRenderer: ToolRenderer = { Summary, Body };
+function Result({ result }: ToolRenderProps): ReactNode {
+	return <ResultText result={result} maxLines={6} />;
+}
+
+export const yieldRenderer: ToolRenderer = { Summary, Input, Result };

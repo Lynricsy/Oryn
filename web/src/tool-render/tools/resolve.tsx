@@ -91,8 +91,8 @@ function Summary(props: ToolRenderProps): ReactNode {
 	);
 }
 
-function Body(props: ToolRenderProps): ReactNode {
-	const { result } = props;
+/** 调用给出的理由 / 计划标题与附加字段：折叠行里只是摘要（会被截断），展开体始终给出全文。 */
+function Input(props: ToolRenderProps): ReactNode {
 	const card = cardModel(props);
 	const extraRows: ReactNode[] = [];
 	if (card.extra) {
@@ -116,6 +116,20 @@ function Body(props: ToolRenderProps): ReactNode {
 	}
 	return (
 		<>
+			{card.kind === "propose" && card.title && (
+				<div className="tv-prose">{card.title}</div>
+			)}
+			{card.kind !== "propose" && card.reason && <Note>{card.reason}</Note>}
+			{extraRows.length > 0 && <KvGrid>{extraRows}</KvGrid>}
+		</>
+	);
+}
+
+function Result(props: ToolRenderProps): ReactNode {
+	const { result } = props;
+	const card = cardModel(props);
+	return (
+		<>
 			<Badges
 				items={[
 					<Badge key="action" tone={card.tone}>
@@ -127,22 +141,16 @@ function Body(props: ToolRenderProps): ReactNode {
 					card.label && (
 						<span key="label">{truncate(normalizeWs(card.label), 120)}</span>
 					),
-					// 计划标题与理由在折叠行里只是摘要（会被截断），展开体始终给出全文
-					card.kind === "propose" && card.title && (
-						<span key="title">{card.title}</span>
-					),
 				]}
 			/>
-			{card.kind !== "propose" && card.reason && <Note>{card.reason}</Note>}
 			{card.kind === "propose" && card.planFilePath && (
 				<KvGrid>
 					<Kv k="plan">{card.planFilePath}</Kv>
 				</KvGrid>
 			)}
-			{extraRows.length > 0 && <KvGrid>{extraRows}</KvGrid>}
 			<ResultText result={result} maxLines={6} />
 		</>
 	);
 }
 
-export const resolveRenderer: ToolRenderer = { Summary, Body };
+export const resolveRenderer: ToolRenderer = { Summary, Input, Result };

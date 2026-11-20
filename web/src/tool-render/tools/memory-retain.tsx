@@ -48,8 +48,23 @@ function Summary({ args, result }: ToolRenderProps): ReactNode {
 	);
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
+function Input({ args }: ToolRenderProps): ReactNode {
 	const items = retainItems(args);
+	if (items === null) return <InvalidArg what="items" />;
+	if (items.length === 0) return null;
+	return (
+		<div className="tv-list">
+			{items.map((item, i) => (
+				<Row key={i}>
+					{item.content}
+					{item.context && <span className="tv-faint"> — {item.context}</span>}
+				</Row>
+			))}
+		</div>
+	);
+}
+
+function Result({ result }: ToolRenderProps): ReactNode {
 	const count = num(detailsRecord(result)?.count);
 	// The tool's own "N memories stored/queued." line; trailing period dropped
 	// so it reads as a status chip.
@@ -62,33 +77,12 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 				? `${count === 1 ? "1 memory" : `${count} memories`} retained`
 				: null);
 	}
+	if (!confirmation) return <ResultText result={result} maxLines={6} />;
 	return (
-		<>
-			{items === null ? (
-				<InvalidArg what="items" />
-			) : (
-				items.length > 0 && (
-					<div className="tv-list">
-						{items.map((item, i) => (
-							<Row key={i}>
-								{item.content}
-								{item.context && (
-									<span className="tv-faint"> — {item.context}</span>
-								)}
-							</Row>
-						))}
-					</div>
-				)
-			)}
-			{confirmation ? (
-				<div>
-					<Badge tone="ok">{confirmation}</Badge>
-				</div>
-			) : (
-				<ResultText result={result} maxLines={6} />
-			)}
-		</>
+		<div>
+			<Badge tone="ok">{confirmation}</Badge>
+		</div>
 	);
 }
 
-export const retainRenderer: ToolRenderer = { Summary, Body };
+export const retainRenderer: ToolRenderer = { Summary, Input, Result };

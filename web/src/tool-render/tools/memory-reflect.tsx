@@ -12,22 +12,25 @@ function Summary({ args }: ToolRenderProps): ReactNode {
 	return <span>{query ? truncate(normalizeWs(query), 96) : ""}</span>;
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
+function Input({ args }: ToolRenderProps): ReactNode {
 	const query = str(args.query) ?? "";
 	const context = str(args.context) ?? "";
-	const failedSilently = result?.isError === true && !resultTextOf(result);
 	return (
 		<>
 			{/* 折叠行只是摘要（会被截断），展开体始终给出完整查询 */}
 			{query && <Output text={query} title="query" maxLines={4} />}
 			{context && <Output text={context} title="context" maxLines={6} />}
-			{failedSilently ? (
-				<Note tone="err">Reflect failed</Note>
-			) : (
-				<ResultText result={result} maxLines={12} />
-			)}
 		</>
 	);
 }
 
-export const reflectRenderer: ToolRenderer = { Summary, Body };
+function Result({ result }: ToolRenderProps): ReactNode {
+	if (result?.isError === true && !resultTextOf(result))
+		return <Note tone="err">Reflect failed</Note>;
+	// 记忆后端的回答是 markdown 文本
+	return (
+		<ResultText result={result} lang="markdown" variant="plain" maxLines={12} />
+	);
+}
+
+export const reflectRenderer: ToolRenderer = { Summary, Input, Result };

@@ -56,14 +56,12 @@ function Meta({ args }: ToolRenderProps): ReactNode {
 	) : null;
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
+function Input({ args }: ToolRenderProps): ReactNode {
 	const path = str(args.file_path ?? args.path);
 	const content = str(args.content);
-	const details = detailsRecord(result);
-	const diagnostics = diagnosticsOf(details);
 	return (
 		<>
-			{/* 折叠行里的路径只是摘要（窄屏会被省略号截断），展开体顶部始终给出完整路径 */}
+			{/* 折叠行里的路径只是摘要（窄屏会被省略号截断），输入段始终给出完整路径 */}
 			{path !== null && (
 				<KvGrid>
 					<Kv k="path">
@@ -71,19 +69,6 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 					</Kv>
 				</KvGrid>
 			)}
-			<Badges
-				items={[
-					details?.madeExecutable === true && (
-						<Badge tone="ok">made executable</Badge>
-					),
-					diagnostics?.summary && (
-						<Badge tone={diagnostics.errored ? "err" : "warn"}>
-							{diagnostics.server ? `${diagnostics.server}: ` : ""}
-							{diagnostics.summary}
-						</Badge>
-					),
-				]}
-			/>
 			{content === null ? (
 				<Note tone="err">
 					<InvalidArg what="content" /> — expected string
@@ -97,6 +82,28 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 					/>
 				)
 			)}
+		</>
+	);
+}
+
+function Result({ result }: ToolRenderProps): ReactNode {
+	const details = detailsRecord(result);
+	const diagnostics = diagnosticsOf(details);
+	return (
+		<>
+			<Badges
+				items={[
+					details?.madeExecutable === true && (
+						<Badge tone="ok">made executable</Badge>
+					),
+					diagnostics?.summary && (
+						<Badge tone={diagnostics.errored ? "err" : "warn"}>
+							{diagnostics.server ? `${diagnostics.server}: ` : ""}
+							{diagnostics.summary}
+						</Badge>
+					),
+				]}
+			/>
 			<ResultText result={result} maxLines={4} />
 			{diagnostics && diagnostics.messages.length > 0 && (
 				<Output
@@ -110,4 +117,4 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	);
 }
 
-export const writeRenderer: ToolRenderer = { Summary, Meta, Body };
+export const writeRenderer: ToolRenderer = { Summary, Meta, Input, Result };

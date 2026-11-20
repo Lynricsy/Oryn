@@ -331,7 +331,37 @@ function Meta({ args, result }: ToolRenderProps): ReactNode {
 	}
 }
 
-function ExecResult({ exec }: { exec: ExecParts }): ReactNode {
+/** IDA 架构名 → 反汇编的高亮语言；认不出的架构不高亮。 */
+function asmLang(arch: string | null): string | null {
+	if (!arch) return null;
+	if (/^(?:x86|x64|amd64|i[3-6]86|metapc)/i.test(arch)) return "x86asm";
+	if (/^(?:arm|aarch64)/i.test(arch)) return "armasm";
+	return null;
+}
+
+/**
+ * exec 输出的高亮语言：代码打印反编译伪代码时按 C；打印反汇编时按已知架构的汇编（架构不明不高亮）；
+ * 认不出或两者都有时不高亮。
+ */
+function execOutputLang(
+	code: string | null,
+	arch: string | null,
+): string | null {
+	if (!code) return null;
+	const decompiles = /\b(?:decompile|pseudocode)\s*\(/.test(code);
+	const disasm =
+		/\b(?:GetDisasm|generate_disasm_line|disasm\w*|asm)\s*\(/i.test(code);
+	if (decompiles === disasm) return null;
+	return decompiles ? "c" : asmLang(arch);
+}
+
+function ExecResult({
+	exec,
+	lang,
+}: {
+	exec: ExecParts;
+	lang: string | null;
+}): ReactNode {
 	const { t } = useTranslation();
 	const empty = !exec.output && exec.value === null && exec.error === null;
 	return (
@@ -340,6 +370,7 @@ function ExecResult({ exec }: { exec: ExecParts }): ReactNode {
 				<Output
 					text={exec.output}
 					title={t("toolRender.ida.output")}
+					lang={lang}
 					maxLines={14}
 					variant="code"
 				/>
@@ -405,11 +436,17 @@ function ListResult({ rows }: { rows: ListRow[] }): ReactNode {
 }
 
 /** 结果里参数之外的新信息（地址已在头部读数里，不重复）。 */
-function ParsedResult({ parsed }: { parsed: Parsed }): ReactNode {
+function ParsedResult({
+	parsed,
+	execLang,
+}: {
+	parsed: Parsed;
+	execLang: string | null;
+}): ReactNode {
 	const { t } = useTranslation();
 	switch (parsed.kind) {
 		case "exec":
-			return <ExecResult exec={parsed.exec} />;
+			return <ExecResult exec={parsed.exec} lang={execLang} />;
 		case "list":
 			return <ListResult rows={parsed.rows} />;
 		case "open":
@@ -454,76 +491,111 @@ function ParsedResult({ parsed }: { parsed: Parsed }): ReactNode {
 	}
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
+/** 参数网格里会出现的可选参数；都缺省时不渲染空网格。 */
+const GRID_ARGS = ["db", "target", "name", "repeatable", "save", "timeout"];
+
+function Input({ args }: ToolRenderProps): ReactNode {
 	const { t } = useTranslation();
 	const action = str(args.action);
 	const db = str(args.db);
-	const resolvedId = str(detailsRecord(result)?.db);
 	const target = str(args.target);
 	const name = str(args.name);
 	const text = str(args.text);
 	const decl = str(args.decl);
 	const code = str(args.code);
 	const timeout = num(args.timeout);
-	const parsed = parseResult(action, result);
-	// open 的结果自带库 id，避免在参数里再写一遍
-	const showId =
-		resolvedId !== null && resolvedId !== db && parsed?.kind !== "open";
+	const badAction = args.action !== undefined && action === null;
+	const badText = args.text !== undefined && text === null;
+	const badDecl = args.decl !== undefined && decl === null;
+	const badCode = args.code !== undefined && code === null;
+	const hasGrid =
+		badAction ||
+		badText ||
+		badDecl ||
+		badCode ||
+		GRID_ARGS.some((k) => args[k] !== undefined);
 	return (
 		<>
 			{/* 动作已在头部；db / 目标 / 新名字 / 声明在头部只是截断的摘要，这里给全文 */}
-			<KvGrid>
-				{args.action !== undefined && action === null && (
-					<Kv k="action">
-						<InvalidArg what="action" />
-					</Kv>
-				)}
-				<ArgKv k="db" raw={args.db} val={db && <PathText path={db} />} />
-				{showId && <Kv k={t("toolRender.ida.dbId")}>{resolvedId}</Kv>}
-				<ArgKv k="target" raw={args.target} val={target} />
-				<ArgKv k="name" raw={args.name} val={name} />
-				<ArgKv
-					k="repeatable"
-					raw={args.repeatable}
-					val={
-						typeof args.repeatable === "boolean"
-							? String(args.repeatable)
-							: null
-					}
-				/>
-				<ArgKv
-					k="save"
-					raw={args.save}
-					val={typeof args.save === "boolean" ? String(args.save) : null}
-				/>
-				<ArgKv
-					k="timeout"
-					raw={args.timeout}
-					val={timeout !== null && `${timeout}s`}
-				/>
-				{args.text !== undefined && text === null && (
-					<Kv k="text">
-						<InvalidArg what="text" />
-					</Kv>
-				)}
-				{args.decl !== undefined && decl === null && (
-					<Kv k="decl">
-						<InvalidArg what="decl" />
-					</Kv>
-				)}
-				{args.code !== undefined && code === null && (
-					<Kv k="code">
-						<InvalidArg what="code" />
-					</Kv>
-				)}
-			</KvGrid>
+			{hasGrid && (
+				<KvGrid>
+					{badAction && (
+						<Kv k="action">
+							<InvalidArg what="action" />
+						</Kv>
+					)}
+					<ArgKv k="db" raw={args.db} val={db && <PathText path={db} />} />
+					<ArgKv k="target" raw={args.target} val={target} />
+					<ArgKv k="name" raw={args.name} val={name} />
+					<ArgKv
+						k="repeatable"
+						raw={args.repeatable}
+						val={
+							typeof args.repeatable === "boolean"
+								? String(args.repeatable)
+								: null
+						}
+					/>
+					<ArgKv
+						k="save"
+						raw={args.save}
+						val={typeof args.save === "boolean" ? String(args.save) : null}
+					/>
+					<ArgKv
+						k="timeout"
+						raw={args.timeout}
+						val={timeout !== null && `${timeout}s`}
+					/>
+					{badText && (
+						<Kv k="text">
+							<InvalidArg what="text" />
+						</Kv>
+					)}
+					{badDecl && (
+						<Kv k="decl">
+							<InvalidArg what="decl" />
+						</Kv>
+					)}
+					{badCode && (
+						<Kv k="code">
+							<InvalidArg what="code" />
+						</Kv>
+					)}
+				</KvGrid>
+			)}
 			{text && <Output text={text} title="text" maxLines={8} />}
 			{decl && <CodeBlock code={decl} lang="c" title="decl" maxLines={8} />}
 			{code && (
 				<CodeBlock code={code} lang="python" title={t("toolRender.ida.code")} />
 			)}
+		</>
+	);
+}
+
+function Result({ args, result }: ToolRenderProps): ReactNode {
+	const { t } = useTranslation();
+	const action = str(args.action);
+	const db = str(args.db);
+	const details = detailsRecord(result);
+	const resolvedId = str(details?.db);
+	// Core 目前的 exec 结果不带架构；参数或 details 里有时才据此选汇编高亮
+	const arch = str(args.arch) ?? str(details?.arch);
+	const parsed = parseResult(action, result);
+	// open 的结果自带库 id，避免再写一遍；与参数里的 db 相同时也不重复
+	const showId =
+		resolvedId !== null && resolvedId !== db && parsed?.kind !== "open";
+	return (
+		<>
+			{showId && (
+				<KvGrid>
+					<Kv k={t("toolRender.ida.dbId")}>{resolvedId}</Kv>
+				</KvGrid>
+			)}
 			{parsed ? (
-				<ParsedResult parsed={parsed} />
+				<ParsedResult
+					parsed={parsed}
+					execLang={execOutputLang(str(args.code), arch)}
+				/>
 			) : (
 				<ResultText result={result} maxLines={12} />
 			)}
@@ -531,4 +603,4 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	);
 }
 
-export const idaRenderer: ToolRenderer = { Summary, Meta, Body };
+export const idaRenderer: ToolRenderer = { Summary, Meta, Input, Result };

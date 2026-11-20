@@ -1,12 +1,20 @@
 /**
  * `terminal` — omp 的终端工具（`terminal_configure{agentTools:true}` 时注册）：list / read / run / stop / open / exec / send / wait。
- * 摘要按 `action` 给出命令或终端 id；正文列出 `details.terminal(s)` 与输出，并提供「在终端面板查看」。
+ * 摘要按 `action` 给出命令或终端 id；输入段给出完整命令，输出段列出 `details.terminal(s)` 与输出，并提供「在终端面板查看」。
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { revealTerminal } from "../../state/terminals";
 import type { Tone } from "../parts";
-import { Badge, Badges, Kv, KvGrid, ResultText } from "../parts";
+import {
+	Badge,
+	Badges,
+	CommandLine,
+	Kv,
+	KvGrid,
+	Output,
+	ResultText,
+} from "../parts";
 import type { ToolRenderer, ToolRenderProps } from "../types";
 import {
 	detailsRecord,
@@ -92,27 +100,42 @@ function Summary({ args, result }: ToolRenderProps): ReactNode {
 	);
 }
 
-function Body({ args, result }: ToolRenderProps): ReactNode {
+function Input({ args }: ToolRenderProps): ReactNode {
+	const id = str(args.id);
+	const command = str(args.command);
+	const text = str(args.text);
+	const key = str(args.key);
+	return (
+		<>
+			{/* 折叠行只是摘要（会被截断、压成一行），展开体始终给出完整命令与发送内容 */}
+			{command && <CommandLine command={command} />}
+			<Badges
+				items={[
+					id && <Badge>{id}</Badge>,
+					key && `key ${key}`,
+					id && <OpenInPanel id={id} />,
+				]}
+			/>
+			{text && <Output text={text} maxLines={8} />}
+		</>
+	);
+}
+
+function Result({ args, result }: ToolRenderProps): ReactNode {
 	const details = detailsRecord(result);
 	const info = termInfo(details?.terminal);
 	const list = Array.isArray(details?.terminals)
 		? details.terminals.map(termInfo).filter((x): x is TermInfo => x !== null)
 		: [];
-	const id = str(args.id) ?? info?.terminalId ?? undefined;
+	const argId = str(args.id);
+	// 参数给了终端 id 时链接已在输入段；这里只为结果报告的另一个终端或终端列表给链接
+	const reported = info && info.terminalId !== argId ? info.terminalId : null;
 	const exitCode = num(details?.exitCode);
-	const command = str(args.command);
 	return (
 		<>
-			{/* 折叠行只是摘要（会被截断、压成一行），展开体始终给出完整命令 */}
-			{command && (
-				<div className="tv-cmd">
-					<span className="tv-cmd-prompt">$</span>
-					<span className="tv-cmd-text">{command}</span>
-				</div>
-			)}
 			<Badges
 				items={[
-					id && <Badge>{id}</Badge>,
+					reported && <Badge>{reported}</Badge>,
 					info?.kind && <Badge>{info.kind}</Badge>,
 					info && (
 						<Badge
@@ -125,7 +148,9 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 					exitCode !== null && (
 						<Badge tone={exitCode === 0 ? "ok" : "err"}>exit {exitCode}</Badge>
 					),
-					(id || list.length > 0) && <OpenInPanel id={id} />,
+					(reported || (list.length > 0 && !argId)) && (
+						<OpenInPanel id={reported ?? undefined} />
+					),
 				]}
 			/>
 			{list.length > 0 && (
@@ -146,4 +171,4 @@ function Body({ args, result }: ToolRenderProps): ReactNode {
 	);
 }
 
-export const terminalRenderer: ToolRenderer = { Summary, Body };
+export const terminalRenderer: ToolRenderer = { Summary, Input, Result };

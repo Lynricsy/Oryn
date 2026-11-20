@@ -184,6 +184,13 @@
 	white-space: nowrap;
 }
 
+/* 收起时头部显示意图（自然语言）：无衬线，比参数摘要更像一句说明 */
+.tv-sum-intent {
+	font-family: var(--tv-sans);
+	font-size: 12.5px;
+	color: var(--tv-muted);
+}
+
 /* 右侧读数（行数、+N −M、通过数与耗时……）：各渲染器的 Meta，按语义着色 */
 .tv-meta {
 	display: flex;
@@ -248,21 +255,81 @@
 
 /* ---- body ---- */
 
-/* 展开体在卡内（头部下方一条发丝线），整块是一层内嵌井：输出块不再各自套底色 */
+/* 展开体在卡内（头部下方一条发丝线）：意图一行 + 「输入」「输出」两段。
+ * 输入段是纸面上的一层浅底，输出段是更深的内嵌井，两段之间一条发丝线，各带一枚小标题。 */
 .tv-body {
 	display: flex;
 	flex-direction: column;
-	gap: 8px;
 	min-width: 0;
-	padding: 10px 12px;
 	background: var(--tv-inset);
 }
 
 .tv-intent {
+	padding: 9px 12px;
 	font-family: var(--tv-sans);
 	font-style: italic;
 	font-size: 12px;
 	color: var(--tv-faint);
+}
+
+.tv-sec {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	min-width: 0;
+	padding: 9px 12px 10px;
+	position: relative;
+}
+
+/* 渲染器的这一段渲染为空：整段（连同小标题）不出现 */
+.tv-sec:has(> .tv-sec-body:empty) {
+	display: none;
+}
+
+.tv-sec--in {
+	background: color-mix(in oklab, var(--tv-raised) 70%, transparent);
+}
+
+.tv-sec--in:not(:has(> .tv-sec-body:empty)) + .tv-sec--out {
+	border-top: 1px solid var(--tv-border);
+}
+
+.tv-sec-label {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-family: var(--tv-sans);
+	font-size: 10.5px;
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--tv-faint);
+	user-select: none;
+}
+
+/* 小标题前一枚 6px 色点：输入用类别中性的 faint，输出用强调色，扫一眼就能分清两段 */
+.tv-sec-label::before {
+	content: "";
+	flex: none;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--tv-faint);
+}
+
+.tv-sec--out .tv-sec-label::before {
+	background: var(--tv-accent);
+}
+
+.tv-card--error .tv-sec--out .tv-sec-label::before {
+	background: var(--tv-err);
+}
+
+.tv-sec-body {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	min-width: 0;
 }
 
 .tv-partial {
@@ -596,6 +663,121 @@
 	user-select: none;
 }
 
+/* 语法高亮的 diff 行：增删标记与 omp 的行号栏（`+12|`）弱化，代码部分走 hljs 令牌 */
+.tv-diff-gutter {
+	color: var(--tv-faint);
+	user-select: none;
+}
+
+.tv-diff-row--add .tv-diff-gutter {
+	color: color-mix(in oklab, var(--tv-ok) 70%, var(--tv-faint));
+}
+
+.tv-diff-row--del .tv-diff-gutter {
+	color: color-mix(in oklab, var(--tv-err) 70%, var(--tv-faint));
+}
+
+/* grep / ast_grep 结果里的文件与目录头（`### file.ts#AB12`、`## dir/`） */
+.tv-match-head {
+	color: var(--tv-muted);
+	font-weight: 600;
+}
+
+/* ---- bash 的 Pseudo 视图（omp 原生 ShellVisualization 的行，经 orb 扩展写进 details.orynPseudo） ---- */
+
+.tv-pseudo {
+	display: flex;
+	flex-direction: column;
+	font-size: 12px;
+	line-height: 1.6;
+}
+
+/* 每行按 depth 缩进（行内 style 给 padding），折行时悬挂到同一缩进；行首 2ch 留给失败的 × */
+.tv-pseudo-row {
+	position: relative;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.tv-pseudo-lead {
+	position: absolute;
+	left: 0;
+	width: 2ch;
+	color: var(--tv-err);
+	font-weight: 600;
+}
+
+.tv-pseudo-row--skipped,
+.tv-pseudo-skipped {
+	opacity: 0.45;
+}
+
+.tv-pseudo-fail {
+	color: var(--tv-err);
+	font-weight: 600;
+}
+
+.tv-pseudo-chip {
+	color: var(--tv-accent);
+}
+
+.tv-pseudo-meta,
+.tv-pseudo-ann {
+	margin-left: 2ch;
+	font-family: var(--tv-sans);
+	font-size: 11px;
+	color: var(--tv-faint);
+}
+
+.tv-pseudo-meta--fail {
+	color: var(--tv-err);
+}
+
+.tv-pseudo-ann {
+	font-family: var(--tv-mono);
+}
+
+/* 输入段右上角的视图切换（Pseudo / 原始），与段落小标题同一行（`.tv-sec` 是定位容器） */
+.tv-viewswitch {
+	position: absolute;
+	top: 6px;
+	right: 12px;
+	display: flex;
+	/* fieldset 的默认外边距与最小宽度归零 */
+	margin: 0;
+	min-inline-size: 0;
+	padding: 1px;
+	border: 1px solid var(--tv-border);
+	border-radius: var(--r-sm, 6px);
+	background: var(--tv-panel);
+}
+
+.tv-viewswitch button {
+	padding: 0 7px;
+	border: 0;
+	border-radius: var(--r-xs, 4px);
+	background: none;
+	font-family: var(--tv-sans);
+	font-size: 11px;
+	line-height: 18px;
+	color: var(--tv-faint);
+	cursor: pointer;
+}
+
+.tv-viewswitch button:hover {
+	color: var(--tv-fg);
+}
+
+.tv-viewswitch button[aria-pressed="true"] {
+	background: var(--tv-hover);
+	color: var(--tv-fg);
+}
+
+.tv-viewswitch button:focus-visible {
+	outline: 2px solid var(--tv-ring);
+	outline-offset: 1px;
+}
+
 /* ---- cells (eval / ast ops) ---- */
 
 .tv-cells {
@@ -788,8 +970,8 @@
 	background: var(--tv-panel);
 }
 
-/* 井里相邻的两段输出（如写入内容与结果、各个单元格）之间用发丝线分开 */
-.tv-body > .tv-out + .tv-out,
+/* 一段里相邻的两块输出（如写入内容与结果、各个单元格）之间用发丝线分开 */
+.tv-sec-body > .tv-out + .tv-out,
 .tv-body .tv-cell + .tv-cell {
 	padding-top: 8px;
 	border-top: 1px solid var(--tv-border);
@@ -801,63 +983,76 @@
 	line-height: 1.6;
 }
 
-/* ---- syntax tokens (highlight.js, scoped) ----
- * 与 Markdown 代码块共用 --syn-* 令牌，随明暗与主题切换。 */
+/* ---- syntax tokens (highlight.js, scoped to the card) ----
+ * 与 Markdown 代码块共用 --syn-* 令牌，随明暗与主题切换。代码块、diff、命令行、pseudo 视图共用。 */
 
-.tv-pre .hljs-comment,
-.tv-pre .hljs-quote {
+.tv-card .hljs-comment,
+.tv-card .hljs-quote {
 	color: var(--tv-faint);
 	font-style: italic;
 }
 
-.tv-pre .hljs-keyword,
-.tv-pre .hljs-selector-tag,
-.tv-pre .hljs-section,
-.tv-pre .hljs-name,
-.tv-pre .hljs-tag {
+.tv-card .hljs-keyword,
+.tv-card .hljs-selector-tag,
+.tv-card .hljs-selector-pseudo,
+.tv-card .hljs-selector-attr,
+.tv-card .hljs-section,
+.tv-card .hljs-doctag,
+.tv-card .hljs-name,
+.tv-card .hljs-tag {
 	color: var(--syn-keyword, var(--tv-accent));
 }
 
-.tv-pre .hljs-string,
-.tv-pre .hljs-regexp,
-.tv-pre .hljs-addition {
+.tv-card .hljs-string,
+.tv-card .hljs-regexp,
+.tv-card .hljs-code,
+.tv-card .hljs-addition {
 	color: var(--syn-string, var(--tv-ok));
 }
 
-.tv-pre .hljs-number,
-.tv-pre .hljs-literal,
-.tv-pre .hljs-symbol,
-.tv-pre .hljs-bullet,
-.tv-pre .hljs-link {
+.tv-card .hljs-number,
+.tv-card .hljs-literal,
+.tv-card .hljs-symbol,
+.tv-card .hljs-bullet,
+.tv-card .hljs-link,
+.tv-card .hljs-char.escape_ {
 	color: var(--syn-number, var(--tv-warn));
 }
 
-.tv-pre .hljs-meta {
+.tv-card .hljs-meta {
 	color: var(--tv-muted);
 }
 
-.tv-pre .hljs-title,
-.tv-pre .hljs-attr,
-.tv-pre .hljs-attribute,
-.tv-pre .hljs-selector-id,
-.tv-pre .hljs-selector-class {
+.tv-card .hljs-title,
+.tv-card .hljs-attr,
+.tv-card .hljs-attribute,
+.tv-card .hljs-property,
+.tv-card .hljs-selector-id,
+.tv-card .hljs-selector-class {
 	color: var(--syn-title, var(--tv-fg));
 }
 
-.tv-pre .hljs-type,
-.tv-pre .hljs-built_in {
+.tv-card .hljs-type,
+.tv-card .hljs-built_in,
+.tv-card .hljs-title.class_,
+.tv-card .hljs-variable,
+.tv-card .hljs-template-variable {
 	color: var(--syn-type, var(--tv-fg));
 }
 
-.tv-pre .hljs-deletion {
+.tv-card .hljs-operator {
+	color: var(--tv-muted);
+}
+
+.tv-card .hljs-deletion {
 	color: var(--tv-err);
 }
 
-.tv-pre .hljs-emphasis {
+.tv-card .hljs-emphasis {
 	font-style: italic;
 }
 
-.tv-pre .hljs-strong {
+.tv-card .hljs-strong {
 	font-weight: 600;
 }
 
