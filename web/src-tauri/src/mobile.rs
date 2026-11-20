@@ -798,8 +798,8 @@ mod android {
                     recreate_main(&app);
                 }
             }
-            // 原生底栏与页头只在 iOS 上有，Kotlin 不发
-            Event::TabBar { .. } | Event::Header { .. } => {}
+            // 底栏、页头与根滚动轨迹是 iOS 插件事件，Kotlin 不发。
+            Event::TabBar { .. } | Event::Header { .. } | Event::Sink { .. } => {}
         }
     }
 
