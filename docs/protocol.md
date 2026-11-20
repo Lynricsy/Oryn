@@ -612,6 +612,90 @@ Android App 有两条后台推送通道，都登记到同一个 `POST /api/v1/pu
 
 App Links（`/.well-known/assetlinks.json`）不启用：通知、分享与跳转一律用 `oryn://` 深链接。
 
+### 官方推送网关（草案，未实现）
+
+让官方签名的 iOS 包与官方 `gms` 包在连任意自部署 orynd 时也能收推送。APNs key 与 Firebase 服务账号只在网关上；自部署 orynd 把 RFC 8291 密文交给网关，由网关转给 APNs / FCM。UnifiedPush 不经网关（orynd 照旧直发分发器）；自编 App 的部署者仍可用自己的凭据直发，或用开源网关代码自建。官方域名待定，下文记作 `<gw>`。
+
+**原则**
+
+- 网关只见密文：载荷与 FCM 的 `e` 相同（RFC 8291 `aes128gcm`，见上文「FCM 发送」），网关解不开。
+- 不注册、无账号：orynd 凭主机密钥签名，手机凭设备密钥签名并证明持有推送令牌；陌生 orynd 只能给明确授权过它的那台手机推送。
+- 网关保留最小授权状态（授权表，不存任何通知内容），因此手机能在网关上立即吊销单个主机的授权，不依赖 orynd 配合。
+- 授权绑定网关 origin、主机公钥与 App 标识；换网关、换主机密钥都要重新授权，旧授权从不转交。
+
+**密钥**
+
+- 主机密钥：Ed25519，orynd 首次需要时生成，存在密钥库 `push/gateway-host-key`（proxy 模式）。轮换即令全部 `gateway` 订阅失效（见「切换与失效」）。
+- 设备密钥：P-256，App 每次安装生成一把，私钥不出 Keystore / Secure Enclave（两者都支持 P-256、不支持 Ed25519）。网关以它识别「同一台手机」。
+- 请求签名：
+  - 主机请求带 `Oryn-Host-Key`（base64url 公钥）、`Oryn-Timestamp`（毫秒）、`Oryn-Signature`（Ed25519）。
+  - 设备请求带 `Oryn-Device-Key`（base64url 未压缩公钥）、`Oryn-Timestamp`、`Oryn-Signature`（ECDSA P-256 / SHA-256，DER）。
+  - 两者签的都是 `oryn-push-gw/1\n<METHOD>\n<网关 origin><路径>\n<Oryn-Timestamp>\n<hex(SHA-256(请求体))>`，签名只对该网关、该路径、该请求体有效。时间与网关时钟差超过 5 分钟 → 401 `clock_skew`。
+
+**orynd 侧**
+
+- 配置：`push: { gateway: { url: "https://<gw>" } }`，默认官方网关；空串关闭。只有手机登记了 `kind: gateway` 订阅时 orynd 才会访问网关，没开推送的实例不产生任何对外流量。
+- `GET /api/v1/push/gateway`（已鉴权）→ `{v: 1, origin, hostKey}`；关闭时 404 `gateway_disabled`。App 只从这里得知网关地址，扫码、深链接等其它来源一律不认。
+- `POST /api/v1/push/subscriptions` 增加 `{kind: "gateway", gateway: <origin>, grant: <授权 id>, keys: {p256dh, auth}}`（`keys` 必填，校验同 Web Push）。orynd 先以主机签名调 `POST /v1/grants/verify {grant}` 确认授权存在、未吊销、绑定的正是本机主机公钥，否则 409 `gateway_grant_invalid`；`gateway` 不等于当前配置的 origin → 409 `gateway_changed`。按 `grant` upsert。
+- 设备在 orynd 被吊销、或订阅被删除时，orynd 尽力调用 `DELETE /v1/grants/{id}`（主机签名），撤销自己名下的授权。这一步只是礼貌清理，吊销的可靠路径是手机直接找网关（见「吊销」）。
+- `PushSubscriptionKind` 与 `NotificationDeliveryTarget` 增加 `gateway`；投递规则与重试分类同 FCM。
+
+**网关接口**
+
+|方法 路径|签名|请求 → 应答|
+|---|---|---|
+|`GET /v1/info`|无|→ `{v: 1, apns?: {topic, environments: ["production"\|"sandbox"]}, fcm?: {projectId, senderId}}`|
+|`POST /v1/challenges`|设备|`{channel: "apns"\|"fcm", appId, environment?, token}` → `202 {challengeId}`；网关向该令牌发一条只含 `{kind: "gateway_challenge", challengeId, nonce}` 的推送，nonce 5 分钟有效、只能用一次|
+|`POST /v1/grants`|设备|`{challengeId, nonce, hostKey, label?}` → `201 {grant, createdAt}`：授权绑定该设备密钥、推送令牌、通道 / App 标识 / 环境与主机公钥；同一 `(设备密钥, 主机公钥)` 已有授权时返回原 `grant`|
+|`PUT /v1/devices/self/token`|设备|`{challengeId, nonce}` → `204`：推送令牌变了（APNs / FCM 刷新），先对新令牌走一次 challenge，再把该设备全部授权改到新令牌|
+|`GET /v1/devices/self/grants`|设备|→ `{grants: [{grant, hostKey, label, createdAt, lastUsedAt}]}`|
+|`DELETE /v1/grants/{id}`|设备或主机|→ `204`，立即生效；只认该授权绑定的设备密钥或主机公钥|
+|`DELETE /v1/devices/self/grants`|设备|→ `204`：撤销本机全部授权|
+|`POST /v1/grants/verify`|主机|`{grant}` → `204`，或 410 `grant_revoked` / 403 `host_mismatch`|
+|`POST /v1/push`|主机|`{grant, id, kind, collapse?, e}` → `202`|
+
+- `challenge` 推送在 App 前台时到达：iOS 用 alert 推送，App 在 `willPresent` 里不展示；FCM 用 data 消息。它只证明「登记者能收到这个令牌的推送」，防止知道别人令牌的人申请授权。
+- `POST /v1/push`：
+  - `id` 是通知 id，`kind` 是 `done | input | error | budget | other`（只用于优先级），`e` 是密文的无填充 base64url，最长 3800 字符（明文上限同 FCM 的 2800 字节）。
+  - `collapse` 只用于 APNs，形如 `base64url(SHA-256(grant ‖ tag))` 的前 22 个字符，网关看不出线程。按线程折叠在 APNs 上是安全的：APNs 对离线设备只保留每个 App 的最后一条，与 FCM 的 4 槽规则无关，丢失由补拉兜底（见下）。
+  - APNs：`apns-push-type: alert`，`apns-priority` 对 `input` 为 10、其余为 5，`apns-expiration` 为 24 小时后，载荷 `{"aps":{"alert":{"title":"Oryn","body":"线程有更新"},"mutable-content":1,"sound":"default"},"v":"2","id","e"}`。Notification Service Extension 解密后替换标题和正文；解不开时只显示这段不含内容的占位文字。
+  - FCM：与 orynd 直发 FCM 的请求体相同（`data: {v: "2", id, e}`，不设 `collapse_key`）。
+- 上游结果：APNs 410 `Unregistered` / FCM `UNREGISTERED` → 网关把该设备全部授权标为失效，并对这次请求回 410 `device_unregistered`。
+
+**错误码（网关）**
+
+|码|HTTP|含义|orynd 的处理|
+|---|---|---|---|
+|`malformed`|400|请求不合规|不重试|
+|`bad_signature` / `clock_skew`|401|签名或时间不对|不重试并告警（时钟偏差时检查 NTP）|
+|`host_mismatch`|403|授权不属于这把主机密钥|删除订阅|
+|`grant_revoked` / `device_unregistered`|410|授权已吊销 / 推送令牌失效|删除订阅|
+|`app_mismatch`|409|`/v1/challenges` 的 App 标识不是本网关服务的|—（手机侧错误）|
+|`too_big`|413|`e` 超长|去掉 `body` 重新加密后再发一次|
+|`rate_limited`|429|超限，带 `Retry-After`|按 `Retry-After` 重试|
+|`upstream`|502|APNs / FCM 拒绝或不可达|按退避重试|
+|`unavailable`|503|网关暂不可用|按退避重试|
+
+**吊销**
+
+- 手机端「关闭推送」：先以设备签名 `DELETE /v1/grants/{id}`（成功才算关闭），再尽力删除 orynd 上的订阅（即现有 `push_disable`）。这样自部署 orynd 即使保留着授权 id，也已经发不出去。
+- 「设置 → 通知」列出 `GET /v1/devices/self/grants` 的结果，可以逐个撤销，也可以一键撤销全部，用于手机换过服务器或不再信任某台主机的情况。
+- 网关对每次 `POST /v1/push` 都查授权表，所以吊销立即生效；不签发自包含的长期令牌。
+
+**切换与失效**
+
+- App 每次同步订阅时都读一遍 `GET /api/v1/push/gateway`。`origin` 或 `hostKey` 与本地授权不一致 → 先在旧网关撤销旧授权（尽力而为），再对新网关走一遍 `info → challenges → grants`，然后登记新订阅。旧授权从不带到新网关，新网关看到别家的授权 id 也只会回 `grant_revoked`。
+- `/v1/info` 里没有与本 App 编译时一致的 APNs topic / 环境，或 Firebase `projectId`：App 不登记，状态显示 `gateway_app_mismatch`。官方 App 因此只能用官方网关；`push.gateway.url` 指向自建网关时，只对用同一凭据自编的 App 有效。
+- orynd 改 `push.gateway.url` 或轮换主机密钥 → 停止向旧订阅投递，并在订阅登记时回 409 `gateway_changed` / `gateway_grant_invalid`，让 App 重新授权。期间不发推送，绝不回退明文或改走其它通道。
+- 离线丢失：APNs 只留最后一条。App 每次启动、以及 NSE 收到任何推送时都按「FCM 发送」中的补拉规则拉未读通知；补拉失败时只显示一条「Oryn 有新通知」。
+
+**网关存储、限额与隐私**
+
+- 授权表：`grant`（128 位随机）、设备公钥、主机公钥、通道、App 标识、环境、推送令牌（静态加密）、`label`、创建时间、最后使用时间、吊销时间。不存任何通知内容，也不存 orynd 的地址。连续 90 天未用的授权删除，已吊销的 7 天后删除。
+- 限额（初值，可配置）：每个授权每分钟 60 条、每天 2000 条；每个主机公钥每分钟 600 条；每个来源 IP 每小时 30 次 `challenges`。
+- 日志只记授权 id、主机公钥的哈希、HTTP 结果与上游错误码，不记推送令牌、`e` 及其它请求内容。来源 IP 只用于内存中的限流，不落盘。
+- 实现：同仓库新增 `cmd/oryn-push-gateway`，单独发布镜像；与 orynd 共用 `internal/webpush` 以及从 `internal/notify/fcm.go` 拆出的 FCM 客户端，新增 APNs 客户端（HTTP/2 长连接、ES256 provider token 缓存 50 分钟）。官方部署的密钥、限额与域名不进仓库。
+
 ## M8：Desktop 与浏览器 Profile
 
 orb 镜像带一块常驻的 X11 桌面（Xvnc `:1` + openbox），Chromium 由 orbd 按需启动、一台 orb 只有一个；agent 的 `browser` 工具经 CDP 前门 `127.0.0.1:7822` 附着到它，`computer` 工具作用于同一显示。用户经线程页的 Desktop 标签（noVNC）观看与操作。命名浏览器 Profile（Chromium `Default` 子 profile 里的登录态）加密保存在控制面，租约跟着「orb 在运行」走：orb 进入 `ready` 之前由控制面定好本地目录，冻结前活体保存，停机 / 删除前关闭式保存，离开运行态（`frozen` / `stopped` / `failed` / `deleted`）即释放租约。
