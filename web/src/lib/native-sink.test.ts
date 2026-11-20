@@ -258,6 +258,42 @@ describe("createSinkScroll", () => {
 		expect(commit.mock.calls).toEqual([["open"]]);
 	});
 
+	it("T10b 未到目的地的 scroll 每 90ms 来一条（静止定时器一直被重排）：截止仍在 SINK_REQUEST_MS 准时落到目的地", () => {
+		const { s, scrollTo, scroll } = setup("closed");
+		s.request("open", true);
+		for (let t = 90; t < SINK_REQUEST_MS; t += 90) {
+			vi.advanceTimersByTime(90);
+			scroll(null);
+		}
+		expect(scrollTo.mock.calls).toEqual([["open", true]]);
+		vi.advanceTimersByTime(SINK_REQUEST_MS % 90 || 90);
+		expect(scrollTo).toHaveBeenLastCalledWith("open", false);
+	});
+
+	it("T10c 到位提交、被新请求替换、卸载都取消截止：之后不再落位", () => {
+		const done = setup("closed");
+		done.s.request("open", true);
+		done.scroll("open");
+		vi.advanceTimersByTime(SINK_REST_MS);
+		expect(done.commit.mock.calls).toEqual([["open"]]);
+		const gone = setup("closed");
+		gone.s.request("open", true);
+		gone.s.dispose();
+		const swapped = setup("closed");
+		swapped.s.request("open", true);
+		vi.advanceTimersByTime(SINK_REQUEST_MS / 2);
+		swapped.s.request("closed", true);
+		swapped.scroll("closed");
+		vi.advanceTimersByTime(SINK_REQUEST_MS * 2);
+		expect(done.scrollTo.mock.calls).toEqual([["open", true]]);
+		expect(gone.scrollTo.mock.calls).toEqual([["open", true]]);
+		expect(swapped.scrollTo.mock.calls).toEqual([
+			["open", true],
+			["closed", true],
+		]);
+		expect(swapped.commit.mock.calls).toEqual([["closed"]]);
+	});
+
 	it("T11 request 途中手指接管：目的地作废，抬起后停在中途就近吸附", () => {
 		const { s, state, scrollTo, scroll } = setup("closed");
 		s.request("open", true);

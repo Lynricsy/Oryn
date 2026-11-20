@@ -177,34 +177,40 @@ export function createSinkScroll(
 	let free = false;
 	let touching = false;
 	let target: SinkRest | null = null;
-	let waits = 0;
 	let timer: number | null = null;
+	/** 本页请求的截止定时器：独立于静止定时器（后者每条 scroll 事件都重排，不能当期限用）。 */
+	let deadline: number | null = null;
 	const arm = (ms: number) => {
 		if (timer !== null) env.clearTimeout(timer);
 		timer = env.setTimeout(settle, ms);
+	};
+	/** 目的地作废：到位提交、手指接管、被新请求替换、卸载。 */
+	const drop = () => {
+		target = null;
+		if (deadline !== null) env.clearTimeout(deadline);
+		deadline = null;
+	};
+	const expire = () => {
+		deadline = null;
+		if (target === null || touching || env.rest() === target) return;
+		// 只落一次：落位也被拉回时按实际位置收场，不来回重试
+		env.scrollTo(target, false);
+		target = null;
+		arm(SINK_REST_MS);
 	};
 	const settle = () => {
 		timer = null;
 		if (touching) return;
 		const rest = env.rest();
-		if (target !== null && rest !== target) {
-			if (++waits * SINK_REST_MS < SINK_REQUEST_MS) {
-				arm(SINK_REST_MS);
-				return;
-			}
-			// 只落一次：落位也被拉回时按实际位置收场，不来回重试
-			env.scrollTo(target, false);
-			target = null;
-			arm(SINK_REST_MS);
-			return;
-		}
+		// 请求还没到位：等动画或截止定时器，不按静止提交、不就近吸附
+		if (target !== null && rest !== target) return;
 		if (rest === null) {
 			env.scrollTo(env.nearer(), true);
 			return;
 		}
 		committed = rest;
 		free = false;
-		target = null;
+		drop();
 		commit(rest);
 	};
 	return {
@@ -219,21 +225,23 @@ export function createSinkScroll(
 			touching = down;
 			if (down) {
 				free = true;
-				target = null;
+				drop();
 			} else arm(SINK_REST_MS);
 		},
 		request(to, smooth) {
 			// 已在目标位且已提交时不动；但有在途目标（另一端的动画还没起步或正在走）时照发，让原生停掉旧动画
 			if (target === null && env.rest() === to && committed === to) return;
+			drop();
 			free = true;
 			target = to;
-			waits = 0;
+			deadline = env.setTimeout(expire, SINK_REQUEST_MS);
 			env.scrollTo(to, smooth);
 			arm(SINK_REST_MS);
 		},
 		dispose() {
 			if (timer !== null) env.clearTimeout(timer);
 			timer = null;
+			drop();
 		},
 	};
 }
