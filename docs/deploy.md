@@ -477,7 +477,7 @@ runner 是你自己的机器（笔记本、工作站、NAS，支持 Linux 与 ma
 
 ### 建立与启动
 
-支持 **Linux**（`x64`、`arm64`）与 **macOS**（`arm64`、`x64`）；不支持原生 Windows，Windows 机器请在 **WSL2** 里运行 Linux 版 `orbd`。
+支持 **Linux**（`x64`、`arm64`）与 **macOS**（Apple 芯片，`arm64`）；不支持 Intel mac（Core 不发布 `darwin-x64` 构建，`orbd` 启动时报「此平台没有 Oryn Core 构建」），不支持原生 Windows，Windows 机器请在 **WSL2** 里运行 Linux 版 `orbd`。
 
 1. **建 runner**：「设置 → Runner → 新建」，或 `oryn runner create laptop`（标准输出只有令牌，启动命令打到标准错误）。令牌只显示这一次。
 2. **在那台机器上**放好与 orynd 同版本的 `orbd`（`make build` 产出的 `bin/orbd`），确保系统 `PATH` 目录（`$HOME` 之外，如 `/usr/bin`、`/opt/homebrew/bin`）里有 `git`（不要求本机安装 `omp`；在 bash 里经网关连 SSH 主机还需 OpenSSH ≥ 8.4）。然后：
