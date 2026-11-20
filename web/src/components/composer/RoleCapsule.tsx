@@ -61,6 +61,8 @@ export interface RoleOption {
 	/** 头像的身份类型：自定义 role 没设头像时回落为默认 Agent 身份 */
 	of: "role" | "agent";
 	glyph?: string;
+	/** 选择器是 `@role` / `pi/role`（可带 `:level`）这样单纯指向另一个已知 role 时，那个 role */
+	alias?: RoleOption;
 }
 
 /** `provider/id` 选择器。 */
@@ -71,8 +73,15 @@ export function modelShortName(m: ModelRef): string {
 	return shortModelName(m.name || m.id, modelBrand(m.id, m.provider));
 }
 
+/** 单纯的 role 别名（`@Cyrene`、`pi/slow:high`）指向的 role；回退链、模型选择器返回 undefined。 */
+function aliasTarget(selector: string | undefined): string | undefined {
+	return /^(?:@|pi\/)([^\s,:]+)(?::[\w-]+)?$/.exec(selector?.trim() ?? "")?.[1];
+}
+
 /**
- * cycleOrder 里的 role（按其顺序）与各自解析出的模型。role 身份列表读失败或为空时用 omp 默认的 cycleOrder。
+ * cycleOrder 里的 role（按其顺序）与各自解析出的模型；`default` 不在 cycleOrder 里时补在末尾（首屏的缺省对象就是它，
+ * 胶囊与弹层要有它的身份、模型与选中项）。别名按全部已知 role 解析（`default: '@Cyrene'` 这类配置）。
+ * role 身份列表读失败或为空时用 omp 默认的 cycleOrder。
  */
 export function useRoleOptions(): RoleOption[] {
 	const identities = useRoleIdentities();
@@ -80,17 +89,27 @@ export function useRoleOptions(): RoleOption[] {
 	const agent = useIdentity("agent").data;
 	const accent = useTheme((s) => s.accent);
 	return useMemo(() => {
-		const listed = (identities.data?.roles ?? []).filter((r) => r.inCycle);
-		const roles: Schemas["RoleIdentity"][] =
+		const known = identities.data?.roles ?? [];
+		const listed = known.filter((r) => r.inCycle);
+		const cycle: Schemas["RoleIdentity"][] =
 			listed.length > 0
 				? listed
 				: DEFAULT_CYCLE_ORDER.map((role) => ({ role, inCycle: true }));
+		const roles = cycle.some((r) => r.role === "default")
+			? cycle
+			: [
+					...cycle,
+					known.find((r) => r.role === "default") ?? {
+						role: "default",
+						inCycle: false,
+					},
+				];
 		const builtinName = (role: string) =>
 			Object.hasOwn(BUILTIN_ROLE_NAMES, role)
 				? BUILTIN_ROLE_NAMES[role as BuiltinRole]
 				: role;
 		const entries = new Map<string, RoleEntry>(
-			roles.map((r) => [
+			[...roles, ...known].map((r) => [
 				r.role,
 				{ id: r.role, name: r.name || builtinName(r.role), model: r.selector },
 			]),
@@ -104,14 +123,14 @@ export function useRoleOptions(): RoleOption[] {
 			avatarIcon: agent?.avatarIcon,
 			avatarImage: agent?.avatarImage,
 		};
-		return roles.map((r, i) => {
+		const toOption = (r: Schemas["RoleIdentity"], hue: string): RoleOption => {
 			const glyph = roleDefaultGlyph(r.role);
 			const custom = !!(r.avatarIcon || r.avatarImage);
 			const own = custom || !!glyph;
 			return {
 				role: r.role,
 				name: roleLabel({ id: r.role, name: r.name || builtinName(r.role) }),
-				hue: roleHue(r.role, i, accent),
+				hue,
 				selector: r.selector,
 				model: r.selector
 					? resolveRoleValue(r.selector, entries, pool, r.role).model
@@ -122,6 +141,20 @@ export function useRoleOptions(): RoleOption[] {
 				of: own ? "role" : "agent",
 				glyph,
 			};
+		};
+		const options = roles.map((r, i) =>
+			toOption(r, roleHue(r.role, i, accent)),
+		);
+		return options.map((o) => {
+			const to = aliasTarget(o.selector);
+			if (!to || to === o.role || !entries.has(to)) return o;
+			const listedTo = options.find((x) => x.role === to);
+			const target = known.find((r) => r.role === to);
+			const alias =
+				listedTo ??
+				(target ? toOption(target, roleHue(to, undefined, accent)) : undefined);
+			// 别名 role 与它指向的 role 同色（托盘光晕不随「换了个名字」变色）
+			return alias ? { ...o, alias, hue: alias.hue } : o;
 		});
 	}, [identities.data, catalog.data, agent, accent]);
 }
@@ -230,6 +263,10 @@ export function RoleCapsule({
 			/>
 		);
 		main = modelShortName(value.model);
+	} else if (value.role === "default" && role?.alias) {
+		// 「默认」说明不了是谁：default 只是另一个 role 的别名（如 `@Cyrene`）时直接显示那个 role
+		face = <RoleFace option={role.alias} size={compactPill ? 20 : 16} />;
+		main = role.alias.name;
 	} else if (value.role === "default" && role?.model) {
 		// 「默认」这个名字说明不了用哪个模型：胶囊直接显示 default role 解析出的模型
 		face = (
@@ -282,9 +319,12 @@ export function RoleCapsule({
 					selected={value.kind === "role" && value.role === r.role}
 					leading={<RoleFace option={r} size={18} />}
 					hint={
-						// 解析出的模型短名；解析不出时给原始选择器或「未配置」（default 未配置 = omp 的默认模型）
+						// 解析出的模型短名（别名前面加上它指向的 role）；解析不出时给原始选择器或「未配置」
+						// （default 未配置 = omp 的默认模型）
 						r.model
-							? modelShortName(r.model)
+							? r.alias
+								? `${r.alias.name} · ${modelShortName(r.model)}`
+								: modelShortName(r.model)
 							: (r.selector ??
 								(r.role === "default"
 									? t("newThread.defaultModel")

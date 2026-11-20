@@ -16,27 +16,30 @@ const chat = (provider: string, id: string, name: string) => ({
 	kind: "chat",
 });
 
+/** `GET settings/role-identities` 的 roles（按 KnownRoles：cycleOrder 在前，其余已知 role inCycle=false）。 */
+let roleList: unknown[];
+
 beforeEach(() => {
 	window.innerWidth = 1280;
+	roleList = [
+		{ role: "smol", inCycle: true, selector: "openai/gpt-lite" },
+		{ role: "default", inCycle: true, selector: "openai/gpt-x" },
+		{ role: "Cyrene", name: "Cyrene", inCycle: true },
+		{ role: "old", inCycle: false, avatarIcon: "x" },
+	];
 	vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
 		const url = new URL(
 			typeof input === "object" && "url" in input ? input.url : String(input),
 			"http://x",
 		);
 		if (url.pathname === "/api/v1/settings/role-identities")
-			return Response.json({
-				roles: [
-					{ role: "smol", inCycle: true, selector: "openai/gpt-lite" },
-					{ role: "default", inCycle: true, selector: "openai/gpt-x" },
-					{ role: "Cyrene", name: "Cyrene", inCycle: true },
-					{ role: "old", inCycle: false, avatarIcon: "x" },
-				],
-			});
+			return Response.json({ roles: roleList });
 		if (url.pathname === "/api/v1/models/catalog")
 			return Response.json({
 				models: [
 					{ ...chat("openai", "gpt-x", "GPT X"), thinking: ["low", "high"] },
 					chat("openai", "gpt-lite", "GPT Lite"),
+					chat("anthropic", "claude-opus-5-5", "Claude Opus 5.5"),
 				],
 				fetchedAt: 0,
 				stale: false,
@@ -207,5 +210,38 @@ describe("RoleCapsule", () => {
 		expect(
 			within(dialog).getByRole("button", { name: /^全局助手/ }),
 		).toBeInTheDocument();
+	});
+
+	it("主人的配置形状（default: '@Cyrene'，default 不在 cycleOrder）：胶囊显示昔涟，弹层补上并选中默认项", async () => {
+		roleList = [
+			{
+				role: "Cyrene",
+				name: "昔涟",
+				inCycle: true,
+				selector: "anthropic/claude-opus-5-5:high",
+			},
+			{ role: "Mare", inCycle: true, selector: "openai/gpt-lite" },
+			{ role: "default", inCycle: false, selector: "@Cyrene" },
+			{ role: "smol", inCycle: false },
+		];
+		const changes = mount(true, { kind: "role", role: "default" });
+		await vi.waitFor(() =>
+			expect(
+				screen.getByRole("button", { name: /^对象：/ }),
+			).toHaveAccessibleName("对象：昔涟"),
+		);
+		openCapsule();
+		const row = await screen.findByRole("button", {
+			name: /^默认.*昔涟.*Opus/,
+		});
+		// 选中项：Option 选中时带实底 bg-hover（未选中只有 hover:bg-hover）
+		expect(row.className.split(/\s+/)).toContain("bg-hover");
+		expect(
+			screen.getByRole("button", { name: /^昔涟/ }).className.split(/\s+/),
+		).not.toContain("bg-hover");
+		// 不在 cycleOrder 的其它 role 不列出
+		expect(screen.queryByRole("button", { name: /^快速/ })).toBeNull();
+		fireEvent.click(row);
+		expect(changes).toEqual([]);
 	});
 });
