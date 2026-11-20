@@ -23,18 +23,26 @@
 	let guard = false;
 	let error = "";
 	let sk = 0;
+	let sh = 0; // host_sink_show 调用次数（区分「没点到」与「点到了但没动 / 被拉回」）
 	// 程序化开合的方式：0 smooth；1 instant；2 nosnap；3 snapoff（第 1–3 轮）；
-	// 4 native = host_sink_show {animated: true}（预案 C2）；5 native-instant = host_sink_show {animated: false}
-	const MODES = ["smooth", "instant", "nosnap", "snapoff", "native", "native-instant"];
+	// 4 native = host_sink_show {animated: true}（预案 C2）；5 native-instant = host_sink_show {animated: false}；
+	// 6 native-snapoff = 动画期间根上 scroll-snap-type: none，到位后恢复（C2 第 3 轮）
+	const MODES = ["smooth", "instant", "nosnap", "snapoff", "native", "native-instant", "native-snapoff"];
 	let mode = 0;
 	let restore = null;
 	const go = (x) => {
 		const m = MODES[mode];
 		if (m.startsWith("native")) {
-			invoke?.("host_sink_show", { open: x === 0, animated: m === "native" }).catch((e) => {
+			sh++;
+			if (m === "native-snapoff") {
+				root.style.scrollSnapType = "none";
+				restore = x;
+			}
+			invoke?.("host_sink_show", { open: x === 0, animated: m !== "native-instant" }).catch((e) => {
 				error = `show ${e}`;
 				update();
 			});
+			update();
 			return;
 		}
 		if (m === "nosnap") {
@@ -59,7 +67,7 @@
 		status.textContent =
 			`sx=${r1(scrollX)};sy=${r1(scrollY)};iw=${innerWidth};max=${r1(max())};` +
 			`vs=${v ? r1(v.scale) : -1};vy=${v ? r1(v.offsetTop) : -1};kb=${kb};` +
-			`vst=${Math.round(vs.scrollTop)};pre=${Math.round(pre.scrollLeft)};n=${n};g=${guard ? 1 : 0};m=${mode};sk=${sk}` +
+			`vst=${Math.round(vs.scrollTop)};pre=${Math.round(pre.scrollLeft)};n=${n};g=${guard ? 1 : 0};m=${mode};sk=${sk};sh=${sh}` +
 			(error ? `;err ${error}` : "");
 	};
 

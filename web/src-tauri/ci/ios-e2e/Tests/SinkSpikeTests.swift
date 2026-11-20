@@ -32,7 +32,7 @@ final class SinkSpikeTests: E2ECase {
       return out
     }
     func text(_ r: [String: Double]) -> String {
-      ["sx", "sy", "max", "vs", "n", "m", "sk"]
+      ["sx", "sy", "max", "vs", "n", "m", "sk", "sh"]
         .map { "\($0)=\(r[$0].map { String($0) } ?? "?")" }.joined(separator: " ")
         + (status.label.contains("err") ? "；\(status.label.components(separatedBy: "err").last ?? "")" : "")
     }
@@ -162,18 +162,22 @@ final class SinkSpikeTests: E2ECase {
       "S4", near(a["sx"], w) && near(b["sx"], 0) && near(c["sx"], w),
       "0.3W → sx \(a["sx"] ?? -1)；0.7W → sx \(b["sx"] ?? -1)；打开态左拖 0.7W → sx \(c["sx"] ?? -1)")
 
-    // C2p：手指拖开之后，原生动画关闭；手指拖回之后，原生动画打开（吸附索引与原生动画的先后）
-    ensureClosed()
-    slowDrag(60, dy, 60 + 0.7 * wPt, dy)
-    let d0 = settle()
-    let pc = cycle(false)
-    try report("C2p-close", pc.ok, "拖开后 sx=\(d0["sx"] ?? -1)；原生动画关闭 \(pc.detail)")
-    ensureClosed()
-    slowDrag(60, dy, 60 + 0.3 * wPt, dy)
-    _ = settle()
-    let po = cycle(true)
-    try report("C2p-open", po.ok, "慢拖 0.3W 弹回关闭位后原生动画打开 \(po.detail)")
-    ensureClosed()
+    // C2p：手指拖开之后程序化关闭；手指拖回之后程序化打开（用户拖动留下的吸附索引与程序化落位的先后）。
+    // 逐帧原生（4）、逐帧原生 + 期间关吸附（6）、原生一步落位（5）各一遍；sh = 页面发出的 host_sink_show 次数
+    for (i, name) in [(4, "native"), (6, "native-snapoff"), (5, "native-instant")] {
+      ensureClosed()
+      setMode(i)
+      slowDrag(60, dy, 60 + 0.7 * wPt, dy)
+      let d0 = settle()
+      let pc = cycle(false)
+      try report("C2p-\(name)-close", pc.ok, "拖开后 sx=\(d0["sx"] ?? -1) sh=\(d0["sh"] ?? -1)；程序化关闭 \(pc.detail)")
+      ensureClosed()
+      slowDrag(60, dy, 60 + 0.3 * wPt, dy)
+      let d1 = settle()
+      let po = cycle(true)
+      try report("C2p-\(name)-open", po.ok, "慢拖 0.3W 弹回后 sx=\(d1["sx"] ?? -1) sh=\(d1["sh"] ?? -1)；程序化打开 \(po.detail)")
+      ensureClosed()
+    }
 
     _ = try step(["end": true])
   }
