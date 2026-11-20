@@ -15,8 +15,8 @@
  * - 打开时卡片 `inert`（不可点、读屏忽略），侧栏获得焦点；关闭后焦点还原到打开前的元素。
  * - `prefers-reduced-motion`：不做过渡，直接切换。
  * - iOS 根滚动模式（bridge 8，`lib/native-sink.ts`）：挂载即请求原生跟随根滚动；接管后 `<html data-sink-native>`，
- *   文档可横向滚动，卡片开合就是根滚动（拖动、吸附、回弹全由系统做），不装上面的 JS 手势。根滚动停稳后提交到
- *   `sidebarOpen`；`sidebarOpen` 由别处改变时请求滚到对应一端（平滑的交给原生动画）；非本页引起的横向位移立即拉回。
+ *   文档可横向滚动；拖动与减速由系统处理，原生给松手落点，不装上面的 JS 手势。根滚动停稳后提交到 `sidebarOpen`；
+ *   `sidebarOpen` 由别处改变时请求原生滚到对应一端；非本页引起的横向位移立即拉回。
  *   不接管（浏览器、Android、旧壳、iOS < 26）时一切照旧走 JS 手势。
  * - iOS 原生底栏（`lib/native-tab-bar.ts`）垫在 WebView 之下：接管期间 `<html data-native-under>`，页面透明、原生垫底，
  *   卡片画在它上面，透出多少完全由网页合成器决定。卡片左缘由原生自己从根滚动算；这里只在侧栏打开且静止时定时探测
@@ -253,8 +253,7 @@ export function SinkLayout({
 		const root = document.documentElement;
 		root.setAttribute("data-sink-native", "");
 		setMinScale(true);
-		// 根滚动位置就是开合状态，不能交给历史恢复：关闭时 history.back() 弹标记是同文档遍历，"auto" 会把根滚动
-		// 恢复到压标记那一刻（拖开时那一刻已在打开位），卡片在关上之后又弹回打开位（PR #3 ios-check final）
+		// 根滚动位置就是开合状态。关闭时 history.back() 弹掉同文档的历史标记，不能恢复标记记录的打开位。
 		const restoration = window.history.scrollRestoration;
 		window.history.scrollRestoration = "manual";
 		const max = () => root.scrollWidth - window.innerWidth;
@@ -264,29 +263,17 @@ export function SinkLayout({
 				behavior: "instant",
 			});
 		const here = (): SinkRest => (openRef.current ? "open" : "closed");
-		// 程序化开合（平滑或一步落位）一律经原生，期间关掉吸附直到提交：途中的重排会让浏览器重新吸附到原目标；
-		// 手指拖动之后网页自己发起的落位会被 WebKit 按原生侧记着的吸附位置拉回（M20 探针 C2 第 4–5 轮）。
-		// 提交（停稳 SINK_REST_MS 之后）、手指按下或请求宽限到期（release）时恢复。
-		const snap = (on: boolean) =>
-			on
-				? root.style.removeProperty("scroll-snap-type")
-				: root.style.setProperty("scroll-snap-type", "none");
 		jump(here());
 		const s = createSinkScroll(
 			{
 				rest: () => sinkRest(window),
-				scrollTo: (to, smooth) => {
-					snap(false);
-					nativeSink.show(to === "open", smooth);
-				},
+				scrollTo: (to, smooth) => nativeSink.show(to === "open", smooth),
 				pull: jump,
-				release: () => snap(true),
 				setTimeout: (cb, ms) => window.setTimeout(cb, ms),
 				clearTimeout: (id) => window.clearTimeout(id),
 			},
 			here(),
 			(rest) => {
-				snap(true);
 				const next = rest === "open";
 				if (next !== openRef.current) uiStore.getState().setSidebar(next);
 			},
@@ -296,11 +283,7 @@ export function SinkLayout({
 			markMoving(card, openRef.current);
 			s.scrolled();
 		};
-		const onTouch = (e: TouchEvent) => {
-			const down = e.touches.length > 0;
-			if (down) snap(true);
-			s.touch(down);
-		};
+		const onTouch = (e: TouchEvent) => s.touch(e.touches.length > 0);
 		const onResize = () => jump(here());
 		const opts = { passive: true };
 		window.addEventListener("scroll", onScroll, opts);
@@ -318,7 +301,6 @@ export function SinkLayout({
 			scrollRef.current = null;
 			card.removeAttribute("data-dragging");
 			root.removeAttribute("data-sink-native");
-			snap(true);
 			setMinScale(false);
 			window.history.scrollRestoration = restoration;
 			window.scrollTo(0, 0);

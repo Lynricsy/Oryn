@@ -1,11 +1,11 @@
 /**
  * iOS 下沉侧栏的根滚动模式（bridge 8，iOS 26+）：卡片开合 = WKWebView 自带滚动视图的横向滚动。
  * - 文档在原生模式下可横向滚动（`<html data-sink-native>`，见 `index.css`）：侧栏 `position: fixed` 垫底，卡片在右侧 in-flow，
- *   滚到最右（scrollX = max）是关闭、滚到 0 是打开；吸附用根元素的 CSS scroll-snap，手指拖动、吸附、回弹全是系统的。
+ *   滚到最右（scrollX = max）是关闭、滚到 0 是打开；原生给松手落点，拖动和减速由系统处理。
  * - 原生（`SinkFollow`）观察 contentOffset，原生页头与底栏在同一进程同一帧里跟着卡片走；网页从自己的 scrollX 得知开合
  *   （`sinkRest`），不需要原生回传状态。
- * - 程序化开合：平滑的交给原生（`host_sink_show`，UIKit 滚动动画）——网页自己发起的 smooth 滚动在 WKWebView 主框架上
- *   会被拉回（M20 探针）；不要动画的（初始落位、拉回、窗口尺寸变化）由网页 `scrollTo({behavior: "instant"})` 做。
+ * - 程序化开合由 `host_sink_show` 交给原生（逐帧动画或一步落位）；初始落位、拉回、窗口尺寸变化由网页
+ *   `scrollTo({behavior: "instant"})` 做。
  * - `createSinkScroll`：把根滚动的静止位置同步到 `uiStore.sidebarOpen`，并把非触摸、非本页请求引起的位移
  *   （`scrollIntoView`、不带 `preventScroll` 的 `focus()`）立即拉回已提交的静止位。
  * - 回退：宿主没有 `mobile.sink`（浏览器、Android、桌面、iOS bridge < 8）、`set` 被拒（iOS < 26）或 `NATIVE_SINK` 为 false 时
@@ -46,8 +46,7 @@ export function latest<T>(
 export const NATIVE_SINK = true;
 /** 根滚动静止多久（毫秒）算停稳并提交到 `sidebarOpen`。 */
 export const SINK_REST_MS = 100;
-/** 本页请求开合后，等原生动画到位的最长时间（毫秒）：原生主线程忙时动画可能晚起步，期间不按静止提交；
- * 超时仍未到目的地就由网页 instant 落到目的地（不丢掉这次开合）。 */
+/** 等原生程序化开合到位的最长时间；超时则请求原生一步落位。 */
 export const SINK_REQUEST_MS = 1000;
 
 export type SinkRest = "open" | "closed";
@@ -67,7 +66,7 @@ export interface NativeSink {
 	subscribe(cb: () => void): () => void;
 	/** SinkLayout 挂载时 true、卸载时 false。 */
 	setOn(on: boolean): void;
-	/** 原生把根滚动视图滚到打开位 / 关闭位（`animated` = UIKit 滚动动画）。 */
+	/** 原生把根滚到打开位 / 关闭位（`animated` = 逐帧动画，否则一步落位）。 */
 	show(open: boolean, animated: boolean): void;
 }
 
@@ -142,16 +141,10 @@ export function useNativeSinkEngaged(): boolean {
 export interface SinkScrollEnv {
 	/** 当前静止位置（`sinkRest(window)`）。 */
 	rest(): SinkRest | null;
-	/**
-	 * 滚到另一端（本页请求、截止兜底）：`smooth` = 原生逐帧动画，否则原生一步落位。
-	 * 都要经原生、且期间关掉吸附直到提交：手指拖动之后，网页自己发起的落位会被 WebKit 按原生侧记着的吸附位置拉回
-	 * （M20 探针 C2 第 4–5 轮）。
-	 */
+	/** 程序化开合或截止兜底：`smooth` = 原生逐帧动画，否则原生一步落位。 */
 	scrollTo(to: SinkRest, smooth: boolean): void;
-	/** 拉回已提交的静止位（非本页引起的位移）：网页 instant 即可，目标就是原生侧记着的吸附位置。 */
+	/** 将非本页引起的位移立即拉回已提交的静止位。 */
 	pull(to: SinkRest): void;
-	/** 放弃本页请求（宽限到期）：恢复吸附，停在中途的根交给系统吸附到一端，到位后照常提交。 */
-	release(): void;
 	setTimeout(cb: () => void, ms: number): number;
 	clearTimeout(id: number): void;
 }
@@ -169,13 +162,12 @@ export interface SinkScroll {
 /**
  * 根滚动 → `sidebarOpen` 的同步与守卫。`committed` = 最近一次提交的静止位；`free` 自触点按下或本页请求起为真，
  * 到下一次提交为假。不 free 时任何离开 `committed` 的位移都立即拉回（instant）；free 时停在一端静止 SINK_REST_MS 后提交。
- * 停在中途不由网页吸附：手指松开后的吸附由根元素的 CSS scroll-snap（mandatory）完成；原生接管拖动时 WebKit 可能给页面
- * 发 touchcancel，网页以为手指抬起了，此时再由网页「就近吸附」就会在按住期间把卡片拖走（PR #3 drag1）。
- * 触点按着时不提交（等抬起再计时）。
+ * 停在中途不由网页吸附：原生给 UIKit 松手落点。WebKit 可能在原生接管拖动时提前发 touchcancel；网页以为手指抬起了，
+ * 此时自行吸附会在按住期间把卡片拖走（PR #3 drag1）。触点按着时不提交（等抬起再计时）。
  * 本页请求的目的地（`target`）在提交或手指接管前一直有效：根不在目的地（还没起步、停在中途或仍在另一端）都继续等，
  * 主线程忙时原生动画可能晚起步、scroll 事件可能隔一百多毫秒才来一条，这时按静止提交会把开合反过来。
  * 等满 SINK_REQUEST_MS 仍未到位就再发一次一步落位（经原生，也是异步的），目的地保留、再给一个 SINK_REQUEST_MS 的宽限；
- * 宽限到了仍未到位就放弃目的地、恢复吸附（`release`），按实际位置提交（不再重发）。
+ * 宽限到了仍未到位就放弃目的地，按实际静止位提交（不再重发）。
  */
 export function createSinkScroll(
 	env: SinkScrollEnv,
@@ -206,10 +198,8 @@ export function createSinkScroll(
 		deadline = null;
 		if (target === null || touching || env.rest() === target) return;
 		if (fallen) {
-			// 兜底落位也没到（原生没动或被拉回）：放弃目的地；吸附是发命令时关的，这里恢复，
-			// 否则停在中途时没有人收场（settle 对中途只等系统吸附）
+			// 兜底落位也没到：放弃目的地，若仍在中途则等原生落到一端。
 			drop();
-			env.release();
 			arm(SINK_REST_MS);
 			return;
 		}
@@ -222,7 +212,7 @@ export function createSinkScroll(
 		timer = null;
 		if (touching) return;
 		const rest = env.rest();
-		// 请求还没到位：等动画或截止定时器，不按静止提交；没有请求时停在中途等系统吸附
+		// 请求还没到位：等动画或截止定时器；没有请求时停在中途等原生落到一端。
 		if (target !== null && rest !== target) return;
 		if (rest === null) return;
 		committed = rest;

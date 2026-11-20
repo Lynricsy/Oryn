@@ -3,8 +3,7 @@ import { realpathSync } from "node:fs";
 /**
  * M20 验收（docs/plan-m20.md 步骤 3.2）：下沉侧栏的根滚动模式在浏览器里的网页侧行为。
  * 起 `VITE_MOCK=1` 的 vite，本机 Chromium 393×852、触摸；`addInitScript` 注入 iOS 壳的 `__ORYN_HOST__`（bridge 8）
- * 与记录全部调用、一律应答的 `__TAURI_INTERNALS__.invoke`。`host_sink_show` 由假壳代做原生的滚动动画
- * （`scrollTo` smooth：Chromium 不会像 WKWebView 主框架那样把网页发起的 smooth 滚动拉回）。
+ * 与记录全部调用、一律应答的 `__TAURI_INTERNALS__.invoke`。假壳代做原生程序化开合与松手落点，不给产品页面加 CSS 吸附。
  * 触摸经 CDP `Input.dispatchTouchEvent` 逐步移动（`synthesizeScrollGesture` 在这里不产生滚动）。
  * iOS 上 UIScrollView 的拖动、吸附与原生跟随由 ios-check 的端到端覆盖，这里只证明网页侧的同步、守卫与回退。
  *
@@ -185,6 +184,24 @@ async function drag(
 	await send("touchEnd", x1, y1);
 }
 
+/** 用 Chromium 的真实拖动触发根滚动；松手后仅代替 UIKit 选落点，不代替网页提交开合状态。 */
+async function dragNative(
+	page: Page,
+	cdp: CDPSession,
+	from: [number, number],
+	to: [number, number],
+): Promise<boolean> {
+	const before = (await state(page)).sx;
+	await drag(cdp, from, to);
+	return page.evaluate((start) => {
+		const max = document.documentElement.scrollWidth - innerWidth;
+		const x = scrollX;
+		if (Math.abs(x - start) < 1 || x <= 0 || x >= max) return false;
+		scrollTo({ left: x <= max / 2 ? 0 : max, behavior: "smooth" });
+		return true;
+	}, before);
+}
+
 async function openPage(browser: Browser, bridge: number, path: string) {
 	const context = await browser.newContext({
 		viewport: VIEW,
@@ -288,7 +305,12 @@ async function run(browser: Browser) {
 		// N3：关闭态慢拖 30% 弹回；慢拖 70% 打开。提交延迟在页面里量：最后一次到达 0 到卡片带上 data-open
 		await mark(page, "N3");
 		const y = 420;
-		await drag(cdp, [60, y], [60 + 0.3 * W, y]);
+		const draggedShort = await dragNative(
+			page,
+			cdp,
+			[60, y],
+			[60 + 0.3 * W, y],
+		);
 		const back = await until(page, 2000, (s) => s.sx === s.max);
 		await sleep(300);
 		const backStill = await state(page);
@@ -308,7 +330,7 @@ async function run(browser: Browser) {
 						lag.opened = performance.now();
 				}).observe(card, { attributes: true, attributeFilter: ["data-open"] });
 		});
-		await drag(cdp, [60, y], [60 + 0.7 * W, y]);
+		const draggedLong = await dragNative(page, cdp, [60, y], [60 + 0.7 * W, y]);
 		const opened = await until(page, 2000, (s) => s.open);
 		const lag = await page.evaluate(() => {
 			const l = Reflect.get(window, "__m20Lag");
@@ -318,14 +340,16 @@ async function run(browser: Browser) {
 		});
 		report(
 			"N3",
-			back.sx === back.max &&
+			draggedShort &&
+				draggedLong &&
+				back.sx === back.max &&
 				backStill.sx === backStill.max &&
 				!backStill.open &&
 				opened.sx === 0 &&
 				opened.open &&
 				lag >= 0 &&
 				lag <= 150,
-			`拖 30%：scrollX=${backStill.sx}（max ${backStill.max}）data-open=${backStill.open}；拖 70%：scrollX=${opened.sx}，到 0 后 ${lag}ms data-open=${opened.open}`,
+			`拖 30%：根有位移=${draggedShort}，scrollX=${backStill.sx}（max ${backStill.max}）data-open=${backStill.open}；拖 70%：根有位移=${draggedLong}，scrollX=${opened.sx}，到 0 后 ${lag}ms data-open=${opened.open}`,
 		);
 
 		// N4：打开态 scrollIntoView 被拉回

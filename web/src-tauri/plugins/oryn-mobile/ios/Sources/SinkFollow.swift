@@ -1,11 +1,10 @@
 // 下沉侧栏的根滚动跟随（iOS 26+，bridge 8）。卡片开合 = WKWebView 自带滚动视图的横向滚动：网页把文档做成可横滚
-// （侧栏 position: fixed 垫底，卡片在右侧 in-flow，吸附用根元素的 CSS scroll-snap），手指拖动、吸附与回弹都是系统的。
-// 这里只观察滚动视图的 contentOffset，把卡片左缘 dx = 关闭位 − contentOffset.x 交给原生页头与底栏，
+// （侧栏 position: fixed 垫底，卡片在右侧 in-flow）。拖动与减速由 UIKit 处理，松手的横向落点由外部滚动代理给出。
+// 观察滚动视图的 contentOffset，把卡片左缘 dx = 关闭位 − contentOffset.x 交给原生页头与底栏，
 // 在同一次 KVO 回调里改它们的位置：与卡片同进程、同一帧，不需要任何对时。
-// 程序化的平滑开合也在这里做：CADisplayLink 逐帧用不带动画的 setContentOffset 推进。网页自己发起的 smooth 滚动与
-// setContentOffset(animated: true) 在 WKWebView 主框架上收尾时都会被吸附逻辑拉回原处（M20 探针，C2 第 1 轮），
-// 不带动画的落位则可靠；逐帧推进的每一步都是这种落位，KVO 照常逐帧驱动页头与底栏。
-// 不设 scrollView.delegate（WKWebView 自己的吸附与键盘处理都挂在内部代理上）。
+// 不用根元素的 CSS 吸附：iOS 26 的 WebKit UI 进程会按上次手指松手记录的吸附索引，把已程序化落位的卡片拉回旧端。
+// 程序化平滑开合由 CADisplayLink 逐帧用不带动画的 setContentOffset 推进，KVO 仍逐帧驱动页头与底栏。
+// WKScrollView 转发给外部代理前仍执行 WKWebView 的内部代理，不接管滚动、可见区或键盘处理。
 import UIKit
 import WebKit
 
@@ -29,14 +28,36 @@ private final class SinkTicker: NSObject {
   @objc func tick(_ link: CADisplayLink) { owner?.tick(link) }
 }
 
+/// UIScrollView 弱引用其代理，由 SinkFollow 持有这层转发。
+@available(iOS 26.0, *)
+private final class SinkSnap: NSObject, UIScrollViewDelegate {
+  weak var owner: SinkFollow?
+  init(_ owner: SinkFollow) { self.owner = owner }
+
+  func scrollViewWillEndDragging(
+    _ scrollView: UIScrollView, withVelocity velocity: CGPoint,
+    targetContentOffset: UnsafeMutablePointer<CGPoint>
+  ) {
+    owner?.land(scrollView, velocity: velocity.x, target: targetContentOffset)
+  }
+
+  func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+    if !decelerate { owner?.settle(scrollView) }
+  }
+
+  func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+    owner?.settle(scrollView)
+  }
+}
+
 @available(iOS 26.0, *)
 final class SinkFollow {
   private weak var scroll: UIScrollView?
   private let onMove: (CGFloat) -> Void
   /// 根滚动的轨迹（op, 当时的 contentOffset.x, 目的地, 调用栈）：Rust 只在 debug 包写进事件日志，供 CI 判断原生动画
   /// 有没有跑、何时跑，以及卡片被谁挪走。op：start / jump（不带动画时一步落位）/ noop（已在目的地）/ busy（手指按着，不动）/
-  /// done / cancel（手指接管、被新请求替换或撤掉）/ move（不是本类、也不是手指与惯性造成的位移：网页请求的滚动或 WebKit
-  /// 自己的吸附；`x` → `to` 是这一阵位移的第一步，带调用栈，300ms 内连续的位移只记第一条）。
+  /// done / cancel（手指接管、被新请求替换或撤掉）/ move（不是本类、也不是手指与惯性造成的位移；`x` → `to` 是这一阵
+  /// 位移的第一步，带调用栈，300ms 内连续的位移只记第一条）。
   var onTrace: ((String, CGFloat, CGFloat, String?) -> Void)?
   /// 上一次观察到的 contentOffset.x、本类正在落位、上一条 move 的时刻（只供轨迹）。
   private var lastX = CGFloat.nan
@@ -44,6 +65,9 @@ final class SinkFollow {
   private var lastMove: CFTimeInterval = 0
   private var observations: [NSKeyValueObservation] = []
   private let hadIndicator: Bool
+  private let hadRate: UIScrollView.DecelerationRate
+  private weak var hadDelegate: UIScrollViewDelegate?
+  private var snap: SinkSnap?
   /// 卡片左缘（= 卡片相对关闭位右移的距离，pt）：关闭 0，打开 = 侧栏宽。
   private(set) var dx: CGFloat = 0
   /// 程序化平滑开合（时长与网页 `--ease` 开合一致的 260ms，ease-out 三次曲线）。
@@ -56,12 +80,19 @@ final class SinkFollow {
     self.scroll = scroll
     self.onMove = onMove
     hadIndicator = scroll.showsHorizontalScrollIndicator
+    hadRate = scroll.decelerationRate
+    hadDelegate = scroll.delegate
     scroll.showsHorizontalScrollIndicator = false
+    // 与 WebKit 自己的 CSS 吸附用同一减速率。
+    scroll.decelerationRate = .fast
     observations = [
       scroll.observe(\.contentOffset) { [weak self] _, _ in self?.update() },
       scroll.observe(\.contentSize) { [weak self] _, _ in self?.update() },
       scroll.observe(\.bounds) { [weak self] _, _ in self?.update() },
     ]
+    let snap = SinkSnap(self)
+    self.snap = snap
+    scroll.delegate = snap
     update()
   }
 
@@ -100,6 +131,29 @@ final class SinkFollow {
         .replacingOccurrences(of: #" \+ \d+$"#, with: "", options: .regularExpression)
       return "\(parts[1]):\(symbol)"
     }.joined(separator: " | ")
+  }
+
+  /// 只改 UIKit 的横向预计落点：快甩按方向，慢拖按松手时离哪端近；没有离开端点的纵向拖动不改变开合。
+  fileprivate func land(_ s: UIScrollView, velocity: CGFloat, target: UnsafeMutablePointer<CGPoint>) {
+    let (open, closed) = ends(s)
+    let x = s.contentOffset.x
+    guard closed - open > 0.5 else { return }
+    let projected = target.pointee.x
+    if (x <= open + 0.5 && projected <= open + 0.5)
+      || (x >= closed - 0.5 && projected >= closed - 0.5)
+    {
+      return
+    }
+    let toOpen = abs(velocity) > 0.3 ? velocity < 0 : x - open <= closed - x
+    target.pointee.x = toOpen ? open : closed
+  }
+
+  /// 没有减速或被系统打断时可能停在中途，由原生就近落位；仍有手指接管时 `show` 不动。
+  fileprivate func settle(_ s: UIScrollView) {
+    let (open, closed) = ends(s)
+    let x = s.contentOffset.x
+    guard x - open > 0.5, closed - x > 0.5 else { return }
+    show(open: x - open <= closed - x, animated: !UIAccessibility.isReduceMotionEnabled)
   }
 
   /// 程序化开合：滚到打开位或关闭位（纵向位置不动）。手指按着（isTracking，或拖动已开始的 isDragging：
@@ -151,12 +205,17 @@ final class SinkFollow {
     anim = nil
   }
 
-  /// 撤掉跟随：注销观察、还原滚动条，原生部件回到关闭位。
+  /// 撤掉跟随：注销观察、还原代理与滚动设置，原生部件回到关闭位。
   func remove() {
     stop(cancelled: true)
     observations.forEach { $0.invalidate() }
     observations = []
-    scroll?.showsHorizontalScrollIndicator = hadIndicator
+    if let s = scroll {
+      if s.delegate === snap { s.delegate = hadDelegate }
+      s.decelerationRate = hadRate
+      s.showsHorizontalScrollIndicator = hadIndicator
+    }
+    snap = nil
     dx = 0
     onMove(0)
   }

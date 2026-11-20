@@ -325,9 +325,9 @@ body {
 }
 
 /*
- * 下沉侧栏的根滚动模式（iOS bridge 8，lib/native-sink.ts）：卡片开合 = 文档的横向滚动，拖动、吸附、回弹全是系统的。
+ * 下沉侧栏的根滚动模式（iOS bridge 8，lib/native-sink.ts）：卡片开合 = 文档的横向滚动，松手落点由原生 SinkFollow 给出。
  * 侧栏 fixed 垫底，卡片在它右侧 in-flow；scrollX = 0 打开、最右关闭。必须无层：要压过 @layer 里的 .sink-* 与 Tailwind 工具类。
- * - 根容器只能 overflow: clip（hidden 会让它自己成为滚动容器，吸附点就不再属于根）；
+ * - 根容器用 overflow: clip 裁剪，不让它成为另一个滚动容器；
  * - 卡片的 translate 保持非 none（--sink-p: 0 时是 0px 0）：卡片内 position: fixed 的后代继续以卡片为包含块。
  */
 /* overscroll-behavior：body 上的 none 在这里管不到（滚动容器换成了根），在根上重申：两端不回弹出空白、不触发浏览器的横滑返回 */
@@ -335,7 +335,6 @@ body {
 	overflow-x: auto;
 	overflow-y: hidden;
 	overscroll-behavior: none;
-	scroll-snap-type: x mandatory;
 	scrollbar-width: none;
 }
 :root[data-sink-native]::-webkit-scrollbar {
@@ -344,15 +343,6 @@ body {
 :root[data-sink-native] .sink-root {
 	width: calc(var(--sink-w) + 100vw);
 	overflow: clip;
-}
-:root[data-sink-native] .sink-root::before {
-	content: "";
-	position: absolute;
-	left: 0;
-	top: 0;
-	width: 1px;
-	height: 1px;
-	scroll-snap-align: start;
 }
 :root[data-sink-native] .sink-sidebar {
 	position: fixed;
@@ -363,7 +353,6 @@ body {
 	width: 100vw;
 	--sink-p: 0;
 	transition: none;
-	scroll-snap-align: start;
 }
 
 @utility pt-safe {

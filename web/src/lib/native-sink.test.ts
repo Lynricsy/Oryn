@@ -111,14 +111,12 @@ describe("createSinkScroll", () => {
 		const state = { rest: initial as SinkRest | null };
 		const scrollTo = vi.fn();
 		const pull = vi.fn();
-		const release = vi.fn();
 		const commit = vi.fn();
 		const s = createSinkScroll(
 			{
 				rest: () => state.rest,
 				scrollTo,
 				pull,
-				release,
 				setTimeout: (cb, ms) => setTimeout(cb, ms) as unknown as number,
 				clearTimeout: (id) => clearTimeout(id),
 			},
@@ -130,7 +128,7 @@ describe("createSinkScroll", () => {
 			state.rest = rest;
 			s.scrolled();
 		};
-		return { s, state, scrollTo, pull, release, commit, scroll };
+		return { s, state, scrollTo, pull, commit, scroll };
 	}
 
 	it("T1 按下、滚到 open、抬起：静止 SINK_REST_MS 后提交 open 恰一次", () => {
@@ -246,15 +244,11 @@ describe("createSinkScroll", () => {
 		]);
 	});
 
-	it("T8c 两次命令都只走到中途、宽限耗尽：恢复吸附（release）且只一次，不提交中途；系统吸附到一端后提交", () => {
-		const { s, scrollTo, release, commit, scroll } = setup("closed");
+	it("T8c 宽限耗尽仍在中途：不重发且不提交中途，根随后落到一端才提交", () => {
+		const { s, scrollTo, commit, scroll } = setup("closed");
 		s.request("open", true);
 		scroll(null);
-		vi.advanceTimersByTime(SINK_REQUEST_MS * 2 - 1);
-		expect(release).not.toHaveBeenCalled();
-		vi.advanceTimersByTime(1);
-		expect(release).toHaveBeenCalledTimes(1);
-		vi.advanceTimersByTime(SINK_REST_MS * 5);
+		vi.advanceTimersByTime(SINK_REQUEST_MS * 2 + SINK_REST_MS * 5);
 		expect(commit).not.toHaveBeenCalled();
 		expect(scrollTo.mock.calls).toEqual([
 			["open", true],
@@ -263,7 +257,6 @@ describe("createSinkScroll", () => {
 		scroll("closed");
 		vi.advanceTimersByTime(SINK_REST_MS);
 		expect(commit.mock.calls).toEqual([["closed"]]);
-		expect(release).toHaveBeenCalledTimes(1);
 	});
 
 	it("T9 request 动画途中 scroll 事件隔了超过 SINK_REST_MS：不提交、不改目的地，到位后照常提交", () => {
