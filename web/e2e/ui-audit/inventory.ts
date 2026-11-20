@@ -36,8 +36,13 @@ function table(md: string, heading: string): string[][] {
 	return rows.slice(1);
 }
 
+/**
+ * 结果文件状态：audit.ts 在用例体末尾写 recorded（未终审），result-reporter 按 Playwright 最终状态改成 done 或 failed；
+ * skipped 由 audit.ts 在显式 only 跳过时写。只有 done 计入通过。
+ */
 type Result =
-	| { status: "done"; issues: string[] }
+	| { status: "done" | "recorded"; issues: string[] }
+	| { status: "failed"; issues: string[]; outcome: string }
 	| { status: "skipped"; reason: string };
 
 /** 读一个结果文件；不存在或是旧格式（没有 status，审计 harness 改为失败闭合之前写的）都当作没有结果。 */
@@ -51,14 +56,15 @@ function result(file: string): Result | undefined {
 
 /**
  * 一个界面在 6 个 project 下的状态（失败闭合，任何不确定都不算通过）：
- * ✓ after 跑完全程 0 问题，且 before / after 截图都在；— after 显式跳过（视口不适用）；
- * ✗ after 跑完但有问题；· 其余（没跑、中途失败或被打断、缺截图）。
+ * ✓ after 经 Playwright 终审通过（done）且 0 问题、before 也 done、两张截图都在；— after 显式跳过（视口不适用）；
+ * ✗ after 有断言问题或终审失败（含 fixture 清理超时）；· 其余（没跑、被打断未终审、缺截图）。
  */
 function status(id: string): { cells: string[]; ok: boolean } {
 	const dir = `${ROOT}shots/${id}/`;
 	const cells = PROJECTS.map((p) => {
 		const after = result(`${dir}${p}-after.json`);
 		if (after?.status === "skipped") return "—";
+		if (after?.status === "failed") return "✗";
 		if (after?.status !== "done") return "·";
 		if (after.issues.length) return "✗";
 		const shots =

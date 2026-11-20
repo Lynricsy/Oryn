@@ -43,6 +43,8 @@ export default defineConfig({
 	reporter: [
 		["list"],
 		["json", { outputFile: `test-results/${RUN}/ui-audit.json` }],
+		// 按用例最终状态（含 fixture 清理）覆写结果 JSON：清理超时等不会留下假绿
+		["./e2e/ui-audit/result-reporter.ts"],
 	],
 	use: {
 		baseURL: `http://127.0.0.1:${PORT}`,

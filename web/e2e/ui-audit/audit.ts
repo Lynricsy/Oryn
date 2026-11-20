@@ -300,14 +300,15 @@ export interface Surface {
 }
 
 /**
- * 本次运行的结果文件 `<project>-<phase>.json`：`status` 为 done（跑完全程，`issues` 为断言问题）或 skipped（该视口不适用）。
+ * 本次运行的结果文件 `<project>-<phase>.json`：用例体跑完写 `recorded`（`issues` 为断言问题），显式跳过写 `skipped`。
+ * `recorded` 还不算数：result-reporter 在 Playwright 给出最终状态（含 fixture 清理）后改成 done 或 failed，被打断没终审的留在 recorded。
  * 用例开始先删掉这个界面在本 project、本阶段的旧结果与截图：中途失败、被打断的用例不会留下上一次的绿灯。
  */
 function record(
 	info: TestInfo,
 	id: string,
 	result:
-		| { status: "done"; issues: string[] }
+		| { status: "recorded"; issues: string[] }
 		| { status: "skipped"; reason: string },
 ) {
 	const dir = `${SHOTS}${id}/`;
@@ -469,7 +470,7 @@ export function surface(s: Surface) {
 		}
 		issues.push(...compareLooks(looks));
 		const unique = [...new Set(issues)];
-		record(info, s.id, { status: "done", issues: unique });
+		record(info, s.id, { status: "recorded", issues: unique });
 		if (PHASE === "after") expect(unique, unique.join("\n")).toEqual([]);
 	});
 }
