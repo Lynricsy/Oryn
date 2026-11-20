@@ -315,6 +315,48 @@ export function clampThinking(
 	return out ?? supported[0];
 }
 
+/*
+ * 下面两个函数照 Core 的取法推算「不单独指定时实际生效的档位」，推不出来（缺数据）时返回 undefined——
+ * 调用方据此不选中、不画任何档位，而不是把猜测当成事实。模型默认档位：字符串 = 有，null = 已知没有，
+ * undefined = 未知（旧版 Core 的目录不报告它）；`configured` 是 config.yml 的 defaultThinkingLevel，未读到为 undefined。
+ */
+
+/**
+ * 新会话的起始档位（Core `newSessionThinkingLevel`，会话以 default role 的模型开场）：default role 选择器显式带的档位 →
+ * 配置为 auto 时 auto → default 模型的默认档位 → 配置的 defaultThinkingLevel。
+ */
+export function sessionStartThinking(
+	defaultExplicit: string | undefined,
+	configured: string | undefined,
+	defaultModelLevel: string | null | undefined,
+): string | undefined {
+	if (defaultExplicit) return defaultExplicit;
+	if (configured === undefined) return undefined;
+	if (configured === "auto") return "auto";
+	if (defaultModelLevel === undefined) return undefined;
+	return defaultModelLevel ?? configured;
+}
+
+/**
+ * 切到某个模型后的档位（Core `setModel` → `#reapplyThinkingLevel`，role 没显式带档位、或指定了别的模型）：
+ * 起始为 auto 时仍是 auto；否则模型自己的默认档位优先，没有就沿用起始档位。
+ */
+export function switchedThinking(
+	start: string | undefined,
+	configured: string | undefined,
+	modelLevel: string | null | undefined,
+): string | undefined {
+	if (start === "auto") return "auto";
+	if (modelLevel === null) return start;
+	// 起始档位未知时，只有确定它不是 auto（配置已读到且不是 auto）才能说模型默认档位生效
+	if (typeof modelLevel === "string")
+		return start !== undefined ||
+			(configured !== undefined && configured !== "auto")
+			? modelLevel
+			: undefined;
+	return undefined;
+}
+
 /** `get_settings` 的 `cycleOrder` 值 → 角色顺序；不是字符串数组时用默认值。 */
 export function parseCycleOrder(value: unknown): string[] {
 	if (!Array.isArray(value)) return [...DEFAULT_CYCLE_ORDER];

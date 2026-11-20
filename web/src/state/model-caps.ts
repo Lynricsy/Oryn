@@ -13,6 +13,11 @@ import {
 export interface ModelCaps {
 	/** 支持的思考级别（不含 auto、off）；空数组表示不能调节思考 */
 	thinking: string[];
+	/**
+	 * 模型自带的默认思考档位（新会话与切模型都优先于 defaultThinkingLevel）：字符串 = 有，null = 已知没有，
+	 * undefined = 目录来自不报告这一项的旧版 Core，未知
+	 */
+	defaultLevel: string | null | undefined;
 }
 
 /** 目录里某个模型的能力；目录还没读到、模型为空或目录里没有时是 undefined。 */
@@ -21,7 +26,12 @@ export function modelCapsOf(
 	model: string,
 ): ModelCaps | undefined {
 	const m = findCatalogModel(catalog, model);
-	return m ? { thinking: m.thinking ?? [] } : undefined;
+	if (!m) return undefined;
+	return {
+		thinking: m.thinking ?? [],
+		defaultLevel:
+			m.thinkingDefault === undefined ? undefined : m.thinkingDefault || null,
+	};
 }
 
 /** 某个模型的已知能力（读中央目录）。 */

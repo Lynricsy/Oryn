@@ -19,12 +19,16 @@ import { shareIntakeStore } from "../state/share-intake";
 import { resetThreadStores } from "../state/stores";
 import { HomePage } from "./HomePage";
 
-/** 中央模型目录里的一个对话模型。 */
+/**
+ * 中央模型目录里的一个对话模型。`thinkingDefault`：档位 = 模型自带默认档位，null = 已知没有（新版 Core），
+ * "unreported" = 目录不报告（旧版 Core）。
+ */
 const chat = (
 	provider: string,
 	id: string,
 	name: string,
 	thinking?: string[],
+	thinkingDefault: string | null = null,
 ) => ({
 	provider,
 	id,
@@ -32,6 +36,9 @@ const chat = (
 	name,
 	kind: "chat",
 	...(thinking ? { thinking } : {}),
+	...(thinkingDefault === "unreported"
+		? {}
+		: { thinkingDefault: thinkingDefault ?? "" }),
 });
 
 /** 首屏偏好的默认对象（`GET settings/composer`）；null = 接口 404（按 default role 处理）。 */
@@ -84,12 +91,31 @@ const fetchMock = vi.fn(
 		if (url.pathname === "/api/v1/orbs") return Response.json({ orbs: [] });
 		if (url.pathname === "/api/v1/settings/composer" && defaultTarget)
 			return Response.json({ defaultTarget });
+		if (url.pathname === "/api/v1/settings/role-identities")
+			return Response.json({
+				roles: [
+					{ role: "smol", inCycle: true },
+					{ role: "default", inCycle: true, selector: "openai/gpt-x" },
+					{ role: "slow", inCycle: true },
+				],
+				defaultThinkingLevel: "high",
+			});
 		if (url.pathname === "/api/v1/models/catalog")
 			return Response.json({
 				models: [
 					chat("openai", "gpt-x", "GPT X", ["low", "high"]),
 					chat("openai", "gpt-lite", "GPT Lite", ["low"]),
 					chat("acme", "plain", "Plain"),
+					// 模型自带默认档位 medium：全局配的 high 也是它支持的档位，但切到它时实际是 medium
+					chat(
+						"factory-droid",
+						"claude-opus-5-5",
+						"Claude Opus 5.5",
+						["low", "medium", "high"],
+						"medium",
+					),
+					// 旧版 Core 不报告默认档位：推不出实际值
+					chat("legacy", "old-x", "Old X", ["low", "high"], "unreported"),
 				],
 				fetchedAt: 0,
 				stale: false,
@@ -178,10 +204,26 @@ function prompt(): HTMLTextAreaElement {
 }
 
 describe("首页思考强度按对象的模型能力列出", () => {
-	it("能力未知（role 没解析出模型）：只列实际生效的那一档（配置缺省 high），不写「默认」", () => {
+	it("default role：选中实际生效的那一档（gpt-x 没有自带默认，起始为配置的 high），不写「默认」", async () => {
 		renderHome();
-		expect(thinkingLevels()).toEqual(["高"]);
+		await waitFor(() => expect(thinkingLevels()).toEqual(["自动", "低", "高"]));
 		expect(checkedLevel()).toBe("高");
+	});
+
+	it("模型自带默认档位优先于全局配置：支持 high、自带 medium 时选中 medium（不因 high 也受支持就勾 high）", async () => {
+		renderHome();
+		await pickModel("factory-droid/claude-opus-5-5");
+		expect(thinkingLevels()).toEqual(["自动", "低", "中", "高"]);
+		expect(checkedLevel()).toBe("中");
+		expect(cornerLevel()).toBe("medium");
+	});
+
+	it("目录不报告默认档位（旧版 Core）：列出可选档位，但不选中任何一档、不画角标", async () => {
+		renderHome();
+		await pickModel("legacy/old-x");
+		expect(thinkingLevels()).toEqual(["自动", "低", "高"]);
+		expect(checkedLevel()).toBeUndefined();
+		expect(cornerLevel()).toBeUndefined();
 	});
 
 	it("指定目录里的模型：列出它支持的级别（加自动），选中实际生效的那一档", async () => {

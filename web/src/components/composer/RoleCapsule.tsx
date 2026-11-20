@@ -13,7 +13,11 @@ import {
 	useIdentity,
 	useRoleIdentities,
 } from "../../api/identity-queries";
-import { chatModels, useModelCatalog } from "../../api/model-catalog-queries";
+import {
+	chatModels,
+	type ModelCatalog,
+	useModelCatalog,
+} from "../../api/model-catalog-queries";
 import { roleDefaultGlyph } from "../../lib/avatar-defaults";
 import { modelBrand, shortModelName } from "../../lib/model-brand";
 import {
@@ -25,6 +29,8 @@ import {
 	type RoleEntry,
 	resolveRoleValue,
 	roleHue,
+	sessionStartThinking,
+	switchedThinking,
 } from "../../lib/model-roles";
 import { useBreakpoint } from "../../lib/viewport";
 import { modelCapsOf, useModelCaps } from "../../state/model-caps";
@@ -66,7 +72,10 @@ export interface RoleOption {
 	alias?: RoleOption;
 	/** 选择器（经别名展开后）显式带的思考级别（`…:high`）；没带时省略 */
 	explicitThinking?: string;
-	/** 以这个 role 开新会话实际生效的思考级别（见 useRoleOptions）；模型不能调节思考时省略 */
+	/**
+	 * 以这个 role 开新会话实际生效的思考级别（见 useRoleOptions）；模型不能调节思考、或缺数据推不出来时省略
+	 * （推不出来就不显示、不选中，不拿猜测冒充实际值）
+	 */
 	thinking?: string;
 }
 
@@ -87,7 +96,8 @@ function aliasTarget(selector: string | undefined): string | undefined {
  * cycleOrder 里的 role（按其顺序）与各自解析出的模型；`default` 不在 cycleOrder 里时补在末尾（首屏的缺省对象就是它，
  * 胶囊、托盘色相与思考档位要按它解析；它只是 cycle 里某个 role 的别名时弹层不单列，见 RoleCapsule）。
  * 别名按全部已知 role 解析（`default: '@Cyrene'` 这类配置）。
- * 思考级别照 omp 新会话的取法：role 选择器显式带的级别，否则会话起始级别（`newSessionThinking`），再按模型能力收窄。
+ * 思考级别照 Core 的取法：role 选择器显式带的级别；否则切到该 role 的模型时的级别（`switchedThinking`，模型默认档位优先，
+ * 再到新会话的起始级别），最后按模型能力收窄。
  * role 身份列表读失败或为空时用 omp 默认的 cycleOrder。
  */
 export function useRoleOptions(): RoleOption[] {
@@ -155,16 +165,22 @@ export function useRoleOptions(): RoleOption[] {
 		const options = roles.map((r, i) =>
 			toOption(r, roleHue(r.role, i, accent)),
 		);
-		const start = newSessionThinking(options, identities.data);
-		const withThinking = (o: RoleOption): RoleOption => ({
-			...o,
-			thinking: clampThinking(
-				o.explicitThinking ?? start,
-				o.model
-					? modelCapsOf(catalog.data, modelSelector(o.model))?.thinking
-					: undefined,
-			),
-		});
+		const configured = identities.data?.defaultThinkingLevel;
+		const start = sessionStart(options, configured, catalog.data);
+		const withThinking = (o: RoleOption): RoleOption => {
+			const caps = o.model
+				? modelCapsOf(catalog.data, modelSelector(o.model))
+				: undefined;
+			const level =
+				o.explicitThinking ??
+				// 模型没解析出来时默认档位未知
+				switchedThinking(
+					start,
+					configured,
+					o.model ? caps?.defaultLevel : undefined,
+				);
+			return { ...o, thinking: clampThinking(level, caps?.thinking) };
+		};
 		return options.map(withThinking).map((o) => {
 			const to = aliasTarget(o.selector);
 			if (!to || to === o.role || !entries.has(to)) return o;
@@ -180,17 +196,20 @@ export function useRoleOptions(): RoleOption[] {
 }
 
 /**
- * 新会话的起始思考级别（omp `pickInitialThinkingLevel`）：default role 的选择器显式带了级别就用它，
- * 否则用 config.yml 的 `defaultThinkingLevel`（列表没读到时按 omp 缺省值 high）。
+ * 新会话的起始思考级别（会话以 default role 的模型开场，见 `sessionStartThinking`）；推不出来时 undefined。
  */
-export function newSessionThinking(
+export function sessionStart(
 	roles: readonly RoleOption[],
-	list: Schemas["RoleIdentityList"] | undefined,
-): string {
-	return (
-		roles.find((r) => r.role === "default")?.explicitThinking ??
-		list?.defaultThinkingLevel ??
-		"high"
+	configured: string | undefined,
+	catalog: ModelCatalog | undefined,
+): string | undefined {
+	const def = roles.find((r) => r.role === "default");
+	return sessionStartThinking(
+		def?.explicitThinking,
+		configured,
+		def?.model
+			? modelCapsOf(catalog, modelSelector(def.model))?.defaultLevel
+			: undefined,
 	);
 }
 
@@ -272,14 +291,31 @@ export function RoleCapsule({
 	const current = targetModel(value, roles);
 	const caps = useModelCaps(current ? modelSelector(current) : "");
 	const identities = useRoleIdentities();
-	// 不改思考级别时实际生效的级别：role 取它自己的（见 useRoleOptions），指定模型与助手从新会话的起始级别按模型能力收窄
+	// 不改思考级别时实际生效的级别（推不出来为 undefined：不选中、不画角标）：role 取它自己的（见 useRoleOptions）；
+	// 指定模型：与 default role 同一个模型时 Core 不切模型，就是起始级别，否则按切模型的规则；
+	// 全局助手跑在协调宿主自己的配置上，这里没有它的数据
+	const defaultModel = roles.find((r) => r.role === "default")?.model;
+	const start = sessionStart(
+		roles,
+		identities.data?.defaultThinkingLevel,
+		catalog.data,
+	);
 	const defaultLevel =
 		value.kind === "role"
 			? roles.find((r) => r.role === value.role)?.thinking
-			: clampThinking(
-					newSessionThinking(roles, identities.data),
-					caps?.thinking,
-				);
+			: value.kind === "model"
+				? clampThinking(
+						defaultModel &&
+							modelSelector(defaultModel) === modelSelector(value.model)
+							? start
+							: switchedThinking(
+									start,
+									identities.data?.defaultThinkingLevel,
+									caps?.defaultLevel,
+								),
+						caps?.thinking,
+					)
+				: undefined;
 	const shownLevel = value.thinking ?? defaultLevel;
 	// 可选级别：模型能力已知时是 auto 加目录里的级别（实际生效的级别不在其中时补在最前，如 off）；
 	// 能力未知时只列实际生效的那一档；模型不能调节思考时没有这一节

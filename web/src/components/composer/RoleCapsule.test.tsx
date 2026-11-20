@@ -42,12 +42,27 @@ beforeEach(() => {
 			});
 		if (url.pathname === "/api/v1/models/catalog")
 			return Response.json({
+				// thinkingDefault：空串 = 已知没有自带默认档位（新版 Core）；不带 = 旧版 Core 不报告
 				models: [
-					{ ...chat("openai", "gpt-x", "GPT X"), thinking: ["low", "high"] },
-					chat("openai", "gpt-lite", "GPT Lite"),
+					{
+						...chat("openai", "gpt-x", "GPT X"),
+						thinking: ["low", "high"],
+						thinkingDefault: "",
+					},
+					{ ...chat("openai", "gpt-lite", "GPT Lite"), thinkingDefault: "" },
 					{
 						...chat("anthropic", "claude-opus-5-5", "Claude Opus 5.5"),
 						thinking: ["low", "medium", "high", "xhigh"],
+						thinkingDefault: "",
+					},
+					{
+						...chat("factory-droid", "claude-opus-5-5", "Droid Opus 5.5"),
+						thinking: ["low", "medium", "high"],
+						thinkingDefault: "medium",
+					},
+					{
+						...chat("legacy", "old-x", "Old X"),
+						thinking: ["low", "high"],
 					},
 				],
 				fetchedAt: 0,
@@ -182,6 +197,7 @@ describe("RoleCapsule", () => {
 	});
 
 	it("思考强度：选中实际生效的一档，不写「默认」；选别的档对象带上 thinking", async () => {
+		defaultThinking = "high";
 		const changes = mount(true, {
 			kind: "model",
 			model: { provider: "openai", id: "gpt-x" },
@@ -195,7 +211,7 @@ describe("RoleCapsule", () => {
 					.map((r) => r.textContent),
 			).toEqual(["自动", "低", "高"]),
 		);
-		// 配置没读到按 omp 缺省 high
+		// 与 default role 同一个模型、它没有自带默认档位：就是配置的 high
 		expect(within(group).getByRole("radio", { name: "高" })).toHaveAttribute(
 			"aria-checked",
 			"true",
@@ -309,5 +325,35 @@ describe("RoleCapsule", () => {
 		openCapsule();
 		await vi.waitFor(() => expect(rowLevel(/^Mare/)).toBe("low"));
 		expect(rowLevel(/^默认/)).toBe("low");
+	});
+
+	it("role 的模型自带默认档位优先于全局配置（支持 high、自带 medium → medium）；目录不报告默认档位时不画、不选中", async () => {
+		roleList = [
+			{
+				role: "Mare",
+				inCycle: true,
+				selector: "factory-droid/claude-opus-5-5",
+			},
+			{ role: "Old", inCycle: true, selector: "legacy/old-x" },
+			{ role: "Fixed", inCycle: true, selector: "legacy/old-x:low" },
+			{ role: "default", inCycle: true, selector: "openai/gpt-x" },
+		];
+		defaultThinking = "high";
+		mount(true, { kind: "role", role: "Old" });
+		openCapsule();
+		await vi.waitFor(() => expect(rowLevel(/^Mare/)).toBe("medium"));
+		expect(rowLevel(/^Old/)).toBeUndefined();
+		// 显式带档位的不依赖模型默认档位
+		expect(rowLevel(/^Fixed/)).toBe("low");
+		expect(rowLevel(/^默认/)).toBe("high");
+		const group = screen.getByRole("radiogroup", { name: "思考级别" });
+		expect(
+			within(group)
+				.getAllByRole("radio")
+				.filter((r) => r.getAttribute("aria-checked") === "true"),
+		).toEqual([]);
+		expect(
+			document.querySelector("[role=img][data-level].absolute"),
+		).toBeNull();
 	});
 });
