@@ -65,8 +65,14 @@ function place(
 	const h = el.offsetHeight;
 	const w = el.offsetWidth;
 	const left = align === "end" ? a.right - w : a.left;
-	el.style.left = `${Math.round(Math.min(Math.max(left, EDGE), vw - EDGE - w))}px`;
-	el.style.top = `${Math.round(s === "bottom" ? a.bottom + gap : a.top - gap - h)}px`;
+	// 退化路径（无 Popover API，如 iOS 15/16、macOS 12 的 WebKit）：fixed 元素若有 transform / filter / contain 等祖先，
+	// 定位基准就变成那个祖先而不是视口（如手机下沉卡片平移时），换算回它的坐标系
+	const cb = SUPPORTS_POPOVER ? null : fixedContainingBlock(el);
+	const r = cb?.getBoundingClientRect();
+	const dx = cb && r ? r.left + cb.clientLeft - cb.scrollLeft : 0;
+	const dy = cb && r ? r.top + cb.clientTop - cb.scrollTop : 0;
+	el.style.left = `${Math.round(Math.min(Math.max(left, EDGE), vw - EDGE - w) - dx)}px`;
+	el.style.top = `${Math.round((s === "bottom" ? a.bottom + gap : a.top - gap - h) - dy)}px`;
 	el.dataset.side = s;
 }
 
