@@ -525,89 +525,94 @@ export default function ChangesPanel({
 				/>
 			)}
 			{status?.repo && (
-				// 摘要在左、动作在右：动作簇是本行的第二个子元素，左侧摘要随之收窄换行（Review / Ship 未排期）
-				<div className="flex items-center gap-2">
-					<div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 px-0.5 text-faint text-xs">
-						{status.branch && (
-							<Badge icon="branch" title={status.branch}>
-								<span className="font-mono">{status.branch}</span>
-							</Badge>
-						)}
-						{status.base?.approximate && scope.scope === "all" && (
-							<Badge tone="warn">{t("changes.approximateBase")}</Badge>
-						)}
-						{scope.scope === "all" && !status.base && (
-							<span>{t("changes.noBase")}</span>
-						)}
-						<span className="inline-flex items-center gap-1.5 tabular-nums">
-							<span>{t("changes.summary", { n: files.length })}</span>
-							{modified > 0 && (
-								// 「~3」在小号等宽字下像「-3」：改用铅笔图标 + 数字，读屏读整句
-								<span
-									className="inline-flex items-center gap-0.5 text-warn"
-									title={t("changes.modified", { n: modified })}
-								>
-									<Icon name="edit" size={11} aria-hidden />
-									<span aria-hidden>{modified}</span>
-									<span className="sr-only">
-										{t("changes.modified", { n: modified })}
-									</span>
+				// 第一行只放摘要（分支、计数、复位链接），整行宽度给它，分支名与计数不再被右侧按钮挤成两行
+				<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-0.5 text-faint text-xs">
+					{status.branch && (
+						<Badge icon="branch" title={status.branch}>
+							<span className="font-mono">{status.branch}</span>
+						</Badge>
+					)}
+					{status.base?.approximate && scope.scope === "all" && (
+						<Badge tone="warn">{t("changes.approximateBase")}</Badge>
+					)}
+					{scope.scope === "all" && !status.base && (
+						<span>{t("changes.noBase")}</span>
+					)}
+					<span className="inline-flex items-center gap-1.5 tabular-nums">
+						<span>{t("changes.summary", { n: files.length })}</span>
+						{modified > 0 && (
+							// 「~3」在小号等宽字下像「-3」：改用铅笔图标 + 数字，读屏读整句
+							<span
+								className="inline-flex items-center gap-0.5 text-warn"
+								title={t("changes.modified", { n: modified })}
+							>
+								<Icon name="edit" size={11} aria-hidden />
+								<span aria-hidden>{modified}</span>
+								<span className="sr-only">
+									{t("changes.modified", { n: modified })}
 								</span>
-							)}
-							<span className="text-ok">{`+${additions}`}</span>
-							<span className="text-err">{`−${deletions}`}</span>
-						</span>
-						{base !== undefined && (
-							<button
-								type="button"
-								className={linkClass}
-								onClick={() => applyBase(undefined)}
-							>
-								{t("changes.base.reset")}
-							</button>
+							</span>
 						)}
-						{root && (
-							<button
-								type="button"
-								className={linkClass}
-								onClick={() => setRoot(undefined)}
-							>
-								{t("changes.resetRoot")}
-							</button>
-						)}
-					</div>
-					<ShipButton threadId={threadId} base={status?.base?.name ?? base} />
-					<SyncMenu threadId={threadId} />
+						<span className="text-ok">{`+${additions}`}</span>
+						<span className="text-err">{`−${deletions}`}</span>
+					</span>
+					{base !== undefined && (
+						<button
+							type="button"
+							className={linkClass}
+							onClick={() => applyBase(undefined)}
+						>
+							{t("changes.base.reset")}
+						</button>
+					)}
+					{root && (
+						<button
+							type="button"
+							className={linkClass}
+							onClick={() => setRoot(undefined)}
+						>
+							{t("changes.resetRoot")}
+						</button>
+					)}
 				</div>
 			)}
-			{stageable && files.length > 0 && (
-				<div className="-mx-1 flex items-center gap-1">
-					<Button
-						size="sm"
-						variant="ghost"
-						disabled={staging || files.every((f) => f.staged === "full")}
-						onClick={() =>
-							void stage(
-								files.filter((f) => f.staged !== "full"),
-								true,
-							)
-						}
-					>
-						{t("changes.stageAll")}
-					</Button>
-					<Button
-						size="sm"
-						variant="ghost"
-						disabled={staging || files.every((f) => f.staged === "none")}
-						onClick={() =>
-							void stage(
-								files.filter((f) => f.staged !== "none"),
-								false,
-							)
-						}
-					>
-						{t("changes.unstageAll")}
-					</Button>
+			{status?.repo && (
+				// 第二行是全部动作：暂存类在左，推送 / 同步在右（放不下时右簇整体折到下一行）
+				<div className="-mx-1 flex flex-wrap items-center gap-1">
+					{stageable && files.length > 0 && (
+						<>
+							<Button
+								size="sm"
+								variant="ghost"
+								disabled={staging || files.every((f) => f.staged === "full")}
+								onClick={() =>
+									void stage(
+										files.filter((f) => f.staged !== "full"),
+										true,
+									)
+								}
+							>
+								{t("changes.stageAll")}
+							</Button>
+							<Button
+								size="sm"
+								variant="ghost"
+								disabled={staging || files.every((f) => f.staged === "none")}
+								onClick={() =>
+									void stage(
+										files.filter((f) => f.staged !== "none"),
+										false,
+									)
+								}
+							>
+								{t("changes.unstageAll")}
+							</Button>
+						</>
+					)}
+					<div className="ml-auto flex items-center gap-1">
+						<ShipButton threadId={threadId} base={status?.base?.name ?? base} />
+						<SyncMenu threadId={threadId} />
+					</div>
 				</div>
 			)}
 		</div>
