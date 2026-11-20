@@ -17,7 +17,7 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import {
 	ApiError,
 	api,
@@ -33,6 +33,7 @@ import {
 	WindowControls,
 } from "../components/layout/WindowControls";
 import { useArchiveThread } from "../components/thread/ArchiveDialog";
+import { threadRowGroups } from "../components/thread/thread-row-menu";
 import { ProjectBadge, Sheet, TitleGlyph } from "../components/ui/data";
 import { Icon } from "../components/ui/icons";
 import {
@@ -45,6 +46,7 @@ import {
 	ThreadStateIcon,
 	tabClass,
 } from "../components/ui/primitives";
+import { useContextTarget } from "../lib/context-menu/registry";
 import { formatRelative } from "../lib/format";
 import {
 	activityOf,
@@ -630,6 +632,11 @@ function InboxRow({
 	onArchive: (thread: Thread) => void;
 }): ReactNode {
 	const { t } = useTranslation();
+	const navigate = useNavigate();
+	const ctxRef = useContextTarget<HTMLAnchorElement>({
+		items: () =>
+			threadRowGroups(item.thread, { to: `/t/${item.thread.id}`, navigate, t }),
+	});
 	const { thread, state } = item;
 	const tcard = parseTitleCard(thread.title);
 	const title = tcard.text || t("thread.untitled");
@@ -653,6 +660,8 @@ function InboxRow({
 				className={`group/row relative ${card ? "rounded-lg border border-accent/35 bg-accent-soft/55 shadow-xs transition-[border-color,box-shadow] duration-150 hover:border-accent/60 hover:shadow-sm" : ""}`}
 			>
 				<Link
+					ref={ctxRef}
+					data-ctx-touch=""
 					to={`/t/${thread.id}`}
 					data-inbox-row={thread.id}
 					data-inbox-state={state}
