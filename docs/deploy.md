@@ -460,27 +460,45 @@ orb_url: "https://172.17.0.1:7643"
 
 ## 11. Runner：在自己的机器上跑线程（M11b）
 
-runner 是你自己的机器（笔记本、工作站、NAS）。在那台机器上以普通用户运行 `orbd run --runner`，它主动连到 orynd；之后新建线程时可以选「这台 runner 的某个目录」，线程里的 agent 就直接在那个目录工作。用的是那台机器自己的 omp 配置（`~/.omp/agent`）和 git 凭据。
+runner 是你自己的机器（笔记本、工作站、NAS，支持 Linux 与 macOS；Windows 机器经 WSL2 运行 Linux 版）。在那台机器上以普通用户运行 `orbd run --runner`，它自动下载并校验钉住版本的 Oryn Core，主动连到 orynd；之后新建线程时可以选「这台 runner 的某个目录」，线程里的 agent 就直接在那个目录工作。模型、omp 配置、记忆与 SSH 主机由控制面提供（与那台机器上你自己的 `omp`、`~/.omp`、`~/.agents`、`~/.ssh` 完全独立），git 与其它命令行工具仍用那台机器自己的环境与凭据。
 
 ### 安全边界（先读）
 
 - **runner 完全信任控制面。** 能操作 orynd 的人（网页会话、设备令牌、或攻破了 orynd 的人），都能以 runner 进程的系统用户在那台机器上执行任意命令。agent 本身不受目录限制，`--dir` 约束的只是面板能看到什么、线程能选什么。所以：只在你信任 orynd 的机器上运行 runner；用一个权限有限的普通用户运行；`orbd` 以 root 运行时会直接拒绝（`--allow-root` 才放行）；`ORYN_URL` 是非回环的 `http://` 时会告警，请走 HTTPS。
-- **反方向不信任：控制面的密钥不去 runner。** orynd 不往 runner 下发 omp 配置、env 密钥、模型 key，也不改那台机器的 git 配置。唯一的出站通道是记忆（第 14 节）：记忆开着时，runner 在 `127.0.0.1:7811` 上开一个本地端口，orynd 只放行 `/memory/` 网关的路径，其余路径一律 403；Hindsight 的 key 由 orynd 注入，不进 runner。runner 的 link 只接受转录同步（`entries.cursors` / `entries.append`）、artifact 工具调用（`artifact.call`，runner 线程只看得到自己建过或写过的 artifact）和状态类通知，`thread.create`、`schedule.*` 等其余请求一律回 `runner_unsupported`，所以 runner 也没法借别的线程把密钥绕回来；hello 里的主机名、目录、特性等字段有长度和数量上限，超出的部分截掉。orbd 在 runner 上只写自己目录下的 `~/.oryn/orbd/extensions/oryn-orb.ts`（只注册 artifact 工具）与记忆开着时的 `~/.oryn/memory-overlay.yml`，前者以 `-e`、后者以 `--config` 加载，不碰 `~/.agents/skills` 与你自己的 omp 扩展。
+- **反方向不信任：控制面的密钥不去 runner。**
+  - **无密钥配置与投递校验**：orynd 向 runner 下发全局 omp 配置（`omphome.apply`）与按线程所属项目交付的项目层配置（随 `agent.start`）。`models.yml` 里的模型 key 一律换成 `oryn-ph-…` 占位符、地址改写到本机常驻出站通道；`env` 模式的密钥不下发，无 `baseUrl`（需以 `ORYN_MODEL_KEY_<NAME>` 环境变量降级下发真实 key）的模型 provider 对 runner 关闭降级、在 runner 上不可用。下发前，orynd 对全局层与项目层的每个文本文件做无密钥校验（`agentcfg.ScreenSecrets`）：扫描形似密钥的串（占位符除外），并比对长度 ≥ 8 的已知密钥明文（密钥库全部值与密码登录 SSH 主机的密码）；命中的文件扣下不发，并在该 runner orb 的事件里写备注说明未下发的文件及原因。
+  - **出站只放行模型中转与记忆**：runner 在 `127.0.0.1:7811`（`ORYN_EGRESS_ADDR` 可改）常驻开一条本地出站通道，orynd 的 `runnerEgressHandler` 只放行 origin-form 的 `/llm/`（模型中转）与 `/memory/`（记忆网关，第 14 节），由 orynd 在控制面注入真实的模型 key 与 Hindsight key（响应回显同步脱敏）；`/git/`、`/gh/`、`/mcp/`、CONNECT 与代理形式请求一律 403。因此控制了这台机器的进程可以经中转调用中央模型（消耗额度）或访问该 runner 线程所属项目的记忆，但拿不到任何密钥明文。
+  - **GitHub 与 git 凭据不下发**：orynd 不往 runner 下发 GitHub OAuth 凭据、git 主机令牌、git 代理改写或提交身份，也不改那台机器的 git 配置；runner 上的 git 操作使用本机自己的凭据。
+  - **link 与本地控制口白名单**：runner 的 link 只受理转录同步（`entries.cursors` / `entries.append`）、artifact 工具调用（`artifact.call`，runner 线程只看得到自己建过或写过的 artifact）、文件库存入（`library.put`，只收调用方线程工作目录内的普通文件）和状态类通知，`thread.*`、`schedule.*`、`github.*`、`ssh.call` 等其余请求一律回 `runner_unsupported`，所以 runner 也没法借别的线程把密钥绕回来；hello 里的主机名、目录、特性等字段有长度和数量上限，超出截断。本机 `~/.oryn/orbd/runner.sock`（0600）只认 `artifact.call` 与 `library.put`。
+  - **SSH 每线程密钥与局限**：Oryn 登记的 SSH 主机私钥和密码留在 orynd，runner 上的 `orbd` 在 `127.0.0.1:7822` 监听并把连接转给控制面网关。因为一台 runner 可同时跑多个项目的线程，`orbd` 为每个线程的每一代监督器生成一把临时 ed25519 密钥（私钥写在 `~/.oryn/threads/<线程>/ssh/` 下，公钥随 `agent.start` 报给 orynd），网关对 runner 的流要求公钥认证，按认出的线程及其所属项目放行主机并记审计。**局限**：同一系统用户下的任何本机进程都能读到其它线程的私钥文件——这把密钥防的是某个线程的 agent 误用别的项目的主机，不防恶意本机进程。
 - **谁能操作 runner 线程。** 除了你自己，只有全局助手（M19）：它可以像你一样在 runner 上新建线程（指定目录、worktree 或共用目录），给 runner 线程发消息、读取、归档、中止、改模型、fork（只能共用环境）、设线程内定时，读写线程目录里的文件、查看改动；删除要你点确认卡。Space 协调者的 send_message、read_thread、归档、定时等工具对 runner 线程仍一律回 `runner_unsupported`，orb 内 agent 只能联系自己的父子线程：普通 orb 里产出的内容不能经它们转成你机器上的指令。全局助手会读网页与工作线程的输出，注入的指令有可能经它到达 runner 线程（见第 8 节「残余风险」）。
 - **面板按声明收窄**：Files / Changes 只能看到线程工作目录里面的内容；线程的目录必须落在 `--dir` 声明的目录里（或 Oryn 在它旁边建的 worktree）；终端只有带 `--terminal` 才开。runner 上没有 Portal、受管服务、Desktop、`oryn sync`、项目快照，不能冻结、删除或「连环境 fork」，也不能绑浏览器 Profile。
 - runner 令牌（`ort_…`）库里只存哈希。在「设置 → Runner」里删除 runner 即吊销，已连着的 link 会被断开。
 
 ### 建立与启动
 
+支持 **Linux**（`x64`、`arm64`）与 **macOS**（`arm64`、`x64`）；不支持原生 Windows，Windows 机器请在 **WSL2** 里运行 Linux 版 `orbd`。
+
 1. **建 runner**：「设置 → Runner → 新建」，或 `oryn runner create laptop`（标准输出只有令牌，启动命令打到标准错误）。令牌只显示这一次。
-2. **在那台机器上**放好与 orynd 同版本的 `orbd`（`make build` 产出的 `bin/orbd`），并确保 `omp` 与 `git` 在 PATH 里。然后：
+2. **在那台机器上**放好与 orynd 同版本的 `orbd`（`make build` 产出的 `bin/orbd`），确保系统 `PATH` 目录（`$HOME` 之外，如 `/usr/bin`、`/opt/homebrew/bin`）里有 `git`（不要求本机安装 `omp`；在 bash 里经网关连 SSH 主机还需 OpenSSH ≥ 8.4）。然后：
 
    ```bash
    install -D -m 600 /dev/stdin ~/.config/oryn/runner.token <<< 'ort_…'   # 或用环境变量 ORYN_RUNNER_TOKEN
    ORYN_URL=https://oryn.example.com orbd run --runner --dir ~/code/app --dir ~/notes [--terminal]
    ```
 
-   `--dir` 可以重复，符号链接会先解析成真实路径；同一个系统用户只能跑一个 runner 实例。会话文件放在 `~/.oryn/threads/<线程>`，不会写进项目目录。
+   - **下载 Core**：首次启动（或升级 `orbd` 换了钉定版本时）按内嵌的 `core/source.json` 从 GitHub Release 下载对应平台的 Oryn Core，校验 SHA-256 后缓存在 `~/.oryn/core/<tag>/omp`（旧版本目录自动清理）。无法直连 GitHub 时设 `ORYN_CORE_BASE_URL=<镜像根>`（请求 `<ORYN_CORE_BASE_URL>/<tag>/omp-<os>-<arch>`）；下载或校验失败即启动失败，不会回退到本机 `omp`。（`ORYN_AGENT_BIN` 仅供开发与测试。）
+   - **本地端口**：出站通道常驻监听 `127.0.0.1:7811`，端口被占用时启动失败，可设 `ORYN_EGRESS_ADDR=127.0.0.1:<端口>`（只允许 `127.0.0.0/8` 或 `[::1]` 回环地址，下发的 `models.yml` 自动改写到该地址）。SSH 网关默认监听 `127.0.0.1:7822`（`ORYN_SSH_ADDR` 可改；监听失败不影响启动，只是该 runner 上 SSH 网关不可用）。
+   - **目录与单实例**：`--dir` 可以重复，符号链接会先解析成真实路径；同一个系统用户只能跑一个 runner 实例。
+   - **本机写入清单**：`orbd` 只在 `~/.oryn/` 下维护自己的文件，不会写进项目目录：
+     - `~/.oryn/core/<tag>/omp`：下载并校验后的 Oryn Core；
+     - `~/.oryn/omp/`：独立的 omp 配置根（agent 以 `PI_CONFIG_DIR=.oryn/omp`、`ORYN_ISOLATE_USER_SOURCES=1` 运行），含下发配置与 runner 版 `oryn-library` 技能所在的 `~/.oryn/omp/agent/`、Core 隔离模式用的 `~/.oryn/omp/ssh/{config,known_hosts}`（下发清理清单在 `~/.oryn/omp-home.manifest.json`）；
+     - `~/.oryn/project-config/<项目 ID>-<sha12>/.omp/`：按线程所属项目、按内容寻址缓存的项目层配置（无运行中线程引用的旧版本自动清理）；
+     - `~/.oryn/threads/<线程>/`：线程会话文件，以及开启 SSH 网关时每代监督器的临时私钥 `~/.oryn/threads/<线程>/ssh/<指纹>/id_ed25519`（监督器结束即删除）；
+     - `~/.oryn/ssh/config`：供 bash 里 `ssh -F ~/.oryn/ssh/config <主机名>` 使用的网关配置；
+     - `~/.oryn/orbd/`：实例锁 `runner.lock`、登记表 `threads.json` / `worktrees.json`、控制口 `runner.sock` 与自带扩展 `extensions/oryn-orb.ts`（另有 `~/.oryn/attachments/`、`~/.oryn/tmp/` 与启用记忆时的 `~/.oryn/memory-overlay.yml`）。
+
+     **不读写**你自己的 `~/.omp`、`~/.agents`、`~/.claude`（及其它外部工具的用户级目录）、`~/.ssh` 与 git 配置；仓库内的项目级规则与技能（`AGENTS.md`、`.omp/`、`.claude/skills` 等）照常生效。
 3. **常驻**（systemd user unit 示例）：
 
    ```ini
@@ -505,6 +523,10 @@ runner 是你自己的机器（笔记本、工作站、NAS）。在那台机器�
 - **归档**：线程有 Oryn 建的 worktree 时，归档对话框可以「同时移除 worktree」。它执行 `git worktree remove` 和 `git branch -d`，不带 `--force` / `-D`：有未提交的改动时 git 会拒绝，分支没合并时会保留，报错原样显示，线程照常归档。
 - **Changes 面板**只在线程目录就是仓库根目录时显示改动；线程目录是仓库的子目录时显示「不是 git 仓库」。
 - **离线**：link 断开超过 30 秒，runner 显示为离线。期间发给它的消息排队（每个线程最多 100 条），runner 重新连上后按顺序送达。
+- **中央配置与下发**：runner 线程与 orb 一样使用中央配置（模型、角色、技能、规则、子 agent、提示模板、MCP）与线程所属项目的项目层配置。全局配置改动后即时经 `omphome.apply` 下发（按变更项自动 reload 或标为需重启）；项目层随 `agent.start` 按线程交付，项目层或项目 SSH 主机改动后运行中的该线程会标为「需要重启」（runner 上的 `/omfg` 不回写中央配置）。
+- **连接 SSH 主机**：Oryn 登记的全局主机与线程所属项目的主机可直接在 `ssh://<名>/<路径>` 与 `terminal` 工具中按名使用；在 bash 里执行 ssh 时用 `ssh -F ~/.oryn/ssh/config <名>`（裸 `ssh <名>` 仍走本机自己的 `~/.ssh/config`）。在 agent 进程之外（例如你本机自己的终端）运行该命令会因缺少线程环境变量 `ORYN_SSH_KEY` 而失败。
+- **存入文件库**：runner 上没有 `oryn` CLI，要把线程工作目录内的普通文件（≤ 100 MiB）放进全局助手文件库时，让 agent 调用 `oryn_library_put` 工具（自带 `oryn-library` 技能）。
+- **从旧版 runner 升级**：把本机 `orbd` 换成与 `orynd` 同版本并重启即可。启动后自动下载 Oryn Core 并接收控制面配置；本机以前安装的 `omp` 与你自己的 `~/.omp` 配置不再被 runner 使用（启用记忆时 `~/.oryn/memory-overlay.yml` 仍由 `orbd` 自动维护）。
 
 ## 12. Firecracker provider（M11b）
 
@@ -800,7 +822,7 @@ M14 用的是 GitHub App：设置页按 manifest 创建 App，安装到账号或
 
 ## 14. Hindsight 记忆服务（M16）
 
-Oryn 的 agent 记忆存放在一个单独部署的 [Hindsight](https://github.com/vectorize-io/hindsight)（MIT）服务里，版本固定为 1.2.x，镜像是 slim 版，不带本地模型。所有项目共用一个 bank `oryn`，靠 `project:<项目 ID>` 标签相互隔离；全局记忆打 `oryn:global` 标签，只有主人在管理页批准的候选才能写入。orb 与 runner 里的 omp 只连 orynd 的记忆网关 `/memory/`，网关替它们填写项目标签，并注入 Hindsight 的 API key。Hindsight 调用模型、嵌入和重排时，也经 orynd 的中转 `<public_url>/memory-relay/v1/`，由 orynd 换上真实的模型与密钥。所以 Hindsight 的 `.env` 里没有任何 provider 密钥，orb 里也看不到 Hindsight 的 key。
+Oryn 的 agent 记忆存放在一个单独部署的 [Hindsight](https://github.com/vectorize-io/hindsight)（MIT）服务里，版本固定为 1.2.x，镜像是 slim 版，不带本地模型。所有项目共用一个 bank `oryn`，靠 `project:<项目 ID>` 标签相互隔离；全局记忆打 `oryn:global` 标签，只有主人在管理页批准的候选才能写入。orb 与 runner 里的 omp 经各自的本机常驻出站通道只连 orynd 的记忆网关 `/memory/`，网关替它们填写项目标签（runner 按线程所属项目区分），并注入 Hindsight 的 API key。Hindsight 调用模型、嵌入和重排时，也经 orynd 的中转 `<public_url>/memory-relay/v1/`，由 orynd 换上真实的模型与密钥。所以 Hindsight 的 `.env` 里没有任何 provider 密钥，orb 与 runner 里也看不到 Hindsight 的 key。
 
 ### 部署
 
@@ -852,7 +874,7 @@ compose 里的镜像按 digest 固定。Oryn 只对一个小版本（当前是 1
 
 任何嵌入模型的更换都必须重新嵌入，维度相同也不例外，否则新旧向量混在一起会让召回变差。嵌入「接口地址」换到另一个服务，即便模型名相同，也按换模型处理。
 
-**必须停机迁移。** Hindsight 按 `provider:model:dimension` 识别嵌入模型（`embeddings.py` 的 `embedding_model_id`），而 Oryn 对它只暴露一个别名 `oryn-embed`，所有请求都经同一个中转。中转一旦切到新模型，仍在运行的 API 和 worker 会立即用新模型生成查询向量与写入向量，与库里的旧向量混在一起。维度相同时 Hindsight 的写保护也认不出模型已换，所以官方文档里那种「边运行边迁移」的流程在这里不成立。迁移期间记忆不可用：agent 的 recall 会失败并给出提示，自动写入留在各 orb 的 Core outbox 里，Hindsight 恢复后补发（outbox 最多保留 7 天）。
+**必须停机迁移。** Hindsight 按 `provider:model:dimension` 识别嵌入模型（`embeddings.py` 的 `embedding_model_id`），而 Oryn 对它只暴露一个别名 `oryn-embed`，所有请求都经同一个中转。中转一旦切到新模型，仍在运行的 API 和 worker 会立即用新模型生成查询向量与写入向量，与库里的旧向量混在一起。维度相同时 Hindsight 的写保护也认不出模型已换，所以官方文档里那种「边运行边迁移」的流程在这里不成立。迁移期间记忆不可用：agent 的 recall 会失败并给出提示，自动写入留在各 orb 与 runner 的 Core outbox 里，Hindsight 恢复后补发（outbox 最多保留 7 天）。
 
 bank 里已有记忆时，管理页的嵌入模型与维度只读。只有勾选「换嵌入模型（reembed）」的保存才会被接受，而且 orynd 会先探测 Hindsight：还能连上时返回 409 `hindsight_running`，保证第 3 步发生在停机之后。步骤（下文 `dc` 代表 `docker compose -f deploy/hindsight/compose.yaml`）：
 
@@ -901,13 +923,13 @@ ORYN_OWNERMEM_EVAL_DECIDE_KEY=<判断模型 key> ORYN_OWNERMEM_EVAL_BANK=oryn-ow
 
 ## 15. SSH 主机与控制面网关（M18）
 
-在「更多 → Agent → SSH 主机」（或 `oryn ssh …`）登记的主机，由 orynd 自己发起 SSH 连接；orb 里的 agent 只连 orb 内的 `127.0.0.1:7822`，经 link 交给 orynd 的网关。私钥和密码只存在 orynd 的数据库里（`secrets.Box` 加密），不进 orb。协议细节见 [protocol.md](protocol.md)「M18」。
+在「更多 → Agent → SSH 主机」（或 `oryn ssh …`）登记的主机，由 orynd 自己发起 SSH 连接；orb 与 runner 里的 agent 只连本机的 `127.0.0.1:7822`，经 link 交给 orynd 的网关。私钥和密码只存在 orynd 的数据库里（`secrets.Box` 加密），不进 orb 或 runner。协议细节见 [protocol.md](protocol.md)「M18」。
 
-- **网络**：目标机（以及跳板）要能从 **orynd 所在的机器**访问，orb 能不能访问无所谓。orb 的网络隔离（第 7 节）不用为 SSH 开口子。
-- **网关主机密钥**：`<data_dir>/ssh-gateway.key`，首次启动时生成。备份数据目录时一并备份；换掉它之后，各 orb 会在下一次下发时拿到新的 known_hosts 条目，不用手工处理。
+- **网络**：目标机（以及跳板）要能从 **orynd 所在的机器**访问，orb 或 runner 能不能直接访问无所谓。orb 的网络隔离（第 7 节）不用为 SSH 开口子。
+- **网关主机密钥**：`<data_dir>/ssh-gateway.key`，首次启动时生成。备份数据目录时一并备份；换掉它之后，各 orb 与在线 runner 会在下一次下发时拿到新的 known_hosts 条目，不用手工处理。
 - **授权钥匙**：在设置页生成钥匙，把公钥加到目标机用户的 `~/.ssh/authorized_keys`；也可以导入已有私钥（带口令的会在导入时解开，之后不再需要口令）。密码登录同样可用，遇到多因素认证会直接失败。
 - **指纹**：第一次成功连接时固定目标机的主机公钥。目标机重装或换密钥后，连接会被拒绝并提示「指纹变了」；确认无误后在设置页（或 `oryn ssh reset-host-key <名>`）重置。
-- **作用范围**：全局主机对所有工作 orb 可见，项目主机只对该项目的 orb 可见，同名时项目主机优先。触发规则、定时等无人值守入口建出来的全自动线程，只能用勾了「允许全自动线程使用」的主机。Runner 线程与协调宿主不接入网关：Runner 用的是那台机器自己的 SSH 配置。
+- **作用范围**：全局主机对所有工作 orb 与 Runner 线程可见，项目主机只对该项目的 orb 与属于该项目的 Runner 线程可见，同名时项目主机优先。触发规则、定时等无人值守入口建出来的全自动线程，只能用勾了「允许全自动线程使用」的主机。协调宿主不接入网关。Runner 不修改用户的 `~/.ssh`：`orbd` 为每个线程的监督器生成一把临时密钥供网关识别线程并按项目放行，bash 里用 `ssh -F ~/.oryn/ssh/config <名>` 连接（局限与用法见第 11 节）。
 - **端口转发**：默认只允许执行命令、交互 shell 与 SFTP。勾选「允许本地端口转发」后才接受 `ssh -L`；远程转发、agent 转发与 X11 一律拒绝。
 - **审计**：网关上的每次连接与命令、设置页的测试 / 终端 / 文件操作、agent 的 `ssh_exec_many` 都记一行审计（命令原文最多 4096 字节，交互式会话不录内容），保留 30 天，在设置页与 `oryn ssh audit` 查看。
 - **反代**：网页终端走 `wss://<域名>/api/v1/ssh/hosts/<id>/terminal`，第 3 节反代示例里的 `Upgrade` / `Connection` 头已经覆盖，无需另加。

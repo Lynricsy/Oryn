@@ -179,7 +179,7 @@ flowchart LR
   subgraph O[隔离 Orb 环境]
     B[orbd] -- RPC + JSONL --> A[Oryn Core<br/>omp --mode rpc-ui]
   end
-  R[个人机器 orbd --runner] -- 仅同步转录与状态 .-> D
+  R[个人机器 orbd --runner] -- 无密钥配置 · 模型 / 记忆 / SSH 中转 .-> D
   B -- WS + yamux 出站长连接 --> D
   D -- 按主机注入真实密钥 --> U[模型 API / Git 远端]
 ```
@@ -196,7 +196,7 @@ flowchart LR
 
 1. **凭据隔离**：默认 `proxy` 模式下，环境里的配置只有 `oryn-ph-…` 占位符，真实值由控制面按上游主机注入，响应里的回显也会被脱敏回去；显式设为 `env` 模式的密钥和未绑定上游主机的模型 Key 会以环境变量下发。
 2. **Git 访问范围**：github.com 用 OAuth 账号令牌，能读写哪些仓库取决于账号自身权限，项目可另开推送 / 开 PR 门禁；其它 Git 主机（PAT）上，绑定仓库的环境只能读写那一个仓库，未绑定的只能只读克隆。
-3. **单向信任**：环境令牌每次创建、唤醒、快照后轮换；控制面从不向个人机器 Runner 下发密钥，普通环境里的 Agent 也无法操控 Runner。
+3. **单向信任**：环境令牌每次创建、唤醒、快照后轮换；个人机器 Runner 只接收不含密钥的配置并经控制面中转访问模型、记忆与 SSH 主机（密钥从不下发），普通环境里的 Agent 也无法操控 Runner。
 
 完整说明见[功能详解 · 安全边界](docs/features.md#安全边界)与[部署文档第 7 节](docs/deploy.md#7-安全)。
 
