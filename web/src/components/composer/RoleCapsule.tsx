@@ -204,12 +204,14 @@ export function sessionStart(
 	catalog: ModelCatalog | undefined,
 ): string | undefined {
 	const def = roles.find((r) => r.role === "default");
+	const caps = def?.model
+		? modelCapsOf(catalog, modelSelector(def.model))
+		: undefined;
 	return sessionStartThinking(
 		def?.explicitThinking,
 		configured,
-		def?.model
-			? modelCapsOf(catalog, modelSelector(def.model))?.defaultLevel
-			: undefined,
+		caps?.defaultLevel,
+		caps?.thinking,
 	);
 }
 

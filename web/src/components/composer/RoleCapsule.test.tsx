@@ -61,6 +61,11 @@ beforeEach(() => {
 						thinkingDefault: "medium",
 					},
 					{
+						...chat("openai", "gpt-low", "GPT Low"),
+						thinking: ["low"],
+						thinkingDefault: "",
+					},
+					{
 						...chat("legacy", "old-x", "Old X"),
 						thinking: ["low", "high"],
 					},
@@ -355,5 +360,26 @@ describe("RoleCapsule", () => {
 		expect(
 			document.querySelector("[role=img][data-level].absolute"),
 		).toBeNull();
+	});
+
+	it("起始档位先落到 default 模型上：全局 high、default 只支持 low，切到支持 low/high 且无自带默认的模型时沿用 low", async () => {
+		roleList = [
+			{ role: "Mare", inCycle: true, selector: "openai/gpt-x" },
+			{ role: "default", inCycle: true, selector: "openai/gpt-low" },
+		];
+		defaultThinking = "high";
+		mount(true, { kind: "model", model: { provider: "openai", id: "gpt-x" } });
+		openCapsule();
+		await vi.waitFor(() => expect(rowLevel(/^Mare/)).toBe("low"));
+		expect(rowLevel(/^默认/)).toBe("low");
+		const group = screen.getByRole("radiogroup", { name: "思考级别" });
+		expect(within(group).getByRole("radio", { name: "低" })).toHaveAttribute(
+			"aria-checked",
+			"true",
+		);
+		expect(within(group).getByRole("radio", { name: "高" })).toHaveAttribute(
+			"aria-checked",
+			"false",
+		);
 	});
 });

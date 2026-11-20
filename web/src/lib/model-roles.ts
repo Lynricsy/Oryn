@@ -323,18 +323,25 @@ export function clampThinking(
 
 /**
  * 新会话的起始档位（Core `newSessionThinkingLevel`，会话以 default role 的模型开场）：default role 选择器显式带的档位 →
- * 配置为 auto 时 auto → default 模型的默认档位 → 配置的 defaultThinkingLevel。
+ * 配置为 auto 时 auto → default 模型的默认档位 → 配置的 defaultThinkingLevel；再像 Core `setThinkingLevel` 那样
+ * 落到 default 模型上（切模型时 `#reapplyThinkingLevel` 沿用的是这个落地后的档位，不是配置原值）。
+ * auto、off 不收窄；`defaultSupported` 是 default 模型目录里的级别，未知时具体档位推不出来。
  */
 export function sessionStartThinking(
 	defaultExplicit: string | undefined,
 	configured: string | undefined,
 	defaultModelLevel: string | null | undefined,
+	defaultSupported: readonly string[] | undefined,
 ): string | undefined {
-	if (defaultExplicit) return defaultExplicit;
-	if (configured === undefined) return undefined;
-	if (configured === "auto") return "auto";
-	if (defaultModelLevel === undefined) return undefined;
-	return defaultModelLevel ?? configured;
+	let level: string;
+	if (defaultExplicit) level = defaultExplicit;
+	else if (configured === undefined) return undefined;
+	else if (configured === "auto") return "auto";
+	else if (defaultModelLevel === undefined) return undefined;
+	else level = defaultModelLevel ?? configured;
+	if (level === "auto" || level === "off") return level;
+	if (defaultSupported === undefined) return undefined;
+	return clampThinking(level, defaultSupported);
 }
 
 /**
