@@ -4,7 +4,7 @@
 > 本文自包含：执行者不需要读过产生它的对话。行号只作提示，动手前按符号重读；仓库里有其他会话在并行改动（main 工作区此刻就有别人未提交的 `CompactThreadHeader.tsx` 等）。
 
 Goal：iOS 26+ 壳里，下沉侧栏的开合由 WKWebView 自己的根 `UIScrollView` 驱动，原生页头与底栏在同一进程里按 `contentOffset` 跟随，删掉 bridge 7 的全部跨合成器对时代码。
-Approach：仍是一个 WebView、一份文档。compact 布局在 iOS 原生模式下把文档做成可横向滚动（侧栏 `position: fixed` 垫底，卡片在右侧 in-flow），吸附用根元素的 CSS scroll-snap，程序化开合用 `window.scrollTo`；Swift 只新增一个观察 `contentOffset` 的跟随器。其余平台与旧壳继续走现有 JS 手势路径和网页页头 / 底栏。
+Approach：仍是一个 WebView、一份文档。compact 布局在 iOS 原生模式下把文档做成可横向滚动（侧栏 `position: fixed` 垫底，卡片在右侧 in-flow）。执行中启用 C1 和 C2：UIKit 拖动与减速，Swift 决定松手落点、推进程序化开合，并观察 `contentOffset` 同帧更新原生部件。其余平台与旧壳继续走现有 JS 手势和网页页头 / 底栏。原始方案及改动证据见阶段 4 修订。
 Rollback point：阶段 1 只存在于不合入的分支上，失败即丢弃，main 不变。阶段 2–4 在 `feat/ios-native-sink` 分支上，合入前丢弃分支即可；合入后回退 = revert 合并提交（没有迁移、没有持久化数据）。任意「新 / 旧壳 × 新 / 旧网页」组合的最坏结果都是网页页头 + 网页底栏（见 R5），所以壳与服务器的发布顺序无约束。
 
 ## Context
@@ -337,3 +337,11 @@ R1 → 3.2、4.1（`drag`、`h-drag`）。R2 → 2.1、2.2、3.1、4.1。R3 → 
 - 阶段 1 证明了 CSS 吸附能承接手指拖动，但阶段 4 发现它不能与程序化开合可靠共存。相同提交 `4c6ced6` 的两次 iOS 取样一红一绿：run `44751816572` 重跑在 `final` 失败，原生关到 `x=320` 后出现 `move 320→0`，再由网页请求一步落回；run `44756314532` 没有回弹。WebKit `safari-7622-branch` 的 `WKWebViewIOS.mm`（`_updateVisibleContentRects`）会调度一步回到旧吸附点，而主框架的吸附索引在手指松手时更新。失败的原生调用栈形状与这条路径吻合。网页切换 `scroll-snap-type` 不等待 UI 进程应用，恢复后还可能读到旧索引，因此不保留这条吸附路径。
 - 步骤 2.2 与 3.2 改用 C1：`SinkFollow` 的外部 `UIScrollViewDelegate` 只改横向落点，UIKit 仍处理拖动与减速，WebKit 仍处理内部代理。快甩按方向（`|v| > 0.3 pt/ms`），其余取近端。删根 CSS 吸附与网页切换吸附的逻辑，保留 C2 的逐帧程序化开合、原生同帧跟随、历史恢复守卫与 bridge 8 契约。Chromium 浏览器脚本只代做 iOS 宿主的松手落点；实际落点由模拟器的 `drag`、`h-drag` 和 `final` 验证。
 - 步骤 4.1 须从对应 PR 运行下载 `ios-screenshot`，确认 `e2e/.complete` 存在。run `44766975907` 下载后有 `header/.complete` 与 `e2e/e2e-h-drag.png`，端到端最后的 `appicon.set（default）` 超时，下载产物没有 `e2e/.complete`；该次不算通过。
+
+### 验收记录
+
+- [x] 0.1 计划入库；1.1 iOS 根滚动探针。
+- [x] 2.1 bridge 8 线路契约；2.2 Swift 跟随与松手落点；3.1 网页宿主与控制器；3.2 根滚动。`bun run accept:m20` 输出 N1–N8 `PASS`、`M20 全部通过`；两个相关 Vitest 文件共 50 条通过。
+- [x] 4.1 [PR #3 的 `ios-check`](https://github.com/Lynricsy/Oryn/actions/runs/44774441275/job/136420450154) 通过。已实际下载 [ios-screenshot](https://github.com/Lynricsy/Oryn/actions/runs/44774441275/artifacts/14648759589)，包含 `e2e/.complete`、`e2e/e2e-h-drag.png` 和 `e2e/summary.md`。iPhone 17 Pro（iOS 26.5）上，底栏 `final` 通过，`h-drag` 原生页头与卡片均平移 **166.0pt**，`appicon.set` 顺序为 `accent,default`；Android foss/gms 构建与冒烟也通过。
+- [x] 4.2 文档与 R9：`rg -n '绝对起步时刻|host_tab_bar_reveal|34ms|passive' docs/mobile.md web/src/lib/host.ts` 无输出；`cd web && bun run check` 覆盖 900 个文件，Biome 和 TypeScript 检查通过。模拟器不验证运动中的逐帧对齐。
+- [ ] 4.3 TestFlight 发布与 M1–M5 真机验收。M5 需要 bridge 7 的实际构建；公开 rc.3 和 rc.4 草稿都是 bridge 6，不能拿它们替代。

@@ -213,6 +213,8 @@ iOS 26+ 的手机布局（下沉侧栏）用原生的底栏与线程页头，协
 
 CI 的 `ios-check` 在 iOS 26+ 模拟器里跑 `ci/ios-header-check.sh`（原生页头演示：插件直接摆出页头与菜单，比像素并探测触摸归属）与 `ci/ios-e2e-check.sh`（端到端：mock Web UI + 远程能力 + XCUITest 真实触摸，底栏的开合、按住拖动、原生点选与横滑，页头的接管、菜单、对话框让位与随卡片开合；事件日志断言、无障碍树断言与逐区域像素比较，见脚本文件头）。事件日志里两类断言分开看：按住拖动期间不能出现 `sink.show`（网页发起的程序化开合）；开合到位之后不能再有从别处落回终点的 `sink.trace` `jump` / `start`，即卡片到位后被带走、靠兜底收场的回弹。`sink.trace` 是 debug 包记下的根滚动轨迹：程序化开合的 start / jump / noop / busy / done / cancel，以及 move（不是程序化开合、也不是手指与惯性的位移，带调用栈，用来查卡片被谁挪走）。底栏垫在网页之下，没有真实网页就看不到，所以只在端到端里检查。网页侧的行为在浏览器里由 `bun run accept:m20`（本机 Chromium 模拟 iOS 壳）验收。
 
+验收以 `ios-check` 成功和下载后的 `ios-screenshot/e2e/.complete` 为准：该标记只在底栏、页头与图标检查全部跑完且通过后写入。产物还包含 `e2e/summary.md`（与 Actions 步骤摘要相同）与 `e2e/e2e-h-drag.png`；图标检查要求先切到品牌色、再切回默认。
+
 CI 不覆盖运动途中的逐帧对齐：按住拖动只在卡片停住后取样比对页头与卡片的位置，开合只看到位后的截图，拖动、甩动、开合动画过程中页头 / 底栏与卡片是否每一帧都对齐，留给真机验收（`docs/plan-m20.md` 步骤 4.3）。
 
 尚未完成：APNs 推送（服务端 `pushSenders["apns"]`、`PushSubscriptionInput` 增加 `kind: apns`）；Share Extension（App Group 容器 + 同一条上传预填流程）；Universal Links（`/.well-known/apple-app-site-association`）；Keychain 令牌存储的真机验证；iPhone / iPad 真机验收。
