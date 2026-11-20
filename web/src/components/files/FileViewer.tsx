@@ -397,17 +397,15 @@ export function FileViewer({
 					size={14}
 					className="shrink-0 text-faint"
 				/>
-				{/* 路径拆段：目录先截断，文件名尽量完整 */}
+				{/* 路径拆段：文件名不收缩（超过整行才截断），目录占剩下的宽度、先截断 */}
 				<span
 					className="flex min-w-0 flex-1 items-center font-mono text-xs"
 					title={path}
 				>
 					{dirPart && (
-						<span className="min-w-0 shrink-[1000] truncate text-faint">
-							{dirPart}
-						</span>
+						<span className="min-w-0 truncate text-faint">{dirPart}</span>
 					)}
-					<span className="min-w-0 truncate font-medium text-fg">
+					<span className="min-w-0 max-w-full shrink-0 truncate font-medium text-fg">
 						{namePart}
 					</span>
 					{dirty && (

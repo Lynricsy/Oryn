@@ -461,13 +461,45 @@ export function FileBrowser({
 		if (ok) setConfirmDelete(null);
 	};
 
+	// 根标签放不下时（窄面板 / 手机）横向滚动：哪一侧还有标签，就在那一侧渐隐，提示可以滑；选中的标签滚进可视范围
+	const rootTabsRef = useRef<HTMLDivElement>(null);
+	const rootKey = root?.key;
+	const rootCount = allRoots.length;
+	useEffect(() => {
+		const el = rootTabsRef.current;
+		if (!el || rootCount === 0) return;
+		const update = () => {
+			el.toggleAttribute("data-more-left", el.scrollLeft > 1);
+			el.toggleAttribute(
+				"data-more-right",
+				el.scrollLeft + el.clientWidth < el.scrollWidth - 1,
+			);
+		};
+		// 换根后（rootKey 变了）把选中的标签滚进来
+		if (rootKey)
+			el.querySelector("[aria-selected=true]")?.scrollIntoView?.({
+				block: "nearest",
+				inline: "nearest",
+			});
+		update();
+		const ro =
+			typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
+		ro?.observe(el);
+		el.addEventListener("scroll", update, { passive: true });
+		return () => {
+			ro?.disconnect();
+			el.removeEventListener("scroll", update);
+		};
+	}, [rootKey, rootCount]);
+
 	const dialogErr = dialog ? nameError(name, dialog.kind === "newFile") : null;
 
 	const header = (
 		<div className="flex h-10 shrink-0 items-center gap-1 border-border border-b px-2">
 			<div
+				ref={rootTabsRef}
 				role="tablist"
-				className="focus-inset flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
+				className="focus-inset flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto [scrollbar-width:none] data-[more-left]:[mask-image:linear-gradient(to_left,#000_calc(100%-1.5rem),transparent)] data-[more-right]:[mask-image:linear-gradient(to_right,#000_calc(100%-1.5rem),transparent)] data-[more-left]:data-[more-right]:[mask-image:linear-gradient(to_right,transparent,#000_1.5rem,#000_calc(100%-1.5rem),transparent)]"
 			>
 				{allRoots.map((r) => {
 					const on = r.key === root?.key;

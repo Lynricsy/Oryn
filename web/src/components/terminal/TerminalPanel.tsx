@@ -3,7 +3,7 @@
  * 挂载即「可见」：开启 `term.watch` 并经 list + snapshot 同步；卸载即关闭。
  * orb 未运行时显示遮罩 +「唤醒」；进程退出 / agent 重启导致会话终止时保留画面并提示。
  */
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useCoarsePointer } from "../../lib/viewport";
 import type { RpcTerminalInfo } from "../../omp/types";
@@ -198,6 +198,15 @@ export default function TerminalPanel({
 		return () => terminalHub.setVisible(threadId, false);
 	}, [threadId]);
 
+	// 新建或切换后，选中的标签滚进标签区的可视范围（标签多时它可能在右侧被挡住）
+	const tabsRef = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		if (!activeId) return;
+		tabsRef.current
+			?.querySelector("[aria-selected=true]")
+			?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+	}, [activeId]);
+
 	const active = activeId ? terminals[activeId] : undefined;
 
 	return (
@@ -208,45 +217,49 @@ export default function TerminalPanel({
 				paddingBottom: "max(env(safe-area-inset-bottom), var(--kb-inset))",
 			}}
 		>
-			<div
-				role="tablist"
-				aria-label={t("terminal.title")}
-				className="focus-inset flex shrink-0 items-center gap-0.5 overflow-x-auto border-border border-b px-1.5 py-1.5"
-			>
-				{order.map((id) => {
-					const e = terminals[id];
-					if (!e) return null;
-					const selected = id === activeId;
-					const dot = tabTone(e);
-					return (
-						<div
-							key={id}
-							className={`group flex shrink-0 items-center rounded-md transition-colors duration-150 ${selected ? "bg-hover" : "hover:bg-hover/60"}`}
-						>
-							<button
-								type="button"
-								role="tab"
-								aria-selected={selected}
-								data-terminal-tab={id}
-								title={`${titleOf(e.info)} · ${t(`terminal.kind.${e.info.kind}`)}${e.attention ? ` · ${t("terminal.needsInput")}` : ""}`}
-								className={tabClass(selected)}
-								onClick={() => terminalHub.activate(threadId, id)}
+			{/* 标签多了只在标签区内横向滚动；「新建终端」钉在右侧，不随标签被挤出可视区 */}
+			<div className="flex shrink-0 items-center gap-0.5 border-border border-b px-1.5 py-1.5">
+				<div
+					ref={tabsRef}
+					role="tablist"
+					aria-label={t("terminal.title")}
+					className="focus-inset flex min-w-0 items-center gap-0.5 overflow-x-auto [scrollbar-width:none]"
+				>
+					{order.map((id) => {
+						const e = terminals[id];
+						if (!e) return null;
+						const selected = id === activeId;
+						const dot = tabTone(e);
+						return (
+							<div
+								key={id}
+								className={`group flex shrink-0 items-center rounded-md transition-colors duration-150 ${selected ? "bg-hover" : "hover:bg-hover/60"}`}
 							>
-								<StatusDot tone={dot.tone} pulse={dot.pulse} />
-								<span className="max-w-36 truncate">{titleOf(e.info)}</span>
-							</button>
-							<button
-								type="button"
-								aria-label={t("terminal.close")}
-								title={t("terminal.close")}
-								className={`-ml-1.5 mr-0.5 inline-flex h-5 w-5 items-center justify-center rounded text-faint transition-opacity hover:bg-active hover:text-fg ${selected ? "" : "opacity-60 group-hover:opacity-100"}`}
-								onClick={() => void terminalHub.close(threadId, id)}
-							>
-								<Icon name="close" size={11} />
-							</button>
-						</div>
-					);
-				})}
+								<button
+									type="button"
+									role="tab"
+									aria-selected={selected}
+									data-terminal-tab={id}
+									title={`${titleOf(e.info)} · ${t(`terminal.kind.${e.info.kind}`)}${e.attention ? ` · ${t("terminal.needsInput")}` : ""}`}
+									className={tabClass(selected)}
+									onClick={() => terminalHub.activate(threadId, id)}
+								>
+									<StatusDot tone={dot.tone} pulse={dot.pulse} />
+									<span className="max-w-36 truncate">{titleOf(e.info)}</span>
+								</button>
+								<button
+									type="button"
+									aria-label={t("terminal.close")}
+									title={t("terminal.close")}
+									className={`-ml-1.5 mr-0.5 inline-flex h-5 w-5 items-center justify-center rounded text-faint transition-opacity hover:bg-active hover:text-fg ${selected ? "" : "opacity-60 group-hover:opacity-100"}`}
+									onClick={() => void terminalHub.close(threadId, id)}
+								>
+									<Icon name="close" size={11} />
+								</button>
+							</div>
+						);
+					})}
+				</div>
 				<button
 					type="button"
 					aria-label={t("terminal.newShell")}
