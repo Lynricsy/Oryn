@@ -471,6 +471,32 @@ describe("服务小节", () => {
 		expect(line()).toHaveTextContent(i18n.t("panel.stillFailing"));
 	});
 
+	it("重启中打开的日志：提示行恢复收起后仍开着；服务被移除才关", async () => {
+		const { setWorker } = mountFault("starting");
+		await clickRestart();
+		fireEvent.click(screen.getByRole("button", { name: i18n.t("env.log") }));
+		await act(() => vi.advanceTimersByTimeAsync(0));
+		// 同一个节点：提示行收起时对话框没有重挂
+		const dialog = screen.getByRole("dialog");
+		await setWorker("running");
+		await act(() => vi.advanceTimersByTimeAsync(RESTART_STABLE_MS));
+		expect(line()).toHaveTextContent(i18n.t("panel.recovered"));
+		await act(() => vi.advanceTimersByTimeAsync(RESTART_RECOVERED_MS));
+		expect(line()).toBeUndefined();
+		expect(screen.getByRole("dialog")).toBe(dialog);
+		const o = orb();
+		getThreadStore(THREAD)
+			.getState()
+			.patchLocal({
+				orb: {
+					...o,
+					services: o.services?.filter((s) => s.name !== "worker"),
+				},
+			});
+		await act(() => vi.advanceTimersByTimeAsync(0));
+		expect(screen.queryByRole("dialog")).toBeNull();
+	});
+
 	it("orb 不是 ready 时服务状态不作数：没有故障提示", () => {
 		vi.spyOn(realtime, "cmd").mockResolvedValue({ subagents: [] } as never);
 		getThreadStore(THREAD)

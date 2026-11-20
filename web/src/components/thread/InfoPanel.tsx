@@ -332,8 +332,22 @@ function FaultNotice({
 		);
 		return () => window.clearTimeout(timer);
 	}, [step, status]);
+	// 日志对话框跟着服务走，不跟提示行：重启中打开的日志在「已恢复」收起后仍开着；服务被移除才关
+	const logOpen = log !== null && orb.services?.some((x) => x.name === log);
+	useEffect(() => {
+		if (log !== null && !logOpen) setLog(null);
+	}, [log, logOpen]);
+	const dialog = logOpen && (
+		<ServiceLogDialog orbId={orb.id} name={log} onClose={() => setLog(null)} />
+	);
+	// 两种返回都把对话框放在第一格，位置不变，提示行收起时它不会重挂（日志不重新加载）
 	if (!s || !name) {
-		return failedRun ? <EnvFault orbId={orb.id} run={failedRun} /> : null;
+		return (
+			<>
+				{dialog}
+				{failedRun ? <EnvFault orbId={orb.id} run={failedRun} /> : null}
+			</>
+		);
 	}
 	const restart = () => {
 		setWatch({ name, step: "sending" });
@@ -371,6 +385,7 @@ function FaultNotice({
 	const who = <b className="font-semibold">{name}</b>;
 	return (
 		<>
+			{dialog}
 			{pending ? (
 				<FaultLine
 					mark="pending"
@@ -427,13 +442,6 @@ function FaultNotice({
 			<div className="empty:hidden">
 				<ErrorText error={action.error} />
 			</div>
-			{log && (
-				<ServiceLogDialog
-					orbId={orb.id}
-					name={log}
-					onClose={() => setLog(null)}
-				/>
-			)}
 		</>
 	);
 }
