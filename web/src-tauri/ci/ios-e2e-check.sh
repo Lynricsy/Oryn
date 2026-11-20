@@ -91,8 +91,8 @@ cp -R "$here/ios-e2e" "$work/proj"
 xcb=(-project "$work/proj/OrynE2E.xcodeproj" -scheme OrynE2E -destination "id=$udid" -derivedDataPath "$work/dd")
 xcodebuild build-for-testing "${xcb[@]}" -quiet
 
-# mock Web UI 的静态服务（:: 同时收 IPv4 / IPv6，localhost 解析到哪个都能连上）
-(cd "$web" && exec bunx vite preview --outDir "$dist" --host :: --port "$port" --strictPort) >"$out/preview.log" 2>&1 &
+# mock Web UI 仍由 Vite 预览；探针把网页滚动、焦点与触摸记到单独的制品，和 sink.trace 按 ts 对齐。
+(cd "$web" && exec bun "$here/ios-e2e-preview.mjs" "$dist" "$port" "$out/sink-web.jsonl") >"$out/preview.log" 2>&1 &
 server=$!
 for _ in $(seq 1 60); do
   curl -fsS -o /dev/null "$origin/" && break
