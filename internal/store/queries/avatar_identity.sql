@@ -67,3 +67,11 @@ SELECT new_thread_target FROM owner WHERE id = 1;
 
 -- name: SetOwnerNewThreadTarget :execrows
 UPDATE owner SET new_thread_target = @new_thread_target WHERE id = 1;
+
+-- Selection actions: custom context-menu prompts for selected text, a JSON array of {id, name, prompt}.
+
+-- name: GetOwnerSelectionActions :one
+SELECT selection_actions FROM owner WHERE id = 1;
+
+-- name: SetOwnerSelectionActions :execrows
+UPDATE owner SET selection_actions = @selection_actions WHERE id = 1;

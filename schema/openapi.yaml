@@ -2315,6 +2315,40 @@ paths:
               schema: { $ref: '#/components/schemas/ComposerPrefs' }
         default: { $ref: '#/components/responses/Error' }
 
+  /api/v1/settings/selection-actions:
+    get:
+      tags: [settings]
+      operationId: getSelectionActions
+      summary: 自定义选区快捷动作（选中文字后出现在右键菜单里）
+      responses:
+        '200':
+          description: 当前列表（尚未初始化所有者时为空列表）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SelectionActions' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [settings]
+      operationId: putSelectionActions
+      summary: 设置自定义选区快捷动作（整体替换）
+      description: 名称与提示词去首尾空白后保存；id 不得重复。尚未初始化所有者 → 409。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SelectionActions' }
+      responses:
+        '200':
+          description: 写入后的列表（已规整）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SelectionActions' }
+        default: { $ref: '#/components/responses/Error' }
+
   /api/v1/models/catalog:
     get:
       tags: [settings]
@@ -8183,6 +8217,25 @@ components:
           type: string
           enum: [role, assistant]
           description: 首屏输入框默认选中的对象：`role` = config 里的 default role（普通 agent）；`assistant` = 全局助手
+    SelectionAction:
+      type: object
+      required: [id, name, prompt]
+      properties:
+        id: { type: string, pattern: '^[a-z0-9]{8}$' }
+        name: { type: string, minLength: 1, maxLength: 24 }
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: 对选中内容的指令，连同选区一起交给模型
+    SelectionActions:
+      type: object
+      required: [actions]
+      properties:
+        actions:
+          type: array
+          maxItems: 12
+          items: { $ref: '#/components/schemas/SelectionAction' }
     ModelCatalog:
       type: object
       required: [models, fetchedAt, stale]

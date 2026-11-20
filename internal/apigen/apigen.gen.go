@@ -9654,6 +9654,20 @@ type SecretPut struct {
 	Value string     `json:"value"`
 }
 
+// SelectionAction defines model for SelectionAction.
+type SelectionAction struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+
+	// Prompt 对选中内容的指令，连同选区一起交给模型
+	Prompt string `json:"prompt"`
+}
+
+// SelectionActions defines model for SelectionActions.
+type SelectionActions struct {
+	Actions []SelectionAction `json:"actions"`
+}
+
 // SetupPhase defines model for SetupPhase.
 type SetupPhase string
 
@@ -12435,6 +12449,9 @@ type PutGitIdentityJSONRequestBody = GitIdentity
 
 // PutRoleIdentityJSONRequestBody defines body for PutRoleIdentity for application/json ContentType.
 type PutRoleIdentityJSONRequestBody = RoleIdentityInput
+
+// PutSelectionActionsJSONRequestBody defines body for PutSelectionActions for application/json ContentType.
+type PutSelectionActionsJSONRequestBody = SelectionActions
 
 // PutUserIdentityJSONRequestBody defines body for PutUserIdentity for application/json ContentType.
 type PutUserIdentityJSONRequestBody = AvatarIdentity
@@ -15540,6 +15557,12 @@ type ServerInterface interface {
 	// PutRoleIdentity 设置或清除一个 role 的头像（两个头像字段都省略 = 清除）
 	// (PUT /api/v1/settings/role-identities)
 	PutRoleIdentity(w http.ResponseWriter, r *http.Request)
+	// GetSelectionActions 自定义选区快捷动作（选中文字后出现在右键菜单里）
+	// (GET /api/v1/settings/selection-actions)
+	GetSelectionActions(w http.ResponseWriter, r *http.Request)
+	// PutSelectionActions 设置自定义选区快捷动作（整体替换）
+	// (PUT /api/v1/settings/selection-actions)
+	PutSelectionActions(w http.ResponseWriter, r *http.Request)
 	// GetUserIdentity 用户头像（用户回合右侧与侧栏页脚显示）
 	// (GET /api/v1/settings/user-identity)
 	GetUserIdentity(w http.ResponseWriter, r *http.Request)
@@ -17277,6 +17300,18 @@ func (_ Unimplemented) ListRoleIdentities(w http.ResponseWriter, r *http.Request
 // PutRoleIdentity 设置或清除一个 role 的头像（两个头像字段都省略 = 清除）
 // (PUT /api/v1/settings/role-identities)
 func (_ Unimplemented) PutRoleIdentity(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetSelectionActions 自定义选区快捷动作（选中文字后出现在右键菜单里）
+// (GET /api/v1/settings/selection-actions)
+func (_ Unimplemented) GetSelectionActions(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutSelectionActions 设置自定义选区快捷动作（整体替换）
+// (PUT /api/v1/settings/selection-actions)
+func (_ Unimplemented) PutSelectionActions(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -24928,6 +24963,34 @@ func (siw *ServerInterfaceWrapper) PutRoleIdentity(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// GetSelectionActions operation middleware
+func (siw *ServerInterfaceWrapper) GetSelectionActions(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSelectionActions(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutSelectionActions operation middleware
+func (siw *ServerInterfaceWrapper) PutSelectionActions(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutSelectionActions(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetUserIdentity operation middleware
 func (siw *ServerInterfaceWrapper) GetUserIdentity(w http.ResponseWriter, r *http.Request) {
 
@@ -27724,6 +27787,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/api/v1/settings/composer", wrapper.PutComposerPrefs)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/settings/selection-actions", wrapper.GetSelectionActions)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/settings/selection-actions", wrapper.PutSelectionActions)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/models/catalog", wrapper.GetModelCatalog)

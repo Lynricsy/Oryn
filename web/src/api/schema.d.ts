@@ -1918,6 +1918,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/settings/selection-actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 自定义选区快捷动作（选中文字后出现在右键菜单里） */
+        get: operations["getSelectionActions"];
+        /**
+         * 设置自定义选区快捷动作（整体替换）
+         * @description 名称与提示词去首尾空白后保存；id 不得重复。尚未初始化所有者 → 409。
+         */
+        put: operations["putSelectionActions"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/models/catalog": {
         parameters: {
             query?: never;
@@ -6278,6 +6299,15 @@ export interface components {
              * @enum {string}
              */
             defaultTarget: "role" | "assistant";
+        };
+        SelectionAction: {
+            id: string;
+            name: string;
+            /** @description 对选中内容的指令，连同选区一起交给模型 */
+            prompt: string;
+        };
+        SelectionActions: {
+            actions: components["schemas"]["SelectionAction"][];
         };
         ModelCatalog: {
             models: components["schemas"]["CatalogModel"][];
@@ -13749,6 +13779,52 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ComposerPrefs"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getSelectionActions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前列表（尚未初始化所有者时为空列表） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SelectionActions"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putSelectionActions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SelectionActions"];
+            };
+        };
+        responses: {
+            /** @description 写入后的列表（已规整） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SelectionActions"];
                 };
             };
             default: components["responses"]["Error"];
