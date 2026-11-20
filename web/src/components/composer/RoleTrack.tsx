@@ -551,7 +551,7 @@ const SHOW_MS = 4000;
 /** 浮层淡出时长；首屏胶囊的收起 / 展开同用这个时长。 */
 export const FADE_MS = 180;
 
-/** 浮出状态：`hidden` 不在 DOM 里，`leaving` 播完淡出（FADE_MS）后回到 `hidden`。 */
+/** 浮出状态：`hidden` 不在 DOM 里，`leaving` 播完收起动画（FADE_MS）后回到 `hidden`。 */
 export type Phase = "hidden" | "shown" | "leaving";
 
 /**
@@ -676,9 +676,10 @@ export function RoleTrack({
 				className="pointer-events-none absolute left-1/2 z-30 flex max-w-[calc(100vw-1.5rem)] -translate-x-1/2 justify-center"
 				style={{ bottom: `calc(100% + ${above + 10}px)` }}
 			>
+				{/* 收起只缩小下沉、不淡出：玻璃在 opacity < 1 时模糊会被截断，读起来像模糊忽有忽无 */}
 				{/* biome-ignore lint/a11y/noStaticElementInteractions: 悬停/聚焦时暂停自动淡出 */}
 				<div
-					className={`glass pop-in pointer-events-auto flex min-w-0 items-center rounded-full p-1 transition-opacity duration-[180ms] ease-out ${phase === "leaving" ? "opacity-0" : ""}`}
+					className={`glass pop-in pointer-events-auto flex min-w-0 items-center rounded-full p-1 transition-[translate,scale] duration-[180ms] ease-out ${phase === "leaving" ? "translate-y-1 scale-95" : ""}`}
 					onPointerEnter={() => {
 						hovering.current = true;
 						clearTimeout(timer.current);

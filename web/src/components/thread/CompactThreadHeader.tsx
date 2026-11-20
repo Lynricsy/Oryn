@@ -603,8 +603,9 @@ function TitleMenu({
 			aria-label={t("titleMenu.label", { title: label })}
 			data-testid="title-menu"
 			onKeyDown={onKeyDown}
-			// 与标题胶囊等宽、挂在它正下方；最高到屏幕一半多一点，其余滚动
-			className={`title-menu absolute inset-x-0 top-full z-10 mt-1.5 max-h-[min(30rem,calc(100dvh-8rem))] origin-top overflow-y-auto overscroll-contain rounded-[22px] p-1.5 transition-[opacity,scale,translate] duration-150 ease-[var(--ease)] ${shown ? "translate-y-0 scale-100 opacity-100" : "-translate-y-1 scale-95 opacity-0"}`}
+			// 与标题胶囊等宽、挂在它正下方；最高到屏幕一半多一点，其余滚动。
+			// 开合只动位移与缩放、收起时直接隐藏：opacity < 1 会让菜单里的玻璃模糊被截断
+			className={`title-menu absolute inset-x-0 top-full z-10 mt-1.5 max-h-[min(30rem,calc(100dvh-8rem))] origin-top overflow-y-auto overscroll-contain rounded-[22px] p-1.5 transition-[scale,translate] duration-150 ease-[var(--ease)] ${shown ? "translate-y-0 scale-100" : "invisible -translate-y-1 scale-95"}`}
 		>
 			{page ? (
 				<>
