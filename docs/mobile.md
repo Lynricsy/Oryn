@@ -211,6 +211,8 @@ iOS 26+ 的手机布局（下沉侧栏）用原生的底栏与线程页头，协
 - **页头**（侧栏钮 / 标题胶囊 / 视图钮）在 `SinkFollow` 的同一次 KVO 回调里随 `contentOffset` 平移，与卡片同进程同帧，不需要对时；卡片离开关闭位时只显示不接触摸。网页的 `host_header_show` 只剩透明度（`{alpha, ms}`）：只有网页内容（对话框、弹层）盖住静止关闭的页头时原生才让位（`alpha 0`），侧栏被要求打开的过程中不做遮挡判定。
 - `host_sink_set` 生效前，非空的 `host_tab_bar_set` / `host_header_set` 一律返回 `unsupported`。bridge ≤ 7 的壳（页头靠跨进程对时跟随卡片）网页一律用网页页头与网页底栏，卡片用网页手势。
 
-CI 的 `ios-check` 在 iOS 26+ 模拟器里跑 `ci/ios-header-check.sh`（原生页头演示：插件直接摆出页头与菜单，比像素并探测触摸归属）与 `ci/ios-e2e-check.sh`（端到端：mock Web UI + 远程能力 + XCUITest 真实触摸，底栏的开合、按住拖动、原生点选与横滑，页头的接管、菜单、对话框让位与随卡片开合；事件日志断言、无障碍树断言与逐区域像素比较，见脚本文件头）。debug 包把原生程序化开合的轨迹记进事件日志（`sink.trace`：start / jump / noop / busy / done / cancel），脚本据此断言按住拖动期间没有程序化开合、开合到位后不回弹。底栏垫在网页之下，没有真实网页就看不到，所以只在端到端里检查。网页侧的行为在浏览器里由 `bun run accept:m20`（本机 Chromium 模拟 iOS 壳）验收。
+CI 的 `ios-check` 在 iOS 26+ 模拟器里跑 `ci/ios-header-check.sh`（原生页头演示：插件直接摆出页头与菜单，比像素并探测触摸归属）与 `ci/ios-e2e-check.sh`（端到端：mock Web UI + 远程能力 + XCUITest 真实触摸，底栏的开合、按住拖动、原生点选与横滑，页头的接管、菜单、对话框让位与随卡片开合；事件日志断言、无障碍树断言与逐区域像素比较，见脚本文件头）。事件日志里两类断言分开看：按住拖动期间不能出现 `sink.show`（网页发起的程序化开合）；开合到位之后不能再有从别处落回终点的 `sink.trace` `jump` / `start`（debug 包记下的原生开合轨迹：start / jump / noop / busy / done / cancel），即卡片到位后被带走、靠兜底收场的回弹。底栏垫在网页之下，没有真实网页就看不到，所以只在端到端里检查。网页侧的行为在浏览器里由 `bun run accept:m20`（本机 Chromium 模拟 iOS 壳）验收。
+
+CI 不覆盖运动途中的逐帧对齐：按住拖动只在卡片停住后取样比对页头与卡片的位置，开合只看到位后的截图，拖动、甩动、开合动画过程中页头 / 底栏与卡片是否每一帧都对齐，留给真机验收（`docs/plan-m20.md` 步骤 4.3）。
 
 尚未完成：APNs 推送（服务端 `pushSenders["apns"]`、`PushSubscriptionInput` 增加 `kind: apns`）；Share Extension（App Group 容器 + 同一条上传预填流程）；Universal Links（`/.well-known/apple-app-site-association`）；Keychain 令牌存储的真机验证；iPhone / iPad 真机验收。
