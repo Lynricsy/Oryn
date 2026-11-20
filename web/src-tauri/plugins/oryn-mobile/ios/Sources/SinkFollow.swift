@@ -73,7 +73,7 @@ final class SinkFollow {
   /// 程序化平滑开合（时长与网页 `--ease` 开合一致的 260ms，ease-out 三次曲线）。
   private static let duration: CFTimeInterval = 0.26
   private var link: CADisplayLink?
-  private var anim: (from: CGFloat, to: CGFloat, start: CFTimeInterval)?
+  private var anim: (from: CGFloat, open: Bool, start: CFTimeInterval)?
 
   init(webview: WKWebView, onMove: @escaping (CGFloat) -> Void) {
     let scroll = webview.scrollView
@@ -96,12 +96,22 @@ final class SinkFollow {
     update()
   }
 
+  deinit {
+    link?.invalidate()
+  }
+
   /// 打开位 / 关闭位的 contentOffset.x（含系统调整的左右内边距：横屏时安全区可能不为 0）。
   private func ends(_ s: UIScrollView) -> (open: CGFloat, closed: CGFloat) {
     let inset = s.adjustedContentInset
     let open = -inset.left
     let closed = max(open, s.contentSize.width + inset.right - s.bounds.width)
     return (open, closed)
+  }
+
+  /// 横竖屏切换时几何可能变；正在推进的动画按当帧的边界落位。
+  private func endpoint(_ s: UIScrollView, open: Bool) -> CGFloat {
+    let range = ends(s)
+    return open ? range.open : range.closed
   }
 
   private func update() {
@@ -161,7 +171,7 @@ final class SinkFollow {
   func show(open: Bool, animated: Bool) {
     stop(cancelled: true)
     guard let s = scroll else { return }
-    let x = open ? ends(s).open : ends(s).closed
+    let x = endpoint(s, open: open)
     guard abs(s.contentOffset.x - x) > 0.5 else {
       onTrace?("noop", s.contentOffset.x, x, nil)
       return
@@ -178,7 +188,7 @@ final class SinkFollow {
       return
     }
     onTrace?("start", s.contentOffset.x, x, nil)
-    anim = (s.contentOffset.x, x, CACurrentMediaTime())
+    anim = (s.contentOffset.x, open, CACurrentMediaTime())
     let link = CADisplayLink(target: SinkTicker(self), selector: #selector(SinkTicker.tick(_:)))
     link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
     link.add(to: .main, forMode: .common)
@@ -192,13 +202,15 @@ final class SinkFollow {
     }
     let t = min((link.targetTimestamp - a.start) / Self.duration, 1)
     let eased = 1 - pow(1 - t, 3)
-    s.setContentOffset(CGPoint(x: a.from + (a.to - a.from) * eased, y: s.contentOffset.y), animated: false)
+    let to = endpoint(s, open: a.open)
+    s.setContentOffset(CGPoint(x: a.from + (to - a.from) * eased, y: s.contentOffset.y), animated: false)
     if t >= 1 { stop(cancelled: false) }
   }
 
   private func stop(cancelled: Bool) {
     if let a = anim {
-      onTrace?(cancelled ? "cancel" : "done", scroll?.contentOffset.x ?? -1, a.to, nil)
+      let to = scroll.map { endpoint($0, open: a.open) } ?? -1
+      onTrace?(cancelled ? "cancel" : "done", scroll?.contentOffset.x ?? -1, to, nil)
     }
     link?.invalidate()
     link = nil
