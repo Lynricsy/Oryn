@@ -62,6 +62,8 @@ import { Transcript } from "../components/transcript/Transcript";
 import { WorkingFooter } from "../components/transcript/WorkingFooter";
 import { Sheet } from "../components/ui/data";
 import { Spinner } from "../components/ui/primitives";
+import { useContextTarget } from "../lib/context-menu/registry";
+import { anchorOf } from "../lib/context-menu/selection";
 import { usePresence } from "../lib/presence";
 import {
 	useBreakpoint,
@@ -445,8 +447,25 @@ export function ThreadScreen({
 		dockRef.current?.querySelector("textarea")?.focus({ preventScroll: true });
 	}, [morph]);
 
+	// 线程页里 AI 动作（旁路提问）归这个线程；协调对话服务端拒绝 btw，所以没有。
+	// 转录、文件等子区域各自认领选区；落在别处的选区只给最基本的上下文
+	const ctxRef = useContextTarget<HTMLDivElement>({
+		askThreadId: coordinator ? null : threadId,
+		selection: (sel, req) => ({
+			threadId: req.askThreadId,
+			text: sel.text,
+			before: "",
+			after: "",
+			source: { kind: "other" },
+			anchor: anchorOf(sel, req.x, req.y),
+		}),
+	});
+
 	return (
-		<div className="@container relative flex h-full min-w-0 flex-1">
+		<div
+			ref={ctxRef}
+			className="@container relative flex h-full min-w-0 flex-1"
+		>
 			{/*
 			 * 对话纸面不做圆角裁剪（overflow-visible）：Chromium 里圆角 overflow 裁剪的后代 backdrop-filter 上的 mask-image
 			 * 会被忽略，页头渐进模糊就成了整条硬切的色带。圆角裁剪只给转录（下面的 morph-late 层），页头纱与输入坞渐隐各自收角。

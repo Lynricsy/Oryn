@@ -505,7 +505,10 @@ function UserMessage({
 	const shown = oryn ? oryn.body : body;
 	const quoted = splitLeadingQuote(shown);
 	return (
-		<div className="group/msg flex flex-col items-end gap-1">
+		<div
+			className="group/msg flex flex-col items-end gap-1"
+			data-ask-scope="user"
+		>
 			{(irc || synthetic || steer || oryn) && (
 				<div className="flex max-w-full flex-wrap justify-end gap-1">
 					{oryn && (
@@ -597,6 +600,7 @@ function ThinkingBlock({
 			</button>
 			{open && (
 				<div
+					data-ask-scope="thinking"
 					className={`mt-0.5 mb-1.5 whitespace-pre-wrap break-words pl-[22px] text-muted text-xs leading-relaxed ${streaming ? "stream-caret" : ""}`}
 				>
 					{text}
@@ -909,6 +913,11 @@ function AssistantMessage({
 				className={b.type === "text" && streaming ? "stream-caret" : undefined}
 				data-tool-call-id={
 					b.type === "toolCall" && typeof b.id === "string" ? b.id : undefined
+				}
+				data-tool-name={
+					b.type === "toolCall" && typeof b.name === "string"
+						? b.name
+						: undefined
 				}
 				style={marginTop ? { marginTop } : undefined}
 			>

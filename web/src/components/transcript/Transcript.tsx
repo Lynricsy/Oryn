@@ -25,6 +25,11 @@ import {
 	useRoleIdentities,
 } from "../../api/identity-queries";
 import { createAssistantConversation } from "../../api/space-queries";
+import {
+	resolveAskThread,
+	useContextTarget,
+} from "../../lib/context-menu/registry";
+import { anchorOf } from "../../lib/context-menu/selection";
 import { BUILTIN_ROLE_NAMES, type BuiltinRole } from "../../lib/model-roles";
 import { describeOrynHeader, parseOrynMessage } from "../../lib/oryn-message";
 import {
@@ -74,6 +79,7 @@ import { NoticeLine } from "./NoticeLine";
 import { clearPendingPrompt, usePendingPrompt } from "./pending-prompt";
 import { QuoteBar, QuoteChip, useQuoteSelection } from "./quote-selection";
 import { findRevealHit, registerRevealer } from "./reveal";
+import { transcriptSelection } from "./selection-context";
 
 /** 滚轮 / 键盘 / 触摸之后多久内的滚动算作用户在翻动（含平滑滚动的余程）。 */
 const INTENT_MS = 600;
@@ -755,6 +761,25 @@ export const Transcript = memo(function Transcript({
 		insetTop,
 		onHold,
 		onQuote: (text) => patchComposerDraft(threadId, { quote: { text } }),
+		// 不传 quote：胶囊的引用仍走上面的 onQuote
+		describe: (dom) =>
+			transcriptSelection(dom, {
+				storeThreadId: threadId,
+				askThreadId: resolveAskThread(scrollRef.current),
+				fallback: anchorOf(dom, 0, 0),
+			}),
+	});
+	// 右键 / 菜单键：转录里的选区交给旁路提问（AI 动作归哪个线程由外层页面登记）
+	const ctxRef = useContextTarget<HTMLDivElement>({
+		selection: (sel, req) =>
+			transcriptSelection(sel, {
+				storeThreadId: threadId,
+				askThreadId: req.askThreadId,
+				quote: readOnly
+					? undefined
+					: (text) => patchComposerDraft(threadId, { quote: { text } }),
+				fallback: anchorOf(null, req.x, req.y),
+			}),
 	});
 	// 手机与触屏：系统选区菜单盖在选区附近，入口改放在输入坞上方
 	const bp = useBreakpoint();
@@ -1049,7 +1074,10 @@ export const Transcript = memo(function Transcript({
 	return (
 		<div className="relative min-h-0 flex-1">
 			<div
-				ref={scrollRef}
+				ref={(el) => {
+					scrollRef.current = el;
+					ctxRef(el);
+				}}
 				onScroll={onScroll}
 				className="h-full overflow-y-auto overscroll-contain"
 				style={{
@@ -1082,14 +1110,20 @@ export const Transcript = memo(function Transcript({
 						{rendered}
 					</ActiveToolCallsContext.Provider>
 					{selection.quote && !quoteBar && (
-						<QuoteChip quote={selection.quote} onTake={selection.take} />
+						<QuoteChip
+							quote={selection.quote}
+							onTake={selection.take}
+							onExplain={selection.explain}
+						/>
 					)}
 				</div>
 			</div>
-			{quoteBar && (
+			{quoteBar && selection.quote && (
 				<QuoteBar
+					quote={selection.quote}
 					bottom={trayTop + 8}
 					onTake={selection.take}
+					onExplain={selection.explain}
 					onDismiss={selection.dismiss}
 				/>
 			)}
