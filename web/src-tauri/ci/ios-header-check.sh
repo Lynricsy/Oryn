@@ -84,6 +84,15 @@ probe "hidden：不接任何触摸" h-hidden '(.center or .lead or .title or .tr
 probe "title：菜单开着时整屏接管" h-title '.center and .title'
 probe "trail：菜单开着时整屏接管" h-trail '.center and .trail'
 
+# 基线兜底：卡顿的 CI 机器上 launcher.ready 之后连接页可能还要好几秒才画出来，基线会截成稳定的白屏。
+# hidden 模式什么都不画，页头下方那块与基线必须一致；不一致就是基线没画完，重截（最多两次）
+for _ in 1 2; do
+  base_diff=$(diff_ratio h-base h-hidden "$tx" "$(calc "$ty + $th + 40")" "$tw" 120)
+  awk -v r="$base_diff" 'BEGIN { exit !(r > 0.003) }' || break
+  echo "::warning::基线与 hidden 的页头下方不一致（${base_diff}），基线可能没画完，重截"
+  run h-base launcher.ready
+done
+
 # 面板顶边：胶囊下方 14pt（面板与胶囊的间距之下），左右各让出 8pt 避开圆角
 py=$(calc "$ty + $th + 14")
 expect "hidden：侧栏钮" "$(diff_ratio h-base h-hidden "$lx" "$ly" "$lw" "$lh")" hidden
