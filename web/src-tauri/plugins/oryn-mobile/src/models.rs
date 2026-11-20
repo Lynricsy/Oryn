@@ -467,12 +467,15 @@ pub enum Event {
         #[serde(default)]
         id: Option<String>,
     },
-    /// 根滚动跟随的程序化开合轨迹（iOS，`SinkFollow`）：`op` 为 start / jump / noop / busy / done / cancel，
-    /// `x` 是当时的 contentOffset.x、`to` 是目的地。只供 debug 包的事件日志（CI 端到端据此判断原生动画跑没跑）。
+    /// 根滚动的轨迹（iOS，`SinkFollow`）：`op` 为 start / jump / noop / busy / done / cancel（程序化开合），
+    /// 或 move（不是程序化开合、也不是手指与惯性造成的位移，带 `stack` 调用栈，查卡片被谁挪走）；
+    /// `x` 是当时的 contentOffset.x、`to` 是目的地（move 为位移后的位置）。只供 debug 包的事件日志（CI 端到端）。
     Sink {
         op: String,
         x: f64,
         to: f64,
+        #[serde(default)]
+        stack: Option<String>,
     },
 }
 

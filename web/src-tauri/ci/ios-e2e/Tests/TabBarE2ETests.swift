@@ -51,6 +51,8 @@ final class TabBarE2ETests: E2ECase {
     var retry: [String: Any] = [:]
     _ = poll(timeout: 8) { !sink.toggle.exists }
     if sink.toggle.exists, abs(sink.toggle.frame.minX - sink.home) <= 1 {
+      // 先写进 XCTest 日志：两次都没效果时 expectSink 失败，checkpoint 不会再把矩形带给脚本
+      print("E2E open：第一下轻点没有效果，重点一次；点击前按钮矩形 \(before)，现在 \(sink.toggle.frame)")
       retry = ["retry": true, "first": "\(before)", "second": "\(sink.toggle.frame)"]
       sink.toggle.tap()
     }
