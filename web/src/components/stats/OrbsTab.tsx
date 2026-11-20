@@ -176,8 +176,9 @@ export function OrbsTab({
 					<Legend items={series} />
 				</div>
 			</Card>
+			{/* 两列卡片按内容高度顶对齐：短表不被长表撑出大片空白 */}
 			<div
-				className={`grid gap-3 ${bp === "expanded" ? "grid-cols-2" : "grid-cols-1"}`}
+				className={`grid items-start gap-3 ${bp === "expanded" ? "grid-cols-2" : "grid-cols-1"}`}
 			>
 				<BreakdownTable
 					testId="table-type"

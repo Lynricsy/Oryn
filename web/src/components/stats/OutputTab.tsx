@@ -144,7 +144,7 @@ export function OutputTab({
 				</div>
 			</Card>
 			<div
-				className={`grid gap-3 ${bp === "expanded" ? "grid-cols-2" : "grid-cols-1"}`}
+				className={`grid items-start gap-3 ${bp === "expanded" ? "grid-cols-2" : "grid-cols-1"}`}
 			>
 				<BreakdownTable
 					testId="table-project"
