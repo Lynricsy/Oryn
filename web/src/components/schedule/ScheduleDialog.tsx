@@ -23,6 +23,7 @@ import {
 	type ReactNode,
 	useCallback,
 	useEffect,
+	useId,
 	useMemo,
 	useRef,
 	useState,
@@ -70,6 +71,7 @@ import {
 import { Badge, Callout, type Tone } from "../ui/data";
 import {
 	Button,
+	Checkbox,
 	Dialog,
 	describeError,
 	ErrorText,
@@ -493,6 +495,7 @@ function ScheduleForm({
 			setS((prev) => ({ ...prev, [k]: v })),
 		[],
 	);
+	const handId = useId();
 	// 只调思考级别（或 W4 退回默认）不算指定了对象；换到别的 role / 模型才算
 	const onTarget = useCallback(
 		(v: Target) =>
@@ -640,21 +643,28 @@ function ScheduleForm({
 			}
 			footer={
 				<>
-					{existing && (
-						<Button
-							variant="danger"
-							className="mr-auto"
-							disabled={del.isPending}
-							onClick={() => {
-								if (!window.confirm(t("schedule.deleteConfirm"))) return;
-								void del
-									.mutateAsync(existing.id)
-									.then(onClose, () => undefined);
-							}}
-						>
-							{t("common.delete")}
-						</Button>
-					)}
+					{/* 启用是整条定时的状态，不是某个运行参数：放在页脚左侧，与删除同属「这条定时」的操作 */}
+					<div className="mr-auto flex items-center gap-3">
+						{existing && (
+							<Button
+								variant="danger"
+								disabled={del.isPending}
+								onClick={() => {
+									if (!window.confirm(t("schedule.deleteConfirm"))) return;
+									void del
+										.mutateAsync(existing.id)
+										.then(onClose, () => undefined);
+								}}
+							>
+								{t("common.delete")}
+							</Button>
+						)}
+						<Toggle
+							checked={s.enabled}
+							onChange={(v) => set("enabled", v)}
+							label={t("schedule.enabled")}
+						/>
+					</div>
 					{existing && (
 						<Button
 							icon="play"
@@ -922,6 +932,7 @@ function ScheduleForm({
 				</Field>
 				{newThread && (
 					<>
+						{/* 在哪跑、和谁跑：两个都只占半行，并排放 */}
 						<div className="grid gap-3 sm:grid-cols-2">
 							<Field label={t("schedule.orbType")}>
 								<Select
@@ -936,12 +947,15 @@ function ScheduleForm({
 									))}
 								</Select>
 							</Field>
-						</div>
-						<div className="flex flex-col gap-1 text-sm">
-							<span className="font-medium text-muted text-xs">
-								{t("schedule.modelLabel")}
-							</span>
-							<TargetField value={s.target} onChange={onTarget} />
+							{/* 胶囊里有按钮与弹层，不能包在 <label> 里 */}
+							<div className="flex min-w-0 flex-col gap-1 text-sm">
+								<span className="font-medium text-muted text-xs">
+									{t("schedule.modelLabel")}
+								</span>
+								<div className="flex min-h-[34px] min-w-0 items-center">
+									<TargetField value={s.target} onChange={onTarget} />
+								</div>
+							</div>
 						</div>
 						<div className="grid gap-3 sm:grid-cols-2">
 							<Field label={t("schedule.overlapLabel")}>
@@ -968,21 +982,26 @@ function ScheduleForm({
 								/>
 							</Field>
 						</div>
-						<Toggle
-							checked={s.handToAssistant}
-							onChange={(v) => set("handToAssistant", v)}
-							label={t("schedule.handToAssistant")}
-						/>
-						<p className="-mt-2 text-faint text-xs">
-							{t("schedule.handToAssistantHint")}
-						</p>
+						{/* 交给助手是运行结果的去向（一个选项），用复选框；与页脚的「启用」开关区分层级 */}
+						<div className="flex items-start gap-2.5">
+							<Checkbox
+								id={handId}
+								className="mt-0.5"
+								checked={s.handToAssistant}
+								onChange={(e) => set("handToAssistant", e.target.checked)}
+								aria-describedby={`${handId}-hint`}
+							/>
+							<div className="flex min-w-0 flex-col gap-0.5 text-sm">
+								<label htmlFor={handId} className="cursor-pointer text-fg">
+									{t("schedule.handToAssistant")}
+								</label>
+								<p id={`${handId}-hint`} className="text-faint text-xs">
+									{t("schedule.handToAssistantHint")}
+								</p>
+							</div>
+						</div>
 					</>
 				)}
-				<Toggle
-					checked={s.enabled}
-					onChange={(v) => set("enabled", v)}
-					label={t("schedule.enabled")}
-				/>
 				{!nameTaken && !conflictError && <ErrorText error={saveError} />}
 				<ErrorText error={runNow.error ?? del.error} />
 				{existing && (
