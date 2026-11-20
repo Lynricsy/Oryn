@@ -412,6 +412,16 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 
 /* ---- 材质与全局类 ---- */
 @layer components {
+	/* 可长按出上下文菜单的对象（lib/context-menu/dispatch.ts）：不弹系统长按菜单；触屏上不让长按选字 */
+	[data-ctx-touch] {
+		-webkit-touch-callout: none;
+	}
+	@media (pointer: coarse) {
+		[data-ctx-touch] {
+			-webkit-user-select: none;
+			user-select: none;
+		}
+	}
 	/* L1 纸面 */
 	.sheet {
 		background: var(--panel);
