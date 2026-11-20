@@ -328,9 +328,9 @@ type thread struct {
 	// 当前监督器，才注销 runner 线程的 SSH 公钥。旧监督器的 exited 由 orbd 在处理新 agent.start 之前发出，即使晚于其应答
 	// 到达，也排在新监督器的 starting / ready 之前——此时它为假，不误删新登记的公钥。
 	statusSinceStart bool
-	failed   bool
-	model    *string
-	thinking *string
+	failed           bool
+	model            *string
+	thinking         *string
 	// copyFrom 非空时，agent 首次启动前先 fs.copyTree ~/.oryn/threads/<copyFrom> → 本线程会话目录（fork copy）。
 	copyFrom string
 	// forkEntry 非空时，agent 就绪后向其发送 fork{entryId}（fork copy / 回退路径）。

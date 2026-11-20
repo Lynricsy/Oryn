@@ -326,6 +326,70 @@ func TestGatewayRunnerThreadKeys(t *testing.T) {
 	}, 5*time.Second, 20*time.Millisecond)
 }
 
+// M21：网关记着每条 runner 连接经哪把公钥认证。同值重复登记（崩溃自重启、幂等 agent.start）不动已有连接；同一线程登记
+// 新公钥（新一代监督器）时经旧公钥认证的连接被关闭，再连只能用新公钥认证；注销线程 / 整台 runner 时已建立的连接关闭。
+func TestGatewayRunnerKeyConnsClosed(t *testing.T) {
+	e := newGwEnv(t, sshgwtest.Options{})
+	e.orb = db.Orb{ID: "orb-gw", Kind: "runner"}
+	e.orbs.put(e.orb)
+	e.runnerThreadRow(t, e.orb.ID, "T-a", nil)
+	ka, pubA := threadSigner(t)
+	ka2, pubA2 := threadSigner(t)
+	require.NoError(t, e.svc.RegisterThreadKey("T-a", e.orb.ID, pubA))
+	closed := func(c *ssh.Client) bool {
+		t.Helper()
+		done := make(chan struct{})
+		go func() { _ = c.Wait(); close(done) }()
+		select {
+		case <-done:
+			return true
+		case <-time.After(5 * time.Second):
+			return false
+		}
+	}
+	connects := func() int {
+		n := 0
+		for _, r := range e.auditRows(t) {
+			if r.Kind == "connect" && r.Ok && r.ThreadID != nil && *r.ThreadID == "T-a" {
+				n++
+			}
+		}
+		return n
+	}
+
+	c1, _, err := e.connectKey(t, "web", ka)
+	require.NoError(t, err)
+	require.Equal(t, "1\n", runOn(t, c1, "echo 1"))
+	// 崩溃自重启：同一把公钥再登记，连接保留
+	require.NoError(t, e.svc.RegisterThreadKey("T-a", e.orb.ID, pubA))
+	require.Equal(t, "2\n", runOn(t, c1, "echo 2"))
+
+	// 新一代监督器：旧公钥的连接被关闭，旧公钥再连被拒，新公钥认证成功
+	before := connects()
+	require.NoError(t, e.svc.RegisterThreadKey("T-a", e.orb.ID, pubA2))
+	require.True(t, closed(c1), "经旧公钥认证的连接被关闭")
+	_, _, err = e.connectKey(t, "web", ka)
+	require.Error(t, err)
+	c2, _, err := e.connectKey(t, "web", ka2)
+	require.NoError(t, err)
+	require.Equal(t, "3\n", runOn(t, c2, "echo 3"))
+	require.Equal(t, before+1, connects(), "网关以新公钥认证了一次")
+
+	// 注销线程：已建立的连接关闭
+	e.svc.DropThreadKey("T-a")
+	require.True(t, closed(c2))
+
+	// 注销整台 runner：同样关闭
+	require.NoError(t, e.svc.RegisterThreadKey("T-a", e.orb.ID, pubA2))
+	c3, _, err := e.connectKey(t, "web", ka2)
+	require.NoError(t, err)
+	e.svc.DropOrbKeys(e.orb.ID)
+	require.True(t, closed(c3))
+	e.svc.keys.mu.Lock()
+	require.Empty(t, e.svc.keys.conns, "连接退出后从公钥下摘掉")
+	e.svc.keys.mu.Unlock()
+}
+
 // M21：runner 线程项目层的 ssh.json 只含该线程可用的本项目主机，端口引用 ORYN_SSH_PORT；orb 线程、无项目线程没有。
 func TestRunnerProjectSSH(t *testing.T) {
 	e := newGwEnv(t, sshgwtest.Options{})

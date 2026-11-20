@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -203,9 +205,10 @@ func (r *Runtime) runnerKnownHosts() string {
 	return filepath.Join(r.ompConfigRoot(), "ssh", "known_hosts")
 }
 
-// threadSSHKeyPath 是线程私钥的路径 `$HOME/.oryn/threads/<线程>/ssh/id_ed25519`（与线程默认会话目录同根）。
-func (r *Runtime) threadSSHKeyPath(threadID string) string {
-	return filepath.Join(r.home, ".oryn", "threads", threadID, "ssh", "id_ed25519")
+// threadSSHDir 是线程的 SSH 目录 `$HOME/.oryn/threads/<线程>/ssh`（与线程默认会话目录同根）；每代监督器的私钥在其下
+// `<公钥指纹前 12 位>/id_ed25519`（writeThreadSSHKey）。
+func (r *Runtime) threadSSHDir(threadID string) string {
+	return filepath.Join(r.home, ".oryn", "threads", threadID, "ssh")
 }
 
 // rewriteRunnerSSHConfig 重写 runner 的 SSH 配置（调用方持 ompMu）：Core 隔离模式 `-F` 用的 <配置根>/ssh/config 与 bash
@@ -283,32 +286,37 @@ func (r *Runtime) refreshRunnerSSHConfig() {
 	}
 }
 
-// writeThreadSSHKey 生成一把 ed25519 密钥：私钥（OpenSSH 格式）原子写到 path（0600，所在目录 0700），返回
-// authorized_keys 单行公钥（不带换行）。
-func writeThreadSSHKey(path string) (string, error) {
+// writeThreadSSHKey 在 base 下为一代监督器生成一把 ed25519 密钥：私钥（OpenSSH 格式）原子写到
+// `<base>/<公钥 SHA-256 前 12 位十六进制>/id_ed25519`（0600，两级目录 0700），返回私钥路径与 authorized_keys 单行公钥
+// （不带换行）。
+func writeThreadSSHKey(base string) (keyPath, pub string, err error) {
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	block, err := ssh.MarshalPrivateKey(priv, "")
 	if err != nil {
-		return "", err
-	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
-	}
-	if err := os.Chmod(dir, 0o700); err != nil {
-		return "", err
-	}
-	if err := writeFileAtomic(path, pem.EncodeToMemory(block), 0o600); err != nil {
-		return "", err
+		return "", "", err
 	}
 	signer, err := ssh.NewSignerFromKey(priv)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey()))), nil
+	sum := sha256.Sum256(signer.PublicKey().Marshal())
+	dir := filepath.Join(base, hex.EncodeToString(sum[:])[:12])
+	for _, d := range []string{base, dir} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			return "", "", err
+		}
+		if err := os.Chmod(d, 0o700); err != nil {
+			return "", "", err
+		}
+	}
+	keyPath = filepath.Join(dir, "id_ed25519")
+	if err := writeFileAtomic(keyPath, pem.EncodeToMemory(block), 0o600); err != nil {
+		return "", "", err
+	}
+	return keyPath, strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey()))), nil
 }
 
 // writeGatewayKnownHost 重写 known_hosts 文件 khPath 里的网关条目：去掉旧的（含端口变了的），追加当前的。

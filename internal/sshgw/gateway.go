@@ -57,7 +57,9 @@ type gwConn struct {
 	host     db.SshHost
 	up       *upstream
 	untrack  func()
-	once     sync.Once
+	// untrackKey 把 runner 连接从其公钥下摘掉（trackKeyConn）；orb 连接为 nil。
+	untrackKey func()
+	once       sync.Once
 }
 
 // close 关掉 orb 侧的底层连接与上游整条链（幂等）。
@@ -79,6 +81,9 @@ func (s *Service) serveConn(ctx context.Context, orb db.Orb, c net.Conn) {
 	defer func() {
 		if g.untrack != nil {
 			g.untrack()
+		}
+		if g.untrackKey != nil {
+			g.untrackKey()
 		}
 	}()
 	defer g.close()
@@ -110,6 +115,19 @@ func (s *Service) serveConn(ctx context.Context, orb db.Orb, c net.Conn) {
 			if err := g.auth(ctx, meta.User()); err != nil {
 				return nil, &ssh.BannerError{Err: err, Message: "oryn: " + err.Error() + "\n"}
 			}
+			// 挂到公钥下：该公钥之后被注销或被同线程新公钥替换时，这条连接随之关闭。挂上在拨通之后（g.up 已写入，
+			// 关闭方经 keys.mu 看得到它）；认证到这里之间公钥已失效则作废刚拨通的上游。
+			untrack, ok := s.trackKeyConn(key, t.ID, g.close)
+			if !ok {
+				if g.untrack != nil {
+					g.untrack()
+					g.untrack = nil
+				}
+				g.up.Close()
+				g.up = nil
+				return nil, errUnknownKey
+			}
+			g.untrackKey = untrack
 			return perms, nil
 		}
 	} else {

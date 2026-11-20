@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -562,8 +563,8 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 		env  map[string]string
 		// projID / projDir：runner 上本线程项目层的项目 id 与按内容寻址的目录（M21；不带 projectConfig 时为空）。
 		projID, projDir string
-		// sshKey：runner 上本线程 SSH 私钥的路径（M21；没有 SSH 网关时为空）。
-		sshKey string
+		// sshDir：runner 上本线程的 SSH 目录（M21；没有 SSH 网关时为空）。
+		sshDir string
 	)
 	switch {
 	case r.cfg.Coordinator:
@@ -664,12 +665,12 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 				delete(env, k)
 			}
 			// M21：线程自己的 SSH 密钥（网关据此认出线程）与本机网关端口，同样在 p.Env 之后设置、不可覆盖；
-			// 没有网关时一并去掉。
+			// ORYN_SSH_KEY 由监督器创建时补上（每代监督器一把，见 startSpec.sshDir）。没有网关时一并去掉。
 			delete(env, envSSHKey)
 			delete(env, envSSHPort)
 			if port := r.sshPort(); port != 0 {
-				sshKey = r.threadSSHKeyPath(p.ThreadID)
-				env[envSSHKey], env[envSSHPort] = sshKey, strconv.Itoa(port)
+				sshDir = r.threadSSHDir(p.ThreadID)
+				env[envSSHPort] = strconv.Itoa(port)
 				if projDir != "" {
 					r.refreshRunnerSSHConfig() // 本项目的主机名进 bash 用的 SSH 配置
 				}
@@ -699,7 +700,7 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 		env:        envList(env),
 		initFrames: frames,
 		projectDir: projDir,
-		sshKey:     sshKey,
+		sshDir:     sshDir,
 	})
 	if projID != "" {
 		// 同一项目没有运行中 agent 引用的旧版本（本次的目录仍在启动名单里，不会被删）。
@@ -776,9 +777,11 @@ type startSpec struct {
 	initFrames [][]byte
 	// projectDir 是 runner 上这个 agent 所用的项目层目录（M21，清理时据此保留）；orb 为空。
 	projectDir string
-	// sshKey 非空时（M21，runner 且 SSH 网关在监听）监督器创建时在这里生成线程密钥，监督器彻底结束时删除；
-	// 崩溃自重启沿用同一把。
-	sshKey string
+	// sshDir 非空时（M21，runner 且 SSH 网关在监听）是线程的 SSH 目录 `$HOME/.oryn/threads/<线程>/ssh`：监督器创建时在
+	// 其下按公钥指纹另建一个子目录生成线程密钥，agent 环境的 ORYN_SSH_KEY 指向它；崩溃自重启沿用同一把（同一路径），
+	// 监督器彻底结束时删掉该子目录。每代监督器的路径不同：Core 的 ssh 连接复用目录按 ORYN_SSH_KEY 的值哈希，
+	// 新一代不会撞上旧一代脱离进程组残留的 master。
+	sshDir string
 }
 
 // start 拉起监督器，返回 pid 与线程 SSH 公钥（没有时为空）；已有活动监督器时幂等返回当前 pid 与该监督器的公钥。
@@ -795,14 +798,15 @@ func (t *thread) start(spec startSpec) (int, string, error) {
 		return pid, pub, nil
 	}
 	s := &supervisor{t: t, spec: spec, stopCh: make(chan struct{}), done: make(chan struct{})}
-	if spec.sshKey != "" {
+	if spec.sshDir != "" {
 		// 在 t.mu 下生成：并发的 agent.start 要么看到带公钥的新监督器，要么自己创建
-		pub, err := writeThreadSSHKey(spec.sshKey)
+		key, pub, err := writeThreadSSHKey(spec.sshDir)
 		if err != nil {
 			t.mu.Unlock()
 			return 0, "", fmt.Errorf("thread ssh key: %w", err)
 		}
-		s.sshPub = pub
+		s.sshKey, s.sshPub = key, pub
+		s.spec.env = append(slices.Clone(spec.env), envSSHKey+"="+key)
 	}
 	t.sup = s
 	t.mu.Unlock()
@@ -841,16 +845,16 @@ type supervisor struct {
 	stopCh   chan struct{}
 	done     chan struct{}
 	lastExit int
-	// sshPub 是监督器创建时生成的线程 SSH 公钥（spec.sshKey 为空时为空）；创建后不变。
-	sshPub string
+	// sshKey / sshPub 是监督器创建时生成的线程私钥路径与公钥（spec.sshDir 为空时为空）；创建后不变。
+	sshKey, sshPub string
 }
 
-// dropSSHKey 删掉监督器的线程私钥（监督器彻底结束时，先于关闭 done：下一个监督器写新密钥不会被它删掉）。
+// dropSSHKey 删掉监督器的密钥子目录（监督器彻底结束时，先于关闭 done）。
 func (s *supervisor) dropSSHKey() {
-	if s.spec.sshKey == "" {
+	if s.sshKey == "" {
 		return
 	}
-	if err := os.Remove(s.spec.sshKey); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := os.RemoveAll(filepath.Dir(s.sshKey)); err != nil {
 		s.t.r.log.Warn("remove thread ssh key failed", "thread", s.t.id, "err", err)
 	}
 }
