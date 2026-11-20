@@ -44,15 +44,23 @@ final class SinkSpikeTests: E2ECase {
     }
     func sx() -> Double { read()["sx"] ?? -1 }
     func web(_ label: String) -> XCUIElement { app.webViews.buttons[label].firstMatch }
-    /// sx 连续两次读数（间隔 0.3s）不变即视为静止；最多等 timeout 秒
+    /// 静止：有效的 sx 按单调时钟持续 ≥ 300ms 不变；最多等 timeout 秒，超时返回最后一次读数
     func settle(_ timeout: TimeInterval = 4) -> [String: Double] {
-      var prev = read()
-      _ = poll(timeout: timeout) {
+      let clock = { ProcessInfo.processInfo.systemUptime }
+      let deadline = clock() + timeout
+      var last = read()
+      var since = clock()
+      while clock() < deadline {
+        Thread.sleep(forTimeInterval: 0.1)
         let now = read()
-        defer { prev = now }
-        return now["sx"] == prev["sx"]
+        if now["sx"] == nil || now["sx"] != last["sx"] {
+          since = clock()
+        } else if clock() - since >= 0.3 {
+          return now
+        }
+        last = now
       }
-      return prev
+      return last
     }
     func step(_ payload: [String: Any]) throws -> [String: Any] {
       seq += 1
@@ -109,7 +117,9 @@ final class SinkSpikeTests: E2ECase {
     web("tabbar").tap()
     _ = try step(["tabbar": true])
 
-    // S2 / S3：四种程序化开合各测一遍。2.4s 后仍停在目标位才算到位（第 1 轮是到位后被拉回）
+    // S2 / S3：四种程序化开合各测一遍，2.4s 后仍停在目标位才算到位。
+    // 第 2 轮结论：三种 smooth 都在途中被拉回（snapoff 也一样，不是吸附索引的问题），instant 到位 → A3 为假，采用预案 C2。
+    // 第 3 轮起 S2 / S3 按 instant 判定（= 程序化到位且页面读数、无障碍矩形一致），三种 smooth 记为 A3 读数（INFO）。
     let modes = ["smooth", "instant", "nosnap", "snapoff"]
     var best: Int?
     for (i, name) in modes.enumerated() {
@@ -130,11 +140,11 @@ final class SinkSpikeTests: E2ECase {
         near(late["sx"], 0) && near(shift("open"), w, 1) && near(shift("badge"), w, 1)
         && near(shift("close"), 0, 1) && near(statusShift, 0, 1)
       try report(
-        "S2-\(name)", opened,
+        i == 1 ? "S2" : "A3-open-\(name)", i == 1 ? opened : nil,
         "0.4s sx=\(early)；2.4s \(text(late))；open +\(shift("open")) badge +\(shift("badge")) close +\(shift("close")) status +\(statusShift)"
       )
       guard near(late["sx"], 0) else {
-        try report("S3-\(name)", nil, "没打开，跳过")
+        try report(i == 1 ? "S3" : "A3-close-\(name)", i == 1 ? false : nil, "没打开，跳过")
         continue
       }
       toggle()
@@ -143,7 +153,9 @@ final class SinkSpikeTests: E2ECase {
       Thread.sleep(forTimeInterval: 2.0)
       let late2 = read()
       let closed = near(late2["sx"], w)
-      try report("S3-\(name)", closed, "0.4s sx=\(early2)；2.4s \(text(late2))")
+      try report(
+        i == 1 ? "S3" : "A3-close-\(name)", i == 1 ? closed : nil,
+        "0.4s sx=\(early2)；2.4s \(text(late2))")
       if best == nil && closed { best = i }
     }
 
