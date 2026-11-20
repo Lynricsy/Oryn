@@ -37,6 +37,13 @@ docker compose version
 docker buildx version
 id -nG | tr ' ' '\n' | grep -qx docker
 
+# BlackArch 源：排在官方源之后，keyring 与同步库已就位；镜像里不留 pacman 本地私钥。
+[[ "$(pacman-conf --repo-list | tail -n 1)" == blackarch ]]
+pacman -Q blackarch-keyring blackarch-mirrorlist >/dev/null
+test -s /var/lib/pacman/sync/blackarch.db
+sudo -n pacman-key --list-keys 4345771566D76038C7FEB43863EC0ADBEA87E4E3 >/dev/null
+[[ -z "$(sudo -n find /etc/pacman.d/gnupg/private-keys-v1.d -mindepth 1 -print -quit)" ]]
+
 # 不依赖交互启动文件补 PATH，且登录/交互 shell 不替换标准命令。
 for mode in -c -lc -ic; do
 	bash "$mode" 'set -eu

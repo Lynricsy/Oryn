@@ -22,6 +22,38 @@ ENV LANG=C.UTF-8 \
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
+# BlackArch 源：只启用源与密钥，不预装安全工具；需要时由 agent 或 setup 用 pacman 安装。
+# 按官方 strap.sh 的流程展开（不执行远程脚本）：blackarch-keyring 包的签名必须来自下列签名主密钥
+# （与 strap.sh / blackarch-trusted 保持一致），在临时 GNUPGHOME 里校验通过后才导入 pacman 密钥环。
+# 官方 Arch 镜像不带 pacman 本地私钥：为 populate 临时生成一把，签完即删，与上游镜像的处理一致，
+# 已签入的信任保留，各 orb 不共享可用的本地私钥。源追加在官方源之后，同名包仍取官方版本。
+ARG BLACKARCH_SIGNERS="8F9A9793CB8591147C2EC70566E0CDBD1E01F333 A0917C4147A37007CB54C1CFD295AA940EFDDF62 4345771566D76038C7FEB43863EC0ADBEA87E4E3 F9A6E68A711354D84A9B91637533BAFE69A25079"
+RUN case "$TARGETARCH" in amd64) a=x86_64 ;; arm64) a=aarch64 ;; *) exit 1 ;; esac \
+ && tmp="$(mktemp -d)" && cd "$tmp" \
+ && repo="https://blackarch.org/blackarch/blackarch/os/${a}" \
+ && curl -fsSLO "$repo/blackarch.db" \
+ && pkg="$(bsdtar -xOf blackarch.db 'blackarch-keyring-*/desc' | awk '/^%FILENAME%$/ { getline; print; exit }')" \
+ && [[ -n "$pkg" ]] \
+ && curl -fsSLO "$repo/$pkg" && curl -fsSLO "$repo/$pkg.sig" \
+ && export GNUPGHOME="$tmp/gnupg" && install -d -m 0700 "$GNUPGHOME" \
+ && for fpr in $BLACKARCH_SIGNERS; do \
+      gpg --batch --keyserver hkps://keyserver.ubuntu.com --recv-keys "$fpr" \
+      || gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys "$fpr" || true; \
+    done \
+ && signer="$(gpg --batch --status-fd 1 --verify "$pkg.sig" "$pkg" 2>/dev/null | awk '$2 == "VALIDSIG" { print $NF }')" \
+ && [[ -n "$signer" && " $BLACKARCH_SIGNERS " == *" $signer "* ]] \
+ && gpgconf --kill all && unset GNUPGHOME \
+ && mkdir pkg && bsdtar -xf "$pkg" -C pkg usr/share/pacman/keyrings \
+ && cp pkg/usr/share/pacman/keyrings/* /usr/share/pacman/keyrings/ \
+ && pacman-key --init && pacman-key --populate blackarch \
+ && pacman -U --noconfirm --overwrite '/usr/share/pacman/keyrings/blackarch*' "$pkg" \
+ && gpgconf --homedir /etc/pacman.d/gnupg --kill all \
+ && rm -rf /etc/pacman.d/gnupg/openpgp-revocs.d/* /etc/pacman.d/gnupg/private-keys-v1.d/* \
+      /etc/pacman.d/gnupg/pubring.gpg~ /etc/pacman.d/gnupg/pubring.kbx~ /etc/pacman.d/gnupg/S.* \
+ && curl -fsSLo /etc/pacman.d/blackarch-mirrorlist https://blackarch.org/blackarch-mirrorlist \
+ && printf '\n[blackarch]\nInclude = /etc/pacman.d/blackarch-mirrorlist\n' >> /etc/pacman.conf \
+ && cd / && rm -rf "$tmp"
+
 # Arch 不支持部分升级；刷新包索引时同时完整升级，不安装 AUR 构建助手。
 # QEMU 用户态模拟不提供 Landlock：只在构建下载时关闭该沙箱，包签名校验仍启用。
 # go-yq 是 Mike Farah yq v4；valkey 提供兼容的 redis-cli，但不启动数据库服务。
@@ -29,7 +61,10 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # typescript 6 的 tsc 不支持 --lsp，omp 会自动改用 typescript-language-server。Python 只装 pyright 一个类型检查器，避免诊断重复。
 # ruby-lsp 会把 debug gem 写进自己组合的 Gemfile；预装 ruby-debug，离线或项目未 bundle install 时它仍能启动。
 # 非开发工具覆盖文档转换、OCR、音视频、图片优化、下载与数据处理；Python 常用库由 pacman 装入系统环境，可直接 import。
-RUN pacman --disable-sandbox -Syu --noconfirm --needed \
+# blackarch-mirrorlist 接管上一步下载的同名镜像列表，之后随系统升级更新。
+# extra/sox 14.8.0.1-2 链接 libebur128.so.1 却未声明依赖（官方 archlinux 镜像单装 sox 即复现），显式补装；上游补上依赖后可删。
+RUN pacman --disable-sandbox -Syu --noconfirm --needed --overwrite /etc/pacman.d/blackarch-mirrorlist \
+      blackarch-mirrorlist \
       base-devel ca-certificates curl wget openssl git git-lfs openssh rsync sudo bash dash \
       coreutils diffutils findutils grep sed gawk patch file tree less vim nano dos2unix \
       jq go-yq ripgrep fd zip unzip tar gzip bzip2 zstd xz 7zip unrar cabextract bc moreutils parallel pv \
@@ -45,7 +80,7 @@ RUN pacman --disable-sandbox -Syu --noconfirm --needed \
       libxml2 libxslt poppler qpdf ghostscript mupdf-tools img2pdf libreoffice-fresh \
       tesseract tesseract-data-eng tesseract-data-chi_sim tesseract-data-chi_tra \
       imagemagick librsvg libwebp-utils libjxl libheif libavif optipng pngquant jpegoptim gifsicle \
-      perl-image-exiftool graphviz qrencode zbar ffmpeg sox mediainfo yt-dlp aria2 httpie miller duckdb \
+      perl-image-exiftool graphviz qrencode zbar ffmpeg sox libebur128 mediainfo yt-dlp aria2 httpie miller duckdb \
       python-numpy python-pandas python-scipy python-matplotlib python-pillow python-requests python-beautifulsoup4 \
       python-lxml python-yaml python-openpyxl python-xlsxwriter python-docx python-pypdf python-reportlab \
       tigervnc xorg-setxkbmap xkeyboard-config openbox chromium \

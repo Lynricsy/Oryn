@@ -75,7 +75,7 @@ orb 是线程的执行环境，不是要用户挑选或清理的资源：
 | Python 库 | 系统 Python 可直接 `import`：numpy、pandas、scipy、matplotlib、Pillow、requests、BeautifulSoup、lxml、PyYAML、openpyxl、XlsxWriter、python-docx、pypdf、ReportLab |
 | 图形桌面 | TigerVNC (`Xvnc`)、Openbox、受管策略加固的 Chromium、中英文与彩色 Emoji 字体 |
 
-系统软件包记录在 `/usr/local/share/oryn/packages.txt`。ShellCheck、Pandoc、rust-analyzer、marksman、phpactor 从上游 GitHub 发行版安装（ARM 仓库缺包，双架构统一来源），版本记录在 `/usr/local/share/oryn/upstream-versions.txt`。在项目 `setup` 脚本里增装系统包用 `sudo pacman -Syu --needed --noconfirm <包名>`。跨架构构建 ARM64 镜像见 [`development.md`](development.md#跨架构构建-arm64-镜像)。
+系统软件包记录在 `/usr/local/share/oryn/packages.txt`。ShellCheck、Pandoc、rust-analyzer、marksman、phpactor 从上游 GitHub 发行版安装（ARM 仓库缺包，双架构统一来源），版本记录在 `/usr/local/share/oryn/upstream-versions.txt`。在项目 `setup` 脚本里增装系统包用 `sudo pacman -Syu --needed --noconfirm <包名>`。镜像已启用 [BlackArch](https://blackarch.org/) 源（双架构）：只导入经钉定签名主密钥校验的 keyring 与镜像列表，不预装安全工具；该源排在官方源之后，同名包仍取官方版本，其中的工具同样用上面的命令安装。跨架构构建 ARM64 镜像见 [`development.md`](development.md#跨架构构建-arm64-镜像)。
 
 ## 工作台
 
