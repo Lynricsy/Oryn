@@ -115,6 +115,18 @@ describe("RoleCapsule", () => {
 		).toBeInTheDocument();
 	});
 
+	it("default role 的胶囊显示解析出的模型，而不是「默认」", async () => {
+		mount(true, { kind: "role", role: "default" });
+		await vi.waitFor(() =>
+			expect(
+				screen.getByRole("button", { name: /^对象：/ }),
+			).toHaveAccessibleName(/^对象：.*X$/),
+		);
+		expect(
+			screen.getByRole("button", { name: /^对象：/ }),
+		).not.toHaveAccessibleName(/默认/);
+	});
+
 	it("选 role、选全局助手、指定模型（目录 / 自由输入）的 onChange 取值", async () => {
 		const changes = mount(true, { kind: "role", role: "default" });
 		openCapsule();

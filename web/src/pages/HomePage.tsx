@@ -5,7 +5,8 @@
  * 选全局助手（M13 R14–R16）：执行位置、项目、Profile 三个胶囊收起（不在 DOM 里），附件传进助手文件库，发送即新建
  * 助手对话（首条消息、文件、图片、所选模型都带上）并跳到 `/assistant/:id`；托盘换成旋转流光描边、色场换成助手色相。
  * 普通对象：新线程以所选 role 开场（`role`），或用指定的模型（`model`）；省略 provider / 类型时由控制面依次取项目默认、
- * orb_defaults、provider 默认。
+ * orb_defaults、provider 默认。胶囊不写「默认」：执行位置与 Profile 直接显示、选中按同样规则解析出的实际值
+ * （没改过时请求仍不带这些字段，换项目后跟着新项目的默认走）。
  * 选的 Profile 被另一台运行中的 orb 占用（409 `profile_in_use`）时弹选择对话框，选「只读使用」或「接管」后带 `profileMode` 重发。
  * 执行位置的「Runners」分组（M11b）：选 runner 的目录（可带子路径、可新建 worktree）；目录已被别的线程占用
  * （409 `dir_in_use`）时弹对话框，选「新建 worktree」或「仍然共用」后重发。
@@ -100,6 +101,34 @@ type Executor = Schemas["ThreadExecutor"];
 
 /** 新线程的浏览器 Profile：`null` = 跟随项目默认（不带字段），`""` = 不使用，`bpf_…` = 指定。 */
 type ProfilePick = string | null;
+
+/**
+ * 不指定 provider / 类型时新 orb 落到哪（与控制面 resolveTarget 同序）：provider 取项目默认 → `orb_defaults` →
+ * 唯一可用的 provider；类型取项目默认 → `orb_defaults` → provider 的 `defaultType`。
+ * 解析不出（provider 不存在或已停用、类型不在其类型表里）时为 undefined，这时控制面也会拒绝。
+ */
+function defaultNewOrb(
+	list: Schemas["ProviderList"] | undefined,
+	project: Schemas["Project"] | undefined,
+): { provider: string; type: string } | undefined {
+	if (!list) return undefined;
+	const name = project?.defaultProvider || list.orbDefaults?.provider;
+	const usable = list.providers.filter(
+		(p) => !p.disabledAt && p.driver !== "runner",
+	);
+	const prov = name
+		? list.providers.find((p) => p.name === name)
+		: usable.length === 1
+			? usable[0]
+			: undefined;
+	if (!prov || prov.disabledAt) return undefined;
+	const type =
+		project?.defaultOrbType || list.orbDefaults?.type || prov.defaultType;
+	if (!type) return undefined;
+	if (prov.orbTypes.length > 0 && !prov.orbTypes.some((t) => t.name === type))
+		return undefined;
+	return { provider: prov.name, type };
+}
 
 /** 焦点在输入框里（Ctrl+B 在这里切 Profile 弹层；别处由全局快捷键开关侧栏）。 */
 function inEditable(target: EventTarget | null): boolean {
@@ -251,33 +280,30 @@ export function HomePage(): ReactNode {
 		executor.kind === "new_orb" && !runnerPick && profileList.length > 0;
 	const showProfileRef = useRef(showProfile);
 	showProfileRef.current = showProfile;
-	const defaultProfileId = projects.data?.projects.find(
-		(p) => p.id === projectId,
-	)?.defaultBrowserProfileId;
-	const defaultProfileName = defaultProfileId
-		? (profileList.find((p) => p.id === defaultProfileId)?.name ??
-			defaultProfileId)
-		: undefined;
-	const pickedProfileName =
-		profilePick === null
-			? defaultProfileName
-			: profilePick === ""
-				? undefined
-				: (profileList.find((p) => p.id === profilePick)?.name ?? profilePick);
-	const profileText: PillText =
-		profilePick === null
-			? {
-					label: t("newThread.profileDefaultLabel", {
-						name: defaultProfileName ?? t("common.none"),
-					}),
-					main: defaultProfileName ?? t("newThread.profileNone"),
-				}
-			: {
-					label: t("newThread.profileLabel", {
-						name: pickedProfileName ?? t("newThread.profileNone"),
-					}),
-					main: pickedProfileName ?? t("newThread.profileNone"),
-				};
+	const project = projects.data?.projects.find((p) => p.id === projectId);
+	// 胶囊与弹层直接显示、选中实际生效的值；没动过时 profilePick / executor 仍是「跟随默认」（请求里不带字段），
+	// 换项目后跟着新项目的默认走
+	const defaultProfileId = project?.defaultBrowserProfileId ?? "";
+	const shownProfile = profilePick ?? defaultProfileId;
+	const shownProfileName = shownProfile
+		? (profileList.find((p) => p.id === shownProfile)?.name ?? shownProfile)
+		: t("newThread.profileNone");
+	const profileText: PillText = {
+		label: t("newThread.profileLabel", { name: shownProfileName }),
+		main: shownProfileName,
+	};
+	/** 选回项目默认即恢复「跟随默认」，与没动过时的请求一致。 */
+	const pickProfile = (id: string) => {
+		setProfilePick(id === defaultProfileId ? null : id);
+		setPill(null);
+	};
+	const newOrbDefault = defaultNewOrb(providers.data, project);
+	const shownNewOrb =
+		executor.kind !== "new_orb"
+			? undefined
+			: executor.provider
+				? { provider: executor.provider, type: executor.type }
+				: newOrbDefault;
 	// 协调 orb（M9，跑在控制面宿主上）不能挂工作线程，也不出现在执行位置里；
 	// 预热池 orb（M11a）由控制面在新建线程时自动认领，不能手动挂（服务端回 409 orb_is_pooled）
 	const liveOrbs = (orbs.data?.orbs ?? []).filter(
@@ -306,19 +332,15 @@ export function HomePage(): ReactNode {
 			}
 		: executor.kind === "orb"
 			? { label: existingOrbLabel, main: existingOrbLabel }
-			: executor.kind === "new_orb" && executor.provider
+			: shownNewOrb
 				? {
-						label: `${executor.provider}${executor.type ? ` · ${executor.type}` : ""}`,
-						main: executor.provider,
-						badge: executor.type,
+						label: `${shownNewOrb.provider}${shownNewOrb.type ? ` · ${shownNewOrb.type}` : ""}`,
+						main: shownNewOrb.provider,
+						badge: shownNewOrb.type,
 					}
-				: {
-						label: t("newThread.newOrbDefault"),
-						main: t("newThread.newOrbDefault"),
-					};
+				: { label: t("newThread.newOrb"), main: t("newThread.newOrb") };
 	const projectName = projectId
-		? (projects.data?.projects.find((p) => p.id === projectId)?.name ??
-			projectId)
+		? (project?.name ?? projectId)
 		: t("newThread.noProject");
 	const projectText: PillText = { label: projectName, main: projectName };
 	const roles = useRoleOptions();
@@ -710,21 +732,6 @@ export function HomePage(): ReactNode {
 								{pill === "executor" && !assistantTarget && (
 									<Popover onClose={() => setPill(null)}>
 										<PopoverLabel>{t("newThread.newOrb")}</PopoverLabel>
-										<Option
-											selected={
-												!runnerPick &&
-												executor.kind === "new_orb" &&
-												!executor.provider
-											}
-											leading={<Icon name="box" size={14} />}
-											onClick={() => {
-												setExecutor({ kind: "new_orb" });
-												setRunnerPick(null);
-												setPill(null);
-											}}
-										>
-											{t("newThread.newOrbDefault")}
-										</Option>
 										{(providers.data?.providers ?? [])
 											.filter((p) => p.name !== "@host")
 											.map((p) =>
@@ -733,9 +740,8 @@ export function HomePage(): ReactNode {
 														key={`${p.id}-${ot.name}`}
 														selected={
 															!runnerPick &&
-															executor.kind === "new_orb" &&
-															executor.provider === p.name &&
-															executor.type === ot.name
+															shownNewOrb?.provider === p.name &&
+															shownNewOrb.type === ot.name
 														}
 														leading={<Icon name="cpu" size={14} />}
 														hint={ot.name}
@@ -754,11 +760,17 @@ export function HomePage(): ReactNode {
 															</>
 														}
 														onClick={() => {
-															setExecutor({
-																kind: "new_orb",
-																provider: p.name,
-																type: ot.name,
-															});
+															// 选回默认落点即恢复「跟随默认」（不带 provider / 类型，换项目后跟着走）
+															setExecutor(
+																newOrbDefault?.provider === p.name &&
+																	newOrbDefault.type === ot.name
+																	? { kind: "new_orb" }
+																	: {
+																			kind: "new_orb",
+																			provider: p.name,
+																			type: ot.name,
+																		},
+															);
 															setRunnerPick(null);
 															setPill(null);
 														}}
@@ -806,30 +818,16 @@ export function HomePage(): ReactNode {
 									<Popover onClose={() => setPill(null)}>
 										<PopoverLabel>{t("newThread.profileTitle")}</PopoverLabel>
 										<Option
-											selected={profilePick === null}
-											leading={<Icon name="folder" size={14} />}
-											hint={defaultProfileName ?? t("common.none")}
-											onClick={() => {
-												setProfilePick(null);
-												setPill(null);
-											}}
-										>
-											{t("newThread.profileFollow")}
-										</Option>
-										<Option
-											selected={profilePick === ""}
+											selected={shownProfile === ""}
 											leading={<Icon name="minusCircle" size={14} />}
-											onClick={() => {
-												setProfilePick("");
-												setPill(null);
-											}}
+											onClick={() => pickProfile("")}
 										>
 											{t("newThread.profileNone")}
 										</Option>
 										{profileList.map((p) => (
 											<Option
 												key={p.id}
-												selected={profilePick === p.id}
+												selected={shownProfile === p.id}
 												leading={<Icon name="browser" size={14} />}
 												trailing={
 													p.holder && (
@@ -838,10 +836,7 @@ export function HomePage(): ReactNode {
 														</Badge>
 													)
 												}
-												onClick={() => {
-													setProfilePick(p.id);
-													setPill(null);
-												}}
+												onClick={() => pickProfile(p.id)}
 											>
 												{p.name}
 											</Option>

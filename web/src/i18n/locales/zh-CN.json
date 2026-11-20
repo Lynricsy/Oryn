@@ -226,11 +226,9 @@
 		"thinkingUnknown": "还不知道这个模型支持哪些级别",
 		"modelPlaceholder": "provider/模型 id",
 		"profileTitle": "浏览器 Profile",
-		"profileFollow": "跟随项目默认",
 		"profileNone": "不用 Profile",
 		"profileInUse": "使用中",
-		"profileLabel": "浏览器 Profile：{{name}}",
-		"profileDefaultLabel": "浏览器 Profile：跟随项目默认（{{name}}）"
+		"profileLabel": "浏览器 Profile：{{name}}"
 	},
 	"roleCapsule": {
 		"label": "对象：{{name}}",

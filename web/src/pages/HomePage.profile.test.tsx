@@ -1,6 +1,6 @@
 /**
- * 新建线程框的浏览器 Profile 胶囊（M8 4.6）：只在新 orb 且有 Profile 时出现；三种请求体
- * （跟随项目默认 = 不带字段、不使用 = 空串、指定 = id）；409 `profile_in_use` 弹对话框，选「接管」后带 profileMode 重发，
+ * 新建线程框的浏览器 Profile 胶囊（M8 4.6）：只在新 orb 且有 Profile 时出现；胶囊直接显示生效的 Profile；三种请求体
+ * （没改过 / 选回项目默认 = 不带字段、不使用 = 空串、指定 = id）；409 `profile_in_use` 弹对话框，选「接管」后带 profileMode 重发，
  * 重发钉住对话框展示的 Profile（期间项目默认被改也不变）；Ctrl+B 在输入框里打开弹层。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -164,10 +164,12 @@ async function pick(option: RegExp) {
 }
 
 describe("首页 Profile 胶囊", () => {
-	it("默认跟随项目默认：不带 browserProfileId", async () => {
+	it("没有项目时显示「不用 Profile」，请求不带 browserProfileId", async () => {
 		renderHome();
 		expect(await profilePill()).toHaveAccessibleName(
-			i18n.t("newThread.profileDefaultLabel", { name: i18n.t("common.none") }),
+			i18n.t("newThread.profileLabel", {
+				name: i18n.t("newThread.profileNone"),
+			}),
 		);
 		await send();
 		expect(posts).toHaveLength(1);
@@ -175,7 +177,7 @@ describe("首页 Profile 胶囊", () => {
 		expect(posts[0]).not.toHaveProperty("profileMode");
 	});
 
-	it("选了项目后「跟随项目默认」显示解析出的名字", async () => {
+	it("选了项目后直接显示项目默认 Profile；选回它仍是跟随默认", async () => {
 		renderHome();
 		await profilePill();
 		fireEvent.click(
@@ -183,12 +185,21 @@ describe("首页 Profile 胶囊", () => {
 		);
 		fireEvent.click(await screen.findByRole("button", { name: /^oryn/ }));
 		expect(await profilePill()).toHaveAccessibleName(
-			i18n.t("newThread.profileDefaultLabel", { name: "工作账号" }),
+			i18n.t("newThread.profileLabel", { name: "工作账号" }),
 		);
+		await pick(/^GitHub 测试号/);
+		await pick(/^工作账号/);
+		await send();
+		expect(posts[0]).not.toHaveProperty("browserProfileId");
 	});
 
-	it("「不用 Profile」：browserProfileId 为空串", async () => {
+	it("「不用 Profile」：项目有默认时 browserProfileId 为空串", async () => {
 		renderHome();
+		await profilePill();
+		fireEvent.click(
+			screen.getByRole("button", { name: i18n.t("newThread.noProject") }),
+		);
+		fireEvent.click(await screen.findByRole("button", { name: /^oryn/ }));
 		await pick(new RegExp(`^${i18n.t("newThread.profileNone")}`));
 		await send();
 		expect(posts[0]?.browserProfileId).toBe("");
@@ -251,7 +262,7 @@ describe("首页 Profile 胶囊", () => {
 		renderHome();
 		await pick(/^工作账号/);
 		fireEvent.click(
-			screen.getByRole("button", { name: i18n.t("newThread.newOrbDefault") }),
+			screen.getByRole("button", { name: i18n.t("newThread.newOrb") }),
 		);
 		fireEvent.click(await screen.findByRole("button", { name: /orb-live/ }));
 		expect(
@@ -277,7 +288,7 @@ describe("首页 Profile 胶囊", () => {
 		fireEvent.keyDown(prompt(), { key: "b", ctrlKey: true });
 		expect(
 			screen.getByRole("button", {
-				name: new RegExp(`^${i18n.t("newThread.profileFollow")}`),
+				name: new RegExp(`^${i18n.t("newThread.profileNone")}`),
 			}),
 		).toBeInTheDocument();
 	});

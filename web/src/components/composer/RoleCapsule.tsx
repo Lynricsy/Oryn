@@ -230,6 +230,16 @@ export function RoleCapsule({
 			/>
 		);
 		main = modelShortName(value.model);
+	} else if (value.role === "default" && role?.model) {
+		// 「默认」这个名字说明不了用哪个模型：胶囊直接显示 default role 解析出的模型
+		face = (
+			<ModelLogo
+				model={role.model.id}
+				provider={role.model.provider}
+				size={compactPill ? 16 : 13}
+			/>
+		);
+		main = modelShortName(role.model);
 	} else {
 		face = role ? (
 			<RoleFace option={role} size={compactPill ? 20 : 16} />

@@ -75,7 +75,10 @@ it("预热池 orb 不在「已有 orb」里；Docker 类型与 orb 带徽标", a
 			</MemoryRouter>
 		</QueryClientProvider>,
 	);
-	fireEvent.click(screen.getByRole("button", { name: /新 orb（默认）/ }));
+	// 唯一的 provider：胶囊直接显示它和它的 defaultType
+	fireEvent.click(
+		await screen.findByRole("button", { name: "local · medium" }),
+	);
 	// 普通 orb 与 Docker orb 都在
 	const work = await screen.findByRole("button", {
 		name: /orb-work00000000/,

@@ -38,6 +38,9 @@ const chat = (
 let defaultTarget: "role" | "assistant" | null = null;
 /** 收到的写请求：路径 + JSON 请求体。 */
 let posts: { path: string; body: unknown }[] = [];
+/** `GET providers` / `GET projects` 的响应。 */
+let providerList: Record<string, unknown> = { providers: [] };
+let projectList: unknown[] = [];
 
 const THREAD = {
 	id: "T-new",
@@ -75,9 +78,9 @@ const fetchMock = vi.fn(
 				);
 		}
 		if (url.pathname === "/api/v1/providers")
-			return Response.json({ providers: [] });
+			return Response.json(providerList);
 		if (url.pathname === "/api/v1/projects")
-			return Response.json({ projects: [] });
+			return Response.json({ projects: projectList });
 		if (url.pathname === "/api/v1/orbs") return Response.json({ orbs: [] });
 		if (url.pathname === "/api/v1/settings/composer" && defaultTarget)
 			return Response.json({ defaultTarget });
@@ -98,6 +101,8 @@ const fetchMock = vi.fn(
 beforeEach(() => {
 	defaultTarget = null;
 	posts = [];
+	providerList = { providers: [] };
+	projectList = [];
 	vi.stubGlobal("fetch", fetchMock);
 });
 
@@ -279,6 +284,77 @@ describe("首屏对象与全局助手（M13 5.4）", () => {
 		expect(capsule()).toHaveAttribute("aria-expanded", "true");
 		fireEvent.keyDown(window, { key: "s", ctrlKey: true });
 		expect(screen.queryByTestId("role-capsule-popover")).toBeNull();
+	});
+});
+
+describe("执行位置胶囊直接显示默认落点", () => {
+	const provider = (name: string, types: string[], defaultType?: string) => ({
+		id: `prov_${name}`,
+		name,
+		online: true,
+		createdAt: 1,
+		defaultType,
+		orbTypes: types.map((n) => ({ name: n, cpus: 2, memoryMB: 2048 })),
+	});
+	const twoProviders = () => [
+		provider("local", ["small", "medium"], "medium"),
+		provider("remote", ["big"], "big"),
+	];
+	beforeEach(() => {
+		providerList = {
+			providers: twoProviders(),
+			orbDefaults: { provider: "local" },
+		};
+		projectList = [
+			{
+				id: "prj_1",
+				name: "oryn",
+				shallowClone: false,
+				defaultProvider: "remote",
+				defaultOrbType: "big",
+				createdAt: 1,
+				updatedAt: 1,
+			},
+		];
+	});
+	const executorPill = () =>
+		screen.findByRole("button", { name: /^(local|remote|新 orb)/ });
+	async function expectFollowDefault() {
+		fireEvent.change(prompt(), { target: { value: "跑一下" } });
+		fireEvent.keyDown(prompt(), { key: "Enter" });
+		await waitFor(() => expect(posts).toHaveLength(1));
+		expect(posts[0]?.body).toHaveProperty("executor", { kind: "new_orb" });
+	}
+
+	it("没有项目：按 orb_defaults 的 provider 与它的 defaultType 显示，请求仍不带 provider", async () => {
+		renderHome();
+		await waitFor(async () =>
+			expect(await executorPill()).toHaveAccessibleName("local · medium"),
+		);
+		await expectFollowDefault();
+	});
+
+	it("项目默认优先于 orb_defaults；选别的类型带上它，选回默认落点恢复跟随", async () => {
+		renderHome();
+		fireEvent.click(await screen.findByRole("button", { name: "无项目" }));
+		fireEvent.click(await screen.findByRole("button", { name: /^oryn/ }));
+		await waitFor(async () =>
+			expect(await executorPill()).toHaveAccessibleName("remote · big"),
+		);
+		fireEvent.click(await executorPill());
+		fireEvent.click(screen.getByRole("button", { name: /^local\s*small/ }));
+		expect(await executorPill()).toHaveAccessibleName("local · small");
+		fireEvent.click(await executorPill());
+		fireEvent.click(screen.getByRole("button", { name: /^remote\s*big/ }));
+		await expectFollowDefault();
+	});
+
+	it("多个 provider 又没有任何默认：只写「新 orb」", async () => {
+		providerList = { providers: twoProviders() };
+		renderHome();
+		await screen.findByRole("button", { name: "无项目" });
+		await act(async () => {});
+		expect(await executorPill()).toHaveAccessibleName("新 orb");
 	});
 });
 
