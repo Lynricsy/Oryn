@@ -176,7 +176,12 @@ export function ToolView(props: ToolViewProps): ReactNode {
 	// 用户点过头部后以用户为准；否则跟随宿主给的 defaultOpen
 	const [userOpen, setUserOpen] = useState<boolean | null>(null);
 	const open = userOpen ?? props.defaultOpen ?? false;
-	const { args: outerArgs, intent: argIntent } = normalizeArgs(props.args);
+	// ask 的参数可以是裸字符串 HTML（Core 19 `recoverAskHtml` 照样提问），其余工具非对象参数一律当空
+	const { args: outerArgs, intent: argIntent } = normalizeArgs(
+		props.name === "ask" && typeof props.args === "string"
+			? { html: props.args }
+			: props.args,
+	);
 	// `write` / `read xd://…`：换成真实工具（或设备文档卡）的名字与参数
 	const xdev = xdevCardOf({
 		name: props.name,

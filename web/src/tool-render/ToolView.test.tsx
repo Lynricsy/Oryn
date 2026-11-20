@@ -780,3 +780,32 @@ describe("bash 的 Pseudo 视图（details.orynPseudo）", () => {
 		expect(rows[1]).toHaveTextContent("›sleep 1");
 	});
 });
+
+describe("ask 的参数形态（Core 19 `recoverAskHtml`）", () => {
+	const form =
+		'<form><fieldset><legend>Which DB?</legend><label><input type="radio" name="db" value="sqlite"> SQLite</label></fieldset></form>';
+
+	it("裸字符串 HTML 参数照样显示表单，不标参数无效", () => {
+		const { container } = render(
+			<ToolView name="ask" args={form} defaultOpen />,
+		);
+		expect(container).toHaveTextContent("Which DB?");
+		expect(container.querySelector(".tv-err-text")).toBeNull();
+	});
+
+	it("旧版 questions 列表重建成表单显示", () => {
+		const { container } = render(
+			<ToolView
+				name="ask"
+				args={{
+					questions: [
+						{ id: "db", question: "Which DB?", options: [{ label: "SQLite" }] },
+					],
+				}}
+				defaultOpen
+			/>,
+		);
+		expect(container).toHaveTextContent("Which DB?");
+		expect(container.querySelector(".tv-err-text")).toBeNull();
+	});
+});
