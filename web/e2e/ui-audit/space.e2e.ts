@@ -45,7 +45,10 @@ surface({
 	ready: READY,
 	open: async (page) => {
 		await page.getByRole("button", { name: "空间操作" }).click();
-		await page.getByRole("menuitem", { name: "编辑空间" }).click();
+		// 基线手机上这份菜单一直在挪动（Playwright 判为 not stable，强制点也落空），直接派发 click；after 上菜单进顶层后稳定
+		await lastOverlay(page)
+			.getByText("编辑空间", { exact: true })
+			.dispatchEvent("click");
 		return page.getByRole("dialog");
 	},
 	noReopen: true,
