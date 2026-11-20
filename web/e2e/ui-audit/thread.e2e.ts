@@ -124,6 +124,32 @@ const overlay = (
 
 page("thread.top", T, (p) => scrollTranscript(p, 0));
 page("thread.mid", T, (p) => scrollTranscript(p, 0.5));
+// 900 宽（窄桌面窗口）：中栏放不下 Markdown 表格，表格横向滚动，右缘要有还能往右滚的阴影提示
+surface({
+	id: "thread.table-narrow",
+	path: T,
+	ready: READY,
+	only: "desktop",
+	open: async (p) => {
+		await p.setViewportSize({ width: 900, height: 768 });
+		await scrollTranscript(p, 0.5);
+		await p.evaluate(() => {
+			const table = document.querySelector<HTMLElement>(
+				"[data-testid=transcript] .md-table",
+			);
+			const box = document.querySelector<HTMLElement>(
+				"[data-testid=transcript]",
+			);
+			if (!table || !box) throw new Error("没有表格");
+			const r = table.getBoundingClientRect();
+			const b = box.getBoundingClientRect();
+			box.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
+			box.scrollTop += r.top + r.height / 2 - (b.top + b.height / 2);
+		});
+		await settle(p);
+		return undefined;
+	},
+});
 page("thread.bottom", T);
 page("thread.tools", ZOO, (p) => scrollTranscript(p, 0));
 page("thread.tools.mid", ZOO, (p) => scrollTranscript(p, 0.5));
