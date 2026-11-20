@@ -23,17 +23,16 @@ const dialog = (page: Page) =>
 /**
  * 把转录滚到 `frac`（0 顶部，1 底部）处。程序写 scrollTop 不会退出贴底跟随，先派发一次向上的滚轮事件
  * 标记「用户在往上读」。转录还没长过一屏时写 scrollTop 等于停在底部（又回到跟随），懒加载的图表、
- * 公式测高后总高还会变：反复写，直到总高与位置连续两轮不变。
+ * 公式测高后总高还会变：反复写，直到总高与位置连续两轮不变；线程刚打开的头一两秒里转录还可能自己贴回底部，
+ * 所以停稳后再等一会儿复查，被带走了就重来。
  */
 async function scrollTranscript(page: Page, frac: number) {
 	await page
 		.locator(`${READY} [data-role]`)
 		.first()
 		.waitFor({ timeout: 30_000 });
-	let last = "";
-	let still = 0;
-	for (let i = 0; i < 30 && still < 2; i++) {
-		const now = await page.evaluate((f) => {
+	const write = (f: number) =>
+		page.evaluate((f) => {
 			const el = document.querySelector<HTMLElement>(
 				"[data-testid=transcript]",
 			);
@@ -41,12 +40,27 @@ async function scrollTranscript(page: Page, frac: number) {
 			if (f < 1) el.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
 			el.scrollTop = (el.scrollHeight - el.clientHeight) * f;
 			return `${el.scrollHeight}:${Math.round(el.scrollTop)}`;
-		}, frac);
-		still = now === last ? still + 1 : 0;
-		last = now;
-		await page.waitForTimeout(300);
+		}, f);
+	const read = () =>
+		page.evaluate(() => {
+			const el = document.querySelector<HTMLElement>(
+				"[data-testid=transcript]",
+			);
+			return el ? `${el.scrollHeight}:${Math.round(el.scrollTop)}` : "";
+		});
+	for (let round = 0; round < 4; round++) {
+		let last = "";
+		let still = 0;
+		for (let i = 0; i < 30 && still < 2; i++) {
+			const now = await write(frac);
+			still = now === last ? still + 1 : 0;
+			last = now;
+			await page.waitForTimeout(300);
+		}
+		await settle(page);
+		await page.waitForTimeout(1000);
+		if ((await read()) === last) return;
 	}
-	await settle(page);
 }
 
 /** 展开转录里当前挂载的全部折叠卡片（虚拟列表会重挂载行，直接在页面里点）。 */
