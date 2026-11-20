@@ -1669,21 +1669,32 @@ async function mockR14() {
 	await shot(p, "mock-R14-role");
 }
 
-async function trayStyle(p: Page) {
-	return p.locator(".home-tray").evaluate((el) => {
-		const after = getComputedStyle(el, "::after");
+async function stageStyle(p: Page) {
+	return p.locator(".home-stage").evaluate((el) => {
+		const trayAfter = getComputedStyle(
+			el.querySelector(".home-tray") as Element,
+			"::after",
+		);
+		const dots = getComputedStyle(
+			el.querySelector(".home-dots") as Element,
+			"::before",
+		);
+		const lineAfter = getComputedStyle(
+			el.querySelector(".home-line-l") as Element,
+			"::after",
+		);
 		const field = el.querySelector(".home-field");
 		const fs = field ? getComputedStyle(field) : null;
 		return {
 			target: el.getAttribute("data-target") ?? "",
-			afterAnim: after.animationName,
-			afterContent: after.content,
+			trayAfter: trayAfter.content,
+			dotsAnim: dots.animationName,
+			dotColor: dots.getPropertyValue("--home-dot").trim(),
+			flowAnim: lineAfter.animationName,
+			flowContent: lineAfter.content,
 			fieldH: fs?.getPropertyValue("--field-h").trim() ?? "",
 			bg: fs?.backgroundImage.slice(0, 160) ?? "",
-			accentH: getComputedStyle(document.documentElement)
-				.getPropertyValue("--accent-h")
-				.trim(),
-			roleH: el.style.getPropertyValue("--role-h"),
+			roleH: (el as HTMLElement).style.getPropertyValue("--role-h"),
 		};
 	});
 }
@@ -1691,34 +1702,53 @@ async function trayStyle(p: Page) {
 async function mockR15() {
 	const p = await mockHome();
 	await pickTarget(p, "全局助手");
-	const a = await trayStyle(p);
+	await sleep(500);
+	const a = await stageStyle(p);
 	note(`全局助手：${JSON.stringify(a)}`);
 	expect(
-		a.target === "assistant" && a.afterAnim === "tray-spin",
-		"全局助手：托盘描边是旋转流光（::after animation tray-spin）",
+		a.target === "assistant" &&
+			a.dotsAnim === "home-dots-breathe" &&
+			a.flowAnim === "home-line-flow",
+		"全局助手：点阵呼吸（home-dots-breathe），两侧的线上有流光（home-line-flow）",
+	);
+	expect(
+		a.trayAfter === "none",
+		`托盘外缘没有描边特效（::after content ${a.trayAfter}）`,
 	);
 	await shot(p, "mock-R15-assistant");
 	await pickTarget(p, "Mare");
-	const r = await trayStyle(p);
+	await sleep(500);
+	const r = await stageStyle(p);
 	note(`Mare：${JSON.stringify(r)}`);
 	expect(
 		r.target === "role" &&
-			(r.afterAnim === "none" || r.afterContent === "none"),
-		"普通 role：没有流光描边（静态光晕）",
+			r.dotsAnim === "none" &&
+			r.flowContent === "none" &&
+			r.trayAfter === "none",
+		"普通 role：点阵与线都静止，没有描边特效",
 	);
 	expect(
-		r.roleH !== "" && r.bg !== a.bg,
-		`普通 role 的色场用该 role 的色相（--role-h ${r.roleH}），与助手色场不同`,
+		r.roleH !== "" && r.bg !== a.bg && r.dotColor !== a.dotColor,
+		`普通 role 的色场用该 role 的色相（--role-h ${r.roleH}），与助手色场不同；点阵是中性色、不染助手色`,
 	);
 	await shot(p, "mock-R15-role");
 	const rm = await mockHome({ reduced: true });
 	await pickTarget(rm, "全局助手");
-	const s = await trayStyle(rm);
+	await sleep(500);
+	const s = await stageStyle(rm);
+	note(`减少动态效果 + 全局助手：${JSON.stringify(s)}`);
 	expect(
-		s.afterAnim === "none" && s.afterContent !== "none",
-		`减少动态效果时流光改为静止描边（animation ${s.afterAnim}）`,
+		s.dotsAnim === "none" && s.flowContent === "none",
+		`减少动态效果时点阵不呼吸、线上无流光（animation ${s.dotsAnim}，流光 content ${s.flowContent}）`,
 	);
 	await shot(rm, "mock-R15-assistant-reduced");
+	await pickTarget(rm, "Mare");
+	await sleep(500);
+	const sr = await stageStyle(rm);
+	expect(
+		sr.dotColor !== s.dotColor && sr.bg !== s.bg,
+		"减少动态效果时仍靠颜色区分全局助手与普通 role（点阵色、色场）",
+	);
 }
 
 async function mockR16() {
@@ -1833,7 +1863,7 @@ async function mockR18() {
 	await waitFor(
 		"首屏按默认对象预选全局助手",
 		async () =>
-			(await p.locator(".home-tray").getAttribute("data-target")) ===
+			(await p.locator(".home-stage").getAttribute("data-target")) ===
 			"assistant",
 		5_000,
 	);
@@ -1844,10 +1874,11 @@ async function mockR18() {
 	await pickTarget(p, "Mare");
 	await spaGo(p, "/settings/devices");
 	await spaGo(p, "/");
-	await waitFor("回到首屏", () => p.locator(".home-tray").isVisible(), 5_000);
+	await waitFor("回到首屏", () => p.locator(".home-stage").isVisible(), 5_000);
 	await sleep(300);
 	expect(
-		(await p.locator(".home-tray").getAttribute("data-target")) === "assistant",
+		(await p.locator(".home-stage").getAttribute("data-target")) ===
+			"assistant",
 		"再次打开首屏仍按默认对象预选，不记上一次选的 Mare",
 	);
 	await shot(p, "mock-R18-home");
@@ -3367,7 +3398,7 @@ async function realR18() {
 	await waitFor(
 		"另一设备首屏预选全局助手",
 		async () =>
-			(await other.locator(".home-tray").getAttribute("data-target")) ===
+			(await other.locator(".home-stage").getAttribute("data-target")) ===
 			"assistant",
 		15_000,
 	);

@@ -1715,7 +1715,7 @@ async function R21() {
 		});
 		const popover = page.getByTestId("role-capsule-popover");
 		if (
-			(await page.locator('.home-tray[data-target="assistant"]').count()) > 0
+			(await page.locator('.home-stage[data-target="assistant"]').count()) > 0
 		) {
 			await capsule.click();
 			await popover
@@ -1739,7 +1739,7 @@ async function R21() {
 			.click();
 		await popover.waitFor({ state: "hidden", timeout: 5_000 });
 		await page
-			.locator('.home-tray[data-target="model"]')
+			.locator('.home-stage[data-target="model"]')
 			.waitFor({ timeout: 5_000 });
 		note(
 			`新建线程框选了模型 ${model}（default 当前解析到的模型，取自 $R 的启动记录）`,
