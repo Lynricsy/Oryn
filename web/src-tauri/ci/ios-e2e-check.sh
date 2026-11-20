@@ -197,6 +197,12 @@ step_traces() { tail -n "+$((lines + 1))" "$log" | jq -sc 'map(select(.event == 
 # 截住一步落完）、或本来就在终点（noop）
 arrived='map(.op == "done" or .op == "jump" or .op == "noop") | index(true)'
 trace_arrived() { step_traces | jq -e "($arrived) != null"; }
+# 底栏可先于 WebKit 提交第一帧；启动基线要等原生实际观察到网页根滚动抵达关闭位。
+initial_closed() {
+  last sink.trace | jq -se --argjson x "$sink_w" '
+    (last // {}) | (.op == "move" or .op == "jump" or .op == "done" or .op == "noop")
+    and .to >= ($x - 0.5) and .to <= ($x + 0.5)'
+}
 # no_bounce <步骤>：程序化开合第一次到位后，等过网页的截止兜底窗口（请求后 SINK_REQUEST_MS 一步落位、
 # 再一个 SINK_REQUEST_MS 宽限，CI 上定时器还会晚几百毫秒）。拒绝从别处发起的 jump / start，也拒绝从终点
 # 离开超过 1pt 的 move：网页可直接用 scrollTo 拉回，不一定再发命令；起点允许 0.5pt 的浮点和像素舍入误差。
@@ -236,6 +242,11 @@ shot() { sim_shot "$out/e2e-$1.png" 60 || fail "$1" "截图 60 秒没有返回�
 steady_shot() {
   local prev="$work/steady-prev.png" next="$work/steady-next.png" end=$((SECONDS + 120))
   sim_shot "$prev" 60 || fail "$1" "截图 60 秒没有返回（模拟器卡住）"
+  if [[ -z ${scale:-} ]]; then
+    local pw
+    pw=$(sips -g pixelWidth "$prev" | awk '/pixelWidth/ { print $2 }')
+    scale=$(jq -r --argjson pw "$pw" '$pw / .width' <<<"$req")
+  fi
   while ((SECONDS < end)); do
     sim_shot "$next" 60 || fail "$1" "截图 60 秒没有返回（模拟器卡住）"
     if at_most "$(strip_diff "$next" "$prev" "$fx" "$fw")" 0.01; then
@@ -316,10 +327,8 @@ sink_first tabbar.set >/dev/null ||
 frame=$(last tabbar.set | jq -c .frame)
 read -r fx fy fw fh < <(jq -r '[.x, .y, .width, .height] | @tsv' <<<"$frame")
 sink_w=$(awk -v x="$fx" -v w="$fw" 'BEGIN { print 2 * x + w }')
-sleep 1
-shot closed0
-pw=$(sips -g pixelWidth "$out/e2e-closed0.png" | awk '/pixelWidth/ { print $2 }')
-scale=$(jq -r --argjson pw "$pw" '$pw / .width' <<<"$req")
+until_ok loaded 120 "根滚动初始落在关闭位（${sink_w}pt）" initial_closed
+steady_shot closed0
 echo "胶囊：${frame}，侧栏宽 ${sink_w}，缩放 ${scale}"
 ok loaded "{\"frame\":$frame}"
 
