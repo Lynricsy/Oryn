@@ -14,6 +14,7 @@ import { keyed } from "../../lib/keys";
 import { contentTabs } from "../../lib/orb-features";
 import type { ResponseData, TodoItem, TodoPhase } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
+import { wakeThread } from "../../state/actions";
 import { agentQueryable, getThreadStore, useThread } from "../../state/stores";
 import {
 	type SubagentNode,
@@ -34,7 +35,13 @@ import {
 import { Icon, type IconName } from "../ui/icons";
 import { DockerBadge } from "../ui/OrbBadges";
 import { OrbBead } from "../ui/OrbBead";
-import { IconButton, Sparkline } from "../ui/primitives";
+import {
+	Button,
+	ErrorText,
+	IconButton,
+	Sparkline,
+	Spinner,
+} from "../ui/primitives";
 import { CapabilitiesSection } from "./CapabilitiesSection";
 import { ContextBar, ContextLegend, useContextParts } from "./ContextBreakdown";
 import { openSubagent, useSubagentTree } from "./Dialogs";
@@ -171,10 +178,38 @@ function useCardFold(key: string) {
 	};
 }
 
+/** orb 停机时状态行右侧的唤醒按钮（打开线程页不会自动唤醒：冷启动代价高）。 */
+function WakeButton({ threadId }: { threadId: string }) {
+	const { t } = useTranslation();
+	const [pending, setPending] = useState(false);
+	const [error, setError] = useState<unknown>(null);
+	const wake = async () => {
+		setPending(true);
+		setError(null);
+		try {
+			await wakeThread(threadId);
+		} catch (e) {
+			setError(e);
+		} finally {
+			setPending(false);
+		}
+	};
+	return (
+		<div className="ml-auto flex min-w-0 flex-col items-end gap-1 text-right">
+			<Button size="sm" disabled={pending} onClick={() => void wake()}>
+				{pending ? <Spinner size={12} /> : null}
+				{t("thread.orbWake")}
+			</Button>
+			{error !== null && <ErrorText error={error} />}
+		</div>
+	);
+}
+
 function OrbSection({ threadId }: { threadId: string }) {
 	const { t, i18n } = useTranslation();
 	const orb = useOrbOf(threadId);
 	const working = useThread(threadId, (s) => s.thread?.state === "working");
+	const running = useThread(threadId, (s) => s.running);
 	const metrics = useOrbMetrics(orb?.state === "deleted" ? undefined : orb?.id);
 	const fold = useCardFold("orb");
 	const runner = orb?.kind === "runner";
@@ -257,6 +292,9 @@ function OrbSection({ threadId }: { threadId: string }) {
 						</div>
 					)}
 				</div>
+				{!running && (orb.state === "stopped" || orb.state === "stopping") && (
+					<WakeButton threadId={threadId} />
+				)}
 			</div>
 			{runner ? (
 				// runner（M11b）：没有类型与规格，显示 runner 名、主机与线程的工作目录
