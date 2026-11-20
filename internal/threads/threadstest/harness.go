@@ -640,6 +640,22 @@ func (o *Orbs) Delete(ctx context.Context, orbID string) error {
 	return nil
 }
 
+// DeleteUnused 实现 threads.Orbs：runner、协调 orb、助手的电脑或仍有线程引用时不删，否则同 Delete。
+func (o *Orbs) DeleteUnused(ctx context.Context, orbID string) (bool, error) {
+	orb, err := o.st.Q.GetOrb(ctx, orbID)
+	if err != nil {
+		return false, err
+	}
+	if orbs.IsRunner(orb) || orb.Coordinator || orb.Computer != 0 || orb.State == "deleted" {
+		return false, nil
+	}
+	n, err := o.st.Q.OrbThreadCounts(ctx, orbID)
+	if err != nil || n.Total > 0 {
+		return false, err
+	}
+	return true, o.Delete(ctx, orbID)
+}
+
 // ---- fake orbd ----
 
 // Orbd 是 link 另一端的 orbd 替身。

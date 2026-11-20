@@ -33,6 +33,7 @@ func (nopOrbs) SetQuiescence(func(string, func() bool) bool)        {}
 func (nopOrbs) Kick(string, string)                                 {}
 func (nopOrbs) HasFeature(string, string) bool                      { return false }
 func (nopOrbs) Delete(context.Context, string) error                { return nil }
+func (nopOrbs) DeleteUnused(context.Context, string) (bool, error)  { return false, nil }
 func (nopOrbs) ClaimPool(context.Context, OrbCreate) (db.Orb, bool) { return db.Orb{}, false }
 func (nopOrbs) RunnerOrb(context.Context, string) (orbs.Runner, error) {
 	return orbs.Runner{}, orbs.ErrNotFound

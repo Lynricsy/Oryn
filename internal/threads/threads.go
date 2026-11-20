@@ -353,7 +353,7 @@ func (s *Service) insertThread(ctx context.Context, row db.CreateThreadParams, l
 			}
 		}
 		if row.OrbID != nil {
-			if err := checkRunnerTx(ctx, q, *row.OrbID); err != nil {
+			if err := checkOrbTx(ctx, q, *row.OrbID); err != nil {
 				return err
 			}
 		}
@@ -689,7 +689,8 @@ func (s *Service) MarkShipped(ctx context.Context, id string, at int64) error {
 	return nil
 }
 
-// Delete 删除线程（条目随之删除；orb 保留）。agent 若在运行则先停止。Space 的聊天线程不能直接删除（删 Space）。
+// Delete 删除线程（条目随之删除；没有别的线程再用它的 orb 时 orb 一并删除）。agent 若在运行则先停止。
+// Space 的聊天线程不能直接删除（删 Space）。
 func (s *Service) Delete(ctx context.Context, id string) error {
 	t, err := s.get(ctx, id)
 	if err != nil {
@@ -773,7 +774,19 @@ func (s *Service) deleteThread(ctx context.Context, t *thread, inTx func(q *db.Q
 	t.mu.Lock()
 	s.out().IndexRemove(id)
 	t.mu.Unlock()
+	s.releaseOrb(ctx, orbID)
 	return nil
+}
+
+// releaseOrb 在线程删除后回收它的 orb：orb 的生命周期跟随线程，最后一个引用它的线程（含已归档的）删除时 orb 随之删除，
+// 用户不需要手动清理。失败只记录：线程已经删掉了。
+func (s *Service) releaseOrb(ctx context.Context, orbID string) {
+	if orbID == "" {
+		return
+	}
+	if _, err := s.orbs.DeleteUnused(ctx, orbID); err != nil {
+		slog.Warn("threads: 回收线程的 orb 失败", "orb", orbID, "err", err)
+	}
 }
 
 // checkSpaceTx 在事务里确认 Space 存在；不存在 → space_not_found。

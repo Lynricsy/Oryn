@@ -115,9 +115,9 @@ func checkDirFreeTx(ctx context.Context, q *db.Queries, orbID, cwd string) error
 	return e
 }
 
-// checkRunnerTx 在写线程行的事务里复核：orb 是 runner 时，其 orb 未删除、runners 关联仍在、provider 未停用；否则 not_found。
-// 普通 orb 不检查。
-func checkRunnerTx(ctx context.Context, q *db.Queries, orbID string) error {
+// checkOrbTx 在写线程行的事务里复核线程要挂的 orb：已删除或正在删除 → not_found（与「最后一个线程删除时回收 orb」
+// 串行，挂上去的线程不会落在被回收的 orb 上）；runner 另需 runners 关联仍在、provider 未停用。
+func checkOrbTx(ctx context.Context, q *db.Queries, orbID string) error {
 	o, err := q.GetOrb(ctx, orbID)
 	if errors.Is(err, sql.ErrNoRows) {
 		// orb 行不存在：交给外键报错
@@ -126,11 +126,15 @@ func checkRunnerTx(ctx context.Context, q *db.Queries, orbID string) error {
 	if err != nil {
 		return err
 	}
+	deleted := o.DeletedAt != nil || o.State == orbStateDeleted || o.State == orbs.StateDeleting
 	if !orbs.IsRunner(o) {
+		if deleted {
+			return errf("not_found", "orb not found")
+		}
 		return nil
 	}
 	gone := errf("not_found", "runner not found")
-	if o.DeletedAt != nil || o.State == orbStateDeleted || o.State == orbs.StateDeleting {
+	if deleted {
 		return gone
 	}
 	r, err := q.GetRunnerByOrb(ctx, orbID)

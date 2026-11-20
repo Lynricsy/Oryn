@@ -547,6 +547,25 @@ func (q *Queries) MaxThreadCreatedAtByProject(ctx context.Context, projectID str
 	return column_1, err
 }
 
+const orbThreadCounts = `-- name: OrbThreadCounts :one
+SELECT COUNT(*) AS total,
+       CAST(COALESCE(SUM(CASE WHEN archived_at IS NULL THEN 1 ELSE 0 END), 0) AS INTEGER) AS unarchived
+FROM threads WHERE orb_id = CAST(?1 AS TEXT)
+`
+
+type OrbThreadCountsRow struct {
+	Total      int64 `json:"total"`
+	Unarchived int64 `json:"unarchived"`
+}
+
+// Threads bound to an orb: all of them, and the unarchived ones (orb lifecycle follows its threads).
+func (q *Queries) OrbThreadCounts(ctx context.Context, orbID string) (OrbThreadCountsRow, error) {
+	row := q.db.QueryRowContext(ctx, orbThreadCounts, orbID)
+	var i OrbThreadCountsRow
+	err := row.Scan(&i.Total, &i.Unarchived)
+	return i, err
+}
+
 const removeThreadLabel = `-- name: RemoveThreadLabel :exec
 DELETE FROM thread_labels WHERE thread_id = ?1 AND label = ?2
 `

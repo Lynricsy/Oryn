@@ -371,6 +371,8 @@ type change struct {
 type transitionOpts struct {
 	// guard 在事务内对变化前的行求值；返回 false 时不做变化。
 	guard func(db.Orb) bool
+	// check 在事务内、状态变化之前求值，可读其它表（如引用 orb 的线程）；返回 false 时不做变化。
+	check func(q *db.Queries) (bool, error)
 	// then 在状态变化成功后于同一事务内执行（入队任务等）；返回错误则整个事务回滚。
 	then func(t *txn) error
 	// spawnJob 为真时把 then 入队的任务 id 记进这次 orb_events 的 detail.spawnJob：之后结束的任务据此认出
@@ -394,6 +396,12 @@ func (s *Service) transitionTx(ctx context.Context, orbID, from, to string, deta
 			}
 			if cur.State != from || !opts.guard(cur) {
 				return nil
+			}
+		}
+		if opts.check != nil {
+			ok, err := opts.check(q)
+			if err != nil || !ok {
+				return err
 			}
 		}
 		n, err := q.TransitionOrbState(ctx, db.TransitionOrbStateParams{ToState: to, StateChangedAt: now, ID: orbID, FromState: from})
@@ -1087,37 +1095,72 @@ func (s *Service) shutdownOrbd(ctx context.Context, orbID string, wait time.Dura
 // Delete 删除 orb：→ deleting，向 orbd 发 shutdown（可达时），再入队 delete；冻结中的 orb 无法应答 shutdown，
 // 与状态变化同一事务直接入队 delete。
 func (s *Service) Delete(ctx context.Context, orbID string) error {
+	_, err := s.deleteIf(ctx, orbID, nil)
+	return err
+}
+
+// DeleteUnused 在没有任何线程（含已归档的）引用 orb 时删除它，返回是否删除。orb 的生命周期跟随线程：最后一个线程删除后
+// 由线程服务调用。「无引用」与 → deleting 在同一事务里判定，写线程行的事务又复核 orb 未进入删除（threads.checkOrbTx），
+// 并发挂上来的线程与回收串行。runner、协调 orb 与助手的电脑各有归属，从不在这里删除。
+func (s *Service) DeleteUnused(ctx context.Context, orbID string) (bool, error) {
+	orb, err := s.Get(ctx, orbID)
+	if err != nil {
+		return false, err
+	}
+	if IsRunner(orb) || orb.Coordinator || orb.Computer != 0 {
+		return false, nil
+	}
+	return s.deleteIf(ctx, orbID, func(q *db.Queries) (bool, error) {
+		n, err := q.OrbThreadCounts(ctx, orbID)
+		return n.Total == 0, err
+	})
+}
+
+// deleteIf 是 Delete 与 DeleteUnused 的共同实现：check 非 nil 时在状态变化的事务里求值，返回 false 则不删除。
+func (s *Service) deleteIf(ctx context.Context, orbID string, check func(q *db.Queries) (bool, error)) (bool, error) {
 	for {
 		orb, err := s.Get(ctx, orbID)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if orb.State == StateDeleted || orb.State == StateDeleting {
-			return nil
+			return false, nil
 		}
 		if IsRunner(orb) {
 			// runner 的 orb 随 runner 一起删除（DeleteRunner）
-			return ErrRunnerUnsupported
+			return false, ErrRunnerUnsupported
 		}
 		frozen := orb.State == StateFrozen || orb.State == StateFreezing
-		var then func(t *txn) error
+		opts := transitionOpts{}
 		if frozen {
-			then = func(t *txn) error { return s.enqueueIn(t, jobs.OpDelete, nil) }
+			opts.then = func(t *txn) error { return s.enqueueIn(t, jobs.OpDelete, nil) }
 		}
-		_, moved, err := s.transitionThen(ctx, orbID, orb.State, StateDeleting, nil, then)
+		declined := false
+		if check != nil {
+			opts.check = func(q *db.Queries) (bool, error) {
+				ok, err := check(q)
+				declined = err == nil && !ok
+				return ok, err
+			}
+		}
+		ch, err := s.transitionTx(ctx, orbID, orb.State, StateDeleting, nil, opts)
 		if err != nil {
-			return err
+			return false, err
 		}
-		if !moved {
+		if ch == nil {
+			if declined {
+				return false, nil
+			}
 			continue
 		}
+		s.publish(ch)
 		s.mu.Lock()
 		delete(s.wakeAfter, orbID)
 		s.mu.Unlock()
 		if !frozen {
 			s.goBG(func() { s.shutdownThenDelete(orbID, 0) })
 		}
-		return nil
+		return true, nil
 	}
 }
 
@@ -1493,8 +1536,8 @@ func (s *Service) reconcile(ctx context.Context, orb db.Orb) error {
 	return err
 }
 
-// EvaluateIdle 执行一次空闲评估：ready 且空闲超时 → 冻结；frozen 超过 stop_after_frozen → 停机。
-// 两者都经冻结闸门（tryQuiesce）提交，空闲条件在提交事务内对最新的行复核。
+// EvaluateIdle 执行一次空闲评估：ready 且空闲超时、或线程已全部归档 → 冻结；frozen 超过 stop_after_frozen → 停机。
+// 两者都经冻结闸门（tryQuiesce）提交，空闲条件在提交事务内对最新的行复核（归档触发的冻结只由闸门确认静止）。
 func (s *Service) EvaluateIdle(ctx context.Context) {
 	for _, state := range []string{StateReady, StateFrozen} {
 		orbs, err := s.st.Q.ListOrbsByState(ctx, state)
@@ -1508,10 +1551,15 @@ func (s *Service) EvaluateIdle(ctx context.Context) {
 				continue
 			}
 			idle := s.idleFrozenTooLong
+			reason := "idle"
 			if state == StateReady {
 				idle = s.idleReady
+				if !idle(orb) && s.retired(ctx, orb) {
+					// 线程全部归档：不等空闲计时，交给闸门确认静止后立即冻结（与 Amp 归档即暂停一致）
+					idle, reason = nil, "archived"
+				}
 			}
-			if !idle(orb) {
+			if idle != nil && !idle(orb) {
 				continue
 			}
 			if state == StateReady {
@@ -1522,7 +1570,7 @@ func (s *Service) EvaluateIdle(ctx context.Context) {
 			var cerr error
 			s.tryQuiesce(orb.ID, func() bool {
 				if state == StateReady {
-					ch, cerr = s.freezeTx(ctx, orb.ID, "idle", idle)
+					ch, cerr = s.freezeTx(ctx, orb.ID, reason, idle)
 				} else {
 					ch, cerr = s.stopTx(ctx, orb.ID, StateFrozen, "frozen too long", idle)
 				}
@@ -1547,6 +1595,20 @@ func (s *Service) idleReady(orb db.Orb) bool {
 	agent := max(orb.StateChangedAt, deref64(orb.LastAgentActivityAt))
 	user := max(orb.StateChangedAt, deref64(orb.LastUserInteractionAt))
 	return now-agent >= s.cfg.Idle.AgentIdle.D().Milliseconds() && now-user >= s.cfg.Idle.UserIdle.D().Milliseconds()
+}
+
+// retired 判断 orb 是否只剩已归档的线程（至少有一个线程，且都已归档）。协调 orb 与助手的电脑不属于线程，不在此列；
+// 预热池里尚未认领的 orb 没有线程，同样不算。
+func (s *Service) retired(ctx context.Context, orb db.Orb) bool {
+	if orb.Coordinator || orb.Computer != 0 {
+		return false
+	}
+	n, err := s.st.Q.OrbThreadCounts(ctx, orb.ID)
+	if err != nil {
+		slog.Warn("统计 orb 的线程失败", "orb", orb.ID, "err", err)
+		return false
+	}
+	return n.Total > 0 && n.Unarchived == 0
 }
 
 // idleFrozenTooLong 判断 frozen 的 orb 是否已冻结超过 stop_after_frozen。

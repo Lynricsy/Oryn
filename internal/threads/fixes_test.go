@@ -15,6 +15,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/omprpc"
+	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
@@ -109,6 +110,22 @@ func (o *stubOrbs) Delete(_ context.Context, id string) error {
 	defer o.mu.Unlock()
 	o.deletes = append(o.deletes, id)
 	return nil
+}
+
+// DeleteUnused 与 orbs.Service 同义：runner、协调 orb、助手的电脑或仍有线程引用时不删。
+func (o *stubOrbs) DeleteUnused(ctx context.Context, id string) (bool, error) {
+	orb, err := o.st.Q.GetOrb(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	if orbs.IsRunner(orb) || orb.Coordinator || orb.Computer != 0 {
+		return false, nil
+	}
+	n, err := o.st.Q.OrbThreadCounts(ctx, id)
+	if err != nil || n.Total > 0 {
+		return false, err
+	}
+	return true, o.Delete(ctx, id)
 }
 
 type fixture struct {
