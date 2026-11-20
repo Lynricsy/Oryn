@@ -40,6 +40,27 @@ export interface FloatingProps extends HTMLAttributes<HTMLDivElement> {
 	ref?: Ref<HTMLDivElement | null>;
 	children: ReactNode;
 }
+/** position:fixed 的实际包含块：最近一个让 fixed 后代相对它定位的祖先；没有则为 null（相对视口）。 */
+function fixedContainingBlock(el: HTMLElement): HTMLElement | null {
+	for (
+		let e = el.parentElement;
+		e && e !== document.documentElement;
+		e = e.parentElement
+	) {
+		const s = getComputedStyle(e);
+		if (
+			s.transform !== "none" ||
+			s.perspective !== "none" ||
+			s.filter !== "none" ||
+			(s.backdropFilter && s.backdropFilter !== "none") ||
+			/paint|layout|strict|content/.test(s.contain) ||
+			/transform|perspective|filter/.test(s.willChange) ||
+			(s.containerType && s.containerType !== "normal")
+		)
+			return e;
+	}
+	return null;
+}
 
 function place(
 	el: HTMLDivElement,

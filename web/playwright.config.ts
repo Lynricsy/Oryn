@@ -38,7 +38,12 @@ export default defineConfig({
 	// SwiftShader 软件合成很吃 CPU，几路审计并行时单个用例常要几十秒
 	timeout: 150_000,
 	expect: { timeout: 5_000 },
-	reporter: [["list"], ["json", { outputFile: "test-results/ui-audit.json" }]],
+	// 每次运行一个产物目录：几路审计并行时，运行开始清空 outputDir 不会删掉别人还在写的 trace
+	outputDir: `test-results/${RUN}`,
+	reporter: [
+		["list"],
+		["json", { outputFile: `test-results/${RUN}/ui-audit.json` }],
+	],
 	use: {
 		baseURL: `http://127.0.0.1:${PORT}`,
 		locale: "zh-CN",

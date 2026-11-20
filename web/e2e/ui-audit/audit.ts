@@ -131,6 +131,28 @@ async function inspect(target: Locator): Promise<string[]> {
 					const y = T + ((B - T) * j) / 4;
 					const hit = document.elementFromPoint(x, y);
 					if (!hit || root.contains(hit)) continue;
+					// 命中的是祖先、且采样点落在祖先圆角之外（圆角裁掉了角上的一小块）：这是容器形状，不是遮挡。
+					// 只放过圆角区；祖先的 overflow 把浮层其余部分裁掉照样报错。
+					if (hit.contains(root)) {
+						const hr = hit.getBoundingClientRect();
+						const cs = getComputedStyle(hit);
+						const corners: [number, number, string][] = [
+							[hr.left, hr.top, cs.borderTopLeftRadius],
+							[hr.right, hr.top, cs.borderTopRightRadius],
+							[hr.left, hr.bottom, cs.borderBottomLeftRadius],
+							[hr.right, hr.bottom, cs.borderBottomRightRadius],
+						];
+						const inCorner = corners.some(([cx, cy, rad]) => {
+							const rr = Number.parseFloat(rad) || 0;
+							if (rr <= 0 || Math.abs(x - cx) > rr || Math.abs(y - cy) > rr)
+								return false;
+							// 圆角的圆心在角点往盒内各偏 r 处
+							const ox = x < cx ? cx - rr : cx + rr;
+							const oy = y < cy ? cy - rr : cy + rr;
+							return Math.hypot(x - ox, y - oy) > rr - 0.5;
+						});
+						if (inCorner) continue;
+					}
 					// 被祖先的 overflow 裁掉还是被别的元素压住
 					let clippedBy: Element | null = null;
 					for (let a = root.parentElement; a; a = a.parentElement) {
@@ -316,8 +338,14 @@ export function surface(s: Surface) {
 				// 钉住这一个元素再关：lastOverlay 这类定位器关掉后会重新解析到外层对话框，不能拿来判断是否关掉
 				const pinned = await overlay.elementHandle();
 				await (s.close ? s.close(page) : page.keyboard.press("Escape"));
-				await expect(overlay).toBeHidden();
-				const again = await s.open(page, info);
+				await expect
+					.poll(
+						() =>
+							pinned?.evaluate((e) => !e.isConnected || !e.checkVisibility()) ??
+							true,
+					)
+					.toBe(true);
+				const again = await (s.reopen ?? s.open)(page, info);
 				if (again) {
 					await again.waitFor({ state: "visible" });
 					await settle(page);
