@@ -68,4 +68,21 @@ describe("activeToolCallIds：当前一批工具调用", () => {
 		const withB = [...newTurnText, assistant("b", [call("t2")])];
 		expect([...activeToolCallIds(withB)]).toEqual(["t2"]);
 	});
+
+	it("A 批 → 运行中 steer → 同一轮续写文字：A 仍展开（steer 不是回合边界）", () => {
+		for (const flag of ["steering", "liveSteered"] as const) {
+			const rows: TranscriptItem[] = [
+				assistant("a", [call("t1")]),
+				{
+					kind: "message",
+					key: "s",
+					seq: 0,
+					live: false,
+					message: { role: "user", content: "顺便看下日志", [flag]: true },
+				},
+				assistant("a2", [{ type: "text", text: "好，接着看" }]),
+			];
+			expect([...activeToolCallIds(rows)]).toEqual(["t1"]);
+		}
+	});
 });
