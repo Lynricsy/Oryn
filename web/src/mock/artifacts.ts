@@ -393,6 +393,54 @@ const SEEDS: Seed[] = [
 			),
 		},
 	},
+	// 压力数据：长标题（中英混排、无空格长串）、emoji 开头、单字标题，分属另一个项目与无项目，撑满两行以上的网格
+	{
+		id: "art_01JDNALONG000000000000000A",
+		kind: "document",
+		title:
+			"2026 年第四季度多区域控制面容量规划与故障演练复盘（含 eu-central-1 / ap-southeast-1 两地的读写分离方案）",
+		projectId: projects[1]?.id,
+		path: "document.md",
+		versions: [
+			{
+				text: "# 容量规划\n\n见各区域的读写分离方案。\n",
+				at: NOW - 26 * 60 * MIN,
+			},
+		],
+	},
+	{
+		id: "art_01JDNALONG000000000000000B",
+		kind: "web",
+		title:
+			"orbd-reconnect-backoff-visualizer-with-jitter-and-afterseq-replay-timeline",
+		projectId: projects[1]?.id,
+		path: "index.html",
+		versions: [
+			{
+				text: page("退避可视化", "<h1>退避可视化</h1><p>时间线。</p>"),
+				at: NOW - 3 * DAY,
+			},
+		],
+	},
+	{
+		id: "art_01JDNALONG000000000000000C",
+		kind: "slides",
+		title: "🚀 发布周会",
+		path: "slides.json",
+		versions: [
+			{
+				text: `${JSON.stringify({ title: "🚀 发布周会", slides: [{ layout: "title", title: "发布周会" }] })}\n`,
+				at: NOW - 6 * DAY,
+			},
+		],
+	},
+	{
+		id: "art_01JDNALONG000000000000000D",
+		kind: "document",
+		title: "记",
+		path: "document.md",
+		versions: [{ text: "# 记\n", at: NOW - 9 * DAY }],
+	},
 	{
 		id: ARTIFACT_IDS.trashed,
 		kind: "web",

@@ -1189,7 +1189,9 @@ function CustomMessage({ message }: { message: JsonRecord }) {
 				<Images content={message.content} />
 			</div>
 		);
-	const first = lines.find((l) => l.trim())?.trim() ?? "";
+	// 摘要取第一行正文：跳过 `<system-notice>` 这类包裹标签行
+	const first =
+		lines.map((l) => l.trim()).find((l) => l && !/^<\/?[\w-]+>$/.test(l)) ?? "";
 	return (
 		<div className="overflow-hidden rounded-lg border border-border-strong border-dashed">
 			<button
