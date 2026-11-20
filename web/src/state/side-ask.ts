@@ -130,6 +130,9 @@ export async function runSideAsk(
 	if (!threadId) return;
 	const overModal = overForeignModal();
 	if (sideAskStore.getState().card) closeSideAsk();
+	// 先领令牌再等取消应答：等待期间卡片被关（例如切走线程）就不再开卡、不再发问
+	seq += 1;
+	const mine = seq;
 	const running = runningRecord(
 		peekThreadStore(threadId)?.getState().btw ?? {},
 	);
@@ -141,10 +144,9 @@ export async function runSideAsk(
 		await realtime
 			.cmd(threadId, { type: "btw_cancel", recordId: running.id })
 			.catch(() => undefined);
+		if (seq !== mine) return;
 	}
 	const question = composeSideQuestion(action, sel, i18n.language);
-	seq += 1;
-	const mine = seq;
 	sideAskStore.setState({
 		card: {
 			threadId,
@@ -165,6 +167,7 @@ export async function runSideAsk(
 			if (!(e instanceof Error && e.message.includes("cancel it first")))
 				throw e;
 			await new Promise((r) => setTimeout(r, RETRY_MS));
+			if (seq !== mine) return;
 			res = await send();
 		}
 		if (seq === mine) patchCard(mine, { recordId: res.record.id });

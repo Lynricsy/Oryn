@@ -120,6 +120,30 @@ describe("runSideAsk", () => {
 		});
 	});
 
+	it("取消旧问题的应答还没到就关掉：不再开卡、不发 btw", async () => {
+		putRecord(
+			record(
+				"old",
+				composeSideQuestion({ kind: "explain" }, SEL, "zh-CN"),
+				"running",
+			),
+		);
+		let reply: (v: unknown) => void = () => {};
+		cmd.mockImplementation(((_t: string, frame: { type: string }) =>
+			frame.type === "btw_cancel"
+				? new Promise((r) => {
+						reply = r;
+					})
+				: Promise.resolve({ record: record("new", "q", "running") })) as never);
+		const run = runSideAsk({ kind: "explain" }, SEL);
+		await Promise.resolve();
+		closeSideAsk();
+		reply({ cancelled: true });
+		await run;
+		expect(sent()).toEqual(["btw_cancel"]);
+		expect(sideAskStore.getState().card).toBeNull();
+	});
+
 	it("应答晚于关闭：对新记录发 btw_cancel", async () => {
 		let reply: (v: unknown) => void = () => {};
 		cmd.mockImplementation(((_t: string, frame: { type: string }) =>
