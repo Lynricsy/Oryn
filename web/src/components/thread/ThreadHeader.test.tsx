@@ -122,7 +122,7 @@ describe("ThreadHeader orb 状态胶囊", () => {
 				orb: {
 					id: `orb-${id}`,
 					state: "ready",
-					stateChangedAt: "2026-01-01T00:00:00Z",
+					stateChangedAt: 0,
 				} as Orb,
 			});
 		renderHeader(id, { title: "无图标的线程", orbId: `orb-${id}` }, true);
