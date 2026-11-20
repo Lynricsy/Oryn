@@ -14,6 +14,10 @@
  *   在侧栏里点链接导航后标记留在栈里，日后返回落到它上面时自动再退一步。
  * - 打开时卡片 `inert`（不可点、读屏忽略），侧栏获得焦点；关闭后焦点还原到打开前的元素。
  * - `prefers-reduced-motion`：不做过渡，直接切换。
+ * - iOS 根滚动模式（bridge 8，`lib/native-sink.ts`）：挂载即请求原生跟随根滚动；接管后 `<html data-sink-native>`，
+ *   文档可横向滚动，卡片开合就是根滚动（拖动、吸附、回弹全由系统做），不装上面的 JS 手势。根滚动停稳后提交到
+ *   `sidebarOpen`；`sidebarOpen` 由别处改变时请求滚到对应一端（平滑的交给原生动画）；非本页引起的横向位移立即拉回。
+ *   不接管（浏览器、Android、旧壳、iOS < 26）时一切照旧走 JS 手势。
  * - iOS 原生底栏（`lib/native-tab-bar.ts`）垫在 WebView 之下：接管期间 `<html data-native-under>`，页面透明、原生垫底，
  *   卡片画在它上面，透出多少完全由网页合成器决定。卡片左缘由原生自己从根滚动算；这里只在侧栏打开且静止时定时探测
  *   底栏位置是否被菜单、弹层、软键盘盖住（`setCovered`，盖住时原生底栏不接触摸）。
@@ -26,13 +30,21 @@ import {
 	useSyncExternalStore,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { sinkRest } from "../../lib/native-sink";
+import {
+	createSinkScroll,
+	nativeSink,
+	type SinkRest,
+	type SinkScroll,
+	sinkRest,
+	useNativeSinkEngaged,
+} from "../../lib/native-sink";
 import {
 	COVER_POLL_MS,
 	nativeTabBar,
 	slotCovered,
 	useNativeTabBarEngaged,
 } from "../../lib/native-tab-bar";
+import { setMinScale } from "../../lib/viewport";
 import { uiStore, useUi } from "../../state/ui";
 
 /** 左缘起手区宽度（px）。 */
@@ -109,6 +121,11 @@ function sinkWidth(side: HTMLElement | null): number {
 	return side?.getBoundingClientRect().width || window.innerWidth;
 }
 
+/** 原生模式：卡片离开关闭位而 store 还是关着（拖动、程序化开合途中）时带 `data-dragging`，切到打开时的圆角、投影与裁剪。 */
+function markMoving(card: HTMLElement, open: boolean) {
+	card.toggleAttribute("data-dragging", !open && sinkRest(window) !== "closed");
+}
+
 export function SinkLayout({
 	sidebar,
 	children,
@@ -120,6 +137,8 @@ export function SinkLayout({
 	const open = useUi((s) => s.sidebarOpen);
 	const reduce = useReducedMotion();
 	const engaged = useNativeTabBarEngaged();
+	const native = useNativeSinkEngaged();
+	const scrollRef = useRef<SinkScroll | null>(null);
 	const cardRef = useRef<HTMLDivElement>(null);
 	const sideRef = useRef<HTMLDivElement>(null);
 	const restore = useRef<HTMLElement | null>(null);
@@ -221,10 +240,96 @@ export function SinkLayout({
 		};
 	}, [open, engaged]);
 
-	// 触摸手势：跟手写 --sink-p，松手吸附
+	// 根滚动跟随：挂载即请求（没有原生能力时是空操作），卸载时撤掉
+	useEffect(() => {
+		nativeSink.setOn(true);
+		return () => nativeSink.setOn(false);
+	}, []);
+
+	// 原生滚动模式：文档可横滚（index.css 的 `:root[data-sink-native]`），根滚动与 sidebarOpen 互相同步
+	useLayoutEffect(() => {
+		const card = cardRef.current;
+		if (!native || !card) return;
+		const root = document.documentElement;
+		root.setAttribute("data-sink-native", "");
+		setMinScale(true);
+		const max = () => root.scrollWidth - window.innerWidth;
+		const jump = (to: SinkRest) =>
+			window.scrollTo({
+				left: to === "open" ? 0 : max(),
+				behavior: "instant",
+			});
+		const here = (): SinkRest => (openRef.current ? "open" : "closed");
+		// 程序化平滑开合期间关掉吸附：途中的任何重排（开合本身就会改 inert、圆角、关闭条）都会让浏览器
+		// 「重新吸附到当前吸附目标」，把正在进行的滚动拉回起点。提交或手指按下时恢复。
+		const snap = (on: boolean) =>
+			on
+				? root.style.removeProperty("scroll-snap-type")
+				: root.style.setProperty("scroll-snap-type", "none");
+		jump(here());
+		const s = createSinkScroll(
+			{
+				rest: () => sinkRest(window),
+				nearer: () => (window.scrollX < max() / 2 ? "open" : "closed"),
+				scrollTo: (to, smooth) => {
+					if (!smooth) return jump(to);
+					snap(false);
+					nativeSink.show(to === "open", true);
+				},
+				setTimeout: (cb, ms) => window.setTimeout(cb, ms),
+				clearTimeout: (id) => window.clearTimeout(id),
+			},
+			here(),
+			(rest) => {
+				snap(true);
+				const next = rest === "open";
+				if (next !== openRef.current) uiStore.getState().setSidebar(next);
+			},
+		);
+		scrollRef.current = s;
+		const onScroll = () => {
+			markMoving(card, openRef.current);
+			s.scrolled();
+		};
+		const onTouch = (e: TouchEvent) => {
+			const down = e.touches.length > 0;
+			if (down) snap(true);
+			s.touch(down);
+		};
+		const onResize = () => jump(here());
+		const opts = { passive: true };
+		window.addEventListener("scroll", onScroll, opts);
+		window.addEventListener("touchstart", onTouch, opts);
+		window.addEventListener("touchend", onTouch, opts);
+		window.addEventListener("touchcancel", onTouch, opts);
+		window.addEventListener("resize", onResize);
+		return () => {
+			window.removeEventListener("scroll", onScroll);
+			window.removeEventListener("touchstart", onTouch);
+			window.removeEventListener("touchend", onTouch);
+			window.removeEventListener("touchcancel", onTouch);
+			window.removeEventListener("resize", onResize);
+			s.dispose();
+			scrollRef.current = null;
+			card.removeAttribute("data-dragging");
+			root.removeAttribute("data-sink-native");
+			snap(true);
+			setMinScale(false);
+			window.scrollTo(0, 0);
+		};
+	}, [native]);
+
+	// sidebarOpen 由别处改变（按钮、Esc、返回键、选线程）：请求滚到对应一端；根滚动自己提交的变化在这里是空操作
+	useLayoutEffect(() => {
+		if (!native) return;
+		scrollRef.current?.request(open ? "open" : "closed", !reduce);
+		if (cardRef.current) markMoving(cardRef.current, open);
+	}, [open, reduce, native]);
+
+	// 触摸手势（非原生模式）：跟手写 --sink-p，松手吸附
 	useEffect(() => {
 		const card = cardRef.current;
-		if (!card) return;
+		if (!card || native) return;
 		let start: {
 			x: number;
 			y: number;
@@ -309,7 +414,7 @@ export function SinkLayout({
 			card.removeEventListener("touchend", end);
 			card.removeEventListener("touchcancel", end);
 		};
-	}, []);
+	}, [native]);
 
 	return (
 		<div className="sink-root relative h-dvh w-full overflow-hidden text-fg">

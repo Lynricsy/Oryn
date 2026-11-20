@@ -8,6 +8,7 @@ import {
 	installNoFocusZoom,
 	installViewportTracking,
 	readSegments,
+	setMinScale,
 	useSafeTop,
 	useViewportSegments,
 } from "./viewport";
@@ -188,6 +189,30 @@ describe("installNoFocusZoom", () => {
 			maxTouchPoints: 5,
 		});
 		expect(content(doc)).toBe(`${BASE}, maximum-scale=2`);
+	});
+});
+
+describe("setMinScale", () => {
+	const BASE = "width=device-width, initial-scale=1.0, viewport-fit=cover";
+	const docWith = (content: string) => {
+		const doc = document.implementation.createHTMLDocument("");
+		const meta = doc.createElement("meta");
+		meta.name = "viewport";
+		meta.content = content;
+		doc.head.appendChild(meta);
+		return doc;
+	};
+	const content = (doc: Document) =>
+		doc.querySelector<HTMLMetaElement>('meta[name="viewport"]')?.content;
+
+	it("开两次只追加一次 minimum-scale=1，关掉后回到原样（保留 maximum-scale）", () => {
+		const doc = docWith(`${BASE}, maximum-scale=1`);
+		setMinScale(true, doc);
+		setMinScale(true, doc);
+		expect(content(doc)).toBe(`${BASE}, maximum-scale=1, minimum-scale=1`);
+		setMinScale(false, doc);
+		setMinScale(false, doc);
+		expect(content(doc)).toBe(`${BASE}, maximum-scale=1`);
 	});
 });
 

@@ -163,6 +163,9 @@ export interface SinkScroll {
  * 根滚动 → `sidebarOpen` 的同步与守卫。`committed` = 最近一次提交的静止位；`free` 自触点按下或本页请求起为真，
  * 到下一次提交为假。不 free 时任何离开 `committed` 的位移都立即拉回（instant）；free 时静止 SINK_REST_MS 后提交，
  * 停在中途则就近平滑吸附。触点按着时不提交（等抬起再计时）。
+ * 本页请求的动画途中停在中途不算「停稳」：主线程忙时 scroll 事件可能隔一百多毫秒才来一条，这时就近吸附会把开合
+ * 反过来。请求的目的地（`target`）在提交或手指接管前一直有效，中途静止就继续等，等满 SINK_REQUEST_MS 仍未到位
+ * （原生动画丢了）才直接落到目的地。
  */
 export function createSinkScroll(
 	env: SinkScrollEnv,
@@ -172,6 +175,8 @@ export function createSinkScroll(
 	let committed = initial;
 	let free = false;
 	let touching = false;
+	let target: SinkRest | null = null;
+	let waits = 0;
 	let timer: number | null = null;
 	const arm = (ms: number) => {
 		if (timer !== null) env.clearTimeout(timer);
@@ -182,11 +187,22 @@ export function createSinkScroll(
 		if (touching) return;
 		const rest = env.rest();
 		if (rest === null) {
-			env.scrollTo(env.nearer(), true);
+			if (target === null) {
+				env.scrollTo(env.nearer(), true);
+				return;
+			}
+			if (waits * SINK_REST_MS < SINK_REQUEST_MS) {
+				waits++;
+				arm(SINK_REST_MS);
+				return;
+			}
+			env.scrollTo(target, false);
+			arm(SINK_REST_MS);
 			return;
 		}
 		committed = rest;
 		free = false;
+		target = null;
 		commit(rest);
 	};
 	return {
@@ -199,12 +215,16 @@ export function createSinkScroll(
 		},
 		touch(down) {
 			touching = down;
-			if (down) free = true;
-			else arm(SINK_REST_MS);
+			if (down) {
+				free = true;
+				target = null;
+			} else arm(SINK_REST_MS);
 		},
 		request(to, smooth) {
 			if (env.rest() === to && committed === to) return;
 			free = true;
+			target = to;
+			waits = 0;
 			env.scrollTo(to, smooth);
 			// 原生动画经桥起步：第一条 scroll 事件之前不按「静止」提交；一直没动（原生失败）就提交实际位置
 			arm(SINK_REQUEST_MS);

@@ -217,6 +217,43 @@ describe("createSinkScroll", () => {
 		expect(commit.mock.calls).toEqual([["closed"]]);
 	});
 
+	it("T9 request 动画途中 scroll 事件隔了超过 SINK_REST_MS：不就近吸附（不把开合反过来），到位后照常提交", () => {
+		const { s, state, scrollTo, commit, scroll } = setup("closed");
+		s.request("open", true);
+		scroll(null);
+		state.nearer = "closed";
+		vi.advanceTimersByTime(SINK_REST_MS * 3);
+		expect(scrollTo.mock.calls).toEqual([["open", true]]);
+		expect(commit).not.toHaveBeenCalled();
+		scroll("open");
+		vi.advanceTimersByTime(SINK_REST_MS);
+		expect(commit.mock.calls).toEqual([["open"]]);
+	});
+
+	it("T10 request 动画停在中途一直不动（原生动画丢了）：等满 SINK_REQUEST_MS 直接落到目的地", () => {
+		const { s, scrollTo, commit, scroll } = setup("closed");
+		s.request("open", true);
+		scroll(null);
+		vi.advanceTimersByTime(SINK_REQUEST_MS);
+		expect(scrollTo).not.toHaveBeenCalledWith("closed", true);
+		vi.advanceTimersByTime(SINK_REST_MS);
+		expect(scrollTo).toHaveBeenLastCalledWith("open", false);
+		scroll("open");
+		vi.advanceTimersByTime(SINK_REST_MS);
+		expect(commit.mock.calls).toEqual([["open"]]);
+	});
+
+	it("T11 request 途中手指接管：目的地作废，抬起后停在中途就近吸附", () => {
+		const { s, state, scrollTo, scroll } = setup("closed");
+		s.request("open", true);
+		s.touch(true);
+		scroll(null);
+		s.touch(false);
+		state.nearer = "closed";
+		vi.advanceTimersByTime(SINK_REST_MS);
+		expect(scrollTo).toHaveBeenLastCalledWith("closed", true);
+	});
+
 	it("提交之后恢复守卫：非本页引起的位移再次被拉回", () => {
 		const { s, scrollTo, commit, scroll } = setup();
 		s.request("open", true);
