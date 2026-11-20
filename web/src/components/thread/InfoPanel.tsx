@@ -574,7 +574,9 @@ function OrbSection({ threadId }: { threadId: string }) {
 						<div className="truncate text-faint text-sm leading-[18px]">
 							{runner ? t("runner.label") : t("panel.orb")}
 							{uptime && ` · ${t("panel.uptime", { d: uptime })}`}
-							{faultLabel && (
+							{/* 只有一项故障时，下面紧挨着的故障提示行（带重启 / 日志）已经说清楚了，副标题不再重复；
+							    多项时提示行只列第一项，计数仍有信息量 */}
+							{faults > 1 && (
 								<span className="font-medium text-err"> · {faultLabel}</span>
 							)}
 						</div>
