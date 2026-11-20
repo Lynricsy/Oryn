@@ -309,6 +309,7 @@ function MessageMenu({
 	entryId,
 	copyText,
 	className = "",
+	chrome = "",
 	touchVisible = true,
 }: {
 	entryId?: string;
@@ -316,6 +317,8 @@ function MessageMenu({
 	copyText: () => string;
 	/** 追加到外包元素上的定位类（例如回合中间消息右上角的浮动槽位）。 */
 	className?: string;
+	/** 追加到按钮上的外观类（底色、描边、阴影）：随按钮一起显隐，按钮透明时不留空框 */
+	chrome?: string;
 	/**
 	 * 粗指针下常显（弱化按钮）。浮在内容上的槽位关掉：改为点按消息后显现——
 	 * 外层 `group/msg` 可被点按聚焦（tabIndex=-1），靠 `group-focus-within` 显示；
@@ -342,7 +345,7 @@ function MessageMenu({
 				trigger={(p) => (
 					<button
 						type="button"
-						className={`inline-grid h-6 w-6 place-items-center rounded-md text-ghost opacity-0 transition-opacity duration-150 hover:bg-hover hover:text-fg group-focus-within/mm:opacity-100 group-hover/msg:opacity-100 ${touchVisible ? "pointer-coarse:opacity-100" : "group-focus-within/msg:opacity-100"}`}
+						className={`inline-grid h-6 w-6 place-items-center rounded-md text-ghost opacity-0 transition-opacity duration-150 hover:bg-hover hover:text-fg group-focus-within/mm:opacity-100 group-hover/msg:opacity-100 ${touchVisible ? "pointer-coarse:opacity-100" : "group-focus-within/msg:opacity-100"} ${chrome}`}
 						aria-label={t("transcript.messageActions")}
 						{...p}
 						onClick={() => {
@@ -986,10 +989,10 @@ export function assistantEdges(
 
 /**
  * 回合中间的助手消息自己的操作菜单：浮在消息右上角（压在上方间距与首块右上角），带底色描边，
- * 只在悬停 / 聚焦时显现——左侧不再留头像列，菜单不占正文宽度。
+ * 只在悬停 / 聚焦时显现——左侧不再留头像列，菜单不占正文宽度。槽位只管定位，底色描边画在按钮上随它显隐。
  */
-const FLOAT_MENU =
-	"absolute -top-3 right-0 z-10 rounded-md border border-border bg-panel shadow-xs";
+const FLOAT_SLOT = "absolute -top-3 right-0 z-10";
+const FLOAT_CHROME = "border border-border bg-panel shadow-xs";
 
 function AssistantMessage({
 	message,
@@ -1102,7 +1105,8 @@ function AssistantMessage({
 					entryId={entryId}
 					copyText={() => textOfContent(content)}
 					touchVisible={false}
-					className={FLOAT_MENU}
+					className={FLOAT_SLOT}
+					chrome={FLOAT_CHROME}
 				/>
 			)}
 			{blocks}
