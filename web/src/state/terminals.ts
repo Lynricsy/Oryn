@@ -46,6 +46,13 @@ export interface TermLike {
 	refont?(): void;
 	/** 明暗 / 主题色切换后重取配色。 */
 	retheme?(): void;
+	/** 当前选中的文字（没有选区为空串）。 */
+	getSelection?(): string;
+	selectAll?(): void;
+	/** 清屏：只留当前行，回滚区清空（不发给 pty）。 */
+	clear?(): void;
+	/** 终端里的程序开了鼠标上报（右键交给它，不出菜单）。 */
+	mouseTracking?(): boolean;
 }
 
 export interface TermHandlers {

@@ -2,10 +2,20 @@
  * 单个终端的 xterm 视图：把模块级会话里的 xterm 挂进容器；容器变化（`ResizeObserver`，防抖 100ms）与
  * `visualViewport` 变化时重新 fit，属主窗口据此发 `terminal_resize`；标签激活时认领尺寸并聚焦。
  * 非属主窗口按属主的尺寸显示，容器可滚动。等宽 webfont 到位后重新测量并 fit；主题切换时重取配色。
+ * 右键菜单：xterm 里有选区时给选区组（解释、引用到输入框、复制…），另有粘贴 / 全选 / 清屏；
+ * 程序开了鼠标上报时右键交给程序。触屏长按留给 xterm 自己（不打 `data-ctx-touch`）。
  */
 import { type ReactNode, useEffect, useRef } from "react";
+import i18n from "../../i18n";
+import { useContextTarget } from "../../lib/context-menu/registry";
+import { anchorOf } from "../../lib/context-menu/selection";
+import { selectionGroups } from "../../lib/context-menu/selection-groups";
+import type { MenuGroup } from "../../lib/context-menu/types";
+import { host } from "../../lib/host";
 import { terminalHub } from "../../state/terminals";
 import { THEME_EVENT } from "../../state/theme";
+import type { MenuItem } from "../ui/primitives";
+import { pasteIntoTerminal } from "./paste";
 
 const FIT_DEBOUNCE_MS = 100;
 /** 与 main.tsx 预加载的字体一致。 */
@@ -20,7 +30,7 @@ export function TerminalView({
 	terminalId: string;
 	autoFocus: boolean;
 }): ReactNode {
-	const ref = useRef<HTMLDivElement>(null);
+	const ref = useRef<HTMLDivElement | null>(null);
 
 	useEffect(() => {
 		const el = ref.current;
@@ -76,9 +86,65 @@ export function TerminalView({
 		};
 	}, [threadId, terminalId, autoFocus]);
 
+	const ctxRef = useContextTarget<HTMLDivElement>({
+		// 终端的选区在 xterm 里，不是 DOM 选区：由 items 自己取
+		selection: () => null,
+		items: (req) => {
+			const term = terminalHub.session(threadId, terminalId)?.term;
+			if (!term) return null;
+			// 终端里的程序开了鼠标上报：右键交给它
+			if (term.mouseTracking?.()) return "suppress";
+			const text = term.getSelection?.() ?? "";
+			const groups: MenuGroup[] = text
+				? selectionGroups({
+						threadId: req.askThreadId,
+						text,
+						before: "",
+						after: "",
+						source: { kind: "terminal" },
+						anchor: anchorOf(null, req.x, req.y),
+						insert: () => `\`\`\`\n${text}\n\`\`\``,
+					})
+				: [];
+			const items: MenuItem[] = [];
+			// Android WebView 读不了剪贴板：粘贴走按键条的输入行
+			if (
+				host.platform !== "android" &&
+				typeof navigator.clipboard?.readText === "function"
+			)
+				items.push({
+					key: "paste",
+					icon: "clipboard",
+					label: i18n.t("contextMenu.paste"),
+					disabled:
+						terminalHub.store(threadId).getState().terminals[terminalId]
+							?.status !== "live",
+					onSelect: () => void pasteIntoTerminal(threadId, terminalId),
+				});
+			if (term.selectAll)
+				items.push({
+					key: "selectAll",
+					icon: "textT",
+					label: i18n.t("contextMenu.selectAll"),
+					onSelect: () => term.selectAll?.(),
+				});
+			if (term.clear)
+				items.push({
+					key: "clear",
+					icon: "trash",
+					label: i18n.t("contextMenu.clearTerminal"),
+					onSelect: () => term.clear?.(),
+				});
+			return [...groups, { key: "terminal", items }];
+		},
+	});
+
 	return (
 		<div
-			ref={ref}
+			ref={(el) => {
+				ref.current = el;
+				ctxRef(el);
+			}}
 			data-testid="terminal-view"
 			data-terminal-id={terminalId}
 			className="oryn-term h-full w-full overflow-auto"
