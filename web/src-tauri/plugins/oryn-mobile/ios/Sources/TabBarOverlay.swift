@@ -8,9 +8,13 @@
 import UIKit
 import WebKit
 
-/// 裁切视图：只把落在底栏（及按住时鼓出的透镜）上的触摸留下，空白处放行给网页。
+/// 裁切视图：只把落在底栏胶囊（及按住时鼓出的透镜）上的触摸留下，空白处与胶囊两侧的留白放行给网页。
 final class TabBarClipView: UIView {
+  /// 起手能落在这里面（本视图坐标）：网页胶囊的矩形，上下含透镜的余量。
+  var touchRect: CGRect = .zero
+
   override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+    guard touchRect.contains(point) else { return nil }
     let hit = super.hitTest(point, with: event)
     return hit === self ? nil : hit
   }
@@ -20,6 +24,9 @@ final class TabBarClipView: UIView {
 final class TabBarOverlay: NSObject, UITabBarDelegate {
   /// 裁切视图比底栏上下多出的边：按住时透镜会鼓出底栏，不该被切掉。
   static let slop: CGFloat = 12
+  /// iOS 26 的 UITabBar 把玻璃胶囊画在自己边界内左右各缩进这么多（模拟器实测 21pt）；
+  /// 底栏左右各放出这么多，看得见的胶囊才与网页胶囊同宽（四项撑满侧栏）。
+  static let platterInset: CGFloat = 21
   /// 缺省缓动（= 网页 `--ease`）。
   static let defaultEase: [Double] = [0.2, 0.8, 0.2, 1]
   /// 让开遮挡后淡回的时长（= 网页 `UNCOVER_MS`）。
@@ -139,13 +146,16 @@ final class TabBarOverlay: NSObject, UITabBarDelegate {
     }.withRenderingMode(.alwaysOriginal)
   }
 
-  /// 底栏按网页胶囊的矩形摆：同左右、竖直居中，高度取系统给的。
+  /// 底栏按网页胶囊的矩形摆：看得见的玻璃胶囊与网页胶囊同左右（底栏本身左右各放出 `platterInset`），竖直居中，高度取系统给的。
   private func layout(_ rect: CGRect) {
     let fit = bar.sizeThatFits(CGSize(width: rect.width, height: .greatestFiniteMagnitude))
     let height = max(fit.height, rect.height)
     slot = CGRect(x: rect.minX, y: rect.midY - height / 2, width: rect.width, height: height)
-    let inClip = CGRect(x: slot.minX, y: Self.slop, width: slot.width, height: slot.height)
+    let inClip = CGRect(
+      x: slot.minX - Self.platterInset, y: Self.slop, width: slot.width + Self.platterInset * 2,
+      height: slot.height)
     if bar.frame != inClip { bar.frame = inClip }
+    clip.touchRect = CGRect(x: slot.minX, y: 0, width: slot.width, height: slot.height + Self.slop * 2)
     // 在途的裁切过渡不打断：只有静止时才把裁切视图挪到新位置
     if animator == nil { clip.frame = clipFrame(edge) }
   }
