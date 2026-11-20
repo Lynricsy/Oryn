@@ -2,6 +2,7 @@
  * 转录中的单条消息渲染：按 omp 的信息量全量展示（思考块、工具卡片、回合脚注、错误、bash 执行、自定义消息等）。
  * 所有字段都按「可能残缺」处理——条目与流式帧都是外部 JSON。
  */
+import type { TFunction } from "i18next";
 import { memo, type ReactNode, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
@@ -11,6 +12,8 @@ import {
 	type MessageAttachment,
 	parseAttachmentBlock,
 } from "../../lib/attachments";
+import { useContextTarget } from "../../lib/context-menu/registry";
+import { copyWithToast } from "../../lib/context-menu/selection-groups";
 import { fileIcon } from "../../lib/file-icon";
 import {
 	formatBytes,
@@ -25,8 +28,9 @@ import {
 	type OrynHeader,
 	parseOrynMessage,
 } from "../../lib/oryn-message";
-import { splitLeadingQuote } from "../../lib/quote";
+import { normalizeQuote, splitLeadingQuote } from "../../lib/quote";
 import { parseTitleCard } from "../../lib/title";
+import { patchComposerDraft } from "../../state/composer-drafts";
 import type { JsonRecord } from "../../state/message-builder";
 import { useIndex } from "../../state/stores";
 import { ToolView } from "../../tool-render/ToolView";
@@ -36,11 +40,11 @@ import { Markdown } from "../markdown/Markdown";
 import { Badge, Callout, Stat } from "../ui/data";
 import { ImageViewer } from "../ui/ImageViewer";
 import { Icon, type IconName } from "../ui/icons";
-import { Menu, ThreadStateIcon } from "../ui/primitives";
+import { Menu, type MenuItem, ThreadStateIcon } from "../ui/primitives";
 import { UserAvatar } from "../ui/UserAvatar";
 import { AgentAvatar } from "./AgentAvatar";
 import { useToolCallActive } from "./active-tools";
-import { useTranscriptContext } from "./context";
+import { type TranscriptContextValue, useTranscriptContext } from "./context";
 
 const CHIP =
 	"inline-flex items-center gap-1.5 rounded-md border border-border bg-panel px-2 py-1 text-xs";
@@ -233,6 +237,57 @@ function pickMenuSide(el: HTMLElement | null, items: number): "top" | "bottom" {
 }
 
 /**
+ * 消息菜单项：行内「⋯」与右键菜单共用。只读（分享页）只有「复制」；fork / 标签 / 引用整条都要改动线程。
+ */
+function messageMenuItems(o: {
+	entryId?: string;
+	copyText: () => string;
+	copyLabel: string;
+	/** 给出时多一项「引用整条」（右键菜单的助手消息） */
+	quoteText?: () => string;
+	ctx: TranscriptContextValue;
+	t: TFunction;
+}): MenuItem[] {
+	const { entryId, ctx, t } = o;
+	const editable = entryId !== undefined && !ctx.readOnly;
+	const items: MenuItem[] = [
+		{
+			key: "copy",
+			icon: "copy",
+			label: o.copyLabel,
+			onSelect: () => void copyWithToast(o.copyText()),
+		},
+	];
+	const { quoteText } = o;
+	if (quoteText && editable)
+		items.push({
+			key: "quote",
+			icon: "quote",
+			label: t("contextMenu.quoteMessage"),
+			onSelect: () =>
+				patchComposerDraft(ctx.threadId, {
+					quote: { text: normalizeQuote(quoteText()) },
+				}),
+		});
+	if (editable && entryId)
+		items.push(
+			{
+				key: "fork",
+				icon: "fork",
+				label: t("transcript.forkHere"),
+				onSelect: () => ctx.forkFrom(entryId),
+			},
+			{
+				key: "label",
+				icon: "edit",
+				label: t("transcript.label"),
+				onSelect: () => ctx.labelEntry(entryId),
+			},
+		);
+	return items;
+}
+
+/**
  * 消息操作菜单：行内渲染，悬停 / 聚焦时显现。打开时按可见空间选择向上或向下展开，
  * 展开后再把菜单滚进页头与输入坞之间（滚动容器带 scroll-padding），保证每一项都点得到。
  */
@@ -258,9 +313,14 @@ function MessageMenu({
 	const ctx = useTranscriptContext();
 	const wrapRef = useRef<HTMLDivElement>(null);
 	const [side, setSide] = useState<"top" | "bottom">("top");
-	// 只读（分享页）：只有「复制」；fork / 标签都要改动线程
-	const editable = entryId !== undefined && !ctx.readOnly;
-	const itemCount = editable ? 3 : 1;
+	const items = messageMenuItems({
+		entryId,
+		copyText,
+		copyLabel: t("common.copy"),
+		ctx,
+		t,
+	});
+	const itemCount = items.length;
 	return (
 		<div
 			ref={wrapRef}
@@ -289,30 +349,7 @@ function MessageMenu({
 						<Icon name="more" size={14} />
 					</button>
 				)}
-				items={[
-					{
-						key: "copy",
-						icon: "copy",
-						label: t("common.copy"),
-						onSelect: () => void navigator.clipboard?.writeText(copyText()),
-					},
-					...(editable && entryId
-						? [
-								{
-									key: "fork",
-									icon: "fork" as const,
-									label: t("transcript.forkHere"),
-									onSelect: () => ctx.forkFrom(entryId),
-								},
-								{
-									key: "label",
-									icon: "edit" as const,
-									label: t("transcript.label"),
-									onSelect: () => ctx.labelEntry(entryId),
-								},
-							]
-						: []),
-				]}
+				items={items}
 			/>
 		</div>
 	);
@@ -483,6 +520,7 @@ function UserMessage({
 	turnStart: boolean;
 }) {
 	const { t, i18n } = useTranslation();
+	const ctx = useTranscriptContext();
 	// 控制面追加的附件块不按原文显示，渲染成附件芯片
 	const { text, attachments } = parseAttachmentBlock(
 		textOfContent(message.content),
@@ -504,8 +542,23 @@ function UserMessage({
 		: "";
 	const shown = oryn ? oryn.body : body;
 	const quoted = splitLeadingQuote(shown);
+	const ctxRef = useContextTarget<HTMLDivElement>({
+		items: () => [
+			{
+				key: "message",
+				items: messageMenuItems({
+					entryId,
+					copyText: () => text,
+					copyLabel: t("contextMenu.copyMessage"),
+					ctx,
+					t,
+				}),
+			},
+		],
+	});
 	return (
 		<div
+			ref={ctxRef}
 			className="group/msg flex flex-col items-end gap-1"
 			data-ask-scope="user"
 		>
@@ -856,6 +909,7 @@ function AssistantMessage({
 	turn?: TurnUsage;
 }) {
 	const { t } = useTranslation();
+	const ctx = useTranscriptContext();
 	const content = Array.isArray(message.content) ? message.content : [];
 	const lastIdx = content.length - 1;
 	const stop =
@@ -864,6 +918,21 @@ function AssistantMessage({
 		typeof message.errorMessage === "string" ? message.errorMessage : undefined;
 	// 回合末尾的消息由脚注承载整回合菜单；其余已结束的消息各自带一个菜单
 	const ownMenu = !live && !turn;
+	const ctxRef = useContextTarget<HTMLDivElement>({
+		items: () => [
+			{
+				key: "message",
+				items: messageMenuItems({
+					entryId,
+					copyText: () => textOfContent(content),
+					copyLabel: t("contextMenu.copyMessage"),
+					quoteText: () => textOfContent(content),
+					ctx,
+					t,
+				}),
+			},
+		],
+	});
 	let prev: FlowKind | null = null;
 	const blocks: ReactNode[] = [];
 	content.forEach((b, i) => {
@@ -929,6 +998,7 @@ function AssistantMessage({
 		// 有浮动菜单时，外层可被点按聚焦（不进 Tab 顺序），触屏点正文即显出菜单，点别处收起。
 		// data-quote-scope：选区完整落在这一条消息里时可以「引用回复」（见 quote-selection）
 		<div
+			ref={ctxRef}
 			className="group/msg relative outline-none"
 			tabIndex={ownMenu ? -1 : undefined}
 			data-quote-scope=""
