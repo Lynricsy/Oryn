@@ -287,11 +287,17 @@ func TestComputerToolCache(t *testing.T) {
 	assert.NotContains(t, names, "computer_bash", "还没有缓存")
 	assert.Contains(t, prof.SystemPrompt, "then your own computer")
 
-	before := stops()
+	arrived, unblock := e.orbs.GateCall("agent.stop")
+	release := sync.OnceFunc(unblock)
+	defer release()
 	st, err := e.c.toolComputerStatus(e.ctx)
 	require.NoError(t, err)
 	assert.Contains(t, st.(map[string]any)["note"], "next turn")
-	require.Eventually(t, func() bool { return stops() > before }, 10*time.Second, 20*time.Millisecond, "缓存变化后助手对话重启")
+	select {
+	case <-arrived:
+	case <-time.After(10 * time.Second):
+		t.Fatal("刷新工具后未请求停止旧 agent")
+	}
 
 	prof, err = e.c.AgentProfile(e.ctx, conv.ID)
 	require.NoError(t, err)
@@ -325,13 +331,25 @@ func TestComputerToolCache(t *testing.T) {
 		return n
 	}
 	started := starts()
-	_, err = e.th.Deliver(e.ctx, conv.ID, threads.AutoMessage{Text: "again"}, nil)
+	// 旧 agent 的停止尚未完成：新消息须留在控制面，不能交给正在退出的进程。
+	cancel, err := e.th.Deliver(e.ctx, conv.ID, threads.AutoMessage{Text: "撤回这条排队消息"}, nil)
 	require.NoError(t, err)
+	require.True(t, cancel(), "停止期间的消息必须还在控制面队列里")
+	ack := make(chan error, 1)
+	_, err = e.th.Deliver(e.ctx, conv.ID, threads.AutoMessage{Text: "again"}, func(err error) { ack <- err })
+	require.NoError(t, err)
+	release()
+	select {
+	case err := <-ack:
+		require.NoError(t, err, "新 agent 应接受停止期间排队的消息")
+	case <-time.After(10 * time.Second):
+		t.Fatal("新 agent 未应答停止期间排队的消息")
+	}
 	require.Eventually(t, func() bool {
 		th, err := e.th.Get(e.ctx, conv.ID)
 		return err == nil && th.State == apigen.ThreadStateIdle && starts() > started
 	}, 10*time.Second, 20*time.Millisecond)
-	before = stops()
+	before := stops()
 	m.cmu.Lock()
 	m.version = "v2"
 	m.tools = m.tools[:1]

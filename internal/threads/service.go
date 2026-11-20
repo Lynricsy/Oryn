@@ -380,7 +380,7 @@ type thread struct {
 	// refresh 为真时，线程在静止后停掉 agent，下一条命令经唤醒路径重新启动（refreshLocked：协调线程取新的
 	// AgentProfile；工作线程让需重启的 omp 配置生效）。
 	refresh bool
-	// stopping 为真表示控制面主动发了 agent.stop：随后的 exited 不算重启耗尽。
+	// stopping 从发起刷新停止到收到 agent.stop 应答为真；期间命令排队，且不得启动下一代。
 	stopping bool
 	// turns 是已获成功应答、等 prompt_result 的 prompt / abort_and_prompt（含无标签的，按应答顺序，至多 64 项）；
 	// steers 是已获成功应答的带标签 steer（等下一个终态 agent_end）；lastYield 是最近一次 yield 的结局（契约 C1）。
@@ -846,6 +846,7 @@ func (s *Service) handleOrbEvent(ctx context.Context, ev OrbEvent) {
 		case state == orbStateDeleted:
 			t.orbID = ""
 			t.agent = nil
+			t.stopping = false
 			t.agentStatus = apigen.AgentStatusNone
 			t.unsynced = false
 			s.resetLiveLocked(t)

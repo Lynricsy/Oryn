@@ -31,6 +31,8 @@ type ctlOrbs struct {
 	reqCh chan ctlCall
 	// startErr 非 nil 时 orbd 以它应答 agent.start（ctl 错误原样回给控制面）。
 	startErr error
+	// stopHook 非 nil 时决定 agent.stop 的应答，可令应答晚于退出通知。
+	stopHook func() error
 	// startPub 非空时 agent.start 的结果带它作 sshPublicKey（扮演 runner，M21）。
 	startPub string
 	// startHook 非 nil 时在应答 agent.start 之前调用（扮演 orbd 在应答前发出的 agent.status，M21）。
@@ -54,6 +56,7 @@ func newCtlOrbs(t *testing.T, base *stubOrbs) *ctlOrbs {
 		o.mu.Lock()
 		o.calls = append(o.calls, c)
 		startErr, home, setupErr, startPub, startHook := o.startErr, o.home, o.setupErr, o.startPub, o.startHook
+		stopHook := o.stopHook
 		o.mu.Unlock()
 		o.reqCh <- c
 		switch method {
@@ -70,6 +73,9 @@ func newCtlOrbs(t *testing.T, base *stubOrbs) *ctlOrbs {
 			}
 			return res, nil
 		case "agent.stop":
+			if stopHook != nil {
+				return apigen.LinkCtlAgentStopResult{}, stopHook()
+			}
 			return apigen.LinkCtlAgentStopResult{}, nil
 		case "setup.run":
 			if setupErr != nil {
@@ -530,6 +536,13 @@ func TestRefreshAgentStopsAfterSettled(t *testing.T) {
 	f := newFixture(t, Config{})
 	o := newCtlOrbs(t, f.orbs)
 	f.s.orbs = o
+	replied := make(chan struct{})
+	release := sync.OnceFunc(func() { close(replied) })
+	defer release()
+	o.stopHook = func() error {
+		<-replied
+		return nil
+	}
 	th := f.coordThread(f.orb("ready"), KindSpace, StateIdle)
 	attach(th, fakeAgent(16), apigen.AgentStatusReady)
 	th.mu.Lock()
@@ -545,11 +558,59 @@ func TestRefreshAgentStopsAfterSettled(t *testing.T) {
 
 	raw, _ := json.Marshal(apigen.LinkCtlAgentStatusParams{ThreadID: th.id, Status: "exited"})
 	f.s.onAgentStatus(f.ctx, th.orbID, raw)
+	f.s.startAgent(f.ctx, th.id)
 	th.mu.Lock()
 	defer th.mu.Unlock()
 	assert.NotEqual(t, StateError, th.state, "主动停止不是故障")
-	assert.False(t, th.stopping)
+	assert.True(t, th.stopping, "exited 先到时仍须等待停止应答")
 	assert.Equal(t, apigen.AgentStatusExited, th.agentStatus)
+}
+
+func TestRefreshAgentDeliversAfterStopFailure(t *testing.T) {
+	f := newFixture(t, Config{})
+	o := newCtlOrbs(t, f.orbs)
+	f.s.orbs = o
+	replied := make(chan struct{})
+	release := sync.OnceFunc(func() { close(replied) })
+	defer release()
+	o.stopHook = func() error {
+		<-replied
+		return &link.CtlError{Code: link.CodeBusy, Message: "busy"}
+	}
+	th := f.coordThread(f.orb("ready"), KindAssistant, StateIdle)
+	a := fakeAgent(16)
+	attach(th, a, apigen.AgentStatusReady)
+	th.mu.Lock()
+	th.settled = true
+	th.mu.Unlock()
+	f.s.RefreshAgent(f.ctx, th.id)
+	require.Equal(t, "agent.stop", o.nextCall(t).method)
+
+	ack := make(chan error, 1)
+	_, err := f.s.Deliver(f.ctx, th.id, AutoMessage{Text: "stop failed"}, func(err error) { ack <- err })
+	require.NoError(t, err)
+	release()
+	deadline := time.NewTimer(3 * time.Second)
+	defer deadline.Stop()
+	for {
+		select {
+		case frame := <-a.out:
+			typ, _, _ := frameHeader(frame)
+			if typ == "prompt" {
+				require.Contains(t, string(frame), "stop failed")
+				f.respond(th, string(frame), true, "")
+				select {
+				case err := <-ack:
+					require.NoError(t, err)
+				case <-deadline.C:
+					t.Fatal("排队消息的应答没有送达")
+				}
+				return
+			}
+		case <-deadline.C:
+			t.Fatal("停止失败后旧流未收到排队消息")
+		}
+	}
 }
 
 // RefreshAgent 落在静止之后、仍有在途命令时（如 session_settled 触发的 get_state）：最后一条应答到了就停，
