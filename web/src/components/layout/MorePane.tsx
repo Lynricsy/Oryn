@@ -1,11 +1,12 @@
 /**
  * 「更多」分区侧栏：连接状态行（只在断线时出现，`warn` 脉动、`unauthorized` 为 `err`）、「切换明暗」，
  * 其后是 `MORE_ENTRIES` 的三组条目（概览 / Agent / 设置）；浏览器里不出现桌面 App 专属的条目。不设分区标题行。
+ * 路由落到某个条目时（直接打开设置分区、刷新）把高亮的那行滚进可视范围，不让它停在折叠线或底栏胶囊下面。
  */
 import type { ParseKeys } from "i18next";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { NavLink } from "react-router";
+import { NavLink, useLocation } from "react-router";
 import { host } from "../../lib/host";
 import { useConnection } from "../../state/stores";
 import { type ThemeMode, themeStore, useTheme } from "../../state/theme";
@@ -36,8 +37,23 @@ export function MorePane(): ReactNode {
 	const entries = MORE_ENTRIES.filter(
 		(e) => !(e.desktopOnly && host.desktop === null),
 	);
+	const scrollRef = useRef<HTMLDivElement>(null);
+	const { pathname } = useLocation();
+	useEffect(() => {
+		const box = scrollRef.current;
+		const row = box?.querySelector("[aria-current=page]");
+		if (!box || !row || !pathname) return;
+		// 只滚本分区的滚动区（scrollIntoView 会带动外壳）；底部让出 scroll-padding（悬浮底栏的高度）
+		const b = box.getBoundingClientRect();
+		const r = row.getBoundingClientRect();
+		const s = getComputedStyle(box);
+		const top = b.top + (Number.parseFloat(s.scrollPaddingTop) || 0);
+		const bottom = b.bottom - (Number.parseFloat(s.scrollPaddingBottom) || 0);
+		if (r.top < top) box.scrollTop -= top - r.top;
+		else if (r.bottom > bottom) box.scrollTop += r.bottom - bottom;
+	}, [pathname]);
 	return (
-		<div className={PANE_SCROLL}>
+		<div ref={scrollRef} className={PANE_SCROLL}>
 			<div className="flex flex-col gap-0.5" data-testid="sidebar-more">
 				{conn !== "open" && (
 					<div
