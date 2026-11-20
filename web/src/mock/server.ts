@@ -394,6 +394,33 @@ function badWarmOrbs(n?: number): Response | null {
 	);
 }
 
+/** 自定义选区快捷动作的校验与规整（同 internal/api/selection_actions.go）：不合法时返回错误说明。 */
+function normalizeSelectionActions(
+	input: unknown,
+): Schemas["SelectionActions"] | string {
+	const list = (input as { actions?: unknown } | null)?.actions;
+	if (!Array.isArray(list)) return "actions 须为数组";
+	if (list.length > 12) return "actions 至多 12 条";
+	const seen = new Set<string>();
+	const actions: Schemas["SelectionAction"][] = [];
+	for (const [i, raw] of list.entries()) {
+		const a = (raw ?? {}) as Partial<Schemas["SelectionAction"]>;
+		const id = String(a.id ?? "");
+		if (!/^[a-z0-9]{8}$/.test(id))
+			return `actions[${i}].id 须为 8 位小写字母或数字`;
+		if (seen.has(id)) return `actions[${i}].id 重复`;
+		seen.add(id);
+		const name = String(a.name ?? "").trim();
+		if (name === "" || [...name].length > 24)
+			return `actions[${i}].name 须为 1-24 个字符`;
+		const prompt = String(a.prompt ?? "").trim();
+		if (prompt === "" || [...prompt].length > 2000)
+			return `actions[${i}].prompt 须为 1-2000 个字符`;
+		actions.push({ id, name, prompt });
+	}
+	return { actions };
+}
+
 function sleep(ms: number) {
 	return new Promise((r) => setTimeout(r, ms));
 }
@@ -557,6 +584,8 @@ export class MockServer {
 	agentAvatars: Record<string, Schemas["AvatarIdentity"]> = {};
 	/** 新对话输入框偏好（`owner.new_thread_target`）。 */
 	composerPrefs: Schemas["ComposerPrefs"] = { defaultTarget: "role" };
+	/** 自定义选区快捷动作（`owner.selection_actions`，M22）。 */
+	selectionActions: Schemas["SelectionActions"] = { actions: [] };
 	/** config.yml 解析失败的原因（模拟 `configError`）。 */
 	roleConfigError: string | undefined;
 	/** 旧 Core 的线程：不认识 `oryn_*` 命令（应答 `Unknown command`），也不写来源记录。 */
@@ -1573,6 +1602,15 @@ export class MockServer {
 				this.composerPrefs = { defaultTarget: b.defaultTarget };
 			}
 			return json(this.composerPrefs);
+		}
+		if (p === "settings/selection-actions") {
+			if (m === "PUT") {
+				const next = normalizeSelectionActions(await body());
+				if (typeof next === "string")
+					return json({ code: "invalid_request", message: next }, 400);
+				this.selectionActions = next;
+			}
+			return json(this.selectionActions);
 		}
 		if (p === "settings/git-identity") {
 			if (m === "PUT") {

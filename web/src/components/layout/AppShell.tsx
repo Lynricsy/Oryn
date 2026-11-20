@@ -39,6 +39,7 @@ import {
 	notificationsStore,
 	setNotificationNavigator,
 } from "../../state/notifications";
+import { useSelectionActionsSync } from "../../state/selection-actions";
 import { shareIntakeStore } from "../../state/share-intake";
 import { connectionStore, indexStore, useConnection } from "../../state/stores";
 import { uiStore, useSidebarShown, useUi } from "../../state/ui";
@@ -201,6 +202,8 @@ export function AppShell(): ReactNode {
 	useRealtimeSshSync();
 	// Artifacts 列表（M14）同理
 	useRealtimeArtifactSync();
+	// 自定义选区快捷动作（M22）：鉴权通过后拉一次，写进菜单读的同步副本
+	useSelectionActionsSync(me.isSuccess);
 	const here = useRef("");
 	here.current = location.pathname + location.search;
 	// 双段抽屉的进出场（挂载与过渡状态）；钩子必须在下面的提前返回之前
