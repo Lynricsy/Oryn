@@ -255,6 +255,10 @@ export interface Surface {
 	close?: (page: Page) => Promise<void>;
 	/** 不做「关掉重开」（打开有副作用的界面） */
 	noReopen?: boolean;
+	/** 打开路由前注入的脚本（如去掉 Popover API，验证老 WebKit 上的退化路径） */
+	init?: string;
+	/** 关掉后重开的步骤（缺省重跑 `open`）；浮层开在对话框里时只重做最后一步 */
+	reopen?: (page: Page, info: TestInfo) => Promise<Locator | undefined>;
 }
 
 function record(info: TestInfo, id: string, issues: string[]) {
@@ -283,6 +287,7 @@ export function surface(s: Surface) {
 			`仅${s.only === "desktop" ? "桌面" : "手机"}`,
 		);
 		const issues: string[] = [];
+		if (s.init) await page.addInitScript({ content: s.init });
 		await go(page, s.path, s.ready);
 		// 页面进入过程中记下的玻璃动画问题归到页面本身，不算到随后打开的浮层上
 		issues.push(
@@ -308,6 +313,8 @@ export function surface(s: Surface) {
 				await shoot(page, info, s.id, "-scrolled");
 			}
 			if (!s.noReopen && s.open) {
+				// 钉住这一个元素再关：lastOverlay 这类定位器关掉后会重新解析到外层对话框，不能拿来判断是否关掉
+				const pinned = await overlay.elementHandle();
 				await (s.close ? s.close(page) : page.keyboard.press("Escape"));
 				await expect(overlay).toBeHidden();
 				const again = await s.open(page, info);
