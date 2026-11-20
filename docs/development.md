@@ -49,6 +49,29 @@ bun run accept:m14-artifacts -- --part real --only K24,K25 # 只跑指定部分�
 
 两者都起 `VITE_MOCK=1` 的 vite 开发服务器并用本机 Chromium 截图，不需要后端。
 
+## UI 排版审计
+
+`web/e2e/ui-audit/` 覆盖全部可达界面及其浮层（下拉、弹窗、抽屉、菜单），清单见 [`docs/ui-audit/inventory.md`](ui-audit/inventory.md)。每个界面都在 6 个视口下跑：1920×1080、1366×768、390×844 触屏，各分明暗两套主题。
+
+```bash
+cd web
+sudo bun e2e/ui-audit/netns.ts &                 # root 下必开：Docker veth 变化会掐断浏览器请求
+npx playwright test e2e/ui-audit                  # 断言 + after 截图；自动起 VITE_MOCK=1 的 vite（端口 5293）
+UI_AUDIT_PHASE=before UI_AUDIT_WEB=<基线 worktree>/web npx playwright test e2e/ui-audit   # 基线截图（端口 5294）
+sh e2e/ui-audit/sheet.sh <界面 id>                # 拼出 before / after 对照图
+```
+
+浮层会在三个时机各断言一次：首次打开、内部滚到底、关掉后重开。检查四项：
+
+- 网格采样 `elementFromPoint`，确认没有被遮挡或被祖先 `overflow` 裁切；
+- 没有超出视口；
+- 玻璃外壳本身不是滚动容器；
+- 玻璃及其祖先都不是 Backdrop Root（opacity、filter、mask、clip-path、backdrop-filter），打开那一刻也没有动画动到这些属性。
+
+页面级只断言没有横向溢出。截图和每个界面的问题清单（JSON）写到 `docs/ui-audit/shots/`，不入库。基线 worktree 要单独执行 `bun install`：直接软链主仓库的 `node_modules` 会共用 `.vite` 预构建缓存，或者出现两份 React。
+
+新写浮层一律用 `web/src/components/ui/Floating.tsx`，或基于它的 `Menu`、`Popover`。它通过 Popover API 进入顶层，并按锚点定位；玻璃画在不滚动的外壳上，内容在内层滚动。
+
 ## 跨架构构建 ARM64 镜像
 
 在 x64 宿主上执行 `scripts/build-orb-image.sh arm64` 构建 ARM64 镜像时，跨架构离线冒烟需要宿主的 QEMU `binfmt_misc` 注册开启 `C`（凭据）标志，否则容器内 `sudo` 会报告 effective uid 不为 0。
