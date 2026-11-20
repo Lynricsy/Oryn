@@ -117,7 +117,8 @@ export function ServiceLogDialog({
 						stick.current =
 							el.scrollTop + el.clientHeight >= el.scrollHeight - 8;
 					}}
-					className="max-h-[55dvh] overflow-auto rounded-lg border border-border bg-inset p-2.5 font-mono text-2xs leading-snug"
+					// 窄屏折行：手机上横向滚动看不到报错行的后半截（路径、模块名）
+					className="max-h-[55dvh] overflow-auto rounded-lg border border-border bg-inset p-2.5 font-mono text-2xs leading-snug max-sm:whitespace-pre-wrap max-sm:[overflow-wrap:anywhere]"
 				>
 					{log.data}
 				</pre>
