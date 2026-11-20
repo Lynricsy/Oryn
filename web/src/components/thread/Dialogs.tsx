@@ -1830,7 +1830,13 @@ export function ThreadDialogs({ threadId }: { threadId: string }): ReactNode {
 				/>
 			);
 		case "btw":
-			return <BtwDialog threadId={threadId} onClose={close} />;
+			return (
+				<BtwDialog
+					threadId={threadId}
+					initialRecordId={dialog.recordId}
+					onClose={close}
+				/>
+			);
 		case "goal":
 			return <GoalDialog threadId={threadId} onClose={close} />;
 		case "label":

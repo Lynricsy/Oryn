@@ -23,7 +23,8 @@ export type DialogState =
 	| { kind: "model"; query?: string }
 	/** `file`：离线子 agent 的完整存档路径（按它打开存档，而不是按 id 查运行中的）。 */
 	| { kind: "subagent"; id: string; file?: string }
-	| { kind: "btw" }
+	/** `recordId`：打开时选中这个话题（解释卡的「在旁路提问里打开」） */
+	| { kind: "btw"; recordId?: string }
 	| { kind: "goal" }
 	| { kind: "label"; entryId: string }
 	| { kind: "labels" }

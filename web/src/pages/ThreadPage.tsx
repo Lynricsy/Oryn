@@ -69,6 +69,7 @@ import {
 } from "../lib/viewport";
 import { realtime } from "../realtime/socket";
 import { useComposerDraft } from "../state/composer-drafts";
+import { closeSideAsk } from "../state/side-ask";
 import {
 	loadEarlierEntries,
 	useConnection,
@@ -264,6 +265,7 @@ export function ThreadScreen({
 		if (shownThread !== threadId) {
 			const ui = uiStore.getState();
 			ui.close();
+			closeSideAsk();
 			ui.setThreadTab("agent");
 			shownThread = threadId;
 		}
@@ -271,7 +273,10 @@ export function ThreadScreen({
 			shownCount--;
 			// 卸载与重新挂载的 effect 在同一轮里先后执行；之后仍没有线程页挂着才算离开
 			queueMicrotask(() => {
-				if (shownCount === 0) shownThread = null;
+				if (shownCount === 0) {
+					shownThread = null;
+					closeSideAsk();
+				}
 			});
 		};
 	}, [threadId]);

@@ -3,12 +3,27 @@
  * （首轮回答、追问气泡、追问回答）、最新一轮的 `<inject>` 引导卡与这一轮的状态。详情区自己滚动：
  * 切换话题时回到顶部（父组件按话题 id 重新挂载），追问新增一轮或贴底时随流式回答跟到底部。
  */
-import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import {
+	type ReactNode,
+	type RefObject,
+	type UIEvent,
+	useLayoutEffect,
+	useRef,
+	useState,
+} from "react";
 import { useTranslation } from "react-i18next";
+import { useContextTarget } from "../../lib/context-menu/registry";
+import { anchorOf } from "../../lib/context-menu/selection";
 import { formatDateTime } from "../../lib/format";
+import {
+	AROUND_MAX,
+	type ParsedSideQuestion,
+	parseSideQuestion,
+} from "../../lib/side-ask";
 import type { RpcBtwHistoryRecord, RpcBtwInjectState } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
 import { Markdown } from "../markdown/Markdown";
+import { USER_QUOTE } from "../transcript/MessageView";
 import { Callout } from "../ui/data";
 import { Icon } from "../ui/icons";
 import { Button, ErrorText, Spinner } from "../ui/primitives";
@@ -76,33 +91,109 @@ function splitInject(answer: string): InjectParts | undefined {
 	};
 }
 
-/** 一个话题的详情；`section` 以首轮问题为名，读屏与测试按它定位。 */
-export function BtwTopicDetail({
+/** 信封问题（选区旁路提问）的动作名：解释 / 翻译 / 解释调用 / 自定义动作名 / 用户自己的问题。 */
+export function useSideActionLabel(): (parsed: ParsedSideQuestion) => string {
+	const { t } = useTranslation();
+	return (parsed) => {
+		switch (parsed.action) {
+			case "custom":
+				return parsed.name ?? "";
+			case "ask":
+				return parsed.ask ?? "";
+			default:
+				return t(`sideAsk.action.${parsed.action}`);
+		}
+	};
+}
+
+/**
+ * btw 问题的显示：信封问题显示成「动作：选区」而不是原始标记。`list` 是一行文字；`title` 是标题行加
+ * 引用块（选区原文）。普通问题原样输出（`title` 时包在标题里）。
+ */
+export function SideQuestionHead({
+	question,
+	variant,
+}: {
+	question: string;
+	variant: "list" | "title";
+}): ReactNode {
+	const labelOf = useSideActionLabel();
+	const parsed = parseSideQuestion(question);
+	const title =
+		"whitespace-pre-wrap break-words font-semibold text-fg text-lg leading-snug tracking-tight";
+	if (!parsed)
+		return variant === "title" ? (
+			<h3 className={title}>{question}</h3>
+		) : (
+			question
+		);
+	const label = labelOf(parsed);
+	if (variant === "list")
+		return `${label}：${parsed.selected.replace(/\s+/g, " ").trim()}`;
+	return (
+		<>
+			<h3 className={title}>{label}</h3>
+			<blockquote
+				className={`${USER_QUOTE} mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap`}
+			>
+				{parsed.selected}
+			</blockquote>
+		</>
+	);
+}
+
+/** 话题的可访问名称：信封问题取「动作 + 选区前 40 字」。 */
+export function useSideQuestionName(): (question: string) => string {
+	const labelOf = useSideActionLabel();
+	return (question) => {
+		const parsed = parseSideQuestion(question);
+		if (!parsed) return question;
+		const head = Array.from(parsed.selected.replace(/\s+/g, " ").trim())
+			.slice(0, 40)
+			.join("");
+		return `${labelOf(parsed)}：${head}`;
+	};
+}
+
+/**
+ * 贴底跟随：新增一轮（刚发出的追问）时滚到底并开始贴底；之后只要还贴着底，流式增长就跟着滚。
+ * 返回值挂到滚动容器的 `onScroll` 上（按 STICK_SLACK 判断是否还贴底）。
+ */
+export function useFollowTail(
+	scrollRef: RefObject<HTMLElement | null>,
+	turnCount: number,
+	latestLength: number,
+): (e: UIEvent<HTMLElement>) => void {
+	const stick = useRef(false);
+	const seenTurns = useRef(turnCount);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: 最新回答变长（流式）时也要重新贴底
+	useLayoutEffect(() => {
+		const el = scrollRef.current;
+		if (!el) return;
+		if (turnCount > seenTurns.current) stick.current = true;
+		seenTurns.current = turnCount;
+		if (stick.current) el.scrollTop = el.scrollHeight;
+	}, [turnCount, latestLength]);
+	return (e) => {
+		const el = e.currentTarget;
+		stick.current =
+			el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_SLACK;
+	};
+}
+
+/** 一个话题的各轮问答、最新一轮的 `<inject>` 处理与提示。 */
+export function BtwTurns({
 	threadId,
 	record,
 }: {
 	threadId: string;
 	record: RpcBtwHistoryRecord;
-}) {
+}): ReactNode {
 	const { t } = useTranslation();
 	const turns: readonly BtwTurn[] = [record, ...(record.followUps ?? [])];
 	const latestIndex = turns.length - 1;
 	const [error, setError] = useState<unknown>(null);
 	const [injectNote, setInjectNote] = useState<string | null>(null);
-	const scrollRef = useRef<HTMLDivElement>(null);
-	const stick = useRef(false);
-	const seenTurns = useRef(turns.length);
-	const latestLength = turns[latestIndex]?.answer.length ?? 0;
-
-	// 新增一轮（刚发出的追问）时滚到底并开始贴底；之后只要还贴着底，流式增长就跟着滚
-	// biome-ignore lint/correctness/useExhaustiveDependencies: 最新回答变长（流式）时也要重新贴底
-	useLayoutEffect(() => {
-		const el = scrollRef.current;
-		if (!el) return;
-		if (turns.length > seenTurns.current) stick.current = true;
-		seenTurns.current = turns.length;
-		if (stick.current) el.scrollTop = el.scrollHeight;
-	}, [turns.length, latestLength]);
 
 	const inject = () => {
 		setError(null);
@@ -120,40 +211,76 @@ export function BtwTopicDetail({
 	};
 
 	return (
+		<div className="flex flex-col gap-4">
+			{turns.map((turn, i) => (
+				<BtwTurnView
+					// 轮次只追加不重排，下标即稳定身份
+					// biome-ignore lint/suspicious/noArrayIndexKey: 同上
+					key={i}
+					turn={turn}
+					followUp={i > 0}
+					inject={i === latestIndex ? record.inject : undefined}
+					onInject={inject}
+				/>
+			))}
+			{injectNote && (
+				<p role="status" className="text-warn-ink text-xs">
+					{injectNote}
+				</p>
+			)}
+			<ErrorText error={error} />
+		</div>
+	);
+}
+
+/** 一个话题的详情；`section` 以首轮问题（信封问题取动作与选区开头）为名，读屏与测试按它定位。 */
+export function BtwTopicDetail({
+	threadId,
+	record,
+}: {
+	threadId: string;
+	record: RpcBtwHistoryRecord;
+}) {
+	const nameOf = useSideQuestionName();
+	const scrollRef = useRef<HTMLElement | null>(null);
+	const latest = latestTurn(record);
+	const onScroll = useFollowTail(
+		scrollRef,
+		1 + (record.followUps?.length ?? 0),
+		latest.answer.length,
+	);
+	// 旁路回答里再选字：AI 动作仍归这个线程
+	const ctxRef = useContextTarget({
+		askThreadId: threadId,
+		selection: (sel) => {
+			const root = scrollRef.current ?? sel.root;
+			return {
+				threadId,
+				text: sel.text,
+				before: sel.before(root, AROUND_MAX),
+				after: sel.after(root, AROUND_MAX),
+				source: { kind: "side" },
+				anchor: anchorOf(sel, 0, 0),
+			};
+		},
+	});
+
+	return (
 		<section
-			aria-label={record.question}
-			ref={scrollRef}
-			onScroll={(e) => {
-				const el = e.currentTarget;
-				stick.current =
-					el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_SLACK;
+			aria-label={nameOf(record.question)}
+			ref={(el) => {
+				scrollRef.current = el;
+				ctxRef(el);
 			}}
+			onScroll={onScroll}
 			className="min-h-0 flex-1 overflow-y-auto px-5 pt-5 pb-6 sm:px-7"
 		>
-			<h3 className="whitespace-pre-wrap break-words font-semibold text-fg text-lg leading-snug tracking-tight">
-				{record.question}
-			</h3>
+			<SideQuestionHead question={record.question} variant="title" />
 			<p className="mt-1 text-faint text-xs tabular-nums">
 				{formatDateTime(record.createdAt)}
 			</p>
-			<div className="mt-4 flex flex-col gap-4">
-				{turns.map((turn, i) => (
-					<BtwTurnView
-						// 轮次只追加不重排，下标即稳定身份
-						// biome-ignore lint/suspicious/noArrayIndexKey: 同上
-						key={i}
-						turn={turn}
-						followUp={i > 0}
-						inject={i === latestIndex ? record.inject : undefined}
-						onInject={inject}
-					/>
-				))}
-				{injectNote && (
-					<p role="status" className="text-warn-ink text-xs">
-						{injectNote}
-					</p>
-				)}
-				<ErrorText error={error} />
+			<div className="mt-4">
+				<BtwTurns threadId={threadId} record={record} />
 			</div>
 		</section>
 	);

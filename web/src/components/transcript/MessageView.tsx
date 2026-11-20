@@ -82,7 +82,7 @@ export const USER_BUBBLE_TEXT =
 	"whitespace-pre-wrap break-words text-[0.875rem] leading-[1.375rem]";
 
 /** 用户消息开头的引用块（引用回复）：左侧竖线、弱色，与下面的回复正文分开。 */
-const USER_QUOTE =
+export const USER_QUOTE =
 	"whitespace-pre-wrap break-words border-border-strong border-l-2 pl-2.5 text-muted text-sm leading-5";
 
 export function textOfContent(content: unknown): string {
