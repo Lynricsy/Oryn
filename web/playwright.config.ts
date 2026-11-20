@@ -24,6 +24,10 @@ const VIEWPORTS = [
 ] as const;
 const SCHEMES = ["light", "dark"] as const;
 
+// 主进程定下运行 id 写进环境变量，worker 进程重新加载配置时继承同一个值
+process.env.UI_AUDIT_RUN ??= `${process.env.UI_AUDIT_PHASE ?? "after"}-${Date.now()}`;
+const RUN = process.env.UI_AUDIT_RUN;
+
 export default defineConfig({
 	testDir: "e2e",
 	testMatch: "**/*.e2e.ts",
@@ -31,7 +35,8 @@ export default defineConfig({
 	forbidOnly: true,
 	retries: 0,
 	workers: Number(process.env.UI_AUDIT_WORKERS ?? 8),
-	timeout: 60_000,
+	// SwiftShader 软件合成很吃 CPU，几路审计并行时单个用例常要几十秒
+	timeout: 150_000,
 	expect: { timeout: 5_000 },
 	reporter: [["list"], ["json", { outputFile: "test-results/ui-audit.json" }]],
 	use: {

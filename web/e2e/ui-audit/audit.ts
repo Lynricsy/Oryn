@@ -94,7 +94,7 @@ export async function go(page: Page, path: string, ready?: string) {
 	await page
 		.locator(ready ?? "main, [role=main], textarea, [data-testid=transcript]")
 		.first()
-		.waitFor({ timeout: 20_000 });
+		.waitFor({ timeout: 60_000 });
 	await settle(page);
 }
 
