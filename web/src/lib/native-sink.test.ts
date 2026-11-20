@@ -329,6 +329,20 @@ describe("createSinkScroll", () => {
 		expect(scrollTo.mock.calls).toEqual([["open", true]]);
 	});
 
+	it("按住期间收到开合请求并超时：不与手势争抢，抬起后提交实际停点", () => {
+		const { s, scrollTo, commit, scroll } = setup("closed");
+		s.touch(true);
+		s.request("open", true);
+		scroll("open");
+		vi.advanceTimersByTime(SINK_REQUEST_MS);
+		expect(commit).not.toHaveBeenCalled();
+		scroll("closed");
+		s.touch(false);
+		vi.advanceTimersByTime(SINK_REST_MS);
+		expect(scrollTo.mock.calls).toEqual([["open", true]]);
+		expect(commit.mock.calls).toEqual([["closed"]]);
+	});
+
 	it("T12 关闭位 request(open) 后、动画首帧前又 request(closed)：照发关闭（停掉旧动画），最终提交 closed 而不是重新打开", () => {
 		const { s, scrollTo, commit, scroll } = setup("closed");
 		s.request("open", true);

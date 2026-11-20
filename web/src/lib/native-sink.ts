@@ -196,7 +196,13 @@ export function createSinkScroll(
 	};
 	const expire = () => {
 		deadline = null;
-		if (target === null || touching || env.rest() === target) return;
+		if (target === null) return;
+		if (touching) {
+			// 触摸期间收到的请求已超时：手势优先。抬手后按实际停点提交，而不是继续等待过期目的地。
+			drop();
+			return;
+		}
+		if (env.rest() === target) return;
 		if (fallen) {
 			// 兜底落位也没到：放弃目的地，若仍在中途则等原生落到一端。
 			drop();
