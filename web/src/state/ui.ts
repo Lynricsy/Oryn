@@ -223,8 +223,8 @@ export interface UiState {
 	fileSel: Record<string, { path: string; n: number }>;
 	/** 在线程的右面板里打开一个文件（绝对路径）：记下请求、切到 Files 标签并打开面板。 */
 	openFile(threadId: string, path: string): void;
-	/** Files 标签处理完待打开的文件后清掉请求（面板重新挂载时不再重放）。 */
-	clearFileSel(threadId: string): void;
+	/** Files 标签处理完第 `n` 个待打开请求后清掉它（面板重新挂载时不再重放）；已被更新的请求取代时不动。 */
+	clearFileSel(threadId: string, n: number): void;
 	/** Artifacts 标签的版本签名（按线程，同 `changesSig`）：有没看过的新版本时标签亮点。 */
 	artifactsSig: Record<string, ChangesSig>;
 	/** 记录线程 artifact 列表的签名；`seen` 为真或首次记录时同时记为已看。 */
@@ -389,9 +389,9 @@ export const uiStore = createStore<UiState>((set, get) => ({
 		get().setPanelTab("files");
 		get().setPanel(true);
 	},
-	clearFileSel: (threadId) =>
+	clearFileSel: (threadId, n) =>
 		set((s) => {
-			if (!(threadId in s.fileSel)) return s;
+			if (s.fileSel[threadId]?.n !== n) return s;
 			const { [threadId]: _, ...rest } = s.fileSel;
 			return { fileSel: rest };
 		}),

@@ -127,8 +127,8 @@ export function FileBrowser({
 	renderError?(error: unknown, retry: () => void): ReactNode;
 	/** 外部请求打开的文件（绝对路径）；`n` 变化即重新处理一次 */
 	openPath?: { path: string; n: number };
-	/** `openPath` 处理完毕（已打开，或不在任何根下而放弃） */
-	onOpened?(): void;
+	/** 第 `n` 个 `openPath` 处理完毕（已打开，或不在任何根下而放弃）；被更新的请求取代时不回调 */
+	onOpened?(n: number): void;
 }): ReactNode {
 	const { t } = useTranslation();
 	const hostRef = useRef<HTMLDivElement>(null);
@@ -263,6 +263,9 @@ export function FileBrowser({
 
 	// 外部请求打开文件：先切到包含它的根（取最深的一个），再逐级展开父目录并选中
 	const openedN = useRef<number | null>(null);
+	// 最新的请求序号：逐级加载目录是异步的，等待期间来了新请求就放弃旧的（不选中、不回调）
+	const latestN = useRef(openPath?.n);
+	latestN.current = openPath?.n;
 	// biome-ignore lint/correctness/useExhaustiveDependencies: 只在请求、根列表与当前根变化时处理
 	useEffect(() => {
 		if (!openPath || allRoots.length === 0 || openedN.current === openPath.n)
@@ -279,7 +282,7 @@ export function FileBrowser({
 				owner = r;
 		if (!owner) {
 			openedN.current = n;
-			onOpened?.();
+			onOpened?.(n);
 			return;
 		}
 		if (owner.key !== root?.key) {
@@ -298,11 +301,13 @@ export function FileBrowser({
 			)
 				chain.unshift(p);
 			for (const p of chain) {
+				if (latestN.current !== n) return;
 				expandTo(p);
 				await loadDir(p);
 			}
+			if (latestN.current !== n) return;
 			select(path);
-			onOpened?.();
+			onOpened?.(n);
 		})();
 	}, [openPath?.n, allRoots, rootPath]);
 

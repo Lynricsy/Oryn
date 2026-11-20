@@ -154,7 +154,7 @@ export default function FilesPanel({
 					publisher={publisher}
 					renderError={renderError}
 					openPath={openPath}
-					onOpened={() => uiStore.getState().clearFileSel(threadId)}
+					onOpened={(n) => uiStore.getState().clearFileSel(threadId, n)}
 				/>
 			</div>
 		</div>

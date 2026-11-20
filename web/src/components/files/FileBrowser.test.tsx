@@ -384,6 +384,48 @@ describe("FileBrowser", () => {
 			await screen.findByLabelText("editor:/r/sub/inner/deep.txt"),
 		).toBeInTheDocument();
 	});
+
+	it("外部请求打开文件：慢请求 A 加载目录期间来了请求 B，A 不再覆盖 B 的选择也不回调", async () => {
+		mem.dirs.add("/r/slow");
+		mem.files.set("/r/slow/a.txt", { text: "A", v: 1 });
+		mem.files.set("/r/b.txt", { text: "B", v: 1 });
+		let release: () => void = () => {};
+		const gate = new Promise<void>((r) => {
+			release = r;
+		});
+		const list = mem.src.list.bind(mem.src);
+		mem.src.list = async (p) => {
+			if (p === "/r/slow") await gate;
+			return list(p);
+		};
+		const onOpened = vi.fn();
+		const { rerender } = render(
+			<FileBrowser
+				sources={[mem.src]}
+				storageKey="test"
+				openPath={{ path: "/r/slow/a.txt", n: 1 }}
+				onOpened={onOpened}
+			/>,
+		);
+		await screen.findByRole("treeitem", { name: "slow" });
+		rerender(
+			<FileBrowser
+				sources={[mem.src]}
+				storageKey="test"
+				openPath={{ path: "/r/b.txt", n: 2 }}
+				onOpened={onOpened}
+			/>,
+		);
+		expect(await screen.findByLabelText("editor:/r/b.txt")).toHaveValue("B");
+		await act(async () => {
+			release();
+			await gate;
+		});
+		await screen.findByRole("treeitem", { name: "a.txt" });
+		expect(screen.getByLabelText("editor:/r/b.txt")).toBeInTheDocument();
+		expect(screen.queryByLabelText("editor:/r/slow/a.txt")).toBeNull();
+		expect(onOpened.mock.calls).toEqual([[2]]);
+	});
 });
 
 /** 清空微任务队列（过期请求的后续 await 链跑完），不依赖计时器。 */
