@@ -208,7 +208,7 @@ mod native {
         }
     }
 
-    /// 原生底栏与原生页头（Swift 在 iOS 26+ 才真正实现）。除 `header_set` / `header_probe` 外，
+    /// 下沉侧栏的根滚动跟随、原生底栏与原生页头（Swift 在 iOS 26+ 才真正实现）。除 `header_set` / `header_probe` 外，
     /// Swift 只把界面操作派到主线程就应答，不等它画完。
     #[cfg(target_os = "ios")]
     impl<R: Runtime> OrynMobile<R> {
@@ -217,9 +217,20 @@ mod native {
             self.call("tabBarSet", json!({ "spec": spec }))
         }
 
-        /// 揭示边与透明度；还没 set 过时是空操作。
-        pub fn tab_bar_reveal(&self, reveal: &TabBarReveal) -> Result<()> {
-            self.call("tabBarReveal", reveal)
+        /// 网页内容是否压在底栏位置上；还没 set 过时是空操作。
+        pub fn tab_bar_cover(&self, covered: bool) -> Result<()> {
+            self.call("tabBarCover", TabBarCover { covered })
+        }
+
+        /// 下沉侧栏改由 WKWebView 的根滚动驱动：`true` 时原生按 `contentOffset` 跟随（原生底栏与页头随之平移）；
+        /// `false` 撤掉跟随（任何系统版本都成功）。iOS < 26 且 `on` 时 Swift 以 `unsupported` 拒绝。
+        pub fn sink_set(&self, on: bool) -> Result<()> {
+            self.call("sinkSet", SinkSet { on })
+        }
+
+        /// 把根滚动视图滚到打开位 / 关闭位（`animated` = UIKit 滚动动画）；还没 `sink_set(true)` 时是空操作。
+        pub fn sink_show(&self, open: bool, animated: bool) -> Result<()> {
+            self.call("sinkShow", SinkShow { open, animated })
         }
 
         /// 整份页头；`None` 撤掉（任何系统版本都成功）。Swift 在主线程把视图挂到窗口上之后才应答
@@ -231,7 +242,7 @@ mod native {
             Ok(())
         }
 
-        /// 控件层的透明度 / 位移 / 是否接触摸；还没 set 过时是空操作。
+        /// 控件层的透明度（淡入淡出 `ms` 毫秒）；还没 set 过时是空操作。位移与是否接触摸由原生按根滚动自己算。
         pub fn header_show(&self, show: &HeaderShow) -> Result<()> {
             self.call("headerShow", show)
         }
