@@ -131,6 +131,9 @@ func TestValidate(t *testing.T) {
 		{"keepLast 越界", Input{Kind: KindEvery, Every: "1h", Prompt: "p", Mode: ModeNewThread, Name: "n", KeepLast: new(51)}},
 		{"@host", Input{Kind: KindEvery, Every: "1h", Prompt: "p", Mode: ModeNewThread, Name: "n", Provider: "@host"}},
 		{"模型缺 id", Input{Kind: KindEvery, Every: "1h", Prompt: "p", Mode: ModeNewThread, Name: "n", Model: &apigen.ModelRef{Provider: "x"}}},
+		{"role 与模型同给", Input{Kind: KindEvery, Every: "1h", Prompt: "p", Mode: ModeNewThread, Name: "n", Role: "slow", Model: &apigen.ModelRef{Provider: "x", ID: "y"}}},
+		{"role 含控制字符", Input{Kind: KindEvery, Every: "1h", Prompt: "p", Mode: ModeNewThread, Name: "n", Role: "a\nb"}},
+		{"thread 带 role", Input{Kind: KindEvery, Every: "1h", Prompt: "p", Mode: ModeThread, Role: "slow"}},
 		{"overlap 非法", Input{Kind: KindEvery, Every: "1h", Prompt: "p", Mode: ModeNewThread, Name: "n", Overlap: "queue"}},
 		{"未知模式", Input{Kind: KindEvery, Every: "1h", Prompt: "p", Mode: "loop"}},
 	}

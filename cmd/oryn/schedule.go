@@ -31,7 +31,7 @@ type scheduleFlags struct {
 	// 仅 add / update（new_thread）。
 	project                                            string
 	noProject                                          bool
-	space, model, thinking, provider, orbType, overlap string
+	space, role, model, thinking, provider, orbType, overlap string
 	keep                                               int
 }
 
@@ -52,7 +52,8 @@ func addTimeFlags(cmd *cobra.Command, f *scheduleFlags) {
 func addNewThreadFlags(cmd *cobra.Command, f *scheduleFlags) {
 	fl := cmd.Flags()
 	fl.StringVar(&f.space, "space", "", "新线程加入的 Space（名称或 id；update 时 none = 不加入）")
-	fl.StringVar(&f.model, "model", "", "模型（provider/id）")
+	fl.StringVar(&f.role, "role", "", "新线程开场的 omp 模型 role（与 --model 互斥；update 时空串 = 不指定）")
+	fl.StringVar(&f.model, "model", "", "模型（provider/id；与 --role 互斥）")
 	fl.StringVar(&f.thinking, "thinking", "", "思考级别")
 	fl.StringVar(&f.provider, "provider", "", "orb provider 名称")
 	fl.StringVar(&f.orbType, "type", "", "orb 类型")
@@ -177,12 +178,19 @@ func applyNewThreadFlags(ctx context.Context, c *apiClient, in *apigen.ScheduleI
 			in.SpaceID = &id
 		}
 	}
+	if changed("role") && changed("model") {
+		return usageErr("--role 与 --model 只能给一个")
+	}
+	// role 与 model 互斥：给出其中一个时清掉另一个
+	if changed("role") {
+		in.Role, in.Model = optional(strings.TrimSpace(f.role)), nil
+	}
 	if changed("model") {
 		p, id, ok := strings.Cut(f.model, "/")
 		if !ok || p == "" || id == "" {
 			return usageErr("--model 须为 provider/id")
 		}
-		in.Model = &apigen.ModelRef{Provider: p, ID: id}
+		in.Model, in.Role = &apigen.ModelRef{Provider: p, ID: id}, nil
 	}
 	if changed("thinking") {
 		in.ThinkingLevel = optional(f.thinking)
@@ -226,7 +234,7 @@ func inputFromSchedule(s apigen.Schedule) apigen.ScheduleInput {
 		in.ThreadID = s.ThreadID
 		return in
 	}
-	in.ProjectID, in.SpaceID, in.Model, in.ThinkingLevel = s.ProjectID, s.SpaceID, s.Model, s.ThinkingLevel
+	in.ProjectID, in.SpaceID, in.Role, in.Model, in.ThinkingLevel = s.ProjectID, s.SpaceID, s.Role, s.Model, s.ThinkingLevel
 	in.Provider, in.OrbType, in.Overlap, in.KeepLast = s.Provider, s.OrbType, new(s.Overlap), new(s.KeepLast)
 	return in
 }
@@ -386,7 +394,7 @@ func scheduleUpdate(ctx context.Context, c *apiClient, ref string, o scheduleFla
 			return apigen.Schedule{}, err
 		}
 	} else {
-		for _, name := range []string{"space", "model", "thinking", "provider", "type", "overlap", "keep"} {
+		for _, name := range []string{"space", "role", "model", "thinking", "provider", "type", "overlap", "keep"} {
 			if changed(name) {
 				return apigen.Schedule{}, usageErr("--%s 只适用于每次新建线程的定时", name)
 			}
@@ -527,6 +535,9 @@ func printSchedule(w io.Writer, s apigen.Schedule) error {
 	}
 	if s.Mode == apigen.ScheduleModeNewThread {
 		fmt.Fprintf(tw, "Overlap\t%s\nKeep\t%d\n", s.Overlap, s.KeepLast)
+		if s.Role != nil {
+			fmt.Fprintf(tw, "Role\t%s\n", *s.Role)
+		}
 		if s.Model != nil {
 			fmt.Fprintf(tw, "Model\t%s/%s\n", s.Model.Provider, s.Model.ID)
 		}

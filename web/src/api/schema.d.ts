@@ -8026,7 +8026,8 @@ export interface components {
          *     不接受 `TZ=` / `CRON_TZ=` 前缀与 `@every`）；`kind = every` 须给 `every`（Go 时长串，≥`1m`、≤`8784h`、整秒）；`kind = once` 须给 `at`（不早于当前 60 秒）。
          *     `timezone` 为 IANA 名称，缺省 `UTC`；`endsAt` 须晚于当前。
          *     模式规则（违反即 400 `invalid_schedule`）：`POST /schedules` 必须给 `mode`；`thread` 必须给 `threadId` 且不得带
-         *     `projectId` / `spaceId` / `model` / `thinkingLevel` / `provider` / `orbType` / `overlap` / `keepLast`；
+         *     `projectId` / `spaceId` / `role` / `model` / `thinkingLevel` / `provider` / `orbType` / `overlap` / `keepLast`；
+         *     `new_thread` 的 `role` 与 `model` 至多给一个；
          *     `new_thread` 不得带 `threadId`，`name` 必填（1–80）；`PUT /schedules/{id}` 里 `mode` / `threadId` / `projectId` 若出现必须与现值相同；
          *     `PUT /threads/{id}/schedule` 隐含 `mode = thread`。
          *     `prompt` 里的占位符 `{{now}}` `{{date}}` `{{scheduled_at}}` `{{run_number}}` `{{last_run_at}}` 在投递时替换。
@@ -8052,6 +8053,11 @@ export interface components {
             projectId?: components["schemas"]["ProjectId"];
             /** @description 仅 `new_thread`：新线程加入该 Space */
             spaceId?: components["schemas"]["SpaceId"];
+            /**
+             * @description 仅 `new_thread`：每次运行的新线程以该 omp 模型 role 开场（同 `CreateThreadRequest.role`）；去首尾空白后不超过 128 字节、不含控制字符。
+             *     与 `model` 互斥；都省略 = omp 的默认模型。
+             */
+            role?: string;
             /** @description 仅 `new_thread` */
             model?: components["schemas"]["ModelRef"];
             /** @description 仅 `new_thread` */
@@ -8093,6 +8099,8 @@ export interface components {
             endsAt?: components["schemas"]["TimestampMs"];
             prompt: string;
             enabled: boolean;
+            /** @description `new_thread` 新线程开场的 omp 模型 role；省略 = 未指定 */
+            role?: string;
             model?: components["schemas"]["ModelRef"];
             thinkingLevel?: string;
             provider?: string;

@@ -991,6 +991,7 @@ type Schedule struct {
 	KeepLast        int64   `json:"keepLast"`
 	Rev             int64   `json:"rev"`
 	HandToAssistant int64   `json:"handToAssistant"`
+	Role            *string `json:"role"`
 }
 
 type ScheduleRun struct {

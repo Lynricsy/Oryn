@@ -451,7 +451,7 @@ func (s *Service) createThread(ctx context.Context, fp fireParams, loc *time.Loc
 	// 项目级定时是全自动线程（R6），按自动化身份取 GitHub 身份；不属于项目的定时与手动建的线程一样用我的账号
 	p := threads.CreateParams{
 		ProjectID: deref(sc.ProjectID), Prompt: text, Provider: deref(sc.Provider), Type: deref(sc.OrbType),
-		Model: parseModel(sc.Model), ThinkingLevel: deref(sc.ThinkingLevel), SpaceID: deref(sc.SpaceID),
+		Role: deref(sc.Role), Model: parseModel(sc.Model), ThinkingLevel: deref(sc.ThinkingLevel), SpaceID: deref(sc.SpaceID),
 		Title:      sc.Name + " · " + time.UnixMilli(fp.scheduledFor).In(loc).Format("01-02 15:04"),
 		ScheduleID: sc.ID, ScheduleRun: fp.run, Tag: fp.runID, Automation: sc.ProjectID != nil,
 	}

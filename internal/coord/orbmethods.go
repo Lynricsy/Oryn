@@ -287,7 +287,7 @@ func (s *Service) onSchedulePut(ctx context.Context, orbID string, params json.R
 		return nil, err
 	}
 	in := p.Input
-	if (in.Mode != nil && *in.Mode != apigen.ScheduleModeThread) || in.ProjectID != nil || in.SpaceID != nil || in.Model != nil ||
+	if (in.Mode != nil && *in.Mode != apigen.ScheduleModeThread) || in.ProjectID != nil || in.SpaceID != nil || in.Role != nil || in.Model != nil ||
 		in.ThinkingLevel != nil || in.Provider != nil || in.OrbType != nil || in.Overlap != nil || in.KeepLast != nil {
 		err = ctlErr(CodeInvalidSchedule, "agents can only set the schedule of their own thread")
 		return nil, err

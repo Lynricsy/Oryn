@@ -6,10 +6,10 @@
 -- name: InsertSchedule :exec
 INSERT INTO schedules (id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt,
                        enabled, paused_reason, next_run_at, created_by, created_at, updated_at, model, thinking_level,
-                       provider, orb_type, overlap, keep_last, hand_to_assistant)
+                       provider, orb_type, overlap, keep_last, hand_to_assistant, role)
 VALUES (@id, @mode, @thread_id, @project_id, @space_id, @name, @kind, @spec, @timezone, @run_at, @ends_at, @prompt,
         @enabled, @paused_reason, @next_run_at, @created_by, @created_at, @updated_at, @model, @thinking_level,
-        @provider, @orb_type, @overlap, @keep_last, @hand_to_assistant);
+        @provider, @orb_type, @overlap, @keep_last, @hand_to_assistant, @role);
 
 -- Replaces the definition; the target (mode, thread_id, project_id), id, run_count and last_run_at stay.
 -- Clears failures; paused_reason is whatever the caller passes (NULL, or 'user' when saved disabled).
@@ -17,7 +17,7 @@ VALUES (@id, @mode, @thread_id, @project_id, @space_id, @name, @kind, @spec, @ti
 -- name: UpdateScheduleDef :execrows
 UPDATE schedules SET name = @name, kind = @kind, spec = @spec, timezone = @timezone, run_at = @run_at,
     ends_at = @ends_at, prompt = @prompt, enabled = @enabled, paused_reason = @paused_reason,
-    next_run_at = @next_run_at, failures = 0, space_id = @space_id, model = @model,
+    next_run_at = @next_run_at, failures = 0, space_id = @space_id, role = @role, model = @model,
     thinking_level = @thinking_level, provider = @provider, orb_type = @orb_type, overlap = @overlap,
     keep_last = @keep_last, hand_to_assistant = @hand_to_assistant, created_by = @created_by, updated_at = @updated_at,
     rev = rev + 1

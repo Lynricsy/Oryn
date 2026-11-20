@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 	_ "time/tzdata" // 宿主没有 zoneinfo 时也能解析 IANA 时区
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/robfig/cron/v3"
@@ -31,6 +32,8 @@ const (
 	maxNameRunes    = 80
 	defaultKeepLast = 5
 	maxKeepLast     = 50
+	// maxRoleLen 是 role 名的长度上限（字节），与新建线程的校验一致。
+	maxRoleLen = 128
 	// maxMissedScan 是统计被合并的错过次数时的迭代上限。
 	maxMissedScan = 1000
 	// previewCount 是预览给出的触发次数。
@@ -118,9 +121,9 @@ func Validate(in Input, now time.Time) (Input, *time.Location, error) {
 	}
 	switch norm.Mode {
 	case "", ModeThread:
-		if norm.ProjectID != "" || norm.SpaceID != "" || norm.ThinkingLevel != "" || norm.Provider != "" ||
+		if norm.ProjectID != "" || norm.SpaceID != "" || norm.Role != "" || norm.ThinkingLevel != "" || norm.Provider != "" ||
 			norm.OrbType != "" || norm.Overlap != "" || norm.Model != nil || norm.KeepLast != nil {
-			return Input{}, nil, invalid("projectId, spaceId, model, thinkingLevel, provider, orbType, overlap and keepLast are only for mode new_thread")
+			return Input{}, nil, invalid("projectId, spaceId, role, model, thinkingLevel, provider, orbType, overlap and keepLast are only for mode new_thread")
 		}
 		if norm.HandToAssistant != nil && *norm.HandToAssistant {
 			return Input{}, nil, invalid("handToAssistant is only for mode new_thread")
@@ -152,6 +155,13 @@ func Validate(in Input, now time.Time) (Input, *time.Location, error) {
 		}
 		if norm.Model != nil && (strings.TrimSpace(norm.Model.Provider) == "" || strings.TrimSpace(norm.Model.ID) == "") {
 			return Input{}, nil, invalid("model must have provider and id")
+		}
+		norm.Role = strings.TrimSpace(norm.Role)
+		if len(norm.Role) > maxRoleLen || strings.ContainsFunc(norm.Role, unicode.IsControl) {
+			return Input{}, nil, invalid("role must be at most %d bytes without control characters", maxRoleLen)
+		}
+		if norm.Role != "" && norm.Model != nil {
+			return Input{}, nil, invalid("role and model are mutually exclusive")
 		}
 	default:
 		return Input{}, nil, invalid("mode must be thread or new_thread")

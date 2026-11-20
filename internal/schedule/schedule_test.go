@@ -1026,6 +1026,29 @@ func TestNewThreadCreatesThread(t *testing.T) {
 	assert.Equal(t, 0, got.OpenRuns)
 }
 
+// 指定 role 的定时：存取原样，每次运行以该 role 开场；改成指定模型时 role 清空。
+func TestNewThreadRole(t *testing.T) {
+	f := newFixture(t)
+	in := Input{Mode: ModeNewThread, Name: "role", Kind: KindEvery, Every: "1m", Prompt: "p", Role: " slow ", ThinkingLevel: "high"}
+	s := f.putNew(in)
+	require.NotNil(t, s.Role)
+	assert.Equal(t, "slow", *s.Role, "去首尾空白")
+	assert.Nil(t, s.Model)
+
+	f.advanceTick(time.Minute)
+	cs := f.th.Creates()
+	require.Len(t, cs, 1)
+	assert.Equal(t, "slow", cs[0].Role)
+	assert.Nil(t, cs[0].Model)
+	assert.Equal(t, "high", cs[0].ThinkingLevel)
+
+	in.Role, in.Model = "", &apigen.ModelRef{Provider: "anthropic", ID: "claude"}
+	s, err := f.s.Put(f.ctx, s.ID, in, "user")
+	require.NoError(t, err)
+	assert.Nil(t, s.Role)
+	assert.Equal(t, "claude", s.Model.ID)
+}
+
 func TestNewThreadCreateFailures(t *testing.T) {
 	f := newFixture(t)
 	s := f.putNew(Input{Name: "bad", Kind: KindEvery, Every: "1h", Prompt: "x", Provider: "nope"})

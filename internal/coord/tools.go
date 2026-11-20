@@ -635,6 +635,7 @@ type setScheduleArgs struct {
 	EndsAt        *int64 `json:"endsAt"`
 	Prompt        string `json:"prompt"`
 	Enabled       *bool  `json:"enabled"`
+	Role          string `json:"role"`
 	Model         string `json:"model"`
 	ThinkingLevel string `json:"thinkingLevel"`
 	OrbType       string `json:"orbType"`
@@ -800,7 +801,7 @@ func (s *Service) putSchedule(ctx context.Context, c toolCtx, a setScheduleArgs,
 		sc, err := s.sched.PutForThread(ctx, tid, in, "agent")
 		return sc, tid, err
 	case string(apigen.ScheduleModeNewThread):
-		in.ThinkingLevel, in.OrbType, in.Overlap, in.KeepLast = a.ThinkingLevel, a.OrbType, a.Overlap, a.KeepLast
+		in.Role, in.ThinkingLevel, in.OrbType, in.Overlap, in.KeepLast = a.Role, a.ThinkingLevel, a.OrbType, a.Overlap, a.KeepLast
 		if a.Model != "" {
 			m, ok := parseModelRef(a.Model)
 			if !ok {

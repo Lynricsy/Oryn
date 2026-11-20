@@ -83,7 +83,9 @@ type Input struct {
 	Mode, ThreadID                            string
 	// 以下仅 new_thread。
 	ProjectID, SpaceID, ThinkingLevel, Provider, OrbType, Overlap string
-	Model                                                         *apigen.ModelRef
+	// Role 是新线程开场的 omp 模型 role（与 Model 互斥）。
+	Role  string
+	Model *apigen.ModelRef
 	KeepLast                                                      *int
 	// HandToAssistant 仅 new_thread：运行结果交给助手的主线；更新时 nil = 沿用现值。
 	HandToAssistant *bool
@@ -277,7 +279,7 @@ func InputFromAPI(in apigen.ScheduleInput) Input {
 	out := Input{
 		Name: deref(in.Name), Kind: string(in.Kind), Cron: deref(in.Cron), Every: deref(in.Every), Timezone: deref(in.Timezone),
 		Prompt: in.Prompt, At: in.At, EndsAt: in.EndsAt, Enabled: in.Enabled, ThreadID: deref(in.ThreadID),
-		ProjectID: deref(in.ProjectID), SpaceID: deref(in.SpaceID), ThinkingLevel: deref(in.ThinkingLevel),
+		ProjectID: deref(in.ProjectID), SpaceID: deref(in.SpaceID), Role: deref(in.Role), ThinkingLevel: deref(in.ThinkingLevel),
 		Provider: deref(in.Provider), OrbType: deref(in.OrbType), Model: in.Model, KeepLast: in.KeepLast,
 		IfRev: in.IfRev, HandToAssistant: in.HandToAssistant,
 	}
@@ -391,7 +393,7 @@ func (s *Service) createLocked(ctx context.Context, in Input, createdBy string) 
 		p.ThreadID = new(norm.ThreadID)
 	} else {
 		p.ProjectID, p.SpaceID = optStr(norm.ProjectID), optStr(norm.SpaceID)
-		p.Model, p.ThinkingLevel = modelStr(norm.Model), optStr(norm.ThinkingLevel)
+		p.Role, p.Model, p.ThinkingLevel = optStr(norm.Role), modelStr(norm.Model), optStr(norm.ThinkingLevel)
 		p.Provider, p.OrbType = optStr(norm.Provider), optStr(norm.OrbType)
 		p.Overlap, p.KeepLast = norm.Overlap, int64(*norm.KeepLast)
 		if norm.HandToAssistant != nil && *norm.HandToAssistant {
@@ -508,7 +510,8 @@ func (s *Service) updateLocked(ctx context.Context, id string, in Input, created
 		p.RunAt = norm.At
 	}
 	if cur.Mode == ModeNewThread {
-		p.SpaceID, p.Model, p.ThinkingLevel = optStr(norm.SpaceID), modelStr(norm.Model), optStr(norm.ThinkingLevel)
+		p.SpaceID, p.Role, p.Model = optStr(norm.SpaceID), optStr(norm.Role), modelStr(norm.Model)
+		p.ThinkingLevel = optStr(norm.ThinkingLevel)
 		p.Provider, p.OrbType = optStr(norm.Provider), optStr(norm.OrbType)
 		p.Overlap, p.KeepLast = norm.Overlap, int64(*norm.KeepLast)
 		// 交给助手：nil = 沿用现值
@@ -993,7 +996,7 @@ func (s *Service) toAPI(ctx context.Context, r db.Schedule) (apigen.Schedule, er
 		RunCount: r.RunCount, Failures: int(r.Failures), CreatedBy: apigen.ScheduleCreatedBy(r.CreatedBy),
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, Overlap: apigen.ScheduleOverlap(r.Overlap), KeepLast: int(r.KeepLast),
 		OpenRuns: int(open), Rev: r.Rev, ThreadID: r.ThreadID, ProjectID: r.ProjectID, SpaceID: r.SpaceID,
-		ThinkingLevel: r.ThinkingLevel, Provider: r.Provider, OrbType: r.OrbType, Model: parseModel(r.Model),
+		Role: r.Role, ThinkingLevel: r.ThinkingLevel, Provider: r.Provider, OrbType: r.OrbType, Model: parseModel(r.Model),
 		HandToAssistant: r.HandToAssistant != 0,
 	}
 	switch r.Kind {
