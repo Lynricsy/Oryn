@@ -224,8 +224,9 @@ mod native {
 
         /// 下沉侧栏改由 WKWebView 的根滚动驱动：`true` 时原生按 `contentOffset` 跟随（原生底栏与页头随之平移）；
         /// `false` 撤掉跟随（任何系统版本都成功）。iOS < 26 且 `on` 时 Swift 以 `unsupported` 拒绝。
-        pub fn sink_set(&self, on: bool) -> Result<()> {
-            self.call("sinkSet", SinkSet { on })
+        /// `trace` 时原生回传根滚动轨迹（只给 debug 包的事件日志）。
+        pub fn sink_set(&self, on: bool, trace: bool) -> Result<()> {
+            self.call("sinkSet", SinkSet { on, trace })
         }
 
         /// 把根滚动视图滚到打开位 / 关闭位（`animated` = UIKit 滚动动画）；还没 `sink_set(true)` 时是空操作。

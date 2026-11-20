@@ -285,7 +285,10 @@ pub async fn host_sink_set(app: AppHandle, on: bool) -> Res<()> {
     #[cfg(target_os = "ios")]
     {
         let plugin = ios::plugin(&app).ok_or("unsupported")?;
-        plugin.sink_set(on).map_err(|e| e.to_string())?;
+        // 根滚动轨迹（sink.trace）只给 debug 包：发布包不让原生装轨迹回调
+        plugin
+            .sink_set(on, cfg!(debug_assertions))
+            .map_err(|e| e.to_string())?;
         ios::set_sink_on(on);
         // CI 端到端检查据此确认接管顺序（sink.set 早于第一条 tabbar.set）
         eventlog::log("sink.set", json!({"on": on}));

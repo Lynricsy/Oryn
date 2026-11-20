@@ -9,9 +9,10 @@
 import UIKit
 import WebKit
 
-/// `sinkSet` 的载荷。
+/// `sinkSet` 的载荷。`trace`：装根滚动轨迹回调（只有 debug 包为真；缺省按假）。
 struct SinkSetArgs: Decodable {
   let on: Bool
+  let trace: Bool?
 }
 
 /// `sinkShow` 的载荷：滚到打开位（`open`）或关闭位；`animated` = 逐帧平滑推进，否则一步落位。

@@ -170,10 +170,13 @@ pub struct TabBarCover {
 }
 
 /// 下沉侧栏改由 WKWebView 的根滚动驱动（`sinkSet` 的载荷，bridge ≥ 8）：`on` 时原生按 `contentOffset` 跟随，
-/// 原生底栏与页头才允许接管。
+/// 原生底栏与页头才允许接管。`trace`：原生回传根滚动轨迹（`Event::Sink`，含 move 的调用栈）；只有 debug 包为真，
+/// 发布包不装轨迹回调，滚动的 KVO 里不取栈、不发事件。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SinkSet {
     pub on: bool,
+    #[serde(default)]
+    pub trace: bool,
 }
 
 /// 程序化开合（`sinkShow` 的载荷）：原生把根滚动视图滚到打开位（`open`）或关闭位，`animated` 时用 UIKit 的滚动动画。
@@ -553,7 +556,13 @@ mod tests {
         assert_eq!(serde_json::to_value(cover).unwrap(), raw);
         let raw: Value = serde_json::from_str(SINK_SET).unwrap();
         let set: SinkSet = serde_json::from_value(raw.clone()).unwrap();
-        assert_eq!(set, SinkSet { on: true });
+        assert_eq!(
+            set,
+            SinkSet {
+                on: true,
+                trace: true
+            }
+        );
         assert_eq!(serde_json::to_value(set).unwrap(), raw);
         let raw: Value = serde_json::from_str(SINK_SHOW).unwrap();
         let show: SinkShow = serde_json::from_value(raw.clone()).unwrap();

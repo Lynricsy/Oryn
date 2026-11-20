@@ -1,6 +1,7 @@
 // Oryn 移动端原生能力（iOS）：下沉侧栏的根滚动跟随、原生底栏、线程页的原生页头（均 iOS 26+）。
-// 命令只给壳的 Rust 调用（build.rs 命令表为空，页面调不到）：sinkSet 载荷 {on}（建 / 拆 SinkFollow：观察 WKWebView 根滚动的
-// contentOffset，把卡片左缘交给原生底栏与页头）、sinkShow 载荷 {open, animated}（程序化开合）；
+// 命令只给壳的 Rust 调用（build.rs 命令表为空，页面调不到）：sinkSet 载荷 {on, trace}（建 / 拆 SinkFollow：观察 WKWebView
+// 根滚动的 contentOffset，把卡片左缘交给原生底栏与页头；trace 时经 trigger("event", {type: "sink", …}) 回传根滚动轨迹，
+// 只有 debug 包会开）、sinkShow 载荷 {open, animated}（程序化开合）；
 // tabBarSet 载荷 {"spec": <spec|null>}，tabBarCover 载荷 {covered}（只决定底栏接不接触摸）；
 // 用户点击经 trigger("event", {type: "tabbar", id}) 回到 Rust，再转成页面事件。
 // 原生页头：headerSet 载荷 {"spec": <spec|null>}（挂到窗口上之后才应答）、headerShow 载荷 {alpha, ms}、
@@ -72,7 +73,8 @@ class OrynMobilePlugin: Plugin {
       invoke.reject("unsupported")
       return
     }
-    DispatchQueue.main.async { self.ensureSink() }
+    let trace = args.trace ?? false
+    DispatchQueue.main.async { self.ensureSink(trace: trace) }
     invoke.resolve()
   }
 
@@ -87,13 +89,16 @@ class OrynMobilePlugin: Plugin {
     invoke.resolve()
   }
 
-  private func ensureSink() {
+  /// 建跟随；`trace` 时才装轨迹回调（debug 包）：没装时 SinkFollow 的 KVO 不取调用栈、不发事件。
+  private func ensureSink(trace: Bool) {
     guard #available(iOS 26.0, *), let webview = self.webview, sink == nil else { return }
     let follow = SinkFollow(webview: webview) { [weak self] dx in self?.follow(dx) }
-    follow.onTrace = { [weak self] op, x, to, stack in
-      var data: JSObject = ["type": "sink", "op": op, "x": Double(x), "to": Double(to)]
-      if let stack { data["stack"] = stack }
-      self?.trigger("event", data: data)
+    if trace {
+      follow.onTrace = { [weak self] op, x, to, stack in
+        var data: JSObject = ["type": "sink", "op": op, "x": Double(x), "to": Double(to)]
+        if let stack { data["stack"] = stack }
+        self?.trigger("event", data: data)
+      }
     }
     sink = follow
   }
