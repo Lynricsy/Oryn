@@ -117,7 +117,7 @@ const TAG_TONE: Record<Tone, string> = {
 	frost: "bg-frost/12 text-frost",
 };
 
-/** 入口行右侧的状态标签：实色淡底、无描边。 */
+/** 入口行右侧的状态标签：实色淡底、无描边。行窄时可收缩，内容在标签里从右截断（不让整枚标签从左边被裁掉）。 */
 export function InfoTag({
 	tone = "neutral",
 	title,
@@ -130,7 +130,7 @@ export function InfoTag({
 	return (
 		<span
 			title={title}
-			className={`inline-flex h-5 max-w-44 shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 font-semibold text-2xs ${TAG_TONE[tone]}`}
+			className={`inline-flex h-5 min-w-0 max-w-44 items-center gap-1 overflow-hidden whitespace-nowrap rounded-full px-2 font-semibold text-2xs ${TAG_TONE[tone]}`}
 		>
 			{children}
 		</span>
@@ -155,7 +155,7 @@ export function InfoTags({
 				<span className="min-w-0 truncate text-faint text-sm">{meta}</span>
 			)}
 			{tags.slice(0, MAX_TAGS).map((tag) => (
-				<span key={tag.key} className="flex min-w-0 shrink-0">
+				<span key={tag.key} className="flex min-w-0">
 					{tag.node}
 				</span>
 			))}
