@@ -50,6 +50,10 @@ function fixedContainingBlock(el: HTMLElement): HTMLElement | null {
 		const s = getComputedStyle(e);
 		if (
 			s.transform !== "none" ||
+			// 独立变换属性同样建立包含块（手机下沉卡片 .sink-card 用的就是 translate）
+			(s.translate && s.translate !== "none") ||
+			(s.rotate && s.rotate !== "none") ||
+			(s.scale && s.scale !== "none") ||
 			s.perspective !== "none" ||
 			s.filter !== "none" ||
 			(s.backdropFilter && s.backdropFilter !== "none") ||
@@ -117,27 +121,36 @@ export function Floating({
 		const anchorEl = anchor?.current ?? node?.parentElement;
 		if (!node || !anchorEl) return;
 		if (SUPPORTS_POPOVER && !node.matches(":popover-open")) node.showPopover();
-		let frame = 0;
-		const update = () => {
-			cancelAnimationFrame(frame);
-			frame = requestAnimationFrame(() =>
-				place(node, anchorEl, side, align, gap, maxHeight),
-			);
-		};
 		// 首帧同步定位：显示前就落在正确位置，进入动画不从视口中央飞过来
 		place(node, anchorEl, side, align, gap, maxHeight);
-		// 没有 ResizeObserver 的环境（jsdom）只跟滚动与窗口尺寸
+		// 开着时逐帧比对锚点（与退化路径下的包含块）位置，变了才重排：祖先的平移 / 缩放动画（下沉卡片滑动、胶囊组进出）
+		// 不触发 scroll / resize / ResizeObserver，只靠事件会让弹层留在原地或（退化路径下）随包含块漂走
+		let last = "";
+		let frame = 0;
+		const tick = () => {
+			const a = anchorEl.getBoundingClientRect();
+			const c = SUPPORTS_POPOVER
+				? undefined
+				: fixedContainingBlock(node)?.getBoundingClientRect();
+			const key = `${a.left},${a.top},${a.width},${a.height},${c?.left},${c?.top},${window.innerWidth},${window.innerHeight}`;
+			if (key !== last) {
+				last = key;
+				place(node, anchorEl, side, align, gap, maxHeight);
+			}
+			frame = requestAnimationFrame(tick);
+		};
+		frame = requestAnimationFrame(tick);
+		// 内容高度变了（列表加载、筛选）也要重排：清掉比对键，下一帧必重排；没有 ResizeObserver 的环境（jsdom）略过
 		const ro =
-			typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
-		ro?.observe(anchorEl);
+			typeof ResizeObserver === "undefined"
+				? null
+				: new ResizeObserver(() => {
+						last = "";
+					});
 		ro?.observe(node);
-		window.addEventListener("scroll", update, true);
-		window.addEventListener("resize", update);
 		return () => {
 			cancelAnimationFrame(frame);
 			ro?.disconnect();
-			window.removeEventListener("scroll", update, true);
-			window.removeEventListener("resize", update);
 			if (SUPPORTS_POPOVER && node.matches(":popover-open")) node.hidePopover();
 		};
 	}, [anchor, side, align, gap, maxHeight]);
