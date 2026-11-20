@@ -30,6 +30,7 @@ on:
       - "web/src/lib/native-tab-bar.ts"
       - "web/src/lib/native-header.ts"
       - "web/src/lib/native-sink.ts"
+      - "web/src/lib/viewport.ts"
       - "web/src/components/layout/SinkLayout.tsx"
       - "web/src/components/layout/SectionTabBar.tsx"
       # 原生底栏垫在 WebView 之下：页面透明、侧栏列表渐隐与卡片的开合过渡都在这里
