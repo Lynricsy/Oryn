@@ -47,7 +47,7 @@ func (schedThreads) RecoveredOutcomeMatch(context.Context, string, func(string) 
 
 type nopOrbs struct{}
 
-func (nopOrbs) Delete(context.Context, string) error { return nil }
+func (nopOrbs) DeleteUnused(context.Context, string, string) (bool, error) { return false, nil }
 
 func newScheduleEnv(t *testing.T) (*notifyEnv, func() string) {
 	t.Helper()

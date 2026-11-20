@@ -481,7 +481,7 @@ func (s *Service) createThread(ctx context.Context, fp fireParams, loc *time.Loc
 }
 
 // retain 是 new_thread 的保留策略：最近 keep_last 个未归档线程之外，静止（idle / error）且未置顶的自动归档；
-// 归档后没有别的未归档线程在用的 orb 一并删除。从不删除线程。
+// 只被该运行线程用到的 orb 一并删除，别的线程（哪怕已归档，例如从它「共用 orb」分叉出的线程）还在用就保留。从不删除线程。
 func (s *Service) retain(ctx context.Context, sc db.Schedule) {
 	rows, err := s.st.Q.ListScheduleThreads(ctx, sc.ID)
 	if err != nil {
@@ -503,11 +503,7 @@ func (s *Service) retain(ctx context.Context, sc db.Schedule) {
 		if r.OrbID == nil {
 			continue
 		}
-		n, err := s.st.Q.CountUnarchivedThreadsByOrb(ctx, *r.OrbID)
-		if err != nil || n > 0 {
-			continue
-		}
-		if err := s.orbs.Delete(ctx, *r.OrbID); err != nil {
+		if _, err := s.orbs.DeleteUnused(ctx, *r.OrbID, r.ID); err != nil {
 			slog.Warn("schedule: 删除自动归档线程的 orb 失败", "schedule", sc.ID, "orb", *r.OrbID, "err", err)
 		}
 	}

@@ -64,9 +64,10 @@ type Threads interface {
 	RecoveredOutcomeMatch(ctx context.Context, threadID string, match func(text string) bool, since int64) (threads.TurnEvent, bool, error)
 }
 
-// Orbs 是保留策略删除独占 orb 用的能力（*orbs.Service 实现）。
+// Orbs 是保留策略回收独占 orb 用的能力（*orbs.Service 实现）。
 type Orbs interface {
-	Delete(ctx context.Context, orbID string) error
+	// DeleteUnused 在除 except 之外没有任何线程（含已归档的）引用 orb 时删除它，判定与删除同一事务。
+	DeleteUnused(ctx context.Context, orbID, except string) (bool, error)
 }
 
 // Notifier 补发线程状态机看不到的失败（*notify.Service 实现）；threadID 可为空。

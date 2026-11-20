@@ -784,7 +784,7 @@ func (s *Service) releaseOrb(ctx context.Context, orbID string) {
 	if orbID == "" {
 		return
 	}
-	if _, err := s.orbs.DeleteUnused(ctx, orbID); err != nil {
+	if _, err := s.orbs.DeleteUnused(ctx, orbID, ""); err != nil {
 		slog.Warn("threads: 回收线程的 orb 失败", "orb", orbID, "err", err)
 	}
 }

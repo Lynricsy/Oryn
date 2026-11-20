@@ -292,16 +292,22 @@ func (f *fakeThreads) Creates() []threads.CreateParams {
 	return append([]threads.CreateParams(nil), f.creates...)
 }
 
+// fakeOrbs 按真实规则回收：除 except 外还有线程（含已归档的）引用时不删。
 type fakeOrbs struct {
+	st      *store.Store
 	mu      sync.Mutex
 	deleted []string
 }
 
-func (o *fakeOrbs) Delete(_ context.Context, orbID string) error {
+func (o *fakeOrbs) DeleteUnused(ctx context.Context, orbID, except string) (bool, error) {
+	n, err := o.st.Q.CountOtherThreadsByOrb(ctx, db.CountOtherThreadsByOrbParams{OrbID: orbID, ExceptID: except})
+	if err != nil || n > 0 {
+		return false, err
+	}
 	o.mu.Lock()
 	o.deleted = append(o.deleted, orbID)
 	o.mu.Unlock()
-	return nil
+	return true, nil
 }
 
 type post struct{ threadID, title, body string }
@@ -353,7 +359,7 @@ func newFixture(t *testing.T) *fixture {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = st.Close() })
 	f := &fixture{t: t, ctx: ctx, st: st, clock: &fakeClock{now: time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)},
-		timers: &fakeTimers{}, th: &fakeThreads{st: st}, orbs: &fakeOrbs{}, n: &fakeNotifier{}}
+		timers: &fakeTimers{}, th: &fakeThreads{st: st}, orbs: &fakeOrbs{st: st}, n: &fakeNotifier{}}
 	f.th.now = f.clock.Now
 	f.s = f.newService()
 	return f
@@ -1088,8 +1094,9 @@ func TestNewThreadRetention(t *testing.T) {
 		orbs[n] = id
 		return &id
 	}
+	// 共用这台 orb 的另一个线程已归档（例如从运行线程「共用 orb」分叉后归档）：它的环境仍要保留
 	other := f.thread()
-	f.exec(`UPDATE threads SET orb_id = ? WHERE id = ?`, shared, other)
+	f.exec(`UPDATE threads SET orb_id = ?, archived_at = 1 WHERE id = ?`, shared, other)
 
 	s := f.putNew(Input{Name: "keep", Kind: KindEvery, Every: "1m", Prompt: "p", Overlap: OverlapAllow, KeepLast: new(2)})
 	var tids []string
@@ -1108,7 +1115,7 @@ func TestNewThreadRetention(t *testing.T) {
 	}
 	// 第 4、5 个仍 provisioning；第 3 个置顶；第 1、2 个静止 → 归档
 	assert.ElementsMatch(t, []string{tids[0], tids[1]}, f.th.archived)
-	assert.Equal(t, []string{orbs[1]}, f.orbs.deleted, "共用的 orb 不删")
+	assert.Equal(t, []string{orbs[1]}, f.orbs.deleted, "只删运行线程独占的 orb；别的线程（哪怕已归档）在用的不删")
 }
 
 func TestNewThreadProjectArchivedAndNames(t *testing.T) {

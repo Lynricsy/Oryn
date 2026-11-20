@@ -58,7 +58,7 @@ func TestArchivedThreadsFreezeOrb(t *testing.T) {
 	assert.Equal(t, StateReady, b.state(busy.ID), "归档也要等闸门确认静止")
 }
 
-// orb 跟随线程回收：仍有线程（含已归档的）引用时不删；最后一个线程删除后删除；协调 orb 从不在这里删除。
+// orb 跟随线程回收：除 except 外仍有线程（含已归档的）引用时不删；最后一个线程删除后删除；协调 orb 从不在这里删除。
 func TestDeleteUnusedFollowsThreads(t *testing.T) {
 	b := newBare(t, nil)
 	ctx := context.Background()
@@ -67,24 +67,35 @@ func TestDeleteUnusedFollowsThreads(t *testing.T) {
 	live := b.thread(orb.ID, false)
 	archived := b.thread(orb.ID, true)
 
+	// 定时 keepLast 只回收运行线程独占的 orb：另一个已归档线程也在用，不删
+	deleted, err := b.svc.DeleteUnused(ctx, orb.ID, live)
+	require.NoError(t, err)
+	assert.False(t, deleted, "已归档的线程也在用")
 	for _, id := range []string{live, archived} {
-		deleted, err := b.svc.DeleteUnused(ctx, orb.ID)
+		deleted, err := b.svc.DeleteUnused(ctx, orb.ID, "")
 		require.NoError(t, err)
 		assert.False(t, deleted, "仍有线程引用")
 		assert.Equal(t, StateFrozen, b.state(orb.ID))
 		_, err = b.st.Q.DeleteThread(ctx, id)
 		require.NoError(t, err)
 	}
-	deleted, err := b.svc.DeleteUnused(ctx, orb.ID)
+	deleted, err = b.svc.DeleteUnused(ctx, orb.ID, "")
 	require.NoError(t, err)
 	assert.True(t, deleted)
 	assert.Equal(t, StateDeleting, b.state(orb.ID))
 	assert.Equal(t, []string{"delete:"}, b.pending(orb.ID), "冻结的 orb 与状态变化同一事务入队 delete")
 
+	// 只有 except 自己在用：删除
+	own := b.orb(StateFrozen, 1)
+	run := b.thread(own.ID, true)
+	deleted, err = b.svc.DeleteUnused(ctx, own.ID, run)
+	require.NoError(t, err)
+	assert.True(t, deleted)
+
 	coord := b.orb(StateReady, 1)
 	_, err = b.st.DB.ExecContext(ctx, `UPDATE orbs SET coordinator = 1 WHERE id = ?`, coord.ID)
 	require.NoError(t, err)
-	deleted, err = b.svc.DeleteUnused(ctx, coord.ID)
+	deleted, err = b.svc.DeleteUnused(ctx, coord.ID, "")
 	require.NoError(t, err)
 	assert.False(t, deleted)
 	assert.Equal(t, StateReady, b.state(coord.ID))

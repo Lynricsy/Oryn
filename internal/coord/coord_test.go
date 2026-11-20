@@ -69,7 +69,7 @@ func (h hostStub) Check(context.Context) error { return h.err }
 
 type nopSchedOrbs struct{}
 
-func (nopSchedOrbs) Delete(context.Context, string) error { return nil }
+func (nopSchedOrbs) DeleteUnused(context.Context, string, string) (bool, error) { return false, nil }
 
 type nopNotifier struct{}
 

@@ -114,8 +114,10 @@ SELECT id, state, pinned, orb_id FROM threads
 WHERE schedule_id = CAST(@schedule_id AS TEXT) AND archived_at IS NULL
 ORDER BY created_at DESC, id DESC;
 
--- name: CountUnarchivedThreadsByOrb :one
-SELECT COUNT(*) FROM threads WHERE orb_id = CAST(@orb_id AS TEXT) AND archived_at IS NULL;
+-- Threads bound to an orb other than @except_id ('' = all of them, archived included): an orb is
+-- reclaimed only when nothing else uses it.
+-- name: CountOtherThreadsByOrb :one
+SELECT COUNT(*) FROM threads WHERE orb_id = CAST(@orb_id AS TEXT) AND id <> CAST(@except_id AS TEXT);
 
 -- Threads bound to an orb: all of them, and the unarchived ones (orb lifecycle follows its threads).
 -- name: OrbThreadCounts :one

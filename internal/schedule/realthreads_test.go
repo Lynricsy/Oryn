@@ -223,4 +223,4 @@ func TestRealThreadsRecoveredPromptErrors(t *testing.T) {
 
 type nopOrbsT struct{}
 
-func (nopOrbsT) Delete(context.Context, string) error { return nil }
+func (nopOrbsT) DeleteUnused(context.Context, string, string) (bool, error) { return false, nil }

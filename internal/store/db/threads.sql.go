@@ -68,12 +68,19 @@ func (q *Queries) CountOpenChildren(ctx context.Context, parentThreadID string) 
 	return count, err
 }
 
-const countUnarchivedThreadsByOrb = `-- name: CountUnarchivedThreadsByOrb :one
-SELECT COUNT(*) FROM threads WHERE orb_id = CAST(?1 AS TEXT) AND archived_at IS NULL
+const countOtherThreadsByOrb = `-- name: CountOtherThreadsByOrb :one
+SELECT COUNT(*) FROM threads WHERE orb_id = CAST(?1 AS TEXT) AND id <> CAST(?2 AS TEXT)
 `
 
-func (q *Queries) CountUnarchivedThreadsByOrb(ctx context.Context, orbID string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countUnarchivedThreadsByOrb, orbID)
+type CountOtherThreadsByOrbParams struct {
+	OrbID    string `json:"orbId"`
+	ExceptID string `json:"exceptId"`
+}
+
+// Threads bound to an orb other than @except_id (” = all of them, archived included): an orb is
+// reclaimed only when nothing else uses it.
+func (q *Queries) CountOtherThreadsByOrb(ctx context.Context, arg CountOtherThreadsByOrbParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countOtherThreadsByOrb, arg.OrbID, arg.ExceptID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err

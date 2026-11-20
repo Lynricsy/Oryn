@@ -1099,10 +1099,12 @@ func (s *Service) Delete(ctx context.Context, orbID string) error {
 	return err
 }
 
-// DeleteUnused 在没有任何线程（含已归档的）引用 orb 时删除它，返回是否删除。orb 的生命周期跟随线程：最后一个线程删除后
-// 由线程服务调用。「无引用」与 → deleting 在同一事务里判定，写线程行的事务又复核 orb 未进入删除（threads.checkOrbTx），
-// 并发挂上来的线程与回收串行。runner、协调 orb 与助手的电脑各有归属，从不在这里删除。
-func (s *Service) DeleteUnused(ctx context.Context, orbID string) (bool, error) {
+// DeleteUnused 在除 except 之外没有任何线程（含已归档的）引用 orb 时删除它，返回是否删除；except 为空 = 不能有任何线程。
+// orb 的生命周期跟随线程：最后一个线程删除后由线程服务调用（except 为空）；定时的 keepLast 归档旧运行后调用（except =
+// 那个运行线程，只回收它独占的 orb，别的线程——哪怕已归档——还在用就保留）。「无引用」与 → deleting 在同一事务里判定，
+// 写线程行的事务又复核 orb 未进入删除（threads.checkOrbTx），并发挂上来的线程与回收串行。runner、协调 orb 与助手的电脑
+// 各有归属，从不在这里删除。
+func (s *Service) DeleteUnused(ctx context.Context, orbID, except string) (bool, error) {
 	orb, err := s.Get(ctx, orbID)
 	if err != nil {
 		return false, err
@@ -1111,8 +1113,8 @@ func (s *Service) DeleteUnused(ctx context.Context, orbID string) (bool, error) 
 		return false, nil
 	}
 	return s.deleteIf(ctx, orbID, func(q *db.Queries) (bool, error) {
-		n, err := q.OrbThreadCounts(ctx, orbID)
-		return n.Total == 0, err
+		n, err := q.CountOtherThreadsByOrb(ctx, db.CountOtherThreadsByOrbParams{OrbID: orbID, ExceptID: except})
+		return n == 0, err
 	})
 }
 

@@ -48,7 +48,7 @@ func (h *coordHost) Status(ctx context.Context) apigen.CoordinatorStatus {
 
 type nopCoordOrbs struct{}
 
-func (nopCoordOrbs) Delete(context.Context, string) error { return nil }
+func (nopCoordOrbs) DeleteUnused(context.Context, string, string) (bool, error) { return false, nil }
 
 type nopCoordNotifier struct{}
 
