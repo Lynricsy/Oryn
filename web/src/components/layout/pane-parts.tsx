@@ -67,10 +67,10 @@ export function useNow(): number {
 }
 
 /**
- * 分组：标题行可折叠。主分组（置顶、项目）的箭头悬停才显现；
- * `fold` 分组（未活动、稍后提醒、已归档）箭头常驻在最左、默认收起。
- * 计数签贴行尾、右缘距侧栏内容边 8px，与导航行（`NAV_ROW` 的 pr-2）和线程行行尾对齐；
- * 主分组的箭头因此放在计数签左侧，不占行尾。
+ * 分组：标题行可折叠，箭头都在标题之后、计数签之前。主分组（置顶、项目）展开时箭头悬停才显现；
+ * `fold` 分组（未活动、稍后提醒、已归档）箭头常驻、默认收起。箭头不放在行首：行首那一列是线程行的状态图标，
+ * 空闲线程是一个 ✓，向下的箭头和它叠在同一列里分不清。
+ * 计数签贴行尾、右缘距侧栏内容边 8px，与导航行（`NAV_ROW` 的 pr-2）和线程行行尾对齐。
  */
 export function Group({
 	title,
@@ -112,24 +112,14 @@ export function Group({
 					onClick={toggle}
 					aria-expanded={open}
 				>
-					{fold && (
-						<Icon
-							name={caret}
-							size={11}
-							aria-hidden
-							className="-mx-0.5 shrink-0 text-ghost"
-						/>
-					)}
 					{icon}
 					<span className="min-w-0 flex-1 truncate">{title}</span>
-					{!fold && (
-						<Icon
-							name={caret}
-							size={11}
-							aria-hidden
-							className={`shrink-0 text-ghost transition-opacity duration-150 ${open ? "opacity-0 group-focus-within/head:opacity-100 group-hover/head:opacity-100" : ""}`}
-						/>
-					)}
+					<Icon
+						name={caret}
+						size={11}
+						aria-hidden
+						className={`shrink-0 text-ghost transition-opacity duration-150 ${open && !fold ? "opacity-0 group-focus-within/head:opacity-100 group-hover/head:opacity-100" : ""}`}
+					/>
 					{count !== undefined && <CountPill n={count} />}
 				</button>
 				{action}
