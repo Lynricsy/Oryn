@@ -23,7 +23,7 @@
 	let guard = false;
 	let error = "";
 	let sk = 0;
-	let sh = 0; // host_sink_show 调用次数（区分「没点到」与「点到了但没动 / 被拉回」）
+	let sh = 0; // 页面发起 host_sink_show 的次数（invoke 之前自增：只证明网页发了，不证明原生收到）
 	// 程序化开合的方式：0 smooth；1 instant；2 nosnap；3 snapoff（第 1–3 轮）；
 	// 4 native = host_sink_show {animated: true}（预案 C2）；5 native-instant = host_sink_show {animated: false}；
 	// 6 native-snapoff = 动画期间根上 scroll-snap-type: none，命中端点后恢复（C2 第 3–4 轮）；
@@ -152,8 +152,11 @@
 		},
 		{ passive: true },
 	);
+	// 守卫关着时不排静止定时器：否则点按钮 / 松手 100ms 后若还在中途，settle 会额外 go(nearer())，
+	// 多发一次 host_sink_show（第 3 轮 native-snapoff 的 sh +2），污染程序化开合的对照
 	const touch = (e) => {
 		touching = e.touches.length;
+		if (!guard) return;
 		if (e.type === "touchstart") free = true;
 		else arm();
 	};
