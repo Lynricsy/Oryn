@@ -213,7 +213,9 @@ async function openPage(browser: Browser, bridge: number, path: string) {
 	await context.addInitScript(shellScript(bridge));
 	const page = await context.newPage();
 	page.on("pageerror", (e) => console.warn(`[page] ${e.message}`));
-	await page.goto(`${BASE}${path}`, { waitUntil: "networkidle" });
+	await page.goto(`${BASE}${path}`, { waitUntil: "domcontentloaded" });
+	// 等真实页面挂出侧栏；轮询或后台请求不属于下沉布局的就绪条件。
+	await page.getByTestId("sink-sidebar").waitFor({ state: "attached" });
 	const cdp = await context.newCDPSession(page);
 	return { context, page, cdp };
 }
