@@ -430,8 +430,17 @@ export interface NativeHeader {
 	): void;
 	/** 拖动中的一帧：卡片进度、侧栏宽（px）、手指速度（px/ms）。逐帧合并后发给原生。 */
 	cardDrag(progress: number, width: number, velocity: number): void;
-	/** 卡片吸附的终点（打开 = 左缘停在侧栏宽，关闭 = 0）：原生按同一时长、缓动与起步时刻跟过去。 */
-	cardSettle(open: boolean, width: number, instant: boolean): void;
+	/**
+	 * 卡片吸附的终点（打开 = 左缘停在侧栏宽，关闭 = 0）：原生按同一时长、缓动与起步时刻跟过去。
+	 * `start`：卡片过渡实际起步的绝对时刻（Unix 毫秒，主线程卡住时会晚于预期；null = 没有过渡）。给了就等它再发，
+	 * 不给就按「现在 + NATIVE_LAG_MS」预计。关闭用它：卡片晚起步时原生跟着晚，不会先一步探到侧栏上。
+	 */
+	cardSettle(
+		open: boolean,
+		width: number,
+		instant: boolean,
+		start?: Promise<number | null>,
+	): void;
 	setCovered(covered: boolean): void;
 	/** 网页强制收起原生菜单（Esc、软键盘弹出）。 */
 	closeMenu(): void;
@@ -482,6 +491,7 @@ export function createNativeHeader(
 	let dx = 0; // 原生控件层的目标位移 = 卡片左缘
 	let dragDx: number | null = null; // 这一帧还没发出的拖动位移
 	let raf = 0;
+	let settleSeq = 0; // 吸附序号：等起步时刻期间又吸附 / 起拖时，旧的那条作废
 	let want = false; // 已要求原生显示
 	let shown = false; // 原生显示稳了（网页该隐藏）
 	let menu: NativeMenuKind | null = null;
@@ -625,6 +635,7 @@ export function createNativeHeader(
 		},
 		cardDrag(progress, w, velocity) {
 			env.clearTimeout(restTimer);
+			settleSeq++;
 			dragging = true;
 			moving = true;
 			width = w;
@@ -643,7 +654,7 @@ export function createNativeHeader(
 				place();
 			});
 		},
-		cardSettle(next, w, instant) {
+		cardSettle(next, w, instant, start) {
 			if (!dragging && next === open && w === width) return;
 			const wasMoving = moving;
 			dragging = false;
@@ -654,33 +665,42 @@ export function createNativeHeader(
 			dragDx = null;
 			dx = next ? w : 0;
 			env.clearTimeout(restTimer);
+			const seq = ++settleSeq;
 			// 已经静止在关闭位（挂载、关闭时改了侧栏宽）：没有要走的路
 			if (!next && !wasMoving) return;
 			moving = true;
-			if (!next)
-				restTimer = env.setTimeout(
-					() => {
-						moving = false;
-						place();
-					},
-					instant ? 0 : REST_MS,
-				);
-			if (!want) return;
-			if (instant) {
-				place();
-				return;
-			}
-			// 卡片晚 NATIVE_LAG_MS 起步；打开时原生早一帧、关闭时晚一帧，误差只落在卡片内侧。
-			// `delay` 给不认 `at` 的旧壳（bridge < 7，从收到算起）：打开立即走，关闭等一段
-			sendShow({
-				alpha: 1,
-				dx,
-				passive: true,
-				ms: SINK_MS,
-				delay: next ? 0 : NATIVE_LAG_MS,
-				ease: [...SINK_EASE],
-				at: env.now() + NATIVE_LAG_MS + (next ? -SYNC_BIAS_MS : SYNC_BIAS_MS),
-			});
+			const predicted = env.now() + NATIVE_LAG_MS;
+			const go = (begin: number | null) => {
+				// 等起步时刻期间又吸附 / 起拖了：这条作废
+				if (seq !== settleSeq) return;
+				const from = begin ?? predicted;
+				if (!next)
+					restTimer = env.setTimeout(
+						() => {
+							moving = false;
+							place();
+						},
+						instant ? 0 : REST_MS + Math.max(0, from - predicted),
+					);
+				if (!want) return;
+				if (instant) {
+					place();
+					return;
+				}
+				// 打开时原生早一帧、关闭时晚一帧，误差只落在卡片内侧。
+				// `delay` 给不认 `at` 的旧壳（bridge < 7，从收到算起）：打开立即走，关闭等一段
+				sendShow({
+					alpha: 1,
+					dx,
+					passive: true,
+					ms: SINK_MS,
+					delay: next ? 0 : NATIVE_LAG_MS,
+					ease: [...SINK_EASE],
+					at: from + (next ? -SYNC_BIAS_MS : SYNC_BIAS_MS),
+				});
+			};
+			if (start && !instant) start.then(go, () => undefined);
+			else go(null);
 		},
 		setCovered(next) {
 			// 卡片动着或开着时不判定：露出的卡片条上的关闭按钮压在页头位置上，那不是遮挡；静止后由下一次探测补上
@@ -887,13 +907,21 @@ export function useHeaderCover(
 			return;
 		}
 		let frame = 0;
-		const check = () =>
+		const check = () => {
+			// 下沉卡片还在过渡或被拖动时不判定：动画途中的命中测试与布局矩形对不上，会误报遮挡（卡片过渡结束后补探）
+			const card = root.current?.closest(".sink-card");
+			if (
+				card?.hasAttribute("data-dragging") ||
+				card?.getAnimations?.().some((a) => a.playState === "running")
+			)
+				return;
 			nativeHeader.setCovered(
 				slotsCovered(
 					root.current?.querySelectorAll("[data-native-slot]") ?? [],
 					window,
 				),
 			);
+		};
 		const soon = () => {
 			if (frame) return;
 			frame = requestAnimationFrame(() => {
@@ -907,6 +935,11 @@ export function useHeaderCover(
 		}, COVER_POLL_MS);
 		const mo = new MutationObserver(soon);
 		mo.observe(document.body, { childList: true });
+		const card = root.current?.closest(".sink-card");
+		const onTransitionEnd = (e: Event) => {
+			if (e.target === card) soon();
+		};
+		card?.addEventListener("transitionend", onTransitionEnd);
 		const vv = window.visualViewport;
 		document.addEventListener("pointerup", soon, true);
 		document.addEventListener("keyup", soon, true);
@@ -916,6 +949,7 @@ export function useHeaderCover(
 			window.clearInterval(poll);
 			cancelAnimationFrame(frame);
 			mo.disconnect();
+			card?.removeEventListener("transitionend", onTransitionEnd);
 			document.removeEventListener("pointerup", soon, true);
 			document.removeEventListener("keyup", soon, true);
 			vv?.removeEventListener("resize", soon);

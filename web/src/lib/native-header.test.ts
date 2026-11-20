@@ -705,6 +705,56 @@ describe("控制器", () => {
 		]);
 	});
 
+	it("cardSettle 带起步时刻：等卡片真正起步再发，at 按实际起步算，REST 同步顺延；期间起拖则作废", async () => {
+		const s = await engaged();
+		s.header.cardSettle(true, 320, false);
+		await flush();
+		s.api.show.mockClear();
+		let begin: (at: number | null) => void = () => {};
+		// 主线程被占住，卡片比预计晚 100ms 起步
+		s.header.cardSettle(
+			false,
+			320,
+			false,
+			new Promise((r) => {
+				begin = r;
+			}),
+		);
+		await flush();
+		expect(s.api.show).not.toHaveBeenCalled();
+		const late = EPOCH + s.now() + NATIVE_LAG_MS + 100;
+		begin(late);
+		await flush();
+		expect(s.shows()).toEqual([
+			{
+				alpha: 1,
+				dx: 0,
+				passive: true,
+				ms: SINK_MS,
+				delay: NATIVE_LAG_MS,
+				ease: [...SINK_EASE],
+				at: late + SYNC_BIAS_MS,
+			},
+		]);
+		s.api.show.mockClear();
+		s.advance(REST_MS + 99);
+		await flush();
+		expect(s.api.show).not.toHaveBeenCalled();
+		s.advance(1);
+		await flush();
+		expect(s.shows()).toEqual([REST]);
+
+		// 等起步时刻期间又起拖：迟到的起步时刻不再发吸附
+		s.header.cardSettle(true, 320, false);
+		await flush();
+		s.header.cardSettle(false, 320, false, new Promise((r) => (begin = r)));
+		s.header.cardDrag(0.5, 320, 0);
+		s.api.show.mockClear();
+		begin(EPOCH + s.now());
+		await flush();
+		expect(s.shows().some((x) => x.dx === 0 && x.ms === SINK_MS)).toBe(false);
+	});
+
 	it("松手吸附：取消待发的拖动帧，按吸附发；REST_MS 内再拖不恢复接触摸", async () => {
 		const s = await engaged();
 		s.header.cardDrag(0.3, 320, 0);

@@ -597,15 +597,25 @@ describe("iOS 原生页头", () => {
 		vi.useRealTimers();
 	});
 
-	it("非手势开合通知 cardSettle(开合, 侧栏宽, 减少动效)；页头接不接管，底栏都只收卡片左缘", () => {
+	it("非手势开合通知 cardSettle(开合, 侧栏宽, 减少动效, 起步时刻)；页头接不接管，底栏都只收卡片左缘", () => {
 		vi.useFakeTimers();
 		const first = mount();
 		act(() => uiStore.getState().setSidebar(true));
-		expect(nh.header.cardSettle).toHaveBeenLastCalledWith(true, 390, false);
+		expect(nh.header.cardSettle).toHaveBeenLastCalledWith(
+			true,
+			390,
+			false,
+			expect.any(Promise),
+		);
 		act(() => vi.advanceTimersByTime(ARMED));
 		expect(nb.bar.reveal).toHaveBeenLastCalledWith(390);
 		act(() => uiStore.getState().setSidebar(false));
-		expect(nh.header.cardSettle).toHaveBeenLastCalledWith(false, 390, false);
+		expect(nh.header.cardSettle).toHaveBeenLastCalledWith(
+			false,
+			390,
+			false,
+			expect.any(Promise),
+		);
 		expect(nb.bar.reveal).toHaveBeenLastCalledWith(0);
 		// 换成页头接管重新挂载（关闭时的 history.back() 异步到达，原地重开会被迟到的 popstate 再关掉）
 		first.unmount();
@@ -614,12 +624,37 @@ describe("iOS 原生页头", () => {
 		nh.engaged = true;
 		mount();
 		act(() => uiStore.getState().setSidebar(true));
-		expect(nh.header.cardSettle).toHaveBeenLastCalledWith(true, 390, false);
+		expect(nh.header.cardSettle).toHaveBeenLastCalledWith(
+			true,
+			390,
+			false,
+			expect.any(Promise),
+		);
 		act(() => vi.advanceTimersByTime(ARMED));
 		expect(nb.bar.reveal).toHaveBeenLastCalledWith(390);
 	});
 
-	it("减少动效：cardSettle 第三个参数为 true", () => {
+	it("起步时刻取卡片 translate 过渡真正排上的时刻（接管时加 transition-delay）；200ms 没有过渡给 null", async () => {
+		nh.engaged = true;
+		mount();
+		act(() => uiStore.getState().setSidebar(true));
+		const started = nh.header.cardSettle.mock.calls.at(-1)?.[3];
+		const run = Object.assign(new Event("transitionrun"), {
+			propertyName: "translate",
+		});
+		card().dispatchEvent(run);
+		await expect(started).resolves.toBe(
+			performance.timeOrigin + run.timeStamp + 34,
+		);
+
+		vi.useFakeTimers();
+		act(() => uiStore.getState().setSidebar(false));
+		const none = nh.header.cardSettle.mock.calls.at(-1)?.[3];
+		act(() => vi.advanceTimersByTime(200));
+		await expect(none).resolves.toBeNull();
+	});
+
+	it("减少动效：cardSettle 第三个参数为 true，不等起步时刻", () => {
 		vi.stubGlobal("matchMedia", (q: string) => ({
 			matches: q === "(prefers-reduced-motion: reduce)",
 			addEventListener: () => {},
@@ -627,7 +662,12 @@ describe("iOS 原生页头", () => {
 		}));
 		mount();
 		act(() => uiStore.getState().setSidebar(true));
-		expect(nh.header.cardSettle).toHaveBeenLastCalledWith(true, 390, true);
+		expect(nh.header.cardSettle).toHaveBeenLastCalledWith(
+			true,
+			390,
+			true,
+			undefined,
+		);
 	});
 
 	it("左缘右滑过阈值后每次 touchMove 都把进度、侧栏宽与速度交给 cardDrag；没过阈值不调", () => {
@@ -663,14 +703,24 @@ describe("iOS 原生页头", () => {
 		touch(card(), "touchMove", 60, 300, 2000);
 		touch(card(), "touchEnd", 60);
 		expect(uiStore.getState().sidebarOpen).toBe(false);
-		expect(nh.header.cardSettle).toHaveBeenLastCalledWith(false, 390, false);
+		expect(nh.header.cardSettle).toHaveBeenLastCalledWith(
+			false,
+			390,
+			false,
+			expect.any(Promise),
+		);
 		expect(card()).not.toHaveAttribute("data-released");
 
 		touch(card(), "touchStart", 4, 300, 3000);
 		touch(card(), "touchMove", 300, 300, 3100);
 		touch(card(), "touchEnd", 300);
 		expect(uiStore.getState().sidebarOpen).toBe(true);
-		expect(nh.header.cardSettle).toHaveBeenCalledWith(true, 390, false);
+		expect(nh.header.cardSettle).toHaveBeenCalledWith(
+			true,
+			390,
+			false,
+			expect.any(Promise),
+		);
 		expect(card()).not.toHaveAttribute("data-released");
 	});
 

@@ -153,6 +153,26 @@ export function SinkLayout({
 		);
 	}).current;
 	useEffect(() => () => window.clearTimeout(revealTimer.current), []);
+	// 卡片 translate 过渡实际起步的绝对时刻（Unix 毫秒）：transitionrun 在样式重算时触发（主线程被路由渲染占住时会晚于预期），
+	// 加上接管时的 transition-delay；200ms 内没有过渡（终点没变、减少动效）给 null，控制器按预计时刻走
+	const cardStart = useRef((): Promise<number | null> => {
+		const card = cardRef.current;
+		if (!card) return Promise.resolve(null);
+		return new Promise((resolve) => {
+			const done = (at: number | null) => {
+				window.clearTimeout(timer);
+				card.removeEventListener("transitionrun", onRun);
+				resolve(at);
+			};
+			const onRun = (e: TransitionEvent) => {
+				if (e.target !== card || e.propertyName !== "translate") return;
+				const lag = card.hasAttribute("data-native-head") ? NATIVE_LAG_MS : 0;
+				done(performance.timeOrigin + e.timeStamp + lag);
+			};
+			const timer = window.setTimeout(() => done(null), 200);
+			card.addEventListener("transitionrun", onRun);
+		});
+	}).current;
 
 	// 历史标记：打开时压入；关闭时若标记仍在栈顶（没有因导航被盖住）就弹掉
 	useEffect(() => {
@@ -211,7 +231,7 @@ export function SinkLayout({
 	useLayoutEffect(() => {
 		const w = sinkWidth(sideRef.current);
 		revealSink(open, w, reduce);
-		nativeHeader.cardSettle(open, w, reduce);
+		nativeHeader.cardSettle(open, w, reduce, reduce ? undefined : cardStart());
 	}, [open, reduce]);
 
 	useEffect(() => {
@@ -310,7 +330,12 @@ export function SinkLayout({
 			// 松手弹回原状态时 store 不变，只有这里能通知原生
 			const w = width();
 			revealSink(next, w, reduceRef.current);
-			nativeHeader.cardSettle(next, w, reduceRef.current);
+			nativeHeader.cardSettle(
+				next,
+				w,
+				reduceRef.current,
+				reduceRef.current ? undefined : cardStart(),
+			);
 			if (next !== openRef.current) uiStore.getState().setSidebar(next);
 		};
 		const onStart = (e: TouchEvent) => {
