@@ -172,7 +172,8 @@ export interface SinkScroll {
  * 停在中途则就近平滑吸附。触点按着时不提交（等抬起再计时）。
  * 本页请求的目的地（`target`）在提交或手指接管前一直有效：根不在目的地（还没起步、停在中途或仍在另一端）都继续等，
  * 主线程忙时原生动画可能晚起步、scroll 事件可能隔一百多毫秒才来一条，这时按静止提交或就近吸附都会把开合反过来。
- * 等满 SINK_REQUEST_MS 仍未到位就由网页 instant 落到目的地，再按实际位置提交。
+ * 等满 SINK_REQUEST_MS 仍未到位就再发一次一步落位（经原生，也是异步的），目的地保留、再给一个 SINK_REQUEST_MS 的宽限；
+ * 宽限到了仍未到位就放弃目的地，按实际位置提交（不再重发）。
  */
 export function createSinkScroll(
 	env: SinkScrollEnv,
@@ -183,6 +184,8 @@ export function createSinkScroll(
 	let free = false;
 	let touching = false;
 	let target: SinkRest | null = null;
+	/** 截止兜底的一步落位已经发过（本次请求不再重发，宽限到了就放弃）。 */
+	let fallen = false;
 	let timer: number | null = null;
 	/** 本页请求的截止定时器：独立于静止定时器（后者每条 scroll 事件都重排，不能当期限用）。 */
 	let deadline: number | null = null;
@@ -190,19 +193,26 @@ export function createSinkScroll(
 		if (timer !== null) env.clearTimeout(timer);
 		timer = env.setTimeout(settle, ms);
 	};
-	/** 目的地作废：到位提交、手指接管、被新请求替换、卸载。 */
+	/** 目的地作废：到位提交、手指接管、被新请求替换、卸载、宽限到期。 */
 	const drop = () => {
 		target = null;
+		fallen = false;
 		if (deadline !== null) env.clearTimeout(deadline);
 		deadline = null;
 	};
 	const expire = () => {
 		deadline = null;
 		if (target === null || touching || env.rest() === target) return;
-		// 只落一次：落位也被拉回时按实际位置收场，不来回重试
+		if (fallen) {
+			// 兜底落位也没到（原生没动或被拉回）：放弃目的地，按实际位置收场
+			drop();
+			arm(SINK_REST_MS);
+			return;
+		}
+		// 原生命令是异步的，落位可能晚到：目的地保留，宽限期内照旧不按静止提交
+		fallen = true;
 		env.scrollTo(target, false);
-		target = null;
-		arm(SINK_REST_MS);
+		deadline = env.setTimeout(expire, SINK_REQUEST_MS);
 	};
 	const settle = () => {
 		timer = null;

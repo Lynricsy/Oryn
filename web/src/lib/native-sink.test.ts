@@ -211,7 +211,7 @@ describe("createSinkScroll", () => {
 		expect(commit.mock.calls).toEqual([["open"]]);
 	});
 
-	it("T8 request 之后根一直没动（原生动画晚起步或丢了）：不提交旧位置；SINK_REQUEST_MS 时网页 instant 落到目的地，落稳后提交", () => {
+	it("T8 request 之后根一直没动（原生动画晚起步或丢了）：不提交旧位置；SINK_REQUEST_MS 时兜底一步落位，落稳后提交", () => {
 		const { s, scrollTo, commit, scroll } = setup("closed");
 		s.request("open", true);
 		vi.advanceTimersByTime(SINK_REQUEST_MS - 1);
@@ -224,10 +224,23 @@ describe("createSinkScroll", () => {
 		expect(commit.mock.calls).toEqual([["open"]]);
 	});
 
-	it("T8b 超时落位也被拉回：只落一次，按实际位置提交，不来回重试", () => {
+	it("T8a 兜底落位 200ms 后才到（原生命令异步）：宽限期内不提交旧位置，到位后提交目的地", () => {
+		const { s, commit, scroll } = setup("closed");
+		s.request("open", true);
+		vi.advanceTimersByTime(SINK_REQUEST_MS + 199);
+		expect(commit).not.toHaveBeenCalled();
+		vi.advanceTimersByTime(1);
+		scroll("open");
+		vi.advanceTimersByTime(SINK_REST_MS);
+		expect(commit.mock.calls).toEqual([["open"]]);
+	});
+
+	it("T8b 兜底落位在宽限期内也没到：不重发，宽限到期后按实际位置提交", () => {
 		const { s, scrollTo, commit } = setup("closed");
 		s.request("open", true);
-		vi.advanceTimersByTime(SINK_REQUEST_MS + SINK_REST_MS);
+		vi.advanceTimersByTime(SINK_REQUEST_MS * 2 - 1);
+		expect(commit).not.toHaveBeenCalled();
+		vi.advanceTimersByTime(1 + SINK_REST_MS);
 		expect(commit.mock.calls).toEqual([["closed"]]);
 		vi.advanceTimersByTime(SINK_REQUEST_MS * 3);
 		expect(scrollTo.mock.calls).toEqual([
