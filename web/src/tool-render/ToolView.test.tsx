@@ -246,10 +246,12 @@ describe("xd:// 设备调用的卡片", () => {
 			/>,
 		);
 		expect(nameOf(container)).toBe("xd://grep");
-		expect(summaryOf(container)).toContain("needle");
-		expect(summaryOf(container)).toContain("src");
-		// 设备参数里的 `i` 作为意图展示，不当成真实参数
-		expect(container.querySelector(".tv-intent")).toHaveTextContent("找");
+		// 设备参数里的 `i` 作为意图显示在头部，不当成真实参数；真实参数在输入段
+		expect(summaryOf(container)).toBe("找");
+		const input = screen.getByRole("region", { name: "输入" });
+		expect(input).toHaveTextContent("needle");
+		expect(input).toHaveTextContent("src");
+		expect(input).not.toHaveTextContent("找");
 	});
 
 	it("纯文本设备 resolve 未派发时按 resolve 卡片显示理由", () => {
@@ -562,7 +564,7 @@ describe("卡片头部的意图与展开体的输入 / 输出分段", () => {
 		details: { exitCode: 0 },
 	};
 
-	it("收起时头部显示意图而不是命令；展开后头部换回命令摘要", () => {
+	it("有意图时头部收起、展开都显示意图，命令在输入段，展开体里不再单写一行意图", () => {
 		const { container } = render(
 			<ToolView
 				name="bash"
@@ -572,9 +574,11 @@ describe("卡片头部的意图与展开体的输入 / 输出分段", () => {
 		);
 		expect(summaryOf(container)).toBe("跑单元测试");
 		fireEvent.click(container.querySelector(".tv-head") as HTMLElement);
-		expect(summaryOf(container)).toContain("make test");
-		expect(summaryOf(container)).not.toContain("跑单元测试");
-		expect(container.querySelector(".tv-intent")).toHaveTextContent(
+		expect(summaryOf(container)).toBe("跑单元测试");
+		expect(screen.getByRole("region", { name: "输入" })).toHaveTextContent(
+			"make test",
+		);
+		expect(container.querySelector(".tv-body")).not.toHaveTextContent(
 			"跑单元测试",
 		);
 	});

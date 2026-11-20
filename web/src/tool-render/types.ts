@@ -83,8 +83,8 @@ export interface ToolRenderProps {
 
 export interface ToolRenderer {
 	/**
-	 * 头部摘要：一行内联内容（不得渲染块级元素）。卡片收起且有意图（`i`）时头部显示意图，
-	 * 展开后才显示 Summary。
+	 * 头部摘要：一行内联内容（不得渲染块级元素）。有意图（`i`）时头部一直显示意图（收起、展开都一样），
+	 * 没有意图才显示 Summary；完整参数由 Input 段给出。
 	 */
 	Summary: ComponentType<ToolRenderProps>;
 	/**

@@ -184,7 +184,7 @@
 	white-space: nowrap;
 }
 
-/* 收起时头部显示意图（自然语言）：无衬线，比参数摘要更像一句说明 */
+/* 有意图时头部显示意图（自然语言），收起、展开都一样：无衬线，比参数摘要更像一句说明 */
 .tv-sum-intent {
 	font-family: var(--tv-sans);
 	font-size: 12.5px;
@@ -255,20 +255,12 @@
 
 /* ---- body ---- */
 
-/* 展开体在卡内（头部下方一条发丝线）：意图一行 + 输入、输出两段，不写段落标题。
- * 意图与输入（这次调用「要做什么」）留在纸面上，输出是一层更深的内嵌井，两者之间一条发丝线。 */
+/* 展开体在卡内（头部下方一条发丝线）：输入、输出两段，不写段落标题。
+ * 输入（这次调用「要做什么」）留在纸面上，输出是一层更深的内嵌井，两者之间一条发丝线。 */
 .tv-body {
 	display: flex;
 	flex-direction: column;
 	min-width: 0;
-}
-
-.tv-intent {
-	padding: 9px 12px 0;
-	font-family: var(--tv-sans);
-	font-style: italic;
-	font-size: 12px;
-	color: var(--tv-faint);
 }
 
 .tv-sec {
@@ -288,15 +280,9 @@
 	background: var(--tv-inset);
 }
 
-/* 输入段为空、也没有意图时，输出井直接接在头部的发丝线下，不再叠一条线 */
+/* 输入段为空时，输出井直接接在头部的发丝线下，不再叠一条线 */
 .tv-body > .tv-sec--in:first-child:has(> .tv-sec-body:empty) + .tv-sec--out {
 	border-top: 0;
-}
-
-/* 只有意图、或意图之后直接是输出：意图下方留出与段落相同的空隙 */
-.tv-intent:has(+ .tv-sec--in > .tv-sec-body:empty),
-.tv-body:not(:has(.tv-sec-body:not(:empty))) > .tv-intent {
-	padding-bottom: 9px;
 }
 
 .tv-sec-body {

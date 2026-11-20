@@ -137,7 +137,7 @@ export interface ToolViewProps {
 	result?: ToolResultLike;
 	/** Tool is still executing (live collab view). */
 	running?: boolean;
-	/** Model-provided intent (`i`): shown in the collapsed header instead of the summary, and atop the expanded body. */
+	/** Model-provided intent (`i`): shown in the header instead of the summary, collapsed or expanded. */
 	intent?: string;
 	/** Streaming partial output tail while running. */
 	partial?: string;
@@ -269,9 +269,9 @@ export function ToolView(props: ToolViewProps): ReactNode {
 						{t("toolRender.computer")}
 					</span>
 				)}
-				{/* 收起时头部说「为什么调用」（意图），展开后头部才换成参数摘要，输入段给出完整参数 */}
+				{/* 头部说「为什么调用」（意图），收起、展开都一样；没有意图才显示参数摘要。完整参数在展开体的输入段 */}
 				<span className="tv-sum">
-					{!open && intent ? (
+					{intent ? (
 						<span className="tv-sum-intent">{intent}</span>
 					) : (
 						<renderer.Summary {...renderProps} />
@@ -308,7 +308,6 @@ export function ToolView(props: ToolViewProps): ReactNode {
 			</button>
 			{open && (
 				<div className="tv-body">
-					{intent && <div className="tv-intent">{intent}</div>}
 					{renderer.Input && (
 						<ToolSection kind="in" label={t("toolRender.input")}>
 							<renderer.Input {...renderProps} />
