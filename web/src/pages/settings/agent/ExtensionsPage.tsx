@@ -29,7 +29,6 @@ import type { IconName } from "../../../components/ui/icons";
 import {
 	Button,
 	Dialog,
-	EmptyState,
 	ErrorText,
 	Field,
 	IconButton,
@@ -354,7 +353,6 @@ export default function ExtensionsPage() {
 						<Button
 							size="sm"
 							icon="plus"
-							className="-mr-1.5"
 							aria-label={t("agentPages.code.newIn", {
 								section: t(`agentPages.code.${s.id}.title`),
 							})}
@@ -374,10 +372,9 @@ export default function ExtensionsPage() {
 							<Spinner />
 						</div>
 					) : s.entries.length === 0 ? (
-						<EmptyState
-							icon={s.icon}
-							title={t(`agentPages.code.${s.id}.empty`)}
-						/>
+						<p className="text-faint text-sm">
+							{t(`agentPages.code.${s.id}.empty`)}
+						</p>
 					) : (
 						<div className="-mx-2 flex flex-col">{s.entries.map(row)}</div>
 					)}

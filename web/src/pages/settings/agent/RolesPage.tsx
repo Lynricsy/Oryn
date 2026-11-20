@@ -474,7 +474,7 @@ export default function RolesPage(): ReactNode {
 				title={t("agentPages.roles.cycleTitle")}
 				icon="repeat"
 				action={
-					<span className="-mr-1.5 inline-flex items-center gap-2">
+					<span className="inline-flex items-center gap-2">
 						{(config.pending || avatarSave.busy) && <Spinner />}
 						<Button
 							size="sm"

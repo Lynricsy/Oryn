@@ -26,7 +26,6 @@ import { Icon, type IconName } from "../ui/icons";
 import {
 	Button,
 	Dialog,
-	EmptyState,
 	ErrorText,
 	Field,
 	IconButton,
@@ -228,12 +227,7 @@ export function MarkdownCollection(props: MarkdownCollectionProps) {
 			title={title}
 			icon={icon}
 			action={
-				<Button
-					size="sm"
-					icon="plus"
-					className="-mr-1.5"
-					onClick={() => setEditing("new")}
-				>
+				<Button size="sm" icon="plus" onClick={() => setEditing("new")}>
 					{t("agentPages.new")}
 				</Button>
 			}
@@ -246,7 +240,7 @@ export function MarkdownCollection(props: MarkdownCollectionProps) {
 					<Spinner />
 				</div>
 			) : entries.length === 0 ? (
-				<EmptyState icon={icon} title={emptyText} />
+				<p className="text-faint text-sm">{emptyText}</p>
 			) : (
 				<div className="-mx-2 flex flex-col">
 					{rows.map(({ entry, parsed }) => {

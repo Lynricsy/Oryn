@@ -189,29 +189,30 @@ function OAuthAppCard({ status }: { status: GitHubStatus }): ReactNode {
 						{t("github.oauth.callbackHint")}
 					</span>
 				</div>
-				<Field label={t("github.oauth.clientId")}>
-					<TextInput
-						className="max-w-96"
-						required
-						autoComplete="off"
-						spellCheck={false}
-						value={clientId}
-						onChange={(e) => setClientId(e.target.value)}
-					/>
-				</Field>
-				<Field
-					label={t("github.oauth.clientSecret")}
-					hint={app ? t("github.oauth.secretKeep") : undefined}
-				>
-					<TextInput
-						className="max-w-96"
-						type="password"
-						required={!app}
-						autoComplete="new-password"
-						value={secret}
-						onChange={(e) => setSecret(e.target.value)}
-					/>
-				</Field>
+				{/* Client ID 与 Secret 是一对凭据，宽屏并排一行 */}
+				<div className="grid gap-3 sm:grid-cols-2">
+					<Field label={t("github.oauth.clientId")}>
+						<TextInput
+							required
+							autoComplete="off"
+							spellCheck={false}
+							value={clientId}
+							onChange={(e) => setClientId(e.target.value)}
+						/>
+					</Field>
+					<Field
+						label={t("github.oauth.clientSecret")}
+						hint={app ? t("github.oauth.secretKeep") : undefined}
+					>
+						<TextInput
+							type="password"
+							required={!app}
+							autoComplete="new-password"
+							value={secret}
+							onChange={(e) => setSecret(e.target.value)}
+						/>
+					</Field>
+				</div>
 				<Field
 					label={t("github.oauth.webhookBase")}
 					hint={t("github.oauth.webhookBaseHint")}

@@ -227,6 +227,10 @@ export default function BrowserProfilesSettings(): ReactNode {
 				</div>
 			</Card>
 			<Card title={t("browserProfiles.title")} icon="browser">
+				{/* 说明放在卡片顶部，与其他设置卡片一致 */}
+				{list.length > 0 && (
+					<p className="mb-2 text-faint text-xs">{t("browserProfiles.hint")}</p>
+				)}
 				{profiles.isPending && <Spinner />}
 				<ErrorText error={profiles.error} />
 				{list.length > 0 && (
@@ -240,9 +244,6 @@ export default function BrowserProfilesSettings(): ReactNode {
 					<EmptyState icon="browser" title={t("browserProfiles.emptyTitle")}>
 						{t("browserProfiles.emptyHint")}
 					</EmptyState>
-				)}
-				{list.length > 0 && (
-					<p className="mt-2 text-faint text-xs">{t("browserProfiles.hint")}</p>
 				)}
 			</Card>
 		</>

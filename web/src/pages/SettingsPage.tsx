@@ -377,11 +377,7 @@ function ProvidersSettings() {
 					{providers.data?.providers.map((p) => (
 						<li key={p.id}>
 							<ListRow
-								leading={
-									<span className="grid h-8 w-8 place-items-center">
-										<StatusDot tone={p.online ? "ok" : "neutral"} />
-									</span>
-								}
+								leading={<LeadIcon name="box" />}
 								title={
 									<>
 										<span className="truncate font-medium">{p.name}</span>
@@ -390,7 +386,9 @@ function ProvidersSettings() {
 								}
 								meta={
 									<>
-										<span>
+										{/* 在线状态：圆点与文字同一处，不再单独占前置位 */}
+										<span className="inline-flex items-center gap-1.5">
+											<StatusDot tone={p.online ? "ok" : "neutral"} />
 											{p.online
 												? t("providers.online")
 												: t("providers.offline")}

@@ -1,7 +1,7 @@
 /**
- * 设置 › 分享 里的 Artifacts 两块（M14 8.4）：
- * - 自动发布开关：把新建的 artifact（agent 创建与用户导入）以私有方式发布，并跟着最新版本更新。
- * - 「已发布的 Artifacts」：标题（点进查看器）、类型图标、访问级别、版本、访客数、复制链接（有访问码时第二行是访问码）、
+ * 设置 › 分享 里的「已发布的 Artifacts」卡片（M14 8.4）：
+ * - 首行是自动发布开关：把新建的 artifact（agent 创建与用户导入）以私有方式发布，并跟着最新版本更新。
+ * - 下面是已发布列表：标题（点进查看器）、类型图标、访问级别、版本、访客数、复制链接（有访问码时第二行是访问码）、
  *   两步取消发布；加载中、失败、空三种占位。
  */
 import type { ReactNode } from "react";
@@ -92,8 +92,9 @@ export function ArtifactPublishing(): ReactNode {
 	const setPrefs = useSetArtifactPrefs();
 	const list = useArtifactPublications();
 	return (
-		<>
-			<Card title={t("artifacts.share.settings.autoTitle")} icon="shapes">
+		// 自动发布开关只有一行，并进「已发布的 Artifacts」卡片的首行，不单独占一张卡
+		<Card title={t("artifacts.share.settings.title")} icon="globe">
+			<div className="mb-2 border-border border-b pb-3">
 				{prefs.isPending ? (
 					<Spinner />
 				) : prefs.isError ? (
@@ -112,24 +113,22 @@ export function ArtifactPublishing(): ReactNode {
 					/>
 				)}
 				<ErrorText error={setPrefs.error} />
-			</Card>
-			<Card title={t("artifacts.share.settings.title")} icon="globe">
-				{list.isPending ? (
-					<Spinner />
-				) : list.isError ? (
-					<ErrorText error={list.error} />
-				) : list.data.length === 0 ? (
-					<p className="text-faint text-sm">
-						{t("artifacts.share.settings.empty")}
-					</p>
-				) : (
-					<ul className="-mx-2 flex flex-col">
-						{list.data.map((item) => (
-							<PublicationRow key={item.publication.id} item={item} />
-						))}
-					</ul>
-				)}
-			</Card>
-		</>
+			</div>
+			{list.isPending ? (
+				<Spinner />
+			) : list.isError ? (
+				<ErrorText error={list.error} />
+			) : list.data.length === 0 ? (
+				<p className="text-faint text-sm">
+					{t("artifacts.share.settings.empty")}
+				</p>
+			) : (
+				<ul className="-mx-2 flex flex-col">
+					{list.data.map((item) => (
+						<PublicationRow key={item.publication.id} item={item} />
+					))}
+				</ul>
+			)}
+		</Card>
 	);
 }

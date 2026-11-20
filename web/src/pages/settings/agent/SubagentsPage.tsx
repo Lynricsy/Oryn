@@ -43,7 +43,6 @@ import { Icon } from "../../../components/ui/icons";
 import {
 	Button,
 	Dialog,
-	EmptyState,
 	ErrorText,
 	Field,
 	IconButton,
@@ -477,12 +476,7 @@ export default function SubagentsPage(): ReactNode {
 				title={t("agentPages.subagents.customTitle")}
 				icon="robot"
 				action={
-					<Button
-						size="sm"
-						icon="plus"
-						className="-mr-1.5"
-						onClick={() => setEditing("new")}
-					>
+					<Button size="sm" icon="plus" onClick={() => setEditing("new")}>
 						{t("agentPages.new")}
 					</Button>
 				}
@@ -497,7 +491,9 @@ export default function SubagentsPage(): ReactNode {
 						<Spinner />
 					</div>
 				) : entries.length === 0 ? (
-					<EmptyState icon="robot" title={t("agentPages.subagents.empty")} />
+					<p className="text-faint text-sm">
+						{t("agentPages.subagents.empty")}
+					</p>
 				) : (
 					<ul className="-mx-2 flex flex-col">
 						{entries.map((e, i) => {

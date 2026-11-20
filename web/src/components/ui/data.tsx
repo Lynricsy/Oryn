@@ -293,14 +293,14 @@ export function Card({
 	);
 }
 
-/** 键值表。 */
+/** 键值表。标签与值按首行基线对齐：值是下拉框、徽章时标签不再贴在顶上。 */
 export function KeyValue({
 	rows,
 }: {
 	rows: { key: string; label: ReactNode; value: ReactNode }[];
 }): ReactNode {
 	return (
-		<dl className="grid grid-cols-[minmax(6rem,max-content)_1fr] gap-x-4 gap-y-1.5 text-sm">
+		<dl className="grid grid-cols-[minmax(6rem,max-content)_1fr] items-baseline gap-x-4 gap-y-1.5 text-sm">
 			{rows.map((r) => (
 				<div key={r.key} className="contents">
 					<dt className="text-muted">{r.label}</dt>

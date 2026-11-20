@@ -19,6 +19,7 @@ import {
 import { FileBrowser } from "../../../../components/files/FileBrowser";
 import { HostStatusDot } from "../../../../components/ssh/HostStatus";
 import { Badge, Card, ListRow } from "../../../../components/ui/data";
+import { Icon } from "../../../../components/ui/icons";
 import {
 	Button,
 	Dialog,
@@ -302,7 +303,9 @@ export function HostsCard({
 		>
 			{intro && <p className="mb-2 text-faint text-xs">{intro}</p>}
 			{tags.length > 0 && (
-				<div className="mb-2 flex flex-wrap gap-1">
+				// 标签是筛选按钮：前置漏斗图标，免得一排 ghost 按钮读起来像普通文字
+				<div className="mb-2 flex flex-wrap items-center gap-1">
+					<Icon name="funnel" size={13} aria-hidden className="text-faint" />
 					{tags.map((tag) => (
 						<Button
 							key={tag}
