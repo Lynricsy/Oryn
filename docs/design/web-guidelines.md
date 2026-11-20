@@ -79,7 +79,7 @@ M3.5 重设计之后的长期约定，目的是防止后续开发让设计变差
 - 展开体分成输入、输出两段（`ToolRenderer.Input` / `Result`），**不写「输入」「输出」标题**，只靠底色与分隔线区分：意图与输入留在纸面上，输出是下方一层内嵌井。输入段只放模型给的参数，输出段放结果、diff、图片、错误与运行中的进度。某段渲染为空时整段隐藏，不写占位文字。
 - **当前一批工具调用默认展开**：线程工作中时，最后一条带工具调用的助手消息里的调用（并行调用同属一批）展开；模型开始下一批调用、或回合结束（等待用户输入）时自动收起（`components/transcript/active-tools.ts`）。用户手动开合过的卡片以用户为准。
 - 代码形态的内容一律带高亮语言：文件内容按路径（`languageFromPath`），diff 用 `DiffBlock` 并给 `lang`（git patch 按 `+++ b/<path>` 逐文件取），命令用 `CommandLine`（bash），grep / ast_grep 结果用 `SearchOutput`（按文件头逐文件取语言），JSON 用 `json`。高亮先整段做再截取折叠预览，跨行注释、字符串不会断色。
-- bash 卡片的输入段默认显示 omp 的 **Pseudo 视图**（Python 风格、带执行状态与变量终值），可切回原始命令。数据来自 orb 扩展（`oryn-orb.ts`）在 `tool_result` 里用 omp 原生 `ShellVisualization` 渲染的 `details.orynPseudo`；运行中、旧会话或 omp 关了 `display.shellVisualization` 时只有原始命令。
+- bash 卡片的输入段默认显示 omp 的 **Pseudo 视图**（Python 风格、带执行状态与变量值），可切回原始命令。数据是 omp 原生 `ShellVisualization` 渲染的 `details.orynPseudo`：运行中由 Oryn Core 在转发 `tool_execution_update` 时补上（每个调用每 250 毫秒至多重算一次，正在执行的行行首标 `›`、其余行弱化），最终结果由 orb 扩展（`oryn-orb.ts`）在 `tool_result` 里写入。Runner（用户自己的 omp）只有最终结果有；旧会话或 omp 关了 `display.shellVisualization` 时只有原始命令。
 - 模型名一律通过 `lib/model-brand.ts` 的 `shortModelName` / `modelBrand` 显示为短名，全名放进 `title`。同一个模型全站只有一种写法：头像 → 品牌 logo → 淡色短名。
 - 成本只显示 `$0.24`，不再加美元图标。
 - 上下文分类与 omp 的实际行为对齐（`lib/context-segments.ts`）。钉定的内核版本见 `core/source.json`（当前 omp 18.19.0）。改分类前先看对应版本的源码。
