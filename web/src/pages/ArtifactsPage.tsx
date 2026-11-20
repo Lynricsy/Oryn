@@ -66,9 +66,11 @@ import {
 	EmptyState,
 	IconButton,
 	Menu,
+	type MenuItem,
 	tabClass,
 } from "../components/ui/primitives";
 import { ARTIFACT_KINDS, kindIcon, kindLabelKey } from "../lib/artifacts/kinds";
+import { useContextTarget } from "../lib/context-menu/registry";
 import { useBreakpoint } from "../lib/viewport";
 import { useIndex } from "../state/stores";
 import { showToast } from "../state/toasts";
@@ -181,7 +183,7 @@ function SkeletonGrid(): ReactNode {
 }
 
 /**
- * 一张卡片 + 浮在右上角的更多菜单（菜单按钮不是 Tab 停靠点；右键与 `Shift+F10` 打开它）。`action` 浮在右下角
+ * 一张卡片 + 浮在右上角的更多菜单（菜单按钮不是 Tab 停靠点）；右键、`Shift+F10`、长按由统一上下文菜单给出同一份菜单项。`action` 浮在右下角
  * （回收站的「恢复」），与卡片按钮是兄弟元素，不嵌套交互元素。
  */
 function CardCell({
@@ -205,10 +207,20 @@ function CardCell({
 	meta?: ReactNode;
 	action?: ReactNode;
 }): ReactNode {
-	const openMenu = useRef<(() => void) | null>(null);
+	const itemsRef = useRef<(() => MenuItem[]) | null>(null);
+	const ctxRef = useContextTarget<HTMLLIElement>({
+		items: () => {
+			const items = itemsRef.current?.() ?? [];
+			return items.length ? [{ key: "artifact", items }] : null;
+		},
+	});
 	// 菜单弹层在右上角按钮的容器里（带 backdrop-blur，自成层叠上下文），盖不过后面的卡片：菜单开着时把整格抬上来
 	return (
-		<li className="group/cell relative min-w-0 [&:has([aria-expanded=true])]:z-20">
+		<li
+			ref={ctxRef}
+			data-ctx-touch=""
+			className="group/cell relative min-w-0 [&:has([aria-expanded=true])]:z-20"
+		>
 			<ArtifactCard
 				artifact={artifact}
 				form="tile"
@@ -216,24 +228,13 @@ function CardCell({
 				tabIndex={index === focusIdx ? 0 : -1}
 				onOpen={onOpen}
 				onFocus={() => onFocusIdx(index)}
-				onKeyDown={(e) => {
-					if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
-						e.preventDefault();
-						openMenu.current?.();
-						return;
-					}
-					onKey(e, index);
-				}}
-				onContextMenu={(e) => {
-					e.preventDefault();
-					openMenu.current?.();
-				}}
+				onKeyDown={(e) => onKey(e, index)}
 			/>
 			<div className="absolute top-2 right-2 rounded-md bg-panel/80 opacity-100 backdrop-blur-sm sm:opacity-0 sm:focus-within:opacity-100 sm:group-hover/cell:opacity-100 [&:has([aria-expanded=true])]:opacity-100">
 				<ArtifactMenu
 					artifact={artifact}
 					place={trash ? "trash" : "card"}
-					openRef={openMenu}
+					itemsRef={itemsRef}
 					tabIndex={-1}
 				/>
 			</div>

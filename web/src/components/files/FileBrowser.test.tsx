@@ -6,17 +6,27 @@ import {
 	waitFor,
 	within,
 } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../api/client";
 import i18n from "../../i18n";
+import { closeContextMenu } from "../../lib/context-menu/store";
 import {
 	baseName,
 	type FileEntry,
 	type FileSource,
 	parentPath,
 } from "../../lib/file-source";
+import { ContextMenuHost } from "../ui/ContextMenu";
 import { draftStore } from "./drafts";
 import { FileBrowser } from "./FileBrowser";
+
+// 文件操作菜单走统一上下文菜单：每个用例都并列渲染它的宿主
+beforeEach(() => {
+	render(<ContextMenuHost />);
+});
+afterEach(() => {
+	act(() => closeContextMenu());
+});
 
 // 编辑器换成 textarea：这里测浏览器的流程，CodeMirror 本身另有测试
 vi.mock("../editor/CodeEditor", () => ({

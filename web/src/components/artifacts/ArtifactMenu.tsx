@@ -204,8 +204,8 @@ export interface ArtifactMenuProps {
 	onReload?(): void;
 	/** 查看器的「版本历史」（卡片上则跳到 `?history=1`）。 */
 	onHistory?(): void;
-	/** 外部打开菜单（卡片右键、`Shift+F10`）：挂载后写入打开函数。 */
-	openRef?: RefObject<(() => void) | null>;
+	/** 卡片的统一上下文菜单（右键、`Shift+F10`、长按）读这份菜单项：每次渲染写入最新的取值函数。 */
+	itemsRef?: RefObject<(() => MenuItem[]) | null>;
 	/** 触发按钮的 tabIndex（卡片网格只有一个 Tab 停靠点，按钮为 -1）。 */
 	tabIndex?: number;
 	align?: "left" | "right";
@@ -217,7 +217,7 @@ export function ArtifactMenu({
 	threadId,
 	onReload,
 	onHistory,
-	openRef,
+	itemsRef,
 	tabIndex,
 	align = "right",
 }: ArtifactMenuProps): ReactNode {
@@ -430,25 +430,23 @@ export function ArtifactMenu({
 					},
 				];
 
+	if (itemsRef) itemsRef.current = () => items;
 	return (
 		<>
 			<Menu
 				align={align}
 				items={items}
-				trigger={(p) => {
-					if (openRef) openRef.current = p.onClick;
-					return (
-						<IconButton
-							icon="more"
-							box="sm"
-							size={15}
-							tabIndex={tabIndex}
-							data-testid="artifact-menu"
-							label={t("artifacts.menu.more")}
-							{...p}
-						/>
-					);
-				}}
+				trigger={(p) => (
+					<IconButton
+						icon="more"
+						box="sm"
+						size={15}
+						tabIndex={tabIndex}
+						data-testid="artifact-menu"
+						label={t("artifacts.menu.more")}
+						{...p}
+					/>
+				)}
 			/>
 			{dialog === "rename" && (
 				<RenameDialog artifact={a} onClose={() => setDialog(null)} />

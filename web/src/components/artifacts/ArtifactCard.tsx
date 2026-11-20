@@ -11,7 +11,6 @@
  */
 import {
 	type KeyboardEvent,
-	type MouseEvent,
 	type ReactNode,
 	type Ref,
 	useState,
@@ -104,7 +103,6 @@ export function ArtifactCard({
 	ref,
 	tabIndex,
 	onKeyDown,
-	onContextMenu,
 	onFocus,
 }: {
 	artifact: ArtifactCardData;
@@ -116,7 +114,6 @@ export function ArtifactCard({
 	/** 总览页的卡片网格用漫游 tabIndex。 */
 	tabIndex?: number;
 	onKeyDown?(e: KeyboardEvent<HTMLButtonElement>): void;
-	onContextMenu?(e: MouseEvent<HTMLButtonElement>): void;
 	onFocus?(): void;
 }): ReactNode {
 	const { t } = useTranslation();
@@ -204,7 +201,6 @@ export function ArtifactCard({
 			className={`${shape} ${base}`}
 			onClick={() => onOpen(artifact.id)}
 			onKeyDown={onKeyDown}
-			onContextMenu={onContextMenu}
 			onFocus={onFocus}
 		>
 			{body}
