@@ -198,20 +198,26 @@ step_traces() { tail -n "+$((lines + 1))" "$log" | jq -sc 'map(select(.event == 
 arrived='map(.op == "done" or .op == "jump" or .op == "noop") | index(true)'
 trace_arrived() { step_traces | jq -e "($arrived) != null"; }
 # no_bounce <步骤>：程序化开合第一次到位后，等过网页的截止兜底窗口（请求后 SINK_REQUEST_MS 一步落位、
-# 再一个 SINK_REQUEST_MS 宽限，CI 上定时器还会晚几百毫秒），期间不能再有从别处落回终点的 jump / start——
-# 那说明卡片到位后又被带走，由兜底收场。noop（已在终点）与起点就在终点的不算；move（网页或 WebKit 挪动根滚动，带调用栈）
-# 不判，只随失败信息带出来查来源
+# 再一个 SINK_REQUEST_MS 宽限，CI 上定时器还会晚几百毫秒）。拒绝从别处发起的 jump / start，也拒绝从终点
+# 离开超过 1pt 的 move：网页可直接用 scrollTo 拉回，不一定再发命令；起点允许 0.5pt 的浮点和像素舍入误差。
+bounce_traces() {
+  jq -c "
+    def absdiff: if . < 0 then -. else . end;
+    ($arrived) as \$d
+    | .[\$d].to as \$target
+    | .[\$d + 1:]
+    | map(select(
+        ((.op == \"jump\" or .op == \"start\") and ((.x - .to) | absdiff) > 0.5)
+        or (.op == \"move\" and ((.x - \$target) | absdiff) <= 0.5
+            and ((.to - \$target) | absdiff) > 1)))"
+}
 no_bounce() {
   local step=$1 bad
   until_ok "$step" 15 "程序化开合到位（sink.trace done / jump / noop）" trace_arrived
   sleep 4
-  bad=$(step_traces | jq -c "
-    ($arrived) as \$d
-    | .[\$d + 1:]
-    | map(select((.op == \"jump\" or .op == \"start\")
-        and (if .x > .to then .x - .to else .to - .x end) > 0.5))")
+  bad=$(step_traces | bounce_traces)
   [[ $bad == "[]" ]] ||
-    fail "$step" "开合到位后卡片又离开终点、由程序化开合落回（回弹）：${bad}；本步轨迹：$(step_traces)"
+    fail "$step" "开合到位后卡片又离开终点（回弹）：${bad}；本步轨迹：$(step_traces)"
 }
 
 # pt → 截图像素（scale 在 loaded 步骤由基线截图算出）

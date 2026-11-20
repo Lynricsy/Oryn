@@ -211,7 +211,9 @@ iOS 26+ 的手机布局（下沉侧栏）用原生的底栏与线程页头，协
 - **页头**（侧栏钮 / 标题胶囊 / 视图钮）在 `SinkFollow` 的同一次 KVO 回调里随 `contentOffset` 平移，与卡片同进程同帧，不需要对时；卡片离开关闭位时只显示不接触摸。网页的 `host_header_show` 只剩透明度（`{alpha, ms}`）：只有网页内容（对话框、弹层）盖住静止关闭的页头时原生才让位（`alpha 0`），侧栏被要求打开的过程中不做遮挡判定。
 - `host_sink_set` 生效前，非空的 `host_tab_bar_set` / `host_header_set` 一律返回 `unsupported`。bridge ≤ 7 的壳（页头靠跨进程对时跟随卡片）网页一律用网页页头与网页底栏，卡片用网页手势。
 
-CI 的 `ios-check` 在 iOS 26+ 模拟器里跑 `ci/ios-header-check.sh`（原生页头演示：插件直接摆出页头与菜单，比像素并探测触摸归属）与 `ci/ios-e2e-check.sh`（端到端：mock Web UI + 远程能力 + XCUITest 真实触摸，底栏的开合、按住拖动、原生点选与横滑，页头的接管、菜单、对话框让位与随卡片开合；事件日志断言、无障碍树断言与逐区域像素比较，见脚本文件头）。事件日志里两类断言分开看：按住拖动期间不能出现 `sink.show`（网页发起的程序化开合）；开合到位之后不能再有从别处落回终点的 `sink.trace` `jump` / `start`，即卡片到位后被带走、靠兜底收场的回弹。`sink.trace` 是 debug 包记下的根滚动轨迹：程序化开合的 start / jump / noop / busy / done / cancel，以及 move（不是程序化开合、也不是手指与惯性的位移，带调用栈，用来查卡片被谁挪走）。底栏垫在网页之下，没有真实网页就看不到，所以只在端到端里检查。网页侧的行为在浏览器里由 `bun run accept:m20`（本机 Chromium 模拟 iOS 壳）验收。
+CI 的 `ios-check` 在 iOS 26+ 模拟器里跑 `ci/ios-header-check.sh`（原生页头演示：插件直接摆出页头与菜单，比像素并探测触摸归属）与 `ci/ios-e2e-check.sh`（端到端：mock Web UI + 远程能力 + XCUITest 真实触摸，底栏的开合、按住拖动、原生点选与横滑，页头的接管、菜单、对话框让位与随卡片开合；事件日志断言、无障碍树断言与逐区域像素比较，见脚本文件头）。底栏垫在网页之下，没有真实网页就看不到，所以只在端到端里检查。网页侧的行为在浏览器里由 `bun run accept:m20`（本机 Chromium 模拟 iOS 壳）验收。
+
+按住拖动期间不能出现 `sink.show`（网页发起的程序化开合）。程序化开合到位后的观测窗口内，从别处重新发起原生 `jump` / `start`，或从终点位置离开超过 1pt 的 `move`，均判为回弹；后者覆盖网页直接 `scrollTo` 拉回、未再次调用原生的情况。`sink.trace` 是 debug 包记下的根滚动轨迹：程序化开合的 `start` / `jump` / `noop` / `busy` / `done` / `cancel`，以及外来位移 `move`（带调用栈，不含手指拖动与惯性）。
 
 验收以 `ios-check` 成功和下载后的 `ios-screenshot/e2e/.complete` 为准：该标记只在底栏、页头与图标检查全部跑完且通过后写入。产物还包含 `e2e/summary.md`（与 Actions 步骤摘要相同）与 `e2e/e2e-h-drag.png`；图标检查要求先切到品牌色、再切回默认。
 
