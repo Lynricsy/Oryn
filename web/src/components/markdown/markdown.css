@@ -106,11 +106,33 @@
 }
 /* 表格：圆角外框、表头 --raised、首列加粗、只留行间发丝线 */
 .md-table {
+	/* 滚动阴影的颜色（深色主题加深，不能用 --text：深色下那是一道亮光）；两侧遮罩用纸面色，随内容滚动（local） */
+	--md-table-shade: oklch(0 0 0 / 0.16);
 	margin: 0.6em 0;
 	border: 1px solid var(--line);
 	border-radius: var(--r-lg);
-	background: var(--panel);
 	overflow-x: auto;
+	/*
+	 * 横向放不下时的边缘提示（纯 CSS 滚动阴影）：两层 local 的纸面色遮罩跟着内容走，滚到头时正好盖住同侧
+	 * 固定（scroll）在框边的径向阴影；还有内容可滚的一侧遮罩已移开，阴影露出来。不用 mask，免得碰到玻璃的 Backdrop Root
+	 */
+	background:
+		linear-gradient(to right, var(--panel) 40%, transparent) left / 32px 100%
+		no-repeat local,
+		linear-gradient(to left, var(--panel) 40%, transparent) right / 32px 100%
+		no-repeat local,
+		radial-gradient(farthest-side at 0 50%, var(--md-table-shade), transparent)
+		left / 12px 100% no-repeat scroll,
+		radial-gradient(
+			farthest-side at 100% 50%,
+			var(--md-table-shade),
+			transparent
+		)
+		right / 12px 100% no-repeat scroll,
+		var(--panel);
+}
+:root[data-theme="dark"] .md-table {
+	--md-table-shade: oklch(0 0 0 / 0.55);
 }
 .md table {
 	width: 100%;
