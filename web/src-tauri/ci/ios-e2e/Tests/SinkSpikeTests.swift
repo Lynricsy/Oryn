@@ -216,19 +216,23 @@ final class SinkSpikeTests: E2ECase {
     try report("S4p", nil, "拖开后 sx=\(d0["sx"] ?? -1)；smooth 关闭 2.4s 后 \(text(d1))")
     ensureClosed()
 
-    // S5：按住拖到 0.55W 不放，脚本在按住期间连拍截图并从事件日志 tabbar.reveal 读 sx；没赶上就收起重拖（最多 3 次）
-    let dx = (wPt * 0.55).rounded()
-    for attempt in 1...3 {
-      seq += 1
-      let name = String(format: "p%02d", seq)
-      try post(name, ["hold": Double(dx), "attempt": attempt])
-      point(app, 40, dy).press(
-        forDuration: 0.1, thenDragTo: point(app, 40 + dx, dy),
-        withVelocity: XCUIGestureVelocity(rawValue: 200), thenHoldForDuration: 40)
-      let reply = try ack(name, timeout: 600)
-      _ = settle()
-      ensureClosed()
-      if reply["retry"] as? Bool != true { break }
+    // S5：同一起点、同一速度按住拖到两个不同位移（0.35W、0.6W）不放；脚本在按住期间连拍截图并从事件日志
+    // tabbar.reveal 读 sx。两次的左缘增量与手指增量之差判定跟手比例（1:1），与固定的起拖死区分开。
+    // 没赶上就收起重拖（每个位移最多 3 次）
+    for (tag, frac) in [("a", 0.35), ("b", 0.6)] {
+      let dx = (wPt * CGFloat(frac)).rounded()
+      for attempt in 1...3 {
+        seq += 1
+        let name = String(format: "p%02d", seq)
+        try post(name, ["hold": Double(dx), "attempt": attempt, "tag": tag])
+        point(app, 40, dy).press(
+          forDuration: 0.1, thenDragTo: point(app, 40 + dx, dy),
+          withVelocity: XCUIGestureVelocity(rawValue: 200), thenHoldForDuration: 40)
+        let reply = try ack(name, timeout: 600)
+        _ = settle()
+        ensureClosed()
+        if reply["retry"] as? Bool != true { break }
+      }
     }
 
     // S6：纵向滚动区（y 220…370）上滑 300pt：内层滚了，根不动、根没有 scroll 事件

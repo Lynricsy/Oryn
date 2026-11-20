@@ -266,11 +266,13 @@ trace() {
 }
 has() { jq -e "$1" >/dev/null <<<"$req"; }
 
-# hold_s5：一次按住拖动；判定后设 reply（没赶上且还能重拖时回 retry）
+# hold_s5：一次按住拖动（tag = a / b）；判定后设 reply（没赶上且还能重拖时回 retry），按住时的左缘记进 edge_<tag> / dx_<tag>
+edge_a="" edge_b="" dx_a="" dx_b=""
 hold_s5() {
-  local dx attempt prev="" moved="" state=timeout end c0 c1 x0 x1 edge left right err pass
+  local dx attempt tag prev="" moved="" state=timeout end c0 c1 x0 x1 edge left right err pass
   dx=$(jq -r .hold <<<"$req")
   attempt=$(jq -r .attempt <<<"$req")
+  tag=$(jq -r .tag <<<"$req")
   end=$((SECONDS + 180))
   while ((SECONDS < end)); do
     c0=$(count tabbar.reveal)
@@ -289,7 +291,7 @@ hold_s5() {
     fi
     if [[ -n $prev && $c0 == "$c1" ]] && mid "$x0" &&
       at_most "$(strip_diff "$work/s5-next.png" "$prev" "$fx" "$fw")" 0.01; then
-      mv "$work/s5-next.png" "$out/e2e-drag.png"
+      mv "$work/s5-next.png" "$out/e2e-drag-$tag.png"
       state=held
       break
     fi
@@ -302,25 +304,24 @@ hold_s5() {
       echo "::warning::S5 第 ${attempt} 次没赶在按住期间截到停稳的图（${state}），重拖"
       reply='{"retry":true}'
     else
-      probe S5 FAIL "连续 3 次没能在按住期间截到停稳的图（最后一次 ${state}，最后的左缘 $(edge_now)）"
+      probe "S5$tag" FAIL "连续 3 次没能在按住期间截到停稳的图（最后一次 ${state}，最后的左缘 $(edge_now)）"
     fi
     return
   fi
   edge=$x0
+  printf -v "edge_$tag" '%s' "$edge"
+  printf -v "dx_$tag" '%s' "$dx"
   if [[ ! -f $out/e2e-open.png ]]; then
-    probe S5 FAIL "没有打开态截图可比（左缘 ${edge}）"
+    probe "S5$tag" FAIL "没有打开态截图可比（左缘 ${edge}）"
     return
   fi
-  left=$(rd "$out/e2e-drag.png" "$out/e2e-open.png" "$fx" "$(calc "$edge - 4 - $fx")")
-  right=$(rd "$out/e2e-drag.png" "$out/e2e-closed.png" "$(calc "$edge + 6")" "$(calc "$fx + $fw - $edge - 6")" 6)
+  left=$(rd "$out/e2e-drag-$tag.png" "$out/e2e-open.png" "$fx" "$(calc "$edge - 4 - $fx")")
+  right=$(rd "$out/e2e-drag-$tag.png" "$out/e2e-closed.png" "$(calc "$edge + 6")" "$(calc "$fx + $fw - $edge - 6")" 6)
   err=$(calc "$edge - $dx")
-  # 第 2 轮：像素两侧都是 0（页面的 sx 与画面上的卡片左缘在 ±2pt 内一致，A1 / A6 成立），手指与左缘差 −10：
-  # 这是 UIScrollView 起拖的滞后（拖过滞后距离才开始跟手，之后 1:1），所以按像素判定，手指差只要求 ≤ 15pt 并记录
+  # 单次只判 sx 与画面一致（像素两侧，±2pt）；跟手比例由两次的增量判（S5-1:1），手指与左缘之差只记录
   pass=FAIL
-  if at_most "$left" 0.01 && at_most "$right" 0.01 && awk -v e="$err" 'BEGIN { exit !(e <= 15 && e >= -15) }'; then
-    pass=PASS
-  fi
-  probe S5 "$pass" "手指位移 ${dx}，按住时卡片左缘（max − sx）${edge}（与手指差 ${err}，UIScrollView 起拖滞后）；揭示边左侧 vs 打开态 ${left}（期望 ≤ 0.01），右侧 vs 按 sx 平移的关闭态 ${right}（期望 ≤ 0.01，±2pt）；第 ${attempt} 次"
+  if at_most "$left" 0.01 && at_most "$right" 0.01; then pass=PASS; fi
+  probe "S5$tag" "$pass" "手指位移 ${dx}，按住时卡片左缘（max − sx）${edge}（与手指差 ${err}）；揭示边左侧 vs 打开态 ${left}（期望 ≤ 0.01），右侧 vs 按 sx 平移的关闭态 ${right}（期望 ≤ 0.01，±2pt）；第 ${attempt} 次"
 }
 
 req=""
@@ -364,6 +365,18 @@ while :; do
   fi
   ok "$step" "$reply"
 done
+
+# S5-1:1：同起点同速度的两次按住，左缘增量与手指增量之差 ≤ 2pt = 跟手比例 1:1（固定的起拖死区在相减时抵消）
+if [[ -n $edge_a && -n $edge_b ]]; then
+  d_edge=$(calc "$edge_b - $edge_a")
+  d_dx=$(calc "$dx_b - $dx_a")
+  gap=$(calc "$d_edge - $d_dx")
+  pass=FAIL
+  if awk -v e="$gap" 'BEGIN { exit !(e <= 2 && e >= -2) }'; then pass=PASS; fi
+  probe S5-1:1 "$pass" "左缘增量 ${d_edge}，手指增量 ${d_dx}，差 ${gap}（期望 ±2）；起拖死区 a $(calc "$dx_a - $edge_a")、b $(calc "$dx_b - $edge_b")"
+else
+  probe S5-1:1 FAIL "缺少按住读数（a=${edge_a:-无} b=${edge_b:-无}）"
+fi
 
 # S9：设了底栏后，打开态横条与关闭态不同（底栏从透明侧栏透出）；关闭态与未设底栏时一致（卡片盖住）
 if [[ -f $out/e2e-open.png && -f $out/e2e-closed.png && -f $out/e2e-bare.png ]]; then
