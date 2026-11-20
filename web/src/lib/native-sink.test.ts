@@ -34,6 +34,10 @@ describe("sinkRest", () => {
 });
 
 describe("createNativeSink", () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
 	/** 排空微任务（桥的应答与 latest 的续发都在微任务里）。 */
 	const flush = async () => {
 		for (let i = 0; i < 10; i++) await Promise.resolve();
@@ -87,7 +91,22 @@ describe("createNativeSink", () => {
 		sink.setOn(true);
 		await flush();
 		expect(a.set.mock.calls).toEqual([[true]]);
-		warn.mockRestore();
+		expect(warn).toHaveBeenCalledWith("[host] native sink", "unsupported");
+	});
+
+	it("撤掉接管失败：记录原生错误，网页仍退回自己的手势", async () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const sink = createNativeSink({
+			...api(),
+			set: (on) => (on ? Promise.resolve() : Promise.reject("unbind")),
+		});
+		sink.setOn(true);
+		await flush();
+		expect(sink.engaged()).toBe(true);
+		sink.setOn(false);
+		await flush();
+		expect(sink.engaged()).toBe(false);
+		expect(warn).toHaveBeenCalledWith("[host] native sink", "unbind");
 	});
 
 	it("没有宿主能力：一切空操作", () => {

@@ -87,10 +87,11 @@ export function createNativeSink(api: NativeSinkHost | null): NativeSink {
 		try {
 			await (api as NativeSinkHost).set(on);
 		} catch (e) {
-			if (!on) return;
-			// 原生不可用（iOS < 26、插件缺失）：本页回到网页手势，不再尝试
-			disabled = true;
-			wanted = false;
+			if (on) {
+				// 原生不可用（iOS < 26、插件缺失）：本页回到网页手势，不再尝试。
+				disabled = true;
+				wanted = false;
+			}
 			throw e;
 		}
 		if (!on || !wanted || engaged) return;
