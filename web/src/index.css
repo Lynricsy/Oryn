@@ -388,18 +388,6 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 	--sheet-r: calc(var(--win-r) - 0.5rem);
 	--side-r: calc(var(--win-r) - 0.5rem);
 }
-/* 列侧栏底部的分区栏（胶囊，离侧栏边 8px）同理收成同心圆角，里面的选中块再内缩 4px（覆盖 rounded-full 与它的 round 角形） */
-:root[data-win-r] [data-tone="inset"] > [data-tabbar-slot] {
-	border-radius: calc(var(--side-r) - 0.5rem);
-	corner-shape: superellipse(1.6);
-}
-:root[data-win-r]
-	[data-tone="inset"]
-	> [data-tabbar-slot]
-	[data-testid="section-tabbar-plate"] {
-	border-radius: calc(var(--side-r) - 0.75rem);
-	corner-shape: superellipse(1.6);
-}
 /* 线程页头的纱（及无模糊回退时的不透明页头）贴着纸面顶边：纸面右上角同心时跟着收角（内缩 1px 描边） */
 .sheet.dc-tr .veil > i,
 .sheet.dc-tr .veil::after,
