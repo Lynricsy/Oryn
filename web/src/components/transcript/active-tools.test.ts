@@ -48,4 +48,24 @@ describe("activeToolCallIds：当前一批工具调用", () => {
 		];
 		expect([...activeToolCallIds(rows)]).toEqual(["t3", "t2"]);
 	});
+
+	it("A 批 → 回合结束 → 新回合只有文字：A 不重新展开；新回合发起 B 批后只展开 B", () => {
+		const user = (key: string): TranscriptItem => ({
+			kind: "message",
+			key,
+			seq: 0,
+			live: false,
+			message: { role: "user", content: "继续" },
+		});
+		const newTurnText = [
+			user("u1"),
+			assistant("a", [call("t1")]),
+			assistant("a2", [{ type: "text", text: "做完了" }]),
+			user("u2"),
+			assistant("b0", [{ type: "text", text: "好的，先想一下" }]),
+		];
+		expect(activeToolCallIds(newTurnText).size).toBe(0);
+		const withB = [...newTurnText, assistant("b", [call("t2")])];
+		expect([...activeToolCallIds(withB)]).toEqual(["t2"]);
+	});
 });

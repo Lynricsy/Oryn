@@ -8,7 +8,10 @@ import type { MainlineRow } from "./mainline";
 
 export const NO_ACTIVE_TOOL_CALLS: ReadonlySet<string> = new Set();
 
-/** 从转录末尾往前找最近一批工具调用的 id；没有时为空集。 */
+/**
+ * 从转录末尾往前找本回合最近一批工具调用的 id；碰到用户消息（回合边界）就停，
+ * 上一回合的调用不会在新回合开始、模型还没调用工具时重新展开。没有时为空集。
+ */
 export function activeToolCallIds(
 	rows: readonly MainlineRow[],
 ): ReadonlySet<string> {
@@ -25,6 +28,8 @@ export function activeToolCallIds(
 			}
 			return ids;
 		}
+		if (row.kind === "message" && row.message.role === "user")
+			return NO_ACTIVE_TOOL_CALLS;
 		if (row.kind !== "message" || row.message.role !== "assistant") continue;
 		const content = row.message.content;
 		if (!Array.isArray(content)) continue;
