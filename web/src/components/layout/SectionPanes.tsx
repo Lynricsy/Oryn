@@ -29,7 +29,10 @@ export function SectionPanes(): ReactNode {
 	const { t } = useTranslation();
 	const section = useSection();
 	return (
-		<div className="relative min-h-0 flex-1 overflow-hidden">
+		<div
+			data-testid="section-panes"
+			className="relative min-h-0 flex-1 overflow-hidden"
+		>
 			<div
 				className="section-track"
 				style={

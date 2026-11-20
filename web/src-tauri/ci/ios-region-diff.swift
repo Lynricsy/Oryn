@@ -1,4 +1,4 @@
-// CI（ios-tabbar-check.sh / ios-e2e-check.sh）用的逐区域像素比较。
+// CI（ios-header-check.sh / ios-e2e-check.sh）用的逐区域像素比较。
 // 用法：ios-region-diff <a.png> <b.png> <x> <y> <w> <h> [bx]（像素，左上为原点）
 // 比较 a 的区域 (x, y, w, h) 与 b 的区域 (bx, y, w, h)；bx 缺省 = x（同位置）。给 bx 用于比较横向平移过的内容（下沉卡片）。
 // 输出「任一颜色通道相差超过 16」的像素占比（0–1，六位小数）；参数或图片有误时退出码 2。

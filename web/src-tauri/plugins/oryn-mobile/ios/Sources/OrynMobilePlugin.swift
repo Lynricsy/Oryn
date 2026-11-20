@@ -1,24 +1,12 @@
 // Oryn 移动端原生能力（iOS）：下沉侧栏的原生底栏、线程页的原生页头（均 iOS 26+）。
-// 命令只给壳的 Rust 调用（build.rs 命令表为空，页面调不到）：tabBarSet 载荷 {"spec": <spec|null>}，tabBarReveal 载荷即揭示对象；
-// 用户点击经 trigger("event", {type: "tabbar", id}) 回到 Rust，再转成页面事件。
+// 命令只给壳的 Rust 调用（build.rs 命令表为空，页面调不到）：tabBarSet 载荷 {"spec": <spec|null>}，
+// tabBarReveal 载荷 {x, covered}（只决定底栏接不接触摸）；用户点击经 trigger("event", {type: "tabbar", id}) 回到 Rust，再转成页面事件。
 // 原生页头：headerSet 载荷 {"spec": <spec|null>}（挂到窗口上之后才应答）、headerShow 载荷即呈现状态、
 // headerMenu 载荷 {open, page?}、headerProbe（调试）；交互经 trigger("event", {type: "header", op, key, menu?, id?}) 回到 Rust。
 // 可替换图标：appIconGet 应答 {supported, current}（current = 资源名或 null 表示默认），appIconSet 载荷 {name: <资源名|null>}。
 import Tauri
 import UIKit
 import WebKit
-
-struct TabBarSetArgs: Decodable {
-  let spec: TabBarSpec?
-}
-
-struct TabBarRevealArgs: Decodable {
-  let x: Double
-  let alpha: Double
-  let ms: Double?
-  let delay: Double?
-  let ease: [Double]?
-}
 
 struct AppIconSetArgs: Decodable {
   let name: String?
@@ -31,7 +19,7 @@ struct AppIconOut: Encodable {
 
 class OrynMobilePlugin: Plugin {
   private weak var webview: WKWebView?
-  /// `TabBarOverlay`（iOS 26+）；按 AnyObject 存，存储属性不能带可用性标注。只在主线程读写。
+  /// `TabBarUnderlay`（iOS 26+）；按 AnyObject 存，存储属性不能带可用性标注。只在主线程读写。
   private var overlay: AnyObject?
   /// `HeaderOverlay`（iOS 26+）；同上按 AnyObject 存，只在主线程读写。
   private var header: AnyObject?
@@ -61,10 +49,8 @@ class OrynMobilePlugin: Plugin {
   @objc public func tabBarReveal(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(TabBarRevealArgs.self)
     DispatchQueue.main.async {
-      if #available(iOS 26.0, *), let bar = self.overlay as? TabBarOverlay {
-        bar.reveal(
-          x: CGFloat(args.x), alpha: CGFloat(args.alpha), ms: args.ms ?? 0,
-          delay: args.delay ?? 0, ease: args.ease)
+      if #available(iOS 26.0, *), let bar = self.overlay as? TabBarUnderlay {
+        bar.reveal(x: CGFloat(args.x), covered: args.covered)
       }
     }
     invoke.resolve()
@@ -72,11 +58,11 @@ class OrynMobilePlugin: Plugin {
 
   private func apply(_ spec: TabBarSpec) {
     guard #available(iOS 26.0, *), let webview = self.webview else { return }
-    let bar: TabBarOverlay
-    if let existing = overlay as? TabBarOverlay {
+    let bar: TabBarUnderlay
+    if let existing = overlay as? TabBarUnderlay {
       bar = existing
     } else {
-      bar = TabBarOverlay(webview: webview, controller: manager.viewController) { [weak self] id in
+      bar = TabBarUnderlay(webview: webview) { [weak self] id in
         let data: JSObject = ["type": "tabbar", "id": id]
         self?.trigger("event", data: data)
       }
@@ -86,7 +72,7 @@ class OrynMobilePlugin: Plugin {
   }
 
   private func removeOverlay() {
-    if #available(iOS 26.0, *), let bar = overlay as? TabBarOverlay {
+    if #available(iOS 26.0, *), let bar = overlay as? TabBarUnderlay {
       bar.remove()
     }
     overlay = nil
@@ -116,9 +102,12 @@ class OrynMobilePlugin: Plugin {
     let args = try invoke.parseArgs(HeaderShowArgs.self)
     DispatchQueue.main.async {
       if #available(iOS 26.0, *), let bar = self.header as? HeaderOverlay {
+        // 有绝对时刻时在主线程上换算成剩余等待（与网页 Date.now() 同一个系统时钟），桥上花掉的时间不再算进卡片与页头的错位
+        let delay =
+          args.at.map { max(0, $0 - Date().timeIntervalSince1970 * 1000) } ?? args.delay ?? 0
         bar.show(
           alpha: CGFloat(args.alpha), dx: CGFloat(args.dx), passive: args.passive,
-          ms: args.ms ?? 0, delay: args.delay ?? 0, ease: args.ease)
+          ms: args.ms ?? 0, delay: delay, ease: args.ease)
       }
     }
     invoke.resolve()

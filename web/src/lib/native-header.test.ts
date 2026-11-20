@@ -1,4 +1,4 @@
-/** 原生页头控制器：spec 合成与截断、菜单项转换、oklch 换算、遮挡探测、接管 / 让位 / 回来 / 事件 / 回退，以及常量与 CSS 不漂移。 */
+/** 原生页头控制器：spec 合成与截断、菜单项转换、oklch 换算、遮挡探测、接管 / 跟随卡片 / 让位 / 回来 / 事件 / 回退，以及常量与 CSS 不漂移。 */
 import { renderHook } from "@testing-library/react";
 import {
 	afterEach,
@@ -29,10 +29,11 @@ import {
 	nativeItems,
 	oklchHex,
 	REST_MS,
+	SYNC_BIAS_MS,
 	slotsCovered,
 	useSlotFrame,
 } from "./native-header";
-import { NATIVE_LAG_MS } from "./native-tab-bar";
+import { NATIVE_LAG_MS, SINK_EASE, SINK_MS } from "./native-tab-bar";
 
 // 前端 tsconfig 不带 Node 类型（静态导入 node:fs 过不了 tsc），只声明用到的函数（同 native-tab-bar.test）；工作目录是 web/
 let readFile: (path: string) => string;
@@ -298,7 +299,7 @@ describe("oklch 换算与 index.css 不漂移", () => {
 		expect(markHex(30, false)).toMatch(/^#[0-9a-f]{6}$/);
 	});
 
-	it("头像、线程色的 oklch 常量与 CSS 一致；原生页头的卡片打开延迟规则在", () => {
+	it("头像、线程色的 oklch 常量与 CSS 一致；原生页头接管时卡片开合两个方向都晚 34ms 起步（拖动、减少动效除外）", () => {
 		const css = readFile("src/index.css");
 		for (const s of [
 			"background: oklch(0.89 0.075 var(--h))",
@@ -309,12 +310,19 @@ describe("oklch 换算与 index.css 不漂移", () => {
 			"background: oklch(0.74 0.14 var(--h))",
 		])
 			expect(css).toContain(s);
-		const at = css.indexOf(".sink-card[data-native-head][data-open]");
-		expect(at).toBeGreaterThan(-1);
-		const rule = css.slice(at, css.indexOf("}", at));
-		for (const s of ["[data-dragging]", "[data-instant]", "[data-released]"])
-			expect(rule).toContain(s);
-		expect(rule).toContain(`transition-delay: ${NATIVE_LAG_MS}ms;`);
+		for (const sel of [
+			".sink-card[data-native-head]:not([data-open])",
+			".sink-card[data-native-head][data-open]",
+		]) {
+			const at = css.indexOf(sel);
+			expect(at).toBeGreaterThan(-1);
+			const rule = css.slice(at, css.indexOf("}", at));
+			for (const s of ["[data-dragging]", "[data-instant]"])
+				expect(rule).toContain(s);
+			expect(rule).toContain(
+				`translate ${SINK_MS}ms var(--ease) ${NATIVE_LAG_MS}ms`,
+			);
+		}
 	});
 });
 
@@ -400,11 +408,15 @@ describe("slotsCovered", () => {
 /** 排空宏任务前的全部微任务（latest 的 then / finally 链），不等真实时长。 */
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
-/** 可手动推进的假定时器 + 同步执行的 microtask。 */
+/** 绝对时钟的起点（Unix 毫秒），假定时器从这里走。 */
+const EPOCH = 1_795_000_000_000;
+
+/** 可手动推进的假定时器、手动跑的假帧 + 同步执行的 microtask。 */
 function fakeEnv(opts: { reduce?: boolean } = {}) {
 	let now = 0;
 	let n = 0;
 	const timers = new Map<number, { at: number; cb: () => void }>();
+	const frames = new Map<number, () => void>();
 	const env: HeaderEnv & { blur: Mock<() => void> } = {
 		setTimeout(cb, ms) {
 			timers.set(++n, { at: now + ms, cb });
@@ -414,6 +426,14 @@ function fakeEnv(opts: { reduce?: boolean } = {}) {
 			timers.delete(id);
 		},
 		microtask: (cb) => cb(),
+		frame(cb) {
+			frames.set(++n, cb);
+			return n;
+		},
+		cancelFrame(id) {
+			frames.delete(id);
+		},
+		now: () => EPOCH + now,
 		blur: vi.fn(),
 		reduce: () => opts.reduce ?? false,
 	};
@@ -430,7 +450,13 @@ function fakeEnv(opts: { reduce?: boolean } = {}) {
 		}
 		now = end;
 	};
-	return { env, advance };
+	/** 跑一帧。 */
+	const frame = () => {
+		const cbs = [...frames.values()];
+		frames.clear();
+		for (const cb of cbs) cb();
+	};
+	return { env, advance, frame, frames: () => frames.size, now: () => now };
 }
 
 interface FakeApi {
@@ -457,9 +483,24 @@ const HIDE: NativeHeaderShow = {
 	delay: 0,
 };
 
+/** 接管 / 遮挡解除时的淡入（卡片静止关闭）。 */
+const FADE_IN: NativeHeaderShow = { ...HIDE, alpha: 1, ms: HEADER_FADE_MS };
+
+/** 卡片静止关闭后恢复接触摸的那一条。 */
+const REST: NativeHeaderShow = { ...HIDE, alpha: 1 };
+
+/** 拖动中的一帧。 */
+const dragShow = (dx: number): NativeHeaderShow => ({
+	alpha: 1,
+	dx,
+	passive: true,
+	ms: 0,
+	delay: 0,
+});
+
 function setup(opts: { rejectSet?: boolean; reduce?: boolean } = {}) {
 	const api = fakeApi(opts);
-	const { env, advance } = fakeEnv(opts);
+	const { env, advance, frame, frames, now } = fakeEnv(opts);
 	let emit: (e: NativeHeaderEvent) => void = () => {};
 	const header = createNativeHeader(
 		api,
@@ -481,6 +522,9 @@ function setup(opts: { rejectSet?: boolean; reduce?: boolean } = {}) {
 		api,
 		env,
 		advance,
+		frame,
+		frames,
+		now,
 		header,
 		p,
 		register,
@@ -502,7 +546,7 @@ async function engaged(opts: { reduce?: boolean } = {}) {
 }
 
 describe("控制器", () => {
-	it("theme / lead / title 到齐只 set 一次；应答后接管并发 show 夹具，淡入完再晚 34ms 才算显示稳了", async () => {
+	it("theme / lead / title 到齐只 set 一次；应答后接管并淡入，淡入完再晚 34ms 才算显示稳了", async () => {
 		const s = setup();
 		const sub = vi.fn();
 		s.header.subscribe(sub);
@@ -515,7 +559,7 @@ describe("控制器", () => {
 		expect(s.api.set).toHaveBeenCalledTimes(1);
 		expect(s.header.engaged()).toBe(true);
 		expect(sub).toHaveBeenCalled();
-		expect(s.shows()).toEqual([fixture("header-show.json")]);
+		expect(s.shows()).toEqual([FADE_IN]);
 		expect(s.header.active()).toBe(false);
 		s.advance(HEADER_FADE_MS + NATIVE_LAG_MS - 1);
 		expect(s.header.active()).toBe(false);
@@ -531,7 +575,7 @@ describe("控制器", () => {
 		const s = setup({ reduce: true });
 		s.register();
 		await flush();
-		expect(s.shows()).toEqual([{ ...HIDE, alpha: 1 }]);
+		expect(s.shows()).toEqual([REST]);
 		s.advance(NATIVE_LAG_MS);
 		expect(s.header.active()).toBe(true);
 	});
@@ -549,44 +593,148 @@ describe("控制器", () => {
 		expect(s.api.show).not.toHaveBeenCalled();
 	});
 
-	it("cardDrag：显示时返回 34 并立即让位；已让位或未接管时返回 0", async () => {
+	it("cardDrag：不让位；同一帧多次只发最后一次；dx = 进度 × 宽 + 往右速度 × 34，钳在 [0, 宽]", async () => {
 		const s = await engaged();
-		expect(s.header.cardDrag()).toBe(NATIVE_LAG_MS);
-		expect(s.header.active()).toBe(false);
+		s.header.cardDrag(0.1, 320, 0);
+		s.header.cardDrag(0.25, 320, 0.5);
+		expect(s.header.active()).toBe(true);
+		expect(s.frames()).toBe(1);
 		await flush();
-		expect(s.shows()).toEqual([HIDE]);
-		expect(s.header.cardDrag()).toBe(0);
-		expect(setup().header.cardDrag()).toBe(0);
+		expect(s.api.show).not.toHaveBeenCalled();
+		s.frame();
+		await flush();
+		// 0.25 × 320 + 0.5 × 34 = 97
+		expect(s.shows()).toEqual([dragShow(97)]);
+		s.api.show.mockClear();
+		// 往左不预判
+		s.header.cardDrag(0.5, 320, -2);
+		s.frame();
+		await flush();
+		// 超出侧栏宽钳到宽
+		s.header.cardDrag(0.95, 320, 3);
+		s.frame();
+		await flush();
+		expect(s.shows()).toEqual([dragShow(160), dragShow(320)]);
+		expect(s.shows().some((x) => x.alpha === 0)).toBe(false);
+		expect(s.header.active()).toBe(true);
 	});
 
-	it("cardSettle：打开让位；关闭后 REST_MS 才回来；instant 推进 0 即回；REST_MS 内再拖不回来", async () => {
+	it("在途期间合并：至多一条 show 在途，其间的多帧只发最新值", async () => {
 		const s = await engaged();
-		s.header.cardSettle(true, false);
-		expect(s.header.active()).toBe(false);
+		const pending: (() => void)[] = [];
+		s.api.show.mockImplementation(
+			() =>
+				new Promise<void>((r) => {
+					pending.push(r);
+				}),
+		);
+		for (const p of [0.1, 0.2, 0.4]) {
+			s.header.cardDrag(p, 320, 0);
+			s.frame();
+		}
+		expect(s.shows()).toEqual([dragShow(32)]);
+		pending.shift()?.();
 		await flush();
-		expect(s.shows()).toEqual([HIDE]);
+		expect(s.shows()).toEqual([dragShow(32), dragShow(128)]);
+	});
+
+	it("cardSettle 打开：不让位，发带终点、时长、缓动与绝对起步时刻的 show（打开早 8ms、不延迟）", async () => {
+		const s = await engaged();
+		s.advance(1000);
+		s.header.cardSettle(true, 320, false);
+		expect(s.header.active()).toBe(true);
+		await flush();
+		expect(s.shows()).toEqual([
+			{
+				alpha: 1,
+				dx: 320,
+				passive: true,
+				ms: SINK_MS,
+				delay: 0,
+				ease: [...SINK_EASE],
+				at: EPOCH + s.now() + NATIVE_LAG_MS - SYNC_BIAS_MS,
+			},
+		]);
+		// 与契约夹具的字段一致（原生按同一份 HeaderShow 解析）
+		expect(Object.keys(s.shows()[0] ?? {}).sort()).toEqual(
+			Object.keys(fixture<object>("header-show.json")).sort(),
+		);
+		// 同一目标、同一宽度：不重发
+		s.header.cardSettle(true, 320, false);
+		await flush();
+		expect(s.api.show).toHaveBeenCalledTimes(1);
+	});
+
+	it("cardSettle 关闭：晚 8ms、delay 34；REST_MS 后恢复接触摸；instant 推进 0 即恢复", async () => {
+		const s = await engaged();
+		s.header.cardSettle(true, 320, false);
+		await flush();
 		s.api.show.mockClear();
-		s.header.cardSettle(false, false);
+		s.header.cardSettle(false, 320, false);
+		await flush();
+		expect(s.shows()).toEqual([
+			{
+				alpha: 1,
+				dx: 0,
+				passive: true,
+				ms: SINK_MS,
+				delay: NATIVE_LAG_MS,
+				ease: [...SINK_EASE],
+				at: EPOCH + s.now() + NATIVE_LAG_MS + SYNC_BIAS_MS,
+			},
+		]);
+		s.api.show.mockClear();
 		s.advance(REST_MS - 1);
 		await flush();
 		expect(s.api.show).not.toHaveBeenCalled();
 		s.advance(1);
 		await flush();
-		expect(s.shows()).toEqual([fixture("header-show.json")]);
+		expect(s.shows()).toEqual([REST]);
+		expect(s.header.active()).toBe(true);
 
-		s.header.cardSettle(true, true);
-		s.header.cardSettle(false, true);
 		s.api.show.mockClear();
+		s.header.cardSettle(true, 320, true);
+		s.header.cardSettle(false, 320, true);
+		await flush();
 		s.advance(0);
 		await flush();
-		expect(s.shows().map((x) => x.alpha)).toEqual([1]);
+		expect(s.shows()).toEqual([
+			{ ...REST, dx: 320, passive: true },
+			{ ...REST, passive: true },
+			REST,
+		]);
+	});
 
-		s.header.cardDrag();
-		s.header.cardSettle(false, false);
+	it("松手吸附：取消待发的拖动帧，按吸附发；REST_MS 内再拖不恢复接触摸", async () => {
+		const s = await engaged();
+		s.header.cardDrag(0.3, 320, 0);
+		s.header.cardSettle(false, 320, false);
+		expect(s.frames()).toBe(0);
+		await flush();
+		expect(s.shows().map((x) => [x.dx, x.ms, x.delay])).toEqual([
+			[0, SINK_MS, NATIVE_LAG_MS],
+		]);
 		s.advance(100);
-		s.header.cardDrag();
+		s.header.cardDrag(0.1, 320, 0);
 		s.api.show.mockClear();
 		s.advance(REST_MS * 2);
+		await flush();
+		expect(s.api.show).not.toHaveBeenCalled();
+	});
+
+	it("挂载时报关闭位：已经静止，只记宽度不发 show；之后遮挡照常生效", async () => {
+		const s = await engaged();
+		s.header.cardSettle(false, 320, false);
+		s.advance(REST_MS);
+		await flush();
+		expect(s.api.show).not.toHaveBeenCalled();
+		s.header.setCovered(true);
+		expect(s.header.active()).toBe(false);
+		// 关闭时改了侧栏宽也不发（先排空遮挡那两条在途的 show）
+		s.header.setCovered(false);
+		await flush();
+		s.api.show.mockClear();
+		s.header.cardSettle(false, 390, false);
 		await flush();
 		expect(s.api.show).not.toHaveBeenCalled();
 	});
@@ -599,13 +747,33 @@ describe("控制器", () => {
 		s.advance(HEADER_FADE_MS + NATIVE_LAG_MS);
 		expect(s.header.active()).toBe(true);
 		await flush();
-		expect(s.shows().map((x) => x.alpha)).toEqual([0, 1]);
+		expect(s.shows()).toEqual([HIDE, FADE_IN]);
 
 		s.emit({ op: "menu", key: KEY, menu: "title" });
 		s.header.setCovered(true);
 		expect(s.header.active()).toBe(true);
 		expect(s.header.menu()).toBe("title");
 		s.emit({ op: "menu", key: KEY, menu: null });
+		expect(s.header.active()).toBe(false);
+	});
+
+	it("setCovered：卡片动着或开着时直接忽略（不记录），静止关闭后才生效", async () => {
+		const s = await engaged();
+		s.header.cardDrag(0.2, 320, 0);
+		s.header.setCovered(true);
+		expect(s.header.active()).toBe(true);
+		s.header.cardSettle(true, 320, false);
+		s.header.setCovered(true);
+		expect(s.header.active()).toBe(true);
+		s.header.cardSettle(false, 320, false);
+		s.header.setCovered(true);
+		expect(s.header.active()).toBe(true);
+		s.advance(REST_MS);
+		await flush();
+		// 动着时的遮挡没被记下：静止后不会自己让位
+		expect(s.header.active()).toBe(true);
+		expect(s.shows().some((x) => x.alpha === 0)).toBe(false);
+		s.header.setCovered(true);
 		expect(s.header.active()).toBe(false);
 	});
 
@@ -655,7 +823,7 @@ describe("控制器", () => {
 		s.header.setPart("title", s.p.title);
 		await flush();
 		expect(s.header.engaged()).toBe(true);
-		expect(s.shows()).toEqual([fixture("header-show.json")]);
+		expect(s.shows()).toEqual([FADE_IN]);
 	});
 
 	it("closeMenu：菜单开着时调 api.menu({open: null})，没开时不调", async () => {
@@ -669,19 +837,20 @@ describe("控制器", () => {
 	});
 
 	it("宿主为 null 时全部空操作", () => {
-		const { env } = fakeEnv();
+		const { env, frame } = fakeEnv();
 		const h = createNativeHeader(null, () => () => {}, env);
 		const p = parts();
 		expect(() => {
 			h.setPart("theme", p.theme);
 			h.setPart("lead", p.lead);
 			h.setPart("title", p.title);
-			h.cardSettle(true, false);
-			h.cardSettle(false, false);
+			h.cardDrag(0.5, 320, 0);
+			frame();
+			h.cardSettle(true, 320, false);
+			h.cardSettle(false, 320, false);
 			h.setCovered(true);
 			h.closeMenu();
 		}).not.toThrow();
-		expect(h.cardDrag()).toBe(0);
 		expect(h.engaged()).toBe(false);
 		expect(h.active()).toBe(false);
 		expect(h.menu()).toBeNull();

@@ -147,7 +147,7 @@ pub struct TabBarFrame {
     pub height: f64,
 }
 
-/// 原生底栏的整份状态（`tabBarSet` 的 `spec`）。
+/// 原生底栏的整份状态（`tabBarSet` 的 `spec`）。底栏垫在 WebView 之下（bridge ≥ 7），页面在接管期间透明。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TabBarSpec {
     pub items: Vec<TabBarItem>,
@@ -157,20 +157,18 @@ pub struct TabBarSpec {
     pub dark: bool,
     /// `#rrggbb`；`None` = 系统强调色。
     pub accent: Option<String>,
+    /// 页面底色 `#rrggbb`：原生垫底按它铺满，页面透明的那部分看起来与原来一样。
+    /// 必填：不带它的是旧网页（还以为底栏叠在 WebView 上面），壳拒绝，旧网页退回网页底栏。
+    pub bg: String,
 }
 
-/// 揭示状态（`tabBarReveal` 的载荷）：`x`（视口 x，CSS px）左侧可见；`ms` 为 0 立即生效，
-/// 否则等 `delay` 毫秒后按 `ease`（cubic-bezier 控制点）过渡 `ms` 毫秒。
+/// 卡片与底栏的相对位置（`tabBarReveal` 的载荷）：`x` = 卡片左缘（视口 x，CSS px），
+/// `covered` = 网页内容（菜单、弹层、软键盘）压在底栏位置上。只决定原生底栏接不接触摸：
+/// 看得见的部分由网页合成器决定（卡片与弹层都画在原生底栏之上），无需原生插值。
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct TabBarReveal {
     pub x: f64,
-    pub alpha: f64,
-    #[serde(default)]
-    pub ms: u32,
-    #[serde(default)]
-    pub delay: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ease: Option<[f64; 4]>,
+    pub covered: bool,
 }
 
 /// 原生页头里各控件的矩形（CSS px）；与底栏同形。
@@ -361,8 +359,9 @@ pub struct HeaderSpec {
     pub trail: Option<HeaderTrail>,
 }
 
-/// 控件层的呈现状态（`headerShow` 的载荷）：`dx` 整层水平位移（CSS px），`passive` 只显示不接触摸；
-/// `ms` 为 0 立即生效，否则等 `delay` 毫秒后按 `ease` 过渡 `ms` 毫秒。
+/// 控件层的呈现状态（`headerShow` 的载荷）：`dx` 整层水平位移（CSS px，= 卡片左缘），`passive` 只显示不接触摸；
+/// `ms` 为 0 立即生效，否则按 `ease` 过渡 `ms` 毫秒。起步时刻：有 `at`（Unix 毫秒，与网页 `Date.now()` 同一时钟）
+/// 时按它对齐卡片的 CSS 过渡（bridge ≥ 7，送达比它晚就立即起步），没有时等 `delay` 毫秒。
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct HeaderShow {
     pub alpha: f64,
@@ -374,6 +373,8 @@ pub struct HeaderShow {
     pub delay: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ease: Option<[f64; 4]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<f64>,
 }
 
 /// 两个菜单。
@@ -522,22 +523,18 @@ mod tests {
         // 撤栏：`{"spec": null}`
         let none: Option<TabBarSpec> = serde_json::from_value(Value::Null).unwrap();
         assert_eq!(json!({ "spec": none }), json!({ "spec": null }));
+        // 旧网页（以为底栏叠在 WebView 上面）不带 bg：解析失败，壳拒绝，它退回网页底栏
+        let mut old: Value = serde_json::from_str(SET).unwrap();
+        old.as_object_mut().unwrap().remove("bg");
+        assert!(serde_json::from_value::<TabBarSpec>(old).is_err());
     }
 
     #[test]
     fn tab_bar_reveal_fixture_round_trips() {
         let raw: Value = serde_json::from_str(REVEAL).unwrap();
         let reveal: TabBarReveal = serde_json::from_value(raw.clone()).unwrap();
-        assert_eq!(reveal.ms, 260);
-        assert_eq!(reveal.delay, 34);
+        assert_eq!(reveal, TabBarReveal { x: 320.0, covered: false });
         assert_eq!(norm(serde_json::to_value(reveal).unwrap()), norm(raw));
-        // ms / delay / ease 可省
-        let bare: TabBarReveal = serde_json::from_value(json!({"x": 0, "alpha": 0})).unwrap();
-        assert_eq!((bare.ms, bare.delay, bare.ease), (0, 0, None));
-        assert_eq!(
-            serde_json::to_value(bare).unwrap(),
-            json!({"x": 0.0, "alpha": 0.0, "ms": 0, "delay": 0})
-        );
     }
 
     #[test]
@@ -590,13 +587,14 @@ mod tests {
         let raw: Value = serde_json::from_str(HEADER_SHOW).unwrap();
         let show: HeaderShow = serde_json::from_value(raw.clone()).unwrap();
         assert_eq!(
-            (show.alpha, show.ms, show.delay, show.passive),
-            (1.0, 120, 0, false)
+            (show.alpha, show.dx, show.ms, show.delay, show.passive, show.at),
+            (1.0, 320.0, 260, 0, true, Some(1_795_000_000_026.0))
         );
         assert_eq!(norm(serde_json::to_value(show).unwrap()), norm(raw));
+        // ms / delay / ease / at 可省（旧网页不发 at）
         let bare: HeaderShow =
             serde_json::from_value(json!({"alpha": 0, "dx": 0, "passive": true})).unwrap();
-        assert_eq!((bare.ms, bare.delay, bare.ease), (0, 0, None));
+        assert_eq!((bare.ms, bare.delay, bare.ease, bare.at), (0, 0, None, None));
     }
 
     #[test]

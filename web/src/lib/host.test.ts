@@ -383,18 +383,19 @@ describe("移动壳（M7）", () => {
 		]);
 	});
 
-	describe("原生底栏（bridge 4）", () => {
+	describe("原生底栏（bridge 7）", () => {
 		const spec: NativeTabBarSpec = {
 			items: [{ id: "threads", label: "线程", icon: { symbol: "folder" } }],
 			selected: "threads",
 			frame: { x: 12, y: 758, width: 296, height: 52 },
 			dark: false,
 			accent: null,
+			bg: "#f7f6f3",
 		};
-		const reveal: NativeTabBarReveal = { x: 160, alpha: 1, ms: 0, delay: 0 };
+		const reveal: NativeTabBarReveal = { x: 160, covered: false };
 
-		it("ios + bridge 4 → tabBar 非空；set / reveal 的参数形状", async () => {
-			const f = mobileWindow({ platform: "ios", bridge: 4 });
+		it("ios + bridge 7 → tabBar 非空；set / reveal 的参数形状", async () => {
+			const f = mobileWindow({ platform: "ios", bridge: 7 });
 			const tb = createHost(f.win).mobile?.tabBar;
 			expect(tb).toBeTruthy();
 			await tb?.set(spec);
@@ -410,7 +411,7 @@ describe("移动壳（M7）", () => {
 		it("invoke 拒绝时 set / reveal 的 Promise 拒绝（调用方据此退回网页底栏）", async () => {
 			const f = mobileWindow({
 				platform: "ios",
-				bridge: 4,
+				bridge: 7,
 				invoke: () => {
 					throw "unsupported";
 				},
@@ -420,17 +421,19 @@ describe("移动壳（M7）", () => {
 			await expect(tb?.reveal(reveal)).rejects.toBe("unsupported");
 		});
 
-		it("ios + bridge 3、android + bridge 4 → tabBar 为 null", () => {
-			const old = createHost(mobileWindow({ platform: "ios", bridge: 3 }).win);
-			expect(old.mobile).not.toBeNull();
-			expect(old.mobile?.tabBar).toBeNull();
-			const android = createHost(mobileWindow({ bridge: 4 }).win);
+		it("ios + bridge 4–6（底栏叠在 WebView 上面的旧协议）、ios + bridge 3、android + bridge 7 → tabBar 为 null", () => {
+			for (const bridge of [3, 4, 5, 6]) {
+				const old = createHost(mobileWindow({ platform: "ios", bridge }).win);
+				expect(old.mobile).not.toBeNull();
+				expect(old.mobile?.tabBar).toBeNull();
+			}
+			const android = createHost(mobileWindow({ bridge: 7 }).win);
 			expect(android.mobile).not.toBeNull();
 			expect(android.mobile?.tabBar).toBeNull();
 		});
 
 		it("tabbar 事件到 onTabBar；id 不是字符串或桌面壳上忽略；可退订", () => {
-			const f = mobileWindow({ platform: "ios", bridge: 4 });
+			const f = mobileWindow({ platform: "ios", bridge: 7 });
 			const h = createHost(f.win);
 			const cb = vi.fn();
 			const off = h.onTabBar(cb);
@@ -467,27 +470,38 @@ describe("移动壳（M7）", () => {
 			ms: 120,
 			delay: 0,
 		};
+		/** 吸附：终点、时长、缓动与绝对起步时刻（bridge ≥ 7 的壳按 at 起步）。 */
+		const timed: NativeHeaderShow = {
+			alpha: 1,
+			dx: 320,
+			passive: true,
+			ms: 260,
+			delay: 34,
+			ease: [0.2, 0.8, 0.2, 1],
+			at: 1795000000034,
+		};
 		const menu: NativeHeaderMenu = { open: "title", page: "env" };
 
-		it("本页宿主协议版本为 6", () => {
-			expect(BRIDGE).toBe(6);
+		it("本页宿主协议版本为 7", () => {
+			expect(BRIDGE).toBe(7);
 		});
 
-		it("ios + bridge 5 → header 非空；set / show / menu 的参数形状", async () => {
+		it("ios + bridge 5 → header 非空；set / show / menu 的参数形状（show 带 at 原样透传）", async () => {
 			const f = mobileWindow({ platform: "ios", bridge: 5 });
 			const m = createHost(f.win).mobile;
-			expect(m?.tabBar).toBeTruthy();
 			const hd = m?.header;
 			expect(hd).toBeTruthy();
 			await hd?.set(spec);
 			await hd?.set(null);
 			await hd?.show(show);
+			await hd?.show(timed);
 			await hd?.menu(menu);
 			await hd?.menu({ open: null });
 			expect(f.invoke.mock.calls).toEqual([
 				["host_header_set", { spec }],
 				["host_header_set", { spec: null }],
 				["host_header_show", { show }],
+				["host_header_show", { show: timed }],
 				["host_header_menu", { menu }],
 				["host_header_menu", { menu: { open: null } }],
 			]);
@@ -507,10 +521,16 @@ describe("移动壳（M7）", () => {
 			await expect(hd?.menu(menu)).rejects.toBe("unsupported");
 		});
 
-		it("ios + bridge 4 → header 为 null 而 tabBar 非空；android + bridge 5 → header 为 null", () => {
+		it("ios + bridge 4 → header 为 null；ios + bridge 5 / 6 → header 非空而 tabBar 为 null；android + bridge 5 → header 为 null", () => {
 			const old = createHost(mobileWindow({ platform: "ios", bridge: 4 }).win);
 			expect(old.mobile?.header).toBeNull();
-			expect(old.mobile?.tabBar).toBeTruthy();
+			for (const bridge of [5, 6]) {
+				const m = createHost(
+					mobileWindow({ platform: "ios", bridge }).win,
+				).mobile;
+				expect(m?.header).toBeTruthy();
+				expect(m?.tabBar).toBeNull();
+			}
 			const android = createHost(mobileWindow({ bridge: 5 }).win);
 			expect(android.mobile).not.toBeNull();
 			expect(android.mobile?.header).toBeNull();

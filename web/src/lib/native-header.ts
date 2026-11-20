@@ -1,8 +1,13 @@
 /**
  * iOS 原生页头（iOS 26 Liquid Glass：侧栏圆钮、两行标题胶囊、视图菜单圆钮与它们的弹出菜单）的网页侧控制器。
  * 原生是哑执行器，策略全在这里（网页随服务器更新，App 发版要走 TestFlight）。
- * - 何时显示：原生页头不随卡片移动。只有下沉卡片静止在关闭位、且没有网页内容盖住页头时原生才显示，
- *   其余时刻（拖动、吸附、侧栏打开、对话框 / 命令面板 / 提示条盖住、切到面板标签、页面被软键盘推走）立即让位给网页页头。
+ * - 跟随卡片：原生页头一直随下沉卡片移动（整层位移 dx = 卡片左缘），开合途中不换回网页页头。拖动时逐帧给 dx
+ *   （按手指速度往右预判一段，原生收到得晚也不会落到卡片左缘之外）；吸附时只给终点、时长、缓动与绝对起步时刻 `at`，
+ *   原生自己插值。卡片的 CSS 过渡晚 NATIVE_LAG_MS 起步（`index.css` 的 `.sink-card[data-native-head]`），`at` 取同一时刻，
+ *   再按方向偏 SYNC_BIAS_MS：打开时原生略早、关闭时略晚，残余误差只会把页头推向卡片内侧，不会探出卡片左缘。
+ *   卡片不在关闭位时控件只显示不接触摸（`passive`：卡片此时 inert，轻点露出的卡片条是收起侧栏）。
+ * - 让位：网页内容盖住页头（对话框 / 命令面板 / 提示条、切到面板标签、页面被软键盘推走）时原生隐藏、网页页头顶上；
+ *   遮挡只在卡片静止关闭时判定（卡片动着或打开时，露出的卡片条上的关闭按钮会盖住页头的位置，那不是遮挡）。
  *   回来时原生 120ms 淡入，网页三件再晚 NATIVE_LAG_MS 才撤（短暂重叠，不留空档）。
  * - 内容：各部件（`CompactThreadHeader`、`ThreadViewMenu`）每次渲染登记自己的一份（`useNativeHeaderPart`），
  *   这里合成一份声明式 spec，按 JSON 去重、在途至多一条。原生点击回传菜单项的路径 id，网页在最新登记的部件里找回调执行。
@@ -37,6 +42,7 @@ import {
 	COVER_POLL_MS,
 	latest,
 	NATIVE_LAG_MS,
+	SINK_EASE,
 	SINK_MS,
 } from "./native-tab-bar";
 
@@ -44,8 +50,10 @@ import {
 export const NATIVE_HEADER = true;
 /** 原生页头淡入的时长；网页页头再晚 NATIVE_LAG_MS 才撤（两者短暂重叠，不留空档）。 */
 export const HEADER_FADE_MS = 120;
-/** 卡片收回后多久算「静止」：吸附 260ms + 底栏接管时的 34ms 晚起步 + 余量。 */
+/** 卡片收回后多久算「静止」（此后才重新判定遮挡）：吸附 260ms + 34ms 晚起步 + 余量。 */
 export const REST_MS = SINK_MS + NATIVE_LAG_MS + 60;
+/** 起步对齐的方向偏置（毫秒，约一帧）：打开时原生早这么多、关闭时晚这么多。 */
+export const SYNC_BIAS_MS = 8;
 /** 遮罩不透明度（= `--scrim` 的 alpha）与面板底色着色强度。 */
 export const HEADER_TUNE = {
 	scrimLight: 0.35,
@@ -408,9 +416,9 @@ export function slotsCovered(slots: Iterable<Element>, win: Window): boolean {
 }
 
 export interface NativeHeader {
-	/** 原生页头已经显示稳了：网页三件应隐藏。 */
+	/** 原生页头已经显示稳了：网页三件应隐藏（开合途中也一直为真）。 */
 	active(): boolean;
-	/** 已接管（可能暂时让位）：卡片的非手势打开要晚 NATIVE_LAG_MS 起步。 */
+	/** 已接管（可能暂时让位）：卡片的非手势开合与松手吸附晚 NATIVE_LAG_MS 起步。 */
 	engaged(): boolean;
 	/** 原生菜单开着哪一个。 */
 	menu(): NativeMenuKind | null;
@@ -420,10 +428,10 @@ export interface NativeHeader {
 		part: K,
 		value: HeaderParts[K] | null,
 	): void;
-	/** 卡片开始被拖动：原生页头立刻让位。返回卡片应再等多少毫秒才开始跟手（原生页头此刻在显示时为 NATIVE_LAG_MS，否则 0）。 */
-	cardDrag(): number;
-	/** 卡片吸附的终点：打开 = 让位；关闭 = REST_MS 后（instant 时立即）回到原生。 */
-	cardSettle(open: boolean, instant: boolean): void;
+	/** 拖动中的一帧：卡片进度、侧栏宽（px）、手指速度（px/ms）。逐帧合并后发给原生。 */
+	cardDrag(progress: number, width: number, velocity: number): void;
+	/** 卡片吸附的终点（打开 = 左缘停在侧栏宽，关闭 = 0）：原生按同一时长、缓动与起步时刻跟过去。 */
+	cardSettle(open: boolean, width: number, instant: boolean): void;
 	setCovered(covered: boolean): void;
 	/** 网页强制收起原生菜单（Esc、软键盘弹出）。 */
 	closeMenu(): void;
@@ -433,6 +441,11 @@ export interface HeaderEnv {
 	setTimeout(cb: () => void, ms: number): number;
 	clearTimeout(id: number): void;
 	microtask(cb: () => void): void;
+	/** 拖动时的逐帧合并。 */
+	frame(cb: () => void): number;
+	cancelFrame(id: number): void;
+	/** 与壳共用的绝对时钟（Unix 毫秒）。 */
+	now(): number;
 	/** 让输入框失焦（收起软键盘）。 */
 	blur(): void;
 	reduce(): boolean;
@@ -442,6 +455,9 @@ const browserEnv: HeaderEnv = {
 	setTimeout: (cb, ms) => window.setTimeout(cb, ms),
 	clearTimeout: (id) => window.clearTimeout(id),
 	microtask: (cb) => queueMicrotask(cb),
+	frame: (cb) => requestAnimationFrame(cb),
+	cancelFrame: (id) => cancelAnimationFrame(id),
+	now: () => Date.now(),
 	blur: () => (document.activeElement as HTMLElement | null)?.blur?.(),
 	reduce: () =>
 		window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
@@ -457,9 +473,15 @@ export function createNativeHeader(
 	let wanted = ""; // 想要的 spec 的 JSON；"" = 不要原生页头
 	let key: string | null = null;
 	let engaged = false;
-	let moving = false; // 卡片不在「关闭且静止」
+	let moving = false; // 卡片不在「关闭且静止」：控件只显示不接触摸，遮挡不判定
 	let covered = false; // 生效中的遮挡
 	let coveredRaw = false; // 最近一次探测结果（菜单开着时先不生效）
+	let open = false; // 最近一次吸附的目标
+	let width = 0; // 侧栏宽 = 打开时卡片左缘
+	let dragging = false;
+	let dx = 0; // 原生控件层的目标位移 = 卡片左缘
+	let dragDx: number | null = null; // 这一帧还没发出的拖动位移
+	let raf = 0;
 	let want = false; // 已要求原生显示
 	let shown = false; // 原生显示稳了（网页该隐藏）
 	let menu: NativeMenuKind | null = null;
@@ -475,14 +497,20 @@ export function createNativeHeader(
 		"native header",
 	);
 
+	// 卡片在动或开着（moving || open）：控件只显示不接触摸
+	const place = () => {
+		if (want)
+			sendShow({ alpha: 1, dx, passive: moving || open, ms: 0, delay: 0 });
+	};
+
 	const evaluate = () => {
-		const next = engaged && !moving && !covered;
+		const next = engaged && !covered;
 		if (next === want) return;
 		want = next;
 		env.clearTimeout(fadeTimer);
 		if (next) {
 			const ms = env.reduce() ? 0 : HEADER_FADE_MS;
-			sendShow({ alpha: 1, dx: 0, passive: false, ms, delay: 0 });
+			sendShow({ alpha: 1, dx, passive: moving || open, ms, delay: 0 });
 			// 网页页头晚撤：等原生淡入完（再加一段桥的延迟），两者重叠而不是留空档
 			fadeTimer = env.setTimeout(() => {
 				shown = true;
@@ -495,7 +523,7 @@ export function createNativeHeader(
 		shown = false;
 		menu = null;
 		if (changed) notify();
-		sendShow({ alpha: 0, dx: 0, passive: false, ms: 0, delay: 0 });
+		sendShow({ alpha: 0, dx, passive: false, ms: 0, delay: 0 });
 	};
 
 	const drop = () => {
@@ -595,30 +623,68 @@ export function createNativeHeader(
 			queued = true;
 			env.microtask(sync);
 		},
-		cardDrag() {
-			const lag = want ? NATIVE_LAG_MS : 0;
+		cardDrag(progress, w, velocity) {
 			env.clearTimeout(restTimer);
+			dragging = true;
 			moving = true;
-			evaluate();
-			return lag;
+			width = w;
+			// 往右（打开方向）按速度预判一段桥的延迟：原生晚到也不会落在卡片左缘之外；
+			// 往左不预判：晚到只会让页头偏向卡片内侧
+			dragDx = Math.min(
+				w,
+				Math.max(0, progress * w + Math.max(0, velocity) * NATIVE_LAG_MS),
+			);
+			if (raf) return;
+			raf = env.frame(() => {
+				raf = 0;
+				if (dragDx === null) return;
+				dx = dragDx;
+				dragDx = null;
+				place();
+			});
 		},
-		cardSettle(open, instant) {
+		cardSettle(next, w, instant) {
+			if (!dragging && next === open && w === width) return;
+			const wasMoving = moving;
+			dragging = false;
+			open = next;
+			width = w;
+			if (raf) env.cancelFrame(raf);
+			raf = 0;
+			dragDx = null;
+			dx = next ? w : 0;
 			env.clearTimeout(restTimer);
-			if (open) {
-				moving = true;
-				evaluate();
+			// 已经静止在关闭位（挂载、关闭时改了侧栏宽）：没有要走的路
+			if (!next && !wasMoving) return;
+			moving = true;
+			if (!next)
+				restTimer = env.setTimeout(
+					() => {
+						moving = false;
+						place();
+					},
+					instant ? 0 : REST_MS,
+				);
+			if (!want) return;
+			if (instant) {
+				place();
 				return;
 			}
-			if (!moving) return;
-			restTimer = env.setTimeout(
-				() => {
-					moving = false;
-					evaluate();
-				},
-				instant ? 0 : REST_MS,
-			);
+			// 卡片晚 NATIVE_LAG_MS 起步；打开时原生早一帧、关闭时晚一帧，误差只落在卡片内侧。
+			// `delay` 给不认 `at` 的旧壳（bridge < 7，从收到算起）：打开立即走，关闭等一段
+			sendShow({
+				alpha: 1,
+				dx,
+				passive: true,
+				ms: SINK_MS,
+				delay: next ? 0 : NATIVE_LAG_MS,
+				ease: [...SINK_EASE],
+				at: env.now() + NATIVE_LAG_MS + (next ? -SYNC_BIAS_MS : SYNC_BIAS_MS),
+			});
 		},
 		setCovered(next) {
+			// 卡片动着或开着时不判定：露出的卡片条上的关闭按钮压在页头位置上，那不是遮挡；静止后由下一次探测补上
+			if (moving) return;
 			coveredRaw = next;
 			// 菜单开着时不因为盖住而让位（提示条冒出来不该把菜单关掉）；菜单关了再生效
 			if (next && menu !== null) return;

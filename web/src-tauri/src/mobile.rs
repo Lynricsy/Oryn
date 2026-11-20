@@ -253,7 +253,8 @@ pub async fn host_tab_bar_set(app: AppHandle, spec: Option<TabBarSpec>) -> Res<(
     }
 }
 
-/// 原生底栏的揭示边与透明度；拖动时每帧至多一次。还没 set 过时 Swift 侧空操作并成功。
+/// 卡片左缘与遮挡：只决定原生底栏接不接触摸（看得见的部分由网页合成器决定）。开合吸附与遮挡变化时各发一条。
+/// 还没 set 过时 Swift 侧空操作并成功。
 #[tauri::command]
 pub async fn host_tab_bar_reveal(app: AppHandle, reveal: TabBarReveal) -> Res<()> {
     if !mobile_logic::valid_reveal(&reveal) {
@@ -263,11 +264,11 @@ pub async fn host_tab_bar_reveal(app: AppHandle, reveal: TabBarReveal) -> Res<()
     {
         let plugin = ios::plugin(&app).ok_or("unsupported")?;
         plugin.tab_bar_reveal(&reveal).map_err(|e| e.to_string())?;
-        // 仅 debug：拖动时每帧一条，供 CI 端到端检查对齐揭示边；发布包不写
+        // 仅 debug：供 CI 端到端检查确认开合与遮挡状态；发布包不写
         #[cfg(debug_assertions)]
         eventlog::log(
             "tabbar.reveal",
-            json!({"x": reveal.x, "alpha": reveal.alpha, "ms": reveal.ms, "delay": reveal.delay}),
+            json!({"x": reveal.x, "covered": reveal.covered}),
         );
         Ok(())
     }
@@ -329,7 +330,7 @@ pub async fn host_header_show(app: AppHandle, show: HeaderShow) -> Res<()> {
         #[cfg(debug_assertions)]
         eventlog::log(
             "header.show",
-            json!({"alpha": show.alpha, "dx": show.dx, "passive": show.passive, "ms": show.ms, "delay": show.delay}),
+            json!({"alpha": show.alpha, "dx": show.dx, "passive": show.passive, "ms": show.ms, "delay": show.delay, "at": show.at}),
         );
         Ok(())
     }
@@ -463,56 +464,6 @@ mod ios {
         });
     }
 
-    /// CI 用（仅 debug 构建）：环境变量 `ORYN_TABBAR_DEMO=<0..1>` 时，在连接页上按夹具摆出底栏并把揭示边放到该进度，
-    /// 结果记到事件日志 `tabbar.demo`。经与页面相同的 Rust → Swift 路径。
-    #[cfg(debug_assertions)]
-    pub async fn tab_bar_demo(app: &AppHandle) {
-        let Some(p) = std::env::var("ORYN_TABBAR_DEMO")
-            .ok()
-            .and_then(|v| v.parse::<f64>().ok())
-        else {
-            return;
-        };
-        // 等连接页的 PageLoadEvent::Started 那次撤栏先跑完
-        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-        let fail =
-            |error: String| eventlog::log("tabbar.demo", json!({"ok": false, "error": error}));
-        let (Some(plugin), Some(w)) = (plugin(app), app.get_webview_window(host::MAIN)) else {
-            return fail("no plugin or window".into());
-        };
-        // tao 在 iOS 上：outer = 屏幕框，inner = 安全区
-        let scale = w.scale_factor().unwrap_or(1.0);
-        let (Ok(outer), Ok(inner), Ok(inner_pos), Ok(outer_pos)) = (
-            w.outer_size(),
-            w.inner_size(),
-            w.inner_position(),
-            w.outer_position(),
-        ) else {
-            return fail("no window size".into());
-        };
-        let (width, height) = (outer.width as f64 / scale, outer.height as f64 / scale);
-        let safe_bottom =
-            height - (inner_pos.y - outer_pos.y) as f64 / scale - inner.height as f64 / scale;
-        let (spec, sink_w) = mobile_logic::demo_tab_bar(width, height, safe_bottom.max(0.0));
-        let reveal = tauri_plugin_oryn_mobile::TabBarReveal {
-            x: sink_w * p.clamp(0.0, 1.0),
-            alpha: 1.0,
-            ms: 0,
-            delay: 0,
-            ease: None,
-        };
-        let res = plugin
-            .tab_bar_set(Some(&spec))
-            .and_then(|()| plugin.tab_bar_reveal(&reveal));
-        match res {
-            Ok(()) => eventlog::log(
-                "tabbar.demo",
-                json!({"ok": true, "p": p, "frame": spec.frame, "sinkW": sink_w, "scale": scale}),
-            ),
-            Err(e) => fail(e.to_string()),
-        }
-    }
-
     /// CI 用（仅 debug 构建）：环境变量 `ORYN_HEADER_DEMO` = `hidden` / `bar` / `title` / `title:<子页 id>` / `trail` 时，
     /// 在连接页上按夹具摆出页头（`hidden` 之外都显示），按模式打开菜单，再取触摸探测结果，记到事件日志 `header.demo`。
     /// 经与页面相同的 Rust → Swift 路径。
@@ -553,6 +504,7 @@ mod ios {
             ms: 0,
             delay: 0,
             ease: None,
+            at: None,
         };
         let res = async {
             plugin.header_set(Some(&spec)).await?;
@@ -599,7 +551,7 @@ mod ios {
 }
 
 #[cfg(all(debug_assertions, target_os = "ios"))]
-pub use ios::{e2e_open, header_demo, tab_bar_demo};
+pub use ios::{e2e_open, header_demo};
 #[cfg(target_os = "ios")]
 pub use ios::{header_reset, listen as listen_ios, tab_bar_reset};
 

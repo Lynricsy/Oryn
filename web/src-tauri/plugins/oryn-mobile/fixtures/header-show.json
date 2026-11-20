@@ -1,1 +1,9 @@
-{ "alpha": 1, "dx": 0, "passive": false, "ms": 120, "delay": 0 }
+{
+	"alpha": 1,
+	"dx": 320,
+	"passive": true,
+	"ms": 260,
+	"delay": 0,
+	"ease": [0.2, 0.8, 0.2, 1],
+	"at": 1795000000026
+}

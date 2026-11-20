@@ -1,36 +1,41 @@
 #!/usr/bin/env bash
-# jq 程序里的 $w / $dx / $k 是 jq 变量（单引号是故意的）；谓词函数与 cleanup 经 until_ok / trap 间接调用
+# jq 程序里的 $w / $k 是 jq 变量（单引号是故意的）；谓词函数与 cleanup 经 until_ok / trap 间接调用
 # shellcheck disable=SC2016,SC2329 source-path=SCRIPTDIR
 # iOS 模拟器里原生底栏、原生页头与可替换图标的端到端检查（mobile.yml 的 ios-check，硬门禁）：真实网页、真实宿主权限、真实触摸。
-# 与 ios-tabbar-check.sh / ios-header-check.sh 的原生演示互补：演示绕过网页直接调插件，这里走生产路径的每一环——
+# 与 ios-header-check.sh 的原生页头演示互补：演示绕过网页直接调插件，这里走生产路径的每一环——
 #   - mock Web UI（VITE_MOCK=1 的构建）由本机 vite preview 提供在 http://localhost:<端口>；
 #   - debug 包读 ORYN_E2E_URL（mobile.rs 的 e2e_open，仅 debug 构建），跳过配对，经与生产相同的 open_remote 打开它：
 #     远程能力与 MOBILE_HOST_PERMISSIONS 照常注入，页面的 host_ready / host_tab_bar_* / host_header_* 都过权限校验；
-#   - 页面认出 iOS 壳（壳注入的 window.__ORYN_HOST__，bridge ≥ 5）并进入 compact 下沉侧栏布局，原生底栏接管；线程页上原生页头接管；
-#   - 触摸由 XCUITest 合成（ios-e2e/，XcodeGen 生成工程）：经模拟器 HID 与 UIKit 命中测试，网页与原生叠层收到的都是真触摸。
+#   - 页面认出 iOS 壳（壳注入的 window.__ORYN_HOST__，bridge ≥ 7）并进入 compact 下沉侧栏布局：原生底栏（系统 UITabBar，
+#     垫在 WebView 之下，接管期间页面透明、遮挡由网页合成器决定）接管；线程页上原生页头接管，并跟着卡片走；
+#   - 触摸由 XCUITest 合成（ios-e2e/，XcodeGen 生成工程）：经模拟器 HID 与 UIKit 命中测试，网页、底栏的触摸转交层与原生页头收到的都是真触摸。
 # 三个 UI 测试先后各跑一次 xcodebuild（-only-testing），测试与本脚本经共享目录交接（见 E2ESupport.swift）。
-# 底栏（TabBarE2ETests.swift，从首页 / 起步）：
-#   loaded   页面就绪：截关闭态基线，回传胶囊矩形（来自事件日志 tabbar.set）
-#   open     点页头的侧栏按钮：等揭示边到侧栏宽，截图（无障碍树断言原生可见、网页胶囊隐藏在测试里）
-#   closed   点露出的卡片条：等揭示边归 0，截图
-#   drag     从左缘拖到约一半并按住：等揭示边停稳，按住期间截图
+# 底栏（TabBarE2ETests.swift，从首页 / 起步）。tabbar.reveal {x, covered} 是卡片左缘与遮挡：每次开合吸附（发终点）、拖动开始、
+# 遮挡变化各一条，同值去重，拖动中不逐帧发；原生据此只决定底栏接不接触摸，卡片的过渡全由网页自己走。
+#   loaded   页面就绪：接管时补发的 tabbar.reveal（x = 0），截关闭态基线，回传胶囊矩形（来自事件日志 tabbar.set）
+#   open     点页头的侧栏按钮：等 tabbar.reveal 报 x = 侧栏宽，截图（无障碍树断言原生按钮在、网页胶囊隐藏、卡片 inert 在测试里）
+#   closed   点露出的卡片条：等 tabbar.reveal 报 x = 0，截图
+#   drag     从左缘拖到约一半并按住：从关闭位起手时拖动开始那条被去重，事件日志里没有信号；就绪看截图——
+#            底栏横条连拍两张一致（卡片停住）且揭示边左侧已与关闭基线不同，期间没有新的 tabbar.reveal（没松手）
 #   projects 点原生底栏的「项目」：等 tabbar.tap 与网页回发的 tabbar.set（selected = projects），截图
-#   final    再点「项目」收起侧栏：等揭示边归 0，截图
+#   swipe    在原生底栏上按住「项目」横滑到第 1 项再松手（系统透镜换选中）：等 tabbar.tap 与 tabbar.set（selected = threads），截图
+#   final    再点已选中的第 1 项收起侧栏：等 tabbar.reveal 报 x = 0，截图
 # 页头（HeaderE2ETests.swift，直接打开 mock 的线程页 /t/<MAIN_THREAD>）：
-#   h-loaded  header.set（key = 线程 id）与 header.show（alpha 1）：原生页头接管，回传三件矩形
+#   h-loaded  header.set（key = 线程 id）与 header.show（alpha 1、dx 0）：原生页头接管，回传三件矩形与侧栏宽
 #   h-native  原生三件接管、网页三件隐藏（无障碍树断言在测试里），截图
 #   h-menu    点原生标题胶囊：等 header.event（menu = title），截图
 #   h-sub     点「Orb」行进子页：此时不应有任何 select，截图
 #   h-back    点返回行回主页，截图
 #   h-dialog  点「改名」：等 header.event（select / title / rename），网页打开对话框、遮挡探测让原生让位（header.show alpha 0），截图
 #   h-return  点遮罩关掉对话框：等 header.show（alpha 1），截图
-#   h-sidebar 点原生侧栏钮：等 header.event（lead）、header.show（alpha 0）与原生底栏揭示到侧栏宽，截图
-#   h-closed  点卡片条关侧栏：等揭示边归 0 与 header.show（alpha 1），截图
+#   h-sidebar 点原生侧栏钮：等 header.event（lead）与原生底栏的 tabbar.reveal（x = 侧栏宽）；原生页头不让位，跟着卡片吸附到右边
+#             （header.show alpha 1、dx = 侧栏宽、passive，带 ms 与绝对起步时刻 at），期间没有 alpha 0，截图
+#   h-closed  点卡片条关侧栏：等 tabbar.reveal（x = 0）、关闭吸附（dx 0、passive、at）与静止后的 header.show（dx 0、passive false），截图
 # 可替换图标（AppIconE2ETests.swift，直接打开 mock 的 /settings/appearance）：点「品牌色」、点掉系统提示、
 #   等 appicon.set（accent），再点「黑白」同样等 appicon.set（default）；测试自己完成，脚本只核对事件顺序。
 # 像素断言（逐区域比较，同 ios-region-diff.swift）全部打印并写进 Step Summary，任一不符则退出码 1；
 # 全部断言跑完且通过才写 <输出目录>/.complete。
-# 事件日志里的 tabbar.reveal / header.show 只有 debug 包会写（mobile.rs）。就绪一律靠事件日志判断，不靠固定 sleep。
+# 事件日志里的 tabbar.reveal / header.show 只有 debug 包会写（mobile.rs）。就绪靠事件日志判断（拖动靠连拍截图），不靠固定 sleep。
 # 用法：ios-e2e-check.sh <Oryn.app> <mock Web UI 构建目录> <输出目录>
 set -euo pipefail
 if (($# != 3)); then
@@ -160,27 +165,41 @@ until_ok() {
   fail "$step" "${secs} 秒内没有等到：${what}"
 }
 
-# 揭示边停稳：tabbar.reveal 的条数 0.75 秒内不再变（吸附由原生插值，网页只发端点；拖动时每帧一条）
-reveal_quiet() {
-  local a b
-  a=$(count tabbar.reveal)
-  sleep 0.75
-  b=$(count tabbar.reveal)
-  [[ $a == "$b" ]]
-}
-
-# 最后一条某事件满足 jq 条件（$w = 侧栏宽，$dx = 拖动的手指位移，$k = 页头测试打开的线程 id）
+# 最后一条某事件满足 jq 条件（$w = 侧栏宽，$k = 页头测试打开的线程 id）
 last_is() {
-  last "$1" | jq -e --argjson w "${sink_w:-0}" --argjson dx "${dx:-0}" --arg k "${thread:-}" "$2"
+  last "$1" | jq -e --argjson w "${sink_w:-0}" --arg k "${thread:-}" "$2"
 }
 reveal_is() { last_is tabbar.reveal "$1"; }
-# 揭示边停稳且停在满足条件的位置（先等停稳再判条件：停稳前的中间值不算）
-settled() { reveal_quiet && reveal_is "$1"; }
-# web_ready <最低 bridge>：host_ready 过了远程能力的权限校验才会记 web.ready；bridge 4 = 页面认得原生底栏，5 = 原生页头
+# 卡片左缘停在打开位 / 关闭位、底栏没被网页内容压住（tabbar.reveal 只在吸附开始时发终点，过渡由网页自己走）
+opened='.x >= $w - 1 and .covered == false'
+closed='.x == 0 and .covered == false'
+# web_ready <最低 bridge>：host_ready 过了远程能力的权限校验才会记 web.ready；bridge 7 = 原生底栏垫底、原生页头跟随卡片
 web_ready() { ev web.ready | jq -se --arg o "$origin" --argjson b "$1" 'any(.origin == $o and .bridge >= $b)'; }
+
+# pt → 截图像素（scale 在 loaded 步骤由基线截图算出）
+px() { awk -v v="$1" -v s="$scale" 'BEGIN { printf "%d", v * s + 0.5 }'; }
+calc() { awk "BEGIN { print $1 }"; }
+# strip_diff <图 a> <图 b> <x（pt）> <宽（pt）>：胶囊所在横条里两张图（完整路径）同位置区域的不同像素占比
+strip_diff() { "$work/region-diff" "$1" "$2" "$(px "$3")" "$(px "$fy")" "$(px "$4")" "$(px "$fh")"; }
+# at_most <比值> <阈值>
+at_most() { awk -v r="$1" -v t="$2" 'BEGIN { exit !(r <= t) }'; }
 
 # 限时截图（见 ios-sim.sh 的 sim_shot）；普通步骤截不到图直接判失败
 shot() { sim_shot "$out/e2e-$1.png" 60 || fail "$1" "截图 60 秒没有返回（模拟器卡住）"; }
+# steady_shot <步骤>：卡片过渡由网页合成器走，没有「停稳」事件；连拍到胶囊横条前后两张一致（≤ 0.01）才收下后一张
+steady_shot() {
+  local prev="$work/steady-prev.png" next="$work/steady-next.png" end=$((SECONDS + 120))
+  sim_shot "$prev" 60 || fail "$1" "截图 60 秒没有返回（模拟器卡住）"
+  while ((SECONDS < end)); do
+    sim_shot "$next" 60 || fail "$1" "截图 60 秒没有返回（模拟器卡住）"
+    if at_most "$(strip_diff "$next" "$prev" "$fx" "$fw")" 0.01; then
+      mv "$next" "$out/e2e-$1.png"
+      return 0
+    fi
+    mv "$next" "$prev"
+  done
+  fail "$1" "120 秒内底栏横条没有停稳（连拍两张总是不同）"
+}
 
 # ok <步骤> [JSON]：放行测试的这一步
 ok() {
@@ -214,12 +233,12 @@ req=""
 wait_req loaded 420
 until_ok loaded 30 "e2e.open" last_is e2e.open '.'
 last_is e2e.open '.ok' >/dev/null || fail loaded "ORYN_E2E_URL 没有打开：$(last e2e.open)"
-until_ok loaded 60 "web.ready（${origin}，bridge ≥ 4）" web_ready 4
+until_ok loaded 60 "web.ready（${origin}，bridge ≥ 7）" web_ready 7
 until_ok loaded 60 "tabbar.set（原生底栏接管）" last_is tabbar.set '.on and .frame != null'
 frame=$(last tabbar.set | jq -c .frame)
 read -r fx fy fw fh < <(jq -r '[.x, .y, .width, .height] | @tsv' <<<"$frame")
 sink_w=$(awk -v x="$fx" -v w="$fw" 'BEGIN { print 2 * x + w }')
-until_ok loaded 30 "关闭态的揭示边停在 x = 0" settled '.x == 0'
+until_ok loaded 30 "接管时补发当前开合：tabbar.reveal 停在 x = 0" reveal_is "$closed"
 sleep 1
 shot closed0
 pw=$(sips -g pixelWidth "$out/e2e-closed0.png" | awk '/pixelWidth/ { print $2 }')
@@ -228,56 +247,57 @@ echo "胶囊：${frame}，侧栏宽 ${sink_w}，缩放 ${scale}"
 ok loaded "{\"frame\":$frame}"
 
 wait_req open 120
-until_ok open 15 "打开：揭示边停在侧栏宽且不透明" settled '.x >= $w - 1 and .alpha == 1'
-sleep 0.5
-shot open
+until_ok open 15 "打开：tabbar.reveal 报侧栏宽" reveal_is "$opened"
+steady_shot open
 ok open
 
 wait_req closed 120
-until_ok closed 15 "关闭：揭示边停在 0" settled '.x == 0'
-sleep 0.5
-shot closed1
+until_ok closed 15 "关闭：tabbar.reveal 报 0" reveal_is "$closed"
+steady_shot closed1
 ok closed
 
-# 按住 40 秒：停稳判定与截图都要落在按住期间，截完再确认期间没有新的揭示边（松手会发吸附终点）。
+# 拖动：从关闭位起手，tabbar.reveal 本来就是 x = 0，拖动开始那条被控制器去重，按住期间事件日志里没有信号；
+# 就绪改看截图：胶囊横条连拍两张一致（卡片停住了），且揭示边左侧与关闭基线不同（确实拖开了）。
+# 松手会发吸附终点（tabbar.reveal x = 侧栏宽），所以 req 之后 tabbar.reveal 的条数一变就是已经松手。
+# 卡片的平移就是手指位移（sinkProgress：0 + dx / 侧栏宽，拖到约一半不会夹到 1），揭示边取 dx。
+# 按住 40 秒：判定用的两张截图都要落在按住期间，截完再确认没有新的 tabbar.reveal。
 # CI 的 macOS 机器会整机卡顿几十秒到几分钟（截图曾卡 3 分钟），没赶上就让测试收起侧栏重拖，最多 3 次；
 # 每次的步骤名带序号（drag1 / drag2 / drag3），交接文件不会与上一次混淆。
 # 测试先发 req 再起手，XCUITest 起手前可能还要等 App 空闲，所以等 req 放宽
-drag_at='.ms == 0 and .x > $w * 0.3 and .x < $w * 0.8 and (.x - $dx | if . < 0 then -. else . end) <= 2'
 for attempt in 1 2 3; do
   step="drag$attempt"
   wait_req "$step" 300
-  dx=$(jq -r .dx <<<"$req")
+  edge=$(jq -r .dx <<<"$req")
+  n=$(count tabbar.reveal)
+  prev=""
   state=timeout
   end=$((SECONDS + 180))
   while ((SECONDS < end)); do
-    if settled "$drag_at"; then
-      n=$(count tabbar.reveal)
-      edge=$(last tabbar.reveal | jq -r .x)
-      # 截图限时 40 秒（与按住时长相同）：超时或截完发现已松手都算没赶上，重拖
-      if sim_shot "$out/e2e-drag.png" 40 && [[ $(count tabbar.reveal) == "$n" ]]; then
-        state=held
-      else
-        state=missed
-      fi
-      break
-    fi
-    # 已经松手并吸附到打开：这次按住期间没来得及判定
-    if reveal_is '.ms > 0 and .x >= $w - 1'; then
+    # 截图限时 40 秒（与按住时长相同）：超时、截之前或截完发现已松手都算没赶上，重拖
+    if [[ $(count tabbar.reveal) != "$n" ]] || ! sim_shot "$work/drag-next.png" 40 ||
+      [[ $(count tabbar.reveal) != "$n" ]]; then
       state=missed
       break
     fi
-    sleep 0.25
+    if [[ -n $prev ]] &&
+      at_most "$(strip_diff "$work/drag-next.png" "$prev" "$fx" "$fw")" 0.01 &&
+      ! at_most "$(strip_diff "$work/drag-next.png" "$out/e2e-closed0.png" "$fx" "$(calc "$edge - 72 - $fx")")" 0.01; then
+      mv "$work/drag-next.png" "$out/e2e-drag.png"
+      state=held
+      break
+    fi
+    mv "$work/drag-next.png" "$work/drag-prev.png"
+    prev="$work/drag-prev.png"
   done
   case $state in
   held)
-    echo "拖动揭示边：${edge}（手指位移 ${dx}，第 ${attempt} 次）"
+    echo "拖动揭示边：${edge}（= 手指位移，第 ${attempt} 次）"
     ok "$step"
     break
     ;;
-  timeout) fail "$step" "180 秒内揭示边没有停在手指位移附近（${dx}），也没有松手吸附" ;;
+  timeout) fail "$step" "180 秒内胶囊横条没有在拖开后停稳（手指位移 ${edge}），也没有松手吸附" ;;
   esac
-  ((attempt < 3)) || fail "$step" "连续 3 次都没能在按住期间截到图（揭示边又动了）"
+  ((attempt < 3)) || fail "$step" "连续 3 次都没能在按住期间连拍到停稳的两张图"
   echo "::warning::第 ${attempt} 次拖动没赶在按住期间截图，收起后重拖"
   ok "$step" '{"retry":true}'
 done
@@ -287,32 +307,36 @@ wait_req projects 120
 until_ok projects 15 "原生点击上报 tabbar.tap（projects）" last_is tabbar.tap '.id == "projects"'
 until_ok projects 15 "网页切到「项目」后回发 tabbar.set（selected = projects）" \
   last_is tabbar.set '.on and .selected == "projects"'
-until_ok projects 15 "点「项目」后侧栏保持打开（揭示边停在侧栏宽且不透明）" settled '.x >= $w - 1 and .alpha == 1'
-sleep 0.5
-shot projects
+until_ok projects 15 "点「项目」后侧栏保持打开（tabbar.reveal 仍是侧栏宽）" reveal_is "$opened"
+steady_shot projects
 ok projects
 
+# 系统透镜的横滑选中：按住已选中的「项目」横滑到第 1 项（threads）松手 → UITabBar 换选中 → 同一条 tabbar.tap 路径
+wait_req swipe 120
+until_ok swipe 15 "横滑松手后上报 tabbar.tap（threads）" last_is tabbar.tap '.id == "threads"'
+until_ok swipe 15 "网页切到第 1 项后回发 tabbar.set（selected = threads）" \
+  last_is tabbar.set '.on and .selected == "threads"'
+until_ok swipe 15 "横滑换项后侧栏保持打开（tabbar.reveal 仍是侧栏宽）" reveal_is "$opened"
+steady_shot swipe
+ok swipe
+
 wait_req final 120
-until_ok final 15 "再点「项目」收起：揭示边停在 0" settled '.x == 0'
-sleep 0.5
-shot final
+until_ok final 15 "再点已选中的第 1 项收起：tabbar.reveal 报 0" reveal_is "$closed"
+steady_shot final
 ok final
 
 finish_runner
 
 # ---------------------------------------------------------------- 像素断言
 
-px() { awk -v v="$1" -v s="$scale" 'BEGIN { printf "%d", v * s + 0.5 }'; }
-calc() { awk "BEGIN { print $1 }"; }
-
 failed=0
 # check <说明> <截图 a> <截图 b> <区域 x（pt）> <区域宽（pt）> <shown|same> [b 的区域 x（pt）]
 # 区域竖直范围是胶囊所在的横条；比值 = 不同像素的占比。shown：≥ 0.01；same：≤ 0.01。
-# 给了 b 的 x 时（比较平移过的卡片）在 ±2 像素内取最小值，吸收换算到像素的舍入。
+# 给了 b 的 x 时（比较平移过的卡片）在 ±2pt 内取最小值：揭示边取的是手指位移，吸收它与实际平移之差及换算到像素的舍入。
 check() {
-  local label=$1 a=$2 b=$3 x=$4 w=$5 want=$6 bx=${7:-$4} r best="" d ok
-  for d in -2 -1 0 1 2; do
-    if [[ -z ${7:-} && $d != 0 ]]; then continue; fi
+  local label=$1 a=$2 b=$3 x=$4 w=$5 want=$6 bx=${7:-$4} r best="" d ok reach=0
+  if [[ -n ${7:-} ]]; then reach=$(px 2); fi
+  for ((d = -reach; d <= reach; d++)); do
     r=$("$work/region-diff" "$out/e2e-$a.png" "$out/e2e-$b.png" \
       "$(px "$x")" "$(px "$fy")" "$(px "$w")" "$(px "$fh")" "$(($(px "$bx") + d))")
     if [[ -z $best ]] || awk -v r="$r" -v b="$best" 'BEGIN { exit !(r < b) }'; then best=$r; fi
@@ -330,14 +354,15 @@ check() {
   fi
 }
 
-# 打开：胶囊处不再是卡片（与关闭基线不同）；关闭：回到关闭基线（原生没有残留）
+# 打开：胶囊处不再是卡片（与关闭基线不同）；关闭：回到关闭基线（卡片重新盖住垫底的原生底栏）
 check "打开：胶囊处与关闭基线不同" open closed0 "$fx" "$fw" shown
 check "关闭：胶囊处回到关闭基线" closed1 closed0 "$fx" "$fw" same
-# 拖动：揭示边左侧与打开态一致（侧栏层不动，原生胶囊露出）；让出 72pt 避开卡片投影（--sh-xl）
+# 拖动：揭示边左侧与打开态一致（侧栏层不动，垫底的原生底栏从透明页面透出）；让出 72pt 避开卡片投影（--sh-xl）
 check "拖动：揭示边左侧与打开态一致" drag open "$fx" "$(calc "$edge - 72 - $fx")" same
 check "拖动：揭示边左侧与关闭基线不同" drag closed0 "$fx" "$(calc "$edge - 72 - $fx")" shown
-# 拖动：揭示边右侧是整体右移 edge 的卡片，与关闭基线错位比较一致 = 原生底栏没有画到卡片上；让出 6pt 避开发丝线
-check "拖动：揭示边右侧是平移的卡片（底栏没画到卡片上）" drag closed0 \
+# 拖动：揭示边右侧是整体右移 edge 的卡片，与关闭基线错位比较一致 = 卡片不透明、底栏没有透到卡片上；
+# 让出 6pt 避开发丝线与卡片左下圆角
+check "拖动：揭示边右侧是平移的卡片（底栏没透到卡片上）" drag closed0 \
   "$(calc "$edge + 6")" "$(calc "$fx + $fw - $edge - 6")" same 6
 
 # ---------------------------------------------------------------- 原生页头（第二次 xcodebuild，只跑 HeaderE2ETests）
@@ -360,20 +385,20 @@ runner=$!
 wait_req h-loaded 420
 until_ok h-loaded 30 "e2e.open" last_is e2e.open '.'
 last_is e2e.open '.ok' >/dev/null || fail h-loaded "ORYN_E2E_URL 没有打开：$(last e2e.open)"
-until_ok h-loaded 60 "web.ready（${origin}，bridge ≥ 5）" web_ready 5
+until_ok h-loaded 60 "web.ready（${origin}，bridge ≥ 7）" web_ready 7
 until_ok h-loaded 30 "header.set（原生页头接管 ${thread}）" last_is header.set '.on and .key == $k'
-until_ok h-loaded 30 "header.show（alpha 1：原生页头显示）" last_is header.show '.alpha == 1'
+until_ok h-loaded 30 "header.show（alpha 1、dx 0：原生页头显示在关闭位）" last_is header.show '.alpha == 1 and .dx == 0'
 hset=$(last header.set)
 jq -e '.trail != null' <<<"$hset" >/dev/null || fail h-loaded "线程页没有视图钮（header.set 的 trail 为 null）：${hset}"
 read -r lx _ _ _ < <(jq -r '.lead | [.x, .y, .width, .height] | @tsv' <<<"$hset")
 read -r tx ty tw th < <(jq -r '.title | [.x, .y, .width, .height] | @tsv' <<<"$hset")
 read -r rx _ rw _ < <(jq -r '.trail | [.x, .y, .width, .height] | @tsv' <<<"$hset")
-# 原生底栏的揭示边要用侧栏宽（线程页同样在下沉侧栏布局里）
+# 侧栏宽：原生底栏与原生页头吸附到打开位的终点（线程页同样在下沉侧栏布局里）
 until_ok h-loaded 30 "tabbar.set（原生底栏接管）" last_is tabbar.set '.on and .frame != null'
 sink_w=$(last tabbar.set | jq -r '.frame | 2 * .x + .width')
-until_ok h-loaded 30 "关闭态的揭示边停在 x = 0" settled '.x == 0'
-echo "页头：$(jq -c '{lead, title, trail}' <<<"$hset")"
-ok h-loaded "$(jq -c '{lead, title, trail}' <<<"$hset")"
+until_ok h-loaded 30 "接管时补发当前开合：tabbar.reveal 停在 x = 0" reveal_is "$closed"
+echo "页头：$(jq -c '{lead, title, trail}' <<<"$hset")，侧栏宽 ${sink_w}"
+ok h-loaded "$(jq -c --argjson w "$sink_w" '{lead, title, trail, sinkW: $w}' <<<"$hset")"
 
 # 原生三件接管、网页三件隐藏的无障碍树断言在测试里；这里确认原生页头此刻是显示的
 wait_req h-native 120
@@ -413,22 +438,36 @@ ok h-dialog
 
 wait_req h-return 60
 until_ok h-return 15 "对话框关掉后原生页头回来（header.show alpha 1）" last_is header.show '.alpha == 1'
+# 之后的开合期间原生页头一直显示：从这里起数 header.show
+shows=$(count header.show)
 sleep 0.7
 shot h-return
 ok h-return
 
-# 原生侧栏钮 → header.event lead → 页面开侧栏 → 卡片一动原生页头就让位，原生底栏揭示到侧栏宽
+# 原生侧栏钮 → header.event lead → 页面开侧栏 → 原生页头不让位：按网页给的终点、时长、缓动与绝对起步时刻
+# （at = 卡片起步时刻，打开早 SYNC_BIAS_MS）跟着卡片吸附到右边，只显示不接触摸（passive）；原生底栏的 tabbar.reveal 到侧栏宽
 wait_req h-sidebar 60
 until_ok h-sidebar 15 "header.event（lead）" last_is header.event '.op == "lead" and .key == $k'
-until_ok h-sidebar 15 "开侧栏时原生页头让位（header.show alpha 0）" last_is header.show '.alpha == 0'
-until_ok h-sidebar 15 "开侧栏：揭示边停在侧栏宽且不透明" settled '.x >= $w - 1 and .alpha == 1'
+until_ok h-sidebar 15 "开侧栏：tabbar.reveal 报侧栏宽" reveal_is "$opened"
+until_ok h-sidebar 15 "开侧栏：原生页头跟着卡片吸附到侧栏宽（header.show alpha 1、dx = 侧栏宽、passive、ms > 0、带 at）" \
+  last_is header.show '.alpha == 1 and .passive == true and .ms > 0 and .at != null and (.dx - $w | if . < 0 then -. else . end) <= 1'
+since=$(ev header.show | tail -n "+$((shows + 1))")
+jq -se 'all(.alpha == 1)' <<<"$since" >/dev/null ||
+  fail h-sidebar "开侧栏时原生页头不该让位（出现了 alpha 0）：$(tr '\n' ' ' <<<"$since")"
 sleep 0.5
 shot h-sidebar
 ok h-sidebar
 
+# 点卡片条关侧栏 → 原生页头跟着卡片吸附回 dx 0（关闭晚 SYNC_BIAS_MS 起步），静止 REST_MS 后再发一条 passive false 重新接触摸
 wait_req h-closed 60
-until_ok h-closed 15 "关侧栏：揭示边停在 0" settled '.x == 0'
-until_ok h-closed 15 "关侧栏后原生页头回来（header.show alpha 1）" last_is header.show '.alpha == 1'
+until_ok h-closed 15 "关侧栏：tabbar.reveal 报 0" reveal_is "$closed"
+until_ok h-closed 15 "关侧栏后原生页头静止在关闭位、重新接触摸（header.show alpha 1、dx 0、passive false）" \
+  last_is header.show '.alpha == 1 and .dx == 0 and .passive == false'
+since=$(ev header.show | tail -n "+$((shows + 1))")
+jq -se 'any(.dx == 0 and .passive == true and .ms > 0 and .at != null)' <<<"$since" >/dev/null ||
+  fail h-closed "关侧栏时原生页头没有跟着卡片吸附（没有 dx 0、passive、带 at 的 header.show）：$(tr '\n' ' ' <<<"$since")"
+jq -se 'all(.alpha == 1)' <<<"$since" >/dev/null ||
+  fail h-closed "开合期间原生页头不该让位（出现了 alpha 0）：$(tr '\n' ' ' <<<"$since")"
 sleep 0.7
 shot h-closed
 ok h-closed

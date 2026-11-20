@@ -1,8 +1,9 @@
 // 原生页头的端到端 UI 测试（ios-e2e-check.sh 在底栏测试之后单独驱动，只在 CI 的 iOS 26+ 模拟器里跑）。
 // Oryn.app 是 debug 构建：ORYN_E2E_URL 直接打开 mock Web UI 的一个线程页（/t/<MAIN_THREAD>），走与生产相同的
-// open_remote（远程能力 + 宿主命令权限）。页面认出 iOS 壳（bridge ≥ 5）后由原生 Liquid Glass 页头接管线程页的三件控件。
+// open_remote（远程能力 + 宿主命令权限）。页面认出 iOS 壳（bridge ≥ 7）后由原生 Liquid Glass 页头接管线程页的三件控件；
+// 原生页头一直跟着下沉卡片走（开合时整层平移到卡片左缘，只显示不接触摸），只在网页内容盖住页头时让位。
 // 步骤（测试写 <步骤>.req，脚本断言事件日志并截图后放行，见 E2ESupport.swift）：
-//   h-loaded   原生侧栏钮出现：脚本确认 header.set（key = 线程 id）与 header.show（alpha 1），回传三件矩形
+//   h-loaded   原生侧栏钮出现：脚本确认 header.set（key = 线程 id）与 header.show（alpha 1），回传三件矩形与侧栏宽
 //   h-native   无障碍树：三件矩形里都是原生按钮，网页三件已退出无障碍树（aria-hidden）
 //   h-menu     点原生标题胶囊：原生面板展开（出现「改名」行），脚本确认 header.event（menu = title）
 //   h-sub      点「Orb」行：面板原地换成子页（「返回, Orb」行），不产生 select
@@ -10,8 +11,9 @@
 //   h-dialog   点「改名」：脚本确认 header.event（select / title / rename）；网页打开改名对话框（无障碍树里有输入框），
 //              遮挡探测让原生页头让位（header.show alpha 0，原生按钮消失）
 //   h-return   点对话框上方的遮罩关掉它：原生页头回来
-//   h-sidebar  点原生侧栏钮：脚本确认 header.event（lead），网页打开侧栏，原生页头让位、原生底栏露出
-//   h-closed   点露出的卡片条关侧栏：原生页头回来
+//   h-sidebar  点原生侧栏钮：脚本确认 header.event（lead）；网页打开侧栏，原生页头不让位、随卡片右移侧栏宽
+//              （原矩形里没有原生按钮，原生侧栏钮出现在右移后的位置，其余两件大部分在屏外）
+//   h-closed   点露出的卡片条关侧栏：原生页头随卡片回到原位
 import XCTest
 
 final class HeaderE2ETests: E2ECase {
@@ -38,8 +40,10 @@ final class HeaderE2ETests: E2ECase {
     }
     let screen = app.frame.size
     let loaded = try checkpoint("h-loaded")
-    guard let lead = rect(loaded["lead"]), let title = rect(loaded["title"]) else {
-      throw E2EFailure("脚本没有回传页头矩形：\(loaded)")
+    guard let lead = rect(loaded["lead"]), let title = rect(loaded["title"]),
+      let sinkW = loaded["sinkW"] as? Double
+    else {
+      throw E2EFailure("脚本没有回传页头矩形与侧栏宽：\(loaded)")
     }
     // mock 线程有 orb，视图钮一定在；没有时脚本已判失败，这里不再要求
     let slots = [lead, title] + (rect(loaded["trail"]).map { [$0] } ?? [])
@@ -85,12 +89,12 @@ final class HeaderE2ETests: E2ECase {
     try expectHeader(app, slots, native: true, "对话框关掉后")
     _ = try checkpoint("h-return")
 
-    // 7. 点原生侧栏钮：网页打开侧栏，原生页头让位
+    // 7. 点原生侧栏钮：网页打开侧栏，原生页头不让位，随卡片右移侧栏宽
     point(app, lead.midX, lead.midY).tap()
-    try expectHeader(app, slots, native: false, "打开侧栏后")
+    try expectShifted(app, slots, lead, by: CGFloat(sinkW), "打开侧栏后")
     _ = try checkpoint("h-sidebar")
 
-    // 8. 点露出的卡片条关侧栏：原生页头回来
+    // 8. 点露出的卡片条关侧栏：原生页头随卡片回到原位
     point(app, screen.width - 16, screen.height / 2).tap()
     try expectHeader(app, slots, native: true, "关侧栏后")
     _ = try checkpoint("h-closed")
@@ -133,6 +137,31 @@ extension HeaderE2ETests {
       throw E2EFailure(
         "\(step)：期望原生页头\(want ? "接管且网页三件隐藏" : "让位")；"
           + "各矩形里的原生按钮 \(natives)，网页按钮 \(webs)")
+    }
+  }
+
+  /// 等到原生页头随卡片右移 `dx`：原生侧栏钮的中心落在右移后的侧栏钮矩形里（四周放宽 8pt，吸收侧栏宽与卡片实际平移的舍入），
+  /// 原矩形里除了它（右移后可能正好落在视图钮的原位上）没有别的原生按钮。标题与视图钮右移后大部分在屏外，不作要求。
+  private func expectShifted(
+    _ app: XCUIApplication, _ slots: [CGRect], _ lead: CGRect, by dx: CGFloat, _ step: String
+  ) throws {
+    let target = lead.offsetBy(dx: dx, dy: 0).insetBy(dx: -8, dy: -8)
+    var natives: [[String]] = []
+    var moved: Snap?
+    let ok = try poll(timeout: 10) {
+      natives = try slots.map { slot in
+        try self.buttons(in: slot, of: app).native.map(\.label).filter { !self.sidebar.contains($0) }
+      }
+      moved = try self.native(app, self.sidebar)
+      guard let snap = moved else { return false }
+      return natives.allSatisfy { $0.isEmpty }
+        && target.contains(CGPoint(x: snap.frame.midX, y: snap.frame.midY))
+    }
+    if !ok {
+      let seen = moved.map { "\($0.frame)" } ?? "没有"
+      throw E2EFailure(
+        "\(step)：期望原生页头随卡片右移 \(dx)pt（侧栏钮中心落在 \(target)）；"
+          + "原矩形里的其它原生按钮 \(natives)，原生侧栏钮 \(seen)")
     }
   }
 }

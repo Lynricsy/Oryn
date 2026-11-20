@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# iOS 模拟器 CI 脚本的公共部分：ios-tabbar-check.sh / ios-header-check.sh（原生演示）与 ios-e2e-check.sh（真实网页 + 真实触摸）
+# iOS 模拟器 CI 脚本的公共部分：ios-header-check.sh（原生页头演示）与 ios-e2e-check.sh（真实网页 + 真实触摸）
 # 都 source 它，几步用同一台模拟器。
 # 下面函数设置的全局变量（app / out / bundle / summary / work / udid / data / log）由 source 它的脚本使用。
 # shellcheck disable=SC2034

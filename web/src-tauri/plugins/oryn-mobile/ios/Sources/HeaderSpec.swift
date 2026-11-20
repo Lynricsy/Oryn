@@ -131,6 +131,8 @@ struct HeaderShowArgs: Decodable {
   let ms: Double?
   let delay: Double?
   let ease: [Double]?
+  /// 起步的绝对时刻（Unix 毫秒）；有它时忽略 `delay`。
+  let at: Double?
 }
 
 /// `headerMenu` 的载荷：`open` 为 `title` / `trail` / null；`page` = 子页的父项 id。

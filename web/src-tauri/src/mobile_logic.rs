@@ -384,7 +384,7 @@ fn valid_ease(e: Option<[f64; 4]>) -> bool {
 /// items 1..=6、id 互不相同且 `valid_tab_id`；label 1..=64 个字符；
 /// icon：symbol 1..=64 字节 `[a-z0-9.]`，glyph 1..=32 字节，image 1..=131072 字节且全是 base64 字符（`A-Za-z0-9+/=`）；
 /// selected ≤ 32 字节；frame 四项有限，x、y ∈ [-100, 5000]，width ∈ [1, 2000]，height ∈ [1, 400]；
-/// accent 为 None 或 `valid_color`。
+/// accent 为 None 或 `valid_color`；bg 为 `valid_color`。
 pub fn valid_tab_bar(spec: &TabBarSpec) -> bool {
     let items = &spec.items;
     let items_ok = (1..=6).contains(&items.len())
@@ -398,15 +398,12 @@ pub fn valid_tab_bar(spec: &TabBarSpec) -> bool {
         && spec.selected.len() <= 32
         && valid_frame(&spec.frame)
         && spec.accent.as_deref().is_none_or(valid_color)
+        && valid_color(&spec.bg)
 }
 
-/// x 有限且 ∈ [-10000, 10000]；alpha ∈ [0, 1]；ms ≤ 2000；delay ≤ 1000；ease 见 `valid_ease`。
+/// x 有限且 ∈ [-10000, 10000]。
 pub fn valid_reveal(r: &TabBarReveal) -> bool {
     within(r.x, -10_000.0, 10_000.0)
-        && within(r.alpha, 0.0, 1.0)
-        && r.ms <= 2000
-        && r.delay <= 1000
-        && valid_ease(r.ease)
 }
 
 // ---------------------------------------------------------------- 可替换图标（iOS）
@@ -448,24 +445,6 @@ pub fn app_icon_info(supported: bool, asset: Option<&str>) -> AppIconInfo {
             .chain(APP_ICONS.iter().map(|(id, _)| *id))
             .collect(),
     }
-}
-
-/// CI 演示用：夹具 tab-bar-set.json，只把 frame 换成该屏幕下网页会算出的位置。返回 (spec, 侧栏宽度)。
-/// sink_w = min(0.82 * width, 320)；frame = {x: 12, y: height - max(safe_bottom, 8) - 52, width: sink_w - 24, height: 52}
-#[cfg(any(test, all(debug_assertions, target_os = "ios")))]
-pub fn demo_tab_bar(width: f64, height: f64, safe_bottom: f64) -> (TabBarSpec, f64) {
-    let mut spec: TabBarSpec = serde_json::from_str(include_str!(
-        "../plugins/oryn-mobile/fixtures/tab-bar-set.json"
-    ))
-    .expect("tab-bar-set.json 夹具");
-    let sink_w = (0.82 * width).min(320.0);
-    spec.frame = tauri_plugin_oryn_mobile::TabBarFrame {
-        x: 12.0,
-        y: height - safe_bottom.max(8.0) - 52.0,
-        width: sink_w - 24.0,
-        height: 52.0,
-    };
-    (spec, sink_w)
 }
 
 // ---------------------------------------------------------------- 原生页头
@@ -593,13 +572,15 @@ pub fn valid_header(spec: &HeaderSpec) -> bool {
         })
 }
 
-/// alpha ∈ [0, 1]；dx 有限且 ∈ [-10000, 10000]；ms ≤ 2000；delay ≤ 1000；ease 见 `valid_ease`。
+/// alpha ∈ [0, 1]；dx 有限且 ∈ [-10000, 10000]；ms ≤ 2000；delay ≤ 1000；ease 见 `valid_ease`；
+/// at 为 None 或有限且 ∈ [0, 1e14]（Unix 毫秒；远近不限：送达已过的时刻原生会立即起步）。
 pub fn valid_header_show(s: &HeaderShow) -> bool {
     within(s.alpha, 0.0, 1.0)
         && within(s.dx, -10_000.0, 10_000.0)
         && s.ms <= 2000
         && s.delay <= 1000
         && valid_ease(s.ease)
+        && s.at.is_none_or(|at| within(at, 0.0, 1e14))
 }
 
 /// `page`（有的话）是合法的菜单项 id。
@@ -1271,6 +1252,8 @@ mod tests {
         rejects_spec("frame x 为 NaN", |s| s.frame.x = f64::NAN);
         rejects_spec("frame 宽为无穷", |s| s.frame.width = f64::INFINITY);
         rejects_spec("accent red", |s| s.accent = Some("red".into()));
+        rejects_spec("bg 为空", |s| s.bg.clear());
+        rejects_spec("bg 带透明度", |s| s.bg = "#f7f6f3cc".into());
         // 边界上的合法值
         let mut s = fixture_spec();
         s.items = (0..6).map(|i| tab_item(&format!("t{i}"))).collect();
@@ -1287,42 +1270,16 @@ mod tests {
         assert!(valid_reveal(&fixture_reveal()));
         assert!(valid_reveal(&TabBarReveal {
             x: 0.0,
-            alpha: 0.0,
-            ms: 0,
-            delay: 0,
-            ease: None,
+            covered: true,
         }));
-        rejects_reveal("alpha 1.5", |r| r.alpha = 1.5);
-        rejects_reveal("ms 2001", |r| r.ms = 2001);
-        rejects_reveal("delay 1001", |r| r.delay = 1001);
-        rejects_reveal("ease[0] 1.2", |r| r.ease = Some([1.2, 0.8, 0.2, 1.0]));
-        rejects_reveal("ease[3] 3.5", |r| r.ease = Some([0.2, 0.8, 0.2, 3.5]));
         rejects_reveal("x 为 NaN", |r| r.x = f64::NAN);
         rejects_reveal("x 越界", |r| r.x = 10_001.0);
     }
 
     #[test]
-    fn tab_bar_demo_and_event() {
-        let (spec, sink_w) = demo_tab_bar(393.0, 852.0, 34.0);
-        assert_eq!(sink_w, 320.0);
+    fn tab_bar_event() {
         assert_eq!(
-            spec.frame,
-            tauri_plugin_oryn_mobile::TabBarFrame {
-                x: 12.0,
-                y: 766.0,
-                width: 296.0,
-                height: 52.0,
-            }
-        );
-        // 其余字段照抄夹具，且仍过校验
-        assert_eq!(spec.items, fixture_spec().items);
-        assert!(valid_tab_bar(&spec));
-        // 窄屏：侧栏宽 = 0.82 × 屏宽；没有安全区时离底 8
-        let (spec, sink_w) = demo_tab_bar(300.0, 600.0, 0.0);
-        assert!((sink_w - 246.0).abs() < 1e-9);
-        assert_eq!(spec.frame.y, 540.0);
-        assert_eq!(
-            tab_bar_event("more"),
+            super::tab_bar_event("more"),
             json!({"type": "tabbar", "id": "more"})
         );
         assert!(valid_tab_id("more"));
@@ -1532,6 +1489,7 @@ mod tests {
             ms: 0,
             delay: 0,
             ease: None,
+            at: None,
         };
         assert!(valid_header_show(&ok));
         assert!(valid_header_show(&HeaderShow {
@@ -1539,6 +1497,7 @@ mod tests {
             ms: 2000,
             delay: 1000,
             ease: Some([0.2, 0.8, 0.2, 1.0]),
+            at: Some(1_795_000_000_034.0),
             ..ok
         }));
         for (name, bad) in [
@@ -1555,6 +1514,8 @@ mod tests {
                     ..ok
                 },
             ),
+            ("at 为 NaN", HeaderShow { at: Some(f64::NAN), ..ok }),
+            ("at 为负", HeaderShow { at: Some(-1.0), ..ok }),
         ] {
             assert!(!valid_header_show(&bad), "{name}");
         }

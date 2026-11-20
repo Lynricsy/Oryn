@@ -203,4 +203,11 @@ Team ID（`XDPWT9ABRD`）写在 `tauri.conf.json` 的 `bundle.iOS.developmentTea
 
 iOS 专用的 Info.plist 键写在 `web/src-tauri/Info.ios.plist`，`tauri ios build` 会合并进生成的 Info.plist。目前只有 `NSCameraUsageDescription`（连接页扫配对二维码、输入区拍照附件）；缺了它 App Store Connect 会以 ITMS-90683 退回构建。`ios-check` 与 `ios-release` 都会断言这个键在、且 `CFBundleShortVersionString` 等于 Cargo.toml 的版本。以后用到其它受保护能力（麦克风、定位、相册写入等）时，同样把用途说明加在这个文件里。
 
+iOS 26+ 的手机布局（下沉侧栏）用原生的底栏与线程页头，协议是壳 bridge 7（`web/src/lib/host.ts` 与 `src-tauri/src/host.rs` 的 `BRIDGE`）：
+
+- **底栏**是系统 `UITabBar`（`plugins/oryn-mobile/ios/Sources/TabBarUnderlay.swift`），垫在 WKWebView 之下。网页接管时给 `<html>` 加 `data-native-under`，页面与下沉根节点变透明，底色交给原生垫底（spec 里必填的 `bg`，与网页的 `--bg` 同一个值）；底栏只从侧栏层透出来，卡片、菜单、弹层都画在它上面，遮挡由网页合成器逐像素决定，原生不做任何揭示动画。WebView 之上只有一块盖住底栏矩形的触摸转交层：网页经 `tabBarReveal {x, covered}` 告诉原生卡片左缘与遮挡，卡片左缘越过底栏右缘且没被网页内容压住时，触摸才交给 `UITabBar`（点选、按住冒出的透镜与横滑换项都是系统行为）。`reveal` 只在开合吸附（发终点）、拖动开始与遮挡变化时各发一次，同值去重。bridge 4–6 的壳把底栏叠在 WebView 上面，协议不同，网页对它们一律用网页底栏。
+- **页头**（侧栏钮 / 标题胶囊 / 视图钮）跟着卡片走：拖动时网页逐帧（按帧合并）发 `show {alpha: 1, dx: 预判的卡片左缘, passive: true}`；松手与按钮、返回键等非手势开合只发终点、时长、缓动与绝对起步时刻 `at`（`Date.now()` 毫秒），原生在同一时刻按同一条曲线自己插值，卡片在原生页头接管时晚 34ms 起步给桥留出送达时间；卡片在动或开着时原生页头只显示不接触摸（`passive`），关上静止后再发一条 `passive: false`。只有网页内容（对话框、弹层）盖住静止关闭的页头时原生才让位（`alpha 0`）。bridge 5–6 的壳不认 `at`，按 `delay` 从收到算起。
+
+CI 的 `ios-check` 在 iOS 26+ 模拟器里跑 `ci/ios-header-check.sh`（原生页头演示：插件直接摆出页头与菜单，比像素并探测触摸归属）与 `ci/ios-e2e-check.sh`（端到端：mock Web UI + 远程能力 + XCUITest 真实触摸，底栏的开合、按住拖动、原生点选与横滑，页头的接管、菜单、对话框让位与随卡片开合；事件日志断言、无障碍树断言与逐区域像素比较，见脚本文件头）。底栏垫在网页之下，没有真实网页就看不到，所以只在端到端里检查。
+
 尚未完成：APNs 推送（服务端 `pushSenders["apns"]`、`PushSubscriptionInput` 增加 `kind: apns`）；Share Extension（App Group 容器 + 同一条上传预填流程）；Universal Links（`/.well-known/apple-app-site-association`）；Keychain 令牌存储的真机验证；iPhone / iPad 真机验收。

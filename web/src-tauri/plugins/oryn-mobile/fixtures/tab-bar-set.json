@@ -22,5 +22,6 @@
 	"selected": "threads",
 	"frame": { "x": 12, "y": 758, "width": 296, "height": 52 },
 	"dark": false,
-	"accent": "#2f6fed"
+	"accent": "#2f6fed",
+	"bg": "#f7f6f3"
 }

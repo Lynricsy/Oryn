@@ -318,6 +318,12 @@ body {
 	overscroll-behavior: none;
 }
 
+/* iOS 原生底栏垫在 WebView 之下时页面透明（lib/native-tab-bar.ts，同组规则见 @layer components 里的 .sink-root）。
+   必须与上面的 body 同为无层规则：放进 @layer 里会被无层的 body 底色压过 */
+:root[data-native-under] body {
+	background: transparent;
+}
+
 @utility pt-safe {
 	padding-top: env(safe-area-inset-top);
 }
@@ -1114,8 +1120,11 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 	}
 	/*
 	 * 手机下沉式侧栏（compact）：侧栏常驻底层（页面底色、无外框无圆角），内容是一张卡片，
-	 * 打开时整张卡片右移 --sink-w 露出侧栏、左缘留一条。进度 --sink-p（0 关、1 开；拖动时由手势写入）驱动平移、圆角与投影。
-	 * 卡片四角与屏幕圆角同心：卡片贴满屏幕（间距 0），半径 = max(较大的圆角令牌 2xl, 视口角半径)；关闭时归 0（沉浸）。
+	 * 打开时整张卡片右移 --sink-w 露出侧栏、左缘留一条。进度 --sink-p（0 关、1 开；拖动时由手势写入）只驱动平移。
+	 * 卡片四角与屏幕圆角同心：卡片贴满屏幕（间距 0），半径 = max(较大的圆角令牌 2xl, 视口角半径)；静止关闭时归 0（沉浸）。
+	 * 圆角与投影不插值、离散切换：两者都不能交给合成器，插值时开合的每一帧都要在主线程重绘整张卡片与它的圆角裁剪
+	 * （顶部还压着页头纱的多层 backdrop-filter，掉帧最重）。卡片贴在屏幕边上时圆角被屏幕圆角挡住、投影落在屏幕外，
+	 * 所以「起步那一刻就到位、收回停稳那一刻才撤掉」看不出跳变：打开 / 拖动立即切到圆角 + 投影，关闭时等平移走完再撤。
 	 * 打开时卡片裁剪内容（overflow: clip），关闭时不裁剪（对话纸面的页头纱需要祖先不带圆角裁剪）。
 	 */
 	.sink-root {
@@ -1126,14 +1135,10 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 		--sink-p: 0;
 		background: var(--bg);
 		translate: calc(var(--sink-w) * var(--sink-p)) 0;
-		border-radius: calc(max(var(--r-2xl), var(--device-r-tl)) * var(--sink-p))
-			calc(max(var(--r-2xl), var(--device-r-tr)) * var(--sink-p))
-			calc(max(var(--r-2xl), var(--device-r-br)) * var(--sink-p))
-			calc(max(var(--r-2xl), var(--device-r-bl)) * var(--sink-p));
 		transition:
 			translate 260ms var(--ease),
-			border-radius 260ms var(--ease),
-			box-shadow 260ms var(--ease);
+			border-radius 0s 260ms,
+			box-shadow 0s 260ms;
 	}
 	.sink-card[data-open] {
 		--sink-p: 1;
@@ -1141,28 +1146,56 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 	.sink-card[data-open],
 	.sink-card[data-dragging] {
 		overflow: clip;
+		border-radius: max(var(--r-2xl), var(--device-r-tl))
+			max(var(--r-2xl), var(--device-r-tr))
+			max(var(--r-2xl), var(--device-r-br))
+			max(var(--r-2xl), var(--device-r-bl));
 		/* 深色下投影几乎看不见：加一圈发丝线分开卡片与底层侧栏 */
 		box-shadow:
 			0 0 0 1px var(--line),
 			var(--sh-xl);
+		transition: translate 260ms var(--ease);
 	}
 	.sink-card[data-dragging],
 	.sink-card[data-instant] {
 		transition: none;
 	}
-	/* iOS 原生底栏接管时（lib/native-tab-bar.ts）：关闭过渡晚 34ms 起步，原生那边的裁切先走，底栏不会画到卡片上面。
-	   三个 :not 缺一不可：少了后两个，拖动与减少动效时会变成「延迟 34ms 的瞬移」 */
-	.sink-card[data-native-bar]:not([data-open]):not([data-dragging]):not(
+	/* iOS 原生页头接管时（lib/native-header.ts）：原生页头跟着卡片走，原生那边按网页给的绝对时刻起步；
+	   卡片的非手势开合与松手吸附都晚 34ms 起步，给桥留出送达时间，两边从同一时刻出发。
+	   两个 :not 缺一不可：少了它们，拖动与减少动效时会变成「延迟 34ms 的瞬移」 */
+	.sink-card[data-native-head]:not([data-open]):not([data-dragging]):not(
 		[data-instant]
 	) {
-		transition-delay: 34ms;
+		transition:
+			translate 260ms var(--ease) 34ms,
+			border-radius 0s 294ms,
+			box-shadow 0s 294ms;
 	}
-	/* iOS 原生页头接管时（lib/native-header.ts）：原生页头不随卡片移动，非手势打开晚 34ms 起步，等它先撤走。
-	   松手吸附（data-released）不延迟：拖动一开始原生页头就已经撤了 */
 	.sink-card[data-native-head][data-open]:not([data-dragging]):not(
 		[data-instant]
-	):not([data-released]) {
-		transition-delay: 34ms;
+	) {
+		transition: translate 260ms var(--ease) 34ms;
+	}
+	/*
+	 * iOS 原生底栏垫在 WebView 下面（lib/native-tab-bar.ts）：接管时页面底色交给原生垫底（同一个 --bg），
+	 * 页面本身透明，底栏从侧栏层透出来；卡片与一切网页弹层都画在它上面，遮挡由网页合成器逐像素保证。
+	 * 侧栏的分区内容在底栏那一条渐隐掉（否则列表会画到原生底栏上面），效果同 iOS 的滚动边缘。
+	 */
+	/* body 的透明规则在文件前部、无层的 body 旁边：写在层里会被无层的 body 底色压过 */
+	:root[data-native-under] .sink-root {
+		background: transparent;
+	}
+	:root[data-native-under] .sink-sidebar [data-testid="section-panes"] {
+		-webkit-mask-image: linear-gradient(
+			to top,
+			transparent var(--tabbar-h, 0px),
+			#000 calc(var(--tabbar-h, 0px) + 1.25rem)
+		);
+		mask-image: linear-gradient(
+			to top,
+			transparent var(--tabbar-h, 0px),
+			#000 calc(var(--tabbar-h, 0px) + 1.25rem)
+		);
 	}
 	/* 名字色相方块（头像、项目徽标、标题图标）：比中性色饱和一档 */
 	.avatar {
