@@ -292,9 +292,12 @@ function OrbSection({ threadId }: { threadId: string }) {
 						</div>
 					)}
 				</div>
-				{!running && (orb.state === "stopped" || orb.state === "stopping") && (
-					<WakeButton threadId={threadId} />
-				)}
+				{/* runner 停机 = 离线，只能等它自己重连，唤醒必然失败（runner_offline） */}
+				{!runner &&
+					!running &&
+					(orb.state === "stopped" || orb.state === "stopping") && (
+						<WakeButton threadId={threadId} />
+					)}
 			</div>
 			{runner ? (
 				// runner（M11b）：没有类型与规格，显示 runner 名、主机与线程的工作目录

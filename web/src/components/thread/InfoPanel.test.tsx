@@ -147,3 +147,70 @@ describe("InfoPanel orb 规格（M14）", () => {
 		expect(screen.getByText("@oryn-owner")).toBeInTheDocument();
 	});
 });
+
+describe("InfoPanel orb 唤醒", () => {
+	function renderStopped(id: string, extra: Record<string, unknown> = {}) {
+		vi.spyOn(realtime, "cmd").mockResolvedValue({ subagents: [] } as never);
+		getThreadStore(id)
+			.getState()
+			.patchLocal({
+				orb: {
+					id: `orb-${id}`,
+					providerId: "prov",
+					providerName: "local",
+					type: "medium",
+					cpus: 4,
+					memoryMB: 8192,
+					image: "oryn-orb:dev",
+					state: "stopped",
+					stateChangedAt: 1,
+					createdAt: 1,
+					threadIds: [id],
+					...extra,
+				} as unknown as ThreadViewState["orb"],
+			});
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		render(
+			<QueryClientProvider client={client}>
+				<InfoPanel threadId={id} />
+			</QueryClientProvider>,
+		);
+	}
+
+	it("普通 orb 停机：点「唤醒」向本线程发 POST threads/{id}/wake", async () => {
+		const id = "T-orb-stopped";
+		const fetch = vi
+			.spyOn(globalThis, "fetch")
+			.mockImplementation(async () => new Response(null, { status: 202 }));
+		renderStopped(id);
+		await act(() => vi.advanceTimersByTimeAsync(0));
+		fetch.mockClear();
+		await act(async () => {
+			screen.getByRole("button", { name: "唤醒" }).click();
+			await vi.advanceTimersByTimeAsync(0);
+		});
+		const calls = fetch.mock.calls.map(([req]) => req as Request);
+		expect(
+			calls.some(
+				(r) =>
+					r.method === "POST" &&
+					new URL(r.url).pathname === `/api/v1/threads/${id}/wake`,
+			),
+		).toBe(true);
+	});
+
+	it("runner 停机（离线）不给唤醒按钮", async () => {
+		vi.spyOn(globalThis, "fetch").mockImplementation(
+			async () =>
+				new Response('{"runners":[]}', {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				}),
+		);
+		renderStopped("T-runner-stopped", { kind: "runner", type: "runner" });
+		await act(() => vi.advanceTimersByTimeAsync(0));
+		expect(screen.queryByRole("button", { name: "唤醒" })).toBeNull();
+	});
+});
