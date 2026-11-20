@@ -91,7 +91,7 @@ final class SinkSpikeTests: E2ECase {
     ])
 
     func setMode(_ i: Int) {
-      for _ in 0..<7 where read()["m"] != Double(i) {
+      for _ in 0..<10 where read()["m"] != Double(i) {
         web("mode").tap()
         _ = poll(timeout: 1) { read()["m"] == Double(i) }
       }
@@ -163,9 +163,10 @@ final class SinkSpikeTests: E2ECase {
       "0.3W → sx \(a["sx"] ?? -1)；0.7W → sx \(b["sx"] ?? -1)；打开态左拖 0.7W → sx \(c["sx"] ?? -1)")
 
     // C2p：手指拖开之后程序化关闭；手指拖回之后程序化打开（用户拖动留下的吸附索引与程序化落位的先后）。
-    // 逐帧原生（4）、逐帧原生 + 期间关吸附（6）、原生一步落位（5）；网页 instant（1，减少动效走它）与网页 instant + 关吸附（7）。
-    // sh = 页面发出的 host_sink_show 次数；rx = 恢复吸附那一刻的 scrollX（只在命中目标端点后恢复）
-    for (i, name) in [(4, "native"), (6, "native-snapoff"), (5, "native-instant"), (1, "instant"), (7, "instant-snapoff")] {
+    // 第 5 轮（守卫关着时触摸不再排定时器，干净对照）：逐帧原生（4，反例）、逐帧原生 + 关吸附（6）、原生一步落位 + 关吸附（8）、
+    // 网页 instant + 关吸附（7，第 4 轮落到目的地后又被拉回）。
+    // sh = 页面发起 host_sink_show 的次数（每组应恰 +1）；rx = 恢复吸附那一刻的 scrollX（每次请求清为 -1）
+    for (i, name) in [(4, "native"), (6, "native-snapoff"), (8, "native-instant-snapoff"), (7, "instant-snapoff")] {
       ensureClosed()
       setMode(i)
       slowDrag(60, dy, 60 + 0.7 * wPt, dy)

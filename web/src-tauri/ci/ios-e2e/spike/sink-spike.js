@@ -27,30 +27,38 @@
 	// 程序化开合的方式：0 smooth；1 instant；2 nosnap；3 snapoff（第 1–3 轮）；
 	// 4 native = host_sink_show {animated: true}（预案 C2）；5 native-instant = host_sink_show {animated: false}；
 	// 6 native-snapoff = 动画期间根上 scroll-snap-type: none，命中端点后恢复（C2 第 3–4 轮）；
-	// 7 instant-snapoff = 网页 instant 落位，落位前关吸附、命中端点后恢复（C2 第 4 轮，减少动效的路径）
-	const MODES = ["smooth", "instant", "nosnap", "snapoff", "native", "native-instant", "native-snapoff", "instant-snapoff"];
+	// 7 instant-snapoff = 网页 instant 落位，落位前关吸附、命中端点后恢复（C2 第 4 轮，减少动效的路径）；
+	// 8 native-instant-snapoff = 原生一步落位，期间关吸附、命中端点后恢复（C2 第 5 轮）
+	const MODES = [
+		"smooth",
+		"instant",
+		"nosnap",
+		"snapoff",
+		"native",
+		"native-instant",
+		"native-snapoff",
+		"instant-snapoff",
+		"native-instant-snapoff",
+	];
 	let mode = 0;
 	let restore = null;
 	const go = (x) => {
 		const m = MODES[mode];
+		// 每次请求都清 rx：第 4 轮只在关吸附的方式里清，别的组读到的是上一组残留
+		rx = -1;
+		if (m.endsWith("snapoff") || m === "nosnap") {
+			root.style.scrollSnapType = "none";
+			restore = x;
+		}
 		if (m.startsWith("native")) {
 			sh++;
-			if (m === "native-snapoff") {
-				root.style.scrollSnapType = "none";
-				restore = x;
-				rx = -1;
-			}
-			invoke?.("host_sink_show", { open: x === 0, animated: m !== "native-instant" }).catch((e) => {
+			const animated = m === "native" || m === "native-snapoff";
+			invoke?.("host_sink_show", { open: x === 0, animated }).catch((e) => {
 				error = `show ${e}`;
 				update();
 			});
 			update();
 			return;
-		}
-		if (m === "nosnap" || m === "instant-snapoff") {
-			root.style.scrollSnapType = "none";
-			restore = x;
-			rx = -1;
 		}
 		scrollTo({ left: x, behavior: m.startsWith("instant") ? "instant" : "smooth" });
 	};
