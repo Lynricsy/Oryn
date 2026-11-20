@@ -1,6 +1,6 @@
 /**
  * 侧栏头部的通知铃铛（M5 计划 6.3）：有未读时右上角一个 accent 计数胶囊；点击打开最近 50 条通知。
- * 桌面是非模态玻璃弹层（外点 / Esc 关闭，照 `AccessPopover`），compact 档改用 `Dialog`。
+ * 桌面是非模态玻璃弹层（外点 / Esc 关闭，照 `AccessPopover`），compact 档改用 `Dialog`（「全部已读」在对话框底栏，没有通知时不显示）。
  * 点一条 → 跳到它的 `url`，按 `readTargetOf` 标已读（有线程标该线程，系统通知只标这一条）；顶部「全部已读」。
  */
 import {
@@ -100,11 +100,31 @@ function Row({
 	);
 }
 
+/** 「全部已读」：桌面弹层放在标题行右端；compact 档的对话框放在底栏（对话框自带标题，不再单占一行）。 */
+function MarkAllRead(): ReactNode {
+	const { t } = useTranslation();
+	const unread = useNotifications((s) => s.unread);
+	return (
+		<Button
+			size="sm"
+			variant="ghost"
+			disabled={unread === 0}
+			onClick={() =>
+				void notificationsStore
+					.getState()
+					.markRead()
+					.catch(() => {})
+			}
+		>
+			{t("notify.markAllRead")}
+		</Button>
+	);
+}
+
 function Body({ onDone, heading }: { onDone: () => void; heading: boolean }) {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const items = useNotifications((s) => s.items);
-	const unread = useNotifications((s) => s.unread);
 	const open = (n: AppNotification) => {
 		onDone();
 		uiStore.getState().setSidebar(false);
@@ -117,28 +137,14 @@ function Body({ onDone, heading }: { onDone: () => void; heading: boolean }) {
 	};
 	return (
 		<>
-			<div className="mb-1 flex h-7 shrink-0 items-center justify-between gap-2 pl-2">
-				{heading ? (
+			{heading && (
+				<div className="mb-1 flex h-7 shrink-0 items-center justify-between gap-2 pl-2">
 					<h2 className="font-medium text-faint text-xs">
 						{t("notify.title")}
 					</h2>
-				) : (
-					<span />
-				)}
-				<Button
-					size="sm"
-					variant="ghost"
-					disabled={unread === 0}
-					onClick={() =>
-						void notificationsStore
-							.getState()
-							.markRead()
-							.catch(() => {})
-					}
-				>
-					{t("notify.markAllRead")}
-				</Button>
-			</div>
+					<MarkAllRead />
+				</div>
+			)}
 			{items.length === 0 ? (
 				<EmptyState icon="bell" title={t("notify.empty")}>
 					{t("notify.emptyHint")}
@@ -159,6 +165,7 @@ export function NotificationBell(): ReactNode {
 	const bp = useBreakpoint();
 	const compact = bp === "compact";
 	const unread = useNotifications((s) => s.unread);
+	const hasItems = useNotifications((s) => s.items.length > 0);
 	const [open, setOpen] = useState(false);
 	const ref = useRef<HTMLDivElement>(null);
 	const triggerRef = useRef<HTMLButtonElement>(null);
@@ -214,7 +221,12 @@ export function NotificationBell(): ReactNode {
 			)}
 			{open &&
 				(compact ? (
-					<Dialog open title={t("notify.title")} onClose={() => setOpen(false)}>
+					<Dialog
+						open
+						title={t("notify.title")}
+						onClose={() => setOpen(false)}
+						footer={hasItems ? <MarkAllRead /> : undefined}
+					>
 						<Body onDone={() => setOpen(false)} heading={false} />
 					</Dialog>
 				) : (
