@@ -498,6 +498,11 @@ mod ios {
                     host::emit(&handle, detail);
                 }
             }
+            // 仅 debug：原生程序化开合的轨迹（CI 端到端据此区分「原生动画晚起步 / 没跑」与「被拉回」）；发布包不写
+            #[cfg(debug_assertions)]
+            Event::Sink { op, x, to } => {
+                eventlog::log("sink.trace", json!({"op": op, "x": x, "to": to}));
+            }
             _ => {}
         });
         if let Err(e) = res {
