@@ -527,6 +527,8 @@ jobs:
           name: ios-screenshot
           path: ios-shot/
           if-no-files-found: ignore
+          # 保留 header/.complete 与 e2e/.complete：验收要能从产物里确认脚本跑完了全部断言（upload-artifact 默认跳过隐藏文件）
+          include-hidden-files: true
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: github.event_name == 'workflow_dispatch' && inputs.export_ios_project
