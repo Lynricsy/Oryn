@@ -1918,6 +1918,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/settings/selection-actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 自定义选区快捷动作（选中文字后出现在右键菜单里） */
+        get: operations["getSelectionActions"];
+        /**
+         * 设置自定义选区快捷动作（整体替换）
+         * @description 名称与提示词去首尾空白后保存；id 不得重复。尚未初始化所有者 → 409。
+         */
+        put: operations["putSelectionActions"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/models/catalog": {
         parameters: {
             query?: never;
@@ -6279,6 +6300,15 @@ export interface components {
              */
             defaultTarget: "role" | "assistant";
         };
+        SelectionAction: {
+            id: string;
+            name: string;
+            /** @description 对选中内容的指令，连同选区一起交给模型 */
+            prompt: string;
+        };
+        SelectionActions: {
+            actions: components["schemas"]["SelectionAction"][];
+        };
         ModelCatalog: {
             models: components["schemas"]["CatalogModel"][];
             fetchedAt: components["schemas"]["TimestampMs"];
@@ -10417,9 +10447,17 @@ export interface components {
              */
             mcpToken?: string;
             memory?: components["schemas"]["LinkCtlAgentMemory"];
+            projectId?: components["schemas"]["ProjectId"];
+            projectConfig?: components["schemas"]["LinkCtlProjectConfig"];
         };
         LinkCtlAgentStartResult: {
             pid: number;
+            /**
+             * @description M21：只有 runner 且 SSH 网关端口在监听时给出——orbd 为该线程的监督器生成的 ed25519 公钥（OpenSSH authorized_keys
+             *     单行）。私钥只在 runner 本机（`$HOME/.oryn/threads/<线程>/ssh/id_ed25519`，agent 环境 `ORYN_SSH_KEY`），随监督器
+             *     生灭：已有活动监督器时幂等返回同一把公钥。orynd 据此登记「公钥 → 线程」，SSH 网关对 runner 的 `ssh` 流按它认出线程。
+             */
+            sshPublicKey?: string;
         };
         LinkCtlAgentStopParams: {
             threadId: components["schemas"]["ThreadId"];
@@ -13747,6 +13785,52 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ComposerPrefs"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getSelectionActions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前列表（尚未初始化所有者时为空列表） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SelectionActions"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putSelectionActions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SelectionActions"];
+            };
+        };
+        responses: {
+            /** @description 写入后的列表（已规整） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SelectionActions"];
                 };
             };
             default: components["responses"]["Error"];

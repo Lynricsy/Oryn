@@ -24,6 +24,19 @@ import { basicSetup } from "codemirror";
 import type { TFunction } from "i18next";
 import { type ReactNode, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
+import i18n from "../../i18n";
+import { copyToClipboard } from "../../lib/clipboard";
+import { useContextTarget } from "../../lib/context-menu/registry";
+import { anchorOf } from "../../lib/context-menu/selection";
+import {
+	copyWithToast,
+	selectionGroups,
+} from "../../lib/context-menu/selection-groups";
+import type { ContextRequest, MenuGroup } from "../../lib/context-menu/types";
+import { AROUND_MAX } from "../../lib/side-ask";
+import { showToast } from "../../state/toasts";
+import { languageFromPath } from "../../tool-render/util";
+import type { MenuItem } from "../ui/primitives";
 
 export interface CodeEditorProps {
 	value: string;
@@ -332,11 +345,89 @@ export default function CodeEditor({
 		};
 	}, [path]);
 
+	const ctxRef = useContextTarget<HTMLDivElement>({
+		// 编辑器里的选区由 items 按 CodeMirror 的选择处理，不让外层按 DOM 选区再出一份
+		selection: () => null,
+		items: (req) => editorMenu(req, view.current, path, readOnly),
+	});
+
 	return (
 		<div
-			ref={host}
+			ref={(el) => {
+				host.current = el;
+				ctxRef(el);
+			}}
 			data-testid="code-editor"
 			className="h-full min-h-0 overflow-hidden"
 		/>
 	);
+}
+
+/** 编辑器的上下文菜单：有选区时给选区组（AI 动作、引用到输入框、复制…）与编辑组；没有选区放行原生菜单（保住粘贴）。 */
+function editorMenu(
+	req: ContextRequest,
+	v: EditorView | null,
+	path: string,
+	readOnly: boolean,
+): MenuGroup[] | null {
+	const main = v?.state.selection.main;
+	if (!v || !main || main.empty) return null;
+	const { state } = v;
+	const text = state.sliceDoc(main.from, main.to);
+	const startLine = state.doc.lineAt(main.from).number;
+	const endLine = state.doc.lineAt(main.to).number;
+	const location = `${path}:${startLine}-${endLine}`;
+	const lang = languageFromPath(path) ?? "";
+	const a = v.coordsAtPos(main.from);
+	const b = v.coordsAtPos(main.to);
+	const edit: MenuItem[] = [];
+	if (!readOnly)
+		edit.push({
+			key: "cut",
+			icon: "edit",
+			label: i18n.t("contextMenu.cut"),
+			onSelect: () =>
+				void copyToClipboard(text).then((ok) => {
+					if (ok) v.dispatch(v.state.replaceSelection(""));
+					else
+						showToast({ text: i18n.t("contextMenu.copyFailed"), tone: "err" });
+				}),
+		});
+	if (!readOnly && navigator.clipboard?.readText)
+		edit.push({
+			key: "paste",
+			icon: "clipboard",
+			label: i18n.t("contextMenu.paste"),
+			onSelect: () =>
+				void navigator.clipboard.readText().then(
+					(pasted) => v.dispatch(v.state.replaceSelection(pasted)),
+					() => {
+						// 读剪贴板被拒：静默
+					},
+				),
+		});
+	edit.push({
+		key: "copyLocation",
+		icon: "locate",
+		label: i18n.t("contextMenu.copyLocation"),
+		onSelect: () => void copyWithToast(location),
+	});
+	return [
+		...selectionGroups({
+			threadId: req.askThreadId,
+			text,
+			// 信封里的 <before> / <after> 只收单行文字：压掉换行
+			before: state
+				.sliceDoc(Math.max(0, main.from - AROUND_MAX), main.from)
+				.replace(/\s+/g, " "),
+			after: state.sliceDoc(main.to, main.to + AROUND_MAX).replace(/\s+/g, " "),
+			source: { kind: "file", path, startLine, endLine },
+			anchor:
+				a && b
+					? { left: a.left, top: a.top, right: b.right, bottom: b.bottom }
+					: anchorOf(null, req.x, req.y),
+			insert: () => `\`${location}\`\n\`\`\`${lang}\n${text}\n\`\`\``,
+		}),
+		{ key: "edit", items: edit },
+	];
 }

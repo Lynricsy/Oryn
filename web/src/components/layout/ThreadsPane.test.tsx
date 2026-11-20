@@ -4,6 +4,8 @@
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+	act,
+	createEvent,
 	fireEvent,
 	render,
 	screen,
@@ -13,6 +15,8 @@ import {
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Thread } from "../../api/client";
+import { installContextMenu } from "../../lib/context-menu/dispatch";
+import { closeContextMenu } from "../../lib/context-menu/store";
 import { inboxBadgeCount } from "../../lib/inbox";
 import { parseTitleCard } from "../../lib/title";
 import {
@@ -24,6 +28,7 @@ import {
 import { MockServer } from "../../mock/server";
 import { connectionStore, indexStore } from "../../state/stores";
 import { uiStore } from "../../state/ui";
+import { ContextMenuHost } from "../ui/ContextMenu";
 import { groupThreads, ThreadRow, ThreadsPane } from "./ThreadsPane";
 
 const NOW = 1_800_000_000_000;
@@ -108,6 +113,41 @@ describe("侧边栏线程树", () => {
 		expect(
 			container.querySelector("[data-activity]")?.getAttribute("data-activity"),
 		).toBe("读取 socket.ts");
+	});
+
+	it("右键线程行：出现线程菜单，链接文字仍只是标题（M22）", () => {
+		const off = installContextMenu();
+		try {
+			const g = groupThreads(
+				[th("p", { title: "🔌 SOCK: 重连" }), th("c", { parentThreadId: "p" })],
+				NOW,
+			);
+			const root = g.byProject[0]?.threads[0] as Thread;
+			render(
+				<MemoryRouter>
+					<ThreadRow thread={root} childMap={g.children} now={NOW} />
+					<ContextMenuHost />
+				</MemoryRouter>,
+			);
+			const links = screen.getAllByRole("link");
+			expect(links[0]?.hasAttribute("data-ctx-touch")).toBe(true);
+			const ev = createEvent.contextMenu(links[0] as Element, {
+				clientX: 10,
+				clientY: 10,
+			});
+			fireEvent(links[0] as Element, ev);
+			expect(ev.defaultPrevented).toBe(true);
+			const menu = within(screen.getByTestId("context-menu"));
+			for (const name of ["打开", "置顶", "稍后提醒", "改名", "删除线程"])
+				expect(menu.getByRole("menuitem", { name })).toBeTruthy();
+			expect(screen.getAllByRole("link").map((a) => a.textContent)).toEqual([
+				"重连",
+				"c",
+			]);
+		} finally {
+			off();
+			act(() => closeContextMenu());
+		}
 	});
 });
 

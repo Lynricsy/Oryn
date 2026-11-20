@@ -16,6 +16,7 @@
     "shots": "bun scripts/screenshots.ts",
     "shots:m25": "bun scripts/screenshots.ts --m25",
     "shots:all": "bun scripts/screenshots.ts --all",
+    "shots:readme": "bun scripts/readme-shots.ts",
     "accept:m3": "bun scripts/m3-accept.ts",
     "accept:m4": "bun scripts/m4-accept.ts",
     "accept:m5": "bun scripts/m5-accept.ts",
@@ -36,6 +37,8 @@
     "accept:m16": "bun scripts/m16-accept.ts",
     "accept:m19": "bun scripts/m19-accept.ts",
     "accept:m20": "bun scripts/m20-accept.ts",
+    "accept:m21": "bun scripts/m21-accept.ts",
+    "accept:m22": "bun scripts/m22-accept.ts",
     "walk:m121": "bun scripts/m121-walk.ts",
     "tauri": "tauri"
   },

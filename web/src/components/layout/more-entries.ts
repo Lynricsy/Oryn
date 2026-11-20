@@ -112,6 +112,13 @@ export const MORE_ENTRIES: readonly MoreEntry[] = [
 		to: "/settings/agent-composer",
 	},
 	{
+		key: "selection-actions",
+		group: "agent",
+		icon: "bolt",
+		labelKey: "settings.selection-actions",
+		to: "/settings/selection-actions",
+	},
+	{
 		key: "agent-config",
 		group: "agent",
 		icon: "file",

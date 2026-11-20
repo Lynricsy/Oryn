@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -198,15 +199,24 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 	}
 	terminal := prof == nil && s.terminalEnabled(orbID)
 	var mem *apigen.LinkCtlAgentMemory
+	var projectID *apigen.ProjectID
+	var projectCfg *apigen.LinkCtlProjectConfig
 	if prof == nil {
 		// M16：协调对话不接入记忆；查询出错时不启用、照常启动
 		mem = s.agentMemory(ctx, t.id, orbID)
+		// M21：runner 线程的项目层随 agent.start 交付；读不到时不带着缺了项目层的配置启动
+		if projectID, projectCfg, err = s.runnerProjectConfig(ctx, t.id, orbID); err != nil {
+			slog.Warn("threads: 读取 runner 线程的项目层失败", "thread", t.id, "orb", orbID, "err", err)
+			s.markFailed(ctx, t, err)
+			return
+		}
 	}
 	t.mu.Lock()
 	params := apigen.LinkCtlAgentStartParams{ThreadID: t.id, SessionDir: t.sessionDir, Env: map[string]string{}, InitFrames: initFrames(t, prof, terminal)}
 	// runner 线程（M11b）：agent 在线程的工作目录里启动
 	params.Cwd = t.cwd
 	params.Memory = mem
+	params.ProjectID, params.ProjectConfig = projectID, projectCfg
 	if prof != nil {
 		profile := apigen.AgentProfileCoordinator
 		params.Profile, params.SystemPrompt = &profile, &prof.SystemPrompt
@@ -247,6 +257,11 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 			return
 		}
 	}
+	t.mu.Lock()
+	// 此后到达的 starting / ready 才属于这次 agent.start 的监督器（见 onAgentStatus）；应答表明仍是原监督器时恢复
+	prevSince := t.statusSinceStart
+	t.statusSinceStart, t.exitSkipped, t.exitDropped = false, false, false
+	t.mu.Unlock()
 	var res apigen.LinkCtlAgentStartResult
 	if err := ctl.Call(cctx, "agent.start", params, &res); err != nil {
 		slog.Warn("threads: agent.start 失败", "thread", t.id, "orb", orbID, "err", err)
@@ -254,6 +269,25 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 			s.markFailed(ctx, t, err)
 		}
 		return
+	}
+	if res.SSHPublicKey != nil && s.runnerAgent != nil {
+		// M21：runner 线程的 SSH 公钥。每代监督器一把，幂等的 agent.start 对同一监督器返回同一把（同值刷新）——此时
+		// orbd 只唤醒现有监督器、不会重报 starting / ready，要恢复发起前的归属，否则它之后的结束会被当成旧监督器迟到的
+		// 结束而不注销。等待应答期间这一代若已结束（新一代：报过 starting / ready 之后的结束；同一代：任何结束），不再
+		// 登记。判定与登记 / 注销都在 t.mu 内，与 onAgentStatus 的注销互斥。
+		key := *res.SSHPublicKey
+		t.mu.Lock()
+		same := key == t.sshKey
+		t.sshKey = key
+		if same {
+			t.statusSinceStart = t.statusSinceStart || prevSince
+		}
+		if t.exitDropped || (same && t.exitSkipped) {
+			s.dropThreadKey(t.id)
+		} else if err := s.runnerAgent.RegisterThreadKey(t.id, orbID, key); err != nil {
+			slog.Warn("threads: 登记 runner 线程的 SSH 公钥失败", "thread", t.id, "orb", orbID, "err", err)
+		}
+		t.mu.Unlock()
 	}
 	slog.Debug("threads: agent 已启动", "thread", t.id, "pid", res.Pid)
 }
@@ -398,8 +432,10 @@ func (s *Service) onAgentStatus(ctx context.Context, orbID string, params json.R
 	switch p.Status {
 	case "starting":
 		t.agentStatus = apigen.AgentStatusStarting
+		t.statusSinceStart = true
 	case "ready":
 		t.agentStatus = apigen.AgentStatusReady
+		t.statusSinceStart = true
 		s.clearFailedLocked(t)
 		s.onReadyLocked(ctx, t)
 	case "exited":
@@ -413,6 +449,17 @@ func (s *Service) onAgentStatus(ctx context.Context, orbID string, params json.R
 		t.autoActive, t.segMsgs = false, false
 		cancelHostCallsLocked(t)
 		resetConfigMarksLocked(t) // 新进程读的就是新配置（M13 6.3）
+		if p.RestartsLeft == nil || *p.RestartsLeft <= 0 {
+			if t.statusSinceStart {
+				// orbd 的监督器已结束（停止，或重启次数用尽）：私钥随之删除，runner 线程的 SSH 公钥失效（M21）。
+				// 还会重启的崩溃不动：自重启沿用同一把密钥。最近一次 agent.start 之后还没收到过 starting / ready 时，
+				// 这是旧监督器迟到的结束（见 thread.statusSinceStart），不动可能已登记的新公钥。
+				s.dropThreadKey(t.id)
+				t.exitDropped = true
+			} else {
+				t.exitSkipped = true
+			}
+		}
 		switch {
 		case t.stopping || p.RestartsLeft == nil:
 			// 有意停止，不是故障：控制面的 agent.stop（RefreshAgent、删除线程、fork 回退），或 orbd 收到 shutdown /
@@ -426,7 +473,7 @@ func (s *Service) onAgentStatus(ctx context.Context, orbID string, params json.R
 				s.wake(t.id, t.orbID)
 			}
 		case p.RestartsLeft != nil && *p.RestartsLeft > 0:
-			// orbd 会重启它：重启后的 get_state 给出权威的运行 / 静止状态
+			// orbd 会重启它：重启后的 get_state 给出权威的运行 / 静止状态；监督器仍在，SSH 公钥照旧有效
 			t.unsynced = true
 		default:
 			// 不会再有进程：没有在跑的回合；排队等它就绪的只读查询随之结束
@@ -1085,8 +1132,9 @@ func (s *Service) Abort(ctx context.Context, threadID string) error {
 	return err
 }
 
-// onRunner 报告线程当前的 orb 是否是 runner 的常驻 orb；没有 orb 或读不到 orb 行时按非 runner 处理。
-func (s *Service) onRunner(ctx context.Context, t *thread) bool {
+// sshSelfManaged 报告线程当前的 orb 是否自管 SSH 主机：只有不支持 omphome-apply 的旧版 runner（用那台机器自己的
+// ssh.json）；M21 起支持它的 runner 与 orb 一样由 Oryn 下发。没有 orb 或读不到 orb 行时按受管处理。
+func (s *Service) sshSelfManaged(ctx context.Context, t *thread) bool {
 	t.mu.Lock()
 	orbID := t.orbID
 	t.mu.Unlock()
@@ -1094,7 +1142,11 @@ func (s *Service) onRunner(ctx context.Context, t *thread) bool {
 		return false
 	}
 	o, err := s.st.Q.GetOrb(ctx, orbID)
-	return err == nil && orbs.IsRunner(o)
+	if err != nil || !orbs.IsRunner(o) {
+		return false
+	}
+	_, feats := s.orbs.Features(orbID)
+	return !slices.Contains(feats, orbs.FeatureOmpHomeApply)
 }
 
 // command 是 Command 与 Deliver 的共同主体。originAuto（自动化投递）不清未读、不通知 Seen、不记用户交互
@@ -1144,8 +1196,8 @@ func (s *Service) command(ctx context.Context, threadID string, frame json.RawMe
 		return nil, errf("invalid", orynFilesKey+" is only accepted in assistant conversations")
 	}
 	// M18：orb 线程的 SSH 主机由 Oryn 集中管理并下发，agent 自己改 ssh.json 会被下一次下发覆盖；
-	// runner 线程管理的是那台机器自己的 ssh.json，照常放行。
-	if t.kind == KindWork && sshManageCommand(cmdType, frame) && !s.onRunner(ctx, t) {
+	// 旧版 runner 的线程管理的是那台机器自己的 ssh.json，照常放行。
+	if t.kind == KindWork && sshManageCommand(cmdType, frame) && !s.sshSelfManaged(ctx, t) {
 		return nil, errf(RouteManaged, "SSH 主机由 Oryn 集中管理：请到 设置 → SSH 主机 里添加或修改")
 	}
 	if len(ids) > 0 {

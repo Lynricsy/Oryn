@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Lynricsy/Oryn/internal/agentcfg"
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
@@ -269,7 +270,8 @@ func (s *Service) applyLayerLocked(ctx context.Context, a *ompApplier, projectID
 	return rep, nil
 }
 
-// applyTargets 返回这一层要下发的 orb：ready、有带 omphome-apply 特性的活动 link；项目层只取该项目的 orb。
+// applyTargets 返回这一层要下发的 orb：ready、有带 omphome-apply 特性的活动 link（含在线的 runner，M21）；项目层只取
+// 该项目的 orb——runner 的常驻 orb 不属于任何项目，只收全局层。
 func (s *Service) applyTargets(ctx context.Context, projectID string) ([]db.Orb, error) {
 	orbs, err := s.st.Q.ListOrbsByState(ctx, StateReady)
 	if err != nil {
@@ -297,6 +299,9 @@ func (s *Service) applyOrb(ctx context.Context, orb db.Orb) OrbApply {
 		res.Err = "生成下发参数: " + err.Error()
 		return res
 	}
+	if IsRunner(orb) {
+		s.NoteRunnerWithheld(ctx, orb.ID, "", plan.Withheld)
+	}
 	ctl, ok := s.Ctl(orb.ID)
 	if !ok {
 		res.Err = ErrOrbNotReady.Error()
@@ -313,6 +318,37 @@ func (s *Service) applyOrb(ctx context.Context, orb db.Orb) OrbApply {
 	s.setPolicy(orb.ID, plan.Egress, gen)
 	res.OK = true
 	return res
+}
+
+// NoteRunnerWithheld 把 runner 下发前被扣下的文件写进该 runner orb 的事件备注（M21，同「runner 配置下发失败」的写法）：
+// 用户在 orb 的事件里看到哪个文件因含形似密钥的内容未下发到 runner。threadID 空 = 全局 omp-home（applyOrb），否则是该
+// 线程随 agent.start 交付的项目层（threads）。同一 runner / 线程只在扣下的清单变化时写，清单变空时只清记录。
+func (s *Service) NoteRunnerWithheld(ctx context.Context, orbID, threadID string, withheld []agentcfg.Withheld) {
+	files := make([]map[string]string, 0, len(withheld))
+	for _, w := range withheld {
+		files = append(files, map[string]string{"path": w.Path, "reason": w.Reason})
+	}
+	sig, _ := json.Marshal(files)
+	key := orbID + "/" + threadID
+	s.mu.Lock()
+	prev := s.runnerWithheld[key]
+	if len(withheld) == 0 {
+		delete(s.runnerWithheld, key)
+	} else {
+		s.runnerWithheld[key] = string(sig)
+	}
+	s.mu.Unlock()
+	if len(withheld) == 0 || prev == string(sig) {
+		return
+	}
+	for _, w := range withheld {
+		slog.Warn("runner 配置里的文件含形似密钥的内容，未下发", "orb", orbID, "thread", threadID, "path", w.Path, "reason", w.Reason)
+	}
+	detail := map[string]any{"reason": "runner config withheld", "files": files}
+	if threadID != "" {
+		detail["reason"], detail["thread"] = "runner project config withheld", threadID
+	}
+	s.noteOrb(ctx, orbID, detail)
 }
 
 // layerDir 是一层的下发记录目录。

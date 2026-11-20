@@ -6,12 +6,15 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
 	type ReactNode,
 	type RefObject,
+	useCallback,
 	useEffect,
 	useMemo,
 	useRef,
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { useContextTarget } from "../../lib/context-menu/registry";
+import { anchorOf } from "../../lib/context-menu/selection";
 import { diffRows } from "../../tool-render/parts";
 import "../../tool-render/tool-render.css";
 import { Callout } from "../ui/data";
@@ -79,7 +82,26 @@ export function FileDiff({
 	}, [key, refresh.n]);
 
 	const diff = loaded?.key === key ? loaded.diff : null;
-	const scrollRef = useRef<HTMLDivElement>(null);
+	const scrollRef = useRef<HTMLDivElement | null>(null);
+	// diff 里的选区：以「改动面板里某文件的 diff」为来源接入旁路提问
+	const ctxRef = useContextTarget<HTMLDivElement>({
+		selection: (sel, req) => ({
+			threadId: req.askThreadId,
+			text: sel.text,
+			before: "",
+			after: "",
+			source: { kind: "diff", path: file.path },
+			anchor: anchorOf(sel, req.x, req.y),
+		}),
+	});
+	// 合并的 ref 必须稳定：每次渲染换新回调会先置空再挂回，子组件（虚拟列表）的布局副作用会读到 null
+	const scrollHost = useCallback(
+		(el: HTMLDivElement | null) => {
+			scrollRef.current = el;
+			ctxRef(el);
+		},
+		[ctxRef],
+	);
 	const slash = file.path.lastIndexOf("/");
 	return (
 		<div className="flex h-full min-h-0 flex-col">
@@ -117,7 +139,7 @@ export function FileDiff({
 						</span>
 					)}
 			</div>
-			<div ref={scrollRef} className="min-h-0 flex-1 overflow-auto p-2">
+			<div ref={scrollHost} className="min-h-0 flex-1 overflow-auto p-2">
 				{error ? (
 					<ErrorText error={error} />
 				) : !diff ? (

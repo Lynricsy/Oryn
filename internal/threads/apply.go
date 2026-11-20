@@ -243,6 +243,9 @@ func (s *Service) restartKeyFunc(ctx context.Context) func(string) bool {
 // ConfigApplied 处理一次 omp 配置下发（orbs.OnOmpApplied）：分类后作用到 agent 在跑的线程。全局层作用于全部线程
 // （协调对话只看 config.yml 与 models.yml）；项目层只作用于该项目 orb 上的工作线程。下发失败、或 ready 却没收到
 // 下发（orbd 不支持）的 orb 上的线程不处理——它们的配置文件没变；冻结 / 停机等 orb 会在恢复时同步，照常处理。
+// runner 线程（M21）的项目层按线程项目随 agent.start 交付，不经下发：属于该项目、agent 在跑的线程要到下次 agent.start
+// 才拿到新内容，所以按 orb 的分类得出的变化一律记为需重启（含项目主机变化合成的 ssh.json：runner 线程的项目主机也在
+// 项目层里交付）。
 func (s *Service) ConfigApplied(ctx context.Context, rep orbs.ApplyReport) {
 	if len(rep.Changed) == 0 {
 		return
@@ -280,6 +283,14 @@ func (s *Service) ConfigApplied(ctx context.Context, rep orbs.ApplyReport) {
 		}
 		return p == rep.ProjectID
 	}
+	var runnerEff *configEffect
+	runnerProjectEffect := func() configEffect {
+		if runnerEff == nil {
+			e := runnerRestartEffect(rep.Changed, rep.ConfigBefore, rep.ConfigAfter, restartKey)
+			runnerEff = &e
+		}
+		return *runnerEff
+	}
 	for _, t := range s.loadedThreads() {
 		t.mu.Lock()
 		kind, orbID, alive := t.kind, t.orbID, t.agentAlive()
@@ -291,6 +302,15 @@ func (s *Service) ConfigApplied(ctx context.Context, rep orbs.ApplyReport) {
 		if kind != KindWork {
 			eff = coord
 		}
+		if rep.ProjectID != "" && kind == KindWork && s.runnerProjectThread(ctx, t.id, orbID, rep.ProjectID) {
+			if eff = runnerProjectEffect(); eff.empty() {
+				continue
+			}
+			t.mu.Lock()
+			s.applyConfigEffectLocked(t, eff)
+			t.mu.Unlock()
+			continue
+		}
 		if eff.empty() || (rep.ProjectID != "" && !inProject(orbID)) || !reached(orbID) {
 			continue
 		}
@@ -298,6 +318,32 @@ func (s *Service) ConfigApplied(ctx context.Context, rep orbs.ApplyReport) {
 		s.applyConfigEffectLocked(t, eff)
 		t.mu.Unlock()
 	}
+}
+
+// runnerProjectThread 报告线程是否是跑在支持 omphome-apply 的 runner（M21）上、属于 projectID 的线程（它的项目层随
+// agent.start 交付）。
+func (s *Service) runnerProjectThread(ctx context.Context, threadID, orbID, projectID string) bool {
+	if kind, feats := s.orbs.Features(orbID); kind != orbs.KindRunner || !slices.Contains(feats, orbs.FeatureOmpHomeApply) {
+		return false
+	}
+	row, err := s.st.Q.GetThread(ctx, threadID)
+	return err == nil && row.ProjectID != nil && *row.ProjectID == projectID
+}
+
+// runnerRestartEffect 是项目层变化对 runner 线程的作用：分类同 orb（configEffectOf），但 reload 类的变化也记为需重启
+// （原因为对应路径；disabledExtensions 引起的记为 config.yml）——文件要到下次 agent.start 才写到 runner 上。
+func runnerRestartEffect(changed []string, before, after []byte, restartKey func(string) bool) configEffect {
+	var e configEffect
+	for _, p := range changed {
+		one := configEffectOf([]string{p}, before, after, false, restartKey)
+		for _, r := range one.restart {
+			e.addRestart(r)
+		}
+		if one.reload {
+			e.addRestart(p)
+		}
+	}
+	return e
 }
 
 // loadedThreads 返回已加载到内存的线程（agent 在跑的线程必然已加载）。

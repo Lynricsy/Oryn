@@ -18,12 +18,12 @@ import (
 
 var sha256Re = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-// blobFetch 查找 $HOME/.omp/agent/blobs/<sha256>；找到时在同一 link 上另开 `blob` 流发送原始字节。
+// blobFetch 查找 agent 目录（见 ompAgentDir）下的 blobs/<sha256>；找到时在同一 link 上另开 `blob` 流发送原始字节。
 func (r *Runtime) blobFetch(ctx context.Context, c *conn, p apigen.LinkCtlBlobFetchParams) (apigen.LinkCtlBlobFetchResult, error) {
 	if !sha256Re.MatchString(p.Sha256) {
 		return apigen.LinkCtlBlobFetchResult{}, ctlErr(link.CodeInvalidParams, "invalid sha256")
 	}
-	path := filepath.Join(r.home, ".omp", "agent", "blobs", p.Sha256)
+	path := filepath.Join(r.ompAgentDir(), "blobs", p.Sha256)
 	f, err := os.Open(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

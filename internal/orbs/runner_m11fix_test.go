@@ -153,8 +153,8 @@ func TestRunnerRevokedBeforeFirstCtl(t *testing.T) {
 	assert.Nil(t, o.OrbdVersion, "hello 未被处理")
 }
 
-// S2：runner 的 link 只放行 entries.cursors / entries.append / artifact.call 与 runner 会发的通知；thread.* / schedule.*
-// 等回 runner_unsupported，不触达处理器、不建线程 / 日程 / 任务。
+// S2：runner 的 link 只放行 entries.cursors / entries.append / artifact.call / library.put 与 runner 会发的通知；
+// thread.* / schedule.* / 其余文件库方法 / ssh.call 等回 runner_unsupported，不触达处理器、不建线程 / 日程 / 任务。
 func TestRunnerCtlAllowlist(t *testing.T) {
 	h := newHarnessRun(t, newFakeDriver(), fakeSetup{}, nil, false)
 	captureTimers(h.svc)
@@ -166,6 +166,7 @@ func TestRunnerCtlAllowlist(t *testing.T) {
 		string(apigen.MethodThreadCreate), string(apigen.MethodThreadSend), string(apigen.MethodThreadGet),
 		string(apigen.MethodSchedulePut), string(apigen.MethodScheduleGet), string(apigen.MethodScheduleDelete),
 		string(apigen.MethodScheduleEnable), string(apigen.MethodProjectScriptsGet), string(apigen.MethodProjectScriptsSet),
+		string(apigen.MethodLibrarySync), string(apigen.MethodLibraryFetch), string(apigen.MethodSSHCall),
 	}
 	var forbidden, cursors, artifactCalls, servicesState atomic.Int32
 	for _, m := range blocked {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Document } from "yaml";
 import {
+	composerPredictionSettings,
 	contextFileKey,
 	extensionModuleKey,
 	hookKey,
@@ -10,6 +11,7 @@ import {
 	readConfigDoc,
 	ruleKey,
 	setAgentModelOverride,
+	setComposerPredictionSetting,
 	setCycleOrder,
 	setDisabledAgent,
 	setModelRole,
@@ -233,6 +235,43 @@ describe("其他设置项", () => {
 		});
 		out = edit(out, (doc) => setAgentModelOverride(doc, "explore", null));
 		expect(out).toBe("{}\n");
+	});
+
+	it("输入框预测按 Core 默认值读写：predictions 缺省为开，关闭写 false；alternatives 缺省为关", () => {
+		expect(composerPredictionSettings(readConfigDoc(""))).toEqual({
+			predictions: true,
+			alternatives: false,
+		});
+		let out = edit("", (doc) =>
+			setComposerPredictionSetting(doc, "predictions", false),
+		);
+		expect(out).toBe("composer:\n  predictions: false\n");
+		expect(composerPredictionSettings(readConfigDoc(out)).predictions).toBe(
+			false,
+		);
+		out = edit(out, (doc) =>
+			setComposerPredictionSetting(doc, "predictions", true),
+		);
+		expect(out).toBe("{}\n");
+		out = edit(out, (doc) =>
+			setComposerPredictionSetting(doc, "alternatives", true),
+		);
+		expect(readConfigDoc(out).toJS()).toEqual({
+			composer: { predictionAlternatives: true },
+		});
+	});
+
+	it('输入框预测：字符串 "false" 不是布尔值，Core 按默认开启，这里也显示开启；关闭时写入真正的 false', () => {
+		const raw = 'composer:\n  predictions: "false"\n';
+		expect(composerPredictionSettings(readConfigDoc(raw)).predictions).toBe(
+			true,
+		);
+		const out = edit(raw, (doc) =>
+			setComposerPredictionSetting(doc, "predictions", false),
+		);
+		expect(readConfigDoc(out).toJS()).toEqual({
+			composer: { predictions: false },
+		});
 	});
 });
 

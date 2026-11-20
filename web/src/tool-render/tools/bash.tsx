@@ -28,8 +28,11 @@ import {
 /** Values safe to show unquoted in a `NAME=value` shell prefix. */
 const SHELL_SAFE = /^[\w@%+=:,./-]+$/;
 
-/** Footer appended by the bash tool when long output was spilled to an artifact. */
-const ARTIFACT_NOTICE = /\[raw output: artifact:\/\/([\w-]+)\]/;
+/**
+ * Footer appended by the bash tool when long output was spilled: `local://N.log` since Core 19,
+ * `artifact://<id>` in older sessions.
+ */
+const RAW_OUTPUT_NOTICE = /\[raw output: ((?:local|artifact):\/\/[^\]\s]+)\]/;
 
 function envPrefix(env: Record<string, unknown>): string {
 	const parts: string[] = [];
@@ -81,8 +84,9 @@ function Summary({ args, result }: ToolRenderProps): ReactNode {
 }
 
 // ---- Pseudo 视图 ----
-// orb 的 omp 扩展（internal/orbdrt/assets/oryn-orb.ts）用 omp 原生 ShellVisualization 把执行轨迹渲染成
-// Python 风格的行，写进 details.orynPseudo；这里只负责显示。运行中、旧会话、没有轨迹时只有原始命令。
+// omp 原生 ShellVisualization 把执行轨迹渲染成 Python 风格的行，写进 details.orynPseudo；这里只负责显示。
+// 运行中的帧由 Oryn Core 在 RPC 转发时补上（oryn-core `modes/rpc/oryn-shell-pseudo.ts`），最终结果由 orb
+// 扩展（internal/orbdrt/assets/oryn-orb.ts）写入。旧会话、没有轨迹时只有原始命令。
 
 interface PseudoSegment {
 	text: string;
@@ -95,6 +99,8 @@ interface PseudoRow {
 	depth: number;
 	state: string | null;
 	failMark: boolean;
+	/** 这一行含正在执行的命令。 */
+	active: boolean;
 	segments: PseudoSegment[];
 	meta: string | null;
 	annotations: { name: string; value: string; truncated: boolean }[];
@@ -105,6 +111,8 @@ interface Pseudo {
 	rows: PseudoRow[];
 	omittedRows: number;
 	message: string | null;
+	/** 有命令正在执行：除正在执行的行外都弱化。 */
+	running: boolean;
 }
 
 /** 校验并归一 `details.orynPseudo`（线路上的普通 JSON，字段逐个收窄）；不可用时 null。 */
@@ -118,6 +126,7 @@ function pseudoOf(details: Record<string, unknown> | null): Pseudo | null {
 			depth: Math.max(0, Math.min(num(r.depth) ?? 0, 12)),
 			state: str(r.state),
 			failMark: r.failMark === true,
+			active: r.active === true,
 			segments: r.segments.flatMap((s) =>
 				isRecord(s) && typeof s.text === "string"
 					? [
@@ -156,6 +165,7 @@ function pseudoOf(details: Record<string, unknown> | null): Pseudo | null {
 		rows,
 		omittedRows: num(raw.omittedRows) ?? 0,
 		message: str(raw.message),
+		running: raw.running === true,
 	};
 }
 
@@ -194,11 +204,18 @@ function PseudoView({ pseudo }: { pseudo: Pseudo }): ReactNode {
 				{rows.map((row, i) => (
 					<div
 						key={i}
-						className={`tv-pseudo-row${row.state === "skipped" ? " tv-pseudo-row--skipped" : ""}`}
+						className={[
+							"tv-pseudo-row",
+							row.state === "skipped" ? "tv-pseudo-row--skipped" : "",
+							row.active ? "tv-pseudo-row--active" : "",
+							pseudo.running && !row.active ? "tv-pseudo-row--idle" : "",
+						]
+							.filter(Boolean)
+							.join(" ")}
 						style={{ paddingInlineStart: `${row.depth * 2 + 2}ch` }}
 					>
 						<span className="tv-pseudo-lead" aria-hidden="true">
-							{row.failMark ? "×" : ""}
+							{row.failMark ? "×" : row.active ? "›" : ""}
 						</span>
 						{row.effects.length > 0 && (
 							<span className="tv-pseudo-effects">{`${row.effects.join("")} `}</span>
@@ -260,7 +277,7 @@ function PseudoView({ pseudo }: { pseudo: Pseudo }): ReactNode {
 	);
 }
 
-function Input({ args, result, running }: ToolRenderProps): ReactNode {
+function Input({ args, result, partial, running }: ToolRenderProps): ReactNode {
 	const { t } = useTranslation();
 	const [view, setView] = useState<"pseudo" | "raw">("pseudo");
 	const command = args.command === undefined ? "…" : str(args.command);
@@ -270,7 +287,8 @@ function Input({ args, result, running }: ToolRenderProps): ReactNode {
 	const tail = num(args.tail);
 	const details = detailsRecord(result);
 	const timeoutSeconds = num(args.timeout) ?? num(details?.timeoutSeconds);
-	const pseudo = pseudoOf(details);
+	// 运行中读部分结果里的 pseudo（边跑边更新），结束后读最终结果的
+	const pseudo = pseudoOf(detailsRecord(result ?? partial));
 	const showPseudo = pseudo !== null && view === "pseudo";
 	const badges = (
 		<Badges
@@ -328,7 +346,7 @@ function Result({ args, result }: ToolRenderProps): ReactNode {
 	const timeoutSeconds = num(args.timeout) ?? num(details?.timeoutSeconds);
 	const requestedTimeoutSeconds = num(details?.requestedTimeoutSeconds);
 	const job = asyncDetailsOf(details);
-	const artifactId = ARTIFACT_NOTICE.exec(resultTextOf(result))?.[1] ?? null;
+	const rawOutput = RAW_OUTPUT_NOTICE.exec(resultTextOf(result))?.[1] ?? null;
 
 	const stats: string[] = [];
 	if (
@@ -338,7 +356,7 @@ function Result({ args, result }: ToolRenderProps): ReactNode {
 		stats.push(`requested timeout ${requestedTimeoutSeconds}s clamped`);
 	}
 	if (job?.jobId) stats.push(`job ${job.jobId}`);
-	if (artifactId) stats.push(`artifact ${artifactId}`);
+	if (rawOutput) stats.push(`raw output ${rawOutput}`);
 
 	return (
 		<>

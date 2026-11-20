@@ -119,9 +119,9 @@ func (r *Runtime) coordinatorAgentSpec(p apigen.LinkCtlAgentStartParams, dir str
 		"PI_RPC_EMIT_TITLE": "1",
 		"PI_NOTIFICATIONS":  "off",
 		"OTEL_SDK_DISABLED": "true",
-		// omp 的原生文件锁改用 home 里的旁路文件（OFD 锁）：沙箱禁止一切 AF_UNIX，默认的 abstract socket 锁用不了。
-		"PI_FILE_LOCK_BACKEND": "sidecar",
-		"ORYN_THREAD_ID":       p.ThreadID,
+		// Core 19 起 RPC 默认不要求工具调用带 intent；Web 的工具卡要显示它
+		"PI_INTENT_TRACING": "1",
+		"ORYN_THREAD_ID":    p.ThreadID,
 	}
 	// 出站（M19，只给全局助手）：omp 的全局 fetch 经 PI_PROXY 走 orynd 的正向代理（https 用 CONNECT），回环与内网地址
 	// 由 omp 直连（沙箱里只有回环 7811 连得通）；是否放行、放行哪些目标由控制面的出站策略决定。MCP 的地址前缀与凭据

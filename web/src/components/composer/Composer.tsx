@@ -54,7 +54,9 @@ import {
 	type InFlightDraft,
 	isInFlightDraft,
 	patchComposerDraft,
+	takeComposerFiles,
 	useComposerDraft,
+	useComposerPendingFiles,
 } from "../../state/composer-drafts";
 import { getThreadStore, useIndex, useThread } from "../../state/stores";
 import { subagentFiles } from "../../state/subagent-entries";
@@ -91,6 +93,7 @@ export const Composer = memo(function Composer({
 	const text = useComposerDraft(threadId, (d) => d.text);
 	const error = useComposerDraft(threadId, (d) => d.error);
 	const quote = useComposerDraft(threadId, (d) => d.quote);
+	const insert = useComposerDraft(threadId, (d) => d.insert);
 	const inFlight = useComposerDraft(threadId, (d) => d.inFlight);
 	const setText = (next: string) =>
 		patchComposerDraft(threadId, { text: next });
@@ -115,6 +118,14 @@ export const Composer = memo(function Composer({
 	const assistant = useIndex((s) => s.threads[threadId]?.kind) === "assistant";
 	const canAttach = !coordinator || assistant;
 	const att = useAttachments({ threadId, library: assistant });
+	// 右键菜单「引用到输入框」送来的图片：挂上后加入附件列表
+	const pendingFiles = useComposerPendingFiles(threadId);
+	const addFiles = att.addFiles;
+	useEffect(() => {
+		if (pendingFiles.length === 0) return;
+		const files = takeComposerFiles(threadId);
+		if (canAttach) void addFiles(files);
+	}, [pendingFiles, threadId, canAttach, addFiles]);
 	const menu = useCommandMenu(threadId, text, commands, coordinator);
 	const menuOpen = menu !== null && !menuDismissed;
 	const entries = menu?.entries ?? [];
@@ -196,6 +207,22 @@ export const Composer = memo(function Composer({
 		el.focus({ preventScroll: true });
 		el.setSelectionRange(el.value.length, el.value.length);
 	}, [quote]);
+
+	// 「引用到输入框」：接到正文末尾（与原文空一行），光标放到最后
+	useEffect(() => {
+		if (!insert) return;
+		const prev = getComposerDraft(threadId).text;
+		const next = prev.trim()
+			? `${prev.replace(/\s+$/, "")}\n\n${insert.text}`
+			: insert.text;
+		patchComposerDraft(threadId, { text: next, insert: null });
+		requestAnimationFrame(() => {
+			const el = ref.current;
+			if (!el) return;
+			el.focus({ preventScroll: true });
+			el.setSelectionRange(el.value.length, el.value.length);
+		});
+	}, [insert, threadId]);
 
 	// 重新挂载后尽力恢复卸载时的光标与焦点；卸载时（DOM 还在）记下它们
 	useLayoutEffect(() => {

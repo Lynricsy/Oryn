@@ -1,9 +1,12 @@
 /** 文件树键盘：WAI-ARIA tree（roving tabindex、方向键、Home / End、Enter / Space），行内「⋯」按钮的按键不冒泡到行。 */
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../../i18n";
+import { installContextMenu } from "../../lib/context-menu/dispatch";
+import { closeContextMenu } from "../../lib/context-menu/store";
 import type { FileEntry } from "../../lib/file-source";
+import { ContextMenuHost } from "../ui/ContextMenu";
 import { actionsFor, type DirState, FileTree } from "./FileTree";
 
 const file = (path: string): FileEntry => ({
@@ -68,7 +71,10 @@ function setup(dirtyPaths: string[] = []) {
 	const onOpen = vi.fn();
 	const onToggle = vi.fn();
 	render(
-		<Harness dirtyPaths={dirtyPaths} onOpen={onOpen} onToggle={onToggle} />,
+		<>
+			<Harness dirtyPaths={dirtyPaths} onOpen={onOpen} onToggle={onToggle} />
+			<ContextMenuHost />
+		</>,
 	);
 	return { onOpen, onToggle };
 }
@@ -77,6 +83,15 @@ const item = (name: string) => screen.getByRole("treeitem", { name });
 const focused = () => document.activeElement?.getAttribute("data-path");
 
 describe("FileTree 键盘", () => {
+	let off: () => void;
+	beforeEach(() => {
+		off = installContextMenu();
+	});
+	afterEach(() => {
+		off();
+		act(() => closeContextMenu());
+	});
+
 	it("整棵树只有一个 Tab 停靠点；↑↓ / Home / End 移动焦点并跟随 tabindex", () => {
 		setup();
 		const items = screen.getAllByRole("treeitem");
@@ -136,7 +151,7 @@ describe("FileTree 键盘", () => {
 		expect(onOpen).not.toHaveBeenCalled();
 		const menu = screen.getByRole("menu");
 		expect(menu.contains(document.activeElement)).toBe(true);
-		fireEvent.keyDown(window, { key: "Escape" });
+		fireEvent.keyDown(document.activeElement as Element, { key: "Escape" });
 		expect(screen.queryByRole("menu")).toBeNull();
 		expect(focused()).toBe("/r/src");
 	});
@@ -145,7 +160,11 @@ describe("FileTree 键盘", () => {
 		setup();
 		item("a.txt").focus();
 		fireEvent.keyDown(item("a.txt"), { key: "F10", shiftKey: true });
-		expect(screen.getByRole("menu")).toBeInTheDocument();
+		const menu = screen.getByTestId("context-menu");
+		expect(menu).toBeInTheDocument();
+		expect(
+			screen.getByRole("menuitem", { name: i18n.t("files.actions.rename") }),
+		).toBeInTheDocument();
 	});
 
 	it("有草稿的文件及其所在目录带「未保存」标记", () => {

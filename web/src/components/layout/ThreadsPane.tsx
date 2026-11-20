@@ -11,11 +11,12 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { NavLink } from "react-router";
+import { NavLink, useNavigate } from "react-router";
 import type { Project, Thread, ThreadState } from "../../api/client";
 import { qk, useArchivedThreads, useProjects } from "../../api/queries";
 import { useSchedules } from "../../api/schedule-queries";
 import { type Space, useSpaces } from "../../api/space-queries";
+import { useContextTarget } from "../../lib/context-menu/registry";
 import { formatRelative } from "../../lib/format";
 import { activityOf, inboxBadgeCount } from "../../lib/inbox";
 import { isCoordinatorThread } from "../../lib/thread-kind";
@@ -25,6 +26,7 @@ import { useIndex } from "../../state/stores";
 import { uiStore, useUi } from "../../state/ui";
 import { SpaceDialog } from "../space/SpaceDialog";
 import { hueVar, threadHue } from "../thread/ThreadHeader";
+import { threadRowGroups } from "../thread/thread-row-menu";
 import { nameHue, ProjectBadge } from "../ui/data";
 import { Icon } from "../ui/icons";
 import { IconButton, ThreadStateIcon } from "../ui/primitives";
@@ -222,6 +224,11 @@ export function ThreadRow({
 	time?: string;
 }) {
 	const { t } = useTranslation();
+	const navigate = useNavigate();
+	const ctxRef = useContextTarget<HTMLAnchorElement>({
+		items: () =>
+			threadRowGroups(thread, { to: `/t/${thread.id}`, navigate, t }),
+	});
 	const card = parseTitleCard(thread.title);
 	const title = card.text || t("thread.untitled");
 	const stamp = time ?? formatRelative(activityOf(thread), now ?? Date.now());
@@ -235,6 +242,8 @@ export function ThreadRow({
 	return (
 		<>
 			<NavLink
+				ref={ctxRef}
+				data-ctx-touch=""
 				to={`/t/${thread.id}`}
 				onClick={closeOnCompact}
 				className={({ isActive }) =>

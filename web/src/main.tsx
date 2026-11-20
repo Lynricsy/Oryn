@@ -10,6 +10,7 @@ import { BrowserRouter } from "react-router";
 import { App } from "./App";
 import "./i18n";
 import "./index.css";
+import { installContextMenu } from "./lib/context-menu/dispatch";
 import { installDeviceCorners } from "./lib/device-corners";
 import { host } from "./lib/host";
 import { installSquircle } from "./lib/squircle";
@@ -29,6 +30,8 @@ async function boot() {
 	installViewportTracking();
 	// iOS：聚焦小字号输入框不自动放大整页（放大后常不缩回，页面停在平移状态）
 	installNoFocusZoom();
+	// 统一上下文菜单：右键 / 菜单键 / 长按（lib/context-menu）
+	installContextMenu();
 	// 移动壳：贴边浮层的圆角与屏幕圆角同心（其它宿主无操作）
 	installDeviceCorners(host, document.documentElement);
 	installTheme();

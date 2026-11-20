@@ -69,7 +69,9 @@ func (q *Queries) CountOpenChildren(ctx context.Context, parentThreadID string) 
 }
 
 const countOtherThreadsByOrb = `-- name: CountOtherThreadsByOrb :one
-SELECT COUNT(*) FROM threads WHERE orb_id = CAST(?1 AS TEXT) AND id <> CAST(?2 AS TEXT)
+SELECT COUNT(*) FROM threads
+WHERE orb_id = CAST(?1 AS TEXT)
+  AND (id <> CAST(?2 AS TEXT) OR archived_at IS NULL)
 `
 
 type CountOtherThreadsByOrbParams struct {
@@ -77,8 +79,9 @@ type CountOtherThreadsByOrbParams struct {
 	ExceptID string `json:"exceptId"`
 }
 
-// Threads bound to an orb other than @except_id (” = all of them, archived included): an orb is
-// reclaimed only when nothing else uses it.
+// Threads bound to an orb, archived included, except @except_id while it is still archived (” = all of them):
+// an orb is reclaimed only when nothing else uses it. Re-checking archived_at here closes the race where the
+// keepLast run thread is unarchived between its Archive and this count.
 func (q *Queries) CountOtherThreadsByOrb(ctx context.Context, arg CountOtherThreadsByOrbParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, countOtherThreadsByOrb, arg.OrbID, arg.ExceptID)
 	var count int64

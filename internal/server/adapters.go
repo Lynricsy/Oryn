@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/Lynricsy/Oryn/internal/agentcfg"
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/artifacts"
 	"github.com/Lynricsy/Oryn/internal/auth"
@@ -75,7 +76,8 @@ func (m lazyMemory) AgentMemory(ctx context.Context, threadID string, projectID 
 	return m.s.Memory.AgentMemory(ctx, threadID, projectID)
 }
 
-// shareSecrets 是分享前密钥扫描的取值来源：密钥库的全部值，加上 SSH 密码登录主机的密码（M18）。
+// shareSecrets 是分享前密钥扫描的取值来源：密钥库的全部值，加上 SSH 密码登录主机的密码（M18）。M21 起 runner 的
+// 无密钥投递校验（orbs.RunnerScreen）用同一来源。
 type shareSecrets struct {
 	vault *secrets.Vault
 	ssh   *sshgw.Service
@@ -94,4 +96,22 @@ func (s shareSecrets) All(ctx context.Context) (map[string]string, error) {
 		out[k] = v
 	}
 	return out, nil
+}
+
+// runnerAgent 组装 runner 线程的 SSH 身份与项目层附加交付（M21，满足 threads.RunnerAgent）：项目主机的 ssh.json 与
+// 「公钥 → 线程」登记在 sshgw，被扣下文件的备注写进 runner orb 的事件，已知密钥同分享前扫描。
+type runnerAgent struct {
+	*sshgw.Service
+	orbs    *orbs.Service
+	secrets shareSecrets
+}
+
+func (r runnerAgent) ProjectSSH(ctx context.Context, threadID string) ([]byte, error) {
+	return r.Service.RunnerProjectSSH(ctx, threadID)
+}
+
+func (r runnerAgent) KnownSecrets(ctx context.Context) (map[string]string, error) { return r.secrets.All(ctx) }
+
+func (r runnerAgent) NoteWithheld(ctx context.Context, orbID, threadID string, withheld []agentcfg.Withheld) {
+	r.orbs.NoteRunnerWithheld(ctx, orbID, threadID, withheld)
 }

@@ -20,7 +20,11 @@ import {
 import { useTranslation } from "react-i18next";
 import { ApiError } from "../../api/client";
 import { copyToClipboard } from "../../lib/clipboard";
+import { useContextTarget } from "../../lib/context-menu/registry";
+import { copyWithToast } from "../../lib/context-menu/selection-groups";
+import { joinPath } from "../../lib/file-source";
 import { useThread } from "../../state/stores";
+import { uiStore } from "../../state/ui";
 import {
 	isOrbdOutdated,
 	useElementWidth,
@@ -37,6 +41,7 @@ import {
 	ErrorText,
 	IconButton,
 	Menu,
+	type MenuItem,
 	Spinner,
 	TextInput,
 } from "../ui/primitives";
@@ -434,6 +439,44 @@ export default function ChangesPanel({
 		}
 	};
 
+	// 文件行的上下文菜单：登记在文件列表上，按命中的行现取数据（写在提前返回之前）
+	const ctxRef = useContextTarget<HTMLUListElement>({
+		items: (req) => {
+			const li = req.target.closest("li[data-change-path]");
+			if (!li) return null;
+			const path = li.getAttribute("data-change-path");
+			const f = (status?.repo ? status.files : []).find((x) => x.path === path);
+			if (!f) return null;
+			const items: MenuItem[] = [];
+			const repoRoot = status?.root;
+			if (f.status !== "deleted" && repoRoot)
+				items.push({
+					key: "openFile",
+					icon: "folderOpen",
+					label: t("contextMenu.openInFiles"),
+					onSelect: () =>
+						uiStore.getState().openFile(threadId, joinPath(repoRoot, f.path)),
+				});
+			items.push({
+				key: "copyPath",
+				icon: "copy",
+				label: t("contextMenu.copyPath"),
+				onSelect: () => void copyWithToast(f.path),
+			});
+			if (scope.scope !== "commit") {
+				const staged = f.staged === "full";
+				items.push({
+					key: "stage",
+					icon: staged ? "minusCircle" : "checkCircle",
+					label: t(staged ? "contextMenu.unstage" : "contextMenu.stage"),
+					disabled: staging,
+					onSelect: () => void stage([f], !staged),
+				});
+			}
+			return [{ key: "change", items }];
+		},
+	});
+
 	if (!orbId)
 		return <EmptyState icon="alert" title={t("changes.orbDeleted")} />;
 	if (isOrbdOutdated(error))
@@ -621,7 +664,11 @@ export default function ChangesPanel({
 		list = <EmptyState icon="checkCircle" title={t("changes.clean")} />;
 	} else {
 		list = (
-			<ul aria-label={t("changes.files")} className="p-1.5 text-sm">
+			<ul
+				ref={ctxRef}
+				aria-label={t("changes.files")}
+				className="p-1.5 text-sm"
+			>
 				{groups.map(([dir, group]) => (
 					<li key={dir}>
 						<div className="flex items-center gap-1.5 px-2 pt-2 pb-1 text-2xs text-faint">
@@ -632,7 +679,7 @@ export default function ChangesPanel({
 						</div>
 						<ul>
 							{group.map((f) => (
-								<li key={f.path}>
+								<li key={f.path} data-change-path={f.path} data-ctx-touch="">
 									<div
 										className={`flex h-8 items-center gap-2 rounded-md px-2 transition-colors duration-150 ${selected === f.path ? "bg-hover text-fg" : "hover:bg-hover/60"}`}
 									>

@@ -381,8 +381,9 @@ func (r *Runtime) libraryFetch(ctx context.Context, c *conn, p apigen.LinkCtlLib
 	return apigen.LinkCtlLibraryFetchResult{Size: fi.Size()}, nil
 }
 
-// libraryPut 处理 orbd.sock 的 library.put（普通 orbd）：校验文件后登记为可取回，再转成 ctl library.put；
-// 控制面在这次请求里经 library.fetch 取回字节。
+// libraryPut 处理 library.put：orb 的 orbd.sock（`oryn library put`），以及 runner 的 runner.sock（M21，扩展的
+// oryn_library_put 工具）。校验文件后只把这一条路径登记为可取回，再转成 ctl library.put；控制面在这次请求里经
+// library.fetch 取回字节，结束后撤销登记。runner 上另要求文件位于调用方线程的工作目录之内（见 runnerLibraryPath）。
 func (r *Runtime) libraryPut(ctx context.Context, params json.RawMessage) (any, error) {
 	var p apigen.LinkCtlLibraryPutParams
 	if err := decodeSock(params, &p); err != nil {
@@ -392,6 +393,13 @@ func (r *Runtime) libraryPut(ctx context.Context, params json.RawMessage) (any, 
 		return nil, orbsock.Errorf(orbsock.CodeInvalidParams, "path must be absolute")
 	}
 	p.Path = filepath.Clean(p.Path)
+	if r.runner != nil {
+		real, err := r.runnerLibraryPath(p)
+		if err != nil {
+			return nil, err
+		}
+		p.Path = real
+	}
 	fi, err := os.Stat(p.Path)
 	if err != nil {
 		return nil, orbsock.Errorf(orbsock.CodeInvalidParams, "%v", err)
@@ -402,18 +410,41 @@ func (r *Runtime) libraryPut(ctx context.Context, params json.RawMessage) (any, 
 	if fi.Size() > libraryMaxBytes {
 		return nil, orbsock.Errorf(orbsock.CodeInvalidParams, "%s exceeds %d bytes", p.Path, libraryMaxBytes)
 	}
-	r.lib.mu.Lock()
-	if r.lib.staged == nil {
-		r.lib.staged = map[string]int{}
-	}
-	r.lib.staged[p.Path]++
-	r.lib.mu.Unlock()
-	defer func() {
-		r.lib.mu.Lock()
-		if r.lib.staged[p.Path]--; r.lib.staged[p.Path] <= 0 {
-			delete(r.lib.staged, p.Path)
-		}
-		r.lib.mu.Unlock()
-	}()
+	defer r.stageLibraryPaths([]string{p.Path})()
 	return r.ctlForwardFor(ctx, apigen.MethodLibraryPut, p, libraryPutTimeout)
+}
+
+// runnerLibraryPath 校验 runner 上 library.put 的路径（已是 Clean 过的绝对路径）：本身是普通文件（不是符号链接或目录），
+// 且解析符号链接后严格位于调用方线程最近一次启动 agent 的工作目录之内。返回解析后的真实路径（登记与取回都用它）。
+func (r *Runtime) runnerLibraryPath(p apigen.LinkCtlLibraryPutParams) (string, error) {
+	if !validThreadID(p.ThreadID) {
+		return "", orbsock.Errorf(orbsock.CodeInvalidParams, "invalid threadId %q", p.ThreadID)
+	}
+	t := r.lookupThread(p.ThreadID)
+	cwd := ""
+	if t != nil {
+		cwd = t.cwd()
+	}
+	if cwd == "" {
+		return "", orbsock.Errorf(orbsock.CodeInvalidParams, "thread %s has no agent on this runner", p.ThreadID)
+	}
+	fi, err := os.Lstat(p.Path)
+	if err != nil {
+		return "", orbsock.Errorf(orbsock.CodeInvalidParams, "%v", err)
+	}
+	if !fi.Mode().IsRegular() {
+		return "", orbsock.Errorf(orbsock.CodeInvalidParams, "%s is not a regular file (directories must be archived first; give the real path instead of a symlink)", p.Path)
+	}
+	real, err := filepath.EvalSymlinks(p.Path)
+	if err != nil {
+		return "", orbsock.Errorf(orbsock.CodeInvalidParams, "%v", err)
+	}
+	root, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return "", orbsock.Errorf(orbsock.CodeInvalidParams, "%v", err)
+	}
+	if real == root || !underDir(real, root) {
+		return "", orbsock.Errorf(orbsock.CodeInvalidParams, "only files inside the thread's working directory %s can be saved", cwd)
+	}
+	return real, nil
 }

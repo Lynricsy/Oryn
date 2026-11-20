@@ -832,7 +832,7 @@ Space 是「名称 + 目标 + 可选项目 + 一个协调聊天」；全局助�
 
 |项|规格位置|语义|
 |---|---|---|
-|`agent.start` 协调档|`LinkCtlAgentStartParams.profile = coordinator`、`systemPrompt`|**只有协调宿主接受**：普通 orbd 收到非空 `profile` → `invalid_params`；协调宿主要求 `profile = coordinator` 且 `systemPrompt` 含换行，`env` 必须为空。协调宿主把 `systemPrompt` 原子写到 `<home>/.oryn/coordinator/prompts/<threadId>.md`（0600），argv 只带该路径（omp 对不含换行的 `--system-prompt` 值按文件读取），正文不出现在 `/proc/<pid>/cmdline`。omp 参数恰为 `--mode rpc-ui --cwd <cwd> --session-dir <dir> --no-tools --tools read,write --no-skills --no-extensions --no-rules --no-context-files --no-lsp --config <overlay.yml> --system-prompt <提示词文件>`（`--tools read,write` 自 M13 起，见「M13：全局助手文件库进协调宿主」），环境从零构造（`HOME PATH LANG TMPDIR PI_RPC_EMIT_TITLE PI_NOTIFICATIONS OTEL_SDK_DISABLED PI_FILE_LOCK_BACKEND=sidecar ORYN_THREAD_ID`；`PI_FILE_LOCK_BACKEND=sidecar` 让 omp 的原生文件锁改用旁路文件 + OFD 锁，见 Oryn Core 的 ORYN.md）|
+|`agent.start` 协调档|`LinkCtlAgentStartParams.profile = coordinator`、`systemPrompt`|**只有协调宿主接受**：普通 orbd 收到非空 `profile` → `invalid_params`；协调宿主要求 `profile = coordinator` 且 `systemPrompt` 含换行，`env` 必须为空。协调宿主把 `systemPrompt` 原子写到 `<home>/.oryn/coordinator/prompts/<threadId>.md`（0600），argv 只带该路径（omp 对不含换行的 `--system-prompt` 值按文件读取），正文不出现在 `/proc/<pid>/cmdline`。omp 参数恰为 `--mode rpc-ui --cwd <cwd> --session-dir <dir> --no-tools --tools read,write --no-skills --no-extensions --no-rules --no-context-files --no-lsp --config <overlay.yml> --system-prompt <提示词文件>`（`--tools read,write` 自 M13 起，见「M13：全局助手文件库进协调宿主」），环境从零构造（`HOME PATH LANG TMPDIR PI_RPC_EMIT_TITLE PI_NOTIFICATIONS OTEL_SDK_DISABLED PI_INTENT_TRACING=1 ORYN_THREAD_ID`；`PI_INTENT_TRACING=1` 让工具调用照旧带 intent（Core 19 起 RPC 默认关闭）；Core 19 起 omp 的原生文件锁在 Linux 上本就是旁路文件 + OFD 锁，不再设 `PI_FILE_LOCK_BACKEND`，见 Oryn Core 的 ORYN.md）|
 |hello `features`|`LinkCtlHelloParams.features`|普通 orbd 追加 `threads`（orb 内线程与定时方法）。`coordinator` **只由** `orynd coordinator-host` 上报，此时特性表恰为 `["coordinator", "omphome-apply", "library"]`（后两项自 M13），`onRequest` 只认 `setup.run / resume.run / agent.start / agent.stop / shutdown / omphome.apply / library.sync / library.fetch`|
 |`thread.create`|`LinkCtlThreadCreateParams{threadId, prompt, title?, type?}` → `LinkCtlThreadInfo`|orbd→orynd 请求。`threadId` 一律是**调用方**线程（须属于本 orb、`kind = work`、未归档，否则 `forbidden`）。新线程取调用方的项目与 Space，`parentThreadId` = 调用方，新 orb；首条提示词前加来源头行 `[Oryn message from thread "" (<调用方 id>) — sent by an agent, not typed by the owner]`。限额检查与创建在同一把锁下（并发请求不能越过限额）|
 |`thread.send` / `thread.get`|`LinkCtlThreadSendParams{threadId, target, message, steer?}` → `LinkCtlOkResult`；`LinkCtlThreadGetParams{threadId, target}` → `LinkCtlThreadInfo`|`target` 须是调用方的父线程或直接子线程且 `kind = work`，否则 `forbidden`。`send` 以自动化身份投递，正文前加 `[Oryn message from thread "" (<id>) — sent by an agent, not typed by the owner]`（名称恒为空串：标题由 agent 控制，不进头行；界面按 id 取当前标题）|
@@ -849,7 +849,7 @@ orb 内方法、`thread.create` / `thread.send` 与 `schedule.put` / `schedule.d
 |探测|结果|
 |---|---|
 |P1 `--no-tools` + `set_host_tools` + 覆盖层（空 HOME、`env -i`）|`set_host_tools` 成功、`toolNames = ["create_thread"]`；`get_active_tools` **只有** `create_thread`（`source: extension`），没有任何内置工具（`manage_skill / learn / checkpoint / rewind` 等也不在）。宿主工具在 `--no-tools` 下自动激活，不需要额外的激活命令|
-|P1 的副作用|启动时 omp 主动连 `127.0.0.1:11434`（ollama）、`127.0.0.1:1234`（lm-studio）、`127.0.0.1:8080`（llama.cpp）做模型发现，并经 systemd-resolved 的 unix socket 解析域名、连外网 443 刷新模型目录；在 HOME 下写 `.omp/{logs,run/daemons,agent/*.db,natives/<版本>}`；会话所有权租约默认 bind 一个 abstract unix datagram 名字（omp 的原生文件锁）；Bun 启动时建一对 `AF_UNIX` stream `socketpair`（拒绝即 abort）。即：不加沙箱时 omp 会碰本机其它端口与 unix socket——沙箱的网络隔离（网络命名空间，或 Landlock ABI ≥ 4 的端口白名单）+ seccomp 禁止 `AF_UNIX` 的 `socket(2)` 与 datagram / seqpacket 的 `socketpair`（只留生来已连接的 stream `socketpair`）是必需的；文件锁由 `PI_FILE_LOCK_BACKEND=sidecar` 改到 `.omp/run/session-owners/` 等处的旁路文件上（OFD 锁）。在 `--no-tools` 的协调档里，omp 其它的 unix socket 用途（daemon broker、预测 daemon、tiny 标题 worker、blob broker、collab、LSP / DAP / 浏览器 / IDA 等）都要工具、非默认设置或被控制面拦截的 RPC 才会触发，触发时得到 `EPERM` 并降级|
+|P1 的副作用|启动时 omp 主动连 `127.0.0.1:11434`（ollama）、`127.0.0.1:1234`（lm-studio）、`127.0.0.1:8080`（llama.cpp）做模型发现，并经 systemd-resolved 的 unix socket 解析域名、连外网 443 刷新模型目录；在 HOME 下写 `.omp/{logs,run/daemons,agent/*.db,natives/<版本>}`；会话所有权租约默认 bind 一个 abstract unix datagram 名字（omp 18 的原生文件锁）；Bun 启动时建一对 `AF_UNIX` stream `socketpair`（拒绝即 abort）。即：不加沙箱时 omp 会碰本机其它端口与 unix socket——沙箱的网络隔离（网络命名空间，或 Landlock ABI ≥ 4 的端口白名单）+ seccomp 禁止 `AF_UNIX` 的 `socket(2)` 与 datagram / seqpacket 的 `socketpair`（只留生来已连接的 stream `socketpair`）是必需的；文件锁在 `.omp/run/session-owners/` 等处的旁路文件上（OFD 锁；omp 18 时靠 `PI_FILE_LOCK_BACKEND=sidecar` 切换，Core 19 起上游默认如此）。在 `--no-tools` 的协调档里，omp 其它的 unix socket 用途（daemon broker、预测 daemon、tiny 标题 worker、blob broker、collab、LSP / DAP / 浏览器 / IDA 等）都要工具、非默认设置或被控制面拦截的 RPC 才会触发，触发时得到 `EPERM` 并降级|
 |P2 最小文件视图 + 无网络（bwrap `--unshare-all`，uid 65534）|与 P1 相同的两行，`ready` 后 0.9 秒内到达，没有因联网失败而卡住|
 |P3 Landlock ABI|`landlock_create_ruleset(NULL, 0, VERSION)` 返回 **11**（errno 0）|
 
@@ -1337,27 +1337,27 @@ docker:    { pids_limit: 4096 }
 
 ## M11b：runner 与 Firecracker
 
-两件事：**runner**（用户自己的机器以 `orbd run --runner --dir <目录> …` 主动接入，作为一台常驻的执行位置；agent 用那台机器自己的 `~/.omp/agent` 与 git 凭据，控制面的密钥不下发）与 **Firecracker provider**（`driver: firecracker`，每个 orb 一台 microVM；对控制面而言只是一种新的 provider 驱动，任务协议不变）。
+两件事：**runner**（用户自己的机器以 `orbd run --runner --dir <目录> …` 主动接入，作为一台常驻的执行位置；M21 起 `orbd` 下载并运行钉住版本的 Oryn Core，以独立的 `~/.oryn/omp` 接收控制面下发的无密钥配置，经本机常驻出站通道与 SSH 端口使用模型中转、记忆与 SSH 网关，控制面的密钥不下发，git 仍用本机凭据）与 **Firecracker provider**（`driver: firecracker`，每个 orb 一台 microVM；对控制面而言只是一种新的 provider 驱动，任务协议不变）。
 
 ### 令牌与 whoami
 
 - runner 令牌前缀 `ort_`（`ids.RunnerToken()`，格式同其它令牌）；库里只存哈希（`providers.token_hash`）。
 - `GET /orb/v1/whoami`（`orbWhoami`，tag `orb-link`，挂在 `/orb/v1/link` 旁，由手写处理器服务，不进 `ServerInterface`）：`Authorization: Bearer oot_… | ort_…` → `200 OrbWhoami{orbId, kind: orb | runner}`；令牌无效、已吊销或其 orb 已删除 → 401 `unauthorized`。runner 形态的 orbd 在拨 link 之前用它得知自己的 orb id。
-- `/orb/v1/link` 同样接受 `ort_…`（安全方案 `runnerBearer`），对应 runner 的常驻 orb；该 orb 的 `egress` 流直接关闭。
+- `/orb/v1/link` 同样接受 `ort_…`（安全方案 `runnerBearer`），对应 runner 的常驻 orb；控制面对该 orb 的 `egress` 流经 `runnerEgressHandler`（M21）只放行 origin-form 的 `/llm/` 与 `/memory/`，其余路径（`/git/`、`/gh/`、`/mcp/`、CONNECT 与代理形式请求）一律回 403。
 
 ### orb link（C2）
 
 - `LinkCtlHelloParams.runner?: LinkRunnerInfo{hostname, dirs: RunnerDir[]}`，只由 runner 形态的 orbd 上报；`RunnerDir{path（解析符号链接后的绝对路径）, name（最后一段）, git（目录本身含 .git）}`。
-- `LinkCtlHelloParams.features` 新增 `terminal`（终端面板可用；runner 只在带 `--terminal` 时上报，未上报时控制面不发 `terminal_configure`）与 `metrics`（上报 `metrics.sample`）。runner 上报 `fs`、`attachments`、`metrics`，`git` 在 PATH 里时加 `git`。
+- `LinkCtlHelloParams.features` 新增 `terminal`（终端面板可用；runner 只在带 `--terminal` 时上报，未上报时控制面不发 `terminal_configure`）与 `metrics`（上报 `metrics.sample`）。runner 上报 `fs`、`attachments`、`metrics`、`memory`、`omphome-apply`（M21），可信 `PATH`（`$HOME` 之外）里有 `git` 时加 `git`，带 `--terminal` 时加 `terminal`，SSH 网关端口监听成功时加 `ssh`。hello 含 `omphome-apply` 的 runner 在接入后先由控制面同步执行一次 `omphome.apply` 并刷新出站策略，成功后才从 `connecting` 进入 `ready`；失败时停在 `connecting`，按 5 秒起翻倍（上限 60 秒）退避重试，并在首次失败或错误变化时记 orb 事件备注 `runner config apply failed`。
 - 新方法（orynd→orbd 请求，只有 runner 形态接受，其它 orbd 回 `not_supported`）：
   - `worktree.add`：`LinkCtlWorktreeAddParams{repo, name}` → `LinkCtlWorktreeAddResult{dir, branch}`。`repo` 须在声明的目录内（否则 `dir_not_served`）且含 `.git`；`name` 须匹配 `^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$`（否则 `invalid_params`）。先 `git -C repo fetch --quiet`（30 秒，失败忽略）；目录 = `<repo 的父目录>/<repo 名>-<name>`，目录或分支已存在则依次试 `-2`、`-3`…；`git worktree add -b <分支> <目录>`，登记到 `$HOME/.oryn/orbd/worktrees.json`。git 失败 → `failed`（`message` 为 stderr）。
   - `worktree.remove`：`LinkCtlWorktreeRemoveParams{dir}` → `LinkCtlWorktreeRemoveResult{ok, branchKept?}`。`dir` 须在登记里（否则 `not_found`）；`git worktree remove`（不带 `--force`，有未提交改动 → `worktree_dirty`，`message` 为 git 的 stderr）；随后 `git branch -d`（不带 `-D`，失败则 `branchKept: true`）；从登记里删掉。
-- `LinkCtlAgentStartParams.cwd`：runner 形态必填，且须等于或位于某个 `--dir` 或已登记的 worktree 之下（按 `EvalSymlinks` 判断，否则 `dir_not_served`）；`sessionDir`、`fs.copyTree`、`fs.move` 的路径须在 `$HOME/.oryn/threads/` 之下。
-- runner 形态不处理的方法回 `not_supported`：`setup.run`、`resume.run`、`project.scripts.*`、`snapshot.prepare`、`shutdown`；`portal` / `desk` 流直接关闭。
-- runner 的 link 上控制面只受理允许清单（M11 审查修复）：请求只有 `entries.cursors`、`entries.append`、`artifact.call`（M14：runner 的 orbd 经只认这一个方法的 `~/.oryn/orbd/runner.sock` 转来；调用方线程按 Runner 范围只看得到自己的 artifact），其余（`thread.*`、`schedule.*`、`project.scripts.*` 等）回 ctl 错误 `runner_unsupported`，不进处理器；通知只有 `hello`、`agent.status`、`agent.gap`、`terminal.gap`、`entries.reset`、`entries.reset_done`、`metrics.sample`，其余记日志后丢弃。
+- `LinkCtlAgentStartParams.cwd`：runner 形态必填，且须等于或位于某个 `--dir` 或已登记的 worktree 之下（按 `EvalSymlinks` 判断，否则 `dir_not_served`）；`sessionDir`、`fs.copyTree`、`fs.move` 的路径须在 `$HOME/.oryn/threads/` 之下。M21 起：runner 在本进程收到首个 `omphome.apply` 之前对 `agent.start` 回 ctl 错误 `config_pending`（「等待控制面下发 omp 配置」）；agent 以 `PI_CONFIG_DIR=.oryn/omp`、`ORYN_ISOLATE_USER_SOURCES=1` 启动（清除继承的 `PI_CODING_AGENT_DIR` / `PI_PROFILE` / `OMP_PROFILE`）。按线程交付的项目层与 SSH 公钥见 M16、M18 对应小节。
+- runner 形态不处理的方法回 `not_supported`：`setup.run`、`resume.run`、`project.scripts.*`、`snapshot.prepare`、`shutdown`、`portal.configure`、`profile.mode`（以及 `computer.*`）；`omphome.apply` 自 M21 起受理（写 `$HOME/.oryn/omp/agent` 与全局 SSH 配置，忽略 `projectConfig`）。`portal` / `desk` 流直接关闭。
+- runner 的 link 上控制面只受理允许清单（M11 审查修复，M21 扩充）：请求只有 `entries.cursors`、`entries.append`、`artifact.call`（M14：调用方线程按 Runner 范围只看得到自己的 artifact）与 `library.put`（M21：扩展工具 `oryn_library_put` 经只认 `artifact.call` 与 `library.put` 两个方法的 `~/.oryn/orbd/runner.sock` 转来，见 M13 文件库节），其余（`thread.*`、`schedule.*`、`project.scripts.*`、`github.*`、`ssh.call` 等）回 ctl 错误 `runner_unsupported`，不进处理器；通知只有 `hello`、`agent.status`、`agent.gap`、`terminal.gap`、`entries.reset`、`entries.reset_done`、`metrics.sample`，其余记日志后丢弃。
 - link 鉴权通过后先登记（此后 `Kick` 能找到它），再复核令牌（provider 未停用、哈希未换、orb 未删除且仍接受 link），复核通过才处理 ctl；复核失败的 link 对请求回 `unauthorized` 并关闭。runner 离线定时器与 link 登记在同一把锁下判定，已经开始提交 `stopped` 的定时器会让新 link 等它提交完再处理 hello（随后经 hello 回到 ready）。
 - hello 字段收紧（截断，不拒绝 link）：`features` 保留前 32 个合法项（非空、≤64B、无控制字符）；`runner.dirs` 保留前 64 个合法项（绝对路径、≤4096B、无控制字符），`name` 去控制字符、≤255B；`hostname`、`os`、`arch`、`orbdVersion`、`agentVersion` 去控制字符、按 UTF-8 边界截到 ≤255B。落库、视图与 live features 都用收紧后的值。
-- ctl 错误码新增：`not_supported`、`dir_not_served`、`worktree_dirty`、`runner_unsupported`。
+- ctl 错误码新增：`not_supported`、`dir_not_served`、`worktree_dirty`、`runner_unsupported`，以及 M21 的 `config_pending`。
 
 ### orbd 本机 API
 
@@ -1439,7 +1439,7 @@ firecracker:
 
 - 对开启 `supportsMidConversationToolChanges` 的模型，Core 保持顶层 `tools` 稳定：新出现的活动工具以 `defer_loading: true` 追加到声明表，并在消息尾部插入 `role: "system"` 的 `tool_addition`；离开活动集的工具发 `tool_removal`。有的网关会改写 `tools[]` 里的工具名却不改写这两种块，于是返回 400 `tool_addition/tool_removal references unknown tool '<名>'`。活动工具集的任何变化都会触发：runner 增减 `--terminal`、goal 模式、MCP 迟连、宿主工具表或 Core 升级。
 - `-5` 起：某次请求以 400 失败、错误文本命中 `tool_addition|tool_removal|tool_reference_unresolved`、且此前没有输出任何内容时，同一回合关掉工具变更（声明表直接用当前活动工具，不再带 `mid-conversation-tool-changes` beta 头）重放一次；重放成功后本进程内对该端点（provider + baseUrl + 模型）不再使用工具变更。其它错误照常上抛。
-- 手工开关（不等 Core 发布即可止血）：`models.yml` 里受影响 provider 加 `compat: { supportsMidConversationToolChanges: false }`；orb 经 `oryn config push` 下发，runner 改本机 `~/.omp/agent/models.yml`。
+- 手工开关（不等 Core 发布即可止血）：`models.yml` 里受影响 provider 加 `compat: { supportsMidConversationToolChanges: false }`，经 `oryn config push`（或设置页保存）统一下发到 orb 与在线 runner。
 
 ### 派生事实 v5：工具名口径
 
@@ -1547,17 +1547,17 @@ firecracker:
   - 出现 = orb 属于某个项目：orbd 把 `$HOME/.oryn/project-config/.omp/` **严格镜像**成 `files`（目录里不在其中的普通文件与符号链接一律删除，空目录自底向上删除；不跟随符号链接）。`files[].path` 相对 `$HOME/.oryn/project-config/.omp/`，内容不经 `agentcfg.Render`。
   - 缺省 = orb 不属于项目（或协调宿主）：orbd 删除 `$HOME/.oryn/project-config`。
   - `setup.run` 与 `resume.run` 都写（新建、唤醒、预热与认领、`deferResume` 时 setup 与随后的 resume 各写一次）；不进项目快照的配置哈希。旧 orbd 忽略未知字段，不需要特性开关。
-- `LinkCtlOmpHomeFile.path`：相对所在配置根——`ompHome` 为 `$HOME/.omp/agent/`，`projectConfig.files` 为 `$HOME/.oryn/project-config/.omp/`。
+- `LinkCtlOmpHomeFile.path`：相对所在配置根——`ompHome` 为 `$HOME/.omp/agent/`（runner 为 `$HOME/.oryn/omp/agent/`，M21），`projectConfig.files` 为 `<root>/.omp/`。
 - 控制面侧接口（`internal/orbs`）：`type ProjectConfigs interface { Load(projectID string) (map[string][]byte, map[string]os.FileMode, error) }`，`DefaultSetup.Projects ProjectConfigs`（nil = 不下发项目层），实现为 `*agentcfg.ProjectHomes`。
 - 全局 omp-home 的现状（本里程碑不改）：每次 `setup.run` / `resume.run` 把中央已有的文件整份重写，orb 内对这些文件的本地改动（`/settings` 改 `config.yml`、`/mcp add` 改 `mcp.json`）在下次唤醒时被覆盖；只存在于 orb 本地、中央没有的文件不会被删，但也到不了别的 orb，orb 删除即丢失；中央删除的文件靠 `~/.oryn/omp-home.manifest.json` 清掉。
 
 ### orb 内路径、环境变量与启动参数（C1）
 
-只对 orb 形态（非 runner、非协调宿主）；runner 用用户机器上自己的 omp 配置，协调宿主只收 `models.yml` 与 `config.yml`。
+普通 orb 与带项目层的 runner 线程（M21）按下表设置；协调宿主没有项目层，只收 `models.yml` 与 `config.yml`（及助手可用的 `mcp.json`）。runner 上一台机器同时服务多个项目，项目层随 `agent.start` 按线程交付并落在按内容寻址的 `<root> = $HOME/.oryn/project-config/<projectId>-<内容 sha256 前 12 位>`（同一项目无运行中 agent 引用的旧版本在 `agent.start` 后清理）；线程不带项目层时不设 `ORYN_CENTRAL_CONFIG` 与 `ORYN_PROJECT_CONFIG_ROOT`。
 
 |项|值|
 |---|---|
-|项目层根 `<root>`|`$HOME/.oryn/project-config`（`$HOME/.oryn/**` 对 Web 文件接口只读）|
+|项目层根 `<root>`|普通 orb 为 `$HOME/.oryn/project-config`；runner 线程为 `$HOME/.oryn/project-config/<projectId>-<sha12>`（`$HOME/.oryn/**` 对 Web 文件接口只读）|
 |项目层文件|`<root>/.omp/<相对路径>`|
 |`ORYN_CENTRAL_CONFIG`|恒为 `1`|
 |`ORYN_PROJECT_CONFIG_ROOT`|`<root>` 的绝对路径；仅当 `<root>/.omp` 是目录时设置|
@@ -1570,7 +1570,7 @@ firecracker:
 - 标题不变：`Save TTSR rule where?`
 - 选项：`This project (Oryn project config)`、`Global — all projects (Oryn central config)`、`Amend with feedback…`（修改选项不变）。`ORYN_PROJECT_CONFIG_ROOT` 未设置（orb 不属于项目）时只给全局与修改两项。
 - `savedPath`（`shortenPath` 之后）：项目 `~/.oryn/project-config/.omp/rules/<name>.md`；全局 `~/.omp/agent/rules/<name>.md`。`<name>` 字符集 `[a-z0-9_-]`。
-- 旧 Core（未升级的 orb）与 runner 仍发上游字面量 `This project (.omp/rules)` / `Global — all projects (~/.omp/agent/rules)`，项目保存落在 `~/workspace/repo/.omp/rules/<name>.md` 或 `~/workspace/.omp/rules/<name>.md`；这两种项目路径同样写回中央项目配置。
+- 旧 Core（未升级的 orb）与无项目层的 runner 线程（未设 `ORYN_CENTRAL_CONFIG`）仍发上游字面量（runner 因 `PI_CONFIG_DIR=.oryn/omp` 全局路径为 `~/.oryn/omp/agent/rules`），带项目层的 runner 线程发 Oryn 文案。普通 orb 上项目保存落在 `~/workspace/repo/.omp/rules/<name>.md` 或 `~/workspace/.omp/rules/<name>.md` 时同样写回中央项目配置；runner 线程的 `omfg` 一律不回写中央配置（见下节）。
 
 ### `omfg` 应答扩展（C5）
 
@@ -1646,21 +1646,21 @@ func (s *Saver) SaveRule(ctx context.Context, p threads.ConfigSaveParams) thread
 
 ### orb link：`omphome.apply`（orynd→orbd 请求）
 
-- 参数 `LinkCtlOmpHomeApplyParams{ompHome: LinkCtlOmpHomeFile[], projectConfig?: LinkCtlProjectConfig}`，结果 `LinkCtlOkResult`。只在 hello 的 `features` 含 `omphome-apply` 时发送；普通 orbd 与协调宿主上报（协调宿主的特性表变为 `["coordinator", "omphome-apply"]`，文件库上线后为 `["coordinator", "omphome-apply", "library"]`），runner 不上报且回 `not_supported`。
-- 语义与 `setup.run` 第 1 步相同：写入 `~/.omp/agent/`，按 `~/.oryn/omp-home.manifest.json` 删除上次下发、这次已不在清单里的文件；omp 自己产生的文件不动。带 `projectConfig` 时同时把项目层镜像到 `~/.oryn/project-config/.omp`；缺省时不动项目层（`setup.run` 缺省表示删除项目层，两者不同）。不碰 git、不跑脚本。协调宿主忽略 `projectConfig`。
+- 参数 `LinkCtlOmpHomeApplyParams{ompHome: LinkCtlOmpHomeFile[], projectConfig?: LinkCtlProjectConfig, ssh?: LinkCtlSshConfig}`，结果 `LinkCtlOkResult`。只在 hello 的 `features` 含 `omphome-apply` 时发送；普通 orbd、协调宿主（特性表 `["coordinator", "omphome-apply", "library"]`）与 runner（M21 起）均上报。
+- 语义与 `setup.run` 第 1 步相同：写入 `<配置根>/agent/`（普通 orb 与协调宿主为 `~/.omp/agent/`，runner 为 `~/.oryn/omp/agent/`；runner 写入 `models.yml` 时若经 `ORYN_EGRESS_ADDR` 改了监听地址，会把默认出站地址前缀改写为实际地址），按 `~/.oryn/omp-home.manifest.json` 删除上次下发、这次已不在清单里的文件；omp 自己产生的文件与 runner 启动时写出的 `skills/oryn-library/SKILL.md` 不在清单内，不动。带 `projectConfig` 时普通 orb 同时把项目层镜像到 `~/.oryn/project-config/.omp`，缺省时不动项目层（`setup.run` 缺省表示删除项目层，两者不同）；协调宿主与 runner 忽略 `projectConfig`（runner 的项目层随 `agent.start` 按线程交付）。带 `ssh` 时一并重写 SSH 配置（见 M18）。不碰 git、不跑脚本。
 - 与 `setup.run` / `resume.run` 的写配置步骤按**到达顺序、按层**生效：每个请求到达时取一个递增编号，写入串行进行；用户层与项目层各记已写入的最大编号，编号更小的请求跳过该层（setup 日志记 `skipped: a newer omp config was applied while waiting (…)`）。所以 `omphome.apply` 不必排在 setup 互斥（含转入后台的 resume）之后，排队中的旧 setup 也不会用旧内容覆盖它；apply 没带的项目层仍由 setup 照常写。
 
 ### 控制面下发器（计划 6.2）
 
 - 触发：全局 `agent-config` 与项目层 `projects/{id}/agent-config` 的 `PUT files/{path}`、`DELETE files/{path}`、`POST import` 成功后，以及 `/omfg` 回写（M12.2）写入中央成功后，按层（全局 / 每个项目）防抖 1 秒下发一次；同一层期间再写会重新计时。各层下发串行进行。
-- 对象：状态为 `ready`、有已 hello 的 link 且 `features` 含 `omphome-apply` 的 orb；项目层只发给 `project_id` 为该项目的 orb。冻结、停机、恢复途中的 orb 跳过，它们在 `resume.run` / `setup.run` 时照常拿到最新配置；runner 与旧 orbd 不发。
-- 参数取自与 setup 同一份 `SetupSource.Plan`：`ompHome` 是渲染后的 omp-home（协调宿主只有 `coordinatorFiles`，即 `models.yml` 与 `config.yml`），`projectConfig` 是该 orb 所属项目的项目层（没有项目则省略，orbd 不动项目层）。各 orb 并发下发，单台应答上限 30 秒；成功后用同一份 Plan 的 `Egress` 替换该 orb 的出站策略（`models.yml` 改了 provider / baseUrl 时路由立即生效）。中央模型目录的缓存键本来就按 `models.yml` 与 `config.yml` 内容计算，不需要额外失效。
+- 对象：状态为 `ready`、有已 hello 的 link 且 `features` 含 `omphome-apply` 的 orb（含在线的 runner，M21）；项目层只发给 `project_id` 为该项目的普通 orb（runner 的常驻 orb 不属于任何项目，只收全局层）。冻结、停机、恢复途中的 orb 跳过，它们在 `resume.run` / `setup.run` 时照常拿到最新配置；旧 orbd 不发。
+- 参数取自与 setup 同一份 `SetupSource.Plan`：`ompHome` 是渲染后的 omp-home（协调宿主只有 `coordinatorFiles`；runner 走 `planRunner`：开 `NoEnvFallback` 关闭 `ORYN_MODEL_KEY_<NAME>` 降级，不带 env 密钥、GitHub、git 主机或脚本，出站策略只有模型路由且 `NoGit: true`，`ssh` 只有全局主机），`projectConfig` 是该 orb 所属项目的项目层（没有项目或为 runner 则省略）。向 runner 下发前（全局层与 `agent.start` 的项目层均同），`agentcfg.ScreenSecrets` 逐个检查合法 UTF-8 且无 NUL 的文本文件，扫描形似密钥的串（抹掉 `oryn-ph-…` 占位符后）并比对长度 ≥ 8 的已知密钥明文（密钥库全部值 + 密码登录 SSH 主机的密码）；命中的文件扣下不发，扣下清单变化时写该 runner orb 的事件备注（全局层 `runner config withheld`，项目层 `runner project config withheld`）。各 orb 并发下发，单台应答上限 30 秒；成功后用同一份 Plan 的 `Egress` 替换该 orb 的出站策略（`models.yml` 改了 provider / baseUrl 时路由立即生效）。中央模型目录的缓存键本来就按 `models.yml` 与 `config.yml` 内容计算，不需要额外失效。
 - 基线：每层下发后在 `<data_dir>/omp-home-applied/`（项目层在其下 `projects/<id>/`）记下各文件原文的 sha256（`manifest.json`）与 `config.yml` 原文。下一次以此算出 `Changed`（新增、修改、删除的路径）与 `ConfigBefore`。没有基线时这一层的全部文件都算变化；全局层在 orynd 启动时若没有基线，先以当前 omp-home 建立基线。个别 orb 下发失败不影响基线（它在下次 setup / resume 时同步）。
 - 结果 `orbs.ApplyReport{ProjectID, Orbs[{OrbID, OK, Err}], Changed, ConfigBefore, ConfigAfter}` 交给线程服务做会话级生效。
 
 ### 会话级生效与懒重启（计划 6.3）
 
-- 只处理 agent 在跑（含正在启动）的线程；下发失败的 orb、或 `ready` 却没收到下发的 orb 上的线程不处理。全局层作用于全部线程，协调对话只看 `config.yml` 与 `models.yml`；项目层只作用于该项目 orb 上的工作线程。
+- 只处理 agent 在跑（含正在启动）的线程；下发失败的 orb、或 `ready` 却没收到下发的 orb 上的线程不处理。全局层作用于全部线程，协调对话只看 `config.yml` 与 `models.yml`；项目层作用于该项目 orb 上的工作线程，以及属于该项目、跑在支持 `omphome-apply` 的 runner 上的工作线程（runner 线程的新项目层随下次 `agent.start` 交付，因此按 orb 分类得出的 reload 与需重启变化在 runner 线程上一律记为需重启）。
 - 分类（取并集）：
   - `config.yml` 做键级差分。`disabledExtensions` 比较前后集合，增删条目按冒号前的前缀分：`skill`、`slash-command`、`rule`、`prompt`、`instruction`、`context-file`、`mcp` → reload；`hook`、`extension-module`、`tool` 与不认识的前缀 → 需重启，原因为该条目（如 `hook:pre:bash:bash.ts`）。协调对话忽略 `disabledExtensions`。`task` 及其下的键什么都不做。其余键逐级比较映射、数组整体比较，得到点分路径，按钉住 Core 的设置 schema（`get_settings_schema` 的 `restartRequired`）判断：需要则标为需重启、原因为路径，否则交给 omp 的文件监听。拿不到 schema 时一律按需重启；`config.yml` 解析失败时原因记为 `config.yml`。
   - 文件：`skills/`、`commands/`、`rules/`、`prompts/`、`instructions/`、`AGENTS.md`、`RULES.md`、`mcp.json` → reload；`agents/` → 不处理；`hooks/`、`extensions/`、`tools/`、`SYSTEM.md`、`APPEND_SYSTEM.md`、`PERSONALITY.md`、`models.yml` 及其余未列出的文件 → 需重启，原因为路径。
@@ -1690,7 +1690,7 @@ func (s *Saver) SaveRule(ctx context.Context, p threads.ConfigSaveParams) thread
 
 - 参数 `LinkCtlLibraryFetchParams{id, path}`，结果 `LinkCtlLibraryFetchResult{size}`。orbd 校验通过后先另开 `library` 流 `{t: "library", id, size}` 发送原始字节，再应答；控制面只接受自己向该 orb 发出、仍在等待的 `id`（应答后 30 秒内流未到视为失败），读到的字节不足 `size` 时不留记录。单文件上限 100MiB。
 - 协调宿主只服务 `~/library/out/` 下的普通文件：`path` 可写成 `~/…`、绝对路径或相对 `~/library/out/` 的路径；含 `..` 段、解析符号链接后越出 `~/library/out/` → `invalid_params`；不存在或不是普通文件 → `not_found`。
-- 普通 orbd 只服务本 orb 正经 `library.put` 存入的那个路径（转发期间登记，结束即撤销），其余 → `not_found`。
+- 普通 orbd 与 runner（M21）只服务正经 `library.put` 存入的那个路径（转发期间登记，结束即撤销），其余 → `not_found`。
 
 ### 宿主工具（只给全局助手）
 
@@ -1712,6 +1712,7 @@ Space 协调者的工具表里没有这三个工具，也没有 `create_thread.f
 - `oryn library put <文件> [--name <库内文件名>] [--json]`：只在 orb 内可用（`ORYN_ORB=1` 且没有 `ORYN_API_TOKEN`），调用方线程取 `ORYN_THREAD_ID`；相对路径按当前目录解析，目录或不存在 → 退出码 2。经 `orbd.sock` 方法 `library.put`（参数 `LinkCtlLibraryPutParams{threadId, path, name?}`，结果 `AssistantFile`）。
 - orbd 校验普通文件、≤100MiB 后把路径登记为可取回，转发 ctl `library.put`（orbd→orynd，上限 10 分钟）；控制面校验调用方（属于本 orb、`kind = work`、未归档，否则 `forbidden`；`path` 不是绝对路径 → `invalid_params`），对同一 orb 发 `library.fetch` 取回字节，存为 `scope = shared`、`source = orb`、`sourceThreadId` = 调用方、不属于任何对话——所有助手对话都能读。
 - 技能 `oryn-library` 与 `oryn-setup` 一样写到 `~/.agents/skills/oryn-library/SKILL.md`（orbd 每次启动覆盖）。
+- runner（M21）：没有 `oryn` CLI 与 `orbd.sock`；扩展注册工具 `oryn_library_put{path, name?}`，经 `~/.oryn/orbd/runner.sock` 发 `library.put`。orbd 额外要求 `path` 本身是普通文件（非目录、非符号链接）且解析符号链接后严格位于调用方线程最近一次启动 agent 的工作目录之内，再走同一条 ctl `library.put` → `library.fetch` 链路；runner 版技能写到 `~/.oryn/omp/agent/skills/oryn-library/SKILL.md`（不写 `oryn-setup`）。
 
 ## 对话内容搜索
 
@@ -1836,7 +1837,7 @@ Web 的命令面板（Ctrl/⌘+K）里「对话内容」一组的数据源。规
 ### 出站代理：GitHub 路由
 
 - **`/gh/api.github.com/…`、`/gh/uploads.github.com/…`**：只在 `Policy.GitHub` 非 nil 时放行，否则 403；其它主机 404；拿不到令牌 502。保留原始转义（`RawPath`），注入 `Bearer <OAuth 用户令牌>`，删除客户端的 `Accept-Encoding`（让 Transport 协商并解压，脱敏与识别读到明文），响应里的令牌换成 `oryn-redacted`。不做路径白名单，也不按仓库拦截。上传主机的请求体（二进制附件）不读，只按路径识别。
-- **`/git/github.com/…` 与代理形式 `http://github.com/…`**：两者是同一条路由。代理形式指 absolute-form 请求（`r.URL.Host` 非空），它只走 git 路由：请求行必须是 `http://<host[:port]>/…` 且路径规范，否则回 400；按 `/git/<host[:port]>/<路径>` 处理，不是 git smart-HTTP 端点回 403 `oryn: <原因>`。记忆、模型与 `/gh/` 路由只认 origin-form，所以 owner 叫 `memory` 的仓库也能访问。`Policy.GitHub` 非 nil 时不受 `GitRepos` 限制，读写都放行，注入 `Basic x-access-token:<OAuth 令牌>`。身份槽位不可用时，我的账号身份的 orb 回落到 `git/github.com/token`，按 M2 规则限制仓库；Agent 身份的 orb 不回落，回 404。只读评审线程在 `info/refs?service=git-receive-pack` 阶段就回 403 `oryn: <原因>`。runner 的通道（`memoryOnlyHandler`）对 absolute-form 请求一律回 403。
+- **`/git/github.com/…` 与代理形式 `http://github.com/…`**：两者是同一条路由。代理形式指 absolute-form 请求（`r.URL.Host` 非空），它只走 git 路由：请求行必须是 `http://<host[:port]>/…` 且路径规范，否则回 400；按 `/git/<host[:port]>/<路径>` 处理，不是 git smart-HTTP 端点回 403 `oryn: <原因>`。记忆、模型与 `/gh/` 路由只认 origin-form，所以 owner 叫 `memory` 的仓库也能访问。`Policy.GitHub` 非 nil 时不受 `GitRepos` 限制，读写都放行，注入 `Basic x-access-token:<OAuth 令牌>`。身份槽位不可用时，我的账号身份的 orb 回落到 `git/github.com/token`，按 M2 规则限制仓库；Agent 身份的 orb 不回落，回 404。只读评审线程在 `info/refs?service=git-receive-pack` 阶段就回 403 `oryn: <原因>`。runner 的通道（`runnerEgressHandler`，只放行 origin-form 的 `/llm/` 与 `/memory/`）对 absolute-form 请求一律回 403。
 - **令牌**：`orbs.GitHub.OrbToken` 直接解密 orb 身份槽位的令牌（`github/identity/<slot>/access`），不收窄、不缓存。归管条件（`orbManaged`）是：不是 runner、不是协调宿主，且槽位为 `ok`。我的账号不可用时视为不归管（可回落 PAT）；Agent 账号不可用时视为归管但不可用（不回落）。
 - **写操作识别**（`egress.ParseGitHubRequest`）：GET / HEAD 与 GraphQL query 不是写操作。REST 非 GET 按路由表得到类别与路径模板，`/repos/{o}/{r}` 与 `/repositories/{id}` 等价，先解码路径、去掉结尾斜杠与 `.json` 后缀，含 `.` / `..` 段时视为无法解析。GraphQL 用 gqlparser 解析：按 `operationName` 选取 operation、展开 fragment、代入变量（含默认值）；mutation 的每个根字段算一个写操作，别名不影响识别。请求体读入上限 `ghWriteBodyMax = 1 MiB`，读后用 `bytes.Reader` 复原；超限或带 `Content-Encoding` 时只有路径级信息（`Unparsed`）。`git-receive-pack` 只读命令段（上限 `receivePackHeadMax = 64 KiB`）：跳过 `shallow` 行，去掉 NUL 之后的能力串，遇到 `push-cert` 视为无法解析，解析后用 `io.MultiReader` 还原请求体。
 - **门禁**（`egress/gate.go`）：项目门禁 `Policy.GitHub.Gates`（`push`、`pr`、`prHeadings`、`requireClosingRef`）随缓存的出站策略生成；项目门禁经 PATCH 改动后，该项目各 orb 的缓存策略即作废（`InvalidateProjectPolicies`），下一个出站请求按当前配置重建。作废同时把策略代际加一：作废之前已读过配置、尚未写缓存的重建（`policyFor`、setup、omp-home 下发）不再写入，`policyFor` 重建至多 3 次，仍撞上作废则返回最后一次的结果、不缓存。线程限制与其余会变的状态每个写请求经 `GateLookup` 向控制面现查：
@@ -1913,6 +1914,10 @@ M14 用 GitHub App 连接，下列契约已在 M15 删除，不再存在：`POST
 
 记忆存放在一个独立部署的 Hindsight 服务里（`deploy/hindsight/`，部署与升级见 deploy.md「Hindsight 记忆服务」）。orb 和 runner 里的 omp 只能通过 orynd 的记忆网关访问它；Hindsight 调用模型时，也通过 orynd 的模型中转。Hindsight 的 API key 和中转令牌都只保存在控制面。
 
+### agent.start：`projectId` / `projectConfig`（M21）
+
+- `LinkCtlAgentStartParams.projectId?: ProjectId`、`projectConfig?: LinkCtlProjectConfig`：runner 线程的项目层按线程交付（一台 runner 可同时跑多个项目的线程，omp-home 只有一份，`omphome.apply` 对 runner 不带项目层）。orynd 只对 hello 含 `omphome-apply` 的 runner 上的线程填写，项目取线程的 `project_id`，内容为该项目的项目层文件并入线程可用项目主机合成的 `ssh.json`（见 M18），再经 `agentcfg.ScreenSecrets` 扣下含密钥的文件；线程不属于项目或扣完后没有文件时两者都省略，orb 线程不带。项目层变化后，该项目在 runner 上 agent 在跑的线程按 orb 的分类处理，但一律记为需重启（新内容随下次 agent.start 交付）。
+
 ### agent.start：`memory`
 
 - **参数**：`LinkCtlAgentStartParams.memory: LinkCtlAgentMemory{project?, autoRetain}`，缺省表示本次不启用记忆。只有 hello 的 `features` 含 `memory` 的 orbd 会收到。普通 orbd 和 runner 上报这个特性，协调宿主不上报，收到时返回 `invalid_params`。
@@ -1932,7 +1937,7 @@ M14 用 GitHub App 连接，下列契约已在 M15 删除，不再存在：`POST
 
 ### 记忆网关：出站路径 `/memory/t/<threadId>/…`
 
-- **通道**：orb 沿用 `127.0.0.1:7811` 的出站通道。runner 平时不监听出站端口；第一个带 `memory` 的 agent.start 到来时，runner 在同一地址开一条只走记忆的通道（`ORYN_EGRESS_ADDR` 可以改地址）。orynd 对 runner 的 `StreamEgress` 流只接 `/memory/` 前缀，其余路径一律 403。
+- **通道**：orb 与 runner（M21 起启动即常驻监听，不再等首个带 `memory` 的 `agent.start`）都在 `127.0.0.1:7811` 监听出站通道（`ORYN_EGRESS_ADDR` 可改；runner 上只允许 `127.0.0.0/8` 或 `[::1]` 回环地址，端口被占用时启动失败）。orynd 对 runner 的 `StreamEgress` 流经 `runnerEgressHandler` 只放行 origin-form 的 `/llm/` 与 `/memory/` 前缀，其余路径一律 403。
 - **身份**：调用方身份由 orynd 确定：orb 来自 link 令牌，线程号来自路径，且必须满足 `threads.orb_id` 等于当前 orb，否则 403。项目归属：普通 orb 取 `orb.ProjectID`，runner 取该线程的 `project_id`。
 - **放行清单**：只放行 Core 实际调用的端点（附录 B，`docs/plan-m16-appendix-b.md`），其余一律 403。路径里的 bank 一律改写为 `oryn`，丢弃请求里的 `Authorization`，转发时注入 Hindsight key，响应里出现的 key 替换为 `oryn-redacted`。
   - `PUT` bank 根：丢弃请求体，直接返回 200 `{}`，不转发。
@@ -1995,24 +2000,26 @@ orb 内 ssh 客户端 ──> orbd 127.0.0.1:7822 ──link 的 ssh 流──> 
 
 ### orbd 侧
 
-- **监听**：orbd 在 `127.0.0.1:7822` 监听（`ORYN_SSH_ADDR` 可改，测试用 `127.0.0.1:0`）。每接一条 TCP 连接，就向控制面开一条 `ssh` 流（流头 `{"t":"ssh"}`），之后双向原样搬运 SSH 字节。监听失败时 orbd 照常启动，只是不上报下面的特性。runner 与协调宿主不监听。
+- **监听**：orbd 在 `127.0.0.1:7822` 监听（`ORYN_SSH_ADDR` 可改，测试用 `127.0.0.1:0`）。每接一条 TCP 连接，就向控制面开一条 `ssh` 流（流头 `{"t":"ssh"}`），之后双向原样搬运 SSH 字节。监听失败时 orbd 照常启动，只是不上报下面的特性。协调宿主不监听；runner（M21）监听，认证见下文「runner 的流」。
 - **hello 特性** `ssh`：认识 `setup.run` / `omphome.apply` 的 `ssh` 参数，并在 agent 环境里设 `ORYN_SSH=1`。
 - **下发** `LinkCtlSSHConfig{hostKey, hosts[{name, description, compat?}]}`：随 `setup.run` 与 `omphome.apply` 的 `ssh` 字段到达，缺省表示不动 orb 里的 SSH 配置。orbd 把它并入 omp 配置的写入编号序列（`writeOmpConfigAt`，写在用户层与项目层之后），据此重写四处：
   - `~/.omp/agent/ssh.json`：每台主机写成 `{host: "127.0.0.1", port: <监听端口>, username: <主机名>, description, compat?}`；描述变了或已删除的主机，顺手删掉 Core 的远端探测缓存 `~/.omp/remote-host/<名>.json`。
   - `~/.oryn/ssh/config`：每台主机一个 `Host` 块，供 bash 里的裸 `ssh <名>` 使用。
   - `~/.ssh/config`：确保第一行是 `Include ~/.oryn/ssh/config`，已有内容不动。
   - `~/.ssh/known_hosts`：删掉旧的网关条目，追加 `[127.0.0.1]:<端口> <hostKey> oryn-ssh-gateway`。
+  - runner（M21）不改 `~/.ssh/config` 与 `~/.ssh/known_hosts`：主机写进 `~/.oryn/omp/agent/ssh.json`（探测缓存在 `~/.oryn/omp/remote-host/<名>.json`），网关公钥写进 `~/.oryn/omp/ssh/known_hosts`，SSH 客户端配置同时写到 `~/.oryn/omp/ssh/config` 与 `~/.oryn/ssh/config`（见下文「runner 的流」）。
 - **中央配置里的 `ssh.json`**：不再接受写入（`agentcfg.Excluded`），也不随 omp-home 下发。控制面把每层主机的规范化摘要合成为一个虚拟 `ssh.json` 放进下发基线，所以主机一变就走既有的 `omphome.apply` 与 `reload_plugins` 链路。
 - **orbd.sock `ssh.call`**：校验 `threadId` 形状与 `tool` 非空后，原样转成 ctl `ssh.call`（上限 11 分钟）。
 
 ### 网关（控制面）
 
 - **主机密钥**：`<data_dir>/ssh-gateway.key`（ed25519，首次启动生成）。
-- **登录**：登录名就是 orb 内的主机名，客户端不需要认证（`NoClientAuthCallback`）。网关在认证阶段按 orb 可见性解析主机：启用的全局主机加本项目主机，同名时项目主机优先；全自动 orb（`orbs.automation = 1`）只能用 `allowAutomation` 的主机。随后拨通上游（含跳板链，每跳 10 秒、整链 20 秒）。拒绝原因经 SSH banner 送到客户端，OpenSSH 会打到标准错误。
+- **登录**：登录名就是 orb 内的主机名。orb 的流不认证客户端（`NoClientAuthCallback`）。网关在认证阶段按 orb 可见性解析主机：启用的全局主机加本项目主机，同名时项目主机优先；全自动 orb（`orbs.automation = 1`）只能用 `allowAutomation` 的主机。随后拨通上游（含跳板链，每跳 10 秒、整链 20 秒）。拒绝原因经 SSH banner 送到客户端，OpenSSH 会打到标准错误。
+- **runner 的流（M21）**：只接受公钥认证。orbd 为每个线程的每一代监督器生成一把 ed25519 密钥（私钥 `$HOME/.oryn/threads/<线程>/ssh/<公钥 SHA-256 前 12 位>/id_ed25519`，0600，两级目录 0700，agent 环境 `ORYN_SSH_KEY`；崩溃自重启沿用同一把、同一路径，监督器彻底结束时删除该子目录。每代路径不同：Core 的 ssh 连接复用目录按 `ORYN_SSH_KEY` 的值哈希，新一代不会复用旧一代残留的 master），公钥随 `agent.start` 结果的 `sshPublicKey` 回给 orynd，登记为「公钥 → 线程」（内存表）。`agent.status exited` 且 `restartsLeft > 0` 时保留；`restartsLeft = 0` 或不带 `restartsLeft`（监督器结束，且最近一次 `agent.start` 之后收到过 `starting` / `ready`，旧监督器迟到的结束不算）、线程删除、runner 离线定时器到期（→ `stopped`）时注销；link 在宽限期内断开不清，重连后幂等的 `agent.start` 回同一把公钥。网关记着每条连接经哪把公钥认证：公钥被注销或被同线程的新公钥替换时，经它认证的连接立即关闭。网关按公钥认出线程，核对登记的 runner 与线程行的 `orb_id` 都等于这条流的 orb、线程是未归档的工作线程（归档即失效），再按该线程的项目套用上面的可见性（全自动标记取 runner orb 的）；审计记这个线程。客户端证明持有私钥之后才拨上游（`VerifiedPublicKeyCallback`）。runner 的 `<配置根>/ssh/config`（Core 隔离模式的 `-F`）与 `~/.oryn/ssh/config` 内容相同：全局主机与各项目层 `ssh.json` 的主机各一个 `Host` 块外加 `Host 127.0.0.1`，都带 `IdentityFile ${ORYN_SSH_KEY}`、`IdentitiesOnly yes` 与 `UserKnownHostsFile`。线程的项目主机随 `agent.start` 的项目层交付（`.omp/ssh.json`，端口写 `${ORYN_SSH_PORT}`，由 Core 展开；需要 Core 的 `oryn-project` 代理 `ssh-json`，oryn-v19.0.1-2 起）。同一系统用户的本机进程都读得到各线程的私钥：它防的是 agent 误用别的项目的主机，不防恶意本机进程。
 - **上游认证与指纹**：钥匙登录或密码登录（密码同时提供 `password` 与 `keyboard-interactive`，遇到多因素直接中止）。第一次成功连接时固定主机公钥，固定时按 `ssh_hosts.rev` 做 CAS，所以拨号期间被修改或重置的主机不会写回旧公钥；之后公钥不一致就拒绝，提示到设置页重置指纹。
 - **通道**：`session` 通道把 `pty-req`、`shell`、`exec`、`subsystem`、`env`、`window-change`、`signal`、`break` 转给上游，把 `exit-status`、`exit-signal` 回给 orb；`direct-tcpip`（`ssh -L`）只在主机开了 `allowForward` 时放行；`tcpip-forward`（`-R`）、agent 转发与 X11 一律拒绝。
 - **失效**：主机被修改、停用、删除或重置指纹时，经过它（包括作为跳板）的网关连接、终端与 SFTP 连接立即断开。
-- **runner**：runner 的 link 不接 `ssh` 流，也不放行 `ssh.call`。
+- **runner**：runner 的 link 不放行 `ssh.call`（`ssh_exec_many` 不在 runner 上注册）。
 
 ### ctl `ssh.call`（orbd→orynd 请求）
 
@@ -2029,7 +2036,7 @@ orb 内 ssh 客户端 ──> orbd 127.0.0.1:7822 ──link 的 ssh 流──> 
 - **REST**：`/api/v1/ssh/hosts`、`/ssh/keys`、`/ssh/audit`、`/threads/{id}/ssh-hosts`、`/ssh/hosts/{id}/test`、`/ssh/hosts/{id}/reset-host-key`、`/ssh/hosts/{id}/fs/*`。`fs/*` 经 SFTP 实现，响应形状与错误码同 orb 的文件接口。`PATCH` 里 `jumpHostId`、`compat` 为 `null` 表示清掉，缺省表示不改。
 - **网页终端** `GET /api/v1/ssh/hosts/{id}/terminal?ticket=&cols=&rows=`（WebSocket，一次性票据鉴权）：客户端发二进制帧作为输入，发文本帧 `{"type":"resize","cols","rows"}` 调整窗口；服务端只发二进制帧。关闭码：`1000` shell 退出，`4401` 主体被吊销或主机被修改，`4429` 超过 8 条，`4502` 拨号失败。
 - **realtime**：主机、钥匙、指纹或测试结果变化时广播 `{"type":"ssh.changed"}`。
-- **集中管理**：orb 线程（非 runner）里的 `ssh_manage` RPC 与 `/ssh add|remove|rm` 回 `managed_by_oryn`；只读的 `get_ssh_hosts`、`ssh_test`、`/ssh list` 照常直通。
+- **集中管理**：orb 线程与支持 `omphome-apply` 的 runner（M21）线程里的 `ssh_manage` RPC 与 `/ssh add|remove|rm` 回 `managed_by_oryn`（未升级的旧版 runner 线程放行）；只读的 `get_ssh_hosts`、`ssh_test`、`/ssh list` 照常直通。
 
 ### 审计与存储
 

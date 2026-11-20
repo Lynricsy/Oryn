@@ -129,6 +129,18 @@ class XtermTerm implements TermLike {
 	retheme() {
 		this.term.options.theme = theme();
 	}
+	getSelection() {
+		return this.term.getSelection();
+	}
+	selectAll() {
+		this.term.selectAll();
+	}
+	clear() {
+		this.term.clear();
+	}
+	mouseTracking() {
+		return this.term.modes.mouseTrackingMode !== "none";
+	}
 	propose() {
 		if (!this.term.element?.parentElement) return undefined;
 		const d = this.fit.proposeDimensions();

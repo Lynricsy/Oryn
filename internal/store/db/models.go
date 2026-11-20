@@ -746,6 +746,7 @@ type Owner struct {
 	NewThreadTarget          string  `json:"newThreadTarget"`
 	AutoPublishArtifacts     int64   `json:"autoPublishArtifacts"`
 	GithubAutomationIdentity string  `json:"githubAutomationIdentity"`
+	SelectionActions         string  `json:"selectionActions"`
 }
 
 type OwnerMemoryChunk struct {

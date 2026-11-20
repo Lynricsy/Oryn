@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -253,4 +254,68 @@ func (s *Service) terminalEnabled(orbID string) bool {
 		}
 	}
 	return false
+}
+
+// runnerProjectConfig 返回 runner 线程 agent.start 的项目层（M21）：runner 一台机器可同时跑多个项目的线程，项目层按线程
+// 交付——项目层文件，加上该线程可用的本项目 SSH 主机合成的 ssh.json（RunnerAgent.ProjectSSH）；runner 是用户自己的机器，
+// 交付前过一遍无密钥投递校验，含形似密钥内容的文件扣下不发，写进线程日志与 runner orb 的事件备注。只对 hello 含
+// omphome-apply 的 runner 给出（旧版 orbd 用那台机器自己的 omp 配置）；线程不属于项目、项目已删除或一个文件都没有时
+// 返回 nil。orb 线程返回 nil（orb 的项目层经 setup / omphome.apply 下发）。
+func (s *Service) runnerProjectConfig(ctx context.Context, threadID, orbID string) (*apigen.ProjectID, *apigen.LinkCtlProjectConfig, error) {
+	if s.cfg.Projects == nil {
+		return nil, nil, nil
+	}
+	if kind, feats := s.orbs.Features(orbID); kind != orbs.KindRunner || !slices.Contains(feats, orbs.FeatureOmpHomeApply) {
+		return nil, nil, nil
+	}
+	row, err := s.st.Q.GetThread(ctx, threadID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if row.ProjectID == nil || *row.ProjectID == "" {
+		return nil, nil, nil
+	}
+	if _, err := s.st.Q.GetProject(ctx, *row.ProjectID); errors.Is(err, sql.ErrNoRows) {
+		return nil, nil, nil
+	} else if err != nil {
+		return nil, nil, err
+	}
+	pid := *row.ProjectID
+	extra := map[string][]byte{}
+	var known orbs.KnownSecrets
+	if ra := s.runnerAgent; ra != nil {
+		b, err := ra.ProjectSSH(ctx, threadID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("读取项目 SSH 主机: %w", err)
+		}
+		if b != nil {
+			extra["ssh.json"] = b
+		}
+		known = ra.KnownSecrets
+	}
+	screen, err := orbs.RunnerScreen(ctx, known)
+	if err != nil {
+		return nil, nil, err
+	}
+	cfg, withheld, err := orbs.RunnerProjectConfigOf(s.cfg.Projects, pid, extra, screen)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, w := range withheld {
+		slog.Warn("threads: runner 线程项目层的文件含形似密钥的内容，未交付", "thread", threadID, "project", pid, "path", w.Path, "reason", w.Reason)
+	}
+	if s.runnerAgent != nil {
+		s.runnerAgent.NoteWithheld(ctx, orbID, threadID, withheld)
+	}
+	if cfg == nil {
+		return nil, nil, nil
+	}
+	return &pid, cfg, nil
+}
+
+// dropThreadKey 注销 runner 线程的 SSH 公钥（M21）；没有 RunnerAgent 时什么也不做。
+func (s *Service) dropThreadKey(threadID string) {
+	if s.runnerAgent != nil {
+		s.runnerAgent.DropThreadKey(threadID)
+	}
 }

@@ -1,7 +1,11 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import i18n from "../../i18n";
+import { installContextMenu } from "../../lib/context-menu/dispatch";
+import { closeContextMenu } from "../../lib/context-menu/store";
 import { type TerminalSession, terminalHub } from "../../state/terminals";
 import { THEME_EVENT } from "../../state/theme";
+import { ContextMenuHost } from "../ui/ContextMenu";
 import { TerminalView } from "./TerminalView";
 
 describe("TerminalView", () => {
@@ -76,5 +80,96 @@ describe("TerminalView", () => {
 			vi.useRealTimers();
 			Reflect.deleteProperty(document, "fonts");
 		}
+	});
+
+	describe("上下文菜单", () => {
+		let off: () => void;
+		beforeEach(() => {
+			off = installContextMenu();
+			Object.defineProperty(navigator, "clipboard", {
+				configurable: true,
+				value: { readText: vi.fn(async () => "") },
+			});
+		});
+		afterEach(() => {
+			off();
+			act(() => closeContextMenu());
+			Reflect.deleteProperty(navigator, "clipboard");
+			vi.restoreAllMocks();
+		});
+
+		function mount(selection: string, tracking = false) {
+			const term = {
+				cols: 80,
+				rows: 24,
+				write: vi.fn(),
+				reset: vi.fn(),
+				resize: vi.fn(),
+				dispose: vi.fn(),
+				text: () => "",
+				mount: vi.fn(),
+				getSelection: () => selection,
+				selectAll: vi.fn(),
+				clear: vi.fn(),
+				mouseTracking: () => tracking,
+			};
+			const session = { term, refit: null } as unknown as TerminalSession;
+			vi.spyOn(terminalHub, "ensure").mockReturnValue(session);
+			vi.spyOn(terminalHub, "session").mockReturnValue(session);
+			vi.spyOn(terminalHub, "claimSize").mockImplementation(() => {});
+			render(
+				<>
+					<ContextMenuHost />
+					<TerminalView threadId="T-1" terminalId="t1" autoFocus={false} />
+				</>,
+			);
+			let prevented = false;
+			act(() => {
+				prevented = !fireEvent.contextMenu(
+					screen.getByTestId("terminal-view"),
+					{
+						clientX: 5,
+						clientY: 5,
+					},
+				);
+			});
+			return { term, prevented };
+		}
+
+		const keys = () =>
+			[
+				...screen
+					.getByTestId("context-menu")
+					.querySelectorAll("[data-menu-key]"),
+			].map((b) => b.getAttribute("data-menu-key"));
+
+		it("没有选区：粘贴（终端不在线时置灰）、全选、清屏", () => {
+			const { term, prevented } = mount("");
+			expect(prevented).toBe(true);
+			expect(keys()).toEqual(["paste", "selectAll", "clear"]);
+			const menu = screen.getByTestId("context-menu");
+			expect(
+				within(menu).getByRole("menuitem", {
+					name: i18n.t("contextMenu.paste"),
+				}),
+			).toBeDisabled();
+			fireEvent.click(
+				within(menu).getByRole("menuitem", {
+					name: i18n.t("contextMenu.selectAll"),
+				}),
+			);
+			expect(term.selectAll).toHaveBeenCalledTimes(1);
+		});
+
+		it("有选区：先给复制，再给终端组", () => {
+			mount("ls -la");
+			expect(keys()).toEqual(["copy", "paste", "selectAll", "clear"]);
+		});
+
+		it("程序开了鼠标上报：拦下原生菜单但不出菜单（右键交给程序）", () => {
+			const { prevented } = mount("x", true);
+			expect(prevented).toBe(true);
+			expect(screen.queryByTestId("context-menu")).toBeNull();
+		});
 	});
 });

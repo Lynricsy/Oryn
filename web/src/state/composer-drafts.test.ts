@@ -25,6 +25,7 @@ describe("composer-drafts", () => {
 			inFlight: null,
 			quote: null,
 			artifactSelection: null,
+			insert: null,
 		});
 	});
 

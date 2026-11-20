@@ -1,5 +1,6 @@
 /**
- * 文件树：目录懒加载（展开时由上层 `list`），右键 / 长按 / 行尾「⋯」/ Shift+F10 打开操作菜单，
+ * 文件树：目录懒加载（展开时由上层 `list`）；操作菜单由统一上下文菜单（`lib/context-menu`）提供，
+ * 本文件只登记菜单项（右键 / 长按 / Shift+F10 由全局分发器处理）与行尾「⋯」。
  * 支持把文件拖到目录行（放进该目录）或空白处（放进当前根）。
  * 键盘按 WAI-ARIA tree 模式：整棵树一个 Tab 停靠点（roving tabindex），
  * ↑↓ 移动、→ 展开 / 进入首个子项、← 收起 / 回到父目录、Home / End 首尾、Enter / Space 打开或展开。
@@ -8,12 +9,14 @@ import {
 	type DragEvent,
 	type KeyboardEvent,
 	type ReactNode,
-	useEffect,
 	useMemo,
 	useRef,
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { useContextTarget } from "../../lib/context-menu/registry";
+import { openContextMenu } from "../../lib/context-menu/store";
+import type { MenuGroup } from "../../lib/context-menu/types";
 import { fileIcon } from "../../lib/file-icon";
 import { type FileEntry, isDirEntry, isWithin } from "../../lib/file-source";
 import { formatBytes } from "../../lib/format";
@@ -81,13 +84,6 @@ const ACTION_ICON: Record<FileAction, IconName> = {
 
 /** 目录列表上限（与 orbd 一致）；恰好达到时提示可能被截断。 */
 const LIST_LIMIT = 5000;
-const LONG_PRESS_MS = 500;
-
-interface MenuState {
-	entry: FileEntry | null;
-	x: number;
-	y: number;
-}
 
 interface VisibleItem {
 	entry: FileEntry;
@@ -149,9 +145,7 @@ export function FileTree({
 	onDropFiles(dir: string, dt: DataTransfer): void;
 }): ReactNode {
 	const { t } = useTranslation();
-	const [menu, setMenu] = useState<MenuState | null>(null);
 	const [dropTarget, setDropTarget] = useState<string | null>(null);
-	const press = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	const [focusPath, setFocusPath] = useState<string | null>(null);
 	const rows = useRef(new Map<string, HTMLDivElement>());
 
@@ -176,9 +170,42 @@ export function FileTree({
 	};
 
 	// 没有可用操作（只读来源的根）时不弹出空菜单
-	const openMenu = (entry: FileEntry | null, x: number, y: number) => {
-		if (actionsFor(entry, caps).length > 0) setMenu({ entry, x, y });
+	const groupsFor = (entry: FileEntry | null): MenuGroup[] | null => {
+		const actions = actionsFor(entry, caps);
+		if (actions.length === 0) return null;
+		return [
+			{
+				key: "file",
+				items: actions.map((a) => ({
+					key: a,
+					icon: ACTION_ICON[a],
+					label:
+						a === "publish" ? t("publish.orbFile") : t(`files.actions.${a}`),
+					danger: a === "delete",
+					onSelect: () => {
+						// 先把焦点还给行，后续对话框关闭时回到这里
+						if (entry) focusRow(entry.path);
+						onAction(a, entry);
+					},
+				})),
+			},
+		];
 	};
+
+	const treeRef = useContextTarget({
+		items: (req) => {
+			const row = req.target.closest('[role="treeitem"][data-path]');
+			if (row) {
+				const i = index.get(row.getAttribute("data-path") ?? "");
+				const entry = i === undefined ? undefined : visible[i]?.entry;
+				return entry ? groupsFor(entry) : null;
+			}
+			// 树里的空白处 = 当前根
+			return req.target.getAttribute("role") === "tree"
+				? groupsFor(null)
+				: null;
+		},
+	});
 
 	const activate = (e: FileEntry) => (isDirEntry(e) ? onToggle(e) : onOpen(e));
 
@@ -217,16 +244,6 @@ export function FileTree({
 			case " ":
 				activate(e);
 				break;
-			case "ContextMenu":
-			case "F10": {
-				if (ev.key === "F10" && !ev.shiftKey) {
-					handled = false;
-					break;
-				}
-				const r = ev.currentTarget.getBoundingClientRect();
-				openMenu(e, r.left + 24, r.bottom);
-				break;
-			}
 			default:
 				handled = false;
 		}
@@ -336,20 +353,7 @@ export function FileTree({
 					}}
 					onFocus={() => setFocusPath(e.path)}
 					onKeyDown={(ev) => onRowKeyDown(ev, e)}
-					onContextMenu={(ev) => {
-						ev.preventDefault();
-						openMenu(e, ev.clientX, ev.clientY);
-					}}
-					onPointerDown={(ev) => {
-						if (ev.pointerType !== "touch") return;
-						const { clientX, clientY } = ev;
-						press.current = setTimeout(
-							() => openMenu(e, clientX, clientY),
-							LONG_PRESS_MS,
-						);
-					}}
-					onPointerUp={() => clearTimeout(press.current)}
-					onPointerMove={() => clearTimeout(press.current)}
+					data-ctx-touch=""
 					{...(dir ? dropProps(e.path) : {})}
 				>
 					<span className="flex w-3 shrink-0 justify-center text-faint">
@@ -390,7 +394,15 @@ export function FileTree({
 						onClick={(ev) => {
 							ev.stopPropagation();
 							const r = ev.currentTarget.getBoundingClientRect();
-							openMenu(e, r.right, r.bottom);
+							const groups = groupsFor(e);
+							if (groups)
+								openContextMenu({
+									groups,
+									x: r.right,
+									y: r.bottom,
+									trigger: "keyboard",
+									restoreFocus: rows.current.get(e.path) ?? null,
+								});
 						}}
 						// Enter / Space 只作用于按钮本身，不冒泡成对行的打开 / 展开
 						onKeyDown={(ev) => ev.stopPropagation()}
@@ -408,123 +420,13 @@ export function FileTree({
 
 	return (
 		<div
+			ref={treeRef}
 			role="tree"
 			aria-label={rootPath || "/"}
 			className={`focus-inset min-h-full p-1 pb-8 ${dropTarget === rootPath ? "bg-accent/5 ring-1 ring-accent ring-inset" : ""}`}
-			onContextMenu={(ev) => {
-				if (ev.target !== ev.currentTarget) return;
-				ev.preventDefault();
-				openMenu(null, ev.clientX, ev.clientY);
-			}}
 			{...dropProps(rootPath)}
 		>
 			{renderDir(rootPath, 0)}
-			{menu && (
-				<ContextMenu
-					menu={menu}
-					actions={actionsFor(menu.entry, caps)}
-					onClose={(restoreFocus) => {
-						setMenu(null);
-						if (restoreFocus && menu.entry) focusRow(menu.entry.path);
-					}}
-					onAction={(a) => {
-						setMenu(null);
-						// 先把焦点还给行，后续对话框关闭时回到这里
-						if (menu.entry) focusRow(menu.entry.path);
-						onAction(a, menu.entry);
-					}}
-				/>
-			)}
-		</div>
-	);
-}
-
-function ContextMenu({
-	menu,
-	actions,
-	onClose,
-	onAction,
-}: {
-	menu: MenuState;
-	actions: FileAction[];
-	/** `restoreFocus`：由键盘（Escape）关闭，焦点回到打开菜单的行 */
-	onClose(restoreFocus: boolean): void;
-	onAction(a: FileAction): void;
-}): ReactNode {
-	const { t } = useTranslation();
-	const ref = useRef<HTMLDivElement>(null);
-	const onCloseRef = useRef(onClose);
-	onCloseRef.current = onClose;
-	// 打开即聚焦第一项，键盘用户可直接 ↑↓ / Enter
-	useEffect(() => {
-		ref.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
-	}, []);
-	useEffect(() => {
-		const onDown = (e: MouseEvent) => {
-			if (ref.current && !ref.current.contains(e.target as Node))
-				onCloseRef.current(false);
-		};
-		const onKey = (e: globalThis.KeyboardEvent) => {
-			if (e.key === "Escape") onCloseRef.current(true);
-		};
-		document.addEventListener("mousedown", onDown);
-		window.addEventListener("keydown", onKey);
-		return () => {
-			document.removeEventListener("mousedown", onDown);
-			window.removeEventListener("keydown", onKey);
-		};
-	}, []);
-	const onMenuKeyDown = (ev: KeyboardEvent<HTMLDivElement>) => {
-		const items = [
-			...(ref.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ??
-				[]),
-		];
-		const i = items.indexOf(document.activeElement as HTMLElement);
-		let next: HTMLElement | undefined;
-		if (ev.key === "ArrowDown") next = items[(i + 1) % items.length];
-		else if (ev.key === "ArrowUp")
-			next = items[(i - 1 + items.length) % items.length];
-		else if (ev.key === "Home") next = items[0];
-		else if (ev.key === "End") next = items.at(-1);
-		else if (ev.key === "Tab") {
-			ev.preventDefault();
-			onClose(true);
-			return;
-		} else return;
-		ev.preventDefault();
-		next?.focus();
-	};
-	// 贴近视口边缘时向内收，避免菜单出屏
-	const left = Math.max(4, Math.min(menu.x, window.innerWidth - 220));
-	const top = Math.max(
-		4,
-		Math.min(menu.y, window.innerHeight - 40 * actions.length),
-	);
-	return (
-		<div
-			ref={ref}
-			role="menu"
-			tabIndex={-1}
-			onKeyDown={onMenuKeyDown}
-			className="glass pop-in fixed z-50 min-w-48 rounded-lg p-1"
-			style={{ left, top }}
-		>
-			{actions.map((a) => (
-				<button
-					key={a}
-					type="button"
-					role="menuitem"
-					className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors duration-150 hover:bg-hover focus-visible:bg-hover ${a === "delete" ? "text-err" : "text-fg"}`}
-					onClick={() => onAction(a)}
-				>
-					<Icon
-						name={ACTION_ICON[a]}
-						size={14}
-						className={`shrink-0 ${a === "delete" ? "" : "text-muted"}`}
-					/>
-					{a === "publish" ? t("publish.orbFile") : t(`files.actions.${a}`)}
-				</button>
-			))}
 		</div>
 	);
 }

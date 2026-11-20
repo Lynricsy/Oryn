@@ -338,21 +338,135 @@ func TestProjectConfigBeforeDesktopOverlay(t *testing.T) {
 	}, configs)
 }
 
-// runner 不设置、不加载项目层：即使 HOME 下恰好有 ~/.oryn/project-config/.omp/config.yml。
-func TestProjectConfigNotOnRunner(t *testing.T) {
+const projThread3 = "T-01932f6e-8d1a-7c3b-9f2e-0123456789ad"
+
+// runnerProjStart 在 runner 上以 cwd = f.work 启动线程；pid 为空时不带 projectConfig。
+func runnerProjStart(t *testing.T, f *runnerFixture, thread, pid string, cfg *apigen.LinkCtlProjectConfig) error {
+	t.Helper()
+	p := apigen.LinkCtlAgentStartParams{
+		ThreadID: thread, Cwd: f.work, SessionDir: "~/.oryn/threads/" + thread,
+		Env: map[string]string{"FAKEOMP_DUMP_DIR": filepath.Join(f.home, "dump")}, InitFrames: initFrames(thread),
+		ProjectConfig: cfg,
+	}
+	if pid != "" {
+		p.ProjectID = &pid
+	}
+	return f.cp.call(t, "agent.start", p, nil)
+}
+
+// runnerProjVersions 返回项目 pid 的版本目录（按名排序）。
+func runnerProjVersions(t *testing.T, f *runnerFixture, pid string) []string {
+	t.Helper()
+	dirs, err := filepath.Glob(filepath.Join(f.home, ".oryn", "project-config", pid+"-*"))
+	require.NoError(t, err)
+	return dirs
+}
+
+// runner（M21）：项目层随 agent.start 按线程下发到 ~/.oryn/project-config/<projectId>-<sha12>/.omp；两个项目各自的
+// 目录与环境（config.yml 存在时加 --config）；不带 projectConfig 的线程没有这两个变量（继承来的也去掉）。
+func TestRunnerProjectConfigPerThread(t *testing.T) {
 	f := newRunnerHome(t)
-	writeTree(t, filepath.Join(f.home, ".oryn", "project-config", ".omp"), map[string]string{"config.yml": "a: 1\n"})
+	t.Setenv("ORYN_CENTRAL_CONFIG", "1")
+	t.Setenv("ORYN_PROJECT_CONFIG_ROOT", "/elsewhere")
 	startRunnerRT(t, f, nil)
 	dump := filepath.Join(f.home, "dump")
-	require.NoError(t, f.cp.call(t, "agent.start", apigen.LinkCtlAgentStartParams{
-		ThreadID: thread1, Cwd: f.work, SessionDir: "~/.oryn/threads/" + thread1,
-		Env: map[string]string{"FAKEOMP_DUMP_DIR": dump}, InitFrames: initFrames(thread1),
-	}, nil))
+
+	require.NoError(t, runnerProjStart(t, f, thread1, "prj_a", projCfg(projFile("config.yml", "a: 1\n", 0o644), projFile("rules/r.md", "r", 0o600))))
+	require.NoError(t, runnerProjStart(t, f, projThread2, "prj_b", projCfg(projFile("AGENTS.md", "b", 0o644))))
+	require.NoError(t, runnerProjStart(t, f, projThread3, "", nil))
+	for _, th := range []string{thread1, projThread2, projThread3} {
+		f.cp.waitNotif(t, 0, "agent.status", statusIs(th, "ready"))
+	}
+
+	a := runnerProjVersions(t, f, "prj_a")
+	b := runnerProjVersions(t, f, "prj_b")
+	require.Len(t, a, 1)
+	require.Len(t, b, 1)
+	assert.Regexp(t, `/prj_a-[0-9a-f]{12}$`, a[0])
+	assert.Equal(t, "a: 1\n", readFile(t, filepath.Join(a[0], ".omp", "config.yml")))
+	assert.Equal(t, "r", readFile(t, filepath.Join(a[0], ".omp", "rules", "r.md")))
+	fi, err := os.Stat(filepath.Join(a[0], ".omp", "rules", "r.md"))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm())
+	assert.Equal(t, "b", readFile(t, filepath.Join(b[0], ".omp", "AGENTS.md")))
+
+	recA := setupDump(t, dump, thread1)
+	assert.Equal(t, "1", recA.Env["ORYN_CENTRAL_CONFIG"])
+	assert.Equal(t, a[0], recA.Env["ORYN_PROJECT_CONFIG_ROOT"])
+	assert.Equal(t, []string{filepath.Join(a[0], ".omp", "config.yml")}, configArgs(recA.Args))
+	recB := setupDump(t, dump, projThread2)
+	assert.Equal(t, "1", recB.Env["ORYN_CENTRAL_CONFIG"])
+	assert.Equal(t, b[0], recB.Env["ORYN_PROJECT_CONFIG_ROOT"])
+	assert.Empty(t, configArgs(recB.Args), "没有 config.yml 就不加 --config")
+	rec3 := setupDump(t, dump, projThread3)
+	assert.NotContains(t, rec3.Env, "ORYN_CENTRAL_CONFIG")
+	assert.NotContains(t, rec3.Env, "ORYN_PROJECT_CONFIG_ROOT")
+	assert.Empty(t, configArgs(rec3.Args))
+	assert.NoDirExists(t, filepath.Join(f.home, ".oryn", "project-config", ".omp"), "runner 不用 orb 的项目层目录")
+}
+
+// 同一项目内容变了产生新目录；旧目录在有运行中 agent 引用时保留，无引用后的下一次 agent.start 把它清掉；
+// 内容相同的版本复用同一目录；别的项目不受影响。
+func TestRunnerProjectConfigVersions(t *testing.T) {
+	f := newRunnerHome(t)
+	startRunnerRT(t, f, nil)
+	v1 := projCfg(projFile("AGENTS.md", "v1", 0o644))
+	v2 := projCfg(projFile("AGENTS.md", "v2", 0o644))
+
+	require.NoError(t, runnerProjStart(t, f, thread1, "prj_a", v1))
 	f.cp.waitNotif(t, 0, "agent.status", statusIs(thread1, "ready"))
-	rec := setupDump(t, dump, thread1)
-	assert.NotContains(t, rec.Env, "ORYN_CENTRAL_CONFIG")
-	assert.NotContains(t, rec.Env, "ORYN_PROJECT_CONFIG_ROOT")
-	assert.NotContains(t, rec.Args, "--config")
+	old := runnerProjVersions(t, f, "prj_a")
+	require.Len(t, old, 1)
+	// 名字以 prj_a- 开头的别的项目目录不是 prj_a 的版本。
+	other := filepath.Join(f.home, ".oryn", "project-config", "prj_a-other-0123456789ab")
+	require.NoError(t, os.MkdirAll(other, 0o755))
+
+	require.NoError(t, runnerProjStart(t, f, projThread2, "prj_a", v2))
+	f.cp.waitNotif(t, 0, "agent.status", statusIs(projThread2, "ready"))
+	both := runnerProjVersions(t, f, "prj_a")
+	require.Len(t, both, 3, "%v", both) // v1、v2 与 prj_a-other-…（Glob 匹配，但不是版本）
+	assert.DirExists(t, old[0], "thread1 的 agent 仍在运行，v1 保留")
+	assert.Equal(t, "v1", readFile(t, filepath.Join(old[0], ".omp", "AGENTS.md")))
+	var cur string
+	for _, d := range both {
+		if d != old[0] && d != other {
+			cur = d
+		}
+	}
+	assert.Equal(t, "v2", readFile(t, filepath.Join(cur, ".omp", "AGENTS.md")))
+
+	require.NoError(t, f.cp.call(t, "agent.stop", apigen.LinkCtlAgentStopParams{ThreadID: thread1, GraceSeconds: 5}, nil))
+	require.NoError(t, runnerProjStart(t, f, projThread3, "prj_a", v2))
+	f.cp.waitNotif(t, 0, "agent.status", statusIs(projThread3, "ready"))
+	assert.NoDirExists(t, old[0], "v1 已无引用，被清理")
+	assert.DirExists(t, cur, "v2 被两个运行中的 agent 引用")
+	assert.DirExists(t, other, "别的项目不受影响")
+	assert.Equal(t, cur, setupDump(t, filepath.Join(f.home, "dump"), projThread3).Env["ORYN_PROJECT_CONFIG_ROOT"], "相同内容复用目录")
+}
+
+// 非法的项目层路径与项目 id：invalid_params，什么都不写（与 orb 写项目层同一套路径校验）。
+func TestRunnerProjectConfigInvalid(t *testing.T) {
+	f := newRunnerHome(t)
+	startRunnerRT(t, f, nil)
+	for _, c := range []struct {
+		pid string
+		cfg *apigen.LinkCtlProjectConfig
+	}{
+		{"prj_a", projCfg(projFile("../escape.md", "x", 0o644))},
+		{"prj_a", projCfg(projFile("rules/../../escape.md", "x", 0o644))},
+		{"prj_a", projCfg(projFile(filepath.Join(f.home, "abs.md"), "x", 0o644))},
+		{"prj_a", projCfg(apigen.LinkCtlOmpHomeFile{Path: "a.md", ContentB64: "!!"})},
+		{"", projCfg(projFile("a.md", "x", 0o644))},
+		{"../prj", projCfg(projFile("a.md", "x", 0o644))},
+		{"prj/a", projCfg(projFile("a.md", "x", 0o644))},
+	} {
+		err := runnerProjStart(t, f, thread1, c.pid, c.cfg)
+		assert.Equal(t, "invalid_params", ctlCode(err), "%q %v: %v", c.pid, c.cfg.Files, err)
+	}
+	assert.NoDirExists(t, filepath.Join(f.home, ".oryn", "project-config"))
+	assert.NoFileExists(t, filepath.Join(f.home, ".oryn", "escape.md"))
+	assert.NoFileExists(t, filepath.Join(f.home, "abs.md"))
+	assert.NoDirExists(t, filepath.Join(f.home, ".oryn", "threads", thread1), "rejected before anything is created")
 }
 
 // 协调宿主不写、不加载项目层：setup.run 里的 projectConfig 被忽略；agent 没有这两个环境变量与项目层 --config。

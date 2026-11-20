@@ -657,7 +657,7 @@
 	font-weight: 600;
 }
 
-/* ---- bash 的 Pseudo 视图（omp 原生 ShellVisualization 的行，经 orb 扩展写进 details.orynPseudo） ---- */
+/* ---- bash 的 Pseudo 视图（omp 原生 ShellVisualization 的行：运行中由 Oryn Core、结束时由 orb 扩展写进 details.orynPseudo） ---- */
 
 .tv-pseudo {
 	display: flex;
@@ -684,6 +684,15 @@
 .tv-pseudo-row--skipped,
 .tv-pseudo-skipped {
 	opacity: 0.45;
+}
+
+/* 运行中：正在执行的行行首画 ›（强调色），其余行弱化 */
+.tv-pseudo-row--idle {
+	opacity: 0.6;
+}
+
+.tv-pseudo-row--active .tv-pseudo-lead {
+	color: var(--tv-accent);
 }
 
 .tv-pseudo-fail {

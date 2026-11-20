@@ -18,7 +18,7 @@ import (
 type binResolver struct{ dirs []string }
 
 // newBinResolver 由 PATH 值与 $HOME 构造：相对路径项（含空项，即当前目录）与 $HOME 之下的项都被去掉；
-// home 为空时（runner 形态）只去掉相对路径项。
+// home 为空时只去掉相对路径项。orb 与 runner（M21 起 agent 是下载的 Core，不再需要 ~/.bun/bin）都传真实 $HOME。
 func newBinResolver(pathEnv, home string) binResolver {
 	if home != "" {
 		home = filepath.Clean(home)

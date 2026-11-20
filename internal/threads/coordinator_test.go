@@ -31,6 +31,10 @@ type ctlOrbs struct {
 	reqCh chan ctlCall
 	// startErr 非 nil 时 orbd 以它应答 agent.start（ctl 错误原样回给控制面）。
 	startErr error
+	// startPub 非空时 agent.start 的结果带它作 sshPublicKey（扮演 runner，M21）。
+	startPub string
+	// startHook 非 nil 时在应答 agent.start 之前调用（扮演 orbd 在应答前发出的 agent.status，M21）。
+	startHook func()
 	// home 非空时 setup.run 把 ompHome 写进 <home>/.omp/agent/（扮演协调宿主的沙箱 HOME）；setupErr 非 nil 时 setup.run 以它应答。
 	home     string
 	setupErr error
@@ -49,7 +53,7 @@ func newCtlOrbs(t *testing.T, base *stubOrbs) *ctlOrbs {
 		c := ctlCall{method: method, params: append(json.RawMessage(nil), params...)}
 		o.mu.Lock()
 		o.calls = append(o.calls, c)
-		startErr, home, setupErr := o.startErr, o.home, o.setupErr
+		startErr, home, setupErr, startPub, startHook := o.startErr, o.home, o.setupErr, o.startPub, o.startHook
 		o.mu.Unlock()
 		o.reqCh <- c
 		switch method {
@@ -57,7 +61,14 @@ func newCtlOrbs(t *testing.T, base *stubOrbs) *ctlOrbs {
 			if startErr != nil {
 				return nil, startErr
 			}
-			return apigen.LinkCtlAgentStartResult{Pid: 1}, nil
+			if startHook != nil {
+				startHook()
+			}
+			res := apigen.LinkCtlAgentStartResult{Pid: 1}
+			if startPub != "" {
+				res.SSHPublicKey = &startPub
+			}
+			return res, nil
 		case "agent.stop":
 			return apigen.LinkCtlAgentStopResult{}, nil
 		case "setup.run":

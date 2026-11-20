@@ -23,7 +23,8 @@ export type DialogState =
 	| { kind: "model"; query?: string }
 	/** `file`：离线子 agent 的完整存档路径（按它打开存档，而不是按 id 查运行中的）。 */
 	| { kind: "subagent"; id: string; file?: string }
-	| { kind: "btw" }
+	/** `recordId`：打开时选中这个话题（解释卡的「在旁路提问里打开」） */
+	| { kind: "btw"; recordId?: string }
 	| { kind: "goal" }
 	| { kind: "label"; entryId: string }
 	| { kind: "labels" }
@@ -218,6 +219,12 @@ export interface UiState {
 	artifactSel: Record<string, string>;
 	/** 在线程的右面板里打开一个 artifact：记下选择、切到 Artifacts 标签并打开面板。 */
 	openArtifact(threadId: string, artifactId: string): void;
+	/** Files 标签待打开的文件（按线程，不持久化）：`n` 每次请求自增，同一路径再请求也会重新打开。 */
+	fileSel: Record<string, { path: string; n: number }>;
+	/** 在线程的右面板里打开一个文件（绝对路径）：记下请求、切到 Files 标签并打开面板。 */
+	openFile(threadId: string, path: string): void;
+	/** Files 标签处理完第 `n` 个待打开请求后清掉它（面板重新挂载时不再重放）；已被更新的请求取代时不动。 */
+	clearFileSel(threadId: string, n: number): void;
 	/** Artifacts 标签的版本签名（按线程，同 `changesSig`）：有没看过的新版本时标签亮点。 */
 	artifactsSig: Record<string, ChangesSig>;
 	/** 记录线程 artifact 列表的签名；`seen` 为真或首次记录时同时记为已看。 */
@@ -235,6 +242,9 @@ export interface UiState {
 	desktopScale: DesktopScale | null;
 	setDesktopScale(scale: DesktopScale | null): void;
 }
+
+/** `openFile` 的请求序号（见 `UiState.fileSel`）。 */
+let fileSelSeq = 0;
 
 export const uiStore = createStore<UiState>((set, get) => ({
 	dialog: null,
@@ -369,6 +379,22 @@ export const uiStore = createStore<UiState>((set, get) => ({
 		get().setPanelTab("artifacts");
 		get().setPanel(true);
 	},
+	fileSel: {},
+	openFile: (threadId, path) => {
+		// 序号全局递增：清掉请求后再打开同一文件，n 也不会与 FileBrowser 已处理过的重复
+		fileSelSeq += 1;
+		set((s) => ({
+			fileSel: { ...s.fileSel, [threadId]: { path, n: fileSelSeq } },
+		}));
+		get().setPanelTab("files");
+		get().setPanel(true);
+	},
+	clearFileSel: (threadId, n) =>
+		set((s) => {
+			if (s.fileSel[threadId]?.n !== n) return s;
+			const { [threadId]: _, ...rest } = s.fileSel;
+			return { fileSel: rest };
+		}),
 	artifactsSig: {},
 	noteArtifacts: (threadId, sig, seen) =>
 		set((s) => {

@@ -406,11 +406,16 @@ export function TextInput(props: InputHTMLAttributes<HTMLInputElement>) {
 	return <input {...props} className={`${INPUT} ${props.className ?? ""}`} />;
 }
 
-export function TextArea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+/** 多行输入；默认等宽字体（配置 / 代码类内容），`mono={false}` 用正文字体（提示词等自然语言）。 */
+export function TextArea({
+	mono = true,
+	className = "",
+	...props
+}: TextareaHTMLAttributes<HTMLTextAreaElement> & { mono?: boolean }) {
 	return (
 		<textarea
 			{...props}
-			className={`${INPUT} font-mono ${props.className ?? ""}`}
+			className={`${INPUT} ${mono ? "font-mono" : ""} ${className}`}
 		/>
 	);
 }

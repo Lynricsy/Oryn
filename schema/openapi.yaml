@@ -2315,6 +2315,40 @@ paths:
               schema: { $ref: '#/components/schemas/ComposerPrefs' }
         default: { $ref: '#/components/responses/Error' }
 
+  /api/v1/settings/selection-actions:
+    get:
+      tags: [settings]
+      operationId: getSelectionActions
+      summary: 自定义选区快捷动作（选中文字后出现在右键菜单里）
+      responses:
+        '200':
+          description: 当前列表（尚未初始化所有者时为空列表）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SelectionActions' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [settings]
+      operationId: putSelectionActions
+      summary: 设置自定义选区快捷动作（整体替换）
+      description: 名称与提示词去首尾空白后保存；id 不得重复。尚未初始化所有者 → 409。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SelectionActions' }
+      responses:
+        '200':
+          description: 写入后的列表（已规整）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SelectionActions' }
+        default: { $ref: '#/components/responses/Error' }
+
   /api/v1/models/catalog:
     get:
       tags: [settings]
@@ -8183,6 +8217,25 @@ components:
           type: string
           enum: [role, assistant]
           description: 首屏输入框默认选中的对象：`role` = config 里的 default role（普通 agent）；`assistant` = 全局助手
+    SelectionAction:
+      type: object
+      required: [id, name, prompt]
+      properties:
+        id: { type: string, pattern: '^[a-z0-9]{8}$' }
+        name: { type: string, minLength: 1, maxLength: 24 }
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: 对选中内容的指令，连同选区一起交给模型
+    SelectionActions:
+      type: object
+      required: [actions]
+      properties:
+        actions:
+          type: array
+          maxItems: 12
+          items: { $ref: '#/components/schemas/SelectionAction' }
     ModelCatalog:
       type: object
       required: [models, fetchedAt, stale]
@@ -13888,11 +13941,22 @@ components:
             M19：协调宿主 /mcp/ 路由的凭据，只在 `web` 为真时生效：orbd 以环境变量 `ORYN_MCP_TOKEN` 交给该 agent，mcp.json 的
             `X-Oryn-MCP-Token` 请求头引用它，出站代理逐个请求核对（D10：Space 协调者没有它，直接请求 /mcp/ 一律 403）。只有协调宿主接受。
         memory: { $ref: '#/components/schemas/LinkCtlAgentMemory' }
+        # M21：projectId / projectConfig 只对 runner 线程给出（同时出现）：runner 一台机器可同时跑多个项目的线程，项目层按线程
+        # 随 agent.start 交付（原样不经变换，与 orb 相同；线程不属于项目或项目没有项目层时省略）。orb 线程不带（orb 的项目层经
+        # setup.run / omphome.apply 下发）。
+        projectId: { $ref: '#/components/schemas/ProjectId' }
+        projectConfig: { $ref: '#/components/schemas/LinkCtlProjectConfig' }
     LinkCtlAgentStartResult:
       type: object
       required: [pid]
       properties:
         pid: { type: integer }
+        sshPublicKey:
+          type: string
+          description: |
+            M21：只有 runner 且 SSH 网关端口在监听时给出——orbd 为该线程的监督器生成的 ed25519 公钥（OpenSSH authorized_keys
+            单行）。私钥只在 runner 本机（`$HOME/.oryn/threads/<线程>/ssh/id_ed25519`，agent 环境 `ORYN_SSH_KEY`），随监督器
+            生灭：已有活动监督器时幂等返回同一把公钥。orynd 据此登记「公钥 → 线程」，SSH 网关对 runner 的 `ssh` 流按它认出线程。
     LinkCtlAgentStopParams:
       type: object
       required: [threadId, graceSeconds]

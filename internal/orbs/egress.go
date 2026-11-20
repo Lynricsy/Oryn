@@ -342,15 +342,15 @@ func (s *Service) setPolicy(orbID string, pol egress.Policy, gen uint64) bool {
 	return true
 }
 
-// serveEgress 把一条 egress 流交给该 orb 的代理服务（按需创建）。memoryOnly 为真（runner）时只放行记忆网关
-// `/memory/…`，其余路径一律 403：runner 的通道只为记忆开（M16 步骤 2.4），模型与 git 路由不对 runner 开放。
-func (s *Service) serveEgress(orbID string, st *link.Stream, memoryOnly bool) {
+// serveEgress 把一条 egress 流交给该 orb 的代理服务（按需创建）。runner 为真时只放行模型中转 `/llm/…` 与记忆网关
+// `/memory/…`（runnerEgressHandler），其余路径一律 403：git、GitHub 与 MCP 的凭据不对 runner 开放（M21 D3）。
+func (s *Service) serveEgress(orbID string, st *link.Stream, runner bool) {
 	s.mu.Lock()
 	es := s.egress[orbID]
 	if es == nil {
 		var h http.Handler = egress.NewHandler(orbID, egressResolver{s: s, orbID: orbID})
-		if memoryOnly {
-			h = memoryOnlyHandler(h)
+		if runner {
+			h = runnerEgressHandler(h)
 		}
 		es = &egressServer{l: link.NewStreamListener("oryn-egress")}
 		es.srv = &http.Server{
@@ -369,13 +369,13 @@ func (s *Service) serveEgress(orbID string, st *link.Stream, memoryOnly bool) {
 	es.l.Push(st)
 }
 
-// memoryOnlyHandler 只把 origin-form 的 `/memory/` 路径交给 next，其余回 403。absolute-form（代理形式，如
-// `GET http://github.com/memory/x/info/refs`）一律拒绝：出站代理把这类请求只交给 git 路由，只看路径前缀会让 runner
-// 借 owner=memory 的代理形式请求进 git 路由。
-func memoryOnlyHandler(next http.Handler) http.Handler {
+// runnerEgressHandler 只把 origin-form 的 `/llm/` 与 `/memory/` 路径交给 next，其余（`/git/`、`/gh/`、`/mcp/`、
+// CONNECT 与 absolute-form）回 403。absolute-form（代理形式，如 `GET http://github.com/memory/x/info/refs`）一律拒绝：
+// 出站代理把这类请求只交给 git 路由，只看路径前缀会让 runner 借 owner=llm / memory 的代理形式请求进 git 路由。
+func runnerEgressHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Host != "" || !strings.HasPrefix(r.URL.Path, "/memory/") {
-			memory.WriteError(w, http.StatusForbidden, "memory_forbidden", "oryn egress: runner 只开放记忆通道")
+		if r.URL.Host != "" || (!strings.HasPrefix(r.URL.Path, "/llm/") && !strings.HasPrefix(r.URL.Path, "/memory/")) {
+			memory.WriteError(w, http.StatusForbidden, "runner_forbidden", "oryn egress: runner 只开放模型中转与记忆通道")
 			return
 		}
 		next.ServeHTTP(w, r)

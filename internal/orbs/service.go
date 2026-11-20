@@ -227,6 +227,9 @@ type Service struct {
 	hookPolicyRebuilt func(orbID string)
 	// runnerOffline 是各 runner orb 的离线定时器（受 mu 保护，见 runner.go）。
 	runnerOffline map[string]*runnerTimer
+	// runnerWithheld 是最近一次写进事件备注的「被扣下的文件」摘要，键为「runner orb/线程」（全局层线程为空；M21，受 mu
+	// 保护，见 NoteRunnerWithheld）。
+	runnerWithheld map[string]string
 	// closed 在 Close 之后为真（受 mu 保护）。
 	closed bool
 
@@ -270,7 +273,7 @@ func New(cfg Config, st *store.Store, q *jobs.Queue, setup SetupSource, secrets 
 		reqs:      map[string]RequestFunc{}, notifies: map[string]NotifyFunc{}, streams: map[string]StreamFunc{},
 		userTouched: map[string]*userTouch{},
 		poolKick:    make(chan struct{}, 1), poolBackoff: map[string]time.Time{},
-		runnerOffline: map[string]*runnerTimer{},
+		runnerOffline: map[string]*runnerTimer{}, runnerWithheld: map[string]string{},
 	}
 	s.reqs[string(apigen.MethodProjectScriptsGet)] = s.onProjectScriptsGet
 	s.reqs[string(apigen.MethodProjectScriptsSet)] = s.onProjectScriptsSet
@@ -1101,7 +1104,8 @@ func (s *Service) Delete(ctx context.Context, orbID string) error {
 
 // DeleteUnused 在除 except 之外没有任何线程（含已归档的）引用 orb 时删除它，返回是否删除；except 为空 = 不能有任何线程。
 // orb 的生命周期跟随线程：最后一个线程删除后由线程服务调用（except 为空）；定时的 keepLast 归档旧运行后调用（except =
-// 那个运行线程，只回收它独占的 orb，别的线程——哪怕已归档——还在用就保留）。「无引用」与 → deleting 在同一事务里判定，
+// 那个运行线程，只回收它独占的 orb，别的线程——哪怕已归档——还在用就保留）。except 只在它此刻仍是归档状态时才排除：
+// 归档与这里分两次提交，其间被取消归档的运行线程照常算作引用，orb 保留。「无引用」与 → deleting 在同一事务里判定，
 // 写线程行的事务又复核 orb 未进入删除（threads.checkOrbTx），并发挂上来的线程与回收串行。runner、协调 orb 与助手的电脑
 // 各有归属，从不在这里删除。
 func (s *Service) DeleteUnused(ctx context.Context, orbID, except string) (bool, error) {

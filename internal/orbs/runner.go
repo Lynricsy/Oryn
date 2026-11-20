@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -35,6 +36,10 @@ const (
 	HeaderWorkdir = "X-Oryn-Workdir"
 	// RunnerOfflineGrace 是 runner 的 link 断开后仍保持原状态的时长：期间重连不改变状态，到期仍无 link 才 → stopped。
 	RunnerOfflineGrace = 30 * time.Second
+	// RunnerApplyRetryBase / RunnerApplyRetryMax 是 runner 配置下发失败后重试的退避：首次 RunnerApplyRetryBase，
+	// 逐次翻倍，不超过 RunnerApplyRetryMax。
+	RunnerApplyRetryBase = 5 * time.Second
+	RunnerApplyRetryMax  = 60 * time.Second
 )
 
 var (
@@ -48,16 +53,19 @@ var (
 const CodeRunnerUnsupported = "runner_unsupported"
 
 // runnerRequests / runnerNotifies 是 runner 的 link 上放行的 orbd→orynd ctl 请求与通知：只有 runner 形态的 orbd
-// 正常流程会发的（转录上报、agent 状态、终端缺口、指标，以及 runner.sock 转来的 artifact.call——处理器按线程校验
-// 调用方，runner 线程只看得到自己的 artifact）。thread.* / schedule.* / project.scripts.* 只经 orbd.sock 转发，
-// runner 不监听 orbd.sock；setup / 受管服务 / 桌面的通知 runner 也没有。被攻破的 runner 发其余方法时，
-// 请求回 runner_unsupported，通知丢弃（S2：控制面的密钥与建 orb 的能力不去 runner）。computer.update（M19）同样不在表里：
-// 工具执行器只在普通 orb 上，runner 发来的一律丢弃。
+// 正常流程会发的（转录上报、agent 状态、终端缺口、指标，以及 runner.sock 转来的 artifact.call 与 library.put——处理器
+// 按线程校验调用方：artifact.call 只看得到自己线程的 artifact，library.put 的调用方须是本 orb 上未归档的工作线程，
+// 字节经同一 link 的 library.fetch 取回）。thread.* / schedule.* / project.scripts.* 只经 orbd.sock 转发，
+// runner 不监听 orbd.sock；其余文件库方法（library.sync 等）只属于协调宿主；setup / 受管服务 / 桌面的通知 runner 也没有。
+// 被攻破的 runner 发其余方法时，请求回 runner_unsupported，通知丢弃（S2：控制面的密钥与建 orb 的能力不去 runner）。
+// computer.update（M19）同样不在表里：工具执行器只在普通 orb 上，runner 发来的一律丢弃。SSH（M21）只走 `ssh` 流，
+// 不需要 ctl 请求（ssh.call 的 ssh_exec_many 工具 runner 不注册）。
 var (
 	runnerRequests = map[string]bool{
 		string(apigen.MethodEntriesCursors): true,
 		string(apigen.MethodEntriesAppend):  true,
 		string(apigen.MethodArtifactCall):   true,
+		string(apigen.MethodLibraryPut):     true,
 	}
 	runnerNotifies = map[string]bool{
 		string(apigen.MethodHello):            true,
@@ -386,11 +394,88 @@ func (s *Service) runnerHello(ctx context.Context, l *orbLink) {
 	}
 }
 
-// runnerReady 是 runner 的 runPhase：没有 setup / resume / 快照 / Profile，connecting 直接 → ready。
-func (s *Service) runnerReady(ctx context.Context, orbID string) {
+// runnerReady 是 runner 的 runPhase：没有 setup / resume / 快照 / Profile。hello 带 omphome-apply 的 runner（M21）先同步
+// 下发 omp 配置（omphome.apply，成功后刷新出站策略），之后才 connecting → ready：runner 在收到首个 omphome.apply 之前对
+// agent.start 回 config_pending，线程只在 ready 后启动 agent。下发失败时停在 connecting 并按退避重试（见 runnerApply）。
+// 旧版 orbd（不报该特性）照旧直接 ready。
+func (s *Service) runnerReady(ctx context.Context, l *orbLink) {
+	if slices.Contains(l.hello.Features, FeatureOmpHomeApply) {
+		s.runnerApply(ctx, l, 0, "")
+		return
+	}
+	s.runnerOnline(ctx, l.orbID)
+}
+
+// runnerOnline 把 runner 的 orb connecting → ready。
+func (s *Service) runnerOnline(ctx context.Context, orbID string) {
 	if _, _, err := s.transition(ctx, orbID, StateConnecting, StateReady, map[string]any{"reason": "runner link"}); err != nil {
 		slog.Warn("runner 就绪状态更新失败", "orb", orbID, "err", err)
 	}
+}
+
+// runnerApply 向 runner 下发 omp 配置（第 attempt 次重试，0 = 首次；prevErr 是上一次失败的错误），成功则进入 ready。
+// 失败时只要 l 仍是该 runner 的当前 link，就按 runnerApplyBackoff 起定时器重试；link 断开（新 link 由自己的 hello 重来）
+// 或服务关闭后到期的定时器什么也不做。每次失败都记日志，事件旁注只在首次失败与错误变化时写。
+func (s *Service) runnerApply(ctx context.Context, l *orbLink, attempt int, prevErr string) {
+	orb, err := s.Get(ctx, l.orbID)
+	if err != nil || orb.State != StateConnecting {
+		return
+	}
+	res := OrbApply{OrbID: l.orbID, Err: "没有 setup 来源"}
+	if s.setup != nil {
+		res = s.applyOrb(ctx, orb)
+	}
+	if res.OK {
+		s.runnerOnline(ctx, l.orbID)
+		return
+	}
+	delay := runnerApplyBackoff(attempt)
+	slog.Warn("runner 配置下发失败，停在 connecting，稍后重试", "orb", l.orbID, "attempt", attempt+1, "retryIn", delay, "err", res.Err)
+	if attempt == 0 || res.Err != prevErr {
+		s.noteOrb(ctx, l.orbID, map[string]any{"reason": "runner config apply failed", "error": res.Err})
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.runnerLinkCurrentLocked(l) {
+		return
+	}
+	s.afterFunc(delay, func() {
+		s.mu.Lock()
+		if !s.runnerLinkCurrentLocked(l) {
+			s.mu.Unlock()
+			return
+		}
+		// 在 s.mu 下登记后台任务：Close 置 closed 之后才等 bg，登记过的重试一定被等到
+		s.bg.Add(1)
+		s.mu.Unlock()
+		defer s.bg.Done()
+		s.runnerApply(context.Background(), l, attempt+1, res.Err)
+	})
+}
+
+// runnerLinkCurrentLocked 报告 l 是否仍是该 orb 的当前 link 且未断开、服务未关闭（调用方持 s.mu）。
+func (s *Service) runnerLinkCurrentLocked(l *orbLink) bool {
+	if s.closed || s.links[l.orbID] != l {
+		return false
+	}
+	select {
+	case <-l.ctl.Done():
+		return false
+	default:
+		return true
+	}
+}
+
+// runnerApplyBackoff 是第 attempt 次失败（0 起）之后的重试间隔：RunnerApplyRetryBase 逐次翻倍，上限 RunnerApplyRetryMax。
+func runnerApplyBackoff(attempt int) time.Duration {
+	d := RunnerApplyRetryBase
+	for range attempt {
+		if d >= RunnerApplyRetryMax {
+			break
+		}
+		d *= 2
+	}
+	return min(d, RunnerApplyRetryMax)
 }
 
 // afterFunc 是可注入的定时器（测试替换为手动触发）；返回的函数停止定时器。

@@ -43,29 +43,13 @@ func (r *Runtime) writeProjectOmp(cfg *apigen.LinkCtlProjectConfig) error {
 		return os.RemoveAll(root)
 	}
 	base := filepath.Join(root, projectOmpDir)
-	type item struct {
-		rel  string
-		path string
-		data []byte
-		mode os.FileMode
+	items, err := projectItems(base, cfg.Files)
+	if err != nil {
+		return err
 	}
-	items := make([]item, 0, len(cfg.Files))
-	want := make(map[string]bool, len(cfg.Files))
-	for _, f := range cfg.Files {
-		path, err := relUnder(base, f.Path)
-		if err != nil {
-			return err
-		}
-		data, err := base64.StdEncoding.DecodeString(f.ContentB64)
-		if err != nil {
-			return fmt.Errorf("%s: %w", f.Path, err)
-		}
-		mode := os.FileMode(f.Mode) & os.ModePerm
-		if mode == 0 {
-			mode = 0o644
-		}
-		items = append(items, item{rel: f.Path, path: path, data: data, mode: mode})
-		want[path] = true
+	want := make(map[string]bool, len(items))
+	for _, it := range items {
+		want[it.path] = true
 	}
 	for _, d := range []string{root, base} {
 		if err := realDir(d); err != nil {
@@ -81,6 +65,36 @@ func (r *Runtime) writeProjectOmp(cfg *apigen.LinkCtlProjectConfig) error {
 		}
 	}
 	return removeEmptyDirs(base)
+}
+
+// projectItem 是项目层清单里校验、解码过的一个文件（path 为 base 之下的绝对路径）。
+type projectItem struct {
+	rel  string
+	path string
+	data []byte
+	mode os.FileMode
+}
+
+// projectItems 校验并解码项目层清单：路径须是 base 之下的相对路径（不得为绝对路径或含越出的 `..`），内容为 base64；
+// 缺省权限 0644。orb 的镜像与 runner 的按线程目录共用这一套校验。
+func projectItems(base string, files []apigen.LinkCtlOmpHomeFile) ([]projectItem, error) {
+	items := make([]projectItem, 0, len(files))
+	for _, f := range files {
+		path, err := relUnder(base, f.Path)
+		if err != nil {
+			return nil, err
+		}
+		data, err := base64.StdEncoding.DecodeString(f.ContentB64)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", f.Path, err)
+		}
+		mode := os.FileMode(f.Mode) & os.ModePerm
+		if mode == 0 {
+			mode = 0o644
+		}
+		items = append(items, projectItem{rel: f.Path, path: path, data: data, mode: mode})
+	}
+	return items, nil
 }
 
 // realDir 确保 d 是真实目录：符号链接或非目录先删掉（RemoveAll 对符号链接只删链接本身）再建。
@@ -159,8 +173,13 @@ func removeEmptyDirs(base string) error {
 // agent.start 的 env 之后调用（用户的 env 密钥不能覆盖这两个变量），并在桌面覆盖层的 `--config` 之前（后者优先）。
 // 判断只看磁盘，不依赖内存状态，orbd 重启后依然正确。
 func (r *Runtime) applyProjectConfig(env map[string]string, args []string) []string {
+	return r.applyProjectRoot(env, args, r.projectConfigRoot())
+}
+
+// applyProjectRoot 以 root（其下 `.omp/` 为项目层）设置 C1 的环境变量与 `--config`：orb 的 root 是
+// `$HOME/.oryn/project-config`，runner 是按线程下发的内容寻址目录（M21，见 runnerproject.go）。
+func (r *Runtime) applyProjectRoot(env map[string]string, args []string, root string) []string {
 	env[envCentralConfig] = "1"
-	root := r.projectConfigRoot()
 	base := filepath.Join(root, projectOmpDir)
 	if st, err := os.Lstat(base); err != nil || !st.IsDir() {
 		delete(env, envProjectConfigRoot)

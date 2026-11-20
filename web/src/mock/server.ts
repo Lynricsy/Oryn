@@ -26,8 +26,13 @@ import {
 	desktopAskTitle,
 } from "../lib/desktop-ask";
 import { readConfigDoc } from "../lib/omp-config";
+import { parseSideQuestion } from "../lib/side-ask";
 import { parseModelSource } from "../lib/turn-role";
-import type { RpcTerminalInfo, SessionState } from "../omp/types";
+import type {
+	RpcBtwHistoryRecord,
+	RpcTerminalInfo,
+	SessionState,
+} from "../omp/types";
 import { activeBranch, isMainFile } from "../state/transcript";
 import { MockArtifacts } from "./artifacts";
 import { MockAssistant } from "./assistant";
@@ -389,6 +394,33 @@ function badWarmOrbs(n?: number): Response | null {
 	);
 }
 
+/** 自定义选区快捷动作的校验与规整（同 internal/api/selection_actions.go）：不合法时返回错误说明。 */
+function normalizeSelectionActions(
+	input: unknown,
+): Schemas["SelectionActions"] | string {
+	const list = (input as { actions?: unknown } | null)?.actions;
+	if (!Array.isArray(list)) return "actions 须为数组";
+	if (list.length > 12) return "actions 至多 12 条";
+	const seen = new Set<string>();
+	const actions: Schemas["SelectionAction"][] = [];
+	for (const [i, raw] of list.entries()) {
+		const a = (raw ?? {}) as Partial<Schemas["SelectionAction"]>;
+		const id = String(a.id ?? "");
+		if (!/^[a-z0-9]{8}$/.test(id))
+			return `actions[${i}].id 须为 8 位小写字母或数字`;
+		if (seen.has(id)) return `actions[${i}].id 重复`;
+		seen.add(id);
+		const name = String(a.name ?? "").trim();
+		if (name === "" || [...name].length > 24)
+			return `actions[${i}].name 须为 1-24 个字符`;
+		const prompt = String(a.prompt ?? "").trim();
+		if (prompt === "" || [...prompt].length > 2000)
+			return `actions[${i}].prompt 须为 1-2000 个字符`;
+		actions.push({ id, name, prompt });
+	}
+	return { actions };
+}
+
 function sleep(ms: number) {
 	return new Promise((r) => setTimeout(r, ms));
 }
@@ -552,6 +584,8 @@ export class MockServer {
 	agentAvatars: Record<string, Schemas["AvatarIdentity"]> = {};
 	/** 新对话输入框偏好（`owner.new_thread_target`）。 */
 	composerPrefs: Schemas["ComposerPrefs"] = { defaultTarget: "role" };
+	/** 自定义选区快捷动作（`owner.selection_actions`，M22）。 */
+	selectionActions: Schemas["SelectionActions"] = { actions: [] };
 	/** config.yml 解析失败的原因（模拟 `configError`）。 */
 	roleConfigError: string | undefined;
 	/** 旧 Core 的线程：不认识 `oryn_*` 命令（应答 `Unknown command`），也不写来源记录。 */
@@ -565,6 +599,14 @@ export class MockServer {
 	private readonly waiters = new Map<string, (value: Json) => void>();
 	private rev = 1;
 	private idSeq = 100;
+	/** btw 旁路提问的话题记录（按线程）；验收脚本经 `__orynMock.btwRecords` 读发出去的问题。 */
+	readonly btwRecords = new Map<string, RpcBtwHistoryRecord[]>();
+	/** 每线程至多一个在答的 btw：逐段推送回答的计时器 */
+	private readonly btwTimers = new Map<
+		string,
+		{ recordId: string; timer: ReturnType<typeof setInterval> }
+	>();
+	private btwSeq = 0;
 	private readonly terms = new Map<string, Map<string, MockTerm>>();
 	private readonly termWatch = new Map<MockSocket, Set<string>>();
 	private readonly termWindow = new Map<
@@ -1560,6 +1602,15 @@ export class MockServer {
 				this.composerPrefs = { defaultTarget: b.defaultTarget };
 			}
 			return json(this.composerPrefs);
+		}
+		if (p === "settings/selection-actions") {
+			if (m === "PUT") {
+				const next = normalizeSelectionActions(await body());
+				if (typeof next === "string")
+					return json({ code: "invalid_request", message: next }, 400);
+				this.selectionActions = next;
+			}
+			return json(this.selectionActions);
 		}
 		if (p === "settings/git-identity") {
 			if (m === "PUT") {
@@ -3066,6 +3117,119 @@ export class MockServer {
 		});
 	}
 
+	/** 改 btw 记录最新一轮（有追问时是 followUps 末尾），存回并推 `btw_record`。 */
+	private patchBtw(
+		threadId: string,
+		recordId: string,
+		patch: Partial<Pick<RpcBtwHistoryRecord, "answer" | "status">>,
+		push = true,
+	): void {
+		const list = this.btwRecords.get(threadId) ?? [];
+		const i = list.findIndex((r) => r.id === recordId);
+		const prev = list[i];
+		if (!prev) return;
+		const updatedAt = Date.now();
+		const last = prev.followUps?.at(-1);
+		const next: RpcBtwHistoryRecord =
+			prev.followUps && last
+				? {
+						...prev,
+						updatedAt,
+						followUps: [
+							...prev.followUps.slice(0, -1),
+							{ ...last, ...patch, updatedAt },
+						],
+					}
+				: { ...prev, ...patch, updatedAt };
+		list[i] = next;
+		if (push) this.frame(threadId, { type: "btw_record", record: next });
+	}
+
+	/** `btw`：同一线程同时只答一个；回答切成 4 段，每隔 `oryn.mock.btw-delay` 毫秒（缺省 120）推一段。 */
+	private btwAsk(
+		socket: MockSocket,
+		threadId: string,
+		id: string,
+		frame: Json,
+	) {
+		if (this.btwTimers.has(threadId))
+			return this.respond(
+				socket,
+				threadId,
+				id,
+				"btw",
+				undefined,
+				"A /btw question is still running; cancel it first",
+			);
+		const question = String(frame.question ?? "").trim();
+		const list = this.btwRecords.get(threadId) ?? [];
+		this.btwRecords.set(threadId, list);
+		const now = Date.now();
+		const turn = {
+			question,
+			answer: "",
+			status: "running" as const,
+			createdAt: now,
+			updatedAt: now,
+		};
+		const prev =
+			typeof frame.recordId === "string"
+				? list.find((r) => r.id === frame.recordId)
+				: undefined;
+		let record: RpcBtwHistoryRecord;
+		if (prev) {
+			record = {
+				...prev,
+				updatedAt: now,
+				followUps: [...(prev.followUps ?? []), turn],
+			};
+			list[list.indexOf(prev)] = record;
+		} else {
+			this.btwSeq += 1;
+			record = { id: `mock-btw-${this.btwSeq}`, leafId: null, ...turn };
+			list.push(record);
+		}
+		this.frame(threadId, { type: "btw_record", record });
+		this.respond(socket, threadId, id, "btw", { record });
+		const parsed = parseSideQuestion(question);
+		const answer = parsed
+			? `模拟回答（${parsed.action}）：${Array.from(parsed.selected).slice(0, 40).join("")}`
+			: `模拟回答：${question}`;
+		const chars = Array.from(answer);
+		const size = Math.ceil(chars.length / 4);
+		const chunks = [0, 1, 2, 3]
+			.map((k) => chars.slice(k * size, (k + 1) * size).join(""))
+			.filter(Boolean);
+		const delay = Number(localStorage.getItem("oryn.mock.btw-delay") ?? 120);
+		const recordId = record.id;
+		let sent = "";
+		const timer = setInterval(() => {
+			const delta = chunks.shift();
+			if (delta !== undefined) {
+				sent += delta;
+				this.patchBtw(threadId, recordId, { answer: sent }, false);
+				this.frame(threadId, { type: "btw_delta", recordId, delta });
+				return;
+			}
+			clearInterval(timer);
+			this.btwTimers.delete(threadId);
+			this.patchBtw(threadId, recordId, { status: "complete" });
+		}, delay);
+		this.btwTimers.set(threadId, { recordId, timer });
+	}
+
+	private btwCancel(socket: MockSocket, threadId: string, id: string) {
+		const running = this.btwTimers.get(threadId);
+		if (running) {
+			clearInterval(running.timer);
+			this.btwTimers.delete(threadId);
+			this.patchBtw(threadId, running.recordId, { status: "cancelled" });
+		}
+		this.respond(socket, threadId, id, "btw_cancel", {
+			cancelled: running !== undefined,
+		});
+	}
+
 	private async handleCmd(
 		socket: MockSocket,
 		threadId: string,
@@ -3172,7 +3336,20 @@ export class MockServer {
 			case "get_goal":
 				return this.respond(socket, threadId, id, type, { enabled: false });
 			case "get_btw_history":
-				return this.respond(socket, threadId, id, type, { records: [] });
+				return this.respond(socket, threadId, id, type, {
+					records: [...(this.btwRecords.get(threadId) ?? [])].sort(
+						(a, b) => b.createdAt - a.createdAt,
+					),
+				});
+			case "btw":
+				return this.btwAsk(socket, threadId, id, frame);
+			case "btw_cancel":
+				return this.btwCancel(socket, threadId, id);
+			case "btw_inject":
+				return this.respond(socket, threadId, id, type, {
+					sent: false,
+					reason: "mock",
+				});
 			// 角色模型（Ctrl+P 轮换、模型对话框的角色列表）：照主人的真实配置，default 用 @ 引用 Cyrene，writer 是裸 id（无 selected）
 			case "get_settings":
 				return this.respond(socket, threadId, id, type, {

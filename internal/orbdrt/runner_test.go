@@ -1,9 +1,12 @@
 package orbdrt
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -19,7 +22,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Lynricsy/Oryn/internal/agentcfg"
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/link"
 	"github.com/Lynricsy/Oryn/internal/orbsock"
 )
 
@@ -73,8 +78,16 @@ func (f *runnerFixture) initRepo(t *testing.T) {
 	rgit(t, f.work, "commit", "-q", "-m", "init")
 }
 
-// startRunnerRT 以 runner 形态起 orbd（声明的目录 = f.work）。
+// startRunnerRT 以 runner 形态起 orbd（声明的目录 = f.work），并像控制面那样在 hello 后先发一次 omphome.apply
+// （M21：此前 agent.start 回 config_pending）。
 func startRunnerRT(t *testing.T, f *runnerFixture, mutate func(*Config)) {
+	t.Helper()
+	startRunnerRTPending(t, f, mutate)
+	require.NoError(t, f.cp.call(t, string(apigen.MethodOmpHomeApply), apigen.LinkCtlOmpHomeApplyParams{OmpHome: []apigen.LinkCtlOmpHomeFile{}}, nil))
+}
+
+// startRunnerRTPending 同 startRunnerRT，但不下发配置。
+func startRunnerRTPending(t *testing.T, f *runnerFixture, mutate func(*Config)) {
 	t.Helper()
 	f.cp = newFakeCP(t)
 	f.cp.token.Store(testRunnerToken)
@@ -97,27 +110,25 @@ func helloOf(t *testing.T, cp *fakeCP) apigen.LinkCtlHelloParams {
 	return h
 }
 
-// --runner：经 whoami 取得 orb id；不监听 egress、不建 orbd.sock；不写 ~/.agents/skills 与 ~/.oryn/core，
-// 不碰 git 全局配置；只在 orbd 自己的目录写自带的扩展并监听 runner.sock（M14）。
+// --runner：经 whoami 取得 orb id；启动即常驻监听 egress（M21）；不建 orbd.sock；不写 ~/.agents、~/.ssh，不碰
+// git 全局配置，ORYN_AGENT_BIN 给出时不下载 Core；只写自带的扩展与 runner 版 oryn-library 技能并监听 runner.sock（M14）。
 func TestRunnerStartupTouchesNothingOrbSpecific(t *testing.T) {
 	f := newRunnerHome(t)
 	f.initRepo(t)
-	// 先占一个空闲端口再放掉，并把它配成 egress 地址：runner 不应监听它。
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	egress := ln.Addr().String()
-	require.NoError(t, ln.Close())
+	egress := freeAddr(t)
 	startRunnerRT(t, f, func(c *Config) { c.EgressAddr = egress })
 	h := helloOf(t, f.cp)
 
 	assert.Equal(t, testRunnerOrb, f.rt.cfg.OrbID, "orb id comes from whoami")
-	assert.Empty(t, f.rt.EgressAddr())
-	probe, err := net.Listen("tcp", egress)
-	require.NoError(t, err, "a runner must not listen on the egress address")
-	_ = probe.Close()
+	assert.Equal(t, fakeompBin, f.rt.cfg.AgentBin)
+	assert.Equal(t, egress, f.rt.EgressAddr())
+	_, err := net.Listen("tcp", egress)
+	require.Error(t, err, "the runner listens on the egress address from startup")
 
 	for _, p := range []string{
 		filepath.Join(f.home, ".agents"),
+		filepath.Join(f.home, ".omp"),
+		filepath.Join(f.home, ".ssh"),
 		filepath.Join(f.home, ".oryn", "core"),
 		orbsock.Path(f.home),
 		filepath.Join(f.home, ".gitconfig"),
@@ -126,9 +137,12 @@ func TestRunnerStartupTouchesNothingOrbSpecific(t *testing.T) {
 		_, err := os.Lstat(p)
 		assert.ErrorIs(t, err, os.ErrNotExist, "%s must not be created on a runner", p)
 	}
-	for _, p := range []string{orbsock.RunnerPath(f.home), runnerExtensionPath(f.home)} {
+	for _, p := range []string{orbsock.RunnerPath(f.home), runnerExtensionPath(f.home), runnerLibrarySkillPath(f.home)} {
 		require.Eventually(t, func() bool { _, err := os.Lstat(p); return err == nil }, 5*time.Second, 10*time.Millisecond, "%s exists on a runner", p)
 	}
+	assert.Equal(t, filepath.Join(f.home, ".oryn", "omp", "agent", "skills", "oryn-library", "SKILL.md"), runnerLibrarySkillPath(f.home))
+	assert.Equal(t, string(runnerLibrarySkill), readFile(t, runnerLibrarySkillPath(f.home)))
+	assert.Contains(t, string(runnerLibrarySkill), "oryn_library_put")
 	fi, err := os.Lstat(orbsock.RunnerPath(f.home))
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm())
@@ -138,25 +152,35 @@ func TestRunnerStartupTouchesNothingOrbSpecific(t *testing.T) {
 	assert.Equal(t, []apigen.RunnerDir{{Path: f.work, Name: "repo", Git: true}}, h.Runner.Dirs)
 }
 
-// hello 的特性随 flag 与 PATH 变化：fs、attachments、metrics、memory；git 在 PATH 里加 git；--terminal 加 terminal。
+// hello 的特性随 flag、PATH 与 SSH 端口变化：fs、attachments、metrics、memory、omphome-apply；git 在 PATH 里加 git；
+// --terminal 加 terminal；SSH 网关端口监听成功加 ssh（M21）。
 func TestRunnerHelloFeatures(t *testing.T) {
 	t.Run("git", func(t *testing.T) {
 		f := newRunnerHome(t)
 		startRunnerRT(t, f, nil)
-		assert.Equal(t, []string{"fs", "attachments", "metrics", "memory", "git"}, helloOf(t, f.cp).Features)
+		assert.Equal(t, []string{"fs", "attachments", "metrics", "memory", "omphome-apply", "git", "ssh"}, helloOf(t, f.cp).Features)
 	})
 	t.Run("terminal", func(t *testing.T) {
 		f := newRunnerHome(t)
 		startRunnerRT(t, f, func(c *Config) { c.Runner.Terminal = true })
-		assert.Equal(t, []string{"fs", "attachments", "metrics", "memory", "git", "terminal"}, helloOf(t, f.cp).Features)
+		assert.Equal(t, []string{"fs", "attachments", "metrics", "memory", "omphome-apply", "git", "terminal", "ssh"}, helloOf(t, f.cp).Features)
 	})
 	t.Run("no git", func(t *testing.T) {
 		f := newRunnerHome(t)
 		t.Setenv("PATH", t.TempDir())
 		startRunnerRT(t, f, nil)
 		h := helloOf(t, f.cp)
-		assert.Equal(t, []string{"fs", "attachments", "metrics", "memory"}, h.Features)
+		assert.Equal(t, []string{"fs", "attachments", "metrics", "memory", "omphome-apply", "ssh"}, h.Features)
 		assert.False(t, h.Runner.Dirs[0].Git, "work is not a repository")
+	})
+	t.Run("ssh port busy", func(t *testing.T) {
+		f := newRunnerHome(t)
+		busy, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = busy.Close() })
+		startRunnerRT(t, f, func(c *Config) { c.SSHAddr = busy.Addr().String() })
+		assert.NotContains(t, helloOf(t, f.cp).Features, "ssh")
+		assert.Nil(t, f.rt.sshLn)
 	})
 }
 
@@ -279,11 +303,14 @@ type agentDump struct {
 
 // agent.start：cwd 必填且在声明的目录之内（符号链接逃逸被拒）；会话目录只能在 ~/.oryn/threads 下；
 // 合法时 omp 以该目录为 cwd、`-e` 恰是 runner 自带的扩展、环境有 ORYN_RUNNER=1 与指向 runner.sock 的
-// ORYN_ARTIFACT_SOCK，而没有 ORYN_ORB / 令牌。
+// ORYN_ARTIFACT_SOCK，而没有 ORYN_ORB / 令牌。M21：独立配置根 PI_CONFIG_DIR=.oryn/omp、ORYN_ISOLATE_USER_SOURCES=1
+// （下发的 env 覆盖不了，继承来的 PI_CODING_AGENT_DIR / profile 被去掉）与 ORYN_SSH=1。
 func TestRunnerAgentStartCwd(t *testing.T) {
 	f := newRunnerHome(t)
 	t.Setenv("ORYN_RUNNER_TOKEN", testRunnerToken) // 进程环境里的令牌不得进入 agent
 	t.Setenv("ORYN_ORB", "1")
+	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(f.home, ".omp", "agent"))
+	t.Setenv("PI_PROFILE", "work")
 	escape := filepath.Join(f.work, "escape")
 	require.NoError(t, os.Symlink(f.outside, escape))
 	startRunnerRT(t, f, nil)
@@ -291,7 +318,7 @@ func TestRunnerAgentStartCwd(t *testing.T) {
 	start := func(cwd, sessionDir string) error {
 		return f.cp.call(t, "agent.start", apigen.LinkCtlAgentStartParams{
 			ThreadID: thread1, Cwd: cwd, SessionDir: sessionDir,
-			Env: map[string]string{"FAKEOMP_DUMP_DIR": dump}, InitFrames: initFrames(thread1),
+			Env: map[string]string{"FAKEOMP_DUMP_DIR": dump, "PI_CONFIG_DIR": ".omp", "ORYN_ISOLATE_USER_SOURCES": "0"}, InitFrames: initFrames(thread1),
 		}, nil)
 	}
 	assert.Equal(t, CodeDirNotServed, ctlCode(start("", "")))
@@ -319,12 +346,16 @@ func TestRunnerAgentStartCwd(t *testing.T) {
 	assert.Equal(t, orbsock.RunnerPath(f.home), rec.Env["ORYN_ARTIFACT_SOCK"])
 	assert.Equal(t, "1", rec.Env["ORYN_RUNNER"])
 	assert.Equal(t, f.home, rec.Env["HOME"])
-	for _, k := range []string{"ORYN_ORB", "ORYN_ORB_ID", "ORYN_RUNNER_TOKEN", "ORYN_ORB_TOKEN"} {
+	for _, k := range []string{"ORYN_ORB", "ORYN_ORB_ID", "ORYN_RUNNER_TOKEN", "ORYN_ORB_TOKEN", "PI_CODING_AGENT_DIR", "PI_PROFILE"} {
 		assert.NotContains(t, rec.Env, k)
 	}
+	assert.Equal(t, ".oryn/omp", rec.Env["PI_CONFIG_DIR"])
+	assert.Equal(t, "1", rec.Env["ORYN_ISOLATE_USER_SOURCES"])
+	assert.Equal(t, "1", rec.Env["ORYN_SSH"])
 }
 
-// M14 1.7：runner.sock 只认 artifact.call（原样转成 ctl artifact.call），thread.* / setup.* 等回 method_not_found。
+// M14 1.7：runner.sock 只认 artifact.call（原样转成 ctl artifact.call）与 library.put（M21，见 TestRunnerLibraryPut），
+// thread.* / setup.* 等回 method_not_found。
 func TestRunnerArtifactSocket(t *testing.T) {
 	f := newRunnerHome(t)
 	startRunnerRT(t, f, nil)
@@ -344,7 +375,7 @@ func TestRunnerArtifactSocket(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	for _, m := range []string{orbsock.MethodThreadNew, orbsock.MethodScheduleSet, orbsock.MethodSetupRerun, orbsock.MethodLibraryPut} {
+	for _, m := range []string{orbsock.MethodThreadNew, orbsock.MethodScheduleSet, orbsock.MethodSetupRerun, orbsock.MethodSshCall, orbsock.MethodGithubCall} {
 		_, err := orbsock.Call(ctx, sock, m, map[string]any{"prompt": "x"}, nil)
 		var se *orbsock.Error
 		require.ErrorAs(t, err, &se, m)
@@ -683,4 +714,294 @@ func TestRunnerSymlinkWorkdirInScope(t *testing.T) {
 	assert.Equal(t, "hello", string(b))
 	resp, b = o.do(http.MethodPost, "/fs/delete", nil, strings.NewReader(`{"path":"`+lnk+`"}`), hdr)
 	assert.Equal(t, "protected_path", o.errCode(resp, b, http.StatusForbidden), "the workdir link itself is not deletable")
+}
+
+// ---- M21 ----
+
+// 首个 omphome.apply 之前 agent.start 回 config_pending（不建会话目录、不起进程），之后照常启动。
+func TestRunnerConfigPending(t *testing.T) {
+	f := newRunnerHome(t)
+	startRunnerRTPending(t, f, nil)
+	helloOf(t, f.cp)
+	start := func() error {
+		return f.cp.call(t, "agent.start", apigen.LinkCtlAgentStartParams{ThreadID: thread1, Cwd: f.work, InitFrames: initFrames(thread1)}, nil)
+	}
+	err := start()
+	assert.Equal(t, CodeConfigPending, ctlCode(err), "%v", err)
+	assert.NoDirExists(t, filepath.Join(f.home, ".oryn", "threads", thread1))
+
+	require.NoError(t, f.cp.call(t, string(apigen.MethodOmpHomeApply), apigen.LinkCtlOmpHomeApplyParams{
+		OmpHome: []apigen.LinkCtlOmpHomeFile{ompFile("config.yml", "x")},
+	}, nil))
+	require.NoError(t, start())
+	f.cp.waitNotif(t, 0, "agent.status", statusIs(thread1, "ready"))
+}
+
+// omphome.apply 写进 ~/.oryn/omp/agent（清单 ~/.oryn/omp-home.manifest.json），预先放好的用户 ~/.omp/agent/config.yml
+// 内容与 mtime 不变；清理只删上次下发的文件（omp 自己的文件与 runner 的 oryn-library 技能保留）；带来的 projectConfig
+// 被忽略（runner 的项目层按线程随 agent.start 下发）；SSH 写 ~/.oryn/omp/agent/ssh.json、~/.oryn/omp/ssh/known_hosts 与 ~/.oryn/ssh/config，
+// 不碰 ~/.ssh。
+func TestRunnerOmpHomeApply(t *testing.T) {
+	f := newRunnerHome(t)
+	userCfg := filepath.Join(f.home, ".omp", "agent", "config.yml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(userCfg), 0o755))
+	require.NoError(t, os.WriteFile(userCfg, []byte("user: mine\n"), 0o644))
+	old := time.Now().Add(-time.Hour).Truncate(time.Second)
+	require.NoError(t, os.Chtimes(userCfg, old, old))
+	startRunnerRTPending(t, f, nil)
+	helloOf(t, f.cp)
+	apply := func(p apigen.LinkCtlOmpHomeApplyParams) {
+		t.Helper()
+		var res apigen.LinkCtlOkResult
+		require.NoError(t, f.cp.call(t, string(apigen.MethodOmpHomeApply), p, &res))
+		assert.True(t, res.Ok)
+	}
+	base := filepath.Join(f.home, ".oryn", "omp", "agent")
+	assert.Equal(t, base, f.rt.ompAgentDir())
+
+	apply(apigen.LinkCtlOmpHomeApplyParams{
+		OmpHome:       []apigen.LinkCtlOmpHomeFile{ompFile("config.yml", "central"), ompFile("skills/x/SKILL.md", "x")},
+		ProjectConfig: &apigen.LinkCtlProjectConfig{Files: []apigen.LinkCtlOmpHomeFile{ompFile("AGENTS.md", "p")}},
+		SSH:           sshCfg(apigen.LinkCtlSSHHost{Name: "web", Description: "root@10.0.0.1:22"}),
+	})
+	assert.Equal(t, "central", readFile(t, filepath.Join(base, "config.yml")))
+	assert.Equal(t, "x", readFile(t, filepath.Join(base, "skills", "x", "SKILL.md")))
+	assert.NoDirExists(t, filepath.Join(f.home, ".oryn", "project-config"))
+	assert.JSONEq(t, `["config.yml","skills/x/SKILL.md"]`, readFile(t, filepath.Join(f.home, ".oryn", "omp-home.manifest.json")))
+
+	port := f.rt.sshPort()
+	require.NotZero(t, port)
+	assert.Contains(t, readFile(t, filepath.Join(base, "ssh.json")), fmt.Sprintf(`"port": %d`, port))
+	assert.Contains(t, readFile(t, filepath.Join(base, "ssh.json")), `"web"`)
+	kh := filepath.Join(f.home, ".oryn", "omp", "ssh", "known_hosts")
+	assert.Equal(t, fmt.Sprintf("[127.0.0.1]:%d %s oryn-ssh-gateway\n", port, testGatewayKey), readFile(t, kh))
+	fi, err := os.Stat(filepath.Dir(kh))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o700), fi.Mode().Perm())
+	auth := fmt.Sprintf("  IdentityFile ${ORYN_SSH_KEY}\n  IdentitiesOnly yes\n  UserKnownHostsFile \"%s\"\n", kh)
+	wantCfg := fmt.Sprintf("# 由 Oryn 生成，每次下发都会重写\n\nHost web\n  HostName 127.0.0.1\n  Port %d\n  User web\n%s\nHost 127.0.0.1\n%s", port, auth, auth)
+	assert.Equal(t, wantCfg, readFile(t, filepath.Join(f.home, ".oryn", "ssh", "config")))
+	assert.Equal(t, wantCfg, readFile(t, filepath.Join(f.home, ".oryn", "omp", "ssh", "config")), "Core 隔离模式的 -F 与 bash 用同一份")
+	assert.NoDirExists(t, filepath.Join(f.home, ".ssh"))
+
+	// omp 自己写的文件；第二次下发不再带 skills/x：只删它。
+	require.NoError(t, os.WriteFile(filepath.Join(base, "agent.db"), []byte("omp"), 0o644))
+	apply(apigen.LinkCtlOmpHomeApplyParams{OmpHome: []apigen.LinkCtlOmpHomeFile{ompFile("config.yml", "central2")}})
+	assert.Equal(t, "central2", readFile(t, filepath.Join(base, "config.yml")))
+	assert.NoFileExists(t, filepath.Join(base, "skills", "x", "SKILL.md"))
+	assert.FileExists(t, filepath.Join(base, "agent.db"))
+	assert.FileExists(t, runnerLibrarySkillPath(f.home), "runner 自带的技能不在清单里，不被清理")
+	assert.FileExists(t, filepath.Join(base, "ssh.json"), "不带 ssh 时不动 SSH 配置")
+
+	assert.Equal(t, "user: mine\n", readFile(t, userCfg))
+	fi, err = os.Stat(userCfg)
+	require.NoError(t, err)
+	assert.True(t, fi.ModTime().Equal(old), "用户的 ~/.omp/agent/config.yml 未被触碰")
+	entries, err := os.ReadDir(filepath.Join(f.home, ".omp", "agent"))
+	require.NoError(t, err)
+	assert.Len(t, entries, 1, "~/.omp/agent 里只有用户自己的文件")
+}
+
+// 出站通道启动即常驻：模型中转与记忆的请求都经 link 的 egress 流原样转给控制面（放行由控制面决定）。
+func TestRunnerEgressAlwaysOn(t *testing.T) {
+	f := newRunnerHome(t)
+	egress := freeAddr(t)
+	startRunnerRT(t, f, func(c *Config) { c.EgressAddr = egress })
+	h := helloOf(t, f.cp)
+	for _, feat := range []string{"memory", "omphome-apply", "ssh"} {
+		assert.Contains(t, h.Features, feat)
+	}
+	for _, path := range []string{"/llm/anthropic/v1/messages", "/memory/t/" + thread1 + "/v1/default/banks/x"} {
+		req, err := http.NewRequest(http.MethodGet, "http://"+egress+path, nil)
+		require.NoError(t, err)
+		req.Header.Set("X-Test", "runner")
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err, path)
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		assert.Equal(t, "egress GET "+path+" runner", string(body))
+	}
+}
+
+// 出站端口被占用：runner 启动失败并提示 ORYN_EGRESS_ADDR；实例锁随之释放。
+func TestRunnerEgressPortBusy(t *testing.T) {
+	f := newRunnerHome(t)
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = busy.Close() })
+	cp := newFakeCP(t)
+	cp.token.Store(testRunnerToken)
+	cfg := Config{URL: cp.srv.URL, Token: testRunnerToken, Home: f.home, AgentBin: fakeompBin, EgressAddr: busy.Addr().String(), SSHAddr: "127.0.0.1:0", Runner: &RunnerConfig{Dirs: []string{f.work}}}
+	_, err = New(cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ORYN_EGRESS_ADDR")
+
+	cfg.EgressAddr = "127.0.0.1:0"
+	rt, err := New(cfg)
+	require.NoError(t, err, "锁已释放")
+	_ = rt.egressLn.Close()
+	_ = rt.sshLn.Close()
+	rt.runner.unlock()
+}
+
+// ORYN_EGRESS_ADDR 改了监听地址：下发的 models.yml 里按默认出站地址渲染的 /llm/ baseUrl 前缀改写为实际地址（其余内容、
+// 其它文件不动，清单照常，重复下发结果相同），按改写后的 baseUrl 发出的请求经 link 的 egress 流转给控制面。
+func TestRunnerEgressAddrRewritesModels(t *testing.T) {
+	f := newRunnerHome(t)
+	egress := freeAddr(t)
+	require.NotEqual(t, agentcfg.EgressAddr, egress)
+	startRunnerRTPending(t, f, func(c *Config) { c.EgressAddr = egress })
+	helloOf(t, f.cp)
+	def := "http://" + agentcfg.EgressAddr
+	models := "providers:\n  anth:\n    baseUrl: " + def + "/llm/anth/v1\n    apiKey: \"oryn-ph-sid1\"\n  other:\n    baseUrl: " + def + "/other\n"
+	want := "providers:\n  anth:\n    baseUrl: http://" + egress + "/llm/anth/v1\n    apiKey: \"oryn-ph-sid1\"\n  other:\n    baseUrl: " + def + "/other\n"
+	cfgYml := "note: " + def + "/llm/x\n"
+	base := filepath.Join(f.home, ".oryn", "omp", "agent")
+	for range 2 {
+		require.NoError(t, f.cp.call(t, string(apigen.MethodOmpHomeApply), apigen.LinkCtlOmpHomeApplyParams{
+			OmpHome: []apigen.LinkCtlOmpHomeFile{ompFile("config.yml", cfgYml), ompFile(agentcfg.ModelsFile, models)},
+		}, nil))
+		assert.Equal(t, want, readFile(t, filepath.Join(base, agentcfg.ModelsFile)))
+		assert.Equal(t, cfgYml, readFile(t, filepath.Join(base, "config.yml")), "只改写 models.yml")
+		assert.JSONEq(t, `["config.yml","models.yml"]`, readFile(t, filepath.Join(f.home, ".oryn", "omp-home.manifest.json")))
+	}
+
+	req, err := http.NewRequest(http.MethodGet, "http://"+egress+"/llm/anth/v1/messages", nil)
+	require.NoError(t, err)
+	req.Header.Set("X-Test", "runner")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	assert.Equal(t, "egress GET /llm/anth/v1/messages runner", string(body))
+}
+
+// runner 的出站地址只能是带端口的回环地址：其余地址启动失败并指明 ORYN_EGRESS_ADDR（在拿实例锁之前）。
+func TestRunnerEgressAddrLoopbackOnly(t *testing.T) {
+	for _, ok := range []string{"127.0.0.1:0", "127.1.2.3:7811", "[::1]:7811"} {
+		assert.NoError(t, checkRunnerEgressAddr(ok), ok)
+	}
+	for _, bad := range []string{"0.0.0.0:7811", "192.168.1.2:7811", "[::]:7811", "localhost:7811", "127.0.0.1", ":7811"} {
+		assert.Error(t, checkRunnerEgressAddr(bad), bad)
+	}
+
+	f := newRunnerHome(t)
+	cp := newFakeCP(t)
+	cp.token.Store(testRunnerToken)
+	cfg := Config{URL: cp.srv.URL, Token: testRunnerToken, Home: f.home, AgentBin: fakeompBin, EgressAddr: "0.0.0.0:0", SSHAddr: "127.0.0.1:0", Runner: &RunnerConfig{Dirs: []string{f.work}}}
+	_, err := New(cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ORYN_EGRESS_ADDR")
+	assert.Contains(t, err.Error(), "loopback")
+
+	cfg.EgressAddr = "127.0.0.1:0"
+	rt, err := New(cfg)
+	require.NoError(t, err, "没有留下实例锁")
+	_ = rt.egressLn.Close()
+	_ = rt.sshLn.Close()
+	rt.runner.unlock()
+}
+
+// runner 的 SSH 网关端口：连接变成 link 上的 ssh 流，两个方向的字节都能到达。
+func TestRunnerSSHPortBridgesToLink(t *testing.T) {
+	f := newRunnerHome(t)
+	startRunnerRT(t, f, nil)
+	require.NotNil(t, f.rt.sshLn)
+	c, err := net.Dial("tcp", f.rt.sshLn.Addr().String())
+	require.NoError(t, err)
+	defer c.Close()
+	_, err = c.Write([]byte("SSH-2.0-test\r\n"))
+	require.NoError(t, err)
+	var st *link.Stream
+	select {
+	case st = <-f.cp.sshs:
+	case <-time.After(10 * time.Second):
+		t.Fatal("没有收到 ssh 流")
+	}
+	defer st.Close()
+	line, err := bufio.NewReader(st).ReadString('\n')
+	require.NoError(t, err)
+	assert.Equal(t, "SSH-2.0-test\r\n", line)
+	_, err = st.Write([]byte("SSH-2.0-Oryn\r\n"))
+	require.NoError(t, err)
+	got := make([]byte, len("SSH-2.0-Oryn\r\n"))
+	require.NoError(t, c.SetReadDeadline(time.Now().Add(5*time.Second)))
+	_, err = io.ReadFull(c, got)
+	require.NoError(t, err)
+	assert.Equal(t, "SSH-2.0-Oryn\r\n", string(got))
+}
+
+// runner.sock 的 library.put：只收调用方线程工作目录内的普通文件（目录外、目录、文件或目录符号链接逃逸、相对路径、
+// 没有 agent 的线程一律 invalid_params，且不转给控制面）；成功时只把该文件登记为可经 library.fetch 取回，结束后撤销。
+func TestRunnerLibraryPut(t *testing.T) {
+	f := newRunnerHome(t)
+	startRunnerRT(t, f, nil)
+	require.NoError(t, f.cp.call(t, "agent.start", apigen.LinkCtlAgentStartParams{ThreadID: thread1, Cwd: f.work, InitFrames: initFrames(thread1)}, nil))
+	f.cp.waitNotif(t, 0, "agent.status", statusIs(thread1, "ready"))
+
+	report := filepath.Join(f.work, "report.txt")
+	require.NoError(t, os.WriteFile(report, []byte("hi"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(f.work, "sub"), 0o755))
+	require.NoError(t, os.Symlink(filepath.Join(f.outside, "secret.txt"), filepath.Join(f.work, "leak")))
+	require.NoError(t, os.Symlink(f.outside, filepath.Join(f.work, "out")))
+
+	var (
+		mu     sync.Mutex
+		seen   []apigen.LinkCtlLibraryPutParams
+		staged map[string]int
+	)
+	f.cp.extra = func(method string, params json.RawMessage) (any, bool, error) {
+		if method != string(apigen.MethodLibraryPut) {
+			return nil, false, nil
+		}
+		var p apigen.LinkCtlLibraryPutParams
+		_ = json.Unmarshal(params, &p)
+		f.rt.lib.mu.Lock()
+		now := maps.Clone(f.rt.lib.staged)
+		f.rt.lib.mu.Unlock()
+		mu.Lock()
+		seen, staged = append(seen, p), now
+		mu.Unlock()
+		return map[string]any{"id": "af_1", "name": "r.txt", "size": 2}, true, nil
+	}
+	sock := orbsock.RunnerPath(f.home)
+	waitSock(t, sock)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	put := func(thread, path string) (json.RawMessage, error) {
+		name := "r.txt"
+		return orbsock.Call(ctx, sock, orbsock.MethodLibraryPut, apigen.LinkCtlLibraryPutParams{ThreadID: thread, Path: path, Name: &name}, nil)
+	}
+
+	for _, c := range []struct{ thread, path, why string }{
+		{thread1, filepath.Join(f.outside, "secret.txt"), "outside the working directory"},
+		{thread1, f.work, "the working directory itself"},
+		{thread1, filepath.Join(f.work, "sub"), "a directory"},
+		{thread1, filepath.Join(f.work, "leak"), "a file symlink out"},
+		{thread1, filepath.Join(f.work, "out", "secret.txt"), "a directory symlink out"},
+		{thread1, "report.txt", "a relative path"},
+		{thread1, filepath.Join(f.work, "missing.txt"), "a missing file"},
+		{projThread2, report, "a thread without an agent"},
+	} {
+		_, err := put(c.thread, c.path)
+		var se *orbsock.Error
+		require.ErrorAs(t, err, &se, c.why)
+		assert.Equal(t, orbsock.CodeInvalidParams, se.Code, c.why)
+	}
+	mu.Lock()
+	assert.Empty(t, seen, "rejected requests never reach the control plane")
+	mu.Unlock()
+
+	raw, err := put(thread1, report)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"id":"af_1","name":"r.txt","size":2}`, string(raw))
+	mu.Lock()
+	require.Len(t, seen, 1)
+	assert.Equal(t, report, seen[0].Path)
+	assert.Equal(t, thread1, seen[0].ThreadID)
+	assert.Equal(t, map[string]int{report: 1}, staged, "只登记这一个文件")
+	mu.Unlock()
+	f.rt.lib.mu.Lock()
+	assert.Empty(t, f.rt.lib.staged, "请求结束后撤销登记")
+	f.rt.lib.mu.Unlock()
 }

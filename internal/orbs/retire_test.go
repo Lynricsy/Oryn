@@ -92,6 +92,16 @@ func TestDeleteUnusedFollowsThreads(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, deleted)
 
+	// keepLast 归档与回收分两次提交：其间运行线程被取消归档，它又是 orb 的使用者，不删
+	restored := b.orb(StateFrozen, 1)
+	back := b.thread(restored.ID, true)
+	_, err = b.st.DB.ExecContext(ctx, `UPDATE threads SET archived_at = NULL WHERE id = ?`, back)
+	require.NoError(t, err)
+	deleted, err = b.svc.DeleteUnused(ctx, restored.ID, back)
+	require.NoError(t, err)
+	assert.False(t, deleted, "已取消归档的运行线程仍在用")
+	assert.Equal(t, StateFrozen, b.state(restored.ID))
+
 	coord := b.orb(StateReady, 1)
 	_, err = b.st.DB.ExecContext(ctx, `UPDATE orbs SET coordinator = 1 WHERE id = ?`, coord.ID)
 	require.NoError(t, err)

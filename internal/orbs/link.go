@@ -438,9 +438,19 @@ func (s *Service) onHello(l *orbLink) {
 	if l.runner {
 		// 目录与特性先落库，再进入 ready：线程看到 runner 在线时一定能看到它声明的目录
 		s.runnerHello(ctx, l)
-		if orb.State == StateStopped {
+		switch {
+		case orb.State == StateStopped:
 			// 离线定时器恰在本 link 发布之前到期
 			s.runnerConnecting(ctx, orb.ID)
+			if orb, err = s.Get(ctx, l.orbID); err != nil {
+				return
+			}
+		case orb.State == StateReady && slices.Contains(l.hello.Features, FeatureOmpHomeApply):
+			// 离线宽限期内重连（M21）：对端可能是重启过、还没有配置的 orbd，先退回 connecting，由 runnerReady 重新下发配置
+			// 再进 ready（期间线程不向它发 agent.start）
+			if _, _, err := s.transition(ctx, orb.ID, StateReady, StateConnecting, map[string]any{"reason": "runner link"}); err != nil {
+				slog.Warn("runner 重连状态更新失败", "orb", orb.ID, "err", err)
+			}
 			if orb, err = s.Get(ctx, l.orbID); err != nil {
 				return
 			}
@@ -488,7 +498,7 @@ func (s *Service) runPhase(l *orbLink) {
 	}
 	ctx := context.Background()
 	if l.runner {
-		s.runnerReady(ctx, l.orbID)
+		s.runnerReady(ctx, l)
 		return
 	}
 	everReady, err := s.st.Q.OrbEverReady(ctx, l.orbID)

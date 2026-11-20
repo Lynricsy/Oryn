@@ -19,7 +19,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Lynricsy/Oryn/internal/agentcfg"
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
@@ -66,6 +68,8 @@ type Config struct {
 	PortalURLTemplate func(threadID string) string
 	// Memory 决定 agent.start 是否启用内置记忆（M16）；nil = 不启用。
 	Memory MemoryStarter
+	// Projects 是项目级 omp 配置（M21：runner 线程的项目层随 agent.start 交付）；nil = 不交付。
+	Projects orbs.ProjectConfigs
 }
 
 // DeliveredAttachment 是已投递到 orb 的附件（Path 为 orb 内绝对路径）。
@@ -103,6 +107,8 @@ type Service struct {
 	profiles Profiles
 	// lib 是全局助手文件库（M13，SetLibrary 在服务对外可用之前设置；nil = 助手对话不接受 orynFiles）。
 	lib LibraryFiles
+	// runnerAgent 是 runner 线程的 SSH 身份与项目层附加交付（M21，SetRunnerAgent 在服务对外可用之前设置；nil = 不支持）。
+	runnerAgent RunnerAgent
 	// cfgSync 是 /omfg 回写（M12.2，SetConfigSync 在服务对外可用之前设置；nil = 不回写）；cfgSyncTimeout 是一次回写的上限。
 	cfgSync        ConfigSync
 	cfgSyncTimeout time.Duration
@@ -226,6 +232,25 @@ func (s *Service) SetSink(k Sink) { s.sink.Store(&sinkBox{k}) }
 // SetAttachments 设置附件服务；须在 orb link 接入与 API 对外服务之前调用。
 func (s *Service) SetAttachments(a Attachments) { s.attach = a }
 
+// RunnerAgent 是 runner 线程 agent.start 的附加交付与 SSH 身份（M21，由 server 组装 sshgw / orbs / 分享前密钥扫描的来源）。
+type RunnerAgent interface {
+	// ProjectSSH 返回线程项目层里合成的 ssh.json（该线程可用的本项目主机）；nil = 没有。
+	ProjectSSH(ctx context.Context, threadID string) ([]byte, error)
+	// KnownSecrets 返回无密钥投递校验用的已知密钥（名 → 明文；密钥库全部值 + SSH 密码登录主机的密码）。
+	KnownSecrets(ctx context.Context) (map[string]string, error)
+	// NoteWithheld 把线程项目层里被扣下的文件写进 runner orb 的事件备注（清单不变时不重复写）。
+	NoteWithheld(ctx context.Context, orbID, threadID string, withheld []agentcfg.Withheld)
+	// RegisterThreadKey 登记 runner 线程的 SSH 公钥（agent.start 结果的 sshPublicKey）；同一线程的旧公钥随之失效。
+	RegisterThreadKey(threadID, orbID, authorizedKey string) error
+	// DropThreadKey 注销线程的 SSH 公钥。
+	DropThreadKey(threadID string)
+	// DropOrbKeys 注销一台 runner 上全部线程的 SSH 公钥。
+	DropOrbKeys(orbID string)
+}
+
+// SetRunnerAgent 设置 runner 线程的 SSH 身份与项目层附加交付（M21）；须在 orb link 接入之前调用。
+func (s *Service) SetRunnerAgent(r RunnerAgent) { s.runnerAgent = r }
+
 // SetProfiles 设置浏览器 Profile 服务（M8）；须在 API 对外服务之前调用。未设置时建线程不能指定 Profile。
 func (s *Service) SetProfiles(p Profiles) { s.profiles = p }
 
@@ -299,9 +324,18 @@ type thread struct {
 	forking  int
 	held     map[string][]apigen.LinkCtlEntriesAppendParams
 	starting bool
-	failed   bool
-	model    *string
-	thinking *string
+	// statusSinceStart 为真表示最近一次发起 agent.start 之后收到过 starting / ready（M21）：之后到达的「监督器结束」才属于
+	// 当前监督器，才注销 runner 线程的 SSH 公钥。旧监督器的 exited 由 orbd 在处理新 agent.start 之前发出，即使晚于其应答
+	// 到达，也排在新监督器的 starting / ready 之前——此时它为假，不误删新登记的公钥。agent.start 的应答带回的公钥等于
+	// sshKey（同一代监督器，orbd 不重报状态）时恢复发起前的值。exitSkipped / exitDropped 记下发起 agent.start 之后、
+	// 处理其应答之前到达的终止结束（因它为假而跳过 / 当场注销），应答处理据此不把已结束的一代登记回去。
+	statusSinceStart bool
+	exitSkipped      bool
+	exitDropped      bool
+	sshKey           string // 最近一次 agent.start 应答的 runner 线程 SSH 公钥：每代监督器一把，用来认出同一代
+	failed           bool
+	model            *string
+	thinking         *string
 	// copyFrom 非空时，agent 首次启动前先 fs.copyTree ~/.oryn/threads/<copyFrom> → 本线程会话目录（fork copy）。
 	copyFrom string
 	// forkEntry 非空时，agent 就绪后向其发送 fork{entryId}（fork copy / 回退路径）。
@@ -773,6 +807,11 @@ func (s *Service) handleOrbEvent(ctx context.Context, ev OrbEvent) {
 			return
 		}
 		state = ev.To
+		if orbGoingDown(state) && s.runnerAgent != nil {
+			// M21：runner 离线定时器到期（→ stopped）或 orb 停机 / 删除：清掉这台上全部线程的 SSH 公钥。link 断开的宽限期内
+			// 状态不变、登记保留；重连后的 agent.start（幂等）回同一把公钥。
+			s.runnerAgent.DropOrbKeys(ev.OrbID)
+		}
 	} else {
 		r, err := s.st.Q.GetOrbStateSeq(ctx, ev.OrbID)
 		if err != nil {

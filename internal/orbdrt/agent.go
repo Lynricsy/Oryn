@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -559,6 +561,10 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 		args []string
 		cwd  string
 		env  map[string]string
+		// projID / projDir：runner 上本线程项目层的项目 id 与按内容寻址的目录（M21；不带 projectConfig 时为空）。
+		projID, projDir string
+		// sshDir：runner 上本线程的 SSH 目录（M21；没有 SSH 网关时为空）。
+		sshDir string
 	)
 	switch {
 	case r.cfg.Coordinator:
@@ -567,6 +573,10 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 			return apigen.LinkCtlAgentStartResult{}, err
 		}
 	case r.runner != nil:
+		// M21：首个 omphome.apply 之前不起 agent（否则它会以空的 ~/.oryn/omp/agent 运行、没有模型）。
+		if !r.ompHomeApplied() {
+			return apigen.LinkCtlAgentStartResult{}, ctlErr(CodeConfigPending, "等待控制面下发 omp 配置")
+		}
 		// runner：cwd 必填且在声明的目录或已登记的 worktree 之内；会话目录只能在 $HOME/.oryn/threads 之下。
 		if p.Cwd == "" {
 			return apigen.LinkCtlAgentStartResult{}, ctlErr(CodeDirNotServed, "cwd is required on a runner")
@@ -577,6 +587,17 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 		cwd = filepath.Clean(p.Cwd)
 		if _, err := r.underThreads(dir); err != nil {
 			return apigen.LinkCtlAgentStartResult{}, ctlErr(link.CodeInvalidParams, "sessionDir: %v", err)
+		}
+		if p.ProjectConfig != nil {
+			if p.ProjectID != nil {
+				projID = *p.ProjectID
+			}
+			var release func()
+			var err error
+			if projDir, release, err = r.runnerProjectDir(projID, p.ProjectConfig); err != nil {
+				return apigen.LinkCtlAgentStartResult{}, err
+			}
+			defer release()
 		}
 	default:
 		cwd = r.currentWorkdir()
@@ -612,6 +633,8 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 		env = loginEnv(r.ctx, cwd, env)
 		env["PI_RPC_EMIT_TITLE"] = "1"
 		env["PI_NOTIFICATIONS"] = "off"
+		// Core 19 起 RPC 默认不要求工具调用带 intent；Web 的工具卡与后台任务标题要显示它
+		env["PI_INTENT_TRACING"] = "1"
 		env["ORYN_THREAD_ID"] = p.ThreadID
 		if r.sshLn != nil {
 			env["ORYN_SSH"] = "1" // M18：orb 扩展据此注册 ssh_exec_many 与 SSH 提示
@@ -631,11 +654,37 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 		if r.runner == nil {
 			// orb 环境说明扩展。
 			args = append(args, "-e", r.extensionPath())
-			// 项目级中央配置（M12.2，C1）：在 p.Env 之后设置，env 密钥不能覆盖；--config 排在桌面覆盖层之前。
-			args = r.applyProjectConfig(env, args)
 		} else {
-			// runner 只加载 orbd 自带的扩展（ORYN_RUNNER=1 时只注册 artifact 工具），其余扩展与技能用那台机器自己的。
+			// runner 只加载 orbd 自带的扩展（ORYN_RUNNER=1 时只注册 artifact / 文件库工具与 Runner 的指引）。
 			args = append(args, "-e", runnerExtensionPath(r.home))
+			// M21：独立的 omp 配置根（与用户自己的 ~/.omp 无关）并屏蔽用户级发现源（~/.agents、~/.claude 等）；
+			// 在 p.Env 之后设置，env 模式的密钥覆盖不了。会改 agent 目录或 profile 的变量一律去掉。
+			env["PI_CONFIG_DIR"] = runnerOmpConfigDir
+			env["ORYN_ISOLATE_USER_SOURCES"] = "1"
+			for _, k := range []string{"PI_CODING_AGENT_DIR", "PI_PROFILE", "OMP_PROFILE"} {
+				delete(env, k)
+			}
+			// M21：线程自己的 SSH 密钥（网关据此认出线程）与本机网关端口，同样在 p.Env 之后设置、不可覆盖；
+			// ORYN_SSH_KEY 由监督器创建时补上（每代监督器一把，见 startSpec.sshDir）。没有网关时一并去掉。
+			delete(env, envSSHKey)
+			delete(env, envSSHPort)
+			if port := r.sshPort(); port != 0 {
+				sshDir = r.threadSSHDir(p.ThreadID)
+				env[envSSHPort] = strconv.Itoa(port)
+				if projDir != "" {
+					r.refreshRunnerSSHConfig() // 本项目的主机名进 bash 用的 SSH 配置
+				}
+			}
+		}
+		if r.runner == nil {
+			// 项目级中央配置（M12.2，C1）：在 p.Env 之后设置，env 密钥不能覆盖；--config 排在记忆与桌面覆盖层之前。
+			args = r.applyProjectConfig(env, args)
+		} else if projDir != "" {
+			// runner（M21）：本线程项目的那一版项目层（按内容寻址的目录，见 runnerproject.go），规则同 orb。
+			args = r.applyProjectRoot(env, args, projDir)
+		} else {
+			delete(env, envCentralConfig)
+			delete(env, envProjectConfigRoot)
 		}
 		if memOverlay != "" {
 			args = append(args, "--config", memOverlay)
@@ -645,12 +694,18 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 			args = append(args, "--config", r.desktopOverlayPath())
 		}
 	}
-	pid, err := t.start(startSpec{
+	pid, sshPub, err := t.start(startSpec{
 		args:       args,
 		cwd:        cwd,
 		env:        envList(env),
 		initFrames: frames,
+		projectDir: projDir,
+		sshDir:     sshDir,
 	})
+	if projID != "" {
+		// 同一项目没有运行中 agent 引用的旧版本（本次的目录仍在启动名单里，不会被删）。
+		r.pruneRunnerProject(projID)
+	}
 	if err != nil {
 		return apigen.LinkCtlAgentStartResult{}, ctlErr("failed", "start agent: %v", err)
 	}
@@ -658,7 +713,11 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 	if !r.cfg.Coordinator && r.runner == nil {
 		go r.svc.refreshPublicURLs()
 	}
-	return apigen.LinkCtlAgentStartResult{Pid: pid}, nil
+	res := apigen.LinkCtlAgentStartResult{Pid: pid}
+	if sshPub != "" {
+		res.SSHPublicKey = &sshPub
+	}
+	return res, nil
 }
 
 // fixOpenSession 把 open_session 帧里 `~/…` 或相对形式的 sessionDir 换成本机绝对路径，
@@ -701,26 +760,54 @@ func (r *Runtime) agentStop(p apigen.LinkCtlAgentStopParams) (apigen.LinkCtlAgen
 	return apigen.LinkCtlAgentStopResult{ExitCode: t.stopAgent(grace)}, nil
 }
 
+// cwd 返回线程最近一次启动 agent 的工作目录；本进程里还没启动过时为空串。
+func (t *thread) cwd() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.sup == nil {
+		return ""
+	}
+	return t.sup.spec.cwd
+}
+
 type startSpec struct {
 	args       []string
 	cwd        string
 	env        []string
 	initFrames [][]byte
+	// projectDir 是 runner 上这个 agent 所用的项目层目录（M21，清理时据此保留）；orb 为空。
+	projectDir string
+	// sshDir 非空时（M21，runner 且 SSH 网关在监听）是线程的 SSH 目录 `$HOME/.oryn/threads/<线程>/ssh`：监督器创建时在
+	// 其下按公钥指纹另建一个子目录生成线程密钥，agent 环境的 ORYN_SSH_KEY 指向它；崩溃自重启沿用同一把（同一路径），
+	// 监督器彻底结束时删掉该子目录。每代监督器的路径不同：Core 的 ssh 连接复用目录按 ORYN_SSH_KEY 的值哈希，
+	// 新一代不会撞上旧一代脱离进程组残留的 master。
+	sshDir string
 }
 
-// start 拉起监督器；已有活动监督器时幂等返回当前 pid。
-func (t *thread) start(spec startSpec) (int, error) {
+// start 拉起监督器，返回 pid 与线程 SSH 公钥（没有时为空）；已有活动监督器时幂等返回当前 pid 与该监督器的公钥。
+func (t *thread) start(spec startSpec) (int, string, error) {
 	t.mu.Lock()
 	if s := t.sup; s != nil && !s.finished() {
 		pid := 0
 		if t.proc != nil {
 			pid = t.proc.pid
 		}
+		pub := s.sshPub
 		t.mu.Unlock()
 		t.wake() // 没有 agent 流时由转发器重开
-		return pid, nil
+		return pid, pub, nil
 	}
 	s := &supervisor{t: t, spec: spec, stopCh: make(chan struct{}), done: make(chan struct{})}
+	if spec.sshDir != "" {
+		// 在 t.mu 下生成：并发的 agent.start 要么看到带公钥的新监督器，要么自己创建
+		key, pub, err := writeThreadSSHKey(spec.sshDir)
+		if err != nil {
+			t.mu.Unlock()
+			return 0, "", fmt.Errorf("thread ssh key: %w", err)
+		}
+		s.sshKey, s.sshPub = key, pub
+		s.spec.env = append(slices.Clone(spec.env), envSSHKey+"="+key)
+	}
 	t.sup = s
 	t.mu.Unlock()
 	p, err := s.spawn()
@@ -730,11 +817,12 @@ func (t *thread) start(spec startSpec) (int, error) {
 			t.sup = nil
 		}
 		t.mu.Unlock()
+		s.dropSSHKey()
 		close(s.done)
-		return 0, err
+		return 0, "", err
 	}
 	go s.run(p)
-	return p.pid, nil
+	return p.pid, s.sshPub, nil
 }
 
 // stopAgent 请求优雅停止并返回退出码；没有监督器时返回 0。
@@ -757,6 +845,18 @@ type supervisor struct {
 	stopCh   chan struct{}
 	done     chan struct{}
 	lastExit int
+	// sshKey / sshPub 是监督器创建时生成的线程私钥路径与公钥（spec.sshDir 为空时为空）；创建后不变。
+	sshKey, sshPub string
+}
+
+// dropSSHKey 删掉监督器的密钥子目录（监督器彻底结束时，先于关闭 done）。
+func (s *supervisor) dropSSHKey() {
+	if s.sshKey == "" {
+		return
+	}
+	if err := os.RemoveAll(filepath.Dir(s.sshKey)); err != nil {
+		s.t.r.log.Warn("remove thread ssh key failed", "thread", s.t.id, "err", err)
+	}
 }
 
 func (s *supervisor) finished() bool {
@@ -801,6 +901,7 @@ func (s *supervisor) stop(grace time.Duration) int {
 func (s *supervisor) run(p *proc) {
 	t := s.t
 	defer func() {
+		s.dropSSHKey()
 		close(s.done)
 		t.wake()
 	}()
@@ -855,13 +956,21 @@ func (s *supervisor) run(p *proc) {
 		case <-tm.C:
 		case <-s.stopCh:
 			tm.Stop()
+			s.reportStopped(code)
 			return
 		}
 		p, spawnErr = s.spawn()
 		if p == nil && s.stopped() {
+			s.reportStopped(code)
 			return
 		}
 	}
+}
+
+// reportStopped 在崩溃重启的退避中被停止时补报终态：此前的 exited 带着 restartsLeft > 0，控制面据此保留了线程的 SSH
+// 公钥（M21）；不补报的话公钥与 Core 留下的 ssh master 一直有效，直到下一代启动或 runner 离线。
+func (s *supervisor) reportStopped(code int) {
+	s.t.setStatus(apigen.LinkCtlAgentStatusParams{Status: apigen.LinkCtlAgentStatusParamsStatusExited, ExitCode: &code})
 }
 
 // spawn 启动一个 omp 进程（C4 第 1 步）。

@@ -3,7 +3,9 @@
 //	orbd run         启动守护进程（读取 ORYN_URL、ORYN_ORB_ID、ORYN_ORB_TOKEN；可选 ORYN_ORB_CA_PEM、ORYN_AGENT_BIN、ORYN_LOG_LEVEL）
 //	orbd run --runner --dir <目录> … [--terminal] [--token-file <文件>] [--allow-root]
 //	                 runner 形态（M11b）：用户自己的机器主动接入。读取 ORYN_URL 与 ORYN_RUNNER_TOKEN（缺省读
-//	                 --token-file，再缺省 $HOME/.config/oryn/runner.token；必须以 ort_ 开头），经 whoami 得知 orb id
+//	                 --token-file，再缺省 $HOME/.config/oryn/runner.token；必须以 ort_ 开头），经 whoami 得知 orb id。
+//	                 启动时下载并校验钉住的 Oryn Core 到 ~/.oryn/core/<tag>/omp（ORYN_CORE_BASE_URL 指向镜像），
+//	                 常驻监听出站通道 127.0.0.1:7811（ORYN_EGRESS_ADDR 可改）与 SSH 网关 127.0.0.1:7822（M21）
 //	orbd --version   打印版本
 //
 // Firecracker guest（M11b）：以 PID 1 且无参数运行时进入 guest-init（内核 init=/usr/local/bin/orbd），

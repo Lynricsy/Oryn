@@ -36,6 +36,11 @@ export function isTopModal(host: HTMLElement): boolean {
 	return stack[stack.length - 1] === host;
 }
 
+/** 当前打开的模态宿主（栈底到栈顶）。 */
+export function modalHosts(): readonly HTMLElement[] {
+	return stack;
+}
+
 const FOCUSABLE = [
 	"a[href]",
 	"button:not([disabled])",

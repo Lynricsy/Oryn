@@ -2,6 +2,7 @@
  * 转录中的单条消息渲染：按 omp 的信息量全量展示（思考块、工具卡片、回合脚注、错误、bash 执行、自定义消息等）。
  * 所有字段都按「可能残缺」处理——条目与流式帧都是外部 JSON。
  */
+import type { TFunction } from "i18next";
 import { memo, type ReactNode, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
@@ -11,7 +12,11 @@ import {
 	type MessageAttachment,
 	parseAttachmentBlock,
 } from "../../lib/attachments";
+import { imageGroup } from "../../lib/context-menu/image-actions";
+import { useContextTarget } from "../../lib/context-menu/registry";
+import { copyWithToast } from "../../lib/context-menu/selection-groups";
 import { fileIcon } from "../../lib/file-icon";
+import { joinPath } from "../../lib/file-source";
 import {
 	formatBytes,
 	formatCost,
@@ -25,22 +30,25 @@ import {
 	type OrynHeader,
 	parseOrynMessage,
 } from "../../lib/oryn-message";
-import { splitLeadingQuote } from "../../lib/quote";
+import { normalizeQuote, splitLeadingQuote } from "../../lib/quote";
 import { parseTitleCard } from "../../lib/title";
+import { patchComposerDraft } from "../../state/composer-drafts";
 import type { JsonRecord } from "../../state/message-builder";
-import { useIndex } from "../../state/stores";
+import { locateEntry, runSideAsk, sideAskBusy } from "../../state/side-ask";
+import { useIndex, useThread } from "../../state/stores";
+import { uiStore } from "../../state/ui";
 import { ToolView } from "../../tool-render/ToolView";
 import type { ToolResultLike } from "../../tool-render/types";
-import { isRecord, resultTextOf } from "../../tool-render/util";
+import { isRecord, resultTextOf, toolSubject } from "../../tool-render/util";
 import { Markdown } from "../markdown/Markdown";
 import { Badge, Callout, Stat } from "../ui/data";
 import { ImageViewer } from "../ui/ImageViewer";
 import { Icon, type IconName } from "../ui/icons";
-import { Menu, ThreadStateIcon } from "../ui/primitives";
+import { Menu, type MenuItem, ThreadStateIcon } from "../ui/primitives";
 import { UserAvatar } from "../ui/UserAvatar";
 import { AgentAvatar } from "./AgentAvatar";
 import { useToolCallActive } from "./active-tools";
-import { useTranscriptContext } from "./context";
+import { type TranscriptContextValue, useTranscriptContext } from "./context";
 
 const CHIP =
 	"inline-flex items-center gap-1.5 rounded-md border border-border bg-panel px-2 py-1 text-xs";
@@ -82,7 +90,7 @@ export const USER_BUBBLE_TEXT =
 	"whitespace-pre-wrap break-words text-[0.875rem] leading-[1.375rem]";
 
 /** 用户消息开头的引用块（引用回复）：左侧竖线、弱色，与下面的回复正文分开。 */
-const USER_QUOTE =
+export const USER_QUOTE =
 	"whitespace-pre-wrap break-words border-border-strong border-l-2 pl-2.5 text-muted text-sm leading-5";
 
 export function textOfContent(content: unknown): string {
@@ -102,6 +110,14 @@ function Images({ content }: { content: unknown }): ReactNode {
 	const { t } = useTranslation();
 	const assets = useAssetUrls();
 	const [viewing, setViewing] = useState<string | null>(null);
+	const ctxRef = useContextTarget<HTMLDivElement>({
+		items: (req) => {
+			const img = req.target.closest("img");
+			return img
+				? [imageGroup(img.currentSrc || img.src, req.askThreadId)]
+				: null;
+		},
+	});
 	if (!Array.isArray(content)) return null;
 	const imgs = content.filter(
 		(b): b is { type: "image"; data: string; mimeType: string } =>
@@ -112,7 +128,7 @@ function Images({ content }: { content: unknown }): ReactNode {
 	);
 	if (imgs.length === 0) return null;
 	return (
-		<div className="mt-2 flex flex-wrap gap-2">
+		<div ref={ctxRef} className="mt-2 flex flex-wrap gap-2">
 			{imgs.map((img, i) => {
 				const src = imageSrc(img.data, img.mimeType, assets.blob);
 				if (!src)
@@ -131,6 +147,7 @@ function Images({ content }: { content: unknown }): ReactNode {
 						key={i}
 						type="button"
 						className="rounded-md"
+						data-ctx-touch=""
 						onClick={() => setViewing(src)}
 						aria-label={t("image.open", { n: i + 1 })}
 					>
@@ -233,6 +250,57 @@ function pickMenuSide(el: HTMLElement | null, items: number): "top" | "bottom" {
 }
 
 /**
+ * 消息菜单项：行内「⋯」与右键菜单共用。只读（分享页）只有「复制」；fork / 标签 / 引用整条都要改动线程。
+ */
+function messageMenuItems(o: {
+	entryId?: string;
+	copyText: () => string;
+	copyLabel: string;
+	/** 给出时多一项「引用整条」（右键菜单的助手消息） */
+	quoteText?: () => string;
+	ctx: TranscriptContextValue;
+	t: TFunction;
+}): MenuItem[] {
+	const { entryId, ctx, t } = o;
+	const editable = entryId !== undefined && !ctx.readOnly;
+	const items: MenuItem[] = [
+		{
+			key: "copy",
+			icon: "copy",
+			label: o.copyLabel,
+			onSelect: () => void copyWithToast(o.copyText()),
+		},
+	];
+	const { quoteText } = o;
+	if (quoteText && editable)
+		items.push({
+			key: "quote",
+			icon: "quote",
+			label: t("contextMenu.quoteMessage"),
+			onSelect: () =>
+				patchComposerDraft(ctx.threadId, {
+					quote: { text: normalizeQuote(quoteText()) },
+				}),
+		});
+	if (editable && entryId)
+		items.push(
+			{
+				key: "fork",
+				icon: "fork",
+				label: t("transcript.forkHere"),
+				onSelect: () => ctx.forkFrom(entryId),
+			},
+			{
+				key: "label",
+				icon: "edit",
+				label: t("transcript.label"),
+				onSelect: () => ctx.labelEntry(entryId),
+			},
+		);
+	return items;
+}
+
+/**
  * 消息操作菜单：行内渲染，悬停 / 聚焦时显现。打开时按可见空间选择向上或向下展开，
  * 展开后再把菜单滚进页头与输入坞之间（滚动容器带 scroll-padding），保证每一项都点得到。
  */
@@ -258,9 +326,14 @@ function MessageMenu({
 	const ctx = useTranscriptContext();
 	const wrapRef = useRef<HTMLDivElement>(null);
 	const [side, setSide] = useState<"top" | "bottom">("top");
-	// 只读（分享页）：只有「复制」；fork / 标签都要改动线程
-	const editable = entryId !== undefined && !ctx.readOnly;
-	const itemCount = editable ? 3 : 1;
+	const items = messageMenuItems({
+		entryId,
+		copyText,
+		copyLabel: t("common.copy"),
+		ctx,
+		t,
+	});
+	const itemCount = items.length;
 	return (
 		<div
 			ref={wrapRef}
@@ -289,30 +362,7 @@ function MessageMenu({
 						<Icon name="more" size={14} />
 					</button>
 				)}
-				items={[
-					{
-						key: "copy",
-						icon: "copy",
-						label: t("common.copy"),
-						onSelect: () => void navigator.clipboard?.writeText(copyText()),
-					},
-					...(editable && entryId
-						? [
-								{
-									key: "fork",
-									icon: "fork" as const,
-									label: t("transcript.forkHere"),
-									onSelect: () => ctx.forkFrom(entryId),
-								},
-								{
-									key: "label",
-									icon: "edit" as const,
-									label: t("transcript.label"),
-									onSelect: () => ctx.labelEntry(entryId),
-								},
-							]
-						: []),
-				]}
+				items={items}
 			/>
 		</div>
 	);
@@ -483,6 +533,7 @@ function UserMessage({
 	turnStart: boolean;
 }) {
 	const { t, i18n } = useTranslation();
+	const ctx = useTranscriptContext();
 	// 控制面追加的附件块不按原文显示，渲染成附件芯片
 	const { text, attachments } = parseAttachmentBlock(
 		textOfContent(message.content),
@@ -504,8 +555,26 @@ function UserMessage({
 		: "";
 	const shown = oryn ? oryn.body : body;
 	const quoted = splitLeadingQuote(shown);
+	const ctxRef = useContextTarget<HTMLDivElement>({
+		items: () => [
+			{
+				key: "message",
+				items: messageMenuItems({
+					entryId,
+					copyText: () => text,
+					copyLabel: t("contextMenu.copyMessage"),
+					ctx,
+					t,
+				}),
+			},
+		],
+	});
 	return (
-		<div className="group/msg flex flex-col items-end gap-1">
+		<div
+			ref={ctxRef}
+			className="group/msg flex flex-col items-end gap-1"
+			data-ask-scope="user"
+		>
 			{(irc || synthetic || steer || oryn) && (
 				<div className="flex max-w-full flex-wrap justify-end gap-1">
 					{oryn && (
@@ -597,6 +666,7 @@ function ThinkingBlock({
 			</button>
 			{open && (
 				<div
+					data-ask-scope="thinking"
 					className={`mt-0.5 mb-1.5 whitespace-pre-wrap break-words pl-[22px] text-muted text-xs leading-relaxed ${streaming ? "stream-caret" : ""}`}
 				>
 					{text}
@@ -631,7 +701,9 @@ export function ToolCard({
 	intent?: string;
 	streamingArgs?: boolean;
 }): ReactNode {
+	const { t } = useTranslation();
 	const ctx = useTranscriptContext();
+	const cwd = useThread(ctx.threadId, (s) => s.thread?.cwd);
 	// 当前一批调用默认展开，模型开始下一批或回合结束时收起（见 active-tools.ts）
 	const active = useToolCallActive(toolCallId);
 	const live = ctx.liveTools[toolCallId];
@@ -646,10 +718,97 @@ export function ToolCard({
 	const partialResult =
 		live && !live.ended ? toolResultLike(live.partialResult) : undefined;
 	const partial = resultTextOf(partialResult);
+	const toolName = live?.toolName ?? name;
+	const toolArgs = args ?? live?.args;
+	const cardRef = useRef<HTMLDivElement | null>(null);
+	const ctxRef = useContextTarget<HTMLDivElement>({
+		items: (req) => {
+			const subject = toolSubject(toolName, toolArgs);
+			const output = resultTextOf(result);
+			const items: MenuItem[] = [];
+			if (subject)
+				items.push({
+					key: "copySubject",
+					icon: "copy",
+					label:
+						subject.kind === "command"
+							? t("contextMenu.copyCommand")
+							: t("contextMenu.copyPath"),
+					onSelect: () => void copyWithToast(subject.text),
+				});
+			if (output)
+				items.push({
+					key: "copyOutput",
+					icon: "copy",
+					label: t("contextMenu.copyOutput"),
+					onSelect: () => void copyWithToast(output),
+				});
+			const abs =
+				subject?.kind !== "path"
+					? null
+					: subject.text.startsWith("/")
+						? subject.text
+						: cwd
+							? joinPath(cwd, subject.text)
+							: null;
+			if (abs && req.askThreadId)
+				items.push({
+					key: "openFile",
+					icon: "folderOpen",
+					label: t("contextMenu.openInFiles"),
+					onSelect: () => uiStore.getState().openFile(ctx.threadId, abs),
+				});
+			const threadId = req.askThreadId;
+			const el = cardRef.current;
+			if (threadId && el) {
+				const busy = sideAskBusy(threadId);
+				const r = el.getBoundingClientRect();
+				const entryId =
+					el.closest("[data-index]")?.getAttribute("data-entry-id") ??
+					undefined;
+				items.push({
+					key: "explain",
+					icon: "sparkle",
+					label: t("contextMenu.explainTool"),
+					disabled: busy,
+					title: busy ? t("sideAsk.busy") : undefined,
+					onSelect: () =>
+						void runSideAsk(
+							{ kind: "tool" },
+							{
+								threadId,
+								text: subject
+									? `${toolName}: ${subject.text}`
+									: `${toolName}: ${JSON.stringify(toolArgs ?? {}).slice(0, 300)}`,
+								before: "",
+								after: "",
+								source: {
+									kind: "tool",
+									toolName,
+									...locateEntry(ctx.threadId, entryId),
+									spans: false,
+								},
+								anchor: {
+									left: r.left,
+									top: r.top,
+									right: r.right,
+									bottom: r.bottom,
+								},
+							},
+						),
+				});
+			}
+			return items.length ? [{ key: "tool", items }] : null;
+		},
+	});
 	return (
 		<ToolView
-			name={live?.toolName ?? name}
-			args={args ?? live?.args}
+			rootRef={(el) => {
+				cardRef.current = el;
+				ctxRef(el);
+			}}
+			name={toolName}
+			args={toolArgs}
 			result={
 				result
 					? { ...result, isError: result.isError || live?.isError }
@@ -852,6 +1011,7 @@ function AssistantMessage({
 	turn?: TurnUsage;
 }) {
 	const { t } = useTranslation();
+	const ctx = useTranscriptContext();
 	const content = Array.isArray(message.content) ? message.content : [];
 	const lastIdx = content.length - 1;
 	const stop =
@@ -860,6 +1020,21 @@ function AssistantMessage({
 		typeof message.errorMessage === "string" ? message.errorMessage : undefined;
 	// 回合末尾的消息由脚注承载整回合菜单；其余已结束的消息各自带一个菜单
 	const ownMenu = !live && !turn;
+	const ctxRef = useContextTarget<HTMLDivElement>({
+		items: () => [
+			{
+				key: "message",
+				items: messageMenuItems({
+					entryId,
+					copyText: () => textOfContent(content),
+					copyLabel: t("contextMenu.copyMessage"),
+					quoteText: () => textOfContent(content),
+					ctx,
+					t,
+				}),
+			},
+		],
+	});
 	let prev: FlowKind | null = null;
 	const blocks: ReactNode[] = [];
 	content.forEach((b, i) => {
@@ -910,6 +1085,11 @@ function AssistantMessage({
 				data-tool-call-id={
 					b.type === "toolCall" && typeof b.id === "string" ? b.id : undefined
 				}
+				data-tool-name={
+					b.type === "toolCall" && typeof b.name === "string"
+						? b.name
+						: undefined
+				}
 				style={marginTop ? { marginTop } : undefined}
 			>
 				{node}
@@ -920,6 +1100,7 @@ function AssistantMessage({
 		// 有浮动菜单时，外层可被点按聚焦（不进 Tab 顺序），触屏点正文即显出菜单，点别处收起。
 		// data-quote-scope：选区完整落在这一条消息里时可以「引用回复」（见 quote-selection）
 		<div
+			ref={ctxRef}
 			className="group/msg relative outline-none"
 			tabIndex={ownMenu ? -1 : undefined}
 			data-quote-scope=""

@@ -10,6 +10,7 @@ import { host } from "../../lib/host";
 import { terminalHub } from "../../state/terminals";
 import { Icon } from "../ui/icons";
 import { TextInput } from "../ui/primitives";
+import { pasteIntoTerminal } from "./paste";
 
 /** 键帽：放大版 Kbd（按钮不抢焦点，靠按下缩放给反馈）。 */
 const KEYCAP =
@@ -121,17 +122,6 @@ export function TerminalKeyBar({
 		else setLine(true);
 	};
 
-	const paste = async () => {
-		try {
-			const text = await navigator.clipboard.readText();
-			const term = terminalHub.session(threadId, terminalId)?.term;
-			if (term?.paste) term.paste(text);
-			else terminalHub.input(threadId, terminalId, text);
-		} catch {
-			// 未授权读取剪贴板
-		}
-	};
-
 	return (
 		<div className="flex shrink-0 flex-col border-border border-t bg-raised">
 			{line && (
@@ -191,7 +181,9 @@ export function TerminalKeyBar({
 					className={`${KEYCAP} gap-1 border-border bg-panel px-2.5 text-fg`}
 					onPointerDown={(e) => e.preventDefault()}
 					onClick={() =>
-						host.platform === "android" ? openLine() : void paste()
+						host.platform === "android"
+							? openLine()
+							: void pasteIntoTerminal(threadId, terminalId)
 					}
 				>
 					<Icon name="copy" size={13} className="text-faint" />

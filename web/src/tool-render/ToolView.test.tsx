@@ -741,11 +741,71 @@ describe("bash 的 Pseudo 视图（details.orynPseudo）", () => {
 		expect(screen.getByTestId("bash-pseudo")).toBeInTheDocument();
 	});
 
-	it("没有 orynPseudo（运行中、旧会话）只显示原始命令，没有视图切换", () => {
+	it("没有 orynPseudo（旧会话、还没有轨迹）只显示原始命令，没有视图切换", () => {
 		const { container } = render(
 			<ToolView name="bash" args={{ command }} running defaultOpen />,
 		);
 		expect(container.querySelector(".tv-cmd-text")).toHaveTextContent(command);
 		expect(screen.queryByRole("button", { name: "原始" })).toBeNull();
+	});
+
+	it("运行中读部分结果里的 pseudo：正在执行的行标出，其余行弱化", () => {
+		const live = {
+			v: 1,
+			running: true,
+			rows: [
+				{ depth: 0, state: "ok", segments: [{ text: "x = 1" }] },
+				{
+					depth: 0,
+					state: "running",
+					active: true,
+					segments: [{ text: "sleep 1" }],
+				},
+			],
+		};
+		render(
+			<ToolView
+				name="bash"
+				args={{ command: "x=1; sleep 1" }}
+				running
+				defaultOpen
+				partialResult={{ content: [], details: { orynPseudo: live } }}
+			/>,
+		);
+		const rows = screen
+			.getByTestId("bash-pseudo")
+			.querySelectorAll(".tv-pseudo-row");
+		expect(rows[0]).toHaveClass("tv-pseudo-row--idle");
+		expect(rows[1]).toHaveClass("tv-pseudo-row--active");
+		expect(rows[1]).toHaveTextContent("›sleep 1");
+	});
+});
+
+describe("ask 的参数形态（Core 19 `recoverAskHtml`）", () => {
+	const form =
+		'<form><fieldset><legend>Which DB?</legend><label><input type="radio" name="db" value="sqlite"> SQLite</label></fieldset></form>';
+
+	it("裸字符串 HTML 参数照样显示表单，不标参数无效", () => {
+		const { container } = render(
+			<ToolView name="ask" args={form} defaultOpen />,
+		);
+		expect(container).toHaveTextContent("Which DB?");
+		expect(container.querySelector(".tv-err-text")).toBeNull();
+	});
+
+	it("旧版 questions 列表重建成表单显示", () => {
+		const { container } = render(
+			<ToolView
+				name="ask"
+				args={{
+					questions: [
+						{ id: "db", question: "Which DB?", options: [{ label: "SQLite" }] },
+					],
+				}}
+				defaultOpen
+			/>,
+		);
+		expect(container).toHaveTextContent("Which DB?");
+		expect(container.querySelector(".tv-err-text")).toBeNull();
 	});
 });

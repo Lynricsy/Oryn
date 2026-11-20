@@ -20,8 +20,7 @@ import { resetThreadStores } from "../state/stores";
 import { HomePage } from "./HomePage";
 
 /**
- * 中央模型目录里的一个对话模型。`thinkingDefault`：档位 = 模型自带默认档位，null = 已知没有（新版 Core），
- * "unreported" = 目录不报告（旧版 Core）。
+ * 中央模型目录里的一个对话模型。`thinkingDefault`：档位 = 模型自带默认档位，null = 已知没有。
  */
 const chat = (
 	provider: string,
@@ -36,9 +35,7 @@ const chat = (
 	name,
 	kind: "chat",
 	...(thinking ? { thinking } : {}),
-	...(thinkingDefault === "unreported"
-		? {}
-		: { thinkingDefault: thinkingDefault ?? "" }),
+	thinkingDefault: thinkingDefault ?? "",
 });
 
 /** 首屏偏好的默认对象（`GET settings/composer`）；null = 接口 404（按 default role 处理）。 */
@@ -106,7 +103,7 @@ const fetchMock = vi.fn(
 					chat("openai", "gpt-x", "GPT X", ["low", "high"]),
 					chat("openai", "gpt-lite", "GPT Lite", ["low"]),
 					chat("acme", "plain", "Plain"),
-					// 模型自带默认档位 medium：全局配的 high 也是它支持的档位，但切到它时实际是 medium
+					// 模型自带默认档位 medium：切模型时沿用起始档位，自带默认不覆盖
 					chat(
 						"factory-droid",
 						"claude-opus-5-5",
@@ -114,8 +111,6 @@ const fetchMock = vi.fn(
 						["low", "medium", "high"],
 						"medium",
 					),
-					// 旧版 Core 不报告默认档位：推不出实际值
-					chat("legacy", "old-x", "Old X", ["low", "high"], "unreported"),
 				],
 				fetchedAt: 0,
 				stale: false,
@@ -210,20 +205,20 @@ describe("首页思考强度按对象的模型能力列出", () => {
 		expect(checkedLevel()).toBe("高");
 	});
 
-	it("模型自带默认档位优先于全局配置：支持 high、自带 medium 时选中 medium（不因 high 也受支持就勾 high）", async () => {
+	it("切模型沿用起始档位（Core 19）：支持 high、自带 medium 时仍是 high，自带默认档位不覆盖", async () => {
 		renderHome();
 		await pickModel("factory-droid/claude-opus-5-5");
 		expect(thinkingLevels()).toEqual(["自动", "低", "中", "高"]);
-		expect(checkedLevel()).toBe("中");
-		expect(cornerLevel()).toBe("medium");
+		expect(checkedLevel()).toBe("高");
+		expect(cornerLevel()).toBe("high");
 	});
 
-	it("目录不报告默认档位（旧版 Core）：列出可选档位，但不选中任何一档、不画角标", async () => {
+	it("起始档位按目标模型收窄：只支持 low 时选中低", async () => {
 		renderHome();
-		await pickModel("legacy/old-x");
-		expect(thinkingLevels()).toEqual(["自动", "低", "高"]);
-		expect(checkedLevel()).toBeUndefined();
-		expect(cornerLevel()).toBeUndefined();
+		await pickModel("openai/gpt-lite");
+		expect(thinkingLevels()).toEqual(["自动", "低"]);
+		expect(checkedLevel()).toBe("低");
+		expect(cornerLevel()).toBe("low");
 	});
 
 	it("指定目录里的模型：列出它支持的级别（加自动），选中实际生效的那一档", async () => {

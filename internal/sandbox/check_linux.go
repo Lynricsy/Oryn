@@ -452,8 +452,8 @@ func truncateInHome(home string) error {
 	return unix.Truncate(f.Name(), 0)
 }
 
-// fileLocks 在 home 里对同一文件取 flock 与 OFD 写锁，再验证 omp 原生文件锁（PI_FILE_LOCK_BACKEND=sidecar：
-// 旁路文件上的 OFD 写锁）要用到的语义：另一个打开文件描述取不到写锁，且 F_OFD_GETLK 看得到持有者。
+// fileLocks 在 home 里对同一文件取 flock 与 OFD 写锁，再验证 omp 原生文件锁（Linux 上是旁路文件上的 OFD 写锁）
+// 要用到的语义：另一个打开文件描述取不到写锁，且 F_OFD_GETLK 看得到持有者。
 func fileLocks(home string) error {
 	f, err := os.CreateTemp(home, "selftest-lock-")
 	if err != nil {

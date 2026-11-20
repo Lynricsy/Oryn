@@ -34,7 +34,12 @@ import {
 	Spinner,
 	TextInput,
 } from "../ui/primitives";
-import { BtwTopicDetail, copyableAnswer, latestTurn } from "./BtwTopic";
+import {
+	BtwTopicDetail,
+	copyableAnswer,
+	latestTurn,
+	SideQuestionHead,
+} from "./BtwTopic";
 
 const NEW_FORM = "btw-new-topic";
 const FOLLOW_FORM = "btw-follow-up";
@@ -64,9 +69,12 @@ function topicTime(ts: number, now: number, lang: string): string {
 
 export function BtwDialog({
 	threadId,
+	initialRecordId,
 	onClose,
 }: {
 	threadId: string;
+	/** 打开时（或对话框开着时换成新值）直接选中这个话题（解释卡的「在旁路提问里打开」） */
+	initialRecordId?: string;
 	onClose: () => void;
 }) {
 	const { t } = useTranslation();
@@ -76,12 +84,20 @@ export function BtwDialog({
 	const notices = useThread(threadId, (s) => s.notices);
 	const [openedAt] = useState(Date.now);
 	// 用户点选的话题；null 表示跟随最新的那个
-	const [picked, setPicked] = useState<string | null>(null);
+	const [picked, setPicked] = useState<string | null>(initialRecordId ?? null);
 	// 右栏（窄屏为整页）是新话题输入
 	const [composing, setComposing] = useState(false);
 	// 窄屏的两级页面；null 表示还没定：话题第一次出现时（可能在历史读回之后）定下来，
 	// 最新话题正在回答（刚用 /btw 发问）就直接进详情，否则停在列表
-	const [pageState, setPage] = useState<"list" | "detail" | null>(null);
+	const [pageState, setPage] = useState<"list" | "detail" | null>(
+		initialRecordId ? "detail" : null,
+	);
+	useEffect(() => {
+		if (!initialRecordId) return;
+		setPicked(initialRecordId);
+		setComposing(false);
+		setPage("detail");
+	}, [initialRecordId]);
 	const [question, setQuestion] = useState("");
 	const [followOpen, setFollowOpen] = useState(false);
 	const [followUp, setFollowUp] = useState("");
@@ -505,7 +521,7 @@ function TopicList({
 								className={`mt-0.5 flex w-full flex-col gap-1 rounded-md px-3 py-2 text-left transition-colors duration-150 ${sel ? "bg-active" : "hover:bg-hover"}`}
 							>
 								<span className="line-clamp-2 break-words text-fg text-sm leading-snug">
-									{r.question}
+									<SideQuestionHead question={r.question} variant="list" />
 								</span>
 								<span className="flex min-w-0 items-center gap-1.5 text-2xs text-faint tabular-nums">
 									{status === "running" && <Spinner size={10} />}

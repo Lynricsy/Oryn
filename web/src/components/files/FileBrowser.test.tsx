@@ -6,17 +6,27 @@ import {
 	waitFor,
 	within,
 } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../api/client";
 import i18n from "../../i18n";
+import { closeContextMenu } from "../../lib/context-menu/store";
 import {
 	baseName,
 	type FileEntry,
 	type FileSource,
 	parentPath,
 } from "../../lib/file-source";
+import { ContextMenuHost } from "../ui/ContextMenu";
 import { draftStore } from "./drafts";
 import { FileBrowser } from "./FileBrowser";
+
+// 文件操作菜单走统一上下文菜单：每个用例都并列渲染它的宿主
+beforeEach(() => {
+	render(<ContextMenuHost />);
+});
+afterEach(() => {
+	act(() => closeContextMenu());
+});
 
 // 编辑器换成 textarea：这里测浏览器的流程，CodeMirror 本身另有测试
 vi.mock("../editor/CodeEditor", () => ({
@@ -338,6 +348,83 @@ describe("FileBrowser", () => {
 		fireEvent.click(await screen.findByText("sub"));
 		expect(await screen.findByText("deep.txt")).toBeInTheDocument();
 		expect(list.mock.calls.map((c) => c[0])).toEqual(["/r", "/r/sub"]);
+	});
+
+	it("外部请求打开文件（openPath）：逐级展开父目录、打开文件后回调 onOpened；路径不在任何根下只回调", async () => {
+		mem.dirs.add("/r/sub");
+		mem.dirs.add("/r/sub/inner");
+		mem.files.set("/r/sub/inner/deep.txt", { text: "deep", v: 1 });
+		const onOpened = vi.fn();
+		const { rerender } = render(
+			<FileBrowser
+				sources={[mem.src]}
+				storageKey="test"
+				openPath={{ path: "/r/sub/inner/deep.txt", n: 1 }}
+				onOpened={onOpened}
+			/>,
+		);
+		expect(
+			await screen.findByLabelText("editor:/r/sub/inner/deep.txt"),
+		).toHaveValue("deep");
+		expect(
+			screen.getByRole("treeitem", { name: "deep.txt" }),
+		).toBeInTheDocument();
+		expect(onOpened).toHaveBeenCalledTimes(1);
+		rerender(
+			<FileBrowser
+				sources={[mem.src]}
+				storageKey="test"
+				openPath={{ path: "/elsewhere/x.txt", n: 2 }}
+				onOpened={onOpened}
+			/>,
+		);
+		await waitFor(() => expect(onOpened).toHaveBeenCalledTimes(2));
+		// 不在任何根下：当前打开的文件不变
+		expect(
+			await screen.findByLabelText("editor:/r/sub/inner/deep.txt"),
+		).toBeInTheDocument();
+	});
+
+	it("外部请求打开文件：慢请求 A 加载目录期间来了请求 B，A 不再覆盖 B 的选择也不回调", async () => {
+		mem.dirs.add("/r/slow");
+		mem.files.set("/r/slow/a.txt", { text: "A", v: 1 });
+		mem.files.set("/r/b.txt", { text: "B", v: 1 });
+		let release: () => void = () => {};
+		const gate = new Promise<void>((r) => {
+			release = r;
+		});
+		const list = mem.src.list.bind(mem.src);
+		mem.src.list = async (p) => {
+			if (p === "/r/slow") await gate;
+			return list(p);
+		};
+		const onOpened = vi.fn();
+		const { rerender } = render(
+			<FileBrowser
+				sources={[mem.src]}
+				storageKey="test"
+				openPath={{ path: "/r/slow/a.txt", n: 1 }}
+				onOpened={onOpened}
+			/>,
+		);
+		await screen.findByRole("treeitem", { name: "slow" });
+		rerender(
+			<FileBrowser
+				sources={[mem.src]}
+				storageKey="test"
+				openPath={{ path: "/r/b.txt", n: 2 }}
+				onOpened={onOpened}
+			/>,
+		);
+		expect(await screen.findByLabelText("editor:/r/b.txt")).toHaveValue("B");
+		await act(async () => {
+			release();
+			await gate;
+		});
+		await screen.findByRole("treeitem", { name: "a.txt" });
+		expect(screen.getByLabelText("editor:/r/b.txt")).toBeInTheDocument();
+		expect(screen.queryByLabelText("editor:/r/slow/a.txt")).toBeNull();
+		expect(onOpened.mock.calls).toEqual([[2]]);
 	});
 });
 

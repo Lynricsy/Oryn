@@ -6120,8 +6120,14 @@ type LinkCtlAgentStartParams struct {
 
 	// Profile M9：`coordinator` = 协调档（无代码工具、独立 HOME 与设置覆盖层、从零构造的环境，`cwd` 由 orbd 决定）。
 	// **只有协调宿主接受**：普通 orbd 收到非空 `profile` → `invalid_params`；协调宿主收到其它值或省略 → `invalid_params`。
-	Profile    *LinkCtlAgentStartParamsProfile `json:"profile,omitempty"`
-	SessionDir string                          `json:"sessionDir"`
+	Profile *LinkCtlAgentStartParamsProfile `json:"profile,omitempty"`
+
+	// ProjectConfig 项目级 omp 配置（M12.2）。出现即表示 orb 属于某个项目：orbd 把 `$HOME/.oryn/project-config/.omp/` 镜像成 `files`，目录里不在其中的文件一律删除
+	ProjectConfig *LinkCtlProjectConfig `json:"projectConfig,omitempty"`
+
+	// ProjectID `prj_<ulid>`
+	ProjectID  *ProjectID `json:"projectId,omitempty"`
+	SessionDir string     `json:"sessionDir"`
 
 	// SystemPrompt M9 协调档的系统提示词（以字面量传给 omp `--system-prompt`，必须含换行，否则 `invalid_params`）；只有协调宿主接受
 	SystemPrompt *string `json:"systemPrompt,omitempty"`
@@ -6143,6 +6149,11 @@ type LinkCtlAgentStartParamsProfile string
 // LinkCtlAgentStartResult defines model for LinkCtlAgentStartResult.
 type LinkCtlAgentStartResult struct {
 	Pid int `json:"pid"`
+
+	// SSHPublicKey M21：只有 runner 且 SSH 网关端口在监听时给出——orbd 为该线程的监督器生成的 ed25519 公钥（OpenSSH authorized_keys
+	// 单行）。私钥只在 runner 本机（`$HOME/.oryn/threads/<线程>/ssh/id_ed25519`，agent 环境 `ORYN_SSH_KEY`），随监督器
+	// 生灭：已有活动监督器时幂等返回同一把公钥。orynd 据此登记「公钥 → 线程」，SSH 网关对 runner 的 `ssh` 流按它认出线程。
+	SSHPublicKey *string `json:"sshPublicKey,omitempty"`
 }
 
 // LinkCtlAgentStatusParams defines model for LinkCtlAgentStatusParams.
@@ -9648,6 +9659,20 @@ type SecretPut struct {
 	Value string     `json:"value"`
 }
 
+// SelectionAction defines model for SelectionAction.
+type SelectionAction struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+
+	// Prompt 对选中内容的指令，连同选区一起交给模型
+	Prompt string `json:"prompt"`
+}
+
+// SelectionActions defines model for SelectionActions.
+type SelectionActions struct {
+	Actions []SelectionAction `json:"actions"`
+}
+
 // SetupPhase defines model for SetupPhase.
 type SetupPhase string
 
@@ -12429,6 +12454,9 @@ type PutGitIdentityJSONRequestBody = GitIdentity
 
 // PutRoleIdentityJSONRequestBody defines body for PutRoleIdentity for application/json ContentType.
 type PutRoleIdentityJSONRequestBody = RoleIdentityInput
+
+// PutSelectionActionsJSONRequestBody defines body for PutSelectionActions for application/json ContentType.
+type PutSelectionActionsJSONRequestBody = SelectionActions
 
 // PutUserIdentityJSONRequestBody defines body for PutUserIdentity for application/json ContentType.
 type PutUserIdentityJSONRequestBody = AvatarIdentity
@@ -15534,6 +15562,12 @@ type ServerInterface interface {
 	// PutRoleIdentity 设置或清除一个 role 的头像（两个头像字段都省略 = 清除）
 	// (PUT /api/v1/settings/role-identities)
 	PutRoleIdentity(w http.ResponseWriter, r *http.Request)
+	// GetSelectionActions 自定义选区快捷动作（选中文字后出现在右键菜单里）
+	// (GET /api/v1/settings/selection-actions)
+	GetSelectionActions(w http.ResponseWriter, r *http.Request)
+	// PutSelectionActions 设置自定义选区快捷动作（整体替换）
+	// (PUT /api/v1/settings/selection-actions)
+	PutSelectionActions(w http.ResponseWriter, r *http.Request)
 	// GetUserIdentity 用户头像（用户回合右侧与侧栏页脚显示）
 	// (GET /api/v1/settings/user-identity)
 	GetUserIdentity(w http.ResponseWriter, r *http.Request)
@@ -17271,6 +17305,18 @@ func (_ Unimplemented) ListRoleIdentities(w http.ResponseWriter, r *http.Request
 // PutRoleIdentity 设置或清除一个 role 的头像（两个头像字段都省略 = 清除）
 // (PUT /api/v1/settings/role-identities)
 func (_ Unimplemented) PutRoleIdentity(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetSelectionActions 自定义选区快捷动作（选中文字后出现在右键菜单里）
+// (GET /api/v1/settings/selection-actions)
+func (_ Unimplemented) GetSelectionActions(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutSelectionActions 设置自定义选区快捷动作（整体替换）
+// (PUT /api/v1/settings/selection-actions)
+func (_ Unimplemented) PutSelectionActions(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -24922,6 +24968,34 @@ func (siw *ServerInterfaceWrapper) PutRoleIdentity(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// GetSelectionActions operation middleware
+func (siw *ServerInterfaceWrapper) GetSelectionActions(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSelectionActions(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutSelectionActions operation middleware
+func (siw *ServerInterfaceWrapper) PutSelectionActions(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutSelectionActions(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetUserIdentity operation middleware
 func (siw *ServerInterfaceWrapper) GetUserIdentity(w http.ResponseWriter, r *http.Request) {
 
@@ -27718,6 +27792,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/api/v1/settings/composer", wrapper.PutComposerPrefs)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/settings/selection-actions", wrapper.GetSelectionActions)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/settings/selection-actions", wrapper.PutSelectionActions)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/models/catalog", wrapper.GetModelCatalog)

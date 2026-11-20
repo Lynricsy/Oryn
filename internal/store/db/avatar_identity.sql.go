@@ -96,6 +96,19 @@ func (q *Queries) GetOwnerNewThreadTarget(ctx context.Context) (string, error) {
 	return new_thread_target, err
 }
 
+const getOwnerSelectionActions = `-- name: GetOwnerSelectionActions :one
+
+SELECT selection_actions FROM owner WHERE id = 1
+`
+
+// Selection actions: custom context-menu prompts for selected text, a JSON array of {id, name, prompt}.
+func (q *Queries) GetOwnerSelectionActions(ctx context.Context) (string, error) {
+	row := q.db.QueryRowContext(ctx, getOwnerSelectionActions)
+	var selection_actions string
+	err := row.Scan(&selection_actions)
+	return selection_actions, err
+}
+
 const getOwnerUserIdentity = `-- name: GetOwnerUserIdentity :one
 
 SELECT user_avatar_icon, user_avatar_image FROM owner WHERE id = 1
@@ -246,6 +259,18 @@ UPDATE owner SET new_thread_target = ?1 WHERE id = 1
 
 func (q *Queries) SetOwnerNewThreadTarget(ctx context.Context, newThreadTarget string) (int64, error) {
 	result, err := q.db.ExecContext(ctx, setOwnerNewThreadTarget, newThreadTarget)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setOwnerSelectionActions = `-- name: SetOwnerSelectionActions :execrows
+UPDATE owner SET selection_actions = ?1 WHERE id = 1
+`
+
+func (q *Queries) SetOwnerSelectionActions(ctx context.Context, selectionActions string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setOwnerSelectionActions, selectionActions)
 	if err != nil {
 		return 0, err
 	}

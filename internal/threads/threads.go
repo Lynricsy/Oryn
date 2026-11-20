@@ -650,6 +650,11 @@ func (s *Service) Patch(ctx context.Context, id string, p apigen.ThreadPatch) (a
 		}
 		return nil
 	})
+	// M21：归档（含已交付顺带归档）即注销 runner 线程的 SSH 公钥，网关关闭经它认证的连接（Core 的 ssh master 不能在归档
+	// 后继续开通道）；取消归档时 agent 若仍在运行，以幂等的 agent.start 取回同一把公钥重新登记
+	archived := err == nil && row.ArchivedAt == nil && m.ArchivedAt != nil
+	unarchived := err == nil && row.ArchivedAt != nil && m.ArchivedAt == nil && t.agentStatus == apigen.AgentStatusReady
+	orbID := t.orbID
 	if err == nil {
 		t.unread = m.Unread
 		if p.SpaceID != nil {
@@ -663,6 +668,13 @@ func (s *Service) Patch(ctx context.Context, id string, p apigen.ThreadPatch) (a
 	t.mu.Unlock()
 	if err != nil {
 		return apigen.Thread{}, err
+	}
+	if archived {
+		s.dropThreadKey(id)
+	} else if unarchived && s.runnerAgent != nil {
+		if kind, _ := s.orbs.Features(orbID); kind == orbs.KindRunner {
+			s.scheduleStart(id)
+		}
 	}
 	if renamed != "" {
 		s.renameSession(t, renamed)
@@ -729,6 +741,7 @@ func (s *Service) deleteThread(ctx context.Context, t *thread, inTx func(q *db.Q
 	cancelHostCallsLocked(t)
 	t.queue = nil
 	t.mu.Unlock()
+	s.dropThreadKey(id) // M21：runner 线程的 SSH 公钥随线程删除失效
 	if ctl, ok := s.orbs.Ctl(orbID); ok && orbID != "" {
 		cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		if err := ctl.Call(cctx, "agent.stop", apigen.LinkCtlAgentStopParams{ThreadID: id, GraceSeconds: 5}, nil); err != nil {
