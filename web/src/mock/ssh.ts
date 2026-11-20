@@ -159,6 +159,22 @@ function initialHosts(): Host[] {
 			},
 		},
 		{
+			// 长名称、长描述、多标签、已停用：压排版（截断与换行）
+			...base,
+			id: "ssh_mock_gpu",
+			name: "gpu-inference-shanghai-az2-node-07",
+			address: "gpu-inference-shanghai-az2-node-07.corp.internal",
+			port: 22022,
+			username: "ml-platform-operator",
+			authType: "password",
+			hasPassword: true,
+			jumpHostId: "ssh_mock_bastion",
+			description:
+				"上海二区推理集群第 7 台节点，挂 8 张卡；维护窗口每周四凌晨，期间不要跑长任务",
+			tags: ["infra", "gpu", "shanghai-az2", "inference"],
+			enabled: false,
+		},
+		{
 			...base,
 			id: "ssh_mock_stagingdb",
 			projectId: MOCK_PROJECT,
