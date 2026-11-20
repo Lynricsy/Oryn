@@ -131,18 +131,17 @@ async function inspect(target: Locator): Promise<string[]> {
 					const y = T + ((B - T) * j) / 4;
 					const hit = document.elementFromPoint(x, y);
 					if (!hit || root.contains(hit)) continue;
-					// 命中的是祖先、且采样点落在祖先圆角之外（圆角裁掉了角上的一小块）：这是容器形状，不是遮挡。
-					// 只放过圆角区；祖先的 overflow 把浮层其余部分裁掉照样报错。
-					if (hit.contains(root)) {
-						const hr = hit.getBoundingClientRect();
-						const cs = getComputedStyle(hit);
+					// 采样点在某个盒子的圆角弧外（角上被圆角削掉的那一小块）
+					const outsideCorner = (el: Element) => {
+						const hr = el.getBoundingClientRect();
+						const cs = getComputedStyle(el);
 						const corners: [number, number, string][] = [
 							[hr.left, hr.top, cs.borderTopLeftRadius],
 							[hr.right, hr.top, cs.borderTopRightRadius],
 							[hr.left, hr.bottom, cs.borderBottomLeftRadius],
 							[hr.right, hr.bottom, cs.borderBottomRightRadius],
 						];
-						const inCorner = corners.some(([cx, cy, rad]) => {
+						return corners.some(([cx, cy, rad]) => {
 							const rr = Number.parseFloat(rad) || 0;
 							if (rr <= 0 || Math.abs(x - cx) > rr || Math.abs(y - cy) > rr)
 								return false;
@@ -151,8 +150,11 @@ async function inspect(target: Locator): Promise<string[]> {
 							const oy = y < cy ? cy - rr : cy + rr;
 							return Math.hypot(x - ox, y - oy) > rr - 0.5;
 						});
-						if (inCorner) continue;
-					}
+					};
+					// 浮层自己的圆角外不属于浮层；命中的是祖先且点落在祖先圆角外，是容器形状不是遮挡。
+					// 只放过圆角区；祖先的 overflow 把浮层其余部分裁掉照样报错。
+					if (outsideCorner(root) || (hit.contains(root) && outsideCorner(hit)))
+						continue;
 					// 被祖先的 overflow 裁掉还是被别的元素压住
 					let clippedBy: Element | null = null;
 					for (let a = root.parentElement; a; a = a.parentElement) {
