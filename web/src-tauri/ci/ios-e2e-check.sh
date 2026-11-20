@@ -12,8 +12,10 @@
 # 三个 UI 测试先后各跑一次 xcodebuild（-only-testing），测试与本脚本经共享目录交接（见 E2ESupport.swift）。
 # 底栏（TabBarE2ETests.swift，从首页 / 起步）。tabbar.reveal {x, covered, ms, at?} 是底栏的裁切右缘（= 卡片左缘）与遮挡：
 # 每次开合吸附发终点（ms > 0、带绝对起步时刻 at，原生自己插值），拖动中逐帧发（ms 0），遮挡变化各一条。
-#   loaded   页面就绪：接管时补发的 tabbar.reveal（x = 0），截关闭态基线，回传胶囊矩形（来自事件日志 tabbar.set）
-#   open     点页头的侧栏按钮：等 tabbar.reveal 报 x = 侧栏宽，截图（无障碍树断言原生按钮在、网页胶囊隐藏、卡片 inert 在测试里）
+#   loaded   页面就绪：接管时补发的 tabbar.reveal（x = 0）；首页的原生侧栏钮接管（header.set key = home、header.show alpha 1），
+#            截关闭态基线，回传胶囊矩形（来自事件日志 tabbar.set）
+#   open     点侧栏钮（此时网页钮已对读屏隐藏，点到的是原生钮）：等 header.event（op = lead、key = home）与
+#            tabbar.reveal 报 x = 侧栏宽，截图（无障碍树断言原生按钮在、网页胶囊隐藏、侧栏可交互在测试里）
 #   closed   点露出的卡片条：等 tabbar.reveal 报 x = 0，截图
 #   drag     从左缘拖到约一半并按住：拖动中的 tabbar.reveal 都是 ms 0，松手才有 ms > 0 的吸附；就绪看截图——
 #            底栏横条连拍两张一致（卡片停住）且揭示边左侧已与关闭基线不同，期间没有新的吸附（没松手）
@@ -241,6 +243,9 @@ frame=$(last tabbar.set | jq -c .frame)
 read -r fx fy fw fh < <(jq -r '[.x, .y, .width, .height] | @tsv' <<<"$frame")
 sink_w=$(awk -v x="$fx" -v w="$fw" 'BEGIN { print 2 * x + w }')
 until_ok loaded 30 "接管时补发当前开合：tabbar.reveal 停在 x = 0" reveal_is "$closed"
+# 首页左上角的侧栏钮由原生页头接管（只有侧栏钮的 spec，key = home）；显示稳了网页钮才对读屏隐藏，测试点到的就是原生钮
+until_ok loaded 30 "header.set（首页原生侧栏钮接管，key = home）" last_is header.set '.on and .key == "home"'
+until_ok loaded 30 "header.show（alpha 1：首页原生侧栏钮显示）" last_is header.show '.alpha == 1'
 sleep 1
 shot closed0
 pw=$(sips -g pixelWidth "$out/e2e-closed0.png" | awk '/pixelWidth/ { print $2 }')
@@ -249,6 +254,8 @@ echo "胶囊：${frame}，侧栏宽 ${sink_w}，缩放 ${scale}"
 ok loaded "{\"frame\":$frame}"
 
 wait_req open 120
+until_ok open 15 "原生侧栏钮上报 header.event（op = lead、key = home）" \
+  last_is header.event '.op == "lead" and .key == "home"'
 until_ok open 15 "打开：tabbar.reveal 报侧栏宽" reveal_is "$opened"
 steady_shot open
 ok open
