@@ -10,19 +10,23 @@ interface PaletteState {
 	open: boolean;
 	/** 关闭后要还原焦点的元素（打开面板之前的焦点；跳转关闭时为 null） */
 	opener: HTMLElement | null;
+	/** 打开时预填的搜索词（右键菜单的「搜索」） */
+	initialQuery: string;
 }
 
 export const paletteStore = createStore<PaletteState>(() => ({
 	open: false,
 	opener: null,
+	initialQuery: "",
 }));
 
-export function openPalette(): void {
+export function openPalette(query = ""): void {
 	if (paletteStore.getState().open) return;
 	const active = document.activeElement;
 	paletteStore.setState({
 		open: true,
 		opener: active instanceof HTMLElement ? active : null,
+		initialQuery: query,
 	});
 }
 
@@ -33,6 +37,7 @@ export function closePalette(restoreFocus = true): void {
 		paletteStore.setState({
 			open: false,
 			opener: restoreFocus ? opener : null,
+			initialQuery: "",
 		});
 }
 
@@ -43,4 +48,19 @@ export function togglePalette(): void {
 
 export function usePaletteOpen(): boolean {
 	return useStore(paletteStore, (s) => s.open);
+}
+
+/** 挂着的面板宿主个数：分享页、登录页没有宿主，那里的菜单不给「搜索」。 */
+let hosts = 0;
+
+/** 面板宿主挂载时登记，返回注销函数（直接作 effect 的清理函数）。 */
+export function claimPalette(): () => void {
+	hosts += 1;
+	return () => {
+		hosts -= 1;
+	};
+}
+
+export function paletteAvailable(): boolean {
+	return hosts > 0;
 }

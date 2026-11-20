@@ -82,7 +82,7 @@ function SidebarSearch(): ReactNode {
 				data-testid="sidebar-search"
 				aria-label={t("palette.open")}
 				aria-keyshortcuts="Control+K Meta+K"
-				onClick={openPalette}
+				onClick={() => openPalette()}
 				className="flex h-8 w-full items-center gap-2 rounded-lg bg-[var(--sb-field)] pr-1.5 pl-2.5 text-faint text-sm transition-colors duration-150 hover:text-muted"
 			>
 				<Icon name="search" size={14} aria-hidden className="shrink-0" />

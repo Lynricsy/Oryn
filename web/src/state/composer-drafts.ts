@@ -7,6 +7,7 @@
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
 import type { ArtifactSelectionRef } from "../lib/artifacts/prompt";
+import { uiStore } from "./ui";
 
 export interface ComposerDraft {
 	text: string;
@@ -31,9 +32,18 @@ export interface ComposerDraft {
 	 * `selectionPrompt` 把它接在正文后面。清除选中、切走 artifact、关掉面板时由面板置空；按对象身份区分每次选中
 	 */
 	artifactSelection: ArtifactSelectionRef | null;
+	/**
+	 * 待并入正文的一段文字（右键菜单的「引用到输入框」）：输入区挂着时接到正文末尾（与原文空一行）后置空。
+	 * 按对象身份区分每次插入
+	 */
+	insert: ComposerInsert | null;
 }
 
 export interface ComposerQuote {
+	text: string;
+}
+
+export interface ComposerInsert {
 	text: string;
 }
 
@@ -63,6 +73,7 @@ const EMPTY: ComposerDraft = {
 	inFlight: null,
 	quote: null,
 	artifactSelection: null,
+	insert: null,
 };
 
 const drafts = createStore<Record<string, ComposerDraft>>(() => ({}));
@@ -107,4 +118,10 @@ export function composerMounted(threadId: string): boolean {
 export function resetComposerDrafts(): void {
 	drafts.setState({}, true);
 	mounted.clear();
+}
+
+/** 把一段文字放进线程输入区（接在草稿末尾），并切到对话标签让输入区挂上。 */
+export function insertIntoComposer(threadId: string, text: string): void {
+	patchComposerDraft(threadId, { insert: { text } });
+	uiStore.getState().setThreadTab("agent");
 }

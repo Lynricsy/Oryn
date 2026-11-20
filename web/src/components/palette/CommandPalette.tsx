@@ -189,7 +189,7 @@ export function CommandPalette(): ReactNode {
 	const inputRef = useRef<HTMLInputElement>(null);
 	const listRef = useRef<HTMLDivElement>(null);
 	const listId = useId();
-	const [q, setQ] = useState("");
+	const [q, setQ] = useState(() => paletteStore.getState().initialQuery);
 	const [expanded, setExpanded] = useState<GroupKey | null>(null);
 	const [active, setActive] = useState(0);
 	const threads = useIndex((s) => s.threads);
