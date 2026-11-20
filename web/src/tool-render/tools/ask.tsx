@@ -73,6 +73,53 @@ function formOutline(html: string): { headings: string[]; fields: number } {
 	return { headings: caption ? [caption] : [], fields: names.size };
 }
 
+function escapeHtml(text: string): string {
+	return text
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;")
+		.replace(/'/g, "&#039;");
+}
+
+/**
+ * 旧版 `questions` 参数（`[{id, question, options: [{label, description?}], multi?, recommended?}]`）
+ * 重建成表单，同 Core `recoverAskHtml`：Core 19 起 ask 宽松校验，模型发旧参数照样会问。
+ */
+function legacyQuestionsHtml(questions: unknown): string | null {
+	if (!Array.isArray(questions) || questions.length === 0) return null;
+	const fieldsets: string[] = [];
+	for (const [index, item] of questions.entries()) {
+		if (!isRecord(item) || typeof item.question !== "string") return null;
+		const name = escapeHtml(
+			typeof item.id === "string" && item.id ? item.id : `q${index + 1}`,
+		);
+		const kind = item.multi === true ? "checkbox" : "radio";
+		const options = Array.isArray(item.options) ? item.options : [];
+		const inputs: string[] = [];
+		for (const [optionIndex, option] of options.entries()) {
+			const label = isRecord(option) ? option.label : option;
+			if (typeof label !== "string") return null;
+			const description =
+				isRecord(option) && typeof option.description === "string"
+					? ` — ${escapeHtml(option.description)}`
+					: "";
+			const checked = item.recommended === optionIndex ? " checked" : "";
+			inputs.push(
+				`<label><input type="${kind}" name="${name}" value="${escapeHtml(label)}"${checked}> ${escapeHtml(label)}${description}</label>`,
+			);
+		}
+		const control =
+			inputs.length > 0
+				? inputs.join("")
+				: `<textarea name="${name}"></textarea>`;
+		fieldsets.push(
+			`<fieldset><legend>${escapeHtml(item.question)}</legend>${control}</fieldset>`,
+		);
+	}
+	return `<form>${fieldsets.join("")}</form>`;
+}
+
 /** Answers from `result.details`; null when the result carries none (error, cancel, older sessions). */
 function answersOf(
 	details: Record<string, unknown> | null,
@@ -113,7 +160,7 @@ function notesOf(details: Record<string, unknown> | null): AskOptionNote[] {
 }
 
 function Summary({ args, result }: ToolRenderProps): ReactNode {
-	const html = str(args.html);
+	const html = str(args.html) ?? legacyQuestionsHtml(args.questions);
 	const answers = answersOf(detailsRecord(result));
 	const outline = html ? formOutline(html) : { headings: [], fields: 0 };
 	const first = answers?.[0]?.question ?? outline.headings[0];
@@ -130,7 +177,7 @@ function Summary({ args, result }: ToolRenderProps): ReactNode {
 
 /** 输入：表单的标题提纲 + 表单 HTML 原文（问题与选项都在里面）。 */
 function Input({ args, result }: ToolRenderProps): ReactNode {
-	const html = str(args.html);
+	const html = str(args.html) ?? legacyQuestionsHtml(args.questions);
 	if (html === null) return result ? null : <InvalidArg what="html" />;
 	const { headings } = formOutline(html);
 	return (
@@ -149,11 +196,15 @@ function Input({ args, result }: ToolRenderProps): ReactNode {
 	);
 }
 
-/** 输出：用户逐题的回答与选项备注；没有结构化回答时给结果文本。 */
+/**
+ * 输出：用户逐题的回答与选项备注；没有结构化回答时给结果文本
+ * （含 Core 19 的「超时时必填项仍空」：answers 为空，不是自动提交的回答）。
+ */
 function Result({ result }: ToolRenderProps): ReactNode {
 	const details = detailsRecord(result);
 	const answers = answersOf(details);
-	if (!answers) return <ResultText result={result} maxLines={10} />;
+	if (!answers || answers.length === 0)
+		return <ResultText result={result} maxLines={10} />;
 	const notes = notesOf(details);
 	return (
 		<>
