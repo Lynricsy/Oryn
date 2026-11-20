@@ -538,7 +538,32 @@ async function R1() {
 	expect(log.at(-1)?.prevented === true, "该次 contextmenu 已 preventDefault");
 	await assertMenuInViewport(p);
 	await shotBoth(p, "R1-selection-menu");
-	// 贴右下角边缘的菜单也不出屏（宽屏）
+	await p.keyboard.press("Escape");
+	await p.locator(MENU).waitFor({ state: "detached" });
+	// 贴右下角边缘触发：在同一条消息上派发坐标为视口右下角的 contextmenu，菜单要翻到触发点上方并夹回视口
+	const fired = await p.evaluate((text) => {
+		const walker = document.createTreeWalker(
+			document.querySelector('[data-testid="transcript"]') ?? document.body,
+			NodeFilter.SHOW_TEXT,
+		);
+		for (let n = walker.nextNode(); n; n = walker.nextNode())
+			if (n.textContent?.includes(text)) {
+				document.getSelection()?.removeAllRanges();
+				return n.parentElement?.dispatchEvent(
+					new MouseEvent("contextmenu", {
+						bubbles: true,
+						cancelable: true,
+						clientX: innerWidth - 2,
+						clientY: innerHeight - 2,
+					}),
+				);
+			}
+		return null;
+	}, PASSAGE_A);
+	check(fired === false, "右下角的 contextmenu 被接管");
+	await p.locator(MENU).waitFor();
+	await assertMenuInViewport(p);
+	await shotBoth(p, "R1-edge-menu");
 	await p.keyboard.press("Escape");
 	await p.locator(MENU).waitFor({ state: "detached" });
 }
@@ -548,10 +573,17 @@ async function assertMenuInViewport(p: Page, host = MENU) {
 	const m = await p.evaluate((h) => {
 		const el = document.querySelector<HTMLElement>(h);
 		if (!el) return null;
-		const r = el.getBoundingClientRect();
 		const menu = el.matches('[role="menu"]')
 			? el
 			: el.querySelector<HTMLElement>('[role="menu"]');
+		const box = menu ?? el;
+		// 量排版盒：去掉 .pop-in 进入过渡的 transform（无头 Chromium 里这段过渡常停在起始帧
+		// translateY(6px) scale(0.98)，包围盒会比实际排版多出 6px）
+		const prev = [box.style.transition, box.style.transform] as const;
+		box.style.transition = "none";
+		box.style.transform = "none";
+		const r = box.getBoundingClientRect();
+		[box.style.transition, box.style.transform] = prev;
 		const cs = menu ? getComputedStyle(menu) : null;
 		return {
 			left: r.left,
