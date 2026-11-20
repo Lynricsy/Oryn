@@ -231,10 +231,13 @@ func (s *Service) RefreshAgent(ctx context.Context, threadID string) {
 // open_session 拉起原会话：协调线程借此取新的 AgentProfile，工作线程借此让需重启的 omp 配置生效（M13 6.3）。
 // agent 不在运行时什么都不做并返回 false（下次启动自然用新的）。调用方持有 t.mu。
 func (s *Service) refreshLocked(t *thread, reason string) bool {
+	if t.stopping {
+		return true // 停止已在途；下一代启动时会读取最新配置
+	}
 	if t.agent == nil && t.agentStatus != apigen.AgentStatusReady && !t.starting {
 		return false
 	}
-	if !t.refresh && !t.stopping {
+	if !t.refresh {
 		slog.Debug("threads: 线程将在静止后重启 agent", "thread", t.id, "reason", reason)
 	}
 	t.refresh = true
@@ -257,21 +260,52 @@ func (s *Service) stopForRefreshLocked(t *thread) {
 	orbID := t.orbID
 	s.go_(func(ctx context.Context) {
 		ctl, ok := s.orbs.Ctl(orbID)
-		if !ok {
-			t.mu.Lock()
-			t.stopping = false
-			t.mu.Unlock()
+		var err error
+		if ok {
+			cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			err = ctl.Call(cctx, "agent.stop", apigen.LinkCtlAgentStopParams{ThreadID: t.id, GraceSeconds: 5}, nil)
+			cancel()
+			if err != nil {
+				slog.Debug("threads: 刷新 agent 时 agent.stop 失败", "thread", t.id, "err", err)
+			}
+		}
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		if t.orbID != orbID {
 			return
 		}
-		cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		defer cancel()
-		if err := ctl.Call(cctx, "agent.stop", apigen.LinkCtlAgentStopParams{ThreadID: t.id, GraceSeconds: 5}, nil); err != nil {
-			slog.Debug("threads: 刷新 agent 时 agent.stop 失败", "thread", t.id, "err", err)
-			t.mu.Lock()
-			t.stopping = false
-			t.mu.Unlock()
+		t.stopping = false
+		if ok && err == nil {
+			// exited 在监督器完成清理前发送。直到同一条 ctl 回复 stop，新的 start 才不会命中旧监督器。
+			t.agent = nil
+			t.agentStatus = apigen.AgentStatusExited
+			s.dropPassiveLocked(t, "agent stopped")
+		} else if t.agentReady() && !orbSuspended(s.orbState(orbID)) {
+			// 停止失败且旧流仍可用：恢复发送，不能让停止期间排队的命令等一个不会来的 ready。
+			if len(t.queue) > 0 {
+				s.onReadyLocked(ctx, t)
+				s.recompute(ctx, t)
+			}
+			return
 		}
+		s.wakeAfterRefreshLocked(t)
+		s.recompute(ctx, t)
 	})
+}
+
+// wakeAfterRefreshLocked 接续停止后仍排队的消息；调用方持有 t.mu。
+func (s *Service) wakeAfterRefreshLocked(t *thread) {
+	if t.stopping || t.orbID == "" {
+		return
+	}
+	if t.starting {
+		// 旧 start 的应答仍在途，立即唤醒会被挡掉。即使现在队列为空，也要等旧应答后重查。
+		t.wakeAfterStart = true
+		return
+	}
+	if (t.queueNeedsWake() || len(t.msgOrder) > 0) && !orbGoingDown(s.orbState(t.orbID)) {
+		s.wake(t.id, t.orbID)
+	}
 }
 
 // Archive 归档线程（等价于 PATCH {archived: true}；不算用户交互）。供定时的保留策略调用。

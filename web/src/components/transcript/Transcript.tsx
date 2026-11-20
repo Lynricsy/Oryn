@@ -1081,10 +1081,11 @@ export const Transcript = memo(function Transcript({
 
 	return (
 		<div className="relative min-h-0 flex-1">
+			{/* 只拦纵向的滚动链：横向要能传到根滚动（iOS 下沉侧栏的原生滚动模式靠它拖开卡片） */}
 			<div
 				ref={setScrollEl}
 				onScroll={onScroll}
-				className="h-full overflow-y-auto overscroll-contain"
+				className="h-full overflow-y-auto overscroll-y-contain"
 				style={{
 					scrollPaddingTop: insetTop,
 					scrollPaddingBottom: insetBottom,

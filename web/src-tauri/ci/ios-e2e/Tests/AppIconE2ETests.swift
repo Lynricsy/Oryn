@@ -17,6 +17,7 @@ final class AppIconE2ETests: E2ECase {
     let app = XCUIApplication(bundleIdentifier: "com.lynricsy.oryn")
     app.launchEnvironment = ["ORYN_E2E_URL": url, "ORYN_DESKTOP_EVENT_LOG": log]
     app.launch()
+    let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
 
     // 页面语言随模拟器区域，两种文案都认
     let steps: [(id: String, labels: [String])] = [
@@ -36,27 +37,20 @@ final class AppIconE2ETests: E2ECase {
         swipes += 1
       }
       radio.tap()
-      try dismissIconAlert(app)
       try until("appicon.set（\(step.id)）", timeout: 60) {
-        logHas(log, event: "appicon.set", id: step.id)
+        if logHas(log, event: "appicon.set", id: step.id) { return true }
+        // 提示可能挂在 App 或 SpringBoard 上。XCTest 的 tap 返回不代表提示已关：
+        // 动画期间第一次点击可能落空，提示仍在且按钮可点时才再次点击。
+        for alert in [app.alerts.firstMatch, springboard.alerts.firstMatch] {
+          let button = alert.buttons.firstMatch
+          if button.exists && button.isHittable {
+            button.tap()
+            break
+          }
+        }
+        return false
       }
     }
-  }
-
-  /// 系统的「已更改图标」提示：CI 里观察到 iOS 要等它被点掉才调 setAlternateIconName 的完成回调。
-  /// 提示可能挂在 App 或 SpringBoard 上；15 秒内都没出现就不管（以 appicon.set 为准）。
-  @MainActor
-  private func dismissIconAlert(_ app: XCUIApplication) throws {
-    let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-    var alert: XCUIElement?
-    _ = poll(timeout: 15) {
-      for candidate in [app.alerts.firstMatch, springboard.alerts.firstMatch] where candidate.exists {
-        alert = candidate
-        return true
-      }
-      return false
-    }
-    alert?.buttons.firstMatch.tap()
   }
 
   private func logHas(_ path: String, event: String, id: String) -> Bool {

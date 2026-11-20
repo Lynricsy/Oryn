@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use tauri_plugin_oryn_mobile::{
     CornerRadii, HeaderIcon, HeaderItem, HeaderMenu, HeaderMenuCmd, HeaderMenuKind, HeaderOp,
     HeaderSeg, HeaderShow, HeaderSpec, Insets, Permission, PushChannel, PushState, ShareIntake,
-    TabBarFrame, TabBarIcon, TabBarReveal, TabBarSpec,
+    TabBarFrame, TabBarIcon, TabBarSpec,
 };
 
 use crate::api::{Api, ApiError, PushSubscription};
@@ -370,16 +370,6 @@ fn valid_frame(f: &TabBarFrame) -> bool {
         && within(f.height, 1.0, 400.0)
 }
 
-/// 缓动：None，或四项有限、第 0 / 2 项 ∈ [0, 1]、第 1 / 3 项 ∈ [-2, 3]。
-fn valid_ease(e: Option<[f64; 4]>) -> bool {
-    e.is_none_or(|[x1, y1, x2, y2]| {
-        within(x1, 0.0, 1.0)
-            && within(x2, 0.0, 1.0)
-            && within(y1, -2.0, 3.0)
-            && within(y2, -2.0, 3.0)
-    })
-}
-
 /// `host_tab_bar_set` 的入参上限（命令可能被 portal iframe 调到，见 host.rs 文件头）：
 /// items 1..=6、id 互不相同且 `valid_tab_id`；label 1..=64 个字符；
 /// icon：symbol 1..=64 字节 `[a-z0-9.]`，glyph 1..=32 字节，image 1..=131072 字节且全是 base64 字符（`A-Za-z0-9+/=`）；
@@ -401,9 +391,10 @@ pub fn valid_tab_bar(spec: &TabBarSpec) -> bool {
         && valid_color(&spec.bg)
 }
 
-/// x 有限且 ∈ [-10000, 10000]。
-pub fn valid_reveal(r: &TabBarReveal) -> bool {
-    within(r.x, -10_000.0, 10_000.0)
+/// 原生底栏 / 页头的 set 是否放行（bridge 8）：撤掉（`!has_spec`）总是放行；非空 spec 要本页已 `host_sink_set(true)`。
+/// 旧网页（bridge 7）不发 `host_sink_set`，非空 set 在这里被拒，退回网页底栏 / 页头。
+pub fn native_chrome_allowed(sink_on: bool, has_spec: bool) -> bool {
+    !has_spec || sink_on
 }
 
 // ---------------------------------------------------------------- 可替换图标（iOS）
@@ -572,15 +563,9 @@ pub fn valid_header(spec: &HeaderSpec) -> bool {
         })
 }
 
-/// alpha ∈ [0, 1]；dx 有限且 ∈ [-10000, 10000]；ms ≤ 2000；delay ≤ 1000；ease 见 `valid_ease`；
-/// at 为 None 或有限且 ∈ [0, 1e14]（Unix 毫秒；远近不限：送达已过的时刻原生会立即起步）。
+/// alpha ∈ [0, 1]；ms ≤ 2000。
 pub fn valid_header_show(s: &HeaderShow) -> bool {
-    within(s.alpha, 0.0, 1.0)
-        && within(s.dx, -10_000.0, 10_000.0)
-        && s.ms <= 2000
-        && s.delay <= 1000
-        && valid_ease(s.ease)
-        && s.at.is_none_or(|at| within(at, 0.0, 1e14))
+    within(s.alpha, 0.0, 1.0) && s.ms <= 2000
 }
 
 /// `page`（有的话）是合法的菜单项 id。
@@ -1163,8 +1148,6 @@ mod tests {
     }
 
     const TAB_BAR_SET: &str = include_str!("../plugins/oryn-mobile/fixtures/tab-bar-set.json");
-    const TAB_BAR_REVEAL: &str =
-        include_str!("../plugins/oryn-mobile/fixtures/tab-bar-reveal.json");
 
     /// 整数与浮点在 `Value` 里不相等（`12` ≠ `12.0`）：统一成浮点再比。
     fn norm(v: Value) -> Value {
@@ -1180,21 +1163,12 @@ mod tests {
         serde_json::from_str(TAB_BAR_SET).unwrap()
     }
 
-    fn fixture_reveal() -> TabBarReveal {
-        serde_json::from_str(TAB_BAR_REVEAL).unwrap()
-    }
-
     /// 夹具 = TS、Rust、Swift 三方的共同契约：Rust 能原样读回、写出。
     #[test]
     fn tab_bar_fixtures_round_trip() {
         let raw: Value = serde_json::from_str(TAB_BAR_SET).unwrap();
         assert_eq!(
             norm(serde_json::to_value(fixture_spec()).unwrap()),
-            norm(raw)
-        );
-        let raw: Value = serde_json::from_str(TAB_BAR_REVEAL).unwrap();
-        assert_eq!(
-            norm(serde_json::to_value(fixture_reveal()).unwrap()),
             norm(raw)
         );
     }
@@ -1213,13 +1187,6 @@ mod tests {
         let mut s = fixture_spec();
         mutate(&mut s);
         assert!(!valid_tab_bar(&s), "{name}");
-    }
-
-    /// 在夹具上改一处后应被 `valid_reveal` 拒绝。
-    fn rejects_reveal(name: &str, mutate: impl FnOnce(&mut TabBarReveal)) {
-        let mut r = fixture_reveal();
-        mutate(&mut r);
-        assert!(!valid_reveal(&r), "{name}");
     }
 
     #[test]
@@ -1265,15 +1232,13 @@ mod tests {
         assert!(valid_tab_bar(&s));
     }
 
+    /// 旧网页（不发 host_sink_set）的非空 set 被拒；撤掉总是放行。
     #[test]
-    fn reveal_limits() {
-        assert!(valid_reveal(&fixture_reveal()));
-        assert!(valid_reveal(&TabBarReveal {
-            x: 0.0,
-            covered: true,
-        }));
-        rejects_reveal("x 为 NaN", |r| r.x = f64::NAN);
-        rejects_reveal("x 越界", |r| r.x = 10_001.0);
+    fn native_chrome_requires_sink() {
+        assert!(!native_chrome_allowed(false, true));
+        assert!(native_chrome_allowed(true, true));
+        assert!(native_chrome_allowed(false, false));
+        assert!(native_chrome_allowed(true, false));
     }
 
     #[test]
@@ -1481,44 +1446,36 @@ mod tests {
     }
 
     #[test]
-    fn header_show_and_menu_limits() {
-        let ok = HeaderShow {
-            alpha: 0.0,
-            dx: 0.0,
-            passive: true,
-            ms: 0,
-            delay: 0,
-            ease: None,
-            at: None,
-        };
-        assert!(valid_header_show(&ok));
+    fn header_show_limits() {
+        assert!(valid_header_show(&HeaderShow { alpha: 0.0, ms: 0 }));
         assert!(valid_header_show(&HeaderShow {
-            dx: -10_000.0,
+            alpha: 1.0,
             ms: 2000,
-            delay: 1000,
-            ease: Some([0.2, 0.8, 0.2, 1.0]),
-            at: Some(1_795_000_000_034.0),
-            ..ok
         }));
         for (name, bad) in [
-            ("alpha 1.5", HeaderShow { alpha: 1.5, ..ok }),
-            ("alpha 为负", HeaderShow { alpha: -0.1, ..ok }),
-            ("dx 为 NaN", HeaderShow { dx: f64::NAN, ..ok }),
-            ("dx 10001", HeaderShow { dx: 10_001.0, ..ok }),
-            ("ms 2001", HeaderShow { ms: 2001, ..ok }),
-            ("delay 1001", HeaderShow { delay: 1001, ..ok }),
+            ("alpha 1.1", HeaderShow { alpha: 1.1, ms: 0 }),
+            ("alpha 为负", HeaderShow { alpha: -0.1, ms: 0 }),
             (
-                "ease[0] 1.2",
+                "alpha 为 NaN",
                 HeaderShow {
-                    ease: Some([1.2, 0.8, 0.2, 1.0]),
-                    ..ok
+                    alpha: f64::NAN,
+                    ms: 0,
                 },
             ),
-            ("at 为 NaN", HeaderShow { at: Some(f64::NAN), ..ok }),
-            ("at 为负", HeaderShow { at: Some(-1.0), ..ok }),
+            (
+                "ms 2001",
+                HeaderShow {
+                    alpha: 1.0,
+                    ms: 2001,
+                },
+            ),
         ] {
             assert!(!valid_header_show(&bad), "{name}");
         }
+    }
+
+    #[test]
+    fn header_menu_limits() {
         assert!(valid_header_menu(&HeaderMenuCmd {
             open: None,
             page: None,

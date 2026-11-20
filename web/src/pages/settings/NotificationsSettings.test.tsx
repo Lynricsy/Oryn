@@ -478,6 +478,7 @@ describe("NotificationsSettings 此设备（移动壳，M7）", () => {
 			setChrome: vi.fn(),
 			openNotificationSettings: vi.fn(),
 			changeServer: vi.fn(),
+			sink: null,
 			tabBar: null,
 			header: null,
 			appIcon: null,

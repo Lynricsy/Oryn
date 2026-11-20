@@ -2149,6 +2149,7 @@ omp 的 `composer.predictions`：回合正常结束后用当前模型跑一次�
 ### 主线
 
 - **分段**：主线的 agent 每次启动时，初始化帧在 `open_session` 之后先发 `{"type": "clear_context"}`，会话文件里追加 `reset_boundary`，转录保留。主线 working→idle 后计一个回合并排 10 分钟定时器；定时器到期或一段满 8 个回合时 `RefreshAgent`（静止后停 agent，下一条命令用新 Profile 拉起，即新的一段）。定时器带代次令牌，旧回调不会结束新的一段。
+  刷新停止期间收到的消息在控制面排队；控制面等待停止应答（`exited` 通知可能先到）和在途的旧启动请求结束，再用新 Profile 启动 agent 并投递。若停止失败且旧流仍可用，则恢复在旧流上投递。
 - **系统提示词**：在助手提示词（与记忆段）之后追加主线说明，以及「主线近况」：备忘全文，加最近 12 条消息（主人亲手发的消息，和每个回合最后一条有文本的助手消息；调用过 `stay_silent` 的回合不取，自动消息不取），每条前缀 `[MM-DD HH:mm] 主人：` 或 `[MM-DD HH:mm] 你：`，单条截 600 字、合计 6000 字，按时间正序。主线不进 M17 记忆近况。
 - **沉默**：`threads` 在下发消息类命令时维护 `autoOnly`（静止后第一条的来源是否为自动化，其后取与）。`stay_silent` 调用 `MarkQuiet`：只有 `autoOnly` 为真的回合生效，该回合离开 working 时不置未读，`StateEvent.Quiet` 让 `notify` 取消完成通知；主人发起的回合里调用返回 `ok: false` 并提示照常回答。
 - **交给助手**：开了 `handToAssistant` 的定时（`new_thread`，运行以 completed / failed / aborted 结束时）与 GitHub 触发规则（带 `github:` 标签的非本地回合）调用 `Config.HandOff` → `coord.PostToMain`，写进 `assistant_inbox` 并排 15 秒合并定时器（窗口从第一条算起）。到点取最早的至多 20 条合并成一条自动消息投进主线（没有主线就先建），回复为空时按转录补（≤4000 字），还有剩余就再排一次；投递失败的每分钟重试，24 小时仍未投递的丢弃并记日志。该运行的完成通知不推送（`notify` 对自动化回合的 done 通知查 `IsThreadHandedToAssistant`），出错与等输入照常，线程照常标未读。

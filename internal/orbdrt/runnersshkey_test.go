@@ -136,15 +136,17 @@ func TestRunnerProjectSSHConfig(t *testing.T) {
 	assert.Contains(t, cfg, "\nHost web2\n")
 	assert.NotContains(t, cfg, "\nHost web\n")
 
-	// 本机 OpenSSH 解析：`-G` 原样列出 `${ORYN_SSH_KEY}`（展开发生在载入身份时），用 -v 看载入的身份文件；
-	// 端口改成 1，连接被拒，不会连到网关。
+	// OpenSSH 9.6 要等 TCP 接通才加载身份文件，使用 runner 已监听的本地端口；测试控制面没有上游 SSH。
 	if _, err := exec.LookPath("ssh"); err != nil {
 		t.Skip("没有 ssh")
 	}
-	key := filepath.Join(f.home, ".oryn", "threads", thread1, "ssh", "id_ed25519")
-	for _, target := range [][]string{{"pa-db"}, {"pa-db@127.0.0.1"}} {
-		args := append([]string{"-F", cfgPath, "-v", "-p", "1", "-o", "BatchMode=yes"}, target...)
-		cmd := exec.Command("ssh", append(args, "true")...)
+	keys, err := filepath.Glob(filepath.Join(f.home, ".oryn", "threads", thread1, "ssh", "*", "id_ed25519"))
+	require.NoError(t, err)
+	require.Len(t, keys, 1)
+	key := keys[0]
+	for _, target := range []string{"pa-db", "pa-db@127.0.0.1"} {
+		cmd := exec.Command("ssh", "-F", cfgPath, "-v", "-p", strconv.Itoa(port),
+			"-o", "BatchMode=yes", "-o", "ConnectTimeout=5", target, "true")
 		cmd.Env = append(os.Environ(), "ORYN_SSH_KEY="+key)
 		out, _ := cmd.CombinedOutput()
 		assert.Contains(t, string(out), "identity file "+key+" type ", "%v: %s", target, out)

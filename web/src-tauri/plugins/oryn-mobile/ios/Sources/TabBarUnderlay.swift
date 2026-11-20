@@ -5,7 +5,8 @@
 // 代价：页面在接管期间要透明（网页把 body / 下沉根节点的底色交给这里的垫底，同一个 --bg），侧栏列表在底栏那一条渐隐，
 // 玻璃只折射垫底色，不折射列表。
 // 触摸：WebView 在上面，底栏收不到触摸；在 WebView 之上放一块只盖住底栏矩形的转交层，底栏露出且没被网页内容压住时
-// 把落在里面的触摸交给 UITabBar（透镜的按住 / 横滑都靠它），其余时候放行给网页。
+// 把落在里面的触摸交给 UITabBar（透镜的按住 / 横滑都靠它），其余时候放行给网页。卡片左缘来自 SinkFollow（根滚动的
+// contentOffset，follow），遮挡来自网页（cover）。
 // 选中项只听网页的（当前分区 = 路由）：系统点选后会先自己换选中，网页回发的 spec 再确认（或改回）。
 import UIKit
 import WebKit
@@ -35,7 +36,7 @@ final class TabBarUnderlay: NSObject, UITabBarDelegate {
   private var spec: TabBarSpec?
   /// 已解码的头像：项 id → (base64, 图)；base64 没变就不重新解码。
   private var avatars: [String: (String, UIImage)] = [:]
-  /// 卡片左缘（视口 x）与遮挡：只决定转交层开不开。
+  /// 卡片左缘（视口 x，SinkFollow 给）与遮挡（网页给）：只决定转交层开不开。
   private var revealX: CGFloat = 0
   private var covered = false
   /// 接管前 WebView 的不透明设置，撤掉时还原。
@@ -163,8 +164,12 @@ final class TabBarUnderlay: NSObject, UITabBarDelegate {
   }
 
   /// 卡片左缘越过底栏右缘、且网页内容没压在底栏上时，转交层才把触摸交给底栏。
-  func reveal(x: CGFloat, covered: Bool) {
-    revealX = x
+  func follow(dx: CGFloat) {
+    revealX = dx
+    updateTouch()
+  }
+
+  func cover(_ covered: Bool) {
     self.covered = covered
     updateTouch()
   }

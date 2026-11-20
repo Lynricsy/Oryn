@@ -645,7 +645,10 @@ mod tests {
             toolbar: true,
         }))
         .unwrap();
-        assert_eq!(mac["inset"], json!({"top": 48.0, "left": 85.0, "right": 0.0}));
+        assert_eq!(
+            mac["inset"],
+            json!({"top": 48.0, "left": 85.0, "right": 0.0})
+        );
         assert_eq!(mac["radius"], 26.0);
         assert_eq!(
             serde_json::to_value(custom("linux", Some("close:"))).unwrap()["controls"],
@@ -670,14 +673,28 @@ mod tests {
     fn calibrates_light_y() {
         // 按钮随 y 一比一移动（macOS 27 实测：y = 24 时中线 21.5）：补一次差就收敛
         let fit = calibrate_y(24.0, |y| Some(y - 2.5)).unwrap();
-        assert_eq!(fit, LightsFit { y: 34.5, mid: 32.0, rounds: 2 });
+        assert_eq!(
+            fit,
+            LightsFit {
+                y: 34.5,
+                mid: 32.0,
+                rounds: 2
+            }
+        );
         // 只移一半（系统在容器里居中按钮）：第二次按一比一补不够，第三次按割线补准
         let fit = calibrate_y(24.0, |y| Some(9.5 + y / 2.0)).unwrap();
         assert_eq!(fit.rounds, 3);
         assert!((fit.y - 45.0).abs() < 1e-9 && (fit.mid - 32.0).abs() < 1e-9);
         // 一开始就对：不再试探
         let fit = calibrate_y(24.0, |y| Some(y + 8.0)).unwrap();
-        assert_eq!(fit, LightsFit { y: 24.0, mid: 32.0, rounds: 1 });
+        assert_eq!(
+            fit,
+            LightsFit {
+                y: 24.0,
+                mid: 32.0,
+                rounds: 1
+            }
+        );
         // 按钮根本不随 y 动：量满次数，取误差最小（同分取最早的一次）
         let mut tried = Vec::new();
         let fit = calibrate_y(24.0, |y| {
@@ -685,11 +702,25 @@ mod tests {
             Some(20.0)
         })
         .unwrap();
-        assert_eq!(fit, LightsFit { y: 24.0, mid: 20.0, rounds: LIGHTS_ROUNDS });
+        assert_eq!(
+            fit,
+            LightsFit {
+                y: 24.0,
+                mid: 20.0,
+                rounds: LIGHTS_ROUNDS
+            }
+        );
         assert_eq!(tried, vec![24.0, 36.0, 48.0, 60.0]);
         // 要的 y 落到范围外：夹到 0，顶住后不再重复量
         let fit = calibrate_y(24.0, |y| Some(y + 40.0)).unwrap();
-        assert_eq!(fit, LightsFit { y: 0.0, mid: 40.0, rounds: 2 });
+        assert_eq!(
+            fit,
+            LightsFit {
+                y: 0.0,
+                mid: 40.0,
+                rounds: 2
+            }
+        );
         // 量不出来（拿不到按钮 / 非有限值）：交给调用方退回常量
         assert_eq!(calibrate_y(24.0, |_| None), None);
         assert_eq!(calibrate_y(24.0, |_| Some(f64::NAN)), None);

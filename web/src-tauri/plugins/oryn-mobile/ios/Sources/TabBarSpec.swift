@@ -43,8 +43,7 @@ struct TabBarSetArgs: Decodable {
   let spec: TabBarSpec?
 }
 
-/// `tabBarReveal` 的载荷：卡片左缘（视口 x）与网页内容是否压在底栏位置上。
-struct TabBarRevealArgs: Decodable {
-  let x: Double
+/// `tabBarCover` 的载荷：网页内容是否压在底栏位置上。
+struct TabBarCoverArgs: Decodable {
   let covered: Bool
 }

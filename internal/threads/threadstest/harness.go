@@ -789,7 +789,7 @@ func (d *Orbd) onRequest(ctx context.Context, method string, params json.RawMess
 		if a != nil {
 			a.kill()
 		}
-		// 真实 orbd 在有意停止后也会上报 exited；控制面据此结束 stopping，并唤醒排队命令。
+		// 与真实 orbd 一样，停止应答前先上报 exited。
 		_ = d.ctl.Notify("agent.status", apigen.LinkCtlAgentStatusParams{ThreadID: p.ThreadID, Status: "exited", ExitCode: new(0)})
 		return apigen.LinkCtlAgentStopResult{ExitCode: 0}, nil
 	case "fs.copyTree", "fs.move":

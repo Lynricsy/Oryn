@@ -29,6 +29,8 @@ on:
       - "web/src/lib/host.ts"
       - "web/src/lib/native-tab-bar.ts"
       - "web/src/lib/native-header.ts"
+      - "web/src/lib/native-sink.ts"
+      - "web/src/lib/viewport.ts"
       - "web/src/components/layout/SinkLayout.tsx"
       - "web/src/components/layout/SectionTabBar.tsx"
       # 原生底栏垫在 WebView 之下：页面透明、侧栏列表渐隐与卡片的开合过渡都在这里
@@ -500,10 +502,11 @@ jobs:
           [[ -f ios-shot/header/.complete ]] || { echo "::error::页头演示检查没有跑完全部断言"; exit 1; }
 
       # 硬门禁：真实网页 + 真实触摸。debug 包的 ORYN_E2E_URL 钩子跳过配对，经与生产相同的 open_remote（远程能力 + 宿主命令权限）
-      # 打开本机的 mock Web UI；XCUITest 合成触摸。底栏（系统 UITabBar 垫在 WebView 之下）：点侧栏按钮打开、点卡片条关闭、
-      # 左缘拖到一半按住（连拍截图等卡片停住）、点原生「项目」、在原生底栏上横滑回第 1 项、再点收起；
+      # 打开本机的 mock Web UI；XCUITest 合成触摸。卡片开合是 WKWebView 的根滚动（bridge 8），原生按 contentOffset 跟随。
+      # 底栏（系统 UITabBar 垫在 WebView 之下）：点侧栏按钮打开、点卡片条关闭（原生 host_sink_show 逐帧开合）、
+      # 左缘拖到一半按住（连拍截图等卡片停住，揭示边 ≈ 手指位移）、点原生「项目」、在原生底栏上横滑回第 1 项、再点收起；
       # 页头（线程页）：原生接管、点胶囊开面板、进子页再返回、选「改名」打开网页对话框（select 事件 + 原生让位）、关对话框、
-      # 开关侧栏（原生页头不让位，跟着卡片吸附）。
+      # 开关侧栏与按住拖动（原生页头与卡片同帧平移，开合期间不发 header.show）。
       # 可替换图标（设置 → 外观）：点「品牌色」、点掉系统提示、等 setAlternateIconName 完成回调后的 appicon.set，再换回「黑白」。
       # 无障碍树断言在测试里，事件日志与逐区域像素断言在脚本里，结果写进 Step Summary，截图与 xcresult 随 ios-screenshot 上传。
       - name: 模拟器：真实网页与触摸驱动的原生底栏、页头与可替换图标（端到端）
@@ -514,6 +517,12 @@ jobs:
         env:
           APP: ${{ steps.app.outputs.path }}
         run: |
+          # 发布同一份 Step Summary 到产物，便于下载后核对各阶段结果。
+          mkdir -p ios-shot/e2e
+          step_summary="$GITHUB_STEP_SUMMARY"
+          export GITHUB_STEP_SUMMARY="$PWD/ios-shot/e2e/summary.md"
+          : > "$GITHUB_STEP_SUMMARY"
+          trap 'cat "$GITHUB_STEP_SUMMARY" >> "$step_summary"' EXIT
           rm -f ios-shot/e2e/.complete
           bash web/src-tauri/ci/ios-e2e-check.sh "$APP" web/dist-e2e ios-shot/e2e
           [[ -f ios-shot/e2e/.complete ]] || { echo "::error::端到端检查没有跑完全部断言"; exit 1; }
@@ -525,6 +534,8 @@ jobs:
           name: ios-screenshot
           path: ios-shot/
           if-no-files-found: ignore
+          # 保留 header/.complete 与 e2e/.complete：验收要能从产物里确认脚本跑完了全部断言（upload-artifact 默认跳过隐藏文件）
+          include-hidden-files: true
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: github.event_name == 'workflow_dispatch' && inputs.export_ios_project

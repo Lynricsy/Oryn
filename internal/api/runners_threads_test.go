@@ -3,10 +3,12 @@ package api_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -206,13 +208,20 @@ func TestRunnerThreadOfflineQueue(t *testing.T) {
 	e.orbs.ConnectRunner(e.orb)
 	th := e.created(e.create(map[string]any{"dir": e.app}))
 	first := e.waitIdle(th.ID)
+	ctx := context.Background()
 
 	// runner 离线：命令受理并排队，wake → 409 runner_offline
 	e.orbs.DisconnectRunner(e.orb)
+	// 线程服务异步更新 orb 缓存；用不触发唤醒的查询确认它已看到 stopped。
+	require.Eventually(t, func() bool {
+		err := e.svc.Command(ctx, th.ID, json.RawMessage(`{"type":"get_state"}`), nil)
+		var unavailable *threads.Error
+		return errors.As(err, &unavailable) && unavailable.Code == "agent_unavailable" && strings.Contains(unavailable.Message, "(orb stopped)")
+	}, 20*time.Second, 20*time.Millisecond, "线程服务未观察到 runner stopped")
 	replies := make(chan json.RawMessage, 1)
-	require.NoError(t, e.svc.Command(context.Background(), th.ID, json.RawMessage(`{"type":"prompt","message":"while offline"}`), func(r json.RawMessage) { replies <- r }))
+	require.NoError(t, e.svc.Command(ctx, th.ID, json.RawMessage(`{"type":"prompt","message":"while offline"}`), func(r json.RawMessage) { replies <- r }))
 	code, body := e.do("POST", "/api/v1/threads/"+th.ID+"/wake", nil)
-	assert.Equal(t, http.StatusConflict, code)
+	require.Equal(t, http.StatusConflict, code, string(body))
 	assert.Equal(t, "runner_offline", apiErr(t, body).Code)
 	select {
 	case r := <-replies:

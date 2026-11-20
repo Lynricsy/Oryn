@@ -198,7 +198,11 @@ pub fn run() {
             #[cfg(mobile)]
             mobile::host_tab_bar_set,
             #[cfg(mobile)]
-            mobile::host_tab_bar_reveal,
+            mobile::host_tab_bar_cover,
+            #[cfg(mobile)]
+            mobile::host_sink_set,
+            #[cfg(mobile)]
+            mobile::host_sink_show,
             #[cfg(mobile)]
             mobile::host_header_set,
             #[cfg(mobile)]
