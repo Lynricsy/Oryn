@@ -2,6 +2,7 @@ import { lazy, type ReactNode, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { AppShell } from "./components/layout/AppShell";
+import { ContextMenuHost } from "./components/ui/ContextMenu";
 import { Spinner } from "./components/ui/primitives";
 import { HomePage } from "./pages/HomePage";
 import type { SettingsSection } from "./pages/SettingsPage";
@@ -163,6 +164,7 @@ export function App(): ReactNode {
 					<Route path="*" element={<Navigate to="/" replace />} />
 				</Routes>
 			</Suspense>
+			<ContextMenuHost />
 		</ErrorBoundary>
 	);
 }
