@@ -273,7 +273,7 @@ orynd 以 root 运行时，沙箱降权到一个只属于这个 Oryn 实例的�
 
 | 层 | 内容 |
 |---|---|
-| 启动开关 | omp 以 `--no-tools --tools <内置工具> --no-skills --no-extensions --no-rules --no-context-files --no-lsp` 启动。Space 协调者的内置工具只有 `read,write`；全局助手的是 `read,write,web_search,generate_image`（`read` 也能读 URL）。两者各带一份覆盖层：强制关闭 autolearn、memory、checkpoint、goal、plan、lsp、项目 MCP、marketplace 自动更新、启动检查更新、direnv；`generate_image` 只在全局助手的覆盖层（`overlay-web.yml`）里打开，生成的图片写进 `~/tmp/`。环境变量从零构造，只有 `HOME PATH LANG TMPDIR PI_RPC_EMIT_TITLE PI_NOTIFICATIONS OTEL_SDK_DISABLED PI_FILE_LOCK_BACKEND ORYN_THREAD_ID`（`PI_FILE_LOCK_BACKEND=sidecar` 让 omp 的原生文件锁改用 home 里的旁路文件加 OFD 锁，不再用 abstract unix socket）；全局助手另有 `PI_PROXY` 与 `ORYN_MCP_BASE`（都是 `http://127.0.0.1:<egress_port>`），以及 MCP 路由凭据 `ORYN_MCP_TOKEN` |
+| 启动开关 | omp 以 `--no-tools --tools <内置工具> --no-skills --no-extensions --no-rules --no-context-files --no-lsp` 启动。Space 协调者的内置工具只有 `read,write`；全局助手的是 `read,write,web_search,generate_image`（`read` 也能读 URL）。两者各带一份覆盖层：强制关闭 autolearn、memory、checkpoint、goal、plan、lsp、项目 MCP、marketplace 自动更新、启动检查更新、direnv；`generate_image` 只在全局助手的覆盖层（`overlay-web.yml`）里打开，生成的图片写进 `~/tmp/`。环境变量从零构造，只有 `HOME PATH LANG TMPDIR PI_RPC_EMIT_TITLE PI_NOTIFICATIONS OTEL_SDK_DISABLED PI_INTENT_TRACING ORYN_THREAD_ID`（`PI_INTENT_TRACING=1`：Core 19 起 RPC 默认不要求工具调用带 intent，Web 的工具卡要显示它）；全局助手另有 `PI_PROXY` 与 `ORYN_MCP_BASE`（都是 `http://127.0.0.1:<egress_port>`），以及 MCP 路由凭据 `ORYN_MCP_TOKEN` |
 | 文件 | 下发 `models.yml` 与 `config.yml`（`models.yml` 里只有占位密钥），有助手可用的 MCP 服务器时再加一份 `mcp.json`（只有类型、代理地址与引用 `${ORYN_MCP_TOKEN}` 的凭据头模板，不含上游的任何请求头）；每次协调 agent 启动前重写一遍（助手用 `write` 改过的会被还原）。全局助手文件库同步到 `~/library/{shared,threads}/`（只读）。`write` 能写 HOME 里任何地方，系统提示要求助手只写 `~/library/out/`；能存进文件库的只有 `~/library/out/` 与 `~/tmp/` 下的文件；cwd 是空目录 |
 | 控制面 | 协调线程的 RPC 命令走白名单；`bash`、`eval`、终端、设置写入等命令到不了 omp |
 | Landlock | 只有本 orb 的 `<dir>/homes/<orb id>` 可写（不可执行）；可执行的只有 omp 本体与它的 ELF 解释器；只读可见 `/usr/lib`、`/lib*`、`/usr/share/zoneinfo`、`/proc`、`/sys/devices/system/cpu`、`/sys/fs/cgroup` 与少量 `/etc` 文件（清单见 `docs/protocol.md`「M9」）；ABI ≥ 4 时 TCP 只能 connect `egress_port`、不能 bind 任何端口（代理端口由子进程在施加沙箱之前监听好再交给 orbd）；ABI ≥ 6 时信号不出沙箱 |
@@ -291,7 +291,7 @@ orynd 以 root 运行时，沙箱降权到一个只属于这个 Oryn 实例的�
 | systemd 生产单元，Ubuntu 23.10+ 默认 AppArmor | 探测失败时不用 | 有（6.8 = ABI 4） | 不适用 | 不可用：没有 PID 命名空间、同一用户，ABI < 6 拦不住信号（以 root 运行 orynd 或放开 user namespace 即可） |
 | Docker 里的 orynd（默认 seccomp，容器内 root） | 无 | 宿主内核 Landlock ABI ≥ 4，且 Docker ≥ 20.10.18 | 专用账号（容器里要有 `useradd`，或预先建好并写进 `coordinator.user`） | 文件 + 按端口限制的网络；ABI < 4 时不可用 |
 
-omp 的原生文件锁（会话所有权租约等）在 Linux 上默认 bind 一个 abstract unix datagram socket；协调宿主给 omp 设了 `PI_FILE_LOCK_BACKEND=sidecar`（Oryn Core `oryn-v18.19.0-3` 起），锁改成 `~/.omp/run/…` 下的旁路文件加 OFD 写锁，沙箱因此可以禁止 `AF_UNIX` 的 `socket(2)`（只留 Bun 需要的、生来已连接的 stream `socketpair`）：宿主上的 abstract socket 与 `/dev/log` 这类带路径的 0666 socket 在任何内核上都联系不上。
+omp 的原生文件锁（会话所有权租约等）在 Linux 上是 `~/.omp/run/…` 下的旁路文件加 OFD 写锁（Core 19 起上游即如此；此前 Oryn Core 靠 `PI_FILE_LOCK_BACKEND=sidecar` 切换，该变量已不再设置）。它对旧版 omp 的 abstract socket 探测在 `socket(AF_UNIX)` 被拒时读作「未持有」（Oryn Core 的补丁，见其 ORYN.md），沙箱因此可以禁止 `AF_UNIX` 的 `socket(2)`（只留 Bun 需要的、生来已连接的 stream `socketpair`）：宿主上的 abstract socket 与 `/dev/log` 这类带路径的 0666 socket 在任何内核上都联系不上。
 
 `deploy/systemd/orynd.service` 不用改：`<data_dir>/coordinator` 在 `ReadWritePaths` 之内，单元没有限制命名空间与系统调用。**如果你自己给单元加了 `RestrictNamespaces=`，协调宿主会退到「按端口限制」模式**；加了 `SystemCallFilter=` 且挡掉了 `landlock_*` 或 `seccomp`，协调功能会不可用。
 

@@ -1131,7 +1131,7 @@ interface PipeStreamInfo {
 	open: boolean;
 }
 type ModelResolutionSource = "bundled" | "cache" | "models.dev" | "provider";
-type KnownApi = "openai-completions" | "openai-responses" | "openrouter" | "openai-codex-responses" | "azure-openai-responses" | "anthropic-messages" | "bedrock-converse-stream" | "google-generative-ai" | "google-gemini-cli" | "google-vertex" | "ollama-chat" | "cursor-agent" | "factory-droid-agent" | "gitlab-duo-agent" | "devin-agent" | "apple-foundation-models";
+type KnownApi = "openai-completions" | "openai-responses" | "openrouter" | "openai-codex-responses" | "azure-openai-responses" | "anthropic-messages" | "bedrock-converse-stream" | "google-generative-ai" | "google-gemini-cli" | "google-vertex" | "kiro-api" | "ollama-chat" | "cursor-agent" | "factory-droid-agent" | "gitlab-duo-agent" | "devin-agent" | "antigravity-acp" | "apple-foundation-models";
 type Api = KnownApi | (string & {});
 declare const MODEL_KINDS: readonly [
 	"chat",
@@ -1207,9 +1207,9 @@ interface ThinkingConfig {
 	requiresEffort?: boolean;
 	/**
 	 * The catalog has no evidence this model reasons (unclassified id, no
-	 * capability metadata). The ladder is offered for the user to opt into:
-	 * sessions leave thinking unset until the user picks an effort, and a
-	 * request without an effort goes out as non-reasoning (see
+	 * capability metadata). The provisional ladder follows the session/default
+	 * effort until live discovery verifies its controls. A request without an
+	 * effort goes out as non-reasoning (see
 	 * `withoutUnverifiedThinking`).
 	 */
 	unverified?: boolean;
@@ -2017,6 +2017,12 @@ interface ResolvedOpenAIResponsesCompat extends ResolvedOpenAISharedCompat {
 	 * input into the in-flight response. Rule-owned: GPT-6 family.
 	 */
 	supportsSteering: boolean;
+	/**
+	 * Whether the model never prompt-caches the top-level `instructions` field,
+	 * so system prompts must ride as leading `developer` input items on every
+	 * host. Rule-owned: GPT-6.2 (openai/codex#62312).
+	 */
+	uncachedInstructions: boolean;
 	/** Inject the `# Juice: 0 !important` developer item when reasoning is forced off (gpt-5.6+). */
 	requiresReasoningOffJuiceInstruction: boolean;
 	/**
@@ -2210,6 +2216,10 @@ interface OllamaCompat {
 type ResolvedOllamaCompat = Required<OllamaCompat>;
 type CompatConfigOf<TApi extends Api> = TApi extends "openai-completions" | "openrouter" | "openai-responses" | "azure-openai-responses" | "openai-codex-responses" ? OpenAICompat : TApi extends "anthropic-messages" ? AnthropicCompat : TApi extends "bedrock-converse-stream" ? BedrockCompat : TApi extends "devin-agent" ? DevinCompat : TApi extends "google-generative-ai" | "google-vertex" | "google-gemini-cli" ? GoogleCompat : TApi extends "ollama-chat" ? OllamaCompat : undefined;
 type CompatOf<TApi extends Api> = TApi extends "openrouter" ? ResolvedOpenRouterCompat : TApi extends "openai-completions" ? ResolvedOpenAICompat : TApi extends "openai-responses" | "azure-openai-responses" | "openai-codex-responses" ? ResolvedOpenAIResponsesCompat : TApi extends "anthropic-messages" ? ResolvedAnthropicCompat : TApi extends "bedrock-converse-stream" ? ResolvedBedrockCompat : TApi extends "devin-agent" ? ResolvedDevinCompat : TApi extends "google-generative-ai" | "google-vertex" | "google-gemini-cli" ? ResolvedGoogleCompat : TApi extends "ollama-chat" ? ResolvedOllamaCompat : undefined;
+interface SnapcompactShapeConfig {
+	variant: string;
+	frameSize?: number;
+}
 interface RemoteCompactionConfig<TApi extends Api = Api> {
 	/** Enables provider-native compaction for providers not enabled by built-in policy. */
 	enabled?: boolean;
@@ -2288,7 +2298,7 @@ interface AntigravityModelWireProfile {
 	/** Fixed `generationConfig.maxOutputTokens` the client always sends. */
 	maxOutputTokens?: number;
 	/** SKU thinking level; the native client sends it in preference to a budget. */
-	thinkingLevel?: "LOW" | "MEDIUM" | "HIGH";
+	thinkingLevel?: "LOW" | "MEDIUM" | "HIGH" | "xhigh";
 	/** SKU thinking budget (`-1` is dynamic), sent when no level is advertised. */
 	thinkingBudget?: number;
 }
@@ -2380,6 +2390,14 @@ interface Model<TApi extends Api = Api> {
 	 * gateway in front of a vendor with a higher limit.
 	 */
 	imageCountBudget?: number;
+	/**
+	 * Snapcompact frame shape for this model, from user or extension
+	 * configuration. Replaces the model line's eval default (a gateway may
+	 * serve a model whose readers or network path favor another shape); an
+	 * explicit `snapcompact.shape` setting still wins, and the frame stays
+	 * within the host's `image-max-edge`.
+	 */
+	snapcompactShape?: SnapcompactShapeConfig;
 	/**
 	 * Native provider tool-call support. `false` is the only unsupported signal:
 	 * `true` and `undefined` both mean callers may use native tools. Catalog and
@@ -3060,6 +3078,13 @@ interface OpenAIResponsesHistoryPayload {
 	provider?: string;
 	dt?: boolean;
 	items: Array<Record<string, unknown>>;
+	/**
+	 * Set on a turn whose request was retried after the server refused replayed
+	 * encrypted reasoning (key rotation, another credential). That retry carried
+	 * no encrypted reasoning from earlier turns, and later requests omit it too,
+	 * so the refused blobs are never sent again.
+	 */
+	encryptedReasoningFloor?: boolean;
 }
 type AnthropicOutputEffort = "low" | "medium" | "high" | "xhigh" | "max";
 interface AnthropicToolChange {
@@ -3151,7 +3176,21 @@ interface GeminiNativeContentPayload {
 		[key: string]: unknown;
 	};
 }
-type ProviderPayload = OpenAIResponsesHistoryPayload | AnthropicMessagePayload | AnthropicCompactionPayload | CursorHistoryPayload | GeminiNativeContentPayload;
+interface AntigravityCliCheckpoint {
+	steps: number;
+	generations: number;
+	executions: number;
+}
+interface AntigravityCliPayload {
+	type: "antigravityCli";
+	/** agy conversation (ACP session) the step ran in. */
+	conversationId: string;
+	/** Structural digest of the transcript through this message. */
+	digest: string;
+	/** Present on the step that ended agy's turn. */
+	checkpoint?: AntigravityCliCheckpoint;
+}
+type ProviderPayload = OpenAIResponsesHistoryPayload | AnthropicMessagePayload | AnthropicCompactionPayload | CursorHistoryPayload | GeminiNativeContentPayload | AntigravityCliPayload;
 interface ProviderInputTransformation {
 	type: string;
 	path?: string;
@@ -3309,6 +3348,8 @@ interface AssistantMessage {
 	providerPayload?: ProviderPayload;
 	/** In-memory fallback credit handle attached when a refusal response carries a fallback credit token. */
 	fallbackCreditHandle?: AnthropicFallbackCreditHandle;
+	/** On a refusal: how many of other models' reasoning blocks the refused request replayed as text. */
+	demotedReasoningBlocks?: number;
 	timestamp: number;
 	duration?: number;
 	ttft?: number;
@@ -3423,6 +3464,8 @@ interface AnthropicFallbackCreditHandle {
 	expiresAt: number;
 	/** The refused response's content, in `AssistantMessage` block form. */
 	refusedContent?: AssistantMessage["content"];
+	/** How many of other models' reasoning blocks the refused request replayed as text. */
+	demotedReasoningBlocks?: number;
 }
 interface ToolCounters {
 	readonly total: number;
@@ -3553,6 +3596,8 @@ interface CustomMessage<T = unknown> {
 	details?: T;
 	/** Who initiated this message for billing/attribution semantics. */
 	attribution?: MessageAttribution;
+	/** Rendered and saved, never sent to the model (like `!!` bash rows). */
+	excludeFromContext?: boolean;
 	timestamp: number;
 }
 interface HookMessage<T = unknown> {
@@ -3701,7 +3746,7 @@ interface ShellTraceUnit {
 	bytes?: number;
 	/** The unit's source; present only for unlocated units (an eval or function body). */
 	source?: ShellTraceBytes;
-	/** Opaque canonical native syntax archive. Only pi-shell may interpret it. */
+	/** Opaque canonical native syntax archive. Only omp-shell may interpret it. */
 	syntax?: unknown;
 	/** Compiler-known wrapper bytes removed from this unit's displayed source. */
 	projection?: number;
@@ -3959,10 +4004,13 @@ interface AgentProgress {
 	/** Cumulative input + output + cacheWrite tokens across all turns. Excludes cacheRead (re-reads cached context every turn, making cumulative sum misleading). */
 	tokens: number;
 	/**
-	 * Current per-turn context size: latest assistant message's `usage.totalTokens`.
-	 * This is the number to compare against `contextWindow` — what compaction
-	 * decides on, what the user typically reads as "how full is the context".
-	 * Distinct from `tokens`, which is a lifetime billing-volume counter.
+	 * Current per-turn occupied context: the latest assistant message's
+	 * provider-reported `usage.contextTokens` when present, else its billable
+	 * `totalTokens` minus orchestration tokens (the same accounting session
+	 * compaction uses). This is the number to compare against `contextWindow` —
+	 * what compaction decides on, what the user typically reads as "how full
+	 * is the context". Distinct from `tokens`, which is a lifetime
+	 * billing-volume counter.
 	 */
 	contextTokens?: number;
 	/** Model's context window in tokens, when known. Lets the UI render `<curr>/<window>` gauges. */
@@ -4176,11 +4224,11 @@ interface OutputSummary {
 	};
 	/** Configured per-line column cap in effect (UTF-8 bytes), when > 0. */
 	columnMax?: number;
-	/** Artifact ID for internal URL access (artifact://<id>) when truncated */
+	/** Spill id of the full output (`local://<id>.log`) when truncated */
 	artifactId?: string;
 	/**
 	 * Bytes the artifact cap dropped from the middle of the saved file. When
-	 * set, `artifact://<id>` holds a head/tail sample, not the full output.
+	 * set, `local://<id>.log` holds a head/tail sample, not the full output.
 	 */
 	artifactElidedBytes?: number;
 	/** Full raw output was not completely saved; artifactId is unavailable. */
@@ -4261,8 +4309,8 @@ interface LimitsMeta {
 	/**
 	 * `unit` may be absent in sessions persisted before it was recorded. `lines` is
 	 * the first-to-last range of cut lines, and `selectorBase` the target a
-	 * `:raw:<line>-<line>` selector reads one of them whole from (an artifact's
-	 * `artifact://<id>` stands in when absent).
+	 * `:raw:<line>-<line>` selector reads one of them whole from (the spill's
+	 * `local://<id>.log` stands in when absent).
 	 */
 	columnTruncated?: {
 		maxColumn: number;
@@ -4339,6 +4387,8 @@ interface CustomMessage$1<T = unknown> {
 	details?: T;
 	/** Who initiated this message for billing/attribution semantics. */
 	attribution?: MessageAttribution;
+	/** Rendered and saved, never sent to the model (like `!!` bash rows). */
+	excludeFromContext?: boolean;
 	timestamp: number;
 }
 interface HookMessage$1<T = unknown> {
@@ -4399,6 +4449,22 @@ interface BashResult extends OutputSummary {
 	workingDir?: string;
 	/** Terminal graphics extracted from raw stdout before sanitization or truncation. */
 	images?: ImageContent[];
+	/**
+	 * Set when the command overlapped another one on the session's persistent
+	 * shell and so ran in a fork of it, which saw the shell's state as of before
+	 * that command.
+	 */
+	fork?: ShellForkOutcome;
+}
+interface ShellForkOutcome {
+	/**
+	 * What it set (variables, functions, aliases, options, traps) carried back into
+	 * the session's shell, a name both set keeping the value of the command that
+	 * ended last; `false`: it stayed in the fork.
+	 */
+	carried: boolean;
+	/** It left background jobs running in the fork, where later commands' `jobs`, `wait` and `%N` miss them. */
+	jobs: boolean;
 }
 type JobWidgetState = 
 /** The cheap model is writing the spec; the view holds the model-free fallback meanwhile. */
@@ -4699,6 +4765,8 @@ interface Rule {
 	agents?: string[];
 	/** Per-rule TTSR interrupt mode override (falls back to global ttsr.interruptMode). */
 	interruptMode?: "never" | "prose-only" | "tool-only" | "always";
+	/** Per-rule TTSR repeat override (falls back to global ttsr.repeatMode); `always` is a one-turn gap, so the retry or continuation its own reminder spawns cannot re-fire it. */
+	repeatMode?: "once" | "after-gap" | "always";
 	/** Source metadata */
 	_source: SourceMeta$1;
 }
@@ -4787,11 +4855,6 @@ interface SessionHeader {
 	kind?: "chat";
 	/** Local-only Task candidate, gated by the actual request model's cache policy; omitted from shares and HTML. */
 	taskPromptCacheKey?: string;
-	/**
-	 * Source session file of a read-only seance fork. Its artifacts stay in the
-	 * source: `history://`, `artifact://`, and `agent://` read them from there.
-	 */
-	seanceSource?: string;
 }
 interface SessionEntryBase {
 	type: string;
@@ -4816,6 +4879,33 @@ interface SessionMessageEntry extends SessionEntryBase {
 	type: "message";
 	message: AgentMessage;
 }
+type JudgmentRecordAnswer = number | [
+	choice: string,
+	confidence: number
+] | [
+	score: number,
+	confidence: number
+] | [
+	top: number,
+	bottom: number,
+	left: number,
+	right: number,
+	confidence: number
+];
+interface JudgmentRecord {
+	/** `sha256` of the canonical state (and image digests): the cache's `states.id`. */
+	state: string;
+	/** Answers the request produced, by question id; empty when it failed. */
+	answers: Record<string, JudgmentRecordAnswer>;
+	/** Questions of the same judgment the cache answered: not billed and not in `answers`. */
+	cached?: number;
+}
+interface CompletionRecord {
+	/** User-turn text the model was sent; absent when the request read the conversation at the entry's `parentId`. */
+	prompt?: string;
+	/** Reply text as the model produced it, before parsing. */
+	reply?: string;
+}
 interface ModelUsageEntry extends SessionEntryBase {
 	type: "model_usage";
 	purpose: string;
@@ -4835,6 +4925,14 @@ interface ModelUsageEntry extends SessionEntryBase {
 		sentAt: number;
 		hit: boolean;
 	};
+	/** Wall time of the request in milliseconds. */
+	duration?: number;
+	/** Milliseconds until the first streamed token. */
+	ttft?: number;
+	/** What a native judge was asked and answered. */
+	judgment?: JudgmentRecord;
+	/** What a text side channel (title generation) was sent and replied. */
+	completion?: CompletionRecord;
 }
 interface ThinkingLevelChangeEntry extends SessionEntryBase {
 	type: "thinking_level_change";
@@ -4988,6 +5086,8 @@ interface CustomMessageEntry<T = unknown> extends SessionEntryBase {
 	display: boolean;
 	/** Who initiated this message for billing/attribution semantics. */
 	attribution?: MessageAttribution;
+	/** Rendered and saved, never sent to the model (like `!!` bash rows). */
+	excludeFromContext?: boolean;
 }
 type SessionEntry = SessionMessageEntry | ModelUsageEntry | ThinkingLevelChangeEntry | ModelChangeEntry | ServiceTierChangeEntry | CompactionEntry | BranchSummaryEntry | CustomEntry | CustomMessageEntry | LabelEntry | TitleChangeEntry | TtsrInjectionEntry | SessionInitEntry | ModeChangeEntry | CredentialPinEntry | ResetBoundaryEntry;
 type FileEntry = SessionHeader | SessionEntry;
@@ -5055,8 +5155,10 @@ interface SubagentEventPayload {
 	event: AgentSessionEvent;
 }
 type CacheWarmingMode = "off" | "streaming" | "idle";
+type CacheWarmingRentMethod = "prewarm" | "replay";
 interface CacheWarmingRefreshStart {
 	phase: "streaming" | "idle";
+	method: CacheWarmingRentMethod;
 	provider: string;
 	model: string;
 }
@@ -5064,7 +5166,10 @@ interface CacheWarmingRefreshEnd extends CacheWarmingRefreshStart {
 	outcome: "hit" | "miss" | "error" | "aborted";
 	/** Present only when onWarmed recorded this refresh, including an aborted one the provider had already accepted. */
 	usage?: Usage;
-	/** Why warming stopped; absent when warming continues (the refresh rescheduled, or a new request replaced the run). */
+	/**
+	 * Why warming stopped; absent when warming continues (the refresh rescheduled, a rejected pre-warm fell back
+	 * to a replay, or a new request replaced the run).
+	 */
 	warmingStopReason?: string;
 }
 interface RetryErrorUpdate {
@@ -5073,11 +5178,11 @@ interface RetryErrorUpdate {
 	note: string;
 	retryRecovery: AssistantRetryRecovery;
 }
-type MemoryBackendId = "off" | "local" | "hindsight" | "mnemopi" | "sharpshooter";
 interface SessionLeaseReport {
 	held: string[];
 	unknown: string[];
 }
+type MemoryBackendId = "off" | "local" | "hindsight" | "mnemopi" | "sharpshooter";
 type AsyncJobSnapshotItem = Pick<AsyncJob, "id" | "type" | "status" | "label" | "intent" | "startTime" | "endTime" | "endedAt" | "agentId" | "ownerId"> & {
 	cancellationPending?: boolean;
 	resultPreview?: string;
@@ -5147,26 +5252,23 @@ interface SessionQueuedMessage extends RestoredQueuedMessage {
 	editable: boolean;
 	timestamp: number;
 }
-type AgentSessionEvent = Exclude<AgentEvent, {
-	type: "agent_end";
-}> | (Extract<AgentEvent, {
-	type: "agent_end";
-}> & {
-	/** False when an async delivery will resume the session before its true final settle. */
-	isTerminal?: boolean;
+type AgentSessionEvent = AgentEvent | {
+	type: "agent_pause";
+	/** Messages of the model loop that stopped, as its `agent_end` would carry them. */
+	messages: AgentMessage[];
 	/**
-	 * True when the agent finished its turn: the end is terminal, or the session resumes
-	 * only for queued input or background-job results. False while the agent continues its
-	 * own work (retry, compaction continuation, stop-time reminders).
+	 * True when the model finished its turn and something outside it resumes the run:
+	 * queued input, a peer message, a background-job result or a child agent. False
+	 * while the session continues the model's own work (retry, compaction continuation,
+	 * stop-time reminders, hook continuations).
 	 */
-	yielded?: boolean;
+	yielded: boolean;
 	/**
-	 * True on a non-terminal end whose only possible resume is a background-job result
-	 * (no queued input, no continuation the agent scheduled itself). The wake is not
-	 * guaranteed: a cancelled or suppressed job never delivers one.
+	 * True when nothing the session scheduled resumes the run: it waits only on outside
+	 * work (a background job, child agent or peer message; see {@link WakeSources}).
 	 */
-	awaitingAsyncWork?: boolean;
-}) | {
+	awaiting: boolean;
+} | {
 	type: "auto_compaction_start";
 	reason: "threshold" | "overflow" | "idle" | "incomplete";
 	action: "context-full" | "remote" | "handoff" | "shake" | "snapcompact";
@@ -5303,6 +5405,7 @@ declare const debugSchema: FluentType<{
 	access_type?: "write" | "read" | "readWrite" | undefined;
 	levels?: number | undefined;
 	timeout?: number | undefined;
+	pid?: number | undefined;
 	args?: string[] | undefined;
 	adapter?: string | undefined;
 	file?: string | undefined;
@@ -5315,7 +5418,6 @@ declare const debugSchema: FluentType<{
 	frame_id?: number | undefined;
 	scope_id?: number | undefined;
 	variable_ref?: number | undefined;
-	pid?: number | undefined;
 	port?: number | undefined;
 	host?: string | undefined;
 	memory_reference?: string | undefined;
@@ -5340,6 +5442,7 @@ declare const debugSchema: FluentType<{
 	access_type?: "write" | "read" | "readWrite" | undefined;
 	levels?: number | undefined;
 	timeout?: number | undefined;
+	pid?: number | undefined;
 	args?: string[] | undefined;
 	adapter?: string | undefined;
 	file?: string | undefined;
@@ -5352,7 +5455,6 @@ declare const debugSchema: FluentType<{
 	frame_id?: number | undefined;
 	scope_id?: number | undefined;
 	variable_ref?: number | undefined;
-	pid?: number | undefined;
 	port?: number | undefined;
 	host?: string | undefined;
 	memory_reference?: string | undefined;
@@ -5536,6 +5638,20 @@ interface BtwHistoryRecord extends BtwHistoryTurn {
 	title?: string;
 	followUps?: readonly BtwHistoryTurn[];
 }
+type AgentEndEvent = Extract<AgentEvent, {
+	type: "agent_end";
+}>;
+type WireAgentEnd = AgentEndEvent & {
+	/** False while the run goes on: a continuation, queued input or outside work resumes it. */
+	isTerminal: boolean;
+	/** The model finished its turn; false while the session continues its own work (retry, reminders). */
+	yielded: boolean;
+	/** Only outside work (a background job, child agent or peer message) can resume the run. */
+	awaitingAsyncWork?: true;
+};
+type WireSessionEvent = Exclude<AgentSessionEvent, {
+	type: "agent_pause" | "agent_end";
+}> | WireAgentEnd;
 type AvailableSlashCommandSource = "builtin" | "skill" | "extension" | "custom" | "mcp_prompt" | "file";
 interface RpcBrowserHostInfo {
 	/** Websocket URL the host dials as the relay extension (carries its token). */
@@ -5736,6 +5852,7 @@ export type RpcCommand = {
 	id?: string;
 	type: "set_fast_mode";
 	enabled: boolean;
+	ultrafast?: boolean;
 } | {
 	id?: string;
 	type: "set_ultrafast_mode";
@@ -6620,6 +6737,17 @@ export type RpcCommand = {
 } | {
 	id?: string;
 	type: "get_btw_history";
+} | {
+	id?: string;
+	type: "composer_prediction_request";
+} | {
+	id?: string;
+	type: "composer_prediction_feedback";
+	action: RpcComposerPredictionFeedback;
+	rank?: number;
+} | {
+	id?: string;
+	type: "abort_compaction";
 } | OrynRpcCommand | OrynUiParityRpcCommand | OrynToolExecRpcCommand;
 export interface RpcSessionState {
 	collab?: RpcCollabState;
@@ -6631,6 +6759,8 @@ export interface RpcSessionState {
 	availableThinkingLevels?: ThinkingLevel[];
 	isStreaming: boolean;
 	isCompacting: boolean;
+	/** Manual compaction that prepares without blocking the current turn. */
+	isBackgroundCompacting?: boolean;
 	steeringMode: "all" | "one-at-a-time";
 	followUpMode: "all" | "one-at-a-time";
 	interruptMode: "immediate" | "wait";
@@ -6648,6 +6778,8 @@ export interface RpcSessionState {
 	ultrafastSupported: boolean;
 	/** `/fast ultra` 对当前模型已开启。 */
 	ultrafastEnabled: boolean;
+	/** Fast mode runs at the model's Ultrafast tier; absent from hosts that predate it. */
+	fastModeUltrafast?: boolean;
 	/** `/slow` applies to the active model (flex tier on OpenAI/Google, low priority on Claude subscriptions). */
 	slowModeSupported: boolean;
 	/** `/slow` is on for the active model; always `false` when `slowModeSupported` is `false`. */
@@ -6662,7 +6794,7 @@ export interface RpcSessionState {
 	tokensPerSecond: number | null;
 	messageCount: number;
 	queuedMessageCount: number;
-	/** Background jobs or deliveries can still inject a follow-up and wake the session. */
+	/** Background jobs, their deliveries, child agents or queued peer messages can still wake the session. */
 	hasPendingAsyncWork: boolean;
 	/** Same predicate as `session_settled`: idle with nothing queued or pending. */
 	isSettled: boolean;
@@ -8240,6 +8372,7 @@ export type RpcResponse = {
 	data: {
 		enabled: boolean;
 		active: boolean;
+		ultrafast: boolean;
 	};
 } | {
 	id?: string;
@@ -9650,6 +9783,24 @@ export type RpcResponse = {
 	data: {
 		records: readonly RpcBtwHistoryRecord[];
 	};
+} | {
+	id?: string;
+	type: "response";
+	command: "composer_prediction_request";
+	success: true;
+} | {
+	id?: string;
+	type: "response";
+	command: "composer_prediction_feedback";
+	success: true;
+} | {
+	id?: string;
+	type: "response";
+	command: "abort_compaction";
+	success: true;
+	data: {
+		aborted: boolean;
+	};
 } | OrynRpcResponse | OrynUiParityRpcResponse | OrynToolExecRpcResponse | {
 	id?: string;
 	type: "response";
@@ -9681,6 +9832,16 @@ export interface RpcBtwDeltaFrame {
 export interface RpcBtwRecordFrame {
 	type: "btw_record";
 	record: RpcBtwHistoryRecord;
+}
+/** How the host used the composer prediction it was offered. */
+export type RpcComposerPredictionFeedback = "shown" | "accepted" | "dismissed";
+/**
+ * The composer prediction for the conversation as it stands: the user's likely next message,
+ * most likely first. Empty when a prediction was withdrawn (dismissed, or the conversation moved on).
+ */
+export interface RpcComposerPredictionFrame {
+	type: "composer_prediction";
+	choices: string[];
 }
 export interface RpcSubagentLifecycleFrame {
 	type: "subagent_lifecycle";
@@ -9738,7 +9899,7 @@ export type RpcDeltaMessageUpdateFrame = Omit<Extract<RpcMessageEventFrame, {
 	assistantMessageEvent: RpcDeltaAssistantMessageEvent;
 };
 /** Session event as written to stdout by default: message lifecycle events carry a `messageId`. */
-export type RpcAgentSessionEventFrame = Exclude<AgentSessionEvent, {
+export type RpcAgentSessionEventFrame = Exclude<WireSessionEvent, {
 	type: RpcMessageEventType;
 }> | RpcMessageEventFrame;
 /** Every session event shape RPC mode can write, including the opt-in `messageUpdates: "delta"` projection. */
@@ -9779,6 +9940,14 @@ export type RpcExtensionUIRequest = {
 	title: string;
 	options: string[];
 	optionDetails?: RpcExtensionUISelectOptionDetail[];
+	/** Index into `options` to focus first. */
+	initialIndex?: number;
+	/** Marker style for the first `markableCount` options. */
+	selectionMarker?: "radio" | "checkbox";
+	/** For `checkbox`: indices into `options` currently checked. */
+	checkedIndices?: number[];
+	/** Leading options that get a marker; trailing ones are actions. */
+	markableCount?: number;
 	timeout?: number;
 } | {
 	type: "extension_ui_request";

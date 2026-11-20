@@ -629,6 +629,8 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 		env = loginEnv(r.ctx, cwd, env)
 		env["PI_RPC_EMIT_TITLE"] = "1"
 		env["PI_NOTIFICATIONS"] = "off"
+		// Core 19 起 RPC 默认不要求工具调用带 intent；Web 的工具卡与后台任务标题要显示它
+		env["PI_INTENT_TRACING"] = "1"
 		env["ORYN_THREAD_ID"] = p.ThreadID
 		if r.sshLn != nil {
 			env["ORYN_SSH"] = "1" // M18：orb 扩展据此注册 ssh_exec_many 与 SSH 提示

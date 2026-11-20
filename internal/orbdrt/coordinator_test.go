@@ -209,7 +209,7 @@ func TestCoordinatorAgentStart(t *testing.T) {
 	assert.Equal(t, cwd, rec.Cwd)
 	assert.Equal(t, map[string]string{
 		"HOME": rt.home, "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "TMPDIR": filepath.Join(rt.home, "tmp"),
-		"PI_RPC_EMIT_TITLE": "1", "PI_NOTIFICATIONS": "off", "OTEL_SDK_DISABLED": "true", "PI_FILE_LOCK_BACKEND": "sidecar",
+		"PI_RPC_EMIT_TITLE": "1", "PI_NOTIFICATIONS": "off", "OTEL_SDK_DISABLED": "true", "PI_INTENT_TRACING": "1",
 		"ORYN_THREAD_ID": thread,
 	}, rec.Env)
 	ov, err := os.ReadFile(overlay)

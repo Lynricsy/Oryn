@@ -895,7 +895,7 @@ func probesInsideSandbox(t *testing.T, portMode bool) {
 	}
 	// M19（全局助手，web）：PI_PROXY 与 ORYN_MCP_BASE 指向沙箱内唯一可连的回环出站监听（正向代理由控制面策略放行或拒绝），
 	// ORYN_MCP_TOKEN 是 /mcp/ 路由的凭据。
-	assert.ElementsMatch(t, []string{"HOME", "PATH", "LANG", "TMPDIR", "PI_RPC_EMIT_TITLE", "PI_NOTIFICATIONS", "OTEL_SDK_DISABLED", "PI_FILE_LOCK_BACKEND", "ORYN_THREAD_ID", "PI_PROXY", "ORYN_MCP_BASE", "ORYN_MCP_TOKEN"}, got.EnvKeys)
+	assert.ElementsMatch(t, []string{"HOME", "PATH", "LANG", "TMPDIR", "PI_RPC_EMIT_TITLE", "PI_NOTIFICATIONS", "OTEL_SDK_DISABLED", "PI_INTENT_TRACING", "ORYN_THREAD_ID", "PI_PROXY", "ORYN_MCP_BASE", "ORYN_MCP_TOKEN"}, got.EnvKeys)
 	if os.Geteuid() == 0 {
 		assert.Equal(t, accountUID(t, e.cfg.Dir), got.UID)
 		assert.NotEqual(t, 65534, got.UID)
@@ -1055,7 +1055,7 @@ func realOmpTurn(t *testing.T, portMode bool, maxABI int) {
 	for _, f := range frames {
 		assert.NotEqual(t, "session-persistence", f["source"], "会话持久化失败：%v", f)
 	}
-	// 会话持久化：omp 的原生文件锁（PI_FILE_LOCK_BACKEND=sidecar，home 里的旁路文件）在沙箱里可用，会话 .jsonl 写进 home 且有条目。
+	// 会话持久化：omp 的原生文件锁（home 里的旁路文件 + OFD 锁）在沙箱里可用，会话 .jsonl 写进 home 且有条目。
 	sessDir := filepath.Join(e.h.homeDir(e.orbID), ".oryn", "threads", coordThread)
 	var jsonl []string
 	require.Eventually(t, func() bool {
@@ -1075,7 +1075,7 @@ func realOmpTurn(t *testing.T, portMode bool, maxABI int) {
 	}, 30*time.Second, 50*time.Millisecond, "会话文件里没有回合的条目（%v）", jsonl)
 	// 会话的所有权租约是 ~/.omp/run/session-owners 下的旁路文件（abstract socket 后端不会留下文件）。
 	owners, err := os.ReadDir(filepath.Join(e.h.homeDir(e.orbID), ".omp", "run", "session-owners"))
-	require.NoError(t, err, "sidecar 文件锁后端没有生效")
+	require.NoError(t, err, "旁路文件锁没有生效")
 	assert.NotEmpty(t, owners)
 	assert.NotEmpty(t, *paths)
 	model := 0
