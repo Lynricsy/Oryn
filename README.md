@@ -78,6 +78,7 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 - **bash 的 Pseudo 视图**：运行中逐行显示执行轨迹，正在执行的那行标出，失败与跳过一眼可见。
 - **思考档位**：模型胶囊右下角的图标就是这一回合实际生效的档位。
 - **输入框**：选中回复一键引用、`#` 引用 GitHub issue / PR，可选的「下一条消息预测」按 Tab 插入。
+- **右键菜单与「解释」**：右键、菜单键或长按都弹同一份上下文菜单；选中一段文字可让模型解释、翻译、就此提问或跑自定义快捷动作，走旁路提问复用主会话的前缀缓存，结果显示在选区旁的解释卡里。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/file-preview-dark.png">
