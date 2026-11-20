@@ -56,6 +56,19 @@ func (s *Server) ListProviders(w http.ResponseWriter, r *http.Request) {
 		}
 		out.Providers = append(out.Providers, providerJSON(p, now))
 	}
+	if s.Orbs != nil && s.Orbs.Service != nil {
+		d := s.Orbs.Service.Defaults()
+		var od apigen.OrbDefaults
+		if d.Provider != "" {
+			od.Provider = new(d.Provider)
+		}
+		if d.Type != "" {
+			od.Type = new(d.Type)
+		}
+		if od.Provider != nil || od.Type != nil {
+			out.OrbDefaults = &od
+		}
+	}
 	WriteJSON(w, http.StatusOK, out)
 }
 

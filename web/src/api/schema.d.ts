@@ -7192,6 +7192,12 @@ export interface components {
         };
         ProviderList: {
             providers: components["schemas"]["Provider"][];
+            orbDefaults?: components["schemas"]["OrbDefaults"];
+        };
+        /** @description 控制面配置的 `orb_defaults`（新建 orb 省略 provider / 类型时，排在项目默认之后、provider 的 `defaultType` 之前）； 未配置的字段省略。客户端据此预先显示新 orb 会落到哪个 provider / 类型。 */
+        OrbDefaults: {
+            provider?: string;
+            type?: string;
         };
         ProviderCreateRequest: {
             name: string;

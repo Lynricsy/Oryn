@@ -643,6 +643,9 @@ func (s *Service) armConnectTimer(orbID, state string, seq int64) {
 	})
 }
 
+// Defaults 返回配置的 orb_defaults（客户端据此预先显示新 orb 的落点，解析顺序见 resolveTarget）。
+func (s *Service) Defaults() config.OrbDefaults { return s.cfg.Defaults }
+
 // resolveProvider 按「显式 → 项目默认 → orb_defaults → 源 orb → 唯一 provider」确定 provider。
 // 内置的 @host 只给协调 orb 用：显式指定它一律拒绝，「唯一 provider」回退也不计入它。
 func (s *Service) resolveProvider(ctx context.Context, name string, prj *db.Project, src *db.Orb) (db.Provider, error) {

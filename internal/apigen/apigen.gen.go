@@ -7891,6 +7891,12 @@ type OrbAttachmentEnsureResult struct {
 // OrbBrowserStatus orb 桌面上唯一那个 Chromium 的状态（由 orbd 启动；进程退出后不自动重启，也不做空闲回收）
 type OrbBrowserStatus string
 
+// OrbDefaults 控制面配置的 `orb_defaults`（新建 orb 省略 provider / 类型时，排在项目默认之后、provider 的 `defaultType` 之前）； 未配置的字段省略。客户端据此预先显示新 orb 会落到哪个 provider / 类型。
+type OrbDefaults struct {
+	Provider *string `json:"provider,omitempty"`
+	Type     *string `json:"type,omitempty"`
+}
+
 // OrbDesktop defines model for OrbDesktop.
 type OrbDesktop struct {
 	// Browser orb 桌面上唯一那个 Chromium 的状态（由 orbd 启动；进程退出后不自动重启，也不做空闲回收）
@@ -9046,7 +9052,9 @@ type ProviderJob struct {
 
 // ProviderList defines model for ProviderList.
 type ProviderList struct {
-	Providers []Provider `json:"providers"`
+	// OrbDefaults 控制面配置的 `orb_defaults`（新建 orb 省略 provider / 类型时，排在项目默认之后、provider 的 `defaultType` 之前）； 未配置的字段省略。客户端据此预先显示新 orb 会落到哪个 provider / 类型。
+	OrbDefaults *OrbDefaults `json:"orbDefaults,omitempty"`
+	Providers   []Provider   `json:"providers"`
 }
 
 // PublicAgentIdentity defines model for PublicAgentIdentity.
