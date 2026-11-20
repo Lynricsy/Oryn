@@ -33,7 +33,7 @@ interface Pending {
 	shipped: boolean;
 }
 
-function ArchiveDialog({
+export function ArchiveDialog({
 	pending,
 	onClose,
 }: {

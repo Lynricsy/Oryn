@@ -68,7 +68,7 @@ export function hueVar(hue: number): CSSProperties {
 	return { "--h": hue } as CSSProperties;
 }
 
-function snoozeAt(kind: "1h" | "3h" | "tomorrow" | "week"): number {
+export function snoozeAt(kind: "1h" | "3h" | "tomorrow" | "week"): number {
 	const now = new Date();
 	if (kind === "1h") return now.getTime() + 3600_000;
 	if (kind === "3h") return now.getTime() + 3 * 3600_000;

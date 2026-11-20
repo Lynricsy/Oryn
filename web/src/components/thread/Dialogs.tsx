@@ -357,7 +357,7 @@ function SessionTreeDialog({
 
 // ---------------------------------------------------------------- fork
 
-function ForkDialog({
+export function ForkDialog({
 	threadId,
 	entryId,
 	onClose,
@@ -1411,12 +1411,15 @@ function EntryLabelDialog({
 	);
 }
 
-function RenameDialog({
+export function RenameDialog({
 	threadId,
 	onClose,
+	submit = (title) => renameThread(threadId, title),
 }: {
 	threadId: string;
 	onClose: () => void;
+	/** 保存动作；缺省改名并同步给 agent（`renameThread`） */
+	submit?: (title: string) => Promise<unknown>;
 }) {
 	const { t } = useTranslation();
 	const current = useThread(threadId, (s) => s.thread?.title ?? "");
@@ -1429,7 +1432,7 @@ function RenameDialog({
 				onSubmit={async (e) => {
 					e.preventDefault();
 					try {
-						await renameThread(threadId, title.trim());
+						await submit(title.trim());
 						onClose();
 					} catch (err) {
 						setError(err);
@@ -1450,7 +1453,7 @@ function RenameDialog({
 	);
 }
 
-function LabelsDialog({
+export function LabelsDialog({
 	threadId,
 	onClose,
 }: {

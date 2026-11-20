@@ -48,6 +48,7 @@ import { NotificationToasts } from "../notify/NotificationToasts";
 import { PaletteHost } from "../palette/PaletteHost";
 import { togglePalette } from "../palette/palette-state";
 import { ServerErrors } from "../ServerErrors";
+import { ThreadRowDialogs } from "../thread/thread-row-menu";
 import { ActionError } from "../ui/ActionError";
 import { Button, Spinner } from "../ui/primitives";
 import { Toasts } from "../ui/Toasts";
@@ -319,6 +320,7 @@ export function AppShell(): ReactNode {
 				<NotificationToasts />
 				<Toasts />
 				<PaletteHost />
+				<ThreadRowDialogs />
 				<ConsentDialog />
 			</>
 		);
@@ -378,6 +380,7 @@ export function AppShell(): ReactNode {
 			<NotificationToasts />
 			<Toasts />
 			<PaletteHost />
+			<ThreadRowDialogs />
 			<ConsentDialog />
 		</div>
 	);
