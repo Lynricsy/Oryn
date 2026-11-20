@@ -301,7 +301,9 @@ export function useQuoteSelection({
 	return { quote, take, dismiss, explain };
 }
 
-const PILL = "glass pop-in z-20 inline-flex items-center rounded-full text-fg";
+// 绝对定位 + left-1/2 的胶囊按收缩适配取宽，可用宽度只剩容器的一半：w-max 与 nowrap 保证按钮文字不被折成两行
+const PILL =
+	"glass pop-in z-20 inline-flex w-max items-center whitespace-nowrap rounded-full text-fg";
 
 function rectOf(el: Element): Anchor {
 	const r = el.getBoundingClientRect();
