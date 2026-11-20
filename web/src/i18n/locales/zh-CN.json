@@ -1136,6 +1136,7 @@
 		"agent-memory": "记忆",
 		"agent-ssh": "SSH 主机",
 		"agent-composer": "输入框",
+		"selection-actions": "选区快捷动作",
 		"about": "关于",
 		"notifications": "通知",
 		"shares": "公开分享",
@@ -4935,5 +4936,62 @@
 			"files": "文件",
 			"desktop": "桌面"
 		}
+	},
+	"contextMenu": {
+		"explain": "解释",
+		"ask": "就此提问…",
+		"translate": "翻译",
+		"moreActions": "更多动作",
+		"insert": "引用到输入框",
+		"search": "搜索",
+		"copyFailed": "复制失败",
+		"copyMessage": "复制消息",
+		"quoteMessage": "引用整条",
+		"openLink": "打开链接",
+		"copyLink": "复制链接地址",
+		"copyImage": "复制图片",
+		"downloadImage": "下载图片",
+		"copyCode": "复制代码",
+		"explainCode": "解释这段代码",
+		"copyCommand": "复制命令",
+		"copyPath": "复制路径",
+		"copyOutput": "复制输出",
+		"openInFiles": "在文件面板打开",
+		"explainTool": "解释这次调用",
+		"open": "打开",
+		"openNewTab": "在新标签页打开",
+		"markUnread": "标为未读",
+		"stage": "暂存",
+		"unstage": "取消暂存",
+		"cut": "剪切",
+		"paste": "粘贴",
+		"selectAll": "全选",
+		"clearTerminal": "清屏",
+		"copyLocation": "复制路径与行号"
+	},
+	"sideAsk": {
+		"action": {
+			"explain": "解释",
+			"translate": "翻译",
+			"ask": "就此提问",
+			"tool": "解释调用"
+		},
+		"busy": "旁路提问进行中",
+		"askPlaceholder": "想问什么？",
+		"stop": "停止",
+		"openInBtw": "在旁路提问里打开"
+	},
+	"selectionActions": {
+		"title": "选区快捷动作",
+		"hint": "选中文字后出现在右键菜单里，把你写的提示词连同选中的内容一起交给模型。",
+		"add": "添加动作",
+		"name": "名称",
+		"prompt": "提示词",
+		"promptHint": "写成对选中内容的指令，例如「找出这段话里的漏洞」。",
+		"empty": "还没有自定义动作",
+		"limit": "最多 12 个",
+		"deleteConfirm": "删除这个动作？",
+		"moveUp": "上移",
+		"moveDown": "下移"
 	}
 }

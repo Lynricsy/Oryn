@@ -1136,6 +1136,7 @@
 		"agent-memory": "Memory",
 		"agent-ssh": "SSH hosts",
 		"agent-composer": "Composer",
+		"selection-actions": "Selection actions",
 		"about": "About",
 		"notifications": "Notifications",
 		"shares": "Public sharing",
@@ -4935,5 +4936,62 @@
 			"files": "Files",
 			"desktop": "Desktop"
 		}
+	},
+	"contextMenu": {
+		"explain": "Explain",
+		"ask": "Ask about this…",
+		"translate": "Translate",
+		"moreActions": "More actions",
+		"insert": "Add to composer",
+		"search": "Search",
+		"copyFailed": "Couldn't copy",
+		"copyMessage": "Copy message",
+		"quoteMessage": "Quote message",
+		"openLink": "Open link",
+		"copyLink": "Copy link address",
+		"copyImage": "Copy image",
+		"downloadImage": "Download image",
+		"copyCode": "Copy code",
+		"explainCode": "Explain this code",
+		"copyCommand": "Copy command",
+		"copyPath": "Copy path",
+		"copyOutput": "Copy output",
+		"openInFiles": "Open in Files",
+		"explainTool": "Explain this call",
+		"open": "Open",
+		"openNewTab": "Open in new tab",
+		"markUnread": "Mark as unread",
+		"stage": "Stage",
+		"unstage": "Unstage",
+		"cut": "Cut",
+		"paste": "Paste",
+		"selectAll": "Select all",
+		"clearTerminal": "Clear",
+		"copyLocation": "Copy path and lines"
+	},
+	"sideAsk": {
+		"action": {
+			"explain": "Explain",
+			"translate": "Translate",
+			"ask": "Ask about this",
+			"tool": "Explain call"
+		},
+		"busy": "A side question is running",
+		"askPlaceholder": "What do you want to ask?",
+		"stop": "Stop",
+		"openInBtw": "Open in side questions"
+	},
+	"selectionActions": {
+		"title": "Selection actions",
+		"hint": "Shown in the context menu when text is selected; your prompt is sent to the model together with the selection.",
+		"add": "Add action",
+		"name": "Name",
+		"prompt": "Prompt",
+		"promptHint": "Write it as an instruction about the selection, e.g. \"Find the flaws in this passage\".",
+		"empty": "No custom actions yet",
+		"limit": "Up to 12 actions",
+		"deleteConfirm": "Delete this action?",
+		"moveUp": "Move up",
+		"moveDown": "Move down"
 	}
 }

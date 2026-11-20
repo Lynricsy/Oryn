@@ -15,6 +15,7 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { selectionText } from "../../lib/context-menu/selection";
 import { normalizeQuote } from "../../lib/quote";
 import { Icon } from "../ui/icons";
 
@@ -50,41 +51,6 @@ function scopeOf(node: Node | null): Element | null {
 	return el?.closest(SCOPE) ?? null;
 }
 
-/**
- * 选中的文字。公式（KaTeX）按渲染结果取会得到 MathML 与排版字形拼成的乱码，改为取它的 TeX 源码：
- * 行内 `$…$`、独立成行 `$$…$$`（选到公式的一部分也算整条）。没有公式时就是 `Selection.toString()`。
- */
-function selectedText(sel: Selection, range: Range, scope: Element): string {
-	const formulas = Array.from(scope.querySelectorAll(".katex")).filter((el) =>
-		range.intersectsNode(el),
-	);
-	if (formulas.length === 0) return sel.toString();
-	const host = document.createElement("div");
-	host.append(range.cloneContents());
-	// 克隆里每条被选到的公式都留有自己的 .katex 外壳（部分选中时是残缺的子树），与原文档里的顺序一一对应
-	const clones = Array.from(host.querySelectorAll(".katex")).filter(
-		(el) => !el.parentElement?.closest(".katex"),
-	);
-	if (clones.length !== formulas.length) return sel.toString();
-	clones.forEach((clone, i) => {
-		const formula = formulas[i];
-		const tex = formula?.querySelector(
-			'annotation[encoding="application/x-tex"]',
-		)?.textContent;
-		if (!formula || !tex) return;
-		const fence = formula.closest(".katex-display") ? "$$" : "$";
-		clone.replaceWith(`${fence}${tex.trim()}${fence}`);
-	});
-	// innerText 才按块级元素换行：在屏外渲染一次再取
-	host.style.cssText =
-		"position:fixed;left:-99999px;top:0;width:800px;white-space:normal";
-	document.body.append(host);
-	// biome-ignore lint/performance/useDomNodeTextContent: 要的正是按渲染结果换行的文字（段落、列表项之间的换行）
-	const text = host.innerText ?? host.textContent ?? "";
-	host.remove();
-	return text;
-}
-
 type SelectionRead =
 	| { kind: "none" }
 	/** 有选区，但不能引用（跨消息、不在 agent 消息里、只有空白）；`inRoot` = 选区落在转录里 */
@@ -104,7 +70,7 @@ function readSelection(
 	const scope = scopeOf(range.startContainer);
 	if (!scope || scope !== scopeOf(range.endContainer) || !root.contains(scope))
 		return { kind: "other", inRoot };
-	const text = selectedText(sel, range, scope);
+	const text = selectionText(range, scope, () => sel.toString());
 	if (!text.trim()) return { kind: "other", inRoot };
 	const entry =
 		scope.closest("[data-entry-id]")?.getAttribute("data-entry-id") ?? "";
