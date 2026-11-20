@@ -23,6 +23,28 @@
 	let n = 0;
 	let guard = false;
 	let error = "";
+	// 程序化开合的方式（第 2 轮探针：第 1 轮里 smooth 到位后约 140ms 被拉回关闭位）
+	// 0 smooth；1 instant；2 nosnap = 滚动期间去掉根的 scroll-snap-type、到位后恢复；3 snapoff = 根上始终不吸附
+	const MODES = ["smooth", "instant", "nosnap", "snapoff"];
+	let mode = 0;
+	let restore = null;
+	const go = (x) => {
+		const m = MODES[mode];
+		if (m === "nosnap") {
+			root.style.scrollSnapType = "none";
+			restore = x;
+		}
+		scrollTo({ left: x, behavior: m === "instant" ? "instant" : "smooth" });
+	};
+	// nosnap：到位（或 scrollend）后下一帧恢复吸附
+	const maybeRestore = (end) => {
+		if (restore === null) return;
+		if (!end && Math.abs(scrollX - restore) > 0.5) return;
+		restore = null;
+		requestAnimationFrame(() => {
+			root.style.scrollSnapType = MODES[mode] === "snapoff" ? "none" : "";
+		});
+	};
 
 	const update = () => {
 		const v = window.visualViewport;
@@ -30,7 +52,7 @@
 		status.textContent =
 			`sx=${r1(scrollX)};sy=${r1(scrollY)};iw=${innerWidth};max=${r1(max())};` +
 			`vs=${v ? r1(v.scale) : -1};vy=${v ? r1(v.offsetTop) : -1};kb=${kb};` +
-			`vst=${Math.round(vs.scrollTop)};pre=${Math.round(pre.scrollLeft)};n=${n};g=${guard ? 1 : 0}` +
+			`vst=${Math.round(vs.scrollTop)};pre=${Math.round(pre.scrollLeft)};n=${n};g=${guard ? 1 : 0};m=${mode}` +
 			(error ? `;err ${error}` : "");
 	};
 
@@ -68,7 +90,7 @@
 		if (touching) return;
 		const r = rest();
 		if (r === null) {
-			scrollTo({ left: left(nearer()), behavior: "smooth" });
+			go(left(nearer()));
 			return;
 		}
 		committed = r;
@@ -80,7 +102,7 @@
 	};
 	const request = (to) => {
 		free = true;
-		scrollTo({ left: left(to), behavior: "smooth" });
+		go(left(to));
 		arm();
 	};
 
@@ -90,6 +112,7 @@
 			n++;
 			update();
 			report();
+			maybeRestore(false);
 			if (!guard) return;
 			if (!free && rest() !== committed) {
 				scrollTo({ left: left(committed), behavior: "instant" });
@@ -99,7 +122,14 @@
 		},
 		{ passive: true },
 	);
-	addEventListener("scrollend", report, { passive: true });
+	addEventListener(
+		"scrollend",
+		() => {
+			report();
+			maybeRestore(true);
+		},
+		{ passive: true },
+	);
 	const touch = (e) => {
 		touching = e.touches.length;
 		if (e.type === "touchstart") free = true;
@@ -117,11 +147,17 @@
 	// ---------------------------------------------------------------- 按钮
 	$("open").addEventListener("click", () => {
 		if (guard) request("open");
-		else scrollTo({ left: 0, behavior: "smooth" });
+		else go(0);
 	});
 	$("close").addEventListener("click", () => {
 		if (guard) request("closed");
-		else scrollTo({ left: max(), behavior: "smooth" });
+		else go(max());
+	});
+	$("mode").addEventListener("click", () => {
+		mode = (mode + 1) % MODES.length;
+		restore = null;
+		root.style.scrollSnapType = MODES[mode] === "snapoff" ? "none" : "";
+		update();
 	});
 	$("reset").addEventListener("click", () => {
 		pre.scrollLeft = 0;

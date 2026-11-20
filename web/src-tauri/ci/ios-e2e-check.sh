@@ -232,8 +232,11 @@ finish_runner() {
 # ---------------------------------------------------------------- 步骤
 
 # ---------------------------------------------------------------- 根滚动探针（ci/ios-sink-spike 分支专用，不合入）
-# plan-m20 步骤 1.1：S1–S4、S6–S8 由测试按无障碍树与状态按钮读数判定并回传 {probe, pass, detail}；
-# S5（按住拖动）与 S9（底栏透出）在这里按截图判定。任一探针不过不中断，全部跑完才写 .complete，退出码 = 有无 FAIL。
+# plan-m20 步骤 1.1。测试按顺序发 p01、p02…，载荷里的键决定这里做什么：
+#   width → 截未设底栏的关闭态（bare）并算缩放；tabbar → 等 tabbar.set 后截设了底栏的关闭态（closed）；
+#   shot → 停稳后截图；hold → S5 按住拖动（连拍截图 + 事件日志读 sx）；probe → 记一条探针结果；end → 收尾。
+# 每条探针附上自上一步以来的卡片左缘轨迹（探针页每帧经 host_tab_bar_reveal 发 max − sx，debug 包记为 tabbar.reveal）。
+# 任一探针不过不中断，全部跑完才写 .complete，退出码 = 有无 FAIL。
 echo >>"$summary"
 echo "### 根滚动探针（plan-m20 S1–S9）" >>"$summary"
 spike_failed=0
@@ -242,14 +245,6 @@ probe() {
   echo "$1 $2：$3"
   echo "- **$1 $2**：$3" >>"$summary"
   if [[ $2 == FAIL ]]; then spike_failed=1; fi
-}
-# record：把测试回传的 {probe, pass, detail} 记下（pass 为 null = 只记录）
-record() {
-  local p v d
-  p=$(jq -r .probe <<<"$req")
-  v=$(jq -r 'if .pass == null then "INFO" elif .pass then "PASS" else "FAIL" end' <<<"$req")
-  d=$(jq -r .detail <<<"$req")
-  probe "$p" "$v" "$d"
 }
 # rd <图 a> <图 b> <x> <宽> [b 的 x]（pt，竖直范围是底栏横条）：给了 b 的 x 时在 ±2pt 内取最小差异
 rd() {
@@ -261,55 +256,22 @@ rd() {
   done
   echo "$best"
 }
-# 卡片左缘（= max − sx）：探针页每帧把它经 host_tab_bar_reveal 发给壳，debug 包记为 tabbar.reveal
 edge_now() { last tabbar.reveal | jq -r '.x // empty'; }
+mid() { awk -v x="$1" -v w="$sink_w" 'BEGIN { exit !(x > 5 && x < w - 5) }'; }
+# 自上一步以来的卡片左缘轨迹（取整、去掉相邻重复）
+mark=0
+trace() {
+  ev tabbar.reveal | tail -n "+$((mark + 1))" | jq -r '.x | floor' |
+    awk 'NR == 1 || $0 != prev { printf "%s ", $0 } { prev = $0 }' | cut -c1-300
+}
+has() { jq -e "$1" >/dev/null <<<"$req"; }
 
-req=""
-wait_req s1 420
-until_ok s1 30 "e2e.open" last_is e2e.open '.'
-last_is e2e.open '.ok' >/dev/null || fail s1 "ORYN_E2E_URL 没有打开：$(last e2e.open)"
-record
-sleep 1
-shot bare
-pw=$(sips -g pixelWidth "$out/e2e-bare.png" | awk '/pixelWidth/ { print $2 }')
-scale=$(jq -r --argjson pw "$pw" '$pw / .width' <<<"$req")
-ok s1
-
-wait_req s9set 120
-until_ok s9set 30 "tabbar.set（探针页设了原生底栏）" last_is tabbar.set '.on and .frame != null'
-frame=$(last tabbar.set | jq -c .frame)
-read -r fx fy fw fh < <(jq -r '[.x, .y, .width, .height] | @tsv' <<<"$frame")
-sink_w=$(awk -v x="$fx" -v w="$fw" 'BEGIN { print 2 * x + w }')
-echo "底栏：${frame}，侧栏宽 ${sink_w}，缩放 ${scale}"
-sleep 1
-steady_shot closed
-ok s9set
-
-wait_req s2 120
-record
-steady_shot open
-ok s2
-
-wait_req s3 120
-record
-steady_shot closed2
-ok s3
-
-wait_req s4 300
-record
-ok s4
-
-# S5：按住期间连拍；两张横条一致、拍摄期间没有新的 tabbar.reveal、且左缘在中间（没松手吸附）才收下
-s5_done=0
-for attempt in 1 2 3; do
-  step="s5_$attempt"
-  wait_req "$step" 300
-  dx=$(jq -r .dx <<<"$req")
-  prev=""
-  moved=""
-  state=timeout
+# hold_s5：一次按住拖动；判定后设 reply（没赶上且还能重拖时回 retry）
+hold_s5() {
+  local dx attempt prev="" moved="" state=timeout end c0 c1 x0 x1 edge left right err pass
+  dx=$(jq -r .hold <<<"$req")
+  attempt=$(jq -r .attempt <<<"$req")
   end=$((SECONDS + 180))
-  mid() { awk -v x="$1" -v w="$sink_w" 'BEGIN { exit !(x > 5 && x < w - 5) }'; }
   while ((SECONDS < end)); do
     c0=$(count tabbar.reveal)
     x0=$(edge_now)
@@ -322,8 +284,7 @@ for attempt in 1 2 3; do
     if mid "$x1"; then
       moved=1
     elif [[ -n $moved ]]; then
-      # 拖开后又回到 0 或侧栏宽：已松手吸附
-      state=missed
+      state=missed # 拖开后又回到 0 或侧栏宽：已松手吸附
       break
     fi
     if [[ -n $prev && $c0 == "$c1" ]] && mid "$x0" &&
@@ -335,44 +296,84 @@ for attempt in 1 2 3; do
     mv "$work/s5-next.png" "$work/s5-prev.png"
     prev="$work/s5-prev.png"
   done
-  if [[ $state == held ]]; then
-    edge=$x0
-    left=$(rd "$out/e2e-drag.png" "$out/e2e-open.png" "$fx" "$(calc "$edge - 4 - $fx")")
-    right=$(rd "$out/e2e-drag.png" "$out/e2e-closed.png" "$(calc "$edge + 6")" "$(calc "$fx + $fw - $edge - 6")" 6)
-    sx_err=$(calc "$edge - $dx")
-    pass=FAIL
-    if at_most "$left" 0.01 && at_most "$right" 0.01 && awk -v e="$sx_err" 'BEGIN { exit !(e <= 2 && e >= -2) }'; then
-      pass=PASS
+  reply='{}'
+  if [[ $state != held ]]; then
+    if ((attempt < 3)); then
+      echo "::warning::S5 第 ${attempt} 次没赶在按住期间截到停稳的图（${state}），重拖"
+      reply='{"retry":true}'
+    else
+      probe S5 FAIL "连续 3 次没能在按住期间截到停稳的图（最后一次 ${state}，最后的左缘 $(edge_now)）"
     fi
-    probe S5 "$pass" "手指位移 ${dx}，按住时卡片左缘（max − sx）${edge}（差 ${sx_err}）；揭示边左侧 vs 打开态 ${left}（期望 ≤ 0.01），右侧 vs 关闭态平移 ${right}（期望 ≤ 0.01）；第 ${attempt} 次"
+    return
+  fi
+  edge=$x0
+  if [[ ! -f $out/e2e-open.png ]]; then
+    probe S5 FAIL "没有打开态截图可比（左缘 ${edge}）"
+    return
+  fi
+  left=$(rd "$out/e2e-drag.png" "$out/e2e-open.png" "$fx" "$(calc "$edge - 4 - $fx")")
+  right=$(rd "$out/e2e-drag.png" "$out/e2e-closed.png" "$(calc "$edge + 6")" "$(calc "$fx + $fw - $edge - 6")" 6)
+  err=$(calc "$edge - $dx")
+  pass=FAIL
+  if at_most "$left" 0.01 && at_most "$right" 0.01 && awk -v e="$err" 'BEGIN { exit !(e <= 2 && e >= -2) }'; then
+    pass=PASS
+  fi
+  probe S5 "$pass" "手指位移 ${dx}，按住时卡片左缘（max − sx）${edge}（差 ${err}）；揭示边左侧 vs 打开态 ${left}（期望 ≤ 0.01），右侧 vs 关闭态平移 ${right}（期望 ≤ 0.01）；第 ${attempt} 次"
+}
+
+req=""
+seq=0
+while :; do
+  seq=$((seq + 1))
+  step=$(printf 'p%02d' "$seq")
+  wait_req "$step" 420
+  if ((seq == 1)); then
+    until_ok "$step" 30 "e2e.open" last_is e2e.open '.'
+    last_is e2e.open '.ok' >/dev/null || fail "$step" "ORYN_E2E_URL 没有打开：$(last e2e.open)"
+  fi
+  reply='{}'
+  if has .width; then
+    sleep 1
+    shot bare
+    pw=$(sips -g pixelWidth "$out/e2e-bare.png" | awk '/pixelWidth/ { print $2 }')
+    scale=$(jq -r --argjson pw "$pw" '$pw / .width' <<<"$req")
+  fi
+  if has .tabbar; then
+    until_ok "$step" 30 "tabbar.set（探针页设了原生底栏）" last_is tabbar.set '.on and .frame != null'
+    frame=$(last tabbar.set | jq -c .frame)
+    read -r fx fy fw fh < <(jq -r '[.x, .y, .width, .height] | @tsv' <<<"$frame")
+    sink_w=$(awk -v x="$fx" -v w="$fw" 'BEGIN { print 2 * x + w }')
+    echo "底栏：${frame}，侧栏宽 ${sink_w}，缩放 ${scale}"
+    sleep 1
+    steady_shot closed
+  fi
+  if has '.shot'; then steady_shot "$(jq -r .shot <<<"$req")"; fi
+  if has '.hold'; then hold_s5; fi
+  if has '.probe'; then
+    t=$(trace)
+    probe "$(jq -r .probe <<<"$req")" \
+      "$(jq -r 'if .pass == null then "INFO" elif .pass then "PASS" else "FAIL" end' <<<"$req")" \
+      "$(jq -r .detail <<<"$req")${t:+ ｜ 左缘轨迹：$t}"
+  fi
+  mark=$(count tabbar.reveal)
+  if has '.end'; then
     ok "$step"
-    s5_done=1
     break
   fi
-  ((attempt < 3)) || break
-  echo "::warning::S5 第 ${attempt} 次没赶在按住期间截到停稳的图（${state}），重拖"
-  ok "$step" '{"retry":true}'
-done
-if ((s5_done == 0)); then
-  probe S5 FAIL "连续 3 次没能在按住期间截到停稳的图（最后一次 ${state}，最后的左缘 $(edge_now)）"
-  ok "$step"
-fi
-
-for p in s6 s7a s7b s8 s8g; do
-  wait_req "$p" 300
-  record
-  ok "$p"
+  ok "$step" "$reply"
 done
 
 # S9：设了底栏后，打开态横条与关闭态不同（底栏从透明侧栏透出）；关闭态与未设底栏时一致（卡片盖住）
-open_vs_closed=$(rd "$out/e2e-open.png" "$out/e2e-closed.png" "$fx" "$fw")
-closed_vs_bare=$(rd "$out/e2e-closed.png" "$out/e2e-bare.png" "$fx" "$fw")
-pass=FAIL
-if ! at_most "$open_vs_closed" 0.01 && at_most "$closed_vs_bare" 0.01; then pass=PASS; fi
-probe S9 "$pass" "打开态 vs 关闭态 ${open_vs_closed}（期望 ≥ 0.01）；关闭态 vs 未设底栏 ${closed_vs_bare}（期望 ≤ 0.01）"
+if [[ -f $out/e2e-open.png && -f $out/e2e-closed.png && -f $out/e2e-bare.png ]]; then
+  open_vs_closed=$(rd "$out/e2e-open.png" "$out/e2e-closed.png" "$fx" "$fw")
+  closed_vs_bare=$(rd "$out/e2e-closed.png" "$out/e2e-bare.png" "$fx" "$fw")
+  pass=FAIL
+  if ! at_most "$open_vs_closed" 0.01 && at_most "$closed_vs_bare" 0.01; then pass=PASS; fi
+  probe S9 "$pass" "打开态 vs 关闭态 ${open_vs_closed}（期望 ≥ 0.01）；关闭态 vs 未设底栏 ${closed_vs_bare}（期望 ≤ 0.01）"
+else
+  probe S9 FAIL "缺截图（open / closed / bare）"
+fi
 
-wait_req end 120
-ok end
 finish_runner
 : >"$out/.complete"
 exit "$spike_failed"
