@@ -799,8 +799,9 @@ export function useHeaderCover(
 		let frame = 0;
 		const check = () => {
 			// 卡片不在关闭位（开着或正在开合）时不判定：露出的卡片条上的关闭按钮压在页头位置上，那不是遮挡；
-			// 回到关闭位后由根滚动的 scroll 事件补探
-			if (sinkRest(window) !== "closed") return;
+			// 侧栏已经要打开（卡片内容 inert）而根滚动还没起步时同理。回到关闭位后由根滚动的 scroll 事件补探
+			if (sinkRest(window) !== "closed" || root.current?.closest("[inert]"))
+				return;
 			nativeHeader.setCovered(
 				slotsCovered(
 					root.current?.querySelectorAll("[data-native-slot]") ?? [],

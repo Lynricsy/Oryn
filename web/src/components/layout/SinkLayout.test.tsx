@@ -3,8 +3,17 @@
  * iOS 原生底栏的接入（`<html data-native-under>`、卡片静止在打开位时的遮挡探测）。
  */
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	type MockInstance,
+	vi,
+} from "vitest";
 import { concentricRadius } from "../../lib/device-corners";
+import type * as NativeSinkModule from "../../lib/native-sink";
 import type * as NativeTabBarModule from "../../lib/native-tab-bar";
 import { uiStore } from "../../state/ui";
 import {
@@ -28,6 +37,26 @@ vi.mock("../../lib/native-tab-bar", async (importOriginal) => ({
 	...(await importOriginal<typeof NativeTabBarModule>()),
 	nativeTabBar: nb.bar,
 	useNativeTabBarEngaged: () => nb.engaged,
+}));
+
+const ns = vi.hoisted(() => {
+	const s = {
+		engaged: false,
+		sink: {
+			engaged: () => s.engaged,
+			subscribe: () => () => {},
+			setOn: vi.fn(),
+			show: vi.fn(),
+		},
+	};
+	return s;
+});
+
+// 同上：只换根滚动跟随的实例与钩子（sinkRest、createSinkScroll 用真的）
+vi.mock("../../lib/native-sink", async (importOriginal) => ({
+	...(await importOriginal<typeof NativeSinkModule>()),
+	nativeSink: ns.sink,
+	useNativeSinkEngaged: () => ns.engaged,
 }));
 
 function mount() {
@@ -96,6 +125,9 @@ beforeEach(() => {
 	window.history.replaceState(null, "");
 	nb.engaged = false;
 	for (const f of Object.values(nb.bar)) f.mockClear();
+	ns.engaged = false;
+	ns.sink.setOn.mockClear();
+	ns.sink.show.mockClear();
 });
 
 afterEach(() => {
@@ -434,5 +466,111 @@ describe("iOS 原生底栏", () => {
 		act(() => uiStore.getState().setSidebar(true));
 		act(() => vi.advanceTimersByTime(2000));
 		expect(nb.bar.setCovered).not.toHaveBeenCalled();
+	});
+});
+
+describe("iOS 根滚动模式", () => {
+	const root = document.documentElement;
+	let scrollTo: MockInstance<typeof window.scrollTo>;
+	beforeEach(() => {
+		window.innerWidth = 390;
+		// 网页 instant 落位立即生效（jsdom 不做布局）
+		scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(((
+			a?: ScrollToOptions | number,
+		) => {
+			if (typeof a === "object" && a.left !== undefined) rootScroll(a.left);
+		}) as typeof window.scrollTo);
+	});
+	afterEach(() => {
+		window.innerWidth = 1024;
+		vi.useRealTimers();
+		scrollTo.mockRestore();
+		Reflect.deleteProperty(root, "scrollWidth");
+		Reflect.deleteProperty(window, "scrollX");
+		root.removeAttribute("data-sink-native");
+	});
+
+	it("挂载即请求跟随、卸载撤掉；未接管不进原生模式；接管后 <html> 带 data-sink-native 并 instant 落到关闭位，卸载时还原", () => {
+		rootScroll(390);
+		const first = mount();
+		expect(ns.sink.setOn.mock.calls).toEqual([[true]]);
+		expect(root).not.toHaveAttribute("data-sink-native");
+		expect(scrollTo).not.toHaveBeenCalled();
+		first.unmount();
+		expect(ns.sink.setOn).toHaveBeenLastCalledWith(false);
+
+		ns.engaged = true;
+		const { unmount } = mount();
+		expect(root).toHaveAttribute("data-sink-native");
+		expect(scrollTo).toHaveBeenCalledWith({ left: 390, behavior: "instant" });
+		unmount();
+		expect(root).not.toHaveAttribute("data-sink-native");
+		expect(scrollTo).toHaveBeenLastCalledWith(0, 0);
+	});
+
+	it("sidebarOpen 变真：请求原生平滑滚到打开位，网页自己不滚；变假时途中卡片带 data-dragging，滚到关闭位后去掉", () => {
+		ns.engaged = true;
+		rootScroll(390);
+		mount();
+		scrollTo.mockClear();
+		act(() => uiStore.getState().setSidebar(true));
+		expect(ns.sink.show.mock.calls).toEqual([[true, true]]);
+		expect(scrollTo).not.toHaveBeenCalled();
+		rootScroll(0);
+		fireEvent.scroll(window);
+		act(() => uiStore.getState().setSidebar(false));
+		expect(ns.sink.show).toHaveBeenLastCalledWith(false, true);
+		expect(card()).toHaveAttribute("data-dragging");
+		rootScroll(390);
+		fireEvent.scroll(window);
+		expect(card()).not.toHaveAttribute("data-dragging");
+	});
+
+	it("减少动效：sidebarOpen 变真时网页 instant 落到 0，不调原生动画", () => {
+		vi.stubGlobal("matchMedia", (q: string) => ({
+			matches: q === "(prefers-reduced-motion: reduce)",
+			addEventListener: () => {},
+			removeEventListener: () => {},
+		}));
+		ns.engaged = true;
+		rootScroll(390);
+		mount();
+		act(() => uiStore.getState().setSidebar(true));
+		expect(scrollTo).toHaveBeenLastCalledWith({ left: 0, behavior: "instant" });
+		expect(ns.sink.show).not.toHaveBeenCalled();
+	});
+
+	it("手指拖开：touchmove 不被阻止、不写 --sink-p；抬起后停稳 SINK_REST_MS 才提交 sidebarOpen", () => {
+		vi.useFakeTimers();
+		ns.engaged = true;
+		rootScroll(390);
+		mount();
+		touch(card(), "touchStart", 4, 300, 1000);
+		const move = touch(card(), "touchMove", 200, 302, 1100);
+		expect(move.defaultPrevented).toBe(false);
+		expect(card().style.getPropertyValue("--sink-p")).toBe("");
+		rootScroll(0);
+		fireEvent.scroll(window);
+		expect(card()).toHaveAttribute("data-dragging");
+		act(() => vi.advanceTimersByTime(500));
+		expect(uiStore.getState().sidebarOpen).toBe(false);
+		touch(card(), "touchEnd", 200);
+		act(() => vi.advanceTimersByTime(99));
+		expect(uiStore.getState().sidebarOpen).toBe(false);
+		act(() => vi.advanceTimersByTime(1));
+		expect(uiStore.getState().sidebarOpen).toBe(true);
+		expect(card()).toHaveAttribute("data-open");
+		expect(ns.sink.show).not.toHaveBeenCalled();
+	});
+
+	it("非触摸、非本页请求的横向位移（scrollIntoView、focus）立即拉回已提交的静止位", () => {
+		ns.engaged = true;
+		rootScroll(390);
+		mount();
+		scrollTo.mockClear();
+		rootScroll(120);
+		fireEvent.scroll(window);
+		expect(scrollTo).toHaveBeenCalledWith({ left: 390, behavior: "instant" });
+		expect(uiStore.getState().sidebarOpen).toBe(false);
 	});
 });
