@@ -89,7 +89,12 @@ class OrynMobilePlugin: Plugin {
 
   private func ensureSink() {
     guard #available(iOS 26.0, *), let webview = self.webview, sink == nil else { return }
-    sink = SinkFollow(webview: webview) { [weak self] dx in self?.follow(dx) }
+    let follow = SinkFollow(webview: webview) { [weak self] dx in self?.follow(dx) }
+    follow.onTrace = { [weak self] op, x, to in
+      let data: JSObject = ["type": "sink", "op": op, "x": Double(x), "to": Double(to)]
+      self?.trigger("event", data: data)
+    }
+    sink = follow
   }
 
   private func removeSink() {

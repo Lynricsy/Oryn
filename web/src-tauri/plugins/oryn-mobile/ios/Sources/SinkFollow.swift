@@ -32,6 +32,9 @@ private final class SinkTicker: NSObject {
 final class SinkFollow {
   private weak var scroll: UIScrollView?
   private let onMove: (CGFloat) -> Void
+  /// 程序化开合的轨迹（op, 当时的 contentOffset.x, 目的地）：Rust 只在 debug 包写进事件日志，供 CI 判断原生动画有没有跑、何时跑。
+  /// op：start / jump（不带动画或手指按着时一步落位）/ noop（已在目的地）/ done / cancel（手指接管、被新请求替换或撤掉）
+  var onTrace: ((String, CGFloat, CGFloat) -> Void)?
   private var observations: [NSKeyValueObservation] = []
   private let hadIndicator: Bool
   /// 卡片左缘（= 卡片相对关闭位右移的距离，pt）：关闭 0，打开 = 侧栏宽。
@@ -74,14 +77,19 @@ final class SinkFollow {
 
   /// 程序化开合：滚到打开位或关闭位（纵向位置不动）。手指按下时立即让给手势。
   func show(open: Bool, animated: Bool) {
-    stop()
+    stop(cancelled: true)
     guard let s = scroll else { return }
     let x = open ? ends(s).open : ends(s).closed
-    guard abs(s.contentOffset.x - x) > 0.5 else { return }
+    guard abs(s.contentOffset.x - x) > 0.5 else {
+      onTrace?("noop", s.contentOffset.x, x)
+      return
+    }
     guard animated, !s.isTracking else {
+      onTrace?("jump", s.contentOffset.x, x)
       s.setContentOffset(CGPoint(x: x, y: s.contentOffset.y), animated: false)
       return
     }
+    onTrace?("start", s.contentOffset.x, x)
     anim = (s.contentOffset.x, x, CACurrentMediaTime())
     let link = CADisplayLink(target: SinkTicker(self), selector: #selector(SinkTicker.tick(_:)))
     link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
@@ -91,16 +99,19 @@ final class SinkFollow {
 
   fileprivate func tick(_ link: CADisplayLink) {
     guard let s = scroll, let a = anim, !s.isTracking else {
-      stop()
+      stop(cancelled: true)
       return
     }
     let t = min((link.targetTimestamp - a.start) / Self.duration, 1)
     let eased = 1 - pow(1 - t, 3)
     s.setContentOffset(CGPoint(x: a.from + (a.to - a.from) * eased, y: s.contentOffset.y), animated: false)
-    if t >= 1 { stop() }
+    if t >= 1 { stop(cancelled: false) }
   }
 
-  private func stop() {
+  private func stop(cancelled: Bool) {
+    if let a = anim {
+      onTrace?(cancelled ? "cancel" : "done", scroll?.contentOffset.x ?? -1, a.to)
+    }
     link?.invalidate()
     link = nil
     anim = nil
@@ -108,7 +119,7 @@ final class SinkFollow {
 
   /// 撤掉跟随：注销观察、还原滚动条，原生部件回到关闭位。
   func remove() {
-    stop()
+    stop(cancelled: true)
     observations.forEach { $0.invalidate() }
     observations = []
     scroll?.showsHorizontalScrollIndicator = hadIndicator
