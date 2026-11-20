@@ -377,6 +377,9 @@ function cachedTurnUsage(messages: readonly JsonRecord[]): TurnUsage {
  * 回合最后一行是已结束的助手消息时，在它下面挂整回合的累计用量脚注（回合仍在进行时不挂）。
  * 连续的用户消息只有第一条放用户头像（`userStarts`）。
  * `openStart` 是最后一个助手回合的起点，且其后再没有用户消息 / 会话分隔（线程工作中时就是正在进行的回合）。
+ * `covered` 是被回合头覆盖的模型 / 思考级别切换行：它与回合头之间只隔着用户消息与其它元信息行（没有 agent 内容、
+ * 没有更新的同类切换），且回合头确实画出了同一个值（模型胶囊的 `provider/id` 相同；思考角标的级别相同）。
+ * 回合中途的切换（回退、prewalk）、切换后还没有回复、回合消息缺模型或实际模型不同的切换都不在其中。
  * 流式时每个增量都会重跑：已结束回合的汇总走 `cachedTurnUsage`，引用保持不变。
  */
 export function layoutTurns(items: readonly MainlineRow[]): {
@@ -388,6 +391,8 @@ export function layoutTurns(items: readonly MainlineRow[]): {
 	openStart: number | undefined;
 	/** 行里出现过 thinking_level_change：没出现过时各回合的级别就是会话当前级别 */
 	thinkingSeen: boolean;
+	/** 回合头已显示同一个值的切换行（不渲染，但照常参与上面的推导） */
+	covered: Set<number>;
 } {
 	const starts = new Set<number>();
 	const userStarts = new Set<number>();
@@ -407,12 +412,26 @@ export function layoutTurns(items: readonly MainlineRow[]): {
 	};
 	let level: string | undefined;
 	let thinkingSeen = false;
+	const covered = new Set<number>();
+	// 等下一个回合头的切换行（行号 + 值）；遇到 agent 内容、折叠行或会话分隔即作废
+	type Pending = { i: number; v: string } | undefined;
+	let pendModel: Pending;
+	let pendLevel: Pending;
+	// 本回合起点冻结的候选，回合头的模型确定时比对
+	let headModel: Pending;
+	let headLevel: Pending;
 	items.forEach((it, i) => {
+		if (it.kind === "meta" && it.entry.type === "model_change") {
+			const v = it.entry.model;
+			pendModel =
+				typeof v === "string" && v.trim() ? { i, v: v.trim() } : undefined;
+		}
 		if (it.kind === "meta" && it.entry.type === "thinking_level_change") {
 			// thinkingLevel 是实际生效的具体级别；auto 模式下它缺省时退回 configured
 			const v = it.entry.thinkingLevel ?? it.entry.configured;
 			level = typeof v === "string" && v ? v : undefined;
 			thinkingSeen = true;
+			pendLevel = level ? { i, v: level } : undefined;
 		}
 		if (isUserRow(it)) {
 			const prev = items[i - 1];
@@ -425,6 +444,7 @@ export function layoutTurns(items: readonly MainlineRow[]): {
 		if (it.kind === "session_divider" || it.kind === "fold") {
 			close();
 			openStart = undefined;
+			pendModel = pendLevel = undefined;
 			return;
 		}
 		if (!isAgentRow(it)) return;
@@ -432,18 +452,32 @@ export function layoutTurns(items: readonly MainlineRow[]): {
 			starts.add(i);
 			openStart = i;
 			start = i;
+			headModel = pendModel;
+			headLevel = pendLevel;
 		}
+		pendModel = pendLevel = undefined;
 		last = i;
 		if (it.kind !== "message") return;
 		messages.push(it.message);
 		const { model, provider } = it.message;
 		if (!models.has(start) && typeof model === "string" && model) {
+			const prov = typeof provider === "string" ? provider : "";
 			models.set(start, {
 				model,
-				provider: typeof provider === "string" ? provider : "",
+				provider: prov,
 				...(level ? { thinking: level } : {}),
 			});
 			if (it.trail) trails.set(start, it.trail);
+			// 回合头画出胶囊（模型 id 非空）时，它显示的就是这里的模型与级别
+			if (model.trim()) {
+				if (
+					headModel &&
+					prov.trim() &&
+					headModel.v === `${prov.trim()}/${model.trim()}`
+				)
+					covered.add(headModel.i);
+				if (headLevel && headLevel.v === level) covered.add(headLevel.i);
+			}
 		}
 	});
 	close();
@@ -455,6 +489,7 @@ export function layoutTurns(items: readonly MainlineRow[]): {
 		trails,
 		openStart,
 		thinkingSeen,
+		covered,
 	};
 }
 
@@ -482,13 +517,16 @@ function rowEdges(item: MainlineRow, hasFooter: boolean): [Edge, Edge] {
  * 与消息内块之间的间距同一规则，虚拟行之间不再叠加各自的内边距。
  * 回合起点行以头像行开头，它的上一行必然是回合边界（用户气泡、分隔线、提示行）或列表开头，
  * 所以按 `GAP_TURN` / `GAP_FLOW` 取值，与行首块的类别无关。
+ * `hidden` 里的行不渲染：上边距为 0，也不改变下一行看到的「上一行」。
  */
 export function rowGaps(
 	items: readonly MainlineRow[],
 	footers: ReadonlyMap<number, TurnUsage>,
+	hidden: ReadonlySet<number>,
 ): number[] {
 	let prev: Edge | null = null;
 	return items.map((it, i) => {
+		if (hidden.has(i)) return 0;
 		const [first, last] = rowEdges(it, footers.has(i));
 		const gap =
 			prev === null
@@ -711,7 +749,10 @@ export const Transcript = memo(function Transcript({
 	);
 	const sessionModel = useThread(threadId, (s) => s.state?.model);
 	const sessionThinking = useThread(threadId, (s) => s.state?.thinkingLevel);
-	const gaps = useMemo(() => rowGaps(rows, turns.footers), [rows, turns]);
+	const gaps = useMemo(
+		() => rowGaps(rows, turns.footers, turns.covered),
+		[rows, turns],
+	);
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const [atBottom, setAtBottom] = useState(true);
 	const stick = useRef(!startAtTop);
@@ -1037,16 +1078,20 @@ export const Transcript = memo(function Transcript({
 								/>
 							)}
 							{item ? (
-								<>
-									<ItemView
-										item={item}
-										turn={turn}
-										turnStart={
-											turns.starts.has(v.index) || turns.userStarts.has(v.index)
-										}
-									/>
-									{quote && <ContinueInNew text={quote} />}
-								</>
+								// 回合头已显示同一个值的切换行：保留虚拟行（行号不变），不画内容
+								turns.covered.has(v.index) ? null : (
+									<>
+										<ItemView
+											item={item}
+											turn={turn}
+											turnStart={
+												turns.starts.has(v.index) ||
+												turns.userStarts.has(v.index)
+											}
+										/>
+										{quote && <ContinueInNew text={quote} />}
+									</>
+								)
 							) : (
 								<>
 									{pendingText !== undefined && (
