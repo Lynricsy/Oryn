@@ -339,6 +339,74 @@ async function shoot(page: Page, info: TestInfo, id: string, suffix = "") {
 	});
 }
 
+/** 浮层壳与其中每块玻璃的实际材质取值。 */
+interface Look {
+	el: string;
+	/** 壳自身与 ::before 的背景色 */
+	bg: string;
+	beforeBg: string;
+	/** 壳自身与 ::before 的 backdrop-filter */
+	bf: string;
+	beforeBf: string;
+	/** 自身到根的 opacity 连乘（实际看到的不透明度） */
+	opacity: number;
+}
+
+async function material(target: Locator): Promise<Look[]> {
+	return target.evaluate((root) => {
+		const desc = (e: Element) =>
+			`${e.tagName.toLowerCase()}${typeof e.className === "string" && e.className.trim() ? `.${e.className.trim().split(/\s+/).slice(0, 3).join(".")}` : ""}`;
+		// 浮层根本身 + 后代里带玻璃的元素（.glass 或 ::before 有 backdrop-filter）
+		const els = [
+			root,
+			...[...root.querySelectorAll("*")].filter((e) => {
+				const b = getComputedStyle(e, "::before").backdropFilter;
+				return e.classList.contains("glass") || (b && b !== "none");
+			}),
+		];
+		return els.map((e) => {
+			const s = getComputedStyle(e);
+			const b = getComputedStyle(e, "::before");
+			let opacity = 1;
+			for (let a: Element | null = e; a; a = a.parentElement)
+				opacity *= Number(getComputedStyle(a).opacity);
+			return {
+				el: desc(e),
+				bg: s.backgroundColor,
+				beforeBg: b.backgroundColor,
+				bf: s.backdropFilter || "none",
+				beforeBf: b.backdropFilter || "none",
+				opacity: Math.round(opacity * 1000) / 1000,
+			};
+		});
+	});
+}
+
+/** 以首次打开为基准，滚到底、重开后的材质任何一项不同都算问题（玻璃块数变了也算）。 */
+function compareLooks(looks: { when: string; look: Look[] }[]): string[] {
+	const [base, ...rest] = looks;
+	if (!base) return [];
+	const out: string[] = [];
+	for (const { when, look } of rest) {
+		if (look.length !== base.look.length) {
+			out.push(
+				`${when}：玻璃块数 ${look.length}，与首次打开的 ${base.look.length} 不同`,
+			);
+			continue;
+		}
+		look.forEach((now, i) => {
+			const was = base.look[i];
+			if (!was) return;
+			for (const k of ["bg", "beforeBg", "bf", "beforeBf", "opacity"] as const)
+				if (now[k] !== was[k])
+					out.push(
+						`${when}：${now.el} 的 ${k} 由 ${String(was[k])} 变为 ${String(now[k])}`,
+					);
+		});
+	}
+	return out;
+}
+
 /** 登记一个界面用例。 */
 export function surface(s: Surface) {
 	test(s.id, async ({ page }, info) => {
@@ -363,16 +431,20 @@ export function surface(s: Surface) {
 			)),
 		);
 		const overlay = s.open ? await s.open(page, info) : undefined;
+		// 三个时刻的材质快照：首次打开、滚到底、关掉重开，逐项比对（不只看有没有触发机制，还看实际取值变没变）
+		const looks: { when: string; look: Look[] }[] = [];
 		if (overlay) {
 			await overlay.waitFor({ state: "visible" });
 			await settle(page);
 			issues.push(...(await inspect(overlay)).map((i) => `首次打开：${i}`));
+			looks.push({ when: "首次打开", look: await material(overlay) });
 		}
 		issues.push(...(await inspectPage(page)));
 		await shoot(page, info, s.id);
 		if (overlay) {
 			if (await scrollInside(overlay)) {
 				issues.push(...(await inspect(overlay)).map((i) => `滚到底后：${i}`));
+				looks.push({ when: "滚到底后", look: await material(overlay) });
 				await shoot(page, info, s.id, "-scrolled");
 			}
 			if (!s.noReopen && s.open) {
@@ -391,9 +463,11 @@ export function surface(s: Surface) {
 					await again.waitFor({ state: "visible" });
 					await settle(page);
 					issues.push(...(await inspect(again)).map((i) => `重开后：${i}`));
+					looks.push({ when: "重开后", look: await material(again) });
 				}
 			}
 		}
+		issues.push(...compareLooks(looks));
 		const unique = [...new Set(issues)];
 		record(info, s.id, { status: "done", issues: unique });
 		if (PHASE === "after") expect(unique, unique.join("\n")).toEqual([]);
