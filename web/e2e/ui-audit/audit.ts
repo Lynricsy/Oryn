@@ -6,6 +6,13 @@
  * before 阶段（基线代码）只记录问题、不判失败，问题清单写进截图目录旁的 `<project>-before.json`。
  */
 import {
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
+import {
 	test as base,
 	expect,
 	type Locator,
@@ -284,13 +291,36 @@ export interface Surface {
 	reopen?: (page: Page, info: TestInfo) => Promise<Locator | undefined>;
 }
 
-function record(info: TestInfo, id: string, issues: string[]) {
+/**
+ * 本次运行的结果文件 `<project>-<phase>.json`：`status` 为 done（跑完全程，`issues` 为断言问题）或 skipped（该视口不适用）。
+ * 用例开始先删掉这个界面在本 project、本阶段的旧结果与截图：中途失败、被打断的用例不会留下上一次的绿灯。
+ */
+function record(
+	info: TestInfo,
+	id: string,
+	result:
+		| { status: "done"; issues: string[] }
+		| { status: "skipped"; reason: string },
+) {
 	const dir = `${SHOTS}${id}/`;
 	mkdirSync(dir, { recursive: true });
 	writeFileSync(
 		`${dir}${info.project.name}-${PHASE}.json`,
 		`${JSON.stringify({ id, project: info.project.name, phase: PHASE, ...result }, null, "\t")}\n`,
 	);
+}
+
+function clearPrevious(info: TestInfo, id: string) {
+	const dir = `${SHOTS}${id}/`;
+	if (!existsSync(dir)) return;
+	const prefix = `${info.project.name}-${PHASE}`;
+	for (const f of readdirSync(dir))
+		if (
+			f === `${prefix}.json` ||
+			f.startsWith(`${prefix}.`) ||
+			f.startsWith(`${prefix}-`)
+		)
+			rmSync(`${dir}${f}`);
 }
 
 async function shoot(page: Page, info: TestInfo, id: string, suffix = "") {
