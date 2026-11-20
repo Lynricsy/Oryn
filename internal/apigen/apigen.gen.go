@@ -9264,6 +9264,9 @@ type RoleIdentityList struct {
 	// ConfigError config.yml 解析失败的原因；出现时 roles 按缺省 cycleOrder 给出
 	ConfigError *string `json:"configError,omitempty"`
 
+	// DefaultThinkingLevel config.yml 的 `defaultThinkingLevel`（off / minimal / low / medium / high / xhigh / max / auto）； 没写或取值不合法时为 omp 的缺省值 high。新会话没有显式级别时从它起步，客户端据此显示实际生效的思考级别
+	DefaultThinkingLevel string `json:"defaultThinkingLevel"`
+
 	// Roles 先是 cycleOrder 里的 role（按其顺序），再是遗留项（按 role 升序）
 	Roles []RoleIdentity `json:"roles"`
 }

@@ -165,6 +165,34 @@ func (h *Home) KnownRoles() (roles []KnownRole, configErr error) {
 	return roles, nil
 }
 
+// fallbackThinkingLevel 是 omp `defaultThinkingLevel` 的缺省值。
+const fallbackThinkingLevel = "high"
+
+// thinkingLevels 是 `defaultThinkingLevel` 的合法取值（omp THINKING_EFFORTS、off 与 auto）。
+var thinkingLevels = []string{"off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"}
+
+// ParseDefaultThinkingLevel 从 config.yml 的内容取 `defaultThinkingLevel`；没写、不是合法取值或 YAML 不合法时
+// 按 omp 的缺省值（high）——与 omp 读取设置时的回退一致。
+func ParseDefaultThinkingLevel(config []byte) string {
+	root, err := parseConfigRoot(config)
+	if err != nil {
+		return fallbackThinkingLevel
+	}
+	if v, ok := str(mapGetDeref(root, "defaultThinkingLevel")); ok && slices.Contains(thinkingLevels, v) {
+		return v
+	}
+	return fallbackThinkingLevel
+}
+
+// DefaultThinkingLevel 读 omp-home 的 config.yml 并按 ParseDefaultThinkingLevel 取值；读取失败按缺省值。
+func (h *Home) DefaultThinkingLevel() string {
+	b, err := h.readConfig()
+	if err != nil {
+		return fallbackThinkingLevel
+	}
+	return ParseDefaultThinkingLevel(b)
+}
+
 func defaultCycleRoles() []CycleRole {
 	out := make([]CycleRole, len(DefaultCycleOrder))
 	for i, r := range DefaultCycleOrder {

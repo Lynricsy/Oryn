@@ -94,6 +94,7 @@ describe("mergeRoleIdentity", () => {
 			{ role: "Cyrene", inCycle: true, avatarIcon: "🌙" },
 			{ role: "Old", inCycle: false, avatarIcon: "x" },
 		],
+		defaultThinkingLevel: "high",
 	};
 	it("替换同名项，保持顺序与其它字段", () => {
 		const out = mergeRoleIdentity(list, {

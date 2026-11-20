@@ -206,3 +206,21 @@ func TestHomeKnownRoles(t *testing.T) {
 	assert.Contains(t, err.Error(), ConfigFile)
 	assert.Equal(t, defaults, got, "解析失败返回缺省配置下的已知 role")
 }
+
+// defaultThinkingLevel：合法取值原样返回；没写、取值不认识、类型不对或 YAML 不合法都回落到 omp 的缺省值 high。
+func TestParseDefaultThinkingLevel(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"", "high"},
+		{ownerConfig, "high"},
+		{"defaultThinkingLevel: medium\n", "medium"},
+		{"defaultThinkingLevel: auto\n", "auto"},
+		{"defaultThinkingLevel: off\n", "off"},
+		{"defaultThinkingLevel: ' xhigh '\n", "xhigh"},
+		{"defaultThinkingLevel: huge\n", "high"},
+		{"defaultThinkingLevel: 3\n", "high"},
+		{"defaultThinkingLevel: [low\n", "high"},
+	}
+	for _, c := range cases {
+		assert.Equal(t, c.want, ParseDefaultThinkingLevel([]byte(c.in)), c.in)
+	}
+}

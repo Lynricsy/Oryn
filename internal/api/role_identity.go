@@ -30,7 +30,10 @@ func (s *Server) ListRoleIdentities(w http.ResponseWriter, r *http.Request) {
 	for _, row := range rows {
 		avatars[row.Role] = row
 	}
-	out := apigen.RoleIdentityList{Roles: make([]apigen.RoleIdentity, 0, len(roles)+len(rows))}
+	out := apigen.RoleIdentityList{
+		Roles:                make([]apigen.RoleIdentity, 0, len(roles)+len(rows)),
+		DefaultThinkingLevel: s.Auth.Home.DefaultThinkingLevel(),
+	}
 	known := make(map[string]bool, len(roles))
 	for i := range roles {
 		known[roles[i].Role] = true

@@ -993,9 +993,12 @@ export class MockServer {
 		const orphans = Object.keys(this.roleAvatars)
 			.filter((r) => !MOCK_CYCLE.includes(r))
 			.sort();
+		const level: unknown = readConfigDoc(this.files["config.yml"] ?? "").toJS()
+			?.defaultThinkingLevel;
 		return {
 			roles: [...MOCK_CYCLE, ...orphans].map((r) => this.roleIdentity(r)),
 			...(this.roleConfigError ? { configError: this.roleConfigError } : {}),
+			defaultThinkingLevel: typeof level === "string" ? level : "high",
 		};
 	}
 
