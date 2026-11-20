@@ -3,6 +3,8 @@
 // 启用了桌面时另注册 desktop_ask_user 工具；ORYN_ARTIFACT_SOCK 非空时注册 artifact 工具（M14）与 GitHub 任务工具（M15），
 // 另有 ORYN_SSH=1 时注册 ssh_exec_many 并追加 SSH 指引（M18）。
 // Runner（ORYN_RUNNER=1）上 orbd 把同一文件写到 ~/.oryn/orbd/extensions/，此时只注册 artifact 工具与它的指引。
+// orb 与 Runner 都注册一个 bash 的 tool_result 钩子：用 omp 原生 ShellVisualization 把执行轨迹渲染成 details.orynPseudo，
+// 供 Web 的 bash 卡片显示 Pseudo 视图。
 import type {
 	AgentToolResult,
 	BeforeAgentStartEvent,
@@ -748,6 +750,148 @@ function registerSsh(pi: ExtensionAPI) {
 const DOCKER_GUIDE = `Docker：这台 orb 有自己的 Docker 守护进程，由 Oryn 托管（不要自己启动或重启 dockerd），日志在 ~/.cache/oryn/logs/dockerd.log；\`docker\` / \`docker compose\` 直接可用（user 在 docker 组，不需要 sudo）。setup 里拉取或构建的镜像会进入项目快照，新 orb 直接可用；setup 结束时不要留下运行中的容器（需要常驻的容器用受管服务启动）。`;
 const NO_DOCKER_GUIDE = `Docker：这台 orb 没有 Docker 守护进程（docker 命令存在但连不上），不要尝试自己安装或启动 dockerd；任务确实需要 Docker 时，请用户改用带 Docker 的 orb 类型新开线程。`;
 
+// ---- bash 的 pseudo 视图 ----
+// omp 的 bash 结果在 details.trace 里带执行轨迹（脚本 + 二进制语法树 + 各节点执行状态），终端里由原生
+// ShellVisualization 渲染成 Python 风格的 Pseudo 视图。浏览器跑不了原生模块，所以在这里用同一个原生实现
+// 渲染一次，把压缩后的行写进 details.orynPseudo，Oryn Web 的 bash 卡片直接显示。trace 原样保留（omp 自己
+// 的 TUI 还要用它）；原生模块不可用、轨迹无法还原时什么也不做。
+
+/** pseudo 的一个片段：文本 + 样式类（`kw` / `var def` / `str` / `cmd` / `op` / `badge` …，空格分隔）+ 执行状态。 */
+interface OrynPseudoSegment {
+	text: string;
+	style?: string;
+	state?: string;
+	/** 同一执行节点第一个失败片段：前面画一个 ×。 */
+	failMark?: true;
+}
+
+interface OrynPseudoRow {
+	depth: number;
+	state?: string;
+	/** 整行失败但没有哪个片段失败（且不是控制结构的头 / 中 / 尾行）：行首画 ×。 */
+	failMark?: true;
+	segments: OrynPseudoSegment[];
+	/** 行尾读数：耗时、循环次数（`↻ 2`）、分支（`↳`）。 */
+	meta?: string;
+	/** 这一行设置的变量最终值（`‹ f = "b" ›`）；truncated 表示值被截断。 */
+	annotations?: { name: string; value: string; truncated?: true }[];
+	/** 副作用字形（写文件、网络……），排在行首。 */
+	effects?: string[];
+}
+
+interface OrynPseudo {
+	v: 1;
+	rows: OrynPseudoRow[];
+	/** 超出行数上限被省略的行数。 */
+	omittedRows?: number;
+	message?: string;
+}
+
+const PSEUDO_MAX_ROWS = 400;
+const PSEUDO_PREFERENCES = {
+	view: "pseudo",
+	layers: { color: true, inline: true, idioms: true, effects: true, unwrap: true },
+	split: false,
+	playing: false,
+	speed: 1,
+	expandedNodes: [],
+	streaming: false,
+};
+
+type ShellVisualizationCtor = new (trace: string) => { present(preferences: unknown): string };
+let shellVisualization: Promise<ShellVisualizationCtor | null> | undefined;
+
+/** omp 把 `@oh-my-pi/pi-natives` 暴露给扩展；旧版本没有 ShellVisualization 时返回 null。 */
+function loadShellVisualization(): Promise<ShellVisualizationCtor | null> {
+	shellVisualization ??= import("@oh-my-pi/pi-natives").then(
+		(mod: Record<string, unknown>) =>
+			typeof mod.ShellVisualization === "function" ? (mod.ShellVisualization as ShellVisualizationCtor) : null,
+		() => null,
+	);
+	return shellVisualization;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function optString(value: unknown): string | undefined {
+	return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+/** 把原生 presentation 的行压缩成 Web 需要的字段（去掉节点 id、字节范围、执行序号等回放用的数据）。 */
+function compactPseudo(presentation: unknown): OrynPseudo | null {
+	if (!isObject(presentation) || !Array.isArray(presentation.rows)) return null;
+	const rows: OrynPseudoRow[] = [];
+	for (const raw of presentation.rows.slice(0, PSEUDO_MAX_ROWS)) {
+		if (!isObject(raw) || !Array.isArray(raw.segments)) continue;
+		const failedNodes = new Set<unknown>();
+		let anySegmentFailed = false;
+		const segments: OrynPseudoSegment[] = [];
+		for (const seg of raw.segments) {
+			if (!isObject(seg) || typeof seg.text !== "string") continue;
+			const out: OrynPseudoSegment = { text: seg.text };
+			const style = optString(seg.style);
+			const state = optString(seg.state);
+			if (style) out.style = style;
+			if (state) out.state = state;
+			if (state === "fail") {
+				anySegmentFailed = true;
+				const node = seg.executionNode ?? seg.node ?? raw.node;
+				if (node !== undefined && !failedNodes.has(node)) {
+					failedNodes.add(node);
+					out.failMark = true;
+				}
+			}
+			segments.push(out);
+		}
+		const row: OrynPseudoRow = { depth: typeof raw.depth === "number" ? raw.depth : 0, segments };
+		const state = optString(raw.state);
+		if (state) row.state = state;
+		const role = optString(raw.role);
+		if (state === "fail" && !anySegmentFailed && role !== "head" && role !== "mid" && role !== "tail") row.failMark = true;
+		const meta = optString(raw.meta);
+		if (meta) row.meta = meta;
+		if (Array.isArray(raw.annotations)) {
+			const annotations = raw.annotations.flatMap((a) => {
+				if (!isObject(a) || typeof a.name !== "string" || typeof a.value !== "string") return [];
+				const truncated =
+					typeof a.fullLength === "number" && a.fullLength > Buffer.byteLength(a.value, "utf8");
+				return [truncated ? { name: a.name, value: a.value, truncated: true as const } : { name: a.name, value: a.value }];
+			});
+			if (annotations.length > 0) row.annotations = annotations;
+		}
+		if (Array.isArray(raw.effects)) {
+			const effects = raw.effects.flatMap((e) => (isObject(e) && typeof e.glyph === "string" ? [e.glyph] : []));
+			if (effects.length > 0) row.effects = effects;
+		}
+		rows.push(row);
+	}
+	if (rows.length === 0) return null;
+	const pseudo: OrynPseudo = { v: 1, rows };
+	if (presentation.rows.length > PSEUDO_MAX_ROWS) pseudo.omittedRows = presentation.rows.length - PSEUDO_MAX_ROWS;
+	const message = optString(presentation.message);
+	if (message) pseudo.message = message;
+	return pseudo;
+}
+
+function registerShellPseudo(pi: ExtensionAPI) {
+	pi.on("tool_result", async (event) => {
+		if (event.toolName !== "bash" || !isObject(event.details) || !isObject(event.details.trace)) return;
+		const ShellVisualization = await loadShellVisualization();
+		if (!ShellVisualization) return;
+		let pseudo: OrynPseudo | null;
+		try {
+			const viz = new ShellVisualization(JSON.stringify(event.details.trace));
+			pseudo = compactPseudo(JSON.parse(viz.present(PSEUDO_PREFERENCES)));
+		} catch {
+			return;
+		}
+		if (!pseudo) return;
+		return { details: { ...event.details, orynPseudo: pseudo } };
+	});
+}
+
 interface SetupResult {
 	ok: boolean;
 	error?: string;
@@ -804,6 +948,8 @@ function statusLines(): string[] {
 }
 
 export default function orynOrbExtension(pi: ExtensionAPI) {
+	// bash 卡片的 pseudo 视图：orb 与 Runner 都注册（Runner 上的 omp 版本不定，原生模块缺失时自动跳过）
+	registerShellPseudo(pi);
 	const artifacts = registerArtifacts(pi);
 	if (process.env.ORYN_RUNNER === "1") {
 		// Runner（用户自己的机器，M14 步骤 1.7）：只有 artifact 工具与它的指引，没有 orb 环境、Docker 与桌面段落。
