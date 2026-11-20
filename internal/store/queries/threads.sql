@@ -114,10 +114,13 @@ SELECT id, state, pinned, orb_id FROM threads
 WHERE schedule_id = CAST(@schedule_id AS TEXT) AND archived_at IS NULL
 ORDER BY created_at DESC, id DESC;
 
--- Threads bound to an orb other than @except_id ('' = all of them, archived included): an orb is
--- reclaimed only when nothing else uses it.
+-- Threads bound to an orb, archived included, except @except_id while it is still archived ('' = all of them):
+-- an orb is reclaimed only when nothing else uses it. Re-checking archived_at here closes the race where the
+-- keepLast run thread is unarchived between its Archive and this count.
 -- name: CountOtherThreadsByOrb :one
-SELECT COUNT(*) FROM threads WHERE orb_id = CAST(@orb_id AS TEXT) AND id <> CAST(@except_id AS TEXT);
+SELECT COUNT(*) FROM threads
+WHERE orb_id = CAST(@orb_id AS TEXT)
+  AND (id <> CAST(@except_id AS TEXT) OR archived_at IS NULL);
 
 -- Threads bound to an orb: all of them, and the unarchived ones (orb lifecycle follows its threads).
 -- name: OrbThreadCounts :one
