@@ -780,28 +780,29 @@ export function useHeaderTheme(
  * 遮挡探测与菜单的强制收起，只在原生已接管时生效。`visible` 为假（转录纸面被面板标签盖住）时直接算被盖住。
  * 探测时机：生效时立即一次；`document.body` 的直接子节点增删（对话框、命令面板的 portal）、抬手、松键、
  * visualViewport 的 resize / scroll 之后下一帧；另每 COVER_POLL_MS 一次兜底（文档不可见时跳过）。
- * 探测对象是 `root` 里所有 `[data-native-slot]`。
+ * 探测对象是 `root` 里所有 `[data-native-slot]`。`sidebar`（侧栏已要求打开）为真时整段不探测：露出的卡片条上的
+ * 关闭按钮压在页头位置上，那不是遮挡；侧栏刚要打开而根滚动还没起步时同理。
  * 原生菜单开着时：Esc → closeMenu()；软键盘弹出（innerHeight − vv.height − vv.offsetTop > 1）→ closeMenu()。
  */
 export function useHeaderCover(
 	root: RefObject<HTMLElement | null>,
 	visible: boolean,
+	sidebar: boolean,
 ): void {
 	const engaged = useNativeHeaderEngaged();
 	const menu = useNativeHeaderMenu();
 
 	useLayoutEffect(() => {
-		if (!engaged) return;
+		if (!engaged || sidebar) return;
 		if (!visible) {
 			nativeHeader.setCovered(true);
 			return;
 		}
 		let frame = 0;
 		const check = () => {
-			// 卡片不在关闭位（开着或正在开合）时不判定：露出的卡片条上的关闭按钮压在页头位置上，那不是遮挡；
-			// 侧栏已经要打开（卡片内容 inert）而根滚动还没起步时同理。回到关闭位后由根滚动的 scroll 事件补探
-			if (sinkRest(window) !== "closed" || root.current?.closest("[inert]"))
-				return;
+			// 卡片不在关闭位（侧栏关上途中）时不判定，回到关闭位后由根滚动的 scroll 事件补探。
+			// 不能用「页头在 [inert] 里」代替 sidebar：模态对话框（lib/modal.ts）会把背景整体设成 inert，那时正要判成被盖住
+			if (sinkRest(window) !== "closed") return;
 			nativeHeader.setCovered(
 				slotsCovered(
 					root.current?.querySelectorAll("[data-native-slot]") ?? [],
@@ -838,7 +839,7 @@ export function useHeaderCover(
 			vv?.removeEventListener("resize", soon);
 			vv?.removeEventListener("scroll", soon);
 		};
-	}, [engaged, visible, root]);
+	}, [engaged, visible, sidebar, root]);
 
 	useLayoutEffect(() => {
 		if (menu === null) return;
