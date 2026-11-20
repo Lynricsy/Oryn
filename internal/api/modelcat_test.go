@@ -24,8 +24,8 @@ import (
 )
 
 const catalogFakeOutput = `{"models":[
-{"provider":"anthropic","kind":"chat","id":"claude-fable-5","selector":"anthropic/claude-fable-5","name":"Claude Fable 5","contextWindow":1000000,"maxTokens":128000,"reasoning":true,"thinking":["low","high"],"input":["text","image"],"cost":{"cacheRead":1,"cacheWrite":12.5,"input":10,"output":50},"pricingStatus":"fixed"},
-{"provider":"openai","kind":"embedding","id":"text-embedding-3-small","selector":"openai/text-embedding-3-small","name":"Embedding","contextWindow":8191,"maxTokens":0,"reasoning":false,"thinking":null,"input":["text"]}
+{"provider":"anthropic","kind":"chat","id":"claude-fable-5","selector":"anthropic/claude-fable-5","name":"Claude Fable 5","contextWindow":1000000,"maxTokens":128000,"reasoning":true,"thinking":["low","high"],"thinkingDefault":"low","input":["text","image"],"cost":{"cacheRead":1,"cacheWrite":12.5,"input":10,"output":50},"pricingStatus":"fixed"},
+{"provider":"openai","kind":"embedding","id":"text-embedding-3-small","selector":"openai/text-embedding-3-small","name":"Embedding","contextWindow":8191,"maxTokens":0,"reasoning":false,"thinking":null,"thinkingDefault":null,"input":["text"]}
 ]}`
 
 // fakeCatalogRun 是计数的假 `omp models` 运行。
@@ -89,6 +89,8 @@ func TestModelCatalogAPI(t *testing.T) {
 	require.NotNil(t, m.ContextWindow)
 	assert.Equal(t, 1000000, *m.ContextWindow)
 	assert.Equal(t, []string{"low", "high"}, m.Thinking)
+	require.NotNil(t, m.ThinkingDefault)
+	assert.Equal(t, "low", *m.ThinkingDefault)
 	require.NotNil(t, m.Cost)
 	require.NotNil(t, m.Cost.CacheWrite)
 	assert.InDelta(t, 12.5, *m.Cost.CacheWrite, 1e-6)
@@ -96,6 +98,7 @@ func TestModelCatalogAPI(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &raw))
 	assert.NotContains(t, raw.Models[1], "maxTokens", "零值的可选字段省略")
 	assert.NotContains(t, raw.Models[1], "thinking")
+	assert.Equal(t, "", raw.Models[1]["thinkingDefault"], "Core 报告了「没有默认档位」：空串，不省略")
 	assert.NotContains(t, raw.Models[1], "cost")
 	assert.EqualValues(t, 1, f.n.Load())
 

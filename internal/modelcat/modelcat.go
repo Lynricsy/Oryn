@@ -60,10 +60,42 @@ type Model struct {
 	MaxTokens     int      `json:"maxTokens"`
 	Reasoning     bool     `json:"reasoning"`
 	Thinking      []string `json:"thinking"`
-	Input         []string `json:"input"`
-	Cost          *Cost    `json:"cost"`
-	PricingStatus string   `json:"pricingStatus"`
+	// ThinkingDefault 是模型自带的默认思考档位（Core 的 thinking.defaultLevel）：新会话与切模型都优先用它。
+	ThinkingDefault ReportedLevel `json:"thinkingDefault,omitzero"`
+	Input           []string      `json:"input"`
+	Cost            *Cost         `json:"cost"`
+	PricingStatus   string        `json:"pricingStatus"`
 }
+
+// ReportedLevel 是 Core 报告的一个可空档位，并记下键是否出现：旧版 Core 不输出 thinkingDefault（未知），
+// 新版对没有默认档位的模型输出 null（已知没有），两者要区分开。
+type ReportedLevel struct {
+	// Set 表示 JSON 里有这个键（值可以是 null）。
+	Set bool
+	// Value 是档位；null 时为空串。
+	Value string
+}
+
+// UnmarshalJSON 记下键出现过；null 也会走到这里。
+func (r *ReportedLevel) UnmarshalJSON(b []byte) error {
+	r.Set = true
+	if string(b) == "null" {
+		r.Value = ""
+		return nil
+	}
+	return json.Unmarshal(b, &r.Value)
+}
+
+// MarshalJSON 写回同样的形状（落盘缓存）：没有档位写 null；键没出现过由 omitzero 省略。
+func (r ReportedLevel) MarshalJSON() ([]byte, error) {
+	if r.Value == "" {
+		return []byte("null"), nil
+	}
+	return json.Marshal(r.Value)
+}
+
+// IsZero 让 omitzero 在旧版 Core 没报告时省略这个键。
+func (r ReportedLevel) IsZero() bool { return !r.Set }
 
 // Result 是一次目录查询的结果。Models 与 Warnings 在多个调用方之间共享，只读。
 type Result struct {

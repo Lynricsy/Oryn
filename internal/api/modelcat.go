@@ -50,6 +50,10 @@ func catalogModel(m *modelcat.Model) apigen.CatalogModel {
 	if len(m.Thinking) > 0 {
 		out.Thinking = m.Thinking
 	}
+	if m.ThinkingDefault.Set {
+		// 空串也照写：已知没有默认档位，与旧版 Core 不报告（省略）区分开
+		out.ThinkingDefault = &m.ThinkingDefault.Value
+	}
 	if len(m.Input) > 0 {
 		out.Input = m.Input
 	}

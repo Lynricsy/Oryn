@@ -2,6 +2,7 @@ package modelcat
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -110,6 +111,29 @@ func TestParseErrors(t *testing.T) {
 	m, err := parse([]byte(`{"models":[]}`))
 	require.NoError(t, err)
 	assert.Empty(t, m)
+}
+
+// thinkingDefault 三态：有档位、Core 报告 null（已知没有）、旧版 Core 不输出（未知）；落盘缓存往返后不变。
+func TestThinkingDefaultReported(t *testing.T) {
+	models, err := parse([]byte(`{"models":[
+{"provider":"p","id":"a","thinkingDefault":"medium"},
+{"provider":"p","id":"b","thinkingDefault":null},
+{"provider":"p","id":"c"}]}`))
+	require.NoError(t, err)
+	want := []ReportedLevel{{Set: true, Value: "medium"}, {Set: true}, {}}
+	got := func(ms []Model) []ReportedLevel {
+		out := make([]ReportedLevel, len(ms))
+		for i := range ms {
+			out[i] = ms[i].ThinkingDefault
+		}
+		return out
+	}
+	assert.Equal(t, want, got(models))
+	b, err := json.Marshal(models)
+	require.NoError(t, err)
+	var back []Model
+	require.NoError(t, json.Unmarshal(b, &back))
+	assert.Equal(t, want, got(back), "落盘缓存往返")
 }
 
 // 运行期间模型请求经本机回环 egress 代理注入真实密钥；临时 HOME 里只有占位符；运行后代理关闭。

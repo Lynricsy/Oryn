@@ -153,7 +153,7 @@ const MOCK_ROLE_MODELS = [
 	{ provider: "deepseek", id: "deepseek-flash", name: "DeepSeek Flash" },
 ];
 
-/** 中央模型目录里的一个模型（`omp models --json` 的子集）。 */
+/** 中央模型目录里的一个模型（`omp models --json` 的子集；按新版 Core 报告 thinkingDefault，空串 = 没有自带默认档位）。 */
 function mockCatalogModel(
 	provider: string,
 	id: string,
@@ -169,6 +169,7 @@ function mockCatalogModel(
 		kind,
 		reasoning: thinking !== undefined,
 		...(thinking ? { thinking } : {}),
+		thinkingDefault: "",
 		input: ["text"],
 	};
 }

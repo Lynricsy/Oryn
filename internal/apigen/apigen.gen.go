@@ -5087,6 +5087,9 @@ type CatalogModel struct {
 
 	// Thinking 支持的思考档位；不支持调节时省略
 	Thinking []string `json:"thinking,omitempty"`
+
+	// ThinkingDefault 模型自带的默认思考档位（Core 的 thinking.defaultLevel；新会话与切模型都优先于 defaultThinkingLevel）。 空串 = 模型没有默认档位；省略 = 目录来自不报告这一项的旧版 Core，默认档位未知
+	ThinkingDefault *string `json:"thinkingDefault,omitempty"`
 }
 
 // ComposerPrefs defines model for ComposerPrefs.
