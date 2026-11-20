@@ -12,8 +12,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Orb } from "../../api/client";
 import { qk } from "../../api/queries";
 import i18n from "../../i18n";
+import { installContextMenu } from "../../lib/context-menu/dispatch";
+import { closeContextMenu } from "../../lib/context-menu/store";
 import { handleOrbFetch, resetOrbFs } from "../../mock/orbfs";
 import { getThreadStore } from "../../state/stores";
+import { uiStore } from "../../state/ui";
+import { ContextMenuHost } from "../ui/ContextMenu";
 import ChangesPanel, { POLL_MS } from "./ChangesPanel";
 import { GIT_REQUEST_TIMEOUT_MS } from "./git";
 
@@ -213,6 +217,61 @@ describe("ChangesPanel", () => {
 			["stage", ["docs/old-guide.md", "docs/guide.md"]],
 			["unstage", ["README.md"]],
 		]);
+	});
+
+	describe("文件行的上下文菜单", () => {
+		let off: () => void;
+		beforeEach(() => {
+			off = installContextMenu();
+		});
+		afterEach(() => {
+			off();
+			act(() => closeContextMenu());
+		});
+
+		it("右键文件行：在文件面板打开（仓库根 + 相对路径）、复制路径、暂存", async () => {
+			render(
+				<>
+					<ContextMenuHost />
+					<ChangesPanel threadId="T-ctx1" orbId={ORB} />
+				</>,
+			);
+			await filesList();
+			const row = screen.getAllByTitle("src/util.ts")[0];
+			if (!row) throw new Error("no row");
+			act(() => {
+				fireEvent.contextMenu(row, { clientX: 5, clientY: 5 });
+			});
+			const menu = screen.getByTestId("context-menu");
+			expect(
+				[...menu.querySelectorAll("[data-menu-key]")].map((b) =>
+					b.getAttribute("data-menu-key"),
+				),
+			).toEqual(["openFile", "copyPath", "stage"]);
+			fireEvent.click(
+				within(menu).getByRole("menuitem", {
+					name: t("contextMenu.openInFiles"),
+				}),
+			);
+			const ui = uiStore.getState();
+			expect(ui.fileSel["T-ctx1"]?.path).toMatch(/^\/.+\/src\/util\.ts$/);
+			expect(ui.panelTab).toBe("files");
+
+			act(() => {
+				fireEvent.contextMenu(row, { clientX: 5, clientY: 5 });
+			});
+			fireEvent.click(
+				within(screen.getByTestId("context-menu")).getByRole("menuitem", {
+					name: t("contextMenu.stage"),
+				}),
+			);
+			await waitFor(() => expect(box("src/util.ts").checked).toBe(true));
+			expect(
+				requests
+					.filter((r) => r.method === "POST")
+					.map((p) => [p.path.split("/").pop(), p.paths]),
+			).toEqual([["stage", ["src/util.ts"]]]);
+		});
 	});
 
 	it("仅未提交 / 单个 commit：请求带对应 scope；commit 范围不显示暂存勾选", async () => {
