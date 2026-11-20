@@ -2484,9 +2484,18 @@ const SHOOTERS: Record<Group, Shooter> = {
 
 // ---------------------------------------------------------------- 主流程
 
-async function waitForServer(url: string, timeoutMs: number) {
+/** 等开发服务器应答；自己起的 vite 先退出（如端口被占用）时立即失败，免得把占着端口的别的服务当成 mock。 */
+async function waitForServer(
+	url: string,
+	timeoutMs: number,
+	proc: { exitCode: number | null } | null,
+) {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
+		if (proc && proc.exitCode !== null)
+			throw new Error(
+				`vite 已退出（退出码 ${proc.exitCode}），端口 ${PORT} 可能被占用`,
+			);
 		try {
 			if ((await fetch(url)).ok) return;
 		} catch {
@@ -2495,6 +2504,32 @@ async function waitForServer(url: string, timeoutMs: number) {
 		await Bun.sleep(200);
 	}
 	throw new Error(`vite 未在 ${timeoutMs}ms 内就绪`);
+}
+
+/**
+ * 确认 BASE 是 `VITE_MOCK=1` 的 mock 前端：页面里的 MockServer 构造后会给 `__orynMock` 赋值。
+ * 截图流程会经页面发 POST / PUT（上传预览文件、接管桌面等），连到真实控制面会改动真实数据，所以认不出 mock 就直接退出。
+ */
+async function assertMock() {
+	const { ctx, page } = await newPage({
+		scheme: "light",
+		width: 1280,
+		height: 800,
+	});
+	try {
+		await page.goto(BASE);
+		await page.waitForFunction(
+			() => Reflect.get(globalThis, "__orynMock") !== undefined,
+			undefined,
+			{ timeout: 30_000 },
+		);
+	} catch {
+		throw new Error(
+			`${BASE} 上没有初始化 window.__orynMock，不是 VITE_MOCK=1 的 mock 服务器；检查 ORYN_README_BASE 或端口 ${PORT} 是否被占用`,
+		);
+	} finally {
+		await ctx.close();
+	}
 }
 
 /** 预热：先把各页面的懒加载模块请求一遍，避免 vite 首次依赖优化时动态导入失败。 */
@@ -2533,7 +2568,7 @@ const server = process.env.ORYN_README_BASE
 
 let failed = false;
 try {
-	await waitForServer(BASE, 60_000);
+	await waitForServer(BASE, 60_000, server);
 	browser = await chromium.launch({
 		executablePath: process.env.CHROMIUM ?? "/usr/bin/chromium",
 		args: [
@@ -2543,6 +2578,7 @@ try {
 		],
 	});
 	await mkdir(OUT, { recursive: true });
+	await assertMock();
 	await warmUp();
 	for (const group of GROUPS) {
 		if (ONLY && !ONLY.includes(group)) continue;
