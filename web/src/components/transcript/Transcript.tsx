@@ -781,6 +781,14 @@ export const Transcript = memo(function Transcript({
 				fallback: anchorOf(null, req.x, req.y),
 			}),
 	});
+	// 合并 ref 要稳定：内联回调每次渲染都会先置 null 再挂上，子组件的 layout effect 会读到空的滚动容器
+	const setScrollEl = useCallback(
+		(el: HTMLDivElement | null) => {
+			scrollRef.current = el;
+			ctxRef(el);
+		},
+		[ctxRef],
+	);
 	// 手机与触屏：系统选区菜单盖在选区附近，入口改放在输入坞上方
 	const bp = useBreakpoint();
 	const coarse = useCoarsePointer();
@@ -1074,10 +1082,7 @@ export const Transcript = memo(function Transcript({
 	return (
 		<div className="relative min-h-0 flex-1">
 			<div
-				ref={(el) => {
-					scrollRef.current = el;
-					ctxRef(el);
-				}}
+				ref={setScrollEl}
 				onScroll={onScroll}
 				className="h-full overflow-y-auto overscroll-contain"
 				style={{
