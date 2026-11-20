@@ -272,25 +272,22 @@ function Input({ args, result, running }: ToolRenderProps): ReactNode {
 	const timeoutSeconds = num(args.timeout) ?? num(details?.timeoutSeconds);
 	const pseudo = pseudoOf(details);
 	const showPseudo = pseudo !== null && view === "pseudo";
+	const badges = (
+		<Badges
+			items={[
+				cwd && <Badge>cwd={shortenPath(cwd)}</Badge>,
+				timeoutSeconds !== null && <Badge>timeout={timeoutSeconds}s</Badge>,
+				args.pty === true && <PtyBadge running={running} />,
+				!asyncDetailsOf(details) && args.async === true && (
+					<Badge tone="accent">async</Badge>
+				),
+				head !== null && <Badge>head={head}</Badge>,
+				tail !== null && <Badge>tail={tail}</Badge>,
+			]}
+		/>
+	);
 	return (
 		<>
-			{pseudo && (
-				<fieldset
-					className="tv-viewswitch"
-					aria-label={t("toolRender.shellView.label")}
-				>
-					{(["pseudo", "raw"] as const).map((v) => (
-						<button
-							key={v}
-							type="button"
-							aria-pressed={view === v}
-							onClick={() => setView(v)}
-						>
-							{t(`toolRender.shellView.${v}`)}
-						</button>
-					))}
-				</fieldset>
-			)}
 			{/* 折叠行只是摘要（会被截断、压成一行），输入段始终给出完整命令 */}
 			{showPseudo ? (
 				<PseudoView pseudo={pseudo} />
@@ -299,18 +296,29 @@ function Input({ args, result, running }: ToolRenderProps): ReactNode {
 			) : (
 				<CommandLine command={command} prefix={prefix} />
 			)}
-			<Badges
-				items={[
-					cwd && <Badge>cwd={shortenPath(cwd)}</Badge>,
-					timeoutSeconds !== null && <Badge>timeout={timeoutSeconds}s</Badge>,
-					args.pty === true && <PtyBadge running={running} />,
-					!asyncDetailsOf(details) && args.async === true && (
-						<Badge tone="accent">async</Badge>
-					),
-					head !== null && <Badge>head={head}</Badge>,
-					tail !== null && <Badge>tail={tail}</Badge>,
-				]}
-			/>
+			{pseudo ? (
+				// 视图切换与参数徽标同一行（切换靠右），不压在命令上
+				<div className="tv-shellview-foot">
+					{badges}
+					<fieldset
+						className="tv-viewswitch"
+						aria-label={t("toolRender.shellView.label")}
+					>
+						{(["pseudo", "raw"] as const).map((v) => (
+							<button
+								key={v}
+								type="button"
+								aria-pressed={view === v}
+								onClick={() => setView(v)}
+							>
+								{t(`toolRender.shellView.${v}`)}
+							</button>
+						))}
+					</fieldset>
+				</div>
+			) : (
+				badges
+			)}
 		</>
 	);
 }

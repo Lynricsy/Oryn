@@ -255,17 +255,16 @@
 
 /* ---- body ---- */
 
-/* 展开体在卡内（头部下方一条发丝线）：意图一行 + 「输入」「输出」两段。
- * 输入段是纸面上的一层浅底，输出段是更深的内嵌井，两段之间一条发丝线，各带一枚小标题。 */
+/* 展开体在卡内（头部下方一条发丝线）：意图一行 + 输入、输出两段，不写段落标题。
+ * 意图与输入（这次调用「要做什么」）留在纸面上，输出是一层更深的内嵌井，两者之间一条发丝线。 */
 .tv-body {
 	display: flex;
 	flex-direction: column;
 	min-width: 0;
-	background: var(--tv-inset);
 }
 
 .tv-intent {
-	padding: 9px 12px;
+	padding: 9px 12px 0;
 	font-family: var(--tv-sans);
 	font-style: italic;
 	font-size: 12px;
@@ -275,54 +274,29 @@
 .tv-sec {
 	display: flex;
 	flex-direction: column;
-	gap: 6px;
 	min-width: 0;
-	padding: 9px 12px 10px;
-	position: relative;
+	padding: 10px 12px;
 }
 
-/* 渲染器的这一段渲染为空：整段（连同小标题）不出现 */
+/* 渲染器的这一段渲染为空：整段不出现 */
 .tv-sec:has(> .tv-sec-body:empty) {
 	display: none;
 }
 
-.tv-sec--in {
-	background: color-mix(in oklab, var(--tv-raised) 70%, transparent);
-}
-
-.tv-sec--in:not(:has(> .tv-sec-body:empty)) + .tv-sec--out {
+.tv-sec--out {
 	border-top: 1px solid var(--tv-border);
+	background: var(--tv-inset);
 }
 
-.tv-sec-label {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	font-family: var(--tv-sans);
-	font-size: 10.5px;
-	font-weight: 600;
-	letter-spacing: 0.06em;
-	text-transform: uppercase;
-	color: var(--tv-faint);
-	user-select: none;
+/* 输入段为空、也没有意图时，输出井直接接在头部的发丝线下，不再叠一条线 */
+.tv-body > .tv-sec--in:first-child:has(> .tv-sec-body:empty) + .tv-sec--out {
+	border-top: 0;
 }
 
-/* 小标题前一枚 6px 色点：输入用类别中性的 faint，输出用强调色，扫一眼就能分清两段 */
-.tv-sec-label::before {
-	content: "";
-	flex: none;
-	width: 6px;
-	height: 6px;
-	border-radius: 50%;
-	background: var(--tv-faint);
-}
-
-.tv-sec--out .tv-sec-label::before {
-	background: var(--tv-accent);
-}
-
-.tv-card--error .tv-sec--out .tv-sec-label::before {
-	background: var(--tv-err);
+/* 只有意图、或意图之后直接是输出：意图下方留出与段落相同的空隙 */
+.tv-intent:has(+ .tv-sec--in > .tv-sec-body:empty),
+.tv-body:not(:has(.tv-sec-body:not(:empty))) > .tv-intent {
+	padding-bottom: 9px;
 }
 
 .tv-sec-body {
@@ -737,14 +711,18 @@
 	font-family: var(--tv-mono);
 }
 
-/* 输入段右上角的视图切换（Pseudo / 原始），与段落小标题同一行（`.tv-sec` 是定位容器） */
-.tv-viewswitch {
-	position: absolute;
-	top: 6px;
-	right: 12px;
+/* bash 输入段底部一行：参数徽标靠左，视图切换（Pseudo / 原始）靠右 */
+.tv-shellview-foot {
 	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.tv-viewswitch {
+	display: flex;
+	flex: none;
 	/* fieldset 的默认外边距与最小宽度归零 */
-	margin: 0;
+	margin: 0 0 0 auto;
 	min-inline-size: 0;
 	padding: 1px;
 	border: 1px solid var(--tv-border);

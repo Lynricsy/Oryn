@@ -45,6 +45,11 @@ import { Icon, type IconName } from "../ui/icons";
 import { ModelLogo } from "../ui/ModelLogo";
 import { describeError } from "../ui/primitives";
 import { CornerLevel } from "../ui/ThinkingDial";
+import {
+	ActiveToolCallsContext,
+	activeToolCallIds,
+	NO_ACTIVE_TOOL_CALLS,
+} from "./active-tools";
 import { type TurnIdentities, useTranscriptContext } from "./context";
 import {
 	assistantEdges,
@@ -693,6 +698,11 @@ export const Transcript = memo(function Transcript({
 	const ownState = useThread(threadId, (s) => s.thread?.state);
 	const working = (indexState ?? ownState) === "working";
 	const liveStart = working ? turns.openStart : undefined;
+	// 当前一批工具调用默认展开：模型开始下一批调用或回合结束（不再 working）时收起
+	const activeTools = useMemo(
+		() => (working ? activeToolCallIds(rows) : NO_ACTIVE_TOOL_CALLS),
+		[working, rows],
+	);
 	const sessionModel = useThread(threadId, (s) => s.state?.model);
 	const sessionThinking = useThread(threadId, (s) => s.state?.thinkingLevel);
 	const gaps = useMemo(() => rowGaps(rows, turns.footers), [rows, turns]);
@@ -1068,7 +1078,9 @@ export const Transcript = memo(function Transcript({
 							</button>
 						</div>
 					)}
-					{rendered}
+					<ActiveToolCallsContext.Provider value={activeTools}>
+						{rendered}
+					</ActiveToolCallsContext.Provider>
 					{selection.quote && !quoteBar && (
 						<QuoteChip quote={selection.quote} onTake={selection.take} />
 					)}

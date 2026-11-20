@@ -617,6 +617,40 @@ describe("卡片头部的意图与展开体的输入 / 输出分段", () => {
 			container.querySelector(".tv-sec--out .tv-sec-body"),
 		).toBeEmptyDOMElement();
 	});
+
+	it("未手动开合时跟随 defaultOpen（宿主收起旧一批）；用户点过后以用户为准", () => {
+		const args = { command: "sleep 1", i: "等一秒" };
+		const { container, rerender } = render(
+			<ToolView name="bash" args={args} running defaultOpen />,
+		);
+		const head = () => container.querySelector(".tv-head") as HTMLElement;
+		expect(head()).toHaveAttribute("aria-expanded", "true");
+		// 结束了但仍是当前一批：保持展开
+		rerender(
+			<ToolView name="bash" args={args} result={{ content: [] }} defaultOpen />,
+		);
+		expect(head()).toHaveAttribute("aria-expanded", "true");
+		// 模型开始下一批或回合结束：宿主不再给 defaultOpen，自动收起
+		rerender(
+			<ToolView
+				name="bash"
+				args={args}
+				result={{ content: [] }}
+				defaultOpen={false}
+			/>,
+		);
+		expect(head()).toHaveAttribute("aria-expanded", "false");
+		fireEvent.click(head());
+		rerender(
+			<ToolView
+				name="bash"
+				args={args}
+				result={{ content: [] }}
+				defaultOpen={false}
+			/>,
+		);
+		expect(head()).toHaveAttribute("aria-expanded", "true");
+	});
 });
 
 describe("bash 的 Pseudo 视图（details.orynPseudo）", () => {

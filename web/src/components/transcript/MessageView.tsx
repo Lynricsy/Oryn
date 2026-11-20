@@ -39,6 +39,7 @@ import { Icon, type IconName } from "../ui/icons";
 import { Menu, ThreadStateIcon } from "../ui/primitives";
 import { UserAvatar } from "../ui/UserAvatar";
 import { AgentAvatar } from "./AgentAvatar";
+import { useToolCallActive } from "./active-tools";
 import { useTranscriptContext } from "./context";
 
 const CHIP =
@@ -631,6 +632,8 @@ export function ToolCard({
 	streamingArgs?: boolean;
 }): ReactNode {
 	const ctx = useTranscriptContext();
+	// 当前一批调用默认展开，模型开始下一批或回合结束时收起（见 active-tools.ts）
+	const active = useToolCallActive(toolCallId);
 	const live = ctx.liveTools[toolCallId];
 	const entryResult = ctx.toolResults.get(toolCallId);
 	const result = entryResult
@@ -653,6 +656,7 @@ export function ToolCard({
 					: undefined
 			}
 			running={running}
+			defaultOpen={active}
 			intent={intent ?? live?.intent}
 			partial={partial}
 			partialResult={partialResult}

@@ -1,0 +1,47 @@
+/**
+ * 当前这一批工具调用：线程工作中时，最后一条带工具调用的助手消息里的全部调用（并行调用同属一批）。
+ * 这一批的工具卡默认展开；模型开始下一批调用，或回合结束（线程不再 working、等待用户输入）时自动收起。
+ */
+import { createContext, useContext } from "react";
+import { isRecord } from "../../tool-render/util";
+import type { MainlineRow } from "./mainline";
+
+export const NO_ACTIVE_TOOL_CALLS: ReadonlySet<string> = new Set();
+
+/** 从转录末尾往前找最近一批工具调用的 id；没有时为空集。 */
+export function activeToolCallIds(
+	rows: readonly MainlineRow[],
+): ReadonlySet<string> {
+	for (let i = rows.length - 1; i >= 0; i--) {
+		const row = rows[i];
+		if (!row) continue;
+		// 还没并入助手消息的在途工具行：连同紧挨着的同类行算一批
+		if (row.kind === "tool") {
+			const ids = new Set<string>();
+			for (let j = i; j >= 0; j--) {
+				const r = rows[j];
+				if (r?.kind !== "tool") break;
+				ids.add(r.toolCallId);
+			}
+			return ids;
+		}
+		if (row.kind !== "message" || row.message.role !== "assistant") continue;
+		const content = row.message.content;
+		if (!Array.isArray(content)) continue;
+		const ids = new Set<string>();
+		for (const b of content) {
+			if (isRecord(b) && b.type === "toolCall" && typeof b.id === "string")
+				ids.add(b.id);
+		}
+		if (ids.size > 0) return ids;
+	}
+	return NO_ACTIVE_TOOL_CALLS;
+}
+
+export const ActiveToolCallsContext =
+	createContext<ReadonlySet<string>>(NO_ACTIVE_TOOL_CALLS);
+
+/** 这次工具调用是否属于当前一批（卡片据此默认展开）。 */
+export function useToolCallActive(toolCallId: string): boolean {
+	return useContext(ActiveToolCallsContext).has(toolCallId);
+}

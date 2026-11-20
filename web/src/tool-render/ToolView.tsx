@@ -143,6 +143,10 @@ export interface ToolViewProps {
 	partial?: string;
 	/** 运行中的结构化部分结果；渲染器声明 `livePartial` 时由它自己展示，替代文本尾巴。 */
 	partialResult?: ToolResultLike;
+	/**
+	 * 默认是否展开：用户还没手动开合时跟随这个值（宿主据此让当前一批工具调用展开、之后收起），
+	 * 用户点过头部后以用户为准。
+	 */
 	defaultOpen?: boolean;
 	/** Host capabilities (sub-session drill-down, …). */
 	host?: ToolRenderHost;
@@ -167,7 +171,9 @@ function normalizeArgs(raw: unknown): {
 
 export function ToolView(props: ToolViewProps): ReactNode {
 	const { t } = useTranslation();
-	const [open, setOpen] = useState(props.defaultOpen ?? false);
+	// 用户点过头部后以用户为准；否则跟随宿主给的 defaultOpen
+	const [userOpen, setUserOpen] = useState<boolean | null>(null);
+	const open = userOpen ?? props.defaultOpen ?? false;
 	const { args: outerArgs, intent: argIntent } = normalizeArgs(props.args);
 	// `write` / `read xd://…`：换成真实工具（或设备文档卡）的名字与参数
 	const xdev = xdevCardOf({
@@ -222,7 +228,7 @@ export function ToolView(props: ToolViewProps): ReactNode {
 				type="button"
 				className="tv-head"
 				aria-expanded={open}
-				onClick={() => setOpen((v) => !v)}
+				onClick={() => setUserOpen(!open)}
 				title={intent || undefined}
 			>
 				<span
@@ -314,8 +320,8 @@ export function ToolView(props: ToolViewProps): ReactNode {
 }
 
 /**
- * 展开体的一段（输入 / 输出）：小标题 + 内容。内容渲染为空时整段由 CSS 隐去
- * （`.tv-sec:has(> .tv-sec-body:empty)`），渲染器不必预判自己是否有内容。
+ * 展开体的一段（输入 / 输出）：不写可见标题，只靠底色与分隔线区分；`label` 只给读屏器。
+ * 内容渲染为空时整段由 CSS 隐去（`.tv-sec:has(> .tv-sec-body:empty)`），渲染器不必预判自己是否有内容。
  */
 function ToolSection({
 	kind,
@@ -328,9 +334,6 @@ function ToolSection({
 }): ReactNode {
 	return (
 		<section className={`tv-sec tv-sec--${kind}`} aria-label={label}>
-			<div className="tv-sec-label" aria-hidden="true">
-				{label}
-			</div>
 			<div className="tv-sec-body">{children}</div>
 		</section>
 	);
