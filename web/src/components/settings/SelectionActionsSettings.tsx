@@ -16,7 +16,6 @@ import { Card, ListRow } from "../ui/data";
 import {
 	Button,
 	Dialog,
-	EmptyState,
 	ErrorText,
 	Field,
 	IconButton,
@@ -137,7 +136,7 @@ export default function SelectionActionsSettings(): ReactNode {
 					<Spinner />
 				</div>
 			) : actions.length === 0 ? (
-				<EmptyState icon="bolt" title={t("selectionActions.empty")} />
+				<p className="text-faint text-sm">{t("selectionActions.empty")}</p>
 			) : (
 				<ul
 					className="-mx-2 flex flex-col"

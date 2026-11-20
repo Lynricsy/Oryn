@@ -736,21 +736,33 @@ function ScheduleForm({
 									: t("schedule.nameOptionalHint")
 					}
 				>
-					<TextInput
-						value={s.name}
-						maxLength={80}
-						aria-invalid={nameTaken || undefined}
-						onChange={(e) => set("name", e.target.value)}
-					/>
-				</Field>
-				{nameTaken && (
-					<p role="alert" className="-mt-2 text-err text-xs">
-						{t("schedule.nameTaken")}
-					</p>
-				)}
-				{newThread && (
-					// 新建线程模式：目标（项目、Space）紧跟名称，放在时间字段之前
-					<div className="grid gap-3 sm:grid-cols-2">
+					<div className="flex min-w-0 flex-col gap-1">
+						<Field
+							label={named ? t("schedule.name") : t("schedule.nameOptional")}
+							hint={
+								nameTaken
+									? undefined
+									: newThread
+										? t("schedule.nameHint")
+										: main
+											? t("schedule.mainNameHint")
+											: t("schedule.nameOptionalHint")
+							}
+						>
+							<TextInput
+								value={s.name}
+								maxLength={80}
+								aria-invalid={nameTaken || undefined}
+								onChange={(e) => set("name", e.target.value)}
+							/>
+						</Field>
+						{nameTaken && (
+							<p role="alert" className="text-err text-xs">
+								{t("schedule.nameTaken")}
+							</p>
+						)}
+					</div>
+					{newThread && (
 						<Field label={t("schedule.project")}>
 							<Select
 								value={s.projectId}
@@ -767,19 +779,18 @@ function ScheduleForm({
 									))}
 							</Select>
 						</Field>
-						{spaceId && (
-							<Field label={t("schedule.space")}>
-								<TextInput
-									readOnly
-									value={
-										spaces.data?.spaces?.find((x) => x.id === spaceId)?.name ??
-										""
-									}
-								/>
-							</Field>
-						)}
-					</div>
-				)}
+					)}
+					{newThread && spaceId && (
+						<Field label={t("schedule.space")}>
+							<TextInput
+								readOnly
+								value={
+									spaces.data?.spaces?.find((x) => x.id === spaceId)?.name ?? ""
+								}
+							/>
+						</Field>
+					)}
+				</div>
 				<div
 					role="radiogroup"
 					aria-label={t("schedule.kindLabel")}
