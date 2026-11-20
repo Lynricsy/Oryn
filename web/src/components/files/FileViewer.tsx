@@ -20,10 +20,13 @@ import {
 	useCallback,
 	useEffect,
 	useMemo,
+	useRef,
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { ApiError } from "../../api/client";
+import { useContextTarget } from "../../lib/context-menu/registry";
+import { anchorOf } from "../../lib/context-menu/selection";
 import { fileIcon } from "../../lib/file-icon";
 import {
 	type FileEntry,
@@ -38,6 +41,7 @@ import {
 	previewKind,
 	type TextRender,
 } from "../../lib/preview-kind";
+import { AROUND_MAX } from "../../lib/side-ask";
 import { Markdown } from "../markdown/Markdown";
 import { Badge } from "../ui/data";
 import { Icon } from "../ui/icons";
@@ -182,6 +186,7 @@ export function FileViewer({
 	readOnly?: boolean;
 }): ReactNode {
 	const { t } = useTranslation();
+	const rootEl = useRef<HTMLDivElement | null>(null);
 	const [loaded, setLoaded] = useState<Loaded | null>(null);
 	const [loadError, setLoadError] = useState<unknown>(null);
 	const key = draftKey(source.id, path);
@@ -359,8 +364,26 @@ export function FileViewer({
 		}
 	}
 
+	// Markdown 预览等非编辑器视图里的选区；编辑器里的选区由 CodeEditor 自己的登记接管
+	const ctxRef = useContextTarget<HTMLDivElement>({
+		selection: (sel, req) => ({
+			threadId: req.askThreadId,
+			text: sel.text,
+			before: sel.before(rootEl.current ?? sel.root, AROUND_MAX),
+			after: sel.after(rootEl.current ?? sel.root, AROUND_MAX),
+			source: { kind: "file", path },
+			anchor: anchorOf(sel, req.x, req.y),
+		}),
+	});
+
 	return (
-		<div className="flex h-full min-h-0 flex-col">
+		<div
+			ref={(el) => {
+				rootEl.current = el;
+				ctxRef(el);
+			}}
+			className="flex h-full min-h-0 flex-col"
+		>
 			<div className="flex h-10 shrink-0 items-center gap-1.5 border-border border-b px-2">
 				{onBack && (
 					<IconButton
