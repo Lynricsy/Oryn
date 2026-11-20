@@ -16,3 +16,7 @@ build/
 /fakeomp
 # FCM 配置只在构建 gms flavor 时从 .dev/m7/ 复制进来，不入库
 web/src-tauri/gen/android/app/google-services.json
+# UI 审计（web/e2e/ui-audit）的截图与 Playwright 产物：本地生成，不入库
+docs/ui-audit/shots/
+web/test-results/
+web/playwright-report/
