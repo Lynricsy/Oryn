@@ -5,6 +5,7 @@
  */
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { revealSelectedTab } from "../../lib/tab-strip";
 import { useCoarsePointer } from "../../lib/viewport";
 import type { RpcTerminalInfo } from "../../omp/types";
 import {
@@ -198,13 +199,10 @@ export default function TerminalPanel({
 		return () => terminalHub.setVisible(threadId, false);
 	}, [threadId]);
 
-	// 新建或切换后，选中的标签滚进标签区的可视范围（标签多时它可能在右侧被挡住）
+	// 新建或切换后，选中的标签滚进标签区的可视范围（标签多时它可能在右侧被挡住）；只滚标签区自己
 	const tabsRef = useRef<HTMLDivElement>(null);
 	useEffect(() => {
-		if (!activeId) return;
-		tabsRef.current
-			?.querySelector("[aria-selected=true]")
-			?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+		if (activeId && tabsRef.current) revealSelectedTab(tabsRef.current);
 	}, [activeId]);
 
 	const active = activeId ? terminals[activeId] : undefined;

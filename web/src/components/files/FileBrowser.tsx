@@ -28,6 +28,7 @@ import {
 	joinPath,
 	parentPath,
 } from "../../lib/file-source";
+import { revealSelectedTab } from "../../lib/tab-strip";
 import { Icon } from "../ui/icons";
 import { ManualCopy } from "../ui/ManualCopy";
 import {
@@ -475,12 +476,8 @@ export function FileBrowser({
 				el.scrollLeft + el.clientWidth < el.scrollWidth - 1,
 			);
 		};
-		// 换根后（rootKey 变了）把选中的标签滚进来
-		if (rootKey)
-			el.querySelector("[aria-selected=true]")?.scrollIntoView?.({
-				block: "nearest",
-				inline: "nearest",
-			});
+		// 换根后（rootKey 变了）把选中的标签滚进来；只滚标签条自己，不带动页面
+		if (rootKey) revealSelectedTab(el);
 		update();
 		const ro =
 			typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
