@@ -390,9 +390,10 @@ export function HomePage(): ReactNode {
 			: pillsMotion
 				? "home-pills-in"
 				: "";
-	const rise = (delay: string) =>
+	// 托盘里是玻璃（backdrop-filter）：opacity < 1 的祖先会截断模糊，淡入那 420ms 里托盘先透明再突然变磨砂，所以托盘只位移不淡入
+	const rise = (delay: string, fade = true) =>
 		intro
-			? `transition-[opacity,translate] duration-300 ease-out starting:translate-y-2 starting:opacity-0 ${delay}`
+			? `transition-[opacity,translate] duration-300 ease-out starting:translate-y-2 ${fade ? "starting:opacity-0" : ""} ${delay}`
 			: "";
 
 	/** 发送当前输入：全局助手新建助手对话；其余新建线程，Profile 被占用时记下这次请求并弹冲突对话框。 */
@@ -653,7 +654,7 @@ export function HomePage(): ReactNode {
 						</div>
 						{/* 与线程页输入坞同一块 D 稿托盘：同一材质（glass-dock）、同样的分行；首页大一档圆角（18px） */}
 						<div
-							className={`home-tray relative isolate col-start-1 row-start-1 ${rise("delay-[120ms]")}`}
+							className={`home-tray relative isolate col-start-1 row-start-1 ${rise("delay-[120ms]", false)}`}
 						>
 							{/* 托盘背后的光场：玻璃底下有东西可模糊，居中态也看得出是玻璃；色相随舞台的对象 */}
 							<div aria-hidden className="home-field" />

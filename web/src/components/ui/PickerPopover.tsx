@@ -4,6 +4,7 @@
  * `leading` 只能放无文字的图标，一律 aria-hidden；`trailing` 放徽标组。
  */
 import { type ReactNode, useEffect, useRef } from "react";
+import { Floating } from "./Floating";
 import { Icon } from "./icons";
 
 export function Popover({
@@ -44,12 +45,16 @@ export function Popover({
 		};
 	}, [onClose]);
 	return (
-		<div
+		<Floating
 			ref={ref}
-			className={`glass pop-in absolute ${align === "end" ? "right-0" : "left-0"} z-30 max-h-80 w-80 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-lg p-1 ${side === "top" ? "bottom-full mb-2" : "top-full mt-1"}`}
+			side={side}
+			align={align}
+			gap={side === "top" ? 8 : 4}
+			className="w-80 max-w-[calc(100vw-2rem)]"
+			bodyClassName="p-1"
 		>
 			{children}
-		</div>
+		</Floating>
 	);
 }
 

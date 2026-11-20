@@ -21,6 +21,7 @@ import { useTranslation } from "react-i18next";
 import { ApiError, type ThreadState } from "../../api/client";
 import { focusablesIn, isTopModal, pushModal, trapTab } from "../../lib/modal";
 import type { NativeHint } from "../../lib/native-header";
+import { Floating } from "./Floating";
 import { Icon, type IconName } from "./icons";
 import { OrbBead } from "./OrbBead";
 
@@ -321,9 +322,12 @@ export function Menu({
 				"aria-expanded": open,
 			})}
 			{open && (
-				<div
+				<Floating
 					role="menu"
-					className={`glass pop-in absolute z-40 min-w-52 max-w-72 rounded-lg p-1 ${side === "top" ? "bottom-full mb-1" : "mt-1"} ${align === "right" ? "right-0" : "left-0"}`}
+					side={side}
+					align={align === "right" ? "end" : "start"}
+					className="w-max min-w-52 max-w-72"
+					bodyClassName="p-1"
 				>
 					{sub && (
 						<button
@@ -392,7 +396,7 @@ export function Menu({
 					{footer && !sub && (
 						<div className="mt-1 border-border border-t pt-1">{footer}</div>
 					)}
-				</div>
+				</Floating>
 			)}
 		</div>
 	);

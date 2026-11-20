@@ -326,14 +326,17 @@ function MenuBody({
 			aria-activedescendant={activeId}
 			data-testid="context-menu"
 			data-quote-affordance=""
-			className="glass pop-in fixed z-50 min-w-52 max-w-72 overflow-y-auto rounded-lg p-1 shadow-lg outline-none"
+			// 玻璃底画在不滚动的外壳上、列表在内层滚动：外壳本身滚动时 ::before 的模糊底会跟着滚走
+			className="glass pop-in fixed z-50 flex min-w-52 max-w-72 flex-col rounded-lg shadow-lg outline-none"
 			style={{
 				left: pos.left,
 				top: pos.top,
 				maxHeight: "calc(100dvh - 16px)",
 			}}
 		>
-			{list}
+			<div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1">
+				{list}
+			</div>
 		</div>
 	);
 }

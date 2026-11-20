@@ -955,6 +955,22 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 		}
 	}
 	/*
+	 * 玻璃浮层只做位移、不淡入：opacity < 1 的元素是 Backdrop Root，淡入那 180ms 里 ::before 的模糊只取得到
+	 * 浮层自己（空的），读起来是「先透明、再突然变磨砂」。
+	 */
+	.glass.pop-in {
+		transition: transform 180ms var(--ease);
+	}
+	/* 顶层浮层（ui/Floating.tsx）：去掉 UA 给 [popover] 的居中、白底、内边距与 overflow:auto（玻璃宿主不能是滚动容器） */
+	[data-floating] {
+		margin: 0;
+		inset: auto;
+		padding: 0;
+		overflow: visible;
+		color: inherit;
+		background: transparent;
+	}
+	/*
 	 * L0 桌面壁纸：铺在三栏背后，主要透过左栏玻璃与栏间 8px 缝露出来，让各处模糊有东西可透。
 	 * <html data-wallpaper="aurora|waves|grain|custom"> 切换（state/theme.ts，首帧由 theme-init.js 写）。
 	 * 内置三种是静态渐变 / 一次性栅格化的图块，色相随 --accent-h，明度与彩度按明暗各一套；彩度跟着主题色走，
