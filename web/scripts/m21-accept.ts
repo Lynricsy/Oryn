@@ -7,41 +7,51 @@ import { homedir } from "node:os";
  *
  * 用法（web/ 目录，以 root 运行）：bun run accept:m21 [-- --only R1,R3]
  * 环境变量：ORYN_URL（缺省 http://localhost:7600）、ORYN_ROOT、ORYN_TOKEN、ORYN_CREDENTIALS（缺省 .dev/credentials.json）；
- *   M21_RUNNER_URL（runner 的 ORYN_URL，缺省 http://127.0.0.1:7600）；M21_USER（跑 runner 的普通用户，缺省 oryn-m21）；
- *   M21_SSH_USER（临时 sshd 的登录用户，缺省 oryn-m21h）；M21_CORE_SRC（本地 Core 源码 cli.ts，
- *   缺省 /root/Projects/Ling/oryn-core/packages/coding-agent/src/cli.ts）；M21_EGRESS（runner 的 ORYN_EGRESS_ADDR，
- *   缺省 127.0.0.1:17811，顺带验证中转地址随之改写）；M21_OUT（结果目录，缺省 /tmp/oryn-shots/m21-accept）。
+ *   M21_RUNNER_URL（runner 的 ORYN_URL，缺省 http://127.0.0.1:7600；与 ORYN_URL 同样要过实例校验）；
+ *   M21_CORE（release | source，缺省 release）；
+ *   M21_CORE_SRC（source 模式的本地 Core 源码 cli.ts，缺省 /root/Projects/Ling/oryn-core/packages/coding-agent/src/cli.ts）；
+ *   M21_EGRESS（source 模式的 ORYN_EGRESS_ADDR，缺省 127.0.0.1:17811，顺带验证中转地址随之改写）；
+ *   M21_OUT（结果目录，缺省 /tmp/oryn-shots/m21-accept）。
  *
  * 固定布置：
- *   - Core 尚未发布：runner 以 ORYN_AGENT_BIN 指向 /var/tmp/m21/bin/omp（包装脚本 `exec bun <M21_CORE_SRC> "$@"`，
- *     runner 用户对源码目录与 /usr/bin/bun 有读 / 执行权限）。下载、sha256 校验、~/.oryn/core 缓存这条路径不经过，
- *     由 corefetch 单测覆盖，待 Core 发布后去掉 ORYN_AGENT_BIN 补跑。
- *   - runner 用户 oryn-m21（不存在就 useradd -m），每次运行清空其 ~/.oryn ~/.omp ~/.agents ~/.ssh 后放哨兵：
- *     ~/.omp/agent/config.yml、~/.agents/skills/sentinel/SKILL.md；~/.ssh 不存在。bin/orbd 拷到 /var/tmp/m21/orbd。
- *     runner 以 `runuser -u oryn-m21 -- env -i HOME=… PATH=/usr/local/bin:/usr/bin:/bin ORYN_URL=… ORYN_RUNNER_TOKEN=…
- *     ORYN_AGENT_BIN=… ORYN_EGRESS_ADDR=… orbd run --runner --dir /tmp/m21-a --dir /tmp/m21-b --dir /tmp/m21-c --terminal`
- *     起在后台，输出追加到 /var/tmp/m21/runner-<RUN>.log。
- *   - /tmp/m21-a（git 仓库，含 .claude/.agents/.omp 三处 skills/m21-*-<RUN>/SKILL.md 与文件库用的 m21-lib-<RUN>.txt）、
- *     /tmp/m21-b、/tmp/m21-c 每次重建，属主 runner 用户。dev 中央 config.yml 的 disabledProviders 含 claude 时，
- *     .claude 那一份不在技能列表里属配置所致，R3 只记录不判定。
+ *   - Core 来源（M21_CORE）：release（缺省）时 runner 用干净 HOME（~/.oryn 不存在）、环境里不传 ORYN_AGENT_BIN /
+ *     ORYN_CORE_BASE_URL / ORYN_EGRESS_ADDR 等任何覆盖变量，orbd 按内嵌的 core/source.json 下载并校验 Core；R1 断言运行中
+ *     agent 的 /proc/<pid>/exe 是 ~/.oryn/core/<tag>/omp、其 sha256 等于 source.json 里本机平台（uname -m）的值，重启
+ *     runner 再跑一条消息后缓存未被重写（mtime、inode、sha256 不变）；runner 日志首次启动恰好一条「orbd: 下载 Oryn Core」与
+ *     一条「orbd: Oryn Core 已下载并校验」，重启后一条「orbd: 使用已缓存的 Oryn Core」、前两种行数不变。source 时 runner 以 ORYN_AGENT_BIN 指向
+ *     <运行目录>/stage/bin/omp（包装脚本 `exec bun <M21_CORE_SRC> "$@"`），下载 / 校验 / 缓存不经过，R1 断言 ~/.oryn/core 不存在。
+ *   - 实例校验（任何写操作之前，不满足即退出码 2）：ORYN_URL 与 M21_RUNNER_URL 必须是回环地址、端口等于 dev/orynd.yaml 的
+ *     监听端口，且不等于生产配置 /root/Oryn/etc/orynd.yaml（只读）里任一 listen 的端口；再以 .dev/data/oryn.db 存在、healthz
+ *     版本等于本仓库 `git rev-parse --short HEAD`（可带 -dirty）二次确认。
+ *   - 账号与目录只用本次新建的：账号 oryn-m21-<RUN>（runner）、oryn-m21h-<RUN>（sshd 登录）——useradd 前已存在即中止，不接管；
+ *     HOME 在本次 `mktemp -d /var/tmp/m21-<RUN>.XXXXXX` 运行目录的 home/ 下。pkill、usermod、清空家目录、userdel 只对清单里的
+ *     账号执行，执行前断言账号在清单里、HOME 是本次创建的路径。运行目录下：stage/orbd（bin/orbd 的副本）、stage/bin/omp
+ *     （source 模式的包装脚本）、a（git 仓库，含 .claude/.agents/.omp 三处 skills/m21-*-<RUN>/SKILL.md 与文件库用的
+ *     m21-lib-<RUN>.txt）、b、c（属主 runner 账号）、sshd/。
+ *   - runner 账号的 ~/.omp/agent/config.yml、~/.agents/skills/sentinel/SKILL.md 放哨兵；~/.ssh 不存在。runner 以
+ *     `runuser -u <账号> -- env -i HOME=… PATH=/usr/local/bin:/usr/bin:/bin ORYN_URL=… ORYN_RUNNER_TOKEN=… [source 模式：
+ *     ORYN_AGENT_BIN=… ORYN_EGRESS_ADDR=…] <运行目录>/stage/orbd run --runner --dir <a> --dir <b> --dir <c> --terminal` 起在后台，
+ *     输出追加到 M21_OUT/runner-<RUN>.log。dev 中央 config.yml 的 disabledProviders 含 claude 时，.claude 那一份技能不在
+ *     列表里属配置所致，R3 只记录不判定。
  *   - 两个项目 m21-<RUN>-a / -b；SSH：临时 sshd（/usr/bin/sshd -D，127.0.0.1 上的空闲端口，独立主机钥匙与
- *     authorized_keys，登录用户 oryn-m21h，家目录放一个 m21-<RUN>.txt），dev 里一把钥匙 m21-<RUN>，主机：全局
- *     m21-<RUN>-g、项目 a 的 m21-<RUN>-pa、项目 b 的 m21-<RUN>-pb，都指向这台 sshd。主机与项目在 runner 上线、线程开始
- *     之前登记（项目层随 agent.start 交付）。
+ *     authorized_keys，登录用户 oryn-m21h-<RUN>，家目录放一个 m21-<RUN>.txt，日志 M21_OUT/sshd-<RUN>.log），dev 里一把钥匙
+ *     m21-<RUN>，主机：全局 m21-<RUN>-g、项目 a 的 m21-<RUN>-pa、项目 b 的 m21-<RUN>-pb，都指向这台 sshd。主机与项目在
+ *     runner 上线、线程开始之前登记（项目层随 agent.start 交付）。
  *   - 「Core 经 ssh 连接」= 线程用 read 工具读 `ssh://<主机>/~/m21-<RUN>.txt`：Core 19 没有单独的 ssh 工具，ssh:// 经
  *     connection-manager 起 `ssh -M -N -f` master 并复用；master 的环境里 ORYN_SSH_KEY 是起它的线程的私钥，脚本据此认出
  *     各线程的 master。对方项目主机的拒绝、R9 归档后的复用与重连以线程私钥 + Core 的 ControlPath 在 runner 用户下直接
  *     执行 ssh（等同 Core / bash 的调用；归档的线程不能再发消息）。
  *   - 假模型服务（本进程 Bun.serve，OpenAI chat completions 流式）：R2 临时在中央 models.yml 的 providers 下加一个
  *     m21fake-<RUN>（字面 apiKey 被控制面抽进密钥库），记录收到的 Authorization；R2 结束即恢复原 models.yml 并删掉抽出的密钥。
- *   - 线程：$A（项目 a，/tmp/m21-a，dev 默认模型）用于 R2–R6、R8、R9；$B（项目 b，/tmp/m21-b）用于 R6（其 master 在 R8
- *     里作为「别的线程」对照）；$F（无项目，/tmp/m21-c，假模型）用于 R2。
+ *   - 线程：$A（项目 a，目录 a，dev 默认模型）用于 R1（release）、R2–R6、R8、R9；$B（项目 b，目录 b）用于 R6（其 master 在 R8
+ *     里作为「别的线程」对照）；$F（无项目，目录 c，假模型）用于 R2。
  *   - R8 换代只动线程 A：连续 kill -9 它的 agent 进程组直到监督器自重启用尽（1s/2s/4s）而结束，再发消息由 agent.start
  *     起新一代；不用 restart-sessions，它会顺带重启 dev 里所有带「需重启」标记的会话。
  *   - R9：archived 那一半用全局主机，shipped 那一半用本项目主机——同一个 Core 进程对某主机的常驻 master 被网关断开后，
  *     之后的 ssh:// 操作改为临时连接、不再常驻新 master，要验「master 存活时归档」就得换一台这一代还没连过的主机。
- *   - 结尾（含异常与 Ctrl-C）：停 runner（及该用户全部进程）、删线程、删 runner、删 SSH 主机与钥匙、停 sshd、删项目、
- *     删 R7 的探针文件并核对中央配置文件清单与开始前一致、恢复 models.yml、删文件库里本次存入的文件。两个系统用户保留。
+ *   - 结尾（含异常与 Ctrl-C）：删 R7 的探针文件并核对中央配置文件清单与开始前一致、恢复 models.yml、删文件库里本次存入的
+ *     文件、删线程、停 runner、删 runner、删 SSH 主机与钥匙、停 sshd、删项目；最后对本次新建的两个账号 pkill + userdel -r，
+ *     删掉本次的运行目录。runner / sshd 日志与 models.yml 备份留在 M21_OUT。
  */
 import type { Subprocess } from "bun";
 
@@ -56,27 +66,182 @@ const DB = `${ROOT}/.dev/data/oryn.db`;
 const ORYN = `${ROOT}/bin/oryn`;
 const ORYND_LOG = `${ROOT}/.dev/orynd.log`;
 const RUNNER_URL = process.env.M21_RUNNER_URL ?? "http://127.0.0.1:7600";
-const RUSER = process.env.M21_USER ?? "oryn-m21";
-const SSH_USER = process.env.M21_SSH_USER ?? "oryn-m21h";
+/** dev 的配置，以及要排除的生产实例配置（只读）。 */
+const DEV_CONFIG = `${ROOT}/dev/orynd.yaml`;
+const PROD_CONFIG = "/root/Oryn/etc/orynd.yaml";
+/** Core 来源：release（缺省）= orbd 按 core/source.json 自己下载；source = ORYN_AGENT_BIN 指向本地源码的包装脚本。 */
+const CORE_MODE = process.env.M21_CORE ?? "release";
+if (CORE_MODE !== "release" && CORE_MODE !== "source")
+	throw new Error(`M21_CORE 只能是 release 或 source：${CORE_MODE}`);
 const CORE_SRC =
 	process.env.M21_CORE_SRC ??
 	"/root/Projects/Ling/oryn-core/packages/coding-agent/src/cli.ts";
-const EGRESS = process.env.M21_EGRESS ?? "127.0.0.1:17811";
-const STAGE = "/var/tmp/m21";
-const RORBD = `${STAGE}/orbd`;
-const AGENT_BIN = `${STAGE}/bin/omp`;
-const DIR_A = "/tmp/m21-a";
-const DIR_B = "/tmp/m21-b";
-const DIR_C = "/tmp/m21-c";
+/** release 模式不传 ORYN_EGRESS_ADDR（runner 用缺省 7811）；source 模式传它，顺带验证中转地址随之改写。 */
+const EGRESS =
+	CORE_MODE === "source"
+		? (process.env.M21_EGRESS ?? "127.0.0.1:17811")
+		: "127.0.0.1:7811";
+/** core/source.json 钉住的 Core：tag、本机平台键（按 uname -m）与期望 sha256。 */
+const coreRel = (() => {
+	const src = JSON.parse(readFileSync(`${ROOT}/core/source.json`, "utf8")) as {
+		tag: string;
+		sha256: Record<string, string>;
+	};
+	const m = Bun.spawnSync(["uname", "-m"]).stdout.toString().trim();
+	const plat = `linux-${m === "aarch64" || m === "arm64" ? "arm64" : "x64"}`;
+	return { tag: src.tag, plat, sha: (src.sha256[plat] ?? "").toLowerCase() };
+})();
 const GIT_ID = "-c user.name=m21 -c user.email=m21@example.invalid";
-const SSHD_DIR = `${STAGE}/sshd`;
 
+/** 全部验收项；R10 是唯一可选项（外部无法稳定触发，SKIP 不判失败），其余选中项都必须 PASS。 */
+const TEST_IDS = ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10"];
+const OPTIONAL: Record<string, true> = { R10: true };
 const onlyArg = process.argv.indexOf("--only");
 const ONLY =
-	onlyArg >= 0 ? new Set((process.argv[onlyArg + 1] ?? "").split(",")) : null;
+	onlyArg >= 0
+		? new Set(
+				(process.argv[onlyArg + 1] ?? "")
+					.split(",")
+					.map((s) => s.trim())
+					.filter(Boolean),
+			)
+		: null;
+{
+	// 在任何写操作之前拒绝空的或未知的筛选：拼错的 --only 不能一项不跑却打印 VERDICT PASS
+	const unknown = ONLY ? [...ONLY].filter((id) => !TEST_IDS.includes(id)) : [];
+	if (ONLY && (ONLY.size === 0 || unknown.length > 0)) {
+		console.log(
+			`--only 无效（${ONLY.size === 0 ? "为空" : `未知项 ${unknown.join(",")}`}；可选 ${TEST_IDS.join(",")}）：中止（尚未做任何写操作）`,
+		);
+		console.log("VERDICT FAIL");
+		process.exit(2);
+	}
+}
 
 const RUN = Math.random().toString(36).slice(2, 6);
-const RUNNER_LOG = `${STAGE}/runner-${RUN}.log`;
+/** 本次运行新建的系统账号（不接管已有账号；结束时 userdel -r）。 */
+const RUSER = `oryn-m21-${RUN}`;
+const SSH_USER = `oryn-m21h-${RUN}`;
+
+// ---------------------------------------------------------------- 实例校验（任何写操作之前）
+
+/** YAML 文档里所有 `listen` 数组的端口（recursive=false 时只取顶层）。 */
+function listenPorts(doc: unknown, recursive: boolean): number[] {
+	const out: number[] = [];
+	const walk = (v: unknown, top: boolean) => {
+		if (Array.isArray(v)) for (const x of v) walk(x, false);
+		else if (v && typeof v === "object")
+			for (const [k, x] of Object.entries(v)) {
+				if (k === "listen" && Array.isArray(x)) {
+					if (top || recursive)
+						for (const a of x)
+							if (typeof a === "string")
+								out.push(Number(a.slice(a.lastIndexOf(":") + 1)));
+				} else if (recursive) walk(x, false);
+			}
+	};
+	walk(doc, true);
+	return out;
+}
+
+/**
+ * 确认 ORYN_URL / M21_RUNNER_URL 连的是本仓库的 dev 实例：回环地址、端口等于 dev/orynd.yaml 的监听端口、不与生产配置
+ * （/root/Oryn/etc/orynd.yaml，任一层的 listen）相同；再以 .dev/data/oryn.db 存在、healthz 版本等于本仓库 HEAD（可带
+ * -dirty）二次确认。任一不满足即中止（退出码 2），此时还没有任何写操作。返回证据行。
+ */
+async function verifyDevInstance(): Promise<string[]> {
+	const abort = (m: string): never => {
+		console.log(`中止（尚未做任何写操作）：${m}`);
+		console.log("VERDICT FAIL");
+		process.exit(2);
+	};
+	const ev: string[] = [];
+	const devPorts = listenPorts(
+		Bun.YAML.parse(readFileSync(DEV_CONFIG, "utf8")),
+		false,
+	);
+	let prodPorts: number[] = [];
+	try {
+		prodPorts = listenPorts(
+			Bun.YAML.parse(readFileSync(PROD_CONFIG, "utf8")),
+			true,
+		);
+	} catch (e) {
+		abort(`读不到生产配置 ${PROD_CONFIG}，无法排除连到生产实例：${String(e)}`);
+	}
+	if (devPorts.length === 0) abort(`${DEV_CONFIG} 没有 listen`);
+	if (devPorts.some((p) => prodPorts.includes(p)))
+		abort(
+			`dev 监听端口 ${devPorts.join(",")} 与生产 ${prodPorts.join(",")} 相同`,
+		);
+	ev.push(
+		`dev 监听端口 ${devPorts.join(",")}；生产（${PROD_CONFIG}）监听端口 ${prodPorts.join(",")}`,
+	);
+	const versions = new Set<string>();
+	for (const [name, raw] of [
+		["ORYN_URL", BASE],
+		["M21_RUNNER_URL", RUNNER_URL],
+	] as const) {
+		const u = new URL(raw);
+		const host = u.hostname.replace(/^\[|\]$/g, "");
+		const port = Number(u.port || (u.protocol === "https:" ? 443 : 80));
+		if (!(host === "localhost" || host === "::1" || /^127\./.test(host)))
+			abort(`${name}=${raw} 不是回环地址`);
+		if (!devPorts.includes(port))
+			abort(
+				`${name}=${raw} 的端口 ${port} 不是 dev 的监听端口 ${devPorts.join(",")}`,
+			);
+		if (prodPorts.includes(port))
+			abort(`${name}=${raw} 的端口 ${port} 是生产实例的监听端口`);
+		const hz = await fetch(`${u.origin}/healthz`, { redirect: "error" })
+			.then((r) => {
+				if (!r.ok) throw new Error(`HTTP ${r.status}`);
+				return r.json() as Promise<{ version?: string }>;
+			})
+			.catch((e) =>
+				abort(`${name} 的 healthz 不可用（不跟随重定向）：${String(e)}`),
+			);
+		versions.add(hz.version ?? "");
+		ev.push(
+			`${name}=${raw}：回环、端口 ${port} 属 dev，healthz version=${hz.version}`,
+		);
+	}
+	if (!existsSync(DB)) abort(`dev 数据库 ${DB} 不存在`);
+	const head = Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"], {
+		cwd: ROOT,
+	})
+		.stdout.toString()
+		.trim();
+	for (const v of versions)
+		if (!head || v.replace(/-dirty$/, "") !== head)
+			abort(
+				`healthz 版本 ${v} 不是本仓库 HEAD ${head}（[-dirty]）：先 make build 并重启 dev orynd`,
+			);
+	ev.push(`${DB} 存在；healthz 版本与本仓库 HEAD ${head} 一致`);
+	return ev;
+}
+
+const INSTANCE_EVIDENCE = await verifyDevInstance();
+
+/** 本次运行新建的目录（0755，runner 用户要能进入）；清理只删它。 */
+const RUNDIR = Bun.spawnSync(["mktemp", "-d", `/var/tmp/m21-${RUN}.XXXXXX`])
+	.stdout.toString()
+	.trim();
+if (!RUNDIR.startsWith(`/var/tmp/m21-${RUN}.`))
+	throw new Error(`mktemp 失败：${RUNDIR}`);
+Bun.spawnSync(["chmod", "755", RUNDIR]);
+Bun.spawnSync(["mkdir", "-p", OUT]);
+const HOMES = `${RUNDIR}/home`;
+const STAGE = `${RUNDIR}/stage`;
+const RORBD = `${STAGE}/orbd`;
+const AGENT_BIN = `${STAGE}/bin/omp`;
+const DIR_A = `${RUNDIR}/a`;
+const DIR_B = `${RUNDIR}/b`;
+const DIR_C = `${RUNDIR}/c`;
+const SSHD_DIR = `${RUNDIR}/sshd`;
+/** 日志与备份放在结果目录（运行目录在结尾删除）。 */
+const RUNNER_LOG = `${OUT}/runner-${RUN}.log`;
+const SSHD_LOG = `${OUT}/sshd-${RUN}.log`;
 const SENTINEL = `# m21 sentinel ${RUN}\ntheme: sentinel\n`;
 /** 仓库内三处项目级技能目录 → 技能名（.claude 受中央 config.yml 的 disabledProviders 影响，见 R3）。 */
 const REPO_SKILLS: Record<string, string> = {
@@ -127,11 +292,22 @@ interface CliRes {
 	stdout: string;
 }
 
+/**
+ * CLI 只连已校验的 dev 实例：显式给 ORYN_API_URL / ORYN_API_TOKEN（CLI 优先读它们），不继承调用方环境里的同名变量，
+ * 也不读凭据文件里的 URL。
+ */
 async function cli(args: string): Promise<CliRes> {
-	const p = Bun.spawn(
-		["bash", "-c", `ORYN_CREDENTIALS=${q(CREDS)} ${q(ORYN)} ${args}`],
-		{ cwd: ROOT, stdout: "pipe", stderr: "pipe" },
-	);
+	const env: Record<string, string> = {};
+	for (const [k, v] of Object.entries(process.env))
+		if (v !== undefined && !k.startsWith("ORYN_")) env[k] = v;
+	env.ORYN_API_URL = new URL(BASE).origin;
+	env.ORYN_API_TOKEN = TOKEN;
+	const p = Bun.spawn(["bash", "-c", `${q(ORYN)} ${args}`], {
+		cwd: ROOT,
+		env,
+		stdout: "pipe",
+		stderr: "pipe",
+	});
 	const [stdout, stderr, code] = await Promise.all([
 		new Response(p.stdout).text(),
 		new Response(p.stderr).text(),
@@ -470,20 +646,40 @@ const treeSig = (p: string) =>
 let sentinelSig = "";
 let agentsSig = "";
 
+/** 本次运行新建的账号 → HOME（清单）。只有清单里的账号才会被 pkill / usermod / 清空家目录 / userdel。 */
+const createdUsers = new Map<string, string>();
+
+/** 新建账号（HOME 在本次运行目录下）；账号已存在就中止，不接管。 */
+function createUser(u: string) {
+	if (Bun.spawnSync(["id", "-u", u]).exitCode === 0)
+		throw new Error(`账号 ${u} 已存在：不接管已有账号，中止`);
+	const home = `${HOMES}/${u}`;
+	must(sh(`useradd -m -d ${q(home)} -s /bin/bash ${u}`), `建账号 ${u}`);
+	createdUsers.set(u, home);
+}
+
+/** 断言 u 是本次新建的账号、HOME 仍是本次创建的路径，返回 HOME。破坏性操作之前调用。 */
+function ownedUser(u: string): string {
+	const home = createdUsers.get(u);
+	if (!home) throw new Error(`${u} 不在本次运行的账号清单里，拒绝操作`);
+	const real = sh(`getent passwd ${q(u)} | cut -d: -f6`).stdout;
+	if (real !== home || !home.startsWith(`${HOMES}/`))
+		throw new Error(`${u} 的 HOME ${real} 不是本次创建的 ${home}，拒绝操作`);
+	return home;
+}
+
 function prepareHost() {
 	if (hostPrepared) return;
 	if (process.getuid?.() !== 0)
 		throw new Error("要以 root 运行（useradd / runuser / sshd）");
-	if (!existsSync(CORE_SRC)) throw new Error(`没有本地 Core 源码 ${CORE_SRC}`);
-	for (const u of [RUSER, SSH_USER])
-		must(
-			sh(`id -u ${u} >/dev/null 2>&1 || useradd -m -s /bin/bash ${u}`),
-			`建用户 ${u}`,
-		);
+	if (CORE_MODE === "source" && !existsSync(CORE_SRC))
+		throw new Error(`没有本地 Core 源码 ${CORE_SRC}`);
+	must(sh(`install -d -m 755 ${HOMES}`), `建 ${HOMES}`);
+	for (const u of [RUSER, SSH_USER]) createUser(u);
 	// 登录目标用户：useradd 的 `!` 口令在 UsePAM no 下算锁定，改成 `*`（同样不能口令登录）
+	ownedUser(SSH_USER);
 	must(sh(`usermod -p '*' ${SSH_USER}`), `解锁 ${SSH_USER}`);
-	uhome = must(sh(`getent passwd ${RUSER} | cut -d: -f6`), "取家目录");
-	sh(`pkill -KILL -u ${RUSER}`);
+	uhome = ownedUser(RUSER);
 	must(
 		asUser(
 			`cd ~ && rm -rf .oryn .omp .agents .ssh && mkdir -p .omp/agent .agents/skills/sentinel && printf %s ${q(SENTINEL)} > .omp/agent/config.yml && printf '%s\\n' '---' 'name: sentinel' 'description: 用户级哨兵技能（Runner 不应看到）' '---' 'sentinel' > .agents/skills/sentinel/SKILL.md`,
@@ -493,24 +689,34 @@ function prepareHost() {
 	sentinelSig = fileSig(`${uhome}/.omp/agent/config.yml`);
 	agentsSig = treeSig(`${uhome}/.agents`);
 	snote(
-		`用户 ${RUSER}（HOME ${uhome}）：清空 ~/.oryn ~/.omp ~/.agents ~/.ssh，哨兵 ~/.omp/agent/config.yml（${sentinelSig}）、~/.agents/skills/sentinel/SKILL.md；~/.ssh 不存在`,
+		`本次新建账号 ${RUSER}（HOME ${uhome}）与 ${SSH_USER}（HOME ${ownedUser(SSH_USER)}）；${RUSER} 的 ~/.oryn ~/.omp ~/.agents ~/.ssh 清空后放哨兵 ~/.omp/agent/config.yml（${sentinelSig}）、~/.agents/skills/sentinel/SKILL.md；~/.ssh 不存在`,
 	);
 	must(
 		sh(
-			`install -d -m 755 ${STAGE} ${STAGE}/bin && install -m 755 ${q(`${ROOT}/bin/orbd`)} ${RORBD} && printf '%s\\n' '#!/bin/sh' ${q(`exec bun ${CORE_SRC} "$@"`)} > ${AGENT_BIN} && chmod 755 ${AGENT_BIN}`,
+			`install -d -m 755 ${STAGE} ${STAGE}/bin && install -m 755 ${q(`${ROOT}/bin/orbd`)} ${RORBD}`,
 		),
-		"拷贝 orbd / 写 Core 包装脚本",
+		"拷贝 orbd",
 	);
-	const ver = asUser(`${AGENT_BIN} --version`);
-	must(ver, "runner 用户运行本地 Core");
-	snote(
-		`orbd → ${RORBD}（${sh(`${RORBD} --version 2>&1 | head -n1`).stdout}）；ORYN_AGENT_BIN=${AGENT_BIN}（exec bun ${CORE_SRC}，runner 用户执行 --version → ${ver.stdout}）`,
-	);
+	const orbdVer = sh(`${RORBD} --version 2>&1 | head -n1`).stdout;
+	if (CORE_MODE === "source") {
+		must(
+			sh(
+				`printf '%s\\n' '#!/bin/sh' ${q(`exec bun ${CORE_SRC} "$@"`)} > ${AGENT_BIN} && chmod 755 ${AGENT_BIN}`,
+			),
+			"写 Core 包装脚本",
+		);
+		const ver = asUser(`${AGENT_BIN} --version`);
+		must(ver, "runner 用户运行本地 Core");
+		snote(
+			`orbd → ${RORBD}（${orbdVer}）；source 模式：ORYN_AGENT_BIN=${AGENT_BIN}（exec bun ${CORE_SRC}，runner 用户执行 --version → ${ver.stdout}）`,
+		);
+	} else
+		snote(
+			`orbd → ${RORBD}（${orbdVer}）；release 模式：不传 ORYN_AGENT_BIN / ORYN_CORE_BASE_URL / ORYN_EGRESS_ADDR，orbd 按 core/source.json 下载 ${coreRel.tag}/omp-${coreRel.plat}（期望 sha256 ${coreRel.sha.slice(0, 16)}…）到 ~/.oryn/core（开跑前 ~/.oryn 已删）`,
+		);
 	must(
-		sh(
-			`rm -rf ${DIR_A} ${DIR_B} ${DIR_C} && install -d -o ${RUSER} -g ${RUSER} -m 755 ${DIR_A} ${DIR_B} ${DIR_C}`,
-		),
-		"重建目录",
+		sh(`install -d -o ${RUSER} -g ${RUSER} -m 755 ${DIR_A} ${DIR_B} ${DIR_C}`),
+		"建工作目录",
 	);
 	const skillCmds = Object.entries(REPO_SKILLS).map(
 		([dir, name]) =>
@@ -525,7 +731,9 @@ function prepareHost() {
 	snote(
 		`${DIR_A}（git 仓库，含 ${Object.entries(REPO_SKILLS)
 			.map(([d, n]) => `${d}/skills/${n}`)
-			.join("、")}、${LIB_FILE}）、${DIR_B}、${DIR_C} 已重建，属主 ${RUSER}`,
+			.join(
+				"、",
+			)}、${LIB_FILE}）、${DIR_B}、${DIR_C}：本次在 ${RUNDIR} 下新建，属主 ${RUSER}`,
 	);
 	hostPrepared = true;
 }
@@ -627,7 +835,7 @@ async function startSshd() {
 	const cfg = `${SSHD_DIR}/sshd_config`;
 	must(
 		sh(
-			`rm -rf ${SSHD_DIR} && install -d -m 755 ${SSHD_DIR} && ssh-keygen -q -t ed25519 -N '' -f ${SSHD_DIR}/host_ed25519 && : > ${SSHD_DIR}/authorized_keys && chmod 644 ${SSHD_DIR}/authorized_keys`,
+			`install -d -m 755 ${SSHD_DIR} && ssh-keygen -q -t ed25519 -N '' -f ${SSHD_DIR}/host_ed25519 && : > ${SSHD_DIR}/authorized_keys && chmod 644 ${SSHD_DIR}/authorized_keys`,
 		),
 		"准备 sshd 目录",
 	);
@@ -651,11 +859,7 @@ async function startSshd() {
 	);
 	must(sh(`/usr/bin/sshd -t -f ${cfg}`), "sshd -t");
 	sshdProc = Bun.spawn(
-		[
-			"bash",
-			"-c",
-			`exec /usr/bin/sshd -D -e -f ${cfg} >>${SSHD_DIR}/sshd.log 2>&1`,
-		],
+		["bash", "-c", `exec /usr/bin/sshd -D -e -f ${cfg} >>${SSHD_LOG} 2>&1`],
 		{ stdin: "ignore", stdout: "ignore", stderr: "ignore" },
 	);
 	await waitFor(
@@ -664,7 +868,7 @@ async function startSshd() {
 		10_000,
 		200,
 	);
-	const home = must(sh(`getent passwd ${SSH_USER} | cut -d: -f6`), "取家目录");
+	const home = ownedUser(SSH_USER);
 	must(
 		sh(
 			`printf '%s\\n' ${q(REMOTE_BODY)} > ${q(`${home}/${REMOTE_FILE}`)} && chown ${SSH_USER}: ${q(`${home}/${REMOTE_FILE}`)}`,
@@ -672,7 +876,7 @@ async function startSshd() {
 		"写远端文件",
 	);
 	snote(
-		`临时 sshd：/usr/bin/sshd -D -f ${cfg}（127.0.0.1:${sshdPort}，登录用户 ${SSH_USER}，日志 ${SSHD_DIR}/sshd.log）；远端文件 ${home}/${REMOTE_FILE}`,
+		`临时 sshd：/usr/bin/sshd -D -f ${cfg}（127.0.0.1:${sshdPort}，登录用户 ${SSH_USER}，日志 ${SSHD_LOG}）；远端文件 ${home}/${REMOTE_FILE}`,
 	);
 }
 
@@ -766,8 +970,9 @@ function startRunner() {
 		"PATH=/usr/local/bin:/usr/bin:/bin",
 		`ORYN_URL=${RUNNER_URL}`,
 		`ORYN_RUNNER_TOKEN=${runnerToken}`,
-		`ORYN_AGENT_BIN=${AGENT_BIN}`,
-		`ORYN_EGRESS_ADDR=${EGRESS}`,
+		...(CORE_MODE === "source"
+			? [`ORYN_AGENT_BIN=${AGENT_BIN}`, `ORYN_EGRESS_ADDR=${EGRESS}`]
+			: []),
 	]
 		.map(q)
 		.join(" ");
@@ -782,7 +987,7 @@ function startRunner() {
 		{ cwd: "/", stdin: "ignore", stdout: "ignore", stderr: "ignore" },
 	);
 	note(
-		`起 runner：orbd ${args}（ORYN_AGENT_BIN、ORYN_EGRESS_ADDR=${EGRESS}；日志 ${RUNNER_LOG}）`,
+		`起 runner：orbd ${args}（${CORE_MODE === "source" ? `ORYN_AGENT_BIN、ORYN_EGRESS_ADDR=${EGRESS}` : "release：不传任何覆盖变量"}；日志 ${RUNNER_LOG}）`,
 	);
 }
 
@@ -796,6 +1001,7 @@ async function stopRunner() {
 		sleep(15_000).then(() => false),
 	]);
 	if (!done) {
+		ownedUser(RUSER);
 		sh(`pkill -KILL -u ${RUSER}`);
 		p.kill(9);
 		await p.exited;
@@ -944,6 +1150,93 @@ async function waitPushed(what: string) {
 
 // ---------------------------------------------------------------- 场景
 
+/** Core 缓存文件的「sha256 mtime（纳秒） inode」。 */
+function coreSig(p: string) {
+	const r = must(
+		sh(`sha256sum ${q(p)} | cut -d' ' -f1 && stat -c '%.9Y %i' ${q(p)}`),
+		`读 ${p}`,
+	).split(/\s+/);
+	return { sha: r[0] ?? "", mtime: r[1] ?? "", ino: r[2] ?? "" };
+}
+
+/** 线程 agent 进程的 /proc/<pid>/exe。 */
+function agentExe(tid: string): string {
+	const pid = agentPids(tid)[0];
+	if (!pid) throw new Error(`找不到线程 ${tid} 的 agent 进程`);
+	return sh(`readlink /proc/${pid}/exe`).stdout;
+}
+
+/** orbd 的 Core 获取日志（带 tag / path）：命中缓存、下载前、下载并校验成功。 */
+const CORE_LOG = {
+	cached: "orbd: 使用已缓存的 Oryn Core",
+	download: "orbd: 下载 Oryn Core",
+	done: "orbd: Oryn Core 已下载并校验",
+} as const;
+
+/** 本次 runner 日志（每次运行一个文件）里三种 Core 获取日志各几行，并把匹配行记进证据。 */
+function coreLogCounts(when: string) {
+	const out = { cached: 0, download: 0, done: 0 };
+	for (const k of Object.keys(CORE_LOG) as (keyof typeof CORE_LOG)[]) {
+		const lines = sh(`grep -F ${q(CORE_LOG[k])} ${q(RUNNER_LOG)}`)
+			.stdout.split("\n")
+			.filter(Boolean);
+		out[k] = lines.length;
+		for (const l of lines) note(`${when} runner 日志：${l.slice(0, 200)}`);
+	}
+	note(
+		`${when}：下载 ${out.download}、已下载并校验 ${out.done}、使用已缓存 ${out.cached}`,
+	);
+	return out;
+}
+
+/**
+ * release 模式（R1）：orbd 按 core/source.json 下载的缓存是运行中 agent 的可执行文件、sha256 正确；重启 runner 再跑一条
+ * 消息后缓存未被重写（mtime、inode、sha256 不变）。日志：首次启动恰好一条「下载」与一条「已下载并校验」、没有「使用已缓存」；
+ * 重启后多一条「使用已缓存」，「下载」与「已下载并校验」行数不变。
+ */
+async function checkReleaseCore() {
+	const root = `${uhome}/.oryn/core`;
+	const cache = `${root}/${coreRel.tag}/omp`;
+	check(coreRel.sha !== "", `core/source.json 有 ${coreRel.plat} 的 sha256`);
+	check(existsSync(cache), `缓存 ${cache} 存在`);
+	const tags = sh(`ls -1 ${q(root)}`).stdout;
+	check(tags === coreRel.tag, `~/.oryn/core 下只有钉住的 tag（${one1(tags)}）`);
+	const sig0 = coreSig(cache);
+	note(`缓存 sha256=${sig0.sha} mtime=${sig0.mtime} inode=${sig0.ino}`);
+	check(
+		sig0.sha === coreRel.sha,
+		`缓存 sha256 等于 core/source.json 的 ${coreRel.plat}`,
+	);
+	const a = await ensureA();
+	const exe0 = agentExe(a);
+	check(exe0 === cache, `运行中 agent 的 /proc/<pid>/exe = ${exe0}`);
+	const log0 = coreLogCounts("首次启动");
+	check(
+		log0.download === 1 && log0.done === 1 && log0.cached === 0,
+		"首次启动恰好一条「下载」与一条「已下载并校验」，没有「使用已缓存」",
+	);
+	await stopRunner();
+	note("已停 runner（orbd 进程），重新起");
+	await ensureRunnerReady();
+	const r = await say(a, "只回复 ok");
+	note(`重启后回复：${one1(r.text).slice(0, 80)}`);
+	const exe1 = agentExe(a);
+	check(exe1 === cache, `重启后 agent 的 /proc/<pid>/exe = ${exe1}`);
+	const sig1 = coreSig(cache);
+	note(`重启后缓存 sha256=${sig1.sha} mtime=${sig1.mtime} inode=${sig1.ino}`);
+	check(
+		sig1.sha === sig0.sha && sig1.mtime === sig0.mtime && sig1.ino === sig0.ino,
+		"重启后缓存未被重写（sha256、mtime、inode 不变）",
+	);
+	const log1 = coreLogCounts("重启后");
+	check(
+		log1.cached === 1 &&
+			log1.download === log0.download &&
+			log1.done === log0.done,
+		"重启后一条「使用已缓存」，「下载」「已下载并校验」行数不变",
+	);
+}
+
 async function R1() {
 	note(
 		"建 runner 并以普通用户起 orbd run --runner --terminal；核对 omphome.apply 先于 ready、models.yml 只有占位符与本机中转、用户配置不动",
@@ -1035,10 +1328,12 @@ async function R1() {
 		.map((l) => l.split(/\s+/)[3]);
 	note(`runner orbd pid=${pid} 监听：${listens.join(", ")}`);
 	check(listens.includes(EGRESS), `出站通道常驻 ${EGRESS}`);
-	check(
-		!existsSync(`${uhome}/.oryn/core`),
-		"设了 ORYN_AGENT_BIN：没有下载 Core（~/.oryn/core 不存在；下载 / 校验 / 缓存待 Core 发布后补跑）",
-	);
+	if (CORE_MODE === "source")
+		check(
+			!existsSync(`${uhome}/.oryn/core`),
+			"source 模式（设了 ORYN_AGENT_BIN）：没有下载 Core（~/.oryn/core 不存在）",
+		);
+	else await checkReleaseCore();
 	await sleep(2000);
 	const now = fileSig(`${uhome}/.omp/agent/config.yml`);
 	check(
@@ -1061,7 +1356,7 @@ async function R2() {
 	const orig = await api("GET", "/api/v1/agent-config/files/models.yml");
 	if (orig.status !== 200) throw new Error(`GET models.yml → ${orig.status}`);
 	modelsOrig = orig.text;
-	writeFileSync(`${STAGE}/models.orig-${RUN}.yml`, modelsOrig, { mode: 0o600 });
+	writeFileSync(`${OUT}/models.orig-${RUN}.yml`, modelsOrig, { mode: 0o600 });
 	const block = [
 		`  ${FAKE_PROVIDER}:`,
 		`    baseUrl: http://127.0.0.1:${fakeSrv.port}/v1`,
@@ -1157,7 +1452,7 @@ async function restoreModels(log: (s: string) => void) {
 	);
 	const back = await api("GET", "/api/v1/agent-config/files/models.yml");
 	log(
-		`恢复 models.yml → ${put.status}；与原文${back.text === modelsOrig ? "一致" : `不一致！原文备份 ${STAGE}/models.orig-${RUN}.yml`}`,
+		`恢复 models.yml → ${put.status}；与原文${back.text === modelsOrig ? "一致" : `不一致！原文备份 ${OUT}/models.orig-${RUN}.yml`}`,
 	);
 	if (back.text === modelsOrig) modelsOrig = "";
 	for (const s of extracted) {
@@ -1293,6 +1588,7 @@ async function R5() {
 	);
 	const res = await fetch(`${BASE}/api/v1/assistant/files/${f.id}/content`, {
 		headers: { Authorization: `Bearer ${TOKEN}` },
+		redirect: "error",
 	});
 	const body = await res.text();
 	check(body === LIB_BODY, `内容一致（${res.status}，${body.length} 字节）`);
@@ -1790,7 +2086,6 @@ async function cleanup() {
 		cn(`删除线程 ${t} → ${r.status}`);
 	}
 	await stopRunner().catch((e) => cn(`停 runner 失败：${String(e)}`));
-	if (hostPrepared) sh(`pkill -KILL -u ${RUSER}`);
 	if (runner) {
 		const r = await tryApi("DELETE", `/api/v1/runners/${runner.id}`);
 		cn(`删除 runner ${runner.name} → ${r.status}`);
@@ -1818,6 +2113,23 @@ async function cleanup() {
 		);
 	}
 	fakeSrv.stop(true);
+	// 本次新建的账号：pkill + userdel -r（HOME 在运行目录下）；再删本次新建的运行目录
+	for (const u of createdUsers.keys()) {
+		try {
+			ownedUser(u);
+			sh(`pkill -KILL -u ${u}`);
+			await sleep(300);
+			const r = sh(`userdel -r ${u}`);
+			cn(`删除账号 ${u}（userdel -r）→ ${r.code === 0 ? "ok" : r.out}`);
+			if (r.code === 0) createdUsers.delete(u);
+		} catch (e) {
+			cn(`删除账号 ${u} 失败：${String(e)}`);
+		}
+	}
+	if (RUNDIR.startsWith(`/var/tmp/m21-${RUN}.`) && existsSync(RUNDIR)) {
+		const r = sh(`rm -rf -- ${q(RUNDIR)}`);
+		cn(`删除本次运行目录 ${RUNDIR} → ${r.code === 0 ? "ok" : r.out}`);
+	}
 }
 
 for (const s of ["SIGINT", "SIGTERM"] as const)
@@ -1829,8 +2141,9 @@ for (const s of ["SIGINT", "SIGTERM"] as const)
 // ---------------------------------------------------------------- 主流程
 
 console.log(
-	`M21 验收 run=${RUN} base=${BASE} runner 用户 ${RUSER} Core=${CORE_SRC} egress=${EGRESS} 假模型 127.0.0.1:${fakeSrv.port}`,
+	`M21 验收 run=${RUN} base=${BASE} runner 账号 ${RUSER} 运行目录 ${RUNDIR} Core=${CORE_MODE === "source" ? `source ${CORE_SRC}` : `release ${coreRel.tag}/${coreRel.plat}`} egress=${EGRESS} 假模型 127.0.0.1:${fakeSrv.port}`,
 );
+for (const s of INSTANCE_EVIDENCE) snote(`实例校验：${s}`);
 
 try {
 	for (const [id, fn] of TESTS) {
@@ -1873,6 +2186,17 @@ await Bun.write(
 );
 console.log(`\n汇总（${out}）`);
 for (const r of results) console.log(`${r.id} ${r.verdict} ${r.seconds}s`);
-const failed = results.some((r) => r.verdict === "FAIL");
+// 末行判据：每个选中的必选项都恰好有一条 PASS（SKIP 也算失败），可选项允许 SKIP，不能有 FAIL
+const selected = TEST_IDS.filter((id) => !ONLY || ONLY.has(id));
+const verdictOf = (id: string) => results.find((r) => r.id === id)?.verdict;
+const bad = selected.filter((id) => {
+	const v = verdictOf(id);
+	return OPTIONAL[id] ? v !== "PASS" && v !== "SKIP" : v !== "PASS";
+});
+const failed = selected.length === 0 || bad.length > 0;
+if (bad.length > 0)
+	console.log(
+		`未通过：${bad.map((id) => `${id}=${verdictOf(id) ?? "未运行"}`).join(" ")}`,
+	);
 console.log(`VERDICT ${failed ? "FAIL" : "PASS"}`);
 process.exit(failed ? 1 : 0);
