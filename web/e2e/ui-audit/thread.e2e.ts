@@ -309,20 +309,15 @@ overlay(
 
 overlay(
 	"thread.context-menu",
-	async (p, info) => {
+	async (p) => {
 		await scrollTranscript(p, 0.5);
 		const msg = p
 			.locator("[data-testid=transcript] [data-role=assistant] p")
 			.first();
-		if (isMobile(info)) {
-			const box = await msg.boundingBox();
-			if (!box) throw new Error("没有消息");
-			// 长按：触屏 contextmenu 事件
-			await msg.dispatchEvent("contextmenu", {
-				clientX: box.x + 20,
-				clientY: box.y + 8,
-			});
-		} else await msg.click({ button: "right" });
+		// 先滚进视口再用真实输入右键：合成的 contextmenu 事件不是 MouseEvent（没有坐标），
+		// 且原先取的段落在视口上方（y≈-450），菜单落到屏幕外是用例造成的
+		await msg.scrollIntoViewIfNeeded();
+		await msg.click({ button: "right", position: { x: 20, y: 8 } });
 		return undefined;
 	},
 	{ noReopen: true },
