@@ -33,7 +33,7 @@ final class SinkFollow {
   private weak var scroll: UIScrollView?
   private let onMove: (CGFloat) -> Void
   /// 程序化开合的轨迹（op, 当时的 contentOffset.x, 目的地）：Rust 只在 debug 包写进事件日志，供 CI 判断原生动画有没有跑、何时跑。
-  /// op：start / jump（不带动画或手指按着时一步落位）/ noop（已在目的地）/ done / cancel（手指接管、被新请求替换或撤掉）
+  /// op：start / jump（不带动画时一步落位）/ noop（已在目的地）/ busy（手指按着，不动）/ done / cancel（手指接管、被新请求替换或撤掉）
   var onTrace: ((String, CGFloat, CGFloat) -> Void)?
   private var observations: [NSKeyValueObservation] = []
   private let hadIndicator: Bool
@@ -75,7 +75,8 @@ final class SinkFollow {
     onMove(next)
   }
 
-  /// 程序化开合：滚到打开位或关闭位（纵向位置不动）。手指按下时立即让给手势。
+  /// 程序化开合：滚到打开位或关闭位（纵向位置不动）。手指按着（isTracking，或拖动已开始的 isDragging：
+  /// 按住不动时 isTracking 可能已为假，PR #3 drag1）时什么都不做（busy），逐帧推进中途遇到也立即停下让给手势。
   func show(open: Bool, animated: Bool) {
     stop(cancelled: true)
     guard let s = scroll else { return }
@@ -84,7 +85,11 @@ final class SinkFollow {
       onTrace?("noop", s.contentOffset.x, x)
       return
     }
-    guard animated, !s.isTracking else {
+    guard !s.isTracking, !s.isDragging else {
+      onTrace?("busy", s.contentOffset.x, x)
+      return
+    }
+    guard animated else {
       onTrace?("jump", s.contentOffset.x, x)
       s.setContentOffset(CGPoint(x: x, y: s.contentOffset.y), animated: false)
       return
@@ -98,7 +103,7 @@ final class SinkFollow {
   }
 
   fileprivate func tick(_ link: CADisplayLink) {
-    guard let s = scroll, let a = anim, !s.isTracking else {
+    guard let s = scroll, let a = anim, !s.isTracking, !s.isDragging else {
       stop(cancelled: true)
       return
     }

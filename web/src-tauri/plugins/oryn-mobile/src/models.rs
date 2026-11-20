@@ -467,7 +467,7 @@ pub enum Event {
         #[serde(default)]
         id: Option<String>,
     },
-    /// 根滚动跟随的程序化开合轨迹（iOS，`SinkFollow`）：`op` 为 start / jump / noop / done / cancel，
+    /// 根滚动跟随的程序化开合轨迹（iOS，`SinkFollow`）：`op` 为 start / jump / noop / busy / done / cancel，
     /// `x` 是当时的 contentOffset.x、`to` 是目的地。只供 debug 包的事件日志（CI 端到端据此判断原生动画跑没跑）。
     Sink {
         op: String,
