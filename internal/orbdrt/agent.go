@@ -956,13 +956,21 @@ func (s *supervisor) run(p *proc) {
 		case <-tm.C:
 		case <-s.stopCh:
 			tm.Stop()
+			s.reportStopped(code)
 			return
 		}
 		p, spawnErr = s.spawn()
 		if p == nil && s.stopped() {
+			s.reportStopped(code)
 			return
 		}
 	}
+}
+
+// reportStopped 在崩溃重启的退避中被停止时补报终态：此前的 exited 带着 restartsLeft > 0，控制面据此保留了线程的 SSH
+// 公钥（M21）；不补报的话公钥与 Core 留下的 ssh master 一直有效，直到下一代启动或 runner 离线。
+func (s *supervisor) reportStopped(code int) {
+	s.t.setStatus(apigen.LinkCtlAgentStatusParams{Status: apigen.LinkCtlAgentStatusParamsStatusExited, ExitCode: &code})
 }
 
 // spawn 启动一个 omp 进程（C4 第 1 步）。

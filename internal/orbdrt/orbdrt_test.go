@@ -353,6 +353,29 @@ func TestAgentCrashGivesUp(t *testing.T) {
 	assert.Contains(t, *s.StderrTail, "read script")
 }
 
+// 崩溃后的重启退避中收到 agent.stop：补报不带 restartsLeft 的终态 exited（此前一条带 restartsLeft > 0，控制面据此保留
+// runner 线程的 SSH 公钥，M21）。
+func TestAgentStopDuringRestartBackoff(t *testing.T) {
+	cp := newFakeCP(t)
+	startRuntime(t, cp, func(c *Config) { c.RestartDelays = []time.Duration{time.Hour} })
+	pid := startAgent(t, cp, thread1, nil)
+	waitAgentStream(t, cp)
+	i, _ := cp.waitNotif(t, 0, "agent.status", statusIs(thread1, "ready"))
+	require.NoError(t, syscall.Kill(pid, syscall.SIGKILL))
+	j, raw := cp.waitNotif(t, i, "agent.status", statusIs(thread1, "exited"))
+	var s apigen.LinkCtlAgentStatusParams
+	require.NoError(t, json.Unmarshal(raw, &s))
+	require.NotNil(t, s.RestartsLeft)
+	assert.Equal(t, 1, *s.RestartsLeft)
+
+	var stop apigen.LinkCtlAgentStopResult
+	require.NoError(t, cp.call(t, "agent.stop", apigen.LinkCtlAgentStopParams{ThreadID: thread1, GraceSeconds: 5}, &stop))
+	_, raw = cp.waitNotif(t, j+1, "agent.status", statusIs(thread1, "exited"))
+	s = apigen.LinkCtlAgentStatusParams{}
+	require.NoError(t, json.Unmarshal(raw, &s))
+	assert.Nil(t, s.RestartsLeft, "退避中被停止补报终态")
+}
+
 func TestEgress(t *testing.T) {
 	cp := newFakeCP(t)
 	rt := startRuntime(t, cp, nil)
