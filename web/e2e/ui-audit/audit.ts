@@ -29,7 +29,9 @@ const SHOTS = new URL("../../../docs/ui-audit/shots/", import.meta.url)
  * 页内记录器：任何带 backdrop-filter 的元素（`.glass` 的 ::before、托盘、侧栏……）插入或换类名后的下一帧，
  * 检查它自己与祖先上正在跑的动画 / 过渡是否动到 opacity、filter、mask、clip-path、backdrop-filter。
  * 这些属性取非初值时祖先成为 Backdrop Root，模糊只取得到祖先内部，读起来就是「透明度时有时无」。
+ * 顶层元素（打开的 popover、模态 dialog）不受 DOM 祖先的 opacity / filter / overflow 影响，祖先链走到它为止（含它自己）。
  */
+const TOP_LAYER = ":popover-open, dialog:modal";
 const RECORDER = `(() => {
 	const BAD = /^(opacity|filter|clip-?path|mask(-image)?|maskImage|backdrop-?filter|backdropFilter|mix-?blend-?mode)$/i;
 	const hits = (window.__uaGlassAnim = []);
@@ -49,6 +51,7 @@ const RECORDER = `(() => {
 				const bad = props.filter((p) => BAD.test(p));
 				if (bad.length) hits.push({ el: g, text: desc(g) + " 打开时 " + (e === g ? "自身" : "祖先 " + desc(e)) + " 在动画 " + bad.join("/") });
 			}
+			if (e.matches(${JSON.stringify(TOP_LAYER)})) break;
 		}
 	});
 	const scan = (n) => {
@@ -106,7 +109,7 @@ export async function go(page: Page, path: string, ready?: string) {
 
 /** 页内断言：返回问题列表（空 = 通过）。 */
 async function inspect(target: Locator): Promise<string[]> {
-	return target.evaluate((root) => {
+	return target.evaluate((root, top) => {
 		const issues: string[] = [];
 		const desc = (e: Element) =>
 			`${e.tagName.toLowerCase()}${typeof e.className === "string" && e.className.trim() ? `.${e.className.trim().split(/\s+/).slice(0, 4).join(".")}` : ""}${e.getAttribute("aria-label") ? `[${e.getAttribute("aria-label")}]` : ""}`;
@@ -169,7 +172,11 @@ async function inspect(target: Locator): Promise<string[]> {
 						continue;
 					// 被祖先的 overflow 裁掉还是被别的元素压住
 					let clippedBy: Element | null = null;
-					for (let a = root.parentElement; a; a = a.parentElement) {
+					for (
+						let a = root.matches(top) ? null : root.parentElement;
+						a;
+						a = a.matches(top) ? null : a.parentElement
+					) {
 						const s = getComputedStyle(a);
 						if (s.overflowX === "visible" && s.overflowY === "visible")
 							continue;
@@ -213,7 +220,7 @@ async function inspect(target: Locator): Promise<string[]> {
 			for (
 				let a: Element | null = g;
 				a && a !== document.documentElement;
-				a = a.parentElement
+				a = a.matches(top) ? null : a.parentElement
 			) {
 				const c = getComputedStyle(a);
 				const why: string[] = [];
@@ -242,7 +249,7 @@ async function inspect(target: Locator): Promise<string[]> {
 		for (const h of anim.splice(0))
 			if (root.contains(h.el) || h.el.contains(root)) issues.push(h.text);
 		return [...new Set(issues)];
-	});
+	}, TOP_LAYER);
 }
 
 /** 把浮层里所有可滚动的区域滚到底，返回是否滚动过。 */
@@ -354,7 +361,7 @@ interface Look {
 }
 
 async function material(target: Locator): Promise<Look[]> {
-	return target.evaluate((root) => {
+	return target.evaluate((root, top) => {
 		const desc = (e: Element) =>
 			`${e.tagName.toLowerCase()}${typeof e.className === "string" && e.className.trim() ? `.${e.className.trim().split(/\s+/).slice(0, 3).join(".")}` : ""}`;
 		// 浮层根本身 + 后代里带玻璃的元素（.glass 或 ::before 有 backdrop-filter）
@@ -369,7 +376,11 @@ async function material(target: Locator): Promise<Look[]> {
 			const s = getComputedStyle(e);
 			const b = getComputedStyle(e, "::before");
 			let opacity = 1;
-			for (let a: Element | null = e; a; a = a.parentElement)
+			for (
+				let a: Element | null = e;
+				a;
+				a = a.matches(top) ? null : a.parentElement
+			)
 				opacity *= Number(getComputedStyle(a).opacity);
 			return {
 				el: desc(e),
@@ -380,7 +391,7 @@ async function material(target: Locator): Promise<Look[]> {
 				opacity: Math.round(opacity * 1000) / 1000,
 			};
 		});
-	});
+	}, TOP_LAYER);
 }
 
 /** 以首次打开为基准，滚到底、重开后的材质任何一项不同都算问题（玻璃块数变了也算）。 */
