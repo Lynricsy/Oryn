@@ -15,8 +15,8 @@
  * 另有 `share`（系统分享已上传为附件）、`mobile`（推送状态变了）、`insets`（屏幕圆角与原生 inset 变了）三个事件；
  * 页面里的外链（`target="_blank"` 或跨源 http(s)）与 `window.open` 一律改经 `host_open_external` 交给系统浏览器。
  * 桌面壳 bridge ≥ 3 去掉了系统标题栏：`__ORYN_HOST__.chrome` 声明按钮布局，窗口操作与 `window` 事件见 `window-chrome.ts`。
- * 移动壳 bridge ≥ 7 且 platform 为 ios：`mobile.tabBar` 非空（原生底栏：系统 UITabBar 垫在 WebView 之下，见 `native-tab-bar.ts`），
- * 另有 `tabbar` 事件（用户点了原生底栏的一项）。bridge 4–6 的壳把底栏叠在 WebView 上面，协议不同，这些壳一律用网页底栏。
+ * 移动壳 bridge ≥ 7 且 platform 为 ios：`mobile.tabBar` 非空（原生底栏：系统 UITabBar 浮在 WebView 之上、右缘裁到卡片左缘，
+ * 见 `native-tab-bar.ts`），另有 `tabbar` 事件（用户点了原生底栏的一项）。bridge 4–6 的壳是自绘 SwiftUI 胶囊，协议不同，一律用网页底栏。
  * 移动壳 bridge ≥ 5 且 platform 为 ios：`mobile.header` 非空（原生页头，见 `native-header.ts`），另有 `header` 事件；
  * bridge ≥ 7 的壳按 `show.at` 对齐起步时刻，更早的壳只认 `delay`（页头照样跟随卡片，起步对齐差一点）。
  */
@@ -149,21 +149,28 @@ export interface NativeTabBarItem {
 export interface NativeTabBarSpec {
 	items: NativeTabBarItem[];
 	selected: string;
-	/** 网页胶囊在布局视口里的矩形（CSS px）；原生底栏按它摆。 */
+	/** 网页胶囊在布局视口里的矩形（CSS px）；原生底栏按它摆（左右对齐，高度取系统的）。 */
 	frame: { x: number; y: number; width: number; height: number };
 	dark: boolean;
 	/** 选中项颜色 `#rrggbb`；null = 系统强调色。 */
 	accent: string | null;
-	/** 页面底色 `#rrggbb`：原生垫在 WebView 之下按它铺满，页面在接管期间透明。 */
-	bg: string;
 }
 
-/** 卡片与底栏的相对位置：只决定原生底栏接不接触摸（看得见的部分由网页合成器决定）。 */
+/**
+ * 原生底栏浮在 WebView 之上，右缘裁到卡片左缘（底栏属于侧栏层，卡片盖过来的部分要藏起来）。
+ * 吸附时原生按 `ms` / `ease` 从 `at` 起自己插值，与卡片的 CSS 过渡同一时刻出发；拖动时逐帧发 `ms: 0`。
+ */
 export interface NativeTabBarReveal {
-	/** 卡片左缘：视口 x 坐标（CSS px）。 */
+	/** 卡片左缘：视口 x 坐标（CSS px）。底栏只画这条线左边的部分。 */
 	x: number;
-	/** 网页内容（菜单、弹层、软键盘）压在底栏位置上。 */
+	/** 网页内容（菜单、弹层、提示、软键盘）压在底栏位置上：原生隐藏、不接触摸，网页胶囊顶上。 */
 	covered: boolean;
+	/** 过渡时长（毫秒）；0 = 立即。 */
+	ms: number;
+	/** cubic-bezier 控制点；缺省 = 线性。 */
+	ease?: [number, number, number, number];
+	/** 起步的绝对时刻（`Date.now()` 毫秒）；缺省 = 收到即起步。 */
+	at?: number;
 }
 
 export interface NativeTabBarHost {
@@ -248,7 +255,7 @@ export interface NativeFrame {
 
 /** 原生页头的整份内容（iOS 26+，见 `native-header.ts`）；只在内容变了时发。 */
 export interface NativeHeaderSpec {
-	/** 线程 id：变了原生收起菜单；事件原样带回。 */
+	/** 线程 id（只有侧栏钮的页是页名，如 `home`）：变了原生收起菜单；事件原样带回。 */
 	key: string;
 	dark: boolean;
 	palette: {
@@ -264,6 +271,7 @@ export interface NativeHeaderSpec {
 	/** 读屏文案：子页的返回行、关闭区。 */
 	text: { back: string; close: string };
 	lead: { frame: NativeFrame; symbol: string; label: string };
+	/** 没有标题胶囊的页（首页：只有侧栏钮）为 `null`（不省略）。 */
 	title: {
 		frame: NativeFrame;
 		text: string;
@@ -275,7 +283,7 @@ export interface NativeHeaderSpec {
 		/** 读屏读的整句。 */
 		label: string;
 		menu: NativeMenu;
-	};
+	} | null;
 	trail: {
 		frame: NativeFrame;
 		symbol: string;
@@ -381,7 +389,7 @@ export interface Host {
 	mobile: MobileHost | null;
 }
 
-/** 本页面实现的宿主协议版本（与壳 `host_ready` 返回的 `bridge` 对应；3 = 桌面自绘标题栏；4 = iOS 原生底栏；5 = iOS 原生页头；6 = iOS 可替换图标；7 = 原生底栏垫在 WebView 之下、页头按绝对时刻起步）。 */
+/** 本页面实现的宿主协议版本（与壳 `host_ready` 返回的 `bridge` 对应；3 = 桌面自绘标题栏；4 = iOS 原生底栏；5 = iOS 原生页头；6 = iOS 可替换图标；7 = 原生底栏改系统 UITabBar、底栏与页头按绝对时刻跟随卡片）。 */
 export const BRIDGE = 7;
 /** 壳向页面推送事件用的 DOM 事件名。 */
 export const HOST_EVENT = "oryn:host";

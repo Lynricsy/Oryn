@@ -29,11 +29,15 @@ import {
 	nativeItems,
 	oklchHex,
 	REST_MS,
-	SYNC_BIAS_MS,
 	slotsCovered,
 	useSlotFrame,
 } from "./native-header";
-import { NATIVE_LAG_MS, SINK_EASE, SINK_MS } from "./native-tab-bar";
+import {
+	NATIVE_LAG_MS,
+	SINK_EASE,
+	SINK_MS,
+	SYNC_BIAS_MS,
+} from "./native-tab-bar";
 
 // 前端 tsconfig 不带 Node 类型（静态导入 node:fs 过不了 tsc），只声明用到的函数（同 native-tab-bar.test）；工作目录是 web/
 let readFile: (path: string) => string;
@@ -200,8 +204,45 @@ describe("buildHeaderSpec 与 nativeItems", () => {
 			theme: { ...p.theme, dark: true },
 			trail: null,
 		});
-		expect(spec.trail).toBeNull();
-		expect(spec.tune).toEqual({ scrim: 0.6, tint: 0.55 });
+		expect(spec?.trail).toBeNull();
+		expect(spec?.tune).toEqual({ scrim: 0.6, tint: 0.55 });
+	});
+
+	it("只有侧栏钮（首页）：lead 带页名 key → title / trail 为 null，与契约夹具 header-lead.json 逐字相等", () => {
+		const p = parts();
+		const spec = buildHeaderSpec({
+			theme: {
+				dark: true,
+				palette: {
+					accent: "#7aa2ff",
+					brand: "#60a5fa",
+					err: "#f2766b",
+					warn: "#e0a84a",
+					good: "#5cc98a",
+					frost: "#8fb8e0",
+				},
+				text: p.theme.text,
+			},
+			lead: { ...p.lead, key: "home" },
+			title: null,
+			trail: null,
+		});
+		expect(spec).toEqual(fixture("header-lead.json"));
+		expect(JSON.parse(JSON.stringify(spec))).toEqual(spec);
+	});
+
+	it("key：有标题胶囊取线程 id（侧栏钮的页名不算）；没有胶囊、侧栏钮也不带页名（线程页胶囊还没量到）→ 不成 spec", () => {
+		const p = parts();
+		expect(
+			buildHeaderSpec({ ...p, lead: { ...p.lead, key: "home" } })?.key,
+		).toBe(KEY);
+		expect(buildHeaderSpec({ ...p, title: null })).toBeNull();
+		expect(buildHeaderSpec({ ...p, title: null, trail: null })).toBeNull();
+		// 没有胶囊也可以带视图钮
+		expect(
+			buildHeaderSpec({ ...p, lead: { ...p.lead, key: "home" }, title: null })
+				?.trail?.symbol,
+		).toBe("square.grid.2x2");
 	});
 
 	it("路径 id、label 非字符串且没有 native.label 的项丢弃并告警、未知图标 → circle、没有图标不带 icon", () => {
@@ -270,13 +311,15 @@ describe("buildHeaderSpec 与 nativeItems", () => {
 				menu: { ...p.title.menu, quick: many, groups: [[], many] },
 			},
 		});
-		expect([...spec.title.text].length).toBe(300);
-		expect("error" in spec.title).toBe(false);
-		expect(spec.title.meta).toHaveLength(6);
-		expect([...(spec.title.meta[0]?.text ?? "")].length).toBe(120);
-		expect(spec.title.marks).toHaveLength(6);
-		expect(spec.title.menu.quick).toHaveLength(4);
-		expect(spec.title.menu.groups.map((g) => g.length)).toEqual([24]);
+		const title = spec?.title;
+		if (!title) throw new Error("应有标题胶囊");
+		expect([...title.text].length).toBe(300);
+		expect("error" in title).toBe(false);
+		expect(title.meta).toHaveLength(6);
+		expect([...(title.meta[0]?.text ?? "")].length).toBe(120);
+		expect(title.marks).toHaveLength(6);
+		expect(title.menu.quick).toHaveLength(4);
+		expect(title.menu.groups.map((g) => g.length)).toEqual([24]);
 	});
 
 	it("findMenuItem：按 a/b 路径找项，找不到为 undefined", () => {
@@ -299,7 +342,8 @@ describe("oklch 换算与 index.css 不漂移", () => {
 		expect(markHex(30, false)).toMatch(/^#[0-9a-f]{6}$/);
 	});
 
-	it("头像、线程色的 oklch 常量与 CSS 一致；原生页头接管时卡片开合两个方向都晚 34ms 起步（拖动、减少动效除外）", () => {
+	// 卡片晚 34ms 起步的 CSS 规则（页头与底栏共用选择器）由 native-tab-bar.test 校验
+	it("头像、线程色的 oklch 常量与 CSS 一致", () => {
 		const css = readFile("src/index.css");
 		for (const s of [
 			"background: oklch(0.89 0.075 var(--h))",
@@ -310,19 +354,6 @@ describe("oklch 换算与 index.css 不漂移", () => {
 			"background: oklch(0.74 0.14 var(--h))",
 		])
 			expect(css).toContain(s);
-		for (const sel of [
-			".sink-card[data-native-head]:not([data-open])",
-			".sink-card[data-native-head][data-open]",
-		]) {
-			const at = css.indexOf(sel);
-			expect(at).toBeGreaterThan(-1);
-			const rule = css.slice(at, css.indexOf("}", at));
-			for (const s of ["[data-dragging]", "[data-instant]"])
-				expect(rule).toContain(s);
-			expect(rule).toContain(
-				`translate ${SINK_MS}ms var(--ease) ${NATIVE_LAG_MS}ms`,
-			);
-		}
 	});
 });
 
@@ -895,6 +926,60 @@ describe("控制器", () => {
 		await flush();
 		expect(s.header.engaged()).toBe(true);
 		expect(s.shows()).toEqual([FADE_IN]);
+	});
+
+	it("只有侧栏钮（首页，lead 带页名）：theme + lead 即 set（title / trail 为 null）并接管；lead 事件按页名回到 onTap", async () => {
+		const s = setup();
+		const onTap = vi.fn();
+		s.header.setPart("theme", s.p.theme);
+		s.header.setPart("lead", { ...s.p.lead, key: "home", onTap });
+		await flush();
+		expect(s.api.set).toHaveBeenCalledTimes(1);
+		const spec = s.api.set.mock.calls[0]?.[0];
+		expect(spec?.key).toBe("home");
+		expect(spec?.title).toBeNull();
+		expect(spec?.trail).toBeNull();
+		expect(s.header.engaged()).toBe(true);
+		expect(s.shows()).toEqual([FADE_IN]);
+		s.emit({ op: "lead", key: "home" });
+		expect(onTap).toHaveBeenCalledTimes(1);
+		s.emit({ op: "lead", key: KEY });
+		expect(onTap).toHaveBeenCalledTimes(1);
+	});
+
+	it("首页 → 线程页：线程页的侧栏钮不带页名，胶囊登记前撤掉原生页头（不发缺胶囊的 spec），胶囊到了才发线程的 spec", async () => {
+		const s = setup();
+		s.header.setPart("theme", s.p.theme);
+		s.header.setPart("lead", { ...s.p.lead, key: "home" });
+		await flush();
+		expect(s.header.engaged()).toBe(true);
+		s.header.setPart("lead", s.p.lead);
+		expect(s.header.engaged()).toBe(false);
+		await flush();
+		// 视图钮先到也不发（还缺胶囊）；测试环境的 microtask 是同步的，每次登记都合成一次
+		s.header.setPart("trail", s.p.trail);
+		s.header.setPart("title", s.p.title);
+		await flush();
+		const sent = s.api.set.mock.calls.map((c) => c[0]);
+		expect(sent.map((spec) => spec?.key ?? null)).toEqual(["home", null, KEY]);
+		expect(sent.at(-1)?.title?.text).toBe("修复登录回调");
+		expect(s.header.engaged()).toBe(true);
+	});
+
+	it("available：有宿主时为真，set 被拒后为假并通知订阅者；宿主为 null 时为假", async () => {
+		vi.spyOn(console, "warn").mockImplementation(() => {});
+		const s = setup({ rejectSet: true });
+		expect(s.header.available()).toBe(true);
+		const sub = vi.fn();
+		s.header.subscribe(sub);
+		s.register();
+		await flush();
+		expect(s.header.available()).toBe(false);
+		expect(sub).toHaveBeenCalled();
+		const { env } = fakeEnv();
+		expect(createNativeHeader(null, () => () => {}, env).available()).toBe(
+			false,
+		);
 	});
 
 	it("closeMenu：菜单开着时调 api.menu({open: null})，没开时不调", async () => {

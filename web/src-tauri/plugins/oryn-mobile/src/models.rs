@@ -157,18 +157,20 @@ pub struct TabBarSpec {
     pub dark: bool,
     /// `#rrggbb`；`None` = 系统强调色。
     pub accent: Option<String>,
-    /// 页面底色 `#rrggbb`：原生垫底按它铺满，页面透明的那部分看起来与原来一样。
-    /// 必填：不带它的是旧网页（还以为底栏叠在 WebView 上面），壳拒绝，旧网页退回网页底栏。
-    pub bg: String,
 }
 
-/// 卡片与底栏的相对位置（`tabBarReveal` 的载荷）：`x` = 卡片左缘（视口 x，CSS px），
-/// `covered` = 网页内容（菜单、弹层、软键盘）压在底栏位置上。只决定原生底栏接不接触摸：
-/// 看得见的部分由网页合成器决定（卡片与弹层都画在原生底栏之上），无需原生插值。
+/// 原生底栏的裁切（`tabBarReveal` 的载荷）：底栏浮在 WebView 之上，右缘裁到 `x` = 卡片左缘（视口 x，CSS px）；
+/// `covered` = 网页内容（菜单、弹层、软键盘）压在底栏位置上，原生隐藏、不接触摸。
+/// `ms` 为 0 立即就位（拖动逐帧），否则从绝对时刻 `at`（Unix 毫秒，缺省 = 收到即起步）按 `ease` 过渡 `ms` 毫秒。
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct TabBarReveal {
     pub x: f64,
     pub covered: bool,
+    pub ms: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ease: Option<[f64; 4]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<f64>,
 }
 
 /// 原生页头里各控件的矩形（CSS px）；与底栏同形。
@@ -347,14 +349,15 @@ pub struct HeaderTrail {
 /// 原生页头的整份状态（`headerSet` 的 `spec`）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HeaderSpec {
-    /// 线程 id：变了原生收起菜单；事件原样带回。
+    /// 线程 id（只有侧栏钮的页是页名，如 `home`）：变了原生收起菜单；事件原样带回。
     pub key: String,
     pub dark: bool,
     pub palette: HeaderPalette,
     pub tune: HeaderTune,
     pub text: HeaderText,
     pub lead: HeaderLead,
-    pub title: HeaderTitle,
+    /// 没有标题胶囊（首页：只有侧栏钮）时为 `null`（不省略）。
+    pub title: Option<HeaderTitle>,
     /// 没有视图钮时为 `null`（不省略）。
     pub trail: Option<HeaderTrail>,
 }
@@ -496,6 +499,7 @@ mod tests {
     const HEADER_SET: &str = include_str!("../fixtures/header-set.json");
     const HEADER_SHOW: &str = include_str!("../fixtures/header-show.json");
     const HEADER_MENU: &str = include_str!("../fixtures/header-menu.json");
+    const HEADER_LEAD: &str = include_str!("../fixtures/header-lead.json");
 
     /// JSON 里整数与浮点不相等（`12` ≠ `12.0`），比较前统一成浮点。
     fn norm(v: Value) -> Value {
@@ -523,18 +527,27 @@ mod tests {
         // 撤栏：`{"spec": null}`
         let none: Option<TabBarSpec> = serde_json::from_value(Value::Null).unwrap();
         assert_eq!(json!({ "spec": none }), json!({ "spec": null }));
-        // 旧网页（以为底栏叠在 WebView 上面）不带 bg：解析失败，壳拒绝，它退回网页底栏
-        let mut old: Value = serde_json::from_str(SET).unwrap();
-        old.as_object_mut().unwrap().remove("bg");
-        assert!(serde_json::from_value::<TabBarSpec>(old).is_err());
     }
 
     #[test]
     fn tab_bar_reveal_fixture_round_trips() {
         let raw: Value = serde_json::from_str(REVEAL).unwrap();
         let reveal: TabBarReveal = serde_json::from_value(raw.clone()).unwrap();
-        assert_eq!(reveal, TabBarReveal { x: 320.0, covered: false });
+        assert_eq!(
+            reveal,
+            TabBarReveal {
+                x: 320.0,
+                covered: false,
+                ms: 260,
+                ease: Some([0.2, 0.8, 0.2, 1.0]),
+                at: Some(1_795_000_000_042.0),
+            }
+        );
         assert_eq!(norm(serde_json::to_value(reveal).unwrap()), norm(raw));
+        // 拖动逐帧：只带 x / covered / ms
+        let bare: TabBarReveal =
+            serde_json::from_value(json!({"x": 12.5, "covered": true, "ms": 0})).unwrap();
+        assert_eq!((bare.ease, bare.at), (None, None));
     }
 
     #[test]
@@ -548,7 +561,7 @@ mod tests {
         let raw: Value = serde_json::from_str(HEADER_SET).unwrap();
         let spec: HeaderSpec = serde_json::from_value(raw.clone()).unwrap();
         assert_eq!(norm(serde_json::to_value(&spec).unwrap()), norm(raw));
-        let menu = &spec.title.menu;
+        let menu = &spec.title.as_ref().unwrap().menu;
         assert_eq!(menu.quick.len(), 3);
         assert_eq!(menu.status[0].children.len(), 4);
         assert_eq!(
@@ -580,6 +593,19 @@ mod tests {
         // 撤掉：`{"spec": null}`
         let none: Option<HeaderSpec> = serde_json::from_value(Value::Null).unwrap();
         assert_eq!(json!({ "spec": none }), json!({ "spec": null }));
+    }
+
+    #[test]
+    fn header_lead_fixture_round_trips() {
+        // 只有侧栏钮（首页）：`title` 与 `trail` 都序列化为 null（不省略）
+        let raw: Value = serde_json::from_str(HEADER_LEAD).unwrap();
+        let spec: HeaderSpec = serde_json::from_value(raw.clone()).unwrap();
+        assert_eq!(spec.key, "home");
+        assert_eq!((spec.title.is_none(), spec.trail.is_none()), (true, true));
+        let back = serde_json::to_value(&spec).unwrap();
+        assert_eq!(back["title"], Value::Null);
+        assert_eq!(back["trail"], Value::Null);
+        assert_eq!(norm(back), norm(raw));
     }
 
     #[test]

@@ -1,0 +1,21 @@
+{
+	"key": "home",
+	"dark": true,
+	"palette": {
+		"accent": "#7aa2ff",
+		"brand": "#60a5fa",
+		"err": "#f2766b",
+		"warn": "#e0a84a",
+		"good": "#5cc98a",
+		"frost": "#8fb8e0"
+	},
+	"tune": { "scrim": 0.6, "tint": 0.55 },
+	"text": { "back": "返回", "close": "关闭" },
+	"lead": {
+		"frame": { "x": 12, "y": 68, "width": 44, "height": 44 },
+		"symbol": "sidebar.left",
+		"label": "侧边栏"
+	},
+	"title": null,
+	"trail": null
+}

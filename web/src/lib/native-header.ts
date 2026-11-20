@@ -9,8 +9,10 @@
  * - 让位：网页内容盖住页头（对话框 / 命令面板 / 提示条、切到面板标签、页面被软键盘推走）时原生隐藏、网页页头顶上；
  *   遮挡只在卡片静止关闭时判定（卡片动着或打开时，露出的卡片条上的关闭按钮会盖住页头的位置，那不是遮挡）。
  *   回来时原生 120ms 淡入，网页三件再晚 NATIVE_LAG_MS 才撤（短暂重叠，不留空档）。
- * - 内容：各部件（`CompactThreadHeader`、`ThreadViewMenu`）每次渲染登记自己的一份（`useNativeHeaderPart`），
+ * - 内容：各部件（`CompactThreadHeader`、`ThreadViewMenu`；首页只有侧栏钮，`HomePage`）每次渲染登记自己的一份（`useNativeHeaderPart`），
  *   这里合成一份声明式 spec，按 JSON 去重、在途至多一条。原生点击回传菜单项的路径 id，网页在最新登记的部件里找回调执行。
+ *   标题胶囊可以没有：侧栏钮自带 `key`（页名）时只有 theme + lead 也成 spec（`title: null`）；线程页的侧栏钮不带 key，
+ *   标题胶囊没量到之前不会发出缺了胶囊的 spec。
  * - 菜单的开合与子页切换是原生的本地状态，打开 / 关闭 / 选中再上报；网页只在 Esc、软键盘弹出时强制收起。
  * - 回退：宿主没有原生页头（浏览器、Android、桌面、iOS bridge < 5）、`set` 被拒（iOS < 26、没挂上）、或 `NATIVE_HEADER`
  *   为 false 时，本页一直用网页页头，行为与以前完全相同。改 `NATIVE_HEADER` 并升级服务器即可全量回退，不需要发版。
@@ -44,6 +46,7 @@ import {
 	NATIVE_LAG_MS,
 	SINK_EASE,
 	SINK_MS,
+	SYNC_BIAS_MS,
 } from "./native-tab-bar";
 
 /** 总开关：false = 所有 App 都用网页页头。 */
@@ -52,8 +55,6 @@ export const NATIVE_HEADER = true;
 export const HEADER_FADE_MS = 120;
 /** 卡片收回后多久算「静止」（此后才重新判定遮挡）：吸附 260ms + 34ms 晚起步 + 余量。 */
 export const REST_MS = SINK_MS + NATIVE_LAG_MS + 60;
-/** 起步对齐的方向偏置（毫秒，约一帧）：打开时原生早这么多、关闭时晚这么多。 */
-export const SYNC_BIAS_MS = 8;
 /** 遮罩不透明度（= `--scrim` 的 alpha）与面板底色着色强度。 */
 export const HEADER_TUNE = {
 	scrimLight: 0.35,
@@ -294,7 +295,11 @@ export interface HeaderParts {
 		palette: NativeHeaderSpec["palette"];
 		text: NativeHeaderSpec["text"];
 	};
-	lead: { frame: NativeFrame; label: string; onTap(): void };
+	/**
+	 * `key`：只有侧栏钮、没有标题胶囊的页（首页）给自己的页名，作 spec 的 key，有它就不等标题胶囊；
+	 * 线程页不给（key 取标题胶囊的线程 id，胶囊没登记时不发 spec）。
+	 */
+	lead: { frame: NativeFrame; label: string; key?: string; onTap(): void };
 	title: {
 		frame: NativeFrame;
 		key: string;
@@ -332,32 +337,39 @@ function specMenu(m: NativeMenu): NativeMenu {
 /**
  * 合成整份 spec：去掉回调；lead.symbol = "sidebar.left"、trail.symbol = "square.grid.2x2"；
  * tune = {scrim: dark ? scrimDark : scrimLight, tint}；title.text / label / error / 各段文字按 HEADER_LIMIT 截断，
- * quick / status / groups / 每组 / meta / marks 按上限截掉多的（空组去掉）；没有 trail 时 `trail: null`。
+ * quick / status / groups / 每组 / meta / marks 按上限截掉多的（空组去掉）；没有 title / trail 时为 `null`。
+ * key 取标题胶囊的线程 id，没有胶囊时取侧栏钮的页名；两者都没有（线程页的胶囊还没登记）时不成 spec，返回 null。
  */
 export function buildHeaderSpec(
-	p: Pick<HeaderParts, "theme" | "lead" | "title"> & {
+	p: Pick<HeaderParts, "theme" | "lead"> & {
+		title: HeaderParts["title"] | null;
 		trail: HeaderParts["trail"] | null;
 	},
-): NativeHeaderSpec {
+): NativeHeaderSpec | null {
 	const { theme, lead, title, trail } = p;
-	const t: NativeHeaderSpec["title"] = {
-		frame: { ...title.frame },
-		text: clip(title.text, HEADER_LIMIT.title),
-		meta: title.meta
-			.flatMap((s) => nativeSeg(s) ?? [])
-			.slice(0, HEADER_LIMIT.meta),
-		marks: title.marks
-			.slice(0, HEADER_LIMIT.marks)
-			.map((m) =>
-				m.dim ? { symbol: m.symbol, dim: true } : { symbol: m.symbol },
-			),
-		label: clip(title.label, HEADER_LIMIT.a11y),
-		menu: specMenu(title.menu),
-	};
-	if (title.icon) t.icon = title.icon;
-	if (title.error) t.error = clip(title.error, HEADER_LIMIT.error);
+	const key = title ? title.key : lead.key;
+	if (key === undefined) return null;
+	let t: NativeHeaderSpec["title"] = null;
+	if (title) {
+		t = {
+			frame: { ...title.frame },
+			text: clip(title.text, HEADER_LIMIT.title),
+			meta: title.meta
+				.flatMap((s) => nativeSeg(s) ?? [])
+				.slice(0, HEADER_LIMIT.meta),
+			marks: title.marks
+				.slice(0, HEADER_LIMIT.marks)
+				.map((m) =>
+					m.dim ? { symbol: m.symbol, dim: true } : { symbol: m.symbol },
+				),
+			label: clip(title.label, HEADER_LIMIT.a11y),
+			menu: specMenu(title.menu),
+		};
+		if (title.icon) t.icon = title.icon;
+		if (title.error) t.error = clip(title.error, HEADER_LIMIT.error);
+	}
 	return {
-		key: title.key,
+		key,
 		dark: theme.dark,
 		palette: { ...theme.palette },
 		tune: {
@@ -416,6 +428,8 @@ export function slotsCovered(slots: Iterable<Element>, win: Window): boolean {
 }
 
 export interface NativeHeader {
+	/** 宿主有原生页头且 set 没被拒过（之后仍可能接管）：首页据此把侧栏钮排成与线程页同样的 44px 圆钮。 */
+	available(): boolean;
 	/** 原生页头已经显示稳了：网页三件应隐藏（开合途中也一直为真）。 */
 	active(): boolean;
 	/** 已接管（可能暂时让位）：卡片的非手势开合与松手吸附晚 NATIVE_LAG_MS 起步。 */
@@ -423,7 +437,9 @@ export interface NativeHeader {
 	/** 原生菜单开着哪一个。 */
 	menu(): NativeMenuKind | null;
 	subscribe(cb: () => void): () => void;
-	/** 各部件登记自己的那份（null = 撤掉）；theme、lead、title 到齐才发 spec，缺一则撤掉原生页头。 */
+	/**
+	 * 各部件登记自己的那份（null = 撤掉）。theme、lead 到齐，且有标题胶囊或侧栏钮带页名 key 才发 spec，否则撤掉原生页头。
+	 */
 	setPart<K extends keyof HeaderParts>(
 		part: K,
 		value: HeaderParts[K] | null,
@@ -558,6 +574,8 @@ export function createNativeHeader(
 			disabled = true;
 			wanted = "";
 			drop();
+			// 不再可用：首页的侧栏钮换回网页原来的样子
+			notify();
 			throw e;
 		}
 		if (spec === null || wanted === "" || engaged) return;
@@ -569,17 +587,23 @@ export function createNativeHeader(
 	const sync = () => {
 		queued = false;
 		if (disabled) return;
-		const { theme, lead, title } = parts;
+		const { theme, lead } = parts;
+		// 标题胶囊可缺（只有侧栏钮的页）；线程页的胶囊还没登记时 buildHeaderSpec 给 null
 		const spec =
-			theme && lead && title
-				? buildHeaderSpec({ theme, lead, title, trail: parts.trail ?? null })
+			theme && lead
+				? buildHeaderSpec({
+						theme,
+						lead,
+						title: parts.title ?? null,
+						trail: parts.trail ?? null,
+					})
 				: null;
 		const next = spec ? JSON.stringify(spec) : "";
 		if (next === wanted) return;
 		wanted = next;
 		if (!spec) drop();
 		else if (spec.key !== key) {
-			// 换了线程：原生会自己收起菜单
+			// 换了线程（或页）：原生会自己收起菜单
 			key = spec.key;
 			if (menu !== null) {
 				menu = null;
@@ -616,6 +640,7 @@ export function createNativeHeader(
 	});
 
 	return {
+		available: () => !disabled,
 		active: () => shown,
 		engaged: () => engaged,
 		menu: () => menu,
@@ -737,6 +762,15 @@ export const nativeHeader: NativeHeader = createNativeHeader(
 	NATIVE_HEADER ? (host.mobile?.header ?? null) : null,
 	(cb) => host.onHeader(cb),
 );
+
+/** 宿主有原生页头且没被拒过（可能还没接管）。 */
+export function useNativeHeaderAvailable(): boolean {
+	return useSyncExternalStore(
+		nativeHeader.subscribe,
+		nativeHeader.available,
+		() => false,
+	);
+}
 
 /** 原生页头显示稳了（网页三件应隐藏）。 */
 export function useNativeHeaderActive(): boolean {

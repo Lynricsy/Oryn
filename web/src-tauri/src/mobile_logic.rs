@@ -384,7 +384,7 @@ fn valid_ease(e: Option<[f64; 4]>) -> bool {
 /// items 1..=6、id 互不相同且 `valid_tab_id`；label 1..=64 个字符；
 /// icon：symbol 1..=64 字节 `[a-z0-9.]`，glyph 1..=32 字节，image 1..=131072 字节且全是 base64 字符（`A-Za-z0-9+/=`）；
 /// selected ≤ 32 字节；frame 四项有限，x、y ∈ [-100, 5000]，width ∈ [1, 2000]，height ∈ [1, 400]；
-/// accent 为 None 或 `valid_color`；bg 为 `valid_color`。
+/// accent 为 None 或 `valid_color`。
 pub fn valid_tab_bar(spec: &TabBarSpec) -> bool {
     let items = &spec.items;
     let items_ok = (1..=6).contains(&items.len())
@@ -398,12 +398,14 @@ pub fn valid_tab_bar(spec: &TabBarSpec) -> bool {
         && spec.selected.len() <= 32
         && valid_frame(&spec.frame)
         && spec.accent.as_deref().is_none_or(valid_color)
-        && valid_color(&spec.bg)
 }
 
-/// x 有限且 ∈ [-10000, 10000]。
+/// x 有限且 ∈ [-10000, 10000]；ms ≤ 2000；ease 见 `valid_ease`；at 为 None 或有限且 ∈ [0, 1e14]（Unix 毫秒）。
 pub fn valid_reveal(r: &TabBarReveal) -> bool {
     within(r.x, -10_000.0, 10_000.0)
+        && r.ms <= 2000
+        && valid_ease(r.ease)
+        && r.at.is_none_or(|at| within(at, 0.0, 1e14))
 }
 
 // ---------------------------------------------------------------- 可替换图标（iOS）
@@ -535,14 +537,13 @@ fn valid_menu(m: &HeaderMenu) -> bool {
 
 /// `host_header_set` 的入参上限（命令可能被 portal iframe 调到，见 host.rs 文件头）：
 /// key `valid_header_key`；六个调色板颜色 `valid_color`；tune 两项 ∈ [0, 1]；text 两项 1..=32 个字符；
-/// lead / trail：frame 同底栏（`valid_frame`）、symbol `valid_symbol`、label 1..=64 个字符；
-/// title：text 1..=300、label 1..=600、error（有的话）1..=300 个字符，meta ≤ 6 段、marks ≤ 6 个；
+/// lead / trail：frame 同底栏（`valid_frame`）、symbol `valid_symbol`、label 1..=64 个字符；title / trail 可为 null（首页只有 lead）；
+/// title（有的话）：text 1..=300、label 1..=600、error（有的话）1..=300 个字符，meta ≤ 6 段、marks ≤ 6 个；
 /// 菜单：label 1..=400，quick ≤ 4、status ≤ 32、groups ≤ 8 组且每组 1..=24 项、子项 ≤ 24 且不再嵌套、
 /// 全菜单 ≤ 160 项且 id 互不相同；项：label 1..=200、hint 1..=32、说明行 1..=120 个字符、copy 1..=2048 字节；
 /// 图标四选一，`bg` / `fg` 只配 `glyph`。
 pub fn valid_header(spec: &HeaderSpec) -> bool {
     let p = &spec.palette;
-    let t = &spec.title;
     valid_header_key(&spec.key)
         && [&p.accent, &p.brand, &p.err, &p.warn, &p.good, &p.frost]
             .iter()
@@ -554,16 +555,18 @@ pub fn valid_header(spec: &HeaderSpec) -> bool {
         && valid_frame(&spec.lead.frame)
         && valid_symbol(&spec.lead.symbol)
         && chars_in(&spec.lead.label, 1, 64)
-        && valid_frame(&t.frame)
-        && chars_in(&t.text, 1, 300)
-        && chars_in(&t.label, 1, 600)
-        && t.icon.as_ref().is_none_or(valid_header_icon)
-        && t.error.as_deref().is_none_or(|e| chars_in(e, 1, 300))
-        && t.meta.len() <= 6
-        && t.meta.iter().all(valid_seg)
-        && t.marks.len() <= 6
-        && t.marks.iter().all(|m| valid_symbol(&m.symbol))
-        && valid_menu(&t.menu)
+        && spec.title.as_ref().is_none_or(|t| {
+            valid_frame(&t.frame)
+                && chars_in(&t.text, 1, 300)
+                && chars_in(&t.label, 1, 600)
+                && t.icon.as_ref().is_none_or(valid_header_icon)
+                && t.error.as_deref().is_none_or(|e| chars_in(e, 1, 300))
+                && t.meta.len() <= 6
+                && t.meta.iter().all(valid_seg)
+                && t.marks.len() <= 6
+                && t.marks.iter().all(|m| valid_symbol(&m.symbol))
+                && valid_menu(&t.menu)
+        })
         && spec.trail.as_ref().is_none_or(|r| {
             valid_frame(&r.frame)
                 && valid_symbol(&r.symbol)
@@ -626,12 +629,14 @@ pub fn demo_header(width: f64, safe_top: f64) -> HeaderSpec {
         height: 44.0,
     };
     spec.lead.frame = round(12.0);
-    spec.title.frame = TabBarFrame {
-        x: 64.0,
-        y: safe_top + 8.0,
-        width: width - 128.0,
-        height: 46.0,
-    };
+    if let Some(title) = spec.title.as_mut() {
+        title.frame = TabBarFrame {
+            x: 64.0,
+            y: safe_top + 8.0,
+            width: width - 128.0,
+            height: 46.0,
+        };
+    }
     if let Some(trail) = spec.trail.as_mut() {
         trail.frame = round(width - 56.0);
     }
@@ -1252,8 +1257,6 @@ mod tests {
         rejects_spec("frame x 为 NaN", |s| s.frame.x = f64::NAN);
         rejects_spec("frame 宽为无穷", |s| s.frame.width = f64::INFINITY);
         rejects_spec("accent red", |s| s.accent = Some("red".into()));
-        rejects_spec("bg 为空", |s| s.bg.clear());
-        rejects_spec("bg 带透明度", |s| s.bg = "#f7f6f3cc".into());
         // 边界上的合法值
         let mut s = fixture_spec();
         s.items = (0..6).map(|i| tab_item(&format!("t{i}"))).collect();
@@ -1271,9 +1274,16 @@ mod tests {
         assert!(valid_reveal(&TabBarReveal {
             x: 0.0,
             covered: true,
+            ms: 0,
+            ease: None,
+            at: None,
         }));
         rejects_reveal("x 为 NaN", |r| r.x = f64::NAN);
         rejects_reveal("x 越界", |r| r.x = 10_001.0);
+        rejects_reveal("ms 2001", |r| r.ms = 2001);
+        rejects_reveal("ease[0] 1.2", |r| r.ease = Some([1.2, 0.8, 0.2, 1.0]));
+        rejects_reveal("at 为 NaN", |r| r.at = Some(f64::NAN));
+        rejects_reveal("at 为负", |r| r.at = Some(-1.0));
     }
 
     #[test]
@@ -1292,6 +1302,7 @@ mod tests {
     const HEADER_SET: &str = include_str!("../plugins/oryn-mobile/fixtures/header-set.json");
     const HEADER_SHOW: &str = include_str!("../plugins/oryn-mobile/fixtures/header-show.json");
     const HEADER_MENU: &str = include_str!("../plugins/oryn-mobile/fixtures/header-menu.json");
+    const HEADER_LEAD: &str = include_str!("../plugins/oryn-mobile/fixtures/header-lead.json");
 
     fn fixture_header() -> HeaderSpec {
         serde_json::from_str(HEADER_SET).unwrap()
@@ -1305,12 +1316,17 @@ mod tests {
         serde_json::from_value(json!({"id": id, "label": id})).unwrap()
     }
 
-    /// 页头的三个夹具同样是 TS、Rust、Swift 三方的共同契约。
+    /// 页头的四个夹具同样是 TS、Rust、Swift 三方的共同契约。
     #[test]
     fn header_fixtures_round_trip() {
         for (raw, back) in [
             (HEADER_SET, serde_json::to_value(fixture_header()).unwrap()),
             (HEADER_SHOW, serde_json::to_value(fixture_show()).unwrap()),
+            (
+                HEADER_LEAD,
+                serde_json::to_value(serde_json::from_str::<HeaderSpec>(HEADER_LEAD).unwrap())
+                    .unwrap(),
+            ),
             (
                 HEADER_MENU,
                 serde_json::to_value(serde_json::from_str::<HeaderMenuCmd>(HEADER_MENU).unwrap())
@@ -1320,6 +1336,7 @@ mod tests {
             assert_eq!(norm(back), norm(serde_json::from_str(raw).unwrap()));
         }
         assert!(valid_header(&fixture_header()));
+        assert!(valid_header(&serde_json::from_str(HEADER_LEAD).unwrap()));
         assert!(valid_header_show(&fixture_show()));
         assert!(valid_header_menu(
             &serde_json::from_str(HEADER_MENU).unwrap()
@@ -1331,6 +1348,11 @@ mod tests {
         let mut s = fixture_header();
         mutate(&mut s);
         assert!(!valid_header(&s), "{name}");
+    }
+
+    /// 在夹具的标题胶囊上改一处后应被 `valid_header` 拒绝。
+    fn rejects_title(name: &str, mutate: impl FnOnce(&mut tauri_plugin_oryn_mobile::HeaderTitle)) {
+        rejects_header(name, |s| mutate(s.title.as_mut().unwrap()));
     }
 
     #[test]
@@ -1346,110 +1368,101 @@ mod tests {
             s.lead.symbol = "Sidebar.left".into()
         });
         rejects_header("lead.label 65 字符", |s| s.lead.label = "字".repeat(65));
-        rejects_header("title.text 为空", |s| s.title.text.clear());
-        rejects_header("title.text 301 字符", |s| s.title.text = "字".repeat(301));
-        rejects_header("title.label 601 字符", |s| {
-            s.title.label = "字".repeat(601)
+        rejects_title("title.text 为空", |t| t.text.clear());
+        rejects_title("title.text 301 字符", |t| t.text = "字".repeat(301));
+        rejects_title("title.label 601 字符", |t| t.label = "字".repeat(601));
+        rejects_title("title.error 为空", |t| t.error = Some(String::new()));
+        rejects_title("meta 7 段", |t| {
+            let seg = t.meta[0].clone();
+            t.meta = vec![seg; 7];
         });
-        rejects_header("title.error 为空", |s| {
-            s.title.error = Some(String::new())
+        rejects_title("meta 文字 121 字符", |t| {
+            t.meta[0].text = "字".repeat(121)
         });
-        rejects_header("meta 7 段", |s| {
-            let seg = s.title.meta[0].clone();
-            s.title.meta = vec![seg; 7];
+        rejects_title("marks 7 个", |t| {
+            let m = t.marks[0].clone();
+            t.marks = vec![m; 7];
         });
-        rejects_header("meta 文字 121 字符", |s| {
-            s.title.meta[0].text = "字".repeat(121)
+        rejects_title("mark symbol 含空格", |t| {
+            t.marks[0].symbol = "a b".into()
         });
-        rejects_header("marks 7 个", |s| {
-            let m = s.title.marks[0].clone();
-            s.title.marks = vec![m; 7];
-        });
-        rejects_header("mark symbol 含空格", |s| {
-            s.title.marks[0].symbol = "a b".into()
-        });
-        rejects_header("图标同时有 symbol 与 dot", |s| {
-            s.title.menu.quick[0].icon = Some(HeaderIcon {
+        rejects_title("图标同时有 symbol 与 dot", |t| {
+            t.menu.quick[0].icon = Some(HeaderIcon {
                 symbol: Some("pin".into()),
                 dot: Some("#123456".into()),
                 ..Default::default()
             })
         });
-        rejects_header("图标一项都没有", |s| {
-            s.title.menu.quick[0].icon = Some(HeaderIcon::default())
+        rejects_title("图标一项都没有", |t| {
+            t.menu.quick[0].icon = Some(HeaderIcon::default())
         });
-        rejects_header("bg 配在 symbol 上", |s| {
-            s.title.menu.quick[0].icon = Some(HeaderIcon {
+        rejects_title("bg 配在 symbol 上", |t| {
+            t.menu.quick[0].icon = Some(HeaderIcon {
                 symbol: Some("pin".into()),
                 bg: Some("#123456".into()),
                 ..Default::default()
             })
         });
-        rejects_header("glyph 的 fg 不是颜色", |s| {
-            s.title.icon.as_mut().unwrap().fg = Some("black".into())
+        rejects_title("glyph 的 fg 不是颜色", |t| {
+            t.icon.as_mut().unwrap().fg = Some("black".into())
         });
-        rejects_header("glyph 33 字节", |s| {
-            s.title.icon.as_mut().unwrap().glyph = Some("a".repeat(33))
+        rejects_title("glyph 33 字节", |t| {
+            t.icon.as_mut().unwrap().glyph = Some("a".repeat(33))
         });
-        rejects_header("dot 不是颜色", |s| {
-            s.title.menu.quick[0].icon = Some(HeaderIcon {
+        rejects_title("dot 不是颜色", |t| {
+            t.menu.quick[0].icon = Some(HeaderIcon {
                 dot: Some("red".into()),
                 ..Default::default()
             })
         });
-        rejects_header("quick 5 项", |s| {
-            s.title.menu.quick = (0..5).map(|i| header_item(&format!("q{i}"))).collect()
+        rejects_title("quick 5 项", |t| {
+            t.menu.quick = (0..5).map(|i| header_item(&format!("q{i}"))).collect()
         });
-        rejects_header("status 33 项", |s| {
-            s.title.menu.status = (0..33).map(|i| header_item(&format!("s{i}"))).collect()
+        rejects_title("status 33 项", |t| {
+            t.menu.status = (0..33).map(|i| header_item(&format!("s{i}"))).collect()
         });
-        rejects_header("9 组", |s| {
-            s.title.menu.groups = (0..9)
+        rejects_title("9 组", |t| {
+            t.menu.groups = (0..9)
                 .map(|i| vec![header_item(&format!("g{i}"))])
                 .collect()
         });
-        rejects_header("某组为空", |s| s.title.menu.groups.push(vec![]));
-        rejects_header("某组 25 项", |s| {
-            s.title.menu.groups[0] = (0..25).map(|i| header_item(&format!("g{i}"))).collect()
+        rejects_title("某组为空", |t| t.menu.groups.push(vec![]));
+        rejects_title("某组 25 项", |t| {
+            t.menu.groups[0] = (0..25).map(|i| header_item(&format!("g{i}"))).collect()
         });
-        rejects_header("全菜单 161 项", |s| {
-            let m = &mut s.title.menu;
+        rejects_title("全菜单 161 项", |t| {
+            let m = &mut t.menu;
             m.quick.clear();
             m.status.clear();
             m.groups = (0..7)
                 .map(|g| (0..23).map(|i| header_item(&format!("g{g}-{i}"))).collect())
                 .collect();
         });
-        rejects_header("子项 25 个", |s| {
-            s.title.menu.status[0].children =
-                (0..25).map(|i| header_item(&format!("env/{i}"))).collect()
+        rejects_title("子项 25 个", |t| {
+            t.menu.status[0].children = (0..25).map(|i| header_item(&format!("env/{i}"))).collect()
         });
-        rejects_header("子项再带 children", |s| {
-            s.title.menu.status[0].children[0].children = vec![header_item("env/info/x")]
+        rejects_title("子项再带 children", |t| {
+            t.menu.status[0].children[0].children = vec![header_item("env/info/x")]
         });
-        rejects_header("两项同 id", |s| {
-            s.title.menu.groups[0][1].children.push(header_item("env"))
+        rejects_title("两项同 id", |t| {
+            t.menu.groups[0][1].children.push(header_item("env"))
         });
-        rejects_header("项 id 含空格", |s| {
-            s.title.menu.quick[0].id = "a b".into()
+        rejects_title("项 id 含空格", |t| t.menu.quick[0].id = "a b".into());
+        rejects_title("项 id 97 字节", |t| t.menu.quick[0].id = "a".repeat(97));
+        rejects_title("item.label 201 字符", |t| {
+            t.menu.quick[0].label = "字".repeat(201)
         });
-        rejects_header("项 id 97 字节", |s| {
-            s.title.menu.quick[0].id = "a".repeat(97)
+        rejects_title("item.label 为空", |t| t.menu.quick[0].label.clear());
+        rejects_title("hint 33 字符", |t| {
+            t.menu.groups[1][0].hint = Some("字".repeat(33))
         });
-        rejects_header("item.label 201 字符", |s| {
-            s.title.menu.quick[0].label = "字".repeat(201)
+        rejects_title("说明行为空", |t| {
+            t.menu.status[1].sub.as_mut().unwrap().text.clear()
         });
-        rejects_header("item.label 为空", |s| s.title.menu.quick[0].label.clear());
-        rejects_header("hint 33 字符", |s| {
-            s.title.menu.groups[1][0].hint = Some("字".repeat(33))
+        rejects_title("copy 2049 字节", |t| {
+            t.menu.groups[1][1].copy = Some("a".repeat(2049))
         });
-        rejects_header("说明行为空", |s| {
-            s.title.menu.status[1].sub.as_mut().unwrap().text.clear()
-        });
-        rejects_header("copy 2049 字节", |s| {
-            s.title.menu.groups[1][1].copy = Some("a".repeat(2049))
-        });
-        rejects_header("菜单 label 为空", |s| s.title.menu.label.clear());
+        rejects_title("菜单 label 为空", |t| t.menu.label.clear());
         rejects_header("trail 菜单 label 为空", |s| {
             s.trail.as_mut().unwrap().menu.label.clear()
         });
@@ -1459,25 +1472,48 @@ mod tests {
         rejects_header("trail.symbol 为空", |s| {
             s.trail.as_mut().unwrap().symbol.clear()
         });
-        rejects_header("title.frame x 为 NaN", |s| s.title.frame.x = f64::NAN);
+        rejects_title("title.frame x 为 NaN", |t| t.frame.x = f64::NAN);
         rejects_header("lead.frame 高 401", |s| s.lead.frame.height = 401.0);
         // 边界上的合法值
         let mut s = fixture_header();
         s.trail = None;
-        s.title.error = Some("x".into());
-        s.title.menu.status = (0..32).map(|i| header_item(&format!("s{i}"))).collect();
-        s.title.menu.groups = vec![(0..24).map(|i| header_item(&format!("g{i}"))).collect()];
-        s.title.menu.groups[0][0].label = "字".repeat(200);
-        s.title.menu.groups[0][1].hint = Some("字".repeat(32));
-        s.title.menu.groups[0][2].copy = Some("a".repeat(2048));
-        s.title.menu.groups[0][3].children =
-            (0..24).map(|i| header_item(&format!("g3/{i}"))).collect();
-        s.title.text = "字".repeat(300);
+        let t = s.title.as_mut().unwrap();
+        t.error = Some("x".into());
+        t.menu.status = (0..32).map(|i| header_item(&format!("s{i}"))).collect();
+        t.menu.groups = vec![(0..24).map(|i| header_item(&format!("g{i}"))).collect()];
+        t.menu.groups[0][0].label = "字".repeat(200);
+        t.menu.groups[0][1].hint = Some("字".repeat(32));
+        t.menu.groups[0][2].copy = Some("a".repeat(2048));
+        t.menu.groups[0][3].children = (0..24).map(|i| header_item(&format!("g3/{i}"))).collect();
+        t.text = "字".repeat(300);
         s.key = "a".repeat(96);
         assert!(valid_header(&s));
         // 菜单项 id 允许 `/` 与 `#`，线程 id 不允许
         assert!(valid_item_id("pr-#12/open"));
         assert!(!valid_header_key("T/1"));
+    }
+
+    /// 只有侧栏钮（首页）：title / trail 都为 null 也合法，lead 与公共字段照样校验；带视图钮也行。
+    #[test]
+    fn header_lead_only() {
+        let lead: HeaderSpec = serde_json::from_str(HEADER_LEAD).unwrap();
+        assert_eq!((lead.title.is_none(), lead.trail.is_none()), (true, true));
+        assert!(valid_header(&lead));
+        let rejects = |name: &str, mutate: fn(&mut HeaderSpec)| {
+            let mut s = lead.clone();
+            mutate(&mut s);
+            assert!(!valid_header(&s), "{name}");
+        };
+        rejects("key 为空", |s| s.key.clear());
+        rejects("lead.label 为空", |s| s.lead.label.clear());
+        rejects("lead.frame 宽 0", |s| s.lead.frame.width = 0.0);
+        rejects("palette.accent red", |s| s.palette.accent = "red".into());
+        // 夹具线程页的标题胶囊去掉：仍合法（视图钮照样校验）
+        let mut s = fixture_header();
+        s.title = None;
+        assert!(valid_header(&s));
+        s.trail.as_mut().unwrap().symbol.clear();
+        assert!(!valid_header(&s));
     }
 
     #[test]
@@ -1596,7 +1632,7 @@ mod tests {
         assert!(valid_header(&spec));
         let spec = demo_header(320.0, 20.0);
         assert_eq!(
-            spec.title.frame,
+            spec.title.unwrap().frame,
             TabBarFrame {
                 x: 64.0,
                 y: 28.0,

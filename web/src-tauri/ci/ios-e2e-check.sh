@@ -7,16 +7,16 @@
 #   - debug 包读 ORYN_E2E_URL（mobile.rs 的 e2e_open，仅 debug 构建），跳过配对，经与生产相同的 open_remote 打开它：
 #     远程能力与 MOBILE_HOST_PERMISSIONS 照常注入，页面的 host_ready / host_tab_bar_* / host_header_* 都过权限校验；
 #   - 页面认出 iOS 壳（壳注入的 window.__ORYN_HOST__，bridge ≥ 7）并进入 compact 下沉侧栏布局：原生底栏（系统 UITabBar，
-#     垫在 WebView 之下，接管期间页面透明、遮挡由网页合成器决定）接管；线程页上原生页头接管，并跟着卡片走；
-#   - 触摸由 XCUITest 合成（ios-e2e/，XcodeGen 生成工程）：经模拟器 HID 与 UIKit 命中测试，网页、底栏的触摸转交层与原生页头收到的都是真触摸。
+#     浮在 WebView 之上、右缘裁到卡片左缘）接管；线程页上原生页头接管，并跟着卡片走；
+#   - 触摸由 XCUITest 合成（ios-e2e/，XcodeGen 生成工程）：经模拟器 HID 与 UIKit 命中测试，网页、原生底栏与原生页头收到的都是真触摸。
 # 三个 UI 测试先后各跑一次 xcodebuild（-only-testing），测试与本脚本经共享目录交接（见 E2ESupport.swift）。
-# 底栏（TabBarE2ETests.swift，从首页 / 起步）。tabbar.reveal {x, covered} 是卡片左缘与遮挡：每次开合吸附（发终点）、拖动开始、
-# 遮挡变化各一条，同值去重，拖动中不逐帧发；原生据此只决定底栏接不接触摸，卡片的过渡全由网页自己走。
+# 底栏（TabBarE2ETests.swift，从首页 / 起步）。tabbar.reveal {x, covered, ms, at?} 是底栏的裁切右缘（= 卡片左缘）与遮挡：
+# 每次开合吸附发终点（ms > 0、带绝对起步时刻 at，原生自己插值），拖动中逐帧发（ms 0），遮挡变化各一条。
 #   loaded   页面就绪：接管时补发的 tabbar.reveal（x = 0），截关闭态基线，回传胶囊矩形（来自事件日志 tabbar.set）
 #   open     点页头的侧栏按钮：等 tabbar.reveal 报 x = 侧栏宽，截图（无障碍树断言原生按钮在、网页胶囊隐藏、卡片 inert 在测试里）
 #   closed   点露出的卡片条：等 tabbar.reveal 报 x = 0，截图
-#   drag     从左缘拖到约一半并按住：从关闭位起手时拖动开始那条被去重，事件日志里没有信号；就绪看截图——
-#            底栏横条连拍两张一致（卡片停住）且揭示边左侧已与关闭基线不同，期间没有新的 tabbar.reveal（没松手）
+#   drag     从左缘拖到约一半并按住：拖动中的 tabbar.reveal 都是 ms 0，松手才有 ms > 0 的吸附；就绪看截图——
+#            底栏横条连拍两张一致（卡片停住）且揭示边左侧已与关闭基线不同，期间没有新的吸附（没松手）
 #   projects 点原生底栏的「项目」：等 tabbar.tap 与网页回发的 tabbar.set（selected = projects），截图
 #   swipe    在原生底栏上按住「项目」横滑到第 1 项再松手（系统透镜换选中）：等 tabbar.tap 与 tabbar.set（selected = threads），截图
 #   final    再点已选中的第 1 项收起侧栏：等 tabbar.reveal 报 x = 0，截图
@@ -119,6 +119,8 @@ runner=$!
 ev() { grep -F "\"event\":\"$1\"" "$log" 2>/dev/null || true; }
 last() { ev "$1" | tail -1; }
 count() { ev "$1" | wc -l | tr -d ' '; }
+# settles：吸附（ms > 0）的 tabbar.reveal 条数；拖动中逐帧的那些 ms 都是 0
+settles() { ev tabbar.reveal | jq -s '[.[] | select(.ms > 0)] | length'; }
 
 # fail <步骤> <原因>：告诉测试（它带着原因失败），打印现场后退出
 fail() {
@@ -256,11 +258,11 @@ until_ok closed 15 "关闭：tabbar.reveal 报 0" reveal_is "$closed"
 steady_shot closed1
 ok closed
 
-# 拖动：从关闭位起手，tabbar.reveal 本来就是 x = 0，拖动开始那条被控制器去重，按住期间事件日志里没有信号；
-# 就绪改看截图：胶囊横条连拍两张一致（卡片停住了），且揭示边左侧与关闭基线不同（确实拖开了）。
-# 松手会发吸附终点（tabbar.reveal x = 侧栏宽），所以 req 之后 tabbar.reveal 的条数一变就是已经松手。
+# 拖动：按住期间 tabbar.reveal 逐帧发（ms 0），松手才发 ms > 0 的吸附终点；
+# 就绪看截图：胶囊横条连拍两张一致（卡片停住了），且揭示边左侧与关闭基线不同（确实拖开了）。
+# 所以 req 之后吸附的条数一变就是已经松手。
 # 卡片的平移就是手指位移（sinkProgress：0 + dx / 侧栏宽，拖到约一半不会夹到 1），揭示边取 dx。
-# 按住 40 秒：判定用的两张截图都要落在按住期间，截完再确认没有新的 tabbar.reveal。
+# 按住 40 秒：判定用的两张截图都要落在按住期间，截完再确认没有新的吸附。
 # CI 的 macOS 机器会整机卡顿几十秒到几分钟（截图曾卡 3 分钟），没赶上就让测试收起侧栏重拖，最多 3 次；
 # 每次的步骤名带序号（drag1 / drag2 / drag3），交接文件不会与上一次混淆。
 # 测试先发 req 再起手，XCUITest 起手前可能还要等 App 空闲，所以等 req 放宽
@@ -268,14 +270,14 @@ for attempt in 1 2 3; do
   step="drag$attempt"
   wait_req "$step" 300
   edge=$(jq -r .dx <<<"$req")
-  n=$(count tabbar.reveal)
+  n=$(settles)
   prev=""
   state=timeout
   end=$((SECONDS + 180))
   while ((SECONDS < end)); do
     # 截图限时 40 秒（与按住时长相同）：超时、截之前或截完发现已松手都算没赶上，重拖
-    if [[ $(count tabbar.reveal) != "$n" ]] || ! sim_shot "$work/drag-next.png" 40 ||
-      [[ $(count tabbar.reveal) != "$n" ]]; then
+    if [[ $(settles) != "$n" ]] || ! sim_shot "$work/drag-next.png" 40 ||
+      [[ $(settles) != "$n" ]]; then
       state=missed
       break
     fi
@@ -354,13 +356,13 @@ check() {
   fi
 }
 
-# 打开：胶囊处不再是卡片（与关闭基线不同）；关闭：回到关闭基线（卡片重新盖住垫底的原生底栏）
+# 打开：胶囊处不再是卡片（与关闭基线不同）；关闭：回到关闭基线（卡片盖回来，原生底栏裁到 0）
 check "打开：胶囊处与关闭基线不同" open closed0 "$fx" "$fw" shown
 check "关闭：胶囊处回到关闭基线" closed1 closed0 "$fx" "$fw" same
-# 拖动：揭示边左侧与打开态一致（侧栏层不动，垫底的原生底栏从透明页面透出）；让出 72pt 避开卡片投影（--sh-xl）
+# 拖动：揭示边左侧与打开态一致（侧栏层不动，原生底栏裁到卡片左缘为止）；让出 72pt 避开卡片投影（--sh-xl）
 check "拖动：揭示边左侧与打开态一致" drag open "$fx" "$(calc "$edge - 72 - $fx")" same
 check "拖动：揭示边左侧与关闭基线不同" drag closed0 "$fx" "$(calc "$edge - 72 - $fx")" shown
-# 拖动：揭示边右侧是整体右移 edge 的卡片，与关闭基线错位比较一致 = 卡片不透明、底栏没有透到卡片上；
+# 拖动：揭示边右侧是整体右移 edge 的卡片，与关闭基线错位比较一致 = 原生底栏的裁切跟上了卡片、没有画到卡片上；
 # 让出 6pt 避开发丝线与卡片左下圆角
 check "拖动：揭示边右侧是平移的卡片（底栏没透到卡片上）" drag closed0 \
   "$(calc "$edge + 6")" "$(calc "$fx + $fw - $edge - 6")" same 6

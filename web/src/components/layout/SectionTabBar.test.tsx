@@ -1,7 +1,7 @@
 /**
  * 底栏（M9.6）：四项顺序与选中态、点击导航到记住的路径、滑动底板、桌面宽度下点已选中项不动、手机下沉侧栏里
  * 点已选中项收起侧栏而点别的分区不收起；助手项的文字与圆形头像按身份三种情况取值；助手未读点与断线状态点；
- * iOS 原生底栏（`tone="glass"`）：整份 spec（含页面底色，读不到底色时不发）、接管时隐藏网页胶囊、原生点击回传、卸载撤栏。
+ * iOS 原生底栏（`tone="glass"`）：整份 spec、原生看得见时隐藏网页胶囊（接管但被盖住时胶囊顶上）、原生点击回传、卸载撤栏。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -23,9 +23,8 @@ import { SectionTabBar } from "./SectionTabBar";
 
 const nb = vi.hoisted(() => ({
 	engaged: false,
+	shown: false,
 	bar: {
-		reveal: vi.fn(),
-		setCovered: vi.fn(),
 		setSpec: vi.fn(),
 	},
 }));
@@ -35,6 +34,7 @@ vi.mock("../../lib/native-tab-bar", async (importOriginal) => ({
 	...(await importOriginal<typeof NativeTabBarModule>()),
 	nativeTabBar: nb.bar,
 	useNativeTabBarEngaged: () => nb.engaged,
+	useNativeTabBarShown: () => nb.shown,
 }));
 
 function th(id: string, p: Partial<Thread> = {}): Thread {
@@ -95,6 +95,7 @@ const plate = () => screen.getByTestId("section-tabbar-plate");
 
 beforeEach(() => {
 	nb.engaged = false;
+	nb.shown = false;
 	for (const f of Object.values(nb.bar)) f.mockClear();
 	window.innerWidth = 1280;
 	identities = { agent: {}, assistant: {} };
@@ -265,8 +266,6 @@ describe("SectionTabBar", () => {
 
 describe("iOS 原生底栏（tone=glass）", () => {
 	let onTab: ((id: string) => void) | null = null;
-	/** 底色探针读到的计算色。 */
-	let bgCss = "rgb(247, 246, 243)";
 	const lastSpec = () =>
 		nb.bar.setSpec.mock.calls.at(-1)?.[0] as NativeTabBarSpec;
 	const slot = () =>
@@ -280,15 +279,6 @@ describe("iOS 原生底栏（tone=glass）", () => {
 			width: 296,
 			height: 52,
 		} as DOMRect);
-		// jsdom 不解析 CSS 变量（探针读成透明 rgba(0, 0, 0, 0)）：底色探针（background: var(--bg)）读成 bgCss
-		bgCss = "rgb(247, 246, 243)";
-		const real = window.getComputedStyle.bind(window);
-		vi.spyOn(window, "getComputedStyle").mockImplementation((el, pseudo) => {
-			const s = real(el, pseudo);
-			return (el as HTMLElement).style?.cssText.includes("var(--bg)")
-				? ({ ...s, backgroundColor: bgCss } as CSSStyleDeclaration)
-				: s;
-		});
 		onTab = null;
 		vi.spyOn(host, "onTabBar").mockImplementation((cb) => {
 			onTab = cb;
@@ -302,7 +292,7 @@ describe("iOS 原生底栏（tone=glass）", () => {
 		delete document.documentElement.dataset.theme;
 	});
 
-	it("量到非零矩形后 setSpec：四项、矩形、选中随路由、页面底色；没有角标的项不带 badge", () => {
+	it("量到非零矩形后 setSpec：四项、矩形、选中随路由；没有角标的项不带 badge", () => {
 		mount("/t/T-1", "glass");
 		const s = lastSpec();
 		expect(s.items.map((i) => [i.id, i.label])).toEqual([
@@ -315,19 +305,8 @@ describe("iOS 原生底栏（tone=glass）", () => {
 		expect(s.selected).toBe("threads");
 		expect(s.frame).toEqual({ x: 12, y: 758, width: 296, height: 52 });
 		expect(s.dark).toBe(false);
-		expect(s.bg).toBe("#f7f6f3");
 		fireEvent.click(tab("projects"));
 		expect(lastSpec().selected).toBe("projects");
-	});
-
-	it("读不到页面底色时不发 spec（原生垫底必须有底色）", () => {
-		// 换算不出（不是 rgb / hex，也没有画布可借）→ bg 为 null
-		bgCss = "var(--bg)";
-		vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
-		mount("/t/T-1", "glass");
-		expect(nb.bar.setSpec).not.toHaveBeenCalledWith(
-			expect.objectContaining({ items: expect.anything() }),
-		);
 	});
 
 	it("助手未读 → accent 角标；断线 → warn，未授权 → err", () => {
@@ -365,14 +344,25 @@ describe("iOS 原生底栏（tone=glass）", () => {
 		await waitFor(() => expect(lastSpec().dark).toBe(true));
 	});
 
-	it("原生接管时网页胶囊 opacity-0、不带 glass、对读屏与 Tab 隐藏；仍可命中", () => {
+	it("原生看得见时网页胶囊 opacity-0、不带 glass、对读屏与 Tab 隐藏；仍可命中", () => {
 		nb.engaged = true;
+		nb.shown = true;
 		mount("/t/T-1", "glass");
 		expect(slot().className).toContain("opacity-0");
 		expect(slot().className).not.toContain("glass");
 		expect(slot().className).toContain("pointer-events-auto");
 		expect(slot()).toHaveAttribute("aria-hidden", "true");
 		expect(tab("threads").tabIndex).toBe(-1);
+	});
+
+	it("接管但被菜单、弹层盖住（原生让位）：网页胶囊照常顶上", () => {
+		nb.engaged = true;
+		nb.shown = false;
+		mount("/t/T-1", "glass");
+		expect(slot().className).toContain("glass");
+		expect(slot().className).not.toContain("opacity-0");
+		expect(slot()).not.toHaveAttribute("aria-hidden");
+		expect(tab("threads")).not.toHaveAttribute("tabindex");
 	});
 
 	it("原生没接管时胶囊照常", () => {
@@ -403,8 +393,9 @@ describe("iOS 原生底栏（tone=glass）", () => {
 		expect(onTab).toBeNull();
 	});
 
-	it("tone=inset 从不调用 setSpec、不订阅原生点击，原生接管时也不隐藏胶囊", () => {
+	it("tone=inset 从不调用 setSpec、不订阅原生点击，原生看得见时也不隐藏胶囊", () => {
 		nb.engaged = true;
+		nb.shown = true;
 		const { unmount } = mount("/t/T-1", "inset");
 		expect(slot().className).toContain("glass");
 		unmount();

@@ -390,9 +390,14 @@ describe("移动壳（M7）", () => {
 			frame: { x: 12, y: 758, width: 296, height: 52 },
 			dark: false,
 			accent: null,
-			bg: "#f7f6f3",
 		};
-		const reveal: NativeTabBarReveal = { x: 160, covered: false };
+		const reveal: NativeTabBarReveal = {
+			x: 160,
+			covered: false,
+			ms: 260,
+			ease: [0.2, 0.8, 0.2, 1],
+			at: 1_795_000_000_042,
+		};
 
 		it("ios + bridge 7 → tabBar 非空；set / reveal 的参数形状", async () => {
 			const f = mobileWindow({ platform: "ios", bridge: 7 });
@@ -421,7 +426,7 @@ describe("移动壳（M7）", () => {
 			await expect(tb?.reveal(reveal)).rejects.toBe("unsupported");
 		});
 
-		it("ios + bridge 4–6（底栏叠在 WebView 上面的旧协议）、ios + bridge 3、android + bridge 7 → tabBar 为 null", () => {
+		it("ios + bridge 4–6（自绘 SwiftUI 胶囊的旧协议）、ios + bridge 3、android + bridge 7 → tabBar 为 null", () => {
 			for (const bridge of [3, 4, 5, 6]) {
 				const old = createHost(mobileWindow({ platform: "ios", bridge }).win);
 				expect(old.mobile).not.toBeNull();

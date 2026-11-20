@@ -1,6 +1,6 @@
 /**
  * 手机下沉式侧栏：开关状态、inert、焦点移入与还原、Esc / 返回键、触摸手势与吸附、同心圆角、减少动效；
- * iOS 原生底栏的接入（卡片左缘 `reveal`、`<html data-native-under>`、遮挡探测）；
+ * iOS 原生底栏的接入（`drag` / `settle` 与页头共用起步时刻、`data-native-bar`、遮挡探测）；
  * iOS 原生页头的接入（`cardDrag` / `cardSettle`、立即跟手、`data-native-head`）。
  */
 import { act, fireEvent, render, screen } from "@testing-library/react";
@@ -20,7 +20,8 @@ import {
 const nb = vi.hoisted(() => ({
 	engaged: false,
 	bar: {
-		reveal: vi.fn(),
+		drag: vi.fn(),
+		settle: vi.fn(),
 		setCovered: vi.fn(),
 		setSpec: vi.fn(),
 	},
@@ -85,7 +86,7 @@ function makeScrollable(el: HTMLElement, scrollLeft: number) {
 	el.scrollLeft = scrollLeft;
 }
 
-/** 吸附完成（ARM_MS = SINK_MS + NATIVE_LAG_MS + 60）：原生底栏此后才接触摸，遮挡探测此后才武装。 */
+/** 遮挡探测的武装延迟（ARM_MS = SINK_MS + NATIVE_LAG_MS + 60）：卡片吸附完才探测。 */
 const ARMED = 260 + 34 + 60;
 
 const card = () => screen.getByTestId("sink-card");
@@ -354,111 +355,144 @@ describe("iOS 原生底栏", () => {
 		window.innerWidth = 1024;
 		vi.useRealTimers();
 		Reflect.deleteProperty(document, "elementFromPoint");
-		document.documentElement.removeAttribute("data-native-under");
 		top = null;
 	});
 
-	it("左缘右滑：拖动开始发一次 reveal(0)，拖动中不再发；松手吸附到打开等吸附完（ARM_MS）才发侧栏宽，只发一次", () => {
+	/** 底栏与页头每次吸附收到同一组参数、同一个起步 Promise（两边从同一时刻出发）。 */
+	function expectSameSettles() {
+		const bar = nb.bar.settle.mock.calls;
+		const head = nh.header.cardSettle.mock.calls;
+		expect(bar.length).toBeGreaterThan(0);
+		expect(head).toHaveLength(bar.length);
+		bar.forEach((c, i) => {
+			expect(head[i]?.slice(0, 3)).toEqual(c.slice(0, 3));
+			expect(head[i]?.[3]).toBe(c[3]);
+		});
+	}
+
+	it("非手势开合：底栏 settle(开合, 侧栏宽, 减少动效, 起步时刻)，与页头共用同一个起步 Promise", () => {
 		vi.useFakeTimers();
 		mount();
-		nb.bar.reveal.mockClear();
-		touch(card(), "touchStart", 4, 300, 1000);
-		touch(card(), "touchMove", 120, 302, 1400);
-		expect(nb.bar.reveal.mock.calls).toEqual([[0]]);
-		touch(card(), "touchMove", 260, 302, 2000);
-		expect(nb.bar.reveal).toHaveBeenCalledTimes(1);
-		touch(card(), "touchEnd", 260);
-		expect(uiStore.getState().sidebarOpen).toBe(true);
-		// 松手与 store 变化各排一次定时器（后者重置前者）：吸附完之前不发
-		act(() => vi.advanceTimersByTime(ARMED - 1));
-		expect(nb.bar.reveal.mock.calls).toEqual([[0]]);
-		act(() => vi.advanceTimersByTime(1));
-		expect(nb.bar.reveal.mock.calls).toEqual([[0], [390]]);
-		act(() => vi.advanceTimersByTime(ARMED));
-		expect(nb.bar.reveal).toHaveBeenCalledTimes(2);
+		nb.bar.settle.mockClear();
+		nh.header.cardSettle.mockClear();
+		act(() => uiStore.getState().setSidebar(true));
+		expect(nb.bar.settle).toHaveBeenLastCalledWith(
+			true,
+			390,
+			false,
+			expect.any(Promise),
+		);
+		act(() => uiStore.getState().setSidebar(false));
+		expect(nb.bar.settle).toHaveBeenLastCalledWith(
+			false,
+			390,
+			false,
+			expect.any(Promise),
+		);
+		expectSameSettles();
 	});
 
-	it("松手弹回原状态（store 不变）也立即发关闭终点", () => {
+	it("松手吸附（含弹回原状态、store 不变）：底栏收到终点，与页头共用同一个起步 Promise", () => {
+		vi.useFakeTimers();
 		mount();
-		nb.bar.reveal.mockClear();
+		nb.bar.settle.mockClear();
+		nh.header.cardSettle.mockClear();
 		touch(card(), "touchStart", 4, 300, 1000);
 		touch(card(), "touchMove", 60, 300, 2000);
 		touch(card(), "touchEnd", 60);
 		expect(uiStore.getState().sidebarOpen).toBe(false);
-		expect(nb.bar.reveal.mock.calls).toEqual([[0], [0]]);
+		expect(nb.bar.settle).toHaveBeenLastCalledWith(
+			false,
+			390,
+			false,
+			expect.any(Promise),
+		);
+		touch(card(), "touchStart", 4, 300, 3000);
+		touch(card(), "touchMove", 300, 300, 3100);
+		touch(card(), "touchEnd", 300);
+		expect(uiStore.getState().sidebarOpen).toBe(true);
+		expect(nb.bar.settle).toHaveBeenCalledWith(
+			true,
+			390,
+			false,
+			expect.any(Promise),
+		);
+		expectSameSettles();
 	});
 
-	it("非手势开合（setSidebar）：打开等吸附完（ARM_MS）才发侧栏宽，关闭立即发 0", () => {
-		vi.useFakeTimers();
+	it("拖动中每次 touchMove 把进度、侧栏宽与速度交给底栏 drag（与页头同一组）；没过阈值不调", () => {
 		mount();
-		nb.bar.reveal.mockClear();
-		act(() => uiStore.getState().setSidebar(true));
-		act(() => vi.advanceTimersByTime(ARMED - 1));
-		expect(nb.bar.reveal).not.toHaveBeenCalled();
-		act(() => vi.advanceTimersByTime(1));
-		expect(nb.bar.reveal.mock.calls).toEqual([[390]]);
-		act(() => uiStore.getState().setSidebar(false));
-		expect(nb.bar.reveal).toHaveBeenLastCalledWith(0);
+		touch(card(), "touchStart", 4, 300, 1000);
+		touch(card(), "touchMove", 8, 300, 1010);
+		expect(nb.bar.drag).not.toHaveBeenCalled();
+		touch(card(), "touchMove", 60, 300, 1100);
+		touch(card(), "touchMove", 120, 300, 1200);
+		expect(nb.bar.drag).toHaveBeenCalledTimes(2);
+		const [p, w, v] = nb.bar.drag.mock.calls.at(-1) ?? [];
+		expect(p).toBeCloseTo(116 / 390);
+		expect(w).toBe(390);
+		expect(v).toBeCloseTo(60 / 100);
+		expect(nh.header.cardDrag.mock.calls).toEqual(nb.bar.drag.mock.calls);
+		touch(card(), "touchEnd", 120);
 	});
 
-	it("打开后 ARM_MS 内又关闭：取消待发的侧栏宽，只发 0", () => {
-		vi.useFakeTimers();
-		mount();
-		nb.bar.reveal.mockClear();
-		act(() => uiStore.getState().setSidebar(true));
-		act(() => vi.advanceTimersByTime(100));
-		act(() => uiStore.getState().setSidebar(false));
-		act(() => vi.advanceTimersByTime(ARMED * 2));
-		expect(nb.bar.reveal.mock.calls).toEqual([[0]]);
-	});
-
-	it("打开后 ARM_MS 内起拖：取消待发的侧栏宽，立即发 0", () => {
-		vi.useFakeTimers();
-		mount();
-		act(() => uiStore.getState().setSidebar(true));
-		nb.bar.reveal.mockClear();
-		const strip = screen.getByTestId("sink-close");
-		touch(strip, "touchStart", 340, 300, 4000);
-		touch(strip, "touchMove", 300, 300, 4010);
-		expect(nb.bar.reveal.mock.calls).toEqual([[0]]);
-		act(() => vi.advanceTimersByTime(ARMED * 2));
-		expect(nb.bar.reveal.mock.calls).toEqual([[0]]);
-		touch(strip, "touchEnd", 300);
-	});
-
-	it("视口尺寸变化：按当前开合重发（底栏走 0ms 定时器，页头 instant）", () => {
+	it("视口尺寸变化：底栏与页头按当前开合 instant 就位（不等起步时刻）", () => {
 		vi.useFakeTimers();
 		mount();
 		act(() => uiStore.getState().setSidebar(true));
-		act(() => vi.advanceTimersByTime(ARMED));
-		nb.bar.reveal.mockClear();
+		nb.bar.settle.mockClear();
 		nh.header.cardSettle.mockClear();
+		window.innerWidth = 400;
 		act(() => {
 			window.dispatchEvent(new Event("resize"));
 		});
-		expect(nh.header.cardSettle).toHaveBeenLastCalledWith(true, 390, true);
-		expect(nb.bar.reveal).not.toHaveBeenCalled();
-		act(() => vi.advanceTimersByTime(0));
-		expect(nb.bar.reveal.mock.calls).toEqual([[390]]);
+		expect(nb.bar.settle.mock.calls).toEqual([[true, 400, true, undefined]]);
+		expectSameSettles();
 	});
 
-	it("接管时 <html> 带 data-native-under，撤栏与卸载时去掉；卡片不再带 data-native-bar", () => {
-		const root = document.documentElement;
-		const first = mount();
-		expect(root).not.toHaveAttribute("data-native-under");
-		first.unmount();
-		nb.engaged = true;
-		const { unmount } = mount();
-		expect(root).toHaveAttribute("data-native-under");
-		expect(card()).not.toHaveAttribute("data-native-bar");
-		nb.engaged = false;
+	it("减少动效：底栏 settle instant，不等起步时刻", () => {
+		vi.stubGlobal("matchMedia", (q: string) => ({
+			matches: q === "(prefers-reduced-motion: reduce)",
+			addEventListener: () => {},
+			removeEventListener: () => {},
+		}));
+		mount();
 		act(() => uiStore.getState().setSidebar(true));
-		expect(root).not.toHaveAttribute("data-native-under");
-		nb.engaged = true;
-		act(() => uiStore.getState().setSidebar(false));
-		expect(root).toHaveAttribute("data-native-under");
+		expect(nb.bar.settle).toHaveBeenLastCalledWith(true, 390, true, undefined);
+	});
+
+	it("底栏接管时卡片带 data-native-bar（晚 34ms 起步），未接管不带", () => {
+		const { unmount } = mount();
+		expect(card()).not.toHaveAttribute("data-native-bar");
 		unmount();
-		expect(root).not.toHaveAttribute("data-native-under");
+		nb.engaged = true;
+		mount();
+		expect(card()).toHaveAttribute("data-native-bar");
+		expect(card()).not.toHaveAttribute("data-native-head");
+	});
+
+	it("只有底栏接管时起步时刻也加上 transition-delay；都没接管不加", async () => {
+		const run = () => {
+			const ev = Object.assign(new Event("transitionrun"), {
+				propertyName: "translate",
+			});
+			card().dispatchEvent(ev);
+			return performance.timeOrigin + ev.timeStamp;
+		};
+		nb.engaged = true;
+		const first = mount();
+		act(() => uiStore.getState().setSidebar(true));
+		const lagged = nb.bar.settle.mock.calls.at(-1)?.[3];
+		await expect(lagged).resolves.toBe(run() + 34);
+		first.unmount();
+		uiStore.setState({ sidebarOpen: false });
+		window.history.replaceState(null, "");
+
+		nb.engaged = false;
+		mount();
+		act(() => uiStore.getState().setSidebar(true));
+		const plain = nb.bar.settle.mock.calls.at(-1)?.[3];
+		await expect(plain).resolves.toBe(run());
 	});
 
 	it("打开且接管：吸附完才探测，被盖住 setCovered(true)、露出 false，抬手后下一帧补探；关闭时撤掉", () => {
@@ -597,7 +631,7 @@ describe("iOS 原生页头", () => {
 		vi.useRealTimers();
 	});
 
-	it("非手势开合通知 cardSettle(开合, 侧栏宽, 减少动效, 起步时刻)；页头接不接管，底栏都只收卡片左缘", () => {
+	it("非手势开合通知 cardSettle(开合, 侧栏宽, 减少动效, 起步时刻)；页头接不接管，底栏都收到同一个终点", () => {
 		vi.useFakeTimers();
 		const first = mount();
 		act(() => uiStore.getState().setSidebar(true));
@@ -607,8 +641,6 @@ describe("iOS 原生页头", () => {
 			false,
 			expect.any(Promise),
 		);
-		act(() => vi.advanceTimersByTime(ARMED));
-		expect(nb.bar.reveal).toHaveBeenLastCalledWith(390);
 		act(() => uiStore.getState().setSidebar(false));
 		expect(nh.header.cardSettle).toHaveBeenLastCalledWith(
 			false,
@@ -616,7 +648,12 @@ describe("iOS 原生页头", () => {
 			false,
 			expect.any(Promise),
 		);
-		expect(nb.bar.reveal).toHaveBeenLastCalledWith(0);
+		expect(nb.bar.settle).toHaveBeenLastCalledWith(
+			false,
+			390,
+			false,
+			expect.any(Promise),
+		);
 		// 换成页头接管重新挂载（关闭时的 history.back() 异步到达，原地重开会被迟到的 popstate 再关掉）
 		first.unmount();
 		window.history.replaceState(null, "");
@@ -630,8 +667,12 @@ describe("iOS 原生页头", () => {
 			false,
 			expect.any(Promise),
 		);
-		act(() => vi.advanceTimersByTime(ARMED));
-		expect(nb.bar.reveal).toHaveBeenLastCalledWith(390);
+		expect(nb.bar.settle).toHaveBeenLastCalledWith(
+			true,
+			390,
+			false,
+			expect.any(Promise),
+		);
 	});
 
 	it("起步时刻取卡片 translate 过渡真正排上的时刻（接管时加 transition-delay）；200ms 没有过渡给 null", async () => {

@@ -1,4 +1,4 @@
-// 原生页头的 SwiftUI 部分：两枚 44pt 圆形玻璃钮 + 46pt 两行标题胶囊；位置全部用网页量好的矩形。
+// 原生页头的 SwiftUI 部分：两枚 44pt 圆形玻璃钮 + 46pt 两行标题胶囊（首页只有侧栏钮）；位置全部用网页量好的矩形。
 // 菜单开着哪一个、停在哪个子页是这里的本地状态（点了立刻有反应），打开 / 关闭 / 选中再上报给网页。
 import SwiftUI
 import UIKit
@@ -19,7 +19,7 @@ final class HeaderModel: ObservableObject {
   }
 
   func menu(_ kind: String?, in spec: HeaderSpec?) -> HeaderMenuSpec? {
-    kind == "title" ? spec?.title.menu : kind == "trail" ? spec?.trail?.menu : nil
+    kind == "title" ? spec?.title?.menu : kind == "trail" ? spec?.trail?.menu : nil
   }
 
   var openMenu: HeaderMenuSpec? { menu(open, in: spec) }
@@ -180,11 +180,13 @@ struct HeaderRootView: View {
           .accessibilityAddTraits(.isButton)
           .transition(.opacity)
       }
-      // 3. 关闭区之上：标题胶囊；视图菜单开着时视图钮也在上面（再点一次收起）
+      // 3. 关闭区之上：标题胶囊（有的话）；视图菜单开着时视图钮也在上面（再点一次收起）
       GlassEffectContainer(spacing: 0) {
         ZStack(alignment: .topLeading) {
-          TitleCapsule(title: spec.title, palette: palette) { model.toggle("title") }
-            .place(spec.title.frame)
+          if let title = spec.title {
+            TitleCapsule(title: title, palette: palette) { model.toggle("title") }
+              .place(title.frame)
+          }
           if let trail = spec.trail, model.open == "trail" {
             RoundGlassButton(symbol: trail.symbol, label: trail.label, dot: palette.dot(trail.dot)) {
               model.toggle("trail")
@@ -194,14 +196,14 @@ struct HeaderRootView: View {
         }
       }
       // 4. 面板：标题菜单挂在胶囊正下方、与它等宽；视图菜单挂在视图钮下方、右缘对齐
-      if model.open == "title" {
+      if model.open == "title", let title = spec.title {
         MenuPanel(
-          model: model, menu: spec.title.menu, wide: true, spec: spec, palette: palette,
+          model: model, menu: title.menu, wide: true, spec: spec, palette: palette,
           maxHeight: maxHeight
         )
-        .frame(width: CGFloat(spec.title.frame.width))
-        .padding(.leading, CGFloat(spec.title.frame.x))
-        .padding(.top, CGFloat(spec.title.frame.y + spec.title.frame.height + 6))
+        .frame(width: CGFloat(title.frame.width))
+        .padding(.leading, CGFloat(title.frame.x))
+        .padding(.top, CGFloat(title.frame.y + title.frame.height + 6))
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .transition(titleIn)
       }

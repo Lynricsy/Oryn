@@ -1,5 +1,5 @@
-// 线程页的原生页头（侧栏钮 / 标题胶囊 / 视图钮与两个菜单）：一张与 WKWebView 等大的透明宿主视图叠在它上面。
-// 平时只截落在三件控件矩形里的触摸，其余全部放行给网页；菜单开着时整屏接管（关闭区 + 面板）。
+// 线程页与首页的原生页头（侧栏钮 / 标题胶囊 / 视图钮与两个菜单；首页只有侧栏钮）：一张与 WKWebView 等大的透明宿主视图叠在它上面。
+// 平时只截落在现有控件矩形里的触摸，其余全部放行给网页；菜单开着时整屏接管（关闭区 + 面板）。
 // 放行不靠 SwiftUI 的命中结果：控件矩形是网页给的，这里直接比（判断错了整屏都点不动，所以要确定性的）。
 // 原生页头跟着下沉卡片走：网页给出卡片左缘作为整层位移 dx——拖动时逐帧给，吸附时只给终点、时长、缓动与绝对起步时刻，
 // 由这里自己插值，与卡片的 CSS 过渡从同一时刻出发（策略全在网页，lib/native-header.ts）。
@@ -8,7 +8,7 @@ import UIKit
 import WebKit
 
 final class HeaderHostView: UIView {
-  /// 三件控件在本视图坐标里的矩形（= 网页布局视口坐标）。
+  /// 现有控件（侧栏钮，有的话再加标题胶囊、视图钮）在本视图坐标里的矩形（= 网页布局视口坐标）。
   var controlFrames: [CGRect] = []
   /// 菜单开着：整屏接管。
   var modal = false
@@ -20,7 +20,7 @@ final class HeaderHostView: UIView {
   var dx: CGFloat = 0
   var onEscape: () -> Bool = { false }
 
-  /// 这个点上的触摸归不归原生层。菜单没开时只有三件矩形之内为真。
+  /// 这个点上的触摸归不归原生层。菜单没开时只有控件矩形之内为真。
   func captures(_ point: CGPoint) -> Bool {
     if passive || !shown || isHidden || alpha < 0.01 { return false }
     return modal || controlFrames.contains { $0.offsetBy(dx: dx, dy: 0).contains(point) }
@@ -73,7 +73,12 @@ final class HeaderOverlay {
       hosting.didMove(toParent: controller)
     }
     if let parent = webview.superview {
-      parent.insertSubview(host, aboveSubview: webview)
+      // 原生底栏（TabBarClipView）也浮在 WebView 之上：页头（含整屏菜单）压在它上面，不论谁先创建
+      if let clip = parent.subviews.last(where: { $0 is TabBarClipView }) {
+        parent.insertSubview(host, aboveSubview: clip)
+      } else {
+        parent.insertSubview(host, aboveSubview: webview)
+      }
     } else {
       controller?.view.addSubview(host)
     }
@@ -92,8 +97,10 @@ final class HeaderOverlay {
     // 宿主控制器的特征继承自父控制器而不是父视图：两处都设
     hosting.overrideUserInterfaceStyle = style
     host.overrideUserInterfaceStyle = style
-    host.controlFrames =
-      [spec.lead.frame.rect, spec.title.frame.rect] + (spec.trail.map { [$0.frame.rect] } ?? [])
+    var frames = [spec.lead.frame.rect]
+    if let title = spec.title { frames.append(title.frame.rect) }
+    if let trail = spec.trail { frames.append(trail.frame.rect) }
+    host.controlFrames = frames
     return host.window != nil
   }
 
@@ -142,7 +149,7 @@ final class HeaderOverlay {
     model.setOpen(open, page: page, report: false)
   }
 
-  /// 屏幕中心与三件控件中心的触摸是否归原生层（与 hitTest 同一条规则）。
+  /// 屏幕中心与各件控件中心的触摸是否归原生层（与 hitTest 同一条规则；没有的件为 false）。
   func probe() -> HeaderProbeOut {
     func mid(_ r: CGRect) -> CGPoint { CGPoint(x: r.midX, y: r.midY) }
     guard let spec = model.spec else {
@@ -151,7 +158,8 @@ final class HeaderOverlay {
     return HeaderProbeOut(
       center: host.captures(mid(host.bounds)),
       lead: host.captures(mid(spec.lead.frame.rect.offsetBy(dx: host.dx, dy: 0))),
-      title: host.captures(mid(spec.title.frame.rect.offsetBy(dx: host.dx, dy: 0))),
+      title: spec.title.map { host.captures(mid($0.frame.rect.offsetBy(dx: host.dx, dy: 0))) }
+        ?? false,
       trail: spec.trail.map { host.captures(mid($0.frame.rect.offsetBy(dx: host.dx, dy: 0))) }
         ?? false)
   }

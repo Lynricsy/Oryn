@@ -253,7 +253,7 @@ pub async fn host_tab_bar_set(app: AppHandle, spec: Option<TabBarSpec>) -> Res<(
     }
 }
 
-/// 卡片左缘与遮挡：只决定原生底栏接不接触摸（看得见的部分由网页合成器决定）。开合吸附与遮挡变化时各发一条。
+/// 原生底栏的裁切与遮挡：底栏浮在 WebView 之上，右缘裁到卡片左缘；吸附带时长、缓动与绝对起步时刻，拖动逐帧 `ms: 0`。
 /// 还没 set 过时 Swift 侧空操作并成功。
 #[tauri::command]
 pub async fn host_tab_bar_reveal(app: AppHandle, reveal: TabBarReveal) -> Res<()> {
@@ -268,7 +268,7 @@ pub async fn host_tab_bar_reveal(app: AppHandle, reveal: TabBarReveal) -> Res<()
         #[cfg(debug_assertions)]
         eventlog::log(
             "tabbar.reveal",
-            json!({"x": reveal.x, "covered": reveal.covered}),
+            json!({"x": reveal.x, "covered": reveal.covered, "ms": reveal.ms, "at": reveal.at}),
         );
         Ok(())
     }
@@ -303,7 +303,7 @@ pub async fn host_header_set(app: AppHandle, spec: Option<HeaderSpec>) -> Res<()
                 "on": spec.is_some(),
                 "key": spec.as_ref().map(|s| &s.key),
                 "lead": spec.as_ref().map(|s| &s.lead.frame),
-                "title": spec.as_ref().map(|s| &s.title.frame),
+                "title": spec.as_ref().and_then(|s| s.title.as_ref()).map(|t| &t.frame),
                 "trail": spec.as_ref().and_then(|s| s.trail.as_ref()).map(|t| &t.frame),
             }),
         );
@@ -518,7 +518,8 @@ mod ios {
         match res {
             Ok(probe) => eventlog::log(
                 "header.demo",
-                json!({"ok": true, "mode": mode, "lead": spec.lead.frame, "title": spec.title.frame,
+                json!({"ok": true, "mode": mode, "lead": spec.lead.frame,
+                       "title": spec.title.as_ref().map(|t| t.frame),
                        "trail": spec.trail.as_ref().map(|t| t.frame), "width": width, "height": height,
                        "scale": scale, "probe": probe}),
             ),

@@ -12,6 +12,9 @@
  * （409 `dir_in_use`）时弹对话框，选「新建 worktree」或「仍然共用」后重发。
  * 托盘背后是一层光场（.home-field），玻璃居中时也有东西可模糊；发送后托盘经 DockTray 连续变形到线程页底部输入坞。
  * 所选项目已绑定 GitHub 时（M14），键入 `#` 弹出该仓库的 issue / PR 候选，选中即作为 Markdown 附件加入（全局助手时不启用）。
+ * iOS 26+ 的 App 里（下沉侧栏布局）左上角的侧栏钮由原生 Liquid Glass 接管（lib/native-header.ts，与线程页的侧栏圆钮同一枚）：
+ * 这时网页钮排成线程页那枚 44px 圆钮的位置与样子，登记成只有侧栏钮的 spec（key `home`）；原生显示稳了网页钮透明（仍可命中，
+ * 遮挡探测靠它），被网页内容盖住时原生让位、网页钮当帧回来。没有原生页头（浏览器、Android、桌面、iOS < 26）时与以前完全相同。
  */
 import {
 	type CSSProperties,
@@ -68,6 +71,10 @@ import {
 	runnerPickError,
 	worktreeSlug,
 } from "../components/runner/RunnerPicker";
+import {
+	ROUND_GLASS,
+	ROUND_GLASS_HIDDEN,
+} from "../components/thread/CompactThreadHeader";
 import { setPendingPrompt } from "../components/transcript/pending-prompt";
 import { Badge, BrandMark, ProjectBadge, Sheet } from "../components/ui/data";
 import { Icon } from "../components/ui/icons";
@@ -79,7 +86,15 @@ import {
 	Spinner,
 } from "../components/ui/primitives";
 import { formatMemoryMB } from "../lib/format";
-import { useBreakpoint } from "../lib/viewport";
+import {
+	useHeaderCover,
+	useHeaderTheme,
+	useNativeHeaderActive,
+	useNativeHeaderAvailable,
+	useNativeHeaderPart,
+	useSlotFrame,
+} from "../lib/native-header";
+import { useBreakpoint, useViewportSegments } from "../lib/viewport";
 import { createThread } from "../state/actions";
 import { shareIntakeStore, useShareIntake } from "../state/share-intake";
 import {
@@ -146,6 +161,35 @@ export function HomePage(): ReactNode {
 	const chrome = useChromeSides();
 	const chromeLeft = !useSidebarShown() && chrome.left !== null;
 	const header = sidebarToggle || chromeLeft || chrome.right !== null;
+	// iOS 原生页头（只在下沉侧栏布局里接管）：侧栏钮排成线程页那枚圆钮，交给原生画
+	const segments = useViewportSegments();
+	const nativeOk = useNativeHeaderAvailable();
+	const nativeLead = nativeOk && compact && segments === null && sidebarToggle;
+	const native = useNativeHeaderActive() && nativeLead;
+	const headRef = useRef<HTMLElement>(null);
+	const leadRef = useRef<HTMLButtonElement>(null);
+	const probeRef = useRef<HTMLSpanElement>(null);
+	const headTheme = useHeaderTheme(probeRef);
+	const leadFrame = useSlotFrame(leadRef, nativeLead);
+	useHeaderCover(headRef, true);
+	useNativeHeaderPart(
+		"theme",
+		headTheme && {
+			...headTheme,
+			text: { back: t("common.back"), close: t("common.close") },
+		},
+		nativeLead,
+	);
+	useNativeHeaderPart(
+		"lead",
+		leadFrame && {
+			frame: leadFrame,
+			label: t("nav.sidebar"),
+			key: "home",
+			onTap: () => uiStore.getState().toggleSidebar(),
+		},
+		nativeLead,
+	);
 	const providers = useProviders();
 	const projects = useProjects();
 	const profiles = useBrowserProfiles();
@@ -525,18 +569,51 @@ export function HomePage(): ReactNode {
 
 	return (
 		<Sheet inset={bp === "expanded"} className="flex h-full flex-col">
+			{nativeOk && (
+				// 原生页头的调色板：读这几个元素的计算颜色（useHeaderTheme，挂载时就要在）
+				<span ref={probeRef} hidden>
+					<i data-k="accent" className="text-accent-ink" />
+					<i data-k="brand" style={{ color: "var(--brand)" }} />
+					<i data-k="err" className="text-err" />
+					<i data-k="warn" className="text-warn" />
+					<i data-k="good" style={{ color: "var(--good)" }} />
+					<i data-k="frost" style={{ color: "var(--frost)" }} />
+				</span>
+			)}
 			{header && (
+				// 原生接管时与线程页头同一几何（px-3 py-2、行高 46）：圆钮落在 {12, 安全区 + 9, 44, 44}，两页之间原生钮不跳
 				<header
+					ref={headRef}
 					data-window-drag=""
-					className="flex h-12 shrink-0 items-center gap-1.5 px-2"
+					className={
+						nativeLead
+							? "flex h-[62px] shrink-0 items-center gap-1.5 px-3 py-2"
+							: "flex h-12 shrink-0 items-center gap-1.5 px-2"
+					}
 				>
 					<ChromeLead show={chromeLeft} />
-					{sidebarToggle && (
-						<IconButton
-							icon={bp === "expanded" ? "sidebar" : "menu"}
-							label={t("nav.sidebar")}
+					{nativeLead ? (
+						<button
+							ref={leadRef}
+							type="button"
+							data-native-slot="lead"
+							aria-label={t("nav.sidebar")}
+							title={t("nav.sidebar")}
+							aria-hidden={native || undefined}
+							tabIndex={native ? -1 : undefined}
+							className={native ? ROUND_GLASS_HIDDEN : ROUND_GLASS}
 							onClick={() => uiStore.getState().toggleSidebar()}
-						/>
+						>
+							<Icon name="sidebar" size={19} />
+						</button>
+					) : (
+						sidebarToggle && (
+							<IconButton
+								icon={bp === "expanded" ? "sidebar" : "menu"}
+								label={t("nav.sidebar")}
+								onClick={() => uiStore.getState().toggleSidebar()}
+							/>
+						)
 					)}
 					<span className="min-w-0 flex-1" />
 					<WindowControls side="right" />

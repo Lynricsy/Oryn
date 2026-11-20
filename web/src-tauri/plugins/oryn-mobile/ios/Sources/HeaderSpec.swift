@@ -108,13 +108,15 @@ struct HeaderTrailSpec: Decodable, Equatable {
 
 /// 原生页头的整份状态（`headerSet` 的 `spec`）。
 struct HeaderSpec: Decodable, Equatable {
+  /// 线程 id（只有侧栏钮的页是页名，如 `home`）：变了收起菜单；事件原样带回。
   let key: String
   let dark: Bool
   let palette: HeaderPaletteSpec
   let tune: HeaderTuneSpec
   let text: HeaderTextSpec
   let lead: HeaderLeadSpec
-  let title: HeaderTitleSpec
+  /// 没有标题胶囊（首页：只有侧栏钮）时为 nil。
+  let title: HeaderTitleSpec?
   let trail: HeaderTrailSpec?
 }
 

@@ -8,10 +8,10 @@
  * 各分区滚动区底部按 `--tabbar-h`（`tabBarHeight`，由侧栏外壳设置）留白，最后一行能滚到胶囊上方。
  * 胶囊两种场合都是玻璃（`.glass`，自带模糊）：`tone="glass"` 是手机下沉侧栏层，底部让出安全区；`inset` 是列侧栏 / 双段抽屉，
  * `safeBottom` 时再让出底部安全区。外层不接收指针（胶囊两侧露出的列表仍可点）。底栏不带 `data-window-drag`（不能拖动窗口）。
- * iOS 原生底栏（`lib/native-tab-bar.ts`，只在 `tone="glass"`）：量好胶囊的视口矩形，连同四项、选中项、深浅、强调色与页面底色、
- * 头像与角标整份交给控制器（`setSpec`，内容变了才真正发）；原生接管时网页胶囊换成 `opacity-0` 并对读屏与 Tab 隐藏，
- * 但仍可命中（遮挡探测靠它）；原生底栏垫在 WebView 之下，从透明的侧栏层透出来。原生点击经 `host.onTabBar` 回来，
- * 走与网页按钮同一个 `switchSection`；卸载时撤掉原生栏。
+ * iOS 原生底栏（`lib/native-tab-bar.ts`，只在 `tone="glass"`）：量好胶囊的视口矩形，连同四项、选中项、深浅、强调色、
+ * 头像与角标整份交给控制器（`setSpec`，内容变了才真正发）；原生浮在 WebView 之上（玻璃折射下面的侧栏列表），
+ * 原生看得见时网页胶囊换成 `opacity-0` 并对读屏与 Tab 隐藏，但仍可命中（遮挡探测靠它）；被菜单、弹层盖住时原生让位、
+ * 网页胶囊顶上。原生点击经 `host.onTabBar` 回来，走与网页按钮同一个 `switchSection`；卸载时撤掉原生栏。
  */
 import {
 	type ReactNode,
@@ -29,7 +29,7 @@ import {
 	buildTabBarSpec,
 	nativeTabBar,
 	rasterizeAvatar,
-	useNativeTabBarEngaged,
+	useNativeTabBarShown,
 } from "../../lib/native-tab-bar";
 import { SECTION_ORDER, type SectionId } from "../../lib/sections";
 import { useConnection, useIndex } from "../../state/stores";
@@ -104,16 +104,14 @@ export function SectionTabBar({
 
 	// ── iOS 原生底栏（只在手机下沉侧栏层）：钩子无条件调用，副作用里判断 sink ──
 	const sink = tone === "glass";
-	const engaged = useNativeTabBarEngaged();
-	const hidden = sink && engaged;
+	const shown = useNativeTabBarShown();
+	const hidden = sink && shown;
 	const slotRef = useRef<HTMLDivElement>(null);
 	const inkRef = useRef<HTMLSpanElement>(null);
-	const bgRef = useRef<HTMLSpanElement>(null);
 	const [frame, setFrame] = useState<Frame | null>(null);
 	const [paint, setPaint] = useState<{
 		dark: boolean;
 		accent: string | null;
-		bg: string | null;
 	} | null>(null);
 	const [raster, setRaster] = useState<{
 		src: string;
@@ -155,8 +153,8 @@ export function SectionTabBar({
 		};
 	}, [sink]);
 
-	// 深浅、强调色与页面底色：跟随 <html> 的属性（主题、强调色变量）与系统明暗。强调色读不带过渡的隐藏探针，
-	// 不读选中按钮（它有 150ms 颜色过渡，换主题的那一刻读到的是旧色）；底色读另一个探针（接管时 body 是透明的）
+	// 深浅与强调色：跟随 <html> 的属性（主题、强调色变量）与系统明暗。强调色读不带过渡的隐藏探针，
+	// 不读选中按钮（它有 150ms 颜色过渡，换主题的那一刻读到的是旧色）
 	useLayoutEffect(() => {
 		if (!sink) return;
 		const root = document.documentElement;
@@ -164,15 +162,8 @@ export function SectionTabBar({
 			const dark = root.dataset.theme === "dark";
 			const ink = inkRef.current;
 			const accent = ink ? toHexColor(getComputedStyle(ink).color) : null;
-			// toHexColor 不看透明度：--bg 没定义时探针是 rgba(0, 0, 0, 0)，不能当成黑色垫底
-			const probe = bgRef.current;
-			const css = probe ? getComputedStyle(probe).backgroundColor : "";
-			const clear = css === "transparent" || /,\s*0\s*\)$/.test(css);
-			const bg = css && !clear ? toHexColor(css) : null;
 			setPaint((p) =>
-				p && p.dark === dark && p.accent === accent && p.bg === bg
-					? p
-					: { dark, accent, bg },
+				p && p.dark === dark && p.accent === accent ? p : { dark, accent },
 			);
 		};
 		read();
@@ -201,13 +192,7 @@ export function SectionTabBar({
 	const avatarPng = raster && raster.src === rasterSrc ? raster.png : null;
 
 	useEffect(() => {
-		if (
-			!sink ||
-			!frame ||
-			!paint?.bg ||
-			frame.width <= 0 ||
-			frame.height <= 0
-		)
+		if (!sink || !frame || !paint || frame.width <= 0 || frame.height <= 0)
 			return;
 		nativeTabBar.setSpec(
 			buildTabBarSpec({
@@ -216,7 +201,6 @@ export function SectionTabBar({
 				frame,
 				dark: paint.dark,
 				accent: paint.accent,
-				bg: paint.bg,
 				assistant: {
 					image: avatarPng,
 					glyph: avatarIcon || null,
@@ -267,9 +251,6 @@ export function SectionTabBar({
 			className={`pointer-events-none absolute inset-x-0 bottom-0 z-10 ${outer}`}
 		>
 			{sink && <span ref={inkRef} hidden className="text-accent-ink" />}
-			{sink && (
-				<span ref={bgRef} hidden style={{ background: "var(--bg)" }} />
-			)}
 			<div
 				ref={slotRef}
 				data-tabbar-slot
