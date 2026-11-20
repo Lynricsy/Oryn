@@ -193,20 +193,23 @@ sink_first() {
 sink_shown() { ev sink.show | tail -n "+$((mark + 1))" | jq -se --argjson o "$1" 'length > 0 and (last | .open == $o)'; }
 # 自上一步放行（$lines = 那时事件日志的行数）起的 sink.trace，单行 JSON 数组
 step_traces() { tail -n "+$((lines + 1))" "$log" | jq -sc 'map(select(.event == "sink.trace"))'; }
-trace_done() { step_traces | jq -e 'any(.op == "done")'; }
-# no_bounce <步骤>：原生开合动画走完（第一条 done）后，等过网页的截止兜底窗口（请求后 SINK_REQUEST_MS 一步落位、
+# 到位：原生动画走完（done）、一步落位（jump，含网页截止兜底：CI 上网页命令到原生常晚几百毫秒，兜底会把还在走的动画
+# 截住一步落完）、或本来就在终点（noop）
+arrived='map(.op == "done" or .op == "jump" or .op == "noop") | index(true)'
+trace_arrived() { step_traces | jq -e "($arrived) != null"; }
+# no_bounce <步骤>：程序化开合第一次到位后，等过网页的截止兜底窗口（请求后 SINK_REQUEST_MS 一步落位、
 # 再一个 SINK_REQUEST_MS 宽限，CI 上定时器还会晚几百毫秒），期间不能再有从别处落回终点的 jump / start——
-# 那说明卡片到位后又被带走（如关闭时 history.back() 的滚动恢复把卡片弹回打开位），由兜底收场。
-# noop（已在终点）与起点就在终点的不算
+# 那说明卡片到位后又被带走，由兜底收场。noop（已在终点）与起点就在终点的不算；move（网页或 WebKit 挪动根滚动，带调用栈）
+# 不判，只随失败信息带出来查来源
 no_bounce() {
   local step=$1 bad
-  until_ok "$step" 15 "原生开合动画走完（sink.trace done）" trace_done
+  until_ok "$step" 15 "程序化开合到位（sink.trace done / jump / noop）" trace_arrived
   sleep 4
-  bad=$(step_traces | jq -c '
-    (map(.op == "done") | index(true)) as $d
-    | .[$d + 1:]
-    | map(select((.op == "jump" or .op == "start")
-        and (if .x > .to then .x - .to else .to - .x end) > 0.5))')
+  bad=$(step_traces | jq -c "
+    ($arrived) as \$d
+    | .[\$d + 1:]
+    | map(select((.op == \"jump\" or .op == \"start\")
+        and (if .x > .to then .x - .to else .to - .x end) > 0.5))")
   [[ $bad == "[]" ]] ||
     fail "$step" "开合到位后卡片又离开终点、由程序化开合落回（回弹）：${bad}；本步轨迹：$(step_traces)"
 }
