@@ -113,7 +113,7 @@ const overlay = (
 	surface({
 		id,
 		path: extra.path ?? T,
-		ready: extra.path === "/" ? "textarea" : READY,
+		ready: READY,
 		only: extra.only,
 		noReopen: extra.noReopen,
 		close: extra.close,
@@ -301,23 +301,33 @@ overlay(
 
 // ---------------------------------------------------------------- 输入坞
 
-// 重开前先清空：同样的文字再 fill 一次不触发 change，菜单保持「已按 Esc 收起」
-overlay("thread.slash", async (p) => {
-	await composer(p).fill("");
-	await composer(p).fill("/");
-	return p.getByRole("listbox", { name: "命令" });
-});
-overlay("thread.slash.usage", async (p) => {
-	await composer(p).fill("");
-	await composer(p).fill("/goal ");
-	return p.getByTestId("menu-usage");
-});
-overlay("thread.ref-menu", async (p) => {
-	await composer(p).fill("");
-	await composer(p).fill("#log");
-	await p.locator("[data-testid=ref-menu] [role=option]").first().waitFor();
-	return p.getByTestId("ref-menu");
-});
+// 关掉 = 清空输入框（Esc 收起后同一个 `#` / `/` 片段会一直记着「已收起」，再输入同样的文字不会重开）
+const clearComposer = { close: (p: Page) => composer(p).fill("") };
+overlay(
+	"thread.slash",
+	async (p) => {
+		await composer(p).fill("/");
+		return p.getByRole("listbox", { name: "命令" });
+	},
+	clearComposer,
+);
+overlay(
+	"thread.slash.usage",
+	async (p) => {
+		await composer(p).fill("/goal ");
+		return p.getByTestId("menu-usage");
+	},
+	clearComposer,
+);
+overlay(
+	"thread.ref-menu",
+	async (p) => {
+		await composer(p).fill("#log");
+		await p.locator("[data-testid=ref-menu] [role=option]").first().waitFor();
+		return p.getByTestId("ref-menu");
+	},
+	clearComposer,
+);
 overlay("thread.thinking", async (p) => {
 	await p.getByRole("button", { name: "思考级别" }).first().click();
 	return undefined;
@@ -503,15 +513,8 @@ overlay(
 );
 
 // ---------------------------------------------------------------- 首页输入卡上的其余浮层
+// 首页输入卡没有斜杠菜单（命令只在线程里可用）；附件托盘与线程页同一组件（见 thread.attachments-tray）
 
-overlay(
-	"thread.home.slash",
-	async (p) => {
-		await p.locator("textarea").first().fill("/");
-		return p.getByRole("listbox").last();
-	},
-	{ path: "/" },
-);
 surface({
 	id: "thread.home.dir-in-use",
 	path: "/",
@@ -519,7 +522,7 @@ surface({
 	noReopen: true,
 	open: async (p) => {
 		await p.locator("textarea").fill("Fix login flicker");
-		await p.getByRole("button", { name: /新 orb（默认）/ }).click();
+		await p.getByRole("button", { name: /^local/ }).click();
 		await p.getByRole("button", { name: /^laptop/ }).click();
 		await p.getByRole("button", { name: /^repo/ }).click();
 		await p.keyboard.press("Escape");
