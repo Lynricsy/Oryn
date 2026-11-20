@@ -976,7 +976,9 @@
 		"authRequired": "需要授权",
 		"refresh": "刷新",
 		"empty": "没有可显示的扩展",
-		"summary": "技能 {{skills}} · MCP {{connected}}/{{total}}"
+		"summary": "技能 {{skills}} · MCP {{connected}}/{{total}}",
+		"warningCount_one": "{{count}} 条警告",
+		"warningCount_other": "{{count}} 条警告"
 	},
 	"palette": {
 		"title": "命令面板",
@@ -1018,7 +1020,6 @@
 	},
 	"panel": {
 		"capabilities": "能力",
-		"tools": "工具",
 		"cpu": "CPU",
 		"cores": "{{n}} 核",
 		"addTodo": "添加待办…",
@@ -1027,14 +1028,16 @@
 		"memChart": "内存曲线",
 		"memory": "内存",
 		"noOrb": "线程没有 orb（只读）。",
-		"noTodos": "没有待办。",
 		"orb": "orb",
 		"subagents": "子 agent",
 		"todos": "待办",
 		"uptime": "已运行 {{d}}",
 		"subagentsRunning": "{{n}} 个运行中",
 		"subagentsTotal": "共 {{n}} 个",
-		"ssh": "SSH 主机"
+		"ssh": "SSH 主机",
+		"faults_one": "{{count}} 项故障",
+		"faults_other": "{{count}} 项故障",
+		"restart": "重启"
 	},
 	"todo": {
 		"status": {

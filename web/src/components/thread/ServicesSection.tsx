@@ -1,6 +1,7 @@
 /**
- * 信息面板 orb 卡里的「服务」小节（计划 M4 5.3）：受管服务列表（状态点、名称、端口、重启次数、失败原因）与行尾动作
- * （启动 / 停止、重启、日志、在 Portal 中打开）。orb 不是 `ready` 时动作禁用、状态点置灰。
+ * 信息面板「服务」入口行（计划 M4 5.3）：行右侧是各服务的状态标签（失败的排在前面），展开后是受管服务列表
+ * （状态点、名称、端口、重启次数、失败原因）与行尾动作（启动 / 停止、重启、日志、在 Portal 中打开）。
+ * orb 不是 `ready` 时动作禁用、状态点与标签置灰。orb 块里的故障提示行也从这里取失败的服务（`faultyServices`）。
  * 日志对话框打开期间每 3s 以 `bg=1` 重新拉取（不唤醒、不计用户交互）。对话框绑定打开它时的
  * {线程, orb, 服务名}：换线程 / 换 orb（路由复用本组件实例）或服务被移除时关闭，不会拿旧服务名去拉别的 orb 的日志。
  */
@@ -25,6 +26,7 @@ import {
 	IconButton,
 	Spinner,
 } from "../ui/primitives";
+import { InfoRow, InfoTag, InfoTags, useExpandedKey } from "./info-parts";
 
 type OrbService = Schemas["OrbService"];
 type ServiceStatus = Schemas["OrbServiceStatus"];
@@ -50,6 +52,15 @@ const ACTIVE: Record<ServiceStatus, boolean> = {
 	stopped: false,
 	failed: false,
 };
+
+/** 标签排序：失败在前，其次是启动中 / 等待重启，最后是正常与已停止。 */
+const TONE_RANK: Partial<Record<Tone, number>> = { err: 0, warn: 1, ok: 2 };
+
+/** 出故障（失败或未就绪）的服务；orb 不是 `ready` 时服务状态不作数，返回空。 */
+export function faultyServices(orb: Orb): OrbService[] {
+	if (orb.state !== "ready") return [];
+	return (orb.services ?? []).filter((s) => STATUS_TONE[s.status] === "err");
+}
 
 export function ServiceLogDialog({
 	orbId,
@@ -157,7 +168,7 @@ function ServiceRow({
 				</span>
 				<span className="min-w-0 truncate font-medium text-fg">{s.name}</span>
 				{s.port !== undefined && (
-					<span className="shrink-0 rounded-sm border border-border bg-inset px-1.5 font-mono text-2xs text-muted leading-[18px]">
+					<span className="shrink-0 font-mono text-2xs text-faint">
 						:{s.port}
 					</span>
 				)}
@@ -244,6 +255,39 @@ function ServiceRow({
 	);
 }
 
+/** 入口行右侧的一个服务标签：正常运行的只给灰底 + 绿点 + 名称与端口，其余写出状态。 */
+function ServiceTag({
+	service: s,
+	ready,
+}: {
+	service: OrbService;
+	ready: boolean;
+}): ReactNode {
+	const { t } = useTranslation();
+	const status = t(`services.status.${s.status}`);
+	const tone = ready ? STATUS_TONE[s.status] : "neutral";
+	if (tone === "ok")
+		return (
+			<InfoTag title={status}>
+				<span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-ok" />
+				{s.name}
+				{s.port !== undefined && (
+					<span className="font-medium font-mono text-2xs">:{s.port}</span>
+				)}
+			</InfoTag>
+		);
+	return (
+		<InfoTag tone={tone} title={s.error ?? status}>
+			<span className="min-w-0 truncate">
+				{s.name} {status}
+				{tone === "err" &&
+					s.restarts > 0 &&
+					` · ${t("services.restarts", { count: s.restarts })}`}
+			</span>
+		</InfoTag>
+	);
+}
+
 /** 日志对话框看的是哪个线程、哪台 orb 上的哪个服务。 */
 interface LogTarget {
 	threadId: string;
@@ -252,7 +296,7 @@ interface LogTarget {
 }
 
 /** orb 没有受管服务时不渲染。 */
-export function ServicesSection({
+export function ServicesRow({
 	threadId,
 	orb,
 }: {
@@ -261,6 +305,7 @@ export function ServicesSection({
 }): ReactNode {
 	const { t } = useTranslation();
 	const action = useServiceAction(orb.id);
+	const { expanded, onToggle } = useExpandedKey("services:expanded");
 	const [logOf, setLogOf] = useState<LogTarget | null>(null);
 	const services = orb.services ?? [];
 	const logName =
@@ -278,33 +323,53 @@ export function ServicesSection({
 	if (orb.state === "deleted" || services.length === 0) return null;
 	const ready = orb.state === "ready";
 	const portalPorts = new Set((orb.portals ?? []).map((p) => p.port));
+	const rank = (s: OrbService) =>
+		ready ? (TONE_RANK[STATUS_TONE[s.status]] ?? 3) : 3;
+	const tags = services
+		.toSorted((a, b) => rank(a) - rank(b))
+		.map((s) => ({
+			key: s.name,
+			node: <ServiceTag service={s} ready={ready} />,
+		}));
 	return (
-		<div className="mt-3" data-testid="orb-services">
-			<h4 className="mb-1 flex items-center gap-1.5 font-medium text-2xs text-faint">
-				{t("services.title")}
-				{!ready && (
-					<span className="font-normal" title={t("services.notReady")}>
-						· {t(`orbState.${orb.state}`)}
-					</span>
-				)}
-			</h4>
-			<ul className="flex flex-col">
-				{services.map((s) => (
-					<ServiceRow
-						key={s.name}
-						threadId={threadId}
-						service={s}
-						ready={ready}
-						hasPortal={s.port !== undefined && portalPorts.has(s.port)}
-						busy={action.isPending && action.variables?.name === s.name}
-						onAction={(a) => action.mutate({ name: s.name, action: a })}
-						onLog={() => setLogOf({ threadId, orbId: orb.id, name: s.name })}
+		<>
+			<InfoRow
+				icon="plugs"
+				title={t("services.title")}
+				testId="orb-services"
+				expanded={expanded}
+				onToggle={onToggle}
+				status={
+					<InfoTags
+						meta={
+							ready ? undefined : (
+								<span title={t("services.notReady")}>
+									{t(`orbState.${orb.state}`)}
+								</span>
+							)
+						}
+						tags={tags}
 					/>
-				))}
-			</ul>
-			<div className="mt-1 empty:hidden">
-				<ErrorText error={action.error} />
-			</div>
+				}
+			>
+				<ul className="flex flex-col">
+					{services.map((s) => (
+						<ServiceRow
+							key={s.name}
+							threadId={threadId}
+							service={s}
+							ready={ready}
+							hasPortal={s.port !== undefined && portalPorts.has(s.port)}
+							busy={action.isPending && action.variables?.name === s.name}
+							onAction={(a) => action.mutate({ name: s.name, action: a })}
+							onLog={() => setLogOf({ threadId, orbId: orb.id, name: s.name })}
+						/>
+					))}
+				</ul>
+				<div className="mt-1 empty:hidden">
+					<ErrorText error={action.error} />
+				</div>
+			</InfoRow>
 			{logName && (
 				<ServiceLogDialog
 					orbId={orb.id}
@@ -312,6 +377,6 @@ export function ServicesSection({
 					onClose={() => setLogOf(null)}
 				/>
 			)}
-		</div>
+		</>
 	);
 }

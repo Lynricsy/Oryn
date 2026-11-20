@@ -1,14 +1,15 @@
 /**
  * 浏览器 Profile 的共用展示：409 `profile_in_use` 的解析、持有者线程名、orb 上 Profile 状态的一句话描述，
- * 以及信息面板 orb 卡里的「浏览器 Profile」一行。
+ * 以及信息面板里的「浏览器 Profile」入口行。
  */
 import type { TFunction } from "i18next";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { ApiError, type Orb, type Schemas } from "../../api/client";
 import { parseTitleCard } from "../../lib/title";
-import { Badge, type Tone } from "../ui/data";
-import { Icon } from "../ui/icons";
+import { uiStore } from "../../state/ui";
+import { InfoLink, InfoTag } from "../thread/info-parts";
+import type { Tone } from "../ui/data";
 
 export type ProfileHolder = Schemas["BrowserProfileHolder"];
 export type OrbDesktopProfile = Schemas["OrbDesktopProfile"];
@@ -90,24 +91,30 @@ export function profileErrorText(code: string | undefined, t: TFunction) {
 	}
 }
 
-/** 信息面板 orb 卡里的「浏览器 Profile」一行；orb 没选 Profile 时不显示。 */
-export function DesktopProfileLine({ orb }: { orb: Orb }): ReactNode {
+/** 信息面板的「浏览器 Profile」入口行：Profile 名 + 状态标签，点开切到桌面标签；orb 没选 Profile 时不显示。 */
+export function DesktopProfileRow({ orb }: { orb: Orb }): ReactNode {
 	const { t } = useTranslation();
 	const p = orb.desktop?.profile;
 	if (!p) return null;
 	const { text, tone } = profileStatusText(p, t);
+	// 有 Profile 就有桌面（`orb.desktop`），桌面标签与右栏同一条件：orb 未删除
+	const desktop = orb.state !== "deleted";
 	return (
-		<div className="mt-3" data-testid="info-desktop-profile">
-			<h4 className="mb-1 font-medium text-2xs text-faint">
-				{t("deskPanel.profile.title")}
-			</h4>
-			<div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
-				<Icon name="browser" size={13} className="shrink-0 text-faint" />
-				<span className="min-w-0 truncate font-medium text-fg">{p.name}</span>
-				<Badge tone={tone} title={text}>
-					{text}
-				</Badge>
-			</div>
-		</div>
+		<InfoLink
+			icon="browser"
+			title={t("deskPanel.profile.title")}
+			testId="info-desktop-profile"
+			onClick={
+				desktop ? () => uiStore.getState().setPanelTab("desktop") : undefined
+			}
+			status={
+				<>
+					<span className="min-w-0 truncate text-faint text-sm">{p.name}</span>
+					<InfoTag tone={tone} title={text}>
+						<span className="min-w-0 truncate">{text}</span>
+					</InfoTag>
+				</>
+			}
+		/>
 	);
 }

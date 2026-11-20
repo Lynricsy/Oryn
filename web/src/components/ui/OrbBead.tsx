@@ -119,11 +119,11 @@ function Glyph({
 	}
 }
 
+/** 状态珠 / 徽记的视觉档位（与 `Glyph` 的分支一一对应）。 */
+export type OrbVisual = Exclude<NativeOrb, "err">;
+
 /** iOS 原生页头里状态珠的档位（lib/native-header.ts）：与 `Glyph` 的分支一一对应，动画由原生按档位自己跑。 */
-export function orbVisual(
-	state: OrbState,
-	active: boolean,
-): Exclude<NativeOrb, "err"> {
+export function orbVisual(state: OrbState, active: boolean): OrbVisual {
 	if (BOOTING[state]) return "booting";
 	switch (state) {
 		case "ready":

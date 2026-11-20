@@ -976,7 +976,9 @@
 		"authRequired": "Auth required",
 		"refresh": "Refresh",
 		"empty": "Nothing to show",
-		"summary": "Skills {{skills}} · MCP {{connected}}/{{total}}"
+		"summary": "Skills {{skills}} · MCP {{connected}}/{{total}}",
+		"warningCount_one": "{{count}} warning",
+		"warningCount_other": "{{count}} warnings"
 	},
 	"palette": {
 		"title": "Command palette",
@@ -1018,7 +1020,6 @@
 	},
 	"panel": {
 		"capabilities": "Capabilities",
-		"tools": "Tools",
 		"cpu": "CPU",
 		"cores": "{{n}} cores",
 		"addTodo": "Add todo…",
@@ -1027,14 +1028,16 @@
 		"memChart": "Memory chart",
 		"memory": "Memory",
 		"noOrb": "This thread has no orb (read-only).",
-		"noTodos": "No todos.",
 		"orb": "Orb",
 		"subagents": "Subagents",
 		"todos": "Todos",
 		"uptime": "Up {{d}}",
 		"subagentsRunning": "{{n}} running",
 		"subagentsTotal": "{{n}} total",
-		"ssh": "SSH hosts"
+		"ssh": "SSH hosts",
+		"faults_one": "{{count}} issue",
+		"faults_other": "{{count}} issues",
+		"restart": "Restart"
 	},
 	"todo": {
 		"status": {

@@ -1,7 +1,7 @@
 /**
- * 信息面板的「服务」小节：状态点颜色、失败原因、按状态给启动 / 停止、动作调对应接口、「在 Portal 中打开」
+ * 信息面板的「服务」入口行：状态点颜色、失败原因、按状态给启动 / 停止、动作调对应接口、「在 Portal 中打开」
  * 切到 Portal 标签并选中端口、orb 不就绪时禁用与置灰，端口错误给出改法，日志对话框每 3s 以 `bg=1` 轮询，
- * 且绑定 {线程, orb, 服务}：身份变化或服务移除即关闭。
+ * 且绑定 {线程, orb, 服务}：身份变化或服务移除即关闭。orb 块的故障提示行对失败的服务给出重启。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
@@ -12,7 +12,7 @@ import { realtime } from "../../realtime/socket";
 import { getThreadStore } from "../../state/stores";
 import { uiStore } from "../../state/ui";
 import { InfoPanel } from "./InfoPanel";
-import { SERVICE_LOG_POLL_MS, ServicesSection } from "./ServicesSection";
+import { SERVICE_LOG_POLL_MS, ServicesRow } from "./ServicesSection";
 
 const ORB = "orb-svc000000000000000000001";
 const THREAD = "T-svc-1";
@@ -69,7 +69,7 @@ function client() {
 function mount(o: Orb) {
 	return render(
 		<QueryClientProvider client={client()}>
-			<ServicesSection threadId={THREAD} orb={o} />
+			<ServicesRow threadId={THREAD} orb={o} />
 		</QueryClientProvider>,
 	);
 }
@@ -86,7 +86,12 @@ const dot = (name: string) =>
 beforeEach(() => {
 	calls = [];
 	logText = "[orbd] starting web (port 5173)\n";
-	uiStore.setState({ portalPort: {}, panelTab: "info" });
+	// 入口行展开着，列表与动作都在
+	uiStore.setState({
+		portalPort: {},
+		panelTab: "info",
+		collapsedCards: { "services:expanded": true },
+	});
 	vi.stubGlobal(
 		"fetch",
 		vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -273,7 +278,7 @@ describe("服务小节", () => {
 		const qc = client();
 		const ui = (threadId: string, o: Orb) => (
 			<QueryClientProvider client={qc}>
-				<ServicesSection threadId={threadId} orb={o} />
+				<ServicesRow threadId={threadId} orb={o} />
 			</QueryClientProvider>
 		);
 		const { rerender } = render(ui(THREAD, orb()));
@@ -285,7 +290,7 @@ describe("服务小节", () => {
 		await act(async () => {});
 		expect(screen.getByRole("dialog")).toBeInTheDocument();
 
-		// 路由复用实例：同一个 ServicesSection 换到线程 B（另一台 orb，也有 web 服务）
+		// 路由复用实例：同一个 ServicesRow 换到线程 B（另一台 orb，也有 web 服务）
 		rerender(ui("T-svc-B", { ...orb(), id: ORB_B, threadIds: ["T-svc-B"] }));
 		await act(async () => {});
 		expect(screen.queryByRole("dialog")).toBeNull();
@@ -303,7 +308,7 @@ describe("服务小节", () => {
 		const qc = client();
 		const ui = (o: Orb) => (
 			<QueryClientProvider client={qc}>
-				<ServicesSection threadId={THREAD} orb={o} />
+				<ServicesRow threadId={THREAD} orb={o} />
 			</QueryClientProvider>
 		);
 		const { rerender } = render(ui(orb()));
@@ -322,7 +327,8 @@ describe("服务小节", () => {
 		expect(screen.queryByRole("dialog")).toBeNull();
 	});
 
-	it("信息面板的 orb 卡在「环境」之下列出服务；没有服务时不出现", () => {
+	it("收起时行右侧是状态标签，失败的排在最前；没有服务时不出现", () => {
+		uiStore.setState({ collapsedCards: {} });
 		vi.spyOn(realtime, "cmd").mockResolvedValue({ subagents: [] } as never);
 		getThreadStore(THREAD)
 			.getState()
@@ -333,11 +339,14 @@ describe("服务小节", () => {
 			</QueryClientProvider>,
 		);
 		const section = screen.getByTestId("orb-services");
-		expect(section).toHaveTextContent(i18n.t("services.title"));
-		expect(
-			screen.getByText(i18n.t("env.title")).compareDocumentPosition(section) &
-				Node.DOCUMENT_POSITION_FOLLOWING,
-		).toBeTruthy();
+		expect(section.querySelector("li[data-service]")).toBeNull();
+		const tags = [...section.querySelectorAll("[title]")].map(
+			(e) => e.textContent,
+		);
+		// 一行最多两个标签：失败的 worker 在前、启动中的 db 其次，正常的 web 收成「+1」
+		expect(tags[0]).toContain(`worker ${i18n.t("services.status.failed")}`);
+		expect(tags[1]).toContain(`db ${i18n.t("services.status.starting")}`);
+		expect(section).toHaveTextContent("+1");
 		unmount();
 		getThreadStore("T-svc-2")
 			.getState()
@@ -351,5 +360,47 @@ describe("服务小节", () => {
 			</QueryClientProvider>,
 		);
 		expect(screen.queryByTestId("orb-services")).toBeNull();
+	});
+
+	it("orb 块的故障提示行：失败服务给出重启，点了调重启接口", async () => {
+		vi.spyOn(realtime, "cmd").mockResolvedValue({ subagents: [] } as never);
+		getThreadStore(THREAD)
+			.getState()
+			.patchLocal({ thread: { id: THREAD, orbId: ORB } as Thread, orb: orb() });
+		render(
+			<QueryClientProvider client={client()}>
+				<InfoPanel threadId={THREAD} />
+			</QueryClientProvider>,
+		);
+		expect(
+			screen.getByRole("img", {
+				name: `${i18n.t("orbState.ready")} · ${i18n.t("panel.faults", { count: 1 })}`,
+			}),
+		).toBeInTheDocument();
+		fireEvent.click(
+			screen.getByRole("button", { name: i18n.t("panel.restart") }),
+		);
+		await act(async () => {});
+		expect(calls.map((c) => `${c.method} ${c.url.pathname}`)).toContain(
+			`POST /api/v1/orbs/${ORB}/services/worker/restart`,
+		);
+	});
+
+	it("orb 不是 ready 时服务状态不作数：没有故障提示", () => {
+		vi.spyOn(realtime, "cmd").mockResolvedValue({ subagents: [] } as never);
+		getThreadStore(THREAD)
+			.getState()
+			.patchLocal({
+				thread: { id: THREAD, orbId: ORB } as Thread,
+				orb: orb("stopped"),
+			});
+		render(
+			<QueryClientProvider client={client()}>
+				<InfoPanel threadId={THREAD} />
+			</QueryClientProvider>,
+		);
+		expect(
+			screen.queryByRole("button", { name: i18n.t("panel.restart") }),
+		).toBeNull();
 	});
 });

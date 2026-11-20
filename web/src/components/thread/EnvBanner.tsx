@@ -1,10 +1,12 @@
 /**
- * orb 环境（计划 I.7）：输入坞托盘里的提示条、setup / resume 日志对话框、信息面板「环境」小节的运行记录。
+ * orb 环境（计划 I.7）：输入坞托盘里的提示条、setup / resume 日志对话框、信息面板「环境」入口行
+ * （行右侧是最近 setup / resume 的结果标签，展开后是快照来源与运行记录）。
  * 提示条的选择与提示词在 `lib/env-banner.ts`。
  */
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import type { Orb } from "../../api/client";
 import { qk, useProjects } from "../../api/queries";
 import {
 	buildEnvPrompt,
@@ -39,6 +41,7 @@ import {
 	IconButton,
 	Spinner,
 } from "../ui/primitives";
+import { InfoRow, InfoTag, InfoTags, useExpandedKey } from "./info-parts";
 import { useOrbOf } from "./ThreadHeader";
 
 type AgentBanner = Exclude<EnvBannerData, FailureBanner>;
@@ -455,8 +458,8 @@ export function SetupLogDialog({
 	);
 }
 
-/** 信息面板 orb 区的「环境」小节内容：最近一次 setup / resume 与日志入口。 */
-export function EnvRuns({
+/** 「环境」入口行展开后的运行记录：最近一次 setup / resume 与日志入口。 */
+function EnvRuns({
 	orbId,
 	runs,
 }: {
@@ -501,5 +504,111 @@ export function EnvRuns({
 				);
 			})}
 		</ul>
+	);
+}
+
+/**
+ * 环境的快照来源（M11a）：来自项目快照的 orb 显示「来自项目快照 · 提交 abc1234」（提交取最近一次 setup 结束时的检出）；
+ * 本次 setup 起步时已有标记（快照）却仍实际跑了脚本，说明基线有新提交、在快照上增量重跑过。
+ */
+export function SnapshotOrigin({
+	orb,
+}: {
+	orb: Pick<Orb, "snapshotKind" | "lastSetup">;
+}): ReactNode {
+	const { t } = useTranslation();
+	const run = orb.lastSetup;
+	const fromSnapshot = orb.snapshotKind === "project";
+	const refreshed = Boolean(run?.prepared && run.setupRan);
+	if (!fromSnapshot && !refreshed) return null;
+	const commit = run?.baseCommit?.slice(0, 7);
+	return (
+		<div
+			data-testid="env-snapshot"
+			className="mb-1 flex flex-col gap-0.5 text-muted text-xs"
+		>
+			{fromSnapshot && (
+				<span className="inline-flex min-w-0 items-center gap-1.5">
+					<Icon
+						name="snapshot"
+						size={12}
+						aria-hidden
+						className="shrink-0 text-faint"
+					/>
+					<span className="min-w-0 truncate">
+						{commit
+							? t("accel.fromSnapshotCommit", { commit })
+							: t("accel.fromSnapshot")}
+					</span>
+				</span>
+			)}
+			{refreshed && (
+				<span className="inline-flex min-w-0 items-center gap-1.5">
+					<Icon
+						name="branch"
+						size={12}
+						aria-hidden
+						className="shrink-0 text-faint"
+					/>
+					<span className="min-w-0">{t("accel.refreshed")}</span>
+				</span>
+			)}
+		</div>
+	);
+}
+
+/** 「环境」入口行的一个结果标签：成功只给灰底 + 绿勾 + 耗时，跳过与失败写出结果；悬停给出触发方式与时间。 */
+function RunTag({ run }: { run: SetupRun }): ReactNode {
+	const { t } = useTranslation();
+	const [tone, key] = runResult(run);
+	const phase = t(`env.phase.${run.phase}`);
+	const title = [
+		`${phase} · ${t(key)}`,
+		formatDuration(run.durationMs),
+		t(`env.trigger.${run.trigger}`),
+		formatRelative(run.finishedAt),
+	].join(" · ");
+	if (tone === "ok")
+		return (
+			<InfoTag title={title}>
+				<Icon
+					name="check"
+					size={11}
+					weight="bold"
+					aria-hidden
+					className="shrink-0 text-ok"
+				/>
+				{phase} {formatDuration(run.durationMs)}
+			</InfoTag>
+		);
+	return (
+		<InfoTag tone={tone} title={title}>
+			<span className="min-w-0 truncate">
+				{phase} {t(key)}
+			</span>
+		</InfoTag>
+	);
+}
+
+/** 信息面板「环境」入口行（runner 不跑 setup / resume，不渲染）。 */
+export function EnvRow({ orb }: { orb: Orb }): ReactNode {
+	const { t } = useTranslation();
+	const { expanded, onToggle } = useExpandedKey("env:expanded");
+	const runs = [orb.lastSetup, orb.lastResume];
+	const tags = runs
+		.filter((r): r is SetupRun => Boolean(r))
+		.map((run) => ({ key: run.id, node: <RunTag run={run} /> }));
+	return (
+		<InfoRow
+			icon="wrench"
+			title={t("env.title")}
+			testId="orb-env"
+			expanded={expanded}
+			onToggle={onToggle}
+			status={<InfoTags tags={tags} />}
+		>
+			<SnapshotOrigin orb={orb} />
+			<EnvRuns orbId={orb.id} runs={runs} />
+		</InfoRow>
 	);
 }

@@ -1,6 +1,6 @@
 /**
- * 信息面板「SSH 主机」卡（M18），只对工作线程渲染；默认收起，展开才查询。
- * - orb 线程：这台 orb 经控制面网关能用的主机（`threads/{id}/ssh-hosts`）。全局与本项目都没有主机时整张卡不渲染；
+ * 信息面板「SSH 主机」入口行（M18），只对工作线程渲染；默认收起，展开才查询（行右侧是主机数标签）。
+ * - orb 线程：这台 orb 经控制面网关能用的主机（`threads/{id}/ssh-hosts`）。全局与本项目都没有主机时整行不渲染；
  *   全自动 orb 上未放开的主机置灰并标「全自动不可用」。每行可复制 `ssh <名>`、测试；底部链到设置页。
  * - runner 线程：那台机器自己的 SSH 配置（omp 的 `get_ssh_hosts` / `ssh_manage` / `ssh_test`），不经 Oryn 网关；
  *   可增删改（仅 `editable` 的项）与测试。
@@ -22,10 +22,9 @@ import type {
 } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
 import { agentQueryable, useThread } from "../../state/stores";
-import { uiStore, useUi } from "../../state/ui";
 import { HostStatusDot } from "../ssh/HostStatus";
 import { CopyButton } from "../ui/CopyButton";
-import { Badge, Callout, Card, ListRow, StatusDot } from "../ui/data";
+import { Badge, Callout, ListRow, StatusDot } from "../ui/data";
 import {
 	Button,
 	Dialog,
@@ -36,19 +35,23 @@ import {
 	Spinner,
 	TextInput,
 } from "../ui/primitives";
+import { InfoRow, InfoTag, InfoTags, useExpandedKey } from "./info-parts";
 import { useOrbOf } from "./ThreadHeader";
 
-/** 本卡默认收起（展开才发查询）：`collapsedCards` 里记的是「已展开」标记。 */
-const EXPANDED_KEY = "ssh:expanded";
-
-function useExpanded() {
-	const expanded = useUi((s) => !!s.collapsedCards[EXPANDED_KEY]);
-	return {
-		collapsible: true,
-		collapsed: !expanded,
-		onToggle: () => uiStore.getState().toggleCard(EXPANDED_KEY),
-		expanded,
-	};
+/** 行右侧的主机数标签；数量还不知道时不显示。 */
+function HostCount({ count }: { count: number | undefined }): ReactNode {
+	const { t } = useTranslation();
+	if (count === undefined) return null;
+	return (
+		<InfoTags
+			tags={[
+				{
+					key: "count",
+					node: <InfoTag>{t("sshPanel.summary", { count })}</InfoTag>,
+				},
+			]}
+		/>
+	);
 }
 
 function ManageLink(): ReactNode {
@@ -67,7 +70,7 @@ function ManagedSsh({ threadId }: { threadId: string }): ReactNode {
 	const { t } = useTranslation();
 	const projectId = useThread(threadId, (s) => s.thread?.projectId);
 	const all = useSshHosts();
-	const { expanded, ...fold } = useExpanded();
+	const { expanded, onToggle } = useExpandedKey("ssh:expanded");
 	const scoped = (all.data?.hosts ?? []).filter(
 		(h) => h.projectId === undefined || h.projectId === projectId,
 	);
@@ -78,17 +81,14 @@ function ManagedSsh({ threadId }: { threadId: string }): ReactNode {
 		return null;
 	const hosts = list.data?.hosts ?? [];
 	return (
-		<Card
-			title={t("panel.ssh")}
+		<InfoRow
 			icon="hardDrives"
-			{...fold}
-			summary={
-				list.data && (
-					<span className="truncate text-faint">
-						{t("sshPanel.summary", { count: hosts.length })}
-					</span>
-				)
-			}
+			title={t("panel.ssh")}
+			testId="info-ssh"
+			expanded={expanded}
+			onToggle={onToggle}
+			// 展开前只知道可见范围内的主机数，展开后以这台 orb 实际能用的为准
+			status={<HostCount count={list.data ? hosts.length : scoped.length} />}
 		>
 			{list.isPending && <Spinner size={12} />}
 			<ErrorText error={list.error ?? test.error} />
@@ -135,7 +135,7 @@ function ManagedSsh({ threadId }: { threadId: string }): ReactNode {
 				</ul>
 			)}
 			<ManageLink />
-		</Card>
+		</InfoRow>
 	);
 }
 
@@ -317,7 +317,7 @@ function RunnerSsh({ threadId }: { threadId: string }): ReactNode {
 	const { t } = useTranslation();
 	const qc = useQueryClient();
 	const queryable = useThread(threadId, agentQueryable);
-	const { expanded, ...fold } = useExpanded();
+	const { expanded, onToggle } = useExpandedKey("ssh:expanded");
 	const queryKey = ["rpc", threadId, "ssh"];
 	const hosts = useQuery({
 		queryKey,
@@ -362,28 +362,21 @@ function RunnerSsh({ threadId }: { threadId: string }): ReactNode {
 	const data = hosts.data;
 	const list = data?.hosts ?? [];
 	return (
-		<Card
-			title={t("panel.ssh")}
+		<InfoRow
 			icon="hardDrives"
-			{...fold}
-			summary={
-				data && (
-					<span className="truncate text-faint">
-						{t("sshPanel.summary", { count: list.length })}
-					</span>
-				)
-			}
+			title={t("panel.ssh")}
+			testId="info-ssh"
+			expanded={expanded}
+			onToggle={onToggle}
+			status={<HostCount count={data ? list.length : undefined} />}
 			action={
-				expanded && (
-					<IconButton
-						icon="plus"
-						size={13}
-						box="xs"
-						className="-mr-1.5"
-						label={t("sshPanel.runner.add")}
-						onClick={() => setDialog({ kind: "add" })}
-					/>
-				)
+				<IconButton
+					icon="plus"
+					size={13}
+					box="xs"
+					label={t("sshPanel.runner.add")}
+					onClick={() => setDialog({ kind: "add" })}
+				/>
 			}
 		>
 			<p className="mb-2 text-faint text-xs">{t("sshPanel.runner.hint")}</p>
@@ -485,7 +478,7 @@ function RunnerSsh({ threadId }: { threadId: string }): ReactNode {
 					onDone={refresh}
 				/>
 			)}
-		</Card>
+		</InfoRow>
 	);
 }
 

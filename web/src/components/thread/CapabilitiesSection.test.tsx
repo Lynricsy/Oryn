@@ -8,7 +8,7 @@ import i18n from "../../i18n";
 import { getThreadStore, resetThreadStores } from "../../state/stores";
 import type { ThreadViewState } from "../../state/thread-reducer";
 import { uiStore } from "../../state/ui";
-import { CapabilitiesSection } from "./CapabilitiesSection";
+import { CapabilitiesRow } from "./CapabilitiesSection";
 
 const { cmd } = vi.hoisted(() => ({ cmd: vi.fn() }));
 vi.mock("../../realtime/socket", () => ({
@@ -68,7 +68,7 @@ function setup(kind: "work" | "space" = "work") {
 				new QueryClient({ defaultOptions: { queries: { retry: false } } })
 			}
 		>
-			<CapabilitiesSection threadId={T} />
+			<CapabilitiesRow threadId={T} />
 		</QueryClientProvider>,
 	);
 }
@@ -86,7 +86,7 @@ beforeEach(() => {
 	);
 });
 
-describe("CapabilitiesSection", () => {
+describe("CapabilitiesRow", () => {
 	it("收起时不发查询；展开后五条命令各 1 次", async () => {
 		setup();
 		expect(screen.getByRole("button", { name: "能力" })).toHaveAttribute(

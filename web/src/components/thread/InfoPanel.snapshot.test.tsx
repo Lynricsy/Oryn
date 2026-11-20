@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import { beforeEach, expect, it } from "vitest";
 import type { Schemas } from "../../api/client";
 import i18n from "../../i18n";
-import { SnapshotOrigin } from "./InfoPanel";
+import { SnapshotOrigin } from "./EnvBanner";
 
 const RUN: Schemas["OrbSetupRun"] = {
 	id: "osr_1",
