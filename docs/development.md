@@ -58,6 +58,7 @@ cd web
 sudo bun e2e/ui-audit/netns.ts &                 # root 下必开：Docker veth 变化会掐断浏览器请求
 npx playwright test e2e/ui-audit                  # 断言 + after 截图；自动起 VITE_MOCK=1 的 vite（端口 5293）
 UI_AUDIT_PHASE=before UI_AUDIT_WEB=<基线 worktree>/web npx playwright test e2e/ui-audit   # 基线截图（端口 5294）
+bun e2e/ui-audit/inventory.ts                     # 由 docs/ui-audit/areas/*.md 生成总清单，并与 spec 对账
 sh e2e/ui-audit/sheet.sh <界面 id>                # 拼出 before / after 对照图
 ```
 
@@ -66,9 +67,19 @@ sh e2e/ui-audit/sheet.sh <界面 id>                # 拼出 before / after 对�
 - 网格采样 `elementFromPoint`，确认没有被遮挡或被祖先 `overflow` 裁切；
 - 没有超出视口；
 - 玻璃外壳本身不是滚动容器；
-- 玻璃及其祖先都不是 Backdrop Root（opacity、filter、mask、clip-path、backdrop-filter），打开那一刻也没有动画动到这些属性。
+- 玻璃及其祖先都不是 Backdrop Root（opacity、filter、mask、clip-path、backdrop-filter），打开那一刻也没有动画动到这些属性。祖先链走到顶层元素（打开的 popover、模态 dialog）为止：顶层元素不受 DOM 祖先的透明度和裁切影响。
 
-页面级只断言没有横向溢出。截图和每个界面的问题清单（JSON）写到 `docs/ui-audit/shots/`，不入库。基线 worktree 要单独执行 `bun install`：直接软链主仓库的 `node_modules` 会共用 `.vite` 预构建缓存，或者出现两份 React。
+此外三个时机各记一份玻璃材质（底色、`::before` 的 backdrop-filter、累乘透明度），任何一项在三次之间变了都算问题。页面级只断言没有横向溢出。
+
+截图和每个界面的结果 JSON 写到 `docs/ui-audit/shots/<id>/<project>-<phase>.*`，不入库。结果分两段终审：用例体跑完写 `recorded`，`result-reporter.ts` 在 Playwright 给出最终状态（含 fixture 清理）后改成 `done` 或 `failed`；只按 `only` 显式跳过的写 `skipped`。`inventory.ts` 只认 `done` 和 `skipped`，任何不一致（spec 与清单 id 对不上、某个组合不是这两种状态）都以非零退出。
+
+注意事项：
+
+- 不要在命令行加 `--reporter`：它会替换配置里的 reporter，`result-reporter.ts` 不跑，结果全部停在 `recorded`。
+- 并行跑多批时，先用常驻进程把 5293 / 5294 的 vite 起好（`reuseExistingServer`），否则先结束的那批会关掉它自己起的 vite，掐断别的批次；同一个 phase 的同一个用例不要两批同时跑，它们写同一个结果文件。
+- 宿主壳界面（Tauri 窗口栏、连接页、手机壳）用 `web/scripts/fake-host.ts` 注入假的 `window.__TAURI__`，与截图脚本共用。
+- 基线 worktree 要单独执行 `bun install`：直接软链主仓库的 `node_modules` 会共用 `.vite` 预构建缓存，或者出现两份 React。
+- 截图必须用 SwiftShader（配置里已加 `--use-angle=swiftshader`）；默认软件合成器在 DPR 2 下 backdrop-filter 只模糊半个盒子。
 
 新写浮层一律用 `web/src/components/ui/Floating.tsx`，或基于它的 `Menu`、`Popover`。它通过 Popover API 进入顶层，并按锚点定位；玻璃画在不滚动的外壳上，内容在内层滚动。
 

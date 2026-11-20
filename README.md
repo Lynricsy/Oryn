@@ -334,8 +334,9 @@ oryn thread new "跑一遍全量集成测试" && oryn thread wait <id>   # 派�
 | [`docs/desktop.md`](docs/desktop.md) | 桌面客户端：安装、配对、窗口与标题栏、托盘、快捷键、自动更新、App 图标 |
 | [`docs/mobile.md`](docs/mobile.md) | 移动客户端：Android 双包、扫码配对、推送与省电；[附录 A](docs/mobile.md#附录-aios) 是 iOS |
 | [`docs/protocol.md`](docs/protocol.md) | 以 [`schema/openapi.yaml`](schema/openapi.yaml) 为唯一源的协议索引与状态机 |
-| [`docs/development.md`](docs/development.md) | 代码生成、构建目标、测试约定、验收脚本、截图与 ARM64 交叉构建 |
+| [`docs/development.md`](docs/development.md) | 代码生成、构建目标、测试约定、验收脚本、截图、UI 排版审计与 ARM64 交叉构建 |
 | [`docs/design/`](docs/design/) | 界面设计说明与前端开发守则 |
+| [`docs/ui-audit/`](docs/ui-audit/inventory.md) | UI 排版审计：全部界面与浮层清单（含打开路径）、各区域问题记录与修复提交 |
 
 ## 内核与第三方组件
 
