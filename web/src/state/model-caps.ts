@@ -14,8 +14,8 @@ export interface ModelCaps {
 	/** 支持的思考级别（不含 auto、off）；空数组表示不能调节思考 */
 	thinking: string[];
 	/**
-	 * 模型自带的默认思考档位（新会话与切模型都优先于 defaultThinkingLevel）：字符串 = 有，null = 已知没有，
-	 * undefined = 目录来自不报告这一项的旧版 Core，未知
+	 * 模型自带的默认思考档位（新会话起始优先于 defaultThinkingLevel；切模型时只在会话没有档位时用）：字符串 = 有，
+	 * null = 已知没有，undefined = 目录来自不报告这一项的旧版 Core，未知
 	 */
 	defaultLevel: string | null | undefined;
 }

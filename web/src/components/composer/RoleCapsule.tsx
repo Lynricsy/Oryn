@@ -96,8 +96,8 @@ function aliasTarget(selector: string | undefined): string | undefined {
  * cycleOrder 里的 role（按其顺序）与各自解析出的模型；`default` 不在 cycleOrder 里时补在末尾（首屏的缺省对象就是它，
  * 胶囊、托盘色相与思考档位要按它解析；它只是 cycle 里某个 role 的别名时弹层不单列，见 RoleCapsule）。
  * 别名按全部已知 role 解析（`default: '@Cyrene'` 这类配置）。
- * 思考级别照 Core 的取法：role 选择器显式带的级别；否则切到该 role 的模型时的级别（`switchedThinking`，模型默认档位优先，
- * 再到新会话的起始级别），最后按模型能力收窄。
+ * 思考级别照 Core 的取法：role 选择器显式带的级别；否则切到该 role 的模型时的级别（`switchedThinking`：沿用新会话的起始级别
+ * 并按模型能力收窄，会话没有级别时才用模型自带的默认档位）。
  * role 身份列表读失败或为空时用 omp 默认的 cycleOrder。
  */
 export function useRoleOptions(): RoleOption[] {
@@ -173,11 +173,11 @@ export function useRoleOptions(): RoleOption[] {
 				: undefined;
 			const level =
 				o.explicitThinking ??
-				// 模型没解析出来时默认档位未知
+				// 模型没解析出来时能力与默认档位都未知
 				switchedThinking(
 					start,
-					configured,
 					o.model ? caps?.defaultLevel : undefined,
+					o.model ? caps?.thinking : undefined,
 				);
 			return { ...o, thinking: clampThinking(level, caps?.thinking) };
 		};
@@ -196,13 +196,14 @@ export function useRoleOptions(): RoleOption[] {
 }
 
 /**
- * 新会话的起始思考级别（会话以 default role 的模型开场，见 `sessionStartThinking`）；推不出来时 undefined。
+ * 新会话的起始思考级别（会话以 default role 的模型开场，见 `sessionStartThinking`）；推不出来时 undefined，
+ * default 模型不能调节思考（会话没有级别）时 null。
  */
 export function sessionStart(
 	roles: readonly RoleOption[],
 	configured: string | undefined,
 	catalog: ModelCatalog | undefined,
-): string | undefined {
+): string | null | undefined {
 	const def = roles.find((r) => r.role === "default");
 	const caps = def?.model
 		? modelCapsOf(catalog, modelSelector(def.model))
@@ -309,12 +310,8 @@ export function RoleCapsule({
 				? clampThinking(
 						defaultModel &&
 							modelSelector(defaultModel) === modelSelector(value.model)
-							? start
-							: switchedThinking(
-									start,
-									identities.data?.defaultThinkingLevel,
-									caps?.defaultLevel,
-								),
+							? (start ?? undefined)
+							: switchedThinking(start, caps?.defaultLevel, caps?.thinking),
 						caps?.thinking,
 					)
 				: undefined;

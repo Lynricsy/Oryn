@@ -326,13 +326,14 @@ export function clampThinking(
  * 配置为 auto 时 auto → default 模型的默认档位 → 配置的 defaultThinkingLevel；再像 Core `setThinkingLevel` 那样
  * 落到 default 模型上（切模型时 `#reapplyThinkingLevel` 沿用的是这个落地后的档位，不是配置原值）。
  * auto、off 不收窄；`defaultSupported` 是 default 模型目录里的级别，未知时具体档位推不出来。
+ * 返回 null：default 模型不能调节思考，会话没有档位（Core 里是 undefined，切模型时改用目标模型的默认档位）。
  */
 export function sessionStartThinking(
 	defaultExplicit: string | undefined,
 	configured: string | undefined,
 	defaultModelLevel: string | null | undefined,
 	defaultSupported: readonly string[] | undefined,
-): string | undefined {
+): string | null | undefined {
 	let level: string;
 	if (defaultExplicit) level = defaultExplicit;
 	else if (configured === undefined) return undefined;
@@ -341,27 +342,24 @@ export function sessionStartThinking(
 	else level = defaultModelLevel ?? configured;
 	if (level === "auto" || level === "off") return level;
 	if (defaultSupported === undefined) return undefined;
+	if (defaultSupported.length === 0) return null;
 	return clampThinking(level, defaultSupported);
 }
 
 /**
- * 切到某个模型后的档位（Core `setModel` → `#reapplyThinkingLevel`，role 没显式带档位、或指定了别的模型）：
- * 起始为 auto 时仍是 auto；否则模型自己的默认档位优先，没有就沿用起始档位。
+ * 切到某个模型后的档位（Core 19 `setModel` → `#reapplyThinkingLevel`，role 没显式带档位、或指定了别的模型）：
+ * 起始为 auto 时仍是 auto；起始档位沿用，按目标模型能力收窄（off 不收窄）；会话没有档位时才用目标模型自己的默认档位。
+ * `supported` 是目标模型目录里的级别，未知时具体档位推不出来。
  */
 export function switchedThinking(
-	start: string | undefined,
-	configured: string | undefined,
+	start: string | null | undefined,
 	modelLevel: string | null | undefined,
+	supported: readonly string[] | undefined,
 ): string | undefined {
-	if (start === "auto") return "auto";
-	if (modelLevel === null) return start;
-	// 起始档位未知时，只有确定它不是 auto（配置已读到且不是 auto）才能说模型默认档位生效
-	if (typeof modelLevel === "string")
-		return start !== undefined ||
-			(configured !== undefined && configured !== "auto")
-			? modelLevel
-			: undefined;
-	return undefined;
+	if (start === undefined) return undefined;
+	if (start === null) return modelLevel ?? undefined;
+	if (start === "auto" || start === "off") return start;
+	return supported === undefined ? undefined : clampThinking(start, supported);
 }
 
 /** `get_settings` 的 `cycleOrder` 值 → 角色顺序；不是字符串数组时用默认值。 */

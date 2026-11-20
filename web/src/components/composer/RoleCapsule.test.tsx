@@ -332,7 +332,7 @@ describe("RoleCapsule", () => {
 		expect(rowLevel(/^默认/)).toBe("low");
 	});
 
-	it("role 的模型自带默认档位优先于全局配置（支持 high、自带 medium → medium）；目录不报告默认档位时不画、不选中", async () => {
+	it("切到 role 的模型时沿用起始档位并按能力收窄（Core 19）：模型自带的默认档位不覆盖已有档位", async () => {
 		roleList = [
 			{
 				role: "Mare",
@@ -340,17 +340,45 @@ describe("RoleCapsule", () => {
 				selector: "factory-droid/claude-opus-5-5",
 			},
 			{ role: "Old", inCycle: true, selector: "legacy/old-x" },
+			{ role: "Low", inCycle: true, selector: "openai/gpt-low" },
 			{ role: "Fixed", inCycle: true, selector: "legacy/old-x:low" },
 			{ role: "default", inCycle: true, selector: "openai/gpt-x" },
+		];
+		defaultThinking = "high";
+		mount(true, { kind: "role", role: "Mare" });
+		openCapsule();
+		// 自带 medium，但起始档位 high 它也支持
+		await vi.waitFor(() => expect(rowLevel(/^Mare/)).toBe("high"));
+		// 目录不报告默认档位也推得出：起始档位有值时用不到它
+		expect(rowLevel(/^Old/)).toBe("high");
+		expect(rowLevel(/^Low/)).toBe("low");
+		expect(rowLevel(/^Fixed/)).toBe("low");
+		expect(rowLevel(/^默认/)).toBe("high");
+		const group = screen.getByRole("radiogroup", { name: "思考级别" });
+		expect(within(group).getByRole("radio", { name: "高" })).toHaveAttribute(
+			"aria-checked",
+			"true",
+		);
+	});
+
+	it("default 模型不能调节思考时会话没有档位：切过去用模型自带的默认档位，不报告默认档位的不画", async () => {
+		roleList = [
+			{
+				role: "Mare",
+				inCycle: true,
+				selector: "factory-droid/claude-opus-5-5",
+			},
+			{ role: "Old", inCycle: true, selector: "legacy/old-x" },
+			{ role: "Opus", inCycle: true, selector: "anthropic/claude-opus-5-5" },
+			{ role: "default", inCycle: true, selector: "openai/gpt-lite" },
 		];
 		defaultThinking = "high";
 		mount(true, { kind: "role", role: "Old" });
 		openCapsule();
 		await vi.waitFor(() => expect(rowLevel(/^Mare/)).toBe("medium"));
 		expect(rowLevel(/^Old/)).toBeUndefined();
-		// 显式带档位的不依赖模型默认档位
-		expect(rowLevel(/^Fixed/)).toBe("low");
-		expect(rowLevel(/^默认/)).toBe("high");
+		// 已知没有自带默认档位：会话照旧没有档位
+		expect(rowLevel(/^Opus/)).toBeUndefined();
 		const group = screen.getByRole("radiogroup", { name: "思考级别" });
 		expect(
 			within(group)
