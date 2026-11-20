@@ -14,11 +14,9 @@ import {
 	type ReactNode,
 	type RefObject,
 	useEffect,
-	useLayoutEffect,
 	useRef,
 	useState,
 } from "react";
-import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
 	type Artifact,
@@ -40,6 +38,7 @@ import { showToast } from "../../state/toasts";
 import { ScanFindings } from "../share/ScanFindings";
 import { CopyButton } from "../ui/CopyButton";
 import { Callout } from "../ui/data";
+import { Floating } from "../ui/Floating";
 import { Icon, type IconName } from "../ui/icons";
 import { ManualCopy } from "../ui/ManualCopy";
 import {
@@ -489,8 +488,8 @@ export function ArtifactShareDialog({
 }
 
 /**
- * 查看器顶栏的分享弹层：贴在 `anchor` 下方右对齐（渲染到 body 下，不被面板裁切）；点外面或 `Esc` 关闭，
- * 关闭后焦点回到按钮。compact 断点下换成底部抽屉。
+ * 查看器顶栏的分享弹层：顶层浮层（ui/Floating）贴在 `anchor` 下方右对齐，不被面板裁切；外壳不滚动、内容在内层滚动。
+ * 点外面或 `Esc` 关闭，关闭后焦点回到按钮。compact 断点下换成底部抽屉。
  */
 export function SharePopover({
 	artifact,
@@ -506,22 +505,6 @@ export function SharePopover({
 	const ref = useRef<HTMLDivElement>(null);
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
-	const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
-
-	useLayoutEffect(() => {
-		if (compact) return;
-		const place = () => {
-			const r = anchor.current?.getBoundingClientRect();
-			if (r)
-				setPos({
-					top: r.bottom + 6,
-					right: Math.max(8, window.innerWidth - r.right),
-				});
-		};
-		place();
-		window.addEventListener("resize", place);
-		return () => window.removeEventListener("resize", place);
-	}, [anchor, compact]);
 
 	useEffect(() => {
 		if (compact) return;
@@ -550,21 +533,22 @@ export function SharePopover({
 	if (compact)
 		return <ArtifactShareDialog artifact={artifact} onClose={onClose} />;
 	const title = t("artifacts.share.title", { title: artifact.title });
-	return createPortal(
-		<div
+	return (
+		<Floating
 			ref={ref}
+			anchor={anchor}
+			align="end"
+			gap={6}
+			maxHeight={720}
 			role="dialog"
 			aria-label={title}
 			data-testid="share-popover"
-			style={
-				pos ? { top: pos.top, right: pos.right } : { visibility: "hidden" }
-			}
-			className="glass pop-in fixed z-40 flex max-h-[calc(100dvh-5rem)] w-[22rem] max-w-[calc(100vw-1rem)] flex-col overflow-y-auto rounded-lg p-4"
+			className="w-[22rem] max-w-[calc(100vw-1rem)]"
+			bodyClassName="p-4"
 		>
 			<h2 className="mb-3 truncate font-semibold text-sm">{title}</h2>
 			<SharePanel artifact={artifact} />
-		</div>,
-		document.body,
+		</Floating>
 	);
 }
 

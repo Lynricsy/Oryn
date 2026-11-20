@@ -16,6 +16,7 @@ import {
 	useSidebarToggleShown,
 } from "../../state/ui";
 import { ChromeLead, WindowControls } from "../layout/WindowControls";
+import { Floating } from "../ui/Floating";
 import { Icon } from "../ui/icons";
 import {
 	Button,
@@ -283,7 +284,7 @@ function FilterChips({
 	);
 }
 
-/** 导出菜单：玻璃弹层里三条带 `download` 的链接；外点 / Esc 关闭。 */
+/** 导出菜单：顶层浮层（ui/Floating）里三条带 `download` 的链接；外点 / Esc 关闭。 */
 function ExportMenu({ links }: { links: ExportLinks }): ReactNode {
 	const { t } = useTranslation();
 	const [open, setOpen] = useState(false);
@@ -330,9 +331,11 @@ function ExportMenu({ links }: { links: ExportLinks }): ReactNode {
 				{t("stats.export.button")}
 			</Button>
 			{open && (
-				<div
+				<Floating
 					role="menu"
-					className="glass pop-in absolute right-0 z-40 mt-1 min-w-52 rounded-lg p-1"
+					align="end"
+					className="min-w-52"
+					bodyClassName="p-1"
 				>
 					{items.map((it) => (
 						<a
@@ -348,7 +351,7 @@ function ExportMenu({ links }: { links: ExportLinks }): ReactNode {
 							<span className="min-w-0 flex-1 truncate">{it.label}</span>
 						</a>
 					))}
-				</div>
+				</Floating>
 			)}
 		</div>
 	);
