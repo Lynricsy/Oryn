@@ -622,6 +622,7 @@ App Links（`/.well-known/assetlinks.json`）不启用：通知、分享与跳�
 - 不注册、无账号：orynd 凭主机密钥签名，手机凭设备密钥签名并证明持有推送令牌；陌生 orynd 只能给明确授权过它的那台手机推送。
 - 网关保留最小授权状态（授权表，不存任何通知内容），因此手机能在网关上立即吊销单个主机的授权，不依赖 orynd 配合。
 - 授权绑定网关 origin、主机公钥与 App 标识；换网关、换主机密钥都要重新授权，旧授权从不转交。
+- 网关是否可信由 App 构建决定，不由 orynd 或网关自己决定：App 只向构建时写入的受信 origin 发请求，`/v1/info` 只做兼容性检查。
 
 **密钥**
 
@@ -635,7 +636,7 @@ App Links（`/.well-known/assetlinks.json`）不启用：通知、分享与跳�
 **orynd 侧**
 
 - 配置：`push: { gateway: { url: "https://<gw>" } }`，默认官方网关；空串关闭。只有手机登记了 `kind: gateway` 订阅时 orynd 才会访问网关，没开推送的实例不产生任何对外流量。
-- `GET /api/v1/push/gateway`（已鉴权）→ `{v: 1, origin, hostKey}`；关闭时 404 `gateway_disabled`。App 只从这里得知网关地址，扫码、深链接等其它来源一律不认。
+- `GET /api/v1/push/gateway`（已鉴权）→ `{v: 1, origin, hostKey}`；关闭时 404 `gateway_disabled`。这里的 `origin` 只是 orynd 的选择，App 在发出任何网关请求前先核对它在不在本构建的受信列表里（见「切换与失效」）；扫码、深链接等其它来源一律不认。
 - `POST /api/v1/push/subscriptions` 增加 `{kind: "gateway", gateway: <origin>, grant: <授权 id>, keys: {p256dh, auth}}`（`keys` 必填，校验同 Web Push）。orynd 先以主机签名调 `POST /v1/grants/verify {grant}` 确认授权存在、未吊销、绑定的正是本机主机公钥，否则 409 `gateway_grant_invalid`；`gateway` 不等于当前配置的 origin → 409 `gateway_changed`。按 `grant` upsert。
 - 设备在 orynd 被吊销、或订阅被删除时，orynd 尽力调用 `DELETE /v1/grants/{id}`（主机签名），撤销自己名下的授权。这一步只是礼貌清理，吊销的可靠路径是手机直接找网关（见「吊销」）。
 - `PushSubscriptionKind` 与 `NotificationDeliveryTarget` 增加 `gateway`；投递规则与重试分类同 FCM。
@@ -644,7 +645,7 @@ App Links（`/.well-known/assetlinks.json`）不启用：通知、分享与跳�
 
 |方法 路径|签名|请求 → 应答|
 |---|---|---|
-|`GET /v1/info`|无|→ `{v: 1, apns?: {topic, environments: ["production"\|"sandbox"]}, fcm?: {projectId, senderId}}`|
+|`GET /v1/info`|无|→ `{v: 1, apns?: {topic, environments: ["production"\|"sandbox"]}, fcm?: {projectId, senderId}}`；网关自报，只用于兼容性检查，不作为信任依据|
 |`POST /v1/challenges`|设备|`{channel: "apns"\|"fcm", appId, environment?, token}` → `202 {challengeId}`；网关向该令牌发一条只含 `{kind: "gateway_challenge", challengeId, nonce}` 的推送，nonce 5 分钟有效、只能用一次|
 |`POST /v1/grants`|设备|`{challengeId, nonce, hostKey, label?}` → `201 {grant, createdAt}`：授权绑定该设备密钥、推送令牌、通道 / App 标识 / 环境与主机公钥；同一 `(设备密钥, 主机公钥)` 已有授权时返回原 `grant`|
 |`PUT /v1/devices/self/token`|设备|`{challengeId, nonce}` → `204`：推送令牌变了（APNs / FCM 刷新），先对新令牌走一次 challenge，再把该设备全部授权改到新令牌|
@@ -684,8 +685,10 @@ App Links（`/.well-known/assetlinks.json`）不启用：通知、分享与跳�
 
 **切换与失效**
 
-- App 每次同步订阅时都读一遍 `GET /api/v1/push/gateway`。`origin` 或 `hostKey` 与本地授权不一致 → 先在旧网关撤销旧授权（尽力而为），再对新网关走一遍 `info → challenges → grants`，然后登记新订阅。旧授权从不带到新网关，新网关看到别家的授权 id 也只会回 `grant_revoked`。
-- `/v1/info` 里没有与本 App 编译时一致的 APNs topic / 环境，或 Firebase `projectId`：App 不登记，状态显示 `gateway_app_mismatch`。官方 App 因此只能用官方网关；`push.gateway.url` 指向自建网关时，只对用同一凭据自编的 App 有效。
+- App 每次同步订阅时都读一遍 `GET /api/v1/push/gateway`。`origin` 或 `hostKey` 与本地授权不一致 → 先在旧网关撤销旧授权（尽力而为），新 `origin` 通过下面的受信检查后，再对它走一遍 `info → challenges → grants`，然后登记新订阅。旧授权从不带到新网关，新网关看到别家的授权 id 也只会回 `grant_revoked`。
+- 受信 origin：App 构建时写入受信网关 origin 列表，官方构建只有 `https://<gw>`，自编包在构建配置里填自己的网关。`GET /api/v1/push/gateway` 给出的 `origin` 不在列表里时，App 不向它发出任何请求（不读 `/v1/info`、不提交推送令牌），状态显示 `gateway_untrusted`。理由：`/v1/info` 是网关自报的，任意 orynd 指向的假网关都能声称同一 topic / project，再从 `/v1/challenges` 收走手机真实的推送令牌。
+- 网关请求只走 HTTPS，不跟随跨 origin 重定向（遇到即失败，按 `gateway_untrusted` 处理）。
+- 兼容性：通过受信检查后，`/v1/info` 里没有与本 App 编译时一致的 APNs topic / 环境或 Firebase `projectId`，或 `v` 不支持时，App 不登记，状态显示 `gateway_app_mismatch`。这一步只防配置错误，比如官方网关尚未支持某个环境。
 - orynd 改 `push.gateway.url` 或轮换主机密钥 → 停止向旧订阅投递，并在订阅登记时回 409 `gateway_changed` / `gateway_grant_invalid`，让 App 重新授权。期间不发推送，绝不回退明文或改走其它通道。
 - 离线丢失：APNs 只留最后一条。App 每次启动、以及 NSE 收到任何推送时都按「FCM 发送」中的补拉规则拉未读通知；补拉失败时只显示一条「Oryn 有新通知」。
 
