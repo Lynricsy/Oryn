@@ -108,17 +108,13 @@ describe("createSinkScroll", () => {
 
 	/** 假根滚动：rest 由测试直接设，scrollTo 记录调用。 */
 	function setup(initial: SinkRest = "closed") {
-		const state = {
-			rest: initial as SinkRest | null,
-			nearer: "closed" as SinkRest,
-		};
+		const state = { rest: initial as SinkRest | null };
 		const scrollTo = vi.fn();
 		const pull = vi.fn();
 		const commit = vi.fn();
 		const s = createSinkScroll(
 			{
 				rest: () => state.rest,
-				nearer: () => state.nearer,
 				scrollTo,
 				pull,
 				setTimeout: (cb, ms) => setTimeout(cb, ms) as unknown as number,
@@ -170,14 +166,13 @@ describe("createSinkScroll", () => {
 		expect(commit.mock.calls).toEqual([["open"]]);
 	});
 
-	it("T4 抬起后停在中途：就近平滑吸附，到位后才提交", () => {
-		const { s, state, scrollTo, commit, scroll } = setup();
+	it("T4 抬起后停在中途（含原生拖动时 WebKit 发来 touchcancel、手指其实还按着）：网页不吸附、不提交，系统吸附到位后才提交", () => {
+		const { s, scrollTo, commit, scroll } = setup();
 		s.touch(true);
 		scroll(null);
 		s.touch(false);
-		state.nearer = "closed";
-		vi.advanceTimersByTime(SINK_REST_MS);
-		expect(scrollTo.mock.calls).toEqual([["closed", true]]);
+		vi.advanceTimersByTime(SINK_REST_MS * 5);
+		expect(scrollTo).not.toHaveBeenCalled();
 		expect(commit).not.toHaveBeenCalled();
 		scroll("closed");
 		vi.advanceTimersByTime(SINK_REST_MS);
@@ -249,11 +244,10 @@ describe("createSinkScroll", () => {
 		]);
 	});
 
-	it("T9 request 动画途中 scroll 事件隔了超过 SINK_REST_MS：不就近吸附（不把开合反过来），到位后照常提交", () => {
-		const { s, state, scrollTo, commit, scroll } = setup("closed");
+	it("T9 request 动画途中 scroll 事件隔了超过 SINK_REST_MS：不提交、不改目的地，到位后照常提交", () => {
+		const { s, scrollTo, commit, scroll } = setup("closed");
 		s.request("open", true);
 		scroll(null);
-		state.nearer = "closed";
 		vi.advanceTimersByTime(SINK_REST_MS * 3);
 		expect(scrollTo.mock.calls).toEqual([["open", true]]);
 		expect(commit).not.toHaveBeenCalled();
@@ -310,15 +304,14 @@ describe("createSinkScroll", () => {
 		expect(swapped.commit.mock.calls).toEqual([["closed"]]);
 	});
 
-	it("T11 request 途中手指接管：目的地作废，抬起后停在中途就近吸附", () => {
-		const { s, state, scrollTo, scroll } = setup("closed");
+	it("T11 request 途中手指接管：目的地作废，截止不再落位；抬起后停在中途等系统吸附", () => {
+		const { s, scrollTo, scroll } = setup("closed");
 		s.request("open", true);
 		s.touch(true);
 		scroll(null);
 		s.touch(false);
-		state.nearer = "closed";
-		vi.advanceTimersByTime(SINK_REST_MS);
-		expect(scrollTo).toHaveBeenLastCalledWith("closed", true);
+		vi.advanceTimersByTime(SINK_REQUEST_MS * 3);
+		expect(scrollTo.mock.calls).toEqual([["open", true]]);
 	});
 
 	it("T12 关闭位 request(open) 后、动画首帧前又 request(closed)：照发关闭（停掉旧动画），最终提交 closed 而不是重新打开", () => {

@@ -271,7 +271,6 @@ export function SinkLayout({
 		const s = createSinkScroll(
 			{
 				rest: () => sinkRest(window),
-				nearer: () => (window.scrollX < max() / 2 ? "open" : "closed"),
 				scrollTo: (to, smooth) => {
 					snap(false);
 					nativeSink.show(to === "open", smooth);

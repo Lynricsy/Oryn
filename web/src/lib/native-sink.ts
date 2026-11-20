@@ -142,10 +142,8 @@ export function useNativeSinkEngaged(): boolean {
 export interface SinkScrollEnv {
 	/** 当前静止位置（`sinkRest(window)`）。 */
 	rest(): SinkRest | null;
-	/** 停在中途时离得近的那一端。 */
-	nearer(): SinkRest;
 	/**
-	 * 滚到另一端（本页请求、截止兜底、中途就近吸附）：`smooth` = 原生逐帧动画，否则原生一步落位。
+	 * 滚到另一端（本页请求、截止兜底）：`smooth` = 原生逐帧动画，否则原生一步落位。
 	 * 都要经原生、且期间关掉吸附直到提交：手指拖动之后，网页自己发起的落位会被 WebKit 按原生侧记着的吸附位置拉回
 	 * （M20 探针 C2 第 4–5 轮）。
 	 */
@@ -168,10 +166,12 @@ export interface SinkScroll {
 
 /**
  * 根滚动 → `sidebarOpen` 的同步与守卫。`committed` = 最近一次提交的静止位；`free` 自触点按下或本页请求起为真，
- * 到下一次提交为假。不 free 时任何离开 `committed` 的位移都立即拉回（instant）；free 时静止 SINK_REST_MS 后提交，
- * 停在中途则就近平滑吸附。触点按着时不提交（等抬起再计时）。
+ * 到下一次提交为假。不 free 时任何离开 `committed` 的位移都立即拉回（instant）；free 时停在一端静止 SINK_REST_MS 后提交。
+ * 停在中途不由网页吸附：手指松开后的吸附由根元素的 CSS scroll-snap（mandatory）完成；原生接管拖动时 WebKit 可能给页面
+ * 发 touchcancel，网页以为手指抬起了，此时再由网页「就近吸附」就会在按住期间把卡片拖走（PR #3 drag1）。
+ * 触点按着时不提交（等抬起再计时）。
  * 本页请求的目的地（`target`）在提交或手指接管前一直有效：根不在目的地（还没起步、停在中途或仍在另一端）都继续等，
- * 主线程忙时原生动画可能晚起步、scroll 事件可能隔一百多毫秒才来一条，这时按静止提交或就近吸附都会把开合反过来。
+ * 主线程忙时原生动画可能晚起步、scroll 事件可能隔一百多毫秒才来一条，这时按静止提交会把开合反过来。
  * 等满 SINK_REQUEST_MS 仍未到位就再发一次一步落位（经原生，也是异步的），目的地保留、再给一个 SINK_REQUEST_MS 的宽限；
  * 宽限到了仍未到位就放弃目的地，按实际位置提交（不再重发）。
  */
@@ -218,12 +218,9 @@ export function createSinkScroll(
 		timer = null;
 		if (touching) return;
 		const rest = env.rest();
-		// 请求还没到位：等动画或截止定时器，不按静止提交、不就近吸附
+		// 请求还没到位：等动画或截止定时器，不按静止提交；没有请求时停在中途等系统吸附
 		if (target !== null && rest !== target) return;
-		if (rest === null) {
-			env.scrollTo(env.nearer(), true);
-			return;
-		}
+		if (rest === null) return;
 		committed = rest;
 		free = false;
 		drop();
