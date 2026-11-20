@@ -1,7 +1,7 @@
 /**
  * 信息面板的「服务」入口行：状态点颜色、失败原因、按状态给启动 / 停止、动作调对应接口、「在 Portal 中打开」
  * 切到 Portal 标签并选中端口、orb 不就绪时禁用与置灰，端口错误给出改法，日志对话框每 3s 以 `bg=1` 轮询，
- * 且绑定 {线程, orb, 服务}：身份变化或服务移除即关闭。orb 块的故障提示行对失败的服务给出重启。
+ * 且绑定 {线程, orb, 服务}：身份变化或服务移除即关闭。orb 块的故障提示行对失败的服务给出重启，并显示重启中与结果。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
@@ -11,7 +11,11 @@ import i18n from "../../i18n";
 import { realtime } from "../../realtime/socket";
 import { getThreadStore } from "../../state/stores";
 import { uiStore } from "../../state/ui";
-import { InfoPanel } from "./InfoPanel";
+import {
+	InfoPanel,
+	RESTART_RECOVERED_MS,
+	RESTART_STABLE_MS,
+} from "./InfoPanel";
 import { SERVICE_LOG_POLL_MS, ServicesRow } from "./ServicesSection";
 
 const ORB = "orb-svc000000000000000000001";
@@ -384,6 +388,87 @@ describe("服务小节", () => {
 		expect(calls.map((c) => `${c.method} ${c.url.pathname}`)).toContain(
 			`POST /api/v1/orbs/${ORB}/services/worker/restart`,
 		);
+	});
+
+	/** 故障提示行里 worker 的重启：重启接口按 `restartAs` 回状态，之后由 `setWorker` 推 orb 更新。 */
+	function mountFault(restartAs: Schemas["OrbService"]["status"]) {
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		vi.spyOn(realtime, "cmd").mockResolvedValue({ subagents: [] } as never);
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => Response.json({ ...SERVICES[1], status: restartAs })),
+		);
+		const store = getThreadStore(THREAD);
+		store
+			.getState()
+			.patchLocal({ thread: { id: THREAD, orbId: ORB } as Thread, orb: orb() });
+		render(
+			<QueryClientProvider client={client()}>
+				<InfoPanel threadId={THREAD} />
+			</QueryClientProvider>,
+		);
+		const setWorker = async (status: Schemas["OrbService"]["status"]) => {
+			const o = orb();
+			store.getState().patchLocal({
+				orb: {
+					...o,
+					services: o.services?.map((s) =>
+						s.name === "worker" ? { ...s, status } : s,
+					),
+				},
+			});
+			await act(async () => {});
+		};
+		return { setWorker };
+	}
+	const line = () =>
+		screen
+			.queryAllByRole("status")
+			.find((el) => el.textContent?.startsWith("worker"));
+	const clickRestart = async () => {
+		fireEvent.click(
+			screen.getByRole("button", { name: i18n.t("panel.restart") }),
+		);
+		await act(() => vi.advanceTimersByTimeAsync(0));
+	};
+
+	it("重启后先显示重启中；接口返回后 orb 里还是旧的失败状态不算结果，稳定运行后显示已恢复再收起", async () => {
+		const { setWorker } = mountFault("starting");
+		await clickRestart();
+		expect(line()).toHaveTextContent(i18n.t("panel.restarting"));
+		// 实时更新还没到：旧的 failed 不能判成重启失败
+		await setWorker("failed");
+		expect(line()).toHaveTextContent(i18n.t("panel.restarting"));
+		await setWorker("starting");
+		await setWorker("running");
+		await act(() => vi.advanceTimersByTimeAsync(RESTART_STABLE_MS - 100));
+		expect(line()).toHaveTextContent(i18n.t("panel.restarting"));
+		await act(() => vi.advanceTimersByTimeAsync(100));
+		expect(line()).toHaveTextContent(i18n.t("panel.recovered"));
+		await act(() => vi.advanceTimersByTimeAsync(RESTART_RECOVERED_MS));
+		expect(line()).toBeUndefined();
+	});
+
+	it("重启后跑起来又失败：停在仍然失败，可再重启、可看日志", async () => {
+		const { setWorker } = mountFault("starting");
+		await clickRestart();
+		await setWorker("running");
+		await setWorker("backoff");
+		expect(line()).toHaveTextContent(i18n.t("panel.restarting"));
+		await setWorker("failed");
+		expect(line()).toHaveTextContent(i18n.t("panel.stillFailing"));
+		expect(
+			screen.getByRole("button", { name: i18n.t("panel.restart") }),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: i18n.t("env.log") }),
+		).toBeInTheDocument();
+	});
+
+	it("重启接口直接回 stopped（拉不起来）：立即显示仍然失败", async () => {
+		mountFault("stopped");
+		await clickRestart();
+		expect(line()).toHaveTextContent(i18n.t("panel.stillFailing"));
 	});
 
 	it("orb 不是 ready 时服务状态不作数：没有故障提示", () => {

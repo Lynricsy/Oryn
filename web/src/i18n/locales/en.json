@@ -1037,7 +1037,10 @@
 		"ssh": "SSH hosts",
 		"faults_one": "{{count}} issue",
 		"faults_other": "{{count}} issues",
-		"restart": "Restart"
+		"restart": "Restart",
+		"restarting": "restarting…",
+		"recovered": "recovered",
+		"stillFailing": "still failing"
 	},
 	"todo": {
 		"status": {

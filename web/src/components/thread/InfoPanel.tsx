@@ -210,83 +210,228 @@ function WakeButton({ threadId }: { threadId: string }) {
 const FAULT_ACTION =
 	"inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-full px-2 font-semibold transition-colors duration-150 disabled:opacity-40";
 
-/** orb 块里的故障提示行：红点 + 一句话，右侧是轻量的动作（不加底色，悬停才出浅底）。 */
+/** orb 块里的提示行：状态点 + 一句话，右侧是轻量的动作（不加底色，悬停才出浅底）。重启过程中点换成转圈，恢复后变绿。 */
 function FaultLine({
+	mark = "err",
 	message,
 	title,
 	children,
 }: {
+	mark?: "err" | "ok" | "pending";
 	message: ReactNode;
 	title?: string;
-	children: ReactNode;
+	children?: ReactNode;
 }) {
 	return (
 		<div className="mt-2.5 flex h-7 items-center gap-2 text-sm">
-			<span
-				aria-hidden
-				className="mx-0.5 h-2 w-2 shrink-0 rounded-full bg-err"
-			/>
-			<span title={title} className="min-w-0 flex-1 truncate">
+			{mark === "pending" ? (
+				<span className="inline-flex w-3 shrink-0 justify-center text-faint">
+					<Spinner size={12} />
+				</span>
+			) : (
+				<span
+					aria-hidden
+					className={`mx-0.5 h-2 w-2 shrink-0 rounded-full ${mark === "ok" ? "bg-ok" : "bg-err"}`}
+				/>
+			)}
+			{/* 重启的进度与结果由读屏播报 */}
+			<span role="status" title={title} className="min-w-0 flex-1 truncate">
 				{message}
 			</span>
-			<span className="-mr-2 flex shrink-0 items-center">{children}</span>
+			{children && (
+				<span className="-mr-2 flex shrink-0 items-center">{children}</span>
+			)}
 		</div>
 	);
 }
 
-/** 服务故障：重启与日志就在提示行里，详情在「服务」入口行。 */
-function ServiceFault({
-	orbId,
-	service: s,
+/** 重启后状态保持 `running` 这么久才算恢复：没有就绪探测的服务一拉起就是 running，短命的会在这段时间里退出、进退避。 */
+export const RESTART_STABLE_MS = 5_000;
+/** 「已恢复」显示多久后收起。 */
+export const RESTART_RECOVERED_MS = 3_000;
+/** 重启中最多等多久：orbd 60s 未就绪会标 unhealthy，再等不到结局（多半是实时连接断了）就按未恢复处理。 */
+export const RESTART_GIVE_UP_MS = 90_000;
+
+/**
+ * 一次从提示行发起的重启，`step`：
+ * - `sending` 请求在途；`waiting` 已被接受，但 orb 里还是重启前的旧状态（失败的旧状态不能当成结果）；
+ * - `armed` 已看到重启后的非失败状态，从此再失败才算重启失败；
+ * - `recovered` 稳定 running；`failed` 重启请求失败、重启后又失败、或等不到结局。
+ * orbd 的结局：稳定 running、failed（连续短命）、unhealthy（60s 未就绪）；launch 失败直接回 stopped。
+ */
+interface RestartWatch {
+	name: string;
+	step: "sending" | "waiting" | "armed" | "recovered" | "failed";
+}
+
+/** `setWatch` 的更新函数：换到下一步；已收起（null）时不动。 */
+const stepTo =
+	(next: RestartWatch["step"]) =>
+	(w: RestartWatch | null): RestartWatch | null =>
+		w && { ...w, step: next };
+
+const RESTART_FAILED: Partial<Record<OrbService["status"], true>> = {
+	failed: true,
+	unhealthy: true,
+	stopped: true,
+};
+
+/**
+ * orb 块的故障提示：失败的服务给出重启与日志（详情在「服务」入口行），重启过程中显示「重启中…」，
+ * 结束后短暂显示「已恢复」或停在「仍然失败」；没有服务故障时退到 setup / resume 失败。
+ * 自己持有重启状态，服务恢复后（已不在故障列表里）也要留在原位把结果说完。
+ */
+function FaultNotice({
+	orb,
+	faulty,
+	failedRun,
 }: {
-	orbId: string;
-	service: OrbService;
+	orb: Orb;
+	faulty: readonly OrbService[];
+	failedRun: SetupRun | undefined;
 }) {
 	const { t } = useTranslation();
-	const action = useServiceAction(orbId);
-	const [log, setLog] = useState(false);
+	const action = useServiceAction(orb.id);
+	const [watch, setWatch] = useState<RestartWatch | null>(null);
+	const [log, setLog] = useState<string | null>(null);
+	const name = watch?.name ?? faulty[0]?.name;
+	const s = orb.services?.find((x) => x.name === name);
+	const status = s?.status;
+	const step = watch?.step;
+	const pending = step === "sending" || step === "waiting" || step === "armed";
+	useEffect(() => {
+		if (step === "waiting" && status && !RESTART_FAILED[status])
+			setWatch(stepTo("armed"));
+		if (step !== "armed") return;
+		if (status && RESTART_FAILED[status]) {
+			setWatch(stepTo("failed"));
+			return;
+		}
+		if (status !== "running") return;
+		const timer = window.setTimeout(
+			() => setWatch(stepTo("recovered")),
+			RESTART_STABLE_MS,
+		);
+		return () => window.clearTimeout(timer);
+	}, [step, status]);
+	useEffect(() => {
+		if (!pending) return;
+		const timer = window.setTimeout(
+			() => setWatch(stepTo("failed")),
+			RESTART_GIVE_UP_MS,
+		);
+		return () => window.clearTimeout(timer);
+	}, [pending]);
+	useEffect(() => {
+		// 「已恢复」说完就收起；停在「仍然失败」时服务自己好了也收起
+		if (!(step === "recovered" || (step === "failed" && status === "running")))
+			return;
+		const timer = window.setTimeout(
+			() => setWatch(null),
+			step === "recovered" ? RESTART_RECOVERED_MS : 0,
+		);
+		return () => window.clearTimeout(timer);
+	}, [step, status]);
+	if (!s || !name) {
+		return failedRun ? <EnvFault orbId={orb.id} run={failedRun} /> : null;
+	}
+	const restart = () => {
+		setWatch({ name, step: "sending" });
+		action.mutate(
+			{ name, action: "restart" },
+			{
+				onSuccess: (svc) =>
+					setWatch(stepTo(RESTART_FAILED[svc.status] ? "failed" : "waiting")),
+				onError: () => setWatch(stepTo("failed")),
+			},
+		);
+	};
+	// 两个按钮带 key：重启中只剩日志钮，不让 React 把重启钮的节点（连同焦点与配色过渡）挪给它
+	const logButton = (
+		<button
+			key="log"
+			type="button"
+			onClick={() => setLog(name)}
+			className={`${FAULT_ACTION} text-muted text-sm hover:bg-hover hover:text-fg`}
+		>
+			{t("env.log")}
+		</button>
+	);
+	const restartButton = (
+		<button
+			key="restart"
+			type="button"
+			onClick={restart}
+			className={`${FAULT_ACTION} text-accent-ink text-sm hover:bg-accent-soft`}
+		>
+			<Icon name="restart" size={15} weight="bold" aria-hidden />
+			{t("panel.restart")}
+		</button>
+	);
+	const who = <b className="font-semibold">{name}</b>;
 	return (
 		<>
-			<FaultLine
-				title={s.error}
-				message={
-					<>
-						<b className="font-semibold">{s.name}</b>{" "}
-						{t(`services.status.${s.status}`)}
-						{s.restarts > 0 &&
-							` · ${t("services.restarts", { count: s.restarts })}`}
-					</>
-				}
-			>
-				<button
-					type="button"
-					disabled={action.isPending}
-					onClick={() => action.mutate({ name: s.name, action: "restart" })}
-					className={`${FAULT_ACTION} text-accent-ink text-sm hover:bg-accent-soft`}
+			{pending ? (
+				<FaultLine
+					mark="pending"
+					message={
+						<>
+							{who} {t("panel.restarting")}
+						</>
+					}
 				>
-					{action.isPending ? (
-						<Spinner size={13} />
-					) : (
-						<Icon name="restart" size={15} weight="bold" aria-hidden />
-					)}
-					{t("panel.restart")}
-				</button>
-				<button
-					type="button"
-					onClick={() => setLog(true)}
-					className={`${FAULT_ACTION} text-muted text-sm hover:bg-hover hover:text-fg`}
+					{logButton}
+				</FaultLine>
+			) : step === "recovered" ? (
+				<FaultLine
+					mark="ok"
+					message={
+						<>
+							{who} <span className="text-ok-ink">{t("panel.recovered")}</span>
+						</>
+					}
+				/>
+			) : step === "failed" ? (
+				<FaultLine
+					title={s.error}
+					message={
+						<>
+							{who}{" "}
+							<span className="font-medium text-err">
+								{t("panel.stillFailing")}
+							</span>
+							{/* 结局是 failed 时「仍然失败」已经说了；未就绪、已停止要补一句 */}
+							{s.status !== "failed" &&
+								` · ${t(`services.status.${s.status}`)}`}
+						</>
+					}
 				>
-					{t("env.log")}
-				</button>
-			</FaultLine>
+					{restartButton}
+					{logButton}
+				</FaultLine>
+			) : (
+				<FaultLine
+					title={s.error}
+					message={
+						<>
+							{who} {t(`services.status.${s.status}`)}
+							{s.restarts > 0 &&
+								` · ${t("services.restarts", { count: s.restarts })}`}
+						</>
+					}
+				>
+					{restartButton}
+					{logButton}
+				</FaultLine>
+			)}
 			<div className="empty:hidden">
 				<ErrorText error={action.error} />
 			</div>
 			{log && (
 				<ServiceLogDialog
-					orbId={orbId}
-					name={s.name}
-					onClose={() => setLog(false)}
+					orbId={orb.id}
+					name={log}
+					onClose={() => setLog(null)}
 				/>
 			)}
 		</>
@@ -441,15 +586,13 @@ function OrbSection({ threadId }: { threadId: string }) {
 						)
 					)}
 				</div>
-				{services[0] ? (
-					<ServiceFault
-						key={`${orb.id}:${services[0].name}`}
-						orbId={orb.id}
-						service={services[0]}
-					/>
-				) : (
-					failedRun && <EnvFault orbId={orb.id} run={failedRun} />
-				)}
+				{/* 按 orb 而不是按服务挂载：重启的服务恢复后离开故障列表，提示行仍要把结果说完 */}
+				<FaultNotice
+					key={orb.id}
+					orb={orb}
+					faulty={services}
+					failedRun={failedRun}
+				/>
 				<OrbSpecs threadId={threadId} orb={orb} />
 			</InfoBlock>
 			{orb.state !== "deleted" && (

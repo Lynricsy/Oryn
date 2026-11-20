@@ -1037,7 +1037,10 @@
 		"ssh": "SSH 主机",
 		"faults_one": "{{count}} 项故障",
 		"faults_other": "{{count}} 项故障",
-		"restart": "重启"
+		"restart": "重启",
+		"restarting": "重启中…",
+		"recovered": "已恢复",
+		"stillFailing": "仍然失败"
 	},
 	"todo": {
 		"status": {
