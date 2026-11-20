@@ -288,11 +288,24 @@ func (s *Service) stopForRefreshLocked(t *thread) {
 			}
 			return
 		}
-		if (t.queueNeedsWake() || len(t.msgOrder) > 0) && !orbGoingDown(s.orbState(orbID)) {
-			s.wake(t.id, orbID)
-		}
+		s.wakeAfterRefreshLocked(t)
 		s.recompute(ctx, t)
 	})
+}
+
+// wakeAfterRefreshLocked 接续停止后仍排队的消息；调用方持有 t.mu。
+func (s *Service) wakeAfterRefreshLocked(t *thread) {
+	if t.stopping || t.orbID == "" {
+		return
+	}
+	if t.starting {
+		// 旧 start 的应答仍在途，立即唤醒会被挡掉。即使现在队列为空，也要等旧应答后重查。
+		t.wakeAfterStart = true
+		return
+	}
+	if (t.queueNeedsWake() || len(t.msgOrder) > 0) && !orbGoingDown(s.orbState(t.orbID)) {
+		s.wake(t.id, t.orbID)
+	}
 }
 
 // Archive 归档线程（等价于 PATCH {archived: true}；不算用户交互）。供定时的保留策略调用。

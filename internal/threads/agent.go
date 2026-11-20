@@ -184,6 +184,10 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 	defer func() {
 		t.mu.Lock()
 		t.starting = false
+		if t.wakeAfterStart {
+			t.wakeAfterStart = false
+			s.wakeAfterRefreshLocked(t)
+		}
 		t.mu.Unlock()
 	}()
 

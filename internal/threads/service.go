@@ -324,6 +324,8 @@ type thread struct {
 	forking  int
 	held     map[string][]apigen.LinkCtlEntriesAppendParams
 	starting bool
+	// wakeAfterStart 表示刷新停止已完成，但须等在途的旧 start 结束后再检查队列、唤醒新一代。
+	wakeAfterStart bool
 	// statusSinceStart 为真表示最近一次发起 agent.start 之后收到过 starting / ready（M21）：之后到达的「监督器结束」才属于
 	// 当前监督器，才注销 runner 线程的 SSH 公钥。旧监督器的 exited 由 orbd 在处理新 agent.start 之前发出，即使晚于其应答
 	// 到达，也排在新监督器的 starting / ready 之前——此时它为假，不误删新登记的公钥。agent.start 的应答带回的公钥等于
@@ -847,6 +849,7 @@ func (s *Service) handleOrbEvent(ctx context.Context, ev OrbEvent) {
 			t.orbID = ""
 			t.agent = nil
 			t.stopping = false
+			t.wakeAfterStart = false
 			t.agentStatus = apigen.AgentStatusNone
 			t.unsynced = false
 			s.resetLiveLocked(t)

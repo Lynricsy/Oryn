@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -17,6 +18,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/link"
+	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
@@ -632,6 +634,83 @@ func TestRefreshAgentStopsWhenPendingDrains(t *testing.T) {
 	f.s.onFrame(f.ctx, th, th.orbID, []byte(`{"type":"response","id":"internal-9","command":"get_state","success":true,"data":{}}`))
 	c := o.nextCall(t)
 	assert.Equal(t, "agent.stop", c.method)
+}
+
+// 旧 start 已命中原监督器，只是应答还在途；新的 start 必须等它应答后接手排队消息。
+func TestRefreshAgentDeliversAfterInFlightStart(t *testing.T) {
+	for _, when := range []string{"before stop reply", "after stop reply"} {
+		t.Run(when, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t, Config{})
+				o := newCtlOrbs(t, f.orbs)
+				o.features[orbs.FeatureCoordinator] = true
+				f.s.orbs = o
+				f.s.SetCoordinator(&fakeCoord{})
+				startReply, stopReply := make(chan struct{}), make(chan struct{})
+				releaseStart := sync.OnceFunc(func() { close(startReply) })
+				releaseStop := sync.OnceFunc(func() { close(stopReply) })
+				defer releaseStart()
+				defer releaseStop()
+				o.startHook = func() { <-startReply }
+				o.stopHook = func() error { <-stopReply; return nil }
+
+				orbID := f.orb("ready")
+				th := f.coordThread(orbID, KindAssistant, StateIdle)
+				old := fakeAgent(16)
+				attach(th, old, apigen.AgentStatusReady)
+				th.mu.Lock()
+				th.settled = true
+				th.mu.Unlock()
+				require.NoError(t, f.s.Wake(f.ctx, th.id))
+				require.Equal(t, "agent.start", o.nextCall(t).method)
+				f.s.RefreshAgent(f.ctx, th.id)
+				require.Equal(t, "agent.stop", o.nextCall(t).method)
+
+				ack := make(chan error, 1)
+				deliver := func() {
+					_, err := f.s.Deliver(f.ctx, th.id, AutoMessage{Text: "new profile"}, func(err error) { ack <- err })
+					require.NoError(t, err)
+				}
+				if when == "before stop reply" {
+					deliver()
+				}
+				f.s.onAgentStatus(f.ctx, orbID, json.RawMessage(`{"threadId":"`+th.id+`","status":"exited"}`))
+				releaseStop()
+				synctest.Wait() // 停止应答及其唤醒均已处理，旧 start 仍卡在应答上。
+				if when == "after stop reply" {
+					deliver()
+					synctest.Wait()
+				}
+				require.Empty(t, sent(old), "旧 agent 不应收到新消息")
+				releaseStart()
+				synctest.Wait()
+				select {
+				case call := <-o.reqCh:
+					require.Equal(t, "agent.start", call.method)
+				default:
+					t.Fatal("旧 start 应答后没有启动新一代，消息无人接手")
+				}
+
+				next := fakeAgent(16)
+				attach(th, next, apigen.AgentStatusReady)
+				f.s.onAgentStatus(f.ctx, orbID, json.RawMessage(`{"threadId":"`+th.id+`","status":"ready"}`))
+				for _, frame := range sent(next) {
+					typ, _, _ := frameHeader([]byte(frame))
+					if typ == "prompt" {
+						require.Contains(t, frame, "new profile")
+						f.respond(th, frame, true, "")
+					}
+				}
+				synctest.Wait()
+				select {
+				case err := <-ack:
+					require.NoError(t, err)
+				default:
+					t.Fatal("新 agent 没有接收并应答排队消息")
+				}
+			})
+		})
+	}
 }
 
 // 列表默认只有工作线程；kind=all 含协调对话；space 过滤；Thread.schedule 来自线程内定时。
