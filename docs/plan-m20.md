@@ -284,6 +284,8 @@ Do：
 - 页头段新增 `h-drag`（放在 `h-closed` 之后）：在线程页按住拖到 0.55 × 侧栏宽；测试断言原生侧栏钮的 `minX` 与 `lead.x + dx` 相差 ≤ 3pt；脚本断言页头行在 `edge + 6` 右侧的区域等于 `h-native` 同一行平移 `dx`（沿用 `check` 的 b-x 参数，±2pt）；松手后 `expectShifted(by: sinkW)`，再点卡片条关上。
 Accept：PR 的 `gh pr checks <PR>` 显示 `ios-check` 通过；Step Summary 里底栏、页头、图标三段全部 `[OK]`，含 `h-drag`；产物 `ios-screenshot` 里有 `e2e/.complete`。
 
+排查 `h-menu`：debug 包带 `ORYN_E2E_URL` 启动时，`e2e/header-events.jsonl` 的 `header.hit` 记录实际触点、宿主是否接管及 UIKit 命中目标。该日志不进网页，也不代替真实点击、原生菜单可见或 `header.event` 断言。
+
 ### 步骤 4.2 — 文档
 
 Depends on：4.1（写的是已验证的行为）。

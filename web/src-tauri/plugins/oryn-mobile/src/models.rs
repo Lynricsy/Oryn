@@ -470,6 +470,12 @@ pub enum Event {
         #[serde(default)]
         id: Option<String>,
     },
+    /// iOS 端到端调试：触摸在页头宿主坐标里的命中结果，不转发给网页。
+    HeaderHit {
+        x: f64,
+        y: f64,
+        info: String,
+    },
     /// 根滚动的轨迹（iOS，`SinkFollow`）：`op` 为 start / jump / noop / busy / done / cancel（程序化开合），
     /// 或 move（不是程序化开合、也不是手指与惯性造成的位移，带 `stack` 调用栈，查卡片被谁挪走）；
     /// `x` 是当时的 contentOffset.x、`to` 是目的地（move 为位移后的位置）。只供 debug 包的事件日志（CI 端到端）。

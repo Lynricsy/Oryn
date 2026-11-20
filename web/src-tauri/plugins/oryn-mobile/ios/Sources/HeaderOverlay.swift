@@ -19,6 +19,8 @@ final class HeaderHostView: UIView {
   /// 控件层的水平位移。
   var dx: CGFloat = 0
   var onEscape: () -> Bool = { false }
+  /// 仅模拟器端到端启用：观测真实触摸走到宿主后如何命中。
+  var onHit: ((CGPoint, String) -> Void)?
 
   /// 这个点上的触摸归不归原生层。菜单没开时只有三件矩形之内为真。
   func captures(_ point: CGPoint) -> Bool {
@@ -28,8 +30,16 @@ final class HeaderHostView: UIView {
 
   override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
     // 归原生的点：交给 SwiftUI；它没接住（透明处）也不漏给网页
-    guard captures(point) else { return nil }
-    return super.hitTest(point, with: event) ?? self
+    let accepts = captures(point)
+    let hit = accepts ? super.hitTest(point, with: event) : nil
+    if let onHit, event?.type == .touches {
+      let target = hit.map { String(describing: type(of: $0)) } ?? "nil"
+      let info = "accepts=\(accepts) target=\(target) dx=\(dx) passive=\(passive) "
+        + "shown=\(shown) hidden=\(isHidden) alpha=\(alpha) modal=\(modal)"
+      // 不在 UIKit 的命中遍历中跨插件边界。
+      DispatchQueue.main.async { onHit(point, info) }
+    }
+    return accepts ? (hit ?? self) : nil
   }
 
   /// 读屏的「退出」手势（双指搓）：子页 → 主页 → 收起。
@@ -135,6 +145,10 @@ final class HeaderOverlay {
     // 不可见时不开（alpha 0 的页头上挂出菜单会整屏挡住网页）
     guard open == nil || host.shown else { return }
     model.setOpen(open, page: page, report: false)
+  }
+
+  func traceHits(_ onHit: @escaping (CGPoint, String) -> Void) {
+    host.onHit = onHit
   }
 
   /// 屏幕中心与三件控件中心的触摸是否归原生层（与 hitTest 同一条规则）。

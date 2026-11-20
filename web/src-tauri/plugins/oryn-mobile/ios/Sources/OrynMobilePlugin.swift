@@ -28,6 +28,8 @@ class OrynMobilePlugin: Plugin {
   private var header: AnyObject?
   /// `SinkFollow`（iOS 26+）；同上按 AnyObject 存，只在主线程读写。
   private var sink: AnyObject?
+  /// 只在 debug 的端到端启动中记录实际触摸；主线程配置。
+  private var traceHeaderHits = false
 
   @objc public override func load(webview: WKWebView) {
     self.webview = webview
@@ -92,6 +94,7 @@ class OrynMobilePlugin: Plugin {
   /// 建跟随；`trace` 时才装轨迹回调（debug 包）：没装时 SinkFollow 的 KVO 不取调用栈、不发事件。
   private func ensureSink(trace: Bool) {
     guard #available(iOS 26.0, *), let webview = self.webview, sink == nil else { return }
+    traceHeaderHits = trace && ProcessInfo.processInfo.environment["ORYN_E2E_URL"] != nil
     let follow = SinkFollow(webview: webview) { [weak self] dx in self?.follow(dx) }
     if trace {
       follow.onTrace = { [weak self] op, x, to, stack in
@@ -238,6 +241,13 @@ class OrynMobilePlugin: Plugin {
         if let menu = menu { data["menu"] = menu }
         if let id = id { data["id"] = id }
         self?.trigger("event", data: data)
+      }
+      if traceHeaderHits {
+        bar.traceHits { [weak self] point, info in
+          self?.trigger("event", data: [
+            "type": "headerhit", "x": Double(point.x), "y": Double(point.y), "info": info,
+          ])
+        }
       }
       header = bar
       bar.follow(dx: currentDx)

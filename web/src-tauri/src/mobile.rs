@@ -501,6 +501,10 @@ mod ios {
                     host::emit(&handle, detail);
                 }
             }
+            #[cfg(debug_assertions)]
+            Event::HeaderHit { x, y, info } => {
+                eventlog::log("header.hit", json!({"x": x, "y": y, "info": info}));
+            }
             // 仅 debug：根滚动的轨迹（CI 端到端据此区分「原生动画晚起步 / 没跑」与「被拉回」，move 带调用栈查卡片被谁挪走）；
             // 发布包不写
             #[cfg(debug_assertions)]
@@ -798,8 +802,11 @@ mod android {
                     recreate_main(&app);
                 }
             }
-            // 底栏、页头与根滚动轨迹是 iOS 插件事件，Kotlin 不发。
-            Event::TabBar { .. } | Event::Header { .. } | Event::Sink { .. } => {}
+            // 这些是 iOS 插件事件，Kotlin 不发。
+            Event::TabBar { .. }
+            | Event::Header { .. }
+            | Event::HeaderHit { .. }
+            | Event::Sink { .. } => {}
         }
     }
 
