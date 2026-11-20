@@ -358,6 +358,7 @@ R1 → 3.2、4.1（`drag`、`h-drag`）。R2 → 2.1、2.2、3.1、4.1。R3 → 
 - 阶段 1 证明了 CSS 吸附能承接手指拖动，但阶段 4 发现它不能与程序化开合可靠共存。相同提交 `4c6ced6` 的两次 iOS 取样一红一绿：run `44751816572` 重跑在 `final` 失败，原生关到 `x=320` 后出现 `move 320→0`，再由网页请求一步落回；run `44756314532` 没有回弹。WebKit `safari-7622-branch` 的 `WKWebViewIOS.mm`（`_updateVisibleContentRects`）会调度一步回到旧吸附点，而主框架的吸附索引在手指松手时更新。失败的原生调用栈形状与这条路径吻合。网页切换 `scroll-snap-type` 不等待 UI 进程应用，恢复后还可能读到旧索引，因此不保留这条吸附路径。
 - 步骤 2.2 与 3.2 改用 C1：`SinkFollow` 的外部 `UIScrollViewDelegate` 只改横向落点，UIKit 仍处理拖动与减速，WebKit 仍处理内部代理。快甩按方向（`|v| > 0.3 pt/ms`），其余取近端。删根 CSS 吸附与网页切换吸附的逻辑，保留 C2 的逐帧程序化开合、原生同帧跟随、历史恢复守卫与 bridge 8 契约。Chromium 浏览器脚本只代做 iOS 宿主的松手落点；实际落点由模拟器的 `drag`、`h-drag` 和 `final` 验证。
 - 步骤 4.1 须从对应 PR 运行下载 `ios-screenshot`，确认 `e2e/.complete` 存在。run `44766975907` 下载后有 `header/.complete` 与 `e2e/e2e-h-drag.png`，端到端最后的 `appicon.set（default）` 超时，下载产物没有 `e2e/.complete`；该次不算通过。
+- [run 44819850705](https://github.com/Lynricsy/Oryn/actions/runs/44819850705/job/136577701833) 的 `appicon.xcresult` 录屏确认：XCTest 记下点了第二个 `OK`，但该提示随后一直留在屏幕上。图标用例在原有截止时间内，只有系统按钮仍在且可点击时才再次点按；仍以原生成功事件 `accent,default` 和 `e2e/.complete` 为准。
 - 补齐回弹断言：C1 的网页守卫能直接用 `scrollTo` 拉回，不会再留下原生 `jump` / `start`。`no_bounce` 也检查到位后从终点离开超过 1pt 的 `move`。旧失败 run `44751816572` 的 `events.jsonl:26–27` 去掉后续 `jump` 后仍被拒绝；C1 成功 run `44774441275` 的 `open`、`closed`、`final` 轨迹通过同一谓词。
 - 初始化关闭基线要等原生根滚动到位再连拍。失败 run `44785123524` 中底栏先接管，根过了约 22 秒才滚到关闭端；过早采的 `closed0` 实际仍露出底栏，不能作为像素对照。
 
