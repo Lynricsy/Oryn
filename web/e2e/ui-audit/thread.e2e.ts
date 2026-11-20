@@ -320,18 +320,44 @@ overlay(
 		await msg.click({ button: "right", position: { x: 20, y: 8 } });
 		return undefined;
 	},
-	{ noReopen: true },
+	// 正文没有 data-ctx-touch，触屏长按正文不出菜单（留给系统选字）；手机的动作面板见 thread.tool-context-menu
+	{ only: "desktop", noReopen: true },
 );
 
 overlay(
 	"thread.tool-context-menu",
-	async (p) => {
+	async (p, info) => {
 		await scrollTranscript(p, 0.3);
-		const card = p.locator("[data-testid=transcript] .tv-card").first();
-		await card.click({ button: "right" });
-		return undefined;
+		const head = p
+			.locator("[data-testid=transcript] .tv-head[data-ctx-touch]")
+			.first();
+		await head.scrollIntoViewIfNeeded();
+		if (!isMobile(info)) {
+			await head.click({ button: "right" });
+			return p.getByTestId("context-menu");
+		}
+		// 手机：真实触摸长按（CDP 触摸事件，Chromium 由此派发 pointerType=touch），按住到动作面板出现再松手
+		const box = await head.boundingBox();
+		if (!box) throw new Error("工具卡头不在视口里");
+		const x = box.x + box.width / 2;
+		const y = box.y + box.height / 2;
+		const cdp = await p.context().newCDPSession(p);
+		await cdp.send("Input.dispatchTouchEvent", {
+			type: "touchStart",
+			touchPoints: [{ x, y }],
+		});
+		const sheet = p.getByTestId("context-sheet");
+		await sheet.waitFor({ state: "visible" });
+		await cdp.send("Input.dispatchTouchEvent", {
+			type: "touchEnd",
+			touchPoints: [],
+		});
+		await cdp.detach();
+		// 浮层根取带圆角的面板（role=menu），不是铺满全屏的外层
+		return sheet.getByRole("menu");
 	},
-	{ path: ZOO, only: "desktop", noReopen: true },
+	// 桌面右键浮动菜单；手机长按工具卡头出底部动作面板
+	{ path: ZOO, noReopen: true },
 );
 
 // ---------------------------------------------------------------- 输入坞

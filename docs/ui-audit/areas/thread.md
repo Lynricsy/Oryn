@@ -32,8 +32,8 @@ mock 线程：主线程 `MAIN_THREAD`（长回复、表格、时序图、公式�
 | `thread.quote` | 选区引用胶囊（桌面贴选区）/ 引用条（触屏贴托盘） | 选中助手正文 | 浮动胶囊 |
 | `thread.side-ask` | 解释浮卡（SideAskCard；手机是对话框） | 选区胶囊 →「解释」 | 浮卡 / 弹窗 |
 | `thread.message-menu` | 消息操作菜单（复制 / 引用 / 分叉 / 加标签） | 悬停用户消息 →「⋯」 | 菜单 |
-| `thread.context-menu` | 转录右键菜单（手机长按动作面板） | 右键 / 长按助手正文 | 菜单 / 动作面板 |
-| `thread.tool-context-menu` | 工具卡右键菜单（仅桌面；手机同一套动作在长按面板里，见上一项） | 右键工具卡 | 菜单 |
+| `thread.context-menu` | 转录右键菜单（仅桌面；正文没有 `data-ctx-touch`，手机长按正文留给系统选字） | 右键助手正文 | 菜单 |
+| `thread.tool-context-menu` | 工具卡右键菜单（桌面）/ 长按动作面板（手机，`context-sheet`） | 右键工具卡 / 长按工具卡头 | 菜单 / 动作面板 |
 | `thread.slash` | 斜杠命令菜单（CommandMenu） | 输入框键入 `/` | 下拉（坞上方） |
 | `thread.slash.usage` | 命令用法卡（`/goal ` 之后） | 键入 `/goal ` | 下拉（坞上方） |
 | `thread.ref-menu` | GitHub issue / PR 引用菜单（RefMenu） | 键入 `#log` | 下拉（坞上方） |
@@ -87,4 +87,4 @@ mock 线程：主线程 `MAIN_THREAD`（长回复、表格、时序图、公式�
 | 14 | `thread.dlg.attachments`（m390） | 手机上附件行很散：文件名、「2 KB」徽标、日期各占一行，日期本身折行；「撤回 / 下载 / 删除」挤在右侧，下面又单独一行「已公开」与复制图标 | 设计 | `shots/thread.dlg.attachments/m390-light-before.png` | d92f941（第一行文件名截断；第二行「2 KB · 11月21日 00:56 · 已公开」合成一行，日期用 Intl 短格式、完整时间在悬停提示；操作在窄屏另起一行与文字左缘对齐，桌面仍在右侧） |
 | 15 | `thread.dlg.attachments` | mock 只有一个附件、名字很短，长文件名截断和多行排版暴露不出来 | 设计 | — | d92f941（mock 补三个附件：超长英文文件名的图片、JSON、超长中文名的 12 MB PDF，均未发布） |
 | 16 | `thread.tools.mid`（及 assistant 区 `assistant.thread`，m390 最明显） | #4 把显隐透明度挪到按钮后，回合中间消息右上角的浮动槽仍常显底色与描边，按钮透明时留下一个空描边小方块压在正文上（SectionsAudit 发现） | 错乱 | `shots/assistant.thread/m390-light-after.png` | 9681c55（底色描边画在按钮上，随按钮显隐；槽位只定位） |
-| 17 | `thread.context-menu`（m390） | 用例报菜单超出视口（0,844 → 208,982） | 错乱（工具误报） | — | 不修：用例问题。合成的 `contextmenu` 事件没有坐标（菜单 left/top 为 NaN，退回静态位置），取的段落还在视口上方（y≈-450）。用例改为先滚进视口再真实右键；真实长按与右键都带坐标，ContextMenu 的夹视口逻辑正常 |
+| 17 | `thread.context-menu`（m390） | 用例报菜单超出视口（0,844 → 208,982） | 错乱（工具误报） | — | 不修：用例问题。合成的 `contextmenu` 事件没有坐标（菜单 left/top 为 NaN，退回静态位置），取的段落还在视口上方（y≈-450）。正文本就没有 `data-ctx-touch`，手机长按正文不出菜单，所以这项改为仅桌面、真实右键；手机动作面板改由 `thread.tool-context-menu` 用 CDP 真实触摸长按工具卡头、等 `context-sheet` 出现后再截图 |
