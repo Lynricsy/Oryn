@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -52,6 +53,7 @@ func ensureCore(ctx context.Context, home string, rel core.Release, client *http
 	bin := filepath.Join(dir, "omp")
 	if got, err := fileSHA256(bin); err == nil && got == want {
 		pruneCoreTags(root, rel.Tag)
+		slog.Info("orbd: 使用已缓存的 Oryn Core", "tag", rel.Tag, "platform", plat, "path", bin)
 		return bin, nil
 	}
 	base := strings.TrimRight(os.Getenv(coreBaseURLEnv), "/")
@@ -59,11 +61,13 @@ func ensureCore(ctx context.Context, home string, rel core.Release, client *http
 		base = "https://github.com/" + rel.Repo + "/releases/download"
 	}
 	url := base + "/" + rel.Tag + "/omp-" + plat
+	slog.Info("orbd: 下载 Oryn Core", "tag", rel.Tag, "platform", plat, "url", url)
 	if err := downloadCore(ctx, client, url, dir, bin, want); err != nil {
 		return "", fmt.Errorf("下载 Oryn Core 失败（%s）：%w；无法直连 GitHub 时设置 %s 指向镜像（<镜像>/%s/omp-%s）",
 			url, err, coreBaseURLEnv, rel.Tag, plat)
 	}
 	pruneCoreTags(root, rel.Tag)
+	slog.Info("orbd: Oryn Core 已下载并校验", "tag", rel.Tag, "platform", plat, "path", bin)
 	return bin, nil
 }
 

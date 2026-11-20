@@ -25,7 +25,8 @@ func TestSource(t *testing.T) {
 	r := Source()
 	assert.Regexp(t, `^[^/\s]+/[^/\s]+$`, r.Repo)
 	assert.Regexp(t, `^oryn-v`, r.Tag)
-	for _, k := range []string{"linux-x64", "linux-arm64"} {
+	// Runner（M21）按 corePlatform 取键：mac 上的 Runner 需要 darwin 的两项，缺了就启动失败
+	for _, k := range []string{"linux-x64", "linux-arm64", "darwin-arm64", "darwin-x64"} {
 		require.Contains(t, r.SHA256, k)
 		assert.Regexp(t, hex64, r.SHA256[k])
 	}
