@@ -760,6 +760,22 @@ describe("控制器", () => {
 		expect(s.shows().some((x) => x.dx === 0 && x.ms === SINK_MS)).toBe(false);
 	});
 
+	it("cardSettle 等过后确认卡片没有过渡（start 给 null）：原生直接就位，不发 260ms 吸附", async () => {
+		const s = await engaged();
+		s.header.cardDrag(0.5, 320, 0);
+		s.advance(16);
+		await flush();
+		s.api.show.mockClear();
+		let begin: (at: number | null) => void = () => {};
+		s.header.cardSettle(false, 320, false, new Promise((r) => (begin = r)));
+		s.advance(200);
+		begin(null);
+		await flush();
+		s.advance(0);
+		await flush();
+		expect(s.shows()).toEqual([{ ...REST, passive: true }, REST]);
+	});
+
 	it("松手吸附：取消待发的拖动帧，按吸附发；REST_MS 内再拖不恢复接触摸", async () => {
 		const s = await engaged();
 		s.header.cardDrag(0.3, 320, 0);

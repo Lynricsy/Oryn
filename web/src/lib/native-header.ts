@@ -432,7 +432,7 @@ export interface NativeHeader {
 	cardDrag(progress: number, width: number, velocity: number): void;
 	/**
 	 * 卡片吸附的终点（打开 = 左缘停在侧栏宽，关闭 = 0）：原生按同一时长、缓动与起步时刻跟过去。
-	 * `start`：卡片过渡实际起步的绝对时刻（Unix 毫秒，主线程卡住时会晚于预期；null = 没有过渡）。给了就等它再发，
+	 * `start`：卡片过渡实际起步的绝对时刻（Unix 毫秒，主线程卡住时会晚于预期；null = 确认卡片没有过渡，原生直接就位）。给了就等它再发，
 	 * 不给就按「现在 + NATIVE_LAG_MS」预计。关闭用它：卡片晚起步时原生跟着晚，不会先一步探到侧栏上。
 	 */
 	cardSettle(
@@ -670,9 +670,11 @@ export function createNativeHeader(
 			if (!next && !wasMoving) return;
 			moving = true;
 			const predicted = env.now() + NATIVE_LAG_MS;
-			const go = (begin: number | null) => {
+			// begin：卡片实际起步时刻；null 且 still = 等过了，卡片确实没有过渡（已在终点），原生直接就位
+			const go = (begin: number | null, still: boolean) => {
 				// 等起步时刻期间又吸附 / 起拖了：这条作废
 				if (seq !== settleSeq) return;
+				const jump = instant || still;
 				const from = begin ?? predicted;
 				// 静止的绝对截止 = 卡片起步 + 过渡 + 余量（REST_MS 已含 NATIVE_LAG_MS，从起步算要扣掉）；
 				// 换算成从现在起的剩余时长，等起步时刻花掉的时间不重复计
@@ -682,12 +684,10 @@ export function createNativeHeader(
 							moving = false;
 							place();
 						},
-						instant
-							? 0
-							: Math.max(0, from - NATIVE_LAG_MS + REST_MS - env.now()),
+						jump ? 0 : Math.max(0, from - NATIVE_LAG_MS + REST_MS - env.now()),
 					);
 				if (!want) return;
-				if (instant) {
+				if (jump) {
 					place();
 					return;
 				}
@@ -703,8 +703,12 @@ export function createNativeHeader(
 					at: from + (next ? -SYNC_BIAS_MS : SYNC_BIAS_MS),
 				});
 			};
-			if (start && !instant) start.then(go, () => undefined);
-			else go(null);
+			if (start && !instant)
+				start.then(
+					(at) => go(at, at === null),
+					() => undefined,
+				);
+			else go(null, false);
 		},
 		setCovered(next) {
 			// 卡片动着或开着时不判定：露出的卡片条上的关闭按钮压在页头位置上，那不是遮挡；静止后由下一次探测补上

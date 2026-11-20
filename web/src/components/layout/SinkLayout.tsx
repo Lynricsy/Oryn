@@ -154,7 +154,8 @@ export function SinkLayout({
 	}).current;
 	useEffect(() => () => window.clearTimeout(revealTimer.current), []);
 	// 卡片 translate 过渡实际起步的绝对时刻（Unix 毫秒）：transitionrun 在样式重算时触发（主线程被路由渲染占住时会晚于预期），
-	// 加上接管时的 transition-delay；200ms 内没有过渡（终点没变、减少动效）给 null，控制器按预计时刻走
+	// 加上接管时的 transition-delay。200ms 还没收到就直接查卡片身上的过渡（主线程卡住时定时器可能先于事件派发）；
+	// 确实没有过渡（终点没变）才给 null，控制器让原生直接就位
 	const cardStart = useRef((): Promise<number | null> => {
 		const card = cardRef.current;
 		if (!card) return Promise.resolve(null);
@@ -169,7 +170,22 @@ export function SinkLayout({
 				const lag = card.hasAttribute("data-native-head") ? NATIVE_LAG_MS : 0;
 				done(performance.timeOrigin + e.timeStamp + lag);
 			};
-			const timer = window.setTimeout(() => done(null), 200);
+			const onTimeout = () => {
+				const run = card.getAnimations?.()?.find(
+					// 不用 instanceof CSSTransition：旧 WebView / jsdom 没有这个全局
+					(a) =>
+						(a as Partial<CSSTransition>).transitionProperty === "translate",
+				);
+				if (!run) return done(null);
+				const t0 =
+					typeof run.startTime === "number" ? run.startTime : performance.now();
+				done(
+					performance.timeOrigin +
+						t0 +
+						Number(run.effect?.getTiming().delay ?? 0),
+				);
+			};
+			const timer = window.setTimeout(onTimeout, 200);
 			card.addEventListener("transitionrun", onRun);
 		});
 	}).current;
@@ -232,7 +248,7 @@ export function SinkLayout({
 		const w = sinkWidth(sideRef.current);
 		revealSink(open, w, reduce);
 		nativeHeader.cardSettle(open, w, reduce, reduce ? undefined : cardStart());
-	}, [open, reduce]);
+	}, [open, reduce, revealSink, cardStart]);
 
 	useEffect(() => {
 		const onResize = () => {
@@ -242,7 +258,7 @@ export function SinkLayout({
 		};
 		window.addEventListener("resize", onResize);
 		return () => window.removeEventListener("resize", onResize);
-	}, []);
+	}, [revealSink]);
 
 	// 原生底栏接管：页面透明、侧栏列表在底栏那一条渐隐（index.css 的 `:root[data-native-under]`）
 	useLayoutEffect(() => {
@@ -405,7 +421,7 @@ export function SinkLayout({
 			card.removeEventListener("touchend", end);
 			card.removeEventListener("touchcancel", end);
 		};
-	}, []);
+	}, [revealSink, cardStart]);
 
 	return (
 		<div className="sink-root relative h-dvh w-full overflow-hidden text-fg">
