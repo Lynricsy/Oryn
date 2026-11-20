@@ -177,6 +177,30 @@ describe("开关", () => {
 		expect(document.activeElement).toBe(opener);
 	});
 
+	it("触屏上关闭后不把焦点还原到输入框（会弹软键盘）；有鼠标的设备照常还原", () => {
+		const media = (coarse: boolean) => (q: string) => ({
+			matches: coarse && q === "(pointer: coarse)",
+			addEventListener: () => {},
+			removeEventListener: () => {},
+		});
+		vi.stubGlobal("matchMedia", media(true));
+		const first = mount();
+		const field = screen.getByTestId("field");
+		field.focus();
+		act(() => uiStore.getState().setSidebar(true));
+		act(() => uiStore.getState().setSidebar(false));
+		expect(document.activeElement).not.toBe(field);
+		first.unmount();
+
+		vi.stubGlobal("matchMedia", media(false));
+		mount();
+		const again = screen.getByTestId("field");
+		again.focus();
+		act(() => uiStore.getState().setSidebar(true));
+		act(() => uiStore.getState().setSidebar(false));
+		expect(document.activeElement).toBe(again);
+	});
+
 	it("Esc 与点露出的卡片条关闭；关闭时弹掉历史标记", () => {
 		const back = vi.spyOn(window.history, "back").mockImplementation(() => {});
 		mount();

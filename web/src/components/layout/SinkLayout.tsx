@@ -12,7 +12,8 @@
  *   跟手（按位移插值进度），松手按速度 / 位置吸附（`settleSink`）。
  * - Esc 与返回键关闭：打开时压入一条带标记的历史记录，返回键弹出它即关闭；其它方式关闭时自己 `history.back()` 弹掉；
  *   在侧栏里点链接导航后标记留在栈里，日后返回落到它上面时自动再退一步。
- * - 打开时卡片 `inert`（不可点、读屏忽略），侧栏获得焦点；关闭后焦点还原到打开前的元素。
+ * - 打开时卡片 `inert`（不可点、读屏忽略），侧栏获得焦点；关闭后焦点还原到打开前的元素。触屏上不还原到输入框
+ *   （关闭那一下是用户手势，聚焦输入框会弹出软键盘；原生侧栏钮不夺网页焦点，打开前的焦点常是首页的输入框）。
  * - `prefers-reduced-motion`：不做过渡，直接切换。
  * - iOS 原生底栏（`lib/native-tab-bar.ts`）浮在 WebView 之上、右缘裁到卡片左缘；iOS 原生页头（`lib/native-header.ts`）跟着卡片平移。
  *   两者同一套运动：拖动时逐帧把进度交给控制器（`drag` / `cardDrag`），松手与任何非手势开合只发终点（`settle` / `cardSettle`，
@@ -49,6 +50,9 @@ const DOMINANT = 1.5;
 /** 起手点在这些元素里时不接管：它们自己要横滑、拖选或编辑（代码块、表格、终端、同级标签条、输入框）。 */
 const OWN_GESTURE =
 	'pre, table, input, textarea, select, [contenteditable]:not([contenteditable="false"]), .cm-editor, .xterm, [data-testid="terminal-view"], [data-testid="thread-tabs"], [role="tablist"]';
+/** 会弹出软键盘的元素：触屏上关闭侧栏时不把焦点还原到它们。 */
+const TEXT_ENTRY =
+	'input, textarea, [contenteditable]:not([contenteditable="false"])';
 
 /**
  * 卡片中部起手的右滑是否该让给元素自己：命中 `OWN_GESTURE`，或从起手点到卡片之间有可横滚且没滚到最左的容器
@@ -228,7 +232,13 @@ export function SinkLayout({
 		}
 		const back = restore.current;
 		restore.current = null;
-		if (back?.isConnected) back.focus({ preventScroll: true });
+		if (!back?.isConnected) return;
+		if (
+			back.matches(TEXT_ENTRY) &&
+			window.matchMedia?.("(pointer: coarse)").matches
+		)
+			return;
+		back.focus({ preventScroll: true });
 	}, [open]);
 
 	useEffect(() => {
