@@ -61,18 +61,21 @@ export function ModelPickerBody({
 		<>
 			{roles}
 			{/* 思考级别在别处调（输入坞的圆圈、胶囊弹层的思考强度），这里只选模型 */}
-			<h3 className="mb-1 px-2 font-medium text-2xs text-faint">
-				{t("model.allModels")}
-			</h3>
-			{/* 桌面打开即可输入筛选；手机上不自动聚焦，免得软键盘把 role 列表挤出视野 */}
-			<TextInput
-				autoFocus={!compact}
-				aria-label={placeholder}
-				placeholder={placeholder}
-				value={q}
-				onChange={(e) => setQ(e.target.value)}
-				className="mb-2"
-			/>
+			{/* 标题与筛选框吸顶：模型几十个时滚到下面也随时能改筛选词；不透明底盖住滚过去的行（半透明会叠出重影，叠模糊又会在对话框淡入时被截断） */}
+			<div className="sticky top-0 z-10 bg-panel pt-1">
+				<h3 className="mb-1 px-2 font-medium text-2xs text-faint">
+					{t("model.allModels")}
+				</h3>
+				{/* 桌面打开即可输入筛选；手机上不自动聚焦，免得软键盘把 role 列表挤出视野 */}
+				<TextInput
+					autoFocus={!compact}
+					aria-label={placeholder}
+					placeholder={placeholder}
+					value={q}
+					onChange={(e) => setQ(e.target.value)}
+					className="mb-2"
+				/>
+			</div>
 			<ErrorText error={error ?? models.error} />
 			{models.isPending && (
 				<div className="flex items-center gap-2 px-2 py-3 text-muted text-sm">

@@ -227,6 +227,53 @@ const MOCK_CATALOG_MODELS: Schemas["CatalogModel"][] = [
 	mockCatalogModel("openrouter", "qwen/qwen3-max", "Qwen3 Max", "chat"),
 	mockCatalogModel("xai", "grok-5", "Grok 5", "chat", ["low", "high"]),
 	mockCatalogModel("typesafe", "jev-latest", "Jev", "chat"),
+	// 补足真实目录的规模（几十个对话模型）与长名称：选择器的筛选框、滚动、截断都在这种量下才看得出问题
+	mockCatalogModel("anthropic", "claude-haiku-5", "Claude Haiku 5", "chat"),
+	mockCatalogModel("openai", "gpt-6.1-mini", "GPT-6.1 Mini", "chat", [
+		"low",
+		"medium",
+		"high",
+	]),
+	mockCatalogModel("openai", "o7-pro", "o7 Pro", "chat", ["high", "xhigh"]),
+	mockCatalogModel(
+		"google",
+		"gemini-4-flash-lite",
+		"Gemini 4 Flash Lite",
+		"chat",
+	),
+	mockCatalogModel("mistral", "mistral-large-3", "Mistral Large 3", "chat"),
+	mockCatalogModel("mistral", "codestral-2611", "Codestral 2611", "chat"),
+	mockCatalogModel("moonshot", "kimi-k3-thinking", "Kimi K3 Thinking", "chat", [
+		"low",
+		"high",
+	]),
+	mockCatalogModel("zhipu", "glm-5.1-air", "GLM-5.1 Air", "chat"),
+	mockCatalogModel(
+		"openrouter",
+		"meta-llama/llama-5-405b-instruct-preview-2611",
+		"Llama 5 405B Instruct Preview (November 2026 snapshot)",
+		"chat",
+	),
+	mockCatalogModel("openrouter", "minimax/minimax-m3", "MiniMax M3", "chat"),
+	mockCatalogModel(
+		"bedrock",
+		"us.anthropic.claude-opus-5-5-v1:0",
+		"Claude Opus 5.5 (Bedrock us-east-1)",
+		"chat",
+	),
+	mockCatalogModel(
+		"vertex",
+		"gemini-4-carbon-001",
+		"Gemini 4 Carbon (Vertex)",
+		"chat",
+	),
+	mockCatalogModel("ollama", "qwen3-coder:32b", "Qwen3 Coder 32B", "chat"),
+	mockCatalogModel(
+		"lmstudio",
+		"deepseek-r3-distill-qwen-14b",
+		"DeepSeek R3 Distill Qwen 14B",
+		"chat",
+	),
 	mockCatalogModel("web", "exa", "Exa", "search"),
 	mockCatalogModel(
 		"openai",
