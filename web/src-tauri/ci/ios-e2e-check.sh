@@ -315,6 +315,11 @@ echo "胶囊：${frame}，侧栏宽 ${sink_w}，缩放 ${scale}"
 ok loaded "{\"frame\":$frame}"
 
 wait_req open 120
+# 测试在第一下轻点没效果（卡片没动）时会再点一次并回传 retry：照常断言，但在日志与 Step Summary 里留痕
+if jq -e '.retry == true' <<<"$req" >/dev/null; then
+  echo "::warning::打开：第一下轻点没有效果，测试重点了一次（点击前按钮矩形 $(jq -c '[.first, .second]' <<<"$req")）"
+  echo "- ⚠️ open：第一下轻点没有效果，重点一次" >>"$summary"
+fi
 until_ok open 15 "点侧栏按钮打开：sink.show（open）交给原生推进" sink_shown true
 no_bounce open
 steady_shot open

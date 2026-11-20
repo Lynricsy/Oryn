@@ -42,10 +42,20 @@ final class TabBarE2ETests: E2ECase {
     let sink = Sink(
       toggle: toggle, capsule: capsule, width: capsule.minX * 2 + capsule.width, home: toggle.frame.minX)
 
-    // 1. 点页头的侧栏按钮打开：胶囊矩形里是 UITabBar 的 4 个原生按钮，网页胶囊退出无障碍树（aria-hidden）
-    toggle.tap()
+    // 1. 点页头的侧栏按钮打开：胶囊矩形里是 UITabBar 的 4 个原生按钮，网页胶囊退出无障碍树（aria-hidden）。
+    //    CI 上偶有一次轻点完全没有效果（网页没发 sink.show，run 44736012739）：8 秒后按钮仍在无障碍树里、且仍在起始位置
+    //    （卡片根本没动；动了说明第一下生效了只是慢，再点会把它关回去）就再点一次。两次点击前的按钮矩形连同重试回传给脚本，
+    //    脚本记 ::warning::，不让偶发吞点击静默通过
+    let before = sink.toggle.frame
+    sink.toggle.tap()
+    var retry: [String: Any] = [:]
+    _ = poll(timeout: 8) { !sink.toggle.exists }
+    if sink.toggle.exists, abs(sink.toggle.frame.minX - sink.home) <= 1 {
+      retry = ["retry": true, "first": "\(before)", "second": "\(sink.toggle.frame)"]
+      sink.toggle.tap()
+    }
     _ = try expectSink(app, sink, open: true, "打开")
-    _ = try checkpoint("open")
+    _ = try checkpoint("open", retry)
 
     // 2. 轻点露出的卡片条关闭：卡片重新盖住垫底的原生底栏
     point(app, screen.width - 16, screen.height / 2).tap()
