@@ -37,7 +37,7 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	binDir = dir
-	for _, c := range []string{"orbd", "fakeomp", "fakedesk", "orynd"} {
+	for _, c := range []string{"orbd", "fakeomp", "fakedesk", "orynd", "fakeapp", "oryn"} {
 		out, err := exec.Command("go", "build", "-o", filepath.Join(dir, c), "../../cmd/"+c).CombinedOutput()
 		if err != nil {
 			panic(fmt.Sprintf("构建 %s 失败: %v\n%s", c, err, out))

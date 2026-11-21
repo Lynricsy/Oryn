@@ -3,13 +3,11 @@ package server
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
@@ -22,25 +20,6 @@ import (
 // M14 步骤 1.6：orb 里的 agent 经 orbd.sock 的 artifact.call 建 artifact（扩展工具与 `oryn artifact call` 走同一条路），
 // 控制面经 library.fetch 取回 source 的字节。
 
-var (
-	orynBinOnce sync.Once
-	orynBinPath string
-	orynBinErr  error
-)
-
-// orynBin 构建一次 cmd/oryn（只有本文件的用例需要，不放进 TestMain）。
-func orynBin(t *testing.T) string {
-	t.Helper()
-	orynBinOnce.Do(func() {
-		orynBinPath = filepath.Join(binDir, "oryn")
-		if out, err := exec.Command("go", "build", "-o", orynBinPath, "../../cmd/oryn").CombinedOutput(); err != nil {
-			orynBinErr = fmt.Errorf("构建 oryn 失败: %v\n%s", err, out)
-		}
-	})
-	require.NoError(t, orynBinErr)
-	return orynBinPath
-}
-
 type artifactCallOut struct {
 	Text    string         `json:"text"`
 	Details map[string]any `json:"details"`
@@ -51,7 +30,7 @@ func artifactCall(t *testing.T, home, threadID, op string, params any) artifactC
 	t.Helper()
 	p, err := json.Marshal(params)
 	require.NoError(t, err)
-	cmd := exec.Command(orynBin(t), "artifact", "call", op, "--params", string(p), "--json")
+	cmd := exec.Command(filepath.Join(binDir, "oryn"), "artifact", "call", op, "--params", string(p), "--json")
 	cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "ORYN_ORB=1", "ORYN_THREAD_ID=" + threadID}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
