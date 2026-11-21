@@ -60,7 +60,7 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 
 ## 工作台
 
-<sub>本页截图均由 `bun run shots:readme` 在 mock 模式下用演示数据生成，图中的线程、报告与数字（如基准耗时、成本）不是实测结果。</sub>
+<sub>本页截图均由 `bun run shots:readme` 在 mock 模式下用演示数据生成（手机三联来自 iOS 模拟器里的真实 App），图中的线程、报告与数字（如基准耗时、成本）不是实测结果。</sub>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/workbench-dark.png">
@@ -156,7 +156,7 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/mobile-views-dark.png">
-  <img alt="Oryn 移动端三联视图：下沉式侧栏与悬浮毛玻璃胶囊底栏、紧凑单栏对话与底部输入坞、右上角快捷视图切换菜单。" src="docs/assets/mobile-views-light.png" width="100%">
+  <img alt="iOS 模拟器里 Oryn App 的三张截图：打开的下沉式侧栏与系统液态玻璃底栏；线程页的原生页头（侧栏钮、标题胶囊、视图钮）与底部输入坞；新建线程页，点阵背景上的输入框与 role 胶囊。" src="docs/assets/mobile-views-light.png" width="100%">
 </picture>
 
 | 平台 | 形态 | 亮点 |
