@@ -95,11 +95,24 @@ func TestPreviewProbeStaleReleaseDropped(t *testing.T) {
 		_, _ = w.Write([]byte(previewPage))
 	}))
 	old := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
 	go func() {
 		defer close(old)
 		e.s.probePreview(e.ctx, "hello")
 	}()
-	<-entered
+	// 任何提前退出（require 失败）都先放行卡住的 handler 并等旧探测结束，httptest.Server.Close 才不会挂住
+	defer func() {
+		unblock()
+		<-old
+	}()
+	select {
+	case <-entered:
+	case <-old:
+		t.Fatal("旧探测没有发出请求就结束了")
+	case <-time.After(10 * time.Second):
+		t.Fatal("等旧探测的请求超时")
+	}
 
 	// 新 release 上线，它的探测先完成
 	a, err := e.st.Q.GetBoxAppByName(e.ctx, "hello")
@@ -115,7 +128,7 @@ func TestPreviewProbeStaleReleaseDropped(t *testing.T) {
 	require.NoError(t, err)
 	e.clk.Add(time.Minute) // 旧探测若落库，preview_checked_at 会变
 
-	close(release)
+	unblock()
 	<-old
 	after, err := e.st.Q.GetBoxAppByName(e.ctx, "hello")
 	require.NoError(t, err)
