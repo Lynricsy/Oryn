@@ -79,6 +79,9 @@ type stubOrbs struct {
 	poolOrb string
 	// feats 是 Features 报告的特性（按 orb id；种类同 nopOrbs 恒为 orb）。
 	feats map[string][]string
+	// boxStopped 是 BoxStopped 报告的结果（按 orb id）；wakeErr 是 Wake 的返回值。
+	boxStopped map[string]bool
+	wakeErr    error
 }
 
 func (o *stubOrbs) Features(orbID string) (string, []string) {
@@ -102,7 +105,16 @@ func (o *stubOrbs) ClaimPool(ctx context.Context, p OrbCreate) (db.Orb, bool) {
 
 func (o *stubOrbs) Wake(_ context.Context, id string) error {
 	o.wakes <- id
-	return nil
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.wakeErr
+}
+
+// BoxStopped 报告 boxStopped 里登记的结果（M23 box 闸门）。
+func (o *stubOrbs) BoxStopped(_ context.Context, id string) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.boxStopped[id]
 }
 
 func (o *stubOrbs) Create(ctx context.Context, p OrbCreate) (db.Orb, error) {
@@ -126,7 +138,7 @@ func (o *stubOrbs) DeleteUnused(ctx context.Context, id, except string) (bool, e
 	if err != nil {
 		return false, err
 	}
-	if orbs.IsRunner(orb) || orb.Coordinator || orb.Computer != 0 {
+	if orbs.IsRunner(orb) || orb.Coordinator || orb.Computer != 0 || orb.Box != 0 {
 		return false, nil
 	}
 	n, err := o.st.Q.CountOtherThreadsByOrb(ctx, db.CountOtherThreadsByOrbParams{OrbID: id, ExceptID: except})

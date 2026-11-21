@@ -1036,12 +1036,17 @@ func (s *Service) Fork(ctx context.Context, srcID string, entryID *string, env s
 		// runner 线程（M11b）：子线程在同一工作目录里继续，worktree 仍归源线程（不继承）
 		Cwd: row.Cwd,
 	}
+	// 源 orb 读一次（读不到时按普通 orb 处理）：runner 与 box 的线程只能共用 fork
+	o, oerr := s.st.Q.GetOrb(ctx, orbID)
 	switch env {
 	case "share":
 		return s.forkShare(ctx, src, child, orbID, entry)
 	case "copy":
-		if o, err := s.st.Q.GetOrb(ctx, orbID); err == nil && orbs.IsRunner(o) {
+		if oerr == nil && orbs.IsRunner(o) {
 			return apigen.Thread{}, errf(CodeRunnerUnsupported, "a runner thread can only be forked with env=share")
+		}
+		if oerr == nil && o.Box == 1 {
+			return apigen.Thread{}, errf(CodeBoxUnsupported, "threads on a box cannot be forked with a copied environment; fork with env=share")
 		}
 		// 只有显式给了 entryId 才在副本上再 fork；否则副本即完整会话
 		forkAt := ""

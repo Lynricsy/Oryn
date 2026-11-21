@@ -1222,6 +1222,11 @@ func (s *Service) command(ctx context.Context, threadID string, frame json.RawMe
 		t.mu.Unlock()
 		return nil, err
 	}
+	if err := s.boxStoppedLocked(ctx, orbID); err != nil {
+		// 停着的 box 不受理命令：消息不进队列（后台唤醒会被闸门挡下，命令只会一直挂着）
+		t.mu.Unlock()
+		return nil, err
+	}
 	p := &pendingCmd{cmdType: cmdType, reply: reply, id: id, origin: origin, tag: tag}
 	if cmdType == "switch_leaf" || cmdType == "navigate_tree" {
 		p.leafBefore = copyStr(t.leaf)
@@ -1414,6 +1419,10 @@ func (s *Service) commandWithAttachments(ctx context.Context, t *thread, cmdType
 		return errf("no_orb", "thread has no orb")
 	}
 	orbID := t.orbID
+	if err := s.boxStoppedLocked(ctx, orbID); err != nil {
+		t.mu.Unlock()
+		return err
+	}
 	if err := s.startDeliveryLocked(t, frame, ids, &pendingCmd{cmdType: cmdType, reply: reply}, false, s.cfg.CallTimeout); err != nil {
 		t.mu.Unlock()
 		return err
@@ -1648,10 +1657,25 @@ func (s *Service) wake(threadID, orbID string) {
 		if err := s.orbs.Wake(ctx, orbID); errors.Is(err, orbs.ErrRunnerOffline) {
 			// runner 离线：命令留在队列里，runner 重新接入（→ ready）时由 orb 事件触发启动并按序下发
 			slog.Debug("threads: runner 离线，命令排队等它重连", "thread", threadID, "orb", orbID)
+		} else if errors.Is(err, orbs.ErrBoxStopped) {
+			// box 被停下：启动后 orb 回到 ready，由 orb 事件触发启动
+			slog.Debug("threads: box 已停止，等它启动", "thread", threadID, "orb", orbID)
 		} else if err != nil {
 			slog.Warn("threads: 唤醒 orb 失败", "orb", orbID, "err", err)
 		}
 	})
+}
+
+// boxStoppedMessage 是停着的 box 拒绝命令 / 唤醒时的说明。
+const boxStoppedMessage = "this box is stopped; start it from the Boxes page"
+
+// boxStoppedLocked 在 orb 不是 ready 且它是一台被闸门挡住的 box 时返回 box_stopped（M23）。只在 orb 不是 ready 时才查库：
+// 普通线程的每条命令不多一次读。调用方持有 t.mu。
+func (s *Service) boxStoppedLocked(ctx context.Context, orbID string) error {
+	if s.orbState(orbID) != orbStateReady && s.orbs.BoxStopped(ctx, orbID) {
+		return errf(CodeBoxStopped, boxStoppedMessage)
+	}
+	return nil
 }
 
 // scheduleStart 在后台启动线程的 agent。先同步把 agentStatus 标为 starting：从此刻到 startAgent 取得线程锁之间
@@ -1691,6 +1715,8 @@ func (s *Service) Wake(ctx context.Context, threadID string) error {
 	}
 	if err := s.orbs.Wake(ctx, orbID); errors.Is(err, orbs.ErrRunnerOffline) {
 		return errf(CodeRunnerOffline, "runner is offline; messages will be delivered when it reconnects")
+	} else if errors.Is(err, orbs.ErrBoxStopped) {
+		return errf(CodeBoxStopped, boxStoppedMessage)
 	} else if err != nil {
 		return err
 	}

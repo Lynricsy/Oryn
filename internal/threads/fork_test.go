@@ -38,7 +38,8 @@ func (nopOrbs) ClaimPool(context.Context, OrbCreate) (db.Orb, bool)        { ret
 func (nopOrbs) RunnerOrb(context.Context, string) (orbs.Runner, error) {
 	return orbs.Runner{}, orbs.ErrNotFound
 }
-func (nopOrbs) Features(string) (string, []string) { return orbs.KindOrb, nil }
+func (nopOrbs) Features(string) (string, []string)      { return orbs.KindOrb, nil }
+func (nopOrbs) BoxStopped(context.Context, string) bool { return false }
 
 // fork_from 在途时出现的新主会话文件（其产物）不得作为源线程的新会话入库，也不得移动源线程的叶子；
 // 同期出现的其它新文件在 fork 结束后补入库。

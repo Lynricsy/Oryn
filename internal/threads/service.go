@@ -70,6 +70,9 @@ type Config struct {
 	Memory MemoryStarter
 	// Projects 是项目级 omp 配置（M21：runner 线程的项目层随 agent.start 交付）；nil = 不交付。
 	Projects orbs.ProjectConfigs
+	// BoxThreadsChanged 在 box 的 orb 上建、共用 fork、删线程之后调用（M23：box 页的活动流与用量图都数线程，而在已经
+	// ready 的 orb 上增删线程不产生任何 orb 事件）；nil = 不通知。
+	BoxThreadsChanged func()
 }
 
 // DeliveredAttachment 是已投递到 orb 的附件（Path 为 orb 内绝对路径）。

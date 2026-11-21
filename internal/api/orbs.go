@@ -70,10 +70,22 @@ func (s *Server) orbView(r *http.Request, o db.Orb) (apigen.Orb, error) {
 	return v, nil
 }
 
+// rejectBoxOrb 在 id 是 box 的 orb 时回 409 orb_is_box 并返回 true（M23：box 的启停与删除只经 /api/v1/boxes）。
+func rejectBoxOrb(w http.ResponseWriter, r *http.Request, svc *orbs.Service, id string) bool {
+	if o, err := svc.Get(r.Context(), id); err == nil && o.Box == 1 {
+		WriteError(w, http.StatusConflict, "orb_is_box", "this orb is a box; use /api/v1/boxes")
+		return true
+	}
+	return false
+}
+
 // PauseOrb 实现 POST /api/v1/orbs/{id}/pause。
 func (s *Server) PauseOrb(w http.ResponseWriter, r *http.Request, id apigen.OrbIDPath) {
 	svc, ok := s.orbsSvc(w)
 	if !ok {
+		return
+	}
+	if rejectBoxOrb(w, r, svc, id) {
 		return
 	}
 	var req apigen.OrbPauseRequest
@@ -97,6 +109,9 @@ func (s *Server) ResumeOrb(w http.ResponseWriter, r *http.Request, id apigen.Orb
 	if !ok {
 		return
 	}
+	if rejectBoxOrb(w, r, svc, id) {
+		return
+	}
 	if o, err := svc.Get(r.Context(), id); err == nil && orbs.IsRunner(o) {
 		// runner 只能自己接入，没有可唤醒的环境
 		writeOrbErr(w, orbs.ErrRunnerUnsupported)
@@ -114,6 +129,9 @@ func (s *Server) ResumeOrb(w http.ResponseWriter, r *http.Request, id apigen.Orb
 func (s *Server) DeleteOrb(w http.ResponseWriter, r *http.Request, id apigen.OrbIDPath) {
 	svc, ok := s.orbsSvc(w)
 	if !ok {
+		return
+	}
+	if rejectBoxOrb(w, r, svc, id) {
 		return
 	}
 	if err := svc.Delete(r.Context(), id); err != nil {

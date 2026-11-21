@@ -32,6 +32,8 @@ func writeOrbErr(w http.ResponseWriter, err error) {
 		WriteError(w, http.StatusConflict, "conflict", err.Error())
 	case errors.Is(err, orbs.ErrRunnerOffline):
 		WriteError(w, http.StatusConflict, "runner_offline", "runner 不在线")
+	case errors.Is(err, orbs.ErrBoxStopped):
+		WriteError(w, http.StatusConflict, "box_stopped", "这台 box 已停止；去 Boxes 页启动它")
 	case errors.Is(err, orbs.ErrRunnerUnsupported):
 		WriteError(w, http.StatusConflict, "runner_unsupported", "runner 不支持该操作")
 	case errors.Is(err, orbs.ErrNoProvider), errors.Is(err, orbs.ErrBadType):
@@ -53,6 +55,8 @@ func writeOrbHTTPErr(w http.ResponseWriter, err error, bg bool) {
 		WriteError(w, http.StatusConflict, "orbd_outdated", "该 orb 的 orbd 版本过旧，不支持此功能；新建线程即可")
 	case errors.Is(err, orbs.ErrRunnerOffline):
 		WriteError(w, http.StatusConflict, "runner_offline", "runner 不在线；它重新连接后再试")
+	case errors.Is(err, orbs.ErrBoxStopped):
+		WriteError(w, http.StatusConflict, "box_stopped", "这台 box 已停止；去 Boxes 页启动它")
 	case errors.Is(err, orbs.ErrOrbNotReady) && bg:
 		WriteError(w, http.StatusConflict, "orb_not_ready", err.Error())
 	case errors.Is(err, orbs.ErrOrbNotReady):

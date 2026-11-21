@@ -72,6 +72,8 @@ var (
 	ErrNoProvider = errors.New("orbs: no provider")
 	// ErrBadType 表示 orb 类型无效。
 	ErrBadType = errors.New("orbs: invalid orb type")
+	// ErrBoxStopped 表示这台 box 被主人或时段停下（M23 闸门），Wake 不唤醒它。
+	ErrBoxStopped = errors.New("orbs: box is stopped")
 )
 
 // Event 是 orb 状态或 link 变化通知。
@@ -139,6 +141,8 @@ type CreateParams struct {
 	GithubIdentity string
 	// Automation 为真时新 orb 标为全自动（M18 D3）：SSH 网关只放行允许全自动线程使用的主机。
 	Automation bool
+	// Box 为真时建 box 的常驻 orb（M23）：无项目、不进预热池、不来自快照、不冻结、不随线程回收。
+	Box bool
 }
 
 // 内置协调宿主 provider（M9 协调宿主分册 H6）。名称 `@host` 不满足 API 的 provider 名称正则，用户建不出同名行。
@@ -199,6 +203,8 @@ type Service struct {
 	streams   map[string]StreamFunc
 	subs      []func(Event)
 	quiescent QuiesceFunc
+	// boxGate 是 box 闸门（M23，SetBoxGate）：返回 false 时 Wake 不唤醒这台 box 的 orb；nil = 不设闸门。
+	boxGate func(orbID string) bool
 	// deskHooks 是 Profile 生命周期钩子（M8，见 desktop.go）。
 	deskHooks DesktopHooks
 
@@ -789,6 +795,9 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (_ db.Orb, err err
 	if p.Computer && (p.Pool || p.ProjectID != "" || p.SnapshotID != "" || p.SnapshotOf != "") {
 		return db.Orb{}, fmt.Errorf("%w: 助手的电脑不属于项目，不能来自快照或预热池", ErrInvalidState)
 	}
+	if p.Box && (p.Pool || p.ProjectID != "" || p.SnapshotID != "" || p.SnapshotOf != "") {
+		return db.Orb{}, fmt.Errorf("%w: box 的 orb 不属于项目，不能来自快照或预热池", ErrInvalidState)
+	}
 	if p.SnapshotOf != "" {
 		if src, err := s.st.Q.GetOrb(ctx, p.SnapshotOf); err == nil && IsRunner(src) {
 			// runner 的目录是用户机器上的，没有可拍的环境
@@ -848,6 +857,9 @@ func (s *Service) insertOrb(ctx context.Context, p CreateParams, t target, pick 
 	}
 	if p.Computer {
 		base.Computer = new(int64(1))
+	}
+	if p.Box {
+		base.Box = new(int64(1))
 	}
 	// orb、requested 事件与首个 spawn 任务同一事务提交：不存在「有 orb 没任务」的中间状态。
 	var ch *change
@@ -943,6 +955,9 @@ func (s *Service) Wake(ctx context.Context, orbID string) error {
 	orb, err := s.Get(ctx, orbID)
 	if err != nil {
 		return err
+	}
+	if orb.Box != 0 && !s.boxAllowed(orbID) {
+		return ErrBoxStopped
 	}
 	if IsRunner(orb) {
 		// runner 只能自己接入：stopped = 离线，其余状态无事可做
@@ -1106,14 +1121,14 @@ func (s *Service) Delete(ctx context.Context, orbID string) error {
 // orb 的生命周期跟随线程：最后一个线程删除后由线程服务调用（except 为空）；定时的 keepLast 归档旧运行后调用（except =
 // 那个运行线程，只回收它独占的 orb，别的线程——哪怕已归档——还在用就保留）。except 只在它此刻仍是归档状态时才排除：
 // 归档与这里分两次提交，其间被取消归档的运行线程照常算作引用，orb 保留。「无引用」与 → deleting 在同一事务里判定，
-// 写线程行的事务又复核 orb 未进入删除（threads.checkOrbTx），并发挂上来的线程与回收串行。runner、协调 orb 与助手的电脑
-// 各有归属，从不在这里删除。
+// 写线程行的事务又复核 orb 未进入删除（threads.checkOrbTx），并发挂上来的线程与回收串行。runner、协调 orb、助手的电脑
+// 与 box 各有归属，从不在这里删除。
 func (s *Service) DeleteUnused(ctx context.Context, orbID, except string) (bool, error) {
 	orb, err := s.Get(ctx, orbID)
 	if err != nil {
 		return false, err
 	}
-	if IsRunner(orb) || orb.Coordinator || orb.Computer != 0 {
+	if IsRunner(orb) || orb.Coordinator || orb.Computer != 0 || orb.Box != 0 {
 		return false, nil
 	}
 	return s.deleteIf(ctx, orbID, func(q *db.Queries) (bool, error) {
@@ -1552,8 +1567,8 @@ func (s *Service) EvaluateIdle(ctx context.Context) {
 			return
 		}
 		for _, orb := range orbs {
-			if IsRunner(orb) {
-				// runner 是常驻的：不冻结、不停机
+			if IsRunner(orb) || orb.Box != 0 {
+				// runner 与 box 是常驻的：不冻结、不停机
 				continue
 			}
 			idle := s.idleFrozenTooLong
@@ -1606,7 +1621,7 @@ func (s *Service) idleReady(orb db.Orb) bool {
 // retired 判断 orb 是否只剩已归档的线程（至少有一个线程，且都已归档）。协调 orb 与助手的电脑不属于线程，不在此列；
 // 预热池里尚未认领的 orb 没有线程，同样不算。
 func (s *Service) retired(ctx context.Context, orb db.Orb) bool {
-	if orb.Coordinator || orb.Computer != 0 {
+	if orb.Coordinator || orb.Computer != 0 || orb.Box != 0 {
 		return false
 	}
 	n, err := s.st.Q.OrbThreadCounts(ctx, orb.ID)

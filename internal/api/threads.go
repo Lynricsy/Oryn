@@ -46,6 +46,10 @@ var threadErrStatus = map[string]int{
 	threads.CodeMainConversation: http.StatusConflict,
 	// M19：把线程挂到助手的电脑上
 	threads.CodeOrbIsComputer: http.StatusConflict,
+	// M23：box
+	threads.CodeBoxStopped:     http.StatusConflict,
+	threads.CodeBoxUnsupported: http.StatusConflict,
+	threads.CodeOrbIsBox:       http.StatusConflict,
 }
 
 func writeThreadErr(w http.ResponseWriter, err error) {

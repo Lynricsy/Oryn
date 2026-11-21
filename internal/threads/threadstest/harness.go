@@ -82,6 +82,8 @@ type Orbs struct {
 	worktreeErr map[string]*link.CtlError
 	// worktrees 记录 fake orbd 收到的 worktree.add 参数。
 	worktrees []apigen.LinkCtlWorktreeAddParams
+	// boxStopped 是 BoxStopped 对各 orb 报告的结果（SetBoxStopped；M23 box 闸门）。
+	boxStopped map[string]bool
 }
 
 // callGate 是一个 ctl 方法的闸门：请求到达时关闭 arrived，等 release 关闭后才处理。
@@ -601,6 +603,23 @@ func (o *Orbs) HasFeature(orbID, feature string) bool {
 	return o.links[orbID] != nil && o.features[feature]
 }
 
+// SetBoxStopped 设置 BoxStopped 对 orbID 的结果（模拟 box 闸门关上 / 打开）。
+func (o *Orbs) SetBoxStopped(orbID string, stopped bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.boxStopped == nil {
+		o.boxStopped = map[string]bool{}
+	}
+	o.boxStopped[orbID] = stopped
+}
+
+// BoxStopped 实现 threads.Orbs：返回 SetBoxStopped 设置的结果（缺省 false）。
+func (o *Orbs) BoxStopped(_ context.Context, orbID string) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.boxStopped[orbID]
+}
+
 // Starts 返回线程收到过的 agent.start 参数。
 func (o *Orbs) Starts(threadID string) []apigen.LinkCtlAgentStartParams {
 	o.mu.Lock()
@@ -640,13 +659,13 @@ func (o *Orbs) Delete(ctx context.Context, orbID string) error {
 	return nil
 }
 
-// DeleteUnused 实现 threads.Orbs：runner、协调 orb、助手的电脑或除 except 外仍有线程引用时不删，否则同 Delete。
+// DeleteUnused 实现 threads.Orbs：runner、协调 orb、助手的电脑、box 或除 except 外仍有线程引用时不删，否则同 Delete。
 func (o *Orbs) DeleteUnused(ctx context.Context, orbID, except string) (bool, error) {
 	orb, err := o.st.Q.GetOrb(ctx, orbID)
 	if err != nil {
 		return false, err
 	}
-	if orbs.IsRunner(orb) || orb.Coordinator || orb.Computer != 0 || orb.State == "deleted" {
+	if orbs.IsRunner(orb) || orb.Coordinator || orb.Computer != 0 || orb.Box != 0 || orb.State == "deleted" {
 		return false, nil
 	}
 	n, err := o.st.Q.CountOtherThreadsByOrb(ctx, db.CountOtherThreadsByOrbParams{OrbID: orbID, ExceptID: except})

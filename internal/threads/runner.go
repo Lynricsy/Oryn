@@ -28,6 +28,10 @@ const (
 	CodeDirInUse          = "dir_in_use"
 	CodeWorktreeFailed    = "worktree_failed"
 	CodeWorktreeDirty     = "worktree_dirty"
+	// M23 box：box 被停下、box 线程不支持的操作、把线程以 executor.kind = orb 挂到 box 的 orb 上。
+	CodeBoxStopped     = "box_stopped"
+	CodeBoxUnsupported = "box_unsupported"
+	CodeOrbIsBox       = "orb_is_box"
 )
 
 // worktreeTimeout 是 worktree.add / worktree.remove 的应答上限（orbd 侧 fetch 限 30 秒）。

@@ -36,6 +36,8 @@ type area struct {
 	OwnerMemory *OwnerMemoryDeps
 	// SSH 是 M18 的 SSH 主机与网关（ssh.go）；nil 时回 501。
 	SSH *SSHDeps
+	// Boxes 是 M23 的 box（boxes.go）；nil 时回 501。
+	Boxes *BoxesDeps
 }
 
 // PortalDeps 是 portal 限时公开接口（portals.go）的依赖。

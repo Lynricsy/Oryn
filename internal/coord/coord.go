@@ -393,6 +393,8 @@ func orbErrCode(err error) string {
 		return "invalid_state"
 	case errors.Is(err, orbs.ErrRunnerOffline):
 		return "runner_offline"
+	case errors.Is(err, orbs.ErrBoxStopped):
+		return threads.CodeBoxStopped
 	case errors.Is(err, orbs.ErrRunnerUnsupported):
 		return threads.CodeRunnerUnsupported
 	case errors.Is(err, orbs.ErrOrbNotReady):

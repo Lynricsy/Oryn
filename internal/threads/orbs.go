@@ -73,6 +73,8 @@ type OrbCreate struct {
 	GithubIdentity string
 	// Automation 对应 orbs.CreateParams.Automation（M18：新 orb 是否标为全自动）。
 	Automation bool
+	// Box 对应 orbs.CreateParams.Box（M23 box 的常驻 orb；本包从不置位）。
+	Box bool
 }
 
 // CodeOrbIsPooled 是把线程挂到预热池 orb 上（executor.kind = orb 指向池 orb）的错误码（M11a，HTTP 409）。
@@ -122,7 +124,7 @@ type Orbs interface {
 	// Delete 删除 orb（先 shutdown 再入队 delete）；契约 C4：建线程事务失败时回收本次新建的 orb。
 	Delete(ctx context.Context, orbID string) error
 	// DeleteUnused 在除 except 之外没有任何线程（含已归档的）引用 orb 时删除它（判定与删除同一事务），返回是否删除；
-	// runner、协调 orb 与助手的电脑从不删除。线程删除后回收它的 orb（except 为空）。
+	// runner、协调 orb、助手的电脑与 box 从不删除。线程删除后回收它的 orb（except 为空）。
 	DeleteUnused(ctx context.Context, orbID, except string) (bool, error)
 	// ClaimPool 认领一台与 p 匹配（项目、provider、类型、配置哈希）的预热池 orb（M11a）；没有可认领的返回 false，
 	// 调用方照常 Create。认领成功的 orb 已离开池（或处于 claimed，刷新后进入 ready）。
@@ -133,4 +135,6 @@ type Orbs interface {
 	// Features 返回 orb 的种类（orbs.KindOrb / KindRunner）与已知特性（活动 link 的 hello；没有 link 时 runner 取
 	// 最近一次上报的，普通 orb 为 nil）。M11b：runner 未上报 terminal 时不发 terminal_configure。
 	Features(orbID string) (kind string, features []string)
+	// BoxStopped 报告 orbID 是不是一台被闸门挡住的 box（M23：主人或时段停下了它）；不是 box 时为 false。
+	BoxStopped(ctx context.Context, orbID string) bool
 }

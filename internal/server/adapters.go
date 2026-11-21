@@ -13,9 +13,18 @@ import (
 	"github.com/Lynricsy/Oryn/internal/realtime"
 	"github.com/Lynricsy/Oryn/internal/secrets"
 	"github.com/Lynricsy/Oryn/internal/sshgw"
+	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
 )
+
+// boxThreads 让线程表满足 boxes.Threads：orb 上有 working 的线程就算忙（时段停机据此推迟）。
+type boxThreads struct{ st *store.Store }
+
+func (b boxThreads) Busy(ctx context.Context, orbID string) (bool, error) {
+	n, err := b.st.Q.CountWorkingThreadsByOrb(ctx, &orbID)
+	return n > 0, err
+}
 
 // orbsAdapter 让 *orbs.Service 满足 threads.Orbs（处理器参数在 orbs 中是具名函数类型）。
 type orbsAdapter struct{ *orbs.Service }

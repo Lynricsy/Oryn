@@ -21,6 +21,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/artifacts/sample"
 	"github.com/Lynricsy/Oryn/internal/attachments"
 	"github.com/Lynricsy/Oryn/internal/auth"
+	"github.com/Lynricsy/Oryn/internal/boxes"
 	"github.com/Lynricsy/Oryn/internal/cfgsync"
 	"github.com/Lynricsy/Oryn/internal/config"
 	"github.com/Lynricsy/Oryn/internal/coord"
@@ -57,6 +58,10 @@ var evalInterval time.Duration
 
 // notifyDoneDelay / notifyInputDelay 是通知去抖时长；0 = notify 默认（3s / 2s）。测试可调小。
 var notifyDoneDelay, notifyInputDelay time.Duration
+
+// boxesTick / boxesUnlinkedAfter 是 box 对账周期与「ready 却没有 link」多久之后重新拉起；零值 = boxes 默认（30s / 90s）。
+// e2e 在 newStack 之前设、t.Cleanup 里还原。
+var boxesTick, boxesUnlinkedAfter time.Duration
 
 // scheduleNow / scheduleAfterFunc 是定时（与协调层限速、进度图、主线的静止与收件合并定时器）的时钟；零值 = 真实时钟。e2e 注入。
 var (
@@ -109,6 +114,8 @@ type Server struct {
 	GitHub *github.Service
 	// SSH 是 M18 的 SSH 主机目录与控制面 SSH 网关。
 	SSH *sshgw.Service
+	// Boxes 是 M23 的 box（常驻机器与应用部署）。
+	Boxes *boxes.Service
 	// Memory 是 M16 的内置 Hindsight 记忆（连接设置、状态与 .env 生成）。
 	Memory *memory.Service
 	// OwnerMemory 是 M17 全局助手的主人记忆（bank `oryn-owner`，连接与 key 与 Memory 共用）。
@@ -199,7 +206,23 @@ func (s *Server) init(ctx context.Context) error {
 	s.Threads = threads.New(threads.Config{
 		DataDir: cfg.DataDir, WakeOnFocus: cfg.Idle.WakeOnFocus, PortalURLTemplate: threadPortalTemplate, Memory: lazyMemory{s},
 		Projects: s.ProjectHomes,
+		BoxThreadsChanged: func() {
+			if s.Boxes != nil {
+				s.Boxes.Touch()
+			}
+		},
 	}, s.Store, orbsAdapter{s.Orbs})
+	// M23：box。须在 ctl 方法登记（box.call 与 ssh.call 同处）之前构造，并在 orb 服务接受 link 之前注册闸门；
+	// s.Hub 在后面才构造，回调晚绑定
+	s.Boxes = boxes.New(boxes.Config{
+		Base: base, Box: box,
+		Changed: func() {
+			if s.Hub != nil {
+				s.Hub.BoxesChanged()
+			}
+		},
+		Tick: boxesTick, UnlinkedAfter: boxesUnlinkedAfter,
+	}, s.Store, s.Orbs, boxThreads{s.Store})
 	// M18：SSH 主机与网关。主机变化经 omp 下发链路推到 orb（ssh.json 摘要参与比较，线程据此 reload_plugins）；
 	// 回调在被调用时才取 s.Orbs / s.Hub（s.Hub 在后面才构造）
 	if s.SSH, err = sshgw.New(sshgw.Config{
@@ -381,6 +404,7 @@ func (s *Server) init(ctx context.Context) error {
 	go s.Stats.Run(runCtx)
 	go s.GitHub.Run(runCtx)
 	go s.SSH.Run(runCtx)
+	go s.Boxes.Run(runCtx)
 	// M16：重试删除失败的 Hindsight 记忆，并在记忆启用时保证 user-preferences 存在
 	go s.Memory.RunTombstones(runCtx)
 	// M17：主人记忆写入循环（助手对话与线程空闲 30 分钟、归档或交付后写入 bank oryn-owner）
@@ -475,6 +499,7 @@ func (s *Server) init(ctx context.Context) error {
 	s.API.Memory = &api.MemoryDeps{Service: s.Memory}
 	s.API.OwnerMemory = &api.OwnerMemoryDeps{Service: s.OwnerMemory}
 	s.API.SSH = &api.SSHDeps{Service: s.SSH}
+	s.API.Boxes = &api.BoxesDeps{Service: s.Boxes}
 	s.API.Artifacts = &api.ArtifactsDeps{Service: s.Artifacts, Host: frames, Render: renderer}
 	if s.Portal != nil {
 		s.API.PortalShares = &api.PortalDeps{Service: s.Portal}

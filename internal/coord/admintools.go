@@ -762,6 +762,8 @@ func (s *Service) orbTarget(ctx context.Context, orbID string) (db.Orb, error) {
 		return db.Orb{}, errf(CodeInvalidTarget, "orb %s is the coordinator host; it is managed by Oryn", orbID)
 	case o.Computer == 1:
 		return db.Orb{}, errf(CodeInvalidTarget, "orb %s is your own computer; it is managed by Oryn", orbID)
+	case o.Box == 1:
+		return db.Orb{}, errf(CodeInvalidTarget, "orb %s is a box; use the box tools", orbID)
 	case ps == orbs.PoolWarming || ps == orbs.PoolIdle:
 		return db.Orb{}, errf(CodeInvalidTarget, "orb %s is a warm pool orb; it is managed by Oryn", orbID)
 	}
