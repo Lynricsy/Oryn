@@ -166,7 +166,6 @@
 		"pullRequest": "Linked GitHub pull request",
 		"scheduledRuns": "Scheduled runs",
 		"allRuns": "All runs",
-		"projectMeta": "Threads {{threads}} · Schedules {{schedules}}",
 		"projectSettings": "Settings for “{{name}}”",
 		"projectThreads_one": "{{count}} thread",
 		"projectThreads_other": "{{count}} threads",
@@ -4332,6 +4331,11 @@
 		"empty": "No conversations yet",
 		"archiveOne": "Archive “{{title}}”",
 		"computer": "Assistant's computer"
+	},
+	"projectsPane": {
+		"overview": "Overview",
+		"meta_one": "{{count}} thread · active {{ago}}",
+		"meta_other": "{{count}} threads · active {{ago}}"
 	},
 	},
 	"projectsPage": {

@@ -1,5 +1,6 @@
 /**
- * 「项目」分区侧栏（M9.6）：首行「新建项目」→ /projects/new；项目行链到 /projects/<id>。数据走 mock 后端。
+ * 「项目」分区侧栏（M24）：首行「总览」→ /projects（只在 /projects 选中），行尾 + → /projects/new；
+ * 每个未归档项目一行，链到 /projects/<id>（子页里同样选中），副标题是线程数与最后活跃。数据走 mock 后端。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, within } from "@testing-library/react";
@@ -41,6 +42,8 @@ function mount(path = "/projects") {
 const where = () => screen.getByTestId("where").textContent;
 const list = () => screen.getByTestId("sidebar-projects");
 const live = projects.filter((p) => !p.archivedAt);
+const legacy = projects.find((p) => p.archivedAt);
+const overview = () => within(list()).getByRole("link", { name: "总览" });
 
 beforeEach(() => {
 	window.innerWidth = 1280;
@@ -67,24 +70,52 @@ afterEach(() => {
 });
 
 describe("ProjectsPane", () => {
-	it("没有分区标题行：第一行是「新建项目」，点了去 /projects/new", () => {
+	it("首行是总览，链到 /projects 且只在 /projects 选中", async () => {
+		const { unmount } = mount("/projects");
+		expect(overview()).toHaveAttribute("href", "/projects");
+		expect(overview()).toHaveAttribute("aria-current", "page");
+		expect(list().firstElementChild).toContainElement(overview());
+		unmount();
+		mount(`/projects/${live[0]?.id}`);
+		await within(list()).findAllByRole("link", { name: /个线程/ });
+		expect(overview()).not.toHaveAttribute("aria-current");
+	});
+
+	it("行尾 + 去 /projects/new", () => {
 		mount();
-		const first = list().firstElementChild as HTMLElement;
-		expect(first).toHaveTextContent("新建项目");
-		fireEvent.click(first);
+		fireEvent.click(within(list()).getByRole("button", { name: "新建项目" }));
 		expect(where()).toBe("/projects/new");
 	});
 
-	it("未归档的项目各一行，链到项目页；当前项目是选中行", async () => {
+	it("未归档项目各一行，legacy-site 不在；子页里项目行仍选中", async () => {
 		const target = live[0];
-		mount(`/projects/${target?.id}`);
-		const links = await within(list()).findAllByRole("link");
-		expect(links.map((a) => a.getAttribute("href"))).toEqual(
+		mount(`/projects/${target?.id}/settings/overview`);
+		await within(list()).findAllByRole("link", { name: /个线程/ });
+		const rows = within(list())
+			.getAllByRole("link")
+			.filter((a) => a.getAttribute("href") !== "/projects");
+		expect(rows.map((a) => a.getAttribute("href"))).toEqual(
 			live.map((p) => `/projects/${p.id}`),
 		);
-		expect(links[0]).toHaveAttribute("aria-current", "page");
-		expect(links[0]).toHaveTextContent(target?.name ?? "");
-		fireEvent.click(links[1] as HTMLElement);
+		expect(rows.map((a) => a.getAttribute("href"))).not.toContain(
+			`/projects/${legacy?.id}`,
+		);
+		expect(rows[0]).toHaveAttribute("aria-current", "page");
+		expect(rows[0]).toHaveTextContent(target?.name ?? "");
+		expect(overview()).not.toHaveAttribute("aria-current");
+		fireEvent.click(rows[1] as HTMLElement);
 		expect(where()).toBe(`/projects/${live[1]?.id}`);
+	});
+
+	it("副标题含『个线程 · 』与『活跃』", async () => {
+		mount();
+		const rows = await within(list()).findAllByRole("link", {
+			name: /个线程/,
+		});
+		expect(rows).toHaveLength(live.length);
+		for (const row of rows) {
+			expect(row).toHaveTextContent("个线程 · ");
+			expect(row).toHaveTextContent("活跃");
+		}
 	});
 });

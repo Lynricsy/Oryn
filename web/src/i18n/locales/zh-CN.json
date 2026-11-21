@@ -166,7 +166,6 @@
 		"pullRequest": "关联了 GitHub PR",
 		"scheduledRuns": "定时运行",
 		"allRuns": "全部运行",
-		"projectMeta": "{{threads}} 个线程 · {{schedules}} 个定时",
 		"projectSettings": "「{{name}}」的设置",
 		"projectThreads_one": "{{count}} 个线程",
 		"projectThreads_other": "{{count}} 个线程",
@@ -4332,6 +4331,11 @@
 		"empty": "还没有对话",
 		"archiveOne": "归档「{{title}}」",
 		"computer": "助手的电脑"
+	},
+	"projectsPane": {
+		"overview": "总览",
+		"meta_one": "{{count}} 个线程 · {{ago}}活跃",
+		"meta_other": "{{count}} 个线程 · {{ago}}活跃"
 	},
 	},
 	"projectsPage": {

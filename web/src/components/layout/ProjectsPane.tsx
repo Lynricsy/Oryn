@@ -1,79 +1,85 @@
 /**
- * 「项目」分区侧栏：首行新建项目，其后每个未归档项目一行（链到项目页 `/projects/<id>`）。不设分区标题行。
+ * 「项目」分区侧栏（M24）：首行「总览」（`/projects`，行尾 `+` 新建项目），其后每个未归档项目一行
+ * （名称 + 线程数 · 多久前活跃，链到项目主页 `/projects/<id>`，子页里同样选中）。不设分区标题行。
+ * 行顺序沿用服务端的名称序：活动变化时行不跳。
  */
 import { type ReactNode, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink, useNavigate } from "react-router";
 import { useProjects } from "../../api/queries";
-import { useSchedules } from "../../api/schedule-queries";
-import { isCoordinatorThread } from "../../lib/thread-kind";
+import { formatRelative } from "../../lib/format";
+import { lastActive, projectActivity } from "../../lib/project-activity";
 import { useIndex } from "../../state/stores";
 import { ProjectBadge } from "../ui/data";
+import { IconButton } from "../ui/primitives";
 import {
 	closeOnCompact,
 	GroupIcon,
 	LIST_LINK,
-	LIST_ROW,
 	PANE_SCROLL,
+	useNow,
 } from "./pane-parts";
 
 export function ProjectsPane(): ReactNode {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
+	const now = useNow();
 	const threads = useIndex((s) => s.threads);
 	const projects = useProjects();
-	const schedules = useSchedules({ mode: "new_thread" });
 	const list = (projects.data?.projects ?? []).filter((p) => !p.archivedAt);
-	const counts = useMemo(() => {
-		const m = new Map<string | null, number>();
-		for (const th of Object.values(threads))
-			if (!th.archivedAt && !isCoordinatorThread(th)) {
-				const key = th.projectId ?? null;
-				m.set(key, (m.get(key) ?? 0) + 1);
-			}
-		return m;
-	}, [threads]);
-	const scheduleCounts = useMemo(() => {
-		const m = new Map<string, number>();
-		for (const s of schedules.data?.schedules ?? [])
-			if (s.projectId) m.set(s.projectId, (m.get(s.projectId) ?? 0) + 1);
-		return m;
-	}, [schedules.data]);
+	const activity = useMemo(
+		() => projectActivity(Object.values(threads)),
+		[threads],
+	);
 	return (
 		<div className={PANE_SCROLL}>
 			<div className="flex flex-col gap-0.5" data-testid="sidebar-projects">
-				<button
-					type="button"
-					className={LIST_ROW}
-					onClick={() => {
-						navigate("/projects/new");
-						closeOnCompact();
-					}}
-				>
-					<span className="grid h-[22px] w-[22px] shrink-0 place-items-center">
-						<GroupIcon name="plus" />
-					</span>
-					<span className="min-w-0 flex-1 truncate">{t("projects.new")}</span>
-				</button>
-				{list.map((p) => (
+				<div className="flex items-center gap-1 pr-1">
 					<NavLink
-						key={p.id}
-						to={`/projects/${p.id}`}
+						to="/projects"
+						end
 						onClick={closeOnCompact}
 						className={LIST_LINK}
 					>
-						<ProjectBadge name={p.name} icon={p.icon} size={22} />
-						<span className="flex min-w-0 flex-1 flex-col">
-							<span className="truncate">{p.name}</span>
-							<span className="truncate font-normal text-2xs text-faint">
-								{t("sidebar.projectMeta", {
-									threads: counts.get(p.id) ?? 0,
-									schedules: scheduleCounts.get(p.id) ?? 0,
-								})}
-							</span>
+						<span className="grid h-[22px] w-[22px] shrink-0 place-items-center">
+							<GroupIcon name="folder" />
+						</span>
+						<span className="min-w-0 flex-1 truncate">
+							{t("projectsPane.overview")}
 						</span>
 					</NavLink>
-				))}
+					<IconButton
+						icon="plus"
+						size={15}
+						label={t("projects.new")}
+						onClick={() => {
+							navigate("/projects/new");
+							closeOnCompact();
+						}}
+					/>
+				</div>
+				{list.map((p) => {
+					const a = activity.get(p.id);
+					return (
+						<NavLink
+							key={p.id}
+							to={`/projects/${p.id}`}
+							onClick={closeOnCompact}
+							className={LIST_LINK}
+						>
+							<ProjectBadge name={p.name} icon={p.icon} size={22} />
+							<span className="flex min-w-0 flex-1 flex-col">
+								<span className="truncate">{p.name}</span>
+								<span className="truncate font-normal text-2xs text-faint">
+									{t("projectsPane.meta", {
+										count: a?.threads ?? 0,
+										ago: formatRelative(lastActive(p, a), now),
+									})}
+								</span>
+							</span>
+						</NavLink>
+					);
+				})}
 			</div>
 		</div>
 	);
