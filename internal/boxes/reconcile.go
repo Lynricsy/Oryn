@@ -29,6 +29,7 @@ func (s *Service) Run(ctx context.Context) {
 	defer t.Stop()
 	for {
 		s.reconcile(ctx)
+		s.maybeProbePreviews(ctx)
 		select {
 		case <-ctx.Done():
 			return
@@ -59,6 +60,19 @@ func (s *Service) reconcile(ctx context.Context) {
 			slog.Warn("boxes: 对账失败", "box", b.ID, "name", b.Name, "err", err)
 		}
 	}
+}
+
+// maybeProbePreviews 每 previewEvery 在后台对全部 live app 探测一次预览（上一轮没跑完就跳过）。
+func (s *Service) maybeProbePreviews(ctx context.Context) {
+	now := s.now()
+	if now.Sub(s.lastPreview) < previewEvery || !s.previewing.CompareAndSwap(false, true) {
+		return
+	}
+	s.lastPreview = now
+	go func() {
+		defer s.previewing.Store(false)
+		s.probePreviews(ctx)
+	}()
 }
 
 // healOrphans 删掉创建超过 orphanAfter 仍没有 box 行的 box orb（Create 写 box 行失败、回收也失败时留下的）。

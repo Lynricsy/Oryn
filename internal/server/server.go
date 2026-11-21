@@ -221,6 +221,12 @@ func (s *Server) init(ctx context.Context) error {
 				s.Hub.BoxesChanged()
 			}
 		},
+		// M23 4.1：改成私有、下线时断开该 app 的匿名连接；未启用 portal 时 s.Portal 为 nil
+		DropApp: func(app string) {
+			if s.Portal != nil {
+				s.Portal.DropApp(app)
+			}
+		},
 		Tick: boxesTick, UnlinkedAfter: boxesUnlinkedAfter,
 	}, s.Store, s.Orbs, boxThreads{s.Store})
 	// M18：SSH 主机与网关。主机变化经 omp 下发链路推到 orb（ssh.json 摘要参与比较，线程据此 reload_plugins）；
@@ -434,7 +440,9 @@ func (s *Server) init(ctx context.Context) error {
 	mounts[sshgw.TerminalWSPath] = s.SSH.TerminalHandler(s.Tickets, s.Auth)
 	// M16 模型中转：Hindsight 凭中转令牌调用，不经 /api/v1 的鉴权组
 	mounts[memory.RelayPathPrefix+"*"] = s.Memory.RelayHandler()
-	frameSrc := base.FrameSrc()
+	// M23：启用 portal 时另放行 'self'——内嵌帧里的私有 box app（悬停预览）没有 app 主机 Cookie 时，
+	// /__oryn/login 会 302 到主站 /portal/auth 再跳回，frame-src 对重定向的每一跳都生效。主站文档本身仍是 frame-ancestors 'none'。
+	frameSrc := "'self' " + base.FrameSrc()
 	if !base.Enabled() {
 		frameSrc = "'self'"
 		mounts[artifacts.FramePathPrefix+"*"] = frames.Handler()
@@ -468,6 +476,7 @@ func (s *Server) init(ctx context.Context) error {
 	}
 	if base.Enabled() {
 		s.Portal = portal.New(portal.Config{Base: base}, s.Store, s.Orbs)
+		s.Portal.SetApps(s.Boxes) // M23：app 主机 <app>.<portal_domain>
 		go s.Portal.Run(runCtx)
 		s.Auth.Subscribe(s.Portal.Revoke)
 		deps.Portal = func(next http.Handler) http.Handler { return frames.Middleware(s.Portal.Middleware(next)) }

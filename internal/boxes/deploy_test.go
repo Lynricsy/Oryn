@@ -562,6 +562,7 @@ func TestFirstDeployFailuresReleaseName(t *testing.T) {
 func TestFailedDeployKeepsApp(t *testing.T) {
 	e := newDeployEnv(t)
 	first := e.deploy(pp("hello", "github.com/acme/x", ""), "v1")
+	e.s.probes.Wait() // 部署成功后的后台预览探测会写 preview_checked_at，等它写完再拍快照
 	before, _ := e.appRow("hello")
 
 	e.boxd.fail = &apigen.OrbBoxResult{Code: new("not_listening")}

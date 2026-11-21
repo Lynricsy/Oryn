@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
@@ -167,6 +168,11 @@ type Service struct {
 	// alMu 保护 appLocks：按 app 名的进程内互斥（带引用计数，用完回收）。
 	alMu     sync.Mutex
 	appLocks map[string]*appLock
+	// lastPreview 是上一次全量预览探测的时刻；previewing 防止两轮全量探测重叠（4.2）。
+	lastPreview time.Time
+	previewing  atomic.Bool
+	// probes 跟踪部署 / 回滚之后起的后台预览探测（测试在关库之前等它们结束）。
+	probes sync.WaitGroup
 }
 
 // appLock 是一个 app 名的互斥与等待它的人数。

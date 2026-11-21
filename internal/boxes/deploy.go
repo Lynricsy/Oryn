@@ -431,8 +431,10 @@ func (s *Service) complete(ctx context.Context, row db.BoxDeploy, pruned []strin
 	return true, nil
 }
 
-// released 在 app 换了 live release（部署成功或回滚成功）之后调用。步骤 4.2 在这里起后台的预览探测。
-func (s *Service) released(boxID, app string) {}
+// released 在 app 换了 live release（部署成功或回滚成功）之后调用：起一个后台的预览探测（4.2）。
+func (s *Service) released(_ string, app string) {
+	s.probes.Go(func() { s.probePreview(s.root, app) })
+}
 
 // resolveActivating 处理一行停在 activating、结果未知的部署：按 orbd 的状态补完或作废。返回最终状态（succeeded /
 // failed）；box 连不上或 orbd 还在试运行时返回空串（留给下一轮对账）。

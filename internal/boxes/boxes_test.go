@@ -38,6 +38,8 @@ type fakeOrbs struct {
 	features map[string]map[string]bool
 	handlers map[string]http.Handler
 	doErr    func(orbID string, req *http.Request) error
+	// dial 是 DialPortal 的替身（预览探测用）；nil = 不可拨号。
+	dial func(ctx context.Context, orbID string, port int) (net.Conn, error)
 }
 
 func (f *fakeOrbs) rec(op, id string) {
@@ -125,8 +127,14 @@ func (f *fakeOrbs) Do(ctx context.Context, id string, req *http.Request) (*http.
 	h.ServeHTTP(rec, req.WithContext(ctx))
 	return rec.Result(), nil
 }
-func (f *fakeOrbs) DialPortal(context.Context, string, int) (net.Conn, error) {
-	return nil, errors.New("not implemented")
+func (f *fakeOrbs) DialPortal(ctx context.Context, orbID string, port int) (net.Conn, error) {
+	f.mu.Lock()
+	dial := f.dial
+	f.mu.Unlock()
+	if dial == nil {
+		return nil, errors.New("not implemented")
+	}
+	return dial(ctx, orbID, port)
 }
 func (f *fakeOrbs) Subscribe(fn func(orbs.Event)) {
 	f.mu.Lock()
@@ -200,6 +208,8 @@ func newEnv(t *testing.T, start time.Time) *env {
 	base, err := portalhost.NewBase("https://oryn.test", "apps.oryn.test")
 	require.NoError(t, err)
 	s := New(Config{Now: clk.Now, Box: sbox, Base: base}, st, o, th)
+	// 后台预览探测在关库之前结束（Cleanup 后进先出：这一条先于上面的 st.Close 执行）
+	t.Cleanup(s.probes.Wait)
 	return &env{t: t, ctx: ctx, st: st, orbs: o, th: th, clk: clk, s: s}
 }
 
