@@ -78,7 +78,7 @@ type snapPick struct{ hash, snapID string }
 
 // configHash 是项目 orb 的配置哈希（M11a 2.1），按 provider 当前的基础镜像身份计算（建 orb、池对账与认领、发布复核用）。
 func (s *Service) configHash(ctx context.Context, q *db.Queries, prj db.Project, prov db.Provider, typ string) (string, error) {
-	stamps, err := q.ListConfigSecretStamps(ctx)
+	stamps, err := q.ListConfigSecretStamps(ctx, prj.ID)
 	if err != nil {
 		return "", fmt.Errorf("读取密钥修改时间: %w", err)
 	}
@@ -87,7 +87,8 @@ func (s *Service) configHash(ctx context.Context, q *db.Queries, prj db.Project,
 
 // projectConfigHash 只含会改变 setup 结果、又不由「HEAD 变了就重跑」覆盖的输入。
 // 不进哈希：resume 脚本（每次启动都跑）、仓库内 .oryn/setup（随基线提交变化）、omp-home（每次下发重写）、git 身份。
-// 可能进入 orb 环境的密钥（env 模式密钥、可能被降级为环境变量的模型 key）只取名字与修改时间，不对值做任何摘要。
+// 可能进入 orb 环境的密钥（全局 env 模式密钥、可能被降级为环境变量的模型 key、本项目的 env 条目）只取名字与修改时间，
+// 不对值做任何摘要。
 func projectConfigHash(prj db.Project, baseImage, typ string, stamps []db.ListConfigSecretStampsRow) string {
 	env := make([][2]string, 0, len(stamps))
 	for _, st := range stamps {

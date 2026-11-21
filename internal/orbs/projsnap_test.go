@@ -33,7 +33,7 @@ func (ps *projSetup) Plan(ctx context.Context, orb db.Orb) (SetupPlan, error) {
 		if err != nil {
 			return plan, err
 		}
-		stamps, err := ps.st.Q.ListConfigSecretStamps(ctx)
+		stamps, err := ps.st.Q.ListConfigSecretStamps(ctx, prj.ID)
 		if err != nil {
 			return plan, err
 		}

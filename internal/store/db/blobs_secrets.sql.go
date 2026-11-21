@@ -9,8 +9,25 @@ import (
 	"context"
 )
 
+const deleteProjectSecret = `-- name: DeleteProjectSecret :execrows
+DELETE FROM secrets WHERE project_id = CAST(?1 AS TEXT) AND name = ?2
+`
+
+type DeleteProjectSecretParams struct {
+	ProjectID string `json:"projectId"`
+	Name      string `json:"name"`
+}
+
+func (q *Queries) DeleteProjectSecret(ctx context.Context, arg DeleteProjectSecretParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteProjectSecret, arg.ProjectID, arg.Name)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const deleteSecretByName = `-- name: DeleteSecretByName :execrows
-DELETE FROM secrets WHERE name = ?1
+DELETE FROM secrets WHERE project_id IS NULL AND name = ?1
 `
 
 func (q *Queries) DeleteSecretByName(ctx context.Context, name string) (int64, error) {
@@ -37,10 +54,37 @@ func (q *Queries) GetBlob(ctx context.Context, sha256 string) (Blob, error) {
 	return i, err
 }
 
-const getSecret = `-- name: GetSecret :one
-SELECT id, name, mode, value_enc, hosts, created_at, updated_at FROM secrets WHERE id = ?1
+const getProjectSecret = `-- name: GetProjectSecret :one
+SELECT id, name, mode, value_enc, hosts, created_at, updated_at, project_id, secret FROM secrets WHERE project_id = CAST(?1 AS TEXT) AND name = ?2
 `
 
+type GetProjectSecretParams struct {
+	ProjectID string `json:"projectId"`
+	Name      string `json:"name"`
+}
+
+func (q *Queries) GetProjectSecret(ctx context.Context, arg GetProjectSecretParams) (Secret, error) {
+	row := q.db.QueryRowContext(ctx, getProjectSecret, arg.ProjectID, arg.Name)
+	var i Secret
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Mode,
+		&i.ValueEnc,
+		&i.Hosts,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ProjectID,
+		&i.Secret,
+	)
+	return i, err
+}
+
+const getSecret = `-- name: GetSecret :one
+SELECT id, name, mode, value_enc, hosts, created_at, updated_at, project_id, secret FROM secrets WHERE id = ?1 AND project_id IS NULL
+`
+
+// Placeholder resolution (oryn-ph-<id>) only ever resolves global rows.
 func (q *Queries) GetSecret(ctx context.Context, id string) (Secret, error) {
 	row := q.db.QueryRowContext(ctx, getSecret, id)
 	var i Secret
@@ -52,14 +96,17 @@ func (q *Queries) GetSecret(ctx context.Context, id string) (Secret, error) {
 		&i.Hosts,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ProjectID,
+		&i.Secret,
 	)
 	return i, err
 }
 
 const getSecretByName = `-- name: GetSecretByName :one
-SELECT id, name, mode, value_enc, hosts, created_at, updated_at FROM secrets WHERE name = ?1
+SELECT id, name, mode, value_enc, hosts, created_at, updated_at, project_id, secret FROM secrets WHERE project_id IS NULL AND name = ?1
 `
 
+// Global rows only.
 func (q *Queries) GetSecretByName(ctx context.Context, name string) (Secret, error) {
 	row := q.db.QueryRowContext(ctx, getSecretByName, name)
 	var i Secret
@@ -71,6 +118,8 @@ func (q *Queries) GetSecretByName(ctx context.Context, name string) (Secret, err
 		&i.Hosts,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ProjectID,
+		&i.Secret,
 	)
 	return i, err
 }
@@ -99,8 +148,44 @@ func (q *Queries) InsertBlob(ctx context.Context, arg InsertBlobParams) error {
 	return err
 }
 
+const insertSecret = `-- name: InsertSecret :exec
+INSERT INTO secrets (id, project_id, name, mode, secret, value_enc, hosts, created_at, updated_at)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+`
+
+type InsertSecretParams struct {
+	ID        string  `json:"id"`
+	ProjectID *string `json:"projectId"`
+	Name      string  `json:"name"`
+	Mode      string  `json:"mode"`
+	Secret    bool    `json:"secret"`
+	ValueEnc  []byte  `json:"valueEnc"`
+	Hosts     string  `json:"hosts"`
+	CreatedAt int64   `json:"createdAt"`
+	UpdatedAt int64   `json:"updatedAt"`
+}
+
+func (q *Queries) InsertSecret(ctx context.Context, arg InsertSecretParams) error {
+	_, err := q.db.ExecContext(ctx, insertSecret,
+		arg.ID,
+		arg.ProjectID,
+		arg.Name,
+		arg.Mode,
+		arg.Secret,
+		arg.ValueEnc,
+		arg.Hosts,
+		arg.CreatedAt,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
 const listConfigSecretStamps = `-- name: ListConfigSecretStamps :many
-SELECT name, updated_at FROM secrets WHERE mode = 'env' OR name LIKE 'omp/models/%/apiKey' ORDER BY name
+SELECT CAST(CASE WHEN project_id IS NULL THEN name ELSE 'project:' || name END AS TEXT) AS name, updated_at
+FROM secrets
+WHERE (project_id IS NULL AND (mode = 'env' OR name LIKE 'omp/models/%/apiKey'))
+   OR (project_id = CAST(?1 AS TEXT) AND mode = 'env')
+ORDER BY 1
 `
 
 type ListConfigSecretStampsRow struct {
@@ -108,11 +193,12 @@ type ListConfigSecretStampsRow struct {
 	UpdatedAt int64  `json:"updatedAt"`
 }
 
-// Names and last change of every secret whose value can reach an orb's environment, for the project snapshot config
-// hash (M11a; never the values): env-mode secrets, and model keys (omp/models/<key>/apiKey) that the omp-home render
-// may downgrade to environment variables. Proxy-mode model keys are included too (cannot tell them apart here).
-func (q *Queries) ListConfigSecretStamps(ctx context.Context) ([]ListConfigSecretStampsRow, error) {
-	rows, err := q.db.QueryContext(ctx, listConfigSecretStamps)
+// Names and last change of every secret whose value can reach an orb of the given project, for the project
+// snapshot config hash (M11a; never the values): global env-mode secrets, global model keys
+// (omp/models/<key>/apiKey, the omp-home render may downgrade them to environment variables), and that project's
+// env entries, prefixed with "project:" so they never collide with a global name. Pass an empty string for no project.
+func (q *Queries) ListConfigSecretStamps(ctx context.Context, projectID string) ([]ListConfigSecretStampsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listConfigSecretStamps, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -134,8 +220,92 @@ func (q *Queries) ListConfigSecretStamps(ctx context.Context) ([]ListConfigSecre
 	return items, nil
 }
 
+const listProjectSecrets = `-- name: ListProjectSecrets :many
+SELECT id, name, mode, value_enc, hosts, created_at, updated_at, project_id, secret FROM secrets WHERE project_id = CAST(?1 AS TEXT) ORDER BY name
+`
+
+// Project rows with ciphertext; the caller opens only what it needs.
+func (q *Queries) ListProjectSecrets(ctx context.Context, projectID string) ([]Secret, error) {
+	rows, err := q.db.QueryContext(ctx, listProjectSecrets, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Secret{}
+	for rows.Next() {
+		var i Secret
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Mode,
+			&i.ValueEnc,
+			&i.Hosts,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ProjectID,
+			&i.Secret,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSealedSecrets = `-- name: ListSealedSecrets :many
+SELECT s.id, s.project_id, s.name, s.value_enc, p.name AS project_name
+FROM secrets s LEFT JOIN projects p ON p.id = s.project_id
+WHERE s.secret = 1
+ORDER BY s.project_id IS NOT NULL, p.name, s.name
+`
+
+type ListSealedSecretsRow struct {
+	ID          string  `json:"id"`
+	ProjectID   *string `json:"projectId"`
+	Name        string  `json:"name"`
+	ValueEnc    []byte  `json:"valueEnc"`
+	ProjectName *string `json:"projectName"`
+}
+
+// Every secret-flagged row (global and project) with its project name, for the known-secret set
+// (share scan, runner screening, owner-memory redaction). Plain project values are not secrets.
+func (q *Queries) ListSealedSecrets(ctx context.Context) ([]ListSealedSecretsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSealedSecrets)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSealedSecretsRow{}
+	for rows.Next() {
+		var i ListSealedSecretsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Name,
+			&i.ValueEnc,
+			&i.ProjectName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSecrets = `-- name: ListSecrets :many
-SELECT id, name, mode, hosts, created_at, updated_at FROM secrets ORDER BY name
+SELECT id, name, mode, hosts, created_at, updated_at FROM secrets WHERE project_id IS NULL ORDER BY name
 `
 
 type ListSecretsRow struct {
@@ -147,7 +317,7 @@ type ListSecretsRow struct {
 	UpdatedAt int64  `json:"updatedAt"`
 }
 
-// Listing never returns ciphertext.
+// Listing never returns ciphertext. Global rows only.
 func (q *Queries) ListSecrets(ctx context.Context) ([]ListSecretsRow, error) {
 	rows, err := q.db.QueryContext(ctx, listSecrets)
 	if err != nil {
@@ -178,32 +348,29 @@ func (q *Queries) ListSecrets(ctx context.Context) ([]ListSecretsRow, error) {
 	return items, nil
 }
 
-const upsertSecret = `-- name: UpsertSecret :exec
-INSERT INTO secrets (id, name, mode, value_enc, hosts, created_at, updated_at)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-ON CONFLICT (name) DO UPDATE SET
-    mode = excluded.mode, value_enc = excluded.value_enc, hosts = excluded.hosts, updated_at = excluded.updated_at
+const updateSecret = `-- name: UpdateSecret :exec
+UPDATE secrets SET mode = ?1, secret = ?2, value_enc = ?3, hosts = ?4, updated_at = ?5
+WHERE id = ?6
 `
 
-type UpsertSecretParams struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
+type UpdateSecretParams struct {
 	Mode      string `json:"mode"`
+	Secret    bool   `json:"secret"`
 	ValueEnc  []byte `json:"valueEnc"`
 	Hosts     string `json:"hosts"`
-	CreatedAt int64  `json:"createdAt"`
 	UpdatedAt int64  `json:"updatedAt"`
+	ID        string `json:"id"`
 }
 
-func (q *Queries) UpsertSecret(ctx context.Context, arg UpsertSecretParams) error {
-	_, err := q.db.ExecContext(ctx, upsertSecret,
-		arg.ID,
-		arg.Name,
+// Overwrite keeps the id (placeholders already delivered stay valid).
+func (q *Queries) UpdateSecret(ctx context.Context, arg UpdateSecretParams) error {
+	_, err := q.db.ExecContext(ctx, updateSecret,
 		arg.Mode,
+		arg.Secret,
 		arg.ValueEnc,
 		arg.Hosts,
-		arg.CreatedAt,
 		arg.UpdatedAt,
+		arg.ID,
 	)
 	return err
 }

@@ -270,8 +270,13 @@ func (d *DefaultSetup) Plan(ctx context.Context, orb db.Orb) (SetupPlan, error) 
 		}
 	}
 	// 密钥值与配置哈希里的修改时间必须出自同一份快照：读值前后各读一次修改时间，不一致（期间有人改了密钥）就重来。
+	// 项目条目只算本项目的（pid 为空 = 只有全局）。
+	pid := ""
+	if prj != nil {
+		pid = prj.ID
+	}
 	for range planStampRetries {
-		before, err := d.Store.Q.ListConfigSecretStamps(ctx)
+		before, err := d.Store.Q.ListConfigSecretStamps(ctx, pid)
 		if err != nil {
 			return SetupPlan{}, fmt.Errorf("读取密钥修改时间: %w", err)
 		}
@@ -279,7 +284,7 @@ func (d *DefaultSetup) Plan(ctx context.Context, orb db.Orb) (SetupPlan, error) 
 		if err != nil {
 			return plan, err
 		}
-		after, err := d.Store.Q.ListConfigSecretStamps(ctx)
+		after, err := d.Store.Q.ListConfigSecretStamps(ctx, pid)
 		if err != nil {
 			return SetupPlan{}, fmt.Errorf("读取密钥修改时间: %w", err)
 		}

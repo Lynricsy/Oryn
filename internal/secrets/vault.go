@@ -74,20 +74,26 @@ func (v *Vault) Put(ctx context.Context, name, mode, value string, hosts []strin
 	now := time.Now().UnixMilli()
 	var row db.Secret
 	err = v.st.Tx(ctx, func(q *db.Queries) error {
+		old, err := q.GetSecretByName(ctx, name)
+		found := err == nil
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
 		hs := normalizeHosts(hosts)
-		if hosts == nil {
-			old, err := q.GetSecretByName(ctx, name)
-			switch {
-			case err == nil:
-				hs = normalizeHosts(decodeHosts(old.Hosts))
-			case !errors.Is(err, sql.ErrNoRows):
-				return err
-			}
+		if hosts == nil && found {
+			hs = normalizeHosts(decodeHosts(old.Hosts))
 		}
 		hj, _ := json.Marshal(hs)
-		if err := q.UpsertSecret(ctx, db.UpsertSecretParams{
-			ID: ids.New("sec"), Name: name, Mode: mode, ValueEnc: sealed, Hosts: string(hj), CreatedAt: now, UpdatedAt: now,
-		}); err != nil {
+		if found {
+			err = q.UpdateSecret(ctx, db.UpdateSecretParams{
+				ID: old.ID, Mode: mode, Secret: true, ValueEnc: sealed, Hosts: string(hj), UpdatedAt: now,
+			})
+		} else {
+			err = q.InsertSecret(ctx, db.InsertSecretParams{
+				ID: ids.New("sec"), Name: name, Mode: mode, Secret: true, ValueEnc: sealed, Hosts: string(hj), CreatedAt: now, UpdatedAt: now,
+			})
+		}
+		if err != nil {
 			return err
 		}
 		row, err = q.GetSecretByName(ctx, name)

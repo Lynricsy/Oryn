@@ -4,6 +4,7 @@ package orbs
 
 import (
 	"context"
+	"database/sql"
 	"slices"
 	"strings"
 	"sync"
@@ -37,10 +38,20 @@ func (v *hookVault) EnvSecrets() (map[string]string, error) {
 	return map[string]string{}, nil
 }
 
+// putSecret 写一条全局密钥（已存在就覆盖，id 不变），值不重要，只看名字与修改时间。
 func (e *m11Env) putSecret(name, mode string, updatedAt int64) {
 	e.t.Helper()
-	require.NoError(e.t, e.st.Q.UpsertSecret(context.Background(), db.UpsertSecretParams{
-		ID: ids.New("sec"), Name: name, Mode: mode, ValueEnc: []byte("x"), Hosts: "[]", CreatedAt: 1, UpdatedAt: updatedAt,
+	ctx := context.Background()
+	old, err := e.st.Q.GetSecretByName(ctx, name)
+	if err == nil {
+		require.NoError(e.t, e.st.Q.UpdateSecret(ctx, db.UpdateSecretParams{
+			ID: old.ID, Mode: mode, Secret: true, ValueEnc: []byte("x"), Hosts: "[]", UpdatedAt: updatedAt,
+		}))
+		return
+	}
+	require.ErrorIs(e.t, err, sql.ErrNoRows)
+	require.NoError(e.t, e.st.Q.InsertSecret(ctx, db.InsertSecretParams{
+		ID: ids.New("sec"), Name: name, Mode: mode, Secret: true, ValueEnc: []byte("x"), Hosts: "[]", CreatedAt: 1, UpdatedAt: updatedAt,
 	}))
 }
 

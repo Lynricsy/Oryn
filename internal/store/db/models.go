@@ -1176,13 +1176,15 @@ type SearchState struct {
 }
 
 type Secret struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Mode      string `json:"mode"`
-	ValueEnc  []byte `json:"valueEnc"`
-	Hosts     string `json:"hosts"`
-	CreatedAt int64  `json:"createdAt"`
-	UpdatedAt int64  `json:"updatedAt"`
+	ID        string  `json:"id"`
+	Name      string  `json:"name"`
+	Mode      string  `json:"mode"`
+	ValueEnc  []byte  `json:"valueEnc"`
+	Hosts     string  `json:"hosts"`
+	CreatedAt int64   `json:"createdAt"`
+	UpdatedAt int64   `json:"updatedAt"`
+	ProjectID *string `json:"projectId"`
+	Secret    bool    `json:"secret"`
 }
 
 type Space struct {
