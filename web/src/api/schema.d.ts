@@ -645,6 +645,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/secrets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 项目级环境变量与 Git 令牌（M24 阶段 ④；保密条目不含值）
+         * @description 项目不存在 → 404 `not_found`。已归档的项目照常可读写。只对本项目的 orb 生效，与全局同名时以项目为准；不下发给 Runner 线程与协调宿主。
+         */
+        get: operations["listProjectSecrets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/secrets/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+                /** @description 密钥名（如 `omp/models/anthropic/apiKey`、`git/github.com/token`、`GITHUB_TOKEN`），`/` 编码为 `%2F` */
+                name: components["parameters"]["SecretNamePath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 写入或覆盖项目级条目（覆盖保留原 id）
+         * @description `mode:"env"`：名称须匹配 `[A-Z_][A-Z0-9_]*`；`secret` 缺省 true，`secret:false` 的值之后可经列表读回。
+         *     `mode:"proxy"`：名称只能是 `git/<主机>/token`（主机小写），且必须保密；模型供应商密钥（`omp/models/…`）只能在全局 `/secrets` 设置。
+         *     校验失败或值为空 → 400 `invalid_request`；项目不存在（含写入期间被删除）→ 404 `not_found`。
+         */
+        put: operations["putProjectSecret"];
+        post?: never;
+        /**
+         * 删除项目级条目
+         * @description 项目或条目不存在 → 404 `not_found`。
+         */
+        delete: operations["deleteProjectSecret"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/providers": {
         parameters: {
             query?: never;
@@ -9206,6 +9258,25 @@ export interface components {
             mode: components["schemas"]["SecretMode"];
             hosts?: string[];
         };
+        ProjectSecret: {
+            name: string;
+            mode: components["schemas"]["SecretMode"];
+            /** @description true = 保存后不可读（不给 `value`）；false = 普通环境变量 */
+            secret: boolean;
+            /** @description 只在 `secret:false` 时给出 */
+            value?: string;
+            createdAt: components["schemas"]["TimestampMs"];
+            updatedAt: components["schemas"]["TimestampMs"];
+        };
+        ProjectSecretList: {
+            secrets: components["schemas"]["ProjectSecret"][];
+        };
+        ProjectSecretPut: {
+            value: string;
+            mode: components["schemas"]["SecretMode"];
+            /** @default true */
+            secret: boolean;
+        };
         AgentConfigFile: {
             path: string;
             /** Format: int64 */
@@ -12833,6 +12904,81 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["AgentConfigImportResult"];
                 };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listProjectSecrets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 按名称排序 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectSecretList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putProjectSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+                /** @description 密钥名（如 `omp/models/anthropic/apiKey`、`git/github.com/token`、`GITHUB_TOKEN`），`/` 编码为 `%2F` */
+                name: components["parameters"]["SecretNamePath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectSecretPut"];
+            };
+        };
+        responses: {
+            /** @description 写入后的条目 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectSecret"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteProjectSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+                /** @description 密钥名（如 `omp/models/anthropic/apiKey`、`git/github.com/token`、`GITHUB_TOKEN`），`/` 编码为 `%2F` */
+                name: components["parameters"]["SecretNamePath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             default: components["responses"]["Error"];
         };

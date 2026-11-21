@@ -824,6 +824,61 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/AgentConfigImportResult' }
         default: { $ref: '#/components/responses/Error' }
+  /api/v1/projects/{id}/secrets:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectIdPath' }
+    get:
+      tags: [projects]
+      operationId: listProjectSecrets
+      summary: 项目级环境变量与 Git 令牌（M24 阶段 ④；保密条目不含值）
+      description: 项目不存在 → 404 `not_found`。已归档的项目照常可读写。只对本项目的 orb 生效，与全局同名时以项目为准；不下发给 Runner 线程与协调宿主。
+      responses:
+        '200':
+          description: 按名称排序
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectSecretList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/projects/{id}/secrets/{name}:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectIdPath' }
+      - { $ref: '#/components/parameters/SecretNamePath' }
+    put:
+      tags: [projects]
+      operationId: putProjectSecret
+      summary: 写入或覆盖项目级条目（覆盖保留原 id）
+      description: |
+        `mode:"env"`：名称须匹配 `[A-Z_][A-Z0-9_]*`；`secret` 缺省 true，`secret:false` 的值之后可经列表读回。
+        `mode:"proxy"`：名称只能是 `git/<主机>/token`（主机小写），且必须保密；模型供应商密钥（`omp/models/…`）只能在全局 `/secrets` 设置。
+        校验失败或值为空 → 400 `invalid_request`；项目不存在（含写入期间被删除）→ 404 `not_found`。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectSecretPut' }
+      responses:
+        '200':
+          description: 写入后的条目
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectSecret' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [projects]
+      operationId: deleteProjectSecret
+      summary: 删除项目级条目
+      description: 项目或条目不存在 → 404 `not_found`。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已删除 }
+        default: { $ref: '#/components/responses/Error' }
 
   # ---------------------------------------------------------------- providers
   /api/v1/providers:
@@ -12156,6 +12211,30 @@ components:
         hosts:
           type: array
           items: { type: string }
+    ProjectSecret:
+      type: object
+      required: [name, mode, secret, createdAt, updatedAt]
+      properties:
+        name: { type: string }
+        mode: { $ref: '#/components/schemas/SecretMode' }
+        secret: { type: boolean, description: 'true = 保存后不可读（不给 `value`）；false = 普通环境变量' }
+        value: { type: string, description: '只在 `secret:false` 时给出' }
+        createdAt: { $ref: '#/components/schemas/TimestampMs' }
+        updatedAt: { $ref: '#/components/schemas/TimestampMs' }
+    ProjectSecretList:
+      type: object
+      required: [secrets]
+      properties:
+        secrets:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectSecret' }
+    ProjectSecretPut:
+      type: object
+      required: [value, mode]
+      properties:
+        value: { type: string }
+        mode: { $ref: '#/components/schemas/SecretMode' }
+        secret: { type: boolean, default: true }
     AgentConfigFile:
       type: object
       required: [path, size, mode, sha256, updatedAt]

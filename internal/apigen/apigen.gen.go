@@ -9827,6 +9827,38 @@ type ProjectRepoTreeEntry struct {
 // ProjectRepoTreeEntryType defines model for ProjectRepoTreeEntry.Type.
 type ProjectRepoTreeEntryType string
 
+// ProjectSecret defines model for ProjectSecret.
+type ProjectSecret struct {
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt TimestampMs `json:"createdAt"`
+
+	// Mode `proxy` 经 egress 注入（不进 orb）；`env` 以同名环境变量注入 agent 进程
+	Mode SecretMode `json:"mode"`
+	Name string     `json:"name"`
+
+	// Secret true = 保存后不可读（不给 `value`）；false = 普通环境变量
+	Secret bool `json:"secret"`
+
+	// UpdatedAt UTC 毫秒时间戳
+	UpdatedAt TimestampMs `json:"updatedAt"`
+
+	// Value 只在 `secret:false` 时给出
+	Value *string `json:"value,omitempty"`
+}
+
+// ProjectSecretList defines model for ProjectSecretList.
+type ProjectSecretList struct {
+	Secrets []ProjectSecret `json:"secrets"`
+}
+
+// ProjectSecretPut defines model for ProjectSecretPut.
+type ProjectSecretPut struct {
+	// Mode `proxy` 经 egress 注入（不进 orb）；`env` 以同名环境变量注入 agent 进程
+	Mode   SecretMode `json:"mode"`
+	Secret *bool      `json:"secret,omitempty"`
+	Value  string     `json:"value"`
+}
+
 // ProjectSnapshot 项目快照（M11a）：某项目在某 provider、某 orb 类型上跑完 setup 后的 orb 镜像；键 = (项目, provider, 类型)
 type ProjectSnapshot struct {
 	// BaseCommit 快照里检出的提交（40 位十六进制）；无仓库或尚未发布时省略
@@ -13606,6 +13638,9 @@ type UpdateProjectJSONRequestBody = ProjectPatch
 // CreateGitHubTriggerJSONRequestBody defines body for CreateGitHubTrigger for application/json ContentType.
 type CreateGitHubTriggerJSONRequestBody = GitHubTriggerInput
 
+// PutProjectSecretJSONRequestBody defines body for PutProjectSecret for application/json ContentType.
+type PutProjectSecretJSONRequestBody = ProjectSecretPut
+
 // PutProjectWebhookJSONRequestBody defines body for PutProjectWebhook for application/json ContentType.
 type PutProjectWebhookJSONRequestBody = ProjectWebhookInput
 
@@ -16809,6 +16844,15 @@ type ServerInterface interface {
 	// GetProjectRepoTree 项目仓库镜像在某个 ref 下的目录或文件（M24）
 	// (GET /api/v1/projects/{id}/repo/tree)
 	GetProjectRepoTree(w http.ResponseWriter, r *http.Request, id ProjectIDPath, params GetProjectRepoTreeParams)
+	// ListProjectSecrets 项目级环境变量与 Git 令牌（M24 阶段 ④；保密条目不含值）
+	// (GET /api/v1/projects/{id}/secrets)
+	ListProjectSecrets(w http.ResponseWriter, r *http.Request, id ProjectIDPath)
+	// DeleteProjectSecret 删除项目级条目
+	// (DELETE /api/v1/projects/{id}/secrets/{name})
+	DeleteProjectSecret(w http.ResponseWriter, r *http.Request, id ProjectIDPath, name SecretNamePath)
+	// PutProjectSecret 写入或覆盖项目级条目（覆盖保留原 id）
+	// (PUT /api/v1/projects/{id}/secrets/{name})
+	PutProjectSecret(w http.ResponseWriter, r *http.Request, id ProjectIDPath, name SecretNamePath)
 	// DeleteProjectSnapshots 清除项目快照（M11a；把匹配的 ready 快照退役，原因 `manual`；镜像由回收器异步删除）
 	// (DELETE /api/v1/projects/{id}/snapshots)
 	DeleteProjectSnapshots(w http.ResponseWriter, r *http.Request, id ProjectIDPath, params DeleteProjectSnapshotsParams)
@@ -18582,6 +18626,24 @@ func (_ Unimplemented) SyncProjectRepo(w http.ResponseWriter, r *http.Request, i
 // GetProjectRepoTree 项目仓库镜像在某个 ref 下的目录或文件（M24）
 // (GET /api/v1/projects/{id}/repo/tree)
 func (_ Unimplemented) GetProjectRepoTree(w http.ResponseWriter, r *http.Request, id ProjectIDPath, params GetProjectRepoTreeParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListProjectSecrets 项目级环境变量与 Git 令牌（M24 阶段 ④；保密条目不含值）
+// (GET /api/v1/projects/{id}/secrets)
+func (_ Unimplemented) ListProjectSecrets(w http.ResponseWriter, r *http.Request, id ProjectIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteProjectSecret 删除项目级条目
+// (DELETE /api/v1/projects/{id}/secrets/{name})
+func (_ Unimplemented) DeleteProjectSecret(w http.ResponseWriter, r *http.Request, id ProjectIDPath, name SecretNamePath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutProjectSecret 写入或覆盖项目级条目（覆盖保留原 id）
+// (PUT /api/v1/projects/{id}/secrets/{name})
+func (_ Unimplemented) PutProjectSecret(w http.ResponseWriter, r *http.Request, id ProjectIDPath, name SecretNamePath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -26528,6 +26590,102 @@ func (siw *ServerInterfaceWrapper) GetProjectRepoTree(w http.ResponseWriter, r *
 	handler.ServeHTTP(w, r)
 }
 
+// ListProjectSecrets operation middleware
+func (siw *ServerInterfaceWrapper) ListProjectSecrets(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProjectIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListProjectSecrets(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteProjectSecret operation middleware
+func (siw *ServerInterfaceWrapper) DeleteProjectSecret(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProjectIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "name" -------------
+	var name SecretNamePath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", chi.URLParam(r, "name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteProjectSecret(w, r, id, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutProjectSecret operation middleware
+func (siw *ServerInterfaceWrapper) PutProjectSecret(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProjectIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "name" -------------
+	var name SecretNamePath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", chi.URLParam(r, "name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutProjectSecret(w, r, id, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeleteProjectSnapshots operation middleware
 func (siw *ServerInterfaceWrapper) DeleteProjectSnapshots(w http.ResponseWriter, r *http.Request) {
 
@@ -30331,6 +30489,15 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/projects/{id}/agent-config/import", wrapper.ImportProjectAgentConfig)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/projects/{id}/secrets", wrapper.ListProjectSecrets)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/projects/{id}/secrets/{name}", wrapper.DeleteProjectSecret)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/projects/{id}/secrets/{name}", wrapper.PutProjectSecret)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/providers", wrapper.ListProviders)
