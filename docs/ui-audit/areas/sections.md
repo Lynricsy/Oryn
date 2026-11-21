@@ -36,6 +36,10 @@
 | `projects.settings.schedule-new` | 新建定时任务对话框 | 「定时任务」的「新建定时任务」 | 弹窗（手机为抽屉） |
 | `projects.settings.schedule-edit` | 编辑定时任务对话框（含运行记录） | 定时某行「…」→ 编辑 | 弹窗（手机为抽屉） |
 | `projects.settings.ssh` | 项目设置「SSH 主机」 | 设置左导航「SSH 主机」 | 页面 |
+| `projects.new.hosted` | 新建项目 ·「空白仓库」来源 | 新建页点「空白仓库（Oryn 托管）」 | 页面 |
+| `projects.hosted.home` | 托管项目主页 | 项目分区点 notes | 页面 |
+| `projects.settings.overview.hosted` | 设置概览 ·「托管仓库」卡（克隆地址、Webhook） | 齿轮 → 概览 | 页面 |
+| `projects.settings.overview.create-hosted` | 设置概览 ·「创建托管仓库」（已归档、按钮禁用） | 打开 legacy-site 的设置 | 页面 |
 | `projects.repo.home` | 项目主页的仓库区块（提交到 main、文件、README） | 项目分区点 Oryn | 页面 |
 | `projects.repo.home-error` | 项目主页 · 仓库镜像不可用（凭据被拒） | 项目分区点 oryn-core | 页面 |
 | `projects.repo.commits` | 提交子页（宽屏左列表、右侧提示） | 主页「提交到 main」→ 查看全部 / 文件区「提交」 | 页面 |

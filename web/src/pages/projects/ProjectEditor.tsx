@@ -203,12 +203,17 @@ function RepoSourcePicker({
 					</button>
 				))}
 			</div>
+			{value === "hosted" && (
+				<p className="text-faint text-xs">
+					{t("hostedRepo.source.hostedHint")}
+				</p>
+			)}
 		</div>
 	);
 }
 
 /**
- * 新建与「概览」共用的字段：名称、（新建页）仓库来源、描述、图标、仓库地址（独占一行，行尾「从 GitHub 选择」）、
+ * 新建与「概览」共用的字段：名称、描述、图标，然后是仓库一组：（新建页）仓库来源、仓库地址（独占一行，行尾「从 GitHub 选择」）、
  * 紧随其后的基线分支。托管来源 / 托管项目不显示仓库地址；「不带仓库」连基线分支也不显示。
  */
 function GeneralFields({
@@ -236,9 +241,6 @@ function GeneralFields({
 					/>
 				</Field>
 			</div>
-			{source && onSource && (
-				<RepoSourcePicker value={source} onChange={onSource} />
-			)}
 			<div className="sm:col-span-2">
 				<Field
 					label={t("projects.description")}
@@ -256,6 +258,9 @@ function GeneralFields({
 				icon={f.icon}
 				onChange={(icon) => set("icon", icon)}
 			/>
+			{source && onSource && (
+				<RepoSourcePicker value={source} onChange={onSource} />
+			)}
 			{src === "existing" && (
 				<div className="sm:col-span-2">
 					<Field label={t("projects.repoUrl")}>
@@ -277,11 +282,6 @@ function GeneralFields({
 						</div>
 					</Field>
 				</div>
-			)}
-			{source === "hosted" && (
-				<p className="text-faint text-xs sm:col-span-2">
-					{t("hostedRepo.source.hostedHint")}
-				</p>
 			)}
 			{src !== "none" && (
 				<Field label={t("projects.baseBranch")}>

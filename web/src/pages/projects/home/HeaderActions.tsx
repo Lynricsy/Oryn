@@ -97,8 +97,17 @@ export function SettingsButton({ project }: { project: Project }): ReactNode {
 	);
 }
 
-/** 在这个项目里新建线程：把项目交给首屏后跳到 `/`。已归档的项目不显示。 */
-export function NewThreadButton({ project }: { project: Project }): ReactNode {
+/**
+ * 在这个项目里新建线程：把项目交给首屏后跳到 `/`。已归档的项目不显示。
+ * 页头里窄屏只留图标；`labeled` 时（如空状态里）总带文字，免得正文里出现一个孤零零的「+」。
+ */
+export function NewThreadButton({
+	project,
+	labeled = false,
+}: {
+	project: Project;
+	labeled?: boolean;
+}): ReactNode {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	if (project.archivedAt) return null;
@@ -113,7 +122,9 @@ export function NewThreadButton({ project }: { project: Project }): ReactNode {
 				navigate("/");
 			}}
 		>
-			<span className="hidden sm:inline">{t("sidebar.newThread")}</span>
+			<span className={labeled ? undefined : "hidden sm:inline"}>
+				{t("sidebar.newThread")}
+			</span>
 		</Button>
 	);
 }

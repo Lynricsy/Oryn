@@ -42,7 +42,7 @@ export function RecentThreadsCard({
 				) : (
 					<div className="flex flex-col items-start gap-2 py-1">
 						<p className="text-faint text-sm">{t("projectHome.noThreads")}</p>
-						<NewThreadButton project={project} />
+						<NewThreadButton project={project} labeled />
 					</div>
 				)}
 			</Card>

@@ -203,3 +203,35 @@ surface({
 	},
 });
 surface({ id: "projects.settings.ssh", path: `${SETTINGS}/ssh` });
+
+// M24 阶段 ③：托管仓库（新建页「空白仓库」来源、托管项目主页、设置概览的托管仓库卡与创建托管仓库）
+const HOSTED = "/projects/prj_01JCZ000000000000000HOSTED";
+const LEGACY = "/projects/prj_01JCZ000000000000000LEGACY";
+
+surface({
+	id: "projects.new.hosted",
+	path: "/projects/new",
+	ready: "[data-testid=repo-source]",
+	open: async (page) => {
+		await page.getByRole("button", { name: "空白仓库（Oryn 托管）" }).click();
+		await settle(page);
+		return undefined;
+	},
+});
+surface({
+	id: "projects.hosted.home",
+	path: HOSTED,
+	ready: "[data-testid=project-home] [data-testid=project-repo]",
+});
+surface({
+	id: "projects.settings.overview.hosted",
+	path: `${HOSTED}/settings/overview`,
+	ready: "[data-testid=hosted-repo-card]",
+	open: cardAt("托管仓库"),
+});
+surface({
+	id: "projects.settings.overview.create-hosted",
+	path: `${LEGACY}/settings/overview`,
+	ready: "[data-testid=hosted-repo-card]",
+	open: cardAt("托管仓库"),
+});

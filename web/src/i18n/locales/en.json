@@ -4756,6 +4756,7 @@
 		"danger": "Danger zone",
 		"archive": "Archive project",
 		"archiveHint": "Hide it from the sidebar and stop its GitHub hook, warm orbs, schedules and triggers. Threads are kept; unarchive any time.",
+		"archiveHintHosted": "Hide it from the sidebar, stop its warm orbs, schedules and triggers, and make the hosted repository read-only. Threads are kept; unarchive any time.",
 		"archiveConfirm": "Archive project {{name}}?",
 		"archiveConfirmBody": "Its GitHub hook is released, warm orbs go to zero, and schedules and triggers stop. Threads are untouched and you can still start threads in it.",
 		"archiveConfirmBodyHosted": "Warm orbs go to zero, schedules and triggers stop, and the hosted repository becomes read-only. Threads are untouched.",

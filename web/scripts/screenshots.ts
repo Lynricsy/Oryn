@@ -1595,6 +1595,35 @@ const SCREENS: Screen[] = [
 				"[data-testid=file-viewer]",
 			),
 	},
+	// M24 阶段 ③：托管仓库（托管项目主页、设置概览的托管仓库卡、新建页「空白仓库」来源）
+	{
+		name: "projects-hosted-home",
+		prepare: ({ page }) =>
+			open(
+				page,
+				"/projects/prj_01JCZ000000000000000HOSTED",
+				"[data-testid=project-home]",
+			),
+	},
+	{
+		name: "projects-hosted-settings",
+		prepare: async ({ page }) => {
+			await open(
+				page,
+				"/projects/prj_01JCZ000000000000000HOSTED/settings/overview",
+				"[data-testid=hosted-repo-card]",
+			);
+			await scrollWithin(page, "[data-testid=hosted-repo-card]", "start");
+		},
+	},
+	{
+		name: "projects-new-hosted",
+		prepare: async ({ page }) => {
+			await open(page, "/projects/new", "[data-testid=repo-source]");
+			await page.click("[data-testid=repo-source] [data-source=hosted]");
+			await settle(page, 400);
+		},
+	},
 	{
 		name: "sink-more",
 		widths: [390],

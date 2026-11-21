@@ -82,7 +82,11 @@ function DangerCard({ project }: { project: Project }): ReactNode {
 					) : (
 						<DangerRow
 							title={t("projectSettings.archive")}
-							hint={t("projectSettings.archiveHint")}
+							hint={t(
+								project.hosted
+									? "projectSettings.archiveHintHosted"
+									: "projectSettings.archiveHint",
+							)}
 						>
 							<Button
 								size="sm"

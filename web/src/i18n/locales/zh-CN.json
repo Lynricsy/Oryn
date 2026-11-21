@@ -4756,6 +4756,7 @@
 		"danger": "危险操作",
 		"archive": "归档项目",
 		"archiveHint": "从侧栏收起，停用它的 GitHub 钩子、预热 orb、定时任务与触发规则；线程保留，随时可以取消归档。",
+		"archiveHintHosted": "从侧栏收起，停用预热 orb、定时任务与触发规则，托管仓库变为只读；线程保留，随时可以取消归档。",
 		"archiveConfirm": "归档项目 {{name}}？",
 		"archiveConfirmBody": "GitHub 仓库钩子会被释放，预热 orb 清零，定时任务与触发规则停止运行；线程不受影响，仍可在这个项目里新建线程。",
 		"archiveConfirmBodyHosted": "预热 orb 清零，定时任务与触发规则停止运行，托管仓库变为只读；线程不受影响。",

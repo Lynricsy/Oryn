@@ -636,19 +636,26 @@ export class MockRepo {
 		return json(this.status(p), 202);
 	}
 
-	/** 关联到第一个项目的线程（push）；线程不在了就不关联。 */
+	/**
+	 * 关联到本项目的一条线程（push）；本项目没有线程就不关联。托管项目复用同一份提交，
+	 * 不能把别的项目的线程挂到它的提交上。
+	 */
 	private threadOf(
+		projectId: string,
 		c: MockCommit,
 	): Schemas["ProjectRepoThreadLink"] | undefined {
 		if (!c.linked) return undefined;
 		const t = [...this.deps.threads.values()].find(
-			(x) => x.projectId === DATA_PROJECT,
+			(x) => x.projectId === projectId,
 		);
 		return t ? { id: t.id, title: t.title ?? "", source: "push" } : undefined;
 	}
 
-	private commitOf(c: MockCommit): Schemas["ProjectRepoCommit"] {
-		const thread = this.threadOf(c);
+	private commitOf(
+		projectId: string,
+		c: MockCommit,
+	): Schemas["ProjectRepoCommit"] {
+		const thread = this.threadOf(projectId, c);
 		return {
 			...summaryOf(c),
 			parents: c.parents,
@@ -726,7 +733,7 @@ export class MockRepo {
 					? COMMITS.find((x) => x.sha.startsWith(sha))
 					: undefined;
 			if (!c) return error(404, "commit_not_found", "提交不存在");
-			return routes[3] ? this.diff(c, q) : this.commit(c);
+			return routes[3] ? this.diff(c, q) : this.commit(prj.id, c);
 		}
 		const ref = q.get("ref") ?? "";
 		const path = q.get("path") ?? "";
@@ -736,7 +743,7 @@ export class MockRepo {
 		const tip = this.resolve(prj, s, ref);
 		if (!tip) return error(404, "ref_not_found", "ref 不存在");
 		const refName = ref || s.baseBranch || "";
-		if (rest === "commits") return this.commits(refName, tip, path, q);
+		if (rest === "commits") return this.commits(prj.id, refName, tip, path, q);
 		if (rest === "tree")
 			return this.tree(refName, tip, path, q.get("lastCommits") !== "false");
 		const download = q.get("download");
@@ -782,6 +789,7 @@ export class MockRepo {
 	}
 
 	private commits(
+		projectId: string,
 		ref: string,
 		tip: string,
 		path: string,
@@ -810,17 +818,17 @@ export class MockRepo {
 		return json({
 			ref,
 			commit: head,
-			commits: page.map((c) => this.commitOf(c)),
+			commits: page.map((c) => this.commitOf(projectId, c)),
 			...(off + limit < all.length
 				? { nextCursor: `${head}:${off + limit}` }
 				: {}),
 		});
 	}
 
-	private commit(c: MockCommit): Response {
+	private commit(projectId: string, c: MockCommit): Response {
 		const files = changesOf(c);
 		const detail: Schemas["ProjectRepoCommitDetail"] = {
-			...this.commitOf(c),
+			...this.commitOf(projectId, c),
 			body: c.body,
 			committerName: c.author[0],
 			committerEmail: c.author[1],
