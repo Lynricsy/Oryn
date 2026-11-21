@@ -752,6 +752,34 @@ export const projectSnapshots: Record<string, Schemas["ProjectSnapshot"][]> = {
 	],
 };
 
+/** 项目级密钥与环境变量（M24 阶段 ④），按项目 id；保密条目不带值（与服务端列表一致）。 */
+export const projectSecrets: Record<string, Schemas["ProjectSecret"][]> = {
+	[projects[0]?.id ?? ""]: [
+		{
+			name: "NODE_ENV",
+			mode: "env",
+			secret: false,
+			value: "development",
+			createdAt: NOW - 5 * 24 * HOUR,
+			updatedAt: NOW - 2 * HOUR,
+		},
+		{
+			name: "SENTRY_DSN",
+			mode: "env",
+			secret: true,
+			createdAt: NOW - 5 * 24 * HOUR,
+			updatedAt: NOW - 26 * HOUR,
+		},
+		{
+			name: "git/gitlab.com/token",
+			mode: "proxy",
+			secret: true,
+			createdAt: NOW - 3 * 24 * HOUR,
+			updatedAt: NOW - 3 * 24 * HOUR,
+		},
+	],
+};
+
 /** 运行记录 id → 日志全文。 */
 export const setupLogs: Record<string, string> = Object.fromEntries(
 	Object.values(orbEnv).flatMap((env) =>

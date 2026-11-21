@@ -61,6 +61,7 @@ import {
 	NOW,
 	orbEnv,
 	poolOrbs,
+	projectSecrets,
 	projectSnapshots,
 	providers,
 	runnerOrb,
@@ -534,6 +535,13 @@ export class MockServer {
 	/** 项目快照（M11a），按项目 id。 */
 	readonly snapshots = new Map<string, Schemas["ProjectSnapshot"][]>(
 		Object.entries(projectSnapshots).map(([k, v]) => [
+			k,
+			v.map((s) => ({ ...s })),
+		]),
+	);
+	/** 项目级密钥与环境变量（M24 阶段 ④），按项目 id；保密条目不存值。 */
+	readonly projectSecrets = new Map<string, Schemas["ProjectSecret"][]>(
+		Object.entries(projectSecrets).map(([k, v]) => [
 			k,
 			v.map((s) => ({ ...s })),
 		]),
@@ -1650,6 +1658,67 @@ export class MockServer {
 			}
 			if (m === "DELETE") {
 				delete files[fp];
+				return new Response(null, { status: 204 });
+			}
+		}
+		const secMatch = /^projects\/([^/]+)\/secrets(?:\/(.+))?$/.exec(p);
+		if (secMatch) {
+			const pid = secMatch[1] ?? "";
+			if (!this.projects.some((x) => x.id === pid))
+				return json({ code: "not_found", message: "项目不存在" }, 404);
+			const list = this.projectSecrets.get(pid) ?? [];
+			if (secMatch[2] === undefined) return json({ secrets: list });
+			const name = decodeURIComponent(secMatch[2]);
+			const bad = (message: string) =>
+				json({ code: "invalid_request", message }, 400);
+			if (m === "PUT") {
+				const b = (await req.json()) as Schemas["ProjectSecretPut"];
+				const secret = b.secret ?? true;
+				// 与服务端 secrets.ValidProjectEntry 同顺序、同文案
+				if (b.mode !== "env" && b.mode !== "proxy")
+					return bad("mode 必须是 proxy 或 env");
+				if (b.mode === "env" && !/^[A-Z_][A-Z0-9_]*$/.test(name))
+					return bad(
+						`env 模式的密钥名必须匹配 [A-Z_][A-Z0-9_]*：${JSON.stringify(name)}`,
+					);
+				if (b.mode === "proxy" && name.startsWith("omp/models/"))
+					return bad(
+						`模型供应商密钥只能在全局密钥里设置：${JSON.stringify(name)}`,
+					);
+				if (
+					b.mode === "proxy" &&
+					!/^git\/[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?\/token$/.test(name)
+				)
+					return bad(
+						`项目级 proxy 条目只能是 git/<主机>/token（主机名小写）：${JSON.stringify(name)}`,
+					);
+				if (b.mode === "proxy" && !secret) return bad("Git 令牌只能保密保存");
+				if (!b.value) return bad("值不能为空");
+				const prev = list.find((s) => s.name === name);
+				const now = Date.now();
+				const next: Schemas["ProjectSecret"] = {
+					name,
+					mode: b.mode,
+					secret,
+					...(secret ? {} : { value: b.value }),
+					createdAt: prev?.createdAt ?? now,
+					updatedAt: now,
+				};
+				this.projectSecrets.set(
+					pid,
+					[...list.filter((s) => s.name !== name), next].sort((a, b) =>
+						a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+					),
+				);
+				return json(next);
+			}
+			if (m === "DELETE") {
+				if (!list.some((s) => s.name === name))
+					return json({ code: "not_found", message: "条目不存在" }, 404);
+				this.projectSecrets.set(
+					pid,
+					list.filter((s) => s.name !== name),
+				);
 				return new Response(null, { status: 204 });
 			}
 		}

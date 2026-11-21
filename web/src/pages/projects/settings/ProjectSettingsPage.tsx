@@ -15,6 +15,7 @@ import { EnvironmentTab } from "./EnvironmentTab";
 import { GitHubTab } from "./GitHubTab";
 import { OverviewTab } from "./OverviewTab";
 import { SchedulesTab } from "./SchedulesTab";
+import { SecretsTab } from "./SecretsTab";
 import { SshTab } from "./SshTab";
 
 export const SETTINGS_TABS = [
@@ -24,6 +25,7 @@ export const SETTINGS_TABS = [
 	"github",
 	"schedules",
 	"ssh",
+	"secrets",
 ] as const;
 export type ProjectSettingsTab = (typeof SETTINGS_TABS)[number];
 
@@ -34,6 +36,7 @@ const TAB_ICON: Record<ProjectSettingsTab, IconName> = {
 	github: "github",
 	schedules: "clock",
 	ssh: "hardDrives",
+	secrets: "key",
 };
 
 const TAB_BODY: Record<
@@ -46,6 +49,7 @@ const TAB_BODY: Record<
 	github: GitHubTab,
 	schedules: SchedulesTab,
 	ssh: SshTab,
+	secrets: SecretsTab,
 };
 
 const isTab = (v: string | undefined): v is ProjectSettingsTab =>

@@ -56,11 +56,11 @@ afterEach(() => {
 });
 
 describe("项目设置：导航", () => {
-	it("宽屏打开 /settings 落到概览，左导航 6 组", async () => {
+	it("宽屏打开 /settings 落到概览，左导航 7 组", async () => {
 		mount(`/projects/${ORYN.id}/settings`);
 		await waitFor(() => expect(where()).toHaveTextContent(OVERVIEW));
 		const nav = await screen.findByTestId("project-settings-nav");
-		expect(within(nav).getAllByRole("link")).toHaveLength(6);
+		expect(within(nav).getAllByRole("link")).toHaveLength(7);
 		expect(within(nav).getByRole("link", { name: "概览" })).toHaveAttribute(
 			"aria-current",
 			"page",
@@ -79,7 +79,7 @@ describe("项目设置：导航", () => {
 		window.innerWidth = 390;
 		mount(`/projects/${ORYN.id}/settings`);
 		const list = await screen.findByTestId("project-settings-list");
-		expect(within(list).getAllByRole("link")).toHaveLength(6);
+		expect(within(list).getAllByRole("link")).toHaveLength(7);
 		expect(screen.queryByTestId("project-settings-nav")).toBeNull();
 		fireEvent.click(within(list).getByRole("link", { name: "环境" }));
 		await waitFor(() => expect(where()).toHaveTextContent(ENV));
