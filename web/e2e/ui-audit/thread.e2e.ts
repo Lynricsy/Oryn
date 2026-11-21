@@ -10,7 +10,7 @@ import {
 	MAIN_THREAD,
 	TOOL_ZOO_THREAD,
 } from "../../src/mock/fixtures";
-import { isMobile, lastOverlay, settle, surface } from "./audit";
+import { isMobile, lastOverlay, PHASE, settle, surface } from "./audit";
 
 const T = `/t/${MAIN_THREAD}`;
 const ZOO = `/t/${TOOL_ZOO_THREAD}`;
@@ -380,13 +380,18 @@ overlay(
 	},
 	clearComposer,
 );
-// 走 Esc 关闭：重开时先删一个字再敲回同样的 `#log`，覆盖「收起后改回同样文本要重新弹出」
-overlay("thread.ref-menu", async (p) => {
-	await composer(p).fill("#lo");
-	await composer(p).fill("#log");
-	await p.locator("[data-testid=ref-menu] [role=option]").first().waitFor();
-	return p.getByTestId("ref-menu");
-});
+// after 走 Esc 关闭：重开时先删一个字再敲回同样的 `#log`，覆盖「收起后改回同样文本要重新弹出」。
+// 基线有这个缺陷（Esc 后敲回同样文本不重开），before 仍用清空输入框来关；缺陷本身由 RefMenu 单测反向验证
+overlay(
+	"thread.ref-menu",
+	async (p) => {
+		await composer(p).fill("#lo");
+		await composer(p).fill("#log");
+		await p.locator("[data-testid=ref-menu] [role=option]").first().waitFor();
+		return p.getByTestId("ref-menu");
+	},
+	PHASE === "before" ? clearComposer : {},
+);
 overlay("thread.thinking", async (p) => {
 	await p.getByRole("button", { name: "思考级别" }).first().click();
 	return undefined;
