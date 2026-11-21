@@ -383,6 +383,7 @@ func (s *Server) init(ctx context.Context) error {
 		Changed:          s.Hub.ProjectRepoChanged,
 		PublicURL:        cfg.PublicURL,
 		Ships:            s.Threads,
+		Box:              box,
 	}, s.Store, s.Vault, s.GitHub); err != nil {
 		return err
 	}

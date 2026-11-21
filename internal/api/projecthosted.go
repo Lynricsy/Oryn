@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/repos"
@@ -199,4 +200,107 @@ func (s *Server) createProjectHostedRepo(ctx context.Context, id string) (db.Pro
 	}
 	s.poolKick(id)
 	return s.Store.Q.GetProject(ctx, id)
+}
+
+// 推送后 Webhook（M24 阶段 ③）：只有主人能改（不在 ProjectPatch 里，助手的项目工具碰不到这个端点）。
+
+const (
+	webhookURLMax    = 2048
+	webhookSecretMax = 256
+)
+
+// webhookJSON 是 Webhook 行的 API 视图：从不返回签名密钥，只报告有没有。
+func webhookJSON(h db.ProjectWebhook) *apigen.ProjectWebhook {
+	out := &apigen.ProjectWebhook{URL: h.Url, HasSecret: len(h.SecretEnc) > 0, LastDeliveryAt: h.LastDeliveryAt, LastError: h.LastError}
+	if h.LastStatus != nil {
+		out.LastStatus = new(int(*h.LastStatus))
+	}
+	return out
+}
+
+// webhookURL 校验 Webhook 地址：http(s)、有主机、不带用户名密码（地址会原样显示在设置里）、≤2048 字符。
+// 内网地址照常允许：只有主人能设，等同主人自己发请求。
+func webhookURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || utf8.RuneCountInString(raw) > webhookURLMax {
+		return "", errInvalid("Webhook 地址不能为空，且至多 2048 个字符")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", errInvalid("Webhook 地址须是 http:// 或 https:// 地址")
+	}
+	if u.User != nil {
+		return "", errInvalid("Webhook 地址不能带用户名或密码")
+	}
+	return raw, nil
+}
+
+// PutProjectWebhook 设置托管项目的推送后 Webhook：secret 省略 = 保留原密钥，空串 = 清除。
+func (s *Server) PutProjectWebhook(w http.ResponseWriter, r *http.Request, id apigen.ProjectIDPath) {
+	var req apigen.ProjectWebhookInput
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	p, err := s.putProjectWebhook(r.Context(), id, req)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	s.writeProject(w, r, http.StatusOK, p)
+}
+
+// putProjectWebhook 校验并写 Webhook 行，返回项目行。
+func (s *Server) putProjectWebhook(ctx context.Context, id string, req apigen.ProjectWebhookInput) (db.Project, error) {
+	p, err := s.Store.Q.GetProject(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return p, errNotFound("项目不存在")
+	} else if err != nil {
+		return p, err
+	}
+	if !p.Hosted {
+		return p, &statusError{http.StatusConflict, "repo_not_hosted", "只有 Oryn 托管仓库的项目能设置推送后 Webhook"}
+	}
+	target, err := webhookURL(req.URL)
+	if err != nil {
+		return p, err
+	}
+	var sealed []byte
+	switch {
+	case req.Secret == nil:
+		old, err := s.Store.Q.GetProjectWebhook(ctx, id)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return p, err
+		}
+		sealed = old.SecretEnc
+	case *req.Secret == "":
+	default:
+		if utf8.RuneCountInString(*req.Secret) > webhookSecretMax {
+			return p, errInvalid("签名密钥至多 256 个字符")
+		}
+		if s.Repos == nil || s.Repos.Service == nil {
+			return p, errRepoUnavailable
+		}
+		if sealed, err = s.Repos.Service.SealWebhookSecret(id, *req.Secret); err != nil {
+			return p, err
+		}
+	}
+	return p, s.Store.Q.UpsertProjectWebhook(ctx, db.UpsertProjectWebhookParams{
+		ProjectID: id, Url: target, SecretEnc: sealed, UpdatedAt: time.Now().UnixMilli(),
+	})
+}
+
+// DeleteProjectWebhook 移除项目的推送后 Webhook（幂等）。
+func (s *Server) DeleteProjectWebhook(w http.ResponseWriter, r *http.Request, id apigen.ProjectIDPath) {
+	if _, err := s.Store.Q.GetProject(r.Context(), id); errors.Is(err, sql.ErrNoRows) {
+		writeErr(w, r, errNotFound("项目不存在"))
+		return
+	} else if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	if _, err := s.Store.Q.DeleteProjectWebhook(r.Context(), id); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

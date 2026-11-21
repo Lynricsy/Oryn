@@ -32,7 +32,7 @@ import (
 // owner_memory_explicit、owner_memory_snapshots；
 // M18：ssh_audit、ssh_hosts、ssh_keys；
 // M19：assistant_settings、assistant_confirmations、assistant_inbox；
-// M24 阶段 ②：project_repos、repo_pushes、repo_commit_threads）。
+// M24 阶段 ②：project_repos、repo_pushes、repo_commit_threads；阶段 ③：project_webhooks）。
 var m2Tables = []string{
 	"agent_avatars", "artifact_comment_threads", "artifact_comments", "artifact_consents", "artifact_data", "artifact_data_totals", "artifact_files", "artifact_publications", "artifact_versions", "artifacts", "assistant_confirmations", "assistant_files", "assistant_inbox", "assistant_settings", "attachments", "blobs", "box_activity", "box_apps", "box_deploys", "box_releases", "box_secrets", "boxes", "browser_profile_events", "browser_profiles", "budget", "budget_alerts", "coord_actions", "device_pairings",
 	"devices", "entries", "entry_cursors", "github_audit", "github_autoclose", "github_deliveries", "github_hooks", "github_identities",
@@ -41,7 +41,7 @@ var m2Tables = []string{
 	"memory_models", "memory_projects", "memory_settings", "memory_stale_holds", "memory_stale_models", "memory_tombstones", "memory_usage", "notification_channels", "notification_deliveries", "notifications", "orb_desktops",
 	"orb_events", "orb_samples", "orb_services", "orb_setup_runs", "orbs", "owner", "owner_memory_chunks", "owner_memory_exclusions", "owner_memory_explicit",
 	"owner_memory_settings", "owner_memory_snapshots", "owner_memory_sources", "owner_memory_topics", "passkeys", "portal_sessions", "portal_shares",
-	"project_repos", "project_snapshots", "projects", "providers", "published_files", "push_subscriptions", "recovery_codes", "repo_commit_threads", "repo_pushes", "role_avatars", "runners", "schedule_runs", "schedules",
+	"project_repos", "project_snapshots", "project_webhooks", "projects", "providers", "published_files", "push_subscriptions", "recovery_codes", "repo_commit_threads", "repo_pushes", "role_avatars", "runners", "schedule_runs", "schedules",
 	"search_docs", "search_fts", "search_fts_config", "search_fts_content", "search_fts_data", "search_fts_docsize", "search_fts_idx", "search_state",
 	"secrets", "spaces", "ssh_audit", "ssh_hosts", "ssh_keys", "stats_state", "thread_commits", "thread_issues", "thread_labels", "thread_pulls", "thread_reports", "thread_share_entries",
 	"thread_share_identities", "thread_shares", "threads", "tool_calls", "tool_q", "turn_q", "turns", "usage_q", "usage_records", "web_sessions",

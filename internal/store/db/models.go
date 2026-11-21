@@ -1007,6 +1007,17 @@ type ProjectSnapshot struct {
 	GcAttemptAt  *int64  `json:"gcAttemptAt"`
 }
 
+type ProjectWebhook struct {
+	ProjectID      string  `json:"projectId"`
+	Url            string  `json:"url"`
+	SecretEnc      []byte  `json:"secretEnc"`
+	LastDeliveryAt *int64  `json:"lastDeliveryAt"`
+	LastStatus     *int64  `json:"lastStatus"`
+	LastError      *string `json:"lastError"`
+	CreatedAt      int64   `json:"createdAt"`
+	UpdatedAt      int64   `json:"updatedAt"`
+}
+
 type Provider struct {
 	ID            string  `json:"id"`
 	Name          string  `json:"name"`

@@ -21,8 +21,9 @@ import (
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
-// projectJSON 把项目行转成 API 视图；hook 是项目所绑仓库的 github_hooks 行（没有为 nil）。
-func (s *Server) projectJSON(p db.Project, hook *db.GithubHook) apigen.Project {
+// projectJSON 把项目行转成 API 视图；hook 是项目所绑仓库的 github_hooks 行，wh 是托管项目的推送后 Webhook 行
+// （没有为 nil）。
+func (s *Server) projectJSON(p db.Project, hook *db.GithubHook, wh *db.ProjectWebhook) apigen.Project {
 	out := apigen.Project{
 		ID: p.ID, Name: p.Name, Description: p.Description, RepoURL: p.RepoUrl, BaseBranch: p.BaseBranch,
 		DefaultProvider: p.DefaultProvider, DefaultOrbType: p.DefaultOrbType,
@@ -38,6 +39,9 @@ func (s *Server) projectJSON(p db.Project, hook *db.GithubHook) apigen.Project {
 	if p.Hosted {
 		out.Hosted = new(true)
 		out.CloneURL = new(orbs.HostedCloneURL(s.Config.PublicURL, p.ID))
+		if wh != nil {
+			out.Webhook = webhookJSON(*wh)
+		}
 	}
 	return out
 }
@@ -52,7 +56,7 @@ func (s *Server) writeProject(w http.ResponseWriter, r *http.Request, status int
 	WriteJSON(w, status, v)
 }
 
-// projectView 是单个项目的 API 视图：已绑定时至多查一次所绑仓库的 hook 行。
+// projectView 是单个项目的 API 视图：已绑定时至多查一次所绑仓库的 hook 行，托管项目再查一次 Webhook 行。
 func (s *Server) projectView(ctx context.Context, p db.Project) (apigen.Project, error) {
 	var hook *db.GithubHook
 	if p.GithubRepoID != nil {
@@ -63,7 +67,16 @@ func (s *Server) projectView(ctx context.Context, p db.Project) (apigen.Project,
 			return apigen.Project{}, err
 		}
 	}
-	return s.projectJSON(p, hook), nil
+	var wh *db.ProjectWebhook
+	if p.Hosted {
+		h, err := s.Store.Q.GetProjectWebhook(ctx, p.ID)
+		if err == nil {
+			wh = &h
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return apigen.Project{}, err
+		}
+	}
+	return s.projectJSON(p, hook, wh), nil
 }
 
 func sameOptStr(a, b *string) bool {
@@ -153,6 +166,19 @@ func (s *Server) ListProjects(w http.ResponseWriter, r *http.Request, params api
 			hooks[h.RepoID] = h
 		}
 	}
+	// 推送后 Webhook 行同样一次读全（只有托管项目才有）
+	var webhooks map[string]db.ProjectWebhook
+	if slices.ContainsFunc(rows, func(p db.Project) bool { return p.Hosted }) {
+		all, err := s.Store.Q.ListProjectWebhooks(r.Context())
+		if err != nil {
+			writeErr(w, r, err)
+			return
+		}
+		webhooks = make(map[string]db.ProjectWebhook, len(all))
+		for _, h := range all {
+			webhooks[h.ProjectID] = h
+		}
+	}
 	out := apigen.ProjectList{Projects: make([]apigen.Project, 0, len(rows))}
 	for _, p := range rows {
 		var hook *db.GithubHook
@@ -161,7 +187,11 @@ func (s *Server) ListProjects(w http.ResponseWriter, r *http.Request, params api
 				hook = &h
 			}
 		}
-		out.Projects = append(out.Projects, s.projectJSON(p, hook))
+		var wh *db.ProjectWebhook
+		if h, ok := webhooks[p.ID]; ok {
+			wh = &h
+		}
+		out.Projects = append(out.Projects, s.projectJSON(p, hook, wh))
 	}
 	WriteJSON(w, http.StatusOK, out)
 }

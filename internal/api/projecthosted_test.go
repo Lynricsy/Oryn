@@ -260,3 +260,75 @@ func TestProjectHostedBaseChangeDoesNotBlock(t *testing.T) {
 	}
 	assert.Equal(t, "refs/heads/dev", bareGit(t, hostedDir(e, p.ID), "symbolic-ref", "HEAD"))
 }
+
+// 推送后 Webhook 的设置接口：只对托管项目、地址校验、密钥只报告有没有（省略 = 保留，空串 = 清除）、移除幂等。
+func TestProjectWebhookAPI(t *testing.T) {
+	e := newRepoEnv(t)
+	dev := h2DeviceToken(t, e)
+	_, p := postProject(t, e, dev, map[string]any{"name": "h", "hosted": true})
+	plain := createRepoProject(t, e, dev, "plain", "")
+	hookPath := "/api/v1/projects/" + p.ID + "/webhook"
+
+	r := e.do("PUT", "/api/v1/projects/"+plain+"/webhook", dev, map[string]any{"url": "https://ci.example/h"})
+	assert.Equal(t, 409, r.status, string(r.body))
+	assert.Equal(t, "repo_not_hosted", r.code(t))
+	r = e.do("PUT", "/api/v1/projects/prj_nope/webhook", dev, map[string]any{"url": "https://ci.example/h"})
+	assert.Equal(t, 404, r.status)
+
+	for _, bad := range []string{"ftp://x", "https://u:p@x", "https://x/" + strings.Repeat("a", 2049-len("https://x/")), "", "http:x"} {
+		r := e.do("PUT", hookPath, dev, map[string]any{"url": bad})
+		assert.Equal(t, 400, r.status, "%q: %s", bad, r.body)
+		assert.Equal(t, "invalid_request", r.code(t), bad)
+	}
+	r = e.do("PUT", hookPath, dev, map[string]any{"url": "https://ci.example/h", "secret": strings.Repeat("s", 257)})
+	assert.Equal(t, 400, r.status)
+
+	webhookOf := func(r h2Resp) *apigen.ProjectWebhook {
+		t.Helper()
+		require.Equal(t, 200, r.status, string(r.body))
+		var out apigen.Project
+		r.json(t, &out)
+		return out.Webhook
+	}
+	r = e.do("PUT", hookPath, dev, map[string]any{"url": "https://ci.example/h", "secret": "s3cret-value"})
+	assert.NotContains(t, string(r.body), "s3cret-value")
+	wh := webhookOf(r)
+	require.NotNil(t, wh)
+	assert.Equal(t, apigen.ProjectWebhook{URL: "https://ci.example/h", HasSecret: true}, *wh)
+	row, err := e.st.Q.GetProjectWebhook(context.Background(), p.ID)
+	require.NoError(t, err)
+	assert.NotContains(t, string(row.SecretEnc), "s3cret-value")
+
+	// 省略 secret 保留原密钥；单个项目与列表里都带 webhook
+	assert.True(t, webhookOf(e.do("PUT", hookPath, dev, map[string]any{"url": "http://10.0.0.5:8080/h"})).HasSecret)
+	got := webhookOf(e.do("GET", "/api/v1/projects/"+p.ID, dev, nil))
+	assert.Equal(t, "http://10.0.0.5:8080/h", got.URL)
+	var list apigen.ProjectList
+	e.do("GET", "/api/v1/projects", dev, nil).json(t, &list)
+	for _, x := range list.Projects {
+		if x.ID == p.ID {
+			require.NotNil(t, x.Webhook)
+			assert.True(t, x.Webhook.HasSecret)
+		} else {
+			assert.Nil(t, x.Webhook)
+		}
+	}
+	assert.NotContains(t, string(e.do("GET", "/api/v1/projects", dev, nil).body), "s3cret-value")
+
+	// 最近投递的字段原样带出
+	_, err = e.st.DB.Exec(`UPDATE project_webhooks SET last_delivery_at = 5, last_status = 500, last_error = 'HTTP 500' WHERE project_id = ?`, p.ID)
+	require.NoError(t, err)
+	got = webhookOf(e.do("GET", "/api/v1/projects/"+p.ID, dev, nil))
+	assert.Equal(t, int64(5), deref(got.LastDeliveryAt))
+	assert.Equal(t, 500, deref(got.LastStatus))
+	assert.Equal(t, "HTTP 500", deref(got.LastError))
+
+	// 空串清除密钥
+	assert.False(t, webhookOf(e.do("PUT", hookPath, dev, map[string]any{"url": "https://ci.example/h", "secret": ""})).HasSecret)
+
+	r = e.do("DELETE", hookPath, dev, nil)
+	assert.Equal(t, 204, r.status, string(r.body))
+	assert.Nil(t, webhookOf(e.do("GET", "/api/v1/projects/"+p.ID, dev, nil)))
+	assert.Equal(t, 204, e.do("DELETE", hookPath, dev, nil).status)
+	assert.Equal(t, 404, e.do("DELETE", "/api/v1/projects/prj_nope/webhook", dev, nil).status)
+}

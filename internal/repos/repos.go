@@ -20,6 +20,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/egress"
+	"github.com/Lynricsy/Oryn/internal/secrets"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
@@ -62,6 +63,10 @@ type Config struct {
 	MaxLFSCacheBytes int64
 	// LFSFlightTimeout 是一次取 LFS 对象（batch、下载、落盘）的总时限；0 = 15 分钟。
 	LFSFlightTimeout time.Duration
+	// Box 封存托管仓库 Webhook 的签名密钥（AAD = WebhookAAD(projectID)）；nil = 不能保存或使用签名密钥。
+	Box *secrets.Box
+	// WebhookTimeout 是一次 Webhook 投递的总时限；0 = 10 秒。
+	WebhookTimeout time.Duration
 }
 
 // GitHub 是 github.com 拉取凭据与「提交 → PR → 线程」反查（*github.Service 实现）。
@@ -115,6 +120,8 @@ type Service struct {
 	smart        smartSlots // 托管仓库 smart-HTTP 的 git 进程名额（阶段 ③）
 	pushLocks    pushLocks  // 托管仓库每项目的推送锁（阶段 ③）
 	lfsSlots     lfsSlots   // 托管仓库 LFS 对象传输的名额（阶段 ③）
+
+	hooks webhookQueues // 托管仓库推送后 Webhook 的每项目投递队列（阶段 ③）
 
 	treeWalkMax  int   // 找子项最后提交时至多读的提交数（测试可改）
 	maxBlobBytes int64 // blob 接口的大小上限（测试可改）

@@ -5989,7 +5989,7 @@ type Error struct {
 	// `ref_not_found`、`commit_not_found`、`path_not_found`（404）、`not_a_file`、`not_a_directory`（409）、`too_large`（413）；
 	// Git LFS：`lfs_missing`（404）、`lfs_auth_failed`（409）、`lfs_unreachable`（502）、`lfs_corrupt`（502）、`lfs_no_space`（507）。
 	// M24（托管仓库）：`repo_hosted`（409，托管项目上改外部仓库地址或同步）、`repo_exists`（409，项目已有仓库时再创建托管仓库）、
-	// `project_archived`（409，已归档项目上创建托管仓库）。
+	// `project_archived`（409，已归档项目上创建托管仓库）、`repo_not_hosted`（409，非托管项目上设置推送后 Webhook）。
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
@@ -9479,6 +9479,9 @@ type Project struct {
 
 	// WarmOrbs 预热池里为本项目常备的 orb 数（M11a；缺省 0 = 不预热）
 	WarmOrbs int `json:"warmOrbs"`
+
+	// Webhook 推送后 Webhook（M24）；仅托管项目且已设置时出现；从不返回签名密钥
+	Webhook *ProjectWebhook `json:"webhook,omitempty"`
 }
 
 // ProjectCreate defines model for ProjectCreate.
@@ -9880,6 +9883,31 @@ type ProjectSnapshotList struct {
 
 // ProjectSnapshotState `building` 正在提交镜像；`ready` 可被新 orb 使用（同键至多一个）；`retired` 已退役、等待回收器删除镜像
 type ProjectSnapshotState string
+
+// ProjectWebhook 托管仓库的推送后 Webhook（M24 阶段 ③）：每次推送成功后异步 POST 一次 JSON，不重试
+type ProjectWebhook struct {
+	// HasSecret 设置了签名密钥：请求带 `X-Oryn-Signature-256` 头（`sha256=<hex>`，HMAC-SHA256）
+	HasSecret bool `json:"hasSecret"`
+
+	// LastDeliveryAt UTC 毫秒时间戳
+	LastDeliveryAt *TimestampMs `json:"lastDeliveryAt,omitempty"`
+
+	// LastError 最近一次投递失败的简短原因（非 2xx 为 `HTTP <code>`，或传输错误）；成功时省略
+	LastError *string `json:"lastError,omitempty"`
+
+	// LastStatus 最近一次投递的 HTTP 状态码；0 = 没拿到响应（连接失败、超时或没有发出）
+	LastStatus *int   `json:"lastStatus,omitempty"`
+	URL        string `json:"url"`
+}
+
+// ProjectWebhookInput defines model for ProjectWebhookInput.
+type ProjectWebhookInput struct {
+	// Secret 签名密钥；省略 = 不改；空串 = 清除
+	Secret *string `json:"secret,omitempty"`
+
+	// URL http:// 或 https:// 地址，不能带用户名密码
+	URL string `json:"url"`
+}
 
 // Provider defines model for Provider.
 type Provider struct {
@@ -13578,6 +13606,9 @@ type UpdateProjectJSONRequestBody = ProjectPatch
 // CreateGitHubTriggerJSONRequestBody defines body for CreateGitHubTrigger for application/json ContentType.
 type CreateGitHubTriggerJSONRequestBody = GitHubTriggerInput
 
+// PutProjectWebhookJSONRequestBody defines body for PutProjectWebhook for application/json ContentType.
+type PutProjectWebhookJSONRequestBody = ProjectWebhookInput
+
 // CreateProviderJSONRequestBody defines body for CreateProvider for application/json ContentType.
 type CreateProviderJSONRequestBody = ProviderCreateRequest
 
@@ -16784,6 +16815,12 @@ type ServerInterface interface {
 	// ListProjectSnapshots 项目快照列表（M11a；按 createdAt 倒序，含 building / ready / retired）
 	// (GET /api/v1/projects/{id}/snapshots)
 	ListProjectSnapshots(w http.ResponseWriter, r *http.Request, id ProjectIDPath)
+	// DeleteProjectWebhook 移除托管仓库的推送后 Webhook（M24 阶段 ③；幂等）
+	// (DELETE /api/v1/projects/{id}/webhook)
+	DeleteProjectWebhook(w http.ResponseWriter, r *http.Request, id ProjectIDPath)
+	// PutProjectWebhook 设置托管仓库的推送后 Webhook（M24 阶段 ③；只有主人能改）
+	// (PUT /api/v1/projects/{id}/webhook)
+	PutProjectWebhook(w http.ResponseWriter, r *http.Request, id ProjectIDPath)
 	// ListProviders provider 列表
 	// (GET /api/v1/providers)
 	ListProviders(w http.ResponseWriter, r *http.Request)
@@ -18557,6 +18594,18 @@ func (_ Unimplemented) DeleteProjectSnapshots(w http.ResponseWriter, r *http.Req
 // ListProjectSnapshots 项目快照列表（M11a；按 createdAt 倒序，含 building / ready / retired）
 // (GET /api/v1/projects/{id}/snapshots)
 func (_ Unimplemented) ListProjectSnapshots(w http.ResponseWriter, r *http.Request, id ProjectIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteProjectWebhook 移除托管仓库的推送后 Webhook（M24 阶段 ③；幂等）
+// (DELETE /api/v1/projects/{id}/webhook)
+func (_ Unimplemented) DeleteProjectWebhook(w http.ResponseWriter, r *http.Request, id ProjectIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutProjectWebhook 设置托管仓库的推送后 Webhook（M24 阶段 ③；只有主人能改）
+// (PUT /api/v1/projects/{id}/webhook)
+func (_ Unimplemented) PutProjectWebhook(w http.ResponseWriter, r *http.Request, id ProjectIDPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -26547,6 +26596,58 @@ func (siw *ServerInterfaceWrapper) ListProjectSnapshots(w http.ResponseWriter, r
 	handler.ServeHTTP(w, r)
 }
 
+// DeleteProjectWebhook operation middleware
+func (siw *ServerInterfaceWrapper) DeleteProjectWebhook(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProjectIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteProjectWebhook(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutProjectWebhook operation middleware
+func (siw *ServerInterfaceWrapper) PutProjectWebhook(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProjectIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutProjectWebhook(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListProviders operation middleware
 func (siw *ServerInterfaceWrapper) ListProviders(w http.ResponseWriter, r *http.Request) {
 
@@ -30185,6 +30286,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/projects/{id}/repo/hosted", wrapper.CreateProjectHostedRepo)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/projects/{id}/webhook", wrapper.DeleteProjectWebhook)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/projects/{id}/webhook", wrapper.PutProjectWebhook)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/projects/{id}/repo/refs", wrapper.ListProjectRepoRefs)

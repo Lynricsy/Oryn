@@ -75,7 +75,7 @@ func newRepoEnvFake(t *testing.T, mut ...func(*repos.Config)) (*h2Env, *githubte
 	cfg.GitHub = config.GitHub{APIURL: fake.URL(), WebURL: fake.URL()}
 	gh := github.New(github.Config{PublicURL: h2PublicURL, APIURL: fake.URL(), WebURL: fake.URL(), Box: box}, st, nil, nil, nil)
 	vault := secrets.NewVault(st, box)
-	rcfg := repos.Config{Dir: cfg.ReposDir(), GitHubWebURL: fake.URL(), PublicURL: h2PublicURL}
+	rcfg := repos.Config{Dir: cfg.ReposDir(), GitHubWebURL: fake.URL(), PublicURL: h2PublicURL, Box: box}
 	for _, m := range mut {
 		m(&rcfg)
 	}

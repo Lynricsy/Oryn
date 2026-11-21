@@ -387,6 +387,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/webhook": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 设置托管仓库的推送后 Webhook（M24 阶段 ③；只有主人能改）
+         * @description 每次推送成功后异步 POST 一次 JSON（`X-Oryn-Event: push`、`X-Oryn-Delivery`，设了密钥再带 `X-Oryn-Signature-256: sha256=<hex>`），
+         *     不阻塞推送、不重试、不跟随重定向。线程里 agent 的推送同样触发（载荷 `pusher.kind` 为 `thread`）。
+         *     地址须是不带用户名密码的 http(s) 地址（≤2048 字符），否则 400 `invalid_request`；项目不存在 → 404 `not_found`；
+         *     非托管项目 → 409 `repo_not_hosted`。
+         */
+        put: operations["putProjectWebhook"];
+        post?: never;
+        /**
+         * 移除托管仓库的推送后 Webhook（M24 阶段 ③；幂等）
+         * @description 项目不存在 → 404 `not_found`；没有 Webhook 时同样回 204。
+         */
+        delete: operations["deleteProjectWebhook"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/repo/refs": {
         parameters: {
             query?: never;
@@ -5922,7 +5951,7 @@ export interface components {
              *     `ref_not_found`、`commit_not_found`、`path_not_found`（404）、`not_a_file`、`not_a_directory`（409）、`too_large`（413）；
              *     Git LFS：`lfs_missing`（404）、`lfs_auth_failed`（409）、`lfs_unreachable`（502）、`lfs_corrupt`（502）、`lfs_no_space`（507）。
              *     M24（托管仓库）：`repo_hosted`（409，托管项目上改外部仓库地址或同步）、`repo_exists`（409，项目已有仓库时再创建托管仓库）、
-             *     `project_archived`（409，已归档项目上创建托管仓库）。
+             *     `project_archived`（409，已归档项目上创建托管仓库）、`repo_not_hosted`（409，非托管项目上设置推送后 Webhook）。
              */
             code: string;
             message: string;
@@ -6125,6 +6154,25 @@ export interface components {
             hosted?: boolean;
             /** @description 托管仓库的克隆地址 https://<Oryn 地址>/git/<id>.git（M24）；非托管项目省略 */
             cloneUrl?: string;
+            /** @description 推送后 Webhook（M24）；仅托管项目且已设置时出现；从不返回签名密钥 */
+            webhook?: components["schemas"]["ProjectWebhook"];
+        };
+        /** @description 托管仓库的推送后 Webhook（M24 阶段 ③）：每次推送成功后异步 POST 一次 JSON，不重试 */
+        ProjectWebhook: {
+            url: string;
+            /** @description 设置了签名密钥：请求带 `X-Oryn-Signature-256` 头（`sha256=<hex>`，HMAC-SHA256） */
+            hasSecret: boolean;
+            lastDeliveryAt?: components["schemas"]["TimestampMs"];
+            /** @description 最近一次投递的 HTTP 状态码；0 = 没拿到响应（连接失败、超时或没有发出） */
+            lastStatus?: number;
+            /** @description 最近一次投递失败的简短原因（非 2xx 为 `HTTP <code>`，或传输错误）；成功时省略 */
+            lastError?: string;
+        };
+        ProjectWebhookInput: {
+            /** @description http:// 或 https:// 地址，不能带用户名密码 */
+            url: string;
+            /** @description 签名密钥；省略 = 不改；空串 = 清除 */
+            secret?: string;
         };
         ProjectList: {
             projects: components["schemas"]["Project"][];
@@ -12366,6 +12414,54 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Project"];
                 };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putProjectWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectWebhookInput"];
+            };
+        };
+        responses: {
+            /** @description 设置后的项目 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteProjectWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已移除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             default: components["responses"]["Error"];
         };

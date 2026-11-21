@@ -158,6 +158,7 @@ func (s *Service) afterHostedPush(ctx context.Context, prj db.Project, pusher eg
 		slog.Warn("托管仓库：更新仓库大小", "project", prj.ID, "err", err)
 	}
 	s.changed(prj.ID)
+	s.queueWebhook(ctx, prj, pusher, updates, now) // 推送后 Webhook（步骤 3.7）：异步投递，不阻塞推送
 	if pusher.ThreadID == "" || s.cfg.Ships == nil || deref(prj.BaseBranch) == "" {
 		return
 	}
