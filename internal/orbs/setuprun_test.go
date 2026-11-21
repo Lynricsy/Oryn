@@ -238,7 +238,7 @@ func TestProjectScriptsSetKeepsOtherColumns(t *testing.T) {
 	ctx := context.Background()
 	str := func(s string) *string { return &s }
 	p := db.CreateProjectParams{ID: ids.New("prj"), Name: "keep", SetupScript: str("echo old"), Color: str("teal"), Icon: str("🧪"),
-		GitAuthorName: str("Bot"), GitAuthorEmail: str("bot@example.com"), CreatedAt: 1, UpdatedAt: 1}
+		GitAuthorName: str("Bot"), GitAuthorEmail: str("bot@example.com"), Description: str("keep me"), CreatedAt: 1, UpdatedAt: 1}
 	require.NoError(t, h.st.Q.CreateProject(ctx, p))
 	require.NoError(t, h.st.Q.CreateBrowserProfile(ctx, db.CreateBrowserProfileParams{ID: "bp-keep", Name: "work", Now: 1}))
 	_, err := h.st.DB.ExecContext(ctx, `UPDATE projects SET default_browser_profile_id = 'bp-keep' WHERE id = ?`, p.ID)
@@ -254,6 +254,8 @@ func TestProjectScriptsSetKeepsOtherColumns(t *testing.T) {
 	require.NotNil(t, got.GitAuthorName)
 	assert.Equal(t, "Bot", *got.GitAuthorName)
 	assert.Equal(t, "bot@example.com", *got.GitAuthorEmail)
+	require.NotNil(t, got.Description)
+	assert.Equal(t, "keep me", *got.Description)
 	// 项目的默认浏览器 Profile 不能因为 orb 改写脚本而丢失
 	require.NotNil(t, got.DefaultBrowserProfileID)
 	assert.Equal(t, "bp-keep", *got.DefaultBrowserProfileID)

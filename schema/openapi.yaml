@@ -7152,6 +7152,9 @@ components:
       properties:
         id: { $ref: '#/components/schemas/ProjectId' }
         name: { type: string }
+        description:
+          type: string
+          description: 一行描述（M24）；未设置时省略
         repoUrl: { type: string }
         baseBranch: { type: string }
         defaultProvider:
@@ -7204,6 +7207,10 @@ components:
       required: [name]
       properties:
         name: { type: string, minLength: 1, maxLength: 100 }
+        description:
+          type: string
+          maxLength: 200
+          description: 一行描述（M24，≤200 字符）；空串等同省略
         repoUrl: { type: string }
         baseBranch: { type: string }
         defaultProvider: { type: string }
@@ -7238,6 +7245,10 @@ components:
       description: 只修改出现的字段；可选字符串字段传空串表示清除
       properties:
         name: { type: string, minLength: 1, maxLength: 100 }
+        description:
+          type: string
+          maxLength: 200
+          description: 一行描述（M24，≤200 字符）；空串表示清除
         repoUrl: { type: string }
         baseBranch: { type: string }
         defaultProvider: { type: string }

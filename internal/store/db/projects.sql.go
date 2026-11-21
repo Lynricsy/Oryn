@@ -33,11 +33,12 @@ const createProject = `-- name: CreateProject :exec
 
 INSERT INTO projects (id, name, repo_url, base_branch, default_provider, default_orb_type,
                       setup_script, resume_script, shallow_clone, color, icon, git_author_name, git_author_email,
-                      default_browser_profile_id, created_at, updated_at, snapshots, warm_orbs)
+                      default_browser_profile_id, created_at, updated_at, snapshots, warm_orbs, description)
 VALUES (?1, ?2, ?3, ?4, ?5, ?6,
         ?7, ?8, ?9, ?10, ?11, ?12, ?13,
         ?14, ?15, ?16,
-        COALESCE(CAST(?17 AS BOOLEAN), 1), COALESCE(CAST(?18 AS INTEGER), 0))
+        COALESCE(CAST(?17 AS BOOLEAN), 1), COALESCE(CAST(?18 AS INTEGER), 0),
+        ?19)
 `
 
 type CreateProjectParams struct {
@@ -59,6 +60,7 @@ type CreateProjectParams struct {
 	UpdatedAt               int64   `json:"updatedAt"`
 	Snapshots               *bool   `json:"snapshots"`
 	WarmOrbs                *int64  `json:"warmOrbs"`
+	Description             *string `json:"description"`
 }
 
 // Projects.
@@ -83,6 +85,7 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) er
 		arg.UpdatedAt,
 		arg.Snapshots,
 		arg.WarmOrbs,
+		arg.Description,
 	)
 	return err
 }
@@ -100,7 +103,7 @@ func (q *Queries) DeleteProject(ctx context.Context, id string) (int64, error) {
 }
 
 const getProject = `-- name: GetProject :one
-SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci, github_bind_status, github_gates FROM projects WHERE id = ?1
+SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci, github_bind_status, github_gates, description FROM projects WHERE id = ?1
 `
 
 func (q *Queries) GetProject(ctx context.Context, id string) (Project, error) {
@@ -133,12 +136,13 @@ func (q *Queries) GetProject(ctx context.Context, id string) (Project, error) {
 		&i.GithubListenCi,
 		&i.GithubBindStatus,
 		&i.GithubGates,
+		&i.Description,
 	)
 	return i, err
 }
 
 const getProjectByName = `-- name: GetProjectByName :one
-SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci, github_bind_status, github_gates FROM projects WHERE name = ?1
+SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci, github_bind_status, github_gates, description FROM projects WHERE name = ?1
 `
 
 func (q *Queries) GetProjectByName(ctx context.Context, name string) (Project, error) {
@@ -171,12 +175,13 @@ func (q *Queries) GetProjectByName(ctx context.Context, name string) (Project, e
 		&i.GithubListenCi,
 		&i.GithubBindStatus,
 		&i.GithubGates,
+		&i.Description,
 	)
 	return i, err
 }
 
 const listProjects = `-- name: ListProjects :many
-SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci, github_bind_status, github_gates FROM projects
+SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci, github_bind_status, github_gates, description FROM projects
 WHERE (CAST(?1 AS BOOLEAN) IS NULL OR (archived_at IS NOT NULL) = CAST(?1 AS BOOLEAN))
 ORDER BY name
 `
@@ -217,6 +222,7 @@ func (q *Queries) ListProjects(ctx context.Context, archived *bool) ([]Project, 
 			&i.GithubListenCi,
 			&i.GithubBindStatus,
 			&i.GithubGates,
+			&i.Description,
 		); err != nil {
 			return nil, err
 		}
@@ -239,8 +245,8 @@ UPDATE projects SET name = ?1, repo_url = ?2, base_branch = ?3,
     default_browser_profile_id = ?13,
     snapshots = COALESCE(CAST(?14 AS BOOLEAN), snapshots),
     warm_orbs = COALESCE(CAST(?15 AS INTEGER), warm_orbs),
-    archived_at = ?16, updated_at = ?17
-WHERE id = ?18
+    archived_at = ?16, description = ?17, updated_at = ?18
+WHERE id = ?19
 `
 
 type UpdateProjectParams struct {
@@ -260,6 +266,7 @@ type UpdateProjectParams struct {
 	Snapshots               *bool   `json:"snapshots"`
 	WarmOrbs                *int64  `json:"warmOrbs"`
 	ArchivedAt              *int64  `json:"archivedAt"`
+	Description             *string `json:"description"`
 	UpdatedAt               int64   `json:"updatedAt"`
 	ID                      string  `json:"id"`
 }
@@ -283,6 +290,7 @@ func (q *Queries) UpdateProject(ctx context.Context, arg UpdateProjectParams) (i
 		arg.Snapshots,
 		arg.WarmOrbs,
 		arg.ArchivedAt,
+		arg.Description,
 		arg.UpdatedAt,
 		arg.ID,
 	)

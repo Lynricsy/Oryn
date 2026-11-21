@@ -24,7 +24,7 @@ import (
 // projectJSON 把项目行转成 API 视图；hook 是项目所绑仓库的 github_hooks 行（没有为 nil）。
 func projectJSON(p db.Project, hook *db.GithubHook) apigen.Project {
 	out := apigen.Project{
-		ID: p.ID, Name: p.Name, RepoURL: p.RepoUrl, BaseBranch: p.BaseBranch,
+		ID: p.ID, Name: p.Name, Description: p.Description, RepoURL: p.RepoUrl, BaseBranch: p.BaseBranch,
 		DefaultProvider: p.DefaultProvider, DefaultOrbType: p.DefaultOrbType,
 		SetupScript: p.SetupScript, ResumeScript: p.ResumeScript, ShallowClone: p.ShallowClone,
 		Color: p.Color, Icon: p.Icon, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt, ArchivedAt: p.ArchivedAt,
@@ -81,6 +81,16 @@ func projectIcon(v *string) (*string, error) {
 		return nil, errInvalid("icon 须是单个字形（≤16 字节）")
 	}
 	return &icon, nil
+}
+
+// projectDescription 校验项目描述：nil 或空白 → nil（未设置 / 清除）；否则 trim 后至多 200 个字符。
+// 服务端没有挂请求校验中间件，maxLength 只能在这里检查。
+func projectDescription(v *string) (*string, error) {
+	d := optStr(v)
+	if d != nil && utf8.RuneCountInString(*d) > 200 {
+		return nil, errInvalid("description 至多 200 个字符")
+	}
+	return d, nil
 }
 
 // checkBrowserProfile 校验 defaultBrowserProfileId：nil 或空串 → nil（不设 / 清除）；否则须是已存在的 Profile
@@ -184,6 +194,10 @@ func (s *Server) createProject(ctx context.Context, req apigen.ProjectCreate) (d
 	if err != nil {
 		return db.Project{}, err
 	}
+	desc, err := projectDescription(req.Description)
+	if err != nil {
+		return db.Project{}, err
+	}
 	if err := s.checkProviderName(ctx, optStr(req.DefaultProvider)); err != nil {
 		return db.Project{}, err
 	}
@@ -198,7 +212,7 @@ func (s *Server) createProject(ctx context.Context, req apigen.ProjectCreate) (d
 		SetupScript: optStr(req.SetupScript), ResumeScript: optStr(req.ResumeScript),
 		ShallowClone: req.ShallowClone != nil && *req.ShallowClone, Color: optStr(req.Color), Icon: icon,
 		GitAuthorName: gitName, GitAuthorEmail: gitEmail, CreatedAt: now, UpdatedAt: now, DefaultBrowserProfileID: profileID,
-		Snapshots: req.Snapshots, WarmOrbs: warm,
+		Snapshots: req.Snapshots, WarmOrbs: warm, Description: desc,
 	}
 	if err := s.Store.Q.CreateProject(ctx, p); isUniqueViolation(err) {
 		return db.Project{}, errConflict("已有同名项目")
@@ -270,6 +284,10 @@ func (s *Server) updateProject(ctx context.Context, id string, req apigen.Projec
 	if err != nil {
 		return db.Project{}, err
 	}
+	desc, err := projectDescription(req.Description)
+	if err != nil {
+		return db.Project{}, err
+	}
 	if req.DefaultProvider != nil {
 		if err := s.checkProviderName(ctx, optStr(req.DefaultProvider)); err != nil {
 			return db.Project{}, err
@@ -298,7 +316,7 @@ func (s *Server) updateProject(ctx context.Context, id string, req apigen.Projec
 			DefaultOrbType: p.DefaultOrbType, SetupScript: p.SetupScript, ResumeScript: p.ResumeScript,
 			ShallowClone: p.ShallowClone, Color: p.Color, Icon: p.Icon, GitAuthorName: p.GitAuthorName,
 			GitAuthorEmail: p.GitAuthorEmail, ArchivedAt: p.ArchivedAt, UpdatedAt: time.Now().UnixMilli(), ID: id,
-			DefaultBrowserProfileID: p.DefaultBrowserProfileID,
+			DefaultBrowserProfileID: p.DefaultBrowserProfileID, Description: p.Description,
 		}
 		if req.DefaultBrowserProfileID != nil {
 			// 未给出该字段时保留旧值；空串清除
@@ -309,6 +327,9 @@ func (s *Server) updateProject(ctx context.Context, id string, req apigen.Projec
 		}
 		if req.Icon != nil {
 			u.Icon = icon
+		}
+		if req.Description != nil {
+			u.Description = desc
 		}
 		if req.Name != nil {
 			u.Name = strings.TrimSpace(*req.Name)

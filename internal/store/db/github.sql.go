@@ -1531,7 +1531,7 @@ func (q *Queries) ListGithubAutoclosesByThread(ctx context.Context, threadID str
 }
 
 const listGithubCandidateProjects = `-- name: ListGithubCandidateProjects :many
-SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci, github_bind_status, github_gates FROM projects WHERE archived_at IS NULL AND repo_url LIKE 'https://github.com/%' ORDER BY created_at
+SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci, github_bind_status, github_gates, description FROM projects WHERE archived_at IS NULL AND repo_url LIKE 'https://github.com/%' ORDER BY created_at
 `
 
 func (q *Queries) ListGithubCandidateProjects(ctx context.Context) ([]Project, error) {
@@ -1570,6 +1570,7 @@ func (q *Queries) ListGithubCandidateProjects(ctx context.Context) ([]Project, e
 			&i.GithubListenCi,
 			&i.GithubBindStatus,
 			&i.GithubGates,
+			&i.Description,
 		); err != nil {
 			return nil, err
 		}
@@ -2265,7 +2266,7 @@ func (q *Queries) ListPendingGithubOutboxByKey(ctx context.Context, arg ListPend
 }
 
 const listProjectsByGithubRepo = `-- name: ListProjectsByGithubRepo :many
-SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci, github_bind_status, github_gates FROM projects
+SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci, github_bind_status, github_gates, description FROM projects
 WHERE github_repo_id = ?1 AND archived_at IS NULL
 ORDER BY created_at
 `
@@ -2307,6 +2308,7 @@ func (q *Queries) ListProjectsByGithubRepo(ctx context.Context, repoID *int64) (
 			&i.GithubListenCi,
 			&i.GithubBindStatus,
 			&i.GithubGates,
+			&i.Description,
 		); err != nil {
 			return nil, err
 		}
@@ -2322,7 +2324,7 @@ func (q *Queries) ListProjectsByGithubRepo(ctx context.Context, repoID *int64) (
 }
 
 const listProjectsByGithubRepoAny = `-- name: ListProjectsByGithubRepoAny :many
-SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci, github_bind_status, github_gates FROM projects WHERE github_repo_id = ?1 ORDER BY created_at
+SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci, github_bind_status, github_gates, description FROM projects WHERE github_repo_id = ?1 ORDER BY created_at
 `
 
 // Every project that ever recorded this repo id (rename following).
@@ -2362,6 +2364,7 @@ func (q *Queries) ListProjectsByGithubRepoAny(ctx context.Context, repoID *int64
 			&i.GithubListenCi,
 			&i.GithubBindStatus,
 			&i.GithubGates,
+			&i.Description,
 		); err != nil {
 			return nil, err
 		}

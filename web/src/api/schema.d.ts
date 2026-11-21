@@ -5564,6 +5564,8 @@ export interface components {
         Project: {
             id: components["schemas"]["ProjectId"];
             name: string;
+            /** @description 一行描述（M24）；未设置时省略 */
+            description?: string;
             repoUrl?: string;
             baseBranch?: string;
             /** @description provider 名称 */
@@ -5597,6 +5599,8 @@ export interface components {
         };
         ProjectCreate: {
             name: string;
+            /** @description 一行描述（M24，≤200 字符）；空串等同省略 */
+            description?: string;
             repoUrl?: string;
             baseBranch?: string;
             defaultProvider?: string;
@@ -5622,6 +5626,8 @@ export interface components {
         /** @description 只修改出现的字段；可选字符串字段传空串表示清除 */
         ProjectPatch: {
             name?: string;
+            /** @description 一行描述（M24，≤200 字符）；空串表示清除 */
+            description?: string;
             repoUrl?: string;
             baseBranch?: string;
             defaultProvider?: string;

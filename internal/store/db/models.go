@@ -875,6 +875,7 @@ type Project struct {
 	GithubListenCi          bool    `json:"githubListenCi"`
 	GithubBindStatus        *string `json:"githubBindStatus"`
 	GithubGates             *string `json:"githubGates"`
+	Description             *string `json:"description"`
 }
 
 type ProjectSnapshot struct {

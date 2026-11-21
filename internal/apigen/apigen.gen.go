@@ -8706,7 +8706,10 @@ type Project struct {
 
 	// DefaultProvider provider 名称
 	DefaultProvider *string `json:"defaultProvider,omitempty"`
-	GitAuthorEmail  *string `json:"gitAuthorEmail,omitempty"`
+
+	// Description 一行描述（M24）；未设置时省略
+	Description    *string `json:"description,omitempty"`
+	GitAuthorEmail *string `json:"gitAuthorEmail,omitempty"`
 
 	// GitAuthorName 本项目 orb 的 git 提交身份覆盖（与 gitAuthorEmail 同时存在或同时缺省）
 	GitAuthorName *string `json:"gitAuthorName,omitempty"`
@@ -8747,6 +8750,9 @@ type ProjectCreate struct {
 	DefaultBrowserProfileID *string `json:"defaultBrowserProfileId,omitempty"`
 	DefaultOrbType          *string `json:"defaultOrbType,omitempty"`
 	DefaultProvider         *string `json:"defaultProvider,omitempty"`
+
+	// Description 一行描述（M24，≤200 字符）；空串等同省略
+	Description *string `json:"description,omitempty"`
 
 	// GitAuthorEmail 须与 gitAuthorName 同时给出；规则同 GitIdentity.email
 	GitAuthorEmail *string `json:"gitAuthorEmail,omitempty"`
@@ -8805,7 +8811,10 @@ type ProjectPatch struct {
 	DefaultBrowserProfileID *string `json:"defaultBrowserProfileId,omitempty"`
 	DefaultOrbType          *string `json:"defaultOrbType,omitempty"`
 	DefaultProvider         *string `json:"defaultProvider,omitempty"`
-	GitAuthorEmail          *string `json:"gitAuthorEmail,omitempty"`
+
+	// Description 一行描述（M24，≤200 字符）；空串表示清除
+	Description    *string `json:"description,omitempty"`
+	GitAuthorEmail *string `json:"gitAuthorEmail,omitempty"`
 
 	// GitAuthorName 须与 gitAuthorEmail 同时给出；两者都传空串表示清除项目覆盖
 	GitAuthorName *string `json:"gitAuthorName,omitempty"`

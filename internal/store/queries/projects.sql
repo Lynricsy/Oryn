@@ -4,11 +4,12 @@
 -- name: CreateProject :exec
 INSERT INTO projects (id, name, repo_url, base_branch, default_provider, default_orb_type,
                       setup_script, resume_script, shallow_clone, color, icon, git_author_name, git_author_email,
-                      default_browser_profile_id, created_at, updated_at, snapshots, warm_orbs)
+                      default_browser_profile_id, created_at, updated_at, snapshots, warm_orbs, description)
 VALUES (@id, @name, @repo_url, @base_branch, @default_provider, @default_orb_type,
         @setup_script, @resume_script, @shallow_clone, @color, @icon, @git_author_name, @git_author_email,
         sqlc.narg(default_browser_profile_id), @created_at, @updated_at,
-        COALESCE(CAST(sqlc.narg(snapshots) AS BOOLEAN), 1), COALESCE(CAST(sqlc.narg(warm_orbs) AS INTEGER), 0));
+        COALESCE(CAST(sqlc.narg(snapshots) AS BOOLEAN), 1), COALESCE(CAST(sqlc.narg(warm_orbs) AS INTEGER), 0),
+        @description);
 
 -- name: GetProject :one
 SELECT * FROM projects WHERE id = @id;
@@ -30,7 +31,7 @@ UPDATE projects SET name = @name, repo_url = @repo_url, base_branch = @base_bran
     default_browser_profile_id = sqlc.narg(default_browser_profile_id),
     snapshots = COALESCE(CAST(sqlc.narg(snapshots) AS BOOLEAN), snapshots),
     warm_orbs = COALESCE(CAST(sqlc.narg(warm_orbs) AS INTEGER), warm_orbs),
-    archived_at = @archived_at, updated_at = @updated_at
+    archived_at = @archived_at, description = @description, updated_at = @updated_at
 WHERE id = @id;
 
 -- Fill the icon only while the project has none (auto-adopted from a title card; never overrides a manual pick).
