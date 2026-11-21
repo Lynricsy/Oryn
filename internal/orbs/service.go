@@ -175,6 +175,8 @@ type Service struct {
 	github GitHub
 	// memory 是记忆网关（M16，SetMemory 在服务对外可用之前设置；nil = 没有记忆通道）。
 	memory *memory.Gateway
+	// pushes 接收出站代理观察到的成功推送（M24，SetPushSink 在服务对外可用之前设置；nil = 不记录）。
+	pushes PushSink
 	now    func() time.Time
 
 	mu      sync.Mutex

@@ -386,6 +386,8 @@ func (s *Server) init(ctx context.Context) error {
 	s.closers = append(s.closers, s.Repos.Close)
 	// GitHub push 事件 → 绑定项目的镜像后台拉取（步骤 2.6）
 	s.GitHub.SetRepoSync(s.Repos)
+	// 出站代理观察到的成功推送 → 镜像拉取后展开成「提交 → 线程」（步骤 2.7）
+	s.Orbs.SetPushSink(s.Repos)
 	s.Threads.AddObserver(s.Artifacts.TurnObserver())
 	home := s.Home
 	s.Share = share.New(share.Config{PublicURL: cfg.PublicURL, RoleNames: func() map[string]string {

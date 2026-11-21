@@ -209,6 +209,9 @@ type target struct {
 	mcpBase *url.URL
 	// deny 非空时是 resolve 拒绝（非 200）的原因，代替按状态码给出的通用文案。
 	deny string
+	// push 为真时是 git-receive-pack 端点（任意主机），gitHost 是 git 主机（小写）；上游以 200 应答推送后交给 PushRecorder（M24）。
+	push    bool
+	gitHost string
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -252,6 +255,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if responded {
 		return
 	}
+	pushed := h.pushRefs(r, t, aud)
 	secretsUsed := make([][2]string, 0, len(used)+len(t.redact)) // 真实值 → 占位符，用于响应脱敏
 	for id, v := range used {
 		secretsUsed = append(secretsUsed, [2]string{v, "oryn-ph-" + id})
@@ -290,6 +294,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		},
 		ModifyResponse: func(resp *http.Response) error {
+			if resp.StatusCode == http.StatusOK && len(pushed) > 0 {
+				if pr, ok := h.R.(PushRecorder); ok {
+					pr.GitPushed(GitPush{Host: t.gitHost, Repo: t.repo, Refs: pushed})
+				}
+			}
 			aud.response(resp)
 			if resp.StatusCode == http.StatusUnauthorized && t.ghToken != "" {
 				h.R.GitHubTokenRejected(t.ghToken)
@@ -520,6 +529,7 @@ func (h *Handler) resolveGit(r *http.Request, pol Policy, host, rest string) (ta
 	t := target{
 		url: up, auth: auth, redact: []string{strings.TrimPrefix(auth, "Basic "), tok},
 		receivePack: githubOpen && strings.HasSuffix(rest, "/git-receive-pack"), repo: repo,
+		push: strings.HasSuffix(rest, "/git-receive-pack"), gitHost: strings.ToLower(host),
 	}
 	if githubOpen {
 		t.ghAccess = pol.GitHub
@@ -847,16 +857,56 @@ func denyGitHubWrite(rw http.ResponseWriter, r *http.Request, writes []GitHubWri
 // 带压缩编码、超限或格式不认识时 Unparsed 为真。
 func receivePackWrite(r *http.Request, repo string) (w GitHubWrite, sideband bool) {
 	w = GitHubWrite{Method: MethodPush, Op: "git-receive-pack", Repo: repo, Unparsed: true}
-	if !identityEncoding(r.Header) {
-		return w, false
-	}
-	cmds, caps, prefix, err := ParseReceivePack(r.Body, receivePackHeadMax)
-	r.Body = readCloser{io.MultiReader(bytes.NewReader(prefix), r.Body), r.Body}
-	if err != nil {
+	cmds, caps, ok := readPushCommands(r)
+	if !ok {
 		return w, false
 	}
 	w.Refs, w.Unparsed = cmds, false
 	return w, slices.Contains(caps, "side-band-64k")
+}
+
+// readPushCommands 读取推送请求开头的命令段（上限 receivePackHeadMax）并还原请求体。带压缩编码、超限或格式不认识时 ok 为假。
+func readPushCommands(r *http.Request) (cmds []RefUpdate, caps []string, ok bool) {
+	if !identityEncoding(r.Header) {
+		return nil, nil, false
+	}
+	cmds, caps, prefix, err := ParseReceivePack(r.Body, receivePackHeadMax)
+	r.Body = readCloser{io.MultiReader(bytes.NewReader(prefix), r.Body), r.Body}
+	if err != nil {
+		return nil, nil, false
+	}
+	return cmds, caps, true
+}
+
+// GitPush 是上游以 200 应答的一次 git-receive-pack（M24）：Host 是小写的 git 主机，Repo 是 NormalizeRepo 形式。
+// 只看 HTTP 状态，不解析 report-status：被 ng 拒绝的 ref 也在其中，由接收方按镜像里是否出现新提交判断。
+type GitPush struct {
+	Host, Repo string
+	Refs       []RefUpdate
+}
+
+// PushRecorder 是 Resolver 的可选能力：上游以 200 应答推送后调用（不实现即不记录）。在响应转发之前同步调用。
+type PushRecorder interface{ GitPushed(p GitPush) }
+
+// pushRefs 返回要记录的推送命令：只对 git-receive-pack 的 POST；门禁已解析过的推送复用它的结果，否则在这里读命令段。
+// Resolver 不实现 PushRecorder 时不读请求体。
+func (h *Handler) pushRefs(r *http.Request, t target, aud *ghAudit) []RefUpdate {
+	if !t.push || r.Method != http.MethodPost {
+		return nil
+	}
+	if _, ok := h.R.(PushRecorder); !ok {
+		return nil
+	}
+	if aud != nil {
+		for _, w := range aud.writes {
+			if w.Method == MethodPush {
+				return w.Refs
+			}
+		}
+		return nil
+	}
+	cmds, _, _ := readPushCommands(r)
+	return cmds
 }
 
 // ghRequestWrites 识别 /gh/ 上的一个非 GET 请求：REST 得到一个写操作，GraphQL mutation 每个根字段一个，GraphQL query 为空。

@@ -262,9 +262,14 @@ func (s *Service) syncOnce(ctx context.Context, projectID string) {
 	if row != nil {
 		p.CreatedAt = row.CreatedAt
 	}
-	if err := s.st.Q.UpsertProjectRepo(ctx, p); err != nil && ctx.Err() == nil {
-		slog.Warn("写入项目仓库记录", "project", projectID, "err", err)
+	if err := s.st.Q.UpsertProjectRepo(ctx, p); err != nil {
+		if ctx.Err() == nil {
+			slog.Warn("写入项目仓库记录", "project", projectID, "err", err)
+		}
+		return
 	}
+	// 线程经出站代理推送的提交此时已在镜像里：展开成「提交 → 线程」，之后才广播状态变化（fly 里的 changed）
+	s.expandPushes(ctx, prj)
 }
 
 // initMirror 建空的裸仓库并写入镜像用的 remote 配置。
@@ -500,10 +505,19 @@ func freeBytes(dir string) (int64, error) {
 	return int64(st.Bavail) * st.Bsize, nil
 }
 
-// Run 启动时清扫仓库目录，然后等到 ctx 结束。
+// Run 启动时清扫仓库目录，之后每小时清理推送记录（过期未展开的记 missing、30 天前的删除），直到 ctx 结束。
 func (s *Service) Run(ctx context.Context) {
 	s.sweep(ctx)
-	<-ctx.Done()
+	tk := time.NewTicker(pushSweepEach)
+	defer tk.Stop()
+	for {
+		s.sweepPushes(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-tk.C:
+		}
+	}
 }
 
 // sweep 清掉上次留下的临时与回收目录、项目已不存在的镜像（托管正本移到 orphaned/），以及断电或 OOM 后的残留锁文件。

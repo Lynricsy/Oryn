@@ -175,22 +175,9 @@ func (r egressResolver) ThreadGates() (egress.ThreadGates, error) {
 // （出站代理按最严处理）。
 func (s *Service) threadGates(ctx context.Context, orbID string) (egress.ThreadGates, error) {
 	var tg egress.ThreadGates
-	ths, err := s.st.Q.ListThreadsByOrb(ctx, &orbID)
-	if err != nil {
-		return tg, fmt.Errorf("读取 orb 的线程: %w", err)
-	}
-	var tid string
-	for _, th := range ths {
-		if th.Kind != threadKindWork || th.ArchivedAt != nil {
-			continue
-		}
-		if tid != "" {
-			return tg, nil
-		}
-		tid = th.ID
-	}
-	if tid == "" {
-		return tg, nil
+	tid, err := s.workThread(ctx, orbID)
+	if err != nil || tid == "" {
+		return tg, err
 	}
 	ti, err := s.st.Q.GetThreadIssueByThread(ctx, tid)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -216,6 +203,67 @@ func (s *Service) threadGates(ctx context.Context, orbID string) (egress.ThreadG
 	}
 	tg.ImplAuth, tg.CommentOnlyReviews = trig.ImplAuth, trig.CommentOnlyReviews
 	return tg, nil
+}
+
+// workThread 返回 orb 唯一的未归档工作线程；没有或不止一个时为空串，读库失败返回错误。
+func (s *Service) workThread(ctx context.Context, orbID string) (string, error) {
+	ths, err := s.st.Q.ListThreadsByOrb(ctx, &orbID)
+	if err != nil {
+		return "", fmt.Errorf("读取 orb 的线程: %w", err)
+	}
+	var tid string
+	for _, th := range ths {
+		if th.Kind != threadKindWork || th.ArchivedAt != nil {
+			continue
+		}
+		if tid != "" {
+			return "", nil
+		}
+		tid = th.ID
+	}
+	return tid, nil
+}
+
+// PushSink 接收出站代理观察到的成功推送（M24 阶段 ②；*repos.Service 实现）。
+type PushSink interface {
+	GitPushed(ctx context.Context, p PushedRefs)
+}
+
+// PushedRefs 是一次上游以 200 应答的 git 推送，归属到 orb 的项目与唯一工作线程。Host 小写，Repo 是 egress.NormalizeRepo 形式。
+type PushedRefs struct {
+	OrbID, ProjectID, ThreadID, Host, Repo string
+	Refs                                   []egress.RefUpdate
+}
+
+// SetPushSink 设置推送记录的接收方；须在服务对外可用之前调用。nil = 不记录。
+func (s *Service) SetPushSink(p PushSink) { s.pushes = p }
+
+// GitPushed 实现 egress.PushRecorder：orb 属于项目且有唯一工作线程时把推送交给 PushSink；否则不记。失败只记日志。
+func (r egressResolver) GitPushed(p egress.GitPush) {
+	if r.s.pushes == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	orb, err := r.s.st.Q.GetOrb(ctx, r.orbID)
+	if err != nil {
+		slog.Warn("记录推送：读取 orb", "orb", r.orbID, "err", err)
+		return
+	}
+	if orb.ProjectID == nil {
+		return
+	}
+	tid, err := r.s.workThread(ctx, r.orbID)
+	if err != nil {
+		slog.Warn("记录推送：读取工作线程", "orb", r.orbID, "err", err)
+		return
+	}
+	if tid == "" {
+		return
+	}
+	r.s.pushes.GitPushed(ctx, PushedRefs{
+		OrbID: r.orbID, ProjectID: *orb.ProjectID, ThreadID: tid, Host: p.Host, Repo: p.Repo, Refs: p.Refs,
+	})
 }
 
 // Prepared 实现 egress.GateLookup：sha 在 level 上本 orb 的 github_prepare 通过记录（须与项目当前门禁配置相符）。
