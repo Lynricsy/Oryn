@@ -60,9 +60,16 @@ type Config struct {
 	LFSFlightTimeout time.Duration
 }
 
-// GitHub 是 github.com 拉取凭据（*github.Service 实现）。
+// GitHub 是 github.com 拉取凭据与「提交 → PR → 线程」反查（*github.Service 实现）。
 type GitHub interface {
 	UserToken(ctx context.Context) (string, error)
+	CommitThreads
+}
+
+// CommitThreads 按「提交所属 PR → 最早关联该 PR 的线程」反查提交的线程（GitHub 项目补 squash 合并）。
+// ok=false 且 err=nil 表示确实没有线程（可以缓存）；err 非 nil 时不缓存（如身份未连接）。
+type CommitThreads interface {
+	CommitThread(ctx context.Context, projectID, sha string) (threadID string, ok bool, err error)
 }
 
 // Secrets 是其它主机的 git 令牌（*secrets.Vault 实现）。
@@ -101,6 +108,11 @@ type Service struct {
 	monitorEvery time.Duration // 拉取中复查磁盘与大小的间隔
 	trace        func(argv, env []string)
 
+	treeWalkMax  int   // 找子项最后提交时至多读的提交数（测试可改）
+	maxBlobBytes int64 // blob 接口的大小上限（测试可改）
+	treeMu       sync.Mutex
+	treeCache    map[string]map[string]apigen.ProjectRepoCommitSummary // commit + "\x00" + dir → 子项名 → 最后提交
+
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -125,6 +137,7 @@ func New(cfg Config, st *store.Store, sec Secrets, gh GitHub) (*Service, error) 
 	s := &Service{
 		cfg: cfg, st: st, sec: sec, gh: gh,
 		sem: make(chan struct{}, 2), monitorEvery: 5 * time.Second,
+		treeWalkMax: treeWalkMax, maxBlobBytes: blobMax, treeCache: map[string]map[string]apigen.ProjectRepoCommitSummary{},
 		ctx: ctx, cancel: cancel, flights: map[string]*flight{},
 	}
 	s.gitBin, s.reason = locateGit(cmp.Or(cfg.Git, "git"))
@@ -335,10 +348,21 @@ func (s *Service) status(ctx context.Context, prj db.Project, row *db.ProjectRep
 	dir := s.dir(prj.ID)
 	res, err := s.git(ctx, gitRun{dir: dir, read: true, limit: 512}, "for-each-ref", "--count=1", "--format=%(refname)", "refs/heads/")
 	out.Empty = err == nil && res.code == 0 && len(strings.TrimSpace(string(res.out))) == 0
-	if b := deref(prj.BaseBranch); b != "" && ValidRef(b) && s.hasBranch(ctx, dir, b) {
+	if b := s.baseBranch(ctx, prj, row, dir); b != "" {
 		out.BaseBranch = &b
 	}
 	return out
+}
+
+// baseBranch 是项目的 baseBranch（在镜像里存在时），否则镜像的默认分支；都没有时为空。
+func (s *Service) baseBranch(ctx context.Context, prj db.Project, row *db.ProjectRepo, dir string) string {
+	if b := deref(prj.BaseBranch); b != "" && ValidRef(b) && s.hasBranch(ctx, dir, b) {
+		return b
+	}
+	if row != nil {
+		return deref(row.DefaultBranch)
+	}
+	return ""
 }
 
 // hasBranch 报告镜像里是否有 refs/heads/<b>。

@@ -38,13 +38,26 @@ func (f fakeSecrets) GitToken(host string) (string, bool) {
 	return v, ok
 }
 
-type fakeGitHub struct{ tok string }
+// fakeGitHub 是 GitHub 替身：tok 是拉取令牌；pulls 是 CommitThread 的结果（sha → 线程），calls 记反查次数。
+type fakeGitHub struct {
+	tok   string
+	pulls map[string]string
+	calls *atomic.Int32
+}
 
 func (f fakeGitHub) UserToken(context.Context) (string, error) {
 	if f.tok == "" {
 		return "", errors.New("没有连接 GitHub 身份")
 	}
 	return f.tok, nil
+}
+
+func (f fakeGitHub) CommitThread(_ context.Context, _, sha string) (string, bool, error) {
+	if f.calls != nil {
+		f.calls.Add(1)
+	}
+	tid, ok := f.pulls[sha]
+	return tid, ok, nil
 }
 
 // testClock 是可拨快的时钟。

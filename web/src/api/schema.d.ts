@@ -363,6 +363,141 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/repo/refs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 项目仓库镜像的分支或标签（M24；按最近提交倒序，默认分支排第一）
+         * @description 项目没有仓库地址 → 409 `no_repo`；控制面没有可用的 git → 503 `repo_unavailable`；镜像不存在、克隆中或克隆失败 → 409 `repo_not_ready`。
+         *     读取时与 `getProjectRepo` 一样按需在后台克隆或拉取（不阻塞）。至多列出前 10000 个。
+         */
+        get: operations["listProjectRepoRefs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/repo/commits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 项目仓库镜像的提交（M24；新到旧，可按路径过滤）
+         * @description `ref` 缺省为仓库状态里的 `baseBranch`；依次按分支、标签、提交 sha 解析，都不是 → 404 `ref_not_found`。
+         *     翻页的 `cursor` 记着第一页的头提交，分支移动后后续页仍然稳定。镜像不可用时的错误同 `listProjectRepoRefs`。
+         */
+        get: operations["listProjectRepoCommits"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/repo/commits/{sha}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+                sha: components["parameters"]["RepoShaPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 项目仓库镜像里的一个提交（M24；含改动文件与关联线程）
+         * @description 提交不存在 → 404 `commit_not_found`。关联线程依次取线程推送、线程里采样到的提交；GitHub 项目都没有时再按「提交所属 PR → 线程」反查一次（结果缓存，没有线程的结果 24 小时内不再反查）。
+         */
+        get: operations["getProjectRepoCommit"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/repo/commits/{sha}/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+                sha: components["parameters"]["RepoShaPath"];
+            };
+            cookie?: never;
+        };
+        /** 提交里一个文件的 unified diff（M24；合并提交相对第一个父提交，根提交相对空树） */
+        get: operations["getProjectRepoCommitDiff"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/repo/tree": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 项目仓库镜像在某个 ref 下的目录或文件（M24）
+         * @description 路径不存在 → 404 `path_not_found`；`ref` 规则同 `listProjectRepoCommits`。
+         */
+        get: operations["getProjectRepoTree"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/repo/blob": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 项目仓库镜像里一个文件的内容（M24）
+         * @description 目录 → 409 `not_a_file`；超过 64MiB → 413 `too_large`；路径不存在 → 404 `path_not_found`。
+         *     安全的栅格图片 `Content-Disposition: inline`，其余一律附件；`text/html` 改为 `text/plain; charset=utf-8`；
+         *     带 `X-Content-Type-Options: nosniff` 与 `Content-Security-Policy: sandbox`。`ref` 是完整提交 sha 时可长期缓存。
+         */
+        get: operations["getProjectRepoBlob"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/snapshots": {
         parameters: {
             query?: never;
@@ -6097,6 +6232,126 @@ export interface components {
             message: string;
             at: components["schemas"]["TimestampMs"];
         };
+        /** @enum {string} */
+        ProjectRepoRefKind: "branch" | "tag";
+        /** @description 提交摘要（字段同 `GitCommit`） */
+        ProjectRepoCommitSummary: {
+            sha: string;
+            shortSha: string;
+            subject: string;
+            authorName: string;
+            authorEmail: string;
+            /** @description 作者时间 */
+            ts: components["schemas"]["TimestampMs"];
+        };
+        /** @description 提交关联的线程 */
+        ProjectRepoThreadLink: {
+            id: components["schemas"]["ThreadId"];
+            title: string;
+            /**
+             * @description `push` = 由该线程经出站代理推送；`sampled` = 线程里采样到过该提交；`pull` = 经 GitHub PR 合并
+             * @enum {string}
+             */
+            source: "push" | "sampled" | "pull";
+        };
+        /** @description 提交摘要、父提交与关联线程 */
+        ProjectRepoCommit: {
+            sha: string;
+            shortSha: string;
+            subject: string;
+            authorName: string;
+            authorEmail: string;
+            /** @description 作者时间 */
+            ts: components["schemas"]["TimestampMs"];
+            parents: string[];
+            thread?: components["schemas"]["ProjectRepoThreadLink"];
+        };
+        ProjectRepoCommitList: {
+            /** @description 实际使用的 ref（缺省时为基线分支） */
+            ref: string;
+            /** @description 本次列表的头提交 sha（翻页时为 cursor 里记下的那个） */
+            commit: string;
+            /** @description 新到旧 */
+            commits: components["schemas"]["ProjectRepoCommit"][];
+            /** @description 还有更早的提交时给出 */
+            nextCursor?: string;
+        };
+        ProjectRepoCommitDetail: {
+            sha: string;
+            shortSha: string;
+            subject: string;
+            authorName: string;
+            authorEmail: string;
+            /** @description 作者时间 */
+            ts: components["schemas"]["TimestampMs"];
+            parents: string[];
+            thread?: components["schemas"]["ProjectRepoThreadLink"];
+            /** @description 去掉 subject 行后的正文（≤64KiB） */
+            body: string;
+            committerName: string;
+            committerEmail?: string;
+            /** @description 提交者时间 */
+            committedAt: components["schemas"]["TimestampMs"];
+            /** @description 按路径排序；合并提交相对第一个父提交，根提交相对空树；`staged` 恒为 `none` */
+            files: components["schemas"]["GitFileChange"][];
+            /** @description 非二进制文件的新增行数之和 */
+            additions: number;
+            /** @description 非二进制文件的删除行数之和 */
+            deletions: number;
+            /** @description 改动文件超过 2000 个，只列出前 2000 个 */
+            truncated: boolean;
+        };
+        ProjectRepoRef: {
+            /** @description 分支或标签名（不含 refs/heads/、refs/tags/） */
+            name: string;
+            kind: components["schemas"]["ProjectRepoRefKind"];
+            commit: components["schemas"]["ProjectRepoCommitSummary"];
+            /** @description 是默认分支 */
+            default: boolean;
+            /** @description 附注标签 */
+            annotated?: boolean;
+        };
+        ProjectRepoRefList: {
+            refs: components["schemas"]["ProjectRepoRef"][];
+            nextCursor?: string;
+        };
+        ProjectRepoTreeEntry: {
+            name: string;
+            /** @description 仓库内相对路径（根为 ""） */
+            path: string;
+            /** @enum {string} */
+            type: "dir" | "file" | "symlink" | "submodule";
+            /** @description Unix 权限位（100644→420，100755→493，040000→493，120000→511，160000→0） */
+            mode: number;
+            /**
+             * Format: int64
+             * @description 仅 file / symlink；其余为 0
+             */
+            size: number;
+            /** @description blob / tree / 子模块提交的 sha */
+            oid: string;
+            /** @description 符号链接目标（≤4KiB） */
+            target?: string;
+            lastCommit?: components["schemas"]["ProjectRepoCommitSummary"];
+            /** @description 仅 self 且 type=file */
+            mime?: string;
+            /** @description 仅 self 且 type=file：前 8KiB 没有 NUL 且是合法 UTF-8 */
+            text?: boolean;
+        };
+        ProjectRepoTree: {
+            /** @description 实际使用的 ref */
+            ref: string;
+            /** @description ref 解析出的提交 sha */
+            commit: string;
+            path: string;
+            self: components["schemas"]["ProjectRepoTreeEntry"];
+            /** @description self 是目录时为直接子项（目录在前、按名不分大小写排序），否则为空 */
+            entries: components["schemas"]["ProjectRepoTreeEntry"][];
+            /** @description 子项超过 5000 个被截断 */
+            truncated: boolean;
+            /** @description 每个子项都找到了最后提交（lastCommits=false 时恒为 true） */
+            lastCommitsComplete: boolean;
+        };
         /** @description orb 内 `git config --global user.name / user.email`；不得含换行或控制字符 */
         GitIdentity: {
             name: string;
@@ -11461,6 +11716,13 @@ export interface components {
         GitDiffPathQuery: string;
         /** @description 重命名 / 复制前的路径（`GitFileChange.oldPath`） */
         GitDiffOldPathQuery: string;
+        /** @description 分支、标签或提交 sha；缺省 = 仓库状态里的 `baseBranch` */
+        RepoRefQuery: string;
+        /** @description 仓库内相对路径；空 = 根 */
+        RepoPathQuery: string;
+        RepoShaPath: string;
+        /** @description 上一页返回的 `nextCursor` */
+        RepoCursorQuery: string;
         /** @description 密钥名（如 `omp/models/anthropic/apiKey`、`git/github.com/token`、`GITHUB_TOKEN`），`/` 编码为 `%2F` */
         SecretNamePath: string;
         /** @description 相对配置根的路径（全局为 omp-home 根，项目级为项目配置根，如 `skills/foo/SKILL.md`），`/` 编码为 `%2F`；不得含 `..` */
@@ -12031,6 +12293,189 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ProjectRepoStatus"];
                 };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listProjectRepoRefs: {
+        parameters: {
+            query: {
+                kind: components["schemas"]["ProjectRepoRefKind"];
+                /** @description 上一页返回的 `nextCursor` */
+                cursor?: components["parameters"]["RepoCursorQuery"];
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 一页分支或标签 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectRepoRefList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listProjectRepoCommits: {
+        parameters: {
+            query?: {
+                /** @description 分支、标签或提交 sha；缺省 = 仓库状态里的 `baseBranch` */
+                ref?: components["parameters"]["RepoRefQuery"];
+                /** @description 仓库内相对路径；空 = 根 */
+                path?: components["parameters"]["RepoPathQuery"];
+                /** @description 上一页返回的 `nextCursor` */
+                cursor?: components["parameters"]["RepoCursorQuery"];
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 一页提交 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectRepoCommitList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getProjectRepoCommit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+                sha: components["parameters"]["RepoShaPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 提交详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectRepoCommitDetail"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getProjectRepoCommitDiff: {
+        parameters: {
+            query: {
+                /** @description 仓库内相对路径（`GitFileChange.path`） */
+                path: components["parameters"]["GitDiffPathQuery"];
+                /** @description 重命名 / 复制前的路径（`GitFileChange.oldPath`） */
+                oldPath?: components["parameters"]["GitDiffOldPathQuery"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+                sha: components["parameters"]["RepoShaPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 文件 diff（`-U3`，≤1MiB） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitFileDiff"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getProjectRepoTree: {
+        parameters: {
+            query?: {
+                /** @description 分支、标签或提交 sha；缺省 = 仓库状态里的 `baseBranch` */
+                ref?: components["parameters"]["RepoRefQuery"];
+                /** @description 仓库内相对路径；空 = 根 */
+                path?: components["parameters"]["RepoPathQuery"];
+                /** @description 目录时给每个直接子项找最后一次改动它的提交（有时限，可能不全，见 `lastCommitsComplete`） */
+                lastCommits?: boolean;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 目录或文件 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectRepoTree"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getProjectRepoBlob: {
+        parameters: {
+            query: {
+                /** @description 分支、标签或提交 sha；缺省 = 仓库状态里的 `baseBranch` */
+                ref?: components["parameters"]["RepoRefQuery"];
+                /** @description 仓库内相对路径 */
+                path: string;
+            };
+            header?: {
+                /** @description 上次响应的 `ETag`；未变 → 304 */
+                "If-None-Match"?: string;
+            };
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 文件字节 */
+            200: {
+                headers: {
+                    /** @description `"<blob oid>"` */
+                    ETag?: string;
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description 与 `If-None-Match` 相同，未改变 */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             default: components["responses"]["Error"];
         };

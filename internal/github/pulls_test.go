@@ -328,3 +328,31 @@ func TestPullSampledCrossRepo(t *testing.T) {
 	_, ok := e.watchRow("pull", "Acme/Widgets", 12)
 	assert.True(t, ok, "跨仓库关联登记对象级 watch")
 }
+
+// 提交 → PR → 线程（M24 仓库浏览补 squash 合并）：先找已合并的 PR，再找打开的；没有 PR 或未绑定时 ok=false。
+func TestCommitThread(t *testing.T) {
+	e := newEnv(t)
+	p := e.boundProject()
+	th := e.thread(p, 0)
+	e.threadCommit(th, shaA)
+	e.deliver("pull_request", prEvent("opened", 12, shaA, 0, nil))
+	require.Equal(t, []int64{12}, e.links(th))
+	e.fake.AddPull(githubtest.Pull{Issue: githubtest.Issue{RepoID: 42, Number: 12, Title: "Fix"}, HeadRef: "fix", HeadSHA: shaA,
+		MergedAt: time.Now().UTC().Truncate(time.Second)})
+
+	tid, ok, err := e.s.CommitThread(e.ctx, p, shaA)
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, th, tid)
+	assert.Len(t, e.fake.CallsTo("GET", "/repos/acme/widgets/commits/"+shaA+"/pulls"), 1)
+
+	// 没有 PR 的提交：确实没有线程
+	_, ok, err = e.s.CommitThread(e.ctx, p, shaB)
+	require.NoError(t, err)
+	assert.False(t, ok)
+	// 未绑定 GitHub 的项目不发请求
+	_, ok, err = e.s.CommitThread(e.ctx, e.project("https://example.com/a/b"), shaA)
+	require.NoError(t, err)
+	assert.False(t, ok)
+	assert.Len(t, e.fake.CallsTo("GET", "/repos/acme/widgets/commits/*"), 2)
+}

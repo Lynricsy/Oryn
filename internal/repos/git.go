@@ -112,86 +112,171 @@ func (s *Service) baseEnv(read bool) []string {
 	return env
 }
 
-// git 执行 git；只有无法启动、超时或被取消（且非截断）时返回错误，非零退出码由调用方按 code 判断。
-// 取消与超时先向整个进程组发 SIGTERM（git 靠信号处理清理 *.lock），killGrace 后仍未退出才 SIGKILL。
-func (s *Service) git(ctx context.Context, o gitRun, args ...string) (gitResult, error) {
+// gitProc 是一个已启动的 git 进程：调用方读 stdout，读完（或 stop 之后）必须调用 finish 收尾。
+type gitProc struct {
+	name   string
+	cmd    *exec.Cmd
+	stdout io.ReadCloser
+	tail   tailBuffer
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	killMu sync.Mutex
+	hard   *time.Timer
+	exited bool
+}
+
+// startGit 启动 git。取消与超时先向整个进程组发 SIGTERM（git 靠信号处理清理 *.lock），killGrace 后仍未退出才 SIGKILL。
+func (s *Service) startGit(ctx context.Context, o gitRun, args ...string) (*gitProc, error) {
 	if s.reason != "" {
-		return gitResult{}, errUnavailable
+		return nil, errUnavailable
 	}
 	ctx, cancel := context.WithTimeout(ctx, cmpDuration(o.timeout, readTimeout))
-	defer cancel()
 	argv := append(baseArgs(o.dir, o.read), args...)
 	env := append(s.baseEnv(o.read), o.env...)
 	if s.trace != nil {
 		s.trace(append([]string{s.gitBin}, argv...), env)
 	}
 	cmd := exec.CommandContext(ctx, s.gitBin, argv...)
+	p := &gitProc{name: args[0], cmd: cmd, ctx: ctx, cancel: cancel}
 	cmd.Env = env
 	cmd.Dir = s.cfg.Dir
 	cmd.Stdin = o.stdin
-	var tail tailBuffer
-	cmd.Stderr = &tail
+	cmd.Stderr = &p.tail
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	var (
-		killMu sync.Mutex
-		hard   *time.Timer
-		exited bool
-	)
-	terminate := func() error {
-		killMu.Lock()
-		defer killMu.Unlock()
-		if exited {
-			return nil
-		}
-		pid := cmd.Process.Pid
-		if hard == nil {
-			hard = time.AfterFunc(killGrace, func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
-		}
-		return syscall.Kill(-pid, syscall.SIGTERM)
-	}
-	cmd.Cancel = terminate
+	cmd.Cancel = p.terminate
 	cmd.WaitDelay = killGrace + time.Second
 	pipe, err := cmd.StdoutPipe()
 	if err != nil {
-		return gitResult{}, err
+		cancel()
+		return nil, err
 	}
 	if err := cmd.Start(); err != nil {
-		return gitResult{}, err
+		cancel()
+		return nil, err
 	}
-	limit := max(o.limit, 0)
-	out, rerr := io.ReadAll(io.LimitReader(pipe, int64(limit)+1))
-	res := gitResult{out: out}
-	if len(out) > limit {
-		res.out, res.truncated = out[:limit], true
-		_ = terminate()
-		_, _ = io.Copy(io.Discard, pipe)
+	p.stdout = pipe
+	return p, nil
+}
+
+func (p *gitProc) terminate() error {
+	p.killMu.Lock()
+	defer p.killMu.Unlock()
+	if p.exited {
+		return nil
 	}
-	werr := cmd.Wait()
-	killMu.Lock()
-	exited = true
-	if hard != nil {
-		hard.Stop()
+	pid := p.cmd.Process.Pid
+	if p.hard == nil {
+		p.hard = time.AfterFunc(killGrace, func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
 	}
-	killMu.Unlock()
-	res.stderr = tail.String()
-	if ctx.Err() != nil && !res.truncated {
-		return res, fmt.Errorf("git %s: %w", args[0], ctx.Err())
+	return syscall.Kill(-pid, syscall.SIGTERM)
+}
+
+// stop 提前终止进程（截断或不再需要后续输出）并读空 stdout。
+func (p *gitProc) stop() {
+	_ = p.terminate()
+	_, _ = io.Copy(io.Discard, p.stdout)
+}
+
+// finish 等进程退出并返回退出码。stopped = 调用方主动终止过，此时不把终止当错误；rerr 是读 stdout 的错误。
+// 只有无法读取、超时或被取消（且非主动终止）时返回错误，非零退出码由调用方按 code 判断。
+func (p *gitProc) finish(stopped bool, rerr error) (int, error) {
+	defer p.cancel()
+	werr := p.cmd.Wait()
+	p.killMu.Lock()
+	p.exited = true
+	if p.hard != nil {
+		p.hard.Stop()
 	}
-	if rerr != nil && !res.truncated {
-		return res, rerr
+	p.killMu.Unlock()
+	if p.ctx.Err() != nil && !stopped {
+		return 0, fmt.Errorf("git %s: %w", p.name, p.ctx.Err())
+	}
+	if rerr != nil && !stopped {
+		return 0, rerr
 	}
 	var ee *exec.ExitError
 	switch {
 	case werr == nil:
+		return 0, nil
 	case errors.As(werr, &ee):
-		res.code = ee.ExitCode()
-		if res.code < 0 && !res.truncated {
-			return res, fmt.Errorf("git %s: %w", args[0], werr)
+		code := ee.ExitCode()
+		if code < 0 && !stopped {
+			return code, fmt.Errorf("git %s: %w", p.name, werr)
 		}
-	case !res.truncated:
-		return res, werr
+		return code, nil
+	case !stopped:
+		return 0, werr
 	}
-	return res, nil
+	return 0, nil
+}
+
+// git 执行 git 并收集至多 o.limit 字节的 stdout（超出即终止进程并置 truncated）；只有无法启动、超时或被取消
+// （且非截断）时返回错误，非零退出码由调用方按 code 判断。
+func (s *Service) git(ctx context.Context, o gitRun, args ...string) (gitResult, error) {
+	p, err := s.startGit(ctx, o, args...)
+	if err != nil {
+		return gitResult{}, err
+	}
+	limit := max(o.limit, 0)
+	out, rerr := io.ReadAll(io.LimitReader(p.stdout, int64(limit)+1))
+	res := gitResult{out: out}
+	if len(out) > limit {
+		res.out, res.truncated = out[:limit], true
+		p.stop()
+	}
+	res.code, err = p.finish(res.truncated, rerr)
+	res.stderr = p.tail.String()
+	return res, err
+}
+
+// gitStream 是 git 的 stdout 读取器：读到 EOF 时收尾，退出码非 0 时 Read 返回错误（而不是 EOF）；
+// 没读完就 Close 时终止进程。
+type gitStream struct {
+	p    *gitProc
+	done bool
+}
+
+// openGit 启动 git 并返回其 stdout 的流式读取器（大文件内容等）；调用方必须 Close。
+func (s *Service) openGit(ctx context.Context, o gitRun, args ...string) (io.ReadCloser, error) {
+	p, err := s.startGit(ctx, o, args...)
+	if err != nil {
+		return nil, err
+	}
+	return &gitStream{p: p}, nil
+}
+
+func (g *gitStream) Read(b []byte) (int, error) {
+	if g.done {
+		return 0, io.EOF
+	}
+	n, err := g.p.stdout.Read(b)
+	if err == nil {
+		return n, nil
+	}
+	g.done = true
+	rerr := err
+	if errors.Is(err, io.EOF) {
+		rerr = nil
+	}
+	code, ferr := g.p.finish(false, rerr)
+	switch {
+	case ferr != nil:
+		return n, ferr
+	case code != 0:
+		return n, fmt.Errorf("git %s: exit %d: %s", g.p.name, code, strings.TrimSpace(g.p.tail.String()))
+	}
+	return n, io.EOF
+}
+
+func (g *gitStream) Close() error {
+	if g.done {
+		return nil
+	}
+	g.done = true
+	g.p.stop()
+	_, err := g.p.finish(true, nil)
+	return err
 }
 
 func cmpDuration(d, def time.Duration) time.Duration {

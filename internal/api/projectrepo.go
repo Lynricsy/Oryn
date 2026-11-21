@@ -2,7 +2,11 @@ package api
 
 import (
 	"errors"
+	"io"
+	"log/slog"
+	"mime"
 	"net/http"
+	"strconv"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/repos"
@@ -57,4 +61,120 @@ func (s *Server) SyncProjectRepo(w http.ResponseWriter, r *http.Request, id apig
 		return
 	}
 	WriteJSON(w, http.StatusAccepted, st)
+}
+
+// ListProjectRepoRefs 列出项目仓库镜像的分支或标签。
+func (s *Server) ListProjectRepoRefs(w http.ResponseWriter, r *http.Request, id apigen.ProjectIDPath, params apigen.ListProjectRepoRefsParams) {
+	svc, ok := s.reposSvc(w)
+	if !ok {
+		return
+	}
+	out, err := svc.Refs(r.Context(), id, params.Kind, deref(params.Cursor), params.Limit)
+	if err != nil {
+		writeRepoErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, out)
+}
+
+// ListProjectRepoCommits 列出项目仓库镜像上 ref 的提交。
+func (s *Server) ListProjectRepoCommits(w http.ResponseWriter, r *http.Request, id apigen.ProjectIDPath, params apigen.ListProjectRepoCommitsParams) {
+	svc, ok := s.reposSvc(w)
+	if !ok {
+		return
+	}
+	out, err := svc.Commits(r.Context(), id, deref(params.Ref), deref(params.Path), deref(params.Cursor), params.Limit)
+	if err != nil {
+		writeRepoErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, out)
+}
+
+// GetProjectRepoCommit 返回项目仓库镜像里一个提交的详情。
+func (s *Server) GetProjectRepoCommit(w http.ResponseWriter, r *http.Request, id apigen.ProjectIDPath, sha apigen.RepoShaPath) {
+	svc, ok := s.reposSvc(w)
+	if !ok {
+		return
+	}
+	out, err := svc.Commit(r.Context(), id, sha)
+	if err != nil {
+		writeRepoErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, out)
+}
+
+// GetProjectRepoCommitDiff 返回提交里一个文件的 diff。
+func (s *Server) GetProjectRepoCommitDiff(w http.ResponseWriter, r *http.Request, id apigen.ProjectIDPath, sha apigen.RepoShaPath, params apigen.GetProjectRepoCommitDiffParams) {
+	svc, ok := s.reposSvc(w)
+	if !ok {
+		return
+	}
+	out, err := svc.CommitDiff(r.Context(), id, sha, params.Path, deref(params.OldPath))
+	if err != nil {
+		writeRepoErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, out)
+}
+
+// GetProjectRepoTree 返回项目仓库镜像在 ref 下的目录或文件。
+func (s *Server) GetProjectRepoTree(w http.ResponseWriter, r *http.Request, id apigen.ProjectIDPath, params apigen.GetProjectRepoTreeParams) {
+	svc, ok := s.reposSvc(w)
+	if !ok {
+		return
+	}
+	lastCommits := params.LastCommits == nil || *params.LastCommits
+	out, err := svc.Tree(r.Context(), id, deref(params.Ref), deref(params.Path), lastCommits)
+	if err != nil {
+		writeRepoErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, out)
+}
+
+// GetProjectRepoBlob 流式返回项目仓库镜像里一个文件的内容：ETag 是 blob oid；安全的栅格图片内联，其余附件下载。
+func (s *Server) GetProjectRepoBlob(w http.ResponseWriter, r *http.Request, id apigen.ProjectIDPath, params apigen.GetProjectRepoBlobParams) {
+	svc, ok := s.reposSvc(w)
+	if !ok {
+		return
+	}
+	b, err := svc.Blob(r.Context(), id, deref(params.Ref), params.Path, deref(params.IfNoneMatch))
+	if err != nil {
+		writeRepoErr(w, r, err)
+		return
+	}
+	h := w.Header()
+	h.Set("ETag", `"`+b.OID+`"`)
+	if b.Immutable {
+		h.Set("Cache-Control", "private, max-age=31536000, immutable")
+	} else {
+		h.Set("Cache-Control", "private, no-cache")
+	}
+	if b.NotModified {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	defer b.Body.Close()
+	disp := "attachment"
+	if b.Inline {
+		disp = "inline"
+	} else if v := mime.FormatMediaType("attachment", map[string]string{"filename": b.Name}); v != "" {
+		disp = v
+	}
+	h.Set("Content-Type", b.ContentType)
+	h.Set("Content-Disposition", disp)
+	h.Set("Content-Length", strconv.FormatInt(b.Size, 10))
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Content-Security-Policy", "sandbox")
+	w.WriteHeader(http.StatusOK)
+	if r.Method == http.MethodHead {
+		return
+	}
+	if _, err := io.Copy(w, b.Body); err != nil {
+		// 头已发出：中止连接，让客户端把这次下载当作失败而不是收到半截内容
+		slog.Warn("输出项目仓库文件", "project", id, "path", params.Path, "err", err)
+		panic(http.ErrAbortHandler)
+	}
 }

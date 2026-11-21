@@ -2693,6 +2693,24 @@ func (e ProjectRepoErrorCode) Valid() bool {
 	}
 }
 
+// Defines values for ProjectRepoRefKind.
+const (
+	RepoRefBranch ProjectRepoRefKind = "branch"
+	RepoRefTag    ProjectRepoRefKind = "tag"
+)
+
+// Valid indicates whether the value is a known member of the ProjectRepoRefKind enum.
+func (e ProjectRepoRefKind) Valid() bool {
+	switch e {
+	case RepoRefBranch:
+		return true
+	case RepoRefTag:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ProjectRepoStatusKind.
 const (
 	ProjectRepoStatusKindMirror ProjectRepoStatusKind = "mirror"
@@ -2747,6 +2765,51 @@ func (e ProjectRepoStatusUnavailableReason) Valid() bool {
 	case ProjectRepoGitMissing:
 		return true
 	case ProjectRepoGitTooOld:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ProjectRepoThreadLinkSource.
+const (
+	RepoThreadPull    ProjectRepoThreadLinkSource = "pull"
+	RepoThreadPush    ProjectRepoThreadLinkSource = "push"
+	RepoThreadSampled ProjectRepoThreadLinkSource = "sampled"
+)
+
+// Valid indicates whether the value is a known member of the ProjectRepoThreadLinkSource enum.
+func (e ProjectRepoThreadLinkSource) Valid() bool {
+	switch e {
+	case RepoThreadPull:
+		return true
+	case RepoThreadPush:
+		return true
+	case RepoThreadSampled:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ProjectRepoTreeEntryType.
+const (
+	RepoEntryDir       ProjectRepoTreeEntryType = "dir"
+	RepoEntryFile      ProjectRepoTreeEntryType = "file"
+	RepoEntrySubmodule ProjectRepoTreeEntryType = "submodule"
+	RepoEntrySymlink   ProjectRepoTreeEntryType = "symlink"
+)
+
+// Valid indicates whether the value is a known member of the ProjectRepoTreeEntryType enum.
+func (e ProjectRepoTreeEntryType) Valid() bool {
+	switch e {
+	case RepoEntryDir:
+		return true
+	case RepoEntryFile:
+		return true
+	case RepoEntrySubmodule:
+		return true
+	case RepoEntrySymlink:
 		return true
 	default:
 		return false
@@ -9478,6 +9541,84 @@ type ProjectPatch struct {
 	WarmOrbs *int `json:"warmOrbs,omitempty"`
 }
 
+// ProjectRepoCommit 提交摘要、父提交与关联线程
+type ProjectRepoCommit struct {
+	AuthorEmail string   `json:"authorEmail"`
+	AuthorName  string   `json:"authorName"`
+	Parents     []string `json:"parents"`
+	Sha         string   `json:"sha"`
+	ShortSha    string   `json:"shortSha"`
+	Subject     string   `json:"subject"`
+
+	// Thread 提交关联的线程
+	Thread *ProjectRepoThreadLink `json:"thread,omitempty"`
+
+	// TS 作者时间
+	TS TimestampMs `json:"ts"`
+}
+
+// ProjectRepoCommitDetail defines model for ProjectRepoCommitDetail.
+type ProjectRepoCommitDetail struct {
+	// Additions 非二进制文件的新增行数之和
+	Additions   int    `json:"additions"`
+	AuthorEmail string `json:"authorEmail"`
+	AuthorName  string `json:"authorName"`
+
+	// Body 去掉 subject 行后的正文（≤64KiB）
+	Body string `json:"body"`
+
+	// CommittedAt 提交者时间
+	CommittedAt    TimestampMs `json:"committedAt"`
+	CommitterEmail *string     `json:"committerEmail,omitempty"`
+	CommitterName  string      `json:"committerName"`
+
+	// Deletions 非二进制文件的删除行数之和
+	Deletions int `json:"deletions"`
+
+	// Files 按路径排序；合并提交相对第一个父提交，根提交相对空树；`staged` 恒为 `none`
+	Files    []GitFileChange `json:"files"`
+	Parents  []string        `json:"parents"`
+	Sha      string          `json:"sha"`
+	ShortSha string          `json:"shortSha"`
+	Subject  string          `json:"subject"`
+
+	// Thread 提交关联的线程
+	Thread *ProjectRepoThreadLink `json:"thread,omitempty"`
+
+	// Truncated 改动文件超过 2000 个，只列出前 2000 个
+	Truncated bool `json:"truncated"`
+
+	// TS 作者时间
+	TS TimestampMs `json:"ts"`
+}
+
+// ProjectRepoCommitList defines model for ProjectRepoCommitList.
+type ProjectRepoCommitList struct {
+	// Commit 本次列表的头提交 sha（翻页时为 cursor 里记下的那个）
+	Commit string `json:"commit"`
+
+	// Commits 新到旧
+	Commits []ProjectRepoCommit `json:"commits"`
+
+	// NextCursor 还有更早的提交时给出
+	NextCursor *string `json:"nextCursor,omitempty"`
+
+	// Ref 实际使用的 ref（缺省时为基线分支）
+	Ref string `json:"ref"`
+}
+
+// ProjectRepoCommitSummary 提交摘要（字段同 `GitCommit`）
+type ProjectRepoCommitSummary struct {
+	AuthorEmail string `json:"authorEmail"`
+	AuthorName  string `json:"authorName"`
+	Sha         string `json:"sha"`
+	ShortSha    string `json:"shortSha"`
+	Subject     string `json:"subject"`
+
+	// TS 作者时间
+	TS TimestampMs `json:"ts"`
+}
+
 // ProjectRepoError 最近一次失败的克隆或拉取
 type ProjectRepoError struct {
 	// At UTC 毫秒时间戳
@@ -9490,6 +9631,31 @@ type ProjectRepoError struct {
 
 // ProjectRepoErrorCode defines model for ProjectRepoError.Code.
 type ProjectRepoErrorCode string
+
+// ProjectRepoRef defines model for ProjectRepoRef.
+type ProjectRepoRef struct {
+	// Annotated 附注标签
+	Annotated *bool `json:"annotated,omitempty"`
+
+	// Commit 提交摘要（字段同 `GitCommit`）
+	Commit ProjectRepoCommitSummary `json:"commit"`
+
+	// Default 是默认分支
+	Default bool               `json:"default"`
+	Kind    ProjectRepoRefKind `json:"kind"`
+
+	// Name 分支或标签名（不含 refs/heads/、refs/tags/）
+	Name string `json:"name"`
+}
+
+// ProjectRepoRefKind defines model for ProjectRepoRefKind.
+type ProjectRepoRefKind string
+
+// ProjectRepoRefList defines model for ProjectRepoRefList.
+type ProjectRepoRefList struct {
+	NextCursor *string          `json:"nextCursor,omitempty"`
+	Refs       []ProjectRepoRef `json:"refs"`
+}
 
 // ProjectRepoStatus M24：项目仓库在控制面的裸镜像
 type ProjectRepoStatus struct {
@@ -9530,6 +9696,73 @@ type ProjectRepoStatusState string
 
 // ProjectRepoStatusUnavailableReason defines model for ProjectRepoStatus.UnavailableReason.
 type ProjectRepoStatusUnavailableReason string
+
+// ProjectRepoThreadLink 提交关联的线程
+type ProjectRepoThreadLink struct {
+	// ID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ID ThreadID `json:"id"`
+
+	// Source `push` = 由该线程经出站代理推送；`sampled` = 线程里采样到过该提交；`pull` = 经 GitHub PR 合并
+	Source ProjectRepoThreadLinkSource `json:"source"`
+	Title  string                      `json:"title"`
+}
+
+// ProjectRepoThreadLinkSource `push` = 由该线程经出站代理推送；`sampled` = 线程里采样到过该提交；`pull` = 经 GitHub PR 合并
+type ProjectRepoThreadLinkSource string
+
+// ProjectRepoTree defines model for ProjectRepoTree.
+type ProjectRepoTree struct {
+	// Commit ref 解析出的提交 sha
+	Commit string `json:"commit"`
+
+	// Entries self 是目录时为直接子项（目录在前、按名不分大小写排序），否则为空
+	Entries []ProjectRepoTreeEntry `json:"entries"`
+
+	// LastCommitsComplete 每个子项都找到了最后提交（lastCommits=false 时恒为 true）
+	LastCommitsComplete bool   `json:"lastCommitsComplete"`
+	Path                string `json:"path"`
+
+	// Ref 实际使用的 ref
+	Ref  string               `json:"ref"`
+	Self ProjectRepoTreeEntry `json:"self"`
+
+	// Truncated 子项超过 5000 个被截断
+	Truncated bool `json:"truncated"`
+}
+
+// ProjectRepoTreeEntry defines model for ProjectRepoTreeEntry.
+type ProjectRepoTreeEntry struct {
+	// LastCommit 提交摘要（字段同 `GitCommit`）
+	LastCommit *ProjectRepoCommitSummary `json:"lastCommit,omitempty"`
+
+	// Mime 仅 self 且 type=file
+	Mime *string `json:"mime,omitempty"`
+
+	// Mode Unix 权限位（100644→420，100755→493，040000→493，120000→511，160000→0）
+	Mode int    `json:"mode"`
+	Name string `json:"name"`
+
+	// Oid blob / tree / 子模块提交的 sha
+	Oid string `json:"oid"`
+
+	// Path 仓库内相对路径（根为 ""）
+	Path string `json:"path"`
+
+	// Size 仅 file / symlink；其余为 0
+	Size int64 `json:"size"`
+
+	// Target 符号链接目标（≤4KiB）
+	Target *string `json:"target,omitempty"`
+
+	// Text 仅 self 且 type=file：前 8KiB 没有 NUL 且是合法 UTF-8
+	Text *bool                    `json:"text,omitempty"`
+	Type ProjectRepoTreeEntryType `json:"type"`
+}
+
+// ProjectRepoTreeEntryType defines model for ProjectRepoTreeEntry.Type.
+type ProjectRepoTreeEntryType string
 
 // ProjectSnapshot 项目快照（M11a）：某项目在某 provider、某 orb 类型上跑完 setup 后的 orb 镜像；键 = (项目, provider, 类型)
 type ProjectSnapshot struct {
@@ -12151,6 +12384,18 @@ type PublishedFileIDPath = PublishedFileID
 // PushSubscriptionIDPath `psub_<ulid>`
 type PushSubscriptionIDPath = PushSubscriptionID
 
+// RepoCursorQuery defines model for RepoCursorQuery.
+type RepoCursorQuery = string
+
+// RepoPathQuery defines model for RepoPathQuery.
+type RepoPathQuery = string
+
+// RepoRefQuery defines model for RepoRefQuery.
+type RepoRefQuery = string
+
+// RepoShaPath defines model for RepoShaPath.
+type RepoShaPath = string
+
 // ScheduleIDPath `sch_<ulid>`（M9）
 type ScheduleIDPath = ScheduleID
 
@@ -12701,6 +12946,61 @@ type PutProjectAgentConfigFileParams struct {
 type ListGitHubRefsParams struct {
 	// Q 空 = 最近更新的打开项；纯数字 = 按编号；其它 = 搜索
 	Q *string `form:"q,omitempty" json:"q,omitempty"`
+}
+
+// GetProjectRepoBlobParams defines parameters for GetProjectRepoBlob.
+type GetProjectRepoBlobParams struct {
+	// Ref 分支、标签或提交 sha；缺省 = 仓库状态里的 `baseBranch`
+	Ref *RepoRefQuery `form:"ref,omitempty" json:"ref,omitempty"`
+
+	// Path 仓库内相对路径
+	Path string `form:"path" json:"path"`
+
+	// IfNoneMatch 上次响应的 `ETag`；未变 → 304
+	IfNoneMatch *string `json:"If-None-Match,omitempty"`
+}
+
+// ListProjectRepoCommitsParams defines parameters for ListProjectRepoCommits.
+type ListProjectRepoCommitsParams struct {
+	// Ref 分支、标签或提交 sha；缺省 = 仓库状态里的 `baseBranch`
+	Ref *RepoRefQuery `form:"ref,omitempty" json:"ref,omitempty"`
+
+	// Path 仓库内相对路径；空 = 根
+	Path *RepoPathQuery `form:"path,omitempty" json:"path,omitempty"`
+
+	// Cursor 上一页返回的 `nextCursor`
+	Cursor *RepoCursorQuery `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit  *int             `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// GetProjectRepoCommitDiffParams defines parameters for GetProjectRepoCommitDiff.
+type GetProjectRepoCommitDiffParams struct {
+	// Path 仓库内相对路径（`GitFileChange.path`）
+	Path GitDiffPathQuery `form:"path" json:"path"`
+
+	// OldPath 重命名 / 复制前的路径（`GitFileChange.oldPath`）
+	OldPath *GitDiffOldPathQuery `form:"oldPath,omitempty" json:"oldPath,omitempty"`
+}
+
+// ListProjectRepoRefsParams defines parameters for ListProjectRepoRefs.
+type ListProjectRepoRefsParams struct {
+	Kind ProjectRepoRefKind `form:"kind" json:"kind"`
+
+	// Cursor 上一页返回的 `nextCursor`
+	Cursor *RepoCursorQuery `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit  *int             `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// GetProjectRepoTreeParams defines parameters for GetProjectRepoTree.
+type GetProjectRepoTreeParams struct {
+	// Ref 分支、标签或提交 sha；缺省 = 仓库状态里的 `baseBranch`
+	Ref *RepoRefQuery `form:"ref,omitempty" json:"ref,omitempty"`
+
+	// Path 仓库内相对路径；空 = 根
+	Path *RepoPathQuery `form:"path,omitempty" json:"path,omitempty"`
+
+	// LastCommits 目录时给每个直接子项找最后一次改动它的提交（有时限，可能不全，见 `lastCommitsComplete`）
+	LastCommits *bool `form:"lastCommits,omitempty" json:"lastCommits,omitempty"`
 }
 
 // DeleteProjectSnapshotsParams defines parameters for DeleteProjectSnapshots.
@@ -16388,9 +16688,27 @@ type ServerInterface interface {
 	// GetProjectRepo 项目仓库镜像状态（M24；未归档项目按需在后台克隆或拉取，不阻塞）
 	// (GET /api/v1/projects/{id}/repo)
 	GetProjectRepo(w http.ResponseWriter, r *http.Request, id ProjectIDPath)
+	// GetProjectRepoBlob 项目仓库镜像里一个文件的内容（M24）
+	// (GET /api/v1/projects/{id}/repo/blob)
+	GetProjectRepoBlob(w http.ResponseWriter, r *http.Request, id ProjectIDPath, params GetProjectRepoBlobParams)
+	// ListProjectRepoCommits 项目仓库镜像的提交（M24；新到旧，可按路径过滤）
+	// (GET /api/v1/projects/{id}/repo/commits)
+	ListProjectRepoCommits(w http.ResponseWriter, r *http.Request, id ProjectIDPath, params ListProjectRepoCommitsParams)
+	// GetProjectRepoCommit 项目仓库镜像里的一个提交（M24；含改动文件与关联线程）
+	// (GET /api/v1/projects/{id}/repo/commits/{sha})
+	GetProjectRepoCommit(w http.ResponseWriter, r *http.Request, id ProjectIDPath, sha RepoShaPath)
+	// GetProjectRepoCommitDiff 提交里一个文件的 unified diff（M24；合并提交相对第一个父提交，根提交相对空树）
+	// (GET /api/v1/projects/{id}/repo/commits/{sha}/diff)
+	GetProjectRepoCommitDiff(w http.ResponseWriter, r *http.Request, id ProjectIDPath, sha RepoShaPath, params GetProjectRepoCommitDiffParams)
+	// ListProjectRepoRefs 项目仓库镜像的分支或标签（M24；按最近提交倒序，默认分支排第一）
+	// (GET /api/v1/projects/{id}/repo/refs)
+	ListProjectRepoRefs(w http.ResponseWriter, r *http.Request, id ProjectIDPath, params ListProjectRepoRefsParams)
 	// SyncProjectRepo 立即克隆或拉取项目仓库镜像（M24；已归档项目也可以；在后台进行）
 	// (POST /api/v1/projects/{id}/repo/sync)
 	SyncProjectRepo(w http.ResponseWriter, r *http.Request, id ProjectIDPath)
+	// GetProjectRepoTree 项目仓库镜像在某个 ref 下的目录或文件（M24）
+	// (GET /api/v1/projects/{id}/repo/tree)
+	GetProjectRepoTree(w http.ResponseWriter, r *http.Request, id ProjectIDPath, params GetProjectRepoTreeParams)
 	// DeleteProjectSnapshots 清除项目快照（M11a；把匹配的 ready 快照退役，原因 `manual`；镜像由回收器异步删除）
 	// (DELETE /api/v1/projects/{id}/snapshots)
 	DeleteProjectSnapshots(w http.ResponseWriter, r *http.Request, id ProjectIDPath, params DeleteProjectSnapshotsParams)
@@ -18113,9 +18431,45 @@ func (_ Unimplemented) GetProjectRepo(w http.ResponseWriter, r *http.Request, id
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// GetProjectRepoBlob 项目仓库镜像里一个文件的内容（M24）
+// (GET /api/v1/projects/{id}/repo/blob)
+func (_ Unimplemented) GetProjectRepoBlob(w http.ResponseWriter, r *http.Request, id ProjectIDPath, params GetProjectRepoBlobParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListProjectRepoCommits 项目仓库镜像的提交（M24；新到旧，可按路径过滤）
+// (GET /api/v1/projects/{id}/repo/commits)
+func (_ Unimplemented) ListProjectRepoCommits(w http.ResponseWriter, r *http.Request, id ProjectIDPath, params ListProjectRepoCommitsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetProjectRepoCommit 项目仓库镜像里的一个提交（M24；含改动文件与关联线程）
+// (GET /api/v1/projects/{id}/repo/commits/{sha})
+func (_ Unimplemented) GetProjectRepoCommit(w http.ResponseWriter, r *http.Request, id ProjectIDPath, sha RepoShaPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetProjectRepoCommitDiff 提交里一个文件的 unified diff（M24；合并提交相对第一个父提交，根提交相对空树）
+// (GET /api/v1/projects/{id}/repo/commits/{sha}/diff)
+func (_ Unimplemented) GetProjectRepoCommitDiff(w http.ResponseWriter, r *http.Request, id ProjectIDPath, sha RepoShaPath, params GetProjectRepoCommitDiffParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListProjectRepoRefs 项目仓库镜像的分支或标签（M24；按最近提交倒序，默认分支排第一）
+// (GET /api/v1/projects/{id}/repo/refs)
+func (_ Unimplemented) ListProjectRepoRefs(w http.ResponseWriter, r *http.Request, id ProjectIDPath, params ListProjectRepoRefsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // SyncProjectRepo 立即克隆或拉取项目仓库镜像（M24；已归档项目也可以；在后台进行）
 // (POST /api/v1/projects/{id}/repo/sync)
 func (_ Unimplemented) SyncProjectRepo(w http.ResponseWriter, r *http.Request, id ProjectIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetProjectRepoTree 项目仓库镜像在某个 ref 下的目录或文件（M24）
+// (GET /api/v1/projects/{id}/repo/tree)
+func (_ Unimplemented) GetProjectRepoTree(w http.ResponseWriter, r *http.Request, id ProjectIDPath, params GetProjectRepoTreeParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -25593,6 +25947,330 @@ func (siw *ServerInterfaceWrapper) GetProjectRepo(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// GetProjectRepoBlob operation middleware
+func (siw *ServerInterfaceWrapper) GetProjectRepoBlob(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProjectIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetProjectRepoBlobParams
+
+	// ------------- Optional query parameter "ref" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "ref", r.URL.Query(), &params.Ref, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "ref"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ref", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "path" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "path", r.URL.Query(), &params.Path, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "path"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "path", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "If-None-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-None-Match")]; found {
+		var IfNoneMatch string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "If-None-Match", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-None-Match", valueList[0], &IfNoneMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "If-None-Match", Err: err})
+			return
+		}
+
+		params.IfNoneMatch = &IfNoneMatch
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetProjectRepoBlob(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListProjectRepoCommits operation middleware
+func (siw *ServerInterfaceWrapper) ListProjectRepoCommits(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProjectIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListProjectRepoCommitsParams
+
+	// ------------- Optional query parameter "ref" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "ref", r.URL.Query(), &params.Ref, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "ref"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ref", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "path" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "path", r.URL.Query(), &params.Path, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "path"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "path", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListProjectRepoCommits(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetProjectRepoCommit operation middleware
+func (siw *ServerInterfaceWrapper) GetProjectRepoCommit(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProjectIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "sha" -------------
+	var sha RepoShaPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "sha", chi.URLParam(r, "sha"), &sha, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sha", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetProjectRepoCommit(w, r, id, sha)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetProjectRepoCommitDiff operation middleware
+func (siw *ServerInterfaceWrapper) GetProjectRepoCommitDiff(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProjectIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "sha" -------------
+	var sha RepoShaPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "sha", chi.URLParam(r, "sha"), &sha, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sha", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetProjectRepoCommitDiffParams
+
+	// ------------- Required query parameter "path" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "path", r.URL.Query(), &params.Path, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "path"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "path", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "oldPath" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "oldPath", r.URL.Query(), &params.OldPath, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "oldPath"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "oldPath", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetProjectRepoCommitDiff(w, r, id, sha, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListProjectRepoRefs operation middleware
+func (siw *ServerInterfaceWrapper) ListProjectRepoRefs(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProjectIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListProjectRepoRefsParams
+
+	// ------------- Required query parameter "kind" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "kind", r.URL.Query(), &params.Kind, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "kind"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListProjectRepoRefs(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // SyncProjectRepo operation middleware
 func (siw *ServerInterfaceWrapper) SyncProjectRepo(w http.ResponseWriter, r *http.Request) {
 
@@ -25610,6 +26288,74 @@ func (siw *ServerInterfaceWrapper) SyncProjectRepo(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SyncProjectRepo(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetProjectRepoTree operation middleware
+func (siw *ServerInterfaceWrapper) GetProjectRepoTree(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProjectIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetProjectRepoTreeParams
+
+	// ------------- Optional query parameter "ref" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "ref", r.URL.Query(), &params.Ref, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "ref"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ref", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "path" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "path", r.URL.Query(), &params.Path, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "path"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "path", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "lastCommits" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "lastCommits", r.URL.Query(), &params.LastCommits, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "lastCommits"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "lastCommits", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetProjectRepoTree(w, r, id, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -29322,6 +30068,24 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/projects/{id}/repo/sync", wrapper.SyncProjectRepo)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/projects/{id}/repo/refs", wrapper.ListProjectRepoRefs)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/projects/{id}/repo/commits", wrapper.ListProjectRepoCommits)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/projects/{id}/repo/commits/{sha}", wrapper.GetProjectRepoCommit)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/projects/{id}/repo/commits/{sha}/diff", wrapper.GetProjectRepoCommitDiff)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/projects/{id}/repo/tree", wrapper.GetProjectRepoTree)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/projects/{id}/repo/blob", wrapper.GetProjectRepoBlob)
 	})
 	r.Group(func(r chi.Router) {
 		r.Delete(options.BaseURL+"/api/v1/projects/{id}/snapshots", wrapper.DeleteProjectSnapshots)

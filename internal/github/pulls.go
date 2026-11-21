@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -309,6 +310,50 @@ func (s *Service) linkSampled(ctx context.Context, threadID, head string) error 
 		}
 	}
 	return nil
+}
+
+// CommitThread 实现 repos.CommitThreads（M24）：按「提交所属的 PR → 最早关联该 PR 的线程」反查提交的线程，补上
+// squash 合并（合并后的提交不在线程推送或采样里）。依次看已合并、再看打开的 PR；项目未绑定仓库或没有线程时
+// ok=false、err=nil（可以缓存），GitHub 请求失败时返回错误。
+func (s *Service) CommitThread(ctx context.Context, projectID, sha string) (string, bool, error) {
+	prj, err := s.st.Q.GetProject(ctx, projectID)
+	if err != nil {
+		if isNoRows(err) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	if prj.GithubRepoID == nil {
+		return "", false, nil
+	}
+	full, err := s.projectRepo(prj)
+	if err != nil {
+		return "", false, nil
+	}
+	var pulls []pullPayload
+	if err := s.callAs(ctx, slotUser, http.MethodGet, fmt.Sprintf("/repos/%s/commits/%s/pulls?per_page=5", full, url.PathEscape(sha)), nil, &pulls); err != nil {
+		return "", false, err
+	}
+	for _, want := range []string{"merged", "open"} {
+		for _, pr := range pulls {
+			if pullState(pr) != want {
+				continue
+			}
+			repoID := *prj.GithubRepoID
+			if pr.Base.Repo != nil && pr.Base.Repo.ID != 0 {
+				repoID = pr.Base.Repo.ID
+			}
+			tid, err := s.st.Q.FirstPullThread(ctx, db.FirstPullThreadParams{RepoID: repoID, Number: pr.Number})
+			if isNoRows(err) {
+				continue
+			}
+			if err != nil {
+				return "", false, err
+			}
+			return tid, true, nil
+		}
+	}
+	return "", false, nil
 }
 
 // identityLogins 返回已连接的身份登录名（小写）。
