@@ -20,19 +20,22 @@ vi.mock("./realtime/socket", () => ({
 	},
 }));
 
-// 项目页本身由 ProjectsPage 的测试覆盖；这里只看路由落到哪个页面、带什么参数
+// 各页面本身另有测试；这里只看路由落到哪个页面、带什么参数
+vi.mock("./pages/projects/ProjectsOverviewPage", () => ({
+	ProjectsOverviewPage: () => <p data-testid="page">INDEX</p>,
+}));
+vi.mock("./pages/projects/ProjectCreatePage", () => ({
+	ProjectCreatePage: () => <p data-testid="page">CREATE</p>,
+}));
 vi.mock("./pages/ProjectsPage", async () => {
 	const { useParams } =
 		await vi.importActual<typeof ReactRouter>("react-router");
 	return {
-		ProjectsIndexPage: () => <p data-testid="page">INDEX</p>,
-		ProjectPage: ({ create }: { create?: boolean }) => {
+		ProjectPage: () => {
 			const { projectId } = useParams();
 			// 模拟页面渲染期抛错（M12.1 走查问题 1：确认条卸载时 TypeError 整页白屏）
 			if (projectId === "boom") throw new TypeError("l is not a function");
-			return (
-				<p data-testid="page">{create ? "CREATE" : `PROJECT ${projectId}`}</p>
-			);
+			return <p data-testid="page">{`PROJECT ${projectId}`}</p>;
 		},
 	};
 });

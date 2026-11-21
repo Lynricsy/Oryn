@@ -12,7 +12,9 @@
 
 | id | 界面 | 打开路径（用户怎么点到） | 形态 |
 |---|---|---|---|
-| `projects.list` | 项目列表 | 底栏 / 侧栏「项目」 | 页面 |
+| `projects.list` | 项目总览 | 底栏 / 侧栏「项目」 | 页面 |
+| `projects.list.menu` | 项目总览的「更多操作」菜单（显示已归档项目） | 项目总览页头「⋯」 | 菜单 |
+| `projects.list.archived` | 项目总览 · 已归档区 | 「⋯」→ 显示已归档项目 | 页面 |
 | `projects.new` | 新建项目 | 项目分区「新建项目」 | 页面 |
 | `projects.page` | 项目页（顶部：项目设置） | 项目分区点某个项目 | 页面 |
 | `projects.page.settings-bottom` | 项目设置下半部分（setup 脚本、保存） | 项目页往下滚 | 页面 |

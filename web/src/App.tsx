@@ -23,10 +23,15 @@ const AssistantComputerPage = lazy(() =>
 	})),
 );
 
-// 项目页（M9.6）：项目分区的主区
-const ProjectsIndexPage = lazy(() =>
-	import("./pages/ProjectsPage").then((m) => ({
-		default: m.ProjectsIndexPage,
+// 项目分区（M9.6 / M24）：总览、新建与项目页
+const ProjectsOverviewPage = lazy(() =>
+	import("./pages/projects/ProjectsOverviewPage").then((m) => ({
+		default: m.ProjectsOverviewPage,
+	})),
+);
+const ProjectCreatePage = lazy(() =>
+	import("./pages/projects/ProjectCreatePage").then((m) => ({
+		default: m.ProjectCreatePage,
 	})),
 );
 const ProjectPage = lazy(() =>
@@ -133,8 +138,8 @@ export function App(): ReactNode {
 							element={<AssistantComputerPage />}
 						/>
 						<Route path="assistant/:threadId" element={<AssistantPage />} />
-						<Route path="projects" element={<ProjectsIndexPage />} />
-						<Route path="projects/new" element={<ProjectPage create />} />
+						<Route path="projects" element={<ProjectsOverviewPage />} />
+						<Route path="projects/new" element={<ProjectCreatePage />} />
 						<Route path="projects/:projectId" element={<ProjectPage />} />
 						<Route
 							path="stats"

@@ -4343,6 +4343,13 @@
 		"archivedBody": "它不在侧栏里，GitHub 仓库钩子已释放，预热 orb 已清零，定时任务与触发规则不再运行。线程都还在。",
 		"unarchive": "取消归档"
 	},
+	"projectsOverview": {
+		"menu": "更多操作",
+		"showArchived": "显示已归档项目",
+		"activeAgo": "{{ago}}活跃",
+		"activity": "{{name}} 近 14 天每天的回合数",
+		"noArchived": "没有已归档的项目。"
+	},
 	"projectsPage": {
 		"settings": "项目设置",
 		"environment": "环境配置",

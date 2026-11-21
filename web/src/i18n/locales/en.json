@@ -4343,6 +4343,13 @@
 		"archivedBody": "It's hidden from the sidebar, its GitHub repository hook is released, warm orbs are at zero, and its schedules and triggers no longer run. Its threads are kept.",
 		"unarchive": "Unarchive"
 	},
+	"projectsOverview": {
+		"menu": "More actions",
+		"showArchived": "Show archived projects",
+		"activeAgo": "Active {{ago}}",
+		"activity": "Turns per day in {{name}} over the last 14 days",
+		"noArchived": "No archived projects."
+	},
 	"projectsPage": {
 		"settings": "Project settings",
 		"environment": "Environment setup",

@@ -1,13 +1,12 @@
 /**
- * 项目分区的主区（M9.6）：`/projects` 跳到第一个未归档项目（没有项目时是空状态），`/projects/new` 新建，
- * `/projects/<id>` 是该项目的设置表单、Agent 配置（M12.2 项目级中央 omp 配置）、环境配置（最近一次 setup）、
- * 服务（只读汇总）与定时任务。
+ * 项目页（M9.6）：`/projects/<id>` 是该项目的设置表单、Agent 配置（M12.2 项目级中央 omp 配置）、环境配置
+ * （最近一次 setup）、服务（只读汇总）与定时任务。总览与新建页见 projects/ProjectsOverviewPage、ProjectCreatePage；
  * 外框与页头（面包屑、归档提示）见 projects/ProjectShell。
  */
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Link, Navigate, useNavigate } from "react-router";
+import { Link, useNavigate } from "react-router";
 import {
 	api,
 	type Orb,
@@ -15,16 +14,11 @@ import {
 	type Schemas,
 	unwrap,
 } from "../api/client";
-import { qk, useOrbs, useProjects } from "../api/queries";
+import { qk, useOrbs } from "../api/queries";
 import { useAsync } from "../components/settings/useAsync";
 import { Badge, Card, Stat, type Tone } from "../components/ui/data";
 import { Icon } from "../components/ui/icons";
-import {
-	Button,
-	ErrorText,
-	IconButton,
-	Spinner,
-} from "../components/ui/primitives";
+import { ErrorText, IconButton } from "../components/ui/primitives";
 import { confirmAction } from "../lib/confirm";
 import type { SetupRun } from "../lib/env-banner";
 import { formatDuration, formatRelative } from "../lib/format";
@@ -33,7 +27,6 @@ import { useIndex } from "../state/stores";
 import { AccelCard } from "./projects/ProjectAccel";
 import { ProjectAgentConfigCard } from "./projects/ProjectAgentConfig";
 import {
-	EMPTY_PROJECT,
 	formOf,
 	ProjectEditor,
 	RepoScriptText,
@@ -55,60 +48,7 @@ const SERVICE_TONE: Record<Schemas["OrbServiceStatus"], Tone> = {
 	stopped: "neutral",
 };
 
-/** `/projects`：有未归档项目就进第一个，否则空状态。 */
-export function ProjectsIndexPage(): ReactNode {
-	const { t } = useTranslation();
-	const navigate = useNavigate();
-	const projects = useProjects();
-	const first = projects.data?.projects.find((p) => !p.archivedAt);
-	if (first) return <Navigate to={`/projects/${first.id}`} replace />;
-	return (
-		<ProjectShell>
-			{projects.isPending ? (
-				<div className="flex justify-center p-6 text-muted">
-					<Spinner size={18} />
-				</div>
-			) : (
-				<div
-					data-testid="projects-empty"
-					className="flex flex-col items-center gap-3 p-8 text-center"
-				>
-					<ErrorText error={projects.error} />
-					<p className="max-w-sm text-muted text-sm">
-						{t("projectsPage.empty")}
-					</p>
-					<Button
-						variant="primary"
-						icon="plus"
-						onClick={() => navigate("/projects/new")}
-					>
-						{t("projects.new")}
-					</Button>
-				</div>
-			)}
-		</ProjectShell>
-	);
-}
-
-export function ProjectPage({
-	create = false,
-}: {
-	create?: boolean;
-}): ReactNode {
-	const { t } = useTranslation();
-	const navigate = useNavigate();
-	if (create)
-		return (
-			<ProjectShell crumbs={[{ label: t("projects.new") }]}>
-				<Card title={t("projectsPage.settings")} icon="settings">
-					<ProjectEditor
-						initial={EMPTY_PROJECT}
-						onSaved={(p) => navigate(`/projects/${p.id}`, { replace: true })}
-						onCancel={() => navigate("/projects")}
-					/>
-				</Card>
-			</ProjectShell>
-		);
+export function ProjectPage(): ReactNode {
 	return <ProjectGate>{(p) => <ProjectDetail project={p} />}</ProjectGate>;
 }
 
