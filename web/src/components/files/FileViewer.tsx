@@ -423,9 +423,12 @@ export function FileViewer({
 					)}
 				</span>
 				{entry && (
-					<span className="flex min-w-0 shrink items-center gap-1">
+					// 放不下时裁掉，不压到右侧的预览 / 源码切换上；类型只显示主体（参数如 charset 放进悬停提示），窄屏不显示
+					<span className="flex min-w-0 shrink items-center gap-1 overflow-hidden">
 						{entry.mime && !onBack && (
-							<Badge title={entry.mime}>{entry.mime}</Badge>
+							<span className="hidden min-w-0 sm:flex">
+								<Badge title={entry.mime}>{entry.mime.split(";")[0]}</Badge>
+							</span>
 						)}
 						<Badge>{formatBytes(entry.size)}</Badge>
 					</span>
