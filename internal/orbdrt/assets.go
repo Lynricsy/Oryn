@@ -18,6 +18,11 @@ var setupSkill []byte
 //go:embed assets/oryn-library/SKILL.md
 var librarySkill []byte
 
+// boxesSkill 是写到 $HOME/.agents/skills/oryn-boxes/SKILL.md 的技能（M23：`oryn boxes …`；runner 不发）。
+//
+//go:embed assets/oryn-boxes/SKILL.md
+var boxesSkill []byte
+
 // runnerLibrarySkill 是 runner 写到 $HOME/.oryn/omp/agent/skills/oryn-library/SKILL.md 的技能（M21：存入方式是
 // 扩展的 oryn_library_put 工具，runner 上没有 `oryn` CLI）。
 //

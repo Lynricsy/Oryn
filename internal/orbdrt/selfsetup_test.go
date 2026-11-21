@@ -378,6 +378,9 @@ func TestAgentAssetsAndExtensionArg(t *testing.T) {
 	b, err = os.ReadFile(filepath.Join(rt.home, ".agents", "skills", "oryn-setup", "SKILL.md"))
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(string(b), "---\nname: oryn-setup\n"), "技能 frontmatter")
+	b, err = os.ReadFile(filepath.Join(rt.home, ".agents", "skills", "oryn-boxes", "SKILL.md"))
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(string(b), "---\nname: oryn-boxes\n"), "技能 frontmatter")
 
 	pid := startAgent(t, cp, thread1, nil)
 	cp.waitNotif(t, 0, "agent.status", statusIs(thread1, "ready"))

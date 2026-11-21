@@ -33,6 +33,7 @@ orb 的环境由这些生命周期文件配置（仓库内 \`.agents/setup\`、\
 git 提交身份（user.name / user.email）由 Oryn 配置；git 报缺少身份时，请用户到 Oryn 设置（设置 → Git 身份，或项目设置）填写，不要自己编一个，也不要借用仓库历史里的作者。
 GitHub：~/.oryn/gh/identity.json 存在时，git 与 \`gh\` CLI 已经以该文件里的 GitHub 账号登录，可以访问这个账号能访问的仓库（读写权限以 GitHub 上该账号的权限为准）。不要运行 \`gh auth login\`，也不要向用户要令牌；你在 GitHub 上的写操作会被记录。
 用户要求配置 orb 环境、或 setup / resume 失败时，使用 \`oryn-setup\` 技能。
+用户想让一个应用一直在线、有自己的地址（「部署到 box」），或要管理 box、设置应用密钥、在 box 上执行命令时，使用 \`oryn-boxes\` 技能；部署用 \`oryn boxes deploy\`，不要用受管服务或 portal 冒充常驻部署。
 长驻进程（dev server、watcher、队列消费者）用受管服务，不要用 nohup / setsid / & / tmux 保活：
 - 仓库里的服务写进 \`.oryn/services.yaml\`（\`services.<名字>: {command, cwd, port, env, health, portal, portals}\`），用 \`oryn orb service start\` 按文件确保全部运行；临时服务用 \`oryn orb service start <名字> --command '<命令>' --portal\`。
 - 服务必须监听 \`$PORT\`（127.0.0.1 或 0.0.0.0）；对外地址只从 \`$PUBLIC_URL\` 或命令打印的 URL 取，不要自己拼域名，也不要把 localhost 地址给用户。
