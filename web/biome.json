@@ -13,7 +13,8 @@
 			"!dist-launcher",
 			"!src-tauri",
 			"!src/api/schema.d.ts",
-			"!src/omp"
+			"!src/omp",
+			"!test-results"
 		]
 	},
 	"formatter": {
