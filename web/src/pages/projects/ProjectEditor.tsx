@@ -157,7 +157,9 @@ function ProjectIconPicker({
 
 type SetField = <K extends keyof ProjectForm>(k: K, v: ProjectForm[K]) => void;
 
-/** 新建与「概览」共用的字段：名称、描述、仓库地址、图标、基线分支。 */
+/**
+ * 新建与「概览」共用的字段：名称、描述、图标、仓库地址（独占一行，行尾「从 GitHub 选择」）、紧随其后的基线分支。
+ */
 function GeneralFields({
 	f,
 	set,
@@ -168,31 +170,15 @@ function GeneralFields({
 	const { t } = useTranslation();
 	return (
 		<>
-			<Field label={t("projects.name")}>
-				<TextInput
-					required
-					value={f.name}
-					onChange={(e) => set("name", e.target.value)}
-				/>
-			</Field>
-			<Field label={t("projects.repoUrl")}>
-				<div className="relative flex items-center gap-2">
+			<div className="sm:col-span-2">
+				<Field label={t("projects.name")}>
 					<TextInput
-						className="min-w-0 flex-1"
-						// 同一个 label 里还有「从 GitHub 选择」按钮：名字只取字段名
-						aria-label={t("projects.repoUrl")}
-						placeholder="https://github.com/…"
-						value={f.repoUrl ?? ""}
-						onChange={(e) => set("repoUrl", e.target.value || undefined)}
+						required
+						value={f.name}
+						onChange={(e) => set("name", e.target.value)}
 					/>
-					<RepoPicker
-						onPick={(r) => {
-							set("repoUrl", `https://github.com/${r.fullName}`);
-							if (!f.baseBranch) set("baseBranch", r.defaultBranch);
-						}}
-					/>
-				</div>
-			</Field>
+				</Field>
+			</div>
 			<div className="sm:col-span-2">
 				<Field
 					label={t("projects.description")}
@@ -210,6 +196,26 @@ function GeneralFields({
 				icon={f.icon}
 				onChange={(icon) => set("icon", icon)}
 			/>
+			<div className="sm:col-span-2">
+				<Field label={t("projects.repoUrl")}>
+					<div className="relative flex items-center gap-2">
+						<TextInput
+							className="min-w-0 flex-1"
+							// 同一个 label 里还有「从 GitHub 选择」按钮：名字只取字段名
+							aria-label={t("projects.repoUrl")}
+							placeholder="https://github.com/…"
+							value={f.repoUrl ?? ""}
+							onChange={(e) => set("repoUrl", e.target.value || undefined)}
+						/>
+						<RepoPicker
+							onPick={(r) => {
+								set("repoUrl", `https://github.com/${r.fullName}`);
+								if (!f.baseBranch) set("baseBranch", r.defaultBranch);
+							}}
+						/>
+					</div>
+				</Field>
+			</div>
 			<Field label={t("projects.baseBranch")}>
 				<TextInput
 					placeholder="main"
@@ -234,13 +240,16 @@ function GitIdentityFields({
 	const { t } = useTranslation();
 	return (
 		<>
-			<Field label={t("projects.gitAuthorName")}>
-				<TextInput
-					autoComplete="off"
-					value={f.gitAuthorName ?? ""}
-					onChange={(e) => set("gitAuthorName", e.target.value || undefined)}
-				/>
-			</Field>
+			{/* 名字与邮箱另起一行并排（基线分支只占左半行） */}
+			<div className="sm:col-start-1">
+				<Field label={t("projects.gitAuthorName")}>
+					<TextInput
+						autoComplete="off"
+						value={f.gitAuthorName ?? ""}
+						onChange={(e) => set("gitAuthorName", e.target.value || undefined)}
+					/>
+				</Field>
+			</div>
 			<Field label={t("projects.gitAuthorEmail")}>
 				<TextInput
 					type="email"

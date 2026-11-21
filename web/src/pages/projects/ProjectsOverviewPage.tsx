@@ -64,10 +64,16 @@ function ProjectRow({
 	archived?: boolean;
 }): ReactNode {
 	const { t } = useTranslation();
-	const sub =
-		[p.description, p.repoUrl && repoLabel(p.repoUrl)]
-			.filter(Boolean)
-			.join(" · ") || t("projects.noRepo");
+	const repo = p.repoUrl && repoLabel(p.repoUrl);
+	// compact 只显示一项（有描述显示描述，否则仓库）；sm 起两项用 · 连接
+	const sub = p.description ? (
+		<>
+			{p.description}
+			{repo && <span className="hidden sm:inline"> · {repo}</span>}
+		</>
+	) : (
+		repo || t("projects.noRepo")
+	);
 	return (
 		<li>
 			<Link
@@ -157,6 +163,8 @@ export function ProjectsOverviewPage(): ReactNode {
 						trigger={(p) => (
 							<IconButton
 								icon="more"
+								// DotsThree 的三个点比链接、齿轮等线条图标轻：放大到 20px，视觉分量与主页页头的图标钮一致
+								size={20}
 								label={t("projectsOverview.menu")}
 								{...p}
 							/>

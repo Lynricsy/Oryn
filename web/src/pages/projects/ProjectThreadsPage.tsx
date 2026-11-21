@@ -92,6 +92,7 @@ function ProjectThreads({ project }: { project: Project }): ReactNode {
 	return (
 		<ProjectShell
 			project={project}
+			wide
 			crumbs={[{ label: t("projectThreads.title") }]}
 			actions={<NewThreadButton project={project} />}
 		>

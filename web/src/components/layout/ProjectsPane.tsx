@@ -1,7 +1,8 @@
 /**
  * 「项目」分区侧栏（M24）：首行「总览」（`/projects`，行尾 `+` 新建项目），其后每个未归档项目一行
  * （名称 + 线程数 · 多久前活跃，链到项目主页 `/projects/<id>`，子页里同样选中）。不设分区标题行。
- * 行顺序沿用服务端的名称序：活动变化时行不跳。
+ * 行顺序沿用服务端的名称序：活动变化时行不跳。选中只换底色、不加粗（中文「总览」加粗明显而拉丁项目名几乎看不出，
+ * 两种行会显得不一致）；`+` 叠在「总览」行的右端，选中底色与项目行等宽。
  */
 import { type ReactNode, useMemo } from "react";
 import { useTranslation } from "react-i18next";
@@ -15,10 +16,14 @@ import { IconButton } from "../ui/primitives";
 import {
 	closeOnCompact,
 	GroupIcon,
-	LIST_LINK,
+	LIST_ROW,
 	PANE_SCROLL,
 	useNow,
 } from "./pane-parts";
+
+/** 本分区的行：选中只换底色。 */
+const ROW = ({ isActive }: { isActive: boolean }) =>
+	`${LIST_ROW} ${isActive ? "bg-[var(--sb-sel)]" : ""}`;
 
 export function ProjectsPane(): ReactNode {
 	const { t } = useTranslation();
@@ -34,12 +39,12 @@ export function ProjectsPane(): ReactNode {
 	return (
 		<div className={PANE_SCROLL}>
 			<div className="flex flex-col gap-0.5" data-testid="sidebar-projects">
-				<div className="flex items-center gap-1 pr-1">
+				<div className="relative">
 					<NavLink
 						to="/projects"
 						end
 						onClick={closeOnCompact}
-						className={LIST_LINK}
+						className={(s) => `${ROW(s)} pr-10`}
 					>
 						<span className="grid h-[22px] w-[22px] shrink-0 place-items-center">
 							<GroupIcon name="folder" />
@@ -52,6 +57,7 @@ export function ProjectsPane(): ReactNode {
 						icon="plus"
 						size={15}
 						label={t("projects.new")}
+						className="absolute top-1/2 right-1 -translate-y-1/2"
 						onClick={() => {
 							navigate("/projects/new");
 							closeOnCompact();
@@ -65,7 +71,7 @@ export function ProjectsPane(): ReactNode {
 							key={p.id}
 							to={`/projects/${p.id}`}
 							onClick={closeOnCompact}
-							className={LIST_LINK}
+							className={ROW}
 						>
 							<ProjectBadge name={p.name} icon={p.icon} size={22} />
 							<span className="flex min-w-0 flex-1 flex-col">

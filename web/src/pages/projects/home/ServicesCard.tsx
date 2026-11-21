@@ -9,6 +9,7 @@ import { Link } from "react-router";
 import type { Project, Schemas } from "../../../api/client";
 import { useOrbs } from "../../../api/queries";
 import { Badge, Card, type Tone } from "../../../components/ui/data";
+import { Icon } from "../../../components/ui/icons";
 import { parseTitleCard } from "../../../lib/title";
 import { useIndex } from "../../../state/stores";
 import { orbActivity } from "../project-orbs";
@@ -47,6 +48,8 @@ export function ServicesCard({ project }: { project: Project }): ReactNode {
 				<ul className="-mx-2 flex flex-col">
 					{rows.map(({ key, service, threadId }) => {
 						const thread = threadId ? threads[threadId] : undefined;
+						const threadTitle =
+							(thread && parseTitleCard(thread.title).text) || threadId;
 						return (
 							<li
 								key={key}
@@ -63,9 +66,11 @@ export function ServicesCard({ project }: { project: Project }): ReactNode {
 								{threadId && (
 									<Link
 										to={`/t/${threadId}`}
-										className="min-w-0 max-w-[50%] truncate text-muted text-xs hover:text-fg hover:underline"
+										title={threadTitle}
+										className="flex min-w-0 max-w-[50%] items-center gap-1.5 text-faint text-xs transition-colors duration-150 hover:text-fg"
 									>
-										{(thread && parseTitleCard(thread.title).text) || threadId}
+										<Icon name="chats" size={12} className="shrink-0" />
+										<span className="truncate">{threadTitle}</span>
 									</Link>
 								)}
 							</li>
