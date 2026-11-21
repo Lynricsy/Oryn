@@ -808,6 +808,17 @@ export class MockServer {
 		};
 	}
 
+	/** 项目级 Agent 配置（M12.2）：项目 id → 相对项目配置根的路径 → 内容。 */
+	projectFiles: Record<string, Record<string, string>> = {
+		[fixtureProjects[0]?.id ?? ""]: {
+			"AGENTS.md": "# 本项目\n\n- 前端用 bun，不用 npm\n",
+			"mcp.json": `{\n  "mcpServers": {\n    "linear": {\n      "url": "https://mcp.linear.app/sse",\n      "headers": { "Authorization": "Bearer \${LINEAR_TOKEN}" }\n    }\n  }\n}\n`,
+			"rules/no-npm.md":
+				'---\nname: no-npm\ndescription: 用 bun\ncondition: ["\\\\bnpm install\\\\b"]\nscope: text\n---\n\n用 `bun install`。\n',
+			"skills/release/SKILL.md": "---\nname: release\n---\n按发版清单走。\n",
+		},
+	};
+
 	constructor() {
 		// runner 的常驻 orb（M11b）：先放进去，下面按线程补 orb 时跳过
 		for (const r of this.runners)
@@ -1542,6 +1553,62 @@ export class MockServer {
 				return new Response(null, { status: 204 });
 			}
 			return json({ snapshots: list });
+		}
+		const prjCfg = /^projects\/([^/]+)\/agent-config\/files(?:\/(.+))?$/.exec(
+			p,
+		);
+		if (prjCfg) {
+			const pid = prjCfg[1] ?? "";
+			if (!this.projects.some((x) => x.id === pid))
+				return json({ code: "not_found", message: "项目不存在" }, 404);
+			const files = this.projectFiles[pid] ?? {};
+			this.projectFiles[pid] = files;
+			if (prjCfg[2] === undefined)
+				return json({
+					files: Object.entries(files).map(([path, content]) => ({
+						path,
+						size: content.length,
+						mode: 420,
+						sha256: "0".repeat(64),
+						updatedAt: NOW - 3_600_000,
+					})),
+				});
+			const fp = decodeURIComponent(prjCfg[2]);
+			if (m === "GET")
+				return files[fp] === undefined
+					? json({ code: "not_found", message: fp }, 404)
+					: new Response(files[fp]);
+			if (m === "PUT") {
+				const text = await req.text();
+				files[fp] = text;
+				// 与服务端一致：项目层不抽取密钥，形似令牌的明文只给 possible_secret 警告
+				const line = text.split("\n").findIndex((l) => /Bearer [^$\s]/.test(l));
+				return json({
+					file: {
+						path: fp,
+						size: text.length,
+						mode: 420,
+						sha256: "0".repeat(64),
+						updatedAt: Date.now(),
+					},
+					extractedSecrets: [],
+					warnings:
+						line < 0
+							? []
+							: [
+									{
+										path: fp,
+										line: line + 1,
+										kind: "possible_secret",
+										message: "looks like a bearer token",
+									},
+								],
+				});
+			}
+			if (m === "DELETE") {
+				delete files[fp];
+				return new Response(null, { status: 204 });
+			}
 		}
 		const projectMatch = /^projects\/([^/]+)$/.exec(p);
 		if (projectMatch) {
