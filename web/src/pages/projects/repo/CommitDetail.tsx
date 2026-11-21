@@ -200,7 +200,7 @@ export function CommitDetail({
 								title={
 									<Link
 										to={`/t/${c.thread.id}`}
-										className="min-w-0 truncate after:absolute after:inset-0 after:rounded-md"
+										className="min-w-0 truncate text-accent-ink after:absolute after:inset-0 after:rounded-md"
 									>
 										{parseTitleCard(c.thread.title).text ||
 											t("thread.untitled")}

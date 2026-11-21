@@ -9,6 +9,7 @@ import type { Project } from "../../../api/client";
 import type { RepoStatus } from "../../../api/repo-queries";
 import { Card } from "../../../components/ui/data";
 import { Button, EmptyState, Spinner } from "../../../components/ui/primitives";
+import { repoLabel } from "../repo-label";
 import { useRepoSyncAction } from "./RepoSyncStatus";
 
 function SyncButton({
@@ -22,6 +23,7 @@ function SyncButton({
 	const action = useRepoSyncAction(projectId, status);
 	return (
 		<Button
+			variant="primary"
 			size="sm"
 			icon="refresh"
 			className="mt-2"
@@ -70,18 +72,24 @@ export function RepoUnavailable({
 				{t("projectRepo.unavailable.gitBody")}
 			</EmptyState>
 		);
-	else if (status.state === "error")
+	else if (status.state === "error") {
+		const code = status.lastError?.code ?? "fetch_failed";
+		const auth = code === "auth_required" || code === "auth_failed";
 		body = (
 			<EmptyState icon="alert" title={t("projectRepo.unavailable.errorTitle")}>
-				<p>
-					{status.lastError
-						? t(`projectRepo.errors.${status.lastError.code}`)
-						: t("projectRepo.errors.fetch_failed")}
-				</p>
+				{/* auth_required 的原因文案本身就是「需要凭据：…」，与下一步提示重复，只留提示 */}
+				{code !== "auth_required" && <p>{t(`projectRepo.errors.${code}`)}</p>}
+				{auth && (
+					<p>
+						{t("projectRepo.unavailable.authHint", {
+							host: repoLabel(project.repoUrl ?? "").split("/")[0] || "<host>",
+						})}
+					</p>
+				)}
 				<SyncButton projectId={project.id} status={status} />
 			</EmptyState>
 		);
-	else if (status.state === "cloning")
+	} else if (status.state === "cloning")
 		body = (
 			<EmptyState
 				icon="download"

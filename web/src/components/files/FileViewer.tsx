@@ -178,6 +178,7 @@ export function FileViewer({
 	onDownload,
 	readOnly = false,
 	relativeTo,
+	fitContent = false,
 }: {
 	source: FileSource;
 	path: string;
@@ -189,6 +190,11 @@ export function FileViewer({
 	readOnly?: boolean;
 	/** Markdown 预览里相对链接与图片的解析（仓库文件页：相对文件所在目录） */
 	relativeTo?: RelativeUrls;
+	/**
+	 * 高度跟随内容（仓库文件页）：Markdown / Mermaid 预览与源码随内容伸展、由外层页面滚动；图片、音视频、表格、
+	 * 网页等需要定高的视图放进 70dvh 的盒子。缺省 false：填满父元素给的高度，内部滚动。
+	 */
+	fitContent?: boolean;
 }): ReactNode {
 	const { t } = useTranslation();
 	const rootEl = useRef<HTMLDivElement | null>(null);
@@ -357,6 +363,13 @@ export function FileViewer({
 				t(wait === "indexing" ? "files.offline.indexing" : "files.waking")}
 		</div>
 	);
+	/** fitContent 时给需要定高的视图（`fixed`）一个固定高度的盒子 */
+	const sized = (node: ReactNode, fixed = true): ReactNode =>
+		fitContent && fixed ? (
+			<div className="h-[70dvh] min-h-80">{node}</div>
+		) : (
+			node
+		);
 
 	let previewText: string | null = null;
 	let previewError: unknown = null;
@@ -387,7 +400,7 @@ export function FileViewer({
 				rootEl.current = el;
 				ctxRef(el);
 			}}
-			className="flex h-full min-h-0 flex-col"
+			className={fitContent ? "flex flex-col" : "flex h-full min-h-0 flex-col"}
 		>
 			<div className="flex h-10 shrink-0 items-center gap-1.5 border-border border-b px-2">
 				{onBack && (
@@ -487,7 +500,7 @@ export function FileViewer({
 					<ErrorText error={saveError} />
 				</div>
 			) : null}
-			<div className="min-h-0 flex-1 overflow-hidden">
+			<div className={fitContent ? "" : "min-h-0 flex-1 overflow-hidden"}>
 				{loadError ? (
 					<div className="p-3">
 						<ErrorText error={loadError} />
@@ -495,7 +508,11 @@ export function FileViewer({
 				) : !loaded ? (
 					loading
 				) : loaded.kind === "text" ? (
-					<div className="flex h-full min-h-0 flex-col">
+					<div
+						className={
+							fitContent ? "flex flex-col" : "flex h-full min-h-0 flex-col"
+						}
+					>
 						{draftStale && (
 							<p className="flex shrink-0 items-center gap-1.5 bg-warn/8 px-3 py-1.5 text-warn text-xs">
 								<Icon name="alert" size={13} className="shrink-0" />
@@ -518,7 +535,7 @@ export function FileViewer({
 								</div>
 							}
 						>
-							<div className="min-h-0 flex-1">
+							<div className={fitContent ? "" : "min-h-0 flex-1"}>
 								{!showSource && loaded.render ? (
 									previewError ? (
 										<div className="p-3">
@@ -527,14 +544,18 @@ export function FileViewer({
 									) : previewText === null ? (
 										loading
 									) : (
-										<PreviewBoundary key={key}>
-											<TextView
-												render={loaded.render}
-												text={previewText}
-												name={namePart}
-												relativeTo={relativeTo}
-											/>
-										</PreviewBoundary>
+										sized(
+											<PreviewBoundary key={key}>
+												<TextView
+													render={loaded.render}
+													text={previewText}
+													name={namePart}
+													relativeTo={relativeTo}
+												/>
+											</PreviewBoundary>,
+											loaded.render !== "markdown" &&
+												loaded.render !== "mermaid",
+										)
 									)
 								) : (
 									<CodeEditor
@@ -549,23 +570,27 @@ export function FileViewer({
 						</Suspense>
 					</div>
 				) : loaded.kind === "blob" ? (
-					<PreviewBoundary key={key}>
-						<Suspense fallback={loading}>
-							<BlobView
-								viewer={loaded.viewer}
-								blob={loaded.blob}
+					sized(
+						<PreviewBoundary key={key}>
+							<Suspense fallback={loading}>
+								<BlobView
+									viewer={loaded.viewer}
+									blob={loaded.blob}
+									name={namePart}
+								/>
+							</Suspense>
+						</PreviewBoundary>,
+					)
+				) : loaded.kind === "media" ? (
+					sized(
+						<PreviewBoundary key={key}>
+							<MediaPreview
+								src={loaded.src}
+								media={loaded.media}
 								name={namePart}
 							/>
-						</Suspense>
-					</PreviewBoundary>
-				) : loaded.kind === "media" ? (
-					<PreviewBoundary key={key}>
-						<MediaPreview
-							src={loaded.src}
-							media={loaded.media}
-							name={namePart}
-						/>
-					</PreviewBoundary>
+						</PreviewBoundary>,
+					)
 				) : (
 					<div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-sm">
 						<span className="grid h-11 w-11 place-items-center rounded-full bg-inset">

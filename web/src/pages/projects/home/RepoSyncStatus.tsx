@@ -1,7 +1,8 @@
 /**
- * 项目仓库镜像的同步状态（M24 阶段 ②）：主页仓库行末尾的一段文字（未克隆 / 克隆中 / 同步中 / 已同步多久前 / 同步失败，
- * git 不可用时说明原因）加「立即同步」图标钮。项目没有仓库地址时不渲染（仓库行本身已写「无仓库」）。
- * `RepoSyncText` 与 `useRepoSyncAction` 也给设置「仓库镜像」卡用。
+ * 项目仓库镜像的同步状态（M24 阶段 ②）：主页仓库行末尾的一段文字（同步中 / 已同步多久前，最近一次拉取失败时带警示）
+ * 加「立即同步」图标钮。项目没有仓库地址时不渲染（仓库行本身已写「无仓库」）；镜像不能读（没有 git、未克隆、克隆中、
+ * 克隆失败）时也不渲染：下方的 `RepoUnavailable` 已写明原因并给出同步按钮。
+ * `RepoSyncText` 与 `useRepoSyncAction` 也给设置「仓库镜像」卡用（那里各状态都显示）。
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -39,8 +40,7 @@ export function useRepoSyncAction(projectId: string, status?: RepoStatus) {
 }
 
 /**
- * 状态的一行文字（行内元素，可放进 `<p>`），前置图标：失败是警示、进行中是转圈、其余是同步记录；没有仓库时为 null。
- * 不用分支图标：仓库行里紧挨着的基线分支已经用了它。
+ * 状态的一行文字（行内元素，可放进 `<p>`）：失败带警示图标、进行中带转圈，其余只有文字（行尾已有刷新钮）；没有仓库时为 null。
  */
 export function RepoSyncText({ status }: { status: RepoStatus }): ReactNode {
 	const { t } = useTranslation();
@@ -52,12 +52,9 @@ export function RepoSyncText({ status }: { status: RepoStatus }): ReactNode {
 			<span className="min-w-0">{text}</span>
 		</span>
 	);
-	const repeat = (
-		<Icon name="repeat" size={12} aria-hidden className="shrink-0" />
-	);
 	if (!status.available)
 		return row(
-			repeat,
+			null,
 			t(
 				status.unavailableReason === "git_too_old"
 					? "projectRepo.status.gitTooOld"
@@ -80,7 +77,6 @@ export function RepoSyncText({ status }: { status: RepoStatus }): ReactNode {
 	if (status.state === "ready" && status.syncedAt !== undefined)
 		return (
 			<span className="inline-flex min-w-0 items-center gap-1">
-				{repeat}
 				<span className="min-w-0">
 					{t("projectRepo.status.synced", {
 						ago: formatRelative(status.syncedAt, now),
@@ -100,14 +96,22 @@ export function RepoSyncText({ status }: { status: RepoStatus }): ReactNode {
 				)}
 			</span>
 		);
-	return row(repeat, t("projectRepo.status.absent"));
+	return row(null, t("projectRepo.status.absent"));
 }
 
 export function RepoSyncStatus({ project }: { project: Project }): ReactNode {
 	const { t } = useTranslation();
 	const { data: status } = useRepoStatus(project.id, !!project.repoUrl);
 	const action = useRepoSyncAction(project.id, status);
-	if (!project.repoUrl || !status || status.kind === "none") return null;
+	// 镜像不能读时 RepoUnavailable 已经说明并给出同步按钮；空仓库照常显示同步记录
+	if (
+		!project.repoUrl ||
+		!status ||
+		status.kind === "none" ||
+		!status.available ||
+		status.state !== "ready"
+	)
+		return null;
 	return (
 		<span
 			data-testid="repo-sync-status"

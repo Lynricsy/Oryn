@@ -38,7 +38,12 @@ export function LfsFileState({
 					<EmptyState icon="alert" title={t("projectRepo.lfs.errorTitle")}>
 						<div className="flex flex-col items-center gap-3">
 							{code && <p>{t(`projectRepo.lfs.errors.${code}`)}</p>}
-							<Button icon="refresh" size="sm" onClick={onRetry}>
+							<Button
+								variant="primary"
+								icon="refresh"
+								size="sm"
+								onClick={onRetry}
+							>
 								{t("projectRepo.lfs.retry")}
 							</Button>
 						</div>
@@ -57,6 +62,7 @@ export function LfsFileState({
 							})}
 						</p>
 						<Button
+							variant="primary"
 							icon="download"
 							size="sm"
 							onClick={() =>

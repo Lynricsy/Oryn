@@ -55,7 +55,7 @@ export function CommitRow({
 						{c.thread && (
 							<Link
 								to={`/t/${c.thread.id}`}
-								className="relative inline-flex min-w-0 items-center gap-1 text-muted hover:text-fg hover:underline"
+								className="relative inline-flex min-w-0 items-center gap-1 text-accent-ink hover:underline"
 							>
 								<Icon
 									name="message"
@@ -63,7 +63,8 @@ export function CommitRow({
 									aria-hidden
 									className="shrink-0"
 								/>
-								<span className="min-w-0 max-w-48 truncate">
+								{/* 不另设宽度上限：放不下时整个链接换到下一行再截断，宽屏能显示完整标题 */}
+								<span className="min-w-0 truncate">
 									{parseTitleCard(c.thread.title).text || t("thread.untitled")}
 								</span>
 							</Link>

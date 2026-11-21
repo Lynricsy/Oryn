@@ -1,6 +1,6 @@
 /**
- * 仓库子页的子导航（M24 阶段 ②）：提交 / 分支 / 标签三个分段链接，选中项是纸面色的小块（同线程子页的状态筛选）。
- * 放在各仓库子页正文的最上面；文件页里三项都不选中。
+ * 仓库子页的子导航（M24 阶段 ②）：提交 / 分支 / 标签 / 文件四个分段链接，选中项是纸面色的小块（同线程子页的状态筛选）。
+ * 放在各仓库子页正文的最上面；文件页的任意路径下都选中「文件」（NavLink 匹配子路径）。
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -12,6 +12,7 @@ const TABS = [
 	["commits", "commit"],
 	["branches", "branch"],
 	["tags", "tag"],
+	["files", "folder"],
 ] as const satisfies readonly (readonly [string, IconName])[];
 
 export function RepoNav({ projectId }: { projectId: string }): ReactNode {

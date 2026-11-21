@@ -4588,7 +4588,8 @@
 			"absentTitle": "仓库尚未克隆",
 			"absentBody": "已归档项目不会自动克隆，点「立即同步」手动克隆。",
 			"cloningBody": "首次克隆可能需要几分钟。",
-			"emptyBody": "推送第一个提交后这里会显示内容。"
+			"emptyBody": "推送第一个提交后这里会显示内容。",
+			"authHint": "需要能读取仓库的凭据：连接 GitHub 账号，或在密钥里设置 git/{{host}}/token。"
 		},
 		"commits": {
 			"title": "提交到 {{branch}}",
@@ -4632,7 +4633,8 @@
 			"label": "仓库",
 			"commits": "提交",
 			"branches": "分支",
-			"tags": "标签"
+			"tags": "标签",
+			"files": "文件"
 		},
 		"readme": {
 			"truncated": "README 过长，只显示前 512 KB"

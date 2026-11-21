@@ -58,7 +58,7 @@ function PathNav({
 		<nav
 			aria-label={t("projectRepo.files.path")}
 			data-testid="repo-path"
-			className="flex min-w-0 flex-wrap items-center gap-x-1 font-mono text-muted text-xs"
+			className="flex min-w-0 flex-wrap items-center gap-x-1 text-muted text-xs"
 		>
 			<Link
 				to={filesHref(project.id, "", refName)}
@@ -71,7 +71,7 @@ function PathNav({
 				const last = i === segs.length - 1;
 				return (
 					<Fragment key={segs.slice(0, i + 1).join("/")}>
-						<span aria-hidden className="text-faint">
+						<span aria-hidden className="font-mono text-faint">
 							/
 						</span>
 						<Link
@@ -81,7 +81,7 @@ function PathNav({
 								refName,
 							)}
 							aria-current={last ? "page" : undefined}
-							className={`${link} ${last ? "font-medium text-fg" : ""}`}
+							className={`${link} font-mono ${last ? "font-medium text-fg" : ""}`}
 						>
 							{s}
 						</Link>
@@ -170,7 +170,7 @@ function FilesBody({
 				)}
 				<div
 					data-testid="file-viewer"
-					className="h-[70dvh] min-h-80 overflow-hidden rounded-lg border border-border bg-panel"
+					className="overflow-hidden rounded-lg border border-border bg-panel"
 				>
 					<FileViewer
 						source={source}
@@ -181,6 +181,7 @@ function FilesBody({
 							if (url) downloadUrl(url, baseName(p));
 						}}
 						relativeTo={relativeTo}
+						fitContent
 					/>
 				</div>
 			</>

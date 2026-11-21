@@ -97,14 +97,14 @@ describe("项目主页的仓库区块", () => {
 		);
 	});
 
-	it("克隆失败：仓库行写原因，提交 / 文件 / README 换成一条说明", async () => {
+	it("克隆失败：只在下方说明里写原因与下一步，仓库行不重复", async () => {
 		mount(CORE);
-		expect(await screen.findByTestId("repo-sync-status")).toHaveTextContent(
-			"同步失败：凭据被拒绝",
-		);
-		const card = screen.getByTestId("repo-unavailable");
+		const card = await screen.findByTestId("repo-unavailable");
 		expect(card).toHaveTextContent("仓库镜像不可用");
 		expect(card).toHaveTextContent("凭据被拒绝");
+		expect(card).toHaveTextContent("git/github.com/token");
+		expect(screen.queryByTestId("repo-sync-status")).toBeNull();
+		expect(screen.getAllByRole("button", { name: "立即同步" })).toHaveLength(1);
 		expect(screen.queryByText(/^提交到/)).toBeNull();
 		expect(screen.queryByTestId("project-files")).toBeNull();
 		// 「最近线程」照常

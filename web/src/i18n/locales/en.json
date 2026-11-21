@@ -4588,7 +4588,8 @@
 			"absentTitle": "Repository not cloned yet",
 			"absentBody": "Archived projects are not cloned automatically. Use \"Sync now\" to clone it.",
 			"cloningBody": "The first clone can take a few minutes.",
-			"emptyBody": "Push a first commit to see it here."
+			"emptyBody": "Push a first commit to see it here.",
+			"authHint": "Oryn needs credentials that can read the repository: connect your GitHub account, or set a git/{{host}}/token secret."
 		},
 		"commits": {
 			"title": "Commits to {{branch}}",
@@ -4632,7 +4633,8 @@
 			"label": "Repository",
 			"commits": "Commits",
 			"branches": "Branches",
-			"tags": "Tags"
+			"tags": "Tags",
+			"files": "Files"
 		},
 		"readme": {
 			"truncated": "README is too long; showing the first 512 KB"
