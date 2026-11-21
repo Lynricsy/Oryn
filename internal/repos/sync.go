@@ -506,13 +506,15 @@ func freeBytes(dir string) (int64, error) {
 	return int64(st.Bavail) * st.Bsize, nil
 }
 
-// Run 启动时清扫仓库目录，之后每小时清理推送记录（过期未展开的记 missing、30 天前的删除），直到 ctx 结束。
+// Run 启动时清扫仓库目录，之后每小时清理推送记录（过期未展开的记 missing、30 天前的删除）与托管仓库 30 天前
+// 留存的 ref 旧值，直到 ctx 结束。
 func (s *Service) Run(ctx context.Context) {
 	s.sweep(ctx)
 	tk := time.NewTicker(pushSweepEach)
 	defer tk.Stop()
 	for {
 		s.sweepPushes(ctx)
+		s.sweepSavedRefs(ctx)
 		select {
 		case <-ctx.Done():
 			return

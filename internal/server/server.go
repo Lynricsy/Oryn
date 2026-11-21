@@ -381,6 +381,7 @@ func (s *Server) init(ctx context.Context) error {
 		ProxyEnv:         proxyEnv(os.Environ()),
 		Changed:          s.Hub.ProjectRepoChanged,
 		PublicURL:        cfg.PublicURL,
+		Ships:            s.Threads,
 	}, s.Store, s.Vault, s.GitHub); err != nil {
 		return err
 	}

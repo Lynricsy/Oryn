@@ -285,13 +285,8 @@ func (s *Service) ServeHostedGit(w http.ResponseWriter, r *http.Request, project
 		slog.Warn("托管仓库：自愈", "project", projectID, "err", err)
 	}
 	if ep == EndpointReceivePack && r.Method == http.MethodPost {
-		release, err := s.pushLocks.lock(ctx, projectID)
-		if err != nil {
-			w.Header().Set("Retry-After", "5")
-			smartError(w, http.StatusServiceUnavailable, "oryn: 仓库正忙，请稍后重试")
-			return
-		}
-		defer release()
+		s.serveHostedPush(w, r, prj, dir, pusher)
+		return
 	}
 	s.serveSmartHTTP(w, r, dir, ep, pusher.OrbID)
 }

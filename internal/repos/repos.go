@@ -56,6 +56,7 @@ type Config struct {
 	ProxyEnv     []string               // 担保主机拉取时追加的代理变量（KEY=VALUE）；nil = 不追加
 	Changed      func(projectID string) // 状态变化后广播；nil = 不广播
 	PublicURL    string                 // cfg.PublicURL：托管仓库克隆地址的前缀（阶段 ③）
+	Ships        Shipper                // 托管仓库自动交付入口（*threads.Service）；nil = 不自动交付
 
 	// MaxLFSCacheBytes 是镜像项目 LFS 对象缓存的总上限（MaxLFSCacheGB<<30）；0 = 2<<30。
 	MaxLFSCacheBytes int64
