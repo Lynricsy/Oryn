@@ -62,6 +62,7 @@ mock 线程：主线程 `MAIN_THREAD`（长回复、表格、时序图、公式�
 | `thread.dlg.share-findings` | 分享：扫描发现疑似密钥 | 分享 →「创建链接」 | 弹窗 |
 | `thread.dlg.schedule` | 定时（从线程打开） | 操作菜单「定时…」 | 弹窗 |
 | `thread.dlg.archive` | 归档（runner worktree 线程） | 操作菜单「归档」 | 弹窗 |
+| `thread.dlg.delete-confirm` | 删除线程确认（共享确认框 ConfirmHost） | 操作菜单「删除」 | 弹窗 |
 | `thread.dlg.context` | 上下文报告（ContextBreakdown） | 输入坞页脚上下文圆环 | 弹窗 |
 | `thread.dlg.subagent` | 子 agent 转录 | 工具卡里的子 agent 链接 | 弹窗 |
 | `thread.dlg.setup-log` | setup 日志 | setup 失败横幅「查看日志」 | 弹窗 |
@@ -88,3 +89,4 @@ mock 线程：主线程 `MAIN_THREAD`（长回复、表格、时序图、公式�
 | 15 | `thread.dlg.attachments` | mock 只有一个附件、名字很短，长文件名截断和多行排版暴露不出来 | 设计 | — | d92f941（mock 补三个附件：超长英文文件名的图片、JSON、超长中文名的 12 MB PDF，均未发布） |
 | 16 | `thread.tools.mid`（及 assistant 区 `assistant.thread`，m390 最明显） | #4 把显隐透明度挪到按钮后，回合中间消息右上角的浮动槽仍常显底色与描边，按钮透明时留下一个空描边小方块压在正文上（SectionsAudit 发现） | 错乱 | `shots/assistant.thread/m390-light-after.png` | 9681c55（底色描边画在按钮上，随按钮显隐；槽位只定位） |
 | 17 | `thread.context-menu`（m390） | 用例报菜单超出视口（0,844 → 208,982） | 错乱（工具误报） | — | 不修：用例问题。合成的 `contextmenu` 事件没有坐标（菜单 left/top 为 NaN，退回静态位置），取的段落还在视口上方（y≈-450）。正文本就没有 `data-ctx-touch`，手机长按正文不出菜单，所以这项改为仅桌面、真实右键；手机动作面板改由 `thread.tool-context-menu` 用 CDP 真实触摸长按工具卡头、等 `context-sheet` 出现后再截图 |
+| 18 | `thread.dlg.delete-confirm`（及全站 22 处确认） | 删除 / 归档 / 清除类确认全是原生 `window.confirm`：样式不受控、无法审计，一句话里塞了问句和后果；手机标题菜单选中后焦点不回胶囊，确认框关闭后焦点掉到 body | 设计 + 错乱 | `shots/thread.dlg.delete-confirm/m390-light-after.png` | dc1dfb4（主人决定：统一换成应用内确认 `confirmAction`，标题问句 + 后果说明 + 动作词；Menu / 手机标题菜单选中后焦点回触发钮） |
