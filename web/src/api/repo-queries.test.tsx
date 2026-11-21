@@ -91,4 +91,10 @@ describe("repoBlobUrl", () => {
 			"/api/v1/projects/prj_a/repo/blob?path=README.md",
 		);
 	});
+
+	it("download 时追加 download=1", () => {
+		expect(repoBlobUrl("prj_a", "main", "a.bin", { download: true })).toBe(
+			"/api/v1/projects/prj_a/repo/blob?ref=main&path=a.bin&download=1",
+		);
+	});
 });

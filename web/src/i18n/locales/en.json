@@ -4640,6 +4640,23 @@
 		"settings": {
 			"mirror": "Mirror {{size}} · synced {{ago}}",
 			"title": "Repository mirror"
+		},
+		"lfs": {
+			"badge": "LFS",
+			"badgeTitle": "Stored with Git LFS",
+			"stored": "Stored with Git LFS · {{size}}",
+			"largeTitle": "Too large to preview in the browser",
+			"largeBody": "Git LFS files larger than {{max}} can only be downloaded.",
+			"download": "Download ({{size}})",
+			"errorTitle": "Can't load this Git LFS file",
+			"retry": "Retry",
+			"errors": {
+				"lfs_missing": "This LFS object can't be found: it may never have been uploaded, or it was deleted.",
+				"lfs_auth_failed": "The upstream rejected the credentials for reading LFS objects.",
+				"lfs_unreachable": "Can't reach the host that stores the LFS object, or its address isn't a public https address and was blocked.",
+				"lfs_corrupt": "The content from the upstream doesn't match the LFS pointer.",
+				"lfs_no_space": "The control plane is low on disk space, so this LFS object can't be loaded right now."
+			}
 		}
 	},
 	"projectsOverview": {

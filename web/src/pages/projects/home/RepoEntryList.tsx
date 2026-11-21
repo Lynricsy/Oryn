@@ -1,6 +1,6 @@
 /**
- * 仓库目录的条目列表（M24 阶段 ②）：类型图标、名字、该条目最后一次提交的 subject 与多久前；点进文件页。
- * 子模块不可点（镜像里没有它的内容）。条目被截断、或服务端没来得及找全最后提交时，有说明 / 「—」。
+ * 仓库目录的条目列表（M24 阶段 ②）：类型图标、名字（Git LFS 文件带「LFS」徽标）、该条目最后一次提交的 subject 与
+ * 多久前；点进文件页。子模块不可点（镜像里没有它的内容）。条目被截断、或服务端没来得及找全最后提交时，有说明 / 「—」。
  * 主页「文件」区块与文件页的目录视图共用。
  */
 import type { ReactNode } from "react";
@@ -8,6 +8,7 @@ import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import type { RepoTree, RepoTreeEntry } from "../../../api/repo-queries";
 import { useNow } from "../../../components/layout/pane-parts";
+import { Badge } from "../../../components/ui/data";
 import { Icon, type IconName } from "../../../components/ui/icons";
 import { formatRelative } from "../../../lib/format";
 import { repoFileHref } from "../repo/paths";
@@ -30,6 +31,7 @@ function EntryRow({
 	missing: string;
 	now: number;
 }): ReactNode {
+	const { t } = useTranslation();
 	const c = entry.lastCommit;
 	return (
 		<>
@@ -39,8 +41,13 @@ function EntryRow({
 				aria-hidden
 				className={`shrink-0 ${entry.type === "dir" ? "text-muted" : "text-faint"}`}
 			/>
-			<span className="min-w-0 flex-1 truncate sm:flex-none sm:basis-2/5">
-				{entry.name}
+			<span className="flex min-w-0 flex-1 items-center gap-1.5 sm:flex-none sm:basis-2/5">
+				<span className="min-w-0 truncate">{entry.name}</span>
+				{entry.lfs && (
+					<Badge title={t("projectRepo.lfs.badgeTitle")}>
+						{t("projectRepo.lfs.badge")}
+					</Badge>
+				)}
 			</span>
 			<span
 				className="hidden min-w-0 flex-1 truncate text-faint text-xs sm:block"

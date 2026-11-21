@@ -613,7 +613,9 @@ export function projectRepoSource(projectId: string, ref: string): FileSource {
 		mkdir: readOnly,
 		rename: readOnly,
 		remove: readOnly,
-		downloadUrl: blobUrl,
+		// 下载一律作附件，超过预览上限的 Git LFS 对象也能取；预览读取（readText / readBlob）不带这个参数
+		downloadUrl: (path) =>
+			repoBlobUrl(projectId, ref, path, { download: true }),
 	};
 }
 

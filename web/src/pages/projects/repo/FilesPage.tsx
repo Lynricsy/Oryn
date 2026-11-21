@@ -2,24 +2,31 @@
  * 仓库文件页（M24 阶段 ②，`/projects/<id>/files/<路径>?ref=`）：路径取 URL 的剩余部分，ref 缺省 = 基线。
  * 页内一条路径导航（根名是项目名，各段都可点）与 ref 选择；目录显示条目列表（带最后提交），文件与符号链接用
  * 只读的 `FileViewer` 预览（可下载）。不用 `FileBrowser`：它的选中项存在 localStorage、不进 URL，做不了深链接。
+ * Git LFS 文件：能预览时在预览上方写明真实大小；取对象失败或超过预览上限时换成 `LfsFileState`（重试 / 只能下载）。
  */
 import { Fragment, type ReactNode, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import type { Project } from "../../../api/client";
-import { useRepoTree } from "../../../api/repo-queries";
+import { LFS_PREVIEW_MAX_BYTES, useRepoTree } from "../../../api/repo-queries";
 import { FileViewer } from "../../../components/files/FileViewer";
-import { Card } from "../../../components/ui/data";
+import { Badge, Card } from "../../../components/ui/data";
 import {
 	EmptyState,
 	ErrorText,
 	Spinner,
 } from "../../../components/ui/primitives";
 import { downloadUrl } from "../../../lib/artifacts/download";
-import { baseName, projectRepoSource } from "../../../lib/file-source";
+import {
+	baseName,
+	parentPath,
+	projectRepoSource,
+} from "../../../lib/file-source";
+import { formatBytes } from "../../../lib/format";
 import { RepoEntryList } from "../home/RepoEntryList";
 import { ProjectGate, ProjectShell } from "../ProjectShell";
-import { repoFileHref } from "./paths";
+import { LfsFileState } from "./LfsFileState";
+import { repoFileHref, repoRelativeUrls } from "./paths";
 import { RefPicker } from "./RefPicker";
 import { RepoGate } from "./RepoGate";
 import { RepoNav } from "./RepoNav";
@@ -94,11 +101,17 @@ function FilesBody({
 	path: string;
 	refName: string;
 }): ReactNode {
+	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const tree = useRepoTree(project.id, refName, path, true);
 	const source = useMemo(
 		() => projectRepoSource(project.id, refName),
 		[project.id, refName],
+	);
+	// Markdown 预览里的相对链接与图片相对文件所在目录
+	const relativeTo = useMemo(
+		() => repoRelativeUrls(project.id, refName, parentPath(path)),
+		[project.id, refName, path],
 	);
 	let body: ReactNode;
 	if (tree.isPending)
@@ -126,23 +139,53 @@ function FilesBody({
 				</EmptyState>
 			</Card>
 		);
-	else
-		body = (
-			<div
-				data-testid="file-viewer"
-				className="h-[70dvh] min-h-80 overflow-hidden rounded-lg border border-border bg-panel"
-			>
-				<FileViewer
-					source={source}
-					path={path}
-					readOnly
-					onDownload={(p) => {
-						const url = source.downloadUrl(p);
-						if (url) downloadUrl(url, baseName(p));
-					}}
-				/>
-			</div>
+	else {
+		const self = tree.data.self;
+		const lfsKind = self.lfs?.error
+			? "error"
+			: self.lfs && self.size > LFS_PREVIEW_MAX_BYTES
+				? "large"
+				: null;
+		body = lfsKind ? (
+			<LfsFileState
+				kind={lfsKind}
+				projectId={project.id}
+				refName={refName}
+				path={path}
+				entry={self}
+				onRetry={() => void tree.refetch()}
+			/>
+		) : (
+			<>
+				{self.lfs && (
+					<p
+						data-testid="repo-lfs-note"
+						className="flex items-center gap-2 text-faint text-xs"
+					>
+						<Badge title={t("projectRepo.lfs.badgeTitle")}>
+							{t("projectRepo.lfs.badge")}
+						</Badge>
+						{t("projectRepo.lfs.stored", { size: formatBytes(self.size) })}
+					</p>
+				)}
+				<div
+					data-testid="file-viewer"
+					className="h-[70dvh] min-h-80 overflow-hidden rounded-lg border border-border bg-panel"
+				>
+					<FileViewer
+						source={source}
+						path={path}
+						readOnly
+						onDownload={(p) => {
+							const url = source.downloadUrl(p);
+							if (url) downloadUrl(url, baseName(p));
+						}}
+						relativeTo={relativeTo}
+					/>
+				</div>
+			</>
 		);
+	}
 	return (
 		<div data-testid="repo-files" className="flex flex-col gap-3">
 			<div className="flex flex-wrap items-center gap-2">

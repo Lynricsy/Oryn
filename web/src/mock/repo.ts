@@ -5,6 +5,8 @@
  * 预置：第一个项目（Oryn）镜像就绪，带一个 8 个提交的假仓库（`main` 7 个提交、`feature/repo-browser` 多 1 个，
  * 附注标签 `v0.1.0`，其中 2 个提交关联到 Oryn 的线程）；oryn-core 克隆失败（凭据被拒）；其余有仓库地址的项目未克隆，
  * 没有仓库地址的是 `kind:"none"`。`POST repo/sync`：就绪的进入同步、600ms 后完成；未克隆的克隆成空仓库；失败的再失败一次。
+ * Git LFS（阶段 ② 补充）：`docs/media/` 下三个 LFS 指针文件——能预览的 SVG、超过预览上限只能下载的视频、上游没有对象的
+ * PSD；目录树给对象的真实大小与 `lfs.oid`，blob 返回对象内容（或同服务端的 413 / 404 `lfs_missing`）。
  */
 import type { Project, Schemas, Thread } from "../api/client";
 import { projects as fixtureProjects, NOW } from "./fixtures";
@@ -172,6 +174,54 @@ func ListFiles(dir string) []string {
 }
 `;
 
+/** 与服务端 lfsInlineMax 一致：超过它的 LFS 对象不带 download=1 回 413。 */
+const LFS_INLINE_MAX = 100 * 1024 * 1024;
+
+const BANNER = `<svg xmlns="http://www.w3.org/2000/svg" width="480" height="120" viewBox="0 0 480 120">
+  <rect x="4" y="4" width="472" height="112" rx="12" fill="none" stroke="gray" stroke-width="2"/>
+  <rect x="28" y="36" width="48" height="48" rx="8" fill="gray"/>
+  <rect x="96" y="44" width="200" height="12" rx="6" fill="gray"/>
+  <rect x="96" y="66" width="140" height="10" rx="5" fill="gray"/>
+</svg>
+`;
+
+/** Git LFS 对象；body 缺省 = 上游没有这个对象（lfs_missing）。 */
+interface LfsObject {
+	oid: string;
+	size: number;
+	body?: string;
+}
+
+/** 固定的 64 位十六进制 oid（形如 sha256）。 */
+function lfsOid(seed: string): string {
+	return fakeSha(`lfs\0${seed}`) + fakeSha(`lfs\0${seed}\0`).slice(0, 24);
+}
+
+/** 规范的三行 LFS 指针（仓库里存的就是它）。 */
+function lfsPointer(o: LfsObject): string {
+	return `version https://git-lfs.github.com/spec/v1\noid sha256:${o.oid}\nsize ${o.size}\n`;
+}
+
+const LFS_FILES: Record<string, LfsObject> = {
+	"docs/media/banner.svg": {
+		oid: lfsOid("banner.svg"),
+		size: byteLength(BANNER),
+		body: BANNER,
+	},
+	"docs/media/walkthrough.mp4": {
+		oid: lfsOid("walkthrough.mp4"),
+		size: 157_286_400,
+		// 真实对象 150 MiB；mock 的 download=1 只给 16 字节
+		body: "\0\0\0\x18ftypmp42\0\0\0\0",
+	},
+	"docs/media/missing.psd": { oid: lfsOid("missing.psd"), size: 8_388_608 },
+};
+
+/** 指针文本 → 对象。 */
+const LFS_BY_POINTER = new Map(
+	Object.values(LFS_FILES).map((o) => [lfsPointer(o), o]),
+);
+
 interface MockCommit {
 	sha: string;
 	subject: string;
@@ -224,10 +274,15 @@ const COMMITS: MockCommit[] = (() => {
 		},
 		{
 			subject: "docs: architecture diagram",
-			body: "",
+			body: "横幅、演示视频与设计稿放在 docs/media，用 Git LFS 存放。",
 			author: AGENT,
 			ts: NOW - 3 * 24 * HOUR,
-			changes: { "docs/diagram.svg": DIAGRAM },
+			changes: {
+				"docs/diagram.svg": DIAGRAM,
+				...Object.fromEntries(
+					Object.entries(LFS_FILES).map(([p, o]) => [p, lfsPointer(o)]),
+				),
+			},
 			linked: true,
 		},
 		{
@@ -399,7 +454,17 @@ function mimeOf(path: string): string {
 	if (ext === "md") return "text/markdown; charset=utf-8";
 	if (ext === "svg") return "image/svg+xml";
 	if (ext === "png") return "image/png";
+	if (ext === "mp4") return "video/mp4";
+	if (ext === "psd") return "image/vnd.adobe.photoshop";
 	return "text/plain; charset=utf-8";
+}
+
+/** blob 接口给出的内容：LFS 指针换成对象内容；对象缺失或超过预览上限（且不是 download）时为 undefined。 */
+function blobContent(content: string, download: boolean): string | undefined {
+	const lfs = LFS_BY_POINTER.get(content);
+	if (!lfs) return content;
+	if (lfs.body === undefined) return undefined;
+	return lfs.size > LFS_INLINE_MAX && !download ? undefined : lfs.body;
 }
 
 /** 仓库内相对路径的校验（同服务端）：根为 ""；不能以 `/` 或 `-` 开头，不能有空段、`.`、`..`。 */
@@ -602,8 +667,10 @@ export class MockRepo {
 				: undefined;
 		const path = url.searchParams.get("path") ?? "";
 		const content = tip ? snapshot(tip).get(path) : undefined;
-		if (content === undefined) return null;
-		return `data:${mimeOf(path).replaceAll(" ", "")},${encodeURIComponent(content)}`;
+		const data =
+			content === undefined ? undefined : blobContent(content, false);
+		if (data === undefined) return null;
+		return `data:${mimeOf(path).replaceAll(" ", "")},${encodeURIComponent(data)}`;
 	}
 
 	async handle(
@@ -652,7 +719,14 @@ export class MockRepo {
 		if (rest === "commits") return this.commits(refName, tip, path, q);
 		if (rest === "tree")
 			return this.tree(refName, tip, path, q.get("lastCommits") !== "false");
-		return this.blob(req, ref, tip, path);
+		const download = q.get("download");
+		return this.blob(
+			req,
+			ref,
+			tip,
+			path,
+			download === "1" || download === "true",
+		);
 	}
 
 	private refs(p: Project, q: URLSearchParams): Response {
@@ -781,14 +855,19 @@ export class MockRepo {
 			return c ? summaryOf(c) : undefined;
 		};
 		const nameOf = (p: string) => p.slice(p.lastIndexOf("/") + 1);
-		const fileEntry = (p: string, content: string): TreeEntry => ({
-			name: nameOf(p),
-			path: p,
-			type: "file",
-			mode: 420,
-			size: byteLength(content),
-			oid: fakeSha(`blob\0${content}`),
-		});
+		const fileEntry = (p: string, content: string): TreeEntry => {
+			const lfs = LFS_BY_POINTER.get(content);
+			return {
+				name: nameOf(p),
+				path: p,
+				type: "file",
+				mode: 420,
+				// LFS：size 是对象的真实大小，oid 仍是指针 blob 的
+				size: lfs ? lfs.size : byteLength(content),
+				oid: fakeSha(`blob\0${content}`),
+				...(lfs ? { lfs: { oid: lfs.oid } } : {}),
+			};
+		};
 		const dirEntry = (p: string): TreeEntry => ({
 			name: nameOf(p),
 			path: p,
@@ -799,10 +878,17 @@ export class MockRepo {
 		});
 		const content = files.get(path);
 		if (content !== undefined) {
+			// 同服务端：LFS 对象缺失时带 error；对象超过预览上限或缺失时 mime 只按扩展名、不给 text
+			const lfs = LFS_BY_POINTER.get(content);
+			const missing = lfs !== undefined && lfs.body === undefined;
+			const inline = !lfs || (!missing && lfs.size <= LFS_INLINE_MAX);
 			const self: TreeEntry = {
 				...fileEntry(path, content),
 				mime: mimeOf(path),
-				text: true,
+				...(lfs && missing
+					? { lfs: { oid: lfs.oid, error: "lfs_missing" as const } }
+					: {}),
+				...(inline ? { text: true } : {}),
 			};
 			const last = lastOf(path);
 			const body: Schemas["ProjectRepoTree"] = {
@@ -853,7 +939,13 @@ export class MockRepo {
 		return json(body);
 	}
 
-	private blob(req: Request, ref: string, tip: string, path: string): Response {
+	private blob(
+		req: Request,
+		ref: string,
+		tip: string,
+		path: string,
+		download: boolean,
+	): Response {
 		if (path === "") return error(409, "not_a_file", "路径是目录");
 		const files = snapshot(tip);
 		const content = files.get(path);
@@ -863,6 +955,16 @@ export class MockRepo {
 				? error(409, "not_a_file", "路径是目录")
 				: error(404, "path_not_found", "路径不存在");
 		}
+		const lfs = LFS_BY_POINTER.get(content);
+		if (lfs && lfs.body === undefined)
+			return error(404, "lfs_missing", "找不到这个 LFS 对象");
+		const data = blobContent(content, download);
+		if (data === undefined)
+			return error(
+				413,
+				"too_large",
+				"Git LFS 对象超过 100 MiB，只能下载（download=1）",
+			);
 		const etag = `"${fakeSha(`blob\0${content}`)}"`;
 		const cache = /^[0-9a-f]{40}$/.test(ref)
 			? "private, max-age=31536000, immutable"
@@ -875,10 +977,13 @@ export class MockRepo {
 		};
 		if (req.headers.get("If-None-Match") === etag)
 			return new Response(null, { status: 304, headers });
-		return new Response(content, {
+		return new Response(data, {
 			headers: {
 				...headers,
-				"Content-Type": mimeOf(path),
+				"Content-Type":
+					lfs && lfs.size > LFS_INLINE_MAX
+						? "application/octet-stream"
+						: mimeOf(path),
 				"Content-Disposition": `attachment; filename="${path.slice(path.lastIndexOf("/") + 1)}"`,
 			},
 		});

@@ -751,15 +751,18 @@ describe("projectRepoSource（M24，项目仓库镜像只读来源）", () => {
 		expect(urls[0]?.searchParams.get("lastCommits")).toBe("false");
 	});
 
-	it("stat 用 self 并带 mime / text；读取与下载走 blob 地址；ref 为空时不带 ref", async () => {
+	it("stat 用 self 并带 mime / text；读取走 blob 地址、下载另带 download=1；ref 为空时不带 ref", async () => {
 		const s = projectRepoSource(prj, "");
 		const st = await s.stat("README.md");
 		expect(st).toMatchObject({ mime: "text/markdown", text: true, size: 12 });
 		expect((await s.readText("README.md")).text).toBe("# hi\n");
 		expect(urls[0]?.searchParams.has("ref")).toBe(false);
+		expect(urls[1]?.pathname).toBe("/api/v1/projects/prj_A/repo/blob");
+		expect(urls[1]?.searchParams.has("download")).toBe(false);
 		expect(s.downloadUrl("docs/a b.md")).toBe(
-			"/api/v1/projects/prj_A/repo/blob?path=docs%2Fa+b.md",
+			"/api/v1/projects/prj_A/repo/blob?path=docs%2Fa+b.md&download=1",
 		);
+		expect(s.downloadUrl("a.bin")).toMatch(/&download=1$/);
 	});
 
 	it("只读：caps 只开下载，写操作以 409 read_only 拒绝且不发请求", async () => {

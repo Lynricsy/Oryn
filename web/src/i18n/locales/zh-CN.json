@@ -4640,6 +4640,23 @@
 		"settings": {
 			"mirror": "镜像 {{size}} · 同步于 {{ago}}",
 			"title": "仓库镜像"
+		},
+		"lfs": {
+			"badge": "LFS",
+			"badgeTitle": "由 Git LFS 存储",
+			"stored": "由 Git LFS 存储 · {{size}}",
+			"largeTitle": "文件过大，不在浏览器中预览",
+			"largeBody": "超过 {{max}} 的 Git LFS 文件只能下载。",
+			"download": "下载（{{size}}）",
+			"errorTitle": "无法读取这个 Git LFS 文件",
+			"retry": "重试",
+			"errors": {
+				"lfs_missing": "找不到这个 LFS 对象：推送时可能没有上传，或已被删除。",
+				"lfs_auth_failed": "上游拒绝了读取 LFS 对象的凭据。",
+				"lfs_unreachable": "连不上存放 LFS 对象的主机，或该地址不是公网 https 地址、已被拦截。",
+				"lfs_corrupt": "上游返回的内容与 LFS 指针不符。",
+				"lfs_no_space": "控制面磁盘空间不足，暂时不能读取这个 LFS 对象。"
+			}
 		}
 	},
 	"projectsOverview": {

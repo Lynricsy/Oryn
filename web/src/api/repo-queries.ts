@@ -230,14 +230,22 @@ export function useRepoTree(
 	});
 }
 
-/** 文件内容地址（`<img src>`、下载、`FileSource` 读取）；ref 为空时由服务端取基线分支。 */
+/** 能在浏览器里预览的 Git LFS 对象上限：与服务端 lfsInlineMax 一致，超过它只能 `download=1` 下载。 */
+export const LFS_PREVIEW_MAX_BYTES = 100 * 1024 * 1024;
+
+/**
+ * 文件内容地址（`<img src>`、下载、`FileSource` 读取）；ref 为空时由服务端取基线分支。
+ * `download` 时一律作附件下载，超过 {@link LFS_PREVIEW_MAX_BYTES} 的 Git LFS 对象也只能这样取。
+ */
 export function repoBlobUrl(
 	projectId: string,
 	ref: string | undefined,
 	path: string,
+	opts?: { download?: boolean },
 ): string {
 	const q = new URLSearchParams();
 	if (ref) q.set("ref", ref);
 	q.set("path", path);
+	if (opts?.download) q.set("download", "1");
 	return `/api/v1/projects/${encodePathParam(projectId)}/repo/blob?${q}`;
 }

@@ -1,9 +1,11 @@
 /**
  * 仓库子页（M24 阶段 ②）：对 mock 后端渲染。提交页宽屏左列表右详情、窄屏只有详情；详情里展开文件出 diff；
  * 分支页带「默认」；文件页列目录、文件用只读的 FileViewer；改 ref 写进 `?ref=`；镜像不可读时只有一条说明。
+ * Git LFS：能预览的带说明、超过预览上限的只能下载（download=1）、取对象失败的有原因与重试。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+	cleanup,
 	fireEvent,
 	render,
 	screen,
@@ -20,14 +22,21 @@ import { CommitsPage } from "./CommitsPage";
 import { FilesPage } from "./FilesPage";
 import { TagsPage } from "./TagsPage";
 
+const download = vi.hoisted(() => vi.fn());
+vi.mock("../../../lib/artifacts/download", () => ({ downloadUrl: download }));
+
 const ORYN = projects[0]?.id ?? "";
 const CORE = projects[1]?.id ?? "";
 
 let server: MockServer;
+/** 发给 mock 后端的请求地址 */
+let urls: URL[];
 
 beforeEach(() => {
 	window.innerWidth = 1280;
 	server = new MockServer();
+	urls = [];
+	download.mockReset();
 	vi.stubGlobal(
 		"fetch",
 		async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -35,6 +44,7 @@ beforeEach(() => {
 				input instanceof Request
 					? input
 					: new Request(new URL(String(input), location.origin), init);
+			urls.push(new URL(req.url));
 			return (
 				(await server.handleFetch(req)) ?? new Response(null, { status: 404 })
 			);
@@ -235,13 +245,20 @@ describe("文件子页", () => {
 		).toBeInTheDocument();
 	});
 
-	it("文件：只读的 FileViewer，没有保存按钮", async () => {
+	it("文件：只读的 FileViewer，没有保存按钮；Markdown 的相对链接与图片按文件所在目录解析", async () => {
 		mount(`/projects/${ORYN}/files/README.md`);
 		const viewer = await screen.findByTestId("file-viewer");
 		expect(await within(viewer).findByText("README.md")).toBeInTheDocument();
 		expect(
 			within(viewer).queryByRole("button", { name: /保存/ }),
 		).not.toBeInTheDocument();
+		expect(
+			await within(viewer).findByRole("link", { name: "指南" }),
+		).toHaveAttribute("href", `/projects/${ORYN}/files/docs/guide.md?ref=main`);
+		expect(within(viewer).getByRole("img", { name: "架构图" })).toHaveAttribute(
+			"src",
+			`/api/v1/projects/${ORYN}/repo/blob?ref=main&path=docs%2Fdiagram.svg`,
+		);
 	});
 
 	it("改 ref 留在同一路径", async () => {
@@ -259,5 +276,54 @@ describe("文件子页", () => {
 				`/projects/${ORYN}/files/src?ref=feature%2Frepo-browser`,
 			),
 		);
+	});
+});
+
+describe("文件子页 · Git LFS", () => {
+	it("目录：docs 下有 media，media 里的 LFS 文件带「LFS」徽标", async () => {
+		mount(`/projects/${ORYN}/files/docs`);
+		const entries = await screen.findAllByTestId("repo-entry");
+		expect(entries.map((e) => e.dataset.path)).toContain("docs/media");
+		cleanup();
+		mount(`/projects/${ORYN}/files/docs/media`);
+		const media = await screen.findAllByTestId("repo-entry");
+		expect(media.map((e) => e.dataset.path)).toEqual([
+			"docs/media/banner.svg",
+			"docs/media/missing.psd",
+			"docs/media/walkthrough.mp4",
+		]);
+		for (const e of media)
+			expect(within(e).getByTitle("由 Git LFS 存储")).toHaveTextContent("LFS");
+	});
+
+	it("能预览的 LFS 文件：上方写明由 Git LFS 存储，下面照常预览", async () => {
+		mount(`/projects/${ORYN}/files/docs/media/banner.svg`);
+		expect(await screen.findByTestId("repo-lfs-note")).toHaveTextContent(
+			/由 Git LFS 存储 · \d/,
+		);
+		expect(screen.getByTestId("file-viewer")).toBeInTheDocument();
+	});
+
+	it("超过预览上限：只有下载按钮，地址带 download=1", async () => {
+		mount(`/projects/${ORYN}/files/docs/media/walkthrough.mp4`);
+		const large = await screen.findByTestId("repo-lfs-large");
+		expect(large).toHaveTextContent("文件过大，不在浏览器中预览");
+		expect(screen.queryByTestId("file-viewer")).not.toBeInTheDocument();
+		fireEvent.click(within(large).getByRole("button", { name: /下载（/ }));
+		expect(download).toHaveBeenCalledTimes(1);
+		expect(download.mock.calls[0]?.[0]).toMatch(/download=1$/);
+		expect(download.mock.calls[0]?.[1]).toBe("walkthrough.mp4");
+	});
+
+	it("取对象失败：写原因，重试会重新请求目录树", async () => {
+		mount(`/projects/${ORYN}/files/docs/media/missing.psd`);
+		const failed = await screen.findByTestId("repo-lfs-error");
+		expect(failed).toHaveTextContent("找不到这个 LFS 对象");
+		expect(screen.queryByTestId("file-viewer")).not.toBeInTheDocument();
+		const trees = () =>
+			urls.filter((u) => u.pathname.endsWith("/repo/tree")).length;
+		const before = trees();
+		fireEvent.click(within(failed).getByRole("button", { name: "重试" }));
+		await waitFor(() => expect(trees()).toBe(before + 1));
 	});
 });

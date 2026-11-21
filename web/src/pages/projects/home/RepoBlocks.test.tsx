@@ -10,6 +10,7 @@ import { projects } from "../../../mock/fixtures";
 import { MockServer } from "../../../mock/server";
 import { ProjectHomePage } from "../ProjectHomePage";
 import { resolveRepoPath } from "../repo/paths";
+import { RepoEntryList } from "./RepoEntryList";
 
 const ORYN = projects[0]?.id ?? "";
 const CORE = projects[1]?.id ?? "";
@@ -141,6 +142,51 @@ describe("项目主页的仓库区块", () => {
 			).toBe(true),
 		);
 		expect(await screen.findByText("同步中…")).toBeInTheDocument();
+	});
+});
+
+describe("RepoEntryList", () => {
+	it("Git LFS 条目带「LFS」徽标，普通文件没有", () => {
+		const file = (name: string, lfs?: { oid: string }) => ({
+			name,
+			path: name,
+			type: "file" as const,
+			mode: 420,
+			size: 10,
+			oid: "b".repeat(40),
+			...(lfs ? { lfs } : {}),
+		});
+		render(
+			<MemoryRouter>
+				<RepoEntryList
+					projectId={ORYN}
+					refName="main"
+					tree={{
+						ref: "main",
+						commit: "c".repeat(40),
+						path: "",
+						self: {
+							name: "",
+							path: "",
+							type: "dir",
+							mode: 493,
+							size: 0,
+							oid: "t".repeat(40),
+						},
+						entries: [file("big.bin", { oid: "a".repeat(64) }), file("a.txt")],
+						truncated: false,
+						lastCommitsComplete: true,
+					}}
+				/>
+			</MemoryRouter>,
+		);
+		const [big, plain] = screen.getAllByTestId("repo-entry");
+		expect(
+			within(big as HTMLElement).getByTitle("由 Git LFS 存储"),
+		).toHaveTextContent("LFS");
+		expect(
+			within(plain as HTMLElement).queryByTitle("由 Git LFS 存储"),
+		).toBeNull();
 	});
 });
 
