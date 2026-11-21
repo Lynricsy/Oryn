@@ -36,6 +36,9 @@
 | `projects.settings.schedule-new` | 新建定时任务对话框 | 「定时任务」的「新建定时任务」 | 弹窗（手机为抽屉） |
 | `projects.settings.schedule-edit` | 编辑定时任务对话框（含运行记录） | 定时某行「…」→ 编辑 | 弹窗（手机为抽屉） |
 | `projects.settings.ssh` | 项目设置「SSH 主机」 | 设置左导航「SSH 主机」 | 页面 |
+| `projects.settings.secrets` | 项目设置「密钥与环境变量」 | 项目页设置 → 左导航「密钥与环境变量」 | 页面 |
+| `projects.settings.secrets.bulk` | 批量添加（粘贴 .env 与预览） | 该分组「批量添加」→ 粘贴文本 | 弹窗（手机为抽屉） |
+| `projects.settings.secrets.edit` | 编辑条目 | 某行「编辑」 | 弹窗（手机为抽屉） |
 | `projects.new.hosted` | 新建项目 ·「空白仓库」来源 | 新建页点「空白仓库（Oryn 托管）」 | 页面 |
 | `projects.hosted.home` | 托管项目主页 | 项目分区点 notes | 页面 |
 | `projects.settings.overview.hosted` | 设置概览 ·「托管仓库」卡（克隆地址、Webhook） | 齿轮 → 概览 | 页面 |

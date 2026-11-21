@@ -1,4 +1,4 @@
-/** 项目分区：总览（含 ⋯ 菜单与已归档区）、新建、线程子页、项目主页、项目设置各分组（概览与危险操作、环境与快照预热、Agent、GitHub 与触发规则、定时、SSH）及其下拉与对话框。 */
+/** 项目分区：总览（含 ⋯ 菜单与已归档区）、新建、线程子页、项目主页、项目设置各分组（概览与危险操作、环境与快照预热、Agent、GitHub 与触发规则、定时、SSH、密钥与环境变量）及其下拉与对话框。 */
 import type { Locator, Page } from "@playwright/test";
 import { lastOverlay, settle, surface } from "./audit";
 
@@ -203,6 +203,41 @@ surface({
 	},
 });
 surface({ id: "projects.settings.ssh", path: `${SETTINGS}/ssh` });
+
+// M24 阶段 ④：项目设置「密钥与环境变量」（列表、粘贴 .env 的批量添加、编辑条目）
+const SECRETS = `${SETTINGS}/secrets`;
+surface({
+	id: "projects.settings.secrets",
+	path: SECRETS,
+	ready: "[data-testid=project-secrets] [data-testid=project-secret-row]",
+});
+surface({
+	id: "projects.settings.secrets.bulk",
+	path: SECRETS,
+	ready: "[data-testid=project-secret-row]",
+	open: async (page) => {
+		await page.getByRole("button", { name: "批量添加" }).click();
+		await page
+			.getByRole("dialog")
+			.getByRole("textbox")
+			.fill(
+				'NODE_ENV=production\nexport API_URL="https://api.example.com"\nbad line',
+			);
+		await settle(page);
+		return page.getByRole("dialog");
+	},
+});
+surface({
+	id: "projects.settings.secrets.edit",
+	path: SECRETS,
+	ready: "[data-testid=project-secret-row]",
+	open: async (page) => {
+		await page.getByRole("button", { name: "编辑 NODE_ENV" }).click();
+		await page.getByRole("dialog").waitFor();
+		await settle(page);
+		return page.getByRole("dialog");
+	},
+});
 
 // M24 阶段 ③：托管仓库（新建页「空白仓库」来源、托管项目主页、设置概览的托管仓库卡与创建托管仓库）
 const HOSTED = "/projects/prj_01JCZ000000000000000HOSTED";

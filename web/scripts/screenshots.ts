@@ -1624,6 +1624,34 @@ const SCREENS: Screen[] = [
 			await settle(page, 400);
 		},
 	},
+	// M24 阶段 ④：项目设置「密钥与环境变量」与粘贴 .env 的批量添加
+	{
+		name: "project-secrets",
+		prepare: ({ page }) =>
+			open(
+				page,
+				`/projects/${projects[0]?.id}/settings/secrets`,
+				"[data-testid=project-secret-row]",
+			),
+	},
+	{
+		name: "project-secrets-bulk",
+		prepare: async ({ page }) => {
+			await open(
+				page,
+				`/projects/${projects[0]?.id}/settings/secrets`,
+				"[data-testid=project-secret-row]",
+			);
+			await page.getByRole("button", { name: "批量添加" }).click();
+			await page
+				.locator("[data-testid=project-secrets-bulk] textarea")
+				.fill(
+					'NODE_ENV=production\nexport API_URL="https://api.example.com"\nbad line',
+				);
+			await page.locator("[data-testid=project-secrets-bulk]").waitFor();
+			await settle(page, 400);
+		},
+	},
 	{
 		name: "sink-more",
 		widths: [390],
