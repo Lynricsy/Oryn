@@ -56,6 +56,8 @@ type Config struct {
 
 	// MaxLFSCacheBytes 是镜像项目 LFS 对象缓存的总上限（MaxLFSCacheGB<<30）；0 = 2<<30。
 	MaxLFSCacheBytes int64
+	// LFSFlightTimeout 是一次取 LFS 对象（batch、下载、落盘）的总时限；0 = 15 分钟。
+	LFSFlightTimeout time.Duration
 }
 
 // GitHub 是 github.com 拉取凭据（*github.Service 实现）。
@@ -92,7 +94,8 @@ type Service struct {
 	reason string // 不可用原因；"" = 可用
 	guard  *egress.PublicProxy
 
-	lfsCache *lfsCache // 镜像项目的 LFS 对象缓存；git 不可用时为 nil
+	lfsCache *lfsCache  // 镜像项目的 LFS 对象缓存；git 不可用时为 nil
+	lfsc     *lfsClient // 镜像项目的 LFS 客户端（传输、单飞、名额）；git 不可用时为 nil
 
 	sem          chan struct{} // 同时最多两个克隆或拉取
 	monitorEvery time.Duration // 拉取中复查磁盘与大小的间隔
@@ -112,6 +115,7 @@ func New(cfg Config, st *store.Store, sec Secrets, gh GitHub) (*Service, error) 
 	cfg.MaxBytes = cmp.Or(cfg.MaxBytes, 5<<30)
 	cfg.MinFreeBytes = cmp.Or(cfg.MinFreeBytes, 2<<30)
 	cfg.MaxLFSCacheBytes = cmp.Or(cfg.MaxLFSCacheBytes, 2<<30)
+	cfg.LFSFlightTimeout = cmp.Or(cfg.LFSFlightTimeout, 15*time.Minute)
 	cfg.StaleAfter = cmp.Or(cfg.StaleAfter, 60*time.Second)
 	cfg.GitHubWebURL = strings.TrimRight(cmp.Or(cfg.GitHubWebURL, "https://github.com"), "/")
 	if cfg.Now == nil {
@@ -144,6 +148,11 @@ func New(cfg Config, st *store.Store, sec Secrets, gh GitHub) (*Service, error) 
 		return nil, fmt.Errorf("启动公网守卫代理: %w", err)
 	}
 	s.guard = guard
+	if s.lfsc, err = newLFSClient(cfg.ProxyEnv, guard.URL()); err != nil {
+		cancel()
+		_ = guard.Close()
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -156,6 +165,9 @@ func (s *Service) Close() {
 	s.wg.Wait()
 	if s.lfsCache != nil {
 		s.lfsCache.bg.Wait()
+	}
+	if s.lfsc != nil {
+		s.lfsc.close()
 	}
 	if s.guard != nil {
 		if err := s.guard.Close(); err != nil {
@@ -255,6 +267,9 @@ func (s *Service) Remove(projectID string) {
 		slog.Warn("删除项目仓库目录", "project", projectID, "err", err)
 	}
 	s.dropLFSCache(projectID)
+	if s.lfsc != nil {
+		s.lfsc.forget(projectID)
+	}
 }
 
 // dropLFSCache 删掉项目的 LFS 对象缓存（镜像被删除时一并清掉）。

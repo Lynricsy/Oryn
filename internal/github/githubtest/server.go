@@ -119,6 +119,15 @@ type Server struct {
 	Releases   []*Release
 	TagObjects map[string]string
 
+	// LFSHrefOrigin / LFSEchoAuth / LFSStall 调整 Git LFS 假上游（见 lfs.go）：download href 的 origin（空 = 自己）、
+	// action.header 是否回显请求的 Authorization、对象请求写完响应头后是否挂起到请求被取消。
+	LFSHrefOrigin string
+	LFSEchoAuth   bool
+	LFSStall      bool
+	lfsObjects    map[string][]byte // oid → 内容（PutLFS）
+	lfsActive     int               // 在途的对象请求数
+	lfsPeak       int               // lfsActive 的最大值
+
 	seq         int64
 	codes       map[string]string // 授权码 → login
 	userTokens  map[string]string // 用户访问令牌 → login

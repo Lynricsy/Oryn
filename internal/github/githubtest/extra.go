@@ -25,6 +25,9 @@ func (s *Server) serveExtra(w http.ResponseWriter, r *http.Request) bool {
 		s.serveControl(w, r)
 		return true
 	}
+	if s.serveLFS(w, r) {
+		return true
+	}
 	m := gitPathRe.FindStringSubmatch(r.URL.Path)
 	if m == nil || s.GitRoot == "" {
 		return false
