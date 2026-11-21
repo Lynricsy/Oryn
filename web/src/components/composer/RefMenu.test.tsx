@@ -217,4 +217,17 @@ describe("Composer 的 # 菜单", () => {
 			expect(screen.getByTestId("ref-menu")).toBeInTheDocument(),
 		);
 	});
+
+	it("Esc 收起后删掉再敲回同样的文本，菜单重新弹出", async () => {
+		mount(T_BOUND);
+		fireEvent.change(box(), { target: { value: "#log" } });
+		await screen.findByTestId("ref-menu");
+		fireEvent.keyDown(box(), { key: "Escape" });
+		expect(screen.queryByTestId("ref-menu")).toBeNull();
+		fireEvent.change(box(), { target: { value: "#lo" } });
+		fireEvent.change(box(), { target: { value: "#log" } });
+		await waitFor(() =>
+			expect(screen.getByTestId("ref-menu")).toBeInTheDocument(),
+		);
+	});
 });

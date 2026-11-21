@@ -48,9 +48,11 @@ export function useRefMenu(o: {
 	onAttached: (a: Attachment) => void;
 }): RefMenuModel {
 	const token = o.projectId ? refToken(o.text, o.caret) : null;
-	// Esc 关掉时记下当时的文本：文本一变就重新允许打开
+	// Esc 关掉时记下当时的文本；文本一离开这个值就清掉记录（渲染期派生），
+	// 之后再改回同样的文本也会重新弹出，不会一直算「已收起」
 	const [dismissedAt, setDismissedAt] = useState<string | null>(null);
-	const open = token !== null && dismissedAt !== o.text;
+	if (dismissedAt !== null && dismissedAt !== o.text) setDismissedAt(null);
+	const open = token !== null && dismissedAt === null;
 	const [query, setQuery] = useState(token?.query ?? "");
 	const raw = token?.query ?? "";
 	useEffect(() => {

@@ -362,7 +362,7 @@ overlay(
 
 // ---------------------------------------------------------------- 输入坞
 
-// 关掉 = 清空输入框（Esc 收起后同一个 `#` / `/` 片段会一直记着「已收起」，再输入同样的文字不会重开）
+// 斜杠菜单用清空输入框来关（Esc 后文本没变时菜单保持收起，重开得先改文本）
 const clearComposer = { close: (p: Page) => composer(p).fill("") };
 overlay(
 	"thread.slash",
@@ -380,15 +380,13 @@ overlay(
 	},
 	clearComposer,
 );
-overlay(
-	"thread.ref-menu",
-	async (p) => {
-		await composer(p).fill("#log");
-		await p.locator("[data-testid=ref-menu] [role=option]").first().waitFor();
-		return p.getByTestId("ref-menu");
-	},
-	clearComposer,
-);
+// 走 Esc 关闭：重开时先删一个字再敲回同样的 `#log`，覆盖「收起后改回同样文本要重新弹出」
+overlay("thread.ref-menu", async (p) => {
+	await composer(p).fill("#lo");
+	await composer(p).fill("#log");
+	await p.locator("[data-testid=ref-menu] [role=option]").first().waitFor();
+	return p.getByTestId("ref-menu");
+});
 overlay("thread.thinking", async (p) => {
 	await p.getByRole("button", { name: "思考级别" }).first().click();
 	return undefined;
