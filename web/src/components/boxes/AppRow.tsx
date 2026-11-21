@@ -45,7 +45,8 @@ export function AppRow({
 			)}
 			<div className="flex min-w-0 flex-1 flex-col gap-0.5">
 				<div className="flex min-w-0 items-center gap-1.5">
-					<span className="truncate font-medium text-fg text-sm">
+					{/* 名字不参与收缩（只在比整行还长时截断）：窄屏先压地址，名字是这一行的主体 */}
+					<span className="max-w-full shrink-0 truncate font-medium text-fg text-sm">
 						{app.name}
 					</span>
 					{!app.public && <Badge>{t("boxes.apps.private")}</Badge>}

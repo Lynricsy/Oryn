@@ -812,6 +812,82 @@ function artifactScreens(): Screen[] {
 	];
 }
 
+/** `bug-tracker` 悬停预览的固定页面（mock 管不到 iframe 的导航，由 Playwright 拦截预览地址）。 */
+const BOX_PREVIEW_TEXT = "Bug tracker · 12 open issues";
+const BOX_PREVIEW_HTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="oryn-preview" content="v1; enabled; iframe"><title>Bug tracker</title></head><body style="margin:0;font:16px system-ui;padding:24px;background:#f6f7f9;color:#111"><h1 style="font-size:22px;margin:0 0 12px">${BOX_PREVIEW_TEXT}</h1><p>Login page flickers on Safari · #482</p><p>Export to CSV drops the last row · #479</p></body></html>`;
+
+/** M23 Boxes：介绍页、总览、box 页（含悬停预览）、新建对话框、首屏执行位置的 Boxes 分组。 */
+function boxScreens(): Screen[] {
+	const widths = M11A_WIDTHS;
+	return [
+		{
+			name: "boxes-empty",
+			widths,
+			// 独立 context：mock 读到这个键就不放种子 box
+			init: `localStorage.setItem("oryn.mock.boxes", "empty");`,
+			prepare: ({ page }) =>
+				open(page, "/boxes", "[data-testid=boxes-hero]", 1000),
+			verify: noHorizontalOverflow("boxes-scroll"),
+		},
+		{
+			name: "boxes-list",
+			widths,
+			prepare: ({ page }) =>
+				open(page, "/boxes", "[data-testid=boxes-list]", 1000),
+			verify: noHorizontalOverflow("boxes-scroll"),
+		},
+		{
+			name: "box-detail",
+			widths,
+			prepare: async ({ page }) => {
+				await page.route("https://bug-tracker.apps.oryn.test/**", (route) =>
+					route.fulfill({ contentType: "text/html", body: BOX_PREVIEW_HTML }),
+				);
+				await open(
+					page,
+					"/boxes/box_01JDBX00000000000WORKBENCH",
+					"[data-testid=box-app-row]",
+					1000,
+				);
+				await page.getByRole("button", { name: "预览 bug-tracker" }).hover();
+				await page
+					.frameLocator("[data-testid=app-preview-frame]")
+					.getByText(BOX_PREVIEW_TEXT)
+					.waitFor({ timeout: 15_000 });
+				await settle(page, 400);
+			},
+			verify: noHorizontalOverflow("box-scroll"),
+		},
+		{
+			name: "box-new-dialog",
+			widths,
+			prepare: async ({ page }) => {
+				await open(page, "/boxes", "[data-testid=boxes-list]");
+				await page.getByRole("button", { name: "新建 Box" }).first().click();
+				await page
+					.locator("[data-testid=new-box-dialog-body]")
+					.waitFor({ timeout: 10_000 });
+				await settle(page, 400);
+			},
+			verify: noHorizontalOverflow("new-box-dialog-body"),
+		},
+		{
+			name: "home-executor-boxes",
+			widths,
+			prepare: async ({ page }) => {
+				await open(page, "/", "textarea");
+				// 执行位置胶囊的名字是当前落点（mock 缺省 `local`）；Boxes 分组在弹层底部，滚到底才看得到
+				await page.getByRole("button", { name: /^local/ }).click();
+				await page
+					.getByTestId("executor-options-body")
+					.evaluate((e) => e.scrollTo({ top: e.scrollHeight }));
+				await settle(page, 400);
+			},
+			verify: noHorizontalOverflow("executor-options-body"),
+		},
+	];
+}
+
 /** 某个滚动容器（`data-testid`）与整页都不得横向溢出。 */
 function noHorizontalOverflow(testId: string) {
 	return async ({ page }: Shot): Promise<string | null> => {
@@ -1495,6 +1571,7 @@ const SCREENS: Screen[] = [
 	...m14Screens(),
 	...artifactScreens(),
 	...memoryScreens(),
+	...boxScreens(),
 	// 手机线程页的视图菜单（对话 / 改动 / 文件 / 终端 … / 信息），展开状态
 	{
 		name: "thread-compact-views",
