@@ -36,6 +36,7 @@ import {
 	projects,
 	TOOL_ZOO_THREAD,
 } from "../src/mock/fixtures";
+import { MOCK_REPO_HEAD_SHA } from "../src/mock/repo";
 import { MOCK_SHARE_SLUGS } from "../src/mock/server";
 import { type BrowserNetns, startBrowserNetns } from "./browser-netns";
 import {
@@ -1555,6 +1556,43 @@ const SCREENS: Screen[] = [
 				width < 600
 					? "[data-testid=project-settings-list]"
 					: "[data-testid=project-settings]",
+			),
+	},
+	// M24 阶段 ②：仓库浏览（主页仓库区块、提交详情、目录、文件预览）
+	{
+		name: "projects-repo-home",
+		prepare: ({ page }) =>
+			open(
+				page,
+				`/projects/${projects[0]?.id}`,
+				"[data-testid=repo-commits-card]",
+			),
+	},
+	{
+		name: "projects-repo-commit",
+		prepare: ({ page }) =>
+			open(
+				page,
+				`/projects/${projects[0]?.id}/commits/${MOCK_REPO_HEAD_SHA}`,
+				"[data-testid=repo-commit-detail] [data-testid=diff-rows]",
+			),
+	},
+	{
+		name: "projects-repo-files",
+		prepare: ({ page }) =>
+			open(
+				page,
+				`/projects/${projects[0]?.id}/files/docs`,
+				"[data-testid=repo-entry-list]",
+			),
+	},
+	{
+		name: "projects-repo-file",
+		prepare: ({ page }) =>
+			open(
+				page,
+				`/projects/${projects[0]?.id}/files/README.md`,
+				"[data-testid=file-viewer]",
 			),
 	},
 	{

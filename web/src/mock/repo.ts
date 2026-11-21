@@ -279,6 +279,9 @@ const BRANCHES: [string, MockCommit][] = [
 ];
 const TAGS: [string, MockCommit][] = [["v0.1.0", commitAt(5)]];
 
+/** 基线 `main` 的最新提交 sha（提交列表第一个）：UI 审计与截图直接打开它的详情页。 */
+export const MOCK_REPO_HEAD_SHA = commitAt(6).sha;
+
 /** 从 tip 沿第一个父提交回溯，新到旧。 */
 function history(tip: string): MockCommit[] {
 	const out: MockCommit[] = [];

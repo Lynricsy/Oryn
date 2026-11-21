@@ -1,6 +1,6 @@
 # UI 审计：各分区页面（sections）
 
-范围：项目、空间、全局助手、收件箱、统计、产物（Artifacts）、匿名分享页、认证页。spec 在 `web/e2e/ui-audit/{projects,space,assistant,inbox,stats,artifacts,share,auth}.e2e.ts`。
+范围：项目（含仓库浏览）、空间、全局助手、收件箱、统计、产物（Artifacts）、匿名分享页、认证页。spec 在 `web/e2e/ui-audit/{projects,projects-repo,space,assistant,inbox,stats,artifacts,share,auth}.e2e.ts`。
 
 说明：
 - 「仅桌面 / 仅手机」的界面在 spec 里用 `only` 显式跳过另一类视口。
@@ -36,6 +36,15 @@
 | `projects.settings.schedule-new` | 新建定时任务对话框 | 「定时任务」的「新建定时任务」 | 弹窗（手机为抽屉） |
 | `projects.settings.schedule-edit` | 编辑定时任务对话框（含运行记录） | 定时某行「…」→ 编辑 | 弹窗（手机为抽屉） |
 | `projects.settings.ssh` | 项目设置「SSH 主机」 | 设置左导航「SSH 主机」 | 页面 |
+| `projects.repo.home` | 项目主页的仓库区块（提交到 main、文件、README） | 项目分区点 Oryn | 页面 |
+| `projects.repo.home-error` | 项目主页 · 仓库镜像不可用（凭据被拒） | 项目分区点 oryn-core | 页面 |
+| `projects.repo.commits` | 提交子页（宽屏左列表、右侧提示） | 主页「提交到 main」→ 查看全部 / 文件区「提交」 | 页面 |
+| `projects.repo.commit` | 提交详情（关联线程、父提交、文件 diff；宽屏带列表） | 提交列表点某个提交 | 页面 |
+| `projects.repo.ref-picker` | 分支 / 标签选择菜单 | 提交子页的分支按钮 | 菜单 |
+| `projects.repo.branches` | 分支子页 | 仓库子导航「分支」 | 页面 |
+| `projects.repo.tags` | 标签子页 | 仓库子导航「标签」 | 页面 |
+| `projects.repo.files` | 仓库目录（docs） | 主页文件区点 docs | 页面 |
+| `projects.repo.file` | 仓库文件预览（README.md，只读） | 主页文件区点 README.md | 页面 |
 | `space.page` | Space 页（聊天 + 右列） | 侧栏「空间」下点某个空间 | 页面 |
 | `space.side` | Space 右列（进度、定时、线程卡片；手机在「线程」标签） | 宽屏直接可见 / 手机切到「线程」标签 | 页面 |
 | `space.menu` | 空间操作菜单 | 页头「…」 | 菜单 |
