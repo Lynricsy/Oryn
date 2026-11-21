@@ -4,19 +4,23 @@
  * `blob:sha256:<hex>` 图片引用改写为 `AssetUrlContext` 给出的地址（站内 `GET /api/v1/blobs/<hex>`，分享页为公开接口）。
  * mermaid 用 `base` 主题，配色取自当前令牌，明暗 / 主题色切换（THEME_EVENT）后重渲染。
  * 文档首行起的 YAML frontmatter（SKILL.md、rules/*.md 等）渲染成字段网格，不再被当成 setext 标题；解析不了时原样交给 Markdown。
+ * `relativeTo`（M24，仓库 README 等）：相对地址的链接改成站内路由（react-router Link，不新开窗口），相对图片改成可加载的地址。
  */
 
 import type { MermaidConfig } from "mermaid";
 import {
 	type ComponentProps,
+	createContext,
 	memo,
 	type ReactNode,
+	useContext,
 	useEffect,
 	useId,
 	useRef,
 	useState,
 } from "react";
 import ReactMarkdown, { type Components, type Options } from "react-markdown";
+import { Link } from "react-router";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
@@ -369,18 +373,8 @@ function makeComponents(streaming: boolean): Components {
 			if (lang === "mermaid" && !streaming) return <MermaidBlock code={text} />;
 			return <CodeBlock code={text} lang={lang} />;
 		},
-		a: ({ href, children }) => (
-			<a href={href} target="_blank" rel="noopener noreferrer">
-				{children}
-			</a>
-		),
-		img: ({ src, alt }) => (
-			<img
-				src={typeof src === "string" ? src : undefined}
-				alt={alt ?? ""}
-				loading="lazy"
-			/>
-		),
+		a: MdLink,
+		img: MdImage,
 		// 表格外包一层圆角描边容器，窄屏横向滚动
 		table: ({ children }) => (
 			<div className="md-table">
@@ -406,15 +400,52 @@ function makeComponents(streaming: boolean): Components {
 const STATIC_COMPONENTS = makeComponents(false);
 const STREAMING_COMPONENTS = makeComponents(true);
 
+/** 相对地址的解析（README 等仓库文档）：不带 scheme、不以 `#` 或 `//` 开头的 href / src 交给它；返回 null 时原样输出 */
+export interface RelativeUrls {
+	/** 返回站内路由（以 `/` 开头），用 react-router 的 Link 打开，不新开窗口 */
+	link(href: string): string | null;
+	/** 返回可直接加载的图片地址 */
+	image(src: string): string | null;
+}
+
+const RelativeUrlContext = createContext<RelativeUrls | null>(null);
+
+function isRelativeUrl(u: string): boolean {
+	return (
+		!/^[a-z][a-z0-9+.-]*:/i.test(u) && !u.startsWith("#") && !u.startsWith("//")
+	);
+}
+
+function MdLink({ href, children }: ComponentProps<"a">): ReactNode {
+	const rel = useContext(RelativeUrlContext);
+	const to = rel && href && isRelativeUrl(href) ? rel.link(href) : null;
+	if (to !== null) return <Link to={to}>{children}</Link>;
+	return (
+		<a href={href} target="_blank" rel="noopener noreferrer">
+			{children}
+		</a>
+	);
+}
+
+function MdImage({ src, alt }: ComponentProps<"img">): ReactNode {
+	const rel = useContext(RelativeUrlContext);
+	const raw = typeof src === "string" ? src : undefined;
+	const resolved = rel && raw && isRelativeUrl(raw) ? rel.image(raw) : null;
+	return <img src={resolved ?? raw} alt={alt ?? ""} loading="lazy" />;
+}
+
 export interface MarkdownProps {
 	text: string;
 	/** 流式中：不渲染 mermaid（代码未完整）。 */
 	streaming?: boolean;
+	/** 相对链接与相对图片的解析；不给时相对地址原样输出 */
+	relativeTo?: RelativeUrls;
 }
 
 export const Markdown = memo(function Markdown({
 	text,
 	streaming = false,
+	relativeTo,
 }: MarkdownProps): ReactNode {
 	const assets = useAssetUrls();
 	const root = useRef<HTMLDivElement | null>(null);
@@ -443,13 +474,15 @@ export const Markdown = memo(function Markdown({
 			className="md"
 		>
 			{doc && <FrontmatterFields fields={doc.fields} />}
-			<ReactMarkdown
-				remarkPlugins={remarkPlugins}
-				rehypePlugins={rehypePlugins}
-				components={streaming ? STREAMING_COMPONENTS : STATIC_COMPONENTS}
-			>
-				{source}
-			</ReactMarkdown>
+			<RelativeUrlContext.Provider value={relativeTo ?? null}>
+				<ReactMarkdown
+					remarkPlugins={remarkPlugins}
+					rehypePlugins={rehypePlugins}
+					components={streaming ? STREAMING_COMPONENTS : STATIC_COMPONENTS}
+				>
+					{source}
+				</ReactMarkdown>
+			</RelativeUrlContext.Provider>
 		</div>
 	);
 });

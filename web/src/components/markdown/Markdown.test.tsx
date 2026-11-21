@@ -1,6 +1,7 @@
 import { render } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
-import { Markdown } from "./Markdown";
+import { Markdown, type RelativeUrls } from "./Markdown";
 
 describe("Markdown", () => {
 	it("单个换行渲染为换行（与 omp 自带 Web 端的 breaks: true 一致）", () => {
@@ -56,5 +57,43 @@ describe("Markdown", () => {
 		);
 		expect(container.querySelector("dl[data-frontmatter]")).toBeNull();
 		expect(container).toHaveTextContent("body text");
+	});
+
+	const REL: RelativeUrls = {
+		link: (h) => `/x/${h}`,
+		image: (s) => `/img/${s}`,
+	};
+	const REL_TEXT =
+		"[a](docs/a.md) [e](https://e.com) [h](#top)\n\n![i](p.png) ![w](https://e.com/w.png)";
+
+	it("relativeTo：相对链接走站内 Link（不新开窗口），相对图片换地址，绝对地址与锚点不变", () => {
+		const { container } = render(
+			<MemoryRouter>
+				<Markdown text={REL_TEXT} relativeTo={REL} />
+			</MemoryRouter>,
+		);
+		const [rel, abs, hash] = container.querySelectorAll("a");
+		expect(rel?.getAttribute("href")).toBe("/x/docs/a.md");
+		expect(rel?.hasAttribute("target")).toBe(false);
+		expect(abs?.getAttribute("href")).toBe("https://e.com");
+		expect(abs?.getAttribute("target")).toBe("_blank");
+		expect(hash?.getAttribute("target")).toBe("_blank");
+		const [img, ext] = container.querySelectorAll("img");
+		expect(img?.getAttribute("src")).toBe("/img/p.png");
+		expect(ext?.getAttribute("src")).toBe("https://e.com/w.png");
+	});
+
+	it("relativeTo 返回 null 或不给 relativeTo 时相对地址原样输出", () => {
+		const none: RelativeUrls = { link: () => null, image: () => null };
+		for (const relativeTo of [none, undefined]) {
+			const { container, unmount } = render(
+				<Markdown text={REL_TEXT} relativeTo={relativeTo} />,
+			);
+			const a = container.querySelector("a");
+			expect(a?.getAttribute("href")).toBe("docs/a.md");
+			expect(a?.getAttribute("target")).toBe("_blank");
+			expect(container.querySelector("img")?.getAttribute("src")).toBe("p.png");
+			unmount();
+		}
 	});
 });
