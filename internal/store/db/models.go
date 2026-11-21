@@ -969,6 +969,21 @@ type Project struct {
 	Description             *string `json:"description"`
 }
 
+type ProjectRepo struct {
+	ProjectID     string  `json:"projectId"`
+	Kind          string  `json:"kind"`
+	RemoteUrl     *string `json:"remoteUrl"`
+	GithubRepoID  *int64  `json:"githubRepoId"`
+	DefaultBranch *string `json:"defaultBranch"`
+	SyncedAt      *int64  `json:"syncedAt"`
+	SizeBytes     int64   `json:"sizeBytes"`
+	ErrorCode     *string `json:"errorCode"`
+	ErrorMessage  *string `json:"errorMessage"`
+	ErrorAt       *int64  `json:"errorAt"`
+	CreatedAt     int64   `json:"createdAt"`
+	UpdatedAt     int64   `json:"updatedAt"`
+}
+
 type ProjectSnapshot struct {
 	ID           string  `json:"id"`
 	ProjectID    *string `json:"projectId"`
@@ -1033,6 +1048,27 @@ type PushSubscription struct {
 type RecoveryCode struct {
 	CodeHash string `json:"codeHash"`
 	UsedAt   *int64 `json:"usedAt"`
+}
+
+type RepoCommitThread struct {
+	ProjectID string  `json:"projectId"`
+	Sha       string  `json:"sha"`
+	ThreadID  *string `json:"threadId"`
+	Source    string  `json:"source"`
+	LinkedAt  int64   `json:"linkedAt"`
+}
+
+type RepoPush struct {
+	ID         int64   `json:"id"`
+	ProjectID  string  `json:"projectId"`
+	ThreadID   string  `json:"threadId"`
+	OrbID      string  `json:"orbId"`
+	Ref        string  `json:"ref"`
+	OldSha     string  `json:"oldSha"`
+	NewSha     string  `json:"newSha"`
+	PushedAt   int64   `json:"pushedAt"`
+	ExpandedAt *int64  `json:"expandedAt"`
+	ExpandNote *string `json:"expandNote"`
 }
 
 type RoleAvatar struct {

@@ -483,6 +483,13 @@ SELECT tp.thread_id, tp.listening, tp.ci_rounds FROM thread_pulls tp JOIN thread
 WHERE tp.repo_id = @repo_id AND tp.number = @number AND tp.unlinked = 0 AND t.archived_at IS NULL
 ORDER BY COALESCE(t.last_message_at, t.created_at) DESC LIMIT 1;
 
+-- The thread that first linked a PR, archived threads included (a merged commit still belongs to it). M24 phase 2:
+-- commit -> PR -> thread lookup for the repository browser.
+-- name: FirstPullThread :one
+SELECT thread_id FROM thread_pulls
+WHERE repo_id = @repo_id AND number = @number AND unlinked = 0
+ORDER BY linked_at LIMIT 1;
+
 -- When several threads sampled the same commit, only the most recently active one counts.
 -- name: ThreadByCommit :one
 SELECT tc.thread_id FROM thread_commits tc

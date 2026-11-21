@@ -107,6 +107,16 @@ type Artifacts struct {
 	Render ArtifactsRender `yaml:"render"`
 }
 
+// Repos 是项目仓库的控制面裸仓库（M24 阶段 ②）。
+type Repos struct {
+	// Git 是 git 可执行文件；空 = 在 PATH 里找 git（不带斜杠的名字也按 PATH 查找）。
+	Git string `yaml:"git"`
+	// MaxMirrorGB 是单个镜像的大小上限；0（缺省）= 5。拉取后超出即删除镜像并记 too_large。
+	MaxMirrorGB int `yaml:"max_mirror_gb"`
+	// MinFreeGB 是数据盘要保留的可用空间：低于它时不克隆、不拉取、不接受推送；0（缺省）= 2。
+	MinFreeGB int `yaml:"min_free_gb"`
+}
+
 // Schedule 是定时调度参数（M9）。
 type Schedule struct {
 	DeliverTimeout Duration `yaml:"deliver_timeout"`
@@ -258,6 +268,7 @@ type Orynd struct {
 	OrbTLS       OrbTLS      `yaml:"orb_tls"`
 	GitHub       GitHub      `yaml:"github"`
 	Artifacts    Artifacts   `yaml:"artifacts"`
+	Repos        Repos       `yaml:"repos"`
 }
 
 // CoordinatorDir 返回协调宿主目录（未配置时为 <data_dir>/coordinator）。
@@ -278,6 +289,9 @@ func (c Orynd) ArtifactRenderDir() string {
 	}
 	return filepath.Join(c.DataDir, "artifacts", "render")
 }
+
+// ReposDir 返回项目仓库裸仓库的目录（<data_dir>/repos）。
+func (c Orynd) ReposDir() string { return filepath.Join(c.DataDir, "repos") }
 
 // DefaultOrynd 返回带默认值的配置。
 func DefaultOrynd() Orynd {
@@ -341,6 +355,12 @@ func LoadOrynd(path string) (Orynd, error) {
 	// chromium 写的是不带斜杠的名字时按 PATH 查找，不转绝对路径
 	if p := c.Artifacts.Render.Chromium; strings.Contains(p, "/") {
 		if c.Artifacts.Render.Chromium, err = filepath.Abs(p); err != nil {
+			return c, err
+		}
+	}
+	// repos.git 同理：不带斜杠的名字按 PATH 查找
+	if p := c.Repos.Git; strings.Contains(p, "/") {
+		if c.Repos.Git, err = filepath.Abs(p); err != nil {
 			return c, err
 		}
 	}
@@ -432,6 +452,12 @@ func (c Orynd) Validate() error {
 	}
 	if c.Artifacts.Render.User == "root" {
 		errs = append(errs, errors.New("artifacts.render.user 不能是 root"))
+	}
+	if c.Repos.MaxMirrorGB < 0 {
+		errs = append(errs, errors.New("repos.max_mirror_gb 不能为负"))
+	}
+	if c.Repos.MinFreeGB < 0 {
+		errs = append(errs, errors.New("repos.min_free_gb 不能为负"))
 	}
 	return errors.Join(errs...)
 }

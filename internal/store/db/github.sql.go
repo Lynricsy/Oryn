@@ -466,6 +466,26 @@ func (q *Queries) FinishGithubDelivery(ctx context.Context, arg FinishGithubDeli
 	return err
 }
 
+const firstPullThread = `-- name: FirstPullThread :one
+SELECT thread_id FROM thread_pulls
+WHERE repo_id = ?1 AND number = ?2 AND unlinked = 0
+ORDER BY linked_at LIMIT 1
+`
+
+type FirstPullThreadParams struct {
+	RepoID int64 `json:"repoId"`
+	Number int64 `json:"number"`
+}
+
+// The thread that first linked a PR, archived threads included (a merged commit still belongs to it). M24 phase 2:
+// commit -> PR -> thread lookup for the repository browser.
+func (q *Queries) FirstPullThread(ctx context.Context, arg FirstPullThreadParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, firstPullThread, arg.RepoID, arg.Number)
+	var thread_id string
+	err := row.Scan(&thread_id)
+	return thread_id, err
+}
+
 const getGithubAutoclose = `-- name: GetGithubAutoclose :one
 SELECT repo_id, number, thread_id, comment_id, author, due_at, state, outcome FROM github_autoclose WHERE repo_id = ?1 AND number = ?2
 `
