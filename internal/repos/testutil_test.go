@@ -31,11 +31,24 @@ func requireGit(t *testing.T) {
 	}
 }
 
+// fakeSecrets 的键：全局令牌是主机名，项目令牌是 "<projectID>/<主机>"。
 type fakeSecrets map[string]string
 
 func (f fakeSecrets) GitToken(host string) (string, bool) {
 	v, ok := f[host]
 	return v, ok
+}
+
+func (f fakeSecrets) ProjectGitToken(projectID, host string) (string, bool, error) {
+	v, ok := f[projectID+"/"+host]
+	return v, ok, nil
+}
+
+// failingSecrets 读项目令牌一律出错（全局令牌照常可读）。
+type failingSecrets struct{ fakeSecrets }
+
+func (failingSecrets) ProjectGitToken(string, string) (string, bool, error) {
+	return "", false, errors.New("vault unavailable")
 }
 
 // fakeGitHub 是 GitHub 替身：tok 是拉取令牌；pulls 是 CommitThread 的结果（sha → 线程），calls 记反查次数。

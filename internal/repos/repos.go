@@ -81,9 +81,11 @@ type CommitThreads interface {
 	CommitThread(ctx context.Context, projectID, sha string) (threadID string, ok bool, err error)
 }
 
-// Secrets 是其它主机的 git 令牌（*secrets.Vault 实现）。
+// Secrets 是其它主机的 git 令牌（*secrets.Vault 实现）：项目级优先，没有时用全局的。
 type Secrets interface {
 	GitToken(host string) (string, bool)
+	// ProjectGitToken 是项目的 git/<host>/token；err 非 nil 时调用方拒绝，不回落到全局。
+	ProjectGitToken(projectID, host string) (tok string, found bool, err error)
 }
 
 // Error 是领域错误，api 按 Status / Code 原样输出。

@@ -473,6 +473,9 @@ func (s *Service) lfsRemote(ctx context.Context, prj db.Project) (remote, error)
 	if err != nil {
 		var se *syncError
 		if errors.As(err, &se) {
+			if se.code == "auth_failed" {
+				return remote{}, lfsErr(errLFSAuth, se.msg)
+			}
 			return remote{}, lfsErr(errLFSUnreachable, se.msg)
 		}
 		return remote{}, err

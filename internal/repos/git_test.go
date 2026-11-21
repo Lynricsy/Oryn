@@ -103,6 +103,57 @@ func TestProxyEnv(t *testing.T) {
 	}
 }
 
+// 非 github.com 主机的令牌：项目的 git/<host>/token 优先，没有时用全局的；读项目令牌出错时拒绝，不回落。
+func TestProjectGitToken(t *testing.T) {
+	const url = "https://git.example/acme/x"
+	sec := fakeSecrets{"git.example": "g1"}
+	e := newTestEnv(t, nil, sec, nil)
+	a, b := e.project(t, url), e.project(t, url)
+	sec[a+"/git.example"] = "p1"
+	token := func(id string) string {
+		t.Helper()
+		prj, err := e.st.Q.GetProject(t.Context(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rm, err := e.svc.remote(t.Context(), prj)
+		if err != nil {
+			t.Fatalf("remote(%s): %v", id, err)
+		}
+		return rm.token
+	}
+	if got := token(a); got != "p1" {
+		t.Fatalf("项目 A 的令牌 = %q，想要项目级 p1", got)
+	}
+	if got := token(b); got != "g1" {
+		t.Fatalf("项目 B 的令牌 = %q，想要全局 g1", got)
+	}
+	delete(sec, a+"/git.example")
+	if got := token(a); got != "g1" {
+		t.Fatalf("删掉项目条目后 A 的令牌 = %q，想要全局 g1", got)
+	}
+
+	f := newTestEnv(t, nil, failingSecrets{fakeSecrets{"git.example": "g1"}}, nil)
+	c := f.project(t, url)
+	prj, err := f.st.Q.GetProject(t.Context(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rm, err := f.svc.remote(t.Context(), prj); err == nil {
+		t.Fatalf("读项目令牌出错时 remote 成功了（token=%q），想要拒绝", rm.token)
+	}
+	if _, err := f.svc.lfsRemote(t.Context(), prj); err == nil || !strings.Contains(err.Error(), "lfs_auth_failed") {
+		t.Fatalf("lfsRemote err = %v，想要 lfs_auth_failed", err)
+	}
+	st := f.settle(t, c)
+	if st.LastError == nil || st.LastError.Code != "auth_failed" {
+		t.Fatalf("Status = %+v，想要 auth_failed", st)
+	}
+	if calls := f.trace.forDir(c); len(calls) != 0 {
+		t.Fatalf("读项目令牌出错时仍执行了 git：%v", calls)
+	}
+}
+
 func TestClassify(t *testing.T) {
 	for _, c := range []struct {
 		stderr string

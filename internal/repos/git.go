@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -375,7 +376,8 @@ type remote struct {
 }
 
 // remote 按项目算出拉取地址、凭据与守卫；地址不是可放行的 https 仓库时返回 unsupported_url。
-// 令牌只进环境变量（GIT_CONFIG_*），不进 argv、不进磁盘配置。
+// 令牌只进环境变量（GIT_CONFIG_*），不进 argv、不进磁盘配置。非 github.com 主机的令牌先取项目的 git/<host>/token、
+// 再取全局的（M24 阶段 ④）；读项目令牌出错时拒绝（auth_failed），不回落到可能更宽的全局令牌。
 func (s *Service) remote(ctx context.Context, prj db.Project) (remote, error) {
 	host, path, ok := orbs.HTTPSRepo(deref(prj.RepoUrl))
 	if !ok {
@@ -393,7 +395,15 @@ func (s *Service) remote(ctx context.Context, prj db.Project) (remote, error) {
 			}
 		}
 	} else if s.sec != nil {
-		if tok, ok := s.sec.GitToken(host); ok && tok != "" {
+		tok, found, err := s.sec.ProjectGitToken(prj.ID, host)
+		if err != nil {
+			slog.Warn("读取项目 Git 令牌失败，拒绝拉取", "project", prj.ID, "host", host, "err", err)
+			return remote{}, &syncError{code: "auth_failed", msg: "读取项目 Git 令牌失败"}
+		}
+		if !found {
+			tok, found = s.sec.GitToken(host)
+		}
+		if found && tok != "" {
 			rm.token, rm.vouched = tok, true
 		}
 	}
