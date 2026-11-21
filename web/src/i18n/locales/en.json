@@ -3214,7 +3214,8 @@
 			"home": "Home",
 			"agentConfig": "Agent config",
 			"projectAgentConfig": "Project agent config",
-			"fsRoot": "Root"
+			"fsRoot": "Root",
+			"repo": "Repository"
 		},
 		"orbDeleted": "The orb has been deleted; only the agent config is available.",
 		"agentConfigSaved": "Saved. Agent config applies to new orbs and on the next wake.",
@@ -4551,6 +4552,9 @@
 		"copyClone": "Copy git clone command",
 		"copyFailed": "Couldn't copy to the clipboard (the browser blocked access): {{text}}",
 		"settings": "Project settings"
+	},
+	"projectRepo": {
+		"copyFailed": "Copy failed"
 	},
 	"projectsOverview": {
 		"menu": "More actions",

@@ -26,6 +26,7 @@ import { useRealtimeBoxSync } from "../../api/box-queries";
 import { ApiError, UNAUTHORIZED_EVENT } from "../../api/client";
 import { useRealtimeGitHubSync } from "../../api/github-queries";
 import { useMe } from "../../api/queries";
+import { useRealtimeRepoSync } from "../../api/repo-queries";
 import { useRealtimeScheduleSync } from "../../api/schedule-queries";
 import { useRealtimeSshSync } from "../../api/ssh-queries";
 import { host } from "../../lib/host";
@@ -215,6 +216,8 @@ export function AppShell(): ReactNode {
 	// GitHub 集成状态（M14）同理
 	useRealtimeGitHubSync();
 	useRealtimeSshSync();
+	// 项目仓库镜像（M24）同理
+	useRealtimeRepoSync();
 	// Boxes（M23）同理
 	useRealtimeBoxSync();
 	// Artifacts 列表（M14）同理

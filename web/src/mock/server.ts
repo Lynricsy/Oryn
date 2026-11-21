@@ -77,6 +77,7 @@ import { MockMemory } from "./memory";
 import { handleNotifyFetch } from "./notify";
 import { handleOrbFetch } from "./orbfs";
 import { MockOwnerMemory } from "./owner-memory";
+import { MockRepo } from "./repo";
 import { handleSearchFetch } from "./search";
 import { redact, SHARE_RULES } from "./share-scan";
 import { MockSsh } from "./ssh";
@@ -572,6 +573,13 @@ export class MockServer {
 		changed: () => this.broadcast({ type: "ssh.changed" }),
 		threads: this.threads,
 		orbs: this.orbs,
+	});
+	/** 项目仓库镜像（M24）。 */
+	readonly repo = new MockRepo({
+		changed: (projectId) =>
+			this.broadcast({ type: "project_repo.changed", projectId }),
+		projects: () => this.projects,
+		threads: this.threads,
 	});
 	/** Boxes（M23）：box 的常驻 orb 由它放进 `orbs`。 */
 	readonly boxes = new MockBoxes({
@@ -1786,6 +1794,8 @@ export class MockServer {
 			}
 			return json(this.gitIdentity ? { identity: this.gitIdentity } : {});
 		}
+		const repoRes = await this.repo.handle(req, p, m, url);
+		if (repoRes) return repoRes;
 		const githubRes = await this.github.handle(p, m, body, url);
 		if (githubRes) return githubRes;
 		const sshRes = await this.ssh.handle(req, p, m, url);

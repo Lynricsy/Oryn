@@ -21,6 +21,7 @@ import { ArrowsVertical } from "@phosphor-icons/react/dist/csr/ArrowsVertical";
 import { ArrowUp } from "@phosphor-icons/react/dist/csr/ArrowUp";
 import { ArrowUpRight } from "@phosphor-icons/react/dist/csr/ArrowUpRight";
 import { Bell } from "@phosphor-icons/react/dist/csr/Bell";
+import { BookOpenText } from "@phosphor-icons/react/dist/csr/BookOpenText";
 import { Brain } from "@phosphor-icons/react/dist/csr/Brain";
 import { Broadcast } from "@phosphor-icons/react/dist/csr/Broadcast";
 import { Browser } from "@phosphor-icons/react/dist/csr/Browser";
@@ -72,6 +73,7 @@ import { Funnel } from "@phosphor-icons/react/dist/csr/Funnel";
 import { Gauge } from "@phosphor-icons/react/dist/csr/Gauge";
 import { GearSix } from "@phosphor-icons/react/dist/csr/GearSix";
 import { GitBranch } from "@phosphor-icons/react/dist/csr/GitBranch";
+import { GitCommit } from "@phosphor-icons/react/dist/csr/GitCommit";
 import { GitDiff } from "@phosphor-icons/react/dist/csr/GitDiff";
 import { GitFork } from "@phosphor-icons/react/dist/csr/GitFork";
 import { GithubLogo } from "@phosphor-icons/react/dist/csr/GithubLogo";
@@ -135,6 +137,7 @@ import { SquaresFour } from "@phosphor-icons/react/dist/csr/SquaresFour";
 import { Stack } from "@phosphor-icons/react/dist/csr/Stack";
 import { Stop } from "@phosphor-icons/react/dist/csr/Stop";
 import { Sun } from "@phosphor-icons/react/dist/csr/Sun";
+import { Tag } from "@phosphor-icons/react/dist/csr/Tag";
 import { Target } from "@phosphor-icons/react/dist/csr/Target";
 import { TelegramLogo } from "@phosphor-icons/react/dist/csr/TelegramLogo";
 import { Terminal } from "@phosphor-icons/react/dist/csr/Terminal";
@@ -218,6 +221,10 @@ const ICONS = {
 	fileImage: FileImage,
 	branch: GitBranch,
 	diff: GitDiff,
+	/** 项目仓库（M24）：提交 / 标签 / README */
+	commit: GitCommit,
+	tag: Tag,
+	readme: BookOpenText,
 	globe: Globe,
 	brain: Brain,
 	robot: Robot,

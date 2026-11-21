@@ -195,6 +195,23 @@ export class RealtimeClient {
 		for (const cb of [...this.boxesListeners]) cb();
 	}
 
+	/** 项目仓库镜像变更的监听者（M24）：收到 `project_repo.changed`（带项目 id）与每次连接建立时（null = 全部项目）调用。 */
+	private readonly projectRepoListeners = new Set<
+		(projectId: string | null) => void
+	>();
+
+	/** 订阅「某个项目的仓库镜像状态可能变了」；连接（重新）建立时以 null 通知（全部项目）。返回取消订阅。 */
+	onProjectRepoChanged(cb: (projectId: string | null) => void): () => void {
+		this.projectRepoListeners.add(cb);
+		return () => {
+			this.projectRepoListeners.delete(cb);
+		};
+	}
+
+	private emitProjectRepoChanged(projectId: string | null) {
+		for (const cb of [...this.projectRepoListeners]) cb(projectId);
+	}
+
 	/** artifact 列表变更的监听者（M14）：收到 `artifacts.changed` 与每次连接建立时调用。 */
 	private readonly artifactsListeners = new Set<() => void>();
 	/** 连接（重新）建立、artifact 观看已重发之后调用：断线期间错过的实时状态（画布等）靠它补回。 */
@@ -472,6 +489,7 @@ export class RealtimeClient {
 			this.emitSchedulesChanged();
 			this.emitGitHubChanged();
 			this.emitSshChanged();
+			this.emitProjectRepoChanged(null);
 			this.emitBoxesChanged();
 			for (const [id, w] of this.artifactWatches)
 				this.sendArtifactWatch(id, w.page);
@@ -783,6 +801,9 @@ export class RealtimeClient {
 				return;
 			case "boxes.changed":
 				this.emitBoxesChanged();
+				return;
+			case "project_repo.changed":
+				this.emitProjectRepoChanged(msg.projectId);
 				return;
 			case "artifacts.changed":
 				this.emitArtifactsChanged();

@@ -3214,7 +3214,8 @@
 			"home": "主目录",
 			"agentConfig": "Agent 配置",
 			"projectAgentConfig": "项目 Agent 配置",
-			"fsRoot": "根目录"
+			"fsRoot": "根目录",
+			"repo": "仓库"
 		},
 		"orbDeleted": "orb 已删除，只能查看 Agent 配置。",
 		"agentConfigSaved": "已保存。Agent 配置对新 orb 与下次唤醒生效。",
@@ -4551,6 +4552,9 @@
 		"copyClone": "复制 git clone 命令",
 		"copyFailed": "没能复制到剪贴板（浏览器不允许访问剪贴板）：{{text}}",
 		"settings": "项目设置"
+	},
+	"projectRepo": {
+		"copyFailed": "复制失败"
 	},
 	"projectsOverview": {
 		"menu": "更多操作",
