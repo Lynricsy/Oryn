@@ -37,6 +37,9 @@ func newSmartServer(t *testing.T, mut func(*Config)) *smartServer {
 	_, err := e.svc.InitHosted(context.Background(), id, "main", true, testIdentity)
 	require.NoError(t, err)
 	s := &smartServer{env: e, dir: e.svc.dir(id), started: make(chan struct{}, 64), done: make(chan struct{}, 64)}
+	// receive-pack 推送后（即使解包失败）会跑 `git maintenance run --auto`，缺省分离到后台：分离的进程拿着
+	// objects/maintenance.lock，可能比处理函数活得久，让「没有残留锁」的断言偶发失败。测试里让它同步跑完。
+	gitCmd(t, s.dir, "config", "maintenance.autoDetach", "false")
 	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.started <- struct{}{}
 		defer func() { s.done <- struct{}{} }()
