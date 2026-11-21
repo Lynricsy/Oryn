@@ -534,16 +534,23 @@ func (b *boxManager) cleanupTrial(app, trial string, prev *boxApp) {
 	b.removeEmptyApp(app, prev)
 }
 
-// removeEmptyApp：之前没有这个 app、data/ 也是空的，就删掉 ~/apps/<app>（首次激活失败不留目录）。
+// removeEmptyApp：之前没有这个 app 时（首次激活失败、下线之后），清掉 ~/apps/<app> 下不再被任何状态引用的
+// releases/ 与 current，再移除已经空了的 data/ 与 app 目录本身。data/ 绝不递归删除：非空、读不了或删不掉都原样保留。
 func (b *boxManager) removeEmptyApp(app string, prev *boxApp) {
 	if prev != nil || b.apps[app] != nil {
 		return
 	}
-	des, err := os.ReadDir(filepath.Join(b.appDir(app), "data"))
-	if err == nil && len(des) > 0 {
-		return
+	dir := b.appDir(app)
+	_ = os.RemoveAll(filepath.Join(dir, "releases"))
+	if st, err := os.Lstat(b.currentLink(app)); err == nil && st.Mode()&fs.ModeSymlink != 0 {
+		_ = os.Remove(b.currentLink(app))
 	}
-	_ = os.RemoveAll(b.appDir(app))
+	for _, p := range []string{filepath.Join(dir, "data"), dir} {
+		// 只删空目录：os.Remove 对普通文件也会 unlink，所以先确认是目录
+		if st, err := os.Lstat(p); err == nil && st.IsDir() {
+			_ = os.Remove(p)
+		}
+	}
 }
 
 // pruneLocked 删掉 keep 之外最旧的 release（不删 live），返回删掉的 id。

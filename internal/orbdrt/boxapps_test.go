@@ -641,6 +641,26 @@ func TestBoxUndeploy(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, resp.StatusCode, string(b))
 	resp, b = e.h.do(http.MethodDelete, "/box/apps/Bad_Name", nil, nil, nil)
 	assert.Equal(t, "invalid_request", e.h.errCode(resp, b, http.StatusBadRequest))
+
+	// 读不了的数据目录（ReadDir 出错）在不带 purge 的下线后仍然保留，app 目录也不会被递归删除
+	port2 := freePort(t)
+	res = e.deploy("blog", relID(2), port2, releaseTar(t, "v1"))
+	require.True(t, res.Ok, resMsg(res))
+	data := filepath.Join(e.appDir("blog"), "data")
+	require.NoError(t, os.RemoveAll(data))
+	require.NoError(t, os.WriteFile(data, []byte("not a dir"), 0o644)) // ReadDir 对它必定报错（root 也一样）
+	resp, b = e.h.do(http.MethodDelete, "/box/apps/blog", nil, nil, nil)
+	require.Equal(t, http.StatusNoContent, resp.StatusCode, string(b))
+	assert.FileExists(t, data, "读不了的数据目录保留")
+	locked := filepath.Join(e.appDir("blog2"), "data")
+	require.NoError(t, os.MkdirAll(locked, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(locked, "db"), []byte("x"), 0o644))
+	require.NoError(t, os.Chmod(locked, 0))
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	resp, b = e.h.do(http.MethodDelete, "/box/apps/blog2", nil, nil, nil)
+	require.Equal(t, http.StatusNoContent, resp.StatusCode, string(b))
+	require.NoError(t, os.Chmod(locked, 0o755))
+	assert.FileExists(t, filepath.Join(locked, "db"), "无权限读取的数据目录保留")
 }
 
 func TestBoxFirstActivationFails(t *testing.T) {
