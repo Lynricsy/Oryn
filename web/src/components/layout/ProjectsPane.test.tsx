@@ -1,6 +1,5 @@
 /**
- * 「项目」分区侧栏（M9.6）：首行「新建项目」→ /projects/new；项目行链到 /projects/<id>；行尾按钮设过滤并回线程分区
- * （回到线程分区记住的路径）；「无项目的线程」= 只看无项目线程。数据走 mock 后端。
+ * 「项目」分区侧栏（M9.6）：首行「新建项目」→ /projects/new；项目行链到 /projects/<id>。数据走 mock 后端。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, within } from "@testing-library/react";
@@ -9,7 +8,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { threads as fixtureThreads, projects } from "../../mock/fixtures";
 import { MockServer } from "../../mock/server";
 import { indexStore } from "../../state/stores";
-import { uiStore } from "../../state/ui";
 import { ProjectsPane } from "./ProjectsPane";
 
 function Where() {
@@ -60,13 +58,11 @@ beforeEach(() => {
 		fixtureThreads.filter((t) => !t.archivedAt),
 		1,
 	);
-	uiStore.setState({ projectFilter: undefined, sectionPaths: {} });
 });
 
 afterEach(() => {
 	vi.unstubAllGlobals();
 	indexStore.getState().setAll([], 0);
-	uiStore.setState({ projectFilter: undefined });
 	window.innerWidth = 1024;
 });
 
@@ -90,27 +86,5 @@ describe("ProjectsPane", () => {
 		expect(links[0]).toHaveTextContent(target?.name ?? "");
 		fireEvent.click(links[1] as HTMLElement);
 		expect(where()).toBe(`/projects/${live[1]?.id}`);
-	});
-
-	it("行尾按钮：设过滤并回到线程分区记住的路径", async () => {
-		const p = live[0];
-		uiStore.setState({ sectionPaths: { threads: "/t/T-remembered" } });
-		mount(`/projects/${live[1]?.id}`);
-		fireEvent.click(
-			await within(list()).findByRole("button", {
-				name: `只看「${p?.name}」的线程`,
-			}),
-		);
-		expect(uiStore.getState().projectFilter).toBe(p?.id);
-		expect(where()).toBe("/t/T-remembered");
-	});
-
-	it("「无项目的线程」：只看无项目线程并回线程分区", () => {
-		mount();
-		fireEvent.click(
-			within(list()).getByRole("button", { name: /^无项目的线程/ }),
-		);
-		expect(uiStore.getState().projectFilter).toBeNull();
-		expect(where()).toBe("/");
 	});
 });

@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Thread } from "../../api/client";
-import {
-	filterByProject,
-	groupThreads,
-	rollupState,
-	stackState,
-} from "./ThreadsPane";
+import { groupThreads, rollupState, stackState } from "./ThreadsPane";
 
 const NOW = 1_800_000_000_000;
 
@@ -128,21 +123,6 @@ describe("侧边栏分区（M9）", () => {
 			]),
 		).toBe("error");
 		expect(stackState([])).toBe("idle");
-	});
-
-	it("项目过滤：undefined 不过滤，null 只留无项目，否则只留该项目", () => {
-		const list = [
-			th("a", { projectId: "p1" }),
-			th("b"),
-			th("c", { projectId: "p2" }),
-		];
-		expect(filterByProject(list, undefined).map((t) => t.id)).toEqual([
-			"a",
-			"b",
-			"c",
-		]);
-		expect(filterByProject(list, null).map((t) => t.id)).toEqual(["b"]);
-		expect(filterByProject(list, "p2").map((t) => t.id)).toEqual(["c"]);
 	});
 });
 

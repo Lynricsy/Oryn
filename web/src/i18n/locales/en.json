@@ -166,8 +166,6 @@
 		"pullRequest": "Linked GitHub pull request",
 		"scheduledRuns": "Scheduled runs",
 		"allRuns": "All runs",
-		"projectFilter": "Project: {{name}}",
-		"clearProjectFilter": "Clear project filter",
 		"projectMeta": "Threads {{threads}} · Schedules {{schedules}}",
 		"projectSettings": "Settings for “{{name}}”",
 		"projectThreads_one": "{{count}} thread",
@@ -4335,12 +4333,8 @@
 		"archiveOne": "Archive “{{title}}”",
 		"computer": "Assistant's computer"
 	},
-	"projectsPane": {
-		"filterThreads": "Show only threads in {{name}}",
-		"noProjectThreads": "Threads without a project"
 	},
 	"projectsPage": {
-		"viewThreads": "View threads",
 		"settings": "Project settings",
 		"environment": "Environment setup",
 		"noSetupRun": "No setup runs yet.",

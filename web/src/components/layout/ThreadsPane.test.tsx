@@ -1,6 +1,6 @@
 /**
  * 「线程」分区侧栏：线程树与链接文字契约；空间分组、线程内定时的时钟标记、定时运行的折叠行（M9，数据走 mock 后端，
- * 夹具同截图）；M9.6 起不再有「全局助手」固定行与底部「已连接 + 图标」行，项目过滤签仍在搜索框下。
+ * 夹具同截图）；M9.6 起不再有「全局助手」固定行与底部「已连接 + 图标」行。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -23,7 +23,6 @@ import {
 	threads as fixtureThreads,
 	M9_IDS,
 	MAIN_THREAD,
-	projects,
 } from "../../mock/fixtures";
 import { MockServer } from "../../mock/server";
 import { connectionStore, indexStore } from "../../state/stores";
@@ -172,7 +171,6 @@ describe("线程分区（M9 / M9.6）", () => {
 		connectionStore.setState({ status: "open" });
 		uiStore.setState({
 			sidebarOpen: true,
-			projectFilter: undefined,
 			expandedStacks: {},
 		});
 	});
@@ -180,7 +178,6 @@ describe("线程分区（M9 / M9.6）", () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
 		indexStore.getState().setAll([], 0);
-		uiStore.setState({ projectFilter: undefined });
 	});
 
 	function mount() {
@@ -269,35 +266,6 @@ describe("线程分区（M9 / M9.6）", () => {
 		expect(links[2]).toHaveTextContent("全部运行");
 		fireEvent.click(head);
 		expect(within(stack()).queryAllByRole("link")).toEqual([]);
-	});
-
-	it("项目过滤签：过滤后只剩该项目的线程，可清除", async () => {
-		const oryn = projects[0];
-		uiStore.setState({ projectFilter: oryn?.id });
-		mount();
-		const chip = screen.getByTestId("project-filter");
-		await waitFor(() => expect(chip).toHaveTextContent(`项目：${oryn?.name}`));
-		expect(
-			screen
-				.queryAllByRole("link")
-				.some((a) => a.getAttribute("href") === `/t/${M9_IDS.scheduledThread}`),
-		).toBe(false);
-		fireEvent.click(within(chip).getByRole("button", { name: "清除项目过滤" }));
-		expect(uiStore.getState().projectFilter).toBeUndefined();
-		expect(screen.queryByTestId("project-filter")).toBeNull();
-		expect(
-			screen
-				.queryAllByRole("link")
-				.some((a) => a.getAttribute("href") === `/t/${M9_IDS.scheduledThread}`),
-		).toBe(true);
-	});
-
-	it("「无项目」过滤签", () => {
-		uiStore.setState({ projectFilter: null });
-		mount();
-		expect(screen.getByTestId("project-filter")).toHaveTextContent(
-			"项目：无项目",
-		);
 	});
 
 	it("「需要你」分组在最上、子线程平铺；父行状态图标上卷；收件箱入口角标", () => {

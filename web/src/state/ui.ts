@@ -184,9 +184,6 @@ export interface UiState {
 	sectionPaths: Partial<Record<SectionId, string>>;
 	/** 记下某分区的路径：值没变不写；写 `SECTION_PATHS_KEY`，存储不可用时静默。 */
 	noteSectionPath(section: SectionId, path: string): void;
-	/** 侧栏线程列表的项目过滤：`undefined` 不过滤，`null` 只看无项目线程，否则项目 id。 */
-	projectFilter: string | null | undefined;
-	setProjectFilter(filter: string | null | undefined): void;
 	/** 侧栏里展开的定时折叠（按定时 id，不持久化）。 */
 	expandedStacks: Record<string, boolean>;
 	toggleStack(scheduleId: string): void;
@@ -275,8 +272,6 @@ export const uiStore = createStore<UiState>((set, get) => ({
 		}
 		set({ sectionPaths });
 	},
-	projectFilter: undefined,
-	setProjectFilter: (projectFilter) => set({ projectFilter }),
 	expandedStacks: {},
 	toggleStack: (id) =>
 		set((s) => ({

@@ -87,7 +87,7 @@ beforeEach(() => {
 		1,
 	);
 	connectionStore.setState({ status: "open" });
-	uiStore.setState({ projectFilter: undefined, sectionPaths: {} });
+	uiStore.setState({ sectionPaths: {} });
 });
 
 afterEach(() => {

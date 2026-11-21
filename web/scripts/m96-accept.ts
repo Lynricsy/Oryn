@@ -3308,22 +3308,6 @@ async function R8() {
 			saved === script,
 			`GET projects/$P 的 setupScript = 新值（${saved}）`,
 		);
-		await main
-			.getByRole("button", { name: zh.projectsPage.viewThreads })
-			.first()
-			.click();
-		await waitTab(page, "threads");
-		const chip = page.getByTestId("project-filter");
-		await chip.waitFor({ timeout: 10_000 });
-		check(
-			((await chip.textContent()) ?? "").includes(p.name),
-			"「查看线程」后回到线程分区且出现 $P 的过滤签",
-		);
-		await chip
-			.getByRole("button")
-			.first()
-			.click()
-			.catch(() => {});
 		await page.goto(`${BASE}/settings/projects`);
 		const landed = await waitPath(page, /^\/projects(\/|$)/, 15_000);
 		check(true, `/settings/projects 落到 ${landed}`);

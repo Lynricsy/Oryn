@@ -1,5 +1,5 @@
 /**
- * 「线程」分区侧栏（按最新 Amp 布局）：项目过滤签、收件箱入口（搜索入口在侧栏外壳里，即命令面板）；分组 需要你 → 空间 → 已置顶 → 按项目分组的活跃线程 →
+ * 「线程」分区侧栏（按最新 Amp 布局）：收件箱入口（搜索入口在侧栏外壳里，即命令面板）；分组 需要你 → 空间 → 已置顶 → 按项目分组的活跃线程 →
  * 72 小时未活动（一键归档）→ 稍后提醒 → 已归档。协调对话（Space 聊天、助手对话）不进任何线程分组（助手对话在「助手」分区）。
  * 「需要你」是置顶的跨项目分组：等待输入或出错的线程（含子线程，平铺）另在这里列一份，原分组里照常保留；空时不显示。
  * 线程行 = 状态图标 + 标题卡图标 + 标题 + 相对时间 / 子线程计数 / 未读点（标题前最多两个标记）；线程色是行左缘的一根细竖条，
@@ -12,7 +12,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink, useNavigate } from "react-router";
-import type { Project, Thread, ThreadState } from "../../api/client";
+import type { Thread, ThreadState } from "../../api/client";
 import { qk, useArchivedThreads, useProjects } from "../../api/queries";
 import { useSchedules } from "../../api/schedule-queries";
 import { type Space, useSpaces } from "../../api/space-queries";
@@ -62,15 +62,6 @@ export interface SidebarGroups {
 	inactive: Thread[];
 	snoozed: Thread[];
 	children: Map<string, Thread[]>;
-}
-
-/** 侧栏的项目过滤：`undefined` 不过滤，`null` 只留无项目线程，否则只留该项目的线程。 */
-export function filterByProject(
-	threads: readonly Thread[],
-	filter: string | null | undefined,
-): Thread[] {
-	if (filter === undefined) return [...threads];
-	return threads.filter((t) => (t.projectId ?? null) === filter);
 }
 
 /** 折叠行的汇总状态：最需要你的那个（等待输入 > 出错 > 工作中 > 准备中 > 空闲）。 */
@@ -525,48 +516,9 @@ function SpaceRow({
 	);
 }
 
-/** 项目过滤签（搜索框下）：项目徽标 + 名称 + 关闭。 */
-function ProjectFilterChip({
-	filter,
-	projects,
-}: {
-	filter: string | null;
-	projects: readonly Project[];
-}) {
-	const { t } = useTranslation();
-	const p = filter ? projects.find((x) => x.id === filter) : undefined;
-	const name = filter === null ? t("sidebar.noProject") : (p?.name ?? filter);
-	return (
-		<div className="shrink-0 px-2.5 pb-2">
-			<span
-				data-testid="project-filter"
-				className="inline-flex h-7 max-w-full items-center gap-1.5 rounded-full border border-border bg-[var(--sb-field)] pr-1 pl-2 text-fg text-xs"
-			>
-				{filter === null ? (
-					<GroupIcon name="folder" />
-				) : (
-					<ProjectBadge name={name} icon={p?.icon} size={16} />
-				)}
-				<span className="min-w-0 truncate">
-					{t("sidebar.projectFilter", { name })}
-				</span>
-				<button
-					type="button"
-					aria-label={t("sidebar.clearProjectFilter")}
-					title={t("sidebar.clearProjectFilter")}
-					onClick={() => uiStore.getState().setProjectFilter(undefined)}
-					className="grid h-5 w-5 shrink-0 place-items-center rounded-full text-faint hover:bg-[var(--sb-hover)] hover:text-fg"
-				>
-					<Icon name="close" size={11} />
-				</button>
-			</span>
-		</div>
-	);
-}
-
 /**
- * 收件箱入口（搜索框下的固定行，手机下沉侧栏同样可见）：角标 = 等你处理 + 已完成未读 + 出错的线程数，
- * 不受项目过滤影响；计数是中性信息，用描边计数签，不用强调色。
+ * 收件箱入口（搜索框下的固定行，手机下沉侧栏同样可见）：角标 = 等你处理 + 已完成未读 + 出错的线程数；
+ * 计数是中性信息，用描边计数签，不用强调色。
  */
 function InboxEntry({ now }: { now: number }): ReactNode {
 	const { t } = useTranslation();
@@ -590,7 +542,6 @@ export function ThreadsPane(): ReactNode {
 	const { t } = useTranslation();
 	const threads = useIndex((s) => s.threads);
 	const projects = useProjects();
-	const projectFilter = useUi((s) => s.projectFilter);
 	const now = useNow();
 	// 项目变更没有实时推送：服务端会把带卡片的自动标题图标写进尚无图标的项目，
 	// 侧栏发现这样的线程（签名变化）时让项目列表失效一次，拉回新图标
@@ -614,9 +565,8 @@ export function ThreadsPane(): ReactNode {
 		if (iconlessSig) void qc.invalidateQueries({ queryKey: qk.projects });
 	}, [iconlessSig, qc]);
 	const groups = useMemo(
-		() =>
-			groupThreads(filterByProject(Object.values(threads), projectFilter), now),
-		[threads, projectFilter, now],
+		() => groupThreads(Object.values(threads), now),
+		[threads, now],
 	);
 	const hasStacks = groups.byProject.some((g) => g.stacks.length > 0);
 	const stackSchedules = useSchedules({ mode: "new_thread" }, hasStacks);
@@ -647,12 +597,6 @@ export function ThreadsPane(): ReactNode {
 
 	return (
 		<>
-			{projectFilter !== undefined && (
-				<ProjectFilterChip
-					filter={projectFilter}
-					projects={projects.data?.projects ?? []}
-				/>
-			)}
 			<div className="shrink-0 px-2 pb-1">
 				<InboxEntry now={now} />
 			</div>

@@ -3209,16 +3209,14 @@ async function S21() {
 			const projs = page.getByTestId("sidebar-projects");
 			await projs.waitFor();
 			await shot(page, `S21-projects-${RUN}`);
-			// M9.6：项目行进项目页；行尾按钮才是「只看该项目的线程」
 			await projs
-				.getByRole("button", { name: `只看「${PROJECT}」的线程` })
+				.locator('a[href^="/projects/prj_"]')
 				.first()
-				.click();
-			const chip = page.getByTestId("project-filter");
-			await chip.waitFor({ timeout: 5_000 });
+				.waitFor({ timeout: 5_000 })
+				.catch(() => {});
 			check(
-				((await chip.textContent()) ?? "").includes(PROJECT),
-				"点项目的过滤按钮回到线程分区并出现过滤签",
+				(await projs.locator('a[href^="/projects/prj_"]').count()) > 0,
+				"项目分区列出项目行（链到项目页）",
 			);
 			await bar.getByRole("button", { name: "更多" }).click();
 			const more = page.getByTestId("sidebar-more");

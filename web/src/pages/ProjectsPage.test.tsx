@@ -1,6 +1,6 @@
 /**
  * 项目分区的主区（M9.6）：索引页的跳转与空状态、项目设置表单（新建 / 编辑 / 取消 / 删除）、环境配置卡、
- * 服务汇总卡、定时任务卡与「查看线程」。fetch 换成按路径记账的桩。
+ * 服务汇总卡与定时任务卡。fetch 换成按路径记账的桩。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -15,7 +15,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Orb, Project, Schemas, Thread } from "../api/client";
 import i18n from "../i18n";
 import { indexStore } from "../state/stores";
-import { uiStore } from "../state/ui";
 import { answerConfirm } from "../test/confirm";
 import { ProjectPage, ProjectsIndexPage } from "./ProjectsPage";
 
@@ -218,7 +217,6 @@ function mount(path: string) {
 		<QueryClientProvider client={client}>
 			<MemoryRouter initialEntries={[path]}>
 				<Routes>
-					<Route path="/" element={<p>THREADS</p>} />
 					<Route path="/projects" element={<ProjectsIndexPage />} />
 					<Route path="/projects/new" element={<ProjectPage create />} />
 					<Route path="/projects/:projectId" element={<ProjectPage />} />
@@ -238,7 +236,6 @@ beforeEach(() => {
 	writes = [];
 	snapshotList = [];
 	projectFiles = {};
-	uiStore.getState().setProjectFilter(undefined);
 	vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
 		handle(
 			input instanceof Request
@@ -418,14 +415,6 @@ describe("ProjectPage 项目设置", () => {
 		const box = await screen.findByTestId("project-not-found");
 		expect(box).toHaveTextContent(i18n.t("projectsPage.notFound"));
 		expect(within(box).getByRole("link")).toHaveAttribute("href", "/projects");
-	});
-
-	it("「查看线程」设侧栏过滤并回线程分区", async () => {
-		mount(`/projects/${ORYN.id}`);
-		fireEvent.click(await screen.findByRole("button", { name: "查看线程" }));
-		expect(uiStore.getState().projectFilter).toBe(ORYN.id);
-		expect(where()).toHaveTextContent(/^\/$/);
-		expect(screen.getByText("THREADS")).toBeInTheDocument();
 	});
 
 	it("定时任务卡：渲染该项目的定时列表", async () => {

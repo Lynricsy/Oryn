@@ -119,7 +119,6 @@ beforeEach(() => {
 		sidebarCollapsed: false,
 		sidebarOpen: false,
 		sectionPaths: {},
-		projectFilter: undefined,
 	});
 	indexStore.getState().setAll([], 1);
 	vi.stubGlobal(

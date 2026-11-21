@@ -166,8 +166,6 @@
 		"pullRequest": "关联了 GitHub PR",
 		"scheduledRuns": "定时运行",
 		"allRuns": "全部运行",
-		"projectFilter": "项目：{{name}}",
-		"clearProjectFilter": "清除项目过滤",
 		"projectMeta": "{{threads}} 个线程 · {{schedules}} 个定时",
 		"projectSettings": "「{{name}}」的设置",
 		"projectThreads_one": "{{count}} 个线程",
@@ -4335,12 +4333,8 @@
 		"archiveOne": "归档「{{title}}」",
 		"computer": "助手的电脑"
 	},
-	"projectsPane": {
-		"filterThreads": "只看「{{name}}」的线程",
-		"noProjectThreads": "无项目的线程"
 	},
 	"projectsPage": {
-		"viewThreads": "查看线程",
 		"settings": "项目设置",
 		"environment": "环境配置",
 		"noSetupRun": "还没有环境配置记录。",
