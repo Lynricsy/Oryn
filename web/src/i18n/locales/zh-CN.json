@@ -3394,7 +3394,8 @@
 		"resetRoot": "改回工作目录",
 		"ship": {
 			"open": "推送并开 PR",
-			"update": "推送更新"
+			"update": "推送更新",
+			"hosted": "提交并推送到 {{base}}"
 		},
 		"stageAll": "全部暂存",
 		"unstageAll": "全部取消暂存",

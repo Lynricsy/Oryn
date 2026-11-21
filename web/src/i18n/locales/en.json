@@ -3394,7 +3394,8 @@
 		"resetRoot": "Back to working directory",
 		"ship": {
 			"open": "Push and open PR",
-			"update": "Push update"
+			"update": "Push update",
+			"hosted": "Commit & push to {{base}}"
 		},
 		"stageAll": "Stage all",
 		"unstageAll": "Unstage all",

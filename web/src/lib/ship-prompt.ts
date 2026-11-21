@@ -1,6 +1,7 @@
 /**
  * 改动面板「推送并开 PR」/「推送更新」（M14）发给 agent 的固定提示词。服务端不做确定性的 commit / push，
  * 全由 agent 在 orb 里用已登录的 git 与 `gh` 完成。文字与 docs/plan-m14.md 步骤 5.4 逐字一致。
+ * 托管项目见 buildHostedShipPrompt（M24 阶段 ③）。
  */
 export function buildShipPrompt(o: { base?: string; update: boolean }): string {
 	if (o.update)
@@ -13,5 +14,16 @@ export function buildShipPrompt(o: { base?: string; update: boolean }): string {
 		"3. Push the branch to origin.",
 		`4. Open a pull request against \`${base}\` with \`gh pr create\`; the body should summarize what changed and how it was verified.`,
 		"5. Reply with the pull request URL.",
+	].join("\n");
+}
+
+/** 托管项目（M24 阶段 ③）：直接推上基线分支；推上基线后服务端自动把线程标为已交付。 */
+export function buildHostedShipPrompt(base: string): string {
+	return [
+		`Ship the current work to \`${base}\`:`,
+		"1. Commit any uncommitted changes that belong to this task, with a clear message.",
+		`2. Run \`git fetch origin\` and rebase your commits onto \`origin/${base}\`, resolving any conflicts.`,
+		`3. Push with \`git push origin HEAD:${base}\`. If it is rejected because \`${base}\` moved, repeat step 2 and push again; do not force-push.`,
+		"4. Reply with the commits that were pushed (short SHA and subject).",
 	].join("\n");
 }

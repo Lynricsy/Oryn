@@ -1,13 +1,14 @@
-/** 改动面板的「推送并开 PR」/「推送更新」（M14）：只在已绑定项目出现，点击发固定提示词。 */
+/** 改动面板的「推送并开 PR」/「推送更新」（M14）与托管项目的「提交并推送到 <基线>」（M24）：点击发固定提示词。 */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Schemas, Thread } from "../../api/client";
+import type { Orb, Schemas, Thread } from "../../api/client";
 import { qk } from "../../api/queries";
 import i18n from "../../i18n";
-import { buildShipPrompt } from "../../lib/ship-prompt";
+import { buildHostedShipPrompt, buildShipPrompt } from "../../lib/ship-prompt";
+import { makeOrb } from "../../mock/fixtures";
 import { realtime } from "../../realtime/socket";
-import { indexStore } from "../../state/stores";
+import { getThreadStore, indexStore } from "../../state/stores";
 import { ShipButton } from "./ShipButton";
 
 const PROJECT = "prj_01JCZ8M3W4X5Y6Z7A8B9C0D1S1";
@@ -58,15 +59,29 @@ const OPEN_PULL: Schemas["ThreadPull"] = {
 	listening: true,
 };
 
-function mount(threadId: string, bound: boolean) {
+function mount(
+	threadId: string,
+	bound: boolean,
+	patch: Partial<Schemas["Project"]> = {},
+) {
 	const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-	qc.setQueryData(qk.projects, { projects: [project(bound)] });
+	qc.setQueryData(qk.projects, {
+		projects: [{ ...project(bound), ...patch }],
+	});
 	return render(
 		<QueryClientProvider client={qc}>
 			<ShipButton threadId={threadId} base="main" />
 		</QueryClientProvider>,
 	);
 }
+
+/** 托管项目（M24）：没有 repoUrl 与 github，基线 trunk。 */
+const HOSTED: Partial<Schemas["Project"]> = {
+	repoUrl: undefined,
+	github: undefined,
+	hosted: true,
+	baseBranch: "trunk",
+};
 
 beforeEach(() => {
 	i18n.changeLanguage("zh-CN");
@@ -91,6 +106,12 @@ describe("buildShipPrompt", () => {
 		expect(buildShipPrompt({ base: "main", update: true })).toBe(
 			"Update the open pull request for this work: commit any uncommitted changes that belong to this task, push the branch to origin, and reply with what was pushed.",
 		);
+	});
+	it("托管项目：推上基线、不强推", () => {
+		const p = buildHostedShipPrompt("main");
+		expect(p.startsWith("Ship the current work to `main`:\n1. ")).toBe(true);
+		expect(p).toContain("git push origin HEAD:main");
+		expect(p).toContain("do not force-push");
 	});
 });
 
@@ -127,5 +148,37 @@ describe("ShipButton", () => {
 		});
 		const frame = cmd.mock.calls[0]?.[1] as { message: string };
 		expect(frame.message.startsWith("Update the open pull request")).toBe(true);
+	});
+
+	it("托管项目：文案「提交并推送到 trunk」，提示词推到 HEAD:trunk", async () => {
+		const cmd = vi.spyOn(realtime, "cmd").mockResolvedValue({} as never);
+		indexStore.getState().upsertThread(thread("T-ship-hosted", [OPEN_PULL]));
+		mount("T-ship-hosted", false, HOSTED);
+		const btn = screen.getByTestId("ship-button");
+		expect(btn).toHaveTextContent("提交并推送到 trunk");
+		await act(async () => {
+			fireEvent.click(btn);
+		});
+		const frame = cmd.mock.calls[0]?.[1] as { message: string };
+		expect(frame.message).toContain("HEAD:trunk");
+	});
+
+	it("runner 线程不渲染（托管项目也一样）", () => {
+		const t = thread("T-ship-runner");
+		indexStore.getState().upsertThread(t);
+		getThreadStore(t.id)
+			.getState()
+			.apply([
+				{ type: "thread", thread: { ...t, orbId: "orb-ship-runner" } },
+				{
+					type: "orb",
+					orb: {
+						...makeOrb("orb-ship-runner", [t.id]),
+						kind: "runner",
+					} as Orb,
+				},
+			]);
+		mount("T-ship-runner", true, HOSTED);
+		expect(screen.queryByTestId("ship-button")).toBeNull();
 	});
 });
