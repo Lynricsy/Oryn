@@ -66,6 +66,9 @@ type CreateParams struct {
 	// 调用方据此写入与线程同生共死的初始化（如 GitHub 任务的 review_only，M15）。返回错误时整个 Create 失败，
 	// 按建线程失败清理（删本次新建的 orb、worktree），不下发任何帧。
 	InitTx func(ctx context.Context, q *db.Queries, threadID string) error
+	// Cwd 是线程的工作目录（M23）：只能与 OrbID 同用，且那台 orb 必须是 box；由 API 层从 executor.kind = box
+	// 经 boxes.ThreadTarget 解析得出（`~` 或 `~/apps/<app>/current[/<root>]`），从不来自客户端。
+	Cwd string
 }
 
 // maxRoleLen 是新建线程时 role 名的长度上限（字节），与 role 头像接口的校验一致。
@@ -152,6 +155,9 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 	if p.RunnerID != "" && (p.OrbID != "" || p.Provider != "" || p.Type != "") {
 		return apigen.Thread{}, errf("invalid", "a runner thread cannot also name an orb, provider or type")
 	}
+	if p.Cwd != "" && p.OrbID == "" {
+		return apigen.Thread{}, errf("invalid", "cwd is only valid for threads on a box")
+	}
 	var orb db.Orb
 	newOrb := false
 	var rt *runnerTarget
@@ -185,6 +191,13 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 		}
 		if o.Computer == 1 {
 			return apigen.Thread{}, errf(CodeOrbIsComputer, "orb is the assistant's computer; threads cannot run on it")
+		}
+		// box 的线程只能经 executor.kind = box 建（ThreadTarget 判定停机与目录）；cwd 也只对 box 有意义
+		if o.Box == 1 && p.Cwd == "" {
+			return apigen.Thread{}, errf(CodeOrbIsBox, "this orb is a box; start the thread with executor.kind = box")
+		}
+		if o.Box != 1 && p.Cwd != "" {
+			return apigen.Thread{}, errf("invalid", "cwd is only valid for threads on a box")
 		}
 	default:
 		var profileID string
@@ -232,6 +245,8 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 	if rt != nil {
 		// 项目只作归类，不触发 clone
 		row.Cwd, row.Worktree = &rt.cwd, worktreeJSON(rt.worktree)
+	} else if p.Cwd != "" {
+		row.Cwd = &p.Cwd
 	}
 	if p.SpaceID != "" {
 		row.SpaceID = &p.SpaceID
@@ -329,6 +344,9 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 		return apigen.Thread{}, err
 	}
 	s.out().IndexUpsert(out)
+	if orb.Box == 1 {
+		s.boxThreadsChanged()
+	}
 	// 不变式：wake / scheduleStart（首条提示词因此可能开始执行）只在上面的事务提交之后发生，InitTx 写入的行此时
 	// 必已可读——出站代理按线程任务现查的门禁（review_only 等）没有「线程已在跑、任务还没写」的窗口
 	if p.OrbID != "" || rt != nil {
@@ -337,6 +355,13 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 		s.scheduleStart(id)
 	}
 	return out, nil
+}
+
+// boxThreadsChanged 通知 box 页线程数变了（M23；Config.BoxThreadsChanged 为 nil 时无操作）。
+func (s *Service) boxThreadsChanged() {
+	if s.cfg.BoxThreadsChanged != nil {
+		s.cfg.BoxThreadsChanged()
+	}
 }
 
 // insertThread 在一个事务里写入线程行、标签与 extra（持久化的续作）。工作线程带 Space 时，事务的第一条语句复核
@@ -787,6 +812,11 @@ func (s *Service) deleteThread(ctx context.Context, t *thread, inTx func(q *db.Q
 	t.mu.Lock()
 	s.out().IndexRemove(id)
 	t.mu.Unlock()
+	if orbID != "" {
+		if o, err := s.st.Q.GetOrb(ctx, orbID); err == nil && o.Box == 1 {
+			s.boxThreadsChanged()
+		}
+	}
 	s.releaseOrb(ctx, orbID)
 	return nil
 }
@@ -1040,7 +1070,7 @@ func (s *Service) Fork(ctx context.Context, srcID string, entryID *string, env s
 	o, oerr := s.st.Q.GetOrb(ctx, orbID)
 	switch env {
 	case "share":
-		return s.forkShare(ctx, src, child, orbID, entry)
+		return s.forkShare(ctx, src, child, orbID, entry, oerr == nil && o.Box == 1)
 	case "copy":
 		if oerr == nil && orbs.IsRunner(o) {
 			return apigen.Thread{}, errf(CodeRunnerUnsupported, "a runner thread can only be forked with env=share")
@@ -1061,7 +1091,8 @@ func (s *Service) Fork(ctx context.Context, srcID string, entryID *string, env s
 // forkShare：源 agent fork_from 写出新会话文件 → fs.move 到新线程会话目录 → agent.start。
 // 回退（计划 Assumptions）：fs.move 失败，或新 agent 未能打开该文件就退出时，
 // 改为以源会话目录的副本启动（fs.copyTree）再发 fork{entryId}。
-func (s *Service) forkShare(ctx context.Context, src *thread, child db.CreateThreadParams, orbID, entry string) (apigen.Thread, error) {
+// box 为真表示源 orb 是 box（由 Fork 读出）：建成后通知 BoxThreadsChanged。
+func (s *Service) forkShare(ctx context.Context, src *thread, child db.CreateThreadParams, orbID, entry string, box bool) (apigen.Thread, error) {
 	frame, _ := json.Marshal(map[string]string{"type": "fork_from", "entryId": entry})
 	// fork_from 把新会话文件写进源会话目录：在途期间暂存新出现的主文件，免得产物被当成源线程的新会话入库
 	src.mu.Lock()
@@ -1120,6 +1151,9 @@ func (s *Service) forkShare(ctx context.Context, src *thread, child db.CreateThr
 		return apigen.Thread{}, err
 	}
 	s.out().IndexUpsert(out)
+	if box {
+		s.boxThreadsChanged()
+	}
 	s.go_(func(ctx context.Context) {
 		s.startAgent(ctx, child.ID)
 		if moveErr != nil {

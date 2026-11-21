@@ -185,6 +185,9 @@ func (h *Host) filesBegin(ctx context.Context, a Artifact) (*filesSession, func(
 	return fs, release, nil
 }
 
+// errWorkdirMissing 是 orbd 对 `/fs/roots?strict=1` 回的 404 workdir_missing：请求带的工作目录不存在。
+var errWorkdirMissing = errors.New("files: workdir missing on orb")
+
 func (h *Host) filesOpen(ctx context.Context, a Artifact) (*filesSession, error) {
 	unavailable := opErr(codeUnsupported, "这个 artifact 现在读不到项目文件（创建它的线程或它的 orb 已不在）。")
 	o := h.s.orbFS()
@@ -199,12 +202,22 @@ func (h *Host) filesOpen(ctx context.Context, a Artifact) (*filesSession, error)
 		return nil, unavailable
 	}
 	fs := &filesSession{o: o, tg: tg}
-	if tg.cwd != nil && *tg.cwd != "" {
+	if tg.cwd != nil && path.IsAbs(*tg.cwd) {
 		fs.wd = path.Clean(*tg.cwd)
 	} else {
+		// 没有 cwd → 取 orbd 的缺省工作目录；cwd 不是绝对路径（box 线程的 `~/…`，M23）→ 带 strict=1 请 orbd 展开，
+		// 目录已不在（app 下线）时 orbd 回 404 workdir_missing：判为不可用，不退回缺省工作目录——否则 artifact 的
+		// 读取范围会在 app 下线后变成整个工作区
+		var q url.Values
+		if tg.cwd != nil && *tg.cwd != "" {
+			q = url.Values{"strict": {"1"}}
+		}
 		ctx, cancel := context.WithTimeout(ctx, filesListTimeout)
 		defer cancel()
-		res, err := fs.get(ctx, "/fs/roots", nil, "")
+		res, err := fs.get(ctx, "/fs/roots", q, "")
+		if errors.Is(err, errWorkdirMissing) {
+			return nil, unavailable
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -249,6 +262,10 @@ func (fs *filesSession) get(ctx context.Context, endpoint string, q url.Values, 
 	defer res.Body.Close()
 	var e apigen.Error
 	_ = json.NewDecoder(io.LimitReader(res.Body, maxFilesErrBody)).Decode(&e)
+	if e.Code == "workdir_missing" {
+		// `/fs/roots?strict=1`：线程的工作目录在 orb 上已不存在（filesOpen 据此判不可用）
+		return nil, errWorkdirMissing
+	}
 	shown := rel
 	if shown == "" {
 		shown = "工作目录"

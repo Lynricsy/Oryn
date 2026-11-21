@@ -40,6 +40,8 @@ type threadNewOptions struct {
 	// shareDir 允许与其它线程共用 dir。
 	runner, dir, worktree string
 	shareDir              bool
+	// box 是 box 的名字或 id（M23）：线程开在这台 box 上；app 非空时工作目录是该 app 的线上目录，否则是机器本身。
+	box, app string
 }
 
 var threadNewOpts threadNewOptions
@@ -85,11 +87,22 @@ func threadNew(ctx context.Context, c *apiClient, prompt string, o threadNewOpti
 	if err := checkRunnerOptions(o); err != nil {
 		return apigen.Thread{}, err
 	}
+	if err := checkBoxOptions(o); err != nil {
+		return apigen.Thread{}, err
+	}
 	req := apigen.CreateThreadRequest{Prompt: prompt, Labels: o.labels}
 	if o.title != "" {
 		req.Title = &o.title
 	}
 	switch {
+	case o.box != "":
+		exec := apigen.ThreadExecutorBox{Kind: apigen.ThreadExecutorBoxKindBox, BoxID: o.box}
+		if o.app != "" {
+			exec.App = &o.app
+		}
+		if err := req.Executor.FromThreadExecutorBox(exec); err != nil {
+			return apigen.Thread{}, err
+		}
 	case o.runner != "":
 		r, err := resolveRunner(ctx, c, o.runner)
 		if err != nil {
@@ -162,6 +175,23 @@ func threadNew(ctx context.Context, c *apiClient, prompt string, o threadNewOpti
 		return apigen.Thread{}, err
 	}
 	return env.Thread, nil
+}
+
+// checkBoxOptions 校验 --box / --app 的组合（不发请求）。
+func checkBoxOptions(o threadNewOptions) error {
+	if o.box == "" {
+		if o.app != "" {
+			return errors.New("--app 需要与 --box 一起使用")
+		}
+		return nil
+	}
+	if o.runner != "" || o.orb != "" || o.provider != "" || o.orbType != "" {
+		return errors.New("--box 与 --runner / --orb / --provider / --type 不能同时使用")
+	}
+	if o.browserProfile != "" || o.readonly || o.takeover {
+		return errors.New("--browser-profile / --readonly / --takeover 只对新建 orb 有效，不能与 --box 同时使用")
+	}
+	return nil
 }
 
 // checkRunnerOptions 校验 --runner / --dir / --worktree / --share-dir 的组合（不发请求）。
@@ -687,6 +717,8 @@ func init() {
 	f.StringVar(&threadNewOpts.dir, "dir", "", "runner 上的工作目录（绝对路径，须在 runner 声明的目录之内）")
 	f.StringVar(&threadNewOpts.worktree, "worktree", "", "先在 --dir（git 仓库）旁新建该名字的 worktree 与分支，线程在其中工作")
 	f.BoolVar(&threadNewOpts.shareDir, "share-dir", false, "允许与其它未归档线程共用 --dir")
+	f.StringVar(&threadNewOpts.box, "box", "", "在 box 上开线程（名字或 id；与 --runner / --orb / --provider / --type 互斥）")
+	f.StringVar(&threadNewOpts.app, "app", "", "与 --box 同用：工作目录是该 app 的线上目录（缺省为机器本身）")
 	lf := threadListCmd.Flags()
 	lf.BoolVar(&threadListOpts.json, "json", false, "以 JSON 输出")
 	lf.BoolVar(&threadListOpts.archived, "archived", false, "只列已归档线程")

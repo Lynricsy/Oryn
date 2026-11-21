@@ -67,6 +67,9 @@ type assistantCreateArgs struct {
 	ShareDir bool     `json:"shareDir"`
 	Role     string   `json:"role"`
 	Labels   []string `json:"labels"`
+	// Box / App（M23）：线程开在这台 box 上（App 非空时在该 app 的线上目录里），与 orbId / runner / provider 互斥。
+	Box string `json:"box"`
+	App string `json:"app"`
 }
 
 // assistantCreateProps 是 assistantCreateArgs 的参数定义（并入助手的 create_thread）。
@@ -81,6 +84,8 @@ func assistantCreateProps() obj {
 		"shareDir": boolean("runner: allow sharing dir with other threads."),
 		"role":     str("Start with this model role."),
 		"labels":   obj{"type": "array", "items": obj{"type": "string"}, "description": "Labels for the thread."},
+		"box":      str("Run on this box (name, see list_boxes) instead of an orb: the thread works directly on the live machine and its apps' data. To deploy, start a normal thread (no box) that runs `oryn boxes deploy` in its repository."),
+		"app":      str("box: work in this app's live directory instead of the machine's home."),
 	}
 }
 
@@ -100,6 +105,23 @@ func (s *Service) applyAssistantCreate(ctx context.Context, a assistantCreateArg
 		}
 	}
 	p.Provider, p.OrbID, p.Role, p.Labels = a.Provider, a.OrbID, a.Role, a.Labels
+	if a.Box != "" || a.App != "" {
+		if a.Box == "" {
+			return errf(CodeInvalid, "app needs box")
+		}
+		if a.OrbID != "" || a.Runner != "" || a.Provider != "" {
+			return errf(CodeInvalid, "box cannot be combined with orbId, runner or provider")
+		}
+		b, err := s.boxesOr()
+		if err != nil {
+			return err
+		}
+		orbID, cwd, err := b.ThreadTarget(ctx, a.Box, a.App)
+		if err != nil {
+			return err
+		}
+		p.OrbID, p.Cwd = orbID, cwd
+	}
 	if a.Runner == "" {
 		if a.Dir != "" || a.Worktree != "" || a.ShareDir {
 			return errf(CodeInvalid, "dir, worktree and shareDir need runner")

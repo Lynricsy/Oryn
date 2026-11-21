@@ -119,6 +119,13 @@ func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) thre
 			break
 		}
 		v, err = s.adminTool(ctx, tc)
+	case ToolListBoxes, ToolGetBox, ToolCreateBox, ToolStartBox, ToolStopBox, ToolSetBoxSchedule, ToolSetBoxAppVisibility, ToolDeleteBox:
+		// M23：box（只给全局助手）
+		if c.Kind != threads.KindAssistant {
+			err = errf("unknown_tool", "no tool named %q", c.Name)
+			break
+		}
+		v, err = s.boxTool(ctx, tc)
 	case ToolListThreadFiles, ToolReadThreadFile, ToolWriteThreadFile, ToolFetchThreadFile, ToolPutThreadFile, ToolGetThreadChanges,
 		ToolListProjectConfig, ToolReadProjectConfig, ToolWriteProjectConfig, ToolDeleteProjectConfig:
 		// M19 第三层：线程文件与项目 Agent 配置（只给全局助手）
@@ -137,8 +144,9 @@ func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) thre
 		return failResult(err)
 	}
 	switch c.Name {
-	case ToolListThreads, ToolListSchedules, ToolGetStats, ToolListFiles, ToolListRunners, ToolListSpaces, ToolListTriggers:
-		// list_files 的文件名可能来自 orb 内的 agent（oryn library put）
+	case ToolListThreads, ToolListSchedules, ToolGetStats, ToolListFiles, ToolListRunners, ToolListSpaces, ToolListTriggers,
+		ToolListBoxes, ToolGetBox:
+		// list_files 的文件名可能来自 orb 内的 agent（oryn library put）；box 与 app 的名字可能出自 orb 里的 agent
 		return threads.HostToolResult{Text: wrapUntrusted("", v), Details: v}
 	}
 	return threads.HostToolResult{Text: jsonText(v), Details: v}

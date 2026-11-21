@@ -34,6 +34,8 @@ type fakeOrbFS struct {
 	// started 非 nil 时，每个 /fs/file 先报到再等 block 关闭。
 	started chan struct{}
 	block   chan struct{}
+	// boxDirs：`/fs/roots?strict=1` 认的工作目录头 → 展开后的绝对路径；不在表里的回 404 workdir_missing（M23）。
+	boxDirs map[string]string
 }
 
 func (f *fakeOrbFS) EnsureUsable(_ context.Context, _, feature string, wake bool, _ time.Duration) error {
@@ -61,7 +63,19 @@ func (f *fakeOrbFS) Do(ctx context.Context, _ string, req *http.Request) (*http.
 	}
 	switch req.URL.Path {
 	case "/fs/roots":
-		_ = json.NewEncoder(rec).Encode(apigen.FsRoots{Home: "/home/u", Workdir: f.workdir})
+		wd := f.workdir
+		if req.URL.Query().Get("strict") == "1" {
+			f.mu.Lock()
+			abs, ok := f.boxDirs[req.Header.Get(orbs.HeaderWorkdir)]
+			f.mu.Unlock()
+			if !ok {
+				rec.WriteHeader(http.StatusNotFound)
+				_ = json.NewEncoder(rec).Encode(apigen.Error{Code: "workdir_missing", Message: "workdir not found"})
+				break
+			}
+			wd = abs
+		}
+		_ = json.NewEncoder(rec).Encode(apigen.FsRoots{Home: "/home/u", Workdir: wd})
 	case "/fs/list":
 		entries, ok := f.dirs[p]
 		if !ok {
@@ -140,7 +154,10 @@ func newFilesEnv(t *testing.T, threadID string, consent bool) *filesEnv {
 	mkOrb(t, e, "orb_r", orbs.KindRunner)
 	mkOrbThread(t, e, "thr_f", "orb_f", "prj_f")
 	mkOrbThread(t, e, "thr_r", "orb_r", "prj_f")
+	mkOrbThread(t, e, "thr_b", "orb_f", "prj_f")
 	_, err := e.st.DB.ExecContext(ctx, `UPDATE threads SET cwd = '/srv/proj' WHERE id = 'thr_r'`)
+	require.NoError(t, err)
+	_, err = e.st.DB.ExecContext(ctx, `UPDATE threads SET cwd = '~/apps/x/current' WHERE id = 'thr_b'`)
 	require.NoError(t, err)
 	h := newHost(t, e, "localhost", fakeViewerAssets)
 	a, err := e.s.Create(ctx, CreateParams{
@@ -154,15 +171,17 @@ func newFilesEnv(t *testing.T, threadID string, consent bool) *filesEnv {
 	fake := &fakeOrbFS{
 		workdir: "/home/u/repo",
 		files: map[string]string{
-			"/home/u/repo/a.txt":     "hello",
-			"/home/u/repo/src/x.go":  "package x",
-			"/home/u/repo/bin.dat":   "\xff\xfe",
-			"/home/u/repo/big":       big,
-			"/home/u/repo/big2":      big,
-			"/home/u/repo/limit.txt": big[:MaxProjectFileBytes],
-			"/srv/proj/a.txt":        "runner",
+			"/home/u/repo/a.txt":           "hello",
+			"/home/u/repo/src/x.go":        "package x",
+			"/home/u/repo/bin.dat":         "\xff\xfe",
+			"/home/u/repo/big":             big,
+			"/home/u/repo/big2":            big,
+			"/home/u/repo/limit.txt":       big[:MaxProjectFileBytes],
+			"/srv/proj/a.txt":              "runner",
+			"/home/u/apps/x/current/a.txt": "box",
 		},
-		sized: map[string]bool{"/home/u/repo/big": true},
+		sized:   map[string]bool{"/home/u/repo/big": true},
+		boxDirs: map[string]string{"~/apps/x/current": "/home/u/apps/x/current"},
 		dirs: map[string][]apigen.FsEntry{
 			"/home/u/repo": {
 				{Name: "src", Type: apigen.FsEntryTypeDir, Size: 4096},
@@ -255,6 +274,34 @@ func TestCapFilesRunnerWorkdir(t *testing.T) {
 	f.fake.reset()
 	assert.Equal(t, "runner", f.value(t, "read", "a.txt"))
 	assert.Equal(t, []string{"/fs/file /srv/proj/a.txt confine=/srv/proj wd=/srv/proj"}, f.fake.requests())
+}
+
+// box 线程（M23）：cwd 是 `~/…`，向 orbd 要 `/fs/roots?strict=1` 换成绝对路径；目录已不在（404 workdir_missing）时
+// 不可用，且不再发不带 strict 的请求退回缺省工作目录。
+func TestCapFilesBoxWorkdir(t *testing.T) {
+	f := newFilesEnv(t, "thr_b", true)
+	f.fake.reset()
+	assert.Equal(t, "box", f.value(t, "read", "a.txt"))
+	assert.Equal(t, []string{
+		"/fs/roots  confine= wd=~/apps/x/current",
+		"/fs/file /home/u/apps/x/current/a.txt confine=/home/u/apps/x/current wd=~/apps/x/current",
+	}, f.fake.requests())
+	f.fake.mu.Lock()
+	assert.Equal(t, "1", f.fake.reqs[0].URL.Query().Get("strict"))
+	f.fake.boxDirs = nil
+	f.fake.mu.Unlock()
+
+	f.fake.reset()
+	assert.Equal(t, codeUnsupported, replyCode(t, f.files(t, "read", "a.txt")))
+	assert.Equal(t, codeUnsupported, replyCode(t, f.files(t, "list")))
+	reqs := f.fake.requests()
+	assert.Equal(t, []string{"/fs/roots  confine= wd=~/apps/x/current", "/fs/roots  confine= wd=~/apps/x/current"}, reqs,
+		"只问带 strict 的 /fs/roots，不退回缺省工作目录")
+	f.fake.mu.Lock()
+	for _, r := range f.fake.reqs {
+		assert.Equal(t, "1", r.URL.Query().Get("strict"))
+	}
+	f.fake.mu.Unlock()
 }
 
 // 不可用：导入的（没有创建线程）、orb 不可用、没接 orb 出口时 use 回 null，call 回 unsupported。

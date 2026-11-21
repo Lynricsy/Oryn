@@ -201,6 +201,26 @@ func (s *Server) CreateThread(w http.ResponseWriter, r *http.Request) {
 				p.Worktree = e.Worktree.Name
 			}
 			p.ShareDir = e.ShareDir != nil && *e.ShareDir
+		case apigen.ThreadExecutorBox:
+			// M23：box 的 orb 与工作目录由服务端解析（停机、app 是否部署），客户端不给路径
+			if e.BoxID == "" {
+				WriteError(w, http.StatusBadRequest, "invalid_request", "executor.boxId required")
+				return
+			}
+			bx, ok := s.boxesSvc(w)
+			if !ok {
+				return
+			}
+			app := ""
+			if e.App != nil {
+				app = *e.App
+			}
+			orbID, cwd, err := bx.ThreadTarget(r.Context(), e.BoxID, app)
+			if err != nil {
+				writeBoxErr(w, r, err)
+				return
+			}
+			p.OrbID, p.Cwd = orbID, cwd
 		}
 	}
 	t, err := svc.Create(r.Context(), p)

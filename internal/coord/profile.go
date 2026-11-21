@@ -382,6 +382,7 @@ func ToolDefs(o ToolSet) []apigen.OmpFrame {
 	defs = append(defs, artifactToolDefs()...)
 	defs = append(defs, threadToolDefs()...)
 	defs = append(defs, adminToolDefs()...)
+	defs = append(defs, boxToolDefs()...)
 	defs = append(defs, fileToolDefs()...)
 	defs = append(defs, shareToolDefs()...)
 	defs = append(defs, computerToolDefs()...)

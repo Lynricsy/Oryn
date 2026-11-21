@@ -21,6 +21,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/artifacts"
+	"github.com/Lynricsy/Oryn/internal/boxes"
 	"github.com/Lynricsy/Oryn/internal/github"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/library"
@@ -128,6 +129,8 @@ type Service struct {
 	// shares / portals 是线程分享与 Portal 公开的入口（M19，SetShares 设置）；portals 为 nil 表示没有配置 Portal。
 	shares  ThreadShares
 	portals PortalShares
+	// boxes 是 M23 的 box 入口（SetBoxes 设置）；nil 时 box 工具回 coordinator_unavailable。
+	boxes Boxes
 
 	ensureMu sync.Mutex
 	// createMu 串行化 orb 内 thread.create 的「计数 + Create」（契约 C6.1）：并发请求不能都通过额度检查。
@@ -194,6 +197,7 @@ func New(cfg Config, st *store.Store, th *threads.Service, o *orbs.Service, host
 	s.onConfirm(ToolDeleteSpace, s.confirmDeleteSpace)
 	s.onConfirm(ToolDeleteTrigger, s.confirmDeleteTrigger)
 	s.onConfirm(ToolDeleteOrb, s.confirmDeleteOrb)
+	s.onConfirm(ToolDeleteBox, s.confirmDeleteBox)
 	s.onConfirm(string(apigen.ActionDeleteSchedule), s.confirmDeleteSchedule)
 	s.onConfirm(ToolShareThread, s.confirmShareThread)
 	s.onConfirm(ToolSharePortal, s.confirmSharePortal)
@@ -369,6 +373,10 @@ func errCode(err error) string {
 	if errors.As(err, &ge) {
 		return ge.Code
 	}
+	var be *boxes.Error
+	if errors.As(err, &be) {
+		return be.Code
+	}
 	if oe, ok := artifacts.AsOpError(err); ok {
 		return oe.Code
 	}
@@ -428,6 +436,10 @@ func errMessage(err error) string {
 	var ge *github.Error
 	if errors.As(err, &ge) {
 		return ge.Message
+	}
+	var be *boxes.Error
+	if errors.As(err, &be) {
+		return be.Message
 	}
 	if oe, ok := artifacts.AsOpError(err); ok {
 		return oe.Message
