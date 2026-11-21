@@ -1,6 +1,7 @@
 /**
  * 单个文件的 diff：`git/diff` → 虚拟滚动的 git patch 行（不折叠，只挂载视口附近的行；
  * 1MiB 的 patch 可达十几万行，全部挂载会卡住界面）；二进制 / 过大 / 截断各有说明行。
+ * 主体 `PatchView` 与标题 `FileChangeLabel` 不依赖 GitTarget，项目仓库的提交详情（阶段 ②）复用它们。
  */
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -102,7 +103,6 @@ export function FileDiff({
 		},
 		[ctxRef],
 	);
-	const slash = file.path.lastIndexOf("/");
 	return (
 		<div className="flex h-full min-h-0 flex-col">
 			<div className="flex h-9 shrink-0 items-center gap-1.5 border-border border-b px-2">
@@ -115,70 +115,104 @@ export function FileDiff({
 					aria-hidden
 					className="ml-1 shrink-0 text-faint"
 				/>
-				<span
-					className="min-w-0 flex-1 truncate font-mono text-xs"
-					title={file.oldPath ? `${file.oldPath} → ${file.path}` : file.path}
-				>
-					{file.oldPath && (
-						<span className="text-faint">{`${file.oldPath} → `}</span>
-					)}
-					<span className="text-faint">{file.path.slice(0, slash + 1)}</span>
-					<span className="font-medium text-fg">
-						{file.path.slice(slash + 1)}
-					</span>
-				</span>
-				{!file.binary &&
-					(file.additions !== undefined || file.deletions !== undefined) && (
-						<span className="shrink-0 font-mono text-2xs tabular-nums">
-							{file.additions !== undefined && (
-								<span className="text-ok">{`+${file.additions}`}</span>
-							)}
-							{file.deletions !== undefined && (
-								<span className="ml-1.5 text-err">{`−${file.deletions}`}</span>
-							)}
-						</span>
-					)}
+				<FileChangeLabel file={file} />
 			</div>
 			<div ref={scrollHost} className="min-h-0 flex-1 overflow-auto p-2">
-				{error ? (
-					<ErrorText error={error} />
-				) : !diff ? (
-					<div className="p-2">
-						<Spinner />
-					</div>
-				) : diff.kind === "binary" ? (
-					<Callout tone="neutral" icon="info">
-						{t("changes.diff.binary")}
-					</Callout>
-				) : diff.kind === "large" ? (
-					<Callout tone="neutral" icon="info">
-						{t("changes.diff.large")}
-					</Callout>
-				) : diff.patch === "" ? (
-					<Callout tone="neutral" icon="info">
-						{t("changes.diff.empty")}
-					</Callout>
-				) : (
-					// `.tv-card` 只为提供 `--tv-*` 配色变量；外框交给 `.tv-diff` 的内嵌井，
-					// 且不能裁切：长行由外层滚动容器横向滚动
-					<div
-						className="tv-card flex flex-col gap-2"
-						style={{
-							margin: 0,
-							border: 0,
-							background: "transparent",
-							overflow: "visible",
-						}}
-					>
-						<VirtualPatch patch={diff.patch} scrollRef={scrollRef} />
-						{diff.truncated && (
-							<Callout tone="neutral" icon="info">
-								{t("changes.diff.truncated")}
-							</Callout>
-						)}
-					</div>
-				)}
+				<PatchView diff={diff} error={error} scrollRef={scrollRef} />
 			</div>
+		</div>
+	);
+}
+
+/** 文件路径（目录淡色、文件名加粗、重命名带旧路径）与 +x −y；放在 flex 行里，路径占满剩余宽度 */
+export function FileChangeLabel({ file }: { file: GitFileChange }): ReactNode {
+	const slash = file.path.lastIndexOf("/");
+	return (
+		<>
+			<span
+				className="min-w-0 flex-1 truncate font-mono text-xs"
+				title={file.oldPath ? `${file.oldPath} → ${file.path}` : file.path}
+			>
+				{file.oldPath && (
+					<span className="text-faint">{`${file.oldPath} → `}</span>
+				)}
+				<span className="text-faint">{file.path.slice(0, slash + 1)}</span>
+				<span className="font-medium text-fg">
+					{file.path.slice(slash + 1)}
+				</span>
+			</span>
+			{!file.binary &&
+				(file.additions !== undefined || file.deletions !== undefined) && (
+					<span className="shrink-0 font-mono text-2xs tabular-nums">
+						{file.additions !== undefined && (
+							<span className="text-ok">{`+${file.additions}`}</span>
+						)}
+						{file.deletions !== undefined && (
+							<span className="ml-1.5 text-err">{`−${file.deletions}`}</span>
+						)}
+					</span>
+				)}
+		</>
+	);
+}
+
+/**
+ * diff 主体：错误 / 加载 / 二进制 / 过大 / 空 / 虚拟 patch + 截断说明。
+ * scrollRef 是外层滚动容器（虚拟列表用），调用方把本组件放在该容器里。
+ */
+export function PatchView({
+	diff,
+	error,
+	scrollRef,
+}: {
+	diff: GitFileDiff | null;
+	error: unknown;
+	scrollRef: RefObject<HTMLDivElement | null>;
+}): ReactNode {
+	const { t } = useTranslation();
+	if (error) return <ErrorText error={error} />;
+	if (!diff)
+		return (
+			<div className="p-2">
+				<Spinner />
+			</div>
+		);
+	if (diff.kind === "binary")
+		return (
+			<Callout tone="neutral" icon="info">
+				{t("changes.diff.binary")}
+			</Callout>
+		);
+	if (diff.kind === "large")
+		return (
+			<Callout tone="neutral" icon="info">
+				{t("changes.diff.large")}
+			</Callout>
+		);
+	if (diff.patch === "")
+		return (
+			<Callout tone="neutral" icon="info">
+				{t("changes.diff.empty")}
+			</Callout>
+		);
+	return (
+		// `.tv-card` 只为提供 `--tv-*` 配色变量；外框交给 `.tv-diff` 的内嵌井，
+		// 且不能裁切：长行由外层滚动容器横向滚动
+		<div
+			className="tv-card flex flex-col gap-2"
+			style={{
+				margin: 0,
+				border: 0,
+				background: "transparent",
+				overflow: "visible",
+			}}
+		>
+			<VirtualPatch patch={diff.patch} scrollRef={scrollRef} />
+			{diff.truncated && (
+				<Callout tone="neutral" icon="info">
+					{t("changes.diff.truncated")}
+				</Callout>
+			)}
 		</div>
 	);
 }
