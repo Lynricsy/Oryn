@@ -4350,6 +4350,23 @@
 		"activity": "Turns per day in {{name}} over the last 14 days",
 		"noArchived": "No archived projects."
 	},
+	"projectThreads": {
+		"title": "Threads",
+		"search": "Search titles and labels",
+		"statusLabel": "Status",
+		"status": {
+			"all": "All",
+			"active": "Active",
+			"archived": "Archived",
+			"shipped": "Shipped"
+		},
+		"noMatch": "No threads match.",
+		"clear": "Clear filters"
+	},
+	"projectHome": {
+		"noThreads": "No threads in this project yet.",
+		"shipped": "Shipped"
+	},
 	"projectsPage": {
 		"settings": "Project settings",
 		"environment": "Environment setup",

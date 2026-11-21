@@ -13,6 +13,7 @@ import type { UsageStat, UsageStats } from "../../api/stats-queries";
 import { ProjectPage } from "../ProjectsPage";
 import { ProjectCreatePage } from "./ProjectCreatePage";
 import { ProjectsOverviewPage } from "./ProjectsOverviewPage";
+import { ProjectThreadsPage } from "./ProjectThreadsPage";
 
 export interface Write {
 	method: string;
@@ -331,6 +332,10 @@ export function mount(path: string) {
 					<Route path="/projects" element={<ProjectsOverviewPage />} />
 					<Route path="/projects/new" element={<ProjectCreatePage />} />
 					<Route path="/projects/:projectId" element={<ProjectPage />} />
+					<Route
+						path="/projects/:projectId/threads"
+						element={<ProjectThreadsPage />}
+					/>
 				</Routes>
 				<Where />
 			</MemoryRouter>

@@ -16,6 +16,8 @@
 | `projects.list.menu` | 项目总览的「更多操作」菜单（显示已归档项目） | 项目总览页头「⋯」 | 菜单 |
 | `projects.list.archived` | 项目总览 · 已归档区 | 「⋯」→ 显示已归档项目 | 页面 |
 | `projects.new` | 新建项目 | 项目分区「新建项目」 | 页面 |
+| `projects.threads` | 项目的线程子页（搜索、状态筛选） | 项目主页「最近线程」→ 查看全部 | 页面 |
+| `projects.threads.archived` | 项目的线程子页 · 只看已归档 | 线程子页状态选「已归档」 | 页面 |
 | `projects.page` | 项目页（顶部：项目设置） | 项目分区点某个项目 | 页面 |
 | `projects.page.settings-bottom` | 项目设置下半部分（setup 脚本、保存） | 项目页往下滚 | 页面 |
 | `projects.page.agent-config` | Agent 配置卡 | 项目页往下滚 | 页面 |

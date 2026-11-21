@@ -37,6 +37,11 @@ const ProjectCreatePage = lazy(() =>
 const ProjectPage = lazy(() =>
 	import("./pages/ProjectsPage").then((m) => ({ default: m.ProjectPage })),
 );
+const ProjectThreadsPage = lazy(() =>
+	import("./pages/projects/ProjectThreadsPage").then((m) => ({
+		default: m.ProjectThreadsPage,
+	})),
+);
 
 // 统计页（M10）：全宽数据页，图表与表格都在这一个分块里
 const StatsPage = lazy(() =>
@@ -141,6 +146,10 @@ export function App(): ReactNode {
 						<Route path="projects" element={<ProjectsOverviewPage />} />
 						<Route path="projects/new" element={<ProjectCreatePage />} />
 						<Route path="projects/:projectId" element={<ProjectPage />} />
+						<Route
+							path="projects/:projectId/threads"
+							element={<ProjectThreadsPage />}
+						/>
 						<Route
 							path="stats"
 							element={<Navigate to="/stats/usage" replace />}

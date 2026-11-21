@@ -1,4 +1,4 @@
-/** 项目分区：总览（含 ⋯ 菜单与已归档区）、新建、项目页各卡片（设置、Agent 配置、GitHub 与触发规则、SSH、环境、快照与预热、服务、定时）及其下拉与对话框。 */
+/** 项目分区：总览（含 ⋯ 菜单与已归档区）、新建、线程子页、项目页各卡片（设置、Agent 配置、GitHub 与触发规则、SSH、环境、快照与预热、服务、定时）及其下拉与对话框。 */
 import type { Locator, Page } from "@playwright/test";
 import { lastOverlay, settle, surface } from "./audit";
 
@@ -55,6 +55,16 @@ surface({
 		'[data-testid=project-row][data-project="prj_01JCZ000000000000000LEGACY"]',
 });
 surface({ id: "projects.new", path: "/projects/new" });
+surface({
+	id: "projects.threads",
+	path: `${PAGE}/threads`,
+	ready: "[data-testid=project-thread-row]",
+});
+surface({
+	id: "projects.threads.archived",
+	path: `${PAGE}/threads?status=archived`,
+	ready: "[data-testid=project-thread-row]",
+});
 surface({ id: "projects.page", path: PAGE });
 surface({
 	id: "projects.page.settings-bottom",

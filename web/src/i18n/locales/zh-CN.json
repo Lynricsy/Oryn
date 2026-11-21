@@ -4350,6 +4350,23 @@
 		"activity": "{{name}} 近 14 天每天的回合数",
 		"noArchived": "没有已归档的项目。"
 	},
+	"projectThreads": {
+		"title": "线程",
+		"search": "搜索标题与标签",
+		"statusLabel": "状态",
+		"status": {
+			"all": "全部",
+			"active": "活跃",
+			"archived": "已归档",
+			"shipped": "已交付"
+		},
+		"noMatch": "没有符合条件的线程。",
+		"clear": "清除筛选"
+	},
+	"projectHome": {
+		"noThreads": "这个项目还没有线程。",
+		"shipped": "已交付"
+	},
 	"projectsPage": {
 		"settings": "项目设置",
 		"environment": "环境配置",

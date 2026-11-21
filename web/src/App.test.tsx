@@ -27,6 +27,15 @@ vi.mock("./pages/projects/ProjectsOverviewPage", () => ({
 vi.mock("./pages/projects/ProjectCreatePage", () => ({
 	ProjectCreatePage: () => <p data-testid="page">CREATE</p>,
 }));
+vi.mock("./pages/projects/ProjectThreadsPage", async () => {
+	const { useParams } =
+		await vi.importActual<typeof ReactRouter>("react-router");
+	return {
+		ProjectThreadsPage: () => (
+			<p data-testid="page">{`THREADS ${useParams().projectId}`}</p>
+		),
+	};
+});
 vi.mock("./pages/ProjectsPage", async () => {
 	const { useParams } =
 		await vi.importActual<typeof ReactRouter>("react-router");
@@ -143,6 +152,14 @@ describe("项目分区的路由（M9.6）", () => {
 		renderAt("/projects/prj_1");
 		expect(await screen.findByTestId("page")).toHaveTextContent(
 			"PROJECT prj_1",
+		);
+	});
+
+	it("/projects/<id>/threads 是线程子页并带上 id", async () => {
+		signedIn();
+		renderAt("/projects/prj_1/threads");
+		expect(await screen.findByTestId("page")).toHaveTextContent(
+			"THREADS prj_1",
 		);
 	});
 
