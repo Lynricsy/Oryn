@@ -115,6 +115,8 @@ type Repos struct {
 	MaxMirrorGB int `yaml:"max_mirror_gb"`
 	// MinFreeGB 是数据盘要保留的可用空间：低于它时不克隆、不拉取、不接受推送；0（缺省）= 2。
 	MinFreeGB int `yaml:"min_free_gb"`
+	// MaxLFSCacheGB 是镜像项目 Git LFS 对象缓存的总上限（所有项目合计，按最近使用淘汰）；0（缺省）= 2。
+	MaxLFSCacheGB int `yaml:"max_lfs_cache_gb"`
 }
 
 // Schedule 是定时调度参数（M9）。
@@ -458,6 +460,9 @@ func (c Orynd) Validate() error {
 	}
 	if c.Repos.MinFreeGB < 0 {
 		errs = append(errs, errors.New("repos.min_free_gb 不能为负"))
+	}
+	if c.Repos.MaxLFSCacheGB < 0 {
+		errs = append(errs, errors.New("repos.max_lfs_cache_gb 不能为负"))
 	}
 	return errors.Join(errs...)
 }

@@ -172,6 +172,7 @@ func (s *Service) dropMirror(ctx context.Context, projectID string) error {
 	if err := removeRepoDir(s.dir(projectID), false); err != nil {
 		slog.Warn("删除项目仓库镜像", "project", projectID, "err", err)
 	}
+	s.dropLFSCache(projectID)
 	s.changed(projectID)
 	return nil
 }
@@ -246,6 +247,7 @@ func (s *Service) syncOnce(ctx context.Context, projectID string) {
 		if err := removeRepoDir(dir, false); err != nil {
 			slog.Warn("删除超限的项目仓库镜像", "project", projectID, "err", err)
 		}
+		s.dropLFSCache(projectID)
 		s.fail(ctx, prj, row, rm, errSyncTooLarge)
 		return
 	}
@@ -538,6 +540,15 @@ func (s *Service) sweep(ctx context.Context) {
 		default:
 			s.clearStaleLocks(path)
 		}
+	}
+	if s.lfsCache != nil {
+		s.lfsCache.prune(func(projectID string) bool {
+			_, err := s.st.Q.GetProject(ctx, projectID)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				slog.Warn("读取项目", "project", projectID, "err", err)
+			}
+			return !errors.Is(err, sql.ErrNoRows)
+		})
 	}
 }
 

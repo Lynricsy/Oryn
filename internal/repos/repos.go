@@ -52,6 +52,9 @@ type Config struct {
 	Now          func() time.Time       // nil = time.Now
 	ProxyEnv     []string               // 担保主机拉取时追加的代理变量（KEY=VALUE）；nil = 不追加
 	Changed      func(projectID string) // 状态变化后广播；nil = 不广播
+
+	// MaxLFSCacheBytes 是镜像项目 LFS 对象缓存的总上限（MaxLFSCacheGB<<30）；0 = 2<<30。
+	MaxLFSCacheBytes int64
 }
 
 // GitHub 是 github.com 拉取凭据（*github.Service 实现）。
@@ -110,6 +113,8 @@ type Service struct {
 	reason string // 不可用原因；"" = 可用
 	guard  *egress.PublicProxy
 
+	lfsCache *lfsCache // 镜像项目的 LFS 对象缓存；git 不可用时为 nil
+
 	sem          chan struct{} // 同时最多两个克隆或拉取
 	monitorEvery time.Duration // 拉取中复查磁盘与大小的间隔
 	trace        func(argv, env []string)
@@ -127,6 +132,7 @@ type Service struct {
 func New(cfg Config, st *store.Store, sec Secrets, gh GitHub) (*Service, error) {
 	cfg.MaxBytes = cmp.Or(cfg.MaxBytes, 5<<30)
 	cfg.MinFreeBytes = cmp.Or(cfg.MinFreeBytes, 2<<30)
+	cfg.MaxLFSCacheBytes = cmp.Or(cfg.MaxLFSCacheBytes, 2<<30)
 	cfg.StaleAfter = cmp.Or(cfg.StaleAfter, 60*time.Second)
 	cfg.GitHubWebURL = strings.TrimRight(cmp.Or(cfg.GitHubWebURL, "https://github.com"), "/")
 	if cfg.Now == nil {
@@ -147,6 +153,12 @@ func New(cfg Config, st *store.Store, sec Secrets, gh GitHub) (*Service, error) 
 		cancel()
 		return nil, fmt.Errorf("创建仓库目录: %w", err)
 	}
+	lc, err := openLFSCache(filepath.Join(cfg.Dir, ".lfs-cache"), cfg.MaxLFSCacheBytes)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("打开 LFS 对象缓存: %w", err)
+	}
+	s.lfsCache = lc
 	guard, err := egress.ListenPublicProxy()
 	if err != nil {
 		cancel()
@@ -163,6 +175,9 @@ func (s *Service) Close() {
 	s.mu.Unlock()
 	s.cancel()
 	s.wg.Wait()
+	if s.lfsCache != nil {
+		s.lfsCache.bg.Wait()
+	}
 	if s.guard != nil {
 		if err := s.guard.Close(); err != nil {
 			slog.Warn("关闭公网守卫代理", "err", err)
@@ -259,6 +274,14 @@ func (s *Service) Remove(projectID string) {
 	}
 	if err := removeRepoDir(s.dir(projectID), true); err != nil {
 		slog.Warn("删除项目仓库目录", "project", projectID, "err", err)
+	}
+	s.dropLFSCache(projectID)
+}
+
+// dropLFSCache 删掉项目的 LFS 对象缓存（镜像被删除时一并清掉）。
+func (s *Service) dropLFSCache(projectID string) {
+	if s.lfsCache != nil {
+		s.lfsCache.removeProject(projectID)
 	}
 }
 

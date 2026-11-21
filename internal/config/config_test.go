@@ -390,8 +390,9 @@ func TestReposConfig(t *testing.T) {
 	require.NoError(t, c.Validate())
 	assert.Equal(t, "/srv/oryn/repos", c.ReposDir())
 	for name, mod := range map[string]func(*Orynd){
-		"max_mirror_gb 为负": func(c *Orynd) { c.Repos.MaxMirrorGB = -1 },
-		"min_free_gb 为负":   func(c *Orynd) { c.Repos.MinFreeGB = -1 },
+		"max_mirror_gb 为负":    func(c *Orynd) { c.Repos.MaxMirrorGB = -1 },
+		"min_free_gb 为负":      func(c *Orynd) { c.Repos.MinFreeGB = -1 },
+		"max_lfs_cache_gb 为负": func(c *Orynd) { c.Repos.MaxLFSCacheGB = -1 },
 	} {
 		bad := c
 		mod(&bad)
@@ -401,11 +402,12 @@ func TestReposConfig(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	path := filepath.Join(dir, "orynd.yaml")
-	require.NoError(t, os.WriteFile(path, []byte("public_url: https://oryn.example.com\ndata_dir: data\nrepos:\n  git: ./bin/git\n  max_mirror_gb: 7\n"), 0o600))
+	require.NoError(t, os.WriteFile(path, []byte("public_url: https://oryn.example.com\ndata_dir: data\nrepos:\n  git: ./bin/git\n  max_mirror_gb: 7\n  max_lfs_cache_gb: 3\n"), 0o600))
 	got, err := LoadOrynd(path)
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(dir, "bin/git"), got.Repos.Git)
 	assert.Equal(t, 7, got.Repos.MaxMirrorGB)
+	assert.Equal(t, 3, got.Repos.MaxLFSCacheGB)
 
 	require.NoError(t, os.WriteFile(path, []byte("public_url: https://oryn.example.com\ndata_dir: data\nrepos:\n  git: git\n"), 0o600))
 	got, err = LoadOrynd(path)
@@ -415,4 +417,8 @@ func TestReposConfig(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte("public_url: https://oryn.example.com\ndata_dir: data\nrepos:\n  max_mirror_gb: -1\n"), 0o600))
 	_, err = LoadOrynd(path)
 	assert.ErrorContains(t, err, "repos.max_mirror_gb 不能为负")
+
+	require.NoError(t, os.WriteFile(path, []byte("public_url: https://oryn.example.com\ndata_dir: data\nrepos:\n  max_lfs_cache_gb: -1\n"), 0o600))
+	_, err = LoadOrynd(path)
+	assert.ErrorContains(t, err, "repos.max_lfs_cache_gb 不能为负")
 }
