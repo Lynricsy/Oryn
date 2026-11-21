@@ -178,6 +178,33 @@ func (c *apiClient) getRaw(ctx context.Context, path string) (io.ReadCloser, err
 	return resp.Body, nil
 }
 
+// postStream 以 JSON 体发送 POST 并返回原始响应体（调用方负责关闭），用于流式响应（如 box exec 的 NDJSON）。
+// 不受 newClient 的 5 分钟总超时约束：用一个 Timeout 为 0 的 http.Client，传输层沿用 c.http.Transport；
+// 非 2xx 时把错误体解成 apiError。
+func (c *apiClient) postStream(ctx context.Context, path string, body any) (io.ReadCloser, error) {
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+path, bytes.NewReader(buf))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := (&http.Client{Transport: c.http.Transport}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		defer resp.Body.Close()
+		return nil, readAPIError(resp)
+	}
+	return resp.Body, nil
+}
+
 // readAPIError 读取错误响应体（至多 64KiB）；不是 {code, message} 时以原文作为消息。
 func readAPIError(resp *http.Response) *apiError {
 	e := &apiError{Status: resp.StatusCode}
