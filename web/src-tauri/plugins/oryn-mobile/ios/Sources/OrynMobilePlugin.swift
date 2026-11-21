@@ -1,7 +1,11 @@
-// Oryn 移动端原生能力（iOS）：下沉侧栏的原生底栏、线程页的原生页头（均 iOS 26+）。
-// 命令只给壳的 Rust 调用（build.rs 命令表为空，页面调不到）：tabBarSet 载荷 {"spec": <spec|null>}，
-// tabBarReveal 载荷 {x, covered, ms, ease?, at?}（底栏右缘裁到卡片左缘、遮挡时隐藏）；用户点击经 trigger("event", {type: "tabbar", id}) 回到 Rust，再转成页面事件。
-// 原生页头：headerSet 载荷 {"spec": <spec|null>}（挂到窗口上之后才应答）、headerShow 载荷即呈现状态、
+// Oryn 移动端原生能力（iOS）：下沉侧栏的根滚动跟随、原生底栏、线程页的原生页头（均 iOS 26+）。
+// 命令只给壳的 Rust 调用（build.rs 命令表为空，页面调不到）：sinkSet 载荷 {on, trace}（建 / 拆 SinkFollow：观察 WKWebView
+// 根滚动的 contentOffset，把卡片左缘交给原生底栏与页头；trace 时经 trigger("event", {type: "sink", …}) 回传根滚动轨迹，
+// 只有 debug 包会开）、sinkShow 载荷 {open, animated}（程序化开合）；
+// tabBarSet 载荷 {"spec": <spec|null>}（底栏浮在 WebView 之上，右缘随 SinkFollow 裁到卡片左缘），
+// tabBarCover 载荷 {covered}（网页内容压在底栏上：隐藏且不接触摸）；
+// 用户点击经 trigger("event", {type: "tabbar", id}) 回到 Rust，再转成页面事件。
+// 原生页头：headerSet 载荷 {"spec": <spec|null>}（挂到窗口上之后才应答）、headerShow 载荷 {alpha, ms}、
 // headerMenu 载荷 {open, page?}、headerProbe（调试）；交互经 trigger("event", {type: "header", op, key, menu?, id?}) 回到 Rust。
 // 可替换图标：appIconGet 应答 {supported, current}（current = 资源名或 null 表示默认），appIconSet 载荷 {name: <资源名|null>}。
 import Tauri
@@ -23,6 +27,10 @@ class OrynMobilePlugin: Plugin {
   private var overlay: AnyObject?
   /// `HeaderOverlay`（iOS 26+）；同上按 AnyObject 存，只在主线程读写。
   private var header: AnyObject?
+  /// `SinkFollow`（iOS 26+）；同上按 AnyObject 存，只在主线程读写。
+  private var sink: AnyObject?
+  /// 只在 debug 的端到端启动中记录实际触摸；主线程配置。
+  private var traceHeaderHits = false
 
   @objc public override func load(webview: WKWebView) {
     self.webview = webview
@@ -46,19 +54,77 @@ class OrynMobilePlugin: Plugin {
   }
 
   /// 还没 set 过（或系统 < 26）时空操作并成功。
-  @objc public func tabBarReveal(_ invoke: Invoke) throws {
-    let args = try invoke.parseArgs(TabBarRevealArgs.self)
+  @objc public func tabBarCover(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(TabBarCoverArgs.self)
     DispatchQueue.main.async {
       if #available(iOS 26.0, *), let bar = self.overlay as? TabBarOverlay {
-        // 有绝对时刻时在主线程上换算成剩余等待（与网页 Date.now() 同一个系统时钟），排队花掉的时间不再算进去；
-        // 已经过了起步时刻（逾期）另外告诉底栏：收起时卡片已经在动，不能再从头补一段完整的过渡
-        let wait = args.at.map { $0 - Date().timeIntervalSince1970 * 1000 }
-        bar.reveal(
-          x: CGFloat(args.x), covered: args.covered, ms: args.ms, delay: max(0, wait ?? 0),
-          overdue: (wait ?? 0) < 0, ease: args.ease)
+        bar.cover(args.covered)
       }
     }
     invoke.resolve()
+  }
+
+  /// 建 / 拆根滚动跟随。撤掉任何系统版本都成功；系统 < 26 时 `on` 以 `unsupported` 拒绝。
+  @objc public func sinkSet(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(SinkSetArgs.self)
+    guard args.on else {
+      DispatchQueue.main.async { self.removeSink() }
+      invoke.resolve()
+      return
+    }
+    guard #available(iOS 26.0, *) else {
+      invoke.reject("unsupported")
+      return
+    }
+    let trace = args.trace ?? false
+    DispatchQueue.main.async { self.ensureSink(trace: trace) }
+    invoke.resolve()
+  }
+
+  /// 程序化开合；还没 sinkSet(true)（或系统 < 26）时空操作并成功。
+  @objc public func sinkShow(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(SinkShowArgs.self)
+    DispatchQueue.main.async {
+      if #available(iOS 26.0, *), let follow = self.sink as? SinkFollow {
+        follow.show(open: args.open, animated: args.animated)
+      }
+    }
+    invoke.resolve()
+  }
+
+  /// 建跟随；`trace` 时才装轨迹回调（debug 包）：没装时 SinkFollow 的 KVO 不取调用栈、不发事件。
+  private func ensureSink(trace: Bool) {
+    guard #available(iOS 26.0, *), let webview = self.webview, sink == nil else { return }
+    traceHeaderHits = trace && ProcessInfo.processInfo.environment["ORYN_E2E_URL"] != nil
+    let follow = SinkFollow(webview: webview) { [weak self] dx in self?.follow(dx) }
+    if trace {
+      follow.onTrace = { [weak self] op, x, to, stack in
+        var data: JSObject = ["type": "sink", "op": op, "x": Double(x), "to": Double(to)]
+        if let stack { data["stack"] = stack }
+        self?.trigger("event", data: data)
+      }
+    }
+    sink = follow
+  }
+
+  private func removeSink() {
+    if #available(iOS 26.0, *), let follow = sink as? SinkFollow {
+      follow.remove()
+    }
+    sink = nil
+  }
+
+  /// 卡片左缘交给原生底栏与页头（SinkFollow 的 KVO 回调里，与卡片同一帧）。
+  private func follow(_ dx: CGFloat) {
+    guard #available(iOS 26.0, *) else { return }
+    (overlay as? TabBarOverlay)?.follow(dx: dx)
+    (header as? HeaderOverlay)?.follow(dx: dx)
+  }
+
+  /// 当前卡片左缘（没有跟随时为 0）：新建的底栏 / 页头立刻补一次。
+  private var currentDx: CGFloat {
+    guard #available(iOS 26.0, *), let follow = sink as? SinkFollow else { return 0 }
+    return follow.dx
   }
 
   private func apply(_ spec: TabBarSpec) {
@@ -72,6 +138,7 @@ class OrynMobilePlugin: Plugin {
         self?.trigger("event", data: data)
       }
       overlay = bar
+      bar.follow(dx: currentDx)
     }
     bar.apply(spec)
   }
@@ -107,12 +174,7 @@ class OrynMobilePlugin: Plugin {
     let args = try invoke.parseArgs(HeaderShowArgs.self)
     DispatchQueue.main.async {
       if #available(iOS 26.0, *), let bar = self.header as? HeaderOverlay {
-        // 有绝对时刻时在主线程上换算成剩余等待（与网页 Date.now() 同一个系统时钟），桥上花掉的时间不再算进卡片与页头的错位
-        let delay =
-          args.at.map { max(0, $0 - Date().timeIntervalSince1970 * 1000) } ?? args.delay ?? 0
-        bar.show(
-          alpha: CGFloat(args.alpha), dx: CGFloat(args.dx), passive: args.passive,
-          ms: args.ms ?? 0, delay: delay, ease: args.ease)
+        bar.show(alpha: CGFloat(args.alpha), ms: args.ms ?? 0)
       }
     }
     invoke.resolve()
@@ -181,7 +243,15 @@ class OrynMobilePlugin: Plugin {
         if let id = id { data["id"] = id }
         self?.trigger("event", data: data)
       }
+      if traceHeaderHits {
+        bar.traceHits { [weak self] point, info in
+          self?.trigger("event", data: [
+            "type": "headerhit", "x": Double(point.x), "y": Double(point.y), "info": info,
+          ])
+        }
+      }
       header = bar
+      bar.follow(dx: currentDx)
     }
     return bar.apply(spec)
   }

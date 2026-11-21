@@ -125,16 +125,10 @@ struct HeaderSetArgs: Decodable {
   let spec: HeaderSpec?
 }
 
-/// `headerShow` 的载荷。
+/// `headerShow` 的载荷：透明度与淡入淡出时长（毫秒）；位移由 SinkFollow 给。
 struct HeaderShowArgs: Decodable {
   let alpha: Double
-  let dx: Double
-  let passive: Bool
   let ms: Double?
-  let delay: Double?
-  let ease: [Double]?
-  /// 起步的绝对时刻（Unix 毫秒）；有它时忽略 `delay`。
-  let at: Double?
 }
 
 /// `headerMenu` 的载荷：`open` 为 `title` / `trail` / null；`page` = 子页的父项 id。

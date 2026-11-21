@@ -403,9 +403,10 @@ func (e *m16Env) stepRunner(t *testing.T) {
 	calls := e.hs.take()
 	require.Len(t, calls, 1)
 	assert.Equal(t, []any{memory.ProjectTag(e.prjP), memory.GlobalTag}, calls[0].body["tags"])
-	// runner 的记忆通道只转发记忆请求
-	code, _ = e.memDo(t, http.MethodGet, strings.SplitN(e.runner.url, "/memory/", 2)[0]+"/llm/x/v1/models", nil)
-	assert.Equal(t, http.StatusForbidden, code)
+	// M21：runner 仍通过同一通道使用记忆，但只允许记忆和模型中转，不开放 Git 路由。
+	code, body = e.memDo(t, http.MethodGet, strings.SplitN(e.runner.url, "/memory/", 2)[0]+"/git/github.com/o/r/info/refs?service=git-upload-pack", nil)
+	assert.Equal(t, http.StatusForbidden, code, body)
+	assert.Contains(t, body, "runner_forbidden")
 }
 
 // R8、R19–R21：全局写入与无项目写入进候选；批准（带编辑）写入 oryn:global，拒绝不碰 Hindsight。

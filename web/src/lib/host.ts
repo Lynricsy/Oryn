@@ -15,10 +15,11 @@
  * 另有 `share`（系统分享已上传为附件）、`mobile`（推送状态变了）、`insets`（屏幕圆角与原生 inset 变了）三个事件；
  * 页面里的外链（`target="_blank"` 或跨源 http(s)）与 `window.open` 一律改经 `host_open_external` 交给系统浏览器。
  * 桌面壳 bridge ≥ 3 去掉了系统标题栏：`__ORYN_HOST__.chrome` 声明按钮布局，窗口操作与 `window` 事件见 `window-chrome.ts`。
- * 移动壳 bridge ≥ 7 且 platform 为 ios：`mobile.tabBar` 非空（原生底栏：系统 UITabBar 浮在 WebView 之上、右缘裁到卡片左缘，
- * 见 `native-tab-bar.ts`），另有 `tabbar` 事件（用户点了原生底栏的一项）。bridge 4–6 的壳是自绘 SwiftUI 胶囊，协议不同，一律用网页底栏。
- * 移动壳 bridge ≥ 5 且 platform 为 ios：`mobile.header` 非空（原生页头，见 `native-header.ts`），另有 `header` 事件；
- * bridge ≥ 7 的壳按 `show.at` 对齐起步时刻，更早的壳只认 `delay`（页头照样跟随卡片，起步对齐差一点）。
+ * 移动壳 bridge ≥ 8 且 platform 为 ios：`mobile.sink` / `mobile.tabBar` / `mobile.header` 非空。下沉侧栏的卡片开合是 WKWebView
+ * 根滚动视图的横向滚动（`native-sink.ts`），原生按 `contentOffset` 跟随：原生底栏（系统 UITabBar 浮在 WebView 之上、右缘裁到
+ * 卡片左缘，`native-tab-bar.ts`）与原生页头（`native-header.ts`）的位置都由原生自己算，网页只发 spec、遮挡与透明度。
+ * 另有 `tabbar` 与 `header` 事件。壳在本页 `host_sink_set(true)` 生效前拒绝非空的底栏 / 页头 spec；
+ * bridge ≤ 7 的壳（页头靠跨进程对时跟随）一律用网页页头与网页底栏。
  */
 
 import type { Attachment } from "./attachments";
@@ -156,27 +157,19 @@ export interface NativeTabBarSpec {
 	accent: string | null;
 }
 
-/**
- * 原生底栏浮在 WebView 之上，右缘裁到卡片左缘（底栏属于侧栏层，卡片盖过来的部分要藏起来）。
- * 吸附时原生按 `ms` / `ease` 从 `at` 起自己插值，与卡片的 CSS 过渡同一时刻出发；拖动时逐帧发 `ms: 0`。
- */
-export interface NativeTabBarReveal {
-	/** 卡片左缘：视口 x 坐标（CSS px）。底栏只画这条线左边的部分。 */
-	x: number;
-	/** 网页内容（菜单、弹层、提示、软键盘）压在底栏位置上：原生隐藏、不接触摸，网页胶囊顶上。 */
-	covered: boolean;
-	/** 过渡时长（毫秒）；0 = 立即。 */
-	ms: number;
-	/** cubic-bezier 控制点；缺省 = 线性。 */
-	ease?: [number, number, number, number];
-	/** 起步的绝对时刻（`Date.now()` 毫秒）；缺省 = 收到即起步。 */
-	at?: number;
-}
-
 export interface NativeTabBarHost {
 	/** 拒绝 = 原生底栏不可用，调用方退回网页底栏。 */
 	set(spec: NativeTabBarSpec | null): Promise<void>;
-	reveal(r: NativeTabBarReveal): Promise<void>;
+	/** 网页内容（菜单、弹层、提示、软键盘）压在底栏位置上：原生隐藏、不接触摸，网页胶囊顶上。 */
+	cover(covered: boolean): Promise<void>;
+}
+
+/** 下沉侧栏的根滚动跟随（iOS 且 bridge ≥ 8）。 */
+export interface NativeSinkHost {
+	/** `true`：原生按根滚动的 `contentOffset` 跟随，之后原生底栏 / 页头才允许接管；拒绝 = 不可用。 */
+	set(on: boolean): Promise<void>;
+	/** 原生根滚动视图开合：`animated` 时逐帧推进，否则一步落位。 */
+	show(open: boolean, animated: boolean): Promise<void>;
 }
 
 /** orb 状态珠的画法（`OrbBead` 的各档 + `err` = 7px 错误色圆点）。 */
@@ -293,20 +286,11 @@ export interface NativeHeaderSpec {
 	} | null;
 }
 
-/** 页头控件层的呈现状态。 */
+/** 页头控件层的透明度（水平位移与是否接触摸由原生按根滚动自己算）。 */
 export interface NativeHeaderShow {
 	alpha: number;
-	/** 整层水平位移（CSS px）= 下沉卡片的左缘。 */
-	dx: number;
-	/** true = 只显示不接触摸（触摸落到网页）。 */
-	passive: boolean;
-	/** 过渡时长（整数毫秒）；0 = 立即。 */
+	/** 淡入淡出时长（整数毫秒）；0 = 立即。 */
 	ms: number;
-	/** 过渡开始前的等待（整数毫秒）；bridge < 7 的壳只认它。 */
-	delay: number;
-	ease?: [number, number, number, number];
-	/** 起步的绝对时刻（`Date.now()` 毫秒）；bridge ≥ 7 的壳按它起步、忽略 `delay`。 */
-	at?: number;
 }
 
 export type NativeMenuKind = "title" | "trail";
@@ -353,9 +337,11 @@ export interface MobileHost {
 	setChrome(c: { dark: boolean; color: string }): void;
 	openNotificationSettings(): void;
 	changeServer(): void;
-	/** 原生底栏（iOS 且 bridge ≥ 7）；其它情况为 null，用网页底栏。 */
+	/** 下沉侧栏的根滚动跟随（iOS 且 bridge ≥ 8）；其它情况为 null，卡片用网页手势。 */
+	sink: NativeSinkHost | null;
+	/** 原生底栏（iOS 且 bridge ≥ 8）；其它情况为 null，用网页底栏。 */
 	tabBar: NativeTabBarHost | null;
-	/** 原生页头（iOS 且 bridge ≥ 5）；其它情况为 null，用网页页头。 */
+	/** 原生页头（iOS 且 bridge ≥ 8）；其它情况为 null，用网页页头。 */
 	header: NativeHeaderHost | null;
 	/** 可替换图标（iOS 且 bridge ≥ 6）；其它情况为 null，设置里不显示这一项。 */
 	appIcon: AppIconHost | null;
@@ -389,8 +375,8 @@ export interface Host {
 	mobile: MobileHost | null;
 }
 
-/** 本页面实现的宿主协议版本（与壳 `host_ready` 返回的 `bridge` 对应；3 = 桌面自绘标题栏；4 = iOS 原生底栏；5 = iOS 原生页头；6 = iOS 可替换图标；7 = 原生底栏改系统 UITabBar、底栏与页头按绝对时刻跟随卡片）。 */
-export const BRIDGE = 7;
+/** 本页面实现的宿主协议版本（与壳 `host_ready` 返回的 `bridge` 对应；3 = 桌面自绘标题栏；4 = iOS 原生底栏；5 = iOS 原生页头；6 = iOS 可替换图标；7 = 原生底栏改系统 UITabBar；8 = 下沉侧栏改由根滚动驱动、原生按 contentOffset 跟随，原生底栏浮在 WebView 之上、右缘裁到卡片左缘，页头可只有侧栏钮）。 */
+export const BRIDGE = 8;
 /** 壳向页面推送事件用的 DOM 事件名。 */
 export const HOST_EVENT = "oryn:host";
 
@@ -584,8 +570,7 @@ function mobileHost(
 		cmd: string,
 		args?: Record<string, unknown>,
 	) => Promise<T | undefined>,
-	nativeTabBar: boolean,
-	nativeHeader: boolean,
+	native: boolean,
 	appIcon: boolean,
 ): MobileHost {
 	const openExternal = (url: string) => {
@@ -633,14 +618,21 @@ function mobileHost(
 		changeServer: () => {
 			void call("host_change_server");
 		},
-		// 用 invoke 不用 call：拒绝要交给调用方退回网页底栏 / 页头
-		tabBar: nativeTabBar
+		// 用 invoke 不用 call：拒绝要交给调用方退回网页手势 / 底栏 / 页头
+		sink: native
 			? {
-					set: (spec) => invoke<void>("host_tab_bar_set", { spec }),
-					reveal: (reveal) => invoke<void>("host_tab_bar_reveal", { reveal }),
+					set: (on) => invoke<void>("host_sink_set", { on }),
+					show: (open, animated) =>
+						invoke<void>("host_sink_show", { open, animated }),
 				}
 			: null,
-		header: nativeHeader
+		tabBar: native
+			? {
+					set: (spec) => invoke<void>("host_tab_bar_set", { spec }),
+					cover: (covered) => invoke<void>("host_tab_bar_cover", { covered }),
+				}
+			: null,
+		header: native
 			? {
 					set: (spec) => invoke<void>("host_header_set", { spec }),
 					show: (show) => invoke<void>("host_header_show", { show }),
@@ -770,8 +762,7 @@ function tauriHost(win: Window, invoke: Invoke): Host {
 					win,
 					invoke,
 					call,
-					platform === "ios" && (meta?.bridge ?? 0) >= 7,
-					platform === "ios" && (meta?.bridge ?? 0) >= 5,
+					platform === "ios" && (meta?.bridge ?? 0) >= 8,
 					platform === "ios" && (meta?.bridge ?? 0) >= 6,
 				)
 			: null,

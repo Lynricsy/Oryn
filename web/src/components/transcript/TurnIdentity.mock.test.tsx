@@ -17,6 +17,7 @@ import {
 	getThreadStore,
 	indexStore,
 	resetThreadStores,
+	type ThreadMessage,
 	useThread,
 } from "../../state/stores";
 import type { OmpFrame } from "../../state/thread-reducer";
@@ -70,9 +71,33 @@ vi.mock("../../realtime/socket", () => {
 });
 
 class Socket implements MockSocket {
+	private queued?: Map<string, ThreadMessage[]>;
+
+	// 模拟生产 WebSocket 的批量写入；这里验证回合完成后的身份，不测流式动画。
+	async batch(run: () => Promise<void>) {
+		const queued = new Map<string, ThreadMessage[]>();
+		this.queued = queued;
+		try {
+			await run();
+		} finally {
+			this.queued = undefined;
+			for (const [threadId, messages] of queued)
+				getThreadStore(threadId).getState().apply(messages);
+		}
+	}
+
+	private apply(threadId: string, message: ThreadMessage) {
+		if (!this.queued) {
+			getThreadStore(threadId).getState().apply([message]);
+			return;
+		}
+		const messages = this.queued.get(threadId);
+		if (messages) messages.push(message);
+		else this.queued.set(threadId, [message]);
+	}
+
 	deliver(msg: Record<string, unknown>) {
 		const threadId = String(msg.threadId ?? "");
-		const store = () => getThreadStore(threadId).getState();
 		switch (msg.type) {
 			case "res": {
 				const p = bridge.pending.get(String(msg.id));
@@ -91,26 +116,22 @@ class Socket implements MockSocket {
 				return;
 			}
 			case "thread.snapshot":
-				store().apply([
-					{
-						type: "thread.snapshot",
-						snapshot: msg as unknown as WsThreadSnapshot,
-					},
-				]);
+				this.apply(threadId, {
+					type: "thread.snapshot",
+					snapshot: msg as unknown as WsThreadSnapshot,
+				});
 				return;
 			case "entries":
-				store().apply([
-					{
-						type: "entries",
-						msg: {
-							entries: msg.entries as Entry[],
-							leafEntryId: msg.leafEntryId as string,
-						},
+				this.apply(threadId, {
+					type: "entries",
+					msg: {
+						entries: msg.entries as Entry[],
+						leafEntryId: msg.leafEntryId as string,
 					},
-				]);
+				});
 				return;
 			case "frame":
-				store().apply([{ type: "frame", frame: msg.frame as OmpFrame }]);
+				this.apply(threadId, { type: "frame", frame: msg.frame as OmpFrame });
 				return;
 		}
 	}
@@ -225,7 +246,9 @@ afterEach(() => {
 
 async function send(threadId: string, text: string) {
 	await act(async () => {
-		await server.runPrompt(threadId, text);
+		await (bridge.socket as Socket).batch(() =>
+			server.runPrompt(threadId, text),
+		);
 	});
 }
 

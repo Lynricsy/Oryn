@@ -30,10 +30,11 @@ function makeInfo(push: MobileInfo["push"]): MobileInfo {
 
 let info: MobileInfo;
 let fake: {
-	[K in Exclude<keyof MobileHost, "tabBar" | "header" | "appIcon">]: Mock<
-		MobileHost[K]
-	>;
-} & { tabBar: null; header: null; appIcon: null };
+	[K in Exclude<
+		keyof MobileHost,
+		"sink" | "tabBar" | "header" | "appIcon"
+	>]: Mock<MobileHost[K]>;
+} & { sink: null; tabBar: null; header: null; appIcon: null };
 let mobileCb: (() => void) | undefined;
 const h = host as { mobile: MobileHost | null };
 
@@ -48,6 +49,7 @@ beforeEach(() => {
 		setChrome: vi.fn(),
 		openNotificationSettings: vi.fn(),
 		changeServer: vi.fn(),
+		sink: null,
 		tabBar: null,
 		header: null,
 		appIcon: null,

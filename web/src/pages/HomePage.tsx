@@ -172,7 +172,11 @@ export function HomePage(): ReactNode {
 	const probeRef = useRef<HTMLSpanElement>(null);
 	const headTheme = useHeaderTheme(probeRef);
 	const leadFrame = useSlotFrame(leadRef, nativeLead);
-	useHeaderCover(headRef, true);
+	useHeaderCover(
+		headRef,
+		true,
+		useUi((s) => s.sidebarOpen),
+	);
 	useNativeHeaderPart(
 		"theme",
 		headTheme && {

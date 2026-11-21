@@ -41,12 +41,7 @@ struct TabBarSetArgs: Decodable {
   let spec: TabBarSpec?
 }
 
-/// `tabBarReveal` 的载荷：卡片左缘（视口 x，底栏右缘裁到这里）、网页内容是否压在底栏位置上，
-/// 以及过渡：`ms` 为 0 立即就位，否则从绝对时刻 `at`（Unix 毫秒，缺省 = 收到即起步）按 `ease` 插值。
-struct TabBarRevealArgs: Decodable {
-  let x: Double
+/// `tabBarCover` 的载荷：网页内容是否压在底栏位置上。
+struct TabBarCoverArgs: Decodable {
   let covered: Bool
-  let ms: Double
-  let ease: [Double]?
-  let at: Double?
 }

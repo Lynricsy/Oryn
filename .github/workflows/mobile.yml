@@ -3,7 +3,7 @@ name: mobile
 # 移动 App（同一 Tauri 工程的 Android / iOS 目标）的构建与发布（M7 计划步骤 6；主人决定：UnifiedPush + FCM、仅 GitHub Release）。
 # - PR / 手动触发：`android` 构建 foss 与 gms 两个 debug APK（x86_64 + arm64）并跑插件单测，`android-smoke` 在模拟器里冒烟，
 #   `ios-check` 在 macOS 上不签名编译模拟器包，并在 iOS 26+ 模拟器里截图断言原生底栏与原生页头（硬门禁）：web/src-tauri/ci/ios-header-check.sh
-#   是原生页头演示，ios-e2e-check.sh 是端到端（mock Web UI + 远程能力 + XCUITest 真实触摸；原生底栏垫在 WebView 之下、要靠真实网页透出，只在这里检查）。
+#   是原生页头演示，ios-e2e-check.sh 是端到端（mock Web UI + 远程能力 + XCUITest 真实触摸；原生底栏的裁切要和真实网页的卡片一起看，只在这里检查）。
 #   不签名、拿不到签名 secret。
 # - 推送 tag `mobile-v<版本>` 或预发布 `mobile-v<版本>-rc.N`（<版本> 须与 web/src-tauri/Cargo.toml 的 version 一致）：`release` 建草稿 Release →
 #   `android-release` 额外以发布密钥构建签名的 release APK + AAB（foss 与 gms 各一套）并上传为 Release 资产，
@@ -29,9 +29,13 @@ on:
       - "web/src/lib/host.ts"
       - "web/src/lib/native-tab-bar.ts"
       - "web/src/lib/native-header.ts"
+      - "web/src/lib/native-sink.ts"
+      - "web/src/lib/viewport.ts"
       - "web/src/components/layout/SinkLayout.tsx"
       - "web/src/components/layout/SectionTabBar.tsx"
-      # 原生底栏垫在 WebView 之下：页面透明、侧栏列表渐隐与卡片的开合过渡都在这里
+      # 首页的侧栏钮由原生页头接管（只有侧栏钮的 spec，key = home）
+      - "web/src/pages/HomePage.tsx"
+      # 下沉侧栏的宽度、根滚动模式与卡片的开合样式都在这里
       - "web/src/index.css"
       - "web/src/components/layout/SectionPanes.tsx"
       - "web/src/components/thread/CompactThreadHeader.tsx"
@@ -500,10 +504,11 @@ jobs:
           [[ -f ios-shot/header/.complete ]] || { echo "::error::页头演示检查没有跑完全部断言"; exit 1; }
 
       # 硬门禁：真实网页 + 真实触摸。debug 包的 ORYN_E2E_URL 钩子跳过配对，经与生产相同的 open_remote（远程能力 + 宿主命令权限）
-      # 打开本机的 mock Web UI；XCUITest 合成触摸。底栏（系统 UITabBar 垫在 WebView 之下）：点侧栏按钮打开、点卡片条关闭、
-      # 左缘拖到一半按住（连拍截图等卡片停住）、点原生「项目」、在原生底栏上横滑回第 1 项、再点收起；
+      # 打开本机的 mock Web UI；XCUITest 合成触摸。卡片开合是 WKWebView 的根滚动（bridge 8），原生按 contentOffset 跟随。
+      # 底栏（系统 UITabBar 浮在 WebView 之上、右缘裁到卡片左缘）：点首页的原生侧栏钮打开、点卡片条关闭（原生 host_sink_show 逐帧开合）、
+      # 左缘拖到一半按住（连拍截图等卡片停住，揭示边 ≈ 手指位移）、点原生「项目」、在原生底栏上横滑回第 1 项、再点收起；
       # 页头（线程页）：原生接管、点胶囊开面板、进子页再返回、选「改名」打开网页对话框（select 事件 + 原生让位）、关对话框、
-      # 开关侧栏（原生页头不让位，跟着卡片吸附）。
+      # 开关侧栏与按住拖动（原生页头与卡片同帧平移，开合期间不发 header.show）。
       # 可替换图标（设置 → 外观）：点「品牌色」、点掉系统提示、等 setAlternateIconName 完成回调后的 appicon.set，再换回「黑白」。
       # 无障碍树断言在测试里，事件日志与逐区域像素断言在脚本里，结果写进 Step Summary，截图与 xcresult 随 ios-screenshot 上传。
       - name: 模拟器：真实网页与触摸驱动的原生底栏、页头与可替换图标（端到端）
@@ -514,6 +519,12 @@ jobs:
         env:
           APP: ${{ steps.app.outputs.path }}
         run: |
+          # 发布同一份 Step Summary 到产物，便于下载后核对各阶段结果。
+          mkdir -p ios-shot/e2e
+          step_summary="$GITHUB_STEP_SUMMARY"
+          export GITHUB_STEP_SUMMARY="$PWD/ios-shot/e2e/summary.md"
+          : > "$GITHUB_STEP_SUMMARY"
+          trap 'cat "$GITHUB_STEP_SUMMARY" >> "$step_summary"' EXIT
           rm -f ios-shot/e2e/.complete
           bash web/src-tauri/ci/ios-e2e-check.sh "$APP" web/dist-e2e ios-shot/e2e
           [[ -f ios-shot/e2e/.complete ]] || { echo "::error::端到端检查没有跑完全部断言"; exit 1; }
@@ -525,6 +536,8 @@ jobs:
           name: ios-screenshot
           path: ios-shot/
           if-no-files-found: ignore
+          # 保留 header/.complete 与 e2e/.complete：验收要能从产物里确认脚本跑完了全部断言（upload-artifact 默认跳过隐藏文件）
+          include-hidden-files: true
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: github.event_name == 'workflow_dispatch' && inputs.export_ios_project

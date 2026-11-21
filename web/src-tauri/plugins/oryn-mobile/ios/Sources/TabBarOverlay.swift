@@ -1,9 +1,9 @@
 // 下沉侧栏的原生底栏（iOS 26+）：系统 UITabBar，浮在 WKWebView 之上。
 // 为什么是系统 UITabBar：按住冒出的大液珠、按住横滑换项都是 UITabBar 私有的选中透镜，SwiftUI 的 glassEffect 只有材质与按压反馈。
 // 为什么浮在上面：玻璃只折射它下面真实的内容；浮在 WebView 之上，侧栏列表一直画到屏幕底边、从玻璃后面透过来。
-// 底栏属于侧栏层，卡片盖过来的部分要藏起来：底栏装在一个裁切视图里，裁切视图的右缘 = 卡片左缘（网页给的 `x`）。
-// 吸附时按网页给的时长、缓动与绝对起步时刻自己插值（与卡片的 CSS 过渡同一时刻出发），拖动时逐帧直接就位；
-// 网页内容（菜单、弹层、提示、软键盘）压在底栏位置上时整块隐藏、不接触摸，网页胶囊顶上。
+// 底栏属于侧栏层，卡片盖过来的部分要藏起来：底栏装在一个裁切视图里，裁切视图的右缘 = 卡片左缘。
+// 卡片左缘来自 SinkFollow（根滚动的 contentOffset，follow）：在同一次 KVO 回调里直接改裁切宽度，与卡片同进程、同一帧，
+// 不需要插值或对时。遮挡来自网页（cover）：网页内容（菜单、弹层、提示、软键盘）压在底栏位置上时整块隐藏、不接触摸，网页胶囊顶上。
 // 选中项只听网页的（当前分区 = 路由）：系统点选后会先自己换选中，网页回发的 spec 再确认（或改回）。
 import UIKit
 import WebKit
@@ -27,8 +27,6 @@ final class TabBarOverlay: NSObject, UITabBarDelegate {
   /// iOS 26 的 UITabBar 把玻璃胶囊画在自己边界内左右各缩进这么多（模拟器实测 21pt）；
   /// 底栏左右各放出这么多，看得见的胶囊才与网页胶囊同宽（四项撑满侧栏）。
   static let platterInset: CGFloat = 21
-  /// 缺省缓动（= 网页 `--ease`）。
-  static let defaultEase: [Double] = [0.2, 0.8, 0.2, 1]
   /// 让开遮挡后淡回的时长（= 网页 `UNCOVER_MS`）。
   static let fadeIn: TimeInterval = 0.12
 
@@ -41,10 +39,10 @@ final class TabBarOverlay: NSObject, UITabBarDelegate {
   private var avatars: [String: (String, UIImage)] = [:]
   /// 底栏在 WebView 坐标里的矩形（高度取系统的）。
   private var slot: CGRect = .zero
-  /// 裁切右缘的目标（WebView 坐标 x = 卡片左缘）。
+  /// 裁切右缘（WebView 坐标 x = 卡片左缘，SinkFollow 给）。
   private var edge: CGFloat = 0
+  /// 网页内容压在底栏位置上（网页给）。
   private var covered = false
-  private var animator: UIViewPropertyAnimator?
 
   init(webview: WKWebView, onTap: @escaping (String) -> Void) {
     self.webview = webview
@@ -156,8 +154,8 @@ final class TabBarOverlay: NSObject, UITabBarDelegate {
       height: slot.height)
     if bar.frame != inClip { bar.frame = inClip }
     clip.touchRect = CGRect(x: slot.minX, y: 0, width: slot.width, height: slot.height + Self.slop * 2)
-    // 在途的裁切过渡不打断：只有静止时才把裁切视图挪到新位置
-    if animator == nil { clip.frame = clipFrame(edge) }
+    clip.frame = clipFrame(edge)
+    updateTouch()
   }
 
   /// 裁切视图：从 WebView 左缘到卡片左缘，上下各多出 `slop`。
@@ -168,46 +166,16 @@ final class TabBarOverlay: NSObject, UITabBarDelegate {
       height: slot.height + Self.slop * 2)
   }
 
-  /// 卡片左缘与遮挡。`ms == 0` 立即就位（拖动逐帧、减少动效）；否则等 `delay` 后按 `ease` 过渡 `ms` 毫秒。
-  /// 只换遮挡（左缘目标没变、`ms == 0`）时不打断在途的过渡。
-  /// `overdue`：消息到时已过了起步时刻。收窄（关侧栏）时卡片已经盖过来一段，再从头走完整过渡会让底栏画到卡片上，
-  /// 所以直接裁到终点（宁可早藏）；放宽（开侧栏）晚起步只会多藏一点，照常过渡。
-  func reveal(
-    x: CGFloat, covered: Bool, ms rawMs: Double, delay: Double, overdue: Bool, ease: [Double]?
-  ) {
-    setCovered(covered)
-    let ms = overdue && x < edge - 0.5 ? 0 : rawMs
-    let sameTarget = abs(x - edge) < 0.5
-    if sameTarget && ms == 0 && animator != nil { return }
-    edge = x
-    if let running = animator, running.state == .active {
-      // 不走完：停在此刻的呈现值，下一段从那里出发
-      running.stopAnimation(true)
-    }
-    animator = nil
-    guard ms > 0 else {
-      clip.frame = clipFrame(x)
-      updateTouch()
-      return
-    }
-    let e = ease.flatMap { $0.count == 4 ? $0 : nil } ?? Self.defaultEase
-    let timing = UICubicTimingParameters(
-      controlPoint1: CGPoint(x: e[0], y: e[1]), controlPoint2: CGPoint(x: e[2], y: e[3]))
-    let next = UIViewPropertyAnimator(duration: ms / 1000, timingParameters: timing)
-    let target = clipFrame(x)
-    next.addAnimations { self.clip.frame = target }
-    next.addCompletion { [weak self, weak next] _ in
-      guard let self = self, self.animator === next else { return }
-      self.animator = nil
-      self.updateTouch()
-    }
-    animator = next
-    // 过渡途中不接触摸：命中按终点算，卡片还压在底栏上的那段会被底栏吃掉点击
+  /// 跟随卡片左缘（SinkFollow 的 dx）：裁切视图同步改宽，不带动画。
+  func follow(dx: CGFloat) {
+    edge = dx
+    let frame = clipFrame(dx)
+    if clip.frame != frame { clip.frame = frame }
     updateTouch()
-    next.startAnimation(afterDelay: delay / 1000)
   }
 
-  private func setCovered(_ next: Bool) {
+  /// 网页内容压没压在底栏上：压上立即隐藏，让开后淡回。
+  func cover(_ next: Bool) {
     guard next != covered else { return }
     covered = next
     if next {
@@ -218,8 +186,9 @@ final class TabBarOverlay: NSObject, UITabBarDelegate {
     updateTouch()
   }
 
+  /// 卡片完全露出底栏胶囊、且网页内容没压在底栏上时才接触摸。
   private func updateTouch() {
-    clip.isUserInteractionEnabled = spec != nil && !covered && animator == nil
+    clip.isUserInteractionEnabled = spec != nil && !covered && edge >= slot.maxX - 0.5
   }
 
   func tabBar(_ tabBar: UITabBar, didSelect item: UITabBarItem) {
@@ -228,8 +197,6 @@ final class TabBarOverlay: NSObject, UITabBarDelegate {
   }
 
   func remove() {
-    animator?.stopAnimation(true)
-    animator = nil
     clip.removeFromSuperview()
   }
 }

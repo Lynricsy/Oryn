@@ -9,12 +9,7 @@
  * agent 正在写时说明行换成「正在写入…」。卡片自己不登记观看（不然总览页的每张卡都会算一个观看者）。
  * 不传 `onOpen` 时（只读的分享页）渲染成不可点的静态块。
  */
-import {
-	type KeyboardEvent,
-	type ReactNode,
-	type Ref,
-	useState,
-} from "react";
+import { type KeyboardEvent, type ReactNode, type Ref, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	type Artifact,

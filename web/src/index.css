@@ -318,6 +318,37 @@ body {
 	overscroll-behavior: none;
 }
 
+/*
+ * 下沉侧栏的根滚动模式（iOS bridge 8，lib/native-sink.ts）：卡片开合 = 文档的横向滚动，松手落点由原生 SinkFollow 给出。
+ * 侧栏 fixed 垫底，卡片在它右侧 in-flow；scrollX = 0 打开、最右关闭。必须无层：要压过 @layer 里的 .sink-* 与 Tailwind 工具类。
+ * - 根容器用 overflow: clip 裁剪，不让它成为另一个滚动容器；
+ * - 卡片的 translate 保持非 none（--sink-p: 0 时是 0px 0）：卡片内 position: fixed 的后代继续以卡片为包含块。
+ */
+/* overscroll-behavior：body 上的 none 在这里管不到（滚动容器换成了根），在根上重申：两端不回弹出空白、不触发浏览器的横滑返回 */
+:root[data-sink-native] {
+	overflow-x: auto;
+	overflow-y: hidden;
+	overscroll-behavior: none;
+	scrollbar-width: none;
+}
+:root[data-sink-native]::-webkit-scrollbar {
+	display: none;
+}
+:root[data-sink-native] .sink-root {
+	width: calc(var(--sink-w) + 100vw);
+	overflow: clip;
+}
+:root[data-sink-native] .sink-sidebar {
+	position: fixed;
+}
+:root[data-sink-native] .sink-card {
+	left: var(--sink-w);
+	right: auto;
+	width: 100vw;
+	--sink-p: 0;
+	transition: none;
+}
+
 @utility pt-safe {
 	padding-top: env(safe-area-inset-top);
 }
@@ -1232,22 +1263,6 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 	.sink-card[data-dragging],
 	.sink-card[data-instant] {
 		transition: none;
-	}
-	/* iOS 原生页头 / 底栏接管时（lib/native-header.ts、lib/native-tab-bar.ts）：原生跟着卡片走（页头平移、底栏右缘裁切），
-	   原生那边按网页给的绝对时刻起步；卡片的非手势开合与松手吸附都晚 34ms 起步，给桥留出送达时间，两边从同一时刻出发。
-	   两个 :not 缺一不可：少了它们，拖动与减少动效时会变成「延迟 34ms 的瞬移」 */
-	.sink-card:is([data-native-head], [data-native-bar]):not([data-open]):not(
-		[data-dragging]
-	):not([data-instant]) {
-		transition:
-			translate 260ms var(--ease) 34ms,
-			border-radius 0s 294ms,
-			box-shadow 0s 294ms;
-	}
-	.sink-card:is([data-native-head], [data-native-bar])[data-open]:not(
-		[data-dragging]
-	):not([data-instant]) {
-		transition: translate 260ms var(--ease) 34ms;
 	}
 	/* 名字色相方块（头像、项目徽标、标题图标）：比中性色饱和一档 */
 	.avatar {

@@ -171,7 +171,7 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 		return
 	}
 	t.mu.Lock()
-	if t.starting || t.orbID == "" {
+	if t.starting || t.stopping || t.orbID == "" {
 		t.mu.Unlock()
 		return
 	}
@@ -184,6 +184,10 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 	defer func() {
 		t.mu.Lock()
 		t.starting = false
+		if t.wakeAfterStart {
+			t.wakeAfterStart = false
+			s.wakeAfterRefreshLocked(t)
+		}
 		t.mu.Unlock()
 	}()
 
@@ -465,11 +469,10 @@ func (s *Service) onAgentStatus(ctx context.Context, orbID string, params json.R
 			// 有意停止，不是故障：控制面的 agent.stop（RefreshAgent、删除线程、fork 回退），或 orbd 收到 shutdown /
 			// SIGTERM（orb 停机、删除；协调宿主的冻结就是结束进程）。orbd 只在崩溃时带 restartsLeft。
 			// 下一条命令经唤醒路径重新 agent.start。
-			t.stopping = false
 			t.live.SetWorking(false)
 			t.settled, t.unsynced = true, false
 			s.dropPassiveLocked(t, "agent stopped")
-			if (t.queueNeedsWake() || len(t.msgOrder) > 0) && !orbGoingDown(s.orbState(t.orbID)) {
+			if !t.stopping && (t.queueNeedsWake() || len(t.msgOrder) > 0) && !orbGoingDown(s.orbState(t.orbID)) {
 				s.wake(t.id, t.orbID)
 			}
 		case p.RestartsLeft != nil && *p.RestartsLeft > 0:
@@ -532,7 +535,7 @@ func (s *Service) onAgentGap(ctx context.Context, orbID string, params json.RawM
 
 // onReadyLocked 在 agent 可接收命令时下发排队命令并刷新 state。调用方持有 t.mu。
 func (s *Service) onReadyLocked(ctx context.Context, t *thread) {
-	if !t.agentReady() {
+	if t.stopping || !t.agentReady() {
 		return
 	}
 	// 状态与流都到位才算就绪（二者经不同的 yamux 流到达，先后不定）
@@ -921,9 +924,9 @@ func (s *Service) enqueueLocked(t *thread, frame []byte, p *pendingCmd) error {
 		}
 		h.ID = id
 	}
-	// orb 冻结 / 停机 / 唤醒途中，现有 agent 流即将随 link 重建而作废，写入的命令会丢失：先排队，
-	// 新流上报 agent.status ready 后由 onReadyLocked 下发。
-	if t.agentReady() && !orbSuspended(s.orbState(t.orbID)) {
+	// 刷新停止期间旧 agent 不再接新命令；orb 冻结 / 停机 / 唤醒途中，旧流也可能失效。先排队，
+	// 等待可用的流，由 onReadyLocked 下发。
+	if !t.stopping && t.agentReady() && !orbSuspended(s.orbState(t.orbID)) {
 		if p != nil {
 			t.pending[h.ID] = p
 		}
@@ -1656,7 +1659,7 @@ func (s *Service) wake(threadID, orbID string) {
 func (s *Service) scheduleStart(threadID string) {
 	if t, err := s.get(s.ctx, threadID); err == nil {
 		t.mu.Lock()
-		if t.orbID != "" && t.agentStatus != apigen.AgentStatusReady {
+		if !t.stopping && t.orbID != "" && t.agentStatus != apigen.AgentStatusReady {
 			t.agentStatus = apigen.AgentStatusStarting
 		}
 		t.mu.Unlock()

@@ -15,12 +15,13 @@
  * - 打开时卡片 `inert`（不可点、读屏忽略），侧栏获得焦点；关闭后焦点还原到打开前的元素。触屏上不还原到输入框
  *   （关闭那一下是用户手势，聚焦输入框会弹出软键盘；原生侧栏钮不夺网页焦点，打开前的焦点常是首页的输入框）。
  * - `prefers-reduced-motion`：不做过渡，直接切换。
- * - iOS 原生底栏（`lib/native-tab-bar.ts`）浮在 WebView 之上、右缘裁到卡片左缘；iOS 原生页头（`lib/native-header.ts`）跟着卡片平移。
- *   两者同一套运动：拖动时逐帧把进度交给控制器（`drag` / `cardDrag`），松手与任何非手势开合只发终点（`settle` / `cardSettle`，
- *   原生按同一时长、缓动与卡片过渡实际起步的绝对时刻自己插值）。接管后卡片带 `data-native-bar` / `data-native-head`：
- *   非手势开合与松手吸附都晚 34ms 起步（index.css），给桥留出送达时间，两边从同一时刻出发。
- *   另外打开且吸附完成后定时探测底栏位置是否被菜单、弹层、软键盘盖住（`setCovered`，盖住时原生隐藏、网页胶囊顶上）；
- *   卡片还在过渡或被拖动时不判定（主线程忙时过渡会拖过武装时间，卡片仍压在槽位上，不是被盖住）。
+ * - iOS 根滚动模式（bridge 8，`lib/native-sink.ts`）：挂载即请求原生跟随根滚动；接管后 `<html data-sink-native>`，
+ *   文档可横向滚动；拖动与减速由系统处理，原生给松手落点，不装上面的 JS 手势。根滚动停稳后提交到 `sidebarOpen`；
+ *   `sidebarOpen` 由别处改变时请求原生滚到对应一端；非本页引起的横向位移立即拉回。
+ *   不接管（浏览器、Android、旧壳、iOS < 26）时一切照旧走 JS 手势。
+ * - iOS 原生底栏（`lib/native-tab-bar.ts`）浮在 WebView 之上，右缘由原生按根滚动裁到卡片左缘（侧栏列表一直画到屏幕底边，
+ *   玻璃折射它）。这里只在侧栏打开且静止时定时探测底栏位置是否被菜单、弹层、软键盘盖住（`setCovered`，盖住时原生隐藏、
+ *   网页胶囊顶上）。
  */
 import {
 	type ReactNode,
@@ -30,15 +31,21 @@ import {
 	useSyncExternalStore,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { nativeHeader, useNativeHeaderEngaged } from "../../lib/native-header";
+import {
+	createSinkScroll,
+	nativeSink,
+	type SinkRest,
+	type SinkScroll,
+	sinkRest,
+	useNativeSinkEngaged,
+} from "../../lib/native-sink";
 import {
 	COVER_POLL_MS,
-	NATIVE_LAG_MS,
 	nativeTabBar,
-	SINK_MS,
 	slotCovered,
 	useNativeTabBarEngaged,
 } from "../../lib/native-tab-bar";
+import { setMinScale } from "../../lib/viewport";
 import { uiStore, useUi } from "../../state/ui";
 
 /** 左缘起手区宽度（px）。 */
@@ -118,8 +125,10 @@ function sinkWidth(side: HTMLElement | null): number {
 	return side?.getBoundingClientRect().width || window.innerWidth;
 }
 
-/** 遮挡探测的武装延迟：卡片吸附完（含原生的 34ms 晚起步）再探，此前卡片还没让开。 */
-const ARM_MS = SINK_MS + NATIVE_LAG_MS + 60;
+/** 原生模式：卡片离开关闭位而 store 还是关着（拖动、程序化开合途中）时带 `data-dragging`，切到打开时的圆角、投影与裁剪。 */
+function markMoving(card: HTMLElement, open: boolean) {
+	card.toggleAttribute("data-dragging", !open && sinkRest(window) !== "closed");
+}
 
 export function SinkLayout({
 	sidebar,
@@ -132,67 +141,13 @@ export function SinkLayout({
 	const open = useUi((s) => s.sidebarOpen);
 	const reduce = useReducedMotion();
 	const engaged = useNativeTabBarEngaged();
-	const headEngaged = useNativeHeaderEngaged();
+	const native = useNativeSinkEngaged();
+	const scrollRef = useRef<SinkScroll | null>(null);
 	const cardRef = useRef<HTMLDivElement>(null);
 	const sideRef = useRef<HTMLDivElement>(null);
 	const restore = useRef<HTMLElement | null>(null);
 	const openRef = useRef(open);
 	openRef.current = open;
-	const reduceRef = useRef(reduce);
-	reduceRef.current = reduce;
-	// 两个原生部件（底栏、页头）同一次吸附共用同一个起步时刻
-	const settleNative = useRef(
-		(
-			next: boolean,
-			w: number,
-			instant: boolean,
-			start?: Promise<number | null>,
-		) => {
-			nativeTabBar.settle(next, w, instant, start);
-			nativeHeader.cardSettle(next, w, instant, start);
-		},
-	).current;
-	// 卡片 translate 过渡实际起步的绝对时刻（Unix 毫秒）：transitionrun 在样式重算时触发（主线程被路由渲染占住时会晚于预期），
-	// 加上接管时的 transition-delay。200ms 还没收到就直接查卡片身上的过渡（主线程卡住时定时器可能先于事件派发）；
-	// 确实没有过渡（终点没变）才给 null，控制器让原生直接就位
-	const cardStart = useRef((): Promise<number | null> => {
-		const card = cardRef.current;
-		if (!card) return Promise.resolve(null);
-		return new Promise((resolve) => {
-			const done = (at: number | null) => {
-				window.clearTimeout(timer);
-				card.removeEventListener("transitionrun", onRun);
-				resolve(at);
-			};
-			const onRun = (e: TransitionEvent) => {
-				if (e.target !== card || e.propertyName !== "translate") return;
-				const lag =
-					card.hasAttribute("data-native-head") ||
-					card.hasAttribute("data-native-bar")
-						? NATIVE_LAG_MS
-						: 0;
-				done(performance.timeOrigin + e.timeStamp + lag);
-			};
-			const onTimeout = () => {
-				const run = card.getAnimations?.()?.find(
-					// 不用 instanceof CSSTransition：旧 WebView / jsdom 没有这个全局
-					(a) =>
-						(a as Partial<CSSTransition>).transitionProperty === "translate",
-				);
-				if (!run) return done(null);
-				const t0 =
-					typeof run.startTime === "number" ? run.startTime : performance.now();
-				done(
-					performance.timeOrigin +
-						t0 +
-						Number(run.effect?.getTiming().delay ?? 0),
-				);
-			};
-			const timer = window.setTimeout(onTimeout, 200);
-			card.addEventListener("transitionrun", onRun);
-		});
-	}).current;
-
 	// 历史标记：打开时压入；关闭时若标记仍在栈顶（没有因导航被盖住）就弹掉
 	useEffect(() => {
 		if (open) {
@@ -252,76 +207,119 @@ export function SinkLayout({
 		return () => window.removeEventListener("keydown", onKey);
 	}, [open]);
 
-	// 原生底栏与页头：非手势开合（按钮、Esc、返回键、选线程）发吸附终点；与手势 end() 的重复由控制器去重
-	useLayoutEffect(() => {
-		const w = sinkWidth(sideRef.current);
-		settleNative(open, w, reduce, reduce ? undefined : cardStart());
-	}, [open, reduce, settleNative, cardStart]);
-
-	useEffect(() => {
-		const onResize = () =>
-			settleNative(openRef.current, sinkWidth(sideRef.current), true);
-		window.addEventListener("resize", onResize);
-		return () => window.removeEventListener("resize", onResize);
-	}, [settleNative]);
-
-	// 原生底栏的遮挡探测：只在打开且接管时；吸附完成后武装，定时探测，抬手 / 松键 / 软键盘变化 / 卡片过渡结束后下一帧补探。
-	// 任何一路探测都只在武装后、且卡片不在过渡或拖动中时判定
+	// 原生底栏的遮挡探测：只在打开且接管时；卡片停在打开位才判定（开合途中卡片还压在槽位上，命中卡片不是被弹层盖住）。
+	// 定时探测，抬手 / 松键 / 软键盘变化 / 根滚动之后下一帧补探
 	useEffect(() => {
 		if (!open || !engaged) return;
-		const card = cardRef.current;
-		let armed = false;
-		let poll = 0;
 		let frame = 0;
 		const check = () => {
-			// 主线程忙时卡片过渡会比武装时间晚结束：此刻卡片可能还压在槽位上，命中卡片不是被弹层盖住；不判定，等过渡结束补探
-			if (
-				card?.hasAttribute("data-dragging") ||
-				card?.getAnimations?.().some((a) => a.playState === "running")
-			)
-				return;
+			if (sinkRest(window) !== "open") return;
 			const slot = sideRef.current?.querySelector("[data-tabbar-slot]");
 			if (slot) nativeTabBar.setCovered(slotCovered(slot, window));
 		};
 		const soon = () => {
-			if (!armed || frame) return;
+			if (frame) return;
 			frame = requestAnimationFrame(() => {
 				frame = 0;
 				check();
 			});
 		};
-		const arm = window.setTimeout(
-			() => {
-				armed = true;
-				check();
-				poll = window.setInterval(check, COVER_POLL_MS);
-			},
-			reduce ? 0 : ARM_MS,
-		);
-		const onTransitionEnd = (e: TransitionEvent) => {
-			if (e.target === card) soon();
-		};
+		check();
+		const poll = window.setInterval(check, COVER_POLL_MS);
 		const vv = window.visualViewport;
 		document.addEventListener("pointerup", soon, true);
 		document.addEventListener("keyup", soon, true);
+		window.addEventListener("scroll", soon, { passive: true });
 		vv?.addEventListener("resize", soon);
-		card?.addEventListener("transitionend", onTransitionEnd);
 		return () => {
-			window.clearTimeout(arm);
 			window.clearInterval(poll);
 			cancelAnimationFrame(frame);
 			document.removeEventListener("pointerup", soon, true);
 			document.removeEventListener("keyup", soon, true);
+			window.removeEventListener("scroll", soon);
 			vv?.removeEventListener("resize", soon);
-			card?.removeEventListener("transitionend", onTransitionEnd);
 			nativeTabBar.setCovered(false);
 		};
-	}, [open, engaged, reduce]);
+	}, [open, engaged]);
 
-	// 触摸手势：跟手写 --sink-p，松手吸附
+	// 根滚动跟随：挂载即请求（没有原生能力时是空操作），卸载时撤掉
+	useEffect(() => {
+		nativeSink.setOn(true);
+		return () => nativeSink.setOn(false);
+	}, []);
+
+	// 原生滚动模式：文档可横滚（index.css 的 `:root[data-sink-native]`），根滚动与 sidebarOpen 互相同步
+	useLayoutEffect(() => {
+		const card = cardRef.current;
+		if (!native || !card) return;
+		const root = document.documentElement;
+		root.setAttribute("data-sink-native", "");
+		setMinScale(true);
+		// 根滚动位置就是开合状态。关闭时 history.back() 弹掉同文档的历史标记，不能恢复标记记录的打开位。
+		const restoration = window.history.scrollRestoration;
+		window.history.scrollRestoration = "manual";
+		const max = () => root.scrollWidth - window.innerWidth;
+		const jump = (to: SinkRest) =>
+			window.scrollTo({
+				left: to === "open" ? 0 : max(),
+				behavior: "instant",
+			});
+		const here = (): SinkRest => (openRef.current ? "open" : "closed");
+		jump(here());
+		const s = createSinkScroll(
+			{
+				rest: () => sinkRest(window),
+				scrollTo: (to, smooth) => nativeSink.show(to === "open", smooth),
+				pull: jump,
+				setTimeout: (cb, ms) => window.setTimeout(cb, ms),
+				clearTimeout: (id) => window.clearTimeout(id),
+			},
+			here(),
+			(rest) => {
+				const next = rest === "open";
+				if (next !== openRef.current) uiStore.getState().setSidebar(next);
+			},
+		);
+		scrollRef.current = s;
+		const onScroll = () => {
+			markMoving(card, openRef.current);
+			s.scrolled();
+		};
+		const onTouch = (e: TouchEvent) => s.touch(e.touches.length > 0);
+		const onResize = () => jump(here());
+		const opts = { passive: true };
+		window.addEventListener("scroll", onScroll, opts);
+		window.addEventListener("touchstart", onTouch, opts);
+		window.addEventListener("touchend", onTouch, opts);
+		window.addEventListener("touchcancel", onTouch, opts);
+		window.addEventListener("resize", onResize);
+		return () => {
+			window.removeEventListener("scroll", onScroll);
+			window.removeEventListener("touchstart", onTouch);
+			window.removeEventListener("touchend", onTouch);
+			window.removeEventListener("touchcancel", onTouch);
+			window.removeEventListener("resize", onResize);
+			s.dispose();
+			scrollRef.current = null;
+			card.removeAttribute("data-dragging");
+			root.removeAttribute("data-sink-native");
+			setMinScale(false);
+			window.history.scrollRestoration = restoration;
+			window.scrollTo(0, 0);
+		};
+	}, [native]);
+
+	// sidebarOpen 由别处改变（按钮、Esc、返回键、选线程）：请求滚到对应一端；根滚动自己提交的变化在这里是空操作
+	useLayoutEffect(() => {
+		if (!native) return;
+		scrollRef.current?.request(open ? "open" : "closed", !reduce);
+		if (cardRef.current) markMoving(cardRef.current, open);
+	}, [open, reduce, native]);
+
+	// 触摸手势（非原生模式）：跟手写 --sink-p，松手吸附
 	useEffect(() => {
 		const card = cardRef.current;
-		if (!card) return;
+		if (!card || native) return;
 		let start: {
 			x: number;
 			y: number;
@@ -340,14 +338,6 @@ export function SinkLayout({
 			card.removeAttribute("data-dragging");
 			card.style.removeProperty("--sink-p");
 			const next = settleSink(progress, last.v);
-			// 松手弹回原状态时 store 不变，只有这里能通知原生
-			const w = width();
-			settleNative(
-				next,
-				w,
-				reduceRef.current,
-				reduceRef.current ? undefined : cardStart(),
-			);
 			if (next !== openRef.current) uiStore.getState().setSidebar(next);
 		};
 		const onStart = (e: TouchEvent) => {
@@ -403,8 +393,6 @@ export function SinkLayout({
 			const w = width();
 			progress = sinkProgress(start.p, dx, w);
 			card.style.setProperty("--sink-p", String(progress));
-			nativeTabBar.drag(progress, w, last.v);
-			nativeHeader.cardDrag(progress, w, last.v);
 		};
 		card.addEventListener("touchstart", onStart, { passive: true });
 		card.addEventListener("touchmove", onMove, { passive: false });
@@ -416,7 +404,7 @@ export function SinkLayout({
 			card.removeEventListener("touchend", end);
 			card.removeEventListener("touchcancel", end);
 		};
-	}, [settleNative, cardStart]);
+	}, [native]);
 
 	return (
 		<div className="sink-root relative h-dvh w-full overflow-hidden text-fg">
@@ -434,8 +422,6 @@ export function SinkLayout({
 				ref={cardRef}
 				data-testid="sink-card"
 				data-open={open ? "" : undefined}
-				data-native-head={headEngaged ? "" : undefined}
-				data-native-bar={engaged ? "" : undefined}
 				data-instant={reduce ? "" : undefined}
 				className="sink-card absolute inset-0 flex"
 			>

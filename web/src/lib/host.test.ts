@@ -8,7 +8,6 @@ import {
 	type NativeHeaderMenu,
 	type NativeHeaderShow,
 	type NativeHeaderSpec,
-	type NativeTabBarReveal,
 	type NativeTabBarSpec,
 	parseHeaderEvent,
 } from "./host";
@@ -383,7 +382,7 @@ describe("移动壳（M7）", () => {
 		]);
 	});
 
-	describe("原生底栏（bridge 7）", () => {
+	describe("下沉侧栏与原生底栏（bridge 8）", () => {
 		const spec: NativeTabBarSpec = {
 			items: [{ id: "threads", label: "线程", icon: { symbol: "folder" } }],
 			selected: "threads",
@@ -391,54 +390,61 @@ describe("移动壳（M7）", () => {
 			dark: false,
 			accent: null,
 		};
-		const reveal: NativeTabBarReveal = {
-			x: 160,
-			covered: false,
-			ms: 260,
-			ease: [0.2, 0.8, 0.2, 1],
-			at: 1_795_000_000_042,
-		};
 
-		it("ios + bridge 7 → tabBar 非空；set / reveal 的参数形状", async () => {
-			const f = mobileWindow({ platform: "ios", bridge: 7 });
-			const tb = createHost(f.win).mobile?.tabBar;
-			expect(tb).toBeTruthy();
-			await tb?.set(spec);
-			await tb?.set(null);
-			await tb?.reveal(reveal);
+		it("ios + bridge 8 → sink / tabBar 非空；sink.set / sink.show / set / cover 的参数形状", async () => {
+			const f = mobileWindow({ platform: "ios", bridge: 8 });
+			const m = createHost(f.win).mobile;
+			expect(m?.sink).toBeTruthy();
+			expect(m?.tabBar).toBeTruthy();
+			await m?.sink?.set(true);
+			await m?.sink?.show(true, true);
+			await m?.sink?.show(false, false);
+			await m?.tabBar?.set(spec);
+			await m?.tabBar?.set(null);
+			await m?.tabBar?.cover(true);
+			await m?.sink?.set(false);
 			expect(f.invoke.mock.calls).toEqual([
+				["host_sink_set", { on: true }],
+				["host_sink_show", { open: true, animated: true }],
+				["host_sink_show", { open: false, animated: false }],
 				["host_tab_bar_set", { spec }],
 				["host_tab_bar_set", { spec: null }],
-				["host_tab_bar_reveal", { reveal }],
+				["host_tab_bar_cover", { covered: true }],
+				["host_sink_set", { on: false }],
 			]);
 		});
 
-		it("invoke 拒绝时 set / reveal 的 Promise 拒绝（调用方据此退回网页底栏）", async () => {
+		it("invoke 拒绝时 sink.set / set / cover 的 Promise 拒绝（调用方据此退回网页手势 / 底栏）", async () => {
 			const f = mobileWindow({
 				platform: "ios",
-				bridge: 7,
+				bridge: 8,
 				invoke: () => {
 					throw "unsupported";
 				},
 			});
-			const tb = createHost(f.win).mobile?.tabBar;
-			await expect(tb?.set(spec)).rejects.toBe("unsupported");
-			await expect(tb?.reveal(reveal)).rejects.toBe("unsupported");
+			const m = createHost(f.win).mobile;
+			await expect(m?.sink?.set(true)).rejects.toBe("unsupported");
+			await expect(m?.tabBar?.set(spec)).rejects.toBe("unsupported");
+			await expect(m?.tabBar?.cover(false)).rejects.toBe("unsupported");
 		});
 
-		it("ios + bridge 4–6（自绘 SwiftUI 胶囊的旧协议）、ios + bridge 3、android + bridge 7 → tabBar 为 null", () => {
-			for (const bridge of [3, 4, 5, 6]) {
+		it("ios + bridge 7 及更早、android + bridge 8 → sink / tabBar / header 皆为 null", () => {
+			for (const bridge of [3, 4, 5, 6, 7]) {
 				const old = createHost(mobileWindow({ platform: "ios", bridge }).win);
 				expect(old.mobile).not.toBeNull();
+				expect(old.mobile?.sink).toBeNull();
 				expect(old.mobile?.tabBar).toBeNull();
+				expect(old.mobile?.header).toBeNull();
 			}
-			const android = createHost(mobileWindow({ bridge: 7 }).win);
+			const android = createHost(mobileWindow({ bridge: 8 }).win);
 			expect(android.mobile).not.toBeNull();
+			expect(android.mobile?.sink).toBeNull();
 			expect(android.mobile?.tabBar).toBeNull();
+			expect(android.mobile?.header).toBeNull();
 		});
 
 		it("tabbar 事件到 onTabBar；id 不是字符串或桌面壳上忽略；可退订", () => {
-			const f = mobileWindow({ platform: "ios", bridge: 7 });
+			const f = mobileWindow({ platform: "ios", bridge: 8 });
 			const h = createHost(f.win);
 			const cb = vi.fn();
 			const off = h.onTabBar(cb);
@@ -466,47 +472,30 @@ describe("移动壳（M7）", () => {
 		});
 	});
 
-	describe("原生页头（bridge 5）", () => {
+	describe("原生页头（bridge 8）", () => {
 		const spec = { key: "T-1" } as NativeHeaderSpec;
-		const show: NativeHeaderShow = {
-			alpha: 1,
-			dx: 0,
-			passive: false,
-			ms: 120,
-			delay: 0,
-		};
-		/** 吸附：终点、时长、缓动与绝对起步时刻（bridge ≥ 7 的壳按 at 起步）。 */
-		const timed: NativeHeaderShow = {
-			alpha: 1,
-			dx: 320,
-			passive: true,
-			ms: 260,
-			delay: 34,
-			ease: [0.2, 0.8, 0.2, 1],
-			at: 1795000000034,
-		};
+		const show: NativeHeaderShow = { alpha: 1, ms: 120 };
 		const menu: NativeHeaderMenu = { open: "title", page: "env" };
 
-		it("本页宿主协议版本为 7", () => {
-			expect(BRIDGE).toBe(7);
+		it("本页宿主协议版本为 8", () => {
+			expect(BRIDGE).toBe(8);
 		});
 
-		it("ios + bridge 5 → header 非空；set / show / menu 的参数形状（show 带 at 原样透传）", async () => {
-			const f = mobileWindow({ platform: "ios", bridge: 5 });
-			const m = createHost(f.win).mobile;
-			const hd = m?.header;
+		it("ios + bridge 8 → header 非空；set / show / menu 的参数形状（show 只有 alpha 与 ms）", async () => {
+			const f = mobileWindow({ platform: "ios", bridge: 8 });
+			const hd = createHost(f.win).mobile?.header;
 			expect(hd).toBeTruthy();
 			await hd?.set(spec);
 			await hd?.set(null);
 			await hd?.show(show);
-			await hd?.show(timed);
+			await hd?.show({ alpha: 0, ms: 0 });
 			await hd?.menu(menu);
 			await hd?.menu({ open: null });
 			expect(f.invoke.mock.calls).toEqual([
 				["host_header_set", { spec }],
 				["host_header_set", { spec: null }],
-				["host_header_show", { show }],
-				["host_header_show", { show: timed }],
+				["host_header_show", { show: { alpha: 1, ms: 120 } }],
+				["host_header_show", { show: { alpha: 0, ms: 0 } }],
 				["host_header_menu", { menu }],
 				["host_header_menu", { menu: { open: null } }],
 			]);
@@ -515,7 +504,7 @@ describe("移动壳（M7）", () => {
 		it("invoke 拒绝时 set / show / menu 的 Promise 拒绝（调用方据此退回网页页头）", async () => {
 			const f = mobileWindow({
 				platform: "ios",
-				bridge: 5,
+				bridge: 8,
 				invoke: () => {
 					throw "unsupported";
 				},
@@ -524,21 +513,6 @@ describe("移动壳（M7）", () => {
 			await expect(hd?.set(spec)).rejects.toBe("unsupported");
 			await expect(hd?.show(show)).rejects.toBe("unsupported");
 			await expect(hd?.menu(menu)).rejects.toBe("unsupported");
-		});
-
-		it("ios + bridge 4 → header 为 null；ios + bridge 5 / 6 → header 非空而 tabBar 为 null；android + bridge 5 → header 为 null", () => {
-			const old = createHost(mobileWindow({ platform: "ios", bridge: 4 }).win);
-			expect(old.mobile?.header).toBeNull();
-			for (const bridge of [5, 6]) {
-				const m = createHost(
-					mobileWindow({ platform: "ios", bridge }).win,
-				).mobile;
-				expect(m?.header).toBeTruthy();
-				expect(m?.tabBar).toBeNull();
-			}
-			const android = createHost(mobileWindow({ bridge: 5 }).win);
-			expect(android.mobile).not.toBeNull();
-			expect(android.mobile?.header).toBeNull();
 		});
 
 		it("可替换图标只给 ios + bridge 6：get / set 的命令与参数；拒绝原样交给调用方", async () => {

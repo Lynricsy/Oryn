@@ -39,7 +39,7 @@ import {
 import { usePresence } from "../../lib/presence";
 import { parseTitleCard } from "../../lib/title";
 import { useThread } from "../../state/stores";
-import { uiStore } from "../../state/ui";
+import { uiStore, useUi } from "../../state/ui";
 import { useSessionCost } from "../composer/ComposerMeta";
 import { openPull, prIcon, prStatusText } from "../github/PrChip";
 import { ChromeLead, WindowControls } from "../layout/WindowControls";
@@ -123,7 +123,11 @@ export function CompactThreadHeader({
 	const dark = theme?.dark ?? isDark();
 	const leadFrame = useSlotFrame(leadRef);
 	const titleFrame = useSlotFrame(capsuleRef);
-	useHeaderCover(headerRef, visible);
+	useHeaderCover(
+		headerRef,
+		visible,
+		useUi((s) => s.sidebarOpen),
+	);
 
 	const card = parseTitleCard(thread?.title ?? "");
 	const hue = threadHue(thread?.color);

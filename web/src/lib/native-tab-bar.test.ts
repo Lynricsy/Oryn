@@ -1,7 +1,4 @@
-/**
- * 原生底栏控制器：spec 生成、遮挡探测、头像栅格化；接管 / 回退 / 撤栏 / 在途合并；吸附终点（按绝对起步时刻插值）、
- * 拖动逐帧（合帧、向左预判）、遮挡让位（网页胶囊立即顶上、晚撤），以及常量与 CSS 不漂移。
- */
+/** 原生底栏控制器：spec 生成、遮挡探测与网页胶囊的交接、头像栅格化、接管 / 回退 / 去重 / 在途合并。 */
 import {
 	afterEach,
 	beforeAll,
@@ -11,18 +8,14 @@ import {
 	type Mock,
 	vi,
 } from "vitest";
-import type { NativeTabBarReveal, NativeTabBarSpec } from "./host";
+import type { NativeTabBarSpec } from "./host";
+import type { SinkGate } from "./native-sink";
 import {
 	buildTabBarSpec,
 	createNativeTabBar,
-	NATIVE_LAG_MS,
 	type NativeTabBar,
 	rasterizeAvatar,
-	SINK_EASE,
-	SINK_MS,
-	SYNC_BIAS_MS,
 	slotCovered,
-	type TabBarEnv,
 	type TabBarSpecInput,
 	UNCOVER_MS,
 } from "./native-tab-bar";
@@ -56,60 +49,12 @@ const INPUT: TabBarSpecInput = {
 
 const SPEC = buildTabBarSpec(INPUT);
 
-/** 排空宏任务前的全部微任务（latest 的 then / finally 链、start 的 then），不等真实时长。 */
+/** 排空宏任务前的全部微任务（latest 的 then / finally 链），不等真实时长。 */
 const flush = () => new Promise((r) => setTimeout(r, 0));
-
-/** 绝对时钟的起点（Unix 毫秒）：此刻打开到 320 的 at = EPOCH + NATIVE_LAG_MS + SYNC_BIAS_MS = 夹具的 at。 */
-const EPOCH = 1_795_000_000_000;
-
-/** 可手动推进的假定时器、手动跑的假帧，钟从 EPOCH 起走。 */
-function fakeEnv() {
-	let now = 0;
-	let n = 0;
-	const timers = new Map<number, { at: number; cb: () => void }>();
-	const frames = new Map<number, () => void>();
-	const env: TabBarEnv = {
-		setTimeout(cb, ms) {
-			timers.set(++n, { at: now + ms, cb });
-			return n;
-		},
-		clearTimeout(id) {
-			timers.delete(id);
-		},
-		frame(cb) {
-			frames.set(++n, cb);
-			return n;
-		},
-		cancelFrame(id) {
-			frames.delete(id);
-		},
-		now: () => EPOCH + now,
-	};
-	const advance = (ms: number) => {
-		const end = now + ms;
-		for (;;) {
-			let next: [number, { at: number; cb: () => void }] | null = null;
-			for (const e of timers)
-				if (e[1].at <= end && (!next || e[1].at < next[1].at)) next = e;
-			if (!next) break;
-			timers.delete(next[0]);
-			now = next[1].at;
-			next[1].cb();
-		}
-		now = end;
-	};
-	/** 跑一帧。 */
-	const frame = () => {
-		const cbs = [...frames.values()];
-		frames.clear();
-		for (const cb of cbs) cb();
-	};
-	return { env, advance, frame, frames: () => frames.size, now: env.now };
-}
 
 interface FakeHost {
 	set: Mock<(spec: NativeTabBarSpec | null) => Promise<void>>;
-	reveal: Mock<(r: NativeTabBarReveal) => Promise<void>>;
+	cover: Mock<(covered: boolean) => Promise<void>>;
 }
 
 function fakeHost(opts: { rejectSet?: boolean } = {}): FakeHost {
@@ -117,41 +62,72 @@ function fakeHost(opts: { rejectSet?: boolean } = {}): FakeHost {
 		set: vi.fn(async (_spec: NativeTabBarSpec | null) => {
 			if (opts.rejectSet) throw "unsupported";
 		}),
-		reveal: vi.fn(async (_r: NativeTabBarReveal) => {}),
+		cover: vi.fn(async (_covered: boolean) => {}),
 	};
 }
 
-/** 建控制器并接管（侧栏关着）；清掉接管时补发的那条 reveal。 */
+/** 可控的根滚动接管：`flip` 切换并通知订阅者。 */
+interface FakeSink extends SinkGate {
+	flip(on: boolean): void;
+}
+
+function fakeSink(on = true): FakeSink {
+	let engaged = on;
+	const subs = new Set<() => void>();
+	return {
+		engaged: () => engaged,
+		subscribe(cb) {
+			subs.add(cb);
+			return () => {
+				subs.delete(cb);
+			};
+		},
+		flip(next) {
+			engaged = next;
+			for (const cb of [...subs]) cb();
+		},
+	};
+}
+
+/** 假计时：`advance` 推进到点的回调（UNCOVER_MS）。 */
+function fakeTimers() {
+	let now = 0;
+	let next = 1;
+	const pending = new Map<number, { at: number; cb: () => void }>();
+	return {
+		setTimeout(cb: () => void, ms: number) {
+			const id = next++;
+			pending.set(id, { at: now + ms, cb });
+			return id;
+		},
+		clearTimeout(id: number) {
+			pending.delete(id);
+		},
+		advance(ms: number) {
+			now += ms;
+			for (const [id, t] of [...pending]) {
+				if (t.at > now) continue;
+				pending.delete(id);
+				t.cb();
+			}
+		},
+	};
+}
+
+/** 建控制器并接管（根滚动已接管、无遮挡）；清掉接管时补发的那条 cover。 */
 async function engagedBar() {
-	const s = fakeEnv();
 	const h = fakeHost();
-	const bar = createNativeTabBar(h, s.env);
+	const sink = fakeSink();
+	const timers = fakeTimers();
+	const bar = createNativeTabBar(h, sink, timers);
 	bar.setSpec(SPEC);
 	await flush();
 	expect(bar.engaged()).toBe(true);
-	h.reveal.mockClear();
-	return { h, bar, s };
+	h.cover.mockClear();
+	return { h, sink, bar, timers };
 }
 
-/** 手动兑现的起步时刻（tsconfig 的 lib 不含 Promise.withResolvers）。 */
-function deferred() {
-	let resolve: (at: number | null) => void = () => {};
-	const promise = new Promise<number | null>((r) => {
-		resolve = r;
-	});
-	return { promise, resolve };
-}
-
-const reveals = (h: FakeHost) => h.reveal.mock.calls.map((c) => c[0]);
-
-/** 原生按卡片的时长与缓动从 `at` 起插值到 `x`（侧栏无遮挡）。 */
-const timed = (x: number, at: number): NativeTabBarReveal => ({
-	x,
-	covered: false,
-	ms: SINK_MS,
-	ease: [...SINK_EASE],
-	at,
-});
+const covers = (h: FakeHost) => h.cover.mock.calls.map((c) => c[0]);
 
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -181,331 +157,229 @@ describe("buildTabBarSpec", () => {
 	});
 });
 
-describe("控制器：接管、回退与撤栏", () => {
-	it("接管：set 首次成功才算接管，立刻补发当前卡片左缘与遮挡（ms 0）；接管前的吸附与遮挡不发；同一 spec 不重发", async () => {
-		const s = fakeEnv();
+describe("控制器", () => {
+	it("接管：set 首次成功才算接管，立刻补发当前遮挡；接管前的遮挡不发；同一 spec 不重发", async () => {
 		const h = fakeHost();
-		const bar = createNativeTabBar(h, s.env);
+		const bar = createNativeTabBar(h, fakeSink());
 		const sub = vi.fn();
 		bar.subscribe(sub);
-		bar.settle(true, 320, false);
 		bar.setCovered(true);
-		expect(h.reveal).not.toHaveBeenCalled();
+		expect(h.cover).not.toHaveBeenCalled();
 		bar.setSpec(SPEC);
 		expect(bar.engaged()).toBe(false);
 		await flush();
 		expect(h.set.mock.calls).toEqual([[SPEC]]);
 		expect(bar.engaged()).toBe(true);
-		expect(sub).toHaveBeenCalled();
-		expect(reveals(h)).toEqual([{ x: 320, covered: true, ms: 0 }]);
-		// 接管那一刻就被盖住：网页胶囊留着
-		expect(bar.shown()).toBe(false);
+		expect(sub).toHaveBeenCalledTimes(1);
+		expect(covers(h)).toEqual([true]);
 		bar.setSpec(structuredClone(SPEC));
 		await flush();
 		expect(h.set).toHaveBeenCalledTimes(1);
 	});
 
-	it("接管时侧栏关着、无遮挡：补发 {x: 0, covered: false, ms: 0}，原生看得见（网页胶囊隐藏）", async () => {
-		const s = fakeEnv();
+	it("接管时无遮挡：补发 cover(false)", async () => {
 		const h = fakeHost();
-		const bar = createNativeTabBar(h, s.env);
-		expect(bar.shown()).toBe(false);
+		const bar = createNativeTabBar(h, fakeSink());
 		bar.setSpec(SPEC);
 		await flush();
-		expect(reveals(h)).toEqual([{ x: 0, covered: false, ms: 0 }]);
-		expect(bar.shown()).toBe(true);
+		expect(covers(h)).toEqual([false]);
 	});
 
-	it("拒绝回退：set 被拒后本页永久退回网页底栏（网页胶囊可见），不再调用宿主", async () => {
+	it("根滚动未接管：setSpec 不调 set；接管后补发想要的 spec 并接管", async () => {
+		const h = fakeHost();
+		const sink = fakeSink(false);
+		const bar = createNativeTabBar(h, sink);
+		bar.setSpec(SPEC);
+		bar.setCovered(true);
+		await flush();
+		expect(h.set).not.toHaveBeenCalled();
+		expect(h.cover).not.toHaveBeenCalled();
+		expect(bar.engaged()).toBe(false);
+		sink.flip(true);
+		await flush();
+		expect(h.set.mock.calls).toEqual([[SPEC]]);
+		expect(bar.engaged()).toBe(true);
+		expect(covers(h)).toEqual([true]);
+	});
+
+	it("根滚动撤掉：立即退出接管并发 set(null)；再接管时重发 spec", async () => {
+		const { h, sink, bar } = await engagedBar();
+		const sub = vi.fn();
+		bar.subscribe(sub);
+		sink.flip(false);
+		expect(bar.engaged()).toBe(false);
+		expect(sub).toHaveBeenCalledTimes(1);
+		await flush();
+		expect(h.set.mock.calls.at(-1)).toEqual([null]);
+		bar.setSpec({ ...SPEC, selected: "more" });
+		await flush();
+		expect(h.set.mock.calls.at(-1)).toEqual([null]);
+		sink.flip(true);
+		await flush();
+		expect(h.set.mock.calls.at(-1)).toEqual([{ ...SPEC, selected: "more" }]);
+		expect(bar.engaged()).toBe(true);
+	});
+
+	it("拒绝回退：set 被拒后本页永久退回网页底栏，不再调用宿主", async () => {
 		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-		const s = fakeEnv();
 		const h = fakeHost({ rejectSet: true });
-		const bar = createNativeTabBar(h, s.env);
+		const sink = fakeSink();
+		const bar = createNativeTabBar(h, sink);
 		const sub = vi.fn();
 		bar.subscribe(sub);
 		bar.setSpec(SPEC);
 		await flush();
 		expect(bar.engaged()).toBe(false);
-		expect(bar.shown()).toBe(false);
 		expect(sub).toHaveBeenCalled();
 		expect(warn).toHaveBeenCalled();
 		bar.setSpec({ ...SPEC, selected: "more" });
 		bar.setSpec(null);
-		bar.settle(true, 320, false);
-		bar.drag(0.5, 320, 0);
-		s.frame();
 		bar.setCovered(true);
+		sink.flip(false);
+		sink.flip(true);
 		await flush();
 		expect(h.set).toHaveBeenCalledTimes(1);
-		expect(h.reveal).not.toHaveBeenCalled();
+		expect(h.cover).not.toHaveBeenCalled();
 	});
 
-	it("reveal 被拒只 warn，不影响接管", async () => {
+	it("cover 被拒只 warn，不影响接管", async () => {
 		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 		const { h, bar } = await engagedBar();
-		h.reveal.mockRejectedValueOnce("invalid_reveal");
-		bar.settle(true, 320, true);
+		h.cover.mockRejectedValueOnce("invalid_cover");
+		bar.setCovered(true);
 		await flush();
 		expect(warn).toHaveBeenCalled();
 		expect(bar.engaged()).toBe(true);
+	});
+
+	it("遮挡的载荷 = cover 夹具", async () => {
+		const { h, bar } = await engagedBar();
+		bar.setCovered(true);
+		await flush();
+		expect(covers(h).map((covered) => ({ covered }))).toEqual([
+			JSON.parse(readFile(`${FIXTURES}/tab-bar-cover.json`)),
+		]);
+	});
+
+	it("去重：setCovered(true) 两次只发一条 cover(true)；值变了照发", async () => {
+		const { h, bar } = await engagedBar();
+		bar.setCovered(false);
+		await flush();
+		expect(h.cover).not.toHaveBeenCalled();
+		bar.setCovered(true);
+		await flush();
+		bar.setCovered(true);
+		await flush();
+		expect(covers(h)).toEqual([true]);
+		bar.setCovered(false);
+		await flush();
+		expect(covers(h)).toEqual([true, false]);
+	});
+
+	it("盖住：网页胶囊立即顶上（shown 为假）；让开：网页胶囊 UNCOVER_MS 后才撤，接管不变", async () => {
+		const { bar, timers } = await engagedBar();
+		const sub = vi.fn();
+		bar.subscribe(sub);
+		expect(bar.shown()).toBe(true);
+		bar.setCovered(true);
+		expect(bar.shown()).toBe(false);
+		expect(bar.engaged()).toBe(true);
+		expect(sub).toHaveBeenCalled();
+		bar.setCovered(false);
+		timers.advance(UNCOVER_MS - 1);
+		expect(bar.shown()).toBe(false);
+		timers.advance(1);
+		expect(bar.shown()).toBe(true);
+	});
+
+	it("让开后的重叠期内又被盖住：网页胶囊不撤", async () => {
+		const { bar, timers } = await engagedBar();
+		bar.setCovered(true);
+		bar.setCovered(false);
+		timers.advance(UNCOVER_MS / 2);
+		bar.setCovered(true);
+		timers.advance(UNCOVER_MS * 2);
+		expect(bar.shown()).toBe(false);
+	});
+
+	it("接管时已被盖住：网页胶囊留着，让开后才撤", async () => {
+		const h = fakeHost();
+		const timers = fakeTimers();
+		const bar = createNativeTabBar(h, fakeSink(), timers);
+		bar.setCovered(true);
+		bar.setSpec(SPEC);
+		await flush();
+		expect(bar.engaged()).toBe(true);
+		expect(bar.shown()).toBe(false);
+		bar.setCovered(false);
+		timers.advance(UNCOVER_MS);
 		expect(bar.shown()).toBe(true);
 	});
 
 	it("在途期间合并：至多一条在途，其间的多次只发最新值", async () => {
 		const { h, bar } = await engagedBar();
 		const pending: (() => void)[] = [];
-		h.reveal.mockImplementation(
+		h.cover.mockImplementation(
 			() =>
 				new Promise<void>((r) => {
 					pending.push(r);
 				}),
 		);
-		bar.settle(true, 320, true);
-		bar.settle(false, 320, true);
-		bar.settle(true, 300, true);
-		expect(reveals(h)).toEqual([{ x: 320, covered: false, ms: 0 }]);
+		bar.setCovered(true);
+		bar.setCovered(false);
+		bar.setCovered(true);
+		bar.setCovered(false);
+		expect(covers(h)).toEqual([true]);
 		pending.shift()?.();
 		await flush();
-		expect(reveals(h)).toEqual([
-			{ x: 320, covered: false, ms: 0 },
-			{ x: 300, covered: false, ms: 0 },
-		]);
+		expect(covers(h)).toEqual([true, false]);
 		pending.shift()?.();
 		await flush();
-		expect(h.reveal).toHaveBeenCalledTimes(2);
+		expect(h.cover).toHaveBeenCalledTimes(2);
 	});
 
-	it("setSpec(null)：立即退出接管、网页胶囊回来并撤栏；撤栏期间不发 reveal；再 set 重新接管并补发当前卡片左缘", async () => {
+	it("setSpec(null)：立即退出接管并撤栏；撤栏期间不发 cover；再 set 重新接管并补发当前值", async () => {
 		const { h, bar } = await engagedBar();
-		bar.settle(true, 320, true);
-		await flush();
-		h.reveal.mockClear();
 		const sub = vi.fn();
 		bar.subscribe(sub);
 		bar.setSpec(null);
 		expect(bar.engaged()).toBe(false);
-		expect(bar.shown()).toBe(false);
-		expect(sub).toHaveBeenCalled();
+		expect(sub).toHaveBeenCalledTimes(1);
 		await flush();
 		expect(h.set.mock.calls.at(-1)).toEqual([null]);
-		bar.settle(false, 320, true);
+		bar.setCovered(true);
 		await flush();
-		expect(h.reveal).not.toHaveBeenCalled();
+		expect(h.cover).not.toHaveBeenCalled();
 		bar.setSpec(SPEC);
 		await flush();
 		expect(bar.engaged()).toBe(true);
-		expect(bar.shown()).toBe(true);
-		expect(reveals(h)).toEqual([{ x: 0, covered: false, ms: 0 }]);
+		expect(covers(h)).toEqual([true]);
+	});
+
+	it("撤栏清空去重：再接管时与撤栏前相同的值也照发", async () => {
+		const { h, bar } = await engagedBar();
+		bar.setCovered(true);
+		await flush();
+		h.cover.mockClear();
+		bar.setSpec(null);
+		await flush();
+		bar.setSpec(SPEC);
+		await flush();
+		expect(covers(h)).toEqual([true]);
 	});
 
 	it("宿主为 null 时全部空操作", () => {
-		const s = fakeEnv();
-		const bar: NativeTabBar = createNativeTabBar(null, s.env);
+		const sink = fakeSink();
+		const bar: NativeTabBar = createNativeTabBar(null, sink);
 		expect(() => {
 			bar.setSpec(SPEC);
-			bar.settle(true, 320, false);
-			bar.drag(0.5, 320, -1);
-			s.frame();
 			bar.setCovered(true);
 			bar.setCovered(false);
-			s.advance(UNCOVER_MS);
+			sink.flip(false);
+			sink.flip(true);
 			bar.setSpec(null);
 		}).not.toThrow();
 		expect(bar.engaged()).toBe(false);
-		expect(bar.shown()).toBe(false);
-	});
-});
-
-describe("控制器：吸附终点", () => {
-	it("打开 = reveal 夹具：卡片的时长与缓动，起步 = 预计起步（now + NATIVE_LAG_MS）晚一帧", async () => {
-		const { h, bar, s } = await engagedBar();
-		expect(s.now()).toBe(EPOCH);
-		bar.settle(true, 320, false);
-		expect(reveals(h)).toEqual([
-			JSON.parse(readFile(`${FIXTURES}/tab-bar-reveal.json`)),
-		]);
-		expect(reveals(h)).toEqual([
-			timed(320, EPOCH + NATIVE_LAG_MS + SYNC_BIAS_MS),
-		]);
-	});
-
-	it("关闭：回到 0，起步早一帧（底栏右缘始终落在卡片左缘之内）", async () => {
-		const { h, bar, s } = await engagedBar();
-		bar.settle(true, 320, false);
-		await flush();
-		s.advance(1000);
-		h.reveal.mockClear();
-		bar.settle(false, 320, false);
-		expect(reveals(h)).toEqual([
-			timed(0, s.now() + NATIVE_LAG_MS - SYNC_BIAS_MS),
-		]);
-	});
-
-	it("同一终点不重发（松手与 store 变化各通知一次）；侧栏宽变了照发", async () => {
-		const { h, bar } = await engagedBar();
-		bar.settle(true, 320, false);
-		await flush();
-		bar.settle(true, 320, false);
-		await flush();
-		expect(h.reveal).toHaveBeenCalledTimes(1);
-		bar.settle(true, 300, true);
-		await flush();
-		expect(reveals(h).at(-1)).toEqual({ x: 300, covered: false, ms: 0 });
-	});
-
-	it("instant（减少动效、视口尺寸变化）与卡片确认没有过渡（start 兑现 null）→ 原生直接就位（ms 0）", async () => {
-		const { h, bar } = await engagedBar();
-		bar.settle(true, 320, true);
-		expect(reveals(h)).toEqual([{ x: 320, covered: false, ms: 0 }]);
-		await flush();
-		h.reveal.mockClear();
-		const d = deferred();
-		bar.settle(false, 320, false, d.promise);
-		await flush();
-		expect(h.reveal).not.toHaveBeenCalled();
-		d.resolve(null);
-		await flush();
-		expect(reveals(h)).toEqual([{ x: 0, covered: false, ms: 0 }]);
-	});
-
-	it("给了 start：等它兑现才发，at 按卡片实际起步（主线程忙时比预计晚）加减偏置", async () => {
-		const { h, bar, s } = await engagedBar();
-		const open = deferred();
-		bar.settle(true, 320, false, open.promise);
-		s.advance(150);
-		await flush();
-		expect(h.reveal).not.toHaveBeenCalled();
-		const began = s.now() + 20;
-		open.resolve(began);
-		await flush();
-		expect(reveals(h)).toEqual([timed(320, began + SYNC_BIAS_MS)]);
-		h.reveal.mockClear();
-		const close = deferred();
-		bar.settle(false, 320, false, close.promise);
-		close.resolve(began + 1000);
-		await flush();
-		expect(reveals(h)).toEqual([timed(0, began + 1000 - SYNC_BIAS_MS)]);
-	});
-
-	it("等起步期间起拖或再吸附：旧的那条作废，不会把原生拽回旧终点", async () => {
-		const { h, bar, s } = await engagedBar();
-		const first = deferred();
-		bar.settle(true, 320, false, first.promise);
-		bar.drag(0.5, 320, 0);
-		s.frame();
-		first.resolve(s.now());
-		await flush();
-		expect(reveals(h)).toEqual([{ x: 160, covered: false, ms: 0 }]);
-		h.reveal.mockClear();
-		const a = deferred();
-		const b = deferred();
-		bar.settle(true, 320, false, a.promise);
-		bar.settle(false, 320, false, b.promise);
-		a.resolve(s.now());
-		await flush();
-		expect(h.reveal).not.toHaveBeenCalled();
-		b.resolve(s.now() + 40);
-		await flush();
-		expect(reveals(h)).toEqual([timed(0, s.now() + 40 - SYNC_BIAS_MS)]);
-	});
-});
-
-describe("控制器：拖动", () => {
-	it("一帧只发一次：同帧多次取最新，ms 0；没有新位置的帧不发", async () => {
-		const { h, bar, s } = await engagedBar();
-		bar.drag(0.25, 320, 0.1);
-		bar.drag(0.5, 320, 0.1);
-		bar.drag(0.75, 320, 0.1);
-		expect(s.frames()).toBe(1);
-		expect(h.reveal).not.toHaveBeenCalled();
-		s.frame();
-		expect(reveals(h)).toEqual([{ x: 240, covered: false, ms: 0 }]);
-		await flush();
-		s.frame();
-		expect(h.reveal).toHaveBeenCalledTimes(1);
-	});
-
-	it("向左（收起方向）按速度预判 NATIVE_LAG_MS，向右不预判；夹到 0", async () => {
-		const { h, bar, s } = await engagedBar();
-		const sent = async (progress: number, velocity: number) => {
-			bar.drag(progress, 320, velocity);
-			s.frame();
-			await flush();
-			return reveals(h).at(-1)?.x;
-		};
-		expect(await sent(0.5, -1)).toBe(160 - NATIVE_LAG_MS);
-		expect(await sent(0.5, 1)).toBe(160);
-		expect(await sent(0.1, -2)).toBe(0);
-	});
-
-	it("拖动后弹回原终点也照发（原生停在半路）；吸附取消还没跑的那帧", async () => {
-		const { h, bar, s } = await engagedBar();
-		bar.settle(true, 320, true);
-		await flush();
-		h.reveal.mockClear();
-		bar.drag(0.8, 320, 0);
-		s.frame();
-		await flush();
-		bar.drag(0.9, 320, 0);
-		bar.settle(true, 320, false);
-		expect(s.frames()).toBe(0);
-		expect(reveals(h)).toEqual([
-			{ x: 256, covered: false, ms: 0 },
-			timed(320, s.now() + NATIVE_LAG_MS + SYNC_BIAS_MS),
-		]);
-	});
-});
-
-describe("控制器：遮挡", () => {
-	it("盖住：原生隐藏、网页胶囊立即顶上；让开：原生淡回，网页胶囊 UNCOVER_MS 后才撤", async () => {
-		const { h, bar, s } = await engagedBar();
-		const sub = vi.fn();
-		bar.subscribe(sub);
-		expect(bar.shown()).toBe(true);
-		bar.setCovered(true);
-		expect(bar.shown()).toBe(false);
-		expect(sub).toHaveBeenCalled();
-		await flush();
-		bar.setCovered(false);
-		await flush();
-		expect(reveals(h)).toEqual([
-			{ x: 0, covered: true, ms: 0 },
-			{ x: 0, covered: false, ms: 0 },
-		]);
-		s.advance(UNCOVER_MS - 1);
-		expect(bar.shown()).toBe(false);
-		s.advance(1);
-		expect(bar.shown()).toBe(true);
-	});
-
-	it("让开后的重叠期内又被盖住：网页胶囊不撤", async () => {
-		const { bar, s } = await engagedBar();
-		bar.setCovered(true);
-		bar.setCovered(false);
-		s.advance(UNCOVER_MS / 2);
-		bar.setCovered(true);
-		s.advance(UNCOVER_MS * 2);
-		expect(bar.shown()).toBe(false);
-	});
-
-	it("只在变化时发，带当前卡片左缘；之后的吸附也带着遮挡", async () => {
-		const { h, bar } = await engagedBar();
-		bar.setCovered(false);
-		await flush();
-		expect(h.reveal).not.toHaveBeenCalled();
-		bar.settle(true, 320, true);
-		await flush();
-		bar.setCovered(true);
-		await flush();
-		bar.setCovered(true);
-		await flush();
-		bar.settle(false, 320, true);
-		await flush();
-		expect(reveals(h)).toEqual([
-			{ x: 320, covered: false, ms: 0 },
-			{ x: 320, covered: true, ms: 0 },
-			{ x: 0, covered: true, ms: 0 },
-		]);
 	});
 });
 
@@ -611,24 +485,5 @@ describe("rasterizeAvatar", () => {
 		expect(await rasterizeAvatar("bad")).toBeNull();
 		vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
 		expect(await rasterizeAvatar("data:image/png;base64,eA==")).toBeNull();
-	});
-});
-
-describe("常量与 index.css 不漂移", () => {
-	it("--ease、260ms 开合；原生页头或底栏接管时卡片开合两个方向都晚 NATIVE_LAG_MS 起步（拖动、减少动效除外）", () => {
-		const css = readFile("src/index.css");
-		expect(css).toContain(`--ease: cubic-bezier(${SINK_EASE.join(", ")});`);
-		expect(css).toContain(`translate ${SINK_MS}ms var(--ease)`);
-		const card = ".sink-card:is([data-native-head], [data-native-bar])";
-		for (const sel of [`${card}:not([data-open])`, `${card}[data-open]`]) {
-			const at = css.indexOf(sel);
-			expect(at).toBeGreaterThan(-1);
-			const rule = css.slice(at, css.indexOf("}", at));
-			for (const s of ["[data-dragging]", "[data-instant]"])
-				expect(rule).toContain(s);
-			expect(rule).toContain(
-				`translate ${SINK_MS}ms var(--ease) ${NATIVE_LAG_MS}ms`,
-			);
-		}
 	});
 });

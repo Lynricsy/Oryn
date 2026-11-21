@@ -1,4 +1,4 @@
-/** 原生页头控制器：spec 合成与截断、菜单项转换、oklch 换算、遮挡探测、接管 / 跟随卡片 / 让位 / 回来 / 事件 / 回退，以及常量与 CSS 不漂移。 */
+/** 原生页头控制器：spec 合成与截断、菜单项转换、oklch 换算、遮挡探测、接管 / 根滚动门禁 / 让位 / 回来 / 事件 / 回退，以及常量与 CSS 不漂移。 */
 import { renderHook } from "@testing-library/react";
 import {
 	afterEach,
@@ -21,6 +21,7 @@ import {
 	createNativeHeader,
 	findMenuItem,
 	HEADER_FADE_MS,
+	HEADER_HANDOFF_MS,
 	type HeaderEnv,
 	type HeaderParts,
 	type MenuSource,
@@ -28,16 +29,10 @@ import {
 	type NativeHeader,
 	nativeItems,
 	oklchHex,
-	REST_MS,
 	slotsCovered,
 	useSlotFrame,
 } from "./native-header";
-import {
-	NATIVE_LAG_MS,
-	SINK_EASE,
-	SINK_MS,
-	SYNC_BIAS_MS,
-} from "./native-tab-bar";
+import type { SinkGate } from "./native-sink";
 
 // 前端 tsconfig 不带 Node 类型（静态导入 node:fs 过不了 tsc），只声明用到的函数（同 native-tab-bar.test）；工作目录是 web/
 let readFile: (path: string) => string;
@@ -342,7 +337,6 @@ describe("oklch 换算与 index.css 不漂移", () => {
 		expect(markHex(30, false)).toMatch(/^#[0-9a-f]{6}$/);
 	});
 
-	// 卡片晚 34ms 起步的 CSS 规则（页头与底栏共用选择器）由 native-tab-bar.test 校验
 	it("头像、线程色的 oklch 常量与 CSS 一致", () => {
 		const css = readFile("src/index.css");
 		for (const s of [
@@ -430,6 +424,12 @@ describe("slotsCovered", () => {
 		expect(slotsCovered(kb.slots, kb.win)).toBe(false);
 	});
 
+	it("根横向滚开（侧栏开合）不算盖住；纵向滚动算盖住", () => {
+		const { slots, win } = setup();
+		expect(slotsCovered(slots, { ...win, scrollX: 320 } as Window)).toBe(false);
+		expect(slotsCovered(slots, { ...win, scrollY: 40 } as Window)).toBe(true);
+	});
+
 	it("没有任何 slot → true", () => {
 		const { win } = setup();
 		expect(slotsCovered([], win)).toBe(true);
@@ -439,15 +439,11 @@ describe("slotsCovered", () => {
 /** 排空宏任务前的全部微任务（latest 的 then / finally 链），不等真实时长。 */
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
-/** 绝对时钟的起点（Unix 毫秒），假定时器从这里走。 */
-const EPOCH = 1_795_000_000_000;
-
-/** 可手动推进的假定时器、手动跑的假帧 + 同步执行的 microtask。 */
+/** 可手动推进的假定时器 + 同步执行的 microtask。 */
 function fakeEnv(opts: { reduce?: boolean } = {}) {
 	let now = 0;
 	let n = 0;
 	const timers = new Map<number, { at: number; cb: () => void }>();
-	const frames = new Map<number, () => void>();
 	const env: HeaderEnv & { blur: Mock<() => void> } = {
 		setTimeout(cb, ms) {
 			timers.set(++n, { at: now + ms, cb });
@@ -457,14 +453,6 @@ function fakeEnv(opts: { reduce?: boolean } = {}) {
 			timers.delete(id);
 		},
 		microtask: (cb) => cb(),
-		frame(cb) {
-			frames.set(++n, cb);
-			return n;
-		},
-		cancelFrame(id) {
-			frames.delete(id);
-		},
-		now: () => EPOCH + now,
 		blur: vi.fn(),
 		reduce: () => opts.reduce ?? false,
 	};
@@ -481,13 +469,30 @@ function fakeEnv(opts: { reduce?: boolean } = {}) {
 		}
 		now = end;
 	};
-	/** 跑一帧。 */
-	const frame = () => {
-		const cbs = [...frames.values()];
-		frames.clear();
-		for (const cb of cbs) cb();
+	return { env, advance };
+}
+
+/** 可控的根滚动接管：`flip` 切换并通知订阅者。 */
+interface FakeSink extends SinkGate {
+	flip(on: boolean): void;
+}
+
+function fakeSink(on = true): FakeSink {
+	let engaged = on;
+	const subs = new Set<() => void>();
+	return {
+		engaged: () => engaged,
+		subscribe(cb) {
+			subs.add(cb);
+			return () => {
+				subs.delete(cb);
+			};
+		},
+		flip(next) {
+			engaged = next;
+			for (const cb of [...subs]) cb();
+		},
 	};
-	return { env, advance, frame, frames: () => frames.size, now: () => now };
 }
 
 interface FakeApi {
@@ -506,32 +511,18 @@ function fakeApi(opts: { rejectSet?: boolean } = {}): FakeApi {
 	};
 }
 
-const HIDE: NativeHeaderShow = {
-	alpha: 0,
-	dx: 0,
-	passive: false,
-	ms: 0,
-	delay: 0,
-};
+/** 让位：立刻隐藏。 */
+const HIDE: NativeHeaderShow = { alpha: 0, ms: 0 };
 
-/** 接管 / 遮挡解除时的淡入（卡片静止关闭）。 */
-const FADE_IN: NativeHeaderShow = { ...HIDE, alpha: 1, ms: HEADER_FADE_MS };
+/** 接管 / 遮挡解除时的淡入。 */
+const FADE_IN: NativeHeaderShow = { alpha: 1, ms: HEADER_FADE_MS };
 
-/** 卡片静止关闭后恢复接触摸的那一条。 */
-const REST: NativeHeaderShow = { ...HIDE, alpha: 1 };
-
-/** 拖动中的一帧。 */
-const dragShow = (dx: number): NativeHeaderShow => ({
-	alpha: 1,
-	dx,
-	passive: true,
-	ms: 0,
-	delay: 0,
-});
-
-function setup(opts: { rejectSet?: boolean; reduce?: boolean } = {}) {
+function setup(
+	opts: { rejectSet?: boolean; reduce?: boolean; sink?: boolean } = {},
+) {
 	const api = fakeApi(opts);
-	const { env, advance, frame, frames, now } = fakeEnv(opts);
+	const { env, advance } = fakeEnv(opts);
+	const sink = fakeSink(opts.sink ?? true);
 	let emit: (e: NativeHeaderEvent) => void = () => {};
 	const header = createNativeHeader(
 		api,
@@ -539,6 +530,7 @@ function setup(opts: { rejectSet?: boolean; reduce?: boolean } = {}) {
 			emit = cb;
 			return () => {};
 		},
+		sink,
 		env,
 	);
 	const p = parts({ onSelect: vi.fn(), onTap: vi.fn(), onTrail: vi.fn() });
@@ -553,9 +545,7 @@ function setup(opts: { rejectSet?: boolean; reduce?: boolean } = {}) {
 		api,
 		env,
 		advance,
-		frame,
-		frames,
-		now,
+		sink,
 		header,
 		p,
 		register,
@@ -564,12 +554,12 @@ function setup(opts: { rejectSet?: boolean; reduce?: boolean } = {}) {
 	};
 }
 
-/** 接管并显示稳了；清掉此前的 show 记录。 */
+/** 接管并显示稳了；清掉此前的 show / set 记录。 */
 async function engaged(opts: { reduce?: boolean } = {}) {
 	const s = setup(opts);
 	s.register();
 	await flush();
-	s.advance(HEADER_FADE_MS + NATIVE_LAG_MS);
+	s.advance(HEADER_FADE_MS + HEADER_HANDOFF_MS);
 	expect(s.header.active()).toBe(true);
 	s.api.show.mockClear();
 	s.api.set.mockClear();
@@ -577,7 +567,7 @@ async function engaged(opts: { reduce?: boolean } = {}) {
 }
 
 describe("控制器", () => {
-	it("theme / lead / title 到齐只 set 一次；应答后接管并淡入，淡入完再晚 34ms 才算显示稳了", async () => {
+	it("theme / lead / title 到齐只 set 一次；应答后接管并淡入，淡入完再晚 HEADER_HANDOFF_MS 才算显示稳了", async () => {
 		const s = setup();
 		const sub = vi.fn();
 		s.header.subscribe(sub);
@@ -592,7 +582,7 @@ describe("控制器", () => {
 		expect(sub).toHaveBeenCalled();
 		expect(s.shows()).toEqual([FADE_IN]);
 		expect(s.header.active()).toBe(false);
-		s.advance(HEADER_FADE_MS + NATIVE_LAG_MS - 1);
+		s.advance(HEADER_FADE_MS + HEADER_HANDOFF_MS - 1);
 		expect(s.header.active()).toBe(false);
 		s.advance(1);
 		expect(s.header.active()).toBe(true);
@@ -602,13 +592,52 @@ describe("控制器", () => {
 		expect(s.api.set).toHaveBeenCalledTimes(1);
 	});
 
-	it("减少动效：立即显示（ms 0）", async () => {
+	it("淡入的载荷与契约夹具 header-show.json 一致", () => {
+		expect(FADE_IN).toEqual(fixture<NativeHeaderShow>("header-show.json"));
+	});
+
+	it("减少动效：立即显示（ms 0），HEADER_HANDOFF_MS 后算显示稳了", async () => {
 		const s = setup({ reduce: true });
 		s.register();
 		await flush();
-		expect(s.shows()).toEqual([REST]);
-		s.advance(NATIVE_LAG_MS);
+		expect(s.shows()).toEqual([{ alpha: 1, ms: 0 }]);
+		s.advance(HEADER_HANDOFF_MS - 1);
+		expect(s.header.active()).toBe(false);
+		s.advance(1);
 		expect(s.header.active()).toBe(true);
+	});
+
+	it("根滚动未接管：部件到齐也不调 set；接管后补发 spec、接管并淡入", async () => {
+		const s = setup({ sink: false });
+		s.register();
+		await flush();
+		expect(s.api.set).not.toHaveBeenCalled();
+		expect(s.api.show).not.toHaveBeenCalled();
+		expect(s.header.engaged()).toBe(false);
+		s.sink.flip(true);
+		await flush();
+		expect(s.api.set).toHaveBeenCalledTimes(1);
+		expect(s.api.set.mock.calls[0]?.[0]?.key).toBe(KEY);
+		expect(s.header.engaged()).toBe(true);
+		expect(s.shows()).toEqual([FADE_IN]);
+	});
+
+	it("根滚动撤掉：立即退出接管并发 set(null)；再接管时重发 spec", async () => {
+		const s = await engaged();
+		const sub = vi.fn();
+		s.header.subscribe(sub);
+		s.sink.flip(false);
+		expect(s.header.engaged()).toBe(false);
+		expect(s.header.active()).toBe(false);
+		expect(sub).toHaveBeenCalled();
+		await flush();
+		expect(s.api.set.mock.calls).toEqual([[null]]);
+		expect(s.api.show).not.toHaveBeenCalled();
+		s.sink.flip(true);
+		await flush();
+		expect(s.api.set.mock.calls.at(-1)?.[0]?.key).toBe(KEY);
+		expect(s.header.engaged()).toBe(true);
+		expect(s.shows()).toEqual([FADE_IN]);
 	});
 
 	it("set 被拒：不接管，之后的 setPart 不再调 set", async () => {
@@ -619,38 +648,14 @@ describe("控制器", () => {
 		expect(s.header.engaged()).toBe(false);
 		expect(warn).toHaveBeenCalled();
 		s.header.setPart("title", { ...s.p.title, text: "别的" });
+		s.sink.flip(false);
+		s.sink.flip(true);
 		await flush();
 		expect(s.api.set).toHaveBeenCalledTimes(1);
 		expect(s.api.show).not.toHaveBeenCalled();
 	});
 
-	it("cardDrag：不让位；同一帧多次只发最后一次；dx = 进度 × 宽 + 往右速度 × 34，钳在 [0, 宽]", async () => {
-		const s = await engaged();
-		s.header.cardDrag(0.1, 320, 0);
-		s.header.cardDrag(0.25, 320, 0.5);
-		expect(s.header.active()).toBe(true);
-		expect(s.frames()).toBe(1);
-		await flush();
-		expect(s.api.show).not.toHaveBeenCalled();
-		s.frame();
-		await flush();
-		// 0.25 × 320 + 0.5 × 34 = 97
-		expect(s.shows()).toEqual([dragShow(97)]);
-		s.api.show.mockClear();
-		// 往左不预判
-		s.header.cardDrag(0.5, 320, -2);
-		s.frame();
-		await flush();
-		// 超出侧栏宽钳到宽
-		s.header.cardDrag(0.95, 320, 3);
-		s.frame();
-		await flush();
-		expect(s.shows()).toEqual([dragShow(160), dragShow(320)]);
-		expect(s.shows().some((x) => x.alpha === 0)).toBe(false);
-		expect(s.header.active()).toBe(true);
-	});
-
-	it("在途期间合并：至多一条 show 在途，其间的多帧只发最新值", async () => {
+	it("在途期间合并：至多一条 show 在途，其间的多次只发最新值", async () => {
 		const s = await engaged();
 		const pending: (() => void)[] = [];
 		s.api.show.mockImplementation(
@@ -659,186 +664,14 @@ describe("控制器", () => {
 					pending.push(r);
 				}),
 		);
-		for (const p of [0.1, 0.2, 0.4]) {
-			s.header.cardDrag(p, 320, 0);
-			s.frame();
-		}
-		expect(s.shows()).toEqual([dragShow(32)]);
+		s.header.setCovered(true);
+		s.header.setCovered(false);
+		s.header.setCovered(true);
+		s.header.setCovered(false);
+		expect(s.shows()).toEqual([HIDE]);
 		pending.shift()?.();
 		await flush();
-		expect(s.shows()).toEqual([dragShow(32), dragShow(128)]);
-	});
-
-	it("cardSettle 打开：不让位，发带终点、时长、缓动与绝对起步时刻的 show（打开早 8ms、不延迟）", async () => {
-		const s = await engaged();
-		s.advance(1000);
-		s.header.cardSettle(true, 320, false);
-		expect(s.header.active()).toBe(true);
-		await flush();
-		expect(s.shows()).toEqual([
-			{
-				alpha: 1,
-				dx: 320,
-				passive: true,
-				ms: SINK_MS,
-				delay: 0,
-				ease: [...SINK_EASE],
-				at: EPOCH + s.now() + NATIVE_LAG_MS - SYNC_BIAS_MS,
-			},
-		]);
-		// 与契约夹具的字段一致（原生按同一份 HeaderShow 解析）
-		expect(Object.keys(s.shows()[0] ?? {}).sort()).toEqual(
-			Object.keys(fixture<object>("header-show.json")).sort(),
-		);
-		// 同一目标、同一宽度：不重发
-		s.header.cardSettle(true, 320, false);
-		await flush();
-		expect(s.api.show).toHaveBeenCalledTimes(1);
-	});
-
-	it("cardSettle 关闭：晚 8ms、delay 34；REST_MS 后恢复接触摸；instant 推进 0 即恢复", async () => {
-		const s = await engaged();
-		s.header.cardSettle(true, 320, false);
-		await flush();
-		s.api.show.mockClear();
-		s.header.cardSettle(false, 320, false);
-		await flush();
-		expect(s.shows()).toEqual([
-			{
-				alpha: 1,
-				dx: 0,
-				passive: true,
-				ms: SINK_MS,
-				delay: NATIVE_LAG_MS,
-				ease: [...SINK_EASE],
-				at: EPOCH + s.now() + NATIVE_LAG_MS + SYNC_BIAS_MS,
-			},
-		]);
-		s.api.show.mockClear();
-		s.advance(REST_MS - 1);
-		await flush();
-		expect(s.api.show).not.toHaveBeenCalled();
-		s.advance(1);
-		await flush();
-		expect(s.shows()).toEqual([REST]);
-		expect(s.header.active()).toBe(true);
-
-		s.api.show.mockClear();
-		s.header.cardSettle(true, 320, true);
-		s.header.cardSettle(false, 320, true);
-		await flush();
-		s.advance(0);
-		await flush();
-		expect(s.shows()).toEqual([
-			{ ...REST, dx: 320, passive: true },
-			{ ...REST, passive: true },
-			REST,
-		]);
-	});
-
-	it("cardSettle 带起步时刻：等卡片真正起步再发，at 按实际起步算，REST 同步顺延；期间起拖则作废", async () => {
-		const s = await engaged();
-		s.header.cardSettle(true, 320, false);
-		await flush();
-		s.api.show.mockClear();
-		let begin: (at: number | null) => void = () => {};
-		// 主线程被占住，卡片比预计晚 100ms 起步
-		s.header.cardSettle(
-			false,
-			320,
-			false,
-			new Promise((r) => {
-				begin = r;
-			}),
-		);
-		await flush();
-		expect(s.api.show).not.toHaveBeenCalled();
-		const late = EPOCH + s.now() + NATIVE_LAG_MS + 100;
-		// 100ms 后 transitionrun 才到（卡片按 delay 再晚 34ms 起步）
-		s.advance(100);
-		await flush();
-		expect(s.api.show).not.toHaveBeenCalled();
-		begin(late);
-		await flush();
-		expect(s.shows()).toEqual([
-			{
-				alpha: 1,
-				dx: 0,
-				passive: true,
-				ms: SINK_MS,
-				delay: NATIVE_LAG_MS,
-				ease: [...SINK_EASE],
-				at: late + SYNC_BIAS_MS,
-			},
-		]);
-		s.api.show.mockClear();
-		// 静止 = 起步 + REST_MS - NATIVE_LAG_MS：从 settle 算共晚 100ms，等待的 100ms 不重复计
-		s.advance(REST_MS - 1);
-		await flush();
-		expect(s.api.show).not.toHaveBeenCalled();
-		s.advance(1);
-		await flush();
-		expect(s.shows()).toEqual([REST]);
-
-		// 等起步时刻期间又起拖：迟到的起步时刻不再发吸附
-		s.header.cardSettle(true, 320, false);
-		await flush();
-		s.header.cardSettle(false, 320, false, new Promise((r) => (begin = r)));
-		s.header.cardDrag(0.5, 320, 0);
-		s.api.show.mockClear();
-		begin(EPOCH + s.now());
-		await flush();
-		expect(s.shows().some((x) => x.dx === 0 && x.ms === SINK_MS)).toBe(false);
-	});
-
-	it("cardSettle 等过后确认卡片没有过渡（start 给 null）：原生直接就位，不发 260ms 吸附", async () => {
-		const s = await engaged();
-		s.header.cardDrag(0.5, 320, 0);
-		s.advance(16);
-		await flush();
-		s.api.show.mockClear();
-		let begin: (at: number | null) => void = () => {};
-		s.header.cardSettle(false, 320, false, new Promise((r) => (begin = r)));
-		s.advance(200);
-		begin(null);
-		await flush();
-		s.advance(0);
-		await flush();
-		expect(s.shows()).toEqual([{ ...REST, passive: true }, REST]);
-	});
-
-	it("松手吸附：取消待发的拖动帧，按吸附发；REST_MS 内再拖不恢复接触摸", async () => {
-		const s = await engaged();
-		s.header.cardDrag(0.3, 320, 0);
-		s.header.cardSettle(false, 320, false);
-		expect(s.frames()).toBe(0);
-		await flush();
-		expect(s.shows().map((x) => [x.dx, x.ms, x.delay])).toEqual([
-			[0, SINK_MS, NATIVE_LAG_MS],
-		]);
-		s.advance(100);
-		s.header.cardDrag(0.1, 320, 0);
-		s.api.show.mockClear();
-		s.advance(REST_MS * 2);
-		await flush();
-		expect(s.api.show).not.toHaveBeenCalled();
-	});
-
-	it("挂载时报关闭位：已经静止，只记宽度不发 show；之后遮挡照常生效", async () => {
-		const s = await engaged();
-		s.header.cardSettle(false, 320, false);
-		s.advance(REST_MS);
-		await flush();
-		expect(s.api.show).not.toHaveBeenCalled();
-		s.header.setCovered(true);
-		expect(s.header.active()).toBe(false);
-		// 关闭时改了侧栏宽也不发（先排空遮挡那两条在途的 show）
-		s.header.setCovered(false);
-		await flush();
-		s.api.show.mockClear();
-		s.header.cardSettle(false, 390, false);
-		await flush();
-		expect(s.api.show).not.toHaveBeenCalled();
+		expect(s.shows()).toEqual([HIDE, FADE_IN]);
 	});
 
 	it("setCovered：true 让位、false 回来；菜单开着时盖住不让位，菜单关了才让位", async () => {
@@ -846,7 +679,7 @@ describe("控制器", () => {
 		s.header.setCovered(true);
 		expect(s.header.active()).toBe(false);
 		s.header.setCovered(false);
-		s.advance(HEADER_FADE_MS + NATIVE_LAG_MS);
+		s.advance(HEADER_FADE_MS + HEADER_HANDOFF_MS);
 		expect(s.header.active()).toBe(true);
 		await flush();
 		expect(s.shows()).toEqual([HIDE, FADE_IN]);
@@ -856,26 +689,6 @@ describe("控制器", () => {
 		expect(s.header.active()).toBe(true);
 		expect(s.header.menu()).toBe("title");
 		s.emit({ op: "menu", key: KEY, menu: null });
-		expect(s.header.active()).toBe(false);
-	});
-
-	it("setCovered：卡片动着或开着时直接忽略（不记录），静止关闭后才生效", async () => {
-		const s = await engaged();
-		s.header.cardDrag(0.2, 320, 0);
-		s.header.setCovered(true);
-		expect(s.header.active()).toBe(true);
-		s.header.cardSettle(true, 320, false);
-		s.header.setCovered(true);
-		expect(s.header.active()).toBe(true);
-		s.header.cardSettle(false, 320, false);
-		s.header.setCovered(true);
-		expect(s.header.active()).toBe(true);
-		s.advance(REST_MS);
-		await flush();
-		// 动着时的遮挡没被记下：静止后不会自己让位
-		expect(s.header.active()).toBe(true);
-		expect(s.shows().some((x) => x.alpha === 0)).toBe(false);
-		s.header.setCovered(true);
 		expect(s.header.active()).toBe(false);
 	});
 
@@ -954,10 +767,11 @@ describe("控制器", () => {
 		await flush();
 		expect(s.header.engaged()).toBe(true);
 		s.header.setPart("lead", s.p.lead);
-		expect(s.header.engaged()).toBe(false);
 		await flush();
-		// 视图钮先到也不发（还缺胶囊）；测试环境的 microtask 是同步的，每次登记都合成一次
+		expect(s.header.engaged()).toBe(false);
+		// 视图钮先到也不发（还缺胶囊）
 		s.header.setPart("trail", s.p.trail);
+		await flush();
 		s.header.setPart("title", s.p.title);
 		await flush();
 		const sent = s.api.set.mock.calls.map((c) => c[0]);
@@ -966,20 +780,24 @@ describe("控制器", () => {
 		expect(s.header.engaged()).toBe(true);
 	});
 
-	it("available：有宿主时为真，set 被拒后为假并通知订阅者；宿主为 null 时为假", async () => {
+	it("available：要求根滚动跟随已接管（接管时通知订阅者）；set 被拒后为假并通知；宿主为 null 时为假", async () => {
 		vi.spyOn(console, "warn").mockImplementation(() => {});
-		const s = setup({ rejectSet: true });
-		expect(s.header.available()).toBe(true);
+		const s = setup({ rejectSet: true, sink: false });
 		const sub = vi.fn();
 		s.header.subscribe(sub);
+		expect(s.header.available()).toBe(false);
+		s.sink.flip(true);
+		expect(s.header.available()).toBe(true);
+		expect(sub).toHaveBeenCalled();
+		sub.mockClear();
 		s.register();
 		await flush();
 		expect(s.header.available()).toBe(false);
 		expect(sub).toHaveBeenCalled();
 		const { env } = fakeEnv();
-		expect(createNativeHeader(null, () => () => {}, env).available()).toBe(
-			false,
-		);
+		expect(
+			createNativeHeader(null, () => () => {}, fakeSink(), env).available(),
+		).toBe(false);
 	});
 
 	it("closeMenu：菜单开着时调 api.menu({open: null})，没开时不调", async () => {
@@ -993,17 +811,16 @@ describe("控制器", () => {
 	});
 
 	it("宿主为 null 时全部空操作", () => {
-		const { env, frame } = fakeEnv();
-		const h = createNativeHeader(null, () => () => {}, env);
+		const { env } = fakeEnv();
+		const sink = fakeSink();
+		const h = createNativeHeader(null, () => () => {}, sink, env);
 		const p = parts();
 		expect(() => {
 			h.setPart("theme", p.theme);
 			h.setPart("lead", p.lead);
 			h.setPart("title", p.title);
-			h.cardDrag(0.5, 320, 0);
-			frame();
-			h.cardSettle(true, 320, false);
-			h.cardSettle(false, 320, false);
+			sink.flip(false);
+			sink.flip(true);
 			h.setCovered(true);
 			h.closeMenu();
 		}).not.toThrow();

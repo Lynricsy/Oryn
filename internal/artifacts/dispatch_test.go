@@ -186,7 +186,7 @@ func TestDispatchDB(t *testing.T) {
 // readLine 读 NDJSON 的下一行。
 func readLine(t *testing.T, sc *bufio.Scanner) map[string]any {
 	t.Helper()
-	require.True(t, sc.Scan(), "流提前结束")
+	require.True(t, sc.Scan(), "流提前结束：%v", sc.Err())
 	var m map[string]any
 	require.NoError(t, json.Unmarshal(sc.Bytes(), &m), sc.Text())
 	return m
@@ -197,21 +197,28 @@ func TestDispatchWatch(t *testing.T) {
 	r := newRtEnv(t, "db")
 	srv := httptest.NewServer(r.mw)
 	t.Cleanup(srv.Close)
-	open := func(id string, args string) (*http.Response, *bufio.Scanner) {
+	open := func(id string, args string) (*bufio.Scanner, context.CancelFunc) {
 		t.Helper()
-		req, err := http.NewRequest(http.MethodPost, srv.URL+"/_oryn/v1",
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		t.Cleanup(cancel)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL+"/_oryn/v1",
 			strings.NewReader(`{"v":1,"id":"`+id+`","kind":"stream","cap":"db","op":"watch","args":`+args+`}`))
 		require.NoError(t, err)
 		req.Host = r.host
 		req.Header.Set("Origin", "null")
 		resp, err := srv.Client().Do(req)
 		require.NoError(t, err)
+		t.Cleanup(func() {
+			cancel()
+			_ = resp.Body.Close()
+		})
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 		assert.Equal(t, "application/x-ndjson", resp.Header.Get("Content-Type"))
-		return resp, bufio.NewScanner(resp.Body)
+		// 响应头先于 WatchData 注册发出；写入前必须等订阅建立。
+		require.Eventually(t, func() bool { return watcherCount(r.e.s, r.art.ID) == 1 }, 5*time.Second, 5*time.Millisecond)
+		return bufio.NewScanner(resp.Body), cancel
 	}
-	resp, sc := open("w1", `["todos"]`)
-	defer resp.Body.Close()
+	sc, _ := open("w1", `["todos"]`)
 
 	r.ok(t, "set", "other", "x", 1) // 不在监听的集合里
 	r.ok(t, "set", "todos", "t1", map[string]any{"text": "a"})
@@ -232,12 +239,12 @@ func TestDispatchWatch(t *testing.T) {
 	assert.Equal(t, map[string]any{"cancelled": true}, r.send(t, r.host, map[string]any{"id": "w1", "kind": "cancel"})["value"])
 	assert.Equal(t, map[string]any{"v": float64(1), "id": "w1", "done": true}, readLine(t, sc))
 	assert.False(t, sc.Scan())
+	require.NoError(t, sc.Err(), "完成帧后必须正常结束流")
 	assert.Equal(t, map[string]any{"cancelled": false}, r.send(t, r.host, map[string]any{"id": "w1", "kind": "cancel"})["value"])
 
-	// 客户端断开：监听者被摘掉，流的名额还回来
-	resp2, _ := open("w2", `null`)
-	require.Eventually(t, func() bool { return watcherCount(r.e.s, r.art.ID) == 1 }, 5*time.Second, 5*time.Millisecond)
-	_ = resp2.Body.Close()
+	// 客户端中止请求（与浏览器 AbortSignal 一致）：监听者被摘掉，流的名额还回来。
+	_, abort := open("w2", `null`)
+	abort()
 	require.Eventually(t, func() bool { return watcherCount(r.e.s, r.art.ID) == 0 }, 5*time.Second, 5*time.Millisecond)
 }
 

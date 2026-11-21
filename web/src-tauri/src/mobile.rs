@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::json;
 use tauri::{AppHandle, Manager, State, Url};
 use tauri_plugin_opener::OpenerExt;
-use tauri_plugin_oryn_mobile::{HeaderMenuCmd, HeaderShow, HeaderSpec, TabBarReveal, TabBarSpec};
+use tauri_plugin_oryn_mobile::{HeaderMenuCmd, HeaderShow, HeaderSpec, TabBarSpec};
 
 use crate::api::HttpApi;
 use crate::eventlog;
@@ -221,6 +221,8 @@ pub async fn host_open_notification_settings(m: State<'_, Arc<MobileRt>>) -> Res
 }
 
 /// 原生底栏（iOS 26+）：整份状态；`null` 撤掉。其它平台与更低系统版本返回 `unsupported`，页面继续用网页底栏。
+/// 非空 spec 要等本页 `host_sink_set(true)` 生效后才接受（bridge 8）：旧网页按 bridge 7 的语义直接 set，
+/// 在这里被拒，走它已有的「set 被拒 → 网页底栏」路径。
 #[tauri::command]
 pub async fn host_tab_bar_set(app: AppHandle, spec: Option<TabBarSpec>) -> Res<()> {
     if spec
@@ -231,6 +233,9 @@ pub async fn host_tab_bar_set(app: AppHandle, spec: Option<TabBarSpec>) -> Res<(
     }
     #[cfg(target_os = "ios")]
     {
+        if !mobile_logic::native_chrome_allowed(ios::sink_on(), spec.is_some()) {
+            return Err("unsupported".into());
+        }
         let plugin = ios::plugin(&app).ok_or("unsupported")?;
         plugin
             .tab_bar_set(spec.as_ref())
@@ -253,34 +258,77 @@ pub async fn host_tab_bar_set(app: AppHandle, spec: Option<TabBarSpec>) -> Res<(
     }
 }
 
-/// 原生底栏的裁切与遮挡：底栏浮在 WebView 之上，右缘裁到卡片左缘；吸附带时长、缓动与绝对起步时刻，拖动逐帧 `ms: 0`。
-/// 还没 set 过时 Swift 侧空操作并成功。
+/// 网页内容（菜单、弹层、软键盘）是否压在底栏位置上：只决定原生底栏接不接触摸（卡片位置原生自己从根滚动算）。
+/// 遮挡变化时发一条。还没 set 过时 Swift 侧空操作并成功。
 #[tauri::command]
-pub async fn host_tab_bar_reveal(app: AppHandle, reveal: TabBarReveal) -> Res<()> {
-    if !mobile_logic::valid_reveal(&reveal) {
-        return Err("invalid_reveal".into());
-    }
+pub async fn host_tab_bar_cover(app: AppHandle, covered: bool) -> Res<()> {
     #[cfg(target_os = "ios")]
     {
         let plugin = ios::plugin(&app).ok_or("unsupported")?;
-        plugin.tab_bar_reveal(&reveal).map_err(|e| e.to_string())?;
-        // 仅 debug：供 CI 端到端检查确认开合与遮挡状态；发布包不写
+        plugin.tab_bar_cover(covered).map_err(|e| e.to_string())?;
+        // 仅 debug：供 CI 端到端检查确认遮挡状态；发布包不写
         #[cfg(debug_assertions)]
-        eventlog::log(
-            "tabbar.reveal",
-            json!({"x": reveal.x, "covered": reveal.covered, "ms": reveal.ms, "at": reveal.at}),
-        );
+        eventlog::log("tabbar.cover", json!({"covered": covered}));
         Ok(())
     }
     #[cfg(not(target_os = "ios"))]
     {
-        let _ = app;
+        let _ = (app, covered);
+        Err("unsupported".into())
+    }
+}
+
+/// 下沉侧栏改由 WKWebView 的根滚动驱动（iOS 26+，bridge 8）：`true` 时原生按 `contentOffset` 跟随，
+/// 之后本页的原生底栏与页头才允许接管；`false` 撤掉跟随。其它平台与更低系统版本返回 `unsupported`。
+#[tauri::command]
+pub async fn host_sink_set(app: AppHandle, on: bool) -> Res<()> {
+    #[cfg(target_os = "ios")]
+    {
+        let plugin = ios::plugin(&app).ok_or("unsupported")?;
+        // 根滚动轨迹（sink.trace）只给 debug 包：发布包不让原生装轨迹回调
+        plugin
+            .sink_set(on, cfg!(debug_assertions))
+            .map_err(|e| e.to_string())?;
+        ios::set_sink_on(on);
+        // CI 端到端检查据此确认接管顺序（sink.set 早于第一条 tabbar.set）
+        eventlog::log("sink.set", json!({"on": on}));
+        Ok(())
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = (app, on);
+        Err("unsupported".into())
+    }
+}
+
+/// 程序化开合：原生把根滚动视图滚到打开位 / 关闭位（`animated` = UIKit 滚动动画）。网页自己发起的 smooth 滚动
+/// 在 WKWebView 主框架上会被拉回（M20 探针），平滑开合因此交给原生。没有 `host_sink_set(true)` 时返回 `unsupported`。
+#[tauri::command]
+pub async fn host_sink_show(app: AppHandle, open: bool, animated: bool) -> Res<()> {
+    #[cfg(target_os = "ios")]
+    {
+        if !ios::sink_on() {
+            return Err("unsupported".into());
+        }
+        let plugin = ios::plugin(&app).ok_or("unsupported")?;
+        plugin
+            .sink_show(open, animated)
+            .map_err(|e| e.to_string())?;
+        // 仅 debug：供 CI 端到端检查确认开合请求；发布包不写
+        #[cfg(debug_assertions)]
+        eventlog::log("sink.show", json!({"open": open, "animated": animated}));
+        Ok(())
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = (app, open, animated);
         Err("unsupported".into())
     }
 }
 
 /// 原生页头（iOS 26+，线程页的侧栏钮 / 标题胶囊 / 视图钮与两个菜单）：整份状态；`null` 撤掉。
-/// 应答 = 原生已把它挂到窗口上。其它平台与更低系统版本返回 `unsupported`，页面继续用网页页头。
+/// 应答 = 原生已把它挂到窗口上。其它平台与更低系统版本返回 `unsupported`，页面继续用网页页头；
+/// 非空 spec 同 `host_tab_bar_set` 要等 `host_sink_set(true)` 生效。
 #[tauri::command]
 pub async fn host_header_set(app: AppHandle, spec: Option<HeaderSpec>) -> Res<()> {
     if spec
@@ -291,6 +339,9 @@ pub async fn host_header_set(app: AppHandle, spec: Option<HeaderSpec>) -> Res<()
     }
     #[cfg(target_os = "ios")]
     {
+        if !mobile_logic::native_chrome_allowed(ios::sink_on(), spec.is_some()) {
+            return Err("unsupported".into());
+        }
         let plugin = ios::plugin(&app).ok_or("unsupported")?;
         plugin
             .header_set(spec.as_ref())
@@ -316,7 +367,7 @@ pub async fn host_header_set(app: AppHandle, spec: Option<HeaderSpec>) -> Res<()
     }
 }
 
-/// 原生页头控件层的透明度 / 位移 / 是否接触摸。还没 set 过时 Swift 侧空操作并成功。
+/// 原生页头控件层的透明度（水平位移与是否接触摸由原生按根滚动自己算）。还没 set 过时 Swift 侧空操作并成功。
 #[tauri::command]
 pub async fn host_header_show(app: AppHandle, show: HeaderShow) -> Res<()> {
     if !mobile_logic::valid_header_show(&show) {
@@ -328,10 +379,7 @@ pub async fn host_header_show(app: AppHandle, show: HeaderShow) -> Res<()> {
         plugin.header_show(&show).map_err(|e| e.to_string())?;
         // 仅 debug：供 CI 端到端检查断言让位 / 出现；发布包不写
         #[cfg(debug_assertions)]
-        eventlog::log(
-            "header.show",
-            json!({"alpha": show.alpha, "dx": show.dx, "passive": show.passive, "ms": show.ms, "delay": show.delay, "at": show.at}),
-        );
+        eventlog::log("header.show", json!({"alpha": show.alpha, "ms": show.ms}));
         Ok(())
     }
     #[cfg(not(target_os = "ios"))]
@@ -407,12 +455,25 @@ pub async fn host_app_icon_set(app: AppHandle, id: String) -> Res<()> {
 
 #[cfg(target_os = "ios")]
 mod ios {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use serde_json::json;
     use tauri::{AppHandle, Manager};
     use tauri_plugin_oryn_mobile::{Event, OrynMobile};
 
     use crate::mobile_logic;
     use crate::{eventlog, host};
+
+    /// 当前页面的 `host_sink_set` 是否生效：原生底栏与页头的非空 set 以它为前提（整页导航时由 `sink_reset` 清掉）。
+    static SINK_ON: AtomicBool = AtomicBool::new(false);
+
+    pub fn sink_on() -> bool {
+        SINK_ON.load(Ordering::Acquire)
+    }
+
+    pub fn set_sink_on(on: bool) {
+        SINK_ON.store(on, Ordering::Release);
+    }
 
     pub fn plugin(app: &AppHandle) -> Option<OrynMobile<tauri::Wry>> {
         app.try_state::<OrynMobile<tauri::Wry>>()
@@ -440,6 +501,19 @@ mod ios {
                     host::emit(&handle, detail);
                 }
             }
+            #[cfg(debug_assertions)]
+            Event::HeaderHit { x, y, info } => {
+                eventlog::log("header.hit", json!({"x": x, "y": y, "info": info}));
+            }
+            // 仅 debug：根滚动的轨迹（CI 端到端据此区分「原生动画晚起步 / 没跑」与「被拉回」，move 带调用栈查卡片被谁挪走）；
+            // 发布包不写
+            #[cfg(debug_assertions)]
+            Event::Sink { op, x, to, stack } => {
+                eventlog::log(
+                    "sink.trace",
+                    json!({"op": op, "x": x, "to": to, "stack": stack}),
+                );
+            }
             _ => {}
         });
         if let Err(e) = res {
@@ -461,6 +535,16 @@ mod ios {
         let Some(p) = plugin(app) else { return };
         tauri::async_runtime::spawn(async move {
             let _ = p.header_set(None).await;
+        });
+    }
+
+    /// 主框架开始加载新文档：清掉接管标志并撤掉根滚动跟随（新页面要重新 `host_sink_set`）。
+    /// 标志同步清（新页面的 set 不会在它之前被放行），插件调用放进异步任务。
+    pub fn sink_reset(app: &AppHandle) {
+        set_sink_on(false);
+        let Some(p) = plugin(app) else { return };
+        tauri::async_runtime::spawn(async move {
+            let _ = p.sink_set(false, false);
         });
     }
 
@@ -499,12 +583,7 @@ mod ios {
         };
         let show = HeaderShow {
             alpha: if mode == "hidden" { 0.0 } else { 1.0 },
-            dx: 0.0,
-            passive: false,
             ms: 0,
-            delay: 0,
-            ease: None,
-            at: None,
         };
         let res = async {
             plugin.header_set(Some(&spec)).await?;
@@ -554,7 +633,7 @@ mod ios {
 #[cfg(all(debug_assertions, target_os = "ios"))]
 pub use ios::{e2e_open, header_demo};
 #[cfg(target_os = "ios")]
-pub use ios::{header_reset, listen as listen_ios, tab_bar_reset};
+pub use ios::{header_reset, listen as listen_ios, sink_reset, tab_bar_reset};
 
 // ---------------------------------------------------------------- Android 原生插件
 
@@ -724,8 +803,11 @@ mod android {
                     recreate_main(&app);
                 }
             }
-            // 原生底栏与页头只在 iOS 上有，Kotlin 不发
-            Event::TabBar { .. } | Event::Header { .. } => {}
+            // 这些是 iOS 插件事件，Kotlin 不发。
+            Event::TabBar { .. }
+            | Event::Header { .. }
+            | Event::HeaderHit { .. }
+            | Event::Sink { .. } => {}
         }
     }
 

@@ -7,7 +7,7 @@
 #   ios-thread-<明暗>.png   线程页（原生页头接管）
 #   ios-home-<明暗>.png     新建线程页（原生侧栏钮）
 # 演示数据与 web/scripts/readme-shots.ts 同一份：`--emit-ios-init` 生成注入脚本，插进 mock 构建的 index.html 最前面。
-# debug 包读 ORYN_E2E_URL（mobile.rs 的 e2e_open）跳过配对直接打开；就绪靠事件日志（web.ready / header.* / tabbar.reveal）判断。
+# debug 包读 ORYN_E2E_URL（mobile.rs 的 e2e_open）跳过配对直接打开；就绪靠事件日志（web.ready / header.* / tabbar.set / sink.show）判断。
 # 合成到 docs/assets/mobile-views-*.png 在本机做：ORYN_IOS_SHOTS=<产物目录> bun run shots:readme --only mobile-views。
 # 用法：ios-readme-shots.sh <Oryn.app> <mock Web UI 构建目录> <输出目录>
 set -euo pipefail
@@ -60,8 +60,9 @@ thread=$(cd "$web" && bun -e 'import { MAIN_THREAD } from "./src/mock/fixtures";
 # last_is <事件> <jq 条件>：事件日志里该事件的最后一条满足条件
 last_is() { grep -F "\"event\":\"$1\"" "$log" 2>/dev/null | tail -1 | jq -e --arg k "$thread" "$2" >/dev/null 2>&1; }
 ready_home() { last_is header.set '.on and .key == "home"' && last_is header.show '.alpha == 1'; }
-ready_thread() { last_is header.set '.on and .key == $k' && last_is header.show '.alpha == 1 and .dx == 0'; }
-ready_sidebar() { last_is tabbar.reveal '.x > 0 and .covered == false and .ms > 0'; }
+ready_thread() { last_is header.set '.on and .key == $k' && last_is header.show '.alpha == 1'; }
+# 网页侧栏钮的 click() 走 toggleSidebar → host_sink_show（open）由原生推进根滚动；之后 shot_settled 等卡片停稳
+ready_sidebar() { last_is tabbar.set '.on' && last_is sink.show '.open == true'; }
 
 # shoot <文件名> <路径> <就绪谓词>：冷启动 App 打开 <路径>，就绪后再等过渡走完，截到相邻两张一致为止
 shoot() {

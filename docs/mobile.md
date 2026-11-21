@@ -203,11 +203,20 @@ Team ID（`XDPWT9ABRD`）写在 `tauri.conf.json` 的 `bundle.iOS.developmentTea
 
 iOS 专用的 Info.plist 键写在 `web/src-tauri/Info.ios.plist`，`tauri ios build` 会合并进生成的 Info.plist。目前只有 `NSCameraUsageDescription`（连接页扫配对二维码、输入区拍照附件）；缺了它 App Store Connect 会以 ITMS-90683 退回构建。`ios-check` 与 `ios-release` 都会断言这个键在、且 `CFBundleShortVersionString` 等于 Cargo.toml 的版本。以后用到其它受保护能力（麦克风、定位、相册写入等）时，同样把用途说明加在这个文件里。
 
-iOS 26+ 的手机布局（下沉侧栏）用原生的底栏与页头（线程页三件；新建线程页只有左上角的侧栏钮，spec 的 `title`、`trail` 为 null、key 为 `home`），协议是壳 bridge 7（`web/src/lib/host.ts` 与 `src-tauri/src/host.rs` 的 `BRIDGE`）：
+iOS 26+ 的手机布局（下沉侧栏）用原生的底栏与页头（线程页三件；新建线程页只有左上角的侧栏钮，spec 的 `title`、`trail` 为 null、key 为 `home`），协议是壳 bridge 8（`web/src/lib/host.ts` 与 `web/src-tauri/src/host.rs` 的 `BRIDGE`；设计与探针结论见 `docs/plan-m20.md`）：
 
-- **底栏**是系统 `UITabBar`（`plugins/oryn-mobile/ios/Sources/TabBarOverlay.swift`，点选、按住冒出的大液珠与横滑换项都是系统行为），浮在 WKWebView 之上，玻璃折射下面真实的侧栏列表（列表一直画到屏幕底边）。底栏属于侧栏层，装在一个裁切视图里，右缘裁到卡片左缘：网页经 `tabBarReveal {x, covered, ms, ease?, at?}` 告诉原生——拖动时逐帧（按帧合并，向左按速度预判一段桥的延迟）发 `ms: 0`，松手与非手势开合只发终点、时长、缓动与绝对起步时刻 `at`，原生在同一时刻按同一条曲线自己插值（打开晚一帧、关闭早一帧，误差只会让底栏多藏一点）；收起的命令到得比 `at` 还晚时直接裁到 0，不再从头补一段过渡。卡片在原生接管时晚 34ms 起步给桥留出送达时间，吸附途中底栏不接触摸。菜单、弹层、提示或软键盘盖到底栏位置时（`covered`）原生隐藏、网页胶囊顶上。下沉侧栏宽 `min(87vw, 24rem)`（440pt 的大屏也是 87%，卡片露出的关闭条至少 44px），底栏左右各让 12px，四项撑满（`itemPositioning = .fill`）；iOS 26 的 `UITabBar` 把玻璃胶囊画在自己边界内左右各缩进约 21pt，所以原生底栏左右各放出 21pt，看得见的胶囊与网页胶囊同宽，起手触摸只认网页胶囊的矩形。bridge 4–6 的壳是自绘的 SwiftUI 胶囊，协议不同，网页对它们一律用网页底栏。
-- **页头**（侧栏钮 / 标题胶囊 / 视图钮）跟着卡片走：拖动时网页逐帧（按帧合并）发 `show {alpha: 1, dx: 预判的卡片左缘, passive: true}`；松手与按钮、返回键等非手势开合只发终点、时长、缓动与绝对起步时刻 `at`（`Date.now()` 毫秒），原生在同一时刻按同一条曲线自己插值，卡片在原生页头接管时晚 34ms 起步给桥留出送达时间；卡片在动或开着时原生页头只显示不接触摸（`passive`），关上静止后再发一条 `passive: false`。只有网页内容（对话框、弹层）盖住静止关闭的页头时原生才让位（`alpha 0`）。bridge 5–6 的壳不认 `at`，按 `delay` 从收到算起。
+- **卡片开合是 WKWebView 根滚动视图的横向滚动**（`web/src-tauri/plugins/oryn-mobile/ios/Sources/SinkFollow.swift`、`web/src/components/layout/SinkLayout.tsx`、`web/src/lib/native-sink.ts`）。网页经 `host_sink_set {on: true}` 接管后给 `<html>` 加 `data-sink-native`：文档可横滚，侧栏 `position: fixed` 垫底，卡片在右侧。UIKit 处理拖动与减速，`SinkFollow` 只设置松手后的横向落点：超过 0.3 pt/ms 按方向，其余取近端。根不使用 CSS 吸附，避免 WebKit 按上次手指松手的索引把程序化落位拉回旧端。根停在一端静止 100ms 后网页才提交 `sidebarOpen`；未经请求的位移（如 `scrollIntoView`）立即拉回已提交的位置。接管期间 `history.scrollRestoration = "manual"`，关侧栏时弹历史标记不会把卡片恢复回打开位。
+- **程序化开合**（按钮、卡片条、Esc、返回键、再点已选分区、减少动效）一律经 `host_sink_show {open, animated}` 交给原生：`animated` 时 `SinkFollow` 用 CADisplayLink 逐帧做不带动画的 `setContentOffset`（260ms 三次缓出，终点按当前尺寸计算），否则一步落位。原生跟手拖动时不执行该命令。1 秒内没到目的地且没有正在进行的触摸，则再发一次一步落位并宽限 1 秒；若仍没到，或超时时手指仍按着，就放弃过期目的地，按实际静止位提交。
+- **底栏**是系统 `UITabBar`（`TabBarOverlay.swift`，点选、按住冒出的大液珠与横滑换项都是系统行为），浮在 WKWebView 之上，玻璃折射下面真实的侧栏列表（列表一直画到屏幕底边）。底栏属于侧栏层，装在一个裁切视图里，右缘裁到卡片左缘：卡片左缘来自 `SinkFollow`（`contentOffset`），在同一次 KVO 回调里改裁切宽度，与卡片同进程同帧，不需要对时；卡片完全露出底栏胶囊时底栏才接触摸。菜单、弹层、提示或软键盘盖到底栏位置时网页经 `host_tab_bar_cover` 告诉原生，原生隐藏、网页胶囊顶上，让开后原生 120ms 淡回、网页胶囊同时长后再撤。下沉侧栏宽 `min(87vw, 24rem)`（440pt 的大屏也是 87%，卡片露出的关闭条至少 44px），底栏左右各让 12px，四项撑满（`itemPositioning = .fill`）；iOS 26 的 `UITabBar` 把玻璃胶囊画在自己边界内左右各缩进约 21pt，所以原生底栏左右各放出 21pt，看得见的胶囊与网页胶囊同宽，起手触摸只认网页胶囊的矩形。
+- **页头**（侧栏钮 / 标题胶囊 / 视图钮）在 `SinkFollow` 的同一次 KVO 回调里随 `contentOffset` 平移，与卡片同进程同帧，不需要对时；卡片离开关闭位时只显示不接触摸。网页的 `host_header_show` 只剩透明度（`{alpha, ms}`）：只有网页内容（对话框、弹层）盖住静止关闭的页头时原生才让位（`alpha 0`），侧栏被要求打开的过程中不做遮挡判定。
+- `host_sink_set` 生效前，非空的 `host_tab_bar_set` / `host_header_set` 一律返回 `unsupported`。bridge ≤ 7 的壳（页头靠跨进程对时跟随卡片）网页一律用网页页头与网页底栏，卡片用网页手势。
 
-CI 的 `ios-check` 在 iOS 26+ 模拟器里跑 `ci/ios-header-check.sh`（原生页头演示：插件直接摆出页头与菜单，比像素并探测触摸归属）与 `ci/ios-e2e-check.sh`（端到端：mock Web UI + 远程能力 + XCUITest 真实触摸，底栏的开合、按住拖动、原生点选与横滑，页头的接管、菜单、对话框让位与随卡片开合；事件日志断言、无障碍树断言与逐区域像素比较，见脚本文件头）。底栏的裁切是否跟上卡片要和真实网页一起看，所以只在端到端里检查。
+CI 的 `ios-check` 在 iOS 26+ 模拟器里跑 `ci/ios-header-check.sh`（原生页头演示：插件直接摆出页头与菜单，比像素并探测触摸归属）与 `ci/ios-e2e-check.sh`（端到端：mock Web UI + 远程能力 + XCUITest 真实触摸，底栏的开合、按住拖动、原生点选与横滑，首页原生侧栏钮的接管，页头的接管、菜单、对话框让位与随卡片开合；事件日志断言、无障碍树断言与逐区域像素比较，见脚本文件头）。底栏的裁切是否跟上卡片要和真实网页一起看，所以只在端到端里检查。网页侧的行为在浏览器里由 `bun run accept:m20`（本机 Chromium 模拟 iOS 壳）验收。
+
+按住拖动期间不能出现 `sink.show`（网页发起的程序化开合）。程序化开合到位后的观测窗口内，从别处重新发起原生 `jump` / `start`，或从终点位置离开超过 1pt 的 `move`，均判为回弹；后者覆盖网页直接 `scrollTo` 拉回、未再次调用原生的情况。`sink.trace` 是 debug 包记下的根滚动轨迹：程序化开合的 `start` / `jump` / `noop` / `busy` / `done` / `cancel`，以及外来位移 `move`（带调用栈，不含手指拖动与惯性）。
+
+验收以 `ios-check` 成功和下载后的 `ios-screenshot/e2e/.complete` 为准：该标记只在底栏、页头与图标检查全部跑完且通过后写入。产物还包含 `e2e/summary.md`（与 Actions 步骤摘要相同）与 `e2e/e2e-h-drag.png`；图标检查要求先切到品牌色、再切回默认。
+
+CI 不覆盖运动途中的逐帧对齐：按住拖动只在卡片停住后取样比对页头与卡片的位置，开合只看到位后的截图，拖动、甩动、开合动画过程中页头 / 底栏与卡片是否每一帧都对齐，留给真机验收（`docs/plan-m20.md` 步骤 4.3）。
 
 尚未完成：APNs 推送（服务端 `pushSenders["apns"]`、`PushSubscriptionInput` 增加 `kind: apns`）；Share Extension（App Group 容器 + 同一条上传预填流程）；Universal Links（`/.well-known/apple-app-site-association`）；Keychain 令牌存储的真机验证；iPhone / iPad 真机验收。

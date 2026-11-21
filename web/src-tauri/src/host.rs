@@ -24,9 +24,12 @@ use crate::webview::{self, TauriShell};
 pub const MAIN: &str = "main";
 /// 宿主命令集版本：以后新增命令就加一（2 = M7 移动端命令，3 = 桌面自绘标题栏 `host_window` 与 `chrome`，
 /// 4 = iOS 原生底栏 `host_tab_bar_*` 与 `tabbar` 事件，5 = iOS 原生页头 `host_header_*` 与 `header` 事件，
-/// 6 = iOS 可替换图标 `host_app_icon_*`，7 = iOS 原生底栏改为系统 `UITabBar` 浮在 WebView 之上（`host_tab_bar_reveal`
-/// 带裁切过渡与绝对起步时刻 `at`），原生页头跟随卡片（`host_header_show` 带绝对起步时刻 `at`））。
-pub const BRIDGE: u32 = 7;
+/// 6 = iOS 可替换图标 `host_app_icon_*`，7 = iOS 原生底栏改为系统 `UITabBar` 垫在 WebView 之下（spec 带 `bg`），
+/// 8 = iOS 下沉侧栏改由 WKWebView 的根滚动驱动：`host_sink_set` / `host_sink_show`，原生按 `contentOffset` 跟随，
+/// 底栏只收遮挡 `host_tab_bar_cover`（不再收卡片位置），`host_header_show` 只剩透明度；原生底栏改为浮在 WebView 之上、
+/// 右缘随根滚动裁到卡片左缘（spec 不再带 `bg`）；原生页头 `title` 可为 null（首页只有侧栏钮）；`host_sink_set` 生效前
+/// 非空的 `host_tab_bar_set` / `host_header_set` 一律 `unsupported`）。
+pub const BRIDGE: u32 = 8;
 
 pub type SessionCore = Core<HttpApi, TauriShell>;
 
