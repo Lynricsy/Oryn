@@ -67,8 +67,10 @@ UPDATE box_apps SET public = @public, updated_at = @updated_at WHERE id = @id;
 UPDATE box_apps SET live_release_id = @live_release_id, repo = @repo, root = @root, source = @source, updated_at = @updated_at
 WHERE id = @id;
 
+-- Only lands when the app still has the live release the probe read (a stale probe of an older release is dropped).
 -- name: SetBoxAppPreview :execrows
-UPDATE box_apps SET preview = @preview, preview_checked_at = @preview_checked_at WHERE id = @id;
+UPDATE box_apps SET preview = @preview, preview_checked_at = @preview_checked_at
+WHERE id = @id AND live_release_id IS CAST(sqlc.narg(live_release_id) AS TEXT);
 
 -- name: DeleteBoxApp :execrows
 DELETE FROM box_apps WHERE id = @id;

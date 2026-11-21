@@ -85,7 +85,8 @@ func hasPreviewMeta(r io.Reader) bool {
 	}
 }
 
-// probePreview 探测一个 app 是否声明了预览，结果写回 app 行；变化时通知前端。任何失败都记成没有预览。
+// probePreview 探测一个 app 是否声明了预览，结果写回 app 行；只在 app 的 live release 仍是探测时读到的那个时才落库
+// （较早 release 的慢探测不会盖掉新 release 的结果），实际写入且结果变化时通知前端。任何失败都记成没有预览。
 func (s *Service) probePreview(ctx context.Context, app string) {
 	a, err := s.st.Q.GetBoxAppByName(ctx, app)
 	if err != nil {
@@ -102,13 +103,14 @@ func (s *Service) probePreview(ctx context.Context, app string) {
 	if ctx.Err() != nil {
 		return
 	}
-	if _, err := s.st.Q.SetBoxAppPreview(ctx, db.SetBoxAppPreviewParams{
-		Preview: ok, PreviewCheckedAt: s.now().UnixMilli(), ID: a.ID,
-	}); err != nil {
+	n, err := s.st.Q.SetBoxAppPreview(ctx, db.SetBoxAppPreviewParams{
+		Preview: ok, PreviewCheckedAt: s.now().UnixMilli(), ID: a.ID, LiveReleaseID: a.LiveReleaseID,
+	})
+	if err != nil {
 		slog.Warn("boxes: 写入预览探测结果失败", "app", app, "err", err)
 		return
 	}
-	if ok != a.Preview {
+	if n > 0 && ok != a.Preview {
 		s.changed()
 	}
 }

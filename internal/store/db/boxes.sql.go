@@ -1118,17 +1118,25 @@ func (q *Queries) SetBoxAppLive(ctx context.Context, arg SetBoxAppLiveParams) (i
 }
 
 const setBoxAppPreview = `-- name: SetBoxAppPreview :execrows
-UPDATE box_apps SET preview = ?1, preview_checked_at = ?2 WHERE id = ?3
+UPDATE box_apps SET preview = ?1, preview_checked_at = ?2
+WHERE id = ?3 AND live_release_id IS CAST(?4 AS TEXT)
 `
 
 type SetBoxAppPreviewParams struct {
-	Preview          bool   `json:"preview"`
-	PreviewCheckedAt int64  `json:"previewCheckedAt"`
-	ID               string `json:"id"`
+	Preview          bool    `json:"preview"`
+	PreviewCheckedAt int64   `json:"previewCheckedAt"`
+	ID               string  `json:"id"`
+	LiveReleaseID    *string `json:"liveReleaseId"`
 }
 
+// Only lands when the app still has the live release the probe read (a stale probe of an older release is dropped).
 func (q *Queries) SetBoxAppPreview(ctx context.Context, arg SetBoxAppPreviewParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, setBoxAppPreview, arg.Preview, arg.PreviewCheckedAt, arg.ID)
+	result, err := q.db.ExecContext(ctx, setBoxAppPreview,
+		arg.Preview,
+		arg.PreviewCheckedAt,
+		arg.ID,
+		arg.LiveReleaseID,
+	)
 	if err != nil {
 		return 0, err
 	}

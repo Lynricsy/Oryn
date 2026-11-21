@@ -6,13 +6,17 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/orbs"
+	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
 func TestPreviewMeta(t *testing.T) {
@@ -48,9 +52,14 @@ func previewEnv(t *testing.T, h http.Handler) (*env, *[]*http.Request) {
 	e.orbs.connected[b.OrbID] = true
 	e.orbs.mu.Unlock()
 	e.app(b.ID, "hello", "", true, true)
-	var seen []*http.Request
+	var (
+		mu   sync.Mutex
+		seen []*http.Request
+	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		seen = append(seen, r.Clone(context.Background()))
+		mu.Unlock()
 		h.ServeHTTP(w, r)
 	}))
 	t.Cleanup(srv.Close)
@@ -68,6 +77,50 @@ func (e *env) preview(name string) bool {
 	a, err := e.st.Q.GetBoxAppByName(e.ctx, name)
 	require.NoError(e.t, err)
 	return a.Preview
+}
+
+// 旧 release 的慢探测晚于新 release 的探测返回时，结果按探测时读到的 live release 丢弃，不盖掉新结果。
+func TestPreviewProbeStaleReleaseDropped(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var n atomic.Int32
+	e, _ := previewEnv(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if n.Add(1) == 1 {
+			// 旧探测：卡住，放行后回一个没有预览标签的页面
+			close(entered)
+			<-release
+			_, _ = w.Write([]byte("<html><head></head><body>old</body></html>"))
+			return
+		}
+		_, _ = w.Write([]byte(previewPage))
+	}))
+	old := make(chan struct{})
+	go func() {
+		defer close(old)
+		e.s.probePreview(e.ctx, "hello")
+	}()
+	<-entered
+
+	// 新 release 上线，它的探测先完成
+	a, err := e.st.Q.GetBoxAppByName(e.ctx, "hello")
+	require.NoError(t, err)
+	rel := ids.New("bxr")
+	_, err = e.st.Q.SetBoxAppLive(e.ctx, db.SetBoxAppLiveParams{
+		LiveReleaseID: &rel, Repo: a.Repo, Root: a.Root, Source: a.Source, UpdatedAt: 3, ID: a.ID,
+	})
+	require.NoError(t, err)
+	e.s.probePreview(e.ctx, "hello")
+	require.True(t, e.preview("hello"))
+	checked, err := e.st.Q.GetBoxAppByName(e.ctx, "hello")
+	require.NoError(t, err)
+	e.clk.Add(time.Minute) // 旧探测若落库，preview_checked_at 会变
+
+	close(release)
+	<-old
+	after, err := e.st.Q.GetBoxAppByName(e.ctx, "hello")
+	require.NoError(t, err)
+	assert.True(t, after.Preview, "旧 release 的结果不落库")
+	assert.Equal(t, checked.PreviewCheckedAt, after.PreviewCheckedAt)
 }
 
 func TestPreviewProbe(t *testing.T) {
