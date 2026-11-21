@@ -24,6 +24,9 @@
 		"enabled": true,
 		"rules": {
 			"preset": "recommended"
+		},
+		"domains": {
+			"playwright": "none"
 		}
 	},
 	"javascript": {
@@ -69,6 +72,14 @@
 					"a11y": {
 						"useAriaPropsSupportedByRole": "off"
 					}
+				}
+			}
+		},
+		{
+			"includes": ["e2e/**"],
+			"linter": {
+				"domains": {
+					"playwright": "recommended"
 				}
 			}
 		}

@@ -167,7 +167,8 @@ surface({
 					const top = sec.getBoundingClientRect().top;
 					const edge = s.getBoundingClientRect().top;
 					if (document.scrollingElement?.scrollTop) return "文档被滚动";
-					if (Math.abs(n.top - edge) > 1) return `目录没贴上沿 ${n.top} vs ${edge}`;
+					if (Math.abs(n.top - edge) > 1)
+						return `目录没贴上沿 ${n.top} vs ${edge}`;
 					if (top < n.bottom || top > n.bottom + 16)
 						return `节顶 ${top} 不在目录下沿 ${n.bottom} 之下 16px 内`;
 					return "ok";

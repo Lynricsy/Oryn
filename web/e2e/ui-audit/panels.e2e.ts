@@ -418,8 +418,7 @@ surface({
 		await lastOverlay(page)
 			.getByRole("menuitemradio", { name: /^工作账号/ })
 			.click();
-		if (PHASE === "after")
-			await page.getByTestId("confirm-ok").click();
+		if (PHASE === "after") await page.getByTestId("confirm-ok").click();
 		await page.getByTestId("profile-conflict").waitFor({ timeout: 15_000 });
 		return lastOverlay(page);
 	},

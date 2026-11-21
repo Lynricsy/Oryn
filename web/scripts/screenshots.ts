@@ -235,7 +235,6 @@ interface Screen {
 	fresh?: boolean;
 }
 
-
 /** 关掉宽屏线程页默认展开的右面板。 */
 async function closePanel(page: Page) {
 	const toggle = page.getByRole("button", { name: "信息面板", exact: true });
@@ -366,7 +365,6 @@ function chromeScreens(
 		},
 	];
 }
-
 
 /** 移动壳里的界面（390 宽）：独立 context 注入假移动壳（屏幕圆角 `radius`，默认 40）。 */
 function mobileScreen(
