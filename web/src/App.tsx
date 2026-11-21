@@ -67,6 +67,13 @@ const ArtifactOpenPage = lazy(() =>
 		default: m.ArtifactOpenPage,
 	})),
 );
+// Boxes（M23）：总览页与单台 box
+const BoxesPage = lazy(() =>
+	import("./pages/BoxesPage").then((m) => ({ default: m.BoxesPage })),
+);
+const BoxPage = lazy(() =>
+	import("./pages/BoxPage").then((m) => ({ default: m.BoxPage })),
+);
 
 // 不常用的页面（认证、设置、匿名分享页）按需加载
 const SetupPage = lazy(() =>
@@ -160,6 +167,8 @@ export function App(): ReactNode {
 						<Route path="artifacts/trash" element={<ArtifactsPage trash />} />
 						<Route path="artifacts/:artifactId" element={<ArtifactPage />} />
 						<Route path="artifacts/open/:slug" element={<ArtifactOpenPage />} />
+						<Route path="boxes" element={<BoxesPage />} />
+						<Route path="boxes/:boxId" element={<BoxPage />} />
 						{/* 项目管理搬到了项目分区（M9.6） */}
 						<Route
 							path="settings/projects"

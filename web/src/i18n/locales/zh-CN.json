@@ -110,7 +110,8 @@
 		"settings": "设置",
 		"sidebar": "侧边栏",
 		"stats": "统计",
-		"artifacts": "Artifacts"
+		"artifacts": "Artifacts",
+		"boxes": "Boxes"
 	},
 	"toasts": {
 		"region": "操作提示"
@@ -1015,6 +1016,7 @@
 			"inbox": "打开收件箱",
 			"stats": "打开统计",
 			"artifacts": "打开 Artifacts",
+			"boxes": "打开 Boxes",
 			"settings": "打开设置",
 			"theme": "切换明暗"
 		}
@@ -1101,7 +1103,25 @@
 		"runner_unsupported": "runner 不支持这个操作（冻结、停机、删除、快照、连环境 fork）",
 		"dir_not_served": "这个目录不在 runner 声明的目录之内",
 		"thread_required": "runner 的文件与改动请求需要指明线程",
-		"omfg_in_progress": "这个线程里已有一个 /omfg 在进行，先完成或取消它再试"
+		"omfg_in_progress": "这个线程里已有一个 /omfg 在进行，先完成或取消它再试",
+		"box_not_found": "这台 box 已经不存在",
+		"app_not_found": "这台 box 上没有这个应用",
+		"release_not_found": "没有更早的 release 可以回滚",
+		"deploy_not_found": "这个应用没有进行中的部署",
+		"box_exists": "已经有同名的 box，换一个名字",
+		"box_limit": "已经有 16 台 box，先删掉一台再新建",
+		"box_stopped": "这台 box 已停止，先在 Boxes 页启动它",
+		"box_not_ready": "box 还没准备好，等它运行起来再试",
+		"box_unsupported": "这台 box 的 orbd 版本太旧，不支持 box，重新创建这台 box 即可更新",
+		"orb_is_box": "这台 orb 是一台 box，请在 Boxes 页管理它",
+		"app_exists_elsewhere": "另一台 box 上已经有同名的应用",
+		"app_repo_mismatch": "这个应用是从另一个仓库或目录部署的；要换过来，部署时加 --move",
+		"app_not_deployed": "这个应用还没有可用的 release，等首次部署完成再试",
+		"app_limit": "这台 box 上已经有 16 个应用，先下线一个",
+		"deploy_in_progress": "有部署正在进行，等它结束或先取消它",
+		"box_changes": "box 上这个应用有未提交的改动：在 box 上的线程里提交并推送，或用 --discard-box-changes 重新部署",
+		"release_too_large": "release 超过 512 MiB，改用 source: false 加 artifacts 只发构建产物",
+		"app_unavailable": "这个应用暂时不可用，过几秒再试"
 	},
 	"pair": {
 		"backToApp": "返回 Oryn App",
@@ -2401,6 +2421,181 @@
 			"exit": "exit {{code}}"
 		}
 	},
+	"boxes": {
+		"title": "Boxes",
+		"hero": {
+			"eyebrow": "BOXES",
+			"title": "你的应用跑在这里。\nAgent 也在。",
+			"body": "一台常驻机器，放任何你想一直开着的东西：随手做的内部工具，或者对外的站点。同一台 box 上的应用共用这台机器。",
+			"point1": "在线程里、让全局助手，或用 `oryn boxes` 创建和更新",
+			"point2": "线程可以直接开在 box 上，操作线上的应用和数据",
+			"point3": "每个应用都有自己的访问地址",
+			"docs": "阅读文档"
+		},
+		"new": {
+			"title": "新建 Box",
+			"open": "新建 Box",
+			"name": "名字",
+			"size": "规格",
+			"sizeDefault": "默认",
+			"sizeOption": "{{provider}} · {{type}} · {{cpus}} 核 · {{memory}}",
+			"nameHint": "小写字母、数字和连字符，至多 30 个字符",
+			"invalidName": "只能用小写字母、数字和单个连字符，首尾是字母或数字",
+			"create": "创建",
+			"handOff": "交给 Agent",
+			"seedPrompt": "帮我建一台 box。先问我要在上面托管什么，再决定名字和规格。"
+		},
+		"list": {
+			"title": "你的 Box",
+			"recent": "最近活动",
+			"apps_one": "{{count}} 个应用",
+			"apps_other": "{{count}} 个应用",
+			"noActivity": "你的 box 上还没有发生什么。"
+		},
+		"noUrl": "还没有配置 portal_domain，应用没有访问地址。",
+		"openBox": "打开这台 Box",
+		"startOnPage": "去 Boxes 页启动",
+		"state": {
+			"starting": "启动中",
+			"running": "运行中",
+			"stopping": "停止中",
+			"stopped": "已停止",
+			"failed": "启动失败",
+			"stoppedBySchedule": "按时段停机"
+		},
+		"apps": {
+			"title": "应用 · {{count}}",
+			"private": "私有",
+			"deploying": "部署中",
+			"unhealthy": "服务异常",
+			"firstDeploy": "首次部署进行中",
+			"deployed": "部署于 {{when}}",
+			"empty": "还没有应用。在线程里运行：",
+			"newThread": "在这个应用上开线程",
+			"machineThread": "在这台机器上开线程",
+			"startFirst": "先启动这台 Box",
+			"makePrivate": "设为私有",
+			"makePublic": "设为公开",
+			"restart": "重启",
+			"rollback": "回滚…",
+			"noRollback": "没有更早的 release",
+			"secrets": "密钥…",
+			"logs": "日志",
+			"undeploy": "下线…",
+			"cancelDeploy": "取消部署",
+			"menu": "{{app}} 的操作"
+		},
+		"preview": {
+			"label": "预览 {{app}}"
+		},
+		"menu": {
+			"label": "Box 操作",
+			"start": "启动 Box",
+			"stop": "停止 Box",
+			"rename": "改名…",
+			"schedule": "运行时段…",
+			"delete": "删除 Box…"
+		},
+		"about": {
+			"title": "关于",
+			"status": "状态",
+			"schedule": "时段",
+			"size": "规格",
+			"sizeValue": "{{type}} · {{cpus}} 核 · {{memory}}",
+			"provider": "Provider",
+			"created": "创建于",
+			"alwaysOn": "一直运行",
+			"footnote": "文件与数据在部署和重启之间保留在这台机器上。"
+		},
+		"usage": {
+			"title": "最近 21 天",
+			"up": "{{percent}}% 在线",
+			"threads_one": "{{count}} 个线程",
+			"threads_other": "{{count}} 个线程",
+			"day": "{{date}}：{{threads}} 个线程，{{percent}}% 在线"
+		},
+		"activity": {
+			"title": "活动",
+			"empty": "还没有活动。",
+			"deployed": "{{app}} 已部署 · {{commit}}",
+			"deploy_failed": "{{app}} 部署失败",
+			"rolled_back": "{{app}} 已回滚",
+			"restarted": "{{app}} 已重启",
+			"undeployed": "{{app}} 已下线",
+			"visibility": "{{app}} 改为{{state}}",
+			"public": "公开",
+			"private": "私有",
+			"thread": "开了线程 {{title}}",
+			"created": "创建了这台 box",
+			"started": "已启动",
+			"stopped": "已停止",
+			"renamed": "由 {{from}} 改名为 {{to}}",
+			"schedule": "更新了运行时段"
+		},
+		"actor": {
+			"owner": "你",
+			"agent": "Agent",
+			"assistant": "助手",
+			"schedule": "时段",
+			"system": "系统"
+		},
+		"confirm": {
+			"delete": {
+				"title": "删除 {{name}}？",
+				"body": "这台 box 上的全部应用和数据都会删除，无法恢复。",
+				"action": "删除 Box"
+			},
+			"stop": {
+				"title": "停止 {{name}}？",
+				"body": "上面的应用会离线，磁盘和数据保留。",
+				"action": "停止"
+			},
+			"undeploy": {
+				"title": "下线 {{app}}？",
+				"body": "应用停止并失去访问地址，数据目录保留。",
+				"action": "下线"
+			},
+			"public": {
+				"title": "公开 {{app}}？",
+				"body": "任何拿到地址的人都能打开它。",
+				"action": "设为公开"
+			},
+			"thread": {
+				"title": "在 {{target}} 上开线程？",
+				"body": "线程直接操作线上的应用和它的数据。",
+				"action": "开线程"
+			}
+		},
+		"rename": {
+			"title": "给 {{name}} 改名"
+		},
+		"schedule": {
+			"title": "运行时段",
+			"on": "开机",
+			"off": "关机",
+			"tz": "时区",
+			"clear": "清除时段",
+			"hint": "每天到开机时间启动、到关机时间停止。手动启停只保持到下一个时间点。"
+		},
+		"secrets": {
+			"title": "{{app}} 的密钥",
+			"name": "名字",
+			"add": "添加",
+			"value": "值",
+			"plain": "明文环境变量",
+			"hidden": "已隐藏",
+			"empty": "还没有密钥。",
+			"remove": "删除 {{name}}",
+			"applyHint": "改动在重启或下次部署后生效。",
+			"restartNow": "现在重启"
+		},
+		"picker": {
+			"label": "Boxes",
+			"machine": "机器",
+			"stopped": "已停止",
+			"gone": "这台 Box 或应用现在不能开线程，换一个执行位置。"
+		}
+	},
 	"artifacts": {
 		"title": "Artifacts",
 		"consent": {
@@ -3358,7 +3553,8 @@
 		},
 		"errorFix": {
 			"file": "在 .oryn/services.yaml 里给它换一个端口（或删掉 port 行让 orbd 自动分配），再重启它。",
-			"dynamic": "用 oryn orb service start {{name}} 重新启动它，换一个 --port（或不带 --port 让 orbd 自动分配）。"
+			"dynamic": "用 oryn orb service start {{name}} 重新启动它，换一个 --port（或不带 --port 让 orbd 自动分配）。",
+			"app": "box 应用的服务共用 box 给这个应用分配的端口。重新部署这个应用，或下线占着这个端口的东西。"
 		},
 		"errorHint": "详情见日志。"
 	},
@@ -3987,6 +4183,7 @@
 			"delete_space": "删除 Space「{{targetLabel}}」？",
 			"delete_trigger": "删除触发规则「{{targetLabel}}」？",
 			"delete_orb": "删除 orb「{{targetLabel}}」？",
+			"delete_box": "删除 box「{{targetLabel}}」及上面的全部应用和数据？",
 			"delete_schedule": "删除定时「{{targetLabel}}」？",
 			"share_thread": "为「{{targetLabel}}」创建公开分享链接？",
 			"share_portal": "为「{{targetLabel}}」开启公开的 Portal 预览？",
@@ -4105,7 +4302,13 @@
 			"share_portal": "公开 Portal 预览",
 			"unshare_portal": "取消 Portal 公开",
 			"publish_artifact": "发布 artifact",
-			"unpublish_artifact": "取消发布 artifact"
+			"unpublish_artifact": "取消发布 artifact",
+			"create_box": "新建 box",
+			"start_box": "启动 box",
+			"stop_box": "停止 box",
+			"set_box_schedule": "修改 box 运行时段",
+			"set_box_app_visibility": "修改应用公开性",
+			"delete_box": "删除 box"
 		}
 	},
 	"schedule": {

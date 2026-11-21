@@ -37,6 +37,7 @@ import { activeBranch, isMainFile } from "../state/transcript";
 import { MockArtifacts } from "./artifacts";
 import { MockAssistant, xdevMountNotice } from "./assistant";
 import { MockAutomation } from "./automation";
+import { MockBoxes } from "./boxes";
 import { MockDesktop } from "./desktop";
 import {
 	assistant,
@@ -571,6 +572,14 @@ export class MockServer {
 		changed: () => this.broadcast({ type: "ssh.changed" }),
 		threads: this.threads,
 		orbs: this.orbs,
+	});
+	/** Boxes（M23）：box 的常驻 orb 由它放进 `orbs`。 */
+	readonly boxes = new MockBoxes({
+		changed: () => this.broadcast({ type: "boxes.changed" }),
+		threads: this.threads,
+		orbs: this.orbs,
+		orbChanged: (orb) => this.broadcast({ type: "orb", orb }),
+		serviceLogs: this.serviceLogs,
 	});
 	/** GitHub 集成（M14）。 */
 	readonly github = new MockGitHub({
@@ -1781,6 +1790,8 @@ export class MockServer {
 		if (githubRes) return githubRes;
 		const sshRes = await this.ssh.handle(req, p, m, url);
 		if (sshRes) return sshRes;
+		const boxRes = await this.boxes.handle(req, p, m, url);
+		if (boxRes) return boxRes;
 		const memoryRes = await this.memory.handle(p, m, body, url);
 		if (memoryRes) return memoryRes;
 		const ownerMemoryRes = await this.ownerMemory.handle(p, m, body, url);
@@ -1955,6 +1966,14 @@ export class MockServer {
 			if (!orb) return json({ code: "not_found", message: "orb" }, 404);
 			if (orb.kind === "runner")
 				return json({ code: "runner_unsupported", message: "runner" }, 409);
+			if (orb.box)
+				return json(
+					{
+						code: "orb_is_box",
+						message: "this orb is a box; use /api/v1/boxes",
+					},
+					409,
+				);
 			const next = {
 				...orb,
 				state:
@@ -1997,6 +2016,18 @@ export class MockServer {
 			const executor = b.executor as Json | undefined;
 			if (executor?.kind === "runner")
 				return this.createRunnerThread(b, executor);
+			if (executor?.kind === "box") {
+				const target = this.boxes.threadTarget(
+					String(executor.boxId ?? ""),
+					typeof executor.app === "string" ? executor.app : undefined,
+				);
+				if (target instanceof Response) return target;
+				const orb = this.orbs.get(target.orbId);
+				if (!orb) return json({ code: "box_not_found", message: "box" }, 404);
+				const t = this.attachThread(b, orb, { cwd: target.cwd });
+				this.boxes.threadsChanged(orb.id);
+				return json({ thread: t }, 201);
+			}
 			const existing = executor?.kind === "orb";
 			const desktop = this.desktop.forNewOrb(
 				existing ? { browserProfileId: "" } : b,
@@ -2042,6 +2073,26 @@ export class MockServer {
 			if (!t) return json({ code: "not_found", message: "thread" }, 404);
 			if (threadMatch[2] === "fork") {
 				const b = await body();
+				// box 上的线程（M23）：只能共用环境，子线程留在同一台 orb、沿用 cwd
+				if (this.boxes.isBoxOrb(t.orbId)) {
+					const orb = this.orbs.get(t.orbId ?? "");
+					if (b.env === "copy" || !orb)
+						return json(
+							{
+								code: "box_unsupported",
+								message:
+									"threads on a box cannot be forked with a copied environment; fork with env=share",
+							},
+							409,
+						);
+					const child = this.attachThread({ prompt: "" }, orb, {
+						title: `fork：${t.title}`,
+						parentThreadId: id,
+						cwd: t.cwd,
+					});
+					this.boxes.threadsChanged(orb.id);
+					return json({ thread: child }, 201);
+				}
 				const copy = this.createThread({
 					prompt: "",
 					title: `fork：${t.title}`,
@@ -2052,6 +2103,14 @@ export class MockServer {
 			}
 			if (threadMatch[2] === "wake") {
 				const orb = t.orbId ? this.orbs.get(t.orbId) : undefined;
+				if (this.boxes.isStopped(t.orbId) && orb?.state !== "ready")
+					return json(
+						{
+							code: "box_stopped",
+							message: "this box is stopped; start it from the Boxes page",
+						},
+						409,
+					);
 				if (orb?.state === "failed") void this.recoverOrb(orb);
 				else if (orb?.state === "frozen" || orb?.state === "stopped")
 					void this.wakeOrb(orb);
@@ -2092,6 +2151,7 @@ export class MockServer {
 			}
 			if (m === "DELETE") {
 				this.threads.delete(id);
+				this.boxes.threadsChanged(t.orbId);
 				// 线程删除即撤销其全部分享（同 orynd 的级联删除）
 				for (const s of [...this.shares.values()])
 					if (s.threadId === id) this.revokeShare(s);
@@ -2436,12 +2496,20 @@ export class MockServer {
 
 	// ------------------------------------------------------------ runner（M11b）
 
-	/** orb 文件 / 改动接口的范围：runner 的 orb 必须带 `thread`（同 orynd 的 orb 代理），范围是线程的工作目录。 */
+	/**
+	 * orb 文件 / 改动接口的范围：runner 的 orb 必须带 `thread`（同 orynd 的 orb 代理），范围是线程的工作目录；
+	 * box 线程（M23）带 `thread` 时工作目录换成线程的 cwd（`$HOME` 不变）。
+	 */
 	private runnerScope = (
 		orbId: string,
 		threadId: string | null,
-	): { cwd: string } | Response | undefined => {
-		if (this.orbs.get(orbId)?.kind !== "runner") return undefined;
+	): { cwd: string } | { workdir: string } | Response | undefined => {
+		const orb = this.orbs.get(orbId);
+		if (orb?.box) {
+			const t = threadId ? this.threads.get(threadId) : undefined;
+			return t?.orbId === orbId && t.cwd ? { workdir: t.cwd } : undefined;
+		}
+		if (orb?.kind !== "runner") return undefined;
 		if (!threadId)
 			return json({ code: "thread_required", message: "thread" }, 400);
 		const t = this.threads.get(threadId);
@@ -2586,6 +2654,11 @@ export class MockServer {
 					409,
 				);
 		}
+		return json({ thread: this.attachThread(b, orb, { cwd, worktree }) }, 201);
+	}
+
+	/** 在已有的常驻 orb（runner、box）上建线程：不建 orb、不跑 setup，agent 直接启动。 */
+	private attachThread(b: Json, orb: Orb, extra: Partial<Thread>): Thread {
 		const id = `T-mock-${(this.idSeq++).toString(16)}`;
 		const prompt =
 			this.withAttachments(
@@ -2609,8 +2682,7 @@ export class MockServer {
 			updatedAt: Date.now(),
 			orbId: orb.id,
 			projectId: typeof b.projectId === "string" ? b.projectId : undefined,
-			cwd,
-			worktree,
+			...extra,
 		};
 		this.entries.set(id, []);
 		this.states.set(id, {
@@ -2622,13 +2694,12 @@ export class MockServer {
 		this.orbs.set(orb.id, next);
 		this.broadcast({ type: "orb", orb: next });
 		this.upsertThread(t);
-		// runner 常驻在线：不建 orb、不跑 setup，agent 直接启动
 		void (async () => {
 			await sleep(this.delay * 4);
 			this.upsertThread({ ...t, state: "idle" });
 			if (prompt) await this.runPrompt(id, prompt);
 		})();
-		return json({ thread: t }, 201);
+		return t;
 	}
 
 	// ------------------------------------------------------------ WS
@@ -3229,14 +3300,27 @@ export class MockServer {
 				} else w.delete(threadId);
 				return;
 			}
-			case "cmd":
-				void this.handleCmd(
-					socket,
-					threadId,
-					String(msg.id),
-					msg.frame as Json,
-				);
+			case "cmd": {
+				const t = this.threads.get(threadId);
+				const frame = msg.frame as Json;
+				// 停着的 box 上的线程（M23）：消息不受理，同 orynd 的 boxStoppedLocked
+				if (
+					frame?.type === "prompt" &&
+					this.boxes.isStopped(t?.orbId) &&
+					this.orbs.get(t?.orbId ?? "")?.state !== "ready"
+				) {
+					socket.deliver({
+						type: "error",
+						code: "box_stopped",
+						message: "this box is stopped; start it from the Boxes page",
+						threadId,
+						id: String(msg.id),
+					});
+					return;
+				}
+				void this.handleCmd(socket, threadId, String(msg.id), frame);
 				return;
+			}
 		}
 	}
 

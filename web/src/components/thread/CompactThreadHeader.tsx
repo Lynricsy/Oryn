@@ -21,6 +21,8 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router";
+import { useBoxOfOrb } from "../../api/box-queries";
 import { useSchedule } from "../../api/schedule-queries";
 import { formatCost, formatRelative } from "../../lib/format";
 import type { NativeIcon, NativeMark, NativeSeg } from "../../lib/host";
@@ -40,6 +42,7 @@ import { usePresence } from "../../lib/presence";
 import { parseTitleCard } from "../../lib/title";
 import { useThread } from "../../state/stores";
 import { uiStore, useUi } from "../../state/ui";
+import { boxThreadLabel } from "../boxes/box-model";
 import { useSessionCost } from "../composer/ComposerMeta";
 import { openPull, prIcon, prStatusText } from "../github/PrChip";
 import { ChromeLead, WindowControls } from "../layout/WindowControls";
@@ -100,6 +103,10 @@ export function CompactThreadHeader({
 	const { t } = useTranslation();
 	const thread = useThread(threadId, (s) => s.thread);
 	const orb = useOrbOf(threadId);
+	const navigate = useNavigate();
+	// box 线程（M23）：拿到 box 之后环境写成 `<box> · <app 或 机器>`；之前保持 orb 的文案与图标
+	const box = useBoxOfOrb(orb?.box ? orb.id : undefined);
+	const boxText = boxThreadLabel(orb, thread, box ? [box] : undefined, t);
 	const project = useThreadProject(thread?.projectId);
 	const space = useThreadSpace(thread?.spaceId);
 	const runSchedule = useSchedule(thread?.scheduleRun?.scheduleId);
@@ -171,10 +178,12 @@ export function CompactThreadHeader({
 		}${runner && thread?.cwd ? ` · ${shortPath(thread.cwd)}` : ""}`;
 		status.push({
 			key: "env",
-			icon: runner ? "device" : "box",
-			label: runner
-				? t("titleMenu.runsOn", { name: runnerName })
-				: t("thread.orb"),
+			icon: boxText ? "hardDrives" : runner ? "device" : "box",
+			label: boxText
+				? t("titleMenu.runsOn", { name: boxText })
+				: runner
+					? t("titleMenu.runsOn", { name: runnerName })
+					: t("thread.orb"),
 			sub: (
 				<span className="inline-flex min-w-0 items-center gap-1.5">
 					{env.failed ? (
@@ -201,6 +210,16 @@ export function CompactThreadHeader({
 					label: t("titleMenu.envInfo"),
 					onSelect: () => uiStore.getState().setThreadTab("info"),
 				},
+				...(box && boxText
+					? [
+							{
+								key: "box",
+								icon: "hardDrives",
+								label: t("boxes.openBox"),
+								onSelect: () => navigate(`/boxes/${box.id}`),
+							} satisfies MenuItem,
+						]
+					: []),
 			],
 		});
 	}
@@ -299,13 +318,15 @@ export function CompactThreadHeader({
 				data-testid="title-env"
 				className={`inline-flex min-w-0 shrink-0 items-center gap-1 ${env.failed ? "text-err" : ""}`}
 			>
-				{env.failed ? (
+				{boxText ? (
+					<Icon name="hardDrives" size={11} className="shrink-0" />
+				) : env.failed ? (
 					<StatusDot tone="err" />
 				) : (
 					<OrbBead state={orb.state} active={working} size={9} />
 				)}
 				<span className="max-w-24 truncate">
-					{runner ? runnerName : env.label}
+					{boxText ?? (runner ? runnerName : env.label)}
 				</span>
 			</span>,
 		);
@@ -347,11 +368,15 @@ export function CompactThreadHeader({
 			},
 		});
 	if (orb && env)
-		nativeMeta.push({
-			text: runner ? runnerName : env.label,
-			icon: { orb: env.failed ? "err" : orbVisual(orb.state, working) },
-			...(env.failed && { tone: "err" as const }),
-		});
+		nativeMeta.push(
+			boxText
+				? { text: boxText, icon: { symbol: "externaldrive" } }
+				: {
+						text: runner ? runnerName : env.label,
+						icon: { orb: env.failed ? "err" : orbVisual(orb.state, working) },
+						...(env.failed && { tone: "err" as const }),
+					},
+		);
 	const nativeMarks: NativeMark[] = [];
 	if (schedule)
 		nativeMarks.push({

@@ -47,6 +47,14 @@ export const MORE_ENTRIES: readonly MoreEntry[] = [
 		labelKey: "nav.artifacts",
 		to: "/artifacts",
 	},
+	{
+		// Boxes（M23）：常驻机器与应用部署
+		key: "boxes",
+		group: "overview",
+		icon: "hardDrives",
+		labelKey: "nav.boxes",
+		to: "/boxes",
+	},
 	// Agent（M13）：omp 配置的表单化子页；「高级」是原始文件浏览器，放在组末
 	{
 		key: "agent-skills",

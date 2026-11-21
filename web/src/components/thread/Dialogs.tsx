@@ -370,7 +370,8 @@ export function ForkDialog({
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const [env, setEnv] = useState<"share" | "copy">("share");
-	const runner = useOrbOf(threadId)?.kind === "runner";
+	const orb = useOrbOf(threadId);
+	const shareOnly = orb?.kind === "runner" || orb?.box === true;
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<unknown>(null);
 	return (
@@ -406,8 +407,8 @@ export function ForkDialog({
 				{entryId ? t("fork.fromEntry") : t("fork.fromLeaf")}
 			</p>
 			<div className="flex flex-col gap-2">
-				{/* runner（M11b）不能连环境 fork（409 runner_unsupported）：只有共用 */}
-				{(runner ? (["share"] as const) : (["share", "copy"] as const)).map(
+				{/* runner（M11b）与 box（M23）不能连环境 fork（409 runner_unsupported / box_unsupported）：只有共用 */}
+				{(shareOnly ? (["share"] as const) : (["share", "copy"] as const)).map(
 					(v) => (
 						// biome-ignore lint/a11y/noLabelWithoutControl: 控件为 Radio 组件（内含原生 input）
 						<label

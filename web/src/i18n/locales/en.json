@@ -110,7 +110,8 @@
 		"settings": "Settings",
 		"sidebar": "Sidebar",
 		"stats": "Statistics",
-		"artifacts": "Artifacts"
+		"artifacts": "Artifacts",
+		"boxes": "Boxes"
 	},
 	"toasts": {
 		"region": "Action messages"
@@ -1015,6 +1016,7 @@
 			"inbox": "Open inbox",
 			"stats": "Open stats",
 			"artifacts": "Open Artifacts",
+			"boxes": "Open Boxes",
 			"settings": "Open settings",
 			"theme": "Toggle light / dark"
 		}
@@ -1101,7 +1103,25 @@
 		"runner_unsupported": "Runners don't support this (freeze, stop, delete, snapshot, fork with environment)",
 		"dir_not_served": "This directory isn't inside the directories the runner serves",
 		"thread_required": "File and change requests on a runner need a thread",
-		"omfg_in_progress": "Another /omfg is still running in this thread. Finish or cancel it, then try again."
+		"omfg_in_progress": "Another /omfg is still running in this thread. Finish or cancel it, then try again.",
+		"box_not_found": "This box no longer exists",
+		"app_not_found": "This app isn't on that box",
+		"release_not_found": "There's no earlier release to roll back to",
+		"deploy_not_found": "There's no deploy in progress for this app",
+		"box_exists": "A box with this name already exists. Pick another name.",
+		"box_limit": "You already have 16 boxes. Delete one before creating another.",
+		"box_stopped": "This box is stopped. Start it on the Boxes page first.",
+		"box_not_ready": "The box isn't ready yet. Wait until it's running, then try again.",
+		"box_unsupported": "This box runs an older orbd without box support. Recreate the box to update it.",
+		"orb_is_box": "This orb is a box. Manage it from the Boxes page.",
+		"app_exists_elsewhere": "An app with this name already runs on another box",
+		"app_repo_mismatch": "This app was deployed from a different repository or folder. Deploy again with --move to switch it.",
+		"app_not_deployed": "This app has no working release yet. Wait for its first deploy to finish.",
+		"app_limit": "This box already runs 16 apps. Undeploy one first.",
+		"deploy_in_progress": "A deploy is in progress. Wait for it to finish, or cancel it first.",
+		"box_changes": "The box has uncommitted changes in this app. Commit and push them from a thread on the box, or redeploy with --discard-box-changes.",
+		"release_too_large": "The release is larger than 512 MiB. Ship build output with source: false and artifacts instead.",
+		"app_unavailable": "This app isn't available right now. Try again in a few seconds."
 	},
 	"pair": {
 		"backToApp": "Back to the Oryn app",
@@ -2401,6 +2421,181 @@
 			"exit": "exit {{code}}"
 		}
 	},
+	"boxes": {
+		"title": "Boxes",
+		"hero": {
+			"eyebrow": "BOXES",
+			"title": "Your apps run here.\nSo does your agent.",
+			"body": "An always-on machine for anything you want running, from a quick internal tool to a customer-facing site. Every app on a box shares that one machine.",
+			"point1": "Create and update them from threads, the assistant, or `oryn boxes`",
+			"point2": "Start threads right on the box to work on live apps and data",
+			"point3": "Get a live URL for every app",
+			"docs": "Read the Docs"
+		},
+		"new": {
+			"title": "New Box",
+			"open": "New Box",
+			"name": "Name",
+			"size": "Size",
+			"sizeDefault": "Default",
+			"sizeOption": "{{provider}} · {{type}} · {{cpus}} cores · {{memory}}",
+			"nameHint": "Lowercase letters, digits and hyphens, up to 30 characters",
+			"invalidName": "Use lowercase letters, digits and single hyphens, starting and ending with a letter or digit.",
+			"create": "Create",
+			"handOff": "Ask the agent",
+			"seedPrompt": "Create a box for me. Ask what I want to host on it first, then pick a name and a size."
+		},
+		"list": {
+			"title": "Your boxes",
+			"recent": "Recent activity",
+			"apps_one": "{{count}} app",
+			"apps_other": "{{count}} apps",
+			"noActivity": "Nothing has happened on your boxes yet."
+		},
+		"noUrl": "portal_domain is not configured, so apps have no URL.",
+		"openBox": "Open this box",
+		"startOnPage": "Start it on the Boxes page",
+		"state": {
+			"starting": "Starting",
+			"running": "Running",
+			"stopping": "Stopping",
+			"stopped": "Stopped",
+			"failed": "Failed",
+			"stoppedBySchedule": "Stopped by schedule"
+		},
+		"apps": {
+			"title": "Apps · {{count}}",
+			"private": "Private",
+			"deploying": "Deploying",
+			"unhealthy": "Unhealthy",
+			"firstDeploy": "First deploy in progress",
+			"deployed": "deployed {{when}}",
+			"empty": "No apps yet. In a thread, run:",
+			"newThread": "New thread on this app",
+			"machineThread": "New thread on this machine",
+			"startFirst": "Start the box first",
+			"makePrivate": "Make private",
+			"makePublic": "Make public",
+			"restart": "Restart",
+			"rollback": "Roll back…",
+			"noRollback": "No earlier release",
+			"secrets": "Secrets…",
+			"logs": "Logs",
+			"undeploy": "Undeploy…",
+			"cancelDeploy": "Cancel deploy",
+			"menu": "Actions for {{app}}"
+		},
+		"preview": {
+			"label": "Preview {{app}}"
+		},
+		"menu": {
+			"label": "Box actions",
+			"start": "Start Box",
+			"stop": "Stop Box",
+			"rename": "Rename…",
+			"schedule": "Schedule…",
+			"delete": "Delete Box…"
+		},
+		"about": {
+			"title": "About",
+			"status": "Status",
+			"schedule": "Schedule",
+			"size": "Size",
+			"sizeValue": "{{type}} · {{cpus}} cores · {{memory}}",
+			"provider": "Provider",
+			"created": "Created",
+			"alwaysOn": "Always on",
+			"footnote": "Files and data stay on the machine between deploys and restarts."
+		},
+		"usage": {
+			"title": "Last 21 days",
+			"up": "{{percent}}% up",
+			"threads_one": "{{count}} thread",
+			"threads_other": "{{count}} threads",
+			"day": "{{date}}: {{threads}} threads, {{percent}}% up"
+		},
+		"activity": {
+			"title": "Activity",
+			"empty": "No activity yet.",
+			"deployed": "{{app}} deployed · {{commit}}",
+			"deploy_failed": "{{app}} deploy failed",
+			"rolled_back": "{{app}} rolled back",
+			"restarted": "{{app}} restarted",
+			"undeployed": "{{app}} undeployed",
+			"visibility": "{{app}} made {{state}}",
+			"public": "public",
+			"private": "private",
+			"thread": "started {{title}}",
+			"created": "Box created",
+			"started": "Started",
+			"stopped": "Stopped",
+			"renamed": "Renamed from {{from}} to {{to}}",
+			"schedule": "Schedule updated"
+		},
+		"actor": {
+			"owner": "You",
+			"agent": "Agent",
+			"assistant": "Assistant",
+			"schedule": "Schedule",
+			"system": "System"
+		},
+		"confirm": {
+			"delete": {
+				"title": "Delete {{name}}?",
+				"body": "Every app and all data on this box will be deleted. This cannot be undone.",
+				"action": "Delete Box"
+			},
+			"stop": {
+				"title": "Stop {{name}}?",
+				"body": "Its apps go offline. The disk and data are kept.",
+				"action": "Stop"
+			},
+			"undeploy": {
+				"title": "Undeploy {{app}}?",
+				"body": "The app stops and loses its URL. Its data directory is kept.",
+				"action": "Undeploy"
+			},
+			"public": {
+				"title": "Make {{app}} public?",
+				"body": "Anyone with the URL can open it.",
+				"action": "Make public"
+			},
+			"thread": {
+				"title": "Start a thread on {{target}}?",
+				"body": "The thread works on the live app and its data.",
+				"action": "Start thread"
+			}
+		},
+		"rename": {
+			"title": "Rename {{name}}"
+		},
+		"schedule": {
+			"title": "Run schedule",
+			"on": "On",
+			"off": "Off",
+			"tz": "Time zone",
+			"clear": "Clear schedule",
+			"hint": "The box starts at the on time and stops at the off time every day. Starting or stopping it by hand holds until the next of these times."
+		},
+		"secrets": {
+			"title": "Secrets for {{app}}",
+			"name": "Name",
+			"add": "Add",
+			"value": "Value",
+			"plain": "Plain environment variable",
+			"hidden": "Hidden",
+			"empty": "No secrets yet.",
+			"remove": "Remove {{name}}",
+			"applyHint": "Changes apply after a restart or the next deploy.",
+			"restartNow": "Restart now"
+		},
+		"picker": {
+			"label": "Boxes",
+			"machine": "Machine",
+			"stopped": "Stopped",
+			"gone": "This box or app can't take a thread right now. Pick another place to run."
+		}
+	},
 	"artifacts": {
 		"title": "Artifacts",
 		"consent": {
@@ -3358,7 +3553,8 @@
 		},
 		"errorFix": {
 			"file": "Change its port in .oryn/services.yaml (or drop the port line to get one assigned automatically), then restart it.",
-			"dynamic": "Start it again with oryn orb service start {{name}} and a different --port (or no --port to get one assigned automatically)."
+			"dynamic": "Start it again with oryn orb service start {{name}} and a different --port (or no --port to get one assigned automatically).",
+			"app": "Box app services share the port the box assigned to the app. Redeploy the app, or undeploy whatever else is holding the port."
 		},
 		"errorHint": "Check the log for details."
 	},
@@ -3987,6 +4183,7 @@
 			"delete_space": "Delete Space “{{targetLabel}}”?",
 			"delete_trigger": "Delete trigger rule “{{targetLabel}}”?",
 			"delete_orb": "Delete orb “{{targetLabel}}”?",
+			"delete_box": "Delete box “{{targetLabel}}” with all its apps and data?",
 			"delete_schedule": "Delete schedule “{{targetLabel}}”?",
 			"share_thread": "Create a public share link for “{{targetLabel}}”?",
 			"share_portal": "Open a public Portal preview for “{{targetLabel}}”?",
@@ -4105,7 +4302,13 @@
 			"share_portal": "Made a portal public",
 			"unshare_portal": "Ended a public portal",
 			"publish_artifact": "Published an artifact",
-			"unpublish_artifact": "Unpublished an artifact"
+			"unpublish_artifact": "Unpublished an artifact",
+			"create_box": "Created a box",
+			"start_box": "Started a box",
+			"stop_box": "Stopped a box",
+			"set_box_schedule": "Changed a box schedule",
+			"set_box_app_visibility": "Changed an app's visibility",
+			"delete_box": "Deleted a box"
 		}
 	},
 	"schedule": {

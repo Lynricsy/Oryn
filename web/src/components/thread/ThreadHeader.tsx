@@ -11,6 +11,7 @@ import type { TFunction } from "i18next";
 import { type CSSProperties, type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useNavigate } from "react-router";
+import { useBoxOfOrb } from "../../api/box-queries";
 import type { Orb, Schemas } from "../../api/client";
 import { useProjects } from "../../api/queries";
 import { useSpaces } from "../../api/space-queries";
@@ -21,6 +22,7 @@ import { useBreakpoint, useViewportSegments } from "../../lib/viewport";
 import { deleteThread, patchThread, renameThread } from "../../state/actions";
 import { useIndex, useThread } from "../../state/stores";
 import { uiStore, useUi } from "../../state/ui";
+import { boxThreadLabel } from "../boxes/box-model";
 import { PrChip } from "../github/PrChip";
 import { ChromeLead, WindowControls } from "../layout/WindowControls";
 import { ScheduleChip, ScheduleRunChip } from "../schedule/ScheduleChip";
@@ -143,6 +145,35 @@ function OrbChip({ orb, working }: { orb: Orb; working: boolean }): ReactNode {
 				{state}
 			</span>
 		</button>
+	);
+}
+
+/**
+ * box 线程（M23）的页头胶囊：`<box> · <app 或 机器>`，整体是到 box 页的链接。box 列表还没到时保持 orb 胶囊。
+ */
+function BoxChip({
+	orb,
+	cwd,
+	working,
+}: {
+	orb: Orb;
+	cwd?: string;
+	working: boolean;
+}): ReactNode {
+	const { t } = useTranslation();
+	const box = useBoxOfOrb(orb.id);
+	const label = boxThreadLabel(orb, { cwd }, box ? [box] : undefined, t);
+	if (!box || !label) return <OrbChip orb={orb} working={working} />;
+	return (
+		<Link
+			to={`/boxes/${box.id}`}
+			data-testid="box-chip"
+			title={t("boxes.openBox")}
+			className="ml-1.5 inline-flex h-[26px] min-w-0 shrink items-center gap-[7px] rounded-full border border-border bg-panel/60 px-2 font-medium text-fg text-xs transition-colors duration-150 hover:bg-hover @lg/header:pr-2.5 @lg/header:pl-[9px]"
+		>
+			<Icon name="hardDrives" size={13} className="shrink-0 text-muted" />
+			<span className="min-w-0 truncate">{label}</span>
+		</Link>
 	);
 }
 
@@ -736,6 +767,12 @@ export function ThreadHeader({
 				!infoBeside &&
 				(isRunner ? (
 					<RunnerChip
+						orb={orb}
+						cwd={thread?.cwd}
+						working={thread?.state === "working"}
+					/>
+				) : orb.box ? (
+					<BoxChip
 						orb={orb}
 						cwd={thread?.cwd}
 						working={thread?.state === "working"}

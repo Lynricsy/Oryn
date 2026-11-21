@@ -37,6 +37,10 @@ export interface FloatingProps extends HTMLAttributes<HTMLDivElement> {
 	bodyClassName?: string;
 	/** 由调用方自己排版（如头部固定 + 列表滚动的 flex 列），不包内层滚动区 */
 	bare?: boolean;
+	/** 进场位移动画（`pop-in`）；悬停出现的浮层传 false（悬停不加入场动画） */
+	motion?: boolean;
+	/** 内层滚动区的 `data-testid`（截图的溢出断言量的是真正的滚动体）；`bare` 时无效 */
+	bodyTestId?: string;
 	ref?: Ref<HTMLDivElement | null>;
 	children: ReactNode;
 }
@@ -109,6 +113,8 @@ export function Floating({
 	maxHeight = 320,
 	bodyClassName = "",
 	bare = false,
+	motion = true,
+	bodyTestId,
 	className = "",
 	ref,
 	children,
@@ -162,12 +168,13 @@ export function Floating({
 			data-floating=""
 			// 顶层元素与 .glass 都自带 position；定位全由 place() 写内联样式
 			style={{ position: "fixed", ...(SUPPORTS_POPOVER ? {} : { zIndex: 60 }) }}
-			className={`glass pop-in flex flex-col rounded-lg ${className}`}
+			className={`glass ${motion ? "pop-in" : ""} flex flex-col rounded-lg ${className}`}
 		>
 			{bare ? (
 				children
 			) : (
 				<div
+					data-testid={bodyTestId}
 					className={`min-h-0 flex-1 overflow-y-auto overscroll-contain ${bodyClassName}`}
 				>
 					{children}

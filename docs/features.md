@@ -9,6 +9,7 @@ README 只列每项能力的一句话概要，这里写完整的行为、边界�
 - [Agent 配置](#agent-配置)
 - [全局助手与 Space](#全局助手与-space)
 - [记忆、GitHub 与 SSH](#记忆github-与-ssh)
+- [Boxes](#boxes)
 - [Artifacts](#artifacts)
 - [客户端](#客户端)
 - [安全边界](#安全边界)
@@ -291,6 +292,29 @@ orb 与 Runner 里的 agent 共用一个自托管的 [Hindsight](https://github.
 - 设置页可以测试连接、查看负载 / CPU / 内存 / 磁盘快照，直接打开网页终端或浏览远端文件。
 
 部署见 [`deploy.md` 第 15 节](deploy.md#15-ssh-主机与控制面网关m18)。
+
+## Boxes
+
+box 是一台常驻机器：由 Provider（Docker / Sysbox / Firecracker）拉起，规格取 Provider 的 orb 类型。它不空闲冻结、不随线程回收，掉线后自动拉起。线程的 orb 负责构建，box 只负责运行：在线程里跑 `oryn boxes deploy`，把仓库的 `HEAD` 提交构建成一个 release 送上 box。一台 box 可以跑多个应用（app），每个 app 有自己的地址、密钥与数据目录。
+
+- **创建**：「更多 › Boxes」里新建（或交给 Agent 去建），也可以让线程里的 agent 部署时加 `--create` 顺手建，或者让全局助手建。至多 16 台，每台至多 16 个 app。
+- **部署**：仓库里放一份 `.oryn/box.yaml`（也认 `.amp/box.yaml`），最小写法：
+
+  ```yaml
+  services:
+    web:
+      command: bun run start   # 必须监听 $PORT
+  build: bun install && bun run build
+  ```
+
+  字段：`services`（1–4 个服务，各有 `command`，可选 `cwd`）、`build`（部署前在 orb 里跑）、`source`（缺省 `true`：release 带源码与 `.git`；`false` 时只打包 `artifacts` 列出的构建产物）、`artifacts`、`include`（单仓多 app 时把仓库里别的目录一起带上）。第一次部署写 `oryn boxes deploy --on <box> --name <app>`，之后在同一个目录里 `oryn boxes deploy` 即可（target 记在 `.oryn/box-deploy.json`）。未提交的改动不会带上，先提交。
+- **激活与回滚**：box 换到新 release、重启服务、等端口监听；起不来就退回上一个 release，不留半成品。保留当前 release 加前两个，可以在 box 页或用 `oryn boxes rollback` 回滚。
+- **地址与公开性**：每个 app 的地址是 `https://<app>.<portal_domain>/`，与 thread portal、artifact 帧共用同一个泛域名与证书。app 默认公开，`--private` 或 box 页「设为私有」后要求主人登录；app 收到的请求带 `X-Oryn-Authenticated: owner=yes|no`。没有配置 `portal_domain` 时 app 没有地址。
+- **环境与数据**：进程拿到 `PORT`、`ORYN_DEPLOYMENT_URL`、`ORYN_DEPLOYMENT_NAME`、`ORYN_DEPLOYMENT_BOX` 与 `ORYN_DEPLOYMENT_DATA_DIRECTORY`；数据只写进数据目录（`~/apps/<app>/data`），它在部署与重启之间保留。密钥用 `oryn boxes secrets set` 或 box 页的「密钥…」设置，改动在重启或下次部署后生效；`--plain` 的是明文环境变量，可以读回。
+- **运行时段**：box 可以设每日的开机、关机时刻与时区；手动启停只保持到下一个时间点。停着的 box 上的线程不接收消息，要先在 Boxes 页启动。
+- **在 box 上开线程**：box 页的「新线程」或首屏执行位置里的 Boxes 分组，可以把线程开在机器（`~`）或某个 app 的线上目录（`~/apps/<app>/current`）上，线程直接操作线上的应用和数据。带源码的 release 在 box 上改了代码、没有推送时，新的部署会拒绝覆盖（`box_changes`），要么在 box 上的线程里提交并推送，要么加 `--discard-box-changes`。
+- **悬停预览**：app 根页面的 `<head>` 里声明 `<meta name="oryn-preview" content="v1; enabled; iframe">`，box 页悬停 app 徽标时显示实时预览（带 `?oryn-preview=light|dark` 参数，app 可以据此调整样式）。
+- **边界**：部署只能在线程的 orb 里进行；同一台 box 上的 app 与线程以同一个用户运行，彼此没有隔离，不可信的 app 放到单独的 box；box 的数据就是那台机器的磁盘，删 box 即丢；全自动线程不能使用 box；orb 里的 agent 不能删 box，删除只能由主人在 Boxes 页、设备令牌 CLI 或经全局助手的确认卡完成。
 
 ## Artifacts
 

@@ -12,6 +12,7 @@ export function Popover({
 	onClose,
 	side = "top",
 	align = "start",
+	bodyTestId,
 }: {
 	children: ReactNode;
 	onClose: () => void;
@@ -19,6 +20,8 @@ export function Popover({
 	side?: "top" | "bottom";
 	/** 与打开它的元素左对齐（缺省）或右对齐（贴在工具条右端的按钮） */
 	align?: "start" | "end";
+	/** 滚动体的 `data-testid`（截图的溢出断言用），原样转给 `Floating` */
+	bodyTestId?: string;
 }): ReactNode {
 	const ref = useRef<HTMLDivElement>(null);
 	// 打开它的元素（首次渲染时的焦点 = 胶囊）；Escape 关闭后焦点回到这里，不掉到 body
@@ -52,6 +55,7 @@ export function Popover({
 			gap={side === "top" ? 8 : 4}
 			className="w-80 max-w-[calc(100vw-2rem)]"
 			bodyClassName="p-1"
+			bodyTestId={bodyTestId}
 		>
 			{children}
 		</Floating>
@@ -74,6 +78,7 @@ export function Option({
 	hint,
 	trailing,
 	mono,
+	disabled,
 }: {
 	selected: boolean;
 	onClick: () => void;
@@ -82,12 +87,16 @@ export function Option({
 	hint?: ReactNode;
 	trailing?: ReactNode;
 	mono?: boolean;
+	/** 看得见、点不了（如停着的 box）：整行半透明、没有悬停底色 */
+	disabled?: boolean;
 }): ReactNode {
 	return (
 		<button
 			type="button"
 			onClick={onClick}
-			className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors duration-150 hover:bg-hover ${selected ? "bg-hover text-fg" : "text-fg"}`}
+			disabled={disabled}
+			aria-disabled={disabled || undefined}
+			className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors duration-150 ${disabled ? "opacity-50" : "hover:bg-hover"} ${selected ? "bg-hover text-fg" : "text-fg"}`}
 		>
 			{leading && (
 				<span

@@ -111,6 +111,7 @@ export const SF_ICON: Partial<Record<IconName, string>> = {
 	terminal: "terminal",
 	shapes: "square.on.circle",
 	monitor: "display",
+	hardDrives: "externaldrive",
 };
 
 /** 侧栏钮与视图钮的 SF Symbol。 */

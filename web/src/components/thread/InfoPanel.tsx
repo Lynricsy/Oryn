@@ -9,6 +9,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useBoxOfOrb } from "../../api/box-queries";
 import type { Orb, Schemas } from "../../api/client";
 import {
 	useOrbMetrics,
@@ -27,6 +28,8 @@ import {
 	subagentVisualState,
 } from "../../state/subagent-tree";
 import { uiStore, useUi } from "../../state/ui";
+import { BoxStartLink } from "../boxes/BoxStartLink";
+import { boxThreadLabel } from "../boxes/box-model";
 import { DesktopProfileRow } from "../desktop/profile-status";
 import { AgentAvatar, agentStateLabel } from "../transcript/AgentAvatar";
 import { AgentStatusRing } from "../ui/AgentStatusAvatar";
@@ -478,6 +481,20 @@ function OrbSpecs({ threadId, orb }: { threadId: string; orb: Orb }) {
 	const cwd = useThread(threadId, (s) => s.thread?.cwd);
 	const cls =
 		"mt-3.5 flex flex-wrap items-center gap-x-3.5 gap-y-1 text-muted text-xs leading-[18px]";
+	const box = useBoxOfOrb(orb.box ? orb.id : undefined);
+	const boxText = boxThreadLabel(orb, { cwd }, box ? [box] : undefined, t);
+	// box 线程（M23）：先写 `<box> · <app 或 机器>`，其余同普通 orb；box 列表没到时与普通 orb 相同
+	if (boxText)
+		return (
+			<div data-testid="box-specs" className={cls}>
+				<Spec icon="hardDrives" className="font-medium text-fg">
+					{boxText}
+				</Spec>
+				<Spec icon="box">{orb.type}</Spec>
+				<Spec icon="cpu">{t("panel.cores", { n: orb.cpus })}</Spec>
+				<Spec icon="memory">{formatMemoryMB(orb.memoryMB)}</Spec>
+			</div>
+		);
 	if (orb.kind === "runner")
 		return (
 			<div data-testid="runner-specs" className={cls}>
@@ -518,6 +535,7 @@ function OrbSection({ threadId }: { threadId: string }) {
 	const working = useThread(threadId, (s) => s.thread?.state === "working");
 	const running = useThread(threadId, (s) => s.running);
 	const metrics = useOrbMetrics(orb?.state === "deleted" ? undefined : orb?.id);
+	const box = useBoxOfOrb(orb?.box ? orb.id : undefined);
 	if (!orb) {
 		return (
 			<InfoBlock>
@@ -549,11 +567,9 @@ function OrbSection({ threadId }: { threadId: string }) {
 	const faultLabel = faults > 0 ? t("panel.faults", { count: faults }) : "";
 	const terminal =
 		orb.state !== "deleted" && contentTabs(orb).includes("terminal");
-	// runner 停机 = 离线，只能等它自己重连，唤醒必然失败（runner_offline）
-	const wake =
-		!runner &&
-		!running &&
-		(orb.state === "stopped" || orb.state === "stopping");
+	// runner 停机 = 离线，只能等它自己重连，唤醒必然失败（runner_offline）；box 的启停只由 Boxes 页决定
+	const stopped = orb.state === "stopped" || orb.state === "stopping";
+	const wake = !runner && !orb.box && !running && stopped;
 	return (
 		<>
 			<InfoBlock className="pb-4">
@@ -581,7 +597,9 @@ function OrbSection({ threadId }: { threadId: string }) {
 							)}
 						</div>
 					</div>
-					{wake ? (
+					{orb.box && stopped && box ? (
+						<BoxStartLink boxId={box.id} />
+					) : wake ? (
 						<WakeButton threadId={threadId} />
 					) : (
 						terminal && (

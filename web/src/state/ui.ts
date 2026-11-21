@@ -93,10 +93,11 @@ export function hasUnseenChanges(sig: ChangesSig | undefined): boolean {
 	return !!sig && sig.current !== "" && sig.current !== sig.seen;
 }
 
-/** 交给首屏输入框的提示：正文与（可选的）项目。 */
+/** 交给首屏输入框的提示：正文、（可选的）项目与执行位置（box 页「新线程」预选的 box / app，M23）。 */
 export interface HomeSeed {
 	text: string;
 	projectId?: string;
+	executor?: Schemas["ThreadExecutorBox"];
 }
 
 export const COLLAPSED_CARDS_KEY = "oryn.panel.collapsed";

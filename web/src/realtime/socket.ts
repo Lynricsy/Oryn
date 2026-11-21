@@ -180,6 +180,21 @@ export class RealtimeClient {
 		for (const cb of [...this.sshListeners]) cb();
 	}
 
+	/** Boxes 变更的监听者（M23）：收到 `boxes.changed` 与每次连接建立时调用。 */
+	private readonly boxesListeners = new Set<() => void>();
+
+	/** 订阅「box、app、部署、活动或用量可能变了」；连接（重新）建立时也通知。返回取消订阅。 */
+	onBoxesChanged(cb: () => void): () => void {
+		this.boxesListeners.add(cb);
+		return () => {
+			this.boxesListeners.delete(cb);
+		};
+	}
+
+	private emitBoxesChanged() {
+		for (const cb of [...this.boxesListeners]) cb();
+	}
+
 	/** artifact 列表变更的监听者（M14）：收到 `artifacts.changed` 与每次连接建立时调用。 */
 	private readonly artifactsListeners = new Set<() => void>();
 	/** 连接（重新）建立、artifact 观看已重发之后调用：断线期间错过的实时状态（画布等）靠它补回。 */
@@ -457,6 +472,7 @@ export class RealtimeClient {
 			this.emitSchedulesChanged();
 			this.emitGitHubChanged();
 			this.emitSshChanged();
+			this.emitBoxesChanged();
 			for (const [id, w] of this.artifactWatches)
 				this.sendArtifactWatch(id, w.page);
 			this.emitArtifactsChanged();
@@ -764,6 +780,9 @@ export class RealtimeClient {
 				return;
 			case "ssh.changed":
 				this.emitSshChanged();
+				return;
+			case "boxes.changed":
+				this.emitBoxesChanged();
 				return;
 			case "artifacts.changed":
 				this.emitArtifactsChanged();

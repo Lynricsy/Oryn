@@ -147,6 +147,7 @@ export function Dialog({
 	wide,
 	size,
 	wrapTitle,
+	bodyTestId,
 }: {
 	open: boolean;
 	onClose: () => void;
@@ -158,6 +159,8 @@ export function Dialog({
 	size?: "xl";
 	/** 标题折行而不是单行截断：确认框的标题是带名字的问句，截断会吞掉关键信息 */
 	wrapTitle?: boolean;
+	/** 正文滚动体的 `data-testid`（截图的溢出断言量的是真正的滚动体） */
+	bodyTestId?: string;
 }) {
 	const { t } = useTranslation();
 	const hostRef = useRef<HTMLDivElement>(null);
@@ -239,6 +242,7 @@ export function Dialog({
 				</div>
 				<div
 					ref={bodyRef}
+					data-testid={bodyTestId}
 					className={`min-h-0 flex-1 overflow-y-auto px-5 pt-1 ${footer ? "pb-2" : "pb-5"}`}
 				>
 					{children}
@@ -751,6 +755,25 @@ const FRIENDLY_CODES = [
 	"thread_required",
 	// 中央 agent 配置（M12.2）
 	"omfg_in_progress",
+	// Boxes（M23）
+	"box_not_found",
+	"app_not_found",
+	"release_not_found",
+	"deploy_not_found",
+	"box_exists",
+	"box_limit",
+	"box_stopped",
+	"box_not_ready",
+	"box_unsupported",
+	"orb_is_box",
+	"app_exists_elsewhere",
+	"app_repo_mismatch",
+	"app_not_deployed",
+	"app_limit",
+	"deploy_in_progress",
+	"box_changes",
+	"release_too_large",
+	"app_unavailable",
 ] as const;
 
 type FriendlyCode = (typeof FRIENDLY_CODES)[number];

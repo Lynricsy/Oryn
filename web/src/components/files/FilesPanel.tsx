@@ -7,6 +7,7 @@
  */
 import { type ReactNode, useMemo, useReducer, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useBoxOfOrb } from "../../api/box-queries";
 import { ApiError } from "../../api/client";
 import { usePublishOrbFile } from "../../api/share-queries";
 import {
@@ -17,6 +18,7 @@ import {
 import { wakeThread } from "../../state/actions";
 import { useThread } from "../../state/stores";
 import { uiStore, useUi } from "../../state/ui";
+import { BoxStartLink } from "../boxes/BoxStartLink";
 import { Icon } from "../ui/icons";
 import { Button, ErrorText, Spinner } from "../ui/primitives";
 import { FileBrowser, type FilePublisher } from "./FileBrowser";
@@ -68,6 +70,14 @@ export default function FilesPanel({
 	const [agentSaved, setAgentSaved] = useState(false);
 	const orbState = useThread(threadId, (s) => s.orb?.state);
 	const offline = orbId !== undefined && orbState === "stopped";
+	// box 线程（M23）不唤醒：启停只由 Boxes 页决定，这里给去 Boxes 页的入口（box 列表没到时先不给）
+	const isBox = useThread(threadId, (s) => s.orb?.box === true);
+	const box = useBoxOfOrb(isBox ? orbId : undefined);
+	const wakeAction = isBox ? (
+		box && <BoxStartLink boxId={box.id} />
+	) : (
+		<WakeButton threadId={threadId} />
+	);
 	const sources = useMemo(() => {
 		const saved = () => setAgentSaved(true);
 		return [
@@ -96,7 +106,7 @@ export default function FilesPanel({
 						<Icon name="info" size={13} className="shrink-0" />
 						{t("files.offline.unsupported")}
 					</p>
-					<WakeButton threadId={threadId} />
+					{wakeAction}
 				</div>
 			);
 		if (error.code === "provider_unavailable")
@@ -128,7 +138,7 @@ export default function FilesPanel({
 				<div className="flex shrink-0 items-center gap-2 bg-raised py-1 pr-1 pl-3 text-muted text-xs">
 					<Icon name="info" size={13} className="shrink-0" />
 					<span className="min-w-0 flex-1">{t("files.offline.banner")}</span>
-					<WakeButton threadId={threadId} />
+					{wakeAction}
 				</div>
 			)}
 			{agentSaved && (

@@ -27,10 +27,13 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
+import { useBoxes } from "../api/box-queries";
 import type { Schemas } from "../api/client";
 import { useComposerPrefs } from "../api/identity-queries";
 import { useBrowserProfiles, useProjects, useProviders } from "../api/queries";
 import { createAssistantConversation } from "../api/space-queries";
+import { BoxOptions } from "../components/boxes/BoxOptions";
+import { type BoxPick, boxLabel } from "../components/boxes/box-model";
 import {
 	AttachButton,
 	AttachmentStrip,
@@ -203,6 +206,9 @@ export function HomePage(): ReactNode {
 	const [executor, setExecutor] = useState<Executor>({ kind: "new_orb" });
 	// 选了 runner 的目录（M11b）时优先于 `executor`；选回新 orb / 已有 orb 时清空
 	const [runnerPick, setRunnerPick] = useState<RunnerPick | null>(null);
+	// 选了 box（机器或某个 app，M23）时优先于 `executor`，与 `runnerPick` 互斥；只存 id，名字从 box 列表里查
+	const [boxPick, setBoxPick] = useState<BoxPick | null>(null);
+	const boxes = useBoxes();
 	const [projectId, setProjectId] = useState<string | undefined>(undefined);
 	// 用户在 role 胶囊里选的对象；还没选时跟随首屏偏好（偏好没读到或读取失败时是 default role）
 	const [picked, setPicked] = useState<Target | null>(null);
@@ -285,6 +291,15 @@ export function HomePage(): ReactNode {
 		if (!seed) return;
 		setPrompt(seed.text);
 		if (seed.projectId) setProjectId(seed.projectId);
+		// box 页的「新线程」：立即预选（不等 box 列表——seed 取走即清空），对象切回工作线程（偏好是全局助手时也一样）
+		if (seed.executor) {
+			setBoxPick({
+				boxId: seed.executor.boxId,
+				...(seed.executor.app ? { app: seed.executor.app } : {}),
+			});
+			setRunnerPick(null);
+			setPicked({ kind: "role", role: "default" });
+		}
 		requestAnimationFrame(() => {
 			const el = ref.current;
 			if (!el) return;
@@ -318,8 +333,8 @@ export function HomePage(): ReactNode {
 	}, []);
 
 	const profileList = profiles.data?.profiles ?? [];
-	// Profile 胶囊：新 orb 且至少有一个 Profile 时出现（runner 用那台机器自己的浏览器）
-	const showProfile = !runnerPick && profileList.length > 0;
+	// Profile 胶囊：新 orb 且至少有一个 Profile 时出现（runner、box 用那台机器自己的浏览器）
+	const showProfile = !runnerPick && !boxPick && profileList.length > 0;
 	const showProfileRef = useRef(showProfile);
 	showProfileRef.current = showProfile;
 	const project = projects.data?.projects.find((p) => p.id === projectId);
@@ -344,22 +359,25 @@ export function HomePage(): ReactNode {
 		? { provider: executor.provider, type: executor.type }
 		: newOrbDefault;
 	// 胶囊的无障碍名保持原拼接字符串；视觉上把「·」后的部分拆成徽标
-	const executorText: PillText = runnerPick
-		? {
-				label: `${runnerPick.runnerName} · ${runnerPickDir(runnerPick)}${runnerPick.mode === "worktree" ? ` · ${t("runner.modeWorktree")}` : ""}`,
-				main: `${runnerPick.runnerName} · ${runnerPickDir(runnerPick).split("/").pop()}`,
-				badge:
-					runnerPick.mode === "worktree"
-						? t("runner.worktreeBadge")
-						: undefined,
-			}
-		: shownNewOrb
+	const boxText = boxPick ? boxLabel(boxPick, boxes.data?.boxes, t) : null;
+	const executorText: PillText = boxText
+		? boxText.text
+		: runnerPick
 			? {
-					label: `${shownNewOrb.provider}${shownNewOrb.type ? ` · ${shownNewOrb.type}` : ""}`,
-					main: shownNewOrb.provider,
-					badge: shownNewOrb.type,
+					label: `${runnerPick.runnerName} · ${runnerPickDir(runnerPick)}${runnerPick.mode === "worktree" ? ` · ${t("runner.modeWorktree")}` : ""}`,
+					main: `${runnerPick.runnerName} · ${runnerPickDir(runnerPick).split("/").pop()}`,
+					badge:
+						runnerPick.mode === "worktree"
+							? t("runner.worktreeBadge")
+							: undefined,
 				}
-			: { label: t("newThread.newOrb"), main: t("newThread.newOrb") };
+			: shownNewOrb
+				? {
+						label: `${shownNewOrb.provider}${shownNewOrb.type ? ` · ${shownNewOrb.type}` : ""}`,
+						main: shownNewOrb.provider,
+						badge: shownNewOrb.type,
+					}
+				: { label: t("newThread.newOrb"), main: t("newThread.newOrb") };
 	const projectName = projectId
 		? (project?.name ?? projectId)
 		: t("newThread.noProject");
@@ -412,6 +430,15 @@ export function HomePage(): ReactNode {
 			await sendAssistant(text, target);
 			return;
 		}
+		if (boxPick) {
+			// box 列表还在加载时等它；选中的 box / app 现在不能开线程就不发请求，打开执行位置弹层说明
+			const list = boxes.data?.boxes ?? (await boxes.refetch()).data?.boxes;
+			if (boxLabel(boxPick, list, t).state !== "ok") {
+				setPill("executor");
+				setError(t("boxes.picker.gone"));
+				return;
+			}
+		}
 		const pickError = runnerPick && runnerPickError(runnerPick);
 		if (pickError) {
 			setPill("executor");
@@ -427,7 +454,15 @@ export function HomePage(): ReactNode {
 		await send(
 			{
 				prompt: text,
-				executor: runnerPick ? runnerExecutor(runnerPick, text) : executor,
+				executor: boxPick
+					? {
+							kind: "box",
+							boxId: boxPick.boxId,
+							...(boxPick.app ? { app: boxPick.app } : {}),
+						}
+					: runnerPick
+						? runnerExecutor(runnerPick, text)
+						: executor,
 				...(projectId ? { projectId } : {}),
 				...(att.contents.length > 0 ? { images: att.contents } : {}),
 				...(att.attachmentIds.length > 0
@@ -439,7 +474,7 @@ export function HomePage(): ReactNode {
 							model: { provider: target.model.provider, id: target.model.id },
 						}),
 				...(target.thinking ? { thinkingLevel: target.thinking } : {}),
-				...(!runnerPick && profilePick !== null
+				...(!runnerPick && !boxPick && profilePick !== null
 					? { browserProfileId: profilePick }
 					: {}),
 			},
@@ -565,7 +600,7 @@ export function HomePage(): ReactNode {
 			} else if (d) {
 				conflictReq.current = { body, text };
 				setDirConflict(d);
-			} else setError(e instanceof Error ? e.message : String(e));
+			} else setError(describeError(e, t));
 		} finally {
 			setBusy(false);
 			setConflictBusy(null);
@@ -750,7 +785,13 @@ export function HomePage(): ReactNode {
 												className={`flex min-w-0 items-center gap-1.5 ${compact ? "flex-1" : ""} ${pillsAnim}`}
 											>
 												<PillButton
-													icon={runnerPick ? "laptop" : "box"}
+													icon={
+														boxPick
+															? "hardDrives"
+															: runnerPick
+																? "laptop"
+																: "box"
+													}
 													text={executorText}
 													shortcut="Ctrl+M"
 													active={pill === "executor"}
@@ -802,7 +843,10 @@ export function HomePage(): ReactNode {
 										)}
 									</button>
 									{pill === "executor" && !assistantTarget && (
-										<Popover onClose={() => setPill(null)}>
+										<Popover
+											onClose={() => setPill(null)}
+											bodyTestId="executor-options-body"
+										>
 											<PopoverLabel>{t("newThread.newOrb")}</PopoverLabel>
 											{(providers.data?.providers ?? [])
 												.filter((p) => p.name !== "@host")
@@ -812,6 +856,7 @@ export function HomePage(): ReactNode {
 															key={`${p.id}-${ot.name}`}
 															selected={
 																!runnerPick &&
+																!boxPick &&
 																shownNewOrb?.provider === p.name &&
 																shownNewOrb.type === ot.name
 															}
@@ -844,6 +889,7 @@ export function HomePage(): ReactNode {
 																			},
 																);
 																setRunnerPick(null);
+																setBoxPick(null);
 																setPill(null);
 															}}
 														>
@@ -854,7 +900,19 @@ export function HomePage(): ReactNode {
 											<RunnerOptions
 												pick={runnerPick}
 												prompt={prompt}
-												onPick={setRunnerPick}
+												onPick={(p) => {
+													setRunnerPick(p);
+													setBoxPick(null);
+												}}
+											/>
+											<BoxOptions
+												pick={boxPick}
+												onPick={(p) => {
+													setBoxPick(p);
+													setRunnerPick(null);
+													setError(null);
+													setPill(null);
+												}}
 											/>
 										</Popover>
 									)}

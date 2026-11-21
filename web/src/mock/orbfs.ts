@@ -178,6 +178,17 @@ function seedGit(): OrbFs["git"] {
 }
 
 const orbs = new Map<string, OrbFs>();
+/** 额外的种子文件（orb id → 相对 `$HOME` 的路径 → 内容）；`resetOrbFs` 不清它，下次建树时照放。 */
+const extraSeeds = new Map<string, Record<string, string>>();
+
+/** 给某台 orb 的文件树加种子文件（相对 `$HOME`；box 的 `apps/<app>/current/` 用）。 */
+export function seedOrbFiles(
+	orbId: string,
+	files: Record<string, string>,
+): void {
+	extraSeeds.set(orbId, { ...extraSeeds.get(orbId), ...files });
+	orbs.delete(orbId);
+}
 
 function orbFs(orbId: string): OrbFs {
 	let fs = orbs.get(orbId);
@@ -194,7 +205,13 @@ function orbFs(orbId: string): OrbFs {
 	};
 	dir(HOME);
 	dir(`${HOME}/.oryn`);
-	for (const [p, content] of Object.entries(seedFiles())) {
+	const extra = Object.fromEntries(
+		Object.entries(extraSeeds.get(orbId) ?? {}).map(([k, v]) => [
+			`${HOME}/${k}`,
+			v,
+		]),
+	);
+	for (const [p, content] of Object.entries({ ...seedFiles(), ...extra })) {
 		dir(p.slice(0, p.lastIndexOf("/")));
 		nodes.set(p, {
 			type: "file",
@@ -426,7 +443,7 @@ async function handleFs(
 		if (typeof from !== "string") return from;
 		const to = resolve(body.to, true);
 		if (typeof to !== "string") return to;
-		if (from === fs.workdir) return fail(403, "protected_path");
+		if (from === scope.workdir) return fail(403, "protected_path");
 		if (!fs.nodes.has(from)) return fail(404, "not_found");
 		if (fs.nodes.has(to) && body.overwrite !== true) return fail(409, "exists");
 		if (!fs.nodes.has(to.slice(0, to.lastIndexOf("/"))))
@@ -442,7 +459,7 @@ async function handleFs(
 	if (op === "delete" && m === "POST") {
 		const p = resolve(body.path, true);
 		if (typeof p !== "string") return p;
-		if (p === fs.workdir) return fail(403, "protected_path");
+		if (p === scope.workdir) return fail(403, "protected_path");
 		for (const k of [...fs.nodes.keys()])
 			if (k === p || k.startsWith(`${p}/`)) fs.nodes.delete(k);
 		return new Response(null, { status: 204 });
@@ -550,13 +567,14 @@ async function handleGit(
 const ROUTE = /^\/api\/v1\/orbs\/([^/]+)\/(fs|git)\/([a-z]+)$/;
 
 /**
- * runner 的 orb（M11b）：按 `thread` 查询参数给出线程的工作目录；缺 `thread` 等错误直接给 Response；
+ * 线程决定的范围：runner 的 orb（M11b）给 `cwd`（家目录与工作目录都是它；缺 `thread` 等错误直接给 Response）；
+ * box 线程（M23）给 `workdir`（`$HOME` 不变，工作目录换成线程的 cwd，`~` 开头照展开；目录不存在时退回缺省，同 orbd）；
  * 普通 orb 返回 undefined（范围照旧）。
  */
 export type RunnerScope = (
 	orbId: string,
 	threadId: string | null,
-) => { cwd: string } | Response | undefined;
+) => { cwd: string } | { workdir: string } | Response | undefined;
 
 /** orb 文件 / git 接口的 mock 应答；其它请求返回 null。 */
 export async function handleOrbFetch(
@@ -576,9 +594,18 @@ export async function handleOrbFetch(
 	const runner = runnerScope?.(orbId, url.searchParams.get("thread"));
 	if (runner instanceof Response) return runner;
 	const fs = orbFs(orbId);
-	const scope: Scope = runner
-		? { home: runner.cwd, workdir: runner.cwd }
-		: { home: HOME, workdir: fs.workdir };
+	const boxDir =
+		runner && "workdir" in runner ? normalize(runner.workdir) : null;
+	const scope: Scope =
+		runner && "cwd" in runner
+			? { home: runner.cwd, workdir: runner.cwd }
+			: {
+					home: HOME,
+					workdir:
+						boxDir && fs.nodes.get(boxDir)?.type === "dir"
+							? boxDir
+							: fs.workdir,
+				};
 	return area === "fs"
 		? handleFs(fs, scope, op, req, url)
 		: handleGit(fs, scope, op, req, url);

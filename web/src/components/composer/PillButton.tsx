@@ -5,11 +5,12 @@ import type { ReactElement, Ref } from "react";
 import { Badge } from "../ui/data";
 import { Icon, type IconName } from "../ui/icons";
 
-/** 胶囊文案：主文字 + 可选徽标；`label` 是整体无障碍名（保持原拼接字符串）。 */
+/** 胶囊文案：主文字 + 可选徽标；`label` 是整体无障碍名（保持原拼接字符串）；`warn` = 选中的东西已经用不了（警示态）。 */
 export interface PillText {
 	label: string;
 	main: string;
 	badge?: string;
+	warn?: boolean;
 }
 
 /**
@@ -47,10 +48,12 @@ export function PillButton({
 			aria-expanded={active}
 			aria-label={text.label}
 			title={shortcut ? `${text.label} (${shortcut})` : text.label}
-			className={`inline-flex h-8 items-center rounded-full border text-xs shadow-xs transition-colors duration-150 ${circle ? "w-8 shrink-0 justify-center" : `min-w-0 shrink gap-1.5 px-3 ${grow ? "max-w-none" : "max-w-60"}`} ${active ? "border-border-strong bg-hover text-fg" : "border-border bg-panel/70 text-muted hover:bg-hover hover:text-fg"}`}
+			className={`inline-flex h-8 items-center rounded-full border text-xs shadow-xs transition-colors duration-150 ${circle ? "w-8 shrink-0 justify-center" : `min-w-0 shrink gap-1.5 px-3 ${grow ? "max-w-none" : "max-w-60"}`} ${text.warn ? "border-warn/40 bg-panel/70 text-warn-ink hover:bg-hover" : active ? "border-border-strong bg-hover text-fg" : "border-border bg-panel/70 text-muted hover:bg-hover hover:text-fg"}`}
 		>
 			<span className="inline-flex shrink-0">
-				{typeof icon === "string" ? (
+				{text.warn ? (
+					<Icon name="alert" size={circle ? 15 : 13} />
+				) : typeof icon === "string" ? (
 					<Icon name={icon} size={circle ? 15 : 13} />
 				) : (
 					icon

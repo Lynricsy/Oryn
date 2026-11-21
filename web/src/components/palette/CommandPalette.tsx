@@ -400,6 +400,13 @@ export function CommandPalette(): ReactNode {
 				() => go("/artifacts"),
 			),
 			action(
+				"boxes",
+				"hardDrives",
+				t("palette.actions.boxes"),
+				"boxes deploy apps machine 部署 机器",
+				() => go("/boxes"),
+			),
+			action(
 				"settings",
 				"settings",
 				t("palette.actions.settings"),

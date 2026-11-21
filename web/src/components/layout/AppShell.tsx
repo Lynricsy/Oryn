@@ -22,6 +22,7 @@ import { type ReactNode, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { Navigate, Outlet, useLocation, useNavigate } from "react-router";
 import { useRealtimeArtifactSync } from "../../api/artifact-queries";
+import { useRealtimeBoxSync } from "../../api/box-queries";
 import { ApiError, UNAUTHORIZED_EVENT } from "../../api/client";
 import { useRealtimeGitHubSync } from "../../api/github-queries";
 import { useMe } from "../../api/queries";
@@ -214,6 +215,8 @@ export function AppShell(): ReactNode {
 	// GitHub 集成状态（M14）同理
 	useRealtimeGitHubSync();
 	useRealtimeSshSync();
+	// Boxes（M23）同理
+	useRealtimeBoxSync();
 	// Artifacts 列表（M14）同理
 	useRealtimeArtifactSync();
 	// 自定义选区快捷动作（M22）：鉴权通过后拉一次，写进菜单读的同步副本
