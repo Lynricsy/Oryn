@@ -4593,13 +4593,43 @@
 		"commits": {
 			"title": "提交到 {{branch}}",
 			"viewAll": "查看全部",
-			"none": "还没有提交"
+			"none": "还没有提交",
+			"loadMore": "加载更早的提交",
+			"selectHint": "选择一个提交查看改动"
+		},
+		"commit": {
+			"copySha": "复制 SHA",
+			"author": "作者",
+			"date": "时间",
+			"parents": "父提交",
+			"filesChanged_one": "{{count}} 个文件变更",
+			"filesChanged_other": "{{count}} 个文件变更",
+			"truncated": "改动文件超过 2000 个，只列出前 2000 个",
+			"thread": "关联线程",
+			"source": {
+				"push": "由该线程推送",
+				"sampled": "线程里出现过该提交",
+				"pull": "经 PR 合并"
+			}
+		},
+		"refs": {
+			"default": "默认",
+			"files": "文件",
+			"loadMore": "加载更多",
+			"none": "没有标签"
+		},
+		"refPicker": {
+			"label": "分支或标签：{{ref}}",
+			"branches": "分支",
+			"tags": "标签"
 		},
 		"files": {
 			"title": "文件",
-			"truncated": "条目过多，只显示前 5000 项"
+			"truncated": "条目过多，只显示前 5000 项",
+			"path": "路径"
 		},
 		"nav": {
+			"label": "仓库",
 			"commits": "提交",
 			"branches": "分支",
 			"tags": "标签"

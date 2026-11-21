@@ -23,6 +23,7 @@ import { RepoUnavailable } from "./home/RepoUnavailable";
 import { ServicesCard } from "./home/ServicesCard";
 import { StatusStrip } from "./home/StatusStrip";
 import { ProjectGate, ProjectShell } from "./ProjectShell";
+import { repoReadable } from "./repo/RepoGate";
 
 export function ProjectHomePage(): ReactNode {
 	return <ProjectGate>{(p) => <ProjectHome project={p} />}</ProjectGate>;
@@ -31,12 +32,7 @@ export function ProjectHomePage(): ReactNode {
 function ProjectHome({ project }: { project: Project }): ReactNode {
 	const repo = useRepoStatus(project.id);
 	const status = repo.data;
-	const readable =
-		status &&
-		status.kind !== "none" &&
-		status.available &&
-		status.state === "ready" &&
-		!status.empty;
+	const readable = status && repoReadable(status);
 	const branch = status?.baseBranch ?? "";
 	return (
 		<ProjectShell

@@ -12,15 +12,17 @@ import { copyToClipboard } from "../../../lib/clipboard";
 import { showToast } from "../../../state/toasts";
 import { uiStore } from "../../../state/ui";
 
-/** 复制按钮的共同部分：成功后 1.2 秒内显示 ✓。 */
-function CopyIconButton({
+/** 复制按钮的共同部分：成功后 1.2 秒内显示 ✓；失败时弹错误提示（缺省文案附上原文，`failText` 覆盖它）。 */
+export function CopyIconButton({
 	icon,
 	label,
 	text,
+	failText,
 }: {
 	icon: IconName;
 	label: string;
 	text: string;
+	failText?: string;
 }): ReactNode {
 	const { t } = useTranslation();
 	const [copied, setCopied] = useState(false);
@@ -37,7 +39,7 @@ function CopyIconButton({
 				if (await copyToClipboard(text)) setCopied(true);
 				else
 					showToast({
-						text: t("projectShell.copyFailed", { text }),
+						text: failText ?? t("projectShell.copyFailed", { text }),
 						tone: "err",
 					});
 			}}

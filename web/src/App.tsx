@@ -44,6 +44,27 @@ const ProjectThreadsPage = lazy(() =>
 		default: m.ProjectThreadsPage,
 	})),
 );
+// 仓库子页（M24 阶段 ②）：提交、分支、标签、文件
+const CommitsPage = lazy(() =>
+	import("./pages/projects/repo/CommitsPage").then((m) => ({
+		default: m.CommitsPage,
+	})),
+);
+const BranchesPage = lazy(() =>
+	import("./pages/projects/repo/BranchesPage").then((m) => ({
+		default: m.BranchesPage,
+	})),
+);
+const TagsPage = lazy(() =>
+	import("./pages/projects/repo/TagsPage").then((m) => ({
+		default: m.TagsPage,
+	})),
+);
+const FilesPage = lazy(() =>
+	import("./pages/projects/repo/FilesPage").then((m) => ({
+		default: m.FilesPage,
+	})),
+);
 const ProjectSettingsPage = lazy(() =>
 	import("./pages/projects/settings/ProjectSettingsPage").then((m) => ({
 		default: m.ProjectSettingsPage,
@@ -164,6 +185,20 @@ export function App(): ReactNode {
 							path="projects/:projectId/threads"
 							element={<ProjectThreadsPage />}
 						/>
+						<Route
+							path="projects/:projectId/commits"
+							element={<CommitsPage />}
+						/>
+						<Route
+							path="projects/:projectId/commits/:sha"
+							element={<CommitsPage />}
+						/>
+						<Route
+							path="projects/:projectId/branches"
+							element={<BranchesPage />}
+						/>
+						<Route path="projects/:projectId/tags" element={<TagsPage />} />
+						<Route path="projects/:projectId/files/*" element={<FilesPage />} />
 						<Route
 							path="projects/:projectId/settings"
 							element={<ProjectSettingsPage />}

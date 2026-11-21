@@ -4593,13 +4593,43 @@
 		"commits": {
 			"title": "Commits to {{branch}}",
 			"viewAll": "View all",
-			"none": "No commits yet"
+			"none": "No commits yet",
+			"loadMore": "Load older commits",
+			"selectHint": "Select a commit to see its changes"
+		},
+		"commit": {
+			"copySha": "Copy SHA",
+			"author": "Author",
+			"date": "Date",
+			"parents": "Parents",
+			"filesChanged_one": "{{count}} file changed",
+			"filesChanged_other": "{{count}} files changed",
+			"truncated": "More than 2,000 files changed; showing the first 2,000",
+			"thread": "Linked thread",
+			"source": {
+				"push": "Pushed from this thread",
+				"sampled": "Seen in this thread",
+				"pull": "Merged via PR"
+			}
+		},
+		"refs": {
+			"default": "Default",
+			"files": "Files",
+			"loadMore": "Load more",
+			"none": "No tags"
+		},
+		"refPicker": {
+			"label": "Branch or tag: {{ref}}",
+			"branches": "Branches",
+			"tags": "Tags"
 		},
 		"files": {
 			"title": "Files",
-			"truncated": "Too many entries; showing the first 5,000"
+			"truncated": "Too many entries; showing the first 5,000",
+			"path": "Path"
 		},
 		"nav": {
+			"label": "Repository",
 			"commits": "Commits",
 			"branches": "Branches",
 			"tags": "Tags"

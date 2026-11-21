@@ -14,6 +14,10 @@ import { ProjectCreatePage } from "./ProjectCreatePage";
 import { ProjectHomePage } from "./ProjectHomePage";
 import { ProjectsOverviewPage } from "./ProjectsOverviewPage";
 import { ProjectThreadsPage } from "./ProjectThreadsPage";
+import { BranchesPage } from "./repo/BranchesPage";
+import { CommitsPage } from "./repo/CommitsPage";
+import { FilesPage } from "./repo/FilesPage";
+import { TagsPage } from "./repo/TagsPage";
 import { ProjectSettingsPage } from "./settings/ProjectSettingsPage";
 
 export interface Write {
@@ -350,6 +354,20 @@ export function mount(path: string) {
 						path="/projects/:projectId/threads"
 						element={<ProjectThreadsPage />}
 					/>
+					<Route
+						path="/projects/:projectId/commits"
+						element={<CommitsPage />}
+					/>
+					<Route
+						path="/projects/:projectId/commits/:sha"
+						element={<CommitsPage />}
+					/>
+					<Route
+						path="/projects/:projectId/branches"
+						element={<BranchesPage />}
+					/>
+					<Route path="/projects/:projectId/tags" element={<TagsPage />} />
+					<Route path="/projects/:projectId/files/*" element={<FilesPage />} />
 					<Route
 						path="/projects/:projectId/settings"
 						element={<ProjectSettingsPage />}
