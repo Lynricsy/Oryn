@@ -109,11 +109,12 @@ export function Option({
 					</span>
 				)}
 			</span>
-			{trailing && (
-				<span className="flex shrink-0 items-center gap-1">{trailing}</span>
-			)}
+			{/* 勾跟在文字后、行尾图标前：占的是文字区的余量，行尾的徽标、logo 不被挤开 */}
 			{selected && (
 				<Icon name="check" size={13} className="shrink-0 text-muted" />
+			)}
+			{trailing && (
+				<span className="flex shrink-0 items-center gap-1">{trailing}</span>
 			)}
 		</button>
 	);

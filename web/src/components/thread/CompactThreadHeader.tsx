@@ -710,14 +710,7 @@ function MenuRow({
 					</span>
 				)}
 			</span>
-			{item.hint && (
-				<span className="shrink-0 text-faint text-xs tabular-nums">
-					{item.hint}
-				</span>
-			)}
-			{item.children && (
-				<Icon name="chevronRight" size={13} className="shrink-0 text-ghost" />
-			)}
+			{/* 勾跟在文字后、行尾提示前：占的是文字区的余量，提示与箭头不被挤开 */}
 			{item.checked && (
 				<Icon
 					name="check"
@@ -725,6 +718,14 @@ function MenuRow({
 					weight="bold"
 					className="shrink-0 text-accent-ink"
 				/>
+			)}
+			{item.hint && (
+				<span className="shrink-0 text-faint text-xs tabular-nums">
+					{item.hint}
+				</span>
+			)}
+			{item.children && (
+				<Icon name="chevronRight" size={13} className="shrink-0 text-ghost" />
 			)}
 		</button>
 	);

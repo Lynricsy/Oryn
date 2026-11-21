@@ -135,24 +135,24 @@ export function ModelPickerBody({
 								<span
 									className={`flex min-w-0 flex-1 ${compact ? "flex-col" : "items-center gap-2"}`}
 								>
+									{/* 与 role 列表同一种选中样式（灰底 + 中性勾）；勾跟在模型名后，右对齐的 id 不被挤开 */}
 									<span
-										className={`min-w-0 truncate ${compact ? "" : "max-w-[60%] shrink-0"}`}
+										className={`flex min-w-0 items-center gap-1.5 ${compact ? "" : "max-w-[60%] shrink-0"}`}
 									>
-										{m.name || m.id}
+										<span className="min-w-0 truncate">{m.name || m.id}</span>
+										{selected && (
+											<Icon
+												name="check"
+												size={13}
+												weight="bold"
+												className="shrink-0 text-fg"
+											/>
+										)}
 									</span>
 									<span
 										className={`min-w-0 truncate font-mono text-faint text-xs ${compact ? "" : "flex-1 text-right"}`}
 									>{`${m.provider}/${m.id}`}</span>
 								</span>
-								{/* 与 role 列表同一种选中样式：灰底 + 行尾中性勾 */}
-								{selected && (
-									<Icon
-										name="check"
-										size={13}
-										weight="bold"
-										className="shrink-0 text-fg"
-									/>
-								)}
 							</button>
 						</li>
 					);

@@ -400,12 +400,7 @@ export function Menu({
 								)
 							)}
 							<span className="min-w-0 flex-1 truncate">{item.label}</span>
-							{item.hint && (
-								<span className="text-faint text-xs">{item.hint}</span>
-							)}
-							{item.children && (
-								<Icon name="chevronRight" size={13} className="text-faint" />
-							)}
+							{/* 勾跟在文字后、行尾提示前：占的是文字区的余量，提示与箭头不被挤开 */}
 							{item.checked && (
 								<Icon
 									name="check"
@@ -413,6 +408,12 @@ export function Menu({
 									weight="bold"
 									className="shrink-0 text-accent-ink"
 								/>
+							)}
+							{item.hint && (
+								<span className="text-faint text-xs">{item.hint}</span>
+							)}
+							{item.children && (
+								<Icon name="chevronRight" size={13} className="text-faint" />
 							)}
 						</button>
 					))}
