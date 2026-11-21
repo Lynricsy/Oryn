@@ -4337,6 +4337,11 @@
 		"meta_one": "{{count}} thread · active {{ago}}",
 		"meta_other": "{{count}} threads · active {{ago}}"
 	},
+	"projectShell": {
+		"breadcrumb": "Breadcrumb",
+		"archivedTitle": "This project is archived",
+		"archivedBody": "It's hidden from the sidebar, its GitHub repository hook is released, warm orbs are at zero, and its schedules and triggers no longer run. Its threads are kept.",
+		"unarchive": "Unarchive"
 	},
 	"projectsPage": {
 		"settings": "Project settings",

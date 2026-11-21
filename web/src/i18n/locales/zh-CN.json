@@ -4337,6 +4337,11 @@
 		"meta_one": "{{count}} 个线程 · {{ago}}活跃",
 		"meta_other": "{{count}} 个线程 · {{ago}}活跃"
 	},
+	"projectShell": {
+		"breadcrumb": "位置",
+		"archivedTitle": "这个项目已归档",
+		"archivedBody": "它不在侧栏里，GitHub 仓库钩子已释放，预热 orb 已清零，定时任务与触发规则不再运行。线程都还在。",
+		"unarchive": "取消归档"
 	},
 	"projectsPage": {
 		"settings": "项目设置",
