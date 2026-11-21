@@ -75,12 +75,13 @@ cd web && ORYN_IOS_SHOTS=/tmp/readme-ios-shots bun run shots:readme --only mobil
 
 ```bash
 cd web
-sudo bun e2e/ui-audit/netns.ts &                 # root 下必开：Docker veth 变化会掐断浏览器请求
 npx playwright test e2e/ui-audit                  # 断言 + after 截图；自动起 VITE_MOCK=1 的 vite（端口 5293）
 UI_AUDIT_PHASE=before UI_AUDIT_WEB=<基线 worktree>/web npx playwright test e2e/ui-audit   # 基线截图（端口 5294）
 bun e2e/ui-audit/inventory.ts                     # 由 docs/ui-audit/areas/*.md 生成总清单，并与 spec 对账
 sh e2e/ui-audit/sheet.sh <界面 id>                # 拼出 before / after 对照图
 ```
+
+root 下 `e2e/ui-audit/global-setup.ts` 每次运行自动把 Chromium 放进本次独占的、只有回环的网络命名空间（`e2e/ui-audit/netns.ts`），运行结束删掉：本机 Docker orb 的 veth 不停增删，Chromium 收到网卡变化会中止在途请求（`net::ERR_NETWORK_CHANGED`），vite 的模块图加载到一半被掐断就白屏、等待超时。非 root 时直接起 Chromium，跑 Docker 的机器上可能出现这种假失败。
 
 浮层会在三个时机各断言一次：首次打开、内部滚到底、关掉后重开。检查四项：
 

@@ -7,11 +7,7 @@
  *
  * 截图写到 `docs/ui-audit/shots/<界面 id>/<project>-<phase>.png`（不入库）。
  */
-import { existsSync } from "node:fs";
 import { defineConfig, devices } from "@playwright/test";
-
-// e2e/ui-audit/netns.ts 开着时在只有回环的网络命名空间里起浏览器，避开 Docker veth 变化掐断请求
-const NETNS_CHROMIUM = "/run/oryn-ui-audit/chromium.sh";
 
 const PHASE = process.env.UI_AUDIT_PHASE === "before" ? "before" : "after";
 // before 与 after 各用一个端口，两个服务器可以同时开着，reuseExistingServer 不会接错
@@ -32,6 +28,7 @@ export default defineConfig({
 	testDir: "e2e",
 	testMatch: "**/*.e2e.ts",
 	fullyParallel: true,
+	globalSetup: "./e2e/ui-audit/global-setup.ts",
 	forbidOnly: true,
 	retries: 0,
 	workers: Number(process.env.UI_AUDIT_WORKERS ?? 8),
@@ -52,9 +49,12 @@ export default defineConfig({
 		timezoneId: "Asia/Shanghai",
 		trace: "retain-on-failure",
 		launchOptions: {
+			// root 下 e2e/ui-audit/global-setup.ts 把 Chromium（CHROMIUM 或默认路径）包进只有回环的网络命名空间，
+			// 避开 Docker veth 变化掐断请求（net::ERR_NETWORK_CHANGED）
 			executablePath:
+				process.env.UI_AUDIT_NETNS_CHROMIUM ??
 				process.env.CHROMIUM ??
-				(existsSync(NETNS_CHROMIUM) ? NETNS_CHROMIUM : "/usr/bin/chromium"),
+				"/usr/bin/chromium",
 			// 软件合成器下模拟 DPR 时 backdrop-filter 会部分失效（.agent-logs 0312），改走 SwiftShader
 			args: ["--use-gl=angle", "--use-angle=swiftshader"],
 		},
