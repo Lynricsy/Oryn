@@ -205,18 +205,43 @@ const appHost = (app: string) => `${app}.${BASE_URL.host}`;
 const appURL = (app: string, path = "/") =>
 	`${BASE_URL.protocol}//${appHost(app)}${path}`;
 
-/** 删掉上次留下的 box（连同 app），并确认 hello / pub 没有被别的 box 占着。 */
+/**
+ * 本脚本建过的 box id，按 ORYN_URL 记在 .dev/m23.box.json（`{ [ORYN_URL]: boxId }`）。
+ * 重跑只删记录里的那台；同名但 id 对不上的 box 可能是主人自己的，直接报冲突、不删。
+ */
+const BOX_RECORD = `${ROOT}/.dev/m23.box.json`;
+
+function readBoxRecord(): Record<string, string> {
+	if (!existsSync(BOX_RECORD)) return {};
+	return JSON.parse(readFileSync(BOX_RECORD, "utf8")) as Record<string, string>;
+}
+
+function writeBoxRecord(id: string | undefined) {
+	const rec = readBoxRecord();
+	if (id) rec[BASE] = id;
+	else delete rec[BASE];
+	mkdirSync(`${ROOT}/.dev`, { recursive: true });
+	writeFileSync(BOX_RECORD, `${JSON.stringify(rec, null, 2)}\n`);
+}
+
+/** 删掉本脚本上次在这个环境建的 box（连同 app），并确认 acc / hello / pub 没有被别的 box 占着。 */
 async function cleanBoxes() {
 	const list = (
 		(await api("GET", "/api/v1/boxes")).json as { boxes: BoxView[] }
 	).boxes;
-	const mine = list.find((b) => b.name === BOX);
-	if (mine) {
-		const d = await api("DELETE", `/api/v1/boxes/${mine.id}`);
+	const recorded = readBoxRecord()[BASE];
+	const same = list.find((b) => b.name === BOX);
+	if (same && same.id !== recorded)
+		throw new Error(
+			`${BASE} 上已有一台不是本脚本建的 box ${BOX}（${same.id}），不删它；换个环境或先自行处理`,
+		);
+	if (same) {
+		const d = await api("DELETE", `/api/v1/boxes/${same.id}`);
 		if (d.status !== 204)
 			throw new Error(`删除旧 box ${BOX} 失败 ${d.status} ${d.text}`);
-		console.log(`已删除上次的 box ${BOX}（${mine.id}）`);
+		console.log(`已删除上次的 box ${BOX}（${same.id}）`);
 	}
+	if (recorded) writeBoxRecord(undefined);
 	for (const b of list)
 		if (b.name !== BOX)
 			for (const a of b.apps)
@@ -382,6 +407,7 @@ async function B1() {
 	await dlg.getByRole("button", { name: "创建", exact: true }).click();
 	await page.waitForURL(/\/boxes\/box_[0-9A-Z]{26}$/, { timeout: 60_000 });
 	BOX_ID = new URL(page.url()).pathname.split("/").pop() ?? "";
+	writeBoxRecord(BOX_ID); // 重跑时只删这台
 	note(`进入 box 页 ${new URL(page.url()).pathname}`);
 	const about = page.getByTestId("box-about");
 	const seen: string[] = [];
