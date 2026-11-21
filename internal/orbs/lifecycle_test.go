@@ -339,6 +339,9 @@ func (fakeSecrets) SecretByID(id string) (string, []string, bool) {
 	return "", nil, false
 }
 func (fakeSecrets) GitToken(string) (string, bool) { return "", false }
+func (fakeSecrets) ProjectGitToken(string, string) (string, bool, error) {
+	return "", false, nil
+}
 
 type harness struct {
 	t      *testing.T

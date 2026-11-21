@@ -20,6 +20,8 @@ import (
 type EgressSecrets interface {
 	SecretByID(id string) (value string, hosts []string, ok bool)
 	GitToken(host string) (string, bool)
+	// ProjectGitToken 返回项目的 git/<host>/token（M24 阶段 ④）：不存在为 found=false；读库或解密失败返回 err（调用方拒绝）。
+	ProjectGitToken(projectID, host string) (tok string, found bool, err error)
 }
 
 // egressServer 是一台 orb 的出站代理服务。
@@ -44,7 +46,8 @@ func (r egressResolver) SecretByID(id string) (string, []string, bool) {
 }
 
 // GitToken 返回 git 主机的令牌：github.com 且这台 orb 由 GitHub 集成下发凭据时用身份槽位的 OAuth 令牌（拿不到即失败，
-// 不回落到 PAT）；否则用密钥库的 git/<host>/token。
+// 不回落到 PAT）；否则先用 orb 所属项目的 git/<host>/token，项目没有该条目才用全局的（M24 阶段 ④）。读 orb 行或项目
+// 令牌失败时拒绝，不回落到可能更宽的全局令牌。
 func (r egressResolver) GitToken(host string) (string, bool) {
 	if strings.EqualFold(host, "github.com") && r.s.github != nil {
 		tok, st := r.githubToken()
@@ -58,7 +61,39 @@ func (r egressResolver) GitToken(host string) (string, bool) {
 	if r.s.secrets == nil {
 		return "", false
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	pid, err := r.s.orbProjectID(ctx, r.orbID)
+	if err != nil {
+		slog.Warn("读取 orb 项目失败，拒绝 git 令牌", "orb", r.orbID, "host", host, "err", err)
+		return "", false
+	}
+	if pid != "" {
+		tok, found, err := r.s.secrets.ProjectGitToken(pid, host)
+		if err != nil {
+			slog.Warn("读取项目 git 令牌失败，拒绝", "orb", r.orbID, "project", pid, "host", host, "err", err)
+			return "", false
+		}
+		if found {
+			return tok, true
+		}
+	}
 	return r.s.secrets.GitToken(host)
+}
+
+// orbProjectID 返回 orb 所属项目 id；orb 不存在或不属于项目时为空串；读库失败返回错误。
+func (s *Service) orbProjectID(ctx context.Context, orbID string) (string, error) {
+	orb, err := s.st.Q.GetOrb(ctx, orbID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("读取 orb %s：%w", orbID, err)
+	}
+	if orb.ProjectID == nil {
+		return "", nil
+	}
+	return *orb.ProjectID, nil
 }
 
 // GitHubToken 返回 GitHub API 令牌（M15：线程身份槽位的 OAuth 令牌）：只有这台 orb 由 GitHub 集成下发凭据且槽位可用时可用。

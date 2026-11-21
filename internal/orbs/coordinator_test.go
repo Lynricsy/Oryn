@@ -116,6 +116,10 @@ func (coordVault) EnvSecrets() (map[string]string, error) {
 	return map[string]string{"NPM_TOKEN": "npm-real"}, nil
 }
 func (coordVault) GitHosts() ([]string, error) { return []string{"github.com"}, nil }
+func (coordVault) ProjectEnv(string) (map[string]string, error) {
+	return map[string]string{"PRJ_ONLY": "x"}, nil
+}
+func (coordVault) ProjectGitHosts(string) ([]string, error) { return nil, nil }
 
 // H6：协调 orb 的 setup 参数只有 models.yml 与 config.yml、模型地址换成协调宿主的代理端口、
 // 没有 env 模式密钥 / 环境变量降级的密钥 / git 主机，egress 拒绝 git。
@@ -153,6 +157,7 @@ func TestPlanCoordinator(t *testing.T) {
 	assert.NotContains(t, files["models.yml"], "sk-ant-real")
 	assert.NotContains(t, files["models.yml"], "7811")
 	assert.Empty(t, plan.Params.Env, "env 模式密钥与降级密钥都不下发")
+	assert.NotContains(t, plan.Params.Env, "PRJ_ONLY", "项目环境变量不下发给协调宿主")
 	assert.Empty(t, plan.Params.GitHosts)
 	assert.Nil(t, plan.Params.Repo, "不取项目")
 	assert.Nil(t, plan.Params.Scripts.Setup)
@@ -166,6 +171,7 @@ func TestPlanCoordinator(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, normal.Egress.NoGit)
 	assert.NotEmpty(t, normal.Params.Env)
+	assert.Equal(t, "x", normal.Params.Env["PRJ_ONLY"])
 	assert.Greater(t, len(normal.Params.OmpHome), 2)
 }
 

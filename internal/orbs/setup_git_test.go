@@ -19,13 +19,29 @@ import (
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
-type gitVault struct{ hosts []string }
+// gitVault 是只关心 git 主机与令牌的假密钥库。project 按 <pid>/<host> 存项目令牌；projectErr 非 nil 时读项目令牌失败。
+type gitVault struct {
+	hosts      []string
+	project    map[string]string
+	projectErr error
+}
 
 func (gitVault) Lookup(string) (string, string, bool)       { return "", "", false }
 func (gitVault) SecretByID(string) (string, []string, bool) { return "", nil, false }
 func (gitVault) GitToken(string) (string, bool)             { return "tok", true }
 func (gitVault) EnvSecrets() (map[string]string, error)     { return map[string]string{}, nil }
 func (v gitVault) GitHosts() ([]string, error)              { return v.hosts, nil }
+func (gitVault) ProjectEnv(string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+func (gitVault) ProjectGitHosts(string) ([]string, error) { return nil, nil }
+func (v gitVault) ProjectGitToken(pid, host string) (string, bool, error) {
+	if v.projectErr != nil {
+		return "", false, v.projectErr
+	}
+	tok, ok := v.project[pid+"/"+host]
+	return tok, ok, nil
+}
 
 // M2：有 https 项目仓库的 orb 只放行该仓库（insteadOf 也只覆盖它）；无项目（或非 https 仓库）任意仓库只读。
 func TestPlanGitEgressPolicy(t *testing.T) {
@@ -399,8 +415,12 @@ func TestPlanGitHubEgress(t *testing.T) {
 
 // github.com 的 git 令牌：由 GitHub 集成下发凭据时用身份槽位的 OAuth 令牌，不可用时不回落；不归集成管（runner 等）时回落到 PAT。
 func TestEgressResolverGitHubToken(t *testing.T) {
+	// 非 github.com 主机要按 orb 行找项目（M24 阶段 ④）：orb-x 不存在 → 无项目 → 全局令牌。
+	st, err := store.Open(context.Background(), t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
 	r := func(g stubGitHub) egressResolver {
-		return egressResolver{s: &Service{secrets: gitVault{}, github: g}, orbID: "orb-x"}
+		return egressResolver{s: &Service{st: st, secrets: gitVault{}, github: g}, orbID: "orb-x"}
 	}
 	tok, ok := r(stubGitHub{tok: "scoped", state: GitHubTokenOK}).GitToken("github.com")
 	assert.True(t, ok)

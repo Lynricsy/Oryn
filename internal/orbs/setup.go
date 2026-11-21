@@ -50,6 +50,10 @@ type Vault interface {
 	EnvSecrets() (map[string]string, error)
 	// GitHosts 返回存在 git/<host>/token 密钥的全部主机。
 	GitHosts() ([]string, error)
+	// ProjectEnv 返回该项目的 env 条目（保密与不保密都含；M24 阶段 ④）。
+	ProjectEnv(projectID string) (map[string]string, error)
+	// ProjectGitHosts 返回该项目有 git/<host>/token 条目的主机（M24 阶段 ④）。
+	ProjectGitHosts(projectID string) ([]string, error)
 }
 
 // Home 是 omp 文本配置存储（*agentcfg.Home 实现）。
@@ -370,6 +374,21 @@ func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project, orb db.Orb) (S
 		if err != nil {
 			return plan, fmt.Errorf("读取 git 主机: %w", err)
 		}
+		// 项目级条目（M24 阶段 ④）：只给本项目的 orb；env 条目覆盖同名的全局 env 密钥，项目 git 主机并入全局主机。
+		if prj != nil {
+			penv, err := d.Vault.ProjectEnv(prj.ID)
+			if err != nil {
+				return plan, fmt.Errorf("读取项目环境变量: %w", err)
+			}
+			for k, v := range penv {
+				p.Env[k] = v
+			}
+			phosts, err := d.Vault.ProjectGitHosts(prj.ID)
+			if err != nil {
+				return plan, fmt.Errorf("读取项目 git 主机: %w", err)
+			}
+			hosts = unionHosts(hosts, phosts)
+		}
 	}
 	// GitHub（M15）：工作 orb 只要身份槽位可用就下发 gh 登录名（含 uploads.github.com）、/gh/ 路由与整个 github.com 主机的
 	// insteadOf，有没有项目、项目在哪个主机都一样；git 与 gh 都经出站代理注入 OAuth 令牌，不需要 PAT。runner（planRunner）
@@ -404,7 +423,7 @@ func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project, orb db.Orb) (S
 			return plan, err
 		}
 		p.OmpHome = home
-		// 环境变量降级的模型密钥优先于同名 env 密钥。
+		// 环境变量降级的模型密钥优先于同名的 env 密钥与项目环境变量（模型供应商密钥只在全局）。
 		for k, v := range rendered.Env {
 			p.Env[k] = v
 		}
@@ -630,6 +649,17 @@ func gitInsteadOf(repo *gitRepo, tokenHosts []string) []string {
 	}
 	out = append(out, tokenHosts...)
 	sort.Strings(out)
+	return out
+}
+
+// unionHosts 合并全局与项目的 git 令牌主机（M24 阶段 ④）：全局在前，项目主机只在全局里没有（不分大小写）时追加。
+func unionHosts(global, project []string) []string {
+	out := slices.Clone(global)
+	for _, h := range project {
+		if !slices.ContainsFunc(out, func(g string) bool { return strings.EqualFold(g, h) }) {
+			out = append(out, h)
+		}
+	}
 	return out
 }
 

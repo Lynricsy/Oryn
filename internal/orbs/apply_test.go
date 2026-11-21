@@ -54,6 +54,10 @@ func (modelVault) SecretByID(string) (string, []string, bool) { return "real-key
 func (modelVault) GitToken(string) (string, bool)             { return "", false }
 func (modelVault) EnvSecrets() (map[string]string, error)     { return map[string]string{}, nil }
 func (modelVault) GitHosts() ([]string, error)                { return nil, nil }
+func (modelVault) ProjectEnv(string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+func (modelVault) ProjectGitHosts(string) ([]string, error) { return nil, nil }
 
 func modelsYml(key, base string) string {
 	return "providers:\n  " + key + ":\n    baseUrl: " + base + "\n    apiKey: ${oryn:secret:omp/models/" + key + "/apiKey}\n    api: openai-completions\n"

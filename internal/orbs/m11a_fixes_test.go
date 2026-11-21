@@ -30,6 +30,10 @@ func (v *hookVault) Lookup(string) (string, string, bool)       { return "", "",
 func (v *hookVault) SecretByID(string) (string, []string, bool) { return "", nil, false }
 func (v *hookVault) GitToken(string) (string, bool)             { return "", false }
 func (v *hookVault) GitHosts() ([]string, error)                { return nil, nil }
+func (v *hookVault) ProjectEnv(string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+func (v *hookVault) ProjectGitHosts(string) ([]string, error) { return nil, nil }
 func (v *hookVault) EnvSecrets() (map[string]string, error) {
 	n := int(v.calls.Add(1))
 	if v.hook != nil {
@@ -52,6 +56,24 @@ func (e *m11Env) putSecret(name, mode string, updatedAt int64) {
 	require.ErrorIs(e.t, err, sql.ErrNoRows)
 	require.NoError(e.t, e.st.Q.InsertSecret(ctx, db.InsertSecretParams{
 		ID: ids.New("sec"), Name: name, Mode: mode, Secret: true, ValueEnc: []byte("x"), Hosts: "[]", CreatedAt: 1, UpdatedAt: updatedAt,
+	}))
+}
+
+// putProjectSecret 写一条项目级条目（已存在就覆盖，id 不变），值不重要，只看名字与修改时间（M24 阶段 ④）。
+func (e *m11Env) putProjectSecret(prj, name, mode string, updatedAt int64) {
+	e.t.Helper()
+	ctx := context.Background()
+	old, err := e.st.Q.GetProjectSecret(ctx, db.GetProjectSecretParams{ProjectID: prj, Name: name})
+	if err == nil {
+		require.NoError(e.t, e.st.Q.UpdateSecret(ctx, db.UpdateSecretParams{
+			ID: old.ID, Mode: mode, Secret: true, ValueEnc: []byte("x"), Hosts: "[]", UpdatedAt: updatedAt,
+		}))
+		return
+	}
+	require.ErrorIs(e.t, err, sql.ErrNoRows)
+	require.NoError(e.t, e.st.Q.InsertSecret(ctx, db.InsertSecretParams{
+		ID: ids.New("sec"), ProjectID: &prj, Name: name, Mode: mode, Secret: true, ValueEnc: []byte("x"), Hosts: "[]",
+		CreatedAt: 1, UpdatedAt: updatedAt,
 	}))
 }
 
@@ -450,6 +472,18 @@ func TestConfigHashModelKeyStamps(t *testing.T) {
 	b := e.createReady(CreateParams{ProjectID: prj})
 	assert.Nil(t, b.SnapshotOf)
 	assert.Equal(t, RetireConfigChanged, retireReason(e.snapshot(s1.ID)))
+}
+
+// M24 阶段 ④：项目的 env 条目只改变本项目的配置哈希；项目的 git 令牌不进哈希（只经出站代理注入，不改 orb 环境）。
+func TestConfigHashProjectEnvStamps(t *testing.T) {
+	e := newM11Env(t, nil, false, nil)
+	a, b := e.project("a", nil), e.project("b", nil)
+	ha, hb := e.currentHash(a, "small"), e.currentHash(b, "small")
+	e.putProjectSecret(a, "git/x.example/token", "proxy", time.Now().UnixMilli())
+	assert.Equal(t, ha, e.currentHash(a, "small"), "项目 git 令牌不改变哈希")
+	e.putProjectSecret(a, "FOO", "env", time.Now().UnixMilli())
+	assert.NotEqual(t, ha, e.currentHash(a, "small"), "项目 env 条目改变本项目的哈希")
+	assert.Equal(t, hb, e.currentHash(b, "small"), "别的项目的哈希不变")
 }
 
 // S-P2-4：单个快照超过 max_snapshot_gb：不发布、退役 quota 并删除，其它项目的快照不动。
