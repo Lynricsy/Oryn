@@ -20,3 +20,5 @@ web/src-tauri/gen/android/app/google-services.json
 docs/ui-audit/shots/
 web/test-results/
 web/playwright-report/
+# 本地参考截图：临时素材，不入库
+TempRefImage/
