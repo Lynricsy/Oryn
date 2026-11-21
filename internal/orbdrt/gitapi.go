@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/gitdiff"
 )
 
 // 改动接口（M3 计划 4.1）：orbd 直接跑 git。omp 自带的 get_git_changes 只有 HEAD↔工作区，无暂存与 commit 列表。
@@ -405,24 +406,6 @@ func (r *Runtime) repoState(ctx context.Context, top string, q gitQuery) (repoSt
 
 // ---- status ----
 
-func nulFields(b []byte) []string {
-	s := strings.TrimSuffix(string(b), "\x00")
-	if s == "" {
-		return nil
-	}
-	return strings.Split(s, "\x00")
-}
-
-var nameStatusMap = map[byte]apigen.GitFileChangeStatus{
-	'A': apigen.GitFileChangeStatusAdded,
-	'M': apigen.GitFileChangeStatusModified,
-	'D': apigen.GitFileChangeStatusDeleted,
-	'R': apigen.GitFileChangeStatusRenamed,
-	'C': apigen.GitFileChangeStatusCopied,
-	'T': apigen.GitFileChangeStatusTypechange,
-	'U': apigen.GitFileChangeStatusConflicted,
-}
-
 func (r *Runtime) handleGitStatus(w http.ResponseWriter, req *http.Request) {
 	q, err := parseGitQuery(req)
 	if err != nil {
@@ -470,75 +453,23 @@ func (r *Runtime) handleGitStatus(w http.ResponseWriter, req *http.Request) {
 
 // changedFiles 计算范围内的文件改动；to 为工作区时并入未跟踪文件与暂存状态。
 func (r *Runtime) changedFiles(ctx context.Context, top string, rng gitRange) ([]apigen.GitFileChange, bool, error) {
-	byPath := map[string]*apigen.GitFileChange{}
-	var order []string
+	diffArgs := append([]string{"diff", "--no-ext-diff", "-M", "--name-status", "-z"}, rng.args()...)
+	nameStatus, truncated, err := r.gitOK(ctx, top, nil, maxGitOutput, append(diffArgs, "--")...)
+	if err != nil {
+		return nil, false, err
+	}
+	numArgs := append([]string{"diff", "--no-ext-diff", "-M", "--numstat", "-z"}, rng.args()...)
+	numstat, ntrunc, err := r.gitOK(ctx, top, nil, maxGitOutput, append(numArgs, "--")...)
+	if err != nil {
+		return nil, false, err
+	}
+	truncated = truncated || ntrunc
+	byPath, order := gitdiff.ParseChanges(nameStatus, numstat)
 	add := func(c *apigen.GitFileChange) {
 		if _, ok := byPath[c.Path]; !ok {
 			order = append(order, c.Path)
 		}
 		byPath[c.Path] = c
-	}
-	diffArgs := append([]string{"diff", "--no-ext-diff", "-M", "--name-status", "-z"}, rng.args()...)
-	out, truncated, err := r.gitOK(ctx, top, nil, maxGitOutput, append(diffArgs, "--")...)
-	if err != nil {
-		return nil, false, err
-	}
-	toks := nulFields(out)
-	for i := 0; i < len(toks); i++ {
-		code := toks[i]
-		if code == "" || i+1 >= len(toks) {
-			break
-		}
-		c := &apigen.GitFileChange{Staged: apigen.GitFileChangeStagedNone, Status: apigen.GitFileChangeStatusModified}
-		if s, ok := nameStatusMap[code[0]]; ok {
-			c.Status = s
-		}
-		if code[0] == 'R' || code[0] == 'C' {
-			if i+2 >= len(toks) {
-				break
-			}
-			old := toks[i+1]
-			c.OldPath, c.Path = &old, toks[i+2]
-			i += 2
-		} else {
-			c.Path = toks[i+1]
-			i++
-		}
-		add(c)
-	}
-	numArgs := append([]string{"diff", "--no-ext-diff", "-M", "--numstat", "-z"}, rng.args()...)
-	out, ntrunc, err := r.gitOK(ctx, top, nil, maxGitOutput, append(numArgs, "--")...)
-	if err != nil {
-		return nil, false, err
-	}
-	truncated = truncated || ntrunc
-	toks = nulFields(out)
-	for i := 0; i < len(toks); i++ {
-		parts := strings.SplitN(toks[i], "\t", 3)
-		if len(parts) != 3 {
-			continue
-		}
-		path := parts[2]
-		if path == "" { // 重命名 / 复制：其后两个字段是旧路径与新路径
-			if i+2 >= len(toks) {
-				break
-			}
-			path = toks[i+2]
-			i += 2
-		}
-		c := byPath[path]
-		if c == nil {
-			continue
-		}
-		if parts[0] == "-" && parts[1] == "-" {
-			c.Binary = true
-			continue
-		}
-		a, aerr := strconv.Atoi(parts[0])
-		d, derr := strconv.Atoi(parts[1])
-		if aerr == nil && derr == nil {
-			c.Additions, c.Deletions = &a, &d
-		}
 	}
 	if rng.worktree {
 		if err := r.mergeIndexState(ctx, top, byPath, add); err != nil {
@@ -575,7 +506,7 @@ func (r *Runtime) mergeIndexState(ctx context.Context, top string, byPath map[st
 	if err != nil {
 		return err
 	}
-	toks := nulFields(out)
+	toks := gitdiff.NULFields(out)
 	for i := 0; i < len(toks); i++ {
 		tok := toks[i]
 		if len(tok) < 2 {
@@ -627,10 +558,7 @@ func (r *Runtime) mergeIndexState(ctx context.Context, top string, byPath map[st
 			if code == '.' {
 				code = y
 			}
-			c = &apigen.GitFileChange{Path: path, Staged: apigen.GitFileChangeStagedNone, Status: apigen.GitFileChangeStatusModified}
-			if s, ok := nameStatusMap[code]; ok {
-				c.Status = s
-			}
+			c = &apigen.GitFileChange{Path: path, Staged: apigen.GitFileChangeStagedNone, Status: gitdiff.Status(code)}
 			if orig != "" && orig != path {
 				c.OldPath = &orig
 			}
@@ -659,7 +587,7 @@ func (r *Runtime) untracked(ctx context.Context, top string, max int) (untracked
 		return res, err
 	}
 	res.truncated = truncated
-	for _, p := range nulFields(out) {
+	for _, p := range gitdiff.NULFields(out) {
 		if len(res.files) >= max {
 			res.truncated = true
 			break
@@ -749,7 +677,7 @@ func (r *Runtime) handleGitDiff(w http.ResponseWriter, req *http.Request) {
 			writeErr(w, err)
 			return
 		}
-		untracked = slices.Contains(nulFields(ls), path)
+		untracked = slices.Contains(gitdiff.NULFields(ls), path)
 	}
 	if untracked {
 		abs := filepath.Join(top, path)
@@ -794,14 +722,10 @@ func (r *Runtime) handleGitDiff(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	if truncated {
-		if i := bytes.LastIndexByte(out, '\n'); i >= 0 {
-			out = out[:i+1]
-		} else {
-			out = nil
-		}
+		out = gitdiff.CutTruncated(out)
 		res.Truncated = true
 	}
-	if isBinaryPatch(out) {
+	if gitdiff.IsBinaryPatch(out) {
 		res.Kind, res.Truncated = apigen.Binary, false
 		out = nil
 	}
@@ -828,19 +752,6 @@ func (r *Runtime) indexPatches(ctx context.Context, top, head, path, oldPath str
 		return nil, false, err
 	}
 	return append(staged, unstaged...), truncated, nil
-}
-
-// isBinaryPatch 识别 git 对二进制文件输出的 `Binary files … differ` 行。
-func isBinaryPatch(patch []byte) bool {
-	for line := range bytes.SplitSeq(patch, []byte{'\n'}) {
-		if bytes.HasPrefix(line, []byte("Binary files ")) && bytes.HasSuffix(line, []byte(" differ")) {
-			return true
-		}
-		if bytes.HasPrefix(line, []byte("@@")) {
-			return false
-		}
-	}
-	return false
 }
 
 // ---- commits ----
