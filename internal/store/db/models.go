@@ -967,6 +967,7 @@ type Project struct {
 	GithubBindStatus        *string `json:"githubBindStatus"`
 	GithubGates             *string `json:"githubGates"`
 	Description             *string `json:"description"`
+	Hosted                  bool    `json:"hosted"`
 }
 
 type ProjectRepo struct {

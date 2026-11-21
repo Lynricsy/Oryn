@@ -107,10 +107,11 @@ func (s *Service) stopFlight(projectID string) {
 }
 
 // ensure 核对仓库地址（指向别的仓库时删除镜像），auto 时按需在后台克隆或拉取；返回核对后的镜像行。
+// 托管项目（阶段 ③）不克隆、不拉取、不比较地址，原样返回 project_repos 行。
 func (s *Service) ensure(ctx context.Context, prj db.Project, auto bool) (*db.ProjectRepo, error) {
 	row, err := s.repoRow(ctx, prj.ID)
-	if err != nil {
-		return nil, err
+	if err != nil || prj.Hosted {
+		return row, err
 	}
 	if row, err = s.reconcile(ctx, prj, row); err != nil {
 		return nil, err
@@ -186,7 +187,7 @@ func (s *Service) syncOnce(ctx context.Context, projectID string) {
 		}
 		return
 	}
-	if !hasRepo(prj) {
+	if !hasRepo(prj) || prj.Hosted {
 		return
 	}
 	select {

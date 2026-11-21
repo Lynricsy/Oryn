@@ -131,14 +131,19 @@ func (s *Service) startGit(ctx context.Context, o gitRun, args ...string) (*gitP
 	if s.reason != "" {
 		return nil, errUnavailable
 	}
-	ctx, cancel := context.WithTimeout(ctx, cmpDuration(o.timeout, readTimeout))
+	var cancel context.CancelFunc
+	if o.timeout == noTimeout {
+		ctx, cancel = context.WithCancel(ctx)
+	} else {
+		ctx, cancel = context.WithTimeout(ctx, cmpDuration(o.timeout, readTimeout))
+	}
 	argv := append(baseArgs(o.dir, o.read), args...)
 	env := append(s.baseEnv(o.read), o.env...)
 	if s.trace != nil {
 		s.trace(append([]string{s.gitBin}, argv...), env)
 	}
 	cmd := exec.CommandContext(ctx, s.gitBin, argv...)
-	p := &gitProc{name: args[0], cmd: cmd, ctx: ctx, cancel: cancel}
+	p := &gitProc{name: subcommand(args), cmd: cmd, ctx: ctx, cancel: cancel}
 	cmd.Env = env
 	cmd.Dir = s.cfg.Dir
 	cmd.Stdin = o.stdin
@@ -277,6 +282,67 @@ func (g *gitStream) Close() error {
 	g.p.stop()
 	_, err := g.p.finish(true, nil)
 	return err
+}
+
+// noTimeout 用作 gitRun.timeout：不限时，只随 ctx 取消（smart-HTTP 的 upload-pack / receive-pack）。
+const noTimeout time.Duration = -1
+
+// gitPipe 执行 git 并把 stdout 流式写入 w（w 有 Flush() error 时每次写后 Flush），stdin 原样喂入；没有超时、
+// 没有 stdout 上限。取消方式同 startGit（向进程组发 SIGTERM，killGrace 后才 SIGKILL）。写 w 失败（客户端断开）后
+// 继续读空 stdout，让 git 自己走完（不因写失败杀进程）；stdout 结束后关闭实现了 io.Closer 的 stdin。
+// 返回 stderr 末尾 4 KiB；无法启动、被取消、退出码非 0 或写 w 失败时返回错误。
+func (s *Service) gitPipe(ctx context.Context, o gitRun, w io.Writer, args ...string) (stderrTail string, err error) {
+	o.timeout = noTimeout
+	p, err := s.startGit(ctx, o, args...)
+	if err != nil {
+		if c, ok := o.stdin.(io.Closer); ok {
+			_ = c.Close()
+		}
+		return "", err
+	}
+	flusher, _ := w.(interface{ Flush() error })
+	buf := make([]byte, 32<<10)
+	var werr, rerr error
+	for {
+		n, err := p.stdout.Read(buf)
+		if n > 0 && werr == nil {
+			if _, werr = w.Write(buf[:n]); werr == nil && flusher != nil {
+				werr = flusher.Flush()
+			}
+		}
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				rerr = err
+			}
+			break
+		}
+	}
+	if c, ok := o.stdin.(io.Closer); ok {
+		_ = c.Close()
+	}
+	code, ferr := p.finish(false, rerr)
+	tail := p.tail.String()
+	switch {
+	case ferr != nil:
+		return tail, ferr
+	case code != 0:
+		return tail, fmt.Errorf("git %s: exit %d", p.name, code)
+	case werr != nil:
+		return tail, werr
+	}
+	return tail, nil
+}
+
+// subcommand 是 args 里第一个不属于「-c <键=值>」的参数（错误信息里的名字）。
+func subcommand(args []string) string {
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-c" {
+			i++
+			continue
+		}
+		return args[i]
+	}
+	return ""
 }
 
 func cmpDuration(d, def time.Duration) time.Duration {

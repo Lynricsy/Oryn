@@ -103,9 +103,10 @@ func projectConfigHash(prj db.Project, baseImage, typ string, stamps []db.ListCo
 		Type      string      `json:"type"`
 		BaseImage string      `json:"baseImage"`
 		Env       [][2]string `json:"env"`
+		Hosted    bool        `json:"hosted,omitempty"` // M24：托管项目（omitempty：非托管项目的哈希不变）
 	}{
 		V: 2, Repo: derefStr(prj.RepoUrl), Branch: derefStr(prj.BaseBranch), Shallow: prj.ShallowClone,
-		Setup: scriptSHA(nonEmpty(prj.SetupScript)), Type: typ, BaseImage: baseImage, Env: env,
+		Setup: scriptSHA(nonEmpty(prj.SetupScript)), Type: typ, BaseImage: baseImage, Env: env, Hosted: prj.Hosted,
 	}
 	b, _ := json.Marshal(v)
 	sum := sha256.Sum256(b)

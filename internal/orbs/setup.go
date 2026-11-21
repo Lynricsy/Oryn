@@ -640,6 +640,12 @@ func HTTPSRepo(raw string) (host, path string, ok bool) {
 
 var repoSegRe = regexp.MustCompile(`^[A-Za-z0-9_~][A-Za-z0-9._~-]*$`)
 
+// HostedCloneURL 是 Oryn 托管仓库（M24 阶段 ③）的克隆地址：<public_url>/git/<projectID>.git。
+// 放在这里而不是 internal/repos：repos 引用 orbs（HTTPSRepo），反过来会成环。
+func HostedCloneURL(publicURL, projectID string) string {
+	return strings.TrimSuffix(publicURL, "/") + "/git/" + projectID + ".git"
+}
+
 type emptyResolver struct{}
 
 func (emptyResolver) Lookup(string) (string, string, bool)       { return "", "", false }

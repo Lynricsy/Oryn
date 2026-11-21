@@ -124,14 +124,14 @@ type repoRead struct {
 	dir string
 }
 
-// openRead 是每个读接口的入口：项目没有仓库地址 → no_repo；git 不可用 → repo_unavailable；镜像不在 → repo_not_ready。
+// openRead 是每个读接口的入口：项目没有仓库（地址或托管）→ no_repo；git 不可用 → repo_unavailable；仓库目录不在 → repo_not_ready。
 // 与 Status 一样经 ensure 核对地址，未归档项目按需在后台克隆或拉取（不阻塞）。
 func (s *Service) openRead(ctx context.Context, projectID string) (repoRead, error) {
 	prj, err := s.project(ctx, projectID)
 	if err != nil {
 		return repoRead{}, err
 	}
-	if !hasRepo(prj) {
+	if !hasRepo(prj) && !prj.Hosted {
 		return repoRead{}, errNoRepo
 	}
 	if s.reason != "" {

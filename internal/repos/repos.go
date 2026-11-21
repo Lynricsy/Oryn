@@ -24,12 +24,14 @@ import (
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
-// Kind 是项目仓库的来源（也写进 project_repos.kind）；阶段 ③ 加 KindHosted。
+// Kind 是项目仓库的来源（也写进 project_repos.kind）。
 type Kind = apigen.ProjectRepoStatusKind
 
 const (
 	KindMirror Kind = apigen.ProjectRepoStatusKindMirror
 	KindNone   Kind = apigen.ProjectRepoStatusKindNone
+	// KindHosted 是 Oryn 托管的正本（阶段 ③）：<Dir>/<projectID>.git 带 oryn-hosted 标记，不拉取、不按大小删除。
+	KindHosted Kind = apigen.ProjectRepoStatusKindHosted
 )
 
 // State 是镜像的状态。
@@ -53,6 +55,7 @@ type Config struct {
 	Now          func() time.Time       // nil = time.Now
 	ProxyEnv     []string               // 担保主机拉取时追加的代理变量（KEY=VALUE）；nil = 不追加
 	Changed      func(projectID string) // 状态变化后广播；nil = 不广播
+	PublicURL    string                 // cfg.PublicURL：托管仓库克隆地址的前缀（阶段 ③）
 
 	// MaxLFSCacheBytes 是镜像项目 LFS 对象缓存的总上限（MaxLFSCacheGB<<30）；0 = 2<<30。
 	MaxLFSCacheBytes int64
@@ -89,6 +92,7 @@ var (
 	errNotFound    = &Error{Status: http.StatusNotFound, Code: "not_found", Message: "项目不存在"}
 	errUnavailable = &Error{Status: http.StatusServiceUnavailable, Code: "repo_unavailable", Message: "控制面没有可用的 git"}
 	errNoRepo      = &Error{Status: http.StatusConflict, Code: "no_repo", Message: "项目没有仓库地址"}
+	errRepoHosted  = &Error{Status: http.StatusConflict, Code: "repo_hosted", Message: "托管仓库不需要同步"}
 )
 
 // Service 维护全部项目的裸镜像。
@@ -107,6 +111,7 @@ type Service struct {
 	sem          chan struct{} // 同时最多两个克隆或拉取
 	monitorEvery time.Duration // 拉取中复查磁盘与大小的间隔
 	trace        func(argv, env []string)
+	smart        smartSlots // 托管仓库 smart-HTTP 的 git 进程名额（阶段 ③）
 
 	treeWalkMax  int   // 找子项最后提交时至多读的提交数（测试可改）
 	maxBlobBytes int64 // blob 接口的大小上限（测试可改）
@@ -231,11 +236,14 @@ func (s *Service) repoRow(ctx context.Context, projectID string) (*db.ProjectRep
 
 func hasRepo(prj db.Project) bool { return prj.RepoUrl != nil && *prj.RepoUrl != "" }
 
-// Status 返回项目仓库的状态；未归档项目在需要时顺带在后台克隆或拉取（不阻塞）。
+// Status 返回项目仓库的状态；未归档项目在需要时顺带在后台克隆或拉取（不阻塞）。托管项目见 hostedStatus。
 func (s *Service) Status(ctx context.Context, projectID string) (apigen.ProjectRepoStatus, error) {
 	prj, err := s.project(ctx, projectID)
 	if err != nil {
 		return apigen.ProjectRepoStatus{}, err
+	}
+	if prj.Hosted {
+		return s.hostedStatus(ctx, prj)
 	}
 	row, err := s.ensure(ctx, prj, prj.ArchivedAt == nil)
 	if err != nil {
@@ -249,6 +257,9 @@ func (s *Service) Sync(ctx context.Context, projectID string) (apigen.ProjectRep
 	prj, err := s.project(ctx, projectID)
 	if err != nil {
 		return apigen.ProjectRepoStatus{}, err
+	}
+	if prj.Hosted {
+		return apigen.ProjectRepoStatus{}, errRepoHosted
 	}
 	if s.reason != "" {
 		return apigen.ProjectRepoStatus{}, errUnavailable
@@ -264,9 +275,9 @@ func (s *Service) Sync(ctx context.Context, projectID string) (apigen.ProjectRep
 	return s.status(ctx, prj, row), nil
 }
 
-// Kick 请求一次后台拉取（推送事件等）；进行中时跑完再来一轮。
+// Kick 请求一次后台拉取（推送事件等）；进行中时跑完再来一轮。托管仓库没有上游，不排队。
 func (s *Service) Kick(projectID string) {
-	if s.reason == "" {
+	if s.reason == "" && !exists(filepath.Join(s.dir(projectID), hostedMarker)) {
 		s.start(projectID, true)
 	}
 }
@@ -293,13 +304,16 @@ func (s *Service) dropLFSCache(projectID string) {
 	}
 }
 
-// ProjectChanged 在项目的仓库地址变化后调用：地址指向别的仓库时删除镜像（GitHub 改名跟随除外）。
+// ProjectChanged 在项目的仓库地址变化后调用：地址指向别的仓库时删除镜像（GitHub 改名跟随除外）。托管项目直接返回。
 func (s *Service) ProjectChanged(ctx context.Context, projectID string) {
 	prj, err := s.project(ctx, projectID)
 	if err != nil {
 		if !errors.Is(err, errNotFound) {
 			slog.Warn("读取项目", "project", projectID, "err", err)
 		}
+		return
+	}
+	if prj.Hosted {
 		return
 	}
 	if _, err := s.ensure(ctx, prj, false); err != nil {

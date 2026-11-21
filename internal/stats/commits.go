@@ -153,7 +153,7 @@ func (s *Service) SampleCommits(ctx context.Context, threadID string) error {
 	if err != nil {
 		return err
 	}
-	if p.RepoUrl == nil || *p.RepoUrl == "" {
+	if (p.RepoUrl == nil || *p.RepoUrl == "") && !p.Hosted {
 		return nil
 	}
 	orbID := *t.OrbID

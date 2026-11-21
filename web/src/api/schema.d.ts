@@ -354,9 +354,33 @@ export interface paths {
         put?: never;
         /**
          * 立即克隆或拉取项目仓库镜像（M24；已归档项目也可以；在后台进行）
-         * @description 项目不存在 → 404 `not_found`；控制面没有可用的 git → 503 `repo_unavailable`；项目没有仓库地址 → 409 `no_repo`。
+         * @description 项目不存在 → 404 `not_found`；控制面没有可用的 git → 503 `repo_unavailable`；项目没有仓库地址 → 409 `no_repo`；托管仓库不需要同步 → 409 `repo_hosted`。
          */
         post: operations["syncProjectRepo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/repo/hosted": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 为没有仓库的项目创建 Oryn 托管仓库（M24 阶段 ③；带一个空树的初始提交，基线分支缺省 main）
+         * @description 项目不存在 → 404 `not_found`；已归档 → 409 `project_archived`；已有仓库地址或托管仓库 → 409 `repo_exists`；
+         *     基线分支不合法 → 400 `invalid_request`；控制面没有可用的 git → 503 `repo_unavailable`。
+         *     之后新建的 orb 会克隆它，正在运行的 orb 不受影响。
+         */
+        post: operations["createProjectHostedRepo"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5897,6 +5921,8 @@ export interface components {
              *     M24（项目仓库镜像）：`repo_unavailable`（503，控制面没有可用的 git）、`no_repo`（409，项目没有仓库地址）、`repo_not_ready`（409，镜像不存在、克隆中或克隆失败）、
              *     `ref_not_found`、`commit_not_found`、`path_not_found`（404）、`not_a_file`、`not_a_directory`（409）、`too_large`（413）；
              *     Git LFS：`lfs_missing`（404）、`lfs_auth_failed`（409）、`lfs_unreachable`（502）、`lfs_corrupt`（502）、`lfs_no_space`（507）。
+             *     M24（托管仓库）：`repo_hosted`（409，托管项目上改外部仓库地址或同步）、`repo_exists`（409，项目已有仓库时再创建托管仓库）、
+             *     `project_archived`（409，已归档项目上创建托管仓库）。
              */
             code: string;
             message: string;
@@ -6095,6 +6121,10 @@ export interface components {
             github?: components["schemas"]["ProjectGitHub"];
             /** @description 推送 / 开 PR 门禁（M15）；未配置时省略 */
             githubGates?: components["schemas"]["GitHubGates"];
+            /** @description 仓库由 Oryn 托管（M24）：仅托管项目为 true，其余省略；此时 repoUrl 恒省略 */
+            hosted?: boolean;
+            /** @description 托管仓库的克隆地址 https://<Oryn 地址>/git/<id>.git（M24）；非托管项目省略 */
+            cloneUrl?: string;
         };
         ProjectList: {
             projects: components["schemas"]["Project"][];
@@ -6124,6 +6154,10 @@ export interface components {
             snapshots?: boolean;
             /** @description 预热 orb 数（M11a）；缺省 0；越界 → 400 `invalid_request` */
             warmOrbs?: number;
+            /** @description 新建 Oryn 托管仓库（M24；带一个空树的初始提交，基线分支缺省 main）；与 repoUrl 互斥；缺省 false */
+            hosted?: boolean;
+            /** @description 只与 hosted 同用：不建初始提交（oryn project create --push 用，本机已有的历史才能推上来）；缺省 false */
+            emptyRepo?: boolean;
         };
         /** @description 只修改出现的字段；可选字符串字段传空串表示清除 */
         ProjectPatch: {
@@ -6203,10 +6237,10 @@ export interface components {
         /** @description M24：项目仓库在控制面的裸镜像 */
         ProjectRepoStatus: {
             /**
-             * @description `none` = 项目没有仓库地址；阶段 ③ 加 `hosted`
+             * @description `mirror` = 外部仓库的镜像；`hosted` = Oryn 托管的正本；`none` = 项目没有仓库
              * @enum {string}
              */
-            kind: "mirror" | "none";
+            kind: "mirror" | "hosted" | "none";
             /** @enum {string} */
             state: "absent" | "cloning" | "ready" | "error";
             /** @description 控制面有可用的 git（≥2.31） */
@@ -6217,10 +6251,10 @@ export interface components {
             syncing: boolean;
             /** @description 镜像就绪但没有任何分支 */
             empty: boolean;
-            /** @description 用户 `git clone` 用的地址（mirror = 项目 repoUrl） */
+            /** @description 用户 `git clone` 用的地址（mirror = 项目 repoUrl；hosted = https://<Oryn 地址>/git/<id>.git） */
             cloneUrl?: string;
             defaultBranch?: string;
-            /** @description 项目 baseBranch 在镜像里存在时取它，否则 defaultBranch */
+            /** @description mirror：项目 baseBranch 在镜像里存在时取它，否则 defaultBranch；hosted：项目 baseBranch */
             baseBranch?: string;
             syncedAt?: components["schemas"]["TimestampMs"];
             /** Format: int64 */
@@ -12308,6 +12342,29 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProjectRepoStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createProjectHostedRepo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 托管后的项目 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"];
                 };
             };
             default: components["responses"]["Error"];

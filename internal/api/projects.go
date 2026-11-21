@@ -22,7 +22,7 @@ import (
 )
 
 // projectJSON 把项目行转成 API 视图；hook 是项目所绑仓库的 github_hooks 行（没有为 nil）。
-func projectJSON(p db.Project, hook *db.GithubHook) apigen.Project {
+func (s *Server) projectJSON(p db.Project, hook *db.GithubHook) apigen.Project {
 	out := apigen.Project{
 		ID: p.ID, Name: p.Name, Description: p.Description, RepoURL: p.RepoUrl, BaseBranch: p.BaseBranch,
 		DefaultProvider: p.DefaultProvider, DefaultOrbType: p.DefaultOrbType,
@@ -35,6 +35,10 @@ func projectJSON(p db.Project, hook *db.GithubHook) apigen.Project {
 	}
 	out.Github = github.ProjectGitHubAPI(p, hook)
 	out.GithubGates = orbs.ParseGitHubGates(p.GithubGates)
+	if p.Hosted {
+		out.Hosted = new(true)
+		out.CloneURL = new(orbs.HostedCloneURL(s.Config.PublicURL, p.ID))
+	}
 	return out
 }
 
@@ -59,7 +63,7 @@ func (s *Server) projectView(ctx context.Context, p db.Project) (apigen.Project,
 			return apigen.Project{}, err
 		}
 	}
-	return projectJSON(p, hook), nil
+	return s.projectJSON(p, hook), nil
 }
 
 func sameOptStr(a, b *string) bool {
@@ -157,7 +161,7 @@ func (s *Server) ListProjects(w http.ResponseWriter, r *http.Request, params api
 				hook = &h
 			}
 		}
-		out.Projects = append(out.Projects, projectJSON(p, hook))
+		out.Projects = append(out.Projects, s.projectJSON(p, hook))
 	}
 	WriteJSON(w, http.StatusOK, out)
 }
@@ -170,13 +174,13 @@ func (s *Server) CreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	row, err := s.createProject(r.Context(), req)
 	if err != nil {
-		writeErr(w, r, err)
+		writeRepoErr(w, r, err)
 		return
 	}
 	s.writeProject(w, r, http.StatusCreated, row)
 }
 
-// createProject 校验并新建项目，绑定其 GitHub 仓库、按需触发预热池对账；REST 与全局助手（ProjectOps）共用。
+// createProject 校验并新建项目，绑定其 GitHub 仓库（托管项目则建托管仓库）、按需触发预热池对账；REST 与全局助手（ProjectOps）共用。
 func (s *Server) createProject(ctx context.Context, req apigen.ProjectCreate) (db.Project, error) {
 	name := strings.TrimSpace(req.Name)
 	if !validProjectName(name) {
@@ -205,21 +209,33 @@ func (s *Server) createProject(ctx context.Context, req apigen.ProjectCreate) (d
 	if err != nil {
 		return db.Project{}, err
 	}
+	baseBranch, hosted, err := s.createRepoSource(req)
+	if err != nil {
+		return db.Project{}, err
+	}
 	now := time.Now().UnixMilli()
 	p := db.CreateProjectParams{
-		ID: ids.New("prj"), Name: name, RepoUrl: optStr(req.RepoURL), BaseBranch: optStr(req.BaseBranch),
+		ID: ids.New("prj"), Name: name, RepoUrl: optStr(req.RepoURL), BaseBranch: baseBranch,
 		DefaultProvider: optStr(req.DefaultProvider), DefaultOrbType: optStr(req.DefaultOrbType),
 		SetupScript: optStr(req.SetupScript), ResumeScript: optStr(req.ResumeScript),
 		ShallowClone: req.ShallowClone != nil && *req.ShallowClone, Color: optStr(req.Color), Icon: icon,
 		GitAuthorName: gitName, GitAuthorEmail: gitEmail, CreatedAt: now, UpdatedAt: now, DefaultBrowserProfileID: profileID,
-		Snapshots: req.Snapshots, WarmOrbs: warm, Description: desc,
+		Snapshots: req.Snapshots, WarmOrbs: warm, Description: desc, Hosted: hosted,
 	}
 	if err := s.Store.Q.CreateProject(ctx, p); isUniqueViolation(err) {
 		return db.Project{}, errConflict("已有同名项目")
 	} else if err != nil {
 		return db.Project{}, err
 	}
-	if s.GitHub != nil && s.GitHub.Service != nil {
+	if hosted {
+		// 建仓与写 project_repos 行都在事务外；失败时撤掉项目行，不留「有行没仓库」的托管项目
+		if _, err := s.initHostedRepo(ctx, p.ID, *baseBranch, req.EmptyRepo == nil || !*req.EmptyRepo); err != nil {
+			if _, derr := s.Store.Q.DeleteProject(context.WithoutCancel(ctx), p.ID); derr != nil {
+				slog.Error("撤销建仓失败的托管项目", "project", p.ID, "err", derr)
+			}
+			return db.Project{}, err
+		}
+	} else if s.GitHub != nil && s.GitHub.Service != nil {
 		if err := s.GitHub.Service.BindProject(ctx, p.ID); err != nil {
 			slog.Warn("绑定项目的 GitHub 仓库失败", "project", p.ID, "err", err)
 		}
@@ -259,7 +275,7 @@ func (s *Server) UpdateProject(w http.ResponseWriter, r *http.Request, id apigen
 	}
 	out, err := s.updateProject(r.Context(), id, req.ProjectPatch, req.GithubGates)
 	if err != nil {
-		writeErr(w, r, err)
+		writeRepoErr(w, r, err)
 		return
 	}
 	s.writeProject(w, r, http.StatusOK, out)
@@ -304,11 +320,15 @@ func (s *Server) updateProject(ctx context.Context, id string, req apigen.Projec
 	var out db.Project
 	var oldRepoID *int64 // 改仓库、归档后可能不再有项目绑定的 GitHub 仓库
 	repoChanged := false
+	hostedBaseChanged := false // 托管项目的基线分支变了：事务提交之后再改 HEAD 与 project_repos 行
 	err = s.Store.Tx(ctx, func(q *db.Queries) error {
 		p, err := q.GetProject(ctx, id)
 		if errors.Is(err, sql.ErrNoRows) {
 			return errNotFound("项目不存在")
 		} else if err != nil {
+			return err
+		}
+		if err := checkHostedPatch(p, req); err != nil {
 			return err
 		}
 		u := db.UpdateProjectParams{
@@ -367,6 +387,7 @@ func (s *Server) updateProject(ctx context.Context, id string, req apigen.Projec
 			return err
 		}
 		repoChanged = !sameOptStr(p.RepoUrl, u.RepoUrl)
+		hostedBaseChanged = p.Hosted && !sameOptStr(p.BaseBranch, u.BaseBranch)
 		if repoChanged || (u.ArchivedAt != nil && p.ArchivedAt == nil) {
 			oldRepoID = p.GithubRepoID
 		}
@@ -415,6 +436,9 @@ func (s *Server) updateProject(ctx context.Context, id string, req apigen.Projec
 	// 仓库地址变了：指向别的仓库时删除旧镜像（GitHub 改名跟随除外）；放在绑定之后，按新的 github_repo_id 判定
 	if repoChanged && s.Repos != nil && s.Repos.Service != nil {
 		s.Repos.Service.ProjectChanged(ctx, id)
+	}
+	if hostedBaseChanged {
+		s.moveHostedHead(ctx, id, *out.BaseBranch)
 	}
 	if oldRepoID != nil && s.GitHub != nil && s.GitHub.Service != nil {
 		if err := s.GitHub.Service.ReleaseHook(ctx, *oldRepoID); err != nil {

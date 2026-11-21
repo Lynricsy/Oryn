@@ -311,10 +311,17 @@ func (s *Service) toolDeleteProject(ctx context.Context, c toolCtx) (v any, err 
 		return nil, err
 	}
 	name := label(p.Name)
+	title := fmt.Sprintf("Delete project %q (%s)?", name, p.ID)
+	summary := fmt.Sprintf("The assistant wants to delete the project %q (%s). Its threads are kept without a project; its project-level agent config, trigger rules and memories are removed.", name, p.ID)
+	if p.Hosted {
+		// 主人可能只看卡片就点确认：正本会被一并删除，必须写在卡片上
+		title = fmt.Sprintf("Delete project %q (%s) and its hosted repository?", name, p.ID)
+		summary += " Its Oryn-hosted git repository is the only copy and will be permanently deleted."
+	}
 	return s.requestConfirm(ctx, c, confirmReq{
 		Action: ToolDeleteProject, Target: p.ID, TargetLabel: name,
-		Title:   fmt.Sprintf("Delete project %q (%s)?", name, p.ID),
-		Summary: fmt.Sprintf("The assistant wants to delete the project %q (%s). Its threads are kept without a project; its project-level agent config, trigger rules and memories are removed.", name, p.ID),
+		Title:   title,
+		Summary: summary,
 		Args:    deleteProjectArgs{ProjectID: p.ID},
 	})
 }

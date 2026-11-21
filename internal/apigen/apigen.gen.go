@@ -2740,6 +2740,7 @@ func (e ProjectRepoRefKind) Valid() bool {
 
 // Defines values for ProjectRepoStatusKind.
 const (
+	ProjectRepoStatusKindHosted ProjectRepoStatusKind = "hosted"
 	ProjectRepoStatusKindMirror ProjectRepoStatusKind = "mirror"
 	ProjectRepoStatusKindNone   ProjectRepoStatusKind = "none"
 )
@@ -2747,6 +2748,8 @@ const (
 // Valid indicates whether the value is a known member of the ProjectRepoStatusKind enum.
 func (e ProjectRepoStatusKind) Valid() bool {
 	switch e {
+	case ProjectRepoStatusKindHosted:
+		return true
 	case ProjectRepoStatusKindMirror:
 		return true
 	case ProjectRepoStatusKindNone:
@@ -5985,6 +5988,8 @@ type Error struct {
 	// M24（项目仓库镜像）：`repo_unavailable`（503，控制面没有可用的 git）、`no_repo`（409，项目没有仓库地址）、`repo_not_ready`（409，镜像不存在、克隆中或克隆失败）、
 	// `ref_not_found`、`commit_not_found`、`path_not_found`（404）、`not_a_file`、`not_a_directory`（409）、`too_large`（413）；
 	// Git LFS：`lfs_missing`（404）、`lfs_auth_failed`（409）、`lfs_unreachable`（502）、`lfs_corrupt`（502）、`lfs_no_space`（507）。
+	// M24（托管仓库）：`repo_hosted`（409，托管项目上改外部仓库地址或同步）、`repo_exists`（409，项目已有仓库时再创建托管仓库）、
+	// `project_archived`（409，已归档项目上创建托管仓库）。
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
@@ -9424,7 +9429,10 @@ type Project struct {
 	// ArchivedAt UTC 毫秒时间戳
 	ArchivedAt *TimestampMs `json:"archivedAt,omitempty"`
 	BaseBranch *string      `json:"baseBranch,omitempty"`
-	Color      *string      `json:"color,omitempty"`
+
+	// CloneURL 托管仓库的克隆地址 https://<Oryn 地址>/git/<id>.git（M24）；非托管项目省略
+	CloneURL *string `json:"cloneUrl,omitempty"`
+	Color    *string `json:"color,omitempty"`
 
 	// CreatedAt UTC 毫秒时间戳
 	CreatedAt TimestampMs `json:"createdAt"`
@@ -9448,6 +9456,9 @@ type Project struct {
 
 	// GithubGates 推送 / 开 PR 门禁（M15）；未配置时省略
 	GithubGates *GitHubGates `json:"githubGates,omitempty"`
+
+	// Hosted 仓库由 Oryn 托管（M24）：仅托管项目为 true，其余省略；此时 repoUrl 恒省略
+	Hosted *bool `json:"hosted,omitempty"`
 
 	// Icon 项目图标：单个字形（Nerd Font 私有区字符或 emoji）。未设置时省略；线程自动标题带卡片图标且项目尚无图标时由控制面自动填入一次
 	Icon *string `json:"icon,omitempty"`
@@ -9483,11 +9494,17 @@ type ProjectCreate struct {
 	// Description 一行描述（M24，≤200 字符）；空串等同省略
 	Description *string `json:"description,omitempty"`
 
+	// EmptyRepo 只与 hosted 同用：不建初始提交（oryn project create --push 用，本机已有的历史才能推上来）；缺省 false
+	EmptyRepo *bool `json:"emptyRepo,omitempty"`
+
 	// GitAuthorEmail 须与 gitAuthorName 同时给出；规则同 GitIdentity.email
 	GitAuthorEmail *string `json:"gitAuthorEmail,omitempty"`
 
 	// GitAuthorName 须与 gitAuthorEmail 同时给出；规则同 GitIdentity.name
 	GitAuthorName *string `json:"gitAuthorName,omitempty"`
+
+	// Hosted 新建 Oryn 托管仓库（M24；带一个空树的初始提交，基线分支缺省 main）；与 repoUrl 互斥；缺省 false
+	Hosted *bool `json:"hosted,omitempty"`
 
 	// Icon 单个字形（一个字素，≤16 字节）；空串等同省略
 	Icon         *string `json:"icon,omitempty"`
@@ -9702,17 +9719,17 @@ type ProjectRepoStatus struct {
 	// Available 控制面有可用的 git（≥2.31）
 	Available bool `json:"available"`
 
-	// BaseBranch 项目 baseBranch 在镜像里存在时取它，否则 defaultBranch
+	// BaseBranch mirror：项目 baseBranch 在镜像里存在时取它，否则 defaultBranch；hosted：项目 baseBranch
 	BaseBranch *string `json:"baseBranch,omitempty"`
 
-	// CloneURL 用户 `git clone` 用的地址（mirror = 项目 repoUrl）
+	// CloneURL 用户 `git clone` 用的地址（mirror = 项目 repoUrl；hosted = https://<Oryn 地址>/git/<id>.git）
 	CloneURL      *string `json:"cloneUrl,omitempty"`
 	DefaultBranch *string `json:"defaultBranch,omitempty"`
 
 	// Empty 镜像就绪但没有任何分支
 	Empty bool `json:"empty"`
 
-	// Kind `none` = 项目没有仓库地址；阶段 ③ 加 `hosted`
+	// Kind `mirror` = 外部仓库的镜像；`hosted` = Oryn 托管的正本；`none` = 项目没有仓库
 	Kind ProjectRepoStatusKind `json:"kind"`
 
 	// LastError 最近一次失败的克隆或拉取
@@ -9728,7 +9745,7 @@ type ProjectRepoStatus struct {
 	UnavailableReason *ProjectRepoStatusUnavailableReason `json:"unavailableReason,omitempty"`
 }
 
-// ProjectRepoStatusKind `none` = 项目没有仓库地址；阶段 ③ 加 `hosted`
+// ProjectRepoStatusKind `mirror` = 外部仓库的镜像；`hosted` = Oryn 托管的正本；`none` = 项目没有仓库
 type ProjectRepoStatusKind string
 
 // ProjectRepoStatusState defines model for ProjectRepoStatus.State.
@@ -16749,6 +16766,9 @@ type ServerInterface interface {
 	// GetProjectRepoCommitDiff 提交里一个文件的 unified diff（M24；合并提交相对第一个父提交，根提交相对空树）
 	// (GET /api/v1/projects/{id}/repo/commits/{sha}/diff)
 	GetProjectRepoCommitDiff(w http.ResponseWriter, r *http.Request, id ProjectIDPath, sha RepoShaPath, params GetProjectRepoCommitDiffParams)
+	// CreateProjectHostedRepo 为没有仓库的项目创建 Oryn 托管仓库（M24 阶段 ③；带一个空树的初始提交，基线分支缺省 main）
+	// (POST /api/v1/projects/{id}/repo/hosted)
+	CreateProjectHostedRepo(w http.ResponseWriter, r *http.Request, id ProjectIDPath)
 	// ListProjectRepoRefs 项目仓库镜像的分支或标签（M24；按最近提交倒序，默认分支排第一）
 	// (GET /api/v1/projects/{id}/repo/refs)
 	ListProjectRepoRefs(w http.ResponseWriter, r *http.Request, id ProjectIDPath, params ListProjectRepoRefsParams)
@@ -18501,6 +18521,12 @@ func (_ Unimplemented) GetProjectRepoCommit(w http.ResponseWriter, r *http.Reque
 // GetProjectRepoCommitDiff 提交里一个文件的 unified diff（M24；合并提交相对第一个父提交，根提交相对空树）
 // (GET /api/v1/projects/{id}/repo/commits/{sha}/diff)
 func (_ Unimplemented) GetProjectRepoCommitDiff(w http.ResponseWriter, r *http.Request, id ProjectIDPath, sha RepoShaPath, params GetProjectRepoCommitDiffParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateProjectHostedRepo 为没有仓库的项目创建 Oryn 托管仓库（M24 阶段 ③；带一个空树的初始提交，基线分支缺省 main）
+// (POST /api/v1/projects/{id}/repo/hosted)
+func (_ Unimplemented) CreateProjectHostedRepo(w http.ResponseWriter, r *http.Request, id ProjectIDPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -26265,6 +26291,32 @@ func (siw *ServerInterfaceWrapper) GetProjectRepoCommitDiff(w http.ResponseWrite
 	handler.ServeHTTP(w, r)
 }
 
+// CreateProjectHostedRepo operation middleware
+func (siw *ServerInterfaceWrapper) CreateProjectHostedRepo(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProjectIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateProjectHostedRepo(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListProjectRepoRefs operation middleware
 func (siw *ServerInterfaceWrapper) ListProjectRepoRefs(w http.ResponseWriter, r *http.Request) {
 
@@ -30130,6 +30182,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/projects/{id}/repo/sync", wrapper.SyncProjectRepo)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/projects/{id}/repo/hosted", wrapper.CreateProjectHostedRepo)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/projects/{id}/repo/refs", wrapper.ListProjectRepoRefs)

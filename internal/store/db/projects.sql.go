@@ -33,12 +33,12 @@ const createProject = `-- name: CreateProject :exec
 
 INSERT INTO projects (id, name, repo_url, base_branch, default_provider, default_orb_type,
                       setup_script, resume_script, shallow_clone, color, icon, git_author_name, git_author_email,
-                      default_browser_profile_id, created_at, updated_at, snapshots, warm_orbs, description)
+                      default_browser_profile_id, created_at, updated_at, snapshots, warm_orbs, description, hosted)
 VALUES (?1, ?2, ?3, ?4, ?5, ?6,
         ?7, ?8, ?9, ?10, ?11, ?12, ?13,
         ?14, ?15, ?16,
         COALESCE(CAST(?17 AS BOOLEAN), 1), COALESCE(CAST(?18 AS INTEGER), 0),
-        ?19)
+        ?19, ?20)
 `
 
 type CreateProjectParams struct {
@@ -61,6 +61,7 @@ type CreateProjectParams struct {
 	Snapshots               *bool   `json:"snapshots"`
 	WarmOrbs                *int64  `json:"warmOrbs"`
 	Description             *string `json:"description"`
+	Hosted                  bool    `json:"hosted"`
 }
 
 // Projects.
@@ -86,6 +87,7 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) er
 		arg.Snapshots,
 		arg.WarmOrbs,
 		arg.Description,
+		arg.Hosted,
 	)
 	return err
 }
@@ -103,7 +105,7 @@ func (q *Queries) DeleteProject(ctx context.Context, id string) (int64, error) {
 }
 
 const getProject = `-- name: GetProject :one
-SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci, github_bind_status, github_gates, description FROM projects WHERE id = ?1
+SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci, github_bind_status, github_gates, description, hosted FROM projects WHERE id = ?1
 `
 
 func (q *Queries) GetProject(ctx context.Context, id string) (Project, error) {
@@ -137,12 +139,13 @@ func (q *Queries) GetProject(ctx context.Context, id string) (Project, error) {
 		&i.GithubBindStatus,
 		&i.GithubGates,
 		&i.Description,
+		&i.Hosted,
 	)
 	return i, err
 }
 
 const getProjectByName = `-- name: GetProjectByName :one
-SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci, github_bind_status, github_gates, description FROM projects WHERE name = ?1
+SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci, github_bind_status, github_gates, description, hosted FROM projects WHERE name = ?1
 `
 
 func (q *Queries) GetProjectByName(ctx context.Context, name string) (Project, error) {
@@ -176,12 +179,13 @@ func (q *Queries) GetProjectByName(ctx context.Context, name string) (Project, e
 		&i.GithubBindStatus,
 		&i.GithubGates,
 		&i.Description,
+		&i.Hosted,
 	)
 	return i, err
 }
 
 const listProjects = `-- name: ListProjects :many
-SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci, github_bind_status, github_gates, description FROM projects
+SELECT id, name, repo_url, base_branch, default_provider, default_orb_type, setup_script, resume_script, shallow_clone, color, created_at, updated_at, archived_at, git_author_name, git_author_email, icon, default_browser_profile_id, snapshots, warm_orbs, github_repo_id, github_prev_urls, github_listen_reviews, github_listen_comments, github_listen_ci, github_bind_status, github_gates, description, hosted FROM projects
 WHERE (CAST(?1 AS BOOLEAN) IS NULL OR (archived_at IS NOT NULL) = CAST(?1 AS BOOLEAN))
 ORDER BY name
 `
@@ -223,6 +227,7 @@ func (q *Queries) ListProjects(ctx context.Context, archived *bool) ([]Project, 
 			&i.GithubBindStatus,
 			&i.GithubGates,
 			&i.Description,
+			&i.Hosted,
 		); err != nil {
 			return nil, err
 		}
@@ -235,6 +240,45 @@ func (q *Queries) ListProjects(ctx context.Context, archived *bool) ([]Project, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const setProjectHosted = `-- name: SetProjectHosted :execrows
+UPDATE projects SET hosted = 1, base_branch = ?1, updated_at = ?2
+WHERE id = ?3 AND hosted = 0 AND (repo_url IS NULL OR repo_url = '') AND archived_at IS NULL
+`
+
+type SetProjectHostedParams struct {
+	BaseBranch *string `json:"baseBranch"`
+	UpdatedAt  int64   `json:"updatedAt"`
+	ID         string  `json:"id"`
+}
+
+// Mark a project without a repository as Oryn-hosted (M24 phase 3); 0 rows = it already has a repository,
+// is hosted, or is archived.
+func (q *Queries) SetProjectHosted(ctx context.Context, arg SetProjectHostedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setProjectHosted, arg.BaseBranch, arg.UpdatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const unsetProjectHosted = `-- name: UnsetProjectHosted :execrows
+UPDATE projects SET hosted = 0, updated_at = ?1 WHERE id = ?2 AND hosted = 1
+`
+
+type UnsetProjectHostedParams struct {
+	UpdatedAt int64  `json:"updatedAt"`
+	ID        string `json:"id"`
+}
+
+// Undo SetProjectHosted when creating the hosted repository failed.
+func (q *Queries) UnsetProjectHosted(ctx context.Context, arg UnsetProjectHostedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, unsetProjectHosted, arg.UpdatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const updateProject = `-- name: UpdateProject :execrows

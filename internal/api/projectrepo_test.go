@@ -49,8 +49,8 @@ func newRepoEnv(t *testing.T) *h2Env {
 	return e
 }
 
-// newRepoEnvFake 同 newRepoEnv，另返回假 GitHub（改上游仓库、存 LFS 对象用）。
-func newRepoEnvFake(t *testing.T) (*h2Env, *githubtest.Server) {
+// newRepoEnvFake 同 newRepoEnv，另返回假 GitHub（改上游仓库、存 LFS 对象用）；mut 可改仓库服务的配置。
+func newRepoEnvFake(t *testing.T, mut ...func(*repos.Config)) (*h2Env, *githubtest.Server) {
 	t.Helper()
 	requireGitAPI(t)
 	ctx := context.Background()
@@ -75,7 +75,11 @@ func newRepoEnvFake(t *testing.T) (*h2Env, *githubtest.Server) {
 	cfg.GitHub = config.GitHub{APIURL: fake.URL(), WebURL: fake.URL()}
 	gh := github.New(github.Config{PublicURL: h2PublicURL, APIURL: fake.URL(), WebURL: fake.URL(), Box: box}, st, nil, nil, nil)
 	vault := secrets.NewVault(st, box)
-	rs, err := repos.New(repos.Config{Dir: cfg.ReposDir(), GitHubWebURL: fake.URL()}, st, vault, gh)
+	rcfg := repos.Config{Dir: cfg.ReposDir(), GitHubWebURL: fake.URL(), PublicURL: h2PublicURL}
+	for _, m := range mut {
+		m(&rcfg)
+	}
+	rs, err := repos.New(rcfg, st, vault, gh)
 	require.NoError(t, err)
 	t.Cleanup(rs.Close)
 	s := &api.Server{Deps: api.Deps{Config: cfg, Store: st, AuthMiddleware: auth.Middleware(st)}}

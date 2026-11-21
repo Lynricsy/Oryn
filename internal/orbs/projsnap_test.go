@@ -702,3 +702,15 @@ func TestSweepSnapshots(t *testing.T) {
 		return err != nil
 	}, 5*time.Second, 20*time.Millisecond)
 }
+
+// 托管标记（M24 阶段 ③）进配置哈希；非托管项目的哈希与加字段之前完全相同（omitempty），现有快照不作废。
+func TestProjectConfigHashHosted(t *testing.T) {
+	repo, branch, setup := "https://github.com/acme/widgets", "main", "make setup"
+	prj := db.Project{RepoUrl: &repo, BaseBranch: &branch, SetupScript: &setup, ShallowClone: true}
+	stamps := []db.ListConfigSecretStampsRow{{Name: "FOO", UpdatedAt: 7}}
+	// 改前（M24 阶段 ③ 之前）的代码对同一输入算出的值
+	const before = "d41f424ce6d980ed1c88ce08be8808163e05a6a2ff14c49b1fa16d8ce7c87cb4"
+	assert.Equal(t, before, projectConfigHash(prj, "img-1", "small", stamps))
+	prj.Hosted = true
+	assert.NotEqual(t, before, projectConfigHash(prj, "img-1", "small", stamps))
+}

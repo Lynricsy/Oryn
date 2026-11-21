@@ -2,6 +2,7 @@ package coord
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -157,6 +158,33 @@ func TestProjectTools(t *testing.T) {
 	assert.True(t, a.Ok)
 	assert.Equal(t, CodeNotFound, errCodeOf(t, e.call(asst, ToolDeleteProject, `{"project":"Nope"}`, true)))
 	assert.False(t, e.latest().Ok, "挂卡之前失败的请求记失败审计")
+}
+
+// 删除托管项目的确认卡写明托管仓库（正本）会被一并删除；非托管项目的文案不变。
+func TestDeleteHostedProjectCard(t *testing.T) {
+	e := newEnv(t, true)
+	asst := e.assistant()
+	e.c.SetProjects(&fakeProjects{e: e})
+	plain := e.project("Plain")
+	hosted := e.project("Hosted")
+	_, err := e.st.DB.ExecContext(e.ctx, `UPDATE projects SET hosted = 1 WHERE id = ?`, hosted)
+	require.NoError(t, err)
+
+	card := func(name string) (title, summary string) {
+		t.Helper()
+		m := details(t, e.call(asst, ToolDeleteProject, `{"project":"`+name+`"}`, false))
+		row, err := e.st.Q.GetAssistantConfirmation(e.ctx, m["confirmationId"].(string))
+		require.NoError(t, err)
+		var p confirmParams
+		require.NoError(t, json.Unmarshal([]byte(row.Params), &p))
+		return p.Title, row.Summary
+	}
+	title, summary := card("Hosted")
+	assert.Contains(t, title, "and its hosted repository")
+	assert.Contains(t, summary, "the only copy")
+	title, summary = card("Plain")
+	assert.Equal(t, `Delete project "Plain" (`+plain+`)?`, title)
+	assert.NotContains(t, summary, "hosted")
 }
 
 // Space 工具：create / update / list 直接执行（审计目标是 Space 的协调对话）；delete 走确认卡，批准后删除 Space。

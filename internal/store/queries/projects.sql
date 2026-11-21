@@ -4,12 +4,12 @@
 -- name: CreateProject :exec
 INSERT INTO projects (id, name, repo_url, base_branch, default_provider, default_orb_type,
                       setup_script, resume_script, shallow_clone, color, icon, git_author_name, git_author_email,
-                      default_browser_profile_id, created_at, updated_at, snapshots, warm_orbs, description)
+                      default_browser_profile_id, created_at, updated_at, snapshots, warm_orbs, description, hosted)
 VALUES (@id, @name, @repo_url, @base_branch, @default_provider, @default_orb_type,
         @setup_script, @resume_script, @shallow_clone, @color, @icon, @git_author_name, @git_author_email,
         sqlc.narg(default_browser_profile_id), @created_at, @updated_at,
         COALESCE(CAST(sqlc.narg(snapshots) AS BOOLEAN), 1), COALESCE(CAST(sqlc.narg(warm_orbs) AS INTEGER), 0),
-        @description);
+        @description, @hosted);
 
 -- name: GetProject :one
 SELECT * FROM projects WHERE id = @id;
@@ -38,6 +38,16 @@ WHERE id = @id;
 -- name: AdoptProjectIcon :execrows
 UPDATE projects SET icon = @icon, updated_at = @updated_at
 WHERE id = @id AND (icon IS NULL OR icon = '');
+
+-- Mark a project without a repository as Oryn-hosted (M24 phase 3); 0 rows = it already has a repository,
+-- is hosted, or is archived.
+-- name: SetProjectHosted :execrows
+UPDATE projects SET hosted = 1, base_branch = @base_branch, updated_at = @updated_at
+WHERE id = @id AND hosted = 0 AND (repo_url IS NULL OR repo_url = '') AND archived_at IS NULL;
+
+-- Undo SetProjectHosted when creating the hosted repository failed.
+-- name: UnsetProjectHosted :execrows
+UPDATE projects SET hosted = 0, updated_at = @updated_at WHERE id = @id AND hosted = 1;
 
 -- name: DeleteProject :execrows
 DELETE FROM projects WHERE id = @id;

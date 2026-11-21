@@ -380,6 +380,7 @@ func (s *Server) init(ctx context.Context) error {
 		MaxLFSCacheBytes: int64(cmp.Or(cfg.Repos.MaxLFSCacheGB, 2)) << 30,
 		ProxyEnv:         proxyEnv(os.Environ()),
 		Changed:          s.Hub.ProjectRepoChanged,
+		PublicURL:        cfg.PublicURL,
 	}, s.Store, s.Vault, s.GitHub); err != nil {
 		return err
 	}

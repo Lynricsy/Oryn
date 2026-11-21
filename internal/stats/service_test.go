@@ -232,6 +232,16 @@ func TestSampleCommitsSkips(t *testing.T) {
 	assert.Empty(t, o.ensures, "项目没有仓库：什么都不做")
 }
 
+// 托管项目（M24 阶段 ③）没有 repo_url，线程照样采样提交。
+func TestSampleCommitsHostedProject(t *testing.T) {
+	o := &fakeOrbs{status: statusWithBase, commits: commitsJSON}
+	f, s := commitFixture(t, o, nil)
+	f.exec(`UPDATE projects SET hosted = 1, base_branch = 'main' WHERE id = 'prj_b'`)
+	require.NoError(t, s.SampleCommits(f.ctx, "W-norepo"))
+	assert.Equal(t, []string{"orb-1 /git/status?base=main&scope=uncommitted", "orb-1 /git/commits?base=main&limit=200"}, o.requests())
+	assert.Equal(t, []string{sha1A, sha1B}, commitRows(t, f, "W-norepo"))
+}
+
 func TestStateChangedDebounce(t *testing.T) {
 	o := &fakeOrbs{status: statusWithBase, commits: commitsJSON}
 	timers := &fakeTimers{}
