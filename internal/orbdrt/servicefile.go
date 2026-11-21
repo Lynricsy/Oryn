@@ -42,8 +42,10 @@ var serviceFileNames = []string{".oryn/services.yaml", ".amp/services.yaml"}
 
 // serviceSpec 是一个服务的定义。Port 在合并后是实际使用的端口（显式或自动分配），
 // PortExplicit 记录定义里是否写了端口（决定是否需要就绪探测）。
+// App 非空表示 box app 的服务（M23，source = app）；Dir 是绝对基目录（空 = 当前工作区根），Cwd 相对它。
 type serviceSpec struct {
 	Name, Command, Cwd, Health, ThreadID string
+	App, Dir                             string
 	Source                               apigen.OrbServiceSource
 	Port                                 int
 	PortExplicit                         bool
@@ -55,6 +57,7 @@ type serviceSpec struct {
 // 线程只影响 PUBLIC_URL，已在运行的服务不因它变化而重启）。
 func (a serviceSpec) sameDefinition(b serviceSpec) bool {
 	return a.Name == b.Name && a.Command == b.Command && a.Cwd == b.Cwd && a.Health == b.Health &&
+		a.App == b.App && a.Dir == b.Dir &&
 		a.Source == b.Source && a.Port == b.Port && a.PortExplicit == b.PortExplicit &&
 		maps.Equal(a.Env, b.Env) && slices.EqualFunc(a.Links, b.Links, sameLink)
 }

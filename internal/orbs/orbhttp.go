@@ -35,6 +35,8 @@ const (
 	FeatureAttachments = "attachments"
 	// FeatureSync：/sync/prepare 与 /sync/bundle（M5 `oryn sync`）。
 	FeatureSync = "sync"
+	// FeatureBox：/box/*（M23 box 的 app 运行时：release 上传、激活、回滚、重启、下线、exec）。
+	FeatureBox = "box"
 )
 
 // usableState 报告 orb 处于 state 时 orbd 是否在跑、可服务 fs 流。

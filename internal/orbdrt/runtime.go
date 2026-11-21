@@ -268,6 +268,8 @@ type Runtime struct {
 
 	// svc 是受管服务监督器（M4）。
 	svc *serviceSupervisor
+	// box 是 box app 的运行时（M23，boxapps.go）；runner 与协调宿主为 nil。
+	box *boxManager
 	// desk 是桌面（M8）；未启用为 nil。
 	desk *desktop
 	// dockerd 是嵌套 Docker 的守护进程监督器（M11a）；未启用为 nil。
@@ -487,6 +489,7 @@ func New(cfg Config) (_ *Runtime, err error) {
 	if !cfg.Coordinator && rs == nil {
 		// 协调宿主没有桌面，也不写 orb 扩展与技能（协调档的 omp 以 --no-extensions --no-skills 启动）；
 		// runner 的扩展与技能见上，也没有桌面、工具执行器与嵌套 Docker。
+		r.box = newBoxManager(r)
 		r.desk = newDesktop(r)
 		r.comp = newComputer(r)
 		if cfg.NestedDocker {
@@ -832,6 +835,9 @@ func (r *Runtime) hello() apigen.LinkCtlHelloParams {
 	// terminal（终端面板）与 metrics（metrics.sample）是 M11b 才有名字的既有能力，orb 一直具备。
 	// memory（M16）：agent.start 接受 memory 参数。computer（M19）：认识 computer.*（工具执行器）。
 	features := []string{"fs", "git", "attachments", "services", "portal", "sync", "threads", "repo-update", "setup-defer-resume", "terminal", "metrics", "omphome-apply", "memory", "computer"}
+	if r.box != nil {
+		features = append(features, "box") // M23：/box/*（app 运行时与 exec）
+	}
 	if r.desk != nil {
 		features = append(features, "desktop")
 	}

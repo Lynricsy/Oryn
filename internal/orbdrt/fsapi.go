@@ -93,7 +93,20 @@ func isDirEntry(e apigen.FsEntry) bool {
 // ---- 只读路由 ----
 
 // handleFsRoots：orb 为 {$HOME, 工作目录}；runner 两者都是线程的工作目录（范围的根）。
+// strict=1（控制面的 artifact 文件能力，M23）：orb 形态的请求带了 X-Oryn-Workdir 却没被采用时 404 workdir_missing，
+// 不退回缺省工作目录——artifact 的读取范围不能因 app 下线而变宽。
 func (r *Runtime) handleFsRoots(w http.ResponseWriter, req *http.Request) {
+	strict, err := boolQuery(req, "strict", false)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if strict && r.runner == nil {
+		if _, given, ok := r.headerWorkdir(req); given && !ok {
+			writeErr(w, errf(http.StatusNotFound, "workdir_missing", "working directory %q does not exist", req.Header.Get(WorkdirHeader)))
+			return
+		}
+	}
 	root, wd, err := r.scope(req)
 	if err != nil {
 		writeErr(w, err)

@@ -324,7 +324,8 @@ func (r *Runtime) allowed(p string) (string, bool) {
 
 // scope 返回一次本机 API 请求可见的范围：root 是路径范围的根（已展开符号链接，本次请求内固定不变，见 relTo），
 // workdir 是缺省工作目录（git 面板的缺省根、不可删除的目录）。orb 形态为 (真实 $HOME, 最近一次 setup 的
-// 工作目录)；runner 形态取请求头 X-Oryn-Workdir（缺失 400 workdir_required，不在声明的目录或已登记的
+// 工作目录)，请求带了可采用的 X-Oryn-Workdir（box 上的线程，M23；见 headerWorkdir）时工作目录换成它；
+// runner 形态取请求头 X-Oryn-Workdir（缺失 400 workdir_required，不在声明的目录或已登记的
 // worktree 之内 403 dir_not_served），两者都是 allowed 解析出的真实路径：请求进行中工作目录被换成指向别处
 // 的链接，也不会把范围跟着带过去。
 func (r *Runtime) scope(req *http.Request) (root, workdir string, err error) {
@@ -332,6 +333,9 @@ func (r *Runtime) scope(req *http.Request) (root, workdir string, err error) {
 		home, err := filepath.EvalSymlinks(r.home)
 		if err != nil {
 			return "", "", err
+		}
+		if abs, _, ok := r.headerWorkdir(req); ok {
+			return home, abs, nil
 		}
 		return home, r.currentWorkdir(), nil
 	}
@@ -344,6 +348,32 @@ func (r *Runtime) scope(req *http.Request) (root, workdir string, err error) {
 		return "", "", errf(http.StatusForbidden, CodeDirNotServed, "%q is not inside a directory served by this runner", wd)
 	}
 	return real, real, nil
+}
+
+// headerWorkdir 解析 orb 形态请求里的 X-Oryn-Workdir（控制面为有 cwd 的线程带上，M23 box 线程是
+// `~/apps/<app>/current[/<root>]`）：given 表示请求带了这个头；ok 表示采用——展开后存在、是目录、跟随符号链接后
+// 落在真实 $HOME 之下。abs 是词法路径（保留 `current` 这一段：文件面板的根不随 release 目录变）。
+func (r *Runtime) headerWorkdir(req *http.Request) (abs string, given, ok bool) {
+	v := req.Header.Get(WorkdirHeader)
+	if v == "" {
+		return "", false, false
+	}
+	if strings.ContainsRune(v, 0) {
+		return "", true, false
+	}
+	abs = r.resolvePath(v)
+	real, err := evalExisting(abs)
+	if err != nil {
+		return "", true, false
+	}
+	if st, err := os.Stat(real); err != nil || !st.IsDir() {
+		return "", true, false
+	}
+	home, err := filepath.EvalSymlinks(r.home)
+	if err != nil || !within(real, home) {
+		return "", true, false
+	}
+	return abs, true, true
 }
 
 // threadsDir 是会话目录的父目录（$HOME/.oryn/threads）。

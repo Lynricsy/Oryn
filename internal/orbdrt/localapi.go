@@ -70,6 +70,7 @@ func (r *Runtime) localHandler() http.Handler {
 	mux.HandleFunc("POST /sync/prepare", r.handleSyncPrepare)
 	mux.HandleFunc("GET /sync/bundle", r.handleSyncBundle)
 	r.deskRoutes(mux)
+	r.boxRoutes(mux)
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		writeErr(w, &apiError{status: http.StatusNotFound, code: "not_found", msg: "no such route"})
 	})
@@ -77,8 +78,8 @@ func (r *Runtime) localHandler() http.Handler {
 		if h := r.cfg.OnLocalRequest; h != nil {
 			h(req)
 		}
-		// runner 没有 oryn sync 与受管服务。
-		if r.runner != nil && (strings.HasPrefix(req.URL.Path, "/sync/") || strings.HasPrefix(req.URL.Path, "/services/")) {
+		// runner 没有 oryn sync、受管服务与 box app。
+		if r.runner != nil && (strings.HasPrefix(req.URL.Path, "/sync/") || strings.HasPrefix(req.URL.Path, "/services/") || strings.HasPrefix(req.URL.Path, "/box/")) {
 			writeErr(w, &apiError{status: http.StatusNotFound, code: "not_found", msg: "not available on a runner"})
 			return
 		}

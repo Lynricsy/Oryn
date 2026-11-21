@@ -29,7 +29,11 @@ const (
 
 // services.state 清洗限额（orb 不可信）。
 const (
-	maxOrbServices    = 32
+	// maxOrbServices 是镜像的总上限：普通服务（file / dynamic）至多 maxPlainServices 个，box app 的服务至多
+	// maxAppServices 个（M23：16 个 app × 每个至多 4 个服务）。
+	maxOrbServices    = maxPlainServices + maxAppServices
+	maxPlainServices  = 32
+	maxAppServices    = 64
 	maxServiceCommand = 4096
 	maxServiceLinks   = 20
 	maxLinkTitle      = 80
@@ -111,6 +115,9 @@ func sanitizeService(sv apigen.OrbService) (apigen.OrbService, bool) {
 	if sv.Restarts < 0 {
 		sv.Restarts = 0
 	}
+	if sv.App != nil && (!portalhost.ValidAppName(*sv.App) || sv.Source != apigen.OrbServiceSourceApp) {
+		sv.App = nil
+	}
 	return sv, true
 }
 
@@ -129,16 +136,23 @@ func (s *Service) onServicesState(ctx context.Context, orbID string, params json
 	rows := make([]row, 0, min(len(p.Services), maxOrbServices))
 	names := map[string]bool{}
 	portalPorts := map[int]bool{}
+	var plain, apps int
 	for _, raw := range p.Services {
 		sv, ok := sanitizeService(raw)
 		if !ok || names[sv.Name] {
 			slog.Warn("services.state 丢弃不合规的服务", "orb", orbID, "name", truncUTF8(raw.Name, 64))
 			continue
 		}
-		if len(rows) == maxOrbServices {
-			slog.Warn("services.state 服务数超过上限，丢弃其余", "orb", orbID, "limit", maxOrbServices)
-			break
+		// 普通服务与 app 服务分别计数（M23），超出各自上限的丢弃
+		count, limit := &plain, maxPlainServices
+		if sv.Source == apigen.OrbServiceSourceApp {
+			count, limit = &apps, maxAppServices
 		}
+		if *count == limit {
+			slog.Warn("services.state 服务数超过上限，丢弃", "orb", orbID, "name", sv.Name, "source", sv.Source, "limit", limit)
+			continue
+		}
+		*count++
 		names[sv.Name] = true
 		// 同一端口只算第一个声明 portal 的服务（orbd 已把后来者标为 port_conflict）
 		hp := len(sv.Links) > 0 && sv.Port != nil && !portalPorts[*sv.Port]

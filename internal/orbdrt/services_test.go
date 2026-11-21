@@ -55,6 +55,8 @@ func runServiceHelper(mode string) {
 		serveHelper()
 	case "serve":
 		serveHelper()
+	case "boxapp":
+		boxAppHelper()
 	}
 	fmt.Fprintln(os.Stderr, "unknown ORBD_TEST_HELPER", mode)
 	os.Exit(2)

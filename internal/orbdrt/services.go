@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -153,6 +154,11 @@ type serviceSupervisor struct {
 	onStatus   func(apigen.OrbService)
 	// hookRunExited 仅供测试：runLoop 在进程自然退出、决定是否重启之前调用（在此替换定义以固定交错）。
 	hookRunExited func(sv *svc)
+
+	// apps 与 appPorts 由 box 管理器（boxapps.go）在每次状态变化后整体替换：全部 live app 的服务定义与全部 app 的端口
+	// （含还没有 live 的）；nil = 没有 app。监督器只读这两份快照、从不取管理器的锁（reload 在 mu 之下用到它们）。
+	apps     atomic.Pointer[[]fileEntry]
+	appPorts atomic.Pointer[map[int]bool]
 
 	opMu sync.Mutex
 
@@ -330,6 +336,9 @@ func (s *serviceSupervisor) snapshotLocked(sv *svc) apigen.OrbService {
 	if sv.threadID != "" {
 		o.ThreadID = new(sv.threadID)
 	}
+	if sp.App != "" {
+		o.App = new(sp.App)
+	}
 	if sv.publicURL != "" {
 		o.PublicURL = new(sv.publicURL)
 	}
@@ -393,6 +402,10 @@ func (s *serviceSupervisor) WaitSettled(ctx context.Context, name string) apigen
 func (s *serviceSupervisor) Exposed(port int) bool {
 	if port <= 0 || s.reserved(port) {
 		return false
+	}
+	// box app 的端口（M23）一律可经 portal 拨到：app 服务没有 Links，不出现在线程的 Portal 列表里。
+	if ports := s.appPorts.Load(); ports != nil && (*ports)[port] {
+		return true
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -561,6 +574,10 @@ func (s *serviceSupervisor) reload(startAll bool) map[string]bool {
 	desired := make([]fileEntry, 0, len(entries)+len(s.st.Dynamic))
 	fileNames := map[string]bool{}
 	for _, e := range entries {
+		if strings.Contains(e.spec.Name, "--") {
+			s.r.log.Warn(fmt.Sprintf("service name %q contains -- (reserved for box apps); ignored", e.spec.Name))
+			continue
+		}
 		if fileNames[e.spec.Name] {
 			s.r.log.Warn("duplicate service in services file ignored", "service", e.spec.Name)
 			continue
@@ -569,6 +586,12 @@ func (s *serviceSupervisor) reload(startAll bool) map[string]bool {
 		desired = append(desired, e)
 	}
 	for _, name := range slices.Sorted(maps.Keys(s.st.Dynamic)) {
+		if strings.Contains(name, "--") {
+			// `--` 留给 box app（M23）：遗留的同名动态定义直接删掉，免得与 app 条目在 order 里重名
+			delete(s.st.Dynamic, name)
+			stateDirty = true
+			continue
+		}
 		if fileNames[name] {
 			s.r.log.Info("services file now declares a dynamic service's name; dropping the dynamic definition", "service", name)
 			delete(s.st.Dynamic, name)
@@ -586,6 +609,10 @@ func (s *serviceSupervisor) reload(startAll bool) map[string]bool {
 	}
 	stateDirty = s.assignPortsLocked(desired) || stateDirty
 	checkPublicURLRefs(desired)
+	// box app 的服务（M23）追加在最后：不占普通服务的名额，也不过端口分配（同一 app 的服务共用一个显式端口）。
+	if apps := s.apps.Load(); apps != nil {
+		desired = append(desired, *apps...)
+	}
 
 	var (
 		toStop  []*svcRun
@@ -660,6 +687,9 @@ func (s *serviceSupervisor) assignPortsLocked(desired []fileEntry) bool {
 			explicit[d.spec.Port] = true
 		}
 	}
+	// box app 的端口（M23）视为已占用：显式写了它 → port_conflict，自动分配跳过它。
+	appPorts := s.appPortSet()
+	maps.Copy(explicit, appPorts)
 	used := map[int]bool{}
 	changed := false
 	for i := range desired {
@@ -671,6 +701,8 @@ func (s *serviceSupervisor) assignPortsLocked(desired []fileEntry) bool {
 			switch p := d.spec.Port; {
 			case s.reserved(p):
 				d.err = "forbidden_port"
+			case appPorts[p]:
+				d.err = "port_conflict"
 			case used[p]:
 				d.err = "port_conflict"
 			default:
@@ -756,6 +788,9 @@ func (s *serviceSupervisor) Start(p orbsock.ServiceStartParams) (apigen.OrbServi
 	if !serviceNameRe.MatchString(p.Name) {
 		return apigen.OrbService{}, svcErrf(orbsock.CodeInvalidService, "invalid service name %q (want ^[a-z0-9][a-z0-9-]{0,31}$)", p.Name)
 	}
+	if p.Command != nil && strings.Contains(p.Name, "--") {
+		return apigen.OrbService{}, svcErrf(orbsock.CodeInvalidService, "names containing -- are reserved for box apps")
+	}
 	if p.Command == nil {
 		if p.Cwd != "" || p.Port != 0 || len(p.Env) > 0 || p.Health != "" || p.Portal {
 			return apigen.OrbService{}, svcErrf(orbsock.CodeInvalidService, "cwd / port / env / health / portal can only be given together with command")
@@ -778,7 +813,7 @@ func (s *serviceSupervisor) Start(p orbsock.ServiceStartParams) (apigen.OrbServi
 		s.mu.Unlock()
 		return apigen.OrbService{}, svcErrf(orbsock.CodeNameConflict, "%q is declared in services.yaml; use another name or start it without --command", p.Name)
 	}
-	if s.svcs[p.Name] == nil && len(s.svcs) >= maxServices {
+	if s.svcs[p.Name] == nil && s.plainCountLocked() >= maxServices {
 		s.mu.Unlock()
 		return apigen.OrbService{}, svcErrf(orbsock.CodeInvalidService, "too many services (max %d)", maxServices)
 	}
@@ -827,6 +862,10 @@ func (s *serviceSupervisor) Stop(name string, remove bool) (apigen.OrbService, e
 	if remove && sv.spec.Source == apigen.OrbServiceSourceFile {
 		s.mu.Unlock()
 		return apigen.OrbService{}, svcErrf(orbsock.CodeInvalidService, "%q is declared in services.yaml and cannot be removed; delete it from the file instead", name)
+	}
+	if remove && sv.spec.App != "" {
+		s.mu.Unlock()
+		return apigen.OrbService{}, svcErrf(orbsock.CodeInvalidService, "%q belongs to box app %s; undeploy the app instead", name, sv.spec.App)
 	}
 	run := sv.run
 	sv.run = nil
@@ -906,6 +945,86 @@ func (s *serviceSupervisor) StopAll(grace time.Duration) {
 	for _, sv := range svcs {
 		s.update(sv, nil, func(sv *svc) bool { sv.pid = 0; sv.status = apigen.OrbServiceStatusStopped; return true })
 	}
+}
+
+// plainCountLocked 返回普通服务（文件 / 动态，不含 box app 的服务）的数量。调用方持有 mu。
+func (s *serviceSupervisor) plainCountLocked() int {
+	n := 0
+	for _, sv := range s.svcs {
+		if sv.spec.App == "" {
+			n++
+		}
+	}
+	return n
+}
+
+// appPortSet 返回 box app 端口集合的快照（只读；nil 时为空表）。
+func (s *serviceSupervisor) appPortSet() map[int]bool {
+	if p := s.appPorts.Load(); p != nil {
+		return *p
+	}
+	return map[int]bool{}
+}
+
+// switchApp 是 box app（M23）换 release、回滚、重启、下线的唯一入口，整个过程是一次监督器操作（取 opMu；
+// 调用方不得持有 opMu，fn 里不得再调任何会取 opMu 的方法）：
+//  1. 摘下该 app 全部服务的 run 并等它们结束；
+//  2. 调 fn（管理器在里面换链接、改状态、落盘、publish）；fn 出错原样返回，服务保持停止；
+//  3. 把该 app 的服务名移出 stopped，reload(false)（已不在快照里的 app 条目在这里消失）；
+//  4. 对该 app 定义有效、没有 run 的服务逐个 launch。
+//
+// 不能拆成各自取锁的「停」「起」：两次取锁之间 Ensure 可能按旧快照把刚停掉的服务又拉起来。第 4 步必须显式
+// launch：Dir 固定是 …/current，换 release 之后定义可能没变，reload(false) 不会拉起第 1 步停掉的服务。
+func (s *serviceSupervisor) switchApp(app string, fn func() error) error {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+	s.mu.Lock()
+	var (
+		svcs []*svc
+		runs []*svcRun
+	)
+	for _, sv := range s.svcs {
+		if sv.spec.App == app && sv.run != nil {
+			svcs, runs = append(svcs, sv), append(runs, sv.run)
+			sv.run = nil
+		}
+	}
+	s.mu.Unlock()
+	stopRuns(runs, serviceStopGrace)
+	for _, sv := range svcs {
+		s.update(sv, nil, func(sv *svc) bool {
+			sv.pid = 0
+			if sv.invalid == "" {
+				sv.status = apigen.OrbServiceStatusStopped
+			}
+			return true
+		})
+	}
+	if err := fn(); err != nil {
+		return err
+	}
+	prefix := app + "--"
+	s.mu.Lock()
+	if n := len(s.st.Stopped); n > 0 {
+		s.st.Stopped = slices.DeleteFunc(s.st.Stopped, func(name string) bool { return strings.HasPrefix(name, prefix) })
+		if len(s.st.Stopped) != n {
+			s.saveLocked()
+		}
+	}
+	s.mu.Unlock()
+	s.reload(false)
+	s.mu.Lock()
+	var toStart []*svc
+	for _, name := range s.order {
+		if sv := s.svcs[name]; sv != nil && sv.spec.App == app && sv.invalid == "" && sv.run == nil {
+			toStart = append(toStart, sv)
+		}
+	}
+	s.mu.Unlock()
+	for _, sv := range toStart {
+		s.launch(sv)
+	}
+	return nil
 }
 
 // killAll 在运行时结束时直接 SIGKILL 全部进程组，此后不再拉起任何服务。
@@ -1049,7 +1168,11 @@ func (s *serviceSupervisor) runOnce(sv *svc, run *svcRun) (code int, lived time.
 	s.sysLine(name, fmt.Sprintf("starting %s (port %d)", name, spec.Port))
 	lg := s.logFor(name)
 	cmd := s.r.bins.command(context.Background(), "bash", "-lc", spec.Command)
-	cmd.Dir = filepath.Join(s.r.currentWorkdir(), spec.Cwd)
+	base := s.r.currentWorkdir()
+	if spec.Dir != "" {
+		base = spec.Dir
+	}
+	cmd.Dir = filepath.Join(base, spec.Cwd)
 	cmd.Env = envList(env)
 	cmd.Stdin = nil
 	cmd.Stdout, cmd.Stderr = lg, lg
@@ -1252,6 +1375,14 @@ func (s *serviceSupervisor) refsMissingLocked(spec serviceSpec) bool {
 // refsMissing 表示有引用被替换成了空串。
 func (s *serviceSupervisor) envLocked(spec serviceSpec) (env map[string]string, thread, url string, refsMissing bool) {
 	env = s.r.baseEnv()
+	if spec.App != "" {
+		// box app（M23）：只有基础环境、app 的 env 与 PORT；setup 的全局 env 模式密钥与线程 / portal 变量不进 app。
+		maps.Copy(env, spec.Env)
+		delete(env, "PUBLIC_URL")
+		delete(env, "ORYN_THREAD_ID")
+		env["PORT"] = strconv.Itoa(spec.Port)
+		return env, "", "", false
+	}
 	maps.Copy(env, s.r.setupEnvSnapshot())
 	for k, v := range spec.Env {
 		env[k] = publicURLRefRe.ReplaceAllStringFunc(v, func(m string) string {

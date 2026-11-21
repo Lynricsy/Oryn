@@ -3,6 +3,7 @@ package orbs
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -170,6 +171,50 @@ func TestServicesStateMirror(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, v.Services)
 	assert.Nil(t, v.Portals)
+}
+
+// M23：普通服务与 box app 的服务分别计数（32 + 64），超出各自上限的丢弃；App 不合规（或来源不是 app）时置空。
+func TestServicesStateAppLimits(t *testing.T) {
+	drv := newFakeDriver()
+	drv.features = []string{FeatureServices, FeaturePortal}
+	h := newHarness(t, drv, nil, nil)
+	orb, c := h.readyOrb(drv, "")
+
+	var list []apigen.OrbService
+	for i := range 40 {
+		list = append(list, apigen.OrbService{Name: fmt.Sprintf("plain-%d", i), Source: apigen.OrbServiceSourceFile, Command: "x",
+			Status: apigen.OrbServiceStatusRunning, Links: []apigen.OrbPortalLink{}, App: new("shop")})
+	}
+	for i := range 70 {
+		app := "shop"
+		if i == 0 {
+			app = "t-0123456789ab-p80" // portal 标签，不是合法 app 名
+		}
+		list = append(list, apigen.OrbService{Name: fmt.Sprintf("shop--w%d", i), Source: apigen.OrbServiceSourceApp, Command: "x",
+			Status: apigen.OrbServiceStatusRunning, Port: new(30000), Links: []apigen.OrbPortalLink{}, App: new(app)})
+	}
+	require.NoError(t, c.Notify("services.state", apigen.LinkCtlServicesStateParams{Services: list}))
+	require.Eventually(t, func() bool { return len(h.mirror(orb.ID)) == 96 }, 5*time.Second, 10*time.Millisecond)
+
+	var plain, apps int
+	for _, r := range h.mirror(orb.ID) {
+		var sv apigen.OrbService
+		require.NoError(t, json.Unmarshal([]byte(r.Doc), &sv))
+		switch {
+		case sv.Source == apigen.OrbServiceSourceApp:
+			apps++
+			if sv.Name == "shop--w0" {
+				assert.Nil(t, sv.App, "不合规的 app 名被置空")
+			} else {
+				assert.Equal(t, "shop", *sv.App)
+			}
+		default:
+			plain++
+			assert.Nil(t, sv.App, "来源不是 app 的服务不带 app")
+		}
+	}
+	assert.Equal(t, 32, plain)
+	assert.Equal(t, 64, apps)
 }
 
 // 支持 portal 的 orbd 在 hello 后、setup / resume 之前收到 portal.configure：urlTemplate 取配置，
