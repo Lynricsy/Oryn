@@ -2,6 +2,8 @@ package repos
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/lfs"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
@@ -237,7 +240,7 @@ func TestReadBlob(t *testing.T) {
 		commitTo(t, bare, "main", map[string]string{"docs/page.html": "<b>x</b>", "img.png": "\x89PNG\r\n\x1a\n"}, "files")
 	})
 	ctx := context.Background()
-	b, err := e.svc.Blob(ctx, pid, "", "README.md", "")
+	b, err := e.svc.Blob(ctx, pid, "", "README.md", "", false)
 	require.NoError(t, err)
 	body, err := io.ReadAll(b.Body)
 	require.NoError(t, err)
@@ -247,28 +250,132 @@ func TestReadBlob(t *testing.T) {
 	assert.False(t, b.Immutable)
 	assert.False(t, b.Inline)
 
-	nm, err := e.svc.Blob(ctx, pid, "", "README.md", `W/"x", "`+b.OID+`"`)
+	nm, err := e.svc.Blob(ctx, pid, "", "README.md", `W/"x", "`+b.OID+`"`, false)
 	require.NoError(t, err)
 	assert.True(t, nm.NotModified)
 	assert.Nil(t, nm.Body)
 
 	head := headOf(t, bare, "main")
-	html, err := e.svc.Blob(ctx, pid, head, "docs/page.html", "")
+	html, err := e.svc.Blob(ctx, pid, head, "docs/page.html", "", false)
 	require.NoError(t, err)
 	_ = html.Body.Close()
 	assert.Equal(t, "text/plain; charset=utf-8", html.ContentType)
 	assert.True(t, html.Immutable, "ref 是完整 sha")
-	img, err := e.svc.Blob(ctx, pid, "", "img.png", "")
+	img, err := e.svc.Blob(ctx, pid, "", "img.png", "", false)
 	require.NoError(t, err)
 	_ = img.Body.Close()
 	assert.True(t, img.Inline)
 	assert.Equal(t, "image/png", img.ContentType)
+	att, err := e.svc.Blob(ctx, pid, "", "img.png", "", true)
+	require.NoError(t, err)
+	_ = att.Body.Close()
+	assert.False(t, att.Inline, "download=1 一律附件")
 
-	_, err = e.svc.Blob(ctx, pid, "", "docs", "")
+	_, err = e.svc.Blob(ctx, pid, "", "docs", "", false)
 	assert.Equal(t, "not_a_file", errCode(err))
 	e.svc.maxBlobBytes = 4
-	_, err = e.svc.Blob(ctx, pid, "", "README.md", "")
+	_, err = e.svc.Blob(ctx, pid, "", "README.md", "", false)
 	assert.Equal(t, "too_large", errCode(err))
+}
+
+// lfsPtr 返回内容 content 的 LFS 指针。
+func lfsPtr(content string) lfs.Pointer {
+	sum := sha256.Sum256([]byte(content))
+	return lfs.Pointer{OID: hex.EncodeToString(sum[:]), Size: int64(len(content))}
+}
+
+func readAllClose(t *testing.T, rc io.ReadCloser) (string, error) {
+	t.Helper()
+	defer rc.Close()
+	b, err := io.ReadAll(rc)
+	return string(b), err
+}
+
+func TestReadLFS(t *testing.T) {
+	const obj = "hello lfs\n"
+	big, gone := lfsPtr(obj), lfsPtr("never uploaded\n")
+	e, pid, _ := readEnv(t, nil, func(bare string) {
+		commitTo(t, bare, "main", map[string]string{
+			"docs/big.bin":   string(big.Encode()),
+			"docs/gone.psd":  string(gone.Encode()),
+			"docs/plain.txt": "plain\n",
+		}, "lfs files")
+	})
+	e.fake.PutLFS(big.OID, []byte(obj))
+	ctx := context.Background()
+
+	// 目录条目：size 是对象大小、带 lfs.oid，不取对象
+	dir, err := e.svc.Tree(ctx, pid, "", "docs", false)
+	require.NoError(t, err)
+	byName := map[string]apigen.ProjectRepoTreeEntry{}
+	for _, en := range dir.Entries {
+		byName[en.Name] = en
+	}
+	require.NotNil(t, byName["big.bin"].Lfs)
+	assert.Equal(t, big.OID, byName["big.bin"].Lfs.Oid)
+	assert.Equal(t, int64(len(obj)), byName["big.bin"].Size)
+	assert.Nil(t, byName["big.bin"].Lfs.Error)
+	assert.Equal(t, int64(15), byName["gone.psd"].Size)
+	assert.Nil(t, byName["plain.txt"].Lfs)
+	assert.Equal(t, int64(6), byName["plain.txt"].Size)
+	assert.Zero(t, e.lfsBatches(), "目录条目不取对象")
+
+	// self：取对象，按对象内容判断 text 与 mime
+	self, err := e.svc.Tree(ctx, pid, "", "docs/big.bin", false)
+	require.NoError(t, err)
+	require.NotNil(t, self.Self.Lfs)
+	assert.Equal(t, int64(len(obj)), self.Self.Size)
+	assert.Nil(t, self.Self.Lfs.Error)
+	require.NotNil(t, self.Self.Text)
+	assert.True(t, *self.Self.Text)
+	require.NotNil(t, self.Self.Mime)
+	assert.NotEmpty(t, *self.Self.Mime)
+
+	// Blob：本地文件（缓存），ETag 仍是指针 blob 的 oid
+	b, err := e.svc.Blob(ctx, pid, "", "docs/big.bin", "", false)
+	require.NoError(t, err)
+	require.NotNil(t, b.File)
+	assert.Nil(t, b.Body)
+	assert.Equal(t, self.Self.Oid, b.OID)
+	assert.Equal(t, int64(len(obj)), b.Size)
+	got, err := readAllClose(t, b.File)
+	require.NoError(t, err)
+	assert.Equal(t, obj, got)
+	assert.Equal(t, 1, e.lfsBatches(), "第二次命中缓存")
+
+	// 未存的对象：self 带 lfs.error，Blob 回 lfs_missing
+	miss, err := e.svc.Tree(ctx, pid, "", "docs/gone.psd", false)
+	require.NoError(t, err)
+	require.NotNil(t, miss.Self.Lfs)
+	require.NotNil(t, miss.Self.Lfs.Error)
+	assert.Equal(t, apigen.LfsMissing, *miss.Self.Lfs.Error)
+	assert.Nil(t, miss.Self.Text)
+	_, err = e.svc.Blob(ctx, pid, "", "docs/gone.psd", "", false)
+	assert.Equal(t, "lfs_missing", errCode(err))
+
+	// 超过内联上限：不带 download → too_large；download → 从上游流式读取
+	e.svc.inlineLFSMax = 4
+	large, err := e.svc.Tree(ctx, pid, "", "docs/big.bin", false)
+	require.NoError(t, err)
+	assert.Nil(t, large.Self.Text)
+	assert.Nil(t, large.Self.Lfs.Error)
+	_, err = e.svc.Blob(ctx, pid, "", "docs/big.bin", "", false)
+	assert.Equal(t, "too_large", errCode(err))
+	st, err := e.svc.Blob(ctx, pid, "", "docs/big.bin", "", true)
+	require.NoError(t, err)
+	require.NotNil(t, st.Body)
+	assert.Nil(t, st.File)
+	assert.False(t, st.Inline)
+	got, err = readAllClose(t, st.Body)
+	require.NoError(t, err)
+	assert.Equal(t, obj, got)
+
+	// 内容与指针不符：流在 EOF 处报错（handler 据此中止连接）
+	e.fake.PutLFS(gone.OID, []byte("not the object!"))
+	bad, err := e.svc.Blob(ctx, pid, "", "docs/gone.psd", "", true)
+	require.NoError(t, err)
+	_, err = readAllClose(t, bad.Body)
+	assert.Equal(t, "lfs_corrupt", errCode(err))
 }
 
 func TestReadBadInput(t *testing.T) {
@@ -286,7 +393,7 @@ func TestReadBadInput(t *testing.T) {
 	assert.Equal(t, "invalid_request", errCode(err))
 	_, err = e.svc.Tree(ctx, pid, "nope", "", false)
 	assert.Equal(t, "ref_not_found", errCode(err))
-	_, err = e.svc.Blob(ctx, pid, "", "", "")
+	_, err = e.svc.Blob(ctx, pid, "", "", "", false)
 	assert.Equal(t, "invalid_request", errCode(err))
 
 	// 没有仓库地址 → no_repo；已归档且没克隆过 → repo_not_ready

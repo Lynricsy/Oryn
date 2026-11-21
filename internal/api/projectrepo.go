@@ -7,6 +7,7 @@ import (
 	"mime"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/repos"
@@ -134,13 +135,14 @@ func (s *Server) GetProjectRepoTree(w http.ResponseWriter, r *http.Request, id a
 	WriteJSON(w, http.StatusOK, out)
 }
 
-// GetProjectRepoBlob 流式返回项目仓库镜像里一个文件的内容：ETag 是 blob oid；安全的栅格图片内联，其余附件下载。
+// GetProjectRepoBlob 返回项目仓库镜像里一个文件的内容：ETag 是 blob oid；安全的栅格图片内联（download 时除外），其余附件下载。
+// Git LFS 对象是本地文件时经 http.ServeContent（支持 Range），其余流式输出。
 func (s *Server) GetProjectRepoBlob(w http.ResponseWriter, r *http.Request, id apigen.ProjectIDPath, params apigen.GetProjectRepoBlobParams) {
 	svc, ok := s.reposSvc(w)
 	if !ok {
 		return
 	}
-	b, err := svc.Blob(r.Context(), id, deref(params.Ref), params.Path, deref(params.IfNoneMatch))
+	b, err := svc.Blob(r.Context(), id, deref(params.Ref), params.Path, deref(params.IfNoneMatch), deref(params.Download))
 	if err != nil {
 		writeRepoErr(w, r, err)
 		return
@@ -156,7 +158,11 @@ func (s *Server) GetProjectRepoBlob(w http.ResponseWriter, r *http.Request, id a
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
-	defer b.Body.Close()
+	if b.File != nil {
+		defer b.File.Close()
+	} else {
+		defer b.Body.Close()
+	}
 	disp := "attachment"
 	if b.Inline {
 		disp = "inline"
@@ -165,9 +171,13 @@ func (s *Server) GetProjectRepoBlob(w http.ResponseWriter, r *http.Request, id a
 	}
 	h.Set("Content-Type", b.ContentType)
 	h.Set("Content-Disposition", disp)
-	h.Set("Content-Length", strconv.FormatInt(b.Size, 10))
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Content-Security-Policy", "sandbox")
+	if b.File != nil {
+		http.ServeContent(w, r, "", time.Time{}, b.File)
+		return
+	}
+	h.Set("Content-Length", strconv.FormatInt(b.Size, 10))
 	w.WriteHeader(http.StatusOK)
 	if r.Method == http.MethodHead {
 		return

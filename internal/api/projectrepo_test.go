@@ -3,6 +3,8 @@ package api_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -23,6 +25,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/config"
 	"github.com/Lynricsy/Oryn/internal/github"
 	"github.com/Lynricsy/Oryn/internal/github/githubtest"
+	"github.com/Lynricsy/Oryn/internal/lfs"
 	"github.com/Lynricsy/Oryn/internal/repos"
 	"github.com/Lynricsy/Oryn/internal/secrets"
 	"github.com/Lynricsy/Oryn/internal/store"
@@ -41,6 +44,13 @@ func requireGitAPI(t *testing.T) {
 
 // newRepoEnv 同 newGitHubEnvWith，另给假 GitHub 建 acme/widgets 裸仓库并挂项目仓库镜像服务（M24）。
 func newRepoEnv(t *testing.T) *h2Env {
+	t.Helper()
+	e, _ := newRepoEnvFake(t)
+	return e
+}
+
+// newRepoEnvFake 同 newRepoEnv，另返回假 GitHub（改上游仓库、存 LFS 对象用）。
+func newRepoEnvFake(t *testing.T) (*h2Env, *githubtest.Server) {
 	t.Helper()
 	requireGitAPI(t)
 	ctx := context.Background()
@@ -75,7 +85,7 @@ func newRepoEnv(t *testing.T) *h2Env {
 	s.Repos = &api.ReposDeps{Service: rs}
 	e.srv = httptest.NewServer(api.NewRouter(s))
 	t.Cleanup(e.srv.Close)
-	return e
+	return e, fake
 }
 
 func createRepoProject(t *testing.T, e *h2Env, cred h2Cred, name, repoURL string) string {
@@ -257,6 +267,66 @@ func TestProjectRepoReadAPI(t *testing.T) {
 	r = e.do("GET", "/api/v1/projects/"+bare+"/repo/tree", dev, nil)
 	assert.Equal(t, 409, r.status, string(r.body))
 	assert.Equal(t, "no_repo", r.code(t))
+}
+
+// commitFile 在裸仓库 bare 的 main 上提交一个文件并推送。
+func commitFile(t *testing.T, bare, name, body string) {
+	t.Helper()
+	work := t.TempDir()
+	git := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = work
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "HOME="+work,
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %s", args, out)
+	}
+	git("clone", "-q", bare, "w")
+	work = filepath.Join(work, "w")
+	p := filepath.Join(work, name)
+	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+	require.NoError(t, os.WriteFile(p, []byte(body), 0o644))
+	git("add", "-A")
+	git("commit", "-q", "-m", "add "+name)
+	git("push", "-q", "origin", "main")
+}
+
+// Git LFS 指针：tree 条目给出对象大小与 lfs.oid，blob 返回对象内容并支持 Range。
+func TestProjectRepoLFSAPI(t *testing.T) {
+	e, fake := newRepoEnvFake(t)
+	dev := h2DeviceToken(t, e)
+	const obj = "hello lfs\n"
+	sum := sha256.Sum256([]byte(obj))
+	ptr := lfs.Pointer{OID: hex.EncodeToString(sum[:]), Size: int64(len(obj))}
+	commitFile(t, fake.BarePath("acme/widgets"), "docs/big.bin", string(ptr.Encode()))
+	fake.PutLFS(ptr.OID, []byte(obj))
+	id := readyRepoProject(t, e, dev)
+	base := "/api/v1/projects/" + id + "/repo"
+
+	r := e.do("GET", base+"/tree?path=docs", dev, nil)
+	require.Equal(t, 200, r.status, string(r.body))
+	var tree apigen.ProjectRepoTree
+	r.json(t, &tree)
+	require.Len(t, tree.Entries, 1)
+	assert.Equal(t, int64(len(obj)), tree.Entries[0].Size)
+	require.NotNil(t, tree.Entries[0].Lfs)
+	assert.Equal(t, ptr.OID, tree.Entries[0].Lfs.Oid)
+
+	resp, body := rawGet(t, e, base+"/blob?path=docs/big.bin", dev, nil)
+	require.Equal(t, 200, resp.StatusCode, string(body))
+	assert.Equal(t, obj, string(body))
+	assert.Equal(t, "10", resp.Header.Get("Content-Length"))
+	assert.Equal(t, `"`+tree.Entries[0].Oid+`"`, resp.Header.Get("ETag"))
+	assert.Equal(t, "nosniff", resp.Header.Get("X-Content-Type-Options"))
+	resp, body = rawGet(t, e, base+"/blob?path=docs/big.bin", dev, map[string]string{"Range": "bytes=0-3"})
+	require.Equal(t, 206, resp.StatusCode, string(body))
+	assert.Equal(t, "hell", string(body))
+	resp, _ = rawGet(t, e, base+"/blob?path=docs/big.bin", dev, map[string]string{"If-None-Match": resp.Header.Get("ETag")})
+	assert.Equal(t, 304, resp.StatusCode)
+	resp, body = rawGet(t, e, base+"/blob?path=docs/big.bin&download=1", dev, nil)
+	require.Equal(t, 200, resp.StatusCode, string(body))
+	assert.Contains(t, resp.Header.Get("Content-Disposition"), "attachment")
+	assert.Equal(t, 1, len(fake.CallsTo("POST", "/acme/widgets.git/info/lfs/objects/batch")), "之后命中缓存")
 }
 
 // 没有装配仓库服务时接口回 501。

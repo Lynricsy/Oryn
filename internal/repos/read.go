@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"mime"
 	"net/http"
+	"os"
 	"path"
 	"regexp"
 	"slices"
@@ -20,6 +22,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/gitdiff"
+	"github.com/Lynricsy/Oryn/internal/lfs"
 	"github.com/Lynricsy/Oryn/internal/share"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
@@ -599,6 +602,12 @@ func (s *Service) Tree(ctx context.Context, projectID, ref, p string, lastCommit
 		if err != nil {
 			return out, err
 		}
+		if ptr, ok := lfsPointer(self.Size, head.out); ok {
+			if err := s.lfsSelf(ctx, r.prj, &out.Self, ptr); err != nil {
+				return out, err
+			}
+			break
+		}
 		out.Self.Mime = new(contentType(self.Name, head.out))
 		out.Self.Text = new(isText(head.out, head.truncated))
 	case apigen.RepoEntrySymlink:
@@ -644,7 +653,94 @@ func (s *Service) listDir(ctx context.Context, dir string, t *apigen.ProjectRepo
 			links = append(links, &t.Entries[i])
 		}
 	}
+	if err := s.lfsEntries(ctx, dir, t.Entries); err != nil {
+		return err
+	}
 	return s.linkTargets(ctx, dir, links)
+}
+
+// lfsPointer 识别 blob 内容 b（大小 size）是不是合规的 Git LFS 指针；只看小于 lfs.PointerMax 的完整内容。
+func lfsPointer(size int64, b []byte) (lfs.Pointer, bool) {
+	if size <= 0 || size >= lfs.PointerMax || int64(len(b)) != size {
+		return lfs.Pointer{}, false
+	}
+	return lfs.ParsePointer(b)
+}
+
+// lfsEntries 用一次 cat-file --batch 读出小文件的内容，是 LFS 指针的条目 size 改为对象大小并带上 lfs.oid。
+// 目录条目从不取对象。
+func (s *Service) lfsEntries(ctx context.Context, dir string, entries []apigen.ProjectRepoTreeEntry) error {
+	var oids []string
+	at := map[string][]int{}
+	for i, e := range entries {
+		if e.Type != apigen.RepoEntryFile || e.Size <= 0 || e.Size >= lfs.PointerMax {
+			continue
+		}
+		if _, seen := at[e.Oid]; !seen {
+			oids = append(oids, e.Oid)
+		}
+		at[e.Oid] = append(at[e.Oid], i)
+	}
+	blobs, err := s.catBlobs(ctx, dir, oids, int64(len(oids))*lfs.PointerMax)
+	if err != nil {
+		return err
+	}
+	for oid, b := range blobs {
+		ptr, ok := lfsPointer(int64(len(b)), b)
+		if !ok {
+			continue
+		}
+		for _, i := range at[oid] {
+			entries[i].Size = ptr.Size
+			entries[i].Lfs = &apigen.ProjectRepoLfs{Oid: ptr.OID}
+		}
+	}
+	return nil
+}
+
+// lfsSelf 给是 LFS 指针的 self 填上对象大小与 lfs.oid。对象不超过 inlineLFSMax 时先取对象，按对象内容判断 mime 与 text；
+// 取不到时记 lfs.error，mime 只按扩展名、省略 text。更大的对象不取，mime 只按扩展名。
+func (s *Service) lfsSelf(ctx context.Context, prj db.Project, e *apigen.ProjectRepoTreeEntry, ptr lfs.Pointer) error {
+	e.Size = ptr.Size
+	e.Lfs = &apigen.ProjectRepoLfs{Oid: ptr.OID}
+	if ptr.Size > s.inlineLFSMax {
+		e.Mime = new(extType(e.Name))
+		return nil
+	}
+	f, err := s.lfsObject(ctx, prj, ptr)
+	if err != nil {
+		if code, ok := lfsCode(err); ok {
+			e.Lfs.Error = &code
+			e.Mime = new(extType(e.Name))
+			return nil
+		}
+		return err
+	}
+	defer f.Close()
+	head := make([]byte, sniffBytes)
+	n, err := io.ReadFull(f, head)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return err
+	}
+	head = head[:n]
+	e.Mime = new(contentType(e.Name, head))
+	e.Text = new(isText(head, ptr.Size > int64(n)))
+	return nil
+}
+
+// lfsCode 取取对象失败的 lfs_* 错误码。
+func lfsCode(err error) (apigen.ProjectRepoLfsError, bool) {
+	var le *Error
+	if !errors.As(err, &le) {
+		return "", false
+	}
+	code := apigen.ProjectRepoLfsError(le.Code)
+	return code, code.Valid()
+}
+
+// extType 只按扩展名判断媒体类型；认不出时为 application/octet-stream。
+func extType(name string) string {
+	return cmp.Or(mime.TypeByExtension(path.Ext(name)), "application/octet-stream")
 }
 
 // linkTargets 填上符号链接的目标（≤4KiB 的才读）。
@@ -797,18 +893,32 @@ func isText(b []byte, truncated bool) bool {
 
 // ---------------------------------------------------------------- blob
 
-// BlobContent 是 Blob 的结果。NotModified 时只有 OID 与 Immutable，Body 为 nil；否则调用方关闭 Body。
+// BlobContent 是 Blob 的结果。NotModified 时只有 OID 与 Immutable，File 与 Body 都为 nil；否则二者恰有一个非 nil，
+// 调用方关闭。
 type BlobContent struct {
 	OID, Name, ContentType string
-	Size                   int64
+	Size                   int64 // LFS 时为对象大小
 	Inline, Immutable      bool
 	NotModified            bool
-	Body                   io.ReadCloser
+	File                   *os.File      // 本地文件（LFS 对象缓存）：调用方用 http.ServeContent，支持 Range
+	Body                   io.ReadCloser // git cat-file 或上游 LFS 流：调用方 io.Copy，出错即中止连接
+}
+
+// setType 定下响应的媒体类型：text/html 改为 text/plain；不是 download 时安全的栅格图片内联。
+func (b *BlobContent) setType(ct string, download bool) {
+	if mt, _, _ := strings.Cut(ct, ";"); strings.EqualFold(strings.TrimSpace(mt), "text/html") {
+		ct = "text/plain; charset=utf-8"
+	}
+	if mt, img := share.InlineImage(ct); img && !download {
+		ct, b.Inline = mt, true
+	}
+	b.ContentType = ct
 }
 
 // Blob 打开 ref（空 = 基线分支）下文件 p 的内容：目录 → not_a_file；超过 64MiB → too_large。
-// ifNoneMatch 与 ETag（"<blob oid>"）相同时不读内容，置 NotModified。
-func (s *Service) Blob(ctx context.Context, projectID, ref, p, ifNoneMatch string) (*BlobContent, error) {
+// ifNoneMatch 与 ETag（"<blob oid>"）相同时不读内容，置 NotModified。Git LFS 指针返回对象内容：不超过 inlineLFSMax 的
+// 对象经缓存（File），更大的只在 download 时从上游流式读取（Body），否则 too_large。download 时一律附件。
+func (s *Service) Blob(ctx context.Context, projectID, ref, p, ifNoneMatch string, download bool) (*BlobContent, error) {
 	if err := validRepoPath(p, false); err != nil {
 		return nil, err
 	}
@@ -832,6 +942,18 @@ func (s *Service) Blob(ctx context.Context, projectID, ref, p, ifNoneMatch strin
 		out.NotModified = true
 		return out, nil
 	}
+	if self.Type == apigen.RepoEntryFile && self.Size > 0 && self.Size < lfs.PointerMax {
+		res, err := s.gitRead(ctx, r.dir, lfs.PointerMax, nil, "cat-file", "blob", self.Oid)
+		if err != nil {
+			return nil, err
+		}
+		if ptr, ok := lfsPointer(self.Size, res.out); ok {
+			if err := s.lfsBlob(ctx, r.prj, out, ptr, download); err != nil {
+				return nil, err
+			}
+			return out, nil
+		}
+	}
 	if self.Size > s.maxBlobBytes {
 		return nil, &Error{Status: http.StatusRequestEntityTooLarge, Code: "too_large", Message: fmt.Sprintf("文件超过 %d MiB，不能在这里读取", s.maxBlobBytes>>20)}
 	}
@@ -843,17 +965,46 @@ func (s *Service) Blob(ctx context.Context, projectID, ref, p, ifNoneMatch strin
 		}
 		ct = http.DetectContentType(head.out)
 	}
-	if mt, _, _ := strings.Cut(ct, ";"); strings.EqualFold(strings.TrimSpace(mt), "text/html") {
-		ct = "text/plain; charset=utf-8"
-	}
-	if mt, img := share.InlineImage(ct); img {
-		ct, out.Inline = mt, true
-	}
-	out.ContentType = ct
+	out.setType(ct, download)
 	if out.Body, err = s.openGit(ctx, gitRun{dir: r.dir, read: true, timeout: blobTimeout}, "cat-file", "blob", self.Oid); err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+// lfsBlob 打开 LFS 指针 ptr 指向的对象：不超过 inlineLFSMax 的经缓存（File）；更大的只在 download 时从上游流式读取。
+func (s *Service) lfsBlob(ctx context.Context, prj db.Project, out *BlobContent, ptr lfs.Pointer, download bool) error {
+	out.Size = ptr.Size
+	if ptr.Size > s.inlineLFSMax {
+		if !download {
+			return &Error{Status: http.StatusRequestEntityTooLarge, Code: "too_large",
+				Message: fmt.Sprintf("Git LFS 对象超过 %d MiB，只能下载（download=1）", s.inlineLFSMax>>20)}
+		}
+		body, err := s.lfsOpenStream(ctx, prj, ptr)
+		if err != nil {
+			return err
+		}
+		out.Body = body
+		out.setType(extType(out.Name), download)
+		return nil
+	}
+	f, err := s.lfsObject(ctx, prj, ptr)
+	if err != nil {
+		return err
+	}
+	ct := mime.TypeByExtension(path.Ext(out.Name))
+	if ct == "" {
+		head := make([]byte, 512)
+		n, err := f.ReadAt(head, 0)
+		if err != nil && !errors.Is(err, io.EOF) {
+			_ = f.Close()
+			return err
+		}
+		ct = http.DetectContentType(head[:n])
+	}
+	out.File = f
+	out.setType(ct, download)
+	return nil
 }
 
 // etagMatch 按 If-None-Match 的规则（逗号分隔、弱比较、`*`）判断 etag 是否命中。

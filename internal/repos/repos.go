@@ -110,6 +110,7 @@ type Service struct {
 
 	treeWalkMax  int   // 找子项最后提交时至多读的提交数（测试可改）
 	maxBlobBytes int64 // blob 接口的大小上限（测试可改）
+	inlineLFSMax int64 // LFS 对象内联预览（取对象、进缓存）的上限，超过只能 download=1（测试可改）
 	treeMu       sync.Mutex
 	treeCache    map[string]map[string]apigen.ProjectRepoCommitSummary // commit + "\x00" + dir → 子项名 → 最后提交
 
@@ -137,8 +138,8 @@ func New(cfg Config, st *store.Store, sec Secrets, gh GitHub) (*Service, error) 
 	s := &Service{
 		cfg: cfg, st: st, sec: sec, gh: gh,
 		sem: make(chan struct{}, 2), monitorEvery: 5 * time.Second,
-		treeWalkMax: treeWalkMax, maxBlobBytes: blobMax, treeCache: map[string]map[string]apigen.ProjectRepoCommitSummary{},
-		ctx: ctx, cancel: cancel, flights: map[string]*flight{},
+		treeWalkMax: treeWalkMax, maxBlobBytes: blobMax, inlineLFSMax: lfsInlineMax,
+		treeCache: map[string]map[string]apigen.ProjectRepoCommitSummary{}, ctx: ctx, cancel: cancel, flights: map[string]*flight{},
 	}
 	s.gitBin, s.reason = locateGit(cmp.Or(cfg.Git, "git"))
 	if s.reason != "" {

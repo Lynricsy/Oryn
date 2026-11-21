@@ -2693,6 +2693,33 @@ func (e ProjectRepoErrorCode) Valid() bool {
 	}
 }
 
+// Defines values for ProjectRepoLfsError.
+const (
+	LfsAuthFailed  ProjectRepoLfsError = "lfs_auth_failed"
+	LfsCorrupt     ProjectRepoLfsError = "lfs_corrupt"
+	LfsMissing     ProjectRepoLfsError = "lfs_missing"
+	LfsNoSpace     ProjectRepoLfsError = "lfs_no_space"
+	LfsUnreachable ProjectRepoLfsError = "lfs_unreachable"
+)
+
+// Valid indicates whether the value is a known member of the ProjectRepoLfsError enum.
+func (e ProjectRepoLfsError) Valid() bool {
+	switch e {
+	case LfsAuthFailed:
+		return true
+	case LfsCorrupt:
+		return true
+	case LfsMissing:
+		return true
+	case LfsNoSpace:
+		return true
+	case LfsUnreachable:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ProjectRepoRefKind.
 const (
 	RepoRefBranch ProjectRepoRefKind = "branch"
@@ -5956,7 +5983,8 @@ type Error struct {
 	// M14 / M15（GitHub）：`github_not_configured`（409，尚未配置 OAuth App）、`github_identity_required`（409，所需身份未连接或需要重新授权）、
 	// `github_agent_required`（409，Agent 账号未连接）、`github_not_bound`（409，项目未绑定 GitHub 仓库）、`github_upstream`（502，GitHub 请求失败）。
 	// M24（项目仓库镜像）：`repo_unavailable`（503，控制面没有可用的 git）、`no_repo`（409，项目没有仓库地址）、`repo_not_ready`（409，镜像不存在、克隆中或克隆失败）、
-	// `ref_not_found`、`commit_not_found`、`path_not_found`（404）、`not_a_file`、`not_a_directory`（409）、`too_large`（413）。
+	// `ref_not_found`、`commit_not_found`、`path_not_found`（404）、`not_a_file`、`not_a_directory`（409）、`too_large`（413）；
+	// Git LFS：`lfs_missing`（404）、`lfs_auth_failed`（409）、`lfs_unreachable`（502）、`lfs_corrupt`（502）、`lfs_no_space`（507）。
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
@@ -9632,6 +9660,18 @@ type ProjectRepoError struct {
 // ProjectRepoErrorCode defines model for ProjectRepoError.Code.
 type ProjectRepoErrorCode string
 
+// ProjectRepoLfs 文件是 Git LFS 指针（M24）；此时条目的 size 是对象的真实大小，oid 仍是指针 blob 的 sha
+type ProjectRepoLfs struct {
+	// Error 只出现在 self 上：取对象失败的原因（对象 ≤ 100 MiB 时 tree 先取对象）
+	Error *ProjectRepoLfsError `json:"error,omitempty"`
+
+	// Oid LFS 对象的 sha256
+	Oid string `json:"oid"`
+}
+
+// ProjectRepoLfsError 只出现在 self 上：取对象失败的原因（对象 ≤ 100 MiB 时 tree 先取对象）
+type ProjectRepoLfsError string
+
 // ProjectRepoRef defines model for ProjectRepoRef.
 type ProjectRepoRef struct {
 	// Annotated 附注标签
@@ -9736,6 +9776,9 @@ type ProjectRepoTree struct {
 type ProjectRepoTreeEntry struct {
 	// LastCommit 提交摘要（字段同 `GitCommit`）
 	LastCommit *ProjectRepoCommitSummary `json:"lastCommit,omitempty"`
+
+	// Lfs 文件是 Git LFS 指针（M24）；此时条目的 size 是对象的真实大小，oid 仍是指针 blob 的 sha
+	Lfs *ProjectRepoLfs `json:"lfs,omitempty"`
 
 	// Mime 仅 self 且 type=file
 	Mime *string `json:"mime,omitempty"`
@@ -12387,6 +12430,9 @@ type PushSubscriptionIDPath = PushSubscriptionID
 // RepoCursorQuery defines model for RepoCursorQuery.
 type RepoCursorQuery = string
 
+// RepoDownloadQuery defines model for RepoDownloadQuery.
+type RepoDownloadQuery = bool
+
 // RepoPathQuery defines model for RepoPathQuery.
 type RepoPathQuery = string
 
@@ -12955,6 +13001,9 @@ type GetProjectRepoBlobParams struct {
 
 	// Path 仓库内相对路径
 	Path string `form:"path" json:"path"`
+
+	// Download 为 true 时一律 Content-Disposition attachment，并允许下载超过 100 MiB 的 Git LFS 对象
+	Download *RepoDownloadQuery `form:"download,omitempty" json:"download,omitempty"`
 
 	// IfNoneMatch 上次响应的 `ETag`；未变 → 304
 	IfNoneMatch *string `json:"If-None-Match,omitempty"`
@@ -25987,6 +26036,19 @@ func (siw *ServerInterfaceWrapper) GetProjectRepoBlob(w http.ResponseWriter, r *
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "path"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "path", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "download" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "download", r.URL.Query(), &params.Download, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "download"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "download", Err: err})
 		}
 		return
 	}

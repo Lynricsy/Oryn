@@ -488,6 +488,8 @@ export interface paths {
          * @description 目录 → 409 `not_a_file`；超过 64MiB → 413 `too_large`；路径不存在 → 404 `path_not_found`。
          *     安全的栅格图片 `Content-Disposition: inline`，其余一律附件；`text/html` 改为 `text/plain; charset=utf-8`；
          *     带 `X-Content-Type-Options: nosniff` 与 `Content-Security-Policy: sandbox`。`ref` 是完整提交 sha 时可长期缓存。
+         *     Git LFS 指针返回对象内容（`ETag` 仍是指针 blob 的 oid，`Content-Length` 是对象大小）；对象是本地文件时支持 Range。
+         *     超过 100 MiB 的 LFS 对象只能 `download=1` 下载，否则 413 `too_large`；取对象失败 → `lfs_*` 错误码。
          */
         get: operations["getProjectRepoBlob"];
         put?: never;
@@ -5893,7 +5895,8 @@ export interface components {
              *     M14 / M15（GitHub）：`github_not_configured`（409，尚未配置 OAuth App）、`github_identity_required`（409，所需身份未连接或需要重新授权）、
              *     `github_agent_required`（409，Agent 账号未连接）、`github_not_bound`（409，项目未绑定 GitHub 仓库）、`github_upstream`（502，GitHub 请求失败）。
              *     M24（项目仓库镜像）：`repo_unavailable`（503，控制面没有可用的 git）、`no_repo`（409，项目没有仓库地址）、`repo_not_ready`（409，镜像不存在、克隆中或克隆失败）、
-             *     `ref_not_found`、`commit_not_found`、`path_not_found`（404）、`not_a_file`、`not_a_directory`（409）、`too_large`（413）。
+             *     `ref_not_found`、`commit_not_found`、`path_not_found`（404）、`not_a_file`、`not_a_directory`（409）、`too_large`（413）；
+             *     Git LFS：`lfs_missing`（404）、`lfs_auth_failed`（409）、`lfs_unreachable`（502）、`lfs_corrupt`（502）、`lfs_no_space`（507）。
              */
             code: string;
             message: string;
@@ -6337,6 +6340,17 @@ export interface components {
             mime?: string;
             /** @description 仅 self 且 type=file：前 8KiB 没有 NUL 且是合法 UTF-8 */
             text?: boolean;
+            lfs?: components["schemas"]["ProjectRepoLfs"];
+        };
+        /** @description 文件是 Git LFS 指针（M24）；此时条目的 size 是对象的真实大小，oid 仍是指针 blob 的 sha */
+        ProjectRepoLfs: {
+            /** @description LFS 对象的 sha256 */
+            oid: string;
+            /**
+             * @description 只出现在 self 上：取对象失败的原因（对象 ≤ 100 MiB 时 tree 先取对象）
+             * @enum {string}
+             */
+            error?: "lfs_missing" | "lfs_auth_failed" | "lfs_unreachable" | "lfs_corrupt" | "lfs_no_space";
         };
         ProjectRepoTree: {
             /** @description 实际使用的 ref */
@@ -11723,6 +11737,8 @@ export interface components {
         RepoShaPath: string;
         /** @description 上一页返回的 `nextCursor` */
         RepoCursorQuery: string;
+        /** @description 为 true 时一律 Content-Disposition attachment，并允许下载超过 100 MiB 的 Git LFS 对象 */
+        RepoDownloadQuery: boolean;
         /** @description 密钥名（如 `omp/models/anthropic/apiKey`、`git/github.com/token`、`GITHUB_TOKEN`），`/` 编码为 `%2F` */
         SecretNamePath: string;
         /** @description 相对配置根的路径（全局为 omp-home 根，项目级为项目配置根，如 `skills/foo/SKILL.md`），`/` 编码为 `%2F`；不得含 `..` */
@@ -12446,6 +12462,8 @@ export interface operations {
                 ref?: components["parameters"]["RepoRefQuery"];
                 /** @description 仓库内相对路径 */
                 path: string;
+                /** @description 为 true 时一律 Content-Disposition attachment，并允许下载超过 100 MiB 的 Git LFS 对象 */
+                download?: components["parameters"]["RepoDownloadQuery"];
             };
             header?: {
                 /** @description 上次响应的 `ETag`；未变 → 304 */
@@ -12464,6 +12482,15 @@ export interface operations {
                     /** @description `"<blob oid>"` */
                     ETag?: string;
                     "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description Range 请求的部分内容（只在内容是本地文件时，如 LFS 对象） */
+            206: {
+                headers: {
                     [name: string]: unknown;
                 };
                 content: {
