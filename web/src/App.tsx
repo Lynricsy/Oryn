@@ -23,7 +23,7 @@ const AssistantComputerPage = lazy(() =>
 	})),
 );
 
-// 项目分区（M9.6 / M24）：总览、新建与项目页
+// 项目分区（M9.6 / M24）：总览、新建、项目主页、线程子页与项目设置
 const ProjectsOverviewPage = lazy(() =>
 	import("./pages/projects/ProjectsOverviewPage").then((m) => ({
 		default: m.ProjectsOverviewPage,
@@ -34,12 +34,19 @@ const ProjectCreatePage = lazy(() =>
 		default: m.ProjectCreatePage,
 	})),
 );
-const ProjectPage = lazy(() =>
-	import("./pages/ProjectsPage").then((m) => ({ default: m.ProjectPage })),
+const ProjectHomePage = lazy(() =>
+	import("./pages/projects/ProjectHomePage").then((m) => ({
+		default: m.ProjectHomePage,
+	})),
 );
 const ProjectThreadsPage = lazy(() =>
 	import("./pages/projects/ProjectThreadsPage").then((m) => ({
 		default: m.ProjectThreadsPage,
+	})),
+);
+const ProjectSettingsPage = lazy(() =>
+	import("./pages/projects/settings/ProjectSettingsPage").then((m) => ({
+		default: m.ProjectSettingsPage,
 	})),
 );
 
@@ -152,10 +159,18 @@ export function App(): ReactNode {
 						<Route path="assistant/:threadId" element={<AssistantPage />} />
 						<Route path="projects" element={<ProjectsOverviewPage />} />
 						<Route path="projects/new" element={<ProjectCreatePage />} />
-						<Route path="projects/:projectId" element={<ProjectPage />} />
+						<Route path="projects/:projectId" element={<ProjectHomePage />} />
 						<Route
 							path="projects/:projectId/threads"
 							element={<ProjectThreadsPage />}
+						/>
+						<Route
+							path="projects/:projectId/settings"
+							element={<ProjectSettingsPage />}
+						/>
+						<Route
+							path="projects/:projectId/settings/:tab"
+							element={<ProjectSettingsPage />}
 						/>
 						<Route
 							path="stats"

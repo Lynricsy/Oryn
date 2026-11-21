@@ -1,15 +1,13 @@
 /**
- * 项目编辑器的推送 / 开 PR 门禁区（M15）：只在编辑已绑定 GitHub 的项目时出现；回填已有门禁；
- * 改过才随 PATCH 发 `githubGates`（命令去空白、空命令省略、标题去 `##` 与空行），没改过不发。
+ * 推送 / 开 PR 门禁卡（M15，M24 起在项目设置「GitHub」分组）：只对绑定了 GitHub 的项目出现；回填已有门禁；
+ * 没改过时不能保存，改过才发 `githubGates`（命令去空白、空命令省略、标题去 `##` 与空行）。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Project } from "../../api/client";
 import i18n from "../../i18n";
-import { formOf, ProjectEditor } from "./ProjectEditor";
-import { normalizeGates } from "./ProjectGates";
+import { normalizeGates, ProjectGatesCard } from "./ProjectGates";
 
 const T = (k: string) => i18n.t(k as "common.copy");
 
@@ -32,24 +30,14 @@ const PROJECT: Project = {
 
 let patches: Record<string, unknown>[];
 
-function renderEditor(project: Project, id: string | undefined = project.id) {
+function renderCard(project: Project) {
 	patches = [];
 	vi.stubGlobal(
 		"fetch",
 		vi.fn(async (input: Request) => {
-			const u = new URL(input.url);
-			if (input.method === "PATCH") {
-				const body = (await input.json()) as Record<string, unknown>;
-				patches.push(body);
-				return Response.json({ ...project, ...body });
-			}
-			if (u.pathname === "/api/v1/projects")
-				return Response.json({ projects: [project] });
-			if (u.pathname === "/api/v1/providers")
-				return Response.json({ providers: [] });
-			if (u.pathname === "/api/v1/browser-profiles")
-				return Response.json({ profiles: [] });
-			return Response.json({ identities: {} });
+			const body = (await input.json()) as Record<string, unknown>;
+			patches.push(body);
+			return Response.json({ ...project, ...body });
 		}),
 	);
 	render(
@@ -58,14 +46,7 @@ function renderEditor(project: Project, id: string | undefined = project.id) {
 				new QueryClient({ defaultOptions: { queries: { retry: false } } })
 			}
 		>
-			<MemoryRouter>
-				<ProjectEditor
-					initial={formOf(project)}
-					id={id}
-					onSaved={() => undefined}
-					onCancel={() => undefined}
-				/>
-			</MemoryRouter>
+			<ProjectGatesCard project={project} onCancel={() => undefined} />
 		</QueryClientProvider>,
 	);
 }
@@ -80,19 +61,19 @@ afterEach(() => {
 });
 
 describe("ProjectGates", () => {
-	it("GitHub 项目：门禁区出现，默认全关；没改过时 PATCH 不带 githubGates", async () => {
-		renderEditor(PROJECT);
+	it("GitHub 项目：门禁区出现，默认全关；没改过时保存不可用", async () => {
+		renderCard(PROJECT);
 		expect(await screen.findByTestId("project-gates")).toBeInTheDocument();
 		expect(toggle("github.gates.push")).not.toBeChecked();
 		expect(toggle("github.gates.pr")).not.toBeChecked();
 		expect(toggle("github.gates.requireClosingRef")).not.toBeChecked();
-		fireEvent.click(save());
-		await waitFor(() => expect(patches).toHaveLength(1));
-		expect(patches[0]).not.toHaveProperty("githubGates");
+		expect(save()).toBeDisabled();
+		fireEvent.click(toggle("github.gates.push"));
+		expect(save()).toBeEnabled();
 	});
 
 	it("改门禁：PATCH 带整理后的 githubGates", async () => {
-		renderEditor(PROJECT);
+		renderCard(PROJECT);
 		await screen.findByTestId("project-gates");
 		fireEvent.click(toggle("github.gates.push"));
 		fireEvent.click(toggle("github.gates.pr"));
@@ -119,7 +100,7 @@ describe("ProjectGates", () => {
 	});
 
 	it("回填已有门禁；清空命令后保存时省略该命令", async () => {
-		renderEditor({
+		renderCard({
 			...PROJECT,
 			githubGates: {
 				push: true,
@@ -146,19 +127,9 @@ describe("ProjectGates", () => {
 		});
 	});
 
-	it("非 GitHub 项目、新建项目：没有门禁区", async () => {
+	it("非 GitHub 项目：没有门禁区", () => {
 		const { github: _g, ...plain } = PROJECT;
-		renderEditor({ ...plain, repoUrl: "https://gitlab.com/acme/widgets" });
-		await screen.findByRole("button", { name: T("common.save") });
-		await waitFor(() =>
-			expect(vi.mocked(fetch).mock.calls.length).toBeGreaterThan(0),
-		);
-		expect(screen.queryByTestId("project-gates")).toBeNull();
-	});
-
-	it("新建项目（无 id）：没有门禁区", async () => {
-		renderEditor(PROJECT, undefined);
-		await screen.findByRole("button", { name: T("common.save") });
+		renderCard({ ...plain, repoUrl: "https://gitlab.com/acme/widgets" });
 		expect(screen.queryByTestId("project-gates")).toBeNull();
 	});
 });

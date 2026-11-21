@@ -540,7 +540,10 @@ async function startMock() {
 	const warm = await openPage({ base: MOCK_BASE });
 	for (const [path, ready] of [
 		[`/t/${MAIN_THREAD}`, "[data-testid=transcript]"],
-		[`/projects/${MOCK_PROJECT}`, "[data-testid=project-github]"],
+		[
+			`/projects/${MOCK_PROJECT}/settings/github`,
+			"[data-testid=project-github]",
+		],
 	] as const) {
 		await goto(warm, MOCK_BASE, path);
 		await warm.locator(ready).first().waitFor({ timeout: 180_000 });
@@ -602,7 +605,7 @@ async function mockR8() {
 		`选中后仓库地址被填入（${url}）`,
 	);
 	expect(base === "gh-pages", `选中后默认分支被填入（${base}）`);
-	await p.getByRole("button", { name: "保存", exact: true }).click();
+	await p.getByRole("button", { name: "创建", exact: true }).click();
 	await waitFor(
 		"保存后跳到项目页",
 		() => /\/projects\/prj_/.test(new URL(p.url()).pathname),
@@ -615,6 +618,9 @@ async function mockR8() {
 		!!post?.body?.includes("https://github.com/oryn-demo/docs-site"),
 		`POST /api/v1/projects 带上仓库地址（${clip(post?.body ?? "无", 160)}）`,
 	);
+	// M24：GitHub 卡片在项目设置的「GitHub」分组。mock 的数据在页内，整页跳转会丢掉刚建的项目，所以在应用内点过去
+	await p.getByRole("button", { name: "项目设置", exact: true }).click();
+	await p.getByRole("link", { name: "GitHub", exact: true }).click();
 	const card = p.getByTestId("project-github");
 	await card.waitFor({ timeout: 15_000 });
 	const text = (await card.textContent()) ?? "";
@@ -700,7 +706,7 @@ async function mockR12() {
 /** R16：项目页触发规则对话框——选事件、填标签、套用预设、保存，列表出现新规则。 */
 async function mockR16() {
 	const p = await mockPage();
-	await goto(p, MOCK_BASE, `/projects/${MOCK_PROJECT}`);
+	await goto(p, MOCK_BASE, `/projects/${MOCK_PROJECT}/settings/github`);
 	const box = p.getByTestId(`github-triggers-${MOCK_PROJECT}`);
 	await box.waitFor({ timeout: 30_000 });
 	await box
@@ -1974,13 +1980,14 @@ async function realR8() {
 		.inputValue();
 	expect(url === `https://github.com/${REPO}`, `仓库地址被填入（${url}）`);
 	expect(base === "main", `默认分支被填入（${base}）`);
-	await p.getByRole("button", { name: "保存", exact: true }).click();
+	await p.getByRole("button", { name: "创建", exact: true }).click();
 	await waitFor(
 		"保存后跳到项目页",
 		() => /\/projects\/prj_/.test(new URL(p.url()).pathname),
 		15_000,
 	);
 	projectId = new URL(p.url()).pathname.split("/")[2] ?? "";
+	await goto(p, REAL_UI, `/projects/${projectId}/settings/github`);
 	const card = p.getByTestId("project-github");
 	await card.waitFor({ timeout: 15_000 });
 	await waitFor(

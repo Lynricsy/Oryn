@@ -1,9 +1,10 @@
-/** 项目分区：总览（含 ⋯ 菜单与已归档区）、新建、线程子页、项目页各卡片（设置、Agent 配置、GitHub 与触发规则、SSH、环境、快照与预热、服务、定时）及其下拉与对话框。 */
+/** 项目分区：总览（含 ⋯ 菜单与已归档区）、新建、线程子页、项目主页、项目设置各分组（概览与危险操作、环境与快照预热、Agent、GitHub 与触发规则、定时、SSH）及其下拉与对话框。 */
 import type { Locator, Page } from "@playwright/test";
 import { lastOverlay, settle, surface } from "./audit";
 
 const PRJ = "prj_01JCZ0000000000000000ORYN";
 const PAGE = `/projects/${PRJ}`;
+const SETTINGS = `${PAGE}/settings`;
 
 /**
  * 只滚元素最近的滚动容器（scrollIntoView 会连带滚动 overflow:hidden 的外壳，把整个应用框推出视口，用户滚不到那种状态）。
@@ -65,41 +66,56 @@ surface({
 	path: `${PAGE}/threads?status=archived`,
 	ready: "[data-testid=project-thread-row]",
 });
-surface({ id: "projects.page", path: PAGE });
 surface({
-	id: "projects.page.settings-bottom",
+	id: "projects.home",
 	path: PAGE,
-	open: cardAt("setup 脚本"),
+	ready: "[data-testid=project-home] [data-testid=project-thread-row]",
 });
 surface({
-	id: "projects.page.agent-config",
+	id: "projects.home.bottom",
 	path: PAGE,
-	open: cardAt("Agent 配置"),
-});
-surface({ id: "projects.page.github", path: PAGE, open: cardAt("GitHub") });
-surface({ id: "projects.page.ssh", path: PAGE, open: cardAt("SSH 主机") });
-surface({ id: "projects.page.accel", path: PAGE, open: cardAt("快照与预热") });
-surface({
-	id: "projects.page.schedules",
-	path: PAGE,
-	open: (page) =>
-		scrollWithin(
-			page,
-			page.locator(`[data-testid=project-schedules-${PRJ}]`),
-			true,
-		),
+	ready: "[data-testid=project-home] [data-testid=project-thread-row]",
+	open: (page) => scrollWithin(page, page.getByTestId("project-home"), true),
 });
 surface({
-	id: "projects.page.repo-picker",
-	path: PAGE,
+	id: "projects.archived",
+	path: "/projects/prj_01JCZ000000000000000LEGACY",
+	ready: "[data-testid=project-archived]",
+});
+surface({
+	id: "projects.settings.nav",
+	path: SETTINGS,
+	ready: "[data-testid=project-settings-list]",
+	only: "mobile",
+});
+surface({ id: "projects.settings.overview", path: `${SETTINGS}/overview` });
+surface({
+	id: "projects.settings.overview.danger",
+	path: `${SETTINGS}/overview`,
+	open: cardAt("危险操作"),
+});
+surface({
+	id: "projects.settings.repo-picker",
+	path: `${SETTINGS}/overview`,
 	open: async (page) => {
 		await page.getByRole("button", { name: "从 GitHub 选择" }).click();
 		return lastOverlay(page);
 	},
 });
 surface({
-	id: "projects.page.trigger-dialog",
-	path: PAGE,
+	id: "projects.settings.environment",
+	path: `${SETTINGS}/environment`,
+});
+surface({
+	id: "projects.settings.accel",
+	path: `${SETTINGS}/environment`,
+	open: cardAt("快照与预热"),
+});
+surface({ id: "projects.settings.agent", path: `${SETTINGS}/agent` });
+surface({ id: "projects.settings.github", path: `${SETTINGS}/github` });
+surface({
+	id: "projects.settings.trigger-dialog",
+	path: `${SETTINGS}/github`,
 	ready: `[data-testid=github-triggers-${PRJ}]`,
 	open: async (page) => {
 		await page
@@ -110,8 +126,8 @@ surface({
 	},
 });
 surface({
-	id: "projects.page.trigger-dialog.model",
-	path: PAGE,
+	id: "projects.settings.trigger-dialog.model",
+	path: `${SETTINGS}/github`,
 	ready: `[data-testid=github-triggers-${PRJ}]`,
 	open: async (page) => {
 		await page
@@ -139,8 +155,13 @@ surface({
 	},
 });
 surface({
-	id: "projects.page.schedule-menu",
-	path: PAGE,
+	id: "projects.settings.schedules",
+	path: `${SETTINGS}/schedules`,
+	ready: `[data-testid=project-schedules-${PRJ}] [data-schedule]`,
+});
+surface({
+	id: "projects.settings.schedule-menu",
+	path: `${SETTINGS}/schedules`,
 	ready: `[data-testid=project-schedules-${PRJ}] [data-schedule]`,
 	open: async (page) => {
 		await page
@@ -152,8 +173,8 @@ surface({
 	},
 });
 surface({
-	id: "projects.page.schedule-new",
-	path: PAGE,
+	id: "projects.settings.schedule-new",
+	path: `${SETTINGS}/schedules`,
 	ready: `[data-testid=project-schedules-${PRJ}]`,
 	open: async (page) => {
 		await page.getByRole("button", { name: "新建定时任务" }).click();
@@ -166,8 +187,8 @@ surface({
 	},
 });
 surface({
-	id: "projects.page.schedule-edit",
-	path: PAGE,
+	id: "projects.settings.schedule-edit",
+	path: `${SETTINGS}/schedules`,
 	ready: `[data-testid=project-schedules-${PRJ}] [data-schedule]`,
 	open: async (page) => {
 		await page
@@ -181,3 +202,4 @@ surface({
 		return page.getByRole("dialog");
 	},
 });
+surface({ id: "projects.settings.ssh", path: `${SETTINGS}/ssh` });

@@ -10,10 +10,11 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { vi } from "vitest";
 import type { Orb, Project, Schemas, Thread } from "../../api/client";
 import type { UsageStat, UsageStats } from "../../api/stats-queries";
-import { ProjectPage } from "../ProjectsPage";
 import { ProjectCreatePage } from "./ProjectCreatePage";
+import { ProjectHomePage } from "./ProjectHomePage";
 import { ProjectsOverviewPage } from "./ProjectsOverviewPage";
 import { ProjectThreadsPage } from "./ProjectThreadsPage";
+import { ProjectSettingsPage } from "./settings/ProjectSettingsPage";
 
 export interface Write {
 	method: string;
@@ -331,10 +332,18 @@ export function mount(path: string) {
 				<Routes>
 					<Route path="/projects" element={<ProjectsOverviewPage />} />
 					<Route path="/projects/new" element={<ProjectCreatePage />} />
-					<Route path="/projects/:projectId" element={<ProjectPage />} />
+					<Route path="/projects/:projectId" element={<ProjectHomePage />} />
 					<Route
 						path="/projects/:projectId/threads"
 						element={<ProjectThreadsPage />}
+					/>
+					<Route
+						path="/projects/:projectId/settings"
+						element={<ProjectSettingsPage />}
+					/>
+					<Route
+						path="/projects/:projectId/settings/:tab"
+						element={<ProjectSettingsPage />}
 					/>
 				</Routes>
 				<Where />

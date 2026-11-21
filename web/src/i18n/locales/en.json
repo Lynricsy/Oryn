@@ -1213,6 +1213,8 @@
 		"defaultOrbType": "Default orb type",
 		"defaultProvider": "Default provider",
 		"deleteConfirm": "Delete project {{name}}?",
+		"description": "Description",
+		"descriptionHint": "One line shown on the projects overview and project home (up to 200 characters).",
 		"empty": "No projects yet.",
 		"gitAuthorEmail": "Commit author email (override)",
 		"gitAuthorName": "Commit author name (override)",
@@ -4544,7 +4546,11 @@
 		"breadcrumb": "Breadcrumb",
 		"archivedTitle": "This project is archived",
 		"archivedBody": "It's hidden from the sidebar, its GitHub repository hook is released, warm orbs are at zero, and its schedules and triggers no longer run. Its threads are kept.",
-		"unarchive": "Unarchive"
+		"unarchive": "Unarchive",
+		"copyLink": "Copy project link",
+		"copyClone": "Copy git clone command",
+		"copyFailed": "Couldn't copy to the clipboard (the browser blocked access): {{text}}",
+		"settings": "Project settings"
 	},
 	"projectsOverview": {
 		"menu": "More actions",
@@ -4568,15 +4574,60 @@
 	},
 	"projectHome": {
 		"noThreads": "No threads in this project yet.",
-		"shipped": "Shipped"
+		"shipped": "Shipped",
+		"status": "Project status",
+		"recentThreads": "Recent threads",
+		"viewAll": "View all",
+		"chip": {
+			"awaiting_one": "{{count}} waiting for you",
+			"awaiting_other": "{{count}} waiting for you",
+			"working_one": "{{count}} working",
+			"working_other": "{{count}} working",
+			"prs_one": "{{count}} open PR",
+			"prs_other": "{{count}} open PRs",
+			"ciFailing_one": "{{count}} failing CI",
+			"ciFailing_other": "{{count}} failing CI",
+			"setupFailed": "Last setup failed",
+			"usage_one": "Last 7 days {{cost}} · {{count}} turn",
+			"usage_other": "Last 7 days {{cost}} · {{count}} turns"
+		}
+	},
+	"projectSettings": {
+		"title": "Settings",
+		"nav": "Settings sections",
+		"tabs": {
+			"overview": "Overview",
+			"environment": "Environment",
+			"agent": "Agent",
+			"github": "GitHub",
+			"schedules": "Schedules",
+			"ssh": "SSH hosts"
+		},
+		"general": "General",
+		"envForm": "Defaults and scripts",
+		"danger": "Danger zone",
+		"archive": "Archive project",
+		"archiveHint": "Hide it from the sidebar and stop its GitHub hook, warm orbs, schedules and triggers. Threads are kept; unarchive any time.",
+		"archiveConfirm": "Archive project {{name}}?",
+		"archiveConfirmBody": "Its GitHub hook is released, warm orbs go to zero, and schedules and triggers stop. Threads are untouched and you can still start threads in it.",
+		"unarchiveHint": "The project returns to the sidebar and its schedules and triggers take effect again.",
+		"delete": "Delete project",
+		"deleteHint": "Threads are kept but leave the project; its schedules, agent config and project memory are deleted for good.",
+		"memory": {
+			"title": "Project memory",
+			"archived": "Archived projects aren't in memory's project list; unarchive to change this."
+		},
+		"github": {
+			"noneTitle": "Not a GitHub repository",
+			"noneBody": "Set the repository URL to https://github.com/<owner>/<repo> to configure event forwarding, triggers and push gates here.",
+			"editRepo": "Change repository URL"
+		}
 	},
 	"projectsPage": {
-		"settings": "Project settings",
 		"environment": "Environment setup",
 		"noSetupRun": "No setup runs yet.",
 		"openThread": "Open thread",
 		"services": "Services",
-		"noServices": "No managed services in this project's orbs.",
 		"notFound": "This project doesn't exist or was deleted.",
 		"empty": "No projects yet. A project ties a repo to its environment and scripts.",
 		"agentConfig": {

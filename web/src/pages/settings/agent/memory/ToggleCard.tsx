@@ -35,7 +35,7 @@ export function ToggleCard(): ReactNode {
 					<p className="text-faint text-xs">{t("memoryPage.projects.hint")}</p>
 					<ul className="-mx-2 flex flex-col">
 						{items.map((p) => (
-							<ProjectRow
+							<MemoryProjectRow
 								key={p.projectId}
 								project={p}
 								busy={put.isPending && put.variables?.id === p.projectId}
@@ -50,7 +50,8 @@ export function ToggleCard(): ReactNode {
 	);
 }
 
-function ProjectRow({
+/** 一个项目的记忆开关行（项目设置「Agent」分组也用它）。 */
+export function MemoryProjectRow({
 	project: p,
 	busy,
 	onChange,

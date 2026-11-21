@@ -3273,19 +3273,29 @@ async function R8() {
 		await sp.locator(`a[href="/projects/${p.id}"]`).click();
 		await waitPath(page, `/projects/${p.id}`);
 		const main = page.locator("main");
-		for (const title of [
-			zh.projectsPage.settings,
-			zh.projectsPage.environment,
-			zh.projectsPage.services,
-			zh.projects.schedules,
-		])
-			await main
-				.getByText(title, { exact: true })
-				.first()
-				.waitFor({ timeout: 15_000 });
+		await main.getByTestId("project-home").waitFor({ timeout: 15_000 });
+		await main
+			.getByText(zh.projectHome.recentThreads, { exact: true })
+			.first()
+			.waitFor({ timeout: 15_000 });
 		check(
 			true,
-			`主区是 /projects/${p.id}，四张卡（${zh.projectsPage.settings} / ${zh.projectsPage.environment} / ${zh.projectsPage.services} / ${zh.projects.schedules}）`,
+			`主区是 /projects/${p.id}（项目主页，含「${zh.projectHome.recentThreads}」）`,
+		);
+		await page
+			.getByRole("button", { name: zh.projectShell.settings, exact: true })
+			.click();
+		await waitPath(page, `/projects/${p.id}/settings/overview`);
+		await main
+			.getByRole("link", {
+				name: zh.projectSettings.tabs.environment,
+				exact: true,
+			})
+			.click();
+		await waitPath(page, `/projects/${p.id}/settings/environment`);
+		check(
+			true,
+			`齿轮 → 设置概览 → 左导航「${zh.projectSettings.tabs.environment}」`,
 		);
 		const script = `echo m96-${RUN}`;
 		await main.getByLabel(zh.projects.setupScript).fill(script);

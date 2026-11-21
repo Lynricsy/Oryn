@@ -67,9 +67,6 @@ function renderEditor(status: GitHubStatus, initial: ProjectForm) {
 				return Response.json({ providers: [] });
 			if (u.pathname === "/api/v1/browser-profiles")
 				return Response.json({ profiles: [] });
-			// 编辑器的门禁区按 id 在项目列表里找当前项目
-			if (u.pathname === "/api/v1/projects")
-				return Response.json({ projects: [] });
 			return Response.json({});
 		}),
 	);
@@ -80,6 +77,7 @@ function renderEditor(status: GitHubStatus, initial: ProjectForm) {
 			}
 		>
 			<ProjectEditor
+				section="create"
 				initial={initial}
 				onSaved={() => undefined}
 				onCancel={() => undefined}

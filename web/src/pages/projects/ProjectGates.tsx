@@ -1,12 +1,24 @@
 /**
- * 项目编辑器里的「推送 / 开 PR 门禁」区（M15，R19）：两个开关（推送门禁、PR 门禁）、修复 / 检查 / 测试命令、
+ * 推送 / 开 PR 门禁（M15，R19）：两个开关（推送门禁、PR 门禁）、修复 / 检查 / 测试命令、
  * PR 正文必需的二级标题（每行一个）与「须含 Fixes|Closes|Resolves #N」。门禁由出站代理强制执行，
- * 检查由 orb 内的 `github_prepare` 按这里的命令运行。受控组件：值随项目表单一起经 `PATCH projects/{id}` 的 `githubGates` 保存。
+ * 检查由 orb 内的 `github_prepare` 按这里的命令运行。`ProjectGates` 是受控的表单区；`ProjectGatesCard`
+ * （M24，项目设置「GitHub」分组）把它放进卡片，改过才能保存，经 `PATCH projects/{id}` 的 `githubGates` 写入。
  */
-import type { ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { api, type Project, unwrap } from "../../api/client";
 import type { GitHubGates } from "../../api/github-queries";
-import { Field, TextArea, Toggle } from "../../components/ui/primitives";
+import { qk } from "../../api/queries";
+import { useAsync } from "../../components/settings/useAsync";
+import { Card } from "../../components/ui/data";
+import {
+	Button,
+	ErrorText,
+	Field,
+	TextArea,
+	Toggle,
+} from "../../components/ui/primitives";
 
 /** 项目还没配置门禁时的值（默认关闭）。 */
 export const DEFAULT_GATES: GitHubGates = {
@@ -122,5 +134,53 @@ export function ProjectGates({
 				label={t("github.gates.requireClosingRef")}
 			/>
 		</fieldset>
+	);
+}
+
+/** 门禁卡（M24）：只对绑定了 GitHub 的项目出现；没改过时「保存」不可用，「取消」交给父组件还原。 */
+export function ProjectGatesCard({
+	project,
+	onCancel,
+}: {
+	project: Project;
+	onCancel(): void;
+}): ReactNode {
+	const { t } = useTranslation();
+	const qc = useQueryClient();
+	const save = useAsync();
+	// null = 没改过
+	const [gates, setGates] = useState<GitHubGates | null>(null);
+	if (!project.github) return null;
+	return (
+		<Card>
+			<div className="flex flex-col gap-3">
+				<ProjectGates
+					value={gates ?? project.githubGates ?? DEFAULT_GATES}
+					onChange={setGates}
+				/>
+				<div className="flex gap-2">
+					<Button
+						variant="primary"
+						disabled={gates === null || save.busy}
+						onClick={() =>
+							void save.run(async () => {
+								if (!gates) return;
+								await unwrap(
+									api.PATCH("/api/v1/projects/{id}", {
+										params: { path: { id: project.id } },
+										body: { githubGates: normalizeGates(gates) },
+									}),
+								);
+								await qc.invalidateQueries({ queryKey: qk.projects });
+							})
+						}
+					>
+						{t("common.save")}
+					</Button>
+					<Button onClick={onCancel}>{t("common.cancel")}</Button>
+				</div>
+				<ErrorText error={save.error} />
+			</div>
+		</Card>
 	);
 }

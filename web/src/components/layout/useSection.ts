@@ -86,7 +86,7 @@ export function useSwitchSection(): (
 
 /**
  * 路由变化后记下该分区的路径。延后一个宏任务（setTimeout 0）并在路由再次变化时取消：同一拍里的重定向
- * （`/assistant` → `/assistant/<id>`、`/t/<助手对话>` → `/assistant/<id>`、`/projects` → `/projects/<id>`）不留痕；
+ * （`/assistant` → `/assistant/<id>`、`/t/<助手对话>` → `/assistant/<id>`、`/projects/<id>/settings` → `…/settings/overview`）不留痕；
  * `settles` 为假的（索引里已知是协调对话的 `/t/<id>`）不记。冷启动时 `/t/<id>` 的种类要等索引到达才判定
  * （`kindPending`）：订阅索引，判定后再按 `settles` 决定；期间路由变化则取消。
  */

@@ -1,5 +1,5 @@
 /**
- * 项目页的定时任务（M9，M9.6 起在 `/projects/<id>` 的「定时任务」卡里）：直接列出该项目的「每次新建线程」定时；
+ * 项目的定时任务（M9，M24 起在项目设置的「定时任务」分组 `/projects/<id>/settings/schedules`）：直接列出该项目的「每次新建线程」定时；
  * 设置 → 关于：协调宿主一栏列出协调 orb 并标「协调」。数据走 mock 后端（夹具同截图）。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -8,7 +8,7 @@ import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { M9_IDS, projects } from "../mock/fixtures";
 import { MockServer } from "../mock/server";
-import { ProjectPage } from "./ProjectsPage";
+import { ProjectSettingsPage } from "./projects/settings/ProjectSettingsPage";
 import { SettingsPage, type SettingsSection } from "./SettingsPage";
 
 let server: MockServer;
@@ -52,9 +52,14 @@ describe("项目页的定时任务（M9）", () => {
 		});
 		render(
 			<QueryClientProvider client={client}>
-				<MemoryRouter initialEntries={[`/projects/${oryn.id}`]}>
+				<MemoryRouter
+					initialEntries={[`/projects/${oryn.id}/settings/schedules`]}
+				>
 					<Routes>
-						<Route path="/projects/:projectId" element={<ProjectPage />} />
+						<Route
+							path="/projects/:projectId/settings/:tab"
+							element={<ProjectSettingsPage />}
+						/>
 					</Routes>
 				</MemoryRouter>
 			</QueryClientProvider>,

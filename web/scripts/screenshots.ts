@@ -512,8 +512,12 @@ function m9Screens(): Screen[] {
 		{
 			name: "m9-project-schedules",
 			prepare: async ({ page }) => {
-				// M9.6：项目定时直接显示在项目页 /projects/<id>（原设置里的项目列表已搬走）
-				await open(page, `/projects/${projects[0]?.id}`, "main");
+				// M24：项目定时在项目设置的「定时任务」分组 /projects/<id>/settings/schedules
+				await open(
+					page,
+					`/projects/${projects[0]?.id}/settings/schedules`,
+					"main",
+				);
 				await page
 					.locator(`[data-testid^=project-schedules-] [data-schedule]`)
 					.first()
@@ -597,13 +601,23 @@ function m14Screens(): Screen[] {
 		{
 			name: "m14-project-github",
 			prepare: ({ page }) =>
-				open(page, `/projects/${projects[0]?.id}`, "main", 1200),
+				open(
+					page,
+					`/projects/${projects[0]?.id}/settings/github`,
+					"main",
+					1200,
+				),
 		},
 		{
-			// 项目页 GitHub 卡片里新建触发规则的对话框，套用「分诊并修复」预设
+			// 项目设置「GitHub」分组里新建触发规则的对话框，套用「分诊并修复」预设
 			name: "m14-trigger-dialog",
 			prepare: async ({ page }) => {
-				await open(page, `/projects/${projects[0]?.id}`, "main", 1200);
+				await open(
+					page,
+					`/projects/${projects[0]?.id}/settings/github`,
+					"main",
+					1200,
+				);
 				const triggers = page.getByTestId(`github-triggers-${projects[0]?.id}`);
 				await triggers.waitFor({ timeout: 15_000 });
 				await triggers.getByRole("button", { name: "新建" }).click();
@@ -1436,6 +1450,37 @@ const SCREENS: Screen[] = [
 			await settle(page, 400);
 		},
 	},
+	// M24：项目总览、项目主页、线程子页与项目设置（窄屏是分组列表）
+	{
+		name: "projects-overview",
+		prepare: ({ page }) =>
+			open(page, "/projects", "[data-testid=projects-overview]"),
+	},
+	{
+		name: "projects-home",
+		prepare: ({ page }) =>
+			open(page, `/projects/${projects[0]?.id}`, "[data-testid=project-home]"),
+	},
+	{
+		name: "projects-threads",
+		prepare: ({ page }) =>
+			open(
+				page,
+				`/projects/${projects[0]?.id}/threads`,
+				"[data-testid=project-threads]",
+			),
+	},
+	{
+		name: "projects-settings",
+		prepare: ({ page, width }) =>
+			open(
+				page,
+				`/projects/${projects[0]?.id}/settings`,
+				width < 600
+					? "[data-testid=project-settings-list]"
+					: "[data-testid=project-settings]",
+			),
+	},
 	{
 		name: "sink-more",
 		widths: [390],
@@ -1855,7 +1900,7 @@ const SCREENS: Screen[] = [
 		prepare: async ({ page }) => {
 			await open(
 				page,
-				`/projects/${projects[0]?.id}`,
+				`/projects/${projects[0]?.id}/settings/environment`,
 				"[data-testid=project-accel]",
 			);
 			await scrollWithin(page, "[data-testid=warm-orbs-value]", "center");
@@ -1867,7 +1912,7 @@ const SCREENS: Screen[] = [
 		prepare: async ({ page }) => {
 			await open(
 				page,
-				`/projects/${projects[0]?.id}`,
+				`/projects/${projects[0]?.id}/settings/environment`,
 				"[data-testid=snapshot-list]",
 			);
 			await scrollWithin(page, "[data-testid=project-accel]", "start");

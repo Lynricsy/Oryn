@@ -2992,8 +2992,8 @@ async function S20() {
 	const tick = schedules.find((x) => x.name === "tick") as Schedule;
 	const spName = `space-${RUN}`;
 	await withPage(async (page) => {
-		// M9.6：项目定时直接显示在项目页 /projects/<id>（设置里的项目列表已搬走）
-		await page.goto(`${BASE}/projects/${pid}`);
+		// M24：项目定时在项目设置的「定时任务」分组 /projects/<id>/settings/schedules
+		await page.goto(`${BASE}/projects/${pid}/settings/schedules`);
 		const list = page.getByTestId(`project-schedules-${pid}`);
 		await list.waitFor({ timeout: 15_000 });
 		const txt = await waitFor(

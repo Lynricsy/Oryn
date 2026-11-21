@@ -18,19 +18,24 @@
 | `projects.new` | 新建项目 | 项目分区「新建项目」 | 页面 |
 | `projects.threads` | 项目的线程子页（搜索、状态筛选） | 项目主页「最近线程」→ 查看全部 | 页面 |
 | `projects.threads.archived` | 项目的线程子页 · 只看已归档 | 线程子页状态选「已归档」 | 页面 |
-| `projects.page` | 项目页（顶部：项目设置） | 项目分区点某个项目 | 页面 |
-| `projects.page.settings-bottom` | 项目设置下半部分（setup 脚本、保存） | 项目页往下滚 | 页面 |
-| `projects.page.agent-config` | Agent 配置卡 | 项目页往下滚 | 页面 |
-| `projects.page.github` | GitHub 卡（钩子、触发规则） | 项目页往下滚 | 页面 |
-| `projects.page.ssh` | SSH 主机卡 | 项目页往下滚 | 页面 |
-| `projects.page.accel` | 快照与预热卡 | 项目页往下滚 | 页面 |
-| `projects.page.schedules` | 服务卡与定时任务卡（页底） | 项目页滚到底 | 页面 |
-| `projects.page.repo-picker` | 仓库选择下拉 | 项目设置「从 GitHub 选择」 | 下拉 |
-| `projects.page.trigger-dialog` | 新建触发规则对话框 | GitHub 卡「新建」 | 弹窗（手机为抽屉） |
-| `projects.page.trigger-dialog.model` | 触发规则的模型池选择器 | 触发规则对话框「添加模型」 | 下拉 |
-| `projects.page.schedule-menu` | 定时任务行菜单 | 定时卡某行「…」 | 菜单 |
-| `projects.page.schedule-new` | 新建定时任务对话框 | 定时卡「新建定时任务」 | 弹窗（手机为抽屉） |
-| `projects.page.schedule-edit` | 编辑定时任务对话框（含运行记录） | 定时卡某行「…」→ 编辑 | 弹窗（手机为抽屉） |
+| `projects.home` | 项目主页（描述与仓库行、状态条、最近线程） | 项目分区点某个项目 | 页面 |
+| `projects.home.bottom` | 项目主页页底（服务卡） | 项目主页滚到底 | 页面 |
+| `projects.archived` | 已归档项目的主页（归档提示、无「新建线程」） | 项目总览「⋯」→ 显示已归档项目 → 点 legacy-site | 页面 |
+| `projects.settings.nav` | 项目设置分组列表（仅手机） | 项目主页齿轮 | 页面 |
+| `projects.settings.overview` | 项目设置「概览」（基本信息） | 项目主页齿轮（宽屏落到概览）/ 分组列表「概览」 | 页面 |
+| `projects.settings.overview.danger` | 「概览」的危险操作（归档、删除） | 「概览」往下滚 | 页面 |
+| `projects.settings.repo-picker` | 仓库选择下拉 | 「概览」的「从 GitHub 选择」 | 下拉 |
+| `projects.settings.environment` | 项目设置「环境」（默认环境与脚本、环境配置卡） | 设置左导航「环境」 | 页面 |
+| `projects.settings.accel` | 快照与预热卡 | 「环境」往下滚 | 页面 |
+| `projects.settings.agent` | 项目设置「Agent」（Agent 配置、项目记忆） | 设置左导航「Agent」 | 页面 |
+| `projects.settings.github` | 项目设置「GitHub」（钩子、触发规则、推送门禁） | 设置左导航「GitHub」 | 页面 |
+| `projects.settings.trigger-dialog` | 新建触发规则对话框 | 「GitHub」的触发规则「新建」 | 弹窗（手机为抽屉） |
+| `projects.settings.trigger-dialog.model` | 触发规则的模型池选择器 | 触发规则对话框「添加模型」 | 下拉 |
+| `projects.settings.schedules` | 项目设置「定时任务」 | 设置左导航「定时任务」 | 页面 |
+| `projects.settings.schedule-menu` | 定时任务行菜单 | 定时某行「…」 | 菜单 |
+| `projects.settings.schedule-new` | 新建定时任务对话框 | 「定时任务」的「新建定时任务」 | 弹窗（手机为抽屉） |
+| `projects.settings.schedule-edit` | 编辑定时任务对话框（含运行记录） | 定时某行「…」→ 编辑 | 弹窗（手机为抽屉） |
+| `projects.settings.ssh` | 项目设置「SSH 主机」 | 设置左导航「SSH 主机」 | 页面 |
 | `space.page` | Space 页（聊天 + 右列） | 侧栏「空间」下点某个空间 | 页面 |
 | `space.side` | Space 右列（进度、定时、线程卡片；手机在「线程」标签） | 宽屏直接可见 / 手机切到「线程」标签 | 页面 |
 | `space.menu` | 空间操作菜单 | 页头「…」 | 菜单 |

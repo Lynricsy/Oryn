@@ -1142,7 +1142,7 @@ async function Z2() {
 		);
 	const page = await newPage();
 	try {
-		await page.goto(`${BASE}/projects/${a.id}`, {
+		await page.goto(`${BASE}/projects/${a.id}/settings/agent`, {
 			waitUntil: "domcontentloaded",
 		});
 		const card = cardSection(page, "Agent 配置");

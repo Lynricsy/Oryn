@@ -1,19 +1,15 @@
 /**
- * 项目表单：名称、仓库、图标、基线分支、默认 provider / orb 类型 / 浏览器 Profile、浅克隆、setup / resume 脚本、
- * 「仓库内脚本：有 / 无」、git 提交身份覆盖；编辑 GitHub 项目时还有推送 / 开 PR 门禁区（M15，`ProjectGates`）。
- * 新建发 POST，编辑发 PATCH（空串 = 清除；门禁只在改过时随 `githubGates` 发出）；响应体就是保存后的项目。
+ * 项目表单（M24 起按 `section` 拆开）：
+ * - `create`（新建页）：名称、图标、描述、仓库地址（可从 GitHub 选择）、基线分支；发 POST，只带填了的字段，其余由服务端补默认值；
+ * - `overview`（设置「概览」）：同上，另有 git 提交身份覆盖；
+ * - `environment`（设置「环境」）：默认 provider / orb 类型 / 浏览器 Profile、浅克隆、快照与预热、setup / resume 脚本与「仓库内脚本：有 / 无」。
+ * 编辑发 PATCH，只带本分组的字段（空串 = 清除）；服务端只改出现的字段，所以两组分开保存互不影响。响应体就是保存后的项目。
  */
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, type Project, type Schemas, unwrap } from "../../api/client";
-import type { GitHubGates } from "../../api/github-queries";
-import {
-	qk,
-	useBrowserProfiles,
-	useProjects,
-	useProviders,
-} from "../../api/queries";
+import { qk, useBrowserProfiles, useProviders } from "../../api/queries";
 import { GlyphGrid } from "../../components/settings/GlyphGrid";
 import { useAsync } from "../../components/settings/useAsync";
 import { ProjectBadge } from "../../components/ui/data";
@@ -30,21 +26,19 @@ import {
 import type { SetupRun } from "../../lib/env-banner";
 import { PROJECT_GLYPHS } from "../../lib/glyphs";
 import { SnapshotsToggle, WarmOrbsStepper } from "./ProjectAccel";
-import { DEFAULT_GATES, normalizeGates, ProjectGates } from "./ProjectGates";
 import { RepoPicker } from "./RepoPicker";
 
 export type ProjectForm = Schemas["ProjectCreate"];
 
-export const EMPTY_PROJECT: ProjectForm = {
-	name: "",
-	shallowClone: false,
-	snapshots: true,
-	warmOrbs: 0,
-};
+/** 表单分组：新建页、设置「概览」、设置「环境」。 */
+export type ProjectSection = "create" | "overview" | "environment";
+
+export const EMPTY_PROJECT: ProjectForm = { name: "", shallowClone: false };
 
 export function formOf(p: Project): ProjectForm {
 	return {
 		name: p.name,
+		description: p.description,
 		repoUrl: p.repoUrl,
 		baseBranch: p.baseBranch,
 		defaultProvider: p.defaultProvider,
@@ -52,13 +46,54 @@ export function formOf(p: Project): ProjectForm {
 		setupScript: p.setupScript,
 		resumeScript: p.resumeScript,
 		shallowClone: p.shallowClone,
-		color: p.color,
 		icon: p.icon,
 		gitAuthorName: p.gitAuthorName,
 		gitAuthorEmail: p.gitAuthorEmail,
 		defaultBrowserProfileId: p.defaultBrowserProfileId,
 		snapshots: p.snapshots,
 		warmOrbs: p.warmOrbs,
+	};
+}
+
+/** 去掉空白后为空的字段视为未填。 */
+const filled = (v: string | undefined): v is string => !!v?.trim();
+
+/** 新建：名称与浅克隆必填，其余只带填了的（服务端补默认值，图标留空以后自动采用）。 */
+function createBody(f: ProjectForm): ProjectForm {
+	const body: ProjectForm = { name: f.name, shallowClone: false };
+	if (filled(f.icon)) body.icon = f.icon;
+	if (filled(f.description)) body.description = f.description;
+	if (filled(f.repoUrl)) body.repoUrl = f.repoUrl;
+	if (filled(f.baseBranch)) body.baseBranch = f.baseBranch;
+	return body;
+}
+
+/** 编辑：只发本分组的字段，未填一律发空串（清除）。 */
+function patchBody(
+	section: Exclude<ProjectSection, "create">,
+	f: ProjectForm,
+): Schemas["ProjectPatch"] {
+	if (section === "overview")
+		return {
+			name: f.name,
+			description: f.description ?? "",
+			repoUrl: f.repoUrl ?? "",
+			baseBranch: f.baseBranch ?? "",
+			// 空串 = 清除，回到自动采用
+			icon: f.icon ?? "",
+			gitAuthorName: f.gitAuthorName ?? "",
+			gitAuthorEmail: f.gitAuthorEmail ?? "",
+		};
+	return {
+		defaultProvider: f.defaultProvider ?? "",
+		defaultOrbType: f.defaultOrbType ?? "",
+		// 空串 = 清除默认 Profile
+		defaultBrowserProfileId: f.defaultBrowserProfileId ?? "",
+		setupScript: f.setupScript ?? "",
+		resumeScript: f.resumeScript ?? "",
+		shallowClone: f.shallowClone,
+		snapshots: f.snapshots ?? true,
+		warmOrbs: f.warmOrbs ?? 0,
 	};
 }
 
@@ -120,74 +155,19 @@ function ProjectIconPicker({
 	);
 }
 
-export function ProjectEditor({
-	initial,
-	id,
-	lastSetup,
-	onSaved,
-	onCancel,
+type SetField = <K extends keyof ProjectForm>(k: K, v: ProjectForm[K]) => void;
+
+/** 新建与「概览」共用的字段：名称、描述、仓库地址、图标、基线分支。 */
+function GeneralFields({
+	f,
+	set,
 }: {
-	initial: ProjectForm;
-	/** 有则编辑（PATCH），无则新建（POST） */
-	id?: string;
-	lastSetup?: SetupRun;
-	onSaved: (project: Project) => void;
-	onCancel: () => void;
+	f: ProjectForm;
+	set: SetField;
 }): ReactNode {
 	const { t } = useTranslation();
-	const qc = useQueryClient();
-	const providers = useProviders();
-	const profiles = useBrowserProfiles();
-	const [f, setF] = useState<ProjectForm>(initial);
-	const save = useAsync();
-	const set = <K extends keyof ProjectForm>(k: K, v: ProjectForm[K]) =>
-		setF((prev) => ({ ...prev, [k]: v }));
-	// 门禁只对已存在的 GitHub 项目开放；null = 没改过，保存时不发 `githubGates`
-	const project = useProjects().data?.projects.find((p) => p.id === id);
-	const [gates, setGates] = useState<GitHubGates | null>(null);
-	const provider = providers.data?.providers.find(
-		(p) => p.name === f.defaultProvider,
-	);
-	// 身份覆盖须两项同时填写或同时留空（服务端同样校验）。
-	const gitPairOk = !f.gitAuthorName?.trim() === !f.gitAuthorEmail?.trim();
 	return (
-		<form
-			className="grid gap-3 sm:grid-cols-2"
-			onSubmit={async (e) => {
-				e.preventDefault();
-				let saved: Project | undefined;
-				const ok = await save.run(async () => {
-					if (id) {
-						const patch: Schemas["ProjectPatch"] = {
-							...f,
-							repoUrl: f.repoUrl ?? "",
-							baseBranch: f.baseBranch ?? "",
-							defaultProvider: f.defaultProvider ?? "",
-							defaultOrbType: f.defaultOrbType ?? "",
-							setupScript: f.setupScript ?? "",
-							resumeScript: f.resumeScript ?? "",
-							color: f.color ?? "",
-							// 空串 = 清除，回到自动采用
-							icon: f.icon ?? "",
-							gitAuthorName: f.gitAuthorName ?? "",
-							gitAuthorEmail: f.gitAuthorEmail ?? "",
-							// 空串 = 清除默认 Profile
-							defaultBrowserProfileId: f.defaultBrowserProfileId ?? "",
-							...(gates ? { githubGates: normalizeGates(gates) } : {}),
-						};
-						saved = await unwrap(
-							api.PATCH("/api/v1/projects/{id}", {
-								params: { path: { id } },
-								body: patch,
-							}),
-						);
-					} else
-						saved = await unwrap(api.POST("/api/v1/projects", { body: f }));
-					await qc.invalidateQueries({ queryKey: qk.projects });
-				});
-				if (ok && saved) onSaved(saved);
-			}}
-		>
+		<>
 			<Field label={t("projects.name")}>
 				<TextInput
 					required
@@ -213,6 +193,18 @@ export function ProjectEditor({
 					/>
 				</div>
 			</Field>
+			<div className="sm:col-span-2">
+				<Field
+					label={t("projects.description")}
+					hint={t("projects.descriptionHint")}
+				>
+					<TextInput
+						maxLength={200}
+						value={f.description ?? ""}
+						onChange={(e) => set("description", e.target.value || undefined)}
+					/>
+				</Field>
+			</div>
 			<ProjectIconPicker
 				name={f.name}
 				icon={f.icon}
@@ -225,6 +217,65 @@ export function ProjectEditor({
 					onChange={(e) => set("baseBranch", e.target.value || undefined)}
 				/>
 			</Field>
+		</>
+	);
+}
+
+/** 「概览」另有的 git 提交身份覆盖（须两项同时填写或同时留空）。 */
+function GitIdentityFields({
+	f,
+	set,
+	pairOk,
+}: {
+	f: ProjectForm;
+	set: SetField;
+	pairOk: boolean;
+}): ReactNode {
+	const { t } = useTranslation();
+	return (
+		<>
+			<Field label={t("projects.gitAuthorName")}>
+				<TextInput
+					autoComplete="off"
+					value={f.gitAuthorName ?? ""}
+					onChange={(e) => set("gitAuthorName", e.target.value || undefined)}
+				/>
+			</Field>
+			<Field label={t("projects.gitAuthorEmail")}>
+				<TextInput
+					type="email"
+					autoComplete="off"
+					value={f.gitAuthorEmail ?? ""}
+					onChange={(e) => set("gitAuthorEmail", e.target.value || undefined)}
+				/>
+			</Field>
+			<p
+				className={`text-xs sm:col-span-2 ${pairOk ? "text-muted" : "text-err"}`}
+			>
+				{pairOk ? t("projects.gitHint") : t("projects.gitPairError")}
+			</p>
+		</>
+	);
+}
+
+/** 「环境」：默认 provider / orb 类型 / 浏览器 Profile、浅克隆、快照与预热、脚本。 */
+function EnvironmentFields({
+	f,
+	set,
+	lastSetup,
+}: {
+	f: ProjectForm;
+	set: SetField;
+	lastSetup?: SetupRun;
+}): ReactNode {
+	const { t } = useTranslation();
+	const providers = useProviders();
+	const profiles = useBrowserProfiles();
+	const provider = providers.data?.providers.find(
+		(p) => p.name === f.defaultProvider,
+	);
+	return (
+		<>
 			<Field label={t("projects.defaultProvider")}>
 				<Select
 					value={f.defaultProvider ?? ""}
@@ -299,11 +350,9 @@ export function ProjectEditor({
 					/>
 				</Field>
 			</div>
-			{id && (
-				<p className="text-muted text-xs sm:col-span-2">
-					<RepoScriptText run={lastSetup} />
-				</p>
-			)}
+			<p className="text-muted text-xs sm:col-span-2">
+				<RepoScriptText run={lastSetup} />
+			</p>
 			<div className="sm:col-span-2">
 				<Field label={t("projects.resumeScript")}>
 					<TextArea
@@ -313,41 +362,77 @@ export function ProjectEditor({
 					/>
 				</Field>
 			</div>
-			<Field label={t("projects.gitAuthorName")}>
-				<TextInput
-					autoComplete="off"
-					value={f.gitAuthorName ?? ""}
-					onChange={(e) => set("gitAuthorName", e.target.value || undefined)}
-				/>
-			</Field>
-			<Field label={t("projects.gitAuthorEmail")}>
-				<TextInput
-					type="email"
-					autoComplete="off"
-					value={f.gitAuthorEmail ?? ""}
-					onChange={(e) => set("gitAuthorEmail", e.target.value || undefined)}
-				/>
-			</Field>
-			<p
-				className={`text-xs sm:col-span-2 ${gitPairOk ? "text-muted" : "text-err"}`}
-			>
-				{gitPairOk ? t("projects.gitHint") : t("projects.gitPairError")}
-			</p>
-			{id && project?.github && (
-				<div className="border-border border-t pt-3 sm:col-span-2">
-					<ProjectGates
-						value={gates ?? project.githubGates ?? DEFAULT_GATES}
-						onChange={setGates}
-					/>
-				</div>
+		</>
+	);
+}
+
+export function ProjectEditor({
+	section,
+	initial,
+	id,
+	lastSetup,
+	onSaved,
+	onCancel,
+}: {
+	section: ProjectSection;
+	initial: ProjectForm;
+	/** 编辑的项目（`create` 以外必填） */
+	id?: string;
+	/** 「环境」分组的「仓库内脚本：有 / 无」 */
+	lastSetup?: SetupRun;
+	onSaved: (project: Project) => void;
+	onCancel: () => void;
+}): ReactNode {
+	const { t } = useTranslation();
+	const qc = useQueryClient();
+	const [f, setF] = useState<ProjectForm>(initial);
+	const save = useAsync();
+	const set: SetField = (k, v) => setF((prev) => ({ ...prev, [k]: v }));
+	// 身份覆盖须两项同时填写或同时留空（服务端同样校验）。
+	const gitPairOk =
+		section !== "overview" ||
+		!f.gitAuthorName?.trim() === !f.gitAuthorEmail?.trim();
+	const nameOk = section === "environment" || !!f.name.trim();
+	return (
+		<form
+			className="grid gap-3 sm:grid-cols-2"
+			onSubmit={async (e) => {
+				e.preventDefault();
+				let saved: Project | undefined;
+				const ok = await save.run(async () => {
+					if (section === "create")
+						saved = await unwrap(
+							api.POST("/api/v1/projects", { body: createBody(f) }),
+						);
+					else {
+						if (!id) throw new Error("ProjectEditor: 编辑需要项目 id");
+						saved = await unwrap(
+							api.PATCH("/api/v1/projects/{id}", {
+								params: { path: { id } },
+								body: patchBody(section, f),
+							}),
+						);
+					}
+					await qc.invalidateQueries({ queryKey: qk.projects });
+				});
+				if (ok && saved) onSaved(saved);
+			}}
+		>
+			{section === "environment" ? (
+				<EnvironmentFields f={f} set={set} lastSetup={lastSetup} />
+			) : (
+				<GeneralFields f={f} set={set} />
+			)}
+			{section === "overview" && (
+				<GitIdentityFields f={f} set={set} pairOk={gitPairOk} />
 			)}
 			<div className="flex gap-2 sm:col-span-2">
 				<Button
 					type="submit"
 					variant="primary"
-					disabled={save.busy || !f.name.trim() || !gitPairOk}
+					disabled={save.busy || !nameOk || !gitPairOk}
 				>
-					{t("common.save")}
+					{section === "create" ? t("common.create") : t("common.save")}
 				</Button>
 				<Button onClick={onCancel}>{t("common.cancel")}</Button>
 			</div>

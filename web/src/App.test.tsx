@@ -37,15 +37,25 @@ vi.mock("./pages/projects/ProjectThreadsPage", async () => {
 		),
 	};
 });
-vi.mock("./pages/ProjectsPage", async () => {
+vi.mock("./pages/projects/ProjectHomePage", async () => {
 	const { useParams } =
 		await vi.importActual<typeof ReactRouter>("react-router");
 	return {
-		ProjectPage: () => {
+		ProjectHomePage: () => {
 			const { projectId } = useParams();
 			// 模拟页面渲染期抛错（M12.1 走查问题 1：确认条卸载时 TypeError 整页白屏）
 			if (projectId === "boom") throw new TypeError("l is not a function");
-			return <p data-testid="page">{`PROJECT ${projectId}`}</p>;
+			return <p data-testid="page">{`HOME ${projectId}`}</p>;
+		},
+	};
+});
+vi.mock("./pages/projects/settings/ProjectSettingsPage", async () => {
+	const { useParams } =
+		await vi.importActual<typeof ReactRouter>("react-router");
+	return {
+		ProjectSettingsPage: () => {
+			const { projectId, tab } = useParams();
+			return <p data-testid="page">{`SETTINGS ${projectId} ${tab ?? "-"}`}</p>;
 		},
 	};
 });
@@ -148,11 +158,25 @@ describe("项目分区的路由（M9.6）", () => {
 		expect(await screen.findByTestId("page")).toHaveTextContent("CREATE");
 	});
 
-	it("/projects/<id> 是项目页并带上 id", async () => {
+	it("/projects/<id> 是项目主页并带上 id", async () => {
 		signedIn();
 		renderAt("/projects/prj_1");
+		expect(await screen.findByTestId("page")).toHaveTextContent("HOME prj_1");
+	});
+
+	it("/projects/<id>/settings[/<分组>] 是项目设置并带上分组", async () => {
+		signedIn();
+		renderAt("/projects/prj_1/settings");
 		expect(await screen.findByTestId("page")).toHaveTextContent(
-			"PROJECT prj_1",
+			"SETTINGS prj_1 -",
+		);
+	});
+
+	it("/projects/<id>/settings/github 带上分组", async () => {
+		signedIn();
+		renderAt("/projects/prj_1/settings/github");
+		expect(await screen.findByTestId("page")).toHaveTextContent(
+			"SETTINGS prj_1 github",
 		);
 	});
 

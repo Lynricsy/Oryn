@@ -1213,6 +1213,8 @@
 		"defaultOrbType": "默认 orb 类型",
 		"defaultProvider": "默认 provider",
 		"deleteConfirm": "删除项目 {{name}}？",
+		"description": "描述",
+		"descriptionHint": "一行说明，显示在项目总览和项目主页上（最多 200 字）。",
 		"empty": "还没有项目。",
 		"gitAuthorEmail": "提交者邮箱（覆盖）",
 		"gitAuthorName": "提交者名字（覆盖）",
@@ -4544,7 +4546,11 @@
 		"breadcrumb": "位置",
 		"archivedTitle": "这个项目已归档",
 		"archivedBody": "它不在侧栏里，GitHub 仓库钩子已释放，预热 orb 已清零，定时任务与触发规则不再运行。线程都还在。",
-		"unarchive": "取消归档"
+		"unarchive": "取消归档",
+		"copyLink": "复制项目链接",
+		"copyClone": "复制 git clone 命令",
+		"copyFailed": "没能复制到剪贴板（浏览器不允许访问剪贴板）：{{text}}",
+		"settings": "项目设置"
 	},
 	"projectsOverview": {
 		"menu": "更多操作",
@@ -4568,15 +4574,60 @@
 	},
 	"projectHome": {
 		"noThreads": "这个项目还没有线程。",
-		"shipped": "已交付"
+		"shipped": "已交付",
+		"status": "项目状态",
+		"recentThreads": "最近线程",
+		"viewAll": "查看全部",
+		"chip": {
+			"awaiting_one": "{{count}} 个等你回复",
+			"awaiting_other": "{{count}} 个等你回复",
+			"working_one": "{{count}} 个工作中",
+			"working_other": "{{count}} 个工作中",
+			"prs_one": "{{count}} 个打开的 PR",
+			"prs_other": "{{count}} 个打开的 PR",
+			"ciFailing_one": "{{count}} 个 CI 失败",
+			"ciFailing_other": "{{count}} 个 CI 失败",
+			"setupFailed": "上次环境配置失败",
+			"usage_one": "近 7 天 {{cost}} · {{count}} 个回合",
+			"usage_other": "近 7 天 {{cost}} · {{count}} 个回合"
+		}
+	},
+	"projectSettings": {
+		"title": "设置",
+		"nav": "设置分组",
+		"tabs": {
+			"overview": "概览",
+			"environment": "环境",
+			"agent": "Agent",
+			"github": "GitHub",
+			"schedules": "定时任务",
+			"ssh": "SSH 主机"
+		},
+		"general": "基本信息",
+		"envForm": "默认环境与脚本",
+		"danger": "危险操作",
+		"archive": "归档项目",
+		"archiveHint": "从侧栏收起，停用它的 GitHub 钩子、预热 orb、定时任务与触发规则；线程保留，随时可以取消归档。",
+		"archiveConfirm": "归档项目 {{name}}？",
+		"archiveConfirmBody": "GitHub 仓库钩子会被释放，预热 orb 清零，定时任务与触发规则停止运行；线程不受影响，仍可在这个项目里新建线程。",
+		"unarchiveHint": "项目回到侧栏，定时任务与触发规则重新生效。",
+		"delete": "删除项目",
+		"deleteHint": "线程保留但不再属于任何项目；定时任务、Agent 配置与项目记忆一并删除，不可恢复。",
+		"memory": {
+			"title": "项目记忆",
+			"archived": "已归档的项目不在记忆的项目列表里，取消归档后才能设置。"
+		},
+		"github": {
+			"noneTitle": "仓库不在 GitHub 上",
+			"noneBody": "把仓库地址改成 https://github.com/<owner>/<repo>，这里就能设置事件回流、触发规则与推送门禁。",
+			"editRepo": "改仓库地址"
+		}
 	},
 	"projectsPage": {
-		"settings": "项目设置",
 		"environment": "环境配置",
 		"noSetupRun": "还没有环境配置记录。",
 		"openThread": "打开线程",
 		"services": "服务",
-		"noServices": "这个项目的 orb 里没有受管服务。",
 		"notFound": "项目不存在或已删除。",
 		"empty": "还没有项目。项目把仓库、环境与脚本绑在一起。",
 		"agentConfig": {
