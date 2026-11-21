@@ -77,6 +77,10 @@ const (
 	// SSH 工具（M18）：ssh.call → ctl ssh.call（LinkCtlSshCallParams → LinkCtlSshCallResult），threadId 恒为调用方线程；
 	// 控制面按调用方 orb 可见的主机执行（ssh_exec_many）。只在 orbd.sock 上，runner.sock 不提供。
 	MethodSshCall = "ssh.call"
+
+	// Boxes（M23）：box.call → ctl box.call（LinkCtlBoxCallParams → LinkCtlBoxCallResult），threadId 恒为调用方线程；
+	// 由 orb 内 `oryn boxes …` 发出。只在 orbd.sock 上，runner.sock 不提供。
+	MethodBoxCall = "box.call"
 )
 
 // 消息类型。
