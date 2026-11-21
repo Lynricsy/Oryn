@@ -81,6 +81,12 @@ orb 里带 portal 的受管服务经 `https://t-<线程短码>-p<端口>.<portal
 
 开发环境（`dev/orynd.yaml`）用 `public_url: "http://localhost:7600"` + `portal_domain: "localhost"`，portal 地址形如 `http://t-<短码>-p<端口>.localhost:7600/`：Chromium 把 `*.localhost` 解析到回环并视为安全上下文，`Secure` Cookie 可用。命令行验证时可直接 `curl -H "Host: t-<短码>-p<端口>.localhost:7600" http://127.0.0.1:7600/`；`orynd --config dev/orynd.yaml admin create-web-session` 在 stdout 打印一个网页会话 Cookie（`__Host-oryn_session`）的值，供脚本走真实的鉴权握手。
 
+### Boxes 应用与数据持久化（M23）
+
+- **共用泛域名与证书**：Boxes 部署的应用地址是 `https://<app>.<portal_domain>/`，与线程 Portal（`t-<短码>-p<端口>`）、Artifact 隔离帧及发布页（`a-…` / `p-…`）共用同一个 `portal_domain` 通配 DNS 记录与 `*.<portal_domain>` 通配证书，不需要新的 DNS 记录或反代站点。与线程 Portal 不同，box 应用默认公开（设为私有后经 `/portal/auth?h=<app>` 握手换取该应用主机的 `__Host-oryn_portal` Cookie），请求不计用户交互、不唤醒停机的 box（停机时回 `503 app_unavailable`），普通响应保留应用自己的 `X-Frame-Options` 与 CSP（仅带 `?oryn-preview` 的主站悬停预览请求改写内嵌头）。未配置 `portal_domain` 时仍可使用 Boxes，但应用没有外部地址，`ORYN_DEPLOYMENT_URL` 为空串。
+- **box 的数据在哪、哪些操作会丢**：每台 box 是一台带 `box` 标记的常驻 orb，应用的 release（`~/apps/<app>/releases/`）与跨部署数据目录（`~/apps/<app>/data/`）直接存在这台 orb 的磁盘里，不挂载独立宿主卷——Docker / Sysbox 驱动下是容器可写层，Firecracker 驱动下是该 VM 的可写盘。容器或 VM 重启、手动或按时段停机再启动、重新部署与回滚都保留数据；下线应用（`undeploy`）默认保留 `~/apps/<app>/data/`，传 `--purge-data`（或 REST `purgeData=true`）才一并删除；**删除 box，或在宿主上直接 `docker rm` 容器、删除 VM 目录，会连同整台机器上的全部应用与数据永久丢失**。同一台 box 上的所有应用与线程以同一个带免密 `sudo` 的 `user` 运行，彼此无隔离，不可信的应用应放到单独的 box；已存在的 box 不会随重建 `oryn-orb` 镜像自动更新 `orbd`。
+- **Firecracker 的名额与磁盘**：Firecracker 驱动下，运行或冻结中的 box 持续占用 `firecracker.limits.max_vms` 的一个名额并计入 `limits.max_memory_mb`；磁盘大小取全局的 `firecracker.disk_gb`，不能按单台 box 调整（详见[第 12 节](#12-firecracker-providerm11b)）。
+
 ## 5. 本机 Docker provider
 
 ```bash

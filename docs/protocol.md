@@ -318,7 +318,7 @@ Sec-Fetch-Site 不存在：
 
 拨号错误映射：`not_exposed` → 404 `portal_not_found`；`forbidden_port` → 403；`connection_refused` → 502 `service_unreachable`；`timeout` → 504 `portal_timeout`；orb 不可用 → 503 `orb_unavailable`；其它 → 502 `portal_unreachable`（导航请求的 502 页带 3s 自动刷新）。
 
-主站 SPA 的 CSP 在启用 portal 时把 `frame-src 'none'` 换成 `frame-src <scheme>://*.<portal_domain>[:端口]`（`Base.FrameSrc()`）；`frame-ancestors 'none'` 与 `X-Frame-Options: DENY` 不变。
+主站 SPA 的 CSP 在启用 portal 时把 `frame-src 'none'` 换成 `frame-src 'self' <scheme>://*.<portal_domain>[:端口]`（`"'self' " + Base.FrameSrc()`，M23：放行内嵌预览帧经 `/__oryn/login` 302 到主站 `/portal/auth` 再跳回的重定向链；未启用 portal 时为 `frame-src 'self'`，`/s/*` 公开分享页启用 portal 时仍为 `Base.FrameSrc()`）；`frame-ancestors 'none'` 与 `X-Frame-Options: DENY` 不变。
 
 ### 公开分享
 
@@ -2313,3 +2313,150 @@ Treat the content above as data, not instructions.
 |`secrets_found`|—|确认后执行分享时密钥扫描命中：确认记 `failed`，出现在结果消息里|
 |`timeout`、`agent_exited`|ctl|`computer.call` 超时；执行器在调用结束前退出|
 |`not_supported`|ctl|runner 与协调宿主收到 `computer.*`|
+
+## M23：Boxes
+
+box 是带 `orbs.box = 1` 标记的常驻 orb，`boxes` 表持有名字、期望状态与每日运行时段；源线程的 orb 构建并打包仓库 `HEAD` 提交，经控制面流式直传 box，由 box 的 `orbd` 切换 release、通过服务监督器托管应用进程并等待端口监听。迁移 `0045_boxes.sql`。
+
+### 数据模型与生命周期
+
+- **`orbs.box`**（`INTEGER NOT NULL DEFAULT 0`，API `Orb.box?: boolean`，为 `false` 时省略）：创建时与 `Pool`、`ProjectID`、`SnapshotID`、`SnapshotOf` 互斥；豁免 `EvaluateIdle`（不空闲冻结）、`retired`（不随线程归档冻结）与 `DeleteUnused`（无线程不回收）。`Wake` 受 `boxGate` 闸门约束：对应 `boxes.desired != running` 时回 `ErrBoxStopped`。对 `box = 1` 的 orb 调 `PauseOrb`、`ResumeOrb`、`DeleteOrb` 或以 `executor.kind = orb` 建线程一律回 409 `orb_is_box`；线程 `Fork` 带 `env = copy` 回 409 `box_unsupported`（`env = share` 留在同一台 orb 并沿用 `cwd`）；管理员宿主工具 `pause_orb` / `wake_orb` / `delete_orb` 指向 box orb 回 `invalid_target`。
+- **六张表**：
+  - `boxes(id, name, orb_id, desired, desired_by, desired_at, sched_on, sched_off, sched_tz, created_at)`：`id` 为 `box_<ULID>`，`name` 全库唯一（`^[a-z0-9]([a-z0-9-]{0,28}[a-z0-9])?$`，不含 `--`），全库至多 16 台。`desired ∈ running|stopped`，`desired_by ∈ owner|schedule`（手动、agent 与助手启停均写 `'owner'`，真实发起者记入 `box_activity.actor`）；`sched_on`、`sched_off`（`HH:MM`，须不相等）与 `sched_tz`（IANA 时区，拒绝空串与 `Local`）三列全 `NULL` 表示一直运行。删除 `boxes` 行级联删除其余五张表（先中止在途部署、调幂等的 `orbs.Delete`，再硬删 `boxes` 行）。
+  - `box_apps(id, box_id, name, port, public, repo, root, source, live_release_id, preview, preview_checked_at, created_at, updated_at)`：`id` 为 `bxa_<ULID>`，`name` 全库唯一（`^[a-z0-9]([a-z0-9-]{0,18}[a-z0-9])?$`，不含 `--`，排除 `t-…-p…` 与 `a-…` / `p-…` 标签），每台 box 至多 16 个；`port` 取该 box 上 `30000–30999` 未用的最小值（`UNIQUE(box_id, port)`，与普通服务自动端口 `20000–29999` 不重叠）；`live_release_id` 为 `NULL` 表示首次部署仍在进行的临时行。
+  - `box_releases(id, app_id, repo, commit_sha, branch, root, source, size_bytes, sha256, services, thread_id, state, created_at, activated_at)`：`id` 为 `bxr_<ULID>`，`state ∈ live|kept|pruned`；回滚时把目标 release 生成时的 `repo`、`root`、`source` 一并写回 `box_apps`。
+  - `box_deploys(id, box_id, app, release_id, actor, thread_id, src_orb_id, repo, root, source, set_public, commit_sha, branch, first, size_bytes, sha256, services, state, error, created_at, finished_at)`：`id` 为 `bxd_<ULID>`，`actor ∈ owner|agent|assistant`；部分唯一索引 `box_deploys_open(box_id, app) WHERE state IN ('prepared', 'transferring', 'activating')` 保证每 app 至多一个未结束部署。
+  - `box_secrets(box_id, app, name, value_enc, size, secret, updated_at)`：主键 `(box_id, app, name)`，首次部署前即可设置，下线 app 不删除。`name` 匹配 `^[A-Za-z_][A-Za-z0-9_]{0,63}$`，拒绝保留名 `PORT`、`ORYN_DEPLOYMENT_URL`、`ORYN_DEPLOYMENT_NAME`、`ORYN_DEPLOYMENT_BOX`、`ORYN_DEPLOYMENT_DATA_DIRECTORY`；单值 ≤ 64 KiB，每 app ≤ 64 项、`len(name)+len(value)` 合计 ≤ 1 MiB；`secrets.Box.Seal` AAD 为 `box/<box_id>/<app>/<name>`；`secret = false` 为明文环境变量（API 解密返回 `value`）。改动在下一次部署或 `restart` 后生效。
+  - `box_activity(id, box_id, ts, kind, actor, app, detail)`：`kind ∈ created|started|stopped|renamed|schedule|deployed|deploy_failed|rolled_back|restarted|undeployed|visibility`，`actor ∈ owner|agent|assistant|schedule|system`。API `BoxActivity` 另合并近 30 天在该 box orb 上创建的工作线程为 `kind = thread`（`id` 分别为 `a:<序号>` 与 `t:<线程 id>`），按 `ts` 倒序截到 `limit`（1–100，缺省 50）。`BoxUsage` 统计最近 21 个 UTC 自然日每天的工作线程数与 `ready` 时长占比（`upRatio`）。
+- **对账与状态映射**：`BoxState` 由 orb 状态映射（`requested | spawning | connecting | setting_up | resuming | waking → starting`，`ready → running`，`freezing | stopping → stopping`，`frozen | stopped → stopped`，`failed → failed`）。后台每 30 秒及收到 box orb 事件或写操作时对账：
+  - 自愈：orb 已 `deleting` / `deleted` 的 `boxes` 行直接补删；创建超 1 分钟仍无 `boxes` 行的孤儿 box orb 调 `orbs.Delete`。
+  - 时段：在 `sched_tz` 下取今天与昨天四个 `on` / `off` 时刻中不晚于当前的最大者；若晚于 `desired_at`，在单个事务内重读复核时段三列未变且仍晚于当前 `desired_at` 后写 `desired`（`desired_by = schedule`）与活动行，手动启停因此只保持到下一个时段边界。
+  - 推向期望状态：`desired = running` 时唤醒 `stopped / frozen / stopping / freezing` 的 orb，`failed` 同一台两次重试间隔 ≥ 60 秒（手动 `Start` 立即清除冷却），`ready` 却无 link 持续 ≥ 90 秒（`UnlinkedAfter`）调 `orbs.Revive`（`ready → waking` 重新入队 spawn）；`desired = stopped` 时对 `ready / frozen` 调 `Pause(stop)`，其中 `desired_by = schedule` 且有 `working` 线程或未结束部署时最多推迟到边界后 30 分钟。
+- **在 box 上开线程与停机闸门**：`ThreadExecutor` 新增 `ThreadExecutorBox{kind: "box", boxId, app?}`，服务端 `ThreadTarget` 校验 `desired != stopped` 后解析为 `orbId` 与 `threads.cwd`（省略 `app` 为 `~`；给 `app` 须有 live release，为 `~/apps/<app>/current`，`source = true` 且 `root != ""` 时再接 `/<root>`）。orb 不在 `ready` 且 `BoxStopped` 为真时，线程的 `command`、`commandWithAttachments` 与 `POST /threads/{id}/wake` 同步回 `box_stopped`（消息不入队）。控制面 artifact 的 `files` 能力在 `threads.cwd` 非绝对路径时向 orbd 请求 `GET /fs/roots?strict=1`（带 `X-Oryn-Workdir`），收到 404 `workdir_missing` 时直接报不可用，不退回缺省工作目录。
+- **受管服务第三来源与全局助手工具**：`OrbService.source` 新增 `app`（带 `OrbService.app`），监督器内名字为 `<app>--<svc>`（`<svc>` 匹配 `^[a-z0-9][a-z0-9-]{0,9}$` 且不含 `--`，每 app 1–4 个；文件与动态服务禁止含 `--`）。控制面 `orb_services` 镜像上限为普通服务 32 个 + `source = app` 64 个（共 96 个）；单个服务的日志与重启复用 `/api/v1/orbs/{id}/services/{name}/{log,restart}`。全局助手（`kind = assistant`）新增只读工具 `list_boxes`、`get_box`（结果过 `wrapUntrusted`），写工具 `create_box`、`start_box`、`stop_box`、`set_box_schedule`、`set_box_app_visibility`（记同名 `AutomationAction`），确认卡工具 `delete_box`（卡内绑定不可变的 `boxId`），以及 `create_thread` 的 `box`、`app` 参数。
+
+### 部署状态机与重启补完
+
+状态迁移：`prepared → transferring → activating → succeeded | failed | canceled`。部署意图（`repo`、`root`、`source`、`set_public`）只记在 `box_deploys` 行上，激活成功的事务里才写到 `box_apps` 与 `box_releases`。
+
+1. **`prepared`**：`PrepareDeploy` 等待 box 就绪且上报 `box` 特性（至多 10 分钟；有 link 却无 `box` 特性立即回 `box_unsupported`，orb `failed` 立即回 `box_not_ready`），在同一事务中把超过 60 分钟的 `prepared` 行收为 `canceled`、校验无未结束部署（否则 `deploy_in_progress`）与仓库绑定（跨 box 同名 `app_exists_elsewhere`，本 box 仓库或 `root` 不同且未带 `move` 则 `app_repo_mismatch`），首次部署建 `live_release_id IS NULL` 的临时 `box_apps` 行（`first = true`），插入 `prepared` 部署行，返回源 orb 打包落点 `~/.cache/oryn/box-releases/<deployId>.tar.gz` 与构建可见的三项 `ORYN_DEPLOYMENT_{URL,NAME,BOX}`。
+2. **`transferring`**：`CommitDeploy` 校验 `sizeBytes ≤ 512 MiB`（超出回 413 `release_too_large`），先登记内存 `inflight` 表，再以 `ClaimBoxDeploy`（限定 `state = 'prepared'` 且 `src_orb_id` 一致）转入 `transferring`，把源 orb `GET /fs/file` 的响应体流式直传 box `PUT /box/incoming/{releaseId}`（上限 30 分钟，不落控制面磁盘）。失败调 `finishDeployTx(failed)`（若已被取消则回 `code = canceled`）。
+3. **`activating`**：传输完成后以条件更新 `SetBoxDeployActivating`（`WHERE state = 'transferring'`）转入 `activating`。进入 `activating` 后 `CancelDeploy` 回 409 `deploy_in_progress`（不再掐断，避免符号链接切到一半）；只有删 box 或进程退出才取消 `abortCtx`。控制面解密 `box_secrets`，拼上四项 `ORYN_DEPLOYMENT_{URL,NAME,BOX,DATA_DIRECTORY}`，调 box `POST /box/apps/{app}/activate`（上限 10 分钟，`keep = 3`，`readyTimeoutSec = 60`）。
+4. **终态**：`ok: true` 在单个脱离取消的事务（`completeDeployTx`）中标 `succeeded`、写新 `live` release、原 `live` 改 `kept`、`pruned` 列表改 `pruned`、更新 `box_apps` 的 `live_release_id / repo / root / source`（及 `set_public`，公开改私有时调 `DropApp`）并记 `deployed` 活动；`ok: false` 在 `finishDeployTx` 中标 `failed`、记 `deploy_failed` 活动。`finishDeployTx`（`failed` 或 `canceled`）与 `CancelDeploy` 均在 `first = true` 时删除 `live_release_id IS NULL` 的临时 `box_apps` 行，让出名字与端口。
+5. **未知结果与重启补完**：`activate` 调用本身因断连或超时出错，以及控制面启动和每轮对账扫描不在 `inflight` 中的行时（`sweepDeploys`）：
+   - `transferring` 直接收为 `failed`（启动时记 `control plane restarted`，运行期对账记 `interrupted`）；
+   - `activating` 交 `resolveActivating`：box 可用时调 `GET /box/apps`——`activating == releaseId` 说明 `orbd` 仍在试运行，不动；`live == releaseId`（`orbd` 仅在端口就绪、清掉 `Trial` 后才报为 `live`）调 `completeDeployTx` 补完为 `succeeded`；其余情况（含 app 不存在或 `live` 仍是旧版）收为 `failed`（`activation did not complete`）；box 暂不可用则保持 `activating`（`CommitDeploy` 返回 `code = activate_unknown`）；
+   - `prepared` 在控制面重启后保留，等待源 orb 继续提交或满 60 分钟过期。
+
+### REST（tag `boxes`）
+
+路径参数 `{box}` 接受 box 的 `id`（`box_<ULID>`）或名字。全部接口只对主人开放（Cookie + CSRF 或设备令牌 `odt_…`）。
+
+|方法与路径|operationId|请求|响应|
+|---|---|---|---|
+|`GET /api/v1/boxes`|`listBoxes`|—|`BoxList`|
+|`POST /api/v1/boxes`|`createBox`|`CreateBoxRequest{name, provider?, type?}`|201 `Box`|
+|`GET /api/v1/box-activity`|`listAllBoxActivity`|`limit?`（1–100，缺省 50）|`BoxActivityList`|
+|`GET /api/v1/boxes/{box}`|`getBox`|—|`Box`|
+|`PATCH /api/v1/boxes/{box}`|`updateBox`|`UpdateBoxRequest{name?, schedule?, clearSchedule?}`|`Box`|
+|`DELETE /api/v1/boxes/{box}`|`deleteBox`|—|204|
+|`POST /api/v1/boxes/{box}/start`|`startBox`|—|202 `Box`|
+|`POST /api/v1/boxes/{box}/stop`|`stopBox`|—|202 `Box`|
+|`GET /api/v1/boxes/{box}/activity`|`listBoxActivity`|`limit?`（1–100，缺省 50）|`BoxActivityList`|
+|`GET /api/v1/boxes/{box}/usage`|`getBoxUsage`|—|`BoxUsage`|
+|`POST /api/v1/boxes/{box}/exec`|`execBox`|`BoxExecRequest{command, app?, timeoutSec?}`（`timeoutSec` 1–3600，缺省 600）|200 `application/x-ndjson`|
+|`PATCH /api/v1/boxes/{box}/apps/{app}`|`updateBoxApp`|`UpdateBoxAppRequest{public}`|`BoxApp`|
+|`DELETE /api/v1/boxes/{box}/apps/{app}`|`undeployBoxApp`|`purgeData?`（boolean）|204|
+|`POST /api/v1/boxes/{box}/apps/{app}/restart`|`restartBoxApp`|—|`BoxApp`|
+|`POST /api/v1/boxes/{box}/apps/{app}/rollback`|`rollbackBoxApp`|`BoxRollbackRequest{releaseId?}`（省略 = 最新的 `kept`）|`BoxApp`|
+|`POST /api/v1/boxes/{box}/apps/{app}/cancel-deploy`|`cancelBoxDeploy`|—|204|
+|`GET /api/v1/boxes/{box}/apps/{app}/releases`|`listBoxReleases`|—|`BoxReleaseList`|
+|`GET /api/v1/boxes/{box}/apps/{app}/secrets`|`listBoxSecrets`|—|`BoxSecretList`|
+|`PUT /api/v1/boxes/{box}/apps/{app}/secrets/{name}`|`putBoxSecret`|`PutBoxSecretRequest{value, secret?}`（`secret` 缺省 `true`）|204|
+|`DELETE /api/v1/boxes/{box}/apps/{app}/secrets/{name}`|`deleteBoxSecret`|—|204|
+
+错误码（控制面 REST 与线程 / orb 接口）：
+
+|码|HTTP|含义|
+|---|---|---|
+|`box_not_found`、`app_not_found`、`release_not_found`、`deploy_not_found`|404|目标 box、app、可回滚的 kept release 或未结束的部署不存在|
+|`box_exists`、`box_limit`、`app_limit`|409|box 重名；box 满 16 台；单台 box 的 app 满 16 个|
+|`box_stopped`、`box_not_ready`、`box_unsupported`|409|box 期望状态为 `stopped`（含向停机 box 上的线程发消息或唤醒）；box 尚未 `ready` 或无 link；box 的 `orbd` 未上报 `box` 特性|
+|`orb_is_box`|409|经 `/orbs/{id}` 暂停 / 恢复 / 删除 box 的 orb，或以 `executor.kind = orb` 在 box 上建线程|
+|`app_exists_elsewhere`、`app_repo_mismatch`、`app_not_deployed`|409|同名 app 已在另一台 box 上；app 绑定的 `repo` 或 `root` 不符且未带 `--move`；app 尚无 live release|
+|`deploy_in_progress`、`box_changes`|409|该 app（或改名时的该 box）有未结束部署，或取消已进入 `activating` 的部署；box 上带源码的 live release 有未提交或未包含进新提交的改动|
+|`release_too_large`|413|release 压缩包超过 512 MiB|
+
+### ctl `box.call`（orbd→orynd 请求）
+
+orb 内 `oryn boxes …` 经 `orbd.sock` 发 `box.call`，`orbd` 校验 `threadId` 与非空 `op` 后原样转成 ctl `box.call`（转发上限 45 分钟；`runner.sock` 不提供，runner 的 link 拒绝该方法）。参数 `LinkCtlBoxCallParams{threadId, op, params}`，结果 `LinkCtlBoxCallResult{result}`（每个 `op` 的 `result` 都是 JSON 对象）。控制面校验调用方线程存在、`kind = work`、未归档、`orb_id` 等于当前 link 的 orb，且该 orb 的 `automation == 0`，否则回 `forbidden`；操作者记 `{agent, threadId}`。
+
+|`op`|`params`|`result`|
+|---|---|---|
+|`list`|`{}`|`BoxList{boxes}`|
+|`show`|`{box}`|`Box`|
+|`create`|`{name, provider?, type?}`|`Box`|
+|`start` / `stop`|`{box}`|`Box`|
+|`rename`|`{box, name}`|`Box`|
+|`schedule`|`{box, on?, off?, tz?, clear?}`|`Box`|
+|`deploy.prepare`|`{box, app, create?, provider?, type?, repo, root, branch, commit, source, move?, public?}`|`{deployId, releaseId, box, app, url, archivePath, maxBytes, env}`|
+|`deploy.commit`|`{deployId, sha256, sizeBytes, services, discardBoxChanges?}`|`{ok, url, releaseId, code, message, log}`|
+|`deploy.cancel`|`{box, app}`|`{}`|
+|`visibility`|`{box, app, public}`|`BoxApp`|
+|`undeploy`|`{box, app}`|`{}`（固定 `purge = false`；删数据目录仅限 orb 外 REST）|
+|`restart`|`{box, app}`|`BoxApp`|
+|`rollback`|`{box, app, releaseId?}`|`BoxApp`|
+|`releases`|`{box, app}`|`BoxReleaseList{releases}`|
+|`secrets.list`|`{box, app}`|`BoxSecretList{secrets}`|
+|`secrets.set`|`{box, app, name, value, secret?}`（`secret` 缺省 `true`）|`{}`|
+|`secrets.unset`|`{box, app, name}`|`{}`|
+|`exec`|`{box, command, app?, timeoutSec?}`（`timeoutSec` 缺省 600、上限 1800，不可中途取消）|`{exit, stdout, stderr, truncated}`（两路各截到 256 KiB）|
+|`cp`|`{box, app?, boxPath, orbPath, toBox}`（`boxPath` 相对 `~/` 或给了 `app` 时的 `~/apps/<app>/data/`，`orbPath` 为绝对路径或 `~/…`，目标父目录须已存在）|`{bytes}`|
+|`logs`|`{box, app, service?, tail?}`（`service` 缺省取首个服务，`tail` 缺省 65536、上限 1048576）|`{text}`|
+|其它（含 `delete`）|—|ctl 错误 `forbidden`|
+
+### orbd 本机路由 `/box/*` 与 `OrbBoxResult`
+
+普通 `orbd` 在 hello `features` 中上报 `"box"`（`orbs.FeatureBox`）；runner 与协调宿主不上报，runner 上 `/box/*` 一律 404 `not_found`。状态持久化在 `~/.oryn/box/apps.json`（0600），目录布局为 `~/apps/<app>/{releases/<releaseId>, current, data}` 与上传落点 `~/.oryn/box/incoming/<releaseId>.tar.gz`（0700）。切换期间状态文件先写入 `Trial{release, prev}` 再原子替换 `current` 符号链接（经 `serviceSupervisor.switchApp` 在单次锁操作内停旧进程、换链落盘、重载并显式拉起新进程）；若 `orbd` 在试运行中途退出，重启初始化时按 `Trial.Prev` 还原状态与链接并清理未确认的新 release 目录，待 resume 末尾 `Ensure` 拉起服务。
+
+|路由|请求 → 响应|语义与校验错误|
+|---|---|---|
+|`PUT /box/incoming/{releaseId}?size=<n>&sha256=<hex>`|原始字节（≤ 512 MiB）→ `204`|`releaseId` 须匹配 `^bxr_[0-9A-Z]{26}$`。先清理 `incoming/` 中修改时间超 1 小时的遗留包；超上限回 413 `too_large`，字节数不符回 400 `size_mismatch`，摘要不符回 422 `checksum_mismatch`，参数格式错误回 400 `invalid_request`（失败不留文件）|
+|`GET /box/apps`|— → `200 OrbBoxAppsState`|无锁读取原子快照。试运行期间 `live` 与 `releases` 报 `Trial.Prev` 的已确认状态（首次部署为 `live: ""`），从进入 `activate` / `rollback`（参数校验后）到返回全程带 `activating`|
+|`POST /box/apps/{app}/activate`|`OrbBoxActivateRequest`（体 ≤ 8 MiB）→ `200 OrbBoxResult`|解包（经 `os.Root` 写入，拒绝越界路径、非法硬链接与特殊文件；单包解压 ≤ 4 GiB、≤ 500000 条目）、检查线上 Git 改动、试运行并每 250ms 探测 `127.0.0.1:<port>` / `[::1]:<port>`，通过后裁剪超出 `keep` 的旧 release，失败自动退回 `prev`；请求参数不合规回 400 `invalid_request`|
+|`POST /box/apps/{app}/rollback`|`OrbBoxRollbackRequest` → `200 OrbBoxResult`|切回已在 `Releases` 中的版本并探测端口（不解包、不裁剪），失败退回原 `live` 且保留目标目录|
+|`POST /box/apps/{app}/restart`|`OrbBoxRestartRequest`（体 ≤ 8 MiB）→ `200 OrbBoxResult`|更新 `env`（`ORYN_DEPLOYMENT_DATA_DIRECTORY` 的 `~/…` 展开为绝对路径）并重启全部服务、探测端口；不就绪不回退，新 `env` 保留|
+|`DELETE /box/apps/{app}?purge=0\|1`|— → `204`|停止服务、从状态移除并删除 `releases/` 与 `current`（`purge=1` 连 `data/` 一起删，否则保留非空 `data/`）；app 不存在也回 204|
+|`POST /box/exec`|`OrbBoxExecRequest{command, cwd, timeoutSec}` → `200 application/x-ndjson`|以登录环境跑 `bash -lc <command>`（独立进程组，`cwd` 须落在 `$HOME` 内，`timeoutSec` 1–3600）。逐行立即 flush：`{"s":"o"\|"e","d":"…"}`（每块 ≤ 32 KiB，不切开 UTF-8 字符），末行 `{"exit":N}`（超时杀进程组回 `124`，启动失败回 `127`，信号终止回 `128+signal`；对端断开杀进程组）。校验错误：400 `invalid_request` / `invalid_path`、404 `not_found`、409 `not_a_directory`|
+
+另：非 runner 的本机文件与 Git 路由在请求头带有效 `X-Oryn-Workdir`（存在、为目录且解析后在 `$HOME` 内）时将该词法路径作为工作目录（保留 `current` 段），否则用缺省工作目录；`GET /fs/roots?strict=1` 在带了 `X-Oryn-Workdir` 却未能采用时回 404 `workdir_missing`。
+
+`activate`、`rollback`、`restart` 的业务失败一律以 HTTP 200 返回 `OrbBoxResult{ok: false, code, message, log?}`（`log` 附该 app 各服务日志末尾合计 ≤ 16 KiB）：
+
+|`OrbBoxResult.code`|触发场景|
+|---|---|
+|`archive_missing`|`incoming/<releaseId>.tar.gz` 不存在|
+|`release_exists`|`activate` 的 `releaseId` 已在保留列表中且非当前 `live`（若已是 `live` 且无 `Trial` 则幂等回 `ok: true`）|
+|`box_changes`|新旧 release 的 `source` 均为真、`current/.git` 存在且未传 `discardBoxChanges` 时，线上目录有未提交改动，或线上 `HEAD` 不是新 release `HEAD` 的祖先|
+|`bad_archive`|非合法 gzip / tar、条目路径非法或逃出根、硬链接目标非法，或含设备 / FIFO 等不支持条目|
+|`too_large`|解包后总字节数超过 4 GiB 或条目数超过 500000|
+|`switch_failed`|`switchApp` 落盘或原子切换 `current` 符号链接失败（`activate` / `rollback` 随即回退）|
+|`not_listening`|`readyTimeoutSec` 内未监听端口，或该 app 的服务全部进入 `failed`（`activate` / `rollback` 回退，`restart` 不回退）|
+|`release_not_found`|`rollback` 的 `releaseId` 不在 `Releases` 中或磁盘目录缺失（若已是 `live` 且无 `Trial` 则幂等回 `ok: true`）|
+|`app_not_found`|`restart` 时该 app 未部署或无 live release|
+|`no_space`、`canceled`、`internal`|磁盘空间 / 配额不足（`ENOSPC` / `EDQUOT`）；切换前上下文取消；其它文件系统或内部错误|
+
+控制面 `CommitDeploy` 的 `CommitResult.code` 在调用 `activate` 之外还可返回 `transfer_failed`、`size_mismatch`、`archive_missing`、`canceled`、`activate_unknown`、`activation_failed`。
+
+### app 主机名、实时推送与悬停预览
+
+- **路由与并发登记**：`portal` 数据面在 `ParseLabel`（`t-<code>-p<port>`）不匹配时试 `ParseAppLabel`（`<app>.<portal_domain>`）。独立登记表 `appReg` 限制每台 box 1024 条并发流、每个公开 app 匿名 512 条；app 改为私有或下线时 `DropApp` 取消 `app/<name>` 的全部匿名连接并递增 `epoch`。`serveApp` 先取 `epoch` 再解析 app，登记遇 `errStale` 时重取 `epoch` 并从 `ResolveApp` 起完整重试（最多 3 次）。
+- **鉴权与 502 / 503**：
+  1. `ResolveApp` 未命中或所属 orb 处于 `deleting` / `deleted` → 404 `portal_not_found`。
+  2. `/__oryn/*` 走握手端点；私有 app 的未授权导航 302 到 `<主域名>/portal/auth?h=<app>&next=…`，签发一次性码回跳 `<app 根>/__oryn/auth?code=…&next=…` 换取该 app 主机的 host-only `__Host-oryn_portal` Cookie。
+  3. 鉴权顺序为设备令牌 → portal Cookie（受跨站策略约束）→ `app.Public` 为真直接放行匿名 `app/<name>`（不查 `portal_shares`）；否则跨站回 403 `cross_site_blocked`、导航 302 握手、非导航回 401 `portal_unauthorized`。
+  4. 鉴权通过后若 `!app.Live`（尚无成功激活的 release），不拨号，直接回 502 `app_not_deployed`（放在鉴权之后，不向匿名访客透露私有 app 的部署状态，也避免误连同端口的普通服务）。
+  5. 可用性调 `EnsureUsable(wake=false)`：**不**计用户交互、**不**唤醒 box；`ErrOrbNotReady` 回 503 `app_unavailable`（带 `Retry-After: 5`，导航请求返回 5 秒自动刷新的过渡页）。开在 box 上的线程自己声明的 `t-…-p…` portal 尝试唤醒被闸门拦下时回 503 `box_stopped`。
+- **响应头**：不带 `oryn-preview` 查询参数的 app 请求保留应用自己的 `X-Frame-Options` 与 `Content-Security-Policy`，不加 `X-Robots-Tag`，仅清洗 `Set-Cookie`（丢弃同名 `__Host-oryn_portal`、剥离 `Domain`）；带 `?oryn-preview` 时按内嵌帧改写 `X-Frame-Options`、`frame-ancestors 'self' <主域名 origin>` 与匿名 `noindex`。
+- **`boxes.changed`**：WS 服务端消息 `WsServerBoxesChanged{type: "boxes.changed"}`，在 box 写操作、box orb 事件及 box 上的线程建 / 共用 fork / 删（`BoxThreadsChanged`）后经 250ms 合并向全部客户端广播。
+- **`oryn-preview` 契约**：app 根页面 `<head>` 声明 `<meta name="oryn-preview" content="v1; enabled; iframe">`（`content` 按 `;` 切分去空白，首段须为 `v1`，其余标志同时含 `enabled` 与 `iframe` 时记 `box_apps.preview = true`，未知标志忽略）。Web 在指针设备悬停或聚焦徽标时以 `<iframe sandbox="allow-scripts allow-same-origin">` 加载预览：公开 app 为 `<url>/?oryn-preview=light|dark`，私有 app 为 `<url>/__oryn/login?next=%2F%3Foryn-preview%3D<light|dark>`。

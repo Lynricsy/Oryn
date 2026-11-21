@@ -40,6 +40,17 @@ bun run accept:m14-artifacts -- --part real --only K24,K25 # 只跑指定部分�
 
 真机部分自建一套隔离的 orynd、vite 与 fakeomp。K37（`sample` 能力）要真实模型回答，fakeomp 下打印 SKIP；控制面渲染器不可用时，K22、K23、K26 的 PDF 与 K31 的附图同样 SKIP。截图与结果默认写到 `.dev/m14-artifacts/`。
 
+## Boxes 端到端验收
+
+```bash
+# Go 端到端（自建进程内控制面、process 驱动 orbd 与 fakeapp，无需外部 Docker）
+go test ./internal/server/ -run 'TestE2EM23' -count=1 -v
+
+# 浏览器真机验收（需要真实开发栈，前置条件同 accept:m4：运行中的 orynd + Docker provider、
+# portal_domain: localhost、已登录的 .dev/credentials.json 或 ORYN_TOKEN，以及本机 Chromium）
+cd web && bun run accept:m23
+```
+
 ## 界面截图
 
 | 命令（`web/` 目录） | 输出 |

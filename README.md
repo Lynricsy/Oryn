@@ -56,6 +56,14 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 
 </td>
 </tr>
+<tr>
+<td colspan="3" valign="top">
+
+**📦 [Boxes](docs/features.md#boxes)**<br>
+常驻机器托管多个应用，各有独立地址、密钥与数据目录；线程可直接开在线上应用目录。
+
+</td>
+</tr>
 </table>
 
 ## 工作台
@@ -308,6 +316,14 @@ oryn schedule set <线程> --cron "0 9 * * 1-5" --tz Asia/Shanghai --prompt "汇
 oryn schedule add --project myproj --every 6h --prompt "检查依赖安全更新并提 PR"
 oryn stats --since 30d --by model                            # 按模型汇总近 30 天 Token、缓存与成本（支持 --csv / --json）
 oryn stats budget set --daily 20 --monthly 300 --warn 80     # 配置日/月成本预算与预警百分比
+
+# ── Boxes（常驻机器与应用）──
+oryn boxes create workbench && oryn boxes list               # 新建常驻机器并查看状态与已部署应用数
+oryn boxes secrets set DATABASE_URL --box workbench --app wiki --value "postgres://localhost/wiki"
+oryn boxes restart workbench --app wiki                      # 重启应用服务以加载最新密钥与环境变量
+oryn boxes exec workbench --app wiki -- ./migrate            # 在应用线上目录执行命令（流式输出，Ctrl-C 中断）
+oryn boxes cp ./seed.db workbench:seed.db --app wiki         # 与应用数据目录互传文件
+oryn thread new --box workbench --app wiki "排查线上慢查询"    # 在 box 应用的线上目录直接启动线程
 ```
 
 </details>
@@ -321,6 +337,7 @@ oryn orb setup status | logs [--resume]               # 查看最近一次环境
 oryn orb service ls | start <名> | logs <名>           # 查看或启停 .oryn/services.yaml 定义的受管服务
 oryn orb desktop status | browser start               # 查看虚拟桌面状态或拉起受管 Chromium
 oryn thread new "跑一遍全量集成测试" && oryn thread wait <id>   # 派生子线程并等待其静止（退出码 0/3/4/124）
+oryn boxes deploy --on workbench --name wiki --create        # 将当前仓库 HEAD 构建打包并部署到 box（首次可顺手建 box）
 ```
 
 </details>
