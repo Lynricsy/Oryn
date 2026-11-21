@@ -19,10 +19,11 @@ import (
 // GET hook 时 GitHub 把 config.secret 打码成 ********（docs/plan-m15.md 附录 B-2），所以每轮同步都连同库里的 secret
 // 一起 PATCH 整个 config，从不「先读后写」secret。hook 只在配置了 OAuth App 时管理（删除 OAuth 配置时全部删除）。
 
-// hookEvents 是仓库 hook 订阅的事件（固定字面量，见 docs/plan-m15.md「全局约束」）。
+// hookEvents 是仓库 hook 订阅的事件（固定字面量，见 docs/plan-m15.md「全局约束」）。push 是 M24 加的（触发项目仓库镜像拉取）：
+// ensureHook 每轮整体 PATCH Events，已有 hook 在下一次 ResyncHooks（≤ hookSyncInterval）内订阅上。
 var hookEvents = []string{
 	"issues", "issue_comment", "pull_request", "pull_request_review", "pull_request_review_comment",
-	"check_suite", "status", "workflow_run", "repository",
+	"check_suite", "status", "workflow_run", "repository", "push",
 }
 
 // hook 状态（github_hooks.status）。org_restricted / sso_required 直接取 ghError 的类别。

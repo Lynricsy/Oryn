@@ -153,6 +153,8 @@ type Service struct {
 	sampler Sampler
 	models  ModelCatalog // nil = 没有模型目录：`/model` 只在规则的模型池里查找
 	orbs    Orbs         // nil = 不冻结（测试）
+	// repoSync 是项目仓库镜像的拉取入口（M24）；nil = push 事件不触发拉取（测试）。
+	repoSync RepoSync
 	// intn 返回 [0, n) 的随机数（模型池随机取一个，测试注入）。
 	intn func(n int) int
 
