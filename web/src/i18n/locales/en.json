@@ -3891,7 +3891,9 @@
 			"inUse": "In use",
 			"save": "Save now",
 			"manage": "Manage profiles…",
-			"switchConfirm": "Switching profiles closes the current browser (an exclusively used profile is saved first). Continue?"
+			"switchTitle": "Switch browser profile?",
+			"switchConfirm": "The current browser will be closed. An exclusively used profile is saved first.",
+			"switchAction": "Switch"
 		},
 		"profile": {
 			"title": "Browser profile",

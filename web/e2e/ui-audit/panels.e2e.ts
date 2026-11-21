@@ -4,7 +4,7 @@
  * 宽屏点「信息面板」再点 `[data-panel-tab]`；手机经页头视图菜单 `thread-view-menu` → `[data-view]`。
  */
 import type { Locator, Page } from "@playwright/test";
-import { isMobile, lastOverlay, settle, surface } from "./audit";
+import { isMobile, lastOverlay, PHASE, settle, surface } from "./audit";
 
 const MAIN = "T-0193a1b2-0000-7000-8000-00000000a001";
 /** 选用的「GitHub 测试号」被另一台 orb 占用的线程；再切到同样被占用的「工作账号」会弹冲突对话框 */
@@ -358,6 +358,25 @@ surface({
 	},
 });
 
+// 切换 Profile 前的确认：after 是应用内对话框；基线是原生 confirm（浏览器自带、不可审计），before 只截出页面并取消
+surface({
+	id: "panels.desktop.switch-confirm",
+	path: `/t/${IN_USE}`,
+	ready: READY,
+	noReopen: true,
+	open: async (page) => {
+		await openDesktop(page);
+		if (PHASE === "before") page.on("dialog", (d) => void d.dismiss());
+		await page.getByTestId("desktop-profile-menu").click();
+		await lastOverlay(page)
+			.getByRole("menuitemradio", { name: /^工作账号/ })
+			.click();
+		if (PHASE === "before") return undefined;
+		await page.getByTestId("profile-switch-confirm").waitFor();
+		return lastOverlay(page);
+	},
+});
+
 surface({
 	id: "panels.desktop.conflict",
 	path: `/t/${IN_USE}`,
@@ -365,13 +384,15 @@ surface({
 	noReopen: true,
 	open: async (page) => {
 		await openDesktop(page);
-		// 切换前的「当前浏览器会被关闭」是原生 confirm：接受
+		// 基线：切换前的确认是原生 confirm，接受；after：点应用内确认框的「切换」
 		page.on("dialog", (d) => void d.accept());
 		await page.getByTestId("desktop-profile-menu").click();
 		await lastOverlay(page)
 			.getByRole("menuitemradio", { name: /^工作账号/ })
 			.click();
-		await page.getByRole("dialog").waitFor({ timeout: 15_000 });
+		if (PHASE === "after")
+			await page.getByTestId("profile-switch-confirm").click();
+		await page.getByTestId("profile-conflict").waitFor({ timeout: 15_000 });
 		return lastOverlay(page);
 	},
 });

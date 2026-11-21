@@ -3891,7 +3891,9 @@
 			"inUse": "使用中",
 			"save": "立即保存",
 			"manage": "管理 Profile…",
-			"switchConfirm": "切换 Profile 会关闭当前浏览器（独占使用的 Profile 先保存）。继续？"
+			"switchTitle": "切换浏览器 Profile？",
+			"switchConfirm": "当前浏览器会被关闭；独占使用的 Profile 会先保存。",
+			"switchAction": "切换"
 		},
 		"profile": {
 			"title": "浏览器 Profile",

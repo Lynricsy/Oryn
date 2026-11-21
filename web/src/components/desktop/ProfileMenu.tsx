@@ -1,7 +1,7 @@
 /**
  * Desktop 工具条最左的 Profile 菜单（M8 4.3）与「为 orb 选用 Profile」的流程钩子。
  * 菜单：各 Profile（当前的打勾；被别的 orb 持有的带「使用中」）、不使用 Profile、立即保存（仅独占持有时）、管理 Profile…
- * 切换前确认一句「当前浏览器会被关闭」。被占用（列表里有持有者，或 PUT 回 409 `profile_in_use`）时弹冲突对话框，
+ * 切换前用应用内对话框确认「当前浏览器会被关闭」。被占用（列表里有持有者，或 PUT 回 409 `profile_in_use`）时弹冲突对话框，
  * 由用户在「只读使用」与「接管」之间选择后重发。
  */
 import { type ReactNode, useState } from "react";
@@ -11,7 +11,7 @@ import type { Schemas } from "../../api/client";
 import { useBrowserProfiles, useSetOrbDesktopProfile } from "../../api/queries";
 import { Badge } from "../ui/data";
 import { Icon } from "../ui/icons";
-import { Menu, type MenuItem } from "../ui/primitives";
+import { Button, Dialog, Menu, type MenuItem } from "../ui/primitives";
 import {
 	type ConflictChoice,
 	ProfileConflictDialog,
@@ -126,10 +126,12 @@ export function ProfileMenu({
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const profiles = useBrowserProfiles();
-	// 浏览器在跑、或本地装着某个 Profile 时，切换会关闭当前浏览器
-	const confirmSwitch = () =>
-		!(browserRunning || current) ||
-		window.confirm(t("deskPanel.menu.switchConfirm"));
+	// 浏览器在跑、或本地装着某个 Profile 时，切换会关闭当前浏览器：先记下切换动作，确认后再执行
+	const [pendingSwitch, setPendingSwitch] = useState<(() => void) | null>(null);
+	const switchTo = (run: () => void) => {
+		if (browserRunning || current) setPendingSwitch(() => run);
+		else run();
+	};
 	const items: MenuItem[] = [
 		...(profiles.data?.profiles ?? []).map((p): MenuItem => {
 			const other = p.holder && p.holder.orbId !== orbId ? p.holder : null;
@@ -140,14 +142,16 @@ export function ProfileMenu({
 				checked: current?.id === p.id,
 				hint: other ? t("deskPanel.menu.inUse") : undefined,
 				onSelect: () => {
-					if (current?.id === p.id || !confirmSwitch()) return;
-					if (other)
-						choice.open({
-							profileId: p.id,
-							profileName: p.name,
-							holder: other,
-						});
-					else void choice.apply(p.id);
+					if (current?.id === p.id) return;
+					switchTo(() => {
+						if (other)
+							choice.open({
+								profileId: p.id,
+								profileName: p.name,
+								holder: other,
+							});
+						else void choice.apply(p.id);
+					});
 				},
 			};
 		}),
@@ -157,8 +161,8 @@ export function ProfileMenu({
 			icon: "minusCircle",
 			checked: !current,
 			onSelect: () => {
-				if (!current || !confirmSwitch()) return;
-				void choice.apply("");
+				if (!current) return;
+				switchTo(() => void choice.apply(""));
 			},
 		},
 		...(current?.status === "attached"
@@ -181,28 +185,61 @@ export function ProfileMenu({
 	];
 	const label = current?.name ?? t("deskPanel.menu.noProfile");
 	return (
-		<Menu
-			align="left"
-			className="min-w-0 shrink"
-			items={items}
-			trigger={(p) => (
-				<button
-					type="button"
-					data-testid="desktop-profile-menu"
-					aria-label={t("deskPanel.menu.label", { name: label })}
-					title={t("deskPanel.menu.label", { name: label })}
-					disabled={choice.pending}
-					className={`inline-flex h-7 min-w-0 max-w-full items-center gap-1.5 rounded-md px-2 text-xs transition-colors duration-150 hover:bg-hover hover:text-fg disabled:opacity-50 ${p["aria-expanded"] ? "bg-active text-fg" : "text-muted"}`}
-					{...p}
-				>
-					<Icon name="browser" size={14} className="shrink-0" />
-					<span className="min-w-0 truncate">{label}</span>
-					{current?.mode === "readonly" && (
-						<Badge>{t("deskPanel.profile.readonlyShort")}</Badge>
-					)}
-					<Icon name="chevronDown" size={11} className="shrink-0 text-faint" />
-				</button>
-			)}
-		/>
+		<>
+			<Menu
+				align="left"
+				className="min-w-0 shrink"
+				items={items}
+				trigger={(p) => (
+					<button
+						type="button"
+						data-testid="desktop-profile-menu"
+						aria-label={t("deskPanel.menu.label", { name: label })}
+						title={t("deskPanel.menu.label", { name: label })}
+						disabled={choice.pending}
+						className={`inline-flex h-7 min-w-0 max-w-full items-center gap-1.5 rounded-md px-2 text-xs transition-colors duration-150 hover:bg-hover hover:text-fg disabled:opacity-50 ${p["aria-expanded"] ? "bg-active text-fg" : "text-muted"}`}
+						{...p}
+					>
+						<Icon name="browser" size={14} className="shrink-0" />
+						<span className="min-w-0 truncate">{label}</span>
+						{current?.mode === "readonly" && (
+							<Badge>{t("deskPanel.profile.readonlyShort")}</Badge>
+						)}
+						<Icon
+							name="chevronDown"
+							size={11}
+							className="shrink-0 text-faint"
+						/>
+					</button>
+				)}
+			/>
+			<Dialog
+				open={pendingSwitch !== null}
+				onClose={() => setPendingSwitch(null)}
+				title={t("deskPanel.menu.switchTitle")}
+				footer={
+					<>
+						<Button variant="ghost" onClick={() => setPendingSwitch(null)}>
+							{t("common.cancel")}
+						</Button>
+						<Button
+							variant="primary"
+							data-testid="profile-switch-confirm"
+							onClick={() => {
+								const run = pendingSwitch;
+								setPendingSwitch(null);
+								run?.();
+							}}
+						>
+							{t("deskPanel.menu.switchAction")}
+						</Button>
+					</>
+				}
+			>
+				<p className="text-muted text-sm">
+					{t("deskPanel.menu.switchConfirm")}
+				</p>
+			</Dialog>
+		</>
 	);
 }

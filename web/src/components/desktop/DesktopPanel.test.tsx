@@ -570,8 +570,7 @@ describe("DesktopPanel Profile", () => {
 		expect(sessions).toHaveLength(1);
 	});
 
-	it("菜单：选空闲的 Profile 先确认，PUT 回 409 时弹对话框，选只读后以 readonly 重发", async () => {
-		vi.spyOn(window, "confirm").mockReturnValue(true);
+	it("菜单：选空闲的 Profile 先在应用内确认，PUT 回 409 时弹对话框，选只读后以 readonly 重发", async () => {
 		putReply = (b) =>
 			b.profileMode
 				? Response.json(currentOrb)
@@ -581,13 +580,16 @@ describe("DesktopPanel Profile", () => {
 		const { threadId, orbId } = setup(READY);
 		mount(threadId);
 		fireEvent.click(screen.getByTestId("desktop-profile-menu"));
-		const item = await screen.findByRole("menuitemradio", { name: /工作账号/ });
-		await act(async () => {
-			fireEvent.click(item);
-		});
-		expect(window.confirm).toHaveBeenCalledWith(
-			i18n.t("deskPanel.menu.switchConfirm"),
+		fireEvent.click(
+			await screen.findByRole("menuitemradio", { name: /工作账号/ }),
 		);
+		expect(
+			screen.getByText(i18n.t("deskPanel.menu.switchConfirm")),
+		).toBeInTheDocument();
+		expect(requests.filter((r) => r.method === "PUT")).toHaveLength(0);
+		await act(async () => {
+			fireEvent.click(screen.getByTestId("profile-switch-confirm"));
+		});
 		await screen.findByTestId("profile-conflict");
 		await act(async () => {
 			fireEvent.click(screen.getByTestId("profile-conflict-readonly"));
@@ -600,8 +602,21 @@ describe("DesktopPanel Profile", () => {
 		expect(puts[0]?.path).toBe(`/api/v1/orbs/${orbId}/desktop/profile`);
 	});
 
+	it("菜单：确认对话框里点取消，不切换也不发请求", async () => {
+		const { threadId } = setup(READY);
+		mount(threadId);
+		fireEvent.click(screen.getByTestId("desktop-profile-menu"));
+		fireEvent.click(
+			await screen.findByRole("menuitemradio", { name: /工作账号/ }),
+		);
+		fireEvent.click(
+			screen.getByRole("button", { name: i18n.t("common.cancel") }),
+		);
+		expect(screen.queryByTestId("profile-switch-confirm")).toBeNull();
+		expect(requests.filter((r) => r.method === "PUT")).toHaveLength(0);
+	});
+
 	it("菜单：列表里已被别的 orb 持有的 Profile 标「使用中」，选它直接弹对话框（不先发请求）", async () => {
-		vi.spyOn(window, "confirm").mockReturnValue(true);
 		const { threadId } = setup(READY);
 		mount(threadId);
 		fireEvent.click(screen.getByTestId("desktop-profile-menu"));
@@ -610,6 +625,7 @@ describe("DesktopPanel Profile", () => {
 		});
 		expect(item).toHaveTextContent(i18n.t("deskPanel.menu.inUse"));
 		fireEvent.click(item);
+		fireEvent.click(screen.getByTestId("profile-switch-confirm"));
 		expect(screen.getByTestId("profile-conflict")).toBeInTheDocument();
 		expect(requests.filter((r) => r.method === "PUT")).toHaveLength(0);
 	});
@@ -641,13 +657,13 @@ const READONLY_WORK: Schemas["OrbDesktop"] = {
 
 describe("DesktopPanel Profile：只读副本与乱序", () => {
 	it("只读使用 A 时换到被占用的 B：对话框仍给「只读使用」，以 readonly 发 PUT", async () => {
-		vi.spyOn(window, "confirm").mockReturnValue(true);
 		const { threadId, orbId } = setup(READONLY_WORK);
 		mount(threadId);
 		fireEvent.click(screen.getByTestId("desktop-profile-menu"));
 		fireEvent.click(
 			await screen.findByRole("menuitemradio", { name: /GitHub 测试号/ }),
 		);
+		fireEvent.click(screen.getByTestId("profile-switch-confirm"));
 		await act(async () => {
 			fireEvent.click(screen.getByTestId("profile-conflict-readonly"));
 		});
