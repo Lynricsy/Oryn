@@ -2460,3 +2460,118 @@ orb 内 `oryn boxes …` 经 `orbd.sock` 发 `box.call`，`orbd` 校验 `threadI
 - **响应头**：不带 `oryn-preview` 查询参数的 app 请求保留应用自己的 `X-Frame-Options` 与 `Content-Security-Policy`，不加 `X-Robots-Tag`，仅清洗 `Set-Cookie`（丢弃同名 `__Host-oryn_portal`、剥离 `Domain`）；带 `?oryn-preview` 时按内嵌帧改写 `X-Frame-Options`、`frame-ancestors 'self' <主域名 origin>` 与匿名 `noindex`。
 - **`boxes.changed`**：WS 服务端消息 `WsServerBoxesChanged{type: "boxes.changed"}`，在 box 写操作、box orb 事件及 box 上的线程建 / 共用 fork / 删（`BoxThreadsChanged`）后经 250ms 合并向全部客户端广播。
 - **`oryn-preview` 契约**：app 根页面 `<head>` 声明 `<meta name="oryn-preview" content="v1; enabled; iframe">`（`content` 按 `;` 切分去空白，首段须为 `v1`，其余标志同时含 `enabled` 与 `iframe` 时记 `box_apps.preview = true`，未知标志忽略）。Web 在指针设备悬停或聚焦徽标时以 `<iframe sandbox="allow-scripts allow-same-origin">` 加载预览：公开 app 为 `<url>/?oryn-preview=light|dark`，私有 app 为 `<url>/__oryn/login?next=%2F%3Foryn-preview%3D<light|dark>`。
+
+## M24：项目仓库
+
+orynd 在 `<data_dir>/repos/<projectId>.git` 为每个有 `https://` 仓库地址的项目维护完整裸镜像（全部 `refs/heads/*` 与 `refs/tags/*`），由 `internal/repos` 自己执行 git（≥ 2.31），给项目页提供只读 REST；出站代理记下 orb 的推送，用来把提交关联到线程。项目描述字段见迁移 `0046_project_description.sql`（`projects.description`，≤ 200 字符，API `Project.description`）；本节的表在迁移 `0047_project_repos.sql`。部署与安全细节见 [`deploy.md`](deploy.md)「项目仓库镜像」「git 出站策略」，行为见 [`features.md`](features.md)「仓库浏览」。
+
+### 数据模型
+
+- **`project_repos(project_id, kind, remote_url, github_repo_id, default_branch, synced_at, size_bytes, error_code, error_message, error_at, created_at, updated_at)`**：每项目至多一行，随项目级联删除。`kind ∈ mirror|hosted`（本阶段只写 `mirror`）；`remote_url` 与 `github_repo_id` 是最近一次拉取时项目的 `repo_url` 与绑定的 GitHub 仓库 id：项目地址改指别的仓库时删除镜像，`github_repo_id` 相同（GitHub 改名）只更新 `remote_url`。`synced_at` 为 `NULL` 表示从未成功拉取；`error_*` 是最近一次失败（`error_message` 已脱敏，≤ 500 字符），成功后清空。
+- **`repo_pushes(id, project_id, thread_id, orb_id, ref, old_sha, new_sha, pushed_at, expanded_at, expand_note)`**：出站代理观察到的成功推送，一行一个 ref。`expanded_at` 为 `NULL` 表示待展开；`expand_note ∈ NULL|truncated|missing`。每次镜像拉取成功后展开；`new_sha` 24 小时内一直没出现在镜像里的记 `missing`，已展开 30 天的行删除（每小时清理一次）。索引 `repo_pushes_pending(project_id, expanded_at)`。
+- **`repo_commit_threads(project_id, sha, thread_id, source, linked_at)`**：主键 `(project_id, sha)`。`source ∈ push|pull|none`，`none` 行 `thread_id` 为 `NULL`，表示 GitHub 反查过、没有线程（24 小时内不再反查）。写入时正结果不互相覆盖（先到的 `push` 胜出），只能覆盖 `none`。
+
+展开推送（`expandPushes`）：`new_sha` 不在镜像里就跳过；`old_sha` 非全 0 且在镜像里时取 `rev-list <new> ^<old>`，否则（新分支、旧提交不在镜像里）ref 就是默认分支或没有默认分支时取 `rev-list <new>`，其余取 `rev-list <new> ^refs/heads/<默认分支>`；至多 500 个提交，超出记 `truncated`，在一个事务里写 `repo_commit_threads(source = push)`。
+
+提交 → 线程的查找顺序：`repo_commit_threads` 里有线程的行（`source` 原样）→ 线程采样到的提交 `thread_commits`（取最近活动的线程，`source = sampled`）→ 只在提交详情接口、项目绑定了 GitHub 仓库、前两步都没有、且没有 24 小时内的 `none` 行时，`GET /repos/{full}/commits/{sha}/pulls` 按 merged、再 open 的顺序取 PR，用 `thread_pulls` 里最早关联它的线程（`source = pull`，含已归档线程）；没有线程写 `none`，请求出错不缓存。列表接口从不请求 GitHub。
+
+### 同步
+
+- **触发**：`getProjectRepo` 与全部读接口对未归档项目按需在后台进行（不阻塞请求）：没有镜像且没有记过错误 → 克隆；有镜像且距上次拉取（成功或失败）超过 60 秒 → 拉取。首次克隆失败后不自动重试。GitHub 仓库 hook 订阅 `push`，收到后对 `ListProjectsByGithubRepo`（未归档）里每个项目排一次拉取（outcome `handled`；没有项目 `ignored:no_project`）。出站代理记下推送后同样排一次拉取。已归档项目不做任何自动网络动作，`syncProjectRepo` 照常可用。
+- **单飞**：每项目同时一个克隆或拉取，进行中再触发只记「完后再来一轮」；全局同时至多 2 个。
+- **克隆**：`git init --bare --template=` 到 `<id>.git.tmp-<rand>`，写 `remote.origin.fetch`（`+refs/heads/*:refs/heads/*`、`+refs/tags/*:refs/tags/*`）与 `tagOpt=--no-tags`；`ls-remote --symref origin HEAD` 取默认分支（失败时依次取旧值、`main`、`master`、第一个分支）；`fetch --prune --no-write-fetch-head origin`；`symbolic-ref HEAD`；改名为 `<id>.git`。拉取同样执行后三步，先把 `remote.origin.url` 设成当前地址。
+- **拉取地址与凭据**：只接受 `orbs.HTTPSRepo` 认可的 `https://` 地址（无端口、userinfo、query 与 `.` / `..` 段），否则 `unsupported_url`。github.com 的拉取地址是 `github.web_url` + `/<owner>/<repo>.git`，令牌取主人的 GitHub 用户令牌（出错则匿名）；其它主机取全局密钥 `git/<host>/token`。有令牌时经 `GIT_CONFIG_*` 注入 `http.<origin>/.extraHeader = Authorization: Basic base64("x-access-token:"+令牌)` 与 `http.followRedirects=false`。github.com 与有令牌的主机（担保主机）沿用进程的代理变量；其它主机设 `http.proxy` 为回环公网守卫 `egress.PublicProxy`（只接受 CONNECT 443，拨号时检查实际 IP 必须是公网地址；违规回 403，git 报 `Received HTTP code 403 from proxy after CONNECT`）。
+- **错误分类**（`ProjectRepoError.code`）：
+
+  |码|条件|
+  |---|---|
+  |`unsupported_url`|仓库地址不是可放行的 `https://` 地址|
+  |`blocked_address`|守卫拒绝（解析到非公网地址或端口不是 443）|
+  |`auth_required` / `auth_failed`|stderr 含 `terminal prompts disabled`、`Authentication failed` 或 `could not read Username`：没有令牌为前者，有令牌为后者|
+  |`not_found`|`Repository not found` 或 `returned error: 404`|
+  |`unreachable`|`Could not resolve host`、`Failed to connect`、`Connection refused`|
+  |`timeout`|首次克隆超过 15 分钟、增量拉取超过 5 分钟（`ls-remote` 60 秒）|
+  |`too_large`|拉取中或拉取后镜像超过 `repos.max_mirror_gb`；拉取后超过时镜像被删除|
+  |`no_space`|数据盘可用空间低于 `repos.min_free_gb`（开始前与进行中每 5 秒检查）|
+  |`fetch_failed`|其它|
+
+  已有镜像时失败不删除镜像，状态仍为 `ready` 并带 `lastError`；首次克隆失败删掉半成品，状态为 `error`。
+- **删除**：删除项目时取消进行中的拉取（至多等 10 秒）、删除行与目录及其 LFS 缓存。目录先改名为 `<id>.git.trash-<rand>` 再在后台删除；带 `oryn-hosted` 标记的目录（阶段 ③ 的托管正本）只有删除项目才会删。启动时清掉残留的 `*.tmp-*` / `*.trash-*`、项目已不存在的镜像，以及 10 分钟前留下的 `HEAD.lock`、`packed-refs.lock`、`refs/**/*.lock`。
+
+### REST（tag `projects`）
+
+全部 GET 用缺省鉴权；`syncProjectRepo` 要 Cookie + CSRF 或设备令牌。项目不存在一律 404 `not_found`。读接口（`refs` 起）在项目没有仓库地址时回 409 `no_repo`，控制面没有可用 git 时回 503 `repo_unavailable`，镜像不存在、克隆中或克隆失败时回 409 `repo_not_ready`；读取同样按需触发后台克隆或拉取。
+
+|方法与路径|operationId|请求|响应|
+|---|---|---|---|
+|`GET /api/v1/projects/{id}/repo`|`getProjectRepo`|—|`ProjectRepoStatus`|
+|`POST /api/v1/projects/{id}/repo/sync`|`syncProjectRepo`|—|202 `ProjectRepoStatus`|
+|`GET /api/v1/projects/{id}/repo/refs`|`listProjectRepoRefs`|`kind`（`branch\|tag`，必填）、`cursor?`、`limit?`（1–200，缺省 50）|`ProjectRepoRefList{refs, nextCursor?}`|
+|`GET /api/v1/projects/{id}/repo/commits`|`listProjectRepoCommits`|`ref?`、`path?`、`cursor?`、`limit?`（1–100，缺省 30）|`ProjectRepoCommitList{ref, commit, commits, nextCursor?}`|
+|`GET /api/v1/projects/{id}/repo/commits/{sha}`|`getProjectRepoCommit`|—|`ProjectRepoCommitDetail`|
+|`GET /api/v1/projects/{id}/repo/commits/{sha}/diff`|`getProjectRepoCommitDiff`|`path`、`oldPath?`|`GitFileDiff`|
+|`GET /api/v1/projects/{id}/repo/tree`|`getProjectRepoTree`|`ref?`、`path?`、`lastCommits?`（缺省 true）|`ProjectRepoTree`|
+|`GET /api/v1/projects/{id}/repo/blob`|`getProjectRepoBlob`|`ref?`、`path`、`download?`、头 `If-None-Match`|200 / 206 字节流，或 304|
+
+- **`ProjectRepoStatus`**：`{kind: mirror|none, state: absent|cloning|ready|error, available, unavailableReason?: git_missing|git_too_old, syncing, empty, cloneUrl?, defaultBranch?, baseBranch?, syncedAt?, sizeBytes?, lastError?: {code, message, at}}`。没有仓库地址为 `kind: none, state: absent`；有进行中的克隆且没有镜像为 `cloning`；有镜像为 `ready`（`syncing` = 正在拉取，`empty` = 没有任何分支）；没有镜像但记过错误为 `error`。`baseBranch` 是项目的 `baseBranch` 在镜像里存在时取它，否则取 `defaultBranch`。git 不可用时照常返回 `available: false`。
+- **参数校验**（违反回 400 `invalid_request`）：`ref` 匹配 `^[A-Za-z0-9][A-Za-z0-9._/-]{0,200}$`，不含 `..`、`//`，不以 `/` 或 `.lock` 结尾；`sha` 匹配 `^[0-9a-f]{7,40}$`；路径不含 NUL、不以 `/` 开头、没有 `.` / `..` / 空段、≤ 4096 字节（`""` = 根）；以 `-` 开头的 ref 或路径一律拒绝。git 调用里修订放在 `--end-of-options` 之后，路径用 `:(literal)` pathspec。
+- **ref 解析**：缺省为状态里的 `baseBranch`；依次试 `refs/heads/<ref>`、`refs/tags/<ref>`，形如 sha 时再试提交本身，都不是回 404 `ref_not_found`。
+- **refs**：分支按最近提交时间、标签按创建时间倒序，默认分支排第一，至多列 10000 个；`cursor` 是十进制偏移。
+- **commits**：`cursor` 为 `<头提交 sha>:<偏移>`（`^[0-9a-f]{40}([0-9a-f]{24})?:[0-9]{1,7}$`），翻页沿用第一页的头提交，分支移动后后续页不变。`path` 过滤只看改动该路径的提交。每个提交带 `parents` 与关联线程 `thread?: {id, title, source: push|sampled|pull}`。
+- **commit / diff**：提交不存在回 404 `commit_not_found`。`files` 是相对第一个父提交（根提交相对空树 `4b825dc6…`）的 `--name-status -M` 与 `--numstat`，按路径排序、至多 2000 个（超出 `truncated`），`staged` 恒为 `none`；`additions` / `deletions` 只计非二进制文件；`body` 去掉 subject 行、≤ 64 KiB。diff 为 `-U3`、≤ 1 MiB（按行截断），二进制文件 `kind = binary`，规则同 orbd 的 `/git/diff`。
+- **tree**：路径不存在回 404 `path_not_found`。目录时 `entries` 为直接子项（目录在前、按名不分大小写排序，至多 5000 个，超出 `truncated`）；`lastCommits` 时给每个子项找最后一次改动它的提交，至多读 2000 个提交或 3 秒，没找全的子项省略 `lastCommit` 并置 `lastCommitsComplete = false`。`self` 是文件时带 `mime` 与 `text`（前 8 KiB 无 NUL 且是合法 UTF-8）。`mode` 为 Unix 权限位（`100644→420`、`100755→493`、`040000→493`、`120000→511`、`160000→0`）；符号链接带 `target`。
+- **blob**：目录回 409 `not_a_file`；超过 64 MiB 回 413 `too_large`。`ETag: "<blob oid>"`，`If-None-Match` 相同回 304；`ref` 是完整提交 sha 时 `Cache-Control: private, max-age=31536000, immutable`，否则 `private, no-cache`。`Content-Type` 按扩展名、退回内容嗅探，`text/html` 一律改为 `text/plain; charset=utf-8`；安全的栅格图片 `Content-Disposition: inline`，其余（以及 `download=1`）一律 `attachment`；带 `X-Content-Type-Options: nosniff` 与 `Content-Security-Policy: sandbox`。普通 blob 忽略 `Range`。
+
+### Git LFS 指针（读接口）
+
+读接口只认规范的三行指针（`version https://git-lfs.github.com/spec/v1` 或 `…hawser…/spec/v1`、`oid sha256:<64 位小写十六进制>`、`size <十进制>`，以换行结尾，小于 1024 字节）；带扩展键的指针按普通文件处理。不看 `.gitattributes`。
+
+- **`ProjectRepoTreeEntry.lfs?: ProjectRepoLfs{oid, error?}`**：目录里小于 1024 字节的文件用一次 `cat-file --batch` 识别指针，命中的条目 `size` 改为对象大小、带 `lfs.oid`（`oid` 字段仍是指针 blob 的 sha），列目录从不取对象。`self` 是指针且对象 ≤ 100 MiB 时先取对象，按对象内容给 `mime` / `text`；取对象失败时 `lfs.error` 为下表的码、省略 `text`、`mime` 只按扩展名；超过 100 MiB 不取对象。
+- **blob**：指针返回对象内容，`Content-Length` 是对象大小，`ETag` 仍是指针 blob 的 oid。对象 ≤ 100 MiB 时经本地缓存（`<data_dir>/repos/.lfs-cache/<projectId>/<oid[0:2]>/<oid[2:4]>/<oid>`，所有项目合计 `repos.max_lfs_cache_gb`，按最近使用淘汰）以 `http.ServeContent` 输出，支持 `Range`（206）；超过 100 MiB 时不带 `download=1` 回 413 `too_large`（「Git LFS 对象超过 100 MiB，只能下载（download=1）」），带了则不经缓存从上游流式输出，校验失败即中断连接。提交 diff 照旧显示指针文本。
+- **取对象**：`POST <拉取地址去掉末尾 / 并补 .git>/info/lfs/objects/batch`（`Accept` / `Content-Type: application/vnd.git-lfs+json`，体 `{"operation":"download","transfers":["basic"],"objects":[{oid,size}],"hash_algo":"sha256"}`，凭据同镜像拉取，30 秒超时，不跟随重定向）；不读仓库里的 `.lfsconfig`。下载 href 须是 https（或与 endpoint 同源），不在仓库主机上时去掉含令牌的头、经公网守卫；至多 5 跳重定向、拒绝 https 降级、换主机清空请求头。内容边读边校验大小与 sha256。同一 `projectId + oid` 只取一次（并发请求共用结果），全局 4 个、每项目 2 个名额，一次至多 15 分钟，60 秒内少于 60 KB 即中止。大小为 0 的对象不访问上游。
+
+  |码|HTTP|条件|
+  |---|---|---|
+  |`lfs_missing`|404|batch 回 404，或对象级错误 404 / 410，或下载回 404 / 410|
+  |`lfs_auth_failed`|409|batch 或下载回 401 / 403，或对象级错误 401 / 403|
+  |`lfs_unreachable`|502|传输错误、超时、3xx、429、5xx、守卫拒绝、下载过慢、href 不是 https|
+  |`lfs_corrupt`|502|batch 响应无法解析或缺下载动作、`transfer` 不是 basic、其它 4xx 或对象级错误、内容与指针不符|
+  |`lfs_no_space`|507|数据盘可用空间减去对象大小后低于 `repos.min_free_gb`|
+
+### 错误码（M24 新增）
+
+|码|HTTP|含义|
+|---|---|---|
+|`repo_unavailable`|503|控制面没有可用的 git（缺失或低于 2.31）|
+|`no_repo`|409|项目没有仓库地址|
+|`repo_not_ready`|409|镜像不存在、克隆中或克隆失败|
+|`ref_not_found`、`commit_not_found`、`path_not_found`|404|分支 / 标签 / 提交、提交、路径不存在|
+|`not_a_file`|409|blob 接口的路径是目录|
+|`too_large`|413|blob 超过 64 MiB，或 LFS 对象超过 100 MiB 且没带 `download=1`|
+|`lfs_missing`、`lfs_auth_failed`、`lfs_unreachable`、`lfs_corrupt`、`lfs_no_space`|404、409、502、502、507|见上节|
+
+### 实时消息
+
+- **`project_repo.changed`**：`WsServerProjectRepoChanged{type: "project_repo.changed", projectId}`，在开始或结束克隆 / 拉取、出错、镜像被删除时发给全部私有连接。客户端让 `["projectRepo", projectId]` 下的查询失效；WS 每次重新 open 后对全部项目失效一次。
+
+### 出站代理：推送记录与 Git LFS
+
+- **推送记录**：`resolveGit` 对全部主机标出 `git-receive-pack`（`target.push`、`gitHost`）。POST 推送时复用门禁已解析的 ref 命令，否则读请求体开头的命令段（`readPushCommands`）；上游以 200 应答时，`Resolver` 若实现可选接口 `egress.PushRecorder{GitPushed(GitPush{Host, Repo, Refs})}` 就调用它（只看 HTTP 200，不解析 report-status）。orbs 的实现（`egressResolver.GitPushed`）要求 orb 属于项目、有唯一的未归档工作线程，交给 `orbs.PushSink`（`*repos.Service`）：仓库须等于项目仓库（`host + "/" + 小写 path`），只记 `refs/heads/` 下 `new` 不为全 0 的 ref，写 `repo_pushes` 后排一次拉取。
+- **Git LFS 端点**（`classifyGit`）：`rest` 含 `.git/info/lfs/` 且前缀规范化后至少有一个 `/`：
+
+  |端点|方法|读写|
+  |---|---|---|
+  |`info/lfs/objects/batch`|POST|请求体 `operation`：`download` 读，`upload` 写|
+  |`info/lfs/locks`|GET / POST|GET 读，POST 写|
+  |`info/lfs/locks/verify`|POST|写|
+  |`info/lfs/locks/<id>/unlock`（`id` 匹配 `^[A-Za-z0-9._-]{1,128}$`）|POST|写|
+
+  其它方法或路径不认。读写判定（`gitAllowed`）与 smart-HTTP 相同：PAT 主机有项目时只放行项目仓库（否则 403 `这个 orb 只能访问项目仓库`），无项目时写操作 403（`没有项目的 orb 对 git 仓库只读（不能推送，也不能上传 Git LFS 对象或改动文件锁）`）；github.com 开放时只读评审线程的 LFS 写操作 403 `denyReviewOnly`。batch 请求体经 `lfsBatchRequest` 校验后重新序列化（只留 `operation`、`transfers: ["basic"]`、`ref.name`、`objects[].oid/size`、`hash_algo`）再转发：带压缩编码 415（`批量请求不能压缩`）；超过 1 MiB 或多于 1000 个对象 413（`批量请求过大`）；JSON 无效、`operation` 不是 download / upload、`hash_algo` 不是空或 sha256、oid 不合法或 size 为负 422（`批量请求无效`）。
+- **LFS 拒绝的形式**：LFS 端点（含门票）被拒时回 `Content-Type: application/vnd.git-lfs+json`、正文 `{"message":"oryn: <原因>"}`（无原因时为 `oryn egress: …`），git-lfs 会显示 `message`；smart-HTTP 照旧回 `text/plain`。代理形式下认不出的路径的拒绝文案改为「代理形式的请求只接受 git smart-HTTP（info/refs、git-upload-pack、git-receive-pack）、Git LFS 接口（<仓库>.git/info/lfs/…）与 LFS 批量接口给出的传输地址」。
+- **batch 响应改写**（`lfsRewrite`，在脱敏之前）：200 解析后重新序列化；其它 2xx 换成 502（`oryn: 上游的 LFS 批量响应不是 200`）；非 2xx 原样转发。响应带压缩编码、超过 4 MiB 或不是合法 JSON 时换成 502（`oryn: 上游的 LFS 批量响应无法解析`）。`download` / `upload` / `verify` 三种 action 中，与上游同主机名的：scheme、端口相同、路径规范且未过期时只留 `Accept`、`Content-Type`、`Transfer-Encoding` 头，href 改写为 `http://<gitHost><EscapedPath>[?query]` 并登记门票，否则该对象 `actions` 清空、`error = {code: 422, message: "oryn: 上游给出的传输地址不能经代理访问"}`；其它主机的 href 不动，删掉值（或其 Basic 解码）含令牌的头。其它名字的 action 丢掉。
+- **门票**：键 `<方法> http://<gitHost><EscapedPath>[?RawQuery]`（download→GET、upload→PUT、verify→POST），值记上游 URL、主机、仓库、是否写、过期时刻（`min(now + 1h, action 过期时间)`）；每台 orb 至多 4096 张，超出先删过期的、再删最早到期的。只有 `classifyGit` 不认的代理形式路径才查门票；命中后按当前策略重新 `gitAllowed`，重新取令牌（拿不到回 404）。未命中或过期回 403 `denyProxyNotGit`。
+
+### orb setup 与 `setupError`
+
+- orbd 的 clone 与 `repo.update` 带 `GIT_LFS_SKIP_SMUDGE=1`。检出之后（每次完整 setup）`git ls-files -z -- ':(attr:filter=lfs)'` 非空时：`git lfs version` 失败 → setup 日志记 warning，返回 `git-lfs is not installed; <n> LFS file(s) are pointer files`；否则 `git lfs pull`，失败记 warning 并返回 `git lfs pull: <err>`，成功记 `git lfs pull: <n> LFS file(s) checked out`。
+- `LinkCtlSetupRunResult.setupError` 的含义扩为：setup 脚本失败，或 Git LFS 对象没能取下。LFS 错误并入时 `ok = false`；已有脚本错误时以 `; ` 接在后面。
