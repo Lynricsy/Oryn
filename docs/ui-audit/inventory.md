@@ -3,9 +3,9 @@
 由 `web/e2e/ui-audit/inventory.ts` 从 `areas/*.md` 生成，勿手改。状态列依次为 d1920 明/暗、d1366 明/暗、m390 明/暗：
 ✓ after 跑完全程断言 0 问题且 before / after 截图都在；✗ after 有问题；— 显式跳过（视口不适用，清单里注明）；· 其余（没跑、中途失败、缺截图），不算通过。
 
-界面 326 个，全部视口通过 326 个。问题 94 条：错乱 46、设计 43、冗余 5。
+界面 327 个，全部视口通过 327 个。问题 96 条：错乱 47、设计 43、冗余 5、设计 + 错乱 1。
 
-覆盖对账（spec 326 个用例 vs 清单 326 个 id）：一致
+覆盖对账（spec 327 个用例 vs 清单 327 个 id）：一致
 
 ## fallback（4 个界面，3 条问题，详见 [areas/fallback.md](areas/fallback.md)）
 
@@ -72,7 +72,7 @@
 | host.mobile.corners-dialog | 手机壳贴边对话框（附件） | 标题胶囊菜单 → 附件 | 弹窗（仅手机） | — — — — ✓ ✓ |
 | host.mobile.push-card | 设置 · 通知里的手机推送卡 | 侧栏「更多」→ 设置 → 通知 | 页面（仅手机） | — — — — ✓ ✓ |
 
-## panels（28 个界面，15 条问题，详见 [areas/panels.md](areas/panels.md)）
+## panels（28 个界面，16 条问题，详见 [areas/panels.md](areas/panels.md)）
 
 | id | 界面 | 打开路径 | 形态 | 状态 |
 |---|---|---|---|---|
@@ -312,7 +312,7 @@
 | `shell.palette.results` | 命令面板长结果（线程、Artifacts、对话内容） | 命令面板输入「重」 | 弹窗 | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `shell.palette.empty` | 命令面板空结果 | 输入不存在的词 | 弹窗 | ✓ ✓ ✓ ✓ ✓ ✓ |
 
-## thread（56 个界面，17 条问题，详见 [areas/thread.md](areas/thread.md)）
+## thread（57 个界面，18 条问题，详见 [areas/thread.md](areas/thread.md)）
 
 | id | 界面 | 打开路径 | 形态 | 状态 |
 |---|---|---|---|---|
@@ -368,6 +368,7 @@
 | `thread.dlg.share-findings` | 分享：扫描发现疑似密钥 | 分享 →「创建链接」 | 弹窗 | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `thread.dlg.schedule` | 定时（从线程打开） | 操作菜单「定时…」 | 弹窗 | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `thread.dlg.archive` | 归档（runner worktree 线程） | 操作菜单「归档」 | 弹窗 | ✓ ✓ ✓ ✓ ✓ ✓ |
+| `thread.dlg.delete-confirm` | 删除线程确认（共享确认框 ConfirmHost） | 操作菜单「删除」 | 弹窗 | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `thread.dlg.context` | 上下文报告（ContextBreakdown） | 输入坞页脚上下文圆环 | 弹窗 | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `thread.dlg.subagent` | 子 agent 转录 | 工具卡里的子 agent 链接 | 弹窗 | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `thread.dlg.setup-log` | setup 日志 | setup 失败横幅「查看日志」 | 弹窗 | ✓ ✓ ✓ ✓ ✓ ✓ |

@@ -65,7 +65,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	// 先撤 stub（还原成假时钟的 rAF），再还原真计时器；反过来会把已卸载的假 rAF 装回去，漏给后面的用例
+	// 先撤 stub 再恢复真实计时器：rAF 的 stub 是在假时钟之后装的，撤 stub 会还原成假 rAF，
+	// 随后 useRealTimers 才能把它一并换回真的
 	vi.unstubAllGlobals();
 	vi.useRealTimers();
 });
@@ -133,11 +134,11 @@ describe("AccessPopover", () => {
 	});
 
 	it("剩余时间每 30s 随时钟刷新，到期即按未公开显示", () => {
+		// 弹层的 Floating 开着时逐帧比对锚点（requestAnimationFrame）：假时钟下推进 1 小时要同步跑约 22 万帧，
+		// 测试随机器快慢超时。这里只测 30s 刷新，逐帧跟随换成空操作（首帧定位是同步的）；
+		// 必须在 useFakeTimers 之后 stub，否则假时钟会把它换回去
 		vi.useFakeTimers();
-		// 弹层（Floating）开着时逐帧比对锚点：假 rAF 下推进一小时要空转二十多万帧。本例不看重排，换成空操作
-		// （要在 useFakeTimers 之后：它会接管 requestAnimationFrame）
 		vi.stubGlobal("requestAnimationFrame", () => 0);
-		vi.stubGlobal("cancelAnimationFrame", () => {});
 		const start = new Date("2026-11-13T10:00:00Z").getTime();
 		vi.setSystemTime(start);
 		const expiresAt = start + HOUR + 30_000;
