@@ -7,6 +7,7 @@ import {
 	agentConfigSource,
 	orbFileSource,
 	projectAgentConfigSource,
+	projectRepoSource,
 	sshHostFileSource,
 } from "./file-source";
 
@@ -643,5 +644,143 @@ describe("sshHostFileSource（对 mock SSH 主机）", () => {
 		await expect(
 			sshHostFileSource("ssh_missing").roots(),
 		).rejects.toMatchObject({ status: 404, code: "not_found" });
+	});
+});
+
+describe("projectRepoSource（M24，项目仓库镜像只读来源）", () => {
+	const prj = "prj_A";
+	const summary = {
+		sha: "a".repeat(40),
+		shortSha: "aaaaaaa",
+		subject: "s",
+		authorName: "n",
+		authorEmail: "e@x",
+		ts: 77,
+	};
+	const dirTree = {
+		ref: "main",
+		commit: "c".repeat(40),
+		path: "",
+		self: { name: "", path: "", type: "dir", mode: 493, size: 0, oid: "t1" },
+		entries: [
+			{ name: "src", path: "src", type: "dir", mode: 493, size: 0, oid: "t2" },
+			{
+				name: "lib",
+				path: "lib",
+				type: "submodule",
+				mode: 0,
+				size: 0,
+				oid: "s1",
+			},
+			{
+				name: "link",
+				path: "link",
+				type: "symlink",
+				mode: 511,
+				size: 6,
+				oid: "l1",
+				target: "README",
+			},
+			{
+				name: "README.md",
+				path: "README.md",
+				type: "file",
+				mode: 420,
+				size: 12,
+				oid: "b1",
+				lastCommit: summary,
+			},
+		],
+		truncated: false,
+		lastCommitsComplete: true,
+	};
+	const fileTree = {
+		...dirTree,
+		path: "README.md",
+		self: {
+			name: "README.md",
+			path: "README.md",
+			type: "file",
+			mode: 420,
+			size: 12,
+			oid: "b1",
+			mime: "text/markdown",
+			text: true,
+		},
+		entries: [],
+	};
+	let urls: URL[];
+	beforeEach(() => {
+		urls = [];
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+				const req =
+					input instanceof Request
+						? input
+						: new Request(new URL(String(input), location.origin), init);
+				const u = new URL(req.url);
+				urls.push(u);
+				if (u.pathname.endsWith("/repo/tree"))
+					return Response.json(
+						u.searchParams.get("path") === "README.md" ? fileTree : dirTree,
+					);
+				if (u.pathname.endsWith("/repo/blob"))
+					return new Response("# hi\n", { headers: { ETag: '"b1"' } });
+				return new Response(null, { status: 404 });
+			}),
+		);
+	});
+	afterEach(() => vi.unstubAllGlobals());
+
+	it("根与列表映射：子模块 → other，mtime 取最后提交时间，etag 是对象 sha；不要最后提交", async () => {
+		const s = projectRepoSource(prj, "main");
+		expect(s.id).toBe("repo:prj_A:main");
+		expect(await s.roots()).toEqual([{ label: "files.roots.repo", path: "" }]);
+		const entries = await s.list("");
+		expect(entries.map((e) => [e.name, e.type, e.mtime])).toEqual([
+			["src", "dir", 0],
+			["lib", "other", 0],
+			["link", "symlink", 0],
+			["README.md", "file", 77],
+		]);
+		expect(entries[2]?.target).toBe("README");
+		expect(entries[3]?.etag).toBe('"b1"');
+		expect(urls[0]?.pathname).toBe("/api/v1/projects/prj_A/repo/tree");
+		expect(urls[0]?.searchParams.get("ref")).toBe("main");
+		expect(urls[0]?.searchParams.get("lastCommits")).toBe("false");
+	});
+
+	it("stat 用 self 并带 mime / text；读取与下载走 blob 地址；ref 为空时不带 ref", async () => {
+		const s = projectRepoSource(prj, "");
+		const st = await s.stat("README.md");
+		expect(st).toMatchObject({ mime: "text/markdown", text: true, size: 12 });
+		expect((await s.readText("README.md")).text).toBe("# hi\n");
+		expect(urls[0]?.searchParams.has("ref")).toBe(false);
+		expect(s.downloadUrl("docs/a b.md")).toBe(
+			"/api/v1/projects/prj_A/repo/blob?path=docs%2Fa+b.md",
+		);
+	});
+
+	it("只读：caps 只开下载，写操作以 409 read_only 拒绝且不发请求", async () => {
+		const s = projectRepoSource(prj, "main");
+		expect(s.caps).toEqual({
+			write: false,
+			mkdir: false,
+			rename: false,
+			upload: false,
+			download: true,
+		});
+		for (const op of [
+			s.write("a.txt", "x"),
+			s.mkdir("d"),
+			s.rename("a", "b"),
+			s.remove("a"),
+		])
+			await expect(op).rejects.toMatchObject({
+				status: 409,
+				code: "read_only",
+			});
+		expect(urls).toEqual([]);
 	});
 });

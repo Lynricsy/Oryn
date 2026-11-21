@@ -5,7 +5,8 @@
  * - agent 配置：全局 `/api/v1/agent-config/files*`（相对 omp-home 根）与项目级
  *   `/api/v1/projects/{id}/agent-config/files*`（相对项目配置根，同仓库里的 `.omp/`），根为 `""`；
  *   服务端只有扁平的文件列表，目录树在客户端合成，不支持新建文件夹与重命名。
- * - SSH 主机（M18）：`/api/v1/ssh/hosts/{id}/fs/*`，控制面经 SFTP 代为读写，接口形状同 orb（不带 `thread` / `offline`）。
+ * - SSH 主机（M18）：`/api/v1/ssh/hosts/{id}/fs/*`，控制面经 SFTP 代为读写目标机，接口形状同 orb（不带 `thread` / `offline`）。
+ * - 项目仓库镜像（M24）：`/api/v1/projects/{id}/repo/tree|blob`，只读；路径是仓库内相对路径，根为 `""`。
  */
 import {
 	ApiError,
@@ -16,6 +17,7 @@ import {
 	UNAUTHORIZED_EVENT,
 	unwrap,
 } from "../api/client";
+import { repoBlobUrl } from "../api/repo-queries";
 
 export type FileEntry = Schemas["FsEntry"];
 
@@ -544,6 +546,74 @@ export function sshHostFileSource(hostId: string): FileSource {
 			);
 		},
 		downloadUrl: fileUrl,
+	};
+}
+
+// ---------------------------------------------------------------- 项目仓库镜像（M24）
+
+type RepoTreeEntry = Schemas["ProjectRepoTreeEntry"];
+
+/** 仓库条目 → 文件浏览器条目：子模块按 `other` 显示；mtime 取最后提交时间（未知为 0）；etag 是对象 sha。 */
+function repoFileEntry(e: RepoTreeEntry): FileEntry {
+	return {
+		path: e.path,
+		name: e.name,
+		type: e.type === "submodule" ? "other" : e.type,
+		size: e.size,
+		mtime: e.lastCommit?.ts ?? 0,
+		mode: e.mode,
+		etag: `"${e.oid}"`,
+		...(e.target !== undefined ? { target: e.target } : {}),
+		...(e.mime !== undefined ? { mime: e.mime } : {}),
+		...(e.text !== undefined ? { text: e.text } : {}),
+	};
+}
+
+/** 项目仓库镜像（M24 阶段 ②）：只读；路径是仓库内相对路径，根为 ""；ref 为空 = 服务端的基线 */
+export function projectRepoSource(projectId: string, ref: string): FileSource {
+	const tree = (path: string) =>
+		unwrap(
+			api.GET("/api/v1/projects/{id}/repo/tree", {
+				params: {
+					path: { id: projectId },
+					query: { ...(ref ? { ref } : {}), path, lastCommits: false },
+				},
+			}),
+		);
+	const blobUrl = (path: string) => repoBlobUrl(projectId, ref, path);
+	const readOnly = (): Promise<never> =>
+		Promise.reject(
+			new ApiError(409, "read_only", "repository files are read-only"),
+		);
+	return {
+		id: `repo:${projectId}:${ref}`,
+		caps: {
+			write: false,
+			mkdir: false,
+			rename: false,
+			upload: false,
+			download: true,
+		},
+		async roots() {
+			return [{ label: "files.roots.repo", path: "" }];
+		},
+		async list(path) {
+			return (await tree(path)).entries.map(repoFileEntry);
+		},
+		async stat(path) {
+			return repoFileEntry((await tree(path)).self);
+		},
+		readText(path, maxBytes = MAX_EDIT_BYTES) {
+			return readTextRange(blobUrl(path), maxBytes);
+		},
+		async readBlob(path) {
+			return cappedBlob(await rawFetch(blobUrl(path)));
+		},
+		write: readOnly,
+		mkdir: readOnly,
+		rename: readOnly,
+		remove: readOnly,
+		downloadUrl: blobUrl,
 	};
 }
 
