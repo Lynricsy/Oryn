@@ -4,7 +4,7 @@
  * 宽屏点「信息面板」再点 `[data-panel-tab]`；手机经页头视图菜单 `thread-view-menu` → `[data-view]`。
  */
 import type { Locator, Page } from "@playwright/test";
-import { isMobile, lastOverlay, PHASE, settle, surface } from "./audit";
+import { expect, isMobile, lastOverlay, PHASE, settle, surface } from "./audit";
 
 const MAIN = "T-0193a1b2-0000-7000-8000-00000000a001";
 /** 选用的「GitHub 测试号」被另一台 orb 占用的线程；再切到同样被占用的「工作账号」会弹冲突对话框 */
@@ -358,23 +358,51 @@ surface({
 	},
 });
 
-// 切换 Profile 前的确认：after 是应用内对话框；基线是原生 confirm（浏览器自带、不可审计），before 只截出页面并取消
+// 切换 Profile 前的确认：after 是应用内对话框；基线是原生 confirm（浏览器自带、不可审计），before 只截出页面并取消。
+// after 全程用真实键盘：聚焦触发钮按 Enter 开菜单，聚焦「工作账号」按 Enter；关闭时按 Esc，
+// 断言焦点回到触发钮（选中后菜单项已卸载，不能掉到 body），且没有发出切换 Profile 的 PUT
+const profilePuts = new WeakMap<Page, string[]>();
+/** 键盘打开切换确认：聚焦触发钮 Enter 开菜单，聚焦「工作账号」Enter 选中。 */
+async function keyboardSwitch(page: Page) {
+	await page.getByTestId("desktop-profile-menu").focus();
+	await page.keyboard.press("Enter");
+	await lastOverlay(page)
+		.getByRole("menuitemradio", { name: /^工作账号/ })
+		.focus();
+	await page.keyboard.press("Enter");
+	await page.getByTestId("profile-switch-confirm").waitFor();
+	return lastOverlay(page);
+}
 surface({
 	id: "panels.desktop.switch-confirm",
 	path: `/t/${IN_USE}`,
 	ready: READY,
-	noReopen: true,
 	open: async (page) => {
 		await openDesktop(page);
-		if (PHASE === "before") page.on("dialog", (d) => void d.dismiss());
-		await page.getByTestId("desktop-profile-menu").click();
-		await lastOverlay(page)
-			.getByRole("menuitemradio", { name: /^工作账号/ })
-			.click();
-		if (PHASE === "before") return undefined;
-		await page.getByTestId("profile-switch-confirm").waitFor();
-		return lastOverlay(page);
+		if (PHASE === "before") {
+			page.on("dialog", (d) => void d.dismiss());
+			await page.getByTestId("desktop-profile-menu").click();
+			await lastOverlay(page)
+				.getByRole("menuitemradio", { name: /^工作账号/ })
+				.click();
+			return undefined;
+		}
+		const puts: string[] = [];
+		profilePuts.set(page, puts);
+		page.on("request", (r) => {
+			if (r.method() === "PUT" && r.url().includes("/desktop/profile"))
+				puts.push(r.url());
+		});
+		return keyboardSwitch(page);
 	},
+	// 只有 after 会走到这里（before 不返回浮层，不做关闭重开）
+	close: async (page) => {
+		await page.keyboard.press("Escape");
+		await expect(page.getByTestId("profile-switch-confirm")).toBeHidden();
+		await expect(page.getByTestId("desktop-profile-menu")).toBeFocused();
+		expect(profilePuts.get(page)).toEqual([]);
+	},
+	reopen: keyboardSwitch,
 });
 
 surface({
