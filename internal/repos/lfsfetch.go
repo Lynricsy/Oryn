@@ -480,14 +480,17 @@ func (s *Service) lfsRemote(ctx context.Context, prj db.Project) (remote, error)
 	return rm, nil
 }
 
-// lfsObject 打开项目的 LFS 对象（调用方保证 p.Size ≤ lfsInlineMax，或项目是托管项目）：镜像项目先查缓存，
-// 未命中时向上游取并写入缓存；同一 projectID+oid 单飞。调用方关闭文件。
+// lfsObject 打开项目的 LFS 对象（调用方保证 p.Size ≤ lfsInlineMax，或项目是托管项目）：托管项目直接打开库里的对象；
+// 镜像项目先查缓存，未命中时向上游取并写入缓存；同一 projectID+oid 单飞。调用方关闭文件。
 func (s *Service) lfsObject(ctx context.Context, prj db.Project, p lfs.Pointer) (*os.File, error) {
 	if p.Size == 0 {
 		if err := lfsEmpty(p); err != nil {
 			return nil, err
 		}
 		return os.Open(os.DevNull)
+	}
+	if prj.Hosted {
+		return s.hostedLFSObject(prj.ID, p)
 	}
 	if s.lfsc == nil {
 		return nil, errUnavailable

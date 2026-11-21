@@ -247,9 +247,14 @@ func (s *Service) healHosted(ctx context.Context, prj db.Project) (*db.ProjectRe
 	return s.repoRow(ctx, prj.ID)
 }
 
-// ServeHostedGit 服务托管仓库的一个 smart-HTTP 请求（调用方已鉴权）。pusher.OrbID 为空 = 主人本机。
-// 错误一律 text/plain：git 把正文显示成 `remote: …`（remote-curl.c 的 show_http_message）。
+// ServeHostedGit 服务托管仓库的一个 smart-HTTP 或 Git LFS 请求（调用方已鉴权）。pusher.OrbID 为空 = 主人本机。
+// smart-HTTP 的错误一律 text/plain：git 把正文显示成 `remote: …`（remote-curl.c 的 show_http_message）；
+// info/lfs/ 端点交给 serveHostedLFS（JSON 错误体，不拿推送锁、不做 ref 快照）。
 func (s *Service) ServeHostedGit(w http.ResponseWriter, r *http.Request, projectID, endpoint string, pusher egress.HostedPusher) {
+	if strings.HasPrefix(endpoint, "info/lfs/") {
+		s.serveHostedLFS(w, r, projectID, endpoint, pusher)
+		return
+	}
 	if s.reason != "" {
 		smartError(w, http.StatusServiceUnavailable, "oryn: 控制面没有可用的 git")
 		return

@@ -378,6 +378,59 @@ func TestReadLFS(t *testing.T) {
 	assert.Equal(t, "lfs_corrupt", errCode(err))
 }
 
+// 托管项目的 LFS：对象直接从库里的 lfs/objects 打开（不访问网络、不经缓存，超过内联上限的 download 也给文件）；
+// 对象被删掉 → lfs_missing。
+func TestReadHostedLFS(t *testing.T) {
+	const obj = "hosted lfs object\n"
+	p := lfsPtr(obj)
+	e := newTestEnv(t, nil, nil, nil)
+	ctx := context.Background()
+	pid := e.hostedProject(t, "main")
+	_, err := e.svc.InitHosted(ctx, pid, "main", true, testIdentity)
+	require.NoError(t, err)
+	dir := e.svc.dir(pid)
+	commitTo(t, dir, "main", map[string]string{"a.bin": string(p.Encode())}, "lfs file")
+	objPath := lfs.ObjectPath(filepath.Join(dir, "lfs", "objects"), p.OID)
+	require.NoError(t, os.MkdirAll(filepath.Dir(objPath), 0o700))
+	require.NoError(t, os.WriteFile(objPath, []byte(obj), 0o600))
+
+	self, err := e.svc.Tree(ctx, pid, "", "a.bin", false)
+	require.NoError(t, err)
+	require.NotNil(t, self.Self.Lfs)
+	assert.Nil(t, self.Self.Lfs.Error)
+	assert.Equal(t, int64(len(obj)), self.Self.Size)
+	require.NotNil(t, self.Self.Text)
+	assert.True(t, *self.Self.Text)
+
+	b, err := e.svc.Blob(ctx, pid, "", "a.bin", "", false)
+	require.NoError(t, err)
+	require.NotNil(t, b.File)
+	got, err := readAllClose(t, b.File)
+	require.NoError(t, err)
+	assert.Equal(t, obj, got)
+
+	// 超过内联上限：不带 download 仍是 too_large；download 直接给库里的文件
+	e.svc.inlineLFSMax = 4
+	_, err = e.svc.Blob(ctx, pid, "", "a.bin", "", false)
+	assert.Equal(t, "too_large", errCode(err))
+	b, err = e.svc.Blob(ctx, pid, "", "a.bin", "", true)
+	require.NoError(t, err)
+	require.NotNil(t, b.File)
+	assert.Nil(t, b.Body)
+	got, err = readAllClose(t, b.File)
+	require.NoError(t, err)
+	assert.Equal(t, obj, got)
+	e.svc.inlineLFSMax = lfsInlineMax
+
+	require.NoError(t, os.Remove(objPath))
+	_, err = e.svc.Blob(ctx, pid, "", "a.bin", "", false)
+	assert.Equal(t, "lfs_missing", errCode(err))
+	miss, err := e.svc.Tree(ctx, pid, "", "a.bin", false)
+	require.NoError(t, err)
+	require.NotNil(t, miss.Self.Lfs.Error)
+	assert.Equal(t, apigen.LfsMissing, *miss.Self.Lfs.Error)
+}
+
 func TestReadBadInput(t *testing.T) {
 	e, pid, _ := readEnv(t, nil, nil)
 	ctx := context.Background()

@@ -698,12 +698,12 @@ func (s *Service) lfsEntries(ctx context.Context, dir string, entries []apigen.P
 	return nil
 }
 
-// lfsSelf 给是 LFS 指针的 self 填上对象大小与 lfs.oid。对象不超过 inlineLFSMax 时先取对象，按对象内容判断 mime 与 text；
-// 取不到时记 lfs.error，mime 只按扩展名、省略 text。更大的对象不取，mime 只按扩展名。
+// lfsSelf 给是 LFS 指针的 self 填上对象大小与 lfs.oid。对象不超过 inlineLFSMax（托管项目不限大小：对象就在本地）时先取对象，
+// 按对象内容判断 mime 与 text；取不到时记 lfs.error，mime 只按扩展名、省略 text。更大的对象不取，mime 只按扩展名。
 func (s *Service) lfsSelf(ctx context.Context, prj db.Project, e *apigen.ProjectRepoTreeEntry, ptr lfs.Pointer) error {
 	e.Size = ptr.Size
 	e.Lfs = &apigen.ProjectRepoLfs{Oid: ptr.OID}
-	if ptr.Size > s.inlineLFSMax {
+	if ptr.Size > s.inlineLFSMax && !prj.Hosted {
 		e.Mime = new(extType(e.Name))
 		return nil
 	}
@@ -972,7 +972,8 @@ func (s *Service) Blob(ctx context.Context, projectID, ref, p, ifNoneMatch strin
 	return out, nil
 }
 
-// lfsBlob 打开 LFS 指针 ptr 指向的对象：不超过 inlineLFSMax 的经缓存（File）；更大的只在 download 时从上游流式读取。
+// lfsBlob 打开 LFS 指针 ptr 指向的对象：不超过 inlineLFSMax 的经缓存（File）；更大的只在 download 时给出——
+// 镜像项目从上游流式读取，托管项目直接打开库里的对象（File）。
 func (s *Service) lfsBlob(ctx context.Context, prj db.Project, out *BlobContent, ptr lfs.Pointer, download bool) error {
 	out.Size = ptr.Size
 	if ptr.Size > s.inlineLFSMax {
@@ -980,13 +981,15 @@ func (s *Service) lfsBlob(ctx context.Context, prj db.Project, out *BlobContent,
 			return &Error{Status: http.StatusRequestEntityTooLarge, Code: "too_large",
 				Message: fmt.Sprintf("Git LFS 对象超过 %d MiB，只能下载（download=1）", s.inlineLFSMax>>20)}
 		}
-		body, err := s.lfsOpenStream(ctx, prj, ptr)
-		if err != nil {
-			return err
+		if !prj.Hosted {
+			body, err := s.lfsOpenStream(ctx, prj, ptr)
+			if err != nil {
+				return err
+			}
+			out.Body = body
+			out.setType(extType(out.Name), download)
+			return nil
 		}
-		out.Body = body
-		out.setType(extType(out.Name), download)
-		return nil
 	}
 	f, err := s.lfsObject(ctx, prj, ptr)
 	if err != nil {

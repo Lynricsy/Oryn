@@ -521,7 +521,8 @@ func (s *Service) Run(ctx context.Context) {
 	}
 }
 
-// sweep 清掉上次留下的临时与回收目录、项目已不存在的镜像（托管正本移到 orphaned/），以及断电或 OOM 后的残留锁文件。
+// sweep 清掉上次留下的临时与回收目录（含托管仓库的 lfs/tmp）、项目已不存在的镜像（托管正本移到 orphaned/），
+// 以及断电或 OOM 后的残留锁文件。
 func (s *Service) sweep(ctx context.Context) {
 	ents, err := os.ReadDir(s.cfg.Dir)
 	if err != nil {
@@ -545,6 +546,10 @@ func (s *Service) sweep(ctx context.Context) {
 		m := repoDirRe.FindStringSubmatch(name)
 		if m == nil || !e.IsDir() {
 			continue
+		}
+		// 托管仓库 LFS 上传的临时文件（上次运行中断时留下的）
+		if err := os.RemoveAll(filepath.Join(path, "lfs", "tmp")); err != nil {
+			slog.Warn("清理 LFS 上传临时目录", "dir", path, "err", err)
 		}
 		_, err := s.st.Q.GetProject(ctx, m[1])
 		switch {

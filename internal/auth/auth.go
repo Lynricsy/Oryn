@@ -194,16 +194,22 @@ func DeviceByToken(ctx context.Context, st *store.Store, tok string) (Principal,
 // GitCredential 校验 /git/ 路径的凭据（M24 阶段 ③）：`Authorization: Basic <任意用户名>:<odt_…>` 或 `Bearer odt_…`，
 // 只认设备令牌（DeviceByToken：存在且未吊销），从不读 Cookie。
 func GitCredential(ctx context.Context, st *store.Store, r *http.Request) (Principal, bool) {
-	var tok string
-	if _, pw, ok := r.BasicAuth(); ok {
-		tok = pw
-	} else if b, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
-		tok = b
-	}
+	tok := GitRequestToken(r)
 	if tok == "" {
 		return Principal{}, false
 	}
 	return DeviceByToken(ctx, st, tok)
+}
+
+// GitRequestToken 取 /git/ 请求带的令牌：HTTP Basic 的密码位，否则 Bearer 的值；都没有为空串。不校验令牌。
+func GitRequestToken(r *http.Request) string {
+	if _, pw, ok := r.BasicAuth(); ok {
+		return pw
+	}
+	if tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
+		return tok
+	}
+	return ""
 }
 
 // sessionFromCookie 读取并校验 Cookie 会话，返回会话与命中的 Cookie 值；没有有效会话返回 ok=false。
