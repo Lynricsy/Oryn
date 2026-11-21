@@ -65,8 +65,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	vi.useRealTimers();
+	// 先撤 stub 再恢复真实计时器：rAF 的 stub 是在假时钟之后装的，撤 stub 会还原成假 rAF，
+	// 随后 useRealTimers 才能把它一并换回真的
 	vi.unstubAllGlobals();
+	vi.useRealTimers();
 });
 
 describe("AccessPopover", () => {
