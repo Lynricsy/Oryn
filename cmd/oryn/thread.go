@@ -238,16 +238,22 @@ func dirInUseError(ae *apiError) error {
 
 // resolveProject 把项目名（或 id）解析为项目 id。
 func resolveProject(ctx context.Context, c *apiClient, name string) (string, error) {
+	p, err := lookupProject(ctx, c, name)
+	return p.ID, err
+}
+
+// lookupProject 按名称或 id 找未归档项目。
+func lookupProject(ctx context.Context, c *apiClient, name string) (apigen.Project, error) {
 	var list apigen.ProjectList
 	if err := c.do(ctx, http.MethodGet, "/api/v1/projects", nil, &list); err != nil {
-		return "", err
+		return apigen.Project{}, err
 	}
 	for _, p := range list.Projects {
 		if p.Name == name || p.ID == name {
-			return p.ID, nil
+			return p, nil
 		}
 	}
-	return "", fmt.Errorf("项目 %q 不存在", name)
+	return apigen.Project{}, fmt.Errorf("项目 %q 不存在", name)
 }
 
 // resolveBrowserProfile 把浏览器 Profile 名（或 id）解析为 id；none 表示不用 Profile（空串）。
