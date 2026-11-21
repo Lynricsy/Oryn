@@ -4,6 +4,7 @@
 //
 // portal 实体是 (orb, 端口)；线程短码只是找 orb 的别名。所有者凭设备令牌或 host-only Cookie
 // `__Host-oryn_portal` 访问；公开中的端口另允许匿名访客。portal 主机的请求永远到不了 /api/v1、link 与 SPA。
+// M23 起同一泛域名还承载 box app 主机 `<app>.<portal_domain>`（见 app.go）。
 package portal
 
 import (
@@ -65,6 +66,10 @@ const (
 	maxNext        = 2048
 	reservedPrefix = "/__oryn/"
 	sweepEvery     = time.Hour
+
+	// box app（M23）：每台 box 的 orb 至多 1024 条流，每个公开 app 的匿名访客至多 512 条。
+	maxAppOrbConns  = 1024
+	maxAppAnonConns = 512
 )
 
 // ErrNotFound 表示该 (orb, 端口) 不是已声明的 portal。
@@ -80,6 +85,8 @@ type Service struct {
 	proxy     *httputil.ReverseProxy
 	codes     *codes
 	reg       *registry
+	appReg    *registry // box app 主机（M23）的登记表，与 thread portal 分开计数
+	apps      Apps      // nil = 没有 box app（SetApps 之前）
 	timers    *shareTimers
 	locks     *shareLocks
 	wakeWait  time.Duration
@@ -98,6 +105,7 @@ func New(cfg Config, st *store.Store, o Orbs) *Service {
 		orbs:      o,
 		codes:     newCodes(),
 		reg:       newRegistry(maxOrbConns, maxAnonConns),
+		appReg:    newRegistry(maxAppOrbConns, maxAppAnonConns),
 		timers:    &shareTimers{m: map[shareKey]*shareTimer{}},
 		locks:     &shareLocks{m: map[shareKey]*shareLock{}},
 		wakeWait:  WakeWait,
@@ -115,15 +123,17 @@ func New(cfg Config, st *store.Store, o Orbs) *Service {
 	return s
 }
 
-// portalReq 是命中 portal 主机后解析出的目标。
+// portalReq 是命中 portal 主机后解析出的目标（thread portal 或 box app）。
 type portalReq struct {
-	code     string
+	code     string // thread portal 的线程短码；app 为空
 	port     int
 	label    string
 	orbID    string
 	orbState string
 	nav      bool
-	origin   string // 本 portal 的 origin（跨站检查用）
+	root     string     // 本主机根地址（带结尾 `/`），握手回跳与说明页用
+	origin   string     // 本主机的 origin（跨站检查用）
+	app      *AppTarget // 非 nil = box app 主机（M23）
 }
 
 // Middleware 把 portal 主机的请求交给数据面，其余请求交给 next。
@@ -154,6 +164,10 @@ func (s *Service) serve(w http.ResponseWriter, r *http.Request, label string) {
 	nav := isNavigation(r)
 	code, port, ok := portalhost.ParseLabel(label)
 	if !ok {
+		if name, isApp := portalhost.ParseAppLabel(label); isApp && s.apps != nil {
+			s.serveApp(w, r, name, nav)
+			return
+		}
 		s.fail(w, nav, http.StatusNotFound, "portal_not_found", "portal 不存在")
 		return
 	}
@@ -179,9 +193,10 @@ func (s *Service) serve(w http.ResponseWriter, r *http.Request, label string) {
 		s.fail(w, nav, http.StatusGone, "orb_deleted", "orb 已删除")
 		return
 	}
+	root := s.base.URL(code, port)
 	p := &portalReq{
 		code: code, port: port, label: label, orbID: orb.ID, orbState: orb.State, nav: nav,
-		origin: strings.TrimSuffix(s.base.URL(code, port), "/"),
+		root: root, origin: strings.TrimSuffix(root, "/"),
 	}
 	if isReserved(r.URL.Path) {
 		s.reserved(w, r, p)
@@ -261,20 +276,27 @@ func (s *Service) authorize(w http.ResponseWriter, r *http.Request, p *portalReq
 		}
 		blocked = true
 	}
-	shared, err := s.shareActive(ctx, p.orbID, p.port)
-	if err != nil {
-		s.internal(w, p.nav, "读取公开分享失败", err)
-		return identity{}, false
-	}
-	if shared {
-		return identity{key: anonKey(p.orbID, p.port), anon: true}, true
+	if p.app != nil {
+		// box app：公开即放行匿名访客，不查 portal_shares
+		if p.app.Public {
+			return identity{key: appAnonKey(p.app.App), anon: true}, true
+		}
+	} else {
+		shared, err := s.shareActive(ctx, p.orbID, p.port)
+		if err != nil {
+			s.internal(w, p.nav, "读取公开分享失败", err)
+			return identity{}, false
+		}
+		if shared {
+			return identity{key: anonKey(p.orbID, p.port), anon: true}, true
+		}
 	}
 	noStore(w)
 	switch {
 	case blocked:
 		s.fail(w, p.nav, http.StatusForbidden, "cross_site_blocked", "跨站请求不能使用 portal 登录态")
 	case p.nav:
-		redirect(w, s.authURL(p.code, p.port, sanitizeNext(r.URL.RequestURI())))
+		redirect(w, s.authURL(p, sanitizeNext(r.URL.RequestURI())))
 	default:
 		s.fail(w, false, http.StatusUnauthorized, "portal_unauthorized", "需要登录后访问该 portal")
 	}
@@ -401,6 +423,9 @@ func (s *Service) ensureUsable(w http.ResponseWriter, r *http.Request, p *portal
 
 func (s *Service) usableErr(w http.ResponseWriter, p *portalReq, err error) {
 	switch {
+	case errors.Is(err, orbs.ErrBoxStopped):
+		// 开在 box 上的线程自己声明的 portal：唤醒被 box 闸门挡下
+		s.fail(w, p.nav, http.StatusServiceUnavailable, "box_stopped", "这台 box 已停止")
 	case errors.Is(err, orbs.ErrOrbdOutdated):
 		s.fail(w, p.nav, http.StatusConflict, "orbd_outdated", "该 orb 的 orbd 版本过旧，不支持 portal")
 	case errors.Is(err, orbs.ErrOrbGone):
@@ -420,9 +445,12 @@ func (s *Service) internal(w http.ResponseWriter, nav bool, msg string, err erro
 	s.fail(w, nav, http.StatusInternalServerError, "internal", msg)
 }
 
-// authURL 是握手步骤 A 的目标：主域名 `/portal/auth?t=&p=&next=`。
-func (s *Service) authURL(code string, port int, next string) string {
-	return s.base.Origin + "/portal/auth?t=" + code + "&p=" + strconv.Itoa(port) + "&next=" + url.QueryEscape(next)
+// authURL 是握手步骤 A 的目标：主域名 `/portal/auth?t=&p=&next=`；box app 是 `/portal/auth?h=<app>&next=`。
+func (s *Service) authURL(p *portalReq, next string) string {
+	if p.app != nil {
+		return s.base.Origin + "/portal/auth?h=" + p.label + "&next=" + url.QueryEscape(next)
+	}
+	return s.base.Origin + "/portal/auth?t=" + p.code + "&p=" + strconv.Itoa(p.port) + "&next=" + url.QueryEscape(next)
 }
 
 // sanitizeNext 是握手各步共用的回跳路径规则：以单个 `/` 开头、第二个字符不是 `/` 或 `\`、

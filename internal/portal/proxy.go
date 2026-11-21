@@ -21,6 +21,8 @@ type target struct {
 	port  int
 	owner bool
 	nav   bool
+	// app = box app 主机（M23）；preview = app 请求且查询里带 oryn-preview（主站悬停预览，需要允许内嵌）。
+	app, preview bool
 	// clientCtx 是原始请求的 context：它已结束 = 客户端断开，ErrorHandler 不再写响应。
 	clientCtx context.Context
 }
@@ -149,18 +151,24 @@ func stripCookie(header, name string) string {
 // modifyResponse 让 portal 能被主站内嵌：删除 X-Frame-Options、各条 CSP 去掉 frame-ancestors 后
 // 追加 `frame-ancestors 'self' <主域名>`；丢弃应用试图设置的 portal Cookie，其余 Set-Cookie 去掉 Domain 属性
 // （变成 portal 主机的 host-only Cookie，应用不能经响应头往父域或兄弟 portal 写 Cookie）；匿名响应加 noindex。
+//
+// box app 的普通请求（非预览）是公开站点：防嵌套与收录由 app 自己决定，只做 Set-Cookie 的处理。
 func (s *Service) modifyResponse(res *http.Response) error {
 	h := res.Header
-	h.Del("X-Frame-Options")
-	if vals := h.Values("Content-Security-Policy"); len(vals) > 0 {
-		h.Del("Content-Security-Policy")
-		for _, v := range vals {
-			if v = dropDirective(v, "frame-ancestors"); v != "" {
-				h.Add("Content-Security-Policy", v)
+	t := targetFrom(res.Request)
+	site := t != nil && t.app && !t.preview
+	if !site {
+		h.Del("X-Frame-Options")
+		if vals := h.Values("Content-Security-Policy"); len(vals) > 0 {
+			h.Del("Content-Security-Policy")
+			for _, v := range vals {
+				if v = dropDirective(v, "frame-ancestors"); v != "" {
+					h.Add("Content-Security-Policy", v)
+				}
 			}
 		}
+		h.Add("Content-Security-Policy", "frame-ancestors 'self' "+s.base.Origin)
 	}
-	h.Add("Content-Security-Policy", "frame-ancestors 'self' "+s.base.Origin)
 	if vals := h.Values("Set-Cookie"); len(vals) > 0 {
 		h.Del("Set-Cookie")
 		for _, v := range vals {
@@ -170,7 +178,7 @@ func (s *Service) modifyResponse(res *http.Response) error {
 			}
 		}
 	}
-	if t := targetFrom(res.Request); t != nil && !t.owner {
+	if t != nil && !t.owner && !site {
 		h.Set("X-Robots-Tag", "noindex, nofollow")
 	}
 	return nil
@@ -225,11 +233,11 @@ func (s *Service) proxyError(w http.ResponseWriter, r *http.Request, err error) 
 		case "forbidden_port":
 			s.fail(w, t.nav, http.StatusForbidden, "forbidden_port", "该端口不允许暴露")
 		case "connection_refused":
-			s.failRefresh(w, t.nav, http.StatusBadGateway, "service_unreachable", "服务没有在该端口监听（可能仍在启动）")
+			s.failRefresh(w, t.nav, http.StatusBadGateway, "service_unreachable", t.unreachableMsg("服务没有在该端口监听（可能仍在启动）"))
 		case "timeout":
 			s.fail(w, t.nav, http.StatusGatewayTimeout, "portal_timeout", "连接服务超时")
 		default:
-			s.failRefresh(w, t.nav, http.StatusBadGateway, "portal_unreachable", fmt.Sprintf("无法连接服务：%s", de.Message))
+			s.failRefresh(w, t.nav, http.StatusBadGateway, "portal_unreachable", t.unreachableMsg(fmt.Sprintf("无法连接服务：%s", de.Message)))
 		}
 	case errors.Is(err, orbs.ErrOrbNotReady):
 		w.Header().Set("Retry-After", "3")
@@ -240,6 +248,14 @@ func (s *Service) proxyError(w http.ResponseWriter, r *http.Request, err error) 
 		s.fail(w, t.nav, http.StatusGatewayTimeout, "portal_timeout", "等待服务响应超时")
 	default:
 		slog.Debug("portal: 代理失败", "orb", t.orbID, "port", t.port, "err", err)
-		s.failRefresh(w, t.nav, http.StatusBadGateway, "portal_unreachable", "无法连接服务")
+		s.failRefresh(w, t.nav, http.StatusBadGateway, "portal_unreachable", t.unreachableMsg("无法连接服务"))
 	}
+}
+
+// unreachableMsg 是「连不上服务」的文案：box app 统一说应用没有在监听，thread portal 用 msg。
+func (t *target) unreachableMsg(msg string) string {
+	if t.app {
+		return "应用没有在监听（可能正在重启）"
+	}
+	return msg
 }

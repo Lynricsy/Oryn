@@ -112,6 +112,8 @@ type fakeOrbs struct {
 	services  map[int]apigen.OrbService
 	refreshes []string
 	dialErr   error
+	dials     int   // DialPortal 被调用的次数
+	wakeErr   error // 非 nil：不可用时 wake=true 的调用返回它（模拟 box 闸门）
 }
 
 func (f *fakeOrbs) Get(ctx context.Context, orbID string) (db.Orb, error) {
@@ -125,10 +127,13 @@ func (f *fakeOrbs) Get(ctx context.Context, orbID string) (db.Orb, error) {
 func (f *fakeOrbs) EnsureUsable(ctx context.Context, _, feature string, wake bool, wait time.Duration) error {
 	f.mu.Lock()
 	f.calls = append(f.calls, ensureCall{wake, wait})
-	usable, gate, waiting := f.usable, f.gate, f.waiting
+	usable, gate, waiting, wakeErr := f.usable, f.gate, f.waiting, f.wakeErr
 	f.mu.Unlock()
 	if feature != featurePortal {
 		return fmt.Errorf("unexpected feature %q", feature)
+	}
+	if usable != nil && wake && wakeErr != nil {
+		return wakeErr
 	}
 	if usable == nil || !wake || wait == 0 || gate == nil {
 		return usable
@@ -149,6 +154,7 @@ func (f *fakeOrbs) EnsureUsable(ctx context.Context, _, feature string, wake boo
 
 func (f *fakeOrbs) DialPortal(ctx context.Context, _ string, _ int) (net.Conn, error) {
 	f.mu.Lock()
+	f.dials++
 	addr, derr := f.upstream, f.dialErr
 	f.mu.Unlock()
 	if derr != nil {

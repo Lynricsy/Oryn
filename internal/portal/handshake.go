@@ -19,12 +19,13 @@ import (
 // 鉴权握手（计划 4.3）：
 //
 //	A  portal 主机，未授权的导航请求 → 302 <主域名>/portal/auth?t=<短码>&p=<端口>&next=<path?query>
+//	   （box app 主机是 ?h=<app>&next=）
 //	B  主域名 GET /portal/auth       → 已登录：签发一次性码，302 <portal>/__oryn/auth?code=&next=；未登录：302 /login?next=
 //	C  portal GET /__oryn/auth       → 兑换码，写 portal 会话与 Cookie，302 /__oryn/auth/check?next=
 //	D  portal GET /__oryn/auth/check → Cookie 带回来了：302 next；被浏览器拦截：说明页（握手不会循环）
 //	E  portal GET /__oryn/login      → 已是所有者：302 next；否则等同 A
 //
-// 回跳主机一律由配置按 (短码, 端口) 重算，没有任何参数能把人带到 portal 域之外。
+// 回跳主机一律由配置按 (短码, 端口) 或 app 名重算，没有任何参数能把人带到 portal 域之外。
 
 // handshakeHeaders 是握手各步响应共有的头。
 func handshakeHeaders(w http.ResponseWriter) {
@@ -49,11 +50,23 @@ func (s *Service) AuthHandler() http.Handler {
 			return
 		}
 		q := r.URL.Query()
-		label := "t-" + q.Get("t") + "-p" + q.Get("p")
-		code, port, ok := portalhost.ParseLabel(label)
-		if !ok {
-			textError(w, http.StatusBadRequest, "invalid portal")
-			return
+		var label, code, appName, root string
+		if q.Has("h") {
+			name, ok := portalhost.ParseAppLabel(q.Get("h"))
+			if !ok {
+				textError(w, http.StatusBadRequest, "invalid app")
+				return
+			}
+			label, appName = name, name
+		} else {
+			label = "t-" + q.Get("t") + "-p" + q.Get("p")
+			c, port, ok := portalhost.ParseLabel(label)
+			if !ok {
+				textError(w, http.StatusBadRequest, "invalid portal")
+				return
+			}
+			code = c
+			root = s.base.URL(c, port)
 		}
 		next := sanitizeNext(q.Get("next"))
 		pr, err := auth.Authenticate(w, r, s.st)
@@ -70,7 +83,20 @@ func (s *Service) AuthHandler() http.Handler {
 			redirect(w, "/login?next="+url.QueryEscape(r.URL.RequestURI()))
 			return
 		}
-		if _, err := s.st.Q.GetThreadByShortCode(r.Context(), code); errors.Is(err, sql.ErrNoRows) {
+		if appName != "" {
+			if s.apps == nil {
+				textError(w, http.StatusNotFound, "app not found")
+				return
+			}
+			if _, found, err := s.apps.ResolveApp(r.Context(), appName); err != nil {
+				s.internal(w, false, "读取 box app 失败", err)
+				return
+			} else if !found {
+				textError(w, http.StatusNotFound, "app not found")
+				return
+			}
+			root = s.base.AppURL(appName)
+		} else if _, err := s.st.Q.GetThreadByShortCode(r.Context(), code); errors.Is(err, sql.ErrNoRows) {
 			textError(w, http.StatusNotFound, "portal not found")
 			return
 		} else if err != nil {
@@ -78,7 +104,7 @@ func (s *Service) AuthHandler() http.Handler {
 			return
 		}
 		tok := s.codes.issue(label, pr.ID, s.now())
-		redirect(w, s.base.URL(code, port)+"__oryn/auth?code="+url.QueryEscape(tok)+"&next="+url.QueryEscape(next))
+		redirect(w, root+"__oryn/auth?code="+url.QueryEscape(tok)+"&next="+url.QueryEscape(next))
 	})
 }
 
@@ -113,7 +139,7 @@ func (s *Service) redeem(w http.ResponseWriter, r *http.Request, p *portalReq) {
 	now := s.now()
 	c, ok := s.codes.redeem(q.Get("code"), now)
 	if !ok || c.label != p.label {
-		redirect(w, s.authURL(p.code, p.port, next))
+		redirect(w, s.authURL(p, next))
 		return
 	}
 	ws, err := s.st.Q.GetWebSession(ctx, c.webHash)
@@ -122,7 +148,7 @@ func (s *Service) redeem(w http.ResponseWriter, r *http.Request, p *portalReq) {
 		return
 	}
 	if err != nil || ws.ExpiresAt <= now.UnixMilli() || ws.Kind != "full" {
-		redirect(w, s.authURL(p.code, p.port, next))
+		redirect(w, s.authURL(p, next))
 		return
 	}
 	exp := min(now.Add(SessionTTL).UnixMilli(), ws.ExpiresAt)
@@ -153,7 +179,7 @@ func (s *Service) check(w http.ResponseWriter, r *http.Request, p *portalReq) {
 		redirect(w, next)
 		return
 	}
-	link := strings.TrimSuffix(s.base.URL(p.code, p.port), "/") + next
+	link := strings.TrimSuffix(p.root, "/") + next
 	page(w, s.base.Origin, http.StatusOK, "浏览器拦截了 portal 的 Cookie", 0,
 		`<p>浏览器拦截了 portal 的 Cookie，无法在当前页面里完成登录（常见于内嵌页面与拦截第三方 Cookie 的浏览器设置）。</p>`+
 			`<p><a href="`+html.EscapeString(link)+`" target="_blank" rel="noopener noreferrer">在新窗口打开该 portal</a></p>`)
@@ -175,7 +201,7 @@ func (s *Service) login(w http.ResponseWriter, r *http.Request, p *portalReq) {
 		redirect(w, next)
 		return
 	}
-	redirect(w, s.authURL(p.code, p.port, next))
+	redirect(w, s.authURL(p, next))
 }
 
 // codes 是一次性码表（只在内存中，60 秒、单次），照 auth.Tickets 实现。
@@ -249,4 +275,5 @@ func (s *Service) Revoke(kind, id string) {
 		s.codes.revokeWeb(id)
 	}
 	s.reg.cancelKey(kind + "/" + id)
+	s.appReg.cancelKey(kind + "/" + id)
 }
