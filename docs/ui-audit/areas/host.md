@@ -51,7 +51,7 @@ spec：`web/e2e/ui-audit/host.e2e.ts`。假宿主（`window.__TAURI__` 与 `__OR
 
 | # | 界面 id | 问题 | 类别 | 截图 | 处理 |
 |---|---|---|---|---|---|
-| 1 | host.chrome-mac.narrow | 900 宽三栏（侧栏 256px）、右面板开：信息面板「服务」行的红色故障标签左侧被裁掉，只剩「败 · 重启 5 次」 | 错乱 | `shots/host.chrome-mac.narrow/d1366-light-after.png` | 转 panels 区域（InfoPanel/ServicesSection 归 ThreadPanelsShellAudit），并在 panels 增加 900 宽变体回归 |
-| 2 | host.chrome-mac.narrow | 900 宽时转录里的 Markdown 表格在中栏右缘被硬切，可以横向滚动，但没有任何提示，读起来像排版坏了 | 设计 | `shots/host.chrome-mac.narrow/d1366-light-after.png` | 转 thread 区域（markdown.css 归 ThreadCoreAudit）：加左右滚动阴影 |
-| 3 | host.mobile.corners-dialog、host.launcher-*.pairing 等 | 本区登记前，宿主壳界面完全不在审计范围（shell.e2e.ts 写的是「纯浏览器跑不到，不登记」） | 设计（覆盖） | — | 本区：用 scripts/fake-host.ts 登记 40 个界面 |
-| 4 | host.mobile.corners-dialog | 手机附件对话框：文件名、大小、日期被拆成三行，日期本身也折行；操作按钮挤在右侧，「已公开」又另起一行，读起来很散 | 设计 | `shots/host.mobile.corners-dialog/m390-light-after.png` | 转 thread 区域（Dialogs.tsx 归 ThreadCoreAudit）：元信息合成一行，窄屏下操作按钮另起一行 |
+| 1 | host.chrome-mac.narrow | 900 宽三栏（侧栏 256px）、右面板开：信息面板「服务」行的红色故障标签左侧被裁掉，只剩「败 · 重启 5 次」 | 错乱 | `shots/host.chrome-mac.narrow/d1366-light-after.png` | 1cfb2dc（ThreadPanelsShellAudit：标签可收缩、从右截断）；panels 新增 `panels.info.narrow` 回归，见 panels #11 |
+| 2 | host.chrome-mac.narrow | 900 宽时转录里的 Markdown 表格在中栏右缘被硬切，可以横向滚动，但没有任何提示，读起来像排版坏了 | 设计 | `shots/host.chrome-mac.narrow/d1366-light-after.png` | b53486a（ThreadCoreAudit：`.md-table` 左右滚动阴影），见 thread #13 |
+| 3 | host.mobile.corners-dialog、host.launcher-*.pairing 等 | 本区登记前，宿主壳界面完全不在审计范围（shell.e2e.ts 写的是「纯浏览器跑不到，不登记」） | 设计（覆盖） | — | c72eaff（用 scripts/fake-host.ts 登记 40 个界面） |
+| 4 | host.mobile.corners-dialog | 手机附件对话框：文件名、大小、日期被拆成三行，日期本身也折行；操作按钮挤在右侧，「已公开」又另起一行，读起来很散 | 设计 | `shots/host.mobile.corners-dialog/m390-light-after.png` | d92f941（ThreadCoreAudit：元信息合成一行，窄屏下操作按钮另起一行），见 thread #14 |

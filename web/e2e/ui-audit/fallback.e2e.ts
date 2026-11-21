@@ -54,7 +54,6 @@ surface({
 	path: `/t/${MAIN_THREAD}`,
 	ready: "[data-testid=transcript]",
 	init: NO_POPOVER,
-	only: "desktop",
 	open: async (page) => {
 		const more = page.getByRole("button", { name: "更多操作" }).first();
 		if (await more.isVisible()) await more.click();
