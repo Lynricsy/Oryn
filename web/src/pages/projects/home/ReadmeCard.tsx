@@ -6,20 +6,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import {
-	repoBlobUrl,
-	repoKeys,
-	repoRetry,
-	useRepoTree,
-} from "../../../api/repo-queries";
-import {
-	Markdown,
-	type RelativeUrls,
-} from "../../../components/markdown/Markdown";
+import { repoKeys, repoRetry, useRepoTree } from "../../../api/repo-queries";
+import { Markdown } from "../../../components/markdown/Markdown";
 import { Card } from "../../../components/ui/data";
 import { ErrorText, Spinner } from "../../../components/ui/primitives";
 import { projectRepoSource } from "../../../lib/file-source";
-import { repoFileHref, resolveRepoPath } from "../repo/paths";
+import { repoRelativeUrls } from "../repo/paths";
 
 const README_NAMES = [
 	"readme.md",
@@ -55,17 +47,9 @@ export function ReadmeCard({
 		staleTime: 30_000,
 		retry: repoRetry,
 	});
-	const relativeTo = useMemo<RelativeUrls>(
-		() => ({
-			link: (href) => {
-				const r = resolveRepoPath("", href);
-				return r && repoFileHref(projectId, r.path, refName) + r.hash;
-			},
-			image: (src) => {
-				const r = resolveRepoPath("", src);
-				return r && repoBlobUrl(projectId, refName, r.path);
-			},
-		}),
+	// README 在仓库根目录
+	const relativeTo = useMemo(
+		() => repoRelativeUrls(projectId, refName, ""),
 		[projectId, refName],
 	);
 	if (!readme) return null;

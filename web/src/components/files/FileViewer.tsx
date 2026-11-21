@@ -42,7 +42,7 @@ import {
 	type TextRender,
 } from "../../lib/preview-kind";
 import { AROUND_MAX } from "../../lib/side-ask";
-import { Markdown } from "../markdown/Markdown";
+import { Markdown, type RelativeUrls } from "../markdown/Markdown";
 import { Badge } from "../ui/data";
 import { Icon } from "../ui/icons";
 import {
@@ -134,10 +134,12 @@ function TextView({
 	render,
 	text,
 	name,
+	relativeTo,
 }: {
 	render: TextRender;
 	text: string;
 	name: string;
+	relativeTo?: RelativeUrls;
 }): ReactNode {
 	// SVG 以 Blob 交给图片查看器（`data:` URL 显示）；只随内容变化重建
 	const svg = useMemo(
@@ -148,7 +150,7 @@ function TextView({
 		case "markdown":
 			return (
 				<div className="h-full overflow-y-auto px-4 py-3">
-					<Markdown text={text} />
+					<Markdown text={text} relativeTo={relativeTo} />
 				</div>
 			);
 		case "mermaid":
@@ -175,6 +177,7 @@ export function FileViewer({
 	onBack,
 	onDownload,
 	readOnly = false,
+	relativeTo,
 }: {
 	source: FileSource;
 	path: string;
@@ -184,6 +187,8 @@ export function FileViewer({
 	onDownload?(path: string): void;
 	/** 只预览不编辑（来源不支持写入，如助手文件库、停机的 orb） */
 	readOnly?: boolean;
+	/** Markdown 预览里相对链接与图片的解析（仓库文件页：相对文件所在目录） */
+	relativeTo?: RelativeUrls;
 }): ReactNode {
 	const { t } = useTranslation();
 	const rootEl = useRef<HTMLDivElement | null>(null);
@@ -524,6 +529,7 @@ export function FileViewer({
 												render={loaded.render}
 												text={previewText}
 												name={namePart}
+												relativeTo={relativeTo}
 											/>
 										</PreviewBoundary>
 									)
