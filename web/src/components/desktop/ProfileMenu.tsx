@@ -4,7 +4,7 @@
  * 切换前用应用内对话框确认「当前浏览器会被关闭」。被占用（列表里有持有者，或 PUT 回 409 `profile_in_use`）时弹冲突对话框，
  * 由用户在「只读使用」与「接管」之间选择后重发。
  */
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
 import type { Schemas } from "../../api/client";
@@ -128,9 +128,13 @@ export function ProfileMenu({
 	const profiles = useBrowserProfiles();
 	// 浏览器在跑、或本地装着某个 Profile 时，切换会关闭当前浏览器：先记下切换动作，确认后再执行
 	const [pendingSwitch, setPendingSwitch] = useState<(() => void) | null>(null);
+	const triggerRef = useRef<HTMLButtonElement>(null);
 	const switchTo = (run: () => void) => {
-		if (browserRunning || current) setPendingSwitch(() => run);
-		else run();
+		if (!(browserRunning || current)) return run();
+		// 选中后菜单项随菜单卸载；Dialog 记下的是打开那一刻的焦点，关闭时只还给仍在页面上的元素。
+		// 先把焦点放回常驻的触发钮，取消或 Esc 后焦点回到这里，而不是掉到 body
+		triggerRef.current?.focus();
+		setPendingSwitch(() => run);
 	};
 	const items: MenuItem[] = [
 		...(profiles.data?.profiles ?? []).map((p): MenuItem => {
@@ -192,6 +196,7 @@ export function ProfileMenu({
 				items={items}
 				trigger={(p) => (
 					<button
+						ref={triggerRef}
 						type="button"
 						data-testid="desktop-profile-menu"
 						aria-label={t("deskPanel.menu.label", { name: label })}

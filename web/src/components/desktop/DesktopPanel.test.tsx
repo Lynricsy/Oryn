@@ -616,6 +616,25 @@ describe("DesktopPanel Profile", () => {
 		expect(requests.filter((r) => r.method === "PUT")).toHaveLength(0);
 	});
 
+	it("菜单：键盘选 Profile 后在确认框按 Esc，焦点回到 Profile 触发钮且不发请求", async () => {
+		const { threadId } = setup(READY);
+		mount(threadId);
+		const trigger = screen.getByTestId("desktop-profile-menu");
+		trigger.focus();
+		fireEvent.click(trigger);
+		const item = await screen.findByRole("menuitemradio", {
+			name: /工作账号/,
+		});
+		// 键盘：焦点在菜单项上按 Enter（按钮的 Enter 派发 click）；选中后菜单项随菜单卸载
+		item.focus();
+		fireEvent.click(item);
+		expect(screen.getByTestId("profile-switch-confirm")).toBeInTheDocument();
+		fireEvent.keyDown(window, { key: "Escape" });
+		expect(screen.queryByTestId("profile-switch-confirm")).toBeNull();
+		expect(screen.getByTestId("desktop-profile-menu")).toHaveFocus();
+		expect(requests.filter((r) => r.method === "PUT")).toHaveLength(0);
+	});
+
 	it("菜单：列表里已被别的 orb 持有的 Profile 标「使用中」，选它直接弹对话框（不先发请求）", async () => {
 		const { threadId } = setup(READY);
 		mount(threadId);
