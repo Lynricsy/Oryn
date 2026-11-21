@@ -50,9 +50,9 @@ curl -fsS -o /dev/null "$origin/" || {
   exit 1
 }
 
-# 状态栏固定成发布图的样子
+# 状态栏固定成发布图的样子（discharging + 100%：满电且不带充电闪电）
 xcrun simctl status_bar "$udid" override --time 9:41 --dataNetwork wifi --wifiMode active --wifiBars 3 \
-  --cellularMode active --cellularBars 4 --batteryState charged --batteryLevel 100
+  --cellularMode active --cellularBars 4 --batteryState discharging --batteryLevel 100
 
 # 演示数据的主线程（与 readme-shots.ts 的 T.fc 同一个夹具 ID）
 thread=$(cd "$web" && bun -e 'import { MAIN_THREAD } from "./src/mock/fixtures"; console.log(MAIN_THREAD)')
