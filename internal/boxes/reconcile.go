@@ -20,8 +20,11 @@ const (
 	orphanAfter = time.Minute
 )
 
-// Run 运行对账循环：每 Tick 一次，另由 box orb 的事件与写操作立即触发；ctx 结束时返回。
+// Run 运行对账循环：先收拾控制面重启前留下的部署，然后每 Tick 一次，另由 box orb 的事件与写操作立即触发；
+// ctx 结束时返回，并中止本进程里在途的部署。
 func (s *Service) Run(ctx context.Context) {
+	defer s.stop()
+	s.sweepDeploys(ctx, true)
 	t := time.NewTicker(s.cfg.Tick)
 	defer t.Stop()
 	for {
@@ -35,11 +38,12 @@ func (s *Service) Run(ctx context.Context) {
 	}
 }
 
-// reconcile 做一轮对账：自愈、时段、把每台 box 的 orb 推向期望状态。各台 box 串行处理。
+// reconcile 做一轮对账：自愈、收拾无主的部署、时段、把每台 box 的 orb 推向期望状态。各台 box 串行处理。
 func (s *Service) reconcile(ctx context.Context) {
 	s.recMu.Lock()
 	defer s.recMu.Unlock()
 	s.healOrphans(ctx)
+	s.sweepDeploys(ctx, false)
 	boxes, err := s.st.Q.ListBoxes(ctx)
 	if err != nil {
 		if ctx.Err() == nil {

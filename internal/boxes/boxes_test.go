@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +16,8 @@ import (
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/orbs"
+	"github.com/Lynricsy/Oryn/internal/portalhost"
+	"github.com/Lynricsy/Oryn/internal/secrets"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
@@ -31,6 +34,10 @@ type fakeOrbs struct {
 	deleteErr error
 	gate      func(string) bool
 	subs      []func(orbs.Event)
+	// features 是 HasFeature 报告的特性（且须 connected）；handlers 是各 orb 的 orbd 本机 API 替身。
+	features map[string]map[string]bool
+	handlers map[string]http.Handler
+	doErr    func(orbID string, req *http.Request) error
 }
 
 func (f *fakeOrbs) rec(op, id string) {
@@ -95,9 +102,28 @@ func (f *fakeOrbs) Connected(id string) bool {
 	defer f.mu.Unlock()
 	return f.connected[id]
 }
-func (f *fakeOrbs) HasFeature(string, string) bool { return false }
-func (f *fakeOrbs) Do(context.Context, string, *http.Request) (*http.Response, error) {
-	return nil, errors.New("not implemented")
+func (f *fakeOrbs) HasFeature(id, feature string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.connected[id] && f.features[id][feature]
+}
+
+// Do 交给该 orb 登记的 handler（httptest 记录器；handler 同步跑完）；doErr 非 nil 且返回错误时模拟连接失败。
+func (f *fakeOrbs) Do(ctx context.Context, id string, req *http.Request) (*http.Response, error) {
+	f.mu.Lock()
+	h, hook := f.handlers[id], f.doErr
+	f.mu.Unlock()
+	if hook != nil {
+		if err := hook(id, req); err != nil {
+			return nil, err
+		}
+	}
+	if h == nil {
+		return nil, errors.New("no orbd")
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req.WithContext(ctx))
+	return rec.Result(), nil
 }
 func (f *fakeOrbs) DialPortal(context.Context, string, int) (net.Conn, error) {
 	return nil, errors.New("not implemented")
@@ -165,10 +191,15 @@ func newEnv(t *testing.T, start time.Time) *env {
 	t.Cleanup(func() { _ = st.Close() })
 	provID := ids.New("prov")
 	require.NoError(t, st.Q.CreateProvider(ctx, db.CreateProviderParams{ID: provID, Name: "docker", TokenHash: ids.Hash(provID), CreatedAt: 1}))
-	o := &fakeOrbs{st: st, provID: provID, connected: map[string]bool{}}
+	o := &fakeOrbs{st: st, provID: provID, connected: map[string]bool{},
+		features: map[string]map[string]bool{}, handlers: map[string]http.Handler{}}
 	th := &fakeThreads{}
 	clk := &clock{t: start}
-	s := New(Config{Now: clk.Now}, st, o, th)
+	sbox, err := secrets.New([]byte("0123456789abcdef0123456789abcdef"))
+	require.NoError(t, err)
+	base, err := portalhost.NewBase("https://oryn.test", "apps.oryn.test")
+	require.NoError(t, err)
+	s := New(Config{Now: clk.Now, Box: sbox, Base: base}, st, o, th)
 	return &env{t: t, ctx: ctx, st: st, orbs: o, th: th, clk: clk, s: s}
 }
 
@@ -192,14 +223,6 @@ func (e *env) row(name string) db.Box {
 	b, err := e.st.Q.GetBoxByName(e.ctx, name)
 	require.NoError(e.t, err)
 	return b
-}
-
-func codeOf(err error) string {
-	var be *Error
-	if errors.As(err, &be) {
-		return be.Code
-	}
-	return ""
 }
 
 func at(s string) time.Time {

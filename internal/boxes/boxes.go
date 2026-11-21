@@ -157,6 +157,48 @@ type Service struct {
 
 	chMu    sync.Mutex
 	chTimer *time.Timer
+
+	// root 是服务自己的根 ctx（Run 结束时取消）：部署的传输与激活从它派生，不随调用方的 ctx 结束。
+	root context.Context
+	stop context.CancelFunc
+	// flMu 保护 inflight：本进程里正在提交（传输或激活）的部署，按部署 id。
+	flMu     sync.Mutex
+	inflight map[string]*flight
+	// alMu 保护 appLocks：按 app 名的进程内互斥（带引用计数，用完回收）。
+	alMu     sync.Mutex
+	appLocks map[string]*appLock
+}
+
+// appLock 是一个 app 名的互斥与等待它的人数。
+type appLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+// lockApp 取 app 名的互斥：PrepareDeploy 从查未结束的部署到插入部署行、Undeploy / Rollback / Restart / SetPublic 从
+// 查未结束的部署到 orbd 调用与写库，都整段持有它，免得两者交错留下没有 app 行的部署。持有期间不得开着 SQLite 事务
+// 跨网络调用。返回解锁函数。
+func (s *Service) lockApp(name string) (unlock func()) {
+	s.alMu.Lock()
+	if s.appLocks == nil {
+		s.appLocks = map[string]*appLock{}
+	}
+	l := s.appLocks[name]
+	if l == nil {
+		l = &appLock{}
+		s.appLocks[name] = l
+	}
+	l.refs++
+	s.alMu.Unlock()
+	l.mu.Lock()
+	return func() {
+		l.mu.Unlock()
+		s.alMu.Lock()
+		if l.refs--; l.refs == 0 {
+			delete(s.appLocks, name)
+		}
+		s.alMu.Unlock()
+	}
 }
 
 // New 构造服务，并立即向 orbs 注册 box 闸门与事件订阅（不等 Run）。
@@ -174,7 +216,9 @@ func New(cfg Config, st *store.Store, o Orbs, th Threads) *Service {
 		cfg: cfg, st: st, orbs: o, th: th,
 		kickCh:        make(chan struct{}, 1),
 		unlinkedSince: map[string]time.Time{}, lastWake: map[string]time.Time{},
+		inflight: map[string]*flight{},
 	}
+	s.root, s.stop = context.WithCancel(context.Background())
 	o.SetBoxGate(s.gate)
 	o.Subscribe(func(ev orbs.Event) {
 		if ev.Orb.Box == 0 {
@@ -510,9 +554,6 @@ func (s *Service) Delete(ctx context.Context, ref string, by Actor) error {
 	s.changed()
 	return nil
 }
-
-// abortDeploys 中止这台 box 上全部在途的部署（部署管线在步骤 3.2 接入；此前没有在途部署）。
-func (s *Service) abortDeploys(boxID string) {}
 
 // forget 清掉一台 box 的内存状态。
 func (s *Service) forget(boxID string) {

@@ -240,6 +240,8 @@ func (s *Server) init(ctx context.Context) error {
 	s.Orbs.HandleStream(link.StreamSSH, s.SSH.ServeStream)
 	// ssh.call：orb 内 agent 的 ssh_exec_many（runner 的 link 不放行，见 orbs.runnerRequests）
 	s.Orbs.HandleRequest(string(apigen.MethodSSHCall), s.SSH.OnCall)
+	// box.call：orb 内 `oryn boxes …`（M23；runner 的 link 不放行）
+	s.Orbs.HandleRequest(string(apigen.MethodBoxCall), s.Boxes.OnCall)
 	if s.Attachments, err = attachments.New(s.Store, cfg.DataDir, s.Orbs); err != nil {
 		return err
 	}
