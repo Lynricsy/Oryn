@@ -7315,7 +7315,7 @@ type LinkCtlSetupRunResult struct {
 	// SetupChanged 本次 `repo.update` 前后 `.oryn/setup`、`.agents/setup`、`.oryn/services.yaml` 任一有变化，或基线不是快进（走了 reset），即为 true（M11a 审查修复）；为 true 时控制面不以来源快照为父发布新快照
 	SetupChanged *bool `json:"setupChanged,omitempty"`
 
-	// SetupError setup 脚本失败原因（ok=false 时给出；完整输出见 setup.log）
+	// SetupError setup 失败原因：setup 脚本失败，或 Git LFS 对象没能取下（`git lfs pull: …`）；ok=false 时给出；完整输出见 setup.log
 	SetupError *string `json:"setupError,omitempty"`
 
 	// SetupRan 本次是否实际执行了 setup（标记已存在则为 false）

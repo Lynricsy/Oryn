@@ -265,5 +265,8 @@ git -c user.name=Smoke -c user.email=smoke@example.invalid commit --quiet -m smo
 [[ "$(git branch --show-current)" == main ]]
 [[ "$(git log -1 --format=%s)" == smoke ]]
 git lfs version
+[[ "$(git config --system --get filter.lfs.required)" == true ]]
+[[ "$(git config --system --get filter.lfs.process)" == "git-lfs filter-process" ]]
+git lfs version | grep -q '^git-lfs/3\.'
 printf 'Git 初始化 / 提交 / LFS：通过\n'
 printf 'orb 镜像离线冒烟：通过\n'

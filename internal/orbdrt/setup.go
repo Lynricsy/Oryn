@@ -1,6 +1,7 @@
 package orbdrt
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -292,7 +293,9 @@ func (r *Runtime) runSetupLocked(ctx context.Context, p apigen.LinkCtlSetupRunPa
 			}
 			args = append(args, "--", p.Repo.URL, workdir)
 			cctx, cancel := context.WithTimeout(ctx, setupTimeout)
-			err := lg.run(cctx, apigen.Clone, r.home, envList(env), "git", args...)
+			// 检出时不下载 LFS 对象（filter.lfs.required=true 时取不下对象会让 clone 以失败退出、停在半检出状态），
+			// 下面统一 git lfs pull。
+			err := lg.run(cctx, apigen.Clone, r.home, skipSmudge(env), "git", args...)
 			cancel()
 			if err != nil {
 				return fail(ctlErr(errCode(err), "git clone: %v", err))
@@ -305,7 +308,12 @@ func (r *Runtime) runSetupLocked(ctx context.Context, p apigen.LinkCtlSetupRunPa
 		// 3b. repo.update：已有检出（快照或池 orb）移动到基线最新提交；HEAD 变了就删掉完成标记，下面增量重跑 setup。
 		repoUpdated, setupChanged := false, false
 		if p.Repo != nil && p.Repo.Update != nil && *p.Repo.Update && !cloned && hasCheckout(workdir) {
-			repoUpdated, setupChanged = r.updateRepo(ctx, lg, workdir, envList(env), p.Repo)
+			repoUpdated, setupChanged = r.updateRepo(ctx, lg, workdir, skipSmudge(env), p.Repo)
+		}
+		// 3c. Git LFS（M24）：检出之后取对象；失败并入 SetupError，但不阻止 setup 脚本运行。
+		var lfsErr error
+		if p.Repo != nil && p.Repo.URL != "" && hasCheckout(workdir) {
+			lfsErr = r.lfsPull(ctx, lg, workdir, envList(env))
 		}
 		res.RepoUpdated, res.SetupChanged = new(repoUpdated), new(setupChanged)
 
@@ -324,6 +332,13 @@ func (r *Runtime) runSetupLocked(ctx context.Context, p apigen.LinkCtlSetupRunPa
 			}
 		} else {
 			lg.system(apigen.Setup, "setup already done; skipped")
+		}
+		if lfsErr != nil {
+			msg := lfsErr.Error()
+			if res.SetupError != nil {
+				msg = *res.SetupError + "; " + msg
+			}
+			res.SetupError = new(msg)
 		}
 		sres.Ok, sres.Error = res.SetupError == nil, res.SetupError
 		sres.DurationMs = time.Since(phaseStart).Milliseconds()
@@ -439,6 +454,55 @@ func setupInputsDigest(workdir string) [sha256.Size]byte {
 	var out [sha256.Size]byte
 	copy(out[:], h.Sum(nil))
 	return out
+}
+
+// skipSmudge 是 clone 与 repo.update 用的环境：GIT_LFS_SKIP_SMUDGE=1 让检出只写指针文件（M24），对象由 lfsPull 统一取。
+// 跳过 smudge 照样会装 git-lfs 的 pre-push 钩子；agent 自己运行的 git 不受影响。
+func skipSmudge(env map[string]string) []string {
+	e := maps.Clone(env)
+	e["GIT_LFS_SKIP_SMUDGE"] = "1"
+	return envList(e)
+}
+
+// lfsPull 在检出之后取 Git LFS 对象（M24）；仓库没有 filter=lfs 的文件时什么都不做。返回值并入 SetupError。
+func (r *Runtime) lfsPull(ctx context.Context, lg *setupLogger, workdir string, env []string) error {
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	cmd := r.bins.command(cctx, "git", "-C", workdir, "ls-files", "-z", "--", ":(attr:filter=lfs)")
+	cmd.Env = env
+	out, err := cmd.Output()
+	cancel()
+	if err != nil {
+		lg.system(apigen.Git, "warning: could not list Git LFS files; skipping git lfs pull: "+err.Error())
+		return nil
+	}
+	n := 0
+	for f := range bytes.SplitSeq(out, []byte{0}) {
+		if len(f) > 0 {
+			n++
+		}
+	}
+	if n == 0 {
+		return nil
+	}
+	vctx, vcancel := context.WithTimeout(ctx, 30*time.Second)
+	ver := r.bins.command(vctx, "git", "lfs", "version")
+	ver.Dir, ver.Env = workdir, env
+	err = ver.Run()
+	vcancel()
+	if err != nil {
+		lg.system(apigen.Git, fmt.Sprintf("warning: the repository has %d Git LFS file(s) but git-lfs is not installed; they stay pointer files", n))
+		return fmt.Errorf("git-lfs is not installed; %d LFS file(s) are pointer files", n)
+	}
+	pctx, pcancel := context.WithTimeout(ctx, setupTimeout)
+	err = lg.run(pctx, apigen.Git, workdir, env, "git", "-C", workdir, "lfs", "pull")
+	pcancel()
+	if err != nil {
+		lg.system(apigen.Git, "warning: git lfs pull failed; files that could not be downloaded are still pointer files. "+
+			"Fix the cause, then run `git lfs pull` in "+workdir)
+		return fmt.Errorf("git lfs pull: %v", err)
+	}
+	lg.system(apigen.Git, fmt.Sprintf("git lfs pull: %d LFS file(s) checked out", n))
+	return nil
 }
 
 // updateRepo 实现 repo.update（M11a 2.3）：fetch 基线（分支名，缺省远端 HEAD）；HEAD 不等于 fetch 到的提交时，

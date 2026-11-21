@@ -10944,7 +10944,7 @@ export interface components {
             ok: boolean;
             /** @description 本次是否实际执行了 setup（标记已存在则为 false） */
             setupRan: boolean;
-            /** @description setup 脚本失败原因（ok=false 时给出；完整输出见 setup.log） */
+            /** @description setup 失败原因：setup 脚本失败，或 Git LFS 对象没能取下（`git lfs pull: …`）；ok=false 时给出；完整输出见 setup.log */
             setupError?: string;
             /** Format: int64 */
             durationMs: number;
