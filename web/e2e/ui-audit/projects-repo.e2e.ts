@@ -1,4 +1,4 @@
-/** 项目仓库浏览（M24 阶段 ②）：主页的仓库区块（就绪 / 克隆失败）、提交列表与详情、ref 选择菜单、分支、标签、目录与文件预览。 */
+/** 项目仓库浏览（M24 阶段 ②）：主页的仓库区块（就绪 / 克隆失败）、提交列表与详情、ref 选择菜单、分支、标签、目录与文件预览、Git LFS 文件的三种状态。 */
 import { MOCK_REPO_HEAD_SHA } from "../../src/mock/repo";
 import { lastOverlay, surface } from "./audit";
 
@@ -53,4 +53,19 @@ surface({
 	id: "projects.repo.file",
 	path: `${PAGE}/files/README.md`,
 	ready: "[data-testid=file-viewer]",
+});
+surface({
+	id: "projects.repo.file-lfs",
+	path: `${PAGE}/files/docs/media/banner.svg`,
+	ready: "[data-testid=repo-lfs-note] ~ [data-testid=file-viewer]",
+});
+surface({
+	id: "projects.repo.file-lfs-large",
+	path: `${PAGE}/files/docs/media/walkthrough.mp4`,
+	ready: "[data-testid=repo-lfs-large]",
+});
+surface({
+	id: "projects.repo.file-lfs-error",
+	path: `${PAGE}/files/docs/media/missing.psd`,
+	ready: "[data-testid=repo-lfs-error]",
 });

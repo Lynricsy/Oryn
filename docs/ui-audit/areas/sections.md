@@ -45,6 +45,9 @@
 | `projects.repo.tags` | 标签子页 | 仓库子导航「标签」 | 页面 |
 | `projects.repo.files` | 仓库目录（docs） | 主页文件区点 docs | 页面 |
 | `projects.repo.file` | 仓库文件预览（README.md，只读） | 主页文件区点 README.md | 页面 |
+| `projects.repo.file-lfs` | 仓库文件 · LFS 预览 | 文件页进 docs/media 点 banner.svg | 页面 |
+| `projects.repo.file-lfs-large` | 仓库文件 · LFS 仅下载 | 文件页进 docs/media 点 walkthrough.mp4 | 页面 |
+| `projects.repo.file-lfs-error` | 仓库文件 · LFS 取对象失败 | 文件页进 docs/media 点 missing.psd | 页面 |
 | `space.page` | Space 页（聊天 + 右列） | 侧栏「空间」下点某个空间 | 页面 |
 | `space.side` | Space 右列（进度、定时、线程卡片；手机在「线程」标签） | 宽屏直接可见 / 手机切到「线程」标签 | 页面 |
 | `space.menu` | 空间操作菜单 | 页头「…」 | 菜单 |
