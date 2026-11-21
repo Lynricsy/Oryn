@@ -32,6 +32,7 @@ const (
 type ghRemoteResolver struct {
 	egress.NoGateLookup
 	egress.NoMemory
+	egress.NoHostedGit
 	pol egress.Policy
 
 	mu     sync.Mutex

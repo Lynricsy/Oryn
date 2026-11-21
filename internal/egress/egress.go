@@ -72,6 +72,9 @@ type Policy struct {
 	// MCPToken 是 /mcp/ 路由要求的凭据（请求头 MCPTokenHeader，M19 D10）：只有全局助手的 agent 持有，Space 协调者
 	// 没有；为空时 /mcp/ 一律 403。转发前去掉该头。
 	MCPToken string
+	// HostedGit 非 nil 时是 orb 所属项目的 Oryn 托管仓库（M24 阶段 ③）：该主机上的 git 请求只放行这个仓库，
+	// 交给 Resolver.HostedGit 在本地服务，不转发、不注入令牌。
+	HostedGit *HostedGitRoute
 }
 
 // GitHubAccess 是 orb 的 GitHub 访问：非 nil 时放行 `/gh/api.github.com/…`、`/gh/uploads.github.com/…`；
@@ -141,6 +144,8 @@ type Resolver interface {
 	GateLookup
 	// MemoryLookup 是记忆网关（M16 步骤 2.2）。
 	MemoryLookup
+	// HostedGitLookup 是托管仓库通道（M24 阶段 ③）。
+	HostedGitLookup
 }
 
 // MemoryLookup 提供 `/memory/t/<threadId>/…` 的处理器与可信调用方身份（M16）。
@@ -222,6 +227,9 @@ type target struct {
 	gitHost string
 	// lfs 为真时是 Git LFS 端点（或门票）：拒绝回 LFS JSON 错误体；lfsBatch 为真时是 objects/batch，200 响应经 lfsRewrite 重写（M24）。
 	lfs, lfsBatch bool
+	// hostedProject 非空时是托管仓库请求（M24 阶段 ③）：不转发，交给 Resolver.HostedGit 在本地服务；hostedEndpoint 是
+	// 相对 <repo>.git/ 的端点。
+	hostedProject, hostedEndpoint string
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -258,6 +266,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		http.Error(w, msg, status)
+		return
+	}
+	if t.hostedProject != "" {
+		h.serveHosted(w, r, t)
 		return
 	}
 	used, ok := h.substitute(r, t)
@@ -533,6 +545,16 @@ func (h *Handler) resolveGit(r *http.Request, pol Policy, host, rest string) (ta
 	}
 	if req.reject != 0 {
 		return target{deny: req.rejectMsg, lfs: true}, req.reject
+	}
+	// 托管仓库（M24 阶段 ③）：public_url 主机上只放行本项目的仓库，在本地服务，不查令牌、不经 github.com 规则。
+	if hg := pol.HostedGit; hg != nil && host == hg.Host {
+		if req.repo != hg.Repo {
+			return target{deny: denyHostedOther, lfs: req.lfs}, http.StatusForbidden
+		}
+		if req.write && h.threadGates().ReviewOnly {
+			return target{deny: denyReviewOnly, lfs: req.lfs}, http.StatusForbidden
+		}
+		return target{hostedProject: hg.ProjectID, hostedEndpoint: req.endpoint, lfs: req.lfs}, http.StatusOK
 	}
 	receivePack := req.endpoint == "git-receive-pack"
 	if deny, st := h.gitAllowed(pol, host, req.repo, req.write, receivePack); st != 0 {

@@ -177,7 +177,10 @@ type Service struct {
 	memory *memory.Gateway
 	// pushes 接收出站代理观察到的成功推送（M24，SetPushSink 在服务对外可用之前设置；nil = 不记录）。
 	pushes PushSink
-	now    func() time.Time
+	// hostedGit 在本地服务 orb 所属项目的托管仓库（M24 阶段 ③，SetHostedGit 在服务对外可用之前设置；nil = 没有通道，
+	// 托管路由一律 403）。
+	hostedGit egress.HostedGitServer
+	now       func() time.Time
 
 	mu      sync.Mutex
 	links   map[string]*orbLink

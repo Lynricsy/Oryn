@@ -84,6 +84,9 @@ type DefaultSetup struct {
 	SSH SSH
 	// KnownSecrets 是 runner 无密钥投递校验用的已知密钥（M21）；nil = 只查形似密钥的串。
 	KnownSecrets KnownSecrets
+	// PublicURL 是控制面的对外地址（cfg.PublicURL）：托管项目（M24 阶段 ③）的 orb 从 <PublicURL>/git/<id>.git 克隆；
+	// 空 = 不给托管项目下发仓库。
+	PublicURL string
 }
 
 // SSH 给出一台 orb 的 SSH 配置（M18）；协调 orb 返回 nil（不动 orb 内的 SSH 配置），runner 只有全局主机（M21）。
@@ -302,6 +305,8 @@ func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project, orb db.Orb) (S
 	p := &plan.Params
 	var projectIdentity *apigen.GitIdentity
 	var projectRepo *gitRepo
+	// hostedEntry 是托管项目仓库的 GitHosts 条目（M24 阶段 ③）；非托管项目为空。
+	var hostedEntry string
 	// projectGates 只用于本次生成的出站策略；不随 setup 下发（github_prepare 在执行时向控制面现查）。
 	var projectGates *apigen.GitHubGates
 	if prj != nil {
@@ -316,6 +321,19 @@ func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project, orb db.Orb) (S
 			}
 			if host, path, ok := HTTPSRepo(*prj.RepoUrl); ok {
 				projectRepo = &gitRepo{host: host, path: path}
+			}
+		}
+		if prj.Hosted && d.PublicURL != "" {
+			// 托管仓库（M24 阶段 ③）：不设 Branch——服务端 HEAD 指向基线；--push 失败留下的空仓库配了 --branch 会克隆失败。
+			clone := HostedCloneURL(d.PublicURL, prj.ID)
+			p.Repo = &apigen.LinkCtlSetupRepo{URL: clone, Shallow: prj.ShallowClone}
+			if entry, route, ok := hostedGitEntry(clone, prj.ID); ok {
+				// insteadOf 按字面前缀匹配：克隆地址用与条目相同的小写主机，public_url 主机带大写时也能命中。
+				scheme, _, _ := strings.Cut(clone, "://")
+				p.Repo.URL = strings.ToLower(scheme) + "://" + entry
+				hostedEntry, plan.Egress.HostedGit = entry, &route
+			} else {
+				slog.Warn("托管仓库的克隆地址不能写进 orb 的 git 配置，orb 将直连（没有令牌，会失败）", "project", prj.ID, "url", clone)
 			}
 		}
 		p.Scripts.Setup = nonEmpty(prj.SetupScript)
@@ -364,6 +382,11 @@ func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project, orb db.Orb) (S
 	p.GitHosts = gitInsteadOf(projectRepo, hosts)
 	if p.Gh != nil {
 		p.GitHosts = withGitHubHost(p.GitHosts)
+	}
+	// 托管仓库的条目不看令牌（出站代理在本地服务，不注入令牌），放在最后，与其它主机的条目一起按字典序排列。
+	if hostedEntry != "" {
+		p.GitHosts = append(p.GitHosts, hostedEntry)
+		sort.Strings(p.GitHosts)
 	}
 	// git 出站策略（契约 §5）：有 https 项目仓库的 orb 只放行该仓库（读写）；否则任意仓库只读（GitRepos 为空）。
 	// 下发了 GitHub 凭据时 github.com 不受此限（egress 按 Policy.GitHub 放行），其它 PAT 主机照旧。
@@ -645,6 +668,31 @@ var repoSegRe = regexp.MustCompile(`^[A-Za-z0-9_~][A-Za-z0-9._~-]*$`)
 func HostedCloneURL(publicURL, projectID string) string {
 	return strings.TrimSuffix(publicURL, "/") + "/git/" + projectID + ".git"
 }
+
+// hostedGitEntry 由托管仓库的克隆地址生成 GitHosts 条目（`host[:port]/<前缀>/git/<id>.git`，orbd 据此写 insteadOf 与
+// `http.http://<host>/.proxy`）与出站代理的托管路由。地址不是 http(s)、带 userinfo / 查询 / 片段，或主机、路径段含
+// git 配置键不接受的字符时 ok 为假（规则同 orbd 的 validGitEntry）。
+func hostedGitEntry(cloneURL, projectID string) (entry string, route egress.HostedGitRoute, ok bool) {
+	u, err := url.Parse(cloneURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" ||
+		!gitHostKeyRe.MatchString(u.Host) {
+		return "", route, false
+	}
+	segs := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
+	if len(segs) < 2 {
+		return "", route, false
+	}
+	for _, s := range segs {
+		if !repoSegRe.MatchString(s) || s == "." || s == ".." {
+			return "", route, false
+		}
+	}
+	host := strings.ToLower(u.Host)
+	return host + u.Path, egress.HostedGitRoute{Host: host, Repo: egress.NormalizeRepo(u.Path), ProjectID: projectID}, true
+}
+
+// gitHostKeyRe 是 GitHosts 条目里的主机（可带端口），同 orbd 的 gitHostRe。
+var gitHostKeyRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?$`)
 
 type emptyResolver struct{}
 

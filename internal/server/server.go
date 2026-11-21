@@ -201,6 +201,7 @@ func (s *Server) init(ctx context.Context) error {
 		CoordinatorEgressAddr: fmt.Sprintf("127.0.0.1:%d", cfg.Coordinator.EgressPort),
 		CoordinatorWebAllow:   lowerAll(cfg.Coordinator.WebAllowHosts),
 		CoordinatorMCPToken:   mcpToken,
+		PublicURL:             cfg.PublicURL,
 	}
 	s.Orbs = orbs.New(orbs.Config{
 		Idle: cfg.Idle, Defaults: cfg.OrbDefaults, PublicURL: cfg.PublicURL, TokenKey: key, EvalInterval: evalInterval,
@@ -390,6 +391,8 @@ func (s *Server) init(ctx context.Context) error {
 	s.GitHub.SetRepoSync(s.Repos)
 	// 出站代理观察到的成功推送 → 镜像拉取后展开成「提交 → 线程」（步骤 2.7）
 	s.Orbs.SetPushSink(s.Repos)
+	// orb 经出站代理读写本项目的托管仓库：在本地服务，不转发（步骤 3.6）
+	s.Orbs.SetHostedGit(s.Repos)
 	s.Threads.AddObserver(s.Artifacts.TurnObserver())
 	home := s.Home
 	s.Share = share.New(share.Config{PublicURL: cfg.PublicURL, RoleNames: func() map[string]string {

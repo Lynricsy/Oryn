@@ -277,6 +277,7 @@ type policyResolver struct {
 	fakeResolver
 	egress.NoGateLookup
 	egress.NoMemory
+	egress.NoHostedGit
 	pol egress.Policy
 }
 

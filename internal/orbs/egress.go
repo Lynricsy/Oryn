@@ -266,6 +266,24 @@ func (r egressResolver) GitPushed(p egress.GitPush) {
 	})
 }
 
+// SetHostedGit 设置托管仓库的本地服务方（M24 阶段 ③，*repos.Service）；须在服务对外可用之前调用。nil = 没有通道。
+func (s *Service) SetHostedGit(h egress.HostedGitServer) { s.hostedGit = h }
+
+// HostedGit 实现 egress.HostedGitLookup：返回托管仓库的本地服务方，以及这台 orb 与它唯一的未归档工作线程（没有时为空，
+// 推送照常，只是不关联线程）。读线程失败返回错误（出站代理回 503）。
+func (r egressResolver) HostedGit() (egress.HostedGitServer, egress.HostedPusher, error) {
+	if r.s.hostedGit == nil {
+		return nil, egress.HostedPusher{}, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	tid, err := r.s.workThread(ctx, r.orbID)
+	if err != nil {
+		return nil, egress.HostedPusher{}, err
+	}
+	return r.s.hostedGit, egress.HostedPusher{OrbID: r.orbID, ThreadID: tid}, nil
+}
+
 // Prepared 实现 egress.GateLookup：sha 在 level 上本 orb 的 github_prepare 通过记录（须与项目当前门禁配置相符）。
 func (r egressResolver) Prepared(sha, level string) egress.PrepareState {
 	if r.s.github == nil {

@@ -424,3 +424,66 @@ func TestEgressResolverGitHubToken(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, "tok", tok, "其它主机不经 GitHub 集成")
 }
+
+// M24 阶段 ③：托管项目的 orb 从 <public_url>/git/<id>.git 克隆（不设 Branch），该地址经出站代理在本地服务（不看令牌）。
+func TestPlanHostedRepo(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	base := "main"
+	hosted := ids.New("prj")
+	require.NoError(t, st.Q.CreateProject(ctx, db.CreateProjectParams{ID: hosted, Name: "h", Hosted: true, BaseBranch: &base, ShallowClone: true, CreatedAt: 1, UpdatedAt: 1}))
+	repo := "https://gitlab.com/a/b"
+	plain := ids.New("prj")
+	require.NoError(t, st.Q.CreateProject(ctx, db.CreateProjectParams{ID: plain, Name: "p", RepoUrl: &repo, CreatedAt: 1, UpdatedAt: 1}))
+	plan := func(publicURL, prj string) SetupPlan {
+		t.Helper()
+		d := &DefaultSetup{Store: st, Vault: gitVault{hosts: []string{"gitlab.com"}}, PublicURL: publicURL}
+		p, err := d.Plan(ctx, db.Orb{ID: "orb-x", ProjectID: &prj})
+		require.NoError(t, err)
+		return p
+	}
+	lower := strings.ToLower(hosted)
+
+	p := plan("https://oryn.example.com", hosted)
+	require.NotNil(t, p.Params.Repo)
+	assert.Equal(t, "https://oryn.example.com/git/"+hosted+".git", p.Params.Repo.URL)
+	assert.Nil(t, p.Params.Repo.Branch, "服务端 HEAD 就是基线；空仓库配 --branch 会克隆失败")
+	assert.True(t, p.Params.Repo.Shallow)
+	assert.Equal(t, []string{"gitlab.com", "oryn.example.com/git/" + hosted + ".git"}, p.Params.GitHosts,
+		"托管仓库主机没有令牌也经代理；其它主机不收窄")
+	assert.Equal(t, &egress.HostedGitRoute{Host: "oryn.example.com", Repo: "git/" + lower, ProjectID: hosted}, p.Egress.HostedGit)
+	assert.Empty(t, p.Egress.GitRepos, "托管项目没有 repoUrl：其它主机只读")
+
+	p = plan("http://localhost:8080", hosted)
+	assert.Contains(t, p.Params.GitHosts, "localhost:8080/git/"+hosted+".git")
+	assert.Equal(t, &egress.HostedGitRoute{Host: "localhost:8080", Repo: "git/" + lower, ProjectID: hosted}, p.Egress.HostedGit)
+
+	p = plan("https://H.example/oryn/", hosted)
+	assert.Equal(t, "https://h.example/oryn/git/"+hosted+".git", p.Params.Repo.URL, "主机小写，与 insteadOf 条目一致")
+	assert.Contains(t, p.Params.GitHosts, "h.example/oryn/git/"+hosted+".git")
+	assert.Equal(t, &egress.HostedGitRoute{Host: "h.example", Repo: "oryn/git/" + lower, ProjectID: hosted}, p.Egress.HostedGit)
+
+	p = plan("", hosted)
+	assert.Nil(t, p.Params.Repo, "没有 public_url 时不下发托管仓库")
+	assert.Nil(t, p.Egress.HostedGit)
+
+	p = plan("https://oryn.example.com", plain)
+	assert.Nil(t, p.Egress.HostedGit, "非托管项目没有托管路由")
+	assert.Equal(t, repo, p.Params.Repo.URL)
+}
+
+func TestHostedGitEntry(t *testing.T) {
+	e, r, ok := hostedGitEntry("https://Oryn.Example.com:8443/git/prj_A.git", "prj_A")
+	require.True(t, ok)
+	assert.Equal(t, "oryn.example.com:8443/git/prj_A.git", e)
+	assert.Equal(t, egress.HostedGitRoute{Host: "oryn.example.com:8443", Repo: "git/prj_a", ProjectID: "prj_A"}, r)
+	for _, bad := range []string{
+		"ftp://h/git/p.git", "https://u:p@h/git/p.git", "https://h/git/p.git?x=1", "https://h/git/p.git#f",
+		"https://h/a b/git/p.git", "https://h/x\"y/git/p.git", "https://h_x/git/p.git", "https://h/p.git",
+	} {
+		_, _, ok := hostedGitEntry(bad, "p")
+		assert.False(t, ok, bad)
+	}
+}

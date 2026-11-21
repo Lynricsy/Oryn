@@ -36,6 +36,7 @@ type policyResolver struct {
 	vaultResolver
 	egress.NoGateLookup // 没有 GitHub 路由，门禁查询不会被调用
 	egress.NoMemory     // 没有记忆通道
+	egress.NoHostedGit  // 没有托管仓库通道
 	routes              map[string]egress.Route
 }
 

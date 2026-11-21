@@ -285,6 +285,7 @@ func TestSelfWriteCleanup(t *testing.T) {
 // ga 是策略里的门禁部分（origin 由 Policy 填）。
 type svcResolver struct {
 	egress.NoMemory
+	egress.NoHostedGit
 	e     *testEnv
 	orbID string
 	tok   string
