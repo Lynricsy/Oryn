@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 )
 
 const keyFile = "master.key"
@@ -91,9 +92,47 @@ const (
 )
 
 var (
-	envNameRe    = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
-	secretNameRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_./-]{0,199}$`)
+	envNameRe      = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+	secretNameRe   = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_./-]{0,199}$`)
+	gitTokenNameRe = regexp.MustCompile(`^git/[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?/token$`)
 )
+
+// ErrNoProject 表示项目不存在（含写入期间被删除）。
+var ErrNoProject = errors.New("项目不存在")
+
+// ProjectAAD 是项目级条目的附加数据：project:<projectID>:<name>，不保密的再加 ":plain"。
+// 全局名的字符集不含 ':'，与全局行的附加数据（名称本身）不会相撞；密文挪到别的项目、别的名字或翻转保密位都解不开。
+func ProjectAAD(projectID, name string, secret bool) string {
+	aad := "project:" + projectID + ":" + name
+	if !secret {
+		aad += ":plain"
+	}
+	return aad
+}
+
+// ValidProjectEntry 校验项目级条目的名称、模式与保密位（阶段 ④）：env 条目是环境变量，
+// proxy 条目只能是保密的 git/<主机>/token；模型供应商密钥只能在全局设置。
+func ValidProjectEntry(name, mode string, secret bool) error {
+	switch mode {
+	case ModeEnv:
+		if !envNameRe.MatchString(name) {
+			return fmt.Errorf("env 模式的密钥名必须匹配 [A-Z_][A-Z0-9_]*：%q", name)
+		}
+	case ModeProxy:
+		if strings.HasPrefix(name, "omp/models/") {
+			return fmt.Errorf("模型供应商密钥只能在全局密钥里设置：%q", name)
+		}
+		if !gitTokenNameRe.MatchString(name) {
+			return fmt.Errorf("项目级 proxy 条目只能是 git/<主机>/token（主机名小写）：%q", name)
+		}
+		if !secret {
+			return errors.New("Git 令牌只能保密保存")
+		}
+	default:
+		return fmt.Errorf("未知模式 %q", mode)
+	}
+	return nil
+}
 
 // ValidName 校验密钥名；env 模式下名称必须是合法环境变量名。
 func ValidName(name, mode string) error {
