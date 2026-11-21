@@ -18,7 +18,7 @@
 
 - 时间：UTC 毫秒整数（`TimestampMs`）。错误体：`Error{code, message}`，每个操作以 `default` 响应描述。
 - 鉴权：Cookie `__Host-oryn_session`（变更类请求另需 `X-Oryn-CSRF: 1`，规格中为 `cookieAuth + csrfHeader` 组合）或 `Authorization: Bearer odt_…`；provider 用 `opv_…`，orb 用 `oot_…`，runner 用 `ort_…`（M11b，只用于 `/orb/v1/link` 与 `/orb/v1/whoami`）。
-- 路径参数中的 `/` 编码为 `%2F`：`/api/v1/agent-config/files/{path}`、`/api/v1/projects/{id}/agent-config/files/{path}`、`/api/v1/secrets/{name}`（chi 按 RawPath 路由，生成代码自动解码，见 `internal/apigen/apigen_test.go`）。
+- 路径参数中的 `/` 编码为 `%2F`：`/api/v1/agent-config/files/{path}`、`/api/v1/projects/{id}/agent-config/files/{path}`、`/api/v1/secrets/{name}`、`/api/v1/projects/{id}/secrets/{name}`（chi 按 RawPath 路由，生成代码自动解码，见 `internal/apigen/apigen_test.go`）。
 - omp RPC 命令与帧对控制面不透明：`OmpFrame`（任意对象），权威类型在 agent 仓库。
 
 ## 分区
@@ -2628,3 +2628,38 @@ orynd 在 `<data_dir>/repos/<projectId>.git` 为每个有 `https://` 仓库地�
 - `oryn clone <项目名|id> [目录]`：只对托管项目；克隆地址须是 http(s) 且与 `oryn login` 的服务器同源（否则报错，不执行 git）。执行 `git clone -c credential.<origin>.helper= -c credential.<origin>.helper=<助手> -- <cloneUrl> <目录>`（`GIT_TERMINAL_PROMPT=0`），助手是 `!oryn git-credential`（PATH 里的 `oryn` 不是当前可执行文件时写绝对路径）。
 - `oryn git-credential get`：读 git 凭据协议的 `key=value` 行，`protocol` 与 `host`（含端口，不分大小写）等于登录地址时输出 `username=oryn` 与 `password=<设备令牌>`，否则什么都不输出；`store` / `erase` 忽略。
 - `oryn project create <名> --hosted` 发 `{hosted: true}`；`--push [--remote <名>]` 先检查本机仓库（工作区、非分离 HEAD、有提交、远端名未被占用、有 LFS 文件时本机有 git-lfs），再发 `{hosted: true, emptyRepo: true, baseBranch: <当前分支>}`，然后 `git remote add`、按主机重置并登记凭据助手、有 LFS 文件时 `git lfs push --all`、`git push -u`。`--hosted` / `--push` 与 `--repo` 互斥，`--push` 不能与 `--branch` 同用，`--remote` 只能与 `--push` 同用（退出码 2）。
+
+### 项目级密钥与环境变量（阶段 ④）
+
+项目可以有自己的环境变量与 Git 令牌，只对本项目的 orb 生效，与全局同名时以项目为准。模型供应商密钥（`omp/models/…`）只在全局。全局密钥的接口、占位符与设置页不变。
+
+#### 数据模型
+
+- **`secrets` 表重建**（迁移 `0050_project_secrets.sql`）：SQLite 去不掉列级 `UNIQUE(name)`，照 0018 / 0033 先搬进无约束的暂存表再建新表，`id` 与密文原样搬回（已下发的占位符 `oryn-ph-<id>` 继续有效）。新增两列：`project_id TEXT REFERENCES projects(id) ON DELETE CASCADE`（`NULL` = 全局，原有行全部是全局）与 `secret BOOLEAN NOT NULL DEFAULT 1`（`0` = 普通环境变量，值可读），另加 `CHECK (secret = 1 OR (project_id IS NOT NULL AND mode = 'env'))`。唯一性改为两条部分唯一索引：`secrets_global_name (name) WHERE project_id IS NULL`、`secrets_project_name (project_id, name) WHERE project_id IS NOT NULL`。写入不用 `ON CONFLICT`，在事务里先查再 `InsertSecret` / `UpdateSecret`，覆盖保留 `id`。Down 回到 0001 的表结构并丢弃全部项目行（迁移回滚会丢掉全部项目级条目）。
+- **AAD**（`secrets.Box`）：全局行仍是 `name`（不重新封存）；项目行是 `project:<projectId>:<name>`，不保密的再加 `:plain`（`secrets.ProjectAAD`）。全局名的字符集不含 `:`，两种 AAD 不会相撞；密文挪到别的项目、别的名字，或翻转保密位都解不开。
+- **作用域**：`Get`、`Lookup`、`List`、`SecretByID`（占位符解析）、`GitToken`、`GitHosts`、`EnvSecrets` 与全局 `/api/v1/secrets*` 只看全局行。项目条目要么以明文进 orb 环境，要么由出站代理注入，从不下发占位符。
+- **已知密钥集合**（`Vault.All`，用于分享前的密钥扫描、runner 无密钥校验、主人记忆脱敏）：一次 `ListSealedSecrets` 读出全部 `secret = 1` 的行。全局行的键是名称，项目行的键是 `<项目名>:<NAME>`（项目名唯一，全局名不含 `:`），扫描命中时就以它作 `secretName`。不保密的值不进这个集合。
+
+#### REST（tag `projects`）
+
+|方法与路径|operationId|请求|响应|
+|---|---|---|---|
+|`GET /api/v1/projects/{id}/secrets`|`listProjectSecrets`|—|`ProjectSecretList{secrets}`（按名称排序）|
+|`PUT /api/v1/projects/{id}/secrets/{name}`|`putProjectSecret`|`ProjectSecretPut{value, mode, secret?}`（`secret` 缺省 `true`）|200 `ProjectSecret`|
+|`DELETE /api/v1/projects/{id}/secrets/{name}`|`deleteProjectSecret`|—|204|
+
+- **`ProjectSecret`**：`{name, mode: proxy|env, secret, value?, createdAt, updatedAt}`；`value` 只在 `secret: false` 时给出。`{name}` 里的 `/` 编码为 `%2F`（如 `git%2Fgitlab.com%2Ftoken`）。
+- **校验**（`secrets.ValidProjectEntry`，违反回 400 `invalid_request`，message 原样）：`mode` 不是 `proxy` / `env` → `mode 必须是 proxy 或 env`；`env` 的名称须匹配 `[A-Z_][A-Z0-9_]*`；`proxy` 的名称以 `omp/models/` 开头 → `模型供应商密钥只能在全局密钥里设置`，否则只能是 `git/<主机>/token`（主机匹配 `^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$`，须小写）；Git 令牌只能保密（`secret: false` → `Git 令牌只能保密保存`）；`value` 为空 → `值不能为空`。
+- **其它**：项目不存在（含写入期间被删除）回 404 `not_found`「项目不存在」，删除不存在的条目回 404「条目不存在」。已归档的项目照常可读写；删除项目经外键级联删除条目。`PUT` / `DELETE` 要 Cookie + CSRF 或设备令牌。写入或删除后对该项目 `poolKick`，预热池按新的配置哈希对账；出站策略里没有由密钥派生的内容（令牌每个 git 请求现取），所以不作废策略缓存。没有实时消息，也没有给全局助手或协调者的工具。
+
+#### 解析优先级
+
+- **setup 计划**（`orbs.DefaultSetup.plan`）：环境变量依次合并全局 `env` 密钥 → 项目 `env` 条目（保密与不保密都含）→ omp-home 降级成环境变量的模型密钥（模型密钥只在全局，项目条目顶不掉它）。`GitHosts` 是全局 Git 令牌主机与项目 Git 令牌主机的并集（`unionHosts`：全局在前，项目主机只在全局里没有时追加，不分大小写）。Runner 线程（`planRunner`）与协调宿主（`planCoordinator`）不读项目条目。
+- **出站代理 Git 令牌**（`egressResolver.GitToken`）：github.com 且 GitHub 集成管着这台 orb 时走 OAuth 令牌，项目里的 `git/github.com/token` 不生效；其余情况先查 orb 所属项目的 `git/<host>/token`（`Vault.ProjectGitToken`），没有再查全局。读 orb 行或项目令牌失败时拒绝（不回落到可能更宽的全局令牌）。
+- **镜像拉取与 LFS 取对象**（`repos` 的 `remote()`）：github.com 仍只用 GitHub 集成的用户令牌（没有则匿名），项目的 `git/github.com/token` 不用于镜像；其它主机先项目、后全局。读项目令牌出错时不拉取，记 `auth_failed`「读取项目 Git 令牌失败」（LFS 取对象为 `lfs_auth_failed`）。有项目令牌的主机同样算担保主机。
+- **项目快照配置哈希**：`ListConfigSecretStamps(project_id)` 在全局 `env` 密钥与全局模型密钥之外，加上该项目 `env` 条目的名称与修改时间（名称带 `project:` 前缀，不与全局名相撞）。所以改项目环境变量使该项目的快照失效，不影响别的项目；Git 令牌不计入（它不进 orb 环境）。没有项目条目的项目哈希与升级前相同。
+
+#### CLI
+
+- `oryn secrets set|ls|rm … --project <名称或 id>` 走上面的项目接口（`--project` 只解析未归档项目）。`set` 未给 `--mode` 时按名称推断：`git/` 开头为 `proxy`，否则 `env`；`--plain` 只能与 `--project` 同用（发 `secret: false`），`--hosts` 不能与 `--project` 同用（退出码 2）。
+- `ls --project` 输出 `NAME  KIND  SECRET  VALUE  UPDATED`：`KIND` 为 `env` 或 `git`，`SECRET` 为 `yes` / `no`，保密条目的 `VALUE` 写 `-`，含制表或换行的值加引号；`--json` 输出 `ProjectSecretList`。

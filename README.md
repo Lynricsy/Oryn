@@ -156,7 +156,7 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 </picture>
 
 - **图形化 Agent 配置**：技能、子 Agent、模型角色、规则、扩展与 MCP 做成表单，保存后数秒内下发到所有运行中的环境。
-- **项目级配置**：每个项目另有一层规则与技能，镜像进环境但不写进仓库，`git status` 保持干净。
+- **项目级配置**：每个项目另有一层规则与技能，镜像进环境但不写进仓库，`git status` 保持干净；还可以有自己的环境变量与 Git 令牌，只注入本项目的环境，同名时覆盖全局密钥。
 - **Hindsight 记忆**：同一项目的线程共享记忆，不同项目互不可见；跨项目的经验要你批准才生效。
 - **GitHub**：环境里 `git` 与 `gh` 免登录；PR 状态与 CI 结果显示在线程页头，评审与 CI 失败回流进线程；分诊、PR 评审、发布哨兵三个自动化预设。
 - **SSH 主机**：登记一次，Agent 就能用主机名读写远端文件、并发执行命令；私钥留在控制面，每条命令记审计。
@@ -289,6 +289,8 @@ oryn config pull                                             # 拉回文本配�
 oryn config push --project myproj                            # 在仓库根目录把 ./.omp 上传为该项目的 Agent 配置（整体替换）
 oryn config pull --project myproj                            # 把项目的 Agent 配置拉回 ./.omp
 oryn secrets set git/github.com/token                        # 写入 Git 令牌（只写不读，由出站代理按需注入）
+oryn secrets set FOO bar --project myproj --plain            # 项目级环境变量（只注入该项目的 orb，同名时覆盖全局；--plain = 不保密，可读回）
+oryn secrets set git/gitlab.com/token --project myproj       # 项目级 Git 令牌（只给该项目的 orb 与仓库镜像用）
 oryn git-identity set --name "Ada" --email ada@example.com   # 设置 orb 内 Git 提交身份的全局默认值
 oryn ssh key gen main                                        # 生成 SSH 钥匙，公钥打印到标准输出（加到目标机的 authorized_keys）
 oryn ssh add web1 --host 10.0.0.5 --user deploy --key main   # 登记主机并立即测试连接（--project 限定到项目，--jump 走跳板）
