@@ -48,6 +48,8 @@ docker0 地址因机器而异，用 `ip -4 addr show docker0` 查看（例如有
 
 三个数值写 0 都按缺省值处理，负数启动时报错。
 
+`data_dir` 里的 `repos/` 不全是可再生的缓存：Oryn 托管仓库（[features.md「托管仓库」](features.md#托管仓库)）的正本也在这里（`<data_dir>/repos/<项目 id>.git`，目录里有标记文件 `oryn-hosted`），没有别的副本，**备份 `data_dir` 时必须包含 `repos/`**，并与 `oryn.db` 一起备份、一起恢复。把库恢复到旧备份后，找不到项目行的托管仓库在 orynd 启动时会被移到 `<data_dir>/repos/orphaned/<项目 id>.git-<Unix 秒>` 而不是删除（日志记一条错误），镜像的任何清理逻辑都不会删带标记的目录。
+
 ### 移动 App 推送
 
 Android App 的后台推送默认走 UnifiedPush（手机上装 ntfy 等分发器），服务端不需要任何配置。要给装了 Google Play 服务、又不想装分发器的手机用 `gms` 包的 FCM 回退通道：
@@ -65,6 +67,7 @@ Android App 的后台推送默认走 UnifiedPush（手机上装 ntfy 等分发�
    - 泛域名 `*.orb.example.com` → `http://127.0.0.1:7600`（Portal：必须透传 `Host`，不得缓存）
 2. 证书：主域名普通证书；泛域名在 1Panel「证书」里用 DNS 账号申请 `*.orb.example.com` 通配证书（ACME DNS-01）。
 3. 配置要点（示例文件已包含）：`proxy_http_version 1.1`、`Upgrade`/`Connection` 头（WebSocket 与 orb link）、`proxy_read_timeout 3600s`、`proxy_buffering off`、`client_max_body_size 600m`。
+4. 托管仓库（M24）：主域名另有 `location /git/ { client_max_body_size 0; … }`，其余各行与 `location /` 相同。主人本机的 `git push` 与 Git LFS 上传经这里到达 orynd，托管仓库不设大小上限，所以这条路径不限请求体，其余路径仍是 `600m`。数据盘由 orynd 自己保护（可用空间低于 `repos.min_free_gb` 时拒绝推送与上传）。orb 的推送与上传在 orb link 里传输，不受这条上限影响。自己写反代配置时同样要给 `/git/` 放开请求体上限并关闭请求缓冲（`proxy_request_buffering off`），否则大推送会被 413 拒绝，或先整个缓冲到反代的磁盘上。
 
 ## 4. 启动控制面并初始化
 
@@ -217,10 +220,11 @@ docker 驱动默认给每个 orb 加 `--cap-drop NET_RAW --cap-drop NET_ADMIN`�
 
 orynd 在 `<data_dir>/repos/` 为每个有 `https://` 仓库地址的项目维护一份完整裸镜像，项目页的提交、文件与 README 都从这里读（见 [features.md「仓库浏览」](features.md#仓库浏览)）。目录（0700）里有：
 
-- `<项目 id>.git`：裸镜像，全部 `refs/heads/*` 与 `refs/tags/*`（不含 PR 引用）。项目删除、仓库地址改指别的仓库、镜像超过 `max_mirror_gb` 时删除。
+- `<项目 id>.git`：外部仓库的裸镜像，全部 `refs/heads/*` 与 `refs/tags/*`（不含 PR 引用）。项目删除、仓库地址改指别的仓库、镜像超过 `max_mirror_gb` 时删除。Oryn 托管项目的正本也用这个名字，目录里多一个标记文件 `oryn-hosted`（见下节「托管仓库入口」），只有删除项目才会删它。
 - `.home/`：控制面 git 的 `HOME` 与 `XDG_CONFIG_HOME`，与 orynd 用户自己的 git 配置隔开。
-- `.lfs-cache/<项目 id>/`：镜像项目的 Git LFS 对象缓存，总量受 `max_lfs_cache_gb` 约束。
-- 克隆中的 `<id>.git.tmp-*` 与待删的 `<id>.git.trash-*`：启动时清掉。启动时还会删掉项目已不存在的镜像，以及各仓库里 10 分钟前留下的 `HEAD.lock`、`packed-refs.lock`、`refs/**/*.lock`（断电或 OOM 后的残留）。
+- `.lfs-cache/<项目 id>/`：镜像项目的 Git LFS 对象缓存，总量受 `max_lfs_cache_gb` 约束。托管项目的 LFS 对象在它自己的 `<项目 id>.git/lfs/objects/` 里，不进缓存。
+- `orphaned/`：项目行已不存在的托管正本（例如把库恢复到了旧备份），按 `<项目 id>.git-<Unix 秒>` 保存，不自动删除；确认不要了再手工删掉。
+- 克隆中的 `<id>.git.tmp-*` 与待删的 `<id>.git.trash-*`：启动时清掉。启动时还会删掉项目已不存在的镜像（托管正本移到 `orphaned/`）、托管仓库残留的 LFS 上传临时目录 `lfs/tmp/`，以及各仓库里 10 分钟前留下的 `HEAD.lock`、`packed-refs.lock`、`refs/**/*.lock`（断电或 OOM 后的残留）。
 
 git 的执行方式：
 
@@ -231,6 +235,18 @@ git 的执行方式：
 - 磁盘保护：克隆与拉取开始前、进行中每 5 秒检查数据盘可用空间，低于 `min_free_gb` 就不执行或终止，记 `no_space`；取 LFS 对象前同样检查（可用空间减去对象大小）。取消与超时先向 git 的进程组发 SIGTERM，10 秒后仍未退出才 SIGKILL，免得留下锁文件。
 - 同时至多两个克隆或拉取；超时：首次克隆 15 分钟、增量拉取 5 分钟、读操作 20 秒。
 
+### 托管仓库入口 `/git/`
+
+Oryn 托管仓库（M24）经 `<public_url>/git/<项目 id>.git/…` 提供 smart-HTTP 与 Git LFS。orynd 直接执行 `git upload-pack` / `git receive-pack --stateless-rpc`（不需要 `git http-backend`），用与镜像相同的受控 argv 与空白环境。
+
+- **只认设备令牌**：`Authorization: Basic <任意用户名>:<odt_…>`（git 凭据助手 `oryn git-credential` 给的就是这个）或 `Bearer odt_…`，令牌须存在且未吊销；从不读 Cookie，浏览器的登录会话访问不了。这条路径挂在 `/api/v1` 的鉴权组之外，先鉴权再查项目，项目是否存在不向匿名者泄露。鉴权失败回 401 加 `WWW-Authenticate: Basic realm="Oryn"`（LFS 端点另加 `LFS-Authenticate`）；带 `Sec-Fetch-Site` 的浏览器请求不回这两个头，免得弹出原生口令框。路径只接受固定的几种端点（正则匹配，不含转义字符），`..`、多余的段一律 404。吊销设备即撤销它对全部托管仓库的访问。
+- **只读与写**：已归档项目的仓库只读（推送与 LFS 上传 403「项目已归档，仓库只读」）。每个项目同一时刻只处理一个推送，等锁超过 60 秒回 503「仓库正忙」。客户端断开时 `receive-pack` 不会被强杀（它读到 EOF 后自己退出并清理锁文件），请求体 120 秒没有新数据就关闭它的输入。
+- **orb 只能访问本项目的仓库**：托管项目的 orb 经出站代理访问克隆地址，请求在控制面本地服务，入站的 `Authorization` 被丢掉、不注入任何令牌；同一 Oryn 地址上别的托管仓库回 403「这个 orb 只能访问本项目的托管仓库」；只读评审线程的推送、LFS 上传 403。orb 推上来的对象先过 `receive.fsckObjects`：带 `.git` 路径项或恶意 `.gitmodules` 的树进不来，主人之后在本机克隆不会中招（主人本机的推送不开 fsck，免得历史仓库因旧瑕疵被拒）。
+- **隐藏 ref**：被删除或被强推覆盖的分支旧值留存在 `refs/oryn/saved/` 下 30 天；两个服务都带 `transfer.hideRefs=refs/oryn`，客户端看不见、也改不了这些 ref。
+- **Git LFS**：批量接口 + basic 传输，不实现文件锁（锁接口 404）。下载地址指回同一个 `/git/` 路径，主人本机拿到的 action 头回显他自己的设备令牌（重新拼成 `Basic oryn:<令牌>`，响应 `Cache-Control: no-store`）；对象下载一律 `attachment` 加 `nosniff`，不会在 Oryn 的源下被当页面打开。上传边写边校验大小与 sha256，不符不落盘。
+- **资源**：托管 git 进程全局至多 8 个、每台 orb 2 个，没有名额回 503 加 `Retry-After: 5`；LFS 对象传输另有名额（全局 16、每台 orb 8，排队至多 30 秒）。仓库与 LFS 对象不设大小上限；推送开始前与进行中每 5 秒、LFS 上传每写 64 MiB 检查一次数据盘，可用空间低于 `repos.min_free_gb` 时拒绝或终止（推送 503「控制面磁盘空间不足」，LFS 上传 507）。
+- **推送后 Webhook**：只有主人能设置（不在助手的工具里）。地址不检查是否内网：等同主人自己发请求。签名密钥用主密钥加密保存，附加数据绑定项目（`project-webhook:<项目 id>`），从不经 API 返回。投递用 orynd 进程的出站环境（`http.DefaultTransport`，会读代理变量），不跟随重定向。
+
 ### git 出站策略
 
 orb 内的 git 请求经 orbd 的本机代理（`127.0.0.1:7811`）到达控制面，由控制面注入 `git/<host>/token` 密钥后转发到 `https://<host>/…`。令牌从不进入 orb。orbd 在 orb 的 `~/.gitconfig` 里写两类条目：`url.http://<前缀>.insteadOf https://<前缀>`，只把 https 换成 http，主机与 `owner/repo` 路径不变；以及 `http.http://<host>/.proxy http://127.0.0.1:<egress 端口>`，让这台主机的 http 请求以代理形式（请求行 `GET http://<host>/<owner>/<repo>/info/refs…`）发给本机代理。这样 `git remote -v` 显示的仍是 `http://github.com/<owner>/<repo>`，`gh` 不带 `-R` 也能从 remote 推断仓库。需要 git 支持按地址配置 `http.<url>.proxy`（1.8.5 起）。控制面按 orb 所属项目决定放行范围：
@@ -238,6 +254,7 @@ orb 内的 git 请求经 orbd 的本机代理（`127.0.0.1:7811`）到达控制�
 - **有项目且项目 `repo_url` 为 `https://` 地址的 orb**：只放行该项目仓库，可读可写（`git-upload-pack` 与 `git-receive-pack`，以及该仓库的 Git LFS 接口）。仓库路径须与 `repo_url` 完全一致（不区分大小写，忽略 `.git` 后缀）。同一主机上的其它仓库、其它主机一律拒绝（403，原因「这个 orb 只能访问项目仓库」）。orb 内的 `insteadOf` 只覆盖项目仓库这一个地址前缀，其它 `https://` git 地址照常直连公网、不带令牌，公开仓库仍可匿名克隆。
 - **无项目的 orb**（以及项目没有 `https://` 仓库地址的 orb）：配置了 `git/<host>/token` 的主机上，任意仓库只读。只放行 `info/refs?service=git-upload-pack`、`git-upload-pack` 与 LFS 的读操作，推送（`git-receive-pack`）、LFS 上传与改动文件锁一律拒绝（403，原因「没有项目的 orb 对 git 仓库只读（不能推送，也不能上传 Git LFS 对象或改动文件锁）」）。这类 orb 的 `insteadOf` 覆盖整个主机。
 - **github.com（M15）**：上面两条只适用于 PAT 主机。orb 由 GitHub 集成下发凭据时，github.com 改由出站代理注入线程身份槽位的 OAuth 令牌，不按项目仓库限制：orb 能读写哪些仓库取决于该身份账号自身的权限，以及项目开启的门禁。详见第 13 节。
+- **Oryn 托管仓库（M24）**：托管项目的 orb 多一个 git 主机条目 `<public_url 的 host[:端口]>/<路径前缀>/git/<项目 id>.git`（不需要令牌），克隆地址按上面的方式改写后经本机代理回到控制面；该主机上只放行本项目的托管仓库，在控制面本地服务，不转发、不注入令牌（见第 7 节「托管仓库入口 `/git/`」）。托管项目没有 `repo_url`，其它主机按「无项目」的只读规则。`public_url` 是 `http://localhost:8080` 这类开发地址时同样适用；它被 `NO_PROXY` 覆盖时按上面的失败关闭规则直连并失败。
 - **路径与端点**：控制面接受两种请求形式，规则相同。一种是 orbd 现在写的代理形式（absolute-form `http://<host>[:<端口>]/<owner>/<repo>/…`）；它只能进 git 路由，`host[:端口]` 就是主机键（同路径形式里的主机段），不是 `http://` 的绝对地址回 400，既不是 git 端点、也没有有效的 LFS 门票（见下）时回 403。另一种是 `/git/<host>/<owner>/<repo>/…` 路径形式，M15 之前的 orbd 用这种。只放行 git smart-HTTP 端点（`info/refs`、`git-upload-pack`、`git-receive-pack`）与 Git LFS 接口，其它路径返回 404（代理形式为 403）。路径里出现 `.` 或 `..` 段、空段（`//`），或 `path.Clean` 后与原路径不同，一律返回 400。这包括 `%2e%2e` 这类编码形式，因为校验针对解码后的路径。git 路由不接受任何 `oryn-ph-…` 占位符。被拒的请求回 `text/plain` 的说明（LFS 接口回 `application/vnd.git-lfs+json` 的 `{"message"}`）：按策略拒绝的以 `oryn: ` 加原因开头，其余为 `oryn egress: …`，git 与 git-lfs 会原样显示。
 - **`NO_PROXY` 覆盖的主机不经出站代理（失败关闭）**：改写之后的地址是明文 http。git 一旦按 `NO_PROXY` / `no_proxy` 绕过本机代理，就会直连 `<host>:80`：请求不带令牌，但网络上的中间人能替换 refs 与代码，对象哈希证明不了对端是谁。因此 orbd 在写这些条目之前，先读 setup 的环境（orbd 进程环境加上 setup 下发的 env）里的 `NO_PROXY` 与 `no_proxy`，两种写法都读，任一命中就算。判定取 libcurl（git 用它，curl 8.23 `proxy_check_noproxy`）与 Go httpproxy（git-lfs 用它）两种规则的并集，宁可多判。下面几种都算命中：整串为 `*` 或任一条目为 `*`；条目等于主机名，或是主机名的后缀（`github.com`、`.github.com`）；`*.domain` 命中子域；`host:端口` 的端口与请求端口相同（http 缺省 80）；主机是 IP 时按 IP 或 CIDR 比较。命中的主机不写 https→http 改写，也不写代理。它的 remote 保持 `https://`，经 TLS 直连、不带令牌：公开仓库照常可读，私有仓库与推送会明确失败，gh 仍能从 https remote 推断仓库。setup 日志记一条 `warning: NO_PROXY/no_proxy covers <host> …`，把该主机从 `NO_PROXY` 和 `no_proxy` 里去掉、重新唤醒 orb 就会恢复。orbd 不改 `NO_PROXY` 本身，以免改变其它流量的代理语义。M16 合并记忆的 `NO_PROXY` 时会保留已有条目，所以项目 env 或镜像里的 `NO_PROXY` 会原样生效。这个判定只看 setup 时的环境：agent 在自己的 shell 里临时设置的 `NO_PROXY` 不在防护范围内。agent 本来就不可信，本来也能直连公网下载代码，只是这样拿不到令牌。
 - orbd 每次执行 setup / resume 时，先删掉自己以前写入的全部条目，再按当前策略重写。要删的条目有三类：同址的 https→http `insteadOf`；值为本机回环端口的 `http.http://<host>/.proxy`，包括 orbd 重启前用过的旧端口；M15 之前的 `url.http://127.0.0.1:<端口>/git/<前缀>.insteadOf`。用户自己写的改写与代理设置保留。项目设置变更后，在下一次唤醒时生效。

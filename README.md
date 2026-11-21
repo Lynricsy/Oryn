@@ -294,6 +294,11 @@ oryn ssh key gen main                                        # 生成 SSH 钥匙
 oryn ssh add web1 --host 10.0.0.5 --user deploy --key main   # 登记主机并立即测试连接（--project 限定到项目，--jump 走跳板）
 oryn ssh ls --all && oryn ssh audit --host web1             # 列出主机与最近测试结果；查看网关审计
 
+# ── Oryn 托管仓库 ──
+oryn project create notes --hosted                           # 新建 Oryn 托管的空白仓库（带初始提交），输出项目 id
+oryn clone notes                                             # 克隆托管仓库，登记 oryn git-credential 作凭据助手（用设备令牌认证）
+oryn project create myapp --push --remote oryn               # 在本机仓库里运行：建成托管项目，基线 = 当前分支，推上去（含 LFS 对象）
+
 # ── 执行后端（Provider 与个人机器 Runner）──
 oryn provider create prod-fc > provider.token                # 创建 Provider（令牌仅在标准输出显示一次）
 sudo oryn provider preflight --config /etc/oryn/fc.yaml      # 启动前逐项核查 KVM / nftables / UID 区间
