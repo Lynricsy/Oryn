@@ -50,6 +50,16 @@ func projectPush(ctx context.Context, c *apiClient, credURL, dir string, req api
 	if _, err := gitIn(ctx, dir, "rev-parse", "--verify", "--quiet", "HEAD"); err != nil {
 		return p, fmt.Errorf("分支 %s 还没有提交：先提交一次", branch)
 	}
+	// 检查 3a：仓库用了 Git LFS 时本机必须有 git-lfs，否则托管库里只会剩指针
+	usesLFS, err := repoUsesLFS(ctx, dir)
+	if err != nil {
+		return p, fmt.Errorf("git ls-files 失败：%w", err)
+	}
+	if usesLFS {
+		if _, err := gitIn(ctx, dir, "lfs", "version"); err != nil {
+			return p, errors.New("仓库里有 Git LFS 文件，但本机没有 git-lfs：先安装 git-lfs 再运行 --push")
+		}
+	}
 	// 读配置原值而不是 get-url：后者会套用 insteadOf
 	if u, err := gitIn(ctx, dir, "config", "--get", "remote."+remote+".url"); err == nil {
 		if !remoteGiven {
@@ -90,6 +100,17 @@ func projectPush(ctx context.Context, c *apiClient, credURL, dir string, req api
 			return p, fmt.Errorf("git config --add %s 失败：%w", key, err)
 		}
 	}
+	// 显式上传 LFS 对象：pre-push 钩子只在装过 git-lfs 钩子的仓库里才有（用 core.hooksPath 的仓库会被跳过），
+	// 缺了对象托管库就只剩指针。重复上传没有代价：batch 对已有对象不给 actions。
+	if usesLFS {
+		lfsPush := exec.CommandContext(ctx, "git", "-C", dir, "lfs", "push", "--all", remote, branch)
+		lfsPush.Stdout, lfsPush.Stderr = stdout, stderr
+		lfsPush.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+		if err := lfsPush.Run(); err != nil {
+			return p, &exitCodeError{code: 1, err: fmt.Errorf("LFS 对象上传失败；项目 %s（%s）已建好，仓库是空的。排查后重跑：git lfs push --all %s %s && git push -u %s %s",
+				name, p.ID, remote, branch, remote, branch)}
+		}
+	}
 	push := exec.CommandContext(ctx, "git", "-C", dir, "push", "-u", remote, branch)
 	push.Stdout, push.Stderr = stdout, stderr
 	push.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
@@ -98,4 +119,10 @@ func projectPush(ctx context.Context, c *apiClient, credURL, dir string, req api
 			name, p.ID, remote, branch)}
 	}
 	return p, nil
+}
+
+// repoUsesLFS 报告工作区里是否有 filter=lfs 的已跟踪文件（attr pathspec，git 2.13 起）。
+func repoUsesLFS(ctx context.Context, dir string) (bool, error) {
+	out, err := gitIn(ctx, dir, "ls-files", "-z", "--", ":(attr:filter=lfs)")
+	return out != "", err
 }

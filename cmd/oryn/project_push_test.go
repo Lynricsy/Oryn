@@ -3,9 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -149,6 +154,89 @@ func TestProjectPushServerSide(t *testing.T) {
 		u, ok := remoteURL(dir, "origin")
 		require.True(t, ok)
 		assert.Equal(t, missing, u)
+	})
+}
+
+// requireGitLFS：找不到 git-lfs 时，ORYN_REQUIRE_GIT_LFS=1 则失败，否则跳过。
+func requireGitLFS(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("git-lfs"); err != nil {
+		if os.Getenv("ORYN_REQUIRE_GIT_LFS") == "1" {
+			t.Fatalf("git-lfs 不可用：%v", err)
+		}
+		t.Skip("git-lfs 不可用")
+	}
+}
+
+func TestProjectPushLFS(t *testing.T) {
+	t.Run("上传 LFS 对象先于推送", func(t *testing.T) {
+		requireGitLFS(t)
+		dir, f, _, _, _ := pushEnv(t)
+		fake, cloneURL := fakeGitHost(t, "lfs", false)
+		f.json("POST /api/v1/projects", 201, hostedProject("demo", cloneURL))
+		gitT(t, dir, "lfs", "install", "--local")
+		gitT(t, dir, "lfs", "track", "*.bin")
+		// 钩子目录指向空目录（core.hooksPath 的仓库）：没有 pre-push，对象只能靠显式的 git lfs push 上传
+		gitT(t, dir, "config", "core.hooksPath", t.TempDir())
+		content := "lfs payload\n"
+		writeFiles(t, dir, map[string]string{"a.bin": content})
+		gitT(t, dir, "add", "-A")
+		gitT(t, dir, "commit", "-q", "-m", "lfs")
+		sum := sha256.Sum256([]byte(content))
+		oid := hex.EncodeToString(sum[:])
+
+		_, _, err := runProjectPush(t, f, fake.URL(), dir, "origin", false)
+		require.NoError(t, err)
+		got, ok := fake.LFSObject(oid)
+		require.True(t, ok, "假上游存下了 LFS 对象")
+		assert.Equal(t, content, string(got))
+
+		upload, receive := -1, -1
+		fake.Lock()
+		for i, c := range fake.Calls {
+			switch {
+			case c.Method == http.MethodPut && c.Path == "/_lfs/objects/"+oid && upload < 0:
+				upload = i
+			case c.Method == http.MethodPost && strings.HasSuffix(c.Path, "/git-receive-pack") && receive < 0:
+				receive = i
+			}
+		}
+		fake.Unlock()
+		require.GreaterOrEqual(t, upload, 0)
+		require.GreaterOrEqual(t, receive, 0)
+		assert.Less(t, upload, receive, "LFS 对象先于 git-receive-pack 上传")
+	})
+	t.Run("本机没有 git-lfs", func(t *testing.T) {
+		dir, f, credURL, cloneURL, _ := pushEnv(t)
+		f.json("POST /api/v1/projects", 201, hostedProject("demo", cloneURL))
+		// 不装 filter：直接提交 .gitattributes，attr pathspec 只看属性
+		writeFiles(t, dir, map[string]string{".gitattributes": "*.bin filter=lfs diff=lfs merge=lfs -text\n", "a.bin": "x\n"})
+		gitT(t, dir, "add", "-A")
+		gitT(t, dir, "commit", "-q", "-m", "lfs")
+		git, err := exec.LookPath("git")
+		require.NoError(t, err)
+		bin := t.TempDir()
+		require.NoError(t, os.Symlink(git, filepath.Join(bin, "git")))
+		t.Setenv("PATH", bin)
+
+		_, _, err = runProjectPush(t, f, credURL, dir, "origin", false)
+		require.ErrorContains(t, err, "本机没有 git-lfs")
+		assert.Zero(t, postCount(f))
+	})
+	t.Run("没有 LFS 文件不调用 git lfs", func(t *testing.T) {
+		dir, f, credURL, cloneURL, _ := pushEnv(t)
+		f.json("POST /api/v1/projects", 201, hostedProject("demo", cloneURL))
+		uses, err := repoUsesLFS(context.Background(), dir)
+		require.NoError(t, err)
+		assert.False(t, uses)
+		// PATH 里只有 git：调用 git lfs 必然失败，推送成功即说明没有调用
+		git, err := exec.LookPath("git")
+		require.NoError(t, err)
+		bin := t.TempDir()
+		require.NoError(t, os.Symlink(git, filepath.Join(bin, "git")))
+		t.Setenv("PATH", bin)
+		_, _, err = runProjectPush(t, f, credURL, dir, "origin", false)
+		require.NoError(t, err)
 	})
 }
 
