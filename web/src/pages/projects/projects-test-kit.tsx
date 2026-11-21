@@ -1,6 +1,6 @@
 /**
  * 项目分区各页测试共用的桩（M24）：两个项目、setup 记录与 orb 工厂；按路径记账的 fetch 桩（项目、已归档项目、
- * 线程、用量统计、项目记忆开关、项目快照与 Agent 配置……）；与 App 里项目路由一致的 `mount`。
+ * 线程、用量统计、项目记忆开关、项目快照与 Agent 配置、仓库镜像状态……）；与 App 里项目路由一致的 `mount`。
  * 用例改 `kit` 上的字段准备数据，`resetKit()`（放在 beforeEach）还原默认值并装上 fetch 桩。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -126,6 +126,14 @@ export function usageByProject(
 	};
 }
 
+const NO_REPO: Schemas["ProjectRepoStatus"] = {
+	kind: "none",
+	state: "absent",
+	available: true,
+	syncing: false,
+	empty: false,
+};
+
 /** 桩的数据与记账；`resetKit` 还原。 */
 export const kit = {
 	/** 未归档项目（`GET /projects`） */
@@ -144,6 +152,8 @@ export const kit = {
 	writes: [] as Write[],
 	/** 全部 GET 请求的 path + search */
 	reads: [] as string[],
+	/** `GET /projects/<id>/repo`（缺省：没有仓库，主页只显示一条说明） */
+	repoStatus: NO_REPO as Schemas["ProjectRepoStatus"],
 };
 
 /** 项目级 Agent 配置（M12.2）：按项目存扁平文件；PUT 回带一条 possible_secret 警告。 */
@@ -198,6 +208,8 @@ export async function handle(req: Request): Promise<Response> {
 	if (cfg) return projectAgentConfig(req, cfg[1] ?? "", cfg[2]);
 	const text = req.method === "GET" ? "" : await req.text();
 	const body = text ? JSON.parse(text) : undefined;
+	if (/^\/api\/v1\/projects\/[^/]+\/repo$/.test(path))
+		return Response.json(kit.repoStatus);
 	if (req.method === "GET") kit.reads.push(path + url.search);
 	else kit.writes.push({ method: req.method, path, body });
 	if (path === "/api/v1/projects") {
@@ -306,6 +318,7 @@ export function resetKit(): void {
 	kit.memoryProjects = [];
 	kit.writes = [];
 	kit.reads = [];
+	kit.repoStatus = NO_REPO;
 	vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
 		handle(
 			input instanceof Request

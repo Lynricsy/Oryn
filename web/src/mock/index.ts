@@ -59,35 +59,38 @@ export function installMock() {
 		return res ?? realFetch(input, init);
 	};
 	globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
-	interceptCanvasFrames();
+	// 画布帧的画框地址（`<origin>/__mock_af/<令牌>/_oryn/v/<n>/<路径>`）换成 mock 生成的 blob
+	interceptSrc(
+		HTMLIFrameElement,
+		(v) => mockServer.artifacts.resolveFrameUrl(v) ?? v,
+	);
+	// 项目仓库的文件图片（README 里的相对图片等）换成 data: 地址（M24）
+	interceptSrc(HTMLImageElement, (v) => mockServer.repo.blobDataUrl(v) ?? v);
 	console.info("[oryn] mock 模式已启用");
 }
 
 /**
- * 画布帧的画框地址（`<origin>/__mock_af/<令牌>/_oryn/v/<n>/<路径>`）在 mock 里没有服务器应答：
- * 拦截 iframe 的 `src`（属性与 `setAttribute` 两条路），换成 mock 生成的 blob。
+ * mock 里没有服务器应答的地址：拦截某类元素的 `src`（属性与 `setAttribute` 两条路），交给 `resolve` 换成可加载的地址。
  */
-function interceptCanvasFrames() {
-	const desc = Object.getOwnPropertyDescriptor(
-		HTMLIFrameElement.prototype,
-		"src",
-	);
-	const resolve = (v: unknown) =>
-		mockServer.artifacts.resolveFrameUrl(String(v)) ?? String(v);
+function interceptSrc(
+	ctor: typeof HTMLIFrameElement | typeof HTMLImageElement,
+	resolve: (src: string) => string,
+) {
+	const desc = Object.getOwnPropertyDescriptor(ctor.prototype, "src");
 	if (desc?.set) {
 		const set = desc.set;
-		Object.defineProperty(HTMLIFrameElement.prototype, "src", {
+		Object.defineProperty(ctor.prototype, "src", {
 			...desc,
-			set(this: HTMLIFrameElement, v: unknown) {
-				set.call(this, resolve(v));
+			set(this: HTMLElement, v: unknown) {
+				set.call(this, resolve(String(v)));
 			},
 		});
 	}
 	const setAttribute = Element.prototype.setAttribute;
 	Element.prototype.setAttribute = function (name: string, value: string) {
 		const v =
-			this instanceof HTMLIFrameElement && name.toLowerCase() === "src"
-				? resolve(value)
+			this instanceof ctor && name.toLowerCase() === "src"
+				? resolve(String(value))
 				: value;
 		setAttribute.call(this, name, v);
 	};

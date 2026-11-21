@@ -1,9 +1,10 @@
-/** 项目主页的开头（M24）：一行描述，以及仓库行（来源图标、地址、基线分支；没有仓库时说明「无仓库」）。 */
+/** 项目主页的开头（M24）：一行描述，以及仓库行（来源图标、地址、基线分支、镜像同步状态；没有仓库时说明「无仓库」）。 */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { Project } from "../../../api/client";
 import { Icon } from "../../../components/ui/icons";
 import { isGitHubRepo, repoLabel } from "../repo-label";
+import { RepoSyncStatus } from "./RepoSyncStatus";
 
 export function ProjectIntro({ project }: { project: Project }): ReactNode {
 	const { t } = useTranslation();
@@ -52,6 +53,7 @@ export function ProjectIntro({ project }: { project: Project }): ReactNode {
 						{t("projects.noRepo")}
 					</span>
 				)}
+				<RepoSyncStatus project={project} />
 			</p>
 		</div>
 	);

@@ -4554,7 +4554,63 @@
 		"settings": "项目设置"
 	},
 	"projectRepo": {
-		"copyFailed": "复制失败"
+		"copyFailed": "复制失败",
+		"status": {
+			"gitMissing": "控制面未安装 git",
+			"gitTooOld": "控制面的 git 版本过旧（需要 2.31 或更高）",
+			"absent": "未克隆",
+			"cloning": "克隆中…",
+			"syncing": "同步中…",
+			"synced": "已同步 {{ago}}",
+			"failed": "同步失败：{{reason}}",
+			"staleFailed": "最近一次同步失败：{{reason}}",
+			"empty": "仓库是空的"
+		},
+		"sync": "立即同步",
+		"errors": {
+			"unsupported_url": "只支持 https:// 仓库地址",
+			"auth_required": "需要凭据：连接 GitHub 账号或添加 git/<主机>/token 密钥",
+			"auth_failed": "凭据被拒绝",
+			"not_found": "找不到仓库",
+			"blocked_address": "仓库主机解析到内网地址，已拦截",
+			"unreachable": "连不上仓库主机",
+			"timeout": "拉取超时",
+			"too_large": "仓库超过镜像大小上限",
+			"no_space": "控制面磁盘空间不足",
+			"fetch_failed": "拉取失败"
+		},
+		"unavailable": {
+			"noRepoTitle": "还没有关联仓库",
+			"noRepoBody": "在项目设置里填写仓库地址后，这里会显示提交、文件和 README。",
+			"openSettings": "打开项目设置",
+			"gitBody": "仓库浏览需要控制面主机安装 git 2.31 或更高版本；线程与其它功能不受影响。",
+			"errorTitle": "仓库镜像不可用",
+			"absentTitle": "仓库尚未克隆",
+			"absentBody": "已归档项目不会自动克隆，点「立即同步」手动克隆。",
+			"cloningBody": "首次克隆可能需要几分钟。",
+			"emptyBody": "推送第一个提交后这里会显示内容。"
+		},
+		"commits": {
+			"title": "提交到 {{branch}}",
+			"viewAll": "查看全部",
+			"none": "还没有提交"
+		},
+		"files": {
+			"title": "文件",
+			"truncated": "条目过多，只显示前 5000 项"
+		},
+		"nav": {
+			"commits": "提交",
+			"branches": "分支",
+			"tags": "标签"
+		},
+		"readme": {
+			"truncated": "README 过长，只显示前 512 KB"
+		},
+		"settings": {
+			"mirror": "镜像 {{size}} · 同步于 {{ago}}",
+			"title": "仓库镜像"
+		}
 	},
 	"projectsOverview": {
 		"menu": "更多操作",

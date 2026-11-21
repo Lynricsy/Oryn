@@ -4554,7 +4554,63 @@
 		"settings": "Project settings"
 	},
 	"projectRepo": {
-		"copyFailed": "Copy failed"
+		"copyFailed": "Copy failed",
+		"status": {
+			"gitMissing": "git is not installed on the control plane",
+			"gitTooOld": "git on the control plane is too old (2.31 or newer required)",
+			"absent": "Not cloned",
+			"cloning": "Cloning…",
+			"syncing": "Syncing…",
+			"synced": "Synced {{ago}}",
+			"failed": "Sync failed: {{reason}}",
+			"staleFailed": "Last sync failed: {{reason}}",
+			"empty": "The repository is empty"
+		},
+		"sync": "Sync now",
+		"errors": {
+			"unsupported_url": "Only https:// repository URLs are supported",
+			"auth_required": "Credentials required: connect your GitHub account or add a git/<host>/token secret",
+			"auth_failed": "Credentials were rejected",
+			"not_found": "Repository not found",
+			"blocked_address": "The repository host resolves to a private address and was blocked",
+			"unreachable": "Cannot reach the repository host",
+			"timeout": "Fetch timed out",
+			"too_large": "The repository exceeds the mirror size limit",
+			"no_space": "The control plane is low on disk space",
+			"fetch_failed": "Fetch failed"
+		},
+		"unavailable": {
+			"noRepoTitle": "No repository yet",
+			"noRepoBody": "Add a repository URL in project settings to see commits, files and the README here.",
+			"openSettings": "Open project settings",
+			"gitBody": "Repository browsing needs git 2.31+ on the control-plane host; threads and everything else keep working.",
+			"errorTitle": "Repository mirror unavailable",
+			"absentTitle": "Repository not cloned yet",
+			"absentBody": "Archived projects are not cloned automatically. Use \"Sync now\" to clone it.",
+			"cloningBody": "The first clone can take a few minutes.",
+			"emptyBody": "Push a first commit to see it here."
+		},
+		"commits": {
+			"title": "Commits to {{branch}}",
+			"viewAll": "View all",
+			"none": "No commits yet"
+		},
+		"files": {
+			"title": "Files",
+			"truncated": "Too many entries; showing the first 5,000"
+		},
+		"nav": {
+			"commits": "Commits",
+			"branches": "Branches",
+			"tags": "Tags"
+		},
+		"readme": {
+			"truncated": "README is too long; showing the first 512 KB"
+		},
+		"settings": {
+			"mirror": "Mirror {{size}} · synced {{ago}}",
+			"title": "Repository mirror"
+		}
 	},
 	"projectsOverview": {
 		"menu": "More actions",

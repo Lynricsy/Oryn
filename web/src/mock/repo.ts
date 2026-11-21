@@ -580,6 +580,29 @@ export class MockRepo {
 		return undefined;
 	}
 
+	/**
+	 * `<img src=…/repo/blob…>` 不经 fetch，mock 模式里没有服务器应答：`installMock` 拦下图片地址，同步换成这里给的
+	 * `data:` 地址（内容同 blob 接口）。不是本仓库的 blob 地址或取不到内容时返回 null（原样加载）。
+	 */
+	blobDataUrl(raw: string): string | null {
+		if (!URL.canParse(raw, location.origin)) return null;
+		const url = new URL(raw, location.origin);
+		const m = /^\/api\/v1\/projects\/([^/]+)\/repo\/blob$/.exec(url.pathname);
+		const prj =
+			m &&
+			this.deps.projects().find((x) => x.id === decodeURIComponent(m[1] ?? ""));
+		if (!prj) return null;
+		const s = this.status(prj);
+		const tip =
+			s.state === "ready"
+				? this.resolve(prj, s, url.searchParams.get("ref") ?? "")
+				: undefined;
+		const path = url.searchParams.get("path") ?? "";
+		const content = tip ? snapshot(tip).get(path) : undefined;
+		if (content === undefined) return null;
+		return `data:${mimeOf(path).replaceAll(" ", "")},${encodeURIComponent(content)}`;
+	}
+
 	async handle(
 		req: Request,
 		p: string,

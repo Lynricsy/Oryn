@@ -1,5 +1,6 @@
 /**
- * 项目设置「概览」（M24）：基本信息（名称、描述、仓库、图标、基线分支、git 提交身份）与危险操作（归档 / 取消归档、删除）。
+ * 项目设置「概览」（M24）：基本信息（名称、描述、仓库、图标、基线分支、git 提交身份）、仓库镜像（有仓库地址时：
+ * 大小与同步时间、立即同步）与危险操作（归档 / 取消归档、删除）。
  */
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
@@ -7,10 +8,13 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
 import { api, type Project, unwrap } from "../../../api/client";
 import { qk } from "../../../api/queries";
+import { useRepoStatus } from "../../../api/repo-queries";
 import { useAsync } from "../../../components/settings/useAsync";
 import { Card } from "../../../components/ui/data";
 import { Button, ErrorText } from "../../../components/ui/primitives";
 import { confirmAction } from "../../../lib/confirm";
+import { formatBytes, formatRelative } from "../../../lib/format";
+import { RepoSyncText, useRepoSyncAction } from "../home/RepoSyncStatus";
 import { formOf, ProjectEditor } from "../ProjectEditor";
 
 /** 危险操作的一行：标题与说明在左，按钮在右（窄屏换行）。 */
@@ -138,6 +142,44 @@ function DangerCard({ project }: { project: Project }): ReactNode {
 	);
 }
 
+/** 「仓库镜像」卡：就绪时写镜像大小与同步时间，其余状态同主页仓库行的文字；右侧「立即同步」。 */
+function RepoMirrorCard({ project }: { project: Project }): ReactNode {
+	const { t } = useTranslation();
+	const { data: status, error } = useRepoStatus(project.id);
+	const action = useRepoSyncAction(project.id, status);
+	return (
+		<div data-testid="project-repo-mirror">
+			<Card title={t("projectRepo.settings.title")} icon="branch">
+				<div className="flex flex-wrap items-center gap-x-4 gap-y-2 py-1">
+					<span className="min-w-0 flex-1 basis-60 text-muted text-sm">
+						{status?.state === "ready" &&
+						!status.syncing &&
+						status.syncedAt !== undefined ? (
+							t("projectRepo.settings.mirror", {
+								size: formatBytes(status.sizeBytes ?? 0),
+								ago: formatRelative(status.syncedAt),
+							})
+						) : status ? (
+							<RepoSyncText status={status} />
+						) : null}
+					</span>
+					{action.syncable && (
+						<Button
+							size="sm"
+							icon="refresh"
+							disabled={action.busy}
+							onClick={action.sync}
+						>
+							{t("projectRepo.sync")}
+						</Button>
+					)}
+				</div>
+				{!status && <ErrorText error={error} />}
+			</Card>
+		</div>
+	);
+}
+
 export function OverviewTab({ project }: { project: Project }): ReactNode {
 	const { t } = useTranslation();
 	// 取消编辑 = 换 key 让表单还原为服务端值
@@ -154,6 +196,7 @@ export function OverviewTab({ project }: { project: Project }): ReactNode {
 					onCancel={() => setRev((r) => r + 1)}
 				/>
 			</Card>
+			{project.repoUrl && <RepoMirrorCard project={project} />}
 			<DangerCard project={project} />
 		</>
 	);
