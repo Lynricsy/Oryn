@@ -532,7 +532,9 @@ func (h *Handler) resolveGit(r *http.Request, pol Policy, host, rest string) (ta
 	if !canonicalPath(rest) {
 		return target{}, http.StatusBadRequest
 	}
-	req, ok := classifyGit(r, rest)
+	hg := pol.HostedGit
+	hosted := hg != nil && host == hg.Host
+	req, ok := classifyGit(r, rest, hosted)
 	if !ok {
 		if r.URL.Host == "" {
 			return target{}, http.StatusNotFound
@@ -547,7 +549,8 @@ func (h *Handler) resolveGit(r *http.Request, pol Policy, host, rest string) (ta
 		return target{deny: req.rejectMsg, lfs: true}, req.reject
 	}
 	// 托管仓库（M24 阶段 ③）：public_url 主机上只放行本项目的仓库，在本地服务，不查令牌、不经 github.com 规则。
-	if hg := pol.HostedGit; hg != nil && host == hg.Host {
+	// 写操作（推送、LFS 上传与对象 PUT、锁的写操作）在只读评审线程里拒绝。
+	if hosted {
 		if req.repo != hg.Repo {
 			return target{deny: denyHostedOther, lfs: req.lfs}, http.StatusForbidden
 		}

@@ -1,6 +1,7 @@
 package egress
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -135,4 +136,58 @@ func TestHostedGitNoRoute(t *testing.T) {
 	rec := hostedDo(t, fakeR{hosted: hf}, http.MethodPost, "http://oryn.test/git/prj_A.git/git-upload-pack")
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 	assert.Empty(t, hf.seen)
+}
+
+// 托管仓库的 LFS 对象传输（步骤 3.14）：info/lfs/objects/<oid> 只在托管主机上认，GET 读、PUT 写，在本地服务。
+func TestHostedGitLFSObjects(t *testing.T) {
+	oid := strings.Repeat("ab", 32)
+	obj := "http://oryn.test/git/prj_A.git/info/lfs/objects/" + oid
+	hf := &hostedFake{pusher: HostedPusher{OrbID: "orb-1", ThreadID: "T-1"}}
+	r := fakeR{pol: hostedPolicy(), hosted: hf}
+
+	rec := hostedDo(t, r, http.MethodPut, obj)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Len(t, hf.seen, 1)
+	assert.Equal(t, hostedSeen{project: "prj_A", endpoint: "info/lfs/objects/" + oid, pusher: hf.pusher}, hf.seen[0],
+		"本地服务，入站的 Authorization 被去掉")
+
+	rec = hostedDo(t, r, http.MethodGet, obj)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Len(t, hf.seen, 2)
+
+	// 别的托管仓库。
+	rec = hostedDo(t, r, http.MethodPut, "http://oryn.test/git/prj_B.git/info/lfs/objects/"+oid)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Equal(t, lfs.MediaType, rec.Header().Get("Content-Type"))
+	assert.Contains(t, rec.Body.String(), denyHostedOther)
+
+	// 不合法的 oid、别的方法都不认（落到门票查找，未命中）。
+	rec = hostedDo(t, r, http.MethodGet, "http://oryn.test/git/prj_A.git/info/lfs/objects/"+strings.Repeat("AB", 32))
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Contains(t, rec.Body.String(), denyProxyNotGit)
+	rec = hostedDo(t, r, http.MethodDelete, obj)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Contains(t, rec.Body.String(), denyProxyNotGit)
+	assert.Len(t, hf.seen, 2)
+
+	// 只读评审：PUT 拒绝并回 LFS JSON 错误体，GET 照常。
+	gl := newGateFake()
+	gl.thread = ThreadGates{ReviewOnly: true}
+	ro := fakeR{pol: hostedPolicy(), hosted: hf, gl: gl}
+	rec = hostedDo(t, ro, http.MethodPut, obj)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Equal(t, lfs.MediaType, rec.Header().Get("Content-Type"))
+	var body struct{ Message string }
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "oryn: "+denyReviewOnly, body.Message)
+	rec = hostedDo(t, ro, http.MethodGet, obj)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Len(t, hf.seen, 3)
+
+	// 非托管主机上同样的路径不认：外部上游的传输地址只走门票。
+	other := fakeR{pol: hostedPolicy(), hosted: hf, git: map[string]string{"git.example": "tok"}}
+	rec = hostedDo(t, other, http.MethodGet, "http://git.example/a/b.git/info/lfs/objects/"+oid)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Contains(t, rec.Body.String(), denyProxyNotGit)
+	assert.Len(t, hf.seen, 3)
 }

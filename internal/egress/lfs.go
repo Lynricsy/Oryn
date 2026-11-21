@@ -57,8 +57,10 @@ type gitReq struct {
 }
 
 // classifyGit 认出 git smart-HTTP 端点与 Git LFS 端点（rest 已是规范路径）。batch 端点在这里调用 lfsBatchRequest，
-// 请求体不可接受时 ok 仍为真、reject 非 0。其它方法或路径一律不认。
-func classifyGit(r *http.Request, rest string) (gitReq, bool) {
+// 请求体不可接受时 ok 仍为真、reject 非 0。hosted 为真（请求的主机是 orb 所属项目的托管仓库，M24 阶段 ③）时多认
+// info/lfs/objects/<oid>：GET 读、PUT 写；这些是托管服务端自己给出的 href，外部上游的传输地址只走门票。
+// 其它方法或路径一律不认。
+func classifyGit(r *http.Request, rest string, hosted bool) (gitReq, bool) {
 	if repo, write, ok := gitEndpoint(rest, r.URL.Query().Get("service")); ok {
 		ep := rest[strings.LastIndexByte(rest, '/')+1:]
 		if ep == "refs" {
@@ -96,6 +98,9 @@ func classifyGit(r *http.Request, rest string) (gitReq, bool) {
 			return gitReq{}, false
 		}
 		req.write = true
+	case hosted && strings.HasPrefix(ep, "info/lfs/objects/") && lfs.ValidOID(strings.TrimPrefix(ep, "info/lfs/objects/")) &&
+		(m == http.MethodGet || m == http.MethodPut):
+		req.write = m == http.MethodPut
 	default:
 		return gitReq{}, false
 	}
