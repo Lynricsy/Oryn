@@ -64,7 +64,9 @@ function ProjectRow({
 	archived?: boolean;
 }): ReactNode {
 	const { t } = useTranslation();
-	const repo = p.repoUrl && repoLabel(p.repoUrl);
+	const repo = p.hosted
+		? t("hostedRepo.label")
+		: p.repoUrl && repoLabel(p.repoUrl);
 	// compact 只显示一项（有描述显示描述，否则仓库）；sm 起两项用 · 连接
 	const sub = p.description ? (
 		<>

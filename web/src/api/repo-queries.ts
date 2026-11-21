@@ -11,7 +11,15 @@ import {
 } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { type RealtimeClient, realtime } from "../realtime/socket";
-import { ApiError, api, encodePathParam, type Schemas, unwrap } from "./client";
+import {
+	ApiError,
+	api,
+	encodePathParam,
+	type Project,
+	type Schemas,
+	unwrap,
+} from "./client";
+import { qk } from "./queries";
 
 export type RepoStatus = Schemas["ProjectRepoStatus"];
 export type RepoRef = Schemas["ProjectRepoRef"];
@@ -44,7 +52,8 @@ export const repoKeys = {
 
 /**
  * 仓库查询与服务端对账：收到 `project_repo.changed` 时让该项目的仓库查询失效；WS（重新）连上时（null）让全部项目的
- * 仓库查询失效。在调 `realtime.connect()` 的应用壳里调用一次。
+ * 仓库查询失效。托管项目（M24 阶段 ③）的推送后 Webhook 最近投递在项目对象里，所以托管项目另让项目列表失效
+ * （只对托管项目多一次列表请求，镜像项目每次同步不拉列表）。在调 `realtime.connect()` 的应用壳里调用一次。
  */
 export function useRealtimeRepoSync(
 	client: Pick<RealtimeClient, "onProjectRepoChanged"> = realtime,
@@ -56,6 +65,10 @@ export function useRealtimeRepoSync(
 				void qc.invalidateQueries({
 					queryKey: projectId ? repoKeys.all(projectId) : ["projectRepo"],
 				});
+				if (!projectId) return;
+				const list = qc.getQueryData<{ projects: Project[] }>(qk.projects);
+				if (list?.projects.some((p) => p.id === projectId && p.hosted))
+					void qc.invalidateQueries({ queryKey: qk.projects });
 			}),
 		[client, qc],
 	);

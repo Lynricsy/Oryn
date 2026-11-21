@@ -237,6 +237,46 @@ export async function handle(req: Request): Promise<Response> {
 		);
 		return new Response(null, { status: 204 });
 	}
+	// 创建托管仓库（M24 阶段 ③）：项目变成托管，克隆地址指向测试用的控制面
+	const mkHosted = /^\/api\/v1\/projects\/([^/]+)\/repo\/hosted$/.exec(path);
+	if (mkHosted && req.method === "POST") {
+		const cur = kit.projects.find((p) => p.id === mkHosted[1]);
+		if (!cur) return Response.json({ code: "not_found" }, { status: 404 });
+		const next: Project = {
+			...cur,
+			hosted: true,
+			cloneUrl: `https://oryn.test/git/${cur.id}.git`,
+			baseBranch: cur.baseBranch || "main",
+			updatedAt: cur.updatedAt + 1,
+		};
+		kit.projects = kit.projects.map((p) => (p.id === cur.id ? next : p));
+		return Response.json(next, { status: 201 });
+	}
+	// 推送后 Webhook：PUT 照抄地址，密钥省略 = 不改、空串 = 清除；DELETE 去掉
+	const hook = /^\/api\/v1\/projects\/([^/]+)\/webhook$/.exec(path);
+	if (hook) {
+		const cur = kit.projects.find((p) => p.id === hook[1]);
+		if (!cur) return Response.json({ code: "not_found" }, { status: 404 });
+		const { webhook: old, ...rest } = cur;
+		const next: Project =
+			req.method === "DELETE"
+				? rest
+				: {
+						...rest,
+						webhook: {
+							...old,
+							url: body.url,
+							hasSecret:
+								body.secret === undefined
+									? (old?.hasSecret ?? false)
+									: body.secret !== "",
+						},
+					};
+		kit.projects = kit.projects.map((p) => (p.id === cur.id ? next : p));
+		return req.method === "DELETE"
+			? new Response(null, { status: 204 })
+			: Response.json(next);
+	}
 	const one = /^\/api\/v1\/projects\/([^/]+)$/.exec(path);
 	if (one) {
 		const id = one[1];

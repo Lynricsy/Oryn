@@ -1,7 +1,8 @@
 /**
  * 项目表单（M24 起按 `section` 拆开）：
- * - `create`（新建页）：名称、图标、描述、仓库地址（可从 GitHub 选择）、基线分支；发 POST，只带填了的字段，其余由服务端补默认值；
- * - `overview`（设置「概览」）：同上，另有 git 提交身份覆盖；
+ * - `create`（新建页）：名称、仓库来源（已有仓库 / 空白仓库（Oryn 托管）/ 不带仓库）、图标、描述、仓库地址（可从 GitHub
+ *   选择）、基线分支；发 POST，只带填了的字段，其余由服务端补默认值；
+ * - `overview`（设置「概览」）：同上（没有来源选择；托管项目不显示仓库地址），另有 git 提交身份覆盖；
  * - `environment`（设置「环境」）：默认 provider / orb 类型 / 浏览器 Profile、浅克隆、快照与预热、setup / resume 脚本与「仓库内脚本：有 / 无」。
  * 编辑发 PATCH，只带本分组的字段（空串 = 清除）；服务端只改出现的字段，所以两组分开保存互不影响。响应体就是保存后的项目。
  */
@@ -22,6 +23,7 @@ import {
 	TextArea,
 	TextInput,
 	Toggle,
+	tabClass,
 } from "../../components/ui/primitives";
 import type { SetupRun } from "../../lib/env-banner";
 import { PROJECT_GLYPHS } from "../../lib/glyphs";
@@ -34,6 +36,10 @@ export type ProjectForm = Schemas["ProjectCreate"];
 export type ProjectSection = "create" | "overview" | "environment";
 
 export const EMPTY_PROJECT: ProjectForm = { name: "", shallowClone: false };
+
+/** 新建页的仓库来源（M24 阶段 ③）：已有仓库（填地址）/ 空白仓库（Oryn 托管）/ 不带仓库。 */
+export type RepoSource = "existing" | "hosted" | "none";
+const REPO_SOURCES: readonly RepoSource[] = ["existing", "hosted", "none"];
 
 export function formOf(p: Project): ProjectForm {
 	return {
@@ -52,19 +58,24 @@ export function formOf(p: Project): ProjectForm {
 		defaultBrowserProfileId: p.defaultBrowserProfileId,
 		snapshots: p.snapshots,
 		warmOrbs: p.warmOrbs,
+		hosted: p.hosted,
 	};
 }
 
 /** 去掉空白后为空的字段视为未填。 */
 const filled = (v: string | undefined): v is string => !!v?.trim();
 
-/** 新建：名称与浅克隆必填，其余只带填了的（服务端补默认值，图标留空以后自动采用）。 */
-function createBody(f: ProjectForm): ProjectForm {
+/**
+ * 新建：名称与浅克隆必填，其余只带填了的（服务端补默认值，图标留空以后自动采用）。
+ * 托管来源加 `hosted: true` 且不带仓库地址；不带仓库时仓库地址与基线分支都不发。
+ */
+function createBody(f: ProjectForm, source: RepoSource): ProjectForm {
 	const body: ProjectForm = { name: f.name, shallowClone: false };
 	if (filled(f.icon)) body.icon = f.icon;
 	if (filled(f.description)) body.description = f.description;
-	if (filled(f.repoUrl)) body.repoUrl = f.repoUrl;
-	if (filled(f.baseBranch)) body.baseBranch = f.baseBranch;
+	if (source === "hosted") body.hosted = true;
+	if (source === "existing" && filled(f.repoUrl)) body.repoUrl = f.repoUrl;
+	if (source !== "none" && filled(f.baseBranch)) body.baseBranch = f.baseBranch;
 	return body;
 }
 
@@ -77,7 +88,8 @@ function patchBody(
 		return {
 			name: f.name,
 			description: f.description ?? "",
-			repoUrl: f.repoUrl ?? "",
+			// 托管项目不能改用外部仓库地址：不发 repoUrl
+			...(f.hosted ? {} : { repoUrl: f.repoUrl ?? "" }),
 			baseBranch: f.baseBranch ?? "",
 			// 空串 = 清除，回到自动采用
 			icon: f.icon ?? "",
@@ -157,17 +169,62 @@ function ProjectIconPicker({
 
 type SetField = <K extends keyof ProjectForm>(k: K, v: ProjectForm[K]) => void;
 
+/** 新建页的仓库来源分段按钮（M24 阶段 ③）；切换时由调用方清掉已填的仓库地址。 */
+function RepoSourcePicker({
+	value,
+	onChange,
+}: {
+	value: RepoSource;
+	onChange: (s: RepoSource) => void;
+}): ReactNode {
+	const { t } = useTranslation();
+	return (
+		<div className="flex flex-col gap-1.5 sm:col-span-2">
+			<span className="font-medium text-muted text-xs">
+				{t("hostedRepo.source.label")}
+			</span>
+			{/* biome-ignore lint/a11y/useSemanticElements: 分段按钮（aria-pressed），不是表单字段集 */}
+			<div
+				role="group"
+				aria-label={t("hostedRepo.source.label")}
+				data-testid="repo-source"
+				className="flex w-fit max-w-full flex-wrap items-center gap-0.5 rounded-md bg-inset p-0.5"
+			>
+				{REPO_SOURCES.map((s) => (
+					<button
+						key={s}
+						type="button"
+						data-source={s}
+						aria-pressed={value === s}
+						onClick={() => onChange(s)}
+						className={`${tabClass(value === s)} h-6 ${value === s ? "bg-panel shadow-xs" : ""}`}
+					>
+						{t(`hostedRepo.source.${s}`)}
+					</button>
+				))}
+			</div>
+		</div>
+	);
+}
+
 /**
- * 新建与「概览」共用的字段：名称、描述、图标、仓库地址（独占一行，行尾「从 GitHub 选择」）、紧随其后的基线分支。
+ * 新建与「概览」共用的字段：名称、（新建页）仓库来源、描述、图标、仓库地址（独占一行，行尾「从 GitHub 选择」）、
+ * 紧随其后的基线分支。托管来源 / 托管项目不显示仓库地址；「不带仓库」连基线分支也不显示。
  */
 function GeneralFields({
 	f,
 	set,
+	source,
+	onSource,
 }: {
 	f: ProjectForm;
 	set: SetField;
+	/** 只有新建页给：仓库来源；缺省按项目是否托管判断 */
+	source?: RepoSource;
+	onSource?: (s: RepoSource) => void;
 }): ReactNode {
 	const { t } = useTranslation();
+	const src: RepoSource = source ?? (f.hosted ? "hosted" : "existing");
 	return (
 		<>
 			<div className="sm:col-span-2">
@@ -179,6 +236,9 @@ function GeneralFields({
 					/>
 				</Field>
 			</div>
+			{source && onSource && (
+				<RepoSourcePicker value={source} onChange={onSource} />
+			)}
 			<div className="sm:col-span-2">
 				<Field
 					label={t("projects.description")}
@@ -196,33 +256,42 @@ function GeneralFields({
 				icon={f.icon}
 				onChange={(icon) => set("icon", icon)}
 			/>
-			<div className="sm:col-span-2">
-				<Field label={t("projects.repoUrl")}>
-					<div className="relative flex items-center gap-2">
-						<TextInput
-							className="min-w-0 flex-1"
-							// 同一个 label 里还有「从 GitHub 选择」按钮：名字只取字段名
-							aria-label={t("projects.repoUrl")}
-							placeholder="https://github.com/…"
-							value={f.repoUrl ?? ""}
-							onChange={(e) => set("repoUrl", e.target.value || undefined)}
-						/>
-						<RepoPicker
-							onPick={(r) => {
-								set("repoUrl", `https://github.com/${r.fullName}`);
-								if (!f.baseBranch) set("baseBranch", r.defaultBranch);
-							}}
-						/>
-					</div>
+			{src === "existing" && (
+				<div className="sm:col-span-2">
+					<Field label={t("projects.repoUrl")}>
+						<div className="relative flex items-center gap-2">
+							<TextInput
+								className="min-w-0 flex-1"
+								// 同一个 label 里还有「从 GitHub 选择」按钮：名字只取字段名
+								aria-label={t("projects.repoUrl")}
+								placeholder="https://github.com/…"
+								value={f.repoUrl ?? ""}
+								onChange={(e) => set("repoUrl", e.target.value || undefined)}
+							/>
+							<RepoPicker
+								onPick={(r) => {
+									set("repoUrl", `https://github.com/${r.fullName}`);
+									if (!f.baseBranch) set("baseBranch", r.defaultBranch);
+								}}
+							/>
+						</div>
+					</Field>
+				</div>
+			)}
+			{source === "hosted" && (
+				<p className="text-faint text-xs sm:col-span-2">
+					{t("hostedRepo.source.hostedHint")}
+				</p>
+			)}
+			{src !== "none" && (
+				<Field label={t("projects.baseBranch")}>
+					<TextInput
+						placeholder="main"
+						value={f.baseBranch ?? ""}
+						onChange={(e) => set("baseBranch", e.target.value || undefined)}
+					/>
 				</Field>
-			</div>
-			<Field label={t("projects.baseBranch")}>
-				<TextInput
-					placeholder="main"
-					value={f.baseBranch ?? ""}
-					onChange={(e) => set("baseBranch", e.target.value || undefined)}
-				/>
-			</Field>
+			)}
 		</>
 	);
 }
@@ -397,6 +466,12 @@ export function ProjectEditor({
 	const [f, setF] = useState<ProjectForm>(initial);
 	const save = useAsync();
 	const set: SetField = (k, v) => setF((prev) => ({ ...prev, [k]: v }));
+	// 新建页的仓库来源；切换时清掉已填的仓库地址
+	const [source, setSource] = useState<RepoSource>("existing");
+	const pickSource = (s: RepoSource) => {
+		setSource(s);
+		set("repoUrl", undefined);
+	};
 	// 身份覆盖须两项同时填写或同时留空（服务端同样校验）。
 	const gitPairOk =
 		section !== "overview" ||
@@ -411,7 +486,7 @@ export function ProjectEditor({
 				const ok = await save.run(async () => {
 					if (section === "create")
 						saved = await unwrap(
-							api.POST("/api/v1/projects", { body: createBody(f) }),
+							api.POST("/api/v1/projects", { body: createBody(f, source) }),
 						);
 					else {
 						if (!id) throw new Error("ProjectEditor: 编辑需要项目 id");
@@ -430,7 +505,11 @@ export function ProjectEditor({
 			{section === "environment" ? (
 				<EnvironmentFields f={f} set={set} lastSetup={lastSetup} />
 			) : (
-				<GeneralFields f={f} set={set} />
+				<GeneralFields
+					f={f}
+					set={set}
+					{...(section === "create" ? { source, onSource: pickSource } : {})}
+				/>
 			)}
 			{section === "overview" && (
 				<GitIdentityFields f={f} set={set} pairOk={gitPairOk} />

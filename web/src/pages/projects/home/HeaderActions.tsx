@@ -1,5 +1,5 @@
 /**
- * 项目页头的动作按钮（M24）：复制项目链接、复制 git clone 命令、项目设置（纯图标）与新建线程（图标加文字）。
+ * 项目页头的动作按钮（M24）：复制项目链接、复制克隆命令、项目设置（纯图标）与新建线程（图标加文字）。
  * 每个组件都只接收 `project`。复制成功时图标换成 ✓，1.2 秒后复原；失败时弹错误提示并附上原文。
  */
 import { type ReactNode, useEffect, useState } from "react";
@@ -9,6 +9,7 @@ import type { Project } from "../../../api/client";
 import type { IconName } from "../../../components/ui/icons";
 import { Button, IconButton } from "../../../components/ui/primitives";
 import { copyToClipboard } from "../../../lib/clipboard";
+import { shellArg } from "../../../lib/shell-quote";
 import { showToast } from "../../../state/toasts";
 import { uiStore } from "../../../state/ui";
 
@@ -59,9 +60,20 @@ export function CopyLinkButton({ project }: { project: Project }): ReactNode {
 	);
 }
 
-/** 复制 `git clone <仓库地址>`；没有仓库的项目不显示。 */
+/**
+ * 复制克隆命令：托管项目是 `oryn clone <项目名>`（它登记凭据助手，用 oryn login 的设备令牌认证），
+ * 外部仓库是 `git clone <仓库地址>`；没有仓库的项目不显示。
+ */
 export function CloneButton({ project }: { project: Project }): ReactNode {
 	const { t } = useTranslation();
+	if (project.hosted)
+		return (
+			<CopyIconButton
+				icon="clone"
+				label={t("projectShell.copyOrynClone")}
+				text={`oryn clone ${shellArg(project.name)}`}
+			/>
+		);
 	if (!project.repoUrl) return null;
 	return (
 		<CopyIconButton

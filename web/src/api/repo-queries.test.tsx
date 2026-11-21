@@ -1,6 +1,7 @@
 /**
  * 项目仓库查询与 WS 对账（M24）：`useRealtimeRepoSync` 收到带项目 id 的通知时只让该项目的仓库查询失效；
- * 收到 null（WS 重新 open）时让全部项目的仓库查询失效；卸载后取消订阅。另测 `repoRetry` 与 `repoBlobUrl`。
+ * 收到 null（WS 重新 open）时让全部项目的仓库查询失效；托管项目另让项目列表失效（Webhook 最近投递在项目里）；
+ * 卸载后取消订阅。另测 `repoRetry` 与 `repoBlobUrl`。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook } from "@testing-library/react";
@@ -69,6 +70,20 @@ describe("useRealtimeRepoSync", () => {
 		client.fire(null);
 		for (const k of [...x, ...y]) expect(invalidated(k)).toBe(true);
 		expect(invalidated(["projects"])).toBe(false);
+	});
+
+	it("托管项目：另让项目列表失效（Webhook 最近投递）", () => {
+		const { qc, client, invalidated } = setup();
+		qc.setQueryData(["projects"], {
+			projects: [
+				{ id: "prj_x", name: "x", hosted: true },
+				{ id: "prj_y", name: "y" },
+			],
+		});
+		client.fire("prj_y");
+		expect(invalidated(["projects"])).toBe(false);
+		client.fire("prj_x");
+		expect(invalidated(["projects"])).toBe(true);
 	});
 });
 

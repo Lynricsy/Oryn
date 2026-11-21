@@ -103,6 +103,13 @@ describe("环境提示条选择", () => {
 		expect(
 			selectEnvBanner(input({ lastSetup: bare }, { project: {} }), NONE),
 		).toBeNull();
+		// 托管项目（M24）没有 repoUrl，同样提示
+		expect(
+			selectEnvBanner(
+				input({ lastSetup: bare }, { project: { hosted: true } }),
+				NONE,
+			),
+		).toMatchObject({ kind: "missing_config" });
 		expect(
 			selectEnvBanner(
 				input({ lastSetup: { ...bare, hasProjectScript: true } }),

@@ -419,6 +419,11 @@ function json(body: unknown, status = 200): Response {
 	});
 }
 
+/** 托管仓库的克隆地址（同 orbs.HostedCloneURL；mock 的 public_url 是 https://oryn.example.com）。 */
+function hostedCloneUrl(projectId: string): string {
+	return `https://oryn.example.com/git/${projectId}.git`;
+}
+
 /** 项目 git 身份覆盖须两项同时给出（与服务端一致）；两项都为空串表示清除。 */
 function badGitPair(name?: string, email?: string): Response | null {
 	if (name === undefined && email === undefined) return null;
@@ -1537,18 +1542,34 @@ export class MockServer {
 				badGitPair(b.gitAuthorName, b.gitAuthorEmail) ??
 				badWarmOrbs(b.warmOrbs);
 			if (bad) return bad;
+			if (b.hosted && b.repoUrl)
+				return json(
+					{
+						code: "invalid_request",
+						message: "hosted 与 repoUrl 只能二选一",
+					},
+					400,
+				);
+			const { emptyRepo: _emptyRepo, ...rest } = b;
+			const id = `prj_mock${this.idSeq++}`;
 			const created: Project = {
 				// 新建时空串等同缺省
 				...(Object.fromEntries(
-					Object.entries(b).filter(([, v]) => v !== ""),
+					Object.entries(rest).filter(([, v]) => v !== ""),
 				) as Schemas["ProjectCreate"]),
-				id: `prj_mock${this.idSeq++}`,
+				id,
 				shallowClone: Boolean(b.shallowClone),
 				snapshots: b.snapshots ?? true,
 				warmOrbs: b.warmOrbs ?? 0,
 				createdAt: Date.now(),
 				updatedAt: Date.now(),
 			};
+			// M24 阶段 ③：托管仓库，克隆地址指向控制面，基线缺省 main
+			if (b.hosted) {
+				created.hosted = true;
+				created.cloneUrl = hostedCloneUrl(id);
+				created.baseBranch = b.baseBranch || "main";
+			} else delete created.hosted;
 			// M14：仓库地址是 App 可访问的 mock 仓库时自动绑定
 			const gh = this.github.projectGitHub(created.repoUrl);
 			if (gh) created.github = gh;
@@ -1632,6 +1653,75 @@ export class MockServer {
 				return new Response(null, { status: 204 });
 			}
 		}
+		const hostedMatch = /^projects\/([^/]+)\/repo\/hosted$/.exec(p);
+		if (hostedMatch && m === "POST") {
+			const i = this.projects.findIndex((x) => x.id === hostedMatch[1]);
+			const cur = this.projects[i];
+			if (!cur) return json({ code: "not_found", message: "项目不存在" }, 404);
+			if (cur.archivedAt)
+				return json({ code: "project_archived", message: "项目已归档" }, 409);
+			if (cur.repoUrl || cur.hosted)
+				return json({ code: "repo_exists", message: "项目已有仓库" }, 409);
+			const next: Project = {
+				...cur,
+				hosted: true,
+				cloneUrl: hostedCloneUrl(cur.id),
+				baseBranch: cur.baseBranch || "main",
+				updatedAt: Date.now(),
+			};
+			this.projects[i] = next;
+			return json(next, 201);
+		}
+		// 推送后 Webhook（M24 阶段 ③）：校验同服务端；密钥省略 = 不改、空串 = 清除；DELETE 幂等
+		const hookMatch = /^projects\/([^/]+)\/webhook$/.exec(p);
+		if (hookMatch && (m === "PUT" || m === "DELETE")) {
+			const i = this.projects.findIndex((x) => x.id === hookMatch[1]);
+			const cur = this.projects[i];
+			if (!cur) return json({ code: "not_found", message: "项目不存在" }, 404);
+			if (m === "DELETE") {
+				const { webhook: _gone, ...rest } = cur;
+				this.projects[i] = rest;
+				return new Response(null, { status: 204 });
+			}
+			const b = (await body()) as Schemas["ProjectWebhookInput"];
+			const u = URL.canParse(b.url) ? new URL(b.url) : null;
+			if (
+				!u ||
+				(u.protocol !== "http:" && u.protocol !== "https:") ||
+				!u.host ||
+				u.username ||
+				u.password ||
+				b.url.length > 2048
+			)
+				return json(
+					{
+						code: "invalid_request",
+						message: "url 必须是不带用户名密码的 http(s) 地址",
+					},
+					400,
+				);
+			if (!cur.hosted)
+				return json(
+					{
+						code: "repo_not_hosted",
+						message: "只有托管仓库的项目能设置 Webhook",
+					},
+					409,
+				);
+			const next: Project = {
+				...cur,
+				webhook: {
+					...cur.webhook,
+					url: b.url,
+					hasSecret:
+						b.secret === undefined
+							? (cur.webhook?.hasSecret ?? false)
+							: b.secret !== "",
+				},
+			};
+			this.projects[i] = next;
+			return json(next);
+		}
 		const projectMatch = /^projects\/([^/]+)$/.exec(p);
 		if (projectMatch) {
 			const i = this.projects.findIndex((x) => x.id === projectMatch[1]);
@@ -1644,6 +1734,23 @@ export class MockServer {
 					badGitPair(b.gitAuthorName, b.gitAuthorEmail) ??
 					badWarmOrbs(b.warmOrbs);
 				if (bad) return bad;
+				// M24 阶段 ③：托管项目不能改用外部仓库地址，基线分支不能清空
+				if (cur.hosted && b.repoUrl)
+					return json(
+						{
+							code: "repo_hosted",
+							message: "托管仓库的项目不能改用外部仓库地址",
+						},
+						409,
+					);
+				if (cur.hosted && b.baseBranch === "")
+					return json(
+						{
+							code: "invalid_request",
+							message: "托管仓库的基线分支不能清空",
+						},
+						400,
+					);
 				const next: Project = { ...cur, updatedAt: Date.now() };
 				for (const [k, v] of Object.entries(b)) {
 					const key = k as keyof Project;

@@ -7,6 +7,7 @@
  * 没有仓库地址的是 `kind:"none"`。`POST repo/sync`：就绪的进入同步、600ms 后完成；未克隆的克隆成空仓库；失败的再失败一次。
  * Git LFS（阶段 ② 补充）：`docs/media/` 下三个 LFS 指针文件——能预览的 SVG、超过预览上限只能下载的视频、上游没有对象的
  * PSD；目录树给对象的真实大小与 `lfs.oid`，blob 返回对象内容（或同服务端的 413 / 404 `lfs_missing`）。
+ * 托管项目（阶段 ③，`hosted`）：`kind:"hosted"`、就绪，读接口复用 Oryn 的假仓库数据；`POST repo/sync` 回 409 `repo_hosted`。
  */
 import type { Project, Schemas, Thread } from "../api/client";
 import { projects as fixtureProjects, NOW } from "./fixtures";
@@ -30,6 +31,9 @@ const HOUR = 60 * MIN;
 const ZERO_SHA = "0".repeat(40);
 const SYNC_MS = 600;
 const DATA_PROJECT = fixtureProjects[0]?.id ?? "";
+/** 带假仓库数据的项目：Oryn 与托管项目（托管项目复用 Oryn 的数据）。 */
+const hasData = (p: Project): boolean =>
+	p.id === DATA_PROJECT || p.hosted === true;
 const FAILING_PROJECT = fixtureProjects[1]?.id ?? "";
 const SHA_RE = /^[0-9a-f]{7,40}$/;
 const REF_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,200}$/;
@@ -527,13 +531,27 @@ export class MockRepo {
 
 	/** 项目 baseBranch 在镜像里存在时取它，否则默认分支。 */
 	private baseOf(p: Project, defaultBranch: string): string {
-		const branches = p.id === DATA_PROJECT ? BRANCHES.map(([n]) => n) : [];
+		const branches = hasData(p) ? BRANCHES.map(([n]) => n) : [];
 		return p.baseBranch && branches.includes(p.baseBranch)
 			? p.baseBranch
 			: defaultBranch;
 	}
 
 	private status(p: Project): Status {
+		if (p.hosted) {
+			this.mirrors.delete(p.id);
+			return {
+				kind: "hosted",
+				state: "ready",
+				available: true,
+				syncing: false,
+				empty: false,
+				...(p.cloneUrl ? { cloneUrl: p.cloneUrl } : {}),
+				defaultBranch: "main",
+				baseBranch: p.baseBranch || "main",
+				sizeBytes: 524_288,
+			};
+		}
 		if (!p.repoUrl) {
 			this.mirrors.delete(p.id);
 			return {
@@ -578,6 +596,8 @@ export class MockRepo {
 	private sync(p: Project): Response {
 		const s = this.status(p);
 		if (s.kind === "none") return error(409, "no_repo", "项目没有仓库地址");
+		if (s.kind === "hosted")
+			return error(409, "repo_hosted", "托管仓库不需要同步");
 		const id = p.id;
 		if (s.state === "ready") {
 			if (!s.syncing) {
@@ -639,7 +659,7 @@ export class MockRepo {
 	/** ref（空 = 基线）→ 提交 sha；不存在返回 undefined。 */
 	private resolve(p: Project, s: Status, ref: string): string | undefined {
 		const name = ref || s.baseBranch || "";
-		if (p.id !== DATA_PROJECT || s.empty) return undefined;
+		if (!hasData(p) || s.empty) return undefined;
 		const hit =
 			BRANCHES.find(([n]) => n === name) ?? TAGS.find(([n]) => n === name);
 		if (hit) return hit[1].sha;
@@ -702,7 +722,7 @@ export class MockRepo {
 			const sha = routes[2];
 			if (!SHA_RE.test(sha)) return error(400, "invalid_request", "sha 无效");
 			const c =
-				prj.id === DATA_PROJECT && !s.empty
+				hasData(prj) && !s.empty
 					? COMMITS.find((x) => x.sha.startsWith(sha))
 					: undefined;
 			if (!c) return error(404, "commit_not_found", "提交不存在");
@@ -741,11 +761,7 @@ export class MockRepo {
 		const off = Number(q.get("cursor") ?? 0) || 0;
 		const s = this.status(p);
 		const list =
-			p.id === DATA_PROJECT && !s.empty
-				? kind === "branch"
-					? BRANCHES
-					: TAGS
-				: [];
+			hasData(p) && !s.empty ? (kind === "branch" ? BRANCHES : TAGS) : [];
 		const all: Schemas["ProjectRepoRef"][] = list
 			.map(([name, c]) => ({
 				name,

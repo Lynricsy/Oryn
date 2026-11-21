@@ -103,11 +103,12 @@ export function RepoSyncStatus({ project }: { project: Project }): ReactNode {
 	const { t } = useTranslation();
 	const { data: status } = useRepoStatus(project.id, !!project.repoUrl);
 	const action = useRepoSyncAction(project.id, status);
-	// 镜像不能读时 RepoUnavailable 已经说明并给出同步按钮；空仓库照常显示同步记录
+	// 镜像不能读时 RepoUnavailable 已经说明并给出同步按钮；空仓库照常显示同步记录；托管仓库没有同步的概念
 	if (
 		!project.repoUrl ||
 		!status ||
 		status.kind === "none" ||
+		status.kind === "hosted" ||
 		!status.available ||
 		status.state !== "ready"
 	)

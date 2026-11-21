@@ -966,7 +966,11 @@ export function HomePage(): ReactNode {
 														leading={
 															<ProjectBadge name={p.name} icon={p.icon} />
 														}
-														hint={p.repoUrl?.replace(/^https?:\/\//, "")}
+														hint={
+															p.hosted
+																? t("hostedRepo.label")
+																: p.repoUrl?.replace(/^https?:\/\//, "")
+														}
 														onClick={() => {
 															setProjectId(p.id);
 															setPill(null);

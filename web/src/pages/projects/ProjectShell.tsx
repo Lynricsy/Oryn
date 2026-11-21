@@ -144,7 +144,11 @@ function ArchivedNotice({ project }: { project: Project }): ReactNode {
 					</Button>
 				}
 			>
-				{t("projectShell.archivedBody")}
+				{t(
+					project.hosted
+						? "projectShell.archivedBodyHosted"
+						: "projectShell.archivedBody",
+				)}
 			</Callout>
 			<ErrorText error={unarchive.error} />
 		</div>

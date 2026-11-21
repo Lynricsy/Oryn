@@ -1,6 +1,7 @@
 /**
- * 项目设置「概览」（M24）：基本信息（名称、描述、仓库、图标、基线分支、git 提交身份）、仓库镜像（有仓库地址时：
- * 大小与同步时间、立即同步）与危险操作（归档 / 取消归档、删除）。
+ * 项目设置「概览」（M24）：基本信息（名称、描述、仓库、图标、基线分支、git 提交身份）、仓库卡（有仓库地址时是
+ * 「仓库镜像」：大小与同步时间、立即同步；托管或没有仓库时是「托管仓库」：克隆地址与推送后 Webhook，或创建托管仓库）
+ * 与危险操作（归档 / 取消归档、删除；托管项目的说明写明仓库只读 / 一并删除）。
  */
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
@@ -16,6 +17,7 @@ import { confirmAction } from "../../../lib/confirm";
 import { formatBytes, formatRelative } from "../../../lib/format";
 import { RepoSyncText, useRepoSyncAction } from "../home/RepoSyncStatus";
 import { formOf, ProjectEditor } from "../ProjectEditor";
+import { HostedRepoCard } from "./HostedRepoCard";
 
 /** 危险操作的一行：标题与说明在左，按钮在右（窄屏换行）。 */
 function DangerRow({
@@ -44,6 +46,9 @@ function DangerCard({ project }: { project: Project }): ReactNode {
 	const navigate = useNavigate();
 	const archive = useAsync();
 	const del = useAsync();
+	const deleteHint = project.hosted
+		? "projectSettings.deleteHintHosted"
+		: "projectSettings.deleteHint";
 	const setArchived = (archived: boolean) =>
 		void archive.run(async () => {
 			const next = await unwrap(
@@ -89,7 +94,11 @@ function DangerCard({ project }: { project: Project }): ReactNode {
 											title: t("projectSettings.archiveConfirm", {
 												name: project.name,
 											}),
-											body: t("projectSettings.archiveConfirmBody"),
+											body: t(
+												project.hosted
+													? "projectSettings.archiveConfirmBodyHosted"
+													: "projectSettings.archiveConfirmBody",
+											),
 											action: t("common.archive"),
 										})
 									)
@@ -100,10 +109,7 @@ function DangerCard({ project }: { project: Project }): ReactNode {
 							</Button>
 						</DangerRow>
 					)}
-					<DangerRow
-						title={t("projectSettings.delete")}
-						hint={t("projectSettings.deleteHint")}
-					>
+					<DangerRow title={t("projectSettings.delete")} hint={t(deleteHint)}>
 						<Button
 							size="sm"
 							variant="danger"
@@ -113,7 +119,7 @@ function DangerCard({ project }: { project: Project }): ReactNode {
 								if (
 									!(await confirmAction({
 										title: t("projects.deleteConfirm", { name: project.name }),
-										body: t("projectSettings.deleteHint"),
+										body: t(deleteHint),
 										action: t("common.delete"),
 										danger: true,
 									}))
@@ -196,7 +202,11 @@ export function OverviewTab({ project }: { project: Project }): ReactNode {
 					onCancel={() => setRev((r) => r + 1)}
 				/>
 			</Card>
-			{project.repoUrl && <RepoMirrorCard project={project} />}
+			{project.repoUrl ? (
+				<RepoMirrorCard project={project} />
+			) : (
+				<HostedRepoCard project={project} />
+			)}
 			<DangerCard project={project} />
 		</>
 	);

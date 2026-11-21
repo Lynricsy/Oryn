@@ -1,4 +1,4 @@
-/** 新建项目页（M24）：精简表单，创建后进新项目，取消回项目总览；没有环境、Agent 配置与推送门禁。 */
+/** 新建项目页（M24）：精简表单（含仓库来源），创建后进新项目，取消回项目总览；没有环境、Agent 配置与推送门禁。 */
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../../i18n";
@@ -48,6 +48,51 @@ describe("ProjectCreatePage", () => {
 			description: "一行说明",
 			repoUrl: "https://github.com/a/w",
 		});
+	});
+
+	it("空白仓库（Oryn 托管）：没有仓库地址输入框，POST 带 hosted", async () => {
+		mount("/projects/new");
+		fireEvent.change(screen.getByLabelText("名称"), {
+			target: { value: "n" },
+		});
+		// 先填了地址再切换：地址被清掉，不会发出去
+		fireEvent.change(screen.getByLabelText("仓库地址"), {
+			target: { value: "https://github.com/a/w" },
+		});
+		const hosted = screen.getByRole("button", {
+			name: "空白仓库（Oryn 托管）",
+		});
+		fireEvent.click(hosted);
+		expect(hosted).toHaveAttribute("aria-pressed", "true");
+		expect(screen.queryByLabelText("仓库地址")).toBeNull();
+		expect(screen.getByText(/只有初始提交的仓库/)).toBeInTheDocument();
+		expect(screen.getByLabelText("基线分支")).toHaveAttribute(
+			"placeholder",
+			"main",
+		);
+		fireEvent.click(screen.getByRole("button", { name: "创建" }));
+		await waitFor(() => expect(kit.writes).toHaveLength(1));
+		expect(kit.writes[0]?.body).toEqual({
+			name: "n",
+			shallowClone: false,
+			hosted: true,
+		});
+	});
+
+	it("不带仓库：仓库地址与基线分支都不显示也不发", async () => {
+		mount("/projects/new");
+		fireEvent.change(screen.getByLabelText("名称"), {
+			target: { value: "n" },
+		});
+		fireEvent.change(screen.getByLabelText("基线分支"), {
+			target: { value: "dev" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "不带仓库" }));
+		expect(screen.queryByLabelText("仓库地址")).toBeNull();
+		expect(screen.queryByLabelText("基线分支")).toBeNull();
+		fireEvent.click(screen.getByRole("button", { name: "创建" }));
+		await waitFor(() => expect(kit.writes).toHaveLength(1));
+		expect(kit.writes[0]?.body).toEqual({ name: "n", shallowClone: false });
 	});
 
 	it("新建时取消：回项目总览", async () => {

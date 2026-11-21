@@ -82,6 +82,7 @@ import { GitPullRequest } from "@phosphor-icons/react/dist/csr/GitPullRequest";
 import { Globe } from "@phosphor-icons/react/dist/csr/Globe";
 import { Hand } from "@phosphor-icons/react/dist/csr/Hand";
 import { HandPalm } from "@phosphor-icons/react/dist/csr/HandPalm";
+import { HardDrive } from "@phosphor-icons/react/dist/csr/HardDrive";
 import { HardDrives } from "@phosphor-icons/react/dist/csr/HardDrives";
 import { Highlighter } from "@phosphor-icons/react/dist/csr/Highlighter";
 import { Hourglass } from "@phosphor-icons/react/dist/csr/Hourglass";
@@ -189,6 +190,8 @@ const ICONS = {
 	terminal: TerminalWindow,
 	/** 复制 git clone 命令（项目页头）；终端面板用 terminal */
 	clone: Terminal,
+	/** 仓库来源：Oryn 托管（M24 阶段 ③）；GitHub 用 github，其它 Git 用 code */
+	hostedRepo: HardDrive,
 	list: ListChecks,
 	trash: Trash,
 	copy: Copy,

@@ -70,6 +70,26 @@ export const projects: Project[] = [
 		updatedAt: NOW - 10 * 24 * HOUR,
 		archivedAt: NOW - 10 * 24 * HOUR,
 	},
+	// Oryn 托管仓库的项目（M24 阶段 ③）：没有 repoUrl，克隆地址指向控制面
+	{
+		id: "prj_01JCZ000000000000000HOSTED",
+		name: "notes",
+		description: "Oryn 托管的笔记仓库",
+		hosted: true,
+		cloneUrl: "https://oryn.example.com/git/prj_01JCZ000000000000000HOSTED.git",
+		baseBranch: "main",
+		shallowClone: false,
+		webhook: {
+			url: "https://ci.example.com/hooks/oryn",
+			hasSecret: true,
+			lastDeliveryAt: NOW - 25 * MIN,
+			lastStatus: 200,
+		},
+		snapshots: true,
+		warmOrbs: 0,
+		createdAt: NOW - 3 * 24 * HOUR,
+		updatedAt: NOW - 25 * MIN,
+	},
 ];
 
 export const providers: Provider[] = [

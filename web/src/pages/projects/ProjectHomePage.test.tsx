@@ -106,6 +106,40 @@ describe("项目主页：页头与开头", () => {
 		).toBeInTheDocument();
 	});
 
+	it.each([
+		["notes", "oryn clone notes"],
+		["my notes", "oryn clone 'my notes'"],
+	])(
+		"托管项目 %s：仓库行写「Oryn 托管」与基线，Clone 复制 %s",
+		async (name, cmd) => {
+			const writeText = vi.fn(async () => {});
+			Object.defineProperty(navigator, "clipboard", {
+				configurable: true,
+				value: { writeText },
+			});
+			kit.projects = [
+				{
+					...CORE,
+					name,
+					hosted: true,
+					cloneUrl: `https://oryn.test/git/${CORE.id}.git`,
+					baseBranch: "main",
+				},
+			];
+			mount(`/projects/${CORE.id}`);
+			const repo = await screen.findByTestId("project-repo");
+			expect(repo).toHaveTextContent("Oryn 托管");
+			expect(repo).toHaveTextContent("main");
+			expect(
+				screen.queryByRole("button", { name: "复制 git clone 命令" }),
+			).toBeNull();
+			fireEvent.click(
+				screen.getByRole("button", { name: "复制 oryn clone 命令" }),
+			);
+			await waitFor(() => expect(writeText).toHaveBeenCalledWith(cmd));
+		},
+	);
+
 	it("「新建线程」把项目交给首屏并跳到 /", async () => {
 		mount(`/projects/${ORYN.id}`);
 		await screen.findByTestId("project-home");

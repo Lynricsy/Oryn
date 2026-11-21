@@ -35,7 +35,7 @@ export interface EnvBannerInput {
 	orb:
 		| Pick<Orb, "state" | "failureReason" | "lastSetup" | "lastResume">
 		| undefined;
-	project: Pick<Project, "repoUrl"> | undefined;
+	project: Pick<Project, "repoUrl" | "hosted"> | undefined;
 }
 
 /**
@@ -67,7 +67,7 @@ export function envBannerCandidates(input: EnvBannerInput): EnvBanner[] {
 	if (setup?.ok && setup.setupRan && setup.durationMs >= SLOW_SETUP_MS)
 		out.push({ kind: "slow_setup", key: `slow:${setup.id}`, run: setup });
 	if (
-		project?.repoUrl &&
+		(project?.repoUrl || project?.hosted) &&
 		setup?.ok &&
 		!setup.hasRepoScript &&
 		!setup.hasProjectScript

@@ -4548,11 +4548,49 @@
 		"breadcrumb": "Breadcrumb",
 		"archivedTitle": "This project is archived",
 		"archivedBody": "It's hidden from the sidebar, its GitHub repository hook is released, warm orbs are at zero, and its schedules and triggers no longer run. Its threads are kept.",
+		"archivedBodyHosted": "It's hidden from the sidebar, warm orbs are at zero, and its schedules and triggers no longer run; its hosted repository is read-only (clone works, push doesn't). Its threads are kept.",
 		"unarchive": "Unarchive",
 		"copyLink": "Copy project link",
 		"copyClone": "Copy git clone command",
+		"copyOrynClone": "Copy oryn clone command",
 		"copyFailed": "Couldn't copy to the clipboard (the browser blocked access): {{text}}",
 		"settings": "Project settings"
+	},
+	"hostedRepo": {
+		"label": "Hosted by Oryn",
+		"source": {
+			"label": "Repository",
+			"existing": "Existing repository",
+			"hosted": "Blank repository (hosted by Oryn)",
+			"none": "No repository",
+			"hostedHint": "Oryn creates a repository with one initial commit; orbs and oryn clone on your machine clone from it and push to it."
+		},
+		"title": "Hosted repository",
+		"cloneUrl": "Clone URL",
+		"copyCloneUrl": "Copy clone URL",
+		"cloneHint": "Run {{cmd}} on your machine; it authenticates with your oryn login device token.",
+		"webhook": {
+			"title": "Push webhook",
+			"hint": "After each successful push, Oryn POSTs one JSON event to this URL. No retries. Pushes made by agents in threads trigger it too (pusher.kind is \"thread\"); the receiver decides whether to act on them.",
+			"url": "URL",
+			"secret": "Signing secret (optional)",
+			"secretKept": "Set — leave blank to keep it",
+			"secretHint": "When set, requests carry an HMAC-SHA256 signature in the X-Oryn-Signature-256 header.",
+			"clearSecret": "Clear secret",
+			"save": "Save webhook",
+			"remove": "Remove webhook",
+			"removeConfirm": "Remove the push webhook of {{name}}?",
+			"removeConfirmBody": "Later pushes will no longer notify this URL.",
+			"never": "No deliveries yet",
+			"lastOk": "Last delivery {{ago}} · HTTP {{status}}",
+			"lastFailed": "Last delivery failed {{ago}} · {{error}}"
+		},
+		"create": "Create hosted repository",
+		"createBody": "This project has no repository. Oryn can host a blank one with an initial commit; it can't be switched to an external repository later.",
+		"createConfirm": "Create a hosted repository for {{name}}?",
+		"createConfirmBody": "The base branch is {{base}}. New orbs will clone it; running orbs are not affected.",
+		"createAction": "Create",
+		"createArchived": "Unarchive the project to create a repository."
 	},
 	"projectRepo": {
 		"copyFailed": "Copy failed",
@@ -4720,9 +4758,11 @@
 		"archiveHint": "Hide it from the sidebar and stop its GitHub hook, warm orbs, schedules and triggers. Threads are kept; unarchive any time.",
 		"archiveConfirm": "Archive project {{name}}?",
 		"archiveConfirmBody": "Its GitHub hook is released, warm orbs go to zero, and schedules and triggers stop. Threads are untouched and you can still start threads in it.",
+		"archiveConfirmBodyHosted": "Warm orbs go to zero, schedules and triggers stop, and the hosted repository becomes read-only. Threads are untouched.",
 		"unarchiveHint": "The project returns to the sidebar and its schedules and triggers take effect again.",
 		"delete": "Delete project",
 		"deleteHint": "Threads are kept but leave the project; its schedules, agent config and project memory are deleted for good.",
+		"deleteHintHosted": "Threads are kept but leave the project; the hosted repository (all branches, tags and commits), its webhook, schedules, agent config and project memory are deleted for good.",
 		"memory": {
 			"title": "Project memory",
 			"archived": "Archived projects aren't in memory's project list; unarchive to change this."
