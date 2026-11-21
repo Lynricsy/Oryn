@@ -34,6 +34,7 @@ spec：`web/e2e/ui-audit/panels.e2e.ts`。面板本身按「浮层」登记（�
 | `panels.desktop.clipboard` | 剪贴板 ClipboardPopover | 桌面 → 剪贴板钮 | 弹层（桌面）/ 弹窗（手机） |
 | `panels.desktop.more` | 桌面「更多」菜单 | 桌面 → 「…」 | 菜单 |
 | `panels.desktop.keyboard` | 软键盘 SoftKeyboard（仅手机：只在粗指针设备上出现键盘钮） | 桌面 → 键盘钮 | 面板 |
+| `panels.desktop.switch-confirm` | 切换 Profile 确认对话框 | 桌面 → Profile 菜单 → 选另一个 Profile（浏览器在跑或已装 Profile 时） | 弹窗 |
 | `panels.desktop.conflict` | Profile 冲突对话框 ProfileConflictDialog | 被占用线程的桌面 → Profile 菜单 → 选另一个被占用的 Profile | 弹窗 |
 | `panels.artifacts` | Artifacts 面板（查看器） | 信息面板 → Artifacts | 面板 |
 | `panels.artifacts.switch` | Artifact 切换菜单 | Artifacts → 标题下拉 | 菜单 |
@@ -56,4 +57,5 @@ spec：`web/e2e/ui-audit/panels.e2e.ts`。面板本身按「浮层」登记（�
 | 11 | panels.info.narrow | 900 宽三栏（侧栏 + 转录 + 面板）时「服务」入口行的故障标签从左边被裁掉，只剩「败 · 重启 5 次」：标签与外层都是 `shrink-0`，状态区 `justify-end + overflow-hidden`，放不下时整枚标签向左溢出 | 错乱 | `shots/host.chrome-mac.narrow/d1366-light-after.png`、`shots/panels.info.narrow/d1366-light-before.png` | 1cfb2dc（标签可收缩、内容在标签里从右截断显示省略号）；新增 900 宽用例覆盖 |
 | 12 | panels.desktop.more | 「分辨率跟随面板 / 缩放以适应」两项没有图标，文字左缘与下面带图标的「关闭浏览器 / 重新连接」对不齐 | 设计 | `shots/panels.desktop.more/d1366-light-before.png` | 5a61435（补 monitor / minimize 图标） |
 | 13 | panels.info.service-logs（m390） | 手机上服务日志不折行，报错行后半截（模块路径）要横向滚才看得到 | 设计 | `shots/panels.info.service-logs/m390-dark-before.png` | fa9ed53（sm 以下折行） |
-| 14 | panels.desktop.conflict | 冲突对话框本身无问题；但切换 Profile 前的「当前浏览器会被关闭」是原生 `window.confirm`，样式不受控 | 设计 | `shots/panels.desktop.conflict/d1366-light-before.png` | 需人工决策：换成应用内确认对话框会改交互流程（多一步自绘对话框、焦点与键盘行为），超出排版范围 |
+| 14 | panels.desktop.conflict | 冲突对话框本身无问题；但切换 Profile 前的「当前浏览器会被关闭」是原生 `window.confirm`，样式不受控 | 设计 | `shots/panels.desktop.switch-confirm/d1366-light-after.png` | 961f44c（主人决定：换成应用内确认对话框，标题 + 说明 + 取消 / 切换；被占用的 Profile 确认后照常进冲突对话框）。其余删除 / 清除类确认仍是原生 confirm，未在本次范围内 |
+| 15 | panels.desktop.switch-confirm | 用键盘在 Profile 菜单里选中后弹确认框，按 Esc 或取消，焦点掉到 body：菜单项选中后随菜单卸载，Dialog 记下的打开者已不在页面上 | 错乱 | — | 1f7f99f（弹确认框前先聚焦常驻的 Profile 触发钮）；单测与审计用例都用键盘走一遍，断言 Esc 后触发钮获得焦点且没有 PUT，去掉修复时两者都失败 |

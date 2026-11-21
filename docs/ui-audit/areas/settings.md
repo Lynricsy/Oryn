@@ -41,13 +41,14 @@ spec：`web/e2e/ui-audit/settings.e2e.ts`。代码：`web/src/pages/SettingsPage
 | `settings.agent-commands.new` | 新建斜杠命令 | 命令与规则 → 斜杠命令「新建」 | 弹窗 |
 | `settings.agent-extensions` | 扩展、Hook、自定义工具（空态） | 更多 → 扩展与工具 | 页面 |
 | `settings.agent-extensions.new` | 在「扩展模块」中新建文件 | 扩展与工具 → 扩展模块「新建」 | 弹窗 |
-| `settings.agent-memory` | 记忆：状态、连接、项目开关 | 更多 → 记忆 | 页面 |
+| `settings.agent-memory` | 记忆：页内目录、状态、连接、项目开关 | 更多 → 记忆 | 页面 |
 | `settings.agent-memory.models` | 记忆：模型、嵌入与重排 | 记忆页向下滚到「模型」 | 页面 |
 | `settings.agent-memory.browse` | 记忆：浏览 | 记忆页向下滚到「浏览」 | 页面 |
 | `settings.agent-memory.candidates` | 记忆：全局记忆、待批准、mental models | 记忆页向下滚到「全局记忆」 | 页面 |
 | `settings.agent-memory.usage` | 记忆：用量、导出 | 记忆页向下滚到「用量」 | 页面 |
 | `settings.agent-memory.owner` | 助手记忆：设置、状态 | 记忆页向下滚到「助手记忆」 | 页面 |
 | `settings.agent-memory.owner-facts` | 助手记忆：事实 | 记忆页向下滚到「事实」 | 页面 |
+| `settings.agent-memory.toc` | 记忆：页内目录跳到「全局记忆」 | 记忆页顶部目录 →「全局记忆」 | 页面（吸顶目录） |
 | `settings.agent-memory.owner-sources` | 助手记忆：来源与排除、明确记忆 | 记忆页向下滚到「来源」 | 页面 |
 | `settings.agent-memory.env-file` | 重新生成 Hindsight .env | 记忆 → 连接「重新生成 .env」 | 弹窗 |
 | `settings.agent-memory.owner-brief` | 助手记忆注入预览 | 记忆 → 助手记忆状态「注入预览」 | 弹窗 |
@@ -118,7 +119,7 @@ spec：`web/e2e/ui-audit/settings.e2e.ts`。代码：`web/src/pages/SettingsPage
 | 12 | settings.agent-ssh | 全局主机卡片里的标签筛选是一排 ghost 按钮（infra、prod、web），没有任何前缀，看起来像普通文字，不像能点的筛选 | 设计 | `shots/settings.agent-ssh/d1366-light-before.png` | 91fd86d（前置漏斗图标） |
 | 13 | settings.automations.new | 新建定时任务里「项目」下拉单独占一行且只有半宽，名称独占一整行；两者都是目标信息，可以并排 | 设计 | `shots/settings.automations.new/d1366-light-before.png` | 047580c、c9e4c22（名称与项目两列并排，Space 在下一行；同名报错跟在名称列下） |
 | 14 | settings.agent-ssh | mock 数据太整齐：主机名都很短、没有停用主机、标签少，看不出截断与换行 | 设计 | — | b06d329（mock 加一台长名称、长地址、长描述、4 个标签、已停用的主机）；after 截图里名称、地址整行显示，描述正常换行，未发现溢出 |
-| 15 | settings.agent-memory | 记忆页一页 11 张卡片 + 助手记忆分区 6 张卡片，1366×768 要滚约 9 屏；没有页内目录 | 设计 | `shots/settings.agent-memory/d1366-light-before.png` | 需人工决策：拆页或加页内目录会改变页面主要信息结构（模块位置、导航层级），超出本次排版修复范围 |
+| 15 | settings.agent-memory | 记忆页一页 11 张卡片 + 助手记忆分区 6 张卡片，1366×768 要滚约 9 屏；没有页内目录 | 设计 | `shots/settings.agent-memory.toc/d1366-light-after.png` | 5b96b6c（主人决定：加吸顶页内目录，卡片按主题分 6 节，点哪节滚到哪节并高亮当前节；页面结构与卡片顺序不变） |
 | 16 | settings.devices | 深色主题下「用手机扫码连接」的二维码底是浅色纸面，在深色卡片里很亮 | 设计 | `shots/settings.devices/d1366-dark-before.png` | 不修：二维码必须浅底深码才能稳定被扫出，代码里已注明是有意为之 |
 | 17 | settings.nav、settings.devices | 打开任一设置分区时，「更多」侧栏（手机为抽屉）不把当前分区滚进可见区：1366×768 与手机上「设置」组在折叠线下，看不出当前在哪个分区 | 设计 | `shots/settings.nav/m390-light-before.png` | 12d3c47（侧栏区域 ThreadPanelsShellAudit：路由变化时把高亮条目滚进本分区滚动区） |
 | 18 | 全部设置页（d1366） | 侧栏列表最后一项「选区快捷动作」露出半行，压在悬浮底栏（线程 / 全局助手 / 项目 / 更多）下面 | 设计 | `shots/settings.devices/d1366-light-before.png` | 不修：侧栏区域确认是设计如此，悬浮玻璃底栏下透出列表，滚到底时最后一项停在底栏上方 |

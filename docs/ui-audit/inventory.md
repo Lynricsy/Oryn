@@ -3,9 +3,9 @@
 由 `web/e2e/ui-audit/inventory.ts` 从 `areas/*.md` 生成，勿手改。状态列依次为 d1920 明/暗、d1366 明/暗、m390 明/暗：
 ✓ after 跑完全程断言 0 问题且 before / after 截图都在；✗ after 有问题；— 显式跳过（视口不适用，清单里注明）；· 其余（没跑、中途失败、缺截图），不算通过。
 
-界面 324 个，全部视口通过 324 个。问题 93 条：错乱 45、设计 43、冗余 5。
+界面 326 个，全部视口通过 326 个。问题 94 条：错乱 46、设计 43、冗余 5。
 
-覆盖对账（spec 324 个用例 vs 清单 324 个 id）：一致
+覆盖对账（spec 326 个用例 vs 清单 326 个 id）：一致
 
 ## fallback（4 个界面，3 条问题，详见 [areas/fallback.md](areas/fallback.md)）
 
@@ -72,7 +72,7 @@
 | host.mobile.corners-dialog | 手机壳贴边对话框（附件） | 标题胶囊菜单 → 附件 | 弹窗（仅手机） | — — — — ✓ ✓ |
 | host.mobile.push-card | 设置 · 通知里的手机推送卡 | 侧栏「更多」→ 设置 → 通知 | 页面（仅手机） | — — — — ✓ ✓ |
 
-## panels（27 个界面，14 条问题，详见 [areas/panels.md](areas/panels.md)）
+## panels（28 个界面，15 条问题，详见 [areas/panels.md](areas/panels.md)）
 
 | id | 界面 | 打开路径 | 形态 | 状态 |
 |---|---|---|---|---|
@@ -99,6 +99,7 @@
 | `panels.desktop.clipboard` | 剪贴板 ClipboardPopover | 桌面 → 剪贴板钮 | 弹层（桌面）/ 弹窗（手机） | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `panels.desktop.more` | 桌面「更多」菜单 | 桌面 → 「…」 | 菜单 | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `panels.desktop.keyboard` | 软键盘 SoftKeyboard（仅手机：只在粗指针设备上出现键盘钮） | 桌面 → 键盘钮 | 面板 | — — — — ✓ ✓ |
+| `panels.desktop.switch-confirm` | 切换 Profile 确认对话框 | 桌面 → Profile 菜单 → 选另一个 Profile（浏览器在跑或已装 Profile 时） | 弹窗 | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `panels.desktop.conflict` | Profile 冲突对话框 ProfileConflictDialog | 被占用线程的桌面 → Profile 菜单 → 选另一个被占用的 Profile | 弹窗 | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `panels.artifacts` | Artifacts 面板（查看器） | 信息面板 → Artifacts | 面板 | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `panels.artifacts.switch` | Artifact 切换菜单 | Artifacts → 标题下拉 | 菜单 | ✓ ✓ ✓ ✓ ✓ ✓ |
@@ -194,7 +195,7 @@
 | `auth.pair` | 批准设备（输入配对码） | `/pair` | 页面 | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `auth.pair.review` | 批准设备（配对详情） | 输入配对码 →「查看」 | 页面 | ✓ ✓ ✓ ✓ ✓ ✓ |
 
-## settings（88 个界面，18 条问题，详见 [areas/settings.md](areas/settings.md)）
+## settings（89 个界面，18 条问题，详见 [areas/settings.md](areas/settings.md)）
 
 | id | 界面 | 打开路径 | 形态 | 状态 |
 |---|---|---|---|---|
@@ -228,13 +229,14 @@
 | `settings.agent-commands.new` | 新建斜杠命令 | 命令与规则 → 斜杠命令「新建」 | 弹窗 | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `settings.agent-extensions` | 扩展、Hook、自定义工具（空态） | 更多 → 扩展与工具 | 页面 | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `settings.agent-extensions.new` | 在「扩展模块」中新建文件 | 扩展与工具 → 扩展模块「新建」 | 弹窗 | ✓ ✓ ✓ ✓ ✓ ✓ |
-| `settings.agent-memory` | 记忆：状态、连接、项目开关 | 更多 → 记忆 | 页面 | ✓ ✓ ✓ ✓ ✓ ✓ |
+| `settings.agent-memory` | 记忆：页内目录、状态、连接、项目开关 | 更多 → 记忆 | 页面 | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `settings.agent-memory.models` | 记忆：模型、嵌入与重排 | 记忆页向下滚到「模型」 | 页面 | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `settings.agent-memory.browse` | 记忆：浏览 | 记忆页向下滚到「浏览」 | 页面 | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `settings.agent-memory.candidates` | 记忆：全局记忆、待批准、mental models | 记忆页向下滚到「全局记忆」 | 页面 | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `settings.agent-memory.usage` | 记忆：用量、导出 | 记忆页向下滚到「用量」 | 页面 | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `settings.agent-memory.owner` | 助手记忆：设置、状态 | 记忆页向下滚到「助手记忆」 | 页面 | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `settings.agent-memory.owner-facts` | 助手记忆：事实 | 记忆页向下滚到「事实」 | 页面 | ✓ ✓ ✓ ✓ ✓ ✓ |
+| `settings.agent-memory.toc` | 记忆：页内目录跳到「全局记忆」 | 记忆页顶部目录 →「全局记忆」 | 页面（吸顶目录） | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `settings.agent-memory.owner-sources` | 助手记忆：来源与排除、明确记忆 | 记忆页向下滚到「来源」 | 页面 | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `settings.agent-memory.env-file` | 重新生成 Hindsight .env | 记忆 → 连接「重新生成 .env」 | 弹窗 | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `settings.agent-memory.owner-brief` | 助手记忆注入预览 | 记忆 → 助手记忆状态「注入预览」 | 弹窗 | ✓ ✓ ✓ ✓ ✓ ✓ |
@@ -340,7 +342,7 @@
 | `thread.tool-context-menu` | 工具卡右键菜单（桌面）/ 长按动作面板（手机，`context-sheet`） | 右键工具卡 / 长按工具卡头 | 菜单 / 动作面板 | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `thread.slash` | 斜杠命令菜单（CommandMenu） | 输入框键入 `/` | 下拉（坞上方） | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `thread.slash.usage` | 命令用法卡（`/goal ` 之后） | 键入 `/goal ` | 下拉（坞上方） | ✓ ✓ ✓ ✓ ✓ ✓ |
-| `thread.ref-menu` | GitHub issue / PR 引用菜单（RefMenu） | 键入 `#log` | 下拉（坞上方） | ✓ ✓ ✓ ✓ ✓ ✓ |
+| `thread.ref-menu` | GitHub issue / PR 引用菜单（RefMenu） | 键入 `#log`（用例以 Esc 关闭，重开时先删一个字再敲回） | 下拉（坞上方） | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `thread.thinking` | 思考级别菜单（ThinkingDial） | 输入坞模型胶囊右侧圆圈 | 菜单 | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `thread.speed` | 速度档位菜单 | 输入坞页脚速度读数 | 菜单 | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `thread.modes-more` | 「更多模式」菜单（仅手机：窄托盘放不下六个模式开关） | 输入坞「⋯」 | 菜单 | — — — — ✓ ✓ |

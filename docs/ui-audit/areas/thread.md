@@ -36,7 +36,7 @@ mock 线程：主线程 `MAIN_THREAD`（长回复、表格、时序图、公式�
 | `thread.tool-context-menu` | 工具卡右键菜单（桌面）/ 长按动作面板（手机，`context-sheet`） | 右键工具卡 / 长按工具卡头 | 菜单 / 动作面板 |
 | `thread.slash` | 斜杠命令菜单（CommandMenu） | 输入框键入 `/` | 下拉（坞上方） |
 | `thread.slash.usage` | 命令用法卡（`/goal ` 之后） | 键入 `/goal ` | 下拉（坞上方） |
-| `thread.ref-menu` | GitHub issue / PR 引用菜单（RefMenu） | 键入 `#log` | 下拉（坞上方） |
+| `thread.ref-menu` | GitHub issue / PR 引用菜单（RefMenu） | 键入 `#log`（用例以 Esc 关闭，重开时先删一个字再敲回） | 下拉（坞上方） |
 | `thread.thinking` | 思考级别菜单（ThinkingDial） | 输入坞模型胶囊右侧圆圈 | 菜单 |
 | `thread.speed` | 速度档位菜单 | 输入坞页脚速度读数 | 菜单 |
 | `thread.modes-more` | 「更多模式」菜单（仅手机：窄托盘放不下六个模式开关） | 输入坞「⋯」 | 菜单 |
@@ -82,7 +82,7 @@ mock 线程：主线程 `MAIN_THREAD`（长回复、表格、时序图、公式�
 | 9 | `thread.dlg.model` | 「全部模型」标题与搜索框随列表滚走 | 设计 | `shots/thread.dlg.model/d1366-light-before-scrolled.png` | 63c74d5（主 agent 在 ModelPickerBody 吸顶，本区复核通过） |
 | 10 | `thread.dlg.debug` | 调试面板是宽对话框，没有未识别帧时只有一行「暂无。」，大片留白 | 设计 | `shots/thread.dlg.debug/d1366-light-after.png` | 不修：宽度是给 JSON 帧准备的，帧随时可能在对话框开着时到来，按内容切换宽度会让对话框跳动 |
 | 11 | `thread.message-menu` 等全部 `Menu` 触发钮 | 共享 `Menu` 的触发钮只给了 `aria-expanded`，没有 `aria-haspopup="menu"`，读屏不知道它会弹菜单（审计脚本也因此无法把它和折叠钮区分开） | 设计 | — | 622832e（主 agent：Menu 触发钮统一带 `aria-haspopup="menu"`；PresenceFaces 自写的同名属性去掉） |
-| 12 | `thread.ref-menu` | Esc 收起 `#` 引用菜单后，删掉再敲出同样的 `#log`，菜单不再弹出（`useRefMenu` 只记「收起时的整段文本」，文本回到同一值就仍算已收起） | 设计 | — | 需人工决策：属交互逻辑，不在排版范围；审计用例改为清空输入框来关菜单 |
+| 12 | `thread.ref-menu` | Esc 收起 `#` 引用菜单后，删掉再敲出同样的 `#log`，菜单不再弹出（`useRefMenu` 只记「收起时的整段文本」，文本回到同一值就仍算已收起） | 设计 | — | d000f6d（主人决定修：文本一离开收起时的值就清掉记录；回归单测 + 审计用例走 Esc 关闭再敲回同样文本） |
 | 13 | `thread.table-narrow`（另见 host 区域 `host.chrome-mac.narrow`） | 900 宽时转录里的 Markdown 表格右侧被硬切（「退避 + 补拉」「live.rese…」截在边缘）；`.md-table` 能横向滚动但边缘没有任何提示，看着像排版坏了 | 设计 | `shots/host.chrome-mac.narrow/d1366-light-after.png` | b53486a（`.md-table` 纯 CSS 滚动阴影：两层 local 纸面色遮罩 + 两层 scroll 径向阴影，只在还能滚的一侧出现；深色主题加深阴影色。表头行底色不透明，阴影只露在表体） |
 | 14 | `thread.dlg.attachments`（m390） | 手机上附件行很散：文件名、「2 KB」徽标、日期各占一行，日期本身折行；「撤回 / 下载 / 删除」挤在右侧，下面又单独一行「已公开」与复制图标 | 设计 | `shots/thread.dlg.attachments/m390-light-before.png` | d92f941（第一行文件名截断；第二行「2 KB · 11月21日 00:56 · 已公开」合成一行，日期用 Intl 短格式、完整时间在悬停提示；操作在窄屏另起一行与文字左缘对齐，桌面仍在右侧） |
 | 15 | `thread.dlg.attachments` | mock 只有一个附件、名字很短，长文件名截断和多行排版暴露不出来 | 设计 | — | d92f941（mock 补三个附件：超长英文文件名的图片、JSON、超长中文名的 12 MB PDF，均未发布） |
