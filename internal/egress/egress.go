@@ -5,8 +5,9 @@
 //   - 占位符只在固定的凭据位置（若干请求头与 query 参数 key）被替换，出现在其它任何位置一律拒绝；
 //   - 每个模型路由只接受绑定到它的密钥 id：路由自己的 apiKey 密钥（hosts 为空时只能用在它自己的路由上），
 //     以及 hosts 非空且与路由上游主机匹配的其它密钥；git 路由不接受任何占位符；
-//   - git 路由（/git/<host>/…，或 orb 内 git 经 `http.<url>.proxy` 发来的代理形式 `http://<host>/…`）只放行 smart-HTTP 端点；
-//     有项目仓库时只放行该仓库（读写），否则任意仓库只读；路径含 `.`、`..`、空段或不是规范形式的一律 400；
+//   - git 路由（/git/<host>/…，或 orb 内 git 经 `http.<url>.proxy` 发来的代理形式 `http://<host>/…`）只放行 smart-HTTP 端点
+//     与 Git LFS 接口（<仓库>.git/info/lfs/…，M24，见 lfs.go）；有项目仓库时只放行该仓库（读写），否则任意仓库只读；
+//     路径含 `.`、`..`、空段或不是规范形式的一律 400；
 //   - GitHub API 路由（/gh/api.github.com/…、/gh/uploads.github.com/…）只在策略开放时可用，注入 OAuth 用户令牌；
 //     GitHub 写操作（REST 非 GET、GraphQL mutation、github.com 的 git-receive-pack）转发前交给 Resolver 预登记（可拒绝），
 //     响应后回报状态码与补充键（M15 防回流与审计）；请求体原样转发，不改写；
@@ -24,7 +25,6 @@ import (
 	"bytes"
 	"cmp"
 	"crypto/subtle"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -36,7 +36,10 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/Lynricsy/Oryn/internal/lfs"
 	"github.com/Lynricsy/Oryn/internal/memory"
 )
 
@@ -175,6 +178,11 @@ type Handler struct {
 	R     Resolver
 	// branches 缓存门禁查过的仓库默认分支（gate.go）。
 	branches branchCache
+	// lfsTickets 是 batch 响应里改写过的同主机传输地址（lfs.go）：键 `<方法> http://<gitHost><路径>[?查询]`。
+	lfsMu      sync.Mutex
+	lfsTickets map[string]lfsTicket
+	// now 为 nil 时用 time.Now（只有测试赋值）。
+	now func() time.Time
 }
 
 // NewHandler 构造代理。
@@ -212,6 +220,8 @@ type target struct {
 	// push 为真时是 git-receive-pack 端点（任意主机），gitHost 是 git 主机（小写）；上游以 200 应答推送后交给 PushRecorder（M24）。
 	push    bool
 	gitHost string
+	// lfs 为真时是 Git LFS 端点（或门票）：拒绝回 LFS JSON 错误体；lfsBatch 为真时是 objects/batch，200 响应经 lfsRewrite 重写（M24）。
+	lfs, lfsBatch bool
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -242,6 +252,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			msg = "oryn egress: 路径不是规范形式"
 		case status == http.StatusBadGateway:
 			msg = "oryn egress: GitHub 令牌不可用（身份未连接或签发失败）"
+		}
+		if t.lfs {
+			lfs.WriteError(w, status, msg)
+			return
 		}
 		http.Error(w, msg, status)
 		return
@@ -305,6 +319,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			if t.mcpKey != "" {
 				mcpRedirect(resp, t.mcpKey, t.mcpBase)
+			}
+			if t.lfsBatch {
+				switch {
+				case resp.StatusCode == http.StatusOK:
+					h.lfsRewrite(resp, t)
+				case resp.StatusCode/100 == 2:
+					lfsBadGateway(resp, lfsRespNot200)
+				}
 			}
 			if len(secretsUsed) == 0 {
 				return nil
@@ -372,16 +394,14 @@ func (h *Handler) serveMemory(w http.ResponseWriter, r *http.Request) {
 
 // resolve 把 /llm/<key>/…、/git/<host>/…、/gh/api.github.com/… 或 /mcp/<key>/… 映射为上游；返回 HTTP 状态（200 = 放行）。
 // 代理形式的请求（`GET http://<host>/<owner>/<repo>/… HTTP/1.1`，orb 内 git 经 `http.<url>.proxy` 发来）只走 git 路由，
-// 等同于 /git/<host>/<owner>/<repo>/…：不是 http 绝对地址或路径不规范回 400，不是 git smart-HTTP 端点回 403。
+// 等同于 /git/<host>/<owner>/<repo>/…：不是 http 绝对地址或路径不规范回 400，不是 git 端点（smart-HTTP、Git LFS）又没有
+// 有效 LFS 门票的回 403。
 func (h *Handler) resolve(r *http.Request) (target, int) {
 	pol := h.R.Policy()
 	if r.URL.Host != "" {
 		host, ok := proxyGitHost(r)
 		if !ok || !canonicalPath(r.URL.Path) {
 			return target{}, http.StatusBadRequest
-		}
-		if _, _, ok := gitEndpoint(r.URL.Path, r.URL.Query().Get("service")); !ok {
-			return target{deny: denyProxyNotGit}, http.StatusForbidden
 		}
 		return h.resolveGit(r, pol, host, r.URL.Path)
 	}
@@ -468,8 +488,15 @@ func (h *Handler) resolve(r *http.Request) (target, int) {
 	return target{}, http.StatusNotFound
 }
 
-// denyProxyNotGit 是代理形式请求不是 git smart-HTTP 端点时的拒绝原因。
-const denyProxyNotGit = "代理形式的请求只接受 git smart-HTTP（info/refs、git-upload-pack、git-receive-pack）"
+// denyProxyNotGit 是代理形式请求不是 git 端点、也没有有效门票时的拒绝原因。
+const denyProxyNotGit = "代理形式的请求只接受 git smart-HTTP（info/refs、git-upload-pack、git-receive-pack）、" +
+	"Git LFS 接口（<仓库>.git/info/lfs/…）与 LFS 批量接口给出的传输地址"
+
+// git 仓库限制的拒绝原因（PAT 主机）。
+const (
+	denyGitOtherRepo = "这个 orb 只能访问项目仓库"
+	denyGitReadOnly  = "没有项目的 orb 对 git 仓库只读（不能推送，也不能上传 Git LFS 对象或改动文件锁）"
+)
 
 // proxyGitHost 返回代理形式 git 请求的 git 主机键：请求行须是 `http://<host>[:<port>]/…` 绝对地址，键是小写的
 // `host[:port]`，与 /git/<host>/ 路径形式里的主机段同义（带端口的 PAT 主机如 `git.corp.example:8443`）。
@@ -483,7 +510,8 @@ func proxyGitHost(r *http.Request) (string, bool) {
 	return strings.ToLower(r.URL.Host), true
 }
 
-// resolveGit 处理 git 路由（/git/<host>/<rest> 与代理形式）：只放行 smart-HTTP 端点，按策略限定仓库与读写，注入主机令牌。
+// resolveGit 处理 git 路由（/git/<host>/<rest> 与代理形式）：只放行 smart-HTTP 端点与 Git LFS 接口，按策略限定仓库与读写，
+// 注入主机令牌；代理形式下认不出的路径再查 LFS 门票（lfs.go）。
 func (h *Handler) resolveGit(r *http.Request, pol Policy, host, rest string) (target, int) {
 	if pol.NoGit {
 		return target{}, http.StatusForbidden
@@ -492,50 +520,70 @@ func (h *Handler) resolveGit(r *http.Request, pol Policy, host, rest string) (ta
 	if !canonicalPath(rest) {
 		return target{}, http.StatusBadRequest
 	}
-	service := r.URL.Query().Get("service")
-	repo, write, ok := gitEndpoint(rest, service)
+	req, ok := classifyGit(r, rest)
 	if !ok {
-		return target{}, http.StatusNotFound
-	}
-	// M15：github.com 改由 OAuth 用户令牌注入，能做什么取决于账号自身权限，不再按仓库限制；
-	// 其它主机（PAT）维持 M2 规则：有项目时只放行项目仓库，无项目时任意仓库只读。
-	githubOpen := host == "github.com" && pol.GitHub != nil
-	if !githubOpen {
-		if len(pol.GitRepos) > 0 {
-			if !slices.ContainsFunc(pol.GitRepos[host], func(a string) bool { return NormalizeRepo(a) == repo }) {
-				return target{}, http.StatusForbidden
-			}
-		} else if write {
-			return target{}, http.StatusForbidden
+		if r.URL.Host == "" {
+			return target{}, http.StatusNotFound
 		}
+		// 只有 classifyGit 不认的路径才查门票：门票不能遮蔽已识别的 git / LFS 端点。
+		if t, st, ok := h.lfsTicketTarget(r, pol, host); ok {
+			return t, st
+		}
+		return target{deny: denyProxyNotGit}, http.StatusForbidden
 	}
-	// R21：只读评审线程在推送协商阶段（info/refs?service=git-receive-pack）就拒绝；推送本身由门禁回 ng。线程限制现查。
-	if githubOpen && write && !strings.HasSuffix(rest, "/git-receive-pack") && h.threadGates().ReviewOnly {
-		return target{deny: denyReviewOnly}, http.StatusForbidden
+	if req.reject != 0 {
+		return target{deny: req.rejectMsg, lfs: true}, req.reject
+	}
+	receivePack := req.endpoint == "git-receive-pack"
+	if deny, st := h.gitAllowed(pol, host, req.repo, req.write, receivePack); st != 0 {
+		return target{deny: deny, lfs: req.lfs}, st
 	}
 	tok, ok := h.R.GitToken(host)
 	if !ok {
-		return target{}, http.StatusNotFound
+		return target{lfs: req.lfs}, http.StatusNotFound
 	}
-	auth := "Basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:"+tok))
+	auth := gitBasicAuth(tok)
 	up := &url.URL{Scheme: "https", Host: host, Path: rest}
 	if host == "github.com" && pol.GitHub != nil && pol.GitHub.GitOrigin != "" {
 		o, err := url.Parse(pol.GitHub.GitOrigin)
 		if err != nil || o.Host == "" {
-			return target{}, http.StatusNotFound
+			return target{lfs: req.lfs}, http.StatusNotFound
 		}
 		up.Scheme, up.Host = o.Scheme, o.Host
 	}
+	githubOpen := host == "github.com" && pol.GitHub != nil
 	t := target{
 		url: up, auth: auth, redact: []string{strings.TrimPrefix(auth, "Basic "), tok},
-		receivePack: githubOpen && strings.HasSuffix(rest, "/git-receive-pack"), repo: repo,
-		push: strings.HasSuffix(rest, "/git-receive-pack"), gitHost: strings.ToLower(host),
+		receivePack: githubOpen && receivePack, repo: req.repo,
+		push: receivePack, gitHost: strings.ToLower(host),
+		lfs: req.lfs, lfsBatch: req.lfsBatch, stripEncoding: req.lfsBatch,
 	}
 	if githubOpen {
 		t.ghAccess = pol.GitHub
 		t.ghToken = tok
 	}
 	return t, http.StatusOK
+}
+
+// gitAllowed 按策略判定一次 git / LFS 访问（status 为 0 表示放行）：github.com 开放时（M15）不按仓库限制，令牌是 OAuth
+// 用户令牌，账号能做什么取决于账号自身；其它主机（PAT）维持 M2 规则：有项目时只放行项目仓库，无项目时任意仓库只读。
+// 只读评审线程（R21，线程限制现查）在 github.com 上拒绝推送以外的写操作：推送协商（info/refs?service=git-receive-pack）、
+// LFS 上传、建锁、解锁与 locks/verify；推送本身（receivePack）由门禁回 ng。
+func (h *Handler) gitAllowed(pol Policy, host, repo string, write, receivePack bool) (deny string, status int) {
+	githubOpen := host == "github.com" && pol.GitHub != nil
+	if !githubOpen {
+		if len(pol.GitRepos) > 0 {
+			if !slices.ContainsFunc(pol.GitRepos[host], func(a string) bool { return NormalizeRepo(a) == repo }) {
+				return denyGitOtherRepo, http.StatusForbidden
+			}
+		} else if write {
+			return denyGitReadOnly, http.StatusForbidden
+		}
+	}
+	if githubOpen && write && !receivePack && h.threadGates().ReviewOnly {
+		return denyReviewOnly, http.StatusForbidden
+	}
+	return "", 0
 }
 
 // canonicalPath 报告 p（以 / 开头）不含 `.`、`..` 与空段，且与 path.Clean 的结果一致。
