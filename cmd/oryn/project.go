@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io"
@@ -23,8 +24,8 @@ var projectCmd = &cobra.Command{
 
 var projectCreateOpts struct {
 	repo, branch, setup, resume, provider, orbType, color string
-	gitName, gitEmail                                     string
-	shallow, json                                         bool
+	gitName, gitEmail, remote                             string
+	shallow, json, hosted, push                           bool
 }
 
 var projectCreateCmd = &cobra.Command{
@@ -33,7 +34,18 @@ var projectCreateCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		o := projectCreateOpts
+		switch {
+		case (o.hosted || o.push) && o.repo != "":
+			return usageErr("--hosted / --push 与 --repo 只能二选一")
+		case o.push && o.branch != "":
+			return usageErr("--push 以当前分支作基线，不能再给 --branch")
+		case o.remote != "" && !o.push:
+			return usageErr("--remote 只能与 --push 同用")
+		}
 		req := apigen.ProjectCreate{Name: args[0], ShallowClone: new(o.shallow)}
+		if o.hosted {
+			req.Hosted = new(true)
+		}
 		var err error
 		set := func(dst **string, v string) {
 			if v != "" && err == nil {
@@ -69,7 +81,20 @@ var projectCreateCmd = &cobra.Command{
 			return err
 		}
 		var p apigen.Project
-		if err := c.do(cmd.Context(), http.MethodPost, "/api/v1/projects", req, &p); err != nil {
+		if o.push {
+			cred, err := loadCredentials()
+			if err != nil {
+				return err
+			}
+			wd, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+			remote := cmp.Or(o.remote, "origin")
+			if p, err = projectPush(cmd.Context(), c, cred.URL, wd, req, remote, o.remote != "", cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
+				return err
+			}
+		} else if err := c.do(cmd.Context(), http.MethodPost, "/api/v1/projects", req, &p); err != nil {
 			return err
 		}
 		if o.json {
@@ -291,6 +316,9 @@ func init() {
 	f.StringVar(&projectCreateOpts.gitName, "git-name", "", "本项目 orb 的 git user.name（须与 --git-email 同用）")
 	f.StringVar(&projectCreateOpts.gitEmail, "git-email", "", "本项目 orb 的 git user.email")
 	f.BoolVar(&projectCreateOpts.shallow, "shallow", false, "浅克隆（--depth 1）")
+	f.BoolVar(&projectCreateOpts.hosted, "hosted", false, "新建 Oryn 托管的空白仓库（带初始提交）")
+	f.BoolVar(&projectCreateOpts.push, "push", false, "把当前目录的 git 仓库建成托管项目并推上去（基线 = 当前分支）")
+	f.StringVar(&projectCreateOpts.remote, "remote", "", "--push 时加的远端名（缺省 origin）")
 	f.BoolVar(&projectCreateOpts.json, "json", false, "输出 JSON")
 	f = projectUpdateCmd.Flags()
 	f.StringVar(&projectUpdateOpts.gitName, "git-name", "", "本项目 orb 的 git user.name（须与 --git-email 同用）")
