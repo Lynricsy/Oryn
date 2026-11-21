@@ -20,6 +20,7 @@ export const projects: Project[] = [
 	{
 		id: "prj_01JCZ0000000000000000ORYN",
 		name: "Oryn",
+		description: "自托管的 agent 工作台：控制面、orb 运行时与网页端",
 		// 有图标的项目；oryn-core 留空（前端回退为名字首字）
 		icon: "\u{F14DE}",
 		// M14：已绑定 GitHub 仓库（与 mock/github.ts 的仓库列表一致）
@@ -46,6 +47,7 @@ export const projects: Project[] = [
 	{
 		id: "prj_01JCZ00000000000000AGENT",
 		name: "oryn-core",
+		description: "Oryn 的 agent 内核（omp 分支）",
 		repoUrl: "https://github.com/Lynricsy/oryn-core",
 		baseBranch: "oryn",
 		shallowClone: false,
@@ -55,6 +57,18 @@ export const projects: Project[] = [
 		gitAuthorEmail: "agent@oryn.example",
 		createdAt: NOW - 20 * 24 * HOUR,
 		updatedAt: NOW - 5 * HOUR,
+	},
+	// 已归档项目（M24）：只在 `GET /projects?archived=true` 与按 id 读取时出现
+	{
+		id: "prj_01JCZ000000000000000LEGACY",
+		name: "legacy-site",
+		description: "旧官网，已迁到 docs-site",
+		shallowClone: false,
+		snapshots: true,
+		warmOrbs: 0,
+		createdAt: NOW - 120 * 24 * HOUR,
+		updatedAt: NOW - 10 * 24 * HOUR,
+		archivedAt: NOW - 10 * 24 * HOUR,
 	},
 ];
 

@@ -1505,10 +1505,15 @@ export class MockServer {
 			});
 		if (p === "ws-ticket")
 			return json({ ticket: "mock-ticket", expiresIn: 30 });
-		if (p === "projects" && m === "GET")
+		if (p === "projects" && m === "GET") {
+			// 与 ListProjects 一致：archived=true 只列已归档，否则只列未归档
+			const archived = url.searchParams.get("archived") === "true";
 			return json({
-				projects: this.projects.filter((x) => !x.archivedAt),
+				projects: this.projects.filter(
+					(x) => Boolean(x.archivedAt) === archived,
+				),
 			});
+		}
 		if (p === "projects" && m === "POST") {
 			const b = (await body()) as Schemas["ProjectCreate"];
 			const bad =
@@ -1964,9 +1969,14 @@ export class MockServer {
 		if (svcRes) return svcRes;
 		if (p === "threads" && m === "GET") {
 			const archived = url.searchParams.get("archived") === "true";
+			// project=none 只留无项目线程；其它值按项目 id 过滤；不给则不过滤
+			const project = url.searchParams.get("project");
 			return json({
 				threads: [...this.threads.values()].filter(
-					(t) => Boolean(t.archivedAt) === archived,
+					(t) =>
+						Boolean(t.archivedAt) === archived &&
+						(project === null ||
+							(project === "none" ? !t.projectId : t.projectId === project)),
 				),
 			});
 		}
