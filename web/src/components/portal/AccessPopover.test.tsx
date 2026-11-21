@@ -132,7 +132,11 @@ describe("AccessPopover", () => {
 	});
 
 	it("剩余时间每 30s 随时钟刷新，到期即按未公开显示", () => {
+		// 弹层的 Floating 开着时逐帧比对锚点（requestAnimationFrame）：假时钟下推进 1 小时要同步跑约 22 万帧，
+		// 测试随机器快慢超时。这里只测 30s 刷新，逐帧跟随换成空操作（首帧定位是同步的）；
+		// 必须在 useFakeTimers 之后 stub，否则假时钟会把它换回去
 		vi.useFakeTimers();
+		vi.stubGlobal("requestAnimationFrame", () => 0);
 		const start = new Date("2026-11-13T10:00:00Z").getTime();
 		vi.setSystemTime(start);
 		const expiresAt = start + HOUR + 30_000;
