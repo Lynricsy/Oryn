@@ -2424,7 +2424,7 @@ const filePreview: Shooter = async (scheme) => {
 	);
 };
 
-/** 全局助手：左 主线（自动化来料折叠成一行），右 首屏选中助手后的流光输入框。 */
+/** 全局助手：左 主线（自动化来料折叠成一行），右 首屏选中助手（点阵染色呼吸、两侧线上光流向输入框）。 */
 const assistant: Shooter = async (scheme) => {
 	const main = await capture(mac(scheme, DUO_W, DUO_H), async (page) => {
 		await go(page, `/assistant/${T.main}`, "[data-testid=transcript]", 1_400);
@@ -2444,7 +2444,7 @@ const assistant: Shooter = async (scheme) => {
 	});
 	return duo(scheme, main, ask, [
 		["全局助手的主线", "自动化结果在幕后看过，只把要紧的说出口"],
-		["首屏直达全局助手", "选中助手时输入框换上流光描边，发送即新建助手对话"],
+		["首屏直达全局助手", "点阵染上助手色，发送即新建助手对话"],
 	]);
 };
 

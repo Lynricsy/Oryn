@@ -67,7 +67,7 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
   <img alt="Oryn macOS 客户端三栏工作台：左侧是项目线程树、收件箱与悬浮分区底栏；中间是 Firecracker 快照恢复线程，收起的 read / edit 工具卡写明意图，运行中的 bash 卡以 Pseudo 视图显示执行轨迹；右侧是 microVM 的资源曲线、上下文分解与待办。" src="docs/assets/workbench-light.png" width="100%">
 </picture>
 
-左边是按项目组织的线程树，中间是对话，右边是这台环境的一切：资源曲线、上下文构成、待办、Git 改动、文件、终端、Portal、远程桌面与 Artifacts。
+左边是按项目组织的线程树，中间是对话，右边是这台环境的一切：资源曲线、上下文构成、待办、Git 改动、文件、终端、Portal、远程桌面与 Artifacts。「信息」页把 orb、服务、浏览器 Profile 与 SSH 主机收成一层入口行，服务故障就地重启并显示进度，停机的环境在这里一键唤醒。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/tool-cards-dark.png">
@@ -76,9 +76,9 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 
 - **工具卡**：收起、展开时头部都显示意图，展开看输入与输出；约 60 种语言的语法高亮；当前一批调用自动展开。
 - **bash 的 Pseudo 视图**：运行中逐行显示执行轨迹，正在执行的那行标出，失败与跳过一眼可见。
-- **思考档位**：模型胶囊右下角的图标就是这一回合实际生效的档位。
+- **思考档位**：模型胶囊右下角的图标就是这一回合实际生效的档位；回合头已经标出的模型与档位切换不再另起一行。
 - **输入框**：选中回复一键引用、`#` 引用 GitHub issue / PR，可选的「下一条消息预测」按 Tab 插入。
-- **右键菜单与「解释」**：右键、菜单键或长按都弹同一份上下文菜单；选中一段文字可让模型解释、翻译、就此提问或跑自定义快捷动作，走旁路提问复用主会话的前缀缓存，结果显示在选区旁的解释卡里。
+- **右键菜单与「解释」**：转录消息、代码块、链接与图片、工具卡、侧栏线程行、收件箱、终端、编辑器与改动列表都有右键菜单，部分界面也支持菜单键或长按；选中一段文字可让模型解释、翻译、就此提问或跑自定义快捷动作，走旁路提问复用主会话的前缀缓存，结果显示在选区旁的解释卡里。快捷动作在「设置 → 选区快捷动作」里增删排序。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/file-preview-dark.png">
@@ -101,7 +101,7 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 | Docker | 普通容器，剥离 `NET_RAW` / `NET_ADMIN` | 默认选择 |
 | Sysbox | 非特权 UID 映射，容器里可跑 `dockerd` | 需要 Docker-in-Docker 的项目 |
 | Firecracker | 独立内核的 microVM | 不可信代码、需要内核级隔离 |
-| 本机 Runner | 你自己机器上的普通用户进程 | 本地目录、本地硬件 |
+| 本机 Runner | 你自己机器上的普通用户进程，跑 Oryn Core，配置不含密钥 | 本地目录、本地硬件 |
 
 - **环境跟着线程走**：新线程总有一台新环境，删掉最后一个线程环境即回收，全部归档即冻结，不用手动管理。
 - **快照与预热池**：项目首次 `.oryn/setup` 后自动快照，之后的新线程跳过构建；高频项目可留常驻预热池。
@@ -123,7 +123,7 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/assistant-dark.png">
-  <img alt="全局助手：左为置顶的主线对话，自动化结果折叠成一行「幕后」，助手只把要紧的说出口；右为首屏选中全局助手时带流光描边的输入框。" src="docs/assets/assistant-light.png" width="100%">
+  <img alt="全局助手：左为置顶的主线对话，自动化结果折叠成一行「幕后」，助手只把要紧的说出口；右为首屏选中全局助手：输入框背后的点阵染上助手色，两侧渐变线止于输入框边缘。" src="docs/assets/assistant-light.png" width="100%">
 </picture>
 
 - **全局助手**：能自己搜索、读网页、生图、调 MCP；能遥控一台属于它的电脑；也能替你开线程、发话、改配置。删除与公开分享要你点确认卡。
@@ -136,7 +136,7 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 </picture>
 
 - **Space**：协调者在严格沙箱里拆解目标、并发派出工作线程，需要你决策时汇总提醒。
-- **定时任务**：在已有线程里按 Cron 巡检，或每次拉起全新线程并自动归档旧运行。
+- **定时任务**：在已有线程里按 Cron 巡检，或每次拉起全新线程并自动归档旧运行；新线程可指定开场的 role 或模型。
 - **成本统计**：按模型、项目、Space 穿透成本、缓存命中率与首字延迟，支持日 / 月预算告警。
 
 ## Agent 配置、记忆与集成
