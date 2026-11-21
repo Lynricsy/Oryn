@@ -7,7 +7,9 @@
  * 环境变量：
  *   ORYN_README_DIR   输出目录（默认仓库的 docs/assets）
  *   ORYN_README_BASE  复用已在跑的 mock 开发服务器（如 http://127.0.0.1:5191），不另起 vite
+ *   ORYN_IOS_SHOTS    mobile-views 用的 iOS 模拟器原图目录（readme-ios-shots 工作流的产物）；没设时跳过该组
  *   CHROMIUM          Chromium 可执行文件（默认 /usr/bin/chromium）
+ * `--emit-ios-init <文件>`：只输出 iOS 模拟器里注入 mock 构建的演示数据脚本（工作流调用），见 `iosDriver`。
  *
  * 演示数据只在运行时经 `window.__orynMock`（`localStorage["oryn.debug"]="1"`）注入：不改 `src/mock/fixtures.ts`
  * （验收脚本与单测依赖其中的 ID 与错误态）。注入时机：MockServer 构造时给 `__orynMock` 赋值，这里用 setter 截住实例，
@@ -1663,12 +1665,15 @@ function seedDemo(mock: MockServer, demo: Demo) {
 	};
 }
 
-/** 页面初始化脚本：截住 MockServer 实例并注入；主题、侧栏等 localStorage 预设。 */
+/**
+ * 页面初始化脚本：截住 MockServer 实例并注入；主题、侧栏等 localStorage 预设。
+ * `shell: "ios"` 给 iOS 模拟器里的真实 App 用（`--emit-ios-init`）：主题跟系统（模拟器外观决定明暗），见 `iosDriver`。
+ */
 function initScript(
 	demo: Demo,
 	opts: {
-		scheme: Scheme;
-		shell?: "macos";
+		scheme: Scheme | "system";
+		shell?: "macos" | "ios";
 		collapsed?: boolean;
 		storage?: Record<string, string>;
 	},
@@ -1692,8 +1697,28 @@ function initScript(
 			get() { return inst; },
 			set(v) { inst = v; queueMicrotask(() => seed(v, demo)); },
 		});
-		${opts.shell === "macos" ? macosShell() : ""}
+		${opts.shell === "macos" ? macosShell() : opts.shell === "ios" ? iosDriver() : ""}
 	})();`;
+}
+
+/**
+ * iOS 模拟器里的 README 截图（`ci/ios-readme-shots.sh`）：App 经 `ORYN_E2E_URL` 打开带这段脚本的 mock 构建。
+ * - 界面语言固定中文：模拟器默认英文，`detectLocale` 读 `navigator.languages`；
+ * - 地址带 `?readme=sidebar` 时，转录出现后点一下页头的网页侧栏钮（原生接管时它隐藏在原生钮下面，`click()` 仍走同一个
+ *   `toggleSidebar`），原生底栏随之按真实的开合路径跟上。模拟器没有点按命令，这是唯一不经触摸的一步。
+ */
+function iosDriver(): string {
+	return `
+		Object.defineProperty(Navigator.prototype, "languages", { configurable: true, get: () => ["zh-CN"] });
+		Object.defineProperty(Navigator.prototype, "language", { configurable: true, get: () => "zh-CN" });
+		if (new URLSearchParams(location.search).get("readme") === "sidebar") {
+			const timer = setInterval(() => {
+				const lead = document.querySelector('[data-native-slot="lead"]');
+				if (!lead || !document.querySelector("[data-testid=transcript]")) return;
+				clearInterval(timer);
+				setTimeout(() => lead.click(), 1500);
+			}, 200);
+		}`;
 }
 
 /**
@@ -1752,7 +1777,6 @@ interface PageOpts {
 	shell?: "macos";
 	collapsed?: boolean;
 	storage?: Record<string, string>;
-	mobile?: boolean;
 }
 
 /**
@@ -1782,7 +1806,6 @@ async function newPage(
 		reducedMotion: "reduce",
 		// Service Worker 发出的请求不经过 ctx.route，直接禁用
 		serviceWorkers: "block",
-		...(opts.mobile ? { isMobile: true, hasTouch: true } : {}),
 	});
 	// mock 应答的请求不出网、不经过这里；真正出网的写请求一律拒绝，免得经 vite 代理改动真实 orynd
 	await ctx.route(PROXIED, (route) => {
@@ -2108,32 +2131,30 @@ const artifactsInbox: Shooter = async (scheme) =>
 		],
 	);
 
-/** 手机三联：下沉侧栏、紧凑单栏对话、右上视图菜单（390 宽 Web 移动布局）。 */
+/**
+ * 手机三联：iOS 模拟器里真实 App 的截图（原生液态玻璃底栏与页头是 UIKit 画的，浏览器里没有）。
+ * 原图由 GitHub Actions 的 readme-ios-shots 工作流产出（`ci/ios-readme-shots.sh`，产物 readme-ios-shots），
+ * 解压到某个目录后用 `ORYN_IOS_SHOTS=<目录>` 指给本脚本；没设时跳过本组、保留现有配图。
+ */
+const IOS_VIEWS = ["sidebar", "thread", "home"] as const;
 const mobileViews: Shooter = async (scheme) => {
-	const phone: PageOpts = { scheme, width: 390, height: 844, mobile: true };
-	const sink = await capture(phone, async (page) => {
-		await openThread(page, T.fc);
-		await page
-			.getByRole("button", { name: "侧边栏", exact: true })
-			.first()
-			.click();
-		await page.locator("[data-testid=sink-card][data-open]").waitFor();
-		await settle(page, 800);
-	});
-	const thread = await capture(phone, async (page) => {
-		await openThread(page, T.fc);
-		await settle(page, 600);
-	});
-	const menu = await capture(phone, async (page) => {
-		await openThread(page, T.fc);
-		await page.locator("[data-testid=thread-view-menu]").first().click();
-		await page.locator("[data-view=info]").waitFor();
-		await settle(page, 500);
-	});
+	const dir = process.env.ORYN_IOS_SHOTS;
+	if (!dir) {
+		console.warn(
+			"  mobile-views 跳过：没设 ORYN_IOS_SHOTS（iOS 原图来自 readme-ios-shots 工作流，见 docs/development.md）",
+		);
+		return Buffer.alloc(0);
+	}
+	const shots: Record<string, Buffer> = {};
+	for (const [i, view] of IOS_VIEWS.entries()) {
+		const file = Bun.file(`${dir}/ios-${view}-${scheme}.png`);
+		if (!(await file.exists())) throw new Error(`缺少 iOS 原图 ${file.name}`);
+		shots[`p${i}`] = Buffer.from(await file.arrayBuffer());
+	}
 	const caps = [
-		"下沉式侧栏与悬浮胶囊底栏",
-		"紧凑单栏对话与底部输入坞",
-		"右上角视图菜单秒切改动与终端",
+		"下沉式侧栏与原生液态玻璃底栏",
+		"线程对话：原生页头与底部输入坞",
+		"新建线程：选好 role 与模型直接开工",
 	];
 	const phones = caps
 		.map(
@@ -2145,8 +2166,8 @@ const mobileViews: Shooter = async (scheme) => {
 		scheme,
 		{ width: 1280, height: 640 },
 		phones,
-		{ p0: sink, p1: thread, p2: menu },
-		`.phone { position: absolute; top: 16px; width: 265px; border-radius: 34px; overflow: hidden; background: var(--bg);
+		shots,
+		`.phone { position: absolute; top: 16px; width: 265px; border-radius: 36px; overflow: hidden; background: var(--bg);
   box-shadow: 0 0 0 1px color-mix(in oklab, var(--text) 14%, transparent), 0 24px 50px -20px oklch(0.25 0.03 235 / 0.4); }
 :root[data-theme="dark"] .phone { box-shadow: 0 0 0 1px oklch(1 0 0 / 0.12), 0 24px 50px -20px oklch(0 0 0 / 0.6); }
 .phone img { display: block; width: 100%; }
@@ -2575,6 +2596,18 @@ async function warmUp() {
 		await page.waitForTimeout(1_500);
 	}
 	await ctx.close();
+}
+
+// iOS 模拟器截图用（readme-ios-shots 工作流）：只输出注入脚本，不起 vite 与浏览器。演示数据的相对时间从这一刻算起，
+// 所以工作流在 App 编译完、即将截图时才生成它。
+const EMIT_IOS = option("--emit-ios-init");
+if (EMIT_IOS) {
+	await Bun.write(
+		EMIT_IOS,
+		initScript(buildDemo(Date.now()), { scheme: "system", shell: "ios" }),
+	);
+	console.log(EMIT_IOS);
+	process.exit(0);
 }
 
 const server = process.env.ORYN_README_BASE

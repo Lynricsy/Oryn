@@ -1,0 +1,86 @@
+name: readme-ios-shots
+
+# README 手机三联的 iOS 原图：iOS 26+ 模拟器里的真实 App（不签名的 debug 模拟器包）打开带演示数据的 mock Web UI，
+# 原生液态玻璃底栏与页头由 UIKit 绘制，明暗各截三张，作为产物 readme-ios-shots 上传（web/src-tauri/ci/ios-readme-shots.sh）。
+# 合成到 docs/assets 在本机做：下载产物后 `ORYN_IOS_SHOTS=<目录> bun run shots:readme --only mobile-views`（见 docs/development.md）。
+# 触发：推送 readme-shots/** 分支，或手动运行。只读权限、不取任何 secret。
+# 供应链约束同 mobile.yml：第三方 action 钉到完整提交 SHA；checkout 不保留凭据。
+on:
+  push:
+    branches: ["readme-shots/**"]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: readme-ios-shots-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shots:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 确认 Xcode ≥ 26（iOS 26 SDK：Liquid Glass）
+        shell: bash
+        run: |
+          set -euo pipefail
+          v=$(xcodebuild -version | awk 'NR==1{print $2}')
+          echo "Xcode $v" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [[ ${v%%.*} -lt 26 ]]; then echo "::error::需要 Xcode 26+，当前 $v"; exit 1; fi
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: web/package.json
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable 分支，2026-10-16
+        with:
+          toolchain: stable
+          targets: aarch64-apple-ios-sim
+
+      - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: "web/src-tauri -> target"
+          key: ios
+
+      - name: 安装 web 依赖
+        working-directory: web
+        run: bun install --frozen-lockfile
+
+      - name: 构建 mock Web UI
+        working-directory: web
+        run: VITE_MOCK=1 bunx vite build --outDir dist-readme
+
+      - name: 生成 iOS 工程（未入库时）并装入 App 图标
+        working-directory: web
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -d src-tauri/gen/apple ]]; then bun run tauri ios init --ci; fi
+          bash src-tauri/ci/ios-appicon.sh
+
+      - name: 不签名编译模拟器包
+        working-directory: web
+        run: bun run tauri ios build --debug --target aarch64-sim --no-sign --ci
+
+      - name: 模拟器截图
+        timeout-minutes: 30
+        shell: bash
+        run: |
+          set -euo pipefail
+          app=$(find web/src-tauri/gen/apple/build -type d -name 'Oryn.app' | head -1)
+          if [[ -z "$app" ]]; then echo "::error::没有找到 Oryn.app"; exit 1; fi
+          bash web/src-tauri/ci/ios-readme-shots.sh "$app" web/dist-readme readme-ios-shots
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: readme-ios-shots
+          path: readme-ios-shots/
+          if-no-files-found: error
