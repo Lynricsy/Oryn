@@ -4,7 +4,7 @@
  * 只能在 TUI 里执行、客户端又没有接管的命令不列（`hiddenFromMenu`）。
  */
 import { useQuery } from "@tanstack/react-query";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	CLIENT_COMMANDS,
@@ -14,6 +14,7 @@ import {
 	findCommand,
 	hiddenFromMenu,
 } from "../../lib/slash";
+import { useDebounced } from "../../lib/use-debounced";
 import type { RpcAvailableSlashCommand } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
 import { Badge } from "../ui/data";
@@ -44,15 +45,6 @@ export interface CommandMenuModel {
 
 /** Oryn 客户端命令的来源名。 */
 const ORYN_SOURCE = "Oryn";
-
-function useDebounced<T>(value: T, ms: number): T {
-	const [v, setV] = useState(value);
-	useEffect(() => {
-		const timer = setTimeout(() => setV(value), ms);
-		return () => clearTimeout(timer);
-	}, [value, ms]);
-	return v;
-}
 
 /** 计算菜单内容；输入不是斜杠命令（或参数阶段的命令不认识）时返回 null。`coordinator`：协调对话只列它能执行的客户端命令。 */
 export function useCommandMenu(

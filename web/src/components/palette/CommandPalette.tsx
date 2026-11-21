@@ -41,6 +41,7 @@ import {
 } from "../../lib/palette-match";
 import { isCoordinatorThread } from "../../lib/thread-kind";
 import { parseTitleCard } from "../../lib/title";
+import { useDebounced } from "../../lib/use-debounced";
 import { useBreakpoint } from "../../lib/viewport";
 import { useIndex } from "../../state/stores";
 import { type ThemeMode, themeStore, useTheme } from "../../state/theme";
@@ -130,16 +131,6 @@ const MODE_ICON = {
 	light: "sun",
 	dark: "moon",
 } as const satisfies Record<ThemeMode, IconName>;
-
-/** 输入停顿后的查询（去首尾空白） */
-function useDebounced(value: string, ms: number): string {
-	const [v, setV] = useState(value);
-	useEffect(() => {
-		const timer = setTimeout(() => setV(value), ms);
-		return () => clearTimeout(timer);
-	}, [value, ms]);
-	return v;
-}
 
 /** 按查询过滤并排序候选：得分高的在前，同分时未归档在前、近的在前。 */
 function rank(

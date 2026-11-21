@@ -15,6 +15,9 @@ export const qk = {
 	me: ["me"] as const,
 	devices: ["devices"] as const,
 	projects: ["projects"] as const,
+	/** 单个项目（按 id 取，含已归档）；以 `projects` 开头，失效 `qk.projects` 时连带失效 */
+	project: (id: string) => ["projects", id] as const,
+	archivedProjects: ["projects", { archived: true }] as const,
 	projectSnapshots: (id: string) => ["projects", id, "snapshots"] as const,
 	providers: ["providers"] as const,
 	secrets: ["secrets"] as const,
@@ -62,6 +65,18 @@ export function useProjects() {
 		queryKey: qk.projects,
 		queryFn: () => unwrap(api.GET("/api/v1/projects")),
 		staleTime: 30_000,
+	});
+}
+
+/** 已归档的项目（`useProjects` 只含未归档的）；`enabled` 为假时不请求。 */
+export function useArchivedProjects(enabled: boolean) {
+	return useQuery({
+		queryKey: qk.archivedProjects,
+		enabled,
+		queryFn: () =>
+			unwrap(
+				api.GET("/api/v1/projects", { params: { query: { archived: true } } }),
+			),
 	});
 }
 
@@ -212,13 +227,19 @@ export function useOrbMetrics(orbId: string | undefined) {
 	});
 }
 
-export function useArchivedThreads(enabled: boolean) {
+/** 已归档线程；给了 `projectId` 时只拉该项目的（服务端按项目过滤）。 */
+export function useArchivedThreads(enabled: boolean, projectId?: string) {
 	return useQuery({
-		queryKey: qk.threads(true),
+		queryKey:
+			projectId === undefined
+				? qk.threads(true)
+				: (["threads", { archived: true, project: projectId }] as const),
 		enabled,
 		queryFn: () =>
 			unwrap(
-				api.GET("/api/v1/threads", { params: { query: { archived: true } } }),
+				api.GET("/api/v1/threads", {
+					params: { query: { archived: true, project: projectId } },
+				}),
 			),
 	});
 }

@@ -137,6 +137,7 @@ import { Stop } from "@phosphor-icons/react/dist/csr/Stop";
 import { Sun } from "@phosphor-icons/react/dist/csr/Sun";
 import { Target } from "@phosphor-icons/react/dist/csr/Target";
 import { TelegramLogo } from "@phosphor-icons/react/dist/csr/TelegramLogo";
+import { Terminal } from "@phosphor-icons/react/dist/csr/Terminal";
 import { TerminalWindow } from "@phosphor-icons/react/dist/csr/TerminalWindow";
 import { TextT } from "@phosphor-icons/react/dist/csr/TextT";
 import { ThermometerHot } from "@phosphor-icons/react/dist/csr/ThermometerHot";
@@ -183,6 +184,8 @@ const ICONS = {
 	/** 循环时钟：重复执行的定时（定时折叠行、定时运行胶囊） */
 	repeat: ClockClockwise,
 	terminal: TerminalWindow,
+	/** 复制 git clone 命令（项目页头）；终端面板用 terminal */
+	clone: Terminal,
 	list: ListChecks,
 	trash: Trash,
 	copy: Copy,

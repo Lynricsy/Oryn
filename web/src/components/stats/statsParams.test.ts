@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	coarseGrain,
 	DEFAULT_PARAMS,
+	daysWindow,
 	grainFor,
 	parseStatsParams,
 	previousWindow,
@@ -77,6 +78,20 @@ describe("statsWindow", () => {
 			from: day(2026, 11, 2),
 			to: day(2026, 11, 9),
 		});
+	});
+});
+
+describe("daysWindow", () => {
+	it("最近 14 个本地日：本地零点到明天零点，按天粒度，当天内结果不变", () => {
+		const w = daysWindow(14, NOW, "Asia/Shanghai");
+		expect(w).toEqual({
+			from: day(2026, 11, 2),
+			to: day(2026, 11, 16),
+			tz: "Asia/Shanghai",
+			days: 14,
+			grain: "day",
+		});
+		expect(daysWindow(14, day(2026, 11, 15) + 1, "Asia/Shanghai")).toEqual(w);
 	});
 });
 

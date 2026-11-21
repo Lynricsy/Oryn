@@ -17,11 +17,15 @@ import { Menu } from "../ui/primitives";
 
 type ThreadPull = Schemas["ThreadPull"];
 
-/** 与 `ScheduleChip` 的胶囊同一串类名。 */
-const CHIP =
+/** 与 `ScheduleChip` 的胶囊同一串类名（项目主页的状态胶囊也用）。 */
+export const CHIP =
 	"inline-flex h-[26px] shrink-0 items-center gap-1.5 rounded-full border px-2 font-medium text-xs transition-colors duration-150";
 
-const CHECK_TONE = { success: "ok", failure: "err", pending: "warn" } as const;
+export const CHECK_TONE = {
+	success: "ok",
+	failure: "err",
+	pending: "warn",
+} as const;
 
 /** PR 的状态文案（草稿单独一档）。 */
 export function prStateText(pull: ThreadPull, t: TFunction): string {

@@ -219,6 +219,22 @@ export function statsWindow(
 	};
 }
 
+/** 截至今天（含）的最近 `days` 个本地日：起点、终点都取本地零点，当天内查询键不变（项目总览的活动曲线用）。 */
+export function daysWindow(
+	days: number,
+	now: number,
+	tz = browserTimeZone(),
+): StatsWindow {
+	const today = addDays(new Date(now), 0);
+	return {
+		from: addDays(today, -(days - 1)).getTime(),
+		to: addDays(today, 1).getTime(),
+		tz,
+		days,
+		grain: grainFor(days),
+	};
+}
+
 /** 等长的前一段（「较上一周期」）。 */
 export function previousWindow(w: Pick<StatsWindow, "from" | "to">): {
 	from: number;
