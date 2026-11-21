@@ -15,6 +15,7 @@ import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Schemas } from "../../api/client";
 import i18n from "../../i18n";
+import { answerConfirm } from "../../test/confirm";
 import BrowserProfilesSettings, {
 	validProfileName,
 } from "./BrowserProfilesSettings";
@@ -221,7 +222,6 @@ describe("BrowserProfilesSettings", () => {
 	});
 
 	it("删除：被持有时禁用并提示先解除；空闲的确认后 DELETE", async () => {
-		const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
 		mount();
 		const work = await rowOf("工作账号");
 		expect(
@@ -235,7 +235,7 @@ describe("BrowserProfilesSettings", () => {
 				within(shop).getByRole("button", { name: i18n.t("common.delete") }),
 			);
 		});
-		expect(confirm).toHaveBeenCalledWith(
+		expect((await answerConfirm(true)).title).toBe(
 			i18n.t("browserProfiles.deleteConfirm", { name: "淘宝采购" }),
 		);
 		expect(requests).toContainEqual({

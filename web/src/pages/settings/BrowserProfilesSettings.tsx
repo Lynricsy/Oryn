@@ -1,7 +1,7 @@
 /**
  * 设置页「浏览器 Profile」（M8 4.6，default export，由设置页接入）：顶部新建表单（名字）；
  * 列表每行 = 名字、大小、上次保存时间、状态（空闲 / 使用中 · 线程（链接）/ 只读副本数 / 上次保存失败的原因），
- * 行内重命名与删除（`window.confirm`；被独占持有时禁用并提示先在 Desktop 面板解除）。
+ * 行内重命名与删除（删除先经应用内确认 `confirmAction`；被独占持有时禁用并提示先在 Desktop 面板解除）。
  */
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -24,6 +24,7 @@ import {
 	Spinner,
 	TextInput,
 } from "../../components/ui/primitives";
+import { confirmAction } from "../../lib/confirm";
 import { formatBytes, formatRelative } from "../../lib/format";
 
 type Profile = Schemas["BrowserProfile"];
@@ -164,13 +165,16 @@ function ProfileRow({ profile }: { profile: Profile }): ReactNode {
 									holder ? t("browserProfiles.deleteHeld") : t("common.delete")
 								}
 								disabled={!!holder || del.isPending}
-								onClick={() => {
+								onClick={async () => {
 									if (
-										!window.confirm(
-											t("browserProfiles.deleteConfirm", {
+										!(await confirmAction({
+											title: t("browserProfiles.deleteConfirm", {
 												name: profile.name,
 											}),
-										)
+											body: t("browserProfiles.deleteConfirmBody"),
+											action: t("common.delete"),
+											danger: true,
+										}))
 									)
 										return;
 									del.mutate(profile.id);

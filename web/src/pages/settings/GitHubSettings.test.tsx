@@ -20,6 +20,7 @@ import type {
 	GitHubStatus,
 } from "../../api/github-queries";
 import i18n from "../../i18n";
+import { answerConfirm } from "../../test/confirm";
 import GitHubSettings, { callbackNotice } from "./GitHubSettings";
 
 const T = (k: string) => i18n.t(k as "common.copy");
@@ -344,17 +345,16 @@ describe("GitHubSettings · OAuth App（M15）", () => {
 	it("删除：确认文案说明会删 hook、断开身份；取消不发请求，确认后发 DELETE", async () => {
 		renderAt(OAUTH);
 		const card = await screen.findByTestId("github-oauth-app");
-		const confirm = vi.fn(() => false);
-		vi.stubGlobal("confirm", confirm);
 		const del = within(card).getByRole("button", {
 			name: T("github.oauth.delete"),
 		});
 		fireEvent.click(del);
-		expect(confirm).toHaveBeenCalledWith(T("github.oauth.deleteConfirm"));
-		expect(T("github.oauth.deleteConfirm")).toMatch(/webhook/);
+		const request = await answerConfirm(false);
+		expect(request.title).toBe(T("github.oauth.deleteConfirm"));
+		expect(request.body).toMatch(/webhook/);
 		expect(sent).toHaveLength(0);
-		confirm.mockReturnValue(true);
 		fireEvent.click(del);
+		await answerConfirm(true);
 		await waitFor(() =>
 			expect(sent).toEqual([
 				{ method: "DELETE", path: "/api/v1/github/oauth-app", body: null },

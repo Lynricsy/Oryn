@@ -42,6 +42,7 @@ import {
 	TextInput,
 	Toggle,
 } from "../../components/ui/primitives";
+import { confirmAction } from "../../lib/confirm";
 import { formatRelative } from "../../lib/format";
 import { TRIGGER_PRESETS } from "../../lib/trigger-presets";
 
@@ -259,11 +260,16 @@ function TriggerRow({
 							icon="trash"
 							label={t("github.triggers.delete", { name: trigger.name })}
 							disabled={del.isPending}
-							onClick={() => {
+							onClick={async () => {
 								if (
-									window.confirm(
-										t("github.triggers.deleteConfirm", { name: trigger.name }),
-									)
+									await confirmAction({
+										title: t("github.triggers.deleteConfirm", {
+											name: trigger.name,
+										}),
+										body: t("github.triggers.deleteConfirmBody"),
+										action: t("common.delete"),
+										danger: true,
+									})
 								)
 									del.mutate(trigger.id);
 							}}

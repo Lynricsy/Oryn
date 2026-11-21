@@ -19,6 +19,7 @@ import {
 } from "../../mock/fixtures";
 import { MockServer } from "../../mock/server";
 import { indexStore } from "../../state/stores";
+import { answerConfirm } from "../../test/confirm";
 import AutomationsSettings from "./AutomationsSettings";
 import { ProjectSchedules } from "./ProjectSchedules";
 
@@ -208,7 +209,6 @@ describe("项目设置里的定时任务", () => {
 
 	it("新建（项目锁定为本项目）后出现在列表里；删除后消失", async () => {
 		if (!oryn) throw new Error("夹具缺项目");
-		vi.spyOn(window, "confirm").mockReturnValue(true);
 		mount(<ProjectSchedules project={oryn} />);
 		const box = screen.getByTestId(`project-schedules-${oryn.id}`);
 		await waitFor(() => expect(rowNames(box)).toHaveLength(2));
@@ -234,6 +234,7 @@ describe("项目设置里的定时任务", () => {
 			within(row).getByRole("button", { name: "「lint」的操作" }),
 		);
 		fireEvent.click(await screen.findByRole("menuitem", { name: "删除" }));
+		expect((await answerConfirm(true)).title).toBe("删除这个定时？");
 		await waitFor(() => expect(rowNames(box)).toHaveLength(2));
 	});
 });

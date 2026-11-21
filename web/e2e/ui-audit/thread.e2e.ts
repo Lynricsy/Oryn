@@ -10,7 +10,7 @@ import {
 	MAIN_THREAD,
 	TOOL_ZOO_THREAD,
 } from "../../src/mock/fixtures";
-import { isMobile, lastOverlay, PHASE, settle, surface } from "./audit";
+import { expect, isMobile, lastOverlay, PHASE, settle, surface } from "./audit";
 
 const T = `/t/${MAIN_THREAD}`;
 const ZOO = `/t/${TOOL_ZOO_THREAD}`;
@@ -510,6 +510,37 @@ overlay("thread.dlg.archive", (p, info) => action(p, info, "归档"), {
 	path: `/t/${M11B_IDS.worktreeThread}`,
 	noReopen: true,
 });
+// 删除线程的确认：after 是共享的应用内确认框（ConfirmHost）；基线是原生 confirm（不可审计），before 只截页面并取消。
+// 关闭按 Esc：确认框消失，焦点回到打开菜单的按钮（宽页头「更多操作」/ 手机标题胶囊），仍停在本线程（未删除）
+overlay(
+	"thread.dlg.delete-confirm",
+	async (p, info) => {
+		if (PHASE === "before") {
+			p.on("dialog", (d) => void d.dismiss());
+			await action(p, info, "删除");
+			return undefined;
+		}
+		await action(p, info, "删除");
+		await p.getByTestId("confirm-ok").waitFor();
+		return lastOverlay(p);
+	},
+	{
+		close: async (p) => {
+			await p.keyboard.press("Escape");
+			await expect(p.getByTestId("confirm-ok")).toBeHidden();
+			await expect
+				.poll(() =>
+					p.evaluate(() =>
+						document.activeElement?.matches(
+							"[data-testid=thread-title], button[aria-label='更多操作']",
+						),
+					),
+				)
+				.toBe(true);
+			expect(new URL(p.url()).pathname).toBe(T);
+		},
+	},
+);
 overlay("thread.dlg.context", async (p) => {
 	await p
 		.getByRole("button", { name: /^上下文 \d+%/ })

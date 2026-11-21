@@ -51,6 +51,7 @@ import {
 	Toggle,
 } from "../../components/ui/primitives";
 import type { ActionStep } from "../../lib/action-error";
+import { confirmAction } from "../../lib/confirm";
 import { formatDateTime, formatRelative } from "../../lib/format";
 import { host } from "../../lib/host";
 import {
@@ -769,11 +770,14 @@ function ChannelRow({
 							box="sm"
 							label={t("common.delete")}
 							disabled={del.isPending}
-							onClick={() => {
+							onClick={async () => {
 								if (
-									window.confirm(
-										t("notifySettings.deleteConfirm", { name: ch.name }),
-									)
+									await confirmAction({
+										title: t("notifySettings.deleteConfirm", { name: ch.name }),
+										body: t("notifySettings.deleteConfirmBody"),
+										action: t("common.delete"),
+										danger: true,
+									})
 								)
 									del.mutate(ch.id);
 							}}

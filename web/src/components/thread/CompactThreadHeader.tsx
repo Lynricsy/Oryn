@@ -585,8 +585,9 @@ function TitleMenu({
 			setSub(item.key);
 			return;
 		}
-		onClose(false);
-		// 操作打开的对话框接管焦点；没有对话框的操作（固定、复制链接）失败时错误显示在标题胶囊第二行
+		// 选中后焦点先回标题胶囊（菜单项随菜单卸载）：随后弹出的对话框、确认框把胶囊记成打开者，关闭后焦点回到这里；
+		// 没有对话框的操作（固定、复制链接）失败时错误显示在标题胶囊第二行
+		onClose(true);
 		item.onSelect?.();
 	};
 	const onKeyDown = (e: KeyboardEvent) => {

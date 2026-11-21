@@ -370,7 +370,7 @@ async function keyboardSwitch(page: Page) {
 		.getByRole("menuitemradio", { name: /^工作账号/ })
 		.focus();
 	await page.keyboard.press("Enter");
-	await page.getByTestId("profile-switch-confirm").waitFor();
+	await page.getByTestId("confirm-ok").waitFor();
 	return lastOverlay(page);
 }
 surface({
@@ -398,7 +398,7 @@ surface({
 	// 只有 after 会走到这里（before 不返回浮层，不做关闭重开）
 	close: async (page) => {
 		await page.keyboard.press("Escape");
-		await expect(page.getByTestId("profile-switch-confirm")).toBeHidden();
+		await expect(page.getByTestId("confirm-ok")).toBeHidden();
 		await expect(page.getByTestId("desktop-profile-menu")).toBeFocused();
 		expect(profilePuts.get(page)).toEqual([]);
 	},
@@ -419,7 +419,7 @@ surface({
 			.getByRole("menuitemradio", { name: /^工作账号/ })
 			.click();
 		if (PHASE === "after")
-			await page.getByTestId("profile-switch-confirm").click();
+			await page.getByTestId("confirm-ok").click();
 		await page.getByTestId("profile-conflict").waitFor({ timeout: 15_000 });
 		return lastOverlay(page);
 	},

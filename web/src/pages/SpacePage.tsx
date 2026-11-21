@@ -32,6 +32,7 @@ import {
 	Spinner,
 	tabClass,
 } from "../components/ui/primitives";
+import { confirmAction } from "../lib/confirm";
 import { useBreakpoint } from "../lib/viewport";
 import { useIndex } from "../state/stores";
 import { useSidebarShown } from "../state/ui";
@@ -181,11 +182,14 @@ function SpaceHeader({
 								icon: "trash",
 								danger: true,
 								label: t("space.delete"),
-								onSelect: () => {
+								onSelect: async () => {
 									if (
-										!window.confirm(
-											t("space.deleteConfirm", { name: space.name }),
-										)
+										!(await confirmAction({
+											title: t("space.deleteConfirm", { name: space.name }),
+											body: t("space.deleteConfirmBody"),
+											action: t("common.delete"),
+											danger: true,
+										}))
 									)
 										return;
 									void del.mutateAsync(space.id).then(

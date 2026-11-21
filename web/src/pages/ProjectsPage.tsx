@@ -37,6 +37,7 @@ import {
 	IconButton,
 	Spinner,
 } from "../components/ui/primitives";
+import { confirmAction } from "../lib/confirm";
 import type { SetupRun } from "../lib/env-banner";
 import { formatDuration, formatRelative } from "../lib/format";
 import { parseTitleCard } from "../lib/title";
@@ -240,11 +241,13 @@ function ProjectDetail({ project }: { project: Project }): ReactNode {
 						icon="trash"
 						label={t("common.delete")}
 						disabled={del.busy}
-						onClick={() => {
+						onClick={async () => {
 							if (
-								!window.confirm(
-									t("projects.deleteConfirm", { name: project.name }),
-								)
+								!(await confirmAction({
+									title: t("projects.deleteConfirm", { name: project.name }),
+									action: t("common.delete"),
+									danger: true,
+								}))
 							)
 								return;
 							void del

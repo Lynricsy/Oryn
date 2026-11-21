@@ -14,6 +14,7 @@ import {
 	useDeleteAssistantFile,
 	useSetAssistantFileScope,
 } from "../../api/library-queries";
+import { confirmAction } from "../../lib/confirm";
 import { fileIcon } from "../../lib/file-icon";
 import {
 	type FileSource,
@@ -322,8 +323,15 @@ export function LibraryPanel({ threadId }: { threadId: string }): ReactNode {
 								scope: f.scope === "shared" ? "conversation" : "shared",
 							})
 						}
-						onDelete={() => {
-							if (window.confirm(t("library.deleteConfirm", { name: f.name })))
+						onDelete={async () => {
+							if (
+								await confirmAction({
+									title: t("library.deleteConfirm", { name: f.name }),
+									body: t("library.deleteConfirmBody"),
+									action: t("common.delete"),
+									danger: true,
+								})
+							)
 								remove.mutate(f.id);
 						}}
 					/>

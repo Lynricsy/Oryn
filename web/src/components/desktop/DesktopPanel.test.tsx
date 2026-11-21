@@ -22,6 +22,7 @@ import type { Orb, Schemas, Thread } from "../../api/client";
 import i18n from "../../i18n";
 import { acceptOrbPush, getThreadStore, indexStore } from "../../state/stores";
 import { uiStore } from "../../state/ui";
+import { ConfirmHost } from "../ui/ConfirmHost";
 import DesktopPanel, { AWAY_MS, RETRY_MS } from "./DesktopPanel";
 import type { DesktopHandlers } from "./session";
 
@@ -156,6 +157,7 @@ function mount(threadId: string) {
 		<QueryClientProvider client={client}>
 			<MemoryRouter>
 				<DesktopPanel threadId={threadId} />
+				<ConfirmHost />
 			</MemoryRouter>
 		</QueryClientProvider>,
 	);
@@ -588,7 +590,7 @@ describe("DesktopPanel Profile", () => {
 		).toBeInTheDocument();
 		expect(requests.filter((r) => r.method === "PUT")).toHaveLength(0);
 		await act(async () => {
-			fireEvent.click(screen.getByTestId("profile-switch-confirm"));
+			fireEvent.click(screen.getByTestId("confirm-ok"));
 		});
 		await screen.findByTestId("profile-conflict");
 		await act(async () => {
@@ -609,10 +611,8 @@ describe("DesktopPanel Profile", () => {
 		fireEvent.click(
 			await screen.findByRole("menuitemradio", { name: /工作账号/ }),
 		);
-		fireEvent.click(
-			screen.getByRole("button", { name: i18n.t("common.cancel") }),
-		);
-		expect(screen.queryByTestId("profile-switch-confirm")).toBeNull();
+		fireEvent.click(screen.getByTestId("confirm-cancel"));
+		expect(screen.queryByTestId("confirm-ok")).toBeNull();
 		expect(requests.filter((r) => r.method === "PUT")).toHaveLength(0);
 	});
 
@@ -625,12 +625,15 @@ describe("DesktopPanel Profile", () => {
 		const item = await screen.findByRole("menuitemradio", {
 			name: /工作账号/,
 		});
-		// 键盘：焦点在菜单项上按 Enter（按钮的 Enter 派发 click）；选中后菜单项随菜单卸载
+		// 键盘：焦点在菜单项上按 Enter（按钮的 Enter 派发 click）；选中后菜单项随菜单卸载，
+		// Menu 先把焦点还给触发钮，确认框记下的打开者就是它
 		item.focus();
 		fireEvent.click(item);
-		expect(screen.getByTestId("profile-switch-confirm")).toBeInTheDocument();
-		fireEvent.keyDown(window, { key: "Escape" });
-		expect(screen.queryByTestId("profile-switch-confirm")).toBeNull();
+		expect(screen.getByTestId("confirm-ok")).toBeInTheDocument();
+		await act(async () => {
+			fireEvent.keyDown(window, { key: "Escape" });
+		});
+		expect(screen.queryByTestId("confirm-ok")).toBeNull();
 		expect(screen.getByTestId("desktop-profile-menu")).toHaveFocus();
 		expect(requests.filter((r) => r.method === "PUT")).toHaveLength(0);
 	});
@@ -644,7 +647,9 @@ describe("DesktopPanel Profile", () => {
 		});
 		expect(item).toHaveTextContent(i18n.t("deskPanel.menu.inUse"));
 		fireEvent.click(item);
-		fireEvent.click(screen.getByTestId("profile-switch-confirm"));
+		await act(async () => {
+			fireEvent.click(screen.getByTestId("confirm-ok"));
+		});
 		expect(screen.getByTestId("profile-conflict")).toBeInTheDocument();
 		expect(requests.filter((r) => r.method === "PUT")).toHaveLength(0);
 	});
@@ -682,7 +687,9 @@ describe("DesktopPanel Profile：只读副本与乱序", () => {
 		fireEvent.click(
 			await screen.findByRole("menuitemradio", { name: /GitHub 测试号/ }),
 		);
-		fireEvent.click(screen.getByTestId("profile-switch-confirm"));
+		await act(async () => {
+			fireEvent.click(screen.getByTestId("confirm-ok"));
+		});
 		await act(async () => {
 			fireEvent.click(screen.getByTestId("profile-conflict-readonly"));
 		});
@@ -694,7 +701,6 @@ describe("DesktopPanel Profile：只读副本与乱序", () => {
 	});
 
 	it("只读使用 A 时恢复写回 A 撞上 409：只给「接管」", async () => {
-		vi.spyOn(window, "confirm").mockReturnValue(true);
 		putReply = () =>
 			Response.json(conflictBody(PROFILE_WORK, "工作账号"), { status: 409 });
 		const { threadId } = setup(READONLY_WORK);
@@ -705,6 +711,9 @@ describe("DesktopPanel Profile：只读副本与乱序", () => {
 					name: i18n.t("deskPanel.banner.writeBack"),
 				}),
 			);
+		});
+		await act(async () => {
+			fireEvent.click(screen.getByTestId("confirm-ok"));
 		});
 		await screen.findByTestId("profile-conflict");
 		expect(screen.queryByTestId("profile-conflict-readonly")).toBeNull();

@@ -65,6 +65,7 @@ import {
 	Spinner,
 	TextInput,
 } from "../components/ui/primitives";
+import { confirmAction } from "../lib/confirm";
 import { agentConfigSource } from "../lib/file-source";
 import { formatDateTime, formatMemoryMB, formatRelative } from "../lib/format";
 import { host, type MobileInfo } from "../lib/host";
@@ -262,11 +263,13 @@ function DevicesSettings() {
 											size="sm"
 											variant="danger"
 											disabled={revoke.busy}
-											onClick={() => {
+											onClick={async () => {
 												if (
-													!window.confirm(
-														t("devices.revokeConfirm", { name: d.name }),
-													)
+													!(await confirmAction({
+														title: t("devices.revokeConfirm", { name: d.name }),
+														action: t("common.revoke"),
+														danger: true,
+													}))
 												)
 													return;
 												void revoke
@@ -438,11 +441,13 @@ function ProvidersSettings() {
 									<IconButton
 										icon="trash"
 										label={t("common.delete")}
-										onClick={() => {
+										onClick={async () => {
 											if (
-												!window.confirm(
-													t("providers.deleteConfirm", { name: p.name }),
-												)
+												!(await confirmAction({
+													title: t("providers.deleteConfirm", { name: p.name }),
+													action: t("common.delete"),
+													danger: true,
+												}))
 											)
 												return;
 											void del
@@ -602,11 +607,13 @@ function SecretsSettings() {
 									<IconButton
 										icon="trash"
 										label={t("common.delete")}
-										onClick={() => {
+										onClick={async () => {
 											if (
-												!window.confirm(
-													t("secrets.deleteConfirm", { name: s.name }),
-												)
+												!(await confirmAction({
+													title: t("secrets.deleteConfirm", { name: s.name }),
+													action: t("common.delete"),
+													danger: true,
+												}))
 											)
 												return;
 											void del
@@ -705,8 +712,16 @@ function GitIdentityForm({ initial }: { initial?: Schemas["GitIdentity"] }) {
 				{initial && (
 					<Button
 						disabled={clear.busy}
-						onClick={() => {
-							if (!window.confirm(t("gitIdentity.clearConfirm"))) return;
+						onClick={async () => {
+							if (
+								!(await confirmAction({
+									title: t("gitIdentity.clearConfirm"),
+									body: t("gitIdentity.clearConfirmBody"),
+									action: t("common.clear"),
+									danger: true,
+								}))
+							)
+								return;
 							setSaved(false);
 							void clear.run(async () => {
 								await unwrap(api.DELETE("/api/v1/settings/git-identity"));

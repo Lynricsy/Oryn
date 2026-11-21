@@ -4,7 +4,6 @@
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
-	act,
 	fireEvent,
 	render,
 	screen,
@@ -17,6 +16,7 @@ import {
 	selectionActionsStore,
 	useSelectionActionsSync,
 } from "../../state/selection-actions";
+import { answerConfirm } from "../../test/confirm";
 import SelectionActionsSettings from "./SelectionActionsSettings";
 
 let stored: Schemas["SelectionActions"];
@@ -156,17 +156,14 @@ describe("SelectionActionsSettings", () => {
 			).toContain("乙"),
 		);
 
-		const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
 		const first = () =>
 			screen.getAllByTestId("selection-action-row")[0] as HTMLElement;
 		fireEvent.click(within(first()).getByRole("button", { name: "删除" }));
-		expect(confirm).toHaveBeenCalledWith("删除这个动作？");
+		expect((await answerConfirm(false)).title).toBe("删除这个动作？");
 		expect(puts).toHaveLength(1);
 
-		confirm.mockReturnValue(true);
-		await act(async () => {
-			fireEvent.click(within(first()).getByRole("button", { name: "删除" }));
-		});
+		fireEvent.click(within(first()).getByRole("button", { name: "删除" }));
+		await answerConfirm(true);
 		await waitFor(() => expect(puts).toHaveLength(2));
 		expect(puts[1]?.actions.map((a) => a.id)).toEqual(["aaaaaaaa"]);
 		await waitFor(() =>

@@ -146,6 +146,7 @@ export function Dialog({
 	footer,
 	wide,
 	size,
+	wrapTitle,
 }: {
 	open: boolean;
 	onClose: () => void;
@@ -155,6 +156,8 @@ export function Dialog({
 	wide?: boolean;
 	/** `xl`：分栏类对话框（≈1024px，如 btw 话题列表 + 详情）；优先于 `wide`，窄屏同样全宽底部弹出。 */
 	size?: "xl";
+	/** 标题折行而不是单行截断：确认框的标题是带名字的问句，截断会吞掉关键信息 */
+	wrapTitle?: boolean;
 }) {
 	const { t } = useTranslation();
 	const hostRef = useRef<HTMLDivElement>(null);
@@ -220,7 +223,9 @@ export function Dialog({
 				className={`pop-in dc-bl dc-br relative flex max-h-[85dvh] w-full flex-col rounded-t-xl bg-panel shadow-xl outline-none ring-1 ring-[var(--glass-line)] [--dc-gap:0px] [--dc-r:0px] sm:rounded-xl sm:[--dc-gap:100vmax] sm:[--dc-r:var(--r-xl)] ${size === "xl" ? "sm:max-w-5xl" : wide ? "sm:max-w-3xl" : "sm:max-w-lg"} pb-safe`}
 			>
 				<div className="flex items-start gap-3 pt-5 pr-4 pb-2 pl-5">
-					<h2 className="min-w-0 flex-1 truncate pt-0.5 font-semibold text-base text-fg tracking-tight">
+					<h2
+						className={`min-w-0 flex-1 pt-0.5 font-semibold text-base text-fg tracking-tight ${wrapTitle ? "text-pretty break-words" : "truncate"}`}
+					>
 						{title}
 					</h2>
 					<IconButton
@@ -271,6 +276,18 @@ export interface MenuItem {
 }
 
 /**
+ * 菜单按钮模式：选中或 Esc 关闭后焦点回到触发钮（容器里的第一个可聚焦元素）。选中的菜单项随菜单卸载，
+ * 焦点留在它上面会掉到 body；随后弹出的确认框等也会把这个已卸载的元素记成「打开者」，关闭后无处可还。
+ */
+function focusMenuTrigger(root: HTMLElement | null) {
+	root
+		?.querySelector<HTMLElement>(
+			"button, a[href], [tabindex]:not([tabindex='-1'])",
+		)
+		?.focus({ preventScroll: true });
+}
+
+/**
  * 下拉菜单（支持一级子菜单）；`side="top"` 时向上展开（贴近输入坞的消息菜单）。
  * `footer`：菜单项之下的一段说明（不可点，只在顶层显示）。`className` 加在根元素上（默认是块级的 relative 容器）。
  */
@@ -303,7 +320,10 @@ export function Menu({
 				setOpen(false);
 		};
 		const onKey = (e: KeyboardEvent) => {
-			if (e.key === "Escape") setOpen(false);
+			if (e.key !== "Escape") return;
+			if (ref.current?.contains(document.activeElement))
+				focusMenuTrigger(ref.current);
+			setOpen(false);
 		};
 		document.addEventListener("mousedown", onDown);
 		window.addEventListener("keydown", onKey);
@@ -358,6 +378,7 @@ export function Menu({
 									return;
 								}
 								setOpen(false);
+								focusMenuTrigger(ref.current);
 								item.onSelect?.();
 							}}
 						>

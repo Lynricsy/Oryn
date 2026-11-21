@@ -48,6 +48,7 @@ import {
 	useThreadSchedule,
 } from "../../api/schedule-queries";
 import { useSpaces } from "../../api/space-queries";
+import { confirmAction } from "../../lib/confirm";
 import { formatDateTime } from "../../lib/format";
 import {
 	browserZone,
@@ -649,8 +650,16 @@ function ScheduleForm({
 							<Button
 								variant="danger"
 								disabled={del.isPending}
-								onClick={() => {
-									if (!window.confirm(t("schedule.deleteConfirm"))) return;
+								onClick={async () => {
+									if (
+										!(await confirmAction({
+											title: t("schedule.deleteConfirm"),
+											body: t("schedule.deleteConfirmBody"),
+											action: t("common.delete"),
+											danger: true,
+										}))
+									)
+										return;
 									void del
 										.mutateAsync(existing.id)
 										.then(onClose, () => undefined);

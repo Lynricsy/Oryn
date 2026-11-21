@@ -27,6 +27,7 @@ import {
 	Spinner,
 	Toggle,
 } from "../../components/ui/primitives";
+import { confirmAction } from "../../lib/confirm";
 import { formatBytes, formatDuration } from "../../lib/format";
 import { useBreakpoint } from "../../lib/viewport";
 import { indexStore } from "../../state/stores";
@@ -213,9 +214,14 @@ export function AccelCard({ project }: { project: Project }): ReactNode {
 						variant="danger"
 						icon="trash"
 						disabled={clear.busy}
-						onClick={() => {
+						onClick={async () => {
 							if (
-								!window.confirm(t("accel.clearConfirm", { name: project.name }))
+								!(await confirmAction({
+									title: t("accel.clearConfirm", { name: project.name }),
+									body: t("accel.clearConfirmBody"),
+									action: t("common.clear"),
+									danger: true,
+								}))
 							)
 								return;
 							void clear.run(async () => {

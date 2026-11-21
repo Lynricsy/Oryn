@@ -1,6 +1,6 @@
 /**
  * 设置 → Agent → 选区快捷动作（M22）：自定义的右键菜单动作，名称 + 提示词，选中文字后连同选区交给模型。
- * 列表可上移、下移、编辑、删除（删除先 `window.confirm`）；新增与编辑在对话框里填。每次改动都整体 PUT
+ * 列表可上移、下移、编辑、删除（删除先经应用内确认 `confirmAction`）；新增与编辑在对话框里填。每次改动都整体 PUT
  * （`saveSelectionActions`，成功后写回查询缓存，菜单读的副本由 AppShell 的 `useSelectionActionsSync` 跟上）。
  * 上限 12 条、名称 ≤ 24 字、提示词 ≤ 2000 字，与服务端校验一致。
  */
@@ -11,6 +11,7 @@ import {
 	saveSelectionActions,
 	useSelectionActions,
 } from "../../api/selection-actions-queries";
+import { confirmAction } from "../../lib/confirm";
 import type { SelectionAction } from "../../state/selection-actions";
 import { Card, ListRow } from "../ui/data";
 import {
@@ -81,8 +82,15 @@ export default function SelectionActionsSettings(): ReactNode {
 		if (!a || !b) return;
 		saveList(actions.with(i, b).with(j, a));
 	};
-	const remove = (action: SelectionAction) => {
-		if (!window.confirm(t("selectionActions.deleteConfirm"))) return;
+	const remove = async (action: SelectionAction) => {
+		if (
+			!(await confirmAction({
+				title: t("selectionActions.deleteConfirm"),
+				action: t("common.delete"),
+				danger: true,
+			}))
+		)
+			return;
 		saveList(actions.filter((a) => a.id !== action.id));
 	};
 	const openDraft = (next: Draft) => {

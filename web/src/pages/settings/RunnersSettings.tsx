@@ -29,6 +29,7 @@ import {
 	Spinner,
 	TextInput,
 } from "../../components/ui/primitives";
+import { confirmAction } from "../../lib/confirm";
 import { formatRelative } from "../../lib/format";
 
 /** 新 runner 的完整启动命令（在那台机器上以普通用户运行；`--dir` 可重复）。 */
@@ -125,9 +126,14 @@ function RunnerRow({ runner }: { runner: Runner }): ReactNode {
 						icon="trash"
 						label={t("runner.delete", { name: runner.name })}
 						disabled={del.isPending}
-						onClick={() => {
+						onClick={async () => {
 							if (
-								window.confirm(t("runner.deleteConfirm", { name: runner.name }))
+								await confirmAction({
+									title: t("runner.deleteConfirm", { name: runner.name }),
+									body: t("runner.deleteConfirmBody"),
+									action: t("common.delete"),
+									danger: true,
+								})
 							)
 								del.mutate(runner.id);
 						}}

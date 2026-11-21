@@ -9,6 +9,7 @@ import type { NavigateFunction } from "react-router";
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
 import type { Thread } from "../../api/client";
+import { confirmAction } from "../../lib/confirm";
 import { copyWithToast } from "../../lib/context-menu/selection-groups";
 import type { MenuGroup } from "../../lib/context-menu/types";
 import { host } from "../../lib/host";
@@ -183,8 +184,16 @@ export function threadRowGroups(
 					icon: "trash",
 					danger: true,
 					label: t("thread.delete"),
-					onSelect: () => {
-						if (!window.confirm(t("thread.deleteConfirm"))) return;
+					onSelect: async () => {
+						if (
+							!(await confirmAction({
+								title: t("thread.deleteConfirm"),
+								body: t("thread.deleteConfirmBody"),
+								action: t("common.delete"),
+								danger: true,
+							}))
+						)
+							return;
 						run(async () => {
 							await deleteThread(id);
 							if (location.pathname === `/t/${id}`) o.navigate("/");

@@ -16,6 +16,8 @@ import { makeOrb } from "../../mock/fixtures";
 import type * as Actions from "../../state/actions";
 import { getThreadStore, resetThreadStores } from "../../state/stores";
 import { uiStore } from "../../state/ui";
+import { answerConfirm } from "../../test/confirm";
+import { ConfirmHost } from "../ui/ConfirmHost";
 import { CompactThreadHeader } from "./CompactThreadHeader";
 
 const { patchThread } = vi.hoisted(() => ({
@@ -104,6 +106,7 @@ function mount() {
 		<QueryClientProvider client={client}>
 			<MemoryRouter>
 				<CompactThreadHeader threadId={tid} veil={56} />
+				<ConfirmHost />
 			</MemoryRouter>
 		</QueryClientProvider>
 	);
@@ -162,6 +165,17 @@ describe("CompactThreadHeader 标题菜单", () => {
 		fireEvent.click(env);
 		expect(item("info")).not.toBeNull();
 		for (const k of ["freeze", "wake", "delete"]) expect(item(k), k).toBeNull();
+	});
+
+	it("菜单选「删除」后取消确认：焦点回到标题胶囊，不掉到 body", async () => {
+		mount();
+		fireEvent.click(capsule());
+		const del = item("delete");
+		if (!del) throw new Error("没有删除项");
+		fireEvent.click(del);
+		await answerConfirm(false);
+		expect(screen.queryByRole("dialog")).toBeNull();
+		expect(capsule()).toHaveFocus();
 	});
 });
 

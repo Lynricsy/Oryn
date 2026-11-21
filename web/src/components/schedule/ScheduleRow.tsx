@@ -14,6 +14,7 @@ import {
 	useRunSchedule,
 	useSetScheduleEnabled,
 } from "../../api/schedule-queries";
+import { confirmAction } from "../../lib/confirm";
 import { formatRelative } from "../../lib/format";
 import { describeSchedule } from "../../lib/schedule";
 import { parseTitleCard } from "../../lib/title";
@@ -167,8 +168,16 @@ export function ScheduleRow({
 						icon: "trash",
 						danger: true,
 						label: t("common.delete"),
-						onSelect: () => {
-							if (window.confirm(t("schedule.deleteConfirm"))) del.mutate(s.id);
+						onSelect: async () => {
+							if (
+								await confirmAction({
+									title: t("schedule.deleteConfirm"),
+									body: t("schedule.deleteConfirmBody"),
+									action: t("common.delete"),
+									danger: true,
+								})
+							)
+								del.mutate(s.id);
 						},
 					},
 				]}

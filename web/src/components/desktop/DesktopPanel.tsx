@@ -31,6 +31,7 @@ import {
 	useOrbDesktopControl,
 	useSaveOrbDesktopProfile,
 } from "../../api/queries";
+import { confirmAction } from "../../lib/confirm";
 import {
 	CONTROL_RENEW_MS,
 	DESKTOP_ASK_DONE,
@@ -707,8 +708,14 @@ function DesktopView({
 					<Button
 						size="sm"
 						disabled={choice.pending}
-						onClick={() => {
-							if (window.confirm(t("deskPanel.banner.writeBackConfirm")))
+						onClick={async () => {
+							if (
+								await confirmAction({
+									title: t("deskPanel.banner.writeBackConfirm"),
+									body: t("deskPanel.banner.writeBackConfirmBody"),
+									action: t("deskPanel.banner.writeBackAction"),
+								})
+							)
 								void choice.apply(profile.id);
 						}}
 					>

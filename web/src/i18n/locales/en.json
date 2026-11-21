@@ -75,6 +75,7 @@
 	},
 	"common": {
 		"none": "None",
+		"archive": "Archive",
 		"back": "Back",
 		"cancel": "Cancel",
 		"clear": "Clear",
@@ -83,9 +84,11 @@
 		"copy": "Copy",
 		"create": "Create",
 		"delete": "Delete",
+		"disconnect": "Disconnect",
 		"dismiss": "Dismiss",
 		"edit": "Edit",
 		"no": "No",
+		"revoke": "Revoke",
 		"save": "Save",
 		"send": "Send",
 		"submit": "Submit",
@@ -468,7 +471,8 @@
 		"costUsage": "Cost & usage",
 		"debug": "Debug panel",
 		"delete": "Delete thread",
-		"deleteConfirm": "Delete this thread? Its transcript and the environment only it uses are deleted too.",
+		"deleteConfirm": "Delete this thread?",
+		"deleteConfirmBody": "Its transcript and the environment only it uses are deleted too.",
 		"fork": "Fork",
 		"labels": "Labels",
 		"labelsHint": "Comma separated",
@@ -1239,7 +1243,8 @@
 		"email": "Email",
 		"notSet": "Not set: git will complain about a missing identity when the agent commits.",
 		"current": "Current: {{name}} <{{email}}>",
-		"clearConfirm": "Clear the global Git identity? Existing orbs keep their git config.",
+		"clearConfirm": "Clear the global Git identity?",
+		"clearConfirmBody": "Existing orbs keep their git config.",
 		"saved": "Saved"
 	},
 	"agentConfig": {
@@ -3287,7 +3292,8 @@
 		"empty": "This thread has no attachments yet",
 		"download": "Download",
 		"delete": "Delete",
-		"deleteConfirm": "Delete attachment {{name}}? The copy inside the orb is removed too.",
+		"deleteConfirm": "Delete attachment {{name}}?",
+		"deleteConfirmBody": "The copy inside the orb is removed too.",
 		"hint": "Attachments are stored in Oryn with the thread and never enter the repository; they are deleted with the thread."
 	},
 	"portal": {
@@ -3472,7 +3478,8 @@
 		"testOk": "Test message sent",
 		"linkedTo": "Linked to {{chat}}",
 		"linkNow": "Link private chat",
-		"deleteConfirm": "Delete the channel \"{{name}}\"? Its delivery records are deleted too.",
+		"deleteConfirm": "Delete the channel \"{{name}}\"?",
+		"deleteConfirmBody": "Its delivery records are deleted too.",
 		"recent": "Recent notifications",
 		"target": {
 			"telegram": "Telegram",
@@ -3928,7 +3935,9 @@
 			"readonlyHint": "This is the last saved version; sign-in changes made here won’t be saved.",
 			"takenOverHint": "Sign-in state here was saved before the takeover; later changes won’t be saved. Take it back to write again.",
 			"writeBack": "Write back…",
-			"writeBackConfirm": "Using it exclusively closes the browser here and loads the latest saved version. If another thread holds it, you can take it over. Continue?",
+			"writeBackConfirm": "Use this profile exclusively?",
+			"writeBackConfirmBody": "The browser here closes and loads the latest saved version. If another thread holds it, you can take it over.",
+			"writeBackAction": "Write back",
 			"errorTitle": "Profile “{{name}}” failed to load",
 			"retry": "Retry"
 		},
@@ -3960,7 +3969,8 @@
 		"neverSaved": "never saved",
 		"rename": "Rename",
 		"deleteHeld": "In use — detach it in that thread’s Desktop panel first",
-		"deleteConfirm": "Delete profile “{{name}}” and its saved sign-in state? Project defaults that use it are cleared.",
+		"deleteConfirm": "Delete profile “{{name}}” and its saved sign-in state?",
+		"deleteConfirmBody": "Project defaults that use it are cleared.",
 		"emptyTitle": "No browser profiles yet",
 		"emptyHint": "A profile is a saved browser sign-in state you can reuse across threads; only one orb at a time writes it back.",
 		"hint": "A profile is a saved browser sign-in state you can reuse across threads; only one orb at a time writes it back."
@@ -4011,7 +4021,8 @@
 		"makeShared": "Share across the library",
 		"makeConversation": "Make conversation-only",
 		"delete": "Delete",
-		"deleteConfirm": "Delete “{{name}}”? Copies already attached to other threads are kept."
+		"deleteConfirm": "Delete “{{name}}”?",
+		"deleteConfirmBody": "Copies already attached to other threads are kept."
 	},
 	"coordinator": {
 		"unavailableTitle": "The assistant is unavailable",
@@ -4148,7 +4159,8 @@
 		"placeholders": "Placeholders:",
 		"enabled": "Enabled",
 		"runNow": "Run now",
-		"deleteConfirm": "Delete this schedule? Threads it already created are kept.",
+		"deleteConfirm": "Delete this schedule?",
+		"deleteConfirmBody": "Threads it already created are kept.",
 		"runs": "Recent runs",
 		"noRuns": "No runs yet.",
 		"missed": "Catch-up ({{n}} missed)",
@@ -4224,7 +4236,8 @@
 		"unarchive": "Unarchive",
 		"archived": "Archived",
 		"delete": "Delete Space",
-		"deleteConfirm": "Delete the Space “{{name}}”? Its chat is deleted; its threads are kept and leave the Space.",
+		"deleteConfirm": "Delete the Space “{{name}}”?",
+		"deleteConfirmBody": "Its chat is deleted; its threads are kept and leave the Space.",
 		"notFound": "This Space doesn't exist",
 		"tabs": "Space views",
 		"tab": {
@@ -4596,7 +4609,8 @@
 			"provider_removed": "Provider removed"
 		},
 		"clear": "Clear snapshots",
-		"clearConfirm": "Clear all ready snapshots of {{name}}? The next new orb runs setup from the base image again; the snapshot images are reclaimed afterwards.",
+		"clearConfirm": "Clear all ready snapshots of {{name}}?",
+		"clearConfirmBody": "The next new orb runs setup from the base image again; the snapshot images are reclaimed afterwards.",
 		"pool": {
 			"title": "Warm orbs",
 			"none": "No warm orbs right now.",
@@ -4652,7 +4666,8 @@
 		"lastSeen": "Last online {{when}}",
 		"gitRepo": "Git repository; worktrees can be created",
 		"delete": "Delete runner {{name}}",
-		"deleteConfirm": "Delete runner {{name}}? Its token stops working right away; its threads keep their transcripts and become read-only."
+		"deleteConfirm": "Delete runner {{name}}?",
+		"deleteConfirmBody": "Its token stops working right away; its threads keep their transcripts and become read-only."
 	},
 	"archive": {
 		"title": "Archive thread",
@@ -4732,7 +4747,8 @@
 			"enable": "Enable \"{{name}}\"",
 			"edit": "Edit \"{{name}}\"",
 			"delete": "Delete \"{{name}}\"",
-			"deleteConfirm": "Delete trigger \"{{name}}\"? Threads it already started are kept.",
+			"deleteConfirm": "Delete trigger \"{{name}}\"?",
+			"deleteConfirmBody": "Threads it already started are kept.",
 			"newTitle": "New trigger",
 			"editTitle": "Edit trigger",
 			"name": "Name",
@@ -4851,7 +4867,8 @@
 			"webhookBaseHint": "Prefix for the webhooks Oryn creates on repositories; defaults to public_url. When GitHub can't reach it, Oryn polls the delivery log instead.",
 			"saved": "Saved",
 			"delete": "Delete configuration",
-			"deleteConfirm": "Delete the OAuth App configuration? Oryn first removes the webhooks it created on repositories, then disconnects My account and the Agent account. The OAuth App itself stays on GitHub."
+			"deleteConfirm": "Delete the OAuth App configuration?",
+			"deleteConfirmBody": "Oryn first removes the webhooks it created on repositories, then disconnects My account and the Agent account. The OAuth App itself stays on GitHub."
 		},
 		"hooks": {
 			"title": "Repository webhooks",

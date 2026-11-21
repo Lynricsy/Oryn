@@ -48,6 +48,7 @@ import {
 	Spinner,
 	TextInput,
 } from "../../components/ui/primitives";
+import { confirmAction } from "../../lib/confirm";
 import { formatDateTime, formatRelative } from "../../lib/format";
 import { useIndex } from "../../state/stores";
 
@@ -234,8 +235,15 @@ function OAuthAppCard({ status }: { status: GitHubStatus }): ReactNode {
 							variant="danger"
 							icon="trash"
 							disabled={busy}
-							onClick={() => {
-								if (window.confirm(t("github.oauth.deleteConfirm")))
+							onClick={async () => {
+								if (
+									await confirmAction({
+										title: t("github.oauth.deleteConfirm"),
+										body: t("github.oauth.deleteConfirmBody"),
+										action: t("common.delete"),
+										danger: true,
+									})
+								)
 									del.mutate();
 							}}
 						>
@@ -359,14 +367,16 @@ function IdentityRow({
 								icon="trash"
 								label={t("github.identity.disconnect", { slot: label })}
 								disabled={disconnect.isPending}
-								onClick={() => {
+								onClick={async () => {
 									if (
-										window.confirm(
-											t("github.identity.disconnectConfirm", {
+										await confirmAction({
+											title: t("github.identity.disconnectConfirm", {
 												slot: label,
 												login: identity.login,
 											}),
-										)
+											action: t("common.disconnect"),
+											danger: true,
+										})
 									)
 										disconnect.mutate(slot);
 								}}

@@ -16,6 +16,7 @@ import type { AssistantFile } from "../../api/library-queries";
 import { threads as fixtureThreads, M9_IDS } from "../../mock/fixtures";
 import { MockServer } from "../../mock/server";
 import { indexStore } from "../../state/stores";
+import { answerConfirm } from "../../test/confirm";
 import { LibraryPanel } from "./LibraryPanel";
 
 let server: MockServer;
@@ -158,7 +159,6 @@ describe("LibraryPanel", () => {
 	});
 
 	it("删除先确认：取消不发请求，确认后行消失", async () => {
-		const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
 		mount();
 		await screen.findByRole("listitem", { name: "等待中的线程.csv" });
 		const del = () =>
@@ -166,12 +166,14 @@ describe("LibraryPanel", () => {
 				within(row("等待中的线程.csv")).getByRole("button", { name: "删除" }),
 			);
 		del();
-		expect(confirm).toHaveBeenCalledWith(
-			"删除「等待中的线程.csv」？已复制给其它线程的附件不受影响。",
-		);
+		expect(await answerConfirm(false)).toMatchObject({
+			title: "删除「等待中的线程.csv」？",
+			body: "已复制给其它线程的附件不受影响。",
+			danger: true,
+		});
 		expect(requests.some((q) => q.method === "DELETE")).toBe(false);
-		confirm.mockReturnValue(true);
 		del();
+		await answerConfirm(true);
 		await waitFor(() =>
 			expect(
 				screen.queryByRole("listitem", { name: "等待中的线程.csv" }),

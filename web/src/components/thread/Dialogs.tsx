@@ -10,6 +10,7 @@ import {
 	deleteAttachment,
 	listThreadAttachments,
 } from "../../lib/attachments";
+import { confirmAction } from "../../lib/confirm";
 import {
 	formatBytes,
 	formatCount,
@@ -1606,9 +1607,12 @@ function AttachmentsDialog({
 								disabled={deleting === a.id}
 								onClick={async () => {
 									if (
-										!window.confirm(
-											t("attachments.deleteConfirm", { name: a.name }),
-										)
+										!(await confirmAction({
+											title: t("attachments.deleteConfirm", { name: a.name }),
+											body: t("attachments.deleteConfirmBody"),
+											action: t("common.delete"),
+											danger: true,
+										}))
 									)
 										return;
 									setError(null);

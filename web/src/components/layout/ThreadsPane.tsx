@@ -16,6 +16,7 @@ import type { Project, Thread, ThreadState } from "../../api/client";
 import { qk, useArchivedThreads, useProjects } from "../../api/queries";
 import { useSchedules } from "../../api/schedule-queries";
 import { type Space, useSpaces } from "../../api/space-queries";
+import { confirmAction } from "../../lib/confirm";
 import { useContextTarget } from "../../lib/context-menu/registry";
 import { formatRelative } from "../../lib/format";
 import { activityOf, inboxBadgeCount } from "../../lib/inbox";
@@ -712,13 +713,14 @@ export function ThreadsPane(): ReactNode {
 								<button
 									type="button"
 									className="shrink-0 rounded-sm px-1.5 py-0.5 text-2xs text-faint hover:bg-[var(--sb-hover)] hover:text-fg"
-									onClick={() => {
+									onClick={async () => {
 										if (
-											!window.confirm(
-												t("sidebar.archiveAllConfirm", {
+											!(await confirmAction({
+												title: t("sidebar.archiveAllConfirm", {
 													count: groups.inactive.length,
 												}),
-											)
+												action: t("common.archive"),
+											}))
 										)
 											return;
 										for (const th of groups.inactive)

@@ -14,6 +14,7 @@ import { Link, useNavigate } from "react-router";
 import type { Orb, Schemas } from "../../api/client";
 import { useProjects } from "../../api/queries";
 import { useSpaces } from "../../api/space-queries";
+import { confirmAction } from "../../lib/confirm";
 import { isDark, markHex } from "../../lib/native-header";
 import { parseTitleCard, withTitleCard } from "../../lib/title";
 import { useBreakpoint, useViewportSegments } from "../../lib/viewport";
@@ -483,8 +484,16 @@ export function useThreadActions(threadId: string): {
 			icon: "trash",
 			danger: true,
 			label: t("thread.delete"),
-			onSelect: () => {
-				if (!window.confirm(t("thread.deleteConfirm"))) return;
+			onSelect: async () => {
+				if (
+					!(await confirmAction({
+						title: t("thread.deleteConfirm"),
+						body: t("thread.deleteConfirmBody"),
+						action: t("common.delete"),
+						danger: true,
+					}))
+				)
+					return;
 				act(async () => {
 					await deleteThread(threadId);
 					navigate("/");

@@ -75,6 +75,7 @@
 	},
 	"common": {
 		"none": "无",
+		"archive": "归档",
 		"back": "返回",
 		"cancel": "取消",
 		"clear": "清除",
@@ -83,9 +84,11 @@
 		"copy": "复制",
 		"create": "创建",
 		"delete": "删除",
+		"disconnect": "断开",
 		"dismiss": "忽略",
 		"edit": "编辑",
 		"no": "否",
+		"revoke": "吊销",
 		"save": "保存",
 		"send": "发送",
 		"submit": "提交",
@@ -468,7 +471,8 @@
 		"costUsage": "成本与用量",
 		"debug": "调试面板",
 		"delete": "删除线程",
-		"deleteConfirm": "删除这个线程？转录和它独占的环境会一并删除。",
+		"deleteConfirm": "删除这个线程？",
+		"deleteConfirmBody": "转录和它独占的环境会一并删除。",
 		"fork": "分叉",
 		"labels": "标签",
 		"labelsHint": "用逗号分隔",
@@ -1239,7 +1243,8 @@
 		"email": "邮箱",
 		"notSet": "尚未设置：agent 提交时 git 会提示缺少身份。",
 		"current": "当前：{{name}} <{{email}}>",
-		"clearConfirm": "清除全局 Git 身份？已有 orb 的 git 配置保持不变。",
+		"clearConfirm": "清除全局 Git 身份？",
+		"clearConfirmBody": "已有 orb 的 git 配置保持不变。",
 		"saved": "已保存"
 	},
 	"agentConfig": {
@@ -3287,7 +3292,8 @@
 		"empty": "这个线程还没有附件",
 		"download": "下载",
 		"delete": "删除",
-		"deleteConfirm": "删除附件 {{name}}？orb 内的副本也会被删除。",
+		"deleteConfirm": "删除附件 {{name}}？",
+		"deleteConfirmBody": "orb 内的副本也会被删除。",
 		"hint": "附件保存在 Oryn 中、随线程保留，不会进入仓库；删除线程时一并删除。"
 	},
 	"portal": {
@@ -3472,7 +3478,8 @@
 		"testOk": "测试消息已发送",
 		"linkedTo": "已绑定 {{chat}}",
 		"linkNow": "绑定私聊",
-		"deleteConfirm": "删除渠道「{{name}}」？它的投递记录也会删除。",
+		"deleteConfirm": "删除渠道「{{name}}」？",
+		"deleteConfirmBody": "它的投递记录也会删除。",
 		"recent": "最近通知",
 		"target": {
 			"telegram": "Telegram",
@@ -3928,7 +3935,9 @@
 			"readonlyHint": "用的是最近一次保存的版本，这里的登录态改动不会保存。",
 			"takenOverHint": "接管前已保存过这里的登录态；之后这里的改动不会保存。要写回，可以再接管回来。",
 			"writeBack": "写回…",
-			"writeBackConfirm": "改为独占使用会关闭这里的浏览器，并装载这个 Profile 最新保存的版本。被别的线程占用时可以接管。继续？",
+			"writeBackConfirm": "改为独占使用这个 Profile？",
+			"writeBackConfirmBody": "这里的浏览器会被关闭，并装载这个 Profile 最新保存的版本。被别的线程占用时可以接管。",
+			"writeBackAction": "写回",
 			"errorTitle": "Profile「{{name}}」没能装载",
 			"retry": "重试"
 		},
@@ -3960,7 +3969,8 @@
 		"neverSaved": "从未保存",
 		"rename": "重命名",
 		"deleteHeld": "使用中，先在那个线程的桌面面板里解除",
-		"deleteConfirm": "删除 Profile「{{name}}」及其保存的登录态？引用它的项目默认值会被清除。",
+		"deleteConfirm": "删除 Profile「{{name}}」及其保存的登录态？",
+		"deleteConfirmBody": "引用它的项目默认值会被清除。",
 		"emptyTitle": "还没有浏览器 Profile",
 		"emptyHint": "Profile 是一份浏览器登录态，可以在多个线程间复用；同一时间只在一台 orb 上写回。",
 		"hint": "Profile 是一份浏览器登录态，可以在多个线程间复用；同一时间只在一台 orb 上写回。"
@@ -4011,7 +4021,8 @@
 		"makeShared": "设为库内共享",
 		"makeConversation": "改回仅所属对话",
 		"delete": "删除",
-		"deleteConfirm": "删除「{{name}}」？已复制给其它线程的附件不受影响。"
+		"deleteConfirm": "删除「{{name}}」？",
+		"deleteConfirmBody": "已复制给其它线程的附件不受影响。"
 	},
 	"coordinator": {
 		"unavailableTitle": "全局助手暂不可用",
@@ -4148,7 +4159,8 @@
 		"placeholders": "可用占位符：",
 		"enabled": "启用",
 		"runNow": "立即运行",
-		"deleteConfirm": "删除这个定时？已经建出的线程保留。",
+		"deleteConfirm": "删除这个定时？",
+		"deleteConfirmBody": "已经建出的线程保留。",
 		"runs": "最近运行",
 		"noRuns": "还没有运行过。",
 		"missed": "补跑（错过 {{n}} 次）",
@@ -4224,7 +4236,8 @@
 		"unarchive": "取消归档",
 		"archived": "已归档",
 		"delete": "删除空间",
-		"deleteConfirm": "删除空间「{{name}}」？聊天一并删除，其中的工作线程保留并移出空间。",
+		"deleteConfirm": "删除空间「{{name}}」？",
+		"deleteConfirmBody": "聊天一并删除，其中的工作线程保留并移出空间。",
 		"notFound": "找不到这个空间",
 		"tabs": "空间视图",
 		"tab": {
@@ -4596,7 +4609,8 @@
 			"provider_removed": "provider 已移除"
 		},
 		"clear": "清除快照",
-		"clearConfirm": "清除 {{name}} 的全部可用快照？下一台新 orb 会从基础镜像重新跑 setup，快照镜像随后被回收。",
+		"clearConfirm": "清除 {{name}} 的全部可用快照？",
+		"clearConfirmBody": "下一台新 orb 会从基础镜像重新跑 setup，快照镜像随后被回收。",
 		"pool": {
 			"title": "预热 orb",
 			"none": "当前没有预热中的 orb。",
@@ -4652,7 +4666,8 @@
 		"lastSeen": "最近在线 {{when}}",
 		"gitRepo": "git 仓库，可新建 worktree",
 		"delete": "删除 runner {{name}}",
-		"deleteConfirm": "删除 runner {{name}}？令牌立即失效，它上面的线程保留转录、变为只读。"
+		"deleteConfirm": "删除 runner {{name}}？",
+		"deleteConfirmBody": "令牌立即失效，它上面的线程保留转录、变为只读。"
 	},
 	"archive": {
 		"title": "归档线程",
@@ -4732,7 +4747,8 @@
 			"enable": "启用「{{name}}」",
 			"edit": "编辑「{{name}}」",
 			"delete": "删除「{{name}}」",
-			"deleteConfirm": "删除触发规则「{{name}}」？已建出的线程不受影响。",
+			"deleteConfirm": "删除触发规则「{{name}}」？",
+			"deleteConfirmBody": "已建出的线程不受影响。",
 			"newTitle": "新建触发规则",
 			"editTitle": "编辑触发规则",
 			"name": "名称",
@@ -4851,7 +4867,8 @@
 			"webhookBaseHint": "Oryn 在仓库上建 webhook 时用的地址前缀，默认等于 public_url。GitHub 访问不到时，Oryn 轮询投递日志补齐事件。",
 			"saved": "已保存",
 			"delete": "删除配置",
-			"deleteConfirm": "删除 OAuth App 配置？Oryn 会先删掉它在各仓库建的 webhook，再断开「我的账号」和「Agent 账号」。GitHub 上的 OAuth App 本身不会被删除。"
+			"deleteConfirm": "删除 OAuth App 配置？",
+			"deleteConfirmBody": "Oryn 会先删掉它在各仓库建的 webhook，再断开「我的账号」和「Agent 账号」。GitHub 上的 OAuth App 本身不会被删除。"
 		},
 		"hooks": {
 			"title": "仓库 webhook",

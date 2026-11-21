@@ -29,6 +29,7 @@ import {
 import { pairUri } from "../lib/pair-qr";
 import { type ProcessedWallpaper, processWallpaper } from "../lib/wallpaper";
 import { installTheme, THEME_KEY, themeStore } from "../state/theme";
+import { answerConfirm } from "../test/confirm";
 import type { SettingsSection } from "./SettingsPage";
 import { SettingsPage } from "./SettingsPage";
 
@@ -228,13 +229,13 @@ describe("设置 → Git 身份", () => {
 
 	it("已设置时清除：确认后以 DELETE 清除并清空输入框", async () => {
 		identity = { name: "Grace", email: "grace@example.com" };
-		vi.spyOn(window, "confirm").mockReturnValue(true);
 		setup();
 		expect(
 			await screen.findByText("当前：Grace <grace@example.com>"),
 		).toBeInTheDocument();
 		expect(screen.getByLabelText("名字")).toHaveValue("Grace");
 		fireEvent.click(screen.getByRole("button", { name: "清除" }));
+		expect((await answerConfirm(true)).title).toBe("清除全局 Git 身份？");
 		expect(await screen.findByText(/尚未设置/)).toBeInTheDocument();
 		expect(writes()).toEqual([
 			{
@@ -251,10 +252,9 @@ describe("设置 → Git 身份", () => {
 
 	it("取消确认时不发送 DELETE", async () => {
 		identity = { name: "Grace", email: "grace@example.com" };
-		vi.spyOn(window, "confirm").mockReturnValue(false);
 		setup();
 		fireEvent.click(await screen.findByRole("button", { name: "清除" }));
-		await waitFor(() => expect(window.confirm).toHaveBeenCalled());
+		await answerConfirm(false);
 		expect(writes()).toEqual([]);
 	});
 });

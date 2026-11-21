@@ -16,6 +16,7 @@ import type { Orb, Project, Schemas, Thread } from "../api/client";
 import i18n from "../i18n";
 import { indexStore } from "../state/stores";
 import { uiStore } from "../state/ui";
+import { answerConfirm } from "../test/confirm";
 import { ProjectPage, ProjectsIndexPage } from "./ProjectsPage";
 
 // 编辑器换成 textarea：这里测 Agent 配置卡片的接线，CodeMirror 本身另有测试
@@ -391,24 +392,23 @@ describe("ProjectPage 项目设置", () => {
 	});
 
 	it("删除：确认后 DELETE 并回 /projects（再落到剩下的项目）", async () => {
-		vi.spyOn(window, "confirm").mockReturnValue(true);
 		mount(`/projects/${ORYN.id}`);
 		await screen.findByRole("heading", { level: 1, name: "oryn" });
 		fireEvent.click(screen.getByRole("button", { name: "删除" }));
+		expect((await answerConfirm(true)).title).toBe("删除项目 oryn？");
 		await waitFor(() =>
 			expect(where()).toHaveTextContent(`/projects/${CORE.id}`),
 		);
-		expect(window.confirm).toHaveBeenCalledWith("删除项目 oryn？");
 		expect(writesOnly()).toEqual([
 			["DELETE", `/api/v1/projects/${ORYN.id}`, undefined],
 		]);
 	});
 
 	it("删除时取消确认：不发请求", async () => {
-		vi.spyOn(window, "confirm").mockReturnValue(false);
 		mount(`/projects/${ORYN.id}`);
 		await screen.findByRole("heading", { level: 1, name: "oryn" });
 		fireEvent.click(screen.getByRole("button", { name: "删除" }));
+		await answerConfirm(false);
 		expect(writes).toEqual([]);
 		expect(where()).toHaveTextContent(`/projects/${ORYN.id}`);
 	});
@@ -617,18 +617,17 @@ describe("ProjectPage 项目快照与预热（M11a）", () => {
 		snapshotList = [
 			SNAP({ id: "s-r", state: "ready", baseCommit: "abc1234def" }),
 		];
-		const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
 		mount(`/projects/${ORYN.id}`);
 		const clear = await screen.findByRole("button", {
 			name: i18n.t("accel.clear"),
 		});
 		fireEvent.click(clear);
-		expect(confirm).toHaveBeenCalledWith(
+		expect((await answerConfirm(false)).title).toBe(
 			i18n.t("accel.clearConfirm", { name: ORYN.name }),
 		);
 		expect(writes).toEqual([]);
-		confirm.mockReturnValue(true);
 		fireEvent.click(clear);
+		await answerConfirm(true);
 		await waitFor(() => expect(writes).toHaveLength(1));
 		expect(writesOnly()).toEqual([
 			["DELETE", `/api/v1/projects/${ORYN.id}/snapshots`, undefined],
