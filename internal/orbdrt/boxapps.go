@@ -472,8 +472,8 @@ func (b *boxManager) tryLocked(app string, next, prev *boxApp, timeout time.Dura
 		if b.hookTrial != nil {
 			b.hookTrial(app, id)
 		}
-		if !b.waitReady(app, next.Port, timeout) {
-			fail = boxFailf("not_listening", "%s is not listening on port %d after %s", app, next.Port, timeout)
+		if f := b.waitReady(app, next.Port, timeout); f != nil {
+			fail = f
 		}
 	}
 	if fail == nil {
@@ -593,8 +593,8 @@ func (b *boxManager) restart(app string, req apigen.OrbBoxRestartRequest) apigen
 		b.r.log.Warn("write box state", "err", saveErr)
 	}
 	timeout := time.Duration(req.ReadyTimeoutSec) * time.Second
-	if !b.waitReady(app, cur.Port, timeout) {
-		return boxFailResult(boxFailf("not_listening", "%s is not listening on port %d after %s", app, cur.Port, timeout), b.logTail(app))
+	if f := b.waitReady(app, cur.Port, timeout); f != nil {
+		return boxFailResult(f, b.logTail(app))
 	}
 	return boxOK(cur.Live, nil)
 }
@@ -631,16 +631,22 @@ func (b *boxManager) undeploy(app string, purge bool) error {
 	return saveErr
 }
 
-// waitReady 每 readyPoll 试连 127.0.0.1:<port>、再 [::1]:<port>；该 app 的服务全部 failed 或超时即不就绪。
-func (b *boxManager) waitReady(app string, port int, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
+// waitReady 每 readyPoll 试连 127.0.0.1:<port>、再 [::1]:<port>。就绪返回 nil；否则返回 not_listening 失败，
+// 消息写明真实原因：该 app 的服务全部 failed（提前放弃）或等满 timeout。
+func (b *boxManager) waitReady(app string, port int, timeout time.Duration) *boxFail {
+	start := time.Now()
+	deadline := start.Add(timeout)
 	for {
 		if c, err := dialLoopback(port); err == nil {
 			_ = c.Close()
-			return true
+			return nil
 		}
-		if b.allFailed(app) || time.Now().After(deadline) {
-			return false
+		if b.allFailed(app) {
+			return boxFailf("not_listening", "%s is not listening on port %d: all services failed after %s",
+				app, port, time.Since(start).Round(time.Second))
+		}
+		if time.Now().After(deadline) {
+			return boxFailf("not_listening", "%s is not listening on port %d after %s", app, port, timeout)
 		}
 		time.Sleep(b.readyPoll)
 	}

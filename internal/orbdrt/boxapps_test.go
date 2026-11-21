@@ -671,11 +671,27 @@ func TestBoxFirstActivationFails(t *testing.T) {
 	})
 	require.False(t, res.Ok)
 	assert.Equal(t, "not_listening", *res.Code)
+	assert.Contains(t, *res.Message, "after 1s", "服务还活着、只是不监听：等满超时")
 	_, ok := appState(e.apps(), "shop")
 	assert.False(t, ok)
 	assert.NoDirExists(t, e.appDir("shop"))
 	assert.Empty(t, e.appServices("shop"))
 	assert.False(t, e.rt.svc.Exposed(port))
+}
+
+// 服务全部 failed 时提前放弃，消息写明原因，不再声称等满了超时。
+func TestBoxActivationAllServicesFailed(t *testing.T) {
+	e := newBoxEnv(t, "")
+	port := freePort(t)
+	res := e.deploy("shop", relID(1), port, releaseTar(t, "v1"), func(r *apigen.OrbBoxActivateRequest) {
+		r.ReadyTimeoutSec = 60
+		r.Services = []apigen.OrbBoxService{{Name: "web", Command: "exit 1"}}
+	})
+	require.False(t, res.Ok)
+	assert.Equal(t, "not_listening", *res.Code)
+	require.NotNil(t, res.Message)
+	assert.Contains(t, *res.Message, "all services failed")
+	assert.NotContains(t, *res.Message, "1m0s")
 }
 
 func TestBoxServicesSharePortAndEnv(t *testing.T) {
