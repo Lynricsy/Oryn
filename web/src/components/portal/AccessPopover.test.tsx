@@ -133,6 +133,10 @@ describe("AccessPopover", () => {
 
 	it("剩余时间每 30s 随时钟刷新，到期即按未公开显示", () => {
 		vi.useFakeTimers();
+		// 弹层（Floating）开着时逐帧比对锚点：假 rAF 下推进一小时要空转二十多万帧。本例不看重排，换成空操作
+		// （要在 useFakeTimers 之后：它会接管 requestAnimationFrame）
+		vi.stubGlobal("requestAnimationFrame", () => 0);
+		vi.stubGlobal("cancelAnimationFrame", () => {});
 		const start = new Date("2026-11-13T10:00:00Z").getTime();
 		vi.setSystemTime(start);
 		const expiresAt = start + HOUR + 30_000;
