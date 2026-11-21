@@ -3,6 +3,8 @@ package repos
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Lynricsy/Oryn/internal/egress"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
@@ -210,4 +213,82 @@ func TestHostedShortCircuits(t *testing.T) {
 	assert.True(t, exists(filepath.Join(dir, hostedMarker)), "托管仓库不能被镜像逻辑删除")
 	assert.NotNil(t, e.row(t, id))
 	assert.Zero(t, e.infoRefs())
+}
+
+// 推送锁：占着锁时第二个推送在自己的 ctx 取消后立即返回；等满上限回 503 + Retry-After；info/refs 不等锁；
+// 托管入口也会自愈缺失的 project_repos 行。
+func TestServeHostedGitPushLock(t *testing.T) {
+	e := newTestEnv(t, nil, nil, nil)
+	ctx := context.Background()
+	id := e.hostedProject(t, "main")
+	_, err := e.svc.InitHosted(ctx, id, "main", true, testIdentity)
+	require.NoError(t, err)
+
+	push := func(ctx context.Context) *httptest.ResponseRecorder {
+		r := httptest.NewRequestWithContext(ctx, http.MethodPost, "/r.git/git-receive-pack", strings.NewReader("0000"))
+		r.Header.Set("Content-Type", "application/x-git-receive-pack-request")
+		w := httptest.NewRecorder()
+		e.svc.ServeHostedGit(w, r, id, string(EndpointReceivePack), egress.HostedPusher{})
+		return w
+	}
+	release, err := e.svc.pushLocks.lock(ctx, id)
+	require.NoError(t, err)
+
+	cctx, cancel := context.WithCancel(ctx)
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- push(cctx) }()
+	select {
+	case <-done:
+		t.Fatal("推送锁被占着时不该返回")
+	case <-time.After(100 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case w := <-done:
+		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	case <-time.After(2 * time.Second):
+		t.Fatal("取消 ctx 后等锁的推送没有返回")
+	}
+
+	e.svc.pushLocks.wait = 50 * time.Millisecond
+	w := push(ctx)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Equal(t, "5", w.Header().Get("Retry-After"))
+	assert.Contains(t, w.Body.String(), "仓库正忙")
+
+	// 推送的发现请求不拿锁
+	r := httptest.NewRequest(http.MethodGet, "/r.git/info/refs?service=git-receive-pack", nil)
+	w = httptest.NewRecorder()
+	e.svc.ServeHostedGit(w, r, id, string(EndpointInfoRefs), egress.HostedPusher{})
+	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.NotNil(t, e.row(t, id), "入口补写了 project_repos 行")
+
+	release()
+	w = push(ctx)
+	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+}
+
+// 入口的前置检查：非托管 / 不存在 → 404，归档项目的推送（含发现请求）→ 403，克隆照常。
+func TestServeHostedGitChecks(t *testing.T) {
+	e := newTestEnv(t, nil, nil, nil)
+	ctx := context.Background()
+	id := e.hostedProject(t, "main")
+	_, err := e.svc.InitHosted(ctx, id, "main", true, testIdentity)
+	require.NoError(t, err)
+	plain := e.project(t, "")
+
+	get := func(pid, service string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, "/r.git/info/refs?service="+service, nil)
+		w := httptest.NewRecorder()
+		e.svc.ServeHostedGit(w, r, pid, string(EndpointInfoRefs), egress.HostedPusher{})
+		return w
+	}
+	assert.Equal(t, http.StatusNotFound, get(plain, "git-upload-pack").Code)
+	assert.Equal(t, http.StatusNotFound, get("prj_01JCZ00000000000000000NONE", "git-upload-pack").Code)
+
+	e.exec(t, "UPDATE projects SET archived_at = 1 WHERE id = ?", id)
+	w := get(id, "git-receive-pack")
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), "项目已归档，仓库只读")
+	assert.Equal(t, http.StatusOK, get(id, "git-upload-pack").Code)
 }

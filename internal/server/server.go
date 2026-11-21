@@ -509,6 +509,8 @@ func (s *Server) init(ctx context.Context) error {
 	s.API = &api.Server{Deps: deps}
 	// App 会话兑换（M6）：不在 /api/v1 下，壳以顶层导航到达
 	mounts[api.AppSessionPath] = s.API.AppSessionHandler()
+	// 托管仓库的主人入口（M24 阶段 ③）：先于鉴权组注册，自己按设备令牌鉴权；不进 serverPrefixes（否则与这里冲突）
+	mounts["/git/*"] = s.API.GitHandler()
 	s.API.Auth = &api.AuthDeps{Service: s.Auth, Tickets: s.Tickets, Vault: s.Vault, Home: s.Home, ProjectHomes: s.ProjectHomes}
 	// M13：中央模型目录（控制面用协调宿主的 omp 跑 `omp models`）；未配置 omp 时不建，接口回 503
 	if cfg.Coordinator.OmpPath != "" {

@@ -191,6 +191,21 @@ func DeviceByToken(ctx context.Context, st *store.Store, tok string) (Principal,
 	return Principal{Kind: KindDevice, ID: dev.ID}, true
 }
 
+// GitCredential 校验 /git/ 路径的凭据（M24 阶段 ③）：`Authorization: Basic <任意用户名>:<odt_…>` 或 `Bearer odt_…`，
+// 只认设备令牌（DeviceByToken：存在且未吊销），从不读 Cookie。
+func GitCredential(ctx context.Context, st *store.Store, r *http.Request) (Principal, bool) {
+	var tok string
+	if _, pw, ok := r.BasicAuth(); ok {
+		tok = pw
+	} else if b, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
+		tok = b
+	}
+	if tok == "" {
+		return Principal{}, false
+	}
+	return DeviceByToken(ctx, st, tok)
+}
+
 // sessionFromCookie 读取并校验 Cookie 会话，返回会话与命中的 Cookie 值；没有有效会话返回 ok=false。
 // 同名 Cookie 可能有多条（浏览器按 Path 长度排序发送，旧的或被写坏的可能排在前面），
 // 逐条校验并取第一条有效的，而不是只看第一条。App 会话（device_id 非空）在其设备已吊销时

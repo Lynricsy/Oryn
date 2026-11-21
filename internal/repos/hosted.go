@@ -1,6 +1,7 @@
 package repos
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -11,8 +12,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/egress"
 	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
@@ -31,7 +35,10 @@ var (
 const (
 	zeroOID          = "0000000000000000000000000000000000000000"
 	initialCommitMsg = "Initial commit"
+	pushLockWait     = 60 * time.Second // 推送等每项目推送锁的上限
 )
+
+var errPushBusy = errors.New("推送锁等待超时")
 
 // InitHosted 建托管裸仓库 <Dir>/<projectID>.git：HEAD → refs/heads/<base>；initialCommit 为真时在 base 上建一个空树提交。
 // 目录已存在且带 oryn-hosted 标记时认领它（adopted=true），不重建也不动内容。只动文件系统与 git，不读写数据库：
@@ -238,4 +245,74 @@ func (s *Service) healHosted(ctx context.Context, prj db.Project) (*db.ProjectRe
 		return row, nil
 	}
 	return s.repoRow(ctx, prj.ID)
+}
+
+// ServeHostedGit 服务托管仓库的一个 smart-HTTP 请求（调用方已鉴权）。pusher.OrbID 为空 = 主人本机。
+// 错误一律 text/plain：git 把正文显示成 `remote: …`（remote-curl.c 的 show_http_message）。
+func (s *Service) ServeHostedGit(w http.ResponseWriter, r *http.Request, projectID, endpoint string, pusher egress.HostedPusher) {
+	if s.reason != "" {
+		smartError(w, http.StatusServiceUnavailable, "oryn: 控制面没有可用的 git")
+		return
+	}
+	ctx := r.Context()
+	prj, err := s.project(ctx, projectID)
+	switch {
+	case errors.Is(err, errNotFound) || (err == nil && !prj.Hosted):
+		smartError(w, http.StatusNotFound, "oryn: 仓库不存在")
+		return
+	case err != nil:
+		slog.Warn("托管仓库：读取项目", "project", projectID, "err", err)
+		smartError(w, http.StatusInternalServerError, "oryn: 读取项目失败")
+		return
+	}
+	ep := Endpoint(endpoint)
+	if IsPush(r, ep) && prj.ArchivedAt != nil {
+		smartError(w, http.StatusForbidden, "oryn: 项目已归档，仓库只读")
+		return
+	}
+	dir := s.dir(projectID)
+	if adopted, err := hostedDirState(dir); err != nil || !adopted {
+		smartError(w, http.StatusNotFound, "oryn: 仓库不存在")
+		return
+	}
+	// 创建或改基线时崩在两步之间：补齐 HEAD 与 project_repos 行（同 hostedStatus）
+	if _, err := s.healHosted(ctx, prj); err != nil {
+		slog.Warn("托管仓库：自愈", "project", projectID, "err", err)
+	}
+	if ep == EndpointReceivePack && r.Method == http.MethodPost {
+		release, err := s.pushLocks.lock(ctx, projectID)
+		if err != nil {
+			w.Header().Set("Retry-After", "5")
+			smartError(w, http.StatusServiceUnavailable, "oryn: 仓库正忙，请稍后重试")
+			return
+		}
+		defer release()
+	}
+	s.serveSmartHTTP(w, r, dir, ep, pusher.OrbID)
+}
+
+// pushLocks 是每项目的推送锁（容量 1 的 chan），零值可用。不用 sync.Mutex：等锁要能随请求取消，
+// 否则一个迟迟不发请求体的推送会把后面的推送全卡住。
+type pushLocks struct {
+	m    sync.Map      // projectID → chan struct{}
+	wait time.Duration // 等锁上限；0 = pushLockWait（测试可改）
+}
+
+// lock 等项目的推送锁：ctx 结束返回 ctx.Err()，等满上限返回 errPushBusy。
+func (p *pushLocks) lock(ctx context.Context, projectID string) (release func(), err error) {
+	v, ok := p.m.Load(projectID)
+	if !ok {
+		v, _ = p.m.LoadOrStore(projectID, make(chan struct{}, 1))
+	}
+	ch := v.(chan struct{})
+	t := time.NewTimer(cmp.Or(p.wait, pushLockWait))
+	defer t.Stop()
+	select {
+	case ch <- struct{}{}:
+		return func() { <-ch }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-t.C:
+		return nil, errPushBusy
+	}
 }

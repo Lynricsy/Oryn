@@ -87,6 +87,7 @@ func newRepoEnvFake(t *testing.T, mut ...func(*repos.Config)) (*h2Env, *githubte
 	s.Auth = &api.AuthDeps{Service: svc, Tickets: e.tickets, Vault: e.vault, Home: home, ProjectHomes: projectHomes}
 	s.GitHub = &api.GitHubDeps{Service: gh}
 	s.Repos = &api.ReposDeps{Service: rs}
+	s.Mounts = map[string]http.Handler{"/git/*": s.GitHandler()}
 	e.srv = httptest.NewServer(api.NewRouter(s))
 	t.Cleanup(e.srv.Close)
 	return e, fake

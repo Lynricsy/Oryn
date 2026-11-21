@@ -137,6 +137,47 @@ func TestRevocations(t *testing.T) {
 	assert.Len(t, got, 3, "取消订阅后不再回调")
 }
 
+// /git/ 入口只认设备令牌：Basic（任意用户名）或 Bearer；吊销后、只带 Cookie、Basic 密码不是 odt 都不行。
+func TestGitCredential(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	dev, tok, err := CreateDevice(ctx, svc.st, "d", "cli", "")
+	require.NoError(t, err)
+	cookie, err := CreateWebSession(ctx, svc.st, "t")
+	require.NoError(t, err)
+
+	req := func(set func(r *http.Request)) *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "/git/x.git/info/refs", nil)
+		set(r)
+		return r
+	}
+	basic := req(func(r *http.Request) { r.SetBasicAuth("x", tok) })
+	bearer := req(func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+tok) })
+
+	p, ok := GitCredential(ctx, svc.st, basic)
+	require.True(t, ok)
+	assert.Equal(t, Principal{Kind: KindDevice, ID: dev.ID}, p)
+	_, ok = GitCredential(ctx, svc.st, bearer)
+	assert.True(t, ok)
+
+	_, ok = GitCredential(ctx, svc.st, req(func(r *http.Request) {
+		r.AddCookie(&http.Cookie{Name: CookieName, Value: cookie})
+	}))
+	assert.False(t, ok, "只带会话 Cookie")
+	_, ok = GitCredential(ctx, svc.st, req(func(r *http.Request) { r.SetBasicAuth(tok, "hunter2") }))
+	assert.False(t, ok, "Basic 的密码不是 odt")
+	_, ok = GitCredential(ctx, svc.st, req(func(r *http.Request) { r.SetBasicAuth("x", "odt_nope") }))
+	assert.False(t, ok, "不存在的令牌")
+	_, ok = GitCredential(ctx, svc.st, req(func(*http.Request) {}))
+	assert.False(t, ok, "没有凭据")
+
+	require.NoError(t, svc.RevokeDevice(ctx, dev.ID))
+	_, ok = GitCredential(ctx, svc.st, basic)
+	assert.False(t, ok, "吊销之后")
+	_, ok = GitCredential(ctx, svc.st, bearer)
+	assert.False(t, ok, "吊销之后")
+}
+
 func TestPairCodeAndRecoveryCodes(t *testing.T) {
 	for range 50 {
 		c := newPairCode()

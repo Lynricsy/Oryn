@@ -112,6 +112,7 @@ type Service struct {
 	monitorEvery time.Duration // 拉取中复查磁盘与大小的间隔
 	trace        func(argv, env []string)
 	smart        smartSlots // 托管仓库 smart-HTTP 的 git 进程名额（阶段 ③）
+	pushLocks    pushLocks  // 托管仓库每项目的推送锁（阶段 ③）
 
 	treeWalkMax  int   // 找子项最后提交时至多读的提交数（测试可改）
 	maxBlobBytes int64 // blob 接口的大小上限（测试可改）
