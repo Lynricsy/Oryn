@@ -782,7 +782,9 @@ func TestBoxChanges(t *testing.T) {
 	repo := t.TempDir()
 	git := func(dir string, args ...string) string {
 		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.com"}, args...)...)
+		// 关掉自动维护：commit 之后 git 会在后台跑 maintenance，它的锁文件会在 tarDir 遍历 .git 时出现又消失
+		cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.com",
+			"-c", "maintenance.auto=false", "-c", "gc.auto=0"}, args...)...)
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, "git %v: %s", args, out)
 		return strings.TrimSpace(string(out))
