@@ -319,6 +319,50 @@ export interface paths {
         patch: operations["updateProject"];
         trace?: never;
     };
+    "/api/v1/projects/{id}/repo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 项目仓库镜像状态（M24；未归档项目按需在后台克隆或拉取，不阻塞）
+         * @description 项目不存在 → 404 `not_found`。控制面没有可用的 git 时照常返回，`available:false` 并给出 `unavailableReason`。
+         */
+        get: operations["getProjectRepo"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/repo/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 立即克隆或拉取项目仓库镜像（M24；已归档项目也可以；在后台进行）
+         * @description 项目不存在 → 404 `not_found`；控制面没有可用的 git → 503 `repo_unavailable`；项目没有仓库地址 → 409 `no_repo`。
+         */
+        post: operations["syncProjectRepo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/snapshots": {
         parameters: {
             query?: never;
@@ -5713,6 +5757,8 @@ export interface components {
              *     `worktree_failed`（400）、`worktree_dirty`（409）。
              *     M14 / M15（GitHub）：`github_not_configured`（409，尚未配置 OAuth App）、`github_identity_required`（409，所需身份未连接或需要重新授权）、
              *     `github_agent_required`（409，Agent 账号未连接）、`github_not_bound`（409，项目未绑定 GitHub 仓库）、`github_upstream`（502，GitHub 请求失败）。
+             *     M24（项目仓库镜像）：`repo_unavailable`（503，控制面没有可用的 git）、`no_repo`（409，项目没有仓库地址）、`repo_not_ready`（409，镜像不存在、克隆中或克隆失败）、
+             *     `ref_not_found`、`commit_not_found`、`path_not_found`（404）、`not_a_file`、`not_a_directory`（409）、`too_large`（413）。
              */
             code: string;
             message: string;
@@ -6015,6 +6061,41 @@ export interface components {
         };
         ProjectSnapshotList: {
             snapshots: components["schemas"]["ProjectSnapshot"][];
+        };
+        /** @description M24：项目仓库在控制面的裸镜像 */
+        ProjectRepoStatus: {
+            /**
+             * @description `none` = 项目没有仓库地址；阶段 ③ 加 `hosted`
+             * @enum {string}
+             */
+            kind: "mirror" | "none";
+            /** @enum {string} */
+            state: "absent" | "cloning" | "ready" | "error";
+            /** @description 控制面有可用的 git（≥2.31） */
+            available: boolean;
+            /** @enum {string} */
+            unavailableReason?: "git_missing" | "git_too_old";
+            /** @description state=ready 时后台拉取进行中 */
+            syncing: boolean;
+            /** @description 镜像就绪但没有任何分支 */
+            empty: boolean;
+            /** @description 用户 `git clone` 用的地址（mirror = 项目 repoUrl） */
+            cloneUrl?: string;
+            defaultBranch?: string;
+            /** @description 项目 baseBranch 在镜像里存在时取它，否则 defaultBranch */
+            baseBranch?: string;
+            syncedAt?: components["schemas"]["TimestampMs"];
+            /** Format: int64 */
+            sizeBytes?: number;
+            lastError?: components["schemas"]["ProjectRepoError"];
+        };
+        /** @description 最近一次失败的克隆或拉取 */
+        ProjectRepoError: {
+            /** @enum {string} */
+            code: "unsupported_url" | "auth_required" | "auth_failed" | "not_found" | "blocked_address" | "unreachable" | "timeout" | "too_large" | "no_space" | "fetch_failed";
+            /** @description 已脱敏的 git 输出末尾（≤500 字符） */
+            message: string;
+            at: components["schemas"]["TimestampMs"];
         };
         /** @description orb 内 `git config --global user.name / user.email`；不得含换行或控制字符 */
         GitIdentity: {
@@ -9862,7 +9943,7 @@ export interface components {
             id: components["schemas"]["ArtifactId"];
         };
         /** @description 服务端 → 客户端 WS 消息 */
-        WsServerMessage: components["schemas"]["WsServerIndex"] | components["schemas"]["WsServerIndexPatch"] | components["schemas"]["WsServerThreadSnapshot"] | components["schemas"]["WsServerEntries"] | components["schemas"]["WsServerFrame"] | components["schemas"]["WsServerRes"] | components["schemas"]["WsServerUiResolved"] | components["schemas"]["WsServerLiveReset"] | components["schemas"]["WsServerTranscriptReset"] | components["schemas"]["WsServerPlanResolved"] | components["schemas"]["WsServerOrb"] | components["schemas"]["WsServerError"] | components["schemas"]["WsServerPong"] | components["schemas"]["WsServerTermLagged"] | components["schemas"]["WsServerTermResized"] | components["schemas"]["WsServerNotification"] | components["schemas"]["WsServerNotificationsRead"] | components["schemas"]["WsServerNotificationsResolved"] | components["schemas"]["WsServerSchedulesChanged"] | components["schemas"]["WsServerGitHubChanged"] | components["schemas"]["WsServerSshChanged"] | components["schemas"]["WsServerBoxesChanged"] | components["schemas"]["WsServerArtifactsChanged"] | components["schemas"]["WsServerArtifactVersion"] | components["schemas"]["WsServerArtifactActivity"] | components["schemas"]["WsServerArtifactComments"] | components["schemas"]["WsServerArtifactCanvas"] | components["schemas"]["WsServerArtifactConsent"];
+        WsServerMessage: components["schemas"]["WsServerIndex"] | components["schemas"]["WsServerIndexPatch"] | components["schemas"]["WsServerThreadSnapshot"] | components["schemas"]["WsServerEntries"] | components["schemas"]["WsServerFrame"] | components["schemas"]["WsServerRes"] | components["schemas"]["WsServerUiResolved"] | components["schemas"]["WsServerLiveReset"] | components["schemas"]["WsServerTranscriptReset"] | components["schemas"]["WsServerPlanResolved"] | components["schemas"]["WsServerOrb"] | components["schemas"]["WsServerError"] | components["schemas"]["WsServerPong"] | components["schemas"]["WsServerTermLagged"] | components["schemas"]["WsServerTermResized"] | components["schemas"]["WsServerNotification"] | components["schemas"]["WsServerNotificationsRead"] | components["schemas"]["WsServerNotificationsResolved"] | components["schemas"]["WsServerSchedulesChanged"] | components["schemas"]["WsServerGitHubChanged"] | components["schemas"]["WsServerSshChanged"] | components["schemas"]["WsServerBoxesChanged"] | components["schemas"]["WsServerProjectRepoChanged"] | components["schemas"]["WsServerArtifactsChanged"] | components["schemas"]["WsServerArtifactVersion"] | components["schemas"]["WsServerArtifactActivity"] | components["schemas"]["WsServerArtifactComments"] | components["schemas"]["WsServerArtifactCanvas"] | components["schemas"]["WsServerArtifactConsent"];
         /** @description 线程摘要全量（连接建立后首条） */
         WsServerIndex: {
             /**
@@ -10131,6 +10212,15 @@ export interface components {
              * @enum {string}
              */
             type: "boxes.changed";
+        };
+        /** @description M24：项目仓库镜像状态变了（开始 / 结束克隆或拉取、出错、被删除）；发给全部私有连接。客户端让该项目的仓库查询失效，WS 每次重新 open 后对全部项目失效一次 */
+        WsServerProjectRepoChanged: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "project_repo.changed";
+            projectId: components["schemas"]["ProjectId"];
         };
         /** @description artifact 列表变了（新建、新版本、改名、删除、恢复、清理、缩略图就绪）；发给全部私有连接。客户端据此让 artifact 列表查询失效，WS 每次重新 open 后也要自行失效一次 */
         WsServerArtifactsChanged: {
@@ -11894,6 +11984,52 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Project"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getProjectRepo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 仓库状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectRepoStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    syncProjectRepo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已开始；返回开始后的状态 */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectRepoStatus"];
                 };
             };
             default: components["responses"]["Error"];

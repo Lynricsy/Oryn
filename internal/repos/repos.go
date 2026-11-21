@@ -18,27 +18,28 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/egress"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
-// Kind 是项目仓库的来源；阶段 ③ 加 KindHosted。
-type Kind string
+// Kind 是项目仓库的来源（也写进 project_repos.kind）；阶段 ③ 加 KindHosted。
+type Kind = apigen.ProjectRepoStatusKind
 
 const (
-	KindMirror Kind = "mirror"
-	KindNone   Kind = "none"
+	KindMirror Kind = apigen.ProjectRepoStatusKindMirror
+	KindNone   Kind = apigen.ProjectRepoStatusKindNone
 )
 
 // State 是镜像的状态。
-type State string
+type State = apigen.ProjectRepoStatusState
 
 const (
-	StateAbsent  State = "absent"
-	StateCloning State = "cloning"
-	StateReady   State = "ready"
-	StateError   State = "error"
+	StateAbsent  State = apigen.ProjectRepoStatusStateAbsent
+	StateCloning State = apigen.ProjectRepoStatusStateCloning
+	StateReady   State = apigen.ProjectRepoStatusStateReady
+	StateError   State = apigen.ProjectRepoStatusStateError
 )
 
 // Config 是 Service 的配置。
@@ -80,28 +81,6 @@ var (
 	errUnavailable = &Error{Status: http.StatusServiceUnavailable, Code: "repo_unavailable", Message: "控制面没有可用的 git"}
 	errNoRepo      = &Error{Status: http.StatusConflict, Code: "no_repo", Message: "项目没有仓库地址"}
 )
-
-// RepoStatus 是项目仓库的状态（与 OpenAPI 的 ProjectRepoStatus 同形；步骤 2.5 改为直接返回生成类型）。
-type RepoStatus struct {
-	Kind              Kind
-	State             State
-	Available         bool
-	UnavailableReason string // "" | git_missing | git_too_old
-	Syncing           bool   // state=ready 时后台拉取进行中
-	Empty             bool   // 镜像就绪但没有任何分支
-	CloneURL          string
-	DefaultBranch     string
-	BaseBranch        string // 项目 baseBranch 在镜像里存在时取它，否则 DefaultBranch
-	SyncedAt          *int64
-	SizeBytes         int64
-	LastError         *RepoError
-}
-
-// RepoError 是最近一次失败的拉取。
-type RepoError struct {
-	Code, Message string
-	At            int64
-}
 
 // Service 维护全部项目的裸镜像。
 type Service struct {
@@ -227,33 +206,33 @@ func (s *Service) repoRow(ctx context.Context, projectID string) (*db.ProjectRep
 func hasRepo(prj db.Project) bool { return prj.RepoUrl != nil && *prj.RepoUrl != "" }
 
 // Status 返回项目仓库的状态；未归档项目在需要时顺带在后台克隆或拉取（不阻塞）。
-func (s *Service) Status(ctx context.Context, projectID string) (RepoStatus, error) {
+func (s *Service) Status(ctx context.Context, projectID string) (apigen.ProjectRepoStatus, error) {
 	prj, err := s.project(ctx, projectID)
 	if err != nil {
-		return RepoStatus{}, err
+		return apigen.ProjectRepoStatus{}, err
 	}
 	row, err := s.ensure(ctx, prj, prj.ArchivedAt == nil)
 	if err != nil {
-		return RepoStatus{}, err
+		return apigen.ProjectRepoStatus{}, err
 	}
 	return s.status(ctx, prj, row), nil
 }
 
 // Sync 立即在后台克隆或拉取（已归档项目也可以），返回开始后的状态。
-func (s *Service) Sync(ctx context.Context, projectID string) (RepoStatus, error) {
+func (s *Service) Sync(ctx context.Context, projectID string) (apigen.ProjectRepoStatus, error) {
 	prj, err := s.project(ctx, projectID)
 	if err != nil {
-		return RepoStatus{}, err
+		return apigen.ProjectRepoStatus{}, err
 	}
 	if s.reason != "" {
-		return RepoStatus{}, errUnavailable
+		return apigen.ProjectRepoStatus{}, errUnavailable
 	}
 	if !hasRepo(prj) {
-		return RepoStatus{}, errNoRepo
+		return apigen.ProjectRepoStatus{}, errNoRepo
 	}
 	row, err := s.ensure(ctx, prj, false)
 	if err != nil {
-		return RepoStatus{}, err
+		return apigen.ProjectRepoStatus{}, err
 	}
 	s.start(projectID, true)
 	return s.status(ctx, prj, row), nil
@@ -301,21 +280,26 @@ func (s *Service) ProjectChanged(ctx context.Context, projectID string) {
 }
 
 // status 由项目、镜像行、目录与飞行状态算出对外状态。
-func (s *Service) status(ctx context.Context, prj db.Project, row *db.ProjectRepo) RepoStatus {
-	out := RepoStatus{Kind: KindMirror, Available: s.reason == "", UnavailableReason: s.reason, State: StateAbsent}
+func (s *Service) status(ctx context.Context, prj db.Project, row *db.ProjectRepo) apigen.ProjectRepoStatus {
+	out := apigen.ProjectRepoStatus{Kind: KindMirror, Available: s.reason == "", State: StateAbsent}
+	if s.reason != "" {
+		out.UnavailableReason = new(apigen.ProjectRepoStatusUnavailableReason(s.reason))
+	}
 	if !hasRepo(prj) {
 		out.Kind = KindNone
 		return out
 	}
-	out.CloneURL = *prj.RepoUrl
+	out.CloneURL = prj.RepoUrl
 	mirror := exists(s.dir(prj.ID))
 	flying := s.flying(prj.ID)
 	if row != nil {
-		out.DefaultBranch = deref(row.DefaultBranch)
+		out.DefaultBranch = row.DefaultBranch
 		out.SyncedAt = row.SyncedAt
-		out.SizeBytes = row.SizeBytes
+		out.SizeBytes = new(row.SizeBytes)
 		if row.ErrorCode != nil {
-			out.LastError = &RepoError{Code: *row.ErrorCode, Message: deref(row.ErrorMessage), At: deref(row.ErrorAt)}
+			out.LastError = &apigen.ProjectRepoError{
+				Code: apigen.ProjectRepoErrorCode(*row.ErrorCode), Message: deref(row.ErrorMessage), At: deref(row.ErrorAt),
+			}
 		}
 	}
 	switch {
@@ -337,7 +321,7 @@ func (s *Service) status(ctx context.Context, prj db.Project, row *db.ProjectRep
 	res, err := s.git(ctx, gitRun{dir: dir, read: true, limit: 512}, "for-each-ref", "--count=1", "--format=%(refname)", "refs/heads/")
 	out.Empty = err == nil && res.code == 0 && len(strings.TrimSpace(string(res.out))) == 0
 	if b := deref(prj.BaseBranch); b != "" && ValidRef(b) && s.hasBranch(ctx, dir, b) {
-		out.BaseBranch = b
+		out.BaseBranch = &b
 	}
 	return out
 }

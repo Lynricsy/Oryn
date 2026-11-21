@@ -22,10 +22,10 @@ func TestSyncCloneFetchPrune(t *testing.T) {
 	}
 	e.waitIdle(t, id)
 	st := e.status(t, id)
-	if st.State != StateReady || st.DefaultBranch != "main" || st.BaseBranch != "main" || st.SizeBytes <= 0 || st.Empty || st.SyncedAt == nil {
+	if st.State != StateReady || deref(st.DefaultBranch) != "main" || deref(st.BaseBranch) != "main" || deref(st.SizeBytes) <= 0 || st.Empty || st.SyncedAt == nil {
 		t.Fatalf("克隆后 Status = %+v", st)
 	}
-	if st.CloneURL != widgetsURL || st.LastError != nil || st.Syncing {
+	if deref(st.CloneURL) != widgetsURL || st.LastError != nil || st.Syncing {
 		t.Fatalf("克隆后 Status = %+v", st)
 	}
 	dir := e.svc.dir(id)
@@ -253,7 +253,7 @@ func TestGitMissing(t *testing.T) {
 		t.Fatalf("Available() = %v, %q", ok, reason)
 	}
 	id := e.project(t, widgetsURL)
-	if st := e.status(t, id); st.Available || st.UnavailableReason != "git_missing" || st.State != StateAbsent {
+	if st := e.status(t, id); st.Available || deref(st.UnavailableReason) != "git_missing" || st.State != StateAbsent {
 		t.Fatalf("git 缺失时 Status = %+v", st)
 	}
 	if _, err := e.svc.Sync(context.Background(), id); err != errUnavailable {

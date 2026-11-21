@@ -412,6 +412,10 @@ func (s *Server) updateProject(ctx context.Context, id string, req apigen.Projec
 			return db.Project{}, err
 		}
 	}
+	// 仓库地址变了：指向别的仓库时删除旧镜像（GitHub 改名跟随除外）；放在绑定之后，按新的 github_repo_id 判定
+	if repoChanged && s.Repos != nil && s.Repos.Service != nil {
+		s.Repos.Service.ProjectChanged(ctx, id)
+	}
 	if oldRepoID != nil && s.GitHub != nil && s.GitHub.Service != nil {
 		if err := s.GitHub.Service.ReleaseHook(ctx, *oldRepoID); err != nil {
 			slog.Warn("删除 GitHub 仓库 hook 失败", "project", id, "err", err)
@@ -475,6 +479,10 @@ func (s *Server) deleteProject(ctx context.Context, id string) error {
 		if err := s.Auth.ProjectHomes.Remove(id); err != nil {
 			slog.Warn("删除项目 omp 配置失败", "project", id, "err", err)
 		}
+	}
+	// 项目仓库镜像随项目删除（行由外键级联）；失败只记日志
+	if s.Repos != nil && s.Repos.Service != nil {
+		s.Repos.Service.Remove(id)
 	}
 	// M16：级联删除项目在 Hindsight 里的记忆（R23）。失败的进入重试队列；记忆未配置或 Hindsight 不可用都不阻塞删除
 	if s.Memory != nil && s.Memory.Service != nil {

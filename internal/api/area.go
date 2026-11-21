@@ -36,6 +36,8 @@ type area struct {
 	OwnerMemory *OwnerMemoryDeps
 	// SSH 是 M18 的 SSH 主机与网关（ssh.go）；nil 时回 501。
 	SSH *SSHDeps
+	// Repos 是 M24 的项目仓库镜像（projectrepo.go）；nil 时回 501。
+	Repos *ReposDeps
 	// Boxes 是 M23 的 box（boxes.go）；nil 时回 501。
 	Boxes *BoxesDeps
 }

@@ -2,6 +2,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -42,6 +43,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/portal"
 	"github.com/Lynricsy/Oryn/internal/portalhost"
 	"github.com/Lynricsy/Oryn/internal/realtime"
+	"github.com/Lynricsy/Oryn/internal/repos"
 	"github.com/Lynricsy/Oryn/internal/schedule"
 	"github.com/Lynricsy/Oryn/internal/search"
 	"github.com/Lynricsy/Oryn/internal/secrets"
@@ -114,6 +116,8 @@ type Server struct {
 	GitHub *github.Service
 	// SSH 是 M18 的 SSH 主机目录与控制面 SSH 网关。
 	SSH *sshgw.Service
+	// Repos 是 M24 的项目仓库裸镜像（克隆、拉取与仓库浏览）。
+	Repos *repos.Service
 	// Boxes 是 M23 的 box（常驻机器与应用部署）。
 	Boxes *boxes.Service
 	// Memory 是 M16 的内置 Hindsight 记忆（连接设置、状态与 .env 生成）。
@@ -368,6 +372,18 @@ func (s *Server) init(ctx context.Context) error {
 	}, s.Store, s.Orbs, s.Notify)
 	s.GitHub.SetSampler(s.Stats)
 	s.Threads.AddObserver(s.Stats)
+	// M24：项目仓库的控制面裸镜像。git 不可用不是错误（仓库浏览停用）；担保主机拉取沿用进程的代理变量
+	if s.Repos, err = repos.New(repos.Config{
+		Dir: cfg.ReposDir(), Git: cfg.Repos.Git, GitHubWebURL: cfg.GitHub.WebURL,
+		MaxBytes:         int64(cmp.Or(cfg.Repos.MaxMirrorGB, 5)) << 30,
+		MinFreeBytes:     int64(cmp.Or(cfg.Repos.MinFreeGB, 2)) << 30,
+		MaxLFSCacheBytes: int64(cmp.Or(cfg.Repos.MaxLFSCacheGB, 2)) << 30,
+		ProxyEnv:         proxyEnv(os.Environ()),
+		Changed:          s.Hub.ProjectRepoChanged,
+	}, s.Store, s.Vault, s.GitHub); err != nil {
+		return err
+	}
+	s.closers = append(s.closers, s.Repos.Close)
 	s.Threads.AddObserver(s.Artifacts.TurnObserver())
 	home := s.Home
 	s.Share = share.New(share.Config{PublicURL: cfg.PublicURL, RoleNames: func() map[string]string {
@@ -414,6 +430,7 @@ func (s *Server) init(ctx context.Context) error {
 	go s.GitHub.Run(runCtx)
 	go s.SSH.Run(runCtx)
 	go s.Boxes.Run(runCtx)
+	go s.Repos.Run(runCtx)
 	// M16：重试删除失败的 Hindsight 记忆，并在记忆启用时保证 user-preferences 存在
 	go s.Memory.RunTombstones(runCtx)
 	// M17：主人记忆写入循环（助手对话与线程空闲 30 分钟、归档或交付后写入 bank oryn-owner）
@@ -512,6 +529,7 @@ func (s *Server) init(ctx context.Context) error {
 	s.API.OwnerMemory = &api.OwnerMemoryDeps{Service: s.OwnerMemory}
 	s.API.SSH = &api.SSHDeps{Service: s.SSH}
 	s.API.Boxes = &api.BoxesDeps{Service: s.Boxes}
+	s.API.Repos = &api.ReposDeps{Service: s.Repos}
 	s.API.Artifacts = &api.ArtifactsDeps{Service: s.Artifacts, Host: frames, Render: renderer}
 	if s.Portal != nil {
 		s.API.PortalShares = &api.PortalDeps{Service: s.Portal}
@@ -577,6 +595,20 @@ func lowerAll(hosts []string) []string {
 	for _, h := range hosts {
 		if h = strings.ToLower(strings.TrimSpace(h)); h != "" {
 			out = append(out, h)
+		}
+	}
+	return out
+}
+
+// proxyEnv 从进程环境里挑出代理变量（HTTPS_PROXY / HTTP_PROXY / NO_PROXY 及小写形式），交给项目仓库镜像在拉取
+// 担保主机时使用：出站代理的上游与 GitHub 客户端经 http.DefaultTransport 本来就读这些变量。
+func proxyEnv(environ []string) []string {
+	var out []string
+	for _, kv := range environ {
+		k, _, _ := strings.Cut(kv, "=")
+		switch k {
+		case "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy":
+			out = append(out, kv)
 		}
 	}
 	return out

@@ -20,7 +20,8 @@ jobs:
     env:
       # M9：协调宿主的沙箱测试在条件不满足时不得跳过（Landlock ABI < 2 即失败）
       ORYN_REQUIRE_SANDBOX: "1"
-      # M24：orb setup 的 Git LFS 测试在没有 git-lfs 时不得跳过
+      # M24：项目仓库镜像的 git 测试与 orb setup 的 Git LFS 测试在没有 git / git-lfs 时不得跳过
+      ORYN_REQUIRE_GIT: "1"
       ORYN_REQUIRE_GIT_LFS: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

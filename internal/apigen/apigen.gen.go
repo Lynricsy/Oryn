@@ -2651,6 +2651,108 @@ func (e ProjectGitHubBindStatus) Valid() bool {
 	}
 }
 
+// Defines values for ProjectRepoErrorCode.
+const (
+	RepoErrAuthFailed     ProjectRepoErrorCode = "auth_failed"
+	RepoErrAuthRequired   ProjectRepoErrorCode = "auth_required"
+	RepoErrBlockedAddress ProjectRepoErrorCode = "blocked_address"
+	RepoErrFetchFailed    ProjectRepoErrorCode = "fetch_failed"
+	RepoErrNoSpace        ProjectRepoErrorCode = "no_space"
+	RepoErrNotFound       ProjectRepoErrorCode = "not_found"
+	RepoErrTimeout        ProjectRepoErrorCode = "timeout"
+	RepoErrTooLarge       ProjectRepoErrorCode = "too_large"
+	RepoErrUnreachable    ProjectRepoErrorCode = "unreachable"
+	RepoErrUnsupportedURL ProjectRepoErrorCode = "unsupported_url"
+)
+
+// Valid indicates whether the value is a known member of the ProjectRepoErrorCode enum.
+func (e ProjectRepoErrorCode) Valid() bool {
+	switch e {
+	case RepoErrAuthFailed:
+		return true
+	case RepoErrAuthRequired:
+		return true
+	case RepoErrBlockedAddress:
+		return true
+	case RepoErrFetchFailed:
+		return true
+	case RepoErrNoSpace:
+		return true
+	case RepoErrNotFound:
+		return true
+	case RepoErrTimeout:
+		return true
+	case RepoErrTooLarge:
+		return true
+	case RepoErrUnreachable:
+		return true
+	case RepoErrUnsupportedURL:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ProjectRepoStatusKind.
+const (
+	ProjectRepoStatusKindMirror ProjectRepoStatusKind = "mirror"
+	ProjectRepoStatusKindNone   ProjectRepoStatusKind = "none"
+)
+
+// Valid indicates whether the value is a known member of the ProjectRepoStatusKind enum.
+func (e ProjectRepoStatusKind) Valid() bool {
+	switch e {
+	case ProjectRepoStatusKindMirror:
+		return true
+	case ProjectRepoStatusKindNone:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ProjectRepoStatusState.
+const (
+	ProjectRepoStatusStateAbsent  ProjectRepoStatusState = "absent"
+	ProjectRepoStatusStateCloning ProjectRepoStatusState = "cloning"
+	ProjectRepoStatusStateError   ProjectRepoStatusState = "error"
+	ProjectRepoStatusStateReady   ProjectRepoStatusState = "ready"
+)
+
+// Valid indicates whether the value is a known member of the ProjectRepoStatusState enum.
+func (e ProjectRepoStatusState) Valid() bool {
+	switch e {
+	case ProjectRepoStatusStateAbsent:
+		return true
+	case ProjectRepoStatusStateCloning:
+		return true
+	case ProjectRepoStatusStateError:
+		return true
+	case ProjectRepoStatusStateReady:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ProjectRepoStatusUnavailableReason.
+const (
+	ProjectRepoGitMissing ProjectRepoStatusUnavailableReason = "git_missing"
+	ProjectRepoGitTooOld  ProjectRepoStatusUnavailableReason = "git_too_old"
+)
+
+// Valid indicates whether the value is a known member of the ProjectRepoStatusUnavailableReason enum.
+func (e ProjectRepoStatusUnavailableReason) Valid() bool {
+	switch e {
+	case ProjectRepoGitMissing:
+		return true
+	case ProjectRepoGitTooOld:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ProjectSnapshotState.
 const (
 	ProjectSnapshotStateBuilding ProjectSnapshotState = "building"
@@ -4034,6 +4136,21 @@ const (
 func (e WsServerPongType) Valid() bool {
 	switch e {
 	case Pong:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WsServerProjectRepoChangedType.
+const (
+	WsServerProjectRepoChangedTypeProjectRepoChanged WsServerProjectRepoChangedType = "project_repo.changed"
+)
+
+// Valid indicates whether the value is a known member of the WsServerProjectRepoChangedType enum.
+func (e WsServerProjectRepoChangedType) Valid() bool {
+	switch e {
+	case WsServerProjectRepoChangedTypeProjectRepoChanged:
 		return true
 	default:
 		return false
@@ -5775,6 +5892,8 @@ type Error struct {
 	// `worktree_failed`（400）、`worktree_dirty`（409）。
 	// M14 / M15（GitHub）：`github_not_configured`（409，尚未配置 OAuth App）、`github_identity_required`（409，所需身份未连接或需要重新授权）、
 	// `github_agent_required`（409，Agent 账号未连接）、`github_not_bound`（409，项目未绑定 GitHub 仓库）、`github_upstream`（502，GitHub 请求失败）。
+	// M24（项目仓库镜像）：`repo_unavailable`（503，控制面没有可用的 git）、`no_repo`（409，项目没有仓库地址）、`repo_not_ready`（409，镜像不存在、克隆中或克隆失败）、
+	// `ref_not_found`、`commit_not_found`、`path_not_found`（404）、`not_a_file`、`not_a_directory`（409）、`too_large`（413）。
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
@@ -9359,6 +9478,59 @@ type ProjectPatch struct {
 	WarmOrbs *int `json:"warmOrbs,omitempty"`
 }
 
+// ProjectRepoError 最近一次失败的克隆或拉取
+type ProjectRepoError struct {
+	// At UTC 毫秒时间戳
+	At   TimestampMs          `json:"at"`
+	Code ProjectRepoErrorCode `json:"code"`
+
+	// Message 已脱敏的 git 输出末尾（≤500 字符）
+	Message string `json:"message"`
+}
+
+// ProjectRepoErrorCode defines model for ProjectRepoError.Code.
+type ProjectRepoErrorCode string
+
+// ProjectRepoStatus M24：项目仓库在控制面的裸镜像
+type ProjectRepoStatus struct {
+	// Available 控制面有可用的 git（≥2.31）
+	Available bool `json:"available"`
+
+	// BaseBranch 项目 baseBranch 在镜像里存在时取它，否则 defaultBranch
+	BaseBranch *string `json:"baseBranch,omitempty"`
+
+	// CloneURL 用户 `git clone` 用的地址（mirror = 项目 repoUrl）
+	CloneURL      *string `json:"cloneUrl,omitempty"`
+	DefaultBranch *string `json:"defaultBranch,omitempty"`
+
+	// Empty 镜像就绪但没有任何分支
+	Empty bool `json:"empty"`
+
+	// Kind `none` = 项目没有仓库地址；阶段 ③ 加 `hosted`
+	Kind ProjectRepoStatusKind `json:"kind"`
+
+	// LastError 最近一次失败的克隆或拉取
+	LastError *ProjectRepoError      `json:"lastError,omitempty"`
+	SizeBytes *int64                 `json:"sizeBytes,omitempty"`
+	State     ProjectRepoStatusState `json:"state"`
+
+	// SyncedAt UTC 毫秒时间戳
+	SyncedAt *TimestampMs `json:"syncedAt,omitempty"`
+
+	// Syncing state=ready 时后台拉取进行中
+	Syncing           bool                                `json:"syncing"`
+	UnavailableReason *ProjectRepoStatusUnavailableReason `json:"unavailableReason,omitempty"`
+}
+
+// ProjectRepoStatusKind `none` = 项目没有仓库地址；阶段 ③ 加 `hosted`
+type ProjectRepoStatusKind string
+
+// ProjectRepoStatusState defines model for ProjectRepoStatus.State.
+type ProjectRepoStatusState string
+
+// ProjectRepoStatusUnavailableReason defines model for ProjectRepoStatus.UnavailableReason.
+type ProjectRepoStatusUnavailableReason string
+
 // ProjectSnapshot 项目快照（M11a）：某项目在某 provider、某 orb 类型上跑完 setup 后的 orb 镜像；键 = (项目, provider, 类型)
 type ProjectSnapshot struct {
 	// BaseCommit 快照里检出的提交（40 位十六进制）；无仓库或尚未发布时省略
@@ -11709,6 +11881,16 @@ type WsServerPong struct {
 
 // WsServerPongType defines model for WsServerPong.Type.
 type WsServerPongType string
+
+// WsServerProjectRepoChanged M24：项目仓库镜像状态变了（开始 / 结束克隆或拉取、出错、被删除）；发给全部私有连接。客户端让该项目的仓库查询失效，WS 每次重新 open 后对全部项目失效一次
+type WsServerProjectRepoChanged struct {
+	// ProjectID `prj_<ulid>`
+	ProjectID ProjectID                      `json:"projectId"`
+	Type      WsServerProjectRepoChangedType `json:"type"`
+}
+
+// WsServerProjectRepoChangedType defines model for WsServerProjectRepoChanged.Type.
+type WsServerProjectRepoChangedType string
 
 // WsServerRes `cmd` 的应答，只发给发起连接；`id` 为客户端原始 id
 type WsServerRes struct {
@@ -15094,6 +15276,40 @@ func (t *WsServerMessage) MergeWsServerBoxesChanged(v WsServerBoxesChanged) erro
 	return err
 }
 
+// AsWsServerProjectRepoChanged returns the union data inside the WsServerMessage as a WsServerProjectRepoChanged
+func (t WsServerMessage) AsWsServerProjectRepoChanged() (WsServerProjectRepoChanged, error) {
+	var body WsServerProjectRepoChanged
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsServerProjectRepoChanged overwrites any union data inside the WsServerMessage as the provided WsServerProjectRepoChanged
+func (t *WsServerMessage) FromWsServerProjectRepoChanged(v WsServerProjectRepoChanged) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"project_repo.changed"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsServerProjectRepoChanged performs a merge with any union data inside the WsServerMessage, using the provided WsServerProjectRepoChanged
+func (t *WsServerMessage) MergeWsServerProjectRepoChanged(v WsServerProjectRepoChanged) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"project_repo.changed"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 // AsWsServerArtifactsChanged returns the union data inside the WsServerMessage as a WsServerArtifactsChanged
 func (t WsServerMessage) AsWsServerArtifactsChanged() (WsServerArtifactsChanged, error) {
 	var body WsServerArtifactsChanged
@@ -15352,6 +15568,8 @@ func (t WsServerMessage) ValueByDiscriminator() (interface{}, error) {
 		return t.AsWsServerPlanResolved()
 	case "pong":
 		return t.AsWsServerPong()
+	case "project_repo.changed":
+		return t.AsWsServerProjectRepoChanged()
 	case "res":
 		return t.AsWsServerRes()
 	case "schedules.changed":
@@ -16167,6 +16385,12 @@ type ServerInterface interface {
 	// CreateGitHubTrigger 新建触发规则（项目未绑定 → 409 `github_not_bound`；`mention` 规则要求 Agent 已连接 → 409 `github_agent_required`）
 	// (POST /api/v1/projects/{id}/github/triggers)
 	CreateGitHubTrigger(w http.ResponseWriter, r *http.Request, id ProjectIDPath)
+	// GetProjectRepo 项目仓库镜像状态（M24；未归档项目按需在后台克隆或拉取，不阻塞）
+	// (GET /api/v1/projects/{id}/repo)
+	GetProjectRepo(w http.ResponseWriter, r *http.Request, id ProjectIDPath)
+	// SyncProjectRepo 立即克隆或拉取项目仓库镜像（M24；已归档项目也可以；在后台进行）
+	// (POST /api/v1/projects/{id}/repo/sync)
+	SyncProjectRepo(w http.ResponseWriter, r *http.Request, id ProjectIDPath)
 	// DeleteProjectSnapshots 清除项目快照（M11a；把匹配的 ready 快照退役，原因 `manual`；镜像由回收器异步删除）
 	// (DELETE /api/v1/projects/{id}/snapshots)
 	DeleteProjectSnapshots(w http.ResponseWriter, r *http.Request, id ProjectIDPath, params DeleteProjectSnapshotsParams)
@@ -17880,6 +18104,18 @@ func (_ Unimplemented) ListGitHubTriggers(w http.ResponseWriter, r *http.Request
 // CreateGitHubTrigger 新建触发规则（项目未绑定 → 409 `github_not_bound`；`mention` 规则要求 Agent 已连接 → 409 `github_agent_required`）
 // (POST /api/v1/projects/{id}/github/triggers)
 func (_ Unimplemented) CreateGitHubTrigger(w http.ResponseWriter, r *http.Request, id ProjectIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetProjectRepo 项目仓库镜像状态（M24；未归档项目按需在后台克隆或拉取，不阻塞）
+// (GET /api/v1/projects/{id}/repo)
+func (_ Unimplemented) GetProjectRepo(w http.ResponseWriter, r *http.Request, id ProjectIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SyncProjectRepo 立即克隆或拉取项目仓库镜像（M24；已归档项目也可以；在后台进行）
+// (POST /api/v1/projects/{id}/repo/sync)
+func (_ Unimplemented) SyncProjectRepo(w http.ResponseWriter, r *http.Request, id ProjectIDPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -25331,6 +25567,58 @@ func (siw *ServerInterfaceWrapper) CreateGitHubTrigger(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
+// GetProjectRepo operation middleware
+func (siw *ServerInterfaceWrapper) GetProjectRepo(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProjectIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetProjectRepo(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SyncProjectRepo operation middleware
+func (siw *ServerInterfaceWrapper) SyncProjectRepo(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProjectIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SyncProjectRepo(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeleteProjectSnapshots operation middleware
 func (siw *ServerInterfaceWrapper) DeleteProjectSnapshots(w http.ResponseWriter, r *http.Request) {
 
@@ -29028,6 +29316,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Patch(options.BaseURL+"/api/v1/projects/{id}", wrapper.UpdateProject)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/projects/{id}/repo", wrapper.GetProjectRepo)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/projects/{id}/repo/sync", wrapper.SyncProjectRepo)
 	})
 	r.Group(func(r chi.Router) {
 		r.Delete(options.BaseURL+"/api/v1/projects/{id}/snapshots", wrapper.DeleteProjectSnapshots)

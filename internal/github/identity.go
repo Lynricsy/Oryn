@@ -167,6 +167,9 @@ func (s *Service) tokenFor(ctx context.Context, slot string) (string, error) {
 	return string(b), err
 }
 
+// UserToken 返回「我的账号」的访问令牌（实现 repos.GitHub：控制面拉取 github.com 镜像用，M24）。
+func (s *Service) UserToken(ctx context.Context) (string, error) { return s.tokenFor(ctx, slotUser) }
+
 // tokenRejected 在上游对令牌 tok 回 401 之后调用（R2）：slots 里当前令牌仍是 tok 的槽位置为 reauth，之后 tokenFor 拒绝该槽位，
 // 请求不再发往上游，设置页显示需要重新授权。控制面自己的请求（client.go 的 do，槽位已知）与出站代理注入的令牌
 // （GitHubTokenRejected，只知道令牌，两个槽位都比）共用这一处。先比明文、再以读到的密文做条件更新

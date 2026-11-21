@@ -406,6 +406,11 @@ func (h *Hub) SshChanged() {
 	h.toAll(apigen.WsServerSSHChanged{Type: apigen.WsServerSSHChangedTypeSSHChanged})
 }
 
+// ProjectRepoChanged 实现 repos.Config.Changed：项目仓库镜像状态变了，广播给全部私有连接（M24）。
+func (h *Hub) ProjectRepoChanged(projectID string) {
+	h.toAll(apigen.WsServerProjectRepoChanged{Type: apigen.WsServerProjectRepoChangedTypeProjectRepoChanged, ProjectID: projectID})
+}
+
 // BoxesChanged 实现 boxes.Config.Changed：box、app、部署、活动或 box 上的线程变了，广播给全部私有连接（M23）。
 func (h *Hub) BoxesChanged() {
 	h.toAll(apigen.WsServerBoxesChanged{Type: apigen.WsServerBoxesChangedTypeBoxesChanged})

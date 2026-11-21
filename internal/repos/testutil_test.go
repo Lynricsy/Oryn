@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/github/githubtest"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/store"
@@ -154,7 +155,7 @@ func (e *testEnv) waitIdle(t *testing.T, projectID string) {
 	}
 }
 
-func (e *testEnv) status(t *testing.T, projectID string) RepoStatus {
+func (e *testEnv) status(t *testing.T, projectID string) apigen.ProjectRepoStatus {
 	t.Helper()
 	st, err := e.svc.Status(context.Background(), projectID)
 	if err != nil {
@@ -164,14 +165,14 @@ func (e *testEnv) status(t *testing.T, projectID string) RepoStatus {
 }
 
 // settle 读一次状态（可能触发后台克隆或拉取），等它结束后再读一次。
-func (e *testEnv) settle(t *testing.T, projectID string) RepoStatus {
+func (e *testEnv) settle(t *testing.T, projectID string) apigen.ProjectRepoStatus {
 	t.Helper()
 	e.status(t, projectID)
 	e.waitIdle(t, projectID)
 	return e.status(t, projectID)
 }
 
-func (e *testEnv) sync(t *testing.T, projectID string) RepoStatus {
+func (e *testEnv) sync(t *testing.T, projectID string) apigen.ProjectRepoStatus {
 	t.Helper()
 	if _, err := e.svc.Sync(context.Background(), projectID); err != nil {
 		t.Fatal(err)
