@@ -3,7 +3,7 @@
  * 页面级用例先等主内容里的加载转圈消失，避免截到半加载的骨架。
  */
 import type { Locator, Page } from "@playwright/test";
-import { go, lastOverlay, surface } from "./audit";
+import { expect, go, lastOverlay, PHASE, surface } from "./audit";
 
 /** 等设置页主内容加载完：网络空闲且主滚动区里没有可见的转圈。 */
 async function loaded(page: Page) {
@@ -40,12 +40,14 @@ async function dialog(
 /**
  * 把主内容里某段文字所在的卡片滚到视口顶部（长页面分段截图）。只滚最近的可滚动祖先：
  * scrollIntoView 会连 overflow:hidden 的外壳一起滚，截出页头被推走的假画面。
+ * 跳过页内目录里的同名标签；停靠位置让出滚动区声明的 `scroll-padding-top`（吸顶目录的高度），没有就留 12px。
  */
 async function scrollTo(page: Page, text: string | RegExp) {
 	await loaded(page);
 	await page
 		.locator("main")
 		.getByText(text)
+		.and(page.locator(":not([data-testid=memory-toc] *)"))
 		.first()
 		.evaluate(async (e) => {
 			let s = e.parentElement;
@@ -53,7 +55,9 @@ async function scrollTo(page: Page, text: string | RegExp) {
 				s = s.parentElement;
 			if (s)
 				s.scrollTop +=
-					e.getBoundingClientRect().top - s.getBoundingClientRect().top - 12;
+					e.getBoundingClientRect().top -
+					s.getBoundingClientRect().top -
+					(Number.parseFloat(s.style.scrollPaddingTop) || 12);
 			const { promise, resolve } = Promise.withResolvers();
 			requestAnimationFrame(() => requestAnimationFrame(resolve));
 			await promise;
@@ -138,6 +142,41 @@ pageSurface("settings.agent-memory.candidates", "agent-memory", /^全局记忆$/
 pageSurface("settings.agent-memory.usage", "agent-memory", /^用量$/);
 pageSurface("settings.agent-memory.owner", "agent-memory", "助手记忆");
 pageSurface("settings.agent-memory.owner-facts", "agent-memory", /^事实$/);
+// 页内目录：点「全局记忆」跳过去。只滚内容区（文档不动、页头还在），目录贴着内容区上沿吸顶，
+// 跳到的节停在目录下方不被压住，目录高亮跟到这一节。基线没有目录，before 只截页顶
+surface({
+	id: "settings.agent-memory.toc",
+	path: "/settings/agent-memory",
+	ready: READY,
+	open: async (page) => {
+		await loaded(page);
+		if (PHASE === "before") return undefined;
+		const toc = page.getByTestId("memory-toc");
+		await toc.getByRole("button", { name: "全局记忆", exact: true }).click();
+		await expect(toc.locator("[aria-current]")).toHaveText("全局记忆");
+		await expect
+			.poll(() =>
+				page.evaluate(() => {
+					const nav = document.querySelector("[data-testid=memory-toc]");
+					const sec = document.getElementById("memory-global");
+					let s = nav?.parentElement ?? null;
+					while (s && !/(auto|scroll)/.test(getComputedStyle(s).overflowY))
+						s = s.parentElement;
+					if (!nav || !sec || !s) return "缺元素";
+					const n = nav.getBoundingClientRect();
+					const top = sec.getBoundingClientRect().top;
+					const edge = s.getBoundingClientRect().top;
+					if (document.scrollingElement?.scrollTop) return "文档被滚动";
+					if (Math.abs(n.top - edge) > 1) return `目录没贴上沿 ${n.top} vs ${edge}`;
+					if (top < n.bottom || top > n.bottom + 16)
+						return `节顶 ${top} 不在目录下沿 ${n.bottom} 之下 16px 内`;
+					return "ok";
+				}),
+			)
+			.toBe("ok");
+		return undefined;
+	},
+});
 pageSurface("settings.agent-memory.owner-sources", "agent-memory", /^来源$/);
 pageSurface("settings.identity.assistant", "identity", "全局助手");
 pageSurface("settings.notifications.recent", "notifications", "最近通知");

@@ -1250,6 +1250,14 @@
 	},
 	"memoryPage": {
 		"scope": "Applies to orbs and runners, not the global assistant. Threads in the same project share its memory; global memories are recalled in every project; projects never see each other. Switch changes take effect for newly started agents.",
+		"toc": {
+			"label": "On this page",
+			"status": "Status",
+			"models": "Models",
+			"browse": "Browse",
+			"global": "Global",
+			"usage": "Usage"
+		},
 		"failed": "{{step}} failed",
 		"listSep": ", ",
 		"steps": {
