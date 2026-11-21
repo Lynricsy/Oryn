@@ -19,6 +19,8 @@ var (
 	// artifactLabelRe 是 artifact 主机标签：`a-<帧令牌>`（渲染帧）或 `p-<slug>`（发布页），令牌与 slug 都是
 	// 16 字节的小写无填充 base32。
 	artifactLabelRe = regexp.MustCompile(`^([ap])-([a-z2-7]{26})$`)
+	// appLabelRe 是 box app 名（M23）：同时就是 app 主机标签。
+	appLabelRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,18}[a-z0-9])?$`)
 )
 
 // Code 返回线程短码：线程 id 形如 `T-<uuid>`（小写十六进制）时取末 12 位，否则 ok=false。
@@ -59,6 +61,29 @@ func ParseArtifactLabel(label string) (kind byte, id string, ok bool) {
 		return 0, "", false
 	}
 	return m[1][0], m[2], true
+}
+
+// ParseAppLabel 解析 box app 主机标签（M23）：就是 app 名（`^[a-z0-9]([a-z0-9-]{0,18}[a-z0-9])?$`，不含 `--`），
+// 且不是 portal / artifact 标签。
+func ParseAppLabel(label string) (app string, ok bool) {
+	if !ValidAppName(label) {
+		return "", false
+	}
+	return label, true
+}
+
+// ValidAppName 与 ParseAppLabel 同一判定（boxes 包校验 app 名用）。
+func ValidAppName(name string) bool {
+	if !appLabelRe.MatchString(name) || strings.Contains(name, "--") {
+		return false
+	}
+	if _, _, ok := ParseLabel(name); ok {
+		return false
+	}
+	if _, _, ok := ParseArtifactLabel(name); ok {
+		return false
+	}
+	return true
 }
 
 // Expand 把模板中的 `{code}` 换成短码；port > 0 时再把 `{port}` 换成端口，port = 0 时保留 `{port}`。
@@ -147,10 +172,7 @@ func (b Base) hostSuffix() string {
 
 // URL 返回 portal 根地址 `<Scheme>://t-<code>-p<port>.<Domain>[:Port]/`；未启用时为空串。
 func (b Base) URL(code string, port int) string {
-	if !b.Enabled() {
-		return ""
-	}
-	return b.Scheme + "://" + Label(code, port) + b.hostSuffix() + "/"
+	return b.LabelURL(Label(code, port))
 }
 
 // Template 返回地址模板 `<Scheme>://t-{code}-p{port}.<Domain>[:Port]/`；未启用时为空串。
@@ -171,8 +193,16 @@ func (b Base) FrameSrc() string {
 
 // ArtifactURL 返回 artifact 主机的根地址 `<Scheme>://<kind>-<id>.<Domain>[:Port]/`；未启用时为空串。
 func (b Base) ArtifactURL(kind byte, id string) string {
+	return b.LabelURL(ArtifactLabel(kind, id))
+}
+
+// LabelURL 返回 `<Scheme>://<label>.<Domain>[:Port]/`；未启用时为空串。
+func (b Base) LabelURL(label string) string {
 	if !b.Enabled() {
 		return ""
 	}
-	return b.Scheme + "://" + ArtifactLabel(kind, id) + b.hostSuffix() + "/"
+	return b.Scheme + "://" + label + b.hostSuffix() + "/"
 }
+
+// AppURL 返回 box app 的根地址 `<Scheme>://<app>.<Domain>[:Port]/`（M23）；未启用时为空串。
+func (b Base) AppURL(app string) string { return b.LabelURL(app) }

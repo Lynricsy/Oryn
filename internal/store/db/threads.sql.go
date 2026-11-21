@@ -89,6 +89,17 @@ func (q *Queries) CountOtherThreadsByOrb(ctx context.Context, arg CountOtherThre
 	return count, err
 }
 
+const countWorkingThreadsByOrb = `-- name: CountWorkingThreadsByOrb :one
+SELECT COUNT(*) FROM threads WHERE orb_id = ?1 AND state = 'working'
+`
+
+func (q *Queries) CountWorkingThreadsByOrb(ctx context.Context, orbID *string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countWorkingThreadsByOrb, orbID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createThread = `-- name: CreateThread :exec
 
 INSERT INTO threads (id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id,
@@ -530,6 +541,52 @@ func (q *Queries) ListThreadsByOrb(ctx context.Context, orbID *string) ([]Thread
 			&i.Cwd,
 			&i.Worktree,
 			&i.Main,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listThreadsByOrbSince = `-- name: ListThreadsByOrbSince :many
+SELECT id, title, created_at, cwd, kind FROM threads WHERE orb_id = ?1 AND created_at >= ?2 ORDER BY created_at
+`
+
+type ListThreadsByOrbSinceParams struct {
+	OrbID *string `json:"orbId"`
+	Since int64   `json:"since"`
+}
+
+type ListThreadsByOrbSinceRow struct {
+	ID        string  `json:"id"`
+	Title     string  `json:"title"`
+	CreatedAt int64   `json:"createdAt"`
+	Cwd       *string `json:"cwd"`
+	Kind      string  `json:"kind"`
+}
+
+func (q *Queries) ListThreadsByOrbSince(ctx context.Context, arg ListThreadsByOrbSinceParams) ([]ListThreadsByOrbSinceRow, error) {
+	rows, err := q.db.QueryContext(ctx, listThreadsByOrbSince, arg.OrbID, arg.Since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListThreadsByOrbSinceRow{}
+	for rows.Next() {
+		var i ListThreadsByOrbSinceRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.CreatedAt,
+			&i.Cwd,
+			&i.Kind,
 		); err != nil {
 			return nil, err
 		}

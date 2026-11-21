@@ -4651,6 +4651,324 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/boxes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 全部 box（按创建时间） */
+        get: operations["listBoxes"];
+        put?: never;
+        /**
+         * 新建 box
+         * @description 名字不合规 → 400 `invalid_request`；重名 → 409 `box_exists`；已有 16 台 → 409 `box_limit`。
+         *     provider / type 省略时按默认落点解析；box 的 orb 不冻结、不随线程回收。
+         */
+        post: operations["createBox"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/box-activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 全部 box 的最近活动（新到旧） */
+        get: operations["listAllBoxActivity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/boxes/{box}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+            };
+            cookie?: never;
+        };
+        /** 单台 box（`box` 为 id 或名字） */
+        get: operations["getBox"];
+        put?: never;
+        post?: never;
+        /** 删除 box（连同全部 app 与数据，不可恢复） */
+        delete: operations["deleteBox"];
+        options?: never;
+        head?: never;
+        /**
+         * 改名或设置运行时段
+         * @description 有未结束的部署时改名 → 409 `deploy_in_progress`。app 地址不含 box 名，改名不影响地址。
+         */
+        patch: operations["updateBox"];
+        trace?: never;
+    };
+    "/api/v1/boxes/{box}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 启动 box（期望状态改为 running；保持到下一个时段边界） */
+        post: operations["startBox"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/boxes/{box}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 停止 box（期望状态改为 stopped；保持到下一个时段边界） */
+        post: operations["stopBox"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/boxes/{box}/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+            };
+            cookie?: never;
+        };
+        /** 这台 box 的活动（含近 30 天在它上面开的工作线程），新到旧 */
+        get: operations["listBoxActivity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/boxes/{box}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+            };
+            cookie?: never;
+        };
+        /** 最近 21 个 UTC 自然日的线程数与在线率 */
+        get: operations["getBoxUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/boxes/{box}/exec": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 在 box 上执行命令（流式）
+         * @description `bash -lc <command>`；给了 `app` 时工作目录为 `~/apps/<app>/current`，否则 `~`。响应每行一个 JSON 对象：
+         *     `{"s":"o"|"e","d":"<文本块>"}`，最后一行 `{"exit":<退出码>}`（超时为 124）。客户端断开时远端进程组被杀。
+         */
+        post: operations["execBox"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/boxes/{box}/apps/{app}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+                app: components["parameters"]["BoxAppPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 下线 app（停止服务、删除 release；`purgeData` 为真时连数据目录一起删） */
+        delete: operations["undeployBoxApp"];
+        options?: never;
+        head?: never;
+        /** 切换 app 的公开性 */
+        patch: operations["updateBoxApp"];
+        trace?: never;
+    };
+    "/api/v1/boxes/{box}/apps/{app}/restart": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+                app: components["parameters"]["BoxAppPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 重启 app 的全部服务（重新下发密钥与环境变量） */
+        post: operations["restartBoxApp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/boxes/{box}/apps/{app}/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+                app: components["parameters"]["BoxAppPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 回滚到保留着的 release（省略 `releaseId` = 上一个） */
+        post: operations["rollbackBoxApp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/boxes/{box}/apps/{app}/cancel-deploy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+                app: components["parameters"]["BoxAppPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 取消 app 未结束的部署（已进入激活 → 409 `deploy_in_progress`） */
+        post: operations["cancelBoxDeploy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/boxes/{box}/apps/{app}/releases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+                app: components["parameters"]["BoxAppPath"];
+            };
+            cookie?: never;
+        };
+        /** app 的 release（新到旧） */
+        get: operations["listBoxReleases"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/boxes/{box}/apps/{app}/secrets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+                app: components["parameters"]["BoxAppPath"];
+            };
+            cookie?: never;
+        };
+        /** app 的密钥与环境变量（密文项不回值） */
+        get: operations["listBoxSecrets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/boxes/{box}/apps/{app}/secrets/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+                app: components["parameters"]["BoxAppPath"];
+                name: components["parameters"]["BoxSecretNamePath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** 设置密钥或环境变量（下一次部署或重启后生效） */
+        put: operations["putBoxSecret"];
+        post?: never;
+        /** 删除密钥或环境变量 */
+        delete: operations["deleteBoxSecret"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/ssh/hosts": {
         parameters: {
             query?: never;
@@ -5959,6 +6277,210 @@ export interface components {
              * @description 还有更早的记录时给出，作为下一页的 `before`
              */
             nextBefore?: number;
+        };
+        /**
+         * @description 由 box orb 的状态映射得出
+         * @enum {string}
+         */
+        BoxState: "starting" | "running" | "stopping" | "stopped" | "failed";
+        /** @enum {string} */
+        BoxDesired: "running" | "stopped";
+        /** @enum {string} */
+        BoxActor: "owner" | "agent" | "assistant" | "schedule" | "system";
+        /** @enum {string} */
+        BoxActivityKind: "created" | "started" | "stopped" | "renamed" | "schedule" | "deployed" | "deploy_failed" | "rolled_back" | "restarted" | "undeployed" | "visibility" | "thread";
+        /** @description 每日运行时段（`on` 时刻启动、`off` 时刻停止；可以跨夜） */
+        BoxSchedule: {
+            on: string;
+            off: string;
+            /** @description IANA 时区名 */
+            tz: string;
+        };
+        BoxRelease: {
+            /** @description `bxr_<ULID>` */
+            id: string;
+            commit: string;
+            branch: string;
+            /** @description 规范化的 origin（`host/path`），没有 origin 时为 `local:<根提交>` */
+            repo: string;
+            /** @description app 在仓库里的目录；'' = 仓库根 */
+            root: string;
+            /** @description release 带源码（含 `.git`） */
+            source: boolean;
+            /** Format: int64 */
+            sizeBytes: number;
+            /** @enum {string} */
+            state: "live" | "kept" | "pruned";
+            threadId?: components["schemas"]["ThreadId"];
+            createdAt: components["schemas"]["TimestampMs"];
+            activatedAt: components["schemas"]["TimestampMs"];
+        };
+        BoxApp: {
+            name: string;
+            /** @description `https://<app>.<portal_domain>`（不带结尾 `/`）；未配置 portal_domain 时省略 */
+            url?: string;
+            /** @description 为真时任何人可访问；为假时要求主人登录 */
+            public: boolean;
+            repo: string;
+            root: string;
+            source: boolean;
+            port: number;
+            live?: components["schemas"]["BoxRelease"];
+            /** @description 有未结束的部署 */
+            deploying: boolean;
+            /** @description 根页面声明了 `<meta name="oryn-preview" content="v1; enabled; iframe">` */
+            preview: boolean;
+            services: components["schemas"]["OrbService"][];
+            createdAt: components["schemas"]["TimestampMs"];
+            updatedAt: components["schemas"]["TimestampMs"];
+        };
+        Box: {
+            /** @description `box_<ULID>` */
+            id: string;
+            name: string;
+            orbId: components["schemas"]["OrbId"];
+            state: components["schemas"]["BoxState"];
+            desired: components["schemas"]["BoxDesired"];
+            /**
+             * @description `desired = stopped` 时给出：由主人还是时段停下
+             * @enum {string}
+             */
+            stoppedBy?: "owner" | "schedule";
+            failureReason?: string;
+            provider: string;
+            type: string;
+            cpus: number;
+            memoryMB: number;
+            schedule?: components["schemas"]["BoxSchedule"];
+            createdAt: components["schemas"]["TimestampMs"];
+            lastDeployAt?: components["schemas"]["TimestampMs"];
+            apps: components["schemas"]["BoxApp"][];
+        };
+        BoxList: {
+            boxes: components["schemas"]["Box"][];
+        };
+        CreateBoxRequest: {
+            name: string;
+            provider?: string;
+            type?: string;
+        };
+        UpdateBoxRequest: {
+            name?: string;
+            schedule?: components["schemas"]["BoxSchedule"];
+            clearSchedule?: boolean;
+        };
+        UpdateBoxAppRequest: {
+            public: boolean;
+        };
+        BoxRollbackRequest: {
+            releaseId?: string;
+        };
+        BoxReleaseList: {
+            releases: components["schemas"]["BoxRelease"][];
+        };
+        BoxSecret: {
+            name: string;
+            secret: boolean;
+            /** @description 只在 `secret = false` 时给出 */
+            value?: string;
+            updatedAt: components["schemas"]["TimestampMs"];
+        };
+        BoxSecretList: {
+            secrets: components["schemas"]["BoxSecret"][];
+        };
+        PutBoxSecretRequest: {
+            value: string;
+            /** @description 缺省 true；false = 明文环境变量（API 可读回） */
+            secret?: boolean;
+        };
+        BoxActivity: {
+            /** @description `a:<序号>`（活动表）或 `t:<线程 id>`（线程项） */
+            id: string;
+            boxId: string;
+            boxName: string;
+            ts: components["schemas"]["TimestampMs"];
+            kind: components["schemas"]["BoxActivityKind"];
+            actor: components["schemas"]["BoxActor"];
+            app?: string;
+            commit?: string;
+            releaseId?: string;
+            threadId?: components["schemas"]["ThreadId"];
+            title?: string;
+            error?: string;
+            public?: boolean;
+            from?: string;
+            to?: string;
+        };
+        BoxActivityList: {
+            items: components["schemas"]["BoxActivity"][];
+        };
+        BoxUsageDay: {
+            /** @description UTC，YYYY-MM-DD */
+            date: string;
+            threads: number;
+            /** @description 当天 orb 处于 ready 的时长占比（0–1） */
+            upRatio: number;
+        };
+        BoxUsage: {
+            days: components["schemas"]["BoxUsageDay"][];
+        };
+        BoxExecRequest: {
+            command: string;
+            app?: string;
+            timeoutSec?: number;
+        };
+        OrbBoxService: {
+            name: string;
+            command: string;
+            /** @description 相对 release 根；'' = 根 */
+            cwd: string;
+        };
+        OrbBoxActivateRequest: {
+            releaseId: string;
+            port: number;
+            services: components["schemas"]["OrbBoxService"][];
+            env: {
+                [key: string]: string;
+            };
+            source: boolean;
+            keep: number;
+            readyTimeoutSec: number;
+            discardBoxChanges?: boolean;
+        };
+        OrbBoxResult: {
+            ok: boolean;
+            liveReleaseId?: string;
+            pruned?: string[];
+            code?: string;
+            message?: string;
+            log?: string;
+        };
+        OrbBoxRollbackRequest: {
+            releaseId: string;
+            readyTimeoutSec: number;
+        };
+        OrbBoxRestartRequest: {
+            env: {
+                [key: string]: string;
+            };
+            readyTimeoutSec: number;
+        };
+        OrbBoxExecRequest: {
+            command: string;
+            cwd: string;
+            timeoutSec: number;
+        };
+        OrbBoxAppState: {
+            name: string;
+            port: number;
+            /** @description 最近一次确认就绪的 release（'' = 还没有） */
+            live: string;
+            /** @description 正在试运行、尚未确认的 release（没有则省略） */
+            activating?: string;
+            releases: string[];
+        };
+        OrbBoxAppsState: {
+            apps: components["schemas"]["OrbBoxAppState"][];
         };
         /** @description `ssh_<ULID>` */
         SshHostId: string;
@@ -7313,8 +7835,8 @@ export interface components {
             data: string;
             mimeType: string;
         };
-        /** @description 线程执行位置（`runner` 为 M11b） */
-        ThreadExecutor: components["schemas"]["ThreadExecutorNewOrb"] | components["schemas"]["ThreadExecutorOrb"] | components["schemas"]["ThreadExecutorRunner"];
+        /** @description 线程执行位置（`runner` 为 M11b，`box` 为 M23） */
+        ThreadExecutor: components["schemas"]["ThreadExecutorNewOrb"] | components["schemas"]["ThreadExecutorOrb"] | components["schemas"]["ThreadExecutorRunner"] | components["schemas"]["ThreadExecutorBox"];
         ThreadExecutorNewOrb: {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -7347,6 +7869,17 @@ export interface components {
             worktree?: components["schemas"]["ThreadExecutorRunnerWorktree"];
             /** @description 为真时允许与其它线程共用同一工作目录（不检查 `dir_in_use`） */
             shareDir?: boolean;
+        };
+        /** @description 在 box 上执行（M23）：省略 `app` = 机器（工作目录 `~`），否则 `~/apps/<app>/current`；工作目录由服务端决定 */
+        ThreadExecutorBox: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "box";
+            /** @description box 的 id 或名字 */
+            boxId: string;
+            app?: string;
         };
         /** @description 给出时先在 runner 上 `worktree.add {repo: dir, name}`，线程的工作目录取新 worktree */
         ThreadExecutorRunnerWorktree: {
@@ -7617,6 +8150,8 @@ export interface components {
             readonly automation?: boolean;
             /** @description 助手的电脑（M19，全库至多一台，线程不能挂上去）；为 false 时省略 */
             computer?: boolean;
+            /** @description box 的常驻 orb（M23）；为 false 时省略 */
+            box?: boolean;
         };
         /**
          * @description `orb` = provider 创建的 orb；`runner` = runner 的常驻 orb（M11b）
@@ -7685,10 +8220,10 @@ export interface components {
         OrbService: {
             name: string;
             /**
-             * @description `file` = `.oryn/services.yaml`（或 `.amp/services.yaml`）；`dynamic` = `oryn orb service start --command`
+             * @description `file` = `.oryn/services.yaml`（或 `.amp/services.yaml`）；`dynamic` = `oryn orb service start --command`；`app` = box app 的服务（M23，名字为 `<app>--<svc>`）
              * @enum {string}
              */
-            source: "file" | "dynamic";
+            source: "file" | "dynamic" | "app";
             command: string;
             /** @description 相对工作区根的目录 */
             cwd?: string;
@@ -7710,6 +8245,8 @@ export interface components {
             /** @description `failed` 的原因（如 `port_conflict`、`forbidden_port`、定义校验错误） */
             error?: string;
             startedAt?: components["schemas"]["TimestampMs"];
+            /** @description 所属 box app（M23；`source = app` 时给出） */
+            app?: string;
         };
         OrbPortal: {
             port: number;
@@ -8208,7 +8745,7 @@ export interface components {
              * @description 工具名（M19 起全局助手有更多写类工具；经确认卡执行的记 `origin = owner`）
              * @enum {string}
              */
-            action: "create_thread" | "send_message" | "archive_thread" | "set_schedule" | "delete_schedule" | "update_thread" | "abort_thread" | "set_thread_model" | "fork_thread" | "wake_thread" | "delete_thread" | "create_project" | "update_project" | "delete_project" | "create_space" | "update_space" | "delete_space" | "set_trigger" | "delete_trigger" | "pause_orb" | "wake_orb" | "delete_orb" | "write_thread_file" | "put_thread_file" | "write_project_config" | "delete_project_config" | "share_thread" | "revoke_share" | "share_portal" | "unshare_portal" | "publish_artifact" | "unpublish_artifact";
+            action: "create_thread" | "send_message" | "archive_thread" | "set_schedule" | "delete_schedule" | "update_thread" | "abort_thread" | "set_thread_model" | "fork_thread" | "wake_thread" | "delete_thread" | "create_project" | "update_project" | "delete_project" | "create_space" | "update_space" | "delete_space" | "set_trigger" | "delete_trigger" | "pause_orb" | "wake_orb" | "delete_orb" | "write_thread_file" | "put_thread_file" | "write_project_config" | "delete_project_config" | "share_thread" | "revoke_share" | "share_portal" | "unshare_portal" | "publish_artifact" | "unpublish_artifact" | "create_box" | "start_box" | "stop_box" | "set_box_schedule" | "set_box_app_visibility" | "delete_box";
             targetThreadId?: components["schemas"]["ThreadId"];
             scheduleId?: components["schemas"]["ScheduleId"];
             /** @description 消息 / 提示词的前 200 字符；定时为 `<name> · <kind> <spec> · <mode>` */
@@ -9325,7 +9862,7 @@ export interface components {
             id: components["schemas"]["ArtifactId"];
         };
         /** @description 服务端 → 客户端 WS 消息 */
-        WsServerMessage: components["schemas"]["WsServerIndex"] | components["schemas"]["WsServerIndexPatch"] | components["schemas"]["WsServerThreadSnapshot"] | components["schemas"]["WsServerEntries"] | components["schemas"]["WsServerFrame"] | components["schemas"]["WsServerRes"] | components["schemas"]["WsServerUiResolved"] | components["schemas"]["WsServerLiveReset"] | components["schemas"]["WsServerTranscriptReset"] | components["schemas"]["WsServerPlanResolved"] | components["schemas"]["WsServerOrb"] | components["schemas"]["WsServerError"] | components["schemas"]["WsServerPong"] | components["schemas"]["WsServerTermLagged"] | components["schemas"]["WsServerTermResized"] | components["schemas"]["WsServerNotification"] | components["schemas"]["WsServerNotificationsRead"] | components["schemas"]["WsServerNotificationsResolved"] | components["schemas"]["WsServerSchedulesChanged"] | components["schemas"]["WsServerGitHubChanged"] | components["schemas"]["WsServerSshChanged"] | components["schemas"]["WsServerArtifactsChanged"] | components["schemas"]["WsServerArtifactVersion"] | components["schemas"]["WsServerArtifactActivity"] | components["schemas"]["WsServerArtifactComments"] | components["schemas"]["WsServerArtifactCanvas"] | components["schemas"]["WsServerArtifactConsent"];
+        WsServerMessage: components["schemas"]["WsServerIndex"] | components["schemas"]["WsServerIndexPatch"] | components["schemas"]["WsServerThreadSnapshot"] | components["schemas"]["WsServerEntries"] | components["schemas"]["WsServerFrame"] | components["schemas"]["WsServerRes"] | components["schemas"]["WsServerUiResolved"] | components["schemas"]["WsServerLiveReset"] | components["schemas"]["WsServerTranscriptReset"] | components["schemas"]["WsServerPlanResolved"] | components["schemas"]["WsServerOrb"] | components["schemas"]["WsServerError"] | components["schemas"]["WsServerPong"] | components["schemas"]["WsServerTermLagged"] | components["schemas"]["WsServerTermResized"] | components["schemas"]["WsServerNotification"] | components["schemas"]["WsServerNotificationsRead"] | components["schemas"]["WsServerNotificationsResolved"] | components["schemas"]["WsServerSchedulesChanged"] | components["schemas"]["WsServerGitHubChanged"] | components["schemas"]["WsServerSshChanged"] | components["schemas"]["WsServerBoxesChanged"] | components["schemas"]["WsServerArtifactsChanged"] | components["schemas"]["WsServerArtifactVersion"] | components["schemas"]["WsServerArtifactActivity"] | components["schemas"]["WsServerArtifactComments"] | components["schemas"]["WsServerArtifactCanvas"] | components["schemas"]["WsServerArtifactConsent"];
         /** @description 线程摘要全量（连接建立后首条） */
         WsServerIndex: {
             /**
@@ -9586,6 +10123,14 @@ export interface components {
              * @enum {string}
              */
             type: "ssh.changed";
+        };
+        /** @description M23：box、app、部署、活动或 box 上的线程变了；发给全部私有连接。客户端据此让 Boxes 相关查询失效，WS 每次重新 open 后也要自行失效一次 */
+        WsServerBoxesChanged: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "boxes.changed";
         };
         /** @description artifact 列表变了（新建、新版本、改名、删除、恢复、清理、缩略图就绪）；发给全部私有连接。客户端据此让 artifact 列表查询失效，WS 每次重新 open 后也要自行失效一次 */
         WsServerArtifactsChanged: {
@@ -10059,13 +10604,14 @@ export interface components {
          *     `github.prepare.report`（orbd→orynd 请求，M15，`github_prepare` 通过后上报，参数 `LinkCtlGithubPrepareReportParams`，结果 `LinkCtlOkResult`）；
          *     runner 的 link 拒绝这两个方法。
          *     `ssh.call`（orbd→orynd 请求，M18，由 orb 内 agent 的 `ssh_exec_many` 工具转来，参数 `LinkCtlSshCallParams`，结果 `LinkCtlSshCallResult`；runner 的 link 拒绝）。
+         *     `box.call`（orbd→orynd 请求，M23，由 orb 内 `oryn boxes …` 经 `orbd.sock` 转来，参数 `LinkCtlBoxCallParams`，结果 `LinkCtlBoxCallResult`；runner 的 link 拒绝）。
          *     `computer.start`、`computer.call`、`computer.cancel`、`computer.stop`（orynd→orbd 请求，M19，助手的电脑里的工具执行器：参数分别为
          *     `LinkCtlComputerStartParams` / `LinkCtlComputerCallParams` / `LinkCtlComputerCancelParams` / 无参数，结果分别为
          *     `LinkCtlComputerStartResult` / `LinkCtlComputerCallResult` / `LinkCtlOkResult` / `LinkCtlOkResult`；只在 hello 含 `computer` 时发送，
          *     runner 与协调宿主回 `not_supported`）、`computer.update`（orbd→orynd 通知，M19，参数 `LinkCtlComputerUpdateParams`，在途工具的流式输出）。
          * @enum {string}
          */
-        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap" | "services.state" | "portal.configure" | "desktop.state" | "profile.mode" | "thread.create" | "thread.send" | "thread.get" | "schedule.get" | "schedule.put" | "schedule.delete" | "schedule.enable" | "snapshot.prepare" | "worktree.add" | "worktree.remove" | "omphome.apply" | "library.sync" | "library.fetch" | "library.put" | "artifact.call" | "github.call" | "github.prepare.report" | "ssh.call" | "computer.start" | "computer.call" | "computer.cancel" | "computer.stop" | "computer.update";
+        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap" | "services.state" | "portal.configure" | "desktop.state" | "profile.mode" | "thread.create" | "thread.send" | "thread.get" | "schedule.get" | "schedule.put" | "schedule.delete" | "schedule.enable" | "snapshot.prepare" | "worktree.add" | "worktree.remove" | "omphome.apply" | "library.sync" | "library.fetch" | "library.put" | "artifact.call" | "github.call" | "github.prepare.report" | "ssh.call" | "computer.start" | "computer.call" | "computer.cancel" | "computer.stop" | "computer.update" | "box.call";
         LinkCtlRequest: {
             /**
              * Format: int64
@@ -10334,6 +10880,21 @@ export interface components {
             /** @description `<用户>@<地址>:<端口>`，再接描述与标签 */
             description: string;
             compat?: boolean;
+        };
+        /** @description M23（orbd→orynd）：orb 内 `oryn boxes …` 的调用。控制面校验调用方线程属于本 orb、`kind = work`、未归档，且 orb 不是全自动入口建立的。 */
+        LinkCtlBoxCallParams: {
+            threadId: components["schemas"]["ThreadId"];
+            /** @description 操作名（`list`、`deploy.prepare`、`deploy.commit`、`exec` 等） */
+            op: string;
+            params: {
+                [key: string]: unknown;
+            };
+        };
+        LinkCtlBoxCallResult: {
+            /** @description 每个 op 的结果都是对象；列表包一层，无返回值为 `{}` */
+            result: {
+                [key: string]: unknown;
+            };
         };
         /** @description M18（orbd→orynd）：orb 内 agent 的 SSH 工具调用。控制面校验调用方线程属于本 orb、`kind = work`、未归档。 */
         LinkCtlSshCallParams: {
@@ -10771,6 +11332,11 @@ export interface components {
         ArtifactVersionPath: number;
         ArtifactCommentThreadIdPath: components["schemas"]["ArtifactCommentThreadId"];
         SshHostIdPath: components["schemas"]["SshHostId"];
+        /** @description box 的 id 或名字 */
+        BoxPath: string;
+        BoxAppPath: string;
+        BoxSecretNamePath: string;
+        BoxActivityLimit: number;
         SshKeyIdPath: components["schemas"]["SshKeyId"];
         /** @description 目标机上的绝对路径（`path.Clean` 之后必须以 `/` 开头） */
         SshFsPathQuery: string;
@@ -18231,6 +18797,508 @@ export interface operations {
             302: {
                 headers: {
                     Location?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listBoxes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description box 列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BoxList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createBox: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateBoxRequest"];
+            };
+        };
+        responses: {
+            /** @description 新 box */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Box"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listAllBoxActivity: {
+        parameters: {
+            query?: {
+                limit?: components["parameters"]["BoxActivityLimit"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 活动 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BoxActivityList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getBox: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description box */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Box"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteBox: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateBox: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateBoxRequest"];
+            };
+        };
+        responses: {
+            /** @description 修改后的 box */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Box"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startBox: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已受理 */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Box"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    stopBox: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已受理 */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Box"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listBoxActivity: {
+        parameters: {
+            query?: {
+                limit?: components["parameters"]["BoxActivityLimit"];
+            };
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 活动 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BoxActivityList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getBoxUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 用量 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BoxUsage"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    execBox: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BoxExecRequest"];
+            };
+        };
+        responses: {
+            /** @description NDJSON 流 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-ndjson": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    undeployBoxApp: {
+        parameters: {
+            query?: {
+                purgeData?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+                app: components["parameters"]["BoxAppPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已下线 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateBoxApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+                app: components["parameters"]["BoxAppPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateBoxAppRequest"];
+            };
+        };
+        responses: {
+            /** @description 修改后的 app */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BoxApp"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    restartBoxApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+                app: components["parameters"]["BoxAppPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description app */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BoxApp"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    rollbackBoxApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+                app: components["parameters"]["BoxAppPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["BoxRollbackRequest"];
+            };
+        };
+        responses: {
+            /** @description app */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BoxApp"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    cancelBoxDeploy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+                app: components["parameters"]["BoxAppPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已取消 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listBoxReleases: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+                app: components["parameters"]["BoxAppPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description release 列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BoxReleaseList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listBoxSecrets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+                app: components["parameters"]["BoxAppPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 密钥列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BoxSecretList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putBoxSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+                app: components["parameters"]["BoxAppPath"];
+                name: components["parameters"]["BoxSecretNamePath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutBoxSecretRequest"];
+            };
+        };
+        responses: {
+            /** @description 已保存 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteBoxSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description box 的 id 或名字 */
+                box: components["parameters"]["BoxPath"];
+                app: components["parameters"]["BoxAppPath"];
+                name: components["parameters"]["BoxSecretNamePath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
                     [name: string]: unknown;
                 };
                 content?: never;

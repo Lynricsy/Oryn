@@ -7,11 +7,12 @@
 -- name: CreateOrb :exec
 INSERT INTO orbs (id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at,
                   token_hash, snapshot_of, created_at, coordinator, pool_state, config_hash, base_image_id, kind, github_identity,
-                  automation, computer)
+                  automation, computer, box)
 VALUES (@id, @provider_id, @type, @cpus, @memory_mb, @image, @project_id, @state, @state_changed_at,
         @token_hash, @snapshot_of, @created_at, @coordinator, sqlc.narg(pool_state), sqlc.narg(config_hash), @base_image_id,
         COALESCE(CAST(sqlc.narg(kind) AS TEXT), 'orb'), COALESCE(CAST(sqlc.narg(github_identity) AS TEXT), 'user'),
-        COALESCE(CAST(sqlc.narg(automation) AS BOOLEAN), 0), COALESCE(CAST(sqlc.narg(computer) AS INTEGER), 0));
+        COALESCE(CAST(sqlc.narg(automation) AS BOOLEAN), 0), COALESCE(CAST(sqlc.narg(computer) AS INTEGER), 0),
+        COALESCE(CAST(sqlc.narg(box) AS INTEGER), 0));
 
 -- name: GetOrb :one
 SELECT * FROM orbs WHERE id = @id;
@@ -68,6 +69,20 @@ UPDATE orbs SET token_gen = token_gen + 1, token_hash = @token_hash WHERE id = @
 
 -- name: ListOrbEvents :many
 SELECT * FROM orb_events WHERE orb_id = @orb_id ORDER BY ts, id;
+
+-- name: ListOrbEventsSince :many
+SELECT * FROM orb_events WHERE orb_id = @orb_id AND ts >= @since ORDER BY id;
+
+-- The last event before @before (sets the initial state of a usage window).
+-- name: GetOrbEventBefore :one
+SELECT * FROM orb_events WHERE orb_id = @orb_id AND ts < @before ORDER BY id DESC LIMIT 1;
+
+-- Box orbs older than @before that no boxes row points at (a create interrupted between the two inserts).
+-- name: ListOrphanBoxOrbs :many
+SELECT * FROM orbs
+WHERE orbs.box = 1 AND orbs.deleted_at IS NULL AND orbs.created_at < @before
+  AND NOT EXISTS (SELECT 1 FROM boxes WHERE boxes.orb_id = orbs.id)
+ORDER BY orbs.created_at;
 
 -- name: ListOrbEventsInRange :many
 SELECT * FROM orb_events WHERE ts >= @from_ts AND ts < @to_ts ORDER BY orb_id, ts, id;

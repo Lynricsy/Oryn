@@ -336,9 +336,11 @@ func (e AssistantMcpServerTransport) Valid() bool {
 const (
 	ActionAbortThread         AutomationActionAction = "abort_thread"
 	ActionArchiveThread       AutomationActionAction = "archive_thread"
+	ActionCreateBox           AutomationActionAction = "create_box"
 	ActionCreateProject       AutomationActionAction = "create_project"
 	ActionCreateSpace         AutomationActionAction = "create_space"
 	ActionCreateThread        AutomationActionAction = "create_thread"
+	ActionDeleteBox           AutomationActionAction = "delete_box"
 	ActionDeleteOrb           AutomationActionAction = "delete_orb"
 	ActionDeleteProject       AutomationActionAction = "delete_project"
 	ActionDeleteProjectConfig AutomationActionAction = "delete_project_config"
@@ -352,11 +354,15 @@ const (
 	ActionPutThreadFile       AutomationActionAction = "put_thread_file"
 	ActionRevokeShare         AutomationActionAction = "revoke_share"
 	ActionSendMessage         AutomationActionAction = "send_message"
+	ActionSetBoxAppVisibility AutomationActionAction = "set_box_app_visibility"
+	ActionSetBoxSchedule      AutomationActionAction = "set_box_schedule"
 	ActionSetSchedule         AutomationActionAction = "set_schedule"
 	ActionSetThreadModel      AutomationActionAction = "set_thread_model"
 	ActionSetTrigger          AutomationActionAction = "set_trigger"
 	ActionSharePortal         AutomationActionAction = "share_portal"
 	ActionShareThread         AutomationActionAction = "share_thread"
+	ActionStartBox            AutomationActionAction = "start_box"
+	ActionStopBox             AutomationActionAction = "stop_box"
 	ActionUnpublishArtifact   AutomationActionAction = "unpublish_artifact"
 	ActionUnsharePortal       AutomationActionAction = "unshare_portal"
 	ActionUpdateProject       AutomationActionAction = "update_project"
@@ -375,11 +381,15 @@ func (e AutomationActionAction) Valid() bool {
 		return true
 	case ActionArchiveThread:
 		return true
+	case ActionCreateBox:
+		return true
 	case ActionCreateProject:
 		return true
 	case ActionCreateSpace:
 		return true
 	case ActionCreateThread:
+		return true
+	case ActionDeleteBox:
 		return true
 	case ActionDeleteOrb:
 		return true
@@ -407,6 +417,10 @@ func (e AutomationActionAction) Valid() bool {
 		return true
 	case ActionSendMessage:
 		return true
+	case ActionSetBoxAppVisibility:
+		return true
+	case ActionSetBoxSchedule:
+		return true
 	case ActionSetSchedule:
 		return true
 	case ActionSetThreadModel:
@@ -416,6 +430,10 @@ func (e AutomationActionAction) Valid() bool {
 	case ActionSharePortal:
 		return true
 	case ActionShareThread:
+		return true
+	case ActionStartBox:
+		return true
+	case ActionStopBox:
 		return true
 	case ActionUnpublishArtifact:
 		return true
@@ -473,6 +491,165 @@ func (e AutomationActionOrigin) Valid() bool {
 	case OriginAuto:
 		return true
 	case OriginOwner:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BoxStoppedBy.
+const (
+	BoxStoppedByOwner    BoxStoppedBy = "owner"
+	BoxStoppedBySchedule BoxStoppedBy = "schedule"
+)
+
+// Valid indicates whether the value is a known member of the BoxStoppedBy enum.
+func (e BoxStoppedBy) Valid() bool {
+	switch e {
+	case BoxStoppedByOwner:
+		return true
+	case BoxStoppedBySchedule:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BoxActivityKind.
+const (
+	BoxActivityCreated      BoxActivityKind = "created"
+	BoxActivityDeployFailed BoxActivityKind = "deploy_failed"
+	BoxActivityDeployed     BoxActivityKind = "deployed"
+	BoxActivityRenamed      BoxActivityKind = "renamed"
+	BoxActivityRestarted    BoxActivityKind = "restarted"
+	BoxActivityRolledBack   BoxActivityKind = "rolled_back"
+	BoxActivitySchedule     BoxActivityKind = "schedule"
+	BoxActivityStarted      BoxActivityKind = "started"
+	BoxActivityStopped      BoxActivityKind = "stopped"
+	BoxActivityThread       BoxActivityKind = "thread"
+	BoxActivityUndeployed   BoxActivityKind = "undeployed"
+	BoxActivityVisibility   BoxActivityKind = "visibility"
+)
+
+// Valid indicates whether the value is a known member of the BoxActivityKind enum.
+func (e BoxActivityKind) Valid() bool {
+	switch e {
+	case BoxActivityCreated:
+		return true
+	case BoxActivityDeployFailed:
+		return true
+	case BoxActivityDeployed:
+		return true
+	case BoxActivityRenamed:
+		return true
+	case BoxActivityRestarted:
+		return true
+	case BoxActivityRolledBack:
+		return true
+	case BoxActivitySchedule:
+		return true
+	case BoxActivityStarted:
+		return true
+	case BoxActivityStopped:
+		return true
+	case BoxActivityThread:
+		return true
+	case BoxActivityUndeployed:
+		return true
+	case BoxActivityVisibility:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BoxActor.
+const (
+	BoxActorAgent     BoxActor = "agent"
+	BoxActorAssistant BoxActor = "assistant"
+	BoxActorOwner     BoxActor = "owner"
+	BoxActorSchedule  BoxActor = "schedule"
+	BoxActorSystem    BoxActor = "system"
+)
+
+// Valid indicates whether the value is a known member of the BoxActor enum.
+func (e BoxActor) Valid() bool {
+	switch e {
+	case BoxActorAgent:
+		return true
+	case BoxActorAssistant:
+		return true
+	case BoxActorOwner:
+		return true
+	case BoxActorSchedule:
+		return true
+	case BoxActorSystem:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BoxDesired.
+const (
+	BoxDesiredRunning BoxDesired = "running"
+	BoxDesiredStopped BoxDesired = "stopped"
+)
+
+// Valid indicates whether the value is a known member of the BoxDesired enum.
+func (e BoxDesired) Valid() bool {
+	switch e {
+	case BoxDesiredRunning:
+		return true
+	case BoxDesiredStopped:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BoxReleaseState.
+const (
+	BoxReleaseKept   BoxReleaseState = "kept"
+	BoxReleaseLive   BoxReleaseState = "live"
+	BoxReleasePruned BoxReleaseState = "pruned"
+)
+
+// Valid indicates whether the value is a known member of the BoxReleaseState enum.
+func (e BoxReleaseState) Valid() bool {
+	switch e {
+	case BoxReleaseKept:
+		return true
+	case BoxReleaseLive:
+		return true
+	case BoxReleasePruned:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BoxState.
+const (
+	BoxStateFailed   BoxState = "failed"
+	BoxStateRunning  BoxState = "running"
+	BoxStateStarting BoxState = "starting"
+	BoxStateStopped  BoxState = "stopped"
+	BoxStateStopping BoxState = "stopping"
+)
+
+// Valid indicates whether the value is a known member of the BoxState enum.
+func (e BoxState) Valid() bool {
+	switch e {
+	case BoxStateFailed:
+		return true
+	case BoxStateRunning:
+		return true
+	case BoxStateStarting:
+		return true
+	case BoxStateStopped:
+		return true
+	case BoxStateStopping:
 		return true
 	default:
 		return false
@@ -1273,6 +1450,7 @@ const (
 	MethodAgentStop           LinkCtlMethod = "agent.stop"
 	MethodArtifactCall        LinkCtlMethod = "artifact.call"
 	MethodBlobFetch           LinkCtlMethod = "blob.fetch"
+	MethodBoxCall             LinkCtlMethod = "box.call"
 	MethodComputerCall        LinkCtlMethod = "computer.call"
 	MethodComputerCancel      LinkCtlMethod = "computer.cancel"
 	MethodComputerStart       LinkCtlMethod = "computer.start"
@@ -1331,6 +1509,8 @@ func (e LinkCtlMethod) Valid() bool {
 	case MethodArtifactCall:
 		return true
 	case MethodBlobFetch:
+		return true
+	case MethodBoxCall:
 		return true
 	case MethodComputerCall:
 		return true
@@ -2089,6 +2269,7 @@ func (e OrbPoolState) Valid() bool {
 
 // Defines values for OrbServiceSource.
 const (
+	OrbServiceSourceApp     OrbServiceSource = "app"
 	OrbServiceSourceDynamic OrbServiceSource = "dynamic"
 	OrbServiceSourceFile    OrbServiceSource = "file"
 )
@@ -2096,6 +2277,8 @@ const (
 // Valid indicates whether the value is a known member of the OrbServiceSource enum.
 func (e OrbServiceSource) Valid() bool {
 	switch e {
+	case OrbServiceSourceApp:
+		return true
 	case OrbServiceSourceDynamic:
 		return true
 	case OrbServiceSourceFile:
@@ -3092,6 +3275,21 @@ func (e ThreadErrorKind) Valid() bool {
 	}
 }
 
+// Defines values for ThreadExecutorBoxKind.
+const (
+	ThreadExecutorBoxKindBox ThreadExecutorBoxKind = "box"
+)
+
+// Valid indicates whether the value is a known member of the ThreadExecutorBoxKind enum.
+func (e ThreadExecutorBoxKind) Valid() bool {
+	switch e {
+	case ThreadExecutorBoxKindBox:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ThreadExecutorNewOrbKind.
 const (
 	NewOrb ThreadExecutorNewOrbKind = "new_orb"
@@ -3626,6 +3824,21 @@ const (
 func (e WsServerArtifactsChangedType) Valid() bool {
 	switch e {
 	case WsServerArtifactsChangedTypeArtifactsChanged:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WsServerBoxesChangedType.
+const (
+	WsServerBoxesChangedTypeBoxesChanged WsServerBoxesChangedType = "boxes.changed"
+)
+
+// Valid indicates whether the value is a known member of the WsServerBoxesChangedType enum.
+func (e WsServerBoxesChangedType) Valid() bool {
+	switch e {
+	case WsServerBoxesChangedTypeBoxesChanged:
 		return true
 	default:
 		return false
@@ -4916,6 +5129,212 @@ type BarkChannelConfig struct {
 	Server *string `json:"server,omitempty"`
 }
 
+// Box defines model for Box.
+type Box struct {
+	Apps []BoxApp `json:"apps"`
+	Cpus float32  `json:"cpus"`
+
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt     TimestampMs `json:"createdAt"`
+	Desired       BoxDesired  `json:"desired"`
+	FailureReason *string     `json:"failureReason,omitempty"`
+
+	// ID `box_<ULID>`
+	ID string `json:"id"`
+
+	// LastDeployAt UTC 毫秒时间戳
+	LastDeployAt *TimestampMs `json:"lastDeployAt,omitempty"`
+	MemoryMB     int          `json:"memoryMB"`
+	Name         string       `json:"name"`
+
+	// OrbID `orb-<26 位小写 ULID>`（同时是容器名与 hostname）
+	//
+	// Example: orb-01jcz8m3w4x5y6z7a8b9c0d1e2
+	OrbID    OrbID  `json:"orbId"`
+	Provider string `json:"provider"`
+
+	// Schedule 每日运行时段（`on` 时刻启动、`off` 时刻停止；可以跨夜）
+	Schedule *BoxSchedule `json:"schedule,omitempty"`
+
+	// State 由 box orb 的状态映射得出
+	State BoxState `json:"state"`
+
+	// StoppedBy `desired = stopped` 时给出：由主人还是时段停下
+	StoppedBy *BoxStoppedBy `json:"stoppedBy,omitempty"`
+	Type      string        `json:"type"`
+}
+
+// BoxStoppedBy `desired = stopped` 时给出：由主人还是时段停下
+type BoxStoppedBy string
+
+// BoxActivity defines model for BoxActivity.
+type BoxActivity struct {
+	Actor   BoxActor `json:"actor"`
+	App     *string  `json:"app,omitempty"`
+	BoxID   string   `json:"boxId"`
+	BoxName string   `json:"boxName"`
+	Commit  *string  `json:"commit,omitempty"`
+	Error   *string  `json:"error,omitempty"`
+	From    *string  `json:"from,omitempty"`
+
+	// ID `a:<序号>`（活动表）或 `t:<线程 id>`（线程项）
+	ID        string          `json:"id"`
+	Kind      BoxActivityKind `json:"kind"`
+	Public    *bool           `json:"public,omitempty"`
+	ReleaseID *string         `json:"releaseId,omitempty"`
+
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID *ThreadID `json:"threadId,omitempty"`
+	Title    *string   `json:"title,omitempty"`
+	To       *string   `json:"to,omitempty"`
+
+	// TS UTC 毫秒时间戳
+	TS TimestampMs `json:"ts"`
+}
+
+// BoxActivityKind defines model for BoxActivityKind.
+type BoxActivityKind string
+
+// BoxActivityList defines model for BoxActivityList.
+type BoxActivityList struct {
+	Items []BoxActivity `json:"items"`
+}
+
+// BoxActor defines model for BoxActor.
+type BoxActor string
+
+// BoxApp defines model for BoxApp.
+type BoxApp struct {
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt TimestampMs `json:"createdAt"`
+
+	// Deploying 有未结束的部署
+	Deploying bool        `json:"deploying"`
+	Live      *BoxRelease `json:"live,omitempty"`
+	Name      string      `json:"name"`
+	Port      int         `json:"port"`
+
+	// Preview 根页面声明了 `<meta name="oryn-preview" content="v1; enabled; iframe">`
+	Preview bool `json:"preview"`
+
+	// Public 为真时任何人可访问；为假时要求主人登录
+	Public   bool         `json:"public"`
+	Repo     string       `json:"repo"`
+	Root     string       `json:"root"`
+	Services []OrbService `json:"services"`
+	Source   bool         `json:"source"`
+
+	// UpdatedAt UTC 毫秒时间戳
+	UpdatedAt TimestampMs `json:"updatedAt"`
+
+	// URL `https://<app>.<portal_domain>`（不带结尾 `/`）；未配置 portal_domain 时省略
+	URL *string `json:"url,omitempty"`
+}
+
+// BoxDesired defines model for BoxDesired.
+type BoxDesired string
+
+// BoxExecRequest defines model for BoxExecRequest.
+type BoxExecRequest struct {
+	App        *string `json:"app,omitempty"`
+	Command    string  `json:"command"`
+	TimeoutSec *int    `json:"timeoutSec,omitempty"`
+}
+
+// BoxList defines model for BoxList.
+type BoxList struct {
+	Boxes []Box `json:"boxes"`
+}
+
+// BoxRelease defines model for BoxRelease.
+type BoxRelease struct {
+	// ActivatedAt UTC 毫秒时间戳
+	ActivatedAt TimestampMs `json:"activatedAt"`
+	Branch      string      `json:"branch"`
+	Commit      string      `json:"commit"`
+
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt TimestampMs `json:"createdAt"`
+
+	// ID `bxr_<ULID>`
+	ID string `json:"id"`
+
+	// Repo 规范化的 origin（`host/path`），没有 origin 时为 `local:<根提交>`
+	Repo string `json:"repo"`
+
+	// Root app 在仓库里的目录；'' = 仓库根
+	Root      string `json:"root"`
+	SizeBytes int64  `json:"sizeBytes"`
+
+	// Source release 带源码（含 `.git`）
+	Source bool            `json:"source"`
+	State  BoxReleaseState `json:"state"`
+
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID *ThreadID `json:"threadId,omitempty"`
+}
+
+// BoxReleaseState defines model for BoxRelease.State.
+type BoxReleaseState string
+
+// BoxReleaseList defines model for BoxReleaseList.
+type BoxReleaseList struct {
+	Releases []BoxRelease `json:"releases"`
+}
+
+// BoxRollbackRequest defines model for BoxRollbackRequest.
+type BoxRollbackRequest struct {
+	ReleaseID *string `json:"releaseId,omitempty"`
+}
+
+// BoxSchedule 每日运行时段（`on` 时刻启动、`off` 时刻停止；可以跨夜）
+type BoxSchedule struct {
+	Off string `json:"off"`
+	On  string `json:"on"`
+
+	// Tz IANA 时区名
+	Tz string `json:"tz"`
+}
+
+// BoxSecret defines model for BoxSecret.
+type BoxSecret struct {
+	Name   string `json:"name"`
+	Secret bool   `json:"secret"`
+
+	// UpdatedAt UTC 毫秒时间戳
+	UpdatedAt TimestampMs `json:"updatedAt"`
+
+	// Value 只在 `secret = false` 时给出
+	Value *string `json:"value,omitempty"`
+}
+
+// BoxSecretList defines model for BoxSecretList.
+type BoxSecretList struct {
+	Secrets []BoxSecret `json:"secrets"`
+}
+
+// BoxState 由 box orb 的状态映射得出
+type BoxState string
+
+// BoxUsage defines model for BoxUsage.
+type BoxUsage struct {
+	Days []BoxUsageDay `json:"days"`
+}
+
+// BoxUsageDay defines model for BoxUsageDay.
+type BoxUsageDay struct {
+	// Date UTC，YYYY-MM-DD
+	Date    string `json:"date"`
+	Threads int    `json:"threads"`
+
+	// UpRatio 当天 orb 处于 ready 的时长占比（0–1）
+	UpRatio float32 `json:"upRatio"`
+}
+
 // BrowserProfile defines model for BrowserProfile.
 type BrowserProfile struct {
 	// CreatedAt UTC 毫秒时间戳
@@ -5139,6 +5558,13 @@ type CreateAssistantConversationRequest struct {
 	ThinkingLevel *string           `json:"thinkingLevel,omitempty"`
 }
 
+// CreateBoxRequest defines model for CreateBoxRequest.
+type CreateBoxRequest struct {
+	Name     string  `json:"name"`
+	Provider *string `json:"provider,omitempty"`
+	Type     *string `json:"type,omitempty"`
+}
+
 // CreateThreadRequest defines model for CreateThreadRequest.
 type CreateThreadRequest struct {
 	// Attachments 已上传附件的 id（`POST attachments`）；建线程时绑定到新线程并投递到 orb（`$HOME/.oryn/attachments/<threadId>/<id>/<name>`）。`prompt`、`images`、`attachments` 至少其一非空
@@ -5148,7 +5574,7 @@ type CreateThreadRequest struct {
 	// 省略 = 用项目的 `defaultBrowserProfileId`；空串 = 不用；`bpf_…` = 指定（不存在 → 404 `profile_not_found`）。
 	BrowserProfileID *string `json:"browserProfileId,omitempty"`
 
-	// Executor 线程执行位置（`runner` 为 M11b）
+	// Executor 线程执行位置（`runner` 为 M11b，`box` 为 M23）
 	Executor ThreadExecutor `json:"executor"`
 	Images   []ImageContent `json:"images,omitempty"`
 	Labels   []string       `json:"labels,omitempty"`
@@ -6230,6 +6656,24 @@ type LinkCtlBlobFetchResult struct {
 	Found bool `json:"found"`
 }
 
+// LinkCtlBoxCallParams M23（orbd→orynd）：orb 内 `oryn boxes …` 的调用。控制面校验调用方线程属于本 orb、`kind = work`、未归档，且 orb 不是全自动入口建立的。
+type LinkCtlBoxCallParams struct {
+	// Op 操作名（`list`、`deploy.prepare`、`deploy.commit`、`exec` 等）
+	Op     string                 `json:"op"`
+	Params map[string]interface{} `json:"params"`
+
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID ThreadID `json:"threadId"`
+}
+
+// LinkCtlBoxCallResult defines model for LinkCtlBoxCallResult.
+type LinkCtlBoxCallResult struct {
+	// Result 每个 op 的结果都是对象；列表包一层，无返回值为 `{}`
+	Result map[string]interface{} `json:"result"`
+}
+
 // LinkCtlComputerCallParams M19（orynd→orbd）：在工具执行器里直接执行一个内置工具；到时发取消并回错误 `timeout`
 type LinkCtlComputerCallParams struct {
 	Args map[string]interface{} `json:"args"`
@@ -6535,6 +6979,7 @@ type LinkCtlLibrarySyncResult struct {
 // `github.prepare.report`（orbd→orynd 请求，M15，`github_prepare` 通过后上报，参数 `LinkCtlGithubPrepareReportParams`，结果 `LinkCtlOkResult`）；
 // runner 的 link 拒绝这两个方法。
 // `ssh.call`（orbd→orynd 请求，M18，由 orb 内 agent 的 `ssh_exec_many` 工具转来，参数 `LinkCtlSshCallParams`，结果 `LinkCtlSshCallResult`；runner 的 link 拒绝）。
+// `box.call`（orbd→orynd 请求，M23，由 orb 内 `oryn boxes …` 经 `orbd.sock` 转来，参数 `LinkCtlBoxCallParams`，结果 `LinkCtlBoxCallResult`；runner 的 link 拒绝）。
 // `computer.start`、`computer.call`、`computer.cancel`、`computer.stop`（orynd→orbd 请求，M19，助手的电脑里的工具执行器：参数分别为
 // `LinkCtlComputerStartParams` / `LinkCtlComputerCallParams` / `LinkCtlComputerCancelParams` / 无参数，结果分别为
 // `LinkCtlComputerStartResult` / `LinkCtlComputerCallResult` / `LinkCtlOkResult` / `LinkCtlOkResult`；只在 hello 含 `computer` 时发送，
@@ -6567,6 +7012,7 @@ type LinkCtlNotification struct {
 	// `github.prepare.report`（orbd→orynd 请求，M15，`github_prepare` 通过后上报，参数 `LinkCtlGithubPrepareReportParams`，结果 `LinkCtlOkResult`）；
 	// runner 的 link 拒绝这两个方法。
 	// `ssh.call`（orbd→orynd 请求，M18，由 orb 内 agent 的 `ssh_exec_many` 工具转来，参数 `LinkCtlSshCallParams`，结果 `LinkCtlSshCallResult`；runner 的 link 拒绝）。
+	// `box.call`（orbd→orynd 请求，M23，由 orb 内 `oryn boxes …` 经 `orbd.sock` 转来，参数 `LinkCtlBoxCallParams`，结果 `LinkCtlBoxCallResult`；runner 的 link 拒绝）。
 	// `computer.start`、`computer.call`、`computer.cancel`、`computer.stop`（orynd→orbd 请求，M19，助手的电脑里的工具执行器：参数分别为
 	// `LinkCtlComputerStartParams` / `LinkCtlComputerCallParams` / `LinkCtlComputerCancelParams` / 无参数，结果分别为
 	// `LinkCtlComputerStartResult` / `LinkCtlComputerCallResult` / `LinkCtlOkResult` / `LinkCtlOkResult`；只在 hello 含 `computer` 时发送，
@@ -6692,6 +7138,7 @@ type LinkCtlRequest struct {
 	// `github.prepare.report`（orbd→orynd 请求，M15，`github_prepare` 通过后上报，参数 `LinkCtlGithubPrepareReportParams`，结果 `LinkCtlOkResult`）；
 	// runner 的 link 拒绝这两个方法。
 	// `ssh.call`（orbd→orynd 请求，M18，由 orb 内 agent 的 `ssh_exec_many` 工具转来，参数 `LinkCtlSshCallParams`，结果 `LinkCtlSshCallResult`；runner 的 link 拒绝）。
+	// `box.call`（orbd→orynd 请求，M23，由 orb 内 `oryn boxes …` 经 `orbd.sock` 转来，参数 `LinkCtlBoxCallParams`，结果 `LinkCtlBoxCallResult`；runner 的 link 拒绝）。
 	// `computer.start`、`computer.call`、`computer.cancel`、`computer.stop`（orynd→orbd 请求，M19，助手的电脑里的工具执行器：参数分别为
 	// `LinkCtlComputerStartParams` / `LinkCtlComputerCallParams` / `LinkCtlComputerCancelParams` / 无参数，结果分别为
 	// `LinkCtlComputerStartResult` / `LinkCtlComputerCallResult` / `LinkCtlOkResult` / `LinkCtlOkResult`；只在 hello 含 `computer` 时发送，
@@ -7795,6 +8242,9 @@ type Orb struct {
 	// Automation M18：这台 orb 由全自动入口（定时、GitHub 触发等）建立；为真时只能用放开了「允许全自动线程使用」的 SSH 主机。缺省 = false
 	Automation *bool `json:"automation,omitempty"`
 
+	// Box box 的常驻 orb（M23）；为 false 时省略
+	Box *bool `json:"box,omitempty"`
+
 	// Computer 助手的电脑（M19，全库至多一台，线程不能挂上去）；为 false 时省略
 	Computer *bool `json:"computer,omitempty"`
 
@@ -7901,6 +8351,73 @@ type OrbAttachmentEnsureResult struct {
 
 	// Present `path` 处已是大小相同的普通文件
 	Present bool `json:"present"`
+}
+
+// OrbBoxActivateRequest defines model for OrbBoxActivateRequest.
+type OrbBoxActivateRequest struct {
+	DiscardBoxChanges *bool             `json:"discardBoxChanges,omitempty"`
+	Env               map[string]string `json:"env"`
+	Keep              int               `json:"keep"`
+	Port              int               `json:"port"`
+	ReadyTimeoutSec   int               `json:"readyTimeoutSec"`
+	ReleaseID         string            `json:"releaseId"`
+	Services          []OrbBoxService   `json:"services"`
+	Source            bool              `json:"source"`
+}
+
+// OrbBoxAppState defines model for OrbBoxAppState.
+type OrbBoxAppState struct {
+	// Activating 正在试运行、尚未确认的 release（没有则省略）
+	Activating *string `json:"activating,omitempty"`
+
+	// Live 最近一次确认就绪的 release（'' = 还没有）
+	Live     string   `json:"live"`
+	Name     string   `json:"name"`
+	Port     int      `json:"port"`
+	Releases []string `json:"releases"`
+}
+
+// OrbBoxAppsState defines model for OrbBoxAppsState.
+type OrbBoxAppsState struct {
+	Apps []OrbBoxAppState `json:"apps"`
+}
+
+// OrbBoxExecRequest defines model for OrbBoxExecRequest.
+type OrbBoxExecRequest struct {
+	Command    string `json:"command"`
+	Cwd        string `json:"cwd"`
+	TimeoutSec int    `json:"timeoutSec"`
+}
+
+// OrbBoxRestartRequest defines model for OrbBoxRestartRequest.
+type OrbBoxRestartRequest struct {
+	Env             map[string]string `json:"env"`
+	ReadyTimeoutSec int               `json:"readyTimeoutSec"`
+}
+
+// OrbBoxResult defines model for OrbBoxResult.
+type OrbBoxResult struct {
+	Code          *string  `json:"code,omitempty"`
+	LiveReleaseID *string  `json:"liveReleaseId,omitempty"`
+	Log           *string  `json:"log,omitempty"`
+	Message       *string  `json:"message,omitempty"`
+	Ok            bool     `json:"ok"`
+	Pruned        []string `json:"pruned,omitempty"`
+}
+
+// OrbBoxRollbackRequest defines model for OrbBoxRollbackRequest.
+type OrbBoxRollbackRequest struct {
+	ReadyTimeoutSec int    `json:"readyTimeoutSec"`
+	ReleaseID       string `json:"releaseId"`
+}
+
+// OrbBoxService defines model for OrbBoxService.
+type OrbBoxService struct {
+	Command string `json:"command"`
+
+	// Cwd 相对 release 根；'' = 根
+	Cwd  string `json:"cwd"`
+	Name string `json:"name"`
 }
 
 // OrbBrowserStatus orb 桌面上唯一那个 Chromium 的状态（由 orbd 启动；进程退出后不自动重启，也不做空闲回收）
@@ -8110,7 +8627,9 @@ type OrbPortalPublic struct {
 
 // OrbService defines model for OrbService.
 type OrbService struct {
-	Command string `json:"command"`
+	// App 所属 box app（M23；`source = app` 时给出）
+	App     *string `json:"app,omitempty"`
+	Command string  `json:"command"`
 
 	// Cwd 相对工作区根的目录
 	Cwd *string `json:"cwd,omitempty"`
@@ -8136,7 +8655,7 @@ type OrbService struct {
 	// Restarts 自动重启次数
 	Restarts int `json:"restarts"`
 
-	// Source `file` = `.oryn/services.yaml`（或 `.amp/services.yaml`）；`dynamic` = `oryn orb service start --command`
+	// Source `file` = `.oryn/services.yaml`（或 `.amp/services.yaml`）；`dynamic` = `oryn orb service start --command`；`app` = box app 的服务（M23，名字为 `<app>--<svc>`）
 	Source OrbServiceSource `json:"source"`
 
 	// StartedAt UTC 毫秒时间戳
@@ -8150,7 +8669,7 @@ type OrbService struct {
 	ThreadID *ThreadID `json:"threadId,omitempty"`
 }
 
-// OrbServiceSource `file` = `.oryn/services.yaml`（或 `.amp/services.yaml`）；`dynamic` = `oryn orb service start --command`
+// OrbServiceSource `file` = `.oryn/services.yaml`（或 `.amp/services.yaml`）；`dynamic` = `oryn orb service start --command`；`app` = box app 的服务（M23，名字为 `<app>--<svc>`）
 type OrbServiceSource string
 
 // OrbServiceList defines model for OrbServiceList.
@@ -9258,6 +9777,13 @@ type PushSubscriptionList struct {
 	Subscriptions []PushSubscription `json:"subscriptions"`
 }
 
+// PutBoxSecretRequest defines model for PutBoxSecretRequest.
+type PutBoxSecretRequest struct {
+	// Secret 缺省 true；false = 明文环境变量（API 可读回）
+	Secret *bool  `json:"secret,omitempty"`
+	Value  string `json:"value"`
+}
+
 // RoleIdentity defines model for RoleIdentity.
 type RoleIdentity struct {
 	AvatarIcon  *string `json:"avatarIcon,omitempty"`
@@ -10311,10 +10837,22 @@ type ThreadErrorCause string
 // ThreadErrorKind defines model for ThreadError.Kind.
 type ThreadErrorKind string
 
-// ThreadExecutor 线程执行位置（`runner` 为 M11b）
+// ThreadExecutor 线程执行位置（`runner` 为 M11b，`box` 为 M23）
 type ThreadExecutor struct {
 	union json.RawMessage
 }
+
+// ThreadExecutorBox 在 box 上执行（M23）：省略 `app` = 机器（工作目录 `~`），否则 `~/apps/<app>/current`；工作目录由服务端决定
+type ThreadExecutorBox struct {
+	App *string `json:"app,omitempty"`
+
+	// BoxID box 的 id 或名字
+	BoxID string                `json:"boxId"`
+	Kind  ThreadExecutorBoxKind `json:"kind"`
+}
+
+// ThreadExecutorBoxKind defines model for ThreadExecutorBox.Kind.
+type ThreadExecutorBoxKind string
 
 // ThreadExecutorNewOrb defines model for ThreadExecutorNewOrb.
 type ThreadExecutorNewOrb struct {
@@ -10553,6 +11091,20 @@ type ToolStats struct {
 	Tools []ToolStat  `json:"tools"`
 	Total ToolStat    `json:"total"`
 	Tz    string      `json:"tz"`
+}
+
+// UpdateBoxAppRequest defines model for UpdateBoxAppRequest.
+type UpdateBoxAppRequest struct {
+	Public bool `json:"public"`
+}
+
+// UpdateBoxRequest defines model for UpdateBoxRequest.
+type UpdateBoxRequest struct {
+	ClearSchedule *bool   `json:"clearSchedule,omitempty"`
+	Name          *string `json:"name,omitempty"`
+
+	// Schedule 每日运行时段（`on` 时刻启动、`off` 时刻停止；可以跨夜）
+	Schedule *BoxSchedule `json:"schedule,omitempty"`
 }
 
 // UsageGroupBy `total` 只给一组 `key = "total"`；`hour / day / week / month` 为时间桶；其余为维度
@@ -10990,6 +11542,14 @@ type WsServerArtifactsChanged struct {
 // WsServerArtifactsChangedType defines model for WsServerArtifactsChanged.Type.
 type WsServerArtifactsChangedType string
 
+// WsServerBoxesChanged M23：box、app、部署、活动或 box 上的线程变了；发给全部私有连接。客户端据此让 Boxes 相关查询失效，WS 每次重新 open 后也要自行失效一次
+type WsServerBoxesChanged struct {
+	Type WsServerBoxesChangedType `json:"type"`
+}
+
+// WsServerBoxesChangedType defines model for WsServerBoxesChanged.Type.
+type WsServerBoxesChangedType string
+
 // WsServerEntries defines model for WsServerEntries.
 type WsServerEntries struct {
 	Entries []Entry `json:"entries"`
@@ -11302,6 +11862,18 @@ type AssistantFileIDPath = AssistantFileID
 // AttachmentIDPath `att_<ulid>`
 type AttachmentIDPath = AttachmentID
 
+// BoxActivityLimit defines model for BoxActivityLimit.
+type BoxActivityLimit = int
+
+// BoxAppPath defines model for BoxAppPath.
+type BoxAppPath = string
+
+// BoxPath defines model for BoxPath.
+type BoxPath = string
+
+// BoxSecretNamePath defines model for BoxSecretNamePath.
+type BoxSecretNamePath = string
+
 // BrowserProfileIDPath `bpf_<ulid>`
 type BrowserProfileIDPath = BrowserProfileID
 
@@ -11577,6 +12149,21 @@ type ListAutomationActionsParams struct {
 	// Thread 只返回该线程作为发起方或目标的记录
 	Thread *ThreadID `form:"thread,omitempty" json:"thread,omitempty"`
 	Limit  *int      `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ListAllBoxActivityParams defines parameters for ListAllBoxActivity.
+type ListAllBoxActivityParams struct {
+	Limit *BoxActivityLimit `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ListBoxActivityParams defines parameters for ListBoxActivity.
+type ListBoxActivityParams struct {
+	Limit *BoxActivityLimit `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// UndeployBoxAppParams defines parameters for UndeployBoxApp.
+type UndeployBoxAppParams struct {
+	PurgeData *bool `form:"purgeData,omitempty" json:"purgeData,omitempty"`
 }
 
 // ListGitHubAuditParams defines parameters for ListGitHubAudit.
@@ -12302,6 +12889,24 @@ type AuthSetupBeginJSONRequestBody = AuthSetupBeginRequest
 // AuthSetupFinishJSONRequestBody defines body for AuthSetupFinish for application/json ContentType.
 type AuthSetupFinishJSONRequestBody = AuthSetupFinishRequest
 
+// CreateBoxJSONRequestBody defines body for CreateBox for application/json ContentType.
+type CreateBoxJSONRequestBody = CreateBoxRequest
+
+// UpdateBoxJSONRequestBody defines body for UpdateBox for application/json ContentType.
+type UpdateBoxJSONRequestBody = UpdateBoxRequest
+
+// UpdateBoxAppJSONRequestBody defines body for UpdateBoxApp for application/json ContentType.
+type UpdateBoxAppJSONRequestBody = UpdateBoxAppRequest
+
+// RollbackBoxAppJSONRequestBody defines body for RollbackBoxApp for application/json ContentType.
+type RollbackBoxAppJSONRequestBody = BoxRollbackRequest
+
+// PutBoxSecretJSONRequestBody defines body for PutBoxSecret for application/json ContentType.
+type PutBoxSecretJSONRequestBody = PutBoxSecretRequest
+
+// ExecBoxJSONRequestBody defines body for ExecBox for application/json ContentType.
+type ExecBoxJSONRequestBody = BoxExecRequest
+
 // CreateBrowserProfileJSONRequestBody defines body for CreateBrowserProfile for application/json ContentType.
 type CreateBrowserProfileJSONRequestBody = BrowserProfileCreate
 
@@ -13000,6 +13605,40 @@ func (t *ThreadExecutor) MergeThreadExecutorRunner(v ThreadExecutorRunner) error
 	return err
 }
 
+// AsThreadExecutorBox returns the union data inside the ThreadExecutor as a ThreadExecutorBox
+func (t ThreadExecutor) AsThreadExecutorBox() (ThreadExecutorBox, error) {
+	var body ThreadExecutorBox
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromThreadExecutorBox overwrites any union data inside the ThreadExecutor as the provided ThreadExecutorBox
+func (t *ThreadExecutor) FromThreadExecutorBox(v ThreadExecutorBox) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"box"}`))
+	t.union = b
+	return err
+}
+
+// MergeThreadExecutorBox performs a merge with any union data inside the ThreadExecutor, using the provided ThreadExecutorBox
+func (t *ThreadExecutor) MergeThreadExecutorBox(v ThreadExecutorBox) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"box"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 func (t ThreadExecutor) Discriminator() (string, error) {
 	var discriminator struct {
 		Discriminator string `json:"kind"`
@@ -13014,6 +13653,8 @@ func (t ThreadExecutor) ValueByDiscriminator() (interface{}, error) {
 		return nil, err
 	}
 	switch discriminator {
+	case "box":
+		return t.AsThreadExecutorBox()
 	case "new_orb":
 		return t.AsThreadExecutorNewOrb()
 	case "orb":
@@ -14419,6 +15060,40 @@ func (t *WsServerMessage) MergeWsServerSSHChanged(v WsServerSSHChanged) error {
 	return err
 }
 
+// AsWsServerBoxesChanged returns the union data inside the WsServerMessage as a WsServerBoxesChanged
+func (t WsServerMessage) AsWsServerBoxesChanged() (WsServerBoxesChanged, error) {
+	var body WsServerBoxesChanged
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsServerBoxesChanged overwrites any union data inside the WsServerMessage as the provided WsServerBoxesChanged
+func (t *WsServerMessage) FromWsServerBoxesChanged(v WsServerBoxesChanged) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"boxes.changed"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsServerBoxesChanged performs a merge with any union data inside the WsServerMessage, using the provided WsServerBoxesChanged
+func (t *WsServerMessage) MergeWsServerBoxesChanged(v WsServerBoxesChanged) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"boxes.changed"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 // AsWsServerArtifactsChanged returns the union data inside the WsServerMessage as a WsServerArtifactsChanged
 func (t WsServerMessage) AsWsServerArtifactsChanged() (WsServerArtifactsChanged, error) {
 	var body WsServerArtifactsChanged
@@ -14649,6 +15324,8 @@ func (t WsServerMessage) ValueByDiscriminator() (interface{}, error) {
 		return t.AsWsServerArtifactVersion()
 	case "artifacts.changed":
 		return t.AsWsServerArtifactsChanged()
+	case "boxes.changed":
+		return t.AsWsServerBoxesChanged()
 	case "entries":
 		return t.AsWsServerEntries()
 	case "error":
@@ -15016,6 +15693,66 @@ type ServerInterface interface {
 	// GetBlob 下载 blob（转录中 `blob:sha256:<hex>` 引用的图片等）
 	// (GET /api/v1/blobs/{sha256})
 	GetBlob(w http.ResponseWriter, r *http.Request, sha256 Sha256)
+	// ListAllBoxActivity 全部 box 的最近活动（新到旧）
+	// (GET /api/v1/box-activity)
+	ListAllBoxActivity(w http.ResponseWriter, r *http.Request, params ListAllBoxActivityParams)
+	// ListBoxes 全部 box（按创建时间）
+	// (GET /api/v1/boxes)
+	ListBoxes(w http.ResponseWriter, r *http.Request)
+	// CreateBox 新建 box
+	// (POST /api/v1/boxes)
+	CreateBox(w http.ResponseWriter, r *http.Request)
+	// DeleteBox 删除 box（连同全部 app 与数据，不可恢复）
+	// (DELETE /api/v1/boxes/{box})
+	DeleteBox(w http.ResponseWriter, r *http.Request, box BoxPath)
+	// GetBox 单台 box（`box` 为 id 或名字）
+	// (GET /api/v1/boxes/{box})
+	GetBox(w http.ResponseWriter, r *http.Request, box BoxPath)
+	// UpdateBox 改名或设置运行时段
+	// (PATCH /api/v1/boxes/{box})
+	UpdateBox(w http.ResponseWriter, r *http.Request, box BoxPath)
+	// ListBoxActivity 这台 box 的活动（含近 30 天在它上面开的工作线程），新到旧
+	// (GET /api/v1/boxes/{box}/activity)
+	ListBoxActivity(w http.ResponseWriter, r *http.Request, box BoxPath, params ListBoxActivityParams)
+	// UndeployBoxApp 下线 app（停止服务、删除 release；`purgeData` 为真时连数据目录一起删）
+	// (DELETE /api/v1/boxes/{box}/apps/{app})
+	UndeployBoxApp(w http.ResponseWriter, r *http.Request, box BoxPath, app BoxAppPath, params UndeployBoxAppParams)
+	// UpdateBoxApp 切换 app 的公开性
+	// (PATCH /api/v1/boxes/{box}/apps/{app})
+	UpdateBoxApp(w http.ResponseWriter, r *http.Request, box BoxPath, app BoxAppPath)
+	// CancelBoxDeploy 取消 app 未结束的部署（已进入激活 → 409 `deploy_in_progress`）
+	// (POST /api/v1/boxes/{box}/apps/{app}/cancel-deploy)
+	CancelBoxDeploy(w http.ResponseWriter, r *http.Request, box BoxPath, app BoxAppPath)
+	// ListBoxReleases app 的 release（新到旧）
+	// (GET /api/v1/boxes/{box}/apps/{app}/releases)
+	ListBoxReleases(w http.ResponseWriter, r *http.Request, box BoxPath, app BoxAppPath)
+	// RestartBoxApp 重启 app 的全部服务（重新下发密钥与环境变量）
+	// (POST /api/v1/boxes/{box}/apps/{app}/restart)
+	RestartBoxApp(w http.ResponseWriter, r *http.Request, box BoxPath, app BoxAppPath)
+	// RollbackBoxApp 回滚到保留着的 release（省略 `releaseId` = 上一个）
+	// (POST /api/v1/boxes/{box}/apps/{app}/rollback)
+	RollbackBoxApp(w http.ResponseWriter, r *http.Request, box BoxPath, app BoxAppPath)
+	// ListBoxSecrets app 的密钥与环境变量（密文项不回值）
+	// (GET /api/v1/boxes/{box}/apps/{app}/secrets)
+	ListBoxSecrets(w http.ResponseWriter, r *http.Request, box BoxPath, app BoxAppPath)
+	// DeleteBoxSecret 删除密钥或环境变量
+	// (DELETE /api/v1/boxes/{box}/apps/{app}/secrets/{name})
+	DeleteBoxSecret(w http.ResponseWriter, r *http.Request, box BoxPath, app BoxAppPath, name BoxSecretNamePath)
+	// PutBoxSecret 设置密钥或环境变量（下一次部署或重启后生效）
+	// (PUT /api/v1/boxes/{box}/apps/{app}/secrets/{name})
+	PutBoxSecret(w http.ResponseWriter, r *http.Request, box BoxPath, app BoxAppPath, name BoxSecretNamePath)
+	// ExecBox 在 box 上执行命令（流式）
+	// (POST /api/v1/boxes/{box}/exec)
+	ExecBox(w http.ResponseWriter, r *http.Request, box BoxPath)
+	// StartBox 启动 box（期望状态改为 running；保持到下一个时段边界）
+	// (POST /api/v1/boxes/{box}/start)
+	StartBox(w http.ResponseWriter, r *http.Request, box BoxPath)
+	// StopBox 停止 box（期望状态改为 stopped；保持到下一个时段边界）
+	// (POST /api/v1/boxes/{box}/stop)
+	StopBox(w http.ResponseWriter, r *http.Request, box BoxPath)
+	// GetBoxUsage 最近 21 个 UTC 自然日的线程数与在线率
+	// (GET /api/v1/boxes/{box}/usage)
+	GetBoxUsage(w http.ResponseWriter, r *http.Request, box BoxPath)
 	// ListBrowserProfiles 浏览器 Profile 列表（按 `name`）
 	// (GET /api/v1/browser-profiles)
 	ListBrowserProfiles(w http.ResponseWriter, r *http.Request)
@@ -16195,6 +16932,126 @@ func (_ Unimplemented) ListAutomationActions(w http.ResponseWriter, r *http.Requ
 // GetBlob 下载 blob（转录中 `blob:sha256:<hex>` 引用的图片等）
 // (GET /api/v1/blobs/{sha256})
 func (_ Unimplemented) GetBlob(w http.ResponseWriter, r *http.Request, sha256 Sha256) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListAllBoxActivity 全部 box 的最近活动（新到旧）
+// (GET /api/v1/box-activity)
+func (_ Unimplemented) ListAllBoxActivity(w http.ResponseWriter, r *http.Request, params ListAllBoxActivityParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListBoxes 全部 box（按创建时间）
+// (GET /api/v1/boxes)
+func (_ Unimplemented) ListBoxes(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateBox 新建 box
+// (POST /api/v1/boxes)
+func (_ Unimplemented) CreateBox(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteBox 删除 box（连同全部 app 与数据，不可恢复）
+// (DELETE /api/v1/boxes/{box})
+func (_ Unimplemented) DeleteBox(w http.ResponseWriter, r *http.Request, box BoxPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetBox 单台 box（`box` 为 id 或名字）
+// (GET /api/v1/boxes/{box})
+func (_ Unimplemented) GetBox(w http.ResponseWriter, r *http.Request, box BoxPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// UpdateBox 改名或设置运行时段
+// (PATCH /api/v1/boxes/{box})
+func (_ Unimplemented) UpdateBox(w http.ResponseWriter, r *http.Request, box BoxPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListBoxActivity 这台 box 的活动（含近 30 天在它上面开的工作线程），新到旧
+// (GET /api/v1/boxes/{box}/activity)
+func (_ Unimplemented) ListBoxActivity(w http.ResponseWriter, r *http.Request, box BoxPath, params ListBoxActivityParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// UndeployBoxApp 下线 app（停止服务、删除 release；`purgeData` 为真时连数据目录一起删）
+// (DELETE /api/v1/boxes/{box}/apps/{app})
+func (_ Unimplemented) UndeployBoxApp(w http.ResponseWriter, r *http.Request, box BoxPath, app BoxAppPath, params UndeployBoxAppParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// UpdateBoxApp 切换 app 的公开性
+// (PATCH /api/v1/boxes/{box}/apps/{app})
+func (_ Unimplemented) UpdateBoxApp(w http.ResponseWriter, r *http.Request, box BoxPath, app BoxAppPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CancelBoxDeploy 取消 app 未结束的部署（已进入激活 → 409 `deploy_in_progress`）
+// (POST /api/v1/boxes/{box}/apps/{app}/cancel-deploy)
+func (_ Unimplemented) CancelBoxDeploy(w http.ResponseWriter, r *http.Request, box BoxPath, app BoxAppPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListBoxReleases app 的 release（新到旧）
+// (GET /api/v1/boxes/{box}/apps/{app}/releases)
+func (_ Unimplemented) ListBoxReleases(w http.ResponseWriter, r *http.Request, box BoxPath, app BoxAppPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RestartBoxApp 重启 app 的全部服务（重新下发密钥与环境变量）
+// (POST /api/v1/boxes/{box}/apps/{app}/restart)
+func (_ Unimplemented) RestartBoxApp(w http.ResponseWriter, r *http.Request, box BoxPath, app BoxAppPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RollbackBoxApp 回滚到保留着的 release（省略 `releaseId` = 上一个）
+// (POST /api/v1/boxes/{box}/apps/{app}/rollback)
+func (_ Unimplemented) RollbackBoxApp(w http.ResponseWriter, r *http.Request, box BoxPath, app BoxAppPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListBoxSecrets app 的密钥与环境变量（密文项不回值）
+// (GET /api/v1/boxes/{box}/apps/{app}/secrets)
+func (_ Unimplemented) ListBoxSecrets(w http.ResponseWriter, r *http.Request, box BoxPath, app BoxAppPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteBoxSecret 删除密钥或环境变量
+// (DELETE /api/v1/boxes/{box}/apps/{app}/secrets/{name})
+func (_ Unimplemented) DeleteBoxSecret(w http.ResponseWriter, r *http.Request, box BoxPath, app BoxAppPath, name BoxSecretNamePath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutBoxSecret 设置密钥或环境变量（下一次部署或重启后生效）
+// (PUT /api/v1/boxes/{box}/apps/{app}/secrets/{name})
+func (_ Unimplemented) PutBoxSecret(w http.ResponseWriter, r *http.Request, box BoxPath, app BoxAppPath, name BoxSecretNamePath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ExecBox 在 box 上执行命令（流式）
+// (POST /api/v1/boxes/{box}/exec)
+func (_ Unimplemented) ExecBox(w http.ResponseWriter, r *http.Request, box BoxPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// StartBox 启动 box（期望状态改为 running；保持到下一个时段边界）
+// (POST /api/v1/boxes/{box}/start)
+func (_ Unimplemented) StartBox(w http.ResponseWriter, r *http.Request, box BoxPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// StopBox 停止 box（期望状态改为 stopped；保持到下一个时段边界）
+// (POST /api/v1/boxes/{box}/stop)
+func (_ Unimplemented) StopBox(w http.ResponseWriter, r *http.Request, box BoxPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetBoxUsage 最近 21 个 UTC 自然日的线程数与在线率
+// (GET /api/v1/boxes/{box}/usage)
+func (_ Unimplemented) GetBoxUsage(w http.ResponseWriter, r *http.Request, box BoxPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -19622,6 +20479,640 @@ func (siw *ServerInterfaceWrapper) GetBlob(w http.ResponseWriter, r *http.Reques
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetBlob(w, r, sha256)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListAllBoxActivity operation middleware
+func (siw *ServerInterfaceWrapper) ListAllBoxActivity(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListAllBoxActivityParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAllBoxActivity(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListBoxes operation middleware
+func (siw *ServerInterfaceWrapper) ListBoxes(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListBoxes(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateBox operation middleware
+func (siw *ServerInterfaceWrapper) CreateBox(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateBox(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteBox operation middleware
+func (siw *ServerInterfaceWrapper) DeleteBox(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "box" -------------
+	var box BoxPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "box", chi.URLParam(r, "box"), &box, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "box", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteBox(w, r, box)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetBox operation middleware
+func (siw *ServerInterfaceWrapper) GetBox(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "box" -------------
+	var box BoxPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "box", chi.URLParam(r, "box"), &box, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "box", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetBox(w, r, box)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateBox operation middleware
+func (siw *ServerInterfaceWrapper) UpdateBox(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "box" -------------
+	var box BoxPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "box", chi.URLParam(r, "box"), &box, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "box", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateBox(w, r, box)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListBoxActivity operation middleware
+func (siw *ServerInterfaceWrapper) ListBoxActivity(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "box" -------------
+	var box BoxPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "box", chi.URLParam(r, "box"), &box, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "box", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListBoxActivityParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListBoxActivity(w, r, box, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UndeployBoxApp operation middleware
+func (siw *ServerInterfaceWrapper) UndeployBoxApp(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "box" -------------
+	var box BoxPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "box", chi.URLParam(r, "box"), &box, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "box", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "app" -------------
+	var app BoxAppPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "app", chi.URLParam(r, "app"), &app, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "app", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params UndeployBoxAppParams
+
+	// ------------- Optional query parameter "purgeData" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "purgeData", r.URL.Query(), &params.PurgeData, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "purgeData"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "purgeData", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UndeployBoxApp(w, r, box, app, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateBoxApp operation middleware
+func (siw *ServerInterfaceWrapper) UpdateBoxApp(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "box" -------------
+	var box BoxPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "box", chi.URLParam(r, "box"), &box, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "box", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "app" -------------
+	var app BoxAppPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "app", chi.URLParam(r, "app"), &app, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "app", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateBoxApp(w, r, box, app)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CancelBoxDeploy operation middleware
+func (siw *ServerInterfaceWrapper) CancelBoxDeploy(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "box" -------------
+	var box BoxPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "box", chi.URLParam(r, "box"), &box, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "box", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "app" -------------
+	var app BoxAppPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "app", chi.URLParam(r, "app"), &app, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "app", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CancelBoxDeploy(w, r, box, app)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListBoxReleases operation middleware
+func (siw *ServerInterfaceWrapper) ListBoxReleases(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "box" -------------
+	var box BoxPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "box", chi.URLParam(r, "box"), &box, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "box", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "app" -------------
+	var app BoxAppPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "app", chi.URLParam(r, "app"), &app, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "app", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListBoxReleases(w, r, box, app)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RestartBoxApp operation middleware
+func (siw *ServerInterfaceWrapper) RestartBoxApp(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "box" -------------
+	var box BoxPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "box", chi.URLParam(r, "box"), &box, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "box", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "app" -------------
+	var app BoxAppPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "app", chi.URLParam(r, "app"), &app, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "app", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RestartBoxApp(w, r, box, app)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RollbackBoxApp operation middleware
+func (siw *ServerInterfaceWrapper) RollbackBoxApp(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "box" -------------
+	var box BoxPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "box", chi.URLParam(r, "box"), &box, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "box", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "app" -------------
+	var app BoxAppPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "app", chi.URLParam(r, "app"), &app, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "app", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RollbackBoxApp(w, r, box, app)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListBoxSecrets operation middleware
+func (siw *ServerInterfaceWrapper) ListBoxSecrets(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "box" -------------
+	var box BoxPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "box", chi.URLParam(r, "box"), &box, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "box", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "app" -------------
+	var app BoxAppPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "app", chi.URLParam(r, "app"), &app, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "app", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListBoxSecrets(w, r, box, app)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteBoxSecret operation middleware
+func (siw *ServerInterfaceWrapper) DeleteBoxSecret(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "box" -------------
+	var box BoxPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "box", chi.URLParam(r, "box"), &box, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "box", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "app" -------------
+	var app BoxAppPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "app", chi.URLParam(r, "app"), &app, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "app", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "name" -------------
+	var name BoxSecretNamePath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", chi.URLParam(r, "name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteBoxSecret(w, r, box, app, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutBoxSecret operation middleware
+func (siw *ServerInterfaceWrapper) PutBoxSecret(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "box" -------------
+	var box BoxPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "box", chi.URLParam(r, "box"), &box, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "box", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "app" -------------
+	var app BoxAppPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "app", chi.URLParam(r, "app"), &app, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "app", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "name" -------------
+	var name BoxSecretNamePath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", chi.URLParam(r, "name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutBoxSecret(w, r, box, app, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ExecBox operation middleware
+func (siw *ServerInterfaceWrapper) ExecBox(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "box" -------------
+	var box BoxPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "box", chi.URLParam(r, "box"), &box, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "box", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ExecBox(w, r, box)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartBox operation middleware
+func (siw *ServerInterfaceWrapper) StartBox(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "box" -------------
+	var box BoxPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "box", chi.URLParam(r, "box"), &box, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "box", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartBox(w, r, box)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StopBox operation middleware
+func (siw *ServerInterfaceWrapper) StopBox(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "box" -------------
+	var box BoxPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "box", chi.URLParam(r, "box"), &box, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "box", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StopBox(w, r, box)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetBoxUsage operation middleware
+func (siw *ServerInterfaceWrapper) GetBoxUsage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "box" -------------
+	var box BoxPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "box", chi.URLParam(r, "box"), &box, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "box", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetBoxUsage(w, r, box)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -28350,6 +29841,66 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/public/github/oauth/callback", wrapper.FinishGitHubOAuth)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/boxes", wrapper.ListBoxes)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/boxes", wrapper.CreateBox)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/box-activity", wrapper.ListAllBoxActivity)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/boxes/{box}", wrapper.DeleteBox)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/boxes/{box}", wrapper.GetBox)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/v1/boxes/{box}", wrapper.UpdateBox)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/boxes/{box}/start", wrapper.StartBox)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/boxes/{box}/stop", wrapper.StopBox)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/boxes/{box}/activity", wrapper.ListBoxActivity)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/boxes/{box}/usage", wrapper.GetBoxUsage)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/boxes/{box}/exec", wrapper.ExecBox)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/boxes/{box}/apps/{app}", wrapper.UndeployBoxApp)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/v1/boxes/{box}/apps/{app}", wrapper.UpdateBoxApp)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/boxes/{box}/apps/{app}/restart", wrapper.RestartBoxApp)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/boxes/{box}/apps/{app}/rollback", wrapper.RollbackBoxApp)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/boxes/{box}/apps/{app}/cancel-deploy", wrapper.CancelBoxDeploy)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/boxes/{box}/apps/{app}/releases", wrapper.ListBoxReleases)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/boxes/{box}/apps/{app}/secrets", wrapper.ListBoxSecrets)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/boxes/{box}/apps/{app}/secrets/{name}", wrapper.DeleteBoxSecret)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/boxes/{box}/apps/{app}/secrets/{name}", wrapper.PutBoxSecret)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/ssh/hosts", wrapper.ListSSHHosts)

@@ -218,3 +218,26 @@ func TestArtifactLabel(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, off.ArtifactURL('a', id))
 }
+
+func TestAppLabel(t *testing.T) {
+	for _, good := range []string{"a", "hello", "bug-tracker", "x1", "abcdefghijklmnopqrst"} {
+		app, ok := ParseAppLabel(good)
+		assert.True(t, ok, good)
+		assert.Equal(t, good, app)
+		assert.True(t, ValidAppName(good), good)
+	}
+	for _, bad := range []string{
+		"", "t-3f9a1c0b7e2d-p80", "-a", "a-", "a--b", "a.b", "Hello", "a_b", "abcdefghijklmnopqrstu",
+		"a-abcdefghijklmnopqrstuvwxyz", "p-abcdefghijklmnopqrstuvwxyz",
+	} {
+		_, ok := ParseAppLabel(bad)
+		assert.False(t, ok, bad)
+		assert.False(t, ValidAppName(bad), bad)
+	}
+	b, err := NewBase("http://localhost:7600", "localhost")
+	require.NoError(t, err)
+	assert.Equal(t, "http://hello.localhost:7600/", b.AppURL("hello"))
+	off, err := NewBase("http://localhost:7600", "")
+	require.NoError(t, err)
+	assert.Empty(t, off.AppURL("hello"))
+}

@@ -177,6 +177,96 @@ type Blob struct {
 	CreatedAt int64  `json:"createdAt"`
 }
 
+type Box struct {
+	ID        string  `json:"id"`
+	Name      string  `json:"name"`
+	OrbID     string  `json:"orbId"`
+	Desired   string  `json:"desired"`
+	DesiredBy string  `json:"desiredBy"`
+	DesiredAt int64   `json:"desiredAt"`
+	SchedOn   *string `json:"schedOn"`
+	SchedOff  *string `json:"schedOff"`
+	SchedTz   *string `json:"schedTz"`
+	CreatedAt int64   `json:"createdAt"`
+}
+
+type BoxActivity struct {
+	ID     int64   `json:"id"`
+	BoxID  string  `json:"boxId"`
+	Ts     int64   `json:"ts"`
+	Kind   string  `json:"kind"`
+	Actor  string  `json:"actor"`
+	App    *string `json:"app"`
+	Detail string  `json:"detail"`
+}
+
+type BoxApp struct {
+	ID               string  `json:"id"`
+	BoxID            string  `json:"boxId"`
+	Name             string  `json:"name"`
+	Port             int64   `json:"port"`
+	Public           bool    `json:"public"`
+	Repo             string  `json:"repo"`
+	Root             string  `json:"root"`
+	Source           bool    `json:"source"`
+	LiveReleaseID    *string `json:"liveReleaseId"`
+	Preview          bool    `json:"preview"`
+	PreviewCheckedAt int64   `json:"previewCheckedAt"`
+	CreatedAt        int64   `json:"createdAt"`
+	UpdatedAt        int64   `json:"updatedAt"`
+}
+
+type BoxDeploy struct {
+	ID         string  `json:"id"`
+	BoxID      string  `json:"boxId"`
+	App        string  `json:"app"`
+	ReleaseID  string  `json:"releaseId"`
+	Actor      string  `json:"actor"`
+	ThreadID   *string `json:"threadId"`
+	SrcOrbID   string  `json:"srcOrbId"`
+	Repo       string  `json:"repo"`
+	Root       string  `json:"root"`
+	Source     bool    `json:"source"`
+	SetPublic  *int64  `json:"setPublic"`
+	CommitSha  string  `json:"commitSha"`
+	Branch     string  `json:"branch"`
+	First      bool    `json:"first"`
+	SizeBytes  int64   `json:"sizeBytes"`
+	Sha256     string  `json:"sha256"`
+	Services   string  `json:"services"`
+	State      string  `json:"state"`
+	Error      *string `json:"error"`
+	CreatedAt  int64   `json:"createdAt"`
+	FinishedAt *int64  `json:"finishedAt"`
+}
+
+type BoxRelease struct {
+	ID          string  `json:"id"`
+	AppID       string  `json:"appId"`
+	Repo        string  `json:"repo"`
+	CommitSha   string  `json:"commitSha"`
+	Branch      string  `json:"branch"`
+	Root        string  `json:"root"`
+	Source      bool    `json:"source"`
+	SizeBytes   int64   `json:"sizeBytes"`
+	Sha256      string  `json:"sha256"`
+	Services    string  `json:"services"`
+	ThreadID    *string `json:"threadId"`
+	State       string  `json:"state"`
+	CreatedAt   int64   `json:"createdAt"`
+	ActivatedAt int64   `json:"activatedAt"`
+}
+
+type BoxSecret struct {
+	BoxID     string `json:"boxId"`
+	App       string `json:"app"`
+	Name      string `json:"name"`
+	ValueEnc  []byte `json:"valueEnc"`
+	Size      int64  `json:"size"`
+	Secret    bool   `json:"secret"`
+	UpdatedAt int64  `json:"updatedAt"`
+}
+
 type BrowserProfile struct {
 	ID            string  `json:"id"`
 	Name          string  `json:"name"`
@@ -659,6 +749,7 @@ type Orb struct {
 	GithubIdentity        string  `json:"githubIdentity"`
 	Computer              int64   `json:"computer"`
 	Automation            bool    `json:"automation"`
+	Box                   int64   `json:"box"`
 }
 
 type OrbDesktop struct {

@@ -33,6 +33,12 @@ ORDER BY pinned DESC, COALESCE(last_message_at, updated_at) DESC, id;
 -- name: ListThreadsByOrb :many
 SELECT * FROM threads WHERE orb_id = @orb_id ORDER BY created_at;
 
+-- name: ListThreadsByOrbSince :many
+SELECT id, title, created_at, cwd, kind FROM threads WHERE orb_id = @orb_id AND created_at >= @since ORDER BY created_at;
+
+-- name: CountWorkingThreadsByOrb :one
+SELECT COUNT(*) FROM threads WHERE orb_id = @orb_id AND state = 'working';
+
 -- Full write-back for PATCH threads/{id} (handler reads, merges, writes).
 -- name: UpdateThreadMeta :execrows
 UPDATE threads SET title = @title, title_source = @title_source, color = @color, pinned = @pinned,
