@@ -152,11 +152,12 @@
 - `type deskApp struct { ID, Name string; Exec, WMClass []string; Icon string }`。`loadDeskApps(path string) []deskApp` 读取清单。文件不存在或解析失败时只返回内置的 `chromium`，图标为空，记一行日志。路径缺省为 `/usr/local/share/oryn/desktop-apps.json`，测试用环境变量 `ORYN_DESKTOP_APPS` 覆盖。
 - 快照字段 `Apps`：每个应用的 `running` 表示有 `appId` 等于它的窗口；chromium 另外看 `browser == running`。`launching` 从发起启动起为真，直到出现这个应用的窗口，或过了 20 秒。
 - 本机路由（`deskRoutes`）：
-  - `POST /desktop/apps/{id}/launch`：`control.state == agent` → 409 `control_agent`；未知 id → 404 `app_not_found`；id 为 chromium → 走 `startBrowser`；否则用 `spawn` 起 `Exec`。工作目录是 `$HOME/workspace`，不存在就用 `$HOME`；环境用 `baseEnv`。进程组独立，不随 orbd 的请求结束。每次点击都启动一个新实例，「切到已有窗口」由网页决定。返回快照。
+  - `POST /desktop/apps/{id}/launch`：`control.state == agent` → 409 `control_agent`；未知 id → 404 `app_not_found`；id 为 chromium → 走 `startBrowser`；否则用 `spawn` 起 `Exec`。工作目录用 1.6 记下的工作区目录（`desktop.wsDir`），还没有就用 `$HOME`；环境用 `baseEnv`。`d.sandbox == false` 时，`vscode` 和 Chromium 一样追加 `--no-sandbox`（1.2 实测：默认 seccomp 下不加会崩）。进程组独立，不随 orbd 的请求结束。每次点击都启动一个新实例，「切到已有窗口」由网页决定。返回快照。
   - `POST /desktop/windows/{wid}/{action}`：control 检查同上；窗口不在 `wins` 里 → 404 `window_not_found`；否则调用对应的 `wmClient` 方法，返回快照。
   - `GET /desktop/apps/{id}/icon`：按扩展名回 `image/svg+xml` 或 `image/png`；没有图标 → 404。
 - hello 在 `r.desk != nil` 时追加 `desktop-apps`。
-验收：`go test ./internal/orbdrt/ -run 'TestDeskApps' -count=1` 通过。用例覆盖：清单缺失只剩 chromium；用 fakeapp-gui 启动后 `launching=true`，假 wmClient 报告窗口后变成 `running=true`、`launching=false`；`control=agent` 时 launch 与窗口操作都回 409 `control_agent`；未知 id 回 404；图标的 Content-Type 正确。
+- 窗口管理器就绪闸门（1.4 交回后补的）：1.4 在真 openbox 上观察到，openbox 设好 `_NET_SUPPORTING_WM_CHECK` 之后的几百毫秒里会丢掉 MapRequest，这段时间映射的窗口永远不会被管理，也不会出现在 client list 里。1.6 的 resume 脚本正好在显示就绪时运行，最容易撞上。在 `runDisplayOnce` 起 openbox 之后、`setDisplayReady(true)` 之前加一道闸门：经 `wmClient`（`Config.DesktopWM` 钩子，测试里换成假实现）建一个 1×1 的探针窗口并映射，等它出现 `WM_STATE`；每 200ms 没出现就取消映射再重新映射，最多等 5 秒，然后销毁探针。超时只记警告，照常就绪。`wmClient` 为此加一个方法 `WaitManaged(ctx) error`。
+验收：`go test ./internal/orbdrt/ -run 'TestDeskApps|TestDeskWin|TestDesktop|TestDeskResume|TestDeskRecord' -count=1` 通过。用例覆盖：清单缺失只剩 chromium；用 fakeapp-gui 启动后 `launching=true`，假 wmClient 报告窗口后变成 `running=true`、`launching=false`；`control=agent` 时 launch 与窗口操作都回 409 `control_agent`；未知 id 回 404；图标的 Content-Type 正确；launch 的工作目录等于 `workspaceReady` 传入的目录；`d.sandbox=false` 时 vscode 的参数带 `--no-sandbox`。新增 `TestDeskWinRealXGate`（有 Xvfb 时运行）：openbox 起来后立刻经 `WaitManaged` 过闸门，再映射一个普通窗口，这个窗口 2 秒内出现在 client list 里。
 
 ### 步骤 1.6 — orbd：桌面 resume 脚本
 
@@ -370,3 +371,4 @@ graph LR
 
 - 2026-11-22（执行前）：步骤 1.6 改成按实际工作目录找脚本，并在显示栈与工作区都就绪之后按显示代数去重执行；新增假设 A5；验收 C9 改为新建真实托管项目来验证，不再往固定路径预埋脚本。原因见步骤 1.6 开头的修订说明。
 - 2026-11-22（3.1 已提交后）：新增步骤 3.5，用户接管、agent 请求人工操作、回合结束时先结束录制再放开人工输入，并在 `user` / `ask` 状态下拒绝开始录制。原因：录制器录的是整个显示，会把登录、验证码等人工输入录进视频。4.1 依赖 3.5；3.3、3.4 的卡片要能显示 `stoppedBy=control`。
+- 2026-11-22（1.4 已提交后）：步骤 1.5 加三处。① 窗口管理器就绪闸门：1.4 实测 openbox 刚起来时会丢 MapRequest。② launch 的工作目录改用 1.6 记下的工作区目录，不再写死 `$HOME/workspace`。③ `d.sandbox=false` 时 vscode 加 `--no-sandbox`（1.2 实测）。
