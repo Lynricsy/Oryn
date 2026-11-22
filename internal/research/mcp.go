@@ -18,9 +18,11 @@ import (
 // mcpOutputFormat 是 MCP 运行的输出格式说明。
 const mcpOutputFormat = "End your reply with exactly one ```json code block and nothing after it:\n" +
 	"```json\n" +
-	`{"findings":[{"title":"…","summary":"…","source":"<server name>"}]}` + "\n" +
+	`{"findings":[{"title":"…","summary":"…","source":"<server name>"}],"unavailable":[]}` + "\n" +
 	"```\n" +
-	`Give at most 5 findings; give an empty array when nothing qualifies (that is the usual answer).`
+	`Give at most 5 findings; give an empty array when nothing qualifies (that is the usual answer). ` +
+	`List in "unavailable" every server whose listed tools you could not call (missing, or every call failed); ` +
+	`never report "nothing new" for a server you could not check.`
 
 // mcpPrompt 是一次 MCP 运行的提示词。
 func mcpPrompt(since time.Time, servers map[string][]string, reported []string, preferences string) string {
@@ -65,14 +67,27 @@ func (s *Service) dueMCP(ctx context.Context, set settingsRow) (*job, error) {
 		}
 	}
 	reported := s.recentReported(ctx, PipelineMCP, 20, 20)
-	return &job{pipeline: PipelineMCP, prompt: mcpPrompt(since, servers, reported, set.Preferences)}, nil
+	names := make([]string, 0, len(servers))
+	for name := range servers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return &job{pipeline: PipelineMCP, prompt: mcpPrompt(since, servers, reported, set.Preferences), mcpServers: names}, nil
 }
 
-// applyMCP 逐条发出受限的发现（至多 mcpMaxFindings 条），成功后把游标推进到运行开始的时间。
+// applyMCP 逐条发出受限的发现（至多 mcpMaxFindings 条），成功后把游标推进到运行开始的时间。研究员报了用不了的服务器
+// 时整次运行失败：不发发现、游标不动（下一次连同这段时间重看）。
 func (s *Service) applyMCP(ctx context.Context, r *runState, raw json.RawMessage) (outcome, report string, err error) {
 	var rep findingsReport
 	if err := json.Unmarshal(raw, &rep); err != nil {
 		return "", "", fmt.Errorf("invalid report: %w", err)
+	}
+	if len(rep.Unavailable) > 0 {
+		names := make([]string, 0, len(rep.Unavailable))
+		for _, n := range rep.Unavailable {
+			names = append(names, cleanText(n, 200))
+		}
+		return "", "", fmt.Errorf("MCP servers unavailable: %s", strings.Join(names, ", "))
 	}
 	var titles []string
 	for _, f := range rep.Findings {

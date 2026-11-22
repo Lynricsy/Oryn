@@ -1,6 +1,7 @@
 package research
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -77,6 +78,46 @@ func TestMcpCursorAdvancesOnSuccessOnly(t *testing.T) {
 	assert.Equal(t, started.UnixMilli(), *cur)
 	_, outcome, _ := f.run(d.runID)
 	assert.Equal(t, "nothing", outcome)
+}
+
+// 所选服务器在研究员里没就绪：不投递提示词、运行失败、游标不动、停掉研究员，冷却一个周期后再试。
+func TestMcpNotReadySkipsDelivery(t *testing.T) {
+	f := newFixture(t)
+	f.enable(mcpOnly(map[string][]string{"mail": {"list_messages"}, "cal": {"list_events"}}))
+	f.host.prepareErr = errors.New("MCP servers not ready: mail")
+	f.s.step(f.ctx)
+	assert.Zero(t, f.host.deliveries())
+	require.Equal(t, [][]string{{"cal", "mail"}}, f.host.prepared)
+	assert.Equal(t, []string{RolePrivate}, f.host.stops)
+	runs, err := f.st.Q.ListResearchRuns(f.ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	assert.Equal(t, "failed", runs[0].Status)
+	assert.Contains(t, deref(runs[0].Error), "not ready")
+	assert.Nil(t, f.mcpCursor())
+	assert.Empty(t, f.s.CurrentPipeline(RolePrivate))
+
+	f.host.prepareErr = nil
+	f.s.step(f.ctx)
+	assert.Len(t, f.host.prepared, 1, "失败后冷却")
+	f.clk.Add(mcpEvery + time.Minute)
+	f.s.step(f.ctx)
+	assert.Equal(t, 1, f.host.deliveries())
+}
+
+// 研究员报了用不了的服务器：不发发现、运行失败、游标不动。
+func TestMcpUnavailableKeepsCursor(t *testing.T) {
+	f := newFixture(t)
+	f.enable(mcpOnly(map[string][]string{"mail": {"list_messages"}}))
+	f.s.step(f.ctx)
+	d := f.host.lastDelivery(t)
+	assert.Contains(t, d.prompt, `"unavailable"`)
+	f.reply(d.runID, `{"findings":[{"title":"x","summary":"y","source":"mail"}],"unavailable":["mail"]}`)
+	assert.Empty(t, f.host.findings)
+	assert.Nil(t, f.mcpCursor())
+	status, _, errMsg := f.run(d.runID)
+	assert.Equal(t, "failed", status)
+	assert.Contains(t, errMsg, "unavailable: mail")
 }
 
 // MCP 运行结束后紧跟一条到期的内部运行：研究员上一代 agent 停稳之前不发起（不能落进带 MCP 凭据的旧进程）。

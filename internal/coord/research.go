@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
@@ -170,6 +172,58 @@ func (s *Service) DeliverResearch(ctx context.Context, role, runID, prompt strin
 	}
 	_, err = s.th.Deliver(ctx, id, threads.AutoMessage{Text: prompt, Tag: runID}, nil)
 	return err
+}
+
+// MCP 运行投递前等所选服务器就绪的时限与轮询间隔：Core 的首回合最多等 MCP 发现 1.5 秒，上游握手慢于此时工具进不了
+// 这一回合，研究员会以「没有发现」交差、游标照样推进。
+const (
+	mcpReadyTimeout = 30 * time.Second
+	mcpReadyPoll    = 300 * time.Millisecond
+)
+
+// PrepareMCP 实现 research.Host：（以当前 MCP 运行的 Profile）启动研究员，等 servers 在它的 omp 里都已连上且有工具；
+// 时限内没就绪时返回错误，由调用方记失败并停掉研究员。
+func (s *Service) PrepareMCP(ctx context.Context, role string, servers []string) error {
+	id, err := s.EnsureResearcher(ctx, role)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, mcpReadyTimeout)
+	defer cancel()
+	tick := time.NewTicker(mcpReadyPoll)
+	defer tick.Stop()
+	for {
+		list, err := s.th.MCPServers(ctx, id)
+		if err == nil {
+			missing := mcpNotReady(list, servers)
+			if len(missing) == 0 {
+				return nil
+			}
+			err = fmt.Errorf("MCP servers not ready: %s", strings.Join(missing, ", "))
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-tick.C:
+		}
+	}
+}
+
+// mcpNotReady 返回 want 里没有连上或没有工具的服务器。
+func mcpNotReady(list []threads.MCPServerStatus, want []string) []string {
+	ready := map[string]bool{}
+	for _, sv := range list {
+		if sv.Status == "connected" && sv.ToolCount > 0 {
+			ready[sv.Name] = true
+		}
+	}
+	var out []string
+	for _, name := range want {
+		if !ready[name] {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // StopResearcher 实现 research.Host。

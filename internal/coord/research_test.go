@@ -185,3 +185,14 @@ func TestResearchExcerpt(t *testing.T) {
 	assert.Empty(t, none.Text)
 	assert.Zero(t, none.OwnerMessages)
 }
+
+// 只有已连上且有工具的服务器算就绪；没列出的、在连的、连上但零工具的都不算。
+func TestMCPNotReady(t *testing.T) {
+	list := []threads.MCPServerStatus{
+		{Name: "mail", Status: "connected", ToolCount: 3},
+		{Name: "cal", Status: "connecting"},
+		{Name: "empty", Status: "connected", ToolCount: 0},
+	}
+	assert.Equal(t, []string{"cal", "empty", "gone"}, mcpNotReady(list, []string{"cal", "empty", "gone", "mail"}))
+	assert.Empty(t, mcpNotReady(list, []string{"mail"}))
+}

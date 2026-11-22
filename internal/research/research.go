@@ -78,6 +78,8 @@ type job struct {
 	pipeline, topicID, subject, prompt string
 	mineLastMsgAt                      *int64
 	mineLastSeq                        int64
+	// mcpServers 是 MCP 运行要用的服务器（投递前等它们在研究员里就绪）。
+	mcpServers []string
 }
 
 func (s *Service) now() time.Time { return s.cfg.Now() }
@@ -253,13 +255,24 @@ func (s *Service) start(ctx context.Context, role string, j *job) {
 	s.mu.Lock()
 	s.current[role] = r
 	s.mu.Unlock()
-	if err := s.cfg.Host.DeliverResearch(ctx, role, r.id, j.prompt); err != nil {
+	var err error
+	if len(j.mcpServers) > 0 {
+		// MCP 运行：研究员以本次的 Profile 起来、所选服务器都连上之后才投递（Core 的首回合只等 MCP 发现 1.5 秒）
+		err = s.cfg.Host.PrepareMCP(ctx, role, j.mcpServers)
+	}
+	if err == nil {
+		err = s.cfg.Host.DeliverResearch(ctx, role, r.id, j.prompt)
+	}
+	if err != nil {
 		slog.Info("research: 投递研究运行失败", "pipeline", j.pipeline, "err", err)
 		s.mu.Lock()
 		delete(s.current, role)
 		s.mu.Unlock()
 		s.finishRun(ctx, r.id, "failed", "", "", err.Error())
 		s.afterFailure(ctx, r)
+		if len(j.mcpServers) > 0 {
+			s.cfg.Host.StopResearcher(ctx, role)
+		}
 	}
 }
 

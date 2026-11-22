@@ -1659,6 +1659,38 @@ func (s *Service) call(ctx context.Context, t *thread, frame []byte) (omprpc.Env
 	}
 }
 
+// MCPServerStatus 是 omp get_mcp_servers 应答里一个 MCP 服务器的状态（只取用到的字段）。
+type MCPServerStatus struct {
+	Name      string `json:"name"`
+	Status    string `json:"status"` // connected / connecting / disconnected
+	ToolCount int    `json:"toolCount"`
+}
+
+// MCPServers 向线程 agent 查询 MCP 服务器的连接状态（M26：MCP 运行投递前等所选服务器就绪）；agent 没起时按当前
+// Profile 启动它。
+func (s *Service) MCPServers(ctx context.Context, threadID string) ([]MCPServerStatus, error) {
+	t, err := s.get(ctx, threadID)
+	if err != nil {
+		return nil, err
+	}
+	if t.kind != KindWork {
+		if err := s.ensureCoordOrb(ctx, t); err != nil {
+			return nil, err
+		}
+	}
+	_, data, err := s.call(ctx, t, []byte(`{"type":"get_mcp_servers"}`))
+	if err != nil {
+		return nil, err
+	}
+	var r struct {
+		Servers []MCPServerStatus `json:"servers"`
+	}
+	if err := json.Unmarshal(data, &r); err != nil {
+		return nil, fmt.Errorf("get_mcp_servers: %w", err)
+	}
+	return r.Servers, nil
+}
+
 // wake 唤醒线程所在 orb；orb 已就绪但 agent 未运行时直接启动 agent。调用方可能持有 t.mu，因此全部在后台进行。
 func (s *Service) wake(threadID, orbID string) {
 	s.go_(func(ctx context.Context) {

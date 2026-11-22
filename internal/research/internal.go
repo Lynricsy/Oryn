@@ -103,6 +103,8 @@ type findingsReport struct {
 		Threads []string `json:"threads"`
 		Source  string   `json:"source"`
 	} `json:"findings"`
+	// Unavailable 是 MCP 运行里用不了的服务器（工具不在或调用都失败）；非空时整次运行算失败、游标不动。
+	Unavailable []string `json:"unavailable"`
 }
 
 // applyInternal 逐条发出不受限的发现（至多 internalMaxFindings 条），成功后把游标推进到运行开始的时间。

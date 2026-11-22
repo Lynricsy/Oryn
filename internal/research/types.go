@@ -100,6 +100,8 @@ type Host interface {
 	ResearcherCold(ctx context.Context, role string) bool
 	// DeliverResearch 把一次研究运行的提示词投递给研究员（标签 = runID）；必要时先建研究员对话。
 	DeliverResearch(ctx context.Context, role, runID, prompt string) error
+	// PrepareMCP 在 MCP 运行投递前启动研究员并等 servers 在它的 omp 里连上且有工具；时限内没就绪时返回错误。
+	PrepareMCP(ctx context.Context, role string, servers []string) error
 	// StopResearcher 中止研究员的回合并在静止后停掉它的 agent。
 	StopResearcher(ctx context.Context, role string)
 	// LastReply 返回线程最后一条助手文本。

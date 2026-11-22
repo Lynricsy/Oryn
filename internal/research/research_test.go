@@ -28,6 +28,9 @@ type fakeHost struct {
 	refreshes  int
 	models     []string
 	deliverErr error
+	// prepared 记下每次 PrepareMCP 的服务器名单；prepareErr 非 nil 时 PrepareMCP 失败。
+	prepared   [][]string
+	prepareErr error
 }
 
 type delivery struct{ role, runID, prompt string }
@@ -46,6 +49,13 @@ func (h *fakeHost) DeliverResearch(_ context.Context, role, runID, prompt string
 	}
 	h.delivered = append(h.delivered, delivery{role, runID, prompt})
 	return nil
+}
+
+func (h *fakeHost) PrepareMCP(_ context.Context, _ string, servers []string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.prepared = append(h.prepared, servers)
+	return h.prepareErr
 }
 
 func (h *fakeHost) StopResearcher(_ context.Context, role string) {
