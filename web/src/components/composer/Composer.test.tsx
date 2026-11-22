@@ -1,16 +1,20 @@
 /**
  * 输入区回归：等待应答期间的新草稿不被清空（W4）、同一草稿不重复发送、斜杠模式命令对账（W12）、
  * 切换线程时草稿各自保留、不串（W5）；跨 compact 断点重新挂载时草稿、错误行、光标保留（M12.1 问题 4）；
- * 触屏上工具行有拍照键，拍到的照片作为附件上传到本线程；全局助手对话的附件传进助手文件库、以 `orynFiles` 发送（M13）。
+ * 触屏上工具行有拍照键，拍到的照片作为附件上传到本线程；全局助手对话的附件传进助手文件库、以 `orynFiles` 发送（M13）；
+ * agent 未就绪时发出的消息立即以「发送中」气泡进转录、输入区清空，失败时草稿放回。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Thread } from "../../api/client";
+import type { Orb, Thread } from "../../api/client";
+import { identityKeys } from "../../api/identity-queries";
+import { qk } from "../../api/queries";
 import i18n from "../../i18n";
 import type * as AttachmentsLib from "../../lib/attachments";
+import type { Attachment } from "../../lib/attachments";
 import type * as ImagesLib from "../../lib/images";
 import { ThreadPage } from "../../pages/ThreadPage";
 import { resetComposerDrafts } from "../../state/composer-drafts";
@@ -19,6 +23,10 @@ import {
 	indexStore,
 	resetThreadStores,
 } from "../../state/stores";
+import type { TranscriptItem } from "../../state/transcript";
+import { TranscriptContext } from "../transcript/context";
+import { pendingPromptStore } from "../transcript/pending-prompt";
+import { Transcript } from "../transcript/Transcript";
 import { Composer } from "./Composer";
 
 const { cmd, upload, uploadLib } = vi.hoisted(() => ({
@@ -38,7 +46,11 @@ vi.mock("../../lib/images", async (orig) => ({
 }));
 vi.mock("../../realtime/socket", () => ({
 	realtime: {
-		cmd: (...args: unknown[]) => cmd(...args),
+		// agent 就绪时模式条会查询开关状态：挂起不应答，不占用各用例给 `cmd` 设的应答
+		cmd: (tid: string, frame: { type: string }, ...rest: unknown[]) =>
+			frame.type === "get_vibe_mode" || frame.type === "get_loop_mode"
+				? new Promise(() => undefined)
+				: cmd(tid, frame, ...rest),
 		uiResponse: () => true,
 		subscribe: () => () => undefined,
 		focus: () => undefined,
@@ -100,6 +112,9 @@ describe("Composer", () => {
 		cmd.mockReset();
 		resetThreadStores();
 		resetComposerDrafts();
+		// 默认 agent 已就绪：应答后清空的原有行为（未就绪的气泡路径见文末）
+		getThreadStore(A).setState({ agentStatus: "ready" });
+		getThreadStore(B).setState({ agentStatus: "ready" });
 	});
 	afterEach(() => {
 		vi.restoreAllMocks();
@@ -403,5 +418,206 @@ describe("全局助手对话的附件（M13 4.2）", () => {
 	it("Space 聊天（协调对话）仍然没有附件入口", () => {
 		wrap(<Composer threadId={S} coordinator />);
 		expect(screen.queryByTestId("attach-file-input")).toBeNull();
+	});
+});
+
+describe("agent 未就绪时发送：转录先显示「发送中」气泡", () => {
+	const ctx = {
+		threadId: A,
+		toolResults: new Map(),
+		liveTools: {},
+		subagents: {},
+		openSubagent: () => {},
+		forkFrom: () => {},
+		labelEntry: () => {},
+	};
+	const userRow = (seq: number, text: string): TranscriptItem => ({
+		kind: "message",
+		key: `e${seq}`,
+		seq,
+		entryId: `E${seq}`,
+		message: { role: "user", content: [{ type: "text", text }] },
+		live: false,
+	});
+	const old = userRow(1, "早先的消息");
+
+	beforeEach(() => {
+		cmd.mockReset();
+		upload.mockReset();
+		resetThreadStores();
+		resetComposerDrafts();
+		pendingPromptStore.setState({ prompts: {} });
+		// 已有一条 user 消息（seq 1），线程条目到 seq 2；agent 在启动
+		getThreadStore(A).setState({ agentStatus: "starting", lastSeq: 2 });
+		// jsdom 没有布局：给虚拟列表一个足够高的视口，所有行都挂载
+		vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(
+			4000,
+		);
+		vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
+	});
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	/** 转录与输入区同挂；返回用新条目重渲染转录的函数。 */
+	function mount(items: TranscriptItem[] = [old]) {
+		const client = new QueryClient({
+			defaultOptions: {
+				queries: { retry: false, staleTime: Number.POSITIVE_INFINITY },
+			},
+		});
+		client.setQueryData(qk.agentIdentity, {});
+		client.setQueryData(qk.userIdentity, {});
+		client.setQueryData(qk.gitIdentity, {});
+		client.setQueryData(identityKeys.roles, []);
+		const tree = (rows: TranscriptItem[]) => (
+			<QueryClientProvider client={client}>
+				<MemoryRouter>
+					<TranscriptContext.Provider value={ctx}>
+						<Transcript items={rows} />
+					</TranscriptContext.Provider>
+					<Composer threadId={A} />
+				</MemoryRouter>
+			</QueryClientProvider>
+		);
+		const r = render(tree(items));
+		return (rows: TranscriptItem[]) => r.rerender(tree(rows));
+	}
+
+	const sending = () => screen.queryAllByText(i18n.t("transcript.sending"));
+
+	it("发送即显示气泡、输入区清空；对应的 user 条目到达后气泡消失，文字只出现一次", async () => {
+		const { promise, resolve } = deferred<unknown>();
+		cmd.mockImplementation(() => promise);
+		const setItems = mount();
+		type("你好");
+		act(() => enter());
+		expect(framesOf("prompt")).toMatchObject([{ message: "你好" }]);
+		expect(box().value).toBe("");
+		expect(sending()).toHaveLength(1);
+		expect(screen.getAllByText("你好")).toHaveLength(1);
+		// 应答先到、条目未到：气泡仍在，不空一下
+		await act(async () => {
+			resolve({});
+			await promise;
+		});
+		expect(sending()).toHaveLength(1);
+		act(() => setItems([old, userRow(3, "你好")]));
+		expect(sending()).toHaveLength(0);
+		expect(screen.getAllByText("你好")).toHaveLength(1);
+		expect(pendingPromptStore.getState().prompts[A]).toBeUndefined();
+	});
+
+	it("连续发出的几条按顺序显示，user 条目逐条认领", () => {
+		cmd.mockImplementation(() => new Promise(() => undefined));
+		const setItems = mount();
+		type("第一条");
+		act(() => enter());
+		type("第二条");
+		act(() => enter());
+		expect(framesOf("prompt")).toHaveLength(2);
+		expect(sending()).toHaveLength(2);
+		const first = screen.getByText("第一条");
+		const second = screen.getByText("第二条");
+		expect(
+			first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy();
+		act(() => setItems([old, userRow(3, "第一条")]));
+		expect(sending()).toHaveLength(1);
+		expect(screen.getAllByText("第一条")).toHaveLength(1);
+		expect(screen.getAllByText("第二条")).toHaveLength(1);
+		act(() => setItems([old, userRow(3, "第一条"), userRow(4, "第二条")]));
+		expect(sending()).toHaveLength(0);
+		expect(screen.getAllByText("第二条")).toHaveLength(1);
+		expect(pendingPromptStore.getState().prompts[A]).toBeUndefined();
+	});
+
+	it("同样的文字在途时再发一次也是新的一条（草稿已离开输入区）", () => {
+		cmd.mockImplementation(() => new Promise(() => undefined));
+		mount();
+		type("继续");
+		act(() => enter());
+		type("继续");
+		act(() => enter());
+		expect(framesOf("prompt")).toHaveLength(2);
+		expect(sending()).toHaveLength(2);
+	});
+
+	it("发送失败：气泡消失，草稿与附件放回输入区，显示错误", async () => {
+		const att: Attachment = {
+			id: "att_1",
+			name: "a.txt",
+			mime: "text/plain",
+			size: 1,
+			sha256: "0".repeat(64),
+			createdAt: 1,
+		};
+		upload.mockResolvedValue(att);
+		// tsconfig 的 lib 不含 Promise.withResolvers
+		let reject: (e: unknown) => void = () => undefined;
+		cmd.mockImplementation(
+			() =>
+				new Promise((_, r) => {
+					reject = r;
+				}),
+		);
+		mount();
+		await act(async () => {
+			fireEvent.change(screen.getByTestId("attach-file-input"), {
+				target: { files: [new File(["x"], "a.txt", { type: "text/plain" })] },
+			});
+		});
+		type("会失败的消息");
+		act(() => enter());
+		expect(framesOf("prompt")).toMatchObject([
+			{ message: "会失败的消息", orynAttachments: ["att_1"] },
+		]);
+		expect(box().value).toBe("");
+		expect(screen.queryByText("a.txt")).toBeNull();
+		expect(sending()).toHaveLength(1);
+		await act(async () => reject(new Error("agent 启动失败")));
+		expect(sending()).toHaveLength(0);
+		expect(box().value).toBe("会失败的消息");
+		expect(screen.getByText("a.txt")).toBeInTheDocument();
+		expect(screen.getByRole("alert")).toHaveTextContent("agent 启动失败");
+	});
+
+	it("agent 已就绪：不显示气泡，草稿等应答后才清空", async () => {
+		getThreadStore(A).setState({ agentStatus: "ready" });
+		const { promise, resolve } = deferred<unknown>();
+		cmd.mockImplementation(() => promise);
+		mount();
+		type("立刻回答");
+		act(() => enter());
+		expect(sending()).toHaveLength(0);
+		expect(box().value).toBe("立刻回答");
+		await act(async () => {
+			resolve({});
+			await promise;
+		});
+		expect(box().value).toBe("");
+	});
+
+	it("orb 冻结（agent 仍是 ready）也按未就绪显示气泡", () => {
+		getThreadStore(A).setState({
+			agentStatus: "ready",
+			orb: { state: "frozen" } as Orb,
+		});
+		cmd.mockImplementation(() => new Promise(() => undefined));
+		mount();
+		type("醒醒");
+		act(() => enter());
+		expect(sending()).toHaveLength(1);
+		expect(box().value).toBe("");
+	});
+
+	it("bash 与斜杠命令不走气泡", () => {
+		cmd.mockImplementation(() => new Promise(() => undefined));
+		mount();
+		type("!ls");
+		act(() => enter());
+		type("/unknown-cmd arg");
+		act(() => enter());
+		expect(sending()).toHaveLength(0);
 	});
 });

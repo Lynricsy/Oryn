@@ -76,7 +76,11 @@ import { foldMainline, type MainlineFold, type MainlineRow } from "./mainline";
 import { describeModeChange } from "./mode-change";
 import { type KnownModel, modelLabel } from "./model-label";
 import { NoticeLine } from "./NoticeLine";
-import { clearPendingPrompt, usePendingPrompt } from "./pending-prompt";
+import {
+	removePendingPrompts,
+	usePendingPrompts,
+	waitingPendingPrompts,
+} from "./pending-prompt";
 import { QuoteBar, QuoteChip, useQuoteSelection } from "./quote-selection";
 import { findRevealHit, registerRevealer } from "./reveal";
 import { transcriptSelection } from "./selection-context";
@@ -539,7 +543,7 @@ export function rowGaps(
 	});
 }
 
-/** 环境准备阶段先显示的首条任务（客户端暂存，转录里出现 user 消息即清除）。 */
+/** 已发出、尚未作为 user 条目出现的消息（客户端暂存，对应的 user 行到达即清除）。 */
 function PendingPrompt({ text }: { text: string }) {
 	const { t } = useTranslation();
 	return (
@@ -722,13 +726,26 @@ export const Transcript = memo(function Transcript({
 }): ReactNode {
 	const { t } = useTranslation();
 	const { threadId, readOnly } = useTranscriptContext();
-	const pending = usePendingPrompt(threadId);
-	const hasUser = useMemo(() => items.some(isUserRow), [items]);
-	// 第一条 user 消息到了就丢掉暂存，避免同一句话出现两次
+	const pending = usePendingPrompts(threadId);
+	// 对应的 user 消息到了的不再画，避免同一句话出现两次
+	const pendingPrompts = useMemo(
+		() =>
+			pending.length === 0
+				? pending
+				: waitingPendingPrompts(
+						pending,
+						items.filter(isUserRow).map((it) => it.seq),
+					),
+		[pending, items],
+	);
+	// 全部到了才一并丢掉暂存（逐条丢会让后面的气泡再认领一次前面的 user 行）
 	useEffect(() => {
-		if (hasUser && pending !== undefined) clearPendingPrompt(threadId);
-	}, [hasUser, pending, threadId]);
-	const pendingText = hasUser ? undefined : pending;
+		if (pending.length > 0 && pendingPrompts.length === 0)
+			removePendingPrompts(
+				threadId,
+				pending.map((p) => p.id),
+			);
+	}, [pending, pendingPrompts, threadId]);
 	// 显示行：主线把自动来料与沉默的回合折叠起来，其余转录原样
 	const rows = useMemo<MainlineRow[]>(
 		() => (mainline ? foldMainline(items) : items),
@@ -1094,9 +1111,9 @@ export const Transcript = memo(function Transcript({
 								)
 							) : (
 								<>
-									{pendingText !== undefined && (
-										<PendingPrompt text={pendingText} />
-									)}
+									{pendingPrompts.map((p) => (
+										<PendingPrompt key={p.id} text={p.text} />
+									))}
 									{footer}
 								</>
 							)}
@@ -1112,7 +1129,7 @@ export const Transcript = memo(function Transcript({
 			virtualizer.measureElement,
 			turns,
 			gaps,
-			pendingText,
+			pendingPrompts,
 			liveStart,
 			sessionModel,
 			sessionThinking,

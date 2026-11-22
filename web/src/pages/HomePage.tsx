@@ -79,7 +79,7 @@ import {
 	ROUND_GLASS,
 	ROUND_GLASS_HIDDEN,
 } from "../components/thread/CompactThreadHeader";
-import { setPendingPrompt } from "../components/transcript/pending-prompt";
+import { addPendingPrompt } from "../components/transcript/pending-prompt";
 import { Badge, BrandMark, ProjectBadge, Sheet } from "../components/ui/data";
 import { Icon } from "../components/ui/icons";
 import { DockerBadge, typeHasDocker } from "../components/ui/OrbBadges";
@@ -500,7 +500,7 @@ export function HomePage(): ReactNode {
 				...(to.thinking ? { thinkingLevel: to.thinking } : {}),
 			});
 			// 助手的 agent 可能还在启动：转录先以「发送中」气泡显示首条消息，第一条 user 条目入库即清除
-			setPendingPrompt(thread.id, text);
+			addPendingPrompt(thread.id, text);
 			if (window.matchMedia?.("(pointer: coarse)").matches) ref.current?.blur();
 			setPrompt("");
 			att.clear();
@@ -571,7 +571,7 @@ export function HomePage(): ReactNode {
 			setConflict(null);
 			setDirConflict(null);
 			conflictReq.current = null;
-			setPendingPrompt(thread.id, text);
+			addPendingPrompt(thread.id, text);
 			// 触屏：发送即收起软键盘，线程页也不再抢焦点（否则键盘会先收后弹闪一下）
 			if (window.matchMedia?.("(pointer: coarse)").matches) ref.current?.blur();
 			// 托盘连续变形到线程页输入坞；旧快照里仍是刚发出的文字，清空放到导航那一刻

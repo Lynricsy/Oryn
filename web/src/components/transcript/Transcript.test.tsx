@@ -24,9 +24,10 @@ import { buildTranscript, type TranscriptItem } from "../../state/transcript";
 import { TranscriptContext, type TranscriptContextValue } from "./context";
 import { MessageView, summarizeTurn } from "./MessageView";
 import {
-	clearPendingPrompt,
+	addPendingPrompt,
 	pendingPromptStore,
-	setPendingPrompt,
+	removePendingPrompts,
+	waitingPendingPrompts,
 } from "./pending-prompt";
 import { layoutTurns, Transcript } from "./Transcript";
 
@@ -435,13 +436,34 @@ describe("MessageView 回合脚注与消息菜单", () => {
 });
 
 describe("pending prompt", () => {
-	it("空文字不写入；清除后不再存在", () => {
-		setPendingPrompt("T-p", "");
+	it("空文字不写入；按 id 清除，清空后不再存在", () => {
+		expect(addPendingPrompt("T-p", "")).toBeUndefined();
 		expect(pendingPromptStore.getState().prompts["T-p"]).toBeUndefined();
-		setPendingPrompt("T-p", "任务");
-		expect(pendingPromptStore.getState().prompts["T-p"]).toBe("任务");
-		clearPendingPrompt("T-p");
+		const a = addPendingPrompt("T-p", "任务") as number;
+		const b = addPendingPrompt("T-p", "补充", 5) as number;
+		expect(pendingPromptStore.getState().prompts["T-p"]).toEqual([
+			{ id: a, text: "任务", afterSeq: 0 },
+			{ id: b, text: "补充", afterSeq: 5 },
+		]);
+		removePendingPrompts("T-p", [a]);
+		expect(
+			pendingPromptStore.getState().prompts["T-p"]?.map((p) => p.text),
+		).toEqual(["补充"]);
+		removePendingPrompts("T-p", [b]);
 		expect(pendingPromptStore.getState().prompts["T-p"]).toBeUndefined();
+	});
+
+	it("按发送先后认领 afterSeq 之后的 user 行，之前的不算", () => {
+		const p = (id: number, afterSeq: number) => ({ id, text: "", afterSeq });
+		const pending = [p(1, 4), p(2, 4), p(3, 9)];
+		expect(waitingPendingPrompts(pending, [2, 4])).toBe(pending);
+		expect(waitingPendingPrompts(pending, [2, 5.6])).toEqual([
+			p(2, 4),
+			p(3, 9),
+		]);
+		// seq 7 被第二条认领；第三条要等 9 之后
+		expect(waitingPendingPrompts(pending, [5, 7, 8])).toEqual([p(3, 9)]);
+		expect(waitingPendingPrompts(pending, [5, 7, 10])).toEqual([]);
 	});
 });
 

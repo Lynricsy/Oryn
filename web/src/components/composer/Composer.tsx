@@ -58,13 +58,22 @@ import {
 	useComposerDraft,
 	useComposerPendingFiles,
 } from "../../state/composer-drafts";
-import { getThreadStore, useIndex, useThread } from "../../state/stores";
+import {
+	agentQueryable,
+	getThreadStore,
+	useIndex,
+	useThread,
+} from "../../state/stores";
 import { subagentFiles } from "../../state/subagent-entries";
 import { uiStore } from "../../state/ui";
 import { SelectionChip } from "../artifacts/SelectionChip";
 import { openPalette } from "../palette/palette-state";
 import { ModeStatus, ModeStrip } from "../thread/ModeBar";
 import { useThreadProject } from "../thread/ThreadHeader";
+import {
+	addPendingPrompt,
+	removePendingPrompts,
+} from "../transcript/pending-prompt";
 import { Icon } from "../ui/icons";
 import { describeError, IconButton, Spinner } from "../ui/primitives";
 import { AttachButton, AttachmentStrip, useAttachments } from "./attachments";
@@ -318,6 +327,17 @@ export const Composer = memo(function Composer({
 		const now = getComposerDraft(threadId);
 		if (now.text === sent.text && draftRef.current.items === sent.items)
 			reset(withRefs ? sent : undefined);
+	};
+
+	/** 发送失败：把发出的那份草稿放回输入区（等待期间又写了新草稿的接在后面），引用、选中的元素、附件空着才放回。 */
+	const restoreDraft = (sent: typeof draftRef.current) => {
+		const now = getComposerDraft(threadId);
+		patchComposerDraft(threadId, {
+			text: now.text.trim() ? `${sent.text}\n\n${now.text}` : sent.text,
+			quote: now.quote ?? sent.quote,
+			artifactSelection: now.artifactSelection ?? sent.artifactSelection,
+		});
+		att.restore(sent.items);
 	};
 
 	/** 命令没有带走附件：只清掉命令文本，附件留在输入区。 */
@@ -574,17 +594,37 @@ export const Composer = memo(function Composer({
 				}
 			}
 			const body = asText.kind === "text" ? asText.text : sent.text.trim();
-			await realtime.cmd(
-				threadId,
-				promptFrame(
-					mode,
-					outgoing(body, sent),
-					att.contents,
-					att.attachmentIds,
-					att.fileIds,
-				),
+			const frame = promptFrame(
+				mode,
+				outgoing(body, sent),
+				att.contents,
+				att.attachmentIds,
+				att.fileIds,
 			);
-			resetIfUnchanged(sent, true);
+			// agent 未就绪（orb 冻结 / 唤醒中、agent 启动中）时命令在服务端排队，agent 接下才应答：消息先以「发送中」气泡
+			// 进转录、输入区立即清空，对应的 user 条目到达时气泡由转录清除。就绪的 agent 几毫秒内应答，不闪气泡，
+			// 仍是应答后清空。未识别的斜杠命令照原文交给 agent，可能不产生 user 条目，不走气泡
+			const ts = getThreadStore(threadId).getState();
+			const bubble =
+				asText.kind === "text" && !agentQueryable(ts)
+					? addPendingPrompt(threadId, body, ts.lastSeq)
+					: undefined;
+			if (bubble === undefined) {
+				await realtime.cmd(threadId, frame);
+				resetIfUnchanged(sent, true);
+				return;
+			}
+			reset(sent);
+			// 草稿已离开输入区：在途标记不再拦重复提交（再输入同样的文字是新的一条）
+			if (getComposerDraft(threadId).inFlight === marker)
+				patchComposerDraft(threadId, { inFlight: null });
+			try {
+				await realtime.cmd(threadId, frame);
+			} catch (e) {
+				removePendingPrompts(threadId, [bubble]);
+				restoreDraft(sent);
+				throw e;
+			}
 		} catch (e) {
 			setError(e);
 		} finally {

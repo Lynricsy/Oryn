@@ -291,6 +291,18 @@ export function useAttachments({
 		setError(null);
 	}, [commit]);
 
+	/** 发送失败时放回先前清掉的条目（清空时没有删除上传）；输入区已卸载则作罢，同 key 的不重复加入。 */
+	const restore = useCallback(
+		(list: readonly AttachmentItem[]) => {
+			if (disposed.current || list.length === 0) return;
+			commit((prev) => [
+				...list.filter((i) => !prev.some((p) => p.key === i.key)),
+				...prev,
+			]);
+		},
+		[commit],
+	);
+
 	const sendable = items.filter((i) => i.status === "done");
 	const contents: ImageContent[] = sendable.flatMap((i) =>
 		i.image
@@ -317,6 +329,7 @@ export function useAttachments({
 		addUploaded,
 		remove,
 		clear,
+		restore,
 	};
 }
 
