@@ -128,7 +128,8 @@ export function ContextBar({
 }
 
 /**
- * 图例（信息面板）：最大的 3 类（色点 + 名称 + 数值）加「其他」合计，≤2 行；估算值带「≈」，「估算」写在各项 title 里。
+ * 图例（信息面板）：最大的 3 类（色点 + 名称 + 数值）加「其他」合计，排成两列网格（最多 2 行，列对齐，
+ * 不会出现第二行只剩一项、右边空一截）；估算值带「≈」，「估算」写在各项 title 里。
  * 「其他」的色点是被合并各类的颜色条纹，title 列出它们的名字。
  */
 export function ContextLegend({
@@ -159,7 +160,7 @@ export function ContextLegend({
 		})
 		.join(", ");
 	return (
-		<ul className="mt-[9px] flex flex-wrap gap-x-3 gap-y-1 text-2xs text-faint">
+		<ul className="mt-[9px] grid grid-cols-2 gap-x-3 gap-y-1 text-2xs text-faint">
 			{shown.map((p) => {
 				const { name, title } = describe(p, contextWindow);
 				return (

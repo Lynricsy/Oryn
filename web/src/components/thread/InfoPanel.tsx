@@ -1110,38 +1110,42 @@ function ContextSection({ threadId }: { threadId: string }) {
 		<InfoBlock
 			title={t("panel.context")}
 			icon="database"
+			// token 读数放标题行右端，正好落在下面分段条终点（窗口上限）的正上方；百分比与分段条并排，
+			// 不再各占一行、右半边留空
 			action={
-				<IconButton
-					icon="info"
-					size={14}
-					box="sm"
-					className="text-faint"
-					label={t("report.get_context_report")}
-					onClick={() =>
-						uiStore
-							.getState()
-							.open({ kind: "report", report: "get_context_report" })
-					}
-				/>
-			}
-		>
-			{ctx ? (
-				<>
-					<div className="mt-1.5 flex items-baseline gap-2.5 tabular-nums">
-						<BigValue
-							value={formatPercent(ctx.percent)}
-							className={`text-3xl leading-9 ${PERCENT_TONE[tone] ?? ""}`}
-						/>
-						<span className="text-faint text-sm">
+				<span className="flex items-center gap-1.5">
+					{ctx && (
+						<span className="text-faint text-xs tabular-nums">
 							<span className="font-semibold text-muted">
 								{formatTokens(ctx.tokens)}
 							</span>{" "}
 							/ {formatTokens(ctx.contextWindow)}
 						</span>
-					</div>
-					<div className="mt-2.5">
-						{parts && breakdown ? (
-							<>
+					)}
+					<IconButton
+						icon="info"
+						size={14}
+						box="sm"
+						className="text-faint"
+						label={t("report.get_context_report")}
+						onClick={() =>
+							uiStore
+								.getState()
+								.open({ kind: "report", report: "get_context_report" })
+						}
+					/>
+				</span>
+			}
+		>
+			{ctx ? (
+				<>
+					<div className="mt-1.5 flex items-center gap-3">
+						<BigValue
+							value={formatPercent(ctx.percent)}
+							className={`shrink-0 text-3xl leading-9 ${PERCENT_TONE[tone] ?? ""}`}
+						/>
+						<div className="min-w-0 flex-1">
+							{parts && breakdown ? (
 								<ContextBar
 									parts={parts}
 									contextWindow={breakdown.contextWindow}
@@ -1150,21 +1154,23 @@ function ContextSection({ threadId }: { threadId: string }) {
 									// 块底已是一层浅色，轨道用悬停色而不是更深的内嵌色（深色下内嵌色比块底还暗）
 									className="h-2! bg-hover!"
 								/>
-								<ContextLegend
-									parts={parts}
-									contextWindow={breakdown.contextWindow}
+							) : (
+								// 报告还没取到：先用单段量表
+								<Meter
+									value={ctx.percent}
+									tone={tone}
+									label={t("panel.context")}
+									className="h-2! bg-hover!"
 								/>
-							</>
-						) : (
-							// 报告还没取到：先用单段量表
-							<Meter
-								value={ctx.percent}
-								tone={tone}
-								label={t("panel.context")}
-								className="h-2! bg-hover!"
-							/>
-						)}
+							)}
+						</div>
 					</div>
+					{parts && breakdown && (
+						<ContextLegend
+							parts={parts}
+							contextWindow={breakdown.contextWindow}
+						/>
+					)}
 				</>
 			) : (
 				<div className="mt-2">
