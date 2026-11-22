@@ -859,6 +859,60 @@ orbd 是控制状态的唯一权威（`internal/orbdrt/deskcontrol.go`），随 
 
 查询见 `internal/store/queries/desktop.sql`：`AcquireBrowserProfile` / `StealBrowserProfile` / `SaveBrowserProfileRevision` 用 `RETURNING`（`:one`，`sql.ErrNoRows` = 被占 / CAS 失败 / 被围栏挡下）。
 
+## M25：桌面应用与窗口
+
+M8 的桌面只有一个浏览器；M25 让它成为能用的桌面：镜像自带一份应用清单（`/usr/local/share/oryn/desktop-apps.json` 与图标目录），orbd 读取后连同顶层窗口一起放进 `desktop.state` 全量快照，网页在 noVNC 画面下方画一条任务栏，经下面三个接口启动应用、操作窗口、取图标。没有清单的镜像只有内置的 `chromium`。
+
+### 模型
+
+- `OrbDesktopApp{id, name, running, launching}`：`id` 匹配 `^[a-z][a-z0-9-]{0,31}$`（镜像清单里的 id，内置 `chromium`）；`name` ≤64 字符；`running` = 有 `appId` 等于它的窗口（`chromium` 另外在 `browser = running` 时为真）；`launching` = 已发起启动、还没出现它的窗口，至多 20s。
+- `OrbDesktopWindow{id, appId?, title, active, minimized}`：`id` 是 X 窗口 id 的十进制字符串（`^[0-9]{1,10}$`）；`appId` 按 WM_CLASS 映射到清单里的应用，省略 = 不属于任何应用（任务栏归入「其它窗口」）；`title` ≤200 字符（超长截断）；`active` 取 `_NET_ACTIVE_WINDOW`，`minimized` 取 `_NET_WM_STATE_HIDDEN`。
+- `OrbDesktop` 与 `LinkCtlDesktopStateParams` 各加可选字段 `apps: OrbDesktopApp[]`（≤16，按任务栏顺序）与 `windows: OrbDesktopWindow[]`（≤32，按 `_NET_CLIENT_LIST` 顺序）。旧 orbd 不发这两个字段。
+- 发送时机：`apps` 与 M8 的其它字段一样，变化即发；只有 `windows` 变化时 orbd 合并上报，至少间隔 500ms。
+- 控制面把两者以 JSON 存进 `orb_desktops.apps` / `orb_desktops.windows`（NULL = 未上报），与 `control` 同一套镜像机制：`Orb.desktop.apps` / `windows` 只在 orb 为 `ready` 时给出（冻结 / 停机后镜像停在最后一次上报）。
+
+### hello 特性
+
+`desktop-apps`：orbd 有下面的本机路由、`desktop.state` 会带 `apps` / `windows` 时声明（只在已声明 `desktop` 时追加）。缺 `desktop-apps` → 三个接口回 409 `orbd_outdated`。
+
+### REST
+
+鉴权同 C3。启动与窗口操作先唤醒 orb 并至多等 25s（`EnsureUsable(orb, "desktop", wake=true, 25s)`），图标不唤醒。都经 `fs` 流转发到 orbd 本机 API。
+
+|方法与路径|operationId|响应|错误码|
+|---|---|---|---|
+|`POST /api/v1/orbs/{id}/desktop/apps/{app}/launch`|`launchOrbDesktopApp`|`200 Orb`（该应用 `launching=true`）|`409 control_agent`、`404 app_not_found`、`409 orbd_outdated`、`503 orb_unavailable`|
+|`POST /api/v1/orbs/{id}/desktop/windows/{window}/{action}`|`operateOrbDesktopWindow`|`200 Orb`|`404 window_not_found`、`409 control_agent`、`409 orbd_outdated`、`503 orb_unavailable`（唤醒失败）|
+|`GET /api/v1/orbs/{id}/desktop/apps/{app}/icon`|`getOrbDesktopAppIcon`|`200`，`image/png` 或 `image/svg+xml`，`Cache-Control: private, max-age=86400`|`409 orb_unavailable`（不唤醒：orb 不在 `ready`）、`404 app_not_found`（没有该应用或它没有图标）、`409 orbd_outdated`|
+
+- 路径参数：`app` 为 `OrbDesktopAppId`，`window` 为 `OrbDesktopWindowId`，`action ∈ activate | minimize | close`（`OrbDesktopWindowAction`）。
+- 启动每次都起一个新实例；「切到已有窗口」由网页改发 `activate`。`chromium` 走 M8 的浏览器启动。
+- `activate` 切到前台（最小化的窗口先还原）；`minimize` 最小化；`close` 发 EWMH `_NET_CLOSE_WINDOW`，应用可能先弹确认。窗口管理器异步处理，结果随后续 `orb` 推送到达。
+- `desktop.control.state = agent` 时启动与窗口操作都回 409 `control_agent`，免得新窗口抢走 agent 的焦点；网页先走现有的「接管」流程再发。
+- 图标内容来自 orb，响应始终带 `X-Content-Type-Options: nosniff` 与 `Content-Security-Policy: sandbox`。
+
+### orbd 本机 API（`desktop-apps` 特性，`fs` 流上）
+
+|路由|行为|
+|---|---|
+|`POST /desktop/apps/{id}/launch`|`control.state == agent` → 409 `control_agent`；未知 id → 404 `app_not_found`；`chromium` → 浏览器启动；否则按清单的 `exec` 在独立进程组里起进程（工作目录 `$HOME/workspace`，不存在用 `$HOME`）→ 状态|
+|`POST /desktop/windows/{wid}/{action}`|control 检查同上；窗口不在当前列表里 → 404 `window_not_found`；否则发对应的 EWMH 消息 → 状态|
+|`GET /desktop/apps/{id}/icon`|按扩展名回 `image/svg+xml` 或 `image/png`；没有图标 → 404|
+
+### 错误码
+
+|code|HTTP|含义|
+|---|---|---|
+|`control_agent`|409|agent 正在操作桌面（`control.state = agent`），先接管|
+|`app_not_found`|404|清单里没有该应用（取图标时：或它没有图标）|
+|`window_not_found`|404|窗口已不存在|
+|`orb_unavailable`|503 / 409|启动与窗口操作唤醒失败回 503（带 `Retry-After`）；取图标不唤醒，orb 不在 `ready` 回 409|
+|`orbd_outdated`|409|hello 不含 `desktop-apps`|
+
+### 存储
+
+`0051_desktop_windows.sql`：`orb_desktops` 加 `apps TEXT`、`windows TEXT`（JSON，可空）。`UpsertOrbDesktopState` 用 `sqlc.narg` 一并写入。
+
 ## M9：Space、助手、定时与协调宿主
 
 Space 是「名称 + 目标 + 可选项目 + 一个协调聊天」；全局助手是不绑定项目的协调对话（可多个）。两者都是 `threads` 里的行（`kind = space | assistant`，合称**协调对话**），转录、WS、条目复制、标题、未读全部复用。协调对话的 omp 跑在控制面宿主上的**协调宿主**里：库里是一个内置 provider `@host`（`driver = host`、类型 `host`）+ 一台 `coordinator = 1` 的 orb，状态机、空闲策略、link 上的 ctl / agent 流 / 条目复制 / egress 密钥注入全部照旧；`orynd` 进程内认领 `@host` 的任务，拉起子进程 `orynd coordinator-host`（受限 orbd，经继承的 socketpair 建 link，无 WebSocket、无令牌），它再拉起 `omp --no-tools …`。协调者的能力只有 omp 宿主工具（`set_host_tools` / `host_tool_call`），由控制面应答；不新增 WS 消息。

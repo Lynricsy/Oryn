@@ -770,6 +770,8 @@ type OrbDesktop struct {
 	Dirty              int64   `json:"dirty"`
 	UpdatedAt          int64   `json:"updatedAt"`
 	Control            *string `json:"control"`
+	Apps               *string `json:"apps"`
+	Windows            *string `json:"windows"`
 }
 
 type OrbEvent struct {

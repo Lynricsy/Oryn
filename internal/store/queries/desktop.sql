@@ -89,13 +89,14 @@ ON CONFLICT (orb_id) DO UPDATE SET
     fence = 0, readonly_reason = excluded.readonly_reason, readonly_by = NULL, readonly_by_thread_id = NULL,
     readonly_at = excluded.readonly_at, local_rev = -1, profile_error = NULL, updated_at = excluded.updated_at;
 
--- Mirror of orbd's desktop.state (only the reported fields).
+-- Mirror of orbd's desktop.state (only the reported fields). control/apps/windows are JSON; NULL = not reported (old orbd).
 -- name: UpsertOrbDesktopState :exec
-INSERT INTO orb_desktops (orb_id, reported, display_ready, browser, dirty, control, updated_at)
-VALUES (@orb_id, 1, @display_ready, @browser, @dirty, sqlc.narg(control), @now)
+INSERT INTO orb_desktops (orb_id, reported, display_ready, browser, dirty, control, apps, windows, updated_at)
+VALUES (@orb_id, 1, @display_ready, @browser, @dirty, sqlc.narg(control), sqlc.narg(apps), sqlc.narg(windows), @now)
 ON CONFLICT (orb_id) DO UPDATE SET
     reported = 1, display_ready = excluded.display_ready, browser = excluded.browser,
-    dirty = excluded.dirty, control = excluded.control, updated_at = excluded.updated_at;
+    dirty = excluded.dirty, control = excluded.control, apps = excluded.apps, windows = excluded.windows,
+    updated_at = excluded.updated_at;
 
 -- Result of a sync/checkin: local revision, load error, fence held (0 when not holding); clears takeover.
 -- name: SetOrbDesktopLocal :exec

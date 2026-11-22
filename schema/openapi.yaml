@@ -2044,6 +2044,80 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Orb' }
         default: { $ref: '#/components/responses/Error' }
+  /api/v1/orbs/{id}/desktop/apps/{app}/launch:
+    parameters:
+      - { $ref: '#/components/parameters/OrbIdPath' }
+      - { $ref: '#/components/parameters/OrbDesktopAppIdPath' }
+    post:
+      tags: [desktop]
+      operationId: launchOrbDesktopApp
+      summary: 在桌面上启动一个应用（M25；每次都起一个新实例）
+      description: |
+        `app` 取自 `desktop.apps[].id`；`chromium` 走浏览器启动（同 `startOrbBrowser`），其余由 orbd 按镜像清单起进程。
+        「切到已有窗口」由客户端改用 `operateOrbDesktopWindow` 决定，本接口不做。
+        先唤醒 orb 并至多等 25s；orb 不可用 → 503 `orb_unavailable`；旧 orbd（hello 不含 `desktop-apps`）→ 409 `orbd_outdated`；
+        `desktop.control.state = agent` → 409 `control_agent`（先接管再启动）；清单里没有该应用 → 404 `app_not_found`。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '200':
+          description: orb（被启动的应用 `launching=true`，直到出现它的窗口或过了 20s）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Orb' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/orbs/{id}/desktop/apps/{app}/icon:
+    parameters:
+      - { $ref: '#/components/parameters/OrbIdPath' }
+      - { $ref: '#/components/parameters/OrbDesktopAppIdPath' }
+    get:
+      tags: [desktop]
+      operationId: getOrbDesktopAppIcon
+      summary: 应用图标（M25；取自 orb 镜像里已安装应用自带的图标）
+      description: |
+        **不唤醒 orb**：orb 不在 `ready` → 409 `orb_unavailable`。旧 orbd（hello 不含 `desktop-apps`）→ 409 `orbd_outdated`；
+        清单里没有该应用或它没有图标 → 404 `app_not_found`。图标内容来自 orb，始终带 `X-Content-Type-Options: nosniff`
+        与 `Content-Security-Policy: sandbox`（SVG 直接打开时也不执行脚本）。
+      responses:
+        '200':
+          description: 图标原始字节
+          headers:
+            Cache-Control:
+              description: '`private, max-age=86400`'
+              schema: { type: string }
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+            image/svg+xml:
+              schema: { type: string, format: binary }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/orbs/{id}/desktop/windows/{window}/{action}:
+    parameters:
+      - { $ref: '#/components/parameters/OrbIdPath' }
+      - { $ref: '#/components/parameters/OrbDesktopWindowIdPath' }
+      - { $ref: '#/components/parameters/OrbDesktopWindowActionPath' }
+    post:
+      tags: [desktop]
+      operationId: operateOrbDesktopWindow
+      summary: 激活、最小化或关闭桌面上的一个窗口（M25）
+      description: |
+        `window` 取自 `desktop.windows[].id`。`activate` 切到前台（最小化的窗口先还原）；`minimize` 最小化；
+        `close` 请窗口自行关闭（EWMH `_NET_CLOSE_WINDOW`，应用可能先弹确认）。
+        先唤醒 orb 并至多等 25s；orb 不可用 → 503 `orb_unavailable`；旧 orbd（hello 不含 `desktop-apps`）→ 409 `orbd_outdated`；
+        `desktop.control.state = agent` → 409 `control_agent`；窗口已不存在 → 404 `window_not_found`。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '200':
+          description: orb（`desktop.windows` 为 orbd 应答时的窗口列表；窗口管理器的处理是异步的，结果随后续 `orb` 推送到达）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Orb' }
+        default: { $ref: '#/components/responses/Error' }
   /api/v1/orbs/{id}/desktop/ws:
     parameters:
       - { $ref: '#/components/parameters/OrbIdPath' }
@@ -7433,6 +7507,21 @@ components:
       in: path
       required: true
       schema: { $ref: '#/components/schemas/BrowserProfileId' }
+    OrbDesktopAppIdPath:
+      name: app
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/OrbDesktopAppId' }
+    OrbDesktopWindowIdPath:
+      name: window
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/OrbDesktopWindowId' }
+    OrbDesktopWindowActionPath:
+      name: action
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/OrbDesktopWindowAction' }
     SpaceIdPath:
       name: id
       in: path
@@ -11688,6 +11777,16 @@ components:
           allOf:
             - $ref: '#/components/schemas/OrbDesktopControl'
           description: 桌面控制状态（orbd 权威）；orbd 未上报（旧 orbd）或 orb 不在运行时省略，按 `idle` 处理
+        apps:
+          type: array
+          maxItems: 16
+          description: 任务栏应用（M25，按任务栏顺序）；旧 orbd（hello 不含 `desktop-apps`）未上报或 orb 不在运行时省略
+          items: { $ref: '#/components/schemas/OrbDesktopApp' }
+        windows:
+          type: array
+          maxItems: 32
+          description: 顶层窗口（M25，按 `_NET_CLIENT_LIST` 顺序）；省略条件同 `apps`
+          items: { $ref: '#/components/schemas/OrbDesktopWindow' }
     OrbDesktopControlState:
       type: string
       description: |
@@ -11738,6 +11837,55 @@ components:
           type: string
           enum: [take, release]
           x-enum-varnames: [OrbDesktopControlActionTake, OrbDesktopControlActionRelease]
+    OrbDesktopAppId:
+      type: string
+      pattern: '^[a-z][a-z0-9-]{0,31}$'
+      description: 桌面应用 id（取自镜像清单 `/usr/local/share/oryn/desktop-apps.json`；内置 `chromium`）
+    OrbDesktopApp:
+      type: object
+      description: 任务栏上的一个应用（M25）
+      required: [id, name, running, launching]
+      properties:
+        id: { $ref: '#/components/schemas/OrbDesktopAppId' }
+        name:
+          type: string
+          maxLength: 64
+          description: 显示名称
+        running:
+          type: boolean
+          description: 有归属于它的窗口（`windows[].appId` 等于本 id）；`chromium` 另外在 `browser = running` 时为真
+        launching:
+          type: boolean
+          description: 已发起启动、还没出现它的窗口（至多 20s）
+    OrbDesktopWindowId:
+      type: string
+      pattern: '^[0-9]{1,10}$'
+      description: X 窗口 id 的十进制
+    OrbDesktopWindow:
+      type: object
+      description: 桌面上的一个顶层窗口（M25；取自窗口管理器的 `_NET_CLIENT_LIST`）
+      required: [id, title, active, minimized]
+      properties:
+        id: { $ref: '#/components/schemas/OrbDesktopWindowId' }
+        appId:
+          allOf:
+            - $ref: '#/components/schemas/OrbDesktopAppId'
+          description: 按 WM_CLASS 归属的应用；省略 = 不属于清单里的任何应用（任务栏归入「其它窗口」）
+        title:
+          type: string
+          maxLength: 200
+          description: 窗口标题（超长截断）
+        active:
+          type: boolean
+          description: 当前的活动窗口（`_NET_ACTIVE_WINDOW`）
+        minimized:
+          type: boolean
+          description: 已最小化（`_NET_WM_STATE_HIDDEN`）
+    OrbDesktopWindowAction:
+      type: string
+      description: 窗口操作：`activate` 切到前台（最小化的先还原）、`minimize` 最小化、`close` 请窗口关闭
+      enum: [activate, minimize, close]
+      x-enum-varnames: [OrbDesktopWindowActionActivate, OrbDesktopWindowActionMinimize, OrbDesktopWindowActionClose]
     OrbDesktopProfilePut:
       type: object
       required: [profileId]
@@ -14811,6 +14959,7 @@ components:
             M16 起：`memory`（认识 `agent.start` 的 `memory`，并为记忆开出站通道 `/memory/`；普通 orbd 与 runner 上报，协调宿主不上报）。
             M18 起：`ssh`（orbd 监听本机 SSH 网关端口并认识 `setup.run` / `omphome.apply` 的 `ssh`；runner 与协调宿主不上报）。
             M19 起：`computer`（认识 `computer.*`：惰性拉起不调模型的 omp 当工具执行器；只由普通 orbd 上报）。
+            M25 起：`desktop-apps`（`desktop.state` 带 `apps` / `windows`，本机路由 `/desktop/apps/*` 与 `/desktop/windows/*`；只在有 `desktop` 时上报）。
             缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync / 桌面请求回 409 `orbd_outdated`。
           items: { type: string }
     LinkRunnerInfo:
@@ -15537,8 +15686,9 @@ components:
     LinkCtlDesktopStateParams:
       type: object
       description: |
-        orbd→orynd 通知（M8）：桌面全量状态。发送时机：`displayReady`、`browser`、标记里的 `profileId` / `profileMode`、`dirty`、`control`
-        任一变化，以及 link 建立后（脏标记 + 单发送者，断连时丢弃、重连必补发）。控制面写入 `orb_desktops` 镜像并经 WS `orb` 消息推送。
+        orbd→orynd 通知（M8）：桌面全量状态。发送时机：`displayReady`、`browser`、标记里的 `profileId` / `profileMode`、`dirty`、`control`、
+        `apps`（M25）任一变化立即发送；只有 `windows`（M25）变化时合并发送，至少间隔 500ms；以及 link 建立后（脏标记 + 单发送者，
+        断连时丢弃、重连必补发）。控制面写入 `orb_desktops` 镜像并经 WS `orb` 消息推送。
       required: [displayReady, browser, dirty]
       properties:
         displayReady: { type: boolean }
@@ -15565,6 +15715,16 @@ components:
           allOf:
             - $ref: '#/components/schemas/OrbDesktopControl'
           description: 桌面控制状态（orbd 权威，见 docs/protocol.md「桌面控制状态」）；旧 orbd 省略
+        apps:
+          type: array
+          maxItems: 16
+          description: 桌面应用清单与运行状态（M25，按任务栏顺序）；旧 orbd 省略
+          items: { $ref: '#/components/schemas/OrbDesktopApp' }
+        windows:
+          type: array
+          maxItems: 32
+          description: 顶层窗口（M25，按 `_NET_CLIENT_LIST` 顺序）；旧 orbd 省略
+          items: { $ref: '#/components/schemas/OrbDesktopWindow' }
     LinkCtlProfileModeParams:
       type: object
       description: |

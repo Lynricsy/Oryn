@@ -172,6 +172,21 @@ func (s *Server) StopOrbBrowser(w http.ResponseWriter, r *http.Request, id apige
 	s.setOrbBrowser(w, r, id, false)
 }
 
+// LaunchOrbDesktopApp 对应 POST /api/v1/orbs/{id}/desktop/apps/{app}/launch（M25）。步骤 2.1 实现，现在只回 501。
+func (s *Server) LaunchOrbDesktopApp(w http.ResponseWriter, r *http.Request, id apigen.OrbIDPath, app apigen.OrbDesktopAppIDPath) {
+	WriteError(w, http.StatusNotImplemented, "not_implemented", "desktop apps not implemented")
+}
+
+// GetOrbDesktopAppIcon 对应 GET /api/v1/orbs/{id}/desktop/apps/{app}/icon（M25）。步骤 2.1 实现，现在只回 501。
+func (s *Server) GetOrbDesktopAppIcon(w http.ResponseWriter, r *http.Request, id apigen.OrbIDPath, app apigen.OrbDesktopAppIDPath) {
+	WriteError(w, http.StatusNotImplemented, "not_implemented", "desktop apps not implemented")
+}
+
+// OperateOrbDesktopWindow 对应 POST /api/v1/orbs/{id}/desktop/windows/{window}/{action}（M25）。步骤 2.1 实现，现在只回 501。
+func (s *Server) OperateOrbDesktopWindow(w http.ResponseWriter, r *http.Request, id apigen.OrbIDPath, window apigen.OrbDesktopWindowIDPath, action apigen.OrbDesktopWindowActionPath) {
+	WriteError(w, http.StatusNotImplemented, "not_implemented", "desktop windows not implemented")
+}
+
 func (s *Server) setOrbBrowser(w http.ResponseWriter, r *http.Request, id string, run bool) {
 	svc, ok := s.desktopSvc(w)
 	if !ok {

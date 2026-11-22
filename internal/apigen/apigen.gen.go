@@ -2198,6 +2198,27 @@ func (e OrbDesktopProfileStatus) Valid() bool {
 	}
 }
 
+// Defines values for OrbDesktopWindowAction.
+const (
+	OrbDesktopWindowActionActivate OrbDesktopWindowAction = "activate"
+	OrbDesktopWindowActionClose    OrbDesktopWindowAction = "close"
+	OrbDesktopWindowActionMinimize OrbDesktopWindowAction = "minimize"
+)
+
+// Valid indicates whether the value is a known member of the OrbDesktopWindowAction enum.
+func (e OrbDesktopWindowAction) Valid() bool {
+	switch e {
+	case OrbDesktopWindowActionActivate:
+		return true
+	case OrbDesktopWindowActionClose:
+		return true
+	case OrbDesktopWindowActionMinimize:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for OrbGroupBy.
 const (
 	OrbGroupByDay     OrbGroupBy = "day"
@@ -6930,9 +6951,13 @@ type LinkCtlComputerUpdateParams struct {
 	PartialResult map[string]interface{} `json:"partialResult"`
 }
 
-// LinkCtlDesktopStateParams orbd→orynd 通知（M8）：桌面全量状态。发送时机：`displayReady`、`browser`、标记里的 `profileId` / `profileMode`、`dirty`、`control`
-// 任一变化，以及 link 建立后（脏标记 + 单发送者，断连时丢弃、重连必补发）。控制面写入 `orb_desktops` 镜像并经 WS `orb` 消息推送。
+// LinkCtlDesktopStateParams orbd→orynd 通知（M8）：桌面全量状态。发送时机：`displayReady`、`browser`、标记里的 `profileId` / `profileMode`、`dirty`、`control`、
+// `apps`（M25）任一变化立即发送；只有 `windows`（M25）变化时合并发送，至少间隔 500ms；以及 link 建立后（脏标记 + 单发送者，
+// 断连时丢弃、重连必补发）。控制面写入 `orb_desktops` 镜像并经 WS `orb` 消息推送。
 type LinkCtlDesktopStateParams struct {
+	// Apps 桌面应用清单与运行状态（M25，按任务栏顺序）；旧 orbd 省略
+	Apps []OrbDesktopApp `json:"apps,omitempty"`
+
 	// Browser orb 桌面上唯一那个 Chromium 的状态（由 orbd 启动；进程退出后不自动重启，也不做空闲回收）
 	Browser OrbBrowserStatus `json:"browser"`
 
@@ -6955,6 +6980,9 @@ type LinkCtlDesktopStateParams struct {
 
 	// ReadonlyReason `profileMode=readonly` 时的原因
 	ReadonlyReason *BrowserProfileReadonlyReason `json:"readonlyReason,omitempty"`
+
+	// Windows 顶层窗口（M25，按 `_NET_CLIENT_LIST` 顺序）；旧 orbd 省略
+	Windows []OrbDesktopWindow `json:"windows,omitempty"`
 }
 
 // LinkCtlEntriesAppendParams `lines` 为 `[baseOffset, endOffset)` 内以 `\n` 结尾的完整行（不含 `\n`）
@@ -7101,6 +7129,7 @@ type LinkCtlHelloParams struct {
 	// M16 起：`memory`（认识 `agent.start` 的 `memory`，并为记忆开出站通道 `/memory/`；普通 orbd 与 runner 上报，协调宿主不上报）。
 	// M18 起：`ssh`（orbd 监听本机 SSH 网关端口并认识 `setup.run` / `omphome.apply` 的 `ssh`；runner 与协调宿主不上报）。
 	// M19 起：`computer`（认识 `computer.*`：惰性拉起不调模型的 omp 当工具执行器；只由普通 orbd 上报）。
+	// M25 起：`desktop-apps`（`desktop.state` 带 `apps` / `windows`，本机路由 `/desktop/apps/*` 与 `/desktop/windows/*`；只在有 `desktop` 时上报）。
 	// 缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync / 桌面请求回 409 `orbd_outdated`。
 	Features    []string `json:"features,omitempty"`
 	OrbdVersion string   `json:"orbdVersion"`
@@ -8646,6 +8675,9 @@ type OrbDefaults struct {
 
 // OrbDesktop defines model for OrbDesktop.
 type OrbDesktop struct {
+	// Apps 任务栏应用（M25，按任务栏顺序）；旧 orbd（hello 不含 `desktop-apps`）未上报或 orb 不在运行时省略
+	Apps []OrbDesktopApp `json:"apps,omitempty"`
+
 	// Browser orb 桌面上唯一那个 Chromium 的状态（由 orbd 启动；进程退出后不自动重启，也不做空闲回收）
 	Browser OrbBrowserStatus `json:"browser"`
 
@@ -8657,7 +8689,28 @@ type OrbDesktop struct {
 
 	// Profile 选用的 Profile；不用 Profile 时省略
 	Profile *OrbDesktopProfile `json:"profile,omitempty"`
+
+	// Windows 顶层窗口（M25，按 `_NET_CLIENT_LIST` 顺序）；省略条件同 `apps`
+	Windows []OrbDesktopWindow `json:"windows,omitempty"`
 }
+
+// OrbDesktopApp 任务栏上的一个应用（M25）
+type OrbDesktopApp struct {
+	// ID 桌面应用 id（取自镜像清单 `/usr/local/share/oryn/desktop-apps.json`；内置 `chromium`）
+	ID OrbDesktopAppID `json:"id"`
+
+	// Launching 已发起启动、还没出现它的窗口（至多 20s）
+	Launching bool `json:"launching"`
+
+	// Name 显示名称
+	Name string `json:"name"`
+
+	// Running 有归属于它的窗口（`windows[].appId` 等于本 id）；`chromium` 另外在 `browser = running` 时为真
+	Running bool `json:"running"`
+}
+
+// OrbDesktopAppID 桌面应用 id（取自镜像清单 `/usr/local/share/oryn/desktop-apps.json`；内置 `chromium`）
+type OrbDesktopAppID = string
 
 // OrbDesktopAsk 待答的 `desktop_ask_user` 请求；作答即对该线程的 `requestId` 回 `extension_ui_response`（`value` 为「完成」或「跳过」）
 type OrbDesktopAsk struct {
@@ -8762,6 +8815,30 @@ type OrbDesktopTakenOver struct {
 	// ThreadTitle 接管当时接管方线程的标题（即 `profile.mode` 的 `by`）
 	ThreadTitle *string `json:"threadTitle,omitempty"`
 }
+
+// OrbDesktopWindow 桌面上的一个顶层窗口（M25；取自窗口管理器的 `_NET_CLIENT_LIST`）
+type OrbDesktopWindow struct {
+	// Active 当前的活动窗口（`_NET_ACTIVE_WINDOW`）
+	Active bool `json:"active"`
+
+	// AppID 按 WM_CLASS 归属的应用；省略 = 不属于清单里的任何应用（任务栏归入「其它窗口」）
+	AppID *OrbDesktopAppID `json:"appId,omitempty"`
+
+	// ID X 窗口 id 的十进制
+	ID OrbDesktopWindowID `json:"id"`
+
+	// Minimized 已最小化（`_NET_WM_STATE_HIDDEN`）
+	Minimized bool `json:"minimized"`
+
+	// Title 窗口标题（超长截断）
+	Title string `json:"title"`
+}
+
+// OrbDesktopWindowAction 窗口操作：`activate` 切到前台（最小化的先还原）、`minimize` 最小化、`close` 请窗口关闭
+type OrbDesktopWindowAction string
+
+// OrbDesktopWindowID X 窗口 id 的十进制
+type OrbDesktopWindowID = string
 
 // OrbGroupBy defines model for OrbGroupBy.
 type OrbGroupBy string
@@ -12466,6 +12543,15 @@ type NotificationIDPath = NotificationID
 
 // OrbBackgroundQuery defines model for OrbBackgroundQuery.
 type OrbBackgroundQuery = bool
+
+// OrbDesktopAppIDPath 桌面应用 id（取自镜像清单 `/usr/local/share/oryn/desktop-apps.json`；内置 `chromium`）
+type OrbDesktopAppIDPath = OrbDesktopAppID
+
+// OrbDesktopWindowActionPath 窗口操作：`activate` 切到前台（最小化的先还原）、`minimize` 最小化、`close` 请窗口关闭
+type OrbDesktopWindowActionPath = OrbDesktopWindowAction
+
+// OrbDesktopWindowIDPath X 窗口 id 的十进制
+type OrbDesktopWindowIDPath = OrbDesktopWindowID
 
 // OrbIDPath `orb-<26 位小写 ULID>`（同时是容器名与 hostname）
 //
@@ -16610,6 +16696,12 @@ type ServerInterface interface {
 	// GetOrb orb 详情
 	// (GET /api/v1/orbs/{id})
 	GetOrb(w http.ResponseWriter, r *http.Request, id OrbIDPath)
+	// GetOrbDesktopAppIcon 应用图标（M25；取自 orb 镜像里已安装应用自带的图标）
+	// (GET /api/v1/orbs/{id}/desktop/apps/{app}/icon)
+	GetOrbDesktopAppIcon(w http.ResponseWriter, r *http.Request, id OrbIDPath, app OrbDesktopAppIDPath)
+	// LaunchOrbDesktopApp 在桌面上启动一个应用（M25；每次都起一个新实例）
+	// (POST /api/v1/orbs/{id}/desktop/apps/{app}/launch)
+	LaunchOrbDesktopApp(w http.ResponseWriter, r *http.Request, id OrbIDPath, app OrbDesktopAppIDPath)
 	// StartOrbBrowser 启动桌面上的 Chromium（幂等；返回时 DevTools 已就绪）
 	// (POST /api/v1/orbs/{id}/desktop/browser/start)
 	StartOrbBrowser(w http.ResponseWriter, r *http.Request, id OrbIDPath)
@@ -16625,6 +16717,9 @@ type ServerInterface interface {
 	// SaveOrbDesktopProfile 立即保存本 orb 持有的 Profile（活体保存，浏览器不关闭）
 	// (POST /api/v1/orbs/{id}/desktop/profile/save)
 	SaveOrbDesktopProfile(w http.ResponseWriter, r *http.Request, id OrbIDPath)
+	// OperateOrbDesktopWindow 激活、最小化或关闭桌面上的一个窗口（M25）
+	// (POST /api/v1/orbs/{id}/desktop/windows/{window}/{action})
+	OperateOrbDesktopWindow(w http.ResponseWriter, r *http.Request, id OrbIDPath, window OrbDesktopWindowIDPath, action OrbDesktopWindowActionPath)
 	// DeleteOrbFs 删除文件或目录（递归）
 	// (POST /api/v1/orbs/{id}/fs/delete)
 	DeleteOrbFs(w http.ResponseWriter, r *http.Request, id OrbIDPath, params DeleteOrbFsParams)
@@ -18161,6 +18256,18 @@ func (_ Unimplemented) GetOrb(w http.ResponseWriter, r *http.Request, id OrbIDPa
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// GetOrbDesktopAppIcon 应用图标（M25；取自 orb 镜像里已安装应用自带的图标）
+// (GET /api/v1/orbs/{id}/desktop/apps/{app}/icon)
+func (_ Unimplemented) GetOrbDesktopAppIcon(w http.ResponseWriter, r *http.Request, id OrbIDPath, app OrbDesktopAppIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// LaunchOrbDesktopApp 在桌面上启动一个应用（M25；每次都起一个新实例）
+// (POST /api/v1/orbs/{id}/desktop/apps/{app}/launch)
+func (_ Unimplemented) LaunchOrbDesktopApp(w http.ResponseWriter, r *http.Request, id OrbIDPath, app OrbDesktopAppIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // StartOrbBrowser 启动桌面上的 Chromium（幂等；返回时 DevTools 已就绪）
 // (POST /api/v1/orbs/{id}/desktop/browser/start)
 func (_ Unimplemented) StartOrbBrowser(w http.ResponseWriter, r *http.Request, id OrbIDPath) {
@@ -18188,6 +18295,12 @@ func (_ Unimplemented) SetOrbDesktopProfile(w http.ResponseWriter, r *http.Reque
 // SaveOrbDesktopProfile 立即保存本 orb 持有的 Profile（活体保存，浏览器不关闭）
 // (POST /api/v1/orbs/{id}/desktop/profile/save)
 func (_ Unimplemented) SaveOrbDesktopProfile(w http.ResponseWriter, r *http.Request, id OrbIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// OperateOrbDesktopWindow 激活、最小化或关闭桌面上的一个窗口（M25）
+// (POST /api/v1/orbs/{id}/desktop/windows/{window}/{action})
+func (_ Unimplemented) OperateOrbDesktopWindow(w http.ResponseWriter, r *http.Request, id OrbIDPath, window OrbDesktopWindowIDPath, action OrbDesktopWindowActionPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -23470,6 +23583,76 @@ func (siw *ServerInterfaceWrapper) GetOrb(w http.ResponseWriter, r *http.Request
 	handler.ServeHTTP(w, r)
 }
 
+// GetOrbDesktopAppIcon operation middleware
+func (siw *ServerInterfaceWrapper) GetOrbDesktopAppIcon(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "app" -------------
+	var app OrbDesktopAppIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "app", chi.URLParam(r, "app"), &app, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "app", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOrbDesktopAppIcon(w, r, id, app)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// LaunchOrbDesktopApp operation middleware
+func (siw *ServerInterfaceWrapper) LaunchOrbDesktopApp(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "app" -------------
+	var app OrbDesktopAppIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "app", chi.URLParam(r, "app"), &app, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "app", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.LaunchOrbDesktopApp(w, r, id, app)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // StartOrbBrowser operation middleware
 func (siw *ServerInterfaceWrapper) StartOrbBrowser(w http.ResponseWriter, r *http.Request) {
 
@@ -23591,6 +23774,50 @@ func (siw *ServerInterfaceWrapper) SaveOrbDesktopProfile(w http.ResponseWriter, 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SaveOrbDesktopProfile(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// OperateOrbDesktopWindow operation middleware
+func (siw *ServerInterfaceWrapper) OperateOrbDesktopWindow(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id OrbIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "window" -------------
+	var window OrbDesktopWindowIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "window", chi.URLParam(r, "window"), &window, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "window", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "action" -------------
+	var action OrbDesktopWindowActionPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "action", chi.URLParam(r, "action"), &action, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "action", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.OperateOrbDesktopWindow(w, r, id, window, action)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -30660,6 +30887,15 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/orbs/{id}/desktop/control", wrapper.SetOrbDesktopControl)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/orbs/{id}/desktop/apps/{app}/launch", wrapper.LaunchOrbDesktopApp)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/orbs/{id}/desktop/apps/{app}/icon", wrapper.GetOrbDesktopAppIcon)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/orbs/{id}/desktop/windows/{window}/{action}", wrapper.OperateOrbDesktopWindow)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/browser-profiles", wrapper.ListBrowserProfiles)

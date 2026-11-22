@@ -198,7 +198,7 @@ func (q *Queries) GetBrowserProfileByName(ctx context.Context, name string) (Bro
 }
 
 const getOrbDesktop = `-- name: GetOrbDesktop :one
-SELECT orb_id, profile_id, profile_mode, takeover, fence, readonly_reason, readonly_by, readonly_by_thread_id, readonly_at, local_rev, profile_error, reported, display_ready, browser, dirty, updated_at, control FROM orb_desktops WHERE orb_id = ?1
+SELECT orb_id, profile_id, profile_mode, takeover, fence, readonly_reason, readonly_by, readonly_by_thread_id, readonly_at, local_rev, profile_error, reported, display_ready, browser, dirty, updated_at, control, apps, windows FROM orb_desktops WHERE orb_id = ?1
 `
 
 func (q *Queries) GetOrbDesktop(ctx context.Context, orbID string) (OrbDesktop, error) {
@@ -222,6 +222,8 @@ func (q *Queries) GetOrbDesktop(ctx context.Context, orbID string) (OrbDesktop, 
 		&i.Dirty,
 		&i.UpdatedAt,
 		&i.Control,
+		&i.Apps,
+		&i.Windows,
 	)
 	return i, err
 }
@@ -561,11 +563,12 @@ func (q *Queries) UpsertOrbDesktopProfile(ctx context.Context, arg UpsertOrbDesk
 }
 
 const upsertOrbDesktopState = `-- name: UpsertOrbDesktopState :exec
-INSERT INTO orb_desktops (orb_id, reported, display_ready, browser, dirty, control, updated_at)
-VALUES (?1, 1, ?2, ?3, ?4, ?5, ?6)
+INSERT INTO orb_desktops (orb_id, reported, display_ready, browser, dirty, control, apps, windows, updated_at)
+VALUES (?1, 1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
 ON CONFLICT (orb_id) DO UPDATE SET
     reported = 1, display_ready = excluded.display_ready, browser = excluded.browser,
-    dirty = excluded.dirty, control = excluded.control, updated_at = excluded.updated_at
+    dirty = excluded.dirty, control = excluded.control, apps = excluded.apps, windows = excluded.windows,
+    updated_at = excluded.updated_at
 `
 
 type UpsertOrbDesktopStateParams struct {
@@ -574,10 +577,12 @@ type UpsertOrbDesktopStateParams struct {
 	Browser      string  `json:"browser"`
 	Dirty        int64   `json:"dirty"`
 	Control      *string `json:"control"`
+	Apps         *string `json:"apps"`
+	Windows      *string `json:"windows"`
 	Now          int64   `json:"now"`
 }
 
-// Mirror of orbd's desktop.state (only the reported fields).
+// Mirror of orbd's desktop.state (only the reported fields). control/apps/windows are JSON; NULL = not reported (old orbd).
 func (q *Queries) UpsertOrbDesktopState(ctx context.Context, arg UpsertOrbDesktopStateParams) error {
 	_, err := q.db.ExecContext(ctx, upsertOrbDesktopState,
 		arg.OrbID,
@@ -585,6 +590,8 @@ func (q *Queries) UpsertOrbDesktopState(ctx context.Context, arg UpsertOrbDeskto
 		arg.Browser,
 		arg.Dirty,
 		arg.Control,
+		arg.Apps,
+		arg.Windows,
 		arg.Now,
 	)
 	return err
