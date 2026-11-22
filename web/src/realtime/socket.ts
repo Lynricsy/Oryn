@@ -388,9 +388,8 @@ export class RealtimeClient {
 			ws.onclose = null;
 			ws.close();
 		}
-		for (const timer of this.effectTimers.values()) clearTimeout(timer);
-		this.effectTimers.clear();
-		this.stateBackfill.clear();
+		// 没有 socket（在等票据、已挂起）时 teardown 不会跑，这里同样要清
+		this.resetEffects();
 		connectionStore.setState({ status: "idle" });
 	}
 
@@ -424,7 +423,7 @@ export class RealtimeClient {
 		this.dropConnection();
 	}
 
-	/** 连接作废时的统一清理：停 ping、拒绝在途命令、放开连接引用。 */
+	/** 连接作废时的统一清理：停 ping、拒绝在途命令、放开连接引用、丢掉待执行的副作用。 */
 	private teardown(ws: WebSocket, reason: string) {
 		if (this.ws === ws) {
 			this.ws = null;
@@ -438,6 +437,17 @@ export class RealtimeClient {
 			this.pending.delete(id);
 			p.reject(new OmpCommandError(p.command, "disconnected", reason));
 		}
+		this.resetEffects();
+	}
+
+	/**
+	 * 去抖中的副作用与 state 补拉标记只对当前连接有效：重连后重新订阅，快照与之后的帧会重新判定。
+	 * 补拉在断线时失败不放开标记，不清的话重连后再拿到不带 state 的启动快照，首帧就不会再补拉。
+	 */
+	private resetEffects() {
+		for (const timer of this.effectTimers.values()) clearTimeout(timer);
+		this.effectTimers.clear();
+		this.stateBackfill.clear();
 	}
 
 	private async open() {

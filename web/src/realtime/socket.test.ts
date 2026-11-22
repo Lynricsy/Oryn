@@ -330,6 +330,27 @@ describe("RealtimeClient", () => {
 		expect(ws.cmds("get_state")).toHaveLength(1);
 	});
 
+	it("首帧补拉因断线失败：重连后再拿到不带 state 的启动快照，首帧仍会补拉", async () => {
+		const ws = await connected(client);
+		client.subscribe(TID);
+		ws.recv(snapshot());
+		ws.recv({ type: "frame", threadId: TID, frame: { type: "agent_start" } });
+		vi.advanceTimersByTime(250);
+		expect(ws.cmds("get_state")).toHaveLength(1);
+		// 应答没到就断线：在途的 get_state 被拒
+		ws.drop();
+		await vi.advanceTimersByTimeAsync(500);
+		await vi.waitFor(() => expect(FakeWS.instances.length).toBe(2));
+		const ws2 = FakeWS.instances[1] as FakeWS;
+		ws2.accept();
+		ws2.recv(snapshot());
+		vi.advanceTimersByTime(250);
+		expect(ws2.cmds("get_state")).toHaveLength(0);
+		ws2.recv({ type: "frame", threadId: TID, frame: { type: "agent_start" } });
+		vi.advanceTimersByTime(250);
+		expect(ws2.cmds("get_state")).toHaveLength(1);
+	});
+
 	it("schedules.changed 与每次连接建立都通知定时监听者；取消订阅后不再通知（M9 审查 W6）", async () => {
 		const seen = vi.fn();
 		const off = client.onSchedulesChanged(seen);
