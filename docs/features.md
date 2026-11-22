@@ -76,9 +76,9 @@ orb 是线程的执行环境，不是要用户挑选或清理的资源：
 | 排障与数据 | `ip`/`ss`/`dig`/`nc`/`socat`/`whois`/`nmap`/`iperf3`、`lsof`/`strace`/`ltrace`/`gdb`、`htop`/`ncdu`、SQLite / PostgreSQL / MariaDB / Valkey(Redis) 客户端、DuckDB、Miller、HTTPie、`aria2`、`yt-dlp` |
 | 文档与媒体 | Pandoc、LibreOffice（`soffice --headless`）、Poppler/`qpdf`/Ghostscript/MuPDF/`img2pdf`、Tesseract OCR（英文、简繁中文）、ImageMagick、librsvg、WebP/AVIF/JPEG XL/HEIF 编解码、`optipng`/`pngquant`/`jpegoptim`/`gifsicle`、ExifTool、Graphviz、`qrencode`/`zbar`、FFmpeg、SoX、MediaInfo |
 | Python 库 | 系统 Python 可直接 `import`：numpy、pandas、scipy、matplotlib、Pillow、requests、BeautifulSoup、lxml、PyYAML、openpyxl、XlsxWriter、python-docx、pypdf、ReportLab |
-| 图形桌面 | TigerVNC (`Xvnc`)、Openbox、受管策略加固的 Chromium、中英文与彩色 Emoji 字体 |
+| 图形桌面 | TigerVNC (`Xvnc`)、Openbox、session D-Bus 与 AT-SPI 无障碍总线、受管策略加固的 Chromium、VS Code（微软官方版）、终端（`xfce4-terminal`）、文件管理器（`pcmanfm`）、文本编辑器（`mousepad`）、LibreOffice、中英文与彩色 Emoji 字体 |
 
-系统软件包记录在 `/usr/local/share/oryn/packages.txt`。ShellCheck、Pandoc、rust-analyzer、marksman、phpactor 从上游 GitHub 发行版安装（ARM 仓库缺包，双架构统一来源），版本记录在 `/usr/local/share/oryn/upstream-versions.txt`。在项目 `setup` 脚本里增装系统包用 `sudo pacman -Syu --needed --noconfirm <包名>`。镜像已启用 [BlackArch](https://blackarch.org/) 源（双架构）：只导入经钉定签名主密钥校验的 keyring 与镜像列表，不预装安全工具；该源排在官方源之后，同名包仍取官方版本，其中的工具同样用上面的命令安装。跨架构构建 ARM64 镜像见 [`development.md`](development.md#跨架构构建-arm64-镜像)。
+系统软件包记录在 `/usr/local/share/oryn/packages.txt`。ShellCheck、Pandoc、rust-analyzer、marksman、phpactor 从上游 GitHub 发行版安装（ARM 仓库缺包，双架构统一来源），VS Code 按微软更新 API 的 `sha256` 校验安装官方 tarball，版本一并记录在 `/usr/local/share/oryn/upstream-versions.txt`。桌面任务栏的应用清单在 `/usr/local/share/oryn/desktop-apps.json`，图标取自镜像内各应用自带的文件并收集在 `/usr/local/share/oryn/desktop-icons/`；不含该清单的自定义镜像在任务栏里只有内置的 Chromium。在项目 `setup` 脚本里增装系统包用 `sudo pacman -Syu --needed --noconfirm <包名>`。镜像已启用 [BlackArch](https://blackarch.org/) 源（双架构）：只导入经钉定签名主密钥校验的 keyring 与镜像列表，不预装安全工具；该源排在官方源之后，同名包仍取官方版本，其中的工具同样用上面的命令安装。跨架构构建 ARM64 镜像见 [`development.md`](development.md#跨架构构建-arm64-镜像)。
 
 ## 工作台
 
@@ -118,7 +118,7 @@ orb 是线程的执行环境，不是要用户挑选或清理的资源：
 | 文件 | 文件树、编辑器与浏览器内预览（见下） |
 | 终端 | Web 终端，256K 字符快照续传，流控背压恢复 |
 | Portal | 经泛域名 `https://t-<短码>-p<端口>.<portal_domain>/` 暴露开发服务器，支持限时公开预览 |
-| 桌面 | 远程桌面（TigerVNC + Openbox + Chromium），跨线程用读写锁复用登录态 Profile |
+| 桌面 | 远程桌面与任务栏（Chromium、终端、VS Code 等常用应用），跨线程用读写锁复用登录态 Profile |
 | Artifacts | 本线程产出的 artifact |
 
 ### 文件预览
@@ -253,6 +253,12 @@ HTML 类内容放进不执行脚本、不发网络请求的沙箱帧。
 
 远程桌面有统一的控制状态（空闲 / Agent 操作中 / 用户已接管 / 等你操作），由 orbd 权威维护，所有设备一致。Agent 回合中面板默认只读观看；用户一键接管后，Agent 的浏览器 CDP 命令被挂起并经 steer 告知，交还或超时自动恢复。遇到登录、验证码、二次验证时，Agent 调用 `desktop_ask_user` 阻塞等待，桌面面板横幅、线程卡片、推送与 Telegram 都能点「完成 / 跳过」作答。
 
+- **任务栏与窗口**：线程右面板的「桌面」标签与 `/assistant/computer` 的「桌面」页签共用同一视图。桌面背景为中性浅灰，窗口带标题栏（最小化、最大化、关闭），Chromium 与 VS Code 默认最大化。画面下方居中一条网页绘制的任务栏（不占远端画面），依次为 Chromium、终端（`xfce4-terminal`）、VS Code（微软官方版，经 VNC 使用）、文件管理器（`pcmanfm`）、文本编辑器（`mousepad`）、LibreOffice，图标取自 orb 镜像内各应用自带的图标；运行中的应用下方显示中性色圆点。点击未运行的应用启动；单窗口时点击在前台激活与最小化之间切换；多窗口（或右键、长按、`Shift`+`F10`）弹出窗口列表（切换、关闭）与「新建窗口」；不属于清单内应用的窗口归入末尾的「其它窗口」。Agent 操作中点击任务栏会先确认接管，接管后再执行操作。旧版 `orbd` 未上报应用列表时，退回画面中央的「启动浏览器」按钮。
+- **无障碍树**：`orbd` 启动 session D-Bus 与 AT-SPI 总线，向桌面进程与 Agent 注入无障碍环境变量（VS Code 附带 `--force-renderer-accessibility`）。Agent 在 `eval` 的 `computer` 中可直接读取这些应用的无障碍树（`win.ax()`），不再只靠截图加坐标操作；Chromium 网页内容仍由 `browser` 工具经 CDP 读取。
+- **桌面 `resume` 脚本**：按顺序查找线程工作目录（项目自定义 `workdir` 优先，有仓库时缺省 `$HOME/workspace/repo`，否则 `$HOME/workspace`）下的 `.oryn/desktop/resume` 与 `$HOME/.oryn/desktop/resume`，执行第一个存在且可执行的脚本（工作目录分别为该 `workdir` 或 `$HOME`）。每次显示栈启动且工作区就绪后执行一次：冻结后唤醒不重复执行，已开窗口原样保留；停机再启动或显示栈崩溃重启会重新执行；拍项目快照前带 `deferResume` 的 `setup.run` 不触发，留给随后的 `resume.run`。输出写入桌面日志 `~/.cache/oryn/logs/desktop/resume.log`，`orbd` 最多等待 60 秒、超时不杀进程。
+- **录屏**：线程内 Agent 用 `desktop_record`（`{action: "start" | "stop"}`）录制桌面，按 15 fps H.264 写入 `$HOME/recordings/*.mp4`，单次最长 10 分钟，保留最近 20 个文件；停止后对话里出现可直接播放的视频卡片，点击播放时才请求文件，不会因打开对话唤醒冻结的 orb。全局助手用 `computer_record` 录制电脑桌面，停止后存入文件库（大小上限同 `computer_download`，超过则留在电脑上）。用户接管桌面、Agent 调用 `desktop_ask_user` 请求人工操作或回合结束时，`orbd` 先结束录制再放开人工输入；`user` 与 `ask` 状态下拒绝开始录制（`control_user`）。
+- **已知限制**：多个线程或助手对话共用同一个桌面时没有租约，同时操作 GUI 会互相干扰；「助手的电脑」平时处于 `idle` 状态，在 `idle` 下开始的录制期间若用户同时在桌面面板里操作，输入会被录进视频。
+
 ## Agent 配置
 
 ### 图形化配置，保存即生效
@@ -325,7 +331,7 @@ HTML 类内容放进不执行脚本、不发网络请求的沙箱帧。
 
 - 助手对话里的附件；
 - 助手写到 `~/library/out/` 的文件和生图结果（`~/tmp/`），用 `save_file` 存入；
-- 从工作线程的 orb（`fetch_thread_file`）或助手的电脑（`computer_download`）取回的文件；
+- 从工作线程的 orb（`fetch_thread_file`）或助手的电脑（`computer_download`、`computer_record`）取回的文件；
 - `export_artifact` 的导出物；
 - orb 内 Agent 用 `oryn library put` 存入的文件。
 
@@ -344,9 +350,9 @@ HTML 类内容放进不执行脚本、不发网络请求的沙箱帧。
 
 全库只有一台属于助手的普通 orb，主线与所有助手对话共用。第一次用到时创建，空闲时照常冻结，调用前自动唤醒。
 
-助手进程仍留在协调宿主沙箱里，经 `computer_bash`、`computer_read` / `computer_write` / `computer_edit`、`computer_grep` / `computer_glob` / `computer_find`、`computer_ast_grep` / `computer_ast_edit`、`computer_eval`、`computer_lsp`、`computer_wait` 遥控 orb 里一个不调模型的 omp 工具执行器（Oryn Core 的 `oryn_tool_*` RPC）。输出流式回传，图片原样到达，取消会传到 orb 里；`computer_upload` / `computer_download` 在电脑与文件库之间搬文件。这些工具的卡片与对应的普通工具相同。
+助手进程仍留在协调宿主沙箱里，经 `computer_bash`、`computer_read` / `computer_write` / `computer_edit`、`computer_grep` / `computer_glob` / `computer_find`、`computer_ast_grep` / `computer_ast_edit`、`computer_eval`、`computer_lsp`、`computer_wait` 遥控 orb 里一个不调模型的 omp 工具执行器（Oryn Core 的 `oryn_tool_*` RPC）。输出流式回传，图片原样到达，取消会传到 orb 里；`computer_upload` / `computer_download` 在电脑与文件库之间搬文件，`computer_record`（`{action: "start" | "stop"}`）录制电脑桌面并在停止后存入文件库（上限同 `computer_download`，超过则留在电脑的 `$HOME/recordings/` 下，控制联动与限制见[远程桌面与人机控制](#远程桌面与人机控制)）。这些工具的卡片与对应的普通工具相同。
 
-`/assistant/computer` 页面可以查看状态，唤醒、暂停或重置（删除后下次用到时重建），浏览文件，查看远程桌面并接管。provider 与类型在「设置 → 全局助手」里选。
+`/assistant/computer` 页面可以查看状态，唤醒、暂停或重置（删除后下次用到时重建），浏览文件，在「桌面」页签里通过共用任务栏查看、操作或接管远程桌面。provider 与类型在「设置 → 全局助手」里选。
 
 ### 定时任务
 

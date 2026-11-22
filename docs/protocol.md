@@ -861,7 +861,7 @@ orbd 是控制状态的唯一权威（`internal/orbdrt/deskcontrol.go`），随 
 
 ## M25：桌面应用与窗口
 
-M8 的桌面只有一个浏览器；M25 让它成为能用的桌面：镜像自带一份应用清单（`/usr/local/share/oryn/desktop-apps.json` 与图标目录），orbd 读取后连同顶层窗口一起放进 `desktop.state` 全量快照，网页在 noVNC 画面下方画一条任务栏，经下面三个接口启动应用、操作窗口、取图标。没有清单的镜像只有内置的 `chromium`。
+M8 的桌面只有一个浏览器；M25 让它成为完整的远程桌面：镜像自带应用清单（`/usr/local/share/oryn/desktop-apps.json` 与 `desktop-icons/`），orbd 启动 session D-Bus / AT-SPI 与桌面 `resume` 脚本，把应用与顶层窗口放进 `desktop.state` 全量快照，网页在 noVNC 画面下方绘制任务栏并经下列接口启动应用、操作窗口、取图标；同时在 `orbd` 本机 API 与 `orbd.sock` 上提供录屏能力。没有清单的镜像只有内置的 `chromium`。
 
 ### 模型
 
@@ -869,7 +869,7 @@ M8 的桌面只有一个浏览器；M25 让它成为能用的桌面：镜像自�
 - `OrbDesktopWindow{id, appId?, title, active, minimized}`：`id` 是 X 窗口 id 的十进制字符串（`^[0-9]{1,10}$`）；`appId` 按 WM_CLASS 映射到清单里的应用，省略 = 不属于任何应用（任务栏归入「其它窗口」）；`title` ≤200 字符（超长截断）；`active` 取 `_NET_ACTIVE_WINDOW`，`minimized` 取 `_NET_WM_STATE_HIDDEN`。
 - `OrbDesktop` 与 `LinkCtlDesktopStateParams` 各加可选字段 `apps: OrbDesktopApp[]`（≤16，按任务栏顺序）与 `windows: OrbDesktopWindow[]`（≤32，按 `_NET_CLIENT_LIST` 顺序）。旧 orbd 不发这两个字段。
 - 发送时机：`apps` 与 M8 的其它字段一样，变化即发；只有 `windows` 变化时 orbd 合并上报，至少间隔 500ms。
-- 控制面把两者以 JSON 存进 `orb_desktops.apps` / `orb_desktops.windows`（NULL = 未上报），与 `control` 同一套镜像机制：`Orb.desktop.apps` / `windows` 只在 orb 为 `ready` 时给出（冻结 / 停机后镜像停在最后一次上报）。
+- 控制面把两者以 JSON 存进 `orb_desktops.apps` / `orb_desktops.windows`（NULL = 未上报），与 `control` 同一套镜像机制：`Orb.desktop.apps` / `windows` 只在 orb 为 `ready` 时给出（冻结 / 停机后镜像停在最后一次上报）。这两列只由 `desktop.state` 通知写入（`ApplyDesktopState`）；HTTP 回包（应用启动、窗口操作、浏览器启停、控制接管与交还）经 `ApplyDesktopReply` 只更新其余桌面字段，不覆盖 `apps` 与 `windows`，避免双通道乱序时迟到的回包把更新的窗口列表覆盖回去。
 
 ### hello 特性
 
@@ -881,7 +881,7 @@ M8 的桌面只有一个浏览器；M25 让它成为能用的桌面：镜像自�
 
 |方法与路径|operationId|响应|错误码|
 |---|---|---|---|
-|`POST /api/v1/orbs/{id}/desktop/apps/{app}/launch`|`launchOrbDesktopApp`|`200 Orb`（该应用 `launching=true`）|`409 control_agent`、`404 app_not_found`、`409 orbd_outdated`、`503 orb_unavailable`|
+|`POST /api/v1/orbs/{id}/desktop/apps/{app}/launch`|`launchOrbDesktopApp`|`200 Orb`（`launching=true` 随 `desktop.state` 通知与 WS `orb` 推送到达）|`409 control_agent`、`404 app_not_found`、`409 orbd_outdated`、`503 orb_unavailable`|
 |`POST /api/v1/orbs/{id}/desktop/windows/{window}/{action}`|`operateOrbDesktopWindow`|`200 Orb`|`404 window_not_found`、`409 control_agent`、`409 orbd_outdated`、`503 orb_unavailable`（唤醒失败）|
 |`GET /api/v1/orbs/{id}/desktop/apps/{app}/icon`|`getOrbDesktopAppIcon`|`200`，`image/png` 或 `image/svg+xml`，`Cache-Control: private, max-age=86400`|`409 orb_unavailable`（不唤醒：orb 不在 `ready`）、`404 app_not_found`（没有该应用或它没有图标）、`409 orbd_outdated`|
 
@@ -912,6 +912,25 @@ M8 的桌面只有一个浏览器；M25 让它成为能用的桌面：镜像自�
 ### 存储
 
 `0051_desktop_windows.sql`：`orb_desktops` 加 `apps TEXT`、`windows TEXT`（JSON，可空）。`UpsertOrbDesktopState` 用 `sqlc.narg` 一并写入。
+
+### 桌面无障碍与 resume 脚本
+
+- **无障碍总线**：显示栈启动时，orbd 建 `$HOME/.oryn/desktop/run`（权限 0700）并拉起 `dbus-daemon --session --address=unix:path=$HOME/.oryn/desktop/run/bus`（至多等 5s；缺少 `dbus-daemon` 或中途退出只记警告，不阻塞或重启 Xvnc）。`baseEnv` 在桌面启用时注入 `DBUS_SESSION_BUS_ADDRESS`、`XDG_RUNTIME_DIR`、`GTK_A11Y=atspi`、`ACCESSIBILITY_ENABLED=1`（agent、受管服务、桌面应用与 `computer` 执行器共用）。
+- **桌面 `resume` 脚本**：openbox 就绪并通过窗口管理器探针闸门后显示代数 `displayGen` 加 1。当显示已就绪、工作区已就绪（本进程 `runSetupLocked` 返回过）且 `displayGen > resumedGen` 时，按顺序查找 `<workdir>/.oryn/desktop/resume`、`$HOME/.oryn/desktop/resume` 中第一个存在且可执行的脚本，在独立进程组里执行一次（工作目录分别为 `workdir` 或 `$HOME`），输出追加到 `$HOME/.cache/oryn/logs/desktop/resume.log`，orbd 最多等 60s、超时不杀进程。冻结唤醒不增加 `displayGen`，不重复执行；带 `deferResume=true` 的 `setup.run`（拍项目快照前）不通知工作区就绪，留给随后的 `resume.run` 触发。
+
+### 录屏（orbd 本机 API 与 `orbd.sock`）
+
+录屏不暴露 C3 REST 路由；桌面启用时，`fs` 流上的本机路由与 `$HOME/.oryn/orbd.sock` 方法共用同一个录制器（`runner.sock` 不提供；桌面未启用时本机路由回 404 `not_found`，sock 回 `not_supported`）：
+
+|`orbd.sock` 方法|本机路由|结果|
+|---|---|---|
+|`desktop.record.start`|`POST /desktop/record/start`|`DesktopRecordStartResult{path}`（`$HOME/recordings/<UTC yyyyMMdd-HHmmss>.mp4`，同一秒内再次开始带 `-2`、`-3` 后缀）|
+|`desktop.record.stop`|`POST /desktop/record/stop`|`DesktopRecording{path, bytes, durationMs, width, height, truncated, stoppedBy}`，`stoppedBy ∈ agent \| limit \| error \| control`；当前未在录但上一次因 `limit`、`error` 或 `control` 自动结束的结果尚未被取走时，返回那一次并清空|
+
+- **参数与保留**：每台 orb 同时最多一个录制；ffmpeg `x11grab` 录 `:1`（15 fps，`libx264 -preset veryfast -crf 28 -pix_fmt yuv420p -movflags +faststart`，宽高取开始时的根窗口偶数尺寸，缺省 1280×800），单次上限 10 分钟（`stoppedBy="limit"`），`$HOME/recordings/` 只保留最新 20 个录制文件；停止时往 stdin 写 `q` 等待至多 10s 收尾，超时对进程组 `SIGKILL` 并置 `truncated=true`。显示失效或 ffmpeg 异常退出记 `stoppedBy="error"`。
+- **人工输入前停录**：录制进行中若控制状态进入 `user`、`ask` 或从 `agent` 变回 `idle`，orbd 先在锁外以 `stoppedBy="control"` 结束录制并等 ffmpeg 退出，再按原顺序上报新控制状态，保证网页放开人工输入前录制已停；`user` 与 `ask` 状态下拒绝 `start`（`control_user`）。
+- **错误码**（本机路由 HTTP 409，sock 同名 `code`）：`already_recording`（已在录制）、`not_recording`（未在录制且无待取走结果）、`not_ready`（显示未就绪）、`control_user`（控制状态为 `user` 或 `ask`）；其它内部错误本机路由回 500 `failed`、sock 回 `internal`。
+- **工具调用链**：线程内扩展工具 `desktop_record {action: start|stop}` 经 `ORYN_ARTIFACT_SOCK`（`orbd.sock`，已加入允许列表）调用，网页卡片以 `orbFileSource` 的 `fs/file` 地址流式播放（`preload="none"`）；全局助手宿主工具 `computer_record {action: start|stop}` 由控制面经 `fs` 流调本机路由，停止后若 `bytes ≤ transferMax` 则经 `GET /fs/file` 存入文件库（`Source: assistant`），工具 `details` 为 `{recording, libraryFileId?}`。
 
 ## M9：Space、助手、定时与协调宿主
 

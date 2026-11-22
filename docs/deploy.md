@@ -11,6 +11,8 @@ sudo install -m 0755 bin/orynd bin/oryn /usr/local/bin/
 make image                      # 构建 orb 镜像 oryn-orb:dev（需要 build/core/x64/omp，见 scripts/fetch-core.sh）
 ```
 
+`oryn-orb:dev` 解压后约 10.2 GB（桌面应用约增加 1.1 GB，主要来自按微软更新 API 的 `sha256` 校验安装的官方 VS Code tarball），Docker 数据盘需预留相应空间；Firecracker 根盘（第 12 节 `make fc-artifacts`）按镜像实际用量自动定大小。镜像内置 `/usr/local/share/oryn/desktop-apps.json` 应用清单与 `desktop-icons/` 图标目录；不含该清单的自定义镜像在桌面任务栏里只有内置的 Chromium。
+
 创建服务用户与目录：
 
 ```bash
@@ -167,9 +169,9 @@ docker 驱动默认给每个 orb 加 `--cap-drop NET_RAW --cap-drop NET_ADMIN`�
 ### 桌面浏览器沙箱（M8）
 
 - docker 驱动给新容器加 `--security-opt seccomp=<orb-seccomp.json>`（`internal/providerrt/orb-seccomp.json`）：moby 默认配置末尾追加一条规则，放行 `clone` / `unshare` 建 user namespace，供 Chromium 自己的沙箱使用（mount、setns、clone3 仍按默认只给有 CAP_SYS_ADMIN 的进程）。`extra_run_args` 里自带 `seccomp` 选项时不追加。代价是 orb 内进程能建 user namespace，内核暴露面略增，与 Chrome 官方推荐的容器配置相同。
-- orbd 启动时探测能否建 user namespace：能则 Chromium 带沙箱运行；不能（升级前建的旧容器、dispatch 驱动的机器）退回 `--no-sandbox` 并保留 Chromium 的警告条。新建的 orb 才有沙箱。
+- orbd 启动时探测能否建 user namespace：能则 Chromium 与 VS Code 带沙箱运行；不能（升级前建的旧容器、dispatch 驱动的机器）都退回 `--no-sandbox`（Chromium 保留警告条）。新建的 orb 才有沙箱。
 - 镜像里的受管策略 `/etc/chromium/policies/managed/oryn.json`（root 所有，不随 Profile 传播）禁止安装扩展、代理固定直连，防止被注入的 agent 往共享 Profile 里植入扩展或代理。
-- Chromium 随镜像发布，**要定期重建 orb 镜像**（`make image`）以跟进浏览器安全更新；已存在的 orb 用的仍是旧镜像。
+- Chromium 与 VS Code 随镜像发布，**要定期重建 orb 镜像**（`make image`）以跟进安全更新；已存在的 orb 用的仍是旧镜像。
 
 ### 网络隔离
 
