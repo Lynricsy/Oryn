@@ -714,7 +714,7 @@ function OverviewScreen(): ReactNode {
 					>
 						<nav
 							aria-label={t("artifacts.page.kinds")}
-							className={`flex min-w-0 items-center gap-1 overflow-x-auto ${compact ? "w-full" : ""}`}
+							className={`focus-inset flex min-w-0 items-center gap-1 overflow-x-auto ${compact ? "w-full" : ""}`}
 						>
 							{KIND_TABS.map((k) => (
 								<button
