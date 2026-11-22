@@ -391,12 +391,12 @@ fn decode_base64_head(chars: &[u8]) -> Option<[u8; 24]> {
         } as u32)
     };
     let mut out = [0u8; 24];
-    for (i, quad) in chars.chunks_exact(4).enumerate() {
+    for g in 0..8 {
         let mut n = 0u32;
-        for &c in quad {
+        for &c in &chars[g * 4..g * 4 + 4] {
             n = n << 6 | val(c)?;
         }
-        out[i * 3..i * 3 + 3].copy_from_slice(&n.to_be_bytes()[1..]);
+        out[g * 3..g * 3 + 3].copy_from_slice(&n.to_be_bytes()[1..]);
     }
     Some(out)
 }
