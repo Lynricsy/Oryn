@@ -22,7 +22,6 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/ids"
-	"github.com/Lynricsy/Oryn/internal/sshgw"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
@@ -43,16 +42,12 @@ type Config struct {
 	// HandOff 在开着“交给助手”的 new_thread 运行结束（完成、出错、被中断；投递失败除外）时调用（M19 步骤 3.3，
 	// 调用时不持 mu）；nil = 不交接。安静结束（[SILENT]）的完成不交接。
 	HandOff func(ctx context.Context, h HandOff)
-	// Gate 执行运行前闸门（*sshgw.Service 实现）；nil = 闸门不可用：不能保存带闸门的定义，已有的闸门按执行失败处理（照常运行）。
-	Gate Gate
+	// SSHGate / LocalGate 执行运行前闸门（经 SSH 网关 / 在控制面本机沙箱里）；nil = 对应执行位置不可用：不能保存
+	// 这类闸门，已有的按执行失败处理（照常运行）。
+	SSHGate   SSHGate
+	LocalGate LocalGate
 	// Go 在后台执行闸门（默认 `go f()`）；测试注入同步执行。
 	Go func(f func())
-}
-
-// Gate 是运行前闸门需要的 SSH 能力：projectID 为空 = 只看全局主机；automation 为真时主机须允许全自动线程使用。
-type Gate interface {
-	CheckGateHost(ctx context.Context, projectID string, automation bool, host string) error
-	RunGate(ctx context.Context, projectID string, automation bool, host, command, label string, timeout time.Duration) sshgw.GateResult
 }
 
 // HandOff 是一次交给助手的运行结果（定时与 GitHub 触发规则共用，由 coord.PostToMain 收进主线）。
@@ -685,13 +680,23 @@ func gateScope(ctx context.Context, q *db.Queries, mode, threadID, projectID str
 	return deref(t.ProjectID), false, nil
 }
 
-// checkGate 是保存带闸门的定义时的预检：主机须对该定时的范围可用。projectID 是更新时库里的项目（新建时取 in）。
+// checkGate 是保存带闸门的定义时的预检：本机闸门要求本机沙箱可用；SSH 闸门的主机须对该定时的范围可用。
+// projectID 是更新时库里的项目（新建时取 in）。
 func (s *Service) checkGate(ctx context.Context, in Input, projectID string) error {
 	if in.Gate == nil {
 		return nil
 	}
-	if s.cfg.Gate == nil {
-		return invalid("pre-run gates are unavailable (no SSH gateway)")
+	if in.Gate.Host == nil {
+		if s.cfg.LocalGate == nil {
+			return invalid("local pre-run gates are unavailable")
+		}
+		if err := s.cfg.LocalGate.Available(); err != nil {
+			return invalid("local pre-run gates are unavailable: %v", err)
+		}
+		return nil
+	}
+	if s.cfg.SSHGate == nil {
+		return invalid("SSH pre-run gates are unavailable (no SSH gateway)")
 	}
 	if projectID == "" {
 		projectID = in.ProjectID
@@ -700,19 +705,19 @@ func (s *Service) checkGate(ctx context.Context, in Input, projectID string) err
 	if err != nil {
 		return err
 	}
-	if err := s.cfg.Gate.CheckGateHost(ctx, pid, auto, in.Gate.Host); err != nil {
+	if err := s.cfg.SSHGate.CheckGateHost(ctx, pid, auto, *in.Gate.Host); err != nil {
 		return invalid("gate.host: %v", err)
 	}
 	return nil
 }
 
-// setGate 把闸门写进库的三列；g 为 nil 时三列都为 NULL。
+// setGate 把闸门写进库的三列：g 为 nil 时三列都为 NULL；本机闸门的 host 为 NULL。
 func setGate(host, command **string, timeout **int64, g *apigen.ScheduleGate) {
 	if g == nil {
 		*host, *command, *timeout = nil, nil, nil
 		return
 	}
-	*host, *command = new(g.Host), new(g.Command)
+	*host, *command = g.Host, new(g.Command)
 	t := int64(defaultGateTimeout)
 	if g.TimeoutSeconds != nil {
 		t = int64(*g.TimeoutSeconds)
@@ -720,16 +725,16 @@ func setGate(host, command **string, timeout **int64, g *apigen.ScheduleGate) {
 	*timeout = &t
 }
 
-// gateOf 读出库里的闸门；gate_host 为 NULL = 没有闸门。
+// gateOf 读出库里的闸门：gate_command 为 NULL = 没有闸门；gate_host 为 NULL = 在本机沙箱里执行。
 func gateOf(r db.Schedule) *apigen.ScheduleGate {
-	if r.GateHost == nil {
+	if r.GateCommand == nil {
 		return nil
 	}
 	sec := defaultGateTimeout
 	if r.GateTimeout != nil {
 		sec = int(*r.GateTimeout)
 	}
-	return &apigen.ScheduleGate{Host: *r.GateHost, Command: deref(r.GateCommand), TimeoutSeconds: &sec}
+	return &apigen.ScheduleGate{Host: r.GateHost, Command: *r.GateCommand, TimeoutSeconds: &sec}
 }
 
 // checkSpaceTx 检查 Space 存在（spaceID 为空时不查）。

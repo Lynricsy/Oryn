@@ -138,7 +138,8 @@ export function ScheduleRow({
 							<Icon name="funnel" size={12} aria-hidden />
 							<span className="truncate">
 								{t("schedule.gate.summary", {
-									host: s.gate.host,
+									// 没有 host = 在控制面本机的沙箱里执行
+									host: s.gate.host ?? t("schedule.gate.localShort"),
 									command: gateCommandSummary(s.gate.command),
 								})}
 							</span>

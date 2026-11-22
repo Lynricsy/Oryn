@@ -10515,11 +10515,15 @@ type Schedule struct {
 	// Failures 连续失败次数
 	Failures int `json:"failures"`
 
-	// Gate 运行前闸门：每次运行（含手动触发）前，控制面先经 SSH 网关在 `host` 上执行 `command`，不启动 agent、不调用模型。
+	// Gate 运行前闸门：每次运行（含手动触发）前先执行 `command`，不启动 agent、不调用模型。
 	// 命令以退出码 0 结束、且标准输出最后一个非空行是 JSON 对象 `{"wakeAgent": false}` 时，本次运行记为 `skipped`（`error = gate`）；
-	// 其余情况（其它输出、非 0 退出、超时、连不上主机）都照常运行，并把闸门的输出或失败原因附在提示词前面交给 agent。
-	// 主机按定时的范围解析：全局主机，加上所在项目（`new_thread` 为定时的项目，`thread` 为目标线程的项目）的主机；
-	// 项目的 `new_thread` 定时是全自动运行，主机须允许全自动线程使用。执行记入 SSH 审计（来源 `owner`）。
+	// 其余情况（其它输出、非 0 退出、超时、执行环境不可用）都照常运行，并把闸门的输出或失败原因附在提示词前面交给 agent。
+	// 执行位置：
+	// - 省略 `host`：在控制面本机的沙箱里以 `/bin/sh -c` 执行（Landlock + seccomp，降权、只读系统目录）。工作目录是数据目录
+	//   `gates/` 的副本（可放脚本，如 `./check.sh`），`HOME` / `TMPDIR` 是一次性的可写目录；只能经 `HTTP(S)_PROXY` 指向的
+	//   出站代理访问公网，读不到控制面的数据与密钥，也访问不了内网。需要 Linux ≥ 6.7（Landlock ABI ≥ 4）。
+	// - 给出 `host`：经 SSH 网关在该主机上执行。主机按定时的范围解析：全局主机，加上所在项目（`new_thread` 为定时的项目，
+	//   `thread` 为目标线程的项目）的主机；项目的 `new_thread` 定时是全自动运行，主机须允许全自动线程使用。执行记入 SSH 审计（来源 `owner`）。
 	Gate *ScheduleGate `json:"gate,omitempty"`
 
 	// HandToAssistant 交给助手（只对 `new_thread` 有意义）
@@ -10587,16 +10591,20 @@ type Schedule struct {
 // ScheduleCreatedBy defines model for ScheduleCreatedBy.
 type ScheduleCreatedBy string
 
-// ScheduleGate 运行前闸门：每次运行（含手动触发）前，控制面先经 SSH 网关在 `host` 上执行 `command`，不启动 agent、不调用模型。
+// ScheduleGate 运行前闸门：每次运行（含手动触发）前先执行 `command`，不启动 agent、不调用模型。
 // 命令以退出码 0 结束、且标准输出最后一个非空行是 JSON 对象 `{"wakeAgent": false}` 时，本次运行记为 `skipped`（`error = gate`）；
-// 其余情况（其它输出、非 0 退出、超时、连不上主机）都照常运行，并把闸门的输出或失败原因附在提示词前面交给 agent。
-// 主机按定时的范围解析：全局主机，加上所在项目（`new_thread` 为定时的项目，`thread` 为目标线程的项目）的主机；
-// 项目的 `new_thread` 定时是全自动运行，主机须允许全自动线程使用。执行记入 SSH 审计（来源 `owner`）。
+// 其余情况（其它输出、非 0 退出、超时、执行环境不可用）都照常运行，并把闸门的输出或失败原因附在提示词前面交给 agent。
+// 执行位置：
+//   - 省略 `host`：在控制面本机的沙箱里以 `/bin/sh -c` 执行（Landlock + seccomp，降权、只读系统目录）。工作目录是数据目录
+//     `gates/` 的副本（可放脚本，如 `./check.sh`），`HOME` / `TMPDIR` 是一次性的可写目录；只能经 `HTTP(S)_PROXY` 指向的
+//     出站代理访问公网，读不到控制面的数据与密钥，也访问不了内网。需要 Linux ≥ 6.7（Landlock ABI ≥ 4）。
+//   - 给出 `host`：经 SSH 网关在该主机上执行。主机按定时的范围解析：全局主机，加上所在项目（`new_thread` 为定时的项目，
+//     `thread` 为目标线程的项目）的主机；项目的 `new_thread` 定时是全自动运行，主机须允许全自动线程使用。执行记入 SSH 审计（来源 `owner`）。
 type ScheduleGate struct {
 	Command string `json:"command"`
 
-	// Host SSH 主机名（设置 → SSH 主机里登记的名称）
-	Host string `json:"host"`
+	// Host SSH 主机名（设置 → SSH 主机里登记的名称）；省略 = 在控制面本机的沙箱里执行
+	Host *string `json:"host,omitempty"`
 
 	// TimeoutSeconds 执行上限（秒）；缺省 60
 	TimeoutSeconds *int `json:"timeoutSeconds,omitempty"`

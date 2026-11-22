@@ -67,14 +67,14 @@ func addNewThreadFlags(cmd *cobra.Command, f *scheduleFlags) {
 
 func addGateFlags(cmd *cobra.Command, f *scheduleFlags) {
 	fl := cmd.Flags()
-	fl.StringVar(&f.gateHost, "gate-host", "", "运行前闸门：执行命令的 SSH 主机名（设置 → SSH 主机）")
-	fl.StringVar(&f.gateCommand, "gate-command", "", `运行前闸门：每次运行前执行的命令；最后一行输出 {"wakeAgent": false} 时跳过本次运行`)
+	fl.StringVar(&f.gateHost, "gate-host", "", "运行前闸门在哪台 SSH 主机上执行（设置 → SSH 主机）；省略 = 控制面本机沙箱，update 时空串 = 改回本机")
+	fl.StringVar(&f.gateCommand, "gate-command", "", `运行前闸门：每次运行前执行的命令（本机沙箱的工作目录是数据目录 gates/）；最后一行输出 {"wakeAgent": false} 时跳过本次运行`)
 	fl.IntVar(&f.gateTimeout, "gate-timeout", 60, "运行前闸门的执行上限（秒，1–600）")
 	fl.BoolVar(&f.noGate, "no-gate", false, "去掉运行前闸门（update）")
 }
 
 // applyGateFlags 合并运行前闸门参数：没给任何闸门参数时保留 in.Gate（update 沿用现值）；--no-gate 去掉闸门；
-// 其余在现值上覆盖给出的字段，结果须同时有主机与命令。
+// 其余在现值上覆盖给出的字段（--gate-host 空串 = 本机沙箱），结果须有命令。
 func applyGateFlags(in *apigen.ScheduleInput, f scheduleFlags, changed func(string) bool) error {
 	set := changed("gate-host") || changed("gate-command") || changed("gate-timeout")
 	if changed("no-gate") && f.noGate {
@@ -92,7 +92,7 @@ func applyGateFlags(in *apigen.ScheduleInput, f scheduleFlags, changed func(stri
 		g = *in.Gate
 	}
 	if changed("gate-host") {
-		g.Host = strings.TrimSpace(f.gateHost)
+		g.Host = optional(strings.TrimSpace(f.gateHost))
 	}
 	if changed("gate-command") {
 		g.Command = f.gateCommand
@@ -100,8 +100,8 @@ func applyGateFlags(in *apigen.ScheduleInput, f scheduleFlags, changed func(stri
 	if changed("gate-timeout") {
 		g.TimeoutSeconds = new(f.gateTimeout)
 	}
-	if g.Host == "" || strings.TrimSpace(g.Command) == "" {
-		return usageErr("运行前闸门须同时给出 --gate-host 与 --gate-command")
+	if strings.TrimSpace(g.Command) == "" {
+		return usageErr("运行前闸门须给出 --gate-command")
 	}
 	in.Gate = &g
 	return nil
@@ -608,7 +608,11 @@ func printSchedule(w io.Writer, s apigen.Schedule) error {
 		if g.TimeoutSeconds != nil {
 			sec = *g.TimeoutSeconds
 		}
-		fmt.Fprintf(tw, "Gate\t%s（%ds）: %s\n", g.Host, sec, g.Command)
+		where := "本机沙箱"
+		if g.Host != nil {
+			where = *g.Host
+		}
+		_, _ = fmt.Fprintf(tw, "Gate\t%s（%ds）: %s\n", where, sec, g.Command)
 	}
 	if s.LastRun != nil {
 		r := s.LastRun

@@ -158,17 +158,3 @@ func resultDuration(t *testing.T, res apigen.LinkCtlSSHCallResult) int64 {
 	require.Len(t, rs, 1)
 	return rs[0].DurationMs
 }
-
-func TestHeadTail(t *testing.T) {
-	var w headTail
-	_, _ = w.Write([]byte(strings.Repeat("h", execOutputHalf)))
-	_, _ = w.Write([]byte("MID"))
-	_, _ = w.Write([]byte(strings.Repeat("t", execOutputHalf)))
-	got := w.String()
-	assert.Equal(t, strings.Repeat("h", execOutputHalf)+"\n…（省略 3 字节）…\n"+strings.Repeat("t", execOutputHalf), got)
-
-	var small headTail
-	_, _ = small.Write([]byte("abc"))
-	_, _ = small.Write([]byte(strings.Repeat("x", execOutputHalf)))
-	assert.Equal(t, "abc"+strings.Repeat("x", execOutputHalf), small.String())
-}

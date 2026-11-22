@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/Lynricsy/Oryn/internal/config"
+	"github.com/Lynricsy/Oryn/internal/localgate"
 	"github.com/Lynricsy/Oryn/internal/server"
 	"github.com/Lynricsy/Oryn/internal/version"
 )
@@ -23,6 +24,10 @@ func main() {
 	// 渲染子进程（M14）：同样在读配置之前分派，见 render_exec.go
 	if len(os.Args) > 1 && os.Args[1] == "render-exec" {
 		os.Exit(renderExec(os.Args[2:]))
+	}
+	// 定时本机闸门的沙箱子进程：同样在读配置之前分派，见 localgate.RunChild
+	if len(os.Args) > 1 && os.Args[1] == localgate.Command {
+		os.Exit(localgate.RunChild(os.Args[2:], os.Stderr))
 	}
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "orynd:", err)

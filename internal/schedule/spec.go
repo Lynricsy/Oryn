@@ -183,12 +183,15 @@ func Validate(in Input, now time.Time) (Input, *time.Location, error) {
 	return norm, loc, nil
 }
 
-// validGate 校验并规范化运行前闸门：主机名去首尾空白后非空且不含空白与控制字符，命令非空白且不超过 8000 字符，
-// 执行上限缺省 60 秒、须在 1–600 秒。主机是否可用由保存时的 Gate.CheckGateHost 判断。
+// validGate 校验并规范化运行前闸门：给了主机名时去首尾空白后须非空且不含空白与控制字符（省略 = 本机沙箱），
+// 命令非空白且不超过 8000 字符，执行上限缺省 60 秒、须在 1–600 秒。执行位置是否可用由保存时的 checkGate 判断。
 func validGate(g apigen.ScheduleGate) (apigen.ScheduleGate, error) {
-	g.Host = strings.TrimSpace(g.Host)
-	if g.Host == "" || len(g.Host) > maxGateHostLen || strings.ContainsFunc(g.Host, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
-		return g, invalid("gate.host must be an SSH host name (at most %d bytes, no spaces)", maxGateHostLen)
+	if g.Host != nil {
+		h := strings.TrimSpace(*g.Host)
+		if h == "" || len(h) > maxGateHostLen || strings.ContainsFunc(h, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+			return g, invalid("gate.host must be an SSH host name (at most %d bytes, no spaces) or omitted", maxGateHostLen)
+		}
+		g.Host = &h
 	}
 	if strings.TrimSpace(g.Command) == "" || utf8.RuneCountInString(g.Command) > maxGateCommandRunes {
 		return g, invalid("gate.command must be 1–%d characters", maxGateCommandRunes)

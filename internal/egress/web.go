@@ -2,6 +2,7 @@ package egress
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"io"
 	"log/slog"
@@ -184,21 +185,30 @@ func webTarget(hostport string) (host, port string, ok bool) {
 	return host, port, true
 }
 
-// denyWeb 按拨号错误回应：非公网目标 403（记一条 Info 日志），其它 502。
-func (h *Handler) denyWeb(w http.ResponseWriter, target string, err error) {
+// denyWeb 按拨号错误回应：非公网目标 403（记一条 Info 日志），其它 502。who 是日志里的调用方（orb id 或闸门）。
+func denyWeb(w http.ResponseWriter, who, target string, err error) {
 	if errors.Is(err, errNotPublic) {
-		slog.Info("出站代理拒绝非公网目标", "orb", h.OrbID, "host", target, "err", errNotPublic)
+		slog.Info("出站代理拒绝非公网目标", "caller", who, "host", target, "err", errNotPublic)
 		http.Error(w, errNotPublic.Error(), http.StatusForbidden)
 		return
 	}
-	slog.Warn("出站代理连接上游失败", "orb", h.OrbID, "host", target, "err", err)
+	slog.Warn("出站代理连接上游失败", "caller", who, "host", target, "err", err)
 	http.Error(w, "oryn egress: 上游不可达", http.StatusBadGateway)
 }
 
-// serveConnect 处理 `CONNECT host:port`（M19 正向代理）：策略没有 Web 时 403；拨号成功后接管连接，
-// 回 200 并在两端之间双向转发。不看隧道里的内容（TLS 由沙箱里的客户端自己校验）。
+// serveConnect 处理 `CONNECT host:port`（M19 正向代理）：策略没有 Web 时 403。
 func (h *Handler) serveConnect(w http.ResponseWriter, r *http.Request) {
-	pol := h.R.Policy().Web
+	serveWebConnect(w, r, h.R.Policy().Web, h.OrbID)
+}
+
+// serveForward 处理协调宿主的 absolute-form 请求（M19 正向代理），见 serveWebForward。
+func (h *Handler) serveForward(w http.ResponseWriter, r *http.Request, pol *WebPolicy) {
+	serveWebForward(w, r, pol, h.OrbID)
+}
+
+// serveWebConnect 处理 `CONNECT host:port`：pol 为 nil 时 403；拨号成功后接管连接，回 200 并在两端之间双向转发。
+// 不看隧道里的内容（TLS 由沙箱里的客户端自己校验）。
+func serveWebConnect(w http.ResponseWriter, r *http.Request, pol *WebPolicy, who string) {
 	if pol == nil {
 		http.Error(w, "web access is turned off", http.StatusForbidden)
 		return
@@ -215,7 +225,7 @@ func (h *Handler) serveConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	up, err := dialWeb(r.Context(), pol, host, port)
 	if err != nil {
-		h.denyWeb(w, r.Host, err)
+		denyWeb(w, who, r.Host, err)
 		return
 	}
 	down, buf, err := hj.Hijack()
@@ -245,9 +255,9 @@ func tunnel(down net.Conn, downR io.Reader, up net.Conn) {
 	<-done
 }
 
-// serveForward 处理协调宿主的 absolute-form 请求（`GET http://host/… HTTP/1.1`，M19 正向代理）：策略没有 Web 时 403，
-// 只接受 http；原样转发到请求里的地址，不做占位符替换，拨号同 CONNECT 只连公网地址。
-func (h *Handler) serveForward(w http.ResponseWriter, r *http.Request, pol *WebPolicy) {
+// serveWebForward 处理 absolute-form 请求（`GET http://host/… HTTP/1.1`）：pol 为 nil 时 403，只接受 http；
+// 原样转发到请求里的地址，不做占位符替换，拨号同 CONNECT 只连公网地址。
+func serveWebForward(w http.ResponseWriter, r *http.Request, pol *WebPolicy, who string) {
 	if pol == nil {
 		http.Error(w, "web access is turned off", http.StatusForbidden)
 		return
@@ -263,7 +273,41 @@ func (h *Handler) serveForward(w http.ResponseWriter, r *http.Request, pol *WebP
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.Out.Host = pr.In.URL.Host
 		},
-		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) { h.denyWeb(w, target, err) },
+		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) { denyWeb(w, who, target, err) },
 	}
 	p.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), webPolicyKey{}, pol)))
+}
+
+// WebProxy 返回只做正向代理的处理器（定时的本机闸门用，不经 link）：CONNECT 隧道与 http absolute-form 转发，
+// 按 pol 只连公网地址（AllowHosts 例外）。token 非空时要求 Proxy-Authorization 为 Basic、密码等于 token（用户名任意），
+// 否则 407；其它形式的请求 400。who 是日志里的调用方。
+func WebProxy(pol *WebPolicy, token, who string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if token != "" {
+			_, pass, ok := proxyBasicAuth(r)
+			if !ok || subtle.ConstantTimeCompare([]byte(pass), []byte(token)) != 1 {
+				w.Header().Set("Proxy-Authenticate", `Basic realm="oryn"`)
+				http.Error(w, "proxy authentication required", http.StatusProxyAuthRequired)
+				return
+			}
+		}
+		switch {
+		case r.Method == http.MethodConnect:
+			serveWebConnect(w, r, pol, who)
+		case r.URL.Host != "":
+			serveWebForward(w, r, pol, who)
+		default:
+			http.Error(w, "oryn egress: 只接受代理形式的请求", http.StatusBadRequest)
+		}
+	})
+}
+
+// proxyBasicAuth 解析 Proxy-Authorization 的 Basic 凭据（同 Request.BasicAuth，换了头名）。
+func proxyBasicAuth(r *http.Request) (user, pass string, ok bool) {
+	auth := r.Header.Get("Proxy-Authorization")
+	if auth == "" {
+		return "", "", false
+	}
+	rr := &http.Request{Header: http.Header{"Authorization": {auth}}}
+	return rr.BasicAuth()
 }

@@ -286,10 +286,11 @@ export class MockAutomation {
 		if (!b.prompt?.trim())
 			return error(400, "invalid_schedule", "prompt 不能为空");
 		if (b.gate) {
-			// 按契约（openapi `ScheduleGate`）：host / command 必填，command 至多 8000 字，超时 1–600 秒的整数
+			// 按契约（openapi `ScheduleGate`）：host 可选（省略 = 控制面本机的沙箱），给了不能是空白；
+			// command 必填、至多 8000 字；超时 1–600 秒的整数
 			const to = b.gate.timeoutSeconds;
-			if (!b.gate.host?.trim())
-				return error(400, "invalid_schedule", "gate.host 不能为空");
+			if (b.gate.host !== undefined && !b.gate.host.trim())
+				return error(400, "invalid_schedule", "gate.host 给了就不能是空白");
 			if (!b.gate.command?.trim() || b.gate.command.length > 8000)
 				return error(400, "invalid_schedule", "gate.command 须为 1–8000 字");
 			if (to !== undefined && (!Number.isInteger(to) || to < 1 || to > 600))

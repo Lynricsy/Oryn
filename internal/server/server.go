@@ -33,6 +33,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/jobs"
 	"github.com/Lynricsy/Oryn/internal/library"
 	"github.com/Lynricsy/Oryn/internal/link"
+	"github.com/Lynricsy/Oryn/internal/localgate"
 	"github.com/Lynricsy/Oryn/internal/memory"
 	"github.com/Lynricsy/Oryn/internal/memory/relayroute"
 	"github.com/Lynricsy/Oryn/internal/modelcat"
@@ -319,14 +320,19 @@ func (s *Server) init(ctx context.Context) error {
 		hostCfg.Command = coordhostCommand
 	}
 	s.Host = coordhost.New(hostCfg, s.Store, s.Jobs, s.Orbs)
+	// 运行前闸门：本机沙箱（orynd schedule-gate 子进程，工作目录是数据目录 gates/ 的副本）与 SSH 网关两种执行位置
+	localGate, err := localgate.New(localgate.Config{GatesDir: filepath.Join(cfg.DataDir, "gates")})
+	if err != nil {
+		return err
+	}
+	s.closers = append(s.closers, func() { _ = localGate.Close() })
 	s.Schedules = schedule.New(schedule.Config{
 		Now: scheduleNow, AfterFunc: scheduleAfterFunc,
 		DeliverTimeout: cfg.Schedule.DeliverTimeout.D(), MaxFailures: cfg.Schedule.MaxFailures,
 		Changed: s.Hub.SchedulesChanged,
 		// M19 3.3：交给助手的运行结果进主线（coord 晚于 schedule 构造，用闭包）
 		HandOff: func(ctx context.Context, h schedule.HandOff) { s.Coord.PostToMain(ctx, h) },
-		// 运行前闸门经 SSH 网关在登记的主机上执行
-		Gate: s.SSH,
+		SSHGate: s.SSH, LocalGate: localGate,
 	}, s.Store, s.Threads, s.Orbs, s.Notify)
 	s.Coord = coord.New(coord.Config{Now: scheduleNow, AfterFunc: scheduleAfterFunc, Model: cfg.Coordinator.Model, PublicURL: cfg.PublicURL, MCPToken: mcpToken, KeepWarm: coord.KeepWarmEvery},
 		s.Store, s.Threads, s.Orbs, s.Host, s.Schedules)

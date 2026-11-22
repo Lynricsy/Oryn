@@ -5,7 +5,8 @@
  * - `new_thread` 专有：名称（必填）、项目（含「无项目」；`lockProject` 或编辑时只读——目标不可改）、对话对象（与首页同一个
  *   role 胶囊：cycleOrder 里的 role 或指定模型，以及思考级别）、orb 类型（不含 `@host`）、重叠策略、保留数（1–50）、
  *   「交给助手」（M19：运行结果进主线，完成时不单独通知）。
- * - 运行前闸门（两种模式共用）：每次运行前在 SSH 主机上执行命令，最后一行输出 `{"wakeAgent": false}` 时跳过本次运行。
+ * - 运行前闸门（两种模式共用）：每次运行前执行一条命令，最后一行输出 `{"wakeAgent": false}` 时跳过本次运行。
+ *   执行位置二选一：控制面本机的沙箱（缺省，不带 `host`）或 SSH 主机（带 `host`）。
  *   `PUT` 是整份替换：编辑时把现有闸门带回表单、保存时原样提交；关掉闸门则不带 `gate`（即去掉）。
  * 保存：新建走 `POST schedules`（线程内定时走 `PUT threads/{id}/schedule`），编辑走 `PUT schedules/{id}`；
  * 409 `schedule_name_taken` 标在名称框上。
@@ -161,9 +162,11 @@ interface FormState {
 	keepLast: number;
 	/** 运行结果交给助手（只用于 `new_thread`） */
 	handToAssistant: boolean;
-	/** 运行前闸门开着；关掉时保存不带 `gate`（整份替换即去掉），下面三个字段保留，重新打开时还在 */
+	/** 运行前闸门开着；关掉时保存不带 `gate`（整份替换即去掉），下面几个字段保留，重新打开时还在 */
 	gateOn: boolean;
-	/** 闸门主机名（设置 → SSH 主机里登记的名称） */
+	/** 执行位置：`local` 控制面本机的沙箱（不带 host），`ssh` 经 SSH 网关在 `gateHost` 上执行 */
+	gateWhere: "local" | "ssh";
+	/** 闸门主机名（设置 → SSH 主机里登记的名称）；切回本机时保留，再切回 SSH 时还在 */
 	gateHost: string;
 	gateCommand: string;
 	/** 执行上限（秒，1–600） */
@@ -202,6 +205,7 @@ function initialState(
 		keepLast: existing?.keepLast ?? 5,
 		handToAssistant: existing?.handToAssistant ?? false,
 		gateOn: existing?.gate !== undefined,
+		gateWhere: existing?.gate?.host ? "ssh" : "local",
 		gateHost: existing?.gate?.host ?? "",
 		gateCommand: existing?.gate?.command ?? "",
 		gateTimeout: existing?.gate?.timeoutSeconds ?? GATE_TIMEOUT_DEFAULT,
@@ -259,7 +263,7 @@ export function scheduleBody(
 		...(s.gateOn
 			? {
 					gate: {
-						host: s.gateHost.trim(),
+						...(s.gateWhere === "ssh" ? { host: s.gateHost.trim() } : {}),
 						command: s.gateCommand,
 						timeoutSeconds: Math.min(
 							600,
@@ -419,7 +423,7 @@ function RunRow({
 }
 
 /**
- * 闸门主机：下拉列出这条定时能用的主机（全局主机 + 定时所在项目的主机）。每次新建线程的定时是全自动运行，
+ * 闸门主机：下拉列出这条定时能用的主机（全局主机 + 定时所在项目的主机）。项目的新建线程定时是全自动运行，
  * 没允许全自动线程使用的主机、已停用的主机照样列出但不可选。当前值不在列表里（主机改名、删除）时也列出，
  * 保存时原样带回。列表读不到或为空时改为手填。
  */
@@ -743,7 +747,9 @@ function ScheduleForm({
 		(!named || s.name.trim() !== "") &&
 		(s.kind !== "cron" || s.cron.trim() !== "") &&
 		(s.kind !== "once" || fromLocalInput(s.at) !== undefined) &&
-		(!s.gateOn || (s.gateHost.trim() !== "" && s.gateCommand.trim() !== ""));
+		(!s.gateOn ||
+			(s.gateCommand.trim() !== "" &&
+				(s.gateWhere === "local" || s.gateHost.trim() !== "")));
 
 	return (
 		<Dialog
@@ -1063,7 +1069,7 @@ function ScheduleForm({
 						onChange={(e) => set("prompt", e.target.value)}
 					/>
 				</Field>
-				{/* 运行前闸门：一个可选项，用复选框（同「交给助手」）；打开后才显示主机、命令与超时 */}
+				{/* 运行前闸门：一个可选项，用复选框（同「交给助手」）；打开后才显示执行位置、主机、命令与超时 */}
 				<div className="flex items-start gap-2.5">
 					<Checkbox
 						id={gateId}
@@ -1084,15 +1090,49 @@ function ScheduleForm({
 								data-testid="schedule-gate"
 								className="mt-2 flex flex-col gap-3"
 							>
-								<div className="grid items-start gap-3 sm:grid-cols-[minmax(0,1fr)_8rem]">
-									<GateHostField
-										value={s.gateHost}
-										onChange={(v) => set("gateHost", v)}
-										projectId={
-											newThread ? s.projectId || undefined : threadProject
-										}
-										automated={newThread && !!s.projectId}
-									/>
+								<div className="flex flex-col gap-1">
+									<div
+										role="radiogroup"
+										aria-label={t("schedule.gate.whereLabel")}
+										className="flex gap-1 self-start rounded-lg bg-inset p-0.5"
+									>
+										{(["local", "ssh"] as const).map((w) => (
+											// biome-ignore lint/a11y/useSemanticElements: 分段按钮（WAI-ARIA radio），同触发方式
+											<button
+												key={w}
+												type="button"
+												role="radio"
+												aria-checked={s.gateWhere === w}
+												className={`${tabClass(s.gateWhere === w)} ${s.gateWhere === w ? "bg-panel shadow-xs" : ""}`}
+												onClick={() => set("gateWhere", w)}
+											>
+												{t(`schedule.gate.where.${w}`)}
+											</button>
+										))}
+									</div>
+									<p className="text-faint text-xs">
+										{s.gateWhere === "local"
+											? t("schedule.gate.localHint")
+											: t("schedule.gate.sshHint")}
+									</p>
+								</div>
+								<div
+									className={
+										s.gateWhere === "ssh"
+											? "grid items-start gap-3 sm:grid-cols-[minmax(0,1fr)_8rem]"
+											: "w-32"
+									}
+								>
+									{s.gateWhere === "ssh" && (
+										<GateHostField
+											value={s.gateHost}
+											onChange={(v) => set("gateHost", v)}
+											projectId={
+												newThread ? s.projectId || undefined : threadProject
+											}
+											automated={newThread && !!s.projectId}
+										/>
+									)}
 									<Field label={t("schedule.gate.timeout")}>
 										<TextInput
 											type="number"

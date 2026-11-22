@@ -684,6 +684,10 @@ describe("ScheduleDialog：运行前闸门", () => {
 		expect(
 			within(dialog()).getByRole("checkbox", { name: "运行前闸门" }),
 		).toBeChecked();
+		// 有 host：执行位置回填为 SSH 主机
+		expect(
+			within(dialog()).getByRole("radio", { name: "SSH 主机" }),
+		).toHaveAttribute("aria-checked", "true");
 		await waitFor(() => expect(field("SSH 主机")).toHaveValue("bastion"));
 		expect(field("命令")).toHaveValue(gate?.command);
 		expect(field("超时（秒）")).toHaveValue(30);
@@ -725,6 +729,11 @@ describe("ScheduleDialog：运行前闸门", () => {
 		fireEvent.click(
 			within(dialog()).getByRole("checkbox", { name: "运行前闸门" }),
 		);
+		// 缺省在控制面本机执行，没有主机框；切到 SSH 主机才出现
+		expect(
+			within(dialog()).getByRole("radio", { name: "控制面本机（沙箱）" }),
+		).toHaveAttribute("aria-checked", "true");
+		fireEvent.click(within(dialog()).getByRole("radio", { name: "SSH 主机" }));
 		expect(save()).toBeDisabled();
 		await waitFor(() => expect(field("SSH 主机").tagName).toBe("SELECT"));
 		const host = field("SSH 主机");
@@ -756,5 +765,34 @@ describe("ScheduleDialog：运行前闸门", () => {
 				},
 			},
 		});
+	});
+
+	it("新建本机闸门：不带 host，不用选主机", async () => {
+		const onClose = mount({ mode: "new_thread", projectId: null });
+		await ready();
+		fireEvent.change(field("名称"), { target: { value: "local-gate" } });
+		fireEvent.change(field("提示词"), { target: { value: "有新版本就看看" } });
+		fireEvent.click(
+			within(dialog()).getByRole("checkbox", { name: "运行前闸门" }),
+		);
+		const gateBox = within(dialog()).getByTestId("schedule-gate");
+		expect(gateBox).toHaveTextContent("gates/");
+		expect(() => field("SSH 主机")).toThrow();
+		expect(save()).toBeDisabled();
+		fireEvent.change(field("命令"), { target: { value: "./check.sh" } });
+		fireEvent.click(save());
+		await waitFor(() => expect(onClose).toHaveBeenCalled());
+		const [post] = writes();
+		expect(post).toMatchObject({
+			method: "POST",
+			body: {
+				name: "local-gate",
+				gate: { command: "./check.sh", timeoutSeconds: 60 },
+			},
+		});
+		expect(post?.body?.gate).not.toHaveProperty("host");
+		expect(
+			server.automation.schedules.find((s) => s.name === "local-gate")?.gate,
+		).toEqual({ command: "./check.sh", timeoutSeconds: 60 });
 	});
 });

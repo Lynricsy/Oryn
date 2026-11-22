@@ -4401,7 +4401,15 @@
 		"silentHint": "In automated runs, an agent whose last reply is [SILENT] ends quietly: no unread mark, no completion notification, nothing handed to the assistant.",
 		"gate": {
 			"label": "Pre-run gate",
-			"hint": "Before each run, a command runs on an SSH host (no model call). If its last output line is {\"wakeAgent\": false}, the run is skipped; otherwise it runs as usual with the command's output prepended to the prompt.",
+			"hint": "Before each run, a command runs first (no model call). If its last output line is {\"wakeAgent\": false}, the run is skipped; otherwise it runs as usual with the command's output prepended to the prompt.",
+			"whereLabel": "Runs on",
+			"where": {
+				"local": "Control plane (sandbox)",
+				"ssh": "SSH host"
+			},
+			"localHint": "Runs with /bin/sh -c in a sandbox on the control plane; the working directory is gates/ in the data directory (put scripts there, e.g. ./check.sh). It can reach the public internet through the outbound proxy, but not the internal network.",
+			"sshHint": "Runs on the chosen host through the SSH gateway (a global host, or one from this schedule's project).",
+			"localShort": "Local",
 			"host": "SSH host",
 			"hostPick": "Choose a host…",
 			"hostManual": "A host name registered in Settings → SSH hosts (a global host, or one from this schedule's project)",

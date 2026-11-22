@@ -15,6 +15,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/headtail"
 	"github.com/Lynricsy/Oryn/internal/link"
 )
 
@@ -204,7 +205,7 @@ func (s *Service) execOne(ctx context.Context, v viewer, threadID, name, command
 	defer up.Close()
 	dctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	out := &headTail{}
+	out := headtail.New(execOutputHalf)
 	expired, err := runBounded(dctx, up.client, up.Close, func(sess *ssh.Session) { sess.Stdout, sess.Stderr = out, out }, command)
 	res.output = out.String()
 	if expired {
@@ -263,46 +264,4 @@ func runBounded(dctx context.Context, c *ssh.Client, closeConn func(), setup fun
 	}
 	err = s.Wait()
 	return !stop(), err
-}
-
-// headTail 并发安全地收集输出：只留头 half 字节与尾 half 字节（half 为 0 时取 execOutputHalf），记下总长。
-type headTail struct {
-	mu    sync.Mutex
-	half  int
-	head  []byte
-	tail  []byte // 滑动窗口，至多 half 字节
-	total int
-}
-
-func (w *headTail) Write(p []byte) (int, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	half := w.half
-	if half <= 0 {
-		half = execOutputHalf
-	}
-	w.total += len(p)
-	rest := p
-	if room := half - len(w.head); room > 0 {
-		n := min(room, len(rest))
-		w.head = append(w.head, rest[:n]...)
-		rest = rest[n:]
-	}
-	if len(rest) > 0 {
-		w.tail = append(w.tail, rest...)
-		if over := len(w.tail) - half; over > 0 {
-			w.tail = append(w.tail[:0], w.tail[over:]...)
-		}
-	}
-	return len(p), nil
-}
-
-// String 返回输出；超过两倍上限时在头尾之间插省略说明。
-func (w *headTail) String() string {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if omitted := w.total - len(w.head) - len(w.tail); omitted > 0 {
-		return strings.ToValidUTF8(string(w.head), "") + fmt.Sprintf("\n…（省略 %d 字节）…\n", omitted) + strings.ToValidUTF8(string(w.tail), "")
-	}
-	return strings.ToValidUTF8(string(w.head)+string(w.tail), "")
 }

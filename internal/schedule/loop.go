@@ -401,7 +401,7 @@ func (s *Service) RunNow(ctx context.Context, id string) (apigen.ScheduleRun, er
 // start 在事务外执行一次 pending 运行：设了闸门时先在后台跑闸门（结果经 evGate 回到循环），否则直接投递。
 // 调用方持有 loopMu。
 func (s *Service) start(ctx context.Context, fp fireParams) {
-	if fp.sc.GateHost != nil {
+	if fp.sc.GateCommand != nil {
 		s.runGate(ctx, fp)
 		return
 	}
