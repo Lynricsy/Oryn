@@ -124,6 +124,8 @@ jobs:
           (cd web && bun install --frozen-lockfile && bun run build)
           find internal/webui/dist -mindepth 1 ! -name .gitkeep -delete
           cp -R web/dist/. internal/webui/dist/
+          # 没有 index.html 时 orynd 照样编译成功，却只会返回「Web 客户端未构建」占位页（internal/webui/webui.go）
+          [[ -f internal/webui/dist/index.html ]] || { echo "::error::internal/webui/dist 里没有 index.html"; exit 1; }
 
       - name: 交叉编译并打包
         shell: bash
@@ -155,15 +157,35 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: 冒烟：版本号
+      # 启动解包前的 linux-x64 orynd（临时数据目录、只监听回环），确认版本号与内嵌的是真实 Web UI 而不是占位页
+      - name: 冒烟：版本号与内嵌 Web UI
+        timeout-minutes: 5
         shell: bash
         run: |
           set -euo pipefail
           d="$RUNNER_TEMP/pkg/oryn-server_${LABEL}_linux-x64"
-          got=$("$d/orynd" --version)
-          [[ "$got" == "$TAG" ]] || { echo "::error::orynd --version 输出「${got}」，应为 ${TAG}"; exit 1; }
           got=$("$d/orbd" --version)
           [[ "$got" == "orbd $TAG" ]] || { echo "::error::orbd --version 输出「${got}」，应为 orbd ${TAG}"; exit 1; }
+          smoke="$RUNNER_TEMP/orynd-smoke"
+          mkdir -p "$smoke"
+          # public_url 须是域名（WebAuthn 的 RPID 不接受 IP）
+          printf 'listen: ["127.0.0.1:17600"]\npublic_url: "http://localhost:17600"\ndata_dir: "%s/data"\n' "$smoke" > "$smoke/orynd.yaml"
+          "$d/orynd" --config "$smoke/orynd.yaml" > "$smoke/orynd.log" 2>&1 &
+          pid=$!
+          # 等它真正退出再结束步骤（步骤级 timeout-minutes 兜底），避免留下仍占着端口的进程
+          trap 'kill "$pid" 2>/dev/null && wait "$pid" 2>/dev/null; true' EXIT
+          for _ in $(seq 1 60); do curl -fsS http://127.0.0.1:17600/healthz > /dev/null 2>&1 && break; sleep 0.5; done
+          health=$(curl -fsS http://127.0.0.1:17600/healthz) || { echo "::error::orynd 没有起来"; tail -30 "$smoke/orynd.log"; exit 1; }
+          # 应答的必须是刚启动的这个进程（端口被别的进程占着时它会启动失败退出）
+          kill -0 "$pid" 2>/dev/null || { echo "::error::orynd 已退出，应答的是别的进程"; tail -30 "$smoke/orynd.log"; exit 1; }
+          ver=$(jq -r .version <<<"$health")
+          [[ "$ver" == "$TAG" ]] || { echo "::error::/healthz 的版本是「${ver}」，应为 ${TAG}"; exit 1; }
+          index=$(curl -fsS http://127.0.0.1:17600/)
+          if grep -q 'Web 客户端未构建' <<<"$index"; then echo "::error::orynd 返回的是占位页，Web UI 没有嵌入"; exit 1; fi
+          entry=$(grep -oE 'src="/assets/[^"]+\.js"' <<<"$index" | head -1 | sed -E 's/^src="|"$//g' || true)
+          [[ -n "$entry" ]] || { echo "::error::首页里没有 /assets/*.js 入口脚本"; exit 1; }
+          curl -fsS -o /dev/null "http://127.0.0.1:17600$entry"
+          echo "- orynd ${ver}：首页与入口脚本 ${entry} 均由内嵌 Web UI 提供" >> "$GITHUB_STEP_SUMMARY"
 
       - name: 上传 Release 资产
         env:

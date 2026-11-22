@@ -145,7 +145,7 @@ D1（全部安装包）和 D11（两次签名的更新包）用的都是**一次
 
 - 校验 tag，创建草稿 Release（标题 `Oryn <版本>`）。
 - 并行三路：
-  - `server`：在 Linux 上构建 Web UI 并交叉编译（静态链接），上传 `oryn-server_<版本>_linux-{x64,arm64}.tar.gz`（`orynd`、`orbd`、`oryn`、`gemini-rerank`）、`orbd_<版本>_darwin-arm64.tar.gz`（macOS Runner）与 `oryn-server_<版本>_SHA256SUMS`。二进制的版本号就是 tag（`orynd --version` 输出 `v<版本>`）。orb 镜像不随版本发布，部署方 checkout 同一 tag 后 `make image`（见 [deploy.md](deploy.md) 第 1 节）。
+  - `server`：在 Linux 上构建 Web UI 并交叉编译（静态链接），上传 `oryn-server_<版本>_linux-{x64,arm64}.tar.gz`（`orynd`、`orbd`、`oryn`、`gemini-rerank`）、`orbd_<版本>_darwin-arm64.tar.gz`（macOS Runner）与 `oryn-server_<版本>_SHA256SUMS`。二进制的版本号就是 tag（`orynd --version` 输出 `v<版本>`）。上传前用临时数据目录启动 linux-x64 的 `orynd`，确认 `/healthz` 的版本、首页与入口脚本来自内嵌的 Web UI（没嵌入前端时 orynd 也能编译，但只返回占位页）。orb 镜像不随版本发布，部署方 checkout 同一 tag 后 `make image`（见 [deploy.md](deploy.md) 第 1 节）。
   - 调用 `desktop.yml`：在 Ubuntu 22.04、Windows、macOS（universal）上构建，跑 `--smoke`，把安装包上传到 Release。
   - 调用 `mobile.yml`：见 [mobile.md](mobile.md)「发版」。
 - 三路全部成功后，生成 `latest.json`（`web/scripts/updater-manifest.ts`），然后发布 Release。任一路失败时 Release 停在草稿，修好后在 Actions 里「Re-run failed jobs」续跑。
