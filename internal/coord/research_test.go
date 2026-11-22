@@ -158,3 +158,30 @@ func TestStopResearcher(t *testing.T) {
 	e.c.StopResearcher(e.ctx, research.RoleWeb)
 	require.Eventually(t, func() bool { return e.c.ResearcherCold(e.ctx, research.RoleWeb) }, 10*time.Second, 20*time.Millisecond)
 }
+
+// 摘录：主人消息与每个回合最后的助手文本；自动化消息及其回复不取；afterSeq 之前的不取。
+func TestResearchExcerpt(t *testing.T) {
+	e, _ := researchEnv(t, true)
+	conv := e.assistant()
+	p := e.entry(conv.ID, "", "user", "old question", "", "", 1)
+	p = e.entry(conv.ID, p, "assistant", "old answer", "stop", "", 2)
+	first, err := e.c.Excerpt(e.ctx, conv.ID, 0)
+	require.NoError(t, err)
+	assert.Equal(t, "主人：old question\n\n助手：old answer", first.Text)
+	assert.Equal(t, 1, first.OwnerMessages)
+
+	p = e.entry(conv.ID, p, "user", "When does Node 24 become LTS?", "", "", 3)
+	p = e.entry(conv.ID, p, "assistant", "thinking…", "toolUse", "", 4)
+	p = e.entry(conv.ID, p, "assistant", "October 2025, I believe.", "stop", "", 5)
+	p = e.entry(conv.ID, p, "user", "[Oryn automation results · automatic] 1 result(s).", "", "", 6)
+	e.entry(conv.ID, p, "assistant", "AUTOMATION REPLY", "stop", "", 7)
+	ex, err := e.c.Excerpt(e.ctx, conv.ID, first.LastSeq)
+	require.NoError(t, err)
+	assert.Equal(t, "主人：When does Node 24 become LTS?\n\n助手：October 2025, I believe.", ex.Text)
+	assert.Equal(t, 1, ex.OwnerMessages)
+	assert.Greater(t, ex.LastSeq, first.LastSeq)
+	none, err := e.c.Excerpt(e.ctx, conv.ID, ex.LastSeq)
+	require.NoError(t, err)
+	assert.Empty(t, none.Text)
+	assert.Zero(t, none.OwnerMessages)
+}

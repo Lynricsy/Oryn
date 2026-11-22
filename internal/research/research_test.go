@@ -18,15 +18,15 @@ import (
 
 // fakeHost 是测试用的 research.Host。
 type fakeHost struct {
-	mu        sync.Mutex
-	warm      map[string]bool // 角色 → agent 还在（ResearcherCold 为假）
-	delivered []delivery
-	stops     []string
-	findings  []Finding
-	threads   []string
-	excerpts  map[string]Excerpt
-	refreshes int
-	models    []string
+	mu         sync.Mutex
+	warm       map[string]bool // 角色 → agent 还在（ResearcherCold 为假）
+	delivered  []delivery
+	stops      []string
+	findings   []Finding
+	threads    []string
+	excerpts   map[string]Excerpt
+	refreshes  int
+	models     []string
 	deliverErr error
 }
 

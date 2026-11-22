@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/research"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
+	"github.com/Lynricsy/Oryn/internal/transcript"
 )
 
 // M26：后台研究的研究员对话与它们的宿主能力。研究服务（internal/research）经 research.Host 调这里；coord 经 Research
@@ -204,9 +206,65 @@ func (s *Service) ResearcherThreads(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
-// Excerpt 实现 research.Host（步骤 2.2）。
-func (s *Service) Excerpt(context.Context, string, int64) (research.Excerpt, error) {
-	return research.Excerpt{}, errors.ErrUnsupported
+// Excerpt 实现 research.Host：助手对话活动分支上 seq > afterSeq 的部分，主人消息记作「主人：…」，每个回合最后一条非空
+// 助手文本记作「助手：…」；自动化消息（"[Oryn " 开头）与它引出的助手回复不取。每条截到 ExcerptEach，从新到旧累计不超过
+// ExcerptMax 后按时间正序拼接。LastSeq 是分支末条的 seq。
+func (s *Service) Excerpt(ctx context.Context, threadID string, afterSeq int64) (research.Excerpt, error) {
+	row, err := s.st.Q.GetThread(ctx, threadID)
+	if err != nil {
+		return research.Excerpt{}, err
+	}
+	branch, err := s.activeBranch(ctx, row)
+	if err != nil {
+		return research.Excerpt{}, err
+	}
+	var out research.Excerpt
+	if n := len(branch); n > 0 {
+		out.LastSeq = branch[n-1].Seq
+	}
+	var items []string
+	skipping, reply := false, ""
+	flush := func() {
+		if reply != "" && !skipping {
+			items = append(items, "助手："+truncRunes(reply, research.ExcerptEach))
+		}
+		reply = ""
+	}
+	for _, e := range branch {
+		if e.Seq <= afterSeq {
+			continue
+		}
+		m, ok := transcript.ParseMessage(e)
+		if !ok {
+			continue
+		}
+		text := strings.TrimSpace(m.Text)
+		switch m.Role {
+		case "user":
+			flush()
+			skipping = transcript.IsAutomatedUserText(m.Text)
+			if !skipping && text != "" {
+				items = append(items, "主人："+truncRunes(text, research.ExcerptEach))
+				out.OwnerMessages++
+			}
+		case "assistant":
+			if text != "" {
+				reply = text
+			}
+		}
+	}
+	flush()
+	total, lo := 0, len(items)
+	for lo > 0 {
+		n := utf8.RuneCountInString(items[lo-1])
+		if total+n > research.ExcerptMax {
+			break
+		}
+		total += n
+		lo--
+	}
+	out.Text = strings.Join(items[lo:], "\n\n")
+	return out, nil
 }
 
 // RefreshPolicy 实现 research.Host：没有协调 orb 时什么也不做。

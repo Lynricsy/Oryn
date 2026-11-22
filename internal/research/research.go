@@ -30,13 +30,16 @@ type Service struct {
 	cfg Config
 	st  *store.Store
 
-	// mu 保护 current、turns、lastMineScan 与 tick（Observer 回调持线程锁调用 TurnEnded，只入队）。调 Host 时不得持有 mu。
+	// mu 保护 current、turns、lastMineScan、backoff 与定时器（Observer 回调持线程锁调用 TurnEnded，只入队）。调 Host 时
+	// 不得持有 mu。
 	mu sync.Mutex
 	// current 是每个角色当前的运行（至多一个）。
 	current map[string]*runState
 	turns   []threads.TurnEvent
 	// lastMineScan 是上一次挖掘扫描的时间（内存字段：重启后立即再扫一次）。
 	lastMineScan time.Time
+	// backoff 是内部关联与 MCP 运行失败后的冷却截止时间（游标只在成功后推进，失败了不能每个节拍都重来）。
+	backoff map[string]time.Time
 	// tick 是下一次节拍的取消函数；retry 是等研究员停下的重查定时器。
 	tick  func()
 	retry func()
@@ -58,7 +61,7 @@ func New(cfg Config) *Service {
 	if cfg.MineIdle <= 0 {
 		cfg.MineIdle = mineIdleAfter
 	}
-	return &Service{cfg: cfg, st: cfg.Store, current: map[string]*runState{}, wake: make(chan struct{}, 1)}
+	return &Service{cfg: cfg, st: cfg.Store, current: map[string]*runState{}, backoff: map[string]time.Time{}, wake: make(chan struct{}, 1)}
 }
 
 // runState 是一条进行中的研究运行。
@@ -219,6 +222,21 @@ func (s *Service) nextJob(ctx context.Context, role string, set settingsRow) (*j
 	if role == RoleWeb {
 		return s.dueWeb(ctx, set)
 	}
+	for _, due := range []func(context.Context, settingsRow) (*job, error){s.dueMine, s.dueMCP, s.dueInternal} {
+		j, err := due(ctx, set)
+		if err != nil || j == nil {
+			if err != nil {
+				return nil, err
+			}
+			continue
+		}
+		s.mu.Lock()
+		cool := s.now().Before(s.backoff[j.pipeline])
+		s.mu.Unlock()
+		if !cool {
+			return j, nil
+		}
+	}
 	return nil, nil
 }
 
@@ -324,6 +342,12 @@ func (s *Service) finishTurn(ctx context.Context, r *runState, ev threads.TurnEv
 	switch r.pipeline {
 	case PipelineWeb:
 		outcome, report, err = s.applyWeb(ctx, r, raw)
+	case PipelineMine:
+		outcome, report, err = s.applyMine(ctx, r, raw)
+	case PipelineInternal:
+		outcome, report, err = s.applyInternal(ctx, r, raw)
+	case PipelineMCP:
+		outcome, report, err = s.applyMCP(ctx, r, raw)
 	}
 	if err != nil {
 		s.finishRun(ctx, r.id, "failed", "", "", err.Error())
@@ -333,10 +357,21 @@ func (s *Service) finishTurn(ctx context.Context, r *runState, ev threads.TurnEv
 	s.finishRun(ctx, r.id, "completed", outcome, report, "")
 }
 
-// afterFailure 是运行失败后的管线善后（公网话题按原间隔再排）。
+// afterFailure 是运行失败后的管线善后：公网话题按原间隔再排；挖掘照样推进游标（等下一次有新消息再看）；内部关联与
+// MCP 冷却一个周期。
 func (s *Service) afterFailure(ctx context.Context, r *runState) {
 	switch r.pipeline {
 	case PipelineWeb:
 		s.webFailed(ctx, r)
+	case PipelineMine:
+		s.mineDone(ctx, r)
+	case PipelineInternal, PipelineMCP:
+		every := internalEvery
+		if r.pipeline == PipelineMCP {
+			every = mcpEvery
+		}
+		s.mu.Lock()
+		s.backoff[r.pipeline] = s.now().Add(every)
+		s.mu.Unlock()
 	}
 }

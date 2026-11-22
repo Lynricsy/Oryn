@@ -67,8 +67,8 @@ func TestWebNothingDoublesInterval(t *testing.T) {
 	f := newFixture(t)
 	f.enable()
 	tp := f.topic("t", "q")
-	want := []time.Duration{48 * time.Hour, 96 * time.Hour, 192 * time.Hour - 24*time.Hour, webMaxInterval}
-	want[2] = webMaxInterval // 96h*2 = 192h > 168h：封顶
+	// 24h → 48h → 96h → 192h 超过 7 天封顶 → 仍封顶
+	want := []time.Duration{48 * time.Hour, 96 * time.Hour, webMaxInterval, webMaxInterval}
 	for i, w := range want {
 		f.due(tp.ID)
 		f.s.step(f.ctx)
