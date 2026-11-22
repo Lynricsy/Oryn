@@ -373,3 +373,4 @@ graph LR
 - 2026-11-22（3.1 已提交后）：新增步骤 3.5，用户接管、agent 请求人工操作、回合结束时先结束录制再放开人工输入，并在 `user` / `ask` 状态下拒绝开始录制。原因：录制器录的是整个显示，会把登录、验证码等人工输入录进视频。4.1 依赖 3.5；3.3、3.4 的卡片要能显示 `stoppedBy=control`。
 - 2026-11-22（1.4 已提交后）：步骤 1.5 加三处。① 窗口管理器就绪闸门：1.4 实测 openbox 刚起来时会丢 MapRequest。② launch 的工作目录改用 1.6 记下的工作区目录，不再写死 `$HOME/workspace`。③ `d.sandbox=false` 时 vscode 加 `--no-sandbox`（1.2 实测）。
 - 2026-11-22（1.6 已提交后）：`setup.run(deferResume=true)` 不再通知桌面工作区就绪，交给随后的 `resume.run`，免得 resume 脚本的产物混进项目快照。补两阶段回归测试。
+- 2026-11-22（4.1 真机验收）：C1-C11 全部通过（orynd、前端、镜像均构建自 `268d564`）。发现 glycin 误判 bwrap 可用导致 pcmanfm 加载图标时 abort，镜像 `ENV GLYCIN_DISABLE_SANDBOX` 绕过（不放进 orbd，免得 process provider 关掉宿主的解码沙箱）。C5 偏离：同名的两个终端窗口在 AT-SPI 里无法区分，验收先关掉多余窗口再按应用取无障碍树。
