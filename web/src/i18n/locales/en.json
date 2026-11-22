@@ -2419,6 +2419,10 @@
 			"file": "File",
 			"resolution": "Resolution"
 		},
+		"computerRecord": {
+			"onComputer": "The video stays on the assistant's computer; open the computer's Files tab to view it",
+			"loadFailed": "Couldn't load the video: the file may have been deleted from the library"
+		},
 		"terminal": {
 			"viewInPanel": "View in terminal panel",
 			"awaitingInput": "Waiting for terminal input",

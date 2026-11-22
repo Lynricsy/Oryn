@@ -57,6 +57,8 @@ export interface ToolRenderHost {
 	orbFileUrl?(path: string): string | null;
 	/** 在当前线程的文件面板里打开 orb 上的某个文件；只读的分享页不提供。 */
 	openOrbFile?(path: string): void;
+	/** 助手文件库里某个文件的内容地址（`computer_record` 卡片内嵌播放存进文件库的录像）；只读的分享页不提供。 */
+	libraryFileUrl?(id: string): string;
 	/**
 	 * 渲染一个 agent 的状态头像（站内读 agent 头像设置，分享页读公开身份）。
 	 * 不给时渲染器只用各 agent 的默认字形，不读任何设置。

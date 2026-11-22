@@ -10,6 +10,7 @@ import { astGrepRenderer } from "./tools/ast-grep";
 import { bashRenderer } from "./tools/bash";
 import { browserRenderer } from "./tools/browser";
 import { checkpointRenderer, rewindRenderer } from "./tools/checkpoint";
+import { computerRecordRenderer } from "./tools/computer-record";
 import { debugRenderer } from "./tools/debug";
 import { desktopRecordRenderer } from "./tools/desktop-record";
 import { editRenderer } from "./tools/edit";
@@ -53,6 +54,7 @@ const RENDERERS: Record<string, ToolRenderer> = {
 	checkpoint: checkpointRenderer,
 	rewind: rewindRenderer,
 	puppeteer: browserRenderer,
+	computer_record: computerRecordRenderer,
 	debug: debugRenderer,
 	desktop_record: desktopRecordRenderer,
 	edit: editRenderer,
@@ -118,6 +120,7 @@ const COMPUTER_OWN_TOOLS: Record<string, true> = {
 	computer_status: true,
 	computer_upload: true,
 	computer_download: true,
+	computer_record: true,
 };
 
 /** 是否是助手在自己的电脑上遥控执行的工具（`computer_<内置工具>`）。 */

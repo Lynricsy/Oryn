@@ -7,6 +7,7 @@ import { memo, type ReactNode, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import type { Orb, ThreadState } from "../../api/client";
+import { assistantFileContentUrl } from "../../api/library-queries";
 import { useAssetUrls } from "../../lib/asset-urls";
 import {
 	type MessageAttachment,
@@ -855,6 +856,8 @@ export function ToolCard({
 							orbFileUrl: (path) => threadOrbFileUrl(ctx.threadId, path),
 							openOrbFile: (path) =>
 								uiStore.getState().openFile(ctx.threadId, path),
+							// computer_record 的录像：存进助手文件库的那份；只读的分享页不给，卡片只显示电脑上的路径
+							libraryFileUrl: (id) => assistantFileContentUrl(id),
 							AgentAvatar,
 						}
 			}

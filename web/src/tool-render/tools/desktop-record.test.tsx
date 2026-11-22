@@ -61,7 +61,7 @@ describe("desktop_record 渲染器", () => {
 			/>,
 		);
 		expect(document.body).toHaveTextContent(tr("start"));
-		expect(screen.queryByTestId("desktop-record-video")).toBeNull();
+		expect(screen.queryByTestId("record-video")).toBeNull();
 	});
 
 	it("stop：标题有时长与大小，内嵌 video 的 src 取 host.orbFileUrl", () => {
@@ -77,10 +77,11 @@ describe("desktop_record 渲染器", () => {
 			/>,
 		);
 		expect(orbFileUrl).toHaveBeenCalledWith(PATH);
-		const video = screen.getByTestId("desktop-record-video");
+		const video = screen.getByTestId("record-video");
 		expect(video.tagName).toBe("VIDEO");
 		expect(video).toHaveAttribute("src", url);
-		expect(video).toHaveAttribute("preload", "metadata");
+		// 取视频会唤醒冻结的 orb：只在用户点播放时才请求
+		expect(video).toHaveAttribute("preload", "none");
 		expect(video).toHaveAttribute("controls");
 		expect(document.body).toHaveTextContent("1:23");
 		expect(document.body).toHaveTextContent("3.0 MB");
@@ -137,7 +138,7 @@ describe("desktop_record 渲染器", () => {
 					host={host}
 				/>,
 			);
-			expect(screen.queryByTestId("desktop-record-video")).toBeNull();
+			expect(screen.queryByTestId("record-video")).toBeNull();
 			expect(document.body).toHaveTextContent(tr("storedInOrb"));
 			expect(document.body).toHaveTextContent("20261122-101500.mp4");
 			unmount();
@@ -155,8 +156,8 @@ describe("desktop_record 渲染器", () => {
 				host={{ orbFileUrl: () => "/v.mp4", openOrbFile }}
 			/>,
 		);
-		fireEvent.error(screen.getByTestId("desktop-record-video"));
-		expect(screen.queryByTestId("desktop-record-video")).toBeNull();
+		fireEvent.error(screen.getByTestId("record-video"));
+		expect(screen.queryByTestId("record-video")).toBeNull();
 		expect(document.body).toHaveTextContent(tr("loadFailed"));
 		fireEvent.click(screen.getByRole("button", { name: tr("openInFiles") }));
 		expect(openOrbFile).toHaveBeenCalledWith(PATH);
@@ -171,7 +172,7 @@ describe("desktop_record 渲染器", () => {
 				host={{ orbFileUrl: () => "/v.mp4" }}
 			/>,
 		);
-		fireEvent.error(screen.getByTestId("desktop-record-video"));
+		fireEvent.error(screen.getByTestId("record-video"));
 		expect(document.body).toHaveTextContent(tr("loadFailed"));
 		expect(
 			screen.queryByRole("button", { name: tr("openInFiles") }),
@@ -197,7 +198,7 @@ describe("desktop_record 渲染器", () => {
 		);
 		expect(document.querySelector(".tv-card--error")).not.toBeNull();
 		expect(document.body).toHaveTextContent("no recording");
-		expect(screen.queryByTestId("desktop-record-video")).toBeNull();
+		expect(screen.queryByTestId("record-video")).toBeNull();
 		unmount();
 		// start 被人工操作挡住（control_user）：同样按出错卡片显示
 		const { unmount: unmountStart } = render(

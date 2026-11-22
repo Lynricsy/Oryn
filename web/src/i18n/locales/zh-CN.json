@@ -2419,6 +2419,10 @@
 			"file": "文件",
 			"resolution": "分辨率"
 		},
+		"computerRecord": {
+			"onComputer": "视频留在助手的电脑上，去电脑的「文件」页签查看",
+			"loadFailed": "视频加载失败：文件可能已从文件库删除"
+		},
 		"terminal": {
 			"viewInPanel": "在终端面板查看",
 			"awaitingInput": "等待终端输入",
