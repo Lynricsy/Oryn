@@ -89,6 +89,13 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 - **右键菜单与「解释」**：转录消息、代码块、链接与图片、工具卡、侧栏线程行、收件箱、终端、编辑器与改动列表都有右键菜单，部分界面也支持菜单键或长按；选中一段文字可让模型解释、翻译、就此提问或跑自定义快捷动作，走旁路提问复用主会话的前缀缓存，结果显示在选区旁的解释卡里。快捷动作在「设置 → 选区快捷动作」里增删排序。
 
 <picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/explain-changes-dark.png">
+  <img alt="左图：选中转录里一段关于 thaw-pending 的回答后点「解释」，贴着选区弹出解释卡，给出旁路回答、追问框与「在旁路提问里打开」；右图：改动面板列出相对 main 的四个改动文件与暂存状态，右侧是 firecracker.go 的语法高亮 diff。" src="docs/assets/explain-changes-light.png" width="100%">
+</picture>
+
+解释卡走旁路提问，不打断正在运行的主回合，可以接着追问或转到「旁路提问」对话框。改动面板按文件列出相对基线分支的改动，可逐个暂存、推送或同步，范围也可以切到未提交的改动或单个提交。
+
+<picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/file-preview-dark.png">
   <img alt="文件面板的浏览器内预览：左为一份 PDF 基准报告（演示数据），右为带代码、表格输出与图表的 Jupyter Notebook。" src="docs/assets/file-preview-light.png" width="100%">
 </picture>
@@ -122,7 +129,21 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 - **冻结与唤醒**：空闲自动冻结，打开线程或访问受管服务时自动唤醒。
 - **开发镜像**：Arch Linux（x64 / ARM64），预装主流语言、语言服务器、文档与媒体工具链和图形桌面；已启用 BlackArch 源，安全工具按需用 pacman 安装。
 
-## 收件箱与 Artifacts
+## Boxes
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/boxes-dark.png">
+  <img alt="左图：Boxes 总览，列出 workbench 与 lab 两台 box 的规格、应用数与最近部署，下方是部署、重启、失败与停机的活动流；右图：workbench 的 box 页，三个应用各有自己的地址与部署提交，右侧是近 21 天的用量柱状图、运行时段与规格。" src="docs/assets/boxes-light.png" width="100%">
+</picture>
+
+线程的环境负责构建，box 负责常驻运行：在线程里 `oryn boxes deploy`，把仓库 `HEAD` 构建成 release 送上 box。
+
+- **多应用**：一台 box 至多 16 个应用，各有 `https://<app>.<portal_domain>/` 地址、密钥与数据目录；默认公开，可设为仅主人可见。
+- **激活与回滚**：新 release 起不来就退回上一个；保留最近三个 release，可在 box 页或 `oryn boxes rollback` 回滚。
+- **运行时段**：按每日开机、关机时刻与时区启停；box 不空闲冻结，掉线后自动拉起。
+- **在线上目录开线程**：线程可以直接开在 box 或某个应用的线上目录，排查线上数据不用另配环境。
+
+## 收件箱、项目与 Artifacts
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/artifacts-inbox-dark.png">
@@ -130,9 +151,15 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 </picture>
 
 - **收件箱分诊台**：按紧急程度列出等你处理、出错、已完成未读与运行中的线程，每行写明在等你什么，选项题在行内直接作答。
+- **Artifacts**：Agent 产出的页面、画布、文档与幻灯片在沙箱里渲染；有版本历史、评论、画布编辑器、演示模式，可导出 Word / PowerPoint / PDF，也可发布成链接。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/project-palette-dark.png">
+  <img alt="左图：项目主页，顶部是描述、仓库与分支，下面是等你回复、工作中、打开的 PR 与近 7 天成本的胶囊，再往下是最近线程、提交到 main 的记录与仓库文件；右图：命令面板输入「快照」，结果分为线程与对话内容两组，关键词高亮。" src="docs/assets/project-palette-light.png" width="100%">
+</picture>
+
 - **命令面板 `Ctrl/⌘ K`**：跳转任何线程、项目与设置，并对全部对话正文全文搜索。
 - **项目主页**：总览列出每个项目的线程数、近 14 天活动曲线与最后活跃时间；项目主页一屏看到描述与仓库、等你回复和工作中的线程、打开的 PR 与失败的 CI、最近的 setup 失败与近 7 天成本；线程子页可按标题、标签与状态筛选，设置按分组放在独立子页。
-- **Artifacts**：Agent 产出的页面、画布、文档与幻灯片在沙箱里渲染；有版本历史、评论、画布编辑器、演示模式，可导出 Word / PowerPoint / PDF，也可发布成链接。
 
 ## 全局助手与 Space
 
@@ -143,8 +170,14 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 
 - **全局助手**：能自己搜索、读网页、生图、调 MCP；能遥控一台属于它的电脑；也能替你开线程、发话，并经内置的 `oryn` 技能操作 Oryn 里几乎所有功能（项目、Space、box、分享、各项设置…）。删除、公开分享与密钥类设置要你点确认卡。
 - **主线**：一条置顶的永久对话，定时与 GitHub 规则的结果汇到这里，助手判断值得说才打扰你。
-- **后台研究**：打开后，助手替你跟进问过的问题与关心的主题（话题从对话里自动挑出，你在「跟进」里改删）、翻看线程找出跨线程的矛盾与卡住、用你勾选的 MCP 只读工具查邮件与日历；有值得说的才在主线里说，每日花费有硬上限。
 - **主人记忆**：助手记得关于你的长期偏好，可查看出处、让事实失效或按来源遗忘。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/research-dark.png">
+  <img alt="左图：主线页头的「跟进」对话框，上方是新建表单，下方三条话题各带种类、来源、下次检查时间与上次发现，行内有暂停开关；右图：设置里的后台研究卡片，总开关、四条管线、研究员模型、每日花费上限与研究偏好。" src="docs/assets/research-light.png" width="100%">
+</picture>
+
+- **后台研究**：打开后，助手替你跟进问过的问题与关心的主题（话题从对话里自动挑出，你在「跟进」里改删）、翻看线程找出跨线程的矛盾与卡住、用你勾选的 MCP 只读工具查邮件与日历；有值得说的才在主线里说，每日花费有硬上限。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/coord-stats-dark.png">
