@@ -193,6 +193,7 @@ func (s *Service) PrepareMCP(ctx context.Context, role string, servers []string)
 	tick := time.NewTicker(mcpReadyPoll)
 	defer tick.Stop()
 	for {
+		// omp 在 MCP 发现结束前可能不应答 get_mcp_servers（服务器握手卡住时），查询本身超时也算没就绪
 		list, err := s.th.MCPServers(ctx, id)
 		if err == nil {
 			missing := mcpNotReady(list, servers)
@@ -200,6 +201,8 @@ func (s *Service) PrepareMCP(ctx context.Context, role string, servers []string)
 				return nil
 			}
 			err = fmt.Errorf("MCP servers not ready: %s", strings.Join(missing, ", "))
+		} else {
+			err = fmt.Errorf("MCP servers not ready: %s (%w)", strings.Join(servers, ", "), err)
 		}
 		select {
 		case <-ctx.Done():
