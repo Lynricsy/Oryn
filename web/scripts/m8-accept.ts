@@ -59,6 +59,8 @@ import { tmpdir } from "node:os";
  *   不再是 `in_use` + 清空目录，Web 侧看的是「只读 Profile · 已被「…」接管」横幅而不是提醒点。
  * 已知前提：Chromium 约 30 秒才把 Cookie 落盘，活体保存（冻结前、接管前）只带走已落盘的部分（计划「假设」已写明）。
  *   B10 / B21 / B22 在活体保存前先轮询 orb 里 Cookies 库直到新值落盘（前置条件，不是断言）。
+ * M25 起 orbd 上报桌面应用（`desktop.apps`），网页用任务栏代替舞台中央的「启动浏览器」按钮（`desktop-start-browser`）：
+ *   B3 与 B17 / B20 的 `xStartBrowser` 改点任务栏的 Chromium 图标（`dock-chromium`，见 DesktopDock）。
  */
 import type { Subprocess } from "bun";
 import {
@@ -1264,10 +1266,11 @@ async function B3() {
 	if ((await getOrb(th.orb)).desktop?.browser === "running")
 		note("浏览器已在运行（不是全新的 T），跳过点按钮");
 	else {
+		// M25 起 orbd 上报 apps，舞台中央的「启动浏览器」按钮（desktop-start-browser）不再出现，改点任务栏的 Chromium 图标
 		await page
-			.locator("[data-testid=desktop-start-browser]")
+			.locator("[data-testid=dock-chromium]")
 			.click({ timeout: 15_000 });
-		note("点了「启动浏览器」");
+		note("点了任务栏的 Chromium 图标");
 	}
 	await waitFor(
 		"desktop.browser == running",
@@ -2557,7 +2560,7 @@ async function xOpenDesktop(x: XEnv, s: Surface) {
 	check(true, `${s.name}：点开 Desktop 标签，canvas 出现且状态 connected`);
 }
 
-/** orb 里的浏览器没在跑时，真实点击舞台上的「启动浏览器」。 */
+/** orb 里的浏览器没在跑时，真实点击任务栏的 Chromium 图标（M25 起取代舞台上的「启动浏览器」，见 B3）。 */
 async function xStartBrowser(x: XEnv, s: Surface, orb: string) {
 	if ((await getOrb(orb)).desktop?.browser === "running") {
 		note("orb 里浏览器已在运行");
@@ -2566,8 +2569,8 @@ async function xStartBrowser(x: XEnv, s: Surface, orb: string) {
 	await xclick(
 		x,
 		s,
-		sel("[data-testid=desktop-start-browser]"),
-		"「启动浏览器」",
+		sel("[data-testid=dock-chromium]"),
+		"任务栏的 Chromium 图标",
 	);
 	await waitFor(
 		"orb 里浏览器 running",
@@ -2575,7 +2578,7 @@ async function xStartBrowser(x: XEnv, s: Surface, orb: string) {
 		120_000,
 		1000,
 	);
-	check(true, `${s.name}：点「启动浏览器」后 orb 里浏览器在运行`);
+	check(true, `${s.name}：点任务栏 Chromium 图标后 orb 里浏览器在运行`);
 }
 
 async function remoteEval<T>(
