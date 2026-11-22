@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/library"
 	"github.com/Lynricsy/Oryn/internal/orbs"
+	"github.com/Lynricsy/Oryn/internal/orbsock"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
 )
@@ -34,6 +36,7 @@ const (
 	ToolComputerStatus   = "computer_status"
 	ToolComputerUpload   = "computer_upload"
 	ToolComputerDownload = "computer_download"
+	ToolComputerRecord   = "computer_record"
 	// CodeComputerStarting 是助手的电脑在等待时长内没有就绪（HTTP 409）。
 	CodeComputerStarting = "computer_starting"
 )
@@ -303,7 +306,7 @@ func (s *Service) computerDefs(ctx context.Context) []apigen.OmpFrame {
 	return out
 }
 
-// computerToolDefs 是始终给全局助手的三个电脑工具（其余 computer_* 来自缓存，见 computerDefs）。
+// computerToolDefs 是始终给全局助手的四个电脑工具（其余 computer_* 来自缓存，见 computerDefs）。
 func computerToolDefs() []apigen.OmpFrame {
 	return []apigen.OmpFrame{
 		tool(ToolComputerStatus, "Start or wake your computer (a persistent Linux machine that is yours alone) and report its state. The first time, the other computer_* tools become available from your next turn.", obj{}),
@@ -318,6 +321,11 @@ func computerToolDefs() []apigen.OmpFrame {
 			"name":   str("File name in the library (default: the file's name)."),
 			"shared": boolean("Share it with every conversation (default: only this conversation)."),
 		}, "path"),
+		tool(ToolComputerRecord, "Record your computer's desktop (its screen, not this conversation) as an MP4 video: call it with start, show what you want on the desktop, then call it with stop. "+
+			"A recording lasts at most 10 minutes and stops by itself after that. stop saves the video into the owner's library (at most 100 MiB; a larger video stays on your computer). "+
+			"Your computer sleeps when idle, which pauses the recording too: keep operating the desktop while recording and call stop as soon as you are done.", obj{
+			"action": enum("start begins a recording; stop ends it and saves the video.", recordStart, recordStop),
+		}, "action"),
 	}
 }
 
@@ -342,6 +350,8 @@ func (s *Service) computerTool(ctx context.Context, c toolCtx) threads.HostToolR
 		} else {
 			v, err = s.toolComputerDownload(ctx, c)
 		}
+	case ToolComputerRecord:
+		return s.toolComputerRecord(ctx, c)
 	default:
 		return s.computerProxy(ctx, c)
 	}
@@ -533,27 +543,172 @@ func (s *Service) toolComputerDownload(ctx context.Context, c toolCtx) (any, err
 	if a.Shared {
 		scope = library.ScopeShared
 	}
-	tooLarge := errf(CodeTooLarge, "the file exceeds %d MiB", s.transferMax()>>20)
-	res, err := s.orbDoAt(ctx, s.machines, orbID, nil, orbRequest{method: http.MethodGet, path: "/fs/file", query: url.Values{"path": {p}}})
+	f, err := s.saveComputerFile(ctx, c.ThreadID, convOrb, orbID, p, name, scope)
 	if err != nil {
 		return nil, err
 	}
+	return toFileItem(f), nil
+}
+
+// saveComputerFile 把电脑 orbID 上的文件 p 以 name 存进文件库（Source 为助手，上限 transferMax，超过回 too_large），并同步到
+// 对话 threadID 所在的协调宿主 convOrb。computer_download 与 computer_record 共用。
+func (s *Service) saveComputerFile(ctx context.Context, threadID, convOrb, orbID, p, name, scope string) (library.File, error) {
+	tooLarge := errf(CodeTooLarge, "the file exceeds %d MiB", s.transferMax()>>20)
+	res, err := s.orbDoAt(ctx, s.machines, orbID, nil, orbRequest{method: http.MethodGet, path: "/fs/file", query: url.Values{"path": {p}}})
+	if err != nil {
+		return library.File{}, err
+	}
 	defer res.Body.Close()
 	if res.ContentLength > s.transferMax() {
-		return nil, tooLarge
+		return library.File{}, tooLarge
 	}
 	f, err := s.lib.Put(ctx, library.PutParams{
-		Name: name, ThreadID: c.ThreadID, Scope: scope, Source: library.SourceAssistant,
+		Name: name, ThreadID: threadID, Scope: scope, Source: library.SourceAssistant,
 		R: &capReader{r: res.Body, max: s.transferMax()},
 	})
 	if errors.Is(err, errTransferTooLarge) || errors.Is(err, library.ErrTooLarge) {
-		return nil, tooLarge
+		return library.File{}, tooLarge
 	}
 	if err != nil {
-		return nil, libErr(err)
+		return library.File{}, libErr(err)
 	}
 	s.syncLibrary(ctx, convOrb)
-	return toFileItem(f), nil
+	return f, nil
+}
+
+// computer_record 的动作。
+const (
+	recordStart = "start"
+	recordStop  = "stop"
+)
+
+// computerRecording 是 computer_record stop 的结果详情：LibraryFileID 只在视频存进了文件库时有。
+type computerRecording struct {
+	Recording     orbsock.DesktopRecording `json:"recording"`
+	LibraryFileID string                   `json:"libraryFileId,omitempty"`
+}
+
+// toolComputerRecord 执行 computer_record：经电脑上 orbd 的本机路由开始或结束录屏；结束后视频不超过 transferMax 时存进
+// 文件库（本对话可见），否则留在电脑上。录制中电脑空闲冻结会连 ffmpeg 一起暂停，工具描述已提醒及时 stop，不另行保活。
+func (s *Service) toolComputerRecord(ctx context.Context, c toolCtx) threads.HostToolResult {
+	var a struct {
+		Action string `json:"action"`
+	}
+	if err := decodeArgs(c.Args, &a); err != nil {
+		return failResult(err)
+	}
+	var (
+		r   threads.HostToolResult
+		err error
+	)
+	switch strings.TrimSpace(a.Action) {
+	case recordStart:
+		r, err = s.recordStart(ctx)
+	case recordStop:
+		r, err = s.recordStop(ctx, c)
+	default:
+		err = errf(CodeInvalid, "action must be start or stop")
+	}
+	if err != nil {
+		return failResult(recordErr(err))
+	}
+	return r
+}
+
+// recordStart 开始录制，详情为 {path}（录制完成后视频所在的电脑路径）。
+func (s *Service) recordStart(ctx context.Context) (threads.HostToolResult, error) {
+	orbID, err := s.useComputer(ctx)
+	if err != nil {
+		return threads.HostToolResult{}, err
+	}
+	res, err := s.orbDoAt(ctx, s.machines, orbID, nil, orbRequest{method: http.MethodPost, path: "/desktop/record/start"})
+	if err != nil {
+		return threads.HostToolResult{}, err
+	}
+	defer res.Body.Close()
+	var v struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(io.LimitReader(res.Body, orbJSONMax)).Decode(&v); err != nil {
+		return threads.HostToolResult{}, errf("orbd_error", "your computer answered an invalid response: %s", err.Error())
+	}
+	text := fmt.Sprintf("Recording your computer's desktop to %s. Keep operating the desktop (your computer sleeps when idle, which pauses the recording) "+
+		"and call computer_record with action stop as soon as you are done; the recording stops by itself after 10 minutes.", v.Path)
+	return threads.HostToolResult{Text: text, Details: v}, nil
+}
+
+// recordStop 结束录制并按大小决定是否存进文件库；存库失败时视频仍留在电脑上，结果照常给出（录制已被 orbd 取走，不能丢）。
+func (s *Service) recordStop(ctx context.Context, c toolCtx) (threads.HostToolResult, error) {
+	if err := s.libraryReady(); err != nil {
+		return threads.HostToolResult{}, err
+	}
+	convOrb, err := s.conversationOrb(ctx, c.ThreadID)
+	if err != nil {
+		return threads.HostToolResult{}, err
+	}
+	orbID, err := s.useComputer(ctx)
+	if err != nil {
+		return threads.HostToolResult{}, err
+	}
+	res, err := s.orbDoAt(ctx, s.machines, orbID, nil, orbRequest{method: http.MethodPost, path: "/desktop/record/stop"})
+	if err != nil {
+		return threads.HostToolResult{}, err
+	}
+	defer res.Body.Close()
+	var d computerRecording
+	if err := json.NewDecoder(io.LimitReader(res.Body, orbJSONMax)).Decode(&d.Recording); err != nil {
+		return threads.HostToolResult{}, errf("orbd_error", "your computer answered an invalid response: %s", err.Error())
+	}
+	rec := d.Recording
+	var b strings.Builder
+	fmt.Fprintf(&b, "Recorded %s of your computer's desktop (%dx%d, %.1f MiB).", recordDuration(rec.DurationMs), rec.Width, rec.Height, float64(rec.Bytes)/(1<<20))
+	switch rec.StoppedBy {
+	case orbsock.RecordStoppedByLimit:
+		b.WriteString(" It reached the 10-minute limit and stopped by itself.")
+	case orbsock.RecordStoppedByError:
+		b.WriteString(" It ended early because the recorder exited (for example the screen resolution changed).")
+	}
+	if rec.Truncated {
+		b.WriteString(" The recorder did not finish cleanly, so the video may be incomplete.")
+	}
+	if rec.Bytes > s.transferMax() {
+		fmt.Fprintf(&b, " The video is larger than %d MiB, so it was not saved into the library; it stays on your computer at %s.", s.transferMax()>>20, rec.Path)
+		return threads.HostToolResult{Text: b.String(), Details: d}, nil
+	}
+	f, err := s.saveComputerFile(ctx, c.ThreadID, convOrb, orbID, rec.Path, path.Base(rec.Path), library.ScopeConversation)
+	if err != nil {
+		if ctx.Err() != nil {
+			return threads.HostToolResult{}, err
+		}
+		fmt.Fprintf(&b, " Saving it into the library failed (%s); the video stays on your computer at %s (computer_download can retry).", err.Error(), rec.Path)
+		return threads.HostToolResult{Text: b.String(), Details: d}, nil
+	}
+	d.LibraryFileID = f.ID
+	fmt.Fprintf(&b, " Saved it into the library as %s (%s); the owner can play it in this conversation.", f.Name, f.ID)
+	return threads.HostToolResult{Text: b.String(), Details: d}, nil
+}
+
+// recordDuration 把毫秒格式化成 m:ss。
+func recordDuration(ms int64) string {
+	sec := (ms + 500) / 1000
+	return fmt.Sprintf("%d:%02d", sec/60, sec%60)
+}
+
+// recordErr 把 orbd 录屏路由的 409 错误码换成说给助手听的消息（码不变）；其余原样返回。
+func recordErr(err error) error {
+	var e *Error
+	if !errors.As(err, &e) {
+		return err
+	}
+	switch e.Code {
+	case "already_recording":
+		return errf(e.Code, "a recording is already running on your computer; call computer_record with action stop first")
+	case "not_recording":
+		return errf(e.Code, "no recording is running on your computer")
+	case "not_ready":
+		return errf(e.Code, "your computer's desktop is not ready yet; try again in a moment")
+	}
+	return err
 }
 
 // ---- REST ----
