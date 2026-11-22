@@ -75,3 +75,20 @@ func ParseTitleCard(title string) (TitleCard, bool) {
 	}
 	return TitleCard{Icon: m[1], Code: m[2], Text: m[3]}, true
 }
+
+// IsNerd 报告 icon 是否以 Nerd Font 私有区码点开头（BMP 私有区或补充私有区 A/B）。
+// 这类字形只有带 Symbols Nerd Font 的界面能画，系统通知、Telegram 一类会显示成方框。
+func IsNerd(icon string) bool {
+	r, _ := utf8.DecodeRuneInString(icon)
+	return (r >= 0xE000 && r <= 0xF8FF) || (r >= 0xF0000 && r <= 0xFFFFD)
+}
+
+// WithoutNerdIcon 去掉卡片标题开头的 Nerd 字形图标，保留代码与标题（`DOCKER: Speed up builds`）；
+// 其它标题（含 emoji 图标的卡片）原样返回。给画不了 Nerd 字形的地方（系统通知、第三方通知渠道）用。
+func WithoutNerdIcon(title string) string {
+	c, ok := ParseTitleCard(title)
+	if !ok || !IsNerd(c.Icon) {
+		return title
+	}
+	return c.Code + ": " + c.Text
+}

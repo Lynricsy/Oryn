@@ -46,3 +46,10 @@ export function isNerdGlyph(icon: string): boolean {
 	const cp = icon.codePointAt(0) ?? 0;
 	return (cp >= 0xe000 && cp <= 0xf8ff) || (cp >= 0xf0000 && cp <= 0xffffd);
 }
+
+/** 去掉卡片标题开头的 Nerd 字形图标，保留代码与标题；其它标题原样。给系统通知这类没有符号字体的地方用。 */
+export function withoutNerdIcon(raw: string): string {
+	const card = parseTitleCard(raw);
+	if (!card.icon || !isNerdGlyph(card.icon)) return raw;
+	return `${card.code}: ${card.text}`;
+}

@@ -44,3 +44,18 @@ func TestParseTitleCard(t *testing.T) {
 		}
 	}
 }
+
+func TestWithoutNerdIcon(t *testing.T) {
+	cases := map[string]string{
+		"\U000F0668 WS: Rework reconnect": "WS: Rework reconnect",    // 补充私有区（nf-md-*）
+		"\uf308 DOCKER: Speed up builds":  "DOCKER: Speed up builds", // BMP 私有区（nf-dev-*）
+		"🧪 FLAKY: 修复不稳定的重连测试":             "🧪 FLAKY: 修复不稳定的重连测试",     // emoji 卡片原样
+		"\uf308 普通标题":                     "\uf308 普通标题",             // 不是卡片：不动
+		"普通标题":                            "普通标题",
+	}
+	for in, want := range cases {
+		if got := WithoutNerdIcon(in); got != want {
+			t.Errorf("WithoutNerdIcon(%q) = %q；应为 %q", in, got, want)
+		}
+	}
+}

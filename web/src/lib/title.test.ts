@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { isNerdGlyph, parseTitleCard, withTitleCard } from "./title";
+import {
+	isNerdGlyph,
+	parseTitleCard,
+	withoutNerdIcon,
+	withTitleCard,
+} from "./title";
 
 const NF = String.fromCodePoint(0xf0668);
 
@@ -47,5 +52,13 @@ describe("isNerdGlyph", () => {
 		expect(isNerdGlyph(NF)).toBe(true);
 		expect(isNerdGlyph("\ue0a0")).toBe(true);
 		expect(isNerdGlyph("🧪")).toBe(false);
+	});
+});
+
+describe("withoutNerdIcon", () => {
+	it("只去掉 Nerd 图标，保留代码；emoji 卡片与普通标题原样", () => {
+		expect(withoutNerdIcon(`${NF} WS: 重做重连`)).toBe("WS: 重做重连");
+		expect(withoutNerdIcon("🧪 FLAKY: 修复测试")).toBe("🧪 FLAKY: 修复测试");
+		expect(withoutNerdIcon("普通标题")).toBe("普通标题");
 	});
 });

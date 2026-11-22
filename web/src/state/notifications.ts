@@ -17,6 +17,7 @@ import { createStore } from "zustand/vanilla";
 import { api, type Schemas, unwrap } from "../api/client";
 import i18n from "../i18n";
 import { host } from "../lib/host";
+import { withoutNerdIcon } from "../lib/title";
 
 export type AppNotification = Schemas["Notification"];
 
@@ -88,8 +89,17 @@ const arrivedDuringLoad = new Set<AppNotification[]>();
 /** 每次已读（本地或其它设备）加一；`load()` 据此判断应答是否可能已过期。 */
 let readGeneration = 0;
 
-function showSystemNotification(n: AppNotification) {
+/** 系统通知（浏览器、桌面壳）的文字：系统字体画不了 Nerd 字形，标题卡片的 Nerd 图标去掉（服务端推送同样处理）。 */
+function systemNotificationText(n: AppNotification): {
+	title: string;
+	body: string;
+} {
 	const { title, body } = notificationText(n, i18n.t);
+	return { title: withoutNerdIcon(title), body };
+}
+
+function showSystemNotification(n: AppNotification) {
+	const { title, body } = systemNotificationText(n);
 	const sys = new Notification(title, {
 		body,
 		tag: notificationTag(n),
@@ -181,7 +191,7 @@ export const notificationsStore = createStore<NotificationsState>(
 				if (host.kind === "tauri") {
 					host.notify({
 						id: n.id,
-						...notificationText(n, i18n.t),
+						...systemNotificationText(n),
 						path: n.url,
 					});
 					return;

@@ -84,6 +84,17 @@ func TestPushPayloadActions(t *testing.T) {
 	assert.JSONEq(t, `{"v":1,"kind":"withdraw","id":"ntf_1","tag":"oryn-456789abcdef"}`, string(b))
 }
 
+// 系统通知与第三方渠道没有 Nerd 字体：卡片的 Nerd 字形图标去掉，emoji 卡片原样。
+func TestDeliveredTitleDropsNerdIcon(t *testing.T) {
+	var p struct{ Title string }
+	b, err := pushPayload(Message{NotificationID: "ntf_1", Kind: KindDone, ThreadID: "T-1", Title: "\U000F0668 WS: Rework reconnect"})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(b, &p))
+	assert.Equal(t, "WS: Rework reconnect", p.Title)
+	assert.Equal(t, "WS: Rework reconnect", displayTitle(Message{Title: "\U000F0668 WS: Rework reconnect"}))
+	assert.Equal(t, "🧪 FLAKY: Fix tests", displayTitle(Message{Title: "🧪 FLAKY: Fix tests"}))
+}
+
 func TestApplePush(t *testing.T) {
 	assert.True(t, applePush("https://web.push.apple.com/QF0abc"))
 	assert.True(t, applePush("https://api.push.apple.com/x"))

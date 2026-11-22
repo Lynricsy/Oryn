@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/glyph"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/version"
 )
@@ -125,10 +126,10 @@ var (
 	kindTextKeys = map[string]string{KindDone: "done", KindInput: "input", KindError: "error", KindBudget: "budget"}
 )
 
-// displayTitle 返回消息标题：线程标题为空时用渠道语言的「未命名线程」。
+// displayTitle 返回消息标题：线程标题为空时用渠道语言的「未命名线程」；卡片的 Nerd 字形图标去掉（渠道没有该字体）。
 func displayTitle(m Message) string {
 	if m.Title != "" {
-		return m.Title
+		return glyph.WithoutNerdIcon(m.Title)
 	}
 	if m.Kind == KindTest {
 		return text(m.Locale, "testTitle")
