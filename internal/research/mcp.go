@@ -49,7 +49,8 @@ func mcpPrompt(since time.Time, servers map[string][]string, reported []string, 
 	return b.String()
 }
 
-// dueMCP 取到期的 MCP 运行：MCP 检查开着、至少一个服务器有研究可用工具、距上次不少于 mcpEvery（第一次从 24 小时前看起）。
+// dueMCP 取到期的 MCP 运行：MCP 检查开着、至少一个服务器有研究可用工具、距上次不少于 mcpEvery（第一次从 24 小时前看起，
+// 起点当即落库：第一次运行失败后重试仍从同一起点看起，不随重试时刻后移）。
 func (s *Service) dueMCP(ctx context.Context, set settingsRow) (*job, error) {
 	if set.Mcp == 0 {
 		return nil, nil
@@ -59,8 +60,13 @@ func (s *Service) dueMCP(ctx context.Context, set settingsRow) (*job, error) {
 		return nil, nil
 	}
 	now := s.now()
-	since := now.Add(-mcpSince)
-	if set.McpCursor != nil {
+	var since time.Time
+	if set.McpCursor == nil {
+		since = now.Add(-mcpSince)
+		if err := s.st.Q.SetResearchMcpCursor(ctx, db.SetResearchMcpCursorParams{Cursor: new(since.UnixMilli()), UpdatedAt: now.UnixMilli()}); err != nil {
+			return nil, err
+		}
+	} else {
 		since = time.UnixMilli(*set.McpCursor)
 		if now.Sub(since) < mcpEvery {
 			return nil, nil
