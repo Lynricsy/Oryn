@@ -780,11 +780,14 @@ function simpleTranscript(
 		.assistant([text(a)], { usage: [24_000, 820, 80_000, 0.07] }).out;
 }
 
-/** 线程补丁：在夹具线程上覆盖（`title` 用标题卡格式 `<图标> 名字: 文字`）。 */
+/**
+ * 线程补丁：在夹具线程上覆盖（`title` 用标题卡格式 `<图标> 名字: 文字`）。
+ * 工作线程的 agent 以 `ORYN_NERD_GLYPHS=1` 启动，标题图标是 Nerd Font 字形（注释是字形名），不是 emoji。
+ */
 function demoThreads(now: number): Record<string, Partial<Thread>> {
 	return {
 		[T.fc]: {
-			title: "⚡ SNAP: Firecracker 快照恢复与 vsock 令牌隔离",
+			title: "\u{F006F} SNAP: Firecracker 快照恢复与 vsock 令牌隔离", // md-backup_restore
 			state: "working",
 			activity: "跑 1 → 8 台 microVM 并发唤醒竞态",
 			model: { provider: OPUS.provider, id: OPUS.id },
@@ -811,14 +814,14 @@ function demoThreads(now: number): Record<string, Partial<Thread>> {
 			],
 		},
 		[T.stress]: {
-			title: "🔄 STRESS: 压测 8 台 microVM 并发唤醒",
+			title: "\u{F04C5} STRESS: 压测 8 台 microVM 并发唤醒", // md-speedometer
 			state: "working",
 			activity: "跑 go test ./internal/providerrt/ -race",
 			parentThreadId: T.fc,
 			lastMessageAt: now - MIN,
 		},
 		[T.reflink]: {
-			title: "📦 COPY: 验证 reflink 稀疏根盘复制耗时",
+			title: "\u{F018F} COPY: 验证 reflink 稀疏根盘复制耗时", // md-content_copy
 			state: "idle",
 			unread: true,
 			pulls: [],
@@ -827,21 +830,21 @@ function demoThreads(now: number): Record<string, Partial<Thread>> {
 			lastMessageAt: now - 8 * MIN,
 		},
 		[T.dind]: {
-			title: "🐋 DIND: Sysbox DinD 内层容器镜像缓存与快照",
+			title: "\u{F0868} DIND: Sysbox DinD 内层容器镜像缓存与快照", // md-docker
 			state: "awaiting_input",
 			pinned: true,
 			unread: true,
 			lastMessageAt: now - 3 * MIN,
 		},
 		[T.opus]: {
-			title: "🧬 OPUS: 适配 Opus 5.5 1M 上下文分段计费",
+			title: "\u{F09D1} OPUS: 适配 Opus 5.5 1M 上下文分段计费", // md-brain
 			state: "idle",
 			error: undefined,
 			color: undefined,
 			lastMessageAt: now - 28 * MIN,
 		},
 		[T.models]: {
-			title: "🔑 KEYS: 梳理 models.yml 密钥抽取规则",
+			title: "\u{F030B} KEYS: 梳理 models.yml 密钥抽取规则", // md-key_variant
 			lastMessageAt: now - 4 * DAY,
 			updatedAt: now - 4 * DAY,
 		},
@@ -851,19 +854,19 @@ function demoThreads(now: number): Record<string, Partial<Thread>> {
 			lastMessageAt: now - 2 * MIN,
 		},
 		[T.proxy]: {
-			title: "🔒 PROXY: 审查出站代理 git smart-HTTP 仓库路径边界",
+			title: "\u{F099D} PROXY: 审查出站代理 git smart-HTTP 仓库路径边界", // md-shield_lock
 			state: "awaiting_input",
 			unread: true,
 			lastMessageAt: now - 2 * MIN,
 		},
 		[T.x28]: {
-			title: "🧪 X28: X28–X35 真机隔离回归",
+			title: "\u{F0668} X28: X28–X35 真机隔离回归", // md-test_tube
 			state: "working",
 			activity: "在 8 台 microVM 上跑 X31 vsock 越权用例",
 			lastMessageAt: now - MIN,
 		},
 		[T.push]: {
-			title: "📱 PUSH: 验证 Android UnifiedPush 离线补拉与锁屏脱敏",
+			title: "\u{F08D3} PUSH: 验证 Android UnifiedPush 离线补拉与锁屏脱敏", // md-cellphone_message
 			state: "idle",
 			unread: true,
 			lastMessageAt: now - 25 * MIN,
@@ -874,12 +877,12 @@ function demoThreads(now: number): Record<string, Partial<Thread>> {
 		},
 		[T.main]: { lastMessageAt: now - 9 * MIN },
 		[T.upstream]: {
-			title: "🌅 SYNC: 每天清晨同步上游 oh-my-pi 并跑测试",
+			title: "\u{F062D} SYNC: 每天清晨同步上游 oh-my-pi 并跑测试", // md-source_merge
 			lastMessageAt: now - 45 * MIN,
 			schedule: { enabled: true, nextRunAt: now + 15 * HOUR },
 		},
 		[T.tauri]: {
-			title: "🖥️ TAURI: 本机 worktree 联调 Tauri 2 macOS 壳",
+			title: "\u{F0379} TAURI: 本机 worktree 联调 Tauri 2 macOS 壳", // md-monitor
 			lastMessageAt: now - 16 * MIN,
 		},
 	};
@@ -913,7 +916,7 @@ function demoNotifications(now: number): Schemas["Notification"][] {
 			id: "ntf_01JDREADME00000000000000001",
 			kind: "input",
 			threadId: T.dind,
-			title: "🐋 DIND: Sysbox DinD 内层容器镜像缓存与快照",
+			title: "\u{F0868} DIND: Sysbox DinD 内层容器镜像缓存与快照", // md-docker
 			body: "允许执行 `docker system prune --filter label=oryn.cache=stale`？\n清掉 3 个过期的内层镜像层（约 4.2 GB），给项目快照腾出空间。",
 			url: `/t/${T.dind}`,
 			createdAt: now - 3 * MIN,
@@ -932,7 +935,7 @@ function demoNotifications(now: number): Schemas["Notification"][] {
 			id: "ntf_01JDREADME00000000000000002",
 			kind: "input",
 			threadId: T.proxy,
-			title: "🔒 PROXY: 审查出站代理 git smart-HTTP 仓库路径边界",
+			title: "\u{F099D} PROXY: 审查出站代理 git smart-HTTP 仓库路径边界", // md-shield_lock
 			body: "仓库路径白名单要不要先把 `.git` 后缀与大小写变体归一化再比对？",
 			url: `/t/${T.proxy}`,
 			createdAt: now - 2 * MIN,
@@ -951,7 +954,7 @@ function demoNotifications(now: number): Schemas["Notification"][] {
 			id: "ntf_01JDREADME00000000000000003",
 			kind: "done",
 			threadId: T.reflink,
-			title: "📦 COPY: 验证 reflink 稀疏根盘复制耗时",
+			title: "\u{F018F} COPY: 验证 reflink 稀疏根盘复制耗时", // md-content_copy
 			body: "20 GiB 稀疏根盘 reflink 复制平均 `0.41s`（btrfs）/ `0.38s`（xfs），回退稀疏 `cp` 为 `6.8s`；数据已写进 `docs/deploy.md`。",
 			url: `/t/${T.reflink}`,
 			createdAt: now - 8 * MIN,
@@ -961,7 +964,7 @@ function demoNotifications(now: number): Schemas["Notification"][] {
 			id: "ntf_01JDREADME00000000000000004",
 			kind: "done",
 			threadId: T.push,
-			title: "📱 PUSH: 验证 Android UnifiedPush 离线补拉与锁屏脱敏",
+			title: "\u{F08D3} PUSH: 验证 Android UnifiedPush 离线补拉与锁屏脱敏", // md-cellphone_message
 			body: "离线 6 小时后重连补拉 14 条推送无丢失；锁屏通知按「隐藏详情」脱敏，回归用例已合入。",
 			url: `/t/${T.push}`,
 			createdAt: now - 25 * MIN,
@@ -971,7 +974,7 @@ function demoNotifications(now: number): Schemas["Notification"][] {
 			id: "ntf_01JDREADME00000000000000005",
 			kind: "done",
 			threadId: T.opus,
-			title: "🧬 OPUS: 适配 Opus 5.5 1M 上下文分段计费",
+			title: "\u{F09D1} OPUS: 适配 Opus 5.5 1M 上下文分段计费", // md-brain
 			body: "超过 200k 的部分按长上下文单价计费，统计页与预算告警已同步。",
 			url: `/t/${T.opus}`,
 			createdAt: now - 28 * MIN,
