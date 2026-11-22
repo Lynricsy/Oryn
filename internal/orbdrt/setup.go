@@ -132,6 +132,10 @@ func (r *Runtime) runSetupLocked(ctx context.Context, p apigen.LinkCtlSetupRunPa
 			r.releaseSetup()
 		}
 	}()
+	// M25：工作区已就绪（成功、失败都算；resume 交给后台时 checkout 也早已完成），桌面据此执行 resume 脚本。
+	if r.desk != nil {
+		defer func() { r.desk.workspaceReady(r.currentWorkdir()) }()
+	}
 	reqStart := time.Now()
 	phase, phaseStart := apigen.SetupPhaseResume, reqStart
 	if full {

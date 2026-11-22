@@ -94,6 +94,12 @@ type desktop struct {
 	changed      chan struct{}  // 任何状态变化时关闭并替换
 	ctl          deskControl    // 控制状态（deskcontrol.go）
 
+	// 桌面 resume 脚本（M25，deskresume.go）。
+	displayGen uint64 // runDisplayOnce 每次走到 openbox 起来加 1
+	resumedGen uint64 // 最近一次已执行 resume 脚本的显示代数
+	wsReady    bool   // 本进程里 runSetupLocked 返回过（工作区已就绪）
+	wsDir      string // workspaceReady 记下的工作目录
+
 	ctlT DeskControlTimings
 
 	// emitMu 让 OnDesktopState 回调按状态修改的顺序发生；last 是上一次交出的快照（JSON），相同则不重复交出。
@@ -419,7 +425,11 @@ func (d *desktop) runDisplayOnce(ctx context.Context) {
 	}
 	defer killWait(opid, odone)
 	d.setBackground(ctx, env)
+	d.mu.Lock()
+	d.displayGen++
+	d.mu.Unlock()
 	d.setDisplayReady(true)
+	d.maybeResume()
 wait:
 	for {
 		select {
