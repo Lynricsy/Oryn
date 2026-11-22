@@ -93,6 +93,24 @@ func TestSetupLFSPull(t *testing.T) {
 	assert.Contains(t, setupLog(t, rt), "git lfs pull: 1 LFS file(s) checked out")
 }
 
+// TestSetupLFSPullWithoutFilter：git-lfs 在 PATH 上但从没 git lfs install 过（没有 filter 配置）时，
+// git lfs pull 本身只下载不检出且退出 0；setup 要先给仓库装上 filter，文件才是真内容。
+func TestSetupLFSPullWithoutFilter(t *testing.T) {
+	requireGitLFS(t)
+	cp := newFakeCP(t)
+	rt := startRuntime(t, cp, nil)
+	url, _ := lfsUpstream(t, true)
+
+	res, _ := setupCall(t, cp, apigen.LinkCtlSetupRunParams{
+		Repo: &apigen.LinkCtlSetupRepo{URL: url},
+		Env:  map[string]string{"GIT_CONFIG_NOSYSTEM": "1"},
+	})
+	assert.True(t, res.Ok, deref(res.SetupError))
+	b, err := os.ReadFile(filepath.Join(rt.home, "workspace", "repo", "big.bin"))
+	require.NoError(t, err)
+	assert.Equal(t, "hello lfs\n", string(b))
+}
+
 // TestSetupLFSMissingObjects：上游缺对象时 clone 仍成功（不 smudge），文件留作指针，setup 记为失败。
 func TestSetupLFSMissingObjects(t *testing.T) {
 	requireGitLFS(t)

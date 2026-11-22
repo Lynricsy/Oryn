@@ -2577,7 +2577,7 @@ orynd 在 `<data_dir>/repos/<projectId>.git` 为每个有 `https://` 仓库地�
 
 ### orb setup 与 `setupError`
 
-- orbd 的 clone 与 `repo.update` 带 `GIT_LFS_SKIP_SMUDGE=1`。检出之后（每次完整 setup）`git ls-files -z -- ':(attr:filter=lfs)'` 非空时：`git lfs version` 失败 → setup 日志记 warning，返回 `git-lfs is not installed; <n> LFS file(s) are pointer files`；否则 `git lfs pull`，失败记 warning 并返回 `git lfs pull: <err>`，成功记 `git lfs pull: <n> LFS file(s) checked out`。
+- orbd 的 clone 与 `repo.update` 带 `GIT_LFS_SKIP_SMUDGE=1`。检出之后（每次完整 setup）`git ls-files -z -- ':(attr:filter=lfs)'` 非空时：`git lfs version` 失败 → setup 日志记 warning，返回 `git-lfs is not installed; <n> LFS file(s) are pointer files`；否则先看 `git config --get filter.lfs.process`，没有 filter 配置时 `git lfs install --local`（失败返回 `git lfs install --local: <err>`；没有 filter 时 `git lfs pull` 只下载不检出却退出 0），再 `git lfs pull`，失败记 warning 并返回 `git lfs pull: <err>`，成功记 `git lfs pull: <n> LFS file(s) checked out`。
 - `LinkCtlSetupRunResult.setupError` 的含义扩为：setup 脚本失败，或 Git LFS 对象没能取下。LFS 错误并入时 `ok = false`；已有脚本错误时以 `; ` 接在后面。
 
 ### 托管仓库（阶段 ③）

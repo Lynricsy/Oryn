@@ -493,6 +493,22 @@ func (r *Runtime) lfsPull(ctx context.Context, lg *setupLogger, workdir string, 
 		lg.system(apigen.Git, fmt.Sprintf("warning: the repository has %d Git LFS file(s) but git-lfs is not installed; they stay pointer files", n))
 		return fmt.Errorf("git-lfs is not installed; %d LFS file(s) are pointer files", n)
 	}
+	// 没有 lfs filter 配置时（宿主或镜像没跑过 git lfs install），git lfs pull 只下载不检出、照样退出 0，
+	// 文件留作指针却像成功了一样：先在本仓库装上 filter（同时让 agent 之后的检出也走 smudge）。
+	fctx, fcancel := context.WithTimeout(ctx, 30*time.Second)
+	probe := r.bins.command(fctx, "git", "-C", workdir, "config", "--get", "filter.lfs.process")
+	probe.Env = env
+	hasFilter := probe.Run() == nil
+	fcancel()
+	if !hasFilter {
+		ictx, icancel := context.WithTimeout(ctx, 30*time.Second)
+		err = lg.run(ictx, apigen.Git, workdir, env, "git", "-C", workdir, "lfs", "install", "--local")
+		icancel()
+		if err != nil {
+			lg.system(apigen.Git, fmt.Sprintf("warning: could not configure Git LFS for the repository; %d LFS file(s) stay pointer files", n))
+			return fmt.Errorf("git lfs install --local: %v", err)
+		}
+	}
 	pctx, pcancel := context.WithTimeout(ctx, setupTimeout)
 	err = lg.run(pctx, apigen.Git, workdir, env, "git", "-C", workdir, "lfs", "pull")
 	pcancel()
