@@ -7,11 +7,11 @@
 
 几家都没有「模型一直开着、自己想到就说」的机制。主动消息由三部分拼成：
 
-1. **唤醒源**：让 agent 在没有用户消息时跑一轮。共有五类：用户或 agent 建的定时、agent 自己定的下次唤醒、外部事件（实际多为轮询）、固定间隔的「主动检查」心跳，以及与主 agent 分开跑的后台研究管线。
-2. **说不说的闸门**：跑完一轮后由模型判断「值不值得打扰」，不值得就静默结束。闸门的输入里有用户写下的偏好（想听什么、别提什么、什么时段、什么形式）。
-3. **投递策略**：说出口的内容落在主线里；只有用户不在前台时才推送；普通事项要排队、限频、等清醒时段，紧急事项立即发。低优先级的内容不进主线，改放到安静的旁路界面（Feed、Home 卡片）。
+1. **唤醒源**：让 agent 在没有用户消息时跑一轮。共有五类：用户或 agent 建的定时、agent 自己定的下次唤醒（dots 官方）、外部事件（Muse 快照明说事件型自动化也是轮询；其余几家没有披露）、固定间隔的「主动检查」心跳（OpenClaw 官方；Muse 快照里只有一个 `is_heartbeat` 字段），以及与主 agent 分开跑的后台研究（dots 官方）。
+2. **说不说的闸门**：跑完一轮后由模型判断「值不值得打扰」，不值得就静默结束（Muse、OpenClaw 官方；dots 官方让用户在任务里写明哪些变化值得通知；Hark 未披露）。偏好写成独立文件（想听什么、别提什么、什么时段、什么形式），只见于 Muse 快照。
+3. **投递策略**：几家都把说出口的内容落在主线里（Hark 另有 Home）。「只有用户不在前台才推送」「普通事项等清醒时段、最多每天一次，紧急事项立即发」都出自 **Muse 快照**，不是几家统一的做法。低优先级内容放到安静的旁路界面，见于 Muse（Feed，快照写明不推送、不进主线）和 Hark（Home 卡片，官方没说是否推送）。
 
-后台研究的工具一律是只读的，不能直接给用户发消息，只能把发现交给主 agent，由主 agent 决定说不说。
+后台研究的工具在技术上只读、不能直接发消息、只能把发现交给主 agent，这是 **dots 官方**披露的设计；其余几家没有公开同等的约束。
 
 ## 1. ChatGPT dots（OpenAI，2026-09）
 
@@ -67,10 +67,10 @@
 
 - 「All handled in a single, persistent chat thread」，另有 Projects 用于专题。界面分三块：Home、Chat、Projects。
 - 主动性被列为三大组件之一：电脑（Handoff）、记忆、**proactive thinking**。
-- **Action Buttons**：「Notifications give you problems. Action Buttons give you solutions」。卡片放在 **Home**，不进聊天；根据邮件内容和对话记忆生成，点一下就能执行（Pay、Cancel）。
+- **Action Buttons**：「Notifications give you problems. Action Buttons give you solutions」。卡片放在 **Home**；根据邮件内容和对话记忆生成，点一下就能执行（Pay、Cancel）。官方没说这些卡片是否同时推送或进聊天。
 - **节奏控制**：买完电影票后，它会主动提出订停车位，并在临近时再把入场二维码发过来；「Hark won't pile up all of this at once in your chat; it will pace these steps out so they arrive at just the right time」。
 - 另有 Scheduled Tasks（用户口头创建）和 Specialties（自动记住重复流程）。
-- 追踪外卖等状态有几分钟延迟，所以第三方推送可能先到。由此推断是**轮询**，不是实时监听。
+- 官方说追踪外卖等状态会有几分钟延迟，所以第三方推送可能先到。这句话分不出延迟来自轮询、上游 webhook 还是内部排队，不能据此推断实现方式。
 
 **[媒体]**（<https://techcrunch.com/2026/10/06/hark-releases-an-ai-personal-assistant-with-a-focus-on-privacy/>）：演示中它主动问起待批报销、待回邮件、和记者的会面，还提醒订机票。
 
