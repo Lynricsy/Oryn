@@ -165,12 +165,15 @@ function useUnseenChanges(
 	return !viewing && hasUnseenChanges(sig);
 }
 
-/** 带文字的标签内容实际占的宽度：最后一个标签的右边缘（相对 tablist，它是 offsetParent）。 */
+/**
+ * 带文字的标签内容实际占的宽度：最后一个标签的右边缘（相对 tablist，它是 offsetParent）加上右内边距，
+ * 与同样含内边距的 clientWidth 对齐。
+ */
 function tabsWidth(list: HTMLElement): number {
 	let right = 0;
 	for (const tab of list.querySelectorAll<HTMLElement>('[role="tab"]'))
 		right = Math.max(right, tab.offsetLeft + tab.offsetWidth);
-	return right;
+	return right + (Number.parseFloat(getComputedStyle(list).paddingRight) || 0);
 }
 
 /**
@@ -427,17 +430,20 @@ export function ThreadTabStrip({
 	}, [shown, tabs, compact, i18n.language]);
 
 	return (
+		// overflow-x-auto 让 tablist 在四个方向都裁剪到内边距盒：底板的 ring / 投影画在自身边框盒之外，
+		// 贴着裁剪边时上下两条边与首尾标签的外侧圆角会被切成直边。`p-1` 给它们留出位置，`-m-1` 抵消占位，
+		// `scroll-px-1` 让滚动到首尾标签时同样留出这段距离
 		<div
 			ref={listRef}
 			role="tablist"
 			aria-label={t("rightPanel.label")}
 			data-testid="thread-tabs"
-			className="focus-inset relative flex min-w-0 flex-1 items-center gap-px overflow-x-auto [scrollbar-width:none]"
+			className="focus-inset relative -m-1 flex min-w-0 flex-1 scroll-px-1 items-center gap-px overflow-x-auto p-1 [scrollbar-width:none]"
 		>
 			<span
 				ref={plateRef}
 				aria-hidden
-				className="absolute top-0 left-0 h-7 rounded-full bg-hover opacity-0 shadow-xs ring-1 ring-border transition-[left,width] duration-200 ease-out"
+				className="absolute top-1 left-0 h-7 rounded-full bg-hover opacity-0 shadow-xs ring-1 ring-border transition-[left,width] duration-200 ease-out"
 			/>
 			{tabs.map((id) => (
 				<button
