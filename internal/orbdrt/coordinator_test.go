@@ -435,7 +435,7 @@ func TestOrdinaryOrbRejectsCoordinatorProfile(t *testing.T) {
 	assert.Equal(t, link.CodeInvalidParams, ctlCode(err), "%v", err)
 }
 
-// v1 4.1：orbd.sock 的七个转发方法按 ctl 原样往返，控制面错误码原样映射。
+// v1 4.1 / M26：orbd.sock 的八个转发方法按 ctl 原样往返，控制面错误码原样映射。
 func TestSockThreadMethodsForward(t *testing.T) {
 	cp := newFakeCP(t)
 	type call struct {
@@ -444,7 +444,7 @@ func TestSockThreadMethodsForward(t *testing.T) {
 	}
 	calls := make(chan call, 16)
 	cp.extra = func(method string, params json.RawMessage) (any, bool, error) {
-		if !strings.HasPrefix(method, "thread.") && !strings.HasPrefix(method, "schedule.") {
+		if !strings.HasPrefix(method, "thread.") && !strings.HasPrefix(method, "schedule.") && !strings.HasPrefix(method, "follow.") {
 			return nil, false, nil
 		}
 		var m map[string]any
@@ -470,6 +470,7 @@ func TestSockThreadMethodsForward(t *testing.T) {
 		{orbsock.MethodScheduleSet, "schedule.put"},
 		{orbsock.MethodScheduleDelete, "schedule.delete"},
 		{orbsock.MethodScheduleEnable, "schedule.enable"},
+		{orbsock.MethodFollowAdd, "follow.add"},
 	} {
 		raw, err := orbsock.Call(ctx, sock, tc.sock, map[string]any{"threadId": "T-a", "target": "T-b", "prompt": "p", "message": "m"}, nil)
 		require.NoError(t, err, tc.sock)
@@ -483,6 +484,17 @@ func TestSockThreadMethodsForward(t *testing.T) {
 	require.ErrorAs(t, err, &se)
 	assert.Equal(t, "forbidden", se.Code)
 	<-calls
+
+	// follow.add 的参数按 LinkCtlFollowAddParams 原样转给控制面。
+	kind := apigen.ResearchTopicInterest
+	_, err = orbsock.Call(ctx, sock, orbsock.MethodFollowAdd, apigen.LinkCtlFollowAddParams{
+		ThreadID: "T-a", Title: "上游修复", Question: "foo#123 是否已发布", Quote: "跟进这个上游修复", Kind: &kind,
+	}, nil)
+	require.NoError(t, err)
+	c := <-calls
+	assert.Equal(t, "follow.add", c.method)
+	assert.Equal(t, map[string]any{"threadId": "T-a", "title": "上游修复", "question": "foo#123 是否已发布",
+		"quote": "跟进这个上游修复", "kind": "interest"}, c.params)
 }
 
 // v1 4.1：thread.wait 在第三次轮询 settled 后返回；到时回 timeout；调用方断开即停止轮询。

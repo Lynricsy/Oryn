@@ -375,7 +375,7 @@ func TestRunnerArtifactSocket(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	for _, m := range []string{orbsock.MethodThreadNew, orbsock.MethodScheduleSet, orbsock.MethodSetupRerun, orbsock.MethodSshCall, orbsock.MethodGithubCall, orbsock.MethodBoxCall} {
+	for _, m := range []string{orbsock.MethodThreadNew, orbsock.MethodScheduleSet, orbsock.MethodSetupRerun, orbsock.MethodSshCall, orbsock.MethodGithubCall, orbsock.MethodBoxCall, orbsock.MethodFollowAdd} {
 		_, err := orbsock.Call(ctx, sock, m, map[string]any{"prompt": "x"}, nil)
 		var se *orbsock.Error
 		require.ErrorAs(t, err, &se, m)

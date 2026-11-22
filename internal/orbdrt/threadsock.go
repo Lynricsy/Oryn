@@ -34,6 +34,7 @@ var sockToCtl = map[string]struct {
 	orbsock.MethodScheduleSet:    {apigen.MethodSchedulePut, decodeAs[apigen.LinkCtlSchedulePutParams]},
 	orbsock.MethodScheduleDelete: {apigen.MethodScheduleDelete, decodeAs[apigen.LinkCtlScheduleParams]},
 	orbsock.MethodScheduleEnable: {apigen.MethodScheduleEnable, decodeAs[apigen.LinkCtlScheduleEnableParams]},
+	orbsock.MethodFollowAdd:      {apigen.MethodFollowAdd, decodeAs[apigen.LinkCtlFollowAddParams]},
 }
 
 func decodeAs[T any](raw json.RawMessage) (any, error) {
@@ -44,7 +45,7 @@ func decodeAs[T any](raw json.RawMessage) (any, error) {
 	return v, nil
 }
 
-// handleThreadSock 处理线程与定时的八个方法；ok=false 表示不是这类方法。
+// handleThreadSock 处理线程、定时与跟进登记的九个方法；ok=false 表示不是这类方法。
 func (r *Runtime) handleThreadSock(ctx context.Context, method string, params json.RawMessage) (any, bool, error) {
 	if method == orbsock.MethodThreadWait {
 		var p orbsock.ThreadWaitParams

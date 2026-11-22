@@ -24,6 +24,8 @@ var (
 	fileRules = []rule{{120, 10 * time.Minute}}
 	// shareRules 覆盖对外分享类工具（键 `<对话>|share`）。
 	shareRules = []rule{{10, 10 * time.Minute}}
+	// followAddRules 覆盖 orb 内的 follow.add（键 `<线程>|follow_add`）。
+	followAddRules = []rule{{5, 10 * time.Minute}, {20, 24 * time.Hour}}
 )
 
 // limiter 是内存中的滑动窗口计数（控制面重启后清零）。

@@ -11,9 +11,11 @@ import (
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/link"
 	"github.com/Lynricsy/Oryn/internal/orbs"
+	"github.com/Lynricsy/Oryn/internal/research"
 	"github.com/Lynricsy/Oryn/internal/schedule"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
+	"github.com/Lynricsy/Oryn/internal/transcript"
 )
 
 // orb 内 agent 的限额（亲属规则之外的失控保护）。
@@ -24,7 +26,7 @@ const (
 	agentThreadWindow = time.Hour
 )
 
-// registerOrbMethods 注册 orb 内 `oryn thread …` / `oryn schedule …` / `oryn library put` 经 orbd.sock 转来的八个 ctl 请求。
+// registerOrbMethods 注册 orb 内 `oryn thread …` / `oryn schedule …` / `oryn library put` / `oryn follow add` 经 orbd.sock 转来的九个 ctl 请求。
 func (s *Service) registerOrbMethods(handle func(method string, fn orbs.RequestFunc)) {
 	handle(string(apigen.MethodThreadCreate), s.onThreadCreate)
 	handle(string(apigen.MethodThreadSend), s.onThreadSend)
@@ -34,6 +36,7 @@ func (s *Service) registerOrbMethods(handle func(method string, fn orbs.RequestF
 	handle(string(apigen.MethodScheduleDelete), s.onScheduleDelete)
 	handle(string(apigen.MethodScheduleEnable), s.onScheduleEnable)
 	handle(string(apigen.MethodLibraryPut), s.onLibraryPut)
+	handle(string(apigen.MethodFollowAdd), s.onFollowAdd)
 }
 
 func ctlErr(code, msg string) *link.CtlError { return &link.CtlError{Code: code, Message: msg} }
@@ -363,4 +366,71 @@ func (s *Service) onScheduleEnable(ctx context.Context, orbID string, params jso
 		return nil, asCtlErr(err)
 	}
 	return apigen.LinkCtlScheduleResult{Schedule: &sc}, nil
+}
+
+// onFollowAdd 是 orb 内 `oryn follow add`（M26）：主人在本线程里要求跟进某件事时登记一个公网跟进话题（origin=thread）。
+// quote 必须逐字出现在本线程活动分支上某条主人亲手输入的消息里，否则 forbidden。
+func (s *Service) onFollowAdd(ctx context.Context, orbID string, params json.RawMessage) (any, error) {
+	var p apigen.LinkCtlFollowAddParams
+	if err := decodeParams(params, &p); err != nil {
+		return nil, err
+	}
+	c, err := s.caller(ctx, orbID, p.ThreadID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		s.audit(ctx, string(apigen.ActorKindAgent), c.ID, false, string(apigen.ActionFollowTopic), c.ID, "", p.Title, err)
+	}()
+	if !s.lim.allow(c.ID+"|follow_add", s.cfg.Now(), followAddRules) {
+		err = ctlErr(CodeRateLimited, "follow-ups are limited to 5 per 10 minutes and 20 per 24 hours per thread")
+		return nil, err
+	}
+	quoted, qerr := s.ownerSaid(ctx, c, p.Quote)
+	if qerr != nil {
+		err = asCtlErr(qerr)
+		return nil, err
+	}
+	if !quoted {
+		err = ctlErr(CodeForbidden, "the owner did not say this in this thread; pass the owner's own words with --quote")
+		return nil, err
+	}
+	if s.topics == nil {
+		err = ctlErr(CodeCoordinatorUnavailable, "background research is not available")
+		return nil, err
+	}
+	in := research.TopicInput{Title: p.Title, Question: p.Question, Origin: string(apigen.ResearchOriginThread), SourceThreadID: c.ID}
+	if p.Kind != nil {
+		in.Kind = string(*p.Kind)
+	}
+	topic, terr := s.topics.CreateTopic(ctx, in)
+	if terr != nil {
+		var re *research.Error
+		if errors.As(terr, &re) {
+			err = ctlErr(re.Code, re.Message)
+		} else {
+			err = asCtlErr(terr)
+		}
+		return nil, err
+	}
+	return apigen.LinkCtlFollowAddResult{TopicID: topic.ID}, nil
+}
+
+// ownerSaid 判断 quote（去首尾空白后非空）是否逐字出现在线程活动分支上某条主人亲手输入的消息里（自动化消息不算）。
+func (s *Service) ownerSaid(ctx context.Context, t db.Thread, quote string) (bool, error) {
+	quote = strings.TrimSpace(quote)
+	if quote == "" {
+		return false, nil
+	}
+	branch, err := s.activeBranch(ctx, t)
+	if err != nil {
+		return false, err
+	}
+	for _, e := range branch {
+		m, ok := transcript.ParseMessage(e)
+		if ok && m.Role == "user" && !transcript.IsAutomatedUserText(m.Text) && strings.Contains(m.Text, quote) {
+			return true, nil
+		}
+	}
+	return false, nil
 }

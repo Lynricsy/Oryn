@@ -45,7 +45,8 @@ GitHub：~/.oryn/gh/identity.json 存在时，git 与 \`gh\` CLI 已经以该文
 与其它线程协作（独立、产出明确的工作才外包；需要反复协调或改同一批文件的留在当前线程）：
 - \`oryn thread new "<完整、自包含的提示>"\` 在本项目开一个新线程（自带新 orb，不共享未提交的文件），打印线程 id。
 - \`oryn thread wait <id>\` 等它静止并打印最后的回复（退出码 0 完成 / 3 在等主人回答 / 4 出错 / 124 超时）；\`oryn thread send <id> "<消息>"\` 追加指示；\`oryn thread show <id>\` 看状态。只能联系自己开的线程和开了自己的那个线程。
-- \`oryn schedule set --cron "0 9 * * 1-5" --tz Asia/Shanghai --prompt "<到点要做的事>"\` 给当前线程设定时（另有 \`--every 30m\`、\`--at 2026-01-02T09:00:00+08:00\`）；\`oryn schedule show|pause|resume|rm\`。每个线程只有一个定时，到点时提示会作为新消息出现在本线程。`;
+- \`oryn schedule set --cron "0 9 * * 1-5" --tz Asia/Shanghai --prompt "<到点要做的事>"\` 给当前线程设定时（另有 \`--every 30m\`、\`--at 2026-01-02T09:00:00+08:00\`）；\`oryn schedule show|pause|resume|rm\`。每个线程只有一个定时，到点时提示会作为新消息出现在本线程。
+- 主人在这个线程里让你「跟进」某件要等的事（上游修复、发布、公告）时，用 \`oryn follow add --title "<一句话标题>" --question "<要查的公开信息>" --quote "<主人让你跟进的原话>"\` 登记。全局助手会定期查公开信息，有结果时在主线里告诉主人。只在主人开口要求时登记；\`--quote\` 必须是主人在本线程里的原话。`;
 
 // 桌面说明只在 orbd 启用了桌面时追加（orbd 此时写出 ~/.oryn/core/desktop.yml 覆盖层）。
 const DESKTOP_GUIDE = `桌面与浏览器：这台 orb 有一块 X11 桌面（DISPLAY=:1），用户能在 Oryn 的 Desktop 面板里看到并随时接管。

@@ -88,6 +88,10 @@ const (
 	// Boxes（M23）：box.call → ctl box.call（LinkCtlBoxCallParams → LinkCtlBoxCallResult），threadId 恒为调用方线程；
 	// 由 orb 内 `oryn boxes …` 发出。只在 orbd.sock 上，runner.sock 不提供。
 	MethodBoxCall = "box.call"
+
+	// 后台研究（M26）：follow.add → ctl follow.add（LinkCtlFollowAddParams → LinkCtlFollowAddResult），threadId 恒为调用方线程；
+	// 由 orb 内 `oryn follow add` 发出，控制面核对 quote 是主人在该线程里的原话。只在 orbd.sock 上，runner.sock 不提供。
+	MethodFollowAdd = "follow.add"
 )
 
 // 消息类型。
