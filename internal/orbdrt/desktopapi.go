@@ -48,6 +48,8 @@ func (r *Runtime) deskRoutes(mux *http.ServeMux) {
 		d.releaseControl(false)
 		writeJSON(w, http.StatusOK, d.snapshot())
 	})
+	route("POST /desktop/record/start", (*desktop).handleRecordStart)
+	route("POST /desktop/record/stop", (*desktop).handleRecordStop)
 }
 
 func (d *desktop) handleBrowserStart(w http.ResponseWriter, req *http.Request) {
@@ -295,6 +297,18 @@ func (r *Runtime) handleDesktopSock(ctx context.Context, method string) (any, er
 		return nil, orbsock.Errorf(orbsock.CodeNotSupported, "the desktop is not enabled on this orb")
 	}
 	switch method {
+	case orbsock.MethodDesktopRecordStart:
+		res, err := d.recorder().start(ctx)
+		if err != nil {
+			return nil, recordSockErr(err)
+		}
+		return res, nil
+	case orbsock.MethodDesktopRecordStop:
+		res, err := d.recorder().stop(ctx)
+		if err != nil {
+			return nil, recordSockErr(err)
+		}
+		return res, nil
 	case orbsock.MethodDesktopBrowserStart:
 		sctx, cancel := context.WithTimeout(ctx, browserStartWait)
 		err := d.startBrowser(sctx)

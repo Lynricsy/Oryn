@@ -1,4 +1,4 @@
-// fakedesk 是 orbd 桌面栈（M8、M25）的测试替身：按 argv[0] 的文件名扮演四个程序。
+// fakedesk 是 orbd 桌面栈（M8、M25）的测试替身：按 argv[0] 的文件名扮演五个程序。
 //
 //   - Xvnc：解析 -rfbunixpath，在该 unix socket 上做字节回显；收到 SIGTERM 退出。
 //   - openbox：挂起直到被杀（SIGTERM 正常退出）。
@@ -10,8 +10,9 @@
 //     和真 Chromium 一样，Cookie 只在正常关闭时落盘：收到 SIGTERM 时只写 `Default/exit-term` 就退出，内存里的
 //     Cookie 丢失。启动时从 `Default/fake-cookies.json` 读回 Cookie 表。
 //   - dbus-daemon：解析 --address=unix:path=，在该 unix socket 上 listen（接受连接后立即关闭）；收到 SIGTERM 退出。
+//   - ffmpeg：往最后一个参数指定的路径写一个以 `ftyp` 开头的小文件，读到 stdin 的 `q`（或 EOF）后退出。
 //
-// 用法：构建后以 Xvnc / openbox / chromium / dbus-daemon 这些名字的符号链接放进 PATH。
+// 用法：构建后以 Xvnc / openbox / chromium / dbus-daemon / ffmpeg 这些名字的符号链接放进 PATH。
 package main
 
 import (
@@ -44,8 +45,10 @@ func main() {
 		err = runChromium(os.Args[1:])
 	case "dbus-daemon":
 		err = runDbus(os.Args[1:])
+	case "ffmpeg":
+		err = runFFmpeg(os.Args[1:])
 	default:
-		err = fmt.Errorf("fakedesk: unknown role %q (link me as Xvnc, openbox, chromium or dbus-daemon)", name)
+		err = fmt.Errorf("fakedesk: unknown role %q (link me as Xvnc, openbox, chromium, dbus-daemon or ffmpeg)", name)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -124,6 +127,22 @@ func runDbus(args []string) error {
 	}()
 	<-sig
 	return ln.Close()
+}
+
+// runFFmpeg 把一个以 `ftyp` 开头的小文件写到最后一个参数，然后等 stdin 上的 `q`（或 EOF）。
+func runFFmpeg(args []string) error {
+	if len(args) == 0 {
+		return errors.New("fakedesk ffmpeg: output path is required")
+	}
+	if err := os.WriteFile(args[len(args)-1], []byte("ftypisom fake recording\n"), 0o644); err != nil {
+		return err
+	}
+	buf := make([]byte, 1)
+	for {
+		if _, err := os.Stdin.Read(buf); err != nil || buf[0] == 'q' {
+			return nil
+		}
+	}
 }
 
 func runChromium(args []string) error {

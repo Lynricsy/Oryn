@@ -152,7 +152,8 @@ func (r *Runtime) handleSock(ctx context.Context, method string, params json.Raw
 			return nil, orbsock.Errorf(orbsock.CodeInvalidParams, "nothing to set: give setup and/or resume")
 		}
 		return r.projectScripts(ctx, apigen.MethodProjectScriptsSet, p)
-	case orbsock.MethodDesktopStatus, orbsock.MethodDesktopBrowserStart, orbsock.MethodDesktopBrowserStop:
+	case orbsock.MethodDesktopStatus, orbsock.MethodDesktopBrowserStart, orbsock.MethodDesktopBrowserStop,
+		orbsock.MethodDesktopRecordStart, orbsock.MethodDesktopRecordStop:
 		return r.handleDesktopSock(ctx, method)
 	case orbsock.MethodLibraryPut:
 		return r.libraryPut(ctx, params)

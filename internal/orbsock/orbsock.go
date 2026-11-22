@@ -44,6 +44,12 @@ const (
 	MethodDesktopBrowserStart = "desktop.browser.start"
 	MethodDesktopBrowserStop  = "desktop.browser.stop"
 
+	// 录屏（M25）：desktop.record.start 开始录制桌面（DesktopRecordStartResult）；desktop.record.stop 停止并返回
+	// DesktopRecording。每台 orb 同时最多一个录制：已在录回 already_recording，显示未就绪回 not_ready；
+	// 没在录、也没有因上限或出错停下且未取走的结果时，stop 回 not_recording。
+	MethodDesktopRecordStart = "desktop.record.start"
+	MethodDesktopRecordStop  = "desktop.record.stop"
+
 	// 线程与定时（M9）：参数与结果同名 ctl 方法的模型（apigen.LinkCtl*），threadId 恒为调用方线程（ORYN_THREAD_ID）。
 	// thread.new → ctl thread.create（LinkCtlThreadCreateParams → LinkCtlThreadInfo）；thread.send → thread.send
 	// （LinkCtlThreadSendParams → {}）；thread.get → thread.get（LinkCtlThreadGetParams → LinkCtlThreadInfo）；
@@ -112,6 +118,9 @@ const (
 	CodeNameConflict    = "name_conflict"     // 动态服务与 services.yaml 里的服务同名
 
 	CodeNotSupported = "not_supported" // 本 orb 没有启用桌面
+
+	CodeAlreadyRecording = "already_recording" // 桌面已在录制
+	CodeNotRecording     = "not_recording"     // 桌面没有在录制，也没有待取走的录制结果
 
 	CodeTimeout = "timeout" // thread.wait 到时目标仍未静止
 )
@@ -209,6 +218,31 @@ type DesktopResult struct {
 	Display     string                           `json:"display"`
 	CDPURL      string                           `json:"cdpUrl"`
 	ProfileName string                           `json:"profileName,omitempty"`
+}
+
+// DesktopRecordStartResult 是 desktop.record.start（以及本机路由 POST /desktop/record/start）的结果：
+// Path 是录制文件在 orb 内的绝对路径（`$HOME/recordings/<UTC yyyyMMdd-HHmmss>.mp4`）。
+type DesktopRecordStartResult struct {
+	Path string `json:"path"`
+}
+
+// 录制停止的原因（DesktopRecording.StoppedBy）。
+const (
+	RecordStoppedByAgent = "agent" // 调用方 stop
+	RecordStoppedByLimit = "limit" // 到达时长上限（10 分钟）自动停止
+	RecordStoppedByError = "error" // ffmpeg 自己退出，或显示失效
+)
+
+// DesktopRecording 是一次结束的录屏（desktop.record.stop 与 POST /desktop/record/stop 的结果）。
+// Width / Height 是开始时的根窗口尺寸；Truncated 表示 ffmpeg 没在等待时限内收尾、被强行结束，文件可能不完整。
+type DesktopRecording struct {
+	Path       string `json:"path"`
+	Bytes      int64  `json:"bytes"`
+	DurationMs int64  `json:"durationMs"`
+	Width      int    `json:"width"`
+	Height     int    `json:"height"`
+	Truncated  bool   `json:"truncated"`
+	StoppedBy  string `json:"stoppedBy"`
 }
 
 // ThreadWaitParams 是 thread.wait 的参数：TimeoutSeconds 缺省 1800，上限 86400。
