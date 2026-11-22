@@ -489,7 +489,8 @@ func New(cfg Config) (_ *Runtime, err error) {
 	r.localSrv = &http.Server{Handler: r.localHandler(), ReadHeaderTimeout: 30 * time.Second}
 	r.svc = newServiceSupervisor(r)
 	if !cfg.Coordinator && rs == nil {
-		// 协调宿主没有桌面，也不写 orb 扩展与技能（协调档的 omp 以 --no-extensions --no-skills 启动）；
+		// 协调宿主没有桌面，也不写 orb 扩展与技能（协调档的 omp 以 --no-extensions 启动；全局助手只加载控制面经
+		// omp-home 下发的内置技能 oryn，Space 协调者 --no-skills）；
 		// runner 的扩展与技能见上，也没有桌面、工具执行器与嵌套 Docker。
 		r.box = newBoxManager(r)
 		r.desk = newDesktop(r)

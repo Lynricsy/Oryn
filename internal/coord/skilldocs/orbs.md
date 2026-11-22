@@ -1,0 +1,3 @@
+- `listOrbs` shows every orb with its state; a thread's orb is `orbId` in `getThread`.
+- `pauseOrb` takes `body.mode`: "freeze" keeps memory, "stop" shuts the machine down; `resumeOrb` wakes it.
+- Provider and runner tokens are created by the owner in Settings; you can list and delete them.

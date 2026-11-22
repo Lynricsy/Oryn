@@ -1,0 +1,3 @@
+- `updateProject` only changes the fields you pass.
+- A project's agent configuration (AGENTS.md, rules, skills, config.yml) is edited with the *ProjectAgentConfigFile operations: `path` is relative, for example `skills/review/SKILL.md`; `body` is the file text.
+- Secret values are write-only; `listProjectSecrets` never returns them.

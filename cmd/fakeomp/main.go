@@ -9,6 +9,7 @@
 //	--no-tools 等     M9 协调档的开关（--no-tools --no-skills --no-extensions --no-rules --no-context-files --no-lsp，接受并忽略）；
 //	                  M19 工具执行器的 --no-session 同样接受并忽略（oryn_tool_* 命令见 toolexec.go）
 //	--tools <list>    M13 协调档的内置工具白名单（接受并忽略）
+//	--skills <list>   全局助手的技能白名单（接受并忽略）
 //	--system-prompt   系统提示词（不含换行的值按文件路径读，同 omp 的 resolvePromptInput）；首行 `#dump <HOME 内路径>`
 //	                  时把参数、环境、uid、cwd、解析后的提示词写成 JSON 到该路径
 //

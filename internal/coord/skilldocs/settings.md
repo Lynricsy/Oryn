@@ -1,0 +1,2 @@
+- Global agent configuration files apply to every agent, so writing them needs confirmation; `path` is relative to the configuration root and `body` is the file text.
+- Secret values are write-only.

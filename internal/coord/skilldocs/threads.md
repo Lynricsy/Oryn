@@ -1,0 +1,5 @@
+- `list_threads`, `read_thread`, `create_thread`, `send_message` and `archive_thread` are top-level tools; this file covers the rest.
+- `updateThread` changes title, labels, color, pin, snooze, unread mark, Space (`spaceId`), `archived` and `shipped`; only the fields you pass change.
+- `forkThread` needs `body.env`: "copy" clones the environment, "share" reuses the orb. Runner and box threads only accept "share". Forks do not report back to you.
+- `abort_thread` stops the current turn; `set_thread_model` switches the model from the next turn.
+- Assistant and Space conversations cannot be targets.

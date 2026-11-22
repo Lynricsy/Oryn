@@ -1,0 +1,3 @@
+- `putAssistantSettings` replaces the whole object: read `getAssistantSettings` first and send every field.
+- Your computer wakes with the top-level `computer_status` tool; `resetAssistantComputer` deletes it with all its files.
+- Library files are saved with `save_file` and shared with `share_file`.

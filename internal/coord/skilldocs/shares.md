@@ -1,0 +1,3 @@
+- Whatever is created here is visible to people outside Oryn, so creating always needs the owner's confirmation.
+- `createThreadShare` scans the transcript for secrets first. On `secrets_found`, tell the owner; pass `acknowledgeFindings: true` only if the owner says so.
+- A Portal preview is addressed by the thread's orb id and the port.

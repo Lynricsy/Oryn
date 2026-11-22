@@ -112,18 +112,28 @@ func TestCoordinatorSetup(t *testing.T) {
 		assert.Equal(t, link.CodeInvalidParams, ctlCode(err), "%s: %v", name, err)
 	}
 	models := "providers: {}\n"
+	skill := "---\nname: oryn\n---\n"
 	var res apigen.LinkCtlSetupRunResult
 	require.NoError(t, cp.call(t, "setup.run", apigen.LinkCtlSetupRunParams{
-		OmpHome: []apigen.LinkCtlOmpHomeFile{{Path: "models.yml", Mode: 0o600, ContentB64: base64.StdEncoding.EncodeToString([]byte(models))}},
+		OmpHome: []apigen.LinkCtlOmpHomeFile{
+			{Path: "models.yml", Mode: 0o600, ContentB64: base64.StdEncoding.EncodeToString([]byte(models))},
+			// 全局助手的内置技能经 omp-home 下发
+			{Path: "skills/oryn/SKILL.md", Mode: 0o644, ContentB64: base64.StdEncoding.EncodeToString([]byte(skill))},
+		},
 	}, &res))
 	assert.True(t, res.Ok)
 	assert.False(t, res.SetupRan)
 	b, err := os.ReadFile(filepath.Join(rt.home, ".omp", "agent", "models.yml"))
 	require.NoError(t, err)
 	assert.Equal(t, models, string(b))
-	// 第二次不再带它：按清单删除。
+	b, err = os.ReadFile(filepath.Join(rt.home, ".omp", "agent", "skills", "oryn", "SKILL.md"))
+	require.NoError(t, err)
+	assert.Equal(t, skill, string(b))
+	// 第二次不再带它们：按清单删除。
 	require.NoError(t, cp.call(t, "resume.run", apigen.LinkCtlSetupRunParams{}, &res))
 	_, err = os.Stat(filepath.Join(rt.home, ".omp", "agent", "models.yml"))
+	assert.ErrorIs(t, err, os.ErrNotExist)
+	_, err = os.Stat(filepath.Join(rt.home, ".omp", "agent", "skills", "oryn", "SKILL.md"))
 	assert.ErrorIs(t, err, os.ErrNotExist)
 
 	cp.mu.Lock()
@@ -217,6 +227,7 @@ func TestCoordinatorAgentStart(t *testing.T) {
 	assert.Equal(t, coordinatorOverlay(false), string(ov))
 	assert.Contains(t, string(ov), `autoUpdate: "off"`)
 	assert.Contains(t, string(ov), "generate_image: { enabled: false }")
+	assert.NotContains(t, string(ov), "skills:", "Space 协调者不加载技能")
 
 	// web（全局助手，M19 第一层）：多 web_search / generate_image、PI_PROXY 与 ORYN_MCP_BASE，覆盖层另写一份且生图打开
 	const thread2 = "T-01932f6e-8d1a-7c3b-9f2e-0123456789ac"
@@ -233,7 +244,7 @@ func TestCoordinatorAgentStart(t *testing.T) {
 	webOverlay := filepath.Join(rt.home, ".oryn", "coordinator", "overlay-web.yml")
 	assert.Equal(t, []string{
 		"--mode", "rpc-ui", "--cwd", cwd, "--session-dir", filepath.Join(rt.home, ".oryn", "threads", thread2),
-		"--no-tools", "--tools", "read,write,web_search,generate_image", "--no-skills", "--no-extensions", "--no-rules", "--no-context-files", "--no-lsp",
+		"--no-tools", "--tools", "read,write,web_search,generate_image", "--skills", "oryn", "--no-extensions", "--no-rules", "--no-context-files", "--no-lsp",
 		"--config", webOverlay, "--system-prompt", filepath.Join(rt.home, ".oryn", "coordinator", "prompts", thread2+".md"),
 	}, rec.Args)
 	egress := "http://" + rt.egressLn.Addr().String()
@@ -247,6 +258,7 @@ func TestCoordinatorAgentStart(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, coordinatorOverlay(true), string(ov))
 	assert.Contains(t, string(ov), "generate_image: { enabled: true }")
+	assert.Contains(t, string(ov), "skills: { enabled: true")
 	ov, err = os.ReadFile(overlay)
 	require.NoError(t, err)
 	assert.Contains(t, string(ov), "generate_image: { enabled: false }", "Space 的覆盖层不被覆盖")

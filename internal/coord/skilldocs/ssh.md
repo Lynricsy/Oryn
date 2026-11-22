@@ -1,0 +1,1 @@
+- Hosts and keys are managed here. To work on a host (run commands, read or write files), start a thread: threads have the SSH tools and their approvals.

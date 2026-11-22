@@ -82,8 +82,9 @@ func parseOptions(args []string, getenv func(string) string, stderr io.Writer) (
 	for _, name := range []string{"no-tools", "no-skills", "no-extensions", "no-rules", "no-context-files", "no-lsp", "no-session"} {
 		fs.Bool(name, false, "忽略")
 	}
-	// M13 协调档的内置工具白名单（`--tools read,write`）：接受并忽略。
+	// M13 协调档的内置工具白名单（`--tools read,write`）与全局助手的技能白名单（`--skills oryn`）：接受并忽略。
 	fs.String("tools", "", "内置工具白名单（忽略）")
+	fs.String("skills", "", "技能白名单（忽略）")
 	fs.StringVar(&o.systemPrompt, "system-prompt", "", "系统提示词（首行 #dump <路径> 时写出参数与环境）")
 	o.args = append([]string(nil), args...)
 	version := fs.Bool("version", false, "打印版本")

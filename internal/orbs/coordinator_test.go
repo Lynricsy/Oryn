@@ -166,6 +166,22 @@ func TestPlanCoordinator(t *testing.T) {
 	require.NotNil(t, plan.Egress.Web, "没有助手设置时联网缺省开")
 	assert.Empty(t, plan.Egress.MCP, "mcp.json 里没有服务器时不下发 mcp.json、没有 MCP 路由")
 
+	// 内置技能：设了 CoordinatorSkill 时并入 omp-home（主人 omp-home 里的 skills/ 仍不下发）
+	d.CoordinatorSkill = func() map[string][]byte {
+		return map[string][]byte{"skills/oryn/SKILL.md": []byte("---\nname: oryn\n---\n"), "skills/oryn/domains/x.md": []byte("x")}
+	}
+	withSkill, err := d.Plan(ctx, db.Orb{ID: "orb-c", Coordinator: true, ProjectID: &prj})
+	require.NoError(t, err)
+	got := map[string]apigen.LinkCtlOmpHomeFile{}
+	for _, f := range withSkill.Params.OmpHome {
+		got[f.Path] = f
+	}
+	assert.Len(t, got, 4)
+	require.Contains(t, got, "skills/oryn/SKILL.md")
+	assert.Equal(t, 0o644, got["skills/oryn/SKILL.md"].Mode)
+	assert.NotContains(t, got, "skills/a/SKILL.md")
+	d.CoordinatorSkill = nil
+
 	// 对照：同样的配置给普通 orb 时 7811、git 主机与 env 密钥都在
 	normal, err := d.Plan(ctx, db.Orb{ID: "orb-n", ProjectID: &prj})
 	require.NoError(t, err)

@@ -1,0 +1,1 @@
+- `box` is a box id or its name. Deploying an app is done from a thread on the box (`create_thread` with `box`), not from here.

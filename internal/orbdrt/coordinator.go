@@ -22,9 +22,9 @@ var ErrNoRedial = errors.New("orbdrt: link cannot be redialed")
 
 // coordinatorOverlay 是协调档 omp 的设置覆盖层（--config）：强制关闭会读写工作区文件或执行代码的功能。
 // web（M19 第一层，只给全局助手）时生图开着：结果写进 TMPDIR（~/tmp/），出站与搜索一样经 orynd 的代理；
-// Space 协调者（D10）生图保持关闭。
+// Space 协调者（D10）生图保持关闭。web 时另强制开启技能：主人的 config.yml 也会下发到协调宿主，不能让它关掉内置技能。
 func coordinatorOverlay(web bool) string {
-	return `autolearn: { enabled: false }
+	overlay := `autolearn: { enabled: false }
 memory: { backend: "off" }
 checkpoint: { enabled: false }
 compaction: { experimentalContextManagement: false }
@@ -37,7 +37,14 @@ marketplace: { autoUpdate: "off" }
 startup: { checkUpdate: false }
 bash: { direnv: "off" }
 `
+	if web {
+		overlay += "skills: { enabled: true, enablePiUser: true, ignoredSkills: [], customDirectories: [] }\n"
+	}
+	return overlay
 }
+
+// coordinatorSkill 是全局助手加载的内置技能（与 coord.SkillName 一致；文件由控制面经 omp-home 下发）。
+const coordinatorSkill = "oryn"
 
 // 协调档 omp 开的内置工具（--tools）：Space 协调者只有 read / write（M13）；全局助手（web）另有 web_search 与 generate_image。
 const (
@@ -106,11 +113,15 @@ func (r *Runtime) coordinatorAgentSpec(p apigen.LinkCtlAgentStartParams, dir str
 	}
 	// 内置工具（M13 起 read / write：读文件库、写 ~/library/out/；M19 第一层给全局助手加 web_search 与 generate_image，
 	// read 也能读 URL）：--no-tools 先关掉全部，--tools 再精确列出。MCP 与宿主工具不受 --tools 限制。
-	args = []string{
-		"--mode", "rpc-ui", "--cwd", cwd, "--session-dir", dir,
-		"--no-tools", "--tools", tools, "--no-skills", "--no-extensions", "--no-rules", "--no-context-files", "--no-lsp",
-		"--config", overlay, "--system-prompt", promptFile,
+	// 技能：全局助手只加载内置的 oryn（--skills 是白名单），Space 协调者一个都不加载。
+	skills := []string{"--no-skills"}
+	if web {
+		skills = []string{"--skills", coordinatorSkill}
 	}
+	args = []string{"--mode", "rpc-ui", "--cwd", cwd, "--session-dir", dir, "--no-tools", "--tools", tools}
+	args = append(args, skills...)
+	args = append(args, "--no-extensions", "--no-rules", "--no-context-files", "--no-lsp",
+		"--config", overlay, "--system-prompt", promptFile)
 	env = map[string]string{
 		"HOME":              r.home,
 		"PATH":              "/usr/bin:/bin",

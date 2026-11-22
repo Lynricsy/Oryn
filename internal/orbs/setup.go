@@ -91,6 +91,8 @@ type DefaultSetup struct {
 	// PublicURL 是控制面的对外地址（cfg.PublicURL）：托管项目（M24 阶段 ③）的 orb 从 <PublicURL>/git/<id>.git 克隆；
 	// 空 = 不给托管项目下发仓库。
 	PublicURL string
+	// CoordinatorSkill 返回下发给协调宿主的内置技能文件（omp-home 相对路径 → 内容，coord.SkillFiles）；nil = 不下发。
+	CoordinatorSkill func() map[string][]byte
 }
 
 // SSH 给出一台 orb 的 SSH 配置（M18）；协调 orb 返回 nil（不动 orb 内的 SSH 配置），runner 只有全局主机（M21）。
@@ -100,7 +102,7 @@ type SSH interface {
 
 // coordinatorFiles 是下发给协调宿主的 omp-home 文件：只有模型与基本设置，其余（extensions/、skills/、agents/、
 // commands/、AGENTS.md…）一律不下发。mcp.json 不原样下发：M19 起由 planCoordinator 按全局配置生成只含 orynd 代理
-// 地址的版本（鉴权头由出站代理注入，不进沙箱）。
+// 地址的版本（鉴权头由出站代理注入，不进沙箱）。内置技能（CoordinatorSkill）由 addCoordinatorSkill 另行并入。
 var coordinatorFiles = map[string]bool{agentcfg.ModelsFile: true, "config.yml": true}
 
 // planCoordinator 是协调 orb 的 setup 参数：不取项目、不下发 git 身份 / GitHosts / env 模式密钥，omp-home 只有
@@ -121,6 +123,7 @@ func (d *DefaultSetup) planCoordinator(ctx context.Context, orb db.Orb) (SetupPl
 		plan.Egress.Web = &egress.WebPolicy{AllowHosts: d.CoordinatorWebAllow}
 	}
 	if d.Home == nil {
+		d.addCoordinatorSkill(&plan)
 		return plan, nil
 	}
 	files, err := d.Home.LoadAll()
@@ -179,7 +182,26 @@ func (d *DefaultSetup) planCoordinator(ctx context.Context, orb db.Orb) (SetupPl
 	if err := d.coordinatorMCP(&plan, files[agentcfg.MCPFile], disabled); err != nil {
 		return plan, err
 	}
+	d.addCoordinatorSkill(&plan)
 	return plan, nil
+}
+
+// addCoordinatorSkill 把内置技能文件并入协调宿主的 omp-home（路径排序，权限 0644）。
+func (d *DefaultSetup) addCoordinatorSkill(plan *SetupPlan) {
+	if d.CoordinatorSkill == nil {
+		return
+	}
+	files := d.CoordinatorSkill()
+	paths := make([]string, 0, len(files))
+	for p := range files {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		plan.Params.OmpHome = append(plan.Params.OmpHome, apigen.LinkCtlOmpHomeFile{
+			Path: p, Mode: 0o644, ContentB64: base64.StdEncoding.EncodeToString(files[p]),
+		})
+	}
 }
 
 // assistantSettings 读全局助手的联网开关与关掉的 MCP 服务器（M19）；没有设置行时按默认（联网开、无禁用项）。
