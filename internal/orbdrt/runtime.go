@@ -1155,12 +1155,6 @@ func (r *Runtime) baseEnv() map[string]string {
 		env["XDG_RUNTIME_DIR"] = d.runtimeDir()
 		env["GTK_A11Y"] = "atspi"
 		env["ACCESSIBILITY_ENABLED"] = "1"
-		// gdk-pixbuf（≥2.44）经 glycin 加载图片与图标，glycin 默认把解码器放进 bwrap 沙箱。orb 的 seccomp 允许 userns
-		// 但不允许 mount，bwrap 报「Failed to make / slave」；glycin 的可用性检测只认几种 namespace 报错，误判 bwrap 可用，
-		// 每次解码都失败，pcmanfm、mousepad 加载图标时直接 abort（M25 4.1 真机发现）。放在 baseEnv 而不只给 orbd 启动的应用：
-		// agent 经 computer 的 apps.open 打开的应用也要它。orb 容器本身就是隔离边界，agent 在里面本就能执行任意代码，
-		// 关掉图片解码沙箱不扩大权限。这是上游 glycin 的检测缺陷，上游修好后可去掉这个变量。
-		env["GLYCIN_DISABLE_SANDBOX"] = "i-know-the-risks"
 	}
 	// M14：项目连接了 GitHub 时 gh 读 orbd 写的配置（经 gh.sock 代理，令牌由 egress 注入）。
 	// 不导出 GH_TOKEN：其它读这个变量的工具会拿占位值直连 GitHub。

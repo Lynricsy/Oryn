@@ -59,6 +59,7 @@ done < <(jq -r '.[] | [.id, .icon, .desktopFile] | @tsv' "$apps")
 # LibreOffice 欢迎框靠 share/registry 下的 oryn.xcd 关掉：ooSetupLastVersion 必须等于已装版本的「主版本.次版本」。
 lo="$(pacman -Q libreoffice-fresh | awk '{ print $2 }' | cut -d. -f1,2)"
 grep -q "<value>$lo</value>" /usr/lib/libreoffice/share/registry/oryn.xcd
+[[ "${GLYCIN_DISABLE_SANDBOX:-}" == i-know-the-risks ]] # glycin 误判 bwrap 可用的绕过，见 Dockerfile
 printf '桌面应用清单 / 图标 / VS Code：通过\n'
 
 # BlackArch 源：排在官方源之后，keyring 与同步库已就位；镜像里不留 pacman 本地私钥。

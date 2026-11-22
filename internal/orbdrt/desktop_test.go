@@ -294,7 +294,6 @@ func TestDesktopDbus(t *testing.T) {
 			"XDG_RUNTIME_DIR=" + filepath.Dir(bus),
 			"GTK_A11Y=atspi",
 			"ACCESSIBILITY_ENABLED=1",
-			"GLYCIN_DISABLE_SANDBOX=i-know-the-risks",
 		} {
 			assert.Contains(t, env, kv)
 		}

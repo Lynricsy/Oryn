@@ -105,6 +105,12 @@ RUN mkdir -p /etc/chromium/policies/managed \
       '}' > /etc/chromium/policies/managed/oryn.json \
  && chmod 0644 /etc/chromium/policies/managed/oryn.json && jq -e . /etc/chromium/policies/managed/oryn.json
 ENV ORYN_DESKTOP=1
+# gdk-pixbuf（≥2.44）经 glycin 解码图片与图标，glycin 默认把解码器放进 bwrap 沙箱。orb 的 seccomp 允许 userns 但不允许
+# mount，bwrap 报「Failed to make / slave」；glycin 的可用性检测只认几种 namespace 报错，误判 bwrap 可用，pcmanfm、mousepad
+# 加载图标时直接 abort（M25 4.1 真机发现）。放在镜像 ENV：orbd 的 baseEnv 继承它，agent 经 computer 打开的应用也拿得到；
+# 不放进 orbd，免得 process provider 在宿主上开桌面时顺手关掉宿主自己的解码沙箱。orb 容器本身是隔离边界，agent 在里面
+# 本就能执行任意代码，关掉它不扩大权限。这是上游 glycin 的检测缺陷，上游修好后删掉。
+ENV GLYCIN_DISABLE_SANDBOX=i-know-the-risks
 
 # ARM 软件仓库缺少下列工具（PHP 的 phpactor 两边都缺）；双架构统一使用上游最新发行版并按 GitHub 发布的摘要校验。
 RUN case "$TARGETARCH" in amd64) a=x86_64 ga=x64 pa=amd64 ;; arm64) a=aarch64 ga=arm64 pa=arm64 ;; *) exit 1 ;; esac \
