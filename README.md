@@ -68,7 +68,7 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 
 ## 工作台
 
-<sub>本页截图均由 `bun run shots:readme` 在 mock 模式下用演示数据生成（手机三联来自 iOS 模拟器里的真实 App），图中的线程、报告与数字（如基准耗时、成本）不是实测结果。</sub>
+<sub>本页截图均由 `bun run shots:readme` 在 mock 模式下用演示数据生成（手机三联来自 iOS 模拟器里的真实 App，桌面任务栏图来自真实 orb），图中的线程、报告与数字（如基准耗时、成本）不是实测结果。</sub>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/workbench-dark.png">
@@ -101,6 +101,12 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 </picture>
 
 远程桌面里 Agent 操作浏览器时你只读观看；遇到登录、验证码时它停下来等你接管，交还后接着干，手机通知上也能点「完成」。
+
+<picture>
+  <img alt="线程右面板的桌面页签：左侧对话里有 desktop_record 开始与停止的工具卡，右侧远程桌面里终端窗口叠在 VS Code 之上，画面下方居中一条任务栏，依次为 Chromium、终端、VS Code、文件管理器、文本编辑器与 LibreOffice。" src="docs/assets/desktop-dock-light.png" width="100%">
+</picture>
+
+画面下方的任务栏内置 Chromium、终端、VS Code、文件管理器、文本编辑器与 LibreOffice；Agent 可直接读取窗口无障碍树、按 `.oryn/desktop/resume` 自启动桌面环境，并用 `desktop_record` 把操作录成视频放进对话。
 
 ## 执行环境
 
