@@ -128,7 +128,7 @@ func TestStartupAttachmentShutdownKeepsStartupFrames(t *testing.T) {
 	frame := json.RawMessage(`{"type":"prompt","message":"read my document","orynAttachments":["att_pending"]}`)
 	require.NoError(t, f.st.Q.SetThreadStartupFrames(f.ctx, db.SetThreadStartupFramesParams{ID: th.id, StartupFrames: startupFrames(frame)}))
 	th.mu.Lock()
-	f.s.queueStartupFrameLocked(th, frame, false)
+	f.s.queueStartupFrameLocked(th, frame, false, true)
 	th.mu.Unlock()
 	<-begun
 	f.s.Close()

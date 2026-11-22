@@ -18,7 +18,7 @@ import (
 const spareMaxAge = time.Hour
 
 // claimSpare 在常驻开着时把就绪的备用对话交给新对话。没有可认领的备用对话时 ok 为假，调用方照常新建；
-// 认领时下发命令失败（如文件库 id 无效）返回错误，备用对话随之删掉（它的模型 / 档位可能已改）。
+// 认领被拒（如文件库 id 无效）时返回错误：认领与首批命令同一事务，备用对话原样保留，留给下一个新对话。
 func (s *Service) claimSpare(ctx context.Context, orbID string, p threads.CoordinatorParams) (apigen.Thread, bool, error) {
 	if s.cfg.KeepWarm <= 0 {
 		return apigen.Thread{}, false, nil
@@ -41,10 +41,6 @@ func (s *Service) claimSpare(ctx context.Context, orbID string, p threads.Coordi
 	case errors.Is(err, threads.ErrSpareUnavailable):
 		return apigen.Thread{}, false, nil
 	}
-	if derr := s.th.Delete(context.WithoutCancel(ctx), sp.ID); derr != nil {
-		slog.Warn("coord: 删除认领失败的备用助手对话失败", "thread", sp.ID, "err", derr)
-	}
-	s.kickSpare()
 	return apigen.Thread{}, false, err
 }
 

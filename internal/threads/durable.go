@@ -108,17 +108,23 @@ func undelivered(env omprpc.Envelope) bool {
 	return !env.OK() && env.ErrorText() == undeliveredError
 }
 
-// queueStartupLocked 排入首批命令；prompt 收到 agent 的应答后清除持久化记录。
-// 应答是「未送达」时（进程在命令到达前退出）重新排队，等重启后的进程就绪再发。调用方持有 t.mu。
+// queueStartupLocked 排入首批命令；批里的 prompt（没有 prompt 时是最后一条，如认领备用对话时只改模型）收到 agent 的
+// 应答后清除持久化记录。应答是「未送达」时（进程在命令到达前退出）重新排队，等重启后的进程就绪再发。调用方持有 t.mu。
 func (s *Service) queueStartupLocked(t *thread, frames []json.RawMessage) {
-	for _, f := range frames {
-		s.queueStartupFrameLocked(t, f, false)
+	last := len(frames) - 1
+	for i, f := range frames {
+		if typ, _, ok := frameHeader(f); ok && typ == "prompt" {
+			last = i
+		}
+	}
+	for i, f := range frames {
+		s.queueStartupFrameLocked(t, f, false, i == last)
 	}
 }
 
 // queueStartupFrameLocked 排入一条首批命令；hold 为真时只进队列、不立即写流（「未送达」后的重排：
-// 此时 agent 状态可能还没变成 exited，直接写会再次落到已退出的进程上）。
-func (s *Service) queueStartupFrameLocked(t *thread, f json.RawMessage, hold bool) {
+// 此时 agent 状态可能还没变成 exited，直接写会再次落到已退出的进程上）。clears 为真时这一条的应答清除持久化记录。
+func (s *Service) queueStartupFrameLocked(t *thread, f json.RawMessage, hold, clears bool) {
 	typ, _, ok := frameHeader(f)
 	if !ok {
 		return
@@ -136,10 +142,10 @@ func (s *Service) queueStartupFrameLocked(t *thread, f json.RawMessage, hold boo
 		if undelivered(env) {
 			// 标签随原帧转给重排的命令：这一条不结算
 			p.tag = ""
-			s.queueStartupFrameLocked(t, f, true)
+			s.queueStartupFrameLocked(t, f, true, clears)
 			return
 		}
-		if typ != "prompt" {
+		if !clears {
 			return
 		}
 		if err := s.st.Q.SetThreadStartupFrames(context.Background(), db.SetThreadStartupFramesParams{StartupFrames: nil, ID: t.id}); err != nil {

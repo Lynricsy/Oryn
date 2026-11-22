@@ -989,6 +989,8 @@ Space 是「名称 + 目标 + 可选项目 + 一个协调聊天」；全局助�
 
 全局助手对话的 WS `cmd` 消息命令（`prompt` / `steer` / `follow_up` / `abort_and_prompt`）可带 Oryn 扩展字段 `orynFiles: string[]`（≤20 个互不相同的 `afl_…`）：控制面从帧里删除该字段，在一个事务里把文件绑定到本对话（标记为已发送，未归属的文件归入本对话；不存在 → `not_found`，属于别的对话且未共享 → `invalid`，任一失败全部不绑定），再在 `message` 末尾追加 `<oryn-attachments>` 块（格式同附件块），列出协调宿主沙箱里的路径：对话文件 `~/library/threads/<threadId>/<id>/<name>`，共享文件 `~/library/shared/<id>/<name>`（`library.SandboxPath`）。Space 聊天带 `orynFiles` → `coordinator_restricted`；工作线程带 → `invalid`；`orynAttachments` 在所有协调对话上仍然 `coordinator_restricted`。`createAssistantConversation` 的 `files` 走同一规则，且与线程行同一事务绑定，首条消息（`prompt` + 附件块 + `images`）随线程行落库为首批命令。
 
+`createAssistantConversation` 认领备用助手对话（见 deploy.md「协调 orb 不参与空闲冻结」）时同样持久：解除隐藏（`threads.hidden = 0`）、绑定 `files`、把首批命令（与备用对话不同的 `set_model` / `set_thinking_level`，再是首条消息）写进 `startup_frames` 在同一个事务里；提交后才排队下发。响应返回后控制面在 agent 接收前重启，加载线程时按原顺序重发；prompt 的应答（没有首条消息时是最后一条命令的应答）之后才清除。事务失败时什么也不下发，备用对话保持隐藏、原样可用。
+
 ### link ctl
 
 |项|规格位置|语义|

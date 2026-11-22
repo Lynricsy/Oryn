@@ -255,13 +255,17 @@ func spareReadyLocked(t *thread) bool {
 	return t.agentReady() && !t.starting && !t.stopping && !t.failed && t.state == StateIdle
 }
 
-// ClaimSpare 把就绪的备用对话交给用户（全局助手的新对话免冷启动）：先按 p 下发模型与思考档位（与备用对话不同时），
-// 再发首条消息（p.Prompt / Images / Files，全空 = 空对话），最后让它对用户可见并推送 index.patch。命令在同一条
-// agent 流上按序执行，首条消息一定用上新的模型与档位。备用对话不在可认领状态或已被认领时返回 ErrSpareUnavailable，
-// 调用方改走 CreateCoordinator；下发命令失败时它的配置可能已改，调用方应删掉它。
+// ClaimSpare 把就绪的备用对话交给用户（全局助手的新对话免冷启动）。与 CreateCoordinator 的首条消息同一套持久化：
+// 在一个事务里解除 hidden、绑定文件库文件、把首批命令写进 startup_frames（模型 / 思考档位与备用对话不同时的
+// set_model / set_thinking_level，再是首条消息 p.Prompt / Images / Files；全空 = 空对话），提交后经 queueStartupLocked
+// 排队、推送 index.patch。认领返回成功后控制面在 agent 接收前重启，加载线程时照样重发；事务失败则什么也没下发，
+// 备用对话保持隐藏、原样可用。备用对话不在可认领状态或已被认领时返回 ErrSpareUnavailable，调用方改走 CreateCoordinator。
 func (s *Service) ClaimSpare(ctx context.Context, id string, p CoordinatorParams) (apigen.Thread, error) {
 	if err := checkIDList("files", p.Files); err != nil {
 		return apigen.Thread{}, err
+	}
+	if len(p.Files) > 0 && s.lib == nil {
+		return apigen.Thread{}, errf("invalid", "library files are not supported")
 	}
 	t, err := s.get(ctx, id)
 	if err != nil {
@@ -269,41 +273,75 @@ func (s *Service) ClaimSpare(ctx context.Context, id string, p CoordinatorParams
 	}
 	t.mu.Lock()
 	ready := spareReadyLocked(t)
-	cur := t.model
+	cur, orbID := t.model, t.orbID
 	t.mu.Unlock()
 	if !ready {
 		return apigen.Thread{}, ErrSpareUnavailable
 	}
-	var model apigen.ModelRef
+	var setup [][]byte
 	if m := parseModel(&p.Model); m != nil && (cur == nil || *cur != p.Model) {
-		model = *m
+		f, _ := json.Marshal(map[string]string{"type": "set_model", "provider": m.Provider, "modelId": m.ID})
+		setup = append(setup, f)
 	}
-	if err := s.SetModel(ctx, id, model, p.ThinkingLevel); err != nil {
+	if p.ThinkingLevel != "" {
+		f, _ := json.Marshal(map[string]string{"type": "set_thinking_level", "level": p.ThinkingLevel})
+		setup = append(setup, f)
+	}
+	first := strings.TrimSpace(p.Prompt) != "" || len(p.Images) > 0 || len(p.Files) > 0
+	var frames [][]byte
+	err = s.st.Tx(ctx, func(q *db.Queries) error {
+		n, err := q.ClaimSpareThread(ctx, db.ClaimSpareThreadParams{Now: s.now(), ID: id})
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrSpareUnavailable
+		}
+		frames = append([][]byte(nil), setup...)
+		if first {
+			prompt := map[string]any{"type": "prompt", "message": p.Prompt}
+			if len(p.Images) > 0 {
+				prompt["images"] = p.Images
+			}
+			frame, _ := json.Marshal(prompt)
+			if len(p.Files) > 0 {
+				if frame, err = s.libraryBlockTx(ctx, q, id, frame, p.Files); err != nil {
+					return err
+				}
+			}
+			frames = append(frames, frame)
+		}
+		if len(frames) == 0 {
+			return nil
+		}
+		return q.SetThreadStartupFrames(ctx, db.SetThreadStartupFramesParams{StartupFrames: startupFrames(frames...), ID: id})
+	})
+	if errors.Is(err, ErrSpareUnavailable) {
 		return apigen.Thread{}, err
 	}
-	if strings.TrimSpace(p.Prompt) != "" || len(p.Images) > 0 || len(p.Files) > 0 {
-		prompt := map[string]any{"type": "prompt", "message": p.Prompt}
-		if len(p.Images) > 0 {
-			prompt["images"] = p.Images
-		}
-		if len(p.Files) > 0 {
-			prompt[orynFilesKey] = p.Files
-		}
-		frame, _ := json.Marshal(prompt)
-		if err := s.Command(ctx, id, frame, nil); err != nil {
-			return apigen.Thread{}, err
-		}
-	}
-	n, err := s.st.Q.ClaimSpareThread(ctx, db.ClaimSpareThreadParams{Now: s.now(), ID: id})
 	if err != nil {
-		return apigen.Thread{}, err
+		return apigen.Thread{}, asThreadErr(err)
 	}
-	if n == 0 {
-		return apigen.Thread{}, ErrSpareUnavailable
+	if len(p.Files) > 0 {
+		// agent 已在跑：消息送达前把刚绑定的文件同步进协调宿主（失败不阻止消息：agent 下次启动前还会同步）
+		if err := s.lib.SyncHost(ctx, orbID); err != nil {
+			slog.Warn("threads: 同步文件库到协调宿主失败", "thread", id, "orb", orbID, "err", err)
+		}
+	}
+	raw := make([]json.RawMessage, len(frames))
+	for i, f := range frames {
+		raw[i] = f
 	}
 	t.mu.Lock()
+	s.queueStartupLocked(t, raw)
+	s.recompute(ctx, t)
 	s.publish(ctx, id)
+	needWake := len(raw) > 0 && !t.agentReady()
 	t.mu.Unlock()
+	if needWake {
+		// 就绪检查之后 agent 退出了：首批命令已排队，照新建对话那样唤醒
+		s.wake(id, orbID)
+	}
 	return s.Get(ctx, id)
 }
 
