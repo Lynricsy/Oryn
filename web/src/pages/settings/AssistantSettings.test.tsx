@@ -1,5 +1,6 @@
 /**
- * 设置 → 全局助手（M19 步骤 1.6）：联网开关保存、MCP 逐个关闭、不可用原因显示。走 mock 后端。
+ * 设置 → 全局助手（M19 步骤 1.6，M26 步骤 1.6）：联网开关保存、MCP 逐个关闭、不可用原因显示；
+ * 后台研究卡片的总开关、今天已花、每日上限与研究偏好整体 PUT。走 mock 后端。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -10,10 +11,12 @@ import AssistantSettings from "./AssistantSettings";
 
 let server: MockServer;
 let puts: unknown[];
+let researchPuts: unknown[];
 
 beforeEach(() => {
 	server = new MockServer();
 	puts = [];
+	researchPuts = [];
 	vi.stubGlobal(
 		"fetch",
 		async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -21,6 +24,11 @@ beforeEach(() => {
 			const u = new URL(req.url);
 			if (req.method === "PUT" && u.pathname === "/api/v1/settings/assistant")
 				puts.push(await req.clone().json());
+			if (
+				req.method === "PUT" &&
+				u.pathname === "/api/v1/assistant/research/settings"
+			)
+				researchPuts.push(await req.clone().json());
 			return (
 				(await server.handleFetch(req)) ?? new Response(null, { status: 404 })
 			);
@@ -129,5 +137,60 @@ describe("设置 → 全局助手", () => {
 		await waitFor(() => expect(providerSel).toBeEnabled());
 		fireEvent.change(providerSel, { target: { value: "" } });
 		await waitFor(() => expect(server.assistant.settings.computer).toEqual({}));
+	});
+
+	it("后台研究（M26）：总开关整体 PUT，带今天已花；上限与偏好各自保存", async () => {
+		mount();
+		const master = await screen.findByRole("checkbox", {
+			name: "开启后台研究",
+		});
+		expect(master).not.toBeChecked();
+		expect(screen.getByTestId("research-spent")).toHaveTextContent(
+			"今天已花 $0.42，上限 $20.00",
+		);
+		fireEvent.click(master);
+		await waitFor(() => expect(server.assistant.research.enabled).toBe(true));
+		expect(researchPuts).toEqual([
+			{
+				enabled: true,
+				web: true,
+				mine: true,
+				internal: true,
+				mcp: false,
+				dailyUsd: 20,
+				preferences: "",
+				mcpTools: {},
+			},
+		]);
+		await waitFor(() => expect(master).toBeChecked());
+		const cap = screen.getByRole("spinbutton", {
+			name: /^每日花费上限（美元）/,
+		});
+		await waitFor(() => expect(cap).toBeEnabled());
+		fireEvent.change(cap, { target: { value: "0.01" } });
+		expect(screen.getByRole("alert")).toHaveTextContent(
+			"请输入 0.1 到 1000 之间的数",
+		);
+		fireEvent.blur(cap);
+		expect(researchPuts).toHaveLength(1);
+		fireEvent.change(cap, { target: { value: "5" } });
+		fireEvent.blur(cap);
+		await waitFor(() => expect(server.assistant.research.dailyUsd).toBe(5));
+		const prefs = screen.getByRole("textbox", { name: /^研究偏好/ });
+		await waitFor(() => expect(prefs).toBeEnabled());
+		fireEvent.change(prefs, { target: { value: "只看一手来源" } });
+		expect(screen.getByTestId("research-preferences-count")).toHaveTextContent(
+			"6 / 1500",
+		);
+		const savePrefs = screen.getByRole("button", { name: "保存偏好" });
+		await waitFor(() => expect(savePrefs).toBeEnabled());
+		fireEvent.click(savePrefs);
+		await waitFor(() =>
+			expect(server.assistant.research.preferences).toBe("只看一手来源"),
+		);
+		expect(server.assistant.research).toMatchObject({
+			enabled: true,
+			dailyUsd: 5,
+		});
 	});
 });

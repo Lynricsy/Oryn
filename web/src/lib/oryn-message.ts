@@ -16,6 +16,8 @@
  *   …结局段另有 `rejected by the owner.`、`approved but failed: <code>.`、`expired without an answer.`；正文是可选的详情
  *   [Oryn automation results · automatic] <n> result(s).   交给助手的运行结果（M19，`internal/coord/main.go`），正文是
  *   不带 thread 属性的包裹，里面是 `{"items":[{kind,name,threadId,title,outcome,reply,error}]}`
+ *   [Oryn research findings · automatic] <n> finding(s).   后台研究的发现（M26，`internal/coord/main.go`），正文是
+ *   不带 thread 属性的包裹，里面是 `{"findings":[{runId,pipeline,topicId,kind,title,question,baseline,summary,sources,threadId,threads}]}`
  *   <untrusted-thread-content thread="<threadId>">
  *   {"title":"…","outcome":"completed|aborted|error|unknown|needs_input","reply":"…","error":"…","question":"…"}
  *   </untrusted-thread-content>
@@ -67,6 +69,8 @@ export type OrynHeader =
 	  }
 	/** 交给助手的定时 / 触发规则运行结果，合并进主线的一条消息（M19） */
 	| { kind: "automation"; count: number }
+	/** 后台研究的发现，合并进主线的一条消息（M26） */
+	| { kind: "research"; count: number }
 	| { kind: "unknown" };
 
 /** 确认卡的结局。 */
@@ -100,6 +104,26 @@ export interface OrynAutomationItem {
 	error?: string;
 }
 
+/** 后台研究的一条来源。 */
+export interface OrynResearchSource {
+	url: string;
+	title: string;
+	/** `YYYY-MM-DD`（研究员给出） */
+	date?: string;
+}
+
+/** 后台研究的一条发现（`research` 消息的包裹里的一项）；只取显示要用的字段。 */
+export interface OrynResearchFinding {
+	title: string;
+	/** 纯文本摘要（不按 Markdown 渲染） */
+	summary: string;
+	/** `web` / `internal` / `mcp` */
+	pipeline?: string;
+	sources: OrynResearchSource[];
+	/** 来源对话或相关线程 */
+	threadId?: string;
+}
+
 export interface OrynMessage {
 	/** 首行原文（解析失败时显示它） */
 	line: string;
@@ -110,6 +134,8 @@ export interface OrynMessage {
 	report?: OrynReport;
 	/** 运行结果：包裹里的各项 */
 	automation?: OrynAutomationItem[];
+	/** 后台研究的发现：包裹里的各项 */
+	research?: OrynResearchFinding[];
 }
 
 const SCHEDULE_RE =
@@ -127,6 +153,8 @@ const CONFIRMATION_RE =
 	/^\[Oryn confirmation · automatic\] ([a-z_]+) (\S+): (approved and done|rejected by the owner|approved but failed: ([a-z_]+)|expired without an answer)\.$/;
 const AUTOMATION_RE =
 	/^\[Oryn automation results · automatic\] (\d+) results?(?:\(s\))?\.$/;
+const RESEARCH_RE =
+	/^\[Oryn research findings · automatic\] (\d+) finding\(s\)\.$/;
 
 /** 确认卡结果首行的结局段 → 结局。 */
 function confirmationOutcome(text: string): ConfirmationOutcome {
@@ -216,8 +244,13 @@ export function parseOrynHeader(line: string): OrynHeader {
 		};
 	const au = AUTOMATION_RE.exec(line);
 	if (au) return { kind: "automation", count: Number(au[1]) };
+	const rs = RESEARCH_RE.exec(line);
+	if (rs) return { kind: "research", count: Number(rs[1]) };
 	return { kind: "unknown" };
 }
+
+/** 非空字符串原样返回，其余为 undefined（包裹里的可选字段）。 */
+const str = (x: unknown) => (typeof x === "string" && x !== "" ? x : undefined);
 
 /** 包裹里一行 JSON 的字段；只认对象且带字符串 `outcome` 的（服务端总会写），否则当作旧格式的纯文本。 */
 function reportJson(inner: string): Omit<OrynReport, "threadId"> {
@@ -233,8 +266,6 @@ function reportJson(inner: string): Omit<OrynReport, "threadId"> {
 	if (!v || typeof v !== "object" || Array.isArray(v)) return plain;
 	const o = v as Record<string, unknown>;
 	if (typeof o.outcome !== "string") return plain;
-	const str = (x: unknown) =>
-		typeof x === "string" && x !== "" ? x : undefined;
 	const title = str(o.title);
 	const error = str(o.error);
 	return {
@@ -262,10 +293,10 @@ function unwrapReport(threadId: string, rest: string): OrynReport | null {
 }
 
 /**
- * 运行结果的包裹：开标签必须在正文开头（不带 thread 属性），结束标签取最后一个，之后只允许空白与固定提示；
- * 包裹里是 `{"items":[…]}`，每项至少带字符串 `threadId` 与 `outcome`。任何一条不满足都返回 null（按原文显示）。
+ * 不带 thread 属性的包裹（运行结果与研究发现共用）：开标签必须在正文开头，结束标签取最后一个，之后只允许空白与
+ * 固定提示；包裹里必须是 JSON 对象。任何一条不满足都返回 null。
  */
-function unwrapAutomation(rest: string): OrynAutomationItem[] | null {
+function unwrapPlain(rest: string): Record<string, unknown> | null {
 	if (!rest.startsWith(OPEN_PLAIN)) return null;
 	const end = rest.lastIndexOf(CLOSE);
 	if (end < OPEN_PLAIN.length - 1) return null;
@@ -278,10 +309,15 @@ function unwrapAutomation(rest: string): OrynAutomationItem[] | null {
 		return null;
 	}
 	if (!v || typeof v !== "object" || Array.isArray(v)) return null;
-	const items = (v as Record<string, unknown>).items;
+	return v as Record<string, unknown>;
+}
+
+/**
+ * 运行结果的包裹：`{"items":[…]}`，每项至少带字符串 `threadId` 与 `outcome`。任何一条不满足都返回 null（按原文显示）。
+ */
+function unwrapAutomation(rest: string): OrynAutomationItem[] | null {
+	const items = unwrapPlain(rest)?.items;
 	if (!Array.isArray(items)) return null;
-	const str = (x: unknown) =>
-		typeof x === "string" && x !== "" ? x : undefined;
 	const out: OrynAutomationItem[] = [];
 	for (const it of items) {
 		if (!it || typeof it !== "object") return null;
@@ -305,6 +341,47 @@ function unwrapAutomation(rest: string): OrynAutomationItem[] | null {
 	return out;
 }
 
+/**
+ * 研究发现的包裹：`{"findings":[…]}`；缺 `title` 或 `summary` 的项丢弃，来源只留带 `url` 与 `title` 的。
+ * 包裹本身不对时返回 null（按原文显示）。
+ */
+function unwrapResearch(rest: string): OrynResearchFinding[] | null {
+	const findings = unwrapPlain(rest)?.findings;
+	if (!Array.isArray(findings)) return null;
+	const out: OrynResearchFinding[] = [];
+	for (const it of findings) {
+		if (!it || typeof it !== "object" || Array.isArray(it)) continue;
+		const o = it as Record<string, unknown>;
+		const title = str(o.title);
+		const summary = str(o.summary);
+		if (!title || !summary) continue;
+		const sources: OrynResearchSource[] = [];
+		if (Array.isArray(o.sources))
+			for (const s of o.sources) {
+				if (!s || typeof s !== "object") continue;
+				const r = s as Record<string, unknown>;
+				const url = str(r.url);
+				if (!url) continue;
+				const date = str(r.date);
+				sources.push({
+					url,
+					title: str(r.title) ?? url,
+					...(date !== undefined ? { date } : {}),
+				});
+			}
+		const pipeline = str(o.pipeline);
+		const threadId = str(o.threadId);
+		out.push({
+			title,
+			summary,
+			sources,
+			...(pipeline !== undefined ? { pipeline } : {}),
+			...(threadId !== undefined ? { threadId } : {}),
+		});
+	}
+	return out;
+}
+
 /** 以 `[Oryn ` 开头的消息拆成首行与正文；不是这种消息时返回 null。 */
 export function parseOrynMessage(text: string): OrynMessage | null {
 	if (!text.startsWith("[Oryn ")) return null;
@@ -319,6 +396,10 @@ export function parseOrynMessage(text: string): OrynMessage | null {
 	if (header.kind === "automation") {
 		const automation = unwrapAutomation(rest);
 		if (automation) return { line, header, body: "", automation };
+	}
+	if (header.kind === "research") {
+		const research = unwrapResearch(rest);
+		if (research) return { line, header, body: "", research };
 	}
 	return { line, header, body: rest.replace(/^\n+/, "") };
 }
@@ -381,6 +462,8 @@ export function describeOrynHeader(
 			});
 		case "automation":
 			return t("oryn.automation", { count: h.count });
+		case "research":
+			return t("oryn.research", { count: h.count });
 		default:
 			return msg.line;
 	}

@@ -1,4 +1,4 @@
-/** 全局助手分区：主线、普通对话、电脑页，与页头的文件库 / 备忘 / 提醒 / 动作菜单；启动时的 xd:// 设备挂载提示。 */
+/** 全局助手分区：主线、普通对话、电脑页，与页头的文件库 / 备忘 / 提醒 / 跟进 / 动作菜单；启动时的 xd:// 设备挂载提示。 */
 import type { Page } from "@playwright/test";
 import { lastOverlay, settle, surface } from "./audit";
 
@@ -144,6 +144,15 @@ surface({
 	ready: READY,
 	open: async (page) => {
 		await page.getByRole("button", { name: "提醒" }).click();
+		return page.getByRole("dialog");
+	},
+});
+surface({
+	id: "assistant.main.follow-ups",
+	path: `/assistant/${MAIN}`,
+	ready: READY,
+	open: async (page) => {
+		await page.getByRole("button", { name: "跟进" }).click();
 		return page.getByRole("dialog");
 	},
 });

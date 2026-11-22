@@ -29,6 +29,7 @@ import {
 	describeOrynHeader,
 	type OrynAutomationItem,
 	type OrynHeader,
+	type OrynResearchFinding,
 	parseOrynMessage,
 } from "../../lib/oryn-message";
 import { normalizeQuote, splitLeadingQuote } from "../../lib/quote";
@@ -369,7 +370,7 @@ function MessageMenu({
 	);
 }
 
-/** 首行小签的图标：定时用时钟，线程报告用列表，GitHub 回流 / 触发用 GitHub 标志，确认卡结果用对勾圈，交给助手的运行结果用铃铛，其余（agent 发来的消息）用机器人。 */
+/** 首行小签的图标：定时用时钟，线程报告用列表，GitHub 回流 / 触发用 GitHub 标志，确认卡结果用对勾圈，交给助手的运行结果用铃铛，后台研究的发现用放大镜，其余（agent 发来的消息）用机器人。 */
 const ORYN_ICON: Record<OrynHeader["kind"], IconName> = {
 	schedule: "clock",
 	report: "list",
@@ -377,6 +378,7 @@ const ORYN_ICON: Record<OrynHeader["kind"], IconName> = {
 	github: "github",
 	confirmation: "checkCircle",
 	automation: "bell",
+	research: "search",
 	unknown: "robot",
 };
 
@@ -446,6 +448,93 @@ function AutomationResults({ items }: { items: OrynAutomationItem[] }) {
 								<Icon name="alert" size={13} className="mt-px shrink-0" />
 								<span className="min-w-0">{it.error}</span>
 							</p>
+						)}
+					</li>
+				);
+			})}
+		</ul>
+	);
+}
+
+/** 来源链接只接受 http(s)；其余（`javascript:` 等）不显示。 */
+function isWebUrl(url: string): boolean {
+	try {
+		const { protocol } = new URL(url);
+		return protocol === "http:" || protocol === "https:";
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * 后台研究的发现（M26）：逐项一张卡片——管线徽标、标题、纯文本摘要（来自网页 / 邮件，不按 Markdown 渲染）、
+ * 来源链接（只有 http(s)，新标签页打开）与相关对话或线程的站内链接。
+ */
+function ResearchFindings({ items }: { items: OrynResearchFinding[] }) {
+	const { t } = useTranslation();
+	return (
+		<ul data-testid="research-findings" className="flex min-w-0 flex-col gap-2">
+			{items.map((it, i) => {
+				const sources = it.sources.filter((s) => isWebUrl(s.url));
+				return (
+					<li
+						// biome-ignore lint/suspicious/noArrayIndexKey: 发现没有稳定 id，按位置区分
+						key={i}
+						data-testid="research-finding"
+						className="flex min-w-0 flex-col gap-1.5 rounded-md border border-border bg-panel/60 px-2.5 py-2"
+					>
+						<span className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
+							{it.pipeline && (
+								<Badge>
+									{t(`oryn.pipeline.${it.pipeline}`, {
+										defaultValue: it.pipeline,
+									})}
+								</Badge>
+							)}
+							<span className="min-w-0 font-medium text-fg">{it.title}</span>
+						</span>
+						<p className="min-w-0 whitespace-pre-wrap break-words text-muted text-sm">
+							{it.summary}
+						</p>
+						{sources.length > 0 && (
+							<ul
+								aria-label={t("oryn.researchSources")}
+								className="flex min-w-0 flex-col gap-0.5 text-xs"
+							>
+								{sources.map((s, k) => (
+									// biome-ignore lint/suspicious/noArrayIndexKey: 同一网址可能出现多次
+									<li key={k} className="flex min-w-0 items-center gap-1.5">
+										<Icon
+											name="link"
+											size={12}
+											aria-hidden
+											className="shrink-0 text-faint"
+										/>
+										<a
+											href={s.url}
+											target="_blank"
+											rel="noreferrer noopener"
+											className="min-w-0 truncate text-accent-ink hover:underline"
+										>
+											{s.title}
+										</a>
+										{s.date && (
+											<span className="shrink-0 text-faint tabular-nums">
+												{s.date}
+											</span>
+										)}
+									</li>
+								))}
+							</ul>
+						)}
+						{it.threadId && (
+							<Link
+								to={`/t/${it.threadId}`}
+								className="inline-flex min-w-0 items-center gap-1 self-start text-accent-ink text-xs hover:underline"
+							>
+								<Icon name="message" size={12} aria-hidden />
+								<span className="truncate">{t("oryn.researchThread")}</span>
+							</Link>
 						)}
 					</li>
 				);
@@ -605,6 +694,7 @@ function UserMessage({
 					/>
 				)}
 				{oryn?.automation && <AutomationResults items={oryn.automation} />}
+				{oryn?.research && <ResearchFindings items={oryn.research} />}
 				{quoted ? (
 					<>
 						<blockquote

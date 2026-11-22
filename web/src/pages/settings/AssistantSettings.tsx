@@ -1,9 +1,10 @@
 /**
- * 设置 → 全局助手（M19 步骤 1.6 / 4.4）：三张卡片。
+ * 设置 → 全局助手（M19 步骤 1.6 / 4.4，M26）：四张卡片。
  * 1. 联网：助手沙箱经 orynd 代理访问公网的总开关（关掉后 `web_search` 与读网页失败）。
  * 2. MCP 服务器：全局 `mcp.json` 里的服务器——名字、主机、传输方式、不可用的原因，可用的逐个开关。
- * 3. 助手的电脑：创建它时用的 provider 与 orb 类型（都留空走 orb 的默认解析）；只影响下一次创建。
- * 都整体 PUT 设置；请求进行中先显示要改成的值。改动后助手对话在静止时用新配置重启。
+ * 3. 后台研究（M26，`ResearchCard`）：总开关、四条管线、研究员的模型、每日上限与研究偏好，整体 PUT 研究设置。
+ * 4. 助手的电脑：创建它时用的 provider 与 orb 类型（都留空走 orb 的默认解析）；只影响下一次创建。
+ * 前两张与最后一张整体 PUT 助手设置；请求进行中先显示要改成的值。改动后助手对话在静止时用新配置重启。
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -25,6 +26,7 @@ import {
 	Spinner,
 	Toggle,
 } from "../../components/ui/primitives";
+import { ResearchCard } from "./ResearchCard";
 
 function ServerRow({
 	server,
@@ -153,6 +155,7 @@ export default function AssistantSettings(): ReactNode {
 					</ul>
 				)}
 			</Card>
+			<ResearchCard />
 			<Card title={t("assistantSettings.computerTitle")} icon="laptop">
 				<p className="text-faint text-xs">
 					{t("assistantSettings.computerHint")}

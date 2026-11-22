@@ -73,6 +73,7 @@
 | `assistant.thread.library` | 文件库 | 页头文件夹按钮 | 弹窗（手机为抽屉） |
 | `assistant.main.notes` | 主线备忘 | 主线页头「备忘」 | 弹窗（手机为抽屉） |
 | `assistant.main.reminders` | 主线提醒 | 主线页头「提醒」 | 弹窗（手机为抽屉） |
+| `assistant.main.follow-ups` | 主线跟进（后台研究的话题） | 主线页头「跟进」 | 弹窗（手机为抽屉） |
 | `assistant.computer` | 助手的电脑（未唤醒空态） | 助手分区「助手的电脑」 | 页面 |
 | `inbox.page` | 收件箱（按状态） | 侧栏「收件箱」 | 页面 |
 | `inbox.by-project` | 收件箱（按项目） | 页头「按项目」 | 页面 |

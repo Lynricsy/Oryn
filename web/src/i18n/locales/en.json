@@ -1169,7 +1169,32 @@
 		"browser-profiles": "Browser profiles",
 		"automations": "Automations",
 		"identity": "Identity & avatars",
-		"assistant": "Assistant"
+		"assistant": "Assistant",
+		"research": {
+			"title": "Background research",
+			"hint": "When on, the assistant looks for new information without being asked: public topics you care about, contradictions and stalls across your threads, and the read-only MCP tools you allow. It tells you in the main conversation only when something is worth saying. The web researcher can only search and read public web pages; it never sees your local data.",
+			"enabled": "Turn on background research",
+			"pipelines": "Pipelines",
+			"pipeline": {
+				"web": "Follow public topics",
+				"mine": "Pick topics to follow from assistant conversations and the main conversation",
+				"internal": "Cross-thread checks: contradictions, duplicates and stalls",
+				"mcp": "MCP checks: mail, calendar and more through the read-only tools you tick"
+			},
+			"model": "Researcher model",
+			"modelDefault": "Same as the assistant",
+			"modelChange": "Change",
+			"modelReset": "Use the assistant's model",
+			"dailyUsd": "Daily spending cap (USD)",
+			"dailyHint": "Research stops for the day when the cap is reached, resumes tomorrow, and you're notified once.",
+			"dailyInvalid": "Enter a number between {{min}} and {{max}}",
+			"spent": "Spent today: {{spent}} of {{cap}}",
+			"capped": "Cap reached today",
+			"preferences": "Research preferences",
+			"preferencesHint": "Instructions for the researchers, e.g. which sources you trust and what not to report.",
+			"tooLong": "Over {{limit}} characters — shorten it before saving",
+			"savePreferences": "Save preferences"
+		}
 	},
 	"devices": {
 		"pairQr": {
@@ -4554,6 +4579,16 @@
 		},
 		"automation_one": "{{count}} run result · handed to the assistant",
 		"automation_other": "{{count}} run results · handed to the assistant",
+		"research_one": "Background research · {{count}} finding",
+		"research_other": "Background research · {{count}} findings",
+		"researchSources": "Sources",
+		"researchThread": "Open the related conversation",
+		"pipeline": {
+			"web": "Web",
+			"mine": "Mining",
+			"internal": "Cross-thread",
+			"mcp": "MCP"
+		},
 		"outcome": {
 			"completed": "Completed",
 			"failed": "Failed",
@@ -4565,6 +4600,7 @@
 	},
 	"mainline": {
 		"behind": "Behind the scenes · {{source}}",
+		"sourceResearch": "Background research",
 		"silent": "The assistant looked and didn't disturb you",
 		"silentReason": "The assistant looked and didn't disturb you: {{reason}}",
 		"continue": "Continue in a new conversation",
@@ -4578,6 +4614,36 @@
 			"hint": "Reminders on the main conversation; when one is due, the assistant tells you here.",
 			"new": "New reminder",
 			"empty": "No reminders yet"
+		},
+		"followUps": {
+			"title": "Follow-ups",
+			"hint": "Questions and interests the assistant follows for you in the background. When there's news, or an earlier answer needs correcting, it tells you in the main conversation.",
+			"disabled": "Background research is off, so these topics aren't being checked.",
+			"openSettings": "Open settings",
+			"new": "New follow-up",
+			"create": "Add",
+			"empty": "No follow-ups yet",
+			"kindLabel": "Kind",
+			"titleLabel": "Title",
+			"questionLabel": "What to look up",
+			"questionHint": "Describe only the public information to look for; the researcher can't see your conversations.",
+			"kind": {
+				"question": "Question",
+				"interest": "Interest"
+			},
+			"origin": {
+				"mined": "Automatic",
+				"manual": "Manual",
+				"thread": "Thread"
+			},
+			"nextRun": "Next check {{when}}",
+			"paused": "Paused",
+			"done": "Finished",
+			"runNow": "Check now",
+			"toggle": "Follow “{{title}}”",
+			"menu": "Actions for “{{title}}”",
+			"deleteConfirm": "Delete the follow-up “{{title}}”?",
+			"deleteConfirmBody": "The assistant stops checking it, and a topic with the same title won't be picked automatically again."
 		}
 	},
 	"sections": {

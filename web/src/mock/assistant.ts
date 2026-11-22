@@ -5,11 +5,15 @@
  * 助手的电脑（M19 步骤 4.3）：`GET /assistant/computer` 与 `POST …/wake | pause | reset`。唤醒时没有则按设置里的
  * provider 与类型建一台带桌面、不属于任何线程的 orb（`computer: true`），直接到 ready；暂停是冻结（没有 → 404）；
  * 重置删除它（没有时无操作）。orb 经 `deps.setOrb` 写进 server 的 orb 表并推送，文件与桌面接口照常可用。
+ * 后台研究（M26）：`GET / PUT /assistant/research/settings`（总开关缺省关闭，今天已花固定为一个演示值）、
+ * 跟进话题的列出 / 新建 / 读取 / 修改 / 删除（置 `dismissed`）/ 立即检查，以及空的运行记录。校验同服务端。
  */
 import type { Orb, Schemas } from "../api/client";
-import { makeOrb } from "./fixtures";
+import { M9_IDS, makeOrb } from "./fixtures";
 
 type Settings = Schemas["AssistantSettings"];
+type ResearchSettings = Schemas["ResearchSettings"];
+type ResearchTopic = Schemas["ResearchTopic"];
 type McpServer = Schemas["AssistantMcpServer"];
 type Computer = Schemas["AssistantComputer"];
 
@@ -59,6 +63,69 @@ function json(body: unknown, status = 200): Response {
 const invalid = (message: string) =>
 	json({ code: "invalid_request", message }, 400);
 
+const HOUR = 3600_000;
+const DAY = 24 * HOUR;
+
+/** 话题字段的长度上限与活跃话题上限（Unicode 字符，同服务端）。 */
+const TOPIC_TITLE_MAX = 80;
+const TOPIC_QUESTION_MAX = 600;
+const MAX_ACTIVE_TOPICS = 50;
+const PREFERENCES_MAX = 1500;
+const MCP_TOOLS_MAX = 100;
+
+/** 两条演示话题：一条自动挖出的问题跟进（有上次报告），一条手动建的长期关注。 */
+function researchTopicFixtures(now = Date.now()): ResearchTopic[] {
+	return [
+		{
+			id: "rtp_01JD0000000000000000RTP001",
+			kind: "question",
+			title: "Model Y 新款的冬季续航实测",
+			question:
+				"Model Y 2026 款在零下 10 度左右的实际续航是多少？有没有第三方的公开测评数据？",
+			baseline:
+				"当时回答：官方 CLTC 续航 688 km，冬季实测数据还很少，估计打七折。",
+			origin: "mined",
+			sourceThreadId: M9_IDS.assistant,
+			state: "active",
+			intervalSeconds: 2 * 86_400,
+			nextRunAt: now + 20 * HOUR,
+			expiresAt: now + 26 * DAY,
+			lastRunAt: now - 28 * HOUR,
+			runCount: 2,
+			lastReport:
+				"懂车帝 11 月的冬测：-12°C 下实测 452 km，约为 CLTC 的 66%，比此前估计的七折略低。",
+			lastSources: [
+				{
+					url: "https://example.com/winter-test",
+					title: "冬测：七款纯电 SUV 续航",
+					date: "2026-11-18",
+				},
+			],
+			createdAt: now - 4 * DAY,
+			updatedAt: now - 28 * HOUR,
+		},
+		{
+			id: "rtp_01JD0000000000000000RTP002",
+			kind: "interest",
+			title: "Rust 2027 edition 的进展",
+			question: "Rust 2027 edition 的计划、已确定的改动与发布时间。",
+			baseline: "",
+			origin: "manual",
+			state: "active",
+			intervalSeconds: 86_400,
+			nextRunAt: now + 6 * HOUR,
+			runCount: 0,
+			lastReport: "",
+			lastSources: [],
+			createdAt: now - 18 * HOUR,
+			updatedAt: now - 18 * HOUR,
+		},
+	];
+}
+
+/** 标题去重用的规范形式（小写、压缩空白），同服务端。 */
+const normTitle = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+
 export class MockAssistant {
 	settings: Settings = {
 		webAccess: true,
@@ -75,6 +142,22 @@ export class MockAssistant {
 		text: "- 主人早上 9 点前不看消息，简报放到 9 点后\n- 周五提醒写周报",
 		updatedAt: Date.now() - 2 * 3600_000,
 	};
+	/** 后台研究的设置（M26）：缺省值同服务端（总开关与 MCP 检查关闭）。 */
+	research: ResearchSettings = {
+		enabled: false,
+		web: true,
+		mine: true,
+		internal: true,
+		mcp: false,
+		dailyUsd: 20,
+		preferences: "",
+		mcpTools: {},
+	};
+	/** 研究员对话今天的花费（演示值） */
+	researchSpentToday = 0.42;
+	/** 跟进话题（含已删除的 `dismissed`，标题去重要看全部） */
+	topics: ResearchTopic[] = researchTopicFixtures();
+	private topicSeq = 0;
 
 	constructor(deps?: AssistantDeps) {
 		this.deps = deps;
@@ -107,7 +190,163 @@ export class MockAssistant {
 			return json(this.computerView());
 		const action = /^assistant\/computer\/(wake|pause|reset)$/.exec(p);
 		if (action && m === "POST") return this.computerAction(action[1] ?? "");
+		if (p.startsWith("assistant/research/"))
+			return this.handleResearch(req, p.slice("assistant/research/".length), m);
 		return null;
+	}
+
+	private researchEnvelope(): Schemas["ResearchSettingsEnvelope"] {
+		return {
+			settings: this.research,
+			spentTodayUsd: this.researchSpentToday,
+			capped: this.researchSpentToday >= this.research.dailyUsd,
+		};
+	}
+
+	private async handleResearch(
+		req: Request,
+		p: string,
+		m: string,
+	): Promise<Response | null> {
+		if (p === "settings") {
+			if (m === "GET") return json(this.researchEnvelope());
+			if (m !== "PUT") return null;
+			const b = (await req.json()) as ResearchSettings;
+			if (!(b.dailyUsd >= 0.1 && b.dailyUsd <= 1000))
+				return invalid("dailyUsd must be between 0.1 and 1000");
+			if ([...(b.preferences ?? "")].length > PREFERENCES_MAX)
+				return invalid(
+					`preferences must be at most ${PREFERENCES_MAX} characters`,
+				);
+			for (const names of Object.values(b.mcpTools ?? {}))
+				if (
+					names.length > MCP_TOOLS_MAX ||
+					names.some((n) => !n || [...n].length > MAX_NAME)
+				)
+					return invalid("invalid mcpTools");
+			this.research = {
+				enabled: b.enabled,
+				web: b.web,
+				mine: b.mine,
+				internal: b.internal,
+				mcp: b.mcp,
+				...(b.model ? { model: b.model } : {}),
+				dailyUsd: b.dailyUsd,
+				preferences: b.preferences ?? "",
+				mcpTools: b.mcpTools ?? {},
+			};
+			return json(this.researchEnvelope());
+		}
+		if (p === "runs" && m === "GET") return json({ runs: [] });
+		if (p === "topics") {
+			if (m === "GET") {
+				const state = new URL(req.url, "http://x").searchParams.get("state");
+				return json({
+					topics: this.topics
+						.filter((x) =>
+							state === "all"
+								? true
+								: state
+									? x.state === state
+									: x.state !== "dismissed",
+						)
+						.sort((a, b) => b.createdAt - a.createdAt),
+				});
+			}
+			if (m !== "POST") return null;
+			return this.createTopic(
+				(await req.json()) as Schemas["ResearchTopicInput"],
+			);
+		}
+		const one = /^topics\/([^/]+)(\/run)?$/.exec(p);
+		if (!one) return null;
+		const topic = this.topics.find((x) => x.id === one[1]);
+		if (!topic)
+			return json({ code: "not_found", message: "no such topic" }, 404);
+		const now = Date.now();
+		if (one[2]) {
+			if (m !== "POST") return null;
+			if (topic.state !== "active")
+				return invalid("only active topics can be checked now");
+			topic.nextRunAt = now;
+			topic.updatedAt = now;
+			return json(topic);
+		}
+		if (m === "GET") return json(topic);
+		if (m === "DELETE") {
+			topic.state = "dismissed";
+			delete topic.nextRunAt;
+			topic.updatedAt = now;
+			return new Response(null, { status: 204 });
+		}
+		if (m !== "PATCH") return null;
+		const b = (await req.json()) as Schemas["ResearchTopicPatch"];
+		const title = b.title?.trim();
+		const question = b.question?.trim();
+		if (title !== undefined) {
+			if (!title || [...title].length > TOPIC_TITLE_MAX)
+				return invalid(`title must be 1–${TOPIC_TITLE_MAX} characters`);
+			if (
+				this.topics.some(
+					(x) => x.id !== topic.id && normTitle(x.title) === normTitle(title),
+				)
+			)
+				return invalid("a topic with this title already exists");
+			topic.title = title;
+		}
+		if (question !== undefined) {
+			if (!question || [...question].length > TOPIC_QUESTION_MAX)
+				return invalid(`question must be 1–${TOPIC_QUESTION_MAX} characters`);
+			topic.question = question;
+		}
+		if (b.kind) topic.kind = b.kind;
+		if (b.state && b.state !== topic.state) {
+			if (topic.state !== "active" && topic.state !== "paused")
+				return invalid("only active or paused topics can change state");
+			topic.state = b.state;
+			if (b.state === "paused") delete topic.nextRunAt;
+			else topic.nextRunAt = now + topic.intervalSeconds * 1000;
+		}
+		topic.updatedAt = now;
+		return json(topic);
+	}
+
+	private createTopic(b: Schemas["ResearchTopicInput"]): Response {
+		const title = (b.title ?? "").trim();
+		const question = (b.question ?? "").trim();
+		if (!title || [...title].length > TOPIC_TITLE_MAX)
+			return invalid(`title must be 1–${TOPIC_TITLE_MAX} characters`);
+		if (!question || [...question].length > TOPIC_QUESTION_MAX)
+			return invalid(`question must be 1–${TOPIC_QUESTION_MAX} characters`);
+		if (this.topics.some((x) => normTitle(x.title) === normTitle(title)))
+			return invalid("a topic with this title already exists");
+		if (
+			this.topics.filter((x) => x.state === "active").length >=
+			MAX_ACTIVE_TOPICS
+		)
+			return invalid(`at most ${MAX_ACTIVE_TOPICS} active topics`);
+		const now = Date.now();
+		const kind = b.kind ?? "question";
+		const topic: ResearchTopic = {
+			id: `rtp_mock${(this.topicSeq++).toString(16).padStart(18, "0")}`,
+			kind,
+			title,
+			question,
+			baseline: (b.baseline ?? "").trim(),
+			origin: "manual",
+			...(b.sourceThreadId ? { sourceThreadId: b.sourceThreadId } : {}),
+			state: "active",
+			intervalSeconds: 86_400,
+			nextRunAt: now + DAY,
+			...(kind === "question" ? { expiresAt: now + 30 * DAY } : {}),
+			runCount: 0,
+			lastReport: "",
+			lastSources: [],
+			createdAt: now,
+			updatedAt: now,
+		};
+		this.topics.push(topic);
+		return json(topic, 201);
 	}
 
 	private computerOrb(): Orb | undefined {

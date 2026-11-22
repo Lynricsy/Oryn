@@ -1169,7 +1169,32 @@
 		"browser-profiles": "浏览器 Profile",
 		"automations": "自动化",
 		"identity": "身份与头像",
-		"assistant": "全局助手"
+		"assistant": "全局助手",
+		"research": {
+			"title": "后台研究",
+			"hint": "开着时，全局助手会在你没问的时候自己去看新信息：公网上你关心的话题、线程之间的矛盾与卡住、你允许的 MCP 只读工具。值得说才在主线里告诉你。公网研究员只能搜索和读公网网页，碰不到你的任何本地数据。",
+			"enabled": "开启后台研究",
+			"pipelines": "管线",
+			"pipeline": {
+				"web": "公网话题跟进",
+				"mine": "从助手对话与主线里自动挖掘要跟进的话题",
+				"internal": "内部关联：跨线程的矛盾、重复与卡住",
+				"mcp": "MCP 检查：用勾选的只读工具看邮件、日历等"
+			},
+			"model": "研究员的模型",
+			"modelDefault": "与助手相同",
+			"modelChange": "更换",
+			"modelReset": "恢复为与助手相同",
+			"dailyUsd": "每日花费上限（美元）",
+			"dailyHint": "到了上限当天就停下，第二天继续，并通知你一次。",
+			"dailyInvalid": "请输入 {{min}} 到 {{max}} 之间的数",
+			"spent": "今天已花 {{spent}}，上限 {{cap}}",
+			"capped": "今天已到上限",
+			"preferences": "研究偏好",
+			"preferencesHint": "交给研究员的说明，例如更信任哪些来源、哪些事不用报。",
+			"tooLong": "超过 {{limit}} 字，请压缩后再保存",
+			"savePreferences": "保存偏好"
+		}
 	},
 	"devices": {
 		"pairQr": {
@@ -4554,6 +4579,16 @@
 		},
 		"automation_one": "{{count}} 条运行结果 · 交给助手",
 		"automation_other": "{{count}} 条运行结果 · 交给助手",
+		"research_one": "后台研究 · {{count}} 条发现",
+		"research_other": "后台研究 · {{count}} 条发现",
+		"researchSources": "来源",
+		"researchThread": "打开相关对话",
+		"pipeline": {
+			"web": "公网",
+			"mine": "挖掘",
+			"internal": "内部关联",
+			"mcp": "MCP"
+		},
 		"outcome": {
 			"completed": "完成",
 			"failed": "失败",
@@ -4565,6 +4600,7 @@
 	},
 	"mainline": {
 		"behind": "幕后 · {{source}}",
+		"sourceResearch": "后台研究",
 		"silent": "助手看过，没有打扰你",
 		"silentReason": "助手看过，没有打扰你：{{reason}}",
 		"continue": "在新对话中继续",
@@ -4578,6 +4614,36 @@
 			"hint": "主线上的定时提醒，到点后由助手在这里跟你说。",
 			"new": "新建提醒",
 			"empty": "还没有提醒"
+		},
+		"followUps": {
+			"title": "跟进",
+			"hint": "全局助手在后台替你跟进的问题与关注。有新信息、或发现之前的回答需要更正时，它会在主线里告诉你。",
+			"disabled": "后台研究没有打开，这些话题暂时不会被检查。",
+			"openSettings": "去设置",
+			"new": "新建跟进",
+			"create": "添加",
+			"empty": "还没有跟进",
+			"kindLabel": "种类",
+			"titleLabel": "标题",
+			"questionLabel": "要查什么",
+			"questionHint": "只写要查的公开信息，研究员看不到你的对话。",
+			"kind": {
+				"question": "问题跟进",
+				"interest": "长期关注"
+			},
+			"origin": {
+				"mined": "自动",
+				"manual": "手动",
+				"thread": "线程"
+			},
+			"nextRun": "下次检查 {{when}}",
+			"paused": "已暂停",
+			"done": "已结束",
+			"runNow": "立即检查",
+			"toggle": "跟进「{{title}}」",
+			"menu": "「{{title}}」的操作",
+			"deleteConfirm": "删除跟进「{{title}}」？",
+			"deleteConfirmBody": "助手不再检查它；同名的话题以后也不会再被自动挖出。"
 		}
 	},
 	"sections": {

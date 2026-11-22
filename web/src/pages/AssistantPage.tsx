@@ -4,8 +4,9 @@
  * 文件库按钮（M13，对话框里是 `LibraryPanel`）+ 动作菜单（新对话、归档此对话；助手记忆可用时还有「不进助手记忆」切换，M17）；切换对话在侧栏的助手分区里做（M9.6）。协调宿主不可用（`GET coordinator` 的
  * `available === false`）时不创建对话：页面主体是「全局助手暂不可用」+ 原因 + 指向设置 → 关于；
  * 已有对话仍可只读浏览（输入区禁用，托盘里同样提示）。
- * 主线（M19）：页头标题是助手的名字，菜单只有「新对话」，另有「备忘」（1500 字，助手每段开头都会读到）与「提醒」
- * （主线上的多条线程内定时）两个按钮；订阅只收最近 {@link MAIN_TAIL} 条，转录顶部逐页加载更早的，转录用主线模式。
+ * 主线（M19）：页头标题是助手的名字，菜单只有「新对话」，另有「备忘」（1500 字，助手每段开头都会读到）、「提醒」
+ * （主线上的多条线程内定时）与「跟进」（M26，后台研究的话题，`FollowUpsDialog`）三个按钮；订阅只收最近
+ * {@link MAIN_TAIL} 条，转录顶部逐页加载更早的，转录用主线模式。
  */
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -26,6 +27,7 @@ import {
 import { type Schedule, useSchedules } from "../api/schedule-queries";
 import { createAssistantConversation } from "../api/space-queries";
 import { AssistantMark } from "../components/assistant/AssistantMark";
+import { FollowUpsDialog } from "../components/assistant/FollowUpsDialog";
 import { LibraryPanel } from "../components/assistant/LibraryPanel";
 import { ScheduleDialog } from "../components/schedule/ScheduleDialog";
 import { ScheduleRow } from "../components/schedule/ScheduleRow";
@@ -286,6 +288,7 @@ function AssistantHeader({
 	const [libraryFor, setLibraryFor] = useState<string | null>(null);
 	const [notesFor, setNotesFor] = useState<string | null>(null);
 	const [remindersFor, setRemindersFor] = useState<string | null>(null);
+	const [followUpsFor, setFollowUpsFor] = useState<string | null>(null);
 	const title = main
 		? name || t("tabBar.assistant")
 		: current
@@ -379,6 +382,11 @@ function AssistantHeader({
 								label={t("mainline.reminders.title")}
 								onClick={() => setRemindersFor(threadId)}
 							/>
+							<IconButton
+								icon="search"
+								label={t("mainline.followUps.title")}
+								onClick={() => setFollowUpsFor(threadId)}
+							/>
 						</>
 					)}
 					<IconButton
@@ -409,6 +417,9 @@ function AssistantHeader({
 							threadId={threadId}
 							onClose={() => setRemindersFor(null)}
 						/>
+					)}
+					{main && followUpsFor === threadId && (
+						<FollowUpsDialog onClose={() => setFollowUpsFor(null)} />
 					)}
 				</>
 			}

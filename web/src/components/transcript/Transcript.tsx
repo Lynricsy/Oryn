@@ -252,7 +252,11 @@ function FoldRow({ fold }: { fold: MainlineFold }): ReactNode {
 				? t("mainline.silentReason", { reason: fold.reason })
 				: t("mainline.silent")
 			: t("mainline.behind", {
-					source: msg ? describeOrynHeader(msg, t, i18n.language) : "",
+					source: !msg
+						? ""
+						: msg.header.kind === "research"
+							? t("mainline.sourceResearch")
+							: describeOrynHeader(msg, t, i18n.language),
 				});
 	return (
 		<div data-testid="mainline-fold" data-fold={fold.fold}>

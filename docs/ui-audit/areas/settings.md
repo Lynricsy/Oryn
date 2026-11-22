@@ -76,7 +76,7 @@ spec：`web/e2e/ui-audit/settings.e2e.ts`。代码：`web/src/pages/SettingsPage
 | `settings.identity` | 身份与头像：默认 Agent 身份 | 更多 → 身份与头像 | 页面 |
 | `settings.identity.assistant` | 身份与头像：全局助手（下半页） | 身份页向下滚到「全局助手」 | 页面 |
 | `settings.identity.crop` | 头像裁剪 | 身份 → 上传图片 → 选图 | 弹窗 |
-| `settings.assistant` | 全局助手：联网、MCP、助手的电脑 | 更多 → 全局助手 | 页面 |
+| `settings.assistant` | 全局助手：联网、MCP、后台研究、助手的电脑 | 更多 → 全局助手 | 页面 |
 | `settings.appearance` | 外观：明暗、主题色、壁纸 | 更多 → 外观 | 页面 |
 | `settings.notifications` | 通知：此设备、渠道 | 更多 → 通知 | 页面 |
 | `settings.notifications.recent` | 通知：最近通知（下半页） | 通知页向下滚到「最近通知」 | 页面 |

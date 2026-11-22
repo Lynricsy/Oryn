@@ -3,7 +3,7 @@
  * M17 起助手记忆可用时多一个「不进助手记忆」切换）；
  * 页头小头像跟随助手的生效头像（圆形）；协调宿主不可用时不创建对话、显示原因与指向设置 → 关于，已有对话只读。
  * M19 主线：落点不选主线；页头标题是助手的名字、菜单只有「新对话」，有「备忘」（字数与超长提示）与「提醒」；
- * 订阅带 tail、转录用主线模式。
+ * 订阅带 tail、转录用主线模式。M26 主线页头多一个「跟进」：列出后台研究的话题，删除先确认再 DELETE。
  * `ThreadScreen` 换成桩。数据走 mock 后端，身份接口由本文件的桩应答。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -25,6 +25,7 @@ import {
 	useNavigate,
 } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ConfirmHost } from "../components/ui/ConfirmHost";
 import { threads as fixtureThreads, M9_IDS } from "../mock/fixtures";
 import { MockServer } from "../mock/server";
 import { indexStore } from "../state/stores";
@@ -74,6 +75,8 @@ let server: MockServer;
 let go: NavigateFunction = () => undefined;
 /** 非空时，下一个 PATCH 先等它放行（手动 resolve）。 */
 let holdPatch: Promise<void> | null = null;
+/** 经过桩的请求（`METHOD /path`），断言发出的写请求用。 */
+let requests: string[] = [];
 
 function Where() {
 	go = useNavigate();
@@ -88,10 +91,12 @@ beforeEach(() => {
 	server = new MockServer();
 	identities = { agent: {}, assistant: {} };
 	holdPatch = null;
+	requests = [];
 	vi.stubGlobal(
 		"fetch",
 		async (input: RequestInfo | URL, init?: RequestInit) => {
 			const req = input instanceof Request ? input : new Request(input, init);
+			requests.push(`${req.method} ${new URL(req.url, "http://x").pathname}`);
 			const who = /\/api\/v1\/settings\/(agent|assistant)-identity$/.exec(
 				new URL(req.url, "http://x").pathname,
 			)?.[1] as "agent" | "assistant" | undefined;
@@ -130,6 +135,7 @@ function mount(path: string) {
 					<Route path="/assistant/:threadId" element={<AssistantPage />} />
 				</Routes>
 				<Where />
+				<ConfirmHost />
 			</MemoryRouter>
 		</QueryClientProvider>,
 	);
@@ -454,5 +460,49 @@ describe("AssistantPage：主线（M19）", () => {
 		const form = await screen.findByRole("dialog", { name: "定时" });
 		expect(within(form).getByText("名称")).toBeVisible();
 		expect(screen.queryByRole("dialog", { name: "提醒" })).toBeNull();
+	});
+
+	it("跟进（M26）：列出话题；删除先确认，再 DELETE 该话题", async () => {
+		mount(`/assistant/${M9_IDS.main}`);
+		fireEvent.click(await screen.findByRole("button", { name: "跟进" }));
+		const dialog = await screen.findByRole("dialog", { name: "跟进" });
+		const [first, second] = server.assistant.topics;
+		if (!first || !second) throw new Error("mock 应有两条跟进话题");
+		expect(await within(dialog).findByText(first.title)).toBeVisible();
+		expect(within(dialog).getByText(second.title)).toBeVisible();
+		const row = (id: string) =>
+			dialog.querySelector(`[data-topic="${id}"]`) as HTMLElement;
+		expect(row(first.id)).toHaveTextContent("问题跟进");
+		expect(row(first.id)).toHaveTextContent("自动");
+		expect(row(second.id)).toHaveTextContent("长期关注");
+		expect(row(second.id)).toHaveTextContent("手动");
+		// 后台研究总开关缺省关闭：顶部提示并链到设置
+		expect(
+			await within(dialog).findByText(
+				"后台研究没有打开，这些话题暂时不会被检查。",
+			),
+		).toBeVisible();
+		fireEvent.click(
+			within(dialog).getByRole("button", {
+				name: `「${second.title}」的操作`,
+			}),
+		);
+		fireEvent.click(await screen.findByRole("menuitem", { name: "删除" }));
+		const confirm = await screen.findByRole("dialog", {
+			name: `删除跟进「${second.title}」？`,
+		});
+		expect(requests).not.toContain(
+			`DELETE /api/v1/assistant/research/topics/${second.id}`,
+		);
+		fireEvent.click(within(confirm).getByRole("button", { name: "删除" }));
+		await waitFor(() =>
+			expect(requests).toContain(
+				`DELETE /api/v1/assistant/research/topics/${second.id}`,
+			),
+		);
+		await waitFor(() =>
+			expect(within(dialog).queryByText(second.title)).toBeNull(),
+		);
+		expect(within(dialog).getByText(first.title)).toBeVisible();
 	});
 });
