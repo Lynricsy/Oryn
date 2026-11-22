@@ -91,8 +91,8 @@ type env struct {
 }
 
 // newEnv 起一套 threads + schedule + coord；hold 为真时新 orb 停在 requested（不拉 fakeomp），
-// 宿主工具直接调用即可。已有一台协调 orb。
-func newEnv(t *testing.T, hold bool) *env {
+// 宿主工具直接调用即可。已有一台协调 orb。opts 在构造前改协调服务的配置。
+func newEnv(t *testing.T, hold bool, opts ...func(*Config)) *env {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	dir := t.TempDir()
@@ -105,7 +105,11 @@ func newEnv(t *testing.T, hold bool) *env {
 	th := threads.New(threads.Config{DataDir: filepath.Join(dir, "data")}, st, o)
 	clk := &clock{t: time.Date(2026, 11, 14, 2, 0, 0, 0, time.UTC)}
 	sched := schedule.New(schedule.Config{Now: clk.Now}, st, th, nopSchedOrbs{}, nopNotifier{})
-	c := New(Config{Now: clk.Now, PublicURL: "https://oryn.test/"}, st, th, nil, hostStub{}, sched)
+	cfg := Config{Now: clk.Now, PublicURL: "https://oryn.test/"}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	c := New(cfg, st, th, nil, hostStub{}, sched)
 	e := &env{t: t, ctx: ctx, st: st, orbs: o, th: th, sched: sched, c: c, clk: clk, reports: make(chan string, 64), texts: make(chan string, 64)}
 	c.afterReport = func(id string) { e.reports <- id }
 	c.sentReport = func(_, text string) { e.texts <- text }
@@ -853,4 +857,32 @@ func TestCoordinatorPipeline(t *testing.T) {
 	assert.Equal(t, "create_thread", create.Action)
 	assert.Equal(t, "owner", create.Origin, "主人发起的回合")
 	assert.True(t, create.Ok)
+}
+
+// 全局助手常驻：配置了 KeepWarm 时不等用户操作就建好主线并起它的 agent；agent 就绪之后的每轮检查不再重启它。
+func TestKeepWarmStartsMain(t *testing.T) {
+	e := newEnv(t, false, func(c *Config) { c.KeepWarm = 20 * time.Millisecond })
+	starts := func() int {
+		n := 0
+		for _, c := range e.orbs.Calls() {
+			if c == "agent.start" {
+				n++
+			}
+		}
+		return n
+	}
+	require.Eventually(t, func() bool {
+		m, err := e.st.Q.GetMainThread(e.ctx)
+		if err != nil {
+			return false
+		}
+		th, err := e.th.Get(e.ctx, m.ID)
+		return err == nil && th.State == apigen.ThreadStateIdle && starts() > 0
+	}, 10*time.Second, 10*time.Millisecond)
+	// 起步阶段的 agent.start 次数不在这里断言：threadstest 的假 Wake 对还没就绪的 orb 每调一次都拉一个 orbd，
+	// 会多出就绪事件（真实 orbs.Wake 对过渡中的 orb 什么也不做）
+	time.Sleep(300 * time.Millisecond)
+	settled := starts()
+	time.Sleep(300 * time.Millisecond) // 约 15 轮检查
+	assert.Equal(t, settled, starts(), "agent 已就绪：后续检查不重启")
 }

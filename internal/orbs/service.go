@@ -1572,8 +1572,9 @@ func (s *Service) EvaluateIdle(ctx context.Context) {
 			return
 		}
 		for _, orb := range orbs {
-			if IsRunner(orb) || orb.Box != 0 {
-				// runner 与 box 是常驻的：不冻结、不停机
+			if IsRunner(orb) || orb.Box != 0 || orb.Coordinator {
+				// runner 与 box 是常驻的：不冻结、不停机。协调 orb 同样常驻：全局助手要随时能立即回复，
+				// 冻结它就是结束协调宿主子进程与其中全部 omp，下一条消息要付完整的冷启动（见 coord.keepWarm）
 				continue
 			}
 			idle := s.idleFrozenTooLong

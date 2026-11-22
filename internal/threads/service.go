@@ -889,8 +889,8 @@ func (s *Service) handleOrbEvent(ctx context.Context, ev OrbEvent) {
 				continue
 			}
 			// 协调对话按需启动（每个都是一个上百 MB 的 omp）：只启动重启前正忙、尚未启动过、或有排队命令的；
-			// 其余在收到命令（Command / Deliver）或被唤醒（Wake）时才起 agent。
-			if r.Kind != KindWork && r.State != StateWorking && r.State != StateAwaitingInput && r.State != StateProvisioning && !s.hasQueued(ctx, r.ID) {
+			// 其余在收到命令（Command / Deliver）或被唤醒（Wake）时才起 agent。主线例外：它常驻，随时能立即回复。
+			if r.Kind != KindWork && r.Main == 0 && r.State != StateWorking && r.State != StateAwaitingInput && r.State != StateProvisioning && !s.hasQueued(ctx, r.ID) {
 				continue
 			}
 			s.scheduleStart(r.ID)

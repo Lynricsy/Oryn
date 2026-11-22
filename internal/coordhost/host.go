@@ -123,6 +123,10 @@ type Host struct {
 	paused     map[string]chan struct{} // 等待某 orb 的 pause / delete 任务执行完（意外退出后的 Pause → Wake）
 	report     *sandbox.Report
 
+	// recovered 在 Run 处理完启动时残留的协调 orb（recover）后关闭；Run 提前退出时同样关闭，等待方不会卡住。
+	recovered     chan struct{}
+	recoveredOnce sync.Once
+
 	// noNS 仅供测试：跳过命名空间探测，固定为端口限制模式（模拟建不了命名空间的环境）。
 	noNS bool
 	// maxABI 仅供测试：把 Landlock ABI 封顶（探测与子进程都按它；模拟旧内核）。
@@ -197,6 +201,8 @@ func New(cfg Config, st *store.Store, q *jobs.Queue, o Orbs) *Host {
 		children: map[string]*child{},
 		crashes:  map[string][]time.Time{},
 		paused:   map[string]chan struct{}{},
+
+		recovered: make(chan struct{}),
 
 		lookupUser: user.Lookup,
 		addUser:    runUseradd,
@@ -588,6 +594,7 @@ func (h *Host) Run(ctx context.Context) {
 	h.runCtx = ctx
 	h.mu.Unlock()
 	defer h.stopAll()
+	defer h.markRecovered()
 	pid, err := h.register(ctx)
 	if err != nil {
 		h.log.Error("register host provider failed; coordinator host disabled", "err", err)
@@ -599,6 +606,7 @@ func (h *Host) Run(ctx context.Context) {
 	}
 	h.migrateLegacyHome(ctx)
 	h.recover(ctx)
+	h.markRecovered()
 	for ctx.Err() == nil {
 		job, ok, err := h.q.Claim(ctx, pid, claimWait)
 		if err != nil {
@@ -624,6 +632,17 @@ func (h *Host) Run(ctx context.Context) {
 		}
 	}
 }
+
+// Recovered 在启动时残留的协调 orb 处理完之后关闭：此前唤醒它会撞上 recover 的停机（子进程已随上一个 orynd 消失）。
+func (h *Host) Recovered() <-chan struct{} { return h.recovered }
+
+func (h *Host) markRecovered() { h.recoveredOnce.Do(func() { close(h.recovered) }) }
+
+// coord 以可选接口探测 Recovered / CrashLooping（coord.hostLiveness）：改了签名常驻检查会静默退化，这里在编译期钉住。
+var _ interface {
+	Recovered() <-chan struct{}
+	CrashLooping() bool
+} = (*Host)(nil)
 
 func (h *Host) register(ctx context.Context) (string, error) {
 	caps, _ := json.Marshal(map[string]bool{"freeze": true, "snapshot": false})
@@ -670,7 +689,8 @@ func (h *Host) leaseLoop(ctx context.Context, pid string) {
 	}
 }
 
-// recover 处理 orynd 启动时的协调 orb：ready → 停机（子进程已随上一个 orynd 消失，下一条消息经 resume 回来）；
+// recover 处理 orynd 启动时的协调 orb：ready → 停机（子进程已随上一个 orynd 消失；之后由 coord 的常驻检查经 resume
+// 拉回来，见 Recovered）；
 // connecting / setting_up / resuming → 直接拉起子进程。其余状态交给 orbs 补发的任务。
 func (h *Host) recover(ctx context.Context) {
 	o, err := h.st.Q.GetCoordinatorOrb(ctx)
@@ -1014,6 +1034,26 @@ func (h *Host) onExit(c *child) {
 	}
 	h.log.Warn("coordinator host exited unexpectedly", "orb", c.orbID, "pid", c.pid, "crashes", n, "log", h.logTail(hostLogTail))
 	go h.recoverCrash(ctx, c.orbID, n < crashLimit)
+}
+
+// CrashLooping 报告协调宿主是否正处在崩溃退避里：某个协调 orb 在 crashWindow 内意外退出已达 crashLimit 次
+// （宿主此时不再自己拉起它）。常驻检查据此暂不唤醒，等窗口滑过再试，免得每轮检查都拉起一个起来就崩的子进程。
+func (h *Host) CrashLooping() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	now := time.Now()
+	for _, list := range h.crashes {
+		n := 0
+		for _, t := range list {
+			if now.Sub(t) < crashWindow {
+				n++
+			}
+		}
+		if n >= crashLimit {
+			return true
+		}
+	}
+	return false
 }
 
 // startingStates 是 orb 还没到 ready、正等协调宿主（重新）建 link 的状态。这些状态不能 stop（orbs.Pause 只接受

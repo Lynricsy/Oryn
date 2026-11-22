@@ -51,6 +51,8 @@ type Config struct {
 	// MCPToken 是协调宿主 /mcp/ 路由的凭据（M19 D10，与 orbs.DefaultSetup.CoordinatorMCPToken 相同）：只放进全局助手的
 	// AgentProfile；空 = 全局助手也用不了 MCP。
 	MCPToken string
+	// KeepWarm 是全局助手常驻检查的间隔（见 keepWarmLoop）；0 = 不做（测试默认，免得每套环境都建主线、起 agent）。
+	KeepWarm time.Duration
 }
 
 // Scheduler 是定时服务（*schedule.Service 实现）。
@@ -227,8 +229,11 @@ func (s *Service) nowMs() int64 { return s.cfg.Now().UnixMilli() }
 func (s *Service) Host() HostChecker { return s.host }
 
 // Run 处理线程回报，并每天裁剪一次 90 天前的审计记录、每小时让超过 24 小时未答的确认卡过期，直到 ctx 结束。
-// 启动时先把仍待答的确认卡放回各自的对话（线程服务的待答请求只在内存里）。
+// 启动时先把仍待答的确认卡放回各自的对话（线程服务的待答请求只在内存里）；配置了 KeepWarm 时另起常驻检查。
 func (s *Service) Run(ctx context.Context) {
+	if s.cfg.KeepWarm > 0 {
+		go s.keepWarmLoop(ctx)
+	}
 	s.expireConfirmations(ctx)
 	s.restoreConfirmations(ctx)
 	s.trimActions(ctx)
@@ -251,6 +256,56 @@ func (s *Service) Run(ctx context.Context) {
 		case <-inbox.C:
 			s.retryInbox(ctx)
 		}
+	}
+}
+
+// KeepWarmEvery 是 orynd 用的常驻检查间隔：协调宿主子进程意外退出、被停下后最迟这么久拉回来。
+const KeepWarmEvery = 30 * time.Second
+
+// hostLiveness 由 *coordhost.Host 实现：启动时残留的协调 orb 处理完之前不唤醒（会撞上 recover 的停机）；
+// 宿主在崩溃退避里（短时间内连续崩溃、它自己也不再拉起）时暂不唤醒。
+type hostLiveness interface {
+	Recovered() <-chan struct{}
+	CrashLooping() bool
+}
+
+// keepWarmLoop 让全局助手常驻：协调宿主处理完启动残留后立即检查一次，之后每 cfg.KeepWarm 检查一次。
+func (s *Service) keepWarmLoop(ctx context.Context) {
+	if r, ok := s.host.(hostLiveness); ok {
+		select {
+		case <-ctx.Done():
+			return
+		case <-r.Recovered():
+		}
+	}
+	t := time.NewTicker(s.cfg.KeepWarm)
+	defer t.Stop()
+	for {
+		s.keepWarm(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
+// keepWarm 在协调宿主可用时确保主线存在、协调 orb 在运行、主线的 agent 已就绪（已就绪时什么也不做）。
+// 主线常驻后，助手的协调宿主子进程一直在：其它对话只付自己的 agent 启动，不再付整个宿主的冷启动。
+func (s *Service) keepWarm(ctx context.Context) {
+	if s.checkHost(ctx) != nil {
+		return
+	}
+	if r, ok := s.host.(hostLiveness); ok && r.CrashLooping() {
+		return
+	}
+	main, err := s.EnsureMain(ctx)
+	if err != nil {
+		slog.Debug("coord: 常驻检查拿不到主线", "err", err)
+		return
+	}
+	if err := s.th.KeepWarm(ctx, main.ID); err != nil && ctx.Err() == nil {
+		slog.Debug("coord: 常驻检查唤醒主线失败", "thread", main.ID, "err", err)
 	}
 }
 

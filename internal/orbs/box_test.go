@@ -126,3 +126,25 @@ func TestReviveBoxOrb(t *testing.T) {
 	require.NoError(t, b.svc.Revive(ctx, box.ID), "已不是 ready：无操作")
 	assert.Equal(t, []string{"spawn:"}, b.pending(box.ID))
 }
+
+// 协调 orb（全局助手）常驻：过了空闲阈值不冻结，冻结状态下也不因冻结过久停机；普通 orb 作对照。
+func TestCoordinatorOrbIsAlwaysOn(t *testing.T) {
+	ctx := context.Background()
+	b := newBare(t, func(c *Config) {
+		c.Idle = config.Idle{AgentIdle: config.Duration(time.Millisecond), UserIdle: config.Duration(time.Millisecond), StopAfterFrozen: config.Duration(time.Millisecond)}
+	})
+	old := time.Now().Add(-time.Hour).UnixMilli()
+	coord := b.orb(StateReady, old)
+	frozen := b.orb(StateFrozen, old)
+	for _, id := range []string{coord.ID, frozen.ID} {
+		_, err := b.st.DB.ExecContext(ctx, `UPDATE orbs SET coordinator = 1 WHERE id = ?`, id)
+		require.NoError(t, err)
+	}
+	plain := b.orb(StateReady, old)
+
+	b.svc.EvaluateIdle(ctx)
+	assert.Equal(t, StateFreezing, b.state(plain.ID), "对照：阈值在生效")
+	assert.Equal(t, StateReady, b.state(coord.ID), "协调 orb 不冻结")
+	assert.Equal(t, StateFrozen, b.state(frozen.ID), "协调 orb 不因冻结过久停机")
+	assert.Empty(t, b.pending(coord.ID))
+}

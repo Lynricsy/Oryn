@@ -324,7 +324,7 @@ func (s *Server) init(ctx context.Context) error {
 		// M19 3.3：交给助手的运行结果进主线（coord 晚于 schedule 构造，用闭包）
 		HandOff: func(ctx context.Context, h schedule.HandOff) { s.Coord.PostToMain(ctx, h) },
 	}, s.Store, s.Threads, s.Orbs, s.Notify)
-	s.Coord = coord.New(coord.Config{Now: scheduleNow, AfterFunc: scheduleAfterFunc, Model: cfg.Coordinator.Model, PublicURL: cfg.PublicURL, MCPToken: mcpToken},
+	s.Coord = coord.New(coord.Config{Now: scheduleNow, AfterFunc: scheduleAfterFunc, Model: cfg.Coordinator.Model, PublicURL: cfg.PublicURL, MCPToken: mcpToken, KeepWarm: coord.KeepWarmEvery},
 		s.Store, s.Threads, s.Orbs, s.Host, s.Schedules)
 	s.Coord.SetLibrary(s.Library, s.LibrarySync)
 	s.Coord.SetArtifacts(s.Artifacts)

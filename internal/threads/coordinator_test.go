@@ -509,11 +509,15 @@ func TestCoordinatorSelfHeal(t *testing.T) {
 	assert.Equal(t, 1, coord.ensures, "已有 orb 时不再调用")
 }
 
-// 协调 orb 就绪时只启动需要的协调对话：尚未启动过的、有排队命令的；空闲的等到有命令或被唤醒。工作线程照旧全部启动。
+// 协调 orb 就绪时只启动需要的协调对话：尚未启动过的、有排队命令的；空闲的等到有命令或被唤醒。主线常驻，空闲也启动。
+// 工作线程照旧全部启动。
 func TestCoordinatorOnDemandStart(t *testing.T) {
 	f := newFixture(t, Config{})
 	orb := f.orb("ready")
 	idle := f.coordThread(orb, KindAssistant, StateIdle)
+	main := f.coordThread(orb, KindAssistant, StateIdle)
+	_, err := f.st.DB.ExecContext(f.ctx, `UPDATE threads SET main = 1 WHERE id = ?`, main.id)
+	require.NoError(t, err)
 	queued := f.coordThread(orb, KindAssistant, StateIdle)
 	queued.mu.Lock()
 	queued.queue = append(queued.queue, []byte(`{"type":"prompt","id":"oryn-x","message":"hi"}`))
@@ -528,9 +532,49 @@ func TestCoordinatorOnDemandStart(t *testing.T) {
 		return th.agentStatus
 	}
 	assert.Equal(t, apigen.AgentStatusNone, status(idle))
+	assert.Equal(t, apigen.AgentStatusStarting, status(main), "主线常驻")
 	assert.Equal(t, apigen.AgentStatusStarting, status(queued))
 	assert.Equal(t, apigen.AgentStatusStarting, status(fresh))
 	assert.Equal(t, apigen.AgentStatusStarting, status(work))
+}
+
+// KeepWarm：orb 停机时唤醒（Focus 不会）；orb 就绪但 agent 没起时启动；agent 已就绪时不重启；orb failed 不自动重试。
+func TestKeepWarm(t *testing.T) {
+	f := newFixture(t, Config{})
+	stopped := f.coordThread(f.orb("stopped"), KindAssistant, StateIdle)
+	require.NoError(t, f.s.KeepWarm(f.ctx, stopped.id))
+	assert.Equal(t, stopped.orbID, <-f.orbs.wakes, "停机的 orb 被唤醒")
+
+	failed := f.coordThread(f.orb("failed"), KindAssistant, StateIdle)
+	require.NoError(t, f.s.KeepWarm(f.ctx, failed.id))
+
+	o := newCtlOrbs(t, f.orbs)
+	f.s.orbs = o
+	f.s.SetCoordinator(newFakeCoord())
+	o.features["coordinator"] = true
+	orb := f.orb("ready")
+	cold := f.coordThread(orb, KindAssistant, StateIdle)
+	warm := f.coordThread(orb, KindAssistant, StateIdle)
+	attach(warm, fakeAgent(16), apigen.AgentStatusReady)
+	require.NoError(t, f.s.KeepWarm(f.ctx, warm.id))
+	require.NoError(t, f.s.KeepWarm(f.ctx, cold.id))
+	f.s.Close()
+	select {
+	case id := <-f.orbs.wakes:
+		t.Fatalf("不该唤醒 %s", id)
+	default:
+	}
+	var started []string
+	o.mu.Lock()
+	for _, c := range o.calls {
+		if c.method == "agent.start" {
+			var p apigen.LinkCtlAgentStartParams
+			require.NoError(t, json.Unmarshal(c.params, &p))
+			started = append(started, p.ThreadID)
+		}
+	}
+	o.mu.Unlock()
+	assert.Equal(t, []string{cold.id}, started, "只启动没起的 agent，已就绪的不重启")
 }
 
 // RefreshAgent：正忙时等 session_settled 再停；停下后的 exited 不算重启耗尽。

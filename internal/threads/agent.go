@@ -1793,6 +1793,53 @@ func (s *Service) UIResponse(ctx context.Context, threadID string, frame json.Ra
 	return nil
 }
 
+// KeepWarm 让线程的 agent 处于能立即应答的状态（全局助手主线常驻用；orb 就绪后由 handleOrbEvent 启动的线程才适用）：
+// orb 没在运行就唤醒（含停机的），orb 就绪而 agent 没有进程（从没起过、或被有意停掉）就启动，可以反复调用。下列情况
+// 什么也不做：agent 正在启动或已上报 ready
+// （流可能还在路上）；崩溃后 orbd 正在重启它；刚建的线程（provisioning，由创建路径与 orb 就绪事件负责启动）。
+// 不计为用户交互。与 Focus 一样，失败（orb failed、agent 没能启动、重启耗尽）不自动重试，只由显式重试恢复，免得每轮
+// 检查都重新拉起一个起不来的进程。
+func (s *Service) KeepWarm(ctx context.Context, threadID string) error {
+	t, err := s.get(ctx, threadID)
+	if err != nil {
+		return err
+	}
+	if t.kind != KindWork {
+		if err := s.ensureCoordOrb(ctx, t); err != nil {
+			return err
+		}
+	}
+	t.mu.Lock()
+	orbID := t.orbID
+	wakeOrb, start := false, false
+	if orbID != "" && !t.failed && !t.starting && !t.stopping {
+		switch st := s.orbState(orbID); {
+		case st == orbStateFailed:
+		case st != orbStateReady:
+			// 只唤醒 orb：就绪事件按 handleOrbEvent 的规则启动主线、刚建的线程。这里若走 wake，orb 恰好在其间就绪时
+			// 会和就绪事件各发一次 agent.start
+			wakeOrb = true
+		default:
+			cold := t.agentStatus == apigen.AgentStatusNone ||
+				(t.agentStatus == apigen.AgentStatusExited && !t.unsynced && !t.live.restartExhausted)
+			start = cold && t.state != StateProvisioning
+		}
+	}
+	t.mu.Unlock()
+	switch {
+	case wakeOrb:
+		s.go_(func(ctx context.Context) {
+			if err := s.orbs.Wake(ctx, orbID); err != nil {
+				slog.Debug("threads: 常驻检查唤醒 orb 失败", "thread", threadID, "orb", orbID, "err", err)
+			}
+		})
+	case start:
+		// 同步记为 starting：下一轮检查不会在 agent.start 发出前再启动一次
+		s.scheduleStart(threadID)
+	}
+	return nil
+}
+
 // Focus 记录连接当前查看的线程（空串 = 无）：清未读、记用户交互、按配置唤醒。失败（orb failed、agent 没能启动）
 // 不因 focus 自动重试，只由显式重试（`POST threads/{id}/wake`，即横幅的「重试」）恢复。
 // 停机（stopping / stopped）的 orb 也不因 focus 唤醒：冷启动代价高，打开线程页只读浏览文件（offline fs）即可；
