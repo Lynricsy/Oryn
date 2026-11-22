@@ -397,7 +397,8 @@ jobs:
   # iOS：PR / 手动 / 发布都跑的不签名编译 + 模拟器截图断言（签名构建见下方 ios-release）
   ios-check:
     needs: prepare
-    runs-on: macos-latest
+    # macos-latest 仍是 Xcode 26.x（iOS 26.x SDK），App Store 自 2027-04 起只收 iOS 27 SDK 构建的包（ITMS-90725）
+    runs-on: xcode-27
     permissions:
       contents: read
     env:
@@ -407,13 +408,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: 确认 Xcode ≥ 26（iOS 26 SDK：Liquid Glass 与 App Store 上传都要求）
+      - name: 确认 Xcode ≥ 27（iOS 27 SDK：App Store 上传要求，ITMS-90725）
         shell: bash
         run: |
           set -euo pipefail
           v=$(xcodebuild -version | awk 'NR==1{print $2}')
           echo "Xcode $v" | tee -a "$GITHUB_STEP_SUMMARY"
-          if [[ ${v%%.*} -lt 26 ]]; then echo "::error::需要 Xcode 26+，当前 $v"; exit 1; fi
+          if [[ ${v%%.*} -lt 27 ]]; then echo "::error::需要 Xcode 27+，当前 $v"; exit 1; fi
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -535,7 +536,8 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.is_release == 'true'
     environment: mobile-release
-    runs-on: macos-latest
+    # 与 ios-check 同一镜像：上传的 IPA 必须由 iOS 27 SDK 构建（ITMS-90725）
+    runs-on: xcode-27
     permissions:
       contents: read
     env:
@@ -545,13 +547,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: 确认 Xcode ≥ 26（iOS 26 SDK：Liquid Glass 与 App Store 上传都要求）
+      - name: 确认 Xcode ≥ 27（iOS 27 SDK：App Store 上传要求，ITMS-90725）
         shell: bash
         run: |
           set -euo pipefail
           v=$(xcodebuild -version | awk 'NR==1{print $2}')
           echo "Xcode $v" | tee -a "$GITHUB_STEP_SUMMARY"
-          if [[ ${v%%.*} -lt 26 ]]; then echo "::error::需要 Xcode 26+，当前 $v"; exit 1; fi
+          if [[ ${v%%.*} -lt 27 ]]; then echo "::error::需要 Xcode 27+，当前 $v"; exit 1; fi
 
       # 只取「有没有」的布尔，不接触 secret 的值
       - name: 检查签名与上传凭据

@@ -18,7 +18,8 @@ concurrency:
 
 jobs:
   shots:
-    runs-on: macos-latest
+    # 与 mobile.yml 的 ios-check 同一镜像（Xcode 27），截图与发版包同一套 SDK
+    runs-on: xcode-27
     permissions:
       contents: read
     timeout-minutes: 90
@@ -27,13 +28,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: 确认 Xcode ≥ 26（iOS 26 SDK：Liquid Glass）
+      - name: 确认 Xcode ≥ 27（iOS 27 SDK，与 mobile.yml 一致）
         shell: bash
         run: |
           set -euo pipefail
           v=$(xcodebuild -version | awk 'NR==1{print $2}')
           echo "Xcode $v" | tee -a "$GITHUB_STEP_SUMMARY"
-          if [[ ${v%%.*} -lt 26 ]]; then echo "::error::需要 Xcode 26+，当前 $v"; exit 1; fi
+          if [[ ${v%%.*} -lt 27 ]]; then echo "::error::需要 Xcode 27+，当前 $v"; exit 1; fi
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
