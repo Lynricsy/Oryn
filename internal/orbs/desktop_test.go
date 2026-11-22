@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -445,4 +446,103 @@ func TestDesktopStateLateReadonlyKeepsDirty(t *testing.T) {
 	h.svc.ApplyDesktopState(ctx, orb.ID, apigen.LinkCtlDesktopStateParams{DisplayReady: true, Browser: apigen.OrbBrowserStatusRunning, Dirty: true})
 	h.svc.ApplyDesktopState(ctx, orb.ID, apigen.LinkCtlDesktopStateParams{DisplayReady: true, Browser: apigen.OrbBrowserStatusRunning, ProfileID: &pid, ProfileMode: &ro})
 	assert.EqualValues(t, 0, dirty(), "库里确是只读：照常写")
+}
+
+// M25：desktop.state 的 apps / windows 写进镜像列并在视图里读出；nil（旧 orbd 不发）→ NULL，空列表照存；
+// 超过上限的截掉；orb 不在 ready 时视图不给出（镜像保留）。
+func TestDesktopAppsMirror(t *testing.T) {
+	h, drv, _ := newDesktopHarness(t, []string{FeatureDesktop, FeatureDesktopApps})
+	ctx := context.Background()
+	orb, _ := h.readyOrb(drv, "")
+	view := func() *apigen.OrbDesktop {
+		t.Helper()
+		cur, err := h.svc.Get(ctx, orb.ID)
+		require.NoError(t, err)
+		v, err := View(ctx, h.st.Q, cur)
+		require.NoError(t, err)
+		require.NotNil(t, v.Desktop)
+		return v.Desktop
+	}
+	app := "vscode"
+	apps := []apigen.OrbDesktopApp{{ID: "chromium", Name: "Chromium"}, {ID: app, Name: "VS Code", Running: true}}
+	wins := []apigen.OrbDesktopWindow{{ID: "4194307", AppID: &app, Title: "main.go", Active: true}, {ID: "8388611", Title: "xterm", Minimized: true}}
+	h.svc.ApplyDesktopState(ctx, orb.ID, apigen.LinkCtlDesktopStateParams{DisplayReady: true, Browser: apigen.OrbBrowserStatusStopped, Apps: apps, Windows: wins})
+	d := view()
+	assert.Equal(t, apps, d.Apps)
+	assert.Equal(t, wins, d.Windows)
+
+	// 空列表照存（[]），视图里为空
+	h.svc.ApplyDesktopState(ctx, orb.ID, apigen.LinkCtlDesktopStateParams{Browser: apigen.OrbBrowserStatusStopped, Apps: apps, Windows: []apigen.OrbDesktopWindow{}})
+	row, err := h.st.Q.GetOrbDesktop(ctx, orb.ID)
+	require.NoError(t, err)
+	require.NotNil(t, row.Windows)
+	assert.Equal(t, "[]", *row.Windows)
+	assert.Empty(t, view().Windows)
+
+	// 旧 orbd 不发：NULL
+	h.svc.ApplyDesktopState(ctx, orb.ID, apigen.LinkCtlDesktopStateParams{Browser: apigen.OrbBrowserStatusStopped})
+	row, err = h.st.Q.GetOrbDesktop(ctx, orb.ID)
+	require.NoError(t, err)
+	assert.Nil(t, row.Apps)
+	assert.Nil(t, row.Windows)
+	d = view()
+	assert.Nil(t, d.Apps)
+	assert.Nil(t, d.Windows)
+
+	// 超过上限：截到 16 / 32
+	many := make([]apigen.OrbDesktopWindow, 40)
+	for i := range many {
+		many[i] = apigen.OrbDesktopWindow{ID: strconv.Itoa(i + 1), Title: "w"}
+	}
+	manyApps := slices.Repeat(apps[:1], 20)
+	h.svc.ApplyDesktopState(ctx, orb.ID, apigen.LinkCtlDesktopStateParams{Browser: apigen.OrbBrowserStatusStopped, Apps: manyApps, Windows: many})
+	d = view()
+	assert.Len(t, d.Apps, maxDesktopApps)
+	assert.Equal(t, many[:maxDesktopWindows], d.Windows)
+
+	// 冻结：视图不给出 control / apps / windows，镜像保留
+	h.svc.ApplyDesktopState(ctx, orb.ID, apigen.LinkCtlDesktopStateParams{Browser: apigen.OrbBrowserStatusStopped, Apps: apps, Windows: wins,
+		Control: &apigen.OrbDesktopControl{State: apigen.OrbDesktopControlStateUser}})
+	require.NotNil(t, view().Control)
+	require.NoError(t, h.st.Q.SetOrbState(ctx, db.SetOrbStateParams{State: StateFrozen, StateChangedAt: 2, ID: orb.ID}))
+	d = view()
+	assert.Nil(t, d.Control)
+	assert.Nil(t, d.Apps)
+	assert.Nil(t, d.Windows)
+	row, err = h.st.Q.GetOrbDesktop(ctx, orb.ID)
+	require.NoError(t, err)
+	assert.NotNil(t, row.Apps)
+	assert.NotNil(t, row.Windows)
+}
+
+// 竞态：apps / windows 只认 desktop.state。先应用一条带新窗口的通知，再应用一份不含它的较旧 HTTP 回包快照：
+// 视图里窗口仍在，而回包里的其余字段照常写入。
+func TestDesktopReplyKeepsWindows(t *testing.T) {
+	h, drv, _ := newDesktopHarness(t, []string{FeatureDesktop, FeatureDesktopApps})
+	ctx := context.Background()
+	orb, _ := h.readyOrb(drv, "")
+	app := "vscode"
+	fresh := []apigen.OrbDesktopWindow{{ID: "4194307", AppID: &app, Title: "main.go", Active: true}}
+	apps := []apigen.OrbDesktopApp{{ID: app, Name: "VS Code", Running: true}}
+	h.svc.ApplyDesktopState(ctx, orb.ID, apigen.LinkCtlDesktopStateParams{DisplayReady: true, Browser: apigen.OrbBrowserStatusStopped, Apps: apps, Windows: fresh})
+	h.svc.ApplyDesktopReply(ctx, orb.ID, apigen.LinkCtlDesktopStateParams{
+		DisplayReady: true, Browser: apigen.OrbBrowserStatusRunning,
+		Apps: []apigen.OrbDesktopApp{{ID: app, Name: "VS Code", Launching: true}}, Windows: []apigen.OrbDesktopWindow{},
+	})
+	cur, err := h.svc.Get(ctx, orb.ID)
+	require.NoError(t, err)
+	v, err := View(ctx, h.st.Q, cur)
+	require.NoError(t, err)
+	require.NotNil(t, v.Desktop)
+	assert.Equal(t, fresh, v.Desktop.Windows)
+	assert.Equal(t, apps, v.Desktop.Apps)
+	assert.Equal(t, apigen.OrbBrowserStatusRunning, v.Desktop.Browser, "回包的其余字段照常写")
+
+	// 镜像还没有行时，回包照样建行（apps / windows 为 NULL）
+	other, _ := h.readyOrb(drv, "")
+	h.svc.ApplyDesktopReply(ctx, other.ID, apigen.LinkCtlDesktopStateParams{DisplayReady: true, Browser: apigen.OrbBrowserStatusRunning, Windows: fresh})
+	row, err := h.st.Q.GetOrbDesktop(ctx, other.ID)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, row.Reported)
+	assert.Nil(t, row.Windows)
 }

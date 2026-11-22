@@ -900,7 +900,7 @@ func (s *Service) SetBrowser(ctx context.Context, orbID string, run bool) error 
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&st); err != nil {
 		return fmt.Errorf("desktop: orbd 返回的桌面状态无效: %w", err)
 	}
-	s.o.ApplyDesktopState(ctx, orbID, st)
+	s.o.ApplyDesktopReply(ctx, orbID, st)
 	return nil
 }
 
@@ -929,7 +929,7 @@ func (s *Service) SetControl(ctx context.Context, orbID string, take bool) error
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&st); err != nil {
 		return fmt.Errorf("desktop: orbd 返回的桌面状态无效: %w", err)
 	}
-	s.o.ApplyDesktopState(ctx, orbID, st)
+	s.o.ApplyDesktopReply(ctx, orbID, st)
 	return nil
 }
 

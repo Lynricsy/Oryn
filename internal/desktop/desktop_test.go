@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -48,6 +49,8 @@ type fakeOrbd struct {
 	notReady       bool
 	// exportFail 非空时导出以 413 + 该码失败（orbd 的条目数 / 解包大小预检）。
 	exportFail string
+	// extra 非 nil 时先处理请求（M25 的应用 / 窗口 / 图标路由）；返回 nil 走下面的内置路由。持 o.mu 调用。
+	extra func(req *http.Request) *http.Response
 }
 
 func (o *fakeOrbd) requests() []string {
@@ -103,6 +106,11 @@ func (o *fakeOrbd) serve(req *http.Request) (*http.Response, error) {
 	o.reqs = append(o.reqs, req.Method+" "+req.URL.Path+"?"+req.URL.RawQuery)
 	idx := len(o.reqs) - 1
 	defer o.mu.Unlock()
+	if o.extra != nil {
+		if resp := o.extra(req); resp != nil {
+			return resp, nil
+		}
+	}
 	switch req.Method + " " + req.URL.Path {
 	case "DELETE /desktop/profile":
 		if !(o.markerSet && o.markerID == "") {
@@ -196,6 +204,10 @@ type fakeOrbs struct {
 	// deferModes 为真时 profile.mode 像超时一样返回错误，但消息留在 pending 里，deliverModes 时才落到 orbd。
 	deferModes bool
 	pending    []modeCall
+	// lacks：orbID → 该 orb 的 hello 缺少的特性（EnsureUsable 要它时回 ErrOrbdOutdated）；ensured 记下
+	// 每次 EnsureUsable 的 "orbID feature wake"。
+	lacks   map[string]string
+	ensured []string
 }
 
 func newFakeOrbs(st *store.Store) *fakeOrbs {
@@ -224,9 +236,13 @@ func (f *fakeOrbs) Get(ctx context.Context, orbID string) (db.Orb, error) {
 	return o, err
 }
 
-func (f *fakeOrbs) EnsureUsable(_ context.Context, orbID, _ string, _ bool, _ time.Duration) error {
+func (f *fakeOrbs) EnsureUsable(_ context.Context, orbID, feature string, wake bool, _ time.Duration) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.ensured = append(f.ensured, fmt.Sprintf("%s %s %v", orbID, feature, wake))
+	if f.lacks[orbID] == feature {
+		return orbs.ErrOrbdOutdated
+	}
 	return f.usable[orbID]
 }
 
@@ -264,7 +280,7 @@ func (f *fakeOrbs) TouchUserCoalesced(_ context.Context, orbID string) {
 	f.touched <- orbID
 }
 
-func (f *fakeOrbs) ApplyDesktopState(_ context.Context, orbID string, st apigen.LinkCtlDesktopStateParams) {
+func (f *fakeOrbs) ApplyDesktopReply(_ context.Context, orbID string, st apigen.LinkCtlDesktopStateParams) {
 	f.mu.Lock()
 	f.applied[orbID] = st
 	f.mu.Unlock()

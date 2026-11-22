@@ -562,6 +562,38 @@ func (q *Queries) UpsertOrbDesktopProfile(ctx context.Context, arg UpsertOrbDesk
 	return err
 }
 
+const upsertOrbDesktopReply = `-- name: UpsertOrbDesktopReply :exec
+INSERT INTO orb_desktops (orb_id, reported, display_ready, browser, dirty, control, updated_at)
+VALUES (?1, 1, ?2, ?3, ?4, ?5, ?6)
+ON CONFLICT (orb_id) DO UPDATE SET
+    reported = 1, display_ready = excluded.display_ready, browser = excluded.browser,
+    dirty = excluded.dirty, control = excluded.control, updated_at = excluded.updated_at
+`
+
+type UpsertOrbDesktopReplyParams struct {
+	OrbID        string  `json:"orbId"`
+	DisplayReady int64   `json:"displayReady"`
+	Browser      string  `json:"browser"`
+	Dirty        int64   `json:"dirty"`
+	Control      *string `json:"control"`
+	Now          int64   `json:"now"`
+}
+
+// Mirror of the state snapshot in an orbd local-API reply (browser/control/apps/windows routes). Same as
+// UpsertOrbDesktopState but leaves apps/windows untouched: those come only from desktop.state notifications,
+// so a late HTTP reply cannot roll the window list back.
+func (q *Queries) UpsertOrbDesktopReply(ctx context.Context, arg UpsertOrbDesktopReplyParams) error {
+	_, err := q.db.ExecContext(ctx, upsertOrbDesktopReply,
+		arg.OrbID,
+		arg.DisplayReady,
+		arg.Browser,
+		arg.Dirty,
+		arg.Control,
+		arg.Now,
+	)
+	return err
+}
+
 const upsertOrbDesktopState = `-- name: UpsertOrbDesktopState :exec
 INSERT INTO orb_desktops (orb_id, reported, display_ready, browser, dirty, control, apps, windows, updated_at)
 VALUES (?1, 1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)

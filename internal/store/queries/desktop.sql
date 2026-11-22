@@ -98,6 +98,16 @@ ON CONFLICT (orb_id) DO UPDATE SET
     dirty = excluded.dirty, control = excluded.control, apps = excluded.apps, windows = excluded.windows,
     updated_at = excluded.updated_at;
 
+-- Mirror of the state snapshot in an orbd local-API reply (browser/control/apps/windows routes). Same as
+-- UpsertOrbDesktopState but leaves apps/windows untouched: those come only from desktop.state notifications,
+-- so a late HTTP reply cannot roll the window list back.
+-- name: UpsertOrbDesktopReply :exec
+INSERT INTO orb_desktops (orb_id, reported, display_ready, browser, dirty, control, updated_at)
+VALUES (@orb_id, 1, @display_ready, @browser, @dirty, sqlc.narg(control), @now)
+ON CONFLICT (orb_id) DO UPDATE SET
+    reported = 1, display_ready = excluded.display_ready, browser = excluded.browser,
+    dirty = excluded.dirty, control = excluded.control, updated_at = excluded.updated_at;
+
 -- Result of a sync/checkin: local revision, load error, fence held (0 when not holding); clears takeover.
 -- name: SetOrbDesktopLocal :exec
 UPDATE orb_desktops

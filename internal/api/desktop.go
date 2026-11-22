@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
@@ -172,19 +173,52 @@ func (s *Server) StopOrbBrowser(w http.ResponseWriter, r *http.Request, id apige
 	s.setOrbBrowser(w, r, id, false)
 }
 
-// LaunchOrbDesktopApp 对应 POST /api/v1/orbs/{id}/desktop/apps/{app}/launch（M25）。步骤 2.1 实现，现在只回 501。
+// LaunchOrbDesktopApp 实现 POST /api/v1/orbs/{id}/desktop/apps/{app}/launch（M25）。
 func (s *Server) LaunchOrbDesktopApp(w http.ResponseWriter, r *http.Request, id apigen.OrbIDPath, app apigen.OrbDesktopAppIDPath) {
-	WriteError(w, http.StatusNotImplemented, "not_implemented", "desktop apps not implemented")
+	svc, ok := s.desktopSvc(w)
+	if !ok {
+		return
+	}
+	if err := svc.LaunchApp(r.Context(), id, app); err != nil {
+		writeDesktopErr(w, r, err)
+		return
+	}
+	s.writeOrb(w, r, id, http.StatusOK)
 }
 
-// GetOrbDesktopAppIcon 对应 GET /api/v1/orbs/{id}/desktop/apps/{app}/icon（M25）。步骤 2.1 实现，现在只回 501。
+// GetOrbDesktopAppIcon 实现 GET /api/v1/orbs/{id}/desktop/apps/{app}/icon（M25）。不唤醒 orb。
 func (s *Server) GetOrbDesktopAppIcon(w http.ResponseWriter, r *http.Request, id apigen.OrbIDPath, app apigen.OrbDesktopAppIDPath) {
-	WriteError(w, http.StatusNotImplemented, "not_implemented", "desktop apps not implemented")
+	svc, ok := s.desktopSvc(w)
+	if !ok {
+		return
+	}
+	ct, body, err := svc.AppIcon(r.Context(), id, app)
+	if err != nil {
+		writeDesktopErr(w, r, err)
+		return
+	}
+	defer body.Close()
+	h := w.Header()
+	// 字节来自 orb：类型已限定为 PNG / SVG；不许探测，且直接打开时不执行 SVG 里的脚本
+	h.Set("Content-Type", ct)
+	h.Set("Cache-Control", "private, max-age=86400")
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Content-Security-Policy", "sandbox")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, body)
 }
 
-// OperateOrbDesktopWindow 对应 POST /api/v1/orbs/{id}/desktop/windows/{window}/{action}（M25）。步骤 2.1 实现，现在只回 501。
+// OperateOrbDesktopWindow 实现 POST /api/v1/orbs/{id}/desktop/windows/{window}/{action}（M25）。
 func (s *Server) OperateOrbDesktopWindow(w http.ResponseWriter, r *http.Request, id apigen.OrbIDPath, window apigen.OrbDesktopWindowIDPath, action apigen.OrbDesktopWindowActionPath) {
-	WriteError(w, http.StatusNotImplemented, "not_implemented", "desktop windows not implemented")
+	svc, ok := s.desktopSvc(w)
+	if !ok {
+		return
+	}
+	if err := svc.WindowAction(r.Context(), id, window, string(action)); err != nil {
+		writeDesktopErr(w, r, err)
+		return
+	}
+	s.writeOrb(w, r, id, http.StatusOK)
 }
 
 func (s *Server) setOrbBrowser(w http.ResponseWriter, r *http.Request, id string, run bool) {

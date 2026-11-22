@@ -61,7 +61,7 @@ type Orbs interface {
 	Do(ctx context.Context, orbID string, req *http.Request) (*http.Response, error)
 	DialDesk(ctx context.Context, orbID string) (net.Conn, error)
 	TouchUserCoalesced(ctx context.Context, orbID string)
-	ApplyDesktopState(ctx context.Context, orbID string, st apigen.LinkCtlDesktopStateParams)
+	ApplyDesktopReply(ctx context.Context, orbID string, st apigen.LinkCtlDesktopStateParams)
 	RefreshDesktop(ctx context.Context, orbID string)
 	SendProfileMode(ctx context.Context, orbID string, p apigen.LinkCtlProfileModeParams) error
 	Subscribe(fn func(orbs.Event))

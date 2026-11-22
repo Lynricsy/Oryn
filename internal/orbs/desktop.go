@@ -22,8 +22,16 @@ import (
 const (
 	// FeatureDesktop 是 M8 orbd 的 hello 特性：有 X11 桌面、desk 流与 /desktop/* 本机 API。
 	FeatureDesktop = "desktop"
+	// FeatureDesktopApps 是 M25 orbd 的 hello 特性：desktop.state 带 apps / windows，有应用启动、窗口操作与图标本机路由。
+	FeatureDesktopApps = "desktop-apps"
 	// EventDesktop 表示桌面镜像或 Profile 绑定变化（From == To == 当前状态）。
 	EventDesktop = "desktop"
+)
+
+// 镜像里 apps / windows 的条数上限（与契约一致；超出的截掉，不让 orb 撑大镜像）。
+const (
+	maxDesktopApps    = 16
+	maxDesktopWindows = 32
 )
 
 // profileModeTimeout 是 profile.mode 请求的应答超时。
@@ -97,9 +105,21 @@ func (s *Service) preFreeze(ctx context.Context, orbID string) {
 	h.BeforeFreeze(ctx, orbID)
 }
 
-// ApplyDesktopState 把 orbd 报告的桌面状态写进镜像并发出 EventDesktop（desktop.state 通知与 REST 的浏览器启停共用）。
+// ApplyDesktopState 把 desktop.state 通知写进镜像（含 apps / windows）并发出 EventDesktop。
 // browser 不合法则丢弃；orb 为 deleting / deleted 时不写。
 func (s *Service) ApplyDesktopState(ctx context.Context, orbID string, st apigen.LinkCtlDesktopStateParams) {
+	s.applyDesktop(ctx, orbID, st, true)
+}
+
+// ApplyDesktopReply 把 orbd 本机 API 回包里的状态快照写进镜像（REST 的浏览器启停、控制接管、应用启动、窗口操作），
+// 但不碰 apps / windows：回包与 desktop.state 通知走两条链路，迟到的旧回包会把更新的窗口列表覆盖回去，
+// 而 orbd 每次状态变化都会发 desktop.state，两列只认通知不会丢更新。其余同 ApplyDesktopState。
+func (s *Service) ApplyDesktopReply(ctx context.Context, orbID string, st apigen.LinkCtlDesktopStateParams) {
+	s.applyDesktop(ctx, orbID, st, false)
+}
+
+// applyDesktop 写镜像；lists 为真时连同 apps / windows 一起写（nil = orbd 没上报该字段 → NULL）。
+func (s *Service) applyDesktop(ctx context.Context, orbID string, st apigen.LinkCtlDesktopStateParams, lists bool) {
 	if !st.Browser.Valid() {
 		slog.Warn("desktop.state 的 browser 无效，丢弃", "orb", orbID, "browser", truncUTF8(string(st.Browser), 32))
 		return
@@ -123,8 +143,15 @@ func (s *Service) ApplyDesktopState(ctx context.Context, orbID string, st apigen
 			b, _ := json.Marshal(st.Control)
 			control = new(string(b))
 		}
+		now := s.nowMs()
+		if !lists {
+			return q.UpsertOrbDesktopReply(ctx, db.UpsertOrbDesktopReplyParams{
+				OrbID: orbID, DisplayReady: b2i(st.DisplayReady), Browser: string(st.Browser), Dirty: dirty, Control: control, Now: now,
+			})
+		}
 		return q.UpsertOrbDesktopState(ctx, db.UpsertOrbDesktopStateParams{
-			OrbID: orbID, DisplayReady: b2i(st.DisplayReady), Browser: string(st.Browser), Dirty: dirty, Control: control, Now: s.nowMs(),
+			OrbID: orbID, DisplayReady: b2i(st.DisplayReady), Browser: string(st.Browser), Dirty: dirty, Control: control,
+			Apps: desktopList(st.Apps, maxDesktopApps), Windows: desktopList(st.Windows, maxDesktopWindows), Now: now,
 		})
 	})
 	if errors.Is(err, errOrbDeletedTx) {
@@ -141,6 +168,27 @@ func (s *Service) ApplyDesktopState(ctx context.Context, orbID string, st apigen
 	if h != nil {
 		h.DesktopReported(orbID, st)
 	}
+}
+
+// desktopList 把 apps / windows 编成镜像列的 JSON：nil（旧 orbd 不发该字段）→ NULL；超过 limit 条的截掉。
+func desktopList[T any](v []T, limit int) *string {
+	if v == nil {
+		return nil
+	}
+	b, _ := json.Marshal(v[:min(len(v), limit)])
+	return new(string(b))
+}
+
+// desktopListOf 读出镜像列：NULL 或解不开（不该出现）→ nil。
+func desktopListOf[T any](col *string) []T {
+	if col == nil {
+		return nil
+	}
+	var v []T
+	if json.Unmarshal([]byte(*col), &v) != nil {
+		return nil
+	}
+	return v
 }
 
 // reportsLateReadonly 报告 desktop.state 是否把库里同一 Profile 的独占绑定报成了只读。
@@ -286,6 +334,8 @@ func DesktopView(ctx context.Context, q *db.Queries, orbID string) (*apigen.OrbD
 			out.Control = &c
 		}
 	}
+	out.Apps = desktopListOf[apigen.OrbDesktopApp](d.Apps)
+	out.Windows = desktopListOf[apigen.OrbDesktopWindow](d.Windows)
 	if d.ProfileID == nil {
 		return out, nil
 	}

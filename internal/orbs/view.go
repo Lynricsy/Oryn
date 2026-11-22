@@ -125,9 +125,9 @@ func View(ctx context.Context, q *db.Queries, o db.Orb) (apigen.Orb, error) {
 		if v.Desktop, err = DesktopView(ctx, q, o.ID); err != nil {
 			return apigen.Orb{}, err
 		}
-		// 控制状态只在 orb 运行时有意义：冻结 / 停机后镜像停在最后一次上报，不再对外给出
+		// 控制状态与应用 / 窗口只在 orb 运行时有意义：冻结 / 停机后镜像停在最后一次上报，不再对外给出
 		if v.Desktop != nil && o.State != StateReady {
-			v.Desktop.Control = nil
+			v.Desktop.Control, v.Desktop.Apps, v.Desktop.Windows = nil, nil, nil
 		}
 	}
 	return v, nil
