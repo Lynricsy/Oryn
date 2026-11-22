@@ -499,6 +499,8 @@ export function HomePage(): ReactNode {
 					: {}),
 				...(to.thinking ? { thinkingLevel: to.thinking } : {}),
 			});
+			// 助手的 agent 可能还在启动：转录先以「发送中」气泡显示首条消息，第一条 user 条目入库即清除
+			setPendingPrompt(thread.id, text);
 			if (window.matchMedia?.("(pointer: coarse)").matches) ref.current?.blur();
 			setPrompt("");
 			att.clear();
