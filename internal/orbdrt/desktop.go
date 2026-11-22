@@ -25,6 +25,7 @@ import (
 // 以及 desktop.state 上报。Xvnc 只开 unix socket（$HOME/.oryn/vnc.sock），不监听 TCP；
 // Chromium 用固定的 user-data-dir（$HOME/.oryn/desktop/profile），DevTools 端口是临时端口，
 // 对 agent 只经 CDP 前门（cdpfront.go）暴露。冻结（docker pause）原样保留浏览器；进程退出后不自动重启。
+// M25：显示栈里还有 session dbus（$HOME/.oryn/desktop/run/bus），给 GTK 应用与 agent 提供 AT-SPI 无障碍总线。
 
 const (
 	// DefaultDesktopCDPAddr 是 CDP 前门的默认监听地址。
@@ -37,6 +38,12 @@ const (
 	displayProbeInterval = 50 * time.Millisecond
 	// displayStableAfter：显示栈单次存活这么久之后，重启退避清零。
 	displayStableAfter = 60 * time.Second
+	// dbusReadyTimeout 是 dbus-daemon 启动后等它的套接字可连的上限；超时照常继续（只是没有无障碍树）。
+	dbusReadyTimeout = 5 * time.Second
+	// desktopBackground 是根窗口的底色（中性浅灰），由 xsetroot 在每次显示就绪时设置。
+	desktopBackground = "#e5e5e3"
+	// xsetrootTimeout 是 xsetroot 这个一次性命令的上限。
+	xsetrootTimeout = 5 * time.Second
 
 	// browserStartWait 是「显示就绪 + Profile 已定 + DevTools 就绪」的合计等待。
 	browserStartWait = 30 * time.Second
@@ -163,6 +170,8 @@ func (d *desktop) profileDir() string    { return filepath.Join(d.dir(), "profil
 func (d *desktop) profileNewDir() string { return filepath.Join(d.dir(), "profile.new") }
 func (d *desktop) markerPath() string    { return filepath.Join(d.dir(), "profile.json") }
 func (d *desktop) rcPath() string        { return filepath.Join(d.dir(), "openbox-rc.xml") }
+func (d *desktop) runtimeDir() string    { return filepath.Join(d.dir(), "run") }
+func (d *desktop) busPath() string       { return filepath.Join(d.runtimeDir(), "bus") }
 
 func (d *desktop) logPath(n string) string {
 	return filepath.Join(d.r.home, ".cache", "oryn", "logs", "desktop", n+".log")
@@ -326,8 +335,8 @@ func killWait(pid int, done <-chan struct{}) {
 
 // ---- 显示栈 ----
 
-// run 监督 Xvnc 与 openbox 直到 ctx 结束：任一退出即视为显示失效，杀掉另一个与浏览器，按退避重启。
-// ctx 结束时三者的进程组都被 SIGKILL。
+// run 监督 Xvnc 与 openbox 直到 ctx 结束：任一退出即视为显示失效，杀掉另一个、dbus 与浏览器，按退避重启。
+// ctx 结束时它们的进程组都被 SIGKILL。
 func (d *desktop) run(ctx context.Context) {
 	defer d.closeLogs()
 	defer d.killBrowser()
@@ -389,7 +398,7 @@ func (d *desktop) runDisplayOnce(ctx context.Context) {
 	d.mu.Lock()
 	d.xvncPid = xpid
 	d.mu.Unlock()
-	if !d.waitSocket(ctx, xdone) {
+	if !d.waitUnix(ctx, d.sockPath(), displayReadyTimeout, xdone) {
 		if ctx.Err() == nil {
 			d.log.Warn("Xvnc did not become ready", "timeout", displayReadyTimeout)
 		}
@@ -397,39 +406,97 @@ func (d *desktop) runDisplayOnce(ctx context.Context) {
 	}
 	env = d.r.baseEnv()
 	env["DISPLAY"] = desktopDisplay
+	// dbus 随显示一起重启；它自己退出不算显示失效（下面的 select 只记警告）。
+	var dbusDone <-chan struct{}
+	if dpid, ddone := d.startDbus(ctx, env); ddone != nil {
+		defer killWait(dpid, ddone)
+		dbusDone = ddone
+	}
 	opid, odone, err := d.spawn("openbox", "openbox", []string{"--config-file", d.rcPath()}, env)
 	if err != nil {
 		d.log.Warn("start openbox failed", "err", err)
 		return
 	}
 	defer killWait(opid, odone)
+	d.setBackground(ctx, env)
 	d.setDisplayReady(true)
-	select {
-	case <-xdone:
-		d.log.Warn("Xvnc exited; restarting display")
-	case <-odone:
-		d.log.Warn("openbox exited; restarting display")
-	case <-ctx.Done():
+wait:
+	for {
+		select {
+		case <-xdone:
+			d.log.Warn("Xvnc exited; restarting display")
+		case <-odone:
+			d.log.Warn("openbox exited; restarting display")
+		case <-dbusDone:
+			d.log.Warn("dbus-daemon exited; accessibility unavailable until the display restarts")
+			dbusDone = nil
+			continue
+		case <-ctx.Done():
+		}
+		break wait
 	}
 	d.setDisplayReady(false)
 	// 显示没了，浏览器跟着走（下次按需重新启动）。
 	d.killBrowser()
 }
 
-// waitSocket 每 50ms 试连 vnc.sock，至多 15s；Xvnc 先退出或 ctx 结束时返回 false。
-func (d *desktop) waitSocket(ctx context.Context, xdone <-chan struct{}) bool {
-	deadline := time.NewTimer(displayReadyTimeout)
+// startDbus 建 runtimeDir（0700）、删掉残留的 bus 套接字，起 session dbus 并等套接字可连（至多 dbusReadyTimeout）。
+// 找不到 dbus-daemon 或启动失败时只记警告，返回的 done 为 nil；等待超时时进程照常保留。
+func (d *desktop) startDbus(ctx context.Context, env map[string]string) (int, <-chan struct{}) {
+	if _, err := d.r.bins.look("dbus-daemon"); err != nil {
+		d.log.Warn("dbus-daemon not found; desktop runs without accessibility bus", "err", err)
+		return 0, nil
+	}
+	dir := d.runtimeDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		d.log.Warn("create desktop runtime dir failed", "dir", dir, "err", err)
+		return 0, nil
+	}
+	// MkdirAll 不改已存在目录的权限；XDG_RUNTIME_DIR 必须只属于本用户。
+	if err := os.Chmod(dir, 0o700); err != nil {
+		d.log.Warn("chmod desktop runtime dir failed", "dir", dir, "err", err)
+	}
+	if err := os.Remove(d.busPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		d.log.Warn("remove stale dbus socket", "path", d.busPath(), "err", err)
+	}
+	args := []string{"--session", "--address=unix:path=" + d.busPath(), "--nofork", "--nopidfile"}
+	pid, done, err := d.spawn("dbus", "dbus-daemon", args, env)
+	if err != nil {
+		d.log.Warn("start dbus-daemon failed", "err", err)
+		return 0, nil
+	}
+	if !d.waitUnix(ctx, d.busPath(), dbusReadyTimeout, done) && ctx.Err() == nil {
+		d.log.Warn("dbus-daemon did not become ready", "timeout", dbusReadyTimeout)
+	}
+	return pid, done
+}
+
+// setBackground 用 xsetroot 设根窗口底色。一次性命令，失败（含找不到 xsetroot）只记日志。
+func (d *desktop) setBackground(ctx context.Context, env map[string]string) {
+	ctx, cancel := context.WithTimeout(ctx, xsetrootTimeout)
+	defer cancel()
+	cmd := d.r.bins.command(ctx, "xsetroot", "-solid", desktopBackground)
+	cmd.Dir = d.r.home
+	cmd.Env = envList(env)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		d.log.Info("xsetroot failed; desktop keeps the default background", "err", err, "output", strings.TrimSpace(string(out)))
+	}
+}
+
+// waitUnix 每 50ms 试连 unix 套接字 path，至多 timeout；进程先退出（done 关闭）或 ctx 结束时返回 false。
+func (d *desktop) waitUnix(ctx context.Context, path string, timeout time.Duration, done <-chan struct{}) bool {
+	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 	tick := time.NewTicker(displayProbeInterval)
 	defer tick.Stop()
 	for {
-		if c, err := net.DialTimeout("unix", d.sockPath(), time.Second); err == nil {
+		if c, err := net.DialTimeout("unix", path, time.Second); err == nil {
 			_ = c.Close()
 			return true
 		}
 		select {
 		case <-tick.C:
-		case <-xdone:
+		case <-done:
 			return false
 		case <-deadline.C:
 			return false

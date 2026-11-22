@@ -268,6 +268,48 @@ func TestDesktopDisplaySupervision(t *testing.T) {
 	assert.NotEqual(t, pid, e.xvncPid())
 }
 
+// TestDesktopDbus（M25）：显示栈里起 session dbus，agent 拿到总线与无障碍环境；没有 dbus-daemon 时桌面照常就绪。
+func TestDesktopDbus(t *testing.T) {
+	t.Run("fake dbus-daemon", func(t *testing.T) {
+		e := newDeskEnv(t, nil)
+		e.wait("display ready", displayIs(true))
+		bus := e.home(".oryn", "desktop", "run", "bus")
+		fi, err := os.Stat(bus)
+		require.NoError(t, err, "fake dbus-daemon listens on the bus socket before the display is ready")
+		assert.Equal(t, os.ModeSocket, fi.Mode().Type())
+		fi, err = os.Stat(filepath.Dir(bus))
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o700), fi.Mode().Perm(), "XDG_RUNTIME_DIR is private")
+
+		rc, err := os.ReadFile(e.home(".oryn", "desktop", "openbox-rc.xml"))
+		require.NoError(t, err)
+		assert.NotContains(t, string(rc), "<decor>no</decor>", "every window keeps its title bar")
+		assert.Contains(t, string(rc), `<application class="code">`)
+
+		pid := startAgent(t, e.cp, thread1, nil)
+		e.cp.waitNotif(t, 0, "agent.status", statusIs(thread1, "ready"))
+		env := procEnv(t, pid)
+		for _, kv := range []string{
+			"DBUS_SESSION_BUS_ADDRESS=unix:path=" + bus,
+			"XDG_RUNTIME_DIR=" + filepath.Dir(bus),
+			"GTK_A11Y=atspi",
+			"ACCESSIBILITY_ENABLED=1",
+		} {
+			assert.Contains(t, env, kv)
+		}
+	})
+	t.Run("without dbus-daemon", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, linkFakedesk(dir, desktopBinaries...))
+		t.Setenv("PATH", dir)
+		e := newDeskEnv(t, nil)
+		e.wait("display ready", displayIs(true))
+		assert.True(t, e.rt.desk.isDisplayReady())
+		_, err := os.Stat(e.home(".oryn", "desktop", "run", "bus"))
+		assert.ErrorIs(t, err, os.ErrNotExist)
+	})
+}
+
 // ---- 浏览器与 CDP 前门 ----
 
 func TestDesktopBrowserLifecycle(t *testing.T) {

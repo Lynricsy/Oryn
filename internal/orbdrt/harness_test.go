@@ -27,8 +27,8 @@ import (
 
 var fakeompBin string
 
-// fakedeskBin 是 cmd/fakedesk 的构建产物；fakedeskDir 里有它的三个符号链接（Xvnc / openbox / chromium），
-// 已放在 PATH 最前面（桌面只在 Config.Desktop 为真时启用，其它测试不受影响）。
+// fakedeskBin 是 cmd/fakedesk 的构建产物；fakedeskDir 里有它的符号链接（Xvnc / openbox / chromium / dbus-daemon），
+// 已放在 PATH 最前面（桌面只在 Config.Desktop 为真时启用，其它测试不受影响；宿主机上的真 dbus-daemon 也不会被用到）。
 var fakedeskBin, fakedeskDir string
 
 func TestMain(m *testing.M) {
@@ -60,7 +60,8 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	fakedeskDir = filepath.Join(dir, "deskbin")
-	if err := linkFakedesk(fakedeskDir, desktopBinaries...); err != nil {
+	// dbus-daemon 不在 desktopBinaries 里（缺了桌面照常启用），单独链接。
+	if err := linkFakedesk(fakedeskDir, append([]string{"dbus-daemon"}, desktopBinaries...)...); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

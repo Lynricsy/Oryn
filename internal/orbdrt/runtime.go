@@ -1126,7 +1126,8 @@ func (r *Runtime) flushTailers(timeout time.Duration) {
 }
 
 // baseEnv 是 orbd 子进程（agent、setup 脚本、受管服务）的基础环境：继承 orbd 环境但去掉 orb / runner 令牌；
-// 桌面启用时设 DISPLAY=:1。runner 形态设 ORYN_RUNNER=1，不设 ORYN_ORB / ORYN_ORB_ID，也不改 HOME。
+// 桌面启用时设 DISPLAY=:1，以及 session dbus 与无障碍（AT-SPI）相关变量（M25）。
+// runner 形态设 ORYN_RUNNER=1，不设 ORYN_ORB / ORYN_ORB_ID，也不改 HOME。
 func (r *Runtime) baseEnv() map[string]string {
 	env := map[string]string{}
 	for _, kv := range os.Environ() {
@@ -1145,8 +1146,13 @@ func (r *Runtime) baseEnv() map[string]string {
 	env["HOME"] = r.home
 	env["ORYN_ORB"] = "1"
 	env["ORYN_ORB_ID"] = r.cfg.OrbID
-	if r.desk != nil {
+	if d := r.desk; d != nil {
 		env["DISPLAY"] = desktopDisplay
+		// dbus-daemon 可能没装或还没起来：变量照设，GTK 应用连不上总线时只是没有无障碍树。
+		env["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=" + d.busPath()
+		env["XDG_RUNTIME_DIR"] = d.runtimeDir()
+		env["GTK_A11Y"] = "atspi"
+		env["ACCESSIBILITY_ENABLED"] = "1"
 	}
 	// M14：项目连接了 GitHub 时 gh 读 orbd 写的配置（经 gh.sock 代理，令牌由 egress 注入）。
 	// 不导出 GH_TOKEN：其它读这个变量的工具会拿占位值直连 GitHub。

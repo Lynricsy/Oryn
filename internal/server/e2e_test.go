@@ -43,11 +43,11 @@ func TestMain(m *testing.M) {
 			panic(fmt.Sprintf("构建 %s 失败: %v\n%s", c, err, out))
 		}
 	}
-	// M8：fakedesk 以三个名字的符号链接放在 binDir/desk（只有设了 ORYN_DESKTOP=1 的栈把它加到 PATH 前面）
+	// M8：fakedesk 以多个名字的符号链接放在 binDir/desk（只有设了 ORYN_DESKTOP=1 的栈把它加到 PATH 前面）；M25 加 dbus-daemon
 	if err := os.Mkdir(filepath.Join(dir, "desk"), 0o755); err != nil {
 		panic(err)
 	}
-	for _, n := range []string{"Xvnc", "openbox", "chromium"} {
+	for _, n := range []string{"Xvnc", "openbox", "chromium", "dbus-daemon"} {
 		if err := os.Symlink(filepath.Join(dir, "fakedesk"), filepath.Join(dir, "desk", n)); err != nil {
 			panic(err)
 		}
