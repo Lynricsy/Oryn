@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -686,6 +687,28 @@ func TestRefreshAgentStopsWhenPendingDrains(t *testing.T) {
 	assert.Empty(t, o.calls, "还有在途命令：先不停")
 	o.mu.Unlock()
 	f.s.onFrame(f.ctx, th, th.orbID, []byte(`{"type":"response","id":"internal-9","command":"get_state","success":true,"data":{}}`))
+	c := o.nextCall(t)
+	assert.Equal(t, "agent.stop", c.method)
+}
+
+// 内部调用超时（agent 一直不应答，例如 MCP 握手卡住时的 get_mcp_servers）：撤下未决命令，等着重启的 agent 照常停下。
+func TestTimedOutCallDoesNotBlockRefresh(t *testing.T) {
+	f := newFixture(t, Config{CallTimeout: 50 * time.Millisecond})
+	o := newCtlOrbs(t, f.orbs)
+	f.s.orbs = o
+	th := f.coordThread(f.orb("ready"), KindAssistant, StateIdle)
+	a := fakeAgent(16)
+	attach(th, a, apigen.AgentStatusReady)
+	th.mu.Lock()
+	th.settled = true
+	th.mu.Unlock()
+	_, err := f.s.MCPServers(f.ctx, th.id)
+	require.ErrorContains(t, err, "get_mcp_servers timed out")
+	assert.Contains(t, strings.Join(sent(a), "\n"), `"type":"get_mcp_servers"`, "命令已写到 agent 流")
+	th.mu.Lock()
+	assert.Empty(t, th.pending)
+	th.mu.Unlock()
+	f.s.RefreshAgent(f.ctx, th.id)
 	c := o.nextCall(t)
 	assert.Equal(t, "agent.stop", c.method)
 }

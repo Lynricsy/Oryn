@@ -1631,7 +1631,13 @@ func (s *Service) call(ctx context.Context, t *thread, frame []byte) (omprpc.Env
 		Type string `json:"type"`
 	}
 	_ = json.Unmarshal(frame, &typ)
-	err := s.enqueueLocked(t, frame, &pendingCmd{cmdType: typ.Type, internal: ch})
+	id := s.newCmdID()
+	line, err := omprpc.SetID(frame, id)
+	if err != nil {
+		t.mu.Unlock()
+		return omprpc.Envelope{}, nil, errf(RouteInvalidFrame, err.Error())
+	}
+	err = s.enqueueLocked(t, line, &pendingCmd{cmdType: typ.Type, internal: ch})
 	needWake := !t.agentReady() || s.orbState(orbID) != orbStateReady // 冻结的 orb 上 agent 流仍在，但进程已暂停
 	t.mu.Unlock()
 	if err != nil {
@@ -1655,7 +1661,29 @@ func (s *Service) call(ctx context.Context, t *thread, frame []byte) (omprpc.Env
 		}
 		return env, r.Data, nil
 	case <-cctx.Done():
+		s.abandonCall(t, id)
 		return omprpc.Envelope{}, nil, errf("timeout", typ.Type+" timed out")
+	}
+}
+
+// abandonCall 撤下调用方已放弃等待的内部命令：不在未决表与队列里留着它（agent 一直不应答时，它会让线程永远不算静止，
+// 等着重启的 agent 也就停不下来）。迟到的应答按未知 id 丢弃。
+func (s *Service) abandonCall(t *thread, id string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if _, ok := t.pending[id]; !ok {
+		return
+	}
+	delete(t.pending, id)
+	for i, f := range t.queue {
+		if _, fid, ok := frameHeader(f); ok && fid == id {
+			t.queue = append(t.queue[:i], t.queue[i+1:]...)
+			break
+		}
+	}
+	s.recompute(context.Background(), t)
+	if t.refresh {
+		s.stopIfQuiescentLocked(t)
 	}
 }
 
