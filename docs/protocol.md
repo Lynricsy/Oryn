@@ -2736,3 +2736,30 @@ orynd 在 `<data_dir>/repos/<projectId>.git` 为每个有 `https://` 仓库地�
 
 - `oryn secrets set|ls|rm … --project <名称或 id>` 走上面的项目接口（`--project` 只解析未归档项目）。`set` 未给 `--mode` 时按名称推断：`git/` 开头为 `proxy`，否则 `env`；`--plain` 只能与 `--project` 同用（发 `secret: false`），`--hosts` 不能与 `--project` 同用（退出码 2）。
 - `ls --project` 输出 `NAME  KIND  SECRET  VALUE  UPDATED`：`KIND` 为 `env` 或 `git`，`SECRET` 为 `yes` / `no`，保密条目的 `VALUE` 写 `-`，含制表或换行的值加引号；`--json` 输出 `ProjectSecretList`。
+
+## 全局助手的 `oryn` 技能与工具
+
+全局助手（`kind = assistant`）的顶层宿主工具收敛为：基础 9 个（与 Space 协调者共用）、文件库 3 个、artifact 6 个（`create_artifact`、`read_artifact`、`update_artifact`、`list_artifacts`、`read_artifact_guide`、`screenshot_artifact`）、`oryn`、电脑工具，以及条件追加的记忆与主线工具。M19 / M23 的薄包装工具（`update_thread`、`fork_thread`、`wake_thread`、`delete_thread`、`list_runners`、项目 / Space / 触发规则 / orb / box / 分享工具、`*_project_config`、`list_deleted_artifacts`、`restore_artifact`）已删除，由下面的 REST 操作取代。
+
+### 工具 `oryn{op, args}`
+
+- `op` 是 OpenAPI 的 operationId（REST 操作），或技能原生操作名：`abort_thread`、`set_thread_model`、`list_thread_files`、`read_thread_file`、`write_thread_file`、`fetch_thread_file`、`put_thread_file`、`get_thread_changes`、`delete_artifact`、`list_artifact_versions`、`restore_artifact_version`、`read_artifact_comments`、`reply_artifact_comment`、`resolve_artifact_comment`、`read_artifact_data`、`write_artifact_data`、`export_artifact`、`import_artifact`（参数与语义同原工具，审计动作名不变）。
+- REST 操作的 `args`：path 参数必填（字符串或数字，原值传入、由控制面转义），query 参数按名字（数组展开为重复参数，`null` 跳过），请求体放在 `body`（JSON 请求体须为对象或数组；`application/octet-stream` 请求体为字符串，按 UTF-8 发送）。未知参数、无请求体却给了 `body`、JSON 请求体里 schema 未声明的顶层字段（schema 含 `oneOf` / `anyOf` 或允许额外字段时不校验）一律 `invalid_request`。
+- 执行：进程内调用 REST 处理器，不经鉴权中间件，主体为 `auth.KindAssistant`（ID 为助手对话的线程 id）；box 处理器把它记为 `ActorAssistant`。
+- 结果：成功时正文加不可信包裹，超过 64 KiB 截断并注明总长；空响应体为 `{"ok":true,"status":<码>}`；二进制响应回 `binary_result`。失败时沿用 REST 的 `{code, message}`，无结构的错误为 `http_<状态码>`；`secrets_found` 只回传数量，不回传扫描结果。
+- 错误码：`unknown_op`（没有这个操作）、`not_available`（操作对助手关闭，消息含替代做法）、`binary_result`。
+- 调用上限 5 分钟（宿主工具时限），内部按操作收紧：REST 操作缺省 60 秒，`forkThread` 5 分钟，`startOrbService` / `restartOrbService` 90 秒；原生操作沿用原工具的时限。
+
+### 策略表
+
+`internal/coord/apipolicy.go` 给规格里的每个 operationId 定级（`TestAPIPolicyComplete` 强制覆盖）：`read` 直接执行，不限速不审计；`write` 计 mutate 限速（分享类另计 share 限速），写审计；`confirm` 挂确认卡，主人批准后执行；`deny` 拒绝。部分 `write` 操作按请求体条件升级为确认（`updateProject` 改 `githubGates`、`updateBoxApp` 设 `public: true`、`publishArtifact` 的 `access` 为 `code` / `public`）。`/api/v1/threads/{id}` 下的写操作要求目标是工作线程，`/api/v1/orbs/{id}` 下的写操作拒绝协调宿主、助手的电脑、box 与预热池 orb（`invalid_target`）。
+
+### 审计与确认卡
+
+- `AutomationAction.action` 追加 `api_call`：`summary` 为 `<operationId> <解码后的路径> <打码后的 args>`，`targetThreadId` 只在线程守卫的操作上填写。
+- 确认卡动作同为 `api_call`：`target` 为 `<operationId> <解码后的路径>`，`targetLabel` 为规格 summary 加目标名，Web 文案键 `assistant.confirm.api_call`。卡片正文与审计摘要里 `value`、`secret`、`token`、`password`、`privateKey`、`headers` 等键的值打码为 `***`，octet-stream 请求体显示为 `<N bytes>`。结果消息首行 `[Oryn confirmation · automatic] api_call <operationId> <路径>: <结果>`。
+- 控制面重启时，动作已无执行函数的待答卡（升级前的已删除工具）直接置 `expired` 并告知对话。
+
+### 技能下发
+
+`coord.SkillFiles()` 由内嵌规格、策略表与原生工具定义生成 `skills/oryn/SKILL.md`、`skills/oryn/domains/<域>.md`（18 个）与 `skills/oryn/ops/<操作>.md`，经 `orbs.DefaultSetup.CoordinatorSkill` 并入协调宿主的 omp-home（`~/.omp/agent/skills/oryn/`，清单机制清理旧文件）。全局助手的 omp 以 `--skills oryn` 启动，覆盖层强制 `skills.enabled`；Space 协调者仍 `--no-skills`，覆盖层不变。
