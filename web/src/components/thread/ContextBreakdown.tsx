@@ -167,11 +167,12 @@ export function ContextLegend({
 					<li
 						key={p.id}
 						title={title}
-						className="inline-flex items-center gap-1.5 whitespace-nowrap"
+						// 名称可截断（完整文案在 title），数值不压缩：窄栏英文长标签不跨列、不被块裁掉
+						className="flex min-w-0 items-center gap-1.5 whitespace-nowrap"
 					>
 						<Swatch id={p.id} />
-						{name}
-						<b className="font-medium text-muted tabular-nums">
+						<span className="min-w-0 truncate">{name}</span>
+						<b className="shrink-0 font-medium text-muted tabular-nums">
 							{p.estimated && "≈"}
 							{formatTokens(p.tokens)}
 						</b>
@@ -186,15 +187,15 @@ export function ContextLegend({
 						contextWindow,
 						restNames,
 					)}
-					className="inline-flex items-center gap-1.5 whitespace-nowrap"
+					className="flex min-w-0 items-center gap-1.5 whitespace-nowrap"
 				>
 					<i
 						aria-hidden
 						className="inline-block h-[7px] w-[7px] shrink-0 rounded-[2px]"
 						style={{ background: `linear-gradient(90deg, ${stripes})` }}
 					/>
-					{t("report.ctx.other")}
-					<b className="font-medium text-muted tabular-nums">
+					<span className="min-w-0 truncate">{t("report.ctx.other")}</span>
+					<b className="shrink-0 font-medium text-muted tabular-nums">
 						{merged.some((p) => p.estimated) && "≈"}
 						{formatTokens(restTokens)}
 					</b>
