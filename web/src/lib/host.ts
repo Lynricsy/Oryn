@@ -184,10 +184,14 @@ export type NativeOrb =
 	| "failed"
 	| "err";
 
-/** 四选一：SF Symbol / 字形方块（`bg`、`fg` 只配 `glyph`）/ 纯色圆点 / orb 状态珠。颜色一律 `#rrggbb`。 */
+/**
+ * 五选一：SF Symbol / 字形方块 / 模板图方块（`bg`、`fg` 只配这两种）/ 纯色圆点 / orb 状态珠。颜色一律 `#rrggbb`。
+ * `mask` 是白色字形、透明底的 PNG（base64，不带 data: 前缀），给系统字体画不了的 Nerd 字形用（见 `nerd-mask.ts`）。
+ */
 export interface NativeIcon {
 	symbol?: string;
 	glyph?: string;
+	mask?: string;
 	bg?: string;
 	fg?: string;
 	dot?: string;

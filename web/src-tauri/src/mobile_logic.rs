@@ -348,13 +348,15 @@ fn valid_tab_icon(icon: &TabBarIcon) -> bool {
     match icon {
         TabBarIcon::Symbol(s) => valid_symbol(s),
         TabBarIcon::Glyph(g) => (1..=32).contains(&g.len()),
-        TabBarIcon::Image(b64) => {
-            (1..=131_072).contains(&b64.len())
-                && b64
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'='))
-        }
+        TabBarIcon::Image(b64) => valid_base64(b64, 131_072),
     }
+}
+
+/// 1..=`max` 字节且全是 base64 字符（`A-Za-z0-9+/=`）。
+fn valid_base64(s: &str, max: usize) -> bool {
+    (1..=max).contains(&s.len())
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'='))
 }
 
 /// `v` 有限且落在 `[lo, hi]` 内（NaN 与无穷都不算）。
@@ -460,11 +462,13 @@ pub fn valid_item_id(id: &str) -> bool {
         })
 }
 
-/// 图标四选一：symbol / glyph（1..=32 字节，可带 `bg`、`fg`）/ dot / orb；颜色一律 `valid_color`。
+/// 图标五选一：symbol / glyph（1..=32 字节）/ mask（base64，1..=16384 字节）/ dot / orb；`bg`、`fg` 只配 glyph 与 mask；
+/// 颜色一律 `valid_color`。
 fn valid_header_icon(i: &HeaderIcon) -> bool {
     let kinds = [
         i.symbol.is_some(),
         i.glyph.is_some(),
+        i.mask.is_some(),
         i.dot.is_some(),
         i.orb.is_some(),
     ];
@@ -473,8 +477,9 @@ fn valid_header_icon(i: &HeaderIcon) -> bool {
         && i.glyph
             .as_deref()
             .is_none_or(|g| (1..=32).contains(&g.len()))
+        && i.mask.as_deref().is_none_or(|m| valid_base64(m, 16_384))
         && i.dot.as_deref().is_none_or(valid_color)
-        && (i.glyph.is_some() || (i.bg.is_none() && i.fg.is_none()))
+        && (i.glyph.is_some() || i.mask.is_some() || (i.bg.is_none() && i.fg.is_none()))
         && i.bg.as_deref().is_none_or(valid_color)
         && i.fg.as_deref().is_none_or(valid_color)
 }
@@ -529,7 +534,7 @@ fn valid_menu(m: &HeaderMenu) -> bool {
 /// title（有的话）：text 1..=300、label 1..=600、error（有的话）1..=300 个字符，meta ≤ 6 段、marks ≤ 6 个；
 /// 菜单：label 1..=400，quick ≤ 4、status ≤ 32、groups ≤ 8 组且每组 1..=24 项、子项 ≤ 24 且不再嵌套、
 /// 全菜单 ≤ 160 项且 id 互不相同；项：label 1..=200、hint 1..=32、说明行 1..=120 个字符、copy 1..=2048 字节；
-/// 图标四选一，`bg` / `fg` 只配 `glyph`。
+/// 图标五选一，`bg` / `fg` 只配 `glyph` 与 `mask`。
 pub fn valid_header(spec: &HeaderSpec) -> bool {
     let p = &spec.palette;
     valid_header_key(&spec.key)
@@ -1364,6 +1369,24 @@ mod tests {
         rejects_title("glyph 33 字节", |t| {
             t.icon.as_mut().unwrap().glyph = Some("a".repeat(33))
         });
+        let mask = |m: &str| HeaderIcon {
+            mask: Some(m.into()),
+            bg: Some("#123456".into()),
+            fg: Some("#abcdef".into()),
+            ..Default::default()
+        };
+        rejects_title("mask 同时有 glyph", |t| {
+            let mut i = mask("iVBORw0KGgo=");
+            i.glyph = Some("x".into());
+            t.icon = Some(i)
+        });
+        rejects_title("mask 非 base64", |t| {
+            t.icon = Some(mask("data:image/png;base64,AAAA"))
+        });
+        rejects_title("mask 16385 字节", |t| {
+            t.icon = Some(mask(&"A".repeat(16_385)))
+        });
+        rejects_title("mask 为空", |t| t.icon = Some(mask("")));
         rejects_title("dot 不是颜色", |t| {
             t.menu.quick[0].icon = Some(HeaderIcon {
                 dot: Some("red".into()),
@@ -1441,6 +1464,7 @@ mod tests {
         t.menu.groups[0][2].copy = Some("a".repeat(2048));
         t.menu.groups[0][3].children = (0..24).map(|i| header_item(&format!("g3/{i}"))).collect();
         t.text = "字".repeat(300);
+        t.icon = Some(mask(&"A".repeat(16_384)));
         s.key = "a".repeat(96);
         assert!(valid_header(&s));
         // 菜单项 id 允许 `/` 与 `#`，线程 id 不允许

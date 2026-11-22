@@ -183,6 +183,7 @@ M9 之后守住的几条：
 - 同一信息不在相邻两处同时出现：页头的 orb / runner 状态胶囊在右侧正显示「信息」标签时隐藏（`ThreadHeader` 的 `infoBeside`），切到其它标签或关掉面板再出现。
 - 侧栏分组的折叠箭头一律放在标题之后、计数签之前，不放在行首：行首那一列是线程行的状态图标，空闲线程是 ✓，向下的箭头和它叠在同一列里分不清。
 - 线程的标题卡图标（侧栏、页头、收件箱、分享页）一律用 `.title-glyph` 黑白小瓷片：不按标题或线程色着色，emoji 也去色；线程色只用竖条和圆点（`.thread-mark`）表达。按色相着色的 `.avatar` 只留给头像和项目徽标。
+- 新标题卡的图标是 Nerd 字形（orbd 以 `ORYN_NERD_GLYPHS=1` 启动 agent，Core `oryn-v19.0.1-4` 起生效），旧线程保留原来的 emoji。凡是画不了 Nerd 字形的地方都不能直接放私有区字符：iOS 原生页头用 `lib/nerd-mask.ts` 在网页里画成模板图（`NativeIcon.mask`），系统通知与第三方通知渠道用 `withoutNerdIcon` / `glyph.WithoutNerdIcon` 去掉图标、只留「代码: 标题」。
 
 ## 5. 放弃过的做法（不要再提）
 

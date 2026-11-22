@@ -364,7 +364,7 @@ struct SegView: View {
   }
 }
 
-/// 图标四选一；`box` 是它占的方格边长。
+/// 图标五选一；`box` 是它占的方格边长。
 @available(iOS 26.0, *)
 struct HeaderIconView: View {
   let icon: HeaderIconSpec
@@ -380,6 +380,18 @@ struct HeaderIconView: View {
       Circle().fill(hexColor(dot) ?? Color.secondary)
         .frame(width: box * 0.5, height: box * 0.5)
         .frame(width: box, height: box)
+        .accessibilityHidden(true)
+    } else if let mask = icon.mask, let image = HeaderMaskCache.image(mask) {
+      // 网页画好的模板图已按方格留了边（字形占 0.68），与 glyph 分支同尺寸
+      Image(uiImage: image)
+        .renderingMode(.template)
+        .resizable()
+        .foregroundStyle(hexColor(icon.fg) ?? Color.primary)
+        .frame(width: box, height: box)
+        .background(
+          hexColor(icon.bg) ?? Color.primary.opacity(0.08),
+          in: RoundedRectangle(cornerRadius: box * 0.375, style: .continuous)
+        )
         .accessibilityHidden(true)
     } else if let glyph = icon.glyph {
       Text(glyph)
@@ -397,5 +409,18 @@ struct HeaderIconView: View {
         .frame(width: box, height: box)
         .accessibilityHidden(true)
     }
+  }
+}
+
+/// mask 图标的解码缓存：同一字形每次渲染都是同一串 base64，只解一次。
+enum HeaderMaskCache {
+  private static let cache = NSCache<NSString, UIImage>()
+
+  static func image(_ b64: String) -> UIImage? {
+    let key = b64 as NSString
+    if let hit = cache.object(forKey: key) { return hit }
+    guard let data = Data(base64Encoded: b64), let image = UIImage(data: data) else { return nil }
+    cache.setObject(image, forKey: key)
+    return image
   }
 }

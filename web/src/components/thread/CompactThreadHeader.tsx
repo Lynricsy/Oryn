@@ -36,9 +36,11 @@ import {
 	useHeaderCover,
 	useHeaderTheme,
 	useNativeHeaderActive,
+	useNativeHeaderAvailable,
 	useNativeHeaderPart,
 	useSlotFrame,
 } from "../../lib/native-header";
+import { glyphTile, useNerdMask } from "../../lib/nerd-mask";
 import { usePresence } from "../../lib/presence";
 import { parseTitleCard } from "../../lib/title";
 import { useThread } from "../../state/stores";
@@ -138,6 +140,10 @@ export function CompactThreadHeader({
 	);
 
 	const card = parseTitleCard(thread?.title ?? "");
+	// 原生页头画不了 Nerd 字形：可能接管原生页头时先在网页里画成模板图（见 nerd-mask.ts）
+	const nativeOn = useNativeHeaderAvailable();
+	const titleMask = useNerdMask(card.icon, nativeOn);
+	const projectMask = useNerdMask(project?.icon ?? undefined, nativeOn);
 	const hue = threadHue(thread?.color);
 	const title = card.text || t("thread.untitled");
 	const working = thread?.state === "working";
@@ -360,14 +366,16 @@ export function CompactThreadHeader({
 	// 原生页头的胶囊第二行：与上面的 meta / marks 一一对应
 	const nativeMeta: NativeSeg[] = [];
 	if (space) nativeMeta.push({ text: space.name, icon: { symbol: "target" } });
-	if (project)
+	if (project) {
+		const colors = avatarHex(nameHue(project.name), dark);
+		const initial = { glyph: firstGrapheme(project.name), ...colors };
 		nativeMeta.push({
 			text: project.name,
-			icon: {
-				glyph: project.icon || firstGrapheme(project.name),
-				...avatarHex(nameHue(project.name), dark),
-			},
+			icon: project.icon
+				? (glyphTile(project.icon, projectMask, colors) ?? initial)
+				: initial,
 		});
+	}
 	if (orb && env)
 		nativeMeta.push(
 			boxText
@@ -388,11 +396,11 @@ export function CompactThreadHeader({
 	if (shares > 0) nativeMarks.push({ symbol: "globe" });
 	if ((thread?.pulls?.length ?? 0) > 0)
 		nativeMarks.push({ symbol: "arrow.triangle.pull" });
+	const hueDot: NativeIcon | undefined =
+		hue !== undefined ? { dot: markHex(hue, dark) } : undefined;
 	const titleIcon: NativeIcon | undefined = card.icon
-		? { glyph: card.icon, ...glyphHex(dark) }
-		: hue !== undefined
-			? { dot: markHex(hue, dark) }
-			: undefined;
+		? (glyphTile(card.icon, titleMask, glyphHex(dark)) ?? hueDot)
+		: hueDot;
 
 	// 原生回传的 id 在本次渲染的菜单项里按路径找（渲染期更新）：不缓存旧闭包，上一个线程的回调不会被执行
 	const latestMenu = useRef({ quick, status, groups });

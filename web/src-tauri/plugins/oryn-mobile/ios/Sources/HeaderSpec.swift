@@ -12,10 +12,12 @@ struct HeaderFrameSpec: Decodable, Equatable {
   var rect: CGRect { CGRect(x: x, y: y, width: width, height: height) }
 }
 
-/// 四选一：symbol / glyph（可带 bg、fg）/ dot / orb。颜色一律 `#rrggbb`。
+/// 五选一：symbol / glyph（可带 bg、fg）/ mask（可带 bg、fg）/ dot / orb。颜色一律 `#rrggbb`。
 struct HeaderIconSpec: Decodable, Equatable {
   let symbol: String?
   let glyph: String?
+  /// 白色字形、透明底的 PNG（base64）：系统字体画不了的 Nerd Font 字形由网页画好，这里当模板图按 fg 着色。
+  let mask: String?
   let bg: String?
   let fg: String?
   let dot: String?

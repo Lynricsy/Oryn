@@ -202,13 +202,17 @@ pub enum HeaderOrb {
     Err,
 }
 
-/// 四选一：`symbol` / `glyph`（可带 `bg`、`fg`）/ `dot` / `orb`（校验在壳的 `mobile_logic::valid_header`）。颜色一律 `#rrggbb`。
+/// 五选一：`symbol` / `glyph`（可带 `bg`、`fg`）/ `mask`（可带 `bg`、`fg`）/ `dot` / `orb`（校验在壳的 `mobile_logic::valid_header`）。
+/// 颜色一律 `#rrggbb`。`mask` 是白色字形、透明底的 PNG（base64，不带 data: 前缀），原生当模板图按 `fg` 着色：
+/// 系统字体画不了的 Nerd Font 私有区字形由网页用自带字体画好后这样交过来。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HeaderIcon {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub symbol: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub glyph: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mask: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bg: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
