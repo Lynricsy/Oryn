@@ -1,7 +1,7 @@
 /**
  * 全局助手后台研究（M26）的 REST：设置（整体 PUT，信封里带今天的花费）、跟进话题（列出、新建、修改、删除即置
  * `dismissed`、立即检查）与运行记录。增删改成功后让 `researchKeys.all` 失效；没有 WS 推送，跟进对话框开着时
- * 话题列表 30 秒轮询一次。
+ * 话题列表 30 秒轮询一次。另有列出一个 MCP 服务器的工具（给「研究可用工具」白名单用）。
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type Schemas, unwrap } from "./client";
@@ -12,6 +12,7 @@ export type ResearchSettingsEnvelope = Schemas["ResearchSettingsEnvelope"];
 export type ResearchTopic = Schemas["ResearchTopic"];
 export type ResearchTopicInput = Schemas["ResearchTopicInput"];
 export type ResearchTopicPatch = Schemas["ResearchTopicPatch"];
+export type AssistantMcpTool = Schemas["AssistantMcpTool"];
 /** 列表的状态过滤：缺省 = 除 `dismissed` 之外的全部；`all` = 全部。 */
 export type ResearchTopicState = NonNullable<
 	NonNullable<
@@ -24,6 +25,9 @@ export const PREFERENCES_LIMIT = 1500;
 /** 每日花费上限的取值范围（美元，同服务端）。 */
 export const DAILY_USD_MIN = 0.1;
 export const DAILY_USD_MAX = 1000;
+/** 每个 MCP 服务器研究可用工具的个数与名字长度上限（同服务端）。 */
+export const MCP_TOOLS_MAX = 100;
+export const MCP_TOOL_NAME_MAX = 200;
 
 export const researchKeys = {
 	all: ["research"] as const,
@@ -31,6 +35,8 @@ export const researchKeys = {
 	topics: (state?: ResearchTopicState) =>
 		["research", "topics", state ?? "default"] as const,
 	runs: ["research", "runs"] as const,
+	/** 不在 `all` 之下：探测要连上游服务器，话题增删改不该让它重来 */
+	mcpTools: (server: string) => ["mcp-tools", server] as const,
 };
 
 function useInvalidateResearch() {
@@ -128,6 +134,24 @@ export function useResearchRuns(limit = 50, enabled = true) {
 			unwrap(
 				api.GET("/api/v1/assistant/research/runs", {
 					params: { query: { limit } },
+				}),
+			),
+	});
+}
+
+/**
+ * 列出一个 MCP 服务器的工具（orynd 现连上游）。失败不重试：上游不通时每次要等到超时；`unsupported_transport`
+ * 等错误由调用方退回手动输入。
+ */
+export function useAssistantMcpServerTools(server: string) {
+	return useQuery({
+		queryKey: researchKeys.mcpTools(server),
+		retry: false,
+		staleTime: 60_000,
+		queryFn: () =>
+			unwrap(
+				api.GET("/api/v1/assistant/mcp-servers/{name}/tools", {
+					params: { path: { name: server } },
 				}),
 			),
 	});

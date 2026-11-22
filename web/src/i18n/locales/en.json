@@ -1193,7 +1193,20 @@
 			"preferences": "Research preferences",
 			"preferencesHint": "Instructions for the researchers, e.g. which sources you trust and what not to report.",
 			"tooLong": "Over {{limit}} characters — shorten it before saving",
-			"savePreferences": "Save preferences"
+			"savePreferences": "Save preferences",
+			"mcpTools": {
+				"button": "Research tools ({{n}})",
+				"title": "Research tools · {{name}}",
+				"note": "Only tick read tools that never send data out or change anything. \"Says read-only\" is the server's own claim, not a guarantee.",
+				"readOnly": "Says read-only",
+				"unlisted": "Saved, but the server didn't list it this time",
+				"empty": "This server reported no tools.",
+				"sse": "This is an SSE server; Oryn can't list its tools. Enter one tool name per line.",
+				"failed": "Couldn't list this server's tools ({{error}}). Enter one tool name per line.",
+				"manualLabel": "Tool names (one per line)",
+				"tooMany": "At most {{max}} tools per server",
+				"tooLong": "Tool names can be at most {{max}} characters"
+			}
 		}
 	},
 	"devices": {

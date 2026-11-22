@@ -1193,7 +1193,20 @@
 			"preferences": "研究偏好",
 			"preferencesHint": "交给研究员的说明，例如更信任哪些来源、哪些事不用报。",
 			"tooLong": "超过 {{limit}} 字，请压缩后再保存",
-			"savePreferences": "保存偏好"
+			"savePreferences": "保存偏好",
+			"mcpTools": {
+				"button": "研究可用工具（{{n}}）",
+				"title": "研究可用工具 · {{name}}",
+				"note": "只勾选不会对外发送数据、不会改动任何东西的读取工具。「自报只读」是服务器自己的说法，不是保证。",
+				"readOnly": "自报只读",
+				"unlisted": "已保存，但服务器这次没有列出它",
+				"empty": "这个服务器没有报告任何工具。",
+				"sse": "这是 SSE 服务器，Oryn 列不出它的工具。请每行填一个工具名。",
+				"failed": "没能列出这个服务器的工具（{{error}}）。请每行填一个工具名。",
+				"manualLabel": "工具名（每行一个）",
+				"tooMany": "每个服务器至多 {{max}} 个工具",
+				"tooLong": "工具名至多 {{max}} 个字符"
+			}
 		}
 	},
 	"devices": {

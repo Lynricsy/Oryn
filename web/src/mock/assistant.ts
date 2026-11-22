@@ -7,6 +7,8 @@
  * 重置删除它（没有时无操作）。orb 经 `deps.setOrb` 写进 server 的 orb 表并推送，文件与桌面接口照常可用。
  * 后台研究（M26）：`GET / PUT /assistant/research/settings`（总开关缺省关闭，今天已花固定为一个演示值）、
  * 跟进话题的列出 / 新建 / 读取 / 修改 / 删除（置 `dismissed`）/ 立即检查，以及空的运行记录。校验同服务端。
+ * 列出 MCP 服务器的工具（M26）：可用的 HTTP 服务器回 `MOCK_MCP_TOOLS`；SSE → 400 `unsupported_transport`；
+ * 不可用 → 400 `invalid_request`；找不到 → 404。
  */
 import type { Orb, Schemas } from "../api/client";
 import { M9_IDS, makeOrb } from "./fixtures";
@@ -51,6 +53,21 @@ export const MOCK_MCP_SERVERS: readonly Omit<McpServer, "enabled">[] = [
 		usable: false,
 		reason: "oauth",
 	},
+];
+
+/** 可用的 HTTP 服务器自报的工具：一个只读、一个会写、一个没声明。 */
+export const MOCK_MCP_TOOLS: readonly Schemas["AssistantMcpTool"][] = [
+	{
+		name: "list_issues",
+		description: "List issues in a repository",
+		readOnly: true,
+	},
+	{
+		name: "create_issue",
+		description: "Open a new issue",
+		readOnly: false,
+	},
+	{ name: "search_code" },
 ];
 
 function json(body: unknown, status = 200): Response {
@@ -176,6 +193,26 @@ export class MockAssistant {
 					enabled: !this.settings.disabledMcpServers.includes(s.name),
 				})),
 			});
+		const probe = /^assistant\/mcp-servers\/([^/]+)\/tools$/.exec(p);
+		if (probe && m === "GET") {
+			const name = decodeURIComponent(probe[1] ?? "");
+			const srv = MOCK_MCP_SERVERS.find((s) => s.name === name);
+			if (!srv)
+				return json(
+					{ code: "not_found", message: `no MCP server named "${name}"` },
+					404,
+				);
+			if (!srv.usable) return invalid(`MCP server "${name}" is not usable`);
+			if (srv.transport === "sse")
+				return json(
+					{
+						code: "unsupported_transport",
+						message: `MCP server "${name}" uses the SSE transport`,
+					},
+					400,
+				);
+			return json({ tools: MOCK_MCP_TOOLS });
+		}
 		if (p === "assistant/main/notes") {
 			if (m === "GET") return json(this.notes);
 			if (m !== "PUT") return null;

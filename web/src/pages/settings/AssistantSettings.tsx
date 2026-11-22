@@ -1,12 +1,13 @@
 /**
  * 设置 → 全局助手（M19 步骤 1.6 / 4.4，M26）：四张卡片。
  * 1. 联网：助手沙箱经 orynd 代理访问公网的总开关（关掉后 `web_search` 与读网页失败）。
- * 2. MCP 服务器：全局 `mcp.json` 里的服务器——名字、主机、传输方式、不可用的原因，可用的逐个开关。
+ * 2. MCP 服务器：全局 `mcp.json` 里的服务器——名字、主机、传输方式、不可用的原因，可用的逐个开关；可用且开着的
+ *    行尾有「研究可用工具（N）」，打开 `McpResearchToolsDialog` 勾选后台研究可调用的工具（M26）。
  * 3. 后台研究（M26，`ResearchCard`）：总开关、四条管线、研究员的模型、每日上限与研究偏好，整体 PUT 研究设置。
  * 4. 助手的电脑：创建它时用的 provider 与 orb 类型（都留空走 orb 的默认解析）；只影响下一次创建。
  * 前两张与最后一张整体 PUT 助手设置；请求进行中先显示要改成的值。改动后助手对话在静止时用新配置重启。
  */
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	type AssistantMcpServer,
@@ -16,10 +17,13 @@ import {
 	usePutAssistantSettings,
 } from "../../api/assistant-queries";
 import { useProviders } from "../../api/queries";
+import { useResearchSettings } from "../../api/research-queries";
+import { McpResearchToolsDialog } from "../../components/assistant/McpResearchToolsDialog";
 import { Badge, Card, ListRow } from "../../components/ui/data";
 import { Icon } from "../../components/ui/icons";
 import { typeHasDocker } from "../../components/ui/OrbBadges";
 import {
+	Button,
 	ErrorText,
 	Field,
 	Select,
@@ -32,12 +36,17 @@ function ServerRow({
 	server,
 	enabled,
 	disabled,
+	researchTools,
 	onToggle,
+	onResearchTools,
 }: {
 	server: AssistantMcpServer;
 	enabled: boolean;
 	disabled: boolean;
+	/** 已勾选的研究可用工具数 */
+	researchTools: number;
 	onToggle: (on: boolean) => void;
+	onResearchTools: () => void;
 }): ReactNode {
 	const { t } = useTranslation();
 	return (
@@ -64,16 +73,25 @@ function ServerRow({
 				}
 				trailing={
 					server.usable ? (
-						<Toggle
-							checked={enabled}
-							disabled={disabled}
-							label={
-								<span className="sr-only">
-									{t("assistantSettings.mcpToggle", { name: server.name })}
-								</span>
-							}
-							onChange={onToggle}
-						/>
+						<span className="flex shrink-0 items-center gap-2">
+							{enabled && (
+								<Button size="sm" variant="ghost" onClick={onResearchTools}>
+									{t("settings.research.mcpTools.button", {
+										n: researchTools,
+									})}
+								</Button>
+							)}
+							<Toggle
+								checked={enabled}
+								disabled={disabled}
+								label={
+									<span className="sr-only">
+										{t("assistantSettings.mcpToggle", { name: server.name })}
+									</span>
+								}
+								onChange={onToggle}
+							/>
+						</span>
 					) : (
 						<Badge tone="warn">{t("assistantSettings.unusable")}</Badge>
 					)
@@ -89,6 +107,9 @@ export default function AssistantSettings(): ReactNode {
 	const servers = useAssistantMcpServers();
 	const put = usePutAssistantSettings();
 	const providers = useProviders();
+	const research = useResearchSettings();
+	// 正在编辑研究可用工具的服务器
+	const [toolsFor, setToolsFor] = useState<string | null>(null);
 	// 请求进行中先显示要改成的值
 	const current: Settings | undefined = put.isPending
 		? put.variables
@@ -149,10 +170,20 @@ export default function AssistantSettings(): ReactNode {
 										: s.enabled
 								}
 								disabled={put.isPending || !current}
+								researchTools={
+									research.data?.settings.mcpTools[s.name]?.length ?? 0
+								}
 								onToggle={(on) => setServer(s.name, on)}
+								onResearchTools={() => setToolsFor(s.name)}
 							/>
 						))}
 					</ul>
+				)}
+				{toolsFor && (
+					<McpResearchToolsDialog
+						server={toolsFor}
+						onClose={() => setToolsFor(null)}
+					/>
 				)}
 			</Card>
 			<ResearchCard />

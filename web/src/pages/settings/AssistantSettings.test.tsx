@@ -1,9 +1,16 @@
 /**
- * 设置 → 全局助手（M19 步骤 1.6，M26 步骤 1.6）：联网开关保存、MCP 逐个关闭、不可用原因显示；
- * 后台研究卡片的总开关、今天已花、每日上限与研究偏好整体 PUT。走 mock 后端。
+ * 设置 → 全局助手（M19 步骤 1.6，M26 步骤 1.6 / 4.2）：联网开关保存、MCP 逐个关闭、不可用原因显示；
+ * 后台研究卡片的总开关、今天已花、每日上限与研究偏好整体 PUT；MCP 服务器的研究可用工具（列出勾选、列不出时手动输入）。
+ * 走 mock 后端。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+	within,
+} from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MockServer } from "../../mock/server";
@@ -192,5 +199,72 @@ describe("设置 → 全局助手", () => {
 			enabled: true,
 			dailyUsd: 5,
 		});
+	});
+
+	it("研究可用工具（M26）：列出工具、不预先勾选，勾一个保存后 PUT 只带它", async () => {
+		mount();
+		await screen.findByRole("checkbox", { name: "助手使用 github" });
+		const open = within(row("github")).getByRole("button", {
+			name: "研究可用工具（0）",
+		});
+		fireEvent.click(open);
+		const dialog = await screen.findByRole("dialog", {
+			name: "研究可用工具 · github",
+		});
+		expect(dialog).toHaveTextContent(
+			"只勾选不会对外发送数据、不会改动任何东西的读取工具。「自报只读」是服务器自己的说法，不是保证。",
+		);
+		const boxes = await within(dialog).findAllByRole("checkbox");
+		expect(boxes).toHaveLength(3);
+		for (const b of boxes) expect(b).not.toBeChecked();
+		const tool = (name: string) =>
+			dialog.querySelector(`[data-mcp-tool="${name}"]`) as HTMLElement;
+		expect(tool("list_issues")).toHaveTextContent("自报只读");
+		expect(tool("create_issue")).not.toHaveTextContent("自报只读");
+		expect(tool("search_code")).not.toHaveTextContent("自报只读");
+
+		fireEvent.click(within(tool("list_issues")).getByRole("checkbox"));
+		fireEvent.click(within(dialog).getByRole("button", { name: "保存" }));
+		await waitFor(() =>
+			expect(server.assistant.research.mcpTools).toEqual({
+				github: ["list_issues"],
+			}),
+		);
+		expect(researchPuts).toEqual([
+			expect.objectContaining({ mcpTools: { github: ["list_issues"] } }),
+		]);
+		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+		await waitFor(() =>
+			expect(
+				within(row("github")).getByRole("button", {
+					name: "研究可用工具（1）",
+				}),
+			).toBeInTheDocument(),
+		);
+	});
+
+	it("研究可用工具（M26）：列不出工具（SSE）时改为手动输入", async () => {
+		mount();
+		await screen.findByRole("checkbox", { name: "助手使用 linear" });
+		fireEvent.click(
+			within(row("linear")).getByRole("button", { name: /^研究可用工具/ }),
+		);
+		const dialog = await screen.findByRole("dialog", {
+			name: "研究可用工具 · linear",
+		});
+		const input = await within(dialog).findByRole("textbox", {
+			name: "工具名（每行一个）",
+		});
+		expect(dialog).toHaveTextContent("这是 SSE 服务器");
+		expect(within(dialog).queryByRole("checkbox")).toBeNull();
+		fireEvent.change(input, {
+			target: { value: " list_issues \n\nget_issue\nlist_issues" },
+		});
+		fireEvent.click(within(dialog).getByRole("button", { name: "保存" }));
+		await waitFor(() =>
+			expect(server.assistant.research.mcpTools).toEqual({
+				linear: ["list_issues", "get_issue"],
+			}),
+		);
 	});
 });

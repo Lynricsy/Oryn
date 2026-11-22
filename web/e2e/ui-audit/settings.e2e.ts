@@ -482,6 +482,9 @@ overlay(
 	},
 	{ noReopen: true },
 );
+overlay("settings.assistant.mcp-research-tools", "assistant", (page) =>
+	btn(page, /^研究可用工具/).click(),
+);
 surface({
 	id: "settings.providers.created",
 	path: "/settings/providers",
