@@ -425,6 +425,7 @@ root 或 Docker 部署：`coordinator.dir` 放在降权账号进得去的地方�
 - 只有 `--no-tools`，没有任何内置工具，读不了文件；覆盖层 `overlay-research-private.yml` 同样关掉 `@路径`；环境没有 `PI_PROXY`。
 - 宿主工具只在内部关联与 MCP 检查的运行里有，全部只读：`list_threads`、`read_thread`、`list_schedules`、`list_projects`、`get_stats`，以及助手记忆开着时的 `search_history`、`recall_memory`、`recall_engineering`。挖掘运行一个宿主工具都没有，对话摘录直接写在提示词里。
 - 只有 MCP 运行里，orynd 才把**研究凭据**作为 `mcpToken` 交给它（orbd 同时设 `ORYN_MCP_BASE`）。它拿不到全局助手的 MCP 凭据。
+- 私有研究员的覆盖层另加 `mcp: { shared: false, startupTimeoutMs: 0 }`，在进程内直接连 MCP 服务器，不等沙箱里没有的 omp daemon。MCP 运行时，orynd 等勾选的服务器在研究员里都连上且列出了工具，才投递提示词，最多等 30 秒。超时的运行记失败，不推进游标。研究员说某个服务器用不了时（`unavailable`）也一样。所以服务器连不上时，这段时间的邮件或日历不会被当成「没有新内容」跳过。
 
 **研究凭据与 `/mcp/` 过滤**：orynd 每次启动另生成一个研究凭据，与助手凭据一起放进协调宿主的出站策略，请求头同为 `X-Oryn-MCP-Token`。持研究凭据的请求：
 
