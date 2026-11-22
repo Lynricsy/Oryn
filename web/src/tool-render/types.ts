@@ -51,6 +51,13 @@ export interface ToolRenderHost {
 	/** 在当前线程的右面板里打开一个 artifact（转录里的 artifact 卡片）；只读的分享页不提供。 */
 	openArtifact?(id: string): void;
 	/**
+	 * 当前线程 orb 上某个文件的地址（`desktop_record` 卡片内嵌播放录像）。orb 已删除时返回 null；
+	 * 只读的分享页不提供，卡片只显示路径。
+	 */
+	orbFileUrl?(path: string): string | null;
+	/** 在当前线程的文件面板里打开 orb 上的某个文件；只读的分享页不提供。 */
+	openOrbFile?(path: string): void;
+	/**
 	 * 渲染一个 agent 的状态头像（站内读 agent 头像设置，分享页读公开身份）。
 	 * 不给时渲染器只用各 agent 的默认字形，不读任何设置。
 	 */

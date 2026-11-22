@@ -2404,6 +2404,21 @@
 			"format": "Format",
 			"backend": "Backend"
 		},
+		"desktopRecord": {
+			"start": "Start recording the desktop",
+			"stop": "Stop recording",
+			"incomplete": "May be incomplete",
+			"truncated": "The recording didn't finish cleanly; the video may be incomplete",
+			"stoppedByLimit": "The recording hit the 10-minute limit and stopped automatically",
+			"stoppedByError": "The recording stopped on an error (for example, the desktop resolution changed); the video only covers what came before",
+			"stoppedByControl": "The recording stopped automatically before someone took over the desktop, so it doesn't interfere with manual input",
+			"storedInOrb": "The video is stored in the thread's environment and is deleted along with it",
+			"video": "Desktop recording",
+			"loadFailed": "Couldn't load the video: the environment may have been deleted, or the file cleaned up",
+			"openInFiles": "Open in Files",
+			"file": "File",
+			"resolution": "Resolution"
+		},
 		"terminal": {
 			"viewInPanel": "View in terminal panel",
 			"awaitingInput": "Waiting for terminal input",

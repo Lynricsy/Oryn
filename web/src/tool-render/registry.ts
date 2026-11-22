@@ -11,6 +11,7 @@ import { bashRenderer } from "./tools/bash";
 import { browserRenderer } from "./tools/browser";
 import { checkpointRenderer, rewindRenderer } from "./tools/checkpoint";
 import { debugRenderer } from "./tools/debug";
+import { desktopRecordRenderer } from "./tools/desktop-record";
 import { editRenderer } from "./tools/edit";
 import { evalRenderer } from "./tools/eval";
 import { fetchRenderer } from "./tools/fetch";
@@ -53,6 +54,7 @@ const RENDERERS: Record<string, ToolRenderer> = {
 	rewind: rewindRenderer,
 	puppeteer: browserRenderer,
 	debug: debugRenderer,
+	desktop_record: desktopRecordRenderer,
 	edit: editRenderer,
 	apply_patch: editRenderer,
 	eval: evalRenderer,

@@ -2404,6 +2404,21 @@
 			"format": "格式",
 			"backend": "后端"
 		},
+		"desktopRecord": {
+			"start": "开始录制桌面",
+			"stop": "停止录制",
+			"incomplete": "可能不完整",
+			"truncated": "录制未正常收尾，视频可能不完整",
+			"stoppedByLimit": "录制达到 10 分钟上限，已自动停止",
+			"stoppedByError": "录制中途出错（例如桌面分辨率变了），视频只包含出错之前的内容",
+			"stoppedByControl": "为不干扰人工操作，录制在用户接管桌面前已自动结束",
+			"storedInOrb": "视频保存在线程的环境里，环境删除后随之删除",
+			"video": "桌面录像",
+			"loadFailed": "视频加载失败：环境可能已删除，或文件已被清理",
+			"openInFiles": "在文件中打开",
+			"file": "文件",
+			"resolution": "分辨率"
+		},
 		"terminal": {
 			"viewInPanel": "在终端面板查看",
 			"awaitingInput": "等待终端输入",

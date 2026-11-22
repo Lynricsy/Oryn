@@ -6,7 +6,7 @@ import type { TFunction } from "i18next";
 import { memo, type ReactNode, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
-import type { ThreadState } from "../../api/client";
+import type { Orb, ThreadState } from "../../api/client";
 import { useAssetUrls } from "../../lib/asset-urls";
 import {
 	type MessageAttachment,
@@ -16,7 +16,7 @@ import { imageGroup } from "../../lib/context-menu/image-actions";
 import { useContextTarget } from "../../lib/context-menu/registry";
 import { copyWithToast } from "../../lib/context-menu/selection-groups";
 import { fileIcon } from "../../lib/file-icon";
-import { joinPath } from "../../lib/file-source";
+import { joinPath, orbFileSource } from "../../lib/file-source";
 import {
 	formatBytes,
 	formatCost,
@@ -35,7 +35,12 @@ import { parseTitleCard } from "../../lib/title";
 import { patchComposerDraft } from "../../state/composer-drafts";
 import type { JsonRecord } from "../../state/message-builder";
 import { locateEntry, runSideAsk, sideAskBusy } from "../../state/side-ask";
-import { useIndex, useThread } from "../../state/stores";
+import {
+	indexStore,
+	peekThreadStore,
+	useIndex,
+	useThread,
+} from "../../state/stores";
 import { uiStore } from "../../state/ui";
 import { ToolView } from "../../tool-render/ToolView";
 import type { ToolResultLike } from "../../tool-render/types";
@@ -682,6 +687,29 @@ function toolResultLike(raw: unknown): ToolResultLike | undefined {
 	};
 }
 
+/**
+ * 线程 orb 上文件的下载地址（`desktop_record` 卡片内嵌播放的录像）。调用时读 store 快照，不给每张工具卡多加一个订阅：
+ * 卡片随转录上下文重渲染时会重新取。orb 的选取与 `useOrbOf` 相同（线程快照与索引里较新的一份）。
+ * 线程没有 orb 或 orb 已删除时为 null；orb 停机时走停机预览（与文件面板一致），打开转录不会唤醒它。
+ */
+function threadOrbFileUrl(threadId: string, path: string): string | null {
+	const s = peekThreadStore(threadId)?.getState();
+	const orbId = s?.thread?.orbId ?? s?.orb?.id;
+	if (!orbId) return null;
+	const fromIndex: Orb | undefined = indexStore.getState().orbs[orbId];
+	const fromThread = s?.orb?.id === orbId ? s.orb : undefined;
+	const orb =
+		fromIndex && fromThread
+			? fromIndex.stateChangedAt >= fromThread.stateChangedAt
+				? fromIndex
+				: fromThread
+			: (fromIndex ?? fromThread);
+	if (!orb || orb.state === "deleted") return null;
+	return orbFileSource(orbId, threadId, {
+		offline: orb.state === "stopped",
+	}).downloadUrl(path);
+}
+
 /** 工具卡片：调用参数来自 toolCall 块（或实时帧），结果来自 toolResult 条目（或 tool_execution_end）。 */
 export function ToolCard({
 	toolCallId,
@@ -823,6 +851,10 @@ export function ToolCard({
 							openAgent: (id) => ctx.openSubagent(id),
 							// artifact 卡片（线程页开右面板，协调对话开整页）；只读的分享页不给，卡片不可点
 							openArtifact: ctx.openArtifact,
+							// desktop_record 的录像：线程 orb 上的文件；只读的分享页不给，卡片只显示路径
+							orbFileUrl: (path) => threadOrbFileUrl(ctx.threadId, path),
+							openOrbFile: (path) =>
+								uiStore.getState().openFile(ctx.threadId, path),
 							AgentAvatar,
 						}
 			}
