@@ -3,7 +3,8 @@
 //
 // 沙箱里能看到的：只读的系统目录与可执行文件、一次性的可写目录（HOME / TMPDIR，含数据目录 gates/ 的副本作为工作目录）；
 // TCP 只能连本进程开在回环上的正向代理（只放行公网地址，带一次性口令），读不到控制面的数据、配置与密钥，也连不上内网。
-// 网络沙箱靠 Landlock 的 TCP 规则（ABI ≥ 4，Linux ≥ 6.7），不建网络命名空间；能建 PID 命名空间时一并隔离进程。
+// 网络沙箱靠 Landlock 的 TCP 规则（ABI ≥ 4，Linux ≥ 6.7），不建网络命名空间；进程一律放进独立的 PID 命名空间，
+// 命令结束或超时时连同全部后台进程（含 setsid 脱离进程组的）一起清理。建不了 PID 命名空间时本机闸门不可用。
 package localgate
 
 import (
@@ -24,7 +25,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/egress"
@@ -70,9 +70,9 @@ type Runner struct {
 	srv   *http.Server
 	token string
 
-	mu sync.Mutex
-	// noPIDNS 在第一次建 PID 命名空间失败后置真，之后不再尝试。
-	noPIDNS bool
+	// pidnsOnce / pidnsErr 缓存「能否建 PID 命名空间」的探测结果（内核与权限在进程生命期内不变）。
+	pidnsOnce sync.Once
+	pidnsErr  error
 }
 
 // New 在回环上开正向代理并返回 Runner。
@@ -119,6 +119,14 @@ func (r *Runner) Available() error {
 	}
 	if abi < sandbox.TCPABI {
 		return fmt.Errorf("landlock ABI %d < %d: local gates need Linux ≥ 6.7 to restrict TCP", abi, sandbox.TCPABI)
+	}
+	r.pidnsOnce.Do(func() {
+		cmd := exec.Command("/bin/sh", "-c", "exit 0")
+		cmd.SysProcAttr = sysProcAttr()
+		r.pidnsErr = cmd.Run()
+	})
+	if r.pidnsErr != nil {
+		return fmt.Errorf("cannot create a PID namespace (needed to clean up background processes): %w", r.pidnsErr)
 	}
 	return nil
 }
@@ -177,39 +185,17 @@ func (r *Runner) prepare(dir string) (uid, gid int, err error) {
 	return uid, gid, err
 }
 
-// exec 拉起子进程并等它结束（超时杀整个进程组 / PID 命名空间）。
+// exec 拉起子进程并等它结束。子进程是 PID 命名空间的 init：超时杀掉它即清理整个命名空间；它正常退出时内核同样杀掉
+// 留在后台的进程，输出管道随之关闭。
 func (r *Runner) exec(ctx context.Context, dir, command string, uid, gid int, stdout, stderr io.Writer, timeout time.Duration) (int, error) {
-	r.mu.Lock()
-	pidns := !r.noPIDNS
-	r.mu.Unlock()
-	for {
-		code, started, err := r.spawn(ctx, dir, command, uid, gid, pidns, stdout, stderr, timeout)
-		if !started && pidns {
-			// 建不了 PID 命名空间（容器里、user namespace 关闭）：退回只靠 Landlock 与降权
-			slog.Info("localgate: PID namespace unavailable; running without it", "err", err)
-			r.mu.Lock()
-			r.noPIDNS = true
-			r.mu.Unlock()
-			pidns = false
-			continue
-		}
-		return code, err
-	}
-}
-
-// spawn 执行一次子进程；started 为假表示进程没能启动（可换参数重试）。
-func (r *Runner) spawn(ctx context.Context, dir, command string, uid, gid int, pidns bool, stdout, stderr io.Writer, timeout time.Duration) (code int, started bool, err error) {
 	statusR, statusW, err := os.Pipe()
 	if err != nil {
-		return 0, true, err
+		return 0, err
 	}
 	defer func() { _ = statusR.Close() }()
 	args := append(append([]string{}, r.cfg.Command[1:]...),
 		"--dir", dir, "--port", strconv.Itoa(r.ln.Addr().(*net.TCPAddr).Port),
 		"--uid", strconv.Itoa(uid), "--gid", strconv.Itoa(gid))
-	if pidns {
-		args = append(args, "--pidns")
-	}
 	if r.cfg.MaxABI > 0 {
 		args = append(args, "--max-landlock-abi", strconv.Itoa(r.cfg.MaxABI))
 	}
@@ -221,33 +207,31 @@ func (r *Runner) spawn(ctx context.Context, dir, command string, uid, gid int, p
 		proxyEnv + "=http://oryn:" + r.token + "@" + r.ln.Addr().String()}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	cmd.ExtraFiles = []*os.File{statusW}
-	cmd.SysProcAttr = sysProcAttr(pidns)
-	// 超时杀整个进程组（有 PID 命名空间时杀掉其 init 即整组退出）
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.SysProcAttr = sysProcAttr()
 	cmd.WaitDelay = waitDelay
-	if err := cmd.Start(); err != nil {
-		_ = statusW.Close()
-		return 0, false, err
-	}
+	err = cmd.Start()
 	_ = statusW.Close()
+	if err != nil {
+		return 0, fmt.Errorf("start sandbox: %w", err)
+	}
 	status, _ := io.ReadAll(statusR)
 	werr := cmd.Wait()
 	switch {
 	case dctx.Err() != nil && ctx.Err() == nil:
-		return 0, true, fmt.Errorf("timed out after %s", timeout)
+		return 0, fmt.Errorf("timed out after %s", timeout)
 	case ctx.Err() != nil:
-		return 0, true, errors.New("canceled")
+		return 0, errors.New("canceled")
 	case strings.TrimSpace(string(status)) != "ok":
-		return 0, true, fmt.Errorf("local sandbox failed: %s", lastLine(stderr))
+		return 0, fmt.Errorf("local sandbox failed: %s", lastLine(stderr))
 	}
 	var ee *exec.ExitError
 	switch {
 	case werr == nil:
-		return 0, true, nil
+		return 0, nil
 	case errors.As(werr, &ee) && ee.Exited():
-		return ee.ExitCode(), true, nil
+		return ee.ExitCode(), nil
 	default:
-		return 0, true, fmt.Errorf("exec failed: %w", werr)
+		return 0, fmt.Errorf("exec failed: %w", werr)
 	}
 }
 

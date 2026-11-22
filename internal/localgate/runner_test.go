@@ -3,7 +3,9 @@
 package localgate
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -102,7 +104,7 @@ func TestRunIsolation(t *testing.T) {
 	assert.Equal(t, "403", stdout, "代理拒绝非公网目标")
 }
 
-// 超过执行上限时杀掉整个进程组，返回超时错误而不是等命令自己结束。
+// 超过执行上限时杀掉整个 PID 命名空间，返回超时错误而不是等命令自己结束。
 func TestRunTimeout(t *testing.T) {
 	r := newRunner(t, Config{GatesDir: t.TempDir()})
 	start := time.Now()
@@ -111,6 +113,63 @@ func TestRunTimeout(t *testing.T) {
 	assert.Contains(t, err.Error(), "timed out after 1s")
 	assert.Equal(t, "started\n", stdout, "超时前的输出保留")
 	assert.Less(t, time.Since(start), 10*time.Second)
+}
+
+// procsWithArg 返回宿主上命令行里含参数 arg 的进程数（扫 /proc；僵尸进程的命令行为空，不计入）。
+func procsWithArg(t *testing.T, arg string) int {
+	t.Helper()
+	paths, err := filepath.Glob("/proc/[0-9]*/cmdline")
+	require.NoError(t, err)
+	n := 0
+	for _, p := range paths {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		if bytes.Contains(append([]byte{0}, b...), []byte("\x00"+arg+"\x00")) {
+			n++
+		}
+	}
+	return n
+}
+
+// 后台进程（含 setsid 脱离原进程组与会话的）不能活过闸门：超时与正常退出两种结束方式都要清理干净。
+func TestRunKillsEscapedDescendants(t *testing.T) {
+	if _, err := exec.LookPath("setsid"); err != nil {
+		t.Skip("setsid not installed")
+	}
+	r := newRunner(t, Config{GatesDir: t.TempDir()})
+	for _, tc := range []struct {
+		name, tail string
+		timeout    time.Duration
+		timedOut   bool
+	}{
+		{"timeout", "sleep 30", 2 * time.Second, true},
+		{"normal exit", "sleep 1; exit 0", 30 * time.Second, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// 每个子测试一个独一无二的 sleep 时长，用来在宿主 /proc 里认出这些后台进程
+			arg := fmt.Sprintf("%d.%09d", 600+len(tc.name), time.Now().UnixNano()%1e9)
+			command := fmt.Sprintf("setsid sleep %s </dev/null >/dev/null 2>&1 & "+
+				"(setsid sh -c 'exec sleep %s' </dev/null >/dev/null 2>&1 &); %s", arg, arg, tc.tail)
+			res := make(chan error, 1)
+			go func() {
+				_, _, _, err := run(r, command, tc.timeout)
+				res <- err
+			}()
+			require.Eventually(t, func() bool { return procsWithArg(t, arg) == 2 }, 5*time.Second, 20*time.Millisecond,
+				"后台进程先要跑起来，否则检查没有意义")
+			err := <-res
+			if tc.timedOut {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "timed out")
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Eventually(t, func() bool { return procsWithArg(t, arg) == 0 }, 2*time.Second, 20*time.Millisecond,
+				"闸门结束后不能留下后台进程")
+		})
+	}
 }
 
 // 内核的 Landlock 不支持 TCP 规则时不可用：预检与执行都报错，不在没有网络限制的情况下执行命令。
