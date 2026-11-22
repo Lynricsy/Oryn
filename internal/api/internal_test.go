@@ -3,13 +3,16 @@ package api_test
 import (
 	"context"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Lynricsy/Oryn/internal/api"
+	"github.com/Lynricsy/Oryn/internal/coord"
 )
 
 // 进程内入口不经鉴权中间件，以助手主体直接调用 REST 处理器。
@@ -41,3 +44,22 @@ func TestInternalDo(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, status)
 	assert.True(t, strings.Contains(string(out), "not_found"))
 }
+
+// 助手可用的每个操作都必须接受 KindAssistant 主体：回 401 说明处理器依赖网页会话或设备主体，应改为 deny。
+func TestInternalNoUnauthorized(t *testing.T) {
+	e, _ := newCoordEnv(t)
+	in := api.NewInternal(e.apiSrv)
+	ops := coord.AllowedAPIOps()
+	require.NotEmpty(t, ops)
+	for _, op := range ops {
+		method, path, ok := coord.APIEndpoint(op)
+		require.True(t, ok, op)
+		target := pathParamRE.ReplaceAllString(path, "x")
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		status, _, out, _ := in.Do(ctx, "T-x", method, target, "", nil, 4096)
+		cancel()
+		assert.NotEqual(t, http.StatusUnauthorized, status, "%s %s %s: %s", op, method, target, out)
+	}
+}
+
+var pathParamRE = regexp.MustCompile(`\{[^}]+\}`)

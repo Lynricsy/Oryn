@@ -78,6 +78,10 @@ const (
 	CodeInvalidSchedule        = "invalid_schedule"
 	CodeThreadArchived         = "thread_archived"
 	CodeTooLarge               = "too_large"
+	// oryn 工具：没有这个操作 / 操作对助手关闭 / 结果是二进制
+	CodeUnknownOp    = "unknown_op"
+	CodeNotAvailable = "not_available"
+	CodeBinaryResult = "binary_result"
 )
 
 // Error 是协调层的业务错误。
