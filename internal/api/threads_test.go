@@ -22,6 +22,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/api"
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/config"
+	"github.com/Lynricsy/Oryn/internal/coord"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
@@ -54,6 +55,9 @@ type threadsEnv struct {
 	svc *threads.Service
 	srv *httptest.Server
 	dir string
+	// apiSrv / coordSvc 只由 newCoordEnv 填上（进程内 REST 入口与 oryn 工具的测试用）。
+	apiSrv   *api.Server
+	coordSvc *coord.Service
 }
 
 func newThreadsEnv(t *testing.T) *threadsEnv {

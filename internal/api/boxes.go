@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/auth"
 	"github.com/Lynricsy/Oryn/internal/boxes"
 )
 
@@ -66,6 +67,14 @@ func writeBoxErr(w http.ResponseWriter, r *http.Request, err error) {
 // ownerActor 是 REST 调用者：Boxes 接口只给主人（Cookie 或设备令牌）。
 var ownerActor = boxes.Actor{Kind: boxes.ActorOwner}
 
+// actorOf 返回请求的 box 操作者：全局助手经 oryn 工具的进程内调用记在助手对话名下，其余是主人。
+func actorOf(r *http.Request) boxes.Actor {
+	if p, ok := auth.FromContext(r.Context()); ok && p.Kind == auth.KindAssistant {
+		return boxes.Actor{Kind: boxes.ActorAssistant, ThreadID: p.ID}
+	}
+	return ownerActor
+}
+
 // ListBoxes 实现 GET /api/v1/boxes。
 func (s *Server) ListBoxes(w http.ResponseWriter, r *http.Request) {
 	svc, ok := s.boxesSvc(w)
@@ -90,7 +99,7 @@ func (s *Server) CreateBox(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	b, err := svc.Create(r.Context(), req.Name, deref(req.Provider), deref(req.Type), ownerActor)
+	b, err := svc.Create(r.Context(), req.Name, deref(req.Provider), deref(req.Type), actorOf(r))
 	if err != nil {
 		writeBoxErr(w, r, err)
 		return
@@ -132,7 +141,7 @@ func (s *Server) UpdateBox(w http.ResponseWriter, r *http.Request, box apigen.Bo
 	var b apigen.Box
 	var err error
 	if req.Name != nil {
-		if b, err = svc.Rename(ctx, ref, *req.Name, ownerActor); err != nil {
+		if b, err = svc.Rename(ctx, ref, *req.Name, actorOf(r)); err != nil {
 			writeBoxErr(w, r, err)
 			return
 		}
@@ -140,9 +149,9 @@ func (s *Server) UpdateBox(w http.ResponseWriter, r *http.Request, box apigen.Bo
 	}
 	switch {
 	case clearSch:
-		b, err = svc.SetSchedule(ctx, ref, nil, ownerActor)
+		b, err = svc.SetSchedule(ctx, ref, nil, actorOf(r))
 	case req.Schedule != nil:
-		b, err = svc.SetSchedule(ctx, ref, req.Schedule, ownerActor)
+		b, err = svc.SetSchedule(ctx, ref, req.Schedule, actorOf(r))
 	case req.Name == nil:
 		b, err = svc.Get(ctx, ref)
 	}
@@ -159,7 +168,7 @@ func (s *Server) DeleteBox(w http.ResponseWriter, r *http.Request, box apigen.Bo
 	if !ok {
 		return
 	}
-	if err := svc.Delete(r.Context(), box, ownerActor); err != nil {
+	if err := svc.Delete(r.Context(), box, actorOf(r)); err != nil {
 		writeBoxErr(w, r, err)
 		return
 	}
@@ -172,7 +181,7 @@ func (s *Server) StartBox(w http.ResponseWriter, r *http.Request, box apigen.Box
 	if !ok {
 		return
 	}
-	b, err := svc.Start(r.Context(), box, ownerActor)
+	b, err := svc.Start(r.Context(), box, actorOf(r))
 	if err != nil {
 		writeBoxErr(w, r, err)
 		return
@@ -186,7 +195,7 @@ func (s *Server) StopBox(w http.ResponseWriter, r *http.Request, box apigen.BoxP
 	if !ok {
 		return
 	}
-	b, err := svc.Stop(r.Context(), box, ownerActor)
+	b, err := svc.Stop(r.Context(), box, actorOf(r))
 	if err != nil {
 		writeBoxErr(w, r, err)
 		return
@@ -254,7 +263,7 @@ func (s *Server) UpdateBoxApp(w http.ResponseWriter, r *http.Request, box apigen
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	a, err := svc.SetPublic(r.Context(), box, app, req.Public, ownerActor)
+	a, err := svc.SetPublic(r.Context(), box, app, req.Public, actorOf(r))
 	if err != nil {
 		writeBoxErr(w, r, err)
 		return
@@ -268,7 +277,7 @@ func (s *Server) UndeployBoxApp(w http.ResponseWriter, r *http.Request, box apig
 	if !ok {
 		return
 	}
-	if err := svc.Undeploy(r.Context(), box, app, deref(params.PurgeData), ownerActor); err != nil {
+	if err := svc.Undeploy(r.Context(), box, app, deref(params.PurgeData), actorOf(r)); err != nil {
 		writeBoxErr(w, r, err)
 		return
 	}
@@ -281,7 +290,7 @@ func (s *Server) RestartBoxApp(w http.ResponseWriter, r *http.Request, box apige
 	if !ok {
 		return
 	}
-	a, err := svc.Restart(r.Context(), box, app, ownerActor)
+	a, err := svc.Restart(r.Context(), box, app, actorOf(r))
 	if err != nil {
 		writeBoxErr(w, r, err)
 		return
@@ -299,7 +308,7 @@ func (s *Server) RollbackBoxApp(w http.ResponseWriter, r *http.Request, box apig
 	if r.ContentLength != 0 && !decodeJSON(w, r, &req) {
 		return
 	}
-	a, err := svc.Rollback(r.Context(), box, app, deref(req.ReleaseID), ownerActor)
+	a, err := svc.Rollback(r.Context(), box, app, deref(req.ReleaseID), actorOf(r))
 	if err != nil {
 		writeBoxErr(w, r, err)
 		return

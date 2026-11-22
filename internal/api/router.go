@@ -86,9 +86,7 @@ func NewRouter(s *Server) http.Handler {
 		}
 		apigen.HandlerWithOptions(s, apigen.ChiServerOptions{
 			BaseRouter: r,
-			ErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, err error) {
-				WriteError(w, http.StatusBadRequest, "bad_request", err.Error())
-			},
+			ErrorHandlerFunc: paramError,
 		})
 		// 服务端路径前缀下没有路由的请求一律 404 JSON，不回落到 SPA（否则客户端拿到 200 text/html）。
 		// 放在鉴权组里：匿名请求与真实端点一样先过鉴权（免鉴权前缀直接 404）。
@@ -107,6 +105,11 @@ var serverPrefixes = []string{"/api", "/provider", "/orb"}
 // notFound 写出 404 {code:"not_found"}。
 func notFound(w http.ResponseWriter, _ *http.Request) {
 	WriteError(w, http.StatusNotFound, "not_found", "no such endpoint")
+}
+
+// paramError 把参数绑定错误写成 400 {code:"bad_request"}（NewRouter 与 NewInternal 共用）。
+func paramError(w http.ResponseWriter, _ *http.Request, err error) {
+	WriteError(w, http.StatusBadRequest, "bad_request", err.Error())
 }
 
 // trustedProxyIP 只在请求来自本机反代（回环地址）时采信 X-Real-IP / X-Forwarded-For。

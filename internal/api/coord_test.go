@@ -91,7 +91,7 @@ func newCoordEnv(t *testing.T) (*threadsEnv, *coordHost) {
 		svc.Close()
 		_ = st.Close()
 	})
-	return &threadsEnv{t: t, st: st, svc: svc, srv: srv, dir: dir}, host
+	return &threadsEnv{t: t, st: st, svc: svc, srv: srv, dir: dir, apiSrv: s, coordSvc: c}, host
 }
 
 // H6：@host 不进 provider 列表、不能删除、不能作项目默认 provider，也不能用来建工作线程。

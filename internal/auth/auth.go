@@ -48,13 +48,15 @@ const (
 const (
 	KindWeb    = "web"
 	KindDevice = "device"
+	// KindAssistant 是全局助手经 oryn 工具在进程内调用 REST 处理器（ID 为助手对话的线程 id）；鉴权中间件永远不产生它。
+	KindAssistant = "assistant"
 )
 
 // Principal 是通过鉴权的请求主体。
 type Principal struct {
-	// Kind 为 "web" 或 "device"。
+	// Kind 为 "web"、"device" 或 "assistant"。
 	Kind string
-	// ID：网页会话为会话 id 的哈希；设备为 dev_…。
+	// ID：网页会话为会话 id 的哈希；设备为 dev_…；助手为对话的线程 id。
 	ID string
 	// Recovery 为真表示恢复码换来的一次性会话（只能重新注册 Passkey）。
 	Recovery bool
