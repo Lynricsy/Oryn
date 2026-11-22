@@ -359,6 +359,48 @@ fn valid_base64(s: &str, max: usize) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'='))
 }
 
+/// mask 图标的边长（像素）：网页 `nerd-mask.ts` 的 `NERD_MASK_PX`，原生 `HeaderMaskCache` 同样只认这个尺寸。
+pub const MASK_PX: u32 = 54;
+
+/// mask：base64（≤ 16384 字节）的 PNG，签名与 IHDR 声明的宽高都是 `MASK_PX`。只解出头 24 字节核对，
+/// 声明超大像素或不是 PNG 的数据到不了原生的图像解码器（命令可能被 portal iframe 调到）。
+fn valid_mask(m: &str) -> bool {
+    if !valid_base64(m, 16_384) || m.len() < 32 {
+        return false;
+    }
+    let Some(head) = decode_base64_head(&m.as_bytes()[..32]) else {
+        return false;
+    };
+    let dim = |at: usize| u32::from_be_bytes([head[at], head[at + 1], head[at + 2], head[at + 3]]);
+    head[..8] == *b"\x89PNG\r\n\x1a\n"
+        && head[12..16] == *b"IHDR"
+        && dim(16) == MASK_PX
+        && dim(20) == MASK_PX
+}
+
+/// 32 个 base64 字符（不含 `=`）→ 24 字节。
+fn decode_base64_head(chars: &[u8]) -> Option<[u8; 24]> {
+    let val = |c: u8| -> Option<u32> {
+        Some(match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        } as u32)
+    };
+    let mut out = [0u8; 24];
+    for (i, quad) in chars.chunks_exact(4).enumerate() {
+        let mut n = 0u32;
+        for &c in quad {
+            n = n << 6 | val(c)?;
+        }
+        out[i * 3..i * 3 + 3].copy_from_slice(&n.to_be_bytes()[1..]);
+    }
+    Some(out)
+}
+
 /// `v` 有限且落在 `[lo, hi]` 内（NaN 与无穷都不算）。
 fn within(v: f64, lo: f64, hi: f64) -> bool {
     v.is_finite() && (lo..=hi).contains(&v)
@@ -462,7 +504,7 @@ pub fn valid_item_id(id: &str) -> bool {
         })
 }
 
-/// 图标五选一：symbol / glyph（1..=32 字节）/ mask（base64，1..=16384 字节）/ dot / orb；`bg`、`fg` 只配 glyph 与 mask；
+/// 图标五选一：symbol / glyph（1..=32 字节）/ mask（`valid_mask`）/ dot / orb；`bg`、`fg` 只配 glyph 与 mask；
 /// 颜色一律 `valid_color`。
 fn valid_header_icon(i: &HeaderIcon) -> bool {
     let kinds = [
@@ -477,7 +519,7 @@ fn valid_header_icon(i: &HeaderIcon) -> bool {
         && i.glyph
             .as_deref()
             .is_none_or(|g| (1..=32).contains(&g.len()))
-        && i.mask.as_deref().is_none_or(|m| valid_base64(m, 16_384))
+        && i.mask.as_deref().is_none_or(valid_mask)
         && i.dot.as_deref().is_none_or(valid_color)
         && (i.glyph.is_some() || i.mask.is_some() || (i.bg.is_none() && i.fg.is_none()))
         && i.bg.as_deref().is_none_or(valid_color)
@@ -1268,6 +1310,25 @@ mod tests {
         serde_json::from_str(HEADER_SET).unwrap()
     }
 
+    /// 标准 base64（带 `=` 补齐），只给测试拼 mask 用。
+    fn b64(bytes: &[u8]) -> String {
+        const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut s = String::new();
+        for c in bytes.chunks(3) {
+            let n = (c[0] as u32) << 16
+                | (*c.get(1).unwrap_or(&0) as u32) << 8
+                | *c.get(2).unwrap_or(&0) as u32;
+            for i in 0..4 {
+                s.push(if i <= c.len() {
+                    T[(n >> (18 - 6 * i) & 63) as usize] as char
+                } else {
+                    '='
+                });
+            }
+        }
+        s
+    }
+
     fn fixture_show() -> HeaderShow {
         serde_json::from_str(HEADER_SHOW).unwrap()
     }
@@ -1375,8 +1436,11 @@ mod tests {
             fg: Some("#abcdef".into()),
             ..Default::default()
         };
+        // 夹具里的是网页实际画出的 54×54 模板图
+        let real = fixture_header().title.unwrap().icon.unwrap().mask.unwrap();
+        assert!(valid_mask(&real));
         rejects_title("mask 同时有 glyph", |t| {
-            let mut i = mask("iVBORw0KGgo=");
+            let mut i = mask(&real);
             i.glyph = Some("x".into());
             t.icon = Some(i)
         });
@@ -1384,9 +1448,30 @@ mod tests {
             t.icon = Some(mask("data:image/png;base64,AAAA"))
         });
         rejects_title("mask 16385 字节", |t| {
-            t.icon = Some(mask(&"A".repeat(16_385)))
+            t.icon = Some(mask(&format!("{real}{}", "A".repeat(16_385 - real.len()))))
         });
         rejects_title("mask 为空", |t| t.icon = Some(mask("")));
+        let png_head = |w: u32, h: u32| {
+            let mut b = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+            b.extend_from_slice(&w.to_be_bytes());
+            b.extend_from_slice(&h.to_be_bytes());
+            b.extend_from_slice(&[8, 6, 0, 0, 0, 0, 0, 0, 0]);
+            b64(&b)
+        };
+        assert!(valid_mask(&png_head(54, 54)));
+        rejects_title("mask 声明 4096×4096", |t| {
+            t.icon = Some(mask(&png_head(4096, 4096)))
+        });
+        rejects_title("mask 54×55", |t| t.icon = Some(mask(&png_head(54, 55))));
+        rejects_title("mask 不是 PNG（JPEG 头）", |t| {
+            t.icon = Some(mask(&b64(&[
+                0xff, 0xd8, 0xff, 0xe0, 0, 0x10, b'J', b'F', b'I', b'F', 0, 1, 1, 0, 0, 1, 0, 1, 0,
+                0, 0, 0, 0, 0,
+            ])))
+        });
+        rejects_title("mask 不足 32 个字符", |t| {
+            t.icon = Some(mask(&real[..28]))
+        });
         rejects_title("dot 不是颜色", |t| {
             t.menu.quick[0].icon = Some(HeaderIcon {
                 dot: Some("red".into()),
@@ -1464,7 +1549,7 @@ mod tests {
         t.menu.groups[0][2].copy = Some("a".repeat(2048));
         t.menu.groups[0][3].children = (0..24).map(|i| header_item(&format!("g3/{i}"))).collect();
         t.text = "字".repeat(300);
-        t.icon = Some(mask(&"A".repeat(16_384)));
+        t.icon = Some(mask(&format!("{real}{}", "A".repeat(16_384 - real.len()))));
         s.key = "a".repeat(96);
         assert!(valid_header(&s));
         // 菜单项 id 允许 `/` 与 `#`，线程 id 不允许

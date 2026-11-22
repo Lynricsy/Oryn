@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import type { NativeIcon } from "./host";
 import { isNerdGlyph } from "./title";
 
-/** 方块边长的像素数：页头里最大的方块是 18pt，按 3 倍屏画。 */
+/** 方块边长的像素数：页头里最大的方块是 18pt，按 3 倍屏画。壳（`MASK_PX`）与原生只收这个尺寸的 PNG，改动要三处一起改。 */
 export const NERD_MASK_PX = 54;
 const FAMILY = '"Symbols Nerd Font Mono"';
 const PNG_PREFIX = "data:image/png;base64,";

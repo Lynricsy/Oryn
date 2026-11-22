@@ -2,6 +2,7 @@
 // 菜单开着哪一个、停在哪个子页是这里的本地状态（点了立刻有反应），打开 / 关闭 / 选中再上报给网页。
 import SwiftUI
 import UIKit
+import ImageIO
 
 final class HeaderModel: ObservableObject {
   @Published var spec: HeaderSpec?
@@ -413,13 +414,25 @@ struct HeaderIconView: View {
 }
 
 /// mask 图标的解码缓存：同一字形每次渲染都是同一串 base64，只解一次。
+/// 壳已核对过 PNG 签名与 IHDR（`mobile_logic::valid_mask`）；这里解码前再用 ImageIO 确认类型是 PNG、
+/// 宽高恰为 `px`，不是的一律不解（不交给其它图像解码器，也不按声明的大尺寸分配内存）。
 enum HeaderMaskCache {
+  /// 与网页 `NERD_MASK_PX`、壳的 `MASK_PX` 一致。
+  static let px = 54
   private static let cache = NSCache<NSString, UIImage>()
 
   static func image(_ b64: String) -> UIImage? {
     let key = b64 as NSString
     if let hit = cache.object(forKey: key) { return hit }
-    guard let data = Data(base64Encoded: b64), let image = UIImage(data: data) else { return nil }
+    guard let data = Data(base64Encoded: b64),
+      let source = CGImageSourceCreateWithData(data as CFData, nil),
+      (CGImageSourceGetType(source) as String?) == "public.png",
+      let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+      (props[kCGImagePropertyPixelWidth] as? Int) == px,
+      (props[kCGImagePropertyPixelHeight] as? Int) == px,
+      let cg = CGImageSourceCreateImageAtIndex(source, 0, nil)
+    else { return nil }
+    let image = UIImage(cgImage: cg)
     cache.setObject(image, forKey: key)
     return image
   }
