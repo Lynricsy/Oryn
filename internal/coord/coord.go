@@ -51,6 +51,9 @@ type Config struct {
 	// MCPToken 是协调宿主 /mcp/ 路由的凭据（M19 D10，与 orbs.DefaultSetup.CoordinatorMCPToken 相同）：只放进全局助手的
 	// AgentProfile；空 = 全局助手也用不了 MCP。
 	MCPToken string
+	// ResearchMCPToken 是后台研究的 /mcp/ 凭据（M26，与 orbs.DefaultSetup.CoordinatorResearchToken 相同）：只放进 MCP 运行
+	// 里私有研究员的 AgentProfile；出站代理按它只放行研究可用的工具。
+	ResearchMCPToken string
 	// KeepWarm 是全局助手常驻检查的间隔（见 keepWarmLoop）；0 = 不做（测试默认，免得每套环境都建主线、起 agent）。
 	KeepWarm time.Duration
 }
@@ -129,6 +132,9 @@ type Service struct {
 	comp computerState
 	// boxes 是 M23 的 box 入口（SetBoxes 设置）；nil 时 create_thread 的 box 参数回 coordinator_unavailable。
 	boxes Boxes
+	// research / topics 是 M26 的后台研究（SetResearch 设置）；nil 时研究员没有工具、orb 内 follow.add 不可用。
+	research Research
+	topics   Topics
 
 	ensureMu sync.Mutex
 	// spareMu 串行化备用助手对话的认领与补充（spare.go）；spareKick 让常驻检查在认领后立即补一个新的。

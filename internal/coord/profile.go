@@ -125,6 +125,9 @@ func (s *Service) AgentProfile(ctx context.Context, threadID string) (threads.Ag
 	if err != nil {
 		return threads.AgentProfile{}, err
 	}
+	if row.Research != nil && *row.Research != "" {
+		return s.researcherProfile(ctx, row)
+	}
 	var space *apigen.Space
 	project := ""
 	if row.Kind == threads.KindSpace {
