@@ -320,7 +320,7 @@ coordinator:
   web_allow_hosts: []                   # M19：全局助手联网时额外允许连接的非公网目标（小写 host 或 host:port），见下文
 ```
 
-`dir` 下的内容：`bin/omp`（`omp_path` 的 0555 副本，源文件大小或 mtime 变了才重拷）、`homes/`（0755，属于 orynd）与其下每个协调 orb 一个的 `homes/<orb id>/`（0700，属于降权账号，协调 agent 唯一可写的目录：会话文件、`.omp/agent/` 里下发的 `models.yml` 与 `config.yml`（有助手可用的 MCP 服务器时还有 `mcp.json`）、natives 缓存、`.oryn/coordinator/prompts/<线程 id>.md` 系统提示词、`.oryn/coordinator/overlay.yml` 与 `overlay-web.yml` 两份覆盖层、生图结果所在的 `tmp/`）、`host.log`（子进程的 stderr，超过 5 MiB 轮转为 `host.log.1`）。`dir` 必须属于 orynd 的运行用户，且不能被组或其他人写。
+`dir` 下的内容：`bin/omp`（`omp_path` 的 0555 副本，源文件大小或 mtime 变了才重拷）、`homes/`（0755，属于 orynd）与其下每个协调 orb 一个的 `homes/<orb id>/`（0700，属于降权账号，协调 agent 唯一可写的目录：会话文件、`.omp/agent/` 里下发的 `models.yml` 与 `config.yml`（有助手可用的 MCP 服务器时还有 `mcp.json`）、natives 缓存、`.oryn/coordinator/prompts/<线程 id>.md` 系统提示词、`.oryn/coordinator/` 下的覆盖层（`overlay.yml`、`overlay-web.yml`，以及 M26 研究员的 `overlay-research-web.yml` 与 `overlay-research-private.yml`）、生图结果所在的 `tmp/`）、`host.log`（子进程的 stderr，超过 5 MiB 轮转为 `host.log.1`）。`dir` 必须属于 orynd 的运行用户，且不能被组或其他人写。
 
 每个协调 orb 有自己的 HOME：删除一个协调 orb 只删它自己的 `homes/<orb id>/`；拉起新一代协调 orb 之前先停掉旧一代的子进程，所以同一时刻至多一个协调宿主子进程。旧版本的 `<dir>/home`（所有协调 orb 共用）在 orynd 启动时迁到 `homes/<当前协调 orb>/`，没有协调 orb 时删除。
 
@@ -407,6 +407,43 @@ root 或 Docker 部署：`coordinator.dir` 放在降权账号进得去的地方�
 **MCP 路由凭据**：orynd 每次启动随机生成一个凭据，放进协调宿主的出站策略，并只经 `agent.start` 的 `mcpToken` 交给全局助手的 agent（orbd 以 `ORYN_MCP_TOKEN` 注入）。出站代理对 `/mcp/` 下的每个请求（任何方法、任何子路径，含 SSE 的 GET）先核对请求头 `X-Oryn-MCP-Token`（常量时间比较）：头缺失、值不对，或策略里没有凭据，一律 403，并且这一步在路由查找之前，不暴露某个路由键是否存在。核对通过后去掉该头再转发。上游回重定向时，同源且在该服务器地址路径之下的改写回 `/mcp/m<i>/…` 继续走代理，跳到别的主机或路径之外的一律回 502：客户端跟随重定向会保留自定义请求头，不拦就会把凭据带到别的服务器。所以 Space 协调者既不会自动连上 MCP（没有 `ORYN_MCP_BASE`），直接请求 `/mcp/m<i>` 也会被拒（没有凭据）。协调宿主随 orynd 一起重启，凭据随之更换。
 
 出站代理把请求转发到原地址：先丢掉入站的 `Authorization`，再注入配置的头；名字含 auth、token、key、secret、cookie 的头，其值若出现在响应里会被抹掉。MCP 路由不做公网判定（主人配置的地址可以在内网），也不受联网总开关约束。全局 `mcp.json` 变化后，助手对话在静止后重启并重新下发。
+
+### 后台研究（M26）
+
+「设置 → 全局助手 → 后台研究」的总开关缺省关闭。打开后，orynd 的研究服务按节奏驱动协调宿主里两个隐藏的研究员对话（不进对话列表、搜索、主人记忆与通知，不能归档或删除）。它们与全局助手在同一个协调宿主里，但启动参数不同（`agent.start` 的 `variant`）。研究员的 agent 只在一次研究运行期间存在，运行结束就停掉，下一次运行拉起新进程，上一次的上下文不会带进来。三条管线的节奏与 REST 见 [`protocol.md`「M26」](protocol.md#m26全局助手的后台研究)。
+
+**公网研究员**（`research_web`）手里没有私有数据：
+
+- 内置工具只有 `web_search` 与 `read`，不加载技能，宿主工具表为空。环境有 `PI_PROXY`（联网与公网判定同上节），没有 `ORYN_MCP_BASE` 与 `ORYN_MCP_TOKEN`。
+- 覆盖层 `overlay-research-web.yml` 打开 Oryn Core 的 `read.remoteOnly`：`read` 只读公网 http(s) 网址和本会话的 `local://`。本地路径、`file://`、`skill://` 等内部协议、`localhost`，以及写成字面量的回环、私网、链路本地、CGNAT 与 `0.0.0.0/8` 地址，一律得到 `This session can only read public web pages (http/https URLs).`。
+- 同一覆盖层把 `prompt.fileMentions` 设为 `false`，关掉提示词里 `@路径` 的自动读取。这个读取不经过 `read` 工具，`read.remoteOnly` 管不到它。
+- 提示词由 orynd 拼装，只含话题的种类、标题、问题、上一次的报告与当天日期；当时的回答（基线）与任何对话内容都不交给它。它即使被网页注入，也没有私有数据可泄露。
+- 助手设置的联网总开关关着时，公网跟进不运行。
+
+**私有研究员**（`research_private`）不能上网：
+
+- 只有 `--no-tools`，没有任何内置工具，读不了文件；覆盖层 `overlay-research-private.yml` 同样关掉 `@路径`；环境没有 `PI_PROXY`。
+- 宿主工具只在内部关联与 MCP 检查的运行里有，全部只读：`list_threads`、`read_thread`、`list_schedules`、`list_projects`、`get_stats`，以及助手记忆开着时的 `search_history`、`recall_memory`、`recall_engineering`。挖掘运行一个宿主工具都没有，对话摘录直接写在提示词里。
+- 只有 MCP 运行里，orynd 才把**研究凭据**作为 `mcpToken` 交给它（orbd 同时设 `ORYN_MCP_BASE`）。它拿不到全局助手的 MCP 凭据。
+
+**研究凭据与 `/mcp/` 过滤**：orynd 每次启动另生成一个研究凭据，与助手凭据一起放进协调宿主的出站策略，请求头同为 `X-Oryn-MCP-Token`。持研究凭据的请求：
+
+- 只能访问主人在「研究可用工具」里勾选过工具的服务器，其余 403。名单只在研究总开关与 MCP 检查都开着时生效；在助手设置里关掉的服务器，研究同样用不了。
+- `POST` 的请求体必须是单个、未压缩、不超过 1 MiB 的 JSON-RPC 对象。握手、`ping`、`tools/list` 与通知放行；`tools/call` 只放行名单里的工具；名单外的工具与其他方法由 orynd 直接回 JSON-RPC 错误，上游收不到请求。逐条规则见 [`protocol.md`「M26」](protocol.md#m26全局助手的后台研究)。
+- 持助手凭据的请求与 M19 相同，不受这份名单约束。
+
+「研究可用工具」对话框里的工具列表由 orynd 以 Streamable HTTP 连上服务器取得（`GET /api/v1/assistant/mcp-servers/{name}/tools`，20 秒超时）；SSE 服务器列不出来，改为手填工具名。「自报只读」取自服务器的 `annotations.readOnlyHint`，是服务器自己的说法，不是保证，所以对话框不预先勾选任何工具。只勾不会对外发送数据、不会改动任何东西的读取工具：邮件的「发送」、日历的「创建」一旦勾上，网页或邮件里的注入就能借研究员调用它们。
+
+**受限的一段**：公网研究与 MCP 检查的发现进主线时，主线 agent 先以 `main_restricted` 变体重启：内置工具只有 `read`，没有 `PI_PROXY` 与 MCP 凭据，宿主工具只剩只读的一组与 `stay_silent`（没有 `oryn`、`computer_*`、`update_main_notes` 与写类工具）。orynd 只在 orbd 报回这个变体之后才投递，这一轮结束后主线下一次启动恢复完整工具表。主人恰好在这一轮里发来的消息由受限的 agent 回答，下一条消息起恢复。内部关联的发现与「交给助手」的运行结果照常交给完整工具表的主线。
+
+**花费**：研究员对话的模型用量照常记进统计。当天（本地时区）合计达到每日上限（缺省 20 美元，可设 0.1–1000）后，当天不再发起运行，并发一条 `budget` 类系统通知，每天至多一条。常驻占用不变：研究运行期间，每个研究员各多一个协调 omp。
+
+**残余风险**：
+
+- 私有研究员与受限的主线不联网，靠的是它们的 omp 没有 `PI_PROXY` 和相应的内置工具，与 Space 协调者相同，而不是出站代理按调用方拒绝。
+- Oryn Core 的 `read` 跟随重定向时不检查目标主机：公网页面可以把公网研究员的 `read` 重定向到 `http://127.0.0.1:<egress_port>/…`。那里它只能发 GET，`/mcp/` 要它没有的凭据，它手里也没有私有数据，所以不另做处理。
+- `/mcp/` 的过滤假定沙箱里没有哪个研究员能自己构造任意 HTTP 请求：公网研究员只有 `web_search` 与只读网址的 `read`，私有研究员没有内置工具。以后给研究员加任何能发任意请求的工具之前，必须先重看这层过滤。
+- 研究凭据同样以环境变量出现在私有研究员的进程里，同宿主的 agent 能从 `/proc` 读到（见下文「残余风险」）；它能做的事是助手凭据的子集。
 
 ### 助手的电脑（M19）
 
