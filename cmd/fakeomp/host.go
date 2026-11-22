@@ -44,7 +44,9 @@ func resolvePromptInput(v string) string {
 
 // dumpInvocation 把启动参数与环境写成 JSON：环境变量 FAKEOMP_DUMP_DIR 非空时写到
 // `<dir>/<ORYN_THREAD_ID 或 pid>.json`；--system-prompt 的首行为 `#dump <路径>` 时写到该路径
-// （协调档的环境从零构造、带不进 FAKEOMP_DUMP_DIR；路径必须在 HOME 之内）。失败只记 stderr。
+// （协调档的环境从零构造、带不进 FAKEOMP_DUMP_DIR；路径必须在 HOME 之内）；`$HOME/.fakeomp-dump/` 是已有目录时
+// 同样写到其中的 `<ORYN_THREAD_ID 或 pid>.json`（协调宿主里系统提示词由控制面拼装、首行带不进 #dump 时用；同一线程
+// 每次启动覆盖，留下的是最近一次）。失败只记 stderr。
 func dumpInvocation(o options, getenv func(string) string, stderr io.Writer) {
 	prompt := resolvePromptInput(o.systemPrompt)
 	rec := dumpRecord{Args: nonNilStrings(o.args), Env: map[string]string{}, UID: os.Getuid(), Cwd: o.cwd, SystemPrompt: prompt}
@@ -55,12 +57,17 @@ func dumpInvocation(o options, getenv func(string) string, stderr io.Writer) {
 	}
 	b, _ := json.MarshalIndent(rec, "", "  ")
 	var targets []string
+	name := getenv("ORYN_THREAD_ID")
+	if name == "" {
+		name = strconv.Itoa(os.Getpid())
+	}
 	if dir := getenv("FAKEOMP_DUMP_DIR"); dir != "" {
-		name := getenv("ORYN_THREAD_ID")
-		if name == "" {
-			name = strconv.Itoa(os.Getpid())
-		}
 		targets = append(targets, filepath.Join(dir, name+".json"))
+	}
+	if home := getenv("HOME"); home != "" {
+		if fi, err := os.Stat(filepath.Join(home, ".fakeomp-dump")); err == nil && fi.IsDir() {
+			targets = append(targets, filepath.Join(home, ".fakeomp-dump", name+".json"))
+		}
 	}
 	first, _, _ := strings.Cut(prompt, "\n")
 	if p, ok := strings.CutPrefix(strings.TrimSpace(first), "#dump "); ok {

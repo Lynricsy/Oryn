@@ -13,7 +13,8 @@
 //	--system-prompt   系统提示词（不含换行的值按文件路径读，同 omp 的 resolvePromptInput）；首行 `#dump <HOME 内路径>`
 //	                  时把参数、环境、uid、cwd、解析后的提示词写成 JSON 到该路径
 //
-// 环境变量 FAKEOMP_DUMP_DIR 非空时同样转储到 `<dir>/<ORYN_THREAD_ID 或 pid>.json`。
+// 环境变量 FAKEOMP_DUMP_DIR 非空时同样转储到 `<dir>/<ORYN_THREAD_ID 或 pid>.json`；`$HOME/.fakeomp-dump/` 是已有目录时
+// 也转储到其中的同名文件（协调宿主的 agent 环境从零构造、系统提示词由控制面拼装时用）。
 // 提示词里的 `hosttool <name> <json>` 行发起宿主工具调用（host_tool_call → 等 host_tool_result），
 // `probe <read|write|exec|tcp|unix|kill> <arg>` 与 `probe args` 行在本进程内做探测；
 // 回合最后的 assistant 文本每步一行：`host:<name>:<ok|error>:<结果前 200 字符>` / `probe:<op>:<ok|错误串>`。

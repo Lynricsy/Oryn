@@ -182,6 +182,26 @@ func TestDumpInvocation(t *testing.T) {
 	assert.ErrorIs(t, err, os.ErrNotExist)
 }
 
+// `$HOME/.fakeomp-dump/` 已存在时（不设 FAKEOMP_DUMP_DIR、系统提示词不带 #dump）同样写出转储；目录不存在时不建。
+func TestDumpInvocationHomeDir(t *testing.T) {
+	home := t.TempDir()
+	env := map[string]string{"HOME": home, "ORYN_THREAD_ID": "T-home"}
+	args := []string{"--session-dir", t.TempDir(), "--no-tools", "--system-prompt", "You are a probe.\nShort."}
+	h := start(t, args, env)
+	require.Equal(t, "ready", h.next()["type"])
+	_, err := os.Stat(filepath.Join(home, ".fakeomp-dump"))
+	assert.ErrorIs(t, err, os.ErrNotExist)
+
+	require.NoError(t, os.Mkdir(filepath.Join(home, ".fakeomp-dump"), 0o700))
+	h = start(t, args, env)
+	require.Equal(t, "ready", h.next()["type"])
+	var rec dumpRecord
+	b, err := os.ReadFile(filepath.Join(home, ".fakeomp-dump", "T-home.json"))
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(b, &rec))
+	assert.Equal(t, args, rec.Args)
+}
+
 func readSessionFiles(t *testing.T, dir string) string {
 	t.Helper()
 	var b strings.Builder
