@@ -7,6 +7,7 @@
  * 环境变量：
  *   ORYN_README_DIR   输出目录（默认仓库的 docs/assets）
  *   ORYN_README_BASE  复用已在跑的 mock 开发服务器（如 http://127.0.0.1:5191），不另起 vite
+ *   ORYN_ORB_IMAGE    desktop-control 取任务栏真实应用图标的 orb 镜像（默认 oryn-orb:dev）
  *   ORYN_IOS_SHOTS    mobile-views 用的 iOS 模拟器原图目录（readme-ios-shots 工作流的产物）；没设时跳过该组
  *   CHROMIUM          Chromium 可执行文件（默认 /usr/bin/chromium）
  * `--emit-ios-init <文件>`：只输出 iOS 模拟器里注入 mock 构建的演示数据脚本（工作流调用），见 `iosDriver`。
@@ -2694,7 +2695,44 @@ const settings: Shooter = async (scheme) =>
 		],
 	);
 
-/** 远程桌面：主人接管控制时的横幅与工具栏。 */
+/**
+ * 任务栏的应用图标取自 orb 镜像：mock 只有中性的占位图标（仓库不收第三方应用的图标），README 配图要与真实 orb 的
+ * 任务栏一致，所以截图时读镜像里 orbd 实际提供的图标（`desktop-apps.json` 的 `icon` → `desktop-icons/` 下的文件），
+ * 换成 data: 地址交给页面。镜像默认 `oryn-orb:dev`，`ORYN_ORB_IMAGE` 可改；读不到就失败，不退回占位图标。
+ */
+let orbIcons: Record<string, string> | undefined;
+function orbDesktopIcons(): Record<string, string> {
+	if (orbIcons) return orbIcons;
+	const image = process.env.ORYN_ORB_IMAGE ?? "oryn-orb:dev";
+	const dir = "/usr/local/share/oryn";
+	const run = Bun.spawnSync([
+		"docker",
+		"run",
+		"--rm",
+		"--network",
+		"none",
+		"--entrypoint",
+		"bash",
+		image,
+		"-c",
+		`jq -r '.[] | [.id, .icon] | @tsv' ${dir}/desktop-apps.json | while IFS=$'\\t' read -r id icon; do printf '%s\\t%s\\t%s\\n' "$id" "$icon" "$(base64 -w0 "${dir}/desktop-icons/$icon")"; done`,
+	]);
+	if (run.exitCode !== 0)
+		throw new Error(
+			`读不到 ${image} 里的桌面图标（desktop-control 需要本机有 orb 镜像，可用 ORYN_ORB_IMAGE 指定）：${run.stderr.toString().trim()}`,
+		);
+	const icons: Record<string, string> = {};
+	for (const line of run.stdout.toString().trim().split("\n")) {
+		const [id, file, b64] = line.split("\t");
+		if (!id || !file || !b64) throw new Error(`桌面图标清单行无效：${line}`);
+		const mime = file.endsWith(".svg") ? "image/svg+xml" : "image/png";
+		icons[id] = `data:${mime};base64,${b64}`;
+	}
+	orbIcons = icons;
+	return icons;
+}
+
+/** 远程桌面：主人接管控制时的横幅与工具栏；任务栏用真实 orb 的应用图标。 */
 const desktopControl: Shooter = async (scheme) => {
 	const win = { width: 1248, height: 700 };
 	const board = await browser.newPage({
@@ -2708,6 +2746,26 @@ const desktopControl: Shooter = async (scheme) => {
 		mac(scheme, win.width, win.height, { collapsed: true }),
 		async (page) => {
 			await openThread(page, T.fc);
+			// 换上镜像里的真实图标；关掉夹具里不属于任何应用的窗口（xclock，真实 orb 里没有），任务栏与真实 orb 同形
+			await page.evaluate(
+				async ({ orb, icons }) => {
+					const mock = Reflect.get(globalThis, "__orynMock") as {
+						desktop: { iconDataUrl(src: string): string | undefined };
+						orbs: Map<string, Orb>;
+					};
+					const iconOf = mock.desktop.iconDataUrl.bind(mock.desktop);
+					mock.desktop.iconDataUrl = (src) => {
+						const m = /\/desktop\/apps\/([^/]+)\/icon$/.exec(src);
+						return (m && icons[decodeURIComponent(m[1] ?? "")]) || iconOf(src);
+					};
+					for (const w of mock.orbs.get(orb)?.desktop?.windows ?? [])
+						if (!w.appId)
+							await fetch(`/api/v1/orbs/${orb}/desktop/windows/${w.id}/close`, {
+								method: "POST",
+							});
+				},
+				{ orb: FC_ORB, icons: orbDesktopIcons() },
+			);
 			await panelTab(page, "desktop").click();
 			await page
 				.locator("[data-testid=desktop-status][data-state=connected]")
