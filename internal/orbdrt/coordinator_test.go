@@ -224,7 +224,7 @@ func TestCoordinatorAgentStart(t *testing.T) {
 	}, rec.Env)
 	ov, err := os.ReadFile(overlay)
 	require.NoError(t, err)
-	assert.Equal(t, coordinatorOverlay(false), string(ov))
+	assert.Equal(t, coordinatorOverlay(false, ""), string(ov))
 	assert.Contains(t, string(ov), `autoUpdate: "off"`)
 	assert.Contains(t, string(ov), "generate_image: { enabled: false }")
 	assert.NotContains(t, string(ov), "skills:", "Space 协调者不加载技能")
@@ -256,7 +256,7 @@ func TestCoordinatorAgentStart(t *testing.T) {
 	}
 	ov, err = os.ReadFile(webOverlay)
 	require.NoError(t, err)
-	assert.Equal(t, coordinatorOverlay(true), string(ov))
+	assert.Equal(t, coordinatorOverlay(true, ""), string(ov))
 	assert.Contains(t, string(ov), "generate_image: { enabled: true }")
 	assert.Contains(t, string(ov), "skills: { enabled: true")
 	ov, err = os.ReadFile(overlay)
@@ -309,39 +309,42 @@ func TestCoordinatorAgentSpecVariants(t *testing.T) {
 		{
 			name: "omitted (space)", p: params("", false, &tok),
 			args: argv([]string{"--tools", "read,write"}, []string{"--no-skills"}, "overlay.yml"), overlay: "overlay.yml",
-			overlayBody: coordinatorOverlay(false), env: map[string]string{},
+			overlayBody: coordinatorOverlay(false, ""), env: map[string]string{},
 		},
 		{
 			name: "omitted (web)", p: params("", true, &tok),
 			args: argv([]string{"--tools", "read,write,web_search,generate_image"}, []string{"--skills", "oryn"}, "overlay-web.yml"), overlay: "overlay-web.yml",
-			overlayBody: coordinatorOverlay(true), env: map[string]string{"PI_PROXY": egress, "ORYN_MCP_BASE": egress, "ORYN_MCP_TOKEN": tok},
+			overlayBody: coordinatorOverlay(true, ""), env: map[string]string{"PI_PROXY": egress, "ORYN_MCP_BASE": egress, "ORYN_MCP_TOKEN": tok},
 		},
 		{
 			name: "omitted (web, no token)", p: params("", true, nil),
 			args: argv([]string{"--tools", "read,write,web_search,generate_image"}, []string{"--skills", "oryn"}, "overlay-web.yml"), overlay: "overlay-web.yml",
-			overlayBody: coordinatorOverlay(true), env: map[string]string{"PI_PROXY": egress, "ORYN_MCP_BASE": egress},
+			overlayBody: coordinatorOverlay(true, ""), env: map[string]string{"PI_PROXY": egress, "ORYN_MCP_BASE": egress},
 		},
 		{
 			name: "research_web", p: params(apigen.AgentVariantResearchWeb, false, &tok), variant: "research_web",
 			args: argv([]string{"--tools", "web_search,read"}, []string{"--no-skills"}, "overlay-research-web.yml"), overlay: "overlay-research-web.yml",
-			overlayBody: coordinatorOverlay(false) + "read: { remoteOnly: true }\nprompt: { fileMentions: false }\n",
+			overlayBody: coordinatorOverlay(false, "") + "read: { remoteOnly: true }\nprompt: { fileMentions: false }\n",
 			env:         map[string]string{"PI_PROXY": egress},
 		},
 		{
 			name: "research_private", p: params(apigen.AgentVariantResearchPrivate, false, &tok), variant: "research_private",
 			args: argv(nil, []string{"--no-skills"}, "overlay-research-private.yml"), overlay: "overlay-research-private.yml",
-			overlayBody: coordinatorOverlay(false) + "prompt: { fileMentions: false }\n",
-			env:         map[string]string{"ORYN_MCP_BASE": egress, "ORYN_MCP_TOKEN": tok},
+			overlayBody: strings.Replace(coordinatorOverlay(false, ""), "mcp: { enableProjectConfig: false }",
+				"mcp: { enableProjectConfig: false, shared: false, startupTimeoutMs: 0 }", 1) + "prompt: { fileMentions: false }\n",
+			env: map[string]string{"ORYN_MCP_BASE": egress, "ORYN_MCP_TOKEN": tok},
 		},
 		{
 			name: "research_private without token", p: params(apigen.AgentVariantResearchPrivate, false, nil), variant: "research_private",
 			args: argv(nil, []string{"--no-skills"}, "overlay-research-private.yml"), overlay: "overlay-research-private.yml",
-			overlayBody: coordinatorOverlay(false) + "prompt: { fileMentions: false }\n", env: map[string]string{},
+			overlayBody: strings.Replace(coordinatorOverlay(false, ""), "mcp: { enableProjectConfig: false }",
+				"mcp: { enableProjectConfig: false, shared: false, startupTimeoutMs: 0 }", 1) + "prompt: { fileMentions: false }\n",
+			env: map[string]string{},
 		},
 		{
 			name: "main_restricted", p: params(apigen.AgentVariantMainRestricted, false, &tok), variant: "main_restricted",
 			args: argv([]string{"--tools", "read"}, []string{"--no-skills"}, "overlay.yml"), overlay: "overlay.yml",
-			overlayBody: coordinatorOverlay(false), env: map[string]string{},
+			overlayBody: coordinatorOverlay(false, ""), env: map[string]string{},
 		},
 	}
 	for _, tc := range cases {

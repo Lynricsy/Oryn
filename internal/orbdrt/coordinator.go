@@ -23,7 +23,12 @@ var ErrNoRedial = errors.New("orbdrt: link cannot be redialed")
 // coordinatorOverlay 是协调档 omp 的设置覆盖层（--config）：强制关闭会读写工作区文件或执行代码的功能。
 // web（M19 第一层，只给全局助手）时生图开着：结果写进 TMPDIR（~/tmp/），出站与搜索一样经 orynd 的代理；
 // Space 协调者（D10）生图保持关闭。web 时另强制开启技能：主人的 config.yml 也会下发到协调宿主，不能让它关掉内置技能。
-func coordinatorOverlay(web bool) string {
+// mcpExtra 追加在 mcp 映射里（YAML 不能出现两个 mcp 键）。
+func coordinatorOverlay(web bool, mcpExtra string) string {
+	mcp := "enableProjectConfig: false"
+	if mcpExtra != "" {
+		mcp += ", " + mcpExtra
+	}
 	overlay := `autolearn: { enabled: false }
 memory: { backend: "off" }
 checkpoint: { enabled: false }
@@ -32,7 +37,7 @@ goal: { enabled: false }
 plan: { enabled: false }
 generate_image: { enabled: ` + strconv.FormatBool(web) + ` }
 lsp: { enabled: false }
-mcp: { enableProjectConfig: false }
+mcp: { ` + mcp + ` }
 marketplace: { autoUpdate: "off" }
 startup: { checkUpdate: false }
 bash: { direnv: "off" }
@@ -57,6 +62,7 @@ type coordinatorMode struct {
 	tools        string // --tools 的值；空 = 不带 --tools（只有 --no-tools）
 	overlayName  string // 覆盖层文件名（在协调目录下）；内容不同的覆盖层分文件写，并发启动的 agent 互不覆盖
 	overlayExtra string // 追加在 coordinatorOverlay(web) 之后的覆盖层行
+	mcpExtra     string // 追加在覆盖层 mcp 映射里的设置
 	web          bool   // 全局助手的第一层（M19）：生图与技能打开、加载内置技能 oryn
 	proxy        bool   // 设 PI_PROXY（出站经 orynd 的正向代理）
 	mcp          bool   // 设 ORYN_MCP_BASE / ORYN_MCP_TOKEN
@@ -76,10 +82,17 @@ var (
 		},
 		apigen.AgentVariantResearchPrivate: {
 			overlayName: "overlay-research-private.yml", overlayExtra: "prompt: { fileMentions: false }\n", mcp: true,
+			mcpExtra: researchPrivateMCP,
 		},
 		apigen.AgentVariantMainRestricted: {tools: "read", overlayName: "overlay.yml"},
 	}
 )
+
+// researchPrivateMCP 让私有研究员的第一个回合尽量赶上 MCP 发现：每次运行都是冷启动的新 agent，提示词随即投递，而 Core
+// 的首回合最多等发现 1.5 秒。共享模式（缺省）要先等 omp daemon 的套接字（沙箱里没有，超时 10 秒才退回进程内连接），
+// 发现必然赶不上；startupTimeoutMs: 0 让发现等各服务器连接落定，而不是 250 毫秒后先交出空工具表。上游握手本身超过
+// 1.5 秒时这一回合仍拿不到 MCP 工具（Core 的固定上限）。
+const researchPrivateMCP = "shared: false, startupTimeoutMs: 0"
 
 // coordinatorMethods 是协调宿主接受的 ctl 方法；其余一律 method_not_found。
 var coordinatorMethods = map[string]bool{
@@ -142,7 +155,7 @@ func (r *Runtime) coordinatorAgentSpec(p apigen.LinkCtlAgentStartParams, dir str
 		}
 	}
 	overlay := filepath.Join(base, mode.overlayName)
-	if err := writeFileAtomic(overlay, []byte(coordinatorOverlay(mode.web)+mode.overlayExtra), 0o600); err != nil {
+	if err := writeFileAtomic(overlay, []byte(coordinatorOverlay(mode.web, mode.mcpExtra)+mode.overlayExtra), 0o600); err != nil {
 		return nil, "", nil, "", ctlErr("failed", "write overlay: %v", err)
 	}
 	// 系统提示词写成文件、argv 只带路径（M9 L4）：同 uid 的进程与 /proc/<pid>/cmdline 看不到正文。omp 对不含换行的
