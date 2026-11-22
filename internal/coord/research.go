@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log/slog"
 	"strings"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
@@ -208,11 +207,6 @@ func (s *Service) ResearcherThreads(ctx context.Context) ([]string, error) {
 // Excerpt 实现 research.Host（步骤 2.2）。
 func (s *Service) Excerpt(context.Context, string, int64) (research.Excerpt, error) {
 	return research.Excerpt{}, errors.ErrUnsupported
-}
-
-// PostFinding 实现 research.Host（步骤 1.4）。
-func (s *Service) PostFinding(_ context.Context, f research.Finding) {
-	slog.Warn("研究发现暂不投递", "run", f.RunID, "pipeline", f.Pipeline)
 }
 
 // RefreshPolicy 实现 research.Host：没有协调 orb 时什么也不做。

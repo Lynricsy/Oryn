@@ -149,6 +149,8 @@ func (s *Service) AgentProfile(ctx context.Context, threadID string) (threads.Ag
 	}
 	memOn := space == nil && s.memoryOn(ctx, row.Kind)
 	main := row.Main == 1
+	// M26：受限的一段（来自外部内容的研究发现）：同一套拼法，但按联网关闭写提示词，再收窄工具表
+	restricted := main && s.mainRestricted()
 	var computer []apigen.OmpFrame
 	if space == nil {
 		computer = s.computerDefs(ctx)
@@ -156,7 +158,7 @@ func (s *Service) AgentProfile(ctx context.Context, threadID string) (threads.Ag
 	tools := ToolDefs(ToolSet{InSpace: space != nil, Memory: memOn, Main: main, Computer: computer})
 	// Web：第一层（内置联网与生图、MCP）只给全局助手，Space 协调者不变（D10）；联网总开关由出站策略执行
 	prof := threads.AgentProfile{
-		SystemPrompt: SystemPrompt(space, project, threadID, space != nil || s.webAccess(ctx)),
+		SystemPrompt: SystemPrompt(space, project, threadID, space != nil || (!restricted && s.webAccess(ctx))),
 		Tools:        tools,
 		Web:          space == nil,
 	}
@@ -176,6 +178,9 @@ func (s *Service) AgentProfile(ctx context.Context, threadID string) (threads.Ag
 	// M19 3.2：主线在记忆段之后接固定说明与「主线近况」
 	if main {
 		prof.SystemPrompt = s.mainProfile(ctx, threadID, prof.SystemPrompt)
+	}
+	if restricted {
+		prof = restrictProfile(prof)
 	}
 	if s.orbs != nil && row.OrbID != nil {
 		setup, err := s.orbs.CoordinatorSetup(ctx, *row.OrbID)

@@ -34,11 +34,15 @@ func (c toolCtx) inSpace() bool { return c.space != nil }
 // 失败时 IsError、Text 以错误码开头。
 func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) threads.HostToolResult {
 	tc := toolCtx{HostToolCall: c}
-	// M26：研究员对话的工具表随运行变化，放行以控制面记下的当前管线为准（表外一律 unknown_tool）
+	// M26：研究员对话的工具表随运行变化，放行以控制面记下的当前管线为准（表外一律 unknown_tool）；受限的主线只放行
+	// 只读工具与 stay_silent
 	if c.Research != "" {
 		if err := s.researcherToolGate(c); err != nil {
 			return failResult(err)
 		}
+	}
+	if err := s.restrictedToolGate(c); err != nil {
+		return failResult(err)
 	}
 	// Space 协调者的作用域是授权判断，必须 fail-closed：SpaceID 缺失或 Space 加载失败时拒绝一切工具，
 	// 不能退回全局助手的权限（sec F6）。

@@ -75,12 +75,15 @@ func (s *Service) StateChanged(ev threads.StateEvent) {
 	s.push(repEvent{state: &ev})
 }
 
-// TurnEnded 实现 threads.Observer：回报登记的投递（标签 rep_…）得到终态时入队。
+// TurnEnded 实现 threads.Observer：回报登记的投递（标签 rep_…）得到终态时入队；受限投递（inr_…）的回合结束时结束
+// 受限的一段（M26）。
 func (s *Service) TurnEnded(ev threads.TurnEvent) {
-	if !strings.HasPrefix(ev.Tag, reportTagPrefix) {
-		return
+	switch {
+	case strings.HasPrefix(ev.Tag, reportTagPrefix):
+		s.push(repEvent{turn: &ev})
+	case strings.HasPrefix(ev.Tag, inboxTagPrefix):
+		s.restrictedTurnEnded(ev)
 	}
-	s.push(repEvent{turn: &ev})
 }
 
 // EntriesAppended 实现 threads.Observer（契约 C1.7）：只有该线程有「非 tagged 登记且上次 RecoveredOutcome 为 !ok」时

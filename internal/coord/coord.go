@@ -135,6 +135,8 @@ type Service struct {
 	// research / topics 是 M26 的后台研究（SetResearch 设置）；nil 时研究员没有工具、orb 内 follow.add 不可用。
 	research Research
 	topics   Topics
+	// restrict 是主线受限一段的状态（M26，mu 保护）。
+	restrict mainRestrict
 
 	ensureMu sync.Mutex
 	// spareMu 串行化备用助手对话的认领与补充（spare.go）；spareKick 让常驻检查在认领后立即补一个新的。
