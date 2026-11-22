@@ -1,4 +1,4 @@
-// fakedesk 是 orbd 桌面栈（M8、M25）的测试替身：按 argv[0] 的文件名扮演五个程序。
+// fakedesk 是 orbd 桌面栈（M8、M25）的测试替身：按 argv[0] 的文件名扮演六个程序。
 //
 //   - Xvnc：解析 -rfbunixpath，在该 unix socket 上做字节回显；收到 SIGTERM 退出。
 //   - openbox：挂起直到被杀（SIGTERM 正常退出）。
@@ -12,8 +12,10 @@
 //   - dbus-daemon：解析 --address=unix:path=，在该 unix socket 上 listen（接受连接后立即关闭）；收到 SIGTERM 退出。
 //   - ffmpeg：往最后一个参数指定的路径写一个以 `ftyp` 开头的小文件，读到 stdin 的 `q`（或 EOF）后退出；
 //     设了 FAKEDESK_FFMPEG_QUIT_DELAY（Go duration，如 300ms）时先睡这么久再退出，模拟收尾耗时。
+//   - fakeapp-gui：通用的桌面应用替身。启动时往 stdout 打一行 `fakeapp-gui {"pid":…,"cwd":…,"args":[…]}`，
+//     然后挂起直到 SIGTERM。
 //
-// 用法：构建后以 Xvnc / openbox / chromium / dbus-daemon / ffmpeg 这些名字的符号链接放进 PATH。
+// 用法：构建后以 Xvnc / openbox / chromium / dbus-daemon / ffmpeg / fakeapp-gui 这些名字的符号链接放进 PATH。
 package main
 
 import (
@@ -49,8 +51,10 @@ func main() {
 		err = runDbus(os.Args[1:])
 	case "ffmpeg":
 		err = runFFmpeg(os.Args[1:])
+	case "fakeapp-gui":
+		err = runFakeApp(os.Args[1:])
 	default:
-		err = fmt.Errorf("fakedesk: unknown role %q (link me as Xvnc, openbox, chromium, dbus-daemon or ffmpeg)", name)
+		err = fmt.Errorf("fakedesk: unknown role %q (link me as Xvnc, openbox, chromium, dbus-daemon, ffmpeg or fakeapp-gui)", name)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -91,6 +95,26 @@ func runXvnc(args []string) error {
 	}()
 	<-sig
 	_ = ln.Close()
+	return nil
+}
+
+// runFakeApp 报告自己的 pid、工作目录与参数，然后挂起直到 SIGTERM。
+func runFakeApp(args []string) error {
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGTERM)
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	if args == nil {
+		args = []string{}
+	}
+	b, err := json.Marshal(map[string]any{"pid": os.Getpid(), "cwd": cwd, "args": args})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("fakeapp-gui %s\n", b)
+	<-sig
 	return nil
 }
 

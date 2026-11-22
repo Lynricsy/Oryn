@@ -25,10 +25,13 @@ import (
 )
 
 // fakeWM 是测试用的 wmClient：Watch 记下回调并阻塞到 ctx 结束；push 模拟窗口管理器报告新列表。
+// WaitManaged 立即返回并计数；三个窗口操作记进 ops（"activate:5" 这样的形式）。
 type fakeWM struct {
 	mu       sync.Mutex
 	onChange func([]winInfo)
 	watching chan struct{} // 每次 Watch 开始时发一个信号
+	gates    int
+	ops      []string
 }
 
 func newFakeWM() *fakeWM { return &fakeWM{watching: make(chan struct{}, 4)} }
@@ -54,9 +57,29 @@ func (f *fakeWM) push(ws []winInfo) {
 	}
 }
 
-func (f *fakeWM) Activate(uint32) error { return nil }
-func (f *fakeWM) Minimize(uint32) error { return nil }
-func (f *fakeWM) Close(uint32) error    { return nil }
+func (f *fakeWM) WaitManaged(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.gates++
+	return nil
+}
+
+func (f *fakeWM) op(name string, id uint32) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ops = append(f.ops, fmt.Sprint(name, ":", id))
+	return nil
+}
+
+func (f *fakeWM) Activate(id uint32) error { return f.op("activate", id) }
+func (f *fakeWM) Minimize(id uint32) error { return f.op("minimize", id) }
+func (f *fakeWM) Close(id uint32) error    { return f.op("close", id) }
+
+func (f *fakeWM) recorded() (gates int, ops []string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.gates, slices.Clone(f.ops)
+}
 
 func windowsLen(n int) func(apigen.LinkCtlDesktopStateParams) bool {
 	return func(s apigen.LinkCtlDesktopStateParams) bool { return len(s.Windows) == n }
@@ -350,6 +373,34 @@ func TestDeskWinRealX(t *testing.T) {
 	require.NoError(t, wm.Close(w1))
 	ws = waitWins("one window left", func(ws []winInfo) bool { return len(ws) == 1 })
 	assert.Equal(t, w2, ws[0].id)
+}
+
+// 窗口管理器就绪闸门：openbox 刚接管根窗口就过闸门，之后只映射一次的普通窗口也会被管理（2 秒内进 client list）。
+func TestDeskWinRealXGate(t *testing.T) {
+	sock, _ := startXvfb(t)
+	ctx, cancel := context.WithTimeout(context.Background(), wmGateTimeout)
+	defer cancel()
+	start := time.Now()
+	require.NoError(t, newXWM(sock).WaitManaged(ctx))
+	t.Logf("window manager gate passed after %v", time.Since(start))
+
+	nc, err := net.Dial("unix", sock)
+	require.NoError(t, err)
+	c, err := xgb.NewConnNet(nc)
+	require.NoError(t, err)
+	t.Cleanup(c.Close)
+	scr := xproto.Setup(c).DefaultScreen(c)
+	wid, err := xproto.NewWindowId(c)
+	require.NoError(t, err)
+	require.NoError(t, xproto.CreateWindowChecked(c, scr.RootDepth, wid, scr.Root, 10, 10, 200, 100, 0,
+		xproto.WindowClassInputOutput, scr.RootVisual, xproto.CwBackPixel, []uint32{scr.WhitePixel}).Check())
+	require.NoError(t, xproto.MapWindowChecked(c, wid).Check()) // 只映射一次，不重试
+	atoms, err := internAtoms(c)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		r, err := xproto.GetProperty(c, false, scr.Root, atoms.clientList, xproto.AtomWindow, 0, 1024).Reply()
+		return err == nil && slices.Contains(prop32(r), uint32(wid))
+	}, 2*time.Second, 20*time.Millisecond, "window mapped after the gate is in _NET_CLIENT_LIST")
 }
 
 // X 连接断开（Xvfb 退出）时 Watch 返回错误，而不是阻塞或忙等。

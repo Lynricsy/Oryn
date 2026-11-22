@@ -104,9 +104,14 @@ type desktop struct {
 	newWM     func(sock string) wmClient  // 缺省 newXWM
 	wm        wmClient                    // 当前显示代的窗口管理器客户端；显示失效时为 nil
 	wins      []winInfo                   // 最新的顶层窗口列表（_NET_CLIENT_LIST 顺序）；显示失效时清空
-	appOf     func(class []string) string // WM_CLASS → 应用 id（清单见步骤 1.5）；nil 或返回空串 = 不属于任何应用
+	appOf     func(class []string) string // WM_CLASS → 应用 id（按清单的 wmClass）；返回空串 = 不属于任何应用
 	winsAt    time.Time                   // 上一次窗口上报的时间
 	winsTimer *time.Timer                 // 已排定的合并上报；nil = 没有
+
+	// 桌面应用（M25，deskapps.go）。apps 与 iconDir 在 newDesktop 里定下后不再改。
+	apps     []deskApp
+	iconDir  string
+	launches map[string]*appLaunch // 应用 id → 未完成的启动（launching）
 
 	ctlT DeskControlTimings
 
@@ -168,6 +173,10 @@ func newDesktop(r *Runtime) *desktop {
 	if d.newWM == nil {
 		d.newWM = newXWM
 	}
+	appsPath := deskAppsPath()
+	d.apps = loadDeskApps(d.log, appsPath)
+	d.iconDir = filepath.Join(filepath.Dir(appsPath), deskIconsDirName)
+	d.appOf = appMatcher(d.apps)
 	d.ctlT = defaultDeskControlTimings
 	if t := r.cfg.DesktopControlTimings; t != nil {
 		d.ctlT = *t
@@ -265,6 +274,7 @@ func (d *desktop) snapshotLocked() apigen.LinkCtlDesktopStateParams {
 		}
 	}
 	st.Windows = d.windowsLocked()
+	st.Apps = d.appsLocked()
 	return st
 }
 
@@ -326,12 +336,17 @@ func (d *desktop) closeLogs() {
 	}
 }
 
-// spawn 以独立进程组启动 bin，输出追加到 `<logName>.log`；返回的 done 在进程被回收后关闭。
+// spawn 以独立进程组启动 bin（工作目录 $HOME），输出追加到 `<logName>.log`；返回的 done 在进程被回收后关闭。
 func (d *desktop) spawn(logName, bin string, args []string, env map[string]string) (int, <-chan struct{}, error) {
+	return d.spawnIn(d.r.home, logName, bin, args, env)
+}
+
+// spawnIn 同 spawn，工作目录为 dir。
+func (d *desktop) spawnIn(dir, logName, bin string, args []string, env map[string]string) (int, <-chan struct{}, error) {
 	lg := d.logFor(logName)
 	_, _ = fmt.Fprintf(lg, "[orbd] starting %s %s\n", bin, strings.Join(args, " "))
 	cmd := d.r.bins.command(context.Background(), bin, args...)
-	cmd.Dir = d.r.home
+	cmd.Dir = dir
 	cmd.Env = envList(env)
 	cmd.Stdout, cmd.Stderr = lg, lg
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -440,6 +455,14 @@ func (d *desktop) runDisplayOnce(ctx context.Context) {
 		return
 	}
 	defer killWait(opid, odone)
+	// 窗口管理器就绪闸门：openbox 刚接管根窗口的几百毫秒里会丢 MapRequest（这时映射的窗口永远不被管理），
+	// resume 脚本正好在显示就绪时运行。等它确实接管了一个探针窗口再报就绪；超时只记警告。
+	wm := d.newWM(d.xSocket())
+	gctx, gcancel := context.WithTimeout(ctx, wmGateTimeout)
+	if err := wm.WaitManaged(gctx); err != nil && ctx.Err() == nil {
+		d.log.Warn("window manager readiness not confirmed; continuing", "err", err)
+	}
+	gcancel()
 	d.setBackground(ctx, env)
 	d.mu.Lock()
 	d.displayGen++
@@ -447,7 +470,6 @@ func (d *desktop) runDisplayOnce(ctx context.Context) {
 	d.setDisplayReady(true)
 	d.maybeResume()
 	// 窗口监视随显示代启停：显示失效时先停掉它，再清空窗口列表（setDisplayReady(false)）。
-	wm := d.newWM(d.xSocket())
 	d.mu.Lock()
 	d.wm = wm
 	d.mu.Unlock()

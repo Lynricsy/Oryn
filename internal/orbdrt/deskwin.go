@@ -47,8 +47,10 @@ type winInfo struct {
 
 // wmClient 是窗口管理器的客户端：Watch 阻塞到 ctx 结束或 X 连接断开，每次窗口列表变化时回调 onChange
 // （首次连上也回调一次）；三个操作经 EWMH ClientMessage 请窗口管理器执行。
+// WaitManaged 是显示就绪前的闸门：阻塞到窗口管理器确实接管了一个探针窗口，ctx 结束时返回错误。
 type wmClient interface {
 	Watch(ctx context.Context, onChange func([]winInfo)) error
+	WaitManaged(ctx context.Context) error
 	Activate(id uint32) error
 	Minimize(id uint32) error
 	Close(id uint32) error
@@ -149,8 +151,14 @@ func init() {
 	xgb.Logger = log.New(io.Discard, "", 0)
 }
 
-// ICCCM 的 IconicState（WM_CHANGE_STATE 的参数）。
-const iconicState = 3
+// ICCCM 的 WithdrawnState 与 IconicState（WM_STATE 的值、WM_CHANGE_STATE 的参数）。
+const (
+	withdrawnState = 0
+	iconicState    = 3
+)
+
+// wmGateRemap 是闸门里探针窗口每次映射后等 WM_STATE 的时长；到期没出现就取消映射再重新映射。
+const wmGateRemap = 200 * time.Millisecond
 
 // EWMH ClientMessage 的 source indication：2 = 来自分页器 / 任务栏（用户的直接操作）。
 const ewmhSourcePager = 2
@@ -430,6 +438,71 @@ func (w *xwm) clientMessage(id uint32, typ func(xAtoms) xproto.Atom, data ...uin
 		return fmt.Errorf("send client message to window %d: %w", id, err)
 	}
 	return nil
+}
+
+// WaitManaged 在独立连接上建一个 1×1 的探针窗口并映射，等窗口管理器给它设上 WM_STATE（说明它已接管）：
+// openbox 设好 _NET_SUPPORTING_WM_CHECK 之后的几百毫秒里会丢 MapRequest，被丢的窗口永远不会被管理，
+// 所以每 wmGateRemap 没等到就取消映射再重新映射。返回前销毁探针（关闭连接也会销毁它）。
+func (w *xwm) WaitManaged(ctx context.Context) error {
+	c, err := w.dial()
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	stop := context.AfterFunc(ctx, c.Close)
+	defer stop()
+	fail := func(what string, err error) error {
+		if ctx.Err() != nil {
+			return fmt.Errorf("window manager did not manage the probe window: %w", ctx.Err())
+		}
+		return fmt.Errorf("window manager probe: %s: %w", what, err)
+	}
+
+	const wmStateName = "WM_STATE"
+	st, err := xproto.InternAtom(c, false, uint16(len(wmStateName)), wmStateName).Reply()
+	if err != nil {
+		return fail("intern WM_STATE", err)
+	}
+	scr := xproto.Setup(c).DefaultScreen(c)
+	wid, err := xproto.NewWindowId(c)
+	if err != nil {
+		return fail("allocate window id", err)
+	}
+	if err := xproto.CreateWindowChecked(c, scr.RootDepth, wid, scr.Root, 0, 0, 1, 1, 0,
+		xproto.WindowClassInputOutput, scr.RootVisual, 0, nil).Check(); err != nil {
+		return fail("create window", err)
+	}
+	defer func() { _ = xproto.DestroyWindowChecked(c, wid).Check() }()
+	class := "oryn-probe\x00OrynProbe\x00"
+	if err := xproto.ChangePropertyChecked(c, xproto.PropModeReplace, wid, xproto.AtomWmClass, xproto.AtomString,
+		8, uint32(len(class)), []byte(class)).Check(); err != nil {
+		return fail("set WM_CLASS", err)
+	}
+	tick := time.NewTicker(20 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if err := xproto.MapWindowChecked(c, wid).Check(); err != nil {
+			return fail("map window", err)
+		}
+		remap := time.Now().Add(wmGateRemap)
+		for time.Now().Before(remap) {
+			r, err := xproto.GetProperty(c, false, wid, st.Atom, xproto.GetPropertyTypeAny, 0, 2).Reply()
+			if err != nil {
+				return fail("read WM_STATE", err)
+			}
+			if v := prop32(r); len(v) > 0 && v[0] != withdrawnState {
+				return nil
+			}
+			select {
+			case <-tick.C:
+			case <-ctx.Done():
+				return fail("wait", ctx.Err())
+			}
+		}
+		if err := xproto.UnmapWindowChecked(c, wid).Check(); err != nil {
+			return fail("unmap window", err)
+		}
+	}
 }
 
 // Activate 发 _NET_ACTIVE_WINDOW（source = 分页器）：窗口管理器把窗口切到前台，最小化的先还原。

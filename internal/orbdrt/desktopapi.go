@@ -50,6 +50,22 @@ func (r *Runtime) deskRoutes(mux *http.ServeMux) {
 	})
 	route("POST /desktop/record/start", (*desktop).handleRecordStart)
 	route("POST /desktop/record/stop", (*desktop).handleRecordStop)
+	// M25 桌面应用与窗口（deskapps.go，docs/protocol.md「M25：桌面应用与窗口」）。成功都回当前快照。
+	route("POST /desktop/apps/{id}/launch", func(d *desktop, w http.ResponseWriter, req *http.Request) {
+		if err := d.launchApp(req.Context(), req.PathValue("id")); err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, d.snapshot())
+	})
+	route("POST /desktop/windows/{wid}/{action}", func(d *desktop, w http.ResponseWriter, req *http.Request) {
+		if err := d.windowAction(req.PathValue("wid"), req.PathValue("action")); err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, d.snapshot())
+	})
+	route("GET /desktop/apps/{id}/icon", (*desktop).handleAppIcon)
 }
 
 func (d *desktop) handleBrowserStart(w http.ResponseWriter, req *http.Request) {

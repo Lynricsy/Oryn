@@ -895,7 +895,7 @@ M8 的桌面只有一个浏览器；M25 让它成为能用的桌面：镜像自�
 
 |路由|行为|
 |---|---|
-|`POST /desktop/apps/{id}/launch`|`control.state == agent` → 409 `control_agent`；未知 id → 404 `app_not_found`；`chromium` → 浏览器启动；否则按清单的 `exec` 在独立进程组里起进程（工作目录 `$HOME/workspace`，不存在用 `$HOME`）→ 状态|
+|`POST /desktop/apps/{id}/launch`|`control.state == agent` → 409 `control_agent`；未知 id → 404 `app_not_found`；`chromium` → 浏览器启动（Profile 未定时同 `/desktop/browser/start` 回 409 `not_ready`）；否则按清单的 `exec` 在独立进程组里起进程（工作目录是最近一次 `setup.run` / `resume.run` 定下的工作区目录，还没有或已不存在用 `$HOME`；没有命名空间沙箱时 `vscode` 追加 `--no-sandbox`；显示未就绪 → 409 `not_ready`）→ 状态|
 |`POST /desktop/windows/{wid}/{action}`|control 检查同上；窗口不在当前列表里 → 404 `window_not_found`；否则发对应的 EWMH 消息 → 状态|
 |`GET /desktop/apps/{id}/icon`|按扩展名回 `image/svg+xml` 或 `image/png`；没有图标 → 404|
 

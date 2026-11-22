@@ -841,7 +841,7 @@ func (r *Runtime) hello() apigen.LinkCtlHelloParams {
 		features = append(features, "box") // M23：/box/*（app 运行时与 exec）
 	}
 	if r.desk != nil {
-		features = append(features, "desktop")
+		features = append(features, "desktop", "desktop-apps") // M25：/desktop/apps、/desktop/windows，快照带 apps / windows
 	}
 	if r.dockerd != nil {
 		features = append(features, "docker")
