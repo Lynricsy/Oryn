@@ -334,7 +334,7 @@ export function DesktopDock({
 				aria-label={t("deskPanel.dock.label")}
 				aria-orientation="horizontal"
 				onKeyDown={onToolbarKey}
-				className="flex h-11 max-w-full items-center gap-1 overflow-x-auto rounded-full border border-border bg-panel px-1 shadow-xs [scrollbar-width:none]"
+				className="focus-inset flex h-11 max-w-full items-center gap-1 overflow-x-auto rounded-full border border-border bg-panel px-1 shadow-xs [scrollbar-width:none]"
 			>
 				{slots.map((slot, i) => (
 					<Fragment key={slot.key}>

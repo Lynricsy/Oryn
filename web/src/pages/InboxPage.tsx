@@ -83,9 +83,9 @@ const SECTION_GLYPH: Record<InboxState, ThreadState> = {
 	running: "working",
 };
 
-/** 面板列表：圆角描边、行间分隔线。 */
+/** 面板列表：圆角描边、行间分隔线；行贴边，焦点环向内画。 */
 const PANEL =
-	"flex flex-col divide-y divide-border overflow-hidden rounded-lg border border-border bg-panel";
+	"focus-inset flex flex-col divide-y divide-border overflow-hidden rounded-lg border border-border bg-panel";
 
 /** 首次进入的依次出场在这之后不再播（最多 12 档 × 40ms + 260ms，见 index.css 的 `.inbox-intro`）。 */
 const INTRO_MS = 800;

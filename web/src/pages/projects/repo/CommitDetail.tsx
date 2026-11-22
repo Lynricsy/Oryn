@@ -65,7 +65,7 @@ function FileItem({
 		<li
 			data-testid="repo-commit-file"
 			data-path={file.path}
-			className="overflow-hidden rounded-md border border-border"
+			className="focus-inset overflow-hidden rounded-md border border-border"
 		>
 			<button
 				type="button"

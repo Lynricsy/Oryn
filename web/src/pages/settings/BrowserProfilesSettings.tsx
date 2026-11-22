@@ -106,22 +106,23 @@ function ProfileRow({ profile }: { profile: Profile }): ReactNode {
 					title={<span className="truncate font-medium">{profile.name}</span>}
 					meta={
 						<>
-							{holder ? (
-								<Badge tone="frost" icon="lock">
-									{holder.threadId ? (
-										<Link
-											to={`/t/${holder.threadId}`}
-											className="hover:underline"
-										>
-											{t("browserProfiles.inUse", {
-												thread: holderTitle(holder, t),
-											})}
-										</Link>
-									) : (
-										t("browserProfiles.inUse", {
+							{holder?.threadId ? (
+								// 链接包在徽章外：徽章里的文字截断会把链接的焦点环一起切掉
+								<Link
+									to={`/t/${holder.threadId}`}
+									className="inline-flex min-w-0 max-w-full rounded hover:[&_span]:underline"
+								>
+									<Badge tone="frost" icon="lock">
+										{t("browserProfiles.inUse", {
 											thread: holderTitle(holder, t),
-										})
-									)}
+										})}
+									</Badge>
+								</Link>
+							) : holder ? (
+								<Badge tone="frost" icon="lock">
+									{t("browserProfiles.inUse", {
+										thread: holderTitle(holder, t),
+									})}
 								</Badge>
 							) : (
 								<Badge>{t("browserProfiles.idle")}</Badge>

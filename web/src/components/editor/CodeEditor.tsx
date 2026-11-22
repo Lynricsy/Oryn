@@ -358,7 +358,7 @@ export default function CodeEditor({
 				ctxRef(el);
 			}}
 			data-testid="code-editor"
-			className="h-full min-h-0 overflow-hidden"
+			className="focus-inset h-full min-h-0 overflow-hidden"
 		/>
 	);
 }

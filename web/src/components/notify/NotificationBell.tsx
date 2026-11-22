@@ -150,7 +150,7 @@ function Body({ onDone, heading }: { onDone: () => void; heading: boolean }) {
 					{t("notify.emptyHint")}
 				</EmptyState>
 			) : (
-				<ul className="-mx-0.5 flex min-h-0 flex-col overflow-y-auto px-0.5">
+				<ul className="focus-inset -mx-0.5 flex min-h-0 flex-col overflow-y-auto px-0.5">
 					{items.map((n) => (
 						<Row key={n.id} n={n} onOpen={open} />
 					))}

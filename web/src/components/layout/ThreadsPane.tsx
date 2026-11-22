@@ -594,7 +594,7 @@ export function ThreadsPane(): ReactNode {
 
 	return (
 		<>
-			<div className="shrink-0 px-2 pb-1">
+			<div className="focus-inset shrink-0 px-2 pb-1">
 				<InboxEntry now={now} />
 			</div>
 			<div data-testid="threads-scroll" className={PANE_SCROLL}>

@@ -881,7 +881,7 @@ function DesktopView({
 					aria-describedby={hintId}
 					onFocus={(e) => setStageFocused(e.target === e.currentTarget)}
 					onBlur={() => setStageFocused(false)}
-					className="relative h-full overflow-hidden rounded-lg border border-border bg-inset"
+					className="focus-inset relative h-full overflow-hidden rounded-lg border border-border bg-inset"
 				>
 					<div ref={screenRef} className="absolute inset-0" />
 					<span id={hintId} className="sr-only">

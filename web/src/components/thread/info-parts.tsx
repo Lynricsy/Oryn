@@ -74,13 +74,14 @@ export function InfoGroup({
 		<section>
 			<header className="group/head flex h-7 items-center gap-2 px-3.5 font-semibold text-sm">
 				<Icon name={icon} size={16} aria-hidden className="text-faint" />
-				<h3 className="min-w-0 shrink truncate">
+				{/* 截断放在按钮自己身上：标题若裁剪溢出，会把按钮的焦点环一起切掉 */}
+				<h3 className="flex min-w-0 shrink">
 					<button
 						type="button"
 						aria-expanded={!collapsed}
 						aria-controls={bodyId}
 						onClick={onToggle}
-						className="cursor-pointer"
+						className="min-w-0 cursor-pointer truncate"
 					>
 						{title}
 					</button>

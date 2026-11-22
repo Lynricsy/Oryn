@@ -332,7 +332,7 @@ export function CodeBlock({
 				self.current = el;
 				ctxRef(el);
 			}}
-			className="md-code group"
+			className="md-code focus-inset group"
 		>
 			<div className="md-code-bar" data-ctx-touch="">
 				<span>{lang ?? ""}</span>
