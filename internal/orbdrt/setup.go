@@ -133,7 +133,9 @@ func (r *Runtime) runSetupLocked(ctx context.Context, p apigen.LinkCtlSetupRunPa
 		}
 	}()
 	// M25：工作区已就绪（成功、失败都算；resume 交给后台时 checkout 也早已完成），桌面据此执行 resume 脚本。
-	if r.desk != nil {
+	// deferResume 的 setup.run 例外：控制面会先拍项目快照、再单独发 resume.run，此时跑桌面脚本会把它写的文件
+	// 或拉起的进程混进只该含 setup 产物的快照；交给随后的 resume.run 通知。
+	if r.desk != nil && !(full && p.DeferResume != nil && *p.DeferResume) {
 		defer func() { r.desk.workspaceReady(r.currentWorkdir()) }()
 	}
 	reqStart := time.Now()

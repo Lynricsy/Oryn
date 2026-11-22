@@ -168,7 +168,7 @@
 产出：
 - `desktop.displayGen uint64`（受 `mu` 保护）：`runDisplayOnce` 每次走到 openbox 起来就加 1。
 - `desktop.resumedGen uint64`：最近一次已执行 resume 的显示代数。
-- `(*desktop).workspaceReady(workdir string)`：由 `runSetupLocked` 在返回前调用（成功、失败都调；`setup.run`、`resume.run` 都调），记下当时的 `r.workdir`，并标记「工作区已就绪」。
+- `(*desktop).workspaceReady(workdir string)`：由 `runSetupLocked` 在返回前调用（成功、失败都调；`setup.run`、`resume.run` 都调），记下当时的 `r.workdir`，并标记「工作区已就绪」。例外：带 `deferResume=true` 的 `setup.run` 不调。控制面先拍项目快照，再单独发 `resume.run`（`internal/orbs/link.go`），这时执行桌面脚本，它写的文件或拉起的服务会混进只该含 setup 产物的快照（`docs/protocol.md` 的 `deferResume` 条目）。这种情况下交给随后的 `resume.run` 去调（1.6 提交后补的，回归测试 `TestDeskResumeDeferredSetup`）。
 做什么：
 - 触发条件：显示已就绪、工作区已就绪、`displayGen > resumedGen`，三者同时成立时执行一次，然后 `resumedGen = displayGen`。显示就绪和 `workspaceReady` 两处都检查一次条件，谁后到谁触发。
 - 效果：冻结（docker pause）后唤醒，代数不变，不会重复执行，已开的应用原样保留；停机再启动是新的 orbd 进程，代数从头算，等 `resume.run` 返回后执行；显示栈崩溃重启，代数加 1，工作区已就绪，立即重新执行；同一代数里又来一次 `setup.run`（例如 repo-update），不重复执行。
@@ -372,3 +372,4 @@ graph LR
 - 2026-11-22（执行前）：步骤 1.6 改成按实际工作目录找脚本，并在显示栈与工作区都就绪之后按显示代数去重执行；新增假设 A5；验收 C9 改为新建真实托管项目来验证，不再往固定路径预埋脚本。原因见步骤 1.6 开头的修订说明。
 - 2026-11-22（3.1 已提交后）：新增步骤 3.5，用户接管、agent 请求人工操作、回合结束时先结束录制再放开人工输入，并在 `user` / `ask` 状态下拒绝开始录制。原因：录制器录的是整个显示，会把登录、验证码等人工输入录进视频。4.1 依赖 3.5；3.3、3.4 的卡片要能显示 `stoppedBy=control`。
 - 2026-11-22（1.4 已提交后）：步骤 1.5 加三处。① 窗口管理器就绪闸门：1.4 实测 openbox 刚起来时会丢 MapRequest。② launch 的工作目录改用 1.6 记下的工作区目录，不再写死 `$HOME/workspace`。③ `d.sandbox=false` 时 vscode 加 `--no-sandbox`（1.2 实测）。
+- 2026-11-22（1.6 已提交后）：`setup.run(deferResume=true)` 不再通知桌面工作区就绪，交给随后的 `resume.run`，免得 resume 脚本的产物混进项目快照。补两阶段回归测试。

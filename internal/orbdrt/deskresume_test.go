@@ -11,6 +11,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Lynricsy/Oryn/internal/apigen"
 )
 
 // resumeEnv 是带假显示栈（fakedesk）的 orbd；测试直接调用 workspaceReady，不走 setup。
@@ -221,4 +223,23 @@ func TestDeskResumeLongScript(t *testing.T) {
 	e.restartDisplay()
 	e.wait("display back again", displayIs(true))
 	assert.True(t, e.rt.desk.isDisplayReady())
+}
+
+// deferResume 的 setup.run 不触发桌面脚本（控制面在它之后、resume.run 之前拍项目快照）；随后的 resume.run 才触发。
+func TestDeskResumeDeferredSetup(t *testing.T) {
+	e := newResumeEnv(t, false)
+	workdir := e.home("workspace")
+	e.script(filepath.Join(workdir, ".oryn", "desktop", "resume"), "workdir", 0o755, "")
+	e.wait("display ready", displayIs(true))
+
+	res, n := setupCall(t, e.cp, apigen.LinkCtlSetupRunParams{DeferResume: new(true)})
+	require.True(t, res.Ok, "%v", deref(res.SetupError))
+	require.True(t, n.Ok)
+	assert.Zero(t, e.started(), "deferred setup.run must not start the desktop script before the snapshot")
+
+	from := e.cp.notifCount()
+	require.NoError(t, e.cp.call(t, "resume.run", apigen.LinkCtlSetupRunParams{}, &res))
+	waitResult(t, e.cp, from, apigen.SetupPhaseResume)
+	assert.Equal(t, []string{"workdir " + evalDir(t, workdir)}, e.runs(1))
+	assert.Equal(t, 1, e.started())
 }
