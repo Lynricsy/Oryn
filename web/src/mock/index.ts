@@ -65,7 +65,12 @@ export function installMock() {
 		(v) => mockServer.artifacts.resolveFrameUrl(v) ?? v,
 	);
 	// 项目仓库的文件图片（README 里的相对图片等）换成 data: 地址（M24）
-	interceptSrc(HTMLImageElement, (v) => mockServer.repo.blobDataUrl(v) ?? v);
+	// 桌面任务栏的应用图标（M25）换成占位 SVG 的 data: 地址
+	interceptSrc(
+		HTMLImageElement,
+		(v) =>
+			mockServer.repo.blobDataUrl(v) ?? mockServer.desktop.iconDataUrl(v) ?? v,
+	);
 	console.info("[oryn] mock 模式已启用");
 }
 

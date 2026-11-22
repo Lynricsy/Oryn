@@ -525,6 +525,40 @@ export function useOrbBrowser(orbId: string) {
 	});
 }
 
+/** 启动桌面应用（M25；每次起一个新实例，`chromium` 走浏览器启动）。 */
+export function useOrbDesktopApp(orbId: string) {
+	return useMutation({
+		mutationFn: (appId: string) =>
+			mutateOrb(orbId, () =>
+				unwrap(
+					api.POST("/api/v1/orbs/{id}/desktop/apps/{app}/launch", {
+						params: { path: { id: orbId, app: appId } },
+					}),
+				),
+			),
+	});
+}
+
+/** 操作桌面上的窗口（M25）：切到前台、最小化、关闭。 */
+export function useOrbDesktopWindow(orbId: string) {
+	return useMutation({
+		mutationFn: ({
+			windowId,
+			action,
+		}: {
+			windowId: string;
+			action: Schemas["OrbDesktopWindowAction"];
+		}) =>
+			mutateOrb(orbId, () =>
+				unwrap(
+					api.POST("/api/v1/orbs/{id}/desktop/windows/{window}/{action}", {
+						params: { path: { id: orbId, window: windowId, action } },
+					}),
+				),
+			),
+	});
+}
+
 /** 接管（`take`，已接管时续期）/ 交还（`release`）桌面控制。 */
 export function useOrbDesktopControl(orbId: string) {
 	return useMutation({

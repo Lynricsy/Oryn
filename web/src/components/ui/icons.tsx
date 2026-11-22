@@ -6,6 +6,7 @@ import { AlignCenterVertical } from "@phosphor-icons/react/dist/csr/AlignCenterV
 import { AlignLeft } from "@phosphor-icons/react/dist/csr/AlignLeft";
 import { AlignRight } from "@phosphor-icons/react/dist/csr/AlignRight";
 import { AlignTop } from "@phosphor-icons/react/dist/csr/AlignTop";
+import { AppWindow } from "@phosphor-icons/react/dist/csr/AppWindow";
 import { Archive } from "@phosphor-icons/react/dist/csr/Archive";
 import { ArrowClockwise } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
 import { ArrowDown } from "@phosphor-icons/react/dist/csr/ArrowDown";
@@ -254,6 +255,8 @@ const ICONS = {
 	hourglass: Hourglass,
 	chats: Chats,
 	browser: Browser,
+	/** 桌面任务栏（M25）：应用图标加载失败的占位、「其它窗口」 */
+	appWindow: AppWindow,
 	wrench: Wrench,
 	link: Link,
 	/** 在转录里定位某条消息（分享前的密钥扫描命中） */

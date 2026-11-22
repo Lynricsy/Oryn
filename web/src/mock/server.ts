@@ -874,6 +874,8 @@ export class MockServer {
 		}
 		// 预热池 orb（M11a）没有线程，单独加入
 		for (const o of poolOrbs) this.orbs.set(o.id, { ...o });
+		// 任务栏（M25）：有桌面的 orb 带上应用与初始窗口
+		this.desktop.seed();
 		for (const orb of this.orbs.values())
 			this.setupRuns.set(
 				orb.id,

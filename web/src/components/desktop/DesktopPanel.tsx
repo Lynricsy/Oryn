@@ -2,7 +2,8 @@
  * Desktop 标签（M8 4.3）：orb 的 X11 桌面经 `/api/v1/orbs/<id>/desktop/ws`（noVNC）显示并可操作。
  *
  * 工具条（h-11，结构照 Portal）：Profile 菜单 + 连接状态点；弹性空白；可控制 / 仅观看开关；剪贴板；键盘（仅触屏）；
- * 更多（缩放「跟随面板 / 适应」、启动 / 关闭浏览器、重新连接）；全屏。
+ * 更多（缩放「跟随面板 / 适应」、启动 / 关闭浏览器、重新连接）；全屏。舞台下方是任务栏（M25，{@link DesktopDock}）；
+ * orbd 没有上报应用（旧 orbd）时没有任务栏，浏览器未运行时舞台中央给「启动浏览器」。
  * 工具条下按需一行 Profile 横幅：被占用（选只读或接管）、只读副本（含被接管）、装载失败（重试）、保存结果。
  *
  * 何时连接：面板挂载、orb `ready`、`desktop.displayReady`、页面在前台四者同时成立；页面转入后台满 60 秒断开，回到前台再连。
@@ -56,6 +57,7 @@ import {
 } from "../ui/primitives";
 import { ClipboardPopover } from "./ClipboardPopover";
 import { releaseStaleCapture } from "./capture";
+import { DesktopDock } from "./DesktopDock";
 import { KEYSYM, keysymOf } from "./keysym";
 import { ProfileMenu, useOrbProfileChoice } from "./ProfileMenu";
 import { profileErrorText, profileStatusText } from "./profile-status";
@@ -273,6 +275,8 @@ function DesktopView({
 	const [stageFocused, setStageFocused] = useState(false);
 	const hintId = useId();
 	const [notice, setNotice] = useState<string | null>(null);
+	// 任务栏操作的错误，显示在横幅区
+	const [dockError, setDockError] = useState<unknown>(null);
 
 	const browser = useOrbBrowser(orb.id);
 	const save = useSaveOrbDesktopProfile(orb.id);
@@ -372,11 +376,13 @@ function DesktopView({
 		};
 	}, []);
 
-	const takeOver = () => {
+	// 横幅的「接管」与任务栏操作前的接管共用；失败时抛出（错误由 ctlMut.error 显示）
+	const takeOverAsync = async () => {
 		uiStore.getState().setDesktopControl(true);
 		renew.current.at = Date.now();
-		ctlMut.mutate("take");
+		await ctlMut.mutateAsync("take");
 	};
+	const takeOver = () => void takeOverAsync().catch(() => {});
 	const answerAsk = (value: string) => {
 		const ask = ctl.ask;
 		if (!ask || !onAnswerAsk) return;
@@ -530,6 +536,8 @@ function DesktopView({
 
 	const shownStatus: DesktopStatus = want ? status : "closed";
 	const running = desktop.browser === "running";
+	// 有任务栏时，启动浏览器改由任务栏的 Chromium 图标负责
+	const hasDock = (desktop.apps?.length ?? 0) > 0;
 	const moreItems: MenuItem[] = [
 		// 两个缩放项也带图标：与下面的动作项文字左缘对齐
 		{
@@ -841,8 +849,8 @@ function DesktopView({
 				notice ||
 				save.error ||
 				choice.error ||
-				browser.error ||
-				ctlMut.error) && (
+				ctlMut.error ||
+				dockError !== null) && (
 				<div className="flex shrink-0 flex-col gap-1.5 border-border border-b px-2 py-2">
 					{controlBanner}
 					{banner}
@@ -852,7 +860,13 @@ function DesktopView({
 						</Callout>
 					)}
 					<ErrorText
-						error={save.error ?? choice.error ?? browser.error ?? ctlMut.error}
+						error={
+							save.error ??
+							choice.error ??
+							browser.error ??
+							ctlMut.error ??
+							dockError
+						}
 					/>
 				</div>
 			)}
@@ -920,7 +934,7 @@ function DesktopView({
 								{t("deskPanel.connecting")}
 							</p>
 						</StageCover>
-					) : shownStatus === "connected" && !running ? (
+					) : shownStatus === "connected" && !running && !hasDock ? (
 						<div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
 							{desktop.browser === "starting" || browser.isPending ? (
 								<p className="flex items-center gap-2 rounded-full bg-panel/85 px-3 py-1.5 text-muted text-sm shadow-xs">
@@ -942,6 +956,12 @@ function DesktopView({
 					) : null}
 				</div>
 			</div>
+			<DesktopDock
+				orb={orb}
+				controlLocked={ctl.locked}
+				onTakeOver={takeOverAsync}
+				onError={setDockError}
+			/>
 			{kbOpen && control && (
 				<SoftKeyboard
 					onKey={(sym, down) => sessionRef.current?.sendKey(sym, down)}

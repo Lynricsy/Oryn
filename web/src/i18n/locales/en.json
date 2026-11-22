@@ -4028,6 +4028,17 @@
 		"toWatch": "Switch to view only (no keyboard or mouse)",
 		"toControl": "Switch to control",
 		"watching": "View only",
+		"dock": {
+			"label": "Desktop taskbar",
+			"runningName": "{{name}} (running)",
+			"others": "Other windows",
+			"untitled": "(Untitled)",
+			"minimized": "Minimized",
+			"closeWindow": "Close “{{title}}”",
+			"newWindow": "New window",
+			"takeConfirm": "Take over the desktop to continue?",
+			"takeConfirmBody": "The agent is using the desktop. Taking over pauses its browser actions until you hand control back."
+		},
 		"control": {
 			"agentTitle": "The agent is using the desktop",
 			"agentHint": "You can only watch for now. Taking over pauses the agent's browser actions until you hand control back.",

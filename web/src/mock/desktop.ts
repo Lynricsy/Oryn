@@ -3,15 +3,66 @@
  * （独占被占用 → 409 `ProfileInUseConflict`；只读 → 只读副本；接管 → 原持有者降级为只读并推送它的 `orb`）、
  * 立即保存（修订 +1）、浏览器启停、桌面控制（接管 / 交还；回合与 `desktop_ask_user` 由 server 的脚本经
  * `turn` / `setAsk` 驱动，状态推导同 orbd）；新建线程时按 `browserProfileId` / `profileMode` 给新 orb 定 Profile。
+ * 任务栏（M25）：有桌面的 orb 都带镜像清单里的 6 个应用（`seed` 给夹具 orb 摆好初始窗口），启动 300ms 后出现新窗口，
+ * 窗口操作立即生效；agent 操作中两者都回 409 `control_agent`。图标是中性的占位 SVG（`iconDataUrl` 供 `<img>` 拦截用）。
  * 改动经 `setOrb` 写回内存并广播 `orb`。
  */
 import type { Orb, Project, Schemas } from "../api/client";
-import { browserProfiles } from "./fixtures";
+import { browserProfiles, DESKTOP_THREADS } from "./fixtures";
 
 type Json = Record<string, unknown>;
 type Profile = Schemas["BrowserProfile"];
 type Holder = Schemas["BrowserProfileHolder"];
 type Mode = Schemas["BrowserProfileMode"];
+type Desktop = Schemas["OrbDesktop"];
+type Win = Schemas["OrbDesktopWindow"];
+
+/** 任务栏应用：与镜像的 `desktop-apps.json` 同序同名；`title` 是新窗口的标题，`glyph` 是占位图标里的线条。 */
+const APPS = [
+	{
+		id: "chromium",
+		name: "Chromium",
+		title: "New Tab - Chromium",
+		glyph: '<circle cx="24" cy="24" r="9"/>',
+	},
+	{
+		id: "terminal",
+		name: "Terminal",
+		title: "lyn@orb: ~/workspace",
+		glyph: '<path d="M15 18l7 6-7 6M25 31h9"/>',
+	},
+	{
+		id: "vscode",
+		name: "VS Code",
+		title: "Welcome - Visual Studio Code",
+		glyph: '<path d="M19 16l-8 8 8 8M29 16l8 8-8 8"/>',
+	},
+	{
+		id: "files",
+		name: "Files",
+		title: "workspace",
+		glyph: '<path d="M12 16h9l3 3h12v14H12z"/>',
+	},
+	{
+		id: "editor",
+		name: "Text Editor",
+		title: "Untitled 1 - Mousepad",
+		glyph: '<path d="M15 17h18M15 23h18M15 29h12"/>',
+	},
+	{
+		id: "libreoffice",
+		name: "LibreOffice",
+		title: "LibreOffice",
+		glyph: '<path d="M16 12h11l7 7v17H16z"/>',
+	},
+] as const;
+
+/** 启动到窗口出现的延迟。 */
+const LAUNCH_MS = 300;
+
+function iconSvg(glyph: string): string {
+	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><rect x="3" y="3" width="42" height="42" rx="11" fill="#7d838c"/><g fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">${glyph}</g></svg>`;
+}
 
 export interface DesktopDeps {
 	orbs: Map<string, Orb>;
@@ -37,10 +88,101 @@ export class MockDesktop {
 	private readonly held = new Map<string, number>();
 	private readonly working = new Set<string>();
 	private readonly asks = new Map<string, Schemas["OrbDesktopAsk"]>();
+	/** 已发起启动、窗口还没出现的应用（按 orb）。 */
+	private readonly launching = new Map<string, Set<string>>();
+	/** 下一个窗口 id（X 窗口 id 的十进制）。 */
+	private wid = 0x0400_0001;
 	private readonly deps: DesktopDeps;
 
 	constructor(deps: DesktopDeps) {
 		this.deps = deps;
+	}
+
+	/** 按窗口与浏览器状态补上 `apps`（`chromium` 另外在浏览器运行时算运行中），连同 `windows` 一起返回。 */
+	private withApps(orbId: string, desktop: Desktop, windows: Win[]): Desktop {
+		const pending = this.launching.get(orbId);
+		return {
+			...desktop,
+			apps: APPS.map((a) => ({
+				id: a.id,
+				name: a.name,
+				running:
+					windows.some((w) => w.appId === a.id) ||
+					(a.id === "chromium" && desktop.browser === "running"),
+				launching: pending?.has(a.id) ?? false,
+			})),
+			windows,
+		};
+	}
+
+	/** 写入新的窗口列表（与浏览器状态）并推送；没有任务栏的 orb 不动。 */
+	private pushWindows(
+		orbId: string,
+		windows: Win[],
+		browser?: Desktop["browser"],
+	): Orb | undefined {
+		const orb = this.deps.orbs.get(orbId);
+		if (!orb?.desktop?.apps) return orb;
+		const desktop = browser ? { ...orb.desktop, browser } : orb.desktop;
+		const next: Orb = {
+			...orb,
+			desktop: this.withApps(orbId, desktop, windows),
+		};
+		this.deps.setOrb(next);
+		return next;
+	}
+
+	private newWindow(
+		appId: string | undefined,
+		title: string,
+		active = true,
+	): Win {
+		return {
+			id: String(this.wid++),
+			...(appId ? { appId } : {}),
+			title,
+			active,
+			minimized: false,
+		};
+	}
+
+	/**
+	 * 给夹具里有桌面的 orb 摆初始窗口（server 建好 orb 后调用一次，不广播）：浏览器在跑的有一个 Chromium 窗口；
+	 * 主线程的 orb 另有两个终端（一个最小化）和一个不属于任何应用的窗口，任务栏的圆点、活动底色、多窗口菜单与「其它窗口」都看得到。
+	 * Profile 被占用场景的 orb 保留为旧 orbd（不上报 apps）：没有任务栏，舞台中央仍是「启动浏览器」。
+	 */
+	seed() {
+		for (const orb of this.deps.orbs.values()) {
+			if (!orb.desktop || orb.threadIds.includes(DESKTOP_THREADS.inUse))
+				continue;
+			const windows: Win[] = [];
+			if (orb.desktop.browser === "running")
+				windows.push(
+					this.newWindow("chromium", "Pull requests · oryn - Chromium"),
+				);
+			if (orb.threadIds.includes(DESKTOP_THREADS.connected))
+				windows.push(
+					this.newWindow("terminal", "lyn@orb: ~/workspace/repo", false),
+					{
+						...this.newWindow("terminal", "bun run dev", false),
+						minimized: true,
+					},
+					this.newWindow(undefined, "xclock", false),
+				);
+			this.deps.orbs.set(orb.id, {
+				...orb,
+				desktop: this.withApps(orb.id, orb.desktop, windows),
+			});
+		}
+	}
+
+	/** `<img>` 的图标地址 → 占位 SVG 的 data: 地址；不是图标地址或应用不在清单里时返回 undefined。 */
+	iconDataUrl(src: string): string | undefined {
+		const m = /\/api\/v1\/orbs\/[^/]+\/desktop\/apps\/([^/]+)\/icon$/.exec(src);
+		const app = m && APPS.find((a) => a.id === decodeURIComponent(m[1] ?? ""));
+		return app
+			? `data:image/svg+xml,${encodeURIComponent(iconSvg(app.glyph))}`
+			: undefined;
 	}
 
 	private controlOf(orbId: string): Schemas["OrbDesktopControl"] {
@@ -202,10 +344,11 @@ export class MockDesktop {
 				?.defaultBrowserProfileId ??
 			"";
 		const mode = (b.profileMode as Mode | undefined) ?? "exclusive";
-		const base: Schemas["OrbDesktop"] = {
-			displayReady: true,
-			browser: "stopped",
-		};
+		const base: Schemas["OrbDesktop"] = this.withApps(
+			"",
+			{ displayReady: true, browser: "stopped" },
+			[],
+		);
 		if (!id) return () => base;
 		const p = this.profiles.find((x) => x.id === id);
 		if (!p) return err("profile_not_found", id, 404);
@@ -267,6 +410,14 @@ export class MockDesktop {
 			}
 			return null;
 		}
+		const appOp = /^orbs\/([^/]+)\/desktop\/apps\/([^/]+)\/(launch|icon)$/.exec(
+			p,
+		);
+		const winOp =
+			/^orbs\/([^/]+)\/desktop\/windows\/([^/]+)\/(activate|minimize|close)$/.exec(
+				p,
+			);
+		if (appOp || winOp) return this.dock(m, appOp, winOp);
 		const desk =
 			/^orbs\/([^/]+)\/desktop\/(profile|profile\/save|browser\/start|browser\/stop|control)$/.exec(
 				p,
@@ -284,7 +435,7 @@ export class MockDesktop {
 				const { profile: _, ...rest } = desktop;
 				const next = {
 					...orb,
-					desktop: { ...rest, browser: "stopped" as const },
+					desktop: this.withBrowser(orb.id, rest, "stopped"),
 				};
 				this.deps.setOrb(next);
 				return json(next);
@@ -297,8 +448,7 @@ export class MockDesktop {
 			const next: Orb = {
 				...orb,
 				desktop: {
-					...desktop,
-					browser: "stopped",
+					...this.withBrowser(orb.id, desktop, "stopped"),
 					profile: this.bind(orb, prof, mode),
 				},
 			};
@@ -325,10 +475,11 @@ export class MockDesktop {
 		if (op?.startsWith("browser/") && m === "POST") {
 			const next: Orb = {
 				...orb,
-				desktop: {
-					...desktop,
-					browser: op === "browser/start" ? "running" : "stopped",
-				},
+				desktop: this.withBrowser(
+					orb.id,
+					desktop,
+					op === "browser/start" ? "running" : "stopped",
+				),
 			};
 			this.deps.setOrb(next);
 			return json(next);
@@ -342,5 +493,109 @@ export class MockDesktop {
 			return json(this.pushControl(orb.id));
 		}
 		return null;
+	}
+
+	/** 浏览器启停时同步 Chromium 窗口：启动时没有就开一个，关闭时全部去掉（没有任务栏的 orb 只改 `browser`）。 */
+	private withBrowser(
+		orbId: string,
+		desktop: Desktop,
+		browser: Desktop["browser"],
+	): Desktop {
+		if (!desktop.apps) return { ...desktop, browser };
+		const wins = desktop.windows ?? [];
+		const windows =
+			browser !== "running"
+				? wins.filter((w) => w.appId !== "chromium")
+				: wins.some((w) => w.appId === "chromium")
+					? wins
+					: [
+							...wins.map((w) => ({ ...w, active: false })),
+							this.newWindow("chromium", APPS[0].title),
+						];
+		return this.withApps(orbId, { ...desktop, browser }, windows);
+	}
+
+	/** 任务栏（M25）：启动应用、取图标、窗口操作。 */
+	private dock(
+		m: string,
+		appOp: RegExpExecArray | null,
+		winOp: RegExpExecArray | null,
+	): Response | null {
+		const orb = this.deps.orbs.get((appOp ?? winOp)?.[1] ?? "");
+		if (!orb) return err("not_found", "orb", 404);
+		const desktop = orb.desktop;
+		if (!desktop?.apps)
+			return err("orbd_outdated", "orbd has no desktop apps", 409);
+		if (appOp) {
+			const id = appOp[2] ?? "";
+			const app = APPS.find((a) => a.id === id);
+			if (appOp[3] === "icon") {
+				if (m !== "GET") return null;
+				if (orb.state !== "ready")
+					return err("orb_unavailable", "orb is not ready", 409);
+				if (!app) return err("app_not_found", id, 404);
+				return new Response(iconSvg(app.glyph), {
+					headers: {
+						"Content-Type": "image/svg+xml",
+						"Cache-Control": "private, max-age=86400",
+					},
+				});
+			}
+			if (m !== "POST") return null;
+			if (this.controlOf(orb.id).state === "agent")
+				return err("control_agent", "agent is using the desktop", 409);
+			if (!app) return err("app_not_found", id, 404);
+			const pending = this.launching.get(orb.id) ?? new Set<string>();
+			pending.add(app.id);
+			this.launching.set(orb.id, pending);
+			const chromium = app.id === "chromium";
+			setTimeout(() => {
+				pending.delete(app.id);
+				const wins = this.deps.orbs.get(orb.id)?.desktop?.windows ?? [];
+				this.pushWindows(
+					orb.id,
+					[
+						...wins.map((w) => ({ ...w, active: false })),
+						this.newWindow(app.id, app.title),
+					],
+					chromium ? "running" : undefined,
+				);
+			}, LAUNCH_MS);
+			return json(
+				this.pushWindows(
+					orb.id,
+					desktop.windows ?? [],
+					chromium && desktop.browser !== "running" ? "starting" : undefined,
+				),
+			);
+		}
+		if (!winOp || m !== "POST") return null;
+		if (this.controlOf(orb.id).state === "agent")
+			return err("control_agent", "agent is using the desktop", 409);
+		const action = winOp[3];
+		const wins = desktop.windows ?? [];
+		const target = wins.find((w) => w.id === winOp[2]);
+		if (!target) return err("window_not_found", winOp[2] ?? "", 404);
+		const windows =
+			action === "close"
+				? wins.filter((w) => w !== target)
+				: wins.map((w) =>
+						w === target
+							? {
+									...w,
+									active: action === "activate",
+									minimized: action === "minimize",
+								}
+							: action === "activate"
+								? { ...w, active: false }
+								: w,
+					);
+		// 关掉最后一个 Chromium 窗口，浏览器随之退出
+		const browserGone =
+			target.appId === "chromium" &&
+			!windows.some((w) => w.appId === "chromium");
+		return json(
+			this.pushWindows(orb.id, windows, browserGone ? "stopped" : undefined),
+		);
 	}
 }

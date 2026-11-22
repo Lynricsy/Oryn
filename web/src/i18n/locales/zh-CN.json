@@ -4028,6 +4028,17 @@
 		"toWatch": "切换为仅观看（不发送键鼠）",
 		"toControl": "切换为可控制",
 		"watching": "仅观看",
+		"dock": {
+			"label": "桌面任务栏",
+			"runningName": "{{name}}（运行中）",
+			"others": "其它窗口",
+			"untitled": "（无标题）",
+			"minimized": "已最小化",
+			"closeWindow": "关闭「{{title}}」",
+			"newWindow": "新建窗口",
+			"takeConfirm": "接管桌面后再打开？",
+			"takeConfirmBody": "Agent 正在操作桌面。接管后它的浏览器操作会暂停，直到你交还。"
+		},
 		"control": {
 			"agentTitle": "Agent 正在操作桌面",
 			"agentHint": "现在只能观看。接管后 agent 的浏览器操作会暂停，直到你交还。",
