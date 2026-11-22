@@ -27,7 +27,7 @@ import { PrChip } from "../github/PrChip";
 import { ChromeLead, WindowControls } from "../layout/WindowControls";
 import { ScheduleChip, ScheduleRunChip } from "../schedule/ScheduleChip";
 import { ScheduleDialog } from "../schedule/ScheduleDialog";
-import { Badge, nameHue, ProjectBadge, StatusDot } from "../ui/data";
+import { Badge, ProjectBadge, StatusDot } from "../ui/data";
 import { Icon } from "../ui/icons";
 import { OrbBead } from "../ui/OrbBead";
 import { IconButton, Menu, type MenuItem } from "../ui/primitives";
@@ -49,7 +49,7 @@ export const THREAD_COLORS = [
 	"pink",
 ] as const;
 
-/** 线程色 → 色相；配色在 index.css 的 `.thread-mark`（竖条）与 `.avatar`（标题图标底色）。 */
+/** 线程色 → 色相；配色在 index.css 的 `.thread-mark`（竖条与圆点）。 */
 export const THREAD_HUE: Record<string, number> = {
 	red: 25,
 	orange: 55,
@@ -691,8 +691,7 @@ export function ThreadHeader({
 						<span
 							aria-hidden
 							data-title-glyph="card"
-							className="avatar inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-xs text-xs leading-none"
-							style={hueVar(hue ?? nameHue(card.text))}
+							className="title-glyph inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-xs text-xs leading-none"
 						>
 							{card.icon}
 						</span>

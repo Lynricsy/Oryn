@@ -28,7 +28,7 @@ import { uiStore, useUi } from "../../state/ui";
 import { SpaceDialog } from "../space/SpaceDialog";
 import { hueVar, threadHue } from "../thread/ThreadHeader";
 import { threadRowGroups } from "../thread/thread-row-menu";
-import { nameHue, ProjectBadge } from "../ui/data";
+import { ProjectBadge } from "../ui/data";
 import { Icon } from "../ui/icons";
 import { IconButton, ThreadStateIcon } from "../ui/primitives";
 import {
@@ -185,13 +185,12 @@ export function groupThreads(
 }
 
 /** 标题卡图标：外观同 `TitleGlyph`，但字形放在伪元素里，不进链接的 textContent。 */
-function CardGlyph({ icon, hue }: { icon: string; hue: number }) {
+function CardGlyph({ icon }: { icon: string }) {
 	return (
 		<span
 			aria-hidden
 			data-glyph={icon}
-			className="avatar inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-[11px] leading-none before:content-[attr(data-glyph)]"
-			style={hueVar(hue)}
+			className="title-glyph inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-[11px] leading-none before:content-[attr(data-glyph)]"
 		/>
 	);
 }
@@ -255,9 +254,7 @@ export function ThreadRow({
 						state={rollupState(thread, childMap, new Set(ancestors))}
 						size={14}
 					/>
-					{card.icon && (
-						<CardGlyph icon={card.icon} hue={hue ?? nameHue(title)} />
-					)}
+					{card.icon && <CardGlyph icon={card.icon} />}
 					<span
 						className={`min-w-0 flex-1 truncate ${thread.unread ? "font-medium text-fg" : ""}`}
 					>

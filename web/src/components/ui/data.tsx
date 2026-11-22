@@ -486,23 +486,21 @@ export function ProjectBadge({
 	);
 }
 
-/** omp 标题卡图标：与项目徽标同形的着色方块；色相取标题文字，emoji 保持原色。 */
+/** omp 标题卡图标：与项目徽标同形的黑白小瓷片（`.title-glyph`），emoji 去色成灰阶。 */
 export function TitleGlyph({
 	icon,
-	seed,
 	size = 16,
 }: {
 	icon: string;
-	/** 计算色相用的文字（通常是标题） */
-	seed: string;
 	size?: number;
 }): ReactNode {
 	return (
 		<span
 			aria-hidden
-			className="avatar inline-flex shrink-0 items-center justify-center rounded-xs leading-none"
+			className="title-glyph inline-flex shrink-0 items-center justify-center rounded-xs leading-none"
 			style={{
-				...hueStyle(nameHue(seed), size),
+				width: size,
+				height: size,
 				fontSize: Math.round(size * 0.68),
 			}}
 		>

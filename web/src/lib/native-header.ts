@@ -185,7 +185,7 @@ export function oklchHex(l: number, c: number, h: number): string {
 		.join("")}`;
 }
 
-/** `.avatar` 的底色与字色（index.css：浅色 0.89/0.075 与 0.4/0.13，深色 0.34/0.08 与 0.87/0.1）。 */
+/** `.avatar` 的底色与字色（项目徽标；index.css：浅色 0.89/0.075 与 0.4/0.13，深色 0.34/0.08 与 0.87/0.1）。 */
 export function avatarHex(
 	hue: number,
 	dark: boolean,
@@ -193,6 +193,25 @@ export function avatarHex(
 	return dark
 		? { bg: oklchHex(0.34, 0.08, hue), fg: oklchHex(0.87, 0.1, hue) }
 		: { bg: oklchHex(0.89, 0.075, hue), fg: oklchHex(0.4, 0.13, hue) };
+}
+
+/** 主题色相（index.css 的 `--tint-h`）。 */
+const TINT_H = 235;
+
+/**
+ * `.title-glyph` 的平涂版：原生页头画不了渐变，底色取渐变中段对应的令牌（浅色 `--raised`、深色 `--hover`），
+ * 字色取 `--text`。
+ */
+export function glyphHex(dark: boolean): { bg: string; fg: string } {
+	return dark
+		? {
+				bg: oklchHex(0.255, 0.014, TINT_H),
+				fg: oklchHex(0.94, 0.006, TINT_H),
+			}
+		: {
+				bg: oklchHex(0.972, 0.005, TINT_H),
+				fg: oklchHex(0.21, 0.015, TINT_H),
+			};
 }
 
 /** `.thread-mark` 的颜色（浅色 0.64/0.15，深色 0.74/0.14）。 */

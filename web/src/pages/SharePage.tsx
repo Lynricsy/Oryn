@@ -256,7 +256,7 @@ function ShareHeader({
 				<i />
 			</div>
 			<BrandMark size={18} />
-			{card.icon && <TitleGlyph icon={card.icon} seed={card.text} size={18} />}
+			{card.icon && <TitleGlyph icon={card.icon} size={18} />}
 			<h1
 				className="min-w-0 truncate font-semibold text-sm tracking-tight"
 				title={text}

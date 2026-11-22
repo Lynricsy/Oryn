@@ -1264,7 +1264,7 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 	.sink-card[data-instant] {
 		transition: none;
 	}
-	/* 名字色相方块（头像、项目徽标、标题图标）：比中性色饱和一档 */
+	/* 名字色相方块（头像、项目徽标）：比中性色饱和一档 */
 	.avatar {
 		background: oklch(0.89 0.075 var(--h));
 		color: oklch(0.4 0.13 var(--h));
@@ -1273,12 +1273,33 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 		background: oklch(0.34 0.08 var(--h));
 		color: oklch(0.87 0.1 var(--h));
 	}
-	/* 线程色（用户给线程挑的颜色）：竖条 / 标题图标底色，色相由 --h 给出，与强调色的圆点区分开 */
+	/* 线程色（用户给线程挑的颜色）：竖条 / 圆点，色相由 --h 给出，与强调色的圆点区分开 */
 	.thread-mark {
 		background: oklch(0.64 0.15 var(--h));
 	}
 	:root[data-theme="dark"] .thread-mark {
 		background: oklch(0.74 0.14 var(--h));
+	}
+	/*
+	 * 标题卡图标：黑白小瓷片，不按标题或线程色着色（各色方块排在侧栏里显得花）。
+	 * 质感来自上亮下暗的渐变、顶边一道高光、发丝外圈和一层浅投影；字形用正文色，emoji 去色成灰阶。
+	 * iOS 原生页头画不了渐变，用 native-header.ts 的 `glyphHex` 取中间色平涂。
+	 */
+	.title-glyph {
+		color: var(--text);
+		filter: grayscale(1);
+		background: linear-gradient(to bottom, var(--panel), var(--inset));
+		box-shadow:
+			inset 0 0.5px 0 oklch(1 0 0 / 0.9),
+			0 0 0 0.5px color-mix(in oklab, var(--text) 16%, transparent),
+			0 1px 1.5px oklch(var(--shadow-color) / calc(0.12 * var(--shadow-k)));
+	}
+	:root[data-theme="dark"] .title-glyph {
+		background: linear-gradient(to bottom, var(--active), var(--hover));
+		box-shadow:
+			inset 0 0.5px 0 oklch(1 0 0 / 0.14),
+			0 0 0 0.5px oklch(0 0 0 / 0.5),
+			0 1px 1.5px oklch(var(--shadow-color) / calc(0.12 * var(--shadow-k)));
 	}
 }
 

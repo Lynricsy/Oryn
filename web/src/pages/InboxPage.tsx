@@ -672,7 +672,7 @@ function InboxRow({
 					</span>
 					<span className="flex min-w-0 flex-1 flex-col gap-1">
 						<span className="flex min-w-0 items-center gap-2">
-							{tcard.icon && <TitleGlyph icon={tcard.icon} seed={title} />}
+							{tcard.icon && <TitleGlyph icon={tcard.icon} />}
 							<span
 								className={`min-w-0 flex-1 truncate text-sm ${thread.unread ? "font-semibold text-fg" : "font-medium text-fg"}`}
 							>

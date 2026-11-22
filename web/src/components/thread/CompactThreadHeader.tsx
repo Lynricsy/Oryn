@@ -29,6 +29,7 @@ import type { NativeIcon, NativeMark, NativeSeg } from "../../lib/host";
 import {
 	avatarHex,
 	findMenuItem,
+	glyphHex,
 	isDark,
 	markHex,
 	nativeItems,
@@ -388,7 +389,7 @@ export function CompactThreadHeader({
 	if ((thread?.pulls?.length ?? 0) > 0)
 		nativeMarks.push({ symbol: "arrow.triangle.pull" });
 	const titleIcon: NativeIcon | undefined = card.icon
-		? { glyph: card.icon, ...avatarHex(hue ?? nameHue(card.text), dark) }
+		? { glyph: card.icon, ...glyphHex(dark) }
 		: hue !== undefined
 			? { dot: markHex(hue, dark) }
 			: undefined;
@@ -520,8 +521,7 @@ export function CompactThreadHeader({
 							<span
 								aria-hidden
 								data-title-glyph="card"
-								className="avatar inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-[11px] leading-none"
-								style={hueVar(hue ?? nameHue(card.text))}
+								className="title-glyph inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-[11px] leading-none"
 							>
 								{card.icon}
 							</span>

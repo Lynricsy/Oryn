@@ -337,7 +337,7 @@ describe("oklch 换算与 index.css 不漂移", () => {
 		expect(markHex(30, false)).toMatch(/^#[0-9a-f]{6}$/);
 	});
 
-	it("头像、线程色的 oklch 常量与 CSS 一致", () => {
+	it("头像、线程色与标题图标平涂色的 oklch 常量与 CSS 一致", () => {
 		const css = readFile("src/index.css");
 		for (const s of [
 			"background: oklch(0.89 0.075 var(--h))",
@@ -346,6 +346,12 @@ describe("oklch 换算与 index.css 不漂移", () => {
 			"color: oklch(0.87 0.1 var(--h))",
 			"background: oklch(0.64 0.15 var(--h))",
 			"background: oklch(0.74 0.14 var(--h))",
+			// glyphHex 取的令牌：浅色 --raised / --text，深色 --hover / --text
+			"--tint-h: 235;",
+			"--raised: oklch(0.972 0.005 var(--tint-h))",
+			"--text: oklch(0.21 0.015 var(--tint-h))",
+			"--hover: oklch(0.255 0.014 var(--tint-h))",
+			"--text: oklch(0.94 0.006 var(--tint-h))",
 		])
 			expect(css).toContain(s);
 	});
