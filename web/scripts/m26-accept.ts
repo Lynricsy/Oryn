@@ -1767,11 +1767,19 @@ async function rRestricted() {
 		blocked.length === 0,
 		`回答里没有 not_available 的工具结果（${blocked.map((p) => p.name).join(",") || "无"}）`,
 	);
-	const now = sandboxProcs(main);
-	for (const p of now) note(`主人消息后的主线进程 ${procDesc(p)}`);
+	// 主线 agent 回合结束后可能很快被停（换段、空闲），此刻的快照不可靠：看观测记录里最后一次启动的主线进程，
+	// 它必须晚于受限的那一代且是完整工具表
+	const all = [...mainProcs.values()].sort((a, b) => a.seenAt - b.seenAt);
+	for (const p of all.slice(seen.length))
+		note(`主人消息前后新观测到的主线进程 ${procDesc(p)}`);
+	const last = all.at(-1);
+	const lastRestricted = all.filter((p) => toolsArg(p) === "read").at(-1);
 	expect(
-		now.some((p) => toolsArg(p).split(",").includes("web_search")),
-		"主人消息后主线恢复完整工具表（--tools 含 web_search）",
+		!!last &&
+			!!lastRestricted &&
+			last.seenAt > lastRestricted.seenAt &&
+			toolsArg(last).split(",").includes("web_search"),
+		`受限那一代之后主线最后一次启动是完整工具表（${last ? procDesc(last) : "没有观测到"}）`,
 	);
 }
 
@@ -2033,8 +2041,29 @@ function mcpCursorInDb(): string {
 	}
 }
 
+/** 本轮当前协调宿主目录下、cmdline 含 overlay-research-private.yml 的进程（私有研究员的 omp；root 直接读 /proc）。 */
+function privateResearcherPids(): number[] {
+	const out: number[] = [];
+	for (const pid of readdirSync("/proc")) {
+		if (!/^\d+$/.test(pid)) continue;
+		try {
+			const cmd = readFileSync(`/proc/${pid}/cmdline`, "utf8");
+			if (
+				cmd.includes("overlay-research-private.yml") &&
+				cmd.includes(COORD_DIR)
+			)
+				out.push(Number(pid));
+		} catch {
+			// 已退出或无权限
+		}
+	}
+	return out;
+}
+
 /**
- * P-mcp-down：MCP 服务的 initialize 一直不应答（延迟远超控制面 30 秒的就绪时限）→ 运行 failed、error 含 not ready。
+ * P-mcp-down：MCP 服务的 initialize 一直不应答（延迟远超控制面 30 秒的就绪时限）→ 运行 failed、error 含 not ready；
+ * 之后 60 秒内私有研究员的 omp 退出；同一套环境里打开内部关联（先让一个工作线程有新消息），60 秒内发起一条内部运行
+ * （研究员停稳、AgentCold 为真之后引擎才发起，证明卡住的那一代没有挡住后面的运行）。
  * MCP 游标：设置接口（ResearchSettingsEnvelope）不暴露它，按要求不作断言；库里的值只记作证据。
  */
 async function pMcpDown() {
@@ -2054,6 +2083,55 @@ async function pMcpDown() {
 		calls.length === 0,
 		`服务端没有收到 tools/call（${calls.join(",") || "无"}）`,
 	);
+	const failedAt = r.finishedAt ?? Date.now();
+	note(
+		`运行结束时私有研究员进程：${privateResearcherPids().join(",") || "无"}`,
+	);
+	const gone = await waitFor(
+		"私有研究员的 omp 退出",
+		() => privateResearcherPids().length === 0,
+		60_000,
+		500,
+	).catch(() => false);
+	check(
+		gone === true,
+		`运行 failed 后 60 秒内私有研究员的 omp 退出（离运行结束 ${sec(Date.now() - failedAt)}；残留 ${privateResearcherPids().join(",") || "无"}）`,
+	);
+
+	const w = await api("POST", "/api/v1/threads", {
+		prompt: "只回复“好的”，不要调用任何工具。",
+		title: `m26 cold ${RUN}`,
+		model: { provider: MODEL_PROVIDER, id: MODEL_ID },
+	});
+	const wid = (w.json as { thread?: { id?: string } } | null)?.thread?.id;
+	check(
+		(w.status === 201 || w.status === 200) && !!wid,
+		`建工作线程（${w.status}${wid ? ` ${wid}` : `：${clip(w.text)}`}）`,
+	);
+	await waitTurn(wid as string, 0, ORB_TURN_TIMEOUT);
+	const t1 = Date.now();
+	await patchSettings({ internal: true });
+	const started = await waitFor(
+		"出现一条内部运行",
+		async () =>
+			(await runs()).find(
+				(x) => x.pipeline === "internal" && x.startedAt >= t1 - 2_000,
+			),
+		60_000,
+		2_000,
+	).catch(() => undefined);
+	check(
+		!!started,
+		`打开内部关联后 60 秒内发起一条内部运行（${started ? `${runDesc(started)}，打开后 ${sec(started.startedAt - t1)}` : "没有"}）`,
+	);
+	// 让这条运行跑完再拆环境（结果不作断言）
+	if (started)
+		await waitRun(
+			"内部运行结束",
+			t1,
+			(x) => x.id === started.id,
+			RUN_WAIT,
+		).catch((e) => note(`内部运行没有按时结束（不作断言）：${String(e)}`));
 }
 
 /** I-internal：两个工作线程里写入互相矛盾的决定，打开内部关联 → 一次内部运行完成（有无发现都记录）。 */
