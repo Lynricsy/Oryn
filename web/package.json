@@ -40,6 +40,7 @@
     "accept:m21": "bun scripts/m21-accept.ts",
     "accept:m22": "bun scripts/m22-accept.ts",
     "accept:m23": "bun scripts/m23-accept.ts",
+    "accept:m25": "bun scripts/m25-accept.ts",
     "walk:m121": "bun scripts/m121-walk.ts",
     "tauri": "tauri"
   },
