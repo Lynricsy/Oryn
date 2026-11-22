@@ -267,6 +267,124 @@ func TestCoordinatorAgentStart(t *testing.T) {
 	assert.Empty(t, entries, "the coordinator cwd stays empty")
 }
 
+// M26 步骤 1.2：三种启动变体的 argv、覆盖层与出站环境逐个核对；省略 variant 的两种与 M26 之前相同；variant 与 web 互斥、未知变体被拒。
+func TestCoordinatorAgentSpecVariants(t *testing.T) {
+	rt, cp, _, _ := startCoordinator(t)
+	cp.waitNotif(t, 0, "hello", nil)
+	const thread = "T-01932f6e-8d1a-7c3b-9f2e-0123456789ad"
+	coord := apigen.AgentProfileCoordinator
+	prompt := "You are a researcher.\nReply with JSON."
+	tok := "mcp-research-token"
+	dir := filepath.Join(rt.home, ".oryn", "threads", thread)
+	cbase := filepath.Join(rt.home, ".oryn", "coordinator")
+	cwd := filepath.Join(cbase, "cwd")
+	promptFile := filepath.Join(cbase, "prompts", thread+".md")
+	egress := "http://" + rt.egressLn.Addr().String()
+	params := func(variant apigen.LinkCtlAgentStartParamsVariant, web bool, token *string) apigen.LinkCtlAgentStartParams {
+		p := apigen.LinkCtlAgentStartParams{ThreadID: thread, Profile: &coord, SystemPrompt: &prompt, McpToken: token}
+		if variant != "" {
+			p.Variant = &variant
+		}
+		if web {
+			p.Web = &web
+		}
+		return p
+	}
+	argv := func(tools []string, skills []string, overlay string) []string {
+		a := []string{"--mode", "rpc-ui", "--cwd", cwd, "--session-dir", dir, "--no-tools"}
+		a = append(a, tools...)
+		a = append(a, skills...)
+		return append(a, "--no-extensions", "--no-rules", "--no-context-files", "--no-lsp",
+			"--config", filepath.Join(cbase, overlay), "--system-prompt", promptFile)
+	}
+	cases := []struct {
+		name        string
+		p           apigen.LinkCtlAgentStartParams
+		variant     string
+		args        []string
+		overlay     string
+		overlayBody string
+		env         map[string]string // 出站相关的三个变量；缺省的键表示不应存在
+	}{
+		{
+			name: "omitted (space)", p: params("", false, &tok),
+			args: argv([]string{"--tools", "read,write"}, []string{"--no-skills"}, "overlay.yml"), overlay: "overlay.yml",
+			overlayBody: coordinatorOverlay(false), env: map[string]string{},
+		},
+		{
+			name: "omitted (web)", p: params("", true, &tok),
+			args: argv([]string{"--tools", "read,write,web_search,generate_image"}, []string{"--skills", "oryn"}, "overlay-web.yml"), overlay: "overlay-web.yml",
+			overlayBody: coordinatorOverlay(true), env: map[string]string{"PI_PROXY": egress, "ORYN_MCP_BASE": egress, "ORYN_MCP_TOKEN": tok},
+		},
+		{
+			name: "omitted (web, no token)", p: params("", true, nil),
+			args: argv([]string{"--tools", "read,write,web_search,generate_image"}, []string{"--skills", "oryn"}, "overlay-web.yml"), overlay: "overlay-web.yml",
+			overlayBody: coordinatorOverlay(true), env: map[string]string{"PI_PROXY": egress, "ORYN_MCP_BASE": egress},
+		},
+		{
+			name: "research_web", p: params(apigen.AgentVariantResearchWeb, false, &tok), variant: "research_web",
+			args: argv([]string{"--tools", "web_search,read"}, []string{"--no-skills"}, "overlay-research-web.yml"), overlay: "overlay-research-web.yml",
+			overlayBody: coordinatorOverlay(false) + "read: { remoteOnly: true }\nprompt: { fileMentions: false }\n",
+			env:         map[string]string{"PI_PROXY": egress},
+		},
+		{
+			name: "research_private", p: params(apigen.AgentVariantResearchPrivate, false, &tok), variant: "research_private",
+			args: argv(nil, []string{"--no-skills"}, "overlay-research-private.yml"), overlay: "overlay-research-private.yml",
+			overlayBody: coordinatorOverlay(false) + "prompt: { fileMentions: false }\n",
+			env:         map[string]string{"ORYN_MCP_BASE": egress, "ORYN_MCP_TOKEN": tok},
+		},
+		{
+			name: "research_private without token", p: params(apigen.AgentVariantResearchPrivate, false, nil), variant: "research_private",
+			args: argv(nil, []string{"--no-skills"}, "overlay-research-private.yml"), overlay: "overlay-research-private.yml",
+			overlayBody: coordinatorOverlay(false) + "prompt: { fileMentions: false }\n", env: map[string]string{},
+		},
+		{
+			name: "main_restricted", p: params(apigen.AgentVariantMainRestricted, false, &tok), variant: "main_restricted",
+			args: argv([]string{"--tools", "read"}, []string{"--no-skills"}, "overlay.yml"), overlay: "overlay.yml",
+			overlayBody: coordinatorOverlay(false), env: map[string]string{},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			args, gotCwd, env, variant, err := rt.coordinatorAgentSpec(tc.p, dir)
+			require.NoError(t, err)
+			assert.Equal(t, tc.args, args)
+			assert.Equal(t, cwd, gotCwd)
+			assert.Equal(t, tc.variant, variant)
+			for _, k := range []string{"PI_PROXY", "ORYN_MCP_BASE", "ORYN_MCP_TOKEN"} {
+				want, ok := tc.env[k]
+				got, has := env[k]
+				assert.Equal(t, ok, has, "%s present", k)
+				assert.Equal(t, want, got, k)
+			}
+			for _, a := range args {
+				assert.NotContains(t, a, tok, "凭据不进 argv")
+			}
+			ov, err := os.ReadFile(filepath.Join(cbase, tc.overlay))
+			require.NoError(t, err)
+			assert.Equal(t, tc.overlayBody, string(ov))
+			if tc.variant != "" {
+				assert.NotContains(t, string(ov), "skills:", "变体不加载技能")
+				assert.Contains(t, string(ov), "generate_image: { enabled: false }")
+			}
+		})
+	}
+	ov, err := os.ReadFile(filepath.Join(cbase, "overlay-research-web.yml"))
+	require.NoError(t, err)
+	assert.Contains(t, string(ov), "remoteOnly: true")
+	assert.Contains(t, string(ov), "fileMentions: false")
+
+	for name, p := range map[string]apigen.LinkCtlAgentStartParams{
+		"variant and web": params(apigen.AgentVariantResearchWeb, true, nil),
+		"unknown variant": params("research_everything", false, nil),
+	} {
+		_, _, _, _, err := rt.coordinatorAgentSpec(p, dir)
+		assert.Equal(t, link.CodeInvalidParams, ctlCode(err), "%s: %v", name, err)
+		err = cp.call(t, "agent.start", p, nil)
+		assert.Equal(t, link.CodeInvalidParams, ctlCode(err), "%s via ctl: %v", name, err)
+	}
+}
+
 // L3：给了 EgressListener 时 New 不再自己监听，egress 就用这个（协调宿主在施加沙箱之前建好它）。
 func TestCoordinatorUsesProvidedEgressListener(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

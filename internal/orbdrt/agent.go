@@ -550,6 +550,9 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 	if !r.cfg.Coordinator && p.Profile != nil && *p.Profile != "" {
 		return apigen.LinkCtlAgentStartResult{}, ctlErr(link.CodeInvalidParams, "profile %q is only available on the coordinator host", *p.Profile)
 	}
+	if !r.cfg.Coordinator && p.Variant != nil && *p.Variant != "" {
+		return apigen.LinkCtlAgentStartResult{}, ctlErr(link.CodeInvalidParams, "variant %q is only available on the coordinator host", *p.Variant)
+	}
 	if r.cfg.Coordinator && p.Memory != nil {
 		return apigen.LinkCtlAgentStartResult{}, ctlErr(link.CodeInvalidParams, "memory is not available on the coordinator host")
 	}
@@ -565,11 +568,13 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 		projID, projDir string
 		// sshDir：runner 上本线程的 SSH 目录（M21；没有 SSH 网关时为空）。
 		sshDir string
+		// variant：协调宿主本次的启动变体（M26；省略时为空）。
+		variant string
 	)
 	switch {
 	case r.cfg.Coordinator:
 		var err error
-		if args, cwd, env, err = r.coordinatorAgentSpec(p, dir); err != nil {
+		if args, cwd, env, variant, err = r.coordinatorAgentSpec(p, dir); err != nil {
 			return apigen.LinkCtlAgentStartResult{}, err
 		}
 	case r.runner != nil:
@@ -694,13 +699,14 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 			args = append(args, "--config", r.desktopOverlayPath())
 		}
 	}
-	pid, sshPub, err := t.start(startSpec{
+	pid, sshPub, running, err := t.start(startSpec{
 		args:       args,
 		cwd:        cwd,
 		env:        envList(env),
 		initFrames: frames,
 		projectDir: projDir,
 		sshDir:     sshDir,
+		variant:    variant,
 	})
 	if projID != "" {
 		// 同一项目没有运行中 agent 引用的旧版本（本次的目录仍在启动名单里，不会被删）。
@@ -716,6 +722,10 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 	res := apigen.LinkCtlAgentStartResult{Pid: pid}
 	if sshPub != "" {
 		res.SSHPublicKey = &sshPub
+	}
+	// M26：报回在跑的监督器实际使用的变体（幂等返回时是已有的那个，不是本次请求的）；控制面据此判断主线是否受限。
+	if running != "" {
+		res.Variant = &running
 	}
 	return res, nil
 }
@@ -782,20 +792,23 @@ type startSpec struct {
 	// 监督器彻底结束时删掉该子目录。每代监督器的路径不同：Core 的 ssh 连接复用目录按 ORYN_SSH_KEY 的值哈希，
 	// 新一代不会撞上旧一代脱离进程组残留的 master。
 	sshDir string
+	// variant 是协调宿主上这个 agent 的启动变体（M26；省略时为空），崩溃自重启沿用，agent.start 应答据此报回。
+	variant string
 }
 
-// start 拉起监督器，返回 pid 与线程 SSH 公钥（没有时为空）；已有活动监督器时幂等返回当前 pid 与该监督器的公钥。
-func (t *thread) start(spec startSpec) (int, string, error) {
+// start 拉起监督器，返回 pid、线程 SSH 公钥（没有时为空）与监督器的启动变体（没有时为空）；
+// 已有活动监督器时幂等返回当前 pid、该监督器的公钥与变体（本次 spec 被忽略）。
+func (t *thread) start(spec startSpec) (int, string, string, error) {
 	t.mu.Lock()
 	if s := t.sup; s != nil && !s.finished() {
 		pid := 0
 		if t.proc != nil {
 			pid = t.proc.pid
 		}
-		pub := s.sshPub
+		pub, variant := s.sshPub, s.spec.variant
 		t.mu.Unlock()
 		t.wake() // 没有 agent 流时由转发器重开
-		return pid, pub, nil
+		return pid, pub, variant, nil
 	}
 	s := &supervisor{t: t, spec: spec, stopCh: make(chan struct{}), done: make(chan struct{})}
 	if spec.sshDir != "" {
@@ -803,7 +816,7 @@ func (t *thread) start(spec startSpec) (int, string, error) {
 		key, pub, err := writeThreadSSHKey(spec.sshDir)
 		if err != nil {
 			t.mu.Unlock()
-			return 0, "", fmt.Errorf("thread ssh key: %w", err)
+			return 0, "", "", fmt.Errorf("thread ssh key: %w", err)
 		}
 		s.sshKey, s.sshPub = key, pub
 		s.spec.env = append(slices.Clone(spec.env), envSSHKey+"="+key)
@@ -819,10 +832,10 @@ func (t *thread) start(spec startSpec) (int, string, error) {
 		t.mu.Unlock()
 		s.dropSSHKey()
 		close(s.done)
-		return 0, "", err
+		return 0, "", "", err
 	}
 	go s.run(p)
-	return p.pid, s.sshPub, nil
+	return p.pid, s.sshPub, spec.variant, nil
 }
 
 // stopAgent 请求优雅停止并返回退出码；没有监督器时返回 0。

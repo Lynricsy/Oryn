@@ -52,6 +52,35 @@ const (
 	coordinatorWebTools = "read,write,web_search,generate_image"
 )
 
+// coordinatorMode 是协调档一种启动方式的工具、覆盖层与出站环境。
+type coordinatorMode struct {
+	tools        string // --tools 的值；空 = 不带 --tools（只有 --no-tools）
+	overlayName  string // 覆盖层文件名（在协调目录下）；内容不同的覆盖层分文件写，并发启动的 agent 互不覆盖
+	overlayExtra string // 追加在 coordinatorOverlay(web) 之后的覆盖层行
+	web          bool   // 全局助手的第一层（M19）：生图与技能打开、加载内置技能 oryn
+	proxy        bool   // 设 PI_PROXY（出站经 orynd 的正向代理）
+	mcp          bool   // 设 ORYN_MCP_BASE / ORYN_MCP_TOKEN
+}
+
+var (
+	// 省略 variant 时的两种（与 M26 之前逐字相同）：Space 协调者与全局助手。
+	coordinatorSpaceMode = coordinatorMode{tools: coordinatorTools, overlayName: "overlay.yml"}
+	coordinatorWebMode   = coordinatorMode{tools: coordinatorWebTools, overlayName: "overlay-web.yml", web: true, proxy: true, mcp: true}
+	// coordinatorVariants 是 M26 的三种启动变体，都不加载技能：
+	// 公网研究员只能搜索与读公网网址（read.remoteOnly），没有 MCP 凭据；私有研究员没有任何内置工具、连不到公网，
+	// 只在控制面给了凭据时能用 MCP；受限的主线只有 read，没有出站与 MCP。两个研究员都关掉提示词里 @路径 的自动读取。
+	coordinatorVariants = map[apigen.LinkCtlAgentStartParamsVariant]coordinatorMode{
+		apigen.AgentVariantResearchWeb: {
+			tools: "web_search,read", overlayName: "overlay-research-web.yml",
+			overlayExtra: "read: { remoteOnly: true }\nprompt: { fileMentions: false }\n", proxy: true,
+		},
+		apigen.AgentVariantResearchPrivate: {
+			overlayName: "overlay-research-private.yml", overlayExtra: "prompt: { fileMentions: false }\n", mcp: true,
+		},
+		apigen.AgentVariantMainRestricted: {tools: "read", overlayName: "overlay.yml"},
+	}
+)
+
 // coordinatorMethods 是协调宿主接受的 ctl 方法；其余一律 method_not_found。
 var coordinatorMethods = map[string]bool{
 	"setup.run": true, "resume.run": true, "agent.start": true, "agent.stop": true, "shutdown": true,
@@ -77,15 +106,31 @@ func (r *Runtime) coordinatorSetup(p apigen.LinkCtlSetupRunParams) (apigen.LinkC
 }
 
 // coordinatorAgentSpec 校验协调档的 agent.start 并构造启动参数与环境（环境从零构造，不继承 orbd 的环境）。
-func (r *Runtime) coordinatorAgentSpec(p apigen.LinkCtlAgentStartParams, dir string) (args []string, cwd string, env map[string]string, err error) {
+// variant 是本次使用的 M26 启动变体（省略时为空串），由监督器记下并在 agent.start 应答里报回。
+func (r *Runtime) coordinatorAgentSpec(p apigen.LinkCtlAgentStartParams, dir string) (args []string, cwd string, env map[string]string, variant string, err error) {
 	if p.Profile == nil || *p.Profile != apigen.AgentProfileCoordinator {
-		return nil, "", nil, ctlErr(link.CodeInvalidParams, "the coordinator host only starts agents with profile %q", apigen.AgentProfileCoordinator)
+		return nil, "", nil, "", ctlErr(link.CodeInvalidParams, "the coordinator host only starts agents with profile %q", apigen.AgentProfileCoordinator)
 	}
 	if p.SystemPrompt == nil || *p.SystemPrompt == "" || !strings.Contains(*p.SystemPrompt, "\n") {
-		return nil, "", nil, ctlErr(link.CodeInvalidParams, "systemPrompt must be a non-empty multi-line prompt")
+		return nil, "", nil, "", ctlErr(link.CodeInvalidParams, "systemPrompt must be a non-empty multi-line prompt")
 	}
 	if len(p.Env) > 0 {
-		return nil, "", nil, ctlErr(link.CodeInvalidParams, "env is not accepted by the coordinator host")
+		return nil, "", nil, "", ctlErr(link.CodeInvalidParams, "env is not accepted by the coordinator host")
+	}
+	web := p.Web != nil && *p.Web
+	mode := coordinatorSpaceMode
+	if web {
+		mode = coordinatorWebMode
+	}
+	if p.Variant != nil && *p.Variant != "" {
+		v, ok := coordinatorVariants[*p.Variant]
+		if !ok {
+			return nil, "", nil, "", ctlErr(link.CodeInvalidParams, "unknown variant %q", *p.Variant)
+		}
+		if web {
+			return nil, "", nil, "", ctlErr(link.CodeInvalidParams, "variant and web are mutually exclusive")
+		}
+		mode, variant = v, string(*p.Variant)
 	}
 	base := r.coordinatorDir()
 	cwd = filepath.Join(base, "cwd")
@@ -93,32 +138,31 @@ func (r *Runtime) coordinatorAgentSpec(p apigen.LinkCtlAgentStartParams, dir str
 	prompts := filepath.Join(base, "prompts")
 	for _, d := range []string{cwd, tmp, prompts} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
-			return nil, "", nil, ctlErr("failed", "%v", err)
+			return nil, "", nil, "", ctlErr("failed", "%v", err)
 		}
 	}
-	// 两种覆盖层分文件写：全局助手与 Space 协调者的 agent 可能同时启动
-	web := p.Web != nil && *p.Web
-	overlay, tools := filepath.Join(base, "overlay.yml"), coordinatorTools
-	if web {
-		overlay, tools = filepath.Join(base, "overlay-web.yml"), coordinatorWebTools
-	}
-	if err := writeFileAtomic(overlay, []byte(coordinatorOverlay(web)), 0o600); err != nil {
-		return nil, "", nil, ctlErr("failed", "write overlay: %v", err)
+	overlay := filepath.Join(base, mode.overlayName)
+	if err := writeFileAtomic(overlay, []byte(coordinatorOverlay(mode.web)+mode.overlayExtra), 0o600); err != nil {
+		return nil, "", nil, "", ctlErr("failed", "write overlay: %v", err)
 	}
 	// 系统提示词写成文件、argv 只带路径（M9 L4）：同 uid 的进程与 /proc/<pid>/cmdline 看不到正文。omp 对不含换行的
 	// --system-prompt 按文件读（resolvePromptInput）；路径不含换行（threadId 已校验）。
 	promptFile := filepath.Join(prompts, p.ThreadID+".md")
 	if err := writeFileAtomic(promptFile, []byte(*p.SystemPrompt), 0o600); err != nil {
-		return nil, "", nil, ctlErr("failed", "write system prompt: %v", err)
+		return nil, "", nil, "", ctlErr("failed", "write system prompt: %v", err)
 	}
 	// 内置工具（M13 起 read / write：读文件库、写 ~/library/out/；M19 第一层给全局助手加 web_search 与 generate_image，
-	// read 也能读 URL）：--no-tools 先关掉全部，--tools 再精确列出。MCP 与宿主工具不受 --tools 限制。
-	// 技能：全局助手只加载内置的 oryn（--skills 是白名单），Space 协调者一个都不加载。
+	// read 也能读 URL）：--no-tools 先关掉全部，--tools 再精确列出（私有研究员不带 --tools，一个内置工具都没有）。
+	// MCP 与宿主工具不受 --tools 限制。
+	// 技能：全局助手只加载内置的 oryn（--skills 是白名单），Space 协调者与 M26 的变体一个都不加载。
 	skills := []string{"--no-skills"}
-	if web {
+	if mode.web {
 		skills = []string{"--skills", coordinatorSkill}
 	}
-	args = []string{"--mode", "rpc-ui", "--cwd", cwd, "--session-dir", dir, "--no-tools", "--tools", tools}
+	args = []string{"--mode", "rpc-ui", "--cwd", cwd, "--session-dir", dir, "--no-tools"}
+	if mode.tools != "" {
+		args = append(args, "--tools", mode.tools)
+	}
 	args = append(args, skills...)
 	args = append(args, "--no-extensions", "--no-rules", "--no-context-files", "--no-lsp",
 		"--config", overlay, "--system-prompt", promptFile)
@@ -137,14 +181,23 @@ func (r *Runtime) coordinatorAgentSpec(p apigen.LinkCtlAgentStartParams, dir str
 	// 出站（M19，只给全局助手）：omp 的全局 fetch 经 PI_PROXY 走 orynd 的正向代理（https 用 CONNECT），回环与内网地址
 	// 由 omp 直连（沙箱里只有回环 7811 连得通）；是否放行、放行哪些目标由控制面的出站策略决定。MCP 的地址前缀与凭据
 	// 也只给全局助手（mcp.json 里是 ${ORYN_MCP_BASE}/mcp/m<i> 与 X-Oryn-MCP-Token: ${ORYN_MCP_TOKEN}，出站代理核对凭据）。
-	// Space 协调者都没有：连不到公网、用不了 MCP（D10）。
-	if web && r.egressLn != nil {
-		base := "http://" + r.egressLn.Addr().String()
-		env["PI_PROXY"] = base
-		env[agentcfg.MCPBaseEnv] = base
-		if p.McpToken != nil && *p.McpToken != "" {
-			env[agentcfg.MCPTokenEnv] = *p.McpToken
+	// Space 协调者都没有：连不到公网、用不了 MCP（D10）。M26：公网研究员只有 PI_PROXY；私有研究员只在带了凭据时
+	// 两个 MCP 变量一起设；受限的主线都没有。
+	if r.egressLn != nil {
+		addr := "http://" + r.egressLn.Addr().String()
+		token := ""
+		if p.McpToken != nil {
+			token = *p.McpToken
+		}
+		if mode.proxy {
+			env["PI_PROXY"] = addr
+		}
+		if mode.mcp && (mode.web || token != "") {
+			env[agentcfg.MCPBaseEnv] = addr
+		}
+		if mode.mcp && token != "" {
+			env[agentcfg.MCPTokenEnv] = token
 		}
 	}
-	return args, cwd, env, nil
+	return args, cwd, env, variant, nil
 }
