@@ -5,8 +5,9 @@
 # 环境变量：IMAGE（默认 oryn-orb:dev）、VERSION（默认 git describe）
 #
 # 前置：build/core/<arch>/omp 已就位（scripts/fetch-core.sh <arch>）。
-# 构建上下文是 build/orb-context/<arch>/，只含三个二进制、冒烟脚本与桌面应用清单相关的三个文件
-# （desktop-apps.json、desktop-icons.sh、libreoffice-oryn.xcd），不发送仓库或 node_modules。
+# 构建上下文是 build/orb-context/<arch>/，只含三个二进制、冒烟脚本、桌面应用清单相关的三个文件
+# （desktop-apps.json、desktop-icons.sh、libreoffice-oryn.xcd）以及 user 的 bashrc 与等宽字体的 fontconfig 配置，
+# 不发送仓库或 node_modules。
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -46,7 +47,8 @@ for b in orbd oryn; do
 done
 cp "$omp" "${ctx}/omp"
 
-cp images/orb/smoke-test.sh images/orb/desktop-apps.json images/orb/desktop-icons.sh images/orb/libreoffice-oryn.xcd "$ctx/"
+cp images/orb/smoke-test.sh images/orb/desktop-apps.json images/orb/desktop-icons.sh images/orb/libreoffice-oryn.xcd \
+	images/orb/bashrc images/orb/oryn-monospace.conf "$ctx/"
 
 docker build \
 	--pull --no-cache \

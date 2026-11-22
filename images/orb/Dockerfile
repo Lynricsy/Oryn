@@ -160,6 +160,25 @@ RUN case "$TARGETARCH" in amd64) va=linux-x64 ;; arm64) va=linux-arm64 ;; *) exi
       'MimeType=text/plain;inode/directory;' > /usr/share/applications/code.desktop \
  && printf 'vscode %s\n' "$(jq -er .productVersion <<< "$release")" >> /usr/local/share/oryn/upstream-versions.txt
 
+# 等宽字体：JetBrains Maple Mono（JetBrains Mono + Maple Mono 合成：中英文 2:1 对齐，带 Nerd Font 字形）。
+# fontconfig 把 monospace 指向它，xfce4-terminal、VS Code 的编辑器与终端、mousepad、Chromium 网页里的等宽文本都用它。
+# 选 NF-XX-NL-HT 版：带 Nerd 字形；不缩窄中文，保持 2:1 列对齐；不带连字，截图里的 != 仍是两个字符，agent 看屏幕不会误读；
+# 带 hinting，Xvnc 1280x800 这种低分辨率下更清楚。只装常规、粗体、斜体、粗斜体四个字重（约 74MB）。
+# 与上面 fetch 同一种做法：取上游最新发行版，按 GitHub 发布的摘要校验。
+RUN --mount=type=bind,source=oryn-monospace.conf,target=/tmp/oryn-monospace.conf \
+    release="$(curl -fsSL https://api.github.com/repos/SpaceTimee/Fusion-JetBrainsMapleMono/releases/latest)" \
+ && asset=JetBrainsMapleMono-NF-XX-NL-HT.zip \
+ && url="$(jq -er --arg n "$asset" '.assets[] | select(.name == $n) | .browser_download_url' <<< "$release")" \
+ && sha="$(jq -er --arg n "$asset" '.assets[] | select(.name == $n) | .digest | select(startswith("sha256:")) | ltrimstr("sha256:")' <<< "$release")" \
+ && curl -fsSLo /tmp/jbmm.zip "$url" && echo "$sha  /tmp/jbmm.zip" | sha256sum -c - \
+ && unzip -q -j /tmp/jbmm.zip -d /usr/share/fonts/jetbrains-maple-mono JetBrainsMapleMono-{Regular,Bold,Italic,BoldItalic}.ttf \
+ && unzip -q -j /tmp/jbmm.zip -d /usr/share/licenses/jetbrains-maple-mono LICENSE.txt \
+ && rm /tmp/jbmm.zip \
+ && install -m 0644 /tmp/oryn-monospace.conf /etc/fonts/conf.d/55-oryn-monospace.conf \
+ && fc-cache -f \
+ && [[ "$(fc-match -f '%{family[0]}' monospace)" == "JetBrains Maple Mono" ]] \
+ && printf 'jetbrains-maple-mono %s\n' "$(jq -er .tag_name <<< "$release")" >> /usr/local/share/oryn/upstream-versions.txt
+
 # 桌面应用清单（M25）：orbd 读 /usr/local/share/oryn/desktop-apps.json 上报任务栏应用，图标取自各应用自带的文件，
 # 由 desktop-icons.sh 解析后复制到 /usr/local/share/oryn/desktop-icons/ 并回写清单的 icon 字段；找不到图标就构建失败。
 # LibreOffice：share/registry 下的 xcd 把 ooSetupLastVersion 设成当前版本并关掉每日提示，首次启动不弹欢迎框；
@@ -217,18 +236,18 @@ RUN useradd --create-home --uid 1000 --shell /bin/bash user \
  && git config --system color.ui false \
  && git lfs install --system --skip-repo
 
-# 普通进程与登录 shell 都能找到用户安装的工具；不注入 alias、函数或 BASH_ENV。
+# 普通进程与登录 shell 都能找到用户安装的工具；不注入 alias 或 BASH_ENV。
 # Arch 的 perl 脚本（如 exiftool）装在 /usr/bin/*_perl，原本只由登录 shell 的 perlbin.sh 补进 PATH。
 ENV HOME=/home/user
 ENV PATH=/home/user/.local/bin:/home/user/.cargo/bin:/home/user/go/bin:$PATH:/usr/bin/site_perl:/usr/bin/vendor_perl:/usr/bin/core_perl
 RUN printf '%s\n' 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/go/bin:$PATH"' > /etc/profile.d/oryn-toolchains.sh \
- && printf '%s\n' '# 保留标准命令语义，不定义别名、补全或彩色提示。' \
-      'case $- in *i*) PS1="\\u@\\h:\\w\\$ " ;; esac' > /home/user/.bashrc \
  && printf '%s\n' 'prefix=${HOME}/.local' > /home/user/.npmrc \
  && printf '%s\n' '[ ! -f "$HOME/.profile" ] || . "$HOME/.profile"' \
       '[ ! -f "$HOME/.bashrc" ] || . "$HOME/.bashrc"' > /home/user/.bash_profile \
  && touch /home/user/.profile \
- && chown user:user /home/user/.bashrc /home/user/.bash_profile /home/user/.profile /home/user/.npmrc
+ && chown user:user /home/user/.bash_profile /home/user/.profile /home/user/.npmrc
+# 交互 shell：提示符与窗口标题只留工作目录，不带 user@<orb ID>；说明见文件内注释。
+COPY --chown=user:user --chmod=0644 bashrc /home/user/.bashrc
 
 COPY --chmod=0755 omp orbd oryn /usr/local/bin/
 COPY --chmod=0755 smoke-test.sh /usr/local/lib/oryn/smoke-test.sh

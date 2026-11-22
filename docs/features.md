@@ -76,9 +76,11 @@ orb 是线程的执行环境，不是要用户挑选或清理的资源：
 | 排障与数据 | `ip`/`ss`/`dig`/`nc`/`socat`/`whois`/`nmap`/`iperf3`、`lsof`/`strace`/`ltrace`/`gdb`、`htop`/`ncdu`、SQLite / PostgreSQL / MariaDB / Valkey(Redis) 客户端、DuckDB、Miller、HTTPie、`aria2`、`yt-dlp` |
 | 文档与媒体 | Pandoc、LibreOffice（`soffice --headless`）、Poppler/`qpdf`/Ghostscript/MuPDF/`img2pdf`、Tesseract OCR（英文、简繁中文）、ImageMagick、librsvg、WebP/AVIF/JPEG XL/HEIF 编解码、`optipng`/`pngquant`/`jpegoptim`/`gifsicle`、ExifTool、Graphviz、`qrencode`/`zbar`、FFmpeg、SoX、MediaInfo |
 | Python 库 | 系统 Python 可直接 `import`：numpy、pandas、scipy、matplotlib、Pillow、requests、BeautifulSoup、lxml、PyYAML、openpyxl、XlsxWriter、python-docx、pypdf、ReportLab |
-| 图形桌面 | TigerVNC (`Xvnc`)、Openbox、session D-Bus 与 AT-SPI 无障碍总线、受管策略加固的 Chromium、VS Code（微软官方版）、终端（`xfce4-terminal`）、文件管理器（`pcmanfm`）、文本编辑器（`mousepad`）、LibreOffice、中英文与彩色 Emoji 字体 |
+| 图形桌面 | TigerVNC (`Xvnc`)、Openbox、session D-Bus 与 AT-SPI 无障碍总线、受管策略加固的 Chromium、VS Code（微软官方版）、终端（`xfce4-terminal`）、文件管理器（`pcmanfm`）、文本编辑器（`mousepad`）、LibreOffice、中英文与彩色 Emoji 字体；等宽字体默认为 [JetBrains Maple Mono](https://github.com/SpaceTimee/Fusion-JetBrainsMapleMono)（中英文 2:1 对齐、带 Nerd Font 字形、无连字） |
 
-系统软件包记录在 `/usr/local/share/oryn/packages.txt`。ShellCheck、Pandoc、rust-analyzer、marksman、phpactor 从上游 GitHub 发行版安装（ARM 仓库缺包，双架构统一来源），VS Code 按微软更新 API 的 `sha256` 校验安装官方 tarball，版本一并记录在 `/usr/local/share/oryn/upstream-versions.txt`。桌面任务栏的应用清单在 `/usr/local/share/oryn/desktop-apps.json`，图标取自镜像内各应用自带的文件并收集在 `/usr/local/share/oryn/desktop-icons/`；不含该清单的自定义镜像在任务栏里只有内置的 Chromium。在项目 `setup` 脚本里增装系统包用 `sudo pacman -Syu --needed --noconfirm <包名>`。镜像已启用 [BlackArch](https://blackarch.org/) 源（双架构）：只导入经钉定签名主密钥校验的 keyring 与镜像列表，不预装安全工具；该源排在官方源之后，同名包仍取官方版本，其中的工具同样用上面的命令安装。跨架构构建 ARM64 镜像见 [`development.md`](development.md#跨架构构建-arm64-镜像)。
+交互 shell 的提示符只显示工作目录（如 `~/workspace $`，超过 3 级时前面折叠成 `~/.../a/b/c`），上一条命令失败时 `$` 变红；窗口与终端标题同样只显示工作目录，不带 `user@<orb ID>`。提示符是纯 ASCII，不用 Nerd 字形，agent 读终端文本和看截图时都能直接认出；非交互 shell 不受影响。
+
+系统软件包记录在 `/usr/local/share/oryn/packages.txt`。ShellCheck、Pandoc、rust-analyzer、marksman、phpactor、JetBrains Maple Mono 从上游 GitHub 发行版安装（ARM 仓库缺包，双架构统一来源），VS Code 按微软更新 API 的 `sha256` 校验安装官方 tarball，版本一并记录在 `/usr/local/share/oryn/upstream-versions.txt`。桌面任务栏的应用清单在 `/usr/local/share/oryn/desktop-apps.json`，图标取自镜像内各应用自带的文件并收集在 `/usr/local/share/oryn/desktop-icons/`；不含该清单的自定义镜像在任务栏里只有内置的 Chromium。在项目 `setup` 脚本里增装系统包用 `sudo pacman -Syu --needed --noconfirm <包名>`。镜像已启用 [BlackArch](https://blackarch.org/) 源（双架构）：只导入经钉定签名主密钥校验的 keyring 与镜像列表，不预装安全工具；该源排在官方源之后，同名包仍取官方版本，其中的工具同样用上面的命令安装。跨架构构建 ARM64 镜像见 [`development.md`](development.md#跨架构构建-arm64-镜像)。
 
 ## 工作台
 

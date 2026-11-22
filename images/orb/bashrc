@@ -1,0 +1,19 @@
+# shellcheck shell=bash
+# orb 里 user 的 ~/.bashrc（镜像内置）。不定义别名或补全，命令语义保持标准；非交互 shell（agent 的 bash 工具、脚本）不受影响。
+case $- in
+*i*)
+	# 提示符只留工作目录（家目录记作 ~，超过 3 级时前面折叠成 ...）和 $ / #，上一条命令失败时 $ 变红。
+	# 不显示 user@主机名：orb 的主机名是 26 位 ID，会占掉半行；ssh 到别的机器后由对方的提示符标明主机。
+	# 只用粗体和红色、纯 ASCII：agent 读终端文本时 ANSI 序列被剥掉，剩下的就是「~/workspace $」；明暗终端底色上都清楚。
+	# PS0、PS2 不在这里设：omp 的终端工具随后注入自己的钩子（前插到 PROMPT_COMMAND，并设 PS0、PS2）。
+	PROMPT_DIRTRIM=3
+	PS1='\[\e[1m\]\w\[\e[0m\] \[\e[$(($? ? 31 : 0))m\]\$\[\e[0m\] '
+	# 窗口和终端标题同样只留工作目录（完整路径）：只替换 /etc/bash.bashrc 加的 user@host:dir 那一项，
+	# PROMPT_COMMAND 里的其它项（systemd 的 OSC 3008、omp 的钩子）原样保留。
+	__oryn_title() { printf '\033]0;%s\007' "${PWD/#$HOME/\~}"; }
+	for __oryn_i in "${!PROMPT_COMMAND[@]}"; do
+		[[ ${PROMPT_COMMAND[__oryn_i]} == *']0;%s@%s:%s'* ]] && PROMPT_COMMAND[__oryn_i]=__oryn_title
+	done
+	unset __oryn_i
+	;;
+esac

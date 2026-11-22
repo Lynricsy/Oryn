@@ -62,6 +62,17 @@ grep -q "<value>$lo</value>" /usr/lib/libreoffice/share/registry/oryn.xcd
 [[ "${GLYCIN_DISABLE_SANDBOX:-}" == i-know-the-risks ]] # glycin 误判 bwrap 可用的绕过，见 Dockerfile
 printf '桌面应用清单 / 图标 / VS Code：通过\n'
 
+# 等宽字体：monospace（含中文语言环境）落到 JetBrains Maple Mono，它同时带中文与 Nerd 字形。
+for pattern in monospace 'monospace:lang=zh-cn'; do
+	[[ "$(fc-match -f '%{family[0]}' "$pattern")" == "JetBrains Maple Mono" ]]
+done
+[[ "$(fc-list ':charset=4e2d e0a0' family)" == *'JetBrains Maple Mono'* ]]
+# 交互 shell：提示符与窗口标题不带 user@主机名，PROMPT_COMMAND 的其它项保留。
+shell="$(TERM=xterm-256color bash -lic 'printf "%s\n" "$PS1"; declare -p PROMPT_COMMAND' 2>/dev/null)"
+[[ "$shell" == *'\w'* && "$shell" != *'\h'* && "$shell" != *'%s@%s'* ]]
+[[ "$shell" == *__oryn_title* && "$shell" == *__systemd_osc_context_precmdline* ]]
+printf '等宽字体 / 交互提示符：通过\n'
+
 # BlackArch 源：排在官方源之后，keyring 与同步库已就位；镜像里不留 pacman 本地私钥。
 [[ "$(pacman-conf --repo-list | tail -n 1)" == blackarch ]]
 pacman -Q blackarch-keyring blackarch-mirrorlist >/dev/null
