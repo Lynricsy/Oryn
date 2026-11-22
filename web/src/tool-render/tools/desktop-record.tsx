@@ -135,25 +135,40 @@ export function RecordNotes({ rec }: { rec: DesktopRecordingCard }): ReactNode {
 	);
 }
 
+/** 播放器最高 15rem（与 `max-h-60` 一致）。 */
+const VIDEO_MAX_REM = 15;
+
 /**
  * 内嵌播放；加载失败时换成 `failed`。换地址时由调用方按 `src` 重挂，错误状态随之清空。
  * `preload="none"`：取视频会唤醒冻结的 orb，只在用户点播放时才发请求，打开对话不发。
+ * 知道分辨率时按它预留宽高比（最高 15rem、不超过卡片宽），点播放前后卡片高度不变。
  */
 export function RecordingVideo({
 	src,
+	rec,
 	failed: failedView,
 }: {
 	src: string;
+	rec: DesktopRecordingCard;
 	failed: ReactNode;
 }): ReactNode {
 	const { t } = useTranslation();
 	const [failed, setFailed] = useState(false);
 	if (failed) return failedView;
+	const sized = rec.width && rec.height ? rec.width / rec.height : null;
 	return (
 		// biome-ignore lint/a11y/useMediaCaption: 桌面录像没有声音，也没有字幕可配
 		<video
 			data-testid="record-video"
 			className="block max-h-60 max-w-full rounded-sm border border-border bg-inset"
+			style={
+				sized
+					? {
+							aspectRatio: `${rec.width} / ${rec.height}`,
+							width: `min(100%, ${VIDEO_MAX_REM * sized}rem)`,
+						}
+					: undefined
+			}
 			src={src}
 			controls
 			preload="none"
@@ -245,6 +260,7 @@ function Result({ result, host }: ToolRenderProps): ReactNode {
 				<RecordingVideo
 					key={src}
 					src={src}
+					rec={rec}
 					failed={
 						<OrbVideoFailed path={rec.path} openOrbFile={host?.openOrbFile} />
 					}

@@ -3,7 +3,8 @@
  * 有不属于任何应用的窗口时末尾再加一个「其它窗口」。旧 orbd 不上报 `apps`，此时不渲染（面板保留舞台中央的「启动浏览器」）。
  *
  * 图标取自 orb（`/api/v1/orbs/{id}/desktop/apps/{app}/icon`，同源 Cookie），加载失败换成占位图标。
- * 运行中的应用图标下有一个圆点，`launching` 时叠一个转圈，拥有活动窗口的应用底色加深。
+ * 运行中的应用图标下有一个中性色圆点，`launching` 时叠一个转圈，拥有活动窗口的应用底色加深（比悬停与菜单展开深一档）。
+ * 窗口菜单里活动窗口行首打勾；同名窗口在标题后加淡色序号以便区分。
  *
  * 点击：没在运行 → 启动；一个窗口 → 活动且没最小化就最小化，否则切到前台；多个窗口 → 弹出窗口菜单
  * （每行一个窗口：点击切到前台、行尾关闭；末行「新建窗口」）。右键、长按或 Shift+F10 在任意运行中的图标上打开同一个菜单；
@@ -106,7 +107,7 @@ function DockButton({
 			aria-expanded={menu ? expanded : undefined}
 			data-testid={`dock-${slot.key}`}
 			data-active={active || undefined}
-			className={`relative grid size-9 shrink-0 select-none place-items-center rounded-full transition-colors duration-150 hover:bg-hover ${active ? "bg-hover" : ""}`}
+			className={`relative grid size-9 shrink-0 select-none place-items-center rounded-full transition-colors duration-150 ${active ? "bg-active" : expanded ? "bg-hover" : "hover:bg-hover"}`}
 			onFocus={onFocus}
 			onClick={() => {
 				if (press.current.fired) {
@@ -168,7 +169,7 @@ function DockButton({
 				<span
 					aria-hidden
 					data-testid="dock-running-dot"
-					className="absolute bottom-0.5 left-1/2 size-1 -translate-x-1/2 rounded-full bg-accent"
+					className="absolute bottom-0.5 left-1/2 size-1 -translate-x-1/2 rounded-full bg-muted"
 				/>
 			)}
 		</button>
@@ -366,6 +367,8 @@ export function DesktopDock({
 					ref={menuRef}
 					anchor={anchor}
 					side="top"
+					// 锚点是胶囊里的图标：再让出胶囊的内边距与描边，菜单与任务栏之间留 8px
+					gap={12}
 					role="menu"
 					aria-label={openName}
 					data-testid="desktop-dock-menu"
@@ -375,21 +378,34 @@ export function DesktopDock({
 				>
 					{open.wins.map((w) => {
 						const title = w.title || t("deskPanel.dock.untitled");
+						const same = open.wins.filter(
+							(x) => (x.title || t("deskPanel.dock.untitled")) === title,
+						);
+						const ordinal = same.length > 1 ? same.indexOf(w) + 1 : 0;
+						const label = ordinal ? `${title} · ${ordinal}` : title;
+						const current = w.active && !w.minimized;
 						return (
 							<div key={w.id} className="flex items-center gap-0.5">
 								<button
 									type="button"
 									role="menuitem"
+									aria-current={current || undefined}
 									className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-fg text-sm hover:bg-hover"
 									onClick={() => {
 										closeMenu(true);
 										void doWindow(w.id, "activate");
 									}}
 								>
-									<span
-										className={`min-w-0 flex-1 truncate ${w.active && !w.minimized ? "font-medium" : ""}`}
-									>
+									<span className="grid w-3.5 shrink-0 place-items-center">
+										{current && (
+											<Icon name="check" size={14} className="text-muted" />
+										)}
+									</span>
+									<span className="min-w-0 flex-1 truncate">
 										{title}
+										{ordinal > 0 && (
+											<span className="text-faint"> · {ordinal}</span>
+										)}
 									</span>
 									{w.minimized && (
 										<span className="shrink-0 text-faint text-xs">
@@ -402,7 +418,7 @@ export function DesktopDock({
 									icon="close"
 									box="sm"
 									size={13}
-									label={t("deskPanel.dock.closeWindow", { title })}
+									label={t("deskPanel.dock.closeWindow", { title: label })}
 									onClick={() => {
 										closeMenu(true);
 										void doWindow(w.id, "close");

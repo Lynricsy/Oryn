@@ -71,6 +71,8 @@ const TOOL_ICON: Record<string, IconName> = {
 	tts: "megaphone",
 	security_scan: "lock",
 	ida: "cpu",
+	desktop_record: "videoCamera",
+	computer_record: "videoCamera",
 	[XDEV_DOCS_TOOL]: "info",
 	[XDEV_DEVICE_TOOL]: "device",
 };

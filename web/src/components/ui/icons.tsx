@@ -152,6 +152,7 @@ import { Tray } from "@phosphor-icons/react/dist/csr/Tray";
 import { TreeStructure } from "@phosphor-icons/react/dist/csr/TreeStructure";
 import { UploadSimple } from "@phosphor-icons/react/dist/csr/UploadSimple";
 import { User } from "@phosphor-icons/react/dist/csr/User";
+import { VideoCamera } from "@phosphor-icons/react/dist/csr/VideoCamera";
 import { WarningCircle } from "@phosphor-icons/react/dist/csr/WarningCircle";
 import { WebhooksLogo } from "@phosphor-icons/react/dist/csr/WebhooksLogo";
 import { Wrench } from "@phosphor-icons/react/dist/csr/Wrench";
@@ -281,6 +282,8 @@ const ICONS = {
 	broadcast: Broadcast,
 	/** 快照分享 */
 	camera: Camera,
+	/** 录屏工具（M25 `desktop_record` / `computer_record`） */
+	videoCamera: VideoCamera,
 	/** 把 orb 的改动同步到本地检出（改动面板「同步 ▾」） */
 	pull: ArrowLineDown,
 	/** GitHub PR（M14）：打开 / 草稿 / 关闭用 `pullRequest`，已合并用 `merge`；`pull` 是同步的下载箭头，别混用 */

@@ -70,6 +70,7 @@ function Result({ result, host }: ToolRenderProps): ReactNode {
 				<RecordingVideo
 					key={src}
 					src={src}
+					rec={card.rec}
 					failed={
 						<Note tone="err">{t("toolRender.computerRecord.loadFailed")}</Note>
 					}
