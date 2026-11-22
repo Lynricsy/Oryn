@@ -42,8 +42,10 @@ func (s *Service) CheckGateHost(ctx context.Context, projectID string, automatio
 }
 
 // RunGate 代主人在主机上执行定时的运行前闸门（控制面直接拨号，不经 orb），分开收集 stdout 与 stderr，并记一行审计
-// （来源 owner，detail 为 label 与命令）。整个过程（含拨号）受 timeout 约束。
+// （来源 owner，detail 为 label 与命令）。整个过程（含拨号）受 timeout 约束。连接与网关会话一样登记为活动连接：
+// 拨号期间链上主机被改（停用、收回全自动权限、改配置）则不执行；执行中被改则断开，按执行失败返回。
 func (s *Service) RunGate(ctx context.Context, projectID string, automation bool, host, command, label string, timeout time.Duration) (res GateResult) {
+	since := s.snapshot() // 先取快照再读主机：之后的任何修改都会让登记失败
 	h, deny, err := s.resolve(ctx, gateViewer(projectID, automation), host)
 	if err == nil && deny != "" {
 		s.audit(ctx, auditRow{source: srcOwner, host: h, hostName: host, kind: "deny", detail: label + ": " + deny})
@@ -74,6 +76,12 @@ func (s *Service) RunGate(ctx context.Context, projectID string, automation bool
 		return GateResult{Err: err}
 	}
 	defer up.Close()
+	// 拨通即登记：拨号期间链上主机被改则作废、不执行；执行中被改由 invalidate 关掉上游连接
+	untrack, ok := s.track(up.hostIDs, since, up.Close)
+	if !ok {
+		return GateResult{Err: errStale}
+	}
+	defer untrack()
 	stdout, stderr := &headTail{half: gateOutputHalf}, &headTail{half: gateOutputHalf}
 	expired, err := runBounded(dctx, up.client, up.Close, func(sess *ssh.Session) { sess.Stdout, sess.Stderr = stdout, stderr }, command)
 	res = GateResult{Stdout: stdout.String(), Stderr: stderr.String()}
