@@ -393,7 +393,8 @@ func TestAgentAssetsAndExtensionArg(t *testing.T) {
 	assert.Equal(t, ext, args[i+1])
 }
 
-// M14：写出的扩展注册 artifact 工具（阶段 1 的 8 个），agent 的环境里有指向 orbd.sock 的 ORYN_ARTIFACT_SOCK。
+// M14：写出的扩展注册 artifact 工具（阶段 1 的 8 个），agent 的环境里有指向 orbd.sock 的 ORYN_ARTIFACT_SOCK；
+// 标题卡片用 Nerd 字形（ORYN_NERD_GLYPHS=1）。
 func TestArtifactExtensionAndSockEnv(t *testing.T) {
 	cp := newFakeCP(t)
 	rt := startRuntime(t, cp, nil)
@@ -414,6 +415,7 @@ func TestArtifactExtensionAndSockEnv(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "environ"))
 	require.NoError(t, err)
 	assert.Contains(t, strings.Split(string(raw), "\x00"), "ORYN_ARTIFACT_SOCK="+orbsock.Path(rt.home))
+	assert.Contains(t, strings.Split(string(raw), "\x00"), "ORYN_NERD_GLYPHS=1")
 }
 
 func indexOf(s []string, v string) int {
