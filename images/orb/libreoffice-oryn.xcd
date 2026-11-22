@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Oryn orb：关掉 LibreOffice 首次启动的欢迎对话框与每日提示。
+     构建时把 value 里的版本占位符换成 libreoffice 报告的「主版本.次版本」，再装进 share/registry/：
+     ooSetupLastVersion 不低于当前版本时，LibreOffice 认为不是首次启动或刚升级，不弹欢迎框。
+     依赖 main.xcd 里的 Setup 与 Common 模式，按文件名排序本文件会先于 main.xcd 加载，所以声明依赖。 -->
+<oor:data xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:oor="http://openoffice.org/2001/registry">
+  <dependency file="main"/>
+  <oor:items>
+    <item oor:path="/org.openoffice.Setup/Product">
+      <prop oor:name="ooSetupLastVersion" oor:op="fuse">
+        <value>@VERSION@</value>
+      </prop>
+    </item>
+    <item oor:path="/org.openoffice.Office.Common/Misc">
+      <prop oor:name="ShowTipOfTheDay" oor:op="fuse">
+        <value>false</value>
+      </prop>
+    </item>
+  </oor:items>
+</oor:data>

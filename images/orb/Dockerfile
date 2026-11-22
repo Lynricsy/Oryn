@@ -1,5 +1,5 @@
 # Oryn orb 镜像：每个线程一台的隔离开发机。
-# 由 scripts/build-orb-image.sh 构建；上下文只含三个二进制与冒烟脚本。
+# 由 scripts/build-orb-image.sh 构建；上下文只含三个二进制、冒烟脚本与桌面应用清单相关的三个文件。
 # x64 使用官方镜像，ARM64 使用公开每日构建的社区镜像；构建脚本强制拉取最新版本。
 ARG TARGETARCH=amd64
 FROM archlinux:latest AS base-amd64
@@ -63,6 +63,10 @@ RUN case "$TARGETARCH" in amd64) a=x86_64 ;; arm64) a=aarch64 ;; *) exit 1 ;; es
 # 非开发工具覆盖文档转换、OCR、音视频、图片优化、下载与数据处理；Python 常用库由 pacman 装入系统环境，可直接 import。
 # blackarch-mirrorlist 接管上一步下载的同名镜像列表，之后随系统升级更新。
 # extra/sox 14.8.0.1-2 链接 libebur128.so.1 却未声明依赖（官方 archlinux 镜像单装 sox 即复现），显式补装；上游补上依赖后可删。
+# 桌面应用（M25）：终端用 xfce4-terminal 而不是 Amp 用的 foot——foot 只支持 Wayland，orb 桌面是 X11（Xvnc）；
+# xfce4-terminal 是 GTK3（VTE），不需要 OpenGL，无障碍树可读。文件管理器 pcmanfm（Arch 的 pcmanfm 就是 GTK3 版）、编辑器 mousepad。
+# dbus、at-spi2-core 本是 chromium 的依赖，显式列出，免得上游依赖变化后被带走：orbd 靠它们起 session dbus 与 AT-SPI。
+# adwaita-icon-theme-legacy 同理（gtk3 的依赖）：pcmanfm 的图标 system-file-manager 只有这个主题里有。
 RUN pacman --disable-sandbox -Syu --noconfirm --needed --overwrite /etc/pacman.d/blackarch-mirrorlist \
       blackarch-mirrorlist \
       base-devel ca-certificates curl wget openssl git git-lfs openssh rsync sudo bash dash \
@@ -83,7 +87,8 @@ RUN pacman --disable-sandbox -Syu --noconfirm --needed --overwrite /etc/pacman.d
       perl-image-exiftool graphviz qrencode zbar ffmpeg sox libebur128 mediainfo yt-dlp aria2 httpie miller duckdb \
       python-numpy python-pandas python-scipy python-matplotlib python-pillow python-requests python-beautifulsoup4 \
       python-lxml python-yaml python-openpyxl python-xlsxwriter python-docx python-pypdf python-reportlab \
-      tigervnc xorg-setxkbmap xkeyboard-config openbox chromium \
+      tigervnc xorg-setxkbmap xkeyboard-config openbox chromium xorg-xsetroot \
+      xfce4-terminal mousepad pcmanfm dbus at-spi2-core adwaita-icon-theme-legacy \
       ttf-liberation noto-fonts-cjk noto-fonts-emoji xorg-xdpyinfo xorg-xwininfo xorg-xprop xorg-xauth xclip \
  && printf '%s\n' 'en_US.UTF-8 UTF-8' > /etc/locale.gen && locale-gen \
  && php -r 'foreach (["curl", "iconv", "mbstring", "openssl", "pdo_sqlite", "sqlite3", "zip"] as $extension) { if (!extension_loaded($extension)) { echo "extension=$extension\n"; } }' > /etc/php/conf.d/oryn.ini \
@@ -123,6 +128,45 @@ RUN case "$TARGETARCH" in amd64) a=x86_64 ga=x64 pa=amd64 ;; arm64) a=aarch64 ga
  && rm /tmp/shellcheck.tar.xz /tmp/pandoc.tar.gz /tmp/rust-analyzer.gz \
  && { shellcheck --version | sed -n 2p; pandoc --version | head -1; rust-analyzer --version; \
       printf 'marksman %s\n' "$(marksman --version)"; phpactor --version; } > /usr/local/share/oryn/upstream-versions.txt
+
+# VS Code（M25 桌面应用）：微软官方 tarball。不用 pacman 的 code：那是 Code - OSS，走 Open VSX，部分微软扩展装不了。
+# 与上面 fetch 同一种做法：从更新 API 取 url 与 sha256hash，下载后校验摘要再解压到 /opt/vscode（约 1.1GB）。
+# tarball 不带桌面项；写入 code.desktop，omp computer 的 apps.list 才能找到它。chrome-sandbox 的 setuid 位随 tarball 保留。
+RUN case "$TARGETARCH" in amd64) va=linux-x64 ;; arm64) va=linux-arm64 ;; *) exit 1 ;; esac \
+ && release="$(curl -fsSL "https://update.code.visualstudio.com/api/update/${va}/stable/latest")" \
+ && url="$(jq -er .url <<< "$release")" && sha="$(jq -er .sha256hash <<< "$release")" \
+ && curl -fsSLo /tmp/vscode.tar.gz "$url" && echo "$sha  /tmp/vscode.tar.gz" | sha256sum -c - \
+ && install -d /opt/vscode \
+ && tar -xzf /tmp/vscode.tar.gz -C /opt/vscode --strip-components=1 --no-same-owner \
+ && rm /tmp/vscode.tar.gz \
+ && ln -s /opt/vscode/bin/code /usr/local/bin/code \
+ && test -f /opt/vscode/resources/app/resources/linux/code.png \
+ && printf '%s\n' '[Desktop Entry]' \
+      'Type=Application' \
+      'Name=Visual Studio Code' \
+      'GenericName=Text Editor' \
+      'Comment=Code Editing. Redefined.' \
+      'Exec=code %F' \
+      'Icon=/opt/vscode/resources/app/resources/linux/code.png' \
+      'StartupNotify=false' \
+      'StartupWMClass=code' \
+      'Categories=TextEditor;Development;IDE;' \
+      'MimeType=text/plain;inode/directory;' > /usr/share/applications/code.desktop \
+ && printf 'vscode %s\n' "$(jq -er .productVersion <<< "$release")" >> /usr/local/share/oryn/upstream-versions.txt
+
+# 桌面应用清单（M25）：orbd 读 /usr/local/share/oryn/desktop-apps.json 上报任务栏应用，图标取自各应用自带的文件，
+# 由 desktop-icons.sh 解析后复制到 /usr/local/share/oryn/desktop-icons/ 并回写清单的 icon 字段；找不到图标就构建失败。
+# LibreOffice：share/registry 下的 xcd 把 ooSetupLastVersion 设成当前版本并关掉每日提示，首次启动不弹欢迎框；
+# xcd 写坏会让 LibreOffice 连 --version 都崩溃，所以装完再跑一次。三个文件只经 bind mount 读取，不留在镜像里。
+RUN --mount=type=bind,source=desktop-apps.json,target=/tmp/oryn-desktop/desktop-apps.json \
+    --mount=type=bind,source=desktop-icons.sh,target=/tmp/oryn-desktop/desktop-icons.sh \
+    --mount=type=bind,source=libreoffice-oryn.xcd,target=/tmp/oryn-desktop/libreoffice-oryn.xcd \
+    bash /tmp/oryn-desktop/desktop-icons.sh /tmp/oryn-desktop/desktop-apps.json /usr/local/share/oryn \
+ && lo="$(libreoffice --version | awk '{ print $2 }' | cut -d. -f1,2)" && [[ "$lo" =~ ^[0-9]+\.[0-9]+$ ]] \
+ && sed "s/@VERSION@/$lo/" /tmp/oryn-desktop/libreoffice-oryn.xcd > /usr/lib/libreoffice/share/registry/oryn.xcd \
+ && xmllint --noout /usr/lib/libreoffice/share/registry/oryn.xcd \
+ && grep -q "<value>$lo</value>" /usr/lib/libreoffice/share/registry/oryn.xcd \
+ && libreoffice --version
 
 # Docker（M11a 嵌套 Docker）：Docker 官方静态发行版（download.docker.com，与 Debian trixie apt 源同一版本）
 # 加 buildx / compose 插件，版本与摘要全部钉死。Arch 仓库是滚动版本、无法钉版本，所以不用 pacman 的 docker。

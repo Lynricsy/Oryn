@@ -1,0 +1,53 @@
+[
+  {
+    "id": "chromium",
+    "name": "Chromium",
+    "exec": [],
+    "wmClass": ["Chromium"],
+    "desktopFile": "chromium.desktop"
+  },
+  {
+    "id": "terminal",
+    "name": "Terminal",
+    "exec": ["xfce4-terminal"],
+    "wmClass": ["Xfce4-terminal"],
+    "desktopFile": "xfce4-terminal.desktop"
+  },
+  {
+    "id": "vscode",
+    "name": "VS Code",
+    "exec": ["code", "--force-renderer-accessibility"],
+    "wmClass": ["code"],
+    "desktopFile": "code.desktop"
+  },
+  {
+    "id": "files",
+    "name": "Files",
+    "exec": ["pcmanfm"],
+    "wmClass": ["Pcmanfm"],
+    "desktopFile": "pcmanfm.desktop"
+  },
+  {
+    "id": "editor",
+    "name": "Text Editor",
+    "exec": ["mousepad"],
+    "wmClass": ["Org.xfce.mousepad"],
+    "desktopFile": "org.xfce.mousepad.desktop"
+  },
+  {
+    "id": "libreoffice",
+    "name": "LibreOffice",
+    "exec": ["libreoffice", "--nologo"],
+    "wmClass": [
+      "libreoffice-startcenter",
+      "libreoffice-writer",
+      "libreoffice-calc",
+      "libreoffice-impress",
+      "libreoffice-draw",
+      "libreoffice-math",
+      "libreoffice-base",
+      "Soffice"
+    ],
+    "desktopFile": "libreoffice-startcenter.desktop"
+  }
+]

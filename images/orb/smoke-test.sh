@@ -27,7 +27,8 @@ for cmd in omp orbd oryn node npm npx pnpm bun bunx python python3 pip pipx uv u
 	pandoc soffice gs mutool img2pdf tesseract magick rsvg-convert cwebp avifenc cjxl heif-enc \
 	optipng pngquant jpegoptim gifsicle exiftool dot qrencode zbarimg sox soxi mediainfo \
 	yt-dlp aria2c http mlr duckdb \
-	chromium Xvnc openbox docker dockerd containerd; do
+	chromium Xvnc openbox docker dockerd containerd \
+	xfce4-terminal mousepad pcmanfm code dbus-daemon xsetroot; do
 	command -v "$cmd" >/dev/null || { echo "缺少工具：$cmd" >&2; exit 1; }
 done
 
@@ -36,6 +37,29 @@ docker --version
 docker compose version
 docker buildx version
 id -nG | tr ' ' '\n' | grep -qx docker
+
+# 桌面应用（M25）：清单按任务栏顺序列出六个应用，字段齐全，图标文件都在镜像里；VS Code 是官方发行版。
+apps=/usr/local/share/oryn/desktop-apps.json
+jq -e '
+	map(.id) == ["chromium", "terminal", "vscode", "files", "editor", "libreoffice"]
+	and all(.[];
+		(.id | test("^[a-z][a-z0-9-]{0,31}$"))
+		and (.name | type == "string" and length > 0 and length <= 64)
+		and (.exec | type == "array" and all(.[]; type == "string")) and (.id == "chromium" or (.exec | length > 0))
+		and (.wmClass | type == "array" and length > 0 and all(.[]; type == "string" and length > 0))
+		and (.desktopFile | type == "string" and endswith(".desktop"))
+		and (.icon | type == "string" and test("^[a-z][a-z0-9-]*\\.(svg|png)$")))
+' "$apps" >/dev/null
+while IFS=$'\t' read -r id icon desktop; do
+	[[ "$icon" == "$id".* ]]
+	test -s "/usr/local/share/oryn/desktop-icons/$icon"
+	test -f "/usr/share/applications/$desktop"
+done < <(jq -r '.[] | [.id, .icon, .desktopFile] | @tsv' "$apps")
+[[ "$(code --version | sed -n 1p)" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+# LibreOffice 欢迎框靠 share/registry 下的 oryn.xcd 关掉：ooSetupLastVersion 必须等于已装版本的「主版本.次版本」。
+lo="$(pacman -Q libreoffice-fresh | awk '{ print $2 }' | cut -d. -f1,2)"
+grep -q "<value>$lo</value>" /usr/lib/libreoffice/share/registry/oryn.xcd
+printf '桌面应用清单 / 图标 / VS Code：通过\n'
 
 # BlackArch 源：排在官方源之后，keyring 与同步库已就位；镜像里不留 pacman 本地私钥。
 [[ "$(pacman-conf --repo-list | tail -n 1)" == blackarch ]]
