@@ -45,8 +45,9 @@ const (
 	MethodDesktopBrowserStop  = "desktop.browser.stop"
 
 	// 录屏（M25）：desktop.record.start 开始录制桌面（DesktopRecordStartResult）；desktop.record.stop 停止并返回
-	// DesktopRecording。每台 orb 同时最多一个录制：已在录回 already_recording，显示未就绪回 not_ready；
-	// 没在录、也没有因上限或出错停下且未取走的结果时，stop 回 not_recording。
+	// DesktopRecording。每台 orb 同时最多一个录制：已在录回 already_recording，显示未就绪回 not_ready，
+	// 用户接管或有待答的 desktop_ask_user 时回 control_user；没在录、也没有因上限、出错或控制状态变化停下且未取走的
+	// 结果时，stop 回 not_recording。
 	MethodDesktopRecordStart = "desktop.record.start"
 	MethodDesktopRecordStop  = "desktop.record.stop"
 
@@ -121,6 +122,7 @@ const (
 
 	CodeAlreadyRecording = "already_recording" // 桌面已在录制
 	CodeNotRecording     = "not_recording"     // 桌面没有在录制，也没有待取走的录制结果
+	CodeControlUser      = "control_user"      // 用户接管了桌面或有待答的 desktop_ask_user（控制状态 user / ask），不能开始录制
 
 	CodeTimeout = "timeout" // thread.wait 到时目标仍未静止
 )
@@ -228,9 +230,10 @@ type DesktopRecordStartResult struct {
 
 // 录制停止的原因（DesktopRecording.StoppedBy）。
 const (
-	RecordStoppedByAgent = "agent" // 调用方 stop
-	RecordStoppedByLimit = "limit" // 到达时长上限（10 分钟）自动停止
-	RecordStoppedByError = "error" // ffmpeg 自己退出，或显示失效
+	RecordStoppedByAgent   = "agent"   // 调用方 stop
+	RecordStoppedByLimit   = "limit"   // 到达时长上限（10 分钟）自动停止
+	RecordStoppedByError   = "error"   // ffmpeg 自己退出，或显示失效
+	RecordStoppedByControl = "control" // 用户接管、agent 请求人工操作或回合结束：放开人工输入之前先停录
 )
 
 // DesktopRecording 是一次结束的录屏（desktop.record.stop 与 POST /desktop/record/stop 的结果）。

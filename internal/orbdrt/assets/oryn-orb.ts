@@ -54,7 +54,7 @@ const DESKTOP_GUIDE = `桌面与浏览器：这台 orb 有一块 X11 桌面（DI
 - 浏览器里可能带着用户的登录态（浏览器 Profile）：不要把 Cookie、令牌或 tab.cookies() / tab.saveState() 的结果写进文件、日志或回复；不要退出用户已登录的账号，除非用户要求。
 - 登录、验证码、二次验证、支付确认，以及其它只能由真人在桌面上完成的步骤，用 desktop_ask_user 工具请用户在 Desktop 面板里操作：先把页面停在需要用户操作的位置，工具会等到用户点「完成」或「跳过」才返回。绝不要在聊天里索要密码、验证码或其它凭据，也不要替用户输入它们。
 - 桌面有控制状态（idle / agent / user / ask）：你工作时用户只能观看，用户可以随时接管。用户接管期间 browser 命令会被挂起、最多 45 秒后报错，你会收到「[Oryn] 用户接管了桌面」的消息；此时不要操作桌面（computer 工具不会被拦截，同样不要用），等收到交还消息再继续，交还后先确认页面状态。
-- 改了界面、需要让用户看到实际效果时，先 desktop_record start，在桌面上演示一遍，再 desktop_record stop，视频会直接显示在对话里；录制最长 10 分钟，到时自动停止。
+- 改了界面、需要让用户看到实际效果时，先 desktop_record start，在桌面上演示一遍，再 desktop_record stop，视频会直接显示在对话里；录制最长 10 分钟，到时自动停止。用户接管桌面、你调用 desktop_ask_user 或本回合结束时，录制会先自动结束（避免把用户的输入录进去），用户接管或等待用户操作期间也不能开始录制。
 - 查看状态：oryn orb desktop status。`;
 
 // desktop_ask_user 的请求格式：标题「需要你操作桌面（<事项>）：<原因>」（other 不带括号），选项恰为「完成」「跳过」。
@@ -129,7 +129,7 @@ interface DesktopRecording {
 	width: number;
 	height: number;
 	truncated: boolean;
-	stoppedBy: "agent" | "limit" | "error";
+	stoppedBy: "agent" | "limit" | "error" | "control";
 }
 
 // 录屏的错误码翻成给模型的可操作说明；其它错误码照原样报。
@@ -137,6 +137,8 @@ const RECORD_ERRORS: Record<string, string> = {
 	already_recording: "桌面已经在录制中（同一时间只能有一个录制）。先调 desktop_record stop 结束当前录制，需要时再重新 start。",
 	not_recording: "现在没有在录制，也没有待取回的录制结果。要录屏先调 desktop_record start，演示完再 stop。",
 	not_ready: "桌面显示还没就绪，暂时不能录制。稍等几秒再试；一直不行就用 oryn orb desktop status 查看桌面状态。",
+	control_user:
+		"用户正在操作桌面（接管了桌面，或在处理 desktop_ask_user 的请求），现在不能开始录制，免得把用户的输入录进去。先做与桌面无关的工作，等用户交还（会收到交还消息）或请求处理完之后，需要时再 desktop_record start。",
 };
 
 function formatDuration(ms: number): string {
@@ -154,6 +156,10 @@ function formatRecording(r: DesktopRecording): string {
 		lines.push("注意：录制达到 10 分钟上限后已自动停止，之后的操作没有录进去；需要的话重新 start 录剩下的部分。");
 	} else if (r.stoppedBy === "error") {
 		lines.push("注意：录制中途出错结束（例如桌面分辨率变了或显示失效），视频只包含出错之前的内容；需要完整演示就重新录一次。");
+	} else if (r.stoppedBy === "control") {
+		lines.push(
+			"注意：用户接管了桌面、你请求了用户操作（desktop_ask_user）或上一回合结束，录制在放开用户输入之前已自动结束，视频只包含那之前的内容。用户交还桌面后，需要的话重新 desktop_record start 录剩下的部分。",
+		);
 	}
 	if (r.truncated) {
 		lines.push("注意：录制程序没能正常收尾、被强行结束，文件可能不完整或无法播放；向用户说明这一点，必要时重新录制。");
@@ -175,7 +181,7 @@ function registerDesktopRecord(pi: ExtensionAPI) {
 			label: "录制桌面",
 			description:
 				"录制这台 orb 的桌面（用户在 Desktop 面板里看到的画面）为视频。action: start 开始录制；在桌面上演示完后 action: stop 结束，视频会直接显示在对话里给用户播放。" +
-				"同一时间只能有一个录制，最长 10 分钟，到时自动停止（之后 stop 仍会取回这段视频）。",
+				"同一时间只能有一个录制，最长 10 分钟，到时自动停止（之后 stop 仍会取回这段视频）。用户接管桌面、调用 desktop_ask_user 或回合结束时录制会先自动结束，stop 仍能取回已录的部分；用户接管或等待用户操作期间不能开始录制。",
 			parameters: z.object({
 				action: z.enum(["start", "stop"]).describe("start 开始录制；stop 结束录制并把视频展示给用户"),
 			}),

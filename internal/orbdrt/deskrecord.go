@@ -17,14 +17,17 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/orbsock"
 )
 
-// 录屏（M25 计划 3.1）：ffmpeg x11grab 录 :1，每台 orb 同时最多一个录制。文件放在
+// 录屏（M25 计划 3.1、3.5）：ffmpeg x11grab 录 :1，每台 orb 同时最多一个录制。文件放在
 // `$HOME/recordings/<UTC yyyyMMdd-HHmmss>.mp4`，只保留最近 recordKeep 个。停止时往 ffmpeg 的 stdin 写 `q`
 // 让它收尾（写完 moov），最多等 recordStopGrace，超时对进程组 SIGKILL 并标记 Truncated。
-// 到时长上限自动停止（StoppedBy=limit）；ffmpeg 自己退出或显示失效（Xvnc 退出、重启）时按 StoppedBy=error 收尾。
-// 自动停下的结果留给下一次 stop 取走。本机路由与 orbd.sock 方法共用 start / stop。
+// 到时长上限自动停止（StoppedBy=limit）；ffmpeg 自己退出或显示失效（Xvnc 退出、重启）时按 StoppedBy=error 收尾；
+// 控制状态进入 user / ask 或 agent → idle 时，放开人工输入之前按 StoppedBy=control 收尾（deskcontrol.go 的
+// takeControl / changeControl），user / ask 状态下也不能开始录制。自动停下的结果留给下一次 stop 取走。
+// 本机路由与 orbd.sock 方法共用 start / stop。
 
 const (
 	recordFPS = 15
@@ -45,6 +48,7 @@ var (
 	errAlreadyRecording = errors.New("desktop: already recording")
 	errNotRecording     = errors.New("desktop: not recording")
 	errDisplayNotReady  = errors.New("desktop: display not ready")
+	errControlUser      = errors.New("desktop: the user has the desktop")
 )
 
 // recordNameRe 匹配录制器写的文件名：时间戳，同一秒内的后续录制带 `-<n>` 后缀。保留策略只动这些文件。
@@ -75,7 +79,7 @@ type deskRecorder struct {
 	grace time.Duration
 	keep  int
 	cur   *recording // 进行中的录制；nil = 没在录
-	last  *recording // 因上限或出错自动停下、还没被 stop 取走的录制
+	last  *recording // 因上限、出错或控制状态变化自动停下、还没被 stop 取走的录制
 }
 
 // recording 是一次录制。res 在 finished 关闭之前写好，之后只读。
@@ -86,7 +90,7 @@ type recording struct {
 	pid     int
 	stdin   io.WriteCloser
 	exited  <-chan struct{} // ffmpeg 被回收后关闭
-	stopReq chan struct{}   // 容量 1：调用方要求停止
+	stopReq chan string     // 容量 1：要求停止，值是 StoppedBy（agent 或 control）
 
 	finished chan struct{}
 	res      orbsock.DesktopRecording
@@ -99,7 +103,7 @@ func (rr *deskRecorder) active() bool {
 	return rr.cur != nil
 }
 
-// start 开始录制：已在录回 errAlreadyRecording，显示未就绪回 errDisplayNotReady。
+// start 开始录制：已在录回 errAlreadyRecording，显示未就绪回 errDisplayNotReady，控制状态是 user / ask 回 errControlUser。
 func (rr *deskRecorder) start(ctx context.Context) (orbsock.DesktopRecordStartResult, error) {
 	rr.mu.Lock()
 	defer rr.mu.Unlock()
@@ -109,17 +113,29 @@ func (rr *deskRecorder) start(ctx context.Context) (orbsock.DesktopRecordStartRe
 	d := rr.d
 	d.mu.Lock()
 	ready, xpid := d.displayReady, d.xvncPid
+	st := d.controlLocked().State
+	userHas := st == apigen.OrbDesktopControlStateUser || st == apigen.OrbDesktopControlStateAsk
+	if ready && !userHas {
+		// 与检查控制状态在同一次 d.mu 里登记：此后会放开人工输入的控制变化都会先来停这次录制
+		// （stopForControl 要等 rr.mu，也就是等 start 返回）。
+		d.ctl.recording = true
+	}
 	d.mu.Unlock()
 	if !ready {
 		return orbsock.DesktopRecordStartResult{}, errDisplayNotReady
 	}
+	if userHas {
+		return orbsock.DesktopRecordStartResult{}, errControlUser
+	}
 	w, h := d.rootSize(ctx)
 	path, err := newRecordingPath(filepath.Join(d.r.home, "recordings"), time.Now())
 	if err != nil {
+		rr.clearRecordingLocked()
 		return orbsock.DesktopRecordStartResult{}, err
 	}
 	rec, err := d.startFFmpeg(path, w, h)
 	if err != nil {
+		rr.clearRecordingLocked()
 		return orbsock.DesktopRecordStartResult{}, err
 	}
 	// 上一次自动停下的结果没人取走：新录制开始后不再给出。
@@ -145,7 +161,7 @@ func (rr *deskRecorder) stop(ctx context.Context) (orbsock.DesktopRecording, err
 	}
 	rr.mu.Unlock()
 	select {
-	case rec.stopReq <- struct{}{}:
+	case rec.stopReq <- orbsock.RecordStoppedByAgent:
 	default:
 	}
 	select {
@@ -160,6 +176,29 @@ func (rr *deskRecorder) stop(ctx context.Context) (orbsock.DesktopRecording, err
 	}
 	rr.mu.Unlock()
 	return rec.res, nil
+}
+
+// stopForControl 以 StoppedBy=control 结束当前录制并等它收尾（ffmpeg 已退出），结果留给下一次 stop 取走；
+// 没在录时立即返回。由控制状态的变化在放开人工输入之前调用，调用方不能持有 d.mu（收尾最多等 grace 加 SIGKILL）。
+func (rr *deskRecorder) stopForControl() {
+	rr.mu.Lock()
+	rec := rr.cur
+	rr.mu.Unlock()
+	if rec == nil {
+		return
+	}
+	select {
+	case rec.stopReq <- orbsock.RecordStoppedByControl:
+	default: // 已有停止请求（agent stop 或另一次控制变化）：等同一次收尾
+	}
+	<-rec.finished
+}
+
+// clearRecordingLocked 清除 desktop 上「有录制在进行」的登记。调用方持有 rr.mu，因此与 rr.cur 的变化一致。
+func (rr *deskRecorder) clearRecordingLocked() {
+	rr.d.mu.Lock()
+	rr.d.ctl.recording = false
+	rr.d.mu.Unlock()
 }
 
 // watch 等到调用方停止、到达上限、ffmpeg 自己退出或显示失效（显示掉了，或 Xvnc 换了进程）之一，然后收尾。
@@ -180,8 +219,7 @@ func (rr *deskRecorder) watch(rec *recording, xpid int, limit, grace time.Durati
 		}
 		select {
 		case <-changed:
-		case <-rec.stopReq:
-			reason = orbsock.RecordStoppedByAgent
+		case reason = <-rec.stopReq:
 		case <-timer.C:
 			reason = orbsock.RecordStoppedByLimit
 		case <-rec.exited:
@@ -227,6 +265,7 @@ func (rr *deskRecorder) finish(rec *recording, reason string, grace time.Duratio
 	}
 	rr.mu.Lock()
 	rr.cur = nil
+	rr.clearRecordingLocked()
 	if reason != orbsock.RecordStoppedByAgent {
 		rr.last = rec
 	}
@@ -355,7 +394,7 @@ func (d *desktop) startFFmpeg(path string, w, h int) (*recording, error) {
 		pid:      cmd.Process.Pid,
 		stdin:    stdin,
 		exited:   exited,
-		stopReq:  make(chan struct{}, 1),
+		stopReq:  make(chan string, 1),
 		finished: make(chan struct{}),
 	}, nil
 }
@@ -389,6 +428,8 @@ func recordAPIErr(err error) *apiError {
 		return errf(http.StatusConflict, "not_recording", "the desktop is not being recorded")
 	case errors.Is(err, errDisplayNotReady):
 		return errf(http.StatusConflict, "not_ready", "the desktop display is not ready yet")
+	case errors.Is(err, errControlUser):
+		return errf(http.StatusConflict, orbsock.CodeControlUser, "the user has taken over the desktop or is asked to operate it; recording cannot start until control returns to the agent")
 	}
 	return errf(http.StatusInternalServerError, "failed", "desktop recording: %v", err)
 }
@@ -402,6 +443,8 @@ func recordSockErr(err error) *orbsock.Error {
 		return orbsock.Errorf(orbsock.CodeNotRecording, "the desktop is not being recorded")
 	case errors.Is(err, errDisplayNotReady):
 		return orbsock.Errorf(orbsock.CodeNotReady, "the desktop display is not ready yet")
+	case errors.Is(err, errControlUser):
+		return orbsock.Errorf(orbsock.CodeControlUser, "the user has taken over the desktop or is asked to operate it; recording cannot start until control returns to the agent")
 	}
 	return orbsock.Errorf(orbsock.CodeInternal, "desktop recording: %v", err)
 }

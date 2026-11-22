@@ -99,11 +99,18 @@ type deskControl struct {
 	seq           int
 	timer         *time.Timer
 	gen           int // 自动交还计时器的代数：旧计时器触发时直接返回
+	// recording：录制器有录制在进行或正在开始（deskrecord.go 在 deskRecorder.mu 下维护）。为 true 时，会放开人工输入的
+	// 变化（needRecordStop）要先结束录制再生效，见 takeControl 与 changeControl。
+	recording bool
 }
 
 // controlLocked 返回控制状态的对外形态。调用方持有 mu。
 func (d *desktop) controlLocked() apigen.OrbDesktopControl {
-	c := &d.ctl
+	return d.ctl.view()
+}
+
+// view 返回 c 的对外形态。
+func (c *deskControl) view() apigen.OrbDesktopControl {
 	out := apigen.OrbDesktopControl{State: apigen.OrbDesktopControlStateIdle, UserHeld: c.userHeld}
 	if c.userHeld {
 		out.UserSince = new(c.since.UnixMilli())
@@ -126,14 +133,32 @@ func (d *desktop) controlLocked() apigen.OrbDesktopControl {
 	return out
 }
 
+// needRecordStop 报告控制状态从 before 变成 after 时是否要先结束录制（M25 计划 3.5）：进入 user / ask 时网页放开
+// 人工输入（登录、验证码、支付确认），agent → idle（回合结束）后面板也放开输入，这些输入不能录进视频。
+func needRecordStop(before, after apigen.OrbDesktopControlState) bool {
+	switch after {
+	case apigen.OrbDesktopControlStateUser, apigen.OrbDesktopControlStateAsk:
+		return true
+	case apigen.OrbDesktopControlStateIdle:
+		return before == apigen.OrbDesktopControlStateAgent
+	}
+	return false
+}
+
 // workingLocked 返回正在工作的线程（按 id 排序，steer 顺序稳定）。调用方持有 mu。
 func (d *desktop) workingLocked() []string {
 	return slices.Sorted(maps.Keys(d.ctl.working))
 }
 
 // takeControl 由用户接管桌面；已接管时只续期。新接管时 steer 正在工作的线程。
+// 新接管且有录制在进行时，先不持 mu 结束录制（等 ffmpeg 退出），再接管并上报：网页看到 user 时录制已经结束。
 func (d *desktop) takeControl() {
 	d.mu.Lock()
+	for d.ctl.recording && !d.ctl.userHeld {
+		d.mu.Unlock()
+		d.rec.stopForControl()
+		d.mu.Lock()
+	}
 	now := time.Now()
 	c := &d.ctl
 	var steer []string
@@ -297,37 +322,35 @@ func (d *desktop) observeAgentFrame(threadID, typ string, frame []byte) {
 	if json.Unmarshal(frame, &h) != nil {
 		return
 	}
-	d.mu.Lock()
-	c := &d.ctl
-	before := d.controlLocked()
-	switch typ {
-	case "agent_start":
-		if c.working == nil {
-			c.working = map[string]bool{}
-		}
-		c.working[threadID] = true
-	case "agent_end":
-		// 与控制面 threads/live.go 一致：isTerminal=false 的 agent_end 不结束回合
-		if h.IsTerminal == nil || *h.IsTerminal {
-			delete(c.working, threadID)
-		}
-	case "extension_ui_request":
-		switch {
-		case h.Method == "cancel" && h.TargetID != "":
-			delete(c.asks, h.TargetID)
-		case h.Method == "select" && h.ID != "":
-			kind, reason, ok := parseDesktopAsk(h.Title, h.Options)
-			if !ok {
-				break
+	d.changeControl(func(c *deskControl) {
+		switch typ {
+		case "agent_start":
+			if c.working == nil {
+				c.working = map[string]bool{}
 			}
-			if c.asks == nil {
-				c.asks = map[string]deskAsk{}
+			c.working[threadID] = true
+		case "agent_end":
+			// 与控制面 threads/live.go 一致：isTerminal=false 的 agent_end 不结束回合
+			if h.IsTerminal == nil || *h.IsTerminal {
+				delete(c.working, threadID)
 			}
-			c.seq++
-			c.asks[h.ID] = deskAsk{seq: c.seq, v: apigen.OrbDesktopAsk{ThreadID: threadID, RequestID: h.ID, Kind: kind, Reason: reason}}
+		case "extension_ui_request":
+			switch {
+			case h.Method == "cancel" && h.TargetID != "":
+				delete(c.asks, h.TargetID)
+			case h.Method == "select" && h.ID != "":
+				kind, reason, ok := parseDesktopAsk(h.Title, h.Options)
+				if !ok {
+					break
+				}
+				if c.asks == nil {
+					c.asks = map[string]deskAsk{}
+				}
+				c.seq++
+				c.asks[h.ID] = deskAsk{seq: c.seq, v: apigen.OrbDesktopAsk{ThreadID: threadID, RequestID: h.ID, Kind: kind, Reason: reason}}
+			}
 		}
-	}
-	d.finishObserveLocked(before)
+	})
 }
 
 // observeAgentCommand 处理控制面 → omp 的 extension_ui_response：对应的待答请求已作答。
@@ -338,22 +361,40 @@ func (d *desktop) observeAgentCommand(line []byte) {
 	if json.Unmarshal(line, &h) != nil || h.ID == "" {
 		return
 	}
-	d.mu.Lock()
-	before := d.controlLocked()
-	delete(d.ctl.asks, h.ID)
-	d.finishObserveLocked(before)
+	d.changeControl(func(c *deskControl) { delete(c.asks, h.ID) })
 }
 
 // agentExited 在线程的 omp 进程退出后清除它的工作状态与待答请求。
 func (d *desktop) agentExited(threadID string) {
-	d.mu.Lock()
-	before := d.controlLocked()
-	delete(d.ctl.working, threadID)
-	for id, a := range d.ctl.asks {
-		if a.v.ThreadID == threadID {
-			delete(d.ctl.asks, id)
+	d.changeControl(func(c *deskControl) {
+		delete(c.working, threadID)
+		for id, a := range c.asks {
+			if a.v.ThreadID == threadID {
+				delete(c.asks, id)
+			}
 		}
+	})
+}
+
+// changeControl 在 mu 下用 apply 修改 working / asks / seq（apply 不碰其它字段），控制状态有变化时唤醒等待者并上报。
+// 有录制在进行时，先在副本上试算：这次变化会放开人工输入（needRecordStop）就解锁、结束录制并等 ffmpeg 退出，
+// 再加锁按当时的状态重来，直到不再有录制。因此新状态写进 d.ctl（被 onState、上报与 snapshot 看到）一定晚于
+// ffmpeg 退出；没有录制时与直接修改完全相同。
+func (d *desktop) changeControl(apply func(c *deskControl)) {
+	d.mu.Lock()
+	for d.ctl.recording {
+		c := &d.ctl
+		next := deskControl{userHeld: c.userHeld, since: c.since, working: maps.Clone(c.working), asks: maps.Clone(c.asks), seq: c.seq}
+		apply(&next)
+		if !needRecordStop(c.view().State, next.view().State) {
+			break
+		}
+		d.mu.Unlock()
+		d.rec.stopForControl()
+		d.mu.Lock()
 	}
+	before := d.controlLocked()
+	apply(&d.ctl)
 	d.finishObserveLocked(before)
 }
 

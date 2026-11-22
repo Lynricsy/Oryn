@@ -10,7 +10,8 @@
 //     和真 Chromium 一样，Cookie 只在正常关闭时落盘：收到 SIGTERM 时只写 `Default/exit-term` 就退出，内存里的
 //     Cookie 丢失。启动时从 `Default/fake-cookies.json` 读回 Cookie 表。
 //   - dbus-daemon：解析 --address=unix:path=，在该 unix socket 上 listen（接受连接后立即关闭）；收到 SIGTERM 退出。
-//   - ffmpeg：往最后一个参数指定的路径写一个以 `ftyp` 开头的小文件，读到 stdin 的 `q`（或 EOF）后退出。
+//   - ffmpeg：往最后一个参数指定的路径写一个以 `ftyp` 开头的小文件，读到 stdin 的 `q`（或 EOF）后退出；
+//     设了 FAKEDESK_FFMPEG_QUIT_DELAY（Go duration，如 300ms）时先睡这么久再退出，模拟收尾耗时。
 //
 // 用法：构建后以 Xvnc / openbox / chromium / dbus-daemon / ffmpeg 这些名字的符号链接放进 PATH。
 package main
@@ -29,6 +30,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/coder/websocket"
 )
@@ -140,9 +142,17 @@ func runFFmpeg(args []string) error {
 	buf := make([]byte, 1)
 	for {
 		if _, err := os.Stdin.Read(buf); err != nil || buf[0] == 'q' {
-			return nil
+			break
 		}
 	}
+	if v := os.Getenv("FAKEDESK_FFMPEG_QUIT_DELAY"); v != "" {
+		delay, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("fakedesk ffmpeg: FAKEDESK_FFMPEG_QUIT_DELAY: %w", err)
+		}
+		time.Sleep(delay)
+	}
+	return nil
 }
 
 func runChromium(args []string) error {

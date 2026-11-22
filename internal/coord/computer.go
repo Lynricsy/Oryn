@@ -323,7 +323,8 @@ func computerToolDefs() []apigen.OmpFrame {
 		}, "path"),
 		tool(ToolComputerRecord, "Record your computer's desktop (its screen, not this conversation) as an MP4 video: call it with start, show what you want on the desktop, then call it with stop. "+
 			"A recording lasts at most 10 minutes and stops by itself after that. stop saves the video into the owner's library (at most 100 MiB; a larger video stays on your computer). "+
-			"Your computer sleeps when idle, which pauses the recording too: keep operating the desktop while recording and call stop as soon as you are done.", obj{
+			"Your computer sleeps when idle, which pauses the recording too: keep operating the desktop while recording and call stop as soon as you are done. "+
+			"When the owner takes over the desktop the recording ends by itself before their input reaches the screen, and no recording can start while they hold it.", obj{
 			"action": enum("start begins a recording; stop ends it and saves the video.", recordStart, recordStop),
 		}, "action"),
 	}
@@ -667,6 +668,8 @@ func (s *Service) recordStop(ctx context.Context, c toolCtx) (threads.HostToolRe
 		b.WriteString(" It reached the 10-minute limit and stopped by itself.")
 	case orbsock.RecordStoppedByError:
 		b.WriteString(" It ended early because the recorder exited (for example the screen resolution changed).")
+	case orbsock.RecordStoppedByControl:
+		b.WriteString(" It ended early because the owner took over the desktop; it only covers what happened before that. Once they hand the desktop back, record again if you still need the rest.")
 	}
 	if rec.Truncated {
 		b.WriteString(" The recorder did not finish cleanly, so the video may be incomplete.")
@@ -707,6 +710,9 @@ func recordErr(err error) error {
 		return errf(e.Code, "no recording is running on your computer")
 	case "not_ready":
 		return errf(e.Code, "your computer's desktop is not ready yet; try again in a moment")
+	case "control_user":
+		return errf(e.Code, "the owner is operating your computer's desktop right now, so recording cannot start (their input must not be recorded); "+
+			"do something that does not need the desktop, and record once they hand it back")
 	}
 	return err
 }

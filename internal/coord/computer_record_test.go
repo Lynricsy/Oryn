@@ -20,6 +20,7 @@ import (
 type fakeRecorder struct {
 	mu        sync.Mutex
 	recording bool
+	userHas   bool // 用户接管了桌面：start 回 control_user
 	next      orbsock.DesktopRecording
 	video     string
 }
@@ -34,6 +35,10 @@ func (r *fakeRecorder) install(m *compMachines) {
 		defer r.mu.Unlock()
 		if r.recording {
 			conflict(w, "already_recording")
+			return
+		}
+		if r.userHas {
+			conflict(w, "control_user")
 			return
 		}
 		r.recording = true
@@ -131,6 +136,20 @@ func TestComputerRecord(t *testing.T) {
 		after, err := lib.List(e.ctx, library.Filter{})
 		require.NoError(t, err)
 		assert.Len(t, after, len(before), "超过上限不存")
+	})
+
+	t.Run("owner took over", func(t *testing.T) {
+		recordDetails(t, e.call(asst, ToolComputerRecord, `{"action":"start"}`, true))
+		rec.next.StoppedBy, rec.next.Truncated = orbsock.RecordStoppedByControl, false
+		r := e.call(asst, ToolComputerRecord, `{"action":"stop"}`, true)
+		d := recordDetails(t, r)
+		assert.Equal(t, "control", d["recording"].(map[string]any)["stoppedBy"])
+		assert.Contains(t, r.Text, "owner took over the desktop")
+
+		rec.mu.Lock()
+		rec.userHas = true
+		rec.mu.Unlock()
+		assert.Equal(t, "control_user", errCodeOf(t, e.call(asst, ToolComputerRecord, `{"action":"start"}`, true)))
 	})
 	assert.Empty(t, e.actions(), "电脑工具不写审计")
 }
