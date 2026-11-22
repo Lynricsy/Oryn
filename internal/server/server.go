@@ -325,6 +325,8 @@ func (s *Server) init(ctx context.Context) error {
 		Changed: s.Hub.SchedulesChanged,
 		// M19 3.3：交给助手的运行结果进主线（coord 晚于 schedule 构造，用闭包）
 		HandOff: func(ctx context.Context, h schedule.HandOff) { s.Coord.PostToMain(ctx, h) },
+		// 运行前闸门经 SSH 网关在登记的主机上执行
+		Gate: s.SSH,
 	}, s.Store, s.Threads, s.Orbs, s.Notify)
 	s.Coord = coord.New(coord.Config{Now: scheduleNow, AfterFunc: scheduleAfterFunc, Model: cfg.Coordinator.Model, PublicURL: cfg.PublicURL, MCPToken: mcpToken, KeepWarm: coord.KeepWarmEvery},
 		s.Store, s.Threads, s.Orbs, s.Host, s.Schedules)

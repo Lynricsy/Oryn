@@ -151,7 +151,7 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 </picture>
 
 - **Space**：协调者在严格沙箱里拆解目标、并发派出工作线程，需要你决策时汇总提醒。
-- **定时任务**：在已有线程里按 Cron 巡检，或每次拉起全新线程并自动归档旧运行；新线程可指定开场的 role 或模型。
+- **定时任务**：在已有线程里按 Cron 巡检，或每次拉起全新线程并自动归档旧运行；新线程可指定开场的 role 或模型。运行前闸门先在 SSH 主机上跑检查命令，没事就跳过、不调模型；agent 回复 `[SILENT]` 即安静结束。
 - **成本统计**：按模型、项目、Space 穿透成本、缓存命中率与首字延迟，支持日 / 月预算告警。
 
 ## Agent 配置、记忆与集成
@@ -330,6 +330,8 @@ oryn sync <线程>                                              # 将 orb 内的
 oryn space create "v1.2 发布周" --project myproj --goal "完成迁移回归与变更日志"
 oryn schedule set <线程> --cron "0 9 * * 1-5" --tz Asia/Shanghai --prompt "汇总昨日 CI 失败"
 oryn schedule add --project myproj --every 6h --prompt "检查依赖安全更新并提 PR"
+oryn schedule add --project ops --name watch --cron "0 * * * *" --prompt-file watch.md \
+  --gate-host UltraServerUS --gate-command "python3 s2a_health.py --gate"   # 闸门输出 {"wakeAgent": false} 时跳过，不调模型
 oryn stats --since 30d --by model                            # 按模型汇总近 30 天 Token、缓存与成本（支持 --csv / --json）
 oryn stats budget set --daily 20 --monthly 300 --warn 80     # 配置日/月成本预算与预警百分比
 

@@ -1180,9 +1180,13 @@ export const scheduleRuns: Record<string, Schemas["ScheduleRun"][]> = {
 			scheduledFor: NOW - 10 * HOUR,
 			threadId: M9_IDS.scheduledThread,
 		}),
+		// 上游没有新提交：运行前闸门判定无需运行
 		run(M9_IDS.threadSchedule, 5, {
 			scheduledFor: NOW - 34 * HOUR,
 			threadId: M9_IDS.scheduledThread,
+			status: "skipped",
+			error: "gate",
+			deliveredAt: undefined,
 		}),
 	],
 	[M9_IDS.failingSchedule]: [1, 2, 3].map((n) =>
@@ -1264,6 +1268,14 @@ export const schedules: Schemas["Schedule"][] = [
 		prompt:
 			"同步 can1357/oh-my-pi 上游，跑 `bun run check`，有冲突就停下来告诉我。",
 		nextRunAt: NOW + 14 * HOUR,
+		gate: {
+			host: "bastion",
+			command: [
+				"cd /srv/mirror/oh-my-pi && git fetch -q upstream",
+				`[ "$(git rev-parse HEAD)" = "$(git rev-parse upstream/main)" ] && echo '{"wakeAgent": false}' || git log --oneline HEAD..upstream/main`,
+			].join("\n"),
+			timeoutSeconds: 30,
+		},
 	}),
 	schedule({
 		id: M9_IDS.failingSchedule,

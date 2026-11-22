@@ -3,6 +3,7 @@
  * 记录发往 `/api/v1/schedules*` 与 `/threads/{id}/schedule` 的请求。
  * M9 审查修复：版本条件与冲突条（W1）、读取失败不落到新建表单（W2）、秒级间隔无损往返（W3）、
  * 能力未知时保留思考级别（W4）、绝对时间按浏览器本地时间标注（W5）。
+ * 运行前闸门：编辑时带回并原样提交、关掉后不带 `gate`（PUT 整份替换）、新建时的主机下拉与必填。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -669,6 +670,90 @@ describe("ScheduleDialog：交给助手与主线的提醒（M19）", () => {
 				name: "早间简报",
 				prompt: "只说要紧的",
 				ifRev: 1,
+			},
+		});
+	});
+});
+
+describe("ScheduleDialog：运行前闸门", () => {
+	it("编辑带闸门的定时：表单带回闸门，只改提示词保存时 gate 原样提交", async () => {
+		const gate = stored(M9_IDS.threadSchedule).gate;
+		expect(gate).toBeDefined();
+		const onClose = mount({ mode: "thread", threadId: M9_IDS.scheduledThread });
+		await ready();
+		expect(
+			within(dialog()).getByRole("checkbox", { name: "运行前闸门" }),
+		).toBeChecked();
+		await waitFor(() => expect(field("SSH 主机")).toHaveValue("bastion"));
+		expect(field("命令")).toHaveValue(gate?.command);
+		expect(field("超时（秒）")).toHaveValue(30);
+		// 工作线程的定时提示「安静结束」
+		expect(dialog()).toHaveTextContent("[SILENT]");
+		// 闸门跳过的运行显示文案，不标红
+		const runs = await within(dialog()).findByTestId("schedule-runs");
+		expect(within(runs).getByText("闸门判定无需运行")).not.toHaveClass(
+			"text-err",
+		);
+		fireEvent.change(field("提示词"), { target: { value: "只改提示词" } });
+		fireEvent.click(save());
+		await waitFor(() => expect(onClose).toHaveBeenCalled());
+		expect(writes()[0]?.body?.gate).toEqual(gate);
+		expect(stored(M9_IDS.threadSchedule).gate).toEqual(gate);
+	});
+
+	it("关掉闸门：PUT 不带 gate（整份替换即去掉）", async () => {
+		const onClose = mount({ mode: "thread", threadId: M9_IDS.scheduledThread });
+		await ready();
+		fireEvent.click(
+			within(dialog()).getByRole("checkbox", { name: "运行前闸门" }),
+		);
+		expect(within(dialog()).queryByTestId("schedule-gate")).toBeNull();
+		fireEvent.click(save());
+		await waitFor(() => expect(onClose).toHaveBeenCalled());
+		expect(writes()[0]?.method).toBe("PUT");
+		expect(writes()[0]?.body).not.toHaveProperty("gate");
+		expect(stored(M9_IDS.threadSchedule).gate).toBeUndefined();
+	});
+
+	it("新建：主机从 SSH 主机列表选（无项目的定时不算全自动），主机与命令必填，超时缺省 60", async () => {
+		const onClose = mount({ mode: "new_thread", projectId: null });
+		await ready();
+		fireEvent.change(field("名称"), { target: { value: "gated" } });
+		fireEvent.change(field("提示词"), {
+			target: { value: "看看有什么新邮件" },
+		});
+		fireEvent.click(
+			within(dialog()).getByRole("checkbox", { name: "运行前闸门" }),
+		);
+		expect(save()).toBeDisabled();
+		await waitFor(() => expect(field("SSH 主机").tagName).toBe("SELECT"));
+		const host = field("SSH 主机");
+		// 无项目的定时不是全自动运行：未允许全自动线程的主机照样可选
+		expect(
+			within(host).getByRole("option", { name: "prod-web" }),
+		).toBeEnabled();
+		// 无项目的定时只列全局主机
+		expect(
+			within(host).queryByRole("option", { name: "staging-db" }),
+		).toBeNull();
+		fireEvent.change(host, { target: { value: "bastion" } });
+		expect(save()).toBeDisabled();
+		fireEvent.change(field("命令"), {
+			target: { value: "check-inbox --json" },
+		});
+		expect(field("超时（秒）")).toHaveValue(60);
+		fireEvent.click(save());
+		await waitFor(() => expect(onClose).toHaveBeenCalled());
+		expect(writes()[0]).toMatchObject({
+			method: "POST",
+			body: {
+				mode: "new_thread",
+				name: "gated",
+				gate: {
+					host: "bastion",
+					command: "check-inbox --json",
+					timeoutSeconds: 60,
+				},
 			},
 		});
 	});

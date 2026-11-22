@@ -9,6 +9,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/robfig/cron/v3"
+
+	"github.com/Lynricsy/Oryn/internal/apigen"
 )
 
 // 定时种类、模式与重叠策略（与 apigen 的枚举同值）。
@@ -40,6 +42,11 @@ const (
 	previewCount = 5
 	// hostProvider 是协调宿主的内置 provider，不能用来跑定时新建的工作线程。
 	hostProvider = "@host"
+	// 运行前闸门：命令长度（字符）、执行上限（秒）与主机名长度（同 SSH 主机名的上限）。
+	maxGateCommandRunes = 8000
+	defaultGateTimeout  = 60
+	maxGateTimeout      = 600
+	maxGateHostLen      = 64
 )
 
 // cronMacros 是允许的 cron 宏（不含 @every / @reboot）。
@@ -166,7 +173,35 @@ func Validate(in Input, now time.Time) (Input, *time.Location, error) {
 	default:
 		return Input{}, nil, invalid("mode must be thread or new_thread")
 	}
+	if norm.Gate != nil {
+		g, err := validGate(*norm.Gate)
+		if err != nil {
+			return Input{}, nil, err
+		}
+		norm.Gate = &g
+	}
 	return norm, loc, nil
+}
+
+// validGate 校验并规范化运行前闸门：主机名去首尾空白后非空且不含空白与控制字符，命令非空白且不超过 8000 字符，
+// 执行上限缺省 60 秒、须在 1–600 秒。主机是否可用由保存时的 Gate.CheckGateHost 判断。
+func validGate(g apigen.ScheduleGate) (apigen.ScheduleGate, error) {
+	g.Host = strings.TrimSpace(g.Host)
+	if g.Host == "" || len(g.Host) > maxGateHostLen || strings.ContainsFunc(g.Host, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+		return g, invalid("gate.host must be an SSH host name (at most %d bytes, no spaces)", maxGateHostLen)
+	}
+	if strings.TrimSpace(g.Command) == "" || utf8.RuneCountInString(g.Command) > maxGateCommandRunes {
+		return g, invalid("gate.command must be 1–%d characters", maxGateCommandRunes)
+	}
+	sec := defaultGateTimeout
+	if g.TimeoutSeconds != nil {
+		sec = *g.TimeoutSeconds
+	}
+	if sec < 1 || sec > maxGateTimeout {
+		return g, invalid("gate.timeoutSeconds must be between 1 and %d", maxGateTimeout)
+	}
+	g.TimeoutSeconds = &sec
+	return g, nil
 }
 
 // validateTime 只校验时间字段（预览用）：种类、表达式 / 间隔 / 时刻、时区、截止时间。

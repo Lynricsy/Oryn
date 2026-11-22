@@ -1,6 +1,7 @@
 /**
  * 定时列表的一行（设置 → 自动化、项目设置里的「定时任务」、Space 页的「定时」小节共用）：
- * 名称或线程标题、可选的目标（项目徽标 / 线程链接）、表达式摘要、下次运行、最近一次状态、`由 agent 创建` 徽标、
+ * 名称或线程标题、可选的目标（项目徽标 / 线程链接）、表达式摘要、下次运行、最近一次状态、
+ * 运行前闸门摘要（主机 + 命令首行）、`由 agent 创建` 徽标、
  * 启停开关与菜单（编辑 / 立即运行 / 运行记录 / 删除）。点名称 = 编辑（对话框由调用方渲染）。
  */
 import type { ReactNode } from "react";
@@ -16,7 +17,7 @@ import {
 } from "../../api/schedule-queries";
 import { confirmAction } from "../../lib/confirm";
 import { formatRelative } from "../../lib/format";
-import { describeSchedule } from "../../lib/schedule";
+import { describeSchedule, gateCommandSummary } from "../../lib/schedule";
 import { parseTitleCard } from "../../lib/title";
 import { useIndex } from "../../state/stores";
 import { Badge, ProjectBadge, type Tone } from "../ui/data";
@@ -127,6 +128,21 @@ export function ScheduleRow({
 						<Badge tone={LAST_TONE[s.lastRun.status]}>
 							{t(`schedule.runStatus.${s.lastRun.status}`)}
 						</Badge>
+					)}
+					{s.gate && (
+						<span
+							data-testid="schedule-gate-summary"
+							title={s.gate.command}
+							className="inline-flex min-w-0 items-center gap-1"
+						>
+							<Icon name="funnel" size={12} aria-hidden />
+							<span className="truncate">
+								{t("schedule.gate.summary", {
+									host: s.gate.host,
+									command: gateCommandSummary(s.gate.command),
+								})}
+							</span>
+						</span>
 					)}
 					{error ? (
 						<span className="text-err">{describeError(error, t)}</span>

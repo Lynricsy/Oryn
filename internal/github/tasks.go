@@ -415,7 +415,8 @@ func (o turnObserver) TurnEnded(ev threads.TurnEvent) {
 	if ev.Status == threads.TurnCompleted {
 		o.s.OnTurnEnded(ev.ThreadID)
 	}
-	if !ev.Local && o.s.cfg.HandOff != nil {
+	// 安静结束（agent 回复 [SILENT]）的回合没有值得交给助手的内容
+	if !ev.Local && !ev.Quiet && o.s.cfg.HandOff != nil {
 		if !o.s.enqueue(func(ctx context.Context) { o.s.handOff(ctx, ev) }) {
 			slog.Warn("github: 任务队列已满，跳过交给助手", "thread", ev.ThreadID)
 		}

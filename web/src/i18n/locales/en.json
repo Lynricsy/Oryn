@@ -4398,6 +4398,20 @@
 		"mainNameHint": "The main conversation can have several reminders; names tell them apart",
 		"handToAssistant": "Hand to the assistant",
 		"handToAssistantHint": "Each run's result goes to the global assistant, which decides in the main conversation whether to tell you; no separate notification when a run completes.",
+		"silentHint": "In automated runs, an agent whose last reply is [SILENT] ends quietly: no unread mark, no completion notification, nothing handed to the assistant.",
+		"gate": {
+			"label": "Pre-run gate",
+			"hint": "Before each run, a command runs on an SSH host (no model call). If its last output line is {\"wakeAgent\": false}, the run is skipped; otherwise it runs as usual with the command's output prepended to the prompt.",
+			"host": "SSH host",
+			"hostPick": "Choose a host…",
+			"hostManual": "A host name registered in Settings → SSH hosts (a global host, or one from this schedule's project)",
+			"hostDisabled": "disabled",
+			"hostNoAutomation": "not allowed for fully automated threads",
+			"command": "Command",
+			"commandHint": "Skips only when it exits 0 and its last non-empty line is {\"wakeAgent\": false}",
+			"timeout": "Timeout (s)",
+			"summary": "Gate: {{host}} · {{command}}"
+		},
 		"nameTaken": "This project already has a schedule with that name",
 		"project": "Project",
 		"modelLabel": "Role or model, and thinking level",
@@ -4431,6 +4445,9 @@
 			"completed": "Done",
 			"failed": "Failed",
 			"skipped": "Skipped"
+		},
+		"runError": {
+			"gate": "Gate: nothing to do"
 		},
 		"trigger": {
 			"schedule": "On time",

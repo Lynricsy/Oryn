@@ -265,34 +265,39 @@ func runBounded(dctx context.Context, c *ssh.Client, closeConn func(), setup fun
 	return !stop(), err
 }
 
-// headTail 并发安全地收集输出：只留头 execOutputHalf 字节与尾 execOutputHalf 字节，记下总长。
+// headTail 并发安全地收集输出：只留头 half 字节与尾 half 字节（half 为 0 时取 execOutputHalf），记下总长。
 type headTail struct {
 	mu    sync.Mutex
+	half  int
 	head  []byte
-	tail  []byte // 滑动窗口，至多 execOutputHalf 字节
+	tail  []byte // 滑动窗口，至多 half 字节
 	total int
 }
 
 func (w *headTail) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	half := w.half
+	if half <= 0 {
+		half = execOutputHalf
+	}
 	w.total += len(p)
 	rest := p
-	if room := execOutputHalf - len(w.head); room > 0 {
+	if room := half - len(w.head); room > 0 {
 		n := min(room, len(rest))
 		w.head = append(w.head, rest[:n]...)
 		rest = rest[n:]
 	}
 	if len(rest) > 0 {
 		w.tail = append(w.tail, rest...)
-		if over := len(w.tail) - execOutputHalf; over > 0 {
+		if over := len(w.tail) - half; over > 0 {
 			w.tail = append(w.tail[:0], w.tail[over:]...)
 		}
 	}
 	return len(p), nil
 }
 
-// String 返回输出；超过 2×execOutputHalf 时在头尾之间插省略说明。
+// String 返回输出；超过两倍上限时在头尾之间插省略说明。
 func (w *headTail) String() string {
 	w.mu.Lock()
 	defer w.mu.Unlock()

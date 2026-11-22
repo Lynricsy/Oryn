@@ -2,6 +2,7 @@ package threads
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -89,4 +90,71 @@ func TestQuietStartupTaggedPromptIsAuto(t *testing.T) {
 	f.frame(th, `{"type":"agent_start"}`)
 	f.frame(th, `{"type":"agent_end","isTerminal":true}`)
 	assert.True(t, lastState(t, o).Auto)
+}
+
+// 工作线程里全由自动化投递的回合以 [SILENT] 收尾：按沉默结束（不置未读、StateEvent 带 Quiet），TurnEvent 也带 Quiet。
+func TestSilentReplyQuietsAutoTurn(t *testing.T) {
+	f := newFixture(t, Config{})
+	th, a, o := readyThread(f)
+	cmd := deliverTagged(t, f, th, a, AutoMessage{Text: "check", Tag: "srn_q"})
+	f.respond(th, cmd, true, `{"agentInvoked":true}`)
+	f.frame(th, `{"type":"agent_start"}`)
+	f.frame(th, agentEnd(true, assistantMsg("Nothing new since last run.\n[SILENT]", "stop", "")))
+	ev := lastState(t, o)
+	assert.Equal(t, StateIdle, ev.State)
+	assert.True(t, ev.Quiet)
+	f.frame(th, fmt.Sprintf(`{"type":"prompt_result","id":%q,"status":"completed","agentInvoked":true}`, frameID(t, cmd)))
+	require.Len(t, o.turnEvents(), 1)
+	assert.True(t, o.turnEvents()[0].Quiet)
+	row, err := f.st.Q.GetThread(f.ctx, th.id)
+	require.NoError(t, err)
+	assert.False(t, row.Unread)
+
+	// 没有标签的自动化投递同样适用
+	f.frame(th, `{"type":"session_settled"}`)
+	_, err = f.s.Deliver(f.ctx, th.id, AutoMessage{Text: "tick"}, nil)
+	require.NoError(t, err)
+	f.respond(th, recvFrame(t, a), true, "")
+	f.frame(th, agentEnd(true, assistantMsg("[silent]", "stop", "")))
+	assert.True(t, lastState(t, o).Quiet)
+}
+
+// 主人发起的回合、出错的回合、标记夹在句中：照常结束。
+func TestSilentReplyIgnored(t *testing.T) {
+	f := newFixture(t, Config{})
+	th, a, o := readyThread(f)
+	require.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(`{"type":"prompt","message":"hi"}`), noReply))
+	f.respond(th, recvFrame(t, a), true, "")
+	f.frame(th, agentEnd(true, assistantMsg("[SILENT]", "stop", "")))
+	assert.False(t, lastState(t, o).Quiet, "主人发起的回合")
+
+	f.frame(th, `{"type":"session_settled"}`)
+	cmd := deliverTagged(t, f, th, a, AutoMessage{Text: "check", Tag: "srn_e"})
+	f.respond(th, cmd, true, `{"agentInvoked":true}`)
+	f.frame(th, agentEnd(true, assistantMsg("[SILENT]", "error", "rate limited")))
+	assert.False(t, lastState(t, o).Quiet, "出错的回合")
+
+	f.frame(th, `{"type":"session_settled"}`)
+	cmd = deliverTagged(t, f, th, a, AutoMessage{Text: "check", Tag: "srn_m"})
+	f.respond(th, cmd, true, `{"agentInvoked":true}`)
+	f.frame(th, agentEnd(true, assistantMsg("I would say [SILENT] but proxy jp is down", "stop", "")))
+	assert.False(t, lastState(t, o).Quiet, "句中的标记")
+}
+
+func TestSilentReply(t *testing.T) {
+	for _, tc := range []struct {
+		text string
+		want bool
+	}{
+		{"[SILENT]", true},
+		{"  [silent]\n", true},
+		{"[SILENT]\nnothing changed", true},
+		{"all good\n\n[SILENT]  ", true},
+		{"", false},
+		{"SILENT", false},
+		{"all good [SILENT]", false},
+		{"a\n[SILENT]\nb", false},
+	} {
+		assert.Equal(t, tc.want, silentReply(tc.text), "silentReply(%q)", tc.text)
+	}
 }

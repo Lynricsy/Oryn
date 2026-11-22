@@ -33,6 +33,9 @@ type TurnEvent struct {
 	// HasText 为假表示控制面没有看到该回合的 agent_end（消费方退回读库）。
 	Text    string
 	HasText bool
+	// Quiet 为真表示该回合安静结束：工作线程里全由自动化投递的这段活动，agent 的最后一条回复是 [SILENT]（silentReply）。
+	// 线程已按沉默处理（不置未读、不发完成通知）；消费方据此不再交给助手。
+	Quiet bool
 }
 
 // orynTagKey 是首条提示词在持久化帧上携带投递标签的 Oryn 扩展字段（与 orynAttachments 同样的做法）：
@@ -56,6 +59,7 @@ type turnRef struct {
 // yieldInfo 是最近一次 yield 的 agent_end 推出的回合结局。
 type yieldInfo struct {
 	status, err, text string
+	quiet             bool
 }
 
 // cmdIDPrefix 是本进程的命令 id 随机段（规则 9）：重启后 orbd 重放的旧应答 / 旧 prompt_result 不会撞上新命令的 id。
@@ -188,9 +192,12 @@ type agentEndFrame struct {
 	Messages   []json.RawMessage `json:"messages"`
 }
 
-// onAgentEndLocked 处理 agent_end（规则 4）：只在有跟踪中的投递时解析。调用方持有 t.mu。
+// onAgentEndLocked 处理 agent_end（规则 4）：有跟踪中的投递，或这段活动全是自动化投递的工作线程时解析。
+// 后者的回合以 [SILENT] 收尾时把这段活动标为沉默（同主线的 stay_silent），随后的 recompute 不置未读、不发完成通知。
+// 调用方持有 t.mu。
 func (s *Service) onAgentEndLocked(t *thread, line []byte) {
-	if len(t.turns)+len(t.steers) == 0 {
+	silenceable := t.kind == KindWork && t.autoOnly
+	if len(t.turns)+len(t.steers) == 0 && !silenceable {
 		return
 	}
 	var f agentEndFrame
@@ -203,15 +210,33 @@ func (s *Service) onAgentEndLocked(t *thread, line []byte) {
 		yielded = *f.Yielded
 	}
 	y := runOutcome(f.Messages)
+	if silenceable && terminal && yielded && y.status == TurnCompleted && silentReply(y.text) {
+		t.quiet, y.quiet = true, true
+	}
 	if yielded {
 		t.lastYield = &y
 	}
 	if terminal && len(t.steers) > 0 {
 		for _, tag := range t.steers {
-			s.endTurn(t.id, TurnEvent{Tag: tag, Status: y.status, Error: y.err, Text: y.text, HasText: true})
+			s.endTurn(t.id, TurnEvent{Tag: tag, Status: y.status, Error: y.err, Text: y.text, HasText: true, Quiet: y.quiet})
 		}
 		t.steers = nil
 	}
+}
+
+// silentMarker 是 agent 表示「没有值得告诉主人的」的回复标记（与 Hermes 定时的约定相同）。
+const silentMarker = "[SILENT]"
+
+// silentReply 报告回复是否表示安静结束：去掉首尾空白后整条是 [SILENT]，或第一个 / 最后一个非空行是 [SILENT]（不区分大小写）。
+// 夹在句子中间的标记不算。
+func silentReply(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+	first, _, _ := strings.Cut(text, "\n")
+	last := text[strings.LastIndexByte(text, '\n')+1:]
+	return strings.EqualFold(strings.TrimSpace(first), silentMarker) || strings.EqualFold(strings.TrimSpace(last), silentMarker)
 }
 
 // promptResultFrame 是 prompt_result 帧里结算所需的字段。
@@ -261,7 +286,7 @@ func (s *Service) onPromptResultLocked(t *thread, line []byte) {
 		ev.Error = defaultProviderError
 	}
 	if y := t.lastYield; y != nil {
-		ev.Text, ev.HasText = y.text, true
+		ev.Text, ev.HasText, ev.Quiet = y.text, true, y.quiet
 	}
 	s.endTurn(t.id, ev)
 }

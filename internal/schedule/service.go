@@ -22,6 +22,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/ids"
+	"github.com/Lynricsy/Oryn/internal/sshgw"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
@@ -40,8 +41,18 @@ type Config struct {
 	// Changed 在某个定时的定义或运行记录变化后调用（契约 C7.2，调用时不持 mu）；nil = 不推送。
 	Changed func(scheduleID string)
 	// HandOff 在开着“交给助手”的 new_thread 运行结束（完成、出错、被中断；投递失败除外）时调用（M19 步骤 3.3，
-	// 调用时不持 mu）；nil = 不交接。
+	// 调用时不持 mu）；nil = 不交接。安静结束（[SILENT]）的完成不交接。
 	HandOff func(ctx context.Context, h HandOff)
+	// Gate 执行运行前闸门（*sshgw.Service 实现）；nil = 闸门不可用：不能保存带闸门的定义，已有的闸门按执行失败处理（照常运行）。
+	Gate Gate
+	// Go 在后台执行闸门（默认 `go f()`）；测试注入同步执行。
+	Go func(f func())
+}
+
+// Gate 是运行前闸门需要的 SSH 能力：projectID 为空 = 只看全局主机；automation 为真时主机须允许全自动线程使用。
+type Gate interface {
+	CheckGateHost(ctx context.Context, projectID string, automation bool, host string) error
+	RunGate(ctx context.Context, projectID string, automation bool, host, command, label string, timeout time.Duration) sshgw.GateResult
 }
 
 // HandOff 是一次交给助手的运行结果（定时与 GitHub 触发规则共用，由 coord.PostToMain 收进主线）。
@@ -84,11 +95,13 @@ type Input struct {
 	// 以下仅 new_thread。
 	ProjectID, SpaceID, ThinkingLevel, Provider, OrbType, Overlap string
 	// Role 是新线程开场的 omp 模型 role（与 Model 互斥）。
-	Role  string
-	Model *apigen.ModelRef
-	KeepLast                                                      *int
+	Role     string
+	Model    *apigen.ModelRef
+	KeepLast *int
 	// HandToAssistant 仅 new_thread：运行结果交给助手的主线；更新时 nil = 沿用现值。
 	HandToAssistant *bool
+	// Gate 是运行前闸门；nil = 不设（整份替换：更新时 nil 即去掉）。agent 定义时不能给，agent 改写时沿用现值。
+	Gate *apigen.ScheduleGate
 	// IfRev 非 nil 时只在定时当前 rev 等于它时才替换（契约 C7.1，仅 REST 的两个 PUT 使用）；nil = 不做版本检查。
 	IfRev *int64
 }
@@ -236,6 +249,8 @@ const (
 	evRecheck
 	// evSettleTimeout 是恢复运行等可验证终态超时。
 	evSettleTimeout
+	// evGate 是一次运行前闸门执行完毕。
+	evGate
 )
 
 type event struct {
@@ -245,6 +260,8 @@ type event struct {
 	runID           string
 	err             error
 	turn            threads.TurnEvent
+	// gate 是 evGate 的闸门结果。
+	gate *gateDone
 }
 
 // New 创建调度器；Run 之前不触发任何定时。
@@ -264,6 +281,9 @@ func New(cfg Config, st *store.Store, th Threads, orbs Orbs, n Notifier) *Servic
 	if cfg.MaxFailures <= 0 {
 		cfg.MaxFailures = defaultMaxFailures
 	}
+	if cfg.Go == nil {
+		cfg.Go = func(f func()) { go f() }
+	}
 	return &Service{
 		cfg: cfg, st: st, th: th, orbs: orbs, n: n,
 		open:      map[string]string{},
@@ -281,7 +301,7 @@ func InputFromAPI(in apigen.ScheduleInput) Input {
 		Prompt: in.Prompt, At: in.At, EndsAt: in.EndsAt, Enabled: in.Enabled, ThreadID: deref(in.ThreadID),
 		ProjectID: deref(in.ProjectID), SpaceID: deref(in.SpaceID), Role: deref(in.Role), ThinkingLevel: deref(in.ThinkingLevel),
 		Provider: deref(in.Provider), OrbType: deref(in.OrbType), Model: in.Model, KeepLast: in.KeepLast,
-		IfRev: in.IfRev, HandToAssistant: in.HandToAssistant,
+		IfRev: in.IfRev, HandToAssistant: in.HandToAssistant, Gate: in.Gate,
 	}
 	if in.Mode != nil {
 		out.Mode = string(*in.Mode)
@@ -354,6 +374,9 @@ func (s *Service) createLocked(ctx context.Context, in Input, createdBy string) 
 	if createdBy == createdByAgent && in.Mode == ModeNewThread && in.Overlap != "" && in.Overlap != OverlapSkip {
 		return apigen.Schedule{}, invalid("agent-defined new_thread schedules cannot overlap (overlap must be skip)")
 	}
+	if createdBy == createdByAgent && in.Gate != nil {
+		return apigen.Schedule{}, invalid("agents cannot set a pre-run gate")
+	}
 	now := s.cfg.Now()
 	norm, loc, err := Validate(in, now)
 	if err != nil {
@@ -365,6 +388,9 @@ func (s *Service) createLocked(ctx context.Context, in Input, createdBy string) 
 		}
 	}
 	if err := s.checkTarget(ctx, norm); err != nil {
+		return apigen.Schedule{}, err
+	}
+	if err := s.checkGate(ctx, norm, ""); err != nil {
 		return apigen.Schedule{}, err
 	}
 	if s.afterCheckTarget != nil {
@@ -389,6 +415,7 @@ func (s *Service) createLocked(ctx context.Context, in Input, createdBy string) 
 	if norm.Kind == KindOnce {
 		p.RunAt = norm.At
 	}
+	setGate(&p.GateHost, &p.GateCommand, &p.GateTimeout, norm.Gate)
 	if norm.Mode == ModeThread {
 		p.ThreadID = new(norm.ThreadID)
 	} else {
@@ -475,6 +502,10 @@ func (s *Service) updateLocked(ctx context.Context, id string, in Input, created
 			return apigen.Schedule{}, err
 		}
 	}
+	if createdBy == createdByAgent {
+		// 闸门只由主人设置：agent 改写时沿用现值
+		in.Gate = gateOf(cur)
+	}
 	now := s.cfg.Now()
 	norm, loc, err := Validate(in, now)
 	if err != nil {
@@ -487,6 +518,11 @@ func (s *Service) updateLocked(ctx context.Context, id string, in Input, created
 	}
 	if err := s.checkTarget(ctx, norm); err != nil {
 		return apigen.Schedule{}, err
+	}
+	if createdBy != createdByAgent {
+		if err := s.checkGate(ctx, norm, deref(cur.ProjectID)); err != nil {
+			return apigen.Schedule{}, err
+		}
 	}
 	if s.afterCheckTarget != nil {
 		s.afterCheckTarget()
@@ -509,6 +545,7 @@ func (s *Service) updateLocked(ctx context.Context, id string, in Input, created
 	if norm.Kind == KindOnce {
 		p.RunAt = norm.At
 	}
+	setGate(&p.GateHost, &p.GateCommand, &p.GateTimeout, norm.Gate)
 	if cur.Mode == ModeNewThread {
 		p.SpaceID, p.Role, p.Model = optStr(norm.SpaceID), optStr(norm.Role), modelStr(norm.Model)
 		p.ThinkingLevel = optStr(norm.ThinkingLevel)
@@ -633,6 +670,66 @@ func (s *Service) checkTarget(ctx context.Context, in Input) error {
 		}
 	}
 	return checkSpaceTx(ctx, s.st.Q, in.SpaceID)
+}
+
+// gateScope 返回闸门解析主机的范围：new_thread 取定时的项目（有项目即全自动，同建出的线程）；thread 取目标线程的项目
+// （主人的线程，不算全自动）。
+func gateScope(ctx context.Context, q *db.Queries, mode, threadID, projectID string) (string, bool, error) {
+	if mode == ModeNewThread {
+		return projectID, projectID != "", nil
+	}
+	t, err := q.GetThread(ctx, threadID)
+	if err != nil {
+		return "", false, err
+	}
+	return deref(t.ProjectID), false, nil
+}
+
+// checkGate 是保存带闸门的定义时的预检：主机须对该定时的范围可用。projectID 是更新时库里的项目（新建时取 in）。
+func (s *Service) checkGate(ctx context.Context, in Input, projectID string) error {
+	if in.Gate == nil {
+		return nil
+	}
+	if s.cfg.Gate == nil {
+		return invalid("pre-run gates are unavailable (no SSH gateway)")
+	}
+	if projectID == "" {
+		projectID = in.ProjectID
+	}
+	pid, auto, err := gateScope(ctx, s.st.Q, in.Mode, in.ThreadID, projectID)
+	if err != nil {
+		return err
+	}
+	if err := s.cfg.Gate.CheckGateHost(ctx, pid, auto, in.Gate.Host); err != nil {
+		return invalid("gate.host: %v", err)
+	}
+	return nil
+}
+
+// setGate 把闸门写进库的三列；g 为 nil 时三列都为 NULL。
+func setGate(host, command **string, timeout **int64, g *apigen.ScheduleGate) {
+	if g == nil {
+		*host, *command, *timeout = nil, nil, nil
+		return
+	}
+	*host, *command = new(g.Host), new(g.Command)
+	t := int64(defaultGateTimeout)
+	if g.TimeoutSeconds != nil {
+		t = int64(*g.TimeoutSeconds)
+	}
+	*timeout = &t
+}
+
+// gateOf 读出库里的闸门；gate_host 为 NULL = 没有闸门。
+func gateOf(r db.Schedule) *apigen.ScheduleGate {
+	if r.GateHost == nil {
+		return nil
+	}
+	sec := defaultGateTimeout
+	if r.GateTimeout != nil {
+		sec = int(*r.GateTimeout)
+	}
+	return &apigen.ScheduleGate{Host: *r.GateHost, Command: deref(r.GateCommand), TimeoutSeconds: &sec}
 }
 
 // checkSpaceTx 检查 Space 存在（spaceID 为空时不查）。
@@ -997,7 +1094,7 @@ func (s *Service) toAPI(ctx context.Context, r db.Schedule) (apigen.Schedule, er
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, Overlap: apigen.ScheduleOverlap(r.Overlap), KeepLast: int(r.KeepLast),
 		OpenRuns: int(open), Rev: r.Rev, ThreadID: r.ThreadID, ProjectID: r.ProjectID, SpaceID: r.SpaceID,
 		Role: r.Role, ThinkingLevel: r.ThinkingLevel, Provider: r.Provider, OrbType: r.OrbType, Model: parseModel(r.Model),
-		HandToAssistant: r.HandToAssistant != 0,
+		HandToAssistant: r.HandToAssistant != 0, Gate: gateOf(r),
 	}
 	switch r.Kind {
 	case KindCron:

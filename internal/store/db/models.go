@@ -1134,6 +1134,9 @@ type Schedule struct {
 	Rev             int64   `json:"rev"`
 	HandToAssistant int64   `json:"handToAssistant"`
 	Role            *string `json:"role"`
+	GateHost        *string `json:"gateHost"`
+	GateCommand     *string `json:"gateCommand"`
+	GateTimeout     *int64  `json:"gateTimeout"`
 }
 
 type ScheduleRun struct {

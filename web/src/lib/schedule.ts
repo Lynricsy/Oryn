@@ -1,6 +1,7 @@
 /**
  * 定时的显示与表单换算（M9）：表达式摘要 `describeSchedule`、cron 预设、`every` 时长串的拆分与拼接、
- * 定义 → 表单输入（`inputOfSchedule`）。只做显示，校验以服务端（`internal/schedule/spec.go`）为准。
+ * 定义 → 表单输入（`inputOfSchedule`）、运行前闸门的命令摘要（`gateCommandSummary`）。
+ * 只做显示，校验以服务端（`internal/schedule/spec.go`）为准。
  */
 import type { TFunction } from "i18next";
 import type { Schemas } from "../api/client";
@@ -29,6 +30,9 @@ export const SCHEDULE_PLACEHOLDERS = [
 	"{{run_number}}",
 	"{{last_run_at}}",
 ] as const;
+
+/** 运行前闸门的执行上限缺省值（秒；服务端接受 1–600）。 */
+export const GATE_TIMEOUT_DEFAULT = 60;
 
 export function cronPreset(cron: string | undefined): CronPresetKey | null {
 	const norm = (cron ?? "").trim().replace(/\s+/g, " ");
@@ -144,7 +148,20 @@ export function inputOfSchedule(
 		...(s.orbType ? { orbType: s.orbType } : {}),
 		overlap: s.overlap,
 		keepLast: s.keepLast,
+		// PUT 整份替换：漏带闸门就会把它清掉
+		...(s.gate ? { gate: s.gate } : {}),
 	};
+}
+
+/** 闸门命令的一行摘要：取第一个非空行，超过 `max` 个字符截断；还有后续行时补省略号。 */
+export function gateCommandSummary(command: string, max = 40): string {
+	const lines = command
+		.split("\n")
+		.map((l) => l.trim())
+		.filter(Boolean);
+	const first = lines[0] ?? "";
+	if (first.length > max) return `${first.slice(0, max)}…`;
+	return lines.length > 1 ? `${first} …` : first;
 }
 
 /** 侧栏 / 列表里给定时的显示名：有名字用名字，线程内定时无名时取兜底文案。 */

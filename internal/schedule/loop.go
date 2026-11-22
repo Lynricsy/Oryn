@@ -196,6 +196,8 @@ func (s *Service) processEvents(ctx context.Context) {
 			s.onRecheck(ctx, ev.threadID)
 		case evSettleTimeout:
 			s.onSettleTimeout(ctx, ev.runID)
+		case evGate:
+			s.onGate(ctx, ev.runID, ev.gate)
 		}
 	}
 }
@@ -396,10 +398,24 @@ func (s *Service) RunNow(ctx context.Context, id string) (apigen.ScheduleRun, er
 	return runAPI(r), nil
 }
 
-// start 在事务外执行一次 pending 运行。调用方持有 loopMu。
+// start 在事务外执行一次 pending 运行：设了闸门时先在后台跑闸门（结果经 evGate 回到循环），否则直接投递。
+// 调用方持有 loopMu。
 func (s *Service) start(ctx context.Context, fp fireParams) {
+	if fp.sc.GateHost != nil {
+		s.runGate(ctx, fp)
+		return
+	}
+	s.launch(ctx, fp, "")
+}
+
+// launch 投递 / 建线程；preface 非空时（闸门输出）放在头行与提示词之间。调用方持有 loopMu。
+func (s *Service) launch(ctx context.Context, fp fireParams, preface string) {
 	loc := loadLoc(fp.sc.Timezone)
-	text := header(fp, loc) + "\n" + expand(fp, s.cfg.Now(), loc)
+	text := header(fp, loc) + "\n"
+	if preface != "" {
+		text += preface + "\n\n"
+	}
+	text += expand(fp, s.cfg.Now(), loc)
 	if fp.sc.Mode == ModeThread {
 		s.deliver(ctx, fp, text)
 		return
@@ -656,7 +672,10 @@ func (s *Service) settle(ctx context.Context, run db.ScheduleRun, threadID strin
 		if err := s.st.Q.SetScheduleFailures(ctx, db.SetScheduleFailuresParams{ID: run.ScheduleID, Failures: 0}); err != nil {
 			slog.Warn("schedule: 清零失败次数失败", "schedule", run.ScheduleID, "err", err)
 		}
-		s.handOff(ctx, run.ScheduleID, threadID, "completed", ev, "")
+		// 安静结束（agent 回复 [SILENT]）：没有值得交给助手的内容
+		if !ev.Quiet {
+			s.handOff(ctx, run.ScheduleID, threadID, "completed", ev, "")
+		}
 	case threads.TurnAborted:
 		s.finishRun(ctx, run.ScheduleID, run.ID, runFailed, "aborted")
 		s.handOff(ctx, run.ScheduleID, threadID, "aborted", ev, "aborted")

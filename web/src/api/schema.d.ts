@@ -4596,7 +4596,7 @@ export interface paths {
         put?: never;
         /**
          * 立即触发一次（`trigger = manual`；不改 `nextRunAt`；暂停中的定时也可触发）
-         * @description 已有未结束的运行且不允许并存（线程内定时，或 `overlap = skip`）→ 409 `schedule_busy`。
+         * @description 已有未结束的运行且不允许并存（线程内定时，或 `overlap = skip`）→ 409 `schedule_busy`。设了运行前闸门（`gate`）时同样先过闸门，返回的运行此时可能仍是 `pending`。
          */
         post: operations["runSchedule"];
         delete?: never;
@@ -9162,6 +9162,20 @@ export interface components {
         /** @enum {string} */
         ScheduleCreatedBy: "user" | "agent";
         /**
+         * @description 运行前闸门：每次运行（含手动触发）前，控制面先经 SSH 网关在 `host` 上执行 `command`，不启动 agent、不调用模型。
+         *     命令以退出码 0 结束、且标准输出最后一个非空行是 JSON 对象 `{"wakeAgent": false}` 时，本次运行记为 `skipped`（`error = gate`）；
+         *     其余情况（其它输出、非 0 退出、超时、连不上主机）都照常运行，并把闸门的输出或失败原因附在提示词前面交给 agent。
+         *     主机按定时的范围解析：全局主机，加上所在项目（`new_thread` 为定时的项目，`thread` 为目标线程的项目）的主机；
+         *     项目的 `new_thread` 定时是全自动运行，主机须允许全自动线程使用。执行记入 SSH 审计（来源 `owner`）。
+         */
+        ScheduleGate: {
+            /** @description SSH 主机名（设置 → SSH 主机里登记的名称） */
+            host: string;
+            command: string;
+            /** @description 执行上限（秒）；缺省 60 */
+            timeoutSeconds?: number;
+        };
+        /**
          * @description 定时的定义（创建、替换、预览共用）。时间字段：`kind = cron` 须给 `cron`（恰好 5 段，或 `@hourly @daily @midnight @weekly @monthly @yearly @annually`；
          *     不接受 `TZ=` / `CRON_TZ=` 前缀与 `@every`）；`kind = every` 须给 `every`（Go 时长串，≥`1m`、≤`8784h`、整秒）；`kind = once` 须给 `at`（不早于当前 60 秒）。
          *     `timezone` 为 IANA 名称，缺省 `UTC`；`endsAt` 须晚于当前。
@@ -9171,6 +9185,8 @@ export interface components {
          *     `new_thread` 不得带 `threadId`，`name` 必填（1–80）；`PUT /schedules/{id}` 里 `mode` / `threadId` / `projectId` 若出现必须与现值相同；
          *     `PUT /threads/{id}/schedule` 隐含 `mode = thread`。
          *     `prompt` 里的占位符 `{{now}}` `{{date}}` `{{scheduled_at}}` `{{run_number}}` `{{last_run_at}}` 在投递时替换。
+         *     安静结束：本次运行这段全由自动化投递的活动里，agent 的最后一条回复是 `[SILENT]`（整条，或独占第一行 / 最后一行；不区分大小写）时，
+         *     该回合不置未读、不发完成通知，也不交给助手（仅工作线程；主线用 `stay_silent`）。
          */
         ScheduleInput: {
             mode?: components["schemas"]["ScheduleMode"];
@@ -9218,6 +9234,8 @@ export interface components {
              *     线程内定时：`0` = 只在该线程没有定时时新建；线程没有定时而给了非 0 值同样 409。省略 = 不做版本检查。
              */
             ifRev?: number;
+            /** @description 运行前闸门；省略 = 不设（`POST` / `PUT` 整份替换，省略即去掉）。agent 定义时不能设置；agent 改写时忽略本字段、沿用现值。 */
+            gate?: components["schemas"]["ScheduleGate"];
         };
         /** @description 定时（两种模式共用）。`thread` 模式下 `overlap` 恒为 `skip`、`keepLast` 恒为 5（无意义） */
         Schedule: {
@@ -9249,6 +9267,7 @@ export interface components {
             keepLast: number;
             /** @description 交给助手（只对 `new_thread` 有意义） */
             handToAssistant: boolean;
+            gate?: components["schemas"]["ScheduleGate"];
             pausedReason?: components["schemas"]["SchedulePausedReason"];
             /** @description 省略 = 不会再触发（暂停或已结束） */
             nextRunAt?: components["schemas"]["TimestampMs"];
@@ -9292,7 +9311,7 @@ export interface components {
             deliveredAt?: components["schemas"]["TimestampMs"];
             finishedAt?: components["schemas"]["TimestampMs"];
             status: components["schemas"]["ScheduleRunStatus"];
-            /** @description 如 `overlap`、`overlap_cap`、`thread_archived`、`project_archived`、`deliver_timeout`、`interrupted`、`stale`、`aborted`（回合被中断）、`agent_exited`（agent 进程退出）、`outcome_unknown`（无法确认回合结果）、`thread_deleted`（线程被删除），或创建线程失败、回合出错的原因 */
+            /** @description 如 `gate`（运行前闸门判定本次不必运行）、`overlap`、`overlap_cap`、`thread_archived`、`project_archived`、`deliver_timeout`、`interrupted`、`stale`、`aborted`（回合被中断）、`agent_exited`（agent 进程退出）、`outcome_unknown`（无法确认回合结果）、`thread_deleted`（线程被删除），或创建线程失败、回合出错的原因 */
             error?: string;
         };
         ScheduleList: {

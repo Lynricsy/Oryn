@@ -5,6 +5,8 @@
  * - `new_thread` 专有：名称（必填）、项目（含「无项目」；`lockProject` 或编辑时只读——目标不可改）、对话对象（与首页同一个
  *   role 胶囊：cycleOrder 里的 role 或指定模型，以及思考级别）、orb 类型（不含 `@host`）、重叠策略、保留数（1–50）、
  *   「交给助手」（M19：运行结果进主线，完成时不单独通知）。
+ * - 运行前闸门（两种模式共用）：每次运行前在 SSH 主机上执行命令，最后一行输出 `{"wakeAgent": false}` 时跳过本次运行。
+ *   `PUT` 是整份替换：编辑时把现有闸门带回表单、保存时原样提交；关掉闸门则不带 `gate`（即去掉）。
  * 保存：新建走 `POST schedules`（线程内定时走 `PUT threads/{id}/schedule`），编辑走 `PUT schedules/{id}`；
  * 409 `schedule_name_taken` 标在名称框上。
  * - 主线（M19）：目标线程是主线时可有多条提醒，按 id 管理——名称必填，新建走 `POST schedules`（`mode: "thread"`），
@@ -48,12 +50,14 @@ import {
 	useThreadSchedule,
 } from "../../api/schedule-queries";
 import { useSpaces } from "../../api/space-queries";
+import { useSshHosts } from "../../api/ssh-queries";
 import { confirmAction } from "../../lib/confirm";
 import { formatDateTime } from "../../lib/format";
 import {
 	browserZone,
 	CRON_PRESETS,
 	type EveryUnit,
+	GATE_TIMEOUT_DEFAULT,
 	joinEvery,
 	parseGoDuration,
 	SCHEDULE_PLACEHOLDERS,
@@ -157,6 +161,13 @@ interface FormState {
 	keepLast: number;
 	/** 运行结果交给助手（只用于 `new_thread`） */
 	handToAssistant: boolean;
+	/** 运行前闸门开着；关掉时保存不带 `gate`（整份替换即去掉），下面三个字段保留，重新打开时还在 */
+	gateOn: boolean;
+	/** 闸门主机名（设置 → SSH 主机里登记的名称） */
+	gateHost: string;
+	gateCommand: string;
+	/** 执行上限（秒，1–600） */
+	gateTimeout: number;
 }
 
 function initialState(
@@ -190,6 +201,10 @@ function initialState(
 		overlap: existing?.overlap ?? "skip",
 		keepLast: existing?.keepLast ?? 5,
 		handToAssistant: existing?.handToAssistant ?? false,
+		gateOn: existing?.gate !== undefined,
+		gateHost: existing?.gate?.host ?? "",
+		gateCommand: existing?.gate?.command ?? "",
+		gateTimeout: existing?.gate?.timeoutSeconds ?? GATE_TIMEOUT_DEFAULT,
 	};
 }
 
@@ -240,6 +255,19 @@ export function scheduleBody(
 		prompt: s.prompt,
 		enabled: s.enabled,
 		...(s.name.trim() ? { name: s.name.trim() } : {}),
+		// 闸门两种模式都可用；关着时不带（PUT 整份替换，省略即去掉）
+		...(s.gateOn
+			? {
+					gate: {
+						host: s.gateHost.trim(),
+						command: s.gateCommand,
+						timeoutSeconds: Math.min(
+							600,
+							Math.max(1, Math.round(s.gateTimeout)),
+						),
+					},
+				}
+			: {}),
 	};
 	if (target.mode === "thread")
 		return main
@@ -328,6 +356,14 @@ const RUN_TONE: Record<Schemas["ScheduleRunStatus"], Tone> = {
 	skipped: "neutral",
 };
 
+/**
+ * 有专门文案的运行原因（`ScheduleRun.error` 里的固定码，不是故障）：显示文案、不标红。
+ * 其余（创建线程失败、回合出错等）原文显示。键是服务端给的任意串，用 Map 免得撞上对象原型上的名字。
+ */
+const RUN_REASON = new Map<string, "schedule.runError.gate">([
+	["gate", "schedule.runError.gate"],
+]);
+
 function RunRow({
 	run,
 	newThread,
@@ -342,6 +378,7 @@ function RunRow({
 	const title = thread
 		? parseTitleCard(thread.title).text || t("thread.untitled")
 		: run.threadId;
+	const reason = run.error ? RUN_REASON.get(run.error) : undefined;
 	return (
 		<li
 			data-run={run.id}
@@ -372,8 +409,78 @@ function RunRow({
 					{t("schedule.missed", { n: run.missed })}
 				</span>
 			)}
-			{run.error && <span className="break-words text-err">{run.error}</span>}
+			{reason ? (
+				<span className="text-faint">{t(reason)}</span>
+			) : (
+				run.error && <span className="break-words text-err">{run.error}</span>
+			)}
 		</li>
+	);
+}
+
+/**
+ * 闸门主机：下拉列出这条定时能用的主机（全局主机 + 定时所在项目的主机）。每次新建线程的定时是全自动运行，
+ * 没允许全自动线程使用的主机、已停用的主机照样列出但不可选。当前值不在列表里（主机改名、删除）时也列出，
+ * 保存时原样带回。列表读不到或为空时改为手填。
+ */
+function GateHostField({
+	value,
+	onChange,
+	projectId,
+	automated,
+}: {
+	value: string;
+	onChange: (v: string) => void;
+	/** 定时所在项目（`new_thread` 为定时的项目，`thread` 为目标线程的项目）；无项目时只有全局主机 */
+	projectId: string | undefined;
+	/** 全自动运行：主机须允许全自动线程使用 */
+	automated: boolean;
+}): ReactNode {
+	const { t } = useTranslation();
+	const hosts = useSshHosts();
+	const list = (hosts.data?.hosts ?? []).filter(
+		(h) => !h.projectId || h.projectId === projectId,
+	);
+	if (list.length === 0)
+		return (
+			<Field
+				label={t("schedule.gate.host")}
+				hint={t("schedule.gate.hostManual")}
+			>
+				<TextInput
+					className="font-mono"
+					value={value}
+					onChange={(e) => onChange(e.target.value)}
+				/>
+			</Field>
+		);
+	return (
+		<Field label={t("schedule.gate.host")}>
+			<Select value={value} onChange={(e) => onChange(e.target.value)}>
+				<option value="" disabled>
+					{t("schedule.gate.hostPick")}
+				</option>
+				{list.map((h) => {
+					const why = !h.enabled
+						? t("schedule.gate.hostDisabled")
+						: automated && !h.allowAutomation
+							? t("schedule.gate.hostNoAutomation")
+							: "";
+					return (
+						<option
+							key={h.id}
+							value={h.name}
+							disabled={why !== "" && h.name !== value}
+						>
+							{why ? `${h.name}（${why}）` : h.name}
+						</option>
+					);
+				})}
+				{value && !list.some((h) => h.name === value) && (
+					<option value={value}>{value}</option>
+				)}
+			</Select>
+		</Field>
 	);
 }
 
@@ -497,6 +604,13 @@ function ScheduleForm({
 		[],
 	);
 	const handId = useId();
+	const gateId = useId();
+	// 线程内定时的闸门主机按目标线程的项目解析
+	const threadProject = useIndex((st) =>
+		target.mode === "thread"
+			? st.threads[target.threadId]?.projectId
+			: undefined,
+	);
 	// 只调思考级别（或 W4 退回默认）不算指定了对象；换到别的 role / 模型才算
 	const onTarget = useCallback(
 		(v: Target) =>
@@ -628,7 +742,8 @@ function ScheduleForm({
 		s.prompt.trim() !== "" &&
 		(!named || s.name.trim() !== "") &&
 		(s.kind !== "cron" || s.cron.trim() !== "") &&
-		(s.kind !== "once" || fromLocalInput(s.at) !== undefined);
+		(s.kind !== "once" || fromLocalInput(s.at) !== undefined) &&
+		(!s.gateOn || (s.gateHost.trim() !== "" && s.gateCommand.trim() !== ""));
 
 	return (
 		<Dialog
@@ -927,13 +1042,17 @@ function ScheduleForm({
 				<Field
 					label={t("schedule.prompt")}
 					hint={
-						<span>
-							{t("schedule.placeholders")}{" "}
-							{SCHEDULE_PLACEHOLDERS.map((p) => (
-								<code key={p} className="mr-1 font-mono">
-									{p}
-								</code>
-							))}
+						<span className="flex flex-col gap-0.5">
+							<span>
+								{t("schedule.placeholders")}{" "}
+								{SCHEDULE_PLACEHOLDERS.map((p) => (
+									<code key={p} className="mr-1 font-mono">
+										{p}
+									</code>
+								))}
+							</span>
+							{/* 安静结束只对工作线程生效；主线用 stay_silent，不提示 */}
+							{!main && <span>{t("schedule.silentHint")}</span>}
 						</span>
 					}
 				>
@@ -944,6 +1063,64 @@ function ScheduleForm({
 						onChange={(e) => set("prompt", e.target.value)}
 					/>
 				</Field>
+				{/* 运行前闸门：一个可选项，用复选框（同「交给助手」）；打开后才显示主机、命令与超时 */}
+				<div className="flex items-start gap-2.5">
+					<Checkbox
+						id={gateId}
+						className="mt-0.5"
+						checked={s.gateOn}
+						onChange={(e) => set("gateOn", e.target.checked)}
+						aria-describedby={`${gateId}-hint`}
+					/>
+					<div className="flex min-w-0 flex-1 flex-col gap-0.5 text-sm">
+						<label htmlFor={gateId} className="cursor-pointer text-fg">
+							{t("schedule.gate.label")}
+						</label>
+						<p id={`${gateId}-hint`} className="text-faint text-xs">
+							{t("schedule.gate.hint")}
+						</p>
+						{s.gateOn && (
+							<div
+								data-testid="schedule-gate"
+								className="mt-2 flex flex-col gap-3"
+							>
+								<div className="grid items-start gap-3 sm:grid-cols-[minmax(0,1fr)_8rem]">
+									<GateHostField
+										value={s.gateHost}
+										onChange={(v) => set("gateHost", v)}
+										projectId={
+											newThread ? s.projectId || undefined : threadProject
+										}
+										automated={newThread && !!s.projectId}
+									/>
+									<Field label={t("schedule.gate.timeout")}>
+										<TextInput
+											type="number"
+											min={1}
+											max={600}
+											value={s.gateTimeout}
+											onChange={(e) =>
+												set("gateTimeout", Number(e.target.value) || 1)
+											}
+										/>
+									</Field>
+								</div>
+								<Field
+									label={t("schedule.gate.command")}
+									hint={t("schedule.gate.commandHint")}
+								>
+									<TextArea
+										rows={3}
+										className="font-mono"
+										maxLength={8000}
+										value={s.gateCommand}
+										onChange={(e) => set("gateCommand", e.target.value)}
+									/>
+								</Field>
+							</div>
+						)}
+					</div>
+				</div>
 				{newThread && (
 					<>
 						{/*

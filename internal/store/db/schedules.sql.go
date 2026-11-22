@@ -137,7 +137,7 @@ func (q *Queries) DeleteThreadReportGen(ctx context.Context, arg DeleteThreadRep
 }
 
 const getSchedule = `-- name: GetSchedule :one
-SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last, rev, hand_to_assistant, role FROM schedules WHERE id = ?1
+SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last, rev, hand_to_assistant, role, gate_host, gate_command, gate_timeout FROM schedules WHERE id = ?1
 `
 
 func (q *Queries) GetSchedule(ctx context.Context, id string) (Schedule, error) {
@@ -174,12 +174,15 @@ func (q *Queries) GetSchedule(ctx context.Context, id string) (Schedule, error) 
 		&i.Rev,
 		&i.HandToAssistant,
 		&i.Role,
+		&i.GateHost,
+		&i.GateCommand,
+		&i.GateTimeout,
 	)
 	return i, err
 }
 
 const getScheduleByProjectName = `-- name: GetScheduleByProjectName :one
-SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last, rev, hand_to_assistant, role FROM schedules
+SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last, rev, hand_to_assistant, role, gate_host, gate_command, gate_timeout FROM schedules
 WHERE mode = 'new_thread' AND name = ?1
   AND ((project_id IS NULL AND CAST(?2 AS TEXT) IS NULL)
        OR project_id = CAST(?2 AS TEXT))
@@ -226,12 +229,15 @@ func (q *Queries) GetScheduleByProjectName(ctx context.Context, arg GetScheduleB
 		&i.Rev,
 		&i.HandToAssistant,
 		&i.Role,
+		&i.GateHost,
+		&i.GateCommand,
+		&i.GateTimeout,
 	)
 	return i, err
 }
 
 const getScheduleByThread = `-- name: GetScheduleByThread :one
-SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last, rev, hand_to_assistant, role FROM schedules WHERE thread_id = CAST(?1 AS TEXT)
+SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last, rev, hand_to_assistant, role, gate_host, gate_command, gate_timeout FROM schedules WHERE thread_id = CAST(?1 AS TEXT)
 `
 
 // The thread-mode schedule of a thread.
@@ -269,6 +275,9 @@ func (q *Queries) GetScheduleByThread(ctx context.Context, threadID string) (Sch
 		&i.Rev,
 		&i.HandToAssistant,
 		&i.Role,
+		&i.GateHost,
+		&i.GateCommand,
+		&i.GateTimeout,
 	)
 	return i, err
 }
@@ -334,10 +343,10 @@ const insertSchedule = `-- name: InsertSchedule :exec
 
 INSERT INTO schedules (id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt,
                        enabled, paused_reason, next_run_at, created_by, created_at, updated_at, model, thinking_level,
-                       provider, orb_type, overlap, keep_last, hand_to_assistant, role)
+                       provider, orb_type, overlap, keep_last, hand_to_assistant, role, gate_host, gate_command, gate_timeout)
 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
         ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20,
-        ?21, ?22, ?23, ?24, ?25, ?26)
+        ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)
 `
 
 type InsertScheduleParams struct {
@@ -367,6 +376,9 @@ type InsertScheduleParams struct {
 	KeepLast        int64   `json:"keepLast"`
 	HandToAssistant int64   `json:"handToAssistant"`
 	Role            *string `json:"role"`
+	GateHost        *string `json:"gateHost"`
+	GateCommand     *string `json:"gateCommand"`
+	GateTimeout     *int64  `json:"gateTimeout"`
 }
 
 // Schedules (M9): one table, two delivery modes.
@@ -403,6 +415,9 @@ func (q *Queries) InsertSchedule(ctx context.Context, arg InsertScheduleParams) 
 		arg.KeepLast,
 		arg.HandToAssistant,
 		arg.Role,
+		arg.GateHost,
+		arg.GateCommand,
+		arg.GateTimeout,
 	)
 	return err
 }
@@ -448,7 +463,7 @@ func (q *Queries) InsertScheduleRun(ctx context.Context, arg InsertScheduleRunPa
 }
 
 const listDueSchedules = `-- name: ListDueSchedules :many
-SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last, rev, hand_to_assistant, role FROM schedules
+SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last, rev, hand_to_assistant, role, gate_host, gate_command, gate_timeout FROM schedules
 WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= CAST(?1 AS INTEGER)
 ORDER BY next_run_at, id
 LIMIT 100
@@ -494,6 +509,9 @@ func (q *Queries) ListDueSchedules(ctx context.Context, now int64) ([]Schedule, 
 			&i.Rev,
 			&i.HandToAssistant,
 			&i.Role,
+			&i.GateHost,
+			&i.GateCommand,
+			&i.GateTimeout,
 		); err != nil {
 			return nil, err
 		}
@@ -634,7 +652,7 @@ func (q *Queries) ListScheduleSummaries(ctx context.Context) ([]ListScheduleSumm
 }
 
 const listSchedules = `-- name: ListSchedules :many
-SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last, rev, hand_to_assistant, role FROM schedules
+SELECT id, mode, thread_id, project_id, space_id, name, kind, spec, timezone, run_at, ends_at, prompt, enabled, paused_reason, next_run_at, last_run_at, run_count, failures, created_by, created_at, updated_at, model, thinking_level, provider, orb_type, overlap, keep_last, rev, hand_to_assistant, role, gate_host, gate_command, gate_timeout FROM schedules
 WHERE (CAST(?1 AS TEXT) IS NULL OR mode = CAST(?1 AS TEXT))
   AND (CAST(?2 AS TEXT) IS NULL OR project_id = CAST(?2 AS TEXT))
   AND (CAST(?3 AS TEXT) IS NULL
@@ -703,6 +721,9 @@ func (q *Queries) ListSchedules(ctx context.Context, arg ListSchedulesParams) ([
 			&i.Rev,
 			&i.HandToAssistant,
 			&i.Role,
+			&i.GateHost,
+			&i.GateCommand,
+			&i.GateTimeout,
 		); err != nil {
 			return nil, err
 		}
@@ -838,9 +859,10 @@ UPDATE schedules SET name = ?1, kind = ?2, spec = ?3, timezone = ?4, run_at = ?5
     ends_at = ?6, prompt = ?7, enabled = ?8, paused_reason = ?9,
     next_run_at = ?10, failures = 0, space_id = ?11, role = ?12, model = ?13,
     thinking_level = ?14, provider = ?15, orb_type = ?16, overlap = ?17,
-    keep_last = ?18, hand_to_assistant = ?19, created_by = ?20, updated_at = ?21,
+    keep_last = ?18, hand_to_assistant = ?19, gate_host = ?20, gate_command = ?21,
+    gate_timeout = ?22, created_by = ?23, updated_at = ?24,
     rev = rev + 1
-WHERE id = ?22
+WHERE id = ?25
 `
 
 type UpdateScheduleDefParams struct {
@@ -863,6 +885,9 @@ type UpdateScheduleDefParams struct {
 	Overlap         string  `json:"overlap"`
 	KeepLast        int64   `json:"keepLast"`
 	HandToAssistant int64   `json:"handToAssistant"`
+	GateHost        *string `json:"gateHost"`
+	GateCommand     *string `json:"gateCommand"`
+	GateTimeout     *int64  `json:"gateTimeout"`
 	CreatedBy       string  `json:"createdBy"`
 	UpdatedAt       int64   `json:"updatedAt"`
 	ID              string  `json:"id"`
@@ -892,6 +917,9 @@ func (q *Queries) UpdateScheduleDef(ctx context.Context, arg UpdateScheduleDefPa
 		arg.Overlap,
 		arg.KeepLast,
 		arg.HandToAssistant,
+		arg.GateHost,
+		arg.GateCommand,
+		arg.GateTimeout,
 		arg.CreatedBy,
 		arg.UpdatedAt,
 		arg.ID,

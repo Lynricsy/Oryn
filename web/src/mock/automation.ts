@@ -285,6 +285,20 @@ export class MockAutomation {
 			return error(400, "invalid_schedule", "role 与 model 只能给一个");
 		if (!b.prompt?.trim())
 			return error(400, "invalid_schedule", "prompt 不能为空");
+		if (b.gate) {
+			// 按契约（openapi `ScheduleGate`）：host / command 必填，command 至多 8000 字，超时 1–600 秒的整数
+			const to = b.gate.timeoutSeconds;
+			if (!b.gate.host?.trim())
+				return error(400, "invalid_schedule", "gate.host 不能为空");
+			if (!b.gate.command?.trim() || b.gate.command.length > 8000)
+				return error(400, "invalid_schedule", "gate.command 须为 1–8000 字");
+			if (to !== undefined && (!Number.isInteger(to) || to < 1 || to > 600))
+				return error(
+					400,
+					"invalid_schedule",
+					"gate.timeoutSeconds 须为 1–600 的整数",
+				);
+		}
 		if (mode === "thread") {
 			const t = threadId ? this.deps.threads.get(threadId) : undefined;
 			if (!t) return error(404, "not_found", "thread");
@@ -354,6 +368,8 @@ export class MockAutomation {
 				mode === "new_thread"
 					? (b.handToAssistant ?? existing?.handToAssistant ?? false)
 					: false,
+			// 整份替换：请求里没有 gate 即去掉
+			...(b.gate ? { gate: { ...b.gate } } : {}),
 			...(enabled ? {} : { pausedReason: "user" as const }),
 			...(enabled && next[0] !== undefined ? { nextRunAt: next[0] } : {}),
 			...(existing?.lastRunAt !== undefined

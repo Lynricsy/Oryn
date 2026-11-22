@@ -29,10 +29,14 @@ type scheduleFlags struct {
 	cron, every, at, tz, name, until, prompt, promptFile string
 	disabled, json                                       bool
 	// 仅 add / update（new_thread）。
-	project                                            string
-	noProject                                          bool
+	project                                                  string
+	noProject                                                bool
 	space, role, model, thinking, provider, orbType, overlap string
-	keep                                               int
+	keep                                                     int
+	// 运行前闸门（set / add / update；orb 内不可用）。
+	gateHost, gateCommand string
+	gateTimeout           int
+	noGate                bool
 }
 
 func addTimeFlags(cmd *cobra.Command, f *scheduleFlags) {
@@ -59,6 +63,48 @@ func addNewThreadFlags(cmd *cobra.Command, f *scheduleFlags) {
 	fl.StringVar(&f.orbType, "type", "", "orb 类型")
 	fl.StringVar(&f.overlap, "overlap", "", "上一次运行未结束时：skip（缺省）跳过 / allow 照常新建（至多 3 个并存）")
 	fl.IntVar(&f.keep, "keep", 5, "只保留最近 N 个未归档的运行线程（1–50），更早且已静止的自动归档")
+}
+
+func addGateFlags(cmd *cobra.Command, f *scheduleFlags) {
+	fl := cmd.Flags()
+	fl.StringVar(&f.gateHost, "gate-host", "", "运行前闸门：执行命令的 SSH 主机名（设置 → SSH 主机）")
+	fl.StringVar(&f.gateCommand, "gate-command", "", `运行前闸门：每次运行前执行的命令；最后一行输出 {"wakeAgent": false} 时跳过本次运行`)
+	fl.IntVar(&f.gateTimeout, "gate-timeout", 60, "运行前闸门的执行上限（秒，1–600）")
+	fl.BoolVar(&f.noGate, "no-gate", false, "去掉运行前闸门（update）")
+}
+
+// applyGateFlags 合并运行前闸门参数：没给任何闸门参数时保留 in.Gate（update 沿用现值）；--no-gate 去掉闸门；
+// 其余在现值上覆盖给出的字段，结果须同时有主机与命令。
+func applyGateFlags(in *apigen.ScheduleInput, f scheduleFlags, changed func(string) bool) error {
+	set := changed("gate-host") || changed("gate-command") || changed("gate-timeout")
+	if changed("no-gate") && f.noGate {
+		if set {
+			return usageErr("--no-gate 不能与 --gate-* 同时给出")
+		}
+		in.Gate = nil
+		return nil
+	}
+	if !set {
+		return nil
+	}
+	g := apigen.ScheduleGate{}
+	if in.Gate != nil {
+		g = *in.Gate
+	}
+	if changed("gate-host") {
+		g.Host = strings.TrimSpace(f.gateHost)
+	}
+	if changed("gate-command") {
+		g.Command = f.gateCommand
+	}
+	if changed("gate-timeout") {
+		g.TimeoutSeconds = new(f.gateTimeout)
+	}
+	if g.Host == "" || strings.TrimSpace(g.Command) == "" {
+		return usageErr("运行前闸门须同时给出 --gate-host 与 --gate-command")
+	}
+	in.Gate = &g
+	return nil
 }
 
 // scheduleTimezone 返回 --tz 的缺省值：环境变量 TZ，再缺省 UTC（并在 stderr 提示）。
@@ -225,7 +271,7 @@ func optional(s string) *string {
 func inputFromSchedule(s apigen.Schedule) apigen.ScheduleInput {
 	in := apigen.ScheduleInput{
 		Kind: s.Kind, Cron: s.Cron, Every: s.Every, At: s.At, Timezone: &s.Timezone, EndsAt: s.EndsAt, Prompt: s.Prompt,
-		Enabled: new(s.Enabled), Mode: new(s.Mode),
+		Enabled: new(s.Enabled), Mode: new(s.Mode), Gate: s.Gate,
 	}
 	if s.Name != "" {
 		in.Name = new(s.Name)
@@ -266,6 +312,12 @@ var scheduleSetCmd = &cobra.Command{
 		o := scheduleSetOpts
 		var in apigen.ScheduleInput
 		if err := applyScheduleFlags(&in, o, cmd.Flags().Changed, true, time.Now(), os.Stdin, os.Stderr); err != nil {
+			return err
+		}
+		if inOrb() && (cmd.Flags().Changed("gate-host") || cmd.Flags().Changed("gate-command") || cmd.Flags().Changed("gate-timeout")) {
+			return usageErr("orb 内不能设置运行前闸门")
+		}
+		if err := applyGateFlags(&in, o, cmd.Flags().Changed); err != nil {
 			return err
 		}
 		var s apigen.Schedule
@@ -341,6 +393,9 @@ func scheduleAdd(ctx context.Context, c *apiClient, o scheduleFlags, changed fun
 	if err := applyNewThreadFlags(ctx, c, &in, o, changed, true); err != nil {
 		return apigen.Schedule{}, err
 	}
+	if err := applyGateFlags(&in, o, changed); err != nil {
+		return apigen.Schedule{}, err
+	}
 	if o.project != "" {
 		id, err := resolveProject(ctx, c, o.project)
 		if err != nil {
@@ -387,6 +442,9 @@ func scheduleUpdate(ctx context.Context, c *apiClient, ref string, o scheduleFla
 	}
 	in := inputFromSchedule(cur)
 	if err := applyScheduleFlags(&in, o, changed, false, time.Now(), stdin, stderr); err != nil {
+		return apigen.Schedule{}, err
+	}
+	if err := applyGateFlags(&in, o, changed); err != nil {
 		return apigen.Schedule{}, err
 	}
 	if cur.Mode == apigen.ScheduleModeNewThread {
@@ -544,6 +602,13 @@ func printSchedule(w io.Writer, s apigen.Schedule) error {
 		if s.Provider != nil || s.OrbType != nil {
 			fmt.Fprintf(tw, "Orb\t%s %s\n", deref(s.Provider), deref(s.OrbType))
 		}
+	}
+	if g := s.Gate; g != nil {
+		sec := 60
+		if g.TimeoutSeconds != nil {
+			sec = *g.TimeoutSeconds
+		}
+		fmt.Fprintf(tw, "Gate\t%s（%ds）: %s\n", g.Host, sec, g.Command)
 	}
 	if s.LastRun != nil {
 		r := s.LastRun
@@ -765,12 +830,15 @@ var scheduleRunsCmd = &cobra.Command{
 
 func init() {
 	addTimeFlags(scheduleSetCmd, &scheduleSetOpts)
+	addGateFlags(scheduleSetCmd, &scheduleSetOpts)
 	addTimeFlags(scheduleAddCmd, &scheduleAddOpts)
 	addNewThreadFlags(scheduleAddCmd, &scheduleAddOpts)
+	addGateFlags(scheduleAddCmd, &scheduleAddOpts)
 	scheduleAddCmd.Flags().StringVar(&scheduleAddOpts.project, "project", "", "新线程所在的项目（名称或 id）")
 	scheduleAddCmd.Flags().BoolVar(&scheduleAddOpts.noProject, "no-project", false, "新线程不关联项目")
 	addTimeFlags(scheduleUpdateCmd, &scheduleUpdateOpts)
 	addNewThreadFlags(scheduleUpdateCmd, &scheduleUpdateOpts)
+	addGateFlags(scheduleUpdateCmd, &scheduleUpdateOpts)
 	scheduleLsCmd.Flags().StringVar(&scheduleLsOpts.project, "project", "", "项目（名称、id 或 none）")
 	scheduleLsCmd.Flags().StringVar(&scheduleLsOpts.mode, "mode", "", "thread 或 new_thread")
 	scheduleLsCmd.Flags().BoolVar(&scheduleLsOpts.json, "json", false, "以 JSON 输出")

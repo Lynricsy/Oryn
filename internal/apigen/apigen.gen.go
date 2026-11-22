@@ -7437,6 +7437,8 @@ type LinkCtlSchedulePutParams struct {
 	// `new_thread` 不得带 `threadId`，`name` 必填（1–80）；`PUT /schedules/{id}` 里 `mode` / `threadId` / `projectId` 若出现必须与现值相同；
 	// `PUT /threads/{id}/schedule` 隐含 `mode = thread`。
 	// `prompt` 里的占位符 `{{now}}` `{{date}}` `{{scheduled_at}}` `{{run_number}}` `{{last_run_at}}` 在投递时替换。
+	// 安静结束：本次运行这段全由自动化投递的活动里，agent 的最后一条回复是 `[SILENT]`（整条，或独占第一行 / 最后一行；不区分大小写）时，
+	// 该回合不置未读、不发完成通知，也不交给助手（仅工作线程；主线用 `stay_silent`）。
 	Input ScheduleInput `json:"input"`
 
 	// ThreadID 调用方线程
@@ -10513,6 +10515,13 @@ type Schedule struct {
 	// Failures 连续失败次数
 	Failures int `json:"failures"`
 
+	// Gate 运行前闸门：每次运行（含手动触发）前，控制面先经 SSH 网关在 `host` 上执行 `command`，不启动 agent、不调用模型。
+	// 命令以退出码 0 结束、且标准输出最后一个非空行是 JSON 对象 `{"wakeAgent": false}` 时，本次运行记为 `skipped`（`error = gate`）；
+	// 其余情况（其它输出、非 0 退出、超时、连不上主机）都照常运行，并把闸门的输出或失败原因附在提示词前面交给 agent。
+	// 主机按定时的范围解析：全局主机，加上所在项目（`new_thread` 为定时的项目，`thread` 为目标线程的项目）的主机；
+	// 项目的 `new_thread` 定时是全自动运行，主机须允许全自动线程使用。执行记入 SSH 审计（来源 `owner`）。
+	Gate *ScheduleGate `json:"gate,omitempty"`
+
 	// HandToAssistant 交给助手（只对 `new_thread` 有意义）
 	HandToAssistant bool `json:"handToAssistant"`
 
@@ -10578,6 +10587,21 @@ type Schedule struct {
 // ScheduleCreatedBy defines model for ScheduleCreatedBy.
 type ScheduleCreatedBy string
 
+// ScheduleGate 运行前闸门：每次运行（含手动触发）前，控制面先经 SSH 网关在 `host` 上执行 `command`，不启动 agent、不调用模型。
+// 命令以退出码 0 结束、且标准输出最后一个非空行是 JSON 对象 `{"wakeAgent": false}` 时，本次运行记为 `skipped`（`error = gate`）；
+// 其余情况（其它输出、非 0 退出、超时、连不上主机）都照常运行，并把闸门的输出或失败原因附在提示词前面交给 agent。
+// 主机按定时的范围解析：全局主机，加上所在项目（`new_thread` 为定时的项目，`thread` 为目标线程的项目）的主机；
+// 项目的 `new_thread` 定时是全自动运行，主机须允许全自动线程使用。执行记入 SSH 审计（来源 `owner`）。
+type ScheduleGate struct {
+	Command string `json:"command"`
+
+	// Host SSH 主机名（设置 → SSH 主机里登记的名称）
+	Host string `json:"host"`
+
+	// TimeoutSeconds 执行上限（秒）；缺省 60
+	TimeoutSeconds *int `json:"timeoutSeconds,omitempty"`
+}
+
 // ScheduleID `sch_<ulid>`（M9）
 type ScheduleID = string
 
@@ -10590,6 +10614,8 @@ type ScheduleID = string
 // `new_thread` 不得带 `threadId`，`name` 必填（1–80）；`PUT /schedules/{id}` 里 `mode` / `threadId` / `projectId` 若出现必须与现值相同；
 // `PUT /threads/{id}/schedule` 隐含 `mode = thread`。
 // `prompt` 里的占位符 `{{now}}` `{{date}}` `{{scheduled_at}}` `{{run_number}}` `{{last_run_at}}` 在投递时替换。
+// 安静结束：本次运行这段全由自动化投递的活动里，agent 的最后一条回复是 `[SILENT]`（整条，或独占第一行 / 最后一行；不区分大小写）时，
+// 该回合不置未读、不发完成通知，也不交给助手（仅工作线程；主线用 `stay_silent`）。
 type ScheduleInput struct {
 	// At UTC 毫秒时间戳
 	At   *TimestampMs `json:"at,omitempty"`
@@ -10603,6 +10629,9 @@ type ScheduleInput struct {
 
 	// Every Example: 30m
 	Every *string `json:"every,omitempty"`
+
+	// Gate 运行前闸门；省略 = 不设（`POST` / `PUT` 整份替换，省略即去掉）。agent 定义时不能设置；agent 改写时忽略本字段、沿用现值。
+	Gate *ScheduleGate `json:"gate,omitempty"`
 
 	// HandToAssistant 仅 `new_thread`：交给助手——每次运行的结果合并进助手的主线，该运行的完成通知不单独推送；`thread` 模式带 true 即 400 `invalid_schedule`；缺省 false
 	HandToAssistant *bool `json:"handToAssistant,omitempty"`
@@ -10685,7 +10714,7 @@ type ScheduleRun struct {
 	// DeliveredAt UTC 毫秒时间戳
 	DeliveredAt *TimestampMs `json:"deliveredAt,omitempty"`
 
-	// Error 如 `overlap`、`overlap_cap`、`thread_archived`、`project_archived`、`deliver_timeout`、`interrupted`、`stale`、`aborted`（回合被中断）、`agent_exited`（agent 进程退出）、`outcome_unknown`（无法确认回合结果）、`thread_deleted`（线程被删除），或创建线程失败、回合出错的原因
+	// Error 如 `gate`（运行前闸门判定本次不必运行）、`overlap`、`overlap_cap`、`thread_archived`、`project_archived`、`deliver_timeout`、`interrupted`、`stale`、`aborted`（回合被中断）、`agent_exited`（agent 进程退出）、`outcome_unknown`（无法确认回合结果）、`thread_deleted`（线程被删除），或创建线程失败、回合出错的原因
 	Error *string `json:"error,omitempty"`
 
 	// FinishedAt UTC 毫秒时间戳
