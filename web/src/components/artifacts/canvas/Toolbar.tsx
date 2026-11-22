@@ -374,7 +374,7 @@ export function Toolbar({
 					commit={commit}
 				/>
 				<span className="mx-1 h-5 w-px shrink-0 bg-border" />
-				<div className="flex min-w-0 items-center gap-0.5 overflow-x-auto">
+				<div className="focus-inset flex min-w-0 items-center gap-0.5 overflow-x-auto">
 					{tools.map((b) => (
 						<IconButton
 							key={b.tool}
