@@ -334,6 +334,7 @@ func (e AssistantMcpServerTransport) Valid() bool {
 
 // Defines values for AutomationActionAction.
 const (
+	ActionAPICall             AutomationActionAction = "api_call"
 	ActionAbortThread         AutomationActionAction = "abort_thread"
 	ActionArchiveThread       AutomationActionAction = "archive_thread"
 	ActionCreateBox           AutomationActionAction = "create_box"
@@ -377,6 +378,8 @@ const (
 // Valid indicates whether the value is a known member of the AutomationActionAction enum.
 func (e AutomationActionAction) Valid() bool {
 	switch e {
+	case ActionAPICall:
+		return true
 	case ActionAbortThread:
 		return true
 	case ActionArchiveThread:
@@ -5294,7 +5297,7 @@ type AuthSetupFinishResponse struct {
 
 // AutomationAction 一条操作记录（协调者的宿主工具调用，或 orb 内 agent 经 `oryn` CLI 的调用；无论成败都记）
 type AutomationAction struct {
-	// Action 工具名（M19 起全局助手有更多写类工具；经确认卡执行的记 `origin = owner`）
+	// Action 工具名（M19 起全局助手有更多写类工具；经确认卡执行的记 `origin = owner`）。`api_call` 是全局助手经 `oryn` 工具执行的 REST 操作，`summary` 以 operationId 开头
 	Action    AutomationActionAction    `json:"action"`
 	ActorKind AutomationActionActorKind `json:"actorKind"`
 
@@ -5326,7 +5329,7 @@ type AutomationAction struct {
 	TS TimestampMs `json:"ts"`
 }
 
-// AutomationActionAction 工具名（M19 起全局助手有更多写类工具；经确认卡执行的记 `origin = owner`）
+// AutomationActionAction 工具名（M19 起全局助手有更多写类工具；经确认卡执行的记 `origin = owner`）。`api_call` 是全局助手经 `oryn` 工具执行的 REST 操作，`summary` 以 operationId 开头
 type AutomationActionAction string
 
 // AutomationActionActorKind defines model for AutomationAction.ActorKind.

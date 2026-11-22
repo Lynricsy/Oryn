@@ -72,10 +72,11 @@ const (
 )
 
 // HostToolTimeout 实现 threads.Coordinator：整文件传输类工具（取回、放入线程文件，导出、导入 artifact，电脑的上传与下载）
-// 5 分钟，助手的电脑里的工具（computer_*）30 分钟，其余返回 0（缺省 60 秒）。
+// 与 oryn（它能转发的操作里最长的就是这些）5 分钟，助手的电脑里的工具（computer_*）30 分钟，其余返回 0（缺省 60 秒）。
+// oryn 在调用内部再按操作收紧。
 func (s *Service) HostToolTimeout(name string) time.Duration {
 	switch name {
-	case ToolFetchThreadFile, ToolPutThreadFile, ToolExportArtifact, ToolImportArtifact, ToolComputerUpload, ToolComputerDownload:
+	case ToolFetchThreadFile, ToolPutThreadFile, ToolExportArtifact, ToolImportArtifact, ToolComputerUpload, ToolComputerDownload, ToolOryn:
 		return transferToolTimeout
 	}
 	if strings.HasPrefix(name, computerToolPrefix) {

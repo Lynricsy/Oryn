@@ -366,6 +366,7 @@ func ToolDefs(o ToolSet) []apigen.OmpFrame {
 		return defs
 	}
 	defs = append(defs,
+		orynToolDef(),
 		tool(ToolSaveFile, "Save a file you wrote under ~/library/out/ into the owner's library.", obj{
 			"path":   str("Path of the file, e.g. ~/library/out/report.md."),
 			"name":   str("File name in the library (default: the file's name)."),

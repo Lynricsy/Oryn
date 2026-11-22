@@ -9339,10 +9339,10 @@ export interface components {
              */
             origin: "owner" | "auto";
             /**
-             * @description 工具名（M19 起全局助手有更多写类工具；经确认卡执行的记 `origin = owner`）
+             * @description 工具名（M19 起全局助手有更多写类工具；经确认卡执行的记 `origin = owner`）。`api_call` 是全局助手经 `oryn` 工具执行的 REST 操作，`summary` 以 operationId 开头
              * @enum {string}
              */
-            action: "create_thread" | "send_message" | "archive_thread" | "set_schedule" | "delete_schedule" | "update_thread" | "abort_thread" | "set_thread_model" | "fork_thread" | "wake_thread" | "delete_thread" | "create_project" | "update_project" | "delete_project" | "create_space" | "update_space" | "delete_space" | "set_trigger" | "delete_trigger" | "pause_orb" | "wake_orb" | "delete_orb" | "write_thread_file" | "put_thread_file" | "write_project_config" | "delete_project_config" | "share_thread" | "revoke_share" | "share_portal" | "unshare_portal" | "publish_artifact" | "unpublish_artifact" | "create_box" | "start_box" | "stop_box" | "set_box_schedule" | "set_box_app_visibility" | "delete_box";
+            action: "create_thread" | "send_message" | "archive_thread" | "set_schedule" | "delete_schedule" | "update_thread" | "abort_thread" | "set_thread_model" | "fork_thread" | "wake_thread" | "delete_thread" | "create_project" | "update_project" | "delete_project" | "create_space" | "update_space" | "delete_space" | "set_trigger" | "delete_trigger" | "pause_orb" | "wake_orb" | "delete_orb" | "write_thread_file" | "put_thread_file" | "write_project_config" | "delete_project_config" | "share_thread" | "revoke_share" | "share_portal" | "unshare_portal" | "publish_artifact" | "unpublish_artifact" | "create_box" | "start_box" | "stop_box" | "set_box_schedule" | "set_box_app_visibility" | "delete_box" | "api_call";
             targetThreadId?: components["schemas"]["ThreadId"];
             scheduleId?: components["schemas"]["ScheduleId"];
             /** @description 消息 / 提示词的前 200 字符；定时为 `<name> · <kind> <spec> · <mode>` */

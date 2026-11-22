@@ -554,6 +554,8 @@ func (s *Server) init(ctx context.Context) error {
 		portals = s.Portal
 	}
 	s.Coord.SetShares(s.Share, portals)
+	// 全局助手的 oryn 工具：在进程内走与网页相同的 REST 处理器
+	s.Coord.SetAPI(api.NewInternal(s.API))
 	s.Handler = api.NewRouter(s.API)
 	return nil
 }

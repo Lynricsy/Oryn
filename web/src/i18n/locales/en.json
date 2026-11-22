@@ -4221,7 +4221,8 @@
 			"delete_schedule": "Delete schedule “{{targetLabel}}”?",
 			"share_thread": "Create a public share link for “{{targetLabel}}”?",
 			"share_portal": "Open a public Portal preview for “{{targetLabel}}”?",
-			"publish_artifact": "Publish artifact “{{targetLabel}}” for people outside Oryn?"
+			"publish_artifact": "Publish artifact “{{targetLabel}}” for people outside Oryn?",
+			"api_call": "Allow the assistant to run “{{targetLabel}}”?"
 		}
 	},
 	"library": {
@@ -4342,7 +4343,8 @@
 			"stop_box": "Stopped a box",
 			"set_box_schedule": "Changed a box schedule",
 			"set_box_app_visibility": "Changed an app's visibility",
-			"delete_box": "Deleted a box"
+			"delete_box": "Deleted a box",
+			"api_call": "API operation"
 		}
 	},
 	"schedule": {

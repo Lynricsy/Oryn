@@ -104,6 +104,13 @@ func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) thre
 	case ToolExportArtifact, ToolImportArtifact, ToolListDeletedArtifacts, ToolRestoreArtifact:
 		// M19：artifact 的补充工具（只给全局助手），coord 自己实现
 		return s.toolArtifactExtra(ctx, tc)
+	case ToolOryn:
+		// oryn 技能的操作（只给全局助手）
+		if c.Kind != threads.KindAssistant {
+			err = errf("unknown_tool", "no tool named %q", c.Name)
+			break
+		}
+		return s.toolOryn(ctx, tc)
 	case ToolUpdateThread, ToolAbortThread, ToolSetThreadModel, ToolForkThread, ToolWakeThread, ToolListRunners, ToolDeleteThread:
 		// M19 第三层：线程全生命周期（只给全局助手）
 		if c.Kind != threads.KindAssistant {

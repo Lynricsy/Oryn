@@ -4221,7 +4221,8 @@
 			"delete_schedule": "删除定时「{{targetLabel}}」？",
 			"share_thread": "为「{{targetLabel}}」创建公开分享链接？",
 			"share_portal": "为「{{targetLabel}}」开启公开的 Portal 预览？",
-			"publish_artifact": "对外发布 artifact「{{targetLabel}}」？"
+			"publish_artifact": "对外发布 artifact「{{targetLabel}}」？",
+			"api_call": "允许助手执行「{{targetLabel}}」？"
 		}
 	},
 	"library": {
@@ -4342,7 +4343,8 @@
 			"stop_box": "停止 box",
 			"set_box_schedule": "修改 box 运行时段",
 			"set_box_app_visibility": "修改应用公开性",
-			"delete_box": "删除 box"
+			"delete_box": "删除 box",
+			"api_call": "接口操作"
 		}
 	},
 	"schedule": {

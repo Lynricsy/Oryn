@@ -160,6 +160,8 @@ type Service struct {
 	wake    chan struct{}
 	// confirmers 是确认卡动作 → 主人批准后的执行函数（onConfirm 在 New 里登记，之后只读）。
 	confirmers map[string]confirmExec
+	// api 是进程内的 REST 调用入口（SetAPI 设置；oryn 工具用）。
+	api API
 	// sentConfirm（仅测试）在一条确认结果投递成功之后调用。
 	sentConfirm func(threadID, text string)
 
@@ -206,6 +208,7 @@ func New(cfg Config, st *store.Store, th *threads.Service, o *orbs.Service, host
 	s.onConfirm(ToolShareThread, s.confirmShareThread)
 	s.onConfirm(ToolSharePortal, s.confirmSharePortal)
 	s.onConfirm(ToolPublishArtifact, s.confirmPublishArtifact)
+	s.onConfirm(actionAPICall, s.confirmAPICall)
 	if o != nil {
 		s.registerOrbMethods(o.HandleRequest)
 		s.refreshPolicy = func(ctx context.Context, orbID string) error {

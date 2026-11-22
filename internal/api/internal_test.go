@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"regexp"
 	"strings"
@@ -12,7 +13,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Lynricsy/Oryn/internal/api"
+	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/coord"
+	"github.com/Lynricsy/Oryn/internal/threads"
 )
 
 // 进程内入口不经鉴权中间件，以助手主体直接调用 REST 处理器。
@@ -60,6 +63,26 @@ func TestInternalNoUnauthorized(t *testing.T) {
 		cancel()
 		assert.NotEqual(t, http.StatusUnauthorized, status, "%s %s %s: %s", op, method, target, out)
 	}
+}
+
+// 端到端：助手对话经 oryn 工具在进程内调用真实处理器，结果经 HTTP 可见，并写审计。
+func TestInternalOrynEndToEnd(t *testing.T) {
+	e, _ := newCoordEnv(t)
+	e.coordSvc.SetAPI(api.NewInternal(e.apiSrv))
+	code, body := e.do("POST", "/api/v1/assistant/conversations", nil)
+	require.Equal(t, http.StatusCreated, code, string(body))
+	var conv apigen.Thread
+	require.NoError(t, json.Unmarshal(body, &conv))
+
+	res := e.coordSvc.HostToolCall(context.Background(), threads.HostToolCall{ThreadID: conv.ID, Kind: threads.KindAssistant, Name: coord.ToolOryn,
+		Args: json.RawMessage(`{"op":"createSpace","args":{"body":{"name":"S2"}}}`), OwnerTurn: true})
+	require.False(t, res.IsError, res.Text)
+	code, body = e.do("GET", "/api/v1/spaces", nil)
+	require.Equal(t, http.StatusOK, code)
+	assert.Contains(t, string(body), `"S2"`)
+	code, body = e.do("GET", "/api/v1/automation/actions", nil)
+	require.Equal(t, http.StatusOK, code)
+	assert.Contains(t, string(body), `"api_call"`)
 }
 
 var pathParamRE = regexp.MustCompile(`\{[^}]+\}`)
