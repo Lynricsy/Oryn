@@ -215,6 +215,10 @@ const MOUNTED_DEVICES: readonly [string, string][] = [
 	["list_projects", "List projects."],
 	["get_stats", "Usage, cost and output statistics over a time range."],
 	[
+		"oryn",
+		"Run one Oryn operation documented in the oryn skill (skill://oryn). Read the operation's doc first; never guess names or arguments.",
+	],
+	[
 		"save_file",
 		"Save a file you wrote under ~/library/out/ into the owner's library.",
 	],
@@ -227,16 +231,21 @@ const MOUNTED_DEVICES: readonly [string, string][] = [
 	["read_artifact", "读 artifact 的一个文件（缺省是入口文件），按字符分页。"],
 	["update_artifact", "改一个 artifact，产生新版本。"],
 	["list_artifacts", "列出 artifact（最近更新的在前）。"],
-	["delete_artifact", "把 artifact 移到「最近删除」（保留 30 天）。"],
-	["list_artifact_versions", "列出 artifact 的全部版本。"],
-	["restore_artifact_version", "把一个旧版本复制成新的最新版本。"],
 	["read_artifact_guide", "读 artifact 的教程。"],
-	["read_artifact_comments", "读主人在 artifact 上留的评论串。"],
-	["reply_artifact_comment", "回复一个评论串，简短说明你做了什么。"],
-	["resolve_artifact_comment", "把一个评论串标为已解决。"],
 	["screenshot_artifact", "在控制面把 artifact 的一个页面渲染成 PNG 图片。"],
-	["export_artifact", "把 artifact 的一个版本导出成文件存进文件库。"],
-	["import_artifact", "把沙箱里的 .zip 或单个 .html 导入成新 artifact。"],
+	["computer_status", "Start or wake your computer and report its state."],
+	[
+		"computer_upload",
+		"Copy a library file, or a file under ~/library/out/ or ~/tmp/, onto your computer.",
+	],
+	[
+		"computer_download",
+		"Save a file from your computer into the owner's library.",
+	],
+	[
+		"computer_record",
+		"Record your computer's desktop as an MP4 video into the owner's library.",
+	],
 ];
 
 /** 内联文档（omp 缺省 `inline`）：每台设备一节 `## <name>` + 说明 + 参数 schema，节与节之间空行分隔。 */

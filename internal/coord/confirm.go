@@ -219,7 +219,8 @@ func (s *Service) deliverConfirm(ctx context.Context, row db.AssistantConfirmati
 	}
 }
 
-// restoreConfirmations 把仍待答的确认卡重新挂到各自的对话上（控制面重启后）。
+// restoreConfirmations 把仍待答的确认卡重新挂到各自的对话上（控制面重启后）。动作已没有执行函数的卡（升级前留下的、
+// 已删除工具的确认）不再挂出，直接过期。
 func (s *Service) restoreConfirmations(ctx context.Context) {
 	rows, err := s.st.Q.ListPendingAssistantConfirmations(ctx)
 	if err != nil {
@@ -229,6 +230,10 @@ func (s *Service) restoreConfirmations(ctx context.Context) {
 		return
 	}
 	for _, row := range rows {
+		if _, ok := s.confirmers[row.Action]; !ok {
+			s.expireConfirmation(ctx, row)
+			continue
+		}
 		if err := s.showConfirm(ctx, row); err != nil {
 			slog.Warn("coord: 恢复确认卡失败", "confirmation", row.ID, "thread", row.ThreadID, "err", err)
 		}
@@ -245,12 +250,17 @@ func (s *Service) expireConfirmations(ctx context.Context) {
 		return
 	}
 	for _, row := range rows {
-		now := s.nowMs()
-		n, err := s.st.Q.DecideAssistantConfirmation(ctx, db.DecideAssistantConfirmationParams{State: confirmExpired, DecidedAt: &now, ID: row.ID})
-		if err != nil || n == 0 {
-			continue
-		}
-		s.th.WithdrawUI(ctx, row.ThreadID, row.ID)
-		s.deliverConfirm(ctx, row, "expired without an answer.", "")
+		s.expireConfirmation(ctx, row)
 	}
+}
+
+// expireConfirmation 把一张待答的确认卡置 expired（CAS），撤回卡片并告知发起的对话。
+func (s *Service) expireConfirmation(ctx context.Context, row db.AssistantConfirmation) {
+	now := s.nowMs()
+	n, err := s.st.Q.DecideAssistantConfirmation(ctx, db.DecideAssistantConfirmationParams{State: confirmExpired, DecidedAt: &now, ID: row.ID})
+	if err != nil || n == 0 {
+		return
+	}
+	s.th.WithdrawUI(ctx, row.ThreadID, row.ID)
+	s.deliverConfirm(ctx, row, "expired without an answer.", "")
 }

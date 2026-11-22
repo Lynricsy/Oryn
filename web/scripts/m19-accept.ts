@@ -324,6 +324,8 @@ interface ToolCall {
 }
 interface ToolResult {
 	tool: string;
+	/** `oryn` 工具调用的操作名（按 toolCallId 对回调用）；其它工具为空串。 */
+	op: string;
 	text: string;
 	isError: boolean;
 }
@@ -364,9 +366,11 @@ function textOf(c: unknown): string {
 /**
  * 工具调用与结果。可发现的工具（宿主工具、MCP 工具）在 omp 里可能是 xd:// 设备：agent 以 `write xd://<工具>` 调用，
  * 参数是 content 里的 JSON（`read xd://<工具>` 只是读文档，不算调用）；结果的 `details.xdev.tool` 是真实工具名。
+ * `oryn{op, args}` 的结果按 toolCallId 记下调用的 op。
  */
 function transcriptOf(es: Entry[]): Transcript {
 	const t: Transcript = { replies: [], calls: [], results: [] };
+	const opOf = new Map<string, string>();
 	for (const e of es) {
 		const m = e.type === "message" ? e.payload.message : undefined;
 		if (!isRecord(m)) continue;
@@ -388,18 +392,23 @@ function transcriptOf(es: Entry[]): Transcript {
 					} catch {
 						args = a.content;
 					}
-				t.calls.push({ name: dev ?? String(b.name ?? ""), args });
+				const name = dev ?? String(b.name ?? "");
+				t.calls.push({ name, args });
+				if (name === "oryn" && isRecord(args) && typeof b.id === "string")
+					opOf.set(b.id, String(args.op ?? ""));
 			}
 		} else if (m.role === "toolResult") {
 			const xdev =
 				isRecord(m.details) && isRecord(m.details.xdev)
 					? m.details.xdev
 					: undefined;
+			const tool =
+				xdev && xdev.mode === "execute"
+					? String(xdev.tool ?? "")
+					: String(m.toolName ?? "");
 			t.results.push({
-				tool:
-					xdev && xdev.mode === "execute"
-						? String(xdev.tool ?? "")
-						: String(m.toolName ?? ""),
+				tool,
+				op: tool === "oryn" ? (opOf.get(String(m.toolCallId ?? "")) ?? "") : "",
 				text: textOf(m.content),
 				isError: m.isError === true,
 			});
@@ -407,6 +416,11 @@ function transcriptOf(es: Entry[]): Transcript {
 	}
 	return t;
 }
+/** 结果是不是 `oryn{op}` 的调用（op 为 REST operationId 或技能原生操作名）。 */
+const isOp = (r: ToolResult, op: string) => r.tool === "oryn" && r.op === op;
+/** 审计行是不是助手经 `oryn` 执行的某个 REST 操作（action api_call，摘要以 operationId 开头）。 */
+const isApiCall = (a: AuditRow, op: string) =>
+	a.action === "api_call" && a.summary.startsWith(`${op} `);
 const transcript = async (tid: string) => transcriptOf(await entries(tid));
 const callNames = (t: Transcript) =>
 	t.calls.map((c) => c.name).join(",") || "无";
@@ -1194,25 +1208,25 @@ async function l1Image() {
 /** L3-project 开出的工作线程（L3-confirm 删除它）。 */
 let projectThread = "";
 
-/** L3-project：助手新建项目并在其中开线程，线程在 docker orb 里跑完首回合。 */
+/** L3-project：助手经 oryn 的 createProject 新建项目并在其中开线程，线程在 docker orb 里跑完首回合。 */
 async function l3Project() {
 	const pname = `m19-p-${RUN}`;
 	const done = (t: Transcript) =>
-		t.results.some((r) => r.tool === "create_project" && !r.isError) &&
+		t.results.some((r) => isOp(r, "createProject") && !r.isError) &&
 		t.results.some((r) => r.tool === "create_thread" && !r.isError);
 	const { th, t } = await askUntil(
 		"L3-project",
-		`请调用 create_project 新建一个项目，name 为 ${pname}（不要仓库，其它参数都不填）。成功后调用 create_thread 在这个项目里开一个工作线程：project 填 ${pname}，title 填 m19 项目线程，prompt 填「只回复 OK 两个字母，不要调用任何工具。」。开完线程就结束这一轮，不用等它回报。`,
-		`请调用 create_thread：project 填 ${pname}，title 填 m19 项目线程，prompt 填「只回复 OK 两个字母，不要调用任何工具。」（项目若还没有，先调用 create_project 建 ${pname}）。`,
+		`请调用 oryn 工具新建一个项目：op 填 createProject，args 填 {"body":{"name":"${pname}"}}（不要仓库，其它字段都不填）。成功后调用 create_thread 在这个项目里开一个工作线程：project 填 ${pname}，title 填 m19 项目线程，prompt 填「只回复 OK 两个字母，不要调用任何工具。」。开完线程就结束这一轮，不用等它回报。`,
+		`请调用 create_thread：project 填 ${pname}，title 填 m19 项目线程，prompt 填「只回复 OK 两个字母，不要调用任何工具。」（项目若还没有，先调用 oryn 工具建它：op 填 createProject，args 填 {"body":{"name":"${pname}"}}）。`,
 		done,
 	);
 	for (const r of t.results.filter(
-		(r) => r.tool === "create_project" || r.tool === "create_thread",
+		(r) => isOp(r, "createProject") || r.tool === "create_thread",
 	))
 		note(
-			`${r.tool} 结果（isError=${r.isError}）：${clip(oneLine(r.text), 200)}`,
+			`${r.op || r.tool} 结果（isError=${r.isError}）：${clip(oneLine(r.text), 200)}`,
 		);
-	check(done(t), "create_project 与 create_thread 都成功");
+	check(done(t), "oryn createProject 与 create_thread 都成功");
 	const projects = await rjson<{ projects: { id: string; name: string }[] }>(
 		"GET",
 		"/api/v1/projects",
@@ -1228,8 +1242,8 @@ async function l3Project() {
 		`审计有助手的 create_thread（目标 ${created?.targetThreadId ?? "无"}）`,
 	);
 	expect(
-		audit.some((a) => a.action === "create_project" && a.ok),
-		"审计有 create_project",
+		audit.some((a) => isApiCall(a, "createProject") && a.ok),
+		"审计有 api_call createProject /api/v1/projects",
 	);
 	const wid = created?.targetThreadId ?? "";
 	const w = await rjson<ThreadView & { projectId?: string; kind?: string }>(
@@ -1252,26 +1266,26 @@ async function l3Project() {
 	projectThread = wid;
 }
 
-/** L3-confirm：删线程走确认卡：对话 awaiting_input、通知带是 / 否；作答“是”后线程被删、对话收到确认结果、审计 origin=owner。 */
+/** L3-confirm：经 oryn 的 deleteThread 删线程走确认卡：对话 awaiting_input、通知带是 / 否；作答“是”后线程被删、对话收到确认结果、审计 origin=owner。 */
 async function l3Confirm() {
 	const wid = projectThread;
 	const asked = (t: Transcript) =>
-		t.results.some((r) => r.tool === "delete_thread");
+		t.results.some((r) => isOp(r, "deleteThread"));
 	const { th, t } = await askUntil(
 		"L3-confirm",
-		`请调用 delete_thread 删除线程 ${wid}。调用之后告诉我结果即可，不要做别的。`,
-		`请现在调用 delete_thread，threadId 填 ${wid}。`,
+		`请调用 oryn 工具删除线程 ${wid}：op 填 deleteThread，args 填 {"id":"${wid}"}。调用之后告诉我结果即可，不要做别的。`,
+		`请现在调用 oryn 工具，op 填 deleteThread，args 填 {"id":"${wid}"}。`,
 		asked,
 	);
-	for (const r of t.results.filter((r) => r.tool === "delete_thread"))
+	for (const r of t.results.filter((r) => isOp(r, "deleteThread")))
 		note(
-			`delete_thread 结果（isError=${r.isError}）：${clip(oneLine(r.text), 240)}`,
+			`oryn deleteThread 结果（isError=${r.isError}）：${clip(oneLine(r.text), 240)}`,
 		);
 	check(
 		t.results.some(
-			(r) => r.tool === "delete_thread" && /awaiting_owner/.test(r.text),
+			(r) => isOp(r, "deleteThread") && /awaiting_owner/.test(r.text),
 		),
-		"delete_thread 返回 awaiting_owner（没有直接执行）",
+		"oryn deleteThread 返回 awaiting_owner（没有直接执行）",
 	);
 	check(
 		(await api("GET", `/api/v1/threads/${wid}`)).status === 200,
@@ -1318,39 +1332,41 @@ async function l3Confirm() {
 	const text = userText(msg) ?? "";
 	note(`自动消息：${clip(oneLine(text), 240)}`);
 	check(
-		/delete_thread/.test(text) && /approved and done\./.test(text),
-		"对话收到 [Oryn confirmation · automatic] delete_thread … approved and done.",
+		text.startsWith(
+			`[Oryn confirmation · automatic] api_call deleteThread /api/v1/threads/${wid}: approved and done.`,
+		),
+		`对话收到 [Oryn confirmation · automatic] api_call deleteThread /api/v1/threads/${wid}: approved and done.`,
 	);
 	const gone = await api("GET", `/api/v1/threads/${wid}`);
 	check(gone.status === 404, `线程 ${wid} 已删除（GET → ${gone.status}）`);
-	const row = (await auditOf(th.id)).find((a) => a.action === "delete_thread");
+	const row = (await auditOf(th.id)).find((a) => isApiCall(a, "deleteThread"));
 	note(`审计：${JSON.stringify(row ?? null)}`);
 	check(
 		row?.origin === "owner" && row.ok,
-		"审计里 delete_thread 的 origin=owner 且成功",
+		"审计里 api_call deleteThread 的 origin=owner 且成功",
 	);
 	await waitSettled(th.id, TURN_TIMEOUT);
 }
 
-/** L3-space：助手新建 Space，向其协调对话发话，Space 那一轮结束后回报到达助手对话。 */
+/** L3-space：助手经 oryn 的 createSpace 新建 Space，向其协调对话发话，Space 那一轮结束后回报到达助手对话。 */
 async function l3Space() {
 	const sname = `m19-s-${RUN}`;
 	const sent = (t: Transcript) =>
-		t.results.some((r) => r.tool === "create_space" && !r.isError) &&
+		t.results.some((r) => isOp(r, "createSpace") && !r.isError) &&
 		t.results.some((r) => r.tool === "send_message" && !r.isError);
 	const { th, t } = await askUntil(
 		"L3-space",
-		`请调用 create_space 新建一个 Space：name 为 ${sname}，goal 为「M19 验收」。成功后调用 send_message，space 参数填 ${sname}，message 填「请只回复 PONG 这个词，不要调用任何工具。」。发完就结束这一轮，等它的回报。`,
-		`请调用 send_message：space 填 ${sname}，message 填「请只回复 PONG 这个词，不要调用任何工具。」（Space 若还没有，先调用 create_space 建 ${sname}）。`,
+		`请调用 oryn 工具新建一个 Space：op 填 createSpace，args 填 {"body":{"name":"${sname}","goal":"M19 验收"}}。成功后调用 send_message，space 参数填 ${sname}，message 填「请只回复 PONG 这个词，不要调用任何工具。」。发完就结束这一轮，等它的回报。`,
+		`请调用 send_message：space 填 ${sname}，message 填「请只回复 PONG 这个词，不要调用任何工具。」（Space 若还没有，先调用 oryn 工具建它：op 填 createSpace，args 填 {"body":{"name":"${sname}","goal":"M19 验收"}}）。`,
 		sent,
 	);
 	for (const r of t.results.filter(
-		(r) => r.tool === "create_space" || r.tool === "send_message",
+		(r) => isOp(r, "createSpace") || r.tool === "send_message",
 	))
 		note(
-			`${r.tool} 结果（isError=${r.isError}）：${clip(oneLine(r.text), 200)}`,
+			`${r.op || r.tool} 结果（isError=${r.isError}）：${clip(oneLine(r.text), 200)}`,
 		);
-	check(sent(t), "create_space 与 send_message 都成功");
+	check(sent(t), "oryn createSpace 与 send_message 都成功");
 	const spaces = await rjson<{
 		spaces: { id: string; name: string; threadId: string }[];
 	}>("GET", "/api/v1/spaces");

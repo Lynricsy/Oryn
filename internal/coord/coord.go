@@ -118,9 +118,8 @@ type Service struct {
 	// mem / eng 是 M17 主人记忆与 M16 工程记忆（SetOwnerMemory 设置）；mem 为 nil 时全局助手不注入记忆段、没有记忆工具。
 	mem OwnerMemory
 	eng EngineeringMemory
-	// home / projectCfg / envSecrets 是全局与项目级 omp 配置、env 模式密钥（M19，SetAgentConfig 设置）。
+	// home / envSecrets 是全局 omp 配置与 env 模式密钥（M19，SetAgentConfig 设置）。
 	home       GlobalConfig
-	projectCfg ProjectConfigs
 	envSecrets EnvSecrets
 	// refreshPolicy 以当前设置刷新协调宿主的出站策略（M19；orbs 为 nil 时为 nil，测试可替换）。
 	refreshPolicy func(ctx context.Context, orbID string) error
@@ -128,14 +127,7 @@ type Service struct {
 	machines Machines
 	// comp 是助手的电脑的单飞锁与在途调用（M19 第二层）。
 	comp computerState
-	// projects / triggers 是项目与 GitHub 触发规则的操作入口（M19，SetProjects / SetTriggers 设置）；nil 时对应的助手工具
-	// 回 coordinator_unavailable。
-	projects Projects
-	triggers Triggers
-	// shares / portals 是线程分享与 Portal 公开的入口（M19，SetShares 设置）；portals 为 nil 表示没有配置 Portal。
-	shares  ThreadShares
-	portals PortalShares
-	// boxes 是 M23 的 box 入口（SetBoxes 设置）；nil 时 box 工具回 coordinator_unavailable。
+	// boxes 是 M23 的 box 入口（SetBoxes 设置）；nil 时 create_thread 的 box 参数回 coordinator_unavailable。
 	boxes Boxes
 
 	ensureMu sync.Mutex
@@ -199,17 +191,8 @@ func New(cfg Config, st *store.Store, th *threads.Service, o *orbs.Service, host
 		lim: newLimiter(), questions: map[string]string{}, armed: map[string]armedReport{}, recheck: map[string]bool{},
 		wake: make(chan struct{}, 1), confirmers: map[string]confirmExec{},
 	}
-	// 确认卡的执行函数（M19）
-	s.onConfirm(ToolDeleteThread, s.confirmDeleteThread)
-	s.onConfirm(ToolDeleteProject, s.confirmDeleteProject)
-	s.onConfirm(ToolDeleteSpace, s.confirmDeleteSpace)
-	s.onConfirm(ToolDeleteTrigger, s.confirmDeleteTrigger)
-	s.onConfirm(ToolDeleteOrb, s.confirmDeleteOrb)
-	s.onConfirm(ToolDeleteBox, s.confirmDeleteBox)
+	// 确认卡的执行函数（M19）：助手自己的定时删除，以及 oryn 的 confirm 类 REST 操作
 	s.onConfirm(string(apigen.ActionDeleteSchedule), s.confirmDeleteSchedule)
-	s.onConfirm(ToolShareThread, s.confirmShareThread)
-	s.onConfirm(ToolSharePortal, s.confirmSharePortal)
-	s.onConfirm(ToolPublishArtifact, s.confirmPublishArtifact)
 	s.onConfirm(actionAPICall, s.confirmAPICall)
 	if o != nil {
 		s.registerOrbMethods(o.HandleRequest)
@@ -442,12 +425,6 @@ func errCode(err error) string {
 	if oe, ok := artifacts.AsOpError(err); ok {
 		return oe.Code
 	}
-	if code := cfgErrCode(err); code != "" {
-		return code
-	}
-	if code := shareErrCode(err); code != "" {
-		return code
-	}
 	if code := orbErrCode(err); code != "" {
 		return code
 	}
@@ -505,9 +482,6 @@ func errMessage(err error) string {
 	}
 	if oe, ok := artifacts.AsOpError(err); ok {
 		return oe.Message
-	}
-	if msg := shareErrMessage(err); msg != "" {
-		return msg
 	}
 	if orbErrCode(err) != "" {
 		// orbs 的错误文本带 "orbs: " 前缀

@@ -130,15 +130,19 @@ func TestArtifactToolsAssistantOnly(t *testing.T) {
 		}
 		return out
 	}
-	all := []string{ToolCreateArtifact, ToolReadArtifact, ToolUpdateArtifact, ToolListArtifacts, ToolDeleteArtifact,
-		ToolListArtifactVersions, ToolRestoreArtifactVersion, ToolReadArtifactGuide, ToolReadArtifactData, ToolWriteArtifactData,
-		ToolScreenshotArtifact, ToolExportArtifact, ToolImportArtifact, ToolListDeletedArtifacts, ToolRestoreArtifact}
+	// 顶层只有 6 个 artifact 工具，其余是 oryn 技能的原生操作；Space 协调者都没有
 	asst, space := names(false), names(true)
-	for _, n := range all {
+	for n := range topLevelArtifactTools {
 		assert.True(t, asst[n], n)
 		assert.False(t, space[n], n)
 	}
-	for _, n := range []string{ToolScreenshotArtifact, ToolExportArtifact, ToolImportArtifact, ToolListDeletedArtifacts, ToolRestoreArtifact} {
+	for _, n := range []string{ToolDeleteArtifact, ToolListArtifactVersions, ToolRestoreArtifactVersion, ToolReadArtifactData,
+		ToolWriteArtifactData, ToolExportArtifact, ToolImportArtifact} {
+		assert.False(t, asst[n], n)
+		assert.False(t, space[n], n)
+		assert.Equal(t, "artifacts", skillNativeDomain[n], n)
+	}
+	for _, n := range []string{ToolScreenshotArtifact, ToolExportArtifact, ToolImportArtifact} {
 		errText(t, e.call(chat, n, `{"id":"art_x"}`, true), "unknown_tool")
 	}
 	for _, d := range ToolDefs(ToolSet{}) {
@@ -252,17 +256,6 @@ func TestArtifactExtraTools(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, after, len(before))
 	e.c.xferMax = 0
-
-	// 最近删除：列出（不可信包裹）与恢复
-	details(t, e.call(asst, ToolDeleteArtifact, `{"id":"`+id+`"}`, true))
-	r = e.call(asst, ToolListDeletedArtifacts, `{}`, true)
-	deleted := details(t, r)["artifacts"].([]any)
-	require.Len(t, deleted, 1)
-	assert.Equal(t, id, deleted[0].(map[string]any)["id"])
-	assert.Equal(t, id, details(t, e.call(asst, ToolRestoreArtifact, `{"id":"`+id+`"}`, true))["id"])
-	a, err := arts.Get(e.ctx, id)
-	require.NoError(t, err)
-	assert.False(t, a.Deleted())
 
 	// M19 1.3：~/tmp/ 下的生图结果可以存库，也可以作 artifact 的 source
 	host.files["~/tmp/img.png"] = []byte("\x89PNG\r\n\x1a\nfake")

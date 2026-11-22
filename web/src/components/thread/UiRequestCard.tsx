@@ -683,7 +683,7 @@ function orynConfirmTitle(req: ExtensionUiRequest): string | null {
 		return null;
 	const key = `assistant.confirm.${action}`;
 	return i18n.exists(key)
-		? i18n.t(key as "assistant.confirm.delete_thread", { targetLabel })
+		? i18n.t(key as "assistant.confirm.delete_schedule", { targetLabel })
 		: null;
 }
 

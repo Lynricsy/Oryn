@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/Lynricsy/Oryn/internal/agentcfg"
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/library"
 	"github.com/Lynricsy/Oryn/internal/orbs"
@@ -34,7 +33,6 @@ type fsMachines struct {
 	files    map[string]string
 	reqs     []fsReq
 	features []string
-	applied  []string
 	mux      *http.ServeMux
 }
 
@@ -139,23 +137,11 @@ func (m *fsMachines) Do(_ context.Context, orbID string, req *http.Request) (*ht
 	return rec.Result(), nil
 }
 
-func (m *fsMachines) ScheduleOmpApply(projectID string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.applied = append(m.applied, projectID)
-}
-
 // last 返回最近一次 orbd 请求。
 func (m *fsMachines) last() fsReq {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.reqs[len(m.reqs)-1]
-}
-
-func (m *fsMachines) appliedCopy() []string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return append([]string(nil), m.applied...)
 }
 
 // M19 2.4：list / read / write / get_thread_changes 经 orbd 本机 API 操作线程的 orb；读类结果带不可信包裹，写入写审计；
@@ -313,69 +299,10 @@ func TestThreadFileLibrary(t *testing.T) {
 	assert.Len(t, acts, 7)
 }
 
-// M19 2.4：项目 Agent 配置的列出、读、写、删；models.yml 与非法路径被拒；写与删之后安排下发；写类工具写审计。
-func TestProjectConfigTools(t *testing.T) {
-	e := newEnv(t, true)
-	asst := e.assistant()
-	alpha := e.project("alpha")
-	assert.Equal(t, CodeCoordinatorUnavailable, errCodeOf(t, e.call(asst, ToolListProjectConfig, `{"project":"alpha"}`, true)))
-	homes, err := agentcfg.NewProjectHomes(t.TempDir())
-	require.NoError(t, err)
-	e.c.SetAgentConfig(nil, homes, nil)
-	m := newFSMachines()
-	e.c.SetMachines(m)
-
-	d := details(t, e.call(asst, ToolWriteProjectConfig, `{"project":"alpha","path":"AGENTS.md","content":"Use tabs."}`, true))
-	assert.Equal(t, "AGENTS.md", d["path"])
-	assert.Equal(t, []string{alpha}, m.appliedCopy())
-	h, err := homes.For(alpha)
-	require.NoError(t, err)
-	b, _, err := h.Get("AGENTS.md")
-	require.NoError(t, err)
-	assert.Equal(t, "Use tabs.", string(b))
-
-	r := e.call(asst, ToolListProjectConfig, `{"project":"alpha"}`, true)
-	assert.True(t, strings.HasPrefix(r.Text, "<untrusted-thread-content>"), r.Text)
-	files := details(t, r)["files"].([]any)
-	require.Len(t, files, 1)
-	assert.Equal(t, "AGENTS.md", files[0].(map[string]any)["path"])
-	r = e.call(asst, ToolReadProjectConfig, `{"project":"alpha","path":"AGENTS.md"}`, true)
-	assert.True(t, strings.HasPrefix(r.Text, "<untrusted-thread-content>"), r.Text)
-	assert.Equal(t, "Use tabs.", details(t, r)["content"])
-
-	for args, code := range map[string]string{
-		`{"project":"alpha","path":"models.yml","content":"providers: {}"}`: "excluded_path",
-		`{"project":"alpha","path":"../x","content":"x"}`:                   "invalid_path",
-		`{"project":"alpha","path":"config.yml","content":"- a\n- b"}`:      "invalid_content",
-		`{"project":"nope","path":"AGENTS.md","content":"x"}`:               CodeNotFound,
-	} {
-		assert.Equal(t, code, errCodeOf(t, e.call(asst, ToolWriteProjectConfig, args, true)), args)
-	}
-	assert.Equal(t, "excluded_path", errCodeOf(t, e.call(asst, ToolReadProjectConfig, `{"project":"alpha","path":"models.yml"}`, true)))
-	assert.Equal(t, []string{alpha}, m.appliedCopy(), "失败的写入不下发")
-
-	details(t, e.call(asst, ToolDeleteProjectConfig, `{"project":"alpha","path":"AGENTS.md"}`, true))
-	assert.Equal(t, []string{alpha, alpha}, m.appliedCopy())
-	assert.Equal(t, CodeNotFound, errCodeOf(t, e.call(asst, ToolReadProjectConfig, `{"project":"alpha","path":"AGENTS.md"}`, true)))
-	assert.Equal(t, CodeNotFound, errCodeOf(t, e.call(asst, ToolDeleteProjectConfig, `{"project":"alpha","path":"AGENTS.md"}`, true)))
-
-	acts := e.actions()
-	require.Len(t, acts, 7)
-	assert.Equal(t, ToolDeleteProjectConfig, acts[1].Action)
-	assert.True(t, acts[1].Ok)
-	assert.Equal(t, "alpha: AGENTS.md", acts[1].Summary)
-	assert.Equal(t, ToolWriteProjectConfig, acts[6].Action)
-	assert.True(t, acts[6].Ok)
-	assert.Nil(t, acts[6].TargetThreadID)
-
-	chat := e.spaceChat(e.space("Alpha", ""))
-	assert.Equal(t, "unknown_tool", errCodeOf(t, e.call(chat, ToolListProjectConfig, `{"project":"alpha"}`, true)))
-}
-
-// M19 2.4：整文件传输类工具的调用上限 5 分钟，其余用缺省值；工具表只给全局助手。
+// M19 2.4：整文件传输类工具与转发它们的 oryn 的调用上限 5 分钟，其余用缺省值；线程文件操作不在顶层工具表里。
 func TestHostToolTimeoutValues(t *testing.T) {
 	var s Service
-	for _, name := range []string{ToolFetchThreadFile, ToolPutThreadFile, ToolExportArtifact, ToolImportArtifact} {
+	for _, name := range []string{ToolFetchThreadFile, ToolPutThreadFile, ToolExportArtifact, ToolImportArtifact, ToolOryn} {
 		assert.Equal(t, 5*time.Minute, s.HostToolTimeout(name), name)
 	}
 	for _, name := range []string{ToolReadThreadFile, ToolWriteThreadFile, ToolListThreads, ToolCreateArtifact} {
@@ -388,9 +315,9 @@ func TestHostToolTimeoutValues(t *testing.T) {
 		}
 		return out
 	}
-	assert.Contains(t, names(ToolSet{}), ToolFetchThreadFile)
-	assert.Contains(t, names(ToolSet{}), ToolDeleteProjectConfig)
-	assert.NotContains(t, names(ToolSet{InSpace: true}), ToolReadThreadFile)
+	assert.Contains(t, names(ToolSet{}), ToolOryn)
+	assert.NotContains(t, names(ToolSet{}), ToolFetchThreadFile)
+	assert.NotContains(t, names(ToolSet{InSpace: true}), ToolOryn)
 }
 
 // M19 2.4：文件类工具按对话合计限速（120 次 / 10 分钟）。

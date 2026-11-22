@@ -42,13 +42,13 @@ type opPolicy struct {
 	Class       opClass
 	Domain      string // 技能里的域；内部接口为空串
 	Guard       opGuard
-	Share       bool                                         // 对外公开类：另计 share 限速
+	Share       bool                                             // 对外公开类：另计 share 限速
 	ConfirmWhen func(body map[string]any, query url.Values) bool // 非 nil 且返回真时，opWrite 改走确认卡
-	ConfirmNote string                                       // ConfirmWhen 的文字说明，进操作文档
-	Check       func(path map[string]string) error           // 额外的参数规则
-	Note        string                                       // 追加到确认卡正文与操作文档
-	Deny        string                                       // opDeny 的原因（英文一句，含替代做法）；空串 = 内部接口，不进文档
-	Timeout     time.Duration                                // 0 = apiCallTimeout
+	ConfirmNote string                                           // ConfirmWhen 的文字说明，进操作文档
+	Check       func(path map[string]string) error               // 额外的参数规则
+	Note        string                                           // 追加到确认卡正文与操作文档
+	Deny        string                                           // opDeny 的原因（英文一句，含替代做法）；空串 = 内部接口，不进文档
+	Timeout     time.Duration                                    // 0 = apiCallTimeout
 }
 
 // 拒绝原因（文案固定，进技能文档与工具错误）。
@@ -266,8 +266,8 @@ func buildAPIPolicy() map[string]opPolicy {
 	set("notifications", opRead, none, "listNotifications", "listNotificationChannels", "getVapidKey", "listPushSubscriptions")
 	set("notifications", opWrite, none, "markNotificationsRead", "testNotificationChannel")
 	set("notifications", opConfirm, none, "createNotificationChannel", "updateNotificationChannel", "deleteNotificationChannel", "deletePushSubscription")
-	set("notifications", opDeny, deny(denyHuman), "answerNotification")         // 它能作答助手自己的确认卡
-	set("notifications", opDeny, deny(denyCredential), "linkTelegramChannel")    // 绑定码泄露等于把确认卡交给别人
+	set("notifications", opDeny, deny(denyHuman), "answerNotification")       // 它能作答助手自己的确认卡
+	set("notifications", opDeny, deny(denyCredential), "linkTelegramChannel") // 绑定码泄露等于把确认卡交给别人
 	set("notifications", opDeny, deny(denyClient), "createPushSubscription")
 
 	// settings

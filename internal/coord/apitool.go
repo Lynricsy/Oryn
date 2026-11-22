@@ -3,7 +3,9 @@ package coord
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"mime"
@@ -16,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
 )
@@ -43,6 +46,47 @@ type API interface {
 
 // SetAPI 设置 REST 调用入口；须在服务对外可用之前调用。未设置时 REST 操作回 coordinator_unavailable。
 func (s *Service) SetAPI(a API) { s.api = a }
+
+// CodeSecretsFound 是分享与发布前的密钥扫描发现疑似密钥（REST 的 409 secrets_found）。
+const CodeSecretsFound = "secrets_found"
+
+// allowShare 按 shareRules 与 mutateRules 给分享类写操作与确认请求计数（每个对话）。
+func (s *Service) allowShare(c toolCtx) error {
+	if !s.lim.allow(c.ThreadID+"|share", s.cfg.Now(), shareRules) {
+		return errf(CodeRateLimited, "sharing limit reached (10 per 10 minutes per conversation)")
+	}
+	return s.allowMutate(c)
+}
+
+// orbTarget 取 orb 类操作的目标：不存在或已删除 → not_found；协调宿主、预热池里未被认领的 orb、助手的电脑与 box
+// 不能作目标（它们由控制面自己管理）→ invalid_target。
+func (s *Service) orbTarget(ctx context.Context, orbID string) (db.Orb, error) {
+	if orbID == "" {
+		return db.Orb{}, errf(CodeInvalid, "orb id is required")
+	}
+	o, err := s.st.Q.GetOrb(ctx, orbID)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && o.DeletedAt != nil) {
+		return db.Orb{}, errf(CodeNotFound, "orb %s not found", orbID)
+	}
+	if err != nil {
+		return db.Orb{}, err
+	}
+	ps := ""
+	if o.PoolState != nil {
+		ps = *o.PoolState
+	}
+	switch {
+	case o.Coordinator:
+		return db.Orb{}, errf(CodeInvalidTarget, "orb %s is the coordinator host; it is managed by Oryn", orbID)
+	case o.Computer == 1:
+		return db.Orb{}, errf(CodeInvalidTarget, "orb %s is your own computer; it is managed by Oryn", orbID)
+	case o.Box == 1:
+		return db.Orb{}, errf(CodeInvalidTarget, "orb %s is a box; use the box operations", orbID)
+	case ps == orbs.PoolWarming || ps == orbs.PoolIdle:
+		return db.Orb{}, errf(CodeInvalidTarget, "orb %s is a warm pool orb; it is managed by Oryn", orbID)
+	}
+	return o, nil
+}
 
 func orynToolDef() apigen.OmpFrame {
 	return essentialTool(ToolOryn, "Run one Oryn operation documented in the oryn skill (skill://oryn). Read the operation's doc first; never guess names or arguments.", obj{

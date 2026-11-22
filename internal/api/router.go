@@ -85,7 +85,7 @@ func NewRouter(s *Server) http.Handler {
 			})
 		}
 		apigen.HandlerWithOptions(s, apigen.ChiServerOptions{
-			BaseRouter: r,
+			BaseRouter:       r,
 			ErrorHandlerFunc: paramError,
 		})
 		// 服务端路径前缀下没有路由的请求一律 404 JSON，不回落到 SPA（否则客户端拿到 200 text/html）。

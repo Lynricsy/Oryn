@@ -81,7 +81,7 @@ func (c *capReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// toolArtifactExtra 执行 M19 补上的 artifact 工具（只给全局助手）：导出进文件库、从沙箱导入、最近删除与恢复。
+// toolArtifactExtra 执行 M19 补上的 artifact 工具（只给全局助手）：导出进文件库、从沙箱导入。
 func (s *Service) toolArtifactExtra(ctx context.Context, c toolCtx) threads.HostToolResult {
 	if c.Kind != threads.KindAssistant {
 		return failResult(errf("unknown_tool", "no tool named %q", c.Name))
@@ -98,28 +98,6 @@ func (s *Service) toolArtifactExtra(ctx context.Context, c toolCtx) threads.Host
 		v, err = s.toolExportArtifact(ctx, c)
 	case ToolImportArtifact:
 		v, err = s.toolImportArtifact(ctx, c)
-	case ToolListDeletedArtifacts:
-		var all []artifacts.Artifact
-		all, err = s.artifacts.List(ctx, artifacts.Filter{Deleted: true})
-		if err == nil {
-			items := make([]map[string]any, 0, len(all))
-			for _, a := range all {
-				items = append(items, map[string]any{"id": a.ID, "title": a.Title, "kind": a.Kind, "version": a.Version,
-					"deletedAt": a.DeletedAt.UnixMilli()})
-			}
-			// 标题可能来自别的 agent
-			return threads.HostToolResult{Text: wrapUntrusted("", map[string]any{"artifacts": items}), Details: map[string]any{"artifacts": items}}
-		}
-	case ToolRestoreArtifact:
-		var a struct {
-			ID string `json:"id"`
-		}
-		if err = decodeArgs(c.Args, &a); err == nil {
-			var art artifacts.Artifact
-			if art, err = s.artifacts.Undelete(ctx, strings.TrimSpace(a.ID)); err == nil {
-				v = map[string]any{"op": ToolRestoreArtifact, "id": art.ID, "title": art.Title, "kind": art.Kind, "version": art.Version}
-			}
-		}
 	}
 	if err != nil {
 		return failResult(err)

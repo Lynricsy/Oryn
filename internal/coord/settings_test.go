@@ -106,7 +106,7 @@ func TestAssistantMCPServers(t *testing.T) {
 		"web": {"type": "http", "url": "https://mcp.example.com:8443/x", "headers": {"Authorization": "Bearer ${TOKEN}"}},
 		"local": {"command": "npx"},
 		"bad": {"type": "http", "url": "https://b.example.com", "headers": {"X": "${NOPE}"}}
-	}}`)}, nil, fakeEnv{"TOKEN": "t"})
+	}}`)}, fakeEnv{"TOKEN": "t"})
 	_, err = e.c.PutSettings(e.ctx, apigen.AssistantSettings{WebAccess: true, DisabledMcpServers: []string{"web"}})
 	require.NoError(t, err)
 	got, err = e.c.MCPServers(e.ctx)
@@ -119,7 +119,7 @@ func TestAssistantMCPServers(t *testing.T) {
 		{Name: "web", Transport: "http", Host: host("mcp.example.com"), Usable: true, Enabled: false},
 	}, got)
 
-	e.c.SetAgentConfig(fakeHome{"mcp.json": []byte(`{`)}, nil, nil)
+	e.c.SetAgentConfig(fakeHome{"mcp.json": []byte(`{`)}, nil)
 	got, err = e.c.MCPServers(e.ctx)
 	require.NoError(t, err)
 	assert.Empty(t, got, "解析失败时为空")

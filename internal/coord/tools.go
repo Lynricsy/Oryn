@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -101,7 +102,7 @@ func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) thre
 		ToolReadArtifactData, ToolWriteArtifactData, ToolScreenshotArtifact:
 		// artifact 工具只属于全局助手；工具名就是 artifacts 的操作名
 		return s.toolArtifact(ctx, tc, c.Name)
-	case ToolExportArtifact, ToolImportArtifact, ToolListDeletedArtifacts, ToolRestoreArtifact:
+	case ToolExportArtifact, ToolImportArtifact:
 		// M19：artifact 的补充工具（只给全局助手），coord 自己实现
 		return s.toolArtifactExtra(ctx, tc)
 	case ToolOryn:
@@ -111,35 +112,16 @@ func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) thre
 			break
 		}
 		return s.toolOryn(ctx, tc)
-	case ToolUpdateThread, ToolAbortThread, ToolSetThreadModel, ToolForkThread, ToolWakeThread, ToolListRunners, ToolDeleteThread:
-		// M19 第三层：线程全生命周期（只给全局助手）
+	case ToolAbortThread, ToolSetThreadModel:
+		// M19 第三层：中止与改模型（只给全局助手，经 oryn 转来）
 		if c.Kind != threads.KindAssistant {
 			err = errf("unknown_tool", "no tool named %q", c.Name)
 			break
 		}
 		v, err = s.threadTool(ctx, tc)
-	case ToolCreateProject, ToolUpdateProject, ToolDeleteProject, ToolListSpaces, ToolCreateSpace, ToolUpdateSpace, ToolDeleteSpace,
-		ToolListTriggers, ToolSetTrigger, ToolDeleteTrigger, ToolListOrbs, ToolPauseOrb, ToolWakeOrb, ToolDeleteOrb:
-		// M19 第三层：项目、Space、触发规则与 orb（只给全局助手）
-		if c.Kind != threads.KindAssistant {
-			err = errf("unknown_tool", "no tool named %q", c.Name)
-			break
-		}
-		v, err = s.adminTool(ctx, tc)
-	case ToolListBoxes, ToolGetBox, ToolCreateBox, ToolStartBox, ToolStopBox, ToolSetBoxSchedule, ToolSetBoxAppVisibility, ToolDeleteBox:
-		// M23：box（只给全局助手）
-		if c.Kind != threads.KindAssistant {
-			err = errf("unknown_tool", "no tool named %q", c.Name)
-			break
-		}
-		v, err = s.boxTool(ctx, tc)
-	case ToolListThreadFiles, ToolReadThreadFile, ToolWriteThreadFile, ToolFetchThreadFile, ToolPutThreadFile, ToolGetThreadChanges,
-		ToolListProjectConfig, ToolReadProjectConfig, ToolWriteProjectConfig, ToolDeleteProjectConfig:
-		// M19 第三层：线程文件与项目 Agent 配置（只给全局助手）
+	case ToolListThreadFiles, ToolReadThreadFile, ToolWriteThreadFile, ToolFetchThreadFile, ToolPutThreadFile, ToolGetThreadChanges:
+		// M19 第三层：线程文件（只给全局助手，经 oryn 转来）
 		return s.fileTool(ctx, tc)
-	case ToolShareThread, ToolListShares, ToolRevokeShare, ToolSharePortal, ToolUnsharePortal, ToolPublishArtifact, ToolUnpublishArtifact:
-		// M19 第三层：对外分享（只给全局助手）
-		return s.shareTool(ctx, tc)
 	default:
 		if strings.HasPrefix(c.Name, computerToolPrefix) {
 			// M19 第二层：助手的电脑（只给全局助手）
@@ -151,9 +133,8 @@ func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) thre
 		return failResult(err)
 	}
 	switch c.Name {
-	case ToolListThreads, ToolListSchedules, ToolGetStats, ToolListFiles, ToolListRunners, ToolListSpaces, ToolListTriggers,
-		ToolListBoxes, ToolGetBox:
-		// list_files 的文件名可能来自 orb 内的 agent（oryn library put）；box 与 app 的名字可能出自 orb 里的 agent
+	case ToolListThreads, ToolListSchedules, ToolGetStats, ToolListFiles:
+		// list_files 的文件名可能来自 orb 内的 agent（oryn library put）
 		return threads.HostToolResult{Text: wrapUntrusted("", v), Details: v}
 	}
 	return threads.HostToolResult{Text: jsonText(v), Details: v}
@@ -863,6 +844,45 @@ func scheduleSummary(sc apigen.Schedule) string {
 		spec = time.UnixMilli(*sc.At).UTC().Format(time.RFC3339)
 	}
 	return name + " · " + string(sc.Kind) + " " + spec + " · " + string(sc.Mode)
+}
+
+// deleteScheduleArgs 是助手 set_schedule{action: delete} 的确认执行参数。
+type deleteScheduleArgs struct {
+	ScheduleID string `json:"scheduleId"`
+}
+
+// requestDeleteSchedule 给全局助手的定时删除挂确认卡（M19 D7）；动作名与审计沿用 delete_schedule。
+func (s *Service) requestDeleteSchedule(ctx context.Context, c toolCtx, sc apigen.Schedule) (any, error) {
+	if err := s.allowMutate(c); err != nil {
+		return nil, err
+	}
+	name := label(sc.Name)
+	what := fmt.Sprintf("the schedule %q (%s)", name, sc.ID)
+	if sc.Name == "" {
+		what = "the schedule " + sc.ID
+	}
+	r := confirmReq{
+		Action: string(apigen.ActionDeleteSchedule), Target: sc.ID, TargetLabel: name,
+		Title:         fmt.Sprintf("Delete schedule %q (%s)?", name, sc.ID),
+		Summary:       "The assistant wants to delete " + what + ".",
+		AuditSchedule: sc.ID, Args: deleteScheduleArgs{ScheduleID: sc.ID},
+	}
+	if sc.ThreadID != nil {
+		r.AuditThread = *sc.ThreadID
+	}
+	return s.requestConfirm(ctx, c, r)
+}
+
+// confirmDeleteSchedule 是 delete_schedule 的确认执行函数。
+func (s *Service) confirmDeleteSchedule(ctx context.Context, _ db.AssistantConfirmation, args json.RawMessage) (string, error) {
+	var a deleteScheduleArgs
+	if err := json.Unmarshal(args, &a); err != nil {
+		return "", err
+	}
+	if s.sched == nil {
+		return "", errf(CodeCoordinatorUnavailable, "schedules are not available")
+	}
+	return "", s.sched.Delete(ctx, a.ScheduleID)
 }
 
 // ---- list_schedules / list_projects / get_stats ----

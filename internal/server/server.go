@@ -202,6 +202,8 @@ func (s *Server) init(ctx context.Context) error {
 		CoordinatorWebAllow:   lowerAll(cfg.Coordinator.WebAllowHosts),
 		CoordinatorMCPToken:   mcpToken,
 		PublicURL:             cfg.PublicURL,
+		// 全局助手的内置技能 oryn（只下发到协调宿主）
+		CoordinatorSkill: coord.SkillFiles,
 	}
 	s.Orbs = orbs.New(orbs.Config{
 		Idle: cfg.Idle, Defaults: cfg.OrbDefaults, PublicURL: cfg.PublicURL, TokenKey: key, EvalInterval: evalInterval,
@@ -328,7 +330,7 @@ func (s *Server) init(ctx context.Context) error {
 		s.Store, s.Threads, s.Orbs, s.Host, s.Schedules)
 	s.Coord.SetLibrary(s.Library, s.LibrarySync)
 	s.Coord.SetArtifacts(s.Artifacts)
-	s.Coord.SetAgentConfig(s.Home, s.ProjectHomes, s.Vault)
+	s.Coord.SetAgentConfig(s.Home, s.Vault)
 	s.Coord.SetMachines(coord.OrbMachines{Service: s.Orbs, Q: s.Store.Q})
 	s.Coord.SetBoxes(s.Boxes)
 	s.Threads.SetCoordinator(s.Coord)
@@ -341,8 +343,6 @@ func (s *Server) init(ctx context.Context) error {
 		HandOff: func(ctx context.Context, h schedule.HandOff) { s.Coord.PostToMain(ctx, h) },
 	}, s.Store, s.Threads, s.Notify, s.Attachments)
 	s.Threads.SetGitHub(s.GitHub)
-	// M19 第三层：全局助手的触发规则工具
-	s.Coord.SetTriggers(s.GitHub)
 	// orb 的 setup 计划与出站代理：工作 orb 下发 gh 登录名、提交身份，出站代理注入身份槽位的 OAuth 令牌
 	setup.GitHub = s.GitHub
 	s.Orbs.SetGitHub(s.GitHub)
@@ -546,14 +546,6 @@ func (s *Server) init(ctx context.Context) error {
 	if s.Portal != nil {
 		s.API.PortalShares = &api.PortalDeps{Service: s.Portal}
 	}
-	// M19 第三层：全局助手的项目工具与 REST 共用同一套校验与副作用（依赖上面装好的 GitHub、Orbs、Auth、Memory）
-	s.Coord.SetProjects(api.ProjectOps{S: s.API})
-	// M19 第三层：全局助手的对外分享工具；没有配置 portal_domain 时不给 Portal（避免把 nil 指针装进接口）
-	var portals coord.PortalShares
-	if s.Portal != nil {
-		portals = s.Portal
-	}
-	s.Coord.SetShares(s.Share, portals)
 	// 全局助手的 oryn 工具：在进程内走与网页相同的 REST 处理器
 	s.Coord.SetAPI(api.NewInternal(s.API))
 	s.Handler = api.NewRouter(s.API)

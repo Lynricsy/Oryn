@@ -4212,16 +4212,7 @@
 		"createFailed": "没能创建助手对话",
 		"ownerMemoryExclude": "不进助手记忆",
 		"confirm": {
-			"delete_thread": "删除线程「{{targetLabel}}」？",
-			"delete_project": "删除项目「{{targetLabel}}」？",
-			"delete_space": "删除 Space「{{targetLabel}}」？",
-			"delete_trigger": "删除触发规则「{{targetLabel}}」？",
-			"delete_orb": "删除 orb「{{targetLabel}}」？",
-			"delete_box": "删除 box「{{targetLabel}}」及上面的全部应用和数据？",
 			"delete_schedule": "删除定时「{{targetLabel}}」？",
-			"share_thread": "为「{{targetLabel}}」创建公开分享链接？",
-			"share_portal": "为「{{targetLabel}}」开启公开的 Portal 预览？",
-			"publish_artifact": "对外发布 artifact「{{targetLabel}}」？",
 			"api_call": "允许助手执行「{{targetLabel}}」？"
 		}
 	},

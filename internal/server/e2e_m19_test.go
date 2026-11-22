@@ -95,8 +95,8 @@ func (s *stack) threadRow(id string) db.Thread {
 	return row
 }
 
-// 确认卡：助手请求删除线程 → 对话 awaiting_input、出现可一触作答的 input 通知 → 主人经 REST 作答「是」→ 线程被删，
-// 对话收到 `[Oryn confirmation · automatic] delete_thread … approved and done.`，审计 origin = owner。
+// 确认卡：助手经 oryn 请求删除线程 → 对话 awaiting_input、出现可一触作答的 input 通知 → 主人经 REST 作答「是」→ 线程被删，
+// 对话收到 `[Oryn confirmation · automatic] api_call deleteThread … approved and done.`，审计 origin = owner。
 func TestE2EM19Confirm(t *testing.T) {
 	useM19Notify(t)
 	s, _ := newM9Stack(t)
@@ -107,10 +107,10 @@ func TestE2EM19Confirm(t *testing.T) {
 	s.rest("POST", "/api/v1/assistant/conversations", nil, &asst, 201)
 	conv := asst.Thread.ID
 
-	s.send(conv, `hosttool delete_thread {"threadId":"`+target.Thread.ID+`"}`)
+	s.send(conv, `hosttool oryn {"op":"deleteThread","args":{"id":"`+target.Thread.ID+`"}}`)
 	s.waitThread(conv, 60*time.Second, func(v threadView) bool {
 		reply, final := lastAssistantMsg(t, s, conv)
-		return v.State == string(apigen.ThreadStateAwaitingInput) && final && strings.HasPrefix(reply, "host:delete_thread:ok:")
+		return v.State == string(apigen.ThreadStateAwaitingInput) && final && strings.HasPrefix(reply, "host:oryn:ok:")
 	})
 	reply := lastAssistant(t, s, conv)
 	assert.Contains(t, reply, `"confirmationId":"cfm_`, "工具结果只是等主人确认")
@@ -135,7 +135,7 @@ func TestE2EM19Confirm(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	s.waitEntry(conv, "[Oryn confirmation · automatic] delete_thread "+target.Thread.ID+": approved and done.", 60*time.Second)
+	s.waitEntry(conv, "[Oryn confirmation · automatic] api_call deleteThread /api/v1/threads/"+target.Thread.ID+": approved and done.", 60*time.Second)
 	s.settledReply(conv)
 	assert.NotEqual(t, string(apigen.ThreadStateAwaitingInput), s.idle(conv).State)
 
@@ -143,7 +143,7 @@ func TestE2EM19Confirm(t *testing.T) {
 	s.rest("GET", "/api/v1/automation/actions?thread="+target.Thread.ID, nil, &acts, 200)
 	var del *apigen.AutomationAction
 	for i, a := range acts.Actions {
-		if string(a.Action) == "delete_thread" {
+		if string(a.Action) == "api_call" && strings.HasPrefix(a.Summary, "deleteThread ") {
 			del = &acts.Actions[i]
 		}
 	}

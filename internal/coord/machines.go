@@ -13,18 +13,16 @@ import (
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
-// Machines 是全局助手操作 orb 与 Runner 的入口（M19 第三层）：列出 Runner 与 orb、暂停 / 唤醒 / 删除 orb，
-// 经 orbd 本机 API 读写线程 orb 里的文件，以及项目 Agent 配置改动后的下发；第二层（助手的电脑）的创建、查询与
-// computer.* ctl 调用也经它。由 OrbMachines 适配 *orbs.Service。
+// Machines 是全局助手使用 orb 与 Runner 的入口（M19）：列出 Runner（create_thread 的 runner 参数）、经 orbd 本机 API
+// 读写线程 orb 里的文件；第二层（助手的电脑）的创建、查询、唤醒、冻结、删除与 computer.* ctl 调用也经它。
+// 由 OrbMachines 适配 *orbs.Service。
 type Machines interface {
 	ListRunners(ctx context.Context) ([]apigen.Runner, error)
-	ListOrbs(ctx context.Context) ([]apigen.Orb, error)
 	Pause(ctx context.Context, orbID, mode string) error
 	Wake(ctx context.Context, orbID string) error
 	Delete(ctx context.Context, orbID string) error
 	EnsureUsable(ctx context.Context, orbID, feature string, wake bool, wait time.Duration) error
 	Do(ctx context.Context, orbID string, req *http.Request) (*http.Response, error)
-	ScheduleOmpApply(projectID string)
 	// CreateComputer 新建助手的电脑（provider / orbType 空 = 默认解析）。
 	CreateComputer(ctx context.Context, provider, orbType string) (apigen.Orb, error)
 	// Computer 返回未删除的助手的电脑；没有时 ok = false。Features 只在有已 hello 的 link 时非 nil。
@@ -58,26 +56,6 @@ func (s *Service) machinesOr() (Machines, error) {
 type OrbMachines struct {
 	*orbs.Service
 	Q *db.Queries
-}
-
-// ListOrbs 返回未删除的 orb（新的在前），活动 link 的特性覆盖库里的值（与 REST GET orbs 同一转换）。
-func (m OrbMachines) ListOrbs(ctx context.Context) ([]apigen.Orb, error) {
-	rows, err := m.Q.ListOrbs(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]apigen.Orb, 0, len(rows))
-	for _, o := range rows {
-		v, err := orbs.View(ctx, m.Q, o)
-		if err != nil {
-			return nil, err
-		}
-		if f, ok := m.LiveFeatures(o.ID); ok {
-			v.Features = f
-		}
-		out = append(out, v)
-	}
-	return out, nil
 }
 
 // CreateComputer 新建助手的电脑。

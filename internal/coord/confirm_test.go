@@ -220,3 +220,26 @@ func TestConfirmRestoredAfterRestart(t *testing.T) {
 	assert.Equal(t, "[Oryn confirmation · automatic] probe thr_target: approved and done.", ce.result())
 	assert.EqualValues(t, 1, ce.execs.Load())
 }
+
+// 重启后动作已没有执行函数的待答卡（升级前已删除工具的确认）不再挂出：置 expired 并告知对话。
+func TestConfirmRestoreExpiresUnknownAction(t *testing.T) {
+	ce := newConfirmEnv(t)
+	asst := ce.assistant()
+	id, err := ce.request(ce.c, asst)
+	require.NoError(t, err)
+
+	th2 := threads.New(threads.Config{DataDir: filepath.Join(t.TempDir(), "data")}, ce.st, ce.orbs)
+	t.Cleanup(th2.Close)
+	c2 := New(Config{Now: ce.clk.Now}, ce.st, th2, nil, hostStub{}, ce.sched) // 不登记 probe
+	c2.sentConfirm = func(_, text string) { ce.results <- text }
+	th2.SetCoordinator(c2)
+
+	ctx, cancel := context.WithCancel(ce.ctx)
+	done := make(chan struct{})
+	go func() { c2.Run(ctx); close(done) }()
+	t.Cleanup(func() { cancel(); <-done })
+	assert.Equal(t, "[Oryn confirmation · automatic] probe thr_target: expired without an answer.", ce.result())
+	assert.Equal(t, confirmExpired, ce.state(id))
+	assert.Empty(t, pending(t, th2, asst.ID))
+	assert.Zero(t, ce.execs.Load())
+}

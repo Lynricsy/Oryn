@@ -32,19 +32,14 @@ type GlobalConfig interface {
 	Get(p string) ([]byte, agentcfg.FileInfo, error)
 }
 
-// ProjectConfigs 是项目级 omp 配置（*agentcfg.ProjectHomes 实现）。
-type ProjectConfigs interface {
-	For(projectID string) (*agentcfg.Home, error)
-}
-
 // EnvSecrets 提供 env 模式的密钥（*secrets.Vault 实现），用于展开 MCP 头里的变量。
 type EnvSecrets interface {
 	EnvSecrets() (map[string]string, error)
 }
 
-// SetAgentConfig 设置全局与项目级 omp 配置、env 模式密钥；须在服务对外可用之前调用。任一为 nil 时相应能力不可用。
-func (s *Service) SetAgentConfig(home GlobalConfig, projects ProjectConfigs, env EnvSecrets) {
-	s.home, s.projectCfg, s.envSecrets = home, projects, env
+// SetAgentConfig 设置全局 omp 配置与 env 模式密钥；须在服务对外可用之前调用。任一为 nil 时相应能力不可用。
+func (s *Service) SetAgentConfig(home GlobalConfig, env EnvSecrets) {
+	s.home, s.envSecrets = home, env
 }
 
 // assistantSettings 是解析后的设置行；没有行时为默认值（联网开、无禁用项）。

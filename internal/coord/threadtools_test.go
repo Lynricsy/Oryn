@@ -3,7 +3,10 @@ package coord
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +25,6 @@ type fakeMachines struct {
 }
 
 func (f *fakeMachines) ListRunners(context.Context) ([]apigen.Runner, error) { return f.runners, nil }
-func (f *fakeMachines) ListOrbs(context.Context) ([]apigen.Orb, error)       { return nil, nil }
 func (f *fakeMachines) Pause(context.Context, string, string) error          { return nil }
 func (f *fakeMachines) Wake(context.Context, string) error                   { return nil }
 func (f *fakeMachines) Delete(context.Context, string) error                 { return nil }
@@ -32,7 +34,6 @@ func (f *fakeMachines) EnsureUsable(context.Context, string, string, bool, time.
 func (f *fakeMachines) Do(context.Context, string, *http.Request) (*http.Response, error) {
 	return nil, http.ErrNotSupported
 }
-func (f *fakeMachines) ScheduleOmpApply(string) {}
 func (f *fakeMachines) CreateComputer(context.Context, string, string) (apigen.Orb, error) {
 	return apigen.Orb{}, http.ErrNotSupported
 }
@@ -96,18 +97,17 @@ func TestActTargetRules(t *testing.T) {
 		assert.Equal(t, CodeInvalidTarget, errCodeOf(t, e.call(chat, ToolSendMessage, args, true)), args)
 	}
 	assert.Equal(t, CodeInvalid, errCodeOf(t, e.call(chat, ToolSendMessage, `{"space":"Beta","message":"hi"}`, true)), "Space 协调者没有 space 参数")
-	assert.Equal(t, "unknown_tool", errCodeOf(t, e.call(chat, ToolUpdateThread, `{"threadId":"x","title":"y"}`, true)))
+	assert.Equal(t, "unknown_tool", errCodeOf(t, e.call(chat, ToolOryn, `{"op":"updateThread","args":{"id":"x","body":{"title":"y"}}}`, true)))
 	assert.Equal(t, CodeInvalidTarget, errCodeOf(t, e.call(chat, ToolReadThread, `{"threadId":"`+other.ID+`"}`, true)))
 
 	for _, tc := range []struct{ tool, args string }{
 		{ToolSendMessage, `{"threadId":"` + asst2.ID + `","message":"hi"}`},
 		{ToolArchiveThread, `{"threadId":"` + asst2.ID + `"}`},
-		{ToolUpdateThread, `{"threadId":"` + asst2.ID + `","title":"x"}`},
-		{ToolDeleteThread, `{"threadId":"` + asst2.ID + `"}`},
+		{ToolAbortThread, `{"threadId":"` + asst2.ID + `"}`},
+		{ToolSetThreadModel, `{"threadId":"` + asst2.ID + `","model":"a/b"}`},
 		{ToolSetSchedule, `{"action":"set","mode":"thread","threadId":"` + asst2.ID + `","kind":"every","every":"1h","prompt":"x"}`},
 		{ToolArchiveThread, `{"threadId":"` + chat.ID + `"}`},
 		{ToolAbortThread, `{"threadId":"` + chat.ID + `"}`},
-		{ToolForkThread, `{"threadId":"` + chat.ID + `"}`},
 	} {
 		assert.Equal(t, CodeInvalidTarget, errCodeOf(t, e.call(asst, tc.tool, tc.args, true)), tc.tool+" "+tc.args)
 	}
@@ -133,17 +133,11 @@ func TestCreateThreadAssistantParams(t *testing.T) {
 
 	// Runner：未注入 Machines → coordinator_unavailable
 	assert.Equal(t, CodeCoordinatorUnavailable, errCodeOf(t, e.call(asst, ToolCreateThread, `{"prompt":"go","runner":"laptop","dir":"/w/app"}`, true)))
-	assert.Equal(t, CodeCoordinatorUnavailable, errCodeOf(t, e.call(asst, ToolListRunners, `{}`, true)))
 	prov, runnerOrb, err := e.orbs.AddRunner("laptop", []apigen.RunnerDir{{Path: "/w/app", Name: "app"}}, nil)
 	require.NoError(t, err)
 	e.orbs.ConnectRunner(runnerOrb)
 	e.c.SetMachines(&fakeMachines{runners: []apigen.Runner{{ID: prov, Name: "laptop", Online: true, Hostname: new("box"),
 		Dirs: []apigen.RunnerDir{{Path: "/w/app", Name: "app"}}}}})
-
-	lr := e.call(asst, ToolListRunners, `{}`, true)
-	assert.True(t, strings.HasPrefix(lr.Text, "<untrusted-thread-content"), "runner 名与目录包在不可信包裹里")
-	assert.Equal(t, []any{map[string]any{"name": "laptop", "online": true, "hostname": "box",
-		"dirs": []any{map[string]any{"path": "/w/app", "name": "app", "git": false}}}}, details(t, lr)["runners"])
 
 	r = details(t, e.call(asst, ToolCreateThread, `{"prompt":"go","runner":"laptop","dir":"/w/app"}`, true))
 	row = e.row(r["threadId"].(string))
@@ -165,43 +159,27 @@ func TestCreateThreadAssistantParams(t *testing.T) {
 	assert.Equal(t, sb.ID, deref(row.SpaceID))
 }
 
-// 线程工具：update / abort / set_thread_model / fork / wake 直接执行并写审计；delete 走确认卡，批准后才删。
-// 用真实拉起的 fakeomp：fork 需要源线程的 agent 写出会话。
+// 线程操作：abort / set_thread_model 经 oryn 转到原实现，直接执行并写审计（动作名 = 操作名）。
+// 用真实拉起的 fakeomp：中止与改模型需要线程的 agent。
 func TestThreadTools(t *testing.T) {
 	e := newEnv(t, false)
-	sp := e.space("Alpha", "")
 	asst := e.assistant()
 	w := e.work("hi")
 	require.Eventually(t, func() bool { r := e.row(w.ID); return r.State == threads.StateIdle && r.LeafEntryID != nil },
 		20*time.Second, 20*time.Millisecond)
 
-	details(t, e.call(asst, ToolUpdateThread, `{"threadId":"`+w.ID+`","title":"New","pinned":true,"labels":["a","b"],"space":"Alpha"}`, true))
-	row := e.row(w.ID)
-	assert.Equal(t, "New", row.Title)
-	assert.Equal(t, sp.ID, deref(row.SpaceID))
-	got, err := e.th.Get(e.ctx, w.ID)
-	require.NoError(t, err)
-	assert.True(t, got.Pinned)
-	assert.Equal(t, []string{"a", "b"}, got.Labels)
-	details(t, e.call(asst, ToolUpdateThread, `{"threadId":"`+w.ID+`","space":""}`, true))
-	assert.Nil(t, e.row(w.ID).SpaceID)
-	assert.Equal(t, CodeInvalid, errCodeOf(t, e.call(asst, ToolUpdateThread, `{"threadId":"`+w.ID+`"}`, true)))
-
-	details(t, e.call(asst, ToolSetThreadModel, `{"threadId":"`+w.ID+`","model":"anthropic/claude","thinkingLevel":"high"}`, true))
-	assert.Equal(t, CodeInvalid, errCodeOf(t, e.call(asst, ToolSetThreadModel, `{"threadId":"`+w.ID+`","model":"claude"}`, true)))
-	details(t, e.call(asst, ToolAbortThread, `{"threadId":"`+w.ID+`"}`, true))
-	details(t, e.call(asst, ToolWakeThread, `{"threadId":"`+w.ID+`"}`, true))
-	f := details(t, e.call(asst, ToolForkThread, `{"threadId":"`+w.ID+`","env":"share"}`, true))
-	forkID := f["threadId"].(string)
-	assert.NotEqual(t, w.ID, forkID)
-	assert.Equal(t, CodeInvalid, errCodeOf(t, e.call(asst, ToolForkThread, `{"threadId":"`+w.ID+`","env":"bogus"}`, true)))
+	details(t, e.call(asst, ToolOryn, `{"op":"set_thread_model","args":{"threadId":"`+w.ID+`","model":"anthropic/claude","thinkingLevel":"high"}}`, true))
+	assert.Equal(t, CodeInvalid, errCodeOf(t, e.call(asst, ToolOryn, `{"op":"set_thread_model","args":{"threadId":"`+w.ID+`","model":"claude"}}`, true)))
+	details(t, e.call(asst, ToolOryn, `{"op":"abort_thread","args":{"threadId":"`+w.ID+`"}}`, true))
+	// 线程文件操作同样落到原实现（没有 Machines 时回 coordinator_unavailable）
+	assert.Equal(t, CodeCoordinatorUnavailable, errCodeOf(t, e.call(asst, ToolOryn, `{"op":"list_thread_files","args":{"threadId":"`+w.ID+`"}}`, true)))
 
 	acts := e.actions() // 新的在前
 	byAction := map[string][]db.CoordAction{}
 	for _, a := range acts {
 		byAction[a.Action] = append(byAction[a.Action], a)
 	}
-	for _, name := range []string{ToolUpdateThread, ToolSetThreadModel, ToolAbortThread, ToolWakeThread, ToolForkThread} {
+	for _, name := range []string{ToolSetThreadModel, ToolAbortThread} {
 		require.NotEmpty(t, byAction[name], name)
 		a := byAction[name][len(byAction[name])-1] // 最早的一条是成功的
 		assert.True(t, a.Ok, name)
@@ -210,49 +188,26 @@ func TestThreadTools(t *testing.T) {
 		assert.Equal(t, w.ID, deref(a.TargetThreadID), name)
 	}
 	assert.Equal(t, "anthropic/claude · high", byAction[ToolSetThreadModel][1].Summary)
-	assert.Equal(t, "env: share → "+forkID, byAction[ToolForkThread][1].Summary)
-	assert.Equal(t, "title: New · pinned: true · labels: a, b · space: Alpha", byAction[ToolUpdateThread][2].Summary)
-	assert.False(t, byAction[ToolUpdateThread][0].Ok, "失败也记审计")
-
-	// delete_thread：先出确认卡，不删除也不写成功审计；批准后才删除，审计 origin=owner
-	n := len(e.actions())
-	r := details(t, e.call(asst, ToolDeleteThread, `{"threadId":"`+forkID+`"}`, false))
-	assert.Equal(t, "awaiting_owner", r["status"])
-	cfm := r["confirmationId"].(string)
-	e.row(forkID)
-	assert.Len(t, e.actions(), n, "确认之前不写审计")
-	e.c.UIAnswered(e.ctx, asst.ID, cfm, answer(cfm, true))
-	_, err = e.st.Q.GetThread(e.ctx, forkID)
-	assert.Error(t, err, "批准后线程已删除")
-	del := e.actions()[0]
-	assert.Equal(t, "delete_thread", del.Action)
-	assert.Equal(t, "owner", del.Origin)
-	assert.True(t, del.Ok)
-	assert.Equal(t, forkID, deref(del.TargetThreadID))
-
-	// 拒绝则不删
-	r = details(t, e.call(asst, ToolDeleteThread, `{"threadId":"`+w.ID+`"}`, true))
-	cfm = r["confirmationId"].(string)
-	e.c.UIAnswered(e.ctx, asst.ID, cfm, answer(cfm, false))
-	e.row(w.ID)
+	assert.False(t, byAction[ToolSetThreadModel][0].Ok, "失败也记审计")
 }
 
 // mutateRules：同一对话的新写类工具与确认请求合计 10 分钟至多 30 次；别的对话不受影响。
 func TestMutateRateLimit(t *testing.T) {
 	e := newEnv(t, true)
+	e.c.SetAPI(&fakeAPI{})
 	asst := e.assistant()
 	w := e.work("hi")
-	for i := range 30 {
-		details(t, e.call(asst, ToolUpdateThread, `{"threadId":"`+w.ID+`","pinned":true}`, true))
-		_ = i
+	update := `{"op":"updateThread","args":{"id":"` + w.ID + `","body":{"pinned":true}}}`
+	for range 30 {
+		require.False(t, e.call(asst, ToolOryn, update, true).IsError)
 	}
-	assert.Equal(t, CodeRateLimited, errCodeOf(t, e.call(asst, ToolWakeThread, `{"threadId":"`+w.ID+`"}`, true)))
-	assert.Equal(t, CodeRateLimited, errCodeOf(t, e.call(asst, ToolDeleteThread, `{"threadId":"`+w.ID+`"}`, true)))
+	assert.Equal(t, CodeRateLimited, errCodeOf(t, e.call(asst, ToolOryn, `{"op":"wakeThread","args":{"id":"`+w.ID+`"}}`, true)))
+	assert.Equal(t, CodeRateLimited, errCodeOf(t, e.call(asst, ToolOryn, `{"op":"deleteThread","args":{"id":"`+w.ID+`"}}`, true)))
+	assert.Equal(t, CodeRateLimited, errCodeOf(t, e.call(asst, ToolSetThreadModel, `{"threadId":"`+w.ID+`","model":"a/b"}`, true)))
 	assert.Equal(t, CodeRateLimited, deref(e.actions()[0].Error))
-	details(t, e.call(e.assistant(), ToolWakeThread, `{"threadId":"`+w.ID+`"}`, true))
+	require.False(t, e.call(e.assistant(), ToolOryn, update, true).IsError, "别的对话不受影响")
 	e.clk.Add(10 * time.Minute)
-	details(t, e.call(asst, ToolWakeThread, `{"threadId":"`+w.ID+`"}`, true))
-
+	require.False(t, e.call(asst, ToolOryn, update, true).IsError)
 	l := newLimiter()
 	now := time.Unix(0, 0)
 	for i := range 200 {
@@ -262,8 +217,8 @@ func TestMutateRateLimit(t *testing.T) {
 	assert.False(t, l.allow("k", now, mutateRules), "24 小时内第 201 次")
 }
 
-// 新工具只出现在助手的工具表里；Space 的工具表不变。
-func TestThreadToolDefs(t *testing.T) {
+// 顶层工具表：Space 协调者恰为基础 9 个；全局助手恰为 23 个（其余能力都是 oryn 技能的操作），oryn 以顶层工具出现。
+func TestAssistantToolDefs(t *testing.T) {
 	names := func(defs []apigen.OmpFrame) map[string]apigen.OmpFrame {
 		out := map[string]apigen.OmpFrame{}
 		for _, d := range defs {
@@ -272,10 +227,14 @@ func TestThreadToolDefs(t *testing.T) {
 		return out
 	}
 	space, asst := names(ToolDefs(ToolSet{InSpace: true})), names(ToolDefs(ToolSet{}))
-	for _, n := range []string{ToolUpdateThread, ToolAbortThread, ToolSetThreadModel, ToolForkThread, ToolWakeThread, ToolListRunners, ToolDeleteThread} {
-		assert.Contains(t, asst, n)
-		assert.NotContains(t, space, n)
-	}
+	base := []string{ToolListThreads, ToolReadThread, ToolCreateThread, ToolSendMessage, ToolArchiveThread, ToolSetSchedule,
+		ToolListSchedules, ToolListProjects, ToolGetStats}
+	assert.ElementsMatch(t, base, slices.Collect(maps.Keys(space)))
+	want := append(slices.Clone(base), ToolSaveFile, ToolListFiles, ToolShareFile,
+		ToolCreateArtifact, ToolReadArtifact, ToolUpdateArtifact, ToolListArtifacts, ToolReadArtifactGuide, ToolScreenshotArtifact,
+		ToolOryn, ToolComputerStatus, ToolComputerUpload, ToolComputerDownload, ToolComputerRecord)
+	assert.ElementsMatch(t, want, slices.Collect(maps.Keys(asst)))
+	assert.Equal(t, "essential", asst[ToolOryn]["loadMode"])
 	props := func(d apigen.OmpFrame) obj { return d["parameters"].(obj)["properties"].(obj) }
 	assert.NotContains(t, props(space[ToolSendMessage]), "space")
 	assert.Equal(t, []string{"threadId", "message"}, space[ToolSendMessage]["parameters"].(obj)["required"])
@@ -287,16 +246,19 @@ func TestThreadToolDefs(t *testing.T) {
 	}
 }
 
-// 系统提示词：助手的能力边界换成确认卡一句并多出第三层用法；Space 协调者保持原句、没有这些用法。
+// 系统提示词：助手的能力边界换成确认卡一句，第三层用法指向 oryn 技能、不再提已删除的工具；Space 协调者保持原句。
 func TestAssistantPromptThirdLayer(t *testing.T) {
 	a := SystemPrompt(nil, "", "T-1", true)
 	assert.Contains(t, a, "\n"+assistantLimits+"\n")
 	assert.NotContains(t, a, spaceLimits)
 	assert.Contains(t, a, "- Use get_stats for questions about usage and cost.\n- Runner threads run on the owner's own machines")
 	assert.Contains(t, a, "send_message with space")
+	assert.Contains(t, a, "read skill://oryn")
+	removed := regexp.MustCompile(`\b(update_thread|fork_thread|wake_thread|list_runners|delete_thread|create_project|update_project|delete_project|list_spaces|create_space|update_space|delete_space|list_triggers|set_trigger|delete_trigger|list_orbs|pause_orb|wake_orb|delete_orb|list_boxes|get_box|create_box|start_box|stop_box|set_box_schedule|set_box_app_visibility|delete_box|share_thread|list_shares|revoke_share|share_portal|unshare_portal|publish_artifact|unpublish_artifact|\w+_project_config|list_deleted_artifacts|restore_artifact)\b`)
+	assert.Empty(t, removed.FindAllString(a, -1), "提示词不提已删除的工具")
 	sp := SystemPrompt(&apigen.Space{Name: "S"}, "", "T-2", true)
 	assert.Contains(t, sp, "\n"+spaceLimits+"\n")
 	assert.Contains(t, sp, "- Use get_stats for questions about usage and cost.\n\nRules:")
-	assert.NotContains(t, sp, "list_runners")
+	assert.NotContains(t, sp, "oryn")
 	assert.NotContains(t, sp, "confirmation")
 }
