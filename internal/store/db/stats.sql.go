@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"strings"
 )
 
 const clearToolQ = `-- name: ClearToolQ :exec
@@ -2085,6 +2086,35 @@ func (q *Queries) SumUsageCost(ctx context.Context, arg SumUsageCostParams) (flo
 	var cost_usd float64
 	err := row.Scan(&cost_usd)
 	return cost_usd, err
+}
+
+const sumUsageCostForThreads = `-- name: SumUsageCostForThreads :one
+SELECT CAST(COALESCE(SUM(cost_usd), 0) AS REAL) FROM usage_records
+WHERE thread_id IN (/*SLICE:thread_ids*/?) AND ts >= ?2
+`
+
+type SumUsageCostForThreadsParams struct {
+	ThreadIds []*string `json:"threadIds"`
+	FromTs    int64     `json:"fromTs"`
+}
+
+// Spend of the given threads since a timestamp (M26 background research daily cap).
+func (q *Queries) SumUsageCostForThreads(ctx context.Context, arg SumUsageCostForThreadsParams) (float64, error) {
+	query := sumUsageCostForThreads
+	var queryParams []interface{}
+	if len(arg.ThreadIds) > 0 {
+		for _, v := range arg.ThreadIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:thread_ids*/?", strings.Repeat(",?", len(arg.ThreadIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:thread_ids*/?", "NULL", 1)
+	}
+	queryParams = append(queryParams, arg.FromTs)
+	row := q.db.QueryRowContext(ctx, query, queryParams...)
+	var column_1 float64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const tombstoneToolCalls = `-- name: TombstoneToolCalls :exec

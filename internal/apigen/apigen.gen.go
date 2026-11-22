@@ -349,6 +349,7 @@ const (
 	ActionDeleteSpace         AutomationActionAction = "delete_space"
 	ActionDeleteThread        AutomationActionAction = "delete_thread"
 	ActionDeleteTrigger       AutomationActionAction = "delete_trigger"
+	ActionFollowTopic         AutomationActionAction = "follow_topic"
 	ActionForkThread          AutomationActionAction = "fork_thread"
 	ActionPauseOrb            AutomationActionAction = "pause_orb"
 	ActionPublishArtifact     AutomationActionAction = "publish_artifact"
@@ -407,6 +408,8 @@ func (e AutomationActionAction) Valid() bool {
 	case ActionDeleteThread:
 		return true
 	case ActionDeleteTrigger:
+		return true
+	case ActionFollowTopic:
 		return true
 	case ActionForkThread:
 		return true
@@ -1406,6 +1409,27 @@ func (e LinkCtlAgentStartParamsProfile) Valid() bool {
 	}
 }
 
+// Defines values for LinkCtlAgentStartParamsVariant.
+const (
+	AgentVariantMainRestricted  LinkCtlAgentStartParamsVariant = "main_restricted"
+	AgentVariantResearchPrivate LinkCtlAgentStartParamsVariant = "research_private"
+	AgentVariantResearchWeb     LinkCtlAgentStartParamsVariant = "research_web"
+)
+
+// Valid indicates whether the value is a known member of the LinkCtlAgentStartParamsVariant enum.
+func (e LinkCtlAgentStartParamsVariant) Valid() bool {
+	switch e {
+	case AgentVariantMainRestricted:
+		return true
+	case AgentVariantResearchPrivate:
+		return true
+	case AgentVariantResearchWeb:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for LinkCtlAgentStatusParamsStatus.
 const (
 	LinkCtlAgentStatusParamsStatusExited   LinkCtlAgentStatusParamsStatus = "exited"
@@ -1464,6 +1488,7 @@ const (
 	MethodEntriesCursors      LinkCtlMethod = "entries.cursors"
 	MethodEntriesReset        LinkCtlMethod = "entries.reset"
 	MethodEntriesResetDone    LinkCtlMethod = "entries.reset_done"
+	MethodFollowAdd           LinkCtlMethod = "follow.add"
 	MethodFsCopyTree          LinkCtlMethod = "fs.copyTree"
 	MethodFsMove              LinkCtlMethod = "fs.move"
 	MethodGithubCall          LinkCtlMethod = "github.call"
@@ -1534,6 +1559,8 @@ func (e LinkCtlMethod) Valid() bool {
 	case MethodEntriesReset:
 		return true
 	case MethodEntriesResetDone:
+		return true
+	case MethodFollowAdd:
 		return true
 	case MethodFsCopyTree:
 		return true
@@ -2981,6 +3008,132 @@ func (e PushSubscriptionKind) Valid() bool {
 	}
 }
 
+// Defines values for ResearchRunPipeline.
+const (
+	ResearchPipelineInternal ResearchRunPipeline = "internal"
+	ResearchPipelineMcp      ResearchRunPipeline = "mcp"
+	ResearchPipelineMine     ResearchRunPipeline = "mine"
+	ResearchPipelineWeb      ResearchRunPipeline = "web"
+)
+
+// Valid indicates whether the value is a known member of the ResearchRunPipeline enum.
+func (e ResearchRunPipeline) Valid() bool {
+	switch e {
+	case ResearchPipelineInternal:
+		return true
+	case ResearchPipelineMcp:
+		return true
+	case ResearchPipelineMine:
+		return true
+	case ResearchPipelineWeb:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ResearchRunStatus.
+const (
+	ResearchRunCompleted ResearchRunStatus = "completed"
+	ResearchRunFailed    ResearchRunStatus = "failed"
+	ResearchRunRunning   ResearchRunStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the ResearchRunStatus enum.
+func (e ResearchRunStatus) Valid() bool {
+	switch e {
+	case ResearchRunCompleted:
+		return true
+	case ResearchRunFailed:
+		return true
+	case ResearchRunRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ResearchTopicOrigin.
+const (
+	ResearchOriginManual ResearchTopicOrigin = "manual"
+	ResearchOriginMined  ResearchTopicOrigin = "mined"
+	ResearchOriginThread ResearchTopicOrigin = "thread"
+)
+
+// Valid indicates whether the value is a known member of the ResearchTopicOrigin enum.
+func (e ResearchTopicOrigin) Valid() bool {
+	switch e {
+	case ResearchOriginManual:
+		return true
+	case ResearchOriginMined:
+		return true
+	case ResearchOriginThread:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ResearchTopicState.
+const (
+	ResearchTopicActive    ResearchTopicState = "active"
+	ResearchTopicDismissed ResearchTopicState = "dismissed"
+	ResearchTopicDone      ResearchTopicState = "done"
+	ResearchTopicPaused    ResearchTopicState = "paused"
+)
+
+// Valid indicates whether the value is a known member of the ResearchTopicState enum.
+func (e ResearchTopicState) Valid() bool {
+	switch e {
+	case ResearchTopicActive:
+		return true
+	case ResearchTopicDismissed:
+		return true
+	case ResearchTopicDone:
+		return true
+	case ResearchTopicPaused:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ResearchTopicKind.
+const (
+	ResearchTopicInterest ResearchTopicKind = "interest"
+	ResearchTopicQuestion ResearchTopicKind = "question"
+)
+
+// Valid indicates whether the value is a known member of the ResearchTopicKind enum.
+func (e ResearchTopicKind) Valid() bool {
+	switch e {
+	case ResearchTopicInterest:
+		return true
+	case ResearchTopicQuestion:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ResearchTopicPatchState.
+const (
+	ResearchTopicPatchActive ResearchTopicPatchState = "active"
+	ResearchTopicPatchPaused ResearchTopicPatchState = "paused"
+)
+
+// Valid indicates whether the value is a known member of the ResearchTopicPatchState enum.
+func (e ResearchTopicPatchState) Valid() bool {
+	switch e {
+	case ResearchTopicPatchActive:
+		return true
+	case ResearchTopicPatchPaused:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ScheduleCreatedBy.
 const (
 	ScheduleCreatedByAgent ScheduleCreatedBy = "agent"
@@ -4394,6 +4547,33 @@ func (e WsServerUIResolvedType) Valid() bool {
 	}
 }
 
+// Defines values for ListResearchTopicsParamsState.
+const (
+	ResearchTopicFilterActive    ListResearchTopicsParamsState = "active"
+	ResearchTopicFilterAll       ListResearchTopicsParamsState = "all"
+	ResearchTopicFilterDismissed ListResearchTopicsParamsState = "dismissed"
+	ResearchTopicFilterDone      ListResearchTopicsParamsState = "done"
+	ResearchTopicFilterPaused    ListResearchTopicsParamsState = "paused"
+)
+
+// Valid indicates whether the value is a known member of the ListResearchTopicsParamsState enum.
+func (e ListResearchTopicsParamsState) Valid() bool {
+	switch e {
+	case ResearchTopicFilterActive:
+		return true
+	case ResearchTopicFilterAll:
+		return true
+	case ResearchTopicFilterDismissed:
+		return true
+	case ResearchTopicFilterDone:
+		return true
+	case ResearchTopicFilterPaused:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ListOwnerMemoryFactsParamsType.
 const (
 	Observation ListOwnerMemoryFactsParamsType = "observation"
@@ -5196,6 +5376,20 @@ type AssistantMcpServerTransport string
 // AssistantMcpServerList defines model for AssistantMcpServerList.
 type AssistantMcpServerList struct {
 	Servers []AssistantMcpServer `json:"servers"`
+}
+
+// AssistantMcpTool defines model for AssistantMcpTool.
+type AssistantMcpTool struct {
+	Description *string `json:"description,omitempty"`
+	Name        string  `json:"name"`
+
+	// ReadOnly 服务器自报的 `annotations.readOnlyHint`（省略 = 未声明）
+	ReadOnly *bool `json:"readOnly,omitempty"`
+}
+
+// AssistantMcpToolList defines model for AssistantMcpToolList.
+type AssistantMcpToolList struct {
+	Tools []AssistantMcpTool `json:"tools"`
 }
 
 // AssistantNotes 主线备忘（M19，助手每段开头带上）
@@ -6773,8 +6967,9 @@ type LinkCtlAgentStartParams struct {
 	// InitFrames `ready` 并完成 `negotiate_protocol` 后依次发送的 omp 命令帧
 	InitFrames []OmpFrame `json:"initFrames"`
 
-	// McpToken M19：协调宿主 /mcp/ 路由的凭据，只在 `web` 为真时生效：orbd 以环境变量 `ORYN_MCP_TOKEN` 交给该 agent，mcp.json 的
-	// `X-Oryn-MCP-Token` 请求头引用它，出站代理逐个请求核对（D10：Space 协调者没有它，直接请求 /mcp/ 一律 403）。只有协调宿主接受。
+	// McpToken M19：协调宿主 /mcp/ 路由的凭据，`web` 为真或 `variant` 为 `research_private` 时生效：orbd 以环境变量 `ORYN_MCP_TOKEN`
+	// 交给该 agent，mcp.json 的 `X-Oryn-MCP-Token` 请求头引用它，出站代理逐个请求核对（D10：Space 协调者没有它，直接请求
+	// /mcp/ 一律 403）。只有协调宿主接受。
 	McpToken *string `json:"mcpToken,omitempty"`
 
 	// Memory M16：本次 agent 启用 Hindsight 记忆（字段缺省 = 不启用）。orbd 写 `--config` 覆盖文件（`memory.backend: hindsight`、
@@ -6802,6 +6997,10 @@ type LinkCtlAgentStartParams struct {
 	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
 	ThreadID ThreadID `json:"threadId"`
 
+	// Variant M26：协调档的启动变体。`research_web` 公网研究员（`web_search` 与只读公网网址的 `read`）；`research_private` 私有研究员
+	// （没有内置工具、没有 `PI_PROXY`）；`main_restricted` 受限的主线（只有 `read`）。与 `web` 互斥。只有协调宿主接受；省略 = 改动前的行为。
+	Variant *LinkCtlAgentStartParamsVariant `json:"variant,omitempty"`
+
 	// Web M19：协调档是否打开第一层（内置 `web_search` 与 `generate_image`、`read` 读 URL、环境带 `PI_PROXY` 走 orynd 的正向代理）。
 	// 只给全局助手的对话；Space 协调者省略（= false），工具与环境同 M19 之前（D10）。只有协调宿主接受。
 	Web *bool `json:"web,omitempty"`
@@ -6811,6 +7010,10 @@ type LinkCtlAgentStartParams struct {
 // **只有协调宿主接受**：普通 orbd 收到非空 `profile` → `invalid_params`；协调宿主收到其它值或省略 → `invalid_params`。
 type LinkCtlAgentStartParamsProfile string
 
+// LinkCtlAgentStartParamsVariant M26：协调档的启动变体。`research_web` 公网研究员（`web_search` 与只读公网网址的 `read`）；`research_private` 私有研究员
+// （没有内置工具、没有 `PI_PROXY`）；`main_restricted` 受限的主线（只有 `read`）。与 `web` 互斥。只有协调宿主接受；省略 = 改动前的行为。
+type LinkCtlAgentStartParamsVariant string
+
 // LinkCtlAgentStartResult defines model for LinkCtlAgentStartResult.
 type LinkCtlAgentStartResult struct {
 	Pid int `json:"pid"`
@@ -6819,6 +7022,9 @@ type LinkCtlAgentStartResult struct {
 	// 单行）。私钥只在 runner 本机（`$HOME/.oryn/threads/<线程>/ssh/id_ed25519`，agent 环境 `ORYN_SSH_KEY`），随监督器
 	// 生灭：已有活动监督器时幂等返回同一把公钥。orynd 据此登记「公钥 → 线程」，SSH 网关对 runner 的 `ssh` 流按它认出线程。
 	SSHPublicKey *string `json:"sshPublicKey,omitempty"`
+
+	// Variant M26：协调宿主报回在跑的 agent 实际使用的变体；幂等返回时是已有监督器的变体；没有变体时省略。
+	Variant *string `json:"variant,omitempty"`
 }
 
 // LinkCtlAgentStatusParams defines model for LinkCtlAgentStatusParams.
@@ -7062,6 +7268,27 @@ type LinkCtlError struct {
 	Message string `json:"message"`
 }
 
+// LinkCtlFollowAddParams M26（orbd→orynd）：工作线程里主人要求跟进某件事时登记一个公网跟进话题（`origin = thread`）。
+type LinkCtlFollowAddParams struct {
+	// Kind 省略 = `question`
+	Kind     *ResearchTopicKind `json:"kind,omitempty"`
+	Question string             `json:"question"`
+
+	// Quote 主人在该线程里的原话；不是任何一条主人消息的子串 → `forbidden`
+	Quote string `json:"quote"`
+
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID ThreadID `json:"threadId"`
+	Title    string   `json:"title"`
+}
+
+// LinkCtlFollowAddResult defines model for LinkCtlFollowAddResult.
+type LinkCtlFollowAddResult struct {
+	TopicID string `json:"topicId"`
+}
+
 // LinkCtlFsCopyTreeParams defines model for LinkCtlFsCopyTreeParams.
 type LinkCtlFsCopyTreeParams struct {
 	From string `json:"from"`
@@ -7227,6 +7454,8 @@ type LinkCtlLibrarySyncResult struct {
 // runner 的 link 拒绝这两个方法。
 // `ssh.call`（orbd→orynd 请求，M18，由 orb 内 agent 的 `ssh_exec_many` 工具转来，参数 `LinkCtlSshCallParams`，结果 `LinkCtlSshCallResult`；runner 的 link 拒绝）。
 // `box.call`（orbd→orynd 请求，M23，由 orb 内 `oryn boxes …` 经 `orbd.sock` 转来，参数 `LinkCtlBoxCallParams`，结果 `LinkCtlBoxCallResult`；runner 的 link 拒绝）。
+// `follow.add`（orbd→orynd 请求，M26，由 orb 内 `oryn follow add` 经 `orbd.sock` 转来，参数 `LinkCtlFollowAddParams`，结果 `LinkCtlFollowAddResult`；
+// 控制面核对 `quote` 逐字出现在该线程某条主人消息里，runner 的 link 拒绝）。
 // `computer.start`、`computer.call`、`computer.cancel`、`computer.stop`（orynd→orbd 请求，M19，助手的电脑里的工具执行器：参数分别为
 // `LinkCtlComputerStartParams` / `LinkCtlComputerCallParams` / `LinkCtlComputerCancelParams` / 无参数，结果分别为
 // `LinkCtlComputerStartResult` / `LinkCtlComputerCallResult` / `LinkCtlOkResult` / `LinkCtlOkResult`；只在 hello 含 `computer` 时发送，
@@ -7260,6 +7489,8 @@ type LinkCtlNotification struct {
 	// runner 的 link 拒绝这两个方法。
 	// `ssh.call`（orbd→orynd 请求，M18，由 orb 内 agent 的 `ssh_exec_many` 工具转来，参数 `LinkCtlSshCallParams`，结果 `LinkCtlSshCallResult`；runner 的 link 拒绝）。
 	// `box.call`（orbd→orynd 请求，M23，由 orb 内 `oryn boxes …` 经 `orbd.sock` 转来，参数 `LinkCtlBoxCallParams`，结果 `LinkCtlBoxCallResult`；runner 的 link 拒绝）。
+	// `follow.add`（orbd→orynd 请求，M26，由 orb 内 `oryn follow add` 经 `orbd.sock` 转来，参数 `LinkCtlFollowAddParams`，结果 `LinkCtlFollowAddResult`；
+	// 控制面核对 `quote` 逐字出现在该线程某条主人消息里，runner 的 link 拒绝）。
 	// `computer.start`、`computer.call`、`computer.cancel`、`computer.stop`（orynd→orbd 请求，M19，助手的电脑里的工具执行器：参数分别为
 	// `LinkCtlComputerStartParams` / `LinkCtlComputerCallParams` / `LinkCtlComputerCancelParams` / 无参数，结果分别为
 	// `LinkCtlComputerStartResult` / `LinkCtlComputerCallResult` / `LinkCtlOkResult` / `LinkCtlOkResult`；只在 hello 含 `computer` 时发送，
@@ -7386,6 +7617,8 @@ type LinkCtlRequest struct {
 	// runner 的 link 拒绝这两个方法。
 	// `ssh.call`（orbd→orynd 请求，M18，由 orb 内 agent 的 `ssh_exec_many` 工具转来，参数 `LinkCtlSshCallParams`，结果 `LinkCtlSshCallResult`；runner 的 link 拒绝）。
 	// `box.call`（orbd→orynd 请求，M23，由 orb 内 `oryn boxes …` 经 `orbd.sock` 转来，参数 `LinkCtlBoxCallParams`，结果 `LinkCtlBoxCallResult`；runner 的 link 拒绝）。
+	// `follow.add`（orbd→orynd 请求，M26，由 orb 内 `oryn follow add` 经 `orbd.sock` 转来，参数 `LinkCtlFollowAddParams`，结果 `LinkCtlFollowAddResult`；
+	// 控制面核对 `quote` 逐字出现在该线程某条主人消息里，runner 的 link 拒绝）。
 	// `computer.start`、`computer.call`、`computer.cancel`、`computer.stop`（orynd→orbd 请求，M19，助手的电脑里的工具执行器：参数分别为
 	// `LinkCtlComputerStartParams` / `LinkCtlComputerCallParams` / `LinkCtlComputerCancelParams` / 无参数，结果分别为
 	// `LinkCtlComputerStartResult` / `LinkCtlComputerCallResult` / `LinkCtlOkResult` / `LinkCtlOkResult`；只在 hello 含 `computer` 时发送，
@@ -10391,6 +10624,173 @@ type PutBoxSecretRequest struct {
 	Value  string `json:"value"`
 }
 
+// ResearchRun defines model for ResearchRun.
+type ResearchRun struct {
+	Error *string `json:"error,omitempty"`
+
+	// FinishedAt UTC 毫秒时间戳
+	FinishedAt *TimestampMs `json:"finishedAt,omitempty"`
+	ID         string       `json:"id"`
+
+	// Outcome `nothing`、`findings:<n>` 或 `topics:<n>`
+	Outcome  string              `json:"outcome"`
+	Pipeline ResearchRunPipeline `json:"pipeline"`
+
+	// StartedAt UTC 毫秒时间戳
+	StartedAt TimestampMs       `json:"startedAt"`
+	Status    ResearchRunStatus `json:"status"`
+
+	// Subject 挖掘运行的对话 id；其余为空
+	Subject string  `json:"subject"`
+	TopicID *string `json:"topicId,omitempty"`
+}
+
+// ResearchRunPipeline defines model for ResearchRun.Pipeline.
+type ResearchRunPipeline string
+
+// ResearchRunStatus defines model for ResearchRun.Status.
+type ResearchRunStatus string
+
+// ResearchRunList defines model for ResearchRunList.
+type ResearchRunList struct {
+	Runs []ResearchRun `json:"runs"`
+}
+
+// ResearchSettings 全局助手后台研究的设置（M26）
+type ResearchSettings struct {
+	// DailyUsd 研究员对话每日花费硬上限（美元，本地时区的自然日）
+	DailyUsd float32 `json:"dailyUsd"`
+
+	// Enabled 总开关（缺省关闭）；关闭时不发起任何研究运行
+	Enabled bool `json:"enabled"`
+
+	// Internal 内部数据关联（跨线程的矛盾、重复与卡住）
+	Internal bool `json:"internal"`
+
+	// Mcp 用 `mcpTools` 白名单里的 MCP 工具检查邮件、日历等
+	Mcp bool `json:"mcp"`
+
+	// McpTools 服务器名 → 研究可用的只读工具名；不在其中的服务器后台研究一律不可用
+	McpTools map[string][]string `json:"mcpTools"`
+
+	// Mine 从助手对话与主线自动挖掘话题
+	Mine bool `json:"mine"`
+
+	// Model 研究员用的模型；省略 = 与助手相同
+	Model *ModelRef `json:"model,omitempty"`
+
+	// Preferences 主人的研究偏好（自由文本，交给研究员）
+	Preferences string `json:"preferences"`
+
+	// Web 公网话题跟进
+	Web bool `json:"web"`
+}
+
+// ResearchSettingsEnvelope defines model for ResearchSettingsEnvelope.
+type ResearchSettingsEnvelope struct {
+	// Capped 今天的花费已达上限
+	Capped bool `json:"capped"`
+
+	// Settings 全局助手后台研究的设置（M26）
+	Settings ResearchSettings `json:"settings"`
+
+	// SpentTodayUsd 研究员对话今天的花费
+	SpentTodayUsd float32 `json:"spentTodayUsd"`
+}
+
+// ResearchSource defines model for ResearchSource.
+type ResearchSource struct {
+	// Date 来源的日期（YYYY-MM-DD，研究员给出）
+	Date  *string `json:"date,omitempty"`
+	Title string  `json:"title"`
+	URL   string  `json:"url"`
+}
+
+// ResearchTopic defines model for ResearchTopic.
+type ResearchTopic struct {
+	// Baseline 当时助手的回答要点（只给主线助手对照，不交给公网研究员）
+	Baseline string `json:"baseline"`
+
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt TimestampMs `json:"createdAt"`
+
+	// ExpiresAt UTC 毫秒时间戳
+	ExpiresAt *TimestampMs `json:"expiresAt,omitempty"`
+	ID        string       `json:"id"`
+
+	// IntervalSeconds 当前检查间隔
+	IntervalSeconds int `json:"intervalSeconds"`
+
+	// Kind `question` 问题跟进（带当时的回答作基线，30 天后结束）；`interest` 长期关注（不结束）
+	Kind ResearchTopicKind `json:"kind"`
+
+	// LastReport 上一次有新信息时的摘要
+	LastReport string `json:"lastReport"`
+
+	// LastRunAt UTC 毫秒时间戳
+	LastRunAt   *TimestampMs     `json:"lastRunAt,omitempty"`
+	LastSources []ResearchSource `json:"lastSources"`
+
+	// NextRunAt UTC 毫秒时间戳
+	NextRunAt *TimestampMs `json:"nextRunAt,omitempty"`
+
+	// Origin `mined` 自动挖掘；`manual` 主人或助手新建；`thread` 工作线程里 `oryn follow add` 登记
+	Origin   ResearchTopicOrigin `json:"origin"`
+	Question string              `json:"question"`
+	RunCount int                 `json:"runCount"`
+
+	// SourceThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	SourceThreadID *ThreadID          `json:"sourceThreadId,omitempty"`
+	State          ResearchTopicState `json:"state"`
+	Title          string             `json:"title"`
+
+	// UpdatedAt UTC 毫秒时间戳
+	UpdatedAt TimestampMs `json:"updatedAt"`
+}
+
+// ResearchTopicOrigin `mined` 自动挖掘；`manual` 主人或助手新建；`thread` 工作线程里 `oryn follow add` 登记
+type ResearchTopicOrigin string
+
+// ResearchTopicState defines model for ResearchTopic.State.
+type ResearchTopicState string
+
+// ResearchTopicInput defines model for ResearchTopicInput.
+type ResearchTopicInput struct {
+	Baseline *string `json:"baseline,omitempty"`
+
+	// Kind `question` 问题跟进（带当时的回答作基线，30 天后结束）；`interest` 长期关注（不结束）
+	Kind     ResearchTopicKind `json:"kind"`
+	Question string            `json:"question"`
+
+	// SourceThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	SourceThreadID *ThreadID `json:"sourceThreadId,omitempty"`
+	Title          string    `json:"title"`
+}
+
+// ResearchTopicKind `question` 问题跟进（带当时的回答作基线，30 天后结束）；`interest` 长期关注（不结束）
+type ResearchTopicKind string
+
+// ResearchTopicList defines model for ResearchTopicList.
+type ResearchTopicList struct {
+	Topics []ResearchTopic `json:"topics"`
+}
+
+// ResearchTopicPatch defines model for ResearchTopicPatch.
+type ResearchTopicPatch struct {
+	// Kind `question` 问题跟进（带当时的回答作基线，30 天后结束）；`interest` 长期关注（不结束）
+	Kind     *ResearchTopicKind       `json:"kind,omitempty"`
+	Question *string                  `json:"question,omitempty"`
+	State    *ResearchTopicPatchState `json:"state,omitempty"`
+	Title    *string                  `json:"title,omitempty"`
+}
+
+// ResearchTopicPatchState defines model for ResearchTopicPatch.State.
+type ResearchTopicPatchState string
+
 // RoleIdentity defines model for RoleIdentity.
 type RoleIdentity struct {
 	AvatarIcon  *string `json:"avatarIcon,omitempty"`
@@ -12806,6 +13206,20 @@ type GetAssistantFileContentParams struct {
 	Inline *bool `form:"inline,omitempty" json:"inline,omitempty"`
 }
 
+// ListResearchRunsParams defines parameters for ListResearchRuns.
+type ListResearchRunsParams struct {
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ListResearchTopicsParams defines parameters for ListResearchTopics.
+type ListResearchTopicsParams struct {
+	// State 缺省 = 除 `dismissed` 之外的全部；`all` = 全部
+	State *ListResearchTopicsParamsState `form:"state,omitempty" json:"state,omitempty"`
+}
+
+// ListResearchTopicsParamsState defines parameters for ListResearchTopics.
+type ListResearchTopicsParamsState string
+
 // UploadAttachmentParams defines parameters for UploadAttachment.
 type UploadAttachmentParams struct {
 	// Name 原始文件名（服务端净化后 ≤200 字节）
@@ -13610,6 +14024,15 @@ type PatchAssistantFileJSONRequestBody = AssistantFilePatch
 
 // PutAssistantNotesJSONRequestBody defines body for PutAssistantNotes for application/json ContentType.
 type PutAssistantNotesJSONRequestBody = AssistantNotes
+
+// PutResearchSettingsJSONRequestBody defines body for PutResearchSettings for application/json ContentType.
+type PutResearchSettingsJSONRequestBody = ResearchSettings
+
+// CreateResearchTopicJSONRequestBody defines body for CreateResearchTopic for application/json ContentType.
+type CreateResearchTopicJSONRequestBody = ResearchTopicInput
+
+// UpdateResearchTopicJSONRequestBody defines body for UpdateResearchTopic for application/json ContentType.
+type UpdateResearchTopicJSONRequestBody = ResearchTopicPatch
 
 // AuthLoginFinishJSONRequestBody defines body for AuthLoginFinish for application/json ContentType.
 type AuthLoginFinishJSONRequestBody = AuthLoginFinishRequest
@@ -16430,6 +16853,36 @@ type ServerInterface interface {
 	// ListAssistantMcpServers 全局 `mcp.json` 里的服务器及其对全局助手是否可用（M19）
 	// (GET /api/v1/assistant/mcp-servers)
 	ListAssistantMcpServers(w http.ResponseWriter, r *http.Request)
+	// ListAssistantMcpServerTools 列出一个 MCP 服务器的工具（M26，给「研究可用工具」白名单用）
+	// (GET /api/v1/assistant/mcp-servers/{name}/tools)
+	ListAssistantMcpServerTools(w http.ResponseWriter, r *http.Request, name string)
+	// ListResearchRuns 最近的研究运行（M26，新的在前）
+	// (GET /api/v1/assistant/research/runs)
+	ListResearchRuns(w http.ResponseWriter, r *http.Request, params ListResearchRunsParams)
+	// GetResearchSettings 后台研究的设置与今天的花费（M26）
+	// (GET /api/v1/assistant/research/settings)
+	GetResearchSettings(w http.ResponseWriter, r *http.Request)
+	// PutResearchSettings 整体改写后台研究的设置（M26；超出取值范围 → 400 `invalid_request`）
+	// (PUT /api/v1/assistant/research/settings)
+	PutResearchSettings(w http.ResponseWriter, r *http.Request)
+	// ListResearchTopics 跟进话题（M26，新的在前）
+	// (GET /api/v1/assistant/research/topics)
+	ListResearchTopics(w http.ResponseWriter, r *http.Request, params ListResearchTopicsParams)
+	// CreateResearchTopic 新建跟进话题（M26；重名、超长、活跃话题达 50 个 → 400 `invalid_request`）
+	// (POST /api/v1/assistant/research/topics)
+	CreateResearchTopic(w http.ResponseWriter, r *http.Request)
+	// DeleteResearchTopic 删除跟进话题（M26；置为 `dismissed`，保留标题用于去重）
+	// (DELETE /api/v1/assistant/research/topics/{id})
+	DeleteResearchTopic(w http.ResponseWriter, r *http.Request, id string)
+	// GetResearchTopic 一个跟进话题（M26）
+	// (GET /api/v1/assistant/research/topics/{id})
+	GetResearchTopic(w http.ResponseWriter, r *http.Request, id string)
+	// UpdateResearchTopic 修改跟进话题（M26；`state` 只能在 `active` 与 `paused` 之间切换）
+	// (PATCH /api/v1/assistant/research/topics/{id})
+	UpdateResearchTopic(w http.ResponseWriter, r *http.Request, id string)
+	// RunResearchTopic 立即检查一个活跃话题（M26；非 `active` → 400 `invalid_request`）
+	// (POST /api/v1/assistant/research/topics/{id}/run)
+	RunResearchTopic(w http.ResponseWriter, r *http.Request, id string)
 	// UploadAttachment 上传附件（单文件 ≤100MiB；可先于线程创建上传，24h 内未绑定线程即被清理）
 	// (POST /api/v1/attachments)
 	UploadAttachment(w http.ResponseWriter, r *http.Request, params UploadAttachmentParams)
@@ -17681,6 +18134,66 @@ func (_ Unimplemented) PutAssistantNotes(w http.ResponseWriter, r *http.Request)
 // ListAssistantMcpServers 全局 `mcp.json` 里的服务器及其对全局助手是否可用（M19）
 // (GET /api/v1/assistant/mcp-servers)
 func (_ Unimplemented) ListAssistantMcpServers(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListAssistantMcpServerTools 列出一个 MCP 服务器的工具（M26，给「研究可用工具」白名单用）
+// (GET /api/v1/assistant/mcp-servers/{name}/tools)
+func (_ Unimplemented) ListAssistantMcpServerTools(w http.ResponseWriter, r *http.Request, name string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListResearchRuns 最近的研究运行（M26，新的在前）
+// (GET /api/v1/assistant/research/runs)
+func (_ Unimplemented) ListResearchRuns(w http.ResponseWriter, r *http.Request, params ListResearchRunsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetResearchSettings 后台研究的设置与今天的花费（M26）
+// (GET /api/v1/assistant/research/settings)
+func (_ Unimplemented) GetResearchSettings(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutResearchSettings 整体改写后台研究的设置（M26；超出取值范围 → 400 `invalid_request`）
+// (PUT /api/v1/assistant/research/settings)
+func (_ Unimplemented) PutResearchSettings(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListResearchTopics 跟进话题（M26，新的在前）
+// (GET /api/v1/assistant/research/topics)
+func (_ Unimplemented) ListResearchTopics(w http.ResponseWriter, r *http.Request, params ListResearchTopicsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateResearchTopic 新建跟进话题（M26；重名、超长、活跃话题达 50 个 → 400 `invalid_request`）
+// (POST /api/v1/assistant/research/topics)
+func (_ Unimplemented) CreateResearchTopic(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteResearchTopic 删除跟进话题（M26；置为 `dismissed`，保留标题用于去重）
+// (DELETE /api/v1/assistant/research/topics/{id})
+func (_ Unimplemented) DeleteResearchTopic(w http.ResponseWriter, r *http.Request, id string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetResearchTopic 一个跟进话题（M26）
+// (GET /api/v1/assistant/research/topics/{id})
+func (_ Unimplemented) GetResearchTopic(w http.ResponseWriter, r *http.Request, id string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// UpdateResearchTopic 修改跟进话题（M26；`state` 只能在 `active` 与 `paused` 之间切换）
+// (PATCH /api/v1/assistant/research/topics/{id})
+func (_ Unimplemented) UpdateResearchTopic(w http.ResponseWriter, r *http.Request, id string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RunResearchTopic 立即检查一个活跃话题（M26；非 `active` → 400 `invalid_request`）
+// (POST /api/v1/assistant/research/topics/{id}/run)
+func (_ Unimplemented) RunResearchTopic(w http.ResponseWriter, r *http.Request, id string) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -21098,6 +21611,244 @@ func (siw *ServerInterfaceWrapper) ListAssistantMcpServers(w http.ResponseWriter
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListAssistantMcpServers(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListAssistantMcpServerTools operation middleware
+func (siw *ServerInterfaceWrapper) ListAssistantMcpServerTools(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "name" -------------
+	var name string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", chi.URLParam(r, "name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAssistantMcpServerTools(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListResearchRuns operation middleware
+func (siw *ServerInterfaceWrapper) ListResearchRuns(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListResearchRunsParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListResearchRuns(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetResearchSettings operation middleware
+func (siw *ServerInterfaceWrapper) GetResearchSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetResearchSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutResearchSettings operation middleware
+func (siw *ServerInterfaceWrapper) PutResearchSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutResearchSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListResearchTopics operation middleware
+func (siw *ServerInterfaceWrapper) ListResearchTopics(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListResearchTopicsParams
+
+	// ------------- Optional query parameter "state" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "state", r.URL.Query(), &params.State, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "state"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "state", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListResearchTopics(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateResearchTopic operation middleware
+func (siw *ServerInterfaceWrapper) CreateResearchTopic(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateResearchTopic(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteResearchTopic operation middleware
+func (siw *ServerInterfaceWrapper) DeleteResearchTopic(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteResearchTopic(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetResearchTopic operation middleware
+func (siw *ServerInterfaceWrapper) GetResearchTopic(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetResearchTopic(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateResearchTopic operation middleware
+func (siw *ServerInterfaceWrapper) UpdateResearchTopic(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateResearchTopic(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RunResearchTopic operation middleware
+func (siw *ServerInterfaceWrapper) RunResearchTopic(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RunResearchTopic(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -31155,6 +31906,36 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/assistant/mcp-servers", wrapper.ListAssistantMcpServers)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/assistant/mcp-servers/{name}/tools", wrapper.ListAssistantMcpServerTools)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/assistant/research/settings", wrapper.GetResearchSettings)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/assistant/research/settings", wrapper.PutResearchSettings)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/assistant/research/topics", wrapper.ListResearchTopics)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/assistant/research/topics", wrapper.CreateResearchTopic)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/assistant/research/topics/{id}", wrapper.DeleteResearchTopic)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/assistant/research/topics/{id}", wrapper.GetResearchTopic)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/v1/assistant/research/topics/{id}", wrapper.UpdateResearchTopic)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/assistant/research/topics/{id}/run", wrapper.RunResearchTopic)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/assistant/research/runs", wrapper.ListResearchRuns)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/assistant/main", wrapper.GetAssistantMain)

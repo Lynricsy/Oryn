@@ -4335,7 +4335,8 @@
 			"set_box_schedule": "Changed a box schedule",
 			"set_box_app_visibility": "Changed an app's visibility",
 			"delete_box": "Deleted a box",
-			"api_call": "API operation"
+			"api_call": "API operation",
+			"follow_topic": "Added a follow-up topic"
 		}
 	},
 	"schedule": {

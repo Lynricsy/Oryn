@@ -2947,6 +2947,124 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/assistant/mcp-servers/{name}/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 全局 `mcp.json` 里的服务器名 */
+                name: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * 列出一个 MCP 服务器的工具（M26，给「研究可用工具」白名单用）
+         * @description orynd 以 Streamable HTTP 连上该服务器（带 `mcp.json` 里的鉴权头），依次 `initialize`、`tools/list`（至多 10 页）。
+         *     `readOnly` 是服务器自报的 `annotations.readOnlyHint`，不是保证。找不到 → 404；不可用 → 400 `invalid_request`；
+         *     `type: sse` → 400 `unsupported_transport`；上游失败 → 502 `upstream_failed`。
+         */
+        get: operations["listAssistantMcpServerTools"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/assistant/research/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 后台研究的设置与今天的花费（M26） */
+        get: operations["getResearchSettings"];
+        /** 整体改写后台研究的设置（M26；超出取值范围 → 400 `invalid_request`） */
+        put: operations["putResearchSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/assistant/research/topics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 跟进话题（M26，新的在前） */
+        get: operations["listResearchTopics"];
+        put?: never;
+        /** 新建跟进话题（M26；重名、超长、活跃话题达 50 个 → 400 `invalid_request`） */
+        post: operations["createResearchTopic"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/assistant/research/topics/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** 一个跟进话题（M26） */
+        get: operations["getResearchTopic"];
+        put?: never;
+        post?: never;
+        /** 删除跟进话题（M26；置为 `dismissed`，保留标题用于去重） */
+        delete: operations["deleteResearchTopic"];
+        options?: never;
+        head?: never;
+        /** 修改跟进话题（M26；`state` 只能在 `active` 与 `paused` 之间切换） */
+        patch: operations["updateResearchTopic"];
+        trace?: never;
+    };
+    "/api/v1/assistant/research/topics/{id}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 立即检查一个活跃话题（M26；非 `active` → 400 `invalid_request`） */
+        post: operations["runResearchTopic"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/assistant/research/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 最近的研究运行（M26，新的在前） */
+        get: operations["listResearchRuns"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/assistant/main": {
         parameters: {
             query?: never;
@@ -8271,6 +8389,118 @@ export interface components {
         AssistantMcpServerList: {
             servers: components["schemas"]["AssistantMcpServer"][];
         };
+        AssistantMcpTool: {
+            name: string;
+            description?: string;
+            /** @description 服务器自报的 `annotations.readOnlyHint`（省略 = 未声明） */
+            readOnly?: boolean;
+        };
+        AssistantMcpToolList: {
+            tools: components["schemas"]["AssistantMcpTool"][];
+        };
+        /** @description 全局助手后台研究的设置（M26） */
+        ResearchSettings: {
+            /** @description 总开关（缺省关闭）；关闭时不发起任何研究运行 */
+            enabled: boolean;
+            /** @description 公网话题跟进 */
+            web: boolean;
+            /** @description 从助手对话与主线自动挖掘话题 */
+            mine: boolean;
+            /** @description 内部数据关联（跨线程的矛盾、重复与卡住） */
+            internal: boolean;
+            /** @description 用 `mcpTools` 白名单里的 MCP 工具检查邮件、日历等 */
+            mcp: boolean;
+            /** @description 研究员用的模型；省略 = 与助手相同 */
+            model?: components["schemas"]["ModelRef"];
+            /** @description 研究员对话每日花费硬上限（美元，本地时区的自然日） */
+            dailyUsd: number;
+            /** @description 主人的研究偏好（自由文本，交给研究员） */
+            preferences: string;
+            /** @description 服务器名 → 研究可用的只读工具名；不在其中的服务器后台研究一律不可用 */
+            mcpTools: {
+                [key: string]: string[];
+            };
+        };
+        ResearchSettingsEnvelope: {
+            settings: components["schemas"]["ResearchSettings"];
+            /** @description 研究员对话今天的花费 */
+            spentTodayUsd: number;
+            /** @description 今天的花费已达上限 */
+            capped: boolean;
+        };
+        ResearchSource: {
+            url: string;
+            title: string;
+            /** @description 来源的日期（YYYY-MM-DD，研究员给出） */
+            date?: string;
+        };
+        /**
+         * @description `question` 问题跟进（带当时的回答作基线，30 天后结束）；`interest` 长期关注（不结束）
+         * @enum {string}
+         */
+        ResearchTopicKind: "question" | "interest";
+        ResearchTopic: {
+            id: string;
+            kind: components["schemas"]["ResearchTopicKind"];
+            title: string;
+            question: string;
+            /** @description 当时助手的回答要点（只给主线助手对照，不交给公网研究员） */
+            baseline: string;
+            /**
+             * @description `mined` 自动挖掘；`manual` 主人或助手新建；`thread` 工作线程里 `oryn follow add` 登记
+             * @enum {string}
+             */
+            origin: "mined" | "manual" | "thread";
+            sourceThreadId?: components["schemas"]["ThreadId"];
+            /** @enum {string} */
+            state: "active" | "paused" | "done" | "dismissed";
+            /** @description 当前检查间隔 */
+            intervalSeconds: number;
+            nextRunAt?: components["schemas"]["TimestampMs"];
+            expiresAt?: components["schemas"]["TimestampMs"];
+            lastRunAt?: components["schemas"]["TimestampMs"];
+            runCount: number;
+            /** @description 上一次有新信息时的摘要 */
+            lastReport: string;
+            lastSources: components["schemas"]["ResearchSource"][];
+            createdAt: components["schemas"]["TimestampMs"];
+            updatedAt: components["schemas"]["TimestampMs"];
+        };
+        ResearchTopicList: {
+            topics: components["schemas"]["ResearchTopic"][];
+        };
+        ResearchTopicInput: {
+            kind: components["schemas"]["ResearchTopicKind"];
+            title: string;
+            question: string;
+            baseline?: string;
+            sourceThreadId?: components["schemas"]["ThreadId"];
+        };
+        ResearchTopicPatch: {
+            title?: string;
+            question?: string;
+            kind?: components["schemas"]["ResearchTopicKind"];
+            /** @enum {string} */
+            state?: "active" | "paused";
+        };
+        ResearchRun: {
+            id: string;
+            /** @enum {string} */
+            pipeline: "web" | "mine" | "internal" | "mcp";
+            topicId?: string;
+            /** @description 挖掘运行的对话 id；其余为空 */
+            subject: string;
+            /** @enum {string} */
+            status: "running" | "completed" | "failed";
+            /** @description `nothing`、`findings:<n>` 或 `topics:<n>` */
+            outcome: string;
+            error?: string;
+            startedAt: components["schemas"]["TimestampMs"];
+            finishedAt?: components["schemas"]["TimestampMs"];
+        };
+        ResearchRunList: {
+            runs: components["schemas"]["ResearchRun"][];
+        };
         /** @description 主线备忘（M19，助手每段开头带上） */
         AssistantNotes: {
             /** @description 上限 1500 字（按 Unicode 字符计） */
@@ -9365,7 +9595,7 @@ export interface components {
              * @description 工具名（M19 起全局助手有更多写类工具；经确认卡执行的记 `origin = owner`）。`api_call` 是全局助手经 `oryn` 工具执行的 REST 操作，`summary` 以 operationId 开头
              * @enum {string}
              */
-            action: "create_thread" | "send_message" | "archive_thread" | "set_schedule" | "delete_schedule" | "update_thread" | "abort_thread" | "set_thread_model" | "fork_thread" | "wake_thread" | "delete_thread" | "create_project" | "update_project" | "delete_project" | "create_space" | "update_space" | "delete_space" | "set_trigger" | "delete_trigger" | "pause_orb" | "wake_orb" | "delete_orb" | "write_thread_file" | "put_thread_file" | "write_project_config" | "delete_project_config" | "share_thread" | "revoke_share" | "share_portal" | "unshare_portal" | "publish_artifact" | "unpublish_artifact" | "create_box" | "start_box" | "stop_box" | "set_box_schedule" | "set_box_app_visibility" | "delete_box" | "api_call";
+            action: "create_thread" | "send_message" | "archive_thread" | "set_schedule" | "delete_schedule" | "update_thread" | "abort_thread" | "set_thread_model" | "fork_thread" | "wake_thread" | "delete_thread" | "create_project" | "update_project" | "delete_project" | "create_space" | "update_space" | "delete_space" | "set_trigger" | "delete_trigger" | "pause_orb" | "wake_orb" | "delete_orb" | "write_thread_file" | "put_thread_file" | "write_project_config" | "delete_project_config" | "share_thread" | "revoke_share" | "share_portal" | "unshare_portal" | "publish_artifact" | "unpublish_artifact" | "create_box" | "start_box" | "stop_box" | "set_box_schedule" | "set_box_app_visibility" | "delete_box" | "api_call" | "follow_topic";
             targetThreadId?: components["schemas"]["ThreadId"];
             scheduleId?: components["schemas"]["ScheduleId"];
             /** @description 消息 / 提示词的前 200 字符；定时为 `<name> · <kind> <spec> · <mode>` */
@@ -11253,13 +11483,15 @@ export interface components {
          *     runner 的 link 拒绝这两个方法。
          *     `ssh.call`（orbd→orynd 请求，M18，由 orb 内 agent 的 `ssh_exec_many` 工具转来，参数 `LinkCtlSshCallParams`，结果 `LinkCtlSshCallResult`；runner 的 link 拒绝）。
          *     `box.call`（orbd→orynd 请求，M23，由 orb 内 `oryn boxes …` 经 `orbd.sock` 转来，参数 `LinkCtlBoxCallParams`，结果 `LinkCtlBoxCallResult`；runner 的 link 拒绝）。
+         *     `follow.add`（orbd→orynd 请求，M26，由 orb 内 `oryn follow add` 经 `orbd.sock` 转来，参数 `LinkCtlFollowAddParams`，结果 `LinkCtlFollowAddResult`；
+         *     控制面核对 `quote` 逐字出现在该线程某条主人消息里，runner 的 link 拒绝）。
          *     `computer.start`、`computer.call`、`computer.cancel`、`computer.stop`（orynd→orbd 请求，M19，助手的电脑里的工具执行器：参数分别为
          *     `LinkCtlComputerStartParams` / `LinkCtlComputerCallParams` / `LinkCtlComputerCancelParams` / 无参数，结果分别为
          *     `LinkCtlComputerStartResult` / `LinkCtlComputerCallResult` / `LinkCtlOkResult` / `LinkCtlOkResult`；只在 hello 含 `computer` 时发送，
          *     runner 与协调宿主回 `not_supported`）、`computer.update`（orbd→orynd 通知，M19，参数 `LinkCtlComputerUpdateParams`，在途工具的流式输出）。
          * @enum {string}
          */
-        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap" | "services.state" | "portal.configure" | "desktop.state" | "profile.mode" | "thread.create" | "thread.send" | "thread.get" | "schedule.get" | "schedule.put" | "schedule.delete" | "schedule.enable" | "snapshot.prepare" | "worktree.add" | "worktree.remove" | "omphome.apply" | "library.sync" | "library.fetch" | "library.put" | "artifact.call" | "github.call" | "github.prepare.report" | "ssh.call" | "computer.start" | "computer.call" | "computer.cancel" | "computer.stop" | "computer.update" | "box.call";
+        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap" | "services.state" | "portal.configure" | "desktop.state" | "profile.mode" | "thread.create" | "thread.send" | "thread.get" | "schedule.get" | "schedule.put" | "schedule.delete" | "schedule.enable" | "snapshot.prepare" | "worktree.add" | "worktree.remove" | "omphome.apply" | "library.sync" | "library.fetch" | "library.put" | "artifact.call" | "github.call" | "github.prepare.report" | "ssh.call" | "computer.start" | "computer.call" | "computer.cancel" | "computer.stop" | "computer.update" | "box.call" | "follow.add";
         LinkCtlRequest: {
             /**
              * Format: int64
@@ -11530,6 +11762,19 @@ export interface components {
             description: string;
             compat?: boolean;
         };
+        /** @description M26（orbd→orynd）：工作线程里主人要求跟进某件事时登记一个公网跟进话题（`origin = thread`）。 */
+        LinkCtlFollowAddParams: {
+            threadId: components["schemas"]["ThreadId"];
+            title: string;
+            question: string;
+            /** @description 省略 = `question` */
+            kind?: components["schemas"]["ResearchTopicKind"];
+            /** @description 主人在该线程里的原话；不是任何一条主人消息的子串 → `forbidden` */
+            quote: string;
+        };
+        LinkCtlFollowAddResult: {
+            topicId: string;
+        };
         /** @description M23（orbd→orynd）：orb 内 `oryn boxes …` 的调用。控制面校验调用方线程属于本 orb、`kind = work`、未归档，且 orb 不是全自动入口建立的。 */
         LinkCtlBoxCallParams: {
             threadId: components["schemas"]["ThreadId"];
@@ -11666,16 +11911,25 @@ export interface components {
              */
             web?: boolean;
             /**
-             * @description M19：协调宿主 /mcp/ 路由的凭据，只在 `web` 为真时生效：orbd 以环境变量 `ORYN_MCP_TOKEN` 交给该 agent，mcp.json 的
-             *     `X-Oryn-MCP-Token` 请求头引用它，出站代理逐个请求核对（D10：Space 协调者没有它，直接请求 /mcp/ 一律 403）。只有协调宿主接受。
+             * @description M19：协调宿主 /mcp/ 路由的凭据，`web` 为真或 `variant` 为 `research_private` 时生效：orbd 以环境变量 `ORYN_MCP_TOKEN`
+             *     交给该 agent，mcp.json 的 `X-Oryn-MCP-Token` 请求头引用它，出站代理逐个请求核对（D10：Space 协调者没有它，直接请求
+             *     /mcp/ 一律 403）。只有协调宿主接受。
              */
             mcpToken?: string;
+            /**
+             * @description M26：协调档的启动变体。`research_web` 公网研究员（`web_search` 与只读公网网址的 `read`）；`research_private` 私有研究员
+             *     （没有内置工具、没有 `PI_PROXY`）；`main_restricted` 受限的主线（只有 `read`）。与 `web` 互斥。只有协调宿主接受；省略 = 改动前的行为。
+             * @enum {string}
+             */
+            variant?: "research_web" | "research_private" | "main_restricted";
             memory?: components["schemas"]["LinkCtlAgentMemory"];
             projectId?: components["schemas"]["ProjectId"];
             projectConfig?: components["schemas"]["LinkCtlProjectConfig"];
         };
         LinkCtlAgentStartResult: {
             pid: number;
+            /** @description M26：协调宿主报回在跑的 agent 实际使用的变体；幂等返回时是已有监督器的变体；没有变体时省略。 */
+            variant?: string;
             /**
              * @description M21：只有 runner 且 SSH 网关端口在监听时给出——orbd 为该线程的监督器生成的 ed25519 公钥（OpenSSH authorized_keys
              *     单行）。私钥只在 runner 本机（`$HOME/.oryn/threads/<线程>/ssh/id_ed25519`，agent 环境 `ORYN_SSH_KEY`），随监督器
@@ -16599,6 +16853,242 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AssistantMcpServerList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listAssistantMcpServerTools: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 全局 `mcp.json` 里的服务器名 */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 工具列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantMcpToolList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getResearchSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 设置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchSettingsEnvelope"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putResearchSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResearchSettings"];
+            };
+        };
+        responses: {
+            /** @description 写入后的设置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchSettingsEnvelope"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listResearchTopics: {
+        parameters: {
+            query?: {
+                /** @description 缺省 = 除 `dismissed` 之外的全部；`all` = 全部 */
+                state?: "active" | "paused" | "done" | "dismissed" | "all";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 话题列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchTopicList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createResearchTopic: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResearchTopicInput"];
+            };
+        };
+        responses: {
+            /** @description 已创建 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchTopic"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getResearchTopic: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 话题 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchTopic"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteResearchTopic: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateResearchTopic: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResearchTopicPatch"];
+            };
+        };
+        responses: {
+            /** @description 修改后的话题 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchTopic"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    runResearchTopic: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 话题（`nextRunAt` 已置为现在） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchTopic"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listResearchRuns: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 运行列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchRunList"];
                 };
             };
             default: components["responses"]["Error"];

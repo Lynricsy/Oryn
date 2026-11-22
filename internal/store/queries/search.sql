@@ -53,7 +53,7 @@ JOIN threads t ON t.id = d.thread_id
 WHERE f.body MATCH @match
   AND NOT EXISTS (SELECT 1 FROM json_each(@short) s WHERE instr(lower(f.body), lower(s.value)) = 0)
   AND (d.ts < @before_ts OR (d.ts = @before_ts AND d.id < @before_id))
-  AND (@kinds = '[]' OR t.kind IN (SELECT value FROM json_each(@kinds)))
+  AND (@kinds = '[]' OR t.kind IN (SELECT value FROM json_each(@kinds))) AND t.hidden = 0
   AND (@project = '' OR t.project_id = @project)
   AND NOT EXISTS (
       SELECT 1 FROM search_docs o JOIN threads ot ON ot.id = o.thread_id
@@ -75,7 +75,7 @@ JOIN search_fts f ON f.rowid = d.id
 JOIN threads t ON t.id = d.thread_id
 WHERE NOT EXISTS (SELECT 1 FROM json_each(@short) s WHERE instr(lower(f.body), lower(s.value)) = 0)
   AND (d.ts < @before_ts OR (d.ts = @before_ts AND d.id < @before_id))
-  AND (@kinds = '[]' OR t.kind IN (SELECT value FROM json_each(@kinds)))
+  AND (@kinds = '[]' OR t.kind IN (SELECT value FROM json_each(@kinds))) AND t.hidden = 0
   AND (@project = '' OR t.project_id = @project)
   AND NOT EXISTS (
       SELECT 1 FROM search_docs o JOIN threads ot ON ot.id = o.thread_id

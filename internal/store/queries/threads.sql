@@ -2,24 +2,31 @@
 
 -- kind: work | space | assistant (M9); schedule_id / schedule_run: set when a new_thread schedule run created it.
 -- cwd / worktree (M11b): a runner thread's working directory and the {repo, dir, branch} JSON of the worktree Oryn made.
+-- research (M26): 'web' | 'private' for the hidden researcher conversations, NULL otherwise.
 -- name: CreateThread :exec
 INSERT INTO threads (id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id,
                      forked_from_entry_id, session_dir, model, thinking_level, color, created_at, updated_at, short_code,
-                     kind, space_id, schedule_id, schedule_run, cwd, worktree, main, hidden)
+                     kind, space_id, schedule_id, schedule_run, cwd, worktree, main, hidden, research)
 VALUES (@id, @project_id, @orb_id, @title, @title_source, @state, @state_changed_at, @parent_thread_id,
         @forked_from_entry_id, @session_dir, @model, @thinking_level, @color, @created_at, @updated_at, @short_code,
         @kind, @space_id, @schedule_id, @schedule_run, sqlc.narg(cwd), sqlc.narg(worktree),
-        COALESCE(CAST(sqlc.narg(main) AS INTEGER), 0), COALESCE(CAST(sqlc.narg(hidden) AS INTEGER), 0));
+        COALESCE(CAST(sqlc.narg(main) AS INTEGER), 0), COALESCE(CAST(sqlc.narg(hidden) AS INTEGER), 0),
+        sqlc.narg(research));
 
--- Oldest spare assistant conversation on the coordinator orb (hidden = 1, see 0052).
+-- Oldest spare assistant conversation on the coordinator orb (hidden = 1, see 0052). Researchers are never spares.
 -- name: GetSpareThread :one
 SELECT * FROM threads WHERE orb_id = @orb_id AND hidden = 1 AND kind = 'assistant' AND archived_at IS NULL
+  AND research IS NULL
 ORDER BY created_at LIMIT 1;
 
 -- Claim a spare: make it visible and stamp created_at with the claim time (lists sort by it). Only while still hidden.
 -- name: ClaimSpareThread :execrows
 UPDATE threads SET hidden = 0, created_at = @now, updated_at = @now, state_changed_at = @now
-WHERE id = @id AND hidden = 1;
+WHERE id = @id AND hidden = 1 AND research IS NULL;
+
+-- The researcher conversation of a role (M26); no archived filter: the unique index has none either.
+-- name: GetResearchThread :one
+SELECT * FROM threads WHERE research = @role;
 
 -- name: GetThread :one
 SELECT * FROM threads WHERE id = @id;

@@ -54,15 +54,20 @@ UPDATE assistant_confirmations SET state = @state, error = sqlc.narg(error) WHER
 
 -- ---------- inbox ----------
 
+-- restricted = 1: the finding came from outside content and only goes to the restricted main agent (M26).
 -- name: InsertAssistantInbox :exec
-INSERT INTO assistant_inbox (id, kind, source_id, source_name, thread_id, outcome, body, error, created_at)
-VALUES (@id, @kind, @source_id, @source_name, @thread_id, @outcome, @body, sqlc.narg(error), @created_at);
+INSERT INTO assistant_inbox (id, kind, source_id, source_name, thread_id, outcome, body, error, created_at, restricted)
+VALUES (@id, @kind, @source_id, @source_name, @thread_id, @outcome, @body, sqlc.narg(error), @created_at, @restricted);
 
 -- name: ListPendingAssistantInbox :many
 SELECT * FROM assistant_inbox WHERE delivered_at IS NULL ORDER BY created_at, id LIMIT @lim;
 
 -- name: MarkAssistantInboxDelivered :exec
 UPDATE assistant_inbox SET delivered_at = @delivered_at WHERE id = @id;
+
+-- Puts a row back in the queue (restricted delivery withdrawn before it reached the agent).
+-- name: UnmarkAssistantInboxDelivered :exec
+UPDATE assistant_inbox SET delivered_at = NULL WHERE id = @id;
 
 -- name: DeleteStaleAssistantInbox :many
 DELETE FROM assistant_inbox WHERE delivered_at IS NULL AND created_at < @before RETURNING *;

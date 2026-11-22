@@ -158,6 +158,9 @@ func buildAPIPolicy() map[string]opPolicy {
 	set("assistant", opDeny, deny(denyNative("save_file")), "uploadAssistantFile")
 	set("assistant", opDeny, deny(denyNative("share_file")), "patchAssistantFile")
 	set("assistant", opDeny, deny(denyBinary("read the file at its ~/library path (list_files shows it)")), "getAssistantFileContent")
+	set("assistant", opDeny, deny("not implemented yet"), "getResearchSettings", "putResearchSettings", "listResearchTopics",
+		"createResearchTopic", "getResearchTopic", "updateResearchTopic", "deleteResearchTopic", "runResearchTopic",
+		"listResearchRuns", "listAssistantMcpServerTools")
 
 	// orbs
 	set("orbs", opRead, none, "listOrbs", "getOrb", "getOrbMetrics", "listOrbSetupRuns", "getOrbSetupRunLog", "listOrbServices",

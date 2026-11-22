@@ -138,7 +138,7 @@ JOIN threads t ON t.id = d.thread_id
 WHERE f.body MATCH ?1
   AND NOT EXISTS (SELECT 1 FROM json_each(?2) s WHERE instr(lower(f.body), lower(s.value)) = 0)
   AND (d.ts < ?3 OR (d.ts = ?3 AND d.id < ?4))
-  AND (?5 = '[]' OR t.kind IN (SELECT value FROM json_each(?5)))
+  AND (?5 = '[]' OR t.kind IN (SELECT value FROM json_each(?5))) AND t.hidden = 0
   AND (?6 = '' OR t.project_id = ?6)
   AND NOT EXISTS (
       SELECT 1 FROM search_docs o JOIN threads ot ON ot.id = o.thread_id
@@ -232,7 +232,7 @@ JOIN search_fts f ON f.rowid = d.id
 JOIN threads t ON t.id = d.thread_id
 WHERE NOT EXISTS (SELECT 1 FROM json_each(?1) s WHERE instr(lower(f.body), lower(s.value)) = 0)
   AND (d.ts < ?2 OR (d.ts = ?2 AND d.id < ?3))
-  AND (?4 = '[]' OR t.kind IN (SELECT value FROM json_each(?4)))
+  AND (?4 = '[]' OR t.kind IN (SELECT value FROM json_each(?4))) AND t.hidden = 0
   AND (?5 = '' OR t.project_id = ?5)
   AND NOT EXISTS (
       SELECT 1 FROM search_docs o JOIN threads ot ON ot.id = o.thread_id

@@ -145,6 +145,7 @@ type AssistantInbox struct {
 	Error       *string `json:"error"`
 	CreatedAt   int64   `json:"createdAt"`
 	DeliveredAt *int64  `json:"deliveredAt"`
+	Restricted  int64   `json:"restricted"`
 }
 
 type AssistantSetting struct {
@@ -1085,6 +1086,64 @@ type RepoPush struct {
 	ExpandNote *string `json:"expandNote"`
 }
 
+type ResearchMined struct {
+	ThreadID      string `json:"threadId"`
+	LastMessageAt *int64 `json:"lastMessageAt"`
+	LastSeq       int64  `json:"lastSeq"`
+	MinedAt       int64  `json:"minedAt"`
+}
+
+type ResearchRun struct {
+	ID         string  `json:"id"`
+	Pipeline   string  `json:"pipeline"`
+	TopicID    *string `json:"topicId"`
+	Subject    string  `json:"subject"`
+	Status     string  `json:"status"`
+	Outcome    string  `json:"outcome"`
+	Report     string  `json:"report"`
+	Error      *string `json:"error"`
+	StartedAt  int64   `json:"startedAt"`
+	FinishedAt *int64  `json:"finishedAt"`
+}
+
+type ResearchSetting struct {
+	ID             int64   `json:"id"`
+	Enabled        int64   `json:"enabled"`
+	Web            int64   `json:"web"`
+	Mine           int64   `json:"mine"`
+	Internal       int64   `json:"internal"`
+	Mcp            int64   `json:"mcp"`
+	Model          *string `json:"model"`
+	DailyUsd       float64 `json:"dailyUsd"`
+	Preferences    string  `json:"preferences"`
+	McpTools       string  `json:"mcpTools"`
+	InternalCursor *int64  `json:"internalCursor"`
+	McpCursor      *int64  `json:"mcpCursor"`
+	MineSince      *int64  `json:"mineSince"`
+	CappedDay      *string `json:"cappedDay"`
+	UpdatedAt      int64   `json:"updatedAt"`
+}
+
+type ResearchTopic struct {
+	ID             string  `json:"id"`
+	Kind           string  `json:"kind"`
+	Title          string  `json:"title"`
+	Question       string  `json:"question"`
+	Baseline       string  `json:"baseline"`
+	Origin         string  `json:"origin"`
+	SourceThreadID *string `json:"sourceThreadId"`
+	State          string  `json:"state"`
+	IntervalS      int64   `json:"intervalS"`
+	NextRunAt      *int64  `json:"nextRunAt"`
+	ExpiresAt      *int64  `json:"expiresAt"`
+	LastRunAt      *int64  `json:"lastRunAt"`
+	RunCount       int64   `json:"runCount"`
+	LastReport     string  `json:"lastReport"`
+	LastSources    string  `json:"lastSources"`
+	CreatedAt      int64   `json:"createdAt"`
+	UpdatedAt      int64   `json:"updatedAt"`
+}
+
 type RoleAvatar struct {
 	Role        string  `json:"role"`
 	AvatarIcon  *string `json:"avatarIcon"`
@@ -1297,6 +1356,7 @@ type Thread struct {
 	Worktree          *string `json:"worktree"`
 	Main              int64   `json:"main"`
 	Hidden            int64   `json:"hidden"`
+	Research          *string `json:"research"`
 }
 
 type ThreadCommit struct {

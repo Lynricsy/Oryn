@@ -4335,7 +4335,8 @@
 			"set_box_schedule": "修改 box 运行时段",
 			"set_box_app_visibility": "修改应用公开性",
 			"delete_box": "删除 box",
-			"api_call": "接口操作"
+			"api_call": "接口操作",
+			"follow_topic": "登记跟进话题"
 		}
 	},
 	"schedule": {

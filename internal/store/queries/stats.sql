@@ -561,3 +561,8 @@ DELETE FROM turns WHERE ts < @before;
 
 -- name: DeleteBudgetAlertsBefore :execrows
 DELETE FROM budget_alerts WHERE created_at < @before;
+
+-- Spend of the given threads since a timestamp (M26 background research daily cap).
+-- name: SumUsageCostForThreads :one
+SELECT CAST(COALESCE(SUM(cost_usd), 0) AS REAL) FROM usage_records
+WHERE thread_id IN (sqlc.slice('thread_ids')) AND ts >= @from_ts;

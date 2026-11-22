@@ -3545,6 +3545,185 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/AssistantMcpServerList' }
         default: { $ref: '#/components/responses/Error' }
+  /api/v1/assistant/mcp-servers/{name}/tools:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        description: 全局 `mcp.json` 里的服务器名
+        schema: { type: string, minLength: 1, maxLength: 200 }
+    get:
+      tags: [spaces]
+      operationId: listAssistantMcpServerTools
+      summary: 列出一个 MCP 服务器的工具（M26，给「研究可用工具」白名单用）
+      description: |
+        orynd 以 Streamable HTTP 连上该服务器（带 `mcp.json` 里的鉴权头），依次 `initialize`、`tools/list`（至多 10 页）。
+        `readOnly` 是服务器自报的 `annotations.readOnlyHint`，不是保证。找不到 → 404；不可用 → 400 `invalid_request`；
+        `type: sse` → 400 `unsupported_transport`；上游失败 → 502 `upstream_failed`。
+      responses:
+        '200':
+          description: 工具列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssistantMcpToolList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/assistant/research/settings:
+    get:
+      tags: [spaces]
+      operationId: getResearchSettings
+      summary: 后台研究的设置与今天的花费（M26）
+      responses:
+        '200':
+          description: 设置
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResearchSettingsEnvelope' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [spaces]
+      operationId: putResearchSettings
+      summary: 整体改写后台研究的设置（M26；超出取值范围 → 400 `invalid_request`）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResearchSettings' }
+      responses:
+        '200':
+          description: 写入后的设置
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResearchSettingsEnvelope' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/assistant/research/topics:
+    get:
+      tags: [spaces]
+      operationId: listResearchTopics
+      summary: 跟进话题（M26，新的在前）
+      parameters:
+        - name: state
+          in: query
+          description: 缺省 = 除 `dismissed` 之外的全部；`all` = 全部
+          schema:
+            type: string
+            enum: [active, paused, done, dismissed, all]
+            x-enum-varnames: [ResearchTopicFilterActive, ResearchTopicFilterPaused, ResearchTopicFilterDone, ResearchTopicFilterDismissed, ResearchTopicFilterAll]
+      responses:
+        '200':
+          description: 话题列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResearchTopicList' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [spaces]
+      operationId: createResearchTopic
+      summary: 新建跟进话题（M26；重名、超长、活跃话题达 50 个 → 400 `invalid_request`）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResearchTopicInput' }
+      responses:
+        '201':
+          description: 已创建
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResearchTopic' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/assistant/research/topics/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [spaces]
+      operationId: getResearchTopic
+      summary: 一个跟进话题（M26）
+      responses:
+        '200':
+          description: 话题
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResearchTopic' }
+        default: { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [spaces]
+      operationId: updateResearchTopic
+      summary: 修改跟进话题（M26；`state` 只能在 `active` 与 `paused` 之间切换）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResearchTopicPatch' }
+      responses:
+        '200':
+          description: 修改后的话题
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResearchTopic' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [spaces]
+      operationId: deleteResearchTopic
+      summary: 删除跟进话题（M26；置为 `dismissed`，保留标题用于去重）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已删除 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/assistant/research/topics/{id}/run:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [spaces]
+      operationId: runResearchTopic
+      summary: 立即检查一个活跃话题（M26；非 `active` → 400 `invalid_request`）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '200':
+          description: 话题（`nextRunAt` 已置为现在）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResearchTopic' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/assistant/research/runs:
+    get:
+      tags: [spaces]
+      operationId: listResearchRuns
+      summary: 最近的研究运行（M26，新的在前）
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        '200':
+          description: 运行列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResearchRunList' }
+        default: { $ref: '#/components/responses/Error' }
   /api/v1/assistant/main:
     get:
       tags: [spaces]
@@ -10747,6 +10926,157 @@ components:
         servers:
           type: array
           items: { $ref: '#/components/schemas/AssistantMcpServer' }
+    AssistantMcpTool:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        readOnly:
+          type: boolean
+          description: 服务器自报的 `annotations.readOnlyHint`（省略 = 未声明）
+    AssistantMcpToolList:
+      type: object
+      required: [tools]
+      properties:
+        tools:
+          type: array
+          items: { $ref: '#/components/schemas/AssistantMcpTool' }
+    ResearchSettings:
+      type: object
+      description: 全局助手后台研究的设置（M26）
+      required: [enabled, web, mine, internal, mcp, dailyUsd, preferences, mcpTools]
+      properties:
+        enabled:
+          type: boolean
+          description: 总开关（缺省关闭）；关闭时不发起任何研究运行
+        web: { type: boolean, description: 公网话题跟进 }
+        mine: { type: boolean, description: 从助手对话与主线自动挖掘话题 }
+        internal: { type: boolean, description: 内部数据关联（跨线程的矛盾、重复与卡住） }
+        mcp: { type: boolean, description: 用 `mcpTools` 白名单里的 MCP 工具检查邮件、日历等 }
+        model:
+          allOf:
+            - $ref: '#/components/schemas/ModelRef'
+          description: 研究员用的模型；省略 = 与助手相同
+        dailyUsd:
+          type: number
+          minimum: 0.1
+          maximum: 1000
+          description: 研究员对话每日花费硬上限（美元，本地时区的自然日）
+        preferences:
+          type: string
+          maxLength: 1500
+          description: 主人的研究偏好（自由文本，交给研究员）
+        mcpTools:
+          type: object
+          description: 服务器名 → 研究可用的只读工具名；不在其中的服务器后台研究一律不可用
+          additionalProperties:
+            type: array
+            maxItems: 100
+            items: { type: string, minLength: 1, maxLength: 200 }
+    ResearchSettingsEnvelope:
+      type: object
+      required: [settings, spentTodayUsd, capped]
+      properties:
+        settings: { $ref: '#/components/schemas/ResearchSettings' }
+        spentTodayUsd: { type: number, description: 研究员对话今天的花费 }
+        capped: { type: boolean, description: 今天的花费已达上限 }
+    ResearchSource:
+      type: object
+      required: [url, title]
+      properties:
+        url: { type: string, maxLength: 500 }
+        title: { type: string, maxLength: 200 }
+        date: { type: string, description: 来源的日期（YYYY-MM-DD，研究员给出） }
+    ResearchTopicKind:
+      type: string
+      description: '`question` 问题跟进（带当时的回答作基线，30 天后结束）；`interest` 长期关注（不结束）'
+      enum: [question, interest]
+      x-enum-varnames: [ResearchTopicQuestion, ResearchTopicInterest]
+    ResearchTopic:
+      type: object
+      required: [id, kind, title, question, baseline, origin, state, intervalSeconds, runCount, lastReport, lastSources, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        kind: { $ref: '#/components/schemas/ResearchTopicKind' }
+        title: { type: string }
+        question: { type: string }
+        baseline:
+          type: string
+          description: 当时助手的回答要点（只给主线助手对照，不交给公网研究员）
+        origin:
+          type: string
+          description: '`mined` 自动挖掘；`manual` 主人或助手新建；`thread` 工作线程里 `oryn follow add` 登记'
+          enum: [mined, manual, thread]
+          x-enum-varnames: [ResearchOriginMined, ResearchOriginManual, ResearchOriginThread]
+        sourceThreadId: { $ref: '#/components/schemas/ThreadId' }
+        state:
+          type: string
+          enum: [active, paused, done, dismissed]
+          x-enum-varnames: [ResearchTopicActive, ResearchTopicPaused, ResearchTopicDone, ResearchTopicDismissed]
+        intervalSeconds: { type: integer, description: 当前检查间隔 }
+        nextRunAt: { $ref: '#/components/schemas/TimestampMs' }
+        expiresAt: { $ref: '#/components/schemas/TimestampMs' }
+        lastRunAt: { $ref: '#/components/schemas/TimestampMs' }
+        runCount: { type: integer }
+        lastReport: { type: string, description: 上一次有新信息时的摘要 }
+        lastSources:
+          type: array
+          items: { $ref: '#/components/schemas/ResearchSource' }
+        createdAt: { $ref: '#/components/schemas/TimestampMs' }
+        updatedAt: { $ref: '#/components/schemas/TimestampMs' }
+    ResearchTopicList:
+      type: object
+      required: [topics]
+      properties:
+        topics:
+          type: array
+          items: { $ref: '#/components/schemas/ResearchTopic' }
+    ResearchTopicInput:
+      type: object
+      required: [kind, title, question]
+      properties:
+        kind: { $ref: '#/components/schemas/ResearchTopicKind' }
+        title: { type: string, minLength: 1, maxLength: 80 }
+        question: { type: string, minLength: 1, maxLength: 600 }
+        baseline: { type: string, maxLength: 2000 }
+        sourceThreadId: { $ref: '#/components/schemas/ThreadId' }
+    ResearchTopicPatch:
+      type: object
+      properties:
+        title: { type: string, minLength: 1, maxLength: 80 }
+        question: { type: string, minLength: 1, maxLength: 600 }
+        kind: { $ref: '#/components/schemas/ResearchTopicKind' }
+        state:
+          type: string
+          enum: [active, paused]
+          x-enum-varnames: [ResearchTopicPatchActive, ResearchTopicPatchPaused]
+    ResearchRun:
+      type: object
+      required: [id, pipeline, subject, status, outcome, startedAt]
+      properties:
+        id: { type: string }
+        pipeline:
+          type: string
+          enum: [web, mine, internal, mcp]
+          x-enum-varnames: [ResearchPipelineWeb, ResearchPipelineMine, ResearchPipelineInternal, ResearchPipelineMcp]
+        topicId: { type: string }
+        subject: { type: string, description: 挖掘运行的对话 id；其余为空 }
+        status:
+          type: string
+          enum: [running, completed, failed]
+          x-enum-varnames: [ResearchRunRunning, ResearchRunCompleted, ResearchRunFailed]
+        outcome: { type: string, description: '`nothing`、`findings:<n>` 或 `topics:<n>`' }
+        error: { type: string }
+        startedAt: { $ref: '#/components/schemas/TimestampMs' }
+        finishedAt: { $ref: '#/components/schemas/TimestampMs' }
+    ResearchRunList:
+      type: object
+      required: [runs]
+      properties:
+        runs:
+          type: array
+          items: { $ref: '#/components/schemas/ResearchRun' }
     AssistantNotes:
       type: object
       description: 主线备忘（M19，助手每段开头带上）
@@ -12337,14 +12667,14 @@ components:
             create_space, update_space, delete_space, set_trigger, delete_trigger, pause_orb, wake_orb, delete_orb,
             write_thread_file, put_thread_file, write_project_config, delete_project_config, share_thread, revoke_share,
             share_portal, unshare_portal, publish_artifact, unpublish_artifact, create_box, start_box, stop_box, set_box_schedule,
-            set_box_app_visibility, delete_box, api_call]
+            set_box_app_visibility, delete_box, api_call, follow_topic]
           x-enum-varnames: [ActionCreateThread, ActionSendMessage, ActionArchiveThread, ActionSetSchedule, ActionDeleteSchedule,
             ActionUpdateThread, ActionAbortThread, ActionSetThreadModel, ActionForkThread, ActionWakeThread, ActionDeleteThread,
             ActionCreateProject, ActionUpdateProject, ActionDeleteProject, ActionCreateSpace, ActionUpdateSpace, ActionDeleteSpace,
             ActionSetTrigger, ActionDeleteTrigger, ActionPauseOrb, ActionWakeOrb, ActionDeleteOrb, ActionWriteThreadFile,
             ActionPutThreadFile, ActionWriteProjectConfig, ActionDeleteProjectConfig, ActionShareThread, ActionRevokeShare,
             ActionSharePortal, ActionUnsharePortal, ActionPublishArtifact, ActionUnpublishArtifact, ActionCreateBox, ActionStartBox,
-            ActionStopBox, ActionSetBoxSchedule, ActionSetBoxAppVisibility, ActionDeleteBox, ActionAPICall]
+            ActionStopBox, ActionSetBoxSchedule, ActionSetBoxAppVisibility, ActionDeleteBox, ActionAPICall, ActionFollowTopic]
         targetThreadId: { $ref: '#/components/schemas/ThreadId' }
         scheduleId: { $ref: '#/components/schemas/ScheduleId' }
         summary:
@@ -14804,6 +15134,8 @@ components:
         runner 的 link 拒绝这两个方法。
         `ssh.call`（orbd→orynd 请求，M18，由 orb 内 agent 的 `ssh_exec_many` 工具转来，参数 `LinkCtlSshCallParams`，结果 `LinkCtlSshCallResult`；runner 的 link 拒绝）。
         `box.call`（orbd→orynd 请求，M23，由 orb 内 `oryn boxes …` 经 `orbd.sock` 转来，参数 `LinkCtlBoxCallParams`，结果 `LinkCtlBoxCallResult`；runner 的 link 拒绝）。
+        `follow.add`（orbd→orynd 请求，M26，由 orb 内 `oryn follow add` 经 `orbd.sock` 转来，参数 `LinkCtlFollowAddParams`，结果 `LinkCtlFollowAddResult`；
+        控制面核对 `quote` 逐字出现在该线程某条主人消息里，runner 的 link 拒绝）。
         `computer.start`、`computer.call`、`computer.cancel`、`computer.stop`（orynd→orbd 请求，M19，助手的电脑里的工具执行器：参数分别为
         `LinkCtlComputerStartParams` / `LinkCtlComputerCallParams` / `LinkCtlComputerCancelParams` / 无参数，结果分别为
         `LinkCtlComputerStartResult` / `LinkCtlComputerCallResult` / `LinkCtlOkResult` / `LinkCtlOkResult`；只在 hello 含 `computer` 时发送，
@@ -14858,6 +15190,7 @@ components:
         - computer.stop
         - computer.update
         - box.call
+        - follow.add
       x-enum-varnames:
         - MethodHello
         - MethodEntriesCursors
@@ -14908,6 +15241,7 @@ components:
         - MethodComputerStop
         - MethodComputerUpdate
         - MethodBoxCall
+        - MethodFollowAdd
     LinkCtlRequest:
       type: object
       required: [id, method, params]
@@ -15276,6 +15610,26 @@ components:
           type: string
           description: '`<用户>@<地址>:<端口>`，再接描述与标签'
         compat: { type: boolean }
+    LinkCtlFollowAddParams:
+      type: object
+      description: M26（orbd→orynd）：工作线程里主人要求跟进某件事时登记一个公网跟进话题（`origin = thread`）。
+      required: [threadId, title, question, quote]
+      properties:
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        title: { type: string }
+        question: { type: string }
+        kind:
+          allOf:
+            - $ref: '#/components/schemas/ResearchTopicKind'
+          description: 省略 = `question`
+        quote:
+          type: string
+          description: 主人在该线程里的原话；不是任何一条主人消息的子串 → `forbidden`
+    LinkCtlFollowAddResult:
+      type: object
+      required: [topicId]
+      properties:
+        topicId: { type: string }
     LinkCtlBoxCallParams:
       type: object
       description: M23（orbd→orynd）：orb 内 `oryn boxes …` 的调用。控制面校验调用方线程属于本 orb、`kind = work`、未归档，且 orb 不是全自动入口建立的。
@@ -15470,8 +15824,16 @@ components:
         mcpToken:
           type: string
           description: |
-            M19：协调宿主 /mcp/ 路由的凭据，只在 `web` 为真时生效：orbd 以环境变量 `ORYN_MCP_TOKEN` 交给该 agent，mcp.json 的
-            `X-Oryn-MCP-Token` 请求头引用它，出站代理逐个请求核对（D10：Space 协调者没有它，直接请求 /mcp/ 一律 403）。只有协调宿主接受。
+            M19：协调宿主 /mcp/ 路由的凭据，`web` 为真或 `variant` 为 `research_private` 时生效：orbd 以环境变量 `ORYN_MCP_TOKEN`
+            交给该 agent，mcp.json 的 `X-Oryn-MCP-Token` 请求头引用它，出站代理逐个请求核对（D10：Space 协调者没有它，直接请求
+            /mcp/ 一律 403）。只有协调宿主接受。
+        variant:
+          type: string
+          description: |
+            M26：协调档的启动变体。`research_web` 公网研究员（`web_search` 与只读公网网址的 `read`）；`research_private` 私有研究员
+            （没有内置工具、没有 `PI_PROXY`）；`main_restricted` 受限的主线（只有 `read`）。与 `web` 互斥。只有协调宿主接受；省略 = 改动前的行为。
+          enum: [research_web, research_private, main_restricted]
+          x-enum-varnames: [AgentVariantResearchWeb, AgentVariantResearchPrivate, AgentVariantMainRestricted]
         memory: { $ref: '#/components/schemas/LinkCtlAgentMemory' }
         # M21：projectId / projectConfig 只对 runner 线程给出（同时出现）：runner 一台机器可同时跑多个项目的线程，项目层按线程
         # 随 agent.start 交付（原样不经变换，与 orb 相同；线程不属于项目或项目没有项目层时省略）。orb 线程不带（orb 的项目层经
@@ -15483,6 +15845,10 @@ components:
       required: [pid]
       properties:
         pid: { type: integer }
+        variant:
+          type: string
+          description: |
+            M26：协调宿主报回在跑的 agent 实际使用的变体；幂等返回时是已有监督器的变体；没有变体时省略。
         sshPublicKey:
           type: string
           description: |

@@ -59,7 +59,7 @@ func (q *Queries) DeleteDeliveredAssistantInbox(ctx context.Context, before *int
 }
 
 const deleteStaleAssistantInbox = `-- name: DeleteStaleAssistantInbox :many
-DELETE FROM assistant_inbox WHERE delivered_at IS NULL AND created_at < ?1 RETURNING id, kind, source_id, source_name, thread_id, outcome, body, error, created_at, delivered_at
+DELETE FROM assistant_inbox WHERE delivered_at IS NULL AND created_at < ?1 RETURNING id, kind, source_id, source_name, thread_id, outcome, body, error, created_at, delivered_at, restricted
 `
 
 func (q *Queries) DeleteStaleAssistantInbox(ctx context.Context, before int64) ([]AssistantInbox, error) {
@@ -82,6 +82,7 @@ func (q *Queries) DeleteStaleAssistantInbox(ctx context.Context, before int64) (
 			&i.Error,
 			&i.CreatedAt,
 			&i.DeliveredAt,
+			&i.Restricted,
 		); err != nil {
 			return nil, err
 		}
@@ -186,7 +187,7 @@ func (q *Queries) GetComputerOrb(ctx context.Context) (Orb, error) {
 
 const getMainThread = `-- name: GetMainThread :one
 
-SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code, kind, space_id, shipped_at, schedule_id, schedule_run, cwd, worktree, main, hidden FROM threads WHERE main = 1
+SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code, kind, space_id, shipped_at, schedule_id, schedule_run, cwd, worktree, main, hidden, research FROM threads WHERE main = 1
 `
 
 // ---------- singletons ----------
@@ -229,6 +230,7 @@ func (q *Queries) GetMainThread(ctx context.Context) (Thread, error) {
 		&i.Worktree,
 		&i.Main,
 		&i.Hidden,
+		&i.Research,
 	)
 	return i, err
 }
@@ -265,8 +267,8 @@ func (q *Queries) InsertAssistantConfirmation(ctx context.Context, arg InsertAss
 
 const insertAssistantInbox = `-- name: InsertAssistantInbox :exec
 
-INSERT INTO assistant_inbox (id, kind, source_id, source_name, thread_id, outcome, body, error, created_at)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+INSERT INTO assistant_inbox (id, kind, source_id, source_name, thread_id, outcome, body, error, created_at, restricted)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
 `
 
 type InsertAssistantInboxParams struct {
@@ -279,9 +281,11 @@ type InsertAssistantInboxParams struct {
 	Body       string  `json:"body"`
 	Error      *string `json:"error"`
 	CreatedAt  int64   `json:"createdAt"`
+	Restricted int64   `json:"restricted"`
 }
 
 // ---------- inbox ----------
+// restricted = 1: the finding came from outside content and only goes to the restricted main agent (M26).
 func (q *Queries) InsertAssistantInbox(ctx context.Context, arg InsertAssistantInboxParams) error {
 	_, err := q.db.ExecContext(ctx, insertAssistantInbox,
 		arg.ID,
@@ -293,6 +297,7 @@ func (q *Queries) InsertAssistantInbox(ctx context.Context, arg InsertAssistantI
 		arg.Body,
 		arg.Error,
 		arg.CreatedAt,
+		arg.Restricted,
 	)
 	return err
 }
@@ -392,7 +397,7 @@ func (q *Queries) ListPendingAssistantConfirmations(ctx context.Context) ([]Assi
 }
 
 const listPendingAssistantInbox = `-- name: ListPendingAssistantInbox :many
-SELECT id, kind, source_id, source_name, thread_id, outcome, body, error, created_at, delivered_at FROM assistant_inbox WHERE delivered_at IS NULL ORDER BY created_at, id LIMIT ?1
+SELECT id, kind, source_id, source_name, thread_id, outcome, body, error, created_at, delivered_at, restricted FROM assistant_inbox WHERE delivered_at IS NULL ORDER BY created_at, id LIMIT ?1
 `
 
 func (q *Queries) ListPendingAssistantInbox(ctx context.Context, lim int64) ([]AssistantInbox, error) {
@@ -415,6 +420,7 @@ func (q *Queries) ListPendingAssistantInbox(ctx context.Context, lim int64) ([]A
 			&i.Error,
 			&i.CreatedAt,
 			&i.DeliveredAt,
+			&i.Restricted,
 		); err != nil {
 			return nil, err
 		}
@@ -533,6 +539,16 @@ type SetAssistantMainNotesParams struct {
 
 func (q *Queries) SetAssistantMainNotes(ctx context.Context, arg SetAssistantMainNotesParams) error {
 	_, err := q.db.ExecContext(ctx, setAssistantMainNotes, arg.MainNotes, arg.MainNotesUpdatedAt)
+	return err
+}
+
+const unmarkAssistantInboxDelivered = `-- name: UnmarkAssistantInboxDelivered :exec
+UPDATE assistant_inbox SET delivered_at = NULL WHERE id = ?1
+`
+
+// Puts a row back in the queue (restricted delivery withdrawn before it reached the agent).
+func (q *Queries) UnmarkAssistantInboxDelivered(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, unmarkAssistantInboxDelivered, id)
 	return err
 }
 
