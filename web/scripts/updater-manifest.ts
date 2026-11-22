@@ -3,7 +3,7 @@
  * 生成 Tauri updater 的静态清单 `latest.json`（M6 计划 8.2 `publish` job 与验收 D11 使用）。
  *
  * 用法（仓库根目录）：
- *   bun web/scripts/updater-manifest.ts --repo <owner/name> --tag <app-vX.Y.Z> --version <X.Y.Z> > latest.json
+ *   bun web/scripts/updater-manifest.ts --repo <owner/name> --tag <vX.Y.Z> --version <X.Y.Z> > latest.json
  * 读 `gh release view --json assets` 的资产列表，`gh release download -p '*.sig'` 取签名内容。
  * 一个 `.sig` 都没有（构建时没配更新私钥）→ 退出码 3，stdout 不输出任何内容。
  *

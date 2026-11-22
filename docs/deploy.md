@@ -4,10 +4,21 @@
 
 ## 1. 安装二进制与镜像
 
+二进制有两种来源，二选一；orb 镜像不随版本发布，总要在同一版本的源码里构建：
+
 ```bash
+git checkout v<版本>
+
+# 来源一：GitHub Release v<版本>（已嵌入 Web UI，静态链接；发版流程见 desktop.md「发版」）
+sha256sum -c --ignore-missing oryn-server_<版本>_SHA256SUMS
+tar -xzf oryn-server_<版本>_linux-x64.tar.gz      # 解出 orynd orbd oryn gemini-rerank；ARM64 用 linux-arm64
+sudo install -m 0755 oryn-server_<版本>_linux-x64/{orynd,oryn} /usr/local/bin/
+
+# 来源二：从源码构建
 make web                        # 构建 Web 客户端，复制到 internal/webui/dist 以便嵌入
 make build                      # 产出 bin/orynd bin/orbd bin/oryn（嵌入上一步的前端）
 sudo install -m 0755 bin/orynd bin/oryn /usr/local/bin/
+
 make image                      # 构建 orb 镜像 oryn-orb:dev（需要 build/core/x64/omp，见 scripts/fetch-core.sh）
 ```
 
@@ -549,7 +560,7 @@ runner 是你自己的机器（笔记本、工作站、NAS，支持 Linux 与 ma
 支持 **Linux**（`x64`、`arm64`）与 **macOS**（Apple 芯片，`arm64`）；不支持 Intel mac（Core 不发布 `darwin-x64` 构建，`orbd` 启动时报「此平台没有 Oryn Core 构建」），不支持原生 Windows，Windows 机器请在 **WSL2** 里运行 Linux 版 `orbd`。
 
 1. **建 runner**：「设置 → Runner → 新建」，或 `oryn runner create laptop`（标准输出只有令牌，启动命令打到标准错误）。令牌只显示这一次。
-2. **在那台机器上**放好与 orynd 同版本的 `orbd`（`make build` 产出的 `bin/orbd`），确保系统 `PATH` 目录（`$HOME` 之外，如 `/usr/bin`、`/opt/homebrew/bin`）里有 `git`（不要求本机安装 `omp`；在 bash 里经网关连 SSH 主机还需 OpenSSH ≥ 8.4）。然后：
+2. **在那台机器上**放好与 orynd 同版本的 `orbd`（同一 Release 的 `oryn-server_<版本>_linux-{x64,arm64}.tar.gz` 或 macOS 用的 `orbd_<版本>_darwin-arm64.tar.gz`，或 `make build` 产出的 `bin/orbd`），确保系统 `PATH` 目录（`$HOME` 之外，如 `/usr/bin`、`/opt/homebrew/bin`）里有 `git`（不要求本机安装 `omp`；在 bash 里经网关连 SSH 主机还需 OpenSSH ≥ 8.4）。然后：
 
    ```bash
    install -D -m 600 /dev/stdin ~/.config/oryn/runner.token <<< 'ort_…'   # 或用环境变量 ORYN_RUNNER_TOKEN

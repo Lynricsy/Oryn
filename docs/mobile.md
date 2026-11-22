@@ -17,7 +17,7 @@ Oryn 的 Android 客户端与桌面 App 是同一个 Tauri 2 工程（`web/src-t
 
 ## 安装与校验
 
-从 GitHub Releases 的 `app-v<版本>` 下载 APK（与桌面 App 同一个 Release；`.aab` 只作留档，供将来上架）。可以用 [Obtainium](https://github.com/ImranR98/Obtainium) 订阅本仓库、过滤 `app-v` 开头的 Release、只匹配 `android-foss.apk` 或 `android-gms.apk` 资产，自动提示更新；App 内没有自更新。`0.1.0` 及更早的预发布在 `mobile-v<版本>`。
+从 GitHub Releases 的 `v<版本>` 下载 APK（服务端、桌面与移动 App 同一个 Release；`.aab` 只作留档，供将来上架）。可以用 [Obtainium](https://github.com/ImranR98/Obtainium) 订阅本仓库、只匹配 `android-foss.apk` 或 `android-gms.apk` 资产，自动提示更新；App 内没有自更新。`0.1.0` 及更早的预发布在 `mobile-v<版本>`。
 
 安装前建议校验签名证书（Android SDK 的 build-tools 里有 `apksigner`）：
 
@@ -139,12 +139,12 @@ make android DIST=foss                                      # 仓库根目录：
 
 ## 发版
 
-移动端与桌面端一起发版，流程与 tag 规则见 [desktop.md](desktop.md)「发版」。
+移动端与服务端、桌面端一起发版，流程与 tag 规则见 [desktop.md](desktop.md)「发版」。
 
 1. 改 `web/src-tauri/Cargo.toml` 的 `version`（只写 `x.y.z`；`versionCode` = `major*1000000 + minor*1000 + patch`，预发布与正式版相同）。
-2. 打 tag `app-v<版本>` 或预发布 `app-v<版本>-rc.N` 并推送。
-3. `.github/workflows/release.yml` 校验 tag 并建草稿 Release，然后以 `workflow_call` 调用 `.github/workflows/mobile.yml`：`android-release`（foss / gms 各一套：debug APK、插件单测、签名的 release APK 与 AAB、`apksigner` / `zipalign` / `aapt2` 校验并把包名、版本号、SDK 与证书指纹写进 Step Summary、上传 Release 资产）→ `android-smoke`（API 34 模拟器里装 foss debug 包，90 秒内出现 `launcher.ready`）→ `ios-check`（macOS 上不签名编译模拟器包）→ `ios-release`（Apple Distribution 签名导出 IPA，build number 为 `(run_number + 1000) × 100 + run_attempt`，重跑同一次运行也不会与已上传的构建撞号，+1000 让它高过旧 `mobile.yml` 时期上传过的号；校验包名与签名者后用 `xcrun altool` 上传 TestFlight；IPA 不进 Release）。移动端与桌面端都成功后，`release.yml` 的 `publish` 才发布 Release。
-4. Release 资产只有 release 签名的 `Oryn_<版本>_android-{foss,gms}.apk` 与 `.aab`。debug APK（可调试、允许任意明文请求）只作为 workflow artifact，从 Actions 运行页下载，不进 Release。
+2. 打 tag `v<版本>` 或预发布 `v<版本>-rc.N` 并推送。
+3. `.github/workflows/release.yml` 校验 tag 并建草稿 Release，然后以 `workflow_call` 调用 `.github/workflows/mobile.yml`：`android-release`（foss / gms 各一套：debug APK、插件单测、签名的 release APK 与 AAB、`apksigner` / `zipalign` / `aapt2` 校验并把包名、版本号、SDK 与证书指纹写进 Step Summary、上传 Release 资产）→ `android-smoke`（API 34 模拟器里装 foss debug 包，90 秒内出现 `launcher.ready`）→ `ios-check`（macOS 上不签名编译模拟器包）→ `ios-release`（Apple Distribution 签名导出 IPA，build number 为 `(run_number + 1000) × 100 + run_attempt`，重跑同一次运行也不会与已上传的构建撞号，+1000 让它高过旧 `mobile.yml` 时期上传过的号；校验包名与签名者后用 `xcrun altool` 上传 TestFlight；IPA 不进 Release）。服务端、桌面端与移动端全部成功后，`release.yml` 的 `publish` 才发布 Release。
+4. Release 里移动端的资产只有 release 签名的 `Oryn_<版本>_android-{foss,gms}.apk` 与 `.aab`。debug APK（可调试、允许任意明文请求）只作为 workflow artifact，从 Actions 运行页下载，不进 Release。
 
 PR 与手动触发只产出 debug APK（workflow artifacts）并跑冒烟与 iOS 编译，拿不到签名密钥；来自 fork 的 PR 没有 `ANDROID_GOOGLE_SERVICES_JSON`，跳过 gms。手动触发可勾选 `export_ios_project`，把 `tauri ios init` 生成的 `gen/apple` 作为产物导出以便入库。
 
@@ -155,7 +155,7 @@ PR 与手动触发只产出 debug APK（workflow artifacts）并跑冒烟与 iOS
 
 ### Secrets
 
-Android 与 iOS 的签名 secret 放在受保护的 environment `mobile-release` 里（部署规则只允许 tag `app-v*`），不是仓库级 secret；`ANDROID_GOOGLE_SERVICES_JSON` 仍是仓库级（PR 的 gms debug 构建要用，它不是签名材料）；上传 TestFlight 用的 App Store Connect API 密钥与桌面公证共用仓库级 `APPLE_API_ISSUER` / `APPLE_API_KEY` / `APPLE_API_KEY_P8`（见 [desktop.md](desktop.md)「Secrets」）。
+Android 与 iOS 的签名 secret 放在受保护的 environment `mobile-release` 里（部署规则只允许 tag `v*`），不是仓库级 secret；`ANDROID_GOOGLE_SERVICES_JSON` 仍是仓库级（PR 的 gms debug 构建要用，它不是签名材料）；上传 TestFlight 用的 App Store Connect API 密钥与桌面公证共用仓库级 `APPLE_API_ISSUER` / `APPLE_API_KEY` / `APPLE_API_KEY_P8`（见 [desktop.md](desktop.md)「Secrets」）。
 
 | 名称 | 内容 |
 |---|---|
@@ -177,7 +177,7 @@ keytool -genkeypair -v -keystore .dev/android-release.jks -storetype PKCS12 -ali
   -validity 10950 -storepass "$PW" -keypass "$PW" -dname "CN=Oryn, O=Lynricsy"
 gh api -X PUT repos/<owner>/<repo>/environments/mobile-release \
   -F 'deployment_branch_policy[protected_branches]=false' -F 'deployment_branch_policy[custom_branch_policies]=true'
-gh api -X POST repos/<owner>/<repo>/environments/mobile-release/deployment-branch-policies -f name='app-v*' -f type=tag
+gh api -X POST repos/<owner>/<repo>/environments/mobile-release/deployment-branch-policies -f name='v*' -f type=tag
 gh secret set ANDROID_KEYSTORE_BASE64 --env mobile-release --body "$(base64 -w0 .dev/android-release.jks)"
 gh secret set ANDROID_KEYSTORE_PASSWORD --env mobile-release --body "$PW"
 gh secret set ANDROID_KEY_ALIAS --env mobile-release --body oryn
@@ -194,7 +194,7 @@ keytool -list -v -keystore .dev/android-release.jks -storepass "$PW" | grep 'SHA
 1. **foss 包**（无 Google 依赖）：按「开发」准备环境，生成自己的发布密钥，在 `web/src-tauri/gen/android/keystore.properties` 写
    `keyAlias=…`、`password=…`、`storeFile=<.jks 的绝对路径>`（该文件已 gitignore），然后 `cd web && bun run tauri android build --apk --target aarch64 armv7 x86_64`。
 2. **gms 包**：在自己的 Firebase 项目里添加包名 `com.lynricsy.oryn` 的 Android 应用，下载 `google-services.json` 放到 `web/src-tauri/gen/android/app/`，以 `ORG_GRADLE_PROJECT_orynDistribution=gms` 构建；服务器端用**同一个 Firebase 项目**的服务账号启用 FCM。
-3. 在 fork 的仓库里配好上表的 secrets（桌面端的 secrets 都是可选的，缺了按 [desktop.md](desktop.md)「Secrets」降级），推送 `app-v*` tag 即由 CI 构建发布。
+3. 在 fork 的仓库里配好上表的 secrets（桌面端的 secrets 都是可选的，缺了按 [desktop.md](desktop.md)「Secrets」降级），推送 `v*` tag 即由 CI 构建发布。
 4. 自签的包与官方包证书不同，不能互相覆盖安装；改应用标识需要同时改 `tauri.conf.json` 的 `identifier`、`gen/android` 的 `applicationId` / `namespace` 与 Firebase 里的包名。
 
 ## 附录 A：iOS

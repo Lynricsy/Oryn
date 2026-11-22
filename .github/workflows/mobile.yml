@@ -6,12 +6,12 @@ name: mobile
 #   `ios-check` 在 macOS 上不签名编译模拟器包，并在 iOS 26+ 模拟器里截图断言原生底栏与原生页头（硬门禁）：web/src-tauri/ci/ios-header-check.sh
 #   是原生页头演示，ios-e2e-check.sh 是端到端（mock Web UI + 远程能力 + XCUITest 真实触摸；原生底栏的裁切要和真实网页的卡片一起看，只在这里检查）。
 #   不签名、拿不到签名 secret。
-# - 被 release.yml 调用（workflow_call，tag `app-v*`）：`android-release` 额外以发布密钥构建签名的 release APK + AAB（foss 与 gms 各一套）
+# - 被 release.yml 调用（workflow_call，tag `v*`）：`android-release` 额外以发布密钥构建签名的 release APK + AAB（foss 与 gms 各一套）
 #   并上传到调用方建好的草稿 Release，`ios-release` 签名导出 IPA 并上传 TestFlight；`android-smoke` 与 `ios-check` 照跑。
-#   发布 Release 在 release.yml 的 `publish` 里，等桌面端也成功后才做。
+#   发布 Release 在 release.yml 的 `publish` 里，等服务端与桌面端也成功后才做。
 #   debug APK 只作为 workflow artifact（冒烟与下载调试用），从不上传到 Release：它可调试、允许明文流量，装错会泄露设备令牌。
 # - 签名 secrets（ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS，IOS_CERTIFICATE / IOS_CERTIFICATE_PASSWORD /
-#   IOS_MOBILE_PROVISION）只存在 environment `mobile-release` 里，该 environment 的部署规则只允许 `app-v*` tag；
+#   IOS_MOBILE_PROVISION）只存在 environment `mobile-release` 里，该 environment 的部署规则只允许 `v*` tag；
 #   只有声明了它的 `android-release` / `ios-release` 能取到这些值，PR / 手动 / 分支运行一律拿不到。
 # flavor 由 gradle 属性 `orynDistribution=foss|gms` 选择（`ORG_GRADLE_PROJECT_orynDistribution`）；gms 需要
 # `app/google-services.json`，由 secret ANDROID_GOOGLE_SERVICES_JSON 在构建前写入（没有该 secret 时跳过 gms）。
@@ -22,11 +22,11 @@ on:
   workflow_call:
     inputs:
       tag:
-        description: 发版 tag（app-v*）；由 release.yml 校验过与 Cargo.toml 版本一致，资产上传到它的草稿 Release
+        description: 发版 tag（v*）；由 release.yml 校验过与 Cargo.toml 版本一致，资产上传到它的草稿 Release
         type: string
         required: true
       label:
-        description: 产物文件名里的版本标签（tag 去掉 app-v，预发布带 -rc.N 后缀）
+        description: 产物文件名里的版本标签（tag 去掉 v，预发布带 -rc.N 后缀）
         type: string
         required: true
   pull_request:
@@ -98,7 +98,7 @@ jobs:
             exit 1
           fi
           if [[ "$version" == *-* ]]; then
-            echo "::error file=web/src-tauri/Cargo.toml::版本 ${version} 含预发布后缀；Cargo.toml 只写 x.y.z，预发布请打 tag app-v${version%%-*}-rc.N"
+            echo "::error file=web/src-tauri/Cargo.toml::版本 ${version} 含预发布后缀；Cargo.toml 只写 x.y.z，预发布请打 tag v${version%%-*}-rc.N"
             exit 1
           fi
           is_release=false
@@ -327,7 +327,7 @@ jobs:
           gh release upload "$TAG" "${assets[@]}" --clobber
 
   # 发版构建：与 android 完全相同的步骤，额外拿到 contents: write（上传 Release 资产）与签名 secrets。
-  # 签名 secrets 只在 environment mobile-release 里（部署规则只放行 app-v* tag），本 job 是唯一声明它的 job。
+  # 签名 secrets 只在 environment mobile-release 里（部署规则只放行 v* tag），本 job 是唯一声明它的 job。
   android-release:
     needs: prepare
     if: needs.prepare.outputs.is_release == 'true'
