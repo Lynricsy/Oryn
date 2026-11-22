@@ -184,6 +184,8 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 
 客户端只带一个配对页，配对后加载服务器自己的 Web UI；设备令牌存在系统凭据库，网页脚本读不到。
 
+桌面与移动 App 统一发版：推送 tag `app-v<版本>`（预发布 `app-v<版本>-rc.N`）后，[`release.yml`](.github/workflows/release.yml) 在同一个 GitHub Release 里发布三平台安装包与 Android APK / AAB，并把 iOS 包上传 TestFlight；两端都成功才发布。步骤见 [桌面端「发版」](docs/desktop.md#发版) 与 [移动端「发版」](docs/mobile.md#发版)。
+
 ## 架构与安全
 
 ```mermaid
@@ -362,8 +364,8 @@ oryn boxes deploy --on workbench --name wiki --create        # 将当前仓库 H
 |---|---|
 | [`docs/features.md`](docs/features.md) | 每项能力的完整行为、边界与约束 |
 | [`docs/deploy.md`](docs/deploy.md) | 生产部署：反代、Portal 证书、网络隔离、协调沙箱、快照与预热池、Sysbox、Runner、Firecracker、Hindsight、SSH 网关；[第 16 节](docs/deploy.md#16-developserverus-本机生产实例)是本机生产实例的入口与维护方式 |
-| [`docs/desktop.md`](docs/desktop.md) | 桌面客户端：安装、配对、窗口与标题栏、托盘、快捷键、自动更新、App 图标 |
-| [`docs/mobile.md`](docs/mobile.md) | 移动客户端：Android 双包、扫码配对、推送与省电；[附录 A](docs/mobile.md#附录-aios) 是 iOS |
+| [`docs/desktop.md`](docs/desktop.md) | 桌面客户端：安装、配对、窗口与标题栏、托盘、快捷键、自动更新、App 图标；桌面与移动 App 的统一发版（`app-v*`） |
+| [`docs/mobile.md`](docs/mobile.md) | 移动客户端：Android 双包、扫码配对、推送与省电、发版；[附录 A](docs/mobile.md#附录-aios) 是 iOS |
 | [`docs/protocol.md`](docs/protocol.md) | 以 [`schema/openapi.yaml`](schema/openapi.yaml) 为唯一源的协议索引与状态机 |
 | [`docs/development.md`](docs/development.md) | 代码生成、构建目标、测试约定、验收脚本、截图、UI 排版审计与 ARM64 交叉构建 |
 | [`docs/design/`](docs/design/) | 界面设计说明与前端开发守则 |
