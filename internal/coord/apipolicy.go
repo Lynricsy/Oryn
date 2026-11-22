@@ -149,18 +149,18 @@ func buildAPIPolicy() map[string]opPolicy {
 
 	// assistant
 	set("assistant", opRead, none, "listAssistantMcpServers", "getAssistantMain", "getAssistantNotes", "getAssistantComputer",
-		"listAssistantFiles", "getAssistantSettings", "getAssistantIdentity")
-	set("assistant", opWrite, none, "pauseAssistantComputer", "putAssistantIdentity")
-	set("assistant", opConfirm, none, "resetAssistantComputer", "deleteAssistantFile", "putAssistantSettings")
+		"listAssistantFiles", "getAssistantSettings", "getAssistantIdentity", "getResearchSettings", "listResearchTopics",
+		"getResearchTopic", "listResearchRuns")
+	set("assistant", opWrite, none, "pauseAssistantComputer", "putAssistantIdentity", "createResearchTopic",
+		"updateResearchTopic", "deleteResearchTopic", "runResearchTopic")
+	set("assistant", opConfirm, none, "resetAssistantComputer", "deleteAssistantFile", "putAssistantSettings", "putResearchSettings")
 	set("assistant", opDeny, deny("only the owner starts assistant conversations"), "createAssistantConversation")
 	set("assistant", opDeny, deny(denyNative("update_main_notes")), "putAssistantNotes")
 	set("assistant", opDeny, deny(denyNative("computer_status")), "wakeAssistantComputer")
 	set("assistant", opDeny, deny(denyNative("save_file")), "uploadAssistantFile")
 	set("assistant", opDeny, deny(denyNative("share_file")), "patchAssistantFile")
 	set("assistant", opDeny, deny(denyBinary("read the file at its ~/library path (list_files shows it)")), "getAssistantFileContent")
-	set("assistant", opDeny, deny("not implemented yet"), "getResearchSettings", "putResearchSettings", "listResearchTopics",
-		"createResearchTopic", "getResearchTopic", "updateResearchTopic", "deleteResearchTopic", "runResearchTopic",
-		"listResearchRuns", "listAssistantMcpServerTools")
+	set("assistant", opDeny, deny("only the owner inspects MCP servers"), "listAssistantMcpServerTools")
 
 	// orbs
 	set("orbs", opRead, none, "listOrbs", "getOrb", "getOrbMetrics", "listOrbSetupRuns", "getOrbSetupRunLog", "listOrbServices",

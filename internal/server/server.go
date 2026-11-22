@@ -45,6 +45,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/portalhost"
 	"github.com/Lynricsy/Oryn/internal/realtime"
 	"github.com/Lynricsy/Oryn/internal/repos"
+	"github.com/Lynricsy/Oryn/internal/research"
 	"github.com/Lynricsy/Oryn/internal/schedule"
 	"github.com/Lynricsy/Oryn/internal/search"
 	"github.com/Lynricsy/Oryn/internal/secrets"
@@ -78,6 +79,16 @@ var coordhostCommand []string
 // renderExe 返回带 render-exec 子命令的可执行文件（orynd 自己）；返回空串时控制面渲染停用。
 // 测试置空：测试二进制不认 render-exec，被当成 orynd 拉起会把整套测试再跑一遍。
 var renderExe = os.Executable
+
+// researchMineIdle 读 ORYN_RESEARCH_MINE_IDLE（Go duration）：只给 M26 的真机验收缩短挖掘前的静止时长；没设或不合法时为 0
+// （= 研究服务的缺省 30 分钟）。
+func researchMineIdle() time.Duration {
+	d, err := time.ParseDuration(os.Getenv("ORYN_RESEARCH_MINE_IDLE"))
+	if err != nil || d <= 0 {
+		return 0
+	}
+	return d
+}
 
 // statsNow / statsBudgetInterval 是统计服务的时钟与预算评估周期；零值 = stats 默认（真实时钟 / 60s）。e2e 注入。
 var (
@@ -127,7 +138,9 @@ type Server struct {
 	OwnerMemory *ownermem.Service
 	Hub         *realtime.Hub
 	Notify      *notify.Service
-	Share       *share.Service
+	// Research 是 M26 全局助手的后台研究。
+	Research *research.Service
+	Share    *share.Service
 	// Portal 是 portal 数据面；未配置 portal_domain 时为 nil。
 	Portal  *portal.Service
 	API     *api.Server
@@ -195,14 +208,17 @@ func (s *Server) init(ctx context.Context) error {
 			return err
 		}
 	}
-	// 协调宿主 /mcp/ 路由的凭据（M19 D10）：每次启动随机生成，只交给全局助手的 agent（协调宿主随 orynd 一起重启）
+	// 协调宿主 /mcp/ 路由的凭据（M19 D10）：每次启动随机生成，只交给全局助手的 agent（协调宿主随 orynd 一起重启）。
+	// researchToken 是后台研究的 /mcp/ 凭据（M26）：出站代理只放行研究可用的工具，只交给 MCP 运行里的私有研究员。
 	mcpToken := ids.Token("mcp")
+	researchToken := ids.Token("mcr")
 	setup := &orbs.DefaultSetup{
 		Store: s.Store, Home: s.Home, Vault: s.Vault, Projects: s.ProjectHomes,
-		CoordinatorEgressAddr: fmt.Sprintf("127.0.0.1:%d", cfg.Coordinator.EgressPort),
-		CoordinatorWebAllow:   lowerAll(cfg.Coordinator.WebAllowHosts),
-		CoordinatorMCPToken:   mcpToken,
-		PublicURL:             cfg.PublicURL,
+		CoordinatorEgressAddr:    fmt.Sprintf("127.0.0.1:%d", cfg.Coordinator.EgressPort),
+		CoordinatorWebAllow:      lowerAll(cfg.Coordinator.WebAllowHosts),
+		CoordinatorMCPToken:      mcpToken,
+		CoordinatorResearchToken: researchToken,
+		PublicURL:                cfg.PublicURL,
 		// 全局助手的内置技能 oryn（只下发到协调宿主）
 		CoordinatorSkill: coord.SkillFiles,
 	}
@@ -334,7 +350,8 @@ func (s *Server) init(ctx context.Context) error {
 		HandOff: func(ctx context.Context, h schedule.HandOff) { s.Coord.PostToMain(ctx, h) },
 		SSHGate: s.SSH, LocalGate: localGate,
 	}, s.Store, s.Threads, s.Orbs, s.Notify)
-	s.Coord = coord.New(coord.Config{Now: scheduleNow, AfterFunc: scheduleAfterFunc, Model: cfg.Coordinator.Model, PublicURL: cfg.PublicURL, MCPToken: mcpToken, KeepWarm: coord.KeepWarmEvery},
+	s.Coord = coord.New(coord.Config{Now: scheduleNow, AfterFunc: scheduleAfterFunc, Model: cfg.Coordinator.Model, PublicURL: cfg.PublicURL,
+		MCPToken: mcpToken, ResearchMCPToken: researchToken, KeepWarm: coord.KeepWarmEvery},
 		s.Store, s.Threads, s.Orbs, s.Host, s.Schedules)
 	s.Coord.SetLibrary(s.Library, s.LibrarySync)
 	s.Coord.SetArtifacts(s.Artifacts)
@@ -345,6 +362,13 @@ func (s *Server) init(ctx context.Context) error {
 	s.Threads.AddObserver(s.Notify)
 	s.Threads.AddObserver(s.Schedules)
 	s.Threads.AddObserver(s.Coord)
+	// M26：后台研究（研究员对话由 coord 实现 research.Host；研究运行的回合终态经 Observer 回来）
+	s.Research = research.New(research.Config{
+		Now: scheduleNow, AfterFunc: scheduleAfterFunc, Store: s.Store, Host: s.Coord, Notifier: s.Notify,
+		WebAccess: s.Coord.WebAccess, MineIdle: researchMineIdle(),
+	})
+	s.Coord.SetResearch(s.Research, s.Research)
+	s.Threads.AddObserver(s.Research)
 	// M14：GitHub 集成（webhook、轮询、回流在 Run 里；线程按自动化身份给新 orb 取 GitHub 身份）
 	s.GitHub = github.New(github.Config{
 		PublicURL: cfg.PublicURL, APIURL: cfg.GitHub.APIURL, WebURL: cfg.GitHub.WebURL, Box: box, Changed: s.Hub.GitHubChanged,
@@ -444,6 +468,7 @@ func (s *Server) init(ctx context.Context) error {
 	go s.Host.Run(runCtx)
 	go s.Schedules.Run(runCtx)
 	go s.Coord.Run(runCtx)
+	go s.Research.Run(runCtx)
 	go s.Stats.Run(runCtx)
 	go s.GitHub.Run(runCtx)
 	go s.SSH.Run(runCtx)
@@ -541,6 +566,7 @@ func (s *Server) init(ctx context.Context) error {
 	s.API.Notify = &api.NotifyDeps{Service: s.Notify}
 	s.API.Desktop = &api.DesktopDeps{Service: s.Desktop}
 	s.API.Coord = &api.CoordDeps{Service: s.Coord, Host: s.Host}
+	s.API.Research = &api.ResearchDeps{Service: s.Research}
 	s.API.Schedules = &api.ScheduleDeps{Service: s.Schedules}
 	s.API.Stats = &api.StatsDeps{Service: s.Stats}
 	s.API.Search = &api.SearchDeps{Service: search.New(s.Store)}

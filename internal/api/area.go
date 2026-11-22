@@ -40,6 +40,8 @@ type area struct {
 	Repos *ReposDeps
 	// Boxes 是 M23 的 box（boxes.go）；nil 时回 501。
 	Boxes *BoxesDeps
+	// Research 是 M26 全局助手的后台研究（research.go）；nil 时回 501。
+	Research *ResearchDeps
 }
 
 // PortalDeps 是 portal 限时公开接口（portals.go）的依赖。

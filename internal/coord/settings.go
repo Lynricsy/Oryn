@@ -158,6 +158,9 @@ func (s *Service) webAccess(ctx context.Context) bool {
 	return err != nil || a.webAccess
 }
 
+// WebAccess 报告全局助手联网是否开启（M26：后台研究在联网关着时不发起公网运行）。
+func (s *Service) WebAccess(ctx context.Context) bool { return s.webAccess(ctx) }
+
 // MCPServers 列出全局 mcp.json 里的服务器及其对助手是否可用、是否开启。解析失败返回空表。
 func (s *Service) MCPServers(ctx context.Context) ([]apigen.AssistantMcpServer, error) {
 	out := []apigen.AssistantMcpServer{}

@@ -645,7 +645,7 @@ func (s *Service) hostToolCallLocked(t *thread, line []byte) {
 		ThreadID: t.id, Kind: t.kind, SpaceID: t.spaceID,
 		CallID: f.ID, ToolCallID: f.ToolCallID, Name: f.ToolName, Args: f.Arguments,
 		OwnerTurn: !t.autoActive, Research: t.research, Variant: t.variant,
-		Update:    func(partial json.RawMessage) { s.hostToolUpdate(t, f.ID, partial) },
+		Update: func(partial json.RawMessage) { s.hostToolUpdate(t, f.ID, partial) },
 	}
 	s.go_(func(context.Context) {
 		defer cancel()
