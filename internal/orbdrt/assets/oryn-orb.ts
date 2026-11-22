@@ -1,6 +1,7 @@
 // Oryn orb 环境说明（由 orbd 写出并以 `omp -e` 加载；每次 orbd 启动覆盖，请勿手改）。
 // 在 before_agent_start 向系统提示词追加一段 orb 生命周期约定，并附上最近一次 setup / resume 与受管服务的异常现状；
-// 启用了桌面时另注册 desktop_ask_user 工具；ORYN_ARTIFACT_SOCK 非空时注册 artifact 工具（M14）与 GitHub 任务工具（M15），
+// 启用了桌面时另注册 desktop_ask_user 工具（ORYN_ARTIFACT_SOCK 也非空时再注册录屏工具 desktop_record，M25）；
+// ORYN_ARTIFACT_SOCK 非空时注册 artifact 工具（M14）与 GitHub 任务工具（M15），
 // 另有 ORYN_SSH=1 时注册 ssh_exec_many 并追加 SSH 指引（M18）。
 // Runner（ORYN_RUNNER=1）上 orbd 把同一文件写到 ~/.oryn/orbd/extensions/，此时只注册 artifact 工具、文件库工具
 // oryn_library_put（M21）与 Runner 的指引（模型与 SSH 主机由 Oryn 下发）；orb 专有的 setup、服务、Portal、Docker、
@@ -53,6 +54,7 @@ const DESKTOP_GUIDE = `桌面与浏览器：这台 orb 有一块 X11 桌面（DI
 - 浏览器里可能带着用户的登录态（浏览器 Profile）：不要把 Cookie、令牌或 tab.cookies() / tab.saveState() 的结果写进文件、日志或回复；不要退出用户已登录的账号，除非用户要求。
 - 登录、验证码、二次验证、支付确认，以及其它只能由真人在桌面上完成的步骤，用 desktop_ask_user 工具请用户在 Desktop 面板里操作：先把页面停在需要用户操作的位置，工具会等到用户点「完成」或「跳过」才返回。绝不要在聊天里索要密码、验证码或其它凭据，也不要替用户输入它们。
 - 桌面有控制状态（idle / agent / user / ask）：你工作时用户只能观看，用户可以随时接管。用户接管期间 browser 命令会被挂起、最多 45 秒后报错，你会收到「[Oryn] 用户接管了桌面」的消息；此时不要操作桌面（computer 工具不会被拦截，同样不要用），等收到交还消息再继续，交还后先确认页面状态。
+- 改了界面、需要让用户看到实际效果时，先 desktop_record start，在桌面上演示一遍，再 desktop_record stop，视频会直接显示在对话里；录制最长 10 分钟，到时自动停止。
 - 查看状态：oryn orb desktop status。`;
 
 // desktop_ask_user 的请求格式：标题「需要你操作桌面（<事项>）：<原因>」（other 不带括号），选项恰为「完成」「跳过」。
@@ -114,6 +116,97 @@ function registerDesktopAsk(pi: ExtensionAPI) {
 
 function desktopEnabled(): boolean {
 	return existsSync(join(homedir(), ".oryn", "core", "desktop.yml"));
+}
+
+// ---- 录屏（M25）：desktop_record 经 ORYN_ARTIFACT_SOCK（orb 上就是 orbd.sock）发 desktop.record.start / stop ----
+// stop 的 details 原样是 orbd 返回的 DesktopRecording（internal/orbsock），Web 的 desktop_record 卡片据 details.path
+// 内嵌播放视频；start 不带 details。每台 orb 同时最多一个录制，最长 10 分钟（internal/orbdrt/deskrecord.go）。
+
+interface DesktopRecording {
+	path: string;
+	bytes: number;
+	durationMs: number;
+	width: number;
+	height: number;
+	truncated: boolean;
+	stoppedBy: "agent" | "limit" | "error";
+}
+
+// 录屏的错误码翻成给模型的可操作说明；其它错误码照原样报。
+const RECORD_ERRORS: Record<string, string> = {
+	already_recording: "桌面已经在录制中（同一时间只能有一个录制）。先调 desktop_record stop 结束当前录制，需要时再重新 start。",
+	not_recording: "现在没有在录制，也没有待取回的录制结果。要录屏先调 desktop_record start，演示完再 stop。",
+	not_ready: "桌面显示还没就绪，暂时不能录制。稍等几秒再试；一直不行就用 oryn orb desktop status 查看桌面状态。",
+};
+
+function formatDuration(ms: number): string {
+	const s = Math.max(0, Math.round(ms / 1000));
+	return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+function formatRecording(r: DesktopRecording): string {
+	const mib = (r.bytes / (1024 * 1024)).toFixed(1);
+	const lines = [
+		`录制已结束：${r.path}（时长 ${formatDuration(r.durationMs)}，${r.width}×${r.height}，${mib} MiB）。`,
+		"视频已经在对话里展示给用户，不需要再上传、转发或贴链接；回复里简要说明视频演示了什么即可。",
+	];
+	if (r.stoppedBy === "limit") {
+		lines.push("注意：录制达到 10 分钟上限后已自动停止，之后的操作没有录进去；需要的话重新 start 录剩下的部分。");
+	} else if (r.stoppedBy === "error") {
+		lines.push("注意：录制中途出错结束（例如桌面分辨率变了或显示失效），视频只包含出错之前的内容；需要完整演示就重新录一次。");
+	}
+	if (r.truncated) {
+		lines.push("注意：录制程序没能正常收尾、被强行结束，文件可能不完整或无法播放；向用户说明这一点，必要时重新录制。");
+	}
+	return lines.join("\n");
+}
+
+// registerDesktopRecord 注册 desktop_record；调用方已确认桌面启用，ORYN_ARTIFACT_SOCK 为空时不注册。注册失败只记一行。
+function registerDesktopRecord(pi: ExtensionAPI) {
+	const sock = process.env.ORYN_ARTIFACT_SOCK ?? "";
+	if (!sock) {
+		return;
+	}
+	try {
+		const z = pi.zod;
+		const name = "desktop_record";
+		pi.registerTool({
+			name: "desktop_record",
+			label: "录制桌面",
+			description:
+				"录制这台 orb 的桌面（用户在 Desktop 面板里看到的画面）为视频。action: start 开始录制；在桌面上演示完后 action: stop 结束，视频会直接显示在对话里给用户播放。" +
+				"同一时间只能有一个录制，最长 10 分钟，到时自动停止（之后 stop 仍会取回这段视频）。",
+			parameters: z.object({
+				action: z.enum(["start", "stop"]).describe("start 开始录制；stop 结束录制并把视频展示给用户"),
+			}),
+			loadMode: "essential",
+			approval: "read",
+			async execute(_toolCallId, params, signal) {
+				const method = params.action === "start" ? "desktop.record.start" : "desktop.record.stop";
+				try {
+					const reply = await artifactSockCall(sock, { method }, signal);
+					if (!reply.ok) {
+						const hint = RECORD_ERRORS[reply.code];
+						return hint
+							? { content: [{ type: "text", text: hint }], isError: true, details: { tool: name, error: { code: reply.code, message: reply.message } } }
+							: sockError(name, reply.code, reply.message);
+					}
+					if (params.action === "start") {
+						const { path } = reply.result as unknown as { path: string };
+						return textResult(
+							`已开始录制桌面，视频写到 ${path}。现在在桌面上演示，完成后调 desktop_record stop；录制最长 10 分钟，到时自动停止。`,
+						);
+					}
+					const rec = reply.result as unknown as DesktopRecording;
+					return { content: [{ type: "text", text: formatRecording(rec) }], details: rec };
+				} catch (err) {
+					return sockError(name, "unavailable", err instanceof Error ? err.message : String(err));
+				}
+			},
+		});
+	} catch (err) {
+		console.error("oryn-orb: register desktop_record failed:", err);
+	}
 }
 
 // ---- Artifacts（M14）：agent 产出的版本化交付物 ----
@@ -1030,6 +1123,7 @@ export default function orynOrbExtension(pi: ExtensionAPI) {
 	registerSsh(pi);
 	if (desktopEnabled()) {
 		registerDesktopAsk(pi);
+		registerDesktopRecord(pi);
 	}
 	pi.on("before_agent_start", async (event: BeforeAgentStartEvent): Promise<BeforeAgentStartEventResult> => {
 		const docker = process.env.ORYN_NESTED_DOCKER === "1" ? DOCKER_GUIDE : NO_DOCKER_GUIDE;
