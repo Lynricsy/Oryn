@@ -129,6 +129,8 @@ func TestSetupLFSNoLFSFiles(t *testing.T) {
 }
 
 // TestSetupLFSNotInstalled：PATH 里只有 git（镜像没装 git-lfs，也没有 filter 配置）时文件留作指针，setup 记为失败。
+// 屏蔽系统级 git 配置：Debian/Ubuntu 的 git-lfs 包会在 /etc/gitconfig 写入 required 的 lfs filter，
+// 宿主装了它时克隆会因找不到 git-lfs 直接失败，测不到「没有 filter 配置」这个场景。
 func TestSetupLFSNotInstalled(t *testing.T) {
 	requireGitLFS(t)
 	gitBin, err := exec.LookPath("git")
@@ -141,7 +143,7 @@ func TestSetupLFSNotInstalled(t *testing.T) {
 
 	res, _ := setupCall(t, cp, apigen.LinkCtlSetupRunParams{
 		Repo: &apigen.LinkCtlSetupRepo{URL: url},
-		Env:  map[string]string{"PATH": onlyGit},
+		Env:  map[string]string{"PATH": onlyGit, "GIT_CONFIG_NOSYSTEM": "1"},
 	})
 	assert.False(t, res.Ok)
 	require.NotNil(t, res.SetupError)
