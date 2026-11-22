@@ -234,6 +234,8 @@ interface Screen {
 	touch?: boolean;
 	/** 在全新的 context 里截，不继承流水线里前一个界面留下的会话与历史记录。 */
 	fresh?: boolean;
+	/** 只在这些明暗下截（缺省两种都截）。 */
+	schemes?: readonly Scheme[];
 }
 
 /** 关掉宽屏线程页默认展开的右面板。 */
@@ -1960,6 +1962,93 @@ const SCREENS: Screen[] = [
 			await settle(page, 400);
 		},
 	},
+	// M25 任务栏（desktop.dock）：线程 Desktop 标签与助手的电脑「桌面」页签，各截单窗口与多窗口菜单展开；
+	// 另有启动中的转圈（mock 把窗口出现推迟到 60 秒后）
+	{
+		name: "desktop-dock-thread",
+		prepare: async ({ page }) => {
+			await openDesktop(page, DESKTOP_THREADS.connected);
+			await showDock(page);
+		},
+	},
+	{
+		name: "desktop-dock-thread-menu",
+		prepare: async ({ page }) => {
+			await openDesktop(page, DESKTOP_THREADS.connected);
+			await showDock(page);
+			await openDockMenu(page, "terminal");
+		},
+	},
+	{
+		name: "desktop-dock-computer",
+		prepare: async ({ page }) => {
+			await openComputerDesktop(page);
+			await launchApp(page, "vscode");
+			await showDock(page);
+		},
+	},
+	{
+		name: "desktop-dock-computer-menu",
+		prepare: async ({ page }) => {
+			await openComputerDesktop(page);
+			await launchApp(page, "terminal");
+			// 第二个终端窗口：右键菜单的「新建窗口」
+			await page
+				.locator("[data-testid=dock-terminal]")
+				.click({ button: "right" });
+			await page
+				.locator("[data-testid=desktop-dock-menu]")
+				.getByRole("menuitem", { name: "新建窗口" })
+				.click();
+			// mock 启动 300ms 后出现窗口；等它出现，再点图标才会弹出多窗口菜单（而不是最小化）
+			await page.waitForTimeout(1000);
+			await showDock(page);
+			await openDockMenu(page, "terminal");
+		},
+	},
+	{
+		name: "desktop-dock-launching",
+		widths: [1280],
+		schemes: ["light"],
+		init: `localStorage.setItem("oryn.mock.desktop-launch-ms", "60000");`,
+		prepare: async ({ page }) => {
+			await openDesktop(page, DESKTOP_THREADS.connected);
+			await page.locator("[data-testid=dock-vscode]").click();
+			await page
+				.locator("[data-testid=dock-vscode] [role=status]")
+				.waitFor({ timeout: 10_000 });
+			// 指针移开，截到的是启动中本身，而不是悬停底色
+			await page.mouse.move(0, 0);
+			await showDock(page);
+		},
+	},
+	// M25 录像卡片：线程对话里 desktop_record 的 stop 卡（工具样例线程末尾）、助手对话里 computer_record 的 stop 卡
+	{
+		name: "desktop-record-thread",
+		widths: [1280],
+		schemes: ["light"],
+		prepare: async ({ page }) => {
+			await openThread(page, TOOL_ZOO_THREAD);
+			await closePanel(page);
+			// 样例线程末尾有一个运行中的调用，转录贴底不能往回滚；拉高视口让整张卡连同头部落在视口里
+			await page.setViewportSize({ width: 1280, height: 1200 });
+			await showRecordCard(page, "desktop_record");
+		},
+	},
+	{
+		name: "desktop-record-computer",
+		widths: [1280],
+		schemes: ["light"],
+		prepare: async ({ page }) => {
+			await open(
+				page,
+				`/assistant/${M9_IDS.assistant}`,
+				"[data-testid=transcript]",
+				1800,
+			);
+			await showRecordCard(page, "computer_record");
+		},
+	},
 	// 桌面 App 无系统标题栏（假桌面壳）：macOS 原生红绿灯在左（占位圆点）、Windows 自绘按钮在右、
 	// Linux 按 GTK 布局放左；另有最大化后（还原图标）+ 窗口失焦变淡的一张
 	...chromeScreens("mac", "macos"),
@@ -2218,6 +2307,64 @@ async function openDesktop(page: Page, threadId: string) {
 	await settle(page, 600);
 }
 
+/** 任务栏挂上后把它滚进视口中部（助手的电脑页整页滚动，桌面在状态卡下面）。 */
+async function showDock(page: Page) {
+	await page.locator("[data-testid=desktop-dock]").waitFor({ timeout: 10_000 });
+	await scrollWithin(page, "[data-testid=desktop-dock]", "center");
+}
+
+/** 点任务栏上的应用图标弹出窗口菜单（该应用须有多个窗口）。 */
+async function openDockMenu(page: Page, app: string) {
+	await page.locator(`[data-testid=dock-${app}]`).click();
+	await page
+		.locator("[data-testid=desktop-dock-menu]")
+		.waitFor({ timeout: 10_000 });
+	await settle(page, 400);
+}
+
+/** 点任务栏图标启动应用，等运行圆点出现（mock 启动 300ms 后出现窗口）。 */
+async function launchApp(page: Page, app: string) {
+	await page.locator(`[data-testid=dock-${app}]`).click();
+	await page
+		.locator(`[data-testid=dock-${app}] [data-testid=dock-running-dot]`)
+		.waitFor({ timeout: 10_000 });
+	await settle(page, 400);
+}
+
+/** 助手的电脑页：还没有电脑就点「启动」，再切到「桌面」页签等桌面连上。 */
+async function openComputerDesktop(page: Page) {
+	await open(
+		page,
+		"/assistant/computer",
+		"[data-testid=computer-empty], [data-testid=computer-status]",
+	);
+	const start = page.getByRole("button", { name: "启动", exact: true });
+	if (await start.isVisible().catch(() => false)) await start.click();
+	await page.locator("[data-tab=desktop]").click({ timeout: 15_000 });
+	await page
+		.locator("[data-testid=desktop-status][data-state=connected]")
+		.waitFor({ timeout: 15_000 });
+	await settle(page, 600);
+}
+
+/** 转录滚到底，展开最后一张 `tool` 的「停止录制」卡，把它滚到转录顶部（页头下方），指针移开免得停在播放器上。 */
+async function showRecordCard(page: Page, tool: string) {
+	await scrollTranscript(page, 1);
+	const card = page
+		.locator(".tv-card")
+		.filter({
+			has: page.locator(".tv-head", { hasText: "停止录制" }),
+		})
+		.filter({ hasText: tool })
+		.last();
+	await card.waitFor({ timeout: 10_000 });
+	const head = card.locator(".tv-head");
+	if ((await head.getAttribute("aria-expanded")) !== "true") await head.click();
+	await card.evaluate((el) => el.setAttribute("data-shot-target", ""));
+	await page.mouse.move(0, 0);
+	await scrollWithin(page, "[data-shot-target]", "start");
+}
+
 /** 一条宽度 × 明暗的流水线：依次截完全部界面。 */
 async function shootLane(
 	browser: Browser,
@@ -2257,6 +2404,7 @@ async function shootLane(
 	};
 	for (const screen of screens) {
 		if (!(screen.widths ?? DEFAULT_WIDTHS).includes(size.width)) continue;
+		if (screen.schemes && !screen.schemes.includes(scheme)) continue;
 		const id = `${screen.name}-${size.width}-${scheme}`;
 		const isolated =
 			screen.init || screen.touch || screen.fresh

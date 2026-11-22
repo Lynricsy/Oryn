@@ -344,6 +344,30 @@ surface({
 	},
 });
 
+// 任务栏（M25）：主线程的 orb 有 6 个应用、Chromium 单窗口、两个终端与一个「其它窗口」
+surface({
+	id: "panels.desktop.dock",
+	path: THREAD,
+	ready: READY,
+	noReopen: true,
+	open: async (page) => {
+		const root = await openDesktop(page);
+		await page.getByTestId("desktop-dock").waitFor({ timeout: 15_000 });
+		return root;
+	},
+});
+
+surface({
+	id: "panels.desktop.dock.menu",
+	path: THREAD,
+	ready: READY,
+	open: async (page) => {
+		await openDesktop(page);
+		await page.getByTestId("dock-terminal").click();
+		return lastOverlay(page);
+	},
+});
+
 surface({
 	id: "panels.desktop.keyboard",
 	path: THREAD,

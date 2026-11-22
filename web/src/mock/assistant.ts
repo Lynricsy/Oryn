@@ -17,6 +17,8 @@ type Computer = Schemas["AssistantComputer"];
 export interface AssistantDeps {
 	orbs: Map<string, Orb>;
 	setOrb(orb: Orb): void;
+	/** 新电脑的桌面（带任务栏应用，见 MockDesktop.computerDesktop） */
+	desktop(): Schemas["OrbDesktop"];
 }
 
 const MAX_DISABLED = 200;
@@ -150,7 +152,7 @@ export class MockAssistant {
 					computer: true,
 					createdAt: now,
 					stateChangedAt: now,
-					desktop: { displayReady: true, browser: "stopped" },
+					desktop: this.deps.desktop(),
 				});
 			}
 			this.toolsReady = true;

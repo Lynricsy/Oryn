@@ -57,8 +57,13 @@ const APPS = [
 	},
 ] as const;
 
-/** 启动到窗口出现的延迟。 */
-const LAUNCH_MS = 300;
+/** 启动到窗口出现的延迟；`localStorage["oryn.mock.desktop-launch-ms"]` 可改（截图拉长它来截启动中的转圈）。 */
+function launchMs(): number {
+	const v = Number(
+		globalThis.localStorage?.getItem("oryn.mock.desktop-launch-ms"),
+	);
+	return Number.isFinite(v) && v > 0 ? v : 300;
+}
 
 function iconSvg(glyph: string): string {
 	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><rect x="3" y="3" width="42" height="42" rx="11" fill="#7d838c"/><g fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">${glyph}</g></svg>`;
@@ -330,6 +335,11 @@ export class MockDesktop {
 		};
 	}
 
+	/** 助手的电脑（M19）新建时的桌面：带全部应用、还没有窗口，浏览器未运行。 */
+	computerDesktop(): Schemas["OrbDesktop"] {
+		return this.withApps("", { displayReady: true, browser: "stopped" }, []);
+	}
+
 	/**
 	 * 新建线程的 Profile：省略 = 项目默认；空串 = 不用。被占用（独占方式）→ 409；不存在 → 404。
 	 * 返回给新 orb 用的 `desktop`（没有 Profile 时也有桌面），或错误响应。
@@ -560,7 +570,7 @@ export class MockDesktop {
 					],
 					chromium ? "running" : undefined,
 				);
-			}, LAUNCH_MS);
+			}, launchMs());
 			return json(
 				this.pushWindows(
 					orb.id,

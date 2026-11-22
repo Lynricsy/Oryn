@@ -2544,6 +2544,48 @@ const ZOO_GROUPS: { text: string; calls: ZooCall[] }[] = [
 			},
 		],
 	},
+	{
+		// 录屏（M25 3.3 / 3.4）：desktop_record 的 start 一行、stop 的 details 是 DesktopRecording，卡片内嵌播放 orb 上的录像；
+		// computer_record（助手的电脑）为人工操作提前结束、没存进文件库，只给电脑上的路径
+		text: "把复现过程录下来：",
+		calls: [
+			{
+				name: "desktop_record",
+				args: { action: "start" },
+				text: "已开始录制桌面，视频写到 /home/user/recordings/20261122-101500.mp4。",
+			},
+			{
+				name: "desktop_record",
+				args: { action: "stop" },
+				text: "录制已结束：/home/user/recordings/20261122-101500.mp4（1:23，3.0 MB）",
+				details: {
+					path: "/home/user/recordings/20261122-101500.mp4",
+					bytes: 3 * 1024 * 1024,
+					durationMs: 83_400,
+					width: 1280,
+					height: 800,
+					truncated: false,
+					stoppedBy: "agent",
+				},
+			},
+			{
+				name: "computer_record",
+				args: { action: "stop" },
+				text: "录制已结束：/home/user/recordings/20261122-094500.mp4",
+				details: {
+					recording: {
+						path: "/home/user/recordings/20261122-094500.mp4",
+						bytes: 1_200_000,
+						durationMs: 31_000,
+						width: 1280,
+						height: 800,
+						truncated: false,
+						stoppedBy: "control",
+					},
+				},
+			},
+		],
+	},
 ];
 
 /** 工具样例线程里仍在运行的工具调用（快照的 `agent.live` 帧与之对应）。 */
@@ -2953,6 +2995,45 @@ export function buildM9Transcripts(): Record<string, Entry[]> {
 		{
 			assistant:
 				"昨天合入 4 个提交，nightly 第 1 次运行已交付并归档；定时对话框还在写，已提醒它先做汇总状态。工作日早上 9 点的巡检定时已建好。",
+		},
+		// 助手的电脑录屏（M25 3.4）：stop 把录像存进文件库，卡片内嵌播放文件库里的那份
+		{ user: "在电脑上把发布说明草稿打开走一遍，录下来给我看看。" },
+		{
+			assistant: "我先开始录制，再打开草稿。",
+			calls: [
+				{
+					name: "computer_record",
+					args: { action: "start" },
+					text: "已开始录制，视频写到 /home/user/recordings/20261122-093000.mp4。",
+					details: { path: "/home/user/recordings/20261122-093000.mp4" },
+				},
+			],
+		},
+		{
+			assistant: "草稿已经走完一遍，结束录制。",
+			calls: [
+				{
+					name: "computer_record",
+					args: { action: "stop" },
+					text: "录制已结束，存进了文件库：/home/user/recordings/20261122-093000.mp4",
+					details: {
+						recording: {
+							path: "/home/user/recordings/20261122-093000.mp4",
+							bytes: 5_400_000,
+							durationMs: 142_000,
+							width: 1280,
+							height: 800,
+							truncated: false,
+							stoppedBy: "agent",
+						},
+						libraryFileId: "afl_01JDM000000000000000LIB009",
+					},
+				},
+			],
+		},
+		{
+			assistant:
+				"录好了，2 分 22 秒，已存进文件库。草稿第 3 节的版本号还是旧的，要我顺手改掉吗？",
 		},
 	]);
 	const scheduled = scriptTranscript("d", NOW - 60 * MIN, [

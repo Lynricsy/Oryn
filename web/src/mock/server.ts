@@ -563,6 +563,7 @@ export class MockServer {
 	readonly assistant = new MockAssistant({
 		orbs: this.orbs,
 		setOrb: (orb) => this.setOrb(orb),
+		desktop: () => this.desktop.computerDesktop(),
 	});
 	/** Space、助手对话、定时、操作记录与协调宿主状态（M9）。 */
 	readonly automation = new MockAutomation({

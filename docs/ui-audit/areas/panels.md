@@ -33,6 +33,8 @@ spec：`web/e2e/ui-audit/panels.e2e.ts`。面板本身按「浮层」登记（�
 | `panels.desktop.profile-menu` | ProfileMenu | 桌面 → 左上 Profile 名 | 菜单 |
 | `panels.desktop.clipboard` | 剪贴板 ClipboardPopover | 桌面 → 剪贴板钮 | 弹层（桌面）/ 弹窗（手机） |
 | `panels.desktop.more` | 桌面「更多」菜单 | 桌面 → 「…」 | 菜单 |
+| `panels.desktop.dock` | 任务栏 DesktopDock（应用图标、运行圆点、「其它窗口」） | 信息面板 → 桌面，舞台下方 | 面板 |
+| `panels.desktop.dock.menu` | 任务栏窗口菜单（多窗口：切到前台、关闭、新建窗口） | 桌面 → 任务栏点有多个窗口的应用（终端） | 菜单 |
 | `panels.desktop.keyboard` | 软键盘 SoftKeyboard（仅手机：只在粗指针设备上出现键盘钮） | 桌面 → 键盘钮 | 面板 |
 | `panels.desktop.switch-confirm` | 切换 Profile 确认对话框 | 桌面 → Profile 菜单 → 选另一个 Profile（浏览器在跑或已装 Profile 时） | 弹窗 |
 | `panels.desktop.conflict` | Profile 冲突对话框 ProfileConflictDialog | 被占用线程的桌面 → Profile 菜单 → 选另一个被占用的 Profile | 弹窗 |
