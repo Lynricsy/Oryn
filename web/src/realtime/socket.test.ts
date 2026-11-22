@@ -301,6 +301,35 @@ describe("RealtimeClient", () => {
 		expect(ws.cmds("get_state")).toHaveLength(1);
 	});
 
+	it("订阅时 agent 还没就绪（新线程）：首个回合一开始就补拉 state，不等回合结束", async () => {
+		const ws = await connected(client);
+		client.subscribe(TID);
+		// 新线程：订阅时 agent 在启动，快照里没有 state；控制面就绪后拉到的 state 只进实时缓冲、不推给已订阅的客户端
+		ws.recv(snapshot());
+		vi.advanceTimersByTime(250);
+		expect(ws.cmds("get_state")).toHaveLength(0);
+		ws.recv({ type: "frame", threadId: TID, frame: { type: "agent_start" } });
+		vi.advanceTimersByTime(250);
+		expect(ws.cmds("get_state")).toHaveLength(1);
+		const [cmd] = ws.cmds("get_state");
+		ws.recv({
+			type: "res",
+			threadId: TID,
+			id: cmd?.id,
+			response: {
+				success: true,
+				data: { model: { id: "m" }, isStreaming: true },
+			},
+		});
+		await vi.advanceTimersByTimeAsync(0);
+		client.flush();
+		expect(getThreadStore(TID).getState().state?.model?.id).toBe("m");
+		// 已有 state 后，回合中的帧不再额外查询
+		ws.recv({ type: "frame", threadId: TID, frame: { type: "message_start" } });
+		vi.advanceTimersByTime(250);
+		expect(ws.cmds("get_state")).toHaveLength(1);
+	});
+
 	it("schedules.changed 与每次连接建立都通知定时监听者；取消订阅后不再通知（M9 审查 W6）", async () => {
 		const seen = vi.fn();
 		const off = client.onSchedulesChanged(seen);

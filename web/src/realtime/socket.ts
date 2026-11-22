@@ -125,6 +125,8 @@ export class RealtimeClient {
 	private batch = new Map<string, ThreadMessage[]>();
 	private flushScheduled = false;
 	private readonly effectTimers = new Map<string, Timer>();
+	/** 因「store 还没有 state」而补拉、应答尚未写回的线程：回合中逐帧到达时不重复查询。 */
+	private readonly stateBackfill = new Set<string>();
 	/** open() 正在等待票据 */
 	private opening = false;
 	/** 每次 close() 递增；open() 在 await 之后据此判断自己是否已被作废 */
@@ -388,6 +390,7 @@ export class RealtimeClient {
 		}
 		for (const timer of this.effectTimers.values()) clearTimeout(timer);
 		this.effectTimers.clear();
+		this.stateBackfill.clear();
 		connectionStore.setState({ status: "idle" });
 	}
 
@@ -724,8 +727,18 @@ export class RealtimeClient {
 				}
 				const frame = msg.frame as OmpFrame;
 				this.enqueue(msg.threadId, { type: "frame", frame });
-				for (const eff of effectsOf(frame))
-					this.scheduleEffect(msg.threadId, eff);
+				const effects = effectsOf(frame);
+				// 订阅时 agent 还没就绪（新建线程、唤醒中）的快照不带 state，控制面就绪后拉到的 state 也不会推给已订阅的
+				// 客户端：agent 一出帧就说明它能应答，补拉一次。否则输入坞显示「模型未知」、头像行写模型 id，要等 agent_end。
+				if (
+					!effects.includes("refresh_state") &&
+					!this.stateBackfill.has(msg.threadId) &&
+					!peekThreadStore(msg.threadId)?.getState().state
+				) {
+					this.stateBackfill.add(msg.threadId);
+					effects.push("refresh_state");
+				}
+				for (const eff of effects) this.scheduleEffect(msg.threadId, eff);
 				return;
 			}
 			case "res": {
@@ -919,6 +932,8 @@ export class RealtimeClient {
 					type: "get_state",
 				})) as SessionState;
 				this.enqueue(threadId, { type: "state", state });
+				// 只在拿到 state 后放开：查询失败时不随回合逐帧重试，回合结束的 agent_end 照常刷新
+				this.stateBackfill.delete(threadId);
 			} else if (effect === "refresh_commands") {
 				const data = await this.cmd(threadId, {
 					type: "get_available_commands",
