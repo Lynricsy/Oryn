@@ -1,0 +1,166 @@
+name: release
+
+# 桌面与移动 App 的统一发版：一个 tag、一个 Release，同时发布 Windows / macOS / Linux 安装包、Android APK / AAB 与 iOS TestFlight。
+# - 推送 tag `app-v<版本>` 或预发布 `app-v<版本>-rc.N`（<版本> 须与 web/src-tauri/Cargo.toml 的 version 一致，后者只写 x.y.z）：
+#   `prepare` 校验 tag → `release` 建草稿 Release → 并行调用 desktop.yml 与 mobile.yml（workflow_call，各自构建并上传资产）
+#   → 两端全部成功后 `publish` 生成 updater 清单 latest.json 并发布 Release；非预发布版本同时刷新滚动发布 `desktop-updater`。
+#   任一端失败，Release 停在草稿，不会出现只有一半平台的已发布版本；修好后在 Actions 里「Re-run failed jobs」即可续跑。
+# - PR / 手动触发的构建仍由 desktop.yml、mobile.yml 各自负责，本工作流只处理发版。
+#
+# 供应链约束（同 desktop.yml）：第三方 action 一律钉到完整提交 SHA（行尾注释为对应版本）；checkout 不保留凭据；
+# 写权限令牌只给调用 gh 的步骤。被调用的工作流以 `secrets: inherit` 拿到仓库级 secrets；
+# 移动端签名 secrets 仍只在 environment `mobile-release`（部署规则只放行 `app-v*` tag），只有声明它的 job 能取到。
+on:
+  push:
+    tags: ["app-v*"]
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      label: ${{ steps.meta.outputs.label }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: 读取版本并校验 tag
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(awk '/^\[/{in_pkg = ($0 == "[package]")} in_pkg && /^version *=/{gsub(/^version *= *"|".*$/, ""); print; exit}' web/src-tauri/Cargo.toml)
+          if [[ -z "$version" ]]; then
+            echo "::error file=web/src-tauri/Cargo.toml::读不到 [package].version"
+            exit 1
+          fi
+          if [[ "$version" == *-* ]]; then
+            # rpm 不接受 '-'，msi 只接受纯数字预发布号：Cargo.toml 只写 x.y.z，预发布用 tag 后缀表达
+            echo "::error file=web/src-tauri/Cargo.toml::版本 ${version} 含预发布后缀；Cargo.toml 只写 x.y.z，预发布请打 tag app-v${version%%-*}-rc.N"
+            exit 1
+          fi
+          prerelease=false
+          case "$GITHUB_REF_NAME" in
+            "app-v${version}") ;;
+            "app-v${version}-"*) prerelease=true ;;
+            *)
+              echo "::error::tag ${GITHUB_REF_NAME} 与 Cargo.toml 版本 ${version} 不一致（应为 app-v${version} 或 app-v${version}-<预发布标识>）"
+              exit 1
+              ;;
+          esac
+          label=${GITHUB_REF_NAME#app-v}
+          {
+            echo "version=$version"
+            echo "label=$label"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+          echo "版本 ${version}（产物标签 ${label}）；预发布：$prerelease" >> "$GITHUB_STEP_SUMMARY"
+
+  release:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.release.outputs.release_id }}
+    steps:
+      - name: 创建草稿 Release
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          LABEL: ${{ needs.prepare.outputs.label }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          # 重跑时 Release 已存在，直接复用
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            flags=(--draft --verify-tag --title "Oryn $LABEL" --generate-notes)
+            if [[ "$PRERELEASE" == "true" ]]; then flags+=(--prerelease); fi
+            gh release create "$GITHUB_REF_NAME" "${flags[@]}"
+          fi
+          echo "release_id=$(gh release view "$GITHUB_REF_NAME" --json databaseId -q .databaseId)" >> "$GITHUB_OUTPUT"
+
+  # 被调用工作流的令牌权限以这里为上限：两端都要往 Release 上传资产
+  desktop:
+    needs: release
+    permissions:
+      contents: write
+    uses: ./.github/workflows/desktop.yml
+    with:
+      tag: ${{ github.ref_name }}
+      release_id: ${{ needs.release.outputs.release_id }}
+    secrets: inherit
+
+  mobile:
+    needs: [prepare, release]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/mobile.yml
+    with:
+      tag: ${{ github.ref_name }}
+      label: ${{ needs.prepare.outputs.label }}
+    secrets: inherit
+
+  publish:
+    needs: [prepare, desktop, mobile]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: web/package.json
+      # 写权限令牌只给调用 gh 的步骤，不放进 job 级 env（第三方 action 及其 post 步骤看不到）
+      - name: 生成 updater 清单
+        id: manifest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          bun web/scripts/updater-manifest.ts --repo "$GITHUB_REPOSITORY" --tag "$TAG" --version "$VERSION" > latest.json
+          code=$?
+          case "$code" in
+            0) echo "has=true" >> "$GITHUB_OUTPUT"; cat latest.json ;;
+            3) echo "has=false" >> "$GITHUB_OUTPUT"; echo "::warning::没有 .sig 资产（未配置更新私钥），跳过 latest.json" ;;
+            *) exit "$code" ;;
+          esac
+      - name: 上传 latest.json
+        if: steps.manifest.outputs.has == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" latest.json --clobber
+      - name: 发布 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$TAG" --draft=false
+      - name: 刷新更新通道 desktop-updater
+        if: steps.manifest.outputs.has == 'true' && env.PRERELEASE != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view desktop-updater >/dev/null 2>&1; then
+            gh release create desktop-updater --title "Oryn Desktop update channel" \
+              --notes "桌面 App 自动更新读取的 latest.json（由 release 工作流在每次正式发布后覆盖）。安装包请到对应的 app-v* Release 下载。" \
+              --latest=false
+          fi
+          gh release upload desktop-updater latest.json --clobber

@@ -28,7 +28,7 @@
  *   M6_WM             先启动的窗口管理器（如 openbox；没有窗口管理器时 xdotool 的窗口操作不生效再设；D16 必须设）
  *   M6_D11_TARGET     D11 两次签名构建用的 CARGO_TARGET_DIR（默认 .dev/m6-d11-target，与正式构建隔离、跨次复用）
  *   M6_NO_STRIP=1     构建 AppImage 时设 NO_STRIP=true（Arch 上 linuxdeploy 的 strip 失败时）
- *   M6_TAG            D14 / D15 检查的 tag（默认 desktop-v<Cargo.toml 版本>-rc.1；需先推送该 tag，脚本不推送）
+ *   M6_TAG            D14 / D15 检查的 tag（默认 app-v<Cargo.toml 版本>-rc.1；需先推送该 tag，脚本不推送）
  *   M6_OUT            结果与日志的保存目录（默认 /tmp/oryn-m6-accept/<run>）
  *   M6_KEEP=1         不删除 $TMP（排查用）
  *
@@ -1503,7 +1503,7 @@ async function D13() {
 	);
 }
 
-const TAG = process.env.M6_TAG ?? `desktop-v${VERSION}-rc.1`;
+const TAG = process.env.M6_TAG ?? `app-v${VERSION}-rc.1`;
 
 interface GhJob {
 	databaseId: number;
@@ -1514,7 +1514,7 @@ interface GhJob {
 
 function releaseRun(): { id: number; jobs: GhJob[] } {
 	const list = sh(
-		`gh run list --workflow desktop.yml --event push --branch ${q(TAG)} --limit 5 --json databaseId,status,conclusion,headBranch`,
+		`gh run list --workflow release.yml --event push --branch ${q(TAG)} --limit 5 --json databaseId,status,conclusion,headBranch`,
 	);
 	if (list.code !== 0) throw new Error(`gh run list 失败：${list.out}`);
 	const runs = JSON.parse(list.stdout) as {
@@ -1525,7 +1525,7 @@ function releaseRun(): { id: number; jobs: GhJob[] } {
 	const run = runs[0];
 	if (!run)
 		throw new Error(
-			`没有 ${TAG} 触发的 desktop 工作流（先推送该 tag：git push origin ${TAG}）`,
+			`没有 ${TAG} 触发的 release 工作流（先推送该 tag：git push origin ${TAG}）`,
 		);
 	check(
 		run.status === "completed" && run.conclusion === "success",
@@ -1541,9 +1541,10 @@ function releaseRun(): { id: number; jobs: GhJob[] } {
 async function D14() {
 	const { jobs } = releaseRun();
 	for (const name of [
-		"build-release (linux)",
-		"build-release (windows)",
-		"build-release (macos)",
+		// 桌面构建在 release.yml 调用的 desktop.yml 里，job 名带调用方前缀
+		"desktop / build-release (linux)",
+		"desktop / build-release (windows)",
+		"desktop / build-release (macos)",
 		"publish",
 	]) {
 		const j = jobs.find((x) => x.name === name);
@@ -1617,7 +1618,7 @@ async function D14() {
 
 async function D15() {
 	const { jobs } = releaseRun();
-	const mac = jobs.find((x) => x.name === "build-release (macos)");
+	const mac = jobs.find((x) => x.name === "desktop / build-release (macos)");
 	check(
 		mac?.conclusion === "success",
 		`macOS job：${mac?.conclusion ?? "不存在"}`,

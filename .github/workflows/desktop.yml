@@ -1,17 +1,24 @@
 name: desktop
 
-# 桌面 App（Tauri 2）的构建与发布（M6 计划 8.2）。
+# 桌面 App（Tauri 2）的构建（M6 计划 8.2）；发版由 release.yml 统一调度，与移动端同一个 tag、同一个 Release。
 # - PR / 手动触发：`build` job 三平台构建 + 冒烟启动，产物上传为 workflow artifacts，不发布、不签名、拿不到任何签名 secret。
-# - 推送 tag `desktop-v<版本>` 或预发布 `desktop-v<版本>-rc.N`（<版本> 须与 web/src-tauri/Cargo.toml 的 version 一致，后者只写 x.y.z）：`release` 建草稿 Release →
-#   `build-release` 三平台构建并上传资产 → `publish` 生成 updater 清单 latest.json → 发布；非预发布版本同时刷新
-#   滚动发布 `desktop-updater` 下的 latest.json（更新通道）。
+# - 被 release.yml 调用（workflow_call，tag `app-v*`）：`build-release` 三平台构建并把资产上传到调用方建好的草稿 Release；
+#   updater 清单 latest.json、发布 Release 与刷新 `desktop-updater` 都在 release.yml 的 `publish` 里，等移动端也成功后才做。
 # 签名均按 secrets 有无自动降级：没有更新私钥 → 不产出 .sig 与 latest.json；没有 Apple 证书 → macOS ad-hoc 签名。
 #
 # 供应链约束：第三方 action 一律钉到完整提交 SHA（行尾注释为对应版本）；checkout 不保留凭据；
-# 签名私钥与 Apple 凭据从不写进 job 级环境文件或磁盘上的持久位置，只出现在构建那一步的 env 里，且只在 tag 发布时取值。
+# 签名私钥与 Apple 凭据从不写进 job 级环境文件或磁盘上的持久位置，只出现在构建那一步的 env 里，且只在发版时取值。
 on:
-  push:
-    tags: ["desktop-v*"]
+  workflow_call:
+    inputs:
+      tag:
+        description: 发版 tag（app-v*）；由 release.yml 校验过与 Cargo.toml 版本一致
+        type: string
+        required: true
+      release_id:
+        description: release.yml 建好的草稿 Release 的 id，tauri-action 往这里上传资产
+        type: string
+        required: true
   pull_request:
     paths:
       - "web/src-tauri/**"
@@ -34,14 +41,16 @@ jobs:
     outputs:
       version: ${{ steps.meta.outputs.version }}
       is_release: ${{ steps.meta.outputs.is_release }}
-      prerelease: ${{ steps.meta.outputs.prerelease }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: 读取版本并校验 tag
+      - name: 读取版本
         id: meta
         shell: bash
+        env:
+          # 只有被 release.yml 调用时才非空（tag 与版本的一致性由它校验）
+          TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
           version=$(awk '/^\[/{in_pkg = ($0 == "[package]")} in_pkg && /^version *=/{gsub(/^version *= *"|".*$/, ""); print; exit}' web/src-tauri/Cargo.toml)
@@ -51,62 +60,22 @@ jobs:
           fi
           if [[ "$version" == *-* ]]; then
             # rpm 不接受 '-'，msi 只接受纯数字预发布号：Cargo.toml 只写 x.y.z，预发布用 tag 后缀表达
-            echo "::error file=web/src-tauri/Cargo.toml::版本 ${version} 含预发布后缀；Cargo.toml 只写 x.y.z，预发布请打 tag desktop-v${version%%-*}-rc.N"
+            echo "::error file=web/src-tauri/Cargo.toml::版本 ${version} 含预发布后缀；Cargo.toml 只写 x.y.z，预发布请打 tag app-v${version%%-*}-rc.N"
             exit 1
           fi
           is_release=false
-          prerelease=false
-          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF_TYPE" == "tag" ]]; then
-            case "$GITHUB_REF_NAME" in
-              "desktop-v${version}") ;;
-              "desktop-v${version}-"*) prerelease=true ;;
-              *)
-                echo "::error::tag ${GITHUB_REF_NAME} 与 Cargo.toml 版本 ${version} 不一致（应为 desktop-v${version} 或 desktop-v${version}-<预发布标识>）"
-                exit 1
-                ;;
-            esac
-            is_release=true
-          fi
+          if [[ -n "$TAG" ]]; then is_release=true; fi
           {
             echo "version=$version"
             echo "is_release=$is_release"
-            echo "prerelease=$prerelease"
           } >> "$GITHUB_OUTPUT"
-          echo "版本 ${version}；发布：${is_release}；预发布：$prerelease" >> "$GITHUB_STEP_SUMMARY"
-
-  release:
-    needs: prepare
-    if: needs.prepare.outputs.is_release == 'true'
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    outputs:
-      release_id: ${{ steps.release.outputs.release_id }}
-    steps:
-      - name: 创建草稿 Release
-        id: release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          VERSION: ${{ needs.prepare.outputs.version }}
-          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
-        run: |
-          set -euo pipefail
-          # 重跑时 Release 已存在，直接复用
-          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            flags=(--draft --verify-tag --title "Oryn Desktop $VERSION" --generate-notes)
-            if [[ "$PRERELEASE" == "true" ]]; then flags+=(--prerelease); fi
-            gh release create "$GITHUB_REF_NAME" "${flags[@]}"
-          fi
-          echo "release_id=$(gh release view "$GITHUB_REF_NAME" --json databaseId -q .databaseId)" >> "$GITHUB_OUTPUT"
+          echo "版本 ${version}；发布：${is_release}${TAG:+（$TAG）}" >> "$GITHUB_STEP_SUMMARY"
 
   # PR / 手动触发的构建：只读令牌，不签名。与 build-release 共用同一份 strategy 与 steps（YAML 锚点），
   # 两者只差权限与触发条件——job 级 permissions 不能按表达式切换，所以拆成两个 job。
   build:
-    needs: [prepare, release]
-    # release 在非发布运行中被跳过；!cancelled() 让本 job 不因此连带跳过
-    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.is_release != 'true' }}
+    needs: prepare
+    if: needs.prepare.outputs.is_release != 'true'
     permissions:
       contents: read
     strategy: &build-strategy
@@ -289,7 +258,7 @@ jobs:
           projectPath: web
           tauriScript: ${{ steps.sign.outputs.script }}
           args: ${{ steps.sign.outputs.args }}
-          releaseId: ${{ needs.prepare.outputs.is_release == 'true' && needs.release.outputs.release_id || '' }}
+          releaseId: ${{ inputs.release_id }}
           releaseDraft: true
           uploadUpdaterJson: false
           uploadWorkflowArtifacts: true
@@ -345,9 +314,9 @@ jobs:
             spctl -a -vv -t install "$dmg" || echo "::notice::spctl 未接受 dmg 本身（其中的 Oryn.app 已公证）"
           fi
 
-  # tag 发布的构建：与 build 完全相同的步骤，额外拿到 contents: write（上传 Release 资产）与签名 secrets
+  # 发版构建：与 build 完全相同的步骤，额外拿到 contents: write（上传 Release 资产）与签名 secrets
   build-release:
-    needs: [prepare, release]
+    needs: prepare
     if: needs.prepare.outputs.is_release == 'true'
     permissions:
       contents: write
@@ -355,57 +324,3 @@ jobs:
     name: build-release (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
     steps: *build-steps
-
-  publish:
-    needs: [prepare, build-release]
-    if: needs.prepare.outputs.is_release == 'true'
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    env:
-      GH_REPO: ${{ github.repository }}
-      TAG: ${{ github.ref_name }}
-      VERSION: ${{ needs.prepare.outputs.version }}
-      PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version-file: web/package.json
-      # 写权限令牌只给调用 gh 的步骤，不放进 job 级 env（第三方 action 及其 post 步骤看不到）
-      - name: 生成 updater 清单
-        id: manifest
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -uo pipefail
-          bun web/scripts/updater-manifest.ts --repo "$GITHUB_REPOSITORY" --tag "$TAG" --version "$VERSION" > latest.json
-          code=$?
-          case "$code" in
-            0) echo "has=true" >> "$GITHUB_OUTPUT"; cat latest.json ;;
-            3) echo "has=false" >> "$GITHUB_OUTPUT"; echo "::warning::没有 .sig 资产（未配置更新私钥），跳过 latest.json" ;;
-            *) exit "$code" ;;
-          esac
-      - name: 上传 latest.json
-        if: steps.manifest.outputs.has == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$TAG" latest.json --clobber
-      - name: 发布 Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release edit "$TAG" --draft=false
-      - name: 刷新更新通道 desktop-updater
-        if: steps.manifest.outputs.has == 'true' && env.PRERELEASE != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if ! gh release view desktop-updater >/dev/null 2>&1; then
-            gh release create desktop-updater --title "Oryn Desktop update channel" \
-              --notes "桌面 App 自动更新读取的 latest.json（由 desktop 工作流在每次正式发布后覆盖）。安装包请到对应的 desktop-v* Release 下载。" \
-              --latest=false
-          fi
-          gh release upload desktop-updater latest.json --clobber

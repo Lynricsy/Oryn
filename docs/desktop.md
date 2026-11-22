@@ -8,7 +8,7 @@ Windows / macOS / Linux 的 Oryn 桌面客户端。App 本身只带一个很小�
 
 ## 安装
 
-从 GitHub Releases 的 `desktop-v<版本>` 下载：
+从 GitHub Releases 的 `app-v<版本>` 下载（桌面与移动 App 同一个 Release；`0.1.0` 及更早的预发布在 `desktop-v<版本>`）：
 
 | 平台 | 安装包 |
 |---|---|
@@ -69,7 +69,7 @@ Linux 运行时依赖：WebKitGTK 4.1、GTK 3、librsvg，托盘需要 `libayata
 
 App 启动进入 Web UI 后检查一次更新，之后每 6 小时检查一次；托盘「检查更新…」和设置页可以立即检查。发现新版本后在后台下载，下载完托盘和设置页出现「重启以更新到 v<版本>」。打开「下载后自动安装并重启」时，下载完成后直接安装并重启。
 
-更新源是 GitHub Releases 上滚动发布的 `desktop-updater` 里的 `latest.json`。每个更新包都用 App 内置的公钥校验签名，校验失败就不安装。预发布版本（tag 带后缀，如 `desktop-v0.2.0-rc.1`）不进入更新通道。Linux 的更新包只提供 AppImage，用 deb / rpm 安装的请下载新包后用系统包管理器升级。
+更新源是 GitHub Releases 上滚动发布的 `desktop-updater` 里的 `latest.json`。每个更新包都用 App 内置的公钥校验签名，校验失败就不安装。预发布版本（tag 带后缀，如 `app-v0.2.0-rc.1`）不进入更新通道。Linux 的更新包只提供 AppImage，用 deb / rpm 安装的请下载新包后用系统包管理器升级。
 
 ## 开发
 
@@ -135,22 +135,24 @@ D1（全部安装包）和 D11（两次签名的更新包）用的都是**一次
 
 ## 发版
 
+桌面与移动 App 一起发版：一个 tag、一个 Release，同时包含三平台安装包、Android APK / AAB，并上传 iOS TestFlight。
+
 1. 修改 `web/src-tauri/Cargo.toml` 的 `version`。这是版本号的唯一来源，`tauri.conf.json` 不写版本。
 2. 提交并推送到 `main`。
-3. `git tag desktop-v<版本> && git push origin desktop-v<版本>`；预发布打 `desktop-v<版本>-rc.N`。`Cargo.toml` 的版本只写 `x.y.z`（rpm 不接受 `-`，msi 只接受纯数字预发布号），tag 去掉后缀后必须与它一致，否则工作流直接失败。
+3. `git tag app-v<版本> && git push origin app-v<版本>`；预发布打 `app-v<版本>-rc.N`。`Cargo.toml` 的版本只写 `x.y.z`（rpm 不接受 `-`，msi 只接受纯数字预发布号），tag 去掉后缀后必须与它一致，否则工作流直接失败。
 
-`.github/workflows/desktop.yml` 依次执行：
+`.github/workflows/release.yml` 依次执行：
 
-- 创建草稿 Release。
-- 在 Ubuntu 22.04、Windows、macOS（universal）上构建，跑 `--smoke`，把安装包上传到 Release。
-- 生成 `latest.json`（`web/scripts/updater-manifest.ts`），然后发布 Release。
+- 校验 tag，创建草稿 Release（标题 `Oryn <版本>`）。
+- 并行调用 `desktop.yml` 与 `mobile.yml`。桌面端在 Ubuntu 22.04、Windows、macOS（universal）上构建，跑 `--smoke`，把安装包上传到 Release；移动端见 [mobile.md](mobile.md)「发版」。
+- 两端全部成功后，生成 `latest.json`（`web/scripts/updater-manifest.ts`），然后发布 Release。任一端失败时 Release 停在草稿，修好后在 Actions 里「Re-run failed jobs」续跑。
 - 不是预发布时，用新的 `latest.json` 覆盖 `desktop-updater`，已安装的 App 随后会收到更新。
 
-PR 只要改动 `web/src-tauri/**`、`web/src/launcher/**`、`web/launcher.html` 或这个工作流本身，就会跑一遍三平台构建和冒烟。构建产物作为 workflow artifacts 上传，不发布。
+PR 只要改动 `web/src-tauri/**`、`web/src/launcher/**`、`web/launcher.html` 或 `desktop.yml` 本身，就会跑一遍三平台构建和冒烟。构建产物作为 workflow artifacts 上传，不发布。
 
 ### 工作流的安全约束
 
-- 构建分成两个 job，共用同一份步骤（YAML 锚点）：`build` 处理 PR、分支和手动触发，令牌只读，不签名；`build-release` 只在推送 `desktop-v*` tag 时运行，才有 `contents: write` 和签名 secrets。所有 PR 都拿不到签名 secrets，同仓库分支发起的也一样。
+- 构建分成两个 job，共用同一份步骤（YAML 锚点）：`build` 处理 PR、分支和手动触发，令牌只读，不签名；`build-release` 只在 `release.yml` 调用时（推送 `app-v*` tag）运行，才有 `contents: write` 和签名 secrets（调用方以 `secrets: inherit` 传入）。所有 PR 都拿不到签名 secrets，同仓库分支发起的也一样。
 - 签名 secrets 不写进 `$GITHUB_ENV`，也不放在 job 级 `env`。它们只出现在 `tauri-action` 那一步的 `env` 里，而且只取「签名配置」步骤判定要用的那一组，其余为空。由一个包装脚本把非空的值以 tauri 认识的变量名交给 `tauri build`。App Store Connect 的 `.p8` 只在构建期间写进临时目录，构建结束即删除。
 - 第三方 action 一律钉到完整的提交 SHA，行尾注释写对应版本；所有 checkout 都设 `persist-credentials: false`；每个 job 单独声明最小的 `permissions`。升级某个 action 时，先用 `gh api repos/<owner>/<repo>/commits/<tag> -q .sha` 查出新 SHA，再一并更新注释，然后跑 `actionlint`。
 
