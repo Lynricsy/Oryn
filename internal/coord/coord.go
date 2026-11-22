@@ -131,6 +131,9 @@ type Service struct {
 	boxes Boxes
 
 	ensureMu sync.Mutex
+	// spareMu 串行化备用助手对话的认领与补充（spare.go）；spareKick 让常驻检查在认领后立即补一个新的。
+	spareMu   sync.Mutex
+	spareKick chan struct{}
 	// createMu 串行化 orb 内 thread.create 的「计数 + Create」（契约 C6.1）：并发请求不能都通过额度检查。
 	createMu sync.Mutex
 	// repMu 让「登记 + 投递」与回报处理互斥（契约 C3）；锁顺序 repMu → 线程锁。Observer 回调只取 mu。
@@ -189,7 +192,7 @@ func New(cfg Config, st *store.Store, th *threads.Service, o *orbs.Service, host
 	s := &Service{
 		cfg: cfg, st: st, th: th, orbs: o, host: host, sched: sched,
 		lim: newLimiter(), questions: map[string]string{}, armed: map[string]armedReport{}, recheck: map[string]bool{},
-		wake: make(chan struct{}, 1), confirmers: map[string]confirmExec{},
+		wake: make(chan struct{}, 1), confirmers: map[string]confirmExec{}, spareKick: make(chan struct{}, 1),
 	}
 	// 确认卡的执行函数（M19）：助手自己的定时删除，以及 oryn 的 confirm 类 REST 操作
 	s.onConfirm(string(apigen.ActionDeleteSchedule), s.confirmDeleteSchedule)
@@ -269,12 +272,13 @@ func (s *Service) keepWarmLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+		case <-s.spareKick:
 		}
 	}
 }
 
-// keepWarm 在协调宿主可用时确保主线存在、协调 orb 在运行、主线的 agent 已就绪（已就绪时什么也不做）。
-// 主线常驻后，助手的协调宿主子进程一直在：其它对话只付自己的 agent 启动，不再付整个宿主的冷启动。
+// keepWarm 在协调宿主可用时确保主线存在、协调 orb 在运行、主线的 agent 已就绪（已就绪时什么也不做），并备好一个
+// 备用助手对话（见 spare.go）。主线常驻后，助手的协调宿主子进程一直在；新对话认领备用对话，连自己的 agent 启动也省掉。
 func (s *Service) keepWarm(ctx context.Context) {
 	if s.checkHost(ctx) != nil {
 		return
@@ -290,6 +294,7 @@ func (s *Service) keepWarm(ctx context.Context) {
 	if err := s.th.KeepWarm(ctx, main.ID); err != nil && ctx.Err() == nil {
 		slog.Debug("coord: 常驻检查唤醒主线失败", "thread", main.ID, "err", err)
 	}
+	s.ensureSpare(ctx)
 }
 
 // actionRetention 是 coord_actions 的保留期。

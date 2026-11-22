@@ -498,7 +498,8 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]apigen.Thread, erro
 	reasons := map[string]*apigen.ThreadError{}
 	out := make([]apigen.Thread, 0, len(all))
 	for _, t := range all {
-		if (t.ArchivedAt != nil) != archived || (f.State != "" && t.State != f.State) {
+		// 备用助手对话认领之前对用户不可见（见 CoordinatorParams.Hidden）
+		if t.Hidden != 0 || (t.ArchivedAt != nil) != archived || (f.State != "" && t.State != f.State) {
 			continue
 		}
 		if (kind != "all" && t.Kind != kind) || (f.Space != "" && (t.SpaceID == nil || *t.SpaceID != f.Space)) {

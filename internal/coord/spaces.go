@@ -243,6 +243,7 @@ func (s *Service) DeleteSpace(ctx context.Context, id string) error {
 
 // CreateConversation 新建一个全局助手对话（无标题，由 omp 自动起标题）。p 只取第一条用户消息与模型、思考档位
 // （Prompt、Images、Files、Model、ThinkingLevel；全空 = 空对话），Kind 与 OrbID 由这里填；Model 为空用默认模型。
+// 有就绪的备用对话时直接认领它（agent 已在跑，免冷启动），否则新建并起 agent。
 func (s *Service) CreateConversation(ctx context.Context, p threads.CoordinatorParams) (apigen.Thread, error) {
 	if err := s.checkHost(ctx); err != nil {
 		return apigen.Thread{}, err
@@ -254,10 +255,14 @@ func (s *Service) CreateConversation(ctx context.Context, p threads.CoordinatorP
 	if p.Model == "" {
 		p.Model = s.cfg.Model
 	}
-	return s.th.CreateCoordinator(ctx, threads.CoordinatorParams{
+	params := threads.CoordinatorParams{
 		Kind: threads.KindAssistant, OrbID: orbID, Model: p.Model, ThinkingLevel: p.ThinkingLevel,
 		Prompt: p.Prompt, Images: p.Images, Files: p.Files,
-	})
+	}
+	if t, ok, err := s.claimSpare(ctx, orbID, params); ok || err != nil {
+		return t, err
+	}
+	return s.th.CreateCoordinator(ctx, params)
 }
 
 // EnsureMain 返回全局助手的主线对话，没有则创建（M19；全库唯一，只由这里创建）。持 createMu：并发调用只建一行。

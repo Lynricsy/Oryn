@@ -5,11 +5,21 @@
 -- name: CreateThread :exec
 INSERT INTO threads (id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id,
                      forked_from_entry_id, session_dir, model, thinking_level, color, created_at, updated_at, short_code,
-                     kind, space_id, schedule_id, schedule_run, cwd, worktree, main)
+                     kind, space_id, schedule_id, schedule_run, cwd, worktree, main, hidden)
 VALUES (@id, @project_id, @orb_id, @title, @title_source, @state, @state_changed_at, @parent_thread_id,
         @forked_from_entry_id, @session_dir, @model, @thinking_level, @color, @created_at, @updated_at, @short_code,
         @kind, @space_id, @schedule_id, @schedule_run, sqlc.narg(cwd), sqlc.narg(worktree),
-        COALESCE(CAST(sqlc.narg(main) AS INTEGER), 0));
+        COALESCE(CAST(sqlc.narg(main) AS INTEGER), 0), COALESCE(CAST(sqlc.narg(hidden) AS INTEGER), 0));
+
+-- Oldest spare assistant conversation on the coordinator orb (hidden = 1, see 0052).
+-- name: GetSpareThread :one
+SELECT * FROM threads WHERE orb_id = @orb_id AND hidden = 1 AND kind = 'assistant' AND archived_at IS NULL
+ORDER BY created_at LIMIT 1;
+
+-- Claim a spare: make it visible and stamp created_at with the claim time (lists sort by it). Only while still hidden.
+-- name: ClaimSpareThread :execrows
+UPDATE threads SET hidden = 0, created_at = @now, updated_at = @now, state_changed_at = @now
+WHERE id = @id AND hidden = 1;
 
 -- name: GetThread :one
 SELECT * FROM threads WHERE id = @id;
@@ -34,7 +44,7 @@ ORDER BY pinned DESC, COALESCE(last_message_at, updated_at) DESC, id;
 SELECT * FROM threads WHERE orb_id = @orb_id ORDER BY created_at;
 
 -- name: ListThreadsByOrbSince :many
-SELECT id, title, created_at, cwd, kind FROM threads WHERE orb_id = @orb_id AND created_at >= @since ORDER BY created_at;
+SELECT id, title, created_at, cwd, kind FROM threads WHERE orb_id = @orb_id AND created_at >= @since AND hidden = 0 ORDER BY created_at;
 
 -- name: CountWorkingThreadsByOrb :one
 SELECT COUNT(*) FROM threads WHERE orb_id = @orb_id AND state = 'working';

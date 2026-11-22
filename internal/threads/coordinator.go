@@ -2,6 +2,7 @@ package threads
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -120,8 +121,11 @@ type CoordinatorParams struct {
 	Images []apigen.ImageContent
 	Files  []string
 	// Main 为真时新建的是全局助手的主线对话（只允许 kind = assistant；全库唯一，由 coord.EnsureMain 创建）。
-	Main  bool
-	Extra func(q *db.Queries, threadID string) error
+	Main bool
+	// Hidden 为真时新建的是备用助手对话（只允许 kind = assistant、不带首条消息）：照常起 agent，但认领（ClaimSpare）之前
+	// 不进线程列表与 index 推送。
+	Hidden bool
+	Extra  func(q *db.Queries, threadID string) error
 }
 
 // CreateCoordinator 新建一个协调对话（kind = space | assistant），挂到协调 orb 上并唤醒它。
@@ -135,9 +139,12 @@ func (s *Service) CreateCoordinator(ctx context.Context, p CoordinatorParams) (a
 	if p.Main && p.Kind != KindAssistant {
 		return apigen.Thread{}, errf("invalid", "only assistant conversations can be the main conversation")
 	}
+	if p.Hidden && (p.Kind != KindAssistant || p.Main) {
+		return apigen.Thread{}, errf("invalid", "only plain assistant conversations can be spares")
+	}
 	first := strings.TrimSpace(p.Prompt) != "" || len(p.Images) > 0 || len(p.Files) > 0
-	if first && p.Kind != KindAssistant {
-		return apigen.Thread{}, errf("invalid", "only assistant conversations accept a first message")
+	if first && (p.Kind != KindAssistant || p.Hidden) {
+		return apigen.Thread{}, errf("invalid", "only visible assistant conversations accept a first message")
 	}
 	if err := checkIDList("files", p.Files); err != nil {
 		return apigen.Thread{}, err
@@ -164,6 +171,9 @@ func (s *Service) CreateCoordinator(ctx context.Context, p CoordinatorParams) (a
 	}
 	if p.Main {
 		row.Main = new(int64(1))
+	}
+	if p.Hidden {
+		row.Hidden = new(int64(1))
 	}
 	extra := func(q *db.Queries) error {
 		if p.Extra != nil {
@@ -202,9 +212,99 @@ func (s *Service) CreateCoordinator(ctx context.Context, p CoordinatorParams) (a
 	if err != nil {
 		return apigen.Thread{}, err
 	}
-	s.out().IndexUpsert(out)
+	if !p.Hidden {
+		s.out().IndexUpsert(out)
+	}
 	s.wake(id, p.OrbID)
 	return out, nil
+}
+
+// ErrSpareUnavailable 表示备用助手对话不在可认领的状态（agent 没就绪、会话不静止，或已被认领）。
+var ErrSpareUnavailable = errors.New("threads: spare conversation is not ready")
+
+// Spare 是协调 orb 上的备用助手对话（见 CoordinatorParams.Hidden）。
+type Spare struct {
+	ID        string
+	CreatedAt int64
+	// Ready 为真表示 agent 已就绪、没有回合在跑，可以直接认领。
+	Ready bool
+}
+
+// FindSpare 返回协调 orb 上最早的备用助手对话；没有时 ok 为假。
+func (s *Service) FindSpare(ctx context.Context, orbID string) (sp Spare, ok bool, err error) {
+	row, err := s.st.Q.GetSpareThread(ctx, &orbID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Spare{}, false, nil
+	}
+	if err != nil {
+		return Spare{}, false, err
+	}
+	t, err := s.get(ctx, row.ID)
+	if err != nil {
+		return Spare{}, false, err
+	}
+	t.mu.Lock()
+	ready := spareReadyLocked(t)
+	t.mu.Unlock()
+	return Spare{ID: row.ID, CreatedAt: row.CreatedAt, Ready: ready}, true, nil
+}
+
+// spareReadyLocked：agent 已就绪且没有回合在跑。启动收尾时控制面自己的命令（get_state、会话来源标记等）在途
+// 不影响认领：认领下发的命令在同一条流上排在它们后面。调用方持有 t.mu。
+func spareReadyLocked(t *thread) bool {
+	return t.agentReady() && !t.starting && !t.stopping && !t.failed && t.state == StateIdle
+}
+
+// ClaimSpare 把就绪的备用对话交给用户（全局助手的新对话免冷启动）：先按 p 下发模型与思考档位（与备用对话不同时），
+// 再发首条消息（p.Prompt / Images / Files，全空 = 空对话），最后让它对用户可见并推送 index.patch。命令在同一条
+// agent 流上按序执行，首条消息一定用上新的模型与档位。备用对话不在可认领状态或已被认领时返回 ErrSpareUnavailable，
+// 调用方改走 CreateCoordinator；下发命令失败时它的配置可能已改，调用方应删掉它。
+func (s *Service) ClaimSpare(ctx context.Context, id string, p CoordinatorParams) (apigen.Thread, error) {
+	if err := checkIDList("files", p.Files); err != nil {
+		return apigen.Thread{}, err
+	}
+	t, err := s.get(ctx, id)
+	if err != nil {
+		return apigen.Thread{}, err
+	}
+	t.mu.Lock()
+	ready := spareReadyLocked(t)
+	cur := t.model
+	t.mu.Unlock()
+	if !ready {
+		return apigen.Thread{}, ErrSpareUnavailable
+	}
+	var model apigen.ModelRef
+	if m := parseModel(&p.Model); m != nil && (cur == nil || *cur != p.Model) {
+		model = *m
+	}
+	if err := s.SetModel(ctx, id, model, p.ThinkingLevel); err != nil {
+		return apigen.Thread{}, err
+	}
+	if strings.TrimSpace(p.Prompt) != "" || len(p.Images) > 0 || len(p.Files) > 0 {
+		prompt := map[string]any{"type": "prompt", "message": p.Prompt}
+		if len(p.Images) > 0 {
+			prompt["images"] = p.Images
+		}
+		if len(p.Files) > 0 {
+			prompt[orynFilesKey] = p.Files
+		}
+		frame, _ := json.Marshal(prompt)
+		if err := s.Command(ctx, id, frame, nil); err != nil {
+			return apigen.Thread{}, err
+		}
+	}
+	n, err := s.st.Q.ClaimSpareThread(ctx, db.ClaimSpareThreadParams{Now: s.now(), ID: id})
+	if err != nil {
+		return apigen.Thread{}, err
+	}
+	if n == 0 {
+		return apigen.Thread{}, ErrSpareUnavailable
+	}
+	t.mu.Lock()
+	s.publish(ctx, id)
+	t.mu.Unlock()
+	return s.Get(ctx, id)
 }
 
 // SetCoordinatorTitle 改协调对话的标题（Space 改名时同步聊天线程），并通知 agent。

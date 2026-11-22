@@ -1293,6 +1293,7 @@ type Thread struct {
 	Cwd               *string `json:"cwd"`
 	Worktree          *string `json:"worktree"`
 	Main              int64   `json:"main"`
+	Hidden            int64   `json:"hidden"`
 }
 
 type ThreadCommit struct {

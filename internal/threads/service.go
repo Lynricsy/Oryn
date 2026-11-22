@@ -626,10 +626,10 @@ func (s *Service) MarkQuiet(ctx context.Context, threadID string) bool {
 	return true
 }
 
-// publish 读出线程最新行并推送 index.patch。调用方持有 t.mu（或线程尚未对外可见）。
+// publish 读出线程最新行并推送 index.patch；备用对话（hidden）在认领之前不推送。调用方持有 t.mu（或线程尚未对外可见）。
 func (s *Service) publish(ctx context.Context, id string) {
 	row, err := s.st.Q.GetThread(ctx, id)
-	if err != nil {
+	if err != nil || row.Hidden != 0 {
 		return
 	}
 	api, err := s.threadAPI(ctx, row)
