@@ -240,6 +240,27 @@
 做什么：录制器挂在 `desktop` 上；显示失效时按 `StoppedBy="error"` 收尾。sock 方法与本机路由共用同一个实现。
 验收：`go test ./internal/orbdrt/ -run 'TestDeskRecord' -count=1` 通过。用例：用 fake ffmpeg 走完 start → stop，`Path` 存在、`Bytes > 0`；重复 start 回 409；把上限改成 200ms 后自动停止，下一次 stop 拿到 `StoppedBy=limit`；第 21 个录制产生后最旧的那个被删除。
 
+### 步骤 3.5 — orbd：人工输入前结束录制（3.1 之后补的）
+
+> 补充（3.1 已提交后，2026-11-22）：录制器录的是整个 `:1`，原先只会因为上限、显示失效、ffmpeg 退出而停止。`desktop_ask_user` 本来就是让人在桌面上登录、输入验证码、确认支付的，用户接管（`user`）或 agent 请求人工操作（`ask`）时画面会放开人工输入，这些输入会被录进视频，再经卡片或文件库交出去。
+
+依赖：3.1、3.2、3.4 的 Go 部分（这里要改它们给模型的文字）。
+文件：改 `internal/orbdrt/deskrecord.go`、`internal/orbdrt/deskcontrol.go`、`internal/orbdrt/deskrecord_test.go`、`internal/orbsock/orbsock.go`、`internal/orbdrt/assets/oryn-orb.ts`、`internal/coord/computer.go`。
+产出：
+- `StoppedBy` 增加取值 `"control"`（常量 `orbsock.RecordStoppedByControl`）。
+- 错误码 `control_user`（常量 `orbsock.CodeControlUser`）：控制状态是 `user` 或 `ask` 时，start 回 409 `control_user`（sock 用同一个码）。
+做什么：
+- **触发**：录制进行中，控制状态变成 `user` 或 `ask`；或者从 `agent` 变回 `idle`（回合结束后，面板也会放开输入）。这三种情况都结束录制，`StoppedBy="control"`，结果留给下一次 stop 取走，与 `limit` 一样。助手的电脑上，控制状态通常一直是 `idle`，在 `idle` 里开始录制仍然允许；这时用户同时在面板里操作，输入会被录进去，写进文档的已知限制。
+- **顺序**：先让 ffmpeg 退出（`q`，等待时长同录制器的收尾等待，超时 SIGKILL），之后才把新的控制状态交给 `onState` 或上报给控制面。网页只在看到新状态后才放开输入，所以人工输入不会进入画面。等 ffmpeg 退出时不能持有 `d.mu`：先在锁内算出新状态并判断需要停录，然后解锁、停录，再按原顺序上报（经 `emitMu`，不能乱序）。`takeControl`、`observeAgentFrame`（`ask` 登记、`agent_end`）、`agentExited` 都要走这条路径。
+- **文字**：`oryn-orb.ts` 和 `coord/computer.go` 给模型的文字，按 `control_user` 和 `stoppedBy=control` 写成可操作的说明，例如「用户正在操作桌面，录制已结束或不能开始；等用户交还后需要时重新录」。
+验收：`go test ./internal/orbdrt/ ./internal/coord/ -run 'TestDeskRecord|TestDesktop|TestDeskControl|TestComputerRecord|TestDesktopRecordTool' -count=1` 通过。新用例用假录制器（fake ffmpeg 读到 `q` 后先睡 300ms 再退出），覆盖以下情况：
+- agent → user（`takeControl`）：录制以 `control` 结束，并且 `onState` 收到 `user` 状态的时刻晚于 ffmpeg 退出。
+- agent → ask（`desktop_ask_user` 的 select 帧）：同上。
+- agent → idle（终结的 `agent_end`）：录制以 `control` 结束。
+- `user` 和 `ask` 状态下 start 都回 409 `control_user`。
+- `idle` 状态下 start 成功。
+`bun build --no-bundle internal/orbdrt/assets/oryn-orb.ts --outdir /tmp/m25-ext` 退出码 0。
+
 ### 步骤 3.2 — 线程工具 `desktop_record`
 
 依赖：3.1（sock 方法与 `DesktopRecording` 的字段名）。
@@ -275,7 +296,7 @@
 
 ### 步骤 4.1 — 真机验收脚本
 
-依赖：1.2–1.6、2.1–2.2、3.1–3.4。
+依赖：1.2–1.6、2.1–2.2、3.1–3.5。
 文件：新建 `web/scripts/m25-accept.ts`；`web/package.json` 加 `"accept:m25": "bun scripts/m25-accept.ts"`。写法照 `web/scripts/m8-accept.ts`：对 dev 部署（`make image` 之后的 `oryn-orb:dev` + docker provider）逐项执行，每项打印 `C<n> PASS|FAIL` 和证据，失败时截图。
 项目：
 - C1 新建线程，打开 Desktop 标签，任务栏出现 6 个图标，图标都加载成功（`naturalWidth > 0`）。
@@ -324,6 +345,8 @@ graph LR
   S23 --> S41
   S33 --> S41
   S34 --> S41
+  S31 --> S35[3.5 接管前停录]
+  S35 --> S41
   S41 --> S42[4.2 文档]
 ```
 
@@ -346,3 +369,4 @@ graph LR
 ## 修订记录
 
 - 2026-11-22（执行前）：步骤 1.6 改成按实际工作目录找脚本，并在显示栈与工作区都就绪之后按显示代数去重执行；新增假设 A5；验收 C9 改为新建真实托管项目来验证，不再往固定路径预埋脚本。原因见步骤 1.6 开头的修订说明。
+- 2026-11-22（3.1 已提交后）：新增步骤 3.5，用户接管、agent 请求人工操作、回合结束时先结束录制再放开人工输入，并在 `user` / `ask` 状态下拒绝开始录制。原因：录制器录的是整个显示，会把登录、验证码等人工输入录进视频。4.1 依赖 3.5；3.3、3.4 的卡片要能显示 `stoppedBy=control`。
