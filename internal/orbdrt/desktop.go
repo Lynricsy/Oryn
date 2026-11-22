@@ -100,6 +100,14 @@ type desktop struct {
 	wsReady    bool   // 本进程里 runSetupLocked 返回过（工作区已就绪）
 	wsDir      string // workspaceReady 记下的工作目录
 
+	// 窗口监视（M25，deskwin.go）。
+	newWM     func(sock string) wmClient  // 缺省 newXWM
+	wm        wmClient                    // 当前显示代的窗口管理器客户端；显示失效时为 nil
+	wins      []winInfo                   // 最新的顶层窗口列表（_NET_CLIENT_LIST 顺序）；显示失效时清空
+	appOf     func(class []string) string // WM_CLASS → 应用 id（清单见步骤 1.5）；nil 或返回空串 = 不属于任何应用
+	winsAt    time.Time                   // 上一次窗口上报的时间
+	winsTimer *time.Timer                 // 已排定的合并上报；nil = 没有
+
 	ctlT DeskControlTimings
 
 	rec *deskRecorder // 录制器（deskrecord.go）
@@ -156,6 +164,10 @@ func newDesktop(r *Runtime) *desktop {
 	}
 	d.sandbox = r.cfg.DesktopUserNS()
 	d.rec = newDeskRecorder(d)
+	d.newWM = r.cfg.DesktopWM
+	if d.newWM == nil {
+		d.newWM = newXWM
+	}
 	d.ctlT = defaultDeskControlTimings
 	if t := r.cfg.DesktopControlTimings; t != nil {
 		d.ctlT = *t
@@ -252,6 +264,7 @@ func (d *desktop) snapshotLocked() apigen.LinkCtlDesktopStateParams {
 			st.ReadonlyReason = new(m.readonlyReason())
 		}
 	}
+	st.Windows = d.windowsLocked()
 	return st
 }
 
@@ -433,6 +446,17 @@ func (d *desktop) runDisplayOnce(ctx context.Context) {
 	d.mu.Unlock()
 	d.setDisplayReady(true)
 	d.maybeResume()
+	// 窗口监视随显示代启停：显示失效时先停掉它，再清空窗口列表（setDisplayReady(false)）。
+	wm := d.newWM(d.xSocket())
+	d.mu.Lock()
+	d.wm = wm
+	d.mu.Unlock()
+	wctx, wcancel := context.WithCancel(ctx)
+	wdone := make(chan struct{})
+	go func() {
+		defer close(wdone)
+		d.watchWindows(wctx, wm)
+	}()
 wait:
 	for {
 		select {
@@ -448,6 +472,8 @@ wait:
 		}
 		break wait
 	}
+	wcancel()
+	<-wdone
 	d.setDisplayReady(false)
 	// 显示没了，浏览器跟着走（下次按需重新启动）。
 	d.killBrowser()
@@ -524,6 +550,13 @@ func (d *desktop) setDisplayReady(v bool) {
 	if d.displayReady != v {
 		d.displayReady = v
 		d.bumpLocked()
+	}
+	if !v {
+		d.wm, d.wins = nil, nil
+		if d.winsTimer != nil {
+			d.winsTimer.Stop()
+			d.winsTimer = nil
+		}
 	}
 	d.unlockAndEmit()
 }

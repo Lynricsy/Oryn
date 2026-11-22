@@ -99,6 +99,8 @@ type Config struct {
 	DesktopUserNS func() bool
 	// DesktopControlTimings 覆盖桌面控制的三个时限（测试用；nil = 生产缺省，见 deskcontrol.go）。
 	DesktopControlTimings *DeskControlTimings
+	// DesktopWM 按 X 显示的 unix 套接字路径创建窗口管理器客户端（测试钩子；nil = xgb 实现 newXWM，见 deskwin.go）。
+	DesktopWM func(sock string) wmClient
 
 	// Coordinator 为真时以协调宿主的受限模式运行（M9，见 coordinator.go）：不要求 URL / Token，
 	// link 只经 Connect 建立且不重连，只服务 setup.run / resume.run / agent.start / agent.stop / shutdown。
