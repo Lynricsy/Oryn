@@ -18,7 +18,8 @@
 //   - 正向代理（M19，web.go）只给协调宿主（NoGit）：策略带 Web 时放行 CONNECT 与 http 的 absolute-form 请求，
 //     在连接建立时按实际连接的 IP 只放行公网地址（AllowHosts 例外）；没有 Web 时一律 403；
 //   - MCP 路由（/mcp/<key>/…，M19）转发到主人配置的 MCP 服务器：丢掉入站的 Authorization 后注入路由的请求头，
-//     凭据类请求头的值从响应里抹掉。
+//     凭据类请求头的值从响应里抹掉；持后台研究凭据（M26）的请求只能到达开放给研究的路由，且 JSON-RPC 请求逐个
+//     经工具白名单过滤（web.go 的 mcpResearchFilter）。
 package egress
 
 import (
@@ -72,6 +73,9 @@ type Policy struct {
 	// MCPToken 是 /mcp/ 路由要求的凭据（请求头 MCPTokenHeader，M19 D10）：只有全局助手的 agent 持有，Space 协调者
 	// 没有；为空时 /mcp/ 一律 403。转发前去掉该头。
 	MCPToken string
+	// MCPResearchToken 是后台研究（M26）的 /mcp/ 凭据（同一个请求头）：只经 agent.start 交给 MCP 运行里的私有研究员；
+	// 只能访问 ResearchTools 非 nil 的路由，tools/call 只放行其中列出的工具。为空时研究凭据不存在。
+	MCPResearchToken string
 	// HostedGit 非 nil 时是 orb 所属项目的 Oryn 托管仓库（M24 阶段 ③）：该主机上的 git 请求只放行这个仓库，
 	// 交给 Resolver.HostedGit 在本地服务，不转发、不注入令牌。
 	HostedGit *HostedGitRoute
@@ -220,6 +224,9 @@ type target struct {
 	// 其余拦成 502），客户端不会带着 MCP 凭据头直接跳到别的服务器。
 	mcpKey  string
 	mcpBase *url.URL
+	// mcpAllow 非 nil 时请求持的是后台研究凭据（M26）：转发前经 mcpResearchFilter 过滤，tools/call 只放行其中的工具
+	// （空切片 = 一个也不放行）。
+	mcpAllow []string
 	// deny 非空时是 resolve 拒绝（非 200）的原因，代替按状态码给出的通用文案。
 	deny string
 	// push 为真时是 git-receive-pack 端点（任意主机），gitHost 是 git 主机（小写）；上游以 200 应答推送后交给 PushRecorder（M24）。
@@ -270,6 +277,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if t.hostedProject != "" {
 		h.serveHosted(w, r, t)
+		return
+	}
+	if t.mcpAllow != nil && mcpResearchFilter(w, r, t.mcpAllow) {
 		return
 	}
 	used, ok := h.substitute(r, t)
@@ -473,14 +483,27 @@ func (h *Handler) resolve(r *http.Request) (target, int) {
 		}, http.StatusOK
 	case "mcp":
 		// MCP（M19）：主人配置的地址可以是内网，按普通方式拨号；请求路径在 /mcp/<key> 之后的部分追加到上游路径之后。
-		// 先核对只有全局助手持有的凭据（D10）：任何方法、任何子路径（含 SSE 的 GET）都要带对，否则 403，不暴露路由是否存在。
-		got := r.Header.Get(MCPTokenHeader)
-		if pol.MCPToken == "" || subtle.ConstantTimeCompare([]byte(got), []byte(pol.MCPToken)) != 1 {
+		// 先核对凭据（D10）：任何方法、任何子路径（含 SSE 的 GET）都要带对，否则 403，不暴露路由是否存在。
+		// 助手凭据不受限制；后台研究凭据（M26）只能访问开放给研究的路由，请求经工具白名单过滤。
+		got := []byte(r.Header.Get(MCPTokenHeader))
+		research := false
+		switch {
+		case pol.MCPToken != "" && subtle.ConstantTimeCompare(got, []byte(pol.MCPToken)) == 1:
+		case pol.MCPResearchToken != "" && subtle.ConstantTimeCompare(got, []byte(pol.MCPResearchToken)) == 1:
+			research = true
+		default:
 			return target{deny: "MCP 只对全局助手开放"}, http.StatusForbidden
 		}
 		rt, ok := pol.MCP[parts[1]]
 		if !ok {
 			return target{}, http.StatusNotFound
+		}
+		var allow []string
+		if research {
+			if rt.ResearchTools == nil {
+				return target{deny: "这个 MCP 服务器没有开放给后台研究"}, http.StatusForbidden
+			}
+			allow = rt.ResearchTools
 		}
 		u, err := url.Parse(rt.URL)
 		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
@@ -495,7 +518,9 @@ func (h *Handler) resolve(r *http.Request) (target, int) {
 		if hdr == nil {
 			hdr = map[string]string{}
 		}
-		return target{url: u, headers: hdr, query: u.RawQuery, redact: mcpRedact(rt.Headers), mcpKey: parts[1], mcpBase: &base}, http.StatusOK
+		return target{
+			url: u, headers: hdr, query: u.RawQuery, redact: mcpRedact(rt.Headers), mcpKey: parts[1], mcpBase: &base, mcpAllow: allow,
+		}, http.StatusOK
 	}
 	return target{}, http.StatusNotFound
 }

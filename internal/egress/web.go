@@ -1,9 +1,12 @@
 package egress
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -16,6 +19,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 )
 
 // webDialTimeout 是正向代理（CONNECT 隧道与 absolute-form 转发）连接上游的拨号超时。
@@ -29,14 +33,191 @@ type WebPolicy struct {
 }
 
 // MCPRoute 是一条 MCP 路由（`/mcp/<key>/…`，M19）：上游是主人在全局 mcp.json 里配置的 HTTP / SSE 服务器地址，
-// Headers 是由出站代理注入的请求头（鉴权头只在这里，不进沙箱）。
+// Headers 是由出站代理注入的请求头（鉴权头只在这里，不进沙箱）。ResearchTools 是主人勾选的后台研究可用工具（M26）：
+// nil = 这个服务器不开放给后台研究（持研究凭据的请求 403）；非 nil 时研究凭据的 tools/call 只放行其中的工具。
 type MCPRoute struct {
-	URL     string
-	Headers map[string]string
+	URL           string
+	Headers       map[string]string
+	ResearchTools []string
 }
 
 // MCPTokenHeader 是 /mcp/ 路由的凭据请求头（M19 D10）：值须等于 Policy.MCPToken，只有全局助手的 agent 持有。
 const MCPTokenHeader = "X-Oryn-MCP-Token"
+
+// mcpFilterBodyMax 是持后台研究凭据的 /mcp/ 请求体上限（M26）：过滤要读完整个 JSON-RPC 对象才能判断。
+const mcpFilterBodyMax = 1 << 20
+
+// mcpOpenMethods 是研究凭据不受工具白名单限制的 JSON-RPC 方法（握手、心跳、列出工具）；`notifications/` 前缀另判。
+var mcpOpenMethods = map[string]bool{"initialize": true, "ping": true, "tools/list": true, "server/discover": true}
+
+// mcpResearchFilter 过滤持后台研究凭据的 /mcp/ 请求（M26）：GET（SSE 流）与 DELETE（结束会话）放行；POST 的体
+// 必须是单个 JSON-RPC 对象：应答（没有 method）、握手与列工具放行，tools/call 只放行 allow 里的工具，其余方法一律
+// 不转发、直接回 JSON-RPC 错误。handled 为真时已写出响应；为假时请求体已复原，照常转发。
+//
+// 上游可能用大小写不敏感的解码（Go 的 encoding/json 按 Unicode 折叠匹配字段名），所以 method、params 与 params.name
+// 只认精确的键：同一层里按大小写折叠相同的键、或与这几个名字折叠相同而写法不同的键一律 400，免得过滤看到的
+// 工具名与上游执行的不是同一个。
+func mcpResearchFilter(w http.ResponseWriter, r *http.Request, allow []string) (handled bool) {
+	switch r.Method {
+	case http.MethodGet, http.MethodDelete:
+		return false
+	case http.MethodPost:
+	default:
+		http.Error(w, "oryn: 后台研究的 MCP 请求只接受 GET、POST 与 DELETE", http.StatusMethodNotAllowed)
+		return true
+	}
+	if !identityEncoding(r.Header) {
+		http.Error(w, "oryn: 后台研究的 MCP 请求体不能压缩", http.StatusUnsupportedMediaType)
+		return true
+	}
+	buf, err := io.ReadAll(io.LimitReader(r.Body, mcpFilterBodyMax+1))
+	if err != nil {
+		http.Error(w, "oryn: 读取请求体失败", http.StatusBadRequest)
+		return true
+	}
+	if len(buf) > mcpFilterBodyMax {
+		http.Error(w, "oryn: 后台研究的 MCP 请求体过大", http.StatusRequestEntityTooLarge)
+		return true
+	}
+	r.Body = readCloser{bytes.NewReader(buf), r.Body}
+	msg, err := jsonObject(buf, "method", "params")
+	if err != nil {
+		http.Error(w, "oryn: 后台研究的 MCP 请求体必须是单个 JSON-RPC 对象", http.StatusBadRequest)
+		return true
+	}
+	method, hasMethod := "", false
+	if raw, ok := msg["method"]; ok {
+		var s *string
+		if json.Unmarshal(raw, &s) != nil || s == nil {
+			http.Error(w, "oryn: JSON-RPC 的 method 必须是字符串", http.StatusBadRequest)
+			return true
+		}
+		method, hasMethod = *s, true
+	}
+	if hv := r.Header.Values("Mcp-Method"); len(hv) > 1 || (len(hv) == 1 && hv[0] != method) {
+		http.Error(w, "oryn: Mcp-Method 请求头与请求体不符", http.StatusBadRequest)
+		return true
+	}
+	nameHdr := r.Header.Values("Mcp-Name")
+	if len(nameHdr) > 1 {
+		http.Error(w, "oryn: Mcp-Name 请求头与请求体不符", http.StatusBadRequest)
+		return true
+	}
+	switch {
+	case !hasMethod:
+		// 对服务器请求的应答：不触发任何操作
+		if len(nameHdr) > 0 {
+			http.Error(w, "oryn: Mcp-Name 请求头与请求体不符", http.StatusBadRequest)
+			return true
+		}
+		return false
+	case mcpOpenMethods[method] || strings.HasPrefix(method, "notifications/"):
+		if len(nameHdr) > 0 {
+			http.Error(w, "oryn: Mcp-Name 请求头与请求体不符", http.StatusBadRequest)
+			return true
+		}
+		return false
+	case method == "tools/call":
+		name, ok := "", false
+		if raw := msg["params"]; len(raw) > 0 && raw[0] == '{' {
+			params, err := jsonObject(raw, "name")
+			if err != nil {
+				http.Error(w, "oryn: tools/call 的 params 无效", http.StatusBadRequest)
+				return true
+			}
+			var s *string
+			if json.Unmarshal(params["name"], &s) == nil && s != nil {
+				name, ok = *s, true
+			}
+		}
+		if len(nameHdr) == 1 && (!ok || nameHdr[0] != name) {
+			http.Error(w, "oryn: Mcp-Name 请求头与请求体不符", http.StatusBadRequest)
+			return true
+		}
+		if ok && slices.Contains(allow, name) {
+			return false
+		}
+		slog.Info("egress: 后台研究调用了白名单外的 MCP 工具", "tool", name)
+		writeJSONRPCError(w, msg["id"], -32602, fmt.Sprintf("tool %q is not available to background research", name))
+		return true
+	default:
+		writeJSONRPCError(w, msg["id"], -32601, fmt.Sprintf("method %q is not available to background research", method))
+		return true
+	}
+}
+
+// writeJSONRPCError 以 HTTP 200 回一个 JSON-RPC 错误应答；id 为空时（通知）回 null。
+func writeJSONRPCError(w http.ResponseWriter, id json.RawMessage, code int, message string) {
+	if len(id) == 0 {
+		id = json.RawMessage("null")
+	}
+	b, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"error":   map[string]any{"code": code, "message": message},
+	})
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(b)
+}
+
+// errJSONObject 是 jsonObject 的拒绝：不是单个对象、有重复（按大小写折叠）的键、或 exact 里某个名字的别样写法。
+var errJSONObject = errors.New("not a single JSON object with unambiguous keys")
+
+// jsonObject 把 b 解析成单个 JSON 对象的键 → 原始值。同一层里按 Unicode 大小写折叠相同的键（含完全重复的键），
+// 或与 exact 中某个名字折叠相同而写法不同的键，都报 errJSONObject；对象之后不能再有内容。
+func jsonObject(b []byte, exact ...string) (map[string]json.RawMessage, error) {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return nil, errJSONObject
+	}
+	out := map[string]json.RawMessage{}
+	seen := map[string]bool{}
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil, errJSONObject
+		}
+		k, _ := tok.(string)
+		f := foldKey(k)
+		if seen[f] {
+			return nil, errJSONObject
+		}
+		seen[f] = true
+		for _, e := range exact {
+			if k != e && f == foldKey(e) {
+				return nil, errJSONObject
+			}
+		}
+		var v json.RawMessage
+		if err := dec.Decode(&v); err != nil {
+			return nil, errJSONObject
+		}
+		out[k] = v
+	}
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('}') {
+		return nil, errJSONObject
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, errJSONObject
+	}
+	return out, nil
+}
+
+// foldKey 把 s 的每个字符换成它 Unicode 简单大小写折叠轨道里码点最小的那个（K、k 与开尔文符号同归一处，
+// s 与长 s 同归一处），用作大小写不敏感的比较键。
+func foldKey(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		m := r
+		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+			m = min(m, f)
+		}
+		b.WriteRune(m)
+	}
+	return b.String()
+}
 
 // mcpRedactMin 是 MCP 凭据值参与响应脱敏的最短长度：更短的值几乎必然误伤正文，也不算有效凭据。
 const mcpRedactMin = 8

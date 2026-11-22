@@ -80,6 +80,9 @@ type DefaultSetup struct {
 	// CoordinatorMCPToken 是协调宿主 /mcp/ 路由的凭据（M19 D10）：只经 agent.start 交给全局助手的 agent，出站代理逐个
 	// 请求核对；空 = 协调宿主不放行 MCP。
 	CoordinatorMCPToken string
+	// CoordinatorResearchToken 是后台研究（M26）的 /mcp/ 凭据：只经 agent.start 交给 MCP 运行里的私有研究员，出站代理
+	// 只放行主人勾选的研究可用工具；空 = 研究凭据不存在。
+	CoordinatorResearchToken string
 	// Projects 是项目级 omp 配置；可为 nil（不下发项目级配置）。
 	Projects ProjectConfigs
 	// GitHub 是 GitHub 集成（M14）；可为 nil（不下发 gh 配置，github.com 只走 PAT）。
@@ -113,7 +116,10 @@ func (d *DefaultSetup) planCoordinator(ctx context.Context, orb db.Orb) (SetupPl
 		Params: apigen.LinkCtlSetupRunParams{
 			GitHosts: []string{}, OmpHome: []apigen.LinkCtlOmpHomeFile{}, Env: map[string]string{},
 		},
-		Egress: egress.Policy{Routes: map[string]egress.Route{}, GitRepos: map[string][]string{}, NoGit: true, MCPToken: d.CoordinatorMCPToken},
+		Egress: egress.Policy{
+			Routes: map[string]egress.Route{}, GitRepos: map[string][]string{}, NoGit: true,
+			MCPToken: d.CoordinatorMCPToken, MCPResearchToken: d.CoordinatorResearchToken,
+		},
 	}
 	web, disabled, err := d.assistantSettings(ctx)
 	if err != nil {
@@ -179,7 +185,11 @@ func (d *DefaultSetup) planCoordinator(ctx context.Context, orb db.Orb) (SetupPl
 	for k, v := range rendered.Routes {
 		plan.Egress.Routes[k] = v
 	}
-	if err := d.coordinatorMCP(&plan, files[agentcfg.MCPFile], disabled); err != nil {
+	research, err := d.researchMCPTools(ctx)
+	if err != nil {
+		return plan, err
+	}
+	if err := d.coordinatorMCP(&plan, files[agentcfg.MCPFile], disabled, research); err != nil {
 		return plan, err
 	}
 	d.addCoordinatorSkill(&plan)
@@ -227,9 +237,34 @@ func (d *DefaultSetup) assistantSettings(ctx context.Context) (web bool, disable
 	return row.WebAccess == 1, disabled, nil
 }
 
+// researchMCPTools 读后台研究可用的 MCP 工具（M26，服务器名 → 工具名）：只在研究总开关与 MCP 检查都开着时返回；
+// 没有设置行时为空表。
+func (d *DefaultSetup) researchMCPTools(ctx context.Context) (map[string][]string, error) {
+	tools := map[string][]string{}
+	if d.Store == nil {
+		return tools, nil
+	}
+	row, err := d.Store.Q.GetResearchSettings(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return tools, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("读取后台研究设置: %w", err)
+	}
+	if row.Enabled != 1 || row.Mcp != 1 {
+		return tools, nil
+	}
+	if err := json.Unmarshal([]byte(row.McpTools), &tools); err != nil {
+		slog.Warn("orbs: 后台研究设置里的 mcp_tools 无法解析，按空处理", "err", err)
+		return map[string][]string{}, nil
+	}
+	return tools, nil
+}
+
 // coordinatorMCP 把全局 mcp.json 里助手可用、未被关掉的 HTTP / SSE 服务器写进出站路由（/mcp/m<i>，带鉴权头），
-// 并生成协调宿主的 mcp.json（只有类型与 orynd 代理地址，不含任何头）。没有可用服务器时不下发该文件；解析失败只记日志。
-func (d *DefaultSetup) coordinatorMCP(plan *SetupPlan, content []byte, disabled map[string]bool) error {
+// 并生成协调宿主的 mcp.json（只有类型与 orynd 代理地址，不含任何头）。research 里名单非空的服务器在路由上带
+// ResearchTools（M26：研究凭据只能调这些工具），其余路由不开放给后台研究。没有可用服务器时不下发该文件；解析失败只记日志。
+func (d *DefaultSetup) coordinatorMCP(plan *SetupPlan, content []byte, disabled map[string]bool, research map[string][]string) error {
 	var env map[string]string
 	if d.Vault != nil {
 		var err error
@@ -251,7 +286,11 @@ func (d *DefaultSetup) coordinatorMCP(plan *SetupPlan, content []byte, disabled 
 		if plan.Egress.MCP == nil {
 			plan.Egress.MCP = map[string]egress.MCPRoute{}
 		}
-		plan.Egress.MCP[key] = egress.MCPRoute{URL: srv.URL, Headers: srv.Headers}
+		route := egress.MCPRoute{URL: srv.URL, Headers: srv.Headers}
+		if tools := research[srv.Name]; len(tools) > 0 {
+			route.ResearchTools = slices.Clone(tools)
+		}
+		plan.Egress.MCP[key] = route
 		// 地址前缀与凭据都由环境变量给出（omp 展开 url / headers 里的 ${VAR}）：协调宿主只给全局助手的 agent 设置它们；
 		// Space 协调者既不会自动连上，直接请求 /mcp/ 也因缺凭据被出站代理拒绝（D10）。
 		out[srv.Name] = map[string]any{

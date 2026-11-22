@@ -207,7 +207,7 @@ func TestPlanCoordinatorMCPAndWeb(t *testing.T) {
 	d := &DefaultSetup{
 		Store: st, Vault: coordVault{}, CoordinatorEgressAddr: "127.0.0.1:9911", CoordinatorWebAllow: []string{"intra.example.com"},
 		CoordinatorMCPToken: "mcp-secret-token",
-		Home: coordHome{"models.yml": []byte("providers: {}\n"), "config.yml": []byte("theme: dark\n"), "mcp.json": []byte(mcp)},
+		Home:                coordHome{"models.yml": []byte("providers: {}\n"), "config.yml": []byte("theme: dark\n"), "mcp.json": []byte(mcp)},
 	}
 	sandboxMCP := func(p SetupPlan) string {
 		for _, f := range p.Params.OmpHome {
@@ -252,6 +252,68 @@ func TestPlanCoordinatorMCPAndWeb(t *testing.T) {
 	assert.Nil(t, plan.Egress.Web)
 	assert.Empty(t, sandboxMCP(plan))
 	assert.Empty(t, plan.Egress.MCP)
+}
+
+// M26 4.1：研究总开关与 MCP 检查都开着时，mcp_tools 里名单非空的服务器在出站路由上带 ResearchTools，其余路由为 nil
+// （研究凭据 403）；研究凭据进 Policy，不进沙箱里的 mcp.json；任一开关关掉后所有路由都不开放给研究。
+func TestCoordinatorResearchTools(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	mcp := `{"mcpServers": {
+		"events": {"type": "sse", "url": "http://10.0.0.2:8080/sse"},
+		"mail": {"type": "http", "url": "https://mail.example.com/mcp"},
+		"search": {"type": "http", "url": "https://mcp.example.com/v1"}
+	}}`
+	d := &DefaultSetup{
+		Store: st, Vault: coordVault{}, CoordinatorMCPToken: "mcp-secret-token", CoordinatorResearchToken: "mcp-research-token",
+		Home: coordHome{"models.yml": []byte("providers: {}\n"), "mcp.json": []byte(mcp)},
+	}
+	research := func(p SetupPlan) map[string][]string {
+		out := map[string][]string{}
+		for k, rt := range p.Egress.MCP {
+			out[k] = rt.ResearchTools
+		}
+		return out
+	}
+
+	// 没有研究设置行：任何路由都不开放给研究，研究凭据照样进 Policy
+	plan, err := d.Plan(ctx, db.Orb{ID: "orb-c", Coordinator: true})
+	require.NoError(t, err)
+	assert.Equal(t, "mcp-research-token", plan.Egress.MCPResearchToken)
+	assert.Equal(t, map[string][]string{"m0": nil, "m1": nil, "m2": nil}, research(plan))
+
+	put := func(enabled, mcpOn int64, tools string) {
+		require.NoError(t, st.Q.UpsertResearchSettings(ctx, db.UpsertResearchSettingsParams{
+			Enabled: enabled, Web: 1, Mine: 1, Internal: 1, Mcp: mcpOn, DailyUsd: 20, McpTools: tools, UpdatedAt: 1,
+		}))
+	}
+	put(1, 1, `{"mail": ["list_messages", "read_message"], "search": [], "gone": ["x"]}`)
+	plan, err = d.Plan(ctx, db.Orb{ID: "orb-c", Coordinator: true})
+	require.NoError(t, err)
+	assert.Equal(t, map[string][]string{"m0": nil, "m1": {"list_messages", "read_message"}, "m2": nil}, research(plan),
+		"空名单与没勾选的服务器不开放；配置里不存在的服务器忽略")
+	for _, f := range plan.Params.OmpHome {
+		b, err := base64.StdEncoding.DecodeString(f.ContentB64)
+		require.NoError(t, err)
+		assert.NotContains(t, string(b), "mcp-research-token", f.Path)
+		assert.NotContains(t, string(b), "list_messages", f.Path)
+	}
+
+	// 总开关或 MCP 检查关掉：不开放
+	for _, c := range [][2]int64{{0, 1}, {1, 0}} {
+		put(c[0], c[1], `{"mail": ["list_messages"]}`)
+		plan, err = d.Plan(ctx, db.Orb{ID: "orb-c", Coordinator: true})
+		require.NoError(t, err)
+		assert.Equal(t, map[string][]string{"m0": nil, "m1": nil, "m2": nil}, research(plan), c)
+	}
+
+	// 解析不了的名单按空处理
+	put(1, 1, `not json`)
+	plan, err = d.Plan(ctx, db.Orb{ID: "orb-c", Coordinator: true})
+	require.NoError(t, err)
+	assert.Equal(t, map[string][]string{"m0": nil, "m1": nil, "m2": nil}, research(plan))
 }
 
 // H6：ServeConn 只服务处于可接 link 状态的协调 orb；成功时走与 WebSocket link 相同的 hello / setup 流程，
