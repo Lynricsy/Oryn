@@ -45,6 +45,9 @@ var coordErrStatus = map[string]int{
 	"orb_gone":                 http.StatusConflict,
 	"orbd_outdated":            http.StatusConflict,
 	"orb_not_ready":            http.StatusConflict,
+	// M26：列出 MCP 服务器的工具：SSE 服务器不支持；连接上游失败
+	coord.CodeUnsupportedTransport: http.StatusBadRequest,
+	coord.CodeUpstreamFailed:       http.StatusBadGateway,
 }
 
 // writeCoordErr 写出协调层的错误：*coord.Error 按码映射，线程服务的错误按线程映射，其余按通用映射。

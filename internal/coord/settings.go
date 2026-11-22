@@ -5,14 +5,19 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"os"
+	"slices"
+	"time"
 	"unicode/utf8"
 
 	"github.com/Lynricsy/Oryn/internal/agentcfg"
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/mcpprobe"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
 )
@@ -161,15 +166,18 @@ func (s *Service) webAccess(ctx context.Context) bool {
 // WebAccess 报告全局助手联网是否开启（M26：后台研究在联网关着时不发起公网运行）。
 func (s *Service) WebAccess(ctx context.Context) bool { return s.webAccess(ctx) }
 
-// MCPServers 列出全局 mcp.json 里的服务器及其对助手是否可用、是否开启。解析失败返回空表。
-func (s *Service) MCPServers(ctx context.Context) ([]apigen.AssistantMcpServer, error) {
-	out := []apigen.AssistantMcpServer{}
+// errMCPUnparsable 表示全局 mcp.json 不是合法 JSON。
+var errMCPUnparsable = errors.New("global mcp.json cannot be parsed")
+
+// globalMCP 读取并解析全局 mcp.json（头里的变量已用 env 密钥展开）。没有配置时返回空表；解析失败返回包了
+// errMCPUnparsable 的错误。
+func (s *Service) globalMCP() ([]agentcfg.MCPServer, error) {
 	if s.home == nil {
-		return out, nil
+		return nil, nil
 	}
 	content, _, err := s.home.Get(agentcfg.MCPFile)
 	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, os.ErrNotExist) {
-		return out, nil
+		return nil, nil
 	}
 	if err != nil {
 		return nil, err
@@ -182,8 +190,21 @@ func (s *Service) MCPServers(ctx context.Context) ([]apigen.AssistantMcpServer, 
 	}
 	servers, err := agentcfg.ParseMCP(content, env)
 	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errMCPUnparsable, err)
+	}
+	return servers, nil
+}
+
+// MCPServers 列出全局 mcp.json 里的服务器及其对助手是否可用、是否开启。解析失败返回空表。
+func (s *Service) MCPServers(ctx context.Context) ([]apigen.AssistantMcpServer, error) {
+	out := []apigen.AssistantMcpServer{}
+	servers, err := s.globalMCP()
+	if errors.Is(err, errMCPUnparsable) {
 		slog.Warn("coord: 全局 mcp.json 无法解析", "err", err)
 		return out, nil
+	}
+	if err != nil {
+		return nil, err
 	}
 	settings, err := s.loadSettings(ctx)
 	if err != nil {
@@ -204,6 +225,57 @@ func (s *Service) MCPServers(ctx context.Context) ([]apigen.AssistantMcpServer, 
 		if u, err := url.Parse(srv.URL); err == nil && u.Host != "" {
 			h := u.Hostname()
 			item.Host = &h
+		}
+		out = append(out, item)
+	}
+	return out, nil
+}
+
+// MCP 工具列表（M26）的错误码与时限。
+const (
+	// CodeUnsupportedTransport：服务器是 SSE 传输，orynd 只会以 Streamable HTTP 列出工具。
+	CodeUnsupportedTransport = "unsupported_transport"
+	// CodeUpstreamFailed：连接 MCP 服务器或它的应答出错。
+	CodeUpstreamFailed = "upstream_failed"
+	// mcpProbeTimeout 是列出一个服务器工具的整体时限。
+	mcpProbeTimeout = 20 * time.Second
+)
+
+// MCPServerTools 以 Streamable HTTP 连上全局 mcp.json 里名为 name 的服务器（带它的鉴权头），列出它的工具（M26：主人
+// 勾选后台研究可用的只读工具时用）。readOnly 是服务器自报的，不是保证。找不到 → not_found；不可用 → invalid_request；
+// SSE → unsupported_transport；上游失败 → upstream_failed（消息不含请求地址与任何请求头的值）。
+func (s *Service) MCPServerTools(ctx context.Context, name string) ([]apigen.AssistantMcpTool, error) {
+	servers, err := s.globalMCP()
+	if errors.Is(err, errMCPUnparsable) {
+		return nil, errf(CodeInvalid, "the global mcp.json cannot be parsed")
+	}
+	if err != nil {
+		return nil, err
+	}
+	i := slices.IndexFunc(servers, func(srv agentcfg.MCPServer) bool { return srv.Name == name })
+	if i < 0 {
+		return nil, errf(CodeNotFound, "no MCP server named %q", name)
+	}
+	srv := servers[i]
+	if !srv.Usable {
+		return nil, errf(CodeInvalid, "MCP server %q is not usable by the assistant (%s)", name, srv.Reason)
+	}
+	if srv.Transport == "sse" {
+		return nil, errf(CodeUnsupportedTransport, "MCP server %q uses the SSE transport; only Streamable HTTP servers can be listed", name)
+	}
+	ctx, cancel := context.WithTimeout(ctx, mcpProbeTimeout)
+	defer cancel()
+	tools, err := mcpprobe.ListTools(ctx, &http.Client{Timeout: mcpProbeTimeout}, srv.URL, srv.Headers)
+	if err != nil {
+		slog.Warn("coord: 列出 MCP 服务器的工具失败", "server", name, "err", err)
+		return nil, errf(CodeUpstreamFailed, "listing the tools of MCP server %q failed: %v", name, err)
+	}
+	out := make([]apigen.AssistantMcpTool, 0, len(tools))
+	for _, t := range tools {
+		item := apigen.AssistantMcpTool{Name: t.Name, ReadOnly: t.ReadOnly}
+		if t.Description != "" {
+			d := t.Description
+			item.Description = &d
 		}
 		out = append(out, item)
 	}

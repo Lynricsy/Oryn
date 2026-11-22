@@ -56,6 +56,21 @@ func (s *Server) ListAssistantMcpServers(w http.ResponseWriter, r *http.Request)
 	WriteJSON(w, http.StatusOK, apigen.AssistantMcpServerList{Servers: servers})
 }
 
+// ListAssistantMcpServerTools 对应 `GET assistant/mcp-servers/{name}/tools`（M26）：以 Streamable HTTP 连上该服务器列出工具，
+// 给「研究可用工具」白名单用。
+func (s *Server) ListAssistantMcpServerTools(w http.ResponseWriter, r *http.Request, name string) {
+	svc, ok := s.coordSvc(w)
+	if !ok {
+		return
+	}
+	tools, err := svc.MCPServerTools(r.Context(), name)
+	if err != nil {
+		writeCoordErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, apigen.AssistantMcpToolList{Tools: tools})
+}
+
 // GetAssistantNotes 对应 `GET assistant/main/notes`：主线备忘（M19）。
 func (s *Server) GetAssistantNotes(w http.ResponseWriter, r *http.Request) {
 	svc, ok := s.coordSvc(w)

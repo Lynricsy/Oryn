@@ -2,7 +2,10 @@ package coord
 
 import (
 	"context"
+	"encoding/json"
 	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"sync"
 	"testing"
@@ -140,4 +143,78 @@ func TestAgentProfileWebAndMCPTokenOnlyForAssistant(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, sp.Web)
 	assert.Empty(t, sp.MCPToken)
+}
+
+// M26 4.2：列出 MCP 服务器的工具：带 mcp.json 里的鉴权头走 Streamable HTTP；SSE 不支持；找不到、不可用、上游失败各有错误码。
+func TestMCPServerTools(t *testing.T) {
+	var mu sync.Mutex
+	var auth []string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		auth = append(auth, r.Header.Get("Authorization"))
+		mu.Unlock()
+		var req struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		var result any
+		switch req.Method {
+		case "initialize":
+			result = map[string]any{"protocolVersion": "2025-06-18", "capabilities": map[string]any{}, "serverInfo": map[string]any{"name": "fake"}}
+		case "tools/list":
+			result = map[string]any{"tools": []map[string]any{
+				{"name": "list_items", "description": "List items", "annotations": map[string]any{"readOnlyHint": true}},
+				{"name": "send_item", "annotations": map[string]any{"readOnlyHint": false}},
+				{"name": "plain"},
+			}}
+		default:
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
+	}))
+	defer up.Close()
+	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer broken.Close()
+
+	e := newEnv(t, true)
+	e.c.SetAgentConfig(fakeHome{"mcp.json": []byte(`{"mcpServers": {
+		"mail": {"type": "http", "url": "` + up.URL + `/mcp", "headers": {"Authorization": "Bearer ${TOKEN}"}},
+		"old": {"type": "sse", "url": "https://sse.example.com/sse"},
+		"local": {"command": "npx"},
+		"down": {"type": "http", "url": "` + broken.URL + `/mcp", "headers": {"Authorization": "Bearer ${TOKEN}"}}
+	}}`)}, fakeEnv{"TOKEN": "secret-token"})
+
+	got, err := e.c.MCPServerTools(e.ctx, "mail")
+	require.NoError(t, err)
+	desc := "List items"
+	yes, no := true, false
+	assert.Equal(t, []apigen.AssistantMcpTool{
+		{Name: "list_items", Description: &desc, ReadOnly: &yes},
+		{Name: "send_item", ReadOnly: &no},
+		{Name: "plain"},
+	}, got)
+	mu.Lock()
+	require.NotEmpty(t, auth)
+	for _, a := range auth {
+		assert.Equal(t, "Bearer secret-token", a, "带上 mcp.json 里展开后的鉴权头")
+	}
+	mu.Unlock()
+
+	_, err = e.c.MCPServerTools(e.ctx, "old")
+	assert.Equal(t, CodeUnsupportedTransport, errCode(err))
+	_, err = e.c.MCPServerTools(e.ctx, "nope")
+	assert.Equal(t, CodeNotFound, errCode(err))
+	_, err = e.c.MCPServerTools(e.ctx, "local")
+	assert.Equal(t, CodeInvalid, errCode(err))
+	_, err = e.c.MCPServerTools(e.ctx, "down")
+	assert.Equal(t, CodeUpstreamFailed, errCode(err))
+	assert.NotContains(t, err.Error(), "secret-token", "错误里不带请求头的值")
 }
