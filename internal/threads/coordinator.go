@@ -58,6 +58,9 @@ type HostToolCall struct {
 	Args                     json.RawMessage
 	// OwnerTurn 为真表示这段活动里没有下发过自动化消息（只用于审计的 origin，不参与放行判断）。
 	OwnerTurn bool
+	// Research 是研究员对话的角色（"web" / "private"，M26；其余为空）；Variant 是 orbd 报回的、在跑的 agent 的启动变体
+	// （见 AgentProfile.Variant；未知为空）。两者都是控制面的事实，放行判断以它们为准。
+	Research, Variant string
 	// Update 把一份流式部分结果（`{content, details?}`）作为 host_tool_update 发给 omp（M19）；调用已结束或 agent 不在线时
 	// 丢弃。可在任意 goroutine 调用。
 	Update func(partial json.RawMessage)
@@ -90,6 +93,9 @@ type AgentProfile struct {
 	// 凭据）；只给全局助手，Space 协调者两者都没有（D10）。
 	Web      bool
 	MCPToken string
+	// Variant 非空时 agent.start 带 variant（M26：research_web / research_private / main_restricted，与 Web 互斥）；
+	// MCPToken 在 Variant 为 research_private 时同样生效。
+	Variant string
 }
 
 // Coordinator 由 internal/coord 实现。
@@ -125,7 +131,10 @@ type CoordinatorParams struct {
 	// Hidden 为真时新建的是备用助手对话（只允许 kind = assistant、不带首条消息）：照常起 agent，但认领（ClaimSpare）之前
 	// 不进线程列表与 index 推送。
 	Hidden bool
-	Extra  func(q *db.Queries, threadID string) error
+	// Research 非空（"web" / "private"）时新建的是后台研究员对话（M26）：必须同时 Hidden、kind = assistant、非主线；
+	// 每种全库至多一个，永远不会被当作备用对话认领。
+	Research string
+	Extra    func(q *db.Queries, threadID string) error
 }
 
 // CreateCoordinator 新建一个协调对话（kind = space | assistant），挂到协调 orb 上并唤醒它。
@@ -141,6 +150,9 @@ func (s *Service) CreateCoordinator(ctx context.Context, p CoordinatorParams) (a
 	}
 	if p.Hidden && (p.Kind != KindAssistant || p.Main) {
 		return apigen.Thread{}, errf("invalid", "only plain assistant conversations can be spares")
+	}
+	if p.Research != "" && (p.Kind != KindAssistant || !p.Hidden || p.Main || (p.Research != "web" && p.Research != "private")) {
+		return apigen.Thread{}, errf("invalid", "researcher conversations must be hidden assistant conversations")
 	}
 	first := strings.TrimSpace(p.Prompt) != "" || len(p.Images) > 0 || len(p.Files) > 0
 	if first && (p.Kind != KindAssistant || p.Hidden) {
@@ -174,6 +186,9 @@ func (s *Service) CreateCoordinator(ctx context.Context, p CoordinatorParams) (a
 	}
 	if p.Hidden {
 		row.Hidden = new(int64(1))
+	}
+	if p.Research != "" {
+		row.Research = &p.Research
 	}
 	extra := func(q *db.Queries) error {
 		if p.Extra != nil {
@@ -629,7 +644,7 @@ func (s *Service) hostToolCallLocked(t *thread, line []byte) {
 	call := HostToolCall{
 		ThreadID: t.id, Kind: t.kind, SpaceID: t.spaceID,
 		CallID: f.ID, ToolCallID: f.ToolCallID, Name: f.ToolName, Args: f.Arguments,
-		OwnerTurn: !t.autoActive,
+		OwnerTurn: !t.autoActive, Research: t.research, Variant: t.variant,
 		Update:    func(partial json.RawMessage) { s.hostToolUpdate(t, f.ID, partial) },
 	}
 	s.go_(func(context.Context) {

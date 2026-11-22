@@ -42,6 +42,8 @@ type ctlOrbs struct {
 	// home 非空时 setup.run 把 ompHome 写进 <home>/.omp/agent/（扮演协调宿主的沙箱 HOME）；setupErr 非 nil 时 setup.run 以它应答。
 	home     string
 	setupErr error
+	// oldVariant 非 nil 时 agent.start 以它作 variant 应答（扮演已有监督器的幂等应答，M26）；否则回显请求里的 variant。
+	oldVariant *string
 }
 
 type ctlCall struct {
@@ -57,7 +59,7 @@ func newCtlOrbs(t *testing.T, base *stubOrbs) *ctlOrbs {
 		c := ctlCall{method: method, params: append(json.RawMessage(nil), params...)}
 		o.mu.Lock()
 		o.calls = append(o.calls, c)
-		startErr, home, setupErr, startPub, startHook := o.startErr, o.home, o.setupErr, o.startPub, o.startHook
+		startErr, home, setupErr, startPub, startHook, oldVariant := o.startErr, o.home, o.setupErr, o.startPub, o.startHook, o.oldVariant
 		stopHook := o.stopHook
 		o.mu.Unlock()
 		o.reqCh <- c
@@ -72,6 +74,14 @@ func newCtlOrbs(t *testing.T, base *stubOrbs) *ctlOrbs {
 			res := apigen.LinkCtlAgentStartResult{Pid: 1}
 			if startPub != "" {
 				res.SSHPublicKey = &startPub
+			}
+			var p apigen.LinkCtlAgentStartParams
+			if err := json.Unmarshal(params, &p); err == nil && p.Variant != nil {
+				v := string(*p.Variant)
+				res.Variant = &v
+			}
+			if oldVariant != nil {
+				res.Variant = oldVariant
 			}
 			return res, nil
 		case "agent.stop":

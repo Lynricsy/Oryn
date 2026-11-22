@@ -567,6 +567,9 @@ func (s *Service) Patch(ctx context.Context, id string, p apigen.ThreadPatch) (a
 	if t.main && ((p.Archived != nil && *p.Archived) || (p.Shipped != nil && *p.Shipped)) {
 		return apigen.Thread{}, errf(CodeMainConversation, "the main conversation cannot be archived")
 	}
+	if t.research != "" && ((p.Archived != nil && *p.Archived) || (p.Shipped != nil && *p.Shipped)) {
+		return apigen.Thread{}, errf(CodeCoordinatorRestricted, "researcher conversations cannot be archived")
+	}
 	var newSpace *string // p.SpaceID 给出时的新值（nil = 移出）
 	if p.SpaceID != nil {
 		if t.kind != KindWork {
@@ -739,8 +742,22 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		return errf("space_thread", "delete the Space instead of its chat thread")
 	case t.main:
 		return errf(CodeMainConversation, "the main conversation cannot be deleted")
+	case t.research != "":
+		return errf(CodeCoordinatorRestricted, "researcher conversations cannot be deleted")
 	}
 	return s.deleteThread(ctx, t, nil)
+}
+
+// ResearchThread 返回角色 role（"web" / "private"）的研究员对话 id（M26）；不存在时 ok 为假。
+func (s *Service) ResearchThread(ctx context.Context, role string) (id string, ok bool, err error) {
+	row, err := s.st.Q.GetResearchThread(ctx, &role)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return row.ID, true, nil
 }
 
 // DeleteSpaceThread 删除 Space 的聊天线程（只供 internal/coord 删除 Space 时调用）。inTx 非 nil 时在删线程行的同一事务里

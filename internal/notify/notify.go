@@ -469,8 +469,13 @@ func (s *Service) emit(ctx context.Context, threadID string, key timerKey, pt *p
 		s.dropUnreadIfNone(ctx, threadID)
 		return
 	}
-	// 去抖期间线程被归档：用户已明确不再关心它，不再发通知（归档线程也不计入未读与托盘状态）
+	// 去抖期间线程被归档：用户已明确不再关心它，不再发通知（归档线程也不计入未读与托盘状态）。隐藏对话（备用助手对话、
+	// M26 的研究员对话）对主人不可见，同样不通知；apigen.Thread 没有 hidden 字段，读库里的行。
 	if th.ArchivedAt != nil {
+		s.dropUnreadIfNone(ctx, threadID)
+		return
+	}
+	if row, err := s.st.Q.GetThread(ctx, threadID); err == nil && row.Hidden == 1 {
 		s.dropUnreadIfNone(ctx, threadID)
 		return
 	}

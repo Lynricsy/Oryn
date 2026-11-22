@@ -699,6 +699,8 @@ type agentProc struct {
 	cmd   *exec.Cmd
 	stdin io.WriteCloser
 	done  chan struct{}
+	// variant 是启动它的 agent.start 带的变体（M26；幂等应答回报它，与真实 orbd 相同）。
+	variant *string
 }
 
 func dialOrbd(o *Orbs, orbID string) (*Orbd, error) {
@@ -880,7 +882,7 @@ func (d *Orbd) agentStart(p apigen.LinkCtlAgentStartParams) (any, error) {
 		d.mu.Unlock()
 		// 幂等：已在运行
 		_ = d.ctl.Notify("agent.status", apigen.LinkCtlAgentStatusParams{ThreadID: p.ThreadID, Status: "ready"})
-		return apigen.LinkCtlAgentStartResult{Pid: a.cmd.Process.Pid}, nil
+		return apigen.LinkCtlAgentStartResult{Pid: a.cmd.Process.Pid, Variant: a.variant}, nil
 	}
 	dir := d.resolve(p.SessionDir)
 	if p.SessionDir == "" {
@@ -903,7 +905,7 @@ func (d *Orbd) agentStart(p apigen.LinkCtlAgentStartParams) (any, error) {
 		d.mu.Unlock()
 		return nil, err
 	}
-	a := &agentProc{cmd: cmd, stdin: stdin, done: make(chan struct{})}
+	a := &agentProc{cmd: cmd, stdin: stdin, done: make(chan struct{}), variant: (*string)(p.Variant)}
 	d.agents[p.ThreadID] = a
 	d.mu.Unlock()
 	go func() {
@@ -912,7 +914,7 @@ func (d *Orbd) agentStart(p apigen.LinkCtlAgentStartParams) (any, error) {
 	}()
 	go d.runAgent(p, dir, a, stdout)
 	go d.tail(p.ThreadID, dir)
-	return apigen.LinkCtlAgentStartResult{Pid: cmd.Process.Pid}, nil
+	return apigen.LinkCtlAgentStartResult{Pid: cmd.Process.Pid, Variant: a.variant}, nil
 }
 
 // runAgent 执行 C4 启动序列（ready → negotiate_protocol → initFrames），然后开 agent 流双向转发。

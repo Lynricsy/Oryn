@@ -107,8 +107,8 @@ type responseHead struct {
 // （terminal_configure：pty:true 的命令与 agent 的 terminal 工具落到 omp 的终端宿主，由 Terminal 面板作答）。
 // terminal 为假时（M11b：runner 没上报 terminal 特性）不发 terminal_configure。
 // 协调线程（prof 非 nil）只有 open_session、set_event_filter、set_host_tools 与可选的思考级别：不开 ask 对话框、
-// 子 agent 订阅与终端。主线（M19）在 open_session 之后先 clear_context：每次启动都是新的一段，模型只看到
-// reset_boundary 之后的内容（转录保留），跨段要记的事在系统提示词的「主线近况」里。
+// 子 agent 订阅与终端。主线（M19）与研究员对话（M26）在 open_session 之后先 clear_context：每次启动都是新的一段，模型
+// 只看到 reset_boundary 之后的内容（转录保留）。主线跨段要记的事在系统提示词的「主线近况」里；研究员的每次运行互不相干。
 func initFrames(t *thread, prof *AgentProfile, terminal bool) []apigen.OmpFrame {
 	open := apigen.OmpFrame{"type": "open_session", "sessionDir": t.sessionDir}
 	if m := parseModel(t.model); m != nil {
@@ -121,7 +121,7 @@ func initFrames(t *thread, prof *AgentProfile, terminal bool) []apigen.OmpFrame 
 			tools = []apigen.OmpFrame{}
 		}
 		frames = []apigen.OmpFrame{open}
-		if t.main {
+		if t.main || t.research != "" {
 			frames = append(frames, apigen.OmpFrame{"type": "clear_context"})
 		}
 		frames = append(frames,
@@ -176,6 +176,7 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 		return
 	}
 	t.starting = true
+	t.variantKnown = false
 	orbID, copyFrom := t.orbID, t.copyFrom
 	if t.agentStatus != apigen.AgentStatusReady {
 		t.agentStatus = apigen.AgentStatusStarting
@@ -227,10 +228,14 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 		if prof.Web {
 			web := true
 			params.Web = &web
-			if prof.MCPToken != "" {
-				tok := prof.MCPToken
-				params.McpToken = &tok
-			}
+		}
+		if prof.Variant != "" {
+			v := apigen.LinkCtlAgentStartParamsVariant(prof.Variant)
+			params.Variant = &v
+		}
+		if prof.MCPToken != "" && (prof.Web || prof.Variant == string(apigen.AgentVariantResearchPrivate)) {
+			tok := prof.MCPToken
+			params.McpToken = &tok
 		}
 	}
 	t.mu.Unlock()
@@ -274,6 +279,13 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 		}
 		return
 	}
+	t.mu.Lock()
+	// M26：协调宿主报回在跑的 agent 实际使用的变体（幂等应答时是已有监督器的那个）
+	t.variant, t.variantKnown = "", true
+	if res.Variant != nil {
+		t.variant = *res.Variant
+	}
+	t.mu.Unlock()
 	if res.SSHPublicKey != nil && s.runnerAgent != nil {
 		// M21：runner 线程的 SSH 公钥。每代监督器一把，幂等的 agent.start 对同一监督器返回同一把（同值刷新）——此时
 		// orbd 只唤醒现有监督器、不会重报 starting / ready，要恢复发起前的归属，否则它之后的结束会被当成旧监督器迟到的
@@ -1838,6 +1850,35 @@ func (s *Service) KeepWarm(ctx context.Context, threadID string) error {
 		s.scheduleStart(threadID)
 	}
 	return nil
+}
+
+// AgentVariant 返回线程在跑的 agent 的启动变体（M26，见 AgentProfile.Variant）：known 为真表示 orbd 对当前这次 agent.start
+// 的应答已到、没有在启动或停止中、agent 流已接上；此时 variant 是该进程实际使用的变体（空 = 没有变体）。
+// 线程不存在时 known 为假。
+func (s *Service) AgentVariant(ctx context.Context, id string) (variant string, known bool) {
+	t, err := s.get(ctx, id)
+	if err != nil {
+		return "", false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.variant, t.variantKnown && !t.starting && !t.stopping && t.agent != nil
+}
+
+// AgentCold 报告线程的 agent 是否已经停了且没有待下发的命令（M26）：没有进程、不在启动或停止中、队列与在途命令都为空，
+// 且 agent 状态为 none，或为 exited 且已同步（与 KeepWarm 的 cold 判定读同一组字段）。为真时下一条投递必然启动新的一代
+// agent，并以届时的 AgentProfile 启动。线程不存在时为假。
+func (s *Service) AgentCold(ctx context.Context, id string) bool {
+	t, err := s.get(ctx, id)
+	if err != nil {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.starting || t.stopping || t.agent != nil || len(t.queue) > 0 || len(t.pending) > 0 || len(t.msgOrder) > 0 {
+		return false
+	}
+	return t.agentStatus == apigen.AgentStatusNone || (t.agentStatus == apigen.AgentStatusExited && !t.unsynced)
 }
 
 // Focus 记录连接当前查看的线程（空串 = 无）：清未读、记用户交互、按配置唤醒。失败（orb failed、agent 没能启动）

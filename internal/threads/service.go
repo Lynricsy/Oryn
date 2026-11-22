@@ -306,6 +306,8 @@ type thread struct {
 	kind string
 	// main 为真表示全局助手的主线对话（threads.main，M19；创建后不变）。
 	main bool
+	// research 是研究员对话的角色（threads.research，M26："web" / "private"，其余为空；创建后不变）。
+	research string
 	// cwd 是 runner 线程的工作目录（threads.cwd，创建后不变；空 = orb 线程，由 orbd 决定）。
 	cwd string
 
@@ -399,6 +401,11 @@ type thread struct {
 	// 生效的配置变化（M13 6.3，见 apply.go）。agent 退出时都清空。
 	reloadPending  bool
 	restartReasons []string
+	// variant 是 orbd 在最近一次 agent.start 应答里报回的启动变体（M26；幂等应答时是已有监督器的那个）；variantKnown
+	// 为真表示这份回报属于当前的 agent.start（发起新的 agent.start 时置假，应答到达后置真）。新的 agent.start 不清 variant：
+	// 宿主工具的放行按最近一次回报判断，宁可多拦。
+	variant      string
+	variantKnown bool
 }
 
 // msgSlot 是消息顺序队列里的一个位置。ready 之前 frame 为 nil；ready 且 frame 为 nil 表示该消息已失败
@@ -466,6 +473,9 @@ func newThread(row db.Thread) *thread {
 		model: row.Model, thinking: row.ThinkingLevel, hostCalls: map[string]context.CancelFunc{},
 	}
 	t.main = row.Main == 1
+	if row.Research != nil {
+		t.research = *row.Research
+	}
 	if t.kind == "" {
 		t.kind = KindWork
 	}

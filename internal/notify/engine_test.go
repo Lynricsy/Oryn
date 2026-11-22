@@ -231,6 +231,18 @@ func TestArchivedDuringDebounceDropsNotification(t *testing.T) {
 	f.s.mu.Unlock()
 }
 
+// M26：隐藏对话（备用助手对话、研究员对话）的回合结束不产生通知。
+func TestHiddenThreadNoNotification(t *testing.T) {
+	f := newFixture(t)
+	id := f.thread("Researcher (web)")
+	_, err := f.st.DB.ExecContext(f.ctx, `UPDATE threads SET hidden = 1 WHERE id = ?`, id)
+	require.NoError(t, err)
+	f.done(id)
+	f.flush()
+	assert.Empty(t, f.notifications())
+	assert.Empty(t, f.out.Notes())
+}
+
 func TestRetentionCleanup(t *testing.T) {
 	f := newFixture(t)
 	id := f.thread("t")
