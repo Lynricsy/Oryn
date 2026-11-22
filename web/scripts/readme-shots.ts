@@ -53,6 +53,10 @@ const GROUPS = [
 	"assistant",
 	"settings",
 	"desktop-control",
+	"explain-changes",
+	"project-palette",
+	"research",
+	"boxes",
 ] as const;
 type Group = (typeof GROUPS)[number];
 const ONLY = option("--only")
@@ -320,6 +324,76 @@ const TOKEN_DIFF = `@@ -41,8 +41,15 @@ func installToken(tok []byte) error {
 +\t}
 +\treturn os.Rename(tmp, "/run/oryn/orb-token")
  }`;
+
+const RESUME_TEST_DIFF = `@@ -0,0 +1,14 @@
++func TestConcurrentResume(t *testing.T) {
++\tvms := flagInt("vms", 4)
++\th := newFCHarness(t, vms)
++\th.SnapshotAll()
++\th.CrashBetweenFreezeAndThaw(0)
++\tvar g errgroup.Group
++\tfor i := range vms {
++\t\tg.Go(func() error { return h.Resume(i) })
++\t}
++\trequire.NoError(t, g.Wait())
++\trequire.Empty(t, h.ThawPending())
++\trequire.Equal(t, vms, h.DistinctTokens())
++\tt.Logf("%d 台并发唤醒：thaw-pending 已全部清除", vms)
++}`;
+
+const DEPLOY_DIFF = `@@ -212,6 +212,8 @@ Firecracker 快照
+ 快照前驱动在源 microVM 的数据目录写 thaw-pending，解冻完成后删除。
+-orbd 在两者之间崩溃时，标记留到下一次快照才清理。
++orbd 在两者之间崩溃时，下一次唤醒会先完成解冻并轮换令牌，
++再交给 orbd；快照路径仍会兜底清理残留标记。
+ 
+ guest 令牌写在 \`/run/oryn/orb-token\`（tmpfs），不进根盘。`;
+
+/** fc 线程 orb 的 Git 改动（改动面板）：文件、暂存状态与 diff。 */
+function demoGit(): Demo["git"] {
+	const file = (
+		path: string,
+		status: string,
+		staged: string,
+		patch: string,
+	) => {
+		const lines = patch.split("\n");
+		return {
+			path,
+			status,
+			staged,
+			binary: false,
+			additions: lines.filter((l) => l.startsWith("+")).length,
+			deletions: lines.filter((l) => l.startsWith("-")).length,
+			patch,
+		};
+	};
+	return {
+		orb: FC_ORB,
+		branch: "oryn/fc-thaw-pending",
+		files: [
+			file("docs/deploy.md", "modified", "none", DEPLOY_DIFF),
+			file(
+				"internal/orbdrt/guestinit/token.go",
+				"modified",
+				"full",
+				TOKEN_DIFF,
+			),
+			file(
+				"internal/providerrt/firecracker.go",
+				"modified",
+				"full",
+				SPAWN_DIFF,
+			),
+			file(
+				"internal/providerrt/resume_test.go",
+				"added",
+				"partial",
+				RESUME_TEST_DIFF,
+			),
+		],
+	};
+}
 
 const BASH_CALL = "toolu_fc_bash_1";
 const BASH_ARGS = {
@@ -985,6 +1059,16 @@ interface Demo {
 	artifacts: DemoArtifact[];
 	/** 扩展名 → MIME（文件面板的演示文件）。 */
 	mimes: Record<string, string>;
+	/** fc 线程 orb 的 Git 改动（覆盖 mock 通用的 status 与 diff）。 */
+	git: {
+		orb: string;
+		branch: string;
+		files: (Json & { path: string; patch: string })[];
+	};
+	/** 后台研究：设置（整体替换 mock 的缺省值）与跟进话题。 */
+	research: { settings: Json; topics: Json[] };
+	/** 选区「解释」的旁路回答（mock 原本回显问题）。 */
+	explain: string;
 }
 
 function buildDemo(now: number): Demo {
@@ -1150,7 +1234,102 @@ function buildDemo(now: number): Demo {
 		configYml: CONFIG_YML,
 		skills: SKILLS,
 		mimes: { pdf: "application/pdf", ipynb: "application/x-ipynb+json" },
+		git: demoGit(),
 		artifacts: demoArtifacts(now),
+		research: demoResearch(now),
+		explain: EXPLAIN_ANSWER,
+	};
+}
+
+/** 选中 fc 线程里「thaw-pending 只在下次快照时收尾」那段后，「解释」得到的回答。 */
+const EXPLAIN_ANSWER =
+	"快照前驱动先在源 microVM 的数据目录写一个 thaw-pending 标记，等解冻完成才删掉。若 orbd 在冻结与解冻之间崩溃，标记会留下来；现在只有下一次快照才会检查它，所以这期间直接唤醒的 microVM 仍处于冻结状态、旧令牌也没轮换。补丁让唤醒路径先看这个标记：有就先解冻并轮换令牌，再交给 orbd。";
+
+/** 后台研究：总开关与 MCP 检查打开；三条跟进话题（自动挖出、手动关注、线程里加的已暂停）。 */
+function demoResearch(now: number): Demo["research"] {
+	return {
+		settings: {
+			enabled: true,
+			web: true,
+			mine: true,
+			internal: true,
+			mcp: true,
+			dailyUsd: 5,
+			preferences:
+				"优先看官方发布说明与上游仓库的 issue / PR；性能数字只认附了测法的一手实测。",
+			mcpTools: { github: ["list_issues", "search_code"] },
+		},
+		topics: [
+			{
+				id: "rtp_01JDREADME0000000000RTP01",
+				kind: "question",
+				title: "Firecracker 新版的快照格式兼容性",
+				question:
+					"Firecracker 下一个版本会不会改快照文件格式？现有快照升级后能否直接恢复，还是要先重建？",
+				baseline: "当时回答：快照只保证同版本恢复，升级前应先重建快照。",
+				origin: "mined",
+				sourceThreadId: T.main,
+				state: "active",
+				intervalSeconds: 86_400,
+				nextRunAt: now + 19 * HOUR,
+				expiresAt: now + 24 * DAY,
+				lastRunAt: now - 5 * HOUR,
+				runCount: 1,
+				lastReport:
+					"发布说明的草稿里写明快照格式版本号会递增，旧快照不保证能恢复；与当时的判断一致，升级前仍需重建快照。",
+				lastSources: [
+					{
+						url: "https://example.com/firecracker-release-notes",
+						title: "Firecracker 发布说明（草稿）",
+						date: "2026-11-21",
+					},
+				],
+				createdAt: now - 20 * HOUR,
+				updatedAt: now - 5 * HOUR,
+			},
+			{
+				id: "rtp_01JDREADME0000000000RTP02",
+				kind: "interest",
+				title: "Tauri 2 的 iOS 原生组件进展",
+				question:
+					"Tauri 2 在 iOS 上对原生导航栏、液态玻璃材质与原生底栏的支持进展。",
+				baseline: "",
+				origin: "manual",
+				state: "active",
+				intervalSeconds: 2 * 86_400,
+				nextRunAt: now + 30 * HOUR,
+				lastRunAt: now - 18 * HOUR,
+				runCount: 1,
+				lastReport:
+					"上游有一个讨论原生导航栏插件接口的 RFC，还没有合入的实现；暂时只能继续走自写的 UIKit 插件。",
+				lastSources: [
+					{
+						url: "https://example.com/tauri-ios-rfc",
+						title: "RFC：iOS 原生导航栏",
+						date: "2026-11-19",
+					},
+				],
+				createdAt: now - 3 * DAY,
+				updatedAt: now - 18 * HOUR,
+			},
+			{
+				id: "rtp_01JDREADME0000000000RTP03",
+				kind: "question",
+				title: "UnifiedPush 分发器的省电白名单",
+				question:
+					"主流 Android 厂商的省电策略会不会杀掉 UnifiedPush 分发器？各家要怎么加白名单？",
+				baseline: "",
+				origin: "thread",
+				sourceThreadId: T.push,
+				state: "paused",
+				intervalSeconds: 7 * 86_400,
+				runCount: 0,
+				lastReport: "",
+				lastSources: [],
+				createdAt: now - 5 * DAY,
+				updatedAt: now - 2 * HOUR,
+			},
+		],
 	};
 }
 
@@ -1455,6 +1634,11 @@ interface MockInternals {
 		items: Map<string, { meta: Json; versions: unknown[] }>;
 		comments: Map<string, unknown[]>;
 	};
+	assistant: { research: Json; topics: Json[] };
+	btwTimers: Map<string, { recordId: string; timer: number }>;
+	btwAsk(socket: unknown, threadId: string, id: string, frame: Json): void;
+	patchBtw(threadId: string, recordId: string, patch: Json): void;
+	frame(threadId: string, frame: Json): void;
 }
 
 /**
@@ -1518,6 +1702,29 @@ function seedDemo(mock: MockServer, demo: Demo) {
 		(a) => a.ok !== false && a.hostId !== "ssh_mock_down",
 	);
 	m.ssh.keys = m.ssh.keys.filter((k) => k.id !== "sshk_mock_legacy");
+
+	// 后台研究：打开总开关与 MCP 检查，换上演示话题
+	m.assistant.research = demo.research.settings;
+	m.assistant.topics = demo.research.topics;
+
+	// 选区「解释」：mock 原本分段回显问题，这里一次给出演示回答
+	const btwAsk = m.btwAsk.bind(m);
+	m.btwAsk = (socket, threadId, id, frame) => {
+		btwAsk(socket, threadId, id, frame);
+		const run = m.btwTimers.get(threadId);
+		if (!run) return;
+		clearInterval(run.timer);
+		m.btwTimers.delete(threadId);
+		m.frame(threadId, {
+			type: "btw_delta",
+			recordId: run.recordId,
+			delta: demo.explain,
+		});
+		m.patchBtw(threadId, run.recordId, {
+			answer: demo.explain,
+			status: "complete",
+		});
+	};
 
 	// Artifacts：换成演示内容（各版本共用最终文件；回收站里的保留）
 	const enc = new TextEncoder();
@@ -1617,6 +1824,29 @@ function seedDemo(mock: MockServer, demo: Demo) {
 			const mime = demo.mimes[String(stat.name).split(".").pop() ?? ""];
 			return Response.json(mime ? { ...stat, mime } : stat, {
 				status: res?.status,
+			});
+		}
+		// fc 线程的 Git 改动：换成这条线程真正改过的文件
+		const git = new RegExp(`^/api/v1/orbs/${demo.git.orb}/git/(status|diff)$`);
+		const op = req.method === "GET" ? git.exec(u.pathname)?.[1] : undefined;
+		if (op === "status") {
+			const res = await orig(req);
+			const st = (await res?.json()) as Json;
+			if (!st.repo) return Response.json(st, { status: res?.status });
+			return Response.json({
+				...st,
+				branch: demo.git.branch,
+				files: demo.git.files.map(({ patch: _p, ...f }) => f),
+			});
+		}
+		if (op === "diff") {
+			const path = u.searchParams.get("path") ?? "";
+			const f = demo.git.files.find((x) => x.path === path);
+			return Response.json({
+				path,
+				kind: "text",
+				patch: f?.patch ?? "",
+				truncated: false,
 			});
 		}
 		return orig(req);
@@ -2514,6 +2744,135 @@ const desktopControl: Shooter = async (scheme) => {
 	);
 };
 
+/** 选区「解释」：选中 fc 线程里的一段回答，解释卡贴着选区给出旁路回答。 */
+const explainShot = (scheme: Scheme) =>
+	capture(mac(scheme, DUO_W, DUO_H, { collapsed: true }), async (page) => {
+		await openThread(page, T.fc);
+		await closePanel(page);
+		await page.evaluate(() => {
+			const para = [
+				...document.querySelectorAll(
+					"[data-testid=transcript] [data-role=assistant] p",
+				),
+			].find((e) => e.textContent?.includes("thaw-pending"));
+			if (!para) throw new Error("没有 thaw-pending 那段回答");
+			const range = document.createRange();
+			range.selectNodeContents(para);
+			const sel = getSelection();
+			sel?.removeAllRanges();
+			sel?.addRange(range);
+			document.dispatchEvent(new Event("selectionchange"));
+			para.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+		});
+		await page.getByRole("button", { name: "解释" }).first().click();
+		await page.getByText("补丁让唤醒路径先看这个标记").first().waitFor();
+		await settle(page, 800);
+	});
+
+/** 改动面板：fc 线程的 Git 改动，选中驱动文件看 diff。 */
+const changesShot = (scheme: Scheme) =>
+	capture(mac(scheme, DUO_W, DUO_H, { collapsed: true }), async (page) => {
+		await openThread(page, T.fc);
+		await panelTab(page, "changes").click();
+		await page.getByRole("button", { name: "面板最大化", exact: true }).click();
+		await page
+			.getByRole("button", { name: /firecracker\.go/ })
+			.first()
+			.click();
+		await settle(page, 1_200);
+	});
+
+const explainChanges: Shooter = async (scheme) =>
+	duo(scheme, await explainShot(scheme), await changesShot(scheme), [
+		["选中即问", "解释、翻译或追问，旁路回答不打断主回合"],
+		["Git 改动", "按文件看 diff，逐个暂存，推送与同步"],
+	]);
+
+/** 项目主页与命令面板。 */
+const projectPalette: Shooter = async (scheme) =>
+	duo(
+		scheme,
+		await capture(
+			mac(scheme, DUO_W, DUO_H, { collapsed: true }),
+			async (page) => {
+				await go(
+					page,
+					`/projects/${PROJECT_ORYN}`,
+					"[data-testid=project-home] [data-testid=project-thread-row]",
+					1_400,
+				);
+			},
+		),
+		await capture(mac(scheme, DUO_W, DUO_H), async (page) => {
+			await openThread(page, T.fc);
+			await page.getByTestId("sidebar-search").click();
+			await page.getByRole("dialog").last().waitFor();
+			await page.keyboard.type("快照");
+			await settle(page, 1_000);
+		}),
+		[
+			["项目主页", "等你回复的线程、PR 与 CI、setup 失败与成本"],
+			["命令面板 Ctrl/⌘ K", "跳转线程与设置，全文搜索对话正文"],
+		],
+	);
+
+/** 后台研究：主线的「跟进」话题与设置里的研究卡片。 */
+const research: Shooter = async (scheme) =>
+	duo(
+		scheme,
+		await capture(mac(scheme, DUO_W, DUO_H), async (page) => {
+			await go(page, `/assistant/${T.main}`, "[data-testid=transcript]", 1_000);
+			await page.getByRole("button", { name: "跟进" }).click();
+			await page
+				.getByRole("dialog")
+				.getByRole("button", {
+					name: "Firecracker 新版的快照格式兼容性",
+					exact: true,
+				})
+				.waitFor();
+			await settle(page, 800);
+		}),
+		await capture(mac(scheme, DUO_W, DUO_H), async (page) => {
+			await go(page, "/settings/assistant", "main", 1_400);
+			await page
+				.getByText("后台研究", { exact: true })
+				.first()
+				.evaluate((e) => e.scrollIntoView({ block: "start" }));
+			await settle(page, 800);
+		}),
+		[
+			["跟进", "从对话里挑出的问题与长期关注，有新发现才说"],
+			["后台研究", "四条管线、MCP 工具白名单与每日花费上限"],
+		],
+	);
+
+/** Boxes：总览与单台 box。 */
+const boxes: Shooter = async (scheme) =>
+	duo(
+		scheme,
+		await capture(
+			mac(scheme, DUO_W, DUO_H, { collapsed: true }),
+			async (page) => {
+				await go(page, "/boxes", "[data-testid=boxes-list]", 1_400);
+			},
+		),
+		await capture(
+			mac(scheme, DUO_W, DUO_H, { collapsed: true }),
+			async (page) => {
+				await go(
+					page,
+					"/boxes/box_01JDBX00000000000WORKBENCH",
+					"[data-testid=box-app-row]",
+					1_400,
+				);
+			},
+		),
+		[
+			["Boxes", "常驻机器与上面的应用，按运行时段启停"],
+			["单台 box", "每个应用独立地址、密钥、日志与回滚"],
+		],
+	);
+
 const SHOOTERS: Record<Group, Shooter> = {
 	hero,
 	workbench,
@@ -2525,6 +2884,10 @@ const SHOOTERS: Record<Group, Shooter> = {
 	assistant,
 	settings,
 	"desktop-control": desktopControl,
+	"explain-changes": explainChanges,
+	"project-palette": projectPalette,
+	research,
+	boxes,
 };
 
 // ---------------------------------------------------------------- 主流程
@@ -2591,7 +2954,16 @@ async function warmUp() {
 		width: 1280,
 		height: 800,
 	});
-	for (const p of ["/", `/t/${T.fc}`, "/inbox", "/artifacts", "/stats"]) {
+	for (const p of [
+		"/",
+		`/t/${T.fc}`,
+		"/inbox",
+		"/artifacts",
+		"/stats",
+		"/boxes",
+		`/projects/${PROJECT_ORYN}`,
+		"/settings/assistant",
+	]) {
 		await page.goto(BASE + p).catch(() => {});
 		await page.waitForTimeout(1_500);
 	}
