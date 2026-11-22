@@ -53,22 +53,18 @@ var recordNameRe = regexp.MustCompile(`^(\d{8}-\d{6})(?:-(\d+))?\.mp4$`)
 // xdpyinfoDimsRe 匹配 xdpyinfo 输出里的 `dimensions:    1280x800 pixels`。
 var xdpyinfoDimsRe = regexp.MustCompile(`dimensions:\s+(\d+)x(\d+)\s+pixels`)
 
-// deskRecorders 把录制器挂到 desktop 上（懒创建；每个 Runtime 至多一个 desktop）。
-var deskRecorders sync.Map // *desktop → *deskRecorder
-
-// recorder 返回 d 的录制器。
-func (d *desktop) recorder() *deskRecorder {
-	if v, ok := deskRecorders.Load(d); ok {
-		return v.(*deskRecorder)
-	}
-	v, _ := deskRecorders.LoadOrStore(d, &deskRecorder{
+// newDeskRecorder 创建 d 的录制器（newDesktop 里调用一次）。
+func newDeskRecorder(d *desktop) *deskRecorder {
+	return &deskRecorder{
 		d:     d,
 		limit: recordMaxDuration,
 		grace: recordStopGrace,
 		keep:  recordKeep,
-	})
-	return v.(*deskRecorder)
+	}
 }
+
+// recorder 返回 d 的录制器。
+func (d *desktop) recorder() *deskRecorder { return d.rec }
 
 // deskRecorder 是桌面的录制器。limit / grace / keep 只在 mu 下读写（测试里缩短）。
 type deskRecorder struct {

@@ -102,6 +102,8 @@ type desktop struct {
 
 	ctlT DeskControlTimings
 
+	rec *deskRecorder // 录制器（deskrecord.go）
+
 	// emitMu 让 OnDesktopState 回调按状态修改的顺序发生；last 是上一次交出的快照（JSON），相同则不重复交出。
 	emitMu sync.Mutex
 	last   []byte
@@ -153,6 +155,7 @@ func newDesktop(r *Runtime) *desktop {
 		d.backoff = defaultDesktopBackoff
 	}
 	d.sandbox = r.cfg.DesktopUserNS()
+	d.rec = newDeskRecorder(d)
 	d.ctlT = defaultDeskControlTimings
 	if t := r.cfg.DesktopControlTimings; t != nil {
 		d.ctlT = *t
