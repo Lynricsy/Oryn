@@ -18,7 +18,7 @@
 - Desktop 标签的画面下方有一条网页绘制的任务栏，依次是 Chromium、终端、VS Code、文件管理器、文本编辑器、LibreOffice。应用在运行时图标下有圆点；点击可以启动、切到前台或最小化；一个应用有多个窗口时点击弹出窗口列表。没有对应图标的窗口归到末尾的「其它窗口」。
 - 窗口都带标题栏（最小化、最大化、关闭），桌面背景是中性浅灰。
 - 有 session dbus 和 AT-SPI，omp computer 能读到上述应用的无障碍树。
-- 仓库里放了 `.oryn/desktop/resume` 时，每次桌面就绪都会执行一次（参考 Amp 的 `.agents/desktop/resume`）。
+- 线程的工作目录（有仓库时缺省是 `$HOME/workspace/repo`，也可能是项目自定义的 workdir）里有 `.oryn/desktop/resume` 时，每次显示栈启动、工作区也就绪之后执行一次（参考 Amp 的 `.agents/desktop/resume`）。
 - agent 能录桌面：线程里用 `desktop_record` 工具，对话中出现可直接播放的视频卡片；助手的电脑用 `computer_record`，录完存进文件库。
 
 **已定的取舍**（实现时不再改）：
@@ -54,6 +54,7 @@
 - A2 openbox 处理 `_NET_ACTIVE_WINDOW` 时会把最小化的窗口还原到前台（EWMH 规定的行为）。不成立时步骤 1.5 的「激活」要先发 `_NET_WM_STATE` 去掉 `_NET_WM_STATE_HIDDEN`。
 - A3 关掉 LibreOffice 首次启动的欢迎对话框，靠 `/usr/lib/libreoffice/share/registry/` 下的一个 xcd 文件就够了，内容是 `org.openoffice.Setup/Product/ooSetupLastVersion` 等于镜像里的版本号，加上 `org.openoffice.Office.Common/Misc/ShowTipOfTheDay=false`。不成立时只影响步骤 1.2 的验收截图。
 - A4 GTK3 应用只要有 `DBUS_SESSION_BUS_ADDRESS` 和 `GTK_A11Y=atspi`，就会自己经 dbus 拉起 `at-spi-bus-launcher`（探针里就是这样拿到总线的）。不成立时步骤 1.3 要由 orbd 自己拉起 `/usr/lib/at-spi-bus-launcher`。
+- A5 每个 orbd 进程在 orb 进入 `ready` 之前都会收到一次 `setup.run` 或 `resume.run`（`DesktopHooks.BeforeReady` 的注释写明它在 setup / resume 成功之后调用），因此「`runSetupLocked` 返回过一次」可以当作「工作区已就绪」。不成立时步骤 1.6 只看 home 脚本的那条路径会永远等不到触发，要改成另找就绪信号。
 
 ## 通用约定
 
@@ -159,10 +160,27 @@
 
 ### 步骤 1.6 — orbd：桌面 resume 脚本
 
+> 修订（执行前，2026-11-22）：原文写死 `$HOME/workspace/.oryn/desktop/resume`，并在显示就绪时立即执行，有两处错误。① `internal/orbdrt/setup.go` 的 `runSetupLocked` 定工作目录：项目自定义 workdir 优先，有仓库时缺省是 `$HOME/workspace/repo`，都没有才是 `$HOME/workspace`。② `Runtime.Run` 先启动显示栈，首次 checkout 在之后的 `setup.run` 里才完成；显示就绪那一刻仓库里的脚本可能还不存在。改成下面的写法。
+
 依赖：1.3（显示生命周期）。
-文件：改 `internal/orbdrt/desktop.go`；新建 `internal/orbdrt/deskresume_test.go`。
-做什么：每次 openbox 起来（显示就绪）后，按顺序找第一个存在且可执行的 `$HOME/workspace/.oryn/desktop/resume`、`$HOME/.oryn/desktop/resume`。在独立进程组里执行，工作目录是脚本所在仓库的根（对第二个路径是 `$HOME`），环境用 `baseEnv`，输出进桌面日志 `resume.log`。orbd 最多等它 60 秒：超时只记「仍在运行」，不杀进程（脚本可能拉起了常驻应用）；退出码非 0 记警告。显示失效时不额外处理，X 一断开，它起的 GUI 进程会自己退出。
-验收：`go test ./internal/orbdrt/ -run 'TestDeskResume' -count=1` 通过。用例：仓库脚本存在时只执行它；只有 home 脚本时执行 home 的；脚本不可执行时跳过；脚本里 `sleep 120` 不阻塞 `displayReady`。
+文件：改 `internal/orbdrt/desktop.go`、`internal/orbdrt/setup.go`（`runSetupLocked` 返回时通知桌面）；新建 `internal/orbdrt/deskresume.go`、`internal/orbdrt/deskresume_test.go`。
+产出：
+- `desktop.displayGen uint64`（受 `mu` 保护）：`runDisplayOnce` 每次走到 openbox 起来就加 1。
+- `desktop.resumedGen uint64`：最近一次已执行 resume 的显示代数。
+- `(*desktop).workspaceReady(workdir string)`：由 `runSetupLocked` 在返回前调用（成功、失败都调；`setup.run`、`resume.run` 都调），记下当时的 `r.workdir`，并标记「工作区已就绪」。
+做什么：
+- 触发条件：显示已就绪、工作区已就绪、`displayGen > resumedGen`，三者同时成立时执行一次，然后 `resumedGen = displayGen`。显示就绪和 `workspaceReady` 两处都检查一次条件，谁后到谁触发。
+- 效果：冻结（docker pause）后唤醒，代数不变，不会重复执行，已开的应用原样保留；停机再启动是新的 orbd 进程，代数从头算，等 `resume.run` 返回后执行；显示栈崩溃重启，代数加 1，工作区已就绪，立即重新执行；同一代数里又来一次 `setup.run`（例如 repo-update），不重复执行。
+- 脚本查找：按顺序找第一个存在且可执行的 `<workdir>/.oryn/desktop/resume`、`$HOME/.oryn/desktop/resume`。`workdir` 取 `workspaceReady` 记下的值。前者的工作目录是 `workdir`，后者是 `$HOME`。
+- 执行：独立进程组，环境用 `baseEnv`，输出进桌面日志 `resume.log`。orbd 最多等 60 秒，超时只记「仍在运行」，不杀进程（脚本可能拉起了常驻应用）；退出码非 0 记警告。显示失效时不额外处理，X 一断开，它起的 GUI 进程会自己退出。
+验收：`go test ./internal/orbdrt/ -run 'TestDeskResume' -count=1` 通过。用例全部用假显示栈和直接调用 `workspaceReady`，不需要真的 setup：
+- 显示先就绪、`workspaceReady` 后到：在 `workspaceReady` 之后执行。
+- `workspaceReady` 先到、显示后就绪：在显示就绪之后执行。
+- workdir 是 `$HOME/workspace/repo` 与自定义目录两种情况：都执行 `<workdir>` 下的脚本，`$HOME/workspace` 下的同名脚本不执行。
+- 只有 home 脚本时执行它，工作目录是 `$HOME`。
+- 脚本不可执行时跳过。
+- 同一代数里第二次 `workspaceReady` 不重复执行；显示重启（代数加 1）后再执行一次。
+- 脚本里 `sleep 120` 不阻塞 `displayReady`。
 
 ## 阶段 ② — 控制面与网页任务栏
 
@@ -268,7 +286,7 @@
 - C6 让线程执行 `desktop_record start`，等 3 秒，再 `stop`；对话里出现 video，`duration > 2`。
 - C7 助手对话执行 `computer_record start/stop`，文件库里多一个 mp4。
 - C8 agent 回合进行中点任务栏，弹出接管确认。
-- C9 在 `$HOME/workspace/.oryn/desktop/resume` 写 `xfce4-terminal &`，重启 orb；桌面就绪后终端窗口自动出现。
+- C9 新建一个托管项目：在临时目录 `git init`，提交可执行的 `.oryn/desktop/resume`（内容是 `xfce4-terminal --title=m25-resume &`），用 `oryn project create --push` 推成托管项目。在这个项目里新建线程，打开 Desktop 标签：60 秒内出现标题为 `m25-resume` 的窗口，且 `docker exec` 进 orb 确认窗口所在进程的 cwd 等于线程工作目录（`readlink /proc/<pid>/cwd`，结果应为 `$HOME/workspace/repo`）。再冻结并唤醒这个 orb：`m25-resume` 窗口仍然只有一个。最后停机再启动：等到 ready 后又出现一个 `m25-resume` 窗口。
 - C10 截图：Desktop 标签 1280 宽亮色，打开 VS Code 与终端各一个窗口，存到 `docs/assets/desktop-dock-light.png`。
 验收：`cd web && bun run accept:m25` 打印 C1–C10 全部 PASS。
 
@@ -324,3 +342,7 @@ graph LR
 - 阶段 ② 做完：任务栏可用。旧 orbd 没有 `apps` 字段，界面退回中央的「启动浏览器」按钮。
 - 阶段 ③ 是纯新增的工具，不调用就不起作用。
 - 任何阶段都可以停：已合入的部分各自完整；未开始的阶段只缺对应功能，不留下半截接口。
+
+## 修订记录
+
+- 2026-11-22（执行前）：步骤 1.6 改成按实际工作目录找脚本，并在显示栈与工作区都就绪之后按显示代数去重执行；新增假设 A5；验收 C9 改为新建真实托管项目来验证，不再往固定路径预埋脚本。原因见步骤 1.6 开头的修订说明。
