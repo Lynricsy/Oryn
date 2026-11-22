@@ -3,6 +3,8 @@ package coord
 import (
 	"net/url"
 	"time"
+
+	"github.com/Lynricsy/Oryn/internal/agentcfg"
 )
 
 // opClass 是全局助手对一个 REST 操作的权限级别。
@@ -274,7 +276,9 @@ func buildAPIPolicy() map[string]opPolicy {
 	set("settings", opRead, none, "getGitIdentity", "getAgentIdentity", "listRoleIdentities", "listAgentAvatars", "getComposerPrefs",
 		"getSelectionActions", "getModelCatalog", "getUserIdentity", "listAgentConfigFiles", "getAgentConfigApplyStatus", "listSecrets", "listDevices")
 	set("settings", opRead, opPolicy{Check: func(path map[string]string) error {
-		if path["path"] == "mcp.json" {
+		// 与 Home.Get 同一套规范化（agentcfg.CleanPath）：./mcp.json、x/../mcp.json 之类的等价路径同样拒绝。
+		// 规范化失败的路径 Home.Get 也会以同一错误拒绝、读不到文件，交给处理器回原有错误码。
+		if c, err := agentcfg.CleanPath(path["path"]); err == nil && c == agentcfg.MCPFile {
 			return errf(CodeNotAvailable, "MCP credentials stay outside your sandbox; use listAssistantMcpServers")
 		}
 		return nil
