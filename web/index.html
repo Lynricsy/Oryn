@@ -5,7 +5,7 @@
 		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 		<link rel="manifest" href="/manifest.webmanifest" />
 		<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-		<!-- interactive-widget=resizes-content：Chromium / Firefox 弹出软键盘时缩小布局视口，页面不被平移（iOS 不认，见 lib/viewport.ts） -->
+		<!-- interactive-widget=resizes-content：Chromium / Firefox 弹出软键盘时缩小布局视口与 dvh，页面不被平移；实测 iOS 27.2 只缩布局视口（innerHeight）、不缩 dvh，键盘让位见 lib/viewport.ts 的 keyboardInset -->
 		<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
 		<meta name="theme-color" content="#eef0f4" />
 		<meta name="color-scheme" content="light dark" />

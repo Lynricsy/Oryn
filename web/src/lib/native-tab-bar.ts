@@ -76,6 +76,9 @@ export function slotCovered(slot: Element, win: Window): boolean {
 	if (vv && win.innerHeight - vv.height - vv.offsetTop > 1) return true;
 	const r = slot.getBoundingClientRect();
 	if (r.width <= 0 || r.height <= 0) return true;
+	// 实测 iOS 27.2（带 interactive-widget=resizes-content）弹键盘时 innerHeight 跟着视觉视口缩，上一条量不出键盘；
+	// 但应用壳（h-dvh）不缩，胶囊沉到视觉视口底边以下，同样算被键盘盖住
+	if (vv && r.top + r.height > vv.offsetTop + vv.height + 1) return true;
 	const y = r.top + r.height / 2;
 	for (const f of [0.15, 0.5, 0.85]) {
 		const x = r.left + r.width * f;

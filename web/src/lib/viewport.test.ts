@@ -120,6 +120,17 @@ describe("keyboardInset", () => {
 	it("双指放大时视觉视口变矮不算键盘", () => {
 		expect(keyboardInset(win(400, 120, 2))).toBe(0);
 	});
+
+	it("innerHeight 随键盘缩（iOS 27.2 实测）而应用壳仍整屏高时，按量出的壳高算", () => {
+		const shrunk = {
+			innerHeight: 478,
+			visualViewport: { height: 478, offsetTop: 0, scale: 1 },
+		} as unknown as Window;
+		expect(keyboardInset(shrunk)).toBe(0);
+		expect(keyboardInset(shrunk, 874)).toBe(396);
+		// Chromium：壳（dvh）跟着缩，壳自己让开了，不再额外让位
+		expect(keyboardInset(shrunk, 478)).toBe(0);
+	});
 });
 
 describe("settleViewport", () => {

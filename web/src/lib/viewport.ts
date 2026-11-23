@@ -114,15 +114,19 @@ export function useViewportSegments(): DualSegments | null {
 const SCALE_EPS = 0.01;
 
 /**
- * 软键盘遮住的布局视口底部高度（px）= 布局视口高 − 视觉视口高。按视觉视口贴着顶算，不扣它被推走的偏移：
+ * 软键盘遮住的应用壳底部高度（px）= 壳高 − 视觉视口高。按视觉视口贴着顶算，不扣它被推走的偏移：
  * 推走会由 `settleViewport` 拉回，拉回后输入区正好让出这么多。双指放大时量不准，记 0。
+ * 壳高取 `innerHeight` 与 `shell`（量出的 100dvh，应用壳 `h-dvh` 的实际高度）的大者：实测 iOS 27.2 模拟器（带
+ * `interactive-widget=resizes-content`）弹键盘时 `innerHeight` 跟着视觉视口缩，但 dvh 不缩、壳仍是整屏高，
+ * 只拿 `innerHeight` 会把键盘算成 0、输入坞被压在键盘底下；Chromium 里两者一起缩，壳自己就让开了，结果是 0。
  */
 export function keyboardInset(
 	win: Pick<Window, "innerHeight" | "visualViewport">,
+	shell = 0,
 ): number {
 	const vv = win.visualViewport;
 	if (!vv || Math.abs(vv.scale - 1) > SCALE_EPS) return 0;
-	return Math.max(0, win.innerHeight - vv.height);
+	return Math.max(0, Math.max(win.innerHeight, shell) - vv.height);
 }
 
 /**
@@ -158,11 +162,17 @@ export function settleViewport(
 export function installViewportTracking(): () => void {
 	const vv = window.visualViewport;
 	const root = document.documentElement;
+	// 量 100dvh 的隐形尺子（与应用壳 h-dvh 同一单位）：keyboardInset 的壳高
+	const ruler = document.createElement("div");
+	ruler.setAttribute("aria-hidden", "true");
+	ruler.style.cssText =
+		"position:fixed;top:0;left:0;width:0;height:100dvh;visibility:hidden;pointer-events:none";
+	(document.body ?? root).append(ruler);
 	const update = () => {
 		const height = vv?.height ?? window.innerHeight;
 		root.style.setProperty(
 			"--kb-inset",
-			`${Math.round(keyboardInset(window))}px`,
+			`${Math.round(keyboardInset(window, ruler.getBoundingClientRect().height))}px`,
 		);
 		root.style.setProperty("--vvh", `${Math.round(height)}px`);
 		root.dataset.bp = breakpointFor(window.innerWidth);
@@ -185,6 +195,7 @@ export function installViewportTracking(): () => void {
 		window.removeEventListener("resize", update);
 		window.removeEventListener("scroll", settle);
 		mq?.removeEventListener?.("change", update);
+		ruler.remove();
 	};
 }
 

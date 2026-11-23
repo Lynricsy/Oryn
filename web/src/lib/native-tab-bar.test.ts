@@ -384,7 +384,10 @@ describe("控制器", () => {
 });
 
 describe("slotCovered", () => {
-	function setup(vv: { height: number; offsetTop: number } | null = null) {
+	function setup(
+		vv: { height: number; offsetTop: number } | null = null,
+		innerHeight = 852,
+	) {
 		const slot = document.createElement("div");
 		const inner = document.createElement("button");
 		slot.append(inner);
@@ -395,7 +398,7 @@ describe("slotCovered", () => {
 		);
 		const hit = vi.fn((_x: number, _y: number): Element | null => inner);
 		const win = {
-			innerHeight: 852,
+			innerHeight,
 			visualViewport: vv,
 			document: { elementFromPoint: hit },
 		} as unknown as Window;
@@ -434,6 +437,12 @@ describe("slotCovered", () => {
 		const empty = setup();
 		empty.rect.width = 0;
 		expect(slotCovered(empty.slot, empty.win)).toBe(true);
+	});
+
+	it("innerHeight 随键盘缩、胶囊沉到视觉视口底边以下 → 遮挡", () => {
+		const kb = setup({ height: 478, offsetTop: 0 }, 478);
+		expect(slotCovered(kb.slot, kb.win)).toBe(true);
+		expect(kb.hit).not.toHaveBeenCalled();
 	});
 
 	it("判定为遮挡时（调试构建）记下命中的元素与取点", () => {
