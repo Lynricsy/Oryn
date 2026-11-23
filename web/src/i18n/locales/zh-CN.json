@@ -401,7 +401,6 @@
 		"label": "加标签",
 		"messageActions": "消息操作",
 		"meta": {
-			"model": "模型切换为 {{model}}",
 			"modes": {
 				"goalBudget": "目标预算改为 {{budget}} token",
 				"goalBudgetCleared": "目标预算已取消",
@@ -422,7 +421,6 @@
 				"vibe": "进入 vibe 模式",
 				"vibeExited": "已退出 vibe 模式"
 			},
-			"thinking": "思考级别：{{level}}",
 			"title": "标题：{{title}}",
 			"ttsr": "注入规则：{{rules}}"
 		},

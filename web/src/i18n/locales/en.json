@@ -401,7 +401,6 @@
 		"label": "Label",
 		"messageActions": "Message actions",
 		"meta": {
-			"model": "Model changed to {{model}}",
 			"modes": {
 				"goalBudget": "Goal budget set to {{budget}} tokens",
 				"goalBudgetCleared": "Goal budget removed",
@@ -422,7 +421,6 @@
 				"vibe": "Entered vibe mode",
 				"vibeExited": "Left vibe mode"
 			},
-			"thinking": "Thinking level: {{level}}",
 			"title": "Title: {{title}}",
 			"ttsr": "Rules injected: {{rules}}"
 		},

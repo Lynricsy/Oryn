@@ -177,107 +177,27 @@ describe("layoutTurns", () => {
 		).toBe(false);
 	});
 
-	describe("covered：回合头已显示同一个值的切换行", () => {
+	it("模型 / 思考级别切换行一律不渲染：回合中途、还没有回复、模型不同的也一样；其它元信息行照常", () => {
 		const meta = (seq: number, entry: JsonRecord): TranscriptItem => ({
 			kind: "meta",
 			key: `e${seq}`,
 			seq,
 			entry,
 		});
-		const model = (seq: number, path: string) =>
-			meta(seq, { type: "model_change", model: path });
-		const level = (seq: number, thinkingLevel: string) =>
-			meta(seq, { type: "thinking_level_change", thinkingLevel });
 		const opus = { model: "claude-opus-5-5", provider: "anthropic" };
-
-		it("切换后发消息，回合头画出同一模型与级别：两行都覆盖", () => {
-			const { covered } = layoutTurns([
-				model(1, "anthropic/claude-opus-5-5"),
-				level(2, "high"),
-				user(3),
-				msg(4, assistant("a", u, opus)),
-			]);
-			expect([...covered]).toEqual([0, 1]);
-		});
-
-		it("模型 id 自带命名空间时按 provider/id 整段比对", () => {
-			const { covered } = layoutTurns([
-				model(1, "openrouter/qwen/qwen3-max"),
-				user(2),
-				msg(
-					3,
-					assistant("a", u, {
-						model: "qwen/qwen3-max",
-						provider: "openrouter",
-					}),
-				),
-			]);
-			expect([...covered]).toEqual([0]);
-		});
-
-		it("切换后还没有回复：不覆盖", () => {
-			const { covered } = layoutTurns([
-				user(1),
-				msg(2, assistant("a", u, opus)),
-				model(3, "anthropic/claude-sonnet-5"),
-				level(4, "low"),
-			]);
-			expect(covered.size).toBe(0);
-		});
-
-		it("回合消息缺模型（回合头没有胶囊）：不覆盖", () => {
-			const { covered } = layoutTurns([
-				model(1, "anthropic/claude-opus-5-5"),
-				level(2, "high"),
-				user(3),
-				msg(4, { role: "assistant", content: [{ type: "text", text: "a" }] }),
-			]);
-			expect(covered.size).toBe(0);
-		});
-
-		it("回合实际模型与切换不同：模型行不覆盖，级别相同的仍覆盖", () => {
-			const { covered } = layoutTurns([
-				model(1, "anthropic/claude-sonnet-5"),
-				level(2, "high"),
-				user(3),
-				msg(4, assistant("a", u, opus)),
-			]);
-			expect([...covered]).toEqual([1]);
-		});
-
-		it("回合中途的切换（回退）不覆盖，即使下一个回合头是同一模型", () => {
-			const { covered } = layoutTurns([
-				user(1),
-				msg(2, assistant("a", u, opus)),
-				model(3, "anthropic/claude-sonnet-5"),
-				msg(
-					4,
-					assistant("b", u, {
-						model: "claude-sonnet-5",
-						provider: "anthropic",
-					}),
-				),
-				user(5),
-				msg(
-					6,
-					assistant("c", u, {
-						model: "claude-sonnet-5",
-						provider: "anthropic",
-					}),
-				),
-			]);
-			expect(covered.size).toBe(0);
-		});
-
-		it("被更新的同类切换取代的行不覆盖", () => {
-			const { covered } = layoutTurns([
-				level(1, "high"),
-				level(2, "low"),
-				user(3),
-				msg(4, assistant("a", u, opus)),
-			]);
-			expect([...covered]).toEqual([1]);
-		});
+		const { hidden, models } = layoutTurns([
+			meta(1, { type: "model_change", model: "anthropic/claude-sonnet-5" }),
+			meta(2, { type: "thinking_level_change", thinkingLevel: "high" }),
+			user(3),
+			msg(4, assistant("a", u, opus)),
+			meta(5, { type: "model_change", model: "anthropic/claude-sonnet-5" }),
+			msg(6, assistant("b", u, opus)),
+			meta(7, { type: "title_change", title: "t" }),
+			meta(8, { type: "thinking_level_change", thinkingLevel: "low" }),
+		]);
+		expect([...hidden]).toEqual([0, 1, 4, 7]);
+		// 隐藏的级别行照常决定回合头的思考角标
+		expect(models.get(3)?.thinking).toBe("high");
 	});
 
 	it("流式增量只重算进行中的回合：历史回合的汇总对象引用不变，尾回合结束后汇总正确", () => {

@@ -16,15 +16,12 @@ describe("modelLabel", () => {
 			short: "Sonnet 5",
 			full: "Claude Sonnet 5 (anthropic/claude-sonnet-5)",
 		});
-		// model_change 条目是 provider/id 路径
-		expect(modelLabel({ path: "anthropic/claude-sonnet-5" }, known)).toEqual({
-			short: "Sonnet 5",
-			full: "Claude Sonnet 5 (anthropic/claude-sonnet-5)",
-		});
 	});
 
 	it("不认识的模型按 id 去掉系列名，悬停给完整路径", () => {
-		expect(modelLabel({ path: "anthropic/claude-opus-5-5" }, known)).toEqual({
+		expect(
+			modelLabel({ id: "claude-opus-5-5", provider: "anthropic" }, known),
+		).toEqual({
 			short: "opus-5-5",
 			full: "anthropic/claude-opus-5-5",
 		});
@@ -39,11 +36,7 @@ describe("modelLabel", () => {
 		expect(
 			modelLabel({ id: "qwen/qwen3-max", provider: "openrouter" })?.full,
 		).toBe("openrouter/qwen/qwen3-max");
-		// model_change：只有第一段是 provider，其后整段是模型 id
-		expect(modelLabel({ path: "openrouter/qwen/qwen3-max" })?.full).toBe(
-			"openrouter/qwen/qwen3-max",
-		);
-		// 用完整 id 匹配当前会话模型，两种输入形状都借到显示名
+		// 用完整 id 匹配当前会话模型，借到显示名
 		const qwen = {
 			id: "qwen/qwen3-max",
 			name: "Qwen3 Max",
@@ -56,15 +49,9 @@ describe("modelLabel", () => {
 		expect(
 			modelLabel({ id: "qwen/qwen3-max", provider: "openrouter" }, qwen),
 		).toEqual(expected);
-		expect(modelLabel({ path: "openrouter/qwen/qwen3-max" }, qwen)).toEqual(
-			expected,
-		);
 	});
 
 	it("空引用返回 null", () => {
 		expect(modelLabel({ id: "" })).toBeNull();
-		expect(modelLabel({ path: "" })).toBeNull();
-		expect(modelLabel({ path: "/" })).toBeNull();
-		expect(modelLabel({ path: "anthropic/" })).toBeNull();
 	});
 });

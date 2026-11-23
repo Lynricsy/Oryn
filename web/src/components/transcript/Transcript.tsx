@@ -115,7 +115,6 @@ const REVEAL_RING = [
 ];
 
 const META_ICON: Record<string, IconName> = {
-	thinking_level_change: "brain",
 	mode_change: "list",
 	title_change: "edit",
 	ttsr_injection: "bolt",
@@ -129,23 +128,8 @@ function MetaLine({
 	prevMode?: JsonRecord;
 }) {
 	const { t } = useTranslation();
-	const { threadId } = useTranscriptContext();
-	const known = useThread(threadId, (s) => s.state?.model);
 	let text = "";
-	let title: string | undefined;
 	switch (entry.type) {
-		case "model_change": {
-			// 条目里是 "provider/modelId"：界面写短名（与头像行、输入坞一致），完整 id 进悬停提示
-			const label = modelLabel({ path: String(entry.model ?? "") }, known);
-			text = t("transcript.meta.model", { model: label?.short ?? "" });
-			title = label?.full;
-			break;
-		}
-		case "thinking_level_change":
-			text = t("transcript.meta.thinking", {
-				level: String(entry.thinkingLevel ?? entry.configured ?? "off"),
-			});
-			break;
 		case "mode_change": {
 			const d = describeModeChange(entry, prevMode);
 			text = t(d.key, d.params ?? {});
@@ -174,16 +158,9 @@ function MetaLine({
 				aria-hidden
 				className="inline-grid h-[18px] w-[18px] shrink-0 place-items-center rounded bg-inset text-muted"
 			>
-				{entry.type === "model_change" ? (
-					// model 是 "provider/modelId"，ModelLogo 会按路径识别
-					<ModelLogo model={String(entry.model ?? "")} size={11} />
-				) : (
-					<Icon name={icon} size={11} />
-				)}
+				<Icon name={icon} size={11} />
 			</span>
-			<span className="min-w-0 truncate" title={title}>
-				{text}
-			</span>
+			<span className="min-w-0 truncate">{text}</span>
 		</div>
 	);
 }
@@ -385,9 +362,8 @@ function cachedTurnUsage(messages: readonly JsonRecord[]): TurnUsage {
  * 回合最后一行是已结束的助手消息时，在它下面挂整回合的累计用量脚注（回合仍在进行时不挂）。
  * 连续的用户消息只有第一条放用户头像（`userStarts`）。
  * `openStart` 是最后一个助手回合的起点，且其后再没有用户消息 / 会话分隔（线程工作中时就是正在进行的回合）。
- * `covered` 是被回合头覆盖的模型 / 思考级别切换行：它与回合头之间只隔着用户消息与其它元信息行（没有 agent 内容、
- * 没有更新的同类切换），且回合头确实画出了同一个值（模型胶囊的 `provider/id` 相同；思考角标的级别相同）。
- * 回合中途的切换（回退、prewalk）、切换后还没有回复、回合消息缺模型或实际模型不同的切换都不在其中。
+ * `hidden` 是模型 / 思考级别切换行：回合头的模型胶囊与思考角标、输入坞已经显示了它们，单独成行只是噪音；
+ * 行照常参与上面的推导（各回合的思考级别取自其中的 thinking_level_change），只是不渲染。
  * 流式时每个增量都会重跑：已结束回合的汇总走 `cachedTurnUsage`，引用保持不变。
  */
 export function layoutTurns(items: readonly MainlineRow[]): {
@@ -399,8 +375,8 @@ export function layoutTurns(items: readonly MainlineRow[]): {
 	openStart: number | undefined;
 	/** 行里出现过 thinking_level_change：没出现过时各回合的级别就是会话当前级别 */
 	thinkingSeen: boolean;
-	/** 回合头已显示同一个值的切换行（不渲染，但照常参与上面的推导） */
-	covered: Set<number>;
+	/** 不渲染的行（模型 / 思考级别切换），照常参与上面的推导 */
+	hidden: Set<number>;
 } {
 	const starts = new Set<number>();
 	const userStarts = new Set<number>();
@@ -420,26 +396,15 @@ export function layoutTurns(items: readonly MainlineRow[]): {
 	};
 	let level: string | undefined;
 	let thinkingSeen = false;
-	const covered = new Set<number>();
-	// 等下一个回合头的切换行（行号 + 值）；遇到 agent 内容、折叠行或会话分隔即作废
-	type Pending = { i: number; v: string } | undefined;
-	let pendModel: Pending;
-	let pendLevel: Pending;
-	// 本回合起点冻结的候选，回合头的模型确定时比对
-	let headModel: Pending;
-	let headLevel: Pending;
+	const hidden = new Set<number>();
 	items.forEach((it, i) => {
-		if (it.kind === "meta" && it.entry.type === "model_change") {
-			const v = it.entry.model;
-			pendModel =
-				typeof v === "string" && v.trim() ? { i, v: v.trim() } : undefined;
-		}
+		if (it.kind === "meta" && it.entry.type === "model_change") hidden.add(i);
 		if (it.kind === "meta" && it.entry.type === "thinking_level_change") {
 			// thinkingLevel 是实际生效的具体级别；auto 模式下它缺省时退回 configured
 			const v = it.entry.thinkingLevel ?? it.entry.configured;
 			level = typeof v === "string" && v ? v : undefined;
 			thinkingSeen = true;
-			pendLevel = level ? { i, v: level } : undefined;
+			hidden.add(i);
 		}
 		if (isUserRow(it)) {
 			const prev = items[i - 1];
@@ -452,7 +417,6 @@ export function layoutTurns(items: readonly MainlineRow[]): {
 		if (it.kind === "session_divider" || it.kind === "fold") {
 			close();
 			openStart = undefined;
-			pendModel = pendLevel = undefined;
 			return;
 		}
 		if (!isAgentRow(it)) return;
@@ -460,10 +424,7 @@ export function layoutTurns(items: readonly MainlineRow[]): {
 			starts.add(i);
 			openStart = i;
 			start = i;
-			headModel = pendModel;
-			headLevel = pendLevel;
 		}
-		pendModel = pendLevel = undefined;
 		last = i;
 		if (it.kind !== "message") return;
 		messages.push(it.message);
@@ -476,16 +437,6 @@ export function layoutTurns(items: readonly MainlineRow[]): {
 				...(level ? { thinking: level } : {}),
 			});
 			if (it.trail) trails.set(start, it.trail);
-			// 回合头画出胶囊（模型 id 非空）时，它显示的就是这里的模型与级别
-			if (model.trim()) {
-				if (
-					headModel &&
-					prov.trim() &&
-					headModel.v === `${prov.trim()}/${model.trim()}`
-				)
-					covered.add(headModel.i);
-				if (headLevel && headLevel.v === level) covered.add(headLevel.i);
-			}
 		}
 	});
 	close();
@@ -497,7 +448,7 @@ export function layoutTurns(items: readonly MainlineRow[]): {
 		trails,
 		openStart,
 		thinkingSeen,
-		covered,
+		hidden,
 	};
 }
 
@@ -771,7 +722,7 @@ export const Transcript = memo(function Transcript({
 	const sessionModel = useThread(threadId, (s) => s.state?.model);
 	const sessionThinking = useThread(threadId, (s) => s.state?.thinkingLevel);
 	const gaps = useMemo(
-		() => rowGaps(rows, turns.footers, turns.covered),
+		() => rowGaps(rows, turns.footers, turns.hidden),
 		[rows, turns],
 	);
 	const scrollRef = useRef<HTMLDivElement>(null);
@@ -1099,8 +1050,8 @@ export const Transcript = memo(function Transcript({
 								/>
 							)}
 							{item ? (
-								// 回合头已显示同一个值的切换行：保留虚拟行（行号不变），不画内容
-								turns.covered.has(v.index) ? null : (
+								// 模型 / 思考级别切换行：保留虚拟行（行号不变），不画内容
+								turns.hidden.has(v.index) ? null : (
 									<>
 										<ItemView
 											item={item}
