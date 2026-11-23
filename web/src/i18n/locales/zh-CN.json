@@ -1291,7 +1291,7 @@
 		"shallowClone": "浅克隆",
 		"icon": "项目图标",
 		"iconAuto": "自动",
-		"iconAutoHint": "自动：取首个会话标题卡上的图标，没有时用名称首字。",
+		"iconAutoHint": "不手选图标，改用首个会话标题卡上的图标；没有时用名称首字。",
 		"title": "项目",
 		"defaultBrowserProfile": "默认浏览器 Profile",
 		"defaultBrowserProfileHint": "这个项目的新线程默认装载它（新建线程时可改）。",

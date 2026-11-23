@@ -134,7 +134,7 @@ const PROJECT_FEATURED: FeaturedGlyphs = { icons: PROJECT_GLYPHS, emoji: [] };
 
 /**
  * 项目图标：点徽标打开字形弹层（常用精选 + 完整目录，可模糊搜索）；弹层里的「自动」清空图标，
- * 之后由首个线程标题卡的图标自动填入。
+ * 之后由首个线程标题卡的图标自动填入（这条说明是「自动」按钮的悬停提示）。
  */
 function ProjectIconPicker({
 	name,
@@ -151,24 +151,18 @@ function ProjectIconPicker({
 			<span className="font-medium text-muted text-xs">
 				{t("projects.icon")}
 			</span>
-			<div className="flex items-center gap-3">
-				<GlyphPicker
-					value={icon}
-					featured={PROJECT_FEATURED}
-					label={t("projects.icon")}
-					removeLabel={t("projects.iconAuto")}
-					onRemove={() => onChange(undefined)}
-					onPick={(c) => onChange(c)}
-					triggerClassName="rounded-md p-1 transition-colors duration-150 hover:bg-hover aria-expanded:bg-hover"
-				>
-					<ProjectBadge name={name || "?"} icon={icon} size={40} />
-				</GlyphPicker>
-				{!icon && (
-					<span className="min-w-0 flex-1 text-faint text-xs">
-						{t("projects.iconAutoHint")}
-					</span>
-				)}
-			</div>
+			<GlyphPicker
+				value={icon}
+				featured={PROJECT_FEATURED}
+				label={t("projects.icon")}
+				removeLabel={t("projects.iconAuto")}
+				removeHint={t("projects.iconAutoHint")}
+				onRemove={() => onChange(undefined)}
+				onPick={(c) => onChange(c)}
+				triggerClassName="rounded-md p-1 transition-colors duration-150 hover:bg-hover aria-expanded:bg-hover"
+			>
+				<ProjectBadge name={name || "?"} icon={icon} size={40} />
+			</GlyphPicker>
 		</div>
 	);
 }

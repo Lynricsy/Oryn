@@ -66,6 +66,7 @@ export function GlyphPicker({
 	defaultTab = "icons",
 	label,
 	removeLabel,
+	removeHint,
 	onRemove,
 	onPick,
 	disabled,
@@ -80,6 +81,8 @@ export function GlyphPicker({
 	label: string;
 	/** 弹层右上角的移除 / 自动按钮；不给 `onRemove` 就不显示 */
 	removeLabel?: string;
+	/** 移除按钮的悬停说明 */
+	removeHint?: string;
 	onRemove?: () => void;
 	onPick: (char: string) => void;
 	disabled?: boolean;
@@ -120,6 +123,7 @@ export function GlyphPicker({
 					defaultTab={defaultTab}
 					label={label}
 					removeLabel={removeLabel}
+					removeHint={removeHint}
 					onRemove={
 						onRemove &&
 						(() => {
@@ -144,6 +148,7 @@ function GlyphPanel({
 	defaultTab,
 	label,
 	removeLabel,
+	removeHint,
 	onRemove,
 	onPick,
 	onClose,
@@ -153,6 +158,7 @@ function GlyphPanel({
 	defaultTab: GlyphTab;
 	label: string;
 	removeLabel?: string;
+	removeHint?: string;
 	onRemove?: () => void;
 	onPick: (char: string) => void;
 	onClose: () => void;
@@ -259,6 +265,7 @@ function GlyphPanel({
 					{onRemove && removeLabel && (
 						<button
 							type="button"
+							title={removeHint}
 							onClick={onRemove}
 							className={`${tabClass(false)} ml-auto hover:bg-hover`}
 						>
