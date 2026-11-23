@@ -59,6 +59,7 @@ import { UserAvatar } from "../ui/UserAvatar";
 import { AgentAvatar } from "./AgentAvatar";
 import { useToolCallActive } from "./active-tools";
 import { type TranscriptContextValue, useTranscriptContext } from "./context";
+import { Foldable } from "./Foldable";
 import { BackgroundToolView, JobEventMessage } from "./JobEvents";
 import { escapeAngles, MD_SIZE } from "./NoticeLine";
 
