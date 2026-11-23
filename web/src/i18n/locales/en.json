@@ -865,6 +865,94 @@
 			"widget": "Job widgets"
 		}
 	},
+	"jobs": {
+		"status": {
+			"running": "Running",
+			"completed": "Completed",
+			"failed": "Failed",
+			"cancelled": "Stopped",
+			"ended": "Ended"
+		},
+		"type": {
+			"bash": "Command",
+			"eval": "Code",
+			"task": "Subagent"
+		},
+		"open": "View job",
+		"copyOutput": "Copy output",
+		"event": {
+			"job": {
+				"running": "Background job {{id}} running",
+				"completed": "Background job {{id}} completed",
+				"failed": "Background job {{id}} failed",
+				"cancelled": "Background job {{id}} stopped"
+			},
+			"agent": {
+				"running": "Subagent {{name}} running",
+				"completed": "Subagent {{name}} completed",
+				"failed": "Subagent {{name}} failed",
+				"cancelled": "Subagent {{name}} stopped"
+			},
+			"many_one": "{{count}} background job finished",
+			"many_other": "{{count}} background jobs finished",
+			"manyFailed_one": "{{count}} failed",
+			"manyFailed_other": "{{count}} failed",
+			"noOutput": "No output",
+			"openAgent": "Open subagent",
+			"notify": "Background job {{id}} output matched /{{pattern}}/",
+			"notifyService": "Service {{id}} output matched /{{pattern}}/",
+			"lines_one": "{{count}} line",
+			"lines_other": "{{count}} lines",
+			"notifyOmitted_one": "{{count}} more line not listed",
+			"notifyOmitted_other": "{{count}} more lines not listed",
+			"notifyStopped": "Matched too often; no further notices",
+			"notifyEnded": "The job had already ended when this was sent",
+			"daemon": "Service {{name}} exited",
+			"exitCode": "exit code {{code}}"
+		},
+		"panel": {
+			"title": "Background jobs",
+			"running": "{{n}} running",
+			"total": "{{n}} total",
+			"showAll": "Show all {{n}} finished jobs",
+			"showLess": "Show recent only"
+		},
+		"dialog": {
+			"title": "Background job {{id}}",
+			"endedHint": "· Core no longer tracks it; its result may have been collected by a wait",
+			"input": "Input",
+			"output": "Output",
+			"events": "Events",
+			"details": "Details",
+			"cwd": "Working directory",
+			"timeout": "Timeout",
+			"notify": "Output notice",
+			"copyCommand": "Copy command",
+			"outputWaiting": "No output yet; it will show up here as the job prints",
+			"outputNone": "No output to show",
+			"outputLive": "Live · latest output",
+			"outputResult": "Final result",
+			"outputPreview": "Result preview",
+			"outputRecent": "Latest output",
+			"event": {
+				"started": "Started",
+				"notify": "Output matched /{{pattern}}/",
+				"running": "Running",
+				"completed": "Completed",
+				"failed": "Failed",
+				"cancelled": "Stopped"
+			},
+			"id": "Job ID",
+			"owner": "Owning agent",
+			"toolCall": "Tool call",
+			"startedAt": "Started at",
+			"endedAt": "Ended at",
+			"prev": "Previous job",
+			"next": "Next job",
+			"notFoundTitle": "Background job not found",
+			"notFoundBody": "It may come from an earlier part of the conversation that isn't loaded, or the agent has restarted."
+		}
+	},
 	"subagent": {
 		"offline": "Agent is not running; showing the saved transcript",
 		"archived": "Saved transcript from an earlier session; the live subagent with this id is a different one",
@@ -2366,6 +2454,15 @@
 		}
 	},
 	"toolRender": {
+		"job": {
+			"title": "Background job {{id}}",
+			"open": "View job",
+			"running": "Running in background",
+			"completed": "Background done",
+			"failed": "Background failed",
+			"cancelled": "Background stopped",
+			"ended": "Background ended"
+		},
 		"collapse": "Collapse",
 		"moreLines_one": "⋯ {{count}} more line",
 		"moreLines_other": "⋯ {{count}} more lines",

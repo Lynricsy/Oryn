@@ -865,6 +865,94 @@
 			"widget": "任务小组件"
 		}
 	},
+	"jobs": {
+		"status": {
+			"running": "运行中",
+			"completed": "已完成",
+			"failed": "失败",
+			"cancelled": "已停止",
+			"ended": "已结束"
+		},
+		"type": {
+			"bash": "命令",
+			"eval": "代码",
+			"task": "子 agent"
+		},
+		"open": "查看任务",
+		"copyOutput": "复制输出",
+		"event": {
+			"job": {
+				"running": "后台任务 {{id}} 运行中",
+				"completed": "后台任务 {{id}} 已完成",
+				"failed": "后台任务 {{id}} 失败",
+				"cancelled": "后台任务 {{id}} 已停止"
+			},
+			"agent": {
+				"running": "子 agent {{name}} 运行中",
+				"completed": "子 agent {{name}} 已完成",
+				"failed": "子 agent {{name}} 失败",
+				"cancelled": "子 agent {{name}} 已停止"
+			},
+			"many_one": "{{count}} 个后台任务已结束",
+			"many_other": "{{count}} 个后台任务已结束",
+			"manyFailed_one": "{{count}} 个失败",
+			"manyFailed_other": "{{count}} 个失败",
+			"noOutput": "没有输出",
+			"openAgent": "打开子 agent",
+			"notify": "后台任务 {{id}} 的输出匹配 /{{pattern}}/",
+			"notifyService": "常驻进程 {{id}} 的输出匹配 /{{pattern}}/",
+			"lines_one": "{{count}} 行",
+			"lines_other": "{{count}} 行",
+			"notifyOmitted_one": "另有 {{count}} 行未列出",
+			"notifyOmitted_other": "另有 {{count}} 行未列出",
+			"notifyStopped": "匹配太频繁，之后不再提醒",
+			"notifyEnded": "提醒发出时任务已经结束",
+			"daemon": "常驻进程 {{name}} 已退出",
+			"exitCode": "退出码 {{code}}"
+		},
+		"panel": {
+			"title": "后台任务",
+			"running": "{{n}} 个运行中",
+			"total": "共 {{n}} 个",
+			"showAll": "显示全部 {{n}} 个已结束的任务",
+			"showLess": "只显示最近的"
+		},
+		"dialog": {
+			"title": "后台任务 {{id}}",
+			"endedHint": "· Core 已不再记录它，结果可能已被等待取走",
+			"input": "输入",
+			"output": "输出",
+			"events": "事件",
+			"details": "详细信息",
+			"cwd": "工作目录",
+			"timeout": "超时",
+			"notify": "输出提醒",
+			"copyCommand": "复制命令",
+			"outputWaiting": "还没有输出，任务一有输出就会出现在这里",
+			"outputNone": "没有可显示的输出",
+			"outputLive": "实时 · 最近的输出",
+			"outputResult": "最终结果",
+			"outputPreview": "结果预览",
+			"outputRecent": "最近的输出",
+			"event": {
+				"started": "开始运行",
+				"notify": "输出匹配 /{{pattern}}/",
+				"running": "运行中",
+				"completed": "完成",
+				"failed": "失败",
+				"cancelled": "已停止"
+			},
+			"id": "任务 ID",
+			"owner": "所属 agent",
+			"toolCall": "工具调用",
+			"startedAt": "开始时间",
+			"endedAt": "结束时间",
+			"prev": "上一个任务",
+			"next": "下一个任务",
+			"notFoundTitle": "找不到这个后台任务",
+			"notFoundBody": "它可能来自更早、尚未加载的对话，或者 agent 已经重启。"
+		}
+	},
 	"subagent": {
 		"offline": "agent 未运行，显示已保存的转录",
 		"archived": "较早会话里已保存的转录；在线的同 id 子 agent 不是它",
@@ -2366,6 +2454,15 @@
 		}
 	},
 	"toolRender": {
+		"job": {
+			"title": "后台任务 {{id}}",
+			"open": "查看任务",
+			"running": "后台运行中",
+			"completed": "后台已完成",
+			"failed": "后台失败",
+			"cancelled": "后台已停止",
+			"ended": "后台已结束"
+		},
 		"collapse": "收起",
 		"moreLines_one": "⋯ 还有 {{count}} 行",
 		"moreLines_other": "⋯ 还有 {{count}} 行",

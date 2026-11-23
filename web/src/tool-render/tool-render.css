@@ -469,6 +469,131 @@
 	opacity: 0.7;
 }
 
+/* ---- 后台任务 ---- */
+
+/* 头部的后台标记：调用已返回、任务在后台跑（或已结束）。收起时也一直在，运行中圆点向外扩散。
+ * 运行中不用强调色底（强调色只给「需要你」的东西），只有圆点与转圈一致用强调色。 */
+.tv-job {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	flex: none;
+	height: 18px;
+	padding: 0 7px 0 6px;
+	border-radius: 999px;
+	background: var(--tv-inset);
+	box-shadow: inset 0 0 0 1px var(--tv-border);
+	font-family: var(--tv-sans);
+	font-size: 11px;
+	font-weight: 560;
+	line-height: 18px;
+	color: var(--tv-muted);
+	white-space: nowrap;
+}
+
+.tv-job-dot {
+	position: relative;
+	flex: none;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--tv-ghost);
+}
+
+.tv-job--running .tv-job-dot {
+	background: var(--tv-accent);
+}
+
+.tv-job--running .tv-job-dot::after {
+	content: "";
+	position: absolute;
+	inset: -3px;
+	border-radius: 50%;
+	border: 1.5px solid var(--tv-accent);
+	opacity: 0;
+	animation: tv-job-pulse 1.6s ease-out infinite;
+}
+
+.tv-job--completed .tv-job-dot {
+	background: var(--tv-ok);
+}
+
+.tv-job--failed {
+	background: color-mix(in oklab, var(--tv-err) 10%, transparent);
+	box-shadow: none;
+	color: color-mix(in oklab, var(--tv-err) 82%, var(--text));
+}
+
+.tv-job--failed .tv-job-dot {
+	background: var(--tv-err);
+}
+
+.tv-job--cancelled .tv-job-dot {
+	background: var(--tv-warn);
+}
+
+/* 展开体末段：任务入口 + 最近输出（与输出井同一层底色） */
+.tv-sec--job {
+	gap: 6px;
+	border-top: 1px solid var(--tv-border);
+	background: var(--tv-inset);
+}
+
+.tv-jobhead {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	font-family: var(--tv-sans);
+	font-size: 11.5px;
+	line-height: 20px;
+	color: var(--tv-faint);
+}
+
+.tv-jobhead-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.tv-joblink {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+	margin-left: auto;
+	padding: 0 6px;
+	border: 0;
+	border-radius: var(--r-xs, 4px);
+	background: none;
+	font: inherit;
+	font-weight: 560;
+	color: var(--tv-muted);
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.tv-joblink:hover {
+	background: var(--tv-hover);
+	color: var(--tv-fg);
+}
+
+.tv-joblink:focus-visible {
+	outline: 2px solid var(--tv-ring);
+	outline-offset: 1px;
+}
+
+.tv-jobout {
+	margin: 0;
+	max-height: 200px;
+	overflow-y: auto;
+	font-size: 11px;
+	line-height: 1.45;
+	color: var(--tv-muted);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
 .tv-warn-text {
 	color: var(--tv-warn);
 }
@@ -1037,6 +1162,17 @@
 	}
 }
 
+@keyframes tv-job-pulse {
+	from {
+		transform: scale(0.5);
+		opacity: 0.8;
+	}
+	to {
+		transform: scale(1.5);
+		opacity: 0;
+	}
+}
+
 @media (prefers-reduced-motion: reduce) {
 	.tv-spin {
 		animation: tv-pulse 1.4s ease-in-out infinite;
@@ -1044,6 +1180,14 @@
 
 	.tv-chev {
 		transition: none;
+	}
+
+	.tv-job--running .tv-job-dot::after {
+		animation: none;
+	}
+
+	.tv-job--running .tv-job-dot {
+		animation: tv-pulse 1.4s ease-in-out infinite;
 	}
 
 	@keyframes tv-pulse {

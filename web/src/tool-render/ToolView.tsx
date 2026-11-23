@@ -21,7 +21,12 @@ import {
 	XDEV_DOCS_TOOL,
 	xdevCardOf,
 } from "./tools/xdev";
-import type { ToolRenderHost, ToolRenderProps, ToolResultLike } from "./types";
+import type {
+	ToolJobMark,
+	ToolRenderHost,
+	ToolRenderProps,
+	ToolResultLike,
+} from "./types";
 import { isRecord, replaceTabs, stripAnsi } from "./util";
 import "./tool-render.css";
 
@@ -152,6 +157,8 @@ export interface ToolViewProps {
 	defaultOpen?: boolean;
 	/** Host capabilities (sub-session drill-down, …). */
 	host?: ToolRenderHost;
+	/** 这次调用转入了后台：任务此刻的状态（宿主合成）。头部动态标记，展开体附最近输出与入口。 */
+	job?: ToolJobMark;
 	/** 卡片根元素的 ref（宿主在上面登记右键菜单）。 */
 	rootRef?: (el: HTMLDivElement | null) => void;
 }
@@ -215,14 +222,17 @@ export function ToolView(props: ToolViewProps): ReactNode {
 	);
 	const label = xdev?.label ?? name;
 
+	const job = props.job;
 	const isError = props.result?.isError === true;
-	const status = props.running
-		? "run"
-		: isError
-			? "err"
-			: props.result
-				? "ok"
-				: "pending";
+	// 调用已返回、任务还在后台跑：头部仍是「运行中」
+	const status =
+		props.running || job?.status === "running"
+			? "run"
+			: isError || job?.status === "failed"
+				? "err"
+				: props.result
+					? "ok"
+					: "pending";
 	const partial =
 		props.running &&
 		!props.result &&
@@ -230,6 +240,7 @@ export function ToolView(props: ToolViewProps): ReactNode {
 		!(renderer.livePartial === true && renderProps.partial)
 			? stripAnsi(replaceTabs(props.partial))
 			: "";
+	const jobOutput = job?.output ? stripAnsi(replaceTabs(job.output)) : "";
 
 	return (
 		<div
@@ -284,6 +295,15 @@ export function ToolView(props: ToolViewProps): ReactNode {
 						<renderer.Meta {...renderProps} />
 					</span>
 				)}
+				{job && (
+					<span
+						className={`tv-job tv-job--${job.status}`}
+						title={t("toolRender.job.title", { id: job.id })}
+					>
+						<span className="tv-job-dot" aria-hidden="true" />
+						{t(`toolRender.job.${job.status}`)}
+					</span>
+				)}
 				{status === "run" ? (
 					<span
 						role="status"
@@ -319,6 +339,35 @@ export function ToolView(props: ToolViewProps): ReactNode {
 						<ToolSection kind="out" label={t("toolRender.output")}>
 							<renderer.Result {...renderProps} />
 						</ToolSection>
+					)}
+					{job && (
+						<section
+							className="tv-sec tv-sec--job"
+							aria-label={t("toolRender.job.title", { id: job.id })}
+						>
+							<div className="tv-jobhead">
+								<span className="tv-jobhead-label">
+									{t("toolRender.job.title", { id: job.id })}
+								</span>
+								{job.onOpen && (
+									<button
+										type="button"
+										className="tv-joblink"
+										onClick={job.onOpen}
+									>
+										{t("toolRender.job.open")}
+										<Icon name="chevronRight" size={11} />
+									</button>
+								)}
+							</div>
+							{jobOutput && (
+								<pre className="tv-jobout">
+									{jobOutput.length > 4096
+										? `…${jobOutput.slice(-4096)}`
+										: jobOutput}
+								</pre>
+							)}
+						</section>
 					)}
 				</div>
 			)}

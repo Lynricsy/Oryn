@@ -1,6 +1,7 @@
 /** `bash` — shell command execution: prompt line (or omp's Pseudo view), arg badges, output tail. */
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { asyncFrameOf } from "../../lib/async-jobs";
 import { formatDuration } from "../../lib/format";
 import { revealTerminal } from "../../state/terminals";
 import {
@@ -41,19 +42,6 @@ function envPrefix(env: Record<string, unknown>): string {
 		parts.push(`${k}=${SHELL_SAFE.test(v) ? v : JSON.stringify(v)}`);
 	}
 	return parts.join(" ");
-}
-
-interface BashAsyncDetails {
-	state: string;
-	jobId: string | null;
-}
-
-function asyncDetailsOf(
-	details: Record<string, unknown> | null,
-): BashAsyncDetails | null {
-	if (!details || !isRecord(details.async)) return null;
-	const state = str(details.async.state);
-	return state ? { state, jobId: str(details.async.jobId) } : null;
 }
 
 /** `pty:true` 的调用在 orb 的终端里运行，agent 等用户作答：运行中提示并可打开 Terminal 面板。 */
@@ -296,7 +284,7 @@ function Input({ args, result, partial, running }: ToolRenderProps): ReactNode {
 				cwd && <Badge>cwd={shortenPath(cwd)}</Badge>,
 				timeoutSeconds !== null && <Badge>timeout={timeoutSeconds}s</Badge>,
 				args.pty === true && <PtyBadge running={running} />,
-				!asyncDetailsOf(details) && args.async === true && (
+				!asyncFrameOf(details) && args.async === true && (
 					<Badge tone="accent">async</Badge>
 				),
 				head !== null && <Badge>head={head}</Badge>,
@@ -345,7 +333,6 @@ function Result({ args, result }: ToolRenderProps): ReactNode {
 	const details = detailsRecord(result);
 	const timeoutSeconds = num(args.timeout) ?? num(details?.timeoutSeconds);
 	const requestedTimeoutSeconds = num(details?.requestedTimeoutSeconds);
-	const job = asyncDetailsOf(details);
 	const rawOutput = RAW_OUTPUT_NOTICE.exec(resultTextOf(result))?.[1] ?? null;
 
 	const stats: string[] = [];
@@ -355,31 +342,13 @@ function Result({ args, result }: ToolRenderProps): ReactNode {
 	) {
 		stats.push(`requested timeout ${requestedTimeoutSeconds}s clamped`);
 	}
-	if (job?.jobId) stats.push(`job ${job.jobId}`);
 	if (rawOutput) stats.push(`raw output ${rawOutput}`);
 
 	return (
 		<>
 			<ResultImages result={result} />
 			<ResultText result={result} maxLines={12} />
-			<Badges
-				items={[
-					job && (
-						<Badge
-							tone={
-								job.state === "failed"
-									? "err"
-									: job.state === "running"
-										? "accent"
-										: "ok"
-							}
-						>
-							async {job.state}
-						</Badge>
-					),
-					...stats,
-				]}
-			/>
+			<Badges items={stats} />
 		</>
 	);
 }

@@ -34,7 +34,7 @@ function shownJobs(data: JobsData | undefined): Job[] {
 	if (!data) return [];
 	return data.tree?.length
 		? data.tree.flatMap((r) => (r.job ? [r.job] : []))
-		: data.jobs;
+		: (data.jobs ?? []);
 }
 
 /** 有仍在变化的任务时才轮询：运行中（含树中的后代），或已请求停止但还没真正退出（`cancellationPending`）。 */

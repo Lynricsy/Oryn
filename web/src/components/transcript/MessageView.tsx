@@ -9,6 +9,7 @@ import { Link } from "react-router";
 import type { Orb, ThreadState } from "../../api/client";
 import { assistantFileContentUrl } from "../../api/library-queries";
 import { useAssetUrls } from "../../lib/asset-urls";
+import { asyncFrameOf } from "../../lib/async-jobs";
 import {
 	type MessageAttachment,
 	parseAttachmentBlock,
@@ -44,7 +45,7 @@ import {
 	useThread,
 } from "../../state/stores";
 import { uiStore } from "../../state/ui";
-import { ToolView } from "../../tool-render/ToolView";
+import { ToolView, type ToolViewProps } from "../../tool-render/ToolView";
 import type { ToolResultLike } from "../../tool-render/types";
 import { isRecord, resultTextOf, toolSubject } from "../../tool-render/util";
 import { Markdown } from "../markdown/Markdown";
@@ -56,6 +57,7 @@ import { UserAvatar } from "../ui/UserAvatar";
 import { AgentAvatar } from "./AgentAvatar";
 import { useToolCallActive } from "./active-tools";
 import { type TranscriptContextValue, useTranscriptContext } from "./context";
+import { BackgroundToolView, JobEventMessage } from "./JobEvents";
 import { escapeAngles, MD_SIZE } from "./NoticeLine";
 
 const CHIP =
@@ -991,43 +993,49 @@ export function ToolCard({
 			return items.length ? [{ key: "tool", items }] : null;
 		},
 	});
-	return (
-		<ToolView
-			rootRef={(el) => {
-				cardRef.current = el;
-				ctxRef(el);
-			}}
-			name={toolName}
-			args={toolArgs}
-			result={
-				result
-					? { ...result, isError: result.isError || live?.isError }
-					: undefined
-			}
-			running={running}
-			defaultOpen={active}
-			intent={intent ?? live?.intent}
-			partial={partial}
-			partialResult={partialResult}
-			host={
-				// 只读（分享页）不提供子 agent 转录查看；头像在分享页只用公开身份（见 AgentAvatar）
-				ctx.readOnly
-					? { AgentAvatar }
-					: {
-							hasAgent: () => true,
-							openAgent: (id) => ctx.openSubagent(id),
-							// artifact 卡片（线程页开右面板，协调对话开整页）；只读的分享页不给，卡片不可点
-							openArtifact: ctx.openArtifact,
-							// desktop_record 的录像：线程 orb 上的文件；只读的分享页不给，卡片只显示路径
-							orbFileUrl: (path) => threadOrbFileUrl(ctx.threadId, path),
-							openOrbFile: (path) =>
-								uiStore.getState().openFile(ctx.threadId, path),
-							// computer_record 的录像：存进助手文件库的那份；只读的分享页不给，卡片只显示电脑上的路径
-							libraryFileUrl: (id) => assistantFileContentUrl(id),
-							AgentAvatar,
-						}
-			}
+	const view: ToolViewProps = {
+		rootRef: (el) => {
+			cardRef.current = el;
+			ctxRef(el);
+		},
+		name: toolName,
+		args: toolArgs,
+		result: result
+			? { ...result, isError: result.isError || live?.isError }
+			: undefined,
+		running,
+		defaultOpen: active,
+		intent: intent ?? live?.intent,
+		partial,
+		partialResult,
+		host:
+			// 只读（分享页）不提供子 agent 转录查看；头像在分享页只用公开身份（见 AgentAvatar）
+			ctx.readOnly
+				? { AgentAvatar }
+				: {
+						hasAgent: () => true,
+						openAgent: (id) => ctx.openSubagent(id),
+						// artifact 卡片（线程页开右面板，协调对话开整页）；只读的分享页不给，卡片不可点
+						openArtifact: ctx.openArtifact,
+						// desktop_record 的录像：线程 orb 上的文件；只读的分享页不给，卡片只显示路径
+						orbFileUrl: (path) => threadOrbFileUrl(ctx.threadId, path),
+						openOrbFile: (path) =>
+							uiStore.getState().openFile(ctx.threadId, path),
+						// computer_record 的录像：存进助手文件库的那份；只读的分享页不给，卡片只显示电脑上的路径
+						libraryFileUrl: (id) => assistantFileContentUrl(id),
+						AgentAvatar,
+					},
+	};
+	// 转入后台的调用：卡片跟着任务的实时状态走（头部标记、最近输出、任务入口）
+	return asyncFrameOf(result?.details) ? (
+		<BackgroundToolView
+			threadId={ctx.threadId}
+			toolCallId={toolCallId}
+			openable={!ctx.readOnly}
+			view={view}
 		/>
+	) : (
+		<ToolView {...view} />
 	);
 }
 
@@ -1551,7 +1559,13 @@ export function MessageView({
 			return <ExecutionMessage message={message} />;
 		case "custom":
 		case "hookMessage":
-			return <CustomMessage message={message} />;
+			// 后台任务的交付 / 提醒 / 常驻进程退出：解析成事件行；认不出时退回通用卡片
+			return (
+				<JobEventMessage
+					message={message}
+					fallback={<CustomMessage message={message} />}
+				/>
+			);
 		case "branchSummary":
 			return <BranchSummaryCard entry={message} />;
 		case "compactionSummary":

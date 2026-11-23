@@ -38,6 +38,28 @@ export interface ToolResultLike {
 	isError?: boolean;
 }
 
+/** 后台任务的状态：Core 的四种，加上「已结束」（Core 不再记录、也没收到终态）。 */
+export type ToolJobStatus =
+	| "running"
+	| "completed"
+	| "failed"
+	| "cancelled"
+	| "ended";
+
+/**
+ * 这次调用转入了后台（结果带 `details.async`）：任务此刻的状态由宿主合成后传给卡片。
+ * 卡片头部据此显示动态标记（收起时也在），展开体附任务的最近输出与入口。
+ */
+export interface ToolJobMark {
+	/** Core 的任务 id（`bg_3`）。 */
+	id: string;
+	status: ToolJobStatus;
+	/** 任务的最近输出（实时尾巴或最终结果）。 */
+	output?: string;
+	/** 打开任务详情；只读宿主不给。 */
+	onOpen?: () => void;
+}
+
 /**
  * Capabilities the embedding host exposes to renderers. Functions are live
  * objects (passed via property assignment or the payload store) — they cannot
