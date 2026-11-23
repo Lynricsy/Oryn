@@ -906,6 +906,7 @@ describe("RightPanel 自绘标题栏", () => {
 				buttons: ["minimize", "maximize", "close"],
 				inset: { top: 48, left: 0, right: 0 },
 				radius: 0,
+				fullscreenLights: false,
 			},
 			getFlags: () => flags,
 			subscribe: () => () => {},

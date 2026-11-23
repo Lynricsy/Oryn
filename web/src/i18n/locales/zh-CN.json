@@ -125,7 +125,8 @@
 		"minimize": "最小化",
 		"maximize": "最大化",
 		"restore": "还原",
-		"close": "关闭窗口"
+		"close": "关闭窗口",
+		"exitFullscreen": "退出全屏"
 	},
 	"nav": {
 		"infoPanel": "信息面板",

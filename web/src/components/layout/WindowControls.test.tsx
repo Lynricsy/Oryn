@@ -27,18 +27,20 @@ import { ThreadHeader } from "../thread/ThreadHeader";
 import {
 	ChromeBar,
 	ChromeLead,
+	FullscreenLights,
 	SidebarBrandRow,
 	SidebarChromeRow,
 	WindowControls,
 } from "./WindowControls";
 
-/** 假的标题栏适配：`set` 模拟壳推来的 `window` 事件。 */
+/** 假的标题栏适配：`set` 模拟壳推来的 `window` 事件；`fullscreenLights` = 壳全屏时把红绿灯交给页面画。 */
 function install(
 	controls: ChromeControls,
 	buttons: WindowButton[] = controls.startsWith("custom")
 		? ["minimize", "maximize", "close"]
 		: [],
 	flags: Partial<WindowFlags> = {},
+	fullscreenLights = false,
 ) {
 	let f: WindowFlags = {
 		maximized: false,
@@ -58,6 +60,7 @@ function install(
 				right: 0,
 			},
 			radius: 0,
+			fullscreenLights,
 		},
 		getFlags: () => f,
 		subscribe: (cb) => {
@@ -395,5 +398,58 @@ describe("侧栏品牌行", () => {
 		expect(shift).toHaveAttribute("data-brand-shift", "lights");
 		expect(shift?.style.transform).toBe("");
 		expect(shift?.className).toContain("delay-0");
+	});
+
+	it("macOS 全屏且壳交出红绿灯：左上角自绘一组，指针移入才出现、品牌区让回；绿灯退出全屏，最小化不可用；离开 300ms 后收起", () => {
+		vi.useFakeTimers();
+		try {
+			const mac = install("native-left", [], { fullscreen: true }, true);
+			const { shift } = brandRow();
+			render(
+				<>
+					<header>
+						<ChromeLead show />
+					</header>
+					<FullscreenLights />
+				</>,
+			);
+			const spot = document.querySelector(
+				"[data-fullscreen-lights]",
+			) as HTMLElement;
+			// 热区 = 红绿灯让位宽 × 标题行（中线 32 + 半行 24）；页头仍让位，红绿灯不会盖住页头按钮
+			expect(spot).toHaveStyle({ width: "84px", height: "56px" });
+			expect(
+				document.querySelector("[data-chrome-lead=native]"),
+			).not.toBeNull();
+			expect(spot).toHaveAttribute("data-fullscreen-lights", "hidden");
+			expect(shift).toHaveAttribute("data-brand-shift", "fullscreen");
+
+			fireEvent.pointerEnter(spot);
+			expect(spot).toHaveAttribute("data-fullscreen-lights", "shown");
+			expect(shift).toHaveAttribute("data-brand-shift", "lights");
+			expect(screen.getByRole("button", { name: "最小化" })).toBeDisabled();
+			fireEvent.click(screen.getByRole("button", { name: "退出全屏" }));
+			expect(mac.wc.act).toHaveBeenCalledWith("toggleFullscreen");
+			fireEvent.click(screen.getByRole("button", { name: "关闭窗口" }));
+			expect(mac.wc.act).toHaveBeenCalledWith("close");
+
+			fireEvent.pointerLeave(spot);
+			act(() => vi.advanceTimersByTime(299));
+			expect(spot).toHaveAttribute("data-fullscreen-lights", "shown");
+			act(() => vi.advanceTimersByTime(1));
+			expect(spot).toHaveAttribute("data-fullscreen-lights", "hidden");
+			expect(shift).toHaveAttribute("data-brand-shift", "fullscreen");
+
+			// 唤出后退出全屏：自绘红绿灯消失，下次进全屏从隐藏开始
+			fireEvent.pointerEnter(spot);
+			mac.set({ fullscreen: false });
+			expect(document.querySelector("[data-fullscreen-lights]")).toBeNull();
+			mac.set({ fullscreen: true });
+			expect(
+				document.querySelector("[data-fullscreen-lights]"),
+			).toHaveAttribute("data-fullscreen-lights", "hidden");
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });

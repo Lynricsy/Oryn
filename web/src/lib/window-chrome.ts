@@ -1,12 +1,14 @@
 /**
  * 桌面壳的自绘标题栏（无系统标题栏，bridge ≥ 3）：
- * - 布局取壳注入的 `__ORYN_HOST__.chrome = {platform, controls, buttons, inset, radius}`（首帧前就在，页面直接按它留位置）。
+ * - 布局取壳注入的 `__ORYN_HOST__.chrome = {platform, controls, buttons, inset, radius, fullscreenLights}`（首帧前就在，页面直接按它留位置）。
  *   `controls`：`native-left` = macOS 原生红绿灯在左上（`inset.left` 是页头要让出的宽度）；`custom-left` / `custom-right` =
  *   页面在左 / 右自绘 `buttons`（按给出的顺序）；`none` 或没有 `chrome` = 什么都不做。
  *   `radius`：窗口外框圆角（macOS 26 挂了 unified 工具栏时 26；0 = 未知）。大于 0 时写到根元素的 `--win-r` / `data-win-r`，
- *   index.css 据此让三栏卡片与窗口同心。
+ *   index.css 据此让三栏卡片与窗口同心。`fullscreenLights`：全屏时壳藏起原生红绿灯，页面在左上角自绘一组、指针移上去才出现
+ *   （macOS；没有该字段的旧壳为 false，全屏时页面不画）。
  * - 窗口状态（最大化 / 全屏 / 聚焦）：挂载时 `host_window{action:"state"}` 取一次，之后壳经 `oryn:host` 的 `window` 事件推送。
- * - 动作：`host_window{action}`（minimize / toggleMaximize / close / startDrag）；关闭等同原生关闭（壳按「关闭时隐藏到托盘」处理）。
+ * - 动作：`host_window{action}`（minimize / toggleMaximize / close / startDrag / toggleFullscreen）；关闭等同原生关闭
+ *   （壳按「关闭时隐藏到托盘」处理）；`toggleFullscreen` 只在 `fullscreenLights` 为真的壳上发。
  * - 拖动区：带 `data-window-drag` 的元素整棵子树（`"false"` 关闭）。按住左键移动超过 3px 才开始拖动、双击切换最大化；
  *   路径上先遇到可交互元素（按钮、链接、输入框、tabindex、交互 role）就不拖，交互元素不会被拖动区吃掉。
  * 浏览器、移动壳、旧壳（bridge < 3）里 `createWindowChrome` 为 null：不显示按钮、不改留白、不装监听。
@@ -38,6 +40,8 @@ export interface HostChrome {
 	inset: ChromeInset;
 	/** 窗口外框圆角（CSS px），0 = 未知，页面保持设计令牌。 */
 	radius: number;
+	/** 全屏时由页面在左上角自绘红绿灯（壳已藏起原生的）。 */
+	fullscreenLights: boolean;
 }
 
 export interface WindowFlags {
@@ -50,7 +54,8 @@ export type WindowAction =
 	| "minimize"
 	| "toggleMaximize"
 	| "close"
-	| "startDrag";
+	| "startDrag"
+	| "toggleFullscreen";
 
 export interface WindowChrome {
 	readonly chrome: HostChrome;
@@ -94,6 +99,7 @@ export function parseChrome(v: unknown): HostChrome | null {
 		controls,
 		buttons,
 		inset: { top: px(inset.top), left: px(inset.left), right: px(inset.right) },
+		fullscreenLights: o.fullscreenLights === true,
 		radius: px(o.radius),
 	};
 }

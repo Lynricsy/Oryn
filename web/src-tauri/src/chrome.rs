@@ -11,9 +11,10 @@
 //! - macOS ≥ 26 再给主窗口挂一个空的 unified `NSToolbar`：只有标题栏的窗口外框圆角约 16，挂了 unified 工具栏的约 26
 //!   （WWDC25「Build an AppKit app with the new design」），页面卡片按 `chrome.radius` 做同心圆角；
 //!   工具栏下的发丝分隔线去掉。临时窗口同样挂上，量到的就是带工具栏时的按钮位置。
-//!   全屏后菜单栏下方出现一条白带、盖住页面顶部（2026-11 macOS 真机截图）。最可能的原因是全屏时工具栏连同标题栏
-//!   被放进全屏工具栏窗口、不透明常驻；未在真机对照验证。候选修复：进全屏前把主窗口工具栏设为不可见，
-//!   退出全屏后再显示（`mac::watch_fullscreen`）。若白带仍在，问题在 Overlay 标题栏本身，而非工具栏。
+//! - macOS 全屏：原生红绿灯与工具栏在进全屏时藏起、退出后再显示（`mac::watch_fullscreen`），页面在左上角自绘一组红绿灯，
+//!   指针移到那里才出现（`chrome.fullscreenLights`，绿灯 = `host_window{toggleFullscreen}` 退出全屏）。
+//!   起因是全屏后菜单栏下方一条白带盖住页面顶部（2026-11 真机截图），最可能是工具栏连同标题栏被放进全屏工具栏窗口；
+//!   未在真机对照验证。若藏起后白带仍在，问题在 Overlay 标题栏本身。
 //! - Windows：`decorations: false`，页面在右上自绘 最小化 / 最大化（还原）/ 关闭。
 //! - Linux：同 Windows；按 GTK 的 `gtk-decoration-layout`（GNOME 由 `org.gnome.desktop.wm.preferences button-layout`
 //!   同步过来）决定左右与顺序，读不到或一个按钮都没有时放右侧。
@@ -94,7 +95,8 @@ pub struct Inset {
 }
 
 /// `__ORYN_HOST__.chrome`：`buttons` 是自绘按钮从左到右的顺序（原生时为空）；`radius` 是窗口外框圆角（CSS px），
-/// 页面据此做同心圆角，0 = 未知 / 不做（页面保持设计令牌；目前只有挂了 unified 工具栏的 macOS 有值）。
+/// 页面据此做同心圆角，0 = 未知 / 不做（页面保持设计令牌；目前只有挂了 unified 工具栏的 macOS 有值）；
+/// `fullscreenLights`：全屏时壳藏起原生红绿灯，由页面在左上角自绘（macOS）。
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Chrome {
     pub platform: &'static str,
@@ -102,6 +104,8 @@ pub struct Chrome {
     pub buttons: Vec<Button>,
     pub inset: Inset,
     pub radius: f64,
+    #[serde(rename = "fullscreenLights")]
+    pub fullscreen_lights: bool,
 }
 
 /// macOS 红绿灯与外框：校准结果，失败时为 [`Lights::FALLBACK`]。
@@ -251,6 +255,7 @@ fn custom(platform: &'static str, layout: Option<&str>) -> Chrome {
             right: 0.0,
         },
         radius: 0.0,
+        fullscreen_lights: false,
     }
 }
 
@@ -266,6 +271,7 @@ fn native_left(lights: &Lights) -> Chrome {
             right: 0.0,
         },
         radius: frame_radius(lights.toolbar),
+        fullscreen_lights: true,
     }
 }
 
@@ -313,13 +319,11 @@ pub fn lights() -> &'static Lights {
     &LIGHTS
 }
 
-/// 给刚建好的主窗口挂 unified 空工具栏（校准时定了挂才挂，与 `chrome.radius` 一致）；挂不上记 `window.toolbar`。
+/// 给刚建好的主窗口挂 unified 空工具栏（校准时定了挂才挂，与 `chrome.radius` 一致），并接管全屏时的标题栏控件
+/// （`mac::watch_fullscreen`，各版本都挂）；失败记 `window.toolbar`。
 #[cfg(target_os = "macos")]
 pub fn attach_toolbar(w: &WebviewWindow) {
-    if !lights().toolbar {
-        return;
-    }
-    if let Err(e) = mac::attach_main(w) {
+    if let Err(e) = mac::attach_main(w, lights().toolbar) {
         eventlog::log("window.toolbar", json!({"error": e}));
     }
 }
@@ -363,19 +367,22 @@ mod mac {
         window.setTitlebarSeparatorStyle(NSTitlebarSeparatorStyle::None);
     }
 
-    pub fn attach_main(w: &WebviewWindow) -> Result<(), String> {
+    pub fn attach_main(w: &WebviewWindow, toolbar: bool) -> Result<(), String> {
         let mtm = MainThreadMarker::new().ok_or("not on main thread")?;
         let ptr = w.ns_window().map_err(|e| e.to_string())?;
         // SAFETY: Tauri 给的是这个（刚建好、仍存活的）窗口的 NSWindow 指针，只在主线程上临时借用
         let window = unsafe { &*ptr.cast::<NSWindow>() };
-        attach(window, mtm, TOOLBAR_ID);
-        watch_fullscreen();
+        if toolbar {
+            attach(window, mtm, TOOLBAR_ID);
+        }
+        watch_fullscreen(window);
         Ok(())
     }
 
-    /// 进全屏（will enter）时藏起主窗口工具栏、退出全屏（did exit）后再显示：整个全屏过程都没有工具栏。
-    /// 按工具栏标识认主窗口，不捕获窗口，主窗口重建后同一个观察者照样生效；只注册一次，随进程常驻。
-    fn watch_fullscreen() {
+    /// 全屏时由页面自绘红绿灯（`chrome.fullscreenLights`，指针移到左上角才出现）：进全屏（will enter）时藏起
+    /// 原生红绿灯与工具栏，退出全屏（did exit）后再显示，整个全屏过程都只有页面的那组。
+    /// 只观察主窗口（桌面端主窗口只建一次）；只注册一次，随进程常驻。
+    fn watch_fullscreen(window: &NSWindow) {
         static ONCE: Once = Once::new();
         ONCE.call_once(|| {
             let center = NSNotificationCenter::defaultCenter();
@@ -389,14 +396,14 @@ mod mac {
             for (name, visible) in names {
                 let block = RcBlock::new(move |n: NonNull<NSNotification>| {
                     // SAFETY: 回调期间通知对象由发送方持有
-                    set_toolbar_visible(unsafe { n.as_ref() }, visible);
+                    set_controls_visible(unsafe { n.as_ref() }, visible);
                 });
-                // SAFETY: object 为 nil（收所有窗口，回调里按工具栏标识过滤）；queue 为 nil 时在发通知的线程同步回调，
+                // SAFETY: object 为主窗口（通知中心不持有它）；queue 为 nil 时在发通知的线程同步回调，
                 // 窗口的全屏通知都在主线程发出，回调里碰 AppKit 安全；块不捕获引用，可跨线程
                 let token = unsafe {
                     center.addObserverForName_object_queue_usingBlock(
                         Some(name),
-                        None,
+                        Some(window),
                         None,
                         &block,
                     )
@@ -407,17 +414,24 @@ mod mac {
         });
     }
 
-    fn set_toolbar_visible(n: &NSNotification, visible: bool) {
+    /// 显示 / 隐藏原生红绿灯与主窗口工具栏。
+    fn set_controls_visible(n: &NSNotification, visible: bool) {
         let Some(window) = n.object().and_then(|o| o.downcast::<NSWindow>().ok()) else {
             return;
         };
-        let Some(toolbar) = window.toolbar() else {
-            return;
-        };
-        if toolbar.identifier().to_string() == TOOLBAR_ID && toolbar.isVisible() != visible {
-            toolbar.setVisible(visible);
-            eventlog::log("window.toolbar", json!({ "visible": visible }));
+        for b in [
+            NSWindowButton::CloseButton,
+            NSWindowButton::MiniaturizeButton,
+            NSWindowButton::ZoomButton,
+        ] {
+            if let Some(button) = window.standardWindowButton(b) {
+                button.setHidden(!visible);
+            }
         }
+        if let Some(toolbar) = window.toolbar() {
+            toolbar.setVisible(visible);
+        }
+        eventlog::log("window.controls", json!({ "visible": visible }));
     }
 
     /// 量红绿灯：读系统版本定是否挂工具栏，在临时窗口上校准 y 与 `inset.left`；结果或失败原因都记 `window.lights`。
@@ -598,6 +612,8 @@ pub enum WindowAction {
     Close,
     /// 拖动区按下鼠标：交给窗口管理器移动窗口。
     StartDrag,
+    /// 进入 / 退出原生全屏（macOS 全屏时页面自绘的绿灯）。
+    ToggleFullscreen,
 }
 
 /// 执行动作。
@@ -614,6 +630,7 @@ pub fn act(w: &WebviewWindow, action: WindowAction) -> tauri::Result<()> {
         }
         WindowAction::Close => w.close(),
         WindowAction::StartDrag => w.start_dragging(),
+        WindowAction::ToggleFullscreen => w.set_fullscreen(!w.is_fullscreen()?),
     }
 }
 
@@ -687,7 +704,8 @@ mod tests {
                 "controls": "custom-right",
                 "buttons": ["minimize", "maximize", "close"],
                 "inset": {"top": 48.0, "left": 0.0, "right": 0.0},
-                "radius": 0.0
+                "radius": 0.0,
+                "fullscreenLights": false
             })
         );
         // 校准失败：旧常量、不挂工具栏、不做同心圆角
@@ -696,6 +714,8 @@ mod tests {
         assert_eq!(mac["buttons"], json!([]));
         assert_eq!(mac["inset"]["left"], 84.0);
         assert_eq!(mac["radius"], 0.0);
+        // 全屏时原生红绿灯藏起，由页面自绘
+        assert_eq!(mac["fullscreenLights"], true);
         // 校准成功且挂了 unified 工具栏：量出的留白、26 的外框圆角
         let mac = serde_json::to_value(native_left(&Lights {
             y: 34.5,

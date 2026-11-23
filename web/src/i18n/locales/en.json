@@ -125,7 +125,8 @@
 		"minimize": "Minimize",
 		"maximize": "Maximize",
 		"restore": "Restore",
-		"close": "Close window"
+		"close": "Close window",
+		"exitFullscreen": "Exit full screen"
 	},
 	"nav": {
 		"infoPanel": "Info panel",

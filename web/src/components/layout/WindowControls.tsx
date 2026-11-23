@@ -4,15 +4,25 @@
  * 单独一行（`SidebarChromeRow`）；侧栏没占左上角时左侧控件归最左侧页面表面的页头（`ChromeLead`）。右侧自绘按钮归最右侧
  * 表面的顶部（右面板展开时在面板标签条右侧、替掉面板的 ×，否则是线程页头 / 首页、设置页头的右端），没有页头的整页卡片
  * （登录、配对、连接页、加载中）用贴顶的 `ChromeBar`。
- * 按钮是低调的圆角 ghost：悬停出底色，关闭悬停变 err 色；窗口失焦时整组变淡；全屏时隐藏（macOS 全屏时红绿灯也收起，留白归 0）。
+ * 按钮是低调的圆角 ghost：悬停出底色，关闭悬停变 err 色；窗口失焦时整组变淡；全屏时隐藏。
+ * macOS 全屏时壳藏起原生红绿灯（`chrome.fullscreenLights`），页面在原位置自绘一组（`FullscreenLights`），指针移到左上角才出现；
+ * 页头仍按红绿灯让位，侧栏品牌区平时左移占住那块、红绿灯出现时让回。
  * 浏览器与移动壳里 `useWindowChrome()` 为 null，这里全部渲染为空，留白不变。
  */
-import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import {
+	type ReactNode,
+	useEffect,
+	useLayoutEffect,
+	useRef,
+	useState,
+	useSyncExternalStore,
+} from "react";
 import { useTranslation } from "react-i18next";
 import {
 	useWindowChrome,
 	type WindowAction,
 	type WindowButton,
+	type WindowChromeView,
 } from "../../lib/window-chrome";
 import { useUi } from "../../state/ui";
 import { BrandMark } from "../ui/data";
@@ -20,14 +30,22 @@ import { Icon, type IconName } from "../ui/icons";
 
 export type ChromeSide = "left" | "right";
 
-/** 两侧此刻各由谁占着：`native` = 原生红绿灯，`custom` = 页面自绘；全屏或不在桌面壳里时都为 null。 */
+/**
+ * 两侧此刻各由谁占着：`native` = 红绿灯（原生，或 macOS 全屏时页面自绘的那组），`custom` = 页面自绘按钮；
+ * 不在桌面壳里时都为 null，全屏时除自绘红绿灯外也为 null。
+ */
 export function useChromeSides(): {
 	left: "native" | "custom" | null;
 	right: "custom" | null;
 } {
 	const v = useWindowChrome();
-	if (!v || v.flags.fullscreen) return { left: null, right: null };
+	if (!v) return { left: null, right: null };
 	const c = v.chrome.controls;
+	if (v.flags.fullscreen)
+		return {
+			left: c === "native-left" && v.chrome.fullscreenLights ? "native" : null,
+			right: null,
+		};
 	return {
 		left:
 			c === "native-left" ? "native" : c === "custom-left" ? "custom" : null,
@@ -223,8 +241,11 @@ function useLightsLead(
 export function ChromeLead({ show }: { show: boolean }): ReactNode {
 	const v = useWindowChrome();
 	const ref = useRef<HTMLSpanElement>(null);
+	// 全屏时壳藏起原生红绿灯、页面在原位置自绘（指针移上去才出现），页头照样让位，红绿灯不会盖住页头的按钮
 	const native =
-		!!v && !v.flags.fullscreen && v.chrome.controls === "native-left";
+		!!v &&
+		v.chrome.controls === "native-left" &&
+		(!v.flags.fullscreen || v.chrome.fullscreenLights);
 	// 会挪动页头横坐标的状态：侧栏展开 / 收起 / 抽屉、面板开合 / 最大化 / 宽度，以及页头自己是不是最左侧表面
 	const layout = useUi(
 		(s) =>
@@ -275,7 +296,8 @@ const LIGHTS_DIVIDER = 13;
  * 左端让出到红绿灯右侧（`inset.left`），按钮间距收紧；字标只在品牌区够宽（≥ 6rem）时显示，256px 宽的侧栏只留品牌标。
  * 全屏时红绿灯收起：品牌区用 transform 平移到红绿灯原来的位置（260ms、`--ease`），退出全屏时平移回来；
  * 进入全屏延后 180ms 再走（壳报告全屏时系统的全屏过渡刚开始，红绿灯随标题栏淡出，先让它们走），退出不延后
- * （退出过渡结束时红绿灯才重新出现，260ms 早已让出空间）。减少动效时直接切换。
+ * （退出过渡结束时红绿灯才重新出现，260ms 早已让出空间）。全屏时指针移到左上角唤出页面自绘的红绿灯（`FullscreenLights`）
+ * 期间，品牌区同样平移回来让出位置。减少动效时直接切换。
  * 其它环境（浏览器、移动壳、Windows / Linux）与以前完全相同：56px 行高、字标常在。
  */
 export function SidebarBrandRow({
@@ -286,7 +308,12 @@ export function SidebarBrandRow({
 	const { t } = useTranslation();
 	const v = useWindowChrome();
 	const native = v?.chrome.controls === "native-left";
-	const fullscreen = native && !!v?.flags.fullscreen;
+	const lightsShown = useLightsShown();
+	// 品牌区此刻占着红绿灯的位置：全屏、且没有唤出自绘红绿灯
+	const shifted =
+		native &&
+		!!v?.flags.fullscreen &&
+		!(v.chrome.fullscreenLights && lightsShown);
 	const row = useRef<HTMLDivElement>(null);
 	const spacer = useRef<HTMLSpanElement>(null);
 	const [, rowTop] = useWindowPos(row, native);
@@ -319,19 +346,17 @@ export function SidebarBrandRow({
 					{/* 红绿灯与品牌之间的发丝分隔线（macOS 常见做法）；全屏红绿灯消失时随之淡出，退出全屏等品牌区回位后再淡入 */}
 					<span
 						data-lights-divider=""
-						className={`absolute top-1/2 h-4 w-px -translate-y-1/2 bg-border transition-opacity duration-150 motion-reduce:transition-none ${fullscreen ? "opacity-0 delay-0" : "opacity-100 delay-[260ms]"}`}
+						className={`absolute top-1/2 h-4 w-px -translate-y-1/2 bg-border transition-opacity duration-150 motion-reduce:transition-none ${shifted ? "opacity-0 delay-0" : "opacity-100 delay-[260ms]"}`}
 						style={{ left: reserve + 2 }}
 					/>
 				</span>
 			)}
 			<span
 				data-brand-shift={
-					native ? (fullscreen ? "fullscreen" : "lights") : undefined
+					native ? (shifted ? "fullscreen" : "lights") : undefined
 				}
-				className={`@container flex min-w-0 flex-1 items-center ${native ? "gap-1.5" : "gap-2"} ${native ? `transition-transform duration-[260ms] ease-[var(--ease)] motion-reduce:transition-none ${fullscreen ? "delay-[180ms]" : "delay-0"}` : ""}`}
-				style={
-					fullscreen ? { transform: `translateX(${-shiftBy}px)` } : undefined
-				}
+				className={`@container flex min-w-0 flex-1 items-center ${native ? "gap-1.5" : "gap-2"} ${native ? `transition-transform duration-[260ms] ease-[var(--ease)] motion-reduce:transition-none ${shifted ? "delay-[180ms]" : "delay-0"}` : ""}`}
+				style={shifted ? { transform: `translateX(${-shiftBy}px)` } : undefined}
 			>
 				<BrandMark size={24} />
 				{/* 不加 truncate：overflow 裁切会切掉 leading-none 下 y 的降部 */}
@@ -344,10 +369,11 @@ export function SidebarBrandRow({
 	);
 }
 
-/** 没有页头的整页卡片（登录 / 配对 / 连接页、加载中）：贴顶一条透明标题行，整条可拖动，两端放自绘按钮。 */
+/** 没有页头的整页卡片（登录 / 配对 / 连接页、加载中）：贴顶一条透明标题行，整条可拖动，两端放自绘按钮；全屏时只剩自绘红绿灯。 */
 export function ChromeBar(): ReactNode {
 	const v = useWindowChrome();
-	if (!v || v.flags.fullscreen || v.chrome.controls === "none") return null;
+	if (!v || v.chrome.controls === "none") return null;
+	if (v.flags.fullscreen) return <FullscreenLights />;
 	return (
 		<div
 			data-window-drag=""
@@ -358,5 +384,163 @@ export function ChromeBar(): ReactNode {
 			<span className="min-w-0 flex-1" />
 			<WindowControls side="right" />
 		</div>
+	);
+}
+
+/** 自绘红绿灯的关闭按钮左缘：与原生一致（chrome.rs 的 TRAFFIC_LIGHT_X）。 */
+const LIGHTS_X = 22;
+/** 按钮框边长：14px 一个、间距 6（中心距 20，与原生相同）。 */
+const LIGHT_BOX = 14;
+/** 指针离开后多久收起（ms）：在按钮之间滑过、稍微出界时不闪。 */
+const LIGHTS_LINGER = 300;
+
+// 自绘红绿灯此刻是否唤出：侧栏品牌行据此让位（各处只有一组红绿灯，模块级状态即可）
+let lightsShown = false;
+const lightsSubs = new Set<() => void>();
+function setLightsShown(on: boolean) {
+	if (on === lightsShown) return;
+	lightsShown = on;
+	for (const cb of [...lightsSubs]) cb();
+}
+function subscribeLights(cb: () => void): () => void {
+	lightsSubs.add(cb);
+	return () => lightsSubs.delete(cb);
+}
+function useLightsShown(): boolean {
+	return useSyncExternalStore(
+		subscribeLights,
+		() => lightsShown,
+		() => false,
+	);
+}
+
+/** 全屏、且壳把红绿灯交给页面画（`chrome.fullscreenLights`）时返回视图，否则 null。 */
+function useFullscreenLights(): WindowChromeView | null {
+	const v = useWindowChrome();
+	return v?.flags.fullscreen &&
+		v.chrome.controls === "native-left" &&
+		v.chrome.fullscreenLights
+		? v
+		: null;
+}
+
+/**
+ * macOS 全屏时页面自绘的红绿灯：位置与原生红绿灯相同，平时隐藏；指针进入左上角（红绿灯让位宽 × 标题行）或键盘聚焦时淡入，
+ * 离开 300ms 后淡出。关闭 = 原生关闭；最小化在全屏里不可用（与系统一致，置灰）；绿灯退出全屏。
+ * 热区下面只有页头的让位空白或侧栏品牌区（都不可交互），不会挡住按钮。
+ */
+export function FullscreenLights(): ReactNode {
+	const { t } = useTranslation();
+	const v = useFullscreenLights();
+	const shown = useLightsShown();
+	const timer = useRef(0);
+	const active = !!v;
+	// 退出全屏或卸载时收起：下次进全屏从隐藏开始
+	// biome-ignore lint/correctness/useExhaustiveDependencies: active 变化 = 进出全屏，需要复位
+	useEffect(
+		() => () => {
+			window.clearTimeout(timer.current);
+			setLightsShown(false);
+		},
+		[active],
+	);
+	if (!v) return null;
+	const show = () => {
+		window.clearTimeout(timer.current);
+		setLightsShown(true);
+	};
+	const hide = () => {
+		window.clearTimeout(timer.current);
+		timer.current = window.setTimeout(
+			() => setLightsShown(false),
+			LIGHTS_LINGER,
+		);
+	};
+	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: 悬停热区只负责唤出；按钮本身可聚焦，聚焦同样唤出
+		<div
+			data-fullscreen-lights={shown ? "shown" : "hidden"}
+			className="fixed top-0 left-0 z-50"
+			style={{
+				width: v.chrome.inset.left,
+				height: LIGHTS_MID + LIGHTS_ROW / 2,
+			}}
+			onPointerEnter={show}
+			onPointerLeave={hide}
+			onFocus={show}
+			onBlur={hide}
+		>
+			<div
+				className={`group/lights absolute flex gap-1.5 transition-opacity duration-150 motion-reduce:transition-none ${shown ? "opacity-100" : "pointer-events-none opacity-0"}`}
+				style={{ left: LIGHTS_X, top: LIGHTS_MID - LIGHT_BOX / 2 }}
+			>
+				<Light
+					kind="close"
+					label={t("window.close")}
+					onClick={() => v.act("close")}
+				/>
+				<Light kind="minimize" label={t("window.minimize")} />
+				<Light
+					kind="fullscreen"
+					label={t("window.exitFullscreen")}
+					onClick={() => v.act("toggleFullscreen")}
+				/>
+			</div>
+		</div>
+	);
+}
+
+/** 一颗红绿灯：12px 圆点，整组悬停时显示符号；没有 `onClick` 即不可用（灰）。 */
+function Light({
+	kind,
+	label,
+	onClick,
+}: {
+	kind: "close" | "minimize" | "fullscreen";
+	label: string;
+	onClick?: () => void;
+}): ReactNode {
+	const color = !onClick
+		? "bg-fg/20"
+		: kind === "close"
+			? "bg-[#ff5f57]"
+			: "bg-[#28c840]";
+	return (
+		<button
+			type="button"
+			aria-label={label}
+			title={label}
+			disabled={!onClick}
+			data-fullscreen-light={kind}
+			className="inline-flex shrink-0 items-center justify-center rounded-full focus-visible:outline-2 focus-visible:outline-accent"
+			style={{ width: LIGHT_BOX, height: LIGHT_BOX }}
+			onClick={onClick}
+		>
+			<span
+				className={`flex h-3 w-3 items-center justify-center rounded-full text-black/55 ring-1 ring-black/10 ring-inset ${color}`}
+			>
+				{onClick && (
+					<svg
+						viewBox="0 0 12 12"
+						aria-hidden
+						className="h-3 w-3 opacity-0 transition-opacity duration-100 group-hover/lights:opacity-100"
+					>
+						{kind === "close" ? (
+							<path
+								d="M4 4l4 4M8 4l-4 4"
+								stroke="currentColor"
+								strokeWidth="1.2"
+								strokeLinecap="round"
+							/>
+						) : (
+							<path
+								d="M5.6 5.6V2.6L2.6 5.6ZM6.4 6.4V9.4L9.4 6.4Z"
+								fill="currentColor"
+							/>
+						)}
+					</svg>
+				)}
+			</span>
+		</button>
 	);
 }

@@ -58,7 +58,7 @@ import { Toasts } from "../ui/Toasts";
 import { Sidebar } from "./Sidebar";
 import { SinkLayout } from "./SinkLayout";
 import { useSectionTracker, useSwitchSection } from "./useSection";
-import { ChromeBar } from "./WindowControls";
+import { ChromeBar, FullscreenLights } from "./WindowControls";
 
 /** 手机抽屉进出场时长，与列侧栏的收起动画一致 */
 const DRAWER_MS = 260;
@@ -407,6 +407,8 @@ export function AppShell(): ReactNode {
 			<PaletteHost />
 			<ThreadRowDialogs />
 			<ConsentDialog />
+			{/* macOS 全屏：左上角自绘红绿灯，指针移上去才出现（不在全屏 / 不在桌面壳里时为空） */}
+			<FullscreenLights />
 		</div>
 	);
 }

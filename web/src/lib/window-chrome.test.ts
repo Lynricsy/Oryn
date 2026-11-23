@@ -75,7 +75,11 @@ describe("判定", () => {
 			focused: false,
 		}));
 		const wc = createWindowChrome(f.win);
-		expect(wc?.chrome).toEqual({ ...CHROME, radius: 0 });
+		expect(wc?.chrome).toEqual({
+			...CHROME,
+			radius: 0,
+			fullscreenLights: false,
+		});
 		// 没有 radius：不改根元素，卡片保持设计令牌
 		expect(f.doc.documentElement.hasAttribute("data-win-r")).toBe(false);
 		expect(f.invoke).toHaveBeenCalledWith("host_window", { action: "state" });
@@ -117,6 +121,8 @@ describe("parseChrome", () => {
 			buttons: ["close", "minimize"],
 			inset: { top: 0, left: 0, right: 0 },
 			radius: 0,
+			// 旧壳没有这个字段：全屏时页面不画红绿灯
+			fullscreenLights: false,
 		});
 		expect(
 			parseChrome({
@@ -125,6 +131,13 @@ describe("parseChrome", () => {
 				inset: { top: 48, left: 84 },
 			})?.inset,
 		).toEqual({ top: 48, left: 84, right: 0 });
+		expect(
+			parseChrome({
+				platform: "macos",
+				controls: "native-left",
+				fullscreenLights: true,
+			})?.fullscreenLights,
+		).toBe(true);
 		expect(parseChrome({ platform: "linux", controls: "center" })).toBeNull();
 		expect(parseChrome({ platform: "ios", controls: "none" })).toBeNull();
 		expect(parseChrome("custom-right")).toBeNull();
