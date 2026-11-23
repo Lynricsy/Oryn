@@ -283,10 +283,12 @@ function GlyphPanel({
 						value={q}
 						onChange={(e) => setQ(e.target.value)}
 						onKeyDown={(e) => {
-							// 回车选第一个结果
-							if (e.key !== "Enter" || !first) return;
+							// 输入法组合中的回车是选字，不归这里
+							if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+							// 弹层的 DOM 仍在外层表单里：回车一律拦下，否则无结果时会提交表单（新建 / 保存项目）
 							e.preventDefault();
-							onPick(first.char);
+							// 只在有搜索词、且结果已跟上当前输入（延迟值）时选第一个
+							if (first && query && query === q.trim()) onPick(first.char);
 						}}
 					/>
 				</div>

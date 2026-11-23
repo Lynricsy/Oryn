@@ -161,6 +161,21 @@ describe("项目设置：概览", () => {
 		]);
 	});
 
+	it("图标搜索无结果时回车被弹层拦下，不提交外层表单，也不选字形", async () => {
+		mount(OVERVIEW);
+		fireEvent.click(
+			await screen.findByRole("button", { name: i18n.t("projects.icon") }),
+		);
+		const picker = screen.getByRole("dialog", {
+			name: i18n.t("projects.icon"),
+		});
+		const search = within(picker).getByRole("searchbox");
+		fireEvent.change(search, { target: { value: "zzzqqq" } });
+		// keyDown 返回 false = 默认动作（表单的隐式提交）被取消
+		expect(fireEvent.keyDown(search, { key: "Enter" })).toBe(false);
+		expect(screen.getByRole("dialog")).toBeInTheDocument();
+	});
+
 	it("归档：确认框写明后果，确认后 PATCH archived=true 并出现归档提示", async () => {
 		mount(OVERVIEW);
 		fireEvent.click(await screen.findByRole("button", { name: "归档" }));
