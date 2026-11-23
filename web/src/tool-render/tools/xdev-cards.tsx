@@ -4,22 +4,10 @@
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Markdown } from "../../components/markdown/Markdown";
-import { Badge, Output, ResultText } from "../parts";
+import { parseJsonText, SmartResult } from "../generic";
+import { Badge, ErrorBlock, MarkdownBlock, MetaCount, Output } from "../parts";
 import type { ToolRenderer, ToolRenderProps } from "../types";
 import { normalizeWs, resultTextOf, str, truncate } from "../util";
-
-/**
- * 卡片里的 Markdown（设备文档、MCP 文本结果、rewind 报告）：卡片默认等宽 12px，
- * 正文退回无衬线并用卡片正文字号，避免整段文档读成代码。
- */
-export function CardMarkdown({ text }: { text: string }): ReactNode {
-	return (
-		<div className="font-sans [&>.md]:text-sm">
-			<Markdown text={text} />
-		</div>
-	);
-}
 
 function DocsSummary({ args }: ToolRenderProps): ReactNode {
 	const { t } = useTranslation();
@@ -35,16 +23,28 @@ function DocsSummary({ args }: ToolRenderProps): ReactNode {
 	);
 }
 
-function DocsResult({ result }: ToolRenderProps): ReactNode {
+/** 文档的篇幅（行数），收起时也看得出是一页还是一本。 */
+function DocsMeta({ result }: ToolRenderProps): ReactNode {
+	if (!result || result.isError) return null;
 	const text = resultTextOf(result).trim();
-	if (!text) return null;
-	if (result?.isError) return <ResultText result={result} maxLines={12} />;
-	return <CardMarkdown text={text} />;
+	return text ? (
+		<MetaCount unit="lines" count={text.split("\n").length} />
+	) : null;
 }
 
-/** 设备文档：Markdown 渲染文档正文，失败时显示错误文本。 */
+function DocsResult({ result }: ToolRenderProps): ReactNode {
+	const { t } = useTranslation();
+	const text = resultTextOf(result).trim();
+	if (!result) return null;
+	if (result.isError || !text)
+		return <SmartResult result={result} empty={t("toolRender.xdev.noDocs")} />;
+	return <MarkdownBlock text={text} maxHeight={360} />;
+}
+
+/** 设备文档：Markdown 渲染文档正文（超高折叠），失败时给错误块。 */
 export const xdevDocsRenderer: ToolRenderer = {
 	Summary: DocsSummary,
+	Meta: DocsMeta,
 	Result: DocsResult,
 };
 
@@ -60,34 +60,27 @@ function DeviceSummary({ args, result }: ToolRenderProps): ReactNode {
 	return payload ? <span>{truncate(normalizeWs(payload), 96)}</span> : null;
 }
 
-/** 写入设备的原始内容；能解析成 JSON 时按 JSON 高亮（设备参数多为 JSON 对象）。 */
+/** 写入设备的原始内容（模型写的就是这段，原样给出）；是 JSON 时按 JSON 高亮（设备参数多为 JSON 对象）。 */
 function DeviceInput({ args }: ToolRenderProps): ReactNode {
 	const payload = str(args.payload);
 	if (!payload?.trim()) return null;
 	return (
 		<Output
 			text={payload}
-			lang={isJson(payload) ? "json" : null}
+			lang={parseJsonText(payload) === undefined ? null : "json"}
 			variant="code"
 			maxLines={12}
 		/>
 	);
 }
 
-function isJson(text: string): boolean {
-	try {
-		JSON.parse(text);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
 function DeviceResult({ result }: ToolRenderProps): ReactNode {
-	return <ResultText result={result} maxLines={16} />;
+	if (result?.isError)
+		return <ErrorBlock text={resultTextOf(result)} maxLines={12} />;
+	return <SmartResult result={result} />;
 }
 
-/** 未派发的设备写入：错误首行（设备不存在、参数无效等）与写入的原始内容。 */
+/** 未派发的设备写入：错误（设备不存在、参数无效等，首行醒目）与写入的原始内容。 */
 export const xdevDeviceRenderer: ToolRenderer = {
 	Summary: DeviceSummary,
 	Input: DeviceInput,

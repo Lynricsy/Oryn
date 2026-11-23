@@ -2,9 +2,10 @@
  * Oryn 宿主工具（M9，协调对话里的 `create_thread` / `send_message` / `archive_thread` / `list_threads` /
  * `read_thread` / `set_schedule` / `list_schedules` / `get_stats` / `list_projects`；M19 加上全局助手的
  * `update_thread` / `abort_thread` / `set_thread_model` / `fork_thread` / `wake_thread` / `delete_thread` / `list_runners`）。
- * 摘要行只用调用参数；输入段是通用渲染的完整参数；输出段里 `details.threadIds` / `details.threads` / `details.thread`
- * 指向的线程渲染成实时的 `ThreadCard`（数据取线程索引），卡片只是补充：下面始终是原始结果（JSON 时按 JSON 高亮；
- * `read_thread` 读到的消息、`send_message` 的全文都在这里，M9 审查 W7）。卡片超过 12 张时 `+N` 可展开其余。
+ * 摘要行只用调用参数，读数是结果里的线程数；输入段是参数的 JSON 树，发出的消息与提示词单独按引文给出全文；
+ * 输出段里 `details.threadIds` / `details.threads` / `details.thread` 指向的线程渲染成实时的 `ThreadCard`
+ * （数据取线程索引），卡片只是补充：下面始终是原始结果（JSON 树，有卡片时深层先收起；`read_thread` 读到的消息
+ * 在这里，M9 审查 W7）；出错时错误块。卡片超过 12 张时 `+N` 可展开其余。
  * `details` 残缺或类型不对时一律当作没有。
  * 与 collab-web 移植来的渲染器不同，这一组只在 Oryn 里出现，可以直接用应用自己的组件。
  */
@@ -13,10 +14,10 @@ import { useTranslation } from "react-i18next";
 import { ThreadCard } from "../../components/space/ThreadCard";
 import { parseTitleCard } from "../../lib/title";
 import { useIndex } from "../../state/stores";
-import { genericRenderer } from "../generic";
-import { Badge, Badges, JsonResultText, ResultImages } from "../parts";
+import { ArgsTree, parseJsonText, SmartResult } from "../generic";
+import { Badge, Badges, ErrorBlock, JsonTree } from "../parts";
 import type { ToolRenderer, ToolRenderProps } from "../types";
-import { detailsRecord, num, str, truncate } from "../util";
+import { detailsRecord, num, resultTextOf, str, truncate } from "../util";
 
 /** 卡片先列这么多条（`list_threads` 可能有上百条），其余点 `+N` 展开。 */
 const MAX_CARDS = 12;
@@ -163,20 +164,55 @@ function Summary({ name, args }: ToolRenderProps): ReactNode {
 	}
 }
 
+/** 右侧读数：结果里列出的线程数（列表类工具，或一次涉及多个线程时）。 */
+function Meta({ name, result }: ToolRenderProps): ReactNode {
+	const { t } = useTranslation();
+	if (!result || result.isError) return null;
+	const n = detailThreadIds(detailsRecord(result)).length;
+	return n > 1 || (n > 0 && name.startsWith("list_")) ? (
+		<span>{t("toolRender.oryn.threads", { count: n })}</span>
+	) : null;
+}
+
+/** 输入段：发出的消息、新线程的提示词按引文排版（全文），其余参数是 JSON 树。 */
+function Input({ name, args }: ToolRenderProps): ReactNode {
+	const a = args ?? {};
+	const quoteKey =
+		name === "send_message"
+			? "message"
+			: name === "create_thread" || name === "set_schedule"
+				? "prompt"
+				: null;
+	const quote = quoteKey ? str(a[quoteKey]) : null;
+	if (!quoteKey || quote === null) return <ArgsTree args={a} />;
+	const rest: Record<string, unknown> = {};
+	for (const k in a) if (k !== quoteKey) rest[k] = a[k];
+	return (
+		<>
+			<ArgsTree args={rest} />
+			<blockquote className="tv-oryn-quote tv-prose">{quote}</blockquote>
+		</>
+	);
+}
+
 function Result(props: ToolRenderProps): ReactNode {
 	const { t } = useTranslation();
 	const [all, setAll] = useState(false);
-	const ids = props.result?.isError
-		? []
-		: detailThreadIds(detailsRecord(props.result));
+	const { result } = props;
+	if (!result) return null;
+	if (result.isError)
+		return (
+			<ErrorBlock
+				text={resultTextOf(result).trim() || t("toolRender.generic.failed")}
+			/>
+		);
+	const ids = detailThreadIds(detailsRecord(result));
 	const shown = all ? ids : ids.slice(0, MAX_CARDS);
+	const json = parseJsonText(resultTextOf(result));
 	return (
 		<>
 			{ids.length > 0 && (
-				<ul
-					data-testid="oryn-tool-threads"
-					className="flex flex-col gap-1.5 p-2"
-				>
+				<ul data-testid="oryn-tool-threads" className="tv-oryn-threads">
 					{shown.map((id) => (
 						<li key={id}>
 							<ThreadCard threadId={id} />
@@ -196,15 +232,20 @@ function Result(props: ToolRenderProps): ReactNode {
 					)}
 				</ul>
 			)}
-			<ResultImages result={props.result} />
-			<JsonResultText result={props.result} />
+			{/* 卡片只是补充：原始结果始终在（read_thread 读到的消息只在这里）；有卡片时 JSON 先收起深层 */}
+			{ids.length > 0 && json !== undefined ? (
+				<JsonTree value={json} openDepth={1} />
+			) : (
+				<SmartResult result={result} />
+			)}
 		</>
 	);
 }
 
 export const orynRenderer: ToolRenderer = {
 	Summary,
-	Input: genericRenderer.Input,
+	Meta,
+	Input,
 	Result,
 };
 

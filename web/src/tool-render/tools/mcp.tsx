@@ -1,23 +1,24 @@
 /**
  * MCP 工具（`mcp__<server>_<tool>`，顶层调用或 `write xd://mcp__…` 派发）：
- * 摘要给出 server / tool 与主要参数，读数显示运行中的进度，展开体给参数、图片与文本结果。
+ * 头部名字由 ToolView 写成 server / tool，摘要给主要参数，读数在运行中是进度条 + 进度文字、结束后是结果的项数。
+ * 展开体：参数是可折叠的 JSON 树；运行中输出段是进度面板，结束后是图片与文本结果（JSON 树 / Markdown / 文本）。
  * 结果形状见 oryn-core `mcp/tool-bridge.ts`：details 带 `serverName` / `mcpToolName`，
- * 部分结果带 `progress: { progress, total?, message? }`；文本结果是 JSON 时按 JSON 显示，否则按 Markdown（同 TUI）。
+ * 部分结果带 `progress: { progress, total?, message? }`。
  */
-import type { ReactNode } from "react";
-import { jsonText, Output, ResultImages, ResultText } from "../parts";
+import type { CSSProperties, ReactNode } from "react";
+import { useTranslation } from "react-i18next";
+import { ArgsTree, inlineArgs, parseJsonText, SmartResult } from "../generic";
 import type { ToolRenderer, ToolRenderProps } from "../types";
 import {
-	argsDigest,
 	detailsRecord,
 	isRecord,
 	normalizeWs,
 	num,
+	resultImagesOf,
 	resultTextOf,
 	str,
 	truncate,
 } from "../util";
-import { CardMarkdown } from "./xdev-cards";
 
 /** 摘要里优先展示的参数：先动作，再对象（同 TUI 的设备活动摘要）。 */
 const VERB_KEYS = ["action", "op", "command"] as const;
@@ -43,29 +44,64 @@ function pick(
 	return null;
 }
 
-function progressText(partial: ToolRenderProps["partial"]): string | null {
+interface McpProgress {
+	progress: number;
+	total: number | null;
+	message: string | null;
+}
+
+function progressOf(partial: ToolRenderProps["partial"]): McpProgress | null {
 	const details = detailsRecord(partial);
 	const p = details && isRecord(details.progress) ? details.progress : null;
 	const progress = num(p?.progress);
 	if (progress === null) return null;
 	const total = num(p?.total);
-	const amount = total === null ? `${progress}` : `${progress}/${total}`;
-	const message = str(p?.message)?.trim();
-	if (!message) return amount;
-	return total === null ? message : `${message} (${amount})`;
+	return {
+		progress,
+		total: total !== null && total > 0 ? total : null,
+		message: str(p?.message)?.trim() || null,
+	};
 }
 
-/** 参数的一行预览：标量写成 `key=value`，嵌套值写成紧凑 JSON（同 TUI 的 formatArgsInline）。 */
-function inlineArgs(args: Record<string, unknown>): string {
-	const parts: string[] = [];
-	for (const key in args) {
-		const value = args[key];
-		if (value === undefined || value === null) continue;
-		parts.push(
-			`${key}=${typeof value === "object" ? argsDigest(value, 40) : String(value)}`,
-		);
-	}
-	return parts.join(" ");
+/** `3/10`，没有总数时只写已完成数。 */
+function amountText(p: McpProgress): string {
+	return p.total === null ? `${p.progress}` : `${p.progress}/${p.total}`;
+}
+
+/** 读数里的进度文字：`Scanning (3/10)`，没有说明时只写数字（同 TUI）。 */
+function progressText(p: McpProgress): string {
+	if (!p.message) return amountText(p);
+	return p.total === null ? p.message : `${p.message} (${amountText(p)})`;
+}
+
+/** 细进度条：有总数时按比例填充，没有总数时一段光标来回走（不确定进度）。 */
+function ProgressBar({
+	p,
+	size,
+}: {
+	p: McpProgress;
+	size: "sm" | "lg";
+}): ReactNode {
+	const ratio =
+		p.total === null ? null : Math.max(0, Math.min(1, p.progress / p.total));
+	return (
+		<span
+			className={`tv-mcp-bar tv-mcp-bar--${size}${ratio === null ? " tv-mcp-bar--indet" : ""}`}
+			role="progressbar"
+			aria-valuemin={0}
+			aria-valuemax={p.total ?? undefined}
+			aria-valuenow={p.progress}
+			aria-valuetext={progressText(p)}
+		>
+			<i
+				style={
+					ratio === null
+						? undefined
+						: ({ "--tv-mcp-ratio": ratio } as CSSProperties)
+				}
+			/>
+		</span>
+	);
 }
 
 /** server / tool 在卡片头的名字里（ToolView 的 mcpOrigin），摘要只给主要参数。 */
@@ -79,49 +115,69 @@ function Summary({ args }: ToolRenderProps): ReactNode {
 	return main ? <span>{truncate(normalizeWs(main), 120)}</span> : null;
 }
 
-/** 右侧读数：运行中的 MCP 进度。 */
+/** 右侧读数：运行中是进度条与进度文字；结束后是 JSON 数组的项数、图片张数。 */
 function Meta({ result, partial }: ToolRenderProps): ReactNode {
-	const text = result ? null : progressText(partial);
-	return text ? <span>{truncate(normalizeWs(text), 60)}</span> : null;
-}
-
-function ResultBody({ result }: Pick<ToolRenderProps, "result">): ReactNode {
-	const text = resultTextOf(result).trim();
-	if (!text) return null;
-	if (result?.isError) return <ResultText result={result} maxLines={12} />;
-	const json = jsonText(text);
-	if (json !== null)
-		return <Output text={json} lang="json" variant="code" maxLines={16} />;
-	return <CardMarkdown text={text} />;
-}
-
-function Input({ args }: ToolRenderProps): ReactNode {
-	if (Object.keys(args).length === 0) return null;
-	let argText = "";
-	try {
-		argText = JSON.stringify(args, null, 2) ?? "";
-	} catch {
-		argText = String(args);
+	const { t } = useTranslation();
+	if (!result) {
+		const p = progressOf(partial);
+		if (!p) return null;
+		return (
+			<>
+				<ProgressBar p={p} size="sm" />
+				<span className="tv-mcp-meta-text">
+					{truncate(normalizeWs(progressText(p)), 60)}
+				</span>
+			</>
+		);
 	}
-	if (!argText) return null;
-	return <Output text={argText} lang="json" variant="code" maxLines={12} />;
+	if (result.isError) return null;
+	const json = parseJsonText(resultTextOf(result));
+	const images = resultImagesOf(result).length;
+	return (
+		<>
+			{Array.isArray(json) && (
+				<span>{t("toolRender.json.items", { count: json.length })}</span>
+			)}
+			{images > 0 && (
+				<span>{t("toolRender.mcp.images", { count: images })}</span>
+			)}
+		</>
+	);
+}
+
+/** 运行中的进度面板：说明文字在上，粗一点的进度条与百分比在下。 */
+function ProgressPanel({ p }: { p: McpProgress }): ReactNode {
+	const pct =
+		p.total === null ? null : Math.round((p.progress / p.total) * 100);
+	return (
+		<div className="tv-mcp-progress">
+			<div className="tv-mcp-progress-line">
+				<span className="tv-mcp-progress-msg">{p.message ?? "…"}</span>
+				<span className="tv-mcp-progress-num">
+					{amountText(p)}
+					{pct !== null && <span className="tv-faint"> · {pct}%</span>}
+				</span>
+			</div>
+			<ProgressBar p={p} size="lg" />
+		</div>
+	);
 }
 
 function Result({ result, partial }: ToolRenderProps): ReactNode {
-	const progress = result ? null : progressText(partial);
+	const { t } = useTranslation();
+	if (!result) {
+		const p = progressOf(partial);
+		return p ? <ProgressPanel p={p} /> : null;
+	}
 	return (
-		<>
-			{progress && <div className="tv-prose">{progress}</div>}
-			<ResultImages result={result} />
-			<ResultBody result={result} />
-		</>
+		<SmartResult result={result} empty={t("toolRender.mcp.empty")} markdown />
 	);
 }
 
 export const mcpRenderer: ToolRenderer = {
 	Summary,
 	Meta,
-	Input,
+	Input: ArgsTree,
 	Result,
 	livePartial: true,
 };

@@ -1,17 +1,17 @@
 /**
  * `computer_record` — 录制助手电脑的桌面（M25 3.4，宿主工具在 `internal/coord/computer.go`，只给全局助手）。
- * 参数 `{action: "start" | "stop"}`。start 的 details 是 `{path}`，卡片只有一行「开始录制桌面」；
+ * 参数 `{action: "start" | "stop"}`。start 的 details 是 `{path}`，头部是带录制红点的「开始录制桌面」，输出段一行回执；
  * stop 的 details 是 `{recording: DesktopRecording, libraryFileId?}`：视频不超过传输上限时存进文件库，
  * 才带 `libraryFileId`。出错时 isError（`already_recording | not_recording | not_ready | control_user`），同 desktop_record。
- * 有 `libraryFileId` 且宿主给了 `libraryFileUrl` 时内嵌 `<video>` 播放文件库里的那份；否则（超过上限没存、分享页）
- * 只给电脑上的路径，引导去电脑的「文件」页签。展示部件与 `desktop_record` 共用。
+ * 有 `libraryFileId` 且宿主给了 `libraryFileUrl` 时放映框内嵌 `<video>` 播放文件库里的那份；否则（超过上限没存、分享页）
+ * 放映框里只给说明，引导去电脑的「文件」页签，下面是电脑上的路径。展示部件与 `desktop_record` 共用。
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { genericRenderer } from "../generic";
-import { Note } from "../parts";
+import { ArgsTree } from "../generic";
+import { Note, PathText } from "../parts";
 import type { ToolRenderer, ToolRenderProps, ToolResultLike } from "../types";
-import { detailsRecord, str } from "../util";
+import { detailsRecord, resultTextOf, str } from "../util";
 import {
 	type DesktopRecordingCard,
 	parseRecording,
@@ -20,6 +20,8 @@ import {
 	RecordingVideo,
 	RecordMeta,
 	RecordNotes,
+	RecordPoster,
+	RecordStarted,
 	RecordSummary,
 } from "./desktop-record";
 
@@ -53,12 +55,21 @@ function Meta({ result }: ToolRenderProps): ReactNode {
 	return <RecordMeta rec={computerRecordingOf(result)?.rec ?? null} />;
 }
 
-function Result({ result, host }: ToolRenderProps): ReactNode {
+function Result({ args, result, host }: ToolRenderProps): ReactNode {
 	const { t } = useTranslation();
-	if (result?.isError) return <RecordErrorResult result={result} />;
+	if (!result) return null;
+	if (result.isError) return <RecordErrorResult result={result} />;
 	const card = computerRecordingOf(result);
-	// start 的结果没有要展示的：头部那一行已经说清楚
-	if (!card) return null;
+	if (!card) {
+		if (str(args.action) !== "start") return null;
+		// start 的回执：details 里有录像要写到的路径时给路径，否则给结果文本
+		const path = str(detailsRecord(result)?.path);
+		return (
+			<RecordStarted
+				text={path ? <PathText path={path} /> : resultTextOf(result).trim()}
+			/>
+		);
+	}
 	const src =
 		card.libraryFileId && host?.libraryFileUrl
 			? host.libraryFileUrl(card.libraryFileId)
@@ -76,7 +87,7 @@ function Result({ result, host }: ToolRenderProps): ReactNode {
 					}
 				/>
 			) : (
-				<Note>{t("toolRender.computerRecord.onComputer")}</Note>
+				<RecordPoster>{t("toolRender.computerRecord.onComputer")}</RecordPoster>
 			)}
 			<RecordFacts rec={card.rec} />
 		</>
@@ -86,6 +97,6 @@ function Result({ result, host }: ToolRenderProps): ReactNode {
 export const computerRecordRenderer: ToolRenderer = {
 	Summary,
 	Meta,
-	Input: genericRenderer.Input,
+	Input: ArgsTree,
 	Result,
 };

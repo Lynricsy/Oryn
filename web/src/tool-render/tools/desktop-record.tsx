@@ -1,20 +1,22 @@
 /**
  * `desktop_record` — 录制线程 orb 的桌面（M25 3.3，工具在 `internal/orbdrt/assets/oryn-orb.ts`）。参数 `{action: "start" | "stop"}`。
- * start 成功时没有 details，卡片只有一行「开始录制桌面」；stop 的 details 是 `DesktopRecording`
+ * start 成功时没有 details，卡片头部是带录制红点的「开始录制桌面」，输出段一行回执；stop 的 details 是 `DesktopRecording`
  * （`{path, bytes, durationMs, width, height, truncated, stoppedBy}`，`stoppedBy ∈ agent | limit | error | control`；
  * control = 用户接管、agent 请求人工操作或回合结束时，为保护人工输入提前结束）。
  * 出错时 isError，details 为 `{tool, error: {code, message}}`。
- * 视频留在 orb 上：输出段内嵌 `<video>`，地址取 `host.orbFileUrl(path)`；宿主不提供（分享页）或返回 null（orb 已删除）时
- * 只给路径与说明。视频加载失败时给错误文字，宿主有 `openOrbFile` 时再给「在文件中打开」。
+ * 视频留在 orb 上：输出段是一块按录像宽高比预留的放映框，内嵌 `<video>`，地址取 `host.orbFileUrl(path)`；
+ * 宿主不提供（分享页）或返回 null（orb 已删除）时放映框里只给说明，下面是文件名与分辨率。
+ * 视频加载失败时给错误文字，宿主有 `openOrbFile` 时再给「在文件中打开」。
  * 读数（时长、大小、未正常收尾）在 Meta。`details` 残缺或类型不对时一律当作没有。
  *
- * 摘要、读数、提示、视频、文件信息与出错卡片几个部件也给 `computer_record`（`./computer-record`）用。
+ * 摘要、读数、提示、放映框、文件信息与出错卡片几个部件也给 `computer_record`（`./computer-record`）用。
  */
-import { type ReactNode, useState } from "react";
+import { type CSSProperties, type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Icon } from "../../components/ui/icons";
 import { formatBytes } from "../../lib/format";
-import { genericRenderer } from "../generic";
-import { InvalidArg, Kv, KvGrid, Note, Output, PathText } from "../parts";
+import { ArgsTree } from "../generic";
+import { ErrorBlock, InvalidArg, Note, PathText } from "../parts";
 import type { ToolRenderer, ToolRenderProps, ToolResultLike } from "../types";
 import { detailsRecord, isRecord, num, resultTextOf, str } from "../util";
 
@@ -66,7 +68,7 @@ export function formatClock(ms: number): string {
 	return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-/** 头部摘要：start 一行；stop 一行加录像路径。 */
+/** 头部摘要：start 带录制红点；stop 带停止方块与录像路径。 */
 export function RecordSummary({
 	action,
 	rec,
@@ -76,17 +78,20 @@ export function RecordSummary({
 }): ReactNode {
 	const { t } = useTranslation();
 	if (action === "start")
-		return <span>{t("toolRender.desktopRecord.start")}</span>;
+		return (
+			<span className="tv-rec-sum">
+				<i className="tv-rec-dot" aria-hidden="true" />
+				{t("toolRender.desktopRecord.start")}
+			</span>
+		);
 	if (action !== "stop") return <InvalidArg what="action" />;
 	return (
 		<>
-			<span>{t("toolRender.desktopRecord.stop")}</span>
-			{rec && (
-				<>
-					{" "}
-					<PathText path={rec.path} />
-				</>
-			)}
+			<span className="tv-rec-sum">
+				<i className="tv-rec-stop" aria-hidden="true" />
+				{t("toolRender.desktopRecord.stop")}
+			</span>
+			{rec && <PathText path={rec.path} />}
 		</>
 	);
 }
@@ -135,13 +140,21 @@ export function RecordNotes({ rec }: { rec: DesktopRecordingCard }): ReactNode {
 	);
 }
 
-/** 播放器最高 15rem（与 `max-h-60` 一致）。 */
+/** 放映框最高 15rem（与 `max-h-60` 一致）。 */
 const VIDEO_MAX_REM = 15;
+
+/** 放映框的尺寸：知道分辨率时按它预留宽高比（最高 15rem、不超过卡片宽），点播放前后卡片高度不变。 */
+function frameStyle(rec: DesktopRecordingCard): CSSProperties | undefined {
+	if (!rec.width || !rec.height) return undefined;
+	return {
+		aspectRatio: `${rec.width} / ${rec.height}`,
+		width: `min(100%, ${(VIDEO_MAX_REM * rec.width) / rec.height}rem)`,
+	};
+}
 
 /**
  * 内嵌播放；加载失败时换成 `failed`。换地址时由调用方按 `src` 重挂，错误状态随之清空。
  * `preload="none"`：取视频会唤醒冻结的 orb，只在用户点播放时才发请求，打开对话不发。
- * 知道分辨率时按它预留宽高比（最高 15rem、不超过卡片宽），点播放前后卡片高度不变。
  */
 export function RecordingVideo({
 	src,
@@ -155,20 +168,12 @@ export function RecordingVideo({
 	const { t } = useTranslation();
 	const [failed, setFailed] = useState(false);
 	if (failed) return failedView;
-	const sized = rec.width && rec.height ? rec.width / rec.height : null;
 	return (
 		// biome-ignore lint/a11y/useMediaCaption: 桌面录像没有声音，也没有字幕可配
 		<video
 			data-testid="record-video"
-			className="block max-h-60 max-w-full rounded-sm border border-border bg-inset"
-			style={
-				sized
-					? {
-							aspectRatio: `${rec.width} / ${rec.height}`,
-							width: `min(100%, ${VIDEO_MAX_REM * sized}rem)`,
-						}
-					: undefined
-			}
+			className="tv-rec-frame"
+			style={frameStyle(rec)}
 			src={src}
 			controls
 			preload="none"
@@ -178,20 +183,30 @@ export function RecordingVideo({
 	);
 }
 
-/** 录像文件的路径与分辨率。 */
-export function RecordFacts({ rec }: { rec: DesktopRecordingCard }): ReactNode {
-	const { t } = useTranslation();
-	const size =
-		rec.width !== null && rec.height !== null
-			? `${rec.width}×${rec.height}`
-			: null;
+/** 放不了录像时（分享页、环境已删除、超过上限没存）占位的矮放映框：摄像机图标与去哪里找这段录像。 */
+export function RecordPoster({ children }: { children: ReactNode }): ReactNode {
 	return (
-		<KvGrid>
-			<Kv k={t("toolRender.desktopRecord.file")}>
-				<PathText path={rec.path} />
-			</Kv>
-			<Kv k={t("toolRender.desktopRecord.resolution")}>{size}</Kv>
-		</KvGrid>
+		<div className="tv-rec-frame tv-rec-poster">
+			<span className="tv-rec-poster-icon" aria-hidden="true">
+				<Icon name="videoCamera" size={20} />
+			</span>
+			<span>{children}</span>
+		</div>
+	);
+}
+
+/** 放映框下的一行：录像文件与分辨率（时长、大小在头部读数里）。 */
+export function RecordFacts({ rec }: { rec: DesktopRecordingCard }): ReactNode {
+	return (
+		<div className="tv-rec-caption">
+			<Icon name="file" size={11} />
+			<PathText path={rec.path} />
+			{rec.width !== null && rec.height !== null && (
+				<span className="tv-faint">
+					{rec.width}×{rec.height}
+				</span>
+			)}
+		</div>
 	);
 }
 
@@ -205,7 +220,18 @@ export function RecordErrorResult({
 	const text =
 		(isRecord(d?.error) ? str(d.error.message) : null) ??
 		resultTextOf(result).trim();
-	return text ? <Output text={text} error variant="plain" /> : null;
+	return text ? <ErrorBlock text={text} /> : null;
+}
+
+/** start 的回执：录制红点 + 结果文本（写到哪个文件）。 */
+export function RecordStarted({ text }: { text: ReactNode }): ReactNode {
+	if (!text) return null;
+	return (
+		<div className="tv-rec-started">
+			<i className="tv-rec-dot tv-rec-dot--live" aria-hidden="true" />
+			<span>{text}</span>
+		</div>
+	);
 }
 
 function Summary({ args, result }: ToolRenderProps): ReactNode {
@@ -237,7 +263,7 @@ function OrbVideoFailed({
 					>
 						{t("toolRender.desktopRecord.openInFiles")}
 						<span className="tv-agent-link-arrow" aria-hidden="true">
-							{" ↗"}
+							<Icon name="external" size={10} />
 						</span>
 					</button>
 				</div>
@@ -246,12 +272,15 @@ function OrbVideoFailed({
 	);
 }
 
-function Result({ result, host }: ToolRenderProps): ReactNode {
+function Result({ args, result, host }: ToolRenderProps): ReactNode {
 	const { t } = useTranslation();
-	if (result?.isError) return <RecordErrorResult result={result} />;
+	if (!result) return null;
+	if (result.isError) return <RecordErrorResult result={result} />;
 	const rec = recordingOf(result);
-	// start 的结果没有要展示的：头部那一行已经说清楚
-	if (!rec) return null;
+	if (!rec)
+		return str(args.action) === "start" ? (
+			<RecordStarted text={resultTextOf(result).trim()} />
+		) : null;
 	const src = host?.orbFileUrl?.(rec.path) ?? null;
 	return (
 		<>
@@ -266,7 +295,7 @@ function Result({ result, host }: ToolRenderProps): ReactNode {
 					}
 				/>
 			) : (
-				<Note>{t("toolRender.desktopRecord.storedInOrb")}</Note>
+				<RecordPoster>{t("toolRender.desktopRecord.storedInOrb")}</RecordPoster>
 			)}
 			<RecordFacts rec={rec} />
 		</>
@@ -276,6 +305,6 @@ function Result({ result, host }: ToolRenderProps): ReactNode {
 export const desktopRecordRenderer: ToolRenderer = {
 	Summary,
 	Meta,
-	Input: genericRenderer.Input,
+	Input: ArgsTree,
 	Result,
 };
