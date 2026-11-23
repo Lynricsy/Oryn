@@ -485,6 +485,18 @@ function sleep(ms: number) {
 	return new Promise((r) => setTimeout(r, ms));
 }
 
+/** 消息正文：字符串内容原样，块内容取各文本块按行拼接。 */
+function mockMessageText(m: Json): string {
+	const content = m.content;
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.flatMap((b) =>
+			b && typeof b === "object" && "text" in b ? [String(b.text)] : [],
+		)
+		.join("\n");
+}
+
 /** 同 orynd（internal/threads/activity.go）：工具调用的意图，缺省时取 path / pattern / command，再缺省取工具名。 */
 function toolActivity(name: string, args: unknown, intent?: unknown): string {
 	const a = (args && typeof args === "object" ? args : {}) as Json;
@@ -712,6 +724,8 @@ export class MockServer {
 		{ start: number; chars: number }
 	>();
 	private termSeq = 0;
+	/** `switch_leaf` 移过的活动叶子（null = 会话开头）；没移过的线程以最后一条会话条目为叶子。 */
+	private readonly leaves = new Map<string, string | null>();
 	/** 消息附件（控制面副本）：id → 元数据与内容。 */
 	readonly attachments = new Map<
 		string,
@@ -2272,7 +2286,7 @@ export class MockServer {
 				entries: page,
 				hasMore,
 				lastSeq: last?.seq ?? 0,
-				leafEntryId: last?.entryId,
+				leafEntryId: this.leafOf(entriesMatch[1] ?? "", list),
 			});
 		}
 		const threadMatch = /^threads\/([^/]+)(?:\/(fork|wake))?$/.exec(p);
@@ -3312,25 +3326,31 @@ export class MockServer {
 		ts = Date.now(),
 	) {
 		const list = this.entries.get(threadId) ?? [];
-		const last = [...list].reverse().find((e) => !e.entryId.startsWith("__"));
+		const leaf = this.leafOf(threadId, list);
 		const id = (this.idSeq++).toString(16).padStart(8, "0");
 		const e: Entry = {
 			seq: (list[list.length - 1]?.seq ?? 0) + 1,
 			file: SESSION_FILE,
 			entryId: id,
-			parentId: last?.entryId,
+			parentId: leaf,
 			type,
 			ts,
 			payload: {
 				type,
 				id,
-				parentId: last?.entryId ?? null,
+				parentId: leaf ?? null,
 				timestamp: new Date(ts).toISOString(),
 				...body,
 			},
 		};
 		list.push(e);
 		this.entries.set(threadId, list);
+		// 移过叶子的线程：摘要里的叶子跟着走（同 orynd），否则之后的 index.patch 会把客户端的叶子拉回旧位置
+		if (this.leaves.has(threadId)) {
+			this.leaves.set(threadId, id);
+			const t = this.threads.get(threadId);
+			if (t) this.threads.set(threadId, { ...t, leafEntryId: id });
+		}
 		this.broadcast(
 			{
 				type: "entries",
@@ -3341,6 +3361,14 @@ export class MockServer {
 			},
 			threadId,
 		);
+	}
+
+	/** 线程的活动叶子：`switch_leaf` 移动过就按它（null = 回到会话开头），否则是最后一条会话条目。 */
+	private leafOf(threadId: string, list: readonly Entry[]): string | undefined {
+		if (this.leaves.has(threadId))
+			return this.leaves.get(threadId) ?? undefined;
+		return [...list].reverse().find((e) => !e.entryId.startsWith("__"))
+			?.entryId;
 	}
 
 	private appendEntry(threadId: string, message: Json) {
@@ -3410,7 +3438,7 @@ export class MockServer {
 						live: this.liveFrames.get(threadId) ?? [],
 						composerPrediction: this.predictions.get(threadId),
 					},
-					leafEntryId: last?.entryId,
+					leafEntryId: this.leafOf(threadId, list),
 					lastSeq: last?.seq ?? 0,
 					transcriptRev: 0,
 					fullReplay: false,
@@ -3428,7 +3456,7 @@ export class MockServer {
 						type: "entries",
 						threadId,
 						entries: batch,
-						leafEntryId: last?.entryId,
+						leafEntryId: this.leafOf(threadId, list),
 						// 本批覆盖到的最大 seq（可续传游标）
 						lastSeq: batch[batch.length - 1]?.seq ?? 0,
 					});
@@ -4074,23 +4102,18 @@ export class MockServer {
 				return this.respond(socket, threadId, id, type, { enabled: on });
 			}
 			case "get_session_tree": {
+				const leaf = this.leafOf(threadId, list);
+				const onBranch = new Set<string>();
+				for (
+					let at = list.find((e) => e.entryId === leaf);
+					at;
+					at = list.find((e) => e.entryId === at?.parentId)
+				)
+					onBranch.add(at.entryId);
 				const tree = list
 					.filter((e) => e.type === "message" && !e.entryId.startsWith("__"))
 					.map((e) => {
 						const m = (e.payload as Json).message as Json;
-						const content = m.content;
-						const text =
-							typeof content === "string"
-								? content
-								: Array.isArray(content)
-									? content
-											.map((b) =>
-												b && typeof b === "object" && "text" in b
-													? String(b.text)
-													: "",
-											)
-											.join(" ")
-									: "";
 						return {
 							entryId: e.entryId,
 							parentId: e.parentId ?? null,
@@ -4100,15 +4123,46 @@ export class MockServer {
 									: m.role === "assistant"
 										? "assistant"
 										: "system",
-							textPreview: text.slice(0, 80),
+							textPreview: mockMessageText(m)
+								.replace(/\s+/g, " ")
+								.slice(0, 200),
 							timestamp: e.ts ?? 0,
-							onActiveBranch: true,
-							isLeaf: e === list[list.length - 1],
+							onActiveBranch: onBranch.has(e.entryId),
+							isLeaf: !list.some((c) => c.parentId === e.entryId),
 						};
 					});
 				return this.respond(socket, threadId, id, type, {
 					tree,
-					activeLeafId: list[list.length - 1]?.entryId ?? null,
+					activeLeafId: leaf ?? null,
+				});
+			}
+			// 同 Core 的 navigateTree：目标是用户消息时叶子移到它的父条目，原文与图片带回输入框；否则叶子移到目标
+			case "switch_leaf": {
+				const target = list.find((e) => e.entryId === frame.entryId);
+				if (!target)
+					return this.respond(
+						socket,
+						threadId,
+						id,
+						type,
+						undefined,
+						`Entry ${String(frame.entryId)} not found`,
+					);
+				const m = (target.payload as Json).message as Json | undefined;
+				const user = target.type === "message" && m?.role === "user";
+				const leaf = user ? (target.parentId ?? null) : target.entryId;
+				this.leaves.set(threadId, leaf);
+				const t = this.threads.get(threadId);
+				if (t) this.upsertThread({ ...t, leafEntryId: leaf ?? undefined });
+				const images =
+					user && m && Array.isArray(m.content)
+						? (m.content as Json[]).filter((b) => b?.type === "image")
+						: [];
+				return this.respond(socket, threadId, id, type, {
+					cancelled: false,
+					...(user && m ? { editorText: mockMessageText(m) } : {}),
+					...(images.length > 0 ? { editorImages: images } : {}),
+					...(leaf ? { activeLeafId: leaf } : {}),
 				});
 			}
 			case "get_context_report":
