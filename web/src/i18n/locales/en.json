@@ -2454,6 +2454,128 @@
 		}
 	},
 	"toolRender": {
+		"files": {
+			"gap_one": "{{count}} line hidden",
+			"gap_other": "{{count}} lines hidden",
+			"errors_one": "{{count}} error",
+			"errors_other": "{{count}} errors",
+			"warnings_one": "{{count}} warning",
+			"warnings_other": "{{count}} warnings",
+			"infos_one": "{{count}} hint",
+			"infos_other": "{{count}} hints",
+			"severity": {
+				"error": "Error",
+				"warning": "Warning",
+				"info": "Info",
+				"hint": "Hint"
+			}
+		},
+		"read": {
+			"image": "Image",
+			"entries_one": "{{count}} entry",
+			"entries_other": "{{count}} entries",
+			"partial": "{{shown}} / {{total}} lines",
+			"conflicts_one": "{{count}} conflict",
+			"conflicts_other": "{{count}} conflicts",
+			"truncated": "Truncated",
+			"suffix": "{{from}} not found; matched {{to}} by suffix",
+			"emptyFile": "The file is empty",
+			"emptyDir": "Empty directory"
+		},
+		"write": {
+			"emptyContent": "Writes empty content",
+			"created": "Created file",
+			"overwritten": "Overwrote file",
+			"executable": "made executable",
+			"formatted": "formatted"
+		},
+		"edit": {
+			"create": "New",
+			"delete": "Deleted",
+			"moveTo": "Moved to",
+			"replaceAll": "replace all",
+			"ops_one": "{{count}} op",
+			"ops_other": "{{count}} ops",
+			"errorKind": "Failure kind"
+		},
+		"astEdit": {
+			"limit": "Limit reached",
+			"preview": "Preview",
+			"deletion": "Empty replacement: matched code is removed",
+			"rule": "Rule {{n}}",
+			"scope": "Scope",
+			"staged": "Preview only, files not modified yet: write to resolve to apply, reject to discard",
+			"empty": "No matches to replace",
+			"limitNote": "Match limit reached; narrow the paths to see everything",
+			"parseIssues_one": "Parse issues ({{count}})",
+			"parseIssues_other": "Parse issues ({{count}})",
+			"searched_one": "Scanned {{count}} file",
+			"searched_other": "Scanned {{count}} files"
+		},
+		"grep": {
+			"ignoreCase": "ignore case",
+			"multiline": "multiline",
+			"noGitignore": "include gitignored",
+			"skip_one": "skip {{count}}",
+			"skip_other": "skip {{count}}",
+			"truncated": "Truncated",
+			"in": "in",
+			"missing": "Skipped missing paths: {{paths}}",
+			"empty": "No matches"
+		},
+		"glob": {
+			"timedOut": "Timed out",
+			"limit_one": "first {{count}}",
+			"limit_other": "first {{count}}",
+			"limitArg_one": "at most {{count}}",
+			"limitArg_other": "at most {{count}}",
+			"noHidden": "no hidden files",
+			"timeout_one": "timeout {{count}}s",
+			"timeout_other": "timeout {{count}}s",
+			"empty": "No matching files"
+		},
+		"lsp": {
+			"none": "No results",
+			"locations_one": "{{count}} location",
+			"locations_other": "{{count}} locations",
+			"preferred": "preferred",
+			"edits_one": "{{count}} edit",
+			"edits_other": "{{count}} edits",
+			"clean": "No issues",
+			"cleanLong": "No issues found",
+			"symbols_one": "{{count}} symbol",
+			"symbols_other": "{{count}} symbols",
+			"actions_one": "{{count}} action",
+			"actions_other": "{{count}} actions",
+			"workspace": "whole workspace",
+			"yes": "yes",
+			"no": "no",
+			"k": {
+				"action": "action",
+				"file": "file",
+				"line": "line",
+				"symbol": "symbol",
+				"query": "query",
+				"newName": "new name",
+				"apply": "apply",
+				"timeout": "timeout",
+				"payload": "payload"
+			}
+		},
+		"resolve": {
+			"nothing": "Nothing pending",
+			"meta": {
+				"apply": "Applied",
+				"discard": "Discarded",
+				"propose": "Submitted"
+			},
+			"apply": "Applied the preview",
+			"discard": "Discarded the preview",
+			"applyFrom": "Applied the {{tool}} preview",
+			"discardFrom": "Discarded the {{tool}} preview",
+			"proposed": "Plan submitted for approval",
+			"plan": "Plan"
+		},
 		"job": {
 			"title": "Background job {{id}}",
 			"open": "View job",
@@ -2464,6 +2586,94 @@
 			"ended": "Background ended"
 		},
 		"collapse": "Collapse",
+		"showAll": "Show all",
+		"todo": {
+			"op": {
+				"init": "New list",
+				"start": "Start",
+				"done": "Done",
+				"drop": "Drop",
+				"rm": "Remove",
+				"append": "Add",
+				"view": "View",
+				"update": "Update"
+			},
+			"progress": "{{done}} of {{total}} tasks done",
+			"phases_one": "{{count}} phase",
+			"phases_other": "{{count}} phases",
+			"tasks_one": "{{count}} task",
+			"tasks_other": "{{count}} tasks",
+			"phaseWithTasks_one": "{{phase}} ({{count}} task)",
+			"phaseWithTasks_other": "{{phase}} ({{count}} tasks)",
+			"touched": "Changed by this call"
+		},
+		"wait": {
+			"reply": "Waiting for a reply",
+			"replyLong": "Waiting for a reply or a service to finish",
+			"idle": "Wait",
+			"timeout": "Still running",
+			"interrupted": "Interrupted by a message",
+			"nothing": "Nothing to wait for",
+			"service": "Service finished"
+		},
+		"jobs": {
+			"status": {
+				"running": "Running",
+				"completed": "Completed",
+				"failed": "Failed",
+				"cancelled": "Cancelled",
+				"unknown": "Unknown",
+				"queued": "Queued"
+			},
+			"settled": "{{settled}} of {{total}} jobs finished",
+			"count": {
+				"failed_one": "{{count}} failed",
+				"failed_other": "{{count}} failed"
+			},
+			"exit": "exit {{code}}",
+			"requests_one": "{{count}} request",
+			"requests_other": "{{count}} requests",
+			"context": "context {{used}}/{{window}}",
+			"contextUsed": "context {{used}}",
+			"noLabel": "(untitled)",
+			"report": "Report sent to the model",
+			"all": "All jobs",
+			"cancel": "Cancel",
+			"poll": "Poll",
+			"cancelOutcome": {
+				"not_found": "not found",
+				"already_completed": "already finished"
+			}
+		},
+		"webSearch": {
+			"sources_one": "{{count}} source",
+			"sources_other": "{{count}} sources",
+			"sourcesTitle": "Sources",
+			"citations": "Citations",
+			"related": "Related questions",
+			"queries": "Searched for",
+			"searches_one": "{{count}} search",
+			"searches_other": "{{count}} searches",
+			"tokens": "{{input}} in · {{output}} out",
+			"noResults": "No results",
+			"untitled": "Untitled",
+			"fallback_one": "Fell back after {{count}} provider failed",
+			"fallback_other": "Fell back after {{count}} providers failed",
+			"recency": {
+				"day": "Past day",
+				"week": "Past week",
+				"month": "Past month",
+				"year": "Past year"
+			},
+			"limit": "Up to {{count}}"
+		},
+		"fetch": {
+			"redirected": "Redirected",
+			"raw": "Raw response",
+			"truncated": "Truncated",
+			"timeout": "Timeout {{seconds}}s",
+			"empty": "Empty response"
+		},
 		"moreLines_one": "⋯ {{count}} more line",
 		"moreLines_other": "⋯ {{count}} more lines",
 		"running": "Running",
@@ -2494,7 +2704,10 @@
 			"idb": "IDB",
 			"oldName": "Was",
 			"appliedType": "Applied type",
-			"funcName": "Function"
+			"funcName": "Function",
+			"noDbs": "No databases open",
+			"moreDbs_one": "⋯ {{count}} more database",
+			"moreDbs_other": "⋯ {{count}} more databases"
 		},
 		"securityScan": {
 			"findings_one": "{{count}} finding",
@@ -2526,15 +2739,36 @@
 			"lastScanned": "Last scanned",
 			"fingerprint": "Fingerprint",
 			"cloudScan": "Cloud scan",
-			"repository": "Repository"
+			"repository": "Repository",
+			"noFindings": "No findings",
+			"phase": {
+				"queued": "Queued",
+				"preparing": "Preparing",
+				"reviewing": "Reviewing",
+				"publishing": "Publishing",
+				"completed": "Completed",
+				"partial": "Partial",
+				"cancelled": "Cancelled",
+				"failed": "Failed"
+			},
+			"sev": {
+				"critical": "Critical",
+				"high": "High",
+				"medium": "Medium",
+				"low": "Low",
+				"informational": "Info"
+			}
 		},
 		"xdev": {
 			"docs": "docs",
-			"catalog": "device catalog"
+			"catalog": "device catalog",
+			"noDocs": "This device has no docs"
 		},
 		"checkpoint": {
-			"started": "Started",
-			"rewound": "rewound"
+			"rewound": "Rewound",
+			"goal": "Investigation goal",
+			"set": "Checkpoint set",
+			"rewoundNote": "Context is back at the checkpoint; this report replaces the exploration after it."
 		},
 		"memoryEdit": {
 			"op": {
@@ -2551,16 +2785,17 @@
 			},
 			"importance": "Importance",
 			"bank": "Bank",
-			"id": "Memory",
-			"replacement": "Replaced by"
+			"noReplacement": "no replacement given"
 		},
 		"tts": {
 			"output": "Output",
 			"requested": "Requested",
-			"voice": "Voice",
-			"language": "Language",
-			"format": "Format",
-			"backend": "Backend"
+			"voiceIs": "voice {{voice}}",
+			"play": "Play",
+			"pause": "Pause",
+			"seek": "Playback position",
+			"loadFailed": "Couldn't load the audio: the environment may have been deleted, or the file cleaned up",
+			"redirected": "saved elsewhere"
 		},
 		"desktopRecord": {
 			"start": "Start recording the desktop",
@@ -2573,18 +2808,274 @@
 			"storedInOrb": "The video is stored in the thread's environment and is deleted along with it",
 			"video": "Desktop recording",
 			"loadFailed": "Couldn't load the video: the environment may have been deleted, or the file cleaned up",
-			"openInFiles": "Open in Files",
-			"file": "File",
-			"resolution": "Resolution"
+			"openInFiles": "Open in Files"
 		},
 		"computerRecord": {
 			"onComputer": "The video stays on the assistant's computer; open the computer's Files tab to view it",
 			"loadFailed": "Couldn't load the video: the file may have been deleted from the library"
 		},
+		"json": {
+			"expand": "Expand",
+			"keys_one": "{{count}} key",
+			"keys_other": "{{count}} keys",
+			"items_one": "{{count}} item",
+			"items_other": "{{count}} items",
+			"more_one": "{{count}} more",
+			"more_other": "{{count}} more"
+		},
+		"generic": {
+			"empty": "No output",
+			"failed": "Call failed"
+		},
+		"mcp": {
+			"empty": "The tool returned nothing",
+			"images_one": "{{count}} image",
+			"images_other": "{{count}} images"
+		},
+		"github": {
+			"op": {
+				"repo_view": "repo",
+				"file_read": "read file",
+				"pr_create": "create PR",
+				"pr_checkout": "check out PR",
+				"pr_push": "push PR",
+				"search_issues": "search issues",
+				"search_prs": "search PRs",
+				"search_code": "search code",
+				"search_commits": "search commits",
+				"search_repos": "search repos",
+				"run_watch": "watch CI"
+			},
+			"noOp": "no op",
+			"fill": "title and body from commits",
+			"run": "run {{run}}",
+			"runsOf": "workflow runs for {{target}}",
+			"jobsDone": "{{done}} of {{total}} jobs passed",
+			"jobsFailed_one": "{{count}} failed",
+			"jobsFailed_other": "{{count}} failed",
+			"results_one": "{{count}} result",
+			"results_other": "{{count}} results",
+			"noResults": "No results",
+			"defaultBranch": "default branch",
+			"draft": "draft",
+			"state": {
+				"open": "Open",
+				"closed": "Closed",
+				"merged": "Merged"
+			},
+			"status": {
+				"success": "passed",
+				"failure": "failed",
+				"cancelled": "cancelled",
+				"skipped": "skipped",
+				"timed_out": "timed out",
+				"neutral": "neutral",
+				"action_required": "action required",
+				"startup_failure": "startup failure",
+				"in_progress": "in progress",
+				"queued": "queued",
+				"waiting": "waiting",
+				"pending": "pending",
+				"completed": "completed"
+			},
+			"archived": "archived",
+			"fork": "fork",
+			"forks_one": "{{count}} fork",
+			"forks_other": "{{count}} forks",
+			"waitingJobs": "Waiting for jobs to start…",
+			"waitingRuns": "Waiting for workflow runs…",
+			"logUnavailable": "{{title}}: log unavailable",
+			"reused": "reused",
+			"created": "Created #{{n}}",
+			"openOnGithub": "Open on GitHub"
+		},
+		"browser": {
+			"action": {
+				"open": "open",
+				"close": "close",
+				"run": "run",
+				"call": "call",
+				"tabs": "tabs",
+				"targets": "pages"
+			},
+			"allTabs": "all tabs",
+			"tab": "tab {{name}}",
+			"target": "page {{target}}",
+			"pages_one": "{{count}} page",
+			"pages_other": "{{count}} pages",
+			"shots_one": "{{count}} screenshot",
+			"shots_other": "{{count}} screenshots",
+			"noPages": "No open pages",
+			"closed": "Closed"
+		},
+		"generateImage": {
+			"edits_one": "{{count}} edit",
+			"edits_other": "{{count}} edits",
+			"images_one": "{{count}} image",
+			"images_other": "{{count}} images",
+			"field": {
+				"action": "Action",
+				"scene": "Scene",
+				"composition": "Composition",
+				"lighting": "Lighting",
+				"style": "Style",
+				"text": "Text",
+				"changes": "Changes",
+				"input": "References"
+			},
+			"inlineImage": "inline image",
+			"generating": "Generating"
+		},
+		"artifact": {
+			"note": "Note",
+			"purgeAt": "Moved to Recently deleted; restorable until {{when}}"
+		},
+		"oryn": {
+			"threads_one": "{{count}} thread",
+			"threads_other": "{{count}} threads"
+		},
 		"terminal": {
 			"viewInPanel": "View in terminal panel",
 			"awaitingInput": "Waiting for terminal input",
-			"openTerminal": "Open terminal"
+			"openTerminal": "Open terminal",
+			"local": "This machine",
+			"count_one": "{{count}} terminal",
+			"count_other": "{{count}} terminals",
+			"empty": "No terminals open",
+			"noOutput": "No output yet",
+			"omitted_one": "⋯ {{count}} earlier line omitted",
+			"omitted_other": "⋯ {{count}} earlier lines omitted",
+			"omittedSome": "⋯ Earlier output omitted",
+			"action": {
+				"list": "list",
+				"read": "read",
+				"run": "run",
+				"stop": "stop",
+				"open": "open session",
+				"exec": "exec",
+				"send": "send",
+				"wait": "wait"
+			},
+			"kind": {
+				"shell": "Shell",
+				"command": "Command",
+				"background": "Background",
+				"session": "Session"
+			},
+			"state": {
+				"starting": "Starting",
+				"idle": "Ready",
+				"input": "Waiting for input",
+				"running": "Running",
+				"killed": "Killed",
+				"exited": "Exited {{code}}"
+			}
+		},
+		"eval": {
+			"progress": "Cell progress {{done}}/{{total}}",
+			"failed": "Failed",
+			"truncated": "Truncated",
+			"truncatedLines": "Output truncated: showing the last {{shown}} of {{total}} lines",
+			"noOutput": "No output",
+			"reset": "Kernel reset",
+			"timeout": "Timeout {{value}}",
+			"moreRows_one": "⋯ {{count}} more row",
+			"moreRows_other": "⋯ {{count}} more rows",
+			"earlierEvents_one": "⋯ {{count}} earlier event",
+			"earlierEvents_other": "⋯ {{count}} earlier events",
+			"state": {
+				"running": "Running",
+				"pending": "Waiting",
+				"skipped": "Not run"
+			}
+		},
+		"debug": {
+			"action": {
+				"launch": "launch",
+				"attach": "attach",
+				"set_breakpoint": "set breakpoint",
+				"remove_breakpoint": "remove breakpoint",
+				"set_instruction_breakpoint": "set instruction breakpoint",
+				"remove_instruction_breakpoint": "remove instruction breakpoint",
+				"data_breakpoint_info": "data breakpoint info",
+				"set_data_breakpoint": "set data breakpoint",
+				"remove_data_breakpoint": "remove data breakpoint",
+				"continue": "continue",
+				"step_over": "step over",
+				"step_in": "step in",
+				"step_out": "step out",
+				"pause": "pause",
+				"evaluate": "evaluate",
+				"stack_trace": "stack trace",
+				"threads": "threads",
+				"scopes": "scopes",
+				"variables": "variables",
+				"disassemble": "disassemble",
+				"read_memory": "read memory",
+				"write_memory": "write memory",
+				"modules": "modules",
+				"loaded_sources": "loaded sources",
+				"custom_request": "custom request",
+				"output": "program output",
+				"terminate": "terminate",
+				"sessions": "sessions"
+			},
+			"status": {
+				"launching": "Launching",
+				"configuring": "Configuring",
+				"stopped": "Paused",
+				"running": "Running",
+				"terminated": "Ended"
+			},
+			"count": {
+				"frames_one": "{{count}} frame",
+				"frames_other": "{{count}} frames",
+				"threads_one": "{{count}} thread",
+				"threads_other": "{{count}} threads",
+				"scopes_one": "{{count}} scope",
+				"scopes_other": "{{count}} scopes",
+				"variables_one": "{{count}} variable",
+				"variables_other": "{{count}} variables",
+				"instructions_one": "{{count}} instruction",
+				"instructions_other": "{{count}} instructions",
+				"modules_one": "{{count}} module",
+				"modules_other": "{{count}} modules",
+				"sources_one": "{{count}} source",
+				"sources_other": "{{count}} sources",
+				"sessions_one": "{{count}} session",
+				"sessions_other": "{{count}} sessions",
+				"breakpoints_one": "{{count}} breakpoint",
+				"breakpoints_other": "{{count}} breakpoints",
+				"bytes_one": "{{count}} byte",
+				"bytes_other": "{{count}} bytes",
+				"written_one": "Wrote {{count}} byte",
+				"written_other": "Wrote {{count}} bytes"
+			},
+			"stoppedAt": "Stopped at {{where}}",
+			"stillRunning": "Still running",
+			"exited": "Exited {{code}}",
+			"unverified_one": "{{count}} unverified",
+			"unverified_other": "{{count}} unverified",
+			"more_one": "⋯ {{count}} more",
+			"more_other": "⋯ {{count}} more",
+			"ref": "ref {{ref}}",
+			"expensive": "expensive",
+			"verified": "Verified",
+			"pending": "Unverified",
+			"noBreakpoints": "No breakpoints",
+			"noVariables": "No variables",
+			"noSessions": "No debug sessions",
+			"noOutput": "No output captured",
+			"noData": "No data read",
+			"unreadable_one": "{{count}} byte unreadable",
+			"unreadable_other": "{{count}} bytes unreadable",
+			"userCode": "user code",
+			"optimized": "optimized",
+			"description": "Description",
+			"access": "Access",
+			"unavailable": "unavailable",
+			"timedOut": "Timed out waiting; the program is still running. Pause it to inspect state",
+			"configPending": "Waiting for configurationDone: set breakpoints, then continue"
 		},
 		"meta": {
 			"lines_one": "{{count}} line",
@@ -2598,6 +3089,127 @@
 			"passed": "{{count}} passed",
 			"failed": "{{count}} failed",
 			"exit": "exit {{code}}"
+		},
+		"task": {
+			"more_one": "+{{count}} more",
+			"more_other": "+{{count}} more",
+			"progress": "{{done}} of {{total}} subagents done",
+			"outcome": {
+				"done": "done",
+				"mergeFailed": "merge failed",
+				"aborted": "aborted",
+				"failed": "failed"
+			},
+			"truncated": "output truncated",
+			"tokens": "{{n}} tok",
+			"requests_one": "{{count}} request",
+			"requests_other": "{{count}} requests",
+			"tools_one": "{{count}} tool call",
+			"tools_other": "{{count}} tool calls",
+			"noOutput": "No output",
+			"patch": "patch",
+			"branch": "branch",
+			"percent": "{{n}}% complete",
+			"retry": "Rate-limited, retry {{attempt}} of {{max}}",
+			"context": "Shared context",
+			"isolated": "isolated",
+			"steps_one": "{{count}} step",
+			"steps_other": "{{count}} steps",
+			"step": "Step {{n}} of {{total}}",
+			"solutionSpace": "Solution space",
+			"sum": {
+				"done_one": "{{count}} done",
+				"done_other": "{{count}} done",
+				"mergeFailed_one": "{{count}} merge failed",
+				"mergeFailed_other": "{{count}} merge failed",
+				"failed_one": "{{count}} failed",
+				"failed_other": "{{count}} failed",
+				"aborted_one": "{{count}} aborted",
+				"aborted_other": "{{count}} aborted"
+			},
+			"wall": "{{d}} total",
+			"starting": "Starting subagents…"
+		},
+		"ask": {
+			"questions_one": "{{count}} question",
+			"questions_other": "{{count}} questions",
+			"waiting": "Awaiting answer",
+			"waitingLong": "Waiting for your answer in the dialog",
+			"cancelled": "Cancelled",
+			"timedOut": "Auto-submitted",
+			"timedOutEmpty": "Timed out, unanswered",
+			"answered": "{{given}} of {{total}} answered",
+			"multi": "multiple",
+			"recommended": "recommended",
+			"noAnswer": "No answer",
+			"timedOutNote": "Auto-submitted with the form's current values after the timeout; not the user's choice.",
+			"timedOutEmptyNote": "Required fields were still empty at the timeout; no answer was received."
+		},
+		"irc": {
+			"wait": "wait",
+			"anyone": "anyone",
+			"reply": "reply",
+			"messages_one": "{{count}} message",
+			"messages_other": "{{count}} messages",
+			"timedOutNote": "No reply yet. They may answer later; check the inbox or wait again."
+		},
+		"goal": {
+			"op": {
+				"create": "Set goal",
+				"get": "Check goal",
+				"complete": "Complete goal",
+				"pause": "Pause goal",
+				"resume": "Resume goal",
+				"drop": "Drop goal"
+			},
+			"status": {
+				"active": "active",
+				"paused": "paused",
+				"budget-limited": "budget spent",
+				"complete": "complete",
+				"dropped": "dropped"
+			},
+			"budget": "Budget {{n}} tokens",
+			"none": "No active goal",
+			"elapsed": "{{d}} spent",
+			"usage": "Token budget used",
+			"tokens": "tokens",
+			"left": "{{n}} left",
+			"noBudget": "no budget"
+		},
+		"yield": {
+			"item": "item {{n}}",
+			"aborted": "failure",
+			"schemaOverridden": "schema relaxed",
+			"complete": "all items done",
+			"fields_one": "{{count}} field",
+			"fields_other": "{{count}} fields",
+			"sections": "Sections"
+		},
+		"reportIssue": {
+			"title": "Tool issue report"
+		},
+		"memory": {
+			"score": "relevance {{n}}",
+			"noHits": "no hits",
+			"hits_one": "{{count}} hit",
+			"hits_other": "{{count}} hits",
+			"empty": "No relevant memories",
+			"asOf": "As of {{at}}",
+			"context": "Context",
+			"reflectFailed": "Reflect failed",
+			"nothingToReflect": "No relevant memories to reflect on",
+			"basedOn": "Based on recalled memories",
+			"items_one": "{{count}} item",
+			"items_other": "{{count}} items",
+			"stored_one": "{{count}} stored",
+			"stored_other": "{{count}} stored",
+			"queued_one": "{{count}} queued",
+			"queued_other": "{{count}} queued",
+			"scope": {
+				"project": "project",
+				"global": "global"
+			}
 		}
 	},
 	"boxes": {

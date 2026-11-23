@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Icon, type IconName } from "../components/ui/icons";
+import { Elapsed } from "./parts";
 import {
 	baseToolName,
 	isComputerTool,
@@ -150,6 +151,8 @@ export interface ToolViewProps {
 	partial?: string;
 	/** 运行中的结构化部分结果；渲染器声明 `livePartial` 时由它自己展示，替代文本尾巴。 */
 	partialResult?: ToolResultLike;
+	/** 调用开始执行的时刻（epoch ms，实时视图才有）：运行中头部据此走表，渲染器也拿到它。 */
+	startedAt?: number;
 	/**
 	 * 默认是否展开：用户还没手动开合时跟随这个值（宿主据此让当前一批工具调用展开、之后收起），
 	 * 用户点过头部后以用户为准。
@@ -213,6 +216,7 @@ export function ToolView(props: ToolViewProps): ReactNode {
 		result,
 		running: props.running,
 		partial: props.running && !result ? unwrap(props.partialResult) : undefined,
+		startedAt: props.startedAt,
 		host: props.host,
 	};
 	// MCP 工具（顶层或 `xd://mcp__…`）：头部名字写成 server / tool，完整工具名放进 title
@@ -245,7 +249,7 @@ export function ToolView(props: ToolViewProps): ReactNode {
 	return (
 		<div
 			ref={props.rootRef}
-			className={`tv-card${isError ? " tv-card--error" : ""}`}
+			className={`tv-card${isError ? " tv-card--error" : ""}${status === "run" ? " tv-card--running" : ""}`}
 		>
 			<button
 				type="button"
@@ -303,6 +307,10 @@ export function ToolView(props: ToolViewProps): ReactNode {
 						<span className="tv-job-dot" aria-hidden="true" />
 						{t(`toolRender.job.${job.status}`)}
 					</span>
+				)}
+				{/* 调用本身在跑：已用时长每秒走动（CSS 延迟 1 秒才显现，瞬间完成的调用不闪一下） */}
+				{props.running && props.startedAt !== undefined && (
+					<Elapsed since={props.startedAt} className="tv-elapsed" />
 				)}
 				{status === "run" ? (
 					<span

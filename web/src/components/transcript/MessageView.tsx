@@ -1048,6 +1048,7 @@ export function ToolCard({
 		intent: intent ?? live?.intent,
 		partial,
 		partialResult,
+		startedAt: live?.startedAt,
 		host:
 			// 只读（分享页）不提供子 agent 转录查看；头像在分享页只用公开身份（见 AgentAvatar）
 			ctx.readOnly

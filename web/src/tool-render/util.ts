@@ -122,6 +122,29 @@ export function replaceTabs(s: string): string {
 	return s.replace(/\t/g, "   ");
 }
 
+/**
+ * 运行中的已用时长（头部计时、等待时长）：一分钟内 `8s`，之后时钟式 `1:05`、`1:02:03`。
+ * 每秒走动的读数用时钟式，宽度稳定、不在单位之间跳动。
+ */
+export function formatElapsed(ms: number): string {
+	const total = Math.max(0, Math.floor(ms / 1000));
+	if (total < 60) return `${total}s`;
+	const s = total % 60;
+	const m = Math.floor(total / 60) % 60;
+	const h = Math.floor(total / 3600);
+	const ss = String(s).padStart(2, "0");
+	return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+}
+
+/** 网址的主机名（去掉 `www.`）；不是合法网址时为空串。 */
+export function hostOf(url: string): string {
+	try {
+		return new URL(url).hostname.replace(/^www\./, "");
+	} catch {
+		return "";
+	}
+}
+
 // Control Sequence Introducer + OSC escapes.
 const ANSI_RE = /\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))/g;
 

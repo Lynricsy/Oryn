@@ -160,7 +160,7 @@ describe("github 展开体只省掉折叠行无损写出的参数", () => {
 	});
 });
 
-/** 展开体里以路径样式（`.tv-path`）给出的路径文字，按出现顺序。 */
+/** 展开体里以路径样式（`.tv-path`）或文件头条（`.tv-fh-path`）给出的路径文字，按出现顺序。 */
 function bodyPaths(
 	name: string,
 	args: Record<string, unknown>,
@@ -169,9 +169,9 @@ function bodyPaths(
 	const { container } = render(
 		<ToolView name={name} args={args} result={result} defaultOpen />,
 	);
-	return [...container.querySelectorAll(".tv-body .tv-path")].map(
-		(el) => el.textContent ?? "",
-	);
+	return [
+		...container.querySelectorAll(".tv-body .tv-path, .tv-body .tv-fh-path"),
+	].map((el) => el.textContent ?? "");
 }
 
 describe("read / edit / write 的展开体顶部给出完整文件路径", () => {
@@ -209,7 +209,7 @@ describe("read / edit / write 的展开体顶部给出完整文件路径", () =>
 		).toEqual(["web/src/a.ts", "web/src/b.ts"]);
 	});
 
-	it("edit：逐文件结果已带路径时不在顶部重复", () => {
+	it("edit：输入段按补丁的文件分段，输出段按文件给出真实改动", () => {
 		const diff = "@@ -1 +1 @@\n-a\n+b";
 		expect(
 			bodyPaths(
@@ -219,11 +219,12 @@ describe("read / edit / write 的展开体顶部给出完整文件路径", () =>
 				},
 				ok("done", {
 					perFileResults: [
-						{ path: "web/src/a.ts", diff },
-						{ path: "web/src/b.ts", diff },
+						{ path: "/repo/web/src/a.ts", diff },
+						{ path: "/repo/web/src/b.ts", diff },
 					],
 				}),
 			),
-		).toEqual(["web/src/a.ts", "web/src/b.ts"]);
+			// 结果里的绝对路径按补丁里的相对写法显示
+		).toEqual(["web/src/a.ts", "web/src/b.ts", "web/src/a.ts", "web/src/b.ts"]);
 	});
 });

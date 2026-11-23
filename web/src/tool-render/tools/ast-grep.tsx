@@ -1,23 +1,32 @@
-/** `ast_grep` — structural AST pattern search across files. */
+/**
+ * `ast_grep` — 结构化（AST）模式搜索。输入段是模式（按语言高亮的代码，语言标签在旁）与搜索范围；
+ * 输出段与 grep 同形：按文件分组，文件头条右侧是该文件的命中数，命中行左缘一道标记，`meta:` 捕获
+ * 作为附注行；解析问题可折叠，扫描的文件数与上限提示收在末尾。头部读数：命中数 · 文件数，到上限时警示。
+ * 结果形状见 oryn-core `tui/src/tools/ast-grep.ts`（`AstGrepToolDetails`）。
+ */
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
+import { Icon } from "../../components/ui/icons";
 import {
-	Badge,
-	Badges,
-	CodeBlock,
+	CodeLines,
+	EmptyNote,
+	ErrorBlock,
+	FootNotes,
+	GroupedCode,
 	InvalidArg,
-	Kv,
-	KvGrid,
 	MetaCount,
 	Output,
 	PathText,
-	SearchOutput,
+	parseGrouped,
 } from "../parts";
-import type { ToolRenderer, ToolRenderProps } from "../types";
+import type { ToolRenderer, ToolRenderProps, ToolResultLike } from "../types";
 import {
 	detailsRecord,
+	isRecord,
 	normalizeWs,
 	num,
 	resultFiles,
+	resultTextOf,
 	scopePaths,
 	sharedLanguage,
 	shortenPath,
@@ -33,159 +42,182 @@ function patternsOf(args: Record<string, unknown>): string[] {
 	return [];
 }
 
-function Summary({ args }: ToolRenderProps): ReactNode {
-	const patterns = patternsOf(args);
-	const paths = scopePaths(args);
-	const lang = str(args.lang);
-	return (
-		<>
-			<span className="tv-pattern">
-				{patterns.length ? truncate(normalizeWs(patterns[0]!), 64) : "?"}
-			</span>
-			{patterns.length > 1 && (
-				<span className="tv-faint">+{patterns.length - 1}</span>
-			)}
-			{paths.length > 0 && <PathText path={paths[0]!} />}
-			{paths.length > 1 && (
-				<span className="tv-faint">+{paths.length - 1}</span>
-			)}
-			{lang && <Badge tone="accent">{lang}</Badge>}
-		</>
-	);
+/** 搜索范围：`path`（`;` 分隔）或旧的 `paths`。 */
+function scopeOf(args: Record<string, unknown>): string[] {
+	return scopePaths(args)
+		.flatMap((p) => p.split(";"))
+		.map((p) => p.trim())
+		.filter(Boolean);
 }
 
 /** 模式的高亮语言：`lang` 参数，否则命中文件（或搜索范围）共同的语言。 */
 function patternLanguage(
 	args: Record<string, unknown>,
-	result: ToolRenderProps["result"],
+	result: ToolResultLike | undefined,
 ): string | null {
 	const files = resultFiles(result);
 	return (
-		str(args.lang) ??
-		sharedLanguage(files.length > 0 ? files : scopePaths(args))
+		str(args.lang) ?? sharedLanguage(files.length > 0 ? files : scopeOf(args))
+	);
+}
+
+function Summary({ args }: ToolRenderProps): ReactNode {
+	const patterns = patternsOf(args);
+	const paths = scopeOf(args);
+	return (
+		<>
+			{patterns.length > 0 ? (
+				<span className="tv-pattern">
+					{truncate(normalizeWs(patterns[0] ?? ""), 64)}
+				</span>
+			) : (
+				<InvalidArg what="pat" />
+			)}
+			{patterns.length > 1 && (
+				<span className="tv-faint">+{patterns.length - 1}</span>
+			)}
+			{paths[0] && <PathText path={paths[0]} />}
+			{paths.length > 1 && (
+				<span className="tv-faint">+{paths.length - 1}</span>
+			)}
+		</>
+	);
+}
+
+/** 头部读数：命中数（0 处时警示）· 文件数，到上限时警示。 */
+function Meta({ result }: ToolRenderProps): ReactNode {
+	const { t } = useTranslation();
+	if (!result || result.isError) return null;
+	const d = detailsRecord(result);
+	const matches = d ? num(d.matchCount) : null;
+	const files = d ? num(d.fileCount) : null;
+	return (
+		<>
+			<MetaCount
+				unit="matches"
+				count={matches}
+				tone={matches === 0 ? "warn" : undefined}
+			/>
+			{files !== null && files > 1 && <MetaCount unit="files" count={files} />}
+			{d?.limitReached === true && (
+				<span className="tv-meta-warn">{t("toolRender.astEdit.limit")}</span>
+			)}
+		</>
 	);
 }
 
 function Input({ args, result }: ToolRenderProps): ReactNode {
+	const { t } = useTranslation();
 	const patterns = patternsOf(args);
-	const paths = scopePaths(args);
-	const glob = str(args.glob);
-	const sel = str(args.sel);
-	const skip = num(args.skip);
+	const paths = scopeOf(args);
 	const lang = patternLanguage(args, result);
-	// 语言在折叠行里；模式与路径在折叠行里只是摘要（会被截断），这里始终给出全文
+	const skip = num(args.skip);
+	const options: string[] = [];
+	if (str(args.lang)) options.push(str(args.lang) ?? "");
+	const glob = str(args.glob);
+	if (glob) options.push(`glob ${glob}`);
+	if (skip !== null && skip > 0)
+		options.push(t("toolRender.grep.skip", { count: skip }));
 	return (
 		<>
-			<Badges
-				items={[
-					glob && <Badge key="glob">glob={glob}</Badge>,
-					sel && <Badge key="sel">sel={sel}</Badge>,
-					skip !== null && skip > 0 && <Badge key="skip">skip:{skip}</Badge>,
-				]}
-			/>
 			{patterns.length === 0 ? (
 				<InvalidArg what="pat" />
 			) : (
 				patterns.map((pat, i) => (
-					<CodeBlock
+					<CodeLines
 						key={i}
-						code={pat}
+						rows={pat.split("\n").map((text) => ({ kind: "ctx", text }))}
 						lang={lang}
-						title={patterns.length > 1 ? `pattern ${i + 1}` : "pattern"}
 						maxLines={12}
 					/>
 				))
 			)}
-			{paths.length > 0 && (
-				<KvGrid>
-					<Kv k={paths.length === 1 ? "path" : "paths"}>
-						{paths.map((p, i) => (
-							<span key={i}>
-								{i > 0 && ", "}
-								<PathText path={p} />
-							</span>
-						))}
-					</Kv>
-				</KvGrid>
+			{(paths.length > 0 || options.length > 0) && (
+				<div className="tv-scope">
+					{paths.length > 0 && (
+						<span className="tv-scope-label">{t("toolRender.grep.in")}</span>
+					)}
+					{paths.map((p, i) => (
+						<span key={i} className="tv-scope-path">
+							<Icon
+								name={/\.[a-z0-9]+$/i.test(p) ? "file" : "folder"}
+								size={12}
+							/>
+							{shortenPath(p)}
+						</span>
+					))}
+					{options.map((o) => (
+						<span key={o} className="tv-badge">
+							{o}
+						</span>
+					))}
+				</div>
 			)}
 		</>
 	);
 }
 
 function Result({ args, result }: ToolRenderProps): ReactNode {
-	const paths = scopePaths(args);
-	const details = detailsRecord(result);
-	const fileCount = num(details?.fileCount);
-	const filesSearched = num(details?.filesSearched);
-	const limitReached = details?.limitReached === true;
-	const scopePath = str(details?.scopePath);
-	const parseErrors = Array.isArray(details?.parseErrors)
-		? details.parseErrors.filter((e): e is string => typeof e === "string")
-		: [];
-	const parseErrorsTotal = num(details?.parseErrorsTotal) ?? parseErrors.length;
-	const showScope =
-		scopePath !== null &&
-		(paths.length !== 1 || shortenPath(scopePath) !== shortenPath(paths[0]!));
-	// 匹配数在头部读数里
-	const resultBadges: ReactNode[] =
-		result && !result.isError
-			? [
-					fileCount !== null && fileCount > 0 && (
-						<Badge key="files">
-							{fileCount} {fileCount === 1 ? "file" : "files"}
-						</Badge>
-					),
-					filesSearched !== null && (
-						<Badge key="searched">searched {filesSearched}</Badge>
-					),
-					limitReached && (
-						<Badge key="limit" tone="warn">
-							limit reached
-						</Badge>
-					),
-				]
+	const { t } = useTranslation();
+	if (!result) return null;
+	const text = resultTextOf(result);
+	if (result.isError) return <ErrorBlock text={text} />;
+	const d = detailsRecord(result);
+	const display = d ? str(d.displayContent) : null;
+	const fromText = parseGrouped(text);
+	const groups = display ? parseGrouped(display).groups : fromText.groups;
+	const parseErrors =
+		d && Array.isArray(d.parseErrors)
+			? d.parseErrors.filter((e): e is string => typeof e === "string")
 			: [];
-
+	const parseTotal = (d ? num(d.parseErrorsTotal) : null) ?? parseErrors.length;
+	const counts = new Map<string, number>();
+	if (d && Array.isArray(d.fileMatches))
+		for (const m of d.fileMatches) {
+			const path = isRecord(m) ? str(m.path) : null;
+			const count = isRecord(m) ? num(m.count) : null;
+			if (path && count !== null) counts.set(path, count);
+		}
+	const notes = fromText.notes.filter(
+		(n) =>
+			!/^No matches found/.test(n) &&
+			!/^Parse issues/.test(n) &&
+			!parseErrors.some((p) => n.endsWith(p)),
+	);
+	const warn = notes.filter((n) => /limit reached/i.test(n));
+	const rest = notes.filter((n) => !warn.includes(n));
+	const searched = d ? num(d.filesSearched) : null;
+	if (searched !== null)
+		rest.push(t("toolRender.astEdit.searched", { count: searched }));
+	const lang = patternLanguage(args, result);
 	return (
 		<>
-			<Badges items={resultBadges} />
-			{showScope && scopePath && (
-				<KvGrid>
-					<Kv k="scope">
-						<PathText path={scopePath} />
-					</Kv>
-				</KvGrid>
+			{groups.length > 0 ? (
+				<GroupedCode
+					groups={groups}
+					lang={lang}
+					maxRows={18}
+					aside={(g) => {
+						const n =
+							counts.get(g.path) ??
+							g.rows.filter((r) => r.kind === "hit").length;
+						return <span>{t("toolRender.meta.matches", { count: n })}</span>;
+					}}
+				/>
+			) : (
+				<EmptyNote>{t("toolRender.grep.empty")}</EmptyNote>
 			)}
 			{parseErrors.length > 0 && (
-				<Output
-					text={parseErrors.join("\n")}
-					maxLines={6}
-					title={
-						parseErrorsTotal > parseErrors.length
-							? `parse issues (${parseErrorsTotal} total)`
-							: "parse issues"
-					}
-				/>
+				<div className="tv-fgroup">
+					<div className="tv-out-title">
+						{t("toolRender.astEdit.parseIssues", { count: parseTotal })}
+					</div>
+					<Output text={parseErrors.join("\n")} maxLines={6} variant="plain" />
+				</div>
 			)}
-			<SearchOutput
-				result={result}
-				maxLines={12}
-				lang={patternLanguage(args, result)}
-			/>
+			<FootNotes notes={warn} tone="warn" />
+			<FootNotes notes={rest} />
 		</>
-	);
-}
-
-/** 右侧读数：匹配数（0 处时提示）。 */
-function Meta({ result }: ToolRenderProps): ReactNode {
-	if (!result || result.isError) return null;
-	const matchCount = num(detailsRecord(result)?.matchCount);
-	return (
-		<MetaCount
-			unit="matches"
-			count={matchCount}
-			tone={matchCount === 0 ? "warn" : undefined}
-		/>
 	);
 }
 

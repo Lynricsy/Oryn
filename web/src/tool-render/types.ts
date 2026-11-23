@@ -108,6 +108,8 @@ export interface ToolRenderProps {
 	running?: boolean;
 	/** 运行中的结构化部分结果（tool_execution_update.partialResult）；仅在 running 且尚无 result 时有值。 */
 	partial?: ToolResultLike;
+	/** 调用开始执行的时刻（epoch ms）：只在实时视图里有值，运行中的计时、等待时长据此走动。 */
+	startedAt?: number;
 	/** Host capabilities (sub-session drill-down, …). */
 	host?: ToolRenderHost;
 }

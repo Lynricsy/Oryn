@@ -1932,6 +1932,201 @@ const ZOO_GROUPS: { text: string; calls: ZooCall[] }[] = [
 		],
 	},
 	{
+		text: "文件工具的更多状态（目录、图片、截断、空结果、出错、多文件、预览）：",
+		calls: [
+			{
+				name: "read",
+				args: { path: "web/src/realtime" },
+				text: "realtime\n  - __snapshots__/                    1m ago\n    - socket.test.ts.snap        2.4KB  1m ago\n  - socket.ts                    9.1KB  2m ago\n  - socket.test.ts               4.0KB  2m ago\n  - backoff.ts                     212B  5m ago\n  - pending.ts                   1.3KB  3h ago\n  - … 4 more\n  - index.ts                       96B  2d ago",
+				details: {
+					isDirectory: true,
+					resolvedPath: `${REPO_DIR}/web/src/realtime`,
+				},
+			},
+			{
+				name: "read",
+				args: { path: "web/src/realtime/socket.ts:88-90" },
+				text: '[web/src/realtime/socket.ts#7F3A]\n87:\t\tthis.ws.onclose = () => {\n88:\t\t\tthis.scheduleReconnect("close");\n89:\t\t\tthis.emit("status", "offline");\n90:\t\t};\n91:\t\tthis.ws.onmessage = (ev) => {\n92:\t\t\tconst msg = JSON.parse(ev.data);\n93:\t\t\tthis.dispatch(msg);\n\n[212 more lines in file. Use web/src/realtime/socket.ts:94- to continue]',
+				details: {
+					resolvedPath: `${REPO_DIR}/web/src/realtime/socket.ts`,
+					rowPrefixes: true,
+					totalLines: 305,
+					fileSize: 9318,
+					displayContent: {
+						text: '\t\tthis.ws.onclose = () => {\n\t\t\tthis.scheduleReconnect("close");\n\t\t\tthis.emit("status", "offline");\n\t\t};\n\t\tthis.ws.onmessage = (ev) => {\n\t\t\tconst msg = JSON.parse(ev.data);\n\t\t\tthis.dispatch(msg);',
+						startLine: 87,
+					},
+				},
+			},
+			{
+				name: "read",
+				args: { path: "docs/assets/oryn-mark.png" },
+				text: "Read image file [image/png]\n96x64",
+				image: true,
+				details: {},
+			},
+			{
+				name: "read",
+				args: { path: "web/src/realtime/sockets.ts" },
+				text: "Path 'web/src/realtime/sockets.ts' not found.\nDid you mean: web/src/realtime/socket.ts",
+				isError: true,
+			},
+			{
+				name: "grep",
+				args: {
+					pattern: "reconnect(Timer|Attempt)",
+					path: "web/src",
+					case: false,
+				},
+				text: '# web/src/realtime/\n## socket.ts#7F3A\n 56:\tprivate ws: WebSocket | null = null;\n*57:\tprivate reconnectTimer: ReturnType<typeof setTimeout> | null = null;\n 58:\tprivate attempts = 0;\n...\n*112:\t\tif (this.reconnectTimer) clearTimeout(this.reconnectTimer);\n## backoff.test.ts#C0DE\n*14:\tit("caps reconnectAttempt at 15s", () => {\n\n# web/src/state/\n## connection.ts#9A1B\n*8:\treconnectAttempt: number;\n\nShowing files 1-3 of 7. Use skip=3 for the next page, or narrow paths/pattern.',
+				details: {
+					matchCount: 4,
+					fileCount: 3,
+					truncated: true,
+					fileMatches: [
+						{ path: "web/src/realtime/socket.ts", count: 2 },
+						{ path: "web/src/realtime/backoff.test.ts", count: 1 },
+						{ path: "web/src/state/connection.ts", count: 1 },
+					],
+					displayContent:
+						'# web/src/realtime/\n## socket.ts\n   56│\tprivate ws: WebSocket | null = null;\n  *57│\tprivate reconnectTimer: ReturnType<typeof setTimeout> | null = null;\n   58│\tprivate attempts = 0;\n     │...\n *112│\t\tif (this.reconnectTimer) clearTimeout(this.reconnectTimer);\n## backoff.test.ts\n  *14│\tit("caps reconnectAttempt at 15s", () => {\n\n# web/src/state/\n## connection.ts\n   *8│\treconnectAttempt: number;',
+				},
+			},
+			{
+				name: "grep",
+				args: { pattern: "afterSeqq", path: "web/src" },
+				text: "No matches found",
+				details: { matchCount: 0, fileCount: 0, files: [], truncated: false },
+			},
+			{
+				name: "glob",
+				args: { path: "web/src/**/*.vue" },
+				text: "No files found matching pattern",
+				details: { fileCount: 0, files: [] },
+			},
+			{
+				name: "lsp",
+				args: {
+					action: "references",
+					file: "web/src/realtime/socket.ts",
+					symbol: "scheduleReconnect",
+				},
+				text: 'Found 3 reference(s):\n  web/src/realtime/socket.ts:40:10\n    39: \n    40: \tprivate scheduleReconnect(reason: string) {\n    41: \t\tconst attempts = connectionStore.getState().attempts;\n  web/src/realtime/socket.ts:88:9\n    87: \t\tthis.ws.onclose = () => {\n    88: \t\t\tthis.scheduleReconnect("close");\n    89: \t\t\tthis.emit("status", "offline");\n  web/src/realtime/socket.test.ts:31:10\n    30: \tit("schedules a reconnect on close", () => {\n    31: \t\tclient.scheduleReconnect("test");\n    32: \t\texpect(timers.pending()).toBe(1);',
+				details: {
+					serverName: "typescript-language-server",
+					action: "references",
+					success: true,
+				},
+			},
+			{
+				name: "lsp",
+				args: {
+					action: "hover",
+					file: "web/src/realtime/socket.ts",
+					line: 40,
+					symbol: "scheduleReconnect",
+				},
+				text: "```typescript\n(method) RealtimeClient.scheduleReconnect(reason: string): void\n```\n\n断线后按指数退避安排下一次重连；`reason` 只用于日志。",
+				details: {
+					serverName: "typescript-language-server",
+					action: "hover",
+					success: true,
+				},
+			},
+			{
+				name: "lsp",
+				args: { action: "symbols", file: "web/src/realtime/socket.ts" },
+				text: "Symbols in web/src/realtime/socket.ts:\n* RealtimeClient @ line 12\n  * ws @ line 56\n  * reconnectTimer @ line 57\n  * scheduleReconnect @ line 40\n  * subscribe @ line 44\n* createClient @ line 140",
+				details: {
+					serverName: "typescript-language-server",
+					action: "symbols",
+					success: true,
+				},
+			},
+			{
+				name: "write",
+				args: {
+					path: "web/.env.example",
+					content: "VITE_API=http://127.0.0.1:5390\nVITE_MOCK=1\n",
+				},
+				text: "Successfully wrote 43 bytes to web/.env.example",
+				details: {
+					overwritten: true,
+					diff: " 1|VITE_API=http://127.0.0.1:5390\n-2|VITE_MOCK=0\n+2|VITE_MOCK=1",
+					firstChangedLine: 2,
+				},
+			},
+			{
+				name: "edit",
+				args: {
+					input:
+						'[web/src/realtime/index.ts#3B1C]\nPUT >2:\n+export { backoffMs } from "./backoff";\n[web/src/realtime/socket.ts#7F3A]\nPUT 57.=57:\n+\tprivate reconnectTimer: ReturnType<typeof setTimeout> | null = null;',
+				},
+				text: '[web/src/realtime/index.ts#9C2E]\n3:export { backoffMs } from "./backoff";\n\n[web/src/realtime/socket.ts#1D4F]\n57:\tprivate reconnectTimer: ReturnType<typeof setTimeout> | null = null;',
+				details: {
+					diff: "",
+					perFileResults: [
+						{
+							path: `${REPO_DIR}/web/src/realtime/index.ts`,
+							diff: ' 1|export { RealtimeClient } from "./socket";\n 2|export type { ConnectionState } from "./state";\n+3|export { backoffMs } from "./backoff";',
+							firstChangedLine: 3,
+						},
+						{
+							path: `${REPO_DIR}/web/src/realtime/socket.ts`,
+							diff: " 55|\tprivate url: string;\n 56|\tprivate ws: WebSocket | null = null;\n-57|\tprivate timer = 0;\n+57|\tprivate reconnectTimer: ReturnType<typeof setTimeout> | null = null;\n 58|\tprivate attempts = 0;\n 59|\n 90|\t\t};\n-91|\t\tclearTimeout(this.timer);\n+91|\t\tif (this.reconnectTimer) clearTimeout(this.reconnectTimer);\n 92|\t}",
+							firstChangedLine: 57,
+							diagnostics: {
+								server: "typescript-language-server",
+								summary: "1 warning(s)",
+								errored: false,
+								messages: [
+									"web/src/realtime/socket.ts:61:7 [warning] [ts] 'attempt' is declared but its value is never read. (6133)",
+								],
+							},
+						},
+					],
+				},
+			},
+			{
+				name: "edit",
+				args: {
+					input:
+						"[web/src/realtime/socket.ts#7F3A]\nPUT 120.=121:\n+\tclose() {\n+\t\tthis.ws?.close();\n+\t}",
+				},
+				text: "Stale tag 7F3A for web/src/realtime/socket.ts: the file changed since it was read.\nRe-read the edited region to get a fresh tag, then retry.",
+				details: { diff: "", errorKind: "stale_tag" },
+				isError: true,
+			},
+			{
+				name: "ast_edit",
+				args: {
+					ops: [{ pat: "console.log($$$A)", out: "log.debug($$$A)" }],
+					path: "web/src/realtime",
+				},
+				text: 'Staged as a proposal — files NOT modified yet. To apply: write a one-sentence reason to xd://resolve. To discard: write to xd://reject.\n\n# web/src/realtime/\n## socket.ts#7F3A (2 replacements)\n-70:console.log("reconnect", attempt)\n+70:log.debug("reconnect", attempt)\n-96:console.log("ping")\n+96:log.debug("ping")\n## pending.ts#5E21 (1 replacement)\n-22:console.log("fail all", pending.size)\n+22:log.debug("fail all", pending.size)',
+				details: {
+					totalReplacements: 3,
+					filesTouched: 2,
+					filesSearched: 6,
+					applied: false,
+					limitReached: false,
+					fileReplacements: [
+						{ path: "web/src/realtime/socket.ts", count: 2 },
+						{ path: "web/src/realtime/pending.ts", count: 1 },
+					],
+					displayContent:
+						'# web/src/realtime/\n## socket.ts (2 replacements)\n  -70│\t\tconsole.log("reconnect", attempt);\n  +70│\t\tlog.debug("reconnect", attempt);\n  -96│\t\tconsole.log("ping");\n  +96│\t\tlog.debug("ping");\n## pending.ts (1 replacement)\n  -22│\tconsole.log("fail all", pending.size);\n  +22│\tlog.debug("fail all", pending.size);',
+				},
+			},
+			{
+				name: "reject",
+				args: { reason: "已经手动改过了" },
+				text: "Nothing to reject; no pending action remains.",
+				details: { action: "discard", reason: "已经手动改过了" },
+			},
+		],
+	},
+	{
 		text: "跑测试与脚本：",
 		calls: [
 			{
@@ -2131,7 +2326,7 @@ const ZOO_GROUPS: { text: string; calls: ZooCall[] }[] = [
 			{
 				name: "wait",
 				args: {},
-				text: "1 job completed.",
+				text: "## Completed (2)\n\n### bg_3 [bash] — completed\nIntent: 后台跑 Go 端测试\nLabel: go test ./internal/realtime/...\nDelivery: delivered by this wait — it finished while you were waiting.\nok  \toryn/internal/realtime\t1.92s\n\n### SchemaCheck [task] — failed\nIntent: 核对 OpenAPI 与前端类型是否同步\nLabel: SchemaCheck\nAgent: history://SchemaCheck\nerror: schema.d.ts is stale: 3 operations missing",
 				details: {
 					jobs: [
 						{
@@ -2141,7 +2336,20 @@ const ZOO_GROUPS: { text: string; calls: ZooCall[] }[] = [
 							label: "go test ./internal/realtime/...",
 							intent: "后台跑 Go 端测试",
 							durationMs: 48_200,
-							resultText: "ok  \toryn/internal/realtime\t1.92s",
+							exitCode: 0,
+							resultText:
+								"ok  \toryn/internal/realtime\t1.92s\nok  \toryn/internal/realtime/hub\t0.84s",
+						},
+						{
+							id: "SchemaCheck",
+							type: "task",
+							status: "failed",
+							label: "SchemaCheck",
+							intent: "核对 OpenAPI 与前端类型是否同步",
+							durationMs: 71_000,
+							agentUrlId: "SchemaCheck",
+							errorText:
+								"schema.d.ts is stale: 3 operations missing\n- GET /threads/{id}/jobs\n- POST /threads/{id}/jobs/{jobId}/cancel\n- GET /orbs/{id}/metrics\n- (and 2 more schemas)",
 						},
 					],
 				},
@@ -2170,24 +2378,47 @@ const ZOO_GROUPS: { text: string; calls: ZooCall[] }[] = [
 					recency: "year",
 					limit: 3,
 				},
-				text: "常见做法是**指数退避 + 全抖动**：等待时间取 `random(0, min(cap, base·2^n))`，避免大量客户端同时重连。",
+				text: "常见做法是**指数退避 + 全抖动**：等待时间取 `random(0, min(cap, base·2^n))`，避免大量客户端同时重连。[1]\n\n## Sources\n3 sources\n[1] Exponential Backoff And Jitter (7mo ago)\n    https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/",
 				details: {
 					response: {
 						provider: "exa",
 						model: "exa-research",
+						answer:
+							"常见做法是**指数退避 + 全抖动**：等待时间取 `random(0, min(cap, base·2^n))`，避免大量客户端在服务恢复的同一刻一起重连。[1]\n\n- **上限**：通常封顶在 10 到 30 秒之间，移动端可以更长。[3]\n- **重置**：连接稳定一段时间后再把计数归零，避免抖动的网络反复从头开始。[2]\n- 浏览器的 `WebSocket` 没有内置重连，需要在 `onclose` 里自己调度。[2]",
 						sources: [
 							{
 								url: "https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/",
 								title: "Exponential Backoff And Jitter",
+								snippet:
+									"Adding jitter to exponential backoff spreads out retries so that clients don't all hammer the server at the same instant. Full jitter performs best in our simulations.",
 								ageSeconds: 86_400 * 200,
+								author: "Marc Brooker",
 							},
 							{
 								url: "https://developer.mozilla.org/en-US/docs/Web/API/WebSocket",
 								title: "WebSocket - Web APIs | MDN",
+								snippet:
+									"The WebSocket object provides the API for creating and managing a WebSocket connection to a server, as well as for sending and receiving data on the connection.",
 								ageSeconds: 86_400 * 12,
 							},
+							{
+								url: "https://github.com/joewalnes/reconnecting-websocket",
+								title:
+									"joewalnes/reconnecting-websocket: A small decorator for the JavaScript WebSocket API that automatically reconnects",
+								snippet:
+									"reconnectDecay: the rate of increase of the reconnect delay. maxReconnectInterval: the maximum number of milliseconds to delay a reconnection attempt.",
+								publishedDate: "2023-04-18",
+							},
 						],
-						usage: { inputTokens: 1840, outputTokens: 212, searchRequests: 1 },
+						relatedQuestions: [
+							"How do I detect a half-open WebSocket connection?",
+							"Should the server tell clients when to retry?",
+						],
+						searchQueries: [
+							"websocket reconnect exponential backoff jitter",
+							"full jitter vs equal jitter",
+						],
+						usage: { inputTokens: 1840, outputTokens: 212, searchRequests: 2 },
 					},
 				},
 			},
@@ -2423,6 +2654,243 @@ const ZOO_GROUPS: { text: string; calls: ZooCall[] }[] = [
 		],
 	},
 	{
+		// 协作 / 记忆类卡片的更多状态：混合结局的子 agent、问卷回执与超时、目标完成、失败提交、检查点、记忆增删改
+		text: "协作与记忆卡片的其他状态：",
+		calls: [
+			{
+				name: "task",
+				args: {
+					context:
+						"## 目标\n给重连改造补测试。\n\n- 只动 `web/src/realtime/`\n- 不改公共 API",
+					tasks: [
+						{
+							name: "BackoffTests",
+							agent: "task",
+							task: "为 backoff.ts 写单元测试：上限、抖动范围、归零。",
+							solutionSpace: "一个测试文件，用例已给出",
+							isolated: true,
+						},
+						{
+							name: "E2eReconnect",
+							agent: "task",
+							task: "补端到端用例：断线 → 重连 → 补拉。",
+							solutionSpace: "Playwright 用例；网络模拟方式待选",
+						},
+						{
+							name: "DocSweep",
+							agent: "scout",
+							task: "找出文档里仍写着固定 1s 重连的地方。",
+							solutionSpace: "只读检索",
+						},
+					],
+				},
+				text: "1 of 3 agents finished.",
+				details: {
+					results: [
+						{
+							index: 0,
+							id: "BackoffTests",
+							agent: "task",
+							description: "backoff 单元测试",
+							exitCode: 0,
+							error: "merge conflict in web/src/realtime/backoff.test.ts",
+							output: "写了 6 个用例，全部通过。",
+							tokens: 31_200,
+							requests: 11,
+							durationMs: 96_000,
+							resolvedModel: "anthropic/claude-sonnet-5",
+							patchPath: "/tmp/omp/patches/BackoffTests.patch",
+						},
+						{
+							index: 1,
+							id: "E2eReconnect",
+							agent: "task",
+							description: "端到端重连用例",
+							exitCode: 1,
+							output: "",
+							error: "playwright: browserType.launch: Executable doesn't exist",
+							tokens: 8_400,
+							requests: 5,
+							durationMs: 38_000,
+							resolvedModel: "anthropic/claude-sonnet-5",
+						},
+						{
+							index: 2,
+							id: "DocSweep",
+							agent: "scout",
+							description: "文档里的固定间隔",
+							exitCode: 0,
+							truncated: true,
+							output:
+								"## 发现 3 处\n\n1. `docs/realtime.md:41` 写着「断线后 1 秒重连」\n2. `README.md:212` 的时序图\n3. `web/src/realtime/README.md:8`\n\n建议统一改成「指数退避，0.5s 起，上限 15s」。",
+							tokens: 5_100,
+							requests: 3,
+							durationMs: 22_000,
+							resolvedModel: "anthropic/claude-haiku-5",
+						},
+					],
+					totalDurationMs: 97_000,
+				},
+			},
+			{
+				name: "ask",
+				args: {
+					html: "<p>重连改造的收尾，确认两件事：</p><fieldset><legend>退避上限取多少？</legend><label><input type=radio name=cap value=10>10s</label><label><input type=radio name=cap value=15 checked>15s</label><label><input type=radio name=cap value=30>30s</label></fieldset><fieldset><legend>哪些端要跟进？</legend><label><input type=checkbox name=clients value=web>Web</label><label><input type=checkbox name=clients value=desktop>桌面端</label><label><input type=checkbox name=clients value=mobile>移动端</label></fieldset><label>其他要求 <textarea name=extra></textarea></label>",
+				},
+				text: "User answered.",
+				details: {
+					answers: [
+						{ name: "cap", question: "退避上限取多少？", answer: "15s" },
+						{
+							name: "clients",
+							question: "哪些端要跟进？",
+							answer: "Web, 桌面端",
+						},
+						{
+							name: "extra",
+							question: "其他要求",
+							answer: "移动端下个迭代再说",
+						},
+					],
+					notes: [
+						{
+							name: "cap",
+							question: "退避上限取多少？",
+							option: "15s",
+							text: "和服务端心跳超时对齐",
+						},
+					],
+				},
+			},
+			{
+				name: "ask",
+				args: {
+					questions: [
+						{
+							id: "deploy",
+							question: "现在就发布到预发环境吗？",
+							options: [
+								{ label: "发布", description: "跑完冒烟测试后自动发布" },
+								{ label: "先不发" },
+							],
+							recommended: 0,
+						},
+					],
+				},
+				text: "The user did not answer before the timeout; required fields are still empty.",
+				details: { answers: [], timedOut: true },
+			},
+			{
+				name: "goal",
+				args: { op: "complete" },
+				text: "Goal: 完成重连改造并补齐端到端测试\nStatus: complete",
+				details: {
+					op: "complete",
+					goal: {
+						objective: "完成重连改造并补齐端到端测试",
+						status: "complete",
+						tokenBudget: 400_000,
+						tokensUsed: 352_000,
+						timeUsedSeconds: 4980,
+					},
+					remainingTokens: 48_000,
+					completionBudgetReport:
+						"Goal achieved. Report final budget usage to the user: tokens used: 352000 of 400000; time used: 4980 seconds.",
+				},
+			},
+			{
+				name: "goal",
+				args: { op: "get" },
+				text: "No active goal.",
+				details: { op: "get", goal: null, remainingTokens: null },
+			},
+			{
+				name: "yield",
+				args: {
+					error: "playwright 浏览器没有安装，端到端用例无法运行。",
+				},
+				text: "Task aborted: playwright 浏览器没有安装，端到端用例无法运行。",
+				details: {
+					status: "aborted",
+					error: "playwright 浏览器没有安装，端到端用例无法运行。",
+				},
+			},
+			{
+				name: "checkpoint",
+				args: { goal: "弄清 afterSeq 补拉在断线 30s 以上时为什么会漏条目" },
+				text: "Checkpoint: 弄清 afterSeq 补拉在断线 30s 以上时为什么会漏条目\nFinish exploration and formulate findings.",
+				details: {
+					goal: "弄清 afterSeq 补拉在断线 30s 以上时为什么会漏条目",
+					startedAt: "2026-11-23T07:12:00.000Z",
+				},
+			},
+			{
+				name: "rewind",
+				args: {
+					report:
+						"## 结论\n\n服务端只保留最近 **2000** 条事件；断线超过约 30s 时 `afterSeq` 早于保留窗口，补拉从窗口起点开始，中间的条目丢失。\n\n## 证据\n\n- `internal/realtime/hub.go:118` 的环形缓冲大小\n- 复现：断线 45s 后缺 312 条\n\n## 建议\n\n补拉发现缺口时改为整页重载。",
+				},
+				text: "Rewind requested.\nReport captured for context replacement.",
+				details: { rewound: true },
+			},
+			{
+				name: "recall",
+				args: { query: "补拉窗口大小" },
+				text: "Found 2 relevant memories (as of 2026-11-23 07:20 UTC):\n\n- 事件环形缓冲 2000 条，按 seq 淘汰 (id: m_8f21) [project] (2026-11-04) c:0.9\n\n- 补拉批大小 200 (id: m_77a0) [project] (2026-10-30) c:0.6",
+			},
+			{
+				name: "recall",
+				args: { query: "移动端重连策略" },
+				text: "No relevant memories found.",
+			},
+			{
+				name: "retain",
+				args: {
+					items: [
+						{
+							content:
+								"断线超过约 30s 时 afterSeq 会早于服务端保留窗口，补拉需改为整页重载",
+							context: "rewind 调查报告",
+							scope: "project",
+						},
+						{
+							content:
+								"Playwright 在新 orb 上需要先装浏览器（npx playwright install）",
+							scope: "global",
+						},
+					],
+				},
+				text: "2 memories stored.",
+				details: { count: 2 },
+			},
+			{
+				name: "memory_edit",
+				args: {
+					op: "update",
+					id: "m_77a0",
+					content: "补拉批大小 200；发现缺口时整页重载",
+					importance: 0.7,
+				},
+				text: "Memory m_77a0 updated in bank oryn (project).",
+				details: { status: "updated", bank: "oryn", store: "project" },
+			},
+			{
+				name: "memory_edit",
+				args: { op: "invalidate", id: "m_1c3d", replacement_id: "m_8f21" },
+				text: "Memory m_1c3d is a read-only fact in bank oryn; it cannot be edited. Read it with memory://m_1c3d.",
+				details: { status: "not_editable", bank: "oryn" },
+			},
+			{
+				name: "report_tool_issue",
+				args: {
+					report:
+						"ast_grep\nlang=tsx 时 selector 漏掉了箭头函数里的 JSX；同一模式在 lang=ts 下能命中。",
+				},
+				text: "Noted, thanks!",
+			},
+		],
+	},
+	{
 		// Oryn 宿主工具（M9，只在协调对话里出现）：结果里的线程渲染成实时卡片；出错与残缺 details 走通用渲染
 		text: "协调对话里的 Oryn 宿主工具：",
 		calls: [
@@ -2598,6 +3066,971 @@ const ZOO_GROUPS: { text: string; calls: ZooCall[] }[] = [
 			},
 		],
 	},
+	{
+		// 执行类卡片的更多状态：eval 多格出错与未运行、状态事件与截断、空输出；terminal 的会话、按键、列表与出错
+		text: "跑几段分析脚本，再在终端里起服务：",
+		calls: [
+			{
+				name: "notebook",
+				args: {
+					cells: [
+						{
+							language: "py",
+							title: "加载延迟样本",
+							code: 'import pandas as pd\ndf = pd.read_json("latency.json")\ndf.describe().loc[["mean", "50%", "95%"]]',
+						},
+						{
+							language: "py",
+							title: "按区域聚合",
+							code: 'df.groupby("region")["ms"].quantile(0.95)',
+							timeout: 30,
+						},
+						{
+							language: "py",
+							title: "画图",
+							code: "df.plot.hist(bins=40)",
+						},
+					],
+				},
+				isError: true,
+				text: "Command exited with code 1",
+				details: {
+					language: "python",
+					languages: ["python"],
+					isError: true,
+					cells: [
+						{
+							index: 0,
+							title: "加载延迟样本",
+							code: "",
+							language: "python",
+							output:
+								"          ms   retries\nmean   412.3      0.21\n50%    388.0      0.00\n95%    911.5      1.00",
+							views: [
+								{
+									text: "          ms   retries\nmean   412.3      0.21\n50%    388.0      0.00\n95%    911.5      1.00",
+									view: {
+										kind: "table",
+										columns: [
+											{ head: "" },
+											{ head: "ms", numeric: true },
+											{ head: "retries", numeric: true },
+										],
+										rows: [
+											["mean", "412.3", "0.21"],
+											["50%", "388.0", "0.00"],
+											["95%", "911.5", "1.00"],
+										],
+									},
+								},
+							],
+							status: "complete",
+							durationMs: 842,
+							exitCode: 0,
+						},
+						{
+							index: 1,
+							title: "按区域聚合",
+							code: "",
+							language: "python",
+							output:
+								'Traceback (most recent call last):\n  File "<cell 2>", line 1, in <module>\n  File "pandas/core/frame.py", line 4102, in __getitem__\nKeyError: \'region\'',
+							status: "error",
+							durationMs: 31,
+							exitCode: 1,
+						},
+						{
+							index: 2,
+							title: "画图",
+							code: "",
+							language: "python",
+							output: "",
+							status: "pending",
+						},
+					],
+				},
+			},
+			{
+				name: "eval",
+				args: {
+					language: "js",
+					title: "批量核对 fixture",
+					code: 'phase("扫描 fixtures");\nconst files = await tool.glob({ path: "web/src/mock/*.ts" });\nphase("逐个解析");\nfor (const f of files) log("ok", f);\nprint(files.length);',
+					timeout: 120,
+				},
+				text: "ok web/src/mock/fixtures.ts\nok web/src/mock/server.ts\n2",
+				details: {
+					language: "js",
+					languages: ["js"],
+					meta: {
+						truncation: {
+							direction: "tail",
+							truncatedBy: "lines",
+							totalLines: 4210,
+							outputLines: 2000,
+						},
+					},
+					cells: [
+						{
+							index: 0,
+							title: "批量核对 fixture",
+							code: "",
+							language: "js",
+							output:
+								"ok web/src/mock/fixtures.ts\nok web/src/mock/server.ts\n2",
+							status: "complete",
+							durationMs: 2310,
+							exitCode: 0,
+							statusEvents: [
+								{ op: "phase", title: "扫描 fixtures" },
+								{ op: "glob", count: 2, path: `${REPO_DIR}/web/src/mock` },
+								{ op: "phase", title: "逐个解析" },
+								{
+									op: "read",
+									chars: 81_230,
+									path: `${REPO_DIR}/web/src/mock/fixtures.ts`,
+								},
+							],
+						},
+					],
+				},
+			},
+			{
+				name: "python",
+				args: { language: "py", code: "import gc\ngc.collect()\n_ = None" },
+				text: "(no output)",
+				details: {
+					language: "python",
+					languages: ["python"],
+					cells: [
+						{
+							index: 0,
+							code: "",
+							language: "python",
+							output: "",
+							status: "complete",
+							durationMs: 4,
+							exitCode: 0,
+						},
+					],
+				},
+			},
+			{
+				name: "terminal",
+				args: { action: "open", host: "web-1", label: "web-1 部署" },
+				text: "Opened term-7 (ssh web-1) on web-1, in /srv/app. Run commands in it with exec; it shows in the omp app's Terminal panel.",
+				details: {
+					action: "open",
+					terminal: {
+						terminalId: "term-7",
+						kind: "session",
+						title: "web-1 部署",
+						cwd: "/srv/app",
+						running: true,
+						state: "idle",
+						host: "web-1",
+						cols: 120,
+						rows: 32,
+					},
+				},
+			},
+			{
+				name: "terminal",
+				args: {
+					action: "exec",
+					id: "term-7",
+					command: "git pull --ff-only && systemctl restart oryn-web",
+				},
+				text: "term-7 (ssh web-1) in /srv/app: exit 0\n\nUpdating 3f2a91c..8b0d4e7\nFast-forward\n web/src/realtime/socket.ts | 42 ++++++++++++++++++-------\n 1 file changed, 30 insertions(+), 12 deletions(-)",
+				details: {
+					action: "exec",
+					exitCode: 0,
+					terminal: {
+						terminalId: "term-7",
+						kind: "session",
+						title: "web-1 部署",
+						cwd: "/srv/app",
+						running: true,
+						state: "idle",
+						host: "web-1",
+						cols: 120,
+						rows: 32,
+					},
+				},
+			},
+			{
+				name: "terminal",
+				args: { action: "send", id: "t3", key: "ctrl-c" },
+				text: "t3  background  exited 130  /home/user/workspace/repo/web  bun run dev:mock\n\n  ➜  Local:   http://localhost:5173/\n^C",
+				details: {
+					action: "send",
+					terminal: {
+						terminalId: "t3",
+						kind: "background",
+						title: "bun run dev:mock",
+						cwd: `${REPO_DIR}/web`,
+						running: false,
+						exitCode: 130,
+						cols: 120,
+						rows: 32,
+					},
+				},
+			},
+			{
+				name: "terminal",
+				args: { action: "list" },
+				text: "term-7  session  idle  ssh web-1  /srv/app  web-1 部署\nt3  background  exited 130  /home/user/workspace/repo/web  bun run dev:mock\nt1  shell  running  /home/user/workspace/repo  zsh",
+				details: {
+					action: "list",
+					terminals: [
+						{
+							terminalId: "term-7",
+							kind: "session",
+							title: "web-1 部署",
+							cwd: "/srv/app",
+							running: true,
+							state: "idle",
+							host: "web-1",
+							cols: 120,
+							rows: 32,
+						},
+						{
+							terminalId: "t3",
+							kind: "background",
+							title: "bun run dev:mock",
+							cwd: `${REPO_DIR}/web`,
+							running: false,
+							exitCode: 130,
+							cols: 120,
+							rows: 32,
+						},
+						{
+							terminalId: "t1",
+							kind: "shell",
+							title: "zsh",
+							cwd: REPO_DIR,
+							running: true,
+							cols: 120,
+							rows: 32,
+						},
+					],
+				},
+			},
+			{
+				name: "terminal",
+				args: { action: "exec", id: "t1", command: "ls" },
+				isError: true,
+				text: "t1 is not a session you opened; exec runs in sessions from open.",
+			},
+		],
+	},
+	{
+		// 调试器面板：调用栈、变量、断点、反汇编、程序结束与出错
+		text: "接着在调试器里看看 Resume 的现场：",
+		calls: [
+			{
+				name: "debug",
+				args: { action: "stack_trace", levels: 4 },
+				text: "Stack trace:\n- #1001 realtime.(*Hub).Resume @ internal/realtime/hub.go:118:2",
+				details: {
+					action: "stack_trace",
+					success: true,
+					snapshot: {
+						id: "1",
+						adapter: "dlv",
+						status: "stopped",
+						program: "bin/orynd",
+						stopReason: "breakpoint",
+						frameName: "realtime.(*Hub).Resume",
+						source: { path: `${REPO_DIR}/internal/realtime/hub.go` },
+						line: 118,
+						column: 2,
+						threadId: 7,
+					},
+					stackFrames: [
+						{
+							id: 1001,
+							name: "realtime.(*Hub).Resume",
+							source: { path: `${REPO_DIR}/internal/realtime/hub.go` },
+							line: 118,
+							column: 2,
+						},
+						{
+							id: 1002,
+							name: "realtime.(*Conn).handleSub",
+							source: { path: `${REPO_DIR}/internal/realtime/conn.go` },
+							line: 76,
+							column: 3,
+						},
+						{
+							id: 1003,
+							name: "realtime.(*Conn).readLoop",
+							source: { path: `${REPO_DIR}/internal/realtime/conn.go` },
+							line: 41,
+							column: 4,
+						},
+						{
+							id: 1004,
+							name: "runtime.goexit",
+							source: { path: "/usr/local/go/src/runtime/asm_amd64.s" },
+							line: 1700,
+							column: 0,
+							presentationHint: "subtle",
+						},
+					],
+				},
+			},
+			{
+				name: "debug",
+				args: { action: "variables", variable_ref: 1001 },
+				text: "Variables:\n- afterSeq = 4182 (uint64)",
+				details: {
+					action: "variables",
+					success: true,
+					snapshot: {
+						id: "1",
+						adapter: "dlv",
+						status: "stopped",
+						stopReason: "breakpoint",
+						frameName: "realtime.(*Hub).Resume",
+						source: { path: `${REPO_DIR}/internal/realtime/hub.go` },
+						line: 118,
+						column: 2,
+					},
+					variables: [
+						{
+							name: "afterSeq",
+							value: "4182",
+							type: "uint64",
+							variablesReference: 0,
+						},
+						{
+							name: "threadID",
+							value: '"T-0193a1b2"',
+							type: "string",
+							variablesReference: 0,
+						},
+						{
+							name: "subs",
+							value: "map[string]*realtime.Sub [3]",
+							type: "map[string]*realtime.Sub",
+							variablesReference: 1017,
+						},
+						{
+							name: "err",
+							value: "error nil",
+							type: "error",
+							variablesReference: 0,
+						},
+					],
+				},
+			},
+			{
+				name: "debug",
+				args: {
+					action: "set_breakpoint",
+					file: "internal/realtime/hub.go",
+					line: 131,
+					condition: "afterSeq > 4000",
+				},
+				text: "Breakpoints for internal/realtime/hub.go:\n- line 118: verified\n- line 131: pending if afterSeq > 4000",
+				details: {
+					action: "set_breakpoint",
+					success: true,
+					breakpoints: [
+						{ id: 1, verified: true, line: 118 },
+						{
+							id: 2,
+							verified: false,
+							line: 131,
+							condition: "afterSeq > 4000",
+							message: "no code at this line",
+						},
+					],
+				},
+			},
+			{
+				name: "debug",
+				args: {
+					action: "disassemble",
+					memory_reference: "0x4a1f20",
+					instruction_count: 5,
+				},
+				text: "Disassembly:\n…",
+				details: {
+					action: "disassemble",
+					success: true,
+					snapshot: {
+						id: "1",
+						adapter: "dlv",
+						status: "stopped",
+						stopReason: "step",
+						frameName: "realtime.(*Hub).Resume",
+						instructionPointerReference: "0x4a1f28",
+						source: { path: `${REPO_DIR}/internal/realtime/hub.go` },
+						line: 119,
+					},
+					disassembly: [
+						{
+							address: "0x4a1f20",
+							instructionBytes: "49 3b 66 10",
+							instruction: "cmp rsp, qword ptr [r14+0x10]",
+							symbol: "realtime.(*Hub).Resume",
+						},
+						{
+							address: "0x4a1f24",
+							instructionBytes: "76 5a",
+							instruction: "jbe 0x4a1f80",
+						},
+						{
+							address: "0x4a1f28",
+							instructionBytes: "55",
+							instruction: "push rbp",
+						},
+						{
+							address: "0x4a1f29",
+							instructionBytes: "48 89 e5",
+							instruction: "mov rbp, rsp",
+						},
+						{
+							address: "0x4a1f2c",
+							instructionBytes: "48 83 ec 30",
+							instruction: "sub rsp, 0x30",
+						},
+					],
+				},
+			},
+			{
+				name: "debug",
+				args: { action: "continue" },
+				text: "Session 1\nAdapter: dlv\nStatus: terminated\nProgram terminated with exit code 2.",
+				details: {
+					action: "continue",
+					success: true,
+					state: "terminated",
+					timedOut: false,
+					snapshot: {
+						id: "1",
+						adapter: "dlv",
+						status: "terminated",
+						program: "bin/orynd",
+						exitCode: 2,
+					},
+				},
+			},
+			{
+				name: "debug",
+				args: { action: "launch", program: "./server.py", adapter: "debugpy" },
+				isError: true,
+				text: "adapter 'debugpy' is not available: python not found in PATH\nConfigured adapters: dlv, js-debug-adapter",
+			},
+		],
+	},
+	{
+		// IDA 与安全扫描（经 `write xd://…` 设备调用）：库列表、exec 输出与出错、改名；扫描阶段、云扫描统计、出错
+		text: "再看看二进制和安全扫描：",
+		calls: [
+			{
+				name: "write",
+				args: { path: "xd://ida", content: JSON.stringify({ action: "list" }) },
+				text: "server-1a2b  server  ELF64  x86_64/64  ~/.omp/agent/idbs/1a2b-server/server.i64  [exec running]\nlibfoo-9f00  (opening)  ./lib/libfoo.so",
+				details: {
+					xdev: {
+						tool: "ida",
+						mode: "execute",
+						args: { action: "list" },
+						inner: { action: "list" },
+					},
+				},
+			},
+			{
+				name: "write",
+				args: {
+					path: "xd://ida",
+					content: JSON.stringify({
+						action: "exec",
+						db: "server-1a2b",
+						code: "for ea, n in functions('crypt|aes'):\n    print(hex(ea), n)\nlen(functions('crypt|aes'))",
+					}),
+				},
+				text: "0x401000 aes_encrypt\n0x401200 aes_decrypt\n0x4013f0 crypt_init\n=> 3",
+				details: {
+					xdev: {
+						tool: "ida",
+						mode: "execute",
+						args: {
+							action: "exec",
+							db: "server-1a2b",
+							code: "for ea, n in functions('crypt|aes'):\n    print(hex(ea), n)\nlen(functions('crypt|aes'))",
+						},
+						inner: { action: "exec", db: "server-1a2b" },
+					},
+				},
+			},
+			{
+				name: "write",
+				args: {
+					path: "xd://ida",
+					content: JSON.stringify({
+						action: "rename",
+						db: "server-1a2b",
+						target: "sub_401000",
+						name: "parse_header",
+					}),
+				},
+				text: "Renamed 0x401000 sub_401000 → parse_header",
+				details: {
+					xdev: {
+						tool: "ida",
+						mode: "execute",
+						args: {
+							action: "rename",
+							db: "server-1a2b",
+							target: "sub_401000",
+							name: "parse_header",
+						},
+						inner: { action: "rename", db: "server-1a2b" },
+					},
+				},
+			},
+			{
+				name: "write",
+				args: {
+					path: "xd://ida",
+					content: JSON.stringify({
+						action: "exec",
+						db: "server-1a2b",
+						code: "print(decompile(missing))",
+					}),
+				},
+				isError: true,
+				text: "Traceback (most recent call last):\n  File \"<ida-exec>\", line 1, in <module>\nNameError: name 'missing' is not defined",
+				details: {
+					xdev: {
+						tool: "ida",
+						mode: "execute",
+						args: {
+							action: "exec",
+							db: "server-1a2b",
+							code: "print(decompile(missing))",
+						},
+						inner: { action: "exec", db: "server-1a2b" },
+					},
+				},
+			},
+			{
+				name: "write",
+				args: {
+					path: "xd://security_scan",
+					content: JSON.stringify({ action: "status", operation_id: "op-9" }),
+				},
+				text: "Security scan scan-3: reviewing; 2 finding(s).",
+				details: {
+					xdev: {
+						tool: "security_scan",
+						mode: "execute",
+						args: { action: "status", operation_id: "op-9" },
+						inner: {
+							action: "status",
+							operation: {
+								operationId: "op-9",
+								planId: "sp-1",
+								scanId: "scan-3",
+								phase: "reviewing",
+								createdAt: "2026-11-22T08:00:00Z",
+								updatedAt: "2026-11-22T08:20:00Z",
+								jobId: "bg_4",
+								findingCount: 2,
+							},
+						},
+					},
+				},
+			},
+			{
+				name: "write",
+				args: {
+					path: "xd://security_scan",
+					content: JSON.stringify({
+						action: "cloud_status",
+						cloud_configuration_id: "cfg-42",
+					}),
+				},
+				text: "Codex Security cloud scan cfg-42: scanning; 18 finished commit(s), 6 pending.",
+				details: {
+					xdev: {
+						tool: "security_scan",
+						mode: "execute",
+						args: { action: "cloud_status", cloud_configuration_id: "cfg-42" },
+						inner: {
+							action: "cloud_status",
+							cloudStats: {
+								configurationId: "cfg-42",
+								currentStep: "scanning",
+								finishedCommits: 18,
+								pendingCommits: 6,
+								failedCommits: 1,
+								findingCounts: {
+									critical: 0,
+									high: 2,
+									medium: 3,
+									low: 5,
+									informational: 1,
+								},
+								lastScannedCommit: "8b0d4e7",
+								lastScannedAt: "2026-11-22T09:12:00Z",
+							},
+						},
+					},
+				},
+			},
+			{
+				name: "write",
+				args: {
+					path: "xd://security_scan",
+					content: JSON.stringify({ action: "start", plan_id: "sp-404" }),
+				},
+				// 设备派发成功、工具本身抛错（ToolError）：details 只有 xdev，没有 inner
+				isError: true,
+				text: "Unknown security plan: sp-404\nRun action=preflight first to create a plan.",
+				details: {
+					xdev: {
+						tool: "security_scan",
+						mode: "execute",
+						args: { action: "start", plan_id: "sp-404" },
+					},
+				},
+			},
+		],
+	},
+	{
+		// 集成 / 外部服务类卡片的更多状态：MCP（Markdown、JSON、出错）、GitHub 各 op、浏览器的标签页与调用链、
+		// 生图失败、TTS、设备文档、artifact 读取与列表、未知工具的通用渲染
+		text: "再看看外部服务类工具：",
+		calls: [
+			{
+				name: "mcp__linear_search_issues",
+				args: { query: "reconnect", team: "WEB", limit: 5 },
+				text: "Found **2** issues in WEB:\n\n- **WEB-212** Reconnect storms after deploy · _In Progress_\n- **WEB-198** `afterSeq` replay drops last entry · _Done_",
+				details: { serverName: "linear", mcpToolName: "search_issues" },
+			},
+			{
+				name: "mcp__postgres_query",
+				args: {
+					sql: "select thread_id, count(*) as n\nfrom entries\nwhere created_at > now() - interval '1 day'\ngroup by 1 order by 2 desc limit 3",
+				},
+				text: JSON.stringify([
+					{ thread_id: "T-0193a1b2", n: 1824 },
+					{ thread_id: "T-0193a1c9", n: 611 },
+					{ thread_id: "T-0193a1d0", n: 97 },
+				]),
+				details: { serverName: "postgres", mcpToolName: "query" },
+			},
+			{
+				name: "mcp__figma_get_frame",
+				args: { file: "kQ2x…", node: "12:345" },
+				isError: true,
+				text: "MCP error -32001: Request timed out\nserver: figma (stdio)\nhint: the Figma desktop app must be running with Dev Mode enabled",
+				details: { serverName: "figma", mcpToolName: "get_frame" },
+			},
+			{
+				name: "github",
+				args: {
+					op: "search_prs",
+					query: "reconnect is:pr",
+					repo: "can1357/oh-my-pi",
+					since: "2026-10-01",
+				},
+				text: '# GitHub pull requests search\n\nQuery: reconnect is:pr created:>=2026-10-01\nRepository: can1357/oh-my-pi\nResults: 3\n\n- #431 rpc: resume subscriptions after socket reconnect\n  Repo: can1357/oh-my-pi\n  State: open\n  Author: @lynricsy\n  Labels: realtime, needs-review\n  Created: 2026-11-18T08:12:00Z\n  Updated: 2026-11-22T16:40:00Z\n  URL: https://github.com/can1357/oh-my-pi/pull/431\n\n- #402 ws: exponential backoff with jitter\n  Repo: can1357/oh-my-pi\n  State: merged\n  Author: @can1357\n  Created: 2026-10-30T10:00:00Z\n  Updated: 2026-11-02T09:00:00Z\n  URL: https://github.com/can1357/oh-my-pi/pull/402\n\n- #377 Revert "ws: drop stale subscriptions"\n  Repo: can1357/oh-my-pi\n  State: closed\n  Author: @can1357\n  Labels: revert\n  Updated: 2026-10-12T11:00:00Z\n  URL: https://github.com/can1357/oh-my-pi/pull/377',
+			},
+			{
+				name: "github",
+				args: {
+					op: "search_code",
+					query: "afterSeq",
+					repo: "can1357/oh-my-pi",
+				},
+				text: '# GitHub code search\n\nQuery: afterSeq\nRepository: can1357/oh-my-pi\nResults: 2\n\n- packages/coding-agent/src/rpc/subscribe.ts\n  Repo: can1357/oh-my-pi\n  Commit: 8b0d4e7a91c2\n  URL: https://github.com/can1357/oh-my-pi/blob/8b0d4e7/packages/coding-agent/src/rpc/subscribe.ts\n  Match: const entries = await store.since(threadId, { afterSeq: cursor.seq });\n\n- web/src/realtime/socket.ts\n  Repo: can1357/oh-my-pi\n  Commit: 8b0d4e7a91c2\n  URL: https://github.com/can1357/oh-my-pi/blob/8b0d4e7/web/src/realtime/socket.ts\n  Match: this.send({ type: "sub", threadId, afterSeq: this.lastSeq(threadId) });',
+			},
+			{
+				name: "github",
+				args: {
+					op: "search_repos",
+					query: "websocket replay cursor stars:>5000",
+				},
+				text: "# GitHub repositories search\n\nQuery: websocket replay cursor stars:>5000\nResults: 0\n\nNo repositories found.",
+			},
+			{
+				name: "github",
+				args: {
+					op: "file_read",
+					repo: "can1357/oh-my-pi",
+					branch: "main",
+					path: "web/src/realtime/backoff.ts",
+				},
+				text: "export function backoff(attempt: number): number {\n\tconst base = Math.min(15_000, 500 * 2 ** attempt);\n\t// full jitter: uniform in [0, base)\n\treturn Math.floor(Math.random() * base);\n}\n",
+				details: {
+					repo: "can1357/oh-my-pi",
+					branch: "main",
+					meta: {
+						source: {
+							type: "url",
+							value:
+								"https://github.com/can1357/oh-my-pi/blob/main/web/src/realtime/backoff.ts",
+						},
+					},
+				},
+			},
+			{
+				name: "github",
+				args: { op: "run_watch", branch: "feat/reconnect" },
+				isError: true,
+				text: "Workflow run #9182 failed: 1 job failed (e2e).",
+				details: {
+					watch: {
+						mode: "commit",
+						state: "completed",
+						repo: "can1357/oh-my-pi",
+						branch: "feat/reconnect",
+						headSha: "8b0d4e7a91c2f00e",
+						runs: [
+							{
+								id: 9182,
+								workflowName: "CI",
+								status: "completed",
+								conclusion: "failure",
+								branch: "feat/reconnect",
+								url: "https://github.com/can1357/oh-my-pi/actions/runs/9182",
+								jobs: [
+									{
+										id: 1,
+										name: "lint",
+										status: "completed",
+										conclusion: "success",
+										durationSeconds: 41,
+									},
+									{
+										id: 2,
+										name: "unit (node 22)",
+										status: "completed",
+										conclusion: "success",
+										durationSeconds: 128,
+									},
+									{
+										id: 3,
+										name: "e2e",
+										status: "completed",
+										conclusion: "failure",
+										durationSeconds: 312,
+										steps: [
+											{ number: 1, name: "Set up job", conclusion: "success" },
+											{
+												number: 4,
+												name: "Run playwright",
+												conclusion: "failure",
+											},
+										],
+									},
+									{
+										id: 4,
+										name: "build",
+										status: "completed",
+										conclusion: "skipped",
+									},
+								],
+							},
+						],
+						failedLogs: [
+							{
+								runId: 9182,
+								workflowName: "CI",
+								jobName: "e2e",
+								available: true,
+								tail: '  ✘ reconnect.spec.ts:41 › 断线期间命令被拒绝 (5.1s)\n    Error: expect(received).toBe(expected)\n    Expected: "rejected"\n    Received: "queued"\n  1 failed, 23 passed (1.2m)',
+							},
+						],
+					},
+				},
+			},
+			{
+				name: "github",
+				args: {
+					op: "pr_create",
+					title: "realtime: 断线重连后按 afterSeq 补拉",
+					base: "main",
+					head: "feat/reconnect",
+					draft: true,
+					reviewer: ["can1357"],
+					label: ["realtime"],
+					body: "## 改了什么\n- 指数退避（0.5s → 15s，full jitter）\n- 重连后按 `afterSeq` 补拉缺失条目\n\n## 怎么验证\n`bun run test e2e/reconnect.spec.ts`",
+				},
+				text: "https://github.com/can1357/oh-my-pi/pull/433",
+				details: { repo: "can1357/oh-my-pi", branch: "feat/reconnect" },
+			},
+			{
+				name: "browser",
+				args: { action: "tabs" },
+				details: {
+					action: "tabs",
+					name: "main",
+					value: [
+						{
+							name: "main",
+							url: "http://localhost:5173/t/demo",
+							title: "重构 WebSocket 重连 · Oryn",
+							kind: "chromium",
+							persist: false,
+						},
+						{
+							name: "docs",
+							url: "https://developer.mozilla.org/en-US/docs/Web/API/WebSocket",
+							title: "WebSocket - Web APIs | MDN",
+							kind: "chromium",
+							persist: true,
+						},
+					],
+				},
+			},
+			{
+				name: "browser",
+				args: {
+					action: "call",
+					name: "main",
+					chain: [
+						{
+							method: "goto",
+							args: ["http://localhost:5173/t/demo?offline=1"],
+						},
+						{ method: "click", args: ['role=button[name="断开"]'] },
+						{
+							method: "waitForSelector",
+							args: [".banner--offline", { timeout: 5000 }],
+						},
+						{ method: "screenshot", args: [{ fullPage: false }] },
+					],
+				},
+				image: true,
+				details: {
+					action: "call",
+					name: "main",
+					url: "http://localhost:5173/t/demo?offline=1",
+					browser: "chromium",
+					screenshots: [
+						{
+							dest: "/tmp/omp/shots/main-1.png",
+							mimeType: "image/png",
+							bytes: 184_320,
+							width: 1280,
+							height: 800,
+						},
+					],
+				},
+			},
+			{
+				name: "browser",
+				args: {
+					action: "run",
+					name: "main",
+					code: 'await page.locator(".composer textarea").fill("hi");\nawait page.keyboard.press("Enter");',
+				},
+				isError: true,
+				text: "TimeoutError: locator.fill: Timeout 5000ms exceeded.\nCall log:\n  - waiting for locator('.composer textarea')\n    - locator resolved to <textarea disabled …>\n    - element is not enabled",
+				details: {
+					action: "run",
+					name: "main",
+					url: "http://localhost:5173/t/demo?offline=1",
+				},
+			},
+			{
+				name: "generate_image",
+				args: {
+					subject: "断线重连示意图：一根被剪断又重新接上的网线",
+					scene: "深色背景",
+					style: "等距插画",
+					aspect_ratio: "16:9",
+					changes: ["线缆改成青碧色", "去掉文字"],
+				},
+				isError: true,
+				text: "No image model could run this request.\nTried: openai/gpt-image-2 (invalid credentials), google/gemini-3-pro-image (offline provider restriction)",
+			},
+			{
+				name: "tts",
+				args: {
+					text: "重连改造完成：断线后会按指数退避自动重连，并补拉断线期间的消息。",
+					output_path: "/home/user/workspace/repo/out/summary.mp3",
+					voice_id: "Ara",
+					language: "zh",
+				},
+				text: "Saved 48213 bytes to /home/user/workspace/repo/out/summary.mp3 (model=xai/grok-tts, voice=Ara)",
+				details: {
+					bytes: 48_213,
+					voiceId: "Ara",
+					codec: "mp3",
+					backend: "xai",
+				},
+			},
+			{
+				name: "read",
+				args: { path: "xd://github" },
+				text: "# github\n\nGitHub 操作：仓库、PR、搜索与 Actions。\n\n## 操作\n\n| op | 用途 |\n| --- | --- |\n| `search_prs` | 搜索 PR |\n| `file_read` | 读仓库里的文件 |\n| `run_watch` | 盯 CI 直到结束 |\n\n写法：`write xd://github` 内容为 JSON 参数。",
+			},
+			{
+				name: "read_artifact",
+				args: { id: ARTIFACT_IDS.web, path: "index.html" },
+				text: `${JSON.stringify({ id: ARTIFACT_IDS.web, title: "本周习惯打卡", version: 3, files: [{ path: "index.html", size: 1840, mime: "text/html" }], path: "index.html", offset: 0 })}\n\n<!doctype html>\n<title>本周习惯打卡</title>\n<h1>本周习惯打卡</h1>\n<p class="streak">4 / 7</p>`,
+				details: {
+					op: "read_artifact",
+					id: ARTIFACT_IDS.web,
+					title: "本周习惯打卡",
+					kind: "web",
+					version: 3,
+				},
+			},
+			{
+				name: "list_artifacts",
+				args: { query: "打卡" },
+				text: JSON.stringify({
+					artifacts: [
+						{
+							id: ARTIFACT_IDS.web,
+							title: "本周习惯打卡",
+							kind: "web",
+							version: 3,
+							updatedAt: "2026-11-22T10:00:00Z",
+						},
+						{
+							id: ARTIFACT_IDS.trashed,
+							title: "旧版落地页",
+							kind: "web",
+							version: 1,
+							deleted: true,
+						},
+					],
+				}),
+			},
+			{
+				name: "acme_deploy_preview",
+				args: {
+					service: "web",
+					env: {
+						name: "preview-431",
+						ttlHours: 24,
+						flags: ["reconnect-v2", "jitter"],
+					},
+					dryRun: false,
+				},
+				text: JSON.stringify({
+					url: "https://preview-431.acme.dev",
+					status: "ready",
+					build: {
+						id: "b-8812",
+						durationMs: 48_300,
+						cached: true,
+						steps: ["install", "build", "upload"],
+					},
+				}),
+			},
+		],
+	},
 ];
 
 /** 工具样例线程里转入后台的 bash 调用（`bg_9` 一直在跑，mock 服务端按时推它的输出）。 */
@@ -2762,6 +4195,44 @@ const ZOO_LIVE_ARGS = {
 	i: "跑端到端测试",
 };
 
+/** 工具样例线程里正在等待的 `wait`：部分结果是 Core 每 0.5 秒推一次的任务快照。 */
+const ZOO_LIVE_WAIT = "toolu_zoo_wait";
+const ZOO_WAIT_JOBS = [
+	{
+		id: "bg_9",
+		type: "bash",
+		status: "running",
+		label: ZOO_RUNNING_JOB.args.command.slice(0, 120),
+		intent: ZOO_RUNNING_JOB.args.i,
+		command: ZOO_RUNNING_JOB.args.command,
+		durationMs: 95_000,
+	},
+	{
+		id: "RaceAudit",
+		type: "task",
+		status: "running",
+		label: "RaceAudit",
+		intent: "审计重连路径上的数据竞争",
+		durationMs: 132_000,
+		agentUrlId: "RaceAudit",
+		stage: "读 hub.go 的订阅表加锁顺序",
+		completionPercent: 60,
+		requests: 14,
+		cost: 0.42,
+		contextTokens: 48_000,
+		contextWindow: 200_000,
+	},
+	{
+		id: "bg_8",
+		type: "bash",
+		status: "completed",
+		label: "go vet ./internal/realtime/...",
+		intent: "后台跑 Go 静态检查",
+		durationMs: 12_400,
+		exitCode: 0,
+	},
+];
+
 /** 工具样例转录：每个注册工具一次调用 + 一次失败 + 一次运行中，外加 bashExecution、compaction、model_change。 */
 export function buildToolZooTranscript(): Entry[] {
 	seq = 0;
@@ -2909,6 +4380,12 @@ export function buildToolZooTranscript(): Entry[] {
 					name: "bash",
 					arguments: ZOO_LIVE_ARGS,
 				},
+				{
+					type: "toolCall",
+					id: ZOO_LIVE_WAIT,
+					name: "wait",
+					arguments: {},
+				},
 			],
 			ts + 4000,
 		),
@@ -2938,6 +4415,21 @@ export function toolZooLiveFrames(): Record<string, unknown>[] {
 						text: " RUN  v4.0.0 /home/user/workspace/repo/web\n\n ✓ e2e/reconnect.spec.ts > 断线后自动重连 1.2s\n ✓ e2e/reconnect.spec.ts > 重连后补拉缺失条目 0.9s\n ⠙ e2e/reconnect.spec.ts > 断线期间命令被拒绝",
 					},
 				],
+			},
+		},
+		{
+			type: "tool_execution_start",
+			toolCallId: ZOO_LIVE_WAIT,
+			toolName: "wait",
+			args: {},
+		},
+		{
+			type: "tool_execution_update",
+			toolCallId: ZOO_LIVE_WAIT,
+			toolName: "wait",
+			partialResult: {
+				content: [{ type: "text", text: "" }],
+				details: { op: "wait", jobs: ZOO_WAIT_JOBS },
 			},
 		},
 	];

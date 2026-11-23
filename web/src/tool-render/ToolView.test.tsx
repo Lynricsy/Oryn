@@ -81,8 +81,9 @@ describe("工具卡片的结构化部分结果（M12 步骤 5）", () => {
 				}}
 			/>,
 		);
-		const badge = screen.getByText("running");
-		expect(badge.closest(".tv-row")).toHaveTextContent("Alpha");
+		expect(
+			container.querySelector('[data-agent-id="Alpha"].tv-subagent--running'),
+		).not.toBeNull();
 		expect(container.querySelector(".tv-partial")).toBeNull();
 	});
 
@@ -113,9 +114,9 @@ describe("工具卡片的结构化部分结果（M12 步骤 5）", () => {
 			/>,
 		);
 		expect(container.querySelector(".tv-name")).toHaveTextContent("xd://task");
-		expect(screen.getByText("running").closest(".tv-row")).toHaveTextContent(
-			"Alpha",
-		);
+		expect(
+			container.querySelector('[data-agent-id="Alpha"].tv-subagent--running'),
+		).not.toBeNull();
 		expect(container.querySelector(".tv-partial")).toBeNull();
 	});
 
@@ -135,7 +136,7 @@ describe("工具卡片的结构化部分结果（M12 步骤 5）", () => {
 	});
 
 	it("task 有最终结果时渲染结果行，不渲染进度行", () => {
-		render(
+		const { container } = render(
 			<ToolView
 				name="task"
 				args={{ tasks: [{ name: "Alpha", agent: "scout", task: "看一眼" }] }}
@@ -157,9 +158,10 @@ describe("工具卡片的结构化部分结果（M12 步骤 5）", () => {
 				}}
 			/>,
 		);
-		expect(screen.getByText("done")).toBeInTheDocument();
-		expect(screen.getByText("1 succeeded")).toBeInTheDocument();
-		expect(screen.queryByText("running")).toBeNull();
+		expect(
+			container.querySelector('[data-agent-id="Alpha"].tv-subagent--done'),
+		).toHaveTextContent("all good");
+		expect(container.querySelector(".tv-subagent--running")).toBeNull();
 	});
 
 	it("运行中的 todo 用 details.phases 渲染看板，不输出文本尾巴", () => {
@@ -262,8 +264,8 @@ describe("xd:// 设备调用的卡片", () => {
 			/>,
 		);
 		expect(nameOf(container)).toBe("xd://resolve");
-		expect(summaryOf(container)).toContain("apply");
-		expect(summaryOf(container)).toContain("看过了，没问题");
+		// 头部摘要是理由本身；结局（应用 / 放弃）在结果出来后才作为读数出现
+		expect(summaryOf(container)).toBe("看过了，没问题");
 	});
 
 	it("xd://report_issue 拆出工具名交给 report_tool_issue 渲染器", () => {
@@ -285,7 +287,7 @@ describe("xd:// 设备调用的卡片", () => {
 		);
 		expect(nameOf(container)).toBe("xd://report_issue");
 		const sum = container.querySelector(".tv-sum");
-		expect(sum?.querySelector(".tv-badge")).toHaveTextContent("read");
+		expect(sum?.querySelector(".tv-issue-tool")).toHaveTextContent("read");
 		expect(sum).toHaveTextContent("偏移量不对");
 	});
 

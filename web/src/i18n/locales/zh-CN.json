@@ -2454,6 +2454,128 @@
 		}
 	},
 	"toolRender": {
+		"files": {
+			"gap_one": "省略 {{count}} 行",
+			"gap_other": "省略 {{count}} 行",
+			"errors_one": "{{count}} 个错误",
+			"errors_other": "{{count}} 个错误",
+			"warnings_one": "{{count}} 个警告",
+			"warnings_other": "{{count}} 个警告",
+			"infos_one": "{{count}} 条提示",
+			"infos_other": "{{count}} 条提示",
+			"severity": {
+				"error": "错误",
+				"warning": "警告",
+				"info": "信息",
+				"hint": "提示"
+			}
+		},
+		"read": {
+			"image": "图片",
+			"entries_one": "{{count}} 项",
+			"entries_other": "{{count}} 项",
+			"partial": "{{shown}} / {{total}} 行",
+			"conflicts_one": "{{count}} 处冲突",
+			"conflicts_other": "{{count}} 处冲突",
+			"truncated": "已截断",
+			"suffix": "{{from}} 不存在，按后缀匹配到 {{to}}",
+			"emptyFile": "文件为空",
+			"emptyDir": "空目录"
+		},
+		"write": {
+			"emptyContent": "写入空内容",
+			"created": "新建文件",
+			"overwritten": "覆盖原文件",
+			"executable": "已设为可执行",
+			"formatted": "已格式化"
+		},
+		"edit": {
+			"create": "新建",
+			"delete": "删除",
+			"moveTo": "移动到",
+			"replaceAll": "全部替换",
+			"ops_one": "{{count}} 处操作",
+			"ops_other": "{{count}} 处操作",
+			"errorKind": "失败类型"
+		},
+		"astEdit": {
+			"limit": "已达上限",
+			"preview": "预览",
+			"deletion": "替换为空：删除匹配到的代码",
+			"rule": "规则 {{n}}",
+			"scope": "范围",
+			"staged": "这是预览，文件尚未修改：写入 resolve 应用，写入 reject 放弃",
+			"empty": "没有可替换的匹配",
+			"limitNote": "已达匹配上限，缩小路径范围可看到全部",
+			"parseIssues_one": "解析问题（{{count}}）",
+			"parseIssues_other": "解析问题（{{count}}）",
+			"searched_one": "共扫描 {{count}} 个文件",
+			"searched_other": "共扫描 {{count}} 个文件"
+		},
+		"grep": {
+			"ignoreCase": "忽略大小写",
+			"multiline": "跨行",
+			"noGitignore": "含 gitignore 文件",
+			"skip_one": "跳过 {{count}}",
+			"skip_other": "跳过 {{count}}",
+			"truncated": "已截断",
+			"in": "范围",
+			"missing": "跳过不存在的路径：{{paths}}",
+			"empty": "没有匹配"
+		},
+		"glob": {
+			"timedOut": "已超时",
+			"limit_one": "前 {{count}} 个",
+			"limit_other": "前 {{count}} 个",
+			"limitArg_one": "最多 {{count}} 个",
+			"limitArg_other": "最多 {{count}} 个",
+			"noHidden": "不含隐藏文件",
+			"timeout_one": "超时 {{count}} 秒",
+			"timeout_other": "超时 {{count}} 秒",
+			"empty": "没有匹配的文件"
+		},
+		"lsp": {
+			"none": "没有结果",
+			"locations_one": "{{count}} 处",
+			"locations_other": "{{count}} 处",
+			"preferred": "推荐",
+			"edits_one": "{{count}} 处改动",
+			"edits_other": "{{count}} 处改动",
+			"clean": "无问题",
+			"cleanLong": "没有发现问题",
+			"symbols_one": "{{count}} 个符号",
+			"symbols_other": "{{count}} 个符号",
+			"actions_one": "{{count}} 个操作",
+			"actions_other": "{{count}} 个操作",
+			"workspace": "整个工作区",
+			"yes": "是",
+			"no": "否",
+			"k": {
+				"action": "动作",
+				"file": "文件",
+				"line": "行",
+				"symbol": "符号",
+				"query": "查询",
+				"newName": "新名字",
+				"apply": "应用",
+				"timeout": "超时",
+				"payload": "请求体"
+			}
+		},
+		"resolve": {
+			"nothing": "无待处理",
+			"meta": {
+				"apply": "已应用",
+				"discard": "已放弃",
+				"propose": "已提交"
+			},
+			"apply": "已应用预览",
+			"discard": "已放弃预览",
+			"applyFrom": "已应用 {{tool}} 的预览",
+			"discardFrom": "已放弃 {{tool}} 的预览",
+			"proposed": "计划已提交，等待批准",
+			"plan": "计划"
+		},
 		"job": {
 			"title": "后台任务 {{id}}",
 			"open": "查看任务",
@@ -2464,6 +2586,94 @@
 			"ended": "后台已结束"
 		},
 		"collapse": "收起",
+		"showAll": "展开全文",
+		"todo": {
+			"op": {
+				"init": "建立清单",
+				"start": "开始",
+				"done": "完成",
+				"drop": "放弃",
+				"rm": "移除",
+				"append": "追加",
+				"view": "查看",
+				"update": "更新"
+			},
+			"progress": "已完成 {{done}} / {{total}} 项",
+			"phases_one": "{{count}} 个阶段",
+			"phases_other": "{{count}} 个阶段",
+			"tasks_one": "{{count}} 项",
+			"tasks_other": "{{count}} 项",
+			"phaseWithTasks_one": "{{phase}}（{{count}} 项）",
+			"phaseWithTasks_other": "{{phase}}（{{count}} 项）",
+			"touched": "这次调用改动了这一项"
+		},
+		"wait": {
+			"reply": "等待回复",
+			"replyLong": "正在等待回复或服务结束",
+			"idle": "等待",
+			"timeout": "到时仍在运行",
+			"interrupted": "被新消息打断",
+			"nothing": "没有可等的",
+			"service": "服务已结束"
+		},
+		"jobs": {
+			"status": {
+				"running": "运行中",
+				"completed": "已完成",
+				"failed": "失败",
+				"cancelled": "已取消",
+				"unknown": "未知",
+				"queued": "排队中"
+			},
+			"settled": "已结束 {{settled}} / {{total}} 个任务",
+			"count": {
+				"failed_one": "{{count}} 个失败",
+				"failed_other": "{{count}} 个失败"
+			},
+			"exit": "退出码 {{code}}",
+			"requests_one": "{{count}} 次请求",
+			"requests_other": "{{count}} 次请求",
+			"context": "上下文 {{used}}/{{window}}",
+			"contextUsed": "上下文 {{used}}",
+			"noLabel": "（无标题）",
+			"report": "模型收到的报告",
+			"all": "全部任务",
+			"cancel": "取消",
+			"poll": "轮询",
+			"cancelOutcome": {
+				"not_found": "未找到",
+				"already_completed": "已经结束"
+			}
+		},
+		"webSearch": {
+			"sources_one": "{{count}} 个来源",
+			"sources_other": "{{count}} 个来源",
+			"sourcesTitle": "来源",
+			"citations": "引用",
+			"related": "相关问题",
+			"queries": "搜索过",
+			"searches_one": "{{count}} 次搜索",
+			"searches_other": "{{count}} 次搜索",
+			"tokens": "输入 {{input}} · 输出 {{output}}",
+			"noResults": "没有找到结果",
+			"untitled": "无标题",
+			"fallback_one": "{{count}} 个提供方失败后回退",
+			"fallback_other": "{{count}} 个提供方失败后回退",
+			"recency": {
+				"day": "近一天",
+				"week": "近一周",
+				"month": "近一月",
+				"year": "近一年"
+			},
+			"limit": "最多 {{count}} 条"
+		},
+		"fetch": {
+			"redirected": "已重定向",
+			"raw": "原始响应",
+			"truncated": "已截断",
+			"timeout": "超时 {{seconds}} 秒",
+			"empty": "响应为空"
+		},
 		"moreLines_one": "⋯ 还有 {{count}} 行",
 		"moreLines_other": "⋯ 还有 {{count}} 行",
 		"running": "运行中",
@@ -2494,7 +2704,10 @@
 			"idb": "IDB",
 			"oldName": "原名",
 			"appliedType": "生效类型",
-			"funcName": "函数名"
+			"funcName": "函数名",
+			"noDbs": "没有打开的数据库",
+			"moreDbs_one": "⋯ 还有 {{count}} 个库",
+			"moreDbs_other": "⋯ 还有 {{count}} 个库"
 		},
 		"securityScan": {
 			"findings_one": "{{count}} 个发现",
@@ -2526,15 +2739,36 @@
 			"lastScanned": "最近扫描",
 			"fingerprint": "指纹",
 			"cloudScan": "云扫描",
-			"repository": "仓库"
+			"repository": "仓库",
+			"noFindings": "没有发现",
+			"phase": {
+				"queued": "排队",
+				"preparing": "准备",
+				"reviewing": "审查",
+				"publishing": "发布",
+				"completed": "完成",
+				"partial": "部分完成",
+				"cancelled": "已取消",
+				"failed": "失败"
+			},
+			"sev": {
+				"critical": "严重",
+				"high": "高",
+				"medium": "中",
+				"low": "低",
+				"informational": "提示"
+			}
 		},
 		"xdev": {
 			"docs": "文档",
-			"catalog": "设备目录"
+			"catalog": "设备目录",
+			"noDocs": "这个设备没有文档"
 		},
 		"checkpoint": {
-			"started": "开始于",
-			"rewound": "已回退"
+			"rewound": "已回退",
+			"goal": "调查目标",
+			"set": "检查点已设立",
+			"rewoundNote": "上下文已回到检查点，之后的探索由这份报告替换。"
 		},
 		"memoryEdit": {
 			"op": {
@@ -2551,16 +2785,17 @@
 			},
 			"importance": "重要度",
 			"bank": "记忆库",
-			"id": "记忆",
-			"replacement": "替代为"
+			"noReplacement": "未指定替代记忆"
 		},
 		"tts": {
 			"output": "输出",
 			"requested": "请求路径",
-			"voice": "音色",
-			"language": "语言",
-			"format": "格式",
-			"backend": "后端"
+			"voiceIs": "音色 {{voice}}",
+			"play": "播放",
+			"pause": "暂停",
+			"seek": "播放进度",
+			"loadFailed": "音频加载失败：环境可能已删除，或文件已被清理",
+			"redirected": "已改存"
 		},
 		"desktopRecord": {
 			"start": "开始录制桌面",
@@ -2573,18 +2808,274 @@
 			"storedInOrb": "视频保存在线程的环境里，环境删除后随之删除",
 			"video": "桌面录像",
 			"loadFailed": "视频加载失败：环境可能已删除，或文件已被清理",
-			"openInFiles": "在文件中打开",
-			"file": "文件",
-			"resolution": "分辨率"
+			"openInFiles": "在文件中打开"
 		},
 		"computerRecord": {
 			"onComputer": "视频留在助手的电脑上，去电脑的「文件」页签查看",
 			"loadFailed": "视频加载失败：文件可能已从文件库删除"
 		},
+		"json": {
+			"expand": "展开",
+			"keys_one": "{{count}} 个键",
+			"keys_other": "{{count}} 个键",
+			"items_one": "{{count}} 项",
+			"items_other": "{{count}} 项",
+			"more_one": "还有 {{count}} 项",
+			"more_other": "还有 {{count}} 项"
+		},
+		"generic": {
+			"empty": "没有输出",
+			"failed": "调用失败"
+		},
+		"mcp": {
+			"empty": "工具没有返回内容",
+			"images_one": "{{count}} 张图片",
+			"images_other": "{{count}} 张图片"
+		},
+		"github": {
+			"op": {
+				"repo_view": "仓库概览",
+				"file_read": "读取文件",
+				"pr_create": "创建 PR",
+				"pr_checkout": "检出 PR",
+				"pr_push": "推送 PR",
+				"search_issues": "搜索 issue",
+				"search_prs": "搜索 PR",
+				"search_code": "搜索代码",
+				"search_commits": "搜索提交",
+				"search_repos": "搜索仓库",
+				"run_watch": "盯 CI"
+			},
+			"noOp": "缺少 op",
+			"fill": "标题与正文取自提交",
+			"run": "运行 {{run}}",
+			"runsOf": "{{target}} 的工作流",
+			"jobsDone": "{{done}}/{{total}} 个作业通过",
+			"jobsFailed_one": "{{count}} 个失败",
+			"jobsFailed_other": "{{count}} 个失败",
+			"results_one": "{{count}} 条结果",
+			"results_other": "{{count}} 条结果",
+			"noResults": "没有找到结果",
+			"defaultBranch": "默认分支",
+			"draft": "草稿",
+			"state": {
+				"open": "打开",
+				"closed": "已关闭",
+				"merged": "已合并"
+			},
+			"status": {
+				"success": "通过",
+				"failure": "失败",
+				"cancelled": "已取消",
+				"skipped": "已跳过",
+				"timed_out": "超时",
+				"neutral": "中性",
+				"action_required": "需要操作",
+				"startup_failure": "启动失败",
+				"in_progress": "进行中",
+				"queued": "排队中",
+				"waiting": "等待中",
+				"pending": "等待中",
+				"completed": "已完成"
+			},
+			"archived": "已归档",
+			"fork": "fork",
+			"forks_one": "{{count}} 个 fork",
+			"forks_other": "{{count}} 个 fork",
+			"waitingJobs": "等待作业开始…",
+			"waitingRuns": "等待工作流运行…",
+			"logUnavailable": "{{title}}：拿不到日志",
+			"reused": "复用",
+			"created": "已创建 #{{n}}",
+			"openOnGithub": "在 GitHub 上打开"
+		},
+		"browser": {
+			"action": {
+				"open": "打开",
+				"close": "关闭",
+				"run": "运行脚本",
+				"call": "调用",
+				"tabs": "标签页",
+				"targets": "页面"
+			},
+			"allTabs": "全部标签页",
+			"tab": "标签页 {{name}}",
+			"target": "页面 {{target}}",
+			"pages_one": "{{count}} 个页面",
+			"pages_other": "{{count}} 个页面",
+			"shots_one": "{{count}} 张截图",
+			"shots_other": "{{count}} 张截图",
+			"noPages": "没有打开的页面",
+			"closed": "已关闭"
+		},
+		"generateImage": {
+			"edits_one": "修改 {{count}} 处",
+			"edits_other": "修改 {{count}} 处",
+			"images_one": "{{count}} 张",
+			"images_other": "{{count}} 张",
+			"field": {
+				"action": "动作",
+				"scene": "场景",
+				"composition": "构图",
+				"lighting": "光线",
+				"style": "风格",
+				"text": "文字",
+				"changes": "修改",
+				"input": "参考图"
+			},
+			"inlineImage": "内嵌图片",
+			"generating": "正在生成"
+		},
+		"artifact": {
+			"note": "备注",
+			"purgeAt": "已移到最近删除，{{when}} 前可以恢复"
+		},
+		"oryn": {
+			"threads_one": "{{count}} 个线程",
+			"threads_other": "{{count}} 个线程"
+		},
 		"terminal": {
 			"viewInPanel": "在终端面板查看",
 			"awaitingInput": "等待终端输入",
-			"openTerminal": "打开终端"
+			"openTerminal": "打开终端",
+			"local": "本机",
+			"count_one": "{{count}} 个终端",
+			"count_other": "{{count}} 个终端",
+			"empty": "没有打开的终端",
+			"noOutput": "暂无输出",
+			"omitted_one": "⋯ 省略了更早的 {{count}} 行",
+			"omitted_other": "⋯ 省略了更早的 {{count}} 行",
+			"omittedSome": "⋯ 省略了更早的输出",
+			"action": {
+				"list": "列出",
+				"read": "读取",
+				"run": "运行",
+				"stop": "停止",
+				"open": "打开会话",
+				"exec": "执行",
+				"send": "发送",
+				"wait": "等待"
+			},
+			"kind": {
+				"shell": "Shell",
+				"command": "命令",
+				"background": "后台",
+				"session": "会话"
+			},
+			"state": {
+				"starting": "启动中",
+				"idle": "就绪",
+				"input": "等待输入",
+				"running": "运行中",
+				"killed": "已终止",
+				"exited": "已退出 {{code}}"
+			}
+		},
+		"eval": {
+			"progress": "单元格进度 {{done}}/{{total}}",
+			"failed": "失败",
+			"truncated": "已截断",
+			"truncatedLines": "输出已截断：显示末尾 {{shown}} / {{total}} 行",
+			"noOutput": "无输出",
+			"reset": "重置内核",
+			"timeout": "超时 {{value}}",
+			"moreRows_one": "⋯ 还有 {{count}} 行",
+			"moreRows_other": "⋯ 还有 {{count}} 行",
+			"earlierEvents_one": "⋯ 更早的 {{count}} 条",
+			"earlierEvents_other": "⋯ 更早的 {{count}} 条",
+			"state": {
+				"running": "运行中",
+				"pending": "等待",
+				"skipped": "未运行"
+			}
+		},
+		"debug": {
+			"action": {
+				"launch": "启动",
+				"attach": "附加",
+				"set_breakpoint": "设断点",
+				"remove_breakpoint": "删断点",
+				"set_instruction_breakpoint": "设指令断点",
+				"remove_instruction_breakpoint": "删指令断点",
+				"data_breakpoint_info": "数据断点信息",
+				"set_data_breakpoint": "设数据断点",
+				"remove_data_breakpoint": "删数据断点",
+				"continue": "继续",
+				"step_over": "单步跳过",
+				"step_in": "单步进入",
+				"step_out": "单步跳出",
+				"pause": "暂停",
+				"evaluate": "求值",
+				"stack_trace": "调用栈",
+				"threads": "线程",
+				"scopes": "作用域",
+				"variables": "变量",
+				"disassemble": "反汇编",
+				"read_memory": "读内存",
+				"write_memory": "写内存",
+				"modules": "模块",
+				"loaded_sources": "已加载源文件",
+				"custom_request": "自定义请求",
+				"output": "程序输出",
+				"terminate": "终止",
+				"sessions": "会话列表"
+			},
+			"status": {
+				"launching": "启动中",
+				"configuring": "配置中",
+				"stopped": "已暂停",
+				"running": "运行中",
+				"terminated": "已结束"
+			},
+			"count": {
+				"frames_one": "{{count}} 帧",
+				"frames_other": "{{count}} 帧",
+				"threads_one": "{{count}} 个线程",
+				"threads_other": "{{count}} 个线程",
+				"scopes_one": "{{count}} 个作用域",
+				"scopes_other": "{{count}} 个作用域",
+				"variables_one": "{{count}} 个变量",
+				"variables_other": "{{count}} 个变量",
+				"instructions_one": "{{count}} 条指令",
+				"instructions_other": "{{count}} 条指令",
+				"modules_one": "{{count}} 个模块",
+				"modules_other": "{{count}} 个模块",
+				"sources_one": "{{count}} 个源文件",
+				"sources_other": "{{count}} 个源文件",
+				"sessions_one": "{{count}} 个会话",
+				"sessions_other": "{{count}} 个会话",
+				"breakpoints_one": "{{count}} 个断点",
+				"breakpoints_other": "{{count}} 个断点",
+				"bytes_one": "{{count}} 字节",
+				"bytes_other": "{{count}} 字节",
+				"written_one": "写入 {{count}} 字节",
+				"written_other": "写入 {{count}} 字节"
+			},
+			"stoppedAt": "停在 {{where}}",
+			"stillRunning": "仍在运行",
+			"exited": "已退出 {{code}}",
+			"unverified_one": "{{count}} 个未验证",
+			"unverified_other": "{{count}} 个未验证",
+			"more_one": "⋯ 还有 {{count}} 项",
+			"more_other": "⋯ 还有 {{count}} 项",
+			"ref": "引用 {{ref}}",
+			"expensive": "开销大",
+			"verified": "已验证",
+			"pending": "未验证",
+			"noBreakpoints": "没有断点",
+			"noVariables": "没有变量",
+			"noSessions": "没有调试会话",
+			"noOutput": "没有捕获到输出",
+			"noData": "没有读到数据",
+			"unreadable_one": "{{count}} 字节不可读",
+			"unreadable_other": "{{count}} 字节不可读",
+			"userCode": "用户代码",
+			"optimized": "已优化",
+			"description": "说明",
+			"access": "访问方式",
+			"unavailable": "不可用",
+			"timedOut": "等待超时，程序仍在运行；可以 pause 中断后再查看状态",
+			"configPending": "等待 configurationDone：先设好断点，再 continue"
 		},
 		"meta": {
 			"lines_one": "{{count}} 行",
@@ -2598,6 +3089,127 @@
 			"passed": "{{count}} passed",
 			"failed": "{{count}} failed",
 			"exit": "exit {{code}}"
+		},
+		"task": {
+			"more_one": "+{{count}} 个",
+			"more_other": "+{{count}} 个",
+			"progress": "已完成 {{done}} / {{total}} 个子 agent",
+			"outcome": {
+				"done": "完成",
+				"mergeFailed": "合并失败",
+				"aborted": "已中止",
+				"failed": "失败"
+			},
+			"truncated": "输出已截断",
+			"tokens": "{{n}} tok",
+			"requests_one": "{{count}} 次请求",
+			"requests_other": "{{count}} 次请求",
+			"tools_one": "{{count}} 次工具",
+			"tools_other": "{{count}} 次工具",
+			"noOutput": "没有输出",
+			"patch": "补丁",
+			"branch": "分支",
+			"percent": "完成 {{n}}%",
+			"retry": "限流等待，第 {{attempt}} / {{max}} 次重试",
+			"context": "共享上下文",
+			"isolated": "隔离",
+			"steps_one": "{{count}} 步",
+			"steps_other": "{{count}} 步",
+			"step": "第 {{n}} / {{total}} 步",
+			"solutionSpace": "解空间",
+			"sum": {
+				"done_one": "{{count}} 个完成",
+				"done_other": "{{count}} 个完成",
+				"mergeFailed_one": "{{count}} 个合并失败",
+				"mergeFailed_other": "{{count}} 个合并失败",
+				"failed_one": "{{count}} 个失败",
+				"failed_other": "{{count}} 个失败",
+				"aborted_one": "{{count}} 个中止",
+				"aborted_other": "{{count}} 个中止"
+			},
+			"wall": "共 {{d}}",
+			"starting": "正在启动子 agent…"
+		},
+		"ask": {
+			"questions_one": "{{count}} 题",
+			"questions_other": "{{count}} 题",
+			"waiting": "等待作答",
+			"waitingLong": "等待你在对话框里作答",
+			"cancelled": "已取消",
+			"timedOut": "超时自动提交",
+			"timedOutEmpty": "超时未作答",
+			"answered": "已答 {{given}} / {{total}}",
+			"multi": "多选",
+			"recommended": "推荐",
+			"noAnswer": "未作答",
+			"timedOutNote": "超时后按表单当前值自动提交，不是用户的选择。",
+			"timedOutEmptyNote": "超时时仍有必填项为空，没有收到回答。"
+		},
+		"irc": {
+			"wait": "等待",
+			"anyone": "任何人",
+			"reply": "回复",
+			"messages_one": "{{count}} 封",
+			"messages_other": "{{count}} 封",
+			"timedOutNote": "还没有回复：对方可能稍后再答，可以查看收件箱或再等一次。"
+		},
+		"goal": {
+			"op": {
+				"create": "设定目标",
+				"get": "查看目标",
+				"complete": "完成目标",
+				"pause": "暂停目标",
+				"resume": "恢复目标",
+				"drop": "放弃目标"
+			},
+			"status": {
+				"active": "进行中",
+				"paused": "已暂停",
+				"budget-limited": "预算耗尽",
+				"complete": "已完成",
+				"dropped": "已放弃"
+			},
+			"budget": "预算 {{n}} tokens",
+			"none": "当前没有目标",
+			"elapsed": "用时 {{d}}",
+			"usage": "token 预算用量",
+			"tokens": "tokens",
+			"left": "剩余 {{n}}",
+			"noBudget": "未设预算"
+		},
+		"yield": {
+			"item": "第 {{n}} 项",
+			"aborted": "失败提交",
+			"schemaOverridden": "已放宽校验",
+			"complete": "全部完成",
+			"fields_one": "{{count}} 个字段",
+			"fields_other": "{{count}} 个字段",
+			"sections": "分节"
+		},
+		"reportIssue": {
+			"title": "工具问题报告"
+		},
+		"memory": {
+			"score": "相关度 {{n}}",
+			"noHits": "无命中",
+			"hits_one": "{{count}} 条",
+			"hits_other": "{{count}} 条",
+			"empty": "没有相关的记忆",
+			"asOf": "截至 {{at}}",
+			"context": "补充上下文",
+			"reflectFailed": "反思失败",
+			"nothingToReflect": "没有可供反思的相关记忆",
+			"basedOn": "基于已召回的记忆",
+			"items_one": "{{count}} 条",
+			"items_other": "{{count}} 条",
+			"stored_one": "已存 {{count}} 条",
+			"stored_other": "已存 {{count}} 条",
+			"queued_one": "已排队 {{count}} 条",
+			"queued_other": "已排队 {{count}} 条",
+			"scope": {
+				"project": "项目",
+				"global": "全局"
+			}
 		}
 	},
 	"boxes": {
