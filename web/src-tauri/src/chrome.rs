@@ -11,7 +11,7 @@
 //! - macOS ≥ 26 再给主窗口挂一个空的 unified `NSToolbar`：只有标题栏的窗口外框圆角约 16，挂了 unified 工具栏的约 26
 //!   （WWDC25「Build an AppKit app with the new design」），页面卡片按 `chrome.radius` 做同心圆角；
 //!   工具栏下的发丝分隔线去掉。临时窗口同样挂上，量到的就是带工具栏时的按钮位置。
-//! - macOS 全屏：原生红绿灯与工具栏在进全屏时藏起、退出后再显示（`mac::watch_fullscreen`），页面在左上角自绘一组红绿灯，
+//! - macOS 全屏：原生红绿灯与工具栏在进入全屏完成后藏起、退出后再显示（`mac::watch_fullscreen`），页面在左上角自绘一组红绿灯，
 //!   指针移到那里才出现（`chrome.fullscreenLights`，绿灯 = `host_window{toggleFullscreen}` 退出全屏）。
 //!   起因是全屏后菜单栏下方一条白带盖住页面顶部（2026-11 真机截图），最可能是工具栏连同标题栏被放进全屏工具栏窗口；
 //!   未在真机对照验证。若藏起后白带仍在，问题在 Overlay 标题栏本身。
@@ -339,8 +339,9 @@ mod mac {
     use objc2::MainThreadMarker;
     use objc2_app_kit::{
         NSBackingStoreType, NSButton, NSTitlebarSeparatorStyle, NSToolbar, NSView, NSWindow,
-        NSWindowButton, NSWindowDidExitFullScreenNotification, NSWindowStyleMask,
-        NSWindowTitleVisibility, NSWindowToolbarStyle, NSWindowWillEnterFullScreenNotification,
+        NSWindowButton, NSWindowDidEnterFullScreenNotification,
+        NSWindowDidExitFullScreenNotification, NSWindowStyleMask, NSWindowTitleVisibility,
+        NSWindowToolbarStyle,
     };
     use objc2_foundation::{
         NSNotification, NSNotificationCenter, NSPoint, NSProcessInfo, NSRect, NSSize, NSString,
@@ -379,8 +380,10 @@ mod mac {
         Ok(())
     }
 
-    /// 全屏时由页面自绘红绿灯（`chrome.fullscreenLights`，指针移到左上角才出现）：进全屏（will enter）时藏起
-    /// 原生红绿灯与工具栏，退出全屏（did exit）后再显示，整个全屏过程都只有页面的那组。
+    /// 全屏时由页面自绘红绿灯（`chrome.fullscreenLights`，指针移到左上角才出现）：进入全屏完成（did enter）后藏起
+    /// 原生红绿灯与工具栏，退出全屏完成（did exit）后再显示。不在 will enter 时藏：AppKit 拒绝进入全屏时只走
+    /// `windowDidFailToEnterFullScreen:`、不发 did exit，窗口模式就会丢掉整组原生红绿灯；did enter / did exit 成对出现。
+    /// 代价是进入过渡期间原生红绿灯与工具栏仍随标题栏一起显示。
     /// 只观察主窗口（桌面端主窗口只建一次）；只注册一次，随进程常驻。
     fn watch_fullscreen(window: &NSWindow) {
         static ONCE: Once = Once::new();
@@ -389,7 +392,7 @@ mod mac {
             // SAFETY: AppKit 导出的常量字符串，进程内一直有效
             let names = unsafe {
                 [
-                    (NSWindowWillEnterFullScreenNotification, false),
+                    (NSWindowDidEnterFullScreenNotification, false),
                     (NSWindowDidExitFullScreenNotification, true),
                 ]
             };
