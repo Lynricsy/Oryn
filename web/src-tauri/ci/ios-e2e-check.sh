@@ -40,6 +40,9 @@
 #   h-drag    卡片左缘内起手按住拖到 0.55 × 侧栏宽：页头行连拍两张一致、与关闭态不同、又不是打开态；像素断言原生页头行与
 #             卡片内容停在同一位移（揭示边左侧是不动的侧栏）
 #   h-end     松手吸附到打开、点卡片条关上之后：sink.show（关），自 h-return 起仍没有新的 header.show，截图
+#   h-keyboard 点输入框、系统软键盘弹出后（测试确认键盘在无障碍树里）：网页探针的视口采样（sink-web.jsonl 的 viewport）里
+#             最后一条是页面没被推走——视觉视口 offsetTop、scrollY 都回到 0，scrollX 与聚焦时一样（侧栏仍关着），
+#             键盘占高 > 100pt，输入框底边在键盘上沿之上（lib/viewport.ts：--kb-inset 让位 + settleViewport 拉回），截图
 # 可替换图标（AppIconE2ETests.swift，直接打开 mock 的 /settings/appearance）：点「品牌色」、点掉系统提示、
 #   等 appicon.set（accent），再点「黑白」同样等 appicon.set（default）；测试自己完成，脚本只核对事件顺序。
 # 像素断言（逐区域比较，同 ios-region-diff.swift）全部打印并写进 Step Summary，任一不符则退出码 1；
@@ -105,6 +108,8 @@ curl -fsS -o /dev/null "$origin/" || {
   exit 1
 }
 
+# 页头测试的 h-keyboard 要系统软键盘真的弹出：模拟器连着 Mac 的硬件键盘时点输入框不出软键盘，开机前断开
+defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool false
 xcrun simctl boot "$udid" 2>/dev/null || true
 xcrun simctl bootstatus "$udid" -b
 xcrun simctl install "$udid" "$app"
@@ -583,7 +588,36 @@ until_ok h-end 15 "拖动后点卡片条关侧栏：sink.show（关）交给原�
 fresh h-end
 sleep 0.7
 shot h-end
+# 软键盘步骤只看这之后的网页探针采样
+wlog="$out/sink-web.jsonl"
+wmark=$(wc -l <"$wlog" | tr -d ' ')
 ok h-end
+
+# 自 h-end 放行起网页探针的视口采样（beacon 到达顺序不保证，按 seq 排）
+kb_samples() {
+  tail -n "+$((wmark + 1))" "$wlog" | jq -sc 'map(select(.event == "viewport")) | sort_by(.seq) | map(.info)'
+}
+# 聚焦输入框那一刻（键盘弹出之前）的 scrollX：侧栏关闭位
+kb_base() { kb_samples | jq -e 'map(select(.why == "focusin" and .active == "textarea")) | first | .sx'; }
+# 键盘弹出并稳定后：最后一条采样里页面没被推走、横向没动、输入框在键盘上沿之上
+kb_settled() {
+  kb_samples | jq -e --argjson x0 "$kb_x0" '
+    def mag: if . < 0 then -. else . end;
+    last | . != null and .active == "textarea" and .scale == 1 and (.ih - .h) > 100
+      and (.top | mag) < 1 and (.sy | mag) < 1 and ((.sx - $x0) | mag) < 1 and .bottom <= .h + 1'
+}
+wait_req h-keyboard 120
+until_ok h-keyboard 15 "聚焦输入框时的视口采样（focusin）" kb_base
+kb_x0=$(kb_base)
+kb_end=$((SECONDS + 20))
+until kb_settled >/dev/null 2>&1; do
+  ((SECONDS < kb_end)) || fail h-keyboard \
+    "软键盘弹出后页面被推走或输入框被键盘挡住（期望 offsetTop、scrollY 为 0，scrollX = ${kb_x0}，输入框底边 ≤ 视觉视口高）：$(kb_samples)"
+  sleep 0.25
+done
+echo "- 软键盘：$(kb_samples | jq -c 'last')" | tee -a "$summary"
+shot h-keyboard
+ok h-keyboard
 
 finish_runner
 

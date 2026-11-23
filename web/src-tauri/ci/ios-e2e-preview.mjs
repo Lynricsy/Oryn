@@ -52,6 +52,37 @@ function watchSink() {
 	window.visualViewport?.addEventListener(
 		"resize", () => line("visualViewport.resize"), { passive: true },
 	);
+	// 视口采样（软键盘步骤 h-keyboard 的断言）：视觉视口的偏移 / 高 / 缩放、根滚动位置、--kb-inset、聚焦元素底边。
+	// 探针装在页面脚本之前，同一事件里先于 lib/viewport.ts 的拉回执行：键盘相关的采样推到下一帧，记的是拉回之后的状态；
+	// focusin 当场记一条，作为键盘弹出前的基线。与上一条相同的采样不重复发。
+	let lastSample;
+	const sample = (why) => {
+		const vv = window.visualViewport;
+		const active = document.activeElement;
+		const info = {
+			top: vv?.offsetTop,
+			h: vv?.height,
+			scale: vv?.scale,
+			ih: window.innerHeight,
+			sx: window.scrollX,
+			sy: window.scrollY,
+			kb: getComputedStyle(document.documentElement).getPropertyValue("--kb-inset").trim(),
+			active: label(active),
+			bottom: active && active !== document.body ? active.getBoundingClientRect().bottom : null,
+		};
+		const key = JSON.stringify(info);
+		if (key === lastSample) return;
+		lastSample = key;
+		line("viewport", { why, ...info });
+	};
+	const later = (why) => () => requestAnimationFrame(() => sample(why));
+	window.visualViewport?.addEventListener("resize", later("vv.resize"), { passive: true });
+	window.visualViewport?.addEventListener("scroll", later("vv.scroll"), { passive: true });
+	window.addEventListener("focusin", () => sample("focusin"), { capture: true, passive: true });
+	window.addEventListener("scroll", () => {
+		// 只关心纵向：横向是下沉侧栏的开合，拖动时每帧都变
+		if (window.scrollY !== 0 || window.visualViewport?.offsetTop) later("scroll")();
+	}, { passive: true });
 	let lastBand;
 	window.addEventListener("scroll", () => {
 		const x = window.scrollX;
