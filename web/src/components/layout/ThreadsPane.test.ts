@@ -22,7 +22,7 @@ function th(id: string, p: Partial<Thread> = {}): Thread {
 }
 
 describe("侧边栏分区", () => {
-	it("Pinned → 按项目 → Inactive 72h → Snoozed，子线程挂在父线程下", () => {
+	it("Pinned → 按项目（无项目在前）→ Inactive 72h → Snoozed，子线程挂在父线程下", () => {
 		const g = groupThreads(
 			[
 				th("pinned", { pinned: true }),
@@ -40,8 +40,8 @@ describe("侧边栏分区", () => {
 		expect(
 			g.byProject.map((x) => [x.projectId, x.threads.map((t) => t.id)]),
 		).toEqual([
-			["p1", ["a"]],
 			[null, ["b", "oldBusy"]],
+			["p1", ["a"]],
 		]);
 		expect(g.children.get("a")?.map((t) => t.id)).toEqual(["child"]);
 		expect(g.inactive.map((t) => t.id)).toEqual(["old"]);

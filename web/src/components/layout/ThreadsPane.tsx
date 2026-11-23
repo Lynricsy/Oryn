@@ -170,18 +170,21 @@ export function groupThreads(
 			g.inactive.push(t);
 		else bucket(t.projectId ?? null).push(t);
 	}
-	g.byProject = [...projects.entries()].map(([projectId, list]) => ({
-		projectId,
-		threads: list,
-		stacks: [...(stacks.get(projectId)?.entries() ?? [])].map(
-			([scheduleId, runs]) => ({
-				scheduleId,
-				threads: runs.sort(
-					(a, b) => (b.scheduleRun?.run ?? 0) - (a.scheduleRun?.run ?? 0),
-				),
-			}),
-		),
-	}));
+	// 「无项目」排在各项目之前；项目之间按各自最新活动的先后
+	g.byProject = [...projects.entries()]
+		.sort(([a], [b]) => Number(a !== null) - Number(b !== null))
+		.map(([projectId, list]) => ({
+			projectId,
+			threads: list,
+			stacks: [...(stacks.get(projectId)?.entries() ?? [])].map(
+				([scheduleId, runs]) => ({
+					scheduleId,
+					threads: runs.sort(
+						(a, b) => (b.scheduleRun?.run ?? 0) - (a.scheduleRun?.run ?? 0),
+					),
+				}),
+			),
+		}));
 	return g;
 }
 
