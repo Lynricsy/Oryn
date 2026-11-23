@@ -13,6 +13,7 @@ import {
 	COORDINATOR_CLIENT_COMMANDS,
 	findCommand,
 	hiddenFromMenu,
+	inlineArgHint,
 } from "../../lib/slash";
 import { commandIcon } from "../../lib/slash-icons";
 import { useDebounced } from "../../lib/use-debounced";
@@ -46,6 +47,8 @@ export interface CommandUsage {
 export interface CommandMenuModel {
 	entries: MenuEntry[];
 	usage?: CommandUsage;
+	/** 输入框里光标后的参数灰字（`inlineArgHint`），只在参数阶段、命令已知时给出 */
+	inlineHint?: string;
 }
 
 /** Oryn 客户端命令的来源名。 */
@@ -163,6 +166,8 @@ export function useCommandMenu(
 		});
 	}
 	if (!known) return entries.length > 0 ? { entries } : null;
+	const hint =
+		(client ? COMMAND_HINTS[name] : undefined) ?? serverCmd?.input?.hint;
 	return {
 		entries,
 		usage: {
@@ -170,12 +175,12 @@ export function useCommandMenu(
 			icon: client
 				? commandIcon(name)
 				: serverCmd && commandIcon(serverCmd.name, serverCmd.source),
-			hint:
-				(client ? COMMAND_HINTS[name] : undefined) ?? serverCmd?.input?.hint,
+			hint,
 			description: client
 				? t(`slash.desc.${name as ClientCommand}`)
 				: serverCmd?.description,
 		},
+		inlineHint: inlineArgHint(argPrefix, hint, serverCmd?.subcommands),
 	};
 }
 

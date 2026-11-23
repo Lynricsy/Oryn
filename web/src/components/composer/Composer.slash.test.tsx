@@ -469,4 +469,17 @@ describe("Composer 斜杠命令", () => {
 			}),
 		);
 	});
+
+	it("输入命令参数时光标后显示参数灰字，输入参数后消失", () => {
+		reply();
+		mount();
+		const hint = () =>
+			screen.queryByTestId("composer-arg-hint")?.textContent ?? null;
+		fireEvent.change(box(), { target: { value: "/btw" } });
+		expect(hint()).toBeNull();
+		fireEvent.change(box(), { target: { value: "/btw " } });
+		expect(hint()).toBe("/btw [question]");
+		fireEvent.change(box(), { target: { value: "/btw why" } });
+		expect(hint()).toBeNull();
+	});
 });

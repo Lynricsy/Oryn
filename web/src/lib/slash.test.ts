@@ -4,6 +4,7 @@ import {
 	carriesAttachments,
 	coordinatorAllows,
 	hiddenFromMenu,
+	inlineArgHint,
 	matchModelSelector,
 	parseSlash,
 	resolveSlash,
@@ -451,6 +452,33 @@ describe("命令菜单过滤", () => {
 		expect(hiddenFromMenu(byName("effort"))).toBe(false);
 		expect(hiddenFromMenu(byName("move"))).toBe(true);
 		expect(hiddenFromMenu({ name: "settings", source: "builtin" })).toBe(true);
+	});
+});
+
+describe("输入框参数灰字", () => {
+	const subs = [
+		{ name: "snap", usage: "[focus]" },
+		{ name: "add", usage: "<name> <url>" },
+		{ name: "list" },
+	];
+	it("还没输入参数时给出整条提示，输入后不再提示", () => {
+		expect(inlineArgHint("", "[question]")).toBe("[question]");
+		expect(inlineArgHint("  ", "[question]")).toBe("[question]");
+		expect(inlineArgHint("why", "[question]")).toBeUndefined();
+	});
+	it("正在输入子命令名：补出名字剩余部分与用法", () => {
+		expect(inlineArgHint("sn", undefined, subs)).toBe("ap [focus]");
+		expect(inlineArgHint("snap", undefined, subs)).toBe(" [focus]");
+		expect(inlineArgHint("li", undefined, subs)).toBe("st");
+		expect(inlineArgHint("list", undefined, subs)).toBeUndefined();
+		expect(inlineArgHint("zz", undefined, subs)).toBeUndefined();
+	});
+	it("子命令已输入：按已输入参数个数给出剩下的用法", () => {
+		expect(inlineArgHint("add ", undefined, subs)).toBe("<name> <url>");
+		expect(inlineArgHint("add foo ", undefined, subs)).toBe("<url>");
+		expect(inlineArgHint("add foo", undefined, subs)).toBe(" <url>");
+		expect(inlineArgHint("add foo https://x", undefined, subs)).toBeUndefined();
+		expect(inlineArgHint("list ", undefined, subs)).toBeUndefined();
 	});
 });
 

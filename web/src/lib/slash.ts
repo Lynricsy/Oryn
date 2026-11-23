@@ -175,6 +175,41 @@ export function findCommand(
 	return commands.find((c) => c.name === name || c.aliases?.includes(name));
 }
 
+/**
+ * 输入框里命令参数的灰字提示（规则同 omp TUI 的 `getInlineHint`），`args` 是命令名后空格之后的文本：
+ * - 还没输入参数：整条参数提示（`hint`）；
+ * - 命令带子命令：正在输入子命令名时补出名字剩余部分与它的用法；子命令已输入完，按已输入的参数个数给出用法里剩下的部分；
+ * - 其余情况不提示。
+ */
+export function inlineArgHint(
+	args: string,
+	hint: string | undefined,
+	subcommands: RpcAvailableSlashCommand["subcommands"] = [],
+): string | undefined {
+	const trimmed = args.trimStart();
+	if (trimmed === "") return hint;
+	if (subcommands.length === 0) return undefined;
+	const space = trimmed.indexOf(" ");
+	if (space === -1) {
+		const prefix = trimmed.toLowerCase();
+		const sub = subcommands.find((s) => s.name.startsWith(prefix));
+		if (!sub) return undefined;
+		const rest =
+			sub.name.slice(prefix.length) + (sub.usage ? ` ${sub.usage}` : "");
+		return rest || undefined;
+	}
+	const sub = subcommands.find(
+		(s) => s.name === trimmed.slice(0, space).toLowerCase(),
+	);
+	if (!sub?.usage) return undefined;
+	const typed = trimmed.slice(space + 1).trim();
+	if (typed === "") return sub.usage;
+	const remaining = sub.usage.split(" ").slice(typed.split(/\s+/).length);
+	if (remaining.length === 0) return undefined;
+	// 光标紧贴着刚输入的参数时，与剩下的用法之间隔一个空格
+	return `${/\s$/.test(args) ? "" : " "}${remaining.join(" ")}`;
+}
+
 function modeWithPrompt(
 	type: "set_plan_mode" | "set_vibe_mode",
 	args: string,

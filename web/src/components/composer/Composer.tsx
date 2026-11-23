@@ -7,6 +7,7 @@
  * `/` 命令菜单打开时（整段以 `/` 开头）与协调对话里不启用。
  * omp 推来下一条消息预测时（`composerPrediction`，规则见 `lib/composer-prediction.ts`）在草稿后叠一层灰色幽灵字：
  * Tab / → 或点一下插入（从不发送），有多个候选时插入后再按 Tab 轮换。
+ * 输入命令参数时（`/btw `），光标后同一层灰字给出参数提示（`inlineArgHint`，同 omp TUI），只是提示，不可插入。
  */
 import {
 	memo,
@@ -176,6 +177,15 @@ export const Composer = memo(function Composer({
 		inserted,
 	});
 	const ghost = predicted.ghost;
+	/** 命令参数灰字：单行、光标在末尾、非输入法组字时显示在草稿后；不可点、不随 Tab 插入。预测灰字优先。 */
+	const argHint =
+		!ghost &&
+		!disabled &&
+		!composing &&
+		caret >= text.length &&
+		!text.includes("\n")
+			? menu?.inlineHint
+			: undefined;
 
 	/** 接受预测：草稿换成完整候选、光标放到末尾；从不发送。 */
 	const acceptPrediction = (choice: string) => {
@@ -267,7 +277,7 @@ export const Composer = memo(function Composer({
 			ghostRef.current?.scrollHeight ?? 0,
 		);
 		el.style.height = `${Math.min(content, Math.round(window.innerHeight * 0.4))}px`;
-	}, [text, ghost?.suffix]);
+	}, [text, ghost?.suffix, argHint]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: 候选数变化时重置高亮项
 	useEffect(() => {
@@ -824,24 +834,28 @@ export const Composer = memo(function Composer({
 						}
 					}}
 				/>
-				{ghost && (
+				{(ghost || argHint) && (
 					<div
 						ref={ghostRef}
 						aria-hidden
-						data-testid="composer-ghost"
+						data-testid={ghost ? "composer-ghost" : "composer-arg-hint"}
 						className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-5 pt-4 pb-1.5 text-[14px] leading-5"
 					>
 						<span className="invisible">{text}</span>
-						{/* biome-ignore lint/a11y/useKeyWithClickEvents: 键盘用 Tab / → 接受，这里只给指针与触屏 */}
-						{/* biome-ignore lint/a11y/noStaticElementInteractions: 同上，幽灵字本身对辅助技术隐藏，说明见 aria-describedby */}
-						<span
-							className="pointer-events-auto cursor-text text-faint"
-							// 不抢输入框焦点
-							onMouseDown={(e) => e.preventDefault()}
-							onClick={() => acceptPrediction(ghost.choice)}
-						>
-							{ghost.suffix}
-						</span>
+						{ghost ? (
+							// biome-ignore lint/a11y/useKeyWithClickEvents: 键盘用 Tab / → 接受，这里只给指针与触屏
+							// biome-ignore lint/a11y/noStaticElementInteractions: 同上，幽灵字本身对辅助技术隐藏，说明见 aria-describedby
+							<span
+								className="pointer-events-auto cursor-text text-faint"
+								// 不抢输入框焦点
+								onMouseDown={(e) => e.preventDefault()}
+								onClick={() => acceptPrediction(ghost.choice)}
+							>
+								{ghost.suffix}
+							</span>
+						) : (
+							<span className="text-faint">{argHint}</span>
+						)}
 					</div>
 				)}
 				{ghost && (
