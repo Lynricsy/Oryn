@@ -1,15 +1,13 @@
-/** `irc` — inter-agent messaging: send/wait/inbox/list ops with delivery receipts. */
+/**
+ * IRC 消息的渲染（旧转录）：registry 没有 `irc` 工具，现行 Core 也没有；这里只服务 `wait` 卡片——
+ * 旧版 `wait` 取到对端消息时 details 带 `waited`（消息数组；超时为 null），wait.tsx 借用这里的 Summary / Result。
+ * 消息画成信件：发件人首字母标记 + 名字、回复标记、正文。
+ */
 import type { ReactNode } from "react";
-import type { Tone } from "../parts";
-import { Badge, Badges, Note, ResultText, Row } from "../parts";
+import { useTranslation } from "react-i18next";
+import { Badge, Note, ResultText } from "../parts";
 import type { ToolRenderer, ToolRenderProps } from "../types";
 import { detailsRecord, isRecord, normalizeWs, str, truncate } from "../util";
-
-interface IrcReceipt {
-	to: string;
-	outcome: string;
-	error?: string;
-}
 
 interface IrcMsg {
 	from: string;
@@ -17,307 +15,92 @@ interface IrcMsg {
 	replyTo?: string;
 }
 
-interface IrcPeer {
-	id: string;
-	kind: string;
-	status: string;
-	parentId?: string;
-	unread: number;
-}
-
-function parseReceipts(value: unknown): IrcReceipt[] {
-	if (!Array.isArray(value)) return [];
-	const out: IrcReceipt[] = [];
-	for (const item of value) {
-		if (!isRecord(item)) continue;
-		const to = str(item.to);
-		const outcome = str(item.outcome);
-		if (to === null || outcome === null) continue;
-		out.push({ to, outcome, error: str(item.error) ?? undefined });
-	}
-	return out;
-}
-
-function parseMsg(value: unknown): IrcMsg | null {
-	if (!isRecord(value)) return null;
-	const from = str(value.from);
-	const body = str(value.body);
-	if (from === null || body === null) return null;
-	return { from, body, replyTo: str(value.replyTo) ?? undefined };
-}
-
-function parseInbox(value: unknown): IrcMsg[] {
+function parseMsgs(value: unknown): IrcMsg[] {
 	if (!Array.isArray(value)) return [];
 	const out: IrcMsg[] = [];
 	for (const item of value) {
-		const msg = parseMsg(item);
-		if (msg) out.push(msg);
+		if (!isRecord(item)) continue;
+		const from = str(item.from);
+		const body = str(item.body);
+		if (from === null || body === null) continue;
+		out.push({ from, body, replyTo: str(item.replyTo) ?? undefined });
 	}
 	return out;
 }
 
-const PEER_STATUS_ORDER: Record<string, number> = {
-	running: 0,
-	idle: 1,
-	parked: 2,
-};
-
-function parsePeers(value: unknown): IrcPeer[] {
-	if (!Array.isArray(value)) return [];
-	const out: IrcPeer[] = [];
-	for (const item of value) {
-		if (!isRecord(item)) continue;
-		const id = str(item.id);
-		if (id === null) continue;
-		out.push({
-			id,
-			kind: str(item.kind) ?? "?",
-			status: str(item.status) ?? "?",
-			parentId: str(item.parentId) ?? undefined,
-			unread:
-				typeof item.unread === "number" && Number.isFinite(item.unread)
-					? item.unread
-					: 0,
-		});
-	}
-	return out.sort(
-		(a, b) =>
-			(PEER_STATUS_ORDER[a.status] ?? 9) - (PEER_STATUS_ORDER[b.status] ?? 9),
+/** 一封信：发件人行（首字母标记 + 名字 + 回复标记）+ 正文。 */
+function Letter({ msg }: { msg: IrcMsg }): ReactNode {
+	const { t } = useTranslation();
+	const letter = (/[\p{L}\p{N}]/u.exec(msg.from)?.[0] ?? "?").toUpperCase();
+	return (
+		<div className="tv-irc-msg">
+			<div className="tv-irc-msg-head">
+				<span className="tv-irc-mark" aria-hidden="true">
+					{letter}
+				</span>
+				<span className="tv-irc-from">{msg.from}</span>
+				{msg.replyTo !== undefined && (
+					<span className="tv-irc-tag">{t("toolRender.irc.reply")}</span>
+				)}
+			</div>
+			<div className="tv-irc-body">{msg.body}</div>
+		</div>
 	);
 }
 
-/** Mirrors the TUI's outcomeColor: woken=success, revived=warning, injected=accent, failed=error. */
-function outcomeTone(outcome: string): Tone | undefined {
-	switch (outcome) {
-		case "woken":
-			return "ok";
-		case "revived":
-			return "warn";
-		case "injected":
-			return "accent";
-		case "failed":
-			return "err";
-		default:
-			return undefined;
-	}
-}
-
-function statusTone(status: string): Tone | undefined {
-	switch (status) {
-		case "running":
-			return "accent";
-		case "idle":
-			return "ok";
-		case "parked":
-			return undefined;
-		default:
-			return "err";
-	}
-}
-
+/** 头部摘要：等到的发件人（一封时附正文开头），没等到时写等谁。 */
 function Summary({ args, result }: ToolRenderProps): ReactNode {
-	const op = str(args.op) ?? "?";
-	const d = detailsRecord(result);
-	const opBadge = (
-		<Badge
-			tone={result?.isError ? "err" : op === "send" ? "accent" : undefined}
-		>
-			{op}
+	const { t } = useTranslation();
+	const waited = parseMsgs(detailsRecord(result)?.waited);
+	const op = (
+		<Badge tone={result?.isError ? "err" : undefined}>
+			{t("toolRender.irc.wait")}
 		</Badge>
 	);
-	if (op === "send") {
-		const to = str(args.to);
-		const message = str(args.message);
+	if (waited.length === 0)
 		return (
 			<>
-				{opBadge} {to && <span className="tv-pattern">→ {to}</span>}{" "}
-				{message && (
-					<span className="tv-muted">{truncate(normalizeWs(message), 80)}</span>
-				)}
+				{op}
+				<span className="tv-pattern">
+					← {str(args.from) ?? t("toolRender.irc.anyone")}
+				</span>
 			</>
 		);
-	}
-	if (op === "wait") {
-		const waited = d ? parseInbox(d.waited) : [];
-		if (waited.length > 0) {
-			const senders = [...new Set(waited.map((msg) => msg.from))].join(", ");
-			return (
-				<>
-					{opBadge} <span className="tv-pattern">← {senders}</span>{" "}
-					<span className="tv-muted">
-						{waited.length === 1
-							? truncate(normalizeWs(waited[0]!.body), 80)
-							: `${waited.length} messages`}
-					</span>
-				</>
-			);
-		}
-		const from = str(args.from);
-		return (
-			<>
-				{opBadge} <span className="tv-pattern">← {from ?? "anyone"}</span>
-				{d?.waited === null && (
-					<>
-						{" "}
-						<Badge tone="warn">timed out</Badge>
-					</>
-				)}
-			</>
-		);
-	}
-	if (op === "inbox") {
-		const inbox = d ? parseInbox(d.inbox) : [];
-		return (
-			<>
-				{opBadge} {args.peek === true && <Badge>peek</Badge>}{" "}
-				{d && (
-					<span className="tv-muted">
-						{inbox.length === 0
-							? "empty"
-							: `${inbox.length} ${inbox.length === 1 ? "message" : "messages"}`}
-					</span>
-				)}
-			</>
-		);
-	}
-	if (op === "list") {
-		const peers = d ? parsePeers(d.peers) : [];
-		let unread = 0;
-		for (const peer of peers) unread += peer.unread;
-		return (
-			<>
-				{opBadge}{" "}
-				{d && (
-					<span className="tv-muted">
-						{peers.length === 1 ? "1 peer" : `${peers.length} peers`}
-					</span>
-				)}
-				{unread > 0 && (
-					<>
-						{" "}
-						<Badge tone="warn">{unread} unread</Badge>
-					</>
-				)}
-			</>
-		);
-	}
-	return opBadge;
-}
-
-/** 输入：动作与收发对象等参数徽标 + 要发送的消息全文。 */
-function Input({ args }: ToolRenderProps): ReactNode {
-	const op = str(args.op);
-	const to = str(args.to);
-	const from = str(args.from);
-	const message = str(args.message);
+	const senders = [...new Set(waited.map((msg) => msg.from))].join(", ");
 	return (
 		<>
-			<Badges
-				items={[
-					op ?? "?",
-					to && `to ${to}`,
-					op === "wait" && from && `from ${from}`,
-					to === "all" && "broadcast",
-					args.await === true && "await reply",
-					str(args.replyTo) && "reply",
-					args.peek === true && "peek",
-				]}
-			/>
-			{message && <Note>{message}</Note>}
+			{op}
+			<span className="tv-pattern">← {senders}</span>
+			<span className="tv-muted">
+				{waited.length === 1
+					? truncate(normalizeWs(waited[0]?.body ?? ""), 80)
+					: t("toolRender.irc.messages", { count: waited.length })}
+			</span>
 		</>
 	);
 }
 
-/** 输出：投递回执、等到的回复、收件箱、对端列表；没有结构化内容（或出错）时给结果文本。 */
+/** 输出：等到的信件；超时给提醒；没有结构化内容（或出错）时给结果文本。 */
 function Result({ result }: ToolRenderProps): ReactNode {
+	const { t } = useTranslation();
 	const d = detailsRecord(result);
-	const receipts = parseReceipts(d?.receipts);
-	const waited = parseInbox(d?.waited);
-	const timedOut = d ? d.waited === null : false;
-	const inbox = parseInbox(d?.inbox);
-	const peers = parsePeers(d?.peers);
-	const structured =
-		receipts.length > 0 ||
-		waited.length > 0 ||
-		timedOut ||
-		inbox.length > 0 ||
-		peers.length > 0;
+	const waited = parseMsgs(d?.waited);
+	const timedOut = d !== null && d.waited === null;
 	return (
 		<>
-			{receipts.length > 0 && (
-				<div className="tv-list">
-					{receipts.map((receipt, i) => (
-						<Row key={i} k={receipt.to}>
-							<Badge tone={outcomeTone(receipt.outcome)}>
-								{receipt.outcome}
-							</Badge>
-							{receipt.error && (
-								<span className="tv-err-text"> — {receipt.error}</span>
-							)}
-						</Row>
-					))}
-				</div>
-			)}
 			{waited.length > 0 && (
-				<div className="tv-list">
+				<div className="tv-irc-thread">
 					{waited.map((msg, i) => (
-						<Row key={i} k={`← ${msg.from}`}>
-							{msg.body}
-							{msg.replyTo && (
-								<>
-									{" "}
-									<Badge>reply</Badge>
-								</>
-							)}
-						</Row>
+						<Letter key={i} msg={msg} />
 					))}
 				</div>
 			)}
-			{timedOut && (
-				<Note tone="warn">
-					No reply yet — they may answer later; check inbox or wait again.
-				</Note>
-			)}
-			{inbox.length > 0 && (
-				<div className="tv-list">
-					{inbox.map((msg, i) => (
-						<Row key={i} k={msg.from}>
-							{msg.body}
-							{msg.replyTo && (
-								<>
-									{" "}
-									<Badge>reply</Badge>
-								</>
-							)}
-						</Row>
-					))}
-				</div>
-			)}
-			{peers.length > 0 && (
-				<div className="tv-list">
-					{peers.map((peer) => (
-						<Row key={peer.id} k={peer.id}>
-							<Badge tone={statusTone(peer.status)}>{peer.status}</Badge>{" "}
-							<span className="tv-faint">
-								{peer.parentId
-									? `${peer.kind} · of ${peer.parentId}`
-									: peer.kind}
-							</span>
-							{peer.unread > 0 && (
-								<>
-									{" "}
-									<Badge tone="warn">{peer.unread} unread</Badge>
-								</>
-							)}
-						</Row>
-					))}
-				</div>
-			)}
-			{(!structured || result?.isError) && (
+			{timedOut && <Note tone="warn">{t("toolRender.irc.timedOutNote")}</Note>}
+			{((waited.length === 0 && !timedOut) || result?.isError) && (
 				<ResultText result={result} maxLines={8} />
 			)}
 		</>
 	);
 }
 
-export const ircRenderer: ToolRenderer = { Summary, Input, Result };
+export const ircRenderer: ToolRenderer = { Summary, Result };

@@ -1,35 +1,67 @@
 /**
  * `reflect` — ask the long-term memory backend a question; the answer comes
- * back as plain result text (details are always empty).
+ * back as plain result text (details are always empty). mnemopi 的回答带
+ * `Based on recalled memories:` 前缀，找不到时是 `No relevant information found to reflect on.`（见 oryn-core）。
+ * 输入段是问题（附补充上下文），输出段是 Markdown 渲染的回答。
  */
 import type { ReactNode } from "react";
-import { Note, Output, ResultText } from "../parts";
+import { useTranslation } from "react-i18next";
+import { Icon } from "../../components/ui/icons";
+import { EmptyNote, ErrorBlock, MarkdownBlock } from "../parts";
 import type { ToolRenderer, ToolRenderProps } from "../types";
 import { normalizeWs, resultTextOf, str, truncate } from "../util";
+
+const BASED_ON = /^Based on recalled memories:\s*/i;
+const NOTHING = /^No relevant information found to reflect on\.?$/i;
 
 function Summary({ args }: ToolRenderProps): ReactNode {
 	const query = str(args.query);
 	return <span>{query ? truncate(normalizeWs(query), 96) : ""}</span>;
 }
 
+/** 输入：问题（醒目）+ 补充上下文（弱化）。 */
 function Input({ args }: ToolRenderProps): ReactNode {
-	const query = str(args.query) ?? "";
-	const context = str(args.context) ?? "";
+	const { t } = useTranslation();
+	const query = str(args.query)?.trim();
+	const context = str(args.context)?.trim();
+	if (!query && !context) return null;
 	return (
-		<>
-			{/* 折叠行只是摘要（会被截断），展开体始终给出完整查询 */}
-			{query && <Output text={query} title="query" maxLines={4} />}
-			{context && <Output text={context} title="context" maxLines={6} />}
-		</>
+		<div className="tv-reflect-q">
+			{query && (
+				<div className="tv-reflect-question">
+					<Icon name="lightbulb" size={13} />
+					<span>{query}</span>
+				</div>
+			)}
+			{context && (
+				<div className="tv-reflect-context">
+					<span className="tv-reflect-label">
+						{t("toolRender.memory.context")}
+					</span>
+					<span>{context}</span>
+				</div>
+			)}
+		</div>
 	);
 }
 
+/** 输出：回答（Markdown，超高折叠；「基于已召回的记忆」作为小标）；没有可反思的内容给空状态。 */
 function Result({ result }: ToolRenderProps): ReactNode {
-	if (result?.isError === true && !resultTextOf(result))
-		return <Note tone="err">Reflect failed</Note>;
-	// 记忆后端的回答是 markdown 文本
+	const { t } = useTranslation();
+	if (!result) return null;
+	const text = resultTextOf(result).trim();
+	if (result.isError)
+		return <ErrorBlock text={text || t("toolRender.memory.reflectFailed")} />;
+	if (!text || NOTHING.test(text))
+		return <EmptyNote>{t("toolRender.memory.nothingToReflect")}</EmptyNote>;
+	const based = BASED_ON.test(text);
 	return (
-		<ResultText result={result} lang="markdown" variant="plain" maxLines={12} />
+		<>
+			{based && (
+				<div className="tv-mem-asof">{t("toolRender.memory.basedOn")}</div>
+			)}
+			<MarkdownBlock text={text.replace(BASED_ON, "")} maxHeight={320} />
+		</>
 	);
 }
 

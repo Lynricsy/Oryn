@@ -1,6 +1,12 @@
-/** `retain` — store facts in long-term memory (one bullet per stored item). */
+/**
+ * `retain` — store facts in long-term memory (one item per stored fact). 参数 `items[]`：
+ * `{ content, context?, scope?: project | global }`；结果 `N memories stored.`（同步写入）或 `queued.`（排队），
+ * details `{ count }`（见 oryn-core `tools/memory-retain.ts`）。输入段是将写入的记忆卡片（带写入标记），
+ * 头部读数给已存 / 已排队条数。
+ */
 import type { ReactNode } from "react";
-import { Badge, InvalidArg, ResultText, Row } from "../parts";
+import { useTranslation } from "react-i18next";
+import { ErrorBlock, InvalidArg, ResultText } from "../parts";
 import type { ToolRenderer, ToolRenderProps } from "../types";
 import {
 	detailsRecord,
@@ -12,10 +18,12 @@ import {
 	str,
 	truncate,
 } from "../util";
+import { MemoryCard } from "./memory-recall";
 
 interface RetainItem {
 	content: string;
 	context: string | null;
+	scope: string | null;
 }
 
 /** Narrow `args.items`; null = present but malformed, [] = absent/empty. */
@@ -28,61 +36,78 @@ function retainItems(args: Record<string, unknown>): RetainItem[] | null {
 		if (!isRecord(entry)) continue;
 		const content = replaceTabs((str(entry.content) ?? "").trim());
 		if (!content) continue;
-		items.push({ content, context: str(entry.context) });
+		items.push({
+			content,
+			context: str(entry.context),
+			scope: str(entry.scope),
+		});
 	}
 	return items;
 }
 
-function Summary({ args, result }: ToolRenderProps): ReactNode {
+function Summary({ args }: ToolRenderProps): ReactNode {
 	const items = retainItems(args);
 	if (items === null) return <InvalidArg what="items" />;
-	const count = num(detailsRecord(result)?.count) ?? items.length;
 	const first = items[0] ? truncate(normalizeWs(items[0].content), 80) : "";
+	return first ? <span className="tv-trunc">{first}</span> : null;
+}
+
+/** 右侧读数：已存 / 已排队 n 条（绿）；没结果时写将要写入的条数。 */
+function Meta({ args, result }: ToolRenderProps): ReactNode {
+	const { t } = useTranslation();
+	const items = retainItems(args) ?? [];
+	if (result?.isError) return null;
+	if (!result)
+		return items.length > 1 ? (
+			<span>{t("toolRender.memory.items", { count: items.length })}</span>
+		) : null;
+	const count = num(detailsRecord(result)?.count) ?? items.length;
+	const queued = /\bqueued\b/i.test(resultTextOf(result));
 	return (
-		<>
-			<Badge tone="accent">
-				{count === 1 ? "1 memory" : `${count} memories`}
-			</Badge>
-			{first && <span className="tv-trunc">{first}</span>}
-		</>
+		<span className="tv-meta-ok">
+			{t(queued ? "toolRender.memory.queued" : "toolRender.memory.stored", {
+				count,
+			})}
+		</span>
 	);
 }
 
+/** 输入：要写入的记忆卡片（写入标记 + 范围标签 + 来源上下文）。 */
 function Input({ args }: ToolRenderProps): ReactNode {
+	const { t } = useTranslation();
 	const items = retainItems(args);
 	if (items === null) return <InvalidArg what="items" />;
 	if (items.length === 0) return null;
 	return (
-		<div className="tv-list">
+		<ul className="tv-mems">
 			{items.map((item, i) => (
-				<Row key={i}>
-					{item.content}
-					{item.context && <span className="tv-faint"> — {item.context}</span>}
-				</Row>
+				<MemoryCard
+					key={i}
+					added
+					content={item.content}
+					tags={[
+						item.scope === "global"
+							? t("toolRender.memory.scope.global")
+							: item.scope === "project"
+								? t("toolRender.memory.scope.project")
+								: item.scope,
+					]}
+					note={item.context}
+				/>
 			))}
-		</div>
+		</ul>
 	);
 }
 
+/** 输出：出错时给错误；成功的确认已在头部读数里，其余文本（非标准回执）原样给出。 */
 function Result({ result }: ToolRenderProps): ReactNode {
-	const count = num(detailsRecord(result)?.count);
-	// The tool's own "N memories stored/queued." line; trailing period dropped
-	// so it reads as a status chip.
-	let confirmation: string | null = null;
-	if (result && result.isError !== true) {
-		const text = resultTextOf(result).trim().replace(/\.$/, "");
-		confirmation =
-			text ||
-			(count !== null
-				? `${count === 1 ? "1 memory" : `${count} memories`} retained`
-				: null);
-	}
-	if (!confirmation) return <ResultText result={result} maxLines={6} />;
-	return (
-		<div>
-			<Badge tone="ok">{confirmation}</Badge>
-		</div>
+	if (!result) return null;
+	const text = resultTextOf(result).trim();
+	if (result.isError) return <ErrorBlock text={text} />;
+	return /^\d+ memor(?:y|ies) (?:stored|queued)\.?$/i.test(text) ||
+		text === "" ? null : (
+		<ResultText result={result} maxLines={6} />
 	);
 }
 
-export const retainRenderer: ToolRenderer = { Summary, Input, Result };
+export const retainRenderer: ToolRenderer = { Summary, Meta, Input, Result };

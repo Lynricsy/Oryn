@@ -116,13 +116,9 @@ describe("task 卡片的 agent 头像", () => {
 			/>,
 		);
 		fireEvent.click(container.querySelector(".tv-head") as HTMLElement);
-		// 结果行的行首是「头像 + 子 agent id」；参数行的头像在值里，行首只有 id
+		// 名册行（data-agent-id）的头像按结果状态；派工单里的头像没有运行状态
 		const stateOf = (id: string) =>
-			[...container.querySelectorAll(".tv-row-key")]
-				.find(
-					(k) => k.textContent?.includes(id) && k.querySelector("[data-state]"),
-				)
-				?.querySelector("[data-state]");
+			container.querySelector(`[data-agent-id="${id}"] [data-state]`);
 		expect(stateOf("Alpha")).toHaveAttribute("data-state", "done");
 		expect(stateOf("Alpha")).toHaveAttribute("title", "scout · 已完成");
 		expect(stateOf("Beta")).toHaveAttribute("data-state", "failed");
@@ -146,6 +142,102 @@ describe("task 卡片的 agent 头像", () => {
 		expect(face?.closest("[data-state]")).toHaveAttribute(
 			"data-state",
 			"unknown",
+		);
+	});
+});
+
+describe("task 卡片的进度", () => {
+	it("运行中：头部读数按进度帧给完成数 / 总数，名册行给阶段与完成百分比", () => {
+		const { container } = render(
+			<ToolView
+				name="task"
+				args={{
+					tasks: [
+						{ name: "A", agent: "scout", task: "a" },
+						{ name: "B", agent: "scout", task: "b" },
+					],
+				}}
+				running
+				partialResult={{
+					content: [],
+					details: {
+						results: [],
+						progress: [
+							{ id: "A", agent: "scout", status: "completed" },
+							{
+								id: "B",
+								agent: "scout",
+								status: "running",
+								stage: "读取 hub.go",
+								completionPercent: 62,
+								currentTool: "read",
+								currentToolArgs: "internal/realtime/hub.go",
+							},
+						],
+					},
+				}}
+				defaultOpen
+			/>,
+		);
+		expect(container.querySelector(".tv-meta")).toHaveTextContent("1/2");
+		const row = container.querySelector('[data-agent-id="B"]');
+		expect(row).toHaveTextContent("读取 hub.go");
+		expect(row).toHaveTextContent("62%");
+		expect(row?.querySelector('[role="progressbar"]')).toHaveAttribute(
+			"aria-valuenow",
+			"62",
+		);
+		expect(row).toHaveTextContent("internal/realtime/hub.go");
+	});
+
+	it("结束：名册按派工顺序，失败的读数标红，输出预览按 Markdown 渲染", () => {
+		const { container } = render(
+			<ToolView
+				name="task"
+				args={{
+					tasks: [
+						{ name: "A", task: "a" },
+						{ name: "B", task: "b" },
+					],
+				}}
+				result={{
+					content: [{ type: "text", text: "done" }],
+					details: {
+						results: [
+							{
+								index: 1,
+								id: "B",
+								exitCode: 1,
+								output: "",
+								error: "boom",
+								durationMs: 1000,
+							},
+							{
+								index: 0,
+								id: "A",
+								exitCode: 0,
+								output: "**ok**",
+								durationMs: 5000,
+							},
+						],
+						totalDurationMs: 5200,
+					},
+				}}
+				defaultOpen
+			/>,
+		);
+		const meta = container.querySelector(".tv-meta");
+		expect(meta).toHaveTextContent("1/2");
+		expect(meta?.querySelector(".tv-meta-err")).not.toBeNull();
+		const ids = [...container.querySelectorAll("[data-agent-id]")].map((el) =>
+			el.getAttribute("data-agent-id"),
+		);
+		expect(ids).toEqual(["A", "B"]);
+		expect(
+			container.querySelector('[data-agent-id="A"] strong'),
+		).toHaveTextContent("ok");
+		expect(container.querySelector('[data-agent-id="B"]')).toHaveTextContent(
+			"boom",
 		);
 	});
 });

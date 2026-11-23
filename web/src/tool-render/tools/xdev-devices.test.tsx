@@ -47,8 +47,10 @@ describe("checkpoint / rewind 卡片", () => {
 		);
 		expect(sum(container)).toHaveTextContent(goal);
 		// 头部摘要会被窄屏截断：短目标也在展开体里给出全文
-		expect(body(container)?.querySelector(".tv-prose")).toHaveTextContent(goal);
-		expect(body(container)).toHaveTextContent("开始于");
+		expect(body(container)?.querySelector(".tv-flag-text")).toHaveTextContent(
+			goal,
+		);
+		expect(body(container)).toHaveTextContent("检查点已设立");
 		// 工具的固定提示语不重复展示
 		expect(body(container)).not.toHaveTextContent("Finish exploration");
 	});
@@ -61,7 +63,7 @@ describe("checkpoint / rewind 卡片", () => {
 			{ text: "Checkpoint", inner: { goal, startedAt: "x" } },
 			{ open: true },
 		);
-		expect(body(container)?.querySelector(".tv-prose")).toHaveTextContent(
+		expect(body(container)?.querySelector(".tv-flag-text")).toHaveTextContent(
 			"并确认服务端重放边界",
 		);
 	});
@@ -77,11 +79,11 @@ describe("checkpoint / rewind 卡片", () => {
 			},
 			{ open: true },
 		);
-		expect(sum(container)?.querySelector(".tv-badge--ok")).toHaveTextContent(
+		expect(meta(container)?.querySelector(".tv-meta-ok")).toHaveTextContent(
 			"已回退",
 		);
 		// 摘要跳过标题、去掉 Markdown 记号
-		expect(sum(container)).toHaveTextContent("已回退 重连时 afterSeq 没带上。");
+		expect(sum(container)).toHaveTextContent("重连时 afterSeq 没带上。");
 		expect(screen.getByRole("heading", { name: "结论" })).toBeInTheDocument();
 		expect(body(container)?.querySelector("strong")).toHaveTextContent(
 			"afterSeq",
@@ -190,7 +192,7 @@ describe("tts 卡片", () => {
 		expect(meta(container)).toBeEmptyDOMElement();
 	});
 
-	it("本地后端把 .mp3 改写为 .wav：输出给实际路径，请求路径另列，正文保留替换说明", () => {
+	it("本地后端把 .mp3 改写为 .wav：摘要给实际路径，输入段标请求路径，输出段标改存与替换说明", () => {
 		const { container } = renderDevice(
 			"tts",
 			{ text: "你好", output_path: "out/done.mp3" },
@@ -207,16 +209,47 @@ describe("tts 卡片", () => {
 		);
 		expect(sum(container)).toHaveTextContent("out/done.wav");
 		expect(sum(container)).not.toHaveTextContent("out/done.mp3");
-		const kvValue = (key: string) =>
-			[...(body(container)?.querySelectorAll(".tv-kv-key") ?? [])].find(
-				(k) => k.textContent === key,
-			)?.nextElementSibling;
-		expect(kvValue("输出")).toHaveTextContent("out/done.wav");
-		expect(kvValue("请求路径")).toHaveTextContent("out/done.mp3");
-		expect(body(container)).toHaveTextContent(
-			"No local MP3 encoder is bundled",
+		const input = container.querySelector(".tv-sec--in");
+		expect(input).toHaveTextContent("请求路径");
+		expect(input).toHaveTextContent("out/done.mp3");
+		const output = container.querySelector(".tv-sec--out");
+		expect(output?.querySelector(".tv-badge--warn")).toHaveTextContent(
+			"已改存",
 		);
-		expect(body(container)).toHaveTextContent("24000 Hz");
+		expect(output).toHaveTextContent("out/done.wav");
+		expect(output).toHaveTextContent("No local MP3 encoder is bundled");
+		expect(output).toHaveTextContent("24000 Hz");
+	});
+
+	it("音频在 orb 上（绝对路径、宿主给了 orbFileUrl）时给播放器，preload 为 none；分享页没有播放器", () => {
+		const result: ToolResultLike = {
+			content: [
+				{
+					type: "text",
+					text: "Saved 48213 bytes to /work/out/a.mp3 (model=xai/grok-tts, voice=Ara)",
+				},
+			],
+			details: { bytes: 48213, voiceId: "Ara", codec: "mp3", backend: "xai" },
+		};
+		const args = { text: "你好", output_path: "/work/out/a.mp3" };
+		const { unmount } = render(
+			<ToolView
+				name="tts"
+				args={args}
+				result={result}
+				defaultOpen
+				host={{ orbFileUrl: (p) => `/orb${p}` }}
+			/>,
+		);
+		const audio = screen.getByTestId("tts-audio");
+		expect(audio).toHaveAttribute("src", "/orb/work/out/a.mp3");
+		expect(audio).toHaveAttribute("preload", "none");
+		expect(screen.getByRole("button", { name: "播放" })).toBeInTheDocument();
+		// 括号里只有模型与音色、之后没有说明：不再重复正文
+		expect(document.body).not.toHaveTextContent("Saved 48213 bytes");
+		unmount();
+		render(<ToolView name="tts" args={args} result={result} defaultOpen />);
+		expect(screen.queryByTestId("tts-audio")).toBeNull();
 	});
 });
 
@@ -229,8 +262,9 @@ describe("xd://github pr_create", () => {
 				text: "Created PR #128: fix reconnect\nhttps://github.com/Lynricsy/Oryn/pull/128",
 			},
 		);
-		expect(sum(container)).toHaveTextContent("pr_create");
+		expect(sum(container)).toHaveTextContent("创建 PR");
 		expect(sum(container)).toHaveTextContent("#128");
 		expect(sum(container)).toHaveTextContent("Lynricsy/Oryn");
+		expect(meta(container)).toHaveTextContent("#128");
 	});
 });
