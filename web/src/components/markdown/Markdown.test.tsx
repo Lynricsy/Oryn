@@ -143,4 +143,33 @@ describe("Markdown", () => {
 			unmount();
 		}
 	});
+
+	it("images={false}：图片变成指向原图的链接；mermaid 围栏按普通代码块显示，不交给 mermaid（它会加载节点里的图片）", async () => {
+		const renderSvg = vi.fn(async () => ({ svg: "<svg></svg>" }));
+		vi.doMock("mermaid", () => ({
+			default: { initialize: vi.fn(), render: renderSvg },
+		}));
+		try {
+			const { container } = render(
+				<Markdown
+					images={false}
+					text={
+						'![tracker](https://evil.example/a.png)\n\n```mermaid\nflowchart LR\n  A@{ img: "https://evil.example/b.png" }\n```'
+					}
+				/>,
+			);
+			// mermaid 是动态导入：等它（若被触发）加载完再断言
+			await vi.dynamicImportSettled();
+			expect(renderSvg).not.toHaveBeenCalled();
+			expect(container.querySelector("img")).toBeNull();
+			expect(
+				screen.getByRole("link", { name: "tracker" }).getAttribute("href"),
+			).toBe("https://evil.example/a.png");
+			expect(container.querySelector("pre code")?.textContent).toContain(
+				"https://evil.example/b.png",
+			);
+		} finally {
+			vi.doUnmock("mermaid");
+		}
+	});
 });

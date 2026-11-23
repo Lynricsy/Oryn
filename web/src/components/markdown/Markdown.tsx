@@ -375,7 +375,9 @@ function makeComponents(streaming: boolean, images = true): Components {
 					</code>
 				);
 			}
-			if (lang === "mermaid" && !streaming) return <MermaidBlock code={text} />;
+			// 禁图模式不交给 mermaid：它渲染时会加载节点里写的图片地址（`img:`），等于自动向外站发请求
+			if (lang === "mermaid" && !streaming && images)
+				return <MermaidBlock code={text} />;
 			return <CodeBlock code={text} lang={lang} />;
 		},
 		a: MdLink,
@@ -477,7 +479,10 @@ export interface MarkdownProps {
 	relativeTo?: RelativeUrls;
 	/** 按文档渲染（仓库文件、README）：允许清洗后的内嵌 HTML，单个换行不断行 */
 	document?: boolean;
-	/** 为 false 时不加载正文里的图片，`![alt](src)` 显示成指向原图的链接（第三方写的正文用） */
+	/**
+	 * 为 false 时正文不触发任何外部图片请求（第三方写的正文用）：`![alt](src)` 显示成指向原图的链接，
+	 * mermaid 围栏按普通代码块显示（mermaid 渲染时会加载节点里的图片）
+	 */
 	images?: boolean;
 }
 
