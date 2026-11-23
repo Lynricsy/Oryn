@@ -14,6 +14,7 @@ import {
 import { type ReactNode, type RefObject, useEffect, useMemo } from "react";
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
+import { useIdentity, useRoleIdentities } from "../../api/identity-queries";
 import {
 	modelCatalogQuery,
 	useModelCatalog,
@@ -37,7 +38,7 @@ import {
 	stepRole,
 } from "../../lib/model-roles";
 import { selectRole } from "../../lib/model-select";
-import { type SourceTrail, trailOf } from "../../lib/turn-role";
+import { type SourceTrail, siteRoleFaces, trailOf } from "../../lib/turn-role";
 import type { OmpCommand, SessionState } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
 import { agentQueryable, getThreadStore, useThread } from "../../state/stores";
@@ -588,22 +589,39 @@ export function RoleTrack({
 	// 按过一次之后不再看 agent 状态：orb 挂起时也要能显示错误提示
 	const view = useRoleView(threadId, queryable || thread.flash > 0);
 	const { cycle, accent } = view;
-	const slots = useMemo<RailSlot[]>(
-		() =>
-			cycle.map((slot) => {
-				const ok = slot.status === "ok";
-				return {
-					id: slot.id,
-					label: roleLabel(slot),
-					hue: slotHue(slot, { cycle, accent }),
-					provider: slot.model?.provider,
-					model: slot.model?.id,
-					ok,
-					title: ok ? slotSelector(slot) : slotProblem(slot),
-				};
-			}),
-		[cycle, accent],
-	);
+	// 头像与回合头同一套规则（turn-role 的 siteRoleFaces）：没进身份表的 role 用默认 Agent 身份
+	const identities = useRoleIdentities().data?.roles;
+	const agent = useIdentity("agent").data;
+	const slots = useMemo<RailSlot[]>(() => {
+		const faces = new Map(siteRoleFaces(identities).map((f) => [f.role, f]));
+		return cycle.map((slot) => {
+			const ok = slot.status === "ok";
+			const face = faces.get(slot.id);
+			return {
+				id: slot.id,
+				label: roleLabel(slot),
+				hue: slotHue(slot, { cycle, accent }),
+				avatar: face
+					? {
+							identity: {
+								avatarIcon: face.avatarIcon,
+								avatarImage: face.avatarImage,
+							},
+							of: "role",
+							glyph: face.glyph,
+						}
+					: {
+							identity: {
+								avatarIcon: agent?.avatarIcon,
+								avatarImage: agent?.avatarImage,
+							},
+							of: "agent",
+						},
+				ok,
+				title: ok ? slotSelector(slot) : slotProblem(slot),
+			};
+		});
+	}, [cycle, accent, identities, agent]);
 	const targetHue = slots.find((s) => s.id === thread.pending)?.hue;
 
 	// 托盘描边闪一下目标角色色（CSS 动画结束即回到默认描边，不留痕）

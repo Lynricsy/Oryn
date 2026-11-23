@@ -1,8 +1,9 @@
 /**
- * 角色胶囊轨（纯展示）：每格是模型 logo + 角色名，当前格由一块角色色滑块高亮，到位后名字轻微回弹；
+ * 角色胶囊轨（纯展示）：每格是角色头像 + 角色名，当前格由一块角色色滑块高亮，到位后名字轻微回弹；
  * `flash` 每递增一次就浮出（或保持）并重置计时，4 秒没有再递增就收起。
  * 线程页（RoleTrack：Ctrl+P 切换线程的角色模型）与首页（Ctrl+P 轮换新对话的 role）共用。
- * 轨道绝对定位在 `anchorRef` 的定位祖先上方：`anchorRef` 自身的 offsetTop 一并抬过去。
+ * 轨道绝对定位在 `anchorRef` 的定位祖先上方（`anchorRef` 自身的 offsetTop 一并抬过去），横向铺满它再居中：
+ * 不超过输入框宽度时全部显示，超出才在轨道内横向滚动（不显示滚动条）。
  */
 import {
 	type CSSProperties,
@@ -14,7 +15,8 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { ModelLogo } from "../ui/ModelLogo";
+import type { Schemas } from "../../api/client";
+import { IdentityAvatar } from "../ui/IdentityAvatar";
 
 const SHOW_MS = 4000;
 /** 浮层淡出时长；首屏胶囊的收起 / 展开同用这个时长。 */
@@ -29,8 +31,12 @@ export interface RailSlot {
 	label: string;
 	/** CSS 色相值（写进 `--role-h`） */
 	hue: string;
-	provider?: string;
-	model?: string;
+	/** 角色头像：设了自定义头像用它，内置 role 没设时用默认字形，其余回落为默认 Agent 身份 */
+	avatar: {
+		identity: Schemas["AvatarIdentity"] | undefined;
+		of: "role" | "agent";
+		glyph?: string;
+	};
 	/** 可选：不可选的格置灰、点击无效 */
 	ok: boolean;
 	/** 悬停说明 */
@@ -120,13 +126,13 @@ export function RoleRail({
 	const activeHue = slots.find((s) => s.id === activeId)?.hue;
 	return (
 		<div
-			className="pointer-events-none absolute left-1/2 z-30 flex max-w-[calc(100vw-1.5rem)] -translate-x-1/2 justify-center"
+			className="pointer-events-none absolute inset-x-0 z-30 flex justify-center"
 			style={{ bottom: `calc(100% + ${above + 10}px)` }}
 		>
 			{/* 收起只缩小下沉、不淡出：玻璃在 opacity < 1 时模糊会被截断，读起来像模糊忽有忽无 */}
 			{/* biome-ignore lint/a11y/noStaticElementInteractions: 悬停/聚焦时暂停自动淡出 */}
 			<div
-				className={`glass pop-in pointer-events-auto flex min-w-0 items-center rounded-full p-1 transition-[translate,scale] duration-[180ms] ease-out ${phase === "leaving" ? "translate-y-1 scale-95" : ""}`}
+				className={`glass pop-in pointer-events-auto flex min-w-0 max-w-full items-center rounded-full p-1 transition-[translate,scale] duration-[180ms] ease-out ${phase === "leaving" ? "translate-y-1 scale-95" : ""}`}
 				onPointerEnter={() => {
 					hovering.current = true;
 					clearTimeout(timer.current);
@@ -150,7 +156,7 @@ export function RoleRail({
 					ref={listRef}
 					role="radiogroup"
 					aria-label={t("roles.track")}
-					className="focus-inset relative flex min-w-0 items-center overflow-x-auto"
+					className="focus-inset relative flex min-w-0 items-center overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
 				>
 					<span
 						ref={plateRef}
@@ -161,7 +167,7 @@ export function RoleRail({
 					{slots.map((slot) => {
 						const on = slot.id === activeId;
 						return (
-							// biome-ignore lint/a11y/useSemanticElements: 胶囊里要放 logo 和滑块，原生 radio 画不出来；键盘与读屏语义由 role/aria-checked 提供
+							// biome-ignore lint/a11y/useSemanticElements: 胶囊里要放头像和滑块，原生 radio 画不出来；键盘与读屏语义由 role/aria-checked 提供
 							<button
 								key={slot.id}
 								type="button"
@@ -170,7 +176,7 @@ export function RoleRail({
 								aria-disabled={!slot.ok || undefined}
 								data-role={slot.id}
 								title={slot.title}
-								className={`role-tone relative z-10 inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full px-2.5 font-medium text-xs transition-colors duration-150 ${
+								className={`role-tone relative z-10 inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full pr-2.5 pl-1.5 font-medium text-xs transition-colors duration-150 ${
 									on
 										? "text-[var(--role-ink)]"
 										: slot.ok
@@ -182,12 +188,17 @@ export function RoleRail({
 									if (slot.ok && !on) onPick(slot.id);
 								}}
 							>
-								<ModelLogo
-									provider={slot.provider}
-									model={slot.model}
-									size={13}
-									className={slot.ok ? "" : "opacity-50"}
-								/>
+								<span
+									className={`inline-flex shrink-0 ${slot.ok ? "" : "opacity-50"}`}
+								>
+									<IdentityAvatar
+										identity={slot.avatar.identity}
+										of={slot.avatar.of}
+										glyph={slot.avatar.glyph}
+										size={18}
+										shape="circle"
+									/>
+								</span>
 								<span
 									key={on ? `on-${bump}` : "off"}
 									className={on ? "role-pop font-semibold" : ""}

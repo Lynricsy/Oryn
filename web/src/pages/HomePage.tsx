@@ -409,8 +409,7 @@ export function HomePage(): ReactNode {
 					id: r.role,
 					label: r.name,
 					hue: r.hue,
-					provider: r.model?.provider,
-					model: r.model?.id,
+					avatar: { identity: r.identity, of: r.of, glyph: r.glyph },
 					ok: r.role === "default" || !!r.selector,
 					title: r.model
 						? `${modelSelector(r.model)}${r.thinking ? `:${r.thinking}` : ""}`
