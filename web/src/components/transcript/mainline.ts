@@ -41,6 +41,11 @@ function autoText(it: TranscriptItem): string | null {
 	return parseOrynMessage(text) ? text : null;
 }
 
+/** 是否自动消息：控制面代发、不是主人亲手输入的 user 消息（转录里铺满正文列、不放用户头像）。 */
+export function isAutoMessage(it: TranscriptItem): boolean {
+	return autoText(it) !== null;
+}
+
 /** 助手消息里第一个 `stay_silent` 调用的理由；没有调用时为 undefined。 */
 function silentReason(message: JsonRecord): string | undefined {
 	if (!Array.isArray(message.content)) return undefined;

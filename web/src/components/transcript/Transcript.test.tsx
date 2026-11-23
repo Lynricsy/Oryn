@@ -117,6 +117,21 @@ describe("layoutTurns", () => {
 		expect([...userStarts]).toEqual([0, 3, 5]);
 	});
 
+	it("自动消息不放用户头像，紧随其后的主人消息照常放", () => {
+		const auto = (seq: number) =>
+			msg(seq, {
+				role: "user",
+				content: [
+					{
+						type: "text",
+						text: "[Oryn GitHub event on acme/widgets#12 — delivered automatically, not typed by the owner]\nCI failed",
+					},
+				],
+			});
+		const { userStarts } = layoutTurns([auto(1), user(2), auto(3)]);
+		expect([...userStarts]).toEqual([1]);
+	});
+
 	it("回合还在进行（最后一行是流式消息或运行中工具）时不挂脚注", () => {
 		const streaming = layoutTurns([
 			user(1),

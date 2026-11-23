@@ -72,7 +72,12 @@ import {
 	USER_BUBBLE_TEXT,
 	UserBubble,
 } from "./MessageView";
-import { foldMainline, type MainlineFold, type MainlineRow } from "./mainline";
+import {
+	foldMainline,
+	isAutoMessage,
+	type MainlineFold,
+	type MainlineRow,
+} from "./mainline";
 import { describeModeChange } from "./mode-change";
 import { type KnownModel, modelLabel } from "./model-label";
 import { NoticeLine } from "./NoticeLine";
@@ -260,8 +265,11 @@ function FoldRow({ fold }: { fold: MainlineFold }): ReactNode {
 					{fold.items
 						.filter((it) => !isSwitchRow(it))
 						.map((it) => (
-							<div key={it.key} className={isUserRow(it) ? "pr-10" : undefined}>
-								<ItemView item={it} turnStart={isUserRow(it)} />
+							<div
+								key={it.key}
+								className={isOwnerRow(it) ? "pr-10" : undefined}
+							>
+								<ItemView item={it} turnStart={isOwnerRow(it)} />
 							</div>
 						))}
 				</div>
@@ -329,6 +337,15 @@ function isUserRow(item: MainlineRow): boolean {
 	return item.kind === "message" && item.message.role === "user";
 }
 
+/** 主人亲手发的 user 消息：右侧气泡、让出头像列；自动消息（`isAutoMessage`）铺满正文列，不放用户头像。 */
+function isOwnerRow(item: MainlineRow): boolean {
+	return (
+		item.kind === "message" &&
+		item.message.role === "user" &&
+		!isAutoMessage(item)
+	);
+}
+
 /** 模型 / 思考级别切换行：回合头的模型胶囊与思考角标、输入坞已经显示了它们，不单独成行（主线折叠展开时同样）。 */
 function isSwitchRow(item: MainlineRow): boolean {
 	return (
@@ -371,7 +388,7 @@ function cachedTurnUsage(messages: readonly JsonRecord[]): TurnUsage {
  * 按回合（以用户消息 / 会话分隔为界）切分：每个回合的第一条 agent 行在内容上方单独放一行头像
  * （`models` 给出该回合的模型，作为头像旁的身份文字；`trails` 是同一条消息挂的模型来源轨迹，回合头据此定 role）；
  * 回合最后一行是已结束的助手消息时，在它下面挂整回合的累计用量脚注（回合仍在进行时不挂）。
- * 连续的用户消息只有第一条放用户头像（`userStarts`）。
+ * 连续的主人消息只有第一条放用户头像（`userStarts`）；自动消息不放，也不占掉其后主人消息的头像。
  * `openStart` 是最后一个助手回合的起点，且其后再没有用户消息 / 会话分隔（线程工作中时就是正在进行的回合）。
  * `hidden` 是模型 / 思考级别切换行：回合头的模型胶囊与思考角标、输入坞已经显示了它们，单独成行只是噪音；
  * 行照常参与上面的推导（各回合的思考级别取自其中的 thinking_level_change），只是不渲染。
@@ -418,7 +435,8 @@ export function layoutTurns(items: readonly MainlineRow[]): {
 		}
 		if (isUserRow(it)) {
 			const prev = items[i - 1];
-			if (prev === undefined || !isUserRow(prev)) userStarts.add(i);
+			if (isOwnerRow(it) && (prev === undefined || !isOwnerRow(prev)))
+				userStarts.add(i);
 			close();
 			openStart = undefined;
 			return;
@@ -1014,8 +1032,8 @@ export const Transcript = memo(function Transcript({
 				const item = v.index < rows.length ? rows[v.index] : undefined;
 				const turn = turns.footers.get(v.index);
 				const quote = mainline && turn ? turnFinalText(turn) : "";
-				// 会话分隔线与 agent 各块都铺满正文列；用户气泡右侧让出头像列（pr-10）
-				const userRow = item !== undefined && isUserRow(item);
+				// 会话分隔线、自动消息与 agent 各块都铺满正文列；主人的用户气泡右侧让出头像列（pr-10）
+				const userRow = item !== undefined && isOwnerRow(item);
 				return (
 					<div
 						key={v.key}

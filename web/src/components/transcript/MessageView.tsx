@@ -659,59 +659,84 @@ function UserMessage({
 			},
 		],
 	});
+	const badges = (irc || synthetic || steer || oryn) && (
+		<div
+			className={`flex max-w-full flex-wrap gap-1 ${oryn ? "" : "justify-end"}`}
+		>
+			{oryn && (
+				<Badge icon={ORYN_ICON[oryn.header.kind]} title={label}>
+					{label}
+				</Badge>
+			)}
+			{irc && (
+				<Badge icon="chats">
+					{t("transcript.ircFrom", { from: String(irc.from ?? "") })}
+				</Badge>
+			)}
+			{synthetic && <Badge icon="bolt">{t("transcript.synthetic")}</Badge>}
+			{steer && <Badge icon="send">{t("transcript.steer")}</Badge>}
+		</div>
+	);
+	const content = (
+		<>
+			{oryn?.report && oryn.header.kind === "report" && (
+				<ThreadReport
+					threadId={oryn.report.threadId}
+					title={oryn.report.title ?? oryn.header.title}
+					state={oryn.header.state}
+					content={oryn.report.content}
+					error={oryn.report.error}
+				/>
+			)}
+			{oryn?.automation && <AutomationResults items={oryn.automation} />}
+			{oryn?.research && <ResearchFindings items={oryn.research} />}
+			{quoted ? (
+				<>
+					<blockquote
+						data-testid="user-quote"
+						className={`${USER_QUOTE} ${quoted.rest ? "mb-1.5" : ""}`}
+					>
+						{quoted.quote}
+					</blockquote>
+					{quoted.rest && <div className={USER_BUBBLE_TEXT}>{quoted.rest}</div>}
+				</>
+			) : (
+				shown && <div className={USER_BUBBLE_TEXT}>{shown}</div>
+			)}
+			<Images content={message.content} />
+			<AttachmentChips attachments={attachments} />
+		</>
+	);
+	// 控制面代发的自动消息（GitHub 事件、定时运行、线程报告等）不是主人说的话：不用靠右的用户气泡与头像，
+	// 铺满正文列、虚线框（与扩展注入消息同一外观），来源标签放在框内
+	if (oryn)
+		return (
+			<div
+				ref={ctxRef}
+				className="group/msg flex flex-col items-start gap-1"
+				data-ask-scope="user"
+				data-testid="oryn-message"
+			>
+				<div
+					className={`w-full min-w-0 rounded-lg border border-border-strong border-dashed px-3.5 py-2.5 ${live ? "opacity-80" : ""}`}
+				>
+					<div className="mb-1.5">{badges}</div>
+					{content}
+				</div>
+				<MessageMenu entryId={entryId} copyText={() => text} />
+			</div>
+		);
 	return (
 		<div
 			ref={ctxRef}
 			className="group/msg flex flex-col items-end gap-1"
 			data-ask-scope="user"
 		>
-			{(irc || synthetic || steer || oryn) && (
-				<div className="flex max-w-full flex-wrap justify-end gap-1">
-					{oryn && (
-						<Badge icon={ORYN_ICON[oryn.header.kind]} title={label}>
-							{label}
-						</Badge>
-					)}
-					{irc && (
-						<Badge icon="chats">
-							{t("transcript.ircFrom", { from: String(irc.from ?? "") })}
-						</Badge>
-					)}
-					{synthetic && <Badge icon="bolt">{t("transcript.synthetic")}</Badge>}
-					{steer && <Badge icon="send">{t("transcript.steer")}</Badge>}
-				</div>
-			)}
+			{badges}
 			{!irc && <span className="sr-only">{t("transcript.you")}</span>}
 			{/* 别的 agent 经 irc 发来的消息不是「你」说的，不放用户头像 */}
 			<UserBubble avatar={turnStart && !irc} dim={live}>
-				{oryn?.report && oryn.header.kind === "report" && (
-					<ThreadReport
-						threadId={oryn.report.threadId}
-						title={oryn.report.title ?? oryn.header.title}
-						state={oryn.header.state}
-						content={oryn.report.content}
-						error={oryn.report.error}
-					/>
-				)}
-				{oryn?.automation && <AutomationResults items={oryn.automation} />}
-				{oryn?.research && <ResearchFindings items={oryn.research} />}
-				{quoted ? (
-					<>
-						<blockquote
-							data-testid="user-quote"
-							className={`${USER_QUOTE} ${quoted.rest ? "mb-1.5" : ""}`}
-						>
-							{quoted.quote}
-						</blockquote>
-						{quoted.rest && (
-							<div className={USER_BUBBLE_TEXT}>{quoted.rest}</div>
-						)}
-					</>
-				) : (
-					shown && <div className={USER_BUBBLE_TEXT}>{shown}</div>
-				)}
-				<Images content={message.content} />
-				<AttachmentChips attachments={attachments} />
+				{content}
 			</UserBubble>
 			<MessageMenu entryId={entryId} copyText={() => text} />
 		</div>
