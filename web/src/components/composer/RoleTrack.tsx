@@ -408,14 +408,26 @@ export function requestRole(threadId: string, slot: RoleSlot) {
 	void drain(threadId);
 }
 
+/** `fetchRoleData` 能不等网络直接拿到全部数据（过期的也算）。 */
+function roleDataCached(qc: QueryClient, threadId: string): boolean {
+	const roles = qc.getQueryData<RolesData>(rpcKey(threadId, ROLES_FRAME));
+	if (!roles) return false;
+	if (qc.getQueryData(rpcKey(threadId, SETTINGS_FRAME)) === undefined)
+		return false;
+	return (
+		!needsModels(roles.roles ?? []) ||
+		qc.getQueryData(modelCatalogQuery().queryKey) !== undefined
+	);
+}
+
 /** 按方向切到下一个可用角色（omp `cycleRoleModels`）。 */
 export async function cycleRole(
 	qc: QueryClient,
 	threadId: string,
 	dir: 1 | -1,
 ) {
-	// 还没有缓存时要等请求：先把轨道浮出来（显示占位），按键立刻有反馈
-	if (qc.getQueryData(rpcKey(threadId, ROLES_FRAME)) === undefined)
+	// 按键要等的数据（角色、cycleOrder、需要时的模型目录）有任何一样没缓存：先把轨道浮出来（显示占位），按键立刻有反馈
+	if (!roleDataCached(qc, threadId))
 		patchThread(threadId, (s) => ({ flash: s.flash + 1, message: undefined }));
 	let data: RoleData;
 	try {

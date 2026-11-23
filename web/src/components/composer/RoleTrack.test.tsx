@@ -316,6 +316,37 @@ describe("Ctrl+P 角色轮换", () => {
 			level: "high",
 		});
 	});
+
+	it("角色数据已缓存、模型目录还在请求：按一次就浮出轨道，不等目录", async () => {
+		// default 的 `@Cyrene` 没有 `selected`，要读模型目录解析：目录请求一直挂起
+		vi.stubGlobal("fetch", () => new Promise<Response>(() => undefined));
+		const qc = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		qc.setQueryData(
+			["rpc", T, { type: "get_settings", paths: ["cycleOrder"] }],
+			{ values: { cycleOrder: ["Hyacinthia", "Nahida", "Mare", "Cyrene"] } },
+		);
+		qc.setQueryData(["rpc", T, { type: "get_model_roles" }], {
+			roles: ROLES,
+		});
+		render(
+			<QueryClientProvider client={qc}>
+				<MemoryRouter>
+					<div className="glass">
+						<Composer threadId={T} />
+					</div>
+				</MemoryRouter>
+			</QueryClientProvider>,
+		);
+		await act(async () => {
+			fireEvent.keyDown(window, { key: "p", ctrlKey: true });
+		});
+		expect(
+			screen.getByRole("radiogroup", { name: i18n.t("roles.track") }),
+		).toBeTruthy();
+		expect(framesOf("oryn_select_model")).toEqual([]);
+	});
 });
 
 describe("模型对话框里的角色列表", () => {
