@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+	within,
+} from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Orb, Thread } from "../../api/client";
@@ -120,9 +126,9 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
 	return Response.json({ code: "not_found", message: "" }, { status: 404 });
 });
 
-function setup(o: Orb, t: Thread = thread(), running = false) {
+function setup(o: Orb, t: Thread = thread()) {
 	indexStore.getState().upsertOrb(o);
-	getThreadStore(TID).getState().patchLocal({ thread: t, running });
+	getThreadStore(TID).getState().patchLocal({ thread: t });
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false } },
 	});
@@ -152,34 +158,30 @@ describe("环境提示条", () => {
 		vi.restoreAllMocks();
 	});
 
-	it("setup 失败：显示错误，「让 agent 修复」以 prompt 发送带日志尾部的提示词", async () => {
+	it("setup 失败：「新开线程修复」带日志尾部在新 orb 上建线程，不打扰正在工作的当前线程", async () => {
 		const cmd = vi.spyOn(realtime, "cmd").mockResolvedValue(undefined);
-		setup(orb({ lastSetup: run() }));
+		setup(orb({ lastSetup: run() }), thread({ state: "working" }));
 		expect(screen.getByText("环境 setup 失败")).toBeInTheDocument();
 		expect(screen.getByText("apt-get 退出码 100")).toBeInTheDocument();
-		fireEvent.click(screen.getByRole("button", { name: /让 agent 修复/ }));
-		await waitFor(() => expect(cmd).toHaveBeenCalledTimes(1));
-		const [tid, frame] = cmd.mock.calls[0] ?? [];
-		expect(tid).toBe(TID);
-		if (frame?.type !== "prompt")
-			throw new Error(`应为 prompt：${frame?.type}`);
-		const message = frame.message;
-		expect(message).toContain("oryn-setup");
-		expect(message).toContain("apt-get 退出码 100");
-		expect(message).toContain("log-100");
-		expect(message).toContain("log-21\n");
-		expect(message).not.toContain("log-20\n");
-		expect(
-			await screen.findByRole("button", { name: /已交给 agent/ }),
-		).toBeDisabled();
-	});
-
-	it("agent 忙时改为排队（follow_up），不打断当前工作", async () => {
-		const cmd = vi.spyOn(realtime, "cmd").mockResolvedValue(undefined);
-		setup(orb({ lastSetup: run() }), thread({ state: "working" }), true);
-		fireEvent.click(screen.getByRole("button", { name: /让 agent 修复/ }));
-		await waitFor(() => expect(cmd).toHaveBeenCalledTimes(1));
-		expect(cmd.mock.calls[0]?.[1]).toMatchObject({ type: "follow_up" });
+		fireEvent.click(screen.getByRole("button", { name: /新开线程修复/ }));
+		await waitFor(() => expect(screen.queryByTestId("env-banner")).toBeNull());
+		expect(cmd).not.toHaveBeenCalled();
+		expect(created).toHaveLength(1);
+		expect(created[0]).toMatchObject({
+			projectId: "prj_1",
+			executor: { kind: "new_orb" },
+			browserProfileId: "",
+			title: "修复环境配置",
+		});
+		const { prompt } = created[0] as { prompt: string };
+		expect(prompt).toContain("oryn-setup");
+		expect(prompt).toContain("apt-get 退出码 100");
+		expect(prompt).toContain("log-100");
+		expect(prompt).toContain("log-21\n");
+		expect(prompt).not.toContain("log-20\n");
+		// 新 orb 的 setup 多半同样失败：新线程里不再提示去开修复线程
+		expect(loadDismissed("T-env-gen").has("run_failed")).toBe(true);
+		expect(toastsStore.getState().toasts[0]?.text).toContain("修复环境配置");
 	});
 
 	it("关闭后按运行记录记住；同一线程出现新的失败记录时再次显示", () => {
@@ -204,6 +206,18 @@ describe("环境提示条", () => {
 				urlOf(u).endsWith(`/orbs/${ORB}/setup-runs/osr_log/log`),
 			),
 		).toBe(true);
+	});
+
+	it("日志对话框里「新开线程修复」：同样新建线程，关闭对话框，提示条随之收起", async () => {
+		setup(orb({ lastSetup: run({ id: "osr_dlg" }) }));
+		fireEvent.click(screen.getByRole("button", { name: /查看日志/ }));
+		const dialog = await screen.findByRole("dialog");
+		fireEvent.click(
+			within(dialog).getByRole("button", { name: /新开线程修复/ }),
+		);
+		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+		expect(created).toHaveLength(1);
+		expect(screen.queryByTestId("env-banner")).toBeNull();
 	});
 
 	it("失败原因：按退出码与日志尾部写出「哪一步、为什么」和下一步建议，原文留在日志对话框里", async () => {

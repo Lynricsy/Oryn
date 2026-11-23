@@ -16,6 +16,7 @@ import {
 	type FailureBanner,
 	isFailureBanner,
 	loadDismissed,
+	onDismissedChange,
 	type SetupRun,
 	selectEnvBanner,
 } from "../../lib/env-banner";
@@ -27,7 +28,6 @@ import {
 import {
 	createThread,
 	fetchSetupRunLog,
-	sendGeneratedPrompt,
 	wakeThread,
 } from "../../state/actions";
 import { useThread } from "../../state/stores";
@@ -49,14 +49,17 @@ import { InfoRow, InfoTag, InfoTags, useExpandedKey } from "./info-parts";
 import { useOrbOf } from "./ThreadHeader";
 
 type AgentBanner = Exclude<EnvBannerData, FailureBanner>;
-type MissingConfigBanner = Extract<AgentBanner, { kind: "missing_config" }>;
 
+/** 线程所属项目：`id` 直接取线程 / orb 上的（总能拿到），`project` 要等项目列表加载。 */
 function useProjectOf(threadId: string) {
 	const projectId = useThread(threadId, (s) => s.thread?.projectId);
 	const orbProjectId = useOrbOf(threadId)?.projectId;
 	const projects = useProjects();
 	const id = projectId ?? orbProjectId;
-	return id ? projects.data?.projects.find((p) => p.id === id) : undefined;
+	return {
+		id,
+		project: id ? projects.data?.projects.find((p) => p.id === id) : undefined,
+	};
 }
 
 /**
@@ -122,15 +125,26 @@ function useRunLog(orbId: string | undefined, run: SetupRun | undefined) {
 	});
 }
 
-/** 「让 agent 修复 / 优化」：取日志尾部、拼提示词、按忙闲以 prompt / follow_up 发到当前线程。 */
-function useAskAgent(threadId: string) {
+const THREAD_TITLE = {
+	run_failed: "env.fixTitle",
+	slow_setup: "env.optimizeTitle",
+	missing_config: "env.generateTitle",
+} as const;
+
+/**
+ * 「新开线程修复 / 优化 / 生成」：在同一项目的新 orb 上建一条可见线程，带提示词（失败 / 过慢时附本 orb 该次运行的日志尾部）
+ * 在后台处理，不占用、也不跳离当前线程——当前线程可能正在做别的事，工作区也可能不干净；新 orb 从干净检出起步，正好复现与验证。
+ * 建好后当前线程的这条提示随即关闭，轻提示给出「打开线程」；新线程里同类提示整类预先关掉：它正在做这件事，不该再提示用户去开线程。
+ */
+function useStartEnvThread(threadId: string) {
 	const { t } = useTranslation();
 	const qc = useQueryClient();
+	const navigate = useNavigate();
 	const orbId = useOrbOf(threadId)?.id;
-	const project = useProjectOf(threadId);
-	return async (banner: Exclude<AgentBanner, MissingConfigBanner>) => {
+	const { id: projectId, project } = useProjectOf(threadId);
+	return async (banner: AgentBanner) => {
 		let log = "";
-		if (orbId) {
+		if (banner.kind !== "missing_config" && orbId) {
 			const runId = banner.run.id;
 			try {
 				log = await qc.fetchQuery({
@@ -142,34 +156,27 @@ function useAskAgent(threadId: string) {
 				log = `（获取日志失败：${describeError(e, t)}）`;
 			}
 		}
-		await sendGeneratedPrompt(
-			threadId,
-			buildEnvPrompt(banner, log, project?.baseBranch),
-		);
-	};
-}
-
-/**
- * 「新开线程生成」环境配置：在同一项目的新 orb 上建一条可见线程，在后台调查仓库、写出并推送 `.oryn/setup`，
- * 不占用、也不跳离当前线程（当前线程可能正在做别的事，工作区也可能不干净）。
- * 新线程里「还没有环境配置」整类预先关掉：它正在做这件事，不该再提示用户去生成。
- */
-function useGenerateInNewThread(threadId: string) {
-	const { t } = useTranslation();
-	const project = useProjectOf(threadId);
-	return async (banner: MissingConfigBanner) => {
-		const prompt = buildEnvPrompt(banner, "", project?.baseBranch);
+		const prompt = buildEnvPrompt(banner, log, project?.baseBranch);
+		const title = t(THREAD_TITLE[banner.kind]);
 		const thread = await createThread({
-			projectId: project?.id,
+			// 项目列表未加载时 project 为空，项目 id 仍取线程 / orb 上的，不能漏掉
+			projectId,
 			prompt,
 			executor: { kind: "new_orb" },
-			title: t("env.generateTitle"),
-			// 写 setup 用不到浏览器；省略会继承项目默认 Profile，当前 orb 正独占它时建线程会被拒（profile_in_use）
+			title,
+			// 改 setup 用不到浏览器；省略会继承项目默认 Profile，当前 orb 正独占它时建线程会被拒（profile_in_use）
 			browserProfileId: "",
 		});
 		addPendingPrompt(thread.id, prompt);
 		dismissBanner(thread.id, banner.kind);
-		return thread;
+		dismissBanner(threadId, banner.key);
+		showToast({
+			text: t("env.threadStarted", { title }),
+			action: {
+				label: t("env.openThread"),
+				run: () => navigate(`/t/${thread.id}`),
+			},
+		});
 	};
 }
 
@@ -236,13 +243,17 @@ export function EnvBanner({ threadId }: { threadId: string }): ReactNode {
 	const { t } = useTranslation();
 	const thread = useThread(threadId, (s) => s.thread);
 	const orb = useOrbOf(threadId);
-	const project = useProjectOf(threadId);
-	const ask = useAskAgent(threadId);
-	const generate = useGenerateInNewThread(threadId);
-	const navigate = useNavigate();
+	const { project } = useProjectOf(threadId);
+	const startThread = useStartEnvThread(threadId);
 	const [dismissed, setDismissed] = useState(() => loadDismissed(threadId));
+	useEffect(
+		() =>
+			onDismissedChange((id, next) => {
+				if (id === threadId) setDismissed(next);
+			}),
+		[threadId],
+	);
 	const [pending, setPending] = useState<string | null>(null);
-	const [sent, setSent] = useState<string | null>(null);
 	const [error, setError] = useState<unknown>(null);
 	const banner = selectEnvBanner({ thread, orb, project }, dismissed);
 	const failedRun = banner?.kind === "run_failed" ? banner.run : undefined;
@@ -255,14 +266,12 @@ export function EnvBanner({ threadId }: { threadId: string }): ReactNode {
 		setError(null);
 		try {
 			await fn();
-			setSent(key);
 		} catch (e) {
 			setError(e);
 		} finally {
 			setPending(null);
 		}
 	};
-	const dismiss = () => setDismissed(dismissBanner(threadId, banner.key));
 
 	if (isFailureBanner(banner)) {
 		// agent 没能启动时同样走 wake：orb 就绪时它直接重新 agent.start（例如 runner 改了服务目录之后）
@@ -319,28 +328,12 @@ export function EnvBanner({ threadId }: { threadId: string }): ReactNode {
 			: banner.kind === "slow_setup"
 				? t("env.slowHint")
 				: t("env.missingHint");
-	const wasSent = sent === banner.key;
-	const askAgent =
-		banner.kind === "missing_config"
-			? async () => {
-					const created = await generate(banner);
-					// 留在当前线程：提示条随即消失，新线程在侧栏里可见，轻提示给出入口
-					dismiss();
-					showToast({
-						text: t("env.generateStarted"),
-						action: {
-							label: t("env.openThread"),
-							run: () => navigate(`/t/${created.id}`),
-						},
-					});
-				}
-			: () => ask(banner);
 	return (
 		<BannerShell
 			tone={banner.kind === "run_failed" ? "err" : "warn"}
 			title={title}
 			detail={detail}
-			onDismiss={dismiss}
+			onDismiss={() => dismissBanner(threadId, banner.key)}
 			actions={
 				<>
 					{banner.kind !== "missing_config" && (
@@ -351,12 +344,12 @@ export function EnvBanner({ threadId }: { threadId: string }): ReactNode {
 					<Button
 						size="sm"
 						variant="primary"
-						icon={wasSent ? "check" : "sparkle"}
-						disabled={pending !== null || wasSent}
-						onClick={() => void act(banner.key, askAgent)}
+						icon="sparkle"
+						disabled={pending !== null}
+						onClick={() => void act(banner.key, () => startThread(banner))}
 					>
 						{pending === banner.key ? <Spinner size={12} /> : null}
-						{wasSent ? t("env.sent") : askLabel}
+						{askLabel}
 					</Button>
 					<ErrorText error={error} />
 				</>
@@ -413,7 +406,7 @@ export function SetupLogDialog({
 }): ReactNode {
 	const { t } = useTranslation();
 	const [resultTone, resultKey] = runResult(run);
-	const ask = useAskAgent(threadId);
+	const startThread = useStartEnvThread(threadId);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<unknown>(null);
 	const log = useQuery({
@@ -447,7 +440,7 @@ export function SetupLogDialog({
 								setBusy(true);
 								setError(null);
 								try {
-									await ask({
+									await startThread({
 										kind: "run_failed",
 										key: `failed:${run.id}`,
 										run,

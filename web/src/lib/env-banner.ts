@@ -125,7 +125,22 @@ export function loadDismissed(threadId: string): Set<string> {
 	}
 }
 
-export function dismissBanner(threadId: string, key: string): Set<string> {
+/**
+ * 关闭记录变化的订阅者：提示条与日志对话框里的操作都会关闭提示，提示条据此刷新。
+ * 带上新集合而不是让订阅者重读存储：存储不可用时也能按内存状态关闭。
+ */
+const dismissListeners = new Set<
+	(threadId: string, dismissed: Set<string>) => void
+>();
+
+export function onDismissedChange(
+	fn: (threadId: string, dismissed: Set<string>) => void,
+): () => void {
+	dismissListeners.add(fn);
+	return () => dismissListeners.delete(fn);
+}
+
+export function dismissBanner(threadId: string, key: string): void {
 	const next = [...loadDismissed(threadId)].filter((k) => k !== key);
 	next.push(key);
 	const kept = next.slice(-MAX_DISMISSED);
@@ -134,7 +149,7 @@ export function dismissBanner(threadId: string, key: string): Set<string> {
 	} catch {
 		// 存储不可用（隐私模式 / 配额满）：本次会话内仍按内存状态关闭
 	}
-	return new Set(kept);
+	for (const fn of dismissListeners) fn(threadId, new Set(kept));
 }
 
 // ---------------------------------------------------------------- 提示词
@@ -160,7 +175,10 @@ function logBlock(log: string): string {
 	return `\`\`\`\`text\n${tail}\n\`\`\`\``;
 }
 
-/** 「让 agent 修复 / 优化 / 生成」发送的提示词（中文；点名 `oryn-setup` 技能）。 */
+/**
+ * 「新开线程修复 / 优化 / 生成」新线程的首条提示词（中文；点名 `oryn-setup` 技能）。
+ * 新线程跑在同一项目新建的 orb 上，失败 / 过慢的记录来自另一台 orb，提示词据此措辞。
+ */
 export function buildEnvPrompt(
 	banner: Exclude<EnvBanner, FailureBanner>,
 	log: string,
@@ -172,7 +190,7 @@ export function buildEnvPrompt(
 		case "run_failed": {
 			const phase = run.phase;
 			return [
-				`这台 orb 的环境配置在 **${phase}** 阶段失败了（触发方式：${run.trigger === "manual" ? "手动重跑" : "自动"}，耗时 ${minutes(run.durationMs)} 分钟）。`,
+				`这个项目的 orb 环境配置在 **${phase}** 阶段失败了（另一台 orb 上的记录；触发方式：${run.trigger === "manual" ? "手动重跑" : "自动"}，耗时 ${minutes(run.durationMs)} 分钟）。你在同一项目新建的 orb 里，它的 setup 已自动跑过一次，可用 \`oryn orb setup status\` 查看本机结果。`,
 				"",
 				`错误：${run.error || "（未给出错误信息）"}`,
 				"",
@@ -185,7 +203,7 @@ export function buildEnvPrompt(
 		}
 		case "slow_setup":
 			return [
-				`这台 orb 的 setup 耗时 ${minutes(run.durationMs)} 分钟，太慢了。`,
+				`这个项目的 orb setup 耗时 ${minutes(run.durationMs)} 分钟（另一台 orb 上的记录），太慢了。你在同一项目新建的 orb 里，可用 \`oryn orb setup status\` 对照本机这次的耗时。`,
 				"",
 				`setup 日志最后 ${LOG_TAIL_LINES} 行：`,
 				logBlock(log),
