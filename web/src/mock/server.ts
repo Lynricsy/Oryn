@@ -724,8 +724,8 @@ export class MockServer {
 		{ start: number; chars: number }
 	>();
 	private termSeq = 0;
-	/** `switch_leaf` 移过的活动叶子（null = 会话开头）；没移过的线程以最后一条会话条目为叶子。 */
-	private readonly leaves = new Map<string, string | null>();
+	/** `switch_leaf` 移过的活动叶子（"" = 空分支，回退到了第一条消息之前）；没移过的线程以最后一条会话条目为叶子。 */
+	private readonly leaves = new Map<string, string>();
 	/** 消息附件（控制面副本）：id → 元数据与内容。 */
 	readonly attachments = new Map<
 		string,
@@ -3332,13 +3332,13 @@ export class MockServer {
 			seq: (list[list.length - 1]?.seq ?? 0) + 1,
 			file: SESSION_FILE,
 			entryId: id,
-			parentId: leaf,
+			parentId: leaf || undefined,
 			type,
 			ts,
 			payload: {
 				type,
 				id,
-				parentId: leaf ?? null,
+				parentId: leaf || null,
 				timestamp: new Date(ts).toISOString(),
 				...body,
 			},
@@ -3363,10 +3363,10 @@ export class MockServer {
 		);
 	}
 
-	/** 线程的活动叶子：`switch_leaf` 移动过就按它（null = 回到会话开头），否则是最后一条会话条目。 */
+	/** 线程的活动叶子（同 orynd 的 `leafEntryId`）：`switch_leaf` 移动过就按它（"" = 空分支），否则是最后一条会话条目。 */
 	private leafOf(threadId: string, list: readonly Entry[]): string | undefined {
-		if (this.leaves.has(threadId))
-			return this.leaves.get(threadId) ?? undefined;
+		const moved = this.leaves.get(threadId);
+		if (moved !== undefined) return moved;
 		return [...list].reverse().find((e) => !e.entryId.startsWith("__"))
 			?.entryId;
 	}
@@ -4133,7 +4133,7 @@ export class MockServer {
 					});
 				return this.respond(socket, threadId, id, type, {
 					tree,
-					activeLeafId: leaf ?? null,
+					activeLeafId: leaf || null,
 				});
 			}
 			// 同 Core 的 navigateTree：目标是用户消息时叶子移到它的父条目，原文与图片带回输入框；否则叶子移到目标
@@ -4150,10 +4150,11 @@ export class MockServer {
 					);
 				const m = (target.payload as Json).message as Json | undefined;
 				const user = target.type === "message" && m?.role === "user";
-				const leaf = user ? (target.parentId ?? null) : target.entryId;
+				// 根上的用户消息没有父条目：空分支（Core 此时省略 activeLeafId，orynd 记为 ""）
+				const leaf = user ? (target.parentId ?? "") : target.entryId;
 				this.leaves.set(threadId, leaf);
 				const t = this.threads.get(threadId);
-				if (t) this.upsertThread({ ...t, leafEntryId: leaf ?? undefined });
+				if (t) this.upsertThread({ ...t, leafEntryId: leaf });
 				const images =
 					user && m && Array.isArray(m.content)
 						? (m.content as Json[]).filter((b) => b?.type === "image")
