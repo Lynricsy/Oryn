@@ -368,7 +368,7 @@ HTML 类内容放进不执行脚本、不发网络请求的沙箱帧。
 
 助手进程仍留在协调宿主沙箱里，经 `computer_bash`、`computer_read` / `computer_write` / `computer_edit`、`computer_grep` / `computer_glob` / `computer_find`、`computer_ast_grep` / `computer_ast_edit`、`computer_eval`、`computer_lsp`、`computer_wait` 遥控 orb 里一个不调模型的 omp 工具执行器（Oryn Core 的 `oryn_tool_*` RPC）。输出流式回传，图片原样到达，取消会传到 orb 里；`computer_upload` / `computer_download` 在电脑与文件库之间搬文件，`computer_record`（`{action: "start" | "stop"}`）录制电脑桌面并在停止后存入文件库（上限同 `computer_download`，超过则留在电脑的 `$HOME/recordings/` 下，控制联动与限制见[远程桌面与人机控制](#远程桌面与人机控制)）。这些工具的卡片与对应的普通工具相同。
 
-`/assistant/computer` 页面可以查看状态，唤醒、暂停或重置（删除后下次用到时重建），浏览文件，在「桌面」页签里通过共用任务栏查看、操作或接管远程桌面。provider 与类型在「设置 → 全局助手」里选。
+`/assistant/computer` 页面的页头一行装下状态、页签与电源钮（就绪时暂停、冻结或停机时唤醒），更多菜单里可以复制 orb ID 或重置（删除后下次用到时重建）。三个页签铺满页头以下的空间，上次停留的页签会记住：「概览」显示规格、CPU / 内存曲线、最近 24 小时的状态时间线、工具是否就绪、助手与你最近使用的时间、镜像与版本；「桌面」通过共用任务栏查看、操作或接管远程桌面；「文件」浏览电脑里的文件。provider 与类型在「设置 → 全局助手」里选。
 
 ### 定时任务
 

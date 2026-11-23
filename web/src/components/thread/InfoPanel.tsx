@@ -16,7 +16,12 @@ import {
 	useRunnerOfOrb,
 	useServiceAction,
 } from "../../api/queries";
-import { formatMemoryMB, formatPercent, formatTokens } from "../../lib/format";
+import {
+	formatMemoryMB,
+	formatPercent,
+	formatTokens,
+	formatUptime,
+} from "../../lib/format";
 import { keyed } from "../../lib/keys";
 import { contentTabs } from "../../lib/orb-features";
 import type { ResponseData, TodoItem, TodoPhase } from "../../omp/types";
@@ -37,18 +42,19 @@ import { ListRow, Meter, type Tone, thresholdTone } from "../ui/data";
 import { Icon, type IconName } from "../ui/icons";
 import { DockerBadge } from "../ui/OrbBadges";
 import { OrbEmblem } from "../ui/OrbEmblem";
-import {
-	Button,
-	ErrorText,
-	IconButton,
-	Sparkline,
-	Spinner,
-} from "../ui/primitives";
+import { Button, ErrorText, IconButton, Spinner } from "../ui/primitives";
 import { CapabilitiesRow } from "./CapabilitiesSection";
 import { ContextBar, ContextLegend, useContextParts } from "./ContextBreakdown";
 import { openSubagent, useSubagentTree } from "./Dialogs";
 import { EnvRow } from "./EnvBanner";
-import { InfoBlock, InfoGroup, InfoLink } from "./info-parts";
+import {
+	BigValue,
+	InfoBlock,
+	InfoGroup,
+	InfoLink,
+	OrbMetricTiles,
+	Spec,
+} from "./info-parts";
 import {
 	faultyServices,
 	ServiceLogDialog,
@@ -77,101 +83,6 @@ function EmptyLine({
 			{children}
 		</p>
 	);
-}
-
-/** 规格的一项：图标 + 值，不加底。 */
-function Spec({
-	icon,
-	className = "",
-	children,
-}: {
-	icon: IconName;
-	className?: string;
-	children: ReactNode;
-}) {
-	return (
-		<span
-			className={`inline-flex min-w-0 items-center gap-1.5 whitespace-nowrap ${className}`}
-		>
-			<Icon name={icon} size={14} aria-hidden className="shrink-0 text-faint" />
-			{children}
-		</span>
-	);
-}
-
-/** 大号读数：数字用大字，单位（%、GB）与 `suffix` 小一号灰字。 */
-function BigValue({
-	value,
-	suffix,
-	className = "",
-}: {
-	value: string;
-	suffix?: string;
-	className?: string;
-}) {
-	const m = /^([\d.,]+)\s*(.*)$/.exec(value);
-	const unit = [m?.[2], suffix].filter(Boolean).join(" ");
-	return (
-		<div className={`font-semibold tabular-nums tracking-tight ${className}`}>
-			{m ? m[1] : value}
-			{unit && (
-				<small className="ml-0.5 font-semibold text-faint text-sm tracking-normal">
-					{unit}
-				</small>
-			)}
-		</div>
-	);
-}
-
-/** 迷你曲线：CPU 用强调色、内存用成功色，越过阈值改染警告 / 错误色。 */
-function chartTone(tone: Tone, base: string): string {
-	if (tone === "warn") return "text-warn";
-	if (tone === "err") return "text-err";
-	return base;
-}
-
-/** CPU / 内存小块：标题、大号读数，面积曲线铺满下半部、贴住块底边（颜色由 `className` 的文字色决定）。 */
-function MetricTile({
-	icon,
-	label,
-	value,
-	suffix,
-	chart,
-	className,
-}: {
-	icon: IconName;
-	label: string;
-	value: string;
-	suffix?: string;
-	chart: ReactNode;
-	className: string;
-}) {
-	return (
-		<InfoBlock icon={icon} title={label} className="h-28 pt-3 pb-0">
-			<BigValue
-				value={value}
-				suffix={suffix}
-				className="relative z-[1] mt-1 text-2xl leading-8"
-			/>
-			<div className={`absolute inset-x-0 bottom-0 ${className}`}>{chart}</div>
-		</InfoBlock>
-	);
-}
-
-/** 已运行时长：只取最大单位（47 分钟 / 3 小时 / 2 天），单位文字交给 Intl 按界面语言给出。 */
-function formatUptime(ms: number, lang: string): string {
-	const min = Math.max(1, Math.floor(ms / 60_000));
-	const [n, unit] =
-		min < 60
-			? [min, "minute"]
-			: min < 1440
-				? [Math.floor(min / 60), "hour"]
-				: [Math.floor(min / 1440), "day"];
-	return new Intl.NumberFormat(lang, {
-		style: "unit",
-		unit,
-		unitDisplay: "long",
-	}).format(n);
 }
 
 /** 分组收起状态（`uiStore.collapsedCards`，所有线程共用并存 localStorage）。 */
@@ -545,13 +456,6 @@ function OrbSection({ threadId }: { threadId: string }) {
 	}
 	const runner = orb.kind === "runner";
 	const samples = metrics.data?.samples ?? [];
-	const last = samples[samples.length - 1];
-	const cpuTone = last ? thresholdTone(last.cpuPct) : "neutral";
-	const memLimit = last?.memLimitMB ?? 0;
-	const memTone =
-		last && memLimit > 0
-			? thresholdTone((last.memUsedMB / memLimit) * 100)
-			: "neutral";
 	const uptime =
 		orb.state === "ready" && orb.stateChangedAt
 			? formatUptime(Date.now() - orb.stateChangedAt, i18n.language)
@@ -623,39 +527,7 @@ function OrbSection({ threadId }: { threadId: string }) {
 				/>
 				<OrbSpecs threadId={threadId} orb={orb} />
 			</InfoBlock>
-			{orb.state !== "deleted" && (
-				<div className="grid grid-cols-2 gap-2">
-					<MetricTile
-						icon="cpu"
-						label={t("panel.cpu")}
-						value={last ? formatPercent(last.cpuPct) : "—"}
-						className={chartTone(cpuTone, "text-accent")}
-						chart={
-							<Sparkline
-								values={samples.map((s) => s.cpuPct)}
-								max={100}
-								label={t("panel.cpuChart")}
-								className="h-12!"
-							/>
-						}
-					/>
-					<MetricTile
-						icon="memory"
-						label={t("panel.memory")}
-						value={last ? formatMemoryMB(last.memUsedMB) : "—"}
-						suffix={memLimit > 0 ? `/ ${formatMemoryMB(memLimit)}` : undefined}
-						className={chartTone(memTone, "text-ok")}
-						chart={
-							<Sparkline
-								values={samples.map((s) => s.memUsedMB)}
-								max={memLimit || undefined}
-								label={t("panel.memChart")}
-								className="h-12!"
-							/>
-						}
-					/>
-				</div>
-			)}
+			{orb.state !== "deleted" && <OrbMetricTiles samples={samples} />}
 		</>
 	);
 }

@@ -3,12 +3,17 @@
  * - `InfoBlock`：无描边的浅色块（orb、CPU / 内存、上下文），块里不再套第二层底色；
  * - `InfoGroup`：直接铺在纸面上的列表分组（待办、子 agent），标题可折叠，箭头在标题之后；
  * - `InfoRow`：纸面上的入口行（服务、环境、能力、SSH 主机），右侧状态标签，点开在行下展开详情；
- * - `InfoLink`：纸面上只做跳转的入口行（浏览器 Profile、报告与旁路提问）。
+ * - `InfoLink`：纸面上只做跳转的入口行（浏览器 Profile、报告与旁路提问）；
+ * - `Spec` / `BigValue` / `OrbMetricTiles`：orb 规格项、大号读数与 CPU / 内存小块（线程信息面板与助手的电脑共用）。
  */
 import { type ReactNode, useId, useRef } from "react";
+import { useTranslation } from "react-i18next";
+import type { Schemas } from "../../api/client";
+import { formatMemoryMB, formatPercent } from "../../lib/format";
 import { uiStore, useUi } from "../../state/ui";
-import type { Tone } from "../ui/data";
+import { type Tone, thresholdTone } from "../ui/data";
 import { Icon, type IconName } from "../ui/icons";
+import { Sparkline } from "../ui/primitives";
 
 /** 入口行的展开状态：默认收起（展开才查询的小节就靠它），`collapsedCards` 里记「已展开」标记，键名以 `:expanded` 结尾。 */
 export function useExpandedKey(key: `${string}:expanded`) {
@@ -289,6 +294,134 @@ export function InfoLink({
 	) : (
 		<div data-testid={testId} className={ROW}>
 			{body}
+		</div>
+	);
+}
+
+/** 规格的一项：图标 + 值，不加底。 */
+export function Spec({
+	icon,
+	className = "",
+	children,
+}: {
+	icon: IconName;
+	className?: string;
+	children: ReactNode;
+}): ReactNode {
+	return (
+		<span
+			className={`inline-flex min-w-0 items-center gap-1.5 whitespace-nowrap ${className}`}
+		>
+			<Icon name={icon} size={14} aria-hidden className="shrink-0 text-faint" />
+			{children}
+		</span>
+	);
+}
+
+/** 大号读数：数字用大字，单位（%、GB）与 `suffix` 小一号灰字。 */
+export function BigValue({
+	value,
+	suffix,
+	className = "",
+}: {
+	value: string;
+	suffix?: string;
+	className?: string;
+}): ReactNode {
+	const m = /^([\d.,]+)\s*(.*)$/.exec(value);
+	const unit = [m?.[2], suffix].filter(Boolean).join(" ");
+	return (
+		<div className={`font-semibold tabular-nums tracking-tight ${className}`}>
+			{m ? m[1] : value}
+			{unit && (
+				<small className="ml-0.5 font-semibold text-faint text-sm tracking-normal">
+					{unit}
+				</small>
+			)}
+		</div>
+	);
+}
+
+/** 迷你曲线：CPU 用强调色、内存用成功色，越过阈值改染警告 / 错误色。 */
+function chartTone(tone: Tone, base: string): string {
+	if (tone === "warn") return "text-warn";
+	if (tone === "err") return "text-err";
+	return base;
+}
+
+/** CPU / 内存小块：标题、大号读数，面积曲线铺满下半部、贴住块底边（颜色由 `className` 的文字色决定）。 */
+function MetricTile({
+	icon,
+	label,
+	value,
+	suffix,
+	chart,
+	className,
+}: {
+	icon: IconName;
+	label: string;
+	value: string;
+	suffix?: string;
+	chart: ReactNode;
+	className: string;
+}): ReactNode {
+	return (
+		<InfoBlock icon={icon} title={label} className="h-28 pt-3 pb-0">
+			<BigValue
+				value={value}
+				suffix={suffix}
+				className="relative z-[1] mt-1 text-2xl leading-8"
+			/>
+			<div className={`absolute inset-x-0 bottom-0 ${className}`}>{chart}</div>
+		</InfoBlock>
+	);
+}
+
+/** orb 的 CPU / 内存两块（`GET orbs/{id}/metrics` 的采样，旧 → 新）：最新读数 + 面积曲线。 */
+export function OrbMetricTiles({
+	samples,
+}: {
+	samples: readonly Schemas["OrbMetricSample"][];
+}): ReactNode {
+	const { t } = useTranslation();
+	const last = samples[samples.length - 1];
+	const cpuTone = last ? thresholdTone(last.cpuPct) : "neutral";
+	const memLimit = last?.memLimitMB ?? 0;
+	const memTone =
+		last && memLimit > 0
+			? thresholdTone((last.memUsedMB / memLimit) * 100)
+			: "neutral";
+	return (
+		<div className="grid grid-cols-2 gap-2">
+			<MetricTile
+				icon="cpu"
+				label={t("panel.cpu")}
+				value={last ? formatPercent(last.cpuPct) : "—"}
+				className={chartTone(cpuTone, "text-accent")}
+				chart={
+					<Sparkline
+						values={samples.map((s) => s.cpuPct)}
+						max={100}
+						label={t("panel.cpuChart")}
+						className="h-12!"
+					/>
+				}
+			/>
+			<MetricTile
+				icon="memory"
+				label={t("panel.memory")}
+				value={last ? formatMemoryMB(last.memUsedMB) : "—"}
+				suffix={memLimit > 0 ? `/ ${formatMemoryMB(memLimit)}` : undefined}
+				className={chartTone(memTone, "text-ok")}
+				chart={
+					<Sparkline
+						values={samples.map((s) => s.memUsedMB)}
+						max={memLimit || undefined}
+						label={t("panel.memChart")}
+						className="h-12!"
+					/>
+				}
+			/>
 		</div>
 	);
 }

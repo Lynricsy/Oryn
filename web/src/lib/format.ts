@@ -24,6 +24,22 @@ export function formatDuration(ms: number): string {
 	return `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
+/** 已运行时长：只取最大单位（47 分钟 / 3 小时 / 2 天），单位文字交给 Intl 按界面语言给出。 */
+export function formatUptime(ms: number, lang: string): string {
+	const min = Math.max(1, Math.floor(ms / 60_000));
+	const [n, unit] =
+		min < 60
+			? [min, "minute"]
+			: min < 1440
+				? [Math.floor(min / 60), "hour"]
+				: [Math.floor(min / 1440), "day"];
+	return new Intl.NumberFormat(lang, {
+		style: "unit",
+		unit,
+		unitDisplay: "long",
+	}).format(n);
+}
+
 const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
 	["year", 365 * 24 * 3600_000],
 	["month", 30 * 24 * 3600_000],

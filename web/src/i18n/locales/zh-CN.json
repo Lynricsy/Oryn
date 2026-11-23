@@ -5583,10 +5583,21 @@
 		"noneHint": "这是一台属于全局助手的 orb，主线与所有对话共用。助手在里面跑命令、处理文件、用浏览器；空闲时自动冻结，用到时唤醒。助手第一次用到时会自动创建，也可以现在启动。",
 		"start": "启动",
 		"starting": "启动中…",
-		"statusTitle": "状态",
-		"state": "状态",
-		"provider": "Provider",
-		"type": "类型",
+		"more": "更多操作",
+		"copyId": "复制 orb ID",
+		"since": "{{when}}进入此状态",
+		"timeline": "最近 24 小时",
+		"details": "详情",
+		"created": "创建于",
+		"lastAgent": "助手最近使用",
+		"lastUser": "你最近操作",
+		"image": "镜像",
+		"versions": "版本",
+		"orbId": "orb ID",
+		"never": "从未",
+		"tools": "电脑工具",
+		"toolsReady": "已就绪",
+		"toolsWaiting": "等待首次唤醒",
 		"toolsPending": "电脑里的工具还没就绪：第一次唤醒后，助手从下一轮起就能用它们。",
 		"wake": "唤醒",
 		"pause": "暂停",
@@ -5595,8 +5606,9 @@
 		"resetBody": "这会删除这台 orb 和里面的全部文件。下次助手用到时会重新创建一台空白的电脑。",
 		"filesAsleep": "电脑没在运行，唤醒后可以浏览文件",
 		"tabs": {
-			"files": "文件",
-			"desktop": "桌面"
+			"overview": "概览",
+			"desktop": "桌面",
+			"files": "文件"
 		}
 	},
 	"contextMenu": {
