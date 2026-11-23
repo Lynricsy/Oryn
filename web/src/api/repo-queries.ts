@@ -193,9 +193,13 @@ export function useRepoCommit(projectId: string, sha: string) {
 	});
 }
 
+/** 空头像列表的新鲜期：与服务端失败缓存（10 分钟）对齐 */
+const AVATARS_EMPTY_STALE_MS = 600_000;
+
 /**
  * 提交作者与共同作者在 GitHub 上的头像（服务端按邮箱对账号，查不到为空列表）；`enabled` 为假时不请求
- * （例如人人都是 noreply 邮箱、前端已能推出头像）。提交不可变，缓存一小时。
+ * （例如人人都是 noreply 邮箱、前端已能推出头像）。查到的缓存一小时；空列表可能是身份未连接或限流（服务端只把失败
+ * 记 10 分钟），所以空结果至多 10 分钟就重新问。
  */
 export function useRepoCommitAvatars(
 	projectId: string,
@@ -211,7 +215,8 @@ export function useRepoCommitAvatars(
 					params: { path: { id: projectId, sha } },
 				}),
 			),
-		staleTime: 3_600_000,
+		staleTime: (q) =>
+			q.state.data?.avatars.length ? 3_600_000 : AVATARS_EMPTY_STALE_MS,
 		retry: false,
 	});
 }
