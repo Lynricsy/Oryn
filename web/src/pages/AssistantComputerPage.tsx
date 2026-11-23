@@ -272,6 +272,11 @@ function ComputerOverview({
 						label: t("assistantComputer.created"),
 						value: formatDateTime(orb.createdAt),
 					},
+				]
+			: []),
+		// docker provider 不回填镜像名（生产上全是空串）：没有就不占一行
+		...(orb?.image
+			? [
 					{
 						key: "image",
 						label: t("assistantComputer.image"),
