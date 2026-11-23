@@ -429,6 +429,19 @@ describe("帧覆盖面", () => {
 		});
 		expect(cancelled.pendingUi).toEqual([]);
 	});
+
+	it("xd:// 挂载变动提示不进转录，其它 notice 照常", () => {
+		const s = frames(initialThreadState(TID), [
+			{
+				type: "notice",
+				level: "info",
+				message: "xd://: mounted list_threads, read_thread",
+				source: "xdev",
+			},
+			{ type: "notice", level: "warning", message: "w", source: "oryn" },
+		]);
+		expect(s.notices.map((n) => n.text)).toEqual(["w"]);
+	});
 });
 
 describe("thread.snapshot", () => {
