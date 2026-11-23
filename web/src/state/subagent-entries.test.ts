@@ -87,6 +87,18 @@ describe("subagentFiles", () => {
 		expect(rows).toEqual([{ id: "0-Scout", file: `${ART}/0-Scout.jsonl` }]);
 	});
 
+	it("主会话产物目录顶层的改动日志 changes.jsonl 不是子 agent", () => {
+		const rows = subagentFiles([
+			entry(1, `${ART}/changes.jsonl`, "change", {
+				type: "change",
+				agent: "Main",
+				tool: "edit",
+			}),
+			msg(2, `${ART}/0-Scout.jsonl`, "s"),
+		]);
+		expect(rows).toEqual([{ id: "0-Scout", file: `${ART}/0-Scout.jsonl` }]);
+	});
+
 	it("不同主会话目录下的同名存档各自一行", () => {
 		const rows = subagentFiles([
 			msg(1, `${ART}/0-Scout.jsonl`, "old"),

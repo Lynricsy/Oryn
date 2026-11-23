@@ -431,6 +431,8 @@ func TestArtifactTranscriptsAndPartialLines(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "S1.jsonl"), []byte(`{"type":"session","id":"s"}`+"\n"+`{"type":"message","id":"a"}`+"\n"+`{"type":"mess`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "S1", "task-1.jsonl"), []byte(`{"type":"message","id":"x"}`+"\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "S1", "sub", "task-2.jsonl"), []byte(`{"type":"message","id":"y"}`+"\n"), 0o644))
+	// Core 选择性提交的改动日志不是会话转录，不复制
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "S1", "changes.jsonl"), []byte(`{"type":"change","agent":"Main"}`+"\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "S1", "notes.txt"), []byte("ignored\n"), 0o644))
 	require.NoError(t, rt.reg.add(thread1, dir))
 	rt.thread(thread1, dir)

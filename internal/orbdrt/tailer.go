@@ -34,6 +34,9 @@ const (
 	maxEntryLine = link.MaxCtlLineBytes - 2<<20
 	// artifactDepth 是会话产物子目录内查找 *.jsonl 的最大深度。
 	artifactDepth = 4
+	// commitJournal 是 Core 选择性提交的改动日志（`commit/selective/journal.ts`），只写在主会话产物目录顶层，
+	// 子 agent 共用它；它不是会话转录，不复制（否则会被当成名为 changes 的子 agent）。
+	commitJournal = "changes.jsonl"
 )
 
 // entryLineLimit 是实际使用的单行上限（测试可调小）。
@@ -244,7 +247,7 @@ func (tl *tailer) list() []string {
 				tl.watch(p)
 				return nil
 			}
-			if strings.HasSuffix(d.Name(), ".jsonl") {
+			if strings.HasSuffix(d.Name(), ".jsonl") && p != filepath.Join(art, commitJournal) {
 				subs = append(subs, filepath.ToSlash(rel))
 			}
 			return nil
