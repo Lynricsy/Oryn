@@ -306,14 +306,14 @@ steady_shot() {
 
 # hold <步骤> <截图名> <x> <y> <宽> <高>（pt）<关闭基线> <打开基线>：测试正按住拖动，连拍到区域停在拖开处——前后两张一致
 # （≤ 0.01，卡片停住了）、与关闭基线不同（确实拖开了）、又不是打开基线（打开 = 已松手吸附）——存成 e2e-<截图名>.png，返回 0。
-# 截图 40 秒没返回（与按住时长相同）或已经松手吸附到打开：返回 1，让测试收起后重拖。
+# 截图超过按住时长（40 秒 × wait_scale，与测试的按住时长相同）没返回，或已经松手吸附到打开：返回 1，让测试收起后重拖。
 # 拖动与吸附都是系统滚动，按住期间出现 sink.show（网页的程序化开合）直接判失败。
 hold() {
   local step=$1 name=$2 x=$3 y=$4 w=$5 h=$6 closed=$7 opened=$8 n
-  local next="$work/hold-next.png" prev="" end=$((SECONDS + 180))
+  local next="$work/hold-next.png" prev="" end=$((SECONDS + 180 * wait_scale))
   n=$(count sink.show)
   while ((SECONDS < end)); do
-    sim_shot "$next" 40 || return 1
+    sim_shot "$next" $((40 * wait_scale)) || return 1
     [[ $(count sink.show) == "$n" ]] ||
       fail "$step" "按住拖动期间出现了程序化开合（拖动应是系统滚动）：$(last sink.show)"
     if at_most "$(rdiff "$next" "$out/e2e-$opened.png" "$x" "$y" "$w" "$h")" 0.01; then return 1; fi
@@ -405,7 +405,7 @@ ok closed
 # 卡片跟手 1:1，但 UIScrollView 起拖有一段滞后（M20 探针：手指 176pt 时卡片左缘 166pt；CI 卡顿时实测滞后可达 40pt），
 # 所以揭示边不取手指位移：松手后以网页探针 touchend 时的根横滚位置算卡片实际平移（check_drag，同时确认过半），
 # 像素断言围绕实际平移取区域。
-# 按住 40 秒：判定用的两张截图都要落在按住期间（松手后吸附到打开，截图与打开态一致即判没赶上）。
+# 按住 40 × wait_scale 秒：判定用的两张截图都要落在按住期间（松手后吸附到打开，截图与打开态一致即判没赶上）。
 # CI 的 macOS 机器会整机卡顿几十秒到几分钟（截图曾卡 3 分钟），没赶上就让测试收起侧栏重拖，最多 3 次；
 # 每次的步骤名带序号（drag1 / drag2 / drag3），交接文件不会与上一次混淆。
 # 测试先发 req 再起手，XCUITest 起手前可能还要等 App 空闲，所以等 req 放宽；探针起始行在 req 到达时记（重拖前收起的轻点在这之前）

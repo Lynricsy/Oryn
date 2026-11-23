@@ -111,7 +111,7 @@ final class HeaderE2ETests: E2ECase {
     _ = try checkpoint("h-closed")
 
     // 9. 在卡片左缘内（x = 8：转录的消息与代码块都有左右内边距，起手点落在纵向滚动的转录上，横拖沿滚动链交给根）
-    //    起手拖到 0.7 × 侧栏宽并按住 40 秒：按住期间本测试阻塞在手势里，原生侧栏钮的位置只能由脚本连拍截图判定
+    //    起手拖到 0.7 × 侧栏宽并按住 40 × waitScale 秒：按住期间本测试阻塞在手势里，原生侧栏钮的位置只能由脚本连拍截图判定
     //    （页头行与卡片内容各自搜出的平移量一致）。没赶上时脚本回 retry，最多 3 次（同底栏测试）。
     //    过半松手：系统吸附到打开，原生侧栏钮右移侧栏宽；再点卡片条关上，回到原位。0.7 给起拖滞后留余量（见底栏测试）
     let dx = (sinkW * 0.7).rounded()
@@ -122,7 +122,7 @@ final class HeaderE2ETests: E2ECase {
       try post(step, ["dx": Double(dx)])
       point(app, 8, y).press(
         forDuration: 0.1, thenDragTo: point(app, 8 + dx, y),
-        withVelocity: XCUIGestureVelocity(rawValue: 200), thenHoldForDuration: 40)
+        withVelocity: XCUIGestureVelocity(rawValue: 200), thenHoldForDuration: 40 * waitScale)
       let reply = try ack(step, timeout: 600)
       try expectLead(app, slots, base, by: sinkW, "第 \(attempt) 次按住拖动松手后")
       point(app, screen.width - 16, screen.height / 2).tap()

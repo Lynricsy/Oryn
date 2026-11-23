@@ -494,7 +494,8 @@ jobs:
       - name: 模拟器：真实网页与触摸驱动的原生底栏、页头与可替换图标（端到端）
         # 演示失败也照跑（互相独立），一次 CI 拿到各项结果
         if: ${{ !cancelled() && steps.app.outcome == 'success' }}
-        timeout-minutes: 45
+        # 脚本与测试的等待、按住时长都乘以 E2E_WAIT_SCALE（缺省 4，见 ios-e2e-check.sh），步骤时限随之放宽
+        timeout-minutes: 90
         shell: bash
         env:
           APP: ${{ steps.app.outputs.path }}
