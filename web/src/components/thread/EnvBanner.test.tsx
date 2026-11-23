@@ -185,6 +185,23 @@ describe("环境提示条", () => {
 		expect(toastsStore.getState().toasts[0]?.text).toContain("修复环境配置");
 	});
 
+	it("setup 过慢：「新开线程优化」带 setup 日志尾部建线程，新线程里不再提示过慢", async () => {
+		setup(
+			orb({
+				lastSetup: run({ ok: true, error: undefined, durationMs: 263_000 }),
+			}),
+		);
+		expect(screen.getByText("环境配置耗时 4 分钟")).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: /新开线程优化/ }));
+		await waitFor(() => expect(screen.queryByTestId("env-banner")).toBeNull());
+		expect(created).toHaveLength(1);
+		const { prompt } = created[0] as { prompt: string };
+		expect(prompt).toContain("4.4 分钟");
+		expect(prompt).toContain("log-100");
+		expect(loadDismissed("T-env-gen").has("slow_setup")).toBe(true);
+		expect(toastsStore.getState().toasts[0]?.text).toContain("优化环境配置");
+	});
+
 	it("关闭后按运行记录记住；同一线程出现新的失败记录时再次显示", () => {
 		const view = setup(orb({ lastSetup: run({ id: "osr_old" }) }));
 		fireEvent.click(screen.getByRole("button", { name: "忽略" }));
