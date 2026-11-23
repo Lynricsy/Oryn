@@ -1,17 +1,33 @@
-/** `fetch` — reader-mode URL fetch; output is markdown with a metadata header. */
+/**
+ * `fetch` — 以阅读模式抓取网址：输出是去掉页面杂物后的 Markdown（或 JSON / 原文），前面带一段元数据头。
+ * 结果形状见 oryn-core `tools/fetch.ts`：details 带 `url`、`finalUrl`、`contentType`、`method`（提取方式，
+ * 如 readability、github-raw、各站点抓取器）、`truncated` 与 `notes`。
+ *
+ * 卡片：头部摘要是去掉协议的地址，读数是内容类型与截断；展开体输入段是一条地址栏，输出段先给重定向与
+ * 提取方式，再按内容类型渲染正文：Markdown 直接排版（超高折叠），JSON 与代码高亮。
+ */
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
+import { Icon } from "../../components/ui/icons";
 import { normalizeLanguage } from "../../lib/highlight";
 import {
 	Badge,
 	InvalidArg,
-	Kv,
-	KvGrid,
+	MarkdownBlock,
+	Note,
 	Output,
 	ResultImages,
-	ResultText,
+	SiteMark,
 } from "../parts";
 import type { ToolRenderer, ToolRenderProps } from "../types";
-import { detailsRecord, num, resultTextOf, str, truncate } from "../util";
+import {
+	detailsRecord,
+	hostOf,
+	num,
+	resultTextOf,
+	str,
+	truncate,
+} from "../util";
 
 /** Subset of the tool's `ReadUrlToolDetails` we render. */
 interface FetchDetails {
@@ -44,54 +60,108 @@ function fetchDetails(
 	};
 }
 
+/** 地址拆成协议、主机与其余部分（解析不了时整串当作「其余」）。 */
+function splitUrl(url: string): { scheme: string; host: string; rest: string } {
+	try {
+		const u = new URL(url);
+		return {
+			scheme: `${u.protocol}//`,
+			host: u.host,
+			rest: `${u.pathname === "/" ? "" : u.pathname}${u.search}${u.hash}`,
+		};
+	} catch {
+		return { scheme: "", host: "", rest: url };
+	}
+}
+
+/** 一行地址：协议弱化、主机正文色、路径次一级；整串可换行。 */
+function UrlText({ url }: { url: string }): ReactNode {
+	const { scheme, host, rest } = splitUrl(url);
+	return (
+		<span className="tv-url">
+			{scheme && <span className="tv-url-scheme">{scheme}</span>}
+			{host && <span className="tv-url-host">{host}</span>}
+			<span className="tv-url-rest">{rest}</span>
+		</span>
+	);
+}
+
+/** 内容类型的短名：`text/html; charset=…` → `HTML`，`application/vnd.api+json` → `JSON`。 */
+function shortType(contentType: string | null): string | null {
+	if (!contentType) return null;
+	const mime = (contentType.split(";", 1)[0] ?? "").trim().toLowerCase();
+	if (!mime) return null;
+	const subtype = mime.slice(mime.indexOf("/") + 1);
+	const name = subtype.slice(subtype.lastIndexOf("+") + 1).replace(/^x-/, "");
+	if (name === "plain") return "Text";
+	return name.length <= 8 ? name.toUpperCase() : name;
+}
+
 function Summary({ args }: ToolRenderProps): ReactNode {
 	const url = str(args.url) ?? str(args.path);
 	const method = (str(args.method) ?? "").toUpperCase();
+	const { host, rest } = url ? splitUrl(url) : { host: "", rest: "" };
 	return (
 		<>
 			{url ? (
-				<span className="tv-path">{truncate(url, 90)}</span>
+				<span className="tv-path">
+					{host}
+					<span className="tv-faint">{truncate(rest, 90)}</span>
+				</span>
 			) : (
 				<InvalidArg what="url" />
 			)}
-			{method && method !== "GET" && (
-				<>
-					{" "}
-					<Badge tone="accent">{method}</Badge>
-				</>
-			)}
-			{args.raw === true && (
-				<>
-					{" "}
-					<Badge>raw</Badge>
-				</>
+			{method && method !== "GET" && <Badge tone="accent">{method}</Badge>}
+			{args.raw === true && <Badge>raw</Badge>}
+		</>
+	);
+}
+
+/** 右侧读数：内容类型短名；被截断时警示色（收起时头部显示意图，读数仍然看得见）。 */
+function Meta({ result }: ToolRenderProps): ReactNode {
+	const { t } = useTranslation();
+	const details = fetchDetails(detailsRecord(result));
+	if (!details) return null;
+	const type = shortType(details.contentType);
+	return (
+		<>
+			{type && <span>{type}</span>}
+			{details.truncated && (
+				<span className="tv-meta-warn">{t("toolRender.fetch.truncated")}</span>
 			)}
 		</>
 	);
 }
 
-/** 右侧读数：内容被截断（收起时头部显示意图，截断标记放在读数里才一直看得见）。 */
-function Meta({ result }: ToolRenderProps): ReactNode {
-	return fetchDetails(detailsRecord(result))?.truncated ? (
-		<span className="tv-meta-warn">truncated</span>
-	) : null;
-}
-
+/** 输入：一条地址栏（站点标记 + 完整地址）与超时、方法等选项。 */
 function Input({ args }: ToolRenderProps): ReactNode {
+	const { t } = useTranslation();
 	const url = str(args.url) ?? str(args.path);
-	// 非 GET 方法与 raw 在展开后的头部摘要里；地址在摘要里会被截断，这里始终给出全文
 	const timeout = num(args.timeout);
+	const method = (str(args.method) ?? "").toUpperCase();
+	if (url === null) return <InvalidArg what="url" />;
 	return (
-		<KvGrid>
-			<Kv k="url">{url === null ? <InvalidArg what="url" /> : url}</Kv>
-			<Kv k="timeout">{timeout != null && `${timeout}s`}</Kv>
-		</KvGrid>
+		<div className="tv-addr">
+			<SiteMark host={hostOf(url) || url} />
+			<UrlText url={url} />
+			{method && method !== "GET" && (
+				<span className="tv-addr-opt">{method}</span>
+			)}
+			{args.raw === true && (
+				<span className="tv-addr-opt">{t("toolRender.fetch.raw")}</span>
+			)}
+			{timeout !== null && (
+				<span className="tv-addr-opt">
+					{t("toolRender.fetch.timeout", { seconds: timeout })}
+				</span>
+			)}
+		</div>
 	);
 }
 
 /**
  * 读取模式的输出带元数据头（工具的 buildUrlReadOutput）：`URL: …` 开头、每行 `Key: value`，以空行与 `---` 分隔线结束。
- * 头里的信息已在读数表里，这里只取正文；头核对不上时原样返回，不误删内容。
+ * 头里的信息已在读数与信息行里，这里只取正文；头核对不上时原样返回，不误删内容。
  */
 function stripEnvelope(text: string): string {
 	if (!text.startsWith("URL: ")) return text;
@@ -143,38 +213,66 @@ function bodyLanguage(
 }
 
 function Result({ args, result }: ToolRenderProps): ReactNode {
+	const { t } = useTranslation();
 	const details = fetchDetails(detailsRecord(result));
 	const redirected = Boolean(
 		details?.finalUrl && details.url && details.finalUrl !== details.url,
 	);
-	const notes = details && details.notes.length > 0 && details.notes.join("; ");
 	// raw 原样返回响应体，没有元数据头：不剥，免得误删以 `URL: ` 开头的内容
 	const raw = args.raw === true || details?.method === "raw";
 	const text = resultTextOf(result).trim();
-	const body = raw ? text : stripEnvelope(text);
+	const body = raw ? text : stripEnvelope(text).trim();
 	const lang = bodyLanguage(details, raw, body);
+	const chips = [details?.contentType, details?.method].filter(
+		(v): v is string => Boolean(v),
+	);
 	return (
 		<>
-			{(redirected || details?.contentType || details?.method || notes) && (
-				<KvGrid>
-					<Kv k="final url">{redirected && details?.finalUrl}</Kv>
-					<Kv k="content-type">{details?.contentType}</Kv>
-					<Kv k="via">{details?.method}</Kv>
-					<Kv k="notes">{notes}</Kv>
-				</KvGrid>
+			{redirected && details?.finalUrl && (
+				<div className="tv-fetch-redirect">
+					<Icon name="arrowUpRight" size={12} />
+					<span className="tv-fetch-redirect-label">
+						{t("toolRender.fetch.redirected")}
+					</span>
+					<a href={details.finalUrl} target="_blank" rel="noopener noreferrer">
+						<UrlText url={details.finalUrl} />
+					</a>
+				</div>
+			)}
+			{(chips.length > 0 || (details?.notes.length ?? 0) > 0) && (
+				<div className="tv-fetch-info">
+					{chips.map((c) => (
+						<span key={c} className="tv-fetch-chip">
+							{c}
+						</span>
+					))}
+					{details?.notes.map((note) => (
+						<span key={note} className="tv-fetch-note">
+							{note}
+						</span>
+					))}
+				</div>
 			)}
 			<ResultImages result={result} />
 			{result?.isError ? (
-				<ResultText result={result} maxLines={12} />
-			) : (
-				body && (
-					<Output
-						text={body}
-						lang={lang}
-						variant={lang ? "code" : "plain"}
-						maxLines={12}
-					/>
+				<Note tone="err">{text}</Note>
+			) : !body ? (
+				result && (
+					<span className="tv-faint tv-sans">
+						{t("toolRender.fetch.empty")}
+					</span>
 				)
+			) : lang === "markdown" ? (
+				<div className="tv-fetch-doc">
+					<MarkdownBlock text={body} maxHeight={320} images={false} />
+				</div>
+			) : (
+				<Output
+					text={body}
+					lang={lang}
+					variant={lang ? "code" : "plain"}
+					maxLines={14}
+				/>
 			)}
 		</>
 	);
