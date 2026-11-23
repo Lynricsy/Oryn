@@ -88,7 +88,8 @@ func TestReadRefsPaging(t *testing.T) {
 func TestReadCommitsPagingAndPath(t *testing.T) {
 	e, pid, bare := readEnv(t, nil, func(bare string) {
 		commitTo(t, bare, "main", map[string]string{"docs/a.md": "a\n"}, "add docs")
-		commitTo(t, bare, "main", map[string]string{"src/b.go": "package b\n"}, "add src")
+		commitTo(t, bare, "main", map[string]string{"src/b.go": "package b\n"},
+			"add src\n\nbody\n\nCo-authored-by: Wine Fox <fox@ling.plus>\nco-authored-by: T <T@example.com>\nCo-authored-by: Wine Fox <fox@ling.plus>\nCo-authored-by: Solo")
 	})
 	ctx := context.Background()
 	page, err := e.svc.Commits(ctx, pid, "", "", "", new(2))
@@ -98,6 +99,11 @@ func TestReadCommitsPagingAndPath(t *testing.T) {
 	assert.Equal(t, "add src", page.Commits[0].Subject)
 	assert.Equal(t, "add docs", page.Commits[1].Subject)
 	assert.Len(t, page.Commits[0].Parents, 1)
+	// trailer 不分大小写；与作者（t@example.com）同邮箱的、重复的跳过；没写邮箱的保留名字
+	assert.Equal(t, []apigen.ProjectRepoPerson{{Name: "Wine Fox", Email: "fox@ling.plus"}, {Name: "Solo", Email: ""}}, page.Commits[0].CoAuthors)
+	assert.Nil(t, page.Commits[1].CoAuthors)
+	require.NotNil(t, page.Total, "第一页没到底时用 rev-list 统计")
+	assert.EqualValues(t, 3, *page.Total)
 	require.NotNil(t, page.NextCursor)
 	assert.Equal(t, page.Commit+":2", *page.NextCursor)
 
@@ -110,6 +116,7 @@ func TestReadCommitsPagingAndPath(t *testing.T) {
 	assert.Equal(t, "initial commit", next.Commits[0].Subject)
 	assert.Empty(t, next.Commits[0].Parents)
 	assert.Nil(t, next.NextCursor)
+	assert.Nil(t, next.Total, "翻页不再统计")
 	fresh, err := e.svc.Commits(ctx, pid, "main", "", "", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "add c", fresh.Commits[0].Subject)
@@ -119,6 +126,8 @@ func TestReadCommitsPagingAndPath(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, docs.Commits, 1)
 	assert.Equal(t, "add docs", docs.Commits[0].Subject)
+	require.NotNil(t, docs.Total)
+	assert.EqualValues(t, 1, *docs.Total)
 }
 
 func TestReadCommitDetailAndDiff(t *testing.T) {

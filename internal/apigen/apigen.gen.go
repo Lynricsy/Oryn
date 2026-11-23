@@ -9906,12 +9906,15 @@ type ProjectPatch struct {
 
 // ProjectRepoCommit 提交摘要、父提交与关联线程
 type ProjectRepoCommit struct {
-	AuthorEmail string   `json:"authorEmail"`
-	AuthorName  string   `json:"authorName"`
-	Parents     []string `json:"parents"`
-	Sha         string   `json:"sha"`
-	ShortSha    string   `json:"shortSha"`
-	Subject     string   `json:"subject"`
+	AuthorEmail string `json:"authorEmail"`
+	AuthorName  string `json:"authorName"`
+
+	// CoAuthors 提交信息里 `Co-authored-by:` trailer 列出的共同作者（按出现顺序，去掉与作者同邮箱的）；没有时省略
+	CoAuthors []ProjectRepoPerson `json:"coAuthors,omitempty"`
+	Parents   []string            `json:"parents"`
+	Sha       string              `json:"sha"`
+	ShortSha  string              `json:"shortSha"`
+	Subject   string              `json:"subject"`
 
 	// Thread 提交关联的线程
 	Thread *ProjectRepoThreadLink `json:"thread,omitempty"`
@@ -9968,6 +9971,9 @@ type ProjectRepoCommitList struct {
 
 	// Ref 实际使用的 ref（缺省时为基线分支）
 	Ref string `json:"ref"`
+
+	// Total 只在第一页（不带 cursor）给出：头提交可达的提交总数（带 path 时只计改动过该路径的）；统计失败时省略
+	Total *int64 `json:"total,omitempty"`
 }
 
 // ProjectRepoCommitSummary 提交摘要（字段同 `GitCommit`）
@@ -10006,6 +10012,12 @@ type ProjectRepoLfs struct {
 
 // ProjectRepoLfsError 只出现在 self 上：取对象失败的原因（对象 ≤ 100 MiB 时 tree 先取对象）
 type ProjectRepoLfsError string
+
+// ProjectRepoPerson 提交里的一个人（`名字 <邮箱>`；trailer 里没写邮箱时 email 为空串）
+type ProjectRepoPerson struct {
+	Email string `json:"email"`
+	Name  string `json:"name"`
+}
 
 // ProjectRepoRef defines model for ProjectRepoRef.
 type ProjectRepoRef struct {

@@ -290,17 +290,49 @@ func (s *Service) Refs(ctx context.Context, projectID string, kind apigen.Projec
 
 // ---------------------------------------------------------------- commits
 
-const logFormat = "%H%x1f%h%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%s%x1e"
+// logFormat 每条提交一个 \x1e 结尾的记录：字段以 \x1f 分隔，最后一个字段是 `Co-authored-by:` trailer 的值（git 解析
+// trailer 块、折行展开，多个之间以 \x1d 分隔）。
+const logFormat = "%H%x1f%h%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%s%x1f%(trailers:key=Co-authored-by,valueonly,unfold,separator=%x1d)%x1e"
 
 func parseCommit(rec string) (apigen.ProjectRepoCommit, bool) {
-	f := strings.SplitN(rec, "\x1f", 7)
-	if len(f) != 7 {
+	f := strings.SplitN(rec, "\x1f", 8)
+	if len(f) != 8 {
 		return apigen.ProjectRepoCommit{}, false
 	}
 	return apigen.ProjectRepoCommit{
 		Sha: f[0], ShortSha: f[1], Parents: append([]string{}, strings.Fields(f[2])...),
 		AuthorName: f[3], AuthorEmail: f[4], TS: unixMs(f[5]), Subject: f[6],
+		CoAuthors: parseCoAuthors(f[7], f[4]),
 	}, true
+}
+
+// parseCoAuthors 解析 `名字 <邮箱>` 列表（\x1d 分隔）：没有尖括号时整段是名字、邮箱为空；空名字跳过；
+// 与作者同邮箱、或与前面重复（有邮箱按邮箱，否则按名字，都不分大小写）的跳过。一个都没有时返回 nil（JSON 里省略）。
+func parseCoAuthors(raw, authorEmail string) []apigen.ProjectRepoPerson {
+	var out []apigen.ProjectRepoPerson
+	seen := map[string]bool{}
+	if authorEmail != "" {
+		seen["e:"+strings.ToLower(authorEmail)] = true
+	}
+	for v := range strings.SplitSeq(raw, "\x1d") {
+		name, email := strings.TrimSpace(v), ""
+		if i := strings.LastIndexByte(name, '<'); i >= 0 && strings.HasSuffix(name, ">") {
+			name, email = strings.TrimSpace(name[:i]), strings.TrimSpace(name[i+1:len(name)-1])
+		}
+		if name == "" {
+			continue
+		}
+		key := "n:" + strings.ToLower(name)
+		if email != "" {
+			key = "e:" + strings.ToLower(email)
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, apigen.ProjectRepoPerson{Name: name, Email: email})
+	}
+	return out
 }
 
 // Commits 列出 ref（空 = 基线分支）上的提交，新到旧，可按路径过滤。cursor = <头提交>:<offset>：翻页沿用第一页的头提交，
@@ -358,6 +390,9 @@ func (s *Service) Commits(ctx context.Context, projectID, ref, pathArg, cursor s
 		out.Commits = out.Commits[:n]
 		out.NextCursor = new(fmt.Sprintf("%s:%d", tip, off+n))
 	}
+	if cursor == "" {
+		out.Total = s.commitCount(ctx, r.dir, tip, pathArg, len(out.Commits), out.NextCursor == nil)
+	}
 	shas := make([]string, len(out.Commits))
 	for i, c := range out.Commits {
 		shas[i] = c.Sha
@@ -369,6 +404,27 @@ func (s *Service) Commits(ctx context.Context, projectID, ref, pathArg, cursor s
 		}
 	}
 	return out, nil
+}
+
+// commitCount 统计 tip 可达（带 path 时只计改动过它）的提交数；第一页已到底时就是本页条数，不再跑 git。
+// 统计失败（超时等）返回 nil，列表照常返回。
+func (s *Service) commitCount(ctx context.Context, dir, tip, pathArg string, got int, complete bool) *int64 {
+	if complete {
+		return new(int64(got))
+	}
+	args := []string{"rev-list", "--count", "--end-of-options", tip, "--"}
+	if pathArg != "" {
+		args = append(args, literal(pathArg))
+	}
+	res, err := s.gitRead(ctx, dir, 64, nil, args...)
+	if err != nil {
+		return nil
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(string(res.out)), 10, 64)
+	if err != nil {
+		return nil
+	}
+	return &n
 }
 
 // Commit 返回一个提交的详情：正文、改动文件（合并提交相对第一个父提交，根提交相对空树）与关联线程。

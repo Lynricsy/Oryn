@@ -298,7 +298,7 @@ const COMMITS: MockCommit[] = (() => {
 		},
 		{
 			subject: "lib: greet world when the name is empty",
-			body: "USER 没设置时以前会输出 `hello, `。\n\n顺手 trim 掉首尾空白。",
+			body: "USER 没设置时以前会输出 `hello, `。\n\n顺手 trim 掉首尾空白。\n\nCo-authored-by: Lynricsy <lynricsy@oryn.example>",
 			author: AGENT,
 			ts: NOW - 5 * HOUR,
 			changes: { "src/lib/util.go": UTIL_V2 },
@@ -656,10 +656,15 @@ export class MockRepo {
 		c: MockCommit,
 	): Schemas["ProjectRepoCommit"] {
 		const thread = this.threadOf(projectId, c);
+		// 同服务端：正文里的 `Co-authored-by: 名字 <邮箱>` trailer
+		const coAuthors = [
+			...c.body.matchAll(/^co-authored-by:\s*(.+?)\s*<([^>]*)>\s*$/gim),
+		].map(([, name = "", email = ""]) => ({ name, email }));
 		return {
 			...summaryOf(c),
 			parents: c.parents,
 			...(thread ? { thread } : {}),
+			...(coAuthors.length ? { coAuthors } : {}),
 		};
 	}
 
@@ -822,6 +827,7 @@ export class MockRepo {
 			...(off + limit < all.length
 				? { nextCursor: `${head}:${off + limit}` }
 				: {}),
+			...(cursor ? {} : { total: all.length }),
 		});
 	}
 

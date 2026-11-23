@@ -8438,6 +8438,17 @@ components:
           type: array
           items: { type: string }
         thread: { $ref: '#/components/schemas/ProjectRepoThreadLink' }
+        coAuthors:
+          type: array
+          description: 提交信息里 `Co-authored-by:` trailer 列出的共同作者（按出现顺序，去掉与作者同邮箱的）；没有时省略
+          items: { $ref: '#/components/schemas/ProjectRepoPerson' }
+    ProjectRepoPerson:
+      type: object
+      description: 提交里的一个人（`名字 <邮箱>`；trailer 里没写邮箱时 email 为空串）
+      required: [name, email]
+      properties:
+        name: { type: string }
+        email: { type: string }
     ProjectRepoCommitList:
       type: object
       required: [ref, commit, commits]
@@ -8450,6 +8461,10 @@ components:
           description: 新到旧
           items: { $ref: '#/components/schemas/ProjectRepoCommit' }
         nextCursor: { type: string, description: 还有更早的提交时给出 }
+        total:
+          type: integer
+          format: int64
+          description: 只在第一页（不带 cursor）给出：头提交可达的提交总数（带 path 时只计改动过该路径的）；统计失败时省略
     ProjectRepoCommitDetail:
       type: object
       required: [sha, shortSha, subject, authorName, authorEmail, ts, parents, body, committerName, committedAt, files, additions, deletions, truncated]

@@ -6598,6 +6598,13 @@ export interface components {
             ts: components["schemas"]["TimestampMs"];
             parents: string[];
             thread?: components["schemas"]["ProjectRepoThreadLink"];
+            /** @description 提交信息里 `Co-authored-by:` trailer 列出的共同作者（按出现顺序，去掉与作者同邮箱的）；没有时省略 */
+            coAuthors?: components["schemas"]["ProjectRepoPerson"][];
+        };
+        /** @description 提交里的一个人（`名字 <邮箱>`；trailer 里没写邮箱时 email 为空串） */
+        ProjectRepoPerson: {
+            name: string;
+            email: string;
         };
         ProjectRepoCommitList: {
             /** @description 实际使用的 ref（缺省时为基线分支） */
@@ -6608,6 +6615,11 @@ export interface components {
             commits: components["schemas"]["ProjectRepoCommit"][];
             /** @description 还有更早的提交时给出 */
             nextCursor?: string;
+            /**
+             * Format: int64
+             * @description 只在第一页（不带 cursor）给出：头提交可达的提交总数（带 path 时只计改动过该路径的）；统计失败时省略
+             */
+            total?: number;
         };
         ProjectRepoCommitDetail: {
             sha: string;
