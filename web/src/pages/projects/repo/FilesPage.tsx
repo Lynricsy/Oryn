@@ -23,6 +23,7 @@ import {
 	projectRepoSource,
 } from "../../../lib/file-source";
 import { formatBytes } from "../../../lib/format";
+import { RepoBox } from "../home/RepoBox";
 import { RepoEntryList } from "../home/RepoEntryList";
 import { ProjectGate, ProjectShell } from "../ProjectShell";
 import { LfsFileState } from "./LfsFileState";
@@ -123,13 +124,13 @@ function FilesBody({
 	else if (tree.isError) body = <ErrorText error={tree.error} />;
 	else if (tree.data.self.type === "dir")
 		body = (
-			<Card>
+			<RepoBox>
 				<RepoEntryList
 					projectId={project.id}
 					refName={refName}
 					tree={tree.data}
 				/>
-			</Card>
+			</RepoBox>
 		);
 	else if (tree.data.self.type === "submodule")
 		body = (
