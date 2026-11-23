@@ -164,6 +164,8 @@ function useGenerateInNewThread(threadId: string) {
 			prompt,
 			executor: { kind: "new_orb" },
 			title: t("env.generateTitle"),
+			// 写 setup 用不到浏览器；省略会继承项目默认 Profile，当前 orb 正独占它时建线程会被拒（profile_in_use）
+			browserProfileId: "",
 		});
 		addPendingPrompt(thread.id, prompt);
 		dismissBanner(thread.id, banner.kind);

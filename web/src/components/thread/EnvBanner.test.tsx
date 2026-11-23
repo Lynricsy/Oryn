@@ -288,6 +288,7 @@ describe("环境提示条", () => {
 		expect(created[0]).toMatchObject({
 			projectId: "prj_1",
 			executor: { kind: "new_orb" },
+			browserProfileId: "",
 			title: "编写环境配置",
 			prompt: expect.stringContaining("oryn-setup"),
 		});
