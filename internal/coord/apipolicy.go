@@ -130,7 +130,7 @@ func buildAPIPolicy() map[string]opPolicy {
 
 	// projects
 	set("projects", opRead, none, "listProjects", "getProject", "getProjectRepo", "listProjectRepoRefs", "listProjectRepoCommits",
-		"getProjectRepoCommit", "getProjectRepoCommitDiff", "getProjectRepoTree", "getProjectRepoBlob", "listProjectSnapshots",
+		"getProjectRepoCommit", "getProjectRepoCommitAvatars", "getProjectRepoCommitDiff", "getProjectRepoTree", "getProjectRepoBlob", "listProjectSnapshots",
 		"listProjectAgentConfigFiles", "getProjectAgentConfigFile", "listProjectSecrets")
 	set("projects", opWrite, none, "createProject", "syncProjectRepo", "createProjectHostedRepo", "deleteProjectSnapshots",
 		"putProjectAgentConfigFile", "deleteProjectAgentConfigFile")

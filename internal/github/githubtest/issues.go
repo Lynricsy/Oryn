@@ -141,6 +141,21 @@ func (s *Server) SetRollup(sha, state string) {
 	s.Rollups[sha] = state
 }
 
+// CommitAuthor 是 GraphQL `Commit.authors` 的一个节点；Login 为空表示邮箱对不上 GitHub 账号（user 为 null）。
+type CommitAuthor struct {
+	Email, Name, Login, AvatarURL string
+}
+
+// SetCommitAuthors 设置提交 sha 在 GraphQL `Commit.authors` 里返回的人。
+func (s *Server) SetCommitAuthors(sha string, authors []CommitAuthor) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.CommitAuthors == nil {
+		s.CommitAuthors = map[string][]CommitAuthor{}
+	}
+	s.CommitAuthors[sha] = authors
+}
+
 // SetChecks 设置提交 sha 上的检查与提交状态。
 func (s *Server) SetChecks(sha string, runs []CheckRun, statuses []CommitStatus) {
 	s.mu.Lock()
@@ -584,6 +599,10 @@ func (s *Server) graphql(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusUnauthorized, "Bad credentials")
 		return
 	}
+	if strings.Contains(in.Query, "authors(first") {
+		s.commitAuthors(w, tok, anyVars)
+		return
+	}
 	if doc, err := parser.ParseQuery(&ast.Source{Input: in.Query}); err == nil {
 		for _, op := range doc.Operations {
 			if op.Operation == ast.Mutation && (in.OperationName == "" || op.Name == in.OperationName) {
@@ -638,6 +657,36 @@ func (s *Server) graphql(w http.ResponseWriter, r *http.Request) {
 		"headRefOid": pr.HeadSHA,
 		"commits":    map[string]any{"nodes": []map[string]any{{"commit": map[string]any{"statusCheckRollup": rollup}}}},
 	}}}})
+}
+
+// commitAuthors 回答 `repository(owner,name){object(oid){... on Commit{authors{nodes{email name user{login avatarUrl}}}}}}`。
+// 调用方持锁。
+func (s *Server) commitAuthors(w http.ResponseWriter, tok string, vars map[string]any) {
+	owner, _ := vars["owner"].(string)
+	name, _ := vars["name"].(string)
+	oid, _ := vars["oid"].(string)
+	rp, _ := s.lookupRepo(owner, name)
+	if rp == nil || !s.canRead(tok, rp) {
+		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"repository": nil},
+			"errors": []map[string]any{{"message": "Could not resolve to a Repository"}}})
+		return
+	}
+	authors, ok := s.CommitAuthors[oid]
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"repository": map[string]any{"object": nil}}})
+		return
+	}
+	nodes := make([]map[string]any, len(authors))
+	for i, a := range authors {
+		var user any
+		if a.Login != "" {
+			user = map[string]any{"login": a.Login, "avatarUrl": a.AvatarURL}
+		}
+		nodes[i] = map[string]any{"email": a.Email, "name": a.Name, "user": user}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"repository": map[string]any{
+		"object": map[string]any{"authors": map[string]any{"nodes": nodes}},
+	}}})
 }
 
 // graphqlMutation 依次执行 mutation 的根字段（只认直接写出的字段，不展开 fragment），按别名回结果。调用方持锁。

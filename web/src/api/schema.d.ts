@@ -505,6 +505,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/repo/commits/{sha}/avatars": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+                sha: components["parameters"]["RepoShaPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 提交作者与共同作者在 GitHub 上的账号与头像（仓库在 github.com 的项目）
+         * @description 以已连接的 GitHub 用户身份查 GraphQL `Commit.authors`（作者 + `Co-authored-by`），按邮箱给出能对上 GitHub 账号的人。
+         *     仓库不在 github.com、没连接身份、提交在 GitHub 上不存在或查询失败时返回空列表（不报错，前端退回首字头像）。
+         *     `sha` 须为完整的 40 位；结果在服务端缓存（成功 24 小时，失败 10 分钟）。
+         */
+        get: operations["getProjectRepoCommitAvatars"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/repo/tree": {
         parameters: {
             query?: never;
@@ -6605,6 +6630,17 @@ export interface components {
         ProjectRepoPerson: {
             name: string;
             email: string;
+        };
+        /** @description 一个提交里的人对上的 GitHub 账号 */
+        ProjectRepoAvatar: {
+            /** @description 提交里写的邮箱（原样） */
+            email: string;
+            login: string;
+            /** @description GitHub 头像地址（https） */
+            avatarUrl: string;
+        };
+        ProjectRepoCommitAvatars: {
+            avatars: components["schemas"]["ProjectRepoAvatar"][];
         };
         ProjectRepoCommitList: {
             /** @description 实际使用的 ref（缺省时为基线分支） */
@@ -13055,6 +13091,30 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GitFileDiff"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getProjectRepoCommitAvatars: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+                sha: components["parameters"]["RepoShaPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 对上账号的人（可能为空） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectRepoCommitAvatars"];
                 };
             };
             default: components["responses"]["Error"];

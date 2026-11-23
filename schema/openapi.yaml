@@ -630,6 +630,25 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/GitFileDiff' }
         default: { $ref: '#/components/responses/Error' }
+  /api/v1/projects/{id}/repo/commits/{sha}/avatars:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectIdPath' }
+      - { $ref: '#/components/parameters/RepoShaPath' }
+    get:
+      tags: [projects]
+      operationId: getProjectRepoCommitAvatars
+      summary: 提交作者与共同作者在 GitHub 上的账号与头像（仓库在 github.com 的项目）
+      description: |
+        以已连接的 GitHub 用户身份查 GraphQL `Commit.authors`（作者 + `Co-authored-by`），按邮箱给出能对上 GitHub 账号的人。
+        仓库不在 github.com、没连接身份、提交在 GitHub 上不存在或查询失败时返回空列表（不报错，前端退回首字头像）。
+        `sha` 须为完整的 40 位；结果在服务端缓存（成功 24 小时，失败 10 分钟）。
+      responses:
+        '200':
+          description: 对上账号的人（可能为空）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectRepoCommitAvatars' }
+        default: { $ref: '#/components/responses/Error' }
   /api/v1/projects/{id}/repo/tree:
     parameters:
       - { $ref: '#/components/parameters/ProjectIdPath' }
@@ -8449,6 +8468,21 @@ components:
       properties:
         name: { type: string }
         email: { type: string }
+    ProjectRepoAvatar:
+      type: object
+      description: 一个提交里的人对上的 GitHub 账号
+      required: [email, login, avatarUrl]
+      properties:
+        email: { type: string, description: 提交里写的邮箱（原样） }
+        login: { type: string }
+        avatarUrl: { type: string, description: GitHub 头像地址（https） }
+    ProjectRepoCommitAvatars:
+      type: object
+      required: [avatars]
+      properties:
+        avatars:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectRepoAvatar' }
     ProjectRepoCommitList:
       type: object
       required: [ref, commit, commits]

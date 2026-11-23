@@ -2717,9 +2717,10 @@ orynd 在 `<data_dir>/repos/<projectId>.git` 为每个有 `https://` 仓库地�
 |`GET /api/v1/projects/{id}/repo`|`getProjectRepo`|—|`ProjectRepoStatus`|
 |`POST /api/v1/projects/{id}/repo/sync`|`syncProjectRepo`|—|202 `ProjectRepoStatus`|
 |`GET /api/v1/projects/{id}/repo/refs`|`listProjectRepoRefs`|`kind`（`branch\|tag`，必填）、`cursor?`、`limit?`（1–200，缺省 50）|`ProjectRepoRefList{refs, nextCursor?}`|
-|`GET /api/v1/projects/{id}/repo/commits`|`listProjectRepoCommits`|`ref?`、`path?`、`cursor?`、`limit?`（1–100，缺省 30）|`ProjectRepoCommitList{ref, commit, commits, nextCursor?}`|
+|`GET /api/v1/projects/{id}/repo/commits`|`listProjectRepoCommits`|`ref?`、`path?`、`cursor?`、`limit?`（1–100，缺省 30）|`ProjectRepoCommitList{ref, commit, commits, nextCursor?, total?}`|
 |`GET /api/v1/projects/{id}/repo/commits/{sha}`|`getProjectRepoCommit`|—|`ProjectRepoCommitDetail`|
 |`GET /api/v1/projects/{id}/repo/commits/{sha}/diff`|`getProjectRepoCommitDiff`|`path`、`oldPath?`|`GitFileDiff`|
+|`GET /api/v1/projects/{id}/repo/commits/{sha}/avatars`|`getProjectRepoCommitAvatars`|—|`ProjectRepoCommitAvatars{avatars: [{email, login, avatarUrl}]}`|
 |`GET /api/v1/projects/{id}/repo/tree`|`getProjectRepoTree`|`ref?`、`path?`、`lastCommits?`（缺省 true）|`ProjectRepoTree`|
 |`GET /api/v1/projects/{id}/repo/blob`|`getProjectRepoBlob`|`ref?`、`path`、`download?`、头 `If-None-Match`|200 / 206 字节流，或 304|
 
@@ -2727,7 +2728,8 @@ orynd 在 `<data_dir>/repos/<projectId>.git` 为每个有 `https://` 仓库地�
 - **参数校验**（违反回 400 `invalid_request`）：`ref` 匹配 `^[A-Za-z0-9][A-Za-z0-9._/-]{0,200}$`，不含 `..`、`//`，不以 `/` 或 `.lock` 结尾；`sha` 匹配 `^[0-9a-f]{7,40}$`；路径不含 NUL、不以 `/` 开头、没有 `.` / `..` / 空段、≤ 4096 字节（`""` = 根）；以 `-` 开头的 ref 或路径一律拒绝。git 调用里修订放在 `--end-of-options` 之后，路径用 `:(literal)` pathspec。
 - **ref 解析**：缺省为状态里的 `baseBranch`；依次试 `refs/heads/<ref>`、`refs/tags/<ref>`，形如 sha 时再试提交本身，都不是回 404 `ref_not_found`。
 - **refs**：分支按最近提交时间、标签按创建时间倒序，默认分支排第一，至多列 10000 个；`cursor` 是十进制偏移。
-- **commits**：`cursor` 为 `<头提交 sha>:<偏移>`（`^[0-9a-f]{40}([0-9a-f]{24})?:[0-9]{1,7}$`），翻页沿用第一页的头提交，分支移动后后续页不变。`path` 过滤只看改动该路径的提交。每个提交带 `parents` 与关联线程 `thread?: {id, title, source: push|sampled|pull}`。
+- **commits**：`cursor` 为 `<头提交 sha>:<偏移>`（`^[0-9a-f]{40}([0-9a-f]{24})?:[0-9]{1,7}$`），翻页沿用第一页的头提交，分支移动后后续页不变。`path` 过滤只看改动该路径的提交。每个提交带 `parents`、关联线程 `thread?: {id, title, source: push|sampled|pull}`，以及 `coAuthors?: [{name, email}]`（git 解析的 `Co-authored-by` trailer，折行展开；按出现顺序，去掉与作者同邮箱的和重复的，有邮箱按邮箱、否则按名字比较，不分大小写）。`total` 只在第一页（不带 `cursor`）给出：头提交可达（带 `path` 时只计改动过它的）的提交数，第一页已到底时就是本页条数，否则 `rev-list --count`，失败时省略。
+- **avatars**：`sha` 须为完整 40 位（否则 400）。仓库地址在 github.com 时以 `user` 身份查 GraphQL `repository.object(oid).authors`（git 作者 + `Co-authored-by`），只返回对上账号、头像为 https 的人，按邮箱去重（不分大小写）；仓库不在 github.com、没连接身份、GitHub 上没有这个提交或查询失败时回 `{avatars: []}`。按「项目 + 提交」在内存缓存：成功 24 小时，失败 10 分钟，至多 2000 条（满了整体清空）。前端 GitHub noreply 邮箱直接推出头像地址，只对其余邮箱才调用。
 - **commit / diff**：提交不存在回 404 `commit_not_found`。`files` 是相对第一个父提交（根提交相对空树 `4b825dc6…`）的 `--name-status -M` 与 `--numstat`，按路径排序、至多 2000 个（超出 `truncated`），`staged` 恒为 `none`；`additions` / `deletions` 只计非二进制文件；`body` 去掉 subject 行、≤ 64 KiB。diff 为 `-U3`、≤ 1 MiB（按行截断），二进制文件 `kind = binary`，规则同 orbd 的 `/git/diff`。
 - **tree**：路径不存在回 404 `path_not_found`。目录时 `entries` 为直接子项（目录在前、按名不分大小写排序，至多 5000 个，超出 `truncated`）；`lastCommits` 时给每个子项找最后一次改动它的提交，至多读 2000 个提交或 3 秒，没找全的子项省略 `lastCommit` 并置 `lastCommitsComplete = false`。`self` 是文件时带 `mime` 与 `text`（前 8 KiB 无 NUL 且是合法 UTF-8）。`mode` 为 Unix 权限位（`100644→420`、`100755→493`、`040000→493`、`120000→511`、`160000→0`）；符号链接带 `target`。
 - **blob**：目录回 409 `not_a_file`；超过 64 MiB 回 413 `too_large`。`ETag: "<blob oid>"`，`If-None-Match` 相同回 304；`ref` 是完整提交 sha 时 `Cache-Control: private, max-age=31536000, immutable`，否则 `private, no-cache`。`Content-Type` 按扩展名、退回内容嗅探，`text/html` 一律改为 `text/plain; charset=utf-8`；安全的栅格图片 `Content-Disposition: inline`，其余（以及 `download=1`）一律 `attachment`；带 `X-Content-Type-Options: nosniff` 与 `Content-Security-Policy: sandbox`。普通 blob 忽略 `Range`。

@@ -89,6 +89,8 @@ type Server struct {
 	Rollups   map[string]string
 	CheckRuns map[string][]CheckRun
 	Statuses  map[string][]CommitStatus
+	// CommitAuthors 是提交 sha → GraphQL `Commit.authors` 的节点（作者与共同作者，见 issues.go 的 SetCommitAuthors）。
+	CommitAuthors map[string][]CommitAuthor
 	// Unreachable 为真时仓库 hook 投递不真的发请求，只在投递日志里记 502。
 	Unreachable bool
 	// Fail 注入失败："METHOD /path" → 状态码；命中的请求直接回该状态码（仍记进 Calls）。

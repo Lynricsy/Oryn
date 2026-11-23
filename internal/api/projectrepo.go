@@ -106,6 +106,20 @@ func (s *Server) GetProjectRepoCommit(w http.ResponseWriter, r *http.Request, id
 	WriteJSON(w, http.StatusOK, out)
 }
 
+// GetProjectRepoCommitAvatars 返回提交作者与共同作者对上的 GitHub 账号与头像（查不到时为空列表）。
+func (s *Server) GetProjectRepoCommitAvatars(w http.ResponseWriter, r *http.Request, id apigen.ProjectIDPath, sha apigen.RepoShaPath) {
+	svc, ok := s.reposSvc(w)
+	if !ok {
+		return
+	}
+	out, err := svc.CommitAvatars(r.Context(), id, sha)
+	if err != nil {
+		writeRepoErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, out)
+}
+
 // GetProjectRepoCommitDiff 返回提交里一个文件的 diff。
 func (s *Server) GetProjectRepoCommitDiff(w http.ResponseWriter, r *http.Request, id apigen.ProjectIDPath, sha apigen.RepoShaPath, params apigen.GetProjectRepoCommitDiffParams) {
 	svc, ok := s.reposSvc(w)

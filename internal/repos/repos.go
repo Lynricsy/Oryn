@@ -69,10 +69,12 @@ type Config struct {
 	WebhookTimeout time.Duration
 }
 
-// GitHub 是 github.com 拉取凭据与「提交 → PR → 线程」反查（*github.Service 实现）。
+// GitHub 是 github.com 拉取凭据、「提交 → PR → 线程」反查与提交作者头像（*github.Service 实现）。
 type GitHub interface {
 	UserToken(ctx context.Context) (string, error)
 	CommitThreads
+	// CommitAvatars 查提交作者与共同作者对上的 GitHub 账号与头像；仓库不在 github.com 时返回 (nil, nil)。
+	CommitAvatars(ctx context.Context, projectID, sha string) ([]apigen.ProjectRepoAvatar, error)
 }
 
 // CommitThreads 按「提交所属 PR → 最早关联该 PR 的线程」反查提交的线程（GitHub 项目补 squash 合并）。
@@ -130,6 +132,8 @@ type Service struct {
 	inlineLFSMax int64 // LFS 对象内联预览（取对象、进缓存）的上限，超过只能 download=1（测试可改）
 	treeMu       sync.Mutex
 	treeCache    map[string]map[string]apigen.ProjectRepoCommitSummary // commit + "\x00" + dir → 子项名 → 最后提交
+	avatarMu     sync.Mutex
+	avatarCache  map[string]avatarEntry // 项目 id + "\x00" + 提交 sha → GitHub 头像（见 avatars.go）
 
 	ctx    context.Context
 	cancel context.CancelFunc

@@ -9904,6 +9904,16 @@ type ProjectPatch struct {
 	WarmOrbs *int `json:"warmOrbs,omitempty"`
 }
 
+// ProjectRepoAvatar 一个提交里的人对上的 GitHub 账号
+type ProjectRepoAvatar struct {
+	// AvatarURL GitHub 头像地址（https）
+	AvatarURL string `json:"avatarUrl"`
+
+	// Email 提交里写的邮箱（原样）
+	Email string `json:"email"`
+	Login string `json:"login"`
+}
+
 // ProjectRepoCommit 提交摘要、父提交与关联线程
 type ProjectRepoCommit struct {
 	AuthorEmail string `json:"authorEmail"`
@@ -9921,6 +9931,11 @@ type ProjectRepoCommit struct {
 
 	// TS 作者时间
 	TS TimestampMs `json:"ts"`
+}
+
+// ProjectRepoCommitAvatars defines model for ProjectRepoCommitAvatars.
+type ProjectRepoCommitAvatars struct {
+	Avatars []ProjectRepoAvatar `json:"avatars"`
 }
 
 // ProjectRepoCommitDetail defines model for ProjectRepoCommitDetail.
@@ -17429,6 +17444,9 @@ type ServerInterface interface {
 	// GetProjectRepoCommit 项目仓库镜像里的一个提交（M24；含改动文件与关联线程）
 	// (GET /api/v1/projects/{id}/repo/commits/{sha})
 	GetProjectRepoCommit(w http.ResponseWriter, r *http.Request, id ProjectIDPath, sha RepoShaPath)
+	// GetProjectRepoCommitAvatars 提交作者与共同作者在 GitHub 上的账号与头像（仓库在 github.com 的项目）
+	// (GET /api/v1/projects/{id}/repo/commits/{sha}/avatars)
+	GetProjectRepoCommitAvatars(w http.ResponseWriter, r *http.Request, id ProjectIDPath, sha RepoShaPath)
 	// GetProjectRepoCommitDiff 提交里一个文件的 unified diff（M24；合并提交相对第一个父提交，根提交相对空树）
 	// (GET /api/v1/projects/{id}/repo/commits/{sha}/diff)
 	GetProjectRepoCommitDiff(w http.ResponseWriter, r *http.Request, id ProjectIDPath, sha RepoShaPath, params GetProjectRepoCommitDiffParams)
@@ -19274,6 +19292,12 @@ func (_ Unimplemented) ListProjectRepoCommits(w http.ResponseWriter, r *http.Req
 // GetProjectRepoCommit 项目仓库镜像里的一个提交（M24；含改动文件与关联线程）
 // (GET /api/v1/projects/{id}/repo/commits/{sha})
 func (_ Unimplemented) GetProjectRepoCommit(w http.ResponseWriter, r *http.Request, id ProjectIDPath, sha RepoShaPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetProjectRepoCommitAvatars 提交作者与共同作者在 GitHub 上的账号与头像（仓库在 github.com 的项目）
+// (GET /api/v1/projects/{id}/repo/commits/{sha}/avatars)
+func (_ Unimplemented) GetProjectRepoCommitAvatars(w http.ResponseWriter, r *http.Request, id ProjectIDPath, sha RepoShaPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -27368,6 +27392,41 @@ func (siw *ServerInterfaceWrapper) GetProjectRepoCommit(w http.ResponseWriter, r
 	handler.ServeHTTP(w, r)
 }
 
+// GetProjectRepoCommitAvatars operation middleware
+func (siw *ServerInterfaceWrapper) GetProjectRepoCommitAvatars(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProjectIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "sha" -------------
+	var sha RepoShaPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "sha", chi.URLParam(r, "sha"), &sha, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sha", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetProjectRepoCommitAvatars(w, r, id, sha)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetProjectRepoCommitDiff operation middleware
 func (siw *ServerInterfaceWrapper) GetProjectRepoCommitDiff(w http.ResponseWriter, r *http.Request) {
 
@@ -31492,6 +31551,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/projects/{id}/repo/commits/{sha}/diff", wrapper.GetProjectRepoCommitDiff)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/projects/{id}/repo/commits/{sha}/avatars", wrapper.GetProjectRepoCommitAvatars)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/projects/{id}/repo/tree", wrapper.GetProjectRepoTree)

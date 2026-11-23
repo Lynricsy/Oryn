@@ -51,11 +51,15 @@ func (failingSecrets) ProjectGitToken(string, string) (string, bool, error) {
 	return "", false, errors.New("vault unavailable")
 }
 
-// fakeGitHub 是 GitHub 替身：tok 是拉取令牌；pulls 是 CommitThread 的结果（sha → 线程），calls 记反查次数。
+// fakeGitHub 是 GitHub 替身：tok 是拉取令牌；pulls 是 CommitThread 的结果（sha → 线程），calls 记反查次数；
+// avatars 是 CommitAvatars 的结果（sha → 头像），avatarErr 非 nil 时 CommitAvatars 失败，avatarCalls 记查询次数。
 type fakeGitHub struct {
-	tok   string
-	pulls map[string]string
-	calls *atomic.Int32
+	tok         string
+	pulls       map[string]string
+	calls       *atomic.Int32
+	avatars     map[string][]apigen.ProjectRepoAvatar
+	avatarErr   error
+	avatarCalls *atomic.Int32
 }
 
 func (f fakeGitHub) UserToken(context.Context) (string, error) {
@@ -71,6 +75,16 @@ func (f fakeGitHub) CommitThread(_ context.Context, _, sha string) (string, bool
 	}
 	tid, ok := f.pulls[sha]
 	return tid, ok, nil
+}
+
+func (f fakeGitHub) CommitAvatars(_ context.Context, _, sha string) ([]apigen.ProjectRepoAvatar, error) {
+	if f.avatarCalls != nil {
+		f.avatarCalls.Add(1)
+	}
+	if f.avatarErr != nil {
+		return nil, f.avatarErr
+	}
+	return f.avatars[sha], nil
 }
 
 // testClock 是可拨快的时钟。
