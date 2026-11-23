@@ -50,6 +50,7 @@ import {
 	Spinner,
 	tabClass,
 } from "../components/ui/primitives";
+import { copyToClipboard } from "../lib/clipboard";
 import { orbFileSource } from "../lib/file-source";
 import {
 	formatDateTime,
@@ -537,9 +538,13 @@ export function AssistantComputerPage(): ReactNode {
 									key: "copy",
 									icon: "copy",
 									label: t("assistantComputer.copyId"),
-									onSelect: () => {
-										void navigator.clipboard?.writeText(orbId);
-										showToast({ text: t("common.copied") });
+									onSelect: async () => {
+										const ok = await copyToClipboard(orbId);
+										showToast(
+											ok
+												? { text: t("common.copied") }
+												: { text: t("contextMenu.copyFailed"), tone: "err" },
+										);
 									},
 								},
 								{
