@@ -1582,8 +1582,10 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 .boot-splash[data-phase="flying"] .boot-splash-caret {
 	animation: none;
 }
+/* 交接完成后整层移出渲染：visibility: hidden 时扫光与插入符的无限动画仍在跑（白白占合成与电量）；
+ * display: none 才真正停掉它们。holdSplash 重新举起时按墙钟重写 --boot-t，相位照样对齐 */
 .boot-splash[data-phase="gone"] {
-	visibility: hidden;
+	display: none;
 }
 /* 减少动态效果：插入符不闪、光不扫，点阵中央留一束静止的主题色；交接改为整体淡出（boot-splash.ts） */
 @media (prefers-reduced-motion: reduce) {

@@ -103,5 +103,12 @@ export function holdSplash(): void {
 	const p = parts();
 	if (!p || p.root.dataset.phase === "shown") return;
 	stop(p.mark);
+	// gone 时整层 display: none，动画已停；重新显示时动画从头开始，按此刻的墙钟重写延迟，扫光相位仍与远程页面对齐。
+	// 交接途中（flying / fading）动画还在跑，改延迟反而会让它跳相位，不动
+	if (p.root.dataset.phase === "gone")
+		document.documentElement.style.setProperty(
+			"--boot-t",
+			`${-(Date.now() % 12000)}ms`,
+		);
 	p.root.dataset.phase = "shown";
 }
