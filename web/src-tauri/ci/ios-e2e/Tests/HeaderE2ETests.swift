@@ -87,7 +87,7 @@ final class HeaderE2ETests: E2ECase {
 
     // 5. 点「改名」：菜单收起，网页打开改名对话框，原生页头让位
     try tap(app, rename, "改名行")
-    guard app.webViews.textFields.firstMatch.waitForExistence(timeout: 10) else {
+    guard app.webViews.textFields.firstMatch.waitForExistence(timeout: 10 * waitScale) else {
       throw E2EFailure("点「改名」后网页没有打开改名对话框（无障碍树里没有输入框）")
     }
     try expectHeader(app, slots, native: false, "对话框打开后")
@@ -136,12 +136,12 @@ final class HeaderE2ETests: E2ECase {
     // 10. 点输入框弹出软键盘：iOS 会平移视觉视口把整页推上去，网页（lib/viewport.ts 的 settleViewport）应把它拉回，
     //     只让输入区按 --kb-inset 让出键盘。断言在脚本里（网页探针的视口采样），这里只确认键盘真的出来了
     let composer = app.webViews.textViews.firstMatch
-    guard composer.waitForExistence(timeout: 10) else {
+    guard composer.waitForExistence(timeout: 10 * waitScale) else {
       throw E2EFailure("线程页的无障碍树里没有输入框")
     }
     composer.tap()
-    guard app.keyboards.firstMatch.waitForExistence(timeout: 15) else {
-      throw E2EFailure("点输入框后 15 秒内没有弹出软键盘（模拟器连着硬件键盘？）")
+    guard app.keyboards.firstMatch.waitForExistence(timeout: 15 * waitScale) else {
+      throw E2EFailure("点输入框后 \(Int(15 * waitScale)) 秒内没有弹出软键盘（模拟器连着硬件键盘？）")
     }
     _ = try checkpoint("h-keyboard")
   }

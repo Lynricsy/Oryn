@@ -61,6 +61,9 @@ mkdir -p "$3"
 out=$(cd "$3" && pwd)
 bundle=com.lynricsy.oryn
 here=$(cd "$(dirname "$0")" && pwd)
+# 等待预算倍数：until_ok / wait_req 写的秒数是机器正常时的量级，实际等待乘以它；UI 测试的 until 同样乘（TEST_RUNNER_E2E_WAIT_SCALE）。
+# CI 的 macOS arm64 机器拥挤时整机慢数倍（同一镜像下原样重跑 rc.6 也会超时），只放宽等待，不改任何判定
+wait_scale=${E2E_WAIT_SCALE:-4}
 web=$(cd "$here/../.." && pwd)
 summary=${GITHUB_STEP_SUMMARY:-/dev/null}
 port=47613
@@ -123,7 +126,7 @@ rm -rf "$out/e2e.xcresult" "$out/header.xcresult"
 # 先只跑底栏测试；页头测试在底栏全部断言之后单独跑（见下方「原生页头」）
 xlog="$out/xcodebuild.log"
 events=events.jsonl
-TEST_RUNNER_E2E_SYNC="$sync" TEST_RUNNER_E2E_URL="$origin/" TEST_RUNNER_E2E_LOG="$log" \
+TEST_RUNNER_E2E_SYNC="$sync" TEST_RUNNER_E2E_URL="$origin/" TEST_RUNNER_E2E_LOG="$log" TEST_RUNNER_E2E_WAIT_SCALE="$wait_scale" \
   xcodebuild test-without-building "${xcb[@]}" -only-testing:OrynE2E/TabBarE2ETests -parallel-testing-enabled NO \
   -resultBundlePath "$out/e2e.xcresult" >"$xlog" 2>&1 &
 runner=$!
@@ -154,9 +157,10 @@ fail() {
   exit 1
 }
 
-# wait_req <步骤> <秒>：等测试走到这一步，它带来的 JSON 存进 $req
+# wait_req <步骤> <秒>：等测试走到这一步，它带来的 JSON 存进 $req（等待预算 × wait_scale）
 wait_req() {
-  local end=$((SECONDS + $2))
+  local secs=$(($2 * wait_scale)) end
+  end=$((SECONDS + secs))
   while ((SECONDS < end)); do
     if [[ -f $sync/$1.req ]]; then
       req=$(cat "$sync/$1.req")
@@ -165,12 +169,12 @@ wait_req() {
     kill -0 "$runner" 2>/dev/null || fail "$1" "UI 测试在走到这一步之前就退出了（见 $(basename "$xlog")）"
     sleep 0.25
   done
-  fail "$1" "${2} 秒内测试没有走到这一步"
+  fail "$1" "${secs} 秒内测试没有走到这一步"
 }
 
-# until_ok <步骤> <秒> <说明> <命令…>：命令成功为止（按墙钟计时，命令本身可能要等）
+# until_ok <步骤> <秒> <说明> <命令…>：命令成功为止（按墙钟计时，命令本身可能要等；等待预算 × wait_scale）
 until_ok() {
-  local step=$1 secs=$2 what=$3 end
+  local step=$1 secs=$(($2 * wait_scale)) what=$3 end
   shift 3
   end=$((SECONDS + secs))
   while ((SECONDS < end)); do
@@ -507,7 +511,7 @@ xlog="$out/xcodebuild-header.log"
 # 底栏测试留下的 App 先停掉，事件日志从头记
 xcrun simctl terminate "$udid" "$bundle" 2>/dev/null || true
 rm -f "$log"
-TEST_RUNNER_E2E_SYNC="$sync" TEST_RUNNER_E2E_URL="$origin/t/$thread" TEST_RUNNER_E2E_LOG="$log" \
+TEST_RUNNER_E2E_SYNC="$sync" TEST_RUNNER_E2E_URL="$origin/t/$thread" TEST_RUNNER_E2E_LOG="$log" TEST_RUNNER_E2E_WAIT_SCALE="$wait_scale" \
   xcodebuild test-without-building "${xcb[@]}" -only-testing:OrynE2E/HeaderE2ETests -parallel-testing-enabled NO \
   -resultBundlePath "$out/header.xcresult" >"$xlog" 2>&1 &
 runner=$!
@@ -700,7 +704,7 @@ events=appicon-events.jsonl
 xlog="$out/xcodebuild-appicon.log"
 xcrun simctl terminate "$udid" "$bundle" 2>/dev/null || true
 rm -f "$log"
-TEST_RUNNER_E2E_SYNC="$sync" TEST_RUNNER_E2E_URL="$origin/settings/appearance" TEST_RUNNER_E2E_LOG="$log" \
+TEST_RUNNER_E2E_SYNC="$sync" TEST_RUNNER_E2E_URL="$origin/settings/appearance" TEST_RUNNER_E2E_LOG="$log" TEST_RUNNER_E2E_WAIT_SCALE="$wait_scale" \
   xcodebuild test-without-building "${xcb[@]}" -only-testing:OrynE2E/AppIconE2ETests -parallel-testing-enabled NO \
   -resultBundlePath "$out/appicon.xcresult" >"$xlog" 2>&1 &
 runner=$!

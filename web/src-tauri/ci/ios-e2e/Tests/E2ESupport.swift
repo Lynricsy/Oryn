@@ -16,6 +16,11 @@ struct E2EFailure: LocalizedError {
   var errorDescription: String? { message }
 }
 
+/// 等待预算倍数（ios-e2e-check.sh 经 TEST_RUNNER_E2E_WAIT_SCALE 传入，缺省 1）：poll / until 与等元素出现的超时都乘以它。
+/// CI 的 macOS 机器拥挤时整机慢数倍，只放宽等待，不改任何判定。
+let waitScale: TimeInterval =
+  ProcessInfo.processInfo.environment["E2E_WAIT_SCALE"].flatMap(TimeInterval.init) ?? 1
+
 /// 各端到端测试的基类：本身没有测试方法。
 class E2ECase: XCTestCase {
   var sync = URL(fileURLWithPath: "/")
@@ -69,7 +74,7 @@ extension E2ECase {
   }
 
   func poll(timeout: TimeInterval, _ cond: () throws -> Bool) rethrows -> Bool {
-    let deadline = Date().addingTimeInterval(timeout)
+    let deadline = Date().addingTimeInterval(timeout * waitScale)
     while true {
       if try cond() { return true }
       if Date() >= deadline { return false }

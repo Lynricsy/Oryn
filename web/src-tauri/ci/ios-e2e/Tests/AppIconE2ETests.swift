@@ -28,7 +28,7 @@ final class AppIconE2ETests: E2ECase {
       let radio = app.webViews.descendants(matching: .any)
         .matching(NSPredicate(format: "label IN %@", step.labels)).firstMatch
       // 冷启动等 300 秒：CI 的 macOS 机器整机卡顿时 WebView 首次加载曾超过 90 秒
-      guard radio.waitForExistence(timeout: index == 0 ? 300 : 30) else {
+      guard radio.waitForExistence(timeout: index == 0 ? 300 : 30 * waitScale) else {
         throw E2EFailure("设置页没有出现「\(step.labels[0])」（宿主没报出可替换图标，或页面没打开）")
       }
       var swipes = 0
