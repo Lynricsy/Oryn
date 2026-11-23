@@ -918,7 +918,7 @@ function ScheduleForm({
 				<div
 					role="radiogroup"
 					aria-label={t("schedule.kindLabel")}
-					className="flex gap-1 self-start rounded-lg bg-inset p-0.5"
+					className="flex gap-1 self-start rounded-full bg-inset p-0.5"
 				>
 					{KINDS.map((k) => (
 						// biome-ignore lint/a11y/useSemanticElements: 分段按钮（WAI-ARIA radio），原生 radio 画不出这种外观
@@ -1094,7 +1094,7 @@ function ScheduleForm({
 									<div
 										role="radiogroup"
 										aria-label={t("schedule.gate.whereLabel")}
-										className="flex gap-1 self-start rounded-lg bg-inset p-0.5"
+										className="flex gap-1 self-start rounded-full bg-inset p-0.5"
 									>
 										{(["local", "ssh"] as const).map((w) => (
 											// biome-ignore lint/a11y/useSemanticElements: 分段按钮（WAI-ARIA radio），同触发方式

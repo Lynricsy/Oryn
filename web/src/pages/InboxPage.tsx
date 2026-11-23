@@ -325,7 +325,7 @@ export function InboxPage(): ReactNode {
 				<div
 					role="group"
 					aria-label={t("inbox.groupBy")}
-					className="flex shrink-0 items-center gap-0.5 rounded-md bg-inset p-0.5"
+					className="flex shrink-0 items-center gap-0.5 rounded-full bg-inset p-0.5"
 				>
 					{GROUP_OPTIONS.map((o) => (
 						<button

@@ -582,6 +582,8 @@ export function Radio({ className = "", ...props }: ComponentProps<"input">) {
 /**
  * 标签页按钮样式；不带滑块的场合选中再加 `bg-hover`。胶囊形：标签条大多贴着纸面 / 面板的大圆角（32px 左右、内缩 8–10px），
  * 同心的半径比 28px 高的按钮的一半还大，取胶囊才与外角同心（以前的 12px 圆角在角落里显得没处理）。
+ * 分段选择器（`bg-inset p-0.5` 槽 + `bg-panel` 滑块）的槽也必须是 `rounded-full`：槽只比滑块高 4px，
+ * 圆角小于槽高一半时滑块的胶囊头会和槽的角对不上。
  */
 export function tabClass(selected: boolean): string {
 	return `relative z-10 inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium transition-colors duration-150 ${selected ? "text-fg" : "text-muted hover:text-fg"}`;

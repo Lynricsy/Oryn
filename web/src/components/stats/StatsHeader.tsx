@@ -182,7 +182,7 @@ function RangePicker({
 				<div
 					role="group"
 					aria-label={t("stats.range.label")}
-					className="flex shrink-0 items-center gap-0.5 rounded-md bg-inset p-0.5"
+					className="flex shrink-0 items-center gap-0.5 rounded-full bg-inset p-0.5"
 				>
 					{RANGES.map((r) => (
 						<button

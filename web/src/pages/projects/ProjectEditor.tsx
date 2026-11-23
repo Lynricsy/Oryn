@@ -194,7 +194,7 @@ function RepoSourcePicker({
 				role="group"
 				aria-label={t("hostedRepo.source.label")}
 				data-testid="repo-source"
-				className="flex w-fit max-w-full flex-wrap items-center gap-0.5 rounded-md bg-inset p-0.5"
+				className="flex w-fit max-w-full items-center gap-0.5 overflow-x-auto rounded-full bg-inset p-0.5"
 			>
 				{REPO_SOURCES.map((s) => (
 					<button

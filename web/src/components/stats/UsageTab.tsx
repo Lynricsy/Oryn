@@ -67,7 +67,7 @@ function Segmented<T extends string>({
 		<div
 			role="group"
 			aria-label={label}
-			className="focus-inset flex min-w-0 items-center gap-0.5 overflow-x-auto rounded-md bg-inset p-0.5"
+			className="focus-inset flex min-w-0 items-center gap-0.5 overflow-x-auto rounded-full bg-inset p-0.5"
 		>
 			{options.map((o) => (
 				<button

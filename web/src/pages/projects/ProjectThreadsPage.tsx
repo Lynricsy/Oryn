@@ -111,7 +111,7 @@ function ProjectThreads({ project }: { project: Project }): ReactNode {
 					<div
 						role="group"
 						aria-label={t("projectThreads.statusLabel")}
-						className="flex shrink-0 items-center gap-0.5 rounded-md bg-inset p-0.5"
+						className="flex shrink-0 items-center gap-0.5 rounded-full bg-inset p-0.5"
 					>
 						{STATUSES.map((s) => (
 							<button

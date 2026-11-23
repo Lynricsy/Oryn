@@ -442,7 +442,7 @@ function ElementForm({
 				<legend className="mb-1 font-medium text-muted text-xs">
 					{t("artifacts.edit.align")}
 				</legend>
-				<div className="flex gap-0.5 self-start rounded-md border border-border bg-inset p-0.5">
+				<div className="flex gap-0.5 self-start rounded-full border border-border bg-inset p-0.5">
 					{ALIGNS.map((a) => {
 						const on = raw["text-align"] === a;
 						return (

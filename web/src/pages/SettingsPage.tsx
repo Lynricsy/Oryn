@@ -881,7 +881,7 @@ function ThemeSettings() {
 						role="radiogroup"
 						aria-label={t("appearance.mode")}
 						onKeyDown={radioKeys}
-						className="inline-flex w-fit max-w-full rounded-lg border border-border bg-inset p-0.5"
+						className="inline-flex w-fit max-w-full rounded-full border border-border bg-inset p-0.5"
 					>
 						{MODES.map((m) => {
 							const on = mode === m;
@@ -894,7 +894,7 @@ function ThemeSettings() {
 									aria-checked={on}
 									tabIndex={on ? 0 : -1}
 									onClick={() => setMode(m)}
-									className={`inline-flex h-7 items-center gap-1.5 rounded-md px-3 font-medium text-xs transition-[background-color,color,box-shadow] duration-150 ${on ? "bg-panel text-fg shadow-xs ring-1 ring-border" : "text-muted hover:text-fg"}`}
+									className={`inline-flex h-7 items-center gap-1.5 rounded-full px-3 font-medium text-xs transition-[background-color,color,box-shadow] duration-150 ${on ? "bg-panel text-fg shadow-xs ring-1 ring-border" : "text-muted hover:text-fg"}`}
 								>
 									<Icon name={MODE_ICON[m]} size={14} />
 									{t(`appearance.modes.${m}`)}

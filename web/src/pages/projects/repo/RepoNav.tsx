@@ -21,7 +21,7 @@ export function RepoNav({ projectId }: { projectId: string }): ReactNode {
 		<nav
 			aria-label={t("projectRepo.nav.label")}
 			data-testid="repo-nav"
-			className="flex w-fit shrink-0 items-center gap-0.5 rounded-md bg-inset p-0.5"
+			className="flex w-fit shrink-0 items-center gap-0.5 rounded-full bg-inset p-0.5"
 		>
 			{TABS.map(([sub, icon]) => (
 				<NavLink
