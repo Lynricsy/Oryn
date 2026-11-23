@@ -414,6 +414,7 @@ function ShareView({
 			subagents: {},
 			openSubagent: noop,
 			forkFrom: noop,
+			rewindTo: noop,
 			labelEntry: noop,
 			readOnly: true,
 			identities,

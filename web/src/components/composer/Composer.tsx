@@ -56,8 +56,10 @@ import {
 	isInFlightDraft,
 	patchComposerDraft,
 	takeComposerFiles,
+	takeComposerRestores,
 	useComposerDraft,
 	useComposerPendingFiles,
+	useComposerPendingRestores,
 } from "../../state/composer-drafts";
 import {
 	agentQueryable,
@@ -136,6 +138,13 @@ export const Composer = memo(function Composer({
 		const files = takeComposerFiles(threadId);
 		if (canAttach) void addFiles(files);
 	}, [pendingFiles, threadId, canAttach, addFiles]);
+	// 回退（rewind）带回 / 撤销时去掉的附件
+	const pendingRestores = useComposerPendingRestores(threadId);
+	const applyRestore = att.applyRestore;
+	useEffect(() => {
+		if (pendingRestores.length === 0) return;
+		for (const op of takeComposerRestores(threadId)) applyRestore(op);
+	}, [pendingRestores, threadId, applyRestore]);
 	const menu = useCommandMenu(threadId, text, commands, coordinator);
 	const menuOpen = menu !== null && !menuDismissed;
 	const entries = menu?.entries ?? [];
@@ -442,6 +451,9 @@ export const Composer = memo(function Composer({
 			case "open_tree":
 				ui.open({ kind: "tree" });
 				return;
+			case "open_rewind":
+				ui.open({ kind: "rewind" });
+				return;
 			case "open_fork":
 				ui.open({ kind: "fork" });
 				return;
@@ -723,12 +735,20 @@ export const Composer = memo(function Composer({
 			busy,
 			escAt.current,
 			Date.now(),
+			text.trim() === "",
 		);
 		escAt.current = decision.escAt;
 		switch (decision.action) {
 			case "abort":
 				e.preventDefault();
 				void realtime.cmd(threadId, { type: "abort" }).catch(() => undefined);
+				return;
+			case "rewind":
+				// 离散输入的更新同步提交、effect 也同步执行：对话框在这次 keydown 冒泡到 window 之前就挂上了
+				// 自己的 Esc 监听，不拦住冒泡会被同一个 Esc 立刻关掉
+				e.preventDefault();
+				e.stopPropagation();
+				uiStore.getState().open({ kind: "rewind" });
 				return;
 			case "prompt":
 			case "steer":

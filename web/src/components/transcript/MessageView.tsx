@@ -260,7 +260,7 @@ function pickMenuSide(el: HTMLElement | null, items: number): "top" | "bottom" {
 }
 
 /**
- * 消息菜单项：行内「⋯」与右键菜单共用。只读（分享页）只有「复制」；fork / 标签 / 引用整条都要改动线程。
+ * 消息菜单项：行内「⋯」与右键菜单共用。只读（分享页）只有「复制」；回退 / fork / 标签 / 引用整条都要改动线程。
  */
 function messageMenuItems(o: {
 	entryId?: string;
@@ -268,6 +268,8 @@ function messageMenuItems(o: {
 	copyLabel: string;
 	/** 给出时多一项「引用整条」（右键菜单的助手消息） */
 	quoteText?: () => string;
+	/** 用户自己发的消息：多一项「回到这里编辑」（回退到它之前，原文放回输入区） */
+	rewindable?: boolean;
 	ctx: TranscriptContextValue;
 	t: TFunction;
 }): MenuItem[] {
@@ -291,6 +293,13 @@ function messageMenuItems(o: {
 				patchComposerDraft(ctx.threadId, {
 					quote: { text: normalizeQuote(quoteText()) },
 				}),
+		});
+	if (editable && entryId && o.rewindable)
+		items.push({
+			key: "rewind",
+			icon: "undo",
+			label: t("transcript.editFromHere"),
+			onSelect: () => ctx.rewindTo(entryId),
 		});
 	if (editable && entryId)
 		items.push(
@@ -318,6 +327,7 @@ function messageMenuItems(o: {
 function MessageMenu({
 	entryId,
 	copyText,
+	rewindable,
 	className = "",
 	chrome = "",
 	touchVisible = true,
@@ -325,6 +335,8 @@ function MessageMenu({
 	entryId?: string;
 	/** 「复制」的文本：点击时才生成（回合脚注要拼接整回合正文，不在每次渲染时做）。 */
 	copyText: () => string;
+	/** 见 `messageMenuItems` */
+	rewindable?: boolean;
 	/** 追加到外包元素上的定位类（例如回合中间消息右上角的浮动槽位）。 */
 	className?: string;
 	/** 追加到按钮上的外观类（底色、描边、阴影）：随按钮一起显隐，按钮透明时不留空框 */
@@ -344,6 +356,7 @@ function MessageMenu({
 		entryId,
 		copyText,
 		copyLabel: t("common.copy"),
+		rewindable,
 		ctx,
 		t,
 	});
@@ -646,6 +659,8 @@ function UserMessage({
 				senderTitle ? parseTitleCard(senderTitle).text : undefined,
 			)
 		: "";
+	// 用户自己写的消息才能「回到这里编辑」：agent / 定时等发来的消息、IRC 转述、合成消息不算
+	const rewindable = !oryn && !irc && !synthetic;
 	const ctxRef = useContextTarget<HTMLDivElement>({
 		items: () => [
 			{
@@ -654,13 +669,20 @@ function UserMessage({
 					entryId,
 					copyText: () => text,
 					copyLabel: t("contextMenu.copyMessage"),
+					rewindable,
 					ctx,
 					t,
 				}),
 			},
 		],
 	});
-	const menu = <MessageMenu entryId={entryId} copyText={() => text} />;
+	const menu = (
+		<MessageMenu
+			entryId={entryId}
+			copyText={() => text}
+			rewindable={rewindable}
+		/>
+	);
 	if (oryn)
 		return (
 			<div

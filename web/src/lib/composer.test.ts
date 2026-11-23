@@ -50,10 +50,28 @@ describe("输入区按键", () => {
 				1001 + DOUBLE_ESC_MS,
 			).action,
 		).toBe("none");
-		// 空闲时不中断
-		expect(composerKeyAction({ key: "Escape" }, false, 1000, 1100).action).toBe(
-			"none",
-		);
+		// 空闲、输入框有字：不中断，也不计入连按
+		expect(composerKeyAction({ key: "Escape" }, false, 1000, 1100)).toEqual({
+			action: "none",
+			escAt: null,
+		});
+	});
+
+	it("空闲且输入框为空：Esc Esc（间隔内）= 回退", () => {
+		const first = composerKeyAction({ key: "Escape" }, false, null, 1000, true);
+		expect(first).toEqual({ action: "none", escAt: 1000 });
+		expect(
+			composerKeyAction({ key: "Escape" }, false, first.escAt, 1200, true),
+		).toEqual({ action: "rewind", escAt: null });
+		expect(
+			composerKeyAction(
+				{ key: "Escape" },
+				false,
+				first.escAt,
+				1001 + DOUBLE_ESC_MS,
+				true,
+			).action,
+		).toBe("none");
 	});
 
 	it("输入法组字中不响应", () => {

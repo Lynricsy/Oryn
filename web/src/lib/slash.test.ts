@@ -92,8 +92,12 @@ describe("斜杠命令拦截映射", () => {
 		});
 	});
 
-	it.each(["/tree", "/branch", "/rewind"])("%s 打开会话树", (cmd) => {
-		expect(resolve(cmd)).toEqual({ kind: "open_tree" });
+	it("/tree 打开会话树", () => {
+		expect(resolve("/tree")).toEqual({ kind: "open_tree" });
+	});
+
+	it.each(["/branch", "/rewind"])("%s 打开回退选择器", (cmd) => {
+		expect(resolve(cmd)).toEqual({ kind: "open_rewind" });
 	});
 
 	it("会话类命令映射到客户端动作", () => {

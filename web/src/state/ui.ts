@@ -17,6 +17,8 @@ import {
 
 export type DialogState =
 	| { kind: "tree" }
+	/** 回退（Esc Esc、`/branch`、`/rewind`）：选一条活动分支上的用户消息，回到它之前并把原文放回输入区。 */
+	| { kind: "rewind" }
 	| { kind: "fork"; entryId?: string }
 	| { kind: "report"; report: ReportKind }
 	/** `query`：打开时预填搜索框（`/model <选择器>` 解析不出唯一模型时）。 */

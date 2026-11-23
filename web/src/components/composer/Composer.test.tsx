@@ -434,6 +434,7 @@ describe("agent 未就绪时发送：转录先显示「发送中」气泡", () =
 		subagents: {},
 		openSubagent: () => {},
 		forkFrom: () => {},
+		rewindTo: () => {},
 		labelEntry: () => {},
 	};
 	const userRow = (seq: number, text: string): TranscriptItem => ({

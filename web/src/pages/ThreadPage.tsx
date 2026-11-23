@@ -47,6 +47,7 @@ import {
 	useThreadTabs,
 } from "../components/thread/RightPanel";
 import { RunnerOfflineNotice } from "../components/thread/RunnerOfflineNotice";
+import { rewindWithToast } from "../components/thread/rewind";
 import { SideAskHost } from "../components/thread/SideAskCard";
 import {
 	COMPACT_HEADER_VEIL,
@@ -310,6 +311,7 @@ export function ThreadScreen({
 			subagents,
 			openSubagent: (id) => uiStore.getState().open({ kind: "subagent", id }),
 			forkFrom: (entryId) => uiStore.getState().open({ kind: "fork", entryId }),
+			rewindTo: (entryId) => rewindWithToast(threadId, entryId),
 			labelEntry: (entryId) =>
 				uiStore.getState().open({ kind: "label", entryId }),
 			// 协调对话没有右面板：artifact 在整页查看器里打开

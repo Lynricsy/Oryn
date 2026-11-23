@@ -173,6 +173,7 @@ function View({ threadId }: { threadId: string }): ReactNode {
 			subagents: {},
 			openSubagent: () => undefined,
 			forkFrom: () => undefined,
+			rewindTo: () => undefined,
 			labelEntry: () => undefined,
 		}),
 		[threadId, model],

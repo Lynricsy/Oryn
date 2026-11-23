@@ -392,6 +392,7 @@
 		"developer": "System message",
 		"error": "Error: {{message}}",
 		"excluded": "excluded from context",
+		"editFromHere": "Edit from here",
 		"forkHere": "Fork from here",
 		"ircFrom": "From {{from}}",
 		"jumpToEnd": "Jump to latest",
@@ -621,6 +622,18 @@
 			"save": "Save only",
 			"refine": "Request changes"
 		}
+	},
+	"rewind": {
+		"title": "Rewind to an earlier message",
+		"intro": "Pick a message you sent: the conversation goes back to just before it and its text and attachments return to the composer for editing. The old path is kept as a branch.",
+		"hint_one": "Goes back to just before this message, undoing {{count}} turn. Its text and attachments return to the composer; the old path is kept as a branch.",
+		"hint_other": "Goes back to just before this message, undoing {{count}} turns. Its text and attachments return to the composer; the old path is kept as a branch.",
+		"submit": "Rewind",
+		"empty": "No messages to rewind to yet",
+		"done": "Rewound; the message is back in the composer",
+		"undo": "Undo",
+		"undone": "Rewind undone",
+		"attachmentsFailed": "Couldn't put the attachments back in the composer: {{error}}"
 	},
 	"tree": {
 		"abortSummary": "Abort summary",

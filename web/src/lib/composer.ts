@@ -2,7 +2,8 @@
  * 输入区按键与输入解析（计划 H5.4）：
  * - 空闲：Enter 发送（prompt）；Shift+Enter 换行。
  * - 忙碌：Enter = steer；Ctrl/Cmd+Enter = 排队（follow_up）；Alt+Enter = 中断并发送（abort_and_prompt）。
- * - 连按两次 Esc（间隔 ≤ 500ms）= 中断（abort）。
+ * - 连按两次 Esc（间隔 ≤ 500ms）：忙碌时 = 中断（abort）；空闲且输入框为空时 = 回退（rewind，同 omp 的 Esc Esc）。
+ *   空闲时输入框里有字，Esc 不计入连按（不让一次误触 Esc 毁掉草稿）。
  * - `!cmd` = bash；`!!cmd` = bash 且不进上下文；`/` 开头 = 斜杠命令。
  */
 
@@ -12,6 +13,7 @@ export type ComposerAction =
 	| "follow_up"
 	| "abort_and_prompt"
 	| "abort"
+	| "rewind"
 	| "newline"
 	| "none";
 
@@ -37,11 +39,14 @@ export function composerKeyAction(
 	busy: boolean,
 	lastEscAt: number | null,
 	now: number,
+	/** 输入框没有文字（空闲时 Esc Esc 回退的前提） */
+	empty = false,
 ): KeyDecision {
 	if (e.isComposing) return { action: "none", escAt: null };
 	if (e.key === "Escape") {
-		if (busy && lastEscAt !== null && now - lastEscAt <= DOUBLE_ESC_MS)
-			return { action: "abort", escAt: null };
+		if (!busy && !empty) return { action: "none", escAt: null };
+		if (lastEscAt !== null && now - lastEscAt <= DOUBLE_ESC_MS)
+			return { action: busy ? "abort" : "rewind", escAt: null };
 		return { action: "none", escAt: now };
 	}
 	if (e.key !== "Enter") return { action: "none", escAt: null };

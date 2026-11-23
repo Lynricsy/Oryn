@@ -7,6 +7,8 @@
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
 import type { ArtifactSelectionRef } from "../lib/artifacts/prompt";
+import type { Attachment } from "../lib/attachments";
+import type { ImageContent } from "../omp/types";
 import { uiStore } from "./ui";
 
 export interface ComposerDraft {
@@ -115,10 +117,11 @@ export function composerMounted(threadId: string): boolean {
 	return mounted.has(threadId);
 }
 
-/** 仅测试用：清空所有草稿、待加入的附件与挂载登记。 */
+/** 仅测试用：清空所有草稿、待加入的附件、待处理的附件恢复与挂载登记。 */
 export function resetComposerDrafts(): void {
 	drafts.setState({}, true);
 	pendingFiles.setState({}, true);
+	pendingRestores.setState({}, true);
 	mounted.clear();
 }
 
@@ -146,4 +149,49 @@ export function takeComposerFiles(threadId: string): File[] {
 	const files = pendingFiles.getState()[threadId] ?? [];
 	if (files.length > 0) pendingFiles.setState({ [threadId]: [] });
 	return files;
+}
+
+/**
+ * 回退（rewind）带回的一项附件：旧消息上已绑定到本线程的附件（`attachment`，直接复用 id，不重传），
+ * 和 / 或它的内联图片副本（`image`，取自 Core 的 `editorImages`）。
+ */
+export interface RestoredAttachment {
+	name: string;
+	size: number;
+	attachment?: Attachment;
+	image?: ImageContent;
+}
+
+/**
+ * 输入区附件列表的恢复操作：`add` 加入一次回退带回的附件（以 `tag` 标记这一批）；`drop` 撤销那次回退时去掉这一批。
+ * 附件列表在输入区组件里，挂上后按顺序取走。
+ */
+export type ComposerRestoreOp =
+	| { kind: "add"; tag: string; items: RestoredAttachment[] }
+	| { kind: "drop"; tag: string };
+
+const pendingRestores = createStore<Record<string, ComposerRestoreOp[]>>(
+	() => ({}),
+);
+const NO_RESTORES: ComposerRestoreOp[] = [];
+
+export function enqueueComposerRestore(
+	threadId: string,
+	op: ComposerRestoreOp,
+): void {
+	const prev = pendingRestores.getState()[threadId] ?? [];
+	pendingRestores.setState({ [threadId]: [...prev, op] });
+}
+
+export function useComposerPendingRestores(
+	threadId: string,
+): ComposerRestoreOp[] {
+	return useStore(pendingRestores, (s) => s[threadId] ?? NO_RESTORES);
+}
+
+/** 取出并清空这个线程待处理的附件恢复操作。 */
+export function takeComposerRestores(threadId: string): ComposerRestoreOp[] {
+	const ops = pendingRestores.getState()[threadId] ?? [];
+	if (ops.length > 0) pendingRestores.setState({ [threadId]: [] });
+	return ops;
 }

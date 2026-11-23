@@ -61,6 +61,7 @@ export type SlashAction =
 	/** `/queue <消息>`：排到 agent 停下之后（`follow_up`，可带附件）。 */
 	| { kind: "queue"; message: string }
 	| { kind: "open_tree" }
+	| { kind: "open_rewind" }
 	| { kind: "open_fork" }
 	| { kind: "new_thread" }
 	| { kind: "thread_search" }
@@ -321,9 +322,11 @@ export function resolveSlash(
 		case "plan-review":
 			return { kind: "review_plan" };
 		case "tree":
+			return { kind: "open_tree" };
+		// omp 的 /branch（别名 /rewind）打开回退选择器（同 Esc Esc）
 		case "branch":
 		case "rewind":
-			return { kind: "open_tree" };
+			return { kind: "open_rewind" };
 		case "fork":
 			return { kind: "open_fork" };
 		case "new":

@@ -29,6 +29,7 @@ function shareCtx(
 		subagents: {},
 		openSubagent: () => undefined,
 		forkFrom: () => undefined,
+		rewindTo: () => undefined,
 		labelEntry: () => undefined,
 		readOnly: true,
 		agentFaces,

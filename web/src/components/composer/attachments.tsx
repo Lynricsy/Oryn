@@ -35,6 +35,7 @@ import {
 } from "../../lib/images";
 import { useCoarsePointer } from "../../lib/viewport";
 import type { ImageContent } from "../../omp/types";
+import type { ComposerRestoreOp } from "../../state/composer-drafts";
 import { Badge, Meter } from "../ui/data";
 import { Icon } from "../ui/icons";
 import { describeError } from "../ui/primitives";
@@ -57,12 +58,15 @@ export interface AttachmentItem {
 	fileOnly?: boolean;
 	/** 本机选的原始文件：上传去向改变时据此重传；系统分享进来的已上传条目没有。 */
 	source?: File;
+	/** 回退带回的条目（`ComposerRestoreOp` 的批次标记）：附件属于旧消息，移除时不删除上传。 */
+	restoredTag?: string;
 }
 
 let seq = 0;
 
-/** 已上传但不再发送：尽力删除（未随消息发出的上传服务端 24h 后也会清理）。 */
+/** 已上传但不再发送：尽力删除（未随消息发出的上传服务端 24h 后也会清理）。回退带回的旧消息附件不删。 */
 function discard(item: AttachmentItem) {
+	if (item.restoredTag !== undefined) return;
 	if (item.attachment)
 		void deleteAttachment(item.attachment.id).catch(() => undefined);
 	if (item.libraryFile)
@@ -274,6 +278,57 @@ export function useAttachments({
 		[push, t],
 	);
 
+	/**
+	 * 回退带回的附件：`add` 以完成条目加入（复用旧附件 id，不重传；有内联副本的图片照旧随 `images` 发送）；
+	 * 线程附件在助手文件库模式下不能发送，同 `addUploaded` 标为错误。`drop`（撤销那次回退）去掉这一批，不删除上传。
+	 */
+	const applyRestore = useCallback(
+		(op: ComposerRestoreOp) => {
+			if (op.kind === "drop") {
+				commit((prev) => prev.filter((i) => i.restoredTag !== op.tag));
+				return;
+			}
+			setError(null);
+			for (const r of op.items) {
+				const live = itemsRef.current.filter((i) => i.status !== "error");
+				if (live.length >= MAX_ATTACHMENTS_PER_MESSAGE) {
+					setError(
+						t("attachments.tooMany", { max: MAX_ATTACHMENTS_PER_MESSAGE }),
+					);
+					return;
+				}
+				const blocked = libraryRef.current && r.attachment !== undefined;
+				push({
+					key: `att-${++seq}`,
+					name: r.name,
+					size: r.size,
+					status: blocked ? "error" : "done",
+					progress: 1,
+					restoredTag: op.tag,
+					...(r.attachment ? { attachment: r.attachment } : {}),
+					...(r.image
+						? {
+								image: {
+									type: "image",
+									data: r.image.data,
+									mimeType: r.image.mimeType,
+									// 尺寸只在本机压缩时得知；恢复的副本不用它
+									width: 0,
+									height: 0,
+									inlineBytes: r.image.data.length,
+									name: r.name,
+								},
+							}
+						: {}),
+					fileOnly:
+						!r.image && r.attachment?.mime.startsWith("image/") === true,
+					...(blocked ? { error: t("attachments.notForAssistant") } : {}),
+				});
+			}
+		},
+		[commit, push, t],
+	);
+
 	const remove = useCallback(
 		(key: string) => {
 			const item = itemsRef.current.find((i) => i.key === key);
@@ -327,6 +382,7 @@ export function useAttachments({
 		error,
 		addFiles,
 		addUploaded,
+		applyRestore,
 		remove,
 		clear,
 		restore,

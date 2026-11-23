@@ -45,6 +45,7 @@ const ctx: TranscriptContextValue = {
 	subagents: {},
 	openSubagent: () => {},
 	forkFrom: () => {},
+	rewindTo: () => {},
 	labelEntry: () => {},
 };
 
