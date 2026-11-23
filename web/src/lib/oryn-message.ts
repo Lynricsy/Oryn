@@ -404,6 +404,42 @@ export function parseOrynMessage(text: string): OrynMessage | null {
 	return { line, header, body: rest.replace(/^\n+/, "") };
 }
 
+/** 自动消息的语气：转录里的事件卡据此给来源图标方块与描边上色，坏消息一眼可见。 */
+export type OrynTone = "neutral" | "ok" | "warn" | "err";
+
+/** GitHub 回流正文的段落开头（`internal/github/message.go` 的 `composeSection`）。 */
+const CI_FAILED_RE = /^CI failed on \S+:$/m;
+const CHANGES_REQUESTED_RE = /^@\S+ reviewed \(changes requested\)/m;
+
+/**
+ * 只有需要主人留意的结果才上色：CI 失败、线程出错、确认执行失败、运行结果里有失败 → `err`；
+ * 评审要求修改、线程等你处理、确认过期没人答 → `warn`；确认已批准并执行 → `ok`；其余（含正常的报告与定时）中性。
+ */
+export function orynTone(msg: OrynMessage): OrynTone {
+	const h = msg.header;
+	switch (h.kind) {
+		case "github":
+			if (h.source !== "event") return "neutral";
+			if (CI_FAILED_RE.test(msg.body)) return "err";
+			return CHANGES_REQUESTED_RE.test(msg.body) ? "warn" : "neutral";
+		case "report":
+			if (h.state === "error") return "err";
+			return h.state === "awaiting_input" ? "warn" : "neutral";
+		case "confirmation":
+			if (h.outcome === "failed") return "err";
+			if (h.outcome === "expired") return "warn";
+			return h.outcome === "approved" ? "ok" : "neutral";
+		case "automation":
+			return msg.automation?.some(
+				(it) => it.outcome === "failed" || it.outcome === "error",
+			)
+				? "err"
+				: "neutral";
+		default:
+			return "neutral";
+	}
+}
+
 /** 计划时间按用户的时区与语言显示（月日 + 时分）。 */
 function formatWhen(ms: number, lang: string): string {
 	return new Intl.DateTimeFormat(lang, {

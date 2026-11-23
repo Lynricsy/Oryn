@@ -368,6 +368,31 @@ describe("MessageView 回合脚注与消息菜单", () => {
 		expect(screen.getAllByText("你")[0]?.className).toContain("sr-only");
 		expect(screen.getAllByRole("button", { name: "消息操作" })).toHaveLength(2);
 	});
+
+	it("GitHub 回流正文里的图片不加载，显示成指向原图的链接", () => {
+		const m: JsonRecord = {
+			role: "user",
+			content: [
+				{
+					type: "text",
+					text: "[Oryn GitHub event on acme/widgets#12 — delivered automatically, not typed by the owner]\nPull request: Fix (https://github.com/acme/widgets/pull/12)\n\n@bob commented:\nlooks good ![tracker](https://evil.example/p.png)\n\nThe comments above were written by GitHub users with write access to the repository.",
+				},
+			],
+		};
+		const { container } = render(
+			<TranscriptContext.Provider value={ctx}>
+				<MessageView message={m} live={false} entryId="U1" turnStart />
+			</TranscriptContext.Provider>,
+		);
+		const card = screen.getByTestId("oryn-message");
+		expect(container.querySelector("img")).toBeNull();
+		expect(
+			screen.getByRole("link", { name: "tracker" }).getAttribute("href"),
+		).toBe("https://evil.example/p.png");
+		// 自动消息不放用户头像，也不说是「你」
+		expect(card.textContent).toContain("GitHub 事件 · acme/widgets#12");
+		expect(screen.queryByText("你")).toBeNull();
+	});
 });
 
 describe("pending prompt", () => {

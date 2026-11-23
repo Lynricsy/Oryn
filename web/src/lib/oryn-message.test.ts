@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import i18n from "../i18n";
 import {
 	describeOrynHeader,
+	orynTone,
 	parseOrynHeader,
 	parseOrynMessage,
 } from "./oryn-message";
@@ -573,5 +574,70 @@ describe("后台研究的发现（M26）", () => {
 			expect(m?.research).toBeUndefined();
 			expect(m?.body).toBe(rest);
 		}
+	});
+});
+
+describe("orynTone：事件卡的语气", () => {
+	const EVENT =
+		"[Oryn GitHub event on acme/widgets#12 — delivered automatically, not typed by the owner]";
+	const tone = (text: string) => {
+		const m = parseOrynMessage(text);
+		if (!m) throw new Error(`不是自动消息：${text}`);
+		return orynTone(m);
+	};
+
+	it.each([
+		[
+			"CI 失败 → err",
+			`${EVENT}\nPull request: x (u)\n\nCI failed on 1a2b3c4:\n- build (failure) u\n\nFix the failures…`,
+			"err",
+		],
+		[
+			"评审要求修改 → warn",
+			`${EVENT}\nPull request: x (u)\n\n@alice reviewed (changes requested):\nplease fix\n\nThe comments above…`,
+			"warn",
+		],
+		[
+			"评审与 CI 失败同在 → err 优先",
+			`${EVENT}\nPull request: x (u)\n\n@alice reviewed (changes requested)\n\nCI failed on 1a2b3c4:\n- build (failure) u\n\nThe comments above…`,
+			"err",
+		],
+		[
+			"普通评论 → neutral（评论正文里提到 CI failed 不算）",
+			`${EVENT}\nPull request: x (u)\n\n@bob commented:\nwhy CI failed on main?\n\nThe comments above…`,
+			"neutral",
+		],
+		[
+			"线程出错 → err",
+			`[Oryn thread report · automatic] ${ID} is now error.`,
+			"err",
+		],
+		[
+			"线程等你处理 → warn",
+			`[Oryn thread report · automatic] ${ID} is now awaiting_input.`,
+			"warn",
+		],
+		[
+			"线程正常结束 → neutral",
+			`[Oryn thread report · automatic] ${ID} is now idle.`,
+			"neutral",
+		],
+		[
+			"确认执行失败 → err",
+			"[Oryn confirmation · automatic] delete_thread thr_01: approved but failed: secrets_found.",
+			"err",
+		],
+		[
+			"确认已执行 → ok",
+			"[Oryn confirmation · automatic] delete_thread thr_01: approved and done.",
+			"ok",
+		],
+		[
+			"定时运行 → neutral",
+			`[Oryn scheduled run "早报" #12 · scheduled for ${AT} (Asia/Shanghai)]\n汇总进展`,
+			"neutral",
+		],
+	])("%s", (_name, text, want) => {
+		expect(tone(text)).toBe(want);
 	});
 });

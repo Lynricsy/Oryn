@@ -8,7 +8,7 @@
  * 超过 `max-h-80` 的正文折叠，底部「展开全部」；卡片右上角可复制全文。
  * 信息 / 警告 / 错误只给图标方块、标签和卡片描边上色，颜色来自令牌。
  */
-import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { type ConfigList, parseConfigList } from "../../lib/config-list";
 import type { Notice } from "../../state/thread-reducer";
@@ -16,6 +16,7 @@ import { Markdown } from "../markdown/Markdown";
 import { CopyButton } from "../ui/CopyButton";
 import { Icon, type IconName } from "../ui/icons";
 import { ConfigListTable } from "./ConfigListTable";
+import { Foldable } from "./Foldable";
 
 /** 正文的排法：`markdown` 交给 Markdown 组件；`plain` 是靠空格对齐的纯文本，等宽、不折行、横向滚动。 */
 export type NoticeBodyFormat = "markdown" | "plain";
@@ -216,77 +217,25 @@ function NoticeBody({
 	cardTone: string;
 	lines: number;
 }): ReactNode {
-	const { t } = useTranslation();
-	const clipRef = useRef<HTMLDivElement>(null);
-	const cardRef = useRef<HTMLDivElement>(null);
-	const [expanded, setExpanded] = useState(false);
-	const collapsing = useRef(false);
-	// 是否被 max-h 截掉了内容：按真实排版量（宽度变了会重新量），不按行数猜
-	const [clipped, setClipped] = useState(false);
-	useLayoutEffect(() => {
-		const el = clipRef.current;
-		if (!el || expanded) return;
-		// 收起后卡片顶部可能已滚出视口：拉回来，免得读者找不到刚才读到哪
-		if (collapsing.current) {
-			collapsing.current = false;
-			cardRef.current?.scrollIntoView?.({ block: "nearest" });
-		}
-		const measure = () => setClipped(el.scrollHeight > el.clientHeight + 1);
-		measure();
-		if (typeof ResizeObserver === "undefined") return;
-		const ro = new ResizeObserver(measure);
-		ro.observe(el);
-		if (el.firstElementChild) ro.observe(el.firstElementChild);
-		return () => ro.disconnect();
-	}, [expanded]);
-	const folded = clipped && !expanded;
 	return (
-		<div
-			ref={cardRef}
-			className={`focus-inset mt-1 ml-[26px] min-w-0 scroll-mt-16 overflow-hidden rounded-md border ${cardTone} ${format === "plain" && !list ? "bg-inset" : "bg-panel"}`}
+		<Foldable
+			lines={lines}
+			testId="notice-body"
+			className={`focus-inset mt-1 ml-[26px] overflow-hidden rounded-md border ${cardTone} ${format === "plain" && !list ? "bg-inset" : "bg-panel"}`}
 		>
-			<div
-				ref={clipRef}
-				data-testid="notice-body"
-				data-folded={folded || undefined}
-				className={`${expanded ? "" : "max-h-80"} overflow-hidden ${folded ? "[mask-image:linear-gradient(to_bottom,black_calc(100%-56px),transparent)]" : ""}`}
-			>
-				{list ? (
-					<div className="py-1">
-						<ConfigListTable list={list} />
-					</div>
-				) : format === "plain" ? (
-					<pre className="m-0 overflow-x-auto whitespace-pre px-3 py-2.5 font-mono text-xs leading-relaxed text-fg">
-						{text}
-					</pre>
-				) : (
-					<div className={`px-3.5 py-2.5 text-fg ${MD_SIZE}`}>
-						<Markdown text={escapeAngles(text)} />
-					</div>
-				)}
-			</div>
-			{clipped && (
-				<div className="flex px-2 pb-1.5">
-					<button
-						type="button"
-						aria-expanded={expanded}
-						className="inline-flex h-6 items-center gap-1 rounded-sm px-1.5 text-2xs text-faint transition-colors duration-150 hover:bg-hover hover:text-fg"
-						onClick={() => {
-							collapsing.current = expanded;
-							setExpanded(!expanded);
-						}}
-					>
-						<Icon
-							name={expanded ? "chevronUp" : "chevronDown"}
-							size={12}
-							aria-hidden
-						/>
-						{expanded
-							? t("notice.collapse")
-							: t("notice.showAll", { count: lines })}
-					</button>
+			{list ? (
+				<div className="py-1">
+					<ConfigListTable list={list} />
+				</div>
+			) : format === "plain" ? (
+				<pre className="m-0 overflow-x-auto whitespace-pre px-3 py-2.5 font-mono text-xs leading-relaxed text-fg">
+					{text}
+				</pre>
+			) : (
+				<div className={`px-3.5 py-2.5 text-fg ${MD_SIZE}`}>
+					<Markdown text={escapeAngles(text)} />
 				</div>
 			)}
-		</div>
+		</Foldable>
 	);
 }

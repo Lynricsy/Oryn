@@ -31,6 +31,8 @@ import {
 	type OrynAutomationItem,
 	type OrynHeader,
 	type OrynResearchFinding,
+	type OrynTone,
+	orynTone,
 	parseOrynMessage,
 } from "../../lib/oryn-message";
 import { normalizeQuote, splitLeadingQuote } from "../../lib/quote";
@@ -671,6 +673,7 @@ function UserMessage({
 				<AutoMessageCard
 					icon={ORYN_ICON[oryn.header.kind]}
 					label={label}
+					tone={orynTone(oryn)}
 					dim={live}
 					flags={
 						<>
@@ -693,9 +696,16 @@ function UserMessage({
 					{oryn.automation && <AutomationResults items={oryn.automation} />}
 					{oryn.research && <ResearchFindings items={oryn.research} />}
 					{oryn.body && (
-						<div className={`min-w-0 text-fg ${MD_SIZE}`}>
-							<Markdown text={escapeAngles(oryn.body)} />
-						</div>
+						<Foldable
+							lines={oryn.body.split("\n").length}
+							testId="oryn-body"
+							toggleClassName="-ml-1.5 pt-1"
+						>
+							<div className={`text-fg ${MD_SIZE}`}>
+								{/* 正文可能含第三方原文（GitHub 评审 / 评论）：不加载图片，免得打开线程就向外站发请求 */}
+								<Markdown text={escapeAngles(oryn.body)} images={false} />
+							</div>
+						</Foldable>
 					)}
 					<Images content={message.content} />
 					<AttachmentChips attachments={attachments} />
@@ -747,35 +757,69 @@ function UserMessage({
 	);
 }
 
+/** 事件卡的语气 → 图标方块、外框与页眉分隔线的颜色；好消息只给图标方块上色，不让描边喧宾夺主。 */
+const AUTO_TONE: Record<
+	OrynTone,
+	{ chip: string; card: string; rule: string }
+> = {
+	neutral: {
+		chip: "border-border bg-panel text-muted",
+		card: "border-border",
+		rule: "border-border",
+	},
+	ok: {
+		chip: "border-ok/25 bg-ok/12 text-ok",
+		card: "border-border",
+		rule: "border-border",
+	},
+	warn: {
+		chip: "border-warn/30 bg-warn/15 text-warn-ink",
+		card: "border-warn/40",
+		rule: "border-warn/25",
+	},
+	err: {
+		chip: "border-err/25 bg-err/10 text-err",
+		card: "border-err/35",
+		rule: "border-err/20",
+	},
+};
+
 /**
  * 控制面代发的自动消息（GitHub 事件、定时运行、线程报告等）：不是主人说的话，不用靠右的用户气泡与头像，
  * 而是铺满正文列的事件卡。页眉是来源图标方块 + 来源标签，右侧是引导 / 系统注入徽标与「自动投递」；
- * 正文按 Markdown 排（GitHub 评审、定时任务的提示词本来就是 Markdown，链接可点），字号与内联提示同档。
+ * 需要留意的结果（CI 失败、线程出错……，见 `orynTone`）给图标方块与描边上色。
+ * 正文按 Markdown 排（GitHub 评审、定时任务的提示词本来就是 Markdown，链接可点），字号与内联提示同档，过长折叠。
  */
 function AutoMessageCard({
 	icon,
 	label,
+	tone,
 	dim,
 	flags,
 	children,
 }: {
 	icon: IconName;
 	label: string;
+	tone: OrynTone;
 	dim: boolean;
 	flags: ReactNode;
 	children: ReactNode;
 }): ReactNode {
 	const { t } = useTranslation();
+	const style = AUTO_TONE[tone];
 	return (
 		<section
 			data-testid="oryn-message"
+			data-tone={tone}
 			aria-label={label}
-			className={`@container w-full min-w-0 overflow-hidden rounded-xl border border-border bg-panel/60 ${dim ? "opacity-80" : ""}`}
+			className={`@container w-full min-w-0 overflow-hidden rounded-xl border bg-panel/60 ${style.card} ${dim ? "opacity-80" : ""}`}
 		>
-			<header className="flex h-10 min-w-0 items-center gap-2.5 border-border border-b bg-inset/40 pr-3 pl-2.5">
+			<header
+				className={`flex h-10 min-w-0 items-center gap-2.5 border-b bg-inset/40 pr-3 pl-2.5 ${style.rule}`}
+			>
 				<span
 					aria-hidden
-					className="inline-grid size-6 shrink-0 place-items-center rounded-md border border-border bg-panel text-muted"
+					className={`inline-grid size-6 shrink-0 place-items-center rounded-md border ${style.chip}`}
 				>
 					<Icon name={icon} size={13} />
 				</span>

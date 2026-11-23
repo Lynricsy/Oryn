@@ -355,7 +355,7 @@ export function CodeBlock({
 	);
 }
 
-function makeComponents(streaming: boolean): Components {
+function makeComponents(streaming: boolean, images = true): Components {
 	return {
 		pre: ({ children }) => <>{children}</>,
 		code: ({
@@ -379,7 +379,7 @@ function makeComponents(streaming: boolean): Components {
 			return <CodeBlock code={text} lang={lang} />;
 		},
 		a: MdLink,
-		img: MdImage,
+		img: images ? MdImage : MdImageLink,
 		// 表格外包圆角描边容器（窄屏横向滚动，宽屏可伸出正文列），悬停时出复制按钮
 		table: ({ children, node }) => (
 			<MdTable position={node?.position}>{children}</MdTable>
@@ -402,6 +402,7 @@ function makeComponents(streaming: boolean): Components {
 
 const STATIC_COMPONENTS = makeComponents(false);
 const STREAMING_COMPONENTS = makeComponents(true);
+const NO_IMAGE_COMPONENTS = makeComponents(false, false);
 
 /** 相对地址的解析（README 等仓库文档）：不带 scheme、不以 `#` 或 `//` 开头的 href / src 交给它；返回 null 时原样输出 */
 export interface RelativeUrls {
@@ -451,6 +452,23 @@ function MdImage({
 	);
 }
 
+/**
+ * 不加载图片时的 `![alt](src)`：渲染成指向原图的链接（文字取 alt，没有就是地址）。
+ * 用于第三方写的正文（GitHub 评审 / 评论回流）：打开线程不能自动向正文指定的站点发请求。
+ */
+function MdImageLink({
+	src,
+	alt,
+}: ComponentProps<"img"> & { node?: unknown }): ReactNode {
+	const href = typeof src === "string" ? src : undefined;
+	if (!href) return alt ?? null;
+	return (
+		<a href={href} target="_blank" rel="noopener noreferrer">
+			{alt || href}
+		</a>
+	);
+}
+
 export interface MarkdownProps {
 	text: string;
 	/** 流式中：不渲染 mermaid（代码未完整）。 */
@@ -459,6 +477,8 @@ export interface MarkdownProps {
 	relativeTo?: RelativeUrls;
 	/** 按文档渲染（仓库文件、README）：允许清洗后的内嵌 HTML，单个换行不断行 */
 	document?: boolean;
+	/** 为 false 时不加载正文里的图片，`![alt](src)` 显示成指向原图的链接（第三方写的正文用） */
+	images?: boolean;
 }
 
 export const Markdown = memo(function Markdown({
@@ -466,6 +486,7 @@ export const Markdown = memo(function Markdown({
 	streaming = false,
 	relativeTo,
 	document = false,
+	images = true,
 }: MarkdownProps): ReactNode {
 	const assets = useAssetUrls();
 	const root = useRef<HTMLDivElement | null>(null);
@@ -503,7 +524,13 @@ export const Markdown = memo(function Markdown({
 					<ReactMarkdown
 						remarkPlugins={remarkPlugins}
 						rehypePlugins={rehypePlugins}
-						components={streaming ? STREAMING_COMPONENTS : STATIC_COMPONENTS}
+						components={
+							!images
+								? NO_IMAGE_COMPONENTS
+								: streaming
+									? STREAMING_COMPONENTS
+									: STATIC_COMPONENTS
+						}
 					>
 						{source}
 					</ReactMarkdown>
