@@ -230,7 +230,7 @@ flowchart LR
   subgraph O[隔离 Orb 环境]
     B[orbd] -- RPC + JSONL --> A[Oryn Core<br/>omp --mode rpc-ui]
   end
-  R[个人机器 orbd --runner] -- 无密钥配置 · 模型 / 记忆 / SSH 中转 .-> D
+  R[个人机器 orbd --runner] -. 无密钥配置 · 模型 / 记忆 / SSH 中转 .-> D
   B -- WS + yamux 出站长连接 --> D
   D -- 按主机注入真实密钥 --> U[模型 API / Git 远端]
 ```
