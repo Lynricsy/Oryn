@@ -125,10 +125,11 @@ function useRunLog(orbId: string | undefined, run: SetupRun | undefined) {
 	});
 }
 
-const THREAD_TITLE = {
-	run_failed: "env.fixTitle",
-	slow_setup: "env.optimizeTitle",
-	missing_config: "env.generateTitle",
+/** 建好后轻提示的文案；线程标题与普通线程一样按首条提示词自动生成。 */
+const STARTED_TEXT = {
+	run_failed: "env.startedFix",
+	slow_setup: "env.startedOptimize",
+	missing_config: "env.startedGenerate",
 } as const;
 
 /**
@@ -157,13 +158,11 @@ function useStartEnvThread(threadId: string) {
 			}
 		}
 		const prompt = buildEnvPrompt(banner, log, project?.baseBranch);
-		const title = t(THREAD_TITLE[banner.kind]);
 		const thread = await createThread({
 			// 项目列表未加载时 project 为空，项目 id 仍取线程 / orb 上的，不能漏掉
 			projectId,
 			prompt,
 			executor: { kind: "new_orb" },
-			title,
 			// 改 setup 用不到浏览器；省略会继承项目默认 Profile，当前 orb 正独占它时建线程会被拒（profile_in_use）
 			browserProfileId: "",
 		});
@@ -171,7 +170,7 @@ function useStartEnvThread(threadId: string) {
 		dismissBanner(thread.id, banner.kind);
 		dismissBanner(threadId, banner.key);
 		showToast({
-			text: t("env.threadStarted", { title }),
+			text: t(STARTED_TEXT[banner.kind]),
 			action: {
 				label: t("env.openThread"),
 				run: () => navigate(`/t/${thread.id}`),

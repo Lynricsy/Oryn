@@ -532,10 +532,10 @@ M1 完成标志：`make gen && make build && make test` 全绿；`./bin/orynd --
 4. **orb 内 CLI**（`oryn orb setup …`，只在 `ORYN_ORB=1` 时可用，经 `orbd.sock`）：`run [--resume]`（实时输出，退出码 = 脚本结果）、`status [--json]`、`logs [--resume] [-n N]`（读 `~/.cache/oryn/logs/{setup,resume}.log`）、`project-script get|set setup|resume [--file <path>]`。
 5. **给 agent 的环境说明**：orbd 内嵌并写出 `$HOME/.oryn/core/extensions/oryn-orb.ts`，启动 omp 时加 `-e <该文件>`（不影响用户自己的扩展与 `APPEND_SYSTEM.md`）。扩展在 `before_agent_start` 里向系统提示词追加一段「Oryn orb 环境」：生命周期文件约定、`oryn orb setup` 命令、日志位置、「改动合入项目基线分支后才对新 orb 生效」、长期进程不要放 setup；并读取 `$HOME/.oryn/setup-status.json`（orbd 维护）在最近一次 setup / resume 失败或 ≥2 分钟时附上一行现状（错误摘要与日志路径）。
 6. **`oryn-setup` 技能**：orbd 内嵌并写出 `$HOME/.agents/skills/oryn-setup/SKILL.md`（omp 从用户主目录的 `.agents/skills` 发现技能；该目录不属于 omp-home，不受配置下发清理影响）。内容按 Amp `orb-setup` 的结构改写为 Oryn：调查仓库（锁文件、版本钉、env 模板、数据库、CI 安装步骤、已有脚本）→ 写 / 更新 `.oryn/setup`（已有 `.agents/setup` 则原地更新）→ 持久化开发环境（login shell 钩子）→ 写 `.oryn/resume` → `chmod +x`、`oryn orb setup run` 跑两次并计时（冷 / 暖）、`oryn orb setup run --resume`、用干净的 `bash -lc` 验证环境 → 提交并推送到基线分支（未推送不得宣称完成）；另有「不提交仓库文件」路径：脚本写临时文件 → `bash -n` → 在仓库根运行两次 → `oryn orb setup project-script set setup --file …`。orb 基础镜像为 Debian 13，用户 `user` 有免密 sudo。
-7. **Web 客户端**：线程页输入区上方的环境提示条（可按线程关闭）。三种「新开线程…」操作都在同一项目的新 orb 上建一条可见线程（不带浏览器 Profile），带预置提示词在后台运行：当前线程不跳转、不收到消息，提示条随即收起，轻提示给出「打开线程」；新线程里同类提示整类不再出现。
-   - setup / resume 失败：显示错误摘要 +「查看日志」（对话框，`GET …/setup-runs/{id}/log`，对话框里也有同一操作）+「新开线程修复」（线程「修复环境配置」；提示词附失败阶段、错误、日志末尾 80 行，要求使用 `oryn-setup` 技能修复并重跑验证）。
-   - 最近一次 setup ≥2 分钟：「环境配置耗时 N 分钟」+「新开线程优化」（线程「优化环境配置」，附 setup 日志末尾）。
-   - 项目有仓库、仓库与项目都没有 setup 脚本、且 setup 已完成过一次：「这个项目还没有环境配置」+「新开线程生成」（线程「编写环境配置」）。
+7. **Web 客户端**：线程页输入区上方的环境提示条（可按线程关闭）。三种「新开线程…」操作都在同一项目的新 orb 上建一条可见线程（不带浏览器 Profile；标题与普通线程一样按首条提示词自动生成），带预置提示词在后台运行：当前线程不跳转、不收到消息，提示条随即收起，轻提示给出「打开线程」；新线程里同类提示整类不再出现。
+   - setup / resume 失败：显示错误摘要 +「查看日志」（对话框，`GET …/setup-runs/{id}/log`，对话框里也有同一操作）+「新开线程修复」（提示词附失败阶段、错误、日志末尾 80 行，要求使用 `oryn-setup` 技能修复并重跑验证）。
+   - 最近一次 setup ≥2 分钟：「环境配置耗时 N 分钟」+「新开线程优化」（附 setup 日志末尾）。
+   - 项目有仓库、仓库与项目都没有 setup 脚本、且 setup 已完成过一次：「这个项目还没有环境配置」+「新开线程生成」。
    - orb `failed`：线程 `error` 横幅显示原因 +「重试」（`POST threads/{id}/wake`）。
    - 信息面板的 orb 区加「环境」小节：最近 setup / resume 的结果、耗时、触发方式与日志入口。
 8. **项目设置页**：setup / resume 脚本的纯文本编辑（已有字段），并显示「仓库内脚本：有 / 无」（取最近一次 `setup.result`）。

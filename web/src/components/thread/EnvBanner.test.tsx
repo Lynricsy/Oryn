@@ -171,8 +171,9 @@ describe("环境提示条", () => {
 			projectId: "prj_1",
 			executor: { kind: "new_orb" },
 			browserProfileId: "",
-			title: "修复环境配置",
 		});
+		// 标题与普通线程一样自动生成，不写死
+		expect(created[0]).not.toHaveProperty("title");
 		const { prompt } = created[0] as { prompt: string };
 		expect(prompt).toContain("oryn-setup");
 		expect(prompt).toContain("apt-get 退出码 100");
@@ -303,9 +304,9 @@ describe("环境提示条", () => {
 			projectId: "prj_1",
 			executor: { kind: "new_orb" },
 			browserProfileId: "",
-			title: "编写环境配置",
 			prompt: expect.stringContaining("oryn-setup"),
 		});
+		expect(created[0]).not.toHaveProperty("title");
 		// 刷新后当前线程仍不再提示；新线程里整类不提示（它正在做这件事）
 		expect(loadDismissed(TID).has("missing:osr_1")).toBe(true);
 		expect(loadDismissed("T-env-gen").has("missing_config")).toBe(true);
