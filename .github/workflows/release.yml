@@ -174,10 +174,15 @@ jobs:
           pid=$!
           # 等它真正退出再结束步骤（步骤级 timeout-minutes 兜底），避免留下仍占着端口的进程
           trap 'kill "$pid" 2>/dev/null && wait "$pid" 2>/dev/null; true' EXIT
-          for _ in $(seq 1 60); do curl -fsS http://127.0.0.1:17600/healthz > /dev/null 2>&1 && break; sleep 0.5; done
-          health=$(curl -fsS http://127.0.0.1:17600/healthz) || { echo "::error::orynd 没有起来"; tail -30 "$smoke/orynd.log"; exit 1; }
-          # 应答的必须是刚启动的这个进程（端口被别的进程占着时它会启动失败退出）
-          kill -0 "$pid" 2>/dev/null || { echo "::error::orynd 已退出，应答的是别的进程"; tail -30 "$smoke/orynd.log"; exit 1; }
+          # 先等本次新建的日志里出现绑定成功的「orynd 监听」（internal/server/listen.go 在 Listen 成功之后才打印），
+          # 再请求 /healthz：只看 PID 存活不够，旧实例占着端口、新进程还在跑迁移时也会应答
+          for _ in $(seq 1 120); do
+            grep -q 'msg="orynd 监听" addr=127.0.0.1:17600' "$smoke/orynd.log" && break
+            kill -0 "$pid" 2>/dev/null || { echo "::error::orynd 启动失败"; tail -30 "$smoke/orynd.log"; exit 1; }
+            sleep 0.5
+          done
+          grep -q 'msg="orynd 监听" addr=127.0.0.1:17600' "$smoke/orynd.log" || { echo "::error::orynd 60 秒内没有绑定 127.0.0.1:17600"; tail -30 "$smoke/orynd.log"; exit 1; }
+          health=$(curl -fsS http://127.0.0.1:17600/healthz) || { echo "::error::/healthz 请求失败"; tail -30 "$smoke/orynd.log"; exit 1; }
           ver=$(jq -r .version <<<"$health")
           [[ "$ver" == "$TAG" ]] || { echo "::error::/healthz 的版本是「${ver}」，应为 ${TAG}"; exit 1; }
           index=$(curl -fsS http://127.0.0.1:17600/)
