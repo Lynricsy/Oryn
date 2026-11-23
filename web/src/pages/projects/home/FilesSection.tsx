@@ -42,7 +42,8 @@ function Authors({ commit: c }: { commit: RepoCommit }): ReactNode {
 	const [first, second] = people;
 	return (
 		<span
-			className="flex min-w-0 shrink-0 items-center gap-2"
+			// 可收缩、至多占一半：窄屏上作者名先截断，同排的提交标题与右侧总数仍留得下
+			className="flex min-w-0 max-w-[50%] shrink items-center gap-2"
 			title={people
 				.map((p) => (p.email ? `${p.name} <${p.email}>` : p.name))
 				.join("\n")}
