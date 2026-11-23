@@ -83,8 +83,10 @@ type pendingCmd struct {
 	internal chan json.RawMessage
 	// after 在应答到达后、持有线程锁时执行（如 get_state 刷新缓冲）。
 	after func(t *thread, resp omprpc.Envelope, data json.RawMessage)
-	// leafBefore 是 switch_leaf / navigate_tree 受理时的叶子：之后得到的新叶子（应答或内部查询）与它不同即视为切换了分支。
+	// leafBefore / revBefore 是 switch_leaf / navigate_tree 受理时的叶子与转录版本：
+	// 之后得到的新叶子与 leafBefore 不同即视为切换了分支；若在此期间 oryn-leaf 入库已将叶子切到位并推进过版本，则不重复推进。
 	leafBefore *string
+	revBefore  int64
 	// id 是注入的命令 id；origin 区分客户端命令与自动化投递（Deliver）。
 	id     string
 	origin cmdOrigin
@@ -833,7 +835,9 @@ func (s *Service) onResponse(ctx context.Context, t *thread, env omprpc.Envelope
 		}
 		if r.Success && json.Unmarshal(r.Data, &d) == nil && !d.Cancelled && !d.Aborted && (len(d.ReopenAsk) == 0 || string(d.ReopenAsk) == "null") {
 			leaf := orEmptyLeaf(d.ActiveLeafID)
-			s.switchLeafLocked(ctx, t, leaf, !eqPtr(leaf, p.leafBefore))
+			if !(eqPtr(leaf, t.leaf) && t.transcriptRev > p.revBefore) {
+				s.switchLeafLocked(ctx, t, leaf, !eqPtr(leaf, p.leafBefore))
+			}
 		}
 	case "navigate_tree":
 		// omp 的 navigate_tree 应答（RpcNavigateTreeResult）不带新叶子：成功且确有移动（非 cancelled / aborted）时
@@ -843,7 +847,7 @@ func (s *Service) onResponse(ctx context.Context, t *thread, env omprpc.Envelope
 			Aborted   bool `json:"aborted"`
 		}
 		if r.Success && json.Unmarshal(r.Data, &d) == nil && !d.Cancelled && !d.Aborted {
-			s.queryLeafLocked(t, p.leafBefore)
+			s.queryLeafLocked(t, p.leafBefore, p.revBefore)
 		}
 	case "plan_approval":
 		if r.Success {
@@ -1050,7 +1054,7 @@ func (s *Service) refreshStateLocked(t *thread) {
 // leafId、不做忙碌检查，代价是整棵树随应答回传——它只在用户手动跳转时发一次。
 // 内部命令：没有 reply，应答不交给任何 WS 客户端；发起方的 navigate_tree 应答已照常送达，不等这次查询。
 // 查询失败（未送达、agent 退出）时不改叶子，之后入库的新条目照常推进它。调用方持有 t.mu。
-func (s *Service) queryLeafLocked(t *thread, leafBefore *string) {
+func (s *Service) queryLeafLocked(t *thread, leafBefore *string, revBefore int64) {
 	frame := []byte(`{"type":"get_tree"}`)
 	_ = s.enqueueLocked(t, frame, &pendingCmd{cmdType: "get_tree", after: func(t *thread, env omprpc.Envelope, data json.RawMessage) {
 		var d struct {
@@ -1066,7 +1070,9 @@ func (s *Service) queryLeafLocked(t *thread, leafBefore *string) {
 		}
 		// leafId 为 null：导航退到了根之前，空分支
 		leaf = orEmptyLeaf(leaf)
-		s.switchLeafLocked(context.Background(), t, leaf, !eqPtr(leaf, leafBefore))
+		if !(eqPtr(leaf, t.leaf) && t.transcriptRev > revBefore) {
+			s.switchLeafLocked(context.Background(), t, leaf, !eqPtr(leaf, leafBefore))
+		}
 	}})
 }
 
@@ -1249,7 +1255,7 @@ func (s *Service) command(ctx context.Context, threadID string, frame json.RawMe
 	}
 	p := &pendingCmd{cmdType: cmdType, reply: reply, id: id, origin: origin, tag: tag}
 	if cmdType == "switch_leaf" || cmdType == "navigate_tree" {
-		p.leafBefore = copyStr(t.leaf)
+		p.leafBefore, p.revBefore = copyStr(t.leaf), t.transcriptRev
 	}
 	if cmdType == "omfg" {
 		if err := admitOmfgLocked(t, p); err != nil {

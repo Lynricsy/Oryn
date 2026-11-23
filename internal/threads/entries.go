@@ -133,10 +133,11 @@ func (s *Service) ingestLocked(ctx context.Context, t *thread, orbID string, p a
 	prevLast := t.lastSeq
 	now := s.now()
 	leaf := t.leaf
-	titled := false
+	titled, leafJumped := false, false
 	var lastMsg *int64
+	var rev int64
 	err := s.st.Tx(ctx, func(q *db.Queries) error {
-		out, leaf, titled, lastMsg = nil, t.leaf, false, nil
+		out, leaf, titled, lastMsg, leafJumped, rev = nil, t.leaf, false, nil, false, 0
 		for _, line := range p.Lines {
 			pe, err := ParseLine(line)
 			if err != nil {
@@ -187,8 +188,13 @@ func (s *Service) ingestLocked(ctx context.Context, t *thread, orbID string, p a
 			}
 			if isNew && !strings.HasPrefix(pe.EntryID, "__") {
 				if pe.OffBranch {
-					// 写在活动分支之外的条目（迟到的 model_usage 等）不移动叶子；它记下的叶子为 null 即空分支
-					leaf = orEmptyLeaf(pe.ActiveLeaf)
+					// 写在活动分支之外的条目（迟到的 model_usage、oryn-leaf 等）不把自身当作叶子；它记下的叶子为 null 即空分支。
+					// 若它把叶子移离紧前位置（如 oryn-leaf 落盘切换），随同一事务递增 transcript_rev，避免应答前崩溃漏掉版本推进。
+					next := orEmptyLeaf(pe.ActiveLeaf)
+					if !eqPtr(next, leaf) {
+						leafJumped = true
+					}
+					leaf = next
 				} else {
 					id := pe.EntryID
 					leaf = &id
@@ -205,6 +211,12 @@ func (s *Service) ingestLocked(ctx context.Context, t *thread, orbID string, p a
 		if len(out) > 0 && main {
 			if err := q.SetThreadLeaf(ctx, db.SetThreadLeafParams{LeafEntryID: leaf, ID: t.id}); err != nil {
 				return err
+			}
+			if leafJumped {
+				var err error
+				if rev, err = q.BumpTranscriptRev(ctx, t.id); err != nil {
+					return err
+				}
 			}
 		}
 		if lastMsg != nil {
@@ -233,25 +245,35 @@ func (s *Service) ingestLocked(ctx context.Context, t *thread, orbID string, p a
 			t.live.ApplyEntry(in.parsed.Type, in.parsed.Payload)
 		}
 	}
-	if len(entries) > 0 && main {
-		t.leaf = leaf
-	}
 	// 先登记缺失 blob 的拉取，再推送条目：客户端收到条目后立即请求的 GET blobs/{sha} 能等到在途的拉取
 	if len(blobs) > 0 {
 		s.fetchBlobs(orbID, blobs)
 	}
-	// 每批的 lastSeq 是该批覆盖到的游标：本次之前的条目早已推送，本次新条目的 seq 递增，
-	// 因此 ≤ max(prevLast, 本批及之前各批的最大 seq) 的条目都已送达（CP2）
-	covered := prevLast
-	for i := 0; i < len(entries); i += entriesBatch {
-		batch := entries[i:min(i+entriesBatch, len(entries))]
-		for _, e := range batch {
-			covered = max(covered, e.Seq)
+	if len(entries) > 0 && main && leafJumped {
+		// 离分支标记把叶子移到别的分支或空分支：同 switchLeafLocked，以新版本发 transcript.reset，
+		// 避免先经 Entries 触发匿名连接以旧版本重建；私有与匿名端收到 reset 后均按新版本整段重拉。
+		published := !eqPtr(leaf, t.leaf)
+		s.announceTranscriptLocked(ctx, t, leaf, rev)
+		if !published && (titled || lastMsg != nil) {
+			s.publish(ctx, t.id)
 		}
-		s.out().Entries(t.id, batch, t.leaf, covered)
-	}
-	if titled || lastMsg != nil {
-		s.publish(ctx, t.id)
+	} else {
+		if len(entries) > 0 && main {
+			t.leaf = leaf
+		}
+		// 每批的 lastSeq 是该批覆盖到的游标：本次之前的条目早已推送，本次新条目的 seq 递增，
+		// 因此 ≤ max(prevLast, 本批及之前各批的最大 seq) 的条目都已送达（CP2）
+		covered := prevLast
+		for i := 0; i < len(entries); i += entriesBatch {
+			batch := entries[i:min(i+entriesBatch, len(entries))]
+			for _, e := range batch {
+				covered = max(covered, e.Seq)
+			}
+			s.out().Entries(t.id, batch, t.leaf, covered)
+		}
+		if titled || lastMsg != nil {
+			s.publish(ctx, t.id)
+		}
 	}
 	s.recompute(ctx, t)
 	if len(entries) > 0 {

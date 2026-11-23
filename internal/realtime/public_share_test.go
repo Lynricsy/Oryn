@@ -357,3 +357,59 @@ func TestPublicOffBranchLeafMarker(t *testing.T) {
 	p.assertClean()
 	p2.assertClean()
 }
+
+// 崩溃恢复路径：Core 落盘 oryn-leaf（切回旧序号分支）并经 entries.append 入库，但在返回 RPC 应答前崩溃；
+// 断线期间的匿名观众带旧游标（after=snap.LastSeq）与旧 rev 重连（不是 after=0），必须收到 FullReplay 并补发旧序号目标分支。
+func TestPublicReconnectAfterOffBranchMarkerCrash(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	svc := share.New(share.Config{PublicURL: "http://oryn.test"}, e.st, e.svc, e.hub, nil, nil, nil)
+	srv := e.shareServer(svc)
+	th, err := e.svc.Create(ctx, threads.CreateParams{Prompt: "seed"})
+	require.NoError(t, err)
+	e.waitState(th.ID, threads.StateIdle)
+	e.waitMessages(th.ID, 4)
+	ctl := e.orbs.OrbdCtl(*th.OrbID)
+	require.NotNil(t, ctl)
+
+	// 构造两条分支：旧序号的分支 A（u1 -> a1）与高序号的分支 B（u1 -> b1 -> b2），当前叶子在 b2
+	msg := func(id, parent, text string) string {
+		p := "null"
+		if parent != "" {
+			p = `"` + parent + `"`
+		}
+		return `{"type":"message","id":"` + id + `","parentId":` + p + `,"message":{"role":"assistant","content":"` + text + `"}}`
+	}
+	off := appendViaOrbd(t, ctl, th.ID, "branch.jsonl", 0, []string{
+		msg("u1", "", "root"),
+		msg("a1", "u1", "branch A"),
+		msg("b1", "u1", "branch B1"),
+		msg("b2", "b1", "branch B2"),
+	})
+
+	sh, err := svc.Create(ctx, th.ID, apigen.ShareModeLive, true)
+	require.NoError(t, err)
+	p, _, err := dialPublic(t, srv, "slug="+sh.Slug+"&after=0")
+	require.NoError(t, err)
+	snap, got := collectBackfill(p)
+	require.Contains(t, got, "b2")
+	require.NotContains(t, got, "a1")
+	require.NoError(t, p.ws.Close(4000, "offline"))
+
+	// 断线期间：Core 落盘 oryn-leaf 切回旧序号的 a1 并入库，随后未发任何 RPC 应答（模拟应答前崩溃）
+	appendViaOrbd(t, ctl, th.ID, "branch.jsonl", off, []string{
+		`{"type":"custom","customType":"oryn-leaf","id":"lf1","parentId":"a1","activeLeafId":"a1"}`,
+	})
+
+	// 匿名观众带旧游标（after=snap.LastSeq）与旧 rev 重连：rev 已原子推进 → FullReplay，旧序号的分支 A 完整补发
+	p2, _, err := dialPublic(t, srv, "slug="+sh.Slug+"&after="+strconv.FormatInt(snap.LastSeq, 10)+"&rev="+strconv.FormatInt(snap.TranscriptRev, 10))
+	require.NoError(t, err)
+	snap2, got2 := collectBackfill(p2)
+	assert.True(t, snap2.FullReplay, "oryn-leaf 入库必须原子推进 transcript_rev，触发重连全量补发")
+	assert.Greater(t, snap2.TranscriptRev, snap.TranscriptRev)
+	assert.Contains(t, got2, "u1")
+	assert.Contains(t, got2, "a1")
+	assert.NotContains(t, got2, "b1")
+	assert.NotContains(t, got2, "b2")
+	p2.assertClean()
+}

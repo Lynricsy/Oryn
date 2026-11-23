@@ -893,3 +893,93 @@ func TestLeafSwitchToRootIsEmptyBranch(t *testing.T) {
 	assert.Equal(t, []int64{1, 2}, f.sink.resets)
 	assert.Equal(t, "", *rowLeaf())
 }
+
+// Core 落盘 oryn-leaf 后、RPC 应答前崩溃：entries.append 入库时同事务把 leaf 与 transcript_rev 一起推进并广播
+// transcript.reset；正常路径下（marker 先于应答，或应答先于 marker）只推进一次、不重复广播；不移走叶子的
+// 离分支条目（同批 [u3, model_usage{activeLeafId:u3}]）不升版本。
+func TestOffBranchLeafMarkerBumpsRevAndDedups(t *testing.T) {
+	f := newFixture(t, Config{})
+	orb := f.orb("ready")
+	th := f.thread(orb, StateIdle)
+	a := fakeAgent(8)
+	attach(th, a, apigen.AgentStatusReady)
+	_, end := f.appendLines(th, orb, "main.jsonl", 0,
+		msgLine("u1", "", "user", 1),
+		msgLine("a1", "u1", "assistant", 2),
+		msgLine("u2", "a1", "user", 3),
+		msgLine("a2", "u2", "assistant", 4),
+	)
+	rowState := func() (int64, string) {
+		t.Helper()
+		row, err := f.st.Q.GetThread(f.ctx, th.id)
+		require.NoError(t, err)
+		require.NotNil(t, row.LeafEntryID)
+		return row.TranscriptRev, *row.LeafEntryID
+	}
+	marker := func(id, leaf string) string {
+		if leaf == "" {
+			return fmt.Sprintf(`{"type":"custom","customType":"oryn-leaf","id":%q,"parentId":null,"activeLeafId":null}`, id)
+		}
+		return fmt.Sprintf(`{"type":"custom","customType":"oryn-leaf","id":%q,"parentId":%q,"activeLeafId":%q}`, id, leaf, leaf)
+	}
+
+	// 1. marker 入库后、RPC 应答前崩溃（永远收不到 switch_leaf 应答）：leaf 与 transcript_rev 均已推进并广播 reset
+	require.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(`{"type":"switch_leaf","entryId":"u2"}`), func(json.RawMessage) {}))
+	require.Len(t, sent(a), 1)
+	_, end = f.appendLines(th, orb, "main.jsonl", end, marker("lf1", "a1"))
+	f.s.onAgentStatus(f.ctx, orb, json.RawMessage(fmt.Sprintf(`{"threadId":%q,"status":"exited"}`, th.id)))
+	rev, leaf := rowState()
+	assert.Equal(t, int64(1), rev)
+	assert.Equal(t, "a1", leaf)
+	assert.Equal(t, []int64{1}, f.sink.resets)
+
+	// 重新挂上 agent，测正常路径去重
+	a = fakeAgent(8)
+	attach(th, a, apigen.AgentStatusReady)
+
+	// 2. marker 先于 switch_leaf 应答到达（退到根前空分支）：rev 只升一次
+	require.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(`{"type":"switch_leaf","entryId":"u1"}`), func(json.RawMessage) {}))
+	frames := sent(a)
+	require.Len(t, frames, 1)
+	_, end = f.appendLines(th, orb, "main.jsonl", end, marker("lf2", ""))
+	f.respond(th, frames[0], true, `{"cancelled":false,"editorText":"x"}`)
+	rev, leaf = rowState()
+	assert.Equal(t, int64(2), rev)
+	assert.Equal(t, "", leaf)
+	assert.Equal(t, []int64{1, 2}, f.sink.resets)
+
+	// 3. switch_leaf 应答先于 marker 到达：rev 也只升一次
+	require.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(`{"type":"switch_leaf","entryId":"a2"}`), func(json.RawMessage) {}))
+	frames = sent(a)
+	require.Len(t, frames, 1)
+	f.respond(th, frames[0], true, `{"cancelled":false,"activeLeafId":"a2"}`)
+	_, end = f.appendLines(th, orb, "main.jsonl", end, marker("lf3", "a2"))
+	rev, leaf = rowState()
+	assert.Equal(t, int64(3), rev)
+	assert.Equal(t, "a2", leaf)
+	assert.Equal(t, []int64{1, 2, 3}, f.sink.resets)
+
+	// 4. marker 先于 navigate_tree + get_tree 到达：rev 只升一次
+	require.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(`{"type":"navigate_tree","entryId":"u2"}`), func(json.RawMessage) {}))
+	frames = sent(a)
+	require.Len(t, frames, 1)
+	_, end = f.appendLines(th, orb, "main.jsonl", end, marker("lf4", "a1"))
+	f.respond(th, frames[0], true, `{"cancelled":false}`)
+	qFrames := sent(a)
+	require.Len(t, qFrames, 1)
+	f.respond(th, qFrames[0], true, `{"tree":[],"leafId":"a1"}`)
+	rev, leaf = rowState()
+	assert.Equal(t, int64(4), rev)
+	assert.Equal(t, "a1", leaf)
+	assert.Equal(t, []int64{1, 2, 3, 4}, f.sink.resets)
+
+	// 5. 同批 [u3, model_usage{activeLeafId:"u3"}]（未把叶子移离紧前位置）：不升 rev
+	_, _ = f.appendLines(th, orb, "main.jsonl", end,
+		msgLine("u3", "a1", "user", 5),
+		`{"type":"model_usage","id":"mu1","parentId":"u3","activeLeafId":"u3","purpose":"title"}`,
+	)
+	rev, leaf = rowState()
+	assert.Equal(t, int64(4), rev)
+	assert.Equal(t, "u3", leaf)
+	assert.Equal(t, []int64{1, 2, 3, 4}, f.sink.resets)
+}
