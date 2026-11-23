@@ -10,6 +10,25 @@ describe("Markdown", () => {
 		expect(container.querySelectorAll("p")).toHaveLength(1);
 	});
 
+	it("文档模式按 GitHub 渲染：内嵌 HTML 清洗后保留对齐与尺寸、脚本被剥掉，徽章换行不断行", () => {
+		const { container } = render(
+			<Markdown
+				document
+				text={
+					'<div align="center">\n\n<img src="https://x.test/logo.svg" width="88" onerror="alert(1)">\n\n# T\n\n[![CI](https://x.test/ci.svg)](https://x.test)\n[![Go](https://x.test/go.svg)](https://x.test)\n\n<script>alert(1)</script>\n\n</div>'
+				}
+			/>,
+		);
+		const div = container.querySelector(".md-doc > div");
+		expect(div?.getAttribute("align")).toBe("center");
+		const [logo, ...badges] = container.querySelectorAll("img");
+		expect(logo?.getAttribute("width")).toBe("88");
+		expect(logo?.hasAttribute("onerror")).toBe(false);
+		expect(badges.map((b) => b.alt)).toEqual(["CI", "Go"]);
+		expect(container.querySelector("br")).toBeNull();
+		expect(container.querySelector("script")).toBeNull();
+	});
+
 	it("表格外包圆角容器，有序列表的 start 落到编号计数器上", () => {
 		const { container } = render(
 			<Markdown text={"| a | b |\n| - | - |\n| 1 | 2 |\n\n3. x\n4. y"} />,

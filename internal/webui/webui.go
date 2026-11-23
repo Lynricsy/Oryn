@@ -23,11 +23,12 @@ func init() {
 // ContentSecurityPolicy 是 SPA 页面与静态资源的 CSP：脚本只许同源（Vite 产物无内联脚本），另放行 WebAssembly 编译
 // （'wasm-unsafe-eval' 只许实例化 WASM，不放行 eval / new Function；文件预览的 HEIC 解码与 pdf.js 图像解码用到），
 // 样式允许内联（mermaid 生成的 SVG 带 <style>、KaTeX 与 React 的 style 属性），图片放行 data: / blob:
-// （内联图片与附件预览），音视频放行 blob:（无法直链时的文件预览），禁止任何插件、<base> 改写与被嵌入（防点击劫持）。
+// （内联图片与附件预览）与任意 https:（README 的 shields.io / CI 徽章等外链图片，同 GitHub；Markdown 里的 <img> 不带
+// Referer），音视频放行 blob:（无法直链时的文件预览），禁止任何插件、<base> 改写与被嵌入（防点击劫持）。
 const ContentSecurityPolicy = "default-src 'self'; " +
 	"script-src 'self' 'wasm-unsafe-eval'; " +
 	"style-src 'self' 'unsafe-inline'; " +
-	"img-src 'self' data: blob:; " +
+	"img-src 'self' data: blob: https:; " +
 	"font-src 'self' data:; " +
 	"media-src 'self' blob:; " +
 	"connect-src 'self'; " +

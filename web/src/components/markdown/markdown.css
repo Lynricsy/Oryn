@@ -104,6 +104,38 @@
 	max-width: 100%;
 	border-radius: var(--r-lg);
 }
+/* 链接里的图片（徽章、截图）不画下划线 */
+.md a:has(> img) {
+	text-decoration: none;
+}
+/*
+ * 文档（仓库 README、.md 文件预览），按 GitHub 的文件渲染：标题更大、h1/h2 下一道发丝线；
+ * 图片按原样（不加圆角、行内与文字中线对齐），徽章一行排开；`<div align="center">` 等由浏览器的旧式对齐处理。
+ */
+.md-doc {
+	font-size: 15px;
+	line-height: 1.6;
+}
+.md-doc h1,
+.md-doc h2 {
+	padding-bottom: 0.3em;
+	border-bottom: 1px solid var(--line);
+	margin: 1.4em 0 0.8em;
+}
+.md-doc h1 {
+	font-size: 1.9em;
+}
+.md-doc h2 {
+	font-size: 1.45em;
+}
+.md-doc h3 {
+	font-size: 1.2em;
+}
+.md-doc img {
+	display: inline;
+	vertical-align: middle;
+	border-radius: 0;
+}
 /* 表格：圆角外框、表头 --raised、首列加粗、只留行间发丝线 */
 .md-table {
 	/* 滚动阴影的颜色（深色主题加深，不能用 --text：深色下那是一道亮光）；两侧遮罩用纸面色，随内容滚动（local） */

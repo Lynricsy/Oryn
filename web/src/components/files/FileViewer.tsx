@@ -150,7 +150,7 @@ function TextView({
 		case "markdown":
 			return (
 				<div className="h-full overflow-y-auto px-4 py-3">
-					<Markdown text={text} relativeTo={relativeTo} />
+					<Markdown text={text} relativeTo={relativeTo} document />
 				</div>
 			);
 		case "mermaid":

@@ -5,6 +5,9 @@
  * mermaid 用 `base` 主题，配色取自当前令牌，明暗 / 主题色切换（THEME_EVENT）后重渲染。
  * 文档首行起的 YAML frontmatter（SKILL.md、rules/*.md 等）渲染成字段网格，不再被当成 setext 标题；解析不了时原样交给 Markdown。
  * `relativeTo`（M24，仓库 README 等）：相对地址的链接改成站内路由（react-router Link，不新开窗口），相对图片改成可加载的地址。
+ * `document`（仓库文件、README 等文档）：按 GitHub 渲染文件的方式——单个换行不断行（不用 remark-breaks）、内嵌 HTML
+ * 经 rehype-raw 解析后同样过 rehype-sanitize（GitHub 的白名单：`<div align>`、`<img width>`、`<details>` 等），样式见 `.md-doc`。
+ * 外链图片不带 Referer。
  */
 
 import type { MermaidConfig } from "mermaid";
@@ -21,6 +24,7 @@ import {
 } from "react";
 import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import { Link } from "react-router";
+import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
@@ -427,11 +431,25 @@ function MdLink({ href, children }: ComponentProps<"a">): ReactNode {
 	);
 }
 
-function MdImage({ src, alt }: ComponentProps<"img">): ReactNode {
+function MdImage({
+	src,
+	alt,
+	node: _node,
+	...rest
+}: ComponentProps<"img"> & { node?: unknown }): ReactNode {
 	const rel = useContext(RelativeUrlContext);
 	const raw = typeof src === "string" ? src : undefined;
 	const resolved = rel && raw && isRelativeUrl(raw) ? rel.image(raw) : null;
-	return <img src={resolved ?? raw} alt={alt ?? ""} loading="lazy" />;
+	// rest 只剩清洗白名单里的属性（内嵌 HTML 的 width / height / align / title）
+	return (
+		<img
+			{...rest}
+			src={resolved ?? raw}
+			alt={alt ?? ""}
+			loading="lazy"
+			referrerPolicy="no-referrer"
+		/>
+	);
 }
 
 export interface MarkdownProps {
@@ -440,12 +458,15 @@ export interface MarkdownProps {
 	streaming?: boolean;
 	/** 相对链接与相对图片的解析；不给时相对地址原样输出 */
 	relativeTo?: RelativeUrls;
+	/** 按文档渲染（仓库文件、README）：允许清洗后的内嵌 HTML，单个换行不断行 */
+	document?: boolean;
 }
 
 export const Markdown = memo(function Markdown({
 	text,
 	streaming = false,
 	relativeTo,
+	document = false,
 }: MarkdownProps): ReactNode {
 	const assets = useAssetUrls();
 	const root = useRef<HTMLDivElement | null>(null);
@@ -458,20 +479,24 @@ export const Markdown = memo(function Markdown({
 		assets.blob(sha),
 	);
 	const math = useMath(MATH_RE.test(source));
-	const remarkPlugins: PluggableList = math
-		? [remarkGfm, remarkBreaks, ...math.remark]
-		: [remarkGfm, remarkBreaks];
-	// 先清洗再交给 KaTeX，避免其输出被剥掉样式类
-	const rehypePlugins: PluggableList = math
-		? [[rehypeSanitize, schema], ...math.rehype]
-		: [[rehypeSanitize, schema]];
+	const remarkPlugins: PluggableList = [
+		remarkGfm,
+		...(document ? [] : [remarkBreaks]),
+		...(math?.remark ?? []),
+	];
+	// 内嵌 HTML 先解析成元素再统一清洗；先清洗再交给 KaTeX，避免其输出被剥掉样式类
+	const rehypePlugins: PluggableList = [
+		...(document ? [rehypeRaw] : []),
+		[rehypeSanitize, schema],
+		...(math?.rehype ?? []),
+	];
 	return (
 		<div
 			ref={(el) => {
 				root.current = el;
 				ctxRef(el);
 			}}
-			className="md"
+			className={document ? "md md-doc" : "md"}
 		>
 			{doc && <FrontmatterFields fields={doc.fields} />}
 			<RelativeUrlContext.Provider value={relativeTo ?? null}>
