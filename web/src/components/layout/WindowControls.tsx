@@ -11,6 +11,7 @@
  */
 import {
 	type ReactNode,
+	type RefObject,
 	useEffect,
 	useLayoutEffect,
 	useRef,
@@ -293,12 +294,13 @@ const LIGHTS_DIVIDER = 13;
 /**
  * 侧栏顶部的品牌行（品牌标 + 字标 + `children` 里的小按钮），整行可拖动。
  * macOS 原生红绿灯（`native-left`）时与红绿灯合为一行：行高 48、竖直中线对齐红绿灯（侧栏贴着窗口上缘时补上内边距），
- * 左端让出到红绿灯右侧（`inset.left`），按钮间距收紧；字标只在品牌区够宽（≥ 6rem）时显示，256px 宽的侧栏只留品牌标。
+ * 左端让出到红绿灯右侧（`inset.left`），按钮间距收紧；字标只在品牌区放得下它的实际宽度时显示（`useWordmarkFits`），
+ * 放不下（红绿灯更宽的 macOS 26、窄侧栏）只留品牌标。
  * 全屏时红绿灯收起：品牌区用 transform 平移到红绿灯原来的位置（260ms、`--ease`），退出全屏时平移回来；
  * 进入全屏延后 180ms 再走（壳报告全屏时系统的全屏过渡刚开始，红绿灯随标题栏淡出，先让它们走），退出不延后
  * （退出过渡结束时红绿灯才重新出现，260ms 早已让出空间）。全屏时指针移到左上角唤出页面自绘的红绿灯（`FullscreenLights`）
  * 期间，品牌区同样平移回来让出位置。减少动效时直接切换。
- * 其它环境（浏览器、移动壳、Windows / Linux）与以前完全相同：56px 行高、字标常在。
+ * 其它环境（浏览器、移动壳、Windows / Linux）与以前完全相同：56px 行高，字标同样按实际宽度决定显隐。
  */
 export function SidebarBrandRow({
 	children,
@@ -316,6 +318,9 @@ export function SidebarBrandRow({
 		!(v.chrome.fullscreenLights && lightsShown);
 	const row = useRef<HTMLDivElement>(null);
 	const spacer = useRef<HTMLSpanElement>(null);
+	const brand = useRef<HTMLSpanElement>(null);
+	const word = useRef<HTMLSpanElement>(null);
+	const wordFits = useWordmarkFits(brand, word);
 	const [, rowTop] = useWindowPos(row, native);
 	const [spacerX] = useWindowPos(spacer, native);
 	const reserve = native
@@ -352,21 +357,61 @@ export function SidebarBrandRow({
 				</span>
 			)}
 			<span
+				ref={brand}
 				data-brand-shift={
 					native ? (shifted ? "fullscreen" : "lights") : undefined
 				}
-				className={`@container flex min-w-0 flex-1 items-center ${native ? "gap-1.5" : "gap-2"} ${native ? `transition-transform duration-[260ms] ease-[var(--ease)] motion-reduce:transition-none ${shifted ? "delay-[180ms]" : "delay-0"}` : ""}`}
+				className={`flex min-w-0 flex-1 items-center ${native ? "gap-1.5" : "gap-2"} ${native ? `transition-transform duration-[260ms] ease-[var(--ease)] motion-reduce:transition-none ${shifted ? "delay-[180ms]" : "delay-0"}` : ""}`}
 				style={shifted ? { transform: `translateX(${-shiftBy}px)` } : undefined}
 			>
 				<BrandMark size={24} />
-				{/* 不加 truncate：overflow 裁切会切掉 leading-none 下 y 的降部 */}
-				<span className="wordmark hidden min-w-0 text-[24px] leading-none @[5.5rem]:inline">
+				{/* 不加 truncate：overflow 裁切会切掉 leading-none 下 y 的降部。shrink-0：量到的总是完整宽度。
+				    放不下时脱离文档流并隐藏（不占位、不进无障碍树），仍留在 DOM 里供下次量宽 */}
+				<span
+					ref={word}
+					data-wordmark={wordFits ? "shown" : "hidden"}
+					className={`wordmark shrink-0 whitespace-nowrap text-[24px] leading-none ${wordFits ? "" : "invisible absolute"}`}
+				>
 					{t("app.name")}
 				</span>
 			</span>
 			{children}
 		</div>
 	);
+}
+
+/**
+ * 字标放得下吗：品牌区（flex-1，宽度不随内容变）≥ 品牌标 + gap + 字标实际宽度。
+ * 不写死阈值：红绿灯让位随系统版本变（macOS 26 的工具栏红绿灯更宽），字体加载、语言切换也会改字标宽度。
+ * 同时观察品牌区与字标：侧栏宽度、红绿灯让位变化改前者，字体换完改后者。用 getBoundingClientRect 取小数宽度，
+ * 不让 offsetWidth 的取整在临界宽度上误判；transform 平移不改宽度。
+ */
+function useWordmarkFits(
+	box: RefObject<HTMLElement | null>,
+	word: RefObject<HTMLElement | null>,
+): boolean {
+	const [fits, setFits] = useState(true);
+	useLayoutEffect(() => {
+		const b = box.current;
+		const w = word.current;
+		const mark = b?.firstElementChild;
+		if (!b || !w || !mark) return;
+		const check = () => {
+			const gap = Number.parseFloat(getComputedStyle(b).columnGap) || 0;
+			const need =
+				mark.getBoundingClientRect().width +
+				gap +
+				w.getBoundingClientRect().width;
+			setFits(need <= b.getBoundingClientRect().width);
+		};
+		check();
+		if (typeof ResizeObserver === "undefined") return;
+		const ro = new ResizeObserver(check);
+		ro.observe(b);
+		ro.observe(w);
+		return () => ro.disconnect();
+	}, [box, word]);
+	return fits;
 }
 
 /** 没有页头的整页卡片（登录 / 配对 / 连接页、加载中）：贴顶一条透明标题行，整条可拖动，两端放自绘按钮；全屏时只剩自绘红绿灯。 */

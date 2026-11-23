@@ -334,6 +334,33 @@ describe("侧栏品牌行", () => {
 		expect(brandRow().row.querySelector("[data-lights-reserve]")).toBeNull();
 	});
 
+	it("字标按实际宽度决定显隐：品牌区放得下品牌标 + 字标才显示，否则隐藏且不占位", () => {
+		// 品牌标 24 + 字标 54（jsdom 无样式，gap 为 0）= 78
+		let boxWidth = 78;
+		const rect = vi
+			.spyOn(HTMLElement.prototype, "getBoundingClientRect")
+			.mockImplementation(function (this: HTMLElement) {
+				const width = this.hasAttribute("data-wordmark")
+					? 54
+					: this.querySelector(":scope > [data-wordmark]")
+						? boxWidth
+						: 24;
+				return DOMRect.fromRect({ x: 0, y: 0, width, height: 24 });
+			});
+		try {
+			let word = brandRow().row.querySelector("[data-wordmark]") as HTMLElement;
+			expect(word).toHaveAttribute("data-wordmark", "shown");
+			expect(word.className).not.toContain("invisible");
+			cleanup();
+			boxWidth = 77.5;
+			word = brandRow().row.querySelector("[data-wordmark]") as HTMLElement;
+			expect(word).toHaveAttribute("data-wordmark", "hidden");
+			expect(word.className).toContain("invisible absolute");
+		} finally {
+			rect.mockRestore();
+		}
+	});
+
 	it("macOS：与红绿灯同一行——48px 行高、左端让到 inset.left、侧栏贴着窗口上缘时补内边距对齐红绿灯中线", () => {
 		install("native-left");
 		// 侧栏玻璃离窗口上缘 8px（宽屏三栏）：行高正好 48，不补内边距。位置按布局偏移量（offsetLeft / offsetTop）算
