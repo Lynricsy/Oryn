@@ -149,10 +149,15 @@ func TestStopResearcher(t *testing.T) {
 	assert.False(t, e.c.ResearcherCold(e.ctx, research.RoleWeb))
 	id, err := e.c.EnsureResearcher(e.ctx, research.RoleWeb)
 	require.NoError(t, err)
+	// 等研究员停在回合中途：fakeomp 见到提示词里的 "ask"（task）会发 extension_ui_request 并一直等应答，状态为
+	// awaiting_input——agent 已就绪、回合在跑，这个回合只有 StopResearcher 的 abort 能结束。只等 AgentVariant 不够：
+	// agent 流可能先于 ready 状态接上，那时 Abort 按「agent 未就绪」跳过，排队的提示词随后下发，回合永远等不到应答
+	// （生产里研究服务不冷时每轮都会再调 StopResearcher，见 research.Service 的调度，不会卡住）。
 	require.Eventually(t, func() bool {
+		th, err := e.th.Get(e.ctx, id)
 		_, known := e.th.AgentVariant(e.ctx, id)
-		return known
-	}, 10*time.Second, 20*time.Millisecond, "研究员 agent 起来")
+		return err == nil && th.State == apigen.ThreadStateAwaitingInput && known
+	}, 10*time.Second, 20*time.Millisecond, "研究员 agent 起来并停在回合中途")
 	v, _ := e.th.AgentVariant(e.ctx, id)
 	assert.Equal(t, research.VariantResearchWeb, v)
 	e.c.StopResearcher(e.ctx, research.RoleWeb)

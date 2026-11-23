@@ -69,6 +69,8 @@ type Orbs struct {
 	// hold 为真时新建 / 唤醒的 orb 停在 requested，直到 Release（模拟 provider 尚未执行 spawn）。
 	hold     bool
 	held     map[string]bool
+	// booting 是正在拉起 fake orbd 的 orb（startOrbd 在途；同一 orb 同时只拉起一个）。
+	booting  map[string]bool
 	snapGate chan struct{}
 	// features 是 HasFeature 对任意 orb 报告的特性（M9：协调线程要求 "coordinator"）。
 	features map[string]bool
@@ -129,6 +131,7 @@ func NewOrbs(st *store.Store, fakeompBin, home string, env ...string) (*Orbs, er
 		orbds:    map[string]*Orbd{},
 		blobs:    map[string][]byte{},
 		held:     map[string]bool{},
+		booting:  map[string]bool{},
 		features: map[string]bool{},
 		starts:   map[string][]apigen.LinkCtlAgentStartParams{},
 	}
@@ -313,6 +316,9 @@ func (o *Orbs) OpenBlob(ctx context.Context, orbID, sha string, data []byte) err
 	return st.Close()
 }
 
+// startOrbd 拉起 orb 的 fake orbd：connecting → 拨 link → ready。同一 orb 已在拉起途中、或已经 ready 时什么也不做
+// （同真实 orbs.Wake：只有 frozen / stopped / failed 才重新 spawn）。否则 Create 的启动还在途时线程服务的唤醒会再拨
+// 一条 link，第二个 orbd 的 ready 让线程在它上面再起一个 agent 进程，旧进程里的回合从此收不到任何命令（例如 abort）。
 func (o *Orbs) startOrbd(orbID string) {
 	o.mu.Lock()
 	select {
@@ -320,10 +326,24 @@ func (o *Orbs) startOrbd(orbID string) {
 		o.mu.Unlock()
 		return
 	default:
-		o.starting.Add(1)
 	}
+	if o.booting[orbID] {
+		o.mu.Unlock()
+		return
+	}
+	o.booting[orbID] = true
+	o.starting.Add(1)
 	o.mu.Unlock()
-	defer o.starting.Done()
+	defer func() {
+		o.mu.Lock()
+		delete(o.booting, orbID)
+		o.mu.Unlock()
+		o.starting.Done()
+	}()
+	// 上一次拉起在 Wake 读到非 ready 之后才完成（ready 先于清除 booting 写入）：不再重复拉起
+	if orb, err := o.st.Q.GetOrb(context.Background(), orbID); err != nil || orb.State == "ready" {
+		return
+	}
 	time.Sleep(20 * time.Millisecond)
 	o.setState(orbID, "connecting")
 	d, err := dialOrbd(o, orbID)
