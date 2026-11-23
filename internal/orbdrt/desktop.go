@@ -40,8 +40,9 @@ const (
 	displayStableAfter = 60 * time.Second
 	// dbusReadyTimeout 是 dbus-daemon 启动后等它的套接字可连的上限；超时照常继续（只是没有无障碍树）。
 	dbusReadyTimeout = 5 * time.Second
-	// desktopBackground 是根窗口的底色（中性浅灰），由 xsetroot 在每次显示就绪时设置。
-	desktopBackground = "#e5e5e3"
+	// desktopBackground 是根窗口的底色，由 xsetroot 在每次显示就绪时设置。取网页浅色 --panel（oklch(0.992 0.003 235)），
+	// 让远端桌面的空白处与网页里包着它的面板同色，两者只靠舞台的细边框分隔。
+	desktopBackground = "#fbfdfe"
 	// xsetrootTimeout 是 xsetroot 这个一次性命令的上限。
 	xsetrootTimeout = 5 * time.Second
 

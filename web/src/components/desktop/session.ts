@@ -75,7 +75,8 @@ export function openDesktopSession(
 			const r = new Rfb(target, ws, { shared: true });
 			rfb = r;
 			r.focusOnClick = focusOnClick;
-			r.background = "var(--inset)";
+			// 与远端根窗口底色（orbd 的 desktopBackground = 浅色 --panel）、舞台底色一致：适应模式的留边不显出色块
+			r.background = "var(--panel)";
 			r.viewOnly = viewOnly;
 			applyScale(r, scale);
 			r.addEventListener("connect", () => emit("connected"));
@@ -141,7 +142,7 @@ function token(name: string): string {
 function drawMock(canvas: HTMLCanvasElement, browser: boolean) {
 	const g = canvas.getContext("2d");
 	if (!g) return;
-	g.fillStyle = token("--bg");
+	g.fillStyle = token("--panel");
 	g.fillRect(0, 0, MOCK_W, MOCK_H);
 	if (!browser) return;
 	g.fillStyle = token("--raised");

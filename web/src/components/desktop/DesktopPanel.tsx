@@ -881,8 +881,9 @@ function DesktopView({
 					aria-describedby={hintId}
 					onFocus={(e) => setStageFocused(e.target === e.currentTarget)}
 					onBlur={() => setStageFocused(false)}
-					// 画布铺满且没有圆角，它自己的焦点环会被舞台的圆角切掉四角：画布不画，改由舞台按自身圆角画（与舞台聚焦时同款外环）
-					className="focus-inset relative h-full overflow-hidden rounded-lg border border-border bg-inset has-[canvas:focus-visible]:outline-2 has-[canvas:focus-visible]:outline-[var(--ring)] has-[canvas:focus-visible]:outline-offset-2 [&_canvas]:outline-none"
+					// 画布铺满且没有圆角，它自己的焦点环会被舞台的圆角切掉四角：画布不画，改由舞台按自身圆角画（与舞台聚焦时同款外环）。
+					// 舞台底色与外面的面板同为 --panel（远端根窗口也是这个色），只靠一圈细边框分隔
+					className="focus-inset relative h-full overflow-hidden rounded-lg border border-border bg-panel has-[canvas:focus-visible]:outline-2 has-[canvas:focus-visible]:outline-[var(--ring)] has-[canvas:focus-visible]:outline-offset-2 [&_canvas]:outline-none"
 				>
 					<div ref={screenRef} className="absolute inset-0" />
 					<span id={hintId} className="sr-only">
