@@ -160,12 +160,15 @@ export function ProjectShell({
 	crumbs = [],
 	actions,
 	wide = false,
+	fill = false,
 	children,
 }: {
 	project?: Project;
 	crumbs?: readonly Crumb[];
 	actions?: ReactNode;
 	wide?: boolean;
+	/** 正文占满可视高度、不整页滚动：页面自己安排各栏的内部滚动（提交子页的左右分栏）；子元素用 flex-1 min-h-0 撑开 */
+	fill?: boolean;
 	children: ReactNode;
 }): ReactNode {
 	const { t } = useTranslation();
@@ -192,9 +195,11 @@ export function ProjectShell({
 				{actions}
 				<WindowControls side="right" className="-mr-1" />
 			</header>
-			<div className="min-h-0 flex-1 overflow-y-auto p-3 pb-safe sm:p-5">
+			<div
+				className={`min-h-0 flex-1 p-3 pb-safe sm:p-5 ${fill ? "overflow-hidden" : "overflow-y-auto"}`}
+			>
 				<div
-					className={`mx-auto flex flex-col gap-3 ${wide ? "max-w-5xl" : "max-w-3xl"}`}
+					className={`mx-auto flex flex-col gap-3 ${wide ? "max-w-5xl" : "max-w-3xl"} ${fill ? "h-full" : ""}`}
 				>
 					{project?.archivedAt ? <ArchivedNotice project={project} /> : null}
 					{children}
