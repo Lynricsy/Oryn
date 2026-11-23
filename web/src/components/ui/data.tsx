@@ -486,18 +486,23 @@ export function ProjectBadge({
 	);
 }
 
-/** omp 标题卡图标：与项目徽标同形的黑白小瓷片（`.title-glyph`），emoji 去色成灰阶。 */
+/**
+ * omp 标题卡图标：与项目徽标同形的黑白小瓷片（`.title-glyph`），emoji 去色成灰阶。
+ * `colored`：保留 emoji 原色（提交行的 gitmoji，颜色本身带含义）。
+ */
 export function TitleGlyph({
 	icon,
 	size = 16,
+	colored = false,
 }: {
 	icon: string;
 	size?: number;
+	colored?: boolean;
 }): ReactNode {
 	return (
 		<span
 			aria-hidden
-			className="title-glyph inline-flex shrink-0 items-center justify-center rounded-xs leading-none"
+			className={`title-glyph inline-flex shrink-0 items-center justify-center rounded-xs leading-none ${colored ? "[filter:none]" : ""}`}
 			style={{
 				width: size,
 				height: size,

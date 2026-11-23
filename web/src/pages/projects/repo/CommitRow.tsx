@@ -1,14 +1,15 @@
 /**
- * 一个提交的行（M24 阶段 ②）：subject、短 sha、关联的线程与多久前；整行进 `to`（提交详情）。整行链接用伸展的
- * `::after`，线程链接排在它上面单独可点，不嵌套交互元素。主页「提交到 <基线>」与提交子页的列表共用。
+ * 一个提交的行（M24 阶段 ②）：gitmoji（没有时为提交图标）、subject、短 sha、关联的线程与多久前；整行进 `to`（提交详情）。
+ * 整行链接用伸展的 `::after`，线程链接排在它上面单独可点，不嵌套交互元素。主页「提交到 <基线>」与提交子页的列表共用。
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import type { RepoCommit } from "../../../api/repo-queries";
-import { ListRow } from "../../../components/ui/data";
+import { ListRow, TitleGlyph } from "../../../components/ui/data";
 import { Icon } from "../../../components/ui/icons";
 import { formatRelative } from "../../../lib/format";
+import { parseCommitSubject } from "../../../lib/gitmoji";
 import { parseTitleCard } from "../../../lib/title";
 
 export function CommitRow({
@@ -27,6 +28,7 @@ export function CommitRow({
 	author?: boolean;
 }): ReactNode {
 	const { t } = useTranslation();
+	const subject = parseCommitSubject(c.subject);
 	return (
 		<li
 			data-testid="repo-commit-row"
@@ -34,16 +36,14 @@ export function CommitRow({
 			className={`relative rounded-md transition-colors duration-150 ${selected ? "bg-active" : "hover:bg-hover"}`}
 		>
 			<ListRow
-				leading={
-					<Icon name="commit" size={14} aria-hidden className="text-faint" />
-				}
+				leading={<CommitGlyph glyph={subject.glyph} />}
 				title={
 					<Link
 						to={to}
 						aria-current={selected ? "page" : undefined}
 						className="min-w-0 truncate after:absolute after:inset-0 after:rounded-md"
 					>
-						{c.subject}
+						{subject.text}
 					</Link>
 				}
 				meta={
@@ -74,5 +74,18 @@ export function CommitRow({
 				}
 			/>
 		</li>
+	);
+}
+
+/** 提交行的前导图标：gitmoji 用彩色小瓷片，否则是提交图标；两者占同样的 16px 宽，列表里标题对齐。 */
+export function CommitGlyph({ glyph }: { glyph?: string }): ReactNode {
+	return (
+		<span className="inline-flex w-4 shrink-0 justify-center">
+			{glyph ? (
+				<TitleGlyph icon={glyph} colored />
+			) : (
+				<Icon name="commit" size={14} aria-hidden className="text-faint" />
+			)}
+		</span>
 	);
 }

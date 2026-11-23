@@ -19,6 +19,7 @@ import {
 	Spinner,
 } from "../../../components/ui/primitives";
 import { formatDateTime } from "../../../lib/format";
+import { emojify } from "../../../lib/gitmoji";
 import { parseTitleCard } from "../../../lib/title";
 import { CopyIconButton } from "../home/HeaderActions";
 
@@ -131,7 +132,7 @@ export function CommitDetail({
 				<div className="flex items-start gap-2">
 					{back}
 					<h2 className="min-w-0 flex-1 break-words pt-1 font-medium text-base text-fg">
-						{c.subject}
+						{emojify(c.subject)}
 					</h2>
 					<CopyIconButton
 						icon="copy"
@@ -142,7 +143,7 @@ export function CommitDetail({
 				</div>
 				{body && (
 					<p className="whitespace-pre-wrap break-words text-muted text-sm">
-						{body}
+						{emojify(body)}
 					</p>
 				)}
 				<dl className="flex flex-wrap items-center gap-x-4 gap-y-1 text-faint text-xs">

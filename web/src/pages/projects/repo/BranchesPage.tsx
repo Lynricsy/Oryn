@@ -21,6 +21,7 @@ import {
 	Spinner,
 } from "../../../components/ui/primitives";
 import { formatRelative } from "../../../lib/format";
+import { emojify } from "../../../lib/gitmoji";
 import { ProjectGate, ProjectShell } from "../ProjectShell";
 import { RepoGate } from "./RepoGate";
 import { RepoNav } from "./RepoNav";
@@ -63,7 +64,7 @@ function RefRow({
 						to={`/projects/${projectId}/commits/${r.commit.sha}${q}`}
 						className="min-w-0 truncate hover:text-fg hover:underline"
 					>
-						{r.commit.subject}
+						{emojify(r.commit.subject)}
 					</Link>
 					<span className="shrink-0 font-mono">{r.commit.shortSha}</span>
 					<span className="shrink-0 tabular-nums">

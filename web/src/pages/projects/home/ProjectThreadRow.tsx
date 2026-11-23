@@ -1,6 +1,6 @@
 /**
- * 项目页里的一行线程（M24）：状态图标、标题、PR 摘要（第一个打开的 PR，没有就取第一个）、已交付 / 已归档徽标、
- * 最后活动时间。不复用侧栏的 ThreadRow：那个绑着侧栏的样式变量、选中态与 fork 子树，这里是纸面上的行。
+ * 项目页里的一行线程（M24）：状态图标、标题卡图标（同侧栏）、标题、PR 摘要（第一个打开的 PR，没有就取第一个）、
+ * 已交付 / 已归档徽标、最后活动时间。不复用侧栏的 ThreadRow：那个绑着侧栏的样式变量、选中态与 fork 子树，这里是纸面上的行。
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -11,7 +11,7 @@ import {
 	prIcon,
 	prStatusText,
 } from "../../../components/github/PrChip";
-import { Badge, StatusDot } from "../../../components/ui/data";
+import { Badge, StatusDot, TitleGlyph } from "../../../components/ui/data";
 import { Icon } from "../../../components/ui/icons";
 import { ThreadStateIcon } from "../../../components/ui/primitives";
 import { formatRelative } from "../../../lib/format";
@@ -26,6 +26,7 @@ export function ProjectThreadRow({
 	now: number;
 }): ReactNode {
 	const { t } = useTranslation();
+	const card = parseTitleCard(thread.title);
 	const pull =
 		thread.pulls?.find((p) => p.state === "open") ?? thread.pulls?.[0];
 	return (
@@ -37,8 +38,9 @@ export function ProjectThreadRow({
 				className="flex min-h-10 items-center gap-3 rounded-md px-2 py-1.5 text-sm transition-colors duration-150 hover:bg-hover"
 			>
 				<ThreadStateIcon state={thread.state} size={14} />
+				{card.icon && <TitleGlyph icon={card.icon} />}
 				<span className="min-w-0 flex-1 truncate">
-					{parseTitleCard(thread.title).text || t("thread.untitled")}
+					{card.text || t("thread.untitled")}
 				</span>
 				{pull && (
 					<span
