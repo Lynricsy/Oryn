@@ -2600,6 +2600,161 @@ const ZOO_GROUPS: { text: string; calls: ZooCall[] }[] = [
 	},
 ];
 
+/** 工具样例线程里转入后台的 bash 调用（`bg_9` 一直在跑，mock 服务端按时推它的输出）。 */
+export interface ZooJob {
+	jobId: string;
+	callId: string;
+	args: {
+		command: string;
+		i: string;
+		async: true;
+		cwd?: string;
+		notify?: string;
+	};
+	status: "running" | "completed" | "failed";
+	result: string;
+	durationMs: number;
+}
+
+export const ZOO_JOBS: readonly ZooJob[] = [
+	{
+		jobId: "bg_7",
+		callId: "toolu_zoo_bg_1",
+		args: {
+			command: "cd web && bun run check",
+			i: "后台跑 lint 与类型检查",
+			async: true,
+		},
+		status: "completed",
+		result:
+			"Checked 412 files in 1.8s. No fixes applied.\n$ tsc --noEmit\n(no output)",
+		durationMs: 41_300,
+	},
+	{
+		jobId: "bg_8",
+		callId: "toolu_zoo_bg_2",
+		args: {
+			command: "go vet ./... && golangci-lint run ./internal/...",
+			i: "后台跑 Go 静态检查",
+			async: true,
+		},
+		status: "failed",
+		result:
+			"internal/realtime/socket.go:88:2: ineffectual assignment to err (ineffassign)\n\terr = conn.Close()\n\t^\n1 issues:\n* ineffassign: 1\nexit status 1",
+		durationMs: 63_800,
+	},
+	{
+		jobId: "bg_9",
+		callId: "toolu_zoo_bg_3",
+		args: {
+			command:
+				"GOBIN=/tmp/gobin go test -count=1 -race -run 'Reconnect|Backoff' ./internal/realtime/... ./internal/threads/...",
+			i: "后台跑带竞态检测的重连测试",
+			async: true,
+			cwd: "/home/user/workspace/repo",
+			notify: "FAIL|panic",
+		},
+		status: "running",
+		result: "",
+		durationMs: 0,
+	},
+];
+
+export const ZOO_RUNNING_JOB = ZOO_JOBS[2] as ZooJob;
+
+/** 一条 `async-result` 交付（与 Core 的模板一致）。 */
+export function zooJobDelivery(
+	j: ZooJob,
+	status: string = j.status,
+): Record<string, unknown> {
+	return {
+		customType: "async-result",
+		display: true,
+		attribution: "agent",
+		content: `<system-notice>\nBackground job ${j.jobId} (${j.args.command}) has completed.\nResume your work using the result below.\n${j.result}\n</system-notice>`,
+		details: {
+			meta: { source: { type: "report", value: "background job delivery" } },
+			jobs: [
+				{
+					jobId: j.jobId,
+					type: "bash",
+					status,
+					label: j.args.command,
+					durationMs: j.durationMs,
+				},
+			],
+		},
+	};
+}
+
+/** `bg_9` 已输出的前几行（快照里的实时帧带上它们）。 */
+export const ZOO_JOB_OUTPUT = [
+	"=== RUN   TestReconnectBackoff",
+	"    backoff_test.go:41: attempt 1 → 212ms",
+	"    backoff_test.go:41: attempt 2 → 431ms",
+	"--- FAIL: TestReconnectBackoff (0.31s)",
+	"    backoff_test.go:57: jitter out of range: 1.42 > 1.25",
+	"=== RUN   TestReconnectReplaysAfterSeq",
+];
+
+/** 后台 bash 结束调用后继续推的进度帧（Core `onDetachedToolUpdate`）。 */
+export function zooJobFrame(
+	lines: readonly string[],
+	state = "running",
+): Record<string, unknown> {
+	return {
+		type: "tool_execution_update",
+		toolCallId: ZOO_RUNNING_JOB.callId,
+		toolName: "bash",
+		args: ZOO_RUNNING_JOB.args,
+		partialResult: {
+			content: [{ type: "text", text: lines.join("\n") }],
+			details: { async: { state, jobId: ZOO_RUNNING_JOB.jobId, type: "bash" } },
+		},
+	};
+}
+
+/** 工具样例线程的 `get_jobs` 快照：bg_9 运行中（可取消），bg_7 / bg_8 刚结束、Core 还记着。 */
+export function zooJobsSnapshot(running: {
+	status: string;
+	startTime: number;
+	endTime?: number;
+}): Record<string, unknown> {
+	const done = ZOO_JOBS.filter((j) => j.status !== "running").map((j) => ({
+		depth: 0,
+		job: {
+			id: j.jobId,
+			type: "bash",
+			status: j.status,
+			label: j.args.command,
+			intent: j.args.i,
+			command: j.args.command,
+			startTime: NOW - 9 * MIN,
+			endTime: NOW - 9 * MIN + j.durationMs,
+			...(j.status === "failed"
+				? { errorPreview: j.result }
+				: { resultPreview: j.result }),
+		},
+	}));
+	const live = {
+		depth: 0,
+		...(running.status === "running" ? { cancellable: true } : {}),
+		job: {
+			id: ZOO_RUNNING_JOB.jobId,
+			type: "bash",
+			status: running.status,
+			label: ZOO_RUNNING_JOB.args.command.slice(0, 120),
+			intent: ZOO_RUNNING_JOB.args.i,
+			command: ZOO_RUNNING_JOB.args.command,
+			startTime: running.startTime,
+			...(running.endTime ? { endTime: running.endTime } : {}),
+			caption: "go test：两个包，-race 下约 3 分钟",
+		},
+	};
+	const tree = [live, ...done];
+	return { jobs: tree.map((r) => r.job), tree };
+}
+
 /** 工具样例线程里仍在运行的工具调用（快照的 `agent.live` 帧与之对应）。 */
 const ZOO_LIVE_CALL = "toolu_zoo_live";
 const ZOO_LIVE_ARGS = {
@@ -2688,6 +2843,62 @@ export function buildToolZooTranscript(): Entry[] {
 			});
 		}
 	});
+	// 后台任务：三条转入后台的 bash（一条完成、一条失败、一条还在跑），之后是交付与输出提醒
+	push("message", {
+		message: assistant(
+			[
+				{ type: "text", text: "顺手在后台跑检查和带竞态检测的测试：" },
+				...ZOO_JOBS.map((j) => ({
+					type: "toolCall",
+					id: j.callId,
+					name: "bash",
+					arguments: j.args,
+				})),
+			],
+			ts + 4000,
+		),
+	});
+	for (const j of ZOO_JOBS)
+		push("message", {
+			message: {
+				role: "toolResult",
+				toolCallId: j.callId,
+				toolName: "bash",
+				content: [
+					{
+						type: "text",
+						text: `Background job ${j.jobId} started: ${j.args.command}\nResult will be delivered automatically when complete.`,
+					},
+				],
+				details: {
+					async: { state: "running", jobId: j.jobId, type: "bash" },
+					timeoutSeconds: 600,
+				},
+				timestamp: ts + 4000,
+			},
+		});
+	for (const j of ZOO_JOBS) {
+		if (j.status === "running") continue;
+		push("custom_message", zooJobDelivery(j));
+	}
+	push("custom_message", {
+		customType: "async-notify",
+		display: true,
+		content: `<system-notice>\nBackground job bg_9 (${ZOO_RUNNING_JOB.args.command}) is still running. Its output matched /FAIL|panic/:\n--- FAIL: TestReconnectBackoff (0.31s)\n</system-notice>`,
+		details: {
+			reports: [
+				{
+					id: "bg_9",
+					type: "bash",
+					pattern: "FAIL|panic",
+					lines: ["--- FAIL: TestReconnectBackoff (0.31s)"],
+					omitted: 0,
+					running: true,
+					stopped: false,
+				},
+			],
+		},
+	});
 	push("message", {
 		message: assistant(
 			[
@@ -2708,6 +2919,7 @@ export function buildToolZooTranscript(): Entry[] {
 /** 工具样例线程快照里的 `agent.live`：一个仍在运行、已有部分输出的 bash 调用。 */
 export function toolZooLiveFrames(): Record<string, unknown>[] {
 	return [
+		zooJobFrame(ZOO_JOB_OUTPUT),
 		{
 			type: "tool_execution_start",
 			toolCallId: ZOO_LIVE_CALL,

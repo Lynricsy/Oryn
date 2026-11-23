@@ -71,6 +71,11 @@ import {
 	TOOL_ZOO_THREAD,
 	toolZooLiveFrames,
 	toolZooReplayFrames,
+	ZOO_JOB_OUTPUT,
+	ZOO_RUNNING_JOB,
+	zooJobDelivery,
+	zooJobFrame,
+	zooJobsSnapshot,
 } from "./fixtures";
 import { MockGitHub } from "./github";
 import { MockLibrary } from "./library";
@@ -685,6 +690,21 @@ export class MockServer {
 		{ recordId: string; timer: ReturnType<typeof setInterval> }
 	>();
 	private btwSeq = 0;
+	/**
+	 * 工具样例线程里一直在跑的后台任务 `bg_9`：第一次 `get_jobs` 起按时推输出帧（同 Core 的分离进度帧），
+	 * 跑满几行后结束并追加交付；`oryn_cancel_job` 可提前停止。
+	 */
+	private zooJob: {
+		status: "running" | "completed" | "cancelled";
+		lines: string[];
+		startTime: number;
+		endTime?: number;
+		timer?: ReturnType<typeof setInterval>;
+	} = {
+		status: "running",
+		lines: [...ZOO_JOB_OUTPUT],
+		startTime: NOW - 2 * 60_000,
+	};
 	private readonly terms = new Map<string, Map<string, MockTerm>>();
 	private readonly termWatch = new Map<MockSocket, Set<string>>();
 	private readonly termWindow = new Map<
@@ -3644,6 +3664,56 @@ export class MockServer {
 		this.btwTimers.set(threadId, { recordId, timer });
 	}
 
+	/** 第一次读快照时开始推 `bg_9` 的输出：每拍一行，跑满后以「完成」结束。 */
+	private startZooJob() {
+		const job = this.zooJob;
+		if (job.status !== "running" || job.timer) return;
+		const more = [
+			"    replay_test.go:73: afterSeq=118 → 6 entries",
+			"--- PASS: TestReconnectReplaysAfterSeq (0.42s)",
+			"=== RUN   TestReconnectJitter",
+			"    backoff_test.go:88: 1000 samples, p99 1.21",
+			"--- PASS: TestReconnectJitter (0.08s)",
+			"=== RUN   TestThreadsResubscribe",
+			"    resubscribe_test.go:40: orb frozen → thawed, 2 queries re-sent",
+			"--- PASS: TestThreadsResubscribe (1.10s)",
+			"FAIL\toryn/internal/realtime\t2.931s",
+			"ok  \toryn/internal/threads\t4.207s",
+		];
+		const delay = Number(localStorage.getItem("oryn.mock.job-delay") ?? 1500);
+		job.timer = setInterval(() => {
+			const line = more.shift();
+			if (line === undefined) {
+				this.finishZooJob("completed");
+				return;
+			}
+			job.lines.push(line);
+			this.frame(TOOL_ZOO_THREAD, zooJobFrame(job.lines));
+		}, delay);
+	}
+
+	/** `bg_9` 结束：最后一帧带终态，随后像 Core 一样把结果作为 `async-result` 交付进会话。 */
+	private finishZooJob(status: "completed" | "cancelled") {
+		const job = this.zooJob;
+		clearInterval(job.timer);
+		job.timer = undefined;
+		job.status = status;
+		job.endTime = Date.now();
+		this.frame(TOOL_ZOO_THREAD, zooJobFrame(job.lines, status));
+		this.appendRaw(
+			TOOL_ZOO_THREAD,
+			"custom_message",
+			zooJobDelivery(
+				{
+					...ZOO_RUNNING_JOB,
+					result: job.lines.join("\n"),
+					durationMs: job.endTime - job.startTime,
+				},
+				status,
+			),
+		);
+	}
+
 	private btwCancel(socket: MockSocket, threadId: string, id: string) {
 		const running = this.btwTimers.get(threadId);
 		if (running) {
@@ -3757,6 +3827,25 @@ export class MockServer {
 					enabled: false,
 					state: "off",
 				});
+			case "get_jobs":
+				if (threadId !== TOOL_ZOO_THREAD)
+					return this.respond(socket, threadId, id, type, { jobs: [] });
+				this.startZooJob();
+				return this.respond(
+					socket,
+					threadId,
+					id,
+					type,
+					zooJobsSnapshot(this.zooJob),
+				);
+			case "oryn_cancel_job": {
+				const live =
+					threadId === TOOL_ZOO_THREAD &&
+					frame.jobId === ZOO_RUNNING_JOB.jobId &&
+					this.zooJob.status === "running";
+				if (live) this.finishZooJob("cancelled");
+				return this.respond(socket, threadId, id, type, { cancelled: live });
+			}
 			case "get_subagents":
 				return this.respond(socket, threadId, id, type, { subagents: [] });
 			case "get_goal":
