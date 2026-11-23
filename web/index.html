@@ -13,6 +13,8 @@
 		<title>Oryn</title>
 		<!-- 首帧前写入明暗与主题色，避免闪色（经典脚本，CSP script-src 'self' 放行） -->
 		<script src="/theme-init.js"></script>
+		<!-- 全局样式直接挂在 head（不经入口模块导入）：开发服务器下首帧也带样式，启动画面不等脚本 -->
+		<link rel="stylesheet" href="/src/index.css" />
 	</head>
 	<body>
 		<div id="root"></div>

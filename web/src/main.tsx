@@ -9,7 +9,6 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router";
 import { App } from "./App";
 import "./i18n";
-import "./index.css";
 import { installContextMenu } from "./lib/context-menu/dispatch";
 import { installDeviceCorners } from "./lib/device-corners";
 import { host } from "./lib/host";

@@ -5,7 +5,6 @@ import "@fontsource-variable/mona-sans/index.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "../i18n";
-import "../index.css";
 import { installNoFocusZoom } from "../lib/viewport";
 import { installTheme } from "../state/theme";
 import { Launcher } from "./Launcher";
