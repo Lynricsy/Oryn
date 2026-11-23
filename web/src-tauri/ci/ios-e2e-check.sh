@@ -244,9 +244,11 @@ at_most() { awk -v r="$1" -v t="$2" 'BEGIN { exit !(r <= t) }'; }
 
 # 限时截图（见 ios-sim.sh 的 sim_shot）；普通步骤截不到图直接判失败
 shot() { sim_shot "$out/e2e-$1.png" 60 || fail "$1" "截图 60 秒没有返回（模拟器卡住）"; }
-# steady_shot <步骤>：程序化开合由原生逐帧推进、系统吸附也没有「停稳」事件；连拍到胶囊横条前后两张一致（≤ 0.01）才收下后一张
+# steady_shot <步骤>：程序化开合由原生逐帧推进、系统吸附也没有「停稳」事件；连拍到胶囊横条前后两张一致（≤ 0.01）才收下后一张。
+# 没停稳时把最后比较的一对图存成 e2e-<步骤>-steady-{a,b}.png，报错带比较次数、最后的差异率与耗时（区分画面在动还是模拟器慢）
 steady_shot() {
-  local prev="$work/steady-prev.png" next="$work/steady-next.png" end=$((SECONDS + 120))
+  local prev="$work/steady-prev.png" next="$work/steady-next.png" older="$work/steady-older.png"
+  local start=$SECONDS end=$((SECONDS + 120)) n=0 ratio=""
   sim_shot "$prev" 60 || fail "$1" "截图 60 秒没有返回（模拟器卡住）"
   if [[ -z ${scale:-} ]]; then
     local pw
@@ -255,13 +257,20 @@ steady_shot() {
   fi
   while ((SECONDS < end)); do
     sim_shot "$next" 60 || fail "$1" "截图 60 秒没有返回（模拟器卡住）"
-    if at_most "$(strip_diff "$next" "$prev" "$fx" "$fw")" 0.01; then
+    ratio=$(strip_diff "$next" "$prev" "$fx" "$fw") || fail "$1" "比较连拍截图失败（ios-region-diff 退出码非 0）"
+    n=$((n + 1))
+    if at_most "$ratio" 0.01; then
       mv "$next" "$out/e2e-$1.png"
       return 0
     fi
+    mv "$prev" "$older"
     mv "$next" "$prev"
   done
-  fail "$1" "120 秒内底栏横条没有停稳（连拍两张总是不同）"
+  if ((n > 0)); then
+    cp "$older" "$out/e2e-$1-steady-a.png"
+    cp "$prev" "$out/e2e-$1-steady-b.png"
+  fi
+  fail "$1" "120 秒内底栏横条没有停稳（连拍两张总是不同）：比较 ${n} 次，最后一次差异率 ${ratio:-无}，耗时 $((SECONDS - start)) 秒"
 }
 
 # hold <步骤> <截图名> <x> <y> <宽> <高>（pt）<关闭基线> <打开基线>：测试正按住拖动，连拍到区域停在拖开处——前后两张一致
