@@ -115,10 +115,21 @@ export function RoleRail({
 		plate.style.left = `${el.offsetLeft}px`;
 		plate.style.width = `${el.offsetWidth}px`;
 		plate.style.opacity = "1";
-		if (animate) {
-			el.scrollIntoView?.({ block: "nearest", inline: "nearest" });
-			setBump((b) => b + 1);
-		}
+		// 当前格在轨道内滚到可见（只滚轨道，不带动页面）：首次浮出就在可见区外时直接到位，之后的切换平滑滚过去
+		const left = el.offsetLeft;
+		const right = left + el.offsetWidth;
+		const target =
+			left < list.scrollLeft
+				? left
+				: right > list.scrollLeft + list.clientWidth
+					? right - list.clientWidth
+					: undefined;
+		if (target !== undefined)
+			list.scrollTo?.({
+				left: target,
+				behavior: animate ? "smooth" : "instant",
+			});
+		if (animate) setBump((b) => b + 1);
 		placedFor.current = activeId;
 	}, [activeId, slots.length, phase]);
 
