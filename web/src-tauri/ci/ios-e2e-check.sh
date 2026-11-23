@@ -643,8 +643,12 @@ ok h-end
 kb_samples() {
   tail -n "+$((wmark + 1))" "$wlog" | jq -sc 'map(select(.event == "viewport")) | sort_by(.seq) | map(.info)'
 }
-# 聚焦输入框那一刻（键盘弹出之前）的采样：scrollX 是侧栏关闭位，h 是没有键盘时的视觉视口高
-kb_base() { kb_samples | jq -ec 'map(select(.why == "focusin" and .active == "textarea")) | first | {sx, h}'; }
+# 聚焦输入框那一刻（键盘弹出之前）的采样：scrollX 是侧栏关闭位，h 是没有键盘时的视觉视口高。
+# 还没有这条采样时退出码非 0（先筛出 sx、h 都是数字的，再构造对象；否则 first 的 null 会变成 {sx:null,h:null} 被当成成功）
+kb_base() {
+  kb_samples | jq -ec 'map(select(.why == "focusin" and .active == "textarea"
+    and (.sx | type) == "number" and (.h | type) == "number")) | first // empty | {sx, h}'
+}
 # 键盘弹出并稳定后：最后一条采样里视觉视口比聚焦时矮了 100pt 以上（键盘真的占了位置）、页面没被推走、横向没动、
 # 输入框在键盘上沿之上。键盘高按聚焦前后的视觉视口高之差算，不用 innerHeight − 视觉视口高：实测 iOS 27.2 弹键盘时
 # innerHeight 跟着缩（interactive-widget=resizes-content），两者相减恒为 0
