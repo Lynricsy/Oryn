@@ -8,6 +8,7 @@ import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import {
 	type RepoCommit,
+	useRepoCommitAvatars,
 	useRepoCommits,
 	useRepoTree,
 } from "../../../api/repo-queries";
@@ -31,14 +32,33 @@ const AVATAR_LAYERS = ["z-30", "z-20", "z-10"];
 
 /**
  * 作者与共同作者：「A」「A 和 B」「A 和其他 N 人」，名字加粗；悬停显示全部 `名字 <邮箱>`。
- * GitHub noreply 邮箱显示真人头像（按 2 倍像素取），其它邮箱与加载失败时是首字。
+ * 头像：GitHub noreply 邮箱直接推出地址（按 2 倍像素取）；其余邮箱问服务端（GitHub 按邮箱对账号），
+ * 只在叠放的几个人里有这种邮箱时才请求；对不上或加载失败时是首字。
  */
-function Authors({ commit: c }: { commit: RepoCommit }): ReactNode {
+function Authors({
+	projectId,
+	commit: c,
+}: {
+	projectId: string;
+	commit: RepoCommit;
+}): ReactNode {
 	const { t } = useTranslation();
 	const people = [
 		{ name: c.authorName, email: c.authorEmail },
 		...(c.coAuthors ?? []),
 	];
+	const shown = people.slice(0, AVATAR_LAYERS.length).map((p) => ({
+		...p,
+		derived: githubAvatarUrl(p.email, 40),
+	}));
+	const resolved = useRepoCommitAvatars(
+		projectId,
+		c.sha,
+		shown.some((p) => p.email && !p.derived),
+	);
+	const byEmail = new Map(
+		resolved.data?.avatars.map((a) => [a.email.toLowerCase(), a.avatarUrl]),
+	);
 	const [first, second] = people;
 	return (
 		<span
@@ -50,13 +70,13 @@ function Authors({ commit: c }: { commit: RepoCommit }): ReactNode {
 		>
 			{/* isolate：头像的 z 层级只在这一组里比较，不会压到页面上的弹层 */}
 			<span className="isolate flex shrink-0 items-center">
-				{people.slice(0, AVATAR_LAYERS.length).map((p, i) => (
+				{shown.map((p, i) => (
 					<Avatar
 						key={`${p.email}\0${p.name}`}
 						name={p.name}
 						size={20}
 						round
-						src={githubAvatarUrl(p.email, 40)}
+						src={p.derived ?? byEmail.get(p.email.toLowerCase())}
 						// 叠放：后面的往左塞到前一个下面（不盖住首字），每个都描一圈表头底色隔开
 						className={`relative ring-2 ring-raised ${AVATAR_LAYERS[i]} ${i ? "-ml-1" : ""}`}
 					/>
@@ -97,7 +117,7 @@ function HeadCommit({
 				data-testid="repo-head-commit"
 				className="flex min-w-0 flex-1 items-center gap-2"
 			>
-				<Authors commit={c} />
+				<Authors projectId={projectId} commit={c} />
 				<Link
 					to={to}
 					title={c.subject}

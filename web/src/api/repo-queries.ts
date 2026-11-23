@@ -193,6 +193,29 @@ export function useRepoCommit(projectId: string, sha: string) {
 	});
 }
 
+/**
+ * 提交作者与共同作者在 GitHub 上的头像（服务端按邮箱对账号，查不到为空列表）；`enabled` 为假时不请求
+ * （例如人人都是 noreply 邮箱、前端已能推出头像）。提交不可变，缓存一小时。
+ */
+export function useRepoCommitAvatars(
+	projectId: string,
+	sha: string,
+	enabled = true,
+) {
+	return useQuery({
+		queryKey: [...repoKeys.commit(projectId, sha), "avatars"],
+		enabled,
+		queryFn: () =>
+			unwrap(
+				api.GET("/api/v1/projects/{id}/repo/commits/{sha}/avatars", {
+					params: { path: { id: projectId, sha } },
+				}),
+			),
+		staleTime: 3_600_000,
+		retry: false,
+	});
+}
+
 /** 提交里一个文件的 diff；提交不可变，缓存永不过期。 */
 export function useRepoCommitDiff(
 	projectId: string,

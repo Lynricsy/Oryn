@@ -720,6 +720,17 @@ export class MockRepo {
 		if (rest === "" && m === "GET") return json(this.status(prj));
 		if (rest === "sync" && m === "POST") return this.sync(prj);
 		if (m !== "GET") return null;
+		// 提交作者的 GitHub 头像：mock 没有 GitHub，只给仓库主人一张（演示服务端对上普通邮箱的效果）
+		if (/^commits\/[0-9a-f]{40}\/avatars$/.test(rest))
+			return json({
+				avatars: [
+					{
+						email: OWNER[1],
+						login: OWNER[0],
+						avatarUrl: "https://avatars.githubusercontent.com/u/62173814?v=4",
+					},
+				],
+			});
 		const routes = /^(refs|commits|tree|blob|commits\/([^/]+)(\/diff)?)$/.exec(
 			rest,
 		);
