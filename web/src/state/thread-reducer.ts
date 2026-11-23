@@ -407,13 +407,30 @@ function messageOf(entry: Entry): JsonRecord | null {
 	return p.message;
 }
 
-/** 该条目是否覆盖了叠加层里的在途消息（`(role, timestamp)` 相同）。 */
+/** 落盘成 `custom_message` 条目的在途消息角色（omp `#persistMessageEnd`）。 */
+const CUSTOM_ROLES: Record<string, true> = { custom: true, hookMessage: true };
+
+/**
+ * 该条目是否覆盖了叠加层里的在途消息：`message` 条目按 `(role, timestamp)`；注入消息（custom / hookMessage）
+ * 落盘为 `custom_message` 条目，没有 `message` 包裹，按 `(customType, 条目时间戳)` 认——Core 用消息自己的
+ * 时间戳写条目，毫秒经 ISO 往返不变。
+ */
 export function entryCoversMessage(
 	entry: Entry,
-	live: Pick<LiveMessage, "role" | "timestamp">,
+	live: Pick<LiveMessage, "role" | "timestamp" | "message">,
 ): boolean {
+	if (live.timestamp === undefined) return false;
+	if (entry.type === "custom_message") {
+		const p = entry.payload;
+		return (
+			CUSTOM_ROLES[live.role] === true &&
+			isRecord(p) &&
+			p.customType === live.message.customType &&
+			entry.ts === live.timestamp
+		);
+	}
 	const m = messageOf(entry);
-	if (!m || live.timestamp === undefined) return false;
+	if (!m) return false;
 	return m.role === live.role && m.timestamp === live.timestamp;
 }
 

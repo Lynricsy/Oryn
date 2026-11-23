@@ -53,6 +53,21 @@ func TestLiveMessageAndToolLifecycle(t *testing.T) {
 	assert.Equal(t, StateIdle, l.Status(true), "新一轮开始清除错误")
 }
 
+// 注入消息（后台任务交付等）落盘为 custom_message 条目：按 customType + 条目时间戳清掉在途帧，迟到订阅者不再重放出重影。
+func TestLiveCustomMessageCoveredByCustomEntry(t *testing.T) {
+	l := NewLive()
+	l.ApplyFrame(raw(`{"type":"message_start","message":{"role":"custom","customType":"async-result","timestamp":1763881804123}}`))
+	l.ApplyFrame(raw(`{"type":"message_end","message":{"role":"custom","customType":"async-result","timestamp":1763881804123}}`))
+	require.Len(t, l.LiveFrames(), 2)
+
+	l.ApplyEntry("custom_message", raw(`{"type":"custom_message","customType":"async-notify","timestamp":"2025-11-23T07:10:04.123Z"}`))
+	assert.Len(t, l.LiveFrames(), 2, "customType 不同不清除")
+	l.ApplyEntry("custom_message", raw(`{"type":"custom_message","customType":"async-result","timestamp":"2025-11-23T07:10:04.124Z"}`))
+	assert.Len(t, l.LiveFrames(), 2, "时间戳不同不清除")
+	l.ApplyEntry("custom_message", raw(`{"type":"custom_message","customType":"async-result","timestamp":"2025-11-23T07:10:04.123Z"}`))
+	assert.Empty(t, l.LiveFrames(), "同一条交付落盘后在途帧清除")
+}
+
 func TestLivePendingUI(t *testing.T) {
 	l := NewLive()
 	l.AgentReady()

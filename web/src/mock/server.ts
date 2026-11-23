@@ -3692,7 +3692,10 @@ export class MockServer {
 		}, delay);
 	}
 
-	/** `bg_9` 结束：最后一帧带终态，随后像 Core 一样把结果作为 `async-result` 交付进会话。 */
+	/**
+	 * `bg_9` 结束：最后一帧带终态，随后像 Core 一样交付：先推 `async-result` 的实时 message_start / message_end，
+	 * 再把同一条消息（同一个时间戳）落盘为 custom_message 条目——客户端得认出两者是同一条，不能渲染两遍。
+	 */
 	private finishZooJob(status: "completed" | "cancelled") {
 		const job = this.zooJob;
 		clearInterval(job.timer);
@@ -3700,18 +3703,18 @@ export class MockServer {
 		job.status = status;
 		job.endTime = Date.now();
 		this.frame(TOOL_ZOO_THREAD, zooJobFrame(job.lines, status));
-		this.appendRaw(
-			TOOL_ZOO_THREAD,
-			"custom_message",
-			zooJobDelivery(
-				{
-					...ZOO_RUNNING_JOB,
-					result: job.lines.join("\n"),
-					durationMs: job.endTime - job.startTime,
-				},
-				status,
-			),
+		const body = zooJobDelivery(
+			{
+				...ZOO_RUNNING_JOB,
+				result: job.lines.join("\n"),
+				durationMs: job.endTime - job.startTime,
+			},
+			status,
 		);
+		const message = { role: "custom", ...body, timestamp: job.endTime };
+		this.frame(TOOL_ZOO_THREAD, { type: "message_start", message });
+		this.frame(TOOL_ZOO_THREAD, { type: "message_end", message });
+		this.appendRaw(TOOL_ZOO_THREAD, "custom_message", body, job.endTime);
 	}
 
 	private btwCancel(socket: MockSocket, threadId: string, id: string) {

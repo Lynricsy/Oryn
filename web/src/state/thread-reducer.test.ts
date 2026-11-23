@@ -751,3 +751,77 @@ describe("btw 帧", () => {
 		expect(s.btw.new?.answer).toBe("更新");
 	});
 });
+
+describe("注入消息落盘为 custom_message：实时副本不重影", () => {
+	const TS = 1_763_881_804_123;
+	const delivery = {
+		role: "custom",
+		customType: "async-result",
+		content:
+			"<system-notice>\nBackground job bg_3 has completed.\n</system-notice>",
+		display: true,
+		details: { jobs: [{ jobId: "bg_3", status: "completed" }] },
+		timestamp: TS,
+	};
+	const live: OmpFrame[] = [
+		{ type: "message_start", message: delivery },
+		{ type: "message_end", message: delivery },
+	];
+	function customEntry(customType: string, ts: number): Entry {
+		seq++;
+		const { role: _role, timestamp: _ts, ...rest } = delivery;
+		return {
+			seq,
+			file: "s.jsonl",
+			entryId: `c${seq}`,
+			type: "custom_message",
+			ts,
+			payload: {
+				type: "custom_message",
+				id: `c${seq}`,
+				timestamp: new Date(ts).toISOString(),
+				...rest,
+				customType,
+			},
+		};
+	}
+	/** 转录里渲染成注入消息的项：落盘的条目与在途消息都算。 */
+	const customRows = (s: ThreadViewState) =>
+		buildTranscript(s).items.filter(
+			(i) =>
+				i.kind === "custom_message" ||
+				(i.kind === "message" && i.message.role === "custom"),
+		).length;
+
+	it("实时帧先到、条目后到：条目清掉在途副本", () => {
+		let s = frames(initialThreadState(TID), live);
+		expect(customRows(s)).toBe(1);
+		s = applyEntries(s, { entries: [customEntry("async-result", TS)] });
+		expect(s.liveMessage).toBeNull();
+		expect(customRows(s)).toBe(1);
+	});
+
+	it("条目先到、实时帧后到（快照重放在途帧）：只渲染条目", () => {
+		let s = applyEntries(initialThreadState(TID), {
+			entries: [customEntry("async-result", TS)],
+		});
+		s = frames(s, live);
+		expect(customRows(s)).toBe(1);
+	});
+
+	it("customType 或时间戳不同的条目不算覆盖", () => {
+		let s = frames(initialThreadState(TID), live);
+		s = applyEntries(s, {
+			entries: [
+				customEntry("async-notify", TS),
+				customEntry("async-result", TS + 1),
+			],
+		});
+		expect(s.liveMessage).not.toBeNull();
+		expect(
+			buildTranscript(s).items.some(
+				(i) => i.kind === "message" && i.key.startsWith("live-"),
+			),
+		).toBe(true);
+	});
+});

@@ -3,6 +3,7 @@ package threads
 import (
 	"encoding/json"
 	"sort"
+	"time"
 )
 
 // 线程状态（全端统一枚举，见计划 C4）。
@@ -23,8 +24,9 @@ var pendingMethods = map[string]bool{"select": true, "confirm": true, "input": t
 var displayMethods = map[string]bool{"setStatus": true, "setWidget": true}
 
 type msgKey struct {
-	role string
-	ts   int64
+	role       string
+	ts         int64
+	customType string // 注入消息（custom / hookMessage）落盘为 custom_message 条目，按它与时间戳认
 }
 
 type toolSlot struct {
@@ -116,6 +118,7 @@ type messageHead struct {
 	Role       string `json:"role"`
 	Timestamp  int64  `json:"timestamp"`
 	ToolCallID string `json:"toolCallId"`
+	CustomType string `json:"customType"`
 }
 
 // Effect 描述一帧对外可见的副作用，供线程服务决定是否刷新状态 / 广播。
@@ -148,7 +151,7 @@ func (l *Live) ApplyFrame(frame json.RawMessage) Effect {
 		l.openKey = nil
 		var m messageHead
 		if json.Unmarshal(h.Message, &m) == nil && m.Role != "" {
-			l.openKey = &msgKey{m.Role, m.Timestamp}
+			l.openKey = &msgKey{m.Role, m.Timestamp, m.CustomType}
 		}
 	case "message_update", "message_end":
 		if l.openMessage != nil {
@@ -158,7 +161,7 @@ func (l *Live) ApplyFrame(frame json.RawMessage) Effect {
 			// message_end 携带完整消息，时间戳以它为准
 			var m messageHead
 			if json.Unmarshal(h.Message, &m) == nil && m.Role != "" {
-				l.openKey = &msgKey{m.Role, m.Timestamp}
+				l.openKey = &msgKey{m.Role, m.Timestamp, m.CustomType}
 			}
 		}
 	case "tool_execution_start", "tool_execution_update", "tool_stream_update", "tool_execution_end":
@@ -271,6 +274,10 @@ func (l *Live) ApplyFrame(frame json.RawMessage) Effect {
 
 // ApplyEntry 处理一条已提交的会话条目，清除被它覆盖的在途帧。
 func (l *Live) ApplyEntry(entryType string, payload json.RawMessage) {
+	if entryType == "custom_message" {
+		l.applyCustomEntry(payload)
+		return
+	}
 	if entryType != "message" {
 		return
 	}
@@ -286,6 +293,25 @@ func (l *Live) ApplyEntry(entryType string, payload json.RawMessage) {
 	}
 	if m.Role == "toolResult" && m.ToolCallID != "" {
 		l.clearTool(m.ToolCallID)
+	}
+}
+
+// applyCustomEntry：注入消息（role custom / hookMessage）落盘为 custom_message 条目，没有 message 包裹；
+// Core 用消息自己的时间戳写条目的 ISO `timestamp`，与 customType 一起认出它覆盖的在途消息。
+func (l *Live) applyCustomEntry(payload json.RawMessage) {
+	k := l.openKey
+	if k == nil || (k.role != "custom" && k.role != "hookMessage") {
+		return
+	}
+	var e struct {
+		CustomType string    `json:"customType"`
+		Timestamp  time.Time `json:"timestamp"`
+	}
+	if json.Unmarshal(payload, &e) != nil || e.Timestamp.IsZero() {
+		return
+	}
+	if k.customType == e.CustomType && k.ts == e.Timestamp.UnixMilli() {
+		l.openMessage, l.openKey = nil, nil
 	}
 }
 
