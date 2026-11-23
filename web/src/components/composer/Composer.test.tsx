@@ -46,9 +46,14 @@ vi.mock("../../lib/images", async (orig) => ({
 }));
 vi.mock("../../realtime/socket", () => ({
 	realtime: {
-		// agent 就绪时模式条会查询开关状态：挂起不应答，不占用各用例给 `cmd` 设的应答
+		// agent 就绪时模式条会查询开关状态、角色轨会预取角色数据：挂起不应答，不占用各用例给 `cmd` 设的应答
 		cmd: (tid: string, frame: { type: string }, ...rest: unknown[]) =>
-			frame.type === "get_vibe_mode" || frame.type === "get_loop_mode"
+			[
+				"get_vibe_mode",
+				"get_loop_mode",
+				"get_settings",
+				"get_model_roles",
+			].includes(frame.type)
 				? new Promise(() => undefined)
 				: cmd(tid, frame, ...rest),
 		uiResponse: () => true,

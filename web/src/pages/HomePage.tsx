@@ -1,6 +1,7 @@
 /**
  * 首页 = 新建对话框（居中玻璃卡，按最新 Amp）：提示词 + 附件（图片另带内联副本）；底部胶囊——对象（role 胶囊，Ctrl+S：
- * 全局助手 / cycleOrder 里的 role / 指定模型，以及思考强度）、执行位置（Ctrl+M）、浏览器 Profile（Ctrl+B，M8；只在新 orb
+ * 全局助手 / cycleOrder 里的 role / 指定模型，以及思考强度；Ctrl+P / Shift+Ctrl+P 在 cycleOrder 的 role 间轮换，托盘上方浮出
+ * 与线程页同一条角色轨）、执行位置（Ctrl+M）、浏览器 Profile（Ctrl+B，M8；只在新 orb
  * 且至少有一个 Profile 时出现）、项目（Ctrl+J）、发送。初始对象取首屏偏好（`settings/composer` 的 `defaultTarget`）。
  * 选全局助手（M13 R14–R16）：执行位置、项目、Profile 三个胶囊收起（不在 DOM 里），附件传进助手文件库，发送即新建
  * 助手对话（首条消息、文件、图片、所选模型都带上）并跳到 `/assistant/:id`；点阵染上助手色并呼吸、两侧的线上有光流向托盘。
@@ -22,6 +23,7 @@ import {
 	type ReactNode,
 	useEffect,
 	useLayoutEffect,
+	useMemo,
 	useRef,
 	useState,
 } from "react";
@@ -43,11 +45,17 @@ import { morphToThread } from "../components/composer/DockTray";
 import { PillButton, type PillText } from "../components/composer/PillButton";
 import { RefMenu, useRefMenu } from "../components/composer/RefMenu";
 import {
+	modelSelector,
 	RoleCapsule,
 	type Target,
 	useRoleOptions,
 } from "../components/composer/RoleCapsule";
-import { FADE_MS, type Phase } from "../components/composer/RoleTrack";
+import {
+	FADE_MS,
+	type Phase,
+	type RailSlot,
+	RoleRail,
+} from "../components/composer/RoleRail";
 import {
 	type ConflictChoice,
 	ProfileConflictDialog,
@@ -392,6 +400,71 @@ export function HomePage(): ReactNode {
 		target.kind === "role"
 			? roles.find((r) => r.role === target.role)?.hue
 			: undefined;
+	// Ctrl+P 的轨道：cycleOrder 里的 role，与胶囊弹层同序同色；没配置模型的 role 跳过（与 omp 的 cycleRoleModels 一致）
+	const railSlots = useMemo<RailSlot[]>(
+		() =>
+			roles
+				.filter((r) => r.inCycle)
+				.map((r) => ({
+					id: r.role,
+					label: r.name,
+					hue: r.hue,
+					provider: r.model?.provider,
+					model: r.model?.id,
+					ok: r.role === "default" || !!r.selector,
+					title: r.model
+						? `${modelSelector(r.model)}${r.thinking ? `:${r.thinking}` : ""}`
+						: (r.selector ??
+							(r.role === "default"
+								? t("newThread.defaultModel")
+								: t("roles.unconfigured"))),
+				})),
+		[roles, t],
+	);
+	// default 不在 cycleOrder 时它只是某个 role 的别名就算作那个 role（与胶囊弹层的选中一致）
+	const defaultOpt = roles.find((r) => r.role === "default");
+	const railActive =
+		target.kind !== "role"
+			? undefined
+			: target.role === "default" && defaultOpt && !defaultOpt.inCycle
+				? defaultOpt.alias?.role
+				: target.role;
+	const [railFlash, setRailFlash] = useState(0);
+	const [railNote, setRailNote] = useState<string | undefined>(undefined);
+	/** 按方向换到下一个可用 role；当前对象不是轨道里的 role（全局助手、指定模型）时从头（或尾）开始。 */
+	const cycleTarget = (dir: 1 | -1) => {
+		setRailFlash((f) => f + 1);
+		const usable = railSlots.flatMap((s, i) => (s.ok ? [i] : []));
+		const at = usable.indexOf(railSlots.findIndex((s) => s.id === railActive));
+		const next =
+			at < 0
+				? usable.at(dir === 1 ? 0 : -1)
+				: usable.length < 2
+					? undefined
+					: usable[(at + dir + usable.length) % usable.length];
+		const slot = next === undefined ? undefined : railSlots[next];
+		if (!slot) {
+			setRailNote(t("roles.onlyOne"));
+			return;
+		}
+		setRailNote(undefined);
+		choose({ kind: "role", role: slot.id });
+	};
+	const cycleRef = useRef(cycleTarget);
+	cycleRef.current = cycleTarget;
+	// Ctrl+P / Shift+Ctrl+P（mac ⌘P）：轮换新对话的 role，并屏蔽浏览器的打印
+	useEffect(() => {
+		const onKey = (e: KeyboardEvent) => {
+			if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+			if (e.key.toLowerCase() !== "p" && e.code !== "KeyP") return;
+			e.preventDefault();
+			// 对话框打开时只屏蔽打印，不切换
+			if (uiStore.getState().dialog) return;
+			cycleRef.current(e.shiftKey ? -1 : 1);
+		};
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, []);
 	// 执行位置、项目、Profile 三个胶囊：hidden（不在 DOM 里）→ shown → leaving（FADE_MS 淡出后回到 hidden）
 	const [pillsPhase, setPillsPhase] = useState<Phase>(
 		assistantTarget ? "hidden" : "shown",
@@ -703,6 +776,19 @@ export function HomePage(): ReactNode {
 						>
 							{/* 托盘背后的光场：玻璃底下有东西可模糊，居中态也看得出是玻璃；色相随舞台的对象 */}
 							<div aria-hidden className="home-field" />
+							<RoleRail
+								slots={railSlots}
+								activeId={railActive}
+								flash={railFlash}
+								anchorRef={trayRef}
+								message={
+									railNote ? { tone: "info", text: railNote } : undefined
+								}
+								onPick={(id) => {
+									setRailFlash((f) => f + 1);
+									choose({ kind: "role", role: id });
+								}}
+							/>
 							{refMenu.open && (
 								<RefMenu
 									entries={refMenu.entries}

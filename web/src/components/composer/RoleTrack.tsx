@@ -1,9 +1,9 @@
 /**
  * 角色模型轮换：Ctrl+P / Shift+Ctrl+P（mac ⌘P）按 omp 的 cycleOrder 切换角色模型，切换时在输入坞上方浮出角色轨道。
- * 解析规则在 `lib/model-roles.ts`；这里负责取数（get_settings / get_model_roles 走线程，React Query 缓存；
+ * 解析规则在 `lib/model-roles.ts`；这里负责取数（get_settings / get_model_roles 走线程，React Query 缓存，agent 能应答时预取；
  * 解析别名与回退链用的模型列表取中央模型目录 `useModelCatalog`）、
  * 切换（`lib/model-select.ts`：新 Core 发 oryn_select_model，旧 Core 回退 set_model + set_thinking_level；按序合并连按）、
- * 轨道动画与读屏播报。当前格：线程里有来源记录时只认记录（`recordedRoleIndex`，不读写本机记忆）；
+ * 托盘闪色与读屏播报（轨道本身是 `RoleRail.tsx`，首页共用）。当前格：线程里有来源记录时只认记录（`recordedRoleIndex`，不读写本机记忆）；
  * 没有记录（旧 Core）时沿用本机记忆 + 现有的匹配逻辑。模型对话框里的角色列表（RolePicker.tsx）走同一套取数与切换。
  */
 import {
@@ -11,16 +11,7 @@ import {
 	useQuery,
 	useQueryClient,
 } from "@tanstack/react-query";
-import {
-	type ReactNode,
-	type RefObject,
-	useEffect,
-	useLayoutEffect,
-	useMemo,
-	useRef,
-	useState,
-} from "react";
-import { useTranslation } from "react-i18next";
+import { type ReactNode, type RefObject, useEffect, useMemo } from "react";
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
 import {
@@ -49,12 +40,12 @@ import { selectRole } from "../../lib/model-select";
 import { type SourceTrail, trailOf } from "../../lib/turn-role";
 import type { OmpCommand, SessionState } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
-import { getThreadStore, useThread } from "../../state/stores";
+import { agentQueryable, getThreadStore, useThread } from "../../state/stores";
 import { type AccentName, useTheme } from "../../state/theme";
 import { activeBranch } from "../../state/transcript";
 import { uiStore } from "../../state/ui";
-import { ModelLogo } from "../ui/ModelLogo";
 import { describeError } from "../ui/primitives";
+import { type RailSlot, RoleRail } from "./RoleRail";
 
 // ---------------------------------------------------------------- 取数
 
@@ -63,7 +54,10 @@ const SETTINGS_FRAME: OmpCommand = {
 	paths: ["cycleOrder"],
 };
 const ROLES_FRAME: OmpCommand = { type: "get_model_roles" };
-/** 角色配置很少变：30 秒内复用缓存，过期后下次按键或打开对话框时重取。 */
+/**
+ * 角色配置很少变：30 秒内视为新鲜。按键时有缓存（哪怕过期）就直接用、后台再刷新，不让按键等网络；
+ * 线程页在 agent 能应答时就预取（RoleTrack），首次按键也不用等。
+ */
 const STALE_MS = 30_000;
 
 /** 与 `Dialogs.tsx` 的 `useRpc` 同一种 key，两边共用缓存。 */
@@ -96,22 +90,34 @@ interface RoleData {
 	available: ModelRef[];
 }
 
-/** 按键时取一次数据（缓存未过期就直接用）。旧版 omp 没有 get_settings 时用默认顺序。 */
+/**
+ * 按键时取数据：有缓存（哪怕已过期）直接用，过期的在后台刷新；完全没有缓存才等请求。
+ * 旧版 omp 没有 get_settings 时用默认顺序。
+ */
 async function fetchRoleData(
 	qc: QueryClient,
 	threadId: string,
 ): Promise<RoleData> {
 	const [settings, roles] = await Promise.all([
 		qc
-			.fetchQuery(rpcQuery<SettingsData>(threadId, SETTINGS_FRAME))
+			.ensureQueryData({
+				...rpcQuery<SettingsData>(threadId, SETTINGS_FRAME),
+				revalidateIfStale: true,
+			})
 			.catch(() => undefined),
-		qc.fetchQuery(rpcQuery<RolesData>(threadId, ROLES_FRAME)),
+		qc.ensureQueryData({
+			...rpcQuery<RolesData>(threadId, ROLES_FRAME),
+			revalidateIfStale: true,
+		}),
 	]);
 	const entries = roles.roles ?? [];
 	// 目录含全部种类（tiny 等角色可能指向非 chat 模型）；读不到时只靠 `selected` 解析
 	const available = needsModels(entries)
-		? ((await qc.fetchQuery(modelCatalogQuery()).catch(() => undefined))
-				?.models ?? [])
+		? ((
+				await qc
+					.ensureQueryData({ ...modelCatalogQuery(), revalidateIfStale: true })
+					.catch(() => undefined)
+			)?.models ?? [])
 		: [];
 	return {
 		order: parseCycleOrder(settings?.values?.cycleOrder),
@@ -408,6 +414,9 @@ export async function cycleRole(
 	threadId: string,
 	dir: 1 | -1,
 ) {
+	// 还没有缓存时要等请求：先把轨道浮出来（显示占位），按键立刻有反馈
+	if (qc.getQueryData(rpcKey(threadId, ROLES_FRAME)) === undefined)
+		patchThread(threadId, (s) => ({ flash: s.flash + 1, message: undefined }));
 	let data: RoleData;
 	try {
 		data = await fetchRoleData(qc, threadId);
@@ -547,17 +556,10 @@ export function useRoleShortcut(threadId: string) {
 	}, [qc, threadId]);
 }
 
-const SHOW_MS = 4000;
-/** 浮层淡出时长；首屏胶囊的收起 / 展开同用这个时长。 */
-export const FADE_MS = 180;
-
-/** 浮出状态：`hidden` 不在 DOM 里，`leaving` 播完收起动画（FADE_MS）后回到 `hidden`。 */
-export type Phase = "hidden" | "shown" | "leaving";
-
 /**
- * 切换时浮在输入坞托盘上方的角色胶囊轨：每格是模型 logo + 角色名，当前格由一块角色色滑块高亮，
- * 到位后名字轻微回弹；4 秒没有再切换就淡出。同时托盘描边闪一下角色色。
+ * 线程页的角色轨：切换时浮在输入坞托盘上方（RoleRail），同时托盘描边闪一下目标角色色。
  * `anchorRef` 是托盘里 Composer 的根节点：轨道定位到整个托盘上方，闪色加在托盘上。
+ * agent 能应答时就取好角色数据（与按键共用缓存），首次 Ctrl+P 不用等网络。
  */
 export function RoleTrack({
 	threadId,
@@ -566,42 +568,31 @@ export function RoleTrack({
 	threadId: string;
 	anchorRef: RefObject<HTMLDivElement | null>;
 }): ReactNode {
-	const { t } = useTranslation();
 	const thread = useStore(
 		roleStore,
 		(s) => s.threads[threadId] ?? EMPTY_THREAD,
 	);
-	const [phase, setPhase] = useState<Phase>("hidden");
-	const [above, setAbove] = useState(0);
-	const [bump, setBump] = useState(0);
-	const view = useRoleView(threadId, phase !== "hidden");
-	const timer = useRef<number | undefined>(undefined);
-	const hovering = useRef(false);
-	const seenFlash = useRef(thread.flash);
-
-	const scheduleHide = () => {
-		window.clearTimeout(timer.current);
-		if (hovering.current) return;
-		timer.current = window.setTimeout(() => {
-			setPhase("leaving");
-			timer.current = window.setTimeout(() => setPhase("hidden"), FADE_MS);
-		}, SHOW_MS);
-	};
-
-	// 每次切换请求：浮出（或保持）轨道、重置计时
-	// biome-ignore lint/correctness/useExhaustiveDependencies: 只由 flash 计数驱动
-	useEffect(() => {
-		if (thread.flash === seenFlash.current) return;
-		seenFlash.current = thread.flash;
-		setAbove(anchorRef.current?.offsetTop ?? 0);
-		setPhase("shown");
-		scheduleHide();
-	}, [thread.flash]);
-
-	useEffect(() => () => clearTimeout(timer.current), []);
-
-	const target = view.cycle.find((s) => s.id === thread.pending);
-	const targetHue = target ? slotHue(target, view) : undefined;
+	const queryable = useThread(threadId, agentQueryable);
+	// 按过一次之后不再看 agent 状态：orb 挂起时也要能显示错误提示
+	const view = useRoleView(threadId, queryable || thread.flash > 0);
+	const { cycle, accent } = view;
+	const slots = useMemo<RailSlot[]>(
+		() =>
+			cycle.map((slot) => {
+				const ok = slot.status === "ok";
+				return {
+					id: slot.id,
+					label: roleLabel(slot),
+					hue: slotHue(slot, { cycle, accent }),
+					provider: slot.model?.provider,
+					model: slot.model?.id,
+					ok,
+					title: ok ? slotSelector(slot) : slotProblem(slot),
+				};
+			}),
+		[cycle, accent],
+	);
+	const targetHue = slots.find((s) => s.id === thread.pending)?.hue;
 
 	// 托盘描边闪一下目标角色色（CSS 动画结束即回到默认描边，不留痕）
 	// biome-ignore lint/correctness/useExhaustiveDependencies: 每次切换请求都重播
@@ -631,150 +622,23 @@ export function RoleTrack({
 		};
 	}, [anchorRef]);
 
-	// 滑块：读当前格的 offsetLeft/offsetWidth；刚浮出时直接到位，之后的切换才滑动
-	const listRef = useRef<HTMLDivElement>(null);
-	const plateRef = useRef<HTMLSpanElement>(null);
-	const placedFor = useRef<string | undefined>(undefined);
-	const active = view.trackId;
-	// biome-ignore lint/correctness/useExhaustiveDependencies: 轨道浮出（phase）与格数变化后按钮才挂载 / 移位，需要重新定位
-	useLayoutEffect(() => {
-		const list = listRef.current;
-		const plate = plateRef.current;
-		if (!list || !plate) {
-			placedFor.current = undefined;
-			return;
-		}
-		const el = list.querySelector<HTMLElement>('[aria-checked="true"]');
-		if (!el) {
-			plate.style.opacity = "0";
-			return;
-		}
-		const animate =
-			placedFor.current !== undefined && placedFor.current !== active;
-		plate.style.transitionDuration = animate ? "" : "0ms";
-		plate.style.left = `${el.offsetLeft}px`;
-		plate.style.width = `${el.offsetWidth}px`;
-		plate.style.opacity = "1";
-		if (animate) {
-			el.scrollIntoView?.({ block: "nearest", inline: "nearest" });
-			setBump((b) => b + 1);
-		}
-		placedFor.current = active;
-	}, [active, view.cycle.length, phase]);
-
-	const activeSlot = view.cycle.find((s) => s.id === active);
-	const live = (
-		<p className="sr-only" aria-live="polite">
-			{thread.announce}
-		</p>
-	);
-	if (phase === "hidden") return live;
 	return (
 		<>
-			{live}
-			<div
-				className="pointer-events-none absolute left-1/2 z-30 flex max-w-[calc(100vw-1.5rem)] -translate-x-1/2 justify-center"
-				style={{ bottom: `calc(100% + ${above + 10}px)` }}
-			>
-				{/* 收起只缩小下沉、不淡出：玻璃在 opacity < 1 时模糊会被截断，读起来像模糊忽有忽无 */}
-				{/* biome-ignore lint/a11y/noStaticElementInteractions: 悬停/聚焦时暂停自动淡出 */}
-				<div
-					className={`glass pop-in pointer-events-auto flex min-w-0 items-center rounded-full p-1 transition-[translate,scale] duration-[180ms] ease-out ${phase === "leaving" ? "translate-y-1 scale-95" : ""}`}
-					onPointerEnter={() => {
-						hovering.current = true;
-						clearTimeout(timer.current);
-						setPhase("shown");
-					}}
-					onPointerLeave={() => {
-						hovering.current = false;
-						scheduleHide();
-					}}
-					onFocus={() => {
-						hovering.current = true;
-						clearTimeout(timer.current);
-						setPhase("shown");
-					}}
-					onBlur={() => {
-						hovering.current = false;
-						scheduleHide();
-					}}
-				>
-					<div
-						ref={listRef}
-						role="radiogroup"
-						aria-label={t("roles.track")}
-						className="focus-inset relative flex min-w-0 items-center overflow-x-auto"
-					>
-						<span
-							ref={plateRef}
-							aria-hidden
-							className="role-tone absolute top-0 h-7 rounded-full bg-[var(--role-fill)] opacity-0 ring-1 ring-[var(--role-line)] ring-inset transition-[left,width,background-color,box-shadow] duration-[220ms] ease-out"
-							style={
-								{
-									"--role-h": activeSlot
-										? slotHue(activeSlot, view)
-										: undefined,
-								} as React.CSSProperties
-							}
-						/>
-						{view.cycle.map((slot) => {
-							const on = slot.id === active;
-							const ok = slot.status === "ok";
-							const label = roleLabel(slot);
-							return (
-								// biome-ignore lint/a11y/useSemanticElements: 胶囊里要放 logo 和滑块，原生 radio 画不出来；键盘与读屏语义由 role/aria-checked 提供
-								<button
-									key={slot.id}
-									type="button"
-									role="radio"
-									aria-checked={on}
-									aria-disabled={!ok || undefined}
-									data-role={slot.id}
-									title={ok ? slotSelector(slot) : slotProblem(slot)}
-									className={`role-tone relative z-10 inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full px-2.5 font-medium text-xs transition-colors duration-150 ${
-										on
-											? "text-[var(--role-ink)]"
-											: ok
-												? "text-muted hover:text-fg"
-												: "cursor-not-allowed text-ghost"
-									}`}
-									style={
-										{
-											"--role-h": slotHue(slot, view),
-										} as React.CSSProperties
-									}
-									onClick={() => {
-										if (ok && !on) requestRole(threadId, slot);
-									}}
-								>
-									<ModelLogo
-										provider={slot.model?.provider}
-										model={slot.model?.id}
-										size={13}
-										className={ok ? "" : "opacity-50"}
-									/>
-									<span
-										key={on ? `on-${bump}` : "off"}
-										className={on ? "role-pop font-semibold" : ""}
-									>
-										{label}
-									</span>
-								</button>
-							);
-						})}
-						{view.isPending && view.cycle.length === 0 && (
-							<span className="px-3 text-2xs text-faint">…</span>
-						)}
-					</div>
-					{thread.message && (
-						<span
-							className={`shrink-0 px-2 text-2xs ${thread.message.tone === "error" ? "text-err" : "text-faint"}`}
-						>
-							{thread.message.text}
-						</span>
-					)}
-				</div>
-			</div>
+			<p className="sr-only" aria-live="polite">
+				{thread.announce}
+			</p>
+			<RoleRail
+				slots={slots}
+				activeId={view.trackId}
+				flash={thread.flash}
+				anchorRef={anchorRef}
+				loading={view.isPending}
+				message={thread.message}
+				onPick={(id) => {
+					const slot = cycle.find((s) => s.id === id);
+					if (slot) requestRole(threadId, slot);
+				}}
+			/>
 		</>
 	);
 }

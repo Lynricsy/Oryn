@@ -1,6 +1,6 @@
 /**
  * 首页新建对话框：role 胶囊里的思考强度按对象的模型列出；首屏默认对象与全局助手（M13 5.4：三个胶囊随对象收起 / 展开、
- * 舞台 `data-target`、助手发送新建助手对话、普通发送带 role、Ctrl+S 打开 role 胶囊）；系统分享预填。
+ * 舞台 `data-target`、助手发送新建助手对话、普通发送带 role、Ctrl+S 打开 role 胶囊、Ctrl+P 轮换 role）；系统分享预填。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -45,6 +45,13 @@ let posts: { path: string; body: unknown }[] = [];
 /** `GET providers` / `GET projects` 的响应。 */
 let providerList: Record<string, unknown> = { providers: [] };
 let projectList: unknown[] = [];
+const IDENTITY_ROLES = [
+	{ role: "smol", inCycle: true },
+	{ role: "default", inCycle: true, selector: "openai/gpt-x" },
+	{ role: "slow", inCycle: true },
+];
+/** `GET settings/role-identities` 的 role 列表。 */
+let identityRoles: unknown[] = IDENTITY_ROLES;
 
 const THREAD = {
 	id: "T-new",
@@ -90,11 +97,7 @@ const fetchMock = vi.fn(
 			return Response.json({ defaultTarget });
 		if (url.pathname === "/api/v1/settings/role-identities")
 			return Response.json({
-				roles: [
-					{ role: "smol", inCycle: true },
-					{ role: "default", inCycle: true, selector: "openai/gpt-x" },
-					{ role: "slow", inCycle: true },
-				],
+				roles: identityRoles,
 				defaultThinkingLevel: "high",
 			});
 		if (url.pathname === "/api/v1/models/catalog")
@@ -122,6 +125,7 @@ const fetchMock = vi.fn(
 beforeEach(() => {
 	defaultTarget = null;
 	posts = [];
+	identityRoles = IDENTITY_ROLES;
 	providerList = { providers: [] };
 	projectList = [];
 	vi.stubGlobal("fetch", fetchMock);
@@ -347,6 +351,61 @@ describe("首屏对象与全局助手（M13 5.4）", () => {
 		expect(capsule()).toHaveAttribute("aria-expanded", "true");
 		fireEvent.keyDown(window, { key: "s", ctrlKey: true });
 		expect(screen.queryByTestId("role-capsule-popover")).toBeNull();
+	});
+
+	it("Ctrl+P 在 cycleOrder 的 role 间轮换（跳过没配置模型的），浮出角色轨，并屏蔽打印", async () => {
+		identityRoles = [
+			{ role: "smol", inCycle: true, selector: "openai/gpt-lite" },
+			{ role: "default", inCycle: true, selector: "openai/gpt-x" },
+			{ role: "slow", inCycle: true },
+		];
+		defaultTarget = "assistant";
+		renderHome();
+		await waitFor(() => expect(stage().dataset.target).toBe("assistant"));
+		const press = (shiftKey = false) => {
+			const ev = new KeyboardEvent("keydown", {
+				key: "p",
+				ctrlKey: true,
+				shiftKey,
+				bubbles: true,
+				cancelable: true,
+			});
+			act(() => {
+				window.dispatchEvent(ev);
+			});
+			return ev;
+		};
+		// 全局助手不在轨道里：从第一个可用 role 开始
+		await waitFor(() => {
+			expect(press().defaultPrevented).toBe(true);
+			expect(capsule()).toHaveAccessibleName("对象：快速");
+		});
+		const track = screen.getByRole("radiogroup", { name: "角色模型" });
+		expect(within(track).getByRole("radio", { name: "快速" })).toHaveAttribute(
+			"aria-checked",
+			"true",
+		);
+		expect(within(track).getByRole("radio", { name: "思考" })).toHaveAttribute(
+			"aria-disabled",
+			"true",
+		);
+		// 没配置模型的「思考」被跳过：快速 → 默认 → 快速
+		press();
+		expect(stage().dataset.target).toBe("role");
+		expect(within(track).getByRole("radio", { name: "默认" })).toHaveAttribute(
+			"aria-checked",
+			"true",
+		);
+		press(true);
+		expect(capsule()).toHaveAccessibleName("对象：快速");
+
+		fireEvent.change(prompt(), { target: { value: "修个 bug" } });
+		fireEvent.keyDown(prompt(), { key: "Enter" });
+		await waitFor(() => expect(posts).toHaveLength(1));
+		expect(posts[0]).toMatchObject({
+			path: "/api/v1/threads",
+			body: { prompt: "修个 bug", role: "smol" },
+		});
 	});
 });
 
