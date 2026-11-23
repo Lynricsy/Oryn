@@ -1768,6 +1768,7 @@ const SCREENS: Screen[] = [
 		prepare: async ({ page }) => {
 			await openThread(page, MAIN_THREAD);
 			await openPanel(page, "info");
+			await expandInfoRow(page, "orb-services");
 			await page
 				.getByRole("button", { name: "worker 的日志", exact: true })
 				.click();
@@ -1941,7 +1942,7 @@ const SCREENS: Screen[] = [
 				.getByRole("button", { name: /^浏览器 Profile：/ })
 				.click({ timeout: 15_000 });
 			await page
-				.getByRole("button", { name: /^跟随项目默认/ })
+				.getByRole("button", { name: /^不用 Profile/ })
 				.waitFor({ timeout: 10_000 });
 			await settle(page, 400);
 		},
@@ -2185,6 +2186,7 @@ const SCREENS: Screen[] = [
 		prepare: async ({ page }) => {
 			await openThread(page, M11A_IDS.snapshotThread);
 			await openPanel(page, "info");
+			await expandInfoRow(page, "orb-env");
 			await page
 				.locator("[data-testid=env-snapshot]")
 				.waitFor({ timeout: 10_000 });
@@ -2196,7 +2198,7 @@ const SCREENS: Screen[] = [
 		widths: M11A_WIDTHS,
 		prepare: async ({ page }) => {
 			await open(page, "/", "textarea");
-			await page.getByRole("button", { name: /新 orb（默认）/ }).click();
+			await openExecutorPicker(page);
 			await settle(page, 400);
 		},
 	},
@@ -2206,7 +2208,7 @@ const SCREENS: Screen[] = [
 		name: "m11b-executor",
 		prepare: async ({ page }) => {
 			await open(page, "/", "textarea");
-			await page.getByRole("button", { name: /新 orb（默认）/ }).click();
+			await openExecutorPicker(page);
 			await page.getByRole("button", { name: /^laptop/ }).click();
 			await page.getByRole("button", { name: "新 worktree" }).first().click();
 			await settle(page, 400);
@@ -2217,7 +2219,7 @@ const SCREENS: Screen[] = [
 		prepare: async ({ page }) => {
 			await open(page, "/", "textarea");
 			await page.locator("textarea").fill("Fix login flicker");
-			await page.getByRole("button", { name: /新 orb（默认）/ }).click();
+			await openExecutorPicker(page);
 			await page.getByRole("button", { name: /^laptop/ }).click();
 			await page.getByRole("button", { name: /^repo/ }).click();
 			await page.keyboard.press("Escape");
@@ -2363,6 +2365,19 @@ async function showRecordCard(page: Page, tool: string) {
 	await card.evaluate((el) => el.setAttribute("data-shot-target", ""));
 	await page.mouse.move(0, 0);
 	await scrollWithin(page, "[data-shot-target]", "start");
+}
+
+/** 展开信息面板里收起的一行（InfoRow：标题钮带 aria-expanded，收起时不渲染内容）。 */
+async function expandInfoRow(page: Page, testId: string) {
+	const head = page.locator(`[data-testid=${testId}] h3 > button`);
+	await head.waitFor({ timeout: 10_000 });
+	if ((await head.getAttribute("aria-expanded")) !== "true") await head.click();
+}
+
+/** 首页打开执行位置选择：胶囊组的第一个钮（文字是当前选中的执行位置，手机上是圆钮，不按名字找）。 */
+async function openExecutorPicker(page: Page) {
+	await page.getByTestId("home-pills").getByRole("button").first().click();
+	await page.getByTestId("executor-options-body").waitFor({ timeout: 10_000 });
 }
 
 /** 一条宽度 × 明暗的流水线：依次截完全部界面。 */
