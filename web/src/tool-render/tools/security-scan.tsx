@@ -16,12 +16,17 @@ import { formatDateTime } from "../../lib/format";
 import {
 	Badge,
 	Badges,
+	type CellTone,
 	InvalidArg,
 	Kv,
 	KvGrid,
+	Note,
+	Output,
 	PathText,
+	ProgressCells,
 	ResultText,
 	Row,
+	type Tone,
 } from "../parts";
 import type { ToolRenderer, ToolRenderProps } from "../types";
 import {
@@ -29,6 +34,7 @@ import {
 	isRecord,
 	normalizeWs,
 	num,
+	resultTextOf,
 	str,
 	truncate,
 } from "../util";
@@ -190,7 +196,11 @@ function Meta(props: ToolRenderProps): ReactNode {
 					)}
 				</span>
 			)}
-			{phase && <span className={PHASE_CLASS[phase]}>{phase}</span>}
+			{phase && (
+				<span className={PHASE_CLASS[phase]}>
+					<PhaseLabel phase={phase} />
+				</span>
+			)}
 			{operation && <Findings count={num(operation.findingCount)} />}
 			{plan && str(plan.id) && (
 				<span className="tv-meta-ok">
@@ -288,7 +298,66 @@ function when(value: unknown): string | null {
 	return Number.isFinite(ts) ? formatDateTime(ts) : raw;
 }
 
-/** operation 快照里读数之外的部分：各级 id、job、会话文件、时间、错误（查询的 operation id 已在头部）。 */
+/** operation 的全部阶段：前五个是本地扫描的工作阶段（顺序即进度），其后是 completed 之外的终态。 */
+const PHASES = [
+	"queued",
+	"preparing",
+	"reviewing",
+	"publishing",
+	"completed",
+	"partial",
+	"cancelled",
+	"failed",
+] as const;
+type Phase = (typeof PHASES)[number];
+
+function PhaseLabel({ phase }: { phase: string }): ReactNode {
+	const { t } = useTranslation();
+	const known = PHASES.find((p) => p === phase);
+	return known ? t(`toolRender.securityScan.phase.${known}`) : phase;
+}
+
+type StepState = "done" | "now" | "todo" | "warn" | "err";
+
+/**
+ * operation 的阶段轨道：已过的阶段为实心，当前阶段用强调色，未到的为空心。
+ * partial / cancelled / failed 只知道终态，不知道停在哪一步：最后一格写终态，之前的阶段按「部分完成」实心、其余空心。
+ */
+function PhaseTrack({ phase }: { phase: string }): ReactNode {
+	const { t } = useTranslation();
+	const known = PHASES.find((p) => p === phase);
+	if (!known) return null;
+	const at = PHASES.indexOf(known);
+	const terminal = at > 4;
+	const steps: Phase[] = terminal
+		? [...PHASES.slice(0, 4), known]
+		: [...PHASES.slice(0, 5)];
+	return (
+		<ol className="tv-scan-track">
+			{steps.map((step, i) => {
+				let state: StepState;
+				if (terminal) {
+					if (i === steps.length - 1)
+						state = known === "failed" ? "err" : "warn";
+					else state = known === "partial" ? "done" : "todo";
+				} else if (known === "completed" || i < at) state = "done";
+				else state = i === at ? "now" : "todo";
+				return (
+					<li
+						key={step}
+						className={`tv-scan-step tv-scan-step--${state}`}
+						aria-current={state === "now" ? "step" : undefined}
+					>
+						<i aria-hidden="true" />
+						<span>{t(`toolRender.securityScan.phase.${step}`)}</span>
+					</li>
+				);
+			})}
+		</ol>
+	);
+}
+
+/** operation 快照里读数之外的部分：阶段轨道、各级 id、job、会话文件、时间、错误（查询的 operation id 已在头部）。 */
 function OperationGrid({
 	op,
 	queried,
@@ -300,8 +369,11 @@ function OperationGrid({
 	const sessionFile = str(op.sessionFile);
 	const error = str(op.error);
 	const operationId = str(op.operationId);
+	const phase = str(op.phase);
 	return (
 		<>
+			{phase && <PhaseTrack phase={phase} />}
+			{error && <Note tone="err">{error}</Note>}
 			<KvGrid>
 				<Kv k={t("toolRender.securityScan.operation")}>
 					{operationId !== queried && operationId}
@@ -315,8 +387,50 @@ function OperationGrid({
 				<Kv k={t("toolRender.securityScan.created")}>{when(op.createdAt)}</Kv>
 				<Kv k={t("toolRender.securityScan.updated")}>{when(op.updatedAt)}</Kv>
 			</KvGrid>
-			{error && <div className="tv-err-text">{error}</div>}
 		</>
+	);
+}
+
+/** 提交进度的格子：总数很大时按比例缩到 120 格以内（非零的一类至少一格），交给 ProgressCells 聚合成分段条。 */
+function commitTones(finished: number, failed: number, pending: number) {
+	const total = finished + failed + pending;
+	const scale = total > 120 ? 120 / total : 1;
+	const n = (count: number) =>
+		count > 0 ? Math.max(1, Math.round(count * scale)) : 0;
+	return [
+		...Array<CellTone>(n(finished)).fill("ok"),
+		...Array<CellTone>(n(failed)).fill("err"),
+		...Array<CellTone>(n(pending)).fill("idle"),
+	];
+}
+
+/** 严重度的色调：critical / high 红，medium 黄，其余中性。 */
+const SEVERITY_TONE: Partial<Record<(typeof SEVERITIES)[number], Tone>> = {
+	critical: "err",
+	high: "err",
+	medium: "warn",
+};
+
+function SeverityChips({
+	counts,
+}: {
+	counts: Record<string, unknown>;
+}): ReactNode {
+	const { t } = useTranslation();
+	const chips = SEVERITIES.flatMap((s) => {
+		const n = num(counts[s]);
+		return n
+			? [
+					<Badge key={s} tone={SEVERITY_TONE[s]}>
+						{t(`toolRender.securityScan.sev.${s}`)} {n}
+					</Badge>,
+				]
+			: [];
+	});
+	return chips.length > 0 ? (
+		<span className="tv-badges">{chips}</span>
+	) : (
+		<span className="tv-faint">{t("toolRender.securityScan.noFindings")}</span>
 	);
 }
 
@@ -378,33 +492,32 @@ function CloudStats({
 			</Kv>
 			<Kv k={t("toolRender.securityScan.commits")}>
 				{(finished !== null || pending !== null || failed !== null) && (
-					<Badges
-						items={[
-							finished !== null && (
-								<Badge key="f" tone="ok">
-									{t("toolRender.securityScan.finished", { count: finished })}
-								</Badge>
-							),
-							pending !== null &&
-								t("toolRender.securityScan.pending", { count: pending }),
-							failed !== null && failed > 0 && (
-								<Badge key="x" tone="err">
-									{t("toolRender.securityScan.failed", { count: failed })}
-								</Badge>
-							),
-						]}
-					/>
+					<span className="tv-scan-commits">
+						<ProgressCells
+							tones={commitTones(finished ?? 0, failed ?? 0, pending ?? 0)}
+							label={t("toolRender.securityScan.commits")}
+						/>
+						<Badges
+							items={[
+								finished !== null && (
+									<Badge key="f" tone="ok">
+										{t("toolRender.securityScan.finished", { count: finished })}
+									</Badge>
+								),
+								pending !== null &&
+									t("toolRender.securityScan.pending", { count: pending }),
+								failed !== null && failed > 0 && (
+									<Badge key="x" tone="err">
+										{t("toolRender.securityScan.failed", { count: failed })}
+									</Badge>
+								),
+							]}
+						/>
+					</span>
 				)}
 			</Kv>
 			<Kv k={t("toolRender.securityScan.severity")}>
-				{counts && (
-					<Badges
-						items={SEVERITIES.map((s) => {
-							const n = num(counts[s]);
-							return n ? `${s} ${n}` : null;
-						})}
-					/>
-				)}
+				{counts && <SeverityChips counts={counts} />}
 			</Kv>
 			<Kv k={t("toolRender.securityScan.lastCommit")}>
 				{str(stats.lastScannedCommit)}
@@ -484,8 +597,24 @@ function Result({ args, result }: ToolRenderProps): ReactNode {
 					<Kv k={t("toolRender.securityScan.scan")}>{str(imported.id)}</Kv>
 				</KvGrid>
 			)}
-			{(result?.isError || !hasStructured(details)) && (
-				<ResultText result={result} maxLines={8} />
+			{result?.isError ? (
+				<ErrorText text={resultTextOf(result)} />
+			) : (
+				!hasStructured(details) && <ResultText result={result} maxLines={8} />
+			)}
+		</>
+	);
+}
+
+/** 出错：首行作醒目的错误提示，其余（堆栈、细节）收在下面的可折叠块里。 */
+function ErrorText({ text }: { text: string }): ReactNode {
+	const trimmed = text.trim();
+	const nl = trimmed.indexOf("\n");
+	return (
+		<>
+			<Note tone="err">{nl < 0 ? trimmed : trimmed.slice(0, nl)}</Note>
+			{nl >= 0 && (
+				<Output text={trimmed.slice(nl + 1)} variant="code" maxLines={8} />
 			)}
 		</>
 	);

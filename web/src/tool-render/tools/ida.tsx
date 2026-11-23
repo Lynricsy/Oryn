@@ -27,7 +27,6 @@ import {
 	Output,
 	PathText,
 	ResultText,
-	Row,
 } from "../parts";
 import type { ToolRenderer, ToolRenderProps, ToolResultLike } from "../types";
 import {
@@ -315,6 +314,8 @@ function Meta({ args, result }: ToolRenderProps): ReactNode {
 					{parsed.arch} {parsed.bitness}-bit
 				</span>
 			);
+		case "save":
+			return <span className="tv-meta-ok">{t("toolRender.ida.saved")}</span>;
 		case "close":
 			return parsed.saved ? (
 				<span className="tv-meta-ok">{t("toolRender.ida.saved")}</span>
@@ -394,42 +395,74 @@ function ExecResult({
 				/>
 			)}
 			{empty && (
-				<span className="tv-faint">{t("toolRender.ida.noOutput")}</span>
+				<span className="tv-ida-empty">{t("toolRender.ida.noOutput")}</span>
 			)}
 			{exec.artifact && (
-				<KvGrid>
-					<Kv k={t("toolRender.ida.artifact")}>artifact://{exec.artifact}</Kv>
-				</KvGrid>
+				<div className="tv-ida-line">
+					<span className="tv-ida-label">{t("toolRender.ida.artifact")}</span>
+					<span className="tv-path">artifact://{exec.artifact}</span>
+				</div>
 			)}
 		</>
 	);
 }
 
+/** 一个数据库：模块名与格式、架构小标在上，库 id 与 IDB 路径在下。list 与 open 共用。 */
+function DbRow({
+	id,
+	module,
+	chips,
+	path,
+	busy,
+}: {
+	id: string;
+	module: string | null;
+	chips: ReadonlyArray<string | null | false>;
+	path: string;
+	busy: string | null;
+}): ReactNode {
+	return (
+		<div className="tv-ida-db">
+			<div className="tv-ida-db-head">
+				<span className="tv-ida-module">{module ?? id}</span>
+				<Badges items={chips} />
+				{busy && <Badge tone="accent">{busy}</Badge>}
+			</div>
+			<div className="tv-ida-db-sub">
+				{/* 模块名未知（打开中）时头部已写库 id，这里不再重复 */}
+				{module && <span className="tv-ida-id">{id}</span>}
+				<PathText path={path} />
+			</div>
+		</div>
+	);
+}
+
 function ListResult({ rows }: { rows: ListRow[] }): ReactNode {
 	const { t } = useTranslation();
-	if (rows.length === 0) return null;
+	if (rows.length === 0)
+		return <span className="tv-ida-empty">{t("toolRender.ida.noDbs")}</span>;
 	const shown = rows.slice(0, MAX_ROWS);
 	return (
-		<div className="tv-list">
+		<div className="tv-ida-dbs">
 			{shown.map((row) => (
-				<Row key={row.id} k={row.id}>
-					<PathText path={row.path} />{" "}
-					<Badges
-						items={[
-							row.opening && t("toolRender.ida.opening"),
-							row.module,
-							row.format,
-							row.arch,
-							row.running &&
-								t("toolRender.ida.execRunning", { method: row.running }),
-						]}
-					/>
-				</Row>
+				<DbRow
+					key={row.id}
+					id={row.id}
+					module={row.module}
+					chips={[row.format, row.arch]}
+					path={row.path}
+					busy={
+						row.opening
+							? t("toolRender.ida.opening")
+							: row.running &&
+								t("toolRender.ida.execRunning", { method: row.running })
+					}
+				/>
 			))}
 			{rows.length > shown.length && (
-				<Row>
-					<span className="tv-faint">… {rows.length - shown.length}</span>
-				</Row>
+				<span className="tv-ida-empty">
+					{t("toolRender.ida.moreDbs", { count: rows.length - shown.length })}
+				</span>
 			)}
 		</div>
 	);
@@ -451,28 +484,31 @@ function ParsedResult({
 			return <ListResult rows={parsed.rows} />;
 		case "open":
 			return (
-				<KvGrid>
-					<Kv k={t("toolRender.ida.dbId")}>{parsed.id}</Kv>
-					<Kv k={t("toolRender.ida.module")}>{parsed.module}</Kv>
-					<Kv k={t("toolRender.ida.format")}>{parsed.format}</Kv>
-					<Kv k={t("toolRender.ida.idb")}>
-						<PathText path={parsed.idb} />
-					</Kv>
-				</KvGrid>
+				<DbRow
+					id={parsed.id}
+					module={parsed.module}
+					chips={[parsed.format]}
+					path={parsed.idb}
+					busy={null}
+				/>
 			);
 		case "save":
 			return (
-				<KvGrid>
-					<Kv k={t("toolRender.ida.idb")}>
-						<PathText path={parsed.idb} />
-					</Kv>
-				</KvGrid>
+				<div className="tv-ida-line">
+					<span className="tv-ida-label">{t("toolRender.ida.idb")}</span>
+					<PathText path={parsed.idb} />
+				</div>
 			);
 		case "rename":
 			return (
-				<KvGrid>
-					<Kv k={t("toolRender.ida.oldName")}>{parsed.old}</Kv>
-				</KvGrid>
+				<div className="tv-ida-line">
+					<span className="tv-ida-label">{t("toolRender.ida.oldName")}</span>
+					<span className="tv-ida-old">{parsed.old}</span>
+					<span className="tv-ida-arrow" aria-hidden="true">
+						→
+					</span>
+					<span className="tv-ida-new">{parsed.name}</span>
+				</div>
 			);
 		case "set_type":
 			return (

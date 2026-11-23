@@ -83,15 +83,71 @@ describe("security_scan 卡片", () => {
 			},
 		);
 		expect(q(container, ".tv-sum")).toHaveTextContent("op-9");
-		expect(q(container, ".tv-meta .tv-meta-err")).toHaveTextContent("failed");
+		expect(q(container, ".tv-meta .tv-meta-err")).toHaveTextContent("失败");
 		expect(q(container, ".tv-meta .tv-meta-warn")).toHaveTextContent(
 			"2 个发现",
 		);
 		const body = q(container, ".tv-body");
 		expect(body).toHaveTextContent("scan-3");
-		expect(body?.querySelector(".tv-err-text")).toHaveTextContent(
+		expect(body?.querySelector(".tv-note--err")).toHaveTextContent(
 			"model quota exhausted",
 		);
+		// 失败的终态落在阶段轨道最后一格
+		const steps = [...(body?.querySelectorAll(".tv-scan-step") ?? [])];
+		expect(steps).toHaveLength(5);
+		expect(steps[4]?.className).toContain("tv-scan-step--err");
+	});
+
+	it("status 进行中：阶段轨道标出已过阶段与当前阶段", () => {
+		const { container } = card(
+			{ action: "status", operation_id: "op-9" },
+			{
+				text: "op-9 reviewing",
+				inner: {
+					action: "status",
+					operation: {
+						operationId: "op-9",
+						phase: "reviewing",
+						findingCount: 0,
+					},
+				},
+			},
+		);
+		const steps = [...container.querySelectorAll(".tv-scan-step")];
+		expect(steps.map((s) => s.className.split("--")[1])).toEqual([
+			"done",
+			"done",
+			"now",
+			"todo",
+			"todo",
+		]);
+		expect(q(container, "[aria-current='step']")).toHaveTextContent("审查");
+	});
+
+	it("cloud_status：提交进度条与按严重度着色的发现数", () => {
+		const { container } = card(
+			{ action: "cloud_status", cloud_configuration_id: "cfg-1" },
+			{
+				text: "cfg-1: scanning",
+				inner: {
+					action: "cloud_status",
+					cloudStats: {
+						configurationId: "cfg-1",
+						currentStep: "scanning",
+						finishedCommits: 3,
+						pendingCommits: 2,
+						failedCommits: 0,
+						findingCounts: { critical: 1, high: 0, medium: 2, low: 0 },
+					},
+				},
+			},
+		);
+		expect(q(container, ".tv-cells-bar")).not.toBeNull();
+		const sev = [...container.querySelectorAll(".tv-body .tv-badge")].map(
+			(b) => [b.textContent, b.className],
+		);
+		expect(sev).toContainEqual(["严重 1", "tv-badge tv-badge--err"]);
+		expect(sev).toContainEqual(["中 2", "tv-badge tv-badge--warn"]);
 	});
 
 	it("validate 运行中：读数给请求的校验状态，展开体给摘要与证据", () => {

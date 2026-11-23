@@ -218,9 +218,12 @@ describe("ida 渲染器", () => {
 			},
 		);
 		expect(part(container, ".tv-meta")?.textContent).toBe("2 个库");
-		const rows = [...container.querySelectorAll(".tv-body .tv-row")];
+		const rows = [...container.querySelectorAll(".tv-body .tv-ida-db")];
 		expect(rows).toHaveLength(2);
-		expect(rows[0]?.querySelector(".tv-row-key")?.textContent).toBe(
+		expect(rows[0]?.querySelector(".tv-ida-module")?.textContent).toBe(
+			"server",
+		);
+		expect(rows[0]?.querySelector(".tv-ida-id")?.textContent).toBe(
 			"server-1a2b",
 		);
 		expect(rows[0]?.textContent).toContain("exec 运行中");
@@ -229,6 +232,26 @@ describe("ida 渲染器", () => {
 		expect(rows[1]?.querySelector(".tv-path")?.textContent).toBe(
 			"./lib/libfoo.so",
 		);
+	});
+
+	it("list 没有库：读数 0 个库，展开体给明确的空状态", () => {
+		const { container } = card(
+			{ action: "list" },
+			{ text: "No IDA databases open.", open: true },
+		);
+		expect(part(container, ".tv-meta")?.textContent).toBe("0 个库");
+		expect(part(container, ".tv-body .tv-ida-empty")?.textContent).toBe(
+			"没有打开的数据库",
+		);
+	});
+
+	it("rename：原名划掉、箭头指向新名", () => {
+		const { container } = card(
+			{ action: "rename", target: "sub_401000", name: "parse_header" },
+			{ text: "Renamed 0x401000 sub_401000 → parse_header", open: true },
+		);
+		expect(part(container, ".tv-ida-old")?.textContent).toBe("sub_401000");
+		expect(part(container, ".tv-ida-new")?.textContent).toBe("parse_header");
 	});
 
 	it("close 不保存：警告读数「已丢弃改动」", () => {
