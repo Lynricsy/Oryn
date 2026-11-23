@@ -213,6 +213,10 @@ func (tl *tailer) loadCursors(ctx context.Context, c *conn) error {
 
 // list 返回需要复制的文件（相对路径，`/` 分隔）：顶层 *.jsonl 按名称（即创建时间）排序，
 // 每个主会话文件之后紧跟其同名产物子目录内的 *.jsonl。
+// 产物目录里只进入子 agent 的产物子目录：Core 把它写在该子 agent 会话文件旁、同名去掉 `.jsonl`，
+// 嵌套派发逐层同理（`task/executor.ts`）。没有同名会话文件的子目录是旁路数据（`local/` 的 local://、
+// `url-search/` 抓来的仓库、`blobs/`、`btw-history/` 等），不进入：其中的 *.jsonl 不是会话，
+// 文件也可能成千上万，逐次扫描和 inotify 监视都白费。
 func (tl *tailer) list() []string {
 	dir := tl.t.dir
 	tl.watch(dir)
@@ -242,8 +246,13 @@ func (tl *tailer) list() []string {
 			}
 			rel, _ := filepath.Rel(dir, p)
 			if d.IsDir() {
-				if strings.Count(rel, string(filepath.Separator)) >= artifactDepth {
-					return filepath.SkipDir
+				if p != art {
+					if strings.Count(rel, string(filepath.Separator)) >= artifactDepth {
+						return filepath.SkipDir
+					}
+					if st, err := os.Stat(p + ".jsonl"); err != nil || !st.Mode().IsRegular() {
+						return filepath.SkipDir
+					}
 				}
 				tl.watch(p)
 				return nil

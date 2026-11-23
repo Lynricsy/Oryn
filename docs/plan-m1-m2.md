@@ -267,7 +267,7 @@ agent 启动序列（orbd 执行 `agent.start`）：
 5. 进程异常退出：orbd 上报 `exited`（带 stderr 尾部 20 行），按 1s/2s/4s 重启至多 3 次（重新走 1–4），仍失败则线程进入 `error`。
 6. `orbd` 收到 SIGTERM 或 `shutdown`：关闭各 omp 的 stdin，持续读 stdout 至进程退出或 20s 超时后 SIGKILL。
 
-会话目录：`/home/user/.oryn/threads/<threadId>/`。tailer 监视该目录下所有 `*.jsonl`（主会话文件）以及各会话同名产物子目录内的 `*.jsonl`（子 agent 转录），`file` 字段为相对路径。一个线程可先后拥有多个主会话文件（计划「执行」会开新会话）；转录按文件创建顺序拼接，文件之间渲染「新会话」分隔线。
+会话目录：`/home/user/.oryn/threads/<threadId>/`。tailer 监视该目录下所有 `*.jsonl`（主会话文件）以及各会话同名产物子目录内的 `*.jsonl`（子 agent 转录），`file` 字段为相对路径。产物目录内只进入「旁边有同名 `.jsonl` 会话文件」的子目录（嵌套子 agent 的产物目录）；`local/`、`url-search/`、`blobs/`、`btw-history/` 等旁路数据不进入。产物目录顶层的 `changes.jsonl` 首行是改动日志记录（`change` / `call` / `commit`）时不复制，首行是会话头时按名为 changes 的子 agent 转录复制。一个线程可先后拥有多个主会话文件（计划「执行」会开新会话）；转录按文件创建顺序拼接，文件之间渲染「新会话」分隔线。
 
 命令路由：
 
