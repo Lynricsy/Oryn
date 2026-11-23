@@ -62,6 +62,7 @@ import { type TranscriptContextValue, useTranscriptContext } from "./context";
 import { Foldable } from "./Foldable";
 import { BackgroundToolView, JobEventMessage } from "./JobEvents";
 import { escapeAngles, MD_SIZE } from "./NoticeLine";
+import { UserText } from "./UserText";
 
 const CHIP =
 	"inline-flex items-center gap-1.5 rounded-md border border-border bg-panel px-2 py-1 text-xs";
@@ -97,10 +98,6 @@ export function UserBubble({
 		</div>
 	);
 }
-
-/** 用户气泡正文排版。 */
-export const USER_BUBBLE_TEXT =
-	"whitespace-pre-wrap break-words text-[0.875rem] leading-[1.375rem]";
 
 /** 用户消息开头的引用块（引用回复）：左侧竖线、弱色，与下面的回复正文分开。 */
 export const USER_QUOTE =
@@ -743,12 +740,10 @@ function UserMessage({
 						>
 							{quoted.quote}
 						</blockquote>
-						{quoted.rest && (
-							<div className={USER_BUBBLE_TEXT}>{quoted.rest}</div>
-						)}
+						{quoted.rest && <UserText text={quoted.rest} />}
 					</>
 				) : (
-					body && <div className={USER_BUBBLE_TEXT}>{body}</div>
+					body && <UserText text={body} />
 				)}
 				<Images content={message.content} />
 				<AttachmentChips attachments={attachments} />

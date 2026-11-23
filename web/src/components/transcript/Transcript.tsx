@@ -75,7 +75,6 @@ import {
 	type TurnUsage,
 	TypingDots,
 	textOfContent,
-	USER_BUBBLE_TEXT,
 	UserBubble,
 } from "./MessageView";
 import {
@@ -95,6 +94,7 @@ import {
 import { QuoteBar, QuoteChip, useQuoteSelection } from "./quote-selection";
 import { findRevealHit, registerRevealer } from "./reveal";
 import { transcriptSelection } from "./selection-context";
+import { UserText } from "./UserText";
 
 /** 滚轮 / 键盘 / 触摸之后多久内的滚动算作用户在翻动（含平滑滚动的余程）。 */
 const INTENT_MS = 600;
@@ -539,7 +539,7 @@ function PendingPrompt({ text }: { text: string }) {
 		<div className="flex flex-col items-end gap-1 pr-10 pb-3">
 			<span className="sr-only">{t("transcript.you")}</span>
 			<UserBubble avatar dim>
-				<div className={USER_BUBBLE_TEXT}>{text}</div>
+				<UserText text={text} />
 			</UserBubble>
 			<span className="inline-flex items-center gap-1 text-2xs text-faint">
 				<Icon name="clock" size={11} aria-hidden />
