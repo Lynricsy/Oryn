@@ -80,13 +80,18 @@ export function envBannerCandidates(input: EnvBannerInput): EnvBanner[] {
 	return out;
 }
 
-/** 当前应显示的提示条：第一条未被关闭的候选。orb / agent 失败不可关闭（需要用户处理）。 */
+/**
+ * 当前应显示的提示条：第一条未被关闭的候选。orb / agent 失败不可关闭（需要用户处理）。
+ * 关闭记录里可以是某条的 `key`（只关这一次运行的提示），也可以是 `kind`（整类不再提示，
+ * 例如专为生成环境配置新建的线程里不再提示「还没有环境配置」）。
+ */
 export function selectEnvBanner(
 	input: EnvBannerInput,
 	dismissed: ReadonlySet<string>,
 ): EnvBanner | null {
 	for (const b of envBannerCandidates(input)) {
-		if (isFailureBanner(b) || !dismissed.has(b.key)) return b;
+		if (isFailureBanner(b) || !(dismissed.has(b.key) || dismissed.has(b.kind)))
+			return b;
 	}
 	return null;
 }

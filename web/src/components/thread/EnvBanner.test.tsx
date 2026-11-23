@@ -1,14 +1,16 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Orb, Thread } from "../../api/client";
-import type { SetupRun } from "../../lib/env-banner";
+import { loadDismissed, type SetupRun } from "../../lib/env-banner";
 import { realtime } from "../../realtime/socket";
 import {
 	getThreadStore,
 	indexStore,
 	resetThreadStores,
 } from "../../state/stores";
+import { toastsStore } from "../../state/toasts";
 import { uiStore } from "../../state/ui";
 import { ThreadDialogs } from "./Dialogs";
 import { EnvBanner } from "./EnvBanner";
@@ -80,8 +82,23 @@ function urlOf(input: unknown): string {
 /** 日志接口返回的正文；个别用例换成带特定报错的日志 */
 let logBody = LOG;
 
+/** 新建线程请求的 JSON 正文（「新开线程生成」用例断言） */
+const created: unknown[] = [];
+
 const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
 	const url = new URL(urlOf(input), "http://x");
+	if (
+		url.pathname === "/api/v1/threads" &&
+		typeof input === "object" &&
+		"method" in input &&
+		input.method === "POST"
+	) {
+		created.push(await input.json());
+		return Response.json(
+			{ thread: thread({ id: "T-env-gen", orbId: "orb-gen" }) },
+			{ status: 201 },
+		);
+	}
 	if (url.pathname === "/api/v1/projects")
 		return Response.json({
 			projects: [
@@ -110,10 +127,12 @@ function setup(o: Orb, t: Thread = thread(), running = false) {
 		defaultOptions: { queries: { retry: false } },
 	});
 	return render(
-		<QueryClientProvider client={client}>
-			<EnvBanner key={TID} threadId={TID} />
-			<ThreadDialogs threadId={TID} />
-		</QueryClientProvider>,
+		<MemoryRouter>
+			<QueryClientProvider client={client}>
+				<EnvBanner key={TID} threadId={TID} />
+				<ThreadDialogs threadId={TID} />
+			</QueryClientProvider>
+		</MemoryRouter>,
 	);
 }
 
@@ -125,6 +144,8 @@ describe("环境提示条", () => {
 		vi.stubGlobal("fetch", fetchMock);
 		fetchMock.mockClear();
 		logBody = LOG;
+		created.length = 0;
+		toastsStore.setState({ toasts: [] });
 	});
 	afterEach(() => {
 		vi.unstubAllGlobals();
@@ -252,14 +273,29 @@ describe("环境提示条", () => {
 		);
 	});
 
-	it("缺少配置：需要项目信息加载后才出现，并提供「让 agent 生成」", async () => {
+	it("缺少配置：需要项目信息加载后才出现，「新开线程生成」在新 orb 上建线程、留在当前线程并收起提示条", async () => {
+		const cmd = vi.spyOn(realtime, "cmd").mockResolvedValue(undefined);
 		setup(orb({ lastSetup: run({ ok: true, hasRepoScript: false }) }));
 		expect(
 			await screen.findByText("这个项目还没有环境配置"),
 		).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /查看日志/ })).toBeNull();
-		expect(
-			screen.getByRole("button", { name: /让 agent 生成/ }),
-		).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: /新开线程生成/ }));
+		await waitFor(() => expect(screen.queryByTestId("env-banner")).toBeNull());
+		// 不往当前线程发消息，而是新建一条同项目、新 orb 的可见线程
+		expect(cmd).not.toHaveBeenCalled();
+		expect(created).toHaveLength(1);
+		expect(created[0]).toMatchObject({
+			projectId: "prj_1",
+			executor: { kind: "new_orb" },
+			title: "编写环境配置",
+			prompt: expect.stringContaining("oryn-setup"),
+		});
+		// 刷新后当前线程仍不再提示；新线程里整类不提示（它正在做这件事）
+		expect(loadDismissed(TID).has("missing:osr_1")).toBe(true);
+		expect(loadDismissed("T-env-gen").has("missing_config")).toBe(true);
+		const [toast] = toastsStore.getState().toasts;
+		expect(toast?.text).toContain("编写环境配置");
+		expect(toast?.action?.label).toBe("打开线程");
 	});
 });

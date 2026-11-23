@@ -6,6 +6,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router";
 import type { Orb } from "../../api/client";
 import { qk, useProjects } from "../../api/queries";
 import {
@@ -24,12 +25,15 @@ import {
 	type SetupDiagnosis,
 } from "../../lib/setup-diagnosis";
 import {
+	createThread,
 	fetchSetupRunLog,
 	sendGeneratedPrompt,
 	wakeThread,
 } from "../../state/actions";
 import { useThread } from "../../state/stores";
+import { showToast } from "../../state/toasts";
 import { uiStore } from "../../state/ui";
+import { addPendingPrompt } from "../transcript/pending-prompt";
 import { CopyButton } from "../ui/CopyButton";
 import { Badge, Callout, Stat, StatusDot, type Tone } from "../ui/data";
 import { Icon } from "../ui/icons";
@@ -45,6 +49,7 @@ import { InfoRow, InfoTag, InfoTags, useExpandedKey } from "./info-parts";
 import { useOrbOf } from "./ThreadHeader";
 
 type AgentBanner = Exclude<EnvBannerData, FailureBanner>;
+type MissingConfigBanner = Extract<AgentBanner, { kind: "missing_config" }>;
 
 function useProjectOf(threadId: string) {
 	const projectId = useThread(threadId, (s) => s.thread?.projectId);
@@ -117,15 +122,15 @@ function useRunLog(orbId: string | undefined, run: SetupRun | undefined) {
 	});
 }
 
-/** 「让 agent 修复 / 优化 / 生成」：取日志尾部、拼提示词、按忙闲以 prompt / follow_up 发送。 */
+/** 「让 agent 修复 / 优化」：取日志尾部、拼提示词、按忙闲以 prompt / follow_up 发到当前线程。 */
 function useAskAgent(threadId: string) {
 	const { t } = useTranslation();
 	const qc = useQueryClient();
 	const orbId = useOrbOf(threadId)?.id;
 	const project = useProjectOf(threadId);
-	return async (banner: AgentBanner) => {
+	return async (banner: Exclude<AgentBanner, MissingConfigBanner>) => {
 		let log = "";
-		if (banner.kind !== "missing_config" && orbId) {
+		if (orbId) {
 			const runId = banner.run.id;
 			try {
 				log = await qc.fetchQuery({
@@ -141,6 +146,28 @@ function useAskAgent(threadId: string) {
 			threadId,
 			buildEnvPrompt(banner, log, project?.baseBranch),
 		);
+	};
+}
+
+/**
+ * 「新开线程生成」环境配置：在同一项目的新 orb 上建一条可见线程，在后台调查仓库、写出并推送 `.oryn/setup`，
+ * 不占用、也不跳离当前线程（当前线程可能正在做别的事，工作区也可能不干净）。
+ * 新线程里「还没有环境配置」整类预先关掉：它正在做这件事，不该再提示用户去生成。
+ */
+function useGenerateInNewThread(threadId: string) {
+	const { t } = useTranslation();
+	const project = useProjectOf(threadId);
+	return async (banner: MissingConfigBanner) => {
+		const prompt = buildEnvPrompt(banner, "", project?.baseBranch);
+		const thread = await createThread({
+			projectId: project?.id,
+			prompt,
+			executor: { kind: "new_orb" },
+			title: t("env.generateTitle"),
+		});
+		addPendingPrompt(thread.id, prompt);
+		dismissBanner(thread.id, banner.kind);
+		return thread;
 	};
 }
 
@@ -209,6 +236,8 @@ export function EnvBanner({ threadId }: { threadId: string }): ReactNode {
 	const orb = useOrbOf(threadId);
 	const project = useProjectOf(threadId);
 	const ask = useAskAgent(threadId);
+	const generate = useGenerateInNewThread(threadId);
+	const navigate = useNavigate();
 	const [dismissed, setDismissed] = useState(() => loadDismissed(threadId));
 	const [pending, setPending] = useState<string | null>(null);
 	const [sent, setSent] = useState<string | null>(null);
@@ -289,6 +318,21 @@ export function EnvBanner({ threadId }: { threadId: string }): ReactNode {
 				? t("env.slowHint")
 				: t("env.missingHint");
 	const wasSent = sent === banner.key;
+	const askAgent =
+		banner.kind === "missing_config"
+			? async () => {
+					const created = await generate(banner);
+					// 留在当前线程：提示条随即消失，新线程在侧栏里可见，轻提示给出入口
+					dismiss();
+					showToast({
+						text: t("env.generateStarted"),
+						action: {
+							label: t("env.openThread"),
+							run: () => navigate(`/t/${created.id}`),
+						},
+					});
+				}
+			: () => ask(banner);
 	return (
 		<BannerShell
 			tone={banner.kind === "run_failed" ? "err" : "warn"}
@@ -307,7 +351,7 @@ export function EnvBanner({ threadId }: { threadId: string }): ReactNode {
 						variant="primary"
 						icon={wasSent ? "check" : "sparkle"}
 						disabled={pending !== null || wasSent}
-						onClick={() => void act(banner.key, () => ask(banner))}
+						onClick={() => void act(banner.key, askAgent)}
 					>
 						{pending === banner.key ? <Spinner size={12} /> : null}
 						{wasSent ? t("env.sent") : askLabel}

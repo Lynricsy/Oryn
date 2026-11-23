@@ -79,6 +79,18 @@ describe("环境提示条选择", () => {
 		).toMatchObject({ kind: "run_failed", key: "failed:osr_new" });
 	});
 
+	it("按种类关闭：该类提示不论哪次运行都不再出现，其它种类照常", () => {
+		const bare = run({ id: "osr_any", hasRepoScript: false });
+		const dismissed = new Set(["missing_config"]);
+		expect(selectEnvBanner(input({ lastSetup: bare }), dismissed)).toBeNull();
+		expect(
+			selectEnvBanner(
+				input({ lastSetup: run({ id: "osr_f", ok: false }) }),
+				dismissed,
+			),
+		).toMatchObject({ kind: "run_failed" });
+	});
+
 	it("setup 实际执行且 ≥2 分钟才提示过慢", () => {
 		expect(
 			selectEnvBanner(input({ lastSetup: run({ durationMs: 120_000 }) }), NONE),
