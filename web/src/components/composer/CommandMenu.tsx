@@ -14,15 +14,19 @@ import {
 	findCommand,
 	hiddenFromMenu,
 } from "../../lib/slash";
+import { commandIcon } from "../../lib/slash-icons";
 import { useDebounced } from "../../lib/use-debounced";
 import type { RpcAvailableSlashCommand } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
 import { Badge } from "../ui/data";
+import { Icon, type IconName } from "../ui/icons";
 
 export interface MenuEntry {
 	/** 选中后输入框的新内容 */
 	insert: string;
 	label: string;
+	/** 命令图标；参数阶段的子命令与候选不带 */
+	icon?: IconName;
 	/** 参数提示（`<work>`、`[on|off]`），命令名后的灰色等宽字 */
 	hint?: string;
 	description?: string;
@@ -34,6 +38,7 @@ export interface MenuEntry {
 /** 正在输入参数的那条命令的用法（菜单底部）。 */
 export interface CommandUsage {
 	label: string;
+	icon?: IconName;
 	hint?: string;
 	description?: string;
 }
@@ -98,6 +103,7 @@ export function useCommandMenu(
 			entries.push({
 				insert: `/${c}${hint ? " " : ""}`,
 				label: `/${c}`,
+				icon: commandIcon(c),
 				hint,
 				description: t(`slash.desc.${c}`),
 				badge: ORYN_SOURCE,
@@ -111,6 +117,7 @@ export function useCommandMenu(
 			entries.push({
 				insert: `/${c.name}${takesArgs ? " " : ""}`,
 				label: `/${c.name}`,
+				icon: commandIcon(c.name, c.source),
 				hint: c.input?.hint,
 				description: c.description,
 				badge: c.source,
@@ -160,6 +167,9 @@ export function useCommandMenu(
 		entries,
 		usage: {
 			label: `/${name}`,
+			icon: client
+				? commandIcon(name)
+				: serverCmd && commandIcon(serverCmd.name, serverCmd.source),
 			hint:
 				(client ? COMMAND_HINTS[name] : undefined) ?? serverCmd?.input?.hint,
 			description: client
@@ -239,6 +249,13 @@ export function CommandMenu({
 								<span
 									className={`flex gap-2 ${selected ? "items-baseline" : "h-7 items-center"}`}
 								>
+									{e.icon && (
+										<Icon
+											name={e.icon}
+											size={14}
+											className={`shrink-0 text-muted ${selected ? "self-start translate-y-px" : ""}`}
+										/>
+									)}
 									<span className="shrink-0 font-medium font-mono text-fg">
 										{e.label}
 									</span>
@@ -272,6 +289,13 @@ export function CommandMenu({
 					data-testid="menu-usage"
 					className={`px-3 py-2 text-xs ${showList ? "border-[var(--glass-line)] border-t" : ""}`}
 				>
+					{usage.icon && (
+						<Icon
+							name={usage.icon}
+							size={14}
+							className="mr-1.5 inline-block align-[-2px] text-muted"
+						/>
+					)}
 					<span className="font-medium font-mono text-fg">{usage.label}</span>
 					{usage.hint && (
 						<span className="ml-2 break-words font-mono text-2xs text-faint">
