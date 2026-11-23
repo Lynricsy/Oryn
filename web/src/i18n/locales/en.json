@@ -385,6 +385,7 @@
 		"contextCleared": "Context cleared",
 		"unknownEntry": "Unknown entry: {{type}}",
 		"aborted": "Aborted",
+		"automated": "Automated",
 		"branchSummary": "Branch summary",
 		"cancelled": "cancelled",
 		"compaction": "Context compacted",

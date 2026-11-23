@@ -111,7 +111,7 @@ const LEVEL_STYLE: Record<
  * 正文字号：转录正文是 14.5px，提示是「过程」，退一档到 13px（text-sm）。
  * markdown.css 不在 Tailwind 的层里，普通工具类压不过它的 `.md { font-size }`，所以带 `!`。
  */
-const MD_SIZE = "[&_.md]:text-sm! [&_.md]:leading-relaxed!";
+export const MD_SIZE = "[&_.md]:text-sm! [&_.md]:leading-relaxed!";
 
 export function NoticeLine({ notice }: { notice: Notice }): ReactNode {
 	const { t } = useTranslation();

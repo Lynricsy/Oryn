@@ -56,6 +56,7 @@ import { UserAvatar } from "../ui/UserAvatar";
 import { AgentAvatar } from "./AgentAvatar";
 import { useToolCallActive } from "./active-tools";
 import { type TranscriptContextValue, useTranscriptContext } from "./context";
+import { escapeAngles, MD_SIZE } from "./NoticeLine";
 
 const CHIP =
 	"inline-flex items-center gap-1.5 rounded-md border border-border bg-panel px-2 py-1 text-xs";
@@ -643,8 +644,6 @@ function UserMessage({
 				senderTitle ? parseTitleCard(senderTitle).text : undefined,
 			)
 		: "";
-	const shown = oryn ? oryn.body : body;
-	const quoted = splitLeadingQuote(shown);
 	const ctxRef = useContextTarget<HTMLDivElement>({
 		items: () => [
 			{
@@ -659,87 +658,139 @@ function UserMessage({
 			},
 		],
 	});
-	const badges = (irc || synthetic || steer || oryn) && (
-		<div
-			className={`flex max-w-full flex-wrap gap-1 ${oryn ? "" : "justify-end"}`}
-		>
-			{oryn && (
-				<Badge icon={ORYN_ICON[oryn.header.kind]} title={label}>
-					{label}
-				</Badge>
-			)}
-			{irc && (
-				<Badge icon="chats">
-					{t("transcript.ircFrom", { from: String(irc.from ?? "") })}
-				</Badge>
-			)}
-			{synthetic && <Badge icon="bolt">{t("transcript.synthetic")}</Badge>}
-			{steer && <Badge icon="send">{t("transcript.steer")}</Badge>}
-		</div>
-	);
-	const content = (
-		<>
-			{oryn?.report && oryn.header.kind === "report" && (
-				<ThreadReport
-					threadId={oryn.report.threadId}
-					title={oryn.report.title ?? oryn.header.title}
-					state={oryn.header.state}
-					content={oryn.report.content}
-					error={oryn.report.error}
-				/>
-			)}
-			{oryn?.automation && <AutomationResults items={oryn.automation} />}
-			{oryn?.research && <ResearchFindings items={oryn.research} />}
-			{quoted ? (
-				<>
-					<blockquote
-						data-testid="user-quote"
-						className={`${USER_QUOTE} ${quoted.rest ? "mb-1.5" : ""}`}
-					>
-						{quoted.quote}
-					</blockquote>
-					{quoted.rest && <div className={USER_BUBBLE_TEXT}>{quoted.rest}</div>}
-				</>
-			) : (
-				shown && <div className={USER_BUBBLE_TEXT}>{shown}</div>
-			)}
-			<Images content={message.content} />
-			<AttachmentChips attachments={attachments} />
-		</>
-	);
-	// 控制面代发的自动消息（GitHub 事件、定时运行、线程报告等）不是主人说的话：不用靠右的用户气泡与头像，
-	// 铺满正文列、虚线框（与扩展注入消息同一外观），来源标签放在框内
+	const menu = <MessageMenu entryId={entryId} copyText={() => text} />;
 	if (oryn)
 		return (
 			<div
 				ref={ctxRef}
 				className="group/msg flex flex-col items-start gap-1"
 				data-ask-scope="user"
-				data-testid="oryn-message"
 			>
-				<div
-					className={`w-full min-w-0 rounded-lg border border-border-strong border-dashed px-3.5 py-2.5 ${live ? "opacity-80" : ""}`}
+				<AutoMessageCard
+					icon={ORYN_ICON[oryn.header.kind]}
+					label={label}
+					dim={live}
+					flags={
+						<>
+							{synthetic && (
+								<Badge icon="bolt">{t("transcript.synthetic")}</Badge>
+							)}
+							{steer && <Badge icon="send">{t("transcript.steer")}</Badge>}
+						</>
+					}
 				>
-					<div className="mb-1.5">{badges}</div>
-					{content}
-				</div>
-				<MessageMenu entryId={entryId} copyText={() => text} />
+					{oryn.report && oryn.header.kind === "report" && (
+						<ThreadReport
+							threadId={oryn.report.threadId}
+							title={oryn.report.title ?? oryn.header.title}
+							state={oryn.header.state}
+							content={oryn.report.content}
+							error={oryn.report.error}
+						/>
+					)}
+					{oryn.automation && <AutomationResults items={oryn.automation} />}
+					{oryn.research && <ResearchFindings items={oryn.research} />}
+					{oryn.body && (
+						<div className={`min-w-0 text-fg ${MD_SIZE}`}>
+							<Markdown text={escapeAngles(oryn.body)} />
+						</div>
+					)}
+					<Images content={message.content} />
+					<AttachmentChips attachments={attachments} />
+				</AutoMessageCard>
+				{menu}
 			</div>
 		);
+	const quoted = splitLeadingQuote(body);
 	return (
 		<div
 			ref={ctxRef}
 			className="group/msg flex flex-col items-end gap-1"
 			data-ask-scope="user"
 		>
-			{badges}
+			{(irc || synthetic || steer) && (
+				<div className="flex max-w-full flex-wrap justify-end gap-1">
+					{irc && (
+						<Badge icon="chats">
+							{t("transcript.ircFrom", { from: String(irc.from ?? "") })}
+						</Badge>
+					)}
+					{synthetic && <Badge icon="bolt">{t("transcript.synthetic")}</Badge>}
+					{steer && <Badge icon="send">{t("transcript.steer")}</Badge>}
+				</div>
+			)}
 			{!irc && <span className="sr-only">{t("transcript.you")}</span>}
 			{/* 别的 agent 经 irc 发来的消息不是「你」说的，不放用户头像 */}
 			<UserBubble avatar={turnStart && !irc} dim={live}>
-				{content}
+				{quoted ? (
+					<>
+						<blockquote
+							data-testid="user-quote"
+							className={`${USER_QUOTE} ${quoted.rest ? "mb-1.5" : ""}`}
+						>
+							{quoted.quote}
+						</blockquote>
+						{quoted.rest && (
+							<div className={USER_BUBBLE_TEXT}>{quoted.rest}</div>
+						)}
+					</>
+				) : (
+					body && <div className={USER_BUBBLE_TEXT}>{body}</div>
+				)}
+				<Images content={message.content} />
+				<AttachmentChips attachments={attachments} />
 			</UserBubble>
-			<MessageMenu entryId={entryId} copyText={() => text} />
+			{menu}
 		</div>
+	);
+}
+
+/**
+ * 控制面代发的自动消息（GitHub 事件、定时运行、线程报告等）：不是主人说的话，不用靠右的用户气泡与头像，
+ * 而是铺满正文列的事件卡。页眉是来源图标方块 + 来源标签，右侧是引导 / 系统注入徽标与「自动投递」；
+ * 正文按 Markdown 排（GitHub 评审、定时任务的提示词本来就是 Markdown，链接可点），字号与内联提示同档。
+ */
+function AutoMessageCard({
+	icon,
+	label,
+	dim,
+	flags,
+	children,
+}: {
+	icon: IconName;
+	label: string;
+	dim: boolean;
+	flags: ReactNode;
+	children: ReactNode;
+}): ReactNode {
+	const { t } = useTranslation();
+	return (
+		<section
+			data-testid="oryn-message"
+			aria-label={label}
+			className={`@container w-full min-w-0 overflow-hidden rounded-xl border border-border bg-panel/60 ${dim ? "opacity-80" : ""}`}
+		>
+			<header className="flex h-10 min-w-0 items-center gap-2.5 border-border border-b bg-inset/40 pr-3 pl-2.5">
+				<span
+					aria-hidden
+					className="inline-grid size-6 shrink-0 place-items-center rounded-md border border-border bg-panel text-muted"
+				>
+					<Icon name={icon} size={13} />
+				</span>
+				<span
+					title={label}
+					className="min-w-0 flex-1 truncate font-medium text-[13px] text-fg"
+				>
+					{label}
+				</span>
+				{flags}
+				{/* 窄卡片让位给来源标签：标签被截断比少一句「自动投递」更糟 */}
+				<span className="shrink-0 text-2xs text-faint @max-sm:hidden">
+					{t("transcript.automated")}
+				</span>
+			</header>
+			<div className="flex min-w-0 flex-col gap-2 px-3.5 py-3">{children}</div>
+		</section>
 	);
 }
 

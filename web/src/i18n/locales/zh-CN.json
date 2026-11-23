@@ -385,6 +385,7 @@
 		"contextCleared": "上下文已清空",
 		"unknownEntry": "未知条目：{{type}}",
 		"aborted": "已中断",
+		"automated": "自动投递",
 		"branchSummary": "分支摘要",
 		"cancelled": "已取消",
 		"compaction": "上下文已压缩",
