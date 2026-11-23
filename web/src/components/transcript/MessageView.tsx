@@ -1188,6 +1188,28 @@ export function assistantEdges(
 	return [head ?? "prose", live && head === null ? "prose" : last];
 }
 
+/** 等待 agent 首个可见输出时的占位：三个依次跃动的点（待回复的回合头下、空的流式助手消息里）。 */
+export function TypingDots(): ReactNode {
+	const { t } = useTranslation();
+	return (
+		<div
+			role="status"
+			aria-label={t("thread.working")}
+			data-testid="typing-dots"
+			className="flex h-6 items-center gap-1 text-faint"
+		>
+			{[0, 1, 2].map((i) => (
+				<span
+					key={i}
+					aria-hidden
+					className="typing-dot h-1.5 w-1.5 rounded-full bg-current"
+					style={{ animationDelay: `${i * 160}ms` }}
+				/>
+			))}
+		</div>
+	);
+}
+
 /**
  * 回合中间的助手消息自己的操作菜单：浮在消息右上角（压在上方间距与首块右上角），带底色描边，
  * 只在悬停 / 聚焦时显现——左侧不再留头像列，菜单不占正文宽度。槽位只管定位，底色描边画在按钮上随它显隐。
@@ -1316,9 +1338,8 @@ function AssistantMessage({
 				/>
 			)}
 			{blocks}
-			{live && content.length === 0 && (
-				<div className="stream-caret text-faint text-sm" />
-			)}
+			{/* 流式中还没有可见块（空 content，或只有空的 text / thinking 块）：接力回合开始时的三点，直到首个可见块 */}
+			{live && blocks.length === 0 && <TypingDots />}
 			{(stop === "error" || stop === "aborted") && (
 				<div style={blocks.length > 0 ? { marginTop: GAP_FLOW } : undefined}>
 					<Callout

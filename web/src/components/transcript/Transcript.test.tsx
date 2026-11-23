@@ -514,28 +514,60 @@ describe("助手头像闪烁", () => {
 		expect(layoutTurns([...items, user(6)]).openStart).toBeUndefined();
 	});
 
-	it("回合开始、agent 尚无输出时末尾先画回合头与三点，第一条 agent 行到达后由它接替", () => {
-		const store = getThreadStore(ctx.threadId).getState();
-		store.patchLocal({ running: true });
-		const { container, rerenderRows } = renderTranscript("working", [
-			...items,
-			user(6),
-		]);
-		const awaiting = screen.getByTestId("awaiting-turn");
-		expect(awaiting.querySelector('[data-avatar-of="agent"]')).not.toBeNull();
-		expect(screen.getByTestId("typing-dots")).toBeTruthy();
-		// 待回复的回合头是正在进行的回合：头像在闪
-		expect(awaiting.querySelector(".caret-blink")).not.toBeNull();
-		rerenderRows([
-			...items,
-			user(6),
-			msg(7, { role: "assistant", content: [] }, true),
-		]);
-		expect(screen.queryByTestId("awaiting-turn")).toBeNull();
-		expect(
-			container.querySelector('[data-index="6"] [data-avatar-of="agent"]'),
-		).not.toBeNull();
-		store.patchLocal({ running: false });
+	describe("等待首个可见输出", () => {
+		// 前两个已结束的回合；不带 items 末尾那条空的流式消息（它本身也会画三点）
+		const done = items.slice(0, 4);
+		const live = (content: unknown[]) =>
+			msg(7, { role: "assistant", content }, true);
+		const dotsIn = (root: ParentNode) =>
+			root.querySelectorAll('[data-testid="typing-dots"]').length;
+
+		afterEach(() => {
+			getThreadStore(ctx.threadId).getState().patchLocal({ running: false });
+		});
+
+		it("回合开始、还没有助手消息：末尾先画回合头与三点", () => {
+			getThreadStore(ctx.threadId).getState().patchLocal({ running: true });
+			const { container } = renderTranscript("working", [...done, user(6)]);
+			const awaiting = screen.getByTestId("awaiting-turn");
+			expect(awaiting.querySelector('[data-avatar-of="agent"]')).not.toBeNull();
+			// 待回复的回合头是正在进行的回合：头像在闪
+			expect(awaiting.querySelector(".caret-blink")).not.toBeNull();
+			expect(dotsIn(awaiting)).toBe(1);
+			expect(dotsIn(container)).toBe(1);
+		});
+
+		it("空的流式助手消息（provider 首事件前的 message_start）接力：回合首行带头像与三点，直到首个可见块", () => {
+			getThreadStore(ctx.threadId).getState().patchLocal({ running: true });
+			const { container, rerenderRows } = renderTranscript("working", [
+				...done,
+				user(6),
+				live([]),
+			]);
+			const row = () =>
+				container.querySelector('[data-index="5"]') as HTMLElement;
+			expect(screen.queryByTestId("awaiting-turn")).toBeNull();
+			expect(row().querySelector('[data-avatar-of="agent"]')).not.toBeNull();
+			expect(dotsIn(row())).toBe(1);
+			expect(dotsIn(container)).toBe(1);
+			// 只有空的 text / thinking 块：仍然没有可见内容
+			rerenderRows([
+				...done,
+				user(6),
+				live([
+					{ type: "thinking", thinking: "" },
+					{ type: "text", text: "" },
+				]),
+			]);
+			expect(dotsIn(row())).toBe(1);
+			// 首个可见块（思考）到达：三点撤掉
+			rerenderRows([
+				...done,
+				user(6),
+				live([{ type: "thinking", thinking: "先看看" }]),
+			]);
+			expect(dotsIn(container)).toBe(0);
+		});
 	});
 });
 

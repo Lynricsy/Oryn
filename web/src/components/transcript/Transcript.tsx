@@ -73,6 +73,7 @@ import {
 	summarizeTurn,
 	ToolCard,
 	type TurnUsage,
+	TypingDots,
 	textOfContent,
 	USER_BUBBLE_TEXT,
 	UserBubble,
@@ -670,28 +671,6 @@ function TurnHead({
 					{thinking && <CornerLevel level={thinking} />}
 				</span>
 			)}
-		</div>
-	);
-}
-
-/** 待回复回合头下的占位：三个依次跃动的点，直到 agent 的第一块输出到达。 */
-function TypingDots(): ReactNode {
-	const { t } = useTranslation();
-	return (
-		<div
-			role="status"
-			aria-label={t("thread.working")}
-			data-testid="typing-dots"
-			className="flex h-6 items-center gap-1 text-faint"
-		>
-			{[0, 1, 2].map((i) => (
-				<span
-					key={i}
-					aria-hidden
-					className="typing-dot h-1.5 w-1.5 rounded-full bg-current"
-					style={{ animationDelay: `${i * 160}ms` }}
-				/>
-			))}
 		</div>
 	);
 }
