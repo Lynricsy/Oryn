@@ -4815,7 +4815,12 @@
 		"files": {
 			"title": "文件",
 			"truncated": "条目过多，只显示前 5000 项",
-			"path": "路径"
+			"path": "路径",
+			"and": "和",
+			"andOthers_one": "和其他 {{count}} 人",
+			"andOthers_other": "和其他 {{count}} 人",
+			"commitCount_one": "{{n}} 次提交",
+			"commitCount_other": "{{n}} 次提交"
 		},
 		"nav": {
 			"label": "仓库",

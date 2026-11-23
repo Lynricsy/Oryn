@@ -4815,7 +4815,12 @@
 		"files": {
 			"title": "Files",
 			"truncated": "Too many entries; showing the first 5,000",
-			"path": "Path"
+			"path": "Path",
+			"and": "and",
+			"andOthers_one": "and {{count}} other",
+			"andOthers_other": "and {{count}} others",
+			"commitCount_one": "{{n}} Commit",
+			"commitCount_other": "{{n}} Commits"
 		},
 		"nav": {
 			"label": "Repository",

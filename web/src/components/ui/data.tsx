@@ -441,20 +441,24 @@ function hueStyle(hue: number, size: number): CSSProperties {
 	return { "--h": hue, width: size, height: size } as CSSProperties;
 }
 
-/** 名字首字的方形头像；色相缺省由名字算出。配色在 index.css 的 `.avatar`。 */
+/** 名字首字的头像（缺省方形，`round` 为圆形，如提交作者）；色相缺省由名字算出。配色在 index.css 的 `.avatar`。 */
 export function Avatar({
 	name,
 	hue,
 	size = 16,
+	round = false,
+	className = "",
 }: {
 	name: string;
 	hue?: number;
 	size?: number;
+	round?: boolean;
+	className?: string;
 }): ReactNode {
 	return (
 		<span
 			aria-hidden
-			className="avatar inline-flex shrink-0 items-center justify-center rounded-xs font-semibold text-[9px]"
+			className={`avatar inline-flex shrink-0 items-center justify-center font-semibold text-[9px] ${round ? "rounded-full" : "rounded-xs"} ${className}`}
 			style={hueStyle(hue ?? nameHue(name), size)}
 		>
 			{firstGrapheme(name)}
