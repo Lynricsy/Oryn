@@ -107,6 +107,49 @@ describe("ContextMenuHost", () => {
 		expect(onSelect).toHaveBeenCalledOnce();
 	});
 
+	it("悬停父项直接弹出子菜单；移到别的项停顿后收起，移进子菜单则保留", () => {
+		vi.useFakeTimers();
+		try {
+			const onSelect = vi.fn();
+			render(<ContextMenuHost />);
+			open([
+				{
+					key: "a",
+					items: [
+						{ key: "plain", label: "plain" },
+						{
+							key: "more",
+							label: "more",
+							children: [{ key: "inner", label: "inner", onSelect }],
+						},
+					],
+				},
+			]);
+			const more = screen.getByRole("menuitem", { name: "more" });
+			fireEvent.mouseEnter(more);
+			expect(more).toHaveAttribute("aria-expanded", "true");
+			// 主菜单项都还在，子菜单是旁边的另一个面板
+			expect(screen.getByRole("menuitem", { name: "plain" })).toBeTruthy();
+			const submenu = screen.getByTestId("context-submenu");
+			expect(submenu).toHaveTextContent("inner");
+			// 斜着移向子菜单途经别的项：停顿内移进子菜单，不收起
+			fireEvent.mouseEnter(screen.getByRole("menuitem", { name: "plain" }));
+			fireEvent.mouseEnter(submenu);
+			act(() => vi.advanceTimersByTime(500));
+			expect(screen.getByTestId("context-submenu")).toBeTruthy();
+			// 停在别的项上：停顿后收起
+			fireEvent.mouseEnter(screen.getByRole("menuitem", { name: "plain" }));
+			act(() => vi.advanceTimersByTime(500));
+			expect(screen.queryByTestId("context-submenu")).toBeNull();
+			fireEvent.mouseEnter(more);
+			fireEvent.click(screen.getByRole("menuitem", { name: "inner" }));
+			expect(onSelect).toHaveBeenCalledOnce();
+			expect(screen.queryByTestId("context-menu")).toBeNull();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("菜单外按下关闭，菜单内按下不关", () => {
 		render(
 			<>
