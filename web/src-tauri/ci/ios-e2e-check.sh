@@ -21,8 +21,8 @@
 #   open     点侧栏钮（此时网页钮已对读屏隐藏，点到的是原生钮）：header.event（op = lead、key = home），sink.show（open）=
 #            原生推进，到位后不回弹（no_bounce），截图（卡片条左缘到侧栏宽、原生按钮在、网页胶囊隐藏在测试里断言）
 #   closed   点露出的卡片条：sink.show（关），到位后不回弹，截图
-#   drag     卡片左缘内起手拖到 0.55 × 侧栏宽并按住：拖动是系统滚动，事件日志里没有信号（也不该有 sink.show）；就绪看截图——
-#            胶囊横条连拍两张一致（卡片停住）、与关闭基线不同、又不是打开态（没松手）
+#   drag     卡片左缘内起手拖到 0.7 × 侧栏宽并按住：拖动是系统滚动，事件日志里没有信号（也不该有 sink.show）；就绪看截图——
+#            胶囊横条连拍两张一致（卡片停住）、与关闭基线不同、又不是打开态（没松手）；松手后按网页探针确认卡片实际平移过半
 #   projects 点原生底栏的「项目」：等 tabbar.tap 与网页回发的 tabbar.set（selected = projects），截图（侧栏保持打开在测试里断言）
 #   swipe    在原生底栏上按住「项目」横滑到第 1 项再松手（系统透镜换选中）：等 tabbar.tap 与 tabbar.set（selected = threads），截图
 #   final    再点已选中的第 1 项收起侧栏（侧栏是 drag 拖开的）：sink.show（关），到位后不回弹，截图
@@ -37,8 +37,8 @@
 #   h-return  点遮罩关掉对话框：等 header.show（alpha 1），截图；从这里起数 header.show
 #   h-sidebar 点原生侧栏钮：等 header.event（lead）与 sink.show（open）；原生页头的位移由原生从根滚动算，没有新的 header.show，截图
 #   h-closed  点卡片条关侧栏：sink.show（关），仍没有新的 header.show，截图
-#   h-drag    卡片左缘内起手按住拖到 0.55 × 侧栏宽：页头行连拍两张一致、与关闭态不同、又不是打开态；像素断言原生页头行与
-#             卡片内容停在同一位移（揭示边左侧是不动的侧栏）
+#   h-drag    卡片左缘内起手按住拖到 0.7 × 侧栏宽：页头行连拍两张一致、与关闭态不同、又不是打开态；松手后确认实际平移过半；
+#             像素断言原生页头行与卡片内容停在同一位移（揭示边左侧是不动的侧栏）
 #   h-end     松手吸附到打开、点卡片条关上之后：sink.show（关），自 h-return 起仍没有新的 header.show，截图
 #   h-keyboard 点输入框、系统软键盘弹出后（测试确认键盘在无障碍树里）：网页探针的视口采样（sink-web.jsonl 的 viewport）里
 #             最后一条是页面没被推走——视觉视口 offsetTop、scrollY 都回到 0，scrollX 与聚焦时一样（侧栏仍关着），
@@ -235,6 +235,25 @@ no_bounce() {
 # pt → 截图像素（scale 在 loaded 步骤由基线截图算出）
 px() { awk -v v="$1" -v s="$scale" 'BEGIN { printf "%d", v * s + 0.5 }'; }
 calc() { awk "BEGIN { print $1 }"; }
+# 网页探针的事件（ios-e2e-preview.mjs 写入；beacon 到达顺序不保证，按 seq 排）
+wlog="$out/sink-web.jsonl"
+wlines() { wc -l <"$wlog" 2>/dev/null | tr -d ' ' || echo 0; }
+# drag_card <起始行>：起始行之后第一次松手（touchend；系统滚动接走手势时可能是 touchcancel）时卡片的实际平移（pt）
+# = 侧栏宽 − 当时的根横滚位置（手指已按住静止，就是截图时的位置）；还没等到时退出码非 0
+drag_card() {
+  tail -n "+$(($1 + 1))" "$wlog" 2>/dev/null | jq -se --argjson w "$sink_w" '
+    map(select((.event == "touchend" or .event == "touchcancel") and (.info.x | type) == "number"))
+    | sort_by(.seq) | first | $w - .info.x'
+}
+# check_drag <步骤> <起始行> <手指位移>：等到这次拖动的松手，确认卡片实际平移过半（系统按落点吸附：过半到打开、否则回关闭）；
+# 结果存进 $card。没过半时直接报出实际平移，不等测试在「松手后期望侧栏打开」上超时
+check_drag() {
+  until_ok "$1" 60 "拖动松手（网页探针的 touchend）" drag_card "$2"
+  card=$(drag_card "$2")
+  echo "- $1：手指位移 ${3}pt，松手时卡片实际平移 ${card}pt（侧栏宽 ${sink_w}pt）" | tee -a "$summary"
+  awk -v c="$card" -v w="$sink_w" 'BEGIN { exit !(c > w / 2) }' ||
+    fail "$1" "松手时卡片只平移 ${card}pt，没过侧栏宽 ${sink_w}pt 的一半（手指位移 ${3}pt，差值是 XCUITest 拖动的起拖滞后）"
+}
 # rdiff <图 a> <图 b> <x> <y> <宽> <高>（pt）[b 的 x（pt）]：两张图（完整路径）区域的不同像素占比
 rdiff() { "$work/region-diff" "$1" "$2" "$(px "$3")" "$(px "$4")" "$(px "$5")" "$(px "$6")" ${7:+"$(px "$7")"}; }
 # strip_diff <图 a> <图 b> <x（pt）> <宽（pt）>：胶囊所在横条里同位置区域的不同像素占比
@@ -379,25 +398,29 @@ steady_shot closed1
 ok closed
 
 # 拖动：手指拖动是根滚动视图自己的滚动，按住期间事件日志里没有信号；就绪看截图（见 hold）。
-# 卡片跟手 1:1，但 UIScrollView 起拖有一段滞后（M20 探针：手指 176pt 时卡片左缘 166pt），所以揭示边不取手指位移本身：
-# 像素断言在手指位移的 [−18, +2]pt 内搜卡片的实际平移，左侧区域按最靠左的可能位置再让出投影。
+# 卡片跟手 1:1，但 UIScrollView 起拖有一段滞后（M20 探针：手指 176pt 时卡片左缘 166pt；CI 卡顿时实测滞后可达 40pt），
+# 所以揭示边不取手指位移：松手后以网页探针 touchend 时的根横滚位置算卡片实际平移（check_drag，同时确认过半），
+# 像素断言围绕实际平移取区域。
 # 按住 40 秒：判定用的两张截图都要落在按住期间（松手后吸附到打开，截图与打开态一致即判没赶上）。
 # CI 的 macOS 机器会整机卡顿几十秒到几分钟（截图曾卡 3 分钟），没赶上就让测试收起侧栏重拖，最多 3 次；
 # 每次的步骤名带序号（drag1 / drag2 / drag3），交接文件不会与上一次混淆。
-# 测试先发 req 再起手，XCUITest 起手前可能还要等 App 空闲，所以等 req 放宽
+# 测试先发 req 再起手，XCUITest 起手前可能还要等 App 空闲，所以等 req 放宽；探针起始行在 req 到达时记（重拖前收起的轻点在这之前）
 for attempt in 1 2 3; do
   step="drag$attempt"
   wait_req "$step" 300
+  dmark=$(wlines)
   edge=$(jq -r .dx <<<"$req")
   if hold "$step" drag "$fx" "$fy" "$fw" "$fh" closed0 open; then
     echo "拖动：手指位移 ${edge}（第 ${attempt} 次）"
     ok "$step"
+    check_drag "$step" "$dmark" "$edge"
     break
   fi
   ((attempt < 3)) || fail "$step" "连续 3 次都没能在按住期间连拍到停稳的两张图"
   echo "::warning::第 ${attempt} 次拖动没赶在按住期间截图，收起后重拖"
   ok "$step" '{"retry":true}'
 done
+drag_dx=$card
 
 # 原生点击 → Rust 记 tabbar.tap 并转给页面 → 页面切分区（路由）→ 页面按新路由回发 spec（selected = projects）；
 # 侧栏保持打开（卡片条仍在侧栏宽处）在测试里断言
@@ -462,16 +485,16 @@ check() { hcheck "$1" "$2" "$3" "$4" "$fy" "$5" "$fh" "${@:6}"; }
 # 打开：胶囊处不再是卡片（与关闭基线不同）；关闭：回到关闭基线（卡片盖回来，原生底栏裁到 0）
 check "打开：胶囊处与关闭基线不同" open closed0 "$fx" "$fw" shown
 check "关闭：胶囊处回到关闭基线" closed1 closed0 "$fx" "$fw" same
-# 拖动：卡片的实际左缘在手指位移的 [−18, +2]pt 内（起拖滞后，见上面拖动步骤）；左侧区域取最靠左的可能位置 lo 再让出 72pt
+# 拖动：卡片的实际左缘 = drag_dx（check_drag 由松手时的根横滚位置算出）；左侧区域取 drag_dx − 2 再让出 72pt
 # 避开卡片投影（--sh-xl）：与打开态一致（侧栏层不动，原生底栏裁到卡片左缘为止）
-lo=$(calc "$edge - 18")
+lo=$(calc "$drag_dx - 2")
 check "拖动：揭示边左侧与打开态一致" drag open "$fx" "$(calc "$lo - 72 - $fx")" same
 check "拖动：揭示边左侧与关闭基线不同" drag closed0 "$fx" "$(calc "$lo - 72 - $fx")" shown
-# 拖动：揭示边右侧是整体右移的卡片，与关闭基线错位比较一致 = 原生底栏的裁切跟上了卡片、没有画到卡片上。区域从手指位移 + 8pt 起
-# （离实际左缘至少 6pt，避开发丝线与卡片左下圆角），b 的 x 以平移 edge − 8 为中心、搜 ±10pt
+# 拖动：揭示边右侧是整体右移的卡片，与关闭基线错位比较一致 = 原生底栏的裁切跟上了卡片、没有画到卡片上。区域从实际左缘 + 16pt 起
+# （避开发丝线与卡片左下圆角），b 的 x = 16，即平移 drag_dx，搜 ±3pt 吸收换算到像素的舍入
 check "拖动：揭示边右侧是平移的卡片（底栏没透到卡片上）" drag closed0 \
-  "$(calc "$edge + 8")" "$(calc "$fx + $fw - $edge - 8")" same 16 10
-echo "- 拖动：卡片平移 ${moved}pt（手指位移 ${edge}pt，差值是 UIScrollView 的起拖滞后）" | tee -a "$summary"
+  "$(calc "$drag_dx + 16")" "$(calc "$fx + $fw - $drag_dx - 16")" same 16 3
+echo "- 拖动：像素搜出卡片平移 ${moved}pt（松手时实测 ${drag_dx}pt，手指位移 ${edge}pt）" | tee -a "$summary"
 
 # ---------------------------------------------------------------- 原生页头（第二次 xcodebuild，只跑 HeaderE2ETests）
 
@@ -583,21 +606,24 @@ sleep 0.7
 shot h-closed
 ok h-closed
 
-# 按住拖动：同底栏的拖动步骤（hold、起拖滞后、最多重拖 3 次），停稳看页头横条，关闭 / 打开基线取 h-closed / h-sidebar
+# 按住拖动：同底栏的拖动步骤（hold、check_drag 量实际平移并确认过半、最多重拖 3 次），停稳看页头横条，关闭 / 打开基线取 h-closed / h-sidebar
 for attempt in 1 2 3; do
   step="h-drag$attempt"
   wait_req "$step" 300
+  dmark=$(wlines)
   hedge=$(jq -r .dx <<<"$req")
   if hold "$step" h-drag "$rowx" "$ty" "$roww" "$th" h-closed h-sidebar; then
     fresh "$step"
     echo "页头拖动：手指位移 ${hedge}（第 ${attempt} 次）"
     ok "$step"
+    check_drag "$step" "$dmark" "$hedge"
     break
   fi
   ((attempt < 3)) || fail "$step" "连续 3 次都没能在按住期间连拍到停稳的两张图"
   echo "::warning::第 ${attempt} 次页头拖动没赶在按住期间截图，收起后重拖"
   ok "$step" '{"retry":true}'
 done
+hdrag_dx=$card
 
 # 松手过半吸附到打开（系统滚动，无 sink.show）、点卡片条关上（sink.show 关）；整段没有新的 header.show
 wait_req h-end 60
@@ -606,8 +632,7 @@ fresh h-end
 sleep 0.7
 shot h-end
 # 软键盘步骤只看这之后的网页探针采样
-wlog="$out/sink-web.jsonl"
-wmark=$(wc -l <"$wlog" | tr -d ' ')
+wmark=$(wlines)
 ok h-end
 
 # 自 h-end 放行起网页探针的视口采样（beacon 到达顺序不保证，按 seq 排）
@@ -650,15 +675,16 @@ hcheck "页头：关侧栏后原生页头原样回来" h-closed h-native "$rowx"
 hcheck "页头：拖动开合后原生页头原样回来" h-end h-native "$rowx" "$ty" "$roww" "$th" same
 # 按住拖动（R1）：揭示边左侧是不动的侧栏（与打开态一致，区域取法同底栏的拖动）；揭示边右侧的页头横条与卡片内容
 # （面板区那一带的转录）都是平移过的关闭态（h-closed），各自搜出平移量——两者一致 = 原生页头与卡片停在同一位移
-hlo=$(calc "$hedge - 18")
+hlo=$(calc "$hdrag_dx - 2")
 hcheck "页头拖动：揭示边左侧与打开态一致（侧栏不动）" h-drag h-sidebar "$rowx" "$ty" "$(calc "$hlo - 72 - $rowx")" "$th" same
+# 区域从实际左缘 + 16pt 起、b 的 x = 16（即以实测平移为中心），各自搜 ±10pt 找平移量，再比较两者
 hcheck "页头拖动：揭示边右侧的原生页头行是平移的关闭态" h-drag h-closed \
-  "$(calc "$hedge + 8")" "$ty" "$(calc "$rowx + $roww - $hedge - 8")" "$th" same 16 10
+  "$(calc "$hdrag_dx + 16")" "$ty" "$(calc "$rowx + $roww - $hdrag_dx - 16")" "$th" same 16 10
 head_dx=$moved
 hcheck "页头拖动：揭示边右侧的卡片内容是平移的关闭态" h-drag h-closed \
-  "$(calc "$hedge + 8")" "$pny" "$(calc "$rowx + $roww - $hedge - 8")" 200 same 16 10
+  "$(calc "$hdrag_dx + 16")" "$pny" "$(calc "$rowx + $roww - $hdrag_dx - 16")" 200 same 16 10
 card_dx=$moved
-echo "- 页头拖动：原生页头平移 ${head_dx}pt、卡片平移 ${card_dx}pt（手指位移 ${hedge}pt，期望两者相差 ≤ 1pt）" | tee -a "$summary"
+echo "- 页头拖动：原生页头平移 ${head_dx}pt、卡片平移 ${card_dx}pt（松手时实测 ${hdrag_dx}pt，手指位移 ${hedge}pt，期望两者相差 ≤ 1pt）" | tee -a "$summary"
 if ! awk -v a="$head_dx" -v b="$card_dx" 'BEGIN { d = a - b; exit !(d <= 1 && d >= -1) }'; then
   echo "::error::按住拖动时原生页头（${head_dx}pt）没有与卡片（${card_dx}pt）停在同一位移"
   failed=1

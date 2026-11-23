@@ -68,12 +68,13 @@ final class TabBarE2ETests: E2ECase {
     _ = try expectSink(app, sink, open: false, "关闭")
     _ = try checkpoint("closed")
 
-    // 3. 在卡片左缘内（x = 8：首页输入框左右各让出 12pt，不落在可编辑元素上）起手拖到 0.55 × 侧栏宽并按住：
+    // 3. 在卡片左缘内（x = 8：首页输入框左右各让出 12pt，不落在可编辑元素上）起手拖到 0.7 × 侧栏宽并按住：
     //    脚本在按住期间连拍截图，断言揭示边两侧。按住期间测试本身阻塞在手势里，取不了无障碍快照，卡片位置全看截图。
     //    按住 40 秒；CI 的 macOS 机器会整机卡顿（XCUITest 取快照一次 30-60 秒、截图曾卡 3 分钟），
     //    脚本没赶在按住期间截到停稳的图时回 retry：轻点卡片条收起后重拖（脚本最多给 3 次）。
-    //    过半松手：原生滚动代理给出横向落点，UIKit 减速到打开位。
-    let dx = (sink.width * 0.55).rounded()
+    //    过半松手：原生滚动代理给出横向落点，UIKit 减速到打开位。拖到 0.7 而不是刚过半：UIScrollView 的起拖滞后在 CI 上
+    //    实测可达 40pt（手指 193pt、卡片只到 153pt，松手回到关闭位），留足余量；卡片实际平移由脚本按网页探针核对
+    let dx = (sink.width * 0.7).rounded()
     let y = (screen.height / 2).rounded()
     var attempt = 1
     while true {

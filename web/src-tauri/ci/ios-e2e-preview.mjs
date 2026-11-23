@@ -44,10 +44,13 @@ function watchSink() {
 		preventScroll: opts?.preventScroll,
 	}));
 	const opts = { capture: true, passive: true };
+	// 触摸事件带上当时的根横滚位置：按住拖动的步骤以 touchend 的 x 算卡片实际平移（sink 宽 − x），不靠手指位移推算
 	for (const type of [
 		"click", "touchstart", "touchend", "touchcancel", "focusin", "popstate", "resize",
 	]) {
-		window.addEventListener(type, (event) => line(type, { target: label(event.target) }), opts);
+		window.addEventListener(
+			type, (event) => line(type, { target: label(event.target), x: window.scrollX }), opts,
+		);
 	}
 	window.visualViewport?.addEventListener(
 		"resize", () => line("visualViewport.resize"), { passive: true },
