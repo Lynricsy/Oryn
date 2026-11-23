@@ -79,9 +79,14 @@ function watchSink() {
 	window.visualViewport?.addEventListener("resize", later("vv.resize"), { passive: true });
 	window.visualViewport?.addEventListener("scroll", later("vv.scroll"), { passive: true });
 	window.addEventListener("focusin", () => sample("focusin"), { capture: true, passive: true });
+	// 只关心纵向：横向是下沉侧栏的开合，拖动时每帧都变。按纵向值有没有变化调度（含回到 0：纯根滚动复位时
+	// offsetTop 一直是 0，不会有 visualViewport.scroll，不记这一条最后一条采样就停在推走时的旧值）
+	let lastY = "0|0";
 	window.addEventListener("scroll", () => {
-		// 只关心纵向：横向是下沉侧栏的开合，拖动时每帧都变
-		if (window.scrollY !== 0 || window.visualViewport?.offsetTop) later("scroll")();
+		const y = `${window.scrollY}|${window.visualViewport?.offsetTop ?? 0}`;
+		if (y === lastY) return;
+		lastY = y;
+		later("scroll")();
 	}, { passive: true });
 	let lastBand;
 	window.addEventListener("scroll", () => {
