@@ -79,6 +79,12 @@ function MenuBody({
 	const subRef = useRef<HTMLDivElement>(null);
 	const hostRef = useRef<HTMLDivElement>(null);
 	const switchTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+	/**
+	 * 渲染后要把 DOM 焦点挪到哪个面板。`aria-activedescendant` 只能指向自己子树里的项，所以键盘落在哪个面板，
+	 * 焦点就得在哪个面板上：键盘进子菜单聚焦子面板，退回 / 子面板卸载时还给主菜单。菜单本来没有焦点
+	 * （鼠标触发，保住选区）时只有键盘进子菜单才会抢焦点。
+	 */
+	const focusNext = useRef<"main" | "sub" | null>(null);
 	/** 打开的子菜单：所属父项在扁平列表里的下标 */
 	const [sub, setSub] = useState<number | null>(null);
 	/** 键盘导航是否落在子菜单里（底部面板原地换页，打开子菜单即落在里面） */
@@ -103,10 +109,13 @@ function MenuBody({
 	const subItems = subRows.map((r) => r.item);
 
 	const cancelSwitch = () => clearTimeout(switchTimer.current);
+	const subFocused = () => !!subRef.current?.contains(document.activeElement);
 	const openSub = (index: number, viaKey: boolean) => {
 		cancelSwitch();
 		const children = items[index]?.children;
 		if (!children) return;
+		// 换父项会重挂子面板（key = sub），焦点原在子面板里的要跟过去
+		if (!sheet && (viaKey || subFocused())) focusNext.current = "sub";
 		setActive(index);
 		setSub(index);
 		setInSub(viaKey || sheet);
@@ -114,6 +123,7 @@ function MenuBody({
 	};
 	const closeSub = () => {
 		cancelSwitch();
+		if (subFocused()) focusNext.current = "main";
 		setSub(null);
 		setInSub(false);
 		setSubPos(null);
@@ -137,6 +147,7 @@ function MenuBody({
 	const hoverMain = (index: number) => {
 		const item = items[index];
 		if (!item) return;
+		if (subFocused()) panelRef.current?.focus({ preventScroll: true });
 		setInSub(false);
 		if (!item.disabled) setActive(index);
 		const target = item.children && !item.disabled ? index : null;
@@ -153,9 +164,19 @@ function MenuBody({
 	};
 	const enterSub = () => {
 		cancelSwitch();
+		// 菜单已有焦点（键盘触发）时焦点跟着指针进子面板；没有焦点时不抢
+		if (panelRef.current?.contains(document.activeElement))
+			subRef.current?.focus({ preventScroll: true });
 		setInSub(true);
 		if (sub !== null) setActive(sub);
 	};
+	useLayoutEffect(() => {
+		const target = focusNext.current;
+		focusNext.current = null;
+		if (target === "sub") subRef.current?.focus({ preventScroll: true });
+		else if (target === "main")
+			panelRef.current?.focus({ preventScroll: true });
+	});
 	const live = useRef({
 		items,
 		subItems,
@@ -434,13 +455,9 @@ function MenuBody({
 			)}
 		</Fragment>
 	));
-	const activeId = inSub
-		? subActive >= 0
-			? `${id}-s${subActive}`
-			: undefined
-		: active >= 0
-			? `${id}-${active}`
-			: undefined;
+	// 每个面板的 aria-activedescendant 只指向自己子树里的项（焦点随键盘在两个面板间移动）
+	const mainActiveId = active >= 0 ? `${id}-${active}` : undefined;
+	const subActiveId = subActive >= 0 ? `${id}-s${subActive}` : undefined;
 	if (sheet)
 		return (
 			<div
@@ -460,7 +477,7 @@ function MenuBody({
 					ref={panelRef}
 					role="menu"
 					tabIndex={-1}
-					aria-activedescendant={activeId}
+					aria-activedescendant={parent ? subActiveId : mainActiveId}
 					className="pop-in relative max-h-[70dvh] w-full overflow-y-auto rounded-t-xl bg-panel p-2 pb-safe shadow-xl outline-none ring-1 ring-[var(--glass-line)]"
 				>
 					{parent ? (
@@ -488,7 +505,7 @@ function MenuBody({
 				ref={panelRef}
 				role="menu"
 				tabIndex={-1}
-				aria-activedescendant={activeId}
+				aria-activedescendant={mainActiveId}
 				data-testid="context-menu"
 				data-quote-affordance=""
 				// 玻璃底画在不滚动的外壳上、列表在内层滚动：外壳本身滚动时 ::before 的模糊底会跟着滚走
@@ -508,14 +525,16 @@ function MenuBody({
 					key={sub}
 					ref={subRef}
 					role="menu"
+					tabIndex={-1}
 					aria-labelledby={`${id}-${sub}`}
+					aria-activedescendant={subActiveId}
 					data-testid="context-submenu"
 					data-quote-affordance=""
 					className="glass pop-in fixed z-50 flex min-w-44 max-w-72 flex-col rounded-lg shadow-lg outline-none"
+					// 首帧位置由 useLayoutEffect 在绘制前改正；不能先藏起来（visibility: hidden 的元素拿不到焦点）
 					style={{
 						left: subPos?.left ?? 0,
 						top: subPos?.top ?? 0,
-						visibility: subPos ? undefined : "hidden",
 						maxHeight: "calc(100dvh - 16px)",
 					}}
 					onMouseEnter={enterSub}

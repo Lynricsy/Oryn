@@ -28,10 +28,14 @@ function key(k: string) {
 	fireEvent.keyDown(document.activeElement ?? document.body, { key: k });
 }
 
+/** 读屏跟随的当前项：焦点所在面板的 aria-activedescendant（必须指向该面板自己子树里的项） */
 function activeKey(): string | null {
-	const menu = screen.getByTestId("context-menu");
-	const id = menu.getAttribute("aria-activedescendant");
-	return id ? (document.getElementById(id)?.dataset.menuKey ?? null) : null;
+	const panel = document.activeElement as HTMLElement;
+	expect(panel.getAttribute("role")).toBe("menu");
+	const id = panel.getAttribute("aria-activedescendant");
+	const el = id ? document.getElementById(id) : null;
+	if (el) expect(panel.contains(el)).toBe(true);
+	return el?.dataset.menuKey ?? null;
 }
 
 describe("ContextMenuHost", () => {
@@ -98,8 +102,18 @@ describe("ContextMenuHost", () => {
 		]);
 		key("ArrowRight");
 		expect(screen.getByRole("menuitem", { name: "inner" })).toBeTruthy();
+		// 键盘进子菜单：焦点挪到子面板，活动项挂在子面板上；主菜单只指向自己的父项
+		expect(document.activeElement).toBe(screen.getByTestId("context-submenu"));
 		expect(activeKey()).toBe("inner");
+		const mainId = screen
+			.getByTestId("context-menu")
+			.getAttribute("aria-activedescendant");
+		expect(mainId && document.getElementById(mainId)?.dataset.menuKey).toBe(
+			"more",
+		);
 		key("ArrowLeft");
+		expect(document.activeElement).toBe(screen.getByTestId("context-menu"));
+		expect(activeKey()).toBe("more");
 		expect(screen.getByRole("menuitem", { name: "more" })).toBeTruthy();
 		expect(screen.queryByRole("menuitem", { name: "inner" })).toBeNull();
 		fireEvent.click(screen.getByRole("menuitem", { name: "more" }));
@@ -128,6 +142,8 @@ describe("ContextMenuHost", () => {
 			const more = screen.getByRole("menuitem", { name: "more" });
 			fireEvent.mouseEnter(more);
 			expect(more).toHaveAttribute("aria-expanded", "true");
+			// 悬停打开不挪焦点：仍在主菜单
+			expect(document.activeElement).toBe(screen.getByTestId("context-menu"));
 			// 主菜单项都还在，子菜单是旁边的另一个面板
 			expect(screen.getByRole("menuitem", { name: "plain" })).toBeTruthy();
 			const submenu = screen.getByTestId("context-submenu");
