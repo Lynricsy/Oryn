@@ -5611,6 +5611,11 @@
 			"files": "Files"
 		}
 	},
+	"markdownTable": {
+		"copyCsv": "Copy as CSV",
+		"copyMarkdown": "Copy as Markdown table",
+		"copyImage": "Copy as image"
+	},
 	"contextMenu": {
 		"explain": "Explain",
 		"ask": "Ask about this…",

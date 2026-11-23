@@ -910,7 +910,8 @@ export function SubagentDialog({
 			<ErrorText error={error ?? msgs.error} />
 			{msgs.isLoading && <Spinner />}
 			<TranscriptContext.Provider value={ctx}>
-				<div className="flex flex-col gap-2">
+				{/* inline-size 容器：助手正文表格的伸出宽度（.md-wide 的 100cqw）以这里为界，不按视口算 */}
+				<div className="@container flex flex-col gap-2">
 					{messages
 						.filter((m) => m.role !== "toolResult")
 						.map((m, i) => (

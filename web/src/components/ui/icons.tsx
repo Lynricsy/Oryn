@@ -67,6 +67,7 @@ import { Eye } from "@phosphor-icons/react/dist/csr/Eye";
 import { FastForward } from "@phosphor-icons/react/dist/csr/FastForward";
 import { File } from "@phosphor-icons/react/dist/csr/File";
 import { FileCode } from "@phosphor-icons/react/dist/csr/FileCode";
+import { FileCsv } from "@phosphor-icons/react/dist/csr/FileCsv";
 import { FileImage } from "@phosphor-icons/react/dist/csr/FileImage";
 import { FilePlus } from "@phosphor-icons/react/dist/csr/FilePlus";
 import { FileText } from "@phosphor-icons/react/dist/csr/FileText";
@@ -114,6 +115,7 @@ import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass"
 import { MagnifyingGlassMinus } from "@phosphor-icons/react/dist/csr/MagnifyingGlassMinus";
 import { MagnifyingGlassPlus } from "@phosphor-icons/react/dist/csr/MagnifyingGlassPlus";
 import { MapTrifold } from "@phosphor-icons/react/dist/csr/MapTrifold";
+import { MarkdownLogo } from "@phosphor-icons/react/dist/csr/MarkdownLogo";
 import { Megaphone } from "@phosphor-icons/react/dist/csr/Megaphone";
 import { Memory } from "@phosphor-icons/react/dist/csr/Memory";
 import { Minus } from "@phosphor-icons/react/dist/csr/Minus";
@@ -246,6 +248,8 @@ const ICONS = {
 	fileCode: FileCode,
 	fileText: FileText,
 	fileImage: FileImage,
+	fileCsv: FileCsv,
+	markdown: MarkdownLogo,
 	branch: GitBranch,
 	diff: GitDiff,
 	/** 项目仓库（M24）：提交 / 标签 / README */

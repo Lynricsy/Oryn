@@ -137,10 +137,49 @@
 	border-radius: 0;
 }
 /* 表格：圆角外框、表头 --raised、首列加粗、只留行间发丝线 */
+/*
+ * 宽度：外层 flex 居中，表格框取内容所需宽度，夹在 [正文列宽, --md-table-max] 之间。
+ * justify-content: center 下超出正文列的部分向两侧对称伸出；--md-table-max 由外层给（转录的助手正文按行宽给），
+ * 不给时等于正文列宽，即不伸出。再放不下时由 .md-table 横向滚动。
+ */
+.md-table-wrap {
+	display: flex;
+	justify-content: center;
+	margin: 0.6em 0;
+}
+.md-table-box {
+	position: relative;
+	flex: none;
+	width: max-content;
+	min-width: 100%;
+	max-width: var(--md-table-max, 100%);
+	outline: none;
+}
+/* 允许表格伸出正文列：最宽到最近的 inline-size 容器（转录行）留出两侧各 1rem，再封顶 72rem */
+.md-wide {
+	--md-table-max: min(calc(100cqw - 2rem), 72rem);
+}
+/* 复制按钮：压在表头行右端；悬停或聚焦（触屏点按）时显出 */
+.md-table-tools {
+	position: absolute;
+	top: 5px;
+	right: 6px;
+	display: flex;
+	gap: 4px;
+	opacity: 0;
+	visibility: hidden;
+	transition:
+		opacity 150ms var(--ease),
+		visibility 150ms;
+}
+.md-table-box:hover .md-table-tools,
+.md-table-box:focus-within .md-table-tools {
+	opacity: 1;
+	visibility: visible;
+}
 .md-table {
 	/* 滚动阴影的颜色（深色主题加深，不能用 --text：深色下那是一道亮光）；两侧遮罩用纸面色，随内容滚动（local） */
 	--md-table-shade: oklch(0 0 0 / 0.16);
-	margin: 0.6em 0;
 	border: 1px solid var(--line);
 	border-radius: var(--r-lg);
 	overflow-x: auto;

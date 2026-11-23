@@ -1201,7 +1201,12 @@ function AssistantMessage({
 				key={
 					b.type === "toolCall" && typeof b.id === "string" && b.id ? b.id : key
 				}
-				className={b.type === "text" && streaming ? "stream-caret" : undefined}
+				// 助手正文里的表格可伸出正文列（宽度按转录行，见 .md-wide）
+				className={
+					b.type === "text"
+						? `md-wide${streaming ? " stream-caret" : ""}`
+						: undefined
+				}
 				data-tool-call-id={
 					b.type === "toolCall" && typeof b.id === "string" ? b.id : undefined
 				}

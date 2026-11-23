@@ -1,6 +1,7 @@
-import { render } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import i18n from "../../i18n";
 import { Markdown, type RelativeUrls } from "./Markdown";
 
 describe("Markdown", () => {
@@ -37,6 +38,33 @@ describe("Markdown", () => {
 		const ol = container.querySelector("ol");
 		expect(ol?.style.counterReset).toBe("md-ol 2");
 		expect(ol?.querySelectorAll("li")).toHaveLength(2);
+	});
+
+	it("表格复制：Markdown 切原文（去掉列表缩进、保留行内格式），CSV 按 RFC 4180 加引号、<br> 记作换行", async () => {
+		const writeText = vi.fn(async (_: string) => {});
+		Object.defineProperty(navigator, "clipboard", {
+			configurable: true,
+			value: { writeText },
+		});
+		const table = '| 名 | 说明 |\n   | - | - |\n   | **a** | x, "y"<br>z |';
+		render(<Markdown document text={`1. 列表\n\n   ${table}`} />);
+		fireEvent.click(
+			screen.getByRole("button", {
+				name: i18n.t("markdownTable.copyMarkdown"),
+			}),
+		);
+		await waitFor(() =>
+			expect(writeText).toHaveBeenLastCalledWith(
+				'| 名 | 说明 |\n| - | - |\n| **a** | x, "y"<br>z |',
+			),
+		);
+		fireEvent.click(
+			screen.getByRole("button", { name: i18n.t("markdownTable.copyCsv") }),
+		);
+		await waitFor(() =>
+			expect(writeText).toHaveBeenLastCalledWith('名,说明\na,"x, ""y""\nz"'),
+		);
+		Reflect.deleteProperty(navigator, "clipboard");
 	});
 
 	it("文档首行的 YAML frontmatter 渲染成字段网格，不变成 setext 标题", () => {

@@ -45,6 +45,7 @@ import { locateEntry, runSideAsk, sideAskBusy } from "../../state/side-ask";
 import { THEME_EVENT } from "../../state/theme";
 import { CopyButton } from "../ui/CopyButton";
 import { FrontmatterFields } from "./Frontmatter";
+import { MarkdownSourceContext, MdTable } from "./Table";
 import "./markdown.css";
 
 type PluggableList = NonNullable<Options["remarkPlugins"]>;
@@ -379,11 +380,9 @@ function makeComponents(streaming: boolean): Components {
 		},
 		a: MdLink,
 		img: MdImage,
-		// 表格外包一层圆角描边容器，窄屏横向滚动
-		table: ({ children }) => (
-			<div className="md-table">
-				<table>{children}</table>
-			</div>
+		// 表格外包圆角描边容器（窄屏横向滚动，宽屏可伸出正文列），悬停时出复制按钮
+		table: ({ children, node }) => (
+			<MdTable position={node?.position}>{children}</MdTable>
 		),
 		// 有序列表编号用 CSS 计数器画成小方块；`start` 要落到计数器起点上
 		ol: ({ start, children }) => (
@@ -500,13 +499,15 @@ export const Markdown = memo(function Markdown({
 		>
 			{doc && <FrontmatterFields fields={doc.fields} />}
 			<RelativeUrlContext.Provider value={relativeTo ?? null}>
-				<ReactMarkdown
-					remarkPlugins={remarkPlugins}
-					rehypePlugins={rehypePlugins}
-					components={streaming ? STREAMING_COMPONENTS : STATIC_COMPONENTS}
-				>
-					{source}
-				</ReactMarkdown>
+				<MarkdownSourceContext.Provider value={source}>
+					<ReactMarkdown
+						remarkPlugins={remarkPlugins}
+						rehypePlugins={rehypePlugins}
+						components={streaming ? STREAMING_COMPONENTS : STATIC_COMPONENTS}
+					>
+						{source}
+					</ReactMarkdown>
+				</MarkdownSourceContext.Provider>
 			</RelativeUrlContext.Provider>
 		</div>
 	);

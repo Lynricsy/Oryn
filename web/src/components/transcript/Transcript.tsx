@@ -1027,8 +1027,9 @@ export const Transcript = memo(function Transcript({
 						data-entry-id={item?.kind === "message" ? item.entryId : undefined}
 						data-live={item?.kind === "message" && item.live ? "1" : undefined}
 						ref={virtualizer.measureElement}
-						// 行内菜单（消息操作）会溢出到相邻行：悬停 / 聚焦时把本行抬到兄弟行之上
-						className="absolute left-0 w-full px-3 focus-within:z-10 hover:z-10 sm:px-5"
+						// 行内菜单（消息操作）会溢出到相邻行：悬停 / 聚焦时把本行抬到兄弟行之上；
+						// 行是 inline-size 容器：助手正文的表格按行宽（100cqw）伸出正文列
+						className="@container absolute left-0 w-full px-3 focus-within:z-10 hover:z-10 sm:px-5"
 						style={{
 							transform: `translateY(${v.start}px)`,
 							// 行间距只来自本行上边距（见 rowGaps）；末尾的 footer 行再留一点底

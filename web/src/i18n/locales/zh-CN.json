@@ -5611,6 +5611,11 @@
 			"files": "文件"
 		}
 	},
+	"markdownTable": {
+		"copyCsv": "复制为 CSV",
+		"copyMarkdown": "复制为 Markdown 表格",
+		"copyImage": "复制为图片"
+	},
 	"contextMenu": {
 		"explain": "解释",
 		"ask": "就此提问…",
