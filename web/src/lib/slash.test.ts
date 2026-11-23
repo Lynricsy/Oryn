@@ -480,6 +480,21 @@ describe("输入框参数灰字", () => {
 		expect(inlineArgHint("add foo https://x", undefined, subs)).toBeUndefined();
 		expect(inlineArgHint("list ", undefined, subs)).toBeUndefined();
 	});
+	it("用法里带空格的参数组（omp 的 /mcp add）整组保留；开始输入选项后不再推断", () => {
+		const mcp = [
+			{
+				name: "add",
+				usage: "<name> [--scope project|user] [--url <url>] [-- <command...>]",
+			},
+		];
+		expect(inlineArgHint("add demo ", undefined, mcp)).toBe(
+			"[--scope project|user] [--url <url>] [-- <command...>]",
+		);
+		expect(inlineArgHint("add demo --scope ", undefined, mcp)).toBeUndefined();
+		expect(
+			inlineArgHint("add demo --scope user ", undefined, mcp),
+		).toBeUndefined();
+	});
 });
 
 describe("模型选择器", () => {

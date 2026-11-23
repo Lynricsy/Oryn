@@ -175,10 +175,30 @@ export function findCommand(
 	return commands.find((c) => c.name === name || c.aliases?.includes(name));
 }
 
+/** 把用法按顶层空格切成参数组：`[]` / `<>` 里的空格不切（`[--scope project|user]`、`[--url <url>]` 各算一组）。 */
+function usageGroups(usage: string): string[] {
+	const groups: string[] = [];
+	let depth = 0;
+	let current = "";
+	for (const ch of usage) {
+		if (ch === " " && depth === 0) {
+			if (current) groups.push(current);
+			current = "";
+			continue;
+		}
+		if (ch === "[" || ch === "<") depth++;
+		else if ((ch === "]" || ch === ">") && depth > 0) depth--;
+		current += ch;
+	}
+	if (current) groups.push(current);
+	return groups;
+}
+
 /**
  * 输入框里命令参数的灰字提示（规则同 omp TUI 的 `getInlineHint`），`args` 是命令名后空格之后的文本：
  * - 还没输入参数：整条参数提示（`hint`）；
- * - 命令带子命令：正在输入子命令名时补出名字剩余部分与它的用法；子命令已输入完，按已输入的参数个数给出用法里剩下的部分；
+ * - 命令带子命令：正在输入子命令名时补出名字剩余部分与它的用法；子命令已输入完，按已输入的参数个数给出用法里剩下的参数组；
+ *   已输入 `-` 开头的选项时不再推断（选项与取值的对应关系从用法里推不出来，宁可不提示也不给残缺的提示）；
  * - 其余情况不提示。
  */
 export function inlineArgHint(
@@ -204,7 +224,9 @@ export function inlineArgHint(
 	if (!sub?.usage) return undefined;
 	const typed = trimmed.slice(space + 1).trim();
 	if (typed === "") return sub.usage;
-	const remaining = sub.usage.split(" ").slice(typed.split(/\s+/).length);
+	const words = typed.split(/\s+/);
+	if (words.some((w) => w.startsWith("-"))) return undefined;
+	const remaining = usageGroups(sub.usage).slice(words.length);
 	if (remaining.length === 0) return undefined;
 	// 光标紧贴着刚输入的参数时，与剩下的用法之间隔一个空格
 	return `${/\s$/.test(args) ? "" : " "}${remaining.join(" ")}`;
