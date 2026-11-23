@@ -17,7 +17,10 @@ import {
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Thread } from "../../api/client";
+import { installContextMenu } from "../../lib/context-menu/dispatch";
+import { closeContextMenu } from "../../lib/context-menu/store";
 import { indexStore } from "../../state/stores";
+import { ContextMenuHost } from "../ui/ContextMenu";
 import { AssistantPane } from "./AssistantPane";
 
 function th(id: string, p: Partial<Thread> = {}): Thread {
@@ -345,5 +348,47 @@ describe("AssistantPane", () => {
 		expect(
 			within(pane()).queryByRole("button", { name: "归档「归档过的」" }),
 		).toBeNull();
+	});
+
+	it("右键菜单：主线只有打开 / 已读 / 复制链接；对话行另有改名、归档、删除，归档走侧栏同一路径", async () => {
+		const off = installContextMenu();
+		try {
+			indexStore
+				.getState()
+				.upsertThread(
+					th("M-main", { title: "Main", main: true, lastMessageAt: 60 }),
+				);
+			mount("/assistant/A-old");
+			render(<ContextMenuHost />);
+			const menuItems = () =>
+				within(screen.getByTestId("context-menu"))
+					.getAllByRole("menuitem")
+					.map((b) => b.textContent);
+			fireEvent.contextMenu(mainRow(), { clientX: 10, clientY: 10 });
+			expect(menuItems()).toEqual([
+				"打开",
+				"在新标签页打开",
+				"标为未读",
+				"复制链接",
+			]);
+			act(() => closeContextMenu());
+			const old = convLinks().find(
+				(a) => a.getAttribute("href") === "/assistant/A-old",
+			) as HTMLElement;
+			fireEvent.contextMenu(old, { clientX: 10, clientY: 10 });
+			for (const name of ["打开", "标为未读", "归档", "改名", "删除对话"])
+				expect(menuItems()).toContain(name);
+			fireEvent.click(screen.getByRole("menuitem", { name: "归档" }));
+			// 归档当前对话：与行尾按钮一样回 landing
+			await waitFor(() => expect(where()).toBe("/assistant"));
+			expect(
+				requests
+					.filter((r) => r.method === "PATCH")
+					.map((r) => [r.url.pathname, r.body]),
+			).toEqual([["/api/v1/threads/A-old", { archived: true }]]);
+		} finally {
+			off();
+			act(() => closeContextMenu());
+		}
 	});
 });

@@ -5397,7 +5397,10 @@
 	"assistantPane": {
 		"empty": "还没有对话",
 		"archiveOne": "归档「{{title}}」",
-		"computer": "助手的电脑"
+		"computer": "助手的电脑",
+		"delete": "删除对话",
+		"deleteConfirm": "删除这个对话？",
+		"deleteConfirmBody": "对话记录会一并删除，无法恢复。"
 	},
 	"projectsPane": {
 		"overview": "总览",

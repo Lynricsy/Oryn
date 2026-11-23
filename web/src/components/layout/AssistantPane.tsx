@@ -4,8 +4,9 @@
  * 而索引里还没有主线时，调一次 `GET assistant/main` 让服务端建出来。其下是「新对话」（协调宿主不可用时禁用，下面一条警告）；
  * 会话行 = 状态图标 + 标题卡图标（有则显示）+ 标题 + 未读点或相对时间，悬停 / 聚焦时行尾出现归档按钮；末尾折叠组「已归档」展开才拉取。
  * 链接的 textContent 只等于标题（时间走 `data-time` 伪元素）。主线不在对话列表里。主线行下面是「助手的电脑」（M19，`/assistant/computer`）。
+ * 主线行与各对话行（含已归档）都有右键菜单（`assistantRowGroups`）；归档一律走侧栏宿主的 `archive`，行归档后即卸载，不能用行自己的。
  */
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink, useNavigate } from "react-router";
@@ -20,10 +21,12 @@ import {
 	useAssistantConversations,
 	useAssistantMain,
 } from "../../lib/assistant-conversations";
+import { useContextTarget } from "../../lib/context-menu/registry";
 import { formatRelative } from "../../lib/format";
 import { parseTitleCard } from "../../lib/title";
 import { useIndex } from "../../state/stores";
 import { AssistantMark } from "../assistant/AssistantMark";
+import { assistantRowGroups } from "../thread/thread-row-menu";
 import { Callout } from "../ui/data";
 import { Icon } from "../ui/icons";
 import { describeError, IconButton, ThreadStateIcon } from "../ui/primitives";
@@ -39,25 +42,51 @@ import {
 	useNow,
 } from "./pane-parts";
 
+type Archive = (threadId: string) => Promise<void>;
+
+/** 对话行（含主线）的右键菜单登记，挂在行链接上。 */
+function useRowMenu(thread: Thread, archive: Archive) {
+	const { t } = useTranslation();
+	const navigate = useNavigate();
+	const qc = useQueryClient();
+	return useContextTarget<HTMLAnchorElement>({
+		items: () =>
+			assistantRowGroups(thread, {
+				navigate,
+				t,
+				archive,
+				refreshArchived: () =>
+					void qc.invalidateQueries({ queryKey: archivedAssistantKey }),
+			}),
+	});
+}
+
 function ConversationRow({
 	thread,
 	now,
-	onArchive,
+	archive,
 }: {
 	thread: Thread;
 	now: number;
-	/** 有则行尾出现归档按钮 */
-	onArchive?: (threadId: string) => void;
+	archive: Archive;
 }): ReactNode {
 	const { t } = useTranslation();
-	const archivable = onArchive !== undefined;
+	const ctxRef = useRowMenu(thread, archive);
+	// 已归档的行不出归档按钮（取消归档在右键菜单里）
+	const archivable = !thread.archivedAt;
 	const card = parseTitleCard(thread.title);
 	const title = card.text || t("assistant.untitled");
 	const to = `/assistant/${thread.id}`;
 	const stamp = formatRelative(thread.lastMessageAt ?? thread.updatedAt, now);
 	return (
 		<div className="group/row relative">
-			<NavLink to={to} onClick={closeOnCompact} className={NAV_ROW}>
+			<NavLink
+				ref={ctxRef}
+				data-ctx-touch=""
+				to={to}
+				onClick={closeOnCompact}
+				className={NAV_ROW}
+			>
 				<ThreadStateIcon state={thread.state} size={14} />
 				{card.icon && <CardGlyph icon={card.icon} />}
 				<span
@@ -82,7 +111,7 @@ function ConversationRow({
 					size={13}
 					label={t("assistantPane.archiveOne", { title })}
 					className="pointer-events-none absolute top-1 right-1 bg-[var(--sb-hover)] opacity-0 focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/row:pointer-events-auto group-hover/row:opacity-100"
-					onClick={() => onArchive(thread.id)}
+					onClick={() => void archive(thread.id).catch(() => undefined)}
 				/>
 			)}
 		</div>
@@ -90,12 +119,23 @@ function ConversationRow({
 }
 
 /** 主线的置顶行：助手的头像与名字，未读时是未读点，否则是最近活动的相对时间。 */
-function MainRow({ thread, now }: { thread: Thread; now: number }): ReactNode {
+function MainRow({
+	thread,
+	now,
+	archive,
+}: {
+	thread: Thread;
+	now: number;
+	archive: Archive;
+}): ReactNode {
 	const { t } = useTranslation();
 	const { name } = useAssistantIdentity();
+	const ctxRef = useRowMenu(thread, archive);
 	const stamp = formatRelative(thread.lastMessageAt ?? thread.updatedAt, now);
 	return (
 		<NavLink
+			ref={ctxRef}
+			data-ctx-touch=""
 			to={`/assistant/${thread.id}`}
 			onClick={closeOnCompact}
 			data-testid="assistant-main-row"
@@ -123,7 +163,13 @@ function MainRow({ thread, now }: { thread: Thread; now: number }): ReactNode {
 }
 
 /** 已归档的助手对话：`GET threads` 缺省只列工作线程，这里显式带 `kind=assistant`。 */
-function ArchivedConversations({ now }: { now: number }): ReactNode {
+function ArchivedConversations({
+	now,
+	archive,
+}: {
+	now: number;
+	archive: Archive;
+}): ReactNode {
 	const { t } = useTranslation();
 	const [open, setOpen] = useState(false);
 	const archived = useQuery({
@@ -146,7 +192,7 @@ function ArchivedConversations({ now }: { now: number }): ReactNode {
 			onOpenChange={setOpen}
 		>
 			{list?.map((th) => (
-				<ConversationRow key={th.id} thread={th} now={now} />
+				<ConversationRow key={th.id} thread={th} now={now} archive={archive} />
 			))}
 			{list?.length === 0 && (
 				<p className="px-3 py-1 text-faint text-xs">{t("sidebar.empty")}</p>
@@ -193,7 +239,7 @@ export function AssistantPane(): ReactNode {
 	};
 	return (
 		<div data-testid="sidebar-assistant" className={PANE_SCROLL}>
-			{main && <MainRow thread={main} now={now} />}
+			{main && <MainRow thread={main} now={now} archive={archive} />}
 			<NavLink
 				to="/assistant/computer"
 				onClick={closeOnCompact}
@@ -236,7 +282,7 @@ export function AssistantPane(): ReactNode {
 						key={th.id}
 						thread={th}
 						now={now}
-						onArchive={(id) => void archive(id).catch(() => undefined)}
+						archive={archive}
 					/>
 				))}
 				{conversations.length === 0 && (
@@ -245,7 +291,7 @@ export function AssistantPane(): ReactNode {
 					</p>
 				)}
 			</div>
-			<ArchivedConversations now={now} />
+			<ArchivedConversations now={now} archive={archive} />
 		</div>
 	);
 }

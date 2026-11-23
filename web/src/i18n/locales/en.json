@@ -5397,7 +5397,10 @@
 	"assistantPane": {
 		"empty": "No conversations yet",
 		"archiveOne": "Archive “{{title}}”",
-		"computer": "Assistant's computer"
+		"computer": "Assistant's computer",
+		"delete": "Delete conversation",
+		"deleteConfirm": "Delete this conversation?",
+		"deleteConfirmBody": "Its transcript is deleted too and can't be recovered."
 	},
 	"projectsPane": {
 		"overview": "Overview",
