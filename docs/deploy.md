@@ -1054,7 +1054,9 @@ ORYN_OWNERMEM_EVAL_DECIDE_KEY=<判断模型 key> ORYN_OWNERMEM_EVAL_BANK=oryn-ow
 
 ## 16. DevelopServerUS 本机生产实例
 
-初始部署源码为 `def2968507297a0b38fec9197af955f5c81a262e`；Gemini 记忆升级的控制面与重排适配器从提交 `22b4f6ac88` 构建，provider 与 Orb 镜像保持初始版本。生产产物在 `/root/Oryn/src` 独立克隆构建，未覆盖本仓库的开发二进制、数据、服务或 `oryn-orb:dev` 镜像。
+当前版本为 `v0.1.0-rc.6-2-gcf9af5e3`（提交 `cf9af5e34e`，Core `oryn-v19.0.1-4`），控制面、provider、重排适配器与 Orb 镜像 `oryn-orb:prod-cf9af5e3` 同版本；镜像以按 ID 钉定的 `oryn-orb:prod-base-6374201aae3e`（`oryn-orb:dev` 在 `7afe3505` 的构建）为底，只覆盖 `omp`、`orbd`、`oryn` 与冒烟脚本。生产产物在 `/root/Oryn/src` 独立克隆构建，未覆盖本仓库的开发二进制、数据、服务或 `oryn-orb:dev` 镜像。升级前已存在的 Orb 仍用旧镜像 `oryn-orb:prod-def2968`，按旧版 orbd 降级运行，删除重建后才换新镜像。
+
+升级流程：在 `/root/Oryn/src` 检出目标提交并放好与 `core/source.json` 哈希一致的 `build/core/x64/omp`，改 `ops/build-production.sh` 头部的提交、版本、基础镜像与目标镜像，运行它（只构建与离线冒烟，不碰运行中的服务）；再把 `etc/provider.yaml` 的 `image` 改为新镜像，运行 `ops/install-production.sh`：停控制面与 provider，把 `data/` 整目录归档并备份旧二进制、Core 与配置到 `backups/pre-<版本>/`，安装后启动，数据库迁移随 orynd 启动自动执行。回滚即反向还原这三样。
 
 ### 入口与端口
 
@@ -1071,7 +1073,7 @@ ORYN_OWNERMEM_EVAL_DECIDE_KEY=<判断模型 key> ORYN_OWNERMEM_EVAL_BANK=oryn-ow
 
 AliDNS 的 `oryn`、`oyrn`、`*.oryn` 均仅使用 default 线路 A 记录指向 `64.20.45.163`，TTL 600；不配置国内分流。1Panel 站点 12 承载主域名及通配域名，站点 13 承载别名。证书 5 覆盖三个名称，启用自动续期；面板每六小时检查，剩余有效期不足 30 天时续签并自动发布到绑定站点。部署时已演练一次重新签发和双站点自动发布。
 
-反代复用现有 OpenResty，不新建或重启反代容器。配置在 `/opt/1panel/www/conf.d/oryn.ling.plus.conf` 与 `/opt/1panel/www/sites/oryn.ling.plus/proxy/root.conf`：WebSocket、Host 透传、3600 秒超时、600 MiB 上传上限、请求与响应禁缓冲、禁缓存、关闭 gzip。未复制 Sub2API 专属接口拦截与国内分流规则。
+反代复用现有 OpenResty，不新建或重启反代容器。配置在 `/opt/1panel/www/conf.d/oryn.ling.plus.conf` 与 `/opt/1panel/www/sites/oryn.ling.plus/proxy/root.conf`：WebSocket、Host 透传、3600 秒超时、600 MiB 上传上限、请求与响应禁缓冲、禁缓存、关闭 gzip。同目录的 `git.conf` 为托管仓库 `/git/` 单独放开请求体上限（`client_max_body_size 0`），其余与 `root.conf` 相同；改动后先 `docker exec OpenResty openresty -t` 再 `-s reload`。这两个文件是手写的，在 1Panel 面板里重新保存该站点的反代设置可能覆盖它们。未复制 Sub2API 专属接口拦截与国内分流规则。
 
 ### 运行目录与维护
 
@@ -1082,9 +1084,9 @@ AliDNS 的 `oryn`、`oyrn`、`*.oryn` 均仅使用 default 线路 A 记录指向
 | `cli/credentials.json` | root-only 的「本机生产运维」设备凭据；与开发 CLI 登录状态分离 |
 | `systemd/` | 生产服务单元，链接到 `/etc/systemd/system/` |
 | `hindsight/data/` | PostgreSQL bind mount，无新增命名数据卷 |
-| `backups/gemini-memory-before/` | 切换 Gemini 前的控制面在线备份、Hindsight 导出及旧部署配置，均受限访问 |
+| `backups/gemini-memory-before/`、`backups/pre-<版本>/` | 切换 Gemini 前的控制面在线备份、Hindsight 导出及旧部署配置；每次升级前的 `data/` 归档、旧二进制、旧 Core 与配置。均受限访问 |
 | `hindsight/.env`、`hindsight/db.env` | 分离保存中转密钥与数据库密码，均为 0600 |
-| `ops/` | 构建清单、网络脚本、无密钥 DNS 回滚记录及 TLS 验收证据 |
+| `ops/` | 构建与安装脚本、构建清单、网络脚本、无密钥 DNS 回滚记录及 TLS 验收证据 |
 
 以下命令只操作生产实例：
 
