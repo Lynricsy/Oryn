@@ -55,6 +55,7 @@ Linux 运行时依赖：WebKitGTK 4.1、GTK 3、librsvg，托盘需要 `libayata
 - **拉伸**：Windows / Linux 去掉系统装饰后仍可拖窗口四边与四角改变大小（Tauri 在窗口边缘保留了约 5px 的拉伸区）。
 - **关闭**：自绘的关闭按钮与系统关闭完全一样，仍遵守「关闭窗口时隐藏到托盘」。
 - **全屏时**自绘按钮隐藏；**窗口失焦时**自绘按钮变淡。macOS 全屏时系统收起红绿灯，分隔线立即淡出，侧栏品牌区用 transform 平移到红绿灯原来的位置（260ms、`--ease`），退出全屏时平移回来：进入全屏延后 180ms 再走（壳报告全屏时系统的全屏过渡刚开始，先让红绿灯随标题栏淡出），退出不延后（红绿灯在系统退出过渡结束时才出现，品牌区早已让出位置）。退出全屏时分隔线等品牌区回位后（260ms）再淡入。减少动效时直接切换。侧栏收起时页头左端的让位在全屏时直接收起。
+- macOS 26 起主窗口挂了一个空的 unified 工具栏（换上大圆角外框）。全屏时系统会把它连同标题栏放进全屏工具栏窗口，以不透明的条带常驻在菜单栏下方、盖住页面顶部，所以壳在进入全屏前隐藏工具栏，退出全屏后再显示（事件日志 `window.toolbar`）。
 - 只在桌面 App 里生效：浏览器和手机 App 里没有窗口按钮，留白也不变。页面靠壳注入的 `__ORYN_HOST__.chrome`（`platform`、`controls` = `native-left` / `custom-left` / `custom-right` / `none`、`buttons`、`inset`）判断，宿主协议版本（bridge）为 3；最大化、全屏、聚焦变化由壳经 `window` 事件推给页面。窗口操作只有一个宿主命令 `host_window`（`state` / `minimize` / `toggleMaximize` / `close` / `startDrag`），连接页（`capabilities/launcher-desktop.json`，只在桌面平台）与远程页面都只多这一项权限，没有开放任何 `core:window:*`。
 - 窗口状态插件不再保存「是否有装饰」：老版本存下的设置不会把系统标题栏带回来。
 

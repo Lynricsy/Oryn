@@ -11,6 +11,8 @@
 //! - macOS ≥ 26 再给主窗口挂一个空的 unified `NSToolbar`：只有标题栏的窗口外框圆角约 16，挂了 unified 工具栏的约 26
 //!   （WWDC25「Build an AppKit app with the new design」），页面卡片按 `chrome.radius` 做同心圆角；
 //!   工具栏下的发丝分隔线去掉。临时窗口同样挂上，量到的就是带工具栏时的按钮位置。
+//!   全屏时 AppKit 把工具栏连同标题栏搬进全屏工具栏窗口，常驻在菜单栏下方、不透明，盖住页面顶部一条，
+//!   所以进全屏前把主窗口工具栏设为不可见，退出全屏后再显示（`mac::watch_fullscreen`）。
 //! - Windows：`decorations: false`，页面在右上自绘 最小化 / 最大化（还原）/ 关闭。
 //! - Linux：同 Windows；按 GTK 的 `gtk-decoration-layout`（GNOME 由 `org.gnome.desktop.wm.preferences button-layout`
 //!   同步过来）决定左右与顺序，读不到或一个按钮都没有时放右侧。
@@ -324,13 +326,20 @@ pub fn attach_toolbar(w: &WebviewWindow) {
 /// AppKit 部分：量红绿灯、挂工具栏。纯计算都在外面（[`calibrate_y`] 等），这里只做调用与测量。
 #[cfg(target_os = "macos")]
 mod mac {
+    use std::ptr::NonNull;
+    use std::sync::Once;
+
+    use block2::RcBlock;
     use objc2::rc::Retained;
     use objc2::MainThreadMarker;
     use objc2_app_kit::{
         NSBackingStoreType, NSButton, NSTitlebarSeparatorStyle, NSToolbar, NSView, NSWindow,
-        NSWindowButton, NSWindowStyleMask, NSWindowTitleVisibility, NSWindowToolbarStyle,
+        NSWindowButton, NSWindowDidExitFullScreenNotification, NSWindowStyleMask,
+        NSWindowTitleVisibility, NSWindowToolbarStyle, NSWindowWillEnterFullScreenNotification,
     };
-    use objc2_foundation::{NSPoint, NSProcessInfo, NSRect, NSSize, NSString};
+    use objc2_foundation::{
+        NSNotification, NSNotificationCenter, NSPoint, NSProcessInfo, NSRect, NSSize, NSString,
+    };
     use serde_json::json;
     use tauri::WebviewWindow;
 
@@ -359,7 +368,51 @@ mod mac {
         // SAFETY: Tauri 给的是这个（刚建好、仍存活的）窗口的 NSWindow 指针，只在主线程上临时借用
         let window = unsafe { &*ptr.cast::<NSWindow>() };
         attach(window, mtm, TOOLBAR_ID);
+        watch_fullscreen();
         Ok(())
+    }
+
+    /// 进全屏（will enter）时藏起主窗口工具栏、退出全屏（did exit）后再显示：整个全屏过程都没有工具栏，
+    /// 页面铺满屏幕，标题栏照常由系统在指针移到顶部时滑出。按工具栏标识认主窗口，不捕获窗口，
+    /// 主窗口重建后同一个观察者照样生效；只注册一次，随进程常驻。
+    fn watch_fullscreen() {
+        static ONCE: Once = Once::new();
+        ONCE.call_once(|| {
+            let center = NSNotificationCenter::defaultCenter();
+            // SAFETY: AppKit 导出的常量字符串，进程内一直有效
+            let names = unsafe {
+                [
+                    (NSWindowWillEnterFullScreenNotification, false),
+                    (NSWindowDidExitFullScreenNotification, true),
+                ]
+            };
+            for (name, visible) in names {
+                let block = RcBlock::new(move |n: NonNull<NSNotification>| {
+                    // SAFETY: 回调期间通知对象由发送方持有
+                    set_toolbar_visible(unsafe { n.as_ref() }, visible);
+                });
+                // SAFETY: object 为 nil（收所有窗口，回调里按工具栏标识过滤）；queue 为 nil 时在发通知的线程同步回调，
+                // 窗口的全屏通知都在主线程发出，回调里碰 AppKit 安全；块不捕获引用，可跨线程
+                let token = unsafe {
+                    center.addObserverForName_object_queue_usingBlock(Some(name), None, None, &block)
+                };
+                // 观察者随进程常驻，从不注销：令牌不释放
+                std::mem::forget(token);
+            }
+        });
+    }
+
+    fn set_toolbar_visible(n: &NSNotification, visible: bool) {
+        let Some(window) = n.object().and_then(|o| o.downcast::<NSWindow>().ok()) else {
+            return;
+        };
+        let Some(toolbar) = window.toolbar() else {
+            return;
+        };
+        if toolbar.identifier().to_string() == TOOLBAR_ID && toolbar.isVisible() != visible {
+            toolbar.setVisible(visible);
+            eventlog::log("window.toolbar", json!({ "visible": visible }));
+        }
     }
 
     /// 量红绿灯：读系统版本定是否挂工具栏，在临时窗口上校准 y 与 `inset.left`；结果或失败原因都记 `window.lights`。
