@@ -297,3 +297,63 @@ func testPublicReconnectAfterLeafSwitch(t *testing.T, switchCmd string) {
 	assert.Equal(t, branchA, got)
 	p2.assertClean()
 }
+
+// 离分支条目（oryn-leaf / model_usage，带 activeLeafId）不在活动分支上：挂在当前末端下时不推进 tip，
+// 随后沿当前末端续写不误重建；若它把叶子切回空分支（""），匿名连接收到 transcript.reset，重连后拿到空分支。
+func TestPublicOffBranchLeafMarker(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	svc := share.New(share.Config{PublicURL: "http://oryn.test"}, e.st, e.svc, e.hub, nil, nil, nil)
+	srv := e.shareServer(svc)
+	const tid = "T-01932f6e-8d1a-7c3b-9f2e-000000000009"
+	require.NoError(t, e.st.Q.CreateThread(ctx, db.CreateThreadParams{Kind: "work", ID: tid, Title: "offbranch", TitleSource: "auto", State: "idle", SessionDir: "/x", CreatedAt: 1, UpdatedAt: 1}))
+	e.addEntry(tid, "u1", "")
+	e.addEntry(tid, "a1", "u1")
+	setLeaf := func(id string) {
+		require.NoError(t, e.st.Q.SetThreadLeaf(ctx, db.SetThreadLeafParams{LeafEntryID: &id, ID: tid}))
+	}
+	setLeaf("a1")
+	sh, err := svc.Create(ctx, tid, apigen.ShareModeLive, true)
+	require.NoError(t, err)
+
+	p, _, err := dialPublic(t, srv, "slug="+sh.Slug+"&after=0")
+	require.NoError(t, err)
+	_, got := collectBackfill(p)
+	require.Equal(t, []string{"u1", "a1"}, got)
+
+	// 挂在当前末端 a1 下的离分支条目（oryn-leaf）：跳过它，不推进 tip
+	offPayload := json.RawMessage(`{"type":"custom","customType":"oryn-leaf","id":"lf1","parentId":"a1","activeLeafId":"a1"}`)
+	offSeq, err := e.st.Q.UpsertEntry(ctx, db.UpsertEntryParams{ThreadID: tid, File: "s.jsonl", EntryID: "lf1", ParentID: new("a1"), Type: "custom", Payload: offPayload})
+	require.NoError(t, err)
+	e.hub.Entries(tid, []threads.Entry{{Seq: offSeq, File: "s.jsonl", EntryID: "lf1", ParentID: new("a1"), Type: "custom", Payload: offPayload}}, new("a1"), offSeq)
+
+	// 随后沿原末端 a1 正常续写 a2：不应误触发重建
+	a2 := e.addEntry(tid, "a2", "a1")
+	setLeaf("a2")
+	e.hub.Entries(tid, []threads.Entry{a2}, &a2.EntryID, a2.Seq)
+	seen := barrier(p)
+	assert.Contains(t, types(seen), "entries")
+	assert.NotContains(t, types(seen), "transcript.reset", "离分支条目之后沿原末端续写不误重建")
+
+	// 离分支条目把叶子切回空分支（activeLeafId: null → 控制面记为 ""）：触发重建，重连后补发为空
+	clearPayload := json.RawMessage(`{"type":"custom","customType":"oryn-leaf","id":"lf2","parentId":null,"activeLeafId":null}`)
+	clearSeq, err := e.st.Q.UpsertEntry(ctx, db.UpsertEntryParams{ThreadID: tid, File: "s.jsonl", EntryID: "lf2", Type: "custom", Payload: clearPayload})
+	require.NoError(t, err)
+	setLeaf("")
+	e.hub.Entries(tid, []threads.Entry{{Seq: clearSeq, File: "s.jsonl", EntryID: "lf2", Type: "custom", Payload: clearPayload}}, new(""), clearSeq)
+	reset := p.next(func(m msg) bool { return m.Type == "transcript.reset" })
+
+	p2, _, err := dialPublic(t, srv, "slug="+sh.Slug+"&after=0&rev="+strconv.FormatInt(reset.TranscriptRev, 10))
+	require.NoError(t, err)
+	_ = p2.next(func(m msg) bool { return m.Type == "share.snapshot" })
+	seen2 := barrier(p2)
+	assert.NotContains(t, types(seen2), "entries", "空分支没有补发条目")
+	assert.NotContains(t, types(seen2), "transcript.reset")
+	page, err := svc.PublicEntries(ctx, sh.Slug, 0, 100)
+	require.NoError(t, err)
+	assert.Empty(t, page.Entries)
+	require.NotNil(t, page.LeafEntryID)
+	assert.Equal(t, "", *page.LeafEntryID)
+	p.assertClean()
+	p2.assertClean()
+}

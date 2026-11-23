@@ -97,11 +97,20 @@ type branchLink struct {
 	root             bool
 }
 
-// linksOf 取出主会话的非合成条目（与公开过滤一致：子 agent 文件、标题槽与会话头不在任何分支上）。
+// isOffBranch 报告条目是否带 `activeLeafId`（离分支条目，如迟到的 model_usage 或 oryn-leaf 标记）：
+// 它不在活动分支链上，不应推动客户端的分支末端 tip。
+func isOffBranch(payload json.RawMessage) bool {
+	var h struct {
+		ActiveLeafID json.RawMessage `json:"activeLeafId"`
+	}
+	return len(payload) > 0 && json.Unmarshal(payload, &h) == nil && len(h.ActiveLeafID) > 0
+}
+
+// linksOf 取出主会话的在分支非合成条目（子 agent 文件、标题槽、会话头与离分支条目不在任何分支上）。
 func linksOf(es []threads.Entry) []branchLink {
 	out := make([]branchLink, 0, len(es))
 	for _, e := range es {
-		if !transcript.IsMainFile(e.File) || strings.HasPrefix(e.EntryID, "__") {
+		if !transcript.IsMainFile(e.File) || strings.HasPrefix(e.EntryID, "__") || isOffBranch(e.Payload) {
 			continue
 		}
 		l := branchLink{id: e.EntryID, file: e.File, root: e.ParentID == nil}
@@ -137,7 +146,8 @@ func (b *branchView) init(backfill []branchLink, fallback, leaf string) {
 
 // apply 处理一个事件；返回 true 表示叶子已不在客户端持有的分支上，须让客户端重建。
 func (b *branchView) apply(ev branchEvent) bool {
-	if !ev.entries {
+	// 纯叶子变化，或整批都是离分支 / 非主会话条目（没有推进分支的新节点）：叶子跳出末端即须重建。
+	if !ev.entries || len(ev.links) == 0 {
 		if ev.leaf == b.leaf {
 			return false
 		}

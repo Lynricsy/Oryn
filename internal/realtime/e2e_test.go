@@ -85,15 +85,16 @@ func newEnv(t *testing.T, agentEnv ...string) *env {
 }
 
 type msg struct {
-	Type      string          `json:"type"`
-	ThreadID  string          `json:"threadId"`
-	ID        string          `json:"id"`
-	Code      string          `json:"code"`
-	RequestID string          `json:"requestId"`
-	Frame     json.RawMessage `json:"frame"`
-	Response  json.RawMessage `json:"response"`
-	Entries   []threads.Entry `json:"entries"`
-	LastSeq   int64           `json:"lastSeq"`
+	Type        string          `json:"type"`
+	ThreadID    string          `json:"threadId"`
+	ID          string          `json:"id"`
+	Code        string          `json:"code"`
+	RequestID   string          `json:"requestId"`
+	Frame       json.RawMessage `json:"frame"`
+	Response    json.RawMessage `json:"response"`
+	Entries     []threads.Entry `json:"entries"`
+	LeafEntryID *string         `json:"leafEntryId"`
+	LastSeq     int64           `json:"lastSeq"`
 	// term.resized
 	TerminalID string `json:"terminalId"`
 	Cols       int    `json:"cols"`
