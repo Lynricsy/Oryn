@@ -116,6 +116,8 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 
 画面下方的任务栏内置 Chromium、终端、VS Code、文件管理器、文本编辑器与 LibreOffice；Agent 可直接读取窗口无障碍树、按 `.oryn/desktop/resume` 自启动桌面环境，并用 `desktop_record` 把操作录成视频放进对话。
 
+远程桌面的底色与外面的面板同色（浅色 `--panel`），两者只靠一圈细边框分隔；窗口用 orbd 自带的扁平 openbox 主题 Oryn：浅色标题栏与 GTK 应用的菜单栏连成一块，1px 细外框，标题居中，只留最大化与关闭按钮。已有的 orb 需升级并重启 orbd 后才换上新底色与标题栏。
+
 ## 执行环境
 
 | 后端 | 隔离方式 | 适合 |
