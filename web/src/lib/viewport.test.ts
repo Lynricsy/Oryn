@@ -7,8 +7,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	installNoFocusZoom,
 	installViewportTracking,
+	keyboardInset,
 	readSegments,
 	setMinScale,
+	settleViewport,
 	useSafeTop,
 	useViewportSegments,
 } from "./viewport";
@@ -98,6 +100,83 @@ describe("installViewportTracking", () => {
 		window.innerWidth = 700;
 		window.dispatchEvent(new Event("resize"));
 		expect(root.dataset.bp).toBe("expanded");
+	});
+});
+
+describe("keyboardInset", () => {
+	const win = (height: number, offsetTop: number, scale = 1) =>
+		({
+			innerHeight: 800,
+			visualViewport: { height, offsetTop, scale },
+		}) as unknown as Window;
+
+	it("键盘高 = 布局视口高 − 视觉视口高，不扣被推走的偏移", () => {
+		expect(keyboardInset(win(500, 0))).toBe(300);
+		// iOS 把页面整个推上去时：拉回后输入区要让出的仍是整个键盘
+		expect(keyboardInset(win(500, 300))).toBe(300);
+		expect(keyboardInset(win(800, 0))).toBe(0);
+	});
+
+	it("双指放大时视觉视口变矮不算键盘", () => {
+		expect(keyboardInset(win(400, 120, 2))).toBe(0);
+	});
+});
+
+describe("settleViewport", () => {
+	function setup(opts: {
+		offsetTop: number;
+		scrollY?: number;
+		scale?: number;
+		focusedBottom?: number;
+	}) {
+		// 游离文档里 focus() 不改 activeElement，聚焦要在当前文档里做
+		const input = document.createElement("textarea");
+		if (opts.focusedBottom !== undefined) {
+			document.body.appendChild(input);
+			input.focus();
+			input.getBoundingClientRect = () =>
+				({ bottom: opts.focusedBottom }) as DOMRect;
+		}
+		const scrollTo = vi.fn();
+		const win = {
+			visualViewport: {
+				height: 500,
+				offsetTop: opts.offsetTop,
+				scale: opts.scale ?? 1,
+			},
+			scrollX: 320,
+			scrollY: opts.scrollY ?? opts.offsetTop,
+			scrollTo,
+			document,
+		} as unknown as Window;
+		try {
+			settleViewport(win);
+		} finally {
+			input.remove();
+		}
+		return scrollTo;
+	}
+
+	it("键盘把页面推上去、输入区已让出键盘：纵向拉回顶，横向（侧栏开合）不动", () => {
+		expect(setup({ offsetTop: 300, focusedBottom: 480 })).toHaveBeenCalledWith(
+			320,
+			0,
+		);
+	});
+
+	it("键盘收起后页面停在平移状态（没有聚焦元素）：拉回", () => {
+		expect(setup({ offsetTop: 0, scrollY: 300 })).toHaveBeenCalledWith(320, 0);
+	});
+
+	it("拉回会把聚焦的输入框压到键盘底下（它没有随键盘让位）：保留系统的平移", () => {
+		expect(
+			setup({ offsetTop: 300, focusedBottom: 700 }),
+		).not.toHaveBeenCalled();
+	});
+
+	it("没被推走或正在双指放大：不动", () => {
+		expect(setup({ offsetTop: 0, focusedBottom: 480 })).not.toHaveBeenCalled();
+		expect(setup({ offsetTop: 200, scale: 2 })).not.toHaveBeenCalled();
 	});
 });
 

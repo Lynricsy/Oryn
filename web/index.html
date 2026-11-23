@@ -5,7 +5,8 @@
 		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 		<link rel="manifest" href="/manifest.webmanifest" />
 		<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-		<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+		<!-- interactive-widget=resizes-content：Chromium / Firefox 弹出软键盘时缩小布局视口，页面不被平移（iOS 不认，见 lib/viewport.ts） -->
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
 		<meta name="theme-color" content="#eef0f4" />
 		<meta name="color-scheme" content="light dark" />
 		<!-- 整个实例都不该被收录（含匿名分享页 /s/<slug>） -->

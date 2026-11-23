@@ -72,7 +72,7 @@ const DEBUG_COVER = import.meta.env.DEV || import.meta.env.VITE_MOCK === "1";
 /** 胶囊位置上最上面的元素不是胶囊自己（菜单、弹层、错误提示盖住了它），或软键盘弹出。 */
 export function slotCovered(slot: Element, win: Window): boolean {
 	const vv = win.visualViewport;
-	// 与 lib/viewport.ts 算 `--kb-inset` 同式
+	// 视觉视口底边没到布局视口底边：软键盘弹出（扣掉被推走的偏移；`--kb-inset` 见 lib/viewport.ts 的 keyboardInset）
 	if (vv && win.innerHeight - vv.height - vv.offsetTop > 1) return true;
 	const r = slot.getBoundingClientRect();
 	if (r.width <= 0 || r.height <= 0) return true;

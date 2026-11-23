@@ -1,6 +1,7 @@
 /**
  * 自适应布局：三档断点（compact <600、medium 600–839、expanded ≥840）、折叠屏双段视口与软键盘处理。
- * 软键盘：用 `visualViewport` 计算被键盘遮挡的高度写入 CSS 变量 `--kb-inset`，输入区据此上移。
+ * 软键盘：用 `visualViewport` 计算被键盘遮挡的高度写入 CSS 变量 `--kb-inset`，输入区据此上移；
+ * 系统为露出输入框把整页推上去（iOS 平移视觉视口）时拉回顶部，只让输入区自己让位。
  * 双段：Viewport Segments API（`window.viewport.segments`）报告左右两段时，线程页按铰链分成两栏。
  */
 import { useSyncExternalStore } from "react";
@@ -109,9 +110,49 @@ function segmentsSnapshot(): DualSegments | null {
 export function useViewportSegments(): DualSegments | null {
 	return useSyncExternalStore(subscribeSegments, segmentsSnapshot, () => null);
 }
+/** 视觉视口缩放偏离 1 超过这个量就是双指放大：视觉视口变矮、偏移都不是软键盘造成的。 */
+const SCALE_EPS = 0.01;
 
 /**
- * 安装一次：跟踪软键盘高度（`--kb-inset`）与可视高度（`--vvh`），
+ * 软键盘遮住的布局视口底部高度（px）= 布局视口高 − 视觉视口高。按视觉视口贴着顶算，不扣它被推走的偏移：
+ * 推走会由 `settleViewport` 拉回，拉回后输入区正好让出这么多。双指放大时量不准，记 0。
+ */
+export function keyboardInset(
+	win: Pick<Window, "innerHeight" | "visualViewport">,
+): number {
+	const vv = win.visualViewport;
+	if (!vv || Math.abs(vv.scale - 1) > SCALE_EPS) return 0;
+	return Math.max(0, win.innerHeight - vv.height);
+}
+
+/**
+ * 页面被推走时拉回顶部。iOS 弹出软键盘会平移视觉视口去露出聚焦的输入框，整页跟着上移一大截；
+ * 应用壳不滚动、输入区自己按 `--kb-inset` 让出键盘，这段平移是多余的。键盘收起后页面也常停在平移状态。
+ * 不拉回：双指放大中；聚焦的元素拉回后会落到键盘底下（对话框、设置页靠下的输入框没有随键盘让位，仍靠系统平移露出来）。
+ * 只动纵轴：下沉侧栏的根横滚模式里横向滚动位置就是侧栏开合。
+ */
+export function settleViewport(
+	win: Pick<
+		Window,
+		"visualViewport" | "scrollX" | "scrollY" | "scrollTo" | "document"
+	>,
+): void {
+	const vv = win.visualViewport;
+	if (!vv || Math.abs(vv.scale - 1) > SCALE_EPS) return;
+	if (vv.offsetTop < 1 && win.scrollY < 1) return;
+	const focused = win.document.activeElement;
+	// 布局视口在顶上（文档不能纵向滚动），客户区坐标就是拉回后的位置；视觉视口高以下是键盘
+	if (
+		focused &&
+		focused !== win.document.body &&
+		focused.getBoundingClientRect().bottom > vv.height + 1
+	)
+		return;
+	win.scrollTo(win.scrollX, 0);
+}
+
+/**
+ * 安装一次：跟踪软键盘高度（`--kb-inset`）与可视高度（`--vvh`），页面被推走时拉回（`settleViewport`），
  * 并在根元素上写 `data-bp`（当前断点）与 `data-segments`（"2" 左右双段，否则 "1"）。
  */
 export function installViewportTracking(): () => void {
@@ -119,23 +160,30 @@ export function installViewportTracking(): () => void {
 	const root = document.documentElement;
 	const update = () => {
 		const height = vv?.height ?? window.innerHeight;
-		const offset = vv?.offsetTop ?? 0;
-		const inset = Math.max(0, window.innerHeight - height - offset);
-		root.style.setProperty("--kb-inset", `${Math.round(inset)}px`);
+		root.style.setProperty(
+			"--kb-inset",
+			`${Math.round(keyboardInset(window))}px`,
+		);
 		root.style.setProperty("--vvh", `${Math.round(height)}px`);
 		root.dataset.bp = breakpointFor(window.innerWidth);
 		root.dataset.segments = readSegments(window) ? "2" : "1";
+		// 先写 --kb-inset 再判定：输入区按新的让位排版后，才知道拉回会不会把聚焦的输入框压到键盘底下
+		settleViewport(window);
 	};
+	const settle = () => settleViewport(window);
 	update();
 	const mq = window.matchMedia?.(SEGMENTS_QUERY);
 	vv?.addEventListener("resize", update);
 	vv?.addEventListener("scroll", update);
 	window.addEventListener("resize", update);
+	// 根横滚（下沉侧栏）时 scroll 每帧都来：这里只判定拉回，不重写变量
+	window.addEventListener("scroll", settle, { passive: true });
 	mq?.addEventListener?.("change", update);
 	return () => {
 		vv?.removeEventListener("resize", update);
 		vv?.removeEventListener("scroll", update);
 		window.removeEventListener("resize", update);
+		window.removeEventListener("scroll", settle);
 		mq?.removeEventListener?.("change", update);
 	};
 }

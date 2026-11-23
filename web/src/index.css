@@ -308,7 +308,22 @@ body,
 	height: 100%;
 }
 
+/*
+ * 根不滚动：每个窗格自己滚，文档本身不该有纵向滚动。否则偶发的溢出（过场中的位移、弹层、内容瞬时撑高）
+ * 加上触控板滚动、聚焦或 scrollIntoView，会把整个应用壳推上去、下面露出空白，并一直停在那里。
+ * - 根 overflow: hidden：不让用户滚，也让 body 的 overflow 不再传给视口；
+ * - body 定位 + overflow: clip：挂在 body 上的绝对定位后代也被裁掉，文档的可滚动范围恒为 0，脚本也滚不动
+ *   （clip 不是滚动容器，hidden 仍可被程序滚动）。
+ * 下沉侧栏的根横滚模式（下面的 :root[data-sink-native]）要文档横向溢出，在那里放开 body 的横轴。
+ * 软键盘把视觉视口推走的情形不归 CSS 管，见 lib/viewport.ts。
+ */
+html {
+	overflow: hidden;
+}
+
 body {
+	position: relative;
+	overflow: clip;
 	margin: 0;
 	background: var(--bg);
 	color: var(--text);
@@ -333,6 +348,9 @@ body {
 }
 :root[data-sink-native]::-webkit-scrollbar {
 	display: none;
+}
+:root[data-sink-native] body {
+	overflow-x: visible;
 }
 :root[data-sink-native] .sink-root {
 	width: calc(var(--sink-w) + 100vw);

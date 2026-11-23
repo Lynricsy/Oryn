@@ -34,6 +34,7 @@ M3.5 重设计之后的长期约定，目的是防止后续开发让设计变差
 - **玻璃浮层进入时只做位移，不做淡入**：在 opacity<1 的那段时间里，元素本身就是 backdrop root，模糊会失效，读起来就是「透明度时有时无」。同理，玻璃的祖先也不要在进入时淡入。
 - **确认一律用 `confirmAction`（`lib/confirm.ts`），不用 `window.confirm`**：原生框样式不受控、审计截不到。标题是带对象名的问句（「删除项目 oryn？」），后果写进说明（会连带删掉什么、什么不受影响），按钮用具体动作词（删除 / 归档 / 切换），不可逆的传 `danger`。从菜单里打开时不用管焦点：共享 `Menu` 选中后已把焦点还给触发钮，确认框关闭后焦点回到那里。
 - **页内跳转只滚最近的滚动区，不用 `scrollIntoView`**：它会连带滚动所有可滚祖先（含文档和 `overflow:hidden` 的外壳），把页头、侧栏一起拉走。对目标滚动区算好偏移再 `scrollTo`。
+- **文档本身不滚动**：`index.css` 给根 `overflow: hidden`、body `position: relative; overflow: clip`，文档可滚动范围恒为 0；页面要滚就放进自己的滚动容器（认证卡片 `AuthCard` 的外层就是）。不要靠文档滚动兜底放不下的内容，下沉侧栏的根横滚模式（`:root[data-sink-native]`）是唯一例外，只放开横轴。软键盘把页面推上去时由 `lib/viewport.ts` 的 `settleViewport` 拉回，输入区按 `--kb-inset`（`pb-keyboard`）自己让位。
 - **吸顶条放在带内边距的滚动区里时，`top` 取负的内边距**（如设置页 `-top-3` / `sm:-top-5`）：sticky 按内边距内缘停靠，`top-0` 会在上方留一道缝透出滚过的内容。吸顶条底色不透明，并把自己的高度写进滚动区的 `scroll-padding-top`，跳转和 Tab 聚焦都停在它下方（参考记忆页目录 `MemoryPage.tsx`）。
 - **对话纸面保持 `overflow-visible`，裁剪只放在转录层**。Chromium 下，如果祖先同时有「圆角 + overflow 裁剪」，后代 `backdrop-filter` 上的 `mask-image` 会失效，页头玻璃就会多出一截空带、底边被硬切。
 - 输入坞只用一个滤镜令牌 `--dock-filter`，不要另写一套参数。

@@ -3,6 +3,7 @@
  * `blink`：品牌标的插入符闪烁，表示在等你操作（登录、配对页用）。`footer`：卡片底部的小字（连接页的版本与存储提示）。
  * 桌面 App 无系统标题栏：页顶一条可拖动的标题行与窗口按钮（`ChromeBar`；浏览器与移动壳里不渲染）。
  * 启动画面还在时，它的大品牌标飞进卡片的品牌标（lib/boot-splash.ts）。
+ * 文档本身不滚动（index.css 的根滚动锁定）：矮屏、横屏放不下卡片时由外层自己纵向滚动。
  */
 import { type ReactNode, useLayoutEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
@@ -25,22 +26,24 @@ export function AuthCard({
 	const mark = useRef<HTMLSpanElement>(null);
 	useLayoutEffect(() => releaseSplash(mark.current), []);
 	return (
-		<div className="shell-wash relative flex min-h-dvh items-center justify-center px-4 pt-safe pb-safe">
+		<div className="shell-wash relative h-dvh overflow-y-auto">
 			<ChromeBar />
-			<div className="glass pop-in w-full max-w-sm rounded-2xl p-6">
-				<div className="mb-4 flex items-center gap-2.5">
-					<BrandMark ref={mark} size={32} blink={blink} />
-					<span className="wordmark text-[28px] text-fg leading-none">
-						{t("app.name")}
-					</span>
-				</div>
-				<h1 className="mb-4 font-semibold text-lg tracking-tight">{title}</h1>
-				{children}
-				{footer && (
-					<div className="mt-5 flex flex-col gap-1 border-border border-t pt-3 text-2xs text-faint">
-						{footer}
+			<div className="flex min-h-full items-center justify-center px-4 pt-safe pb-safe">
+				<div className="glass pop-in w-full max-w-sm rounded-2xl p-6">
+					<div className="mb-4 flex items-center gap-2.5">
+						<BrandMark ref={mark} size={32} blink={blink} />
+						<span className="wordmark text-[28px] text-fg leading-none">
+							{t("app.name")}
+						</span>
 					</div>
-				)}
+					<h1 className="mb-4 font-semibold text-lg tracking-tight">{title}</h1>
+					{children}
+					{footer && (
+						<div className="mt-5 flex flex-col gap-1 border-border border-t pt-3 text-2xs text-faint">
+							{footer}
+						</div>
+					)}
+				</div>
 			</div>
 		</div>
 	);
