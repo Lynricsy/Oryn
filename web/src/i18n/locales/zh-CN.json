@@ -285,7 +285,6 @@
 			}
 		},
 		"label": "消息",
-		"menuHint": "↑↓ 选择 · Tab 补全 · Esc 关闭",
 		"noCommands": "没有匹配的命令",
 		"placeholder": "回复… （/ 命令，! bash）",
 		"placeholderBusy": "引导正在进行的回合…",

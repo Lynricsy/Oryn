@@ -285,7 +285,6 @@
 			}
 		},
 		"label": "Message",
-		"menuHint": "↑↓ select · Tab complete · Esc close",
 		"noCommands": "No matching commands",
 		"placeholder": "Reply… (/ commands, ! bash)",
 		"placeholderBusy": "Steer the running turn…",

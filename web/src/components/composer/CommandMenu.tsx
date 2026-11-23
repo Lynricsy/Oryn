@@ -189,13 +189,11 @@ export function CommandMenu({
 	usage,
 	active,
 	onPick,
-	hint,
 }: {
 	entries: MenuEntry[];
 	usage?: CommandUsage;
 	active: number;
 	onPick: (e: MenuEntry) => void;
-	hint?: string;
 }): ReactNode {
 	const { t } = useTranslation();
 	// 来源徽标只用来区分来源：所有项来源相同时不显示；混排时 Oryn 自己的命令（排在最前）不挂徽标，
@@ -213,13 +211,8 @@ export function CommandMenu({
 	const showList = entries.length > 0 || !usage;
 	return (
 		// 玻璃放在外层、滚动放在内层：玻璃的模糊底是伪元素，放进滚动容器会随内容滚走。
-		// 提示行与用法放在滚动区外；滚动区高度是 9 个单行项（h-7）加上下内边距，高亮项展开后底部露出的半行正好提示还能往下滚
+		// 用法放在滚动区外；滚动区高度是 9 个单行项（h-7）加上下内边距，高亮项展开后底部露出的半行正好提示还能往下滚
 		<div className="glass pop-in absolute right-0 bottom-full left-0 z-30 mb-2 overflow-hidden rounded-xl">
-			{hint && (
-				<div className="border-[var(--glass-line)] border-b px-3 py-1 text-2xs text-faint">
-					{hint}
-				</div>
-			)}
 			{showList && (
 				<div
 					ref={listRef}

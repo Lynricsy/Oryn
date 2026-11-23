@@ -754,7 +754,6 @@ export const Composer = memo(function Composer({
 					usage={menu.usage}
 					active={active}
 					onPick={pick}
-					hint={entries.length > 0 ? t("composer.menuHint") : undefined}
 				/>
 			)}
 			{refMenu.open && (
