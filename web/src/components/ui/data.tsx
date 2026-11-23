@@ -1,5 +1,11 @@
 /** 数据呈现元件：徽标、读数、量表、圆环、状态点、卡片、键值、列表行、提示条、头像、纸面、品牌标。 */
-import { type CSSProperties, type ReactNode, type Ref, useId } from "react";
+import {
+	type CSSProperties,
+	type ReactNode,
+	type Ref,
+	useId,
+	useState,
+} from "react";
 import { Icon, type IconName } from "./icons";
 
 export type Tone = "neutral" | "accent" | "ok" | "warn" | "err" | "frost";
@@ -441,27 +447,49 @@ function hueStyle(hue: number, size: number): CSSProperties {
 	return { "--h": hue, width: size, height: size } as CSSProperties;
 }
 
-/** 名字首字的头像（缺省方形，`round` 为圆形，如提交作者）；色相缺省由名字算出。配色在 index.css 的 `.avatar`。 */
+/**
+ * 名字首字的头像（缺省方形，`round` 为圆形，如提交作者）；色相缺省由名字算出。配色在 index.css 的 `.avatar`。
+ * 给了 `src`（如 GitHub 头像）就显示图片，加载失败退回首字。
+ */
 export function Avatar({
 	name,
 	hue,
 	size = 16,
 	round = false,
+	src,
 	className = "",
 }: {
 	name: string;
 	hue?: number;
 	size?: number;
 	round?: boolean;
+	src?: string;
 	className?: string;
 }): ReactNode {
+	// 记下失败的是哪个地址：src 换了就重新尝试
+	const [failed, setFailed] = useState<string | null>(null);
+	const image = src && failed !== src ? src : undefined;
 	return (
 		<span
 			aria-hidden
-			className={`avatar inline-flex shrink-0 items-center justify-center font-semibold text-[9px] ${round ? "rounded-full" : "rounded-xs"} ${className}`}
+			data-avatar={image ? "image" : "initial"}
+			className={`avatar inline-flex shrink-0 items-center justify-center overflow-hidden font-semibold text-[9px] ${round ? "rounded-full" : "rounded-xs"} ${className}`}
 			style={hueStyle(hue ?? nameHue(name), size)}
 		>
-			{firstGrapheme(name)}
+			{image ? (
+				<img
+					src={image}
+					alt=""
+					width={size}
+					height={size}
+					loading="lazy"
+					referrerPolicy="no-referrer"
+					onError={() => setFailed(image)}
+					className="h-full w-full object-cover"
+				/>
+			) : (
+				firstGrapheme(name)
+			)}
 		</span>
 	);
 }

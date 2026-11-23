@@ -16,6 +16,7 @@ import { Avatar } from "../../../components/ui/data";
 import { Icon, type IconName } from "../../../components/ui/icons";
 import { ErrorText, Spinner } from "../../../components/ui/primitives";
 import { formatCount, formatRelative } from "../../../lib/format";
+import { githubAvatarUrl } from "../../../lib/github-avatar";
 import { emojify } from "../../../lib/gitmoji";
 import { RepoBox } from "./RepoBox";
 import { RepoEntryList } from "./RepoEntryList";
@@ -28,7 +29,10 @@ const NAV = [
 /** 头像最多叠放几个；越靠前（作者）层级越高，共同作者依次压在下面 */
 const AVATAR_LAYERS = ["z-30", "z-20", "z-10"];
 
-/** 作者与共同作者：「A」「A 和 B」「A 和其他 N 人」，名字加粗；悬停显示全部 `名字 <邮箱>`。 */
+/**
+ * 作者与共同作者：「A」「A 和 B」「A 和其他 N 人」，名字加粗；悬停显示全部 `名字 <邮箱>`。
+ * GitHub noreply 邮箱显示真人头像（按 2 倍像素取），其它邮箱与加载失败时是首字。
+ */
 function Authors({ commit: c }: { commit: RepoCommit }): ReactNode {
 	const { t } = useTranslation();
 	const people = [
@@ -51,6 +55,7 @@ function Authors({ commit: c }: { commit: RepoCommit }): ReactNode {
 						name={p.name}
 						size={20}
 						round
+						src={githubAvatarUrl(p.email, 40)}
 						// 叠放：后面的往左塞到前一个下面（不盖住首字），每个都描一圈表头底色隔开
 						className={`relative ring-2 ring-raised ${AVATAR_LAYERS[i]} ${i ? "-ml-1" : ""}`}
 					/>
