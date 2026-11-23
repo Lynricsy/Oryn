@@ -416,7 +416,7 @@ describe("助手头像闪烁", () => {
 		indexStore.setState({ threads: {} });
 	});
 
-	function renderTranscript(state: Thread["state"]) {
+	function renderTranscript(state: Thread["state"], rows = items) {
 		// jsdom 没有布局：给虚拟列表一个足够高的视口，所有行都挂载
 		vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(
 			4000,
@@ -433,13 +433,18 @@ describe("助手头像闪烁", () => {
 		client.setQueryData(qk.agentIdentity, {});
 		client.setQueryData(qk.userIdentity, {});
 		client.setQueryData(qk.gitIdentity, {});
-		return render(
+		const tree = (r: TranscriptItem[]) => (
 			<QueryClientProvider client={client}>
 				<TranscriptContext.Provider value={ctx}>
-					<Transcript items={items} />
+					<Transcript items={r} />
 				</TranscriptContext.Provider>
-			</QueryClientProvider>,
+			</QueryClientProvider>
 		);
+		const view = render(tree(rows));
+		return {
+			...view,
+			rerenderRows: (r: TranscriptItem[]) => view.rerender(tree(r)),
+		};
 	}
 
 	const carets = (root: HTMLElement) =>
@@ -507,6 +512,30 @@ describe("助手头像闪烁", () => {
 	it("最后一行是用户消息时没有进行中的回合", () => {
 		expect(layoutTurns(items).openStart).toBe(3);
 		expect(layoutTurns([...items, user(6)]).openStart).toBeUndefined();
+	});
+
+	it("回合开始、agent 尚无输出时末尾先画回合头与三点，第一条 agent 行到达后由它接替", () => {
+		const store = getThreadStore(ctx.threadId).getState();
+		store.patchLocal({ running: true });
+		const { container, rerenderRows } = renderTranscript("working", [
+			...items,
+			user(6),
+		]);
+		const awaiting = screen.getByTestId("awaiting-turn");
+		expect(awaiting.querySelector('[data-avatar-of="agent"]')).not.toBeNull();
+		expect(screen.getByTestId("typing-dots")).toBeTruthy();
+		// 待回复的回合头是正在进行的回合：头像在闪
+		expect(awaiting.querySelector(".caret-blink")).not.toBeNull();
+		rerenderRows([
+			...items,
+			user(6),
+			msg(7, { role: "assistant", content: [] }, true),
+		]);
+		expect(screen.queryByTestId("awaiting-turn")).toBeNull();
+		expect(
+			container.querySelector('[data-index="6"] [data-avatar-of="agent"]'),
+		).not.toBeNull();
+		store.patchLocal({ running: false });
 	});
 });
 

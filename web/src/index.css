@@ -1444,6 +1444,28 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 	}
 }
 
+/* 待回复回合头下的三点占位（TypingDots）：依次上跳，延迟由行内 animation-delay 错开 */
+@keyframes typing-dot {
+	0%,
+	60%,
+	100% {
+		transform: translateY(0);
+		opacity: 0.4;
+	}
+	30% {
+		transform: translateY(-4px);
+		opacity: 1;
+	}
+}
+.typing-dot {
+	animation: typing-dot 1.2s var(--ease) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+	.typing-dot {
+		animation: none;
+	}
+}
+
 /*
  * 启动画面（index.html / launcher.html 的静态 #boot-splash，交接逻辑见 lib/boot-splash.ts）：纸面底色上居中一枚大品牌标，
  * 插入符闪烁；底部一片 14px 点阵（与首页托盘的点阵同一格距），椭圆遮罩从底边中央向上、向两侧渐隐，

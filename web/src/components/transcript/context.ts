@@ -47,3 +47,9 @@ export function useTranscriptContext(): TranscriptContextValue {
 	if (!ctx) throw new Error("TranscriptContext 缺失");
 	return ctx;
 }
+
+/**
+ * 转录末尾正在画「待回复的回合头」（回合已开始、agent 还没有任何输出）：头像行 + 跃动的三点。
+ * 此时 footer 里的 WorkingFooter 不再画「工作中」行，免得两处同时表示同一件事。
+ */
+export const AwaitingReplyContext = createContext(false);

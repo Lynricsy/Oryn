@@ -1,11 +1,12 @@
 /** 转录末尾的工作状态行：环境准备 / 启动 agent、agent 退出、工作中（含当前活动）。 */
-import type { ReactNode } from "react";
+import { type ReactNode, useContext } from "react";
 import { useTranslation } from "react-i18next";
 import { useThread } from "../../state/stores";
 import { useOrbOf } from "../thread/ThreadHeader";
 import { Callout } from "../ui/data";
 import { OrbBead } from "../ui/OrbBead";
 import { Spinner } from "../ui/primitives";
+import { AwaitingReplyContext } from "./context";
 
 export function WorkingFooter({ threadId }: { threadId: string }): ReactNode {
 	const { t } = useTranslation();
@@ -18,6 +19,8 @@ export function WorkingFooter({ threadId }: { threadId: string }): ReactNode {
 	const activity = useThread(threadId, (s) => s.thread?.activity);
 	const agentStatus = useThread(threadId, (s) => s.agentStatus);
 	const orb = useOrbOf(threadId);
+	// 转录已在末尾画了回合头 + 三点占位（回合开始、agent 尚无输出）：不再重复画「工作中」
+	const awaiting = useContext(AwaitingReplyContext);
 	if (state === "provisioning") {
 		return (
 			<div className="flex items-center gap-2 py-3 text-muted text-sm">
@@ -42,7 +45,7 @@ export function WorkingFooter({ threadId }: { threadId: string }): ReactNode {
 			</div>
 		);
 	}
-	if (running && !live) {
+	if (running && !live && !awaiting) {
 		return (
 			<div className="flex min-w-0 items-center gap-2 py-3 text-muted text-sm">
 				<Spinner />

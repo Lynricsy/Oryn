@@ -38,12 +38,13 @@ import {
 	resolveTurnRole,
 	type SourceTrail,
 	siteRoleFaces,
+	trailOf,
 } from "../../lib/turn-role";
 import { useBreakpoint, useCoarsePointer } from "../../lib/viewport";
 import { patchComposerDraft } from "../../state/composer-drafts";
 import type { JsonRecord } from "../../state/message-builder";
 import { getThreadStore, useIndex, useThread } from "../../state/stores";
-import type { TranscriptItem } from "../../state/transcript";
+import { activeBranch, type TranscriptItem } from "../../state/transcript";
 import { Badge } from "../ui/data";
 import { IdentityAvatar } from "../ui/IdentityAvatar";
 import { Icon, type IconName } from "../ui/icons";
@@ -55,7 +56,11 @@ import {
 	activeToolCallIds,
 	NO_ACTIVE_TOOL_CALLS,
 } from "./active-tools";
-import { type TurnIdentities, useTranscriptContext } from "./context";
+import {
+	AwaitingReplyContext,
+	type TurnIdentities,
+	useTranscriptContext,
+} from "./context";
 import {
 	assistantEdges,
 	BranchSummaryCard,
@@ -669,6 +674,28 @@ function TurnHead({
 	);
 }
 
+/** 待回复回合头下的占位：三个依次跃动的点，直到 agent 的第一块输出到达。 */
+function TypingDots(): ReactNode {
+	const { t } = useTranslation();
+	return (
+		<div
+			role="status"
+			aria-label={t("thread.working")}
+			data-testid="typing-dots"
+			className="flex h-6 items-center gap-1 text-faint"
+		>
+			{[0, 1, 2].map((i) => (
+				<span
+					key={i}
+					aria-hidden
+					className="typing-dot h-1.5 w-1.5 rounded-full bg-current"
+					style={{ animationDelay: `${i * 160}ms` }}
+				/>
+			))}
+		</div>
+	);
+}
+
 /**
  * memo：线程页因页头 / 面板 / 侧栏开合等与转录无关的状态重渲染时（每次 260ms 开合的第一帧），不必重算整段虚拟列表；
  * 条目变化时 `items` 换引用照常更新。调用方须让 `footer`、回调保持稳定（useMemo / useCallback）。
@@ -749,6 +776,26 @@ export const Transcript = memo(function Transcript({
 	);
 	const sessionModel = useThread(threadId, (s) => s.state?.model);
 	const sessionThinking = useThread(threadId, (s) => s.state?.thinkingLevel);
+	// 回合已开始、agent 还没有任何输出（最后一个回合边界之后没有 agent 行）：末尾先画回合头 + 跃动的三点，
+	// 取代 WorkingFooter 的「工作中」行；第一条 agent 行到达后由那一行自己的回合头在同一位置接替
+	const running = useThread(threadId, (s) => s.running);
+	const agentExited = useThread(threadId, (s) => s.agentStatus === "exited");
+	const awaiting = running && !agentExited && turns.openStart === undefined;
+	// 还没有助手消息可取模型：用会话当前模型（即将开始的回合就跑它）
+	const awaitingModel = useMemo<TurnModel | undefined>(
+		() =>
+			sessionModel?.id
+				? { model: sessionModel.id, provider: sessionModel.provider ?? "" }
+				: undefined,
+		[sessionModel],
+	);
+	const entries = useThread(threadId, (s) => s.entries);
+	const leafEntryId = useThread(threadId, (s) => s.leafEntryId);
+	// 待回复回合头的 role：与即将到来的助手消息同一条轨迹（活动分支末端），接替时脸不跳
+	const awaitingTrail = useMemo(
+		() => (awaiting ? trailOf(activeBranch(entries, leafEntryId)) : undefined),
+		[awaiting, entries, leafEntryId],
+	);
 	const gaps = useMemo(
 		() => rowGaps(rows, turns.footers, turns.hidden),
 		[rows, turns],
@@ -1098,7 +1145,31 @@ export const Transcript = memo(function Transcript({
 									{pendingPrompts.map((p) => (
 										<PendingPrompt key={p.id} text={p.text} />
 									))}
-									{footer}
+									{awaiting && (
+										// 补足到回合边界的间距（行自带 GAP_FLOW），头像行与接替它的回合首行落在同一高度
+										<div
+											data-testid="awaiting-turn"
+											style={{ paddingTop: GAP_TURN - GAP_FLOW }}
+										>
+											<TurnHead
+												working
+												model={awaitingModel}
+												thinking={sessionThinking}
+												known={sessionModel}
+												face={resolveTurnRole(
+													awaitingModel,
+													awaitingTrail,
+													identities.faces,
+												)}
+												identities={identities}
+												source={awaitingTrail?.record?.source}
+											/>
+											<TypingDots />
+										</div>
+									)}
+									<AwaitingReplyContext.Provider value={awaiting}>
+										{footer}
+									</AwaitingReplyContext.Provider>
 								</>
 							)}
 						</div>
@@ -1118,6 +1189,9 @@ export const Transcript = memo(function Transcript({
 			sessionModel,
 			sessionThinking,
 			identities,
+			awaiting,
+			awaitingModel,
+			awaitingTrail,
 			revealed,
 		],
 	);
