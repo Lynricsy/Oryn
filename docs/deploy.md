@@ -1113,7 +1113,7 @@ curl --fail https://oryn.ling.plus/healthz
 
 `/root/Oryn/oryn` 固定使用生产专用 `ORYN_CREDENTIALS`；不要直接用默认凭据运行生产 CLI。`/root/Oryn/hindsight/dc` 固定读取 `db.env`，更新 Hindsight 的中转配置时不得修改数据库密码。
 
-控制面以无 Docker 权限的专用账号 `oryn-prod` 运行，systemd 保留 `NoNewPrivileges`、只读系统与 HOME，并屏蔽宿主 `.omp`、`.ssh`、`Projects`。协调宿主使用非特权命名空间、Landlock 和 seccomp。Docker provider 单独以 root 运行，默认规格为 2 CPU / 4 GiB，预热池总上限为 1。
+控制面以无 Docker 权限的专用账号 `oryn-prod` 运行，systemd 保留 `NoNewPrivileges`、只读系统与 HOME，并屏蔽宿主 `.omp`、`.ssh`、`Projects`。协调宿主使用非特权命名空间、Landlock 和 seccomp。Docker provider 单独以 root 运行，提供 small（2 CPU / 4 GiB）、medium（4 / 8）、large（8 / 16）、xl（16 / 32）四档，`provider.yaml` 的 `default_type` 与 `orynd.yaml` 的 `orb_defaults.type` 均为 large，预热池总上限为 1。
 
 生产 Orb 使用 `oryn-prod-orbs` 网桥（`orynp0`，`172.30.240.0/24`），关闭 ICC。`oryn-prod-network.service` 只为该网桥安装自有防火墙规则：宿主仅放行 Orb TLS，转发阻断私网、CGNAT 与链路本地地址；不修改现有开发网桥、SSH 或默认防火墙策略。
 
