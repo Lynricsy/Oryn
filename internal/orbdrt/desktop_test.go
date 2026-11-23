@@ -879,6 +879,11 @@ func TestDesktopAgentConfig(t *testing.T) {
 	rc, err := os.ReadFile(e.home(".oryn", "desktop", "openbox-rc.xml"))
 	require.NoError(t, err)
 	assert.Contains(t, string(rc), `<application class="Chromium*">`)
+	// rc 引用的主题名必须对得上写出的主题目录，否则 openbox 静默退回内置主题
+	assert.Contains(t, string(rc), "<name>Oryn</name>")
+	for _, f := range []string{"themerc", "close.xbm", "max.xbm", "max_toggled.xbm"} {
+		assert.FileExists(t, e.home(".themes", "Oryn", "openbox-3", f))
+	}
 
 	pid := startAgent(t, e.cp, thread1, nil)
 	e.cp.waitNotif(t, 0, "agent.status", statusIs(thread1, "ready"))

@@ -284,7 +284,7 @@ func (r *Runtime) boxesSkillPath() string {
 }
 
 // writeAgentAssets 写出内嵌的扩展与技能（每次启动覆盖，保持与 orbd 版本一致）与工具执行器的设置覆盖层；桌面启用时另写给 omp 的
-// 设置覆盖层（地址取 CDP 前门的实际地址）与 openbox 配置，未启用时删除残留的覆盖层。
+// 设置覆盖层（地址取 CDP 前门的实际地址）、openbox 配置与主题，未启用时删除残留的覆盖层。
 func (r *Runtime) writeAgentAssets() error {
 	files := map[string][]byte{
 		r.extensionPath(): orbExtension, r.skillPath(): setupSkill, r.librarySkillPath(): librarySkill, r.boxesSkillPath(): boxesSkill,
@@ -293,6 +293,17 @@ func (r *Runtime) writeAgentAssets() error {
 	if d := r.desk; d != nil {
 		files[r.desktopOverlayPath()] = desktopOverlay(d.cdpAddr())
 		files[d.rcPath()] = openboxRC
+		entries, err := openboxTheme.ReadDir("assets/openbox-theme")
+		if err != nil {
+			return fmt.Errorf("read embedded openbox theme: %w", err)
+		}
+		for _, e := range entries {
+			data, err := openboxTheme.ReadFile("assets/openbox-theme/" + e.Name())
+			if err != nil {
+				return fmt.Errorf("read embedded openbox theme: %w", err)
+			}
+			files[filepath.Join(d.themeDir(), e.Name())] = data
+		}
 	} else if err := os.Remove(r.desktopOverlayPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove %s: %w", r.desktopOverlayPath(), err)
 	}

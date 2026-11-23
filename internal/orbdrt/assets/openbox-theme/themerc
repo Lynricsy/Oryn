@@ -1,0 +1,92 @@
+# 由 orbd 生成（每次启动覆盖，请勿手改）：Oryn 桌面的 openbox 主题，写到 ~/.themes/Oryn/openbox-3/。
+# 扁平浅色。活动标题栏用 GTK3 Adwaita 的窗口底色 #f6f5f4，和桌面里 GTK 应用（pcmanfm、mousepad、xfce4-terminal）的
+# 菜单栏连成一整块；外框是中性灰细线。其余取网页设计令牌（web/src/index.css 浅色、--tint-h 235）的 sRGB 值：
+#   非活动标题栏 = --panel（= 根窗口底色，desktop.go 的 desktopBackground）、按钮悬停 = --hover、按下 = --active、
+#   按钮图形 = --text-faint / --text-ghost、关闭悬停 = --bad。
+# 不留底边把手（handle.width 0），窗口只靠 1px 外框与桌面分隔；标题字体在 openbox-rc.xml 的 <theme><font> 里。
+# 按钮图形是同目录的 close.xbm / max.xbm / max_toggled.xbm（10×10，1px 线条）。
+
+border.width: 1
+padding.width: 10
+padding.height: 6
+window.handle.width: 0
+window.client.padding.width: 0
+window.client.padding.height: 0
+window.label.text.justify: center
+
+window.active.border.color: #c4c4c4
+window.inactive.border.color: #d8d8d8
+window.active.title.separator.color: #deddda
+window.inactive.title.separator.color: #e6e5e3
+window.active.client.color: #fbfdfe
+window.inactive.client.color: #fbfdfe
+
+window.active.title.bg: flat solid
+window.active.title.bg.color: #f6f5f4
+window.inactive.title.bg: flat solid
+window.inactive.title.bg.color: #fbfdfe
+window.active.label.bg: parentrelative
+window.inactive.label.bg: parentrelative
+window.active.label.text.color: #121a1e
+window.inactive.label.text.color: #8d9397
+window.active.handle.bg: flat solid
+window.active.handle.bg.color: #f6f5f4
+window.inactive.handle.bg: flat solid
+window.inactive.handle.bg.color: #fbfdfe
+window.active.grip.bg: flat solid
+window.active.grip.bg.color: #f6f5f4
+window.inactive.grip.bg: flat solid
+window.inactive.grip.bg.color: #fbfdfe
+
+window.active.button.unpressed.bg: parentrelative
+window.active.button.unpressed.image.color: #5a6266
+window.active.button.hover.bg: flat solid
+window.active.button.hover.bg.color: #e5eaee
+window.active.button.hover.image.color: #121a1e
+window.active.button.pressed.bg: flat solid
+window.active.button.pressed.bg.color: #dbe2e7
+window.active.button.pressed.image.color: #121a1e
+window.active.button.disabled.bg: parentrelative
+window.active.button.disabled.image.color: #c5ccd0
+window.active.button.toggled.unpressed.bg: parentrelative
+window.active.button.toggled.unpressed.image.color: #5a6266
+window.active.button.toggled.hover.bg: flat solid
+window.active.button.toggled.hover.bg.color: #e5eaee
+window.active.button.toggled.hover.image.color: #121a1e
+window.active.button.toggled.pressed.bg: flat solid
+window.active.button.toggled.pressed.bg.color: #dbe2e7
+window.active.button.toggled.pressed.image.color: #121a1e
+window.active.button.close.hover.bg: flat solid
+window.active.button.close.hover.bg.color: #d02b31
+window.active.button.close.hover.image.color: #ffffff
+window.active.button.close.pressed.bg: flat solid
+window.active.button.close.pressed.bg.color: #b0222a
+window.active.button.close.pressed.image.color: #ffffff
+
+window.inactive.button.unpressed.bg: parentrelative
+window.inactive.button.unpressed.image.color: #8d9397
+window.inactive.button.hover.bg: flat solid
+window.inactive.button.hover.bg.color: #e5eaee
+window.inactive.button.hover.image.color: #121a1e
+window.inactive.button.pressed.bg: flat solid
+window.inactive.button.pressed.bg.color: #dbe2e7
+window.inactive.button.pressed.image.color: #121a1e
+window.inactive.button.disabled.bg: parentrelative
+window.inactive.button.disabled.image.color: #dbe1e4
+window.inactive.button.toggled.unpressed.bg: parentrelative
+window.inactive.button.toggled.unpressed.image.color: #8d9397
+window.inactive.button.toggled.hover.bg: flat solid
+window.inactive.button.toggled.hover.bg.color: #e5eaee
+window.inactive.button.toggled.hover.image.color: #121a1e
+window.inactive.button.toggled.pressed.bg: flat solid
+window.inactive.button.toggled.pressed.bg.color: #dbe2e7
+window.inactive.button.toggled.pressed.image.color: #121a1e
+window.inactive.button.close.hover.bg: flat solid
+window.inactive.button.close.hover.bg.color: #d02b31
+window.inactive.button.close.hover.image.color: #ffffff
+window.inactive.button.close.pressed.bg: flat solid
+window.inactive.button.close.pressed.bg.color: #b0222a
+window.inactive.button.close.pressed.image.color: #ffffff
+
+window.undecorated.active.border.color: #c5ccd0
+window.undecorated.inactive.border.color: #dbe1e4

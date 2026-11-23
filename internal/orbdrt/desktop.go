@@ -203,6 +203,9 @@ func (d *desktop) rcPath() string        { return filepath.Join(d.dir(), "openbo
 func (d *desktop) runtimeDir() string    { return filepath.Join(d.dir(), "run") }
 func (d *desktop) busPath() string       { return filepath.Join(d.runtimeDir(), "bus") }
 
+// themeDir 是 openbox 主题 Oryn 的目录：openbox 按主题名先找 ~/.themes/<名字>/openbox-3/，与 XDG_DATA_HOME 无关。
+func (d *desktop) themeDir() string { return filepath.Join(d.r.home, ".themes", "Oryn", "openbox-3") }
+
 func (d *desktop) logPath(n string) string {
 	return filepath.Join(d.r.home, ".cache", "oryn", "logs", "desktop", n+".log")
 }

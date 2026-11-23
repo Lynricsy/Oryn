@@ -1,6 +1,6 @@
 package orbdrt
 
-import _ "embed"
+import "embed"
 
 // orbExtension 是写到 $HOME/.oryn/core/extensions/oryn-orb.ts 的 omp 扩展：
 // 在 before_agent_start 向系统提示词追加「Oryn orb 环境」说明与最近 setup 现状。
@@ -33,3 +33,8 @@ var runnerLibrarySkill []byte
 //
 //go:embed assets/openbox-rc.xml
 var openboxRC []byte
+
+// openboxTheme 是写到 $HOME/.themes/Oryn/openbox-3/ 的 openbox 主题（themerc 与按钮图形；openbox-rc.xml 按名字 Oryn 引用）。
+//
+//go:embed assets/openbox-theme
+var openboxTheme embed.FS
