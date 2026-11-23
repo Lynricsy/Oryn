@@ -1,4 +1,28 @@
 {
+	"glyphPicker": {
+		"icons": "图标",
+		"emoji": "表情符号",
+		"searchIcons": "按英文名搜索图标…",
+		"searchEmoji": "搜索表情，中英文均可…",
+		"noMatch": "没有匹配「{{q}}」的结果",
+		"loading": "正在加载完整目录…",
+		"failed": "完整目录加载失败，只显示常用。",
+		"section": {
+			"featured": "常用",
+			"dev": "开发",
+			"linux": "Linux 发行版",
+			"md": "通用",
+			"smileys": "笑脸与情感",
+			"people": "人物与身体",
+			"nature": "动物与自然",
+			"food": "食物与饮料",
+			"travel": "旅行与地点",
+			"activities": "活动",
+			"objects": "物品",
+			"symbols": "符号",
+			"flags": "旗帜"
+		}
+	},
 	"app": {
 		"name": "Oryn",
 		"tagline": "omp 的高级环境系统"
@@ -35,8 +59,6 @@
 		"avatarUpload": "上传图片",
 		"avatarReset": "恢复默认",
 		"avatarGlyphs": "内置图标",
-		"avatarEmoji": "Emoji",
-		"avatarNerd": "字形",
 		"avatarCustom": "自定义（单个 emoji 或 Nerd 字形）",
 		"avatarCustomPlaceholder": "粘贴一个字符",
 		"avatarUse": "使用",
@@ -1270,7 +1292,6 @@
 		"icon": "项目图标",
 		"iconAuto": "自动",
 		"iconAutoHint": "自动：取首个会话标题卡上的图标，没有时用名称首字。",
-		"iconAutoHintShort": "取首个会话标题卡上的图标，没有时用名称首字。",
 		"title": "项目",
 		"defaultBrowserProfile": "默认浏览器 Profile",
 		"defaultBrowserProfileHint": "这个项目的新线程默认装载它（新建线程时可改）。",

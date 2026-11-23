@@ -13,6 +13,7 @@
 			"!dist-launcher",
 			"!src-tauri",
 			"!src/api/schema.d.ts",
+			"!src/lib/glyph-catalog.gen.ts",
 			"!src/omp",
 			"!test-results"
 		]

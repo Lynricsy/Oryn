@@ -7,6 +7,7 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseFrontmatter } from "../../../lib/frontmatter";
 import { readConfigDoc } from "../../../lib/omp-config";
+import { pickAvatarGlyph } from "../../../test/glyph-picker";
 import { agentFetch, home, renderPage, resetHome } from "./agent-config-mock";
 import SubagentsPage, { agentForm, applyAgentForm } from "./SubagentsPage";
 
@@ -138,7 +139,7 @@ describe("SubagentsPage", () => {
 		fireEvent.click(
 			within(row).getByRole("button", { name: "设置 scout 的模型与头像" }),
 		);
-		fireEvent.click(within(row).getByRole("button", { name: "🦊" }));
+		pickAvatarGlyph(row, "🦊");
 		await waitFor(() =>
 			expect(avatarPuts).toEqual([{ name: "scout", avatarIcon: "🦊" }]),
 		);

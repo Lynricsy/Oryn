@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Schemas } from "../../api/client";
 import { identityKeys } from "../../api/identity-queries";
 import { loadAvatarSource, renderAvatar } from "../../lib/avatar-image";
+import { pickAvatarGlyph } from "../../test/glyph-picker";
 import { IdentitySettings } from "./IdentitySettings";
 
 vi.mock("../../lib/avatar-image", async (orig) => ({
@@ -159,7 +160,7 @@ describe("Agent 身份", () => {
 		await waitFor(() =>
 			expect(within(scope).getByLabelText("名字")).toHaveValue("Ling"),
 		);
-		fireEvent.click(within(scope).getByRole("button", { name: "🐱" }));
+		pickAvatarGlyph(scope, "🐱");
 		await waitFor(() => expect(puts()).toHaveLength(1));
 		expect(puts()[0]?.body).toEqual({ name: "Ling", avatarIcon: "🐱" });
 	});
@@ -218,7 +219,7 @@ describe("同一张卡连续编辑（写入排队、按最新身份合并）", (
 			const scope = card(who);
 			const name = within(scope).getByLabelText("名字");
 			await waitFor(() => expect(name).toHaveValue("A"));
-			fireEvent.click(within(scope).getByRole("button", { name: "🐱" }));
+			pickAvatarGlyph(scope, "🐱");
 			await waitFor(() => expect(puts()).toHaveLength(1));
 			expect(puts()[0]?.body).toEqual({ name: "A", avatarIcon: "🐱" });
 			// 名字输入不锁：用户的改动不丢
@@ -271,7 +272,7 @@ describe("全局助手", () => {
 			"全局助手",
 		);
 
-		fireEvent.click(within(scope).getByRole("button", { name: "🐱" }));
+		pickAvatarGlyph(scope, "🐱");
 		await waitFor(() => expect(tab).toHaveTextContent("🐱"));
 		expect(big).toHaveTextContent("🐱");
 		expect(tab).toHaveTextContent("全局助手");

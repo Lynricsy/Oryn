@@ -41,7 +41,7 @@ import {
 import { PairApproval } from "../components/PairApproval";
 import { ApplyStatusBanner } from "../components/settings/ApplyStatusBanner";
 import { ArtifactsSection } from "../components/settings/ArtifactsSection";
-import { radioKeys } from "../components/settings/GlyphGrid";
+import { radioKeys } from "../components/settings/radioKeys";
 import SelectionActionsSettings from "../components/settings/SelectionActionsSettings";
 import { useAsync } from "../components/settings/useAsync";
 import { CopyButton } from "../components/ui/CopyButton";

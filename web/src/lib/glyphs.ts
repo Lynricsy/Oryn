@@ -1,7 +1,9 @@
 /**
- * 精选字形：项目图标与 agent 头像的选择网格共用。
+ * 字形：项目图标与 agent 头像选择弹层的「常用」精选，以及按需加载的完整目录（`glyph-catalog.gen.ts`）与模糊搜索。
  * Nerd 字形的码点取自 Nerd Fonts 3.4 官方 glyphnames（oh-my-pi `utils/nerd-font-glyphs.txt`），按名字逐个核对，不要凭记忆改码点。
  */
+
+import type * as CatalogGen from "./glyph-catalog.gen";
 
 export interface Glyph {
 	/** 无障碍名与悬停提示：Nerd 字形为去掉类前缀的英文名，emoji 为其本身 */
@@ -117,4 +119,126 @@ export function isSingleGlyph(raw: string): boolean {
 		return n === 1;
 	}
 	return [...s].length <= 2;
+}
+
+/** 完整目录里的字形：带搜索用的全文。 */
+export interface CatalogGlyph extends Glyph {
+	/** emoji 的中文名（CLDR）；Nerd 字形没有 */
+	zh?: string;
+	/** 小写的搜索全文：英文名、中文名、中文关键词，空格分隔，英文名打头 */
+	terms: string;
+}
+
+/** 目录分组：Nerd 按字体类（dev / linux / md），emoji 按 Unicode 分组（smileys、people…）。 */
+export type GlyphSectionId =
+	| keyof typeof CatalogGen.NERD_SETS
+	| keyof typeof CatalogGen.EMOJI_GROUPS;
+
+export interface GlyphSection {
+	id: GlyphSectionId;
+	glyphs: readonly CatalogGlyph[];
+}
+
+export interface GlyphCatalog {
+	nerd: readonly GlyphSection[];
+	emoji: readonly GlyphSection[];
+	byChar: ReadonlyMap<string, CatalogGlyph>;
+}
+
+function parseCatalog(gen: typeof CatalogGen): GlyphCatalog {
+	const byChar = new Map<string, CatalogGlyph>();
+	const keep = (g: CatalogGlyph) => {
+		byChar.set(g.char, g);
+		return g;
+	};
+	const nerd = (
+		Object.keys(gen.NERD_SETS) as (keyof typeof gen.NERD_SETS)[]
+	).map((id) => ({
+		id,
+		glyphs: gen.NERD_SETS[id].split("\n").map((line) => {
+			const sp = line.indexOf(" ");
+			const label = line.slice(sp + 1);
+			return keep({
+				label,
+				char: String.fromCodePoint(Number.parseInt(line.slice(0, sp), 16)),
+				terms: label,
+			});
+		}),
+	}));
+	const emoji = (
+		Object.keys(gen.EMOJI_GROUPS) as (keyof typeof gen.EMOJI_GROUPS)[]
+	).map((id) => ({
+		id,
+		glyphs: gen.EMOJI_GROUPS[id].split("\n").map((line) => {
+			const [char = "", label = "", zh = "", words = ""] = line.split("\t");
+			return keep({
+				label,
+				char,
+				zh: zh || undefined,
+				terms: `${label} ${zh} ${words}`.toLowerCase(),
+			});
+		}),
+	}));
+	return { nerd, emoji, byChar };
+}
+
+let catalog: Promise<GlyphCatalog> | undefined;
+
+/** 完整目录（约 9400 个字形、gzip 后约 100 KB）：首次打开选择弹层时才下载，之后复用；失败后下次重试。 */
+export function loadGlyphCatalog(): Promise<GlyphCatalog> {
+	catalog ??= import("./glyph-catalog.gen").then(parseCatalog, (err) => {
+		catalog = undefined;
+		throw err;
+	});
+	return catalog;
+}
+
+/** `q` 的字符按顺序出现在 `s` 里（可不连续）。 */
+function isSubsequence(q: string, s: string): boolean {
+	let i = 0;
+	for (const c of s) if (c === q[i] && ++i === q.length) return true;
+	return false;
+}
+
+/**
+ * 模糊匹配：查询按空白切词，每个词都要命中，得分相加；有词没命中返回 0。
+ * 单词得分：英文名或中文名开头 4 > 某个词开头 3 > 全文任意位置 2 > 英文名里按序出现（如 `ts` → `language typescript`）1。
+ */
+export function glyphScore(
+	g: Glyph & { zh?: string; terms?: string },
+	query: string,
+): number {
+	const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+	const name = g.label.toLowerCase();
+	const terms = g.terms ?? name;
+	let total = 0;
+	for (const w of words) {
+		const s =
+			terms.startsWith(w) || g.zh?.startsWith(w)
+				? 4
+				: terms.includes(` ${w}`)
+					? 3
+					: terms.includes(w)
+						? 2
+						: isSubsequence(w, name)
+							? 1
+							: 0;
+		if (!s) return 0;
+		total += s;
+	}
+	return total;
+}
+
+/** 按 `glyphScore` 筛选并排序；同分时名字短的在前，再按原顺序。 */
+export function searchGlyphs<G extends Glyph & { zh?: string; terms?: string }>(
+	glyphs: readonly G[],
+	query: string,
+): G[] {
+	return glyphs
+		.map((g, i) => ({ g, i, s: glyphScore(g, query) }))
+		.filter((x) => x.s > 0)
+		.sort(
+			(a, b) => b.s - a.s || a.g.label.length - b.g.label.length || a.i - b.i,
+		)
+		.map((x) => x.g);
 }

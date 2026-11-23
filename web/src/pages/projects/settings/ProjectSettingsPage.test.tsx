@@ -128,21 +128,30 @@ describe("项目设置：概览", () => {
 		expect(kit.writes).toEqual([]);
 	});
 
-	it("选字形后保存发送该字形；选「自动」发送空串清除", async () => {
+	it("弹层里选字形后保存发送该字形；选「自动」发送空串清除", async () => {
 		mount(OVERVIEW);
-		const grid = await screen.findByRole("group", {
-			name: i18n.t("projects.icon"),
-		});
+		// jsdom 量不出尺寸：给虚拟滚动的网格一个可见高度（afterEach 里还原）
+		vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(288);
+		vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(340);
+		const openPicker = async () => {
+			fireEvent.click(
+				await screen.findByRole("button", { name: i18n.t("projects.icon") }),
+			);
+			return screen.getByRole("dialog", { name: i18n.t("projects.icon") });
+		};
+		let picker = await openPicker();
 		expect(
-			within(grid).getByRole("button", { name: "language go" }),
+			within(picker).getByRole("button", { name: "language go" }),
 		).toHaveAttribute("aria-pressed", "true");
 		fireEvent.click(
-			within(grid).getByRole("button", { name: "language rust" }),
+			within(picker).getByRole("button", { name: "language rust" }),
 		);
+		expect(screen.queryByRole("dialog")).toBeNull();
 		fireEvent.click(screen.getByRole("button", { name: "保存" }));
 		await waitFor(() => expect(kit.writes).toHaveLength(1));
+		picker = await openPicker();
 		fireEvent.click(
-			await screen.findByRole("button", { name: i18n.t("projects.iconAuto") }),
+			within(picker).getByRole("button", { name: i18n.t("projects.iconAuto") }),
 		);
 		fireEvent.click(screen.getByRole("button", { name: "保存" }));
 		await waitFor(() => expect(kit.writes).toHaveLength(2));

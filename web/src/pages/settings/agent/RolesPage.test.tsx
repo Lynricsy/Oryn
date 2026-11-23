@@ -5,6 +5,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readConfigDoc } from "../../../lib/omp-config";
+import { pickAvatarGlyph } from "../../../test/glyph-picker";
 import { agentFetch, home, renderPage, resetHome } from "./agent-config-mock";
 import RolesPage, { knownRoles, moveRole, rolesConfig } from "./RolesPage";
 
@@ -177,9 +178,7 @@ describe("RolesPage", () => {
 	it("头像：选字形写 role 头像接口；遗留项可清除头像", async () => {
 		renderPage(<RolesPage />);
 		fireEvent.click(await screen.findByRole("button", { name: "设置 思考" }));
-		fireEvent.click(
-			within(roleRow("slow")).getByRole("button", { name: "🦊" }),
-		);
+		pickAvatarGlyph(roleRow("slow"), "🦊");
 		await waitFor(() =>
 			expect(rolePuts).toEqual([{ role: "slow", avatarIcon: "🦊" }]),
 		);

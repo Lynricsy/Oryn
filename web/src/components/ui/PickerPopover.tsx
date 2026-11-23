@@ -13,6 +13,9 @@ export function Popover({
 	side = "top",
 	align = "start",
 	bodyTestId,
+	className = "w-80",
+	bare,
+	maxHeight,
 }: {
 	children: ReactNode;
 	onClose: () => void;
@@ -22,6 +25,12 @@ export function Popover({
 	align?: "start" | "end";
 	/** 滚动体的 `data-testid`（截图的溢出断言用），原样转给 `Floating` */
 	bodyTestId?: string;
+	/** 宽度类名；无论多宽都不超出视口两侧各 1rem */
+	className?: string;
+	/** 由调用方自己排版（固定头部 + 自己的滚动区），原样转给 `Floating` */
+	bare?: boolean;
+	/** 最大高度上限（px），原样转给 `Floating` */
+	maxHeight?: number;
 }): ReactNode {
 	const ref = useRef<HTMLDivElement>(null);
 	// 打开它的元素（首次渲染时的焦点 = 胶囊）；Escape 关闭后焦点回到这里，不掉到 body
@@ -53,9 +62,11 @@ export function Popover({
 			side={side}
 			align={align}
 			gap={side === "top" ? 8 : 4}
-			className="w-80 max-w-[calc(100vw-2rem)]"
+			className={`${className} max-w-[calc(100vw-2rem)]`}
 			bodyClassName="p-1"
 			bodyTestId={bodyTestId}
+			bare={bare}
+			maxHeight={maxHeight}
 		>
 			{children}
 		</Floating>

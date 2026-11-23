@@ -11,7 +11,10 @@ import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, type Project, type Schemas, unwrap } from "../../api/client";
 import { qk, useBrowserProfiles, useProviders } from "../../api/queries";
-import { GlyphGrid } from "../../components/settings/GlyphGrid";
+import {
+	type FeaturedGlyphs,
+	GlyphPicker,
+} from "../../components/settings/GlyphPicker";
 import { useAsync } from "../../components/settings/useAsync";
 import { ProjectBadge } from "../../components/ui/data";
 import { typeHasDocker } from "../../components/ui/OrbBadges";
@@ -127,7 +130,12 @@ export function RepoScriptText({
 	);
 }
 
-/** 项目图标：当前徽标 + 「自动」（清空，之后由首个线程标题卡的图标自动填入）+ 精选字形网格。 */
+const PROJECT_FEATURED: FeaturedGlyphs = { icons: PROJECT_GLYPHS, emoji: [] };
+
+/**
+ * 项目图标：点徽标打开字形弹层（常用精选 + 完整目录，可模糊搜索）；弹层里的「自动」清空图标，
+ * 之后由首个线程标题卡的图标自动填入。
+ */
 function ProjectIconPicker({
 	name,
 	icon,
@@ -139,30 +147,28 @@ function ProjectIconPicker({
 }) {
 	const { t } = useTranslation();
 	return (
-		<div className="flex flex-col gap-2 sm:col-span-2">
+		<div className="flex flex-col gap-1.5 sm:col-span-2">
 			<span className="font-medium text-muted text-xs">
 				{t("projects.icon")}
 			</span>
-			<div className="flex flex-wrap items-center gap-3">
-				<ProjectBadge name={name || "?"} icon={icon} size={32} />
-				<Button
-					size="sm"
-					variant={icon ? "ghost" : "secondary"}
-					aria-pressed={!icon}
-					onClick={() => onChange(undefined)}
+			<div className="flex items-center gap-3">
+				<GlyphPicker
+					value={icon}
+					featured={PROJECT_FEATURED}
+					label={t("projects.icon")}
+					removeLabel={t("projects.iconAuto")}
+					onRemove={() => onChange(undefined)}
+					onPick={(c) => onChange(c)}
+					triggerClassName="rounded-md p-1 transition-colors duration-150 hover:bg-hover aria-expanded:bg-hover"
 				>
-					{t("projects.iconAuto")}
-				</Button>
-				<span className="min-w-0 flex-1 text-faint text-xs">
-					{t("projects.iconAutoHintShort")}
-				</span>
+					<ProjectBadge name={name || "?"} icon={icon} size={40} />
+				</GlyphPicker>
+				{!icon && (
+					<span className="min-w-0 flex-1 text-faint text-xs">
+						{t("projects.iconAutoHint")}
+					</span>
+				)}
 			</div>
-			<GlyphGrid
-				glyphs={PROJECT_GLYPHS}
-				value={icon}
-				label={t("projects.icon")}
-				onPick={(c) => onChange(c)}
-			/>
 		</div>
 	);
 }

@@ -1,4 +1,28 @@
 {
+	"glyphPicker": {
+		"icons": "Icons",
+		"emoji": "Emoji",
+		"searchIcons": "Search icons…",
+		"searchEmoji": "Search emoji…",
+		"noMatch": "No results for “{{q}}”",
+		"loading": "Loading the full catalog…",
+		"failed": "Couldn't load the full catalog; showing featured only.",
+		"section": {
+			"featured": "Featured",
+			"dev": "Development",
+			"linux": "Linux distros",
+			"md": "General",
+			"smileys": "Smileys & emotion",
+			"people": "People & body",
+			"nature": "Animals & nature",
+			"food": "Food & drink",
+			"travel": "Travel & places",
+			"activities": "Activities",
+			"objects": "Objects",
+			"symbols": "Symbols",
+			"flags": "Flags"
+		}
+	},
 	"app": {
 		"name": "Oryn",
 		"tagline": "An advanced environment system for omp"
@@ -35,8 +59,6 @@
 		"avatarUpload": "Upload image",
 		"avatarReset": "Reset",
 		"avatarGlyphs": "Built-in glyphs",
-		"avatarEmoji": "Emoji",
-		"avatarNerd": "Glyphs",
 		"avatarCustom": "Custom (one emoji or Nerd glyph)",
 		"avatarCustomPlaceholder": "Paste one character",
 		"avatarUse": "Use",
@@ -1270,7 +1292,6 @@
 		"icon": "Project icon",
 		"iconAuto": "Auto",
 		"iconAutoHint": "Auto: uses the icon from the first thread's title card, else the name's first letter.",
-		"iconAutoHintShort": "Uses the icon from the first thread's title card, else the name's first letter.",
 		"title": "Projects",
 		"defaultBrowserProfile": "Default browser profile",
 		"defaultBrowserProfileHint": "New threads in this project load it by default (you can change it when starting a thread).",

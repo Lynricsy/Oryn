@@ -5,7 +5,7 @@
  */
 import { useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { radioKeys } from "../../components/settings/GlyphGrid";
+import { radioKeys } from "../../components/settings/radioKeys";
 import { ErrorText, Spinner } from "../../components/ui/primitives";
 import { type AppIconState, host } from "../../lib/host";
 import { APP_ICON_PALETTE } from "./app-icon-palette.gen";
