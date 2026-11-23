@@ -643,22 +643,24 @@ ok h-end
 kb_samples() {
   tail -n "+$((wmark + 1))" "$wlog" | jq -sc 'map(select(.event == "viewport")) | sort_by(.seq) | map(.info)'
 }
-# 聚焦输入框那一刻（键盘弹出之前）的 scrollX：侧栏关闭位
-kb_base() { kb_samples | jq -e 'map(select(.why == "focusin" and .active == "textarea")) | first | .sx'; }
-# 键盘弹出并稳定后：最后一条采样里页面没被推走、横向没动、输入框在键盘上沿之上
+# 聚焦输入框那一刻（键盘弹出之前）的采样：scrollX 是侧栏关闭位，h 是没有键盘时的视觉视口高
+kb_base() { kb_samples | jq -ec 'map(select(.why == "focusin" and .active == "textarea")) | first | {sx, h}'; }
+# 键盘弹出并稳定后：最后一条采样里视觉视口比聚焦时矮了 100pt 以上（键盘真的占了位置）、页面没被推走、横向没动、
+# 输入框在键盘上沿之上。键盘高按聚焦前后的视觉视口高之差算，不用 innerHeight − 视觉视口高：实测 iOS 27.2 弹键盘时
+# innerHeight 跟着缩（interactive-widget=resizes-content），两者相减恒为 0
 kb_settled() {
-  kb_samples | jq -e --argjson x0 "$kb_x0" '
+  kb_samples | jq -e --argjson b "$kb_b" '
     def mag: if . < 0 then -. else . end;
-    last | . != null and .active == "textarea" and .scale == 1 and (.ih - .h) > 100
-      and (.top | mag) < 1 and (.sy | mag) < 1 and ((.sx - $x0) | mag) < 1 and .bottom <= .h + 1'
+    last | . != null and .active == "textarea" and .scale == 1 and ($b.h - .h) > 100
+      and (.top | mag) < 1 and (.sy | mag) < 1 and ((.sx - $b.sx) | mag) < 1 and .bottom <= .h + 1'
 }
 wait_req h-keyboard 120
 until_ok h-keyboard 15 "聚焦输入框时的视口采样（focusin）" kb_base
-kb_x0=$(kb_base)
-kb_end=$((SECONDS + 20))
+kb_b=$(kb_base)
+kb_end=$((SECONDS + 20 * wait_scale))
 until kb_settled >/dev/null 2>&1; do
   ((SECONDS < kb_end)) || fail h-keyboard \
-    "软键盘弹出后页面被推走或输入框被键盘挡住（期望 offsetTop、scrollY 为 0，scrollX = ${kb_x0}，输入框底边 ≤ 视觉视口高）：$(kb_samples)"
+    "软键盘弹出后页面被推走或输入框被键盘挡住（期望视觉视口比聚焦时的 $(jq .h <<<"$kb_b")pt 矮 100pt 以上，offsetTop、scrollY 为 0，scrollX = $(jq .sx <<<"$kb_b")，输入框底边 ≤ 视觉视口高）：$(kb_samples)"
   sleep 0.25
 done
 echo "- 软键盘：$(kb_samples | jq -c 'last')" | tee -a "$summary"
