@@ -81,6 +81,7 @@ import { StructuredView } from "../ui/StructuredView";
 import { BtwDialog } from "./BtwDialog";
 import { ContextBar, ContextTable, useContextParts } from "./ContextBreakdown";
 import { SetupLogDialog } from "./EnvBanner";
+import { JobDialog } from "./JobDialog";
 import { JOBS_POLL_MS, JobsReport, jobsRunning } from "./reports/JobsReport";
 import {
 	ConfirmStrip,
@@ -1857,6 +1858,15 @@ export function ThreadDialogs({ threadId }: { threadId: string }): ReactNode {
 					threadId={threadId}
 					id={dialog.id}
 					file={dialog.file}
+					onClose={close}
+				/>
+			);
+		case "job":
+			return (
+				<JobDialog
+					threadId={threadId}
+					id={dialog.id}
+					jobKey={dialog.key}
 					onClose={close}
 				/>
 			);

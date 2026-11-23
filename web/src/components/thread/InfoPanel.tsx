@@ -55,6 +55,7 @@ import {
 	OrbMetricTiles,
 	Spec,
 } from "./info-parts";
+import { JobsSection } from "./JobsSection";
 import {
 	faultyServices,
 	ServiceLogDialog,
@@ -1055,12 +1056,11 @@ function ContextSection({ threadId }: { threadId: string }) {
 
 const TOOL_ROWS: readonly {
 	icon: IconName;
-	report?: "get_usage" | "get_session_stats" | "get_jobs" | "get_active_tools";
+	report?: "get_usage" | "get_session_stats" | "get_active_tools";
 }[] = [
 	{ icon: "message" },
 	{ icon: "coin", report: "get_usage" },
 	{ icon: "chart", report: "get_session_stats" },
-	{ icon: "hourglass", report: "get_jobs" },
 	{ icon: "bolt", report: "get_active_tools" },
 ];
 
@@ -1077,6 +1077,7 @@ export function InfoPanel({ threadId }: { threadId: string }): ReactNode {
 			</div>
 			<TodoSection threadId={threadId} />
 			<SubagentSection threadId={threadId} />
+			<JobsSection threadId={threadId} />
 			<div className="flex flex-col empty:hidden">
 				<OrbRows threadId={threadId} />
 				<CapabilitiesRow threadId={threadId} />
