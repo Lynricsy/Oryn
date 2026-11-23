@@ -1426,6 +1426,139 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 	}
 }
 
+/*
+ * 启动画面（index.html / launcher.html 的静态 #boot-splash，交接逻辑见 lib/boot-splash.ts）：纸面底色上居中一枚大品牌标，
+ * 插入符闪烁；底部一片 14px 点阵（与首页托盘的点阵同一格距），椭圆遮罩从底边中央向上、向两侧渐隐，
+ * 两束光（主题色与邻近色，与首页两侧的线同一对）反向横扫过点阵。
+ * z-index 9：盖住加载中的页面，但让出 z-10 的可拖动标题行与窗口按钮（ChromeBar）；整层不接收指针。
+ * 扫光的 animation-delay 取 theme-init.js 按墙钟写的 --boot-t（两个周期都整除 12s）：壳从连接页换到远程页面时相位接得上。
+ * 阶段（data-phase）：flying 底色与点阵淡出、插入符停闪，品牌标由脚本逐帧平移缩放；fading 整体淡出；gone 隐藏。
+ */
+.boot-splash {
+	position: fixed;
+	inset: 0;
+	z-index: 9;
+	display: grid;
+	place-items: center;
+	pointer-events: none;
+}
+.boot-splash::before {
+	content: "";
+	position: absolute;
+	inset: 0;
+	background: var(--panel);
+}
+.boot-splash::before,
+.boot-splash-dots,
+.boot-splash-mark {
+	transition: opacity 280ms var(--ease);
+}
+.boot-splash-mark {
+	position: relative;
+	width: clamp(96px, 20vmin, 200px);
+	aspect-ratio: 1;
+	color: var(--ink);
+	transform-origin: center;
+	will-change: transform;
+}
+.boot-splash-mark > svg {
+	display: block;
+	width: 100%;
+	height: 100%;
+}
+.boot-splash-caret {
+	animation: caret-blink 1.06s steps(1) infinite;
+}
+.boot-splash-dots {
+	position: absolute;
+	inset-inline: 0;
+	bottom: 0;
+	height: min(48vh, 28rem);
+	-webkit-mask-image: radial-gradient(
+		ellipse 80% 100% at 50% 100%,
+		#000 30%,
+		transparent 100%
+	);
+	mask-image: radial-gradient(
+		ellipse 80% 100% at 50% 100%,
+		#000 30%,
+		transparent 100%
+	);
+}
+.boot-splash-grid {
+	position: absolute;
+	inset: 0;
+	overflow: hidden;
+	background: color-mix(in oklab, var(--text) 22%, transparent);
+	-webkit-mask:
+		radial-gradient(circle, #000 1.2px, transparent 1.7px) center bottom / 14px
+		14px;
+	mask:
+		radial-gradient(circle, #000 1.2px, transparent 1.7px) center bottom / 14px
+		14px;
+}
+:root[data-theme="dark"] .boot-splash-grid {
+	background: color-mix(in oklab, var(--text) 26%, transparent);
+}
+.boot-splash-sweep {
+	--sweep-h: var(--accent-h);
+	position: absolute;
+	inset-block: 0;
+	left: 0;
+	width: 60%;
+	background: linear-gradient(
+		90deg,
+		transparent,
+		oklch(var(--accent-l) calc(var(--accent-c) + 0.06) var(--sweep-h)),
+		transparent
+	);
+	animation: boot-sweep 3s cubic-bezier(0.45, 0, 0.55, 1) var(--boot-t, 0ms)
+		infinite;
+}
+.boot-splash-sweep + .boot-splash-sweep {
+	--sweep-h: calc(var(--accent-h) + 40);
+	animation-duration: 4s;
+	animation-direction: reverse;
+}
+/* 宽 60% 的光束从容器左外侧扫到右外侧：translate 按自身宽度算，终点 = 100% / 0.6 */
+@keyframes boot-sweep {
+	from {
+		translate: -100% 0;
+	}
+	to {
+		translate: 167% 0;
+	}
+}
+.boot-splash[data-phase="flying"]::before,
+.boot-splash[data-phase="flying"] .boot-splash-dots,
+.boot-splash[data-phase="fading"]::before,
+.boot-splash[data-phase="fading"] .boot-splash-dots,
+.boot-splash[data-phase="fading"] .boot-splash-mark,
+.boot-splash[data-phase="gone"]::before,
+.boot-splash[data-phase="gone"] .boot-splash-dots,
+.boot-splash[data-phase="gone"] .boot-splash-mark {
+	opacity: 0;
+}
+.boot-splash[data-phase="flying"] .boot-splash-caret {
+	animation: none;
+}
+.boot-splash[data-phase="gone"] {
+	visibility: hidden;
+}
+/* 减少动态效果：插入符不闪、光不扫，点阵中央留一束静止的主题色；交接改为整体淡出（boot-splash.ts） */
+@media (prefers-reduced-motion: reduce) {
+	.boot-splash-caret,
+	.boot-splash-sweep {
+		animation: none;
+	}
+	.boot-splash-sweep {
+		translate: 33% 0;
+	}
+	.boot-splash-sweep + .boot-splash-sweep {
+		display: none;
+	}
+}
+
 @layer components {
 	/* 「Oryn」字标：Fraunces 显示光学尺寸（opsz 72），字重与字距固定，字号由调用处给 */
 	.wordmark {

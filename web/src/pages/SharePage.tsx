@@ -40,6 +40,7 @@ import { Icon } from "../components/ui/icons";
 import { Button, EmptyState, Spinner } from "../components/ui/primitives";
 import { AssetUrlContext, type AssetUrls } from "../lib/asset-urls";
 import { parseAttachmentBlock } from "../lib/attachments";
+import { releaseSplash } from "../lib/boot-splash";
 import { formatDateTime } from "../lib/format";
 import { parseTitleCard } from "../lib/title";
 import { advanceTrail, EMPTY_TRAIL } from "../lib/turn-role";
@@ -484,6 +485,8 @@ export function SharePage(): ReactNode {
 	const share = q.data;
 	const loaded = share !== undefined;
 	const gone = !valid || goneSlug === slug || q.error instanceof ShareGoneError;
+	// 匿名分享页没有首页的品牌标可落：启动画面整体淡出（lib/boot-splash.ts）
+	useEffect(() => releaseSplash(), []);
 
 	// 数据源只随 slug 建一次：元数据之后的刷新（附件的公开地址）不重连；链接失效即停
 	useEffect(() => {

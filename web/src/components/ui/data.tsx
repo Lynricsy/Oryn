@@ -1,5 +1,5 @@
 /** 数据呈现元件：徽标、读数、量表、圆环、状态点、卡片、键值、列表行、提示条、头像、纸面、品牌标。 */
-import { type CSSProperties, type ReactNode, useId } from "react";
+import { type CSSProperties, type ReactNode, type Ref, useId } from "react";
 import { Icon, type IconName } from "./icons";
 
 export type Tone = "neutral" | "accent" | "ok" | "warn" | "err" | "frost";
@@ -528,17 +528,20 @@ export function Sheet({
 
 /**
  * 品牌标「O|」：左半个 orb + 一根插入符。`blink` 时插入符像文本光标一样硬切闪烁
- * （`.caret-blink`，见 index.css；减少动效时常亮）。
+ * （`.caret-blink`，见 index.css；减少动效时常亮）。`ref` 给启动画面当落点（lib/boot-splash.ts）。
+ * 路径与 index.html / launcher.html 里的启动画面、public/favicon.svg 相同，改一处要一起改。
  */
 export function BrandMark({
 	size = 16,
 	blink = false,
+	ref,
 }: {
 	size?: number;
 	blink?: boolean;
+	ref?: Ref<HTMLSpanElement>;
 }): ReactNode {
 	return (
-		<span aria-hidden className="inline-flex shrink-0 text-ink">
+		<span ref={ref} aria-hidden className="inline-flex shrink-0 text-ink">
 			<svg
 				viewBox="0 0 32 32"
 				width={size}

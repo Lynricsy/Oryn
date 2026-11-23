@@ -2,9 +2,11 @@
  * 认证类页面的居中卡片：品牌标 + 字标 + 标题 + 内容。`/login`、`/setup`、`/pair` 与桌面壳的连接页共用，外观一致。
  * `blink`：品牌标的插入符闪烁，表示在等你操作（登录、配对页用）。`footer`：卡片底部的小字（连接页的版本与存储提示）。
  * 桌面 App 无系统标题栏：页顶一条可拖动的标题行与窗口按钮（`ChromeBar`；浏览器与移动壳里不渲染）。
+ * 启动画面还在时，它的大品牌标飞进卡片的品牌标（lib/boot-splash.ts）。
  */
-import type { ReactNode } from "react";
+import { type ReactNode, useLayoutEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
+import { releaseSplash } from "../lib/boot-splash";
 import { ChromeBar } from "./layout/WindowControls";
 import { BrandMark } from "./ui/data";
 
@@ -20,12 +22,14 @@ export function AuthCard({
 	footer?: ReactNode;
 }): ReactNode {
 	const { t } = useTranslation();
+	const mark = useRef<HTMLSpanElement>(null);
+	useLayoutEffect(() => releaseSplash(mark.current), []);
 	return (
 		<div className="shell-wash relative flex min-h-dvh items-center justify-center px-4 pt-safe pb-safe">
 			<ChromeBar />
 			<div className="glass pop-in w-full max-w-sm rounded-2xl p-6">
 				<div className="mb-4 flex items-center gap-2.5">
-					<BrandMark size={32} blink={blink} />
+					<BrandMark ref={mark} size={32} blink={blink} />
 					<span className="wordmark text-[28px] text-fg leading-none">
 						{t("app.name")}
 					</span>

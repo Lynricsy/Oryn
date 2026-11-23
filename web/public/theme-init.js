@@ -1,6 +1,8 @@
 // 首帧前写入明暗、主题色与壁纸，避免闪色；规则与 src/state/theme.ts 一致。经典脚本，CSP script-src 'self' 放行。
 (() => {
 	const root = document.documentElement;
+	// 启动画面（#boot-splash）的扫光相位按墙钟对齐：壳从连接页换到远程页面时接着扫，不从头再来（周期见 index.css）
+	root.style.setProperty("--boot-t", `${-(Date.now() % 12000)}ms`);
 	let dark = false;
 	try {
 		dark = window.matchMedia("(prefers-color-scheme: dark)").matches;

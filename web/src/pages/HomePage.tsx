@@ -89,6 +89,7 @@ import {
 	IconButton,
 	Spinner,
 } from "../components/ui/primitives";
+import { releaseSplash } from "../lib/boot-splash";
 import { formatMemoryMB } from "../lib/format";
 import {
 	useHeaderCover,
@@ -262,6 +263,9 @@ export function HomePage(): ReactNode {
 	});
 	// 首次出场：品牌标、标题、输入卡依次上移淡入（仅本次页面会话里第一次挂载）
 	const [intro] = useState(() => !introPlayed);
+	// 启动画面的大品牌标落到输入框上方的品牌标（lib/boot-splash.ts）；已交接过时无操作
+	const markRef = useRef<HTMLSpanElement>(null);
+	useLayoutEffect(() => releaseSplash(markRef.current), []);
 
 	useEffect(() => {
 		introPlayed = true;
@@ -666,7 +670,7 @@ export function HomePage(): ReactNode {
 			<div className="relative isolate flex flex-1 items-start justify-center overflow-y-auto overflow-x-hidden px-3 pt-[10vh] pb-keyboard sm:items-center sm:pt-0">
 				<div className="w-full max-w-2xl">
 					<div className={`mb-3 flex justify-center ${rise("")}`}>
-						<BrandMark size={32} blink />
+						<BrandMark ref={markRef} size={32} blink />
 					</div>
 					<h1
 						className={`mb-5 text-center font-semibold text-fg text-xl tracking-tight ${rise("delay-[60ms]")}`}

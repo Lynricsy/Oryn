@@ -2,7 +2,8 @@
  * 桌面壳的连接页（M6 计划 4）：壳 `session.rs` 状态机的投影。外观与 `/login`、`/pair` 一致（共用 AuthCard）。
  * - connect：填服务器地址 → `launcher_connect`；错误按 `error.code` 给出原因与下一步。
  * - pairing：配对码（等宽大字 + 复制）、剩余有效时间、重新打开浏览器 / 取消。
- * - connecting / connected：转圈 + 服务器主机名。
+ * - 启动 / connecting / connected：不再显示卡片，只举着启动画面（居中大品牌标 + 底部点阵扫光，lib/boot-splash.ts），
+ *   主机名只给读屏；远程页面首帧是同一张启动画面，就绪后品牌标落到首页。进入其它步骤时品牌标飞进卡片。
  * - error：原因与建议、重试、更换服务器（先在本页确认）；`unreachable` 时壳在自动重连。
  * - confirmChange：确认移除这台设备在该服务器上的登录。
  * 每条命令都返回新的状态；壳也会经 `oryn:host` 事件主动推送（轮询批准、自动重连）。
@@ -11,9 +12,16 @@
  * 二维码与 `oryn://pair` 链接给出的服务器只预填（confirmConnect：壳推来的，或本页扫码得到的），清楚显示主机名，
  * 用户点「连接」才发起连接（安全审查第 1 条：链接来源不可信，恶意服务器可以直接批准配对）。
  */
-import { type FormEvent, type ReactNode, useEffect, useState } from "react";
+import {
+	type FormEvent,
+	type ReactNode,
+	useEffect,
+	useLayoutEffect,
+	useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { AuthCard } from "../components/AuthCard";
+import { ChromeBar } from "../components/layout/WindowControls";
 import { CopyButton } from "../components/ui/CopyButton";
 import {
 	Button,
@@ -22,6 +30,7 @@ import {
 	Spinner,
 	TextInput,
 } from "../components/ui/primitives";
+import { holdSplash } from "../lib/boot-splash";
 import { watchChrome } from "../lib/host-chrome";
 import { scannedServer } from "../lib/pair-qr";
 import {
@@ -118,6 +127,18 @@ function PairingCountdown({ expiresAt }: { expiresAt: number }) {
 	);
 }
 
+/** 连接中：页面上只有可拖动的标题行，启动画面盖在上面；状态文字只给读屏。 */
+function SplashStep({ label }: { label: string }): ReactNode {
+	return (
+		<div className="relative h-dvh">
+			<ChromeBar />
+			<p role="status" className="sr-only">
+				{label}
+			</p>
+		</div>
+	);
+}
+
 export function Launcher(): ReactNode {
 	const { t, i18n } = useTranslation();
 	const [info, setInfo] = useState<LauncherInfo | null>(null);
@@ -174,6 +195,15 @@ export function Launcher(): ReactNode {
 	useEffect(() => {
 		if (prefill) setUrl(prefill);
 	}, [prefill]);
+
+	// 启动画面：读到状态之前与连接中举着；其余步骤由 AuthCard 挂载时把品牌标接进卡片
+	const splashing = state
+		? !confirmLocal &&
+			(state.step === "connecting" || state.step === "connected")
+		: !failure;
+	useLayoutEffect(() => {
+		if (splashing) holdSplash();
+	}, [splashing]);
 
 	const run = async (cmd: string, args?: Record<string, unknown>) => {
 		setBusy(true);
@@ -236,10 +266,12 @@ export function Launcher(): ReactNode {
 	);
 
 	if (!state) {
-		return (
+		return failure ? (
 			<AuthCard title={t("launcher.title.connecting")} footer={footer}>
-				{failure ? <ErrorText error={failure} /> : <Spinner />}
+				<ErrorText error={failure} />
 			</AuthCard>
+		) : (
+			<SplashStep label={t("launcher.title.connecting")} />
 		);
 	}
 
@@ -502,12 +534,5 @@ export function Launcher(): ReactNode {
 	}
 
 	// connecting / connected：主窗口马上会离开本页
-	return (
-		<AuthCard title={t("launcher.title.connecting")} footer={footer}>
-			<p className="inline-flex items-center gap-2 text-muted text-sm">
-				<Spinner />
-				{t("launcher.connectingTo", { host: server })}
-			</p>
-		</AuthCard>
-	);
+	return <SplashStep label={t("launcher.connectingTo", { host: server })} />;
 }

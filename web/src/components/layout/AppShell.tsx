@@ -29,6 +29,7 @@ import { useMe } from "../../api/queries";
 import { useRealtimeRepoSync } from "../../api/repo-queries";
 import { useRealtimeScheduleSync } from "../../api/schedule-queries";
 import { useRealtimeSshSync } from "../../api/ssh-queries";
+import { releaseSplash } from "../../lib/boot-splash";
 import { host } from "../../lib/host";
 import { watchChrome } from "../../lib/host-chrome";
 import { computeHostStatus } from "../../lib/host-status";
@@ -287,8 +288,15 @@ export function AppShell(): ReactNode {
 	useEffect(() => {
 		if (authLost && tauri) host.reauth(here.current);
 	}, [authLost, tauri]);
+	// 启动画面（lib/boot-splash.ts）：身份就绪、或确定显示失败页时交接。首页 / 认证卡片在 layout effect 里先把大品牌标
+	// 接到自己的品牌标上（同一次提交里先于这里），其它页面在这里整体淡出；要跳登录页时留给登录卡片接
+	const booting = me.isPending || (authLost && tauri);
+	const redirecting = unauthorized && !tauri;
+	useEffect(() => {
+		if (!booting && !redirecting) releaseSplash();
+	}, [booting, redirecting]);
 
-	if (me.isPending || (authLost && tauri)) {
+	if (booting) {
 		return (
 			<div className="relative flex h-dvh items-center justify-center text-muted">
 				<ChromeBar />
@@ -312,7 +320,7 @@ export function AppShell(): ReactNode {
 			</div>
 		);
 	}
-	if (unauthorized && !tauri) {
+	if (redirecting) {
 		return (
 			<Navigate
 				to={`/login?next=${encodeURIComponent(location.pathname)}`}
