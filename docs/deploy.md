@@ -1054,7 +1054,7 @@ ORYN_OWNERMEM_EVAL_DECIDE_KEY=<判断模型 key> ORYN_OWNERMEM_EVAL_BANK=oryn-ow
 
 ## 16. DevelopServerUS 本机生产实例
 
-当前版本为 `v0.1.0-rc.6-2-gcf9af5e3`（提交 `cf9af5e34e`，Core `oryn-v19.0.1-4`），控制面、provider、重排适配器与 Orb 镜像 `oryn-orb:prod-cf9af5e3` 同版本；镜像以按 ID 钉定的 `oryn-orb:prod-base-6374201aae3e`（`oryn-orb:dev` 在 `7afe3505` 的构建）为底，只覆盖 `omp`、`orbd`、`oryn` 与冒烟脚本。生产产物在 `/root/Oryn/src` 独立克隆构建，未覆盖本仓库的开发二进制、数据、服务或 `oryn-orb:dev` 镜像。升级前已存在的 Orb 仍用旧镜像 `oryn-orb:prod-def2968`，按旧版 orbd 降级运行，删除重建后才换新镜像。
+当前版本为 `v0.1.0-rc.7`（提交 `2fdda936`，Core `oryn-v19.0.1-4`），控制面、provider、重排适配器与 Orb 镜像 `oryn-orb:prod-2fdda936` 同版本；镜像以按 ID 钉定的 `oryn-orb:prod-base-6374201aae3e`（`oryn-orb:dev` 在 `7afe3505` 的构建）为底，只覆盖 `omp`、`orbd`、`oryn` 与冒烟脚本。生产产物在 `/root/Oryn/src` 独立克隆构建，未覆盖本仓库的开发二进制、数据、服务或 `oryn-orb:dev` 镜像。升级前已存在的 Orb 仍用旧镜像 `oryn-orb:prod-def2968`，按旧版 orbd 降级运行，删除重建后才换新镜像。
 
 升级流程：在 `/root/Oryn/src` 检出目标提交并放好与 `core/source.json` 哈希一致的 `build/core/x64/omp`，改 `ops/build-production.sh` 头部的提交、版本、基础镜像与目标镜像，运行它（只构建与离线冒烟，不碰运行中的服务）；再改 `ops/install-production.sh` 头部的版本与镜像并运行：停控制面与 provider，先把 `data/` 整目录归档、把 `bin/`、`lib/`、`etc/` 原样（保留属主、权限与 ACL）拷到 `backups/pre-<版本>/`，然后才改 `etc/provider.yaml` 的 `image` 并安装新产物，启动后数据库迁移随 orynd 自动执行。备份只收紧备份根目录（0700），里面的文件保持原权限：`gemini-rerank` 以动态非特权账号运行，拷回的二进制必须仍是 0755。
 
