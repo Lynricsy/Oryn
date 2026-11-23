@@ -394,7 +394,12 @@ mod mac {
                 // SAFETY: object 为 nil（收所有窗口，回调里按工具栏标识过滤）；queue 为 nil 时在发通知的线程同步回调，
                 // 窗口的全屏通知都在主线程发出，回调里碰 AppKit 安全；块不捕获引用，可跨线程
                 let token = unsafe {
-                    center.addObserverForName_object_queue_usingBlock(Some(name), None, None, &block)
+                    center.addObserverForName_object_queue_usingBlock(
+                        Some(name),
+                        None,
+                        None,
+                        &block,
+                    )
                 };
                 // 观察者随进程常驻，从不注销：令牌不释放
                 std::mem::forget(token);
