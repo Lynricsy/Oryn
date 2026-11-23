@@ -228,6 +228,26 @@ describe("Transcript：主线模式", () => {
 		expect(card.querySelector("blockquote")).toHaveTextContent("全部通过");
 	});
 
+	it("幕后展开时也不显示模型 / 思考级别切换行", () => {
+		const meta = (seq: number, entry: JsonRecord): TranscriptItem => ({
+			kind: "meta",
+			key: `e${seq}`,
+			seq,
+			entry,
+		});
+		mount(true, [
+			userText(1, AUTOMATION),
+			meta(2, { type: "model_change", model: "anthropic/claude-opus-5-5" }),
+			meta(3, { type: "thinking_level_change", thinkingLevel: "high" }),
+			reply(4, "我先看一下。"),
+			reply(5, "夜间测试通过了。"),
+		]);
+		const [behind] = folds() as [HTMLElement];
+		fireEvent.click(within(behind).getByRole("button", { expanded: false }));
+		expect(within(behind).getByText("我先看一下。")).toBeTruthy();
+		expect(behind).not.toHaveTextContent(/model_change|thinking_level_change/);
+	});
+
 	it("后台研究的发现（M26）：折成一行「幕后 · 后台研究」；展开后逐项显示标题、纯文本摘要、http(s) 来源与相关对话", () => {
 		mount(true, [userText(1, RESEARCH), reply(2, "补贴政策有变化。")]);
 		const [behind] = folds() as [HTMLElement];

@@ -257,11 +257,13 @@ function FoldRow({ fold }: { fold: MainlineFold }): ReactNode {
 			</button>
 			{open && (
 				<div className="mt-1.5 flex flex-col gap-3 border-border border-l-2 pl-3">
-					{fold.items.map((it) => (
-						<div key={it.key} className={isUserRow(it) ? "pr-10" : undefined}>
-							<ItemView item={it} turnStart={isUserRow(it)} />
-						</div>
-					))}
+					{fold.items
+						.filter((it) => !isSwitchRow(it))
+						.map((it) => (
+							<div key={it.key} className={isUserRow(it) ? "pr-10" : undefined}>
+								<ItemView item={it} turnStart={isUserRow(it)} />
+							</div>
+						))}
 				</div>
 			)}
 		</div>
@@ -325,6 +327,15 @@ function isAgentRow(item: MainlineRow | undefined): boolean {
 
 function isUserRow(item: MainlineRow): boolean {
 	return item.kind === "message" && item.message.role === "user";
+}
+
+/** 模型 / 思考级别切换行：回合头的模型胶囊与思考角标、输入坞已经显示了它们，不单独成行（主线折叠展开时同样）。 */
+function isSwitchRow(item: MainlineRow): boolean {
+	return (
+		item.kind === "meta" &&
+		(item.entry.type === "model_change" ||
+			item.entry.type === "thinking_level_change")
+	);
 }
 
 /** 回合的模型（第一条带模型字段的助手消息），用于头像行的身份文字。 */
@@ -398,13 +409,12 @@ export function layoutTurns(items: readonly MainlineRow[]): {
 	let thinkingSeen = false;
 	const hidden = new Set<number>();
 	items.forEach((it, i) => {
-		if (it.kind === "meta" && it.entry.type === "model_change") hidden.add(i);
+		if (isSwitchRow(it)) hidden.add(i);
 		if (it.kind === "meta" && it.entry.type === "thinking_level_change") {
 			// thinkingLevel 是实际生效的具体级别；auto 模式下它缺省时退回 configured
 			const v = it.entry.thinkingLevel ?? it.entry.configured;
 			level = typeof v === "string" && v ? v : undefined;
 			thinkingSeen = true;
-			hidden.add(i);
 		}
 		if (isUserRow(it)) {
 			const prev = items[i - 1];
