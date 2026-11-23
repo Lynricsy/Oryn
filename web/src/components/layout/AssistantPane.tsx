@@ -2,7 +2,7 @@
  * 「助手」分区侧栏：全局助手的会话列表。不设分区标题行（底栏选中态已表明分区）。
  * 最上面是主线（M19）的置顶行：助手的头像与名字（没设名字用「全局助手」）+ 未读点或相对时间；索引加载完、协调宿主可用
  * 而索引里还没有主线时，调一次 `GET assistant/main` 让服务端建出来。其下是「新对话」（协调宿主不可用时禁用，下面一条警告）；
- * 会话行 = 状态图标 + 标题 + 未读点或相对时间，悬停 / 聚焦时行尾出现归档按钮；末尾折叠组「已归档」展开才拉取。
+ * 会话行 = 状态图标 + 标题卡图标（有则显示）+ 标题 + 未读点或相对时间，悬停 / 聚焦时行尾出现归档按钮；末尾折叠组「已归档」展开才拉取。
  * 链接的 textContent 只等于标题（时间走 `data-time` 伪元素）。主线不在对话列表里。主线行下面是「助手的电脑」（M19，`/assistant/computer`）。
  */
 import { useQuery } from "@tanstack/react-query";
@@ -28,6 +28,7 @@ import { Callout } from "../ui/data";
 import { Icon } from "../ui/icons";
 import { describeError, IconButton, ThreadStateIcon } from "../ui/primitives";
 import {
+	CardGlyph,
 	closeOnCompact,
 	Group,
 	GroupIcon,
@@ -50,13 +51,15 @@ function ConversationRow({
 }): ReactNode {
 	const { t } = useTranslation();
 	const archivable = onArchive !== undefined;
-	const title = parseTitleCard(thread.title).text || t("assistant.untitled");
+	const card = parseTitleCard(thread.title);
+	const title = card.text || t("assistant.untitled");
 	const to = `/assistant/${thread.id}`;
 	const stamp = formatRelative(thread.lastMessageAt ?? thread.updatedAt, now);
 	return (
 		<div className="group/row relative">
 			<NavLink to={to} onClick={closeOnCompact} className={NAV_ROW}>
 				<ThreadStateIcon state={thread.state} size={14} />
+				{card.icon && <CardGlyph icon={card.icon} />}
 				<span
 					className={`min-w-0 flex-1 truncate ${thread.unread ? "font-medium" : ""}`}
 				>

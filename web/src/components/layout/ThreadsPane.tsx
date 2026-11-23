@@ -32,6 +32,7 @@ import { ProjectBadge } from "../ui/data";
 import { Icon } from "../ui/icons";
 import { IconButton, ThreadStateIcon } from "../ui/primitives";
 import {
+	CardGlyph,
 	CountPill,
 	closeOnCompact,
 	Group,
@@ -182,17 +183,6 @@ export function groupThreads(
 		),
 	}));
 	return g;
-}
-
-/** 标题卡图标：外观同 `TitleGlyph`，但字形放在伪元素里，不进链接的 textContent。 */
-function CardGlyph({ icon }: { icon: string }) {
-	return (
-		<span
-			aria-hidden
-			data-glyph={icon}
-			className="title-glyph inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-[11px] leading-none before:content-[attr(data-glyph)]"
-		/>
-	);
 }
 
 export function ThreadRow({

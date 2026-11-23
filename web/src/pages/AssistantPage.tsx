@@ -1,6 +1,6 @@
 /**
  * 全局助手页（M9，`Ctrl/Cmd+/`）：`/assistant` 跳到最近一个未归档的助手对话（不含主线），没有就新建一个；
- * `/assistant/<id>` 是该对话（`ThreadScreen variant="coordinator"`）。页头是助手的圆形小头像 + 对话标题 +
+ * `/assistant/<id>` 是该对话（`ThreadScreen variant="coordinator"`）。页头是助手的圆形小头像 + 标题卡图标 + 对话标题 + 标题卡代码徽标 +
  * 文件库按钮（M13，对话框里是 `LibraryPanel`）+ 动作菜单（新对话、归档此对话；助手记忆可用时还有「不进助手记忆」切换，M17）；切换对话在侧栏的助手分区里做（M9.6）。协调宿主不可用（`GET coordinator` 的
  * `available === false`）时不创建对话：页面主体是「全局助手暂不可用」+ 原因 + 指向设置 → 关于；
  * 已有对话仍可只读浏览（输入区禁用，托盘里同样提示）。
@@ -32,7 +32,7 @@ import { LibraryPanel } from "../components/assistant/LibraryPanel";
 import { ScheduleDialog } from "../components/schedule/ScheduleDialog";
 import { ScheduleRow } from "../components/schedule/ScheduleRow";
 import { CoordinatorHeader } from "../components/thread/CoordinatorHeader";
-import { Callout, Sheet } from "../components/ui/data";
+import { Badge, Callout, Sheet, TitleGlyph } from "../components/ui/data";
 import {
 	Button,
 	Dialog,
@@ -289,10 +289,12 @@ function AssistantHeader({
 	const [notesFor, setNotesFor] = useState<string | null>(null);
 	const [remindersFor, setRemindersFor] = useState<string | null>(null);
 	const [followUpsFor, setFollowUpsFor] = useState<string | null>(null);
+	// 主线标题是助手的名字；其它对话的 omp 标题卡拆成 图标 + 标题 + 代码徽标（同线程页头）
+	const card = !main && current ? parseTitleCard(current.title) : undefined;
 	const title = main
 		? name || t("tabBar.assistant")
-		: current
-			? parseTitleCard(current.title).text || t("assistant.untitled")
+		: card
+			? card.text || t("assistant.untitled")
 			: t("assistant.title");
 	// 助手记忆（M17）：工程记忆可用时，菜单里可切换本对话「不进助手记忆」（已写入的随之遗忘）
 	const ownerMemory = useOwnerMemorySettings();
@@ -358,9 +360,18 @@ function AssistantHeader({
 			title={
 				<>
 					<AssistantMark size={18} />
+					{card?.icon && <TitleGlyph icon={card.icon} size={18} />}
 					<h1 className="min-w-0 truncate font-semibold text-sm tracking-tight">
 						{title}
 					</h1>
+					{card?.code && (
+						<span
+							aria-hidden
+							className="hidden shrink-0 font-normal @2xl/header:inline-flex"
+						>
+							<Badge>{card.code}</Badge>
+						</span>
+					)}
 				</>
 			}
 			actions={

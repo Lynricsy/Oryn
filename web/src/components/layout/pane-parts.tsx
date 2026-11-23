@@ -1,4 +1,4 @@
-/** 各分区侧栏共用的小件：行样式、未读点、计数签、分组图标与可折叠分组、跳转后收起手机侧栏、分钟时钟。 */
+/** 各分区侧栏共用的小件：行样式、标题卡图标、未读点、计数签、分组图标与可折叠分组、跳转后收起手机侧栏、分钟时钟。 */
 import { type ReactNode, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { breakpointFor } from "../../lib/viewport";
@@ -23,6 +23,17 @@ export const LIST_LINK = ({ isActive }: { isActive: boolean }) =>
  */
 export const PANE_SCROLL =
 	"min-h-0 flex-1 overflow-y-auto px-2 pt-1 pb-[calc(var(--tabbar-h,0px)+1rem)] scroll-pb-[calc(var(--tabbar-h,0px)+0.5rem)]";
+
+/** 标题卡图标：外观同 `TitleGlyph`，但字形放在伪元素里，不进链接的 textContent。 */
+export function CardGlyph({ icon }: { icon: string }): ReactNode {
+	return (
+		<span
+			aria-hidden
+			data-glyph={icon}
+			className="title-glyph inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-[11px] leading-none before:content-[attr(data-glyph)]"
+		/>
+	);
+}
 
 /** 与线程行同款的未读点。 */
 export function UnreadDot(): ReactNode {
