@@ -24,9 +24,9 @@ type scope struct {
 	share  db.ThreadShare
 	keys   roleKeys // 本分享的不透明 role 键
 	thread db.Thread
-	title  string // snapshot：share.title；live：thread.title
-	until  int64  // snapshot：share.until_seq；live：thread.last_seq
-	leaf   string // snapshot：share.leaf_entry_id；live：thread.leaf_entry_id
+	title  string  // snapshot：share.title；live：thread.title
+	until  int64   // snapshot：share.until_seq；live：thread.last_seq
+	leaf   *string // snapshot：share.leaf_entry_id；live：thread.leaf_entry_id（nil = 未知，"" = 空分支）
 	branch []int64
 	onPath map[int64]bool
 	sorted []int64 // branch 按 seq 升序
@@ -45,15 +45,11 @@ func (s *Service) scopeOf(ctx context.Context, sh db.ThreadShare) (*scope, error
 	if sh.Mode == "snapshot" {
 		return s.frozenScope(ctx, sh, th)
 	}
-	leaf := ""
-	if th.LeafEntryID != nil {
-		leaf = *th.LeafEntryID
-	}
-	return s.branchScope(ctx, sh, th, th.LastSeq, leaf)
+	return s.branchScope(ctx, sh, th, th.LastSeq, th.LeafEntryID)
 }
 
 // branchScope 计算 until 之前、以 leaf 为叶子的活动分支（实时分享，以及创建快照时的扫描范围）。
-func (s *Service) branchScope(ctx context.Context, sh db.ThreadShare, th db.Thread, until int64, leaf string) (*scope, error) {
+func (s *Service) branchScope(ctx context.Context, sh db.ThreadShare, th db.Thread, until int64, leaf *string) (*scope, error) {
 	sc := &scope{share: sh, keys: s.roleKeys(sh.ID), thread: th, title: th.Title, until: until, leaf: leaf}
 	rows, err := s.st.Q.ListMainEntryLinks(ctx, db.ListMainEntryLinksParams{ThreadID: th.ID, UntilSeq: until})
 	if err != nil {
@@ -78,9 +74,7 @@ func (s *Service) frozenScope(ctx context.Context, sh db.ThreadShare, th db.Thre
 	if sh.UntilSeq != nil {
 		sc.until = *sh.UntilSeq
 	}
-	if sh.LeafEntryID != nil {
-		sc.leaf = *sh.LeafEntryID
-	}
+	sc.leaf = sh.LeafEntryID
 	if sh.Title != nil {
 		sc.title = *sh.Title
 	}

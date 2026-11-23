@@ -204,13 +204,9 @@ func (s *Service) Create(ctx context.Context, threadID string, mode apigen.Share
 	}
 	until := th.LastSeq
 	row := db.InsertThreadShareParams{ID: ids.New("shr"), ThreadID: threadID, Slug: newSlug(), Mode: string(mode), CreatedAt: s.now()}
-	leaf := ""
-	if th.LeafEntryID != nil {
-		leaf = *th.LeafEntryID
-	}
 	// 扫描的范围与快照即将固化的范围相同（实时分享同样以此刻为界扫描）；accept 记下扫过的每行摘要。
 	// 范围带上分享 id：来源记录的不透明键按它计算，扫描到的内容与公开的内容一致
-	sc, err := s.branchScope(ctx, db.ThreadShare{ID: row.ID, ThreadID: threadID, Mode: string(mode), CreatedAt: row.CreatedAt}, th, until, leaf)
+	sc, err := s.branchScope(ctx, db.ThreadShare{ID: row.ID, ThreadID: threadID, Mode: string(mode), CreatedAt: row.CreatedAt}, th, until, th.LeafEntryID)
 	if err != nil {
 		return apigen.ThreadShare{}, err
 	}

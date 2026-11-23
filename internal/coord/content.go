@@ -46,11 +46,7 @@ func (s *Service) activeBranch(ctx context.Context, t db.Thread) ([]transcript.E
 			break
 		}
 	}
-	leaf := ""
-	if t.LeafEntryID != nil {
-		leaf = *t.LeafEntryID
-	}
-	return transcript.ActiveBranch(all, leaf), nil
+	return transcript.ActiveBranch(all, t.LeafEntryID), nil
 }
 
 // recentMessages 返回活动分支上最近 n 条 user / assistant 文本消息（时间正序），见 readMessages。

@@ -261,11 +261,7 @@ func (s *Service) activeBranch(ctx context.Context, t db.Thread) ([]transcript.E
 			break
 		}
 	}
-	leaf := ""
-	if t.LeafEntryID != nil {
-		leaf = *t.LeafEntryID
-	}
-	return transcript.ActiveBranch(all, leaf), nil
+	return transcript.ActiveBranch(all, t.LeafEntryID), nil
 }
 
 // forgetStale 遗忘线程已删除或已被排除的来源（R6）。

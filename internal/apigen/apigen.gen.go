@@ -6171,7 +6171,9 @@ type EntryPage struct {
 	HasMore bool    `json:"hasMore"`
 
 	// LastSeq 该线程当前最大 seq
-	LastSeq     int64   `json:"lastSeq"`
+	LastSeq int64 `json:"lastSeq"`
+
+	// LeafEntryID 同 `Thread.leafEntryId`（空串 = 空分支）
 	LeafEntryID *string `json:"leafEntryId,omitempty"`
 }
 
@@ -11804,7 +11806,9 @@ type Thread struct {
 
 	// LastMessageAt UTC 毫秒时间戳
 	LastMessageAt *TimestampMs `json:"lastMessageAt,omitempty"`
-	LeafEntryID   *string      `json:"leafEntryId,omitempty"`
+
+	// LeafEntryID 活动分支的叶子条目。省略 = 未知（按最后一条条目回溯）；空串 = 明确的空分支（回退到了会话第一条消息之前，当前会话文件不在活动分支上）
+	LeafEntryID *string `json:"leafEntryId,omitempty"`
 
 	// Main 是否为全局助手的主线对话（M19，`kind = assistant` 的单例）；不是则省略
 	Main  *bool     `json:"main,omitempty"`
@@ -12624,7 +12628,9 @@ type WsServerEntries struct {
 	Entries []Entry `json:"entries"`
 
 	// LastSeq 本条消息覆盖到的最大 seq（可续传游标：≤ 它的条目都已送达）；分批时每批各自填写
-	LastSeq     int64   `json:"lastSeq"`
+	LastSeq int64 `json:"lastSeq"`
+
+	// LeafEntryID 同 `Thread.leafEntryId`（空串 = 空分支）
 	LeafEntryID *string `json:"leafEntryId,omitempty"`
 
 	// ThreadID `T-<uuidv7>`
@@ -12862,7 +12868,9 @@ type WsServerThreadSnapshot struct {
 	FullReplay bool `json:"fullReplay"`
 
 	// LastSeq 快照时刻线程的最大 seq（补发的目标；不是可续传游标，游标以各条 `entries.lastSeq` 为准）
-	LastSeq     int64   `json:"lastSeq"`
+	LastSeq int64 `json:"lastSeq"`
+
+	// LeafEntryID 同 `Thread.leafEntryId`（空串 = 空分支）
 	LeafEntryID *string `json:"leafEntryId,omitempty"`
 
 	// Orb 线程所在 orb；无 orb 时省略

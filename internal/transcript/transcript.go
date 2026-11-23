@@ -33,9 +33,11 @@ func isSynthetic(id string) bool { return strings.HasPrefix(id, "__") }
 
 // ActiveBranch 返回活动分支上的主会话条目：主会话文件按首次出现的 seq 拼接；
 // 含 leaf 的文件从 leaf 沿 parentId 回溯，其余文件从其最后一条（按输入顺序）回溯。
+// leaf 为 nil 表示叶子未知（各文件都从最后一条回溯）；指向 "" 表示明确的空分支（回退到了会话的第一条消息之前）：
+// 当前会话文件（最晚开始的主会话文件）不贡献条目，更早的文件照常。
 // 合成 id 的条目与子 agent 文件不在结果里；遇到环或断链即停止回溯。
 // 只用到 Seq / File / EntryID / ParentID（Payload 可为空），输入应按 seq 升序。
-func ActiveBranch(entries []Entry, leaf string) []Entry {
+func ActiveBranch(entries []Entry, leaf *string) []Entry {
 	type fileEntries struct {
 		first int64
 		byID  map[string]Entry
@@ -59,12 +61,18 @@ func ActiveBranch(entries []Entry, leaf string) []Entry {
 		names = append(names, n)
 	}
 	sort.Slice(names, func(i, j int) bool { return files[names[i]].first < files[names[j]].first })
+	empty := leaf != nil && *leaf == ""
 	var out []Entry
-	for _, n := range names {
+	for i, n := range names {
 		f := files[n]
+		if empty && i == len(names)-1 {
+			break
+		}
 		start := f.last
-		if _, ok := f.byID[leaf]; ok {
-			start = leaf
+		if leaf != nil {
+			if _, ok := f.byID[*leaf]; ok {
+				start = *leaf
+			}
 		}
 		var chain []Entry
 		seen := map[string]bool{}

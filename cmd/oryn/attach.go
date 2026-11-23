@@ -61,7 +61,7 @@ type attacher struct {
 	o attachOpts
 
 	entries []transcript.Entry
-	leaf    string
+	leaf    *string // nil = 未知；"" = 空分支（见 transcript.ActiveBranch）
 	lastSeq int64
 	rev     *int64
 
@@ -310,7 +310,7 @@ func (a *attacher) handle(ctx context.Context, conn *wsConn, m wsEnvelope) (int,
 		rev := s.TranscriptRev
 		a.rev, a.snapSeq, a.subscribed = &rev, s.LastSeq, true
 		if s.LeafEntryID != nil {
-			a.leaf = *s.LeafEntryID
+			a.leaf = s.LeafEntryID
 		}
 		a.pending, a.pendOrder = map[string]json.RawMessage{}, nil
 		for _, f := range s.Agent.PendingUI {
@@ -382,7 +382,7 @@ func (a *attacher) handle(ctx context.Context, conn *wsConn, m wsEnvelope) (int,
 
 func (a *attacher) addEntries(e entriesMsg) {
 	if e.LeafEntryID != nil {
-		a.leaf = *e.LeafEntryID
+		a.leaf = e.LeafEntryID
 	}
 	for _, en := range e.Entries {
 		if en.Seq <= a.lastSeq {

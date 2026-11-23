@@ -403,11 +403,7 @@ func (s *Service) RecoveredOutcomeMatch(ctx context.Context, threadID string, ma
 			break
 		}
 	}
-	leaf := ""
-	if row.LeafEntryID != nil {
-		leaf = *row.LeafEntryID
-	}
-	branch := transcript.ActiveBranch(all, leaf)
+	branch := transcript.ActiveBranch(all, row.LeafEntryID)
 	anchor := -1
 	for i, e := range branch {
 		m, isMsg := transcript.ParseMessage(e)

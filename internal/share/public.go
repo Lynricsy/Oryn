@@ -41,13 +41,6 @@ type EntryPage struct {
 	LeafEntryID *string            `json:"leafEntryId,omitempty"`
 }
 
-func strPtr(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}
-
 // PublicShare 对应 `GET public/shares/{slug}`：不含线程 id、orb、项目、标签、模型配置。
 func (s *Service) PublicShare(ctx context.Context, slug string) (apigen.PublicShare, error) {
 	sh, err := s.activeBySlug(ctx, slug)
@@ -60,7 +53,7 @@ func (s *Service) PublicShare(ctx context.Context, slug string) (apigen.PublicSh
 	}
 	out := apigen.PublicShare{
 		Mode: apigen.ShareMode(sh.Mode), Title: publicTitle(sc.title), SharedAt: sh.CreatedAt,
-		ThreadCreatedAt: sc.thread.CreatedAt, LastSeq: sc.until, LeafEntryID: strPtr(sc.leaf),
+		ThreadCreatedAt: sc.thread.CreatedAt, LastSeq: sc.until, LeafEntryID: sc.leaf,
 		TranscriptRev: sc.thread.TranscriptRev, Attachments: []apigen.PublicAttachment{},
 	}
 	if sh.Mode == string(apigen.ShareModeLive) {
@@ -141,7 +134,7 @@ func (s *Service) PublicEntries(ctx context.Context, slug string, after int64, l
 	if err != nil {
 		return EntryPage{}, err
 	}
-	return EntryPage{Entries: es, HasMore: more, LastSeq: sc.until, LeafEntryID: strPtr(sc.leaf)}, nil
+	return EntryPage{Entries: es, HasMore: more, LastSeq: sc.until, LeafEntryID: sc.leaf}, nil
 }
 
 // PublicBlob 对应 `GET public/shares/{slug}/blobs/{sha256}`：只放行范围内活动分支上的条目引用的 blob。

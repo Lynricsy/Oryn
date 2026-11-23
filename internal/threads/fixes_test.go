@@ -833,3 +833,63 @@ func TestLeafSwitchBumpsTranscriptRev(t *testing.T) {
 	assert.Equal(t, int64(3), rev)
 	assert.Equal(t, "bs", leaf)
 }
+
+// 回退到根上的用户消息之前：Core 的 switch_leaf 应答省略 activeLeafId（叶子为 null），navigate_tree 后的 get_tree 回
+// leafId:null。两者都是明确的空分支——叶子记为 ""（不是表示未知的 NULL）、转录版本递增并广播；之后的新消息从根
+// 分叉，旧分支的条目仍在库里。reopenAsk（叶子没动）不算。
+func TestLeafSwitchToRootIsEmptyBranch(t *testing.T) {
+	f := newFixture(t, Config{})
+	orb := f.orb("ready")
+	th := f.thread(orb, StateIdle)
+	a := fakeAgent(8)
+	attach(th, a, apigen.AgentStatusReady)
+	_, end := f.appendLines(th, orb, "main.jsonl", 0, msgLine("u1", "", "user", 1), msgLine("a1", "u1", "assistant", 2))
+
+	cmd := func(typ, entry, data string) {
+		t.Helper()
+		require.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(fmt.Sprintf(`{"type":%q,"entryId":%q}`, typ, entry)), func(json.RawMessage) {}))
+		frames := sent(a)
+		require.Len(t, frames, 1)
+		f.respond(th, frames[0], true, data)
+	}
+	rowLeaf := func() *string {
+		t.Helper()
+		row, err := f.st.Q.GetThread(f.ctx, th.id)
+		require.NoError(t, err)
+		return row.LeafEntryID
+	}
+
+	// 要先重开 ask 的应答也不带 activeLeafId，但叶子没动
+	cmd("switch_leaf", "u1", `{"cancelled":false,"reopenAsk":{"toolCallId":"c","html":"<p>"}}`)
+	assert.Empty(t, f.sink.resets)
+	assert.Equal(t, "a1", *rowLeaf())
+
+	cmd("switch_leaf", "u1", `{"cancelled":false,"editorText":"x"}`)
+	assert.Equal(t, []int64{1}, f.sink.resets)
+	require.NotNil(t, rowLeaf(), "空分支不能存成表示未知的 NULL")
+	assert.Equal(t, "", *rowLeaf())
+	var snap Snapshot
+	require.NoError(t, f.s.Subscribe(f.ctx, th.id, func(s Snapshot) { snap = s }))
+	require.NotNil(t, snap.LeafEntryID)
+	assert.Equal(t, "", *snap.LeafEntryID)
+
+	// 新消息从根分叉：叶子跟到新条目，旧分支仍在
+	f.appendLines(th, orb, "main.jsonl", end, msgLine("u2", "", "user", 3), msgLine("a2", "u2", "assistant", 4))
+	assert.Equal(t, "a2", *rowLeaf())
+	rows, err := f.st.Q.ListEntriesAfter(f.ctx, db.ListEntriesAfterParams{ThreadID: th.id, AfterSeq: 0, Limit: 100})
+	require.NoError(t, err)
+	var got []string
+	for _, r := range rows {
+		got = append(got, r.EntryID)
+	}
+	assert.Subset(t, got, []string{"u1", "a1", "u2", "a2"})
+
+	// navigate_tree 退到根之前：内部 get_tree 回 leafId:null
+	cmd("navigate_tree", "u2", `{"cancelled":false}`)
+	frames := sent(a)
+	require.Len(t, frames, 1)
+	require.Contains(t, frames[0], `"type":"get_tree"`)
+	f.respond(th, frames[0], true, `{"tree":[],"leafId":null}`)
+	assert.Equal(t, []int64{1, 2}, f.sink.resets)
+	assert.Equal(t, "", *rowLeaf())
+}

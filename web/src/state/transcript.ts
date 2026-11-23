@@ -151,19 +151,21 @@ export function branchPath(
 	return path.reverse();
 }
 
-/** 活动分支上的主会话条目（跨文件按顺序拼接）。 */
+/**
+ * 活动分支上的主会话条目（跨文件按顺序拼接）。`leafEntryId` 为 undefined 表示叶子未知（各文件从最后一条回溯）；
+ * 为 "" 表示明确的空分支（回退到了会话第一条消息之前）：当前会话文件（最后一个）的分支为空，更早的文件照常。
+ */
 export function activeBranch(
 	entries: readonly Entry[],
 	leafEntryId: string | undefined,
 ): Entry[][] {
-	const files = groupMainFiles(entries);
-	const out: Entry[][] = [];
-	for (const list of files.values()) {
+	const files = [...groupMainFiles(entries).values()];
+	return files.map((list, i) => {
+		if (leafEntryId === "" && i === files.length - 1) return [];
 		const hasLeaf =
 			leafEntryId !== undefined && list.some((e) => e.entryId === leafEntryId);
-		out.push(branchPath(list, hasLeaf ? leafEntryId : undefined));
-	}
-	return out;
+		return branchPath(list, hasLeaf ? leafEntryId : undefined);
+	});
 }
 
 /** 启动文件里允许出现的条目类型（另加来源记录）。 */

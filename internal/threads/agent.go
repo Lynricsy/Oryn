@@ -823,11 +823,17 @@ func (s *Service) onResponse(ctx context.Context, t *thread, env omprpc.Envelope
 	_ = json.Unmarshal(frame, &r)
 	switch p.cmdType {
 	case "switch_leaf":
+		// Core 的应答在叶子为 null（回退到了根上的用户消息之前）时省略 activeLeafId：成功、未取消、也不是要求先重开
+		// ask 的应答（reopenAsk，叶子没动）时，缺省即是明确的空分支
 		var d struct {
-			ActiveLeafID *string `json:"activeLeafId"`
+			Cancelled    bool            `json:"cancelled"`
+			Aborted      bool            `json:"aborted"`
+			ReopenAsk    json.RawMessage `json:"reopenAsk"`
+			ActiveLeafID *string         `json:"activeLeafId"`
 		}
-		if r.Success && json.Unmarshal(r.Data, &d) == nil && d.ActiveLeafID != nil {
-			s.switchLeafLocked(ctx, t, d.ActiveLeafID, !eqPtr(d.ActiveLeafID, p.leafBefore))
+		if r.Success && json.Unmarshal(r.Data, &d) == nil && !d.Cancelled && !d.Aborted && (len(d.ReopenAsk) == 0 || string(d.ReopenAsk) == "null") {
+			leaf := orEmptyLeaf(d.ActiveLeafID)
+			s.switchLeafLocked(ctx, t, leaf, !eqPtr(leaf, p.leafBefore))
 		}
 	case "navigate_tree":
 		// omp 的 navigate_tree 应答（RpcNavigateTreeResult）不带新叶子：成功且确有移动（非 cancelled / aborted）时
@@ -1058,6 +1064,8 @@ func (s *Service) queryLeafLocked(t *thread, leafBefore *string) {
 		if json.Unmarshal(d.LeafID, &leaf) != nil {
 			return
 		}
+		// leafId 为 null：导航退到了根之前，空分支
+		leaf = orEmptyLeaf(leaf)
 		s.switchLeafLocked(context.Background(), t, leaf, !eqPtr(leaf, leafBefore))
 	}})
 }

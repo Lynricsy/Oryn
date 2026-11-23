@@ -3,7 +3,11 @@ import { describe, expect, it } from "vitest";
 import type { Entry } from "../api/client";
 import { EMPTY_TRAIL } from "../lib/turn-role";
 import type { JsonRecord, LiveMessage } from "./message-builder";
-import { buildTranscript, type TranscriptItem } from "./transcript";
+import {
+	activeBranch,
+	buildTranscript,
+	type TranscriptItem,
+} from "./transcript";
 
 let seq = 0;
 function entry(
@@ -228,6 +232,31 @@ describe("mode_change 带上前一条模式", () => {
 			["goal", undefined],
 			["goal_paused", "goal"],
 			["none", "goal_paused"],
+		]);
+	});
+});
+
+describe("activeBranch 的叶子", () => {
+	const ids = (files: Entry[][]) => files.map((f) => f.map((e) => e.entryId));
+
+	it("空串 = 明确的空分支：当前会话文件为空，更早的文件照常；之后从根分叉的新消息成为新分支，旧分支不再显示", () => {
+		const older = chain("a.jsonl", [["message", user("旧文件")]]);
+		const current = chain("b.jsonl", [
+			["message", user("根上的第一条")],
+			["message", reply("答")],
+		]);
+		const entries = [...older, ...current];
+		const last = current[1]?.entryId;
+		expect(ids(activeBranch(entries, undefined))).toEqual([
+			[older[0]?.entryId],
+			[current[0]?.entryId, last],
+		]);
+		expect(ids(activeBranch(entries, ""))).toEqual([[older[0]?.entryId], []]);
+
+		const fork = entry("b.jsonl", "message", user("重写的第一条"));
+		expect(ids(activeBranch([...entries, fork], fork.entryId))).toEqual([
+			[older[0]?.entryId],
+			[fork.entryId],
 		]);
 	});
 });

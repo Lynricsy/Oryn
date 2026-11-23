@@ -460,10 +460,10 @@ var threadShowCmd = &cobra.Command{
 	},
 }
 
-func fetchEntries(ctx context.Context, c *apiClient, id string) ([]transcript.Entry, string, error) {
+func fetchEntries(ctx context.Context, c *apiClient, id string) ([]transcript.Entry, *string, error) {
 	var all []transcript.Entry
 	var after int64
-	leaf := ""
+	var leaf *string
 	for {
 		var page struct {
 			Entries     []transcript.Entry `json:"entries"`
@@ -471,11 +471,11 @@ func fetchEntries(ctx context.Context, c *apiClient, id string) ([]transcript.En
 			LeafEntryID *string            `json:"leafEntryId"`
 		}
 		if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/api/v1/threads/%s/entries?after=%d&limit=500", id, after), nil, &page); err != nil {
-			return nil, "", err
+			return nil, nil, err
 		}
 		all = append(all, page.Entries...)
 		if page.LeafEntryID != nil {
-			leaf = *page.LeafEntryID
+			leaf = page.LeafEntryID
 		}
 		if !page.HasMore || len(page.Entries) == 0 {
 			return all, leaf, nil

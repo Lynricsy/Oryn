@@ -378,7 +378,7 @@ Sec-Fetch-Site 不存在：
 
 |包|导出|用途|
 |---|---|---|
-|`internal/transcript`|`Entry`、`IsMainFile`、`ActiveBranch`、`Message` / `ToolCall` / `ParseMessage`、`LineText`、`Public`、`MarkdownMeta` / `Markdown`、`Snippet`|活动分支（主会话文件按首次出现的 seq 拼接；含叶子的文件从叶子沿 `parentId` 回溯，其余从最后一条回溯；合成 id 与子 agent 文件除外）、公开视图、`.md` 导出、通知正文。CLI、分享、通知共用|
+|`internal/transcript`|`Entry`、`IsMainFile`、`ActiveBranch`、`Message` / `ToolCall` / `ParseMessage`、`LineText`、`Public`、`MarkdownMeta` / `Markdown`、`Snippet`|活动分支（主会话文件按首次出现的 seq 拼接；含叶子的文件从叶子沿 `parentId` 回溯，其余从最后一条回溯；合成 id 与子 agent 文件除外。叶子未知（`leafEntryId` 省略）时各文件都从最后一条回溯；叶子为空串是明确的空分支——回退到了根上的用户消息之前（Core 的 `switch_leaf` 应答省略 `activeLeafId`、`get_tree` 回 `leafId:null`，控制面都记为 `""`），当前会话文件不贡献条目）、公开视图、`.md` 导出、通知正文。CLI、分享、通知共用|
 |`internal/uiprompt`|`Prompt`、`Labels`、`Describe`、`AnswerOption`、`AnswerText`、`ErrUnsupported`、`ErrNeedOption`|待答请求的纯文本呈现与文本作答（Telegram、`oryn thread attach`）|
 
 `transcript.Public(e)`：子 agent 文件 → 不公开；类型不在 `{message, compaction, branch_summary, custom_message, model_change, thinking_level_change, mode_change, ttsr_injection, title_change}`，或 `role ∈ {custom, hookMessage}` 且 `display:false` 的消息，或 `display:false` 的 `custom_message` → payload 换成 `{"type":"<type>"}`（**保留链、清空内容**：活动分支沿 `parentId` 回溯，丢掉条目会断链）；其余原样。

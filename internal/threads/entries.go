@@ -187,8 +187,8 @@ func (s *Service) ingestLocked(ctx context.Context, t *thread, orbID string, p a
 			}
 			if isNew && !strings.HasPrefix(pe.EntryID, "__") {
 				if pe.OffBranch {
-					// 写在活动分支之外的条目（迟到的 model_usage 等）不移动叶子
-					leaf = pe.ActiveLeaf
+					// 写在活动分支之外的条目（迟到的 model_usage 等）不移动叶子；它记下的叶子为 null 即空分支
+					leaf = orEmptyLeaf(pe.ActiveLeaf)
 				} else {
 					id := pe.EntryID
 					leaf = &id
@@ -321,7 +321,7 @@ func (s *Service) rewriteTranscriptLocked(ctx context.Context, t *thread, file s
 		if err := deleteOrphanFacts(ctx, q, t.id, s.now()); err != nil {
 			return err
 		}
-		if leaf != nil {
+		if leaf != nil && *leaf != "" { // 空分支没有叶子条目可失效
 			n, err := q.EntryIDExists(ctx, db.EntryIDExistsParams{ThreadID: t.id, EntryID: *leaf})
 			if err != nil {
 				return err
@@ -361,6 +361,15 @@ func (s *Service) announceTranscriptLocked(ctx context.Context, t *thread, leaf 
 	if leafChanged {
 		s.publish(ctx, t.id)
 	}
+}
+
+// orEmptyLeaf 把 omp 报告的叶子（null / 省略 = 叶子被清空）转成线程叶子：nil 记为 ""，即明确的空分支——
+// 线程叶子里 nil 只表示「未知」（还没有条目），读的一方据此回落到最后一条（见 transcript.ActiveBranch）。
+func orEmptyLeaf(leaf *string) *string {
+	if leaf == nil {
+		return new("")
+	}
+	return leaf
 }
 
 // switchLeafLocked 记下 switch_leaf 成功应答给出的叶子，或 navigate_tree 成功后内部 get_tree 查到的叶子。moved 为真（叶子离开了命令受理时的位置：

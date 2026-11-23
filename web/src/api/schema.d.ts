@@ -8772,6 +8772,7 @@ export interface components {
             stateChangedAt: components["schemas"]["TimestampMs"];
             parentThreadId?: components["schemas"]["ThreadId"];
             forkedFromEntryId?: string;
+            /** @description 活动分支的叶子条目。省略 = 未知（按最后一条条目回溯）；空串 = 明确的空分支（回退到了会话第一条消息之前，当前会话文件不在活动分支上） */
             leafEntryId?: string;
             model?: components["schemas"]["ModelRef"];
             thinkingLevel?: string;
@@ -8929,6 +8930,7 @@ export interface components {
         };
         EntryPage: {
             entries: components["schemas"]["Entry"][];
+            /** @description 同 `Thread.leafEntryId`（空串 = 空分支） */
             leafEntryId?: string;
             /**
              * Format: int64
@@ -10834,6 +10836,7 @@ export interface components {
             /** @description 线程所在 orb；无 orb 时省略 */
             orb?: components["schemas"]["Orb"];
             agent: components["schemas"]["AgentLiveState"];
+            /** @description 同 `Thread.leafEntryId`（空串 = 空分支） */
             leafEntryId?: string;
             /**
              * Format: int64
@@ -10862,6 +10865,7 @@ export interface components {
             type: "entries";
             threadId: components["schemas"]["ThreadId"];
             entries: components["schemas"]["Entry"][];
+            /** @description 同 `Thread.leafEntryId`（空串 = 空分支） */
             leafEntryId?: string;
             /**
              * Format: int64

@@ -57,26 +57,29 @@ func TestActiveBranch(t *testing.T) {
 	}
 
 	// 叶子在第一个文件：该文件从叶子回溯，b 文件从最后一条回溯；文件按首次出现顺序拼接。
-	assert.Equal(t, []string{"u1", "x2", "v1", "v3"}, ids(ActiveBranch(entries, "x2")))
+	assert.Equal(t, []string{"u1", "x2", "v1", "v3"}, ids(ActiveBranch(entries, new("x2"))))
 	// 叶子在第二个文件：a 文件从其最后一条（x3）回溯。
-	assert.Equal(t, []string{"u1", "x1", "x3", "v1", "v2"}, ids(ActiveBranch(entries, "v2")))
-	// 无叶子 / 未知叶子：各文件都从最后一条回溯。
-	assert.Equal(t, []string{"u1", "x1", "x3", "v1", "v3"}, ids(ActiveBranch(entries, "")))
-	assert.Equal(t, ids(ActiveBranch(entries, "")), ids(ActiveBranch(entries, "nope")))
+	assert.Equal(t, []string{"u1", "x1", "x3", "v1", "v2"}, ids(ActiveBranch(entries, new("v2"))))
+	// 叶子未知 / 不存在：各文件都从最后一条回溯。
+	assert.Equal(t, []string{"u1", "x1", "x3", "v1", "v3"}, ids(ActiveBranch(entries, nil)))
+	assert.Equal(t, ids(ActiveBranch(entries, nil)), ids(ActiveBranch(entries, new("nope"))))
+	// 明确的空分支（回退到根之前）：当前会话文件（最晚开始的 b）没有条目，更早的文件照常；旧条目仍在输入里可找回。
+	assert.Equal(t, []string{"u1", "x1", "x3"}, ids(ActiveBranch(entries, new(""))))
 
 	// 环：遇到已访问的 id 即停止。
 	cyc := []Entry{
 		{Seq: 1, File: "a.jsonl", EntryID: "c1", ParentID: new("c2")},
 		{Seq: 2, File: "a.jsonl", EntryID: "c2", ParentID: new("c1")},
 	}
-	assert.Equal(t, []string{"c1", "c2"}, ids(ActiveBranch(cyc, "")))
+	assert.Equal(t, []string{"c1", "c2"}, ids(ActiveBranch(cyc, nil)))
 	// 断链：父不在本文件里即停止。
 	broken := []Entry{
 		{Seq: 1, File: "a.jsonl", EntryID: "r1"},
 		{Seq: 2, File: "a.jsonl", EntryID: "r3", ParentID: new("gone")},
 	}
-	assert.Equal(t, []string{"r3"}, ids(ActiveBranch(broken, "")))
-	assert.Empty(t, ActiveBranch(nil, ""))
+	assert.Equal(t, []string{"r3"}, ids(ActiveBranch(broken, nil)))
+	assert.Empty(t, ActiveBranch(nil, nil))
+	assert.Empty(t, ActiveBranch(broken, new("")))
 }
 
 func TestParseMessageAndLineText(t *testing.T) {
