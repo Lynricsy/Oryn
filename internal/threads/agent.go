@@ -643,6 +643,8 @@ func (s *Service) failPendingLocked(t *thread, reason string, all bool) {
 		}
 		t.msgOrder = nil
 	}
+	// 旧进程已发出的切换命令全部终止，不把旧代留下的跳叶记录带给后续新命令。
+	t.ingestedLeafJumps = nil
 }
 
 // dropPassiveLocked 以 agent_unavailable 结束排队中的只读查询：它们在 provisioning / 恢复途中排队，随后 orb 进入
@@ -835,9 +837,11 @@ func (s *Service) onResponse(ctx context.Context, t *thread, env omprpc.Envelope
 		}
 		if r.Success && json.Unmarshal(r.Data, &d) == nil && !d.Cancelled && !d.Aborted && (len(d.ReopenAsk) == 0 || string(d.ReopenAsk) == "null") {
 			leaf := orEmptyLeaf(d.ActiveLeafID)
-			if !(eqPtr(leaf, t.leaf) && t.transcriptRev > p.revBefore) {
-				s.switchLeafLocked(ctx, t, leaf, !eqPtr(leaf, p.leafBefore))
+			if !t.consumeIngestedLeafJumpLocked(leaf, p.revBefore) && !eqPtr(leaf, p.leafBefore) {
+				s.switchLeafLocked(ctx, t, leaf, true)
 			}
+		} else {
+			t.pruneIngestedLeafJumpsLocked()
 		}
 	case "navigate_tree":
 		// omp 的 navigate_tree 应答（RpcNavigateTreeResult）不带新叶子：成功且确有移动（非 cancelled / aborted）时
@@ -848,6 +852,8 @@ func (s *Service) onResponse(ctx context.Context, t *thread, env omprpc.Envelope
 		}
 		if r.Success && json.Unmarshal(r.Data, &d) == nil && !d.Cancelled && !d.Aborted {
 			s.queryLeafLocked(t, p.leafBefore, p.revBefore)
+		} else {
+			t.pruneIngestedLeafJumpsLocked()
 		}
 	case "plan_approval":
 		if r.Success {
@@ -1056,7 +1062,8 @@ func (s *Service) refreshStateLocked(t *thread) {
 // 查询失败（未送达、agent 退出）时不改叶子，之后入库的新条目照常推进它。调用方持有 t.mu。
 func (s *Service) queryLeafLocked(t *thread, leafBefore *string, revBefore int64) {
 	frame := []byte(`{"type":"get_tree"}`)
-	_ = s.enqueueLocked(t, frame, &pendingCmd{cmdType: "get_tree", after: func(t *thread, env omprpc.Envelope, data json.RawMessage) {
+	_ = s.enqueueLocked(t, frame, &pendingCmd{cmdType: "get_tree", revBefore: revBefore, after: func(t *thread, env omprpc.Envelope, data json.RawMessage) {
+		defer t.pruneIngestedLeafJumpsLocked()
 		var d struct {
 			LeafID json.RawMessage `json:"leafId"`
 		}
@@ -1070,9 +1077,10 @@ func (s *Service) queryLeafLocked(t *thread, leafBefore *string, revBefore int64
 		}
 		// leafId 为 null：导航退到了根之前，空分支
 		leaf = orEmptyLeaf(leaf)
-		if !(eqPtr(leaf, t.leaf) && t.transcriptRev > revBefore) {
-			s.switchLeafLocked(context.Background(), t, leaf, !eqPtr(leaf, leafBefore))
+		if t.consumeIngestedLeafJumpLocked(leaf, revBefore) || (eqPtr(leaf, t.leaf) && t.transcriptRev > revBefore) || eqPtr(leaf, leafBefore) {
+			return
 		}
+		s.switchLeafLocked(context.Background(), t, leaf, true)
 	}})
 }
 

@@ -362,6 +362,10 @@ type thread struct {
 	gapUI map[string]bool
 	// transcriptRev 是转录版本（threads.transcript_rev）。
 	transcriptRev int64
+	// ingestedLeafJumps 记录已被 entries.append 离分支条目（oryn-leaf 等）推进的叶子切换：
+	// 对应的 switch_leaf / navigate_tree 应答若晚于文件入库到达（哪怕期间已有新消息越过该叶子），
+	// 按此记录去重，避免把已前进的 t.leaf 回退覆盖或重复递增 transcript_rev。
+	ingestedLeafJumps []ingestedLeafJump
 	// deliveries 是在途的附件投递数（命令在投递完成后才入队）：>0 时线程算 working、不静止。
 	deliveries int
 	// msgOrder 是已受理、尚未入队的消息命令（prompt / steer / follow_up / abort_and_prompt），按受理顺序排列：

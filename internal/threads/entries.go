@@ -134,10 +134,11 @@ func (s *Service) ingestLocked(ctx context.Context, t *thread, orbID string, p a
 	now := s.now()
 	leaf := t.leaf
 	titled, leafJumped := false, false
+	var jumped []string
 	var lastMsg *int64
 	var rev int64
 	err := s.st.Tx(ctx, func(q *db.Queries) error {
-		out, leaf, titled, lastMsg, leafJumped, rev = nil, t.leaf, false, nil, false, 0
+		out, leaf, titled, lastMsg, leafJumped, jumped, rev = nil, t.leaf, false, nil, false, nil, 0
 		for _, line := range p.Lines {
 			pe, err := ParseLine(line)
 			if err != nil {
@@ -193,6 +194,7 @@ func (s *Service) ingestLocked(ctx context.Context, t *thread, orbID string, p a
 					next := orEmptyLeaf(pe.ActiveLeaf)
 					if !eqPtr(next, leaf) {
 						leafJumped = true
+						jumped = append(jumped, *next)
 					}
 					leaf = next
 				} else {
@@ -254,6 +256,7 @@ func (s *Service) ingestLocked(ctx context.Context, t *thread, orbID string, p a
 		// 避免先经 Entries 触发匿名连接以旧版本重建；私有与匿名端收到 reset 后均按新版本整段重拉。
 		published := !eqPtr(leaf, t.leaf)
 		s.announceTranscriptLocked(ctx, t, leaf, rev)
+		t.recordIngestedLeafJumpsLocked(jumped, rev)
 		if !published && (titled || lastMsg != nil) {
 			s.publish(ctx, t.id)
 		}
@@ -428,6 +431,79 @@ func copyStr(p *string) *string {
 	}
 	v := *p
 	return &v
+}
+
+// ingestedLeafJump 是已由 entries.append 离分支条目入库的一次叶子切换目标与提交后的转录版本。
+type ingestedLeafJump struct {
+	leaf string
+	rev  int64
+}
+
+func isLeafCmd(cmdType string) bool {
+	return cmdType == "switch_leaf" || cmdType == "navigate_tree" || cmdType == "get_tree"
+}
+
+func (t *thread) minPendingLeafRevBeforeLocked() (int64, bool) {
+	var minRev int64
+	found := false
+	for _, p := range t.pending {
+		if !isLeafCmd(p.cmdType) {
+			continue
+		}
+		if !found || p.revBefore < minRev {
+			minRev, found = p.revBefore, true
+		}
+	}
+	return minRev, found
+}
+
+func (t *thread) pruneIngestedLeafJumpsLocked() {
+	minRev, ok := t.minPendingLeafRevBeforeLocked()
+	if !ok {
+		t.ingestedLeafJumps = nil
+		return
+	}
+	kept := t.ingestedLeafJumps[:0]
+	for _, j := range t.ingestedLeafJumps {
+		if j.rev > minRev {
+			kept = append(kept, j)
+		}
+	}
+	if len(kept) == 0 {
+		t.ingestedLeafJumps = nil
+		return
+	}
+	t.ingestedLeafJumps = kept
+}
+
+func (t *thread) recordIngestedLeafJumpsLocked(targets []string, rev int64) {
+	minRev, ok := t.minPendingLeafRevBeforeLocked()
+	if !ok || rev <= minRev {
+		t.pruneIngestedLeafJumpsLocked()
+		return
+	}
+	for _, target := range targets {
+		t.ingestedLeafJumps = append(t.ingestedLeafJumps, ingestedLeafJump{leaf: target, rev: rev})
+	}
+	t.pruneIngestedLeafJumpsLocked()
+}
+
+// consumeIngestedLeafJumpLocked 匹配并消费在 revBefore 之后已由离分支标记入库的目标叶子切换。
+// 即使之后已有新消息继续把 t.leaf 往前推进，仍能准确识别本次切换已入库并跳过迟到的 RPC 应答。
+func (t *thread) consumeIngestedLeafJumpLocked(leaf *string, revBefore int64) bool {
+	if leaf == nil {
+		return false
+	}
+	target := *leaf
+	for i, j := range t.ingestedLeafJumps {
+		if j.rev > revBefore && j.leaf == target {
+			t.ingestedLeafJumps = append(t.ingestedLeafJumps[:i], t.ingestedLeafJumps[i+1:]...)
+			t.pruneIngestedLeafJumpsLocked()
+			return true
+		}
+	}
+	t.pruneIngestedLeafJumpsLocked()
+	return false
 }
 
 // dropFile 删除线程中某文件的全部条目与游标，并丢弃之后对它的追加（fork share 回退时移走新线程里的产物）。

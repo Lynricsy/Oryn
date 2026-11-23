@@ -983,3 +983,106 @@ func TestOffBranchLeafMarkerBumpsRevAndDedups(t *testing.T) {
 	assert.Equal(t, "u3", leaf)
 	assert.Equal(t, []int64{1, 2, 3, 4}, f.sink.resets)
 }
+
+// 乱序回归：两路独立转发（entries.append 与 RPC 应答流）允许文件流先于 switch_leaf 应答推进过切换点——
+// 例如 [oryn-leaf(B), message(C, parent=B)] 先入库使 t.leaf=C，随后才到达 activeLeafId:B 应答；
+// 去重必须识别已入库的切换标记，不得重复 bump transcript_rev，更不得把已前进的 C 回退覆盖成 B。
+func TestOffBranchLeafMarkerOutOfOrderBeforeResponse(t *testing.T) {
+	f := newFixture(t, Config{})
+	orb := f.orb("ready")
+	th := f.thread(orb, StateIdle)
+	a := fakeAgent(8)
+	attach(th, a, apigen.AgentStatusReady)
+	_, end := f.appendLines(th, orb, "main.jsonl", 0,
+		msgLine("u1", "", "user", 1),
+		msgLine("a1", "u1", "assistant", 2),
+		msgLine("u2", "a1", "user", 3),
+		msgLine("a2", "u2", "assistant", 4),
+	)
+	rowState := func() (int64, string) {
+		t.Helper()
+		row, err := f.st.Q.GetThread(f.ctx, th.id)
+		require.NoError(t, err)
+		require.NotNil(t, row.LeafEntryID)
+		return row.TranscriptRev, *row.LeafEntryID
+	}
+	marker := func(id, leaf string) string {
+		if leaf == "" {
+			return fmt.Sprintf(`{"type":"custom","customType":"oryn-leaf","id":%q,"parentId":null,"activeLeafId":null}`, id)
+		}
+		return fmt.Sprintf(`{"type":"custom","customType":"oryn-leaf","id":%q,"parentId":%q,"activeLeafId":%q}`, id, leaf, leaf)
+	}
+
+	// 1. 同批 [oryn-leaf(a1), message(u3, parent=a1)] 先于 activeLeafId:a1 应答到达：保持 u3、rev 只升一次
+	require.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(`{"type":"switch_leaf","entryId":"u2"}`), func(json.RawMessage) {}))
+	frames := sent(a)
+	require.Len(t, frames, 1)
+	_, end = f.appendLines(th, orb, "main.jsonl", end,
+		marker("lf1", "a1"),
+		msgLine("u3", "a1", "user", 5),
+	)
+	f.respond(th, frames[0], true, `{"cancelled":false,"activeLeafId":"a1"}`)
+	rev, leaf := rowState()
+	assert.Equal(t, int64(1), rev)
+	assert.Equal(t, "u3", leaf)
+	assert.Equal(t, []int64{1}, f.sink.resets)
+
+	// 2. 退到根前空分支并紧跟新根消息：[oryn-leaf(null), message(u4, parent=null)] 先于省略 activeLeafId 的应答到达
+	require.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(`{"type":"switch_leaf","entryId":"u1"}`), func(json.RawMessage) {}))
+	frames = sent(a)
+	require.Len(t, frames, 1)
+	_, end = f.appendLines(th, orb, "main.jsonl", end,
+		marker("lf2", ""),
+		msgLine("u4", "", "user", 6),
+	)
+	f.respond(th, frames[0], true, `{"cancelled":false,"editorText":"retry"}`)
+	rev, leaf = rowState()
+	assert.Equal(t, int64(2), rev)
+	assert.Equal(t, "u4", leaf)
+	assert.Equal(t, []int64{1, 2}, f.sink.resets)
+
+	// 3. 分两批先后到达 [oryn-leaf(a1)]、[message(u5, parent=a1)]，再收到 activeLeafId:a1 应答
+	require.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(`{"type":"switch_leaf","entryId":"u2"}`), func(json.RawMessage) {}))
+	frames = sent(a)
+	require.Len(t, frames, 1)
+	_, end = f.appendLines(th, orb, "main.jsonl", end, marker("lf3", "a1"))
+	_, end = f.appendLines(th, orb, "main.jsonl", end, msgLine("u5", "a1", "user", 7))
+	f.respond(th, frames[0], true, `{"cancelled":false,"activeLeafId":"a1"}`)
+	rev, leaf = rowState()
+	assert.Equal(t, int64(3), rev)
+	assert.Equal(t, "u5", leaf)
+	assert.Equal(t, []int64{1, 2, 3}, f.sink.resets)
+
+	// 4. 连续两次 switch_leaf，文件流先到 [oryn-leaf(a1), oryn-leaf(u1)]，两份应答依次后到：最终保持 u1 不倒退
+	require.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(`{"type":"switch_leaf","entryId":"u2"}`), func(json.RawMessage) {}))
+	require.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(`{"type":"switch_leaf","entryId":"a1"}`), func(json.RawMessage) {}))
+	frames = sent(a)
+	require.Len(t, frames, 2)
+	_, end = f.appendLines(th, orb, "main.jsonl", end,
+		marker("lf4", "a1"),
+		marker("lf5", "u1"),
+	)
+	f.respond(th, frames[0], true, `{"cancelled":false,"activeLeafId":"a1"}`)
+	f.respond(th, frames[1], true, `{"cancelled":false,"activeLeafId":"u1"}`)
+	rev, leaf = rowState()
+	assert.Equal(t, int64(4), rev)
+	assert.Equal(t, "u1", leaf)
+	assert.Equal(t, []int64{1, 2, 3, 4}, f.sink.resets)
+
+	// 5. 旧代崩溃后残留记录不跨进程误吞新代命令
+	require.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(`{"type":"switch_leaf","entryId":"u2"}`), func(json.RawMessage) {}))
+	require.Len(t, sent(a), 1)
+	_, end = f.appendLines(th, orb, "main.jsonl", end, marker("lf6", "a1"))
+	f.s.onAgentStatus(f.ctx, orb, json.RawMessage(fmt.Sprintf(`{"threadId":%q,"status":"exited"}`, th.id)))
+	a = fakeAgent(8)
+	attach(th, a, apigen.AgentStatusReady)
+	_, _ = f.appendLines(th, orb, "main.jsonl", end, msgLine("u6", "a1", "user", 8))
+	require.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(`{"type":"switch_leaf","entryId":"u2"}`), func(json.RawMessage) {}))
+	frames = sent(a)
+	require.Len(t, frames, 1)
+	f.respond(th, frames[0], true, `{"cancelled":false,"activeLeafId":"a1"}`)
+	rev, leaf = rowState()
+	assert.Equal(t, int64(6), rev)
+	assert.Equal(t, "a1", leaf)
+	assert.Equal(t, []int64{1, 2, 3, 4, 5, 6}, f.sink.resets)
+}
