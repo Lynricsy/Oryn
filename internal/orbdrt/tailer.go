@@ -217,6 +217,9 @@ func (tl *tailer) loadCursors(ctx context.Context, c *conn) error {
 // 嵌套派发逐层同理（`task/executor.ts`）。没有同名会话文件的子目录是旁路数据（`local/` 的 local://、
 // `url-search/` 抓来的仓库、`blobs/`、`btw-history/` 等），不进入：其中的 *.jsonl 不是会话，
 // 文件也可能成千上万，逐次扫描和 inotify 监视都白费。
+// 子 agent 的产物子目录里，Core 分配的嵌套 id 都带「父 id.」前缀（`task/output-manager.ts` 的 parentPrefix），
+// 只认这样的会话文件与子目录，外加该子 agent 的顾问转录；这样子 agent 恰好叫 `local` 等旁路目录名时，
+// 重新进入的旁路目录里的其他 *.jsonl 也不会被当成转录。
 func (tl *tailer) list() []string {
 	dir := tl.t.dir
 	tl.watch(dir)
@@ -245,9 +248,13 @@ func (tl *tailer) list() []string {
 				return nil
 			}
 			rel, _ := filepath.Rel(dir, p)
+			parent := filepath.Dir(p)
+			// 位于子 agent 的产物子目录（而非主会话产物目录顶层）时，id 必须带父 id 前缀
+			nested := p != art && parent != art
+			prefixed := !nested || strings.HasPrefix(d.Name(), filepath.Base(parent)+".")
 			if d.IsDir() {
 				if p != art {
-					if strings.Count(rel, string(filepath.Separator)) >= artifactDepth {
+					if strings.Count(rel, string(filepath.Separator)) >= artifactDepth || !prefixed {
 						return filepath.SkipDir
 					}
 					if st, err := os.Stat(p + ".jsonl"); err != nil || !st.Mode().IsRegular() {
@@ -257,16 +264,29 @@ func (tl *tailer) list() []string {
 				tl.watch(p)
 				return nil
 			}
-			if strings.HasSuffix(d.Name(), ".jsonl") &&
-				(p != filepath.Join(art, commitJournal) || !isCommitJournal(p)) {
-				subs = append(subs, filepath.ToSlash(rel))
+			name := d.Name()
+			if !strings.HasSuffix(name, ".jsonl") {
+				return nil
 			}
+			if nested && !prefixed && !isAdvisorTranscript(name) {
+				return nil
+			}
+			if !nested && name == commitJournal && isCommitJournal(p) {
+				return nil
+			}
+			subs = append(subs, filepath.ToSlash(rel))
 			return nil
 		})
 		sort.Strings(subs)
 		out = append(out, subs...)
 	}
 	return out
+}
+
+// isAdvisorTranscript 对应 Core `isAdvisorTranscriptName`：`__advisor.jsonl` 或 `__advisor.<slug>.jsonl`。
+// 主会话与每个子 agent 的产物目录各有一份；`__advisor-2.jsonl` 之类是被顶开的子 agent id，不是顾问。
+func isAdvisorTranscript(name string) bool {
+	return name == "__advisor.jsonl" || strings.HasPrefix(name, "__advisor.") && strings.HasSuffix(name, ".jsonl")
 }
 
 // journalRecordTypes 是改动日志的记录类型（Core ChangeRecord / CallRecord / CommitRecord）。
