@@ -34,8 +34,9 @@ const (
 	maxEntryLine = link.MaxCtlLineBytes - 2<<20
 	// artifactDepth 是会话产物子目录内查找 *.jsonl 的最大深度。
 	artifactDepth = 4
-	// commitJournal 是 Core 选择性提交的改动日志（`commit/selective/journal.ts`），只写在主会话产物目录顶层，
-	// 子 agent 共用它；它不是会话转录，不复制（否则会被当成名为 changes 的子 agent）。
+	// commitJournal 是 Core 选择性提交的改动日志（`commit/selective/journal.ts`），写在主会话产物目录顶层，
+	// 子 agent 共用它。Core 的子 agent id 分配器不保留 `changes`，根级子 agent 取这个名字时它的会话转录
+	// 也写在同一路径，所以按内容区分（见 isCommitJournal），不按文件名一刀切。
 	commitJournal = "changes.jsonl"
 )
 
@@ -247,7 +248,8 @@ func (tl *tailer) list() []string {
 				tl.watch(p)
 				return nil
 			}
-			if strings.HasSuffix(d.Name(), ".jsonl") && p != filepath.Join(art, commitJournal) {
+			if strings.HasSuffix(d.Name(), ".jsonl") &&
+				(p != filepath.Join(art, commitJournal) || !isCommitJournal(p)) {
 				subs = append(subs, filepath.ToSlash(rel))
 			}
 			return nil
@@ -256,6 +258,31 @@ func (tl *tailer) list() []string {
 		out = append(out, subs...)
 	}
 	return out
+}
+
+// journalRecordTypes 是改动日志的记录类型（Core ChangeRecord / CallRecord / CommitRecord）。
+var journalRecordTypes = map[string]bool{"change": true, "call": true, "commit": true}
+
+// isCommitJournal 按首行判断 changes.jsonl 是不是改动日志：会话转录首行是 `title` / `session` 头，
+// 改动日志首行是一条记录。首行还没写完整时也返回 true——先不复制，等下次扫描再判断（游标仍从 0 开始）。
+// 首行超长或不是 JSON 时不像日志记录，照常复制。
+func isCommitJournal(abs string) bool {
+	fh, err := os.Open(abs)
+	if err != nil {
+		return true
+	}
+	defer fh.Close()
+	line, err := bufio.NewReaderSize(fh, 64<<10).ReadSlice('\n')
+	if errors.Is(err, bufio.ErrBufferFull) {
+		return false
+	}
+	if err != nil {
+		return true
+	}
+	var h struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal(line, &h) == nil && journalRecordTypes[h.Type]
 }
 
 func (tl *tailer) scan(ctx context.Context, c *conn) error {

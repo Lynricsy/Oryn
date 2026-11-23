@@ -6,7 +6,8 @@
  * 存档的身份是完整 `file`，不是 id：同一线程的不同主会话各自从 `0-…` 编号，同名文件可以出现在不同目录。
  * 顾问转录（`__advisor.jsonl` / `__advisor.<slug>.jsonl`，主会话与每个子 agent 目录各一份）不是 task 子 agent，
  * 同 Core `registry-helpers` 一样排除。主会话产物目录顶层的 `changes.jsonl` 是 Core 选择性提交的改动日志
- * （`commit/selective/journal.ts`），也不是会话；orbd 已不再复制它，这里排除的是此前已入库的。
+ * （`commit/selective/journal.ts`），不是会话；但 Core 不保留 `changes` 这个 id，名为 changes 的根级子 agent
+ * 的转录也写在同一路径，所以只跳过该路径上的日志记录（`change` / `call` / `commit`），不按文件名排除。
  */
 import type { Entry } from "../api/client";
 import { isRecord } from "../tool-render/util";
@@ -26,8 +27,23 @@ export interface SubagentFile {
 
 /** Core `ADVISOR_TRANSCRIPT_STEM`。 */
 const ADVISOR_STEM = "__advisor";
-/** Core 选择性提交改动日志的文件名去掉 `.jsonl`（只在主会话产物目录顶层）。 */
-const COMMIT_JOURNAL_STEM = "changes";
+/** 主会话产物目录顶层的改动日志文件名（Core `commit/selective/journal.ts` 的 `JOURNAL_FILE`）。 */
+const COMMIT_JOURNAL_FILE = "changes.jsonl";
+/** 改动日志的记录类型（Core `ChangeRecord` / `CallRecord` / `CommitRecord`）。 */
+const JOURNAL_RECORD_TYPES: ReadonlySet<string> = new Set([
+	"change",
+	"call",
+	"commit",
+]);
+
+/** 主会话产物目录顶层（路径只含一个 `/`）的改动日志路径。 */
+function isCommitJournalPath(file: string): boolean {
+	const slash = file.indexOf("/");
+	return (
+		slash === file.lastIndexOf("/") &&
+		file.slice(slash + 1) === COMMIT_JOURNAL_FILE
+	);
+}
 
 /** 文件名（路径末段）去掉 `.jsonl`。 */
 function fileId(file: string): string {
@@ -50,16 +66,12 @@ export function subagentFiles(entries: readonly Entry[]): SubagentFile[] {
 	>();
 	for (const e of entries) {
 		if (!e.file.includes("/")) continue;
+		if (JOURNAL_RECORD_TYPES.has(e.type) && isCommitJournalPath(e.file))
+			continue;
 		let slot = byFile.get(e.file);
 		if (!slot) {
 			const id = fileId(e.file);
 			if (id === ADVISOR_STEM || id.startsWith(`${ADVISOR_STEM}.`)) continue;
-			// 主会话产物目录顶层（路径只含一个 `/`）的改动日志
-			if (
-				id === COMMIT_JOURNAL_STEM &&
-				e.file.indexOf("/") === e.file.lastIndexOf("/")
-			)
-				continue;
 			slot = { row: { id, file: e.file } };
 			byFile.set(e.file, slot);
 		}

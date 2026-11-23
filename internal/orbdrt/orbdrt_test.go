@@ -428,11 +428,15 @@ func TestArtifactTranscriptsAndPartialLines(t *testing.T) {
 	rt := startRuntime(t, cp, nil)
 	dir := filepath.Join(rt.home, ".oryn", "threads", thread1)
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "S1", "sub"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "S2"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "S1.jsonl"), []byte(`{"type":"session","id":"s"}`+"\n"+`{"type":"message","id":"a"}`+"\n"+`{"type":"mess`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "S1", "task-1.jsonl"), []byte(`{"type":"message","id":"x"}`+"\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "S1", "sub", "task-2.jsonl"), []byte(`{"type":"message","id":"y"}`+"\n"), 0o644))
 	// Core 选择性提交的改动日志不是会话转录，不复制
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "S1", "changes.jsonl"), []byte(`{"type":"change","agent":"Main"}`+"\n"), 0o644))
+	// 名为 changes 的根级子 agent 的转录在同一路径，首行是会话头：照常复制（日志记录随后追加进来也一起复制）
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "S2.jsonl"), []byte(`{"type":"session","id":"s2"}`+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "S2", "changes.jsonl"), []byte(`{"type":"title","title":""}`+"\n"+`{"type":"session","id":"c"}`+"\n"+`{"type":"change","agent":"Main"}`+"\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "S1", "notes.txt"), []byte("ignored\n"), 0o644))
 	require.NoError(t, rt.reg.add(thread1, dir))
 	rt.thread(thread1, dir)
@@ -442,10 +446,11 @@ func TestArtifactTranscriptsAndPartialLines(t *testing.T) {
 		defer cp.mu.Unlock()
 		f := cp.files[thread1]
 		return f["S1.jsonl"] != nil && len(f["S1.jsonl"].lines) == 2 &&
-			f["S1/task-1.jsonl"] != nil && f["S1/sub/task-2.jsonl"] != nil
+			f["S1/task-1.jsonl"] != nil && f["S1/sub/task-2.jsonl"] != nil &&
+			f["S2/changes.jsonl"] != nil && len(f["S2/changes.jsonl"].lines) == 3
 	}, 10*time.Second, 20*time.Millisecond)
 	cp.mu.Lock()
-	assert.Equal(t, []string{"S1.jsonl", "S1/sub/task-2.jsonl", "S1/task-1.jsonl"}, sortedKeys(cp.files[thread1]))
+	assert.Equal(t, []string{"S1.jsonl", "S1/sub/task-2.jsonl", "S1/task-1.jsonl", "S2.jsonl", "S2/changes.jsonl"}, sortedKeys(cp.files[thread1]))
 	assert.EqualValues(t, len(`{"type":"session","id":"s"}`+"\n"+`{"type":"message","id":"a"}`+"\n"), cp.files[thread1]["S1.jsonl"].offset)
 	cp.mu.Unlock()
 

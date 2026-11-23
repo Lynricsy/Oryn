@@ -94,9 +94,30 @@ describe("subagentFiles", () => {
 				agent: "Main",
 				tool: "edit",
 			}),
-			msg(2, `${ART}/0-Scout.jsonl`, "s"),
+			entry(2, `${ART}/changes.jsonl`, "call", { type: "call" }),
+			msg(3, `${ART}/0-Scout.jsonl`, "s"),
 		]);
 		expect(rows).toEqual([{ id: "0-Scout", file: `${ART}/0-Scout.jsonl` }]);
+	});
+
+	it("名为 changes 的根级子 agent 与改动日志同路径：转录照常成行，日志记录不进消息", () => {
+		const file = `${ART}/changes.jsonl`;
+		const entries = [
+			entry(1, file, "session", { type: "session", title: "改动审计" }),
+			entry(2, file, "session_init", {
+				type: "session_init",
+				agent: "task",
+				task: "audit",
+			}),
+			entry(3, file, "change", { type: "change", agent: "Main" }),
+			msg(4, file, "hi"),
+		];
+		expect(subagentFiles(entries)).toEqual([
+			{ id: "changes", file, agent: "task", task: "audit", title: "改动审计" },
+		]);
+		expect(subagentMessages(entries, file).map((m) => m.content)).toEqual([
+			"hi",
+		]);
 	});
 
 	it("不同主会话目录下的同名存档各自一行", () => {
