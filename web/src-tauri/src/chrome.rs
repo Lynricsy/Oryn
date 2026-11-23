@@ -11,8 +11,9 @@
 //! - macOS ≥ 26 再给主窗口挂一个空的 unified `NSToolbar`：只有标题栏的窗口外框圆角约 16，挂了 unified 工具栏的约 26
 //!   （WWDC25「Build an AppKit app with the new design」），页面卡片按 `chrome.radius` 做同心圆角；
 //!   工具栏下的发丝分隔线去掉。临时窗口同样挂上，量到的就是带工具栏时的按钮位置。
-//!   全屏时 AppKit 把工具栏连同标题栏搬进全屏工具栏窗口，常驻在菜单栏下方、不透明，盖住页面顶部一条，
-//!   所以进全屏前把主窗口工具栏设为不可见，退出全屏后再显示（`mac::watch_fullscreen`）。
+//!   全屏后菜单栏下方出现一条白带、盖住页面顶部（2026-11 macOS 真机截图）。最可能的原因是全屏时工具栏连同标题栏
+//!   被放进全屏工具栏窗口、不透明常驻；未在真机对照验证。候选修复：进全屏前把主窗口工具栏设为不可见，
+//!   退出全屏后再显示（`mac::watch_fullscreen`）。若白带仍在，问题在 Overlay 标题栏本身，而非工具栏。
 //! - Windows：`decorations: false`，页面在右上自绘 最小化 / 最大化（还原）/ 关闭。
 //! - Linux：同 Windows；按 GTK 的 `gtk-decoration-layout`（GNOME 由 `org.gnome.desktop.wm.preferences button-layout`
 //!   同步过来）决定左右与顺序，读不到或一个按钮都没有时放右侧。
@@ -372,9 +373,8 @@ mod mac {
         Ok(())
     }
 
-    /// 进全屏（will enter）时藏起主窗口工具栏、退出全屏（did exit）后再显示：整个全屏过程都没有工具栏，
-    /// 页面铺满屏幕，标题栏照常由系统在指针移到顶部时滑出。按工具栏标识认主窗口，不捕获窗口，
-    /// 主窗口重建后同一个观察者照样生效；只注册一次，随进程常驻。
+    /// 进全屏（will enter）时藏起主窗口工具栏、退出全屏（did exit）后再显示：整个全屏过程都没有工具栏。
+    /// 按工具栏标识认主窗口，不捕获窗口，主窗口重建后同一个观察者照样生效；只注册一次，随进程常驻。
     fn watch_fullscreen() {
         static ONCE: Once = Once::new();
         ONCE.call_once(|| {
