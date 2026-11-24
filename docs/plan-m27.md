@@ -3,6 +3,7 @@
 > 编号按现状取 M27（`docs/plan-m26.md` 是最后一份）、迁移号取 `0055`（`0054_research.sql` 是最后一个）。动手时若被占用则顺延，并同步改本文里的 `m27`、`M27`、`0055`、`TestE2EM27`。
 > 本文自包含：执行者不需要读过产生它的对话。行号只作提示，动手前按符号重读。工作区由多个会话共用，提交时只带本步骤改的行。
 > 涉及两个仓库：Oryn（`/root/Projects/Ling/Oryn`）与 Oryn Core（`/root/Projects/Ling/oryn-core`，仅扩展包 `packages/browser-relay`，`omp` 二进制无需改动）。
+> **修订记录（Rev 1）**：核对 `oryn-core/packages/coding-agent/src/tools/browser/relay/bridge.ts:291,1472,2322-2334` 发现 `RPC_TIMEOUT_MS = 20_000`（硬超时 20s），且 `createTab` 注册了 `onLateResult` 回调——若挂起 RPC 等待用户审批超过 20s，旧 RPC 会超时失败，用户第 30s 点允许后再执行旧 RPC 不仅无效，其迟到返回还会被 `bridge.ts` 立即 `closeTab` 关闭。故将原“挂起 RPC 120s 等用户确认”修订为**非阻塞两阶段审批**：① 扩展立即返回明确的 `ORYN_APPROVAL_REQUIRED` 结果并登记待审批项（原 RPC 立刻终结，绝不事后执行过期 RPC）；② 用户任意时间（如第 30s）批准后只写入本机放行票据/会话白名单，经 `orynd` 通知线程由 agent 重试；并在 Step 6 增加「第 30s 才批准」真实链路验收门禁。
 
 - **Goal**：让运行在远端 orb 中的 agent 能够安全、可控地操作用户本机 Chrome 浏览器（复用真实登录态、本机内网与住宅 IP），同时保持与现有 orb 云桌面浏览器（M8）互不干扰。
 - **Approach**：复用 `oryn-core` 已有的两套原生资产——在 **orb 内**按需拉起自带的 `omp browser-relay`（95KB CDP 多路复用合成器，与 `omp` 同二进制零版本漂移），在 **用户电脑**改造原生 Chrome MV3 扩展 `packages/browser-relay` 增加「Oryn 云端共享模式」（配对码认证、Popup 选 Tab 与审批、本机策略过滤、直连 `orynd` WSS）；`orynd` 作为纯认证路由与流桥接层，把扩展与 orb 内的 `/ext` JSON 协议经现有 `yamux` link 联通。
@@ -87,8 +88,8 @@ sequenceDiagram
     OMP->>ORBD: browser.open({app: "relay", ...}) → http://127.0.0.1:<frontPort>
     ORBD->>ORBD: relayfront 反代 HTTP/WS → 127.0.0.1:<inner>
     ORBD-->>EXT: session.frame(T, rpc{op: "createTab" / "attach" / "send", ...})
-    Note over EXT: 本机 policy.ts 校验：未授权动作挂起并弹出确认，批准后执行
-    EXT-->>OMP: rpcResult / cdpEvent 流式回传
+    Note over EXT: 本机 policy.ts 校验：未授权动作立即返回 ORYN_APPROVAL_REQUIRED 并入审批队列（绝不挂起超过 20s）
+    EXT-->>OMP: 立即回传 rpcResult / cdpEvent；用户批准后写入放行票据并通知线程重试
 ```
 
 ### 3.2 本机安全策略契约（`packages/browser-relay/extension/policy.ts`）
@@ -102,10 +103,10 @@ sequenceDiagram
 | **系统级硬拦截** | `findDownload` | **拒绝**（返回明确错误：云端模式不支持读取本机下载路径）。 |
 | **系统级硬拦截** | `chrome://` / `chrome-extension://` / `devtools://` / `edge://` / `about:`（`about:blank` 除外） | **拒绝**（浏览器内置特权页不可附着/操作）。 |
 | **现有 Tab 操作** | `attach` / `detach` / `send` / `activateTab` / `removeTab` / `group` / `ungroup` 针对**未在授权集合内的现有 `tabId`** | **默认拒绝**（云端根本看不到未共享 tabId，防伪造 tabId 越权探测；用户需主动在扩展 Popup 点选「共享此标签页」后才加入授权集合）。 |
-| **新建 Tab** | `createTab`（任意 `http://` / `https://` / `about:blank` URL，**不做域名白名单限制**） | **默认进入待审批授权队列**（不直接硬拒）：Badge 提示 + Chrome 通知 + Popup 审批卡，展示目标线程名与目标 URL，提供「允许这次」「本会话总是允许新建 Tab」「拒绝」三个按钮。批准后创建 tab、自动将该 `tabId` 加入本会话授权集合并标记来源为 `created`；超时（默认 120s）或点拒绝则返回明确错误 `User denied createTab`。 |
+| **新建 Tab** | `createTab`（任意 `http://` / `https://` / `about:blank` URL，**不做域名白名单限制**） | **默认走非阻塞待审批流程**（因 `bridge.ts:291,1472` 的 `RPC_TIMEOUT_MS = 20_000` 且 `createTab` 有 `onLateResult` 关页回调，**绝不挂起该 RPC 等人点击**）：扩展立即登记待审批项（有效 5 分钟，带操作指纹 `createTab:<url>`）、亮 Badge + 弹 Chrome 通知 + 推 `session.state`，并**立刻**返回 `ok: false, error: "ORYN_APPROVAL_REQUIRED(<approvalId>): 等待用户在 Chrome 扩展中确认新建标签页（<url>），批准后再重试。"`；原 RPC 至此终结，**绝不在事后执行已过期的旧 RPC**。用户在 Popup 点「允许这次」（写入带 TTL 的单次放行票据 `oneTimeGrants`）或「本会话总是允许新建 Tab」或「拒绝」后，扩展发 `session.approval_resolved` 经 `orynd` 通知该线程；agent 收到通知后重试同一调用即命中放行，创建 Tab 并自动纳入本会话授权集合（标记来源 `created`）。 |
 | **已共享 / 已新建 Tab 内的普通 CDP** | DOM 观察、点击、输入、截图、普通导航（`Page.navigate` 到 `http/https`）、控制台、页面 JS 执行等 | 直接放行执行（用户共享该 Tab 或批准新建即授权操作该 Tab）。 |
-| **高危 / 越界操作（交互式授权）** | ① `createTab` / `Page.navigate` 指向 `file://`；② 跨站跳离已共享现有 Tab 的初始主域名（eTLD+1，仅针对用户共享的**现有 Tab**，新建 Tab 不限）；③ 凭据批量读取/嗅探类 CDP（`Storage.getCookies`、`Network.getAllCookies`、`Network.getCookies`、`Network.requestWillBeSentExtraInfo`、`Network.responseReceivedExtraInfo`）；④ 跨目标/浏览器级 CDP（`Target.*`、`Browser.*`、`SystemInfo.*`） | **默认进入待审批授权队列**（而非一刀切硬拒）：Popup 清晰展示操作摘要（例如「线程 X 请求读取当前标签页 Cookies」或「请求跳转到 `accounts.google.com`」），提供「允许这次」「本会话对此类操作总是允许」「拒绝」。 |
-| **一键撤销 / 熔断** | 用户在 Popup 取消共享某个 Tab / 解绑线程 / 点「立即断开」 | 立即对受影响 Tab 执行 `chrome.debugger.detach` + `ungroup`，向云端补发 `tabRemoved`（或关闭会话），挂起中的审批请求立刻返回拒绝。 |
+| **高危 / 越界操作（交互式授权）** | ① `createTab` / `Page.navigate` 指向 `file://`；② 跨站跳离已共享现有 Tab 的初始主域名（eTLD+1，仅针对用户共享的**现有 Tab**，新建 Tab 不限）；③ 凭据批量读取/嗅探类 CDP（`Storage.getCookies`、`Network.getAllCookies`、`Network.getCookies`、`Network.requestWillBeSentExtraInfo`、`Network.responseReceivedExtraInfo`）；④ 跨目标/浏览器级 CDP（`Target.*`、`Browser.*`、`SystemInfo.*`） | **同上走非阻塞待审批流程**（而非一刀切硬拒，也不挂起 RPC）：立即返回 `ORYN_APPROVAL_REQUIRED(<approvalId>)` 并在 Popup 展示操作摘要（如「线程 X 请求读取当前标签页 Cookies」或「请求跳转到 `accounts.google.com`」），提供「允许这次（写入 `oneTimeGrants`）」「本会话对此类操作总是允许」「拒绝」；绝不事后执行过期旧 RPC，批准后通知线程由 agent 重试。 |
+| **一键撤销 / 熔断** | 用户在 Popup 取消共享某个 Tab / 解绑线程 / 点「立即断开」 | 立即对受影响 Tab 执行 `chrome.debugger.detach` + `ungroup`，向云端补发 `tabRemoved`（或关闭会话），清空全部未消费的 `oneTimeGrants` 与待审批队列并通知云端。 |
 
 ### 3.3 线协议契约（冻结）
 
@@ -116,6 +117,7 @@ sequenceDiagram
   - 扩展 → `orynd`：
     - `{"t":"register","instanceId":"...","browserSession":"...","browserVersion":"Chrome/136...","userAgent":"...","extVersion":"0.2.0"}`
     - `{"t":"session.state","threadId":"thr_...","sharedTabCount":2,"pendingApprovals":0,"autoApproveCreateTab":false}`
+    - `{"t":"session.approval_resolved","threadId":"thr_...","approvalId":"...","decision":"approved_once|approved_session|denied","summary":"..."}`（用户在 Popup 作出审批决议时上报，触发控制面通知线程重试或停止）
     - `{"t":"session.frame","threadId":"thr_...","payload":{/* 标准 ExtToRelayMessage */}}`
     - `{"t":"session.bind","threadId":"thr_..."}` / `{"t":"session.unbind","threadId":"thr_..."}`（允许用户在 Popup 主动发起绑定/解绑）
     - `{"t":"ping"}`
@@ -170,7 +172,7 @@ sequenceDiagram
 ### 全局约束
 - 所有新增 API 必须先写进 `schema/openapi.yaml`，再跑 `make gen` 生成 Go (`internal/apigen`) 与 TS (`web/src/api`)，并通过 `make lint-spec` 与 `make check-gen`。
 - SQLite 迁移仅使用编号 `0055_browser_relay.sql`（含 Up 与 Down），并同步更新 `sqlc` 查询与 `make gen-sqlc`。
-- 本机扩展策略过滤测试必须覆盖「未共享 Tab 零泄露」、「伪造 `tabId` 拒绝」、「`createTab` 默认挂起授权」、「高危 CDP 默认挂起授权」、「远端 `reload` 静默丢弃」、「一键断开立即 detach」。
+- 本机扩展策略过滤测试必须覆盖「未共享 Tab 零泄露」、「伪造 `tabId` 拒绝」、「`createTab` 立即返回 `ORYN_APPROVAL_REQUIRED` 且批准不事后执行旧 RPC」、「`oneTimeGrants` 单次消费与重试放行」、「高危 CDP 非阻塞审批」、「远端 `reload` 静默丢弃」、「一键断开立即 detach」。
 - 保持 `oryn-core/packages/browser-relay` 原有本地模式（连接 `127.0.0.1:9224`）100% 向后兼容。
 
 ### Non-goals（本里程碑明确不做）
@@ -260,8 +262,9 @@ sequenceDiagram
      - 线程绑定且扩展在线且对应 orb `Connected` 并具备 `browser-relay` 特性时，调 `orbs.DialBrowserRelay` 打开 yamux 流，向扩展发 `session.open`，双向流式转发 `session.frame`；
      - orb 唤醒/重连就绪事件（`EventLinkUp`）触发检查该 orb 下线程是否有活跃绑定并自动重连流；
      - 限制单连接待发缓冲 `16 MiB`、单帧 `64 MiB`，防止控制面 OOM。
-  3. 同步活跃工作线程列表给在线扩展（`registered` 与 `threads.update`），仅包含未归档/非隐藏的工作线程 ID、标题与项目名，供 Popup 选择。
-  4. 编写单元测试：覆盖鉴权拦截（非扩展设备拒绝、吊销断连）、绑定/解绑生命周期、扩展与伪造 `orbd` 流双向帧透传、orb 重连自动恢复、慢连接背压断开。
+  3. 处理 `session.approval_resolved`：刷新 `pendingApprovals` 并推送 `browser_relay.state` 给 Web UI；同时经 `threads.Deliver` 向该线程注入一条简短系统提示（类似 M14 `deskcontrol.go`：`[Oryn] 用户已批准（或拒绝）本机浏览器操作请求（<摘要>），现在可以重试（或请改用其他方案）。`），让等待中的 agent 在任意延迟（包括 >20s）后都能可靠续跑重试。
+  4. 同步活跃工作线程列表给在线扩展（`registered` 与 `threads.update`），仅包含未归档/非隐藏的工作线程 ID、标题与项目名，供 Popup 选择。
+  5. 编写单元测试：覆盖鉴权拦截（非扩展设备拒绝、吊销断连）、绑定/解绑生命周期、扩展与伪造 `orbd` 流双向帧透传、`session.approval_resolved` 触发线程通知、orb 重连自动恢复、慢连接背压断开。
 - **Accept**：`go test -race ./internal/browserrelay/... ./internal/orbs/... ./internal/api/...` 全部 `PASS`。
 
 ---
@@ -273,7 +276,7 @@ sequenceDiagram
   - create `internal/orbdrt/browserrelay_test.go`
   - modify `internal/orbdrt/runtime.go`（`hello()` 追加 `"browser-relay"` 特性；注册接收控制面发来的 `StreamBrowserRelay` 流；`shutdown` 时清理所有 relay 子进程）
   - modify `internal/orbdrt/agent.go`（`agentStart` 为非协调线程分配 `relayFront` 端口、写出 `browser-relay.yml` 并追加 `--config`、注入 `ORYN_BROWSER_RELAY_STATE` 环境变量）
-  - modify `internal/orbdrt/assets/oryn-orb.ts`（`before_agent_start` 读取 `ORYN_BROWSER_RELAY_STATE`，仅当本机浏览器已绑定在线时向系统提示词追加简短指引：告知可用 `browser.open({ app: "relay", ... })` 与 `browser.targets({ app: "relay" })` 访问主人共享的本机标签页或新建标签页，默认 `browser.open()` 仍走云端桌面）
+  - modify `internal/orbdrt/assets/oryn-orb.ts`（`before_agent_start` 读取 `ORYN_BROWSER_RELAY_STATE`，仅当本机浏览器已绑定在线时向系统提示词追加简短指引：告知可用 `browser.open({ app: "relay", ... })` 与 `browser.targets({ app: "relay" })` 访问主人共享的本机标签页或新建标签页，默认 `browser.open()` 仍走云端桌面；若返回 `ORYN_APPROVAL_REQUIRED`，应停下告知主人去 Chrome 扩展确认，切勿盲目循环重试，待收到批准通知后再重试同一调用）
 - **Consumes**：Step 1 的 `link.StreamBrowserRelay`；orb 内 `omp` 二进制的 `browser-relay` 子命令与 `r.agentVersion`。
 - **Produces**：
   - 每个工作线程独立的 loopback `browser.relayUrl`；
@@ -306,20 +309,20 @@ sequenceDiagram
 - **Produces**：向后兼容本地模式、完整支持 Oryn 云端安全共享模式的 Chrome MV3 扩展包及可分发 zip。
 - **Do**：
   1. 实现 `extension/policy.ts` 并写满单测（先于接入 `background.ts`）：
-     - 会话隔离结构 `ThreadSessionPolicy{ threadId, sharedTabs: Map<tabId, { origin, source: "shared" | "created" }>, autoApproveCreateTab: boolean, autoApproveCategories: Set<ApprovalCategory>, pendingApprovals: Map<approvalId, PendingApproval> }`；
+     - 会话隔离结构 `ThreadSessionPolicy{ threadId, sharedTabs: Map<tabId, { origin, source: "shared" | "created" }>, autoApproveCreateTab: boolean, autoApproveCategories: Set<ApprovalCategory>, oneTimeGrants: Map<fingerprint, { expiresAt: number }>, pendingApprovals: Map<approvalId, PendingApproval> }`；
      - 严格实现 §3.2 全部规则：
        - `filterHello` / `filterTabEvent` 丢弃一切不在 `sharedTabs` 中的现有标签页，剥离 `downloadsProtocol`；
-       - `authorizeRpc(threadId, rpc)` 返回 `allow | deny(reason) | prompt(approvalRequest)`：
+       - `authorizeRpc(threadId, rpc)` 返回 `allow | deny(reason) | requireApproval(approvalRequest)`（纯同步判定，绝不阻塞等待人类输入）：
          - 远端 `reload` → 丢弃；`findDownload` → `deny`；`chrome://`/`chrome-extension://`/`devtools://` → `deny`；
          - 非 `createTab` 且 `tabId` 不在 `sharedTabs` → `deny`；
-         - `createTab`（http/https/about:blank）→ 若 `autoApproveCreateTab` 为真则 `allow`，否则返回 `prompt`；
-         - `file://` 导航/建页、共享现有 Tab 的跨主域名导航、高危凭据/跨目标 CDP（`Storage.getCookies`、`Network.getAllCookies`、`Network.getCookies`、`Network.requestWillBeSentExtraInfo`、`Network.responseReceivedExtraInfo`、`Target.*`、`Browser.*`、`SystemInfo.*`）→ 若对应 category 已本会话授权则 `allow`，否则返回 `prompt`；
+         - `createTab`（http/https/about:blank）→ 若 `autoApproveCreateTab` 为真或命中未过期的 `oneTimeGrants`（命中即消费删除）则 `allow`，否则登记 `PendingApproval`（同指纹幂等去重，TTL 5 分钟）并立即返回 `requireApproval`（向上游立刻回 `rpcResult{ ok: false, error: "ORYN_APPROVAL_REQUIRED(<id>): ..." }`）；
+         - `file://` 导航/建页、共享现有 Tab 的跨主域名导航、高危凭据/跨目标 CDP（`Storage.getCookies`、`Network.getAllCookies`、`Network.getCookies`、`Network.requestWillBeSentExtraInfo`、`Network.responseReceivedExtraInfo`、`Target.*`、`Browser.*`、`SystemInfo.*`）→ 若对应 category 已本会话授权或命中未过期 `oneTimeGrants`（命中即消费）则 `allow`，否则登记 `PendingApproval` 并立即返回 `requireApproval`；
          - 其余针对已授权 Tab 的操作 → `allow`。
-     - 审批决议处理：`approve_once` / `approve_session` / `deny` / 超时自动 `deny`（默认 120s）。
+     - 审批决议处理（`resolveApproval(threadId, approvalId, decision)`）：`approve_once` 写入 `oneTimeGrants`（默认 TTL 5 分钟）、`approve_session` 写入会话放行集、`deny` 仅移除待审批项；**所有分支均绝不回放/执行已失败的旧 RPC**，只通知远端由 agent 发起新一次重试。
   2. 实现 `extension/oryn-cloud.ts`：
      - 配对：`POST <serverUrl>/api/v1/devices/pair/start`（`kind: "browser_extension"`，`name` 默认 Chrome + 主机/平台识别）→ 用 `chrome.tabs.create({ url: verifyUrl })` 打开批准页并展示 8 位配对码 → 轮询 `pair/poll` → 保存 `deviceToken` 到 `chrome.storage.local`。
      - 连接：用 `Bearer <deviceToken>` 调 `POST /api/v1/ws-ticket` → 拨号 `wss://<host>/api/v1/browser-relay/ws?ticket=<ticket>`；收到 `4401`（设备被吊销）时清除本地令牌、切回未配对态并停止重连；收到 `session.open` 时仅发过滤后的 `hello`；当用户在 Popup 勾选/取消共享某个 Tab 时，立即向对应会话发 `tabCreated` / `tabRemoved`（取消共享时同时 `chrome.debugger.detach` + `ungroup`）。
-     - 待审批提醒：进入 `pendingApprovals` 时更新扩展 Badge 为 `!`（橙红色）并发送一条 `chrome.notifications.create` 系统通知，点击通知唤起提示；同时把 `pendingApprovals` 数量经 `session.state` 推给 `orynd`，让 Oryn Web UI 也能同步提示「请在 Chrome 扩展中确认授权」！
+     - 待审批与决议通知：进入 `pendingApprovals` 时更新扩展 Badge 为 `!`（橙红色）并发送一条 `chrome.notifications.create` 系统通知，同时推送 `session.state` 让 Web UI 同步展示提示；用户在 Popup 点选「允许这次 / 本会话允许 / 拒绝」后调用 `resolveApproval`，立即向 `orynd` 发送 `session.approval_resolved` 与刷新后的 `session.state`。
   3. 实现 `extension/popup.html` & `popup.ts`：
      - 简洁无依赖原生 HTML/CSS/TS（与现有 `options.html` 风格一致，体积小、零打包臃肿）：
        - 顶部：连接状态灯 + 服务器地址 + 「设置」按钮 + 「立即断开」熔断按钮；
@@ -370,12 +373,12 @@ sequenceDiagram
   1. 编写 `TestE2EM27`（`internal/server/e2e_m27_test.go`），覆盖以下可判定用例：
      - **M27-1 配对与鉴权**：`browser_extension` 走完 `pair/start → approve → poll`，成功连上 `/api/v1/browser-relay/ws`；普通 `cli/desktop` 设备令牌连接该 WS 被拒绝。
      - **M27-2 未共享 Tab 隐私隔离**：扩展侧有多个现有 Tab，只共享其中 1 个；验证经 `orynd → orbd` 到达 `omp browser-relay` 的 `/json/list` 只含该 1 个 Tab，对未共享 `tabId` 发 RPC 被本机拒绝。
-     - **M27-3 `createTab` 默认审批流**：模拟远端发 `createTab`，验证进入待审批态且 Web/API `pendingApprovals == 1`；用户点拒绝返回错误；用户点批准后 Tab 创建成功并纳入本会话可操作集合。
+     - **M27-3 `createTab` 非阻塞审批与第 30s 批准实测门禁**：模拟（及真实 `omp browser-relay`）远端发 `createTab` → 验证扩展 <1s 立即返回 `ORYN_APPROVAL_REQUIRED`（不触发 `bridge.ts:291` 的 20s `RPC_TIMEOUT_MS`、不落入 `lateRpc`、不提前开 Tab），且 Web/API `pendingApprovals == 1`；用户点拒绝时 `session.approval_resolved(denied)` 送达且再次调用仍被拦截；再次请求后**刻意等待至第 30s**（超过 `bridge.ts` 20s RPC 超时窗口）用户才点「允许这次」→ 验证批准瞬间**不会**事后执行过期旧 RPC，而是通知线程由 agent 发起重试，重试调用命中 `oneTimeGrants` 在 <1s 内成功创建 Tab、被 `bridge.ts` 正常 claim/attach 且**不会**被 `onLateResult` 关闭，随后再次请求另一 `createTab` 确认单次授权已消费。
      - **M27-4 与云端桌面并存**：验证 `browser.cdpUrl` 与 `browser.relayUrl` 同时存在时，默认 `browser.open()` 仍走云桌面，显式 `app: "relay"` 走本机浏览器；未绑定时 `relayFront` 立即返回 503（不阻塞 35s）。
      - **M27-5 熔断与吊销**：在 `Settings` 吊销扩展设备后，扩展 WS 以 `4401` 断开、线程绑定立即失效、`orbd` 断开 `/ext` 并回收 `omp browser-relay` 子进程。
   2. 真机冒烟验收：在真实 Chrome 中加载 `oryn-core/packages/browser-relay/dist/extension`，配对连上本地 `orynd`，绑定一个运行真实 `omp` 的 orb 线程，验证：
      - 点选共享一个已登录页面 → agent 用 `browser.targets({ app: "relay" })` 仅看到该共享页并成功 `observe` / 交互；
-     - agent 请求 `browser.open({ app: "relay", url: "https://example.com" })` → Chrome 弹出授权提示 → 批准后打开新 Tab 并完成操作；
+     - agent 请求 `browser.open({ app: "relay", url: "https://example.com" })` → 立刻返回待审批提示且 Chrome 弹通知 → **等待超过 30 秒后再点「允许这次」** → 确认无过期旧 RPC 幽灵建页，线程收到批准通知后 agent 重试 `browser.open({ app: "relay", url: "https://example.com" })` 成功打开并稳定操作该新 Tab（不被 `bridge.ts` 迟到回调关闭）；
      - 点「立即断开」→ Chrome 顶部调试黄条立刻消失，agent 收到断连错误。
   3. 更新 `docs/protocol.md`、`docs/features.md`、`README.md`。
 - **Accept**：
