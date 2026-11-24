@@ -23,6 +23,8 @@ interface Vector {
 	ops: unknown;
 	want?: unknown;
 	error?: string;
+	/** 逆操作恢复不了原文档的原因（例如删的是封存维护的设计画框）；有它时不检查撤销。 */
+	noUndo?: string;
 }
 
 function run(v: Vector): { doc: CanvasDoc; ops: CanvasOp[]; out: CanvasDoc } {
@@ -50,7 +52,8 @@ describe("canvas-ops.json 测试向量", () => {
 		// 规范化输出再解析得到同一份文档
 		expect(parseCanvasDoc(stringifyCanvasDoc(out))).toEqual(out);
 		// 逆操作把文档恢复原样
-		expect(applyCanvasOps(out, inverseOps(doc, ops))).toEqual(doc);
+		if (v.noUndo === undefined)
+			expect(applyCanvasOps(out, inverseOps(doc, ops))).toEqual(doc);
 	});
 });
 

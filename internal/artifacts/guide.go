@@ -213,10 +213,17 @@ notes 里是画在画框之上的标注，大多是用户画的。公共字段 {
 - 改某个画框的内容：用 update_artifact 的 files 或 edits 改它的 HTML 文件，不用动 canvas.json。
 - 改布局（加删页面与画框、挪位置、改尺寸、改名、处理便签）：用 update_artifact 的 canvas 参数传一组操作，按顺序应用，任何一条不合法整批不生效：
   - {"op": "add", "object": {"type": "canvas" | "page" | "note", …字段}}：新画框可以省略 file（取 page-<id>.html，由你随后写入内容），省略 x、y 时自动排位；加 "copyOf": "<画框 id>" 表示新画框的 HTML 复制自那个画框。
-  - {"op": "set", "id": "…", "key": "…", "value": …}：改一个字段。页面能改 name；画框能改 name、file、x、y、width、height、locked；标注能改除 id、canvas、kind、by 之外的字段。
+  - {"op": "set", "id": "…", "key": "…", "value": …}：改一个字段。页面能改 name；画框能改 name、file、x、y、width、height、locked、device（设备外壳：none、phone、tablet、browser，缺省 none）；标注能改除 id、canvas、kind、by 之外的字段。
   - {"op": "remove", "id": "…"}：删页面会连带删掉它上面的画框和标注；删画框会把吸附它的 from / to 置空。
   - {"op": "order", "id": "…", "index": n}：调整在列表里的位置（绘制顺序）。
 - 也可以用 files 整个重写 canvas.json，但这会和用户同时进行的拖动、标注冲突；能用 canvas 操作时优先用它。
+
+## 设计画布
+
+canvas.json 顶层带 design（{"engine": 1, "start": <画框 id 或 null>}）的是设计画布：画框的 source 是它的 TSX 源码 src/frames/<名>.tsx，file 固定是构建产物 dist/<名>.html。带这些字段时文档写出 "format": 2。
+
+- design、source 以及带 source 的画框的 file 都由 Oryn 在回合结束封存时维护，不要手写：canvas 操作里 add 画框不能带 source，set 不能改 source，也不能改带 source 的画框的 file；用 files 写 canvas.json 时同样不要加减这些字段。
+- 带 source 的画框仍可以照常改 name、x、y、width、height、locked、device，也可以 remove；删掉 design.start 指向的画框时 start 会置为 null。
 
 ## 画框的调节参数
 

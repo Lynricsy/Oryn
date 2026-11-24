@@ -2,9 +2,15 @@
 //
 // 与 internal/artifacts/canvas 的 Go 实现逐条相同，两边共用 schema/testdata/canvas-ops.json 的测试向量；
 // 改规则时两边一起改。文档里 canvases 的元素在界面上叫「页面」，pages 的元素叫「画框」，notes 是标注。
+// 带顶层 design 的是设计画布：画框可以带 source（TSX 源码，file 是它的构建产物），design 与 source
+// 只由服务端封存维护，这里的操作不能添加或修改 source。
 
 export const CANVAS_FILE = "canvas.json";
+/** 只有 HTML 画框的画布写出的格式；带 design、source 或 device 任一字段时写出 CANVAS_FORMAT_DESIGN。 */
 export const CANVAS_FORMAT = 1;
+export const CANVAS_FORMAT_DESIGN = 2;
+/** design.engine 目前唯一的取值。 */
+export const DESIGN_ENGINE = 1;
 
 export const CANVAS_LIMITS = {
 	canvases: 50,
@@ -60,6 +66,10 @@ export const NOTE_COLORS = [
 ] as const;
 export type NoteColor = (typeof NOTE_COLORS)[number];
 
+/** 画框的设备外壳。 */
+export const DEVICES = ["none", "phone", "tablet", "browser"] as const;
+export type Device = (typeof DEVICES)[number];
+
 export interface CanvasSheet {
 	id: string;
 	name: string;
@@ -69,13 +79,23 @@ export interface CanvasPage {
 	id: string;
 	canvas: string;
 	name: string;
-	/** 画框的 HTML 文件（artifact 里的相对路径）。 */
+	/** 画框的 HTML 文件（artifact 里的相对路径）；带 source 时固定是 dist/<名>.html。 */
 	file: string;
 	x: number;
 	y: number;
 	width: number;
 	height: number;
 	locked: boolean;
+	/** 设计画框的源码 src/frames/<名>.tsx，只由封存维护。 */
+	source?: string;
+	/** 设备外壳；省略即 none。 */
+	device?: Exclude<Device, "none">;
+}
+
+/** 设计画布的顶层信息：引擎版本与原型的起始画框。 */
+export interface CanvasDesign {
+	engine: typeof DESIGN_ENGINE;
+	start: string | null;
 }
 
 interface NoteBase {
@@ -127,7 +147,9 @@ export interface ShapeNote extends NoteBase {
 export type CanvasNote = TextNote | StickyNote | PenNote | ShapeNote;
 
 export interface CanvasDoc {
-	format: typeof CANVAS_FORMAT;
+	format: typeof CANVAS_FORMAT | typeof CANVAS_FORMAT_DESIGN;
+	/** 有它即设计画布。 */
+	design?: CanvasDesign;
 	canvases: CanvasSheet[];
 	/** 绘制顺序，先画的在下面。 */
 	pages: CanvasPage[];
@@ -291,6 +313,42 @@ function pageFile(v: unknown, where: string): string {
 	return v;
 }
 
+/** 设计画框的源码路径：src/frames/<名>.tsx。 */
+const SOURCE = /^src\/frames\/[a-z0-9][a-z0-9-]{0,63}\.tsx$/;
+
+function source(v: unknown, where: string): string {
+	if (typeof v !== "string" || !SOURCE.test(v)) {
+		fail(
+			where,
+			"必须是 src/frames/<名>.tsx，名字是 1–64 个小写字母、数字或 -，以字母或数字开头",
+		);
+	}
+	return v;
+}
+
+/** source 对应的产物文件：src/frames/<名>.tsx → dist/<名>.html。 */
+export function frameFile(src: string): string {
+	return `dist/${src.replace(/^src\/frames\//, "").replace(/\.tsx$/, "")}.html`;
+}
+
+function device(v: unknown, where: string): Device {
+	if (typeof v !== "string" || !(DEVICES as readonly string[]).includes(v)) {
+		fail(where, `只能是 ${DEVICES.join("、")} 之一`);
+	}
+	return v as Device;
+}
+
+function designOf(v: unknown, where: string): CanvasDesign {
+	const m = object(v, where);
+	only(m, DESIGN_KEYS, where);
+	if (need(m, "engine", where) !== DESIGN_ENGINE)
+		fail(at(where, "engine"), `必须是 ${DESIGN_ENGINE}`);
+	return {
+		engine: DESIGN_ENGINE,
+		start: opt<string | null>(m, "start", where, null, ref),
+	};
+}
+
 function color(v: unknown, where: string): NoteColor {
 	if (
 		typeof v !== "string" ||
@@ -317,7 +375,8 @@ function list(m: Obj, key: string, max: number): unknown[] {
 	return v;
 }
 
-const DOC_KEYS = ["format", "canvases", "pages", "notes"];
+const DOC_KEYS = ["format", "design", "canvases", "pages", "notes"];
+const DESIGN_KEYS = ["engine", "start"];
 const CANVAS_KEYS = ["id", "name"];
 const PAGE_KEYS = [
 	"id",
@@ -329,6 +388,8 @@ const PAGE_KEYS = [
 	"width",
 	"height",
 	"locked",
+	"source",
+	"device",
 ];
 const NOTE_COMMON = ["id", "canvas", "kind", "color", "locked", "by"];
 const SHAPE_KEYS = [
@@ -389,6 +450,9 @@ function pageOf(v: unknown, where: string): LoosePage {
 		height: opt(m, "height", where, DEFAULT_PAGE.height, size),
 		locked: opt(m, "locked", where, false, boolean),
 	};
+	if (has(m, "source")) page.source = source(m.source, at(where, "source"));
+	const dev = opt(m, "device", where, "none", device);
+	if (dev !== "none") page.device = dev;
 	const hasX = has(m, "x");
 	const hasY = has(m, "y");
 	if (hasX && hasY) {
@@ -517,7 +581,10 @@ function withCanvas(v: unknown, sole: string | null): unknown {
 		: v;
 }
 
-/** id 不重复、画框与标注都在存在的画布页上、形状吸附的是同一画布页上存在的画框。 */
+/**
+ * id 不重复、画框与标注都在存在的画布页上、形状吸附的是同一画布页上存在的画框；
+ * 设计画布另查 source 只出现在设计画布里、file 与 source 配套、design.start 指向存在的画框。
+ */
 function checkLinks(doc: CanvasDoc): void {
 	const kinds = new Map<string, CanvasObjectType>();
 	const claim = (key: string, kind: CanvasObjectType, where: string): void => {
@@ -543,6 +610,17 @@ function checkLinks(doc: CanvasDoc): void {
 				`没有 id 为 ${JSON.stringify(p.canvas)} 的画布页`,
 			);
 		}
+		if (p.source === undefined) return;
+		if (!doc.design) {
+			fail(`pages[${i}].source`, "只有设计画布（带 design）的画框能有 source");
+		}
+		const want = frameFile(p.source);
+		if (p.file !== want) {
+			fail(
+				`pages[${i}].file`,
+				`带 source 的画框的 file 必须是 ${JSON.stringify(want)}（现在是 ${JSON.stringify(p.file)}）`,
+			);
+		}
 	});
 	doc.notes.forEach((n, i) => {
 		if (kinds.get(n.canvas) !== "canvas") {
@@ -562,6 +640,17 @@ function checkLinks(doc: CanvasDoc): void {
 			}
 		}
 	});
+	const start = doc.design?.start ?? null;
+	if (start !== null && kinds.get(start) !== "page")
+		fail("design.start", `没有 id 为 ${JSON.stringify(start)} 的画框`);
+}
+
+/** 文档该写出的格式：带 design、source 或 device 任一字段时是 CANVAS_FORMAT_DESIGN。 */
+function formatOf(doc: CanvasDoc): CanvasDoc["format"] {
+	return doc.design ||
+		doc.pages.some((p) => p.source !== undefined || p.device !== undefined)
+		? CANVAS_FORMAT_DESIGN
+		: CANVAS_FORMAT;
 }
 
 /** canvas 上 pages 之后的下一个位置：接在最右边（间距 PAGE_GAP、顶边对齐）；没有画框时在原点。 */
@@ -608,8 +697,15 @@ export function parseCanvasDoc(json: string): CanvasDoc {
 	}
 	if (!isObj(raw)) fail("", "canvas.json 必须是一个 JSON 对象");
 	only(raw, DOC_KEYS, "");
-	if (has(raw, "format") && raw.format !== CANVAS_FORMAT)
-		fail("format", `必须是 ${CANVAS_FORMAT}`);
+	if (
+		has(raw, "format") &&
+		raw.format !== CANVAS_FORMAT &&
+		raw.format !== CANVAS_FORMAT_DESIGN
+	)
+		fail("format", `必须是 ${CANVAS_FORMAT} 或 ${CANVAS_FORMAT_DESIGN}`);
+	const design = has(raw, "design")
+		? designOf(raw.design, "design")
+		: undefined;
 	let canvases = list(raw, "canvases", CANVAS_LIMITS.canvases).map((v, i) =>
 		sheetOf(v, `canvases[${i}]`),
 	);
@@ -623,10 +719,12 @@ export function parseCanvasDoc(json: string): CanvasDoc {
 	);
 	const doc: CanvasDoc = {
 		format: CANVAS_FORMAT,
+		...(design ? { design } : {}),
 		canvases,
 		pages: place(pages),
 		notes,
 	};
+	doc.format = formatOf(doc);
 	checkLinks(doc);
 	return doc;
 }
@@ -728,7 +826,18 @@ function find(doc: CanvasDoc, key: string): Found | null {
 }
 
 const CANVAS_SETTABLE = ["name"];
-const PAGE_SETTABLE = ["name", "file", "x", "y", "width", "height", "locked"];
+const PAGE_SETTABLE = [
+	"name",
+	"file",
+	"x",
+	"y",
+	"width",
+	"height",
+	"locked",
+	"device",
+];
+/** 带 source 的画框能改的字段：file 跟着 source 走，只由封存改。 */
+const FRAME_PAGE_SETTABLE = PAGE_SETTABLE.filter((k) => k !== "file");
 const NOTE_FIXED = ["id", "canvas", "kind", "by"];
 const TYPE_LABEL: Record<CanvasObjectType, string> = {
 	canvas: "画布页",
@@ -738,7 +847,10 @@ const TYPE_LABEL: Record<CanvasObjectType, string> = {
 
 function settable(found: Found): readonly string[] {
 	if (found.type === "canvas") return CANVAS_SETTABLE;
-	if (found.type === "page") return PAGE_SETTABLE;
+	if (found.type === "page")
+		return found.value.source === undefined
+			? PAGE_SETTABLE
+			: FRAME_PAGE_SETTABLE;
 	return NOTE_KEYS[found.value.kind].filter((k) => !NOTE_FIXED.includes(k));
 }
 
@@ -757,9 +869,11 @@ function addTo(
 		doc.canvases.length === 1
 	)
 		obj.canvas = sole.id;
+	const ow = at(where, "object");
+	if (type === "page" && has(obj, "source"))
+		fail(at(ow, "source"), "画框的 source 只由封存维护，不能用操作添加");
 	if (type === "page" && !has(obj, "file") && typeof obj.id === "string")
 		obj.file = `page-${obj.id}.html`;
-	const ow = at(where, "object");
 	const unused = (key: string): void => {
 		if (find(doc, key))
 			fail(at(ow, "id"), `id ${JSON.stringify(key)} 已被使用`);
@@ -841,7 +955,7 @@ function setIn(
 	}
 }
 
-/** 删对象：删画布页连带删它的画框与标注；删画框把吸附它的 from / to 置空。 */
+/** 删对象：删画布页连带删它的画框与标注；删画框把吸附它的 from / to 与指向它的 design.start 置空。 */
 function removeFrom(doc: CanvasDoc, key: string): CanvasDoc {
 	const found = find(doc, key);
 	if (!found) return doc;
@@ -865,6 +979,8 @@ function removeFrom(doc: CanvasDoc, key: string): CanvasDoc {
 			return { ...doc, notes: doc.notes.filter((n) => n.id !== key) };
 	}
 	if (gone.size === 0) return next;
+	if (next.design && next.design.start !== null && gone.has(next.design.start))
+		next = { ...next, design: { ...next.design, start: null } };
 	return {
 		...next,
 		notes: next.notes.map((n) =>
@@ -927,6 +1043,8 @@ export function applyCanvasOps(
 	ops.forEach((op, i) => {
 		doc = applyOne(doc, op, `ops[${i}]`);
 	});
+	const format = formatOf(doc);
+	if (doc.format !== format) doc = { ...doc, format };
 	if (doc.canvases.length === 0) fail("canvases", "至少要保留一个画布页");
 	if (doc.canvases.length > CANVAS_LIMITS.canvases)
 		fail("canvases", `最多 ${CANVAS_LIMITS.canvases} 个画布页`);
@@ -952,7 +1070,12 @@ function inverseOne(doc: CanvasDoc, op: CanvasOp): CanvasOp[] {
 			const found = find(doc, op.id);
 			if (!found) return [];
 			const current = found.value as unknown as Obj;
-			return [{ op: "set", id: op.id, key: op.key, value: current[op.key] }];
+			// 画框省略 device 即 none
+			const value =
+				found.type === "page" && op.key === "device"
+					? (current.device ?? "none")
+					: current[op.key];
+			return [{ op: "set", id: op.id, key: op.key, value }];
 		}
 		case "order": {
 			const found = find(doc, op.id);

@@ -148,3 +148,75 @@ func must[T any](v T, err error) T {
 	}
 	return v
 }
+
+// HTML 画布的规范化输出与改动前逐字节相同：format 1，不出现 design / source / device。
+func TestHTMLCanvasStaysFormat1(t *testing.T) {
+	in := `{"format":1,"canvases":[{"id":"c1","name":"首页"}],"pages":[{"id":"p1","canvas":"c1","name":"封面","file":"a.html","x":0,"y":0,"width":1280,"height":800,"locked":false}],"notes":[]}`
+	d, err := Parse([]byte(in))
+	require.NoError(t, err)
+	want := "{\n  \"format\": 1,\n  \"canvases\": [\n    {\n      \"id\": \"c1\",\n      \"name\": \"首页\"\n    }\n  ],\n" +
+		"  \"pages\": [\n    {\n      \"id\": \"p1\",\n      \"canvas\": \"c1\",\n      \"name\": \"封面\",\n      \"file\": \"a.html\",\n" +
+		"      \"x\": 0,\n      \"y\": 0,\n      \"width\": 1280,\n      \"height\": 800,\n      \"locked\": false\n    }\n  ],\n" +
+		"  \"notes\": []\n}\n"
+	assert.Equal(t, want, string(d.JSON()))
+	assert.Equal(t, Format, d.Format)
+}
+
+func TestApplySeal(t *testing.T) {
+	d, err := Parse([]byte(`{"pages":[]}`))
+	require.NoError(t, err)
+	ops, err := ParseOps(json.RawMessage(`[{"op":"add","object":{"type":"page","id":"login","name":"登录","source":"src/frames/login.tsx","device":"phone"}},` +
+		`{"op":"add","object":{"type":"page","id":"signup","name":"注册","source":"src/frames/signup.tsx"}}]`))
+	require.NoError(t, err)
+
+	// 普通 Apply 不能带 source
+	plain := d
+	err = Apply(&plain, ops)
+	var ce *Error
+	require.ErrorAs(t, err, &ce)
+	assert.Equal(t, "ops[0].object.source", ce.Where)
+
+	require.NoError(t, ApplySeal(&d, ops))
+	require.NotNil(t, d.Design)
+	assert.Equal(t, Design{Engine: DesignEngine}, *d.Design)
+	assert.Equal(t, FormatDesign, d.Format)
+	assert.Equal(t, "dist/login.html", d.Pages[0].File)
+	assert.Equal(t, DevicePhone, d.Pages[0].Device)
+	assert.Equal(t, "dist/signup.html", d.Pages[1].File)
+
+	// 封存可以改 source 与 file（成对改），也保留已有的 design
+	start := "signup"
+	d.Design.Start = &start
+	ops, err = ParseOps(json.RawMessage(`[{"op":"set","id":"signup","key":"source","value":"src/frames/register.tsx"},` +
+		`{"op":"set","id":"signup","key":"file","value":"dist/register.html"}]`))
+	require.NoError(t, err)
+	require.NoError(t, ApplySeal(&d, ops))
+	assert.Equal(t, "src/frames/register.tsx", d.Pages[1].Source)
+	assert.Equal(t, "dist/register.html", d.Pages[1].File)
+	assert.Equal(t, "signup", *d.Design.Start)
+
+	// 只改 source 不改 file：不配套，整批不生效
+	before := string(d.JSON())
+	ops, err = ParseOps(json.RawMessage(`[{"op":"set","id":"signup","key":"source","value":"src/frames/x.tsx"}]`))
+	require.NoError(t, err)
+	err = ApplySeal(&d, ops)
+	require.ErrorAs(t, err, &ce)
+	assert.Equal(t, "pages[1].file", ce.Where)
+	assert.Equal(t, before, string(d.JSON()))
+
+	// 封存后的文档能被普通解析读回
+	again, err := Parse(d.JSON())
+	require.NoError(t, err)
+	assert.Equal(t, string(d.JSON()), string(again.JSON()))
+}
+
+func TestRemoveStartDoesNotAliasInput(t *testing.T) {
+	d, err := Parse([]byte(`{"design":{"engine":1,"start":"a"},"pages":[{"id":"a","name":"a","file":"dist/a.html","source":"src/frames/a.tsx"}]}`))
+	require.NoError(t, err)
+	orig := d
+	ops, err := ParseOps(json.RawMessage(`[{"op":"remove","id":"a"}]`))
+	require.NoError(t, err)
+	require.NoError(t, Apply(&d, ops))
+	assert.Nil(t, d.Design.Start)
+	assert.Equal(t, "a", *orig.Design.Start)
+}

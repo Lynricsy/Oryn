@@ -162,14 +162,34 @@ func (r *reader) op(v any, where string) Op {
 
 // Apply 按顺序把操作应用到 d：同一属性后写的赢；set / remove / order 指向已不存在的对象时跳过
 // （别的客户端可能先删了它）。任何一条让文档不合法就报错，d 保持不变。
+// 画框的 source 只由封存维护：add 不能带 source，set 不能改 source，也不能改带 source 的画框的 file。
 func Apply(d *Doc, ops []Op) error {
+	return apply(d, ops, &reader{})
+}
+
+// ApplySeal 是封存（seal_design）用的 Apply：先把 d 变成设计画布（没有 design 时补上
+// {engine: DesignEngine, start: null}，已有的 design 原样保留），再应用 ops。与 Apply 不同的是：
+// add 画框可以带 source（省略 file 时取 FrameFile(source)），set 能改画框的 source 与 file。
+// 其余规则与 Apply 相同，任何一条不合法就报错，d 保持不变。
+func ApplySeal(d *Doc, ops []Op) error {
+	w := *d
+	if w.Design == nil {
+		w.Design = &Design{Engine: DesignEngine}
+	}
+	if err := apply(&w, ops, &reader{seal: true}); err != nil {
+		return err
+	}
+	*d = w
+	return nil
+}
+
+func apply(d *Doc, ops []Op, r *reader) error {
 	w := Doc{
-		Format:   Format,
+		Design:   d.Design,
 		Canvases: slices.Clone(d.Canvases),
 		Pages:    slices.Clone(d.Pages),
 		Notes:    slices.Clone(d.Notes),
 	}
-	r := &reader{}
 	for i, op := range ops {
 		where := fmt.Sprintf("ops[%d]", i)
 		switch op.Op {
@@ -207,6 +227,7 @@ func Apply(d *Doc, ops []Op) error {
 	if r.err != nil {
 		return r.err
 	}
+	w.Format = w.format()
 	*d = w
 	return nil
 }
@@ -236,9 +257,18 @@ func (r *reader) add(d *Doc, op Op, where string) {
 	if _, has := obj["canvas"]; typ != TypeCanvas && !has && len(d.Canvases) == 1 {
 		obj["canvas"] = d.Canvases[0].ID
 	}
-	if _, has := obj["file"]; typ == TypePage && !has {
-		if id, ok := obj["id"].(string); ok {
-			obj["file"] = "page-" + id + ".html"
+	if typ == TypePage {
+		_, hasSource := obj["source"]
+		if hasSource && !r.seal {
+			r.fail(at(at(where, "object"), "source"), "画框的 source 只由封存维护，不能用操作添加")
+			return
+		}
+		if _, has := obj["file"]; !has {
+			if src, ok := obj["source"].(string); ok && hasSource {
+				obj["file"] = FrameFile(src)
+			} else if id, ok := obj["id"].(string); ok {
+				obj["file"] = "page-" + id + ".html"
+			}
 		}
 	}
 	ow := at(where, "object")
@@ -282,16 +312,25 @@ func (r *reader) add(d *Doc, op Op, where string) {
 
 var (
 	canvasSettable = []string{"name"}
-	pageSettable   = []string{"name", "file", "x", "y", "width", "height", "locked"}
-	noteFixed      = []string{"id", "canvas", "kind", "by"}
+	pageSettable   = []string{"name", "file", "x", "y", "width", "height", "locked", "device"}
+	// framePageSettable 是带 source 的画框能改的字段：file 跟着 source 走，只由封存改。
+	framePageSettable = []string{"name", "x", "y", "width", "height", "locked", "device"}
+	sealPageSettable  = append(slices.Clone(pageSettable), "source")
+	noteFixed         = []string{"id", "canvas", "kind", "by"}
 )
 
 // settable 返回某类对象能用 set 改的字段。
-func settable(d *Doc, typ string, i int) []string {
+func (r *reader) settable(d *Doc, typ string, i int) []string {
 	switch typ {
 	case TypeCanvas:
 		return canvasSettable
 	case TypePage:
+		switch {
+		case r.seal:
+			return sealPageSettable
+		case d.Pages[i].Source != "":
+			return framePageSettable
+		}
 		return pageSettable
 	}
 	var out []string
@@ -321,7 +360,7 @@ func (r *reader) set(d *Doc, op Op, where string) {
 	if typ == "" {
 		return
 	}
-	keys := settable(d, typ, i)
+	keys := r.settable(d, typ, i)
 	if !slices.Contains(keys, op.Key) {
 		r.fail(at(where, "key"), "%s %q 不能改 %q（能改的字段：%s）", typeLabel[typ], op.ID, op.Key, strings.Join(keys, "、"))
 		return
@@ -350,7 +389,7 @@ func (r *reader) set(d *Doc, op Op, where string) {
 
 var typeLabel = map[string]string{TypeCanvas: "画布页", TypePage: "画框", TypeNote: "标注"}
 
-// remove 删除对象：删画布页连带删它的画框与标注；删画框把吸附它的 from / to 置空。
+// remove 删除对象：删画布页连带删它的画框与标注；删画框把吸附它的 from / to 与指向它的 design.start 置空。
 func (d *Doc) remove(id string) {
 	typ, i := d.find(id)
 	gone := map[string]bool{}
@@ -373,6 +412,9 @@ func (d *Doc) remove(id string) {
 	}
 	if len(gone) == 0 {
 		return
+	}
+	if d.Design != nil && d.Design.Start != nil && gone[*d.Design.Start] {
+		d.Design = &Design{Engine: d.Design.Engine} // 换新对象，不改调用方的文档
 	}
 	for j, n := range d.Notes {
 		if n.From != nil && gone[*n.From] {

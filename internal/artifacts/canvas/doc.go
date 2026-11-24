@@ -1,8 +1,9 @@
 // Package canvas 是画布 artifact 的文档模型：canvas.json 的严格解析、规范化输出与操作。
 //
 // 文档里 canvases 的元素在界面上叫「页面」，pages 的元素叫「画框」（每个画框是版本里的一个 HTML 文件），
-// notes 是画在画框之上的标注。web/src/lib/artifacts/canvas-doc.ts 是逐条相同的 TS 实现，两边共用
-// schema/testdata/canvas-ops.json 的测试向量；改规则时两边一起改。
+// notes 是画在画框之上的标注。带顶层 design 的是设计画布：画框可以带 source（TSX 源码，file 是它的构建产物），
+// design 与 source 只由封存（ApplySeal）维护。web/src/lib/artifacts/canvas-doc.ts 是逐条相同的 TS 实现，
+// 两边共用 schema/testdata/canvas-ops.json 的测试向量；改规则时两边一起改。
 package canvas
 
 import (
@@ -10,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"regexp"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -17,7 +19,11 @@ import (
 
 // 格式、上限与缺省值。
 const (
-	Format = 1
+	// Format 是只有 HTML 画框的画布写出的格式；带 design、source 或 device 任一字段时写出 FormatDesign。
+	// 解析两种都接受，这样 HTML 画布的 canvas.json 逐字节不变，旧版本仍能读。
+	Format       = 1
+	FormatDesign = 2
+	DesignEngine = 1 // design.engine 目前唯一的取值
 
 	MaxCanvases   = 50
 	MaxPages      = 500
@@ -73,6 +79,17 @@ var NoteKinds = []string{KindText, KindSticky, KindPen, KindRect, KindEllipse, K
 // Colors 是标注可用的颜色名（界面按主题映射成具体颜色）。
 var Colors = []string{"ink", "red", "orange", "yellow", "green", "blue", "violet"}
 
+// 画框的设备外壳。
+const (
+	DeviceNone    = "none"
+	DevicePhone   = "phone"
+	DeviceTablet  = "tablet"
+	DeviceBrowser = "browser"
+)
+
+// Devices 是 device 的全部取值。
+var Devices = []string{DeviceNone, DevicePhone, DeviceTablet, DeviceBrowser}
+
 // Canvas 是一个画布页。
 type Canvas struct {
 	ID   string `json:"id"`
@@ -80,6 +97,7 @@ type Canvas struct {
 }
 
 // Page 是一个画框：版本里的一个 HTML 文件摆在画布页上的位置。
+// 设计画布的画框带 Source（src/frames/<名>.tsx），File 固定是它的产物 dist/<名>.html。
 type Page struct {
 	ID     string  `json:"id"`
 	Canvas string  `json:"canvas"`
@@ -90,6 +108,19 @@ type Page struct {
 	Width  float64 `json:"width"`
 	Height float64 `json:"height"`
 	Locked bool    `json:"locked"`
+	Source string  `json:"source,omitempty"`
+	Device string  `json:"device,omitempty"` // 设备外壳；空串即 none（规范化输出不写 none）
+}
+
+// Design 是设计画布的顶层信息：引擎版本与原型的起始画框（nil 表示未指定）。
+type Design struct {
+	Engine int     `json:"engine"`
+	Start  *string `json:"start"`
+}
+
+// FrameFile 返回 source 对应的产物文件：src/frames/<名>.tsx → dist/<名>.html。
+func FrameFile(source string) string {
+	return "dist/" + strings.TrimSuffix(strings.TrimPrefix(source, "src/frames/"), ".tsx") + ".html"
 }
 
 // Note 是一个标注。哪些字段有意义由 Kind 决定：
@@ -178,16 +209,26 @@ func (n Note) MarshalJSON() ([]byte, error) {
 }
 
 // Doc 是解析后的 canvas.json。数组顺序就是绘制顺序（先画的在下面）。
+// Design 非 nil 即设计画布。Format 由内容决定（见 Format 常量），JSON 写出时重新计算。
 type Doc struct {
 	Format   int      `json:"format"`
+	Design   *Design  `json:"design,omitempty"`
 	Canvases []Canvas `json:"canvases"`
 	Pages    []Page   `json:"pages"`
 	Notes    []Note   `json:"notes"`
 }
 
+// format 返回文档该写出的格式：带 design、source 或 device 任一字段时是 FormatDesign。
+func (d Doc) format() int {
+	if d.Design != nil || slices.ContainsFunc(d.Pages, func(p Page) bool { return p.Source != "" || p.Device != "" }) {
+		return FormatDesign
+	}
+	return Format
+}
+
 // JSON 是规范化的 canvas.json：键序固定、两空格缩进、末尾换行，便于逐版本比较。
 func (d Doc) JSON() []byte {
-	out := Doc{Format: Format, Canvases: d.Canvases, Pages: d.Pages, Notes: d.Notes}
+	out := Doc{Format: d.format(), Design: d.Design, Canvases: d.Canvases, Pages: d.Pages, Notes: d.Notes}
 	if out.Canvases == nil {
 		out.Canvases = []Canvas{}
 	}
@@ -271,7 +312,11 @@ func jsRound(v float64) float64 {
 }
 
 // reader 逐字段读取解码后的 JSON 值，只记第一个错误；出错之后的读取都返回零值。
-type reader struct{ err error }
+// seal 为真时是封存在改文档（ApplySeal），可以写画框的 source。
+type reader struct {
+	err  error
+	seal bool
+}
 
 func (r *reader) fail(where, format string, args ...any) {
 	if r.err == nil {
@@ -423,6 +468,43 @@ func (r *reader) pageFile(v any, where string) string {
 	return s
 }
 
+// sourcePattern 是设计画框的源码路径：src/frames/<名>.tsx。
+var sourcePattern = regexp.MustCompile(`^src/frames/[a-z0-9][a-z0-9-]{0,63}\.tsx$`)
+
+func (r *reader) source(v any, where string) string {
+	s, ok := v.(string)
+	if !ok || !sourcePattern.MatchString(s) {
+		r.fail(where, "必须是 src/frames/<名>.tsx，名字是 1–64 个小写字母、数字或 -，以字母或数字开头")
+		return ""
+	}
+	return s
+}
+
+// device 读设备外壳；none 存成空串，规范化输出时不写。
+func (r *reader) device(v any, where string) string {
+	s, ok := v.(string)
+	if !ok || !slices.Contains(Devices, s) {
+		r.fail(where, "只能是 %s 之一", strings.Join(Devices, "、"))
+		return ""
+	}
+	if s == DeviceNone {
+		return ""
+	}
+	return s
+}
+
+func (r *reader) design(v any, where string) *Design {
+	m := r.object(v, where)
+	if m == nil {
+		return nil
+	}
+	r.only(m, designKeys, where)
+	if e := r.need(m, "engine", where); e != float64(DesignEngine) {
+		r.fail(at(where, "engine"), "必须是 %d", DesignEngine)
+	}
+	return &Design{Engine: DesignEngine, Start: opt(r, m, "start", where, nil, r.ref)}
+}
+
 // opt 返回可选字段：不存在时用缺省值。
 func opt[T any](r *reader, m map[string]any, key, where string, def T, read func(any, string) T) T {
 	v, ok := m[key]
@@ -450,9 +532,10 @@ func (r *reader) list(m map[string]any, key string, max int) []any {
 }
 
 var (
-	docKeys    = []string{"format", "canvases", "pages", "notes"}
+	docKeys    = []string{"format", "design", "canvases", "pages", "notes"}
+	designKeys = []string{"engine", "start"}
 	canvasKeys = []string{"id", "name"}
-	pageKeys   = []string{"id", "canvas", "name", "file", "x", "y", "width", "height", "locked"}
+	pageKeys   = []string{"id", "canvas", "name", "file", "x", "y", "width", "height", "locked", "source", "device"}
 	noteCommon = []string{"id", "canvas", "kind", "color", "locked", "by"}
 	shapeKeys  = append(slices.Clone(noteCommon), "x1", "y1", "x2", "y2", "width", "from", "to")
 	noteKeys   = map[string][]string{
@@ -473,9 +556,10 @@ func (r *reader) doc(raw any) Doc {
 		return Doc{}
 	}
 	r.only(m, docKeys, "")
-	if f, ok := m["format"]; ok && f != float64(Format) {
-		r.fail("format", "必须是 %d", Format)
+	if f, ok := m["format"]; ok && f != float64(Format) && f != float64(FormatDesign) {
+		r.fail("format", "必须是 %d 或 %d", Format, FormatDesign)
 	}
+	design := opt(r, m, "design", "", nil, r.design)
 	var canvases []Canvas
 	for i, v := range r.list(m, "canvases", MaxCanvases) {
 		canvases = append(canvases, r.canvas(v, fmt.Sprintf("canvases[%d]", i)))
@@ -498,7 +582,8 @@ func (r *reader) doc(raw any) Doc {
 	if r.err != nil {
 		return Doc{}
 	}
-	d := Doc{Format: Format, Canvases: canvases, Pages: place(pages), Notes: notes}
+	d := Doc{Design: design, Canvases: canvases, Pages: place(pages), Notes: notes}
+	d.Format = d.format()
 	r.links(d)
 	return d
 }
@@ -556,6 +641,8 @@ func (r *reader) page(v any, where string) loosePage {
 		Width:  opt(r, m, "width", where, DefaultPageWidth, r.size),
 		Height: opt(r, m, "height", where, DefaultPageHeight, r.size),
 		Locked: opt(r, m, "locked", where, false, r.boolean),
+		Source: opt(r, m, "source", where, "", r.source),
+		Device: opt(r, m, "device", where, "", r.device),
 	}
 	_, hasX := m["x"]
 	_, hasY := m["y"]
@@ -667,7 +754,8 @@ func (r *reader) points(v any, where string) []float64 {
 	return out
 }
 
-// links 检查 id 不重复、画框与标注都在存在的画布页上、形状吸附的是同一画布页上存在的画框。
+// links 检查 id 不重复、画框与标注都在存在的画布页上、形状吸附的是同一画布页上存在的画框；
+// 设计画布另查 source 只出现在设计画布里、file 与 source 配套、design.start 指向存在的画框。
 func (r *reader) links(d Doc) {
 	kinds := make(map[string]string, len(d.Canvases)+len(d.Pages)+len(d.Notes))
 	claim := func(id, kind, where string) {
@@ -689,8 +777,17 @@ func (r *reader) links(d Doc) {
 		claim(n.ID, "note", fmt.Sprintf("notes[%d].id", i))
 	}
 	for i, p := range d.Pages {
+		where := fmt.Sprintf("pages[%d]", i)
 		if kinds[p.Canvas] != "canvas" {
-			r.fail(fmt.Sprintf("pages[%d].canvas", i), "没有 id 为 %q 的画布页", p.Canvas)
+			r.fail(where+".canvas", "没有 id 为 %q 的画布页", p.Canvas)
+		}
+		if p.Source == "" {
+			continue
+		}
+		if d.Design == nil {
+			r.fail(where+".source", "只有设计画布（带 design）的画框能有 source")
+		} else if want := FrameFile(p.Source); p.File != want {
+			r.fail(where+".file", "带 source 的画框的 file 必须是 %q（现在是 %q）", want, p.File)
 		}
 	}
 	for i, n := range d.Notes {
@@ -709,6 +806,9 @@ func (r *reader) links(d Doc) {
 				r.fail(where+"."+end.key, "同一画布页上没有 id 为 %q 的画框", *end.id)
 			}
 		}
+	}
+	if d.Design != nil && d.Design.Start != nil && kinds[*d.Design.Start] != "page" {
+		r.fail("design.start", "没有 id 为 %q 的画框", *d.Design.Start)
 	}
 }
 
