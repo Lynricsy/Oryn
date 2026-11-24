@@ -59,6 +59,26 @@ func (q *Queries) GetArtifact(ctx context.Context, id string) (Artifact, error) 
 	return i, err
 }
 
+const getArtifactDesign = `-- name: GetArtifactDesign :one
+SELECT artifact_id, surface, direction, dealt, auto_notes, delivered, dirty_at FROM artifact_designs WHERE artifact_id = ?1
+`
+
+// M29: per-artifact design state; no row = defaults (auto_notes 1).
+func (q *Queries) GetArtifactDesign(ctx context.Context, artifactID string) (ArtifactDesign, error) {
+	row := q.db.QueryRowContext(ctx, getArtifactDesign, artifactID)
+	var i ArtifactDesign
+	err := row.Scan(
+		&i.ArtifactID,
+		&i.Surface,
+		&i.Direction,
+		&i.Dealt,
+		&i.AutoNotes,
+		&i.Delivered,
+		&i.DirtyAt,
+	)
+	return i, err
+}
+
 const getArtifactFile = `-- name: GetArtifactFile :one
 SELECT artifact_id, n, path, sha256, size FROM artifact_files WHERE artifact_id = ?1 AND n = ?2 AND path = ?3
 `
@@ -83,7 +103,7 @@ func (q *Queries) GetArtifactFile(ctx context.Context, arg GetArtifactFileParams
 }
 
 const getArtifactVersion = `-- name: GetArtifactVersion :one
-SELECT artifact_id, n, size, pages, author_thread_id, author_label, note, capabilities, format, files_key, created_at FROM artifact_versions WHERE artifact_id = ?1 AND n = ?2
+SELECT artifact_id, n, size, pages, author_thread_id, author_label, note, capabilities, format, files_key, created_at, turn_id, title, check_json FROM artifact_versions WHERE artifact_id = ?1 AND n = ?2
 `
 
 type GetArtifactVersionParams struct {
@@ -106,6 +126,9 @@ func (q *Queries) GetArtifactVersion(ctx context.Context, arg GetArtifactVersion
 		&i.Format,
 		&i.FilesKey,
 		&i.CreatedAt,
+		&i.TurnID,
+		&i.Title,
+		&i.CheckJson,
 	)
 	return i, err
 }
@@ -172,8 +195,8 @@ func (q *Queries) InsertArtifactFile(ctx context.Context, arg InsertArtifactFile
 }
 
 const insertArtifactVersion = `-- name: InsertArtifactVersion :exec
-INSERT INTO artifact_versions (artifact_id, n, size, pages, author_thread_id, author_label, note, capabilities, format, files_key, created_at)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+INSERT INTO artifact_versions (artifact_id, n, size, pages, author_thread_id, author_label, note, capabilities, format, files_key, created_at, turn_id, title)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
 `
 
 type InsertArtifactVersionParams struct {
@@ -188,6 +211,8 @@ type InsertArtifactVersionParams struct {
 	Format         *int64  `json:"format"`
 	FilesKey       string  `json:"filesKey"`
 	CreatedAt      int64   `json:"createdAt"`
+	TurnID         *string `json:"turnId"`
+	Title          *string `json:"title"`
 }
 
 func (q *Queries) InsertArtifactVersion(ctx context.Context, arg InsertArtifactVersionParams) error {
@@ -203,6 +228,8 @@ func (q *Queries) InsertArtifactVersion(ctx context.Context, arg InsertArtifactV
 		arg.Format,
 		arg.FilesKey,
 		arg.CreatedAt,
+		arg.TurnID,
+		arg.Title,
 	)
 	return err
 }
@@ -282,7 +309,7 @@ func (q *Queries) ListArtifactFiles(ctx context.Context, arg ListArtifactFilesPa
 }
 
 const listArtifactVersions = `-- name: ListArtifactVersions :many
-SELECT artifact_id, n, size, pages, author_thread_id, author_label, note, capabilities, format, files_key, created_at FROM artifact_versions WHERE artifact_id = ?1 ORDER BY n DESC
+SELECT artifact_id, n, size, pages, author_thread_id, author_label, note, capabilities, format, files_key, created_at, turn_id, title, check_json FROM artifact_versions WHERE artifact_id = ?1 ORDER BY n DESC
 `
 
 func (q *Queries) ListArtifactVersions(ctx context.Context, artifactID string) ([]ArtifactVersion, error) {
@@ -306,6 +333,9 @@ func (q *Queries) ListArtifactVersions(ctx context.Context, artifactID string) (
 			&i.Format,
 			&i.FilesKey,
 			&i.CreatedAt,
+			&i.TurnID,
+			&i.Title,
+			&i.CheckJson,
 		); err != nil {
 			return nil, err
 		}
@@ -468,6 +498,21 @@ func (q *Queries) SetArtifactDeleted(ctx context.Context, arg SetArtifactDeleted
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const setArtifactDesignAutoNotes = `-- name: SetArtifactDesignAutoNotes :exec
+INSERT INTO artifact_designs (artifact_id, auto_notes) VALUES (?1, ?2)
+ON CONFLICT (artifact_id) DO UPDATE SET auto_notes = excluded.auto_notes
+`
+
+type SetArtifactDesignAutoNotesParams struct {
+	ArtifactID string `json:"artifactId"`
+	AutoNotes  int64  `json:"autoNotes"`
+}
+
+func (q *Queries) SetArtifactDesignAutoNotes(ctx context.Context, arg SetArtifactDesignAutoNotesParams) error {
+	_, err := q.db.ExecContext(ctx, setArtifactDesignAutoNotes, arg.ArtifactID, arg.AutoNotes)
+	return err
 }
 
 const setArtifactOpened = `-- name: SetArtifactOpened :execrows

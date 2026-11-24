@@ -285,6 +285,39 @@ func (s *Server) RestoreArtifactVersion(w http.ResponseWriter, r *http.Request, 
 	WriteJSON(w, http.StatusOK, a.API())
 }
 
+// GetArtifactDesign 对应 `GET artifacts/{id}/design`：画布的设计状态。没有 artifact_designs 行时回缺省值（autoNotes 开）；
+// 非画布回 400 invalid。live 暂一律为 null（实时预览由 orb 侧的设计服务提供）。
+func (s *Server) GetArtifactDesign(w http.ResponseWriter, r *http.Request, id apigen.ArtifactIDPath) {
+	svc, ok := s.artifactsSvc(w)
+	if !ok {
+		return
+	}
+	d, err := svc.Design(r.Context(), id)
+	if err != nil {
+		writeArtifactErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, d.API())
+}
+
+// PatchArtifactDesign 对应 `PATCH artifacts/{id}/design`：改便签自动投递开关（不产生版本；回收站里的回 410）。
+func (s *Server) PatchArtifactDesign(w http.ResponseWriter, r *http.Request, id apigen.ArtifactIDPath) {
+	svc, ok := s.artifactsSvc(w)
+	if !ok {
+		return
+	}
+	var req apigen.ArtifactDesignPatch
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	d, err := svc.SetDesignAutoNotes(r.Context(), id, req.AutoNotes)
+	if err != nil {
+		writeArtifactErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, d.API())
+}
+
 // EditArtifactElement 对应 `POST artifacts/{id}/element`：直接编辑页面上的一个元素（文字与七个样式属性），
 // 落成一个用户版本，回 {version}。偏移处已不是该标签或文件在 baseVersion 之后被改过回 409 带 state。
 func (s *Server) EditArtifactElement(w http.ResponseWriter, r *http.Request, id apigen.ArtifactIDPath) {

@@ -2,6 +2,7 @@ package artifacts
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"strings"
@@ -425,4 +426,143 @@ func TestAgentOrbMethod(t *testing.T) {
 	require.NoError(t, err)
 	_, err = call("orb_r", "thr_r", OpRead, `{"id":"`+id+`"}`)
 	assert.Equal(t, CodeNotFound, ctlCode(err))
+}
+
+// M29：artifact.call 外壳里的 turn 进入 Caller.Turn；同一回合写两次，两版 turnId 相同、title 取首行；
+// 自动消息（`[Oryn ` 开头）不当标题；list_artifact_versions 带 turnId / title，没有时省略。
+func TestAgentOrbTurn(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	require.NoError(t, e.st.Q.CreateProvider(ctx, db.CreateProviderParams{ID: "prov_1", Name: "local", TokenHash: "h", CreatedAt: 1}))
+	mkOrb(t, e, "orb_a", "")
+	mkOrbThread(t, e, "thr_a", "orb_a", "")
+	links := fakeLinks{}
+	e.s.RegisterOrbMethod(links, fakeSource{})
+	fn := links[string(apigen.MethodArtifactCall)]
+	call := func(turn any, op, params string) apigen.LinkCtlArtifactCallResult {
+		t.Helper()
+		m := map[string]any{"threadId": "thr_a", "op": op, "params": json.RawMessage(params)}
+		if turn != nil {
+			m["turn"] = turn
+		}
+		raw, err := json.Marshal(m)
+		require.NoError(t, err)
+		res, err := fn(ctx, "orb_a", raw)
+		require.NoError(t, err)
+		return res.(apigen.LinkCtlArtifactCallResult)
+	}
+	turn := map[string]string{"id": "turn-1", "title": "  把首页改成深色\n第二行细节\n"}
+	id := call(turn, OpCreate, `{"title":"页","html":"<p>1</p>"}`).Details["id"].(string)
+	call(turn, OpUpdate, `{"id":"`+id+`","baseVersion":1,"html":"<p>2</p>"}`)
+	call(map[string]string{"id": "turn-2", "title": "[Oryn 设计便签] 有 2 条便签"}, OpUpdate, `{"id":"`+id+`","baseVersion":2,"html":"<p>3</p>"}`)
+	call(nil, OpUpdate, `{"id":"`+id+`","baseVersion":3,"html":"<p>4</p>"}`)
+	long := strings.Repeat("长", MaxNoteRunes+5)
+	call(map[string]string{"id": "turn-3", "title": long}, OpRestoreVersion, `{"id":"`+id+`","version":1,"baseVersion":4}`)
+
+	vs, err := e.s.Versions(ctx, id)
+	require.NoError(t, err)
+	require.Len(t, vs, 5)
+	// 新的在前：v5 恢复（turn-3，标题截断）、v4 无回合、v3 自动消息、v2/v1 同一回合
+	assert.Equal(t, "turn-3", vs[0].TurnID)
+	assert.Equal(t, strings.Repeat("长", MaxNoteRunes), vs[0].Title)
+	assert.Empty(t, vs[1].TurnID)
+	assert.Empty(t, vs[1].Title)
+	assert.Equal(t, "turn-2", vs[2].TurnID)
+	assert.Empty(t, vs[2].Title, "自动消息不当标题")
+	for _, v := range vs[3:] {
+		assert.Equal(t, "turn-1", v.TurnID)
+		assert.Equal(t, "把首页改成深色", v.Title)
+	}
+
+	list := textObj(t, mustCall(t, e.s, threadCaller("thr_a"), OpListVersions, `{"id":"`+id+`"}`))["versions"].([]any)
+	require.Len(t, list, 5)
+	v1 := list[4].(map[string]any)
+	assert.Equal(t, "turn-1", v1["turnId"])
+	assert.Equal(t, "把首页改成深色", v1["title"])
+	v4 := list[1].(map[string]any)
+	assert.NotContains(t, v4, "turnId")
+	assert.NotContains(t, v4, "title")
+	v3 := list[2].(map[string]any)
+	assert.Equal(t, "turn-2", v3["turnId"])
+	assert.NotContains(t, v3, "title")
+	api := vs[3].API()
+	require.NotNil(t, api.TurnID)
+	assert.Equal(t, "turn-1", *api.TurnID)
+	require.NotNil(t, api.Title)
+	assert.Nil(t, api.Check)
+}
+
+// M29：画布的设计状态——缺省 autoNotes 开且不建行；PATCH 后读回；design 按顶层键判断；check 读最新版本的 check_json；
+// 非画布 invalid。
+func TestDesignState(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	a, err := e.s.Create(ctx, CreateParams{Title: "画布", Files: []FileChange{
+		put(EntryCanvas, `{"format":1,"canvases":[{"id":"c1","name":"首页"}],"pages":[{"id":"p1","name":"一","file":"a.html"}]}`),
+		put("a.html", "<p>a</p>"),
+	}})
+	require.NoError(t, err)
+	d, err := e.s.Design(ctx, a.ID)
+	require.NoError(t, err)
+	assert.True(t, d.AutoNotes)
+	assert.False(t, d.Design)
+	assert.Nil(t, d.Check)
+	assert.Nil(t, d.API().Direction)
+	assert.Nil(t, d.API().Live)
+	_, err = e.st.Q.GetArtifactDesign(ctx, a.ID)
+	assert.ErrorIs(t, err, sql.ErrNoRows, "GET 不建行")
+
+	d, err = e.s.SetDesignAutoNotes(ctx, a.ID, false)
+	require.NoError(t, err)
+	assert.False(t, d.AutoNotes)
+	d, err = e.s.Design(ctx, a.ID)
+	require.NoError(t, err)
+	assert.False(t, d.AutoNotes)
+	d, err = e.s.SetDesignAutoNotes(ctx, a.ID, true)
+	require.NoError(t, err)
+	assert.True(t, d.AutoNotes)
+
+	_, err = e.st.DB.ExecContext(ctx, `UPDATE artifact_versions SET check_json = ? WHERE artifact_id = ? AND n = 1`,
+		`{"status":"issues","issues":[{"rule":"text-clipped","frame":"p1","loc":null}],"fingerprint":"abc"}`, a.ID)
+	require.NoError(t, err)
+	_, err = e.st.DB.ExecContext(ctx, `UPDATE artifact_designs SET direction = ? WHERE artifact_id = ?`, `{"name":"深海"}`, a.ID)
+	require.NoError(t, err)
+	d, err = e.s.Design(ctx, a.ID)
+	require.NoError(t, err)
+	require.NotNil(t, d.Check)
+	assert.Equal(t, apigen.ArtifactCheckIssues, d.Check.Status)
+	require.Len(t, d.Check.Issues, 1)
+	assert.Equal(t, "text-clipped", d.Check.Issues[0].Rule)
+	assert.Equal(t, map[string]any{"name": "深海"}, d.API().Direction)
+
+	// 顶层 design 键 → 设计画布（直接写 canvas.json 的字节绕过 canvas 包的校验，只测这里的判据）
+	_, err = e.st.DB.ExecContext(ctx, `UPDATE artifact_versions SET check_json = NULL WHERE artifact_id = ?`, a.ID)
+	require.NoError(t, err)
+	sha := writeContent(t, e, `{"format":2,"design":{"engine":1,"start":null},"pages":[]}`)
+	_, err = e.st.DB.ExecContext(ctx, `UPDATE artifact_files SET sha256 = ? WHERE artifact_id = ? AND path = ?`, sha, a.ID, EntryCanvas)
+	require.NoError(t, err)
+	d, err = e.s.Design(ctx, a.ID)
+	require.NoError(t, err)
+	assert.True(t, d.Design)
+	assert.Nil(t, d.Check)
+
+	w, err := e.s.Create(ctx, CreateParams{Title: "页", Files: []FileChange{put("index.html", "<p>x</p>")}})
+	require.NoError(t, err)
+	_, err = e.s.Design(ctx, w.ID)
+	assert.Equal(t, CodeInvalid, code(err))
+	_, err = e.s.SetDesignAutoNotes(ctx, w.ID, false)
+	assert.Equal(t, CodeInvalid, code(err))
+
+	_, err = e.s.Delete(ctx, a.ID)
+	require.NoError(t, err)
+	_, err = e.s.SetDesignAutoNotes(ctx, a.ID, false)
+	assert.Equal(t, CodeDeleted, code(err))
+}
+
+// writeContent 把字节落进内容存储，返回 sha256。
+func writeContent(t *testing.T, e *env, s string) string {
+	t.Helper()
+	st, err := e.s.c.put(strings.NewReader(s), MaxFileBytes, false)
+	require.NoError(t, err)
+	return st.sha
 }

@@ -119,6 +119,30 @@ func (e ArtifactCapability) Valid() bool {
 	}
 }
 
+// Defines values for ArtifactCheckStatus.
+const (
+	ArtifactCheckClean      ArtifactCheckStatus = "clean"
+	ArtifactCheckIssues     ArtifactCheckStatus = "issues"
+	ArtifactCheckStale      ArtifactCheckStatus = "stale"
+	ArtifactCheckUnverified ArtifactCheckStatus = "unverified"
+)
+
+// Valid indicates whether the value is a known member of the ArtifactCheckStatus enum.
+func (e ArtifactCheckStatus) Valid() bool {
+	switch e {
+	case ArtifactCheckClean:
+		return true
+	case ArtifactCheckIssues:
+		return true
+	case ArtifactCheckStale:
+		return true
+	case ArtifactCheckUnverified:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ArtifactConsentCapability.
 const (
 	ArtifactConsentFiles  ArtifactConsentCapability = "files"
@@ -139,10 +163,13 @@ func (e ArtifactConsentCapability) Valid() bool {
 
 // Defines values for ArtifactExportFormat.
 const (
-	ArtifactExportHTML     ArtifactExportFormat = "html"
-	ArtifactExportMarkdown ArtifactExportFormat = "md"
-	ArtifactExportPDF      ArtifactExportFormat = "pdf"
-	ArtifactExportZip      ArtifactExportFormat = "zip"
+	ArtifactExportHTML      ArtifactExportFormat = "html"
+	ArtifactExportMarkdown  ArtifactExportFormat = "md"
+	ArtifactExportMockupPDF ArtifactExportFormat = "mockup-pdf"
+	ArtifactExportMockupPNG ArtifactExportFormat = "mockup-png"
+	ArtifactExportPDF       ArtifactExportFormat = "pdf"
+	ArtifactExportProject   ArtifactExportFormat = "project"
+	ArtifactExportZip       ArtifactExportFormat = "zip"
 )
 
 // Valid indicates whether the value is a known member of the ArtifactExportFormat enum.
@@ -152,7 +179,13 @@ func (e ArtifactExportFormat) Valid() bool {
 		return true
 	case ArtifactExportMarkdown:
 		return true
+	case ArtifactExportMockupPDF:
+		return true
+	case ArtifactExportMockupPNG:
+		return true
 	case ArtifactExportPDF:
+		return true
+	case ArtifactExportProject:
 		return true
 	case ArtifactExportZip:
 		return true
@@ -4979,6 +5012,35 @@ type ArtifactCapabilitiesFrames string
 // ArtifactCapability 页面运行时能力（`oryn.use(name)`）
 type ArtifactCapability string
 
+// ArtifactCheck 设计检查结果（M29，`artifact_versions.check_json`）
+type ArtifactCheck struct {
+	Issues []ArtifactCheckIssue `json:"issues"`
+
+	// Status `clean` 无问题；`issues` 有问题；`stale` 检查结果早于当前源码；`unverified` 未检查或检查没跑成
+	Status ArtifactCheckStatus `json:"status"`
+}
+
+// ArtifactCheckIssue defines model for ArtifactCheckIssue.
+type ArtifactCheckIssue struct {
+	// Detail 规则相关的测量值（数字或字符串）
+	Detail interface{} `json:"detail,omitempty"`
+
+	// Frame 所在帧的 page id
+	Frame *string `json:"frame,omitempty"`
+
+	// Loc 源码位置 `src/frames/x.tsx:42:5`；HTML 画框为空
+	Loc *string `json:"loc,omitempty"`
+
+	// Rule 探针规则名（如 `text-clipped`、`contrast-low`）
+	Rule string `json:"rule"`
+
+	// Text 元素文本片段
+	Text *string `json:"text,omitempty"`
+}
+
+// ArtifactCheckStatus `clean` 无问题；`issues` 有问题；`stale` 检查结果早于当前源码；`unverified` 未检查或检查没跑成
+type ArtifactCheckStatus string
+
 // ArtifactComment defines model for ArtifactComment.
 type ArtifactComment struct {
 	// AuthorLabel 写入时的线程标题快照（用户为空串）
@@ -5111,6 +5173,36 @@ type ArtifactConsentList struct {
 	Consents []ArtifactConsent `json:"consents"`
 }
 
+// ArtifactDesign defines model for ArtifactDesign.
+type ArtifactDesign struct {
+	// AutoNotes 画布便签是否自动投递给创建线程（缺省开）
+	AutoNotes bool `json:"autoNotes"`
+
+	// Check 设计检查结果（M29，`artifact_versions.check_json`）
+	Check *ArtifactCheck `json:"check,omitempty"`
+
+	// Design 最新版本的 `canvas.json` 带顶层 `design`（设计画布）
+	Design bool `json:"design"`
+
+	// Direction 选定的设计方向（`design_direction` 写入）；未选时为 null
+	Direction map[string]interface{} `json:"direction"`
+
+	// Live 实时预览（orb 里的设计开发服务）；没有时为 null
+	Live *struct {
+		Port int `json:"port"`
+
+		// ThreadID `T-<uuidv7>`
+		//
+		// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+		ThreadID ThreadID `json:"threadId"`
+	} `json:"live"`
+}
+
+// ArtifactDesignPatch defines model for ArtifactDesignPatch.
+type ArtifactDesignPatch struct {
+	AutoNotes bool `json:"autoNotes"`
+}
+
 // ArtifactDetail defines model for ArtifactDetail.
 type ArtifactDetail struct {
 	Artifact Artifact `json:"artifact"`
@@ -5144,7 +5236,7 @@ type ArtifactElementEdit struct {
 	Text *string `json:"text,omitempty"`
 }
 
-// ArtifactExportFormat `html` 单文件页面；`zip` 全部文件；`md` 文档（有图片时为 zip）；`pdf` 幻灯片
+// ArtifactExportFormat `html` 单文件页面；`zip` 全部文件；`md` 文档（有图片时为 zip）；`pdf` 幻灯片；`project` 设计画布导出为可运行的前端工程（zip）；`mockup-png`、`mockup-pdf` 设计画布的样机图
 type ArtifactExportFormat string
 
 // ArtifactFile defines model for ArtifactFile.
@@ -5341,12 +5433,21 @@ type ArtifactVersion struct {
 	// AuthorThreadID 写入这个版本的线程；省略 = 用户
 	AuthorThreadID *ThreadID `json:"authorThreadId,omitempty"`
 
+	// Check 设计检查结果（M29，`artifact_versions.check_json`）
+	Check *ArtifactCheck `json:"check,omitempty"`
+
 	// CreatedAt UTC 毫秒时间戳
 	CreatedAt TimestampMs `json:"createdAt"`
 	Note      *string     `json:"note,omitempty"`
 	Pages     int         `json:"pages"`
 	Size      int64       `json:"size"`
-	Version   int         `json:"version"`
+
+	// Title 回合标题（用户输入的首行，最多 200 个字符）；省略 = 无
+	Title *string `json:"title,omitempty"`
+
+	// TurnID 写入这个版本的 agent 回合（M29，orb 扩展生成）；同一回合的版本相同。省略 = 不属于任何回合
+	TurnID  *string `json:"turnId,omitempty"`
+	Version int     `json:"version"`
 }
 
 // ArtifactVersionList defines model for ArtifactVersionList.
@@ -7192,6 +7293,12 @@ type LinkCtlArtifactCallParams struct {
 
 	// ThreadID 调用方线程
 	ThreadID ThreadID `json:"threadId"`
+
+	// Turn M29：调用所处的 agent 回合（orb 扩展每次调用都带）；写出的版本记 `turnId` 与标题（`title` 的首行）
+	Turn *struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+	} `json:"turn,omitempty"`
 }
 
 // LinkCtlArtifactCallResult defines model for LinkCtlArtifactCallResult.
@@ -14477,6 +14584,9 @@ type PatchArtifactCommentJSONRequestBody = ArtifactCommentPatch
 // ReplyArtifactCommentJSONRequestBody defines body for ReplyArtifactComment for application/json ContentType.
 type ReplyArtifactCommentJSONRequestBody = ArtifactCommentReply
 
+// PatchArtifactDesignJSONRequestBody defines body for PatchArtifactDesign for application/json ContentType.
+type PatchArtifactDesignJSONRequestBody = ArtifactDesignPatch
+
 // EditArtifactElementJSONRequestBody defines body for EditArtifactElement for application/json ContentType.
 type EditArtifactElementJSONRequestBody = ArtifactElementEdit
 
@@ -17389,10 +17499,16 @@ type ServerInterface interface {
 	// ReplyArtifactComment 用户回复（清掉该串的已发送标记）
 	// (POST /api/v1/artifacts/{id}/comments/{threadId}/replies)
 	ReplyArtifactComment(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, threadID ArtifactCommentThreadIDPath)
+	// GetArtifactDesign 画布的设计状态（是否设计画布、实时预览、选定方向、便签自动投递、最新版本的设计检查）；非画布回 400 `invalid`
+	// (GET /api/v1/artifacts/{id}/design)
+	GetArtifactDesign(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
+	// PatchArtifactDesign 修改画布的设计设置（便签自动投递开关）；非画布回 400 `invalid`，回收站里的回 410
+	// (PATCH /api/v1/artifacts/{id}/design)
+	PatchArtifactDesign(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
 	// EditArtifactElement 直接编辑页面上的一个元素（文字与 7 个样式属性），落成一个用户版本
 	// (POST /api/v1/artifacts/{id}/element)
 	EditArtifactElement(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
-	// ExportArtifact 导出某个版本（`html` 只对单文件版本可用；`zip` 打包全部文件）
+	// ExportArtifact 导出某个版本（`html` 只对单文件版本可用；`zip` 打包全部文件；`project`、`mockup-png`、`mockup-pdf` 只对设计画布可用）
 	// (GET /api/v1/artifacts/{id}/export)
 	ExportArtifact(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, params ExportArtifactParams)
 	// GetArtifactFile 下载某个版本里的一个文件（栅格图 inline，其余一律 attachment；带 `Content-Security-Policy: sandbox`，主域上从不把 HTML 当页面渲染）
@@ -18604,13 +18720,25 @@ func (_ Unimplemented) ReplyArtifactComment(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// GetArtifactDesign 画布的设计状态（是否设计画布、实时预览、选定方向、便签自动投递、最新版本的设计检查）；非画布回 400 `invalid`
+// (GET /api/v1/artifacts/{id}/design)
+func (_ Unimplemented) GetArtifactDesign(w http.ResponseWriter, r *http.Request, id ArtifactIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PatchArtifactDesign 修改画布的设计设置（便签自动投递开关）；非画布回 400 `invalid`，回收站里的回 410
+// (PATCH /api/v1/artifacts/{id}/design)
+func (_ Unimplemented) PatchArtifactDesign(w http.ResponseWriter, r *http.Request, id ArtifactIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // EditArtifactElement 直接编辑页面上的一个元素（文字与 7 个样式属性），落成一个用户版本
 // (POST /api/v1/artifacts/{id}/element)
 func (_ Unimplemented) EditArtifactElement(w http.ResponseWriter, r *http.Request, id ArtifactIDPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// ExportArtifact 导出某个版本（`html` 只对单文件版本可用；`zip` 打包全部文件）
+// ExportArtifact 导出某个版本（`html` 只对单文件版本可用；`zip` 打包全部文件；`project`、`mockup-png`、`mockup-pdf` 只对设计画布可用）
 // (GET /api/v1/artifacts/{id}/export)
 func (_ Unimplemented) ExportArtifact(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, params ExportArtifactParams) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -21434,6 +21562,58 @@ func (siw *ServerInterfaceWrapper) ReplyArtifactComment(w http.ResponseWriter, r
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ReplyArtifactComment(w, r, id, threadID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetArtifactDesign operation middleware
+func (siw *ServerInterfaceWrapper) GetArtifactDesign(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetArtifactDesign(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PatchArtifactDesign operation middleware
+func (siw *ServerInterfaceWrapper) PatchArtifactDesign(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PatchArtifactDesign(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -32894,6 +33074,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/artifacts/{id}/render.png", wrapper.RenderArtifactPng)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/artifacts/{id}/design", wrapper.GetArtifactDesign)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/v1/artifacts/{id}/design", wrapper.PatchArtifactDesign)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/artifacts/{id}/canvas", wrapper.GetArtifactCanvas)

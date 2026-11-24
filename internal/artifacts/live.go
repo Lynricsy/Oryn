@@ -456,7 +456,7 @@ func (s *Service) flushLive(ctx context.Context, id string, l *live) error {
 		return nil
 	}
 	for attempt := 1; ; attempt++ {
-		a, err := s.writeCanvas(ctx, id, l.version, l.doc, l.copies, Author{}, "", nil)
+		a, err := s.writeCanvas(ctx, id, l.version, l.doc, l.copies, Author{}, Turn{}, "", nil)
 		if err == nil {
 			l.version, l.pending, l.copies = a.Version, nil, nil
 			l.stopTimer()
@@ -474,10 +474,10 @@ func (s *Service) flushLive(ctx context.Context, id string, l *live) error {
 	}
 }
 
-// writeCanvas 把 doc 作为 canvas.json、连同 extra 写成 base 之上的新版本。画框引用了、但最新版本与 extra
+// writeCanvas 把 doc 作为 canvas.json、连同 extra 写成 base 之上的新版本（记在 turn 回合下）。画框引用了、但最新版本与 extra
 // 里都没有的文件由服务端补上：带 copyOf 的复制来源画框的文件，其余是 BlankPage。canvas.json 以 base 为底稿
 // 参与冲突检查（base 之后被别处改过就 conflict），补上的文件不参与。
-func (s *Service) writeCanvas(ctx context.Context, id string, base int, doc canvas.Doc, copies map[string]string, author Author, note string, extra []FileChange) (Artifact, error) {
+func (s *Service) writeCanvas(ctx context.Context, id string, base int, doc canvas.Doc, copies map[string]string, author Author, turn Turn, note string, extra []FileChange) (Artifact, error) {
 	head, err := s.Files(ctx, id, 0)
 	if err != nil {
 		return Artifact{}, err
@@ -506,7 +506,7 @@ func (s *Service) writeCanvas(ctx context.Context, id string, base int, doc canv
 		files = append(files, FileChange{Path: p.File, Data: bytes.NewReader(data)})
 		made = append(made, p.File)
 	}
-	return s.Write(ctx, WriteParams{ID: id, BaseVersion: base, Author: author, Note: note, Files: files, Unchecked: made})
+	return s.Write(ctx, WriteParams{ID: id, BaseVersion: base, Author: author, Turn: turn, Note: note, Files: files, Unchecked: made})
 }
 
 // reloadLive 以最新版本为底稿重建文档，把 pending 逐条重放（放不上的丢弃），广播整份文档。调用方持有锁。
@@ -597,7 +597,7 @@ func (s *Service) agentCanvas(ctx context.Context, c Caller, id string, base int
 			return Artifact{}, err
 		}
 	}
-	r, err := s.writeCanvas(ctx, id, a.Version, doc, addCopies(nil, pre, doc, ops), c.author(), note, files)
+	r, err := s.writeCanvas(ctx, id, a.Version, doc, addCopies(nil, pre, doc, ops), c.author(), c.Turn, note, files)
 	if err != nil {
 		return Artifact{}, err
 	}

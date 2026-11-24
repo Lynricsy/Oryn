@@ -201,12 +201,17 @@ type Version struct {
 	Capabilities   []string
 	Format         int
 	FilesKey       string
+	// TurnID、Title 是写入所属的 agent 回合与回合标题（M29）；空 = 无。
+	TurnID, Title string
+	// Check 是设计检查结果（`check_json` 原文，{status, issues, fingerprint}）；nil = 没有检查过。
+	Check json.RawMessage
 }
 
 // API 返回 REST 表示。
 func (v Version) API() apigen.ArtifactVersion {
 	out := apigen.ArtifactVersion{
 		Version: v.Version, CreatedAt: v.CreatedAt.UnixMilli(), AuthorLabel: v.AuthorLabel, Size: v.Size, Pages: v.Pages,
+		Check: v.APICheck(),
 	}
 	if v.AuthorThreadID != "" {
 		out.AuthorThreadID = &v.AuthorThreadID
@@ -214,7 +219,28 @@ func (v Version) API() apigen.ArtifactVersion {
 	if v.Note != "" {
 		out.Note = &v.Note
 	}
+	if v.TurnID != "" {
+		out.TurnID = &v.TurnID
+	}
+	if v.Title != "" {
+		out.Title = &v.Title
+	}
 	return out
+}
+
+// APICheck 返回设计检查结果的 REST 表示；没有检查过或 check_json 解析不了时为 nil。
+func (v Version) APICheck() *apigen.ArtifactCheck {
+	if len(v.Check) == 0 {
+		return nil
+	}
+	var c apigen.ArtifactCheck
+	if json.Unmarshal(v.Check, &c) != nil || c.Status == "" {
+		return nil
+	}
+	if c.Issues == nil {
+		c.Issues = []apigen.ArtifactCheckIssue{}
+	}
+	return &c
 }
 
 // File 是某个版本里的一个文件。
@@ -363,10 +389,14 @@ func versionFromRow(r db.ArtifactVersion) Version {
 	v := Version{
 		Version: int(r.N), CreatedAt: time.UnixMilli(r.CreatedAt), AuthorThreadID: deref(r.AuthorThreadID),
 		AuthorLabel: r.AuthorLabel, Note: deref(r.Note), Size: r.Size, Pages: int(r.Pages), FilesKey: r.FilesKey,
+		TurnID: deref(r.TurnID), Title: deref(r.Title),
 	}
 	_ = json.Unmarshal([]byte(r.Capabilities), &v.Capabilities)
 	if r.Format != nil {
 		v.Format = int(*r.Format)
+	}
+	if r.CheckJson != nil && *r.CheckJson != "" {
+		v.Check = json.RawMessage(*r.CheckJson)
 	}
 	return v
 }
@@ -593,6 +623,94 @@ func (s *Service) Rename(ctx context.Context, id, title string) (Artifact, error
 	}
 	s.changed()
 	return s.Get(ctx, id)
+}
+
+// DesignState 是画布的设计状态（M29，`GET artifacts/{id}/design`）。
+type DesignState struct {
+	// Design 报告最新版本的 canvas.json 是否带顶层 design 键（设计画布）。
+	Design bool
+	// Direction 是选定的设计方向（artifact_designs.direction 原文）；nil = 未选。
+	Direction json.RawMessage
+	// AutoNotes 是便签自动投递开关（缺省开，决策 D7）。
+	AutoNotes bool
+	// Check 是最新版本的设计检查结果；nil = 没有。
+	Check *apigen.ArtifactCheck
+}
+
+// API 返回 REST 表示。live（实时预览）由 orb 侧的设计服务决定，这里一律为 null。
+func (d DesignState) API() apigen.ArtifactDesign {
+	out := apigen.ArtifactDesign{Design: d.Design, AutoNotes: d.AutoNotes, Check: d.Check}
+	if len(d.Direction) > 0 {
+		var m map[string]any
+		if json.Unmarshal(d.Direction, &m) == nil {
+			out.Direction = m
+		}
+	}
+	return out
+}
+
+// canvasRow 读画布 artifact 的行；不是画布 → invalid。
+func canvasRow(ctx context.Context, q *db.Queries, id string) (db.Artifact, error) {
+	r, err := getRow(ctx, q, id)
+	if err != nil {
+		return db.Artifact{}, err
+	}
+	if r.Kind != KindCanvas {
+		return db.Artifact{}, opErr(CodeInvalid, "artifact %s 不是画布，没有设计状态。", id)
+	}
+	return r, nil
+}
+
+// Design 返回画布的设计状态（回收站里的也能取）。没有 artifact_designs 行时取缺省值，不建行。
+func (s *Service) Design(ctx context.Context, id string) (DesignState, error) {
+	r, err := canvasRow(ctx, s.st.Q, id)
+	if err != nil {
+		return DesignState{}, err
+	}
+	out := DesignState{AutoNotes: true}
+	row, err := s.st.Q.GetArtifactDesign(ctx, id)
+	switch {
+	case err == nil:
+		out.AutoNotes = row.AutoNotes != 0
+		if d := deref(row.Direction); d != "" {
+			out.Direction = json.RawMessage(d)
+		}
+	case !errors.Is(err, sql.ErrNoRows):
+		return DesignState{}, err
+	}
+	v, err := s.st.Q.GetArtifactVersion(ctx, db.GetArtifactVersionParams{ArtifactID: id, N: r.Head})
+	if err != nil {
+		return DesignState{}, err
+	}
+	out.Check = versionFromRow(v).APICheck()
+	// 只看 canvas.json 的顶层键，不经 canvas.Parse：读不到或解析失败按非设计画布处理
+	if b, _, err := s.ReadFile(ctx, id, int(r.Head), EntryCanvas); err == nil {
+		var top map[string]json.RawMessage
+		if json.Unmarshal(b, &top) == nil {
+			d, ok := top["design"]
+			out.Design = ok && string(d) != "null"
+		}
+	}
+	return out, nil
+}
+
+// SetDesignAutoNotes 打开或关闭画布便签的自动投递（建行或更新；回收站里的不能改）。
+func (s *Service) SetDesignAutoNotes(ctx context.Context, id string, on bool) (DesignState, error) {
+	r, err := canvasRow(ctx, s.st.Q, id)
+	if err != nil {
+		return DesignState{}, err
+	}
+	if r.DeletedAt != nil {
+		return DesignState{}, deletedErr(id)
+	}
+	var v int64
+	if on {
+		v = 1
+	}
+	if err := s.st.Q.SetArtifactDesignAutoNotes(ctx, db.SetArtifactDesignAutoNotesParams{ArtifactID: id, AutoNotes: v}); err != nil {
+		return DesignState{}, err
+	}
+	return s.Design(ctx, id)
 }
 
 // Delete 把 artifact 移到「最近删除」（已在其中时不变）。

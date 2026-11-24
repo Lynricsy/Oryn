@@ -69,6 +69,16 @@ type ArtifactDatum struct {
 	UpdatedAt  int64  `json:"updatedAt"`
 }
 
+type ArtifactDesign struct {
+	ArtifactID string  `json:"artifactId"`
+	Surface    *string `json:"surface"`
+	Direction  *string `json:"direction"`
+	Dealt      string  `json:"dealt"`
+	AutoNotes  int64   `json:"autoNotes"`
+	Delivered  string  `json:"delivered"`
+	DirtyAt    *int64  `json:"dirtyAt"`
+}
+
 type ArtifactFile struct {
 	ArtifactID string `json:"artifactId"`
 	N          int64  `json:"n"`
@@ -105,6 +115,9 @@ type ArtifactVersion struct {
 	Format         *int64  `json:"format"`
 	FilesKey       string  `json:"filesKey"`
 	CreatedAt      int64   `json:"createdAt"`
+	TurnID         *string `json:"turnId"`
+	Title          *string `json:"title"`
+	CheckJson      *string `json:"checkJson"`
 }
 
 type AssistantConfirmation struct {

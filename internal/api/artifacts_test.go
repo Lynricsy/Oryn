@@ -204,6 +204,49 @@ func TestArtifactsREST(t *testing.T) {
 	assert.Equal(t, 404, code)
 }
 
+// M29：版本列表带 turnId / title（没有时省略）；设计状态 GET 缺省 autoNotes=true、live 为 null，PATCH 后读回；非画布 400 invalid。
+func TestArtifactDesignREST(t *testing.T) {
+	e, svc := newArtifactsEnv(t)
+	ctx := t.Context()
+	turn := artifacts.Turn{ID: "turn-1", Title: "做一个登录页\n细节"}
+	c, err := svc.Create(ctx, artifacts.CreateParams{Title: "画布", Turn: turn, Files: artFiles(
+		"canvas.json", `{"format":1,"canvases":[{"id":"c1","name":"页 1"}],"pages":[],"notes":[]}`)})
+	require.NoError(t, err)
+	_, err = svc.Write(ctx, artifacts.WriteParams{ID: c.ID, BaseVersion: 1, Files: artFiles("x.css", "a{}")})
+	require.NoError(t, err)
+
+	code, body := e.do("GET", "/api/v1/artifacts/"+c.ID+"/versions", nil)
+	require.Equal(t, 200, code, string(body))
+	vs := decodeAs[apigen.ArtifactVersionList](t, body).Versions
+	require.Len(t, vs, 2)
+	assert.Nil(t, vs[0].TurnID)
+	assert.Nil(t, vs[0].Title)
+	require.NotNil(t, vs[1].TurnID)
+	assert.Equal(t, "turn-1", *vs[1].TurnID)
+	require.NotNil(t, vs[1].Title)
+	assert.Equal(t, "做一个登录页", *vs[1].Title)
+	assert.NotContains(t, string(body), `"check"`)
+
+	code, body = e.do("GET", "/api/v1/artifacts/"+c.ID+"/design", nil)
+	require.Equal(t, 200, code, string(body))
+	assert.JSONEq(t, `{"design":false,"live":null,"direction":null,"autoNotes":true}`, string(body))
+
+	code, body = e.do("PATCH", "/api/v1/artifacts/"+c.ID+"/design", map[string]any{"autoNotes": false})
+	require.Equal(t, 200, code, string(body))
+	assert.False(t, decodeAs[apigen.ArtifactDesign](t, body).AutoNotes)
+	code, body = e.do("GET", "/api/v1/artifacts/"+c.ID+"/design", nil)
+	require.Equal(t, 200, code, string(body))
+	assert.False(t, decodeAs[apigen.ArtifactDesign](t, body).AutoNotes)
+
+	w, err := svc.Create(ctx, artifacts.CreateParams{Title: "页", Files: artFiles("index.html", "<p>x</p>")})
+	require.NoError(t, err)
+	code, body = e.do("GET", "/api/v1/artifacts/"+w.ID+"/design", nil)
+	assert.Equal(t, 400, code, string(body))
+	assert.Contains(t, string(body), artifacts.CodeInvalid)
+	code, _ = e.do("PATCH", "/api/v1/artifacts/"+w.ID+"/design", map[string]any{"autoNotes": true})
+	assert.Equal(t, 400, code)
+}
+
 // 元素直接编辑：改样式落成用户版本回 {version}；偏移处不是该标签回 409 带 state；非法值回 400。
 func TestArtifactElementREST(t *testing.T) {
 	e, svc := newArtifactsEnv(t)

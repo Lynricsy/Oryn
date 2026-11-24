@@ -40,8 +40,8 @@ DELETE FROM artifacts WHERE id = @id AND deleted_at IS NOT NULL AND deleted_at <
 SELECT * FROM artifacts WHERE deleted_at IS NOT NULL AND deleted_at < @ts ORDER BY deleted_at, id;
 
 -- name: InsertArtifactVersion :exec
-INSERT INTO artifact_versions (artifact_id, n, size, pages, author_thread_id, author_label, note, capabilities, format, files_key, created_at)
-VALUES (@artifact_id, @n, @size, @pages, @author_thread_id, @author_label, @note, @capabilities, @format, @files_key, @created_at);
+INSERT INTO artifact_versions (artifact_id, n, size, pages, author_thread_id, author_label, note, capabilities, format, files_key, created_at, turn_id, title)
+VALUES (@artifact_id, @n, @size, @pages, @author_thread_id, @author_label, @note, @capabilities, @format, @files_key, @created_at, @turn_id, @title);
 
 -- name: GetArtifactVersion :one
 SELECT * FROM artifact_versions WHERE artifact_id = @artifact_id AND n = @n;
@@ -67,3 +67,11 @@ SELECT * FROM artifact_files WHERE artifact_id = @artifact_id AND n = @n AND pat
 
 -- name: CountArtifactFilesBySHA :one
 SELECT COUNT(*) FROM artifact_files WHERE sha256 = @sha256;
+
+-- M29: per-artifact design state; no row = defaults (auto_notes 1).
+-- name: GetArtifactDesign :one
+SELECT * FROM artifact_designs WHERE artifact_id = @artifact_id;
+
+-- name: SetArtifactDesignAutoNotes :exec
+INSERT INTO artifact_designs (artifact_id, auto_notes) VALUES (@artifact_id, @auto_notes)
+ON CONFLICT (artifact_id) DO UPDATE SET auto_notes = excluded.auto_notes;

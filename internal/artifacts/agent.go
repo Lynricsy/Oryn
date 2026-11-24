@@ -60,6 +60,8 @@ type Caller struct {
 	// ProjectID 是调用线程的项目（新建的 artifact 归它；ScopeProject 按它筛）。
 	ProjectID *string
 	Scope     Scope
+	// Turn 是调用所处的 agent 回合（orb 扩展在 artifact.call 外壳里带的 turn）；写出的版本记在它下面。零值 = 无回合。
+	Turn Turn
 	// Fetch 取回 source 路径的字节（调用方负责关闭）；nil = 不接受 source。
 	Fetch func(ctx context.Context, path string) (io.ReadCloser, int64, error)
 }
@@ -439,7 +441,7 @@ func (s *Service) agentCreate(ctx context.Context, c Caller, params json.RawMess
 	defer closeAll()
 	a, err := s.Create(ctx, CreateParams{
 		Title: p.Title, Type: p.Type, ProjectID: deref(project), ThreadID: c.ThreadID, Origin: OriginAgent,
-		Author: c.author(), Note: p.Note, Files: files, Capabilities: p.Capabilities,
+		Author: c.author(), Turn: c.Turn, Note: p.Note, Files: files, Capabilities: p.Capabilities,
 	})
 	if err != nil {
 		return Result{}, err
@@ -642,7 +644,7 @@ func (s *Service) agentUpdate(ctx context.Context, c Caller, params json.RawMess
 	if hasCanvas {
 		r, err = s.agentCanvas(ctx, c, a.ID, base, p.Canvas, files, deref(p.Note))
 	} else {
-		r, err = s.Write(ctx, WriteParams{ID: a.ID, BaseVersion: base, Author: c.author(), Note: deref(p.Note), Files: files, Capabilities: p.Capabilities})
+		r, err = s.Write(ctx, WriteParams{ID: a.ID, BaseVersion: base, Author: c.author(), Turn: c.Turn, Note: deref(p.Note), Files: files, Capabilities: p.Capabilities})
 	}
 	if err != nil {
 		return Result{}, err
@@ -840,6 +842,12 @@ func (s *Service) agentVersions(ctx context.Context, c Caller, params json.RawMe
 		if v.Note != "" {
 			item["note"] = v.Note
 		}
+		if v.TurnID != "" {
+			item["turnId"] = v.TurnID
+		}
+		if v.Title != "" {
+			item["title"] = v.Title
+		}
 		out = append(out, item)
 	}
 	return jsonResult(OpListVersions, obj{"versions": out}), nil
@@ -863,7 +871,7 @@ func (s *Service) agentRestore(ctx context.Context, c Caller, params json.RawMes
 	if err != nil {
 		return Result{}, err
 	}
-	r, err := s.RestoreVersion(ctx, a.ID, p.Version, p.BaseVersion, c.author())
+	r, err := s.restoreVersion(ctx, a.ID, p.Version, p.BaseVersion, c.author(), c.Turn)
 	if err != nil {
 		return Result{}, err
 	}
@@ -898,11 +906,16 @@ type SourceFetcher interface {
 	Fetch(ctx context.Context, orbID, path string) (io.ReadCloser, int64, error)
 }
 
-// orbCallParams 是 artifact.call 的参数（params 保持原样，交给 Call 严格解码）。
+// orbCallParams 是 artifact.call 的参数（params 保持原样，交给 Call 严格解码）。Turn 可选：orb 扩展每次调用都带
+// 当前回合，进入 Caller.Turn。
 type orbCallParams struct {
 	ThreadID string          `json:"threadId"`
 	Op       string          `json:"op"`
 	Params   json.RawMessage `json:"params"`
+	Turn     *struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+	} `json:"turn"`
 }
 
 // RegisterOrbMethod 注册 orb / Runner 内 agent 的 artifact 工具经 orbd 转来的 artifact.call；须在 orb 接受 link 之前调用。
@@ -920,6 +933,9 @@ func (s *Service) onOrbCall(ctx context.Context, fetch SourceFetcher, orbID stri
 	c, err := s.orbCaller(ctx, fetch, orbID, p.ThreadID)
 	if err != nil {
 		return nil, err
+	}
+	if p.Turn != nil {
+		c.Turn = Turn{ID: p.Turn.ID, Title: p.Turn.Title}
 	}
 	res, err := s.Call(ctx, c, p.Op, p.Params)
 	if err != nil {

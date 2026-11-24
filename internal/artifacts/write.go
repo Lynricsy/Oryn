@@ -15,6 +15,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/artifacts/canvas"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/store/db"
+	"github.com/Lynricsy/Oryn/internal/transcript"
 )
 
 // 能力名（页面运行时 `oryn.use`）。
@@ -22,6 +23,10 @@ var capabilityOrder = []string{"db", "files", "sample"}
 
 // Author 是版本的作者；零值 = 用户。
 type Author struct{ ThreadID, Label string }
+
+// Turn 是写入所属的 agent 回合（M29）：ID 由 orb 扩展生成，同一回合的版本带同一个 ID；Title 是回合的用户输入，
+// 入库时只取首行（见 turnTitle）。零值 = 不属于任何回合（用户写入、助手、Runner 等）。
+type Turn struct{ ID, Title string }
 
 // FileChange 是一次写入里的一个文件改动：Remove 为真时删除 Path，否则以 Data 的内容覆盖或新增。
 type FileChange struct {
@@ -36,6 +41,7 @@ type WriteParams struct {
 	BaseVersion int
 	Author      Author
 	Note        string
+	Turn        Turn
 	Files       []FileChange
 	// Capabilities 非 nil 时替换能力声明（参与冲突检查，伪路径 #capabilities）。
 	Capabilities *[]string
@@ -48,6 +54,7 @@ type CreateParams struct {
 	Title, Type, ProjectID, ThreadID, Origin string
 	Author                                   Author
 	Note                                     string
+	Turn                                     Turn
 	Files                                    []FileChange
 	Capabilities                             []string
 }
@@ -178,6 +185,21 @@ func cleanNote(note string) (string, error) {
 		return "", opErr(CodeInvalid, "备注有 %d 个字符，上限是 %d。", n, MaxNoteRunes)
 	}
 	return note, nil
+}
+
+// turnTitle 把回合的用户输入变成版本标题：取去首尾空白后的首行，截到 MaxNoteRunes 个字符；控制面代发的自动消息
+// （transcript.IsAutomatedUserText，以 `[Oryn ` 开头）不算标题，返回空串。
+func turnTitle(text string) string {
+	text = strings.TrimSpace(text)
+	if transcript.IsAutomatedUserText(text) {
+		return ""
+	}
+	line, _, _ := strings.Cut(text, "\n")
+	line = strings.TrimSpace(line)
+	if utf8.RuneCountInString(line) > MaxNoteRunes {
+		line = string([]rune(line)[:MaxNoteRunes])
+	}
+	return line
 }
 
 // filesKey 是清单的摘要：按路径排序拼接 path\x00sha256\n 后取 sha256；类型化时前面加 type\x00format\n。
@@ -371,7 +393,7 @@ func checkBase(ctx context.Context, q *db.Queries, id string, base int, head int
 }
 
 // insertVersion 在事务里插入版本行与文件行，并更新 artifact 的 head。
-func (s *Service) insertVersion(ctx context.Context, q *db.Queries, id string, n int64, typ string, m manifest, sh shape, caps []string, author Author, note string) error {
+func (s *Service) insertVersion(ctx context.Context, q *db.Queries, id string, n int64, typ string, m manifest, sh shape, caps []string, author Author, note string, turn Turn) error {
 	var size int64
 	for _, e := range m {
 		size += e.size
@@ -386,6 +408,7 @@ func (s *Service) insertVersion(ctx context.Context, q *db.Queries, id string, n
 		ArtifactID: id, N: n, Size: size, Pages: int64(sh.pages), AuthorThreadID: nullable(author.ThreadID),
 		AuthorLabel: author.Label, Note: nullable(note), Capabilities: capsJSON(caps), Format: format,
 		FilesKey: filesKey(typ, sh.format, m), CreatedAt: now,
+		TurnID: nullable(strings.TrimSpace(turn.ID)), Title: nullable(turnTitle(turn.Title)),
 	}); err != nil {
 		return err
 	}
@@ -473,7 +496,7 @@ func (s *Service) create(ctx context.Context, p CreateParams, pre *staged) (Arti
 		}); err != nil {
 			return err
 		}
-		return s.insertVersion(ctx, q, id, 1, p.Type, m, sh, caps, p.Author, note)
+		return s.insertVersion(ctx, q, id, 1, p.Type, m, sh, caps, p.Author, note, p.Turn)
 	})
 	if err != nil {
 		return Artifact{}, err
@@ -561,7 +584,7 @@ func (s *Service) Write(ctx context.Context, p WriteParams) (Artifact, error) {
 			caps = versionFromRow(hv).Capabilities
 		}
 		n = a.Head + 1
-		return s.insertVersion(ctx, q, p.ID, n, typ, m, sh, caps, p.Author, note)
+		return s.insertVersion(ctx, q, p.ID, n, typ, m, sh, caps, p.Author, note, p.Turn)
 	})
 	if err != nil {
 		return Artifact{}, err
@@ -572,8 +595,13 @@ func (s *Service) Write(ctx context.Context, p WriteParams) (Artifact, error) {
 }
 
 // RestoreVersion 把旧版本 version 的文件清单、能力声明与格式复制成新的最新版本。冲突检查的路径是两版之间
-// 内容不同的全部路径。
+// 内容不同的全部路径。新版本不属于任何回合；agent 的恢复走 restoreVersion 带上回合。
 func (s *Service) RestoreVersion(ctx context.Context, id string, version, base int, author Author) (Artifact, error) {
+	return s.restoreVersion(ctx, id, version, base, author, Turn{})
+}
+
+// restoreVersion 是 RestoreVersion，新版本记在 turn 回合下。
+func (s *Service) restoreVersion(ctx context.Context, id string, version, base int, author Author, turn Turn) (Artifact, error) {
 	if !ValidID(id) {
 		return Artifact{}, notFound(id)
 	}
@@ -640,7 +668,7 @@ func (s *Service) RestoreVersion(ctx context.Context, id string, version, base i
 				sh.kind = KindWeb
 			}
 		}
-		return s.insertVersion(ctx, q, id, n, deref(a.Type), old, sh, v.Capabilities, author, fmt.Sprintf("恢复自版本 %d", version))
+		return s.insertVersion(ctx, q, id, n, deref(a.Type), old, sh, v.Capabilities, author, fmt.Sprintf("恢复自版本 %d", version), turn)
 	})
 	if err != nil {
 		return Artifact{}, err

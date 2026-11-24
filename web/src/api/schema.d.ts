@@ -3511,7 +3511,7 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** 导出某个版本（`html` 只对单文件版本可用；`zip` 打包全部文件） */
+        /** 导出某个版本（`html` 只对单文件版本可用；`zip` 打包全部文件；`project`、`mockup-png`、`mockup-pdf` 只对设计画布可用） */
         get: operations["exportArtifact"];
         put?: never;
         post?: never;
@@ -3672,6 +3672,26 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifacts/{id}/design": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 画布的设计状态（是否设计画布、实时预览、选定方向、便签自动投递、最新版本的设计检查）；非画布回 400 `invalid` */
+        get: operations["getArtifactDesign"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** 修改画布的设计设置（便签自动投递开关）；非画布回 400 `invalid`，回收站里的回 410 */
+        patch: operations["patchArtifactDesign"];
         trace?: never;
     };
     "/api/v1/artifacts/{id}/canvas": {
@@ -7799,6 +7819,11 @@ export interface components {
             /** @description 写入时的线程标题快照（用户写入时为空串） */
             authorLabel: string;
             note?: string;
+            /** @description 写入这个版本的 agent 回合（M29，orb 扩展生成）；同一回合的版本相同。省略 = 不属于任何回合 */
+            turnId?: string;
+            /** @description 回合标题（用户输入的首行，最多 200 个字符）；省略 = 无 */
+            title?: string;
+            check?: components["schemas"]["ArtifactCheck"];
             /** Format: int64 */
             size: number;
             pages: number;
@@ -7862,10 +7887,51 @@ export interface components {
             url: string;
         };
         /**
-         * @description `html` 单文件页面；`zip` 全部文件；`md` 文档（有图片时为 zip）；`pdf` 幻灯片
+         * @description `html` 单文件页面；`zip` 全部文件；`md` 文档（有图片时为 zip）；`pdf` 幻灯片；`project` 设计画布导出为可运行的前端工程（zip）；`mockup-png`、`mockup-pdf` 设计画布的样机图
          * @enum {string}
          */
-        ArtifactExportFormat: "html" | "zip" | "md" | "pdf";
+        ArtifactExportFormat: "html" | "zip" | "md" | "pdf" | "project" | "mockup-png" | "mockup-pdf";
+        /**
+         * @description `clean` 无问题；`issues` 有问题；`stale` 检查结果早于当前源码；`unverified` 未检查或检查没跑成
+         * @enum {string}
+         */
+        ArtifactCheckStatus: "clean" | "issues" | "stale" | "unverified";
+        ArtifactCheckIssue: {
+            /** @description 探针规则名（如 `text-clipped`、`contrast-low`） */
+            rule: string;
+            /** @description 所在帧的 page id */
+            frame?: string;
+            /** @description 源码位置 `src/frames/x.tsx:42:5`；HTML 画框为空 */
+            loc?: string | null;
+            /** @description 元素文本片段 */
+            text?: string;
+            /** @description 规则相关的测量值（数字或字符串） */
+            detail?: unknown;
+        };
+        /** @description 设计检查结果（M29，`artifact_versions.check_json`） */
+        ArtifactCheck: {
+            status: components["schemas"]["ArtifactCheckStatus"];
+            issues: components["schemas"]["ArtifactCheckIssue"][];
+        };
+        ArtifactDesign: {
+            /** @description 最新版本的 `canvas.json` 带顶层 `design`（设计画布） */
+            design: boolean;
+            /** @description 实时预览（orb 里的设计开发服务）；没有时为 null */
+            live: {
+                threadId: components["schemas"]["ThreadId"];
+                port: number;
+            } | null;
+            /** @description 选定的设计方向（`design_direction` 写入）；未选时为 null */
+            direction: {
+                [key: string]: unknown;
+            } | null;
+            /** @description 画布便签是否自动投递给创建线程（缺省开） */
+            autoNotes: boolean;
+            check?: components["schemas"]["ArtifactCheck"];
+        };
+        ArtifactDesignPatch: {
+            autoNotes: boolean;
+        };
         ArtifactCapabilities: {
             /**
              * @description `host` 泛域名（配置了 `portal_domain`）；`path` 主域回退路径
@@ -12375,6 +12441,11 @@ export interface components {
             /** @description 操作参数（camelCase，与 agent 工具同形） */
             params: {
                 [key: string]: unknown;
+            };
+            /** @description M29：调用所处的 agent 回合（orb 扩展每次调用都带）；写出的版本记 `turnId` 与标题（`title` 的首行） */
+            turn?: {
+                id: string;
+                title: string;
             };
         };
         LinkCtlArtifactCallResult: {
@@ -18495,6 +18566,56 @@ export interface operations {
                 };
                 content: {
                     "image/png": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getArtifactDesign: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 设计状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactDesign"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    patchArtifactDesign: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArtifactDesignPatch"];
+            };
+        };
+        responses: {
+            /** @description 修改后的设计状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactDesign"];
                 };
             };
             default: components["responses"]["Error"];

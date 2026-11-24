@@ -201,8 +201,9 @@ func buildAPIPolicy() map[string]opPolicy {
 
 	// artifacts
 	set("artifacts", opRead, none, "listArtifacts", "getArtifact", "listArtifactVersions", "getArtifactCapabilities",
-		"listArtifactComments", "getArtifactCanvas", "listArtifactConsents", "getArtifactPublication", "listArtifactPublications", "getArtifactPrefs")
-	set("artifacts", opWrite, none, "patchArtifact", "undeleteArtifact", "revokeArtifactConsents", "putArtifactPrefs")
+		"listArtifactComments", "getArtifactCanvas", "listArtifactConsents", "getArtifactPublication", "listArtifactPublications", "getArtifactPrefs",
+		"getArtifactDesign")
+	set("artifacts", opWrite, none, "patchArtifact", "undeleteArtifact", "revokeArtifactConsents", "putArtifactPrefs", "patchArtifactDesign")
 	set("artifacts", opWrite, share, "unpublishArtifact", "rotateArtifactPublicationCode")
 	set("artifacts", opWrite, opPolicy{
 		Share: true,
