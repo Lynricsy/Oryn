@@ -460,6 +460,8 @@ func (s *Service) flushLive(ctx context.Context, id string, l *live) error {
 		if err == nil {
 			l.version, l.pending, l.copies = a.Version, nil, nil
 			l.stopTimer()
+			// 用户的画布改动可能带来新的 sticky：设计画布标脏，由便签投递去抖后判断
+			s.markNotesDirty(ctx, id)
 			return nil
 		}
 		if oe, ok := AsOpError(err); attempt == 3 || !ok || oe.Code != CodeConflict || oe.State == nil || !slices.Contains(oe.State.Changed, EntryCanvas) {

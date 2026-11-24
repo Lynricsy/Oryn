@@ -423,8 +423,11 @@ type turnObserver struct{ s *Service }
 
 var _ threads.Observer = turnObserver{}
 
-// StateChanged：线程离开 working / awaiting_input（转入 idle、error 等）即回合结束。
+// StateChanged：线程离开 working / awaiting_input（转入 idle、error 等）即回合结束；转入 idle 时投递等着它的设计便签。
 func (o turnObserver) StateChanged(ev threads.StateEvent) {
+	if ev.State == threads.StateIdle {
+		o.s.notesIdle(ev.ThreadID)
+	}
 	if ev.State == threads.StateWorking || ev.State == threads.StateAwaitingInput {
 		return
 	}

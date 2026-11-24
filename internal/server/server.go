@@ -435,6 +435,8 @@ func (s *Server) init(ctx context.Context) error {
 	// orb 经出站代理读写本项目的托管仓库：在本地服务，不转发（步骤 3.6）
 	s.Orbs.SetHostedGit(s.Repos)
 	s.Threads.AddObserver(s.Artifacts.TurnObserver())
+	// M29 I3：设计便签自动投递给 artifact 的创建线程（线程转入 idle 由上面的观察者通知）
+	s.Artifacts.SetNotesDelivery(s.Threads.Deliver)
 	home := s.Home
 	s.Share = share.New(share.Config{PublicURL: cfg.PublicURL, RoleNames: func() map[string]string {
 		// 分享页 role 的显示名（config.yml 的 modelTags.<role>.name）；config.yml 解析失败时不给名字
@@ -471,6 +473,7 @@ func (s *Server) init(ctx context.Context) error {
 	go s.Library.Run(runCtx)
 	go s.Artifacts.Run(runCtx)
 	go s.Artifacts.RunActivity(runCtx)
+	go s.Artifacts.RecoverNotes(runCtx)
 	go s.LibrarySync.Run(runCtx)
 	go s.Notify.Run(runCtx)
 	go s.Host.Run(runCtx)

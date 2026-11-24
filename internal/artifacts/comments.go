@@ -379,6 +379,7 @@ func (s *Service) Comment(ctx context.Context, id string, an Anchor, body string
 		return CommentThread{}, err
 	}
 	s.commented(id)
+	s.markNotesDirty(ctx, id)
 	return s.threadLocked(ctx, r, thread)
 }
 
@@ -423,6 +424,10 @@ func (s *Service) Reply(ctx context.Context, id, thread, body string, author Aut
 		return CommentThread{}, err
 	}
 	s.commented(id)
+	if author.ThreadID == "" {
+		// 用户回复清掉了已发送标记：这串又是待投递的便签
+		s.markNotesDirty(ctx, id)
+	}
 	return s.threadLocked(ctx, r, thread)
 }
 
