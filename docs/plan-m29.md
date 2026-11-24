@@ -278,7 +278,7 @@ Accept 统一口径：除特别写明外，`go build ./...` 无输出，`go test
   - `Deal(lib, surface, industry, tone, seed, avoid) [3]Direction` 是纯函数，`avoid` = `dealt` 的最近 9 项。
   - `library.json` 取自 taste-skill 的 `palettes.json`、`type.json`，裁到约 40 色板、20 字体对，写进 NOTICE。
   - app 面校验 `proposals`：3 个，色相两两相差 ≥ 30° 或字体族不同，否则 `invalid`。
-  - `design_direction` 把选定方向写进 `artifact_designs.direction`，并回一段可粘进 `theme.css` 的 `@theme` 文本。
+  - `design_directions` / `design_direction` 对任意画布 artifact 可用（助手与 Runner 只做 HTML 画框；审美规则按 `direction` 是否非空在 HTML 画布上同样生效），HTML 网页、文档、幻灯片回 `invalid`。`design_direction` 把选定方向写进 `artifact_designs.direction`：设计画布回可粘进 `src/theme.css` 的 `@theme` 文本，HTML 画布回同一组 token 的 `:root {…}`，放进页面 `<style>`。
   - token 名（Q2 与 T3 共用，冻结）：`--color-{bg,surface,text,muted,accent,on-accent}`、`--font-display`，正文覆盖 `--font-sans`，等宽覆盖 `--font-mono`；`bg`、`text`、`accent` 必有。
 - Accept：`go test ./internal/artifacts/design/` → `ok`（同种子同结果；连发三次不重复）。
 
