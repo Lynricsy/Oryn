@@ -230,11 +230,11 @@ Accept 统一口径：除特别写明外，`go build ./...` 无输出，`go test
 - Depends on：T2、T3。
 - Files：新 `internal/orbdrt/design.go`、`design_test.go`、`internal/orbsock/orbsock.go`、`internal/orbdrt/selfsetup.go`（`handleSock` 分支）、`internal/artifacts/agent.go`（`seal_design`）、`internal/artifacts/design.go`（对齐 pages）、`schema`（link 的 artifact.call 外壳加 `turn`）。
 - Do：按 C3、C4、C5。
-  - 物化：经 ctl `artifact.call read_artifact` 逐文件取 `src/**`（文本），二进制资产走新的内部操作 `fetch_design_files`，返回带 base64 的清单；单次不超过 `maxRequestBytes` 4 MiB，超过则分页。
+  - 物化：`src/**` 全部经新的内部操作 `fetch_design_files {id, version, cursor?}` 取回，返回 `{files:[{path, offset, data(base64), size, sha256}], next?}`。单个文件可达 `MaxFileBytes`（20 MiB），而单条消息上限 4 MiB，所以要在文件内分片：游标记录「第几个文件 + 文件内偏移」，每页按**序列化后的 JSON 大小**（含 base64 膨胀）不超过 `maxRequestBytes` 的一半。orbd 按 offset 追加写临时文件，最后一片写完核对 size 与 sha256 后 rename；缺片或校验不符时整次物化失败。
   - 起服务：直接调 `r.svc.Start(ServiceStartParams{Name, Command, Cwd, Portal:true, ThreadID})`。
   - 封存：算 hash，未变则 skip；`src/package.json` 变了先在 `src/` 下 `npm install`（D3，不加 `--ignore-scripts`）。
   - 对账：`.oryn-design.json` 的 `baseVersion` 落后于 head 时，副本干净就重新物化，脏则保留；封存报 `conflict` 时原文回给 agent。
-- Accept：`go test ./internal/orbdrt/ -run Design` → `ok`（用假 vite 脚本，覆盖 open / seal / skip / build_failed / conflict）；`go test ./internal/artifacts/ -run Seal` → `ok`（多帧、增删帧后 pages 对齐，`canvas.json` 不冲突）。
+- Accept：`go test ./internal/orbdrt/ -run Design` → `ok`（用假 vite 脚本，覆盖 open / seal / skip / build_failed / conflict，以及 src/ 内 >3 MiB 二进制文件物化后逐字节一致）；`go test ./internal/artifacts/ -run 'Seal|DesignFiles'` → `ok`（多帧、增删帧后 pages 对齐，`canvas.json` 不冲突；大文件跨页分片且每页序列化大小 ≤ 限额）。
 
 **T5 扩展：工具、闸门、钩子、技能下发**
 - Depends on：T4、P4、P6。
