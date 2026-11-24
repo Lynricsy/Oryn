@@ -97,7 +97,8 @@ dist/<id>.html  dist/assets/**  dist/frames.json
 - `sealedHash` = `src/**`（排除 `node_modules`）按路径排序后的 sha256。
 - 引擎的 `node_modules` 优先软链到镜像预装目录；版本不符时在引擎目录 `npm ci`（一次，约 1 分钟，对 agent 显示进度）。
 - 引擎依赖：react 19、react-dom、lucide-react、vite 7、@vitejs/plugin-react 5、tailwindcss 4、@tailwindcss/vite、@iconify/tailwind4。去掉 react-router 与 html-to-image。
-- 受管服务名 `dsn-<sha256(artifactId) 前 10 位 hex>`，`Portal: true`，命令 `node <engine>/node_modules/vite/bin/vite.js --config <engine>/vite.config.mjs`，环境 `ORYN_DESIGN_DIR`。
+- 受管服务名 `dsn-<sha256(artifactId) 前 10 位 hex>`，`Portal: true`，命令 `node <engine>/node_modules/vite/bin/vite.js --config <engine>/vite.config.mjs`，环境 `ORYN_DESIGN_DIR`、`ORYN_DESIGN_ALLOWED_HOSTS`。
+- Host 白名单（安全）：Portal 代理把公开 Host 原样转给 orb（`internal/portal/proxy.go:109`），dev server **不得**设 `allowedHosts: true`（会让任意 Host 读到设计源码）。引擎只从 `ORYN_DESIGN_ALLOWED_HOSTS`（逗号分隔，完整主机名或以 `.` 开头的后缀）取值传给 vite；缺省或为空时保持 vite 默认，只放行回环。T4 起服务时传入该 artifact 的 portal 主机名 `t-<短码>-p<端口>.<portal_domain>`，由 orbd 根据 portal 配置计算，不接受 agent 传值。T3 验收包含「错误 Host 被拒」。
 
 ### C4 orbd.sock 新方法（`internal/orbsock`，runner.sock 不认）
 
