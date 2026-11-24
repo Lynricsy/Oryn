@@ -9,6 +9,8 @@ import (
 //   - `oryn_select_model{role}`：模型不变（fakeomp 没有 role → 模型表），追加 `model_change{model, role}` + 来源记录 `source:"role"`；
 //   - `oryn_select_model{provider, modelId}`：换模型，追加 `model_change{model, role:"default"}` + 来源记录 `source:"manual"`，
 //     模型变了先发 `model_changed` 帧；
+//   - 两种形式都接受可选 `thinkingLevel`（选完后再设，追加 `thinking_level_change`）；`startup` 忽略（fakeomp 没有计划模式，
+//     开场 role 总是照常选）；
 //   - `oryn_mark_session_start{explicitModel}`：会话没有 message 条目且没有来源记录时追加来源记录
 //     （explicitModel 为真 → `manual`，否则 `startup, role:"default"`）；fakeomp 不写启动时的 model_change，所以不核实它。
 
@@ -29,9 +31,10 @@ func (s *server) appendModelSourceLocked(d modelSourceData, now time.Time) error
 func (s *server) selectModel(id string, line []byte) {
 	const cmd = "oryn_select_model"
 	var c struct {
-		Role     *string `json:"role"`
-		Provider *string `json:"provider"`
-		ModelID  *string `json:"modelId"`
+		Role          *string `json:"role"`
+		Provider      *string `json:"provider"`
+		ModelID       *string `json:"modelId"`
+		ThinkingLevel string  `json:"thinkingLevel"`
 	}
 	_ = json.Unmarshal(line, &c)
 	nonEmpty := func(p *string) bool { return p != nil && *p != "" }
@@ -66,6 +69,12 @@ func (s *server) selectModel(id string, line []byte) {
 	_, err := s.sess.appendEntry("model_change", map[string]any{"model": key, "role": changeRole}, now)
 	if err == nil {
 		err = s.appendModelSourceLocked(modelSourceData{V: 1, Source: source, Model: key, Role: role}, now)
+	}
+	if c.ThinkingLevel != "" {
+		s.thinking = c.ThinkingLevel
+		if err == nil {
+			_, err = s.sess.appendEntry("thinking_level_change", map[string]any{"thinkingLevel": c.ThinkingLevel}, now)
+		}
 	}
 	thinking := s.thinking
 	s.mu.Unlock()

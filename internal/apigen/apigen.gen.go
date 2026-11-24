@@ -6115,8 +6115,9 @@ type CreateThreadRequest struct {
 	ProjectID *ProjectID `json:"projectId,omitempty"`
 	Prompt    string     `json:"prompt"`
 
-	// Role 新线程以该 omp 模型 role 开场：首条提示词之前先发 `oryn_select_model{role}`（写入模型来源记录），给了 `thinkingLevel`
-	// 时随后再设思考档位。与 `model` 同时给出时以 role 为准（`model` 只决定 agent 启动时的初始模型）。
+	// Role 新线程以该 omp 模型 role 开场：首条提示词之前先发 `oryn_select_model{role, startup:true}`（写入模型来源记录），给了
+	// `thinkingLevel` 时放在同一帧里；会话已被 `plan.defaultOnStartup` 带进计划模式时 Core 把该 role 记作进入前基线、
+	// 退出计划模式时切到它。与 `model` 同时给出时以 role 为准（`model` 只决定 agent 启动时的初始模型）。
 	Role *string `json:"role,omitempty"`
 
 	// SpaceID 新线程加入该 Space（M9；不存在 → 404 `space_not_found`）；未给 `projectId` 时取 Space 的项目

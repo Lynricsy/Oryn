@@ -8,7 +8,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 带 role 新建线程：首批命令依次为 oryn_select_model → set_thinking_level → prompt，agent 就绪后按此顺序下发。
+// 带 role 新建线程：首批命令依次为 oryn_select_model{role, startup, thinkingLevel} → prompt，agent 就绪后按此顺序下发；
+// 思考档位在同一帧里，不单独发 set_thinking_level（计划模式下它会改掉计划思考级别）。
 func TestCreateWithRoleSelectsBeforePrompt(t *testing.T) {
 	f := newFixture(t, Config{})
 	out, err := f.s.Create(f.ctx, CreateParams{Prompt: "role hello", Role: " Cyrene ", ThinkingLevel: "high"})
@@ -22,12 +23,15 @@ func TestCreateWithRoleSelectsBeforePrompt(t *testing.T) {
 	f.s.onReadyLocked(f.ctx, th)
 	th.mu.Unlock()
 	frames := afterMark(t, sent(a))
-	require.GreaterOrEqual(t, len(frames), 3)
+	require.GreaterOrEqual(t, len(frames), 2)
 	assert.Contains(t, frames[0], `"oryn_select_model"`)
 	assert.Contains(t, frames[0], `"role":"Cyrene"`, "role 名去掉首尾空白")
-	assert.Contains(t, frames[1], `"set_thinking_level"`)
-	assert.Contains(t, frames[1], `"level":"high"`)
-	assert.Contains(t, frames[2], `"role hello"`)
+	assert.Contains(t, frames[0], `"startup":true`)
+	assert.Contains(t, frames[0], `"thinkingLevel":"high"`)
+	assert.Contains(t, frames[1], `"role hello"`)
+	for _, f := range frames {
+		assert.NotContains(t, f, `"set_thinking_level"`)
+	}
 }
 
 // 不带 role 时首批命令与以前一致：只有 prompt。

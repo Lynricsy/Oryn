@@ -52,9 +52,10 @@ type CreateParams struct {
 	RunnerID, Dir string
 	Worktree      string
 	ShareDir      bool
-	// Role 非空时新线程以该 omp 模型 role 开场：首批命令在 prompt 之前先发 oryn_select_model{role}（写入模型来源
-	// 记录，回合头据此显示 role 身份）；同时给了 ThinkingLevel 时紧接着再发 set_thinking_level，用户选的思考档位
-	// 压过 role 自带的档位。只作用于首条提示词：之后 agent 重启时不再重选（会话里已有模型来源记录）。
+	// Role 非空时新线程以该 omp 模型 role 开场：首批命令在 prompt 之前先发 oryn_select_model{role, startup:true}（写入模型
+	// 来源记录，回合头据此显示 role 身份）；给了 ThinkingLevel 时放进同一帧的 thinkingLevel，用户选的思考档位压过 role
+	// 自带的档位。会话已被 plan.defaultOnStartup 带进计划模式时 Core 把它记作进入前基线，退出计划模式时切到它。
+	// 只作用于首条提示词：之后 agent 重启时不再重选（会话里已有模型来源记录）。
 	Role string
 	// Automation 为真表示由全自动入口创建——GitHub 触发、项目级定时、发布哨兵（M14 / M15）：新 orb 的 GitHub 身份由
 	// GitHub.ResolveAutomationSlot 决定（R6），回退到我的账号时把回退提示追加到首条提示词末尾（Q6）。
@@ -281,12 +282,14 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 	frame, _ := json.Marshal(prompt)
 	var frames [][]byte
 	if role != "" {
-		f, _ := json.Marshal(map[string]string{"type": "oryn_select_model", "role": role})
-		frames = append(frames, f)
+		// startup:true 表示这是新线程的开场 role：会话若已被 plan.defaultOnStartup 带进计划模式，Core 只把它记作进入前基线、
+		// 不覆盖计划模型；思考档位放在同一帧里，避免单独的 set_thinking_level 改掉计划思考级别。
+		sel := map[string]any{"type": "oryn_select_model", "role": role, "startup": true}
 		if p.ThinkingLevel != "" {
-			f, _ = json.Marshal(map[string]string{"type": "set_thinking_level", "level": p.ThinkingLevel})
-			frames = append(frames, f)
+			sel["thinkingLevel"] = p.ThinkingLevel
 		}
+		f, _ := json.Marshal(sel)
+		frames = append(frames, f)
 	}
 	frames = append(frames, frame)
 	if title != "" {

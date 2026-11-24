@@ -1287,7 +1287,7 @@ tag `settings` 的四个接口鉴权与 CSRF 同 `agent-identity`；身份接口
 
 - agent 列表：内置 agent（`agentcfg.BundledAgents` 的顺序：task / sonic / scout / reviewer / security-reviewer / advisor）→ omp-home `agents/*.md` frontmatter 的 `name`（按名字；与内置同名的文件在 omp 里覆盖内置定义，只列一次，`source=user`）→ `agent_avatars` 里不在前两类的遗留项（按名字）。frontmatter 解析失败或缺 `name` 的文件跳过，列入 `warnings`（`kind = invalid_agent`）。**设置**头像只允许内置 agent 或当前 `agents/*.md` 里的名字（否则 400 `invalid_request`），清除总是允许（幂等）；头像校验同 `putAgentIdentity`。
 - 模型目录：控制面用 `coordinator.omp_path` 运行 `omp models --json --kind all`（`internal/modelcat`），缓存键 = 渲染后的 `models.yml` 与 `config.yml` 加 Core 版本，每次请求都重算，所以写配置的接口不通知目录；`refresh=true` 强制重跑。运行失败时返回上一份结果（`stale: true`，失败原因进 `warnings`）；从未成功过或没有配置 omp → 503 `catalog_unavailable`。
-- `CreateThreadRequest.role?`：非空时首批命令在 prompt 之前先发 `oryn_select_model{role}`（给了 `thinkingLevel` 时紧接着 `set_thinking_level`）；去首尾空白后超 128 字节或含控制字符 → 400。
+- `CreateThreadRequest.role?`：非空时首批命令在 prompt 之前先发 `oryn_select_model{role, startup:true}`（给了 `thinkingLevel` 时放在同一帧，不单独发 `set_thinking_level`；会话已被 `plan.defaultOnStartup` 带进计划模式时 Core 只把 role 记作进入前基线，退出计划模式时切到它）；去首尾空白后超 128 字节或含控制字符 → 400。
 
 ## M10：统计分析
 
