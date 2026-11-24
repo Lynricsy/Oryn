@@ -92,6 +92,8 @@ tags:
     description: 全局助手的主人记忆（M17：Hindsight bank `oryn-owner`，只由控制面访问）
   - name: ssh
     description: SSH 主机、钥匙与网关审计（M18）
+  - name: browser-relay
+    description: 客户端浏览器中继（M27：复用 Chrome browser-relay 扩展经控制面驱动本机浏览器）
 
 paths:
   /healthz:
@@ -7352,6 +7354,79 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/OrbWhoami' }
         default: { $ref: '#/components/responses/Error' }
+  # ---------------------------------------------------------------- browser-relay（M27）
+  /api/v1/browser-relay/clients:
+    get:
+      tags: [browser-relay]
+      operationId: listBrowserRelayClients
+      summary: 列出当前在线的本机浏览器扩展客户端（M27）
+      responses:
+        '200':
+          description: 在线浏览器扩展客户端列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BrowserRelayClientList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/browser-relay/ws:
+    get:
+      tags: [websocket, browser-relay]
+      operationId: browserRelaySocket
+      summary: 客户端 Chrome 扩展中继通道（WebSocket，文本 JSON 帧，M27）
+      description: |
+        由一次性 `ws-ticket` 鉴权，只接受 `kind=browser_extension` 的设备主体。
+        扩展直连本端点并多路复用承载多个线程的 `/ext` 协议帧（本机过滤未共享标签页、非阻塞审批）。
+        关闭码：`4401` 设备已吊销或无权、`4409` 同设备被新连接顶替、`4429` 发送缓冲溢出。
+      security: [{}]
+      parameters:
+        - name: ticket
+          in: query
+          required: true
+          description: '`POST /api/v1/ws-ticket` 签发的票据（须用 `browser_extension` 设备令牌换取）'
+          schema: { type: string }
+      responses:
+        '101': { description: 切换到 WebSocket }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/threads/{id}/browser-relay:
+    parameters:
+      - { $ref: '#/components/parameters/ThreadIdPath' }
+    get:
+      tags: [browser-relay]
+      operationId: getThreadBrowserRelay
+      summary: 查询线程当前绑定的本机浏览器扩展状态（M27）
+      responses:
+        '200':
+          description: 绑定与在线状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ThreadBrowserRelay' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [browser-relay]
+      operationId: bindThreadBrowserRelay
+      summary: 绑定线程到指定本机浏览器扩展设备（M27）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ThreadBrowserRelayBindRequest' }
+      responses:
+        '200':
+          description: 更新后的绑定状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ThreadBrowserRelay' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [browser-relay]
+      operationId: unbindThreadBrowserRelay
+      summary: 解除线程与本机浏览器扩展的绑定（幂等，M27）
+      responses:
+        '200':
+          description: 解绑后的状态（`bound=false`）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ThreadBrowserRelay' }
+        default: { $ref: '#/components/responses/Error' }
 
 components:
   securitySchemes:
@@ -7948,7 +8023,7 @@ components:
       enum: [freeze, stop]
     DeviceKind:
       type: string
-      enum: [cli, desktop, mobile]
+      enum: [cli, desktop, mobile, browser_extension]
     SecretMode:
       type: string
       description: '`proxy` 经 egress 注入（不进 orb）；`env` 以同名环境变量注入 agent 进程'
@@ -14329,6 +14404,8 @@ components:
         - $ref: '#/components/schemas/WsServerArtifactComments'
         - $ref: '#/components/schemas/WsServerArtifactCanvas'
         - $ref: '#/components/schemas/WsServerArtifactConsent'
+        - $ref: '#/components/schemas/WsServerBrowserRelayState'
+        - $ref: '#/components/schemas/WsServerBrowserRelayClients'
       discriminator:
         propertyName: type
         mapping:
@@ -14361,6 +14438,8 @@ components:
           artifact.comments: '#/components/schemas/WsServerArtifactComments'
           artifact.canvas: '#/components/schemas/WsServerArtifactCanvas'
           artifact.consent: '#/components/schemas/WsServerArtifactConsent'
+          browser_relay.state: '#/components/schemas/WsServerBrowserRelayState'
+          browser_relay.clients: '#/components/schemas/WsServerBrowserRelayClients'
     WsServerIndex:
       type: object
       description: 线程摘要全量（连接建立后首条）
@@ -15040,6 +15119,7 @@ components:
         - $ref: '#/components/schemas/LinkStreamDesk'
         - $ref: '#/components/schemas/LinkStreamLibrary'
         - $ref: '#/components/schemas/LinkStreamSsh'
+        - $ref: '#/components/schemas/LinkStreamBrowserRelay'
       discriminator:
         propertyName: t
         mapping:
@@ -15052,6 +15132,7 @@ components:
           desk: '#/components/schemas/LinkStreamDesk'
           library: '#/components/schemas/LinkStreamLibrary'
           ssh: '#/components/schemas/LinkStreamSsh'
+          browser_relay: '#/components/schemas/LinkStreamBrowserRelay'
     LinkStreamCtl:
       type: object
       description: orbd 建连后开的第一条且唯一的控制流
@@ -16304,3 +16385,75 @@ components:
       description: '`schedule.get` / `schedule.put` / `schedule.enable` 的结果；`schedule` 省略 = 该线程没有定时'
       properties:
         schedule: { $ref: '#/components/schemas/Schedule' }
+
+    # ============================================================ browser-relay（M27）
+    BrowserRelayBindingSummary:
+      type: object
+      required: [threadId, sharedTabCount, pendingApprovals]
+      properties:
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        sharedTabCount: { type: integer, minimum: 0 }
+        pendingApprovals: { type: integer, minimum: 0 }
+        autoApproveCreateTab: { type: boolean }
+    BrowserRelayClient:
+      type: object
+      required: [deviceId, name, connectedAt, bindings]
+      properties:
+        deviceId: { $ref: '#/components/schemas/DeviceId' }
+        name: { type: string }
+        browserVersion: { type: string }
+        extVersion: { type: string }
+        connectedAt: { $ref: '#/components/schemas/TimestampMs' }
+        bindings:
+          type: array
+          items: { $ref: '#/components/schemas/BrowserRelayBindingSummary' }
+    BrowserRelayClientList:
+      type: object
+      required: [clients]
+      properties:
+        clients:
+          type: array
+          items: { $ref: '#/components/schemas/BrowserRelayClient' }
+    ThreadBrowserRelay:
+      type: object
+      required: [threadId, bound, online, sharedTabCount, pendingApprovals]
+      properties:
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        bound: { type: boolean }
+        deviceId: { $ref: '#/components/schemas/DeviceId' }
+        deviceName: { type: string }
+        online: { type: boolean }
+        sharedTabCount: { type: integer, minimum: 0 }
+        pendingApprovals: { type: integer, minimum: 0 }
+        autoApproveCreateTab: { type: boolean }
+    ThreadBrowserRelayBindRequest:
+      type: object
+      required: [deviceId]
+      properties:
+        deviceId: { $ref: '#/components/schemas/DeviceId' }
+    WsServerBrowserRelayState:
+      type: object
+      description: 线程本机浏览器绑定与审批状态变更（M27）
+      required: [type, state]
+      properties:
+        type: { type: string, enum: [browser_relay.state] }
+        state: { $ref: '#/components/schemas/ThreadBrowserRelay' }
+    WsServerBrowserRelayClients:
+      type: object
+      description: 在线本机浏览器扩展客户端列表变更（M27）
+      required: [type, clients]
+      properties:
+        type: { type: string, enum: [browser_relay.clients] }
+        clients:
+          type: array
+          items: { $ref: '#/components/schemas/BrowserRelayClient' }
+    LinkStreamBrowserRelay:
+      type: object
+      description: |
+        由 orynd 打开（M27），对应一个已绑定在线浏览器扩展的线程。
+        流头之后为换行分隔 JSON（NDJSON）：orynd→orbd 传扩展的 ExtToRelayMessage，
+        orbd→orynd 传 orb 内 omp browser-relay 的 RelayToExtMessage。
+      required: [t, threadId]
+      properties:
+        t: { type: string, enum: [browser_relay] }
+        threadId: { $ref: '#/components/schemas/ThreadId' }

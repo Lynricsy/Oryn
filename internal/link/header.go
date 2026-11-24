@@ -21,6 +21,8 @@ const (
 	StreamLibrary = "library"
 	// StreamSSH 是 orbd→orynd 的一条流（M18）：orb 内到 SSH 网关的一条 TCP 连接，其后是裸 SSH 字节流。
 	StreamSSH = "ssh"
+	// StreamBrowserRelay 是 orynd→orbd 的一条流（M27）：客户端 Chrome 扩展经控制面与 orb 内 omp browser-relay 的 NDJSON 协议流。
+	StreamBrowserRelay = "browser_relay"
 )
 
 // MaxHeaderBytes 是流头行（含换行）的上限。

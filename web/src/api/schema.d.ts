@@ -6124,6 +6124,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/browser-relay/clients": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 列出当前在线的本机浏览器扩展客户端（M27） */
+        get: operations["listBrowserRelayClients"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/browser-relay/ws": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 客户端 Chrome 扩展中继通道（WebSocket，文本 JSON 帧，M27）
+         * @description 由一次性 `ws-ticket` 鉴权，只接受 `kind=browser_extension` 的设备主体。
+         *     扩展直连本端点并多路复用承载多个线程的 `/ext` 协议帧（本机过滤未共享标签页、非阻塞审批）。
+         *     关闭码：`4401` 设备已吊销或无权、`4409` 同设备被新连接顶替、`4429` 发送缓冲溢出。
+         */
+        get: operations["browserRelaySocket"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/threads/{id}/browser-relay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 查询线程当前绑定的本机浏览器扩展状态（M27） */
+        get: operations["getThreadBrowserRelay"];
+        /** 绑定线程到指定本机浏览器扩展设备（M27） */
+        put: operations["bindThreadBrowserRelay"];
+        post?: never;
+        /** 解除线程与本机浏览器扩展的绑定（幂等，M27） */
+        delete: operations["unbindThreadBrowserRelay"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -6256,7 +6316,7 @@ export interface components {
         /** @enum {string} */
         PauseMode: "freeze" | "stop";
         /** @enum {string} */
-        DeviceKind: "cli" | "desktop" | "mobile";
+        DeviceKind: "cli" | "desktop" | "mobile" | "browser_extension";
         /**
          * @description `proxy` 经 egress 注入（不进 orb）；`env` 以同名环境变量注入 agent 进程
          * @enum {string}
@@ -10781,7 +10841,7 @@ export interface components {
             id: components["schemas"]["ArtifactId"];
         };
         /** @description 服务端 → 客户端 WS 消息 */
-        WsServerMessage: components["schemas"]["WsServerIndex"] | components["schemas"]["WsServerIndexPatch"] | components["schemas"]["WsServerThreadSnapshot"] | components["schemas"]["WsServerEntries"] | components["schemas"]["WsServerFrame"] | components["schemas"]["WsServerRes"] | components["schemas"]["WsServerUiResolved"] | components["schemas"]["WsServerLiveReset"] | components["schemas"]["WsServerTranscriptReset"] | components["schemas"]["WsServerPlanResolved"] | components["schemas"]["WsServerOrb"] | components["schemas"]["WsServerError"] | components["schemas"]["WsServerPong"] | components["schemas"]["WsServerTermLagged"] | components["schemas"]["WsServerTermResized"] | components["schemas"]["WsServerNotification"] | components["schemas"]["WsServerNotificationsRead"] | components["schemas"]["WsServerNotificationsResolved"] | components["schemas"]["WsServerSchedulesChanged"] | components["schemas"]["WsServerGitHubChanged"] | components["schemas"]["WsServerSshChanged"] | components["schemas"]["WsServerBoxesChanged"] | components["schemas"]["WsServerProjectRepoChanged"] | components["schemas"]["WsServerArtifactsChanged"] | components["schemas"]["WsServerArtifactVersion"] | components["schemas"]["WsServerArtifactActivity"] | components["schemas"]["WsServerArtifactComments"] | components["schemas"]["WsServerArtifactCanvas"] | components["schemas"]["WsServerArtifactConsent"];
+        WsServerMessage: components["schemas"]["WsServerIndex"] | components["schemas"]["WsServerIndexPatch"] | components["schemas"]["WsServerThreadSnapshot"] | components["schemas"]["WsServerEntries"] | components["schemas"]["WsServerFrame"] | components["schemas"]["WsServerRes"] | components["schemas"]["WsServerUiResolved"] | components["schemas"]["WsServerLiveReset"] | components["schemas"]["WsServerTranscriptReset"] | components["schemas"]["WsServerPlanResolved"] | components["schemas"]["WsServerOrb"] | components["schemas"]["WsServerError"] | components["schemas"]["WsServerPong"] | components["schemas"]["WsServerTermLagged"] | components["schemas"]["WsServerTermResized"] | components["schemas"]["WsServerNotification"] | components["schemas"]["WsServerNotificationsRead"] | components["schemas"]["WsServerNotificationsResolved"] | components["schemas"]["WsServerSchedulesChanged"] | components["schemas"]["WsServerGitHubChanged"] | components["schemas"]["WsServerSshChanged"] | components["schemas"]["WsServerBoxesChanged"] | components["schemas"]["WsServerProjectRepoChanged"] | components["schemas"]["WsServerArtifactsChanged"] | components["schemas"]["WsServerArtifactVersion"] | components["schemas"]["WsServerArtifactActivity"] | components["schemas"]["WsServerArtifactComments"] | components["schemas"]["WsServerArtifactCanvas"] | components["schemas"]["WsServerArtifactConsent"] | components["schemas"]["WsServerBrowserRelayState"] | components["schemas"]["WsServerBrowserRelayClients"];
         /** @description 线程摘要全量（连接建立后首条） */
         WsServerIndex: {
             /**
@@ -11389,7 +11449,7 @@ export interface components {
             snapshotUsed?: boolean;
         };
         /** @description yamux 流的第一行（JSON + `\n`）。 */
-        LinkStreamHeader: components["schemas"]["LinkStreamCtl"] | components["schemas"]["LinkStreamAgent"] | components["schemas"]["LinkStreamEgress"] | components["schemas"]["LinkStreamBlob"] | components["schemas"]["LinkStreamFs"] | components["schemas"]["LinkStreamPortal"] | components["schemas"]["LinkStreamDesk"] | components["schemas"]["LinkStreamLibrary"] | components["schemas"]["LinkStreamSsh"];
+        LinkStreamHeader: components["schemas"]["LinkStreamCtl"] | components["schemas"]["LinkStreamAgent"] | components["schemas"]["LinkStreamEgress"] | components["schemas"]["LinkStreamBlob"] | components["schemas"]["LinkStreamFs"] | components["schemas"]["LinkStreamPortal"] | components["schemas"]["LinkStreamDesk"] | components["schemas"]["LinkStreamLibrary"] | components["schemas"]["LinkStreamSsh"] | components["schemas"]["LinkStreamBrowserRelay"];
         /** @description orbd 建连后开的第一条且唯一的控制流 */
         LinkStreamCtl: {
             /**
@@ -12261,6 +12321,67 @@ export interface components {
         /** @description `schedule.get` / `schedule.put` / `schedule.enable` 的结果；`schedule` 省略 = 该线程没有定时 */
         LinkCtlScheduleResult: {
             schedule?: components["schemas"]["Schedule"];
+        };
+        BrowserRelayBindingSummary: {
+            threadId: components["schemas"]["ThreadId"];
+            sharedTabCount: number;
+            pendingApprovals: number;
+            autoApproveCreateTab?: boolean;
+        };
+        BrowserRelayClient: {
+            deviceId: components["schemas"]["DeviceId"];
+            name: string;
+            browserVersion?: string;
+            extVersion?: string;
+            connectedAt: components["schemas"]["TimestampMs"];
+            bindings: components["schemas"]["BrowserRelayBindingSummary"][];
+        };
+        BrowserRelayClientList: {
+            clients: components["schemas"]["BrowserRelayClient"][];
+        };
+        ThreadBrowserRelay: {
+            threadId: components["schemas"]["ThreadId"];
+            bound: boolean;
+            deviceId?: components["schemas"]["DeviceId"];
+            deviceName?: string;
+            online: boolean;
+            sharedTabCount: number;
+            pendingApprovals: number;
+            autoApproveCreateTab?: boolean;
+        };
+        ThreadBrowserRelayBindRequest: {
+            deviceId: components["schemas"]["DeviceId"];
+        };
+        /** @description 线程本机浏览器绑定与审批状态变更（M27） */
+        WsServerBrowserRelayState: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "browser_relay.state";
+            state: components["schemas"]["ThreadBrowserRelay"];
+        };
+        /** @description 在线本机浏览器扩展客户端列表变更（M27） */
+        WsServerBrowserRelayClients: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "browser_relay.clients";
+            clients: components["schemas"]["BrowserRelayClient"][];
+        };
+        /**
+         * @description 由 orynd 打开（M27），对应一个已绑定在线浏览器扩展的线程。
+         *     流头之后为换行分隔 JSON（NDJSON）：orynd→orbd 传扩展的 ExtToRelayMessage，
+         *     orbd→orynd 传 orb 内 omp browser-relay 的 RelayToExtMessage。
+         */
+        LinkStreamBrowserRelay: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            t: "browser_relay";
+            threadId: components["schemas"]["ThreadId"];
         };
     };
     responses: {
@@ -21970,6 +22091,122 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrbWhoami"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listBrowserRelayClients: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 在线浏览器扩展客户端列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserRelayClientList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    browserRelaySocket: {
+        parameters: {
+            query: {
+                /** @description `POST /api/v1/ws-ticket` 签发的票据（须用 `browser_extension` 设备令牌换取） */
+                ticket: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 切换到 WebSocket */
+            101: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getThreadBrowserRelay: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 绑定与在线状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThreadBrowserRelay"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    bindThreadBrowserRelay: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ThreadBrowserRelayBindRequest"];
+            };
+        };
+        responses: {
+            /** @description 更新后的绑定状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThreadBrowserRelay"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    unbindThreadBrowserRelay: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 解绑后的状态（`bound=false`） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThreadBrowserRelay"];
                 };
             };
             default: components["responses"]["Error"];

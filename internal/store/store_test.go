@@ -33,7 +33,8 @@ import (
 // M18：ssh_audit、ssh_hosts、ssh_keys；
 // M19：assistant_settings、assistant_confirmations、assistant_inbox；
 // M24 阶段 ②：project_repos、repo_pushes、repo_commit_threads；阶段 ③：project_webhooks；
-// M26：research_topics、research_runs、research_mined、research_settings）。
+// M26：research_topics、research_runs、research_mined、research_settings；
+// M27：thread_browser_relay_bindings）。
 var m2Tables = []string{
 	"agent_avatars", "artifact_comment_threads", "artifact_comments", "artifact_consents", "artifact_data", "artifact_data_totals", "artifact_files", "artifact_publications", "artifact_versions", "artifacts", "assistant_confirmations", "assistant_files", "assistant_inbox", "assistant_settings", "attachments", "blobs", "box_activity", "box_apps", "box_deploys", "box_releases", "box_secrets", "boxes", "browser_profile_events", "browser_profiles", "budget", "budget_alerts", "coord_actions", "device_pairings",
 	"devices", "entries", "entry_cursors", "github_audit", "github_autoclose", "github_deliveries", "github_hooks", "github_identities",
@@ -45,7 +46,7 @@ var m2Tables = []string{
 	"project_repos", "project_snapshots", "project_webhooks", "projects", "providers", "published_files", "push_subscriptions", "recovery_codes", "repo_commit_threads", "repo_pushes",
 	"research_mined", "research_runs", "research_settings", "research_topics", "role_avatars", "runners", "schedule_runs", "schedules",
 	"search_docs", "search_fts", "search_fts_config", "search_fts_content", "search_fts_data", "search_fts_docsize", "search_fts_idx", "search_state",
-	"secrets", "spaces", "ssh_audit", "ssh_hosts", "ssh_keys", "stats_state", "thread_commits", "thread_issues", "thread_labels", "thread_pulls", "thread_reports", "thread_share_entries",
+	"secrets", "spaces", "ssh_audit", "ssh_hosts", "ssh_keys", "stats_state", "thread_browser_relay_bindings", "thread_commits", "thread_issues", "thread_labels", "thread_pulls", "thread_reports", "thread_share_entries",
 	"thread_share_identities", "thread_shares", "threads", "tool_calls", "tool_q", "turn_q", "turns", "usage_q", "usage_records", "web_sessions",
 }
 
@@ -701,4 +702,26 @@ func TestBrowserProfileLeaseQueries(t *testing.T) {
 	require.NoError(t, q.DeleteOrbDesktop(ctx, orbA))
 	_, err = q.GetOrbDesktop(ctx, orbA)
 	assert.ErrorIs(t, err, sql.ErrNoRows)
+}
+
+func TestBrowserRelayBindingsAndDeviceKind(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t, t.TempDir())
+	q := s.Q
+	require.NoError(t, q.CreateDevice(ctx, db.CreateDeviceParams{
+		ID: "dev_ext1", Name: "Chrome Mac", Kind: "browser_extension", Platform: "chrome", TokenHash: "hash1", CreatedAt: 10,
+	}))
+	require.NoError(t, q.CreateThread(ctx, db.CreateThreadParams{
+		Kind: "work", ID: "thr_1", Title: "T", TitleSource: "auto", State: "idle", SessionDir: "/s", CreatedAt: 10, UpdatedAt: 10,
+	}))
+	require.NoError(t, q.UpsertThreadBrowserRelayBinding(ctx, db.UpsertThreadBrowserRelayBindingParams{
+		ThreadID: "thr_1", DeviceID: "dev_ext1", CreatedAt: 11, UpdatedAt: 11,
+	}))
+	got, err := q.GetThreadBrowserRelayBinding(ctx, "thr_1")
+	require.NoError(t, err)
+	assert.Equal(t, "dev_ext1", got.DeviceID)
+	assert.Equal(t, "Chrome Mac", got.DeviceName)
+	n, err := q.DeleteThreadBrowserRelayBinding(ctx, "thr_1")
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, n)
 }

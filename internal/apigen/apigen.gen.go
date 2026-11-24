@@ -823,14 +823,17 @@ func (e CoordinatorSandboxNetwork) Valid() bool {
 
 // Defines values for DeviceKind.
 const (
-	Cli     DeviceKind = "cli"
-	Desktop DeviceKind = "desktop"
-	Mobile  DeviceKind = "mobile"
+	BrowserExtension DeviceKind = "browser_extension"
+	Cli              DeviceKind = "cli"
+	Desktop          DeviceKind = "desktop"
+	Mobile           DeviceKind = "mobile"
 )
 
 // Valid indicates whether the value is a known member of the DeviceKind enum.
 func (e DeviceKind) Valid() bool {
 	switch e {
+	case BrowserExtension:
+		return true
 	case Cli:
 		return true
 	case Desktop:
@@ -1703,6 +1706,21 @@ const (
 func (e LinkStreamBlobT) Valid() bool {
 	switch e {
 	case Blob:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for LinkStreamBrowserRelayT.
+const (
+	BrowserRelay LinkStreamBrowserRelayT = "browser_relay"
+)
+
+// Valid indicates whether the value is a known member of the LinkStreamBrowserRelayT enum.
+func (e LinkStreamBrowserRelayT) Valid() bool {
+	switch e {
+	case BrowserRelay:
 		return true
 	default:
 		return false
@@ -4217,6 +4235,36 @@ func (e WsServerBoxesChangedType) Valid() bool {
 	}
 }
 
+// Defines values for WsServerBrowserRelayClientsType.
+const (
+	BrowserRelayClients WsServerBrowserRelayClientsType = "browser_relay.clients"
+)
+
+// Valid indicates whether the value is a known member of the WsServerBrowserRelayClientsType enum.
+func (e WsServerBrowserRelayClientsType) Valid() bool {
+	switch e {
+	case BrowserRelayClients:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WsServerBrowserRelayStateType.
+const (
+	BrowserRelayState WsServerBrowserRelayStateType = "browser_relay.state"
+)
+
+// Valid indicates whether the value is a known member of the WsServerBrowserRelayStateType enum.
+func (e WsServerBrowserRelayStateType) Valid() bool {
+	switch e {
+	case BrowserRelayState:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for WsServerEntriesType.
 const (
 	Entries WsServerEntriesType = "entries"
@@ -5860,6 +5908,37 @@ type BrowserProfileReadonlyReason string
 // BrowserProfileSaveError 最近一次保存失败的原因（成功保存后清除）：`too_large`（归档超过 256MiB）、`export_failed`（orbd 导出或落盘失败）、
 // `takeover_unsaved`（接管前对原持有者的保存失败，接管方装载的是更早的修订）。
 type BrowserProfileSaveError string
+
+// BrowserRelayBindingSummary defines model for BrowserRelayBindingSummary.
+type BrowserRelayBindingSummary struct {
+	AutoApproveCreateTab *bool `json:"autoApproveCreateTab,omitempty"`
+	PendingApprovals     int   `json:"pendingApprovals"`
+	SharedTabCount       int   `json:"sharedTabCount"`
+
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID ThreadID `json:"threadId"`
+}
+
+// BrowserRelayClient defines model for BrowserRelayClient.
+type BrowserRelayClient struct {
+	Bindings       []BrowserRelayBindingSummary `json:"bindings"`
+	BrowserVersion *string                      `json:"browserVersion,omitempty"`
+
+	// ConnectedAt UTC 毫秒时间戳
+	ConnectedAt TimestampMs `json:"connectedAt"`
+
+	// DeviceID `dev_<ulid>`
+	DeviceID   DeviceID `json:"deviceId"`
+	ExtVersion *string  `json:"extVersion,omitempty"`
+	Name       string   `json:"name"`
+}
+
+// BrowserRelayClientList defines model for BrowserRelayClientList.
+type BrowserRelayClientList struct {
+	Clients []BrowserRelayClient `json:"clients"`
+}
 
 // Budget defines model for Budget.
 type Budget struct {
@@ -8024,6 +8103,21 @@ type LinkStreamBlob struct {
 
 // LinkStreamBlobT defines model for LinkStreamBlob.T.
 type LinkStreamBlobT string
+
+// LinkStreamBrowserRelay 由 orynd 打开（M27），对应一个已绑定在线浏览器扩展的线程。
+// 流头之后为换行分隔 JSON（NDJSON）：orynd→orbd 传扩展的 ExtToRelayMessage，
+// orbd→orynd 传 orb 内 omp browser-relay 的 RelayToExtMessage。
+type LinkStreamBrowserRelay struct {
+	T LinkStreamBrowserRelayT `json:"t"`
+
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID ThreadID `json:"threadId"`
+}
+
+// LinkStreamBrowserRelayT defines model for LinkStreamBrowserRelay.T.
+type LinkStreamBrowserRelayT string
 
 // LinkStreamCtl orbd 建连后开的第一条且唯一的控制流
 type LinkStreamCtl struct {
@@ -11879,6 +11973,30 @@ type Thread struct {
 // ThreadTitleSource defines model for Thread.TitleSource.
 type ThreadTitleSource string
 
+// ThreadBrowserRelay defines model for ThreadBrowserRelay.
+type ThreadBrowserRelay struct {
+	AutoApproveCreateTab *bool `json:"autoApproveCreateTab,omitempty"`
+	Bound                bool  `json:"bound"`
+
+	// DeviceID `dev_<ulid>`
+	DeviceID         *DeviceID `json:"deviceId,omitempty"`
+	DeviceName       *string   `json:"deviceName,omitempty"`
+	Online           bool      `json:"online"`
+	PendingApprovals int       `json:"pendingApprovals"`
+	SharedTabCount   int       `json:"sharedTabCount"`
+
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID ThreadID `json:"threadId"`
+}
+
+// ThreadBrowserRelayBindRequest defines model for ThreadBrowserRelayBindRequest.
+type ThreadBrowserRelayBindRequest struct {
+	// DeviceID `dev_<ulid>`
+	DeviceID DeviceID `json:"deviceId"`
+}
+
 // ThreadEnvelope defines model for ThreadEnvelope.
 type ThreadEnvelope struct {
 	Thread Thread `json:"thread"`
@@ -12622,6 +12740,24 @@ type WsServerBoxesChanged struct {
 
 // WsServerBoxesChangedType defines model for WsServerBoxesChanged.Type.
 type WsServerBoxesChangedType string
+
+// WsServerBrowserRelayClients 在线本机浏览器扩展客户端列表变更（M27）
+type WsServerBrowserRelayClients struct {
+	Clients []BrowserRelayClient            `json:"clients"`
+	Type    WsServerBrowserRelayClientsType `json:"type"`
+}
+
+// WsServerBrowserRelayClientsType defines model for WsServerBrowserRelayClients.Type.
+type WsServerBrowserRelayClientsType string
+
+// WsServerBrowserRelayState 线程本机浏览器绑定与审批状态变更（M27）
+type WsServerBrowserRelayState struct {
+	State ThreadBrowserRelay            `json:"state"`
+	Type  WsServerBrowserRelayStateType `json:"type"`
+}
+
+// WsServerBrowserRelayStateType defines model for WsServerBrowserRelayState.Type.
+type WsServerBrowserRelayStateType string
 
 // WsServerEntries defines model for WsServerEntries.
 type WsServerEntries struct {
@@ -14318,6 +14454,9 @@ type CreateThreadJSONRequestBody = CreateThreadRequest
 // UpdateThreadJSONRequestBody defines body for UpdateThread for application/json ContentType.
 type UpdateThreadJSONRequestBody = ThreadPatch
 
+// BindThreadBrowserRelayJSONRequestBody defines body for BindThreadBrowserRelay for application/json ContentType.
+type BindThreadBrowserRelayJSONRequestBody = ThreadBrowserRelayBindRequest
+
 // ForkThreadJSONRequestBody defines body for ForkThread for application/json ContentType.
 type ForkThreadJSONRequestBody = ForkThreadRequest
 
@@ -14654,6 +14793,40 @@ func (t *LinkStreamHeader) MergeLinkStreamSSH(v LinkStreamSSH) error {
 	return err
 }
 
+// AsLinkStreamBrowserRelay returns the union data inside the LinkStreamHeader as a LinkStreamBrowserRelay
+func (t LinkStreamHeader) AsLinkStreamBrowserRelay() (LinkStreamBrowserRelay, error) {
+	var body LinkStreamBrowserRelay
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromLinkStreamBrowserRelay overwrites any union data inside the LinkStreamHeader as the provided LinkStreamBrowserRelay
+func (t *LinkStreamHeader) FromLinkStreamBrowserRelay(v LinkStreamBrowserRelay) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"t":"browser_relay"}`))
+	t.union = b
+	return err
+}
+
+// MergeLinkStreamBrowserRelay performs a merge with any union data inside the LinkStreamHeader, using the provided LinkStreamBrowserRelay
+func (t *LinkStreamHeader) MergeLinkStreamBrowserRelay(v LinkStreamBrowserRelay) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"t":"browser_relay"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 func (t LinkStreamHeader) Discriminator() (string, error) {
 	var discriminator struct {
 		Discriminator string `json:"t"`
@@ -14672,6 +14845,8 @@ func (t LinkStreamHeader) ValueByDiscriminator() (interface{}, error) {
 		return t.AsLinkStreamAgent()
 	case "blob":
 		return t.AsLinkStreamBlob()
+	case "browser_relay":
+		return t.AsLinkStreamBrowserRelay()
 	case "ctl":
 		return t.AsLinkStreamCtl()
 	case "desk":
@@ -16530,6 +16705,74 @@ func (t *WsServerMessage) MergeWsServerArtifactConsent(v WsServerArtifactConsent
 	return err
 }
 
+// AsWsServerBrowserRelayState returns the union data inside the WsServerMessage as a WsServerBrowserRelayState
+func (t WsServerMessage) AsWsServerBrowserRelayState() (WsServerBrowserRelayState, error) {
+	var body WsServerBrowserRelayState
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsServerBrowserRelayState overwrites any union data inside the WsServerMessage as the provided WsServerBrowserRelayState
+func (t *WsServerMessage) FromWsServerBrowserRelayState(v WsServerBrowserRelayState) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"browser_relay.state"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsServerBrowserRelayState performs a merge with any union data inside the WsServerMessage, using the provided WsServerBrowserRelayState
+func (t *WsServerMessage) MergeWsServerBrowserRelayState(v WsServerBrowserRelayState) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"browser_relay.state"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsWsServerBrowserRelayClients returns the union data inside the WsServerMessage as a WsServerBrowserRelayClients
+func (t WsServerMessage) AsWsServerBrowserRelayClients() (WsServerBrowserRelayClients, error) {
+	var body WsServerBrowserRelayClients
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsServerBrowserRelayClients overwrites any union data inside the WsServerMessage as the provided WsServerBrowserRelayClients
+func (t *WsServerMessage) FromWsServerBrowserRelayClients(v WsServerBrowserRelayClients) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"browser_relay.clients"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsServerBrowserRelayClients performs a merge with any union data inside the WsServerMessage, using the provided WsServerBrowserRelayClients
+func (t *WsServerMessage) MergeWsServerBrowserRelayClients(v WsServerBrowserRelayClients) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"browser_relay.clients"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 func (t WsServerMessage) Discriminator() (string, error) {
 	var discriminator struct {
 		Discriminator string `json:"type"`
@@ -16558,6 +16801,10 @@ func (t WsServerMessage) ValueByDiscriminator() (interface{}, error) {
 		return t.AsWsServerArtifactsChanged()
 	case "boxes.changed":
 		return t.AsWsServerBoxesChanged()
+	case "browser_relay.clients":
+		return t.AsWsServerBrowserRelayClients()
+	case "browser_relay.state":
+		return t.AsWsServerBrowserRelayState()
 	case "entries":
 		return t.AsWsServerEntries()
 	case "error":
@@ -17029,6 +17276,9 @@ type ServerInterface interface {
 	// UpdateBrowserProfile 重命名 Profile
 	// (PATCH /api/v1/browser-profiles/{id})
 	UpdateBrowserProfile(w http.ResponseWriter, r *http.Request, id BrowserProfileIDPath)
+	// ListBrowserRelayClients 列出当前在线的本机浏览器扩展客户端（M27）
+	// (GET /api/v1/browser-relay/clients)
+	ListBrowserRelayClients(w http.ResponseWriter, r *http.Request)
 	// GetCoordinator 协调宿主的可用性与沙箱报告
 	// (GET /api/v1/coordinator)
 	GetCoordinator(w http.ResponseWriter, r *http.Request)
@@ -17773,6 +18023,15 @@ type ServerInterface interface {
 	// ListThreadAttachments 线程的附件（按上传时间）
 	// (GET /api/v1/threads/{id}/attachments)
 	ListThreadAttachments(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
+	// UnbindThreadBrowserRelay 解除线程与本机浏览器扩展的绑定（幂等，M27）
+	// (DELETE /api/v1/threads/{id}/browser-relay)
+	UnbindThreadBrowserRelay(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
+	// GetThreadBrowserRelay 查询线程当前绑定的本机浏览器扩展状态（M27）
+	// (GET /api/v1/threads/{id}/browser-relay)
+	GetThreadBrowserRelay(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
+	// BindThreadBrowserRelay 绑定线程到指定本机浏览器扩展设备（M27）
+	// (PUT /api/v1/threads/{id}/browser-relay)
+	BindThreadBrowserRelay(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
 	// ListThreadEntries 分页读取已复制条目（按 `seq` 升序）
 	// (GET /api/v1/threads/{id}/entries)
 	ListThreadEntries(w http.ResponseWriter, r *http.Request, id ThreadIDPath, params ListThreadEntriesParams)
@@ -18454,6 +18713,12 @@ func (_ Unimplemented) DeleteBrowserProfile(w http.ResponseWriter, r *http.Reque
 // UpdateBrowserProfile 重命名 Profile
 // (PATCH /api/v1/browser-profiles/{id})
 func (_ Unimplemented) UpdateBrowserProfile(w http.ResponseWriter, r *http.Request, id BrowserProfileIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListBrowserRelayClients 列出当前在线的本机浏览器扩展客户端（M27）
+// (GET /api/v1/browser-relay/clients)
+func (_ Unimplemented) ListBrowserRelayClients(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -19942,6 +20207,24 @@ func (_ Unimplemented) UpdateThread(w http.ResponseWriter, r *http.Request, id T
 // ListThreadAttachments 线程的附件（按上传时间）
 // (GET /api/v1/threads/{id}/attachments)
 func (_ Unimplemented) ListThreadAttachments(w http.ResponseWriter, r *http.Request, id ThreadIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// UnbindThreadBrowserRelay 解除线程与本机浏览器扩展的绑定（幂等，M27）
+// (DELETE /api/v1/threads/{id}/browser-relay)
+func (_ Unimplemented) UnbindThreadBrowserRelay(w http.ResponseWriter, r *http.Request, id ThreadIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetThreadBrowserRelay 查询线程当前绑定的本机浏览器扩展状态（M27）
+// (GET /api/v1/threads/{id}/browser-relay)
+func (_ Unimplemented) GetThreadBrowserRelay(w http.ResponseWriter, r *http.Request, id ThreadIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// BindThreadBrowserRelay 绑定线程到指定本机浏览器扩展设备（M27）
+// (PUT /api/v1/threads/{id}/browser-relay)
+func (_ Unimplemented) BindThreadBrowserRelay(w http.ResponseWriter, r *http.Request, id ThreadIDPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -22917,6 +23200,20 @@ func (siw *ServerInterfaceWrapper) UpdateBrowserProfile(w http.ResponseWriter, r
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdateBrowserProfile(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListBrowserRelayClients operation middleware
+func (siw *ServerInterfaceWrapper) ListBrowserRelayClients(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListBrowserRelayClients(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -30824,6 +31121,84 @@ func (siw *ServerInterfaceWrapper) ListThreadAttachments(w http.ResponseWriter, 
 	handler.ServeHTTP(w, r)
 }
 
+// UnbindThreadBrowserRelay operation middleware
+func (siw *ServerInterfaceWrapper) UnbindThreadBrowserRelay(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ThreadIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UnbindThreadBrowserRelay(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetThreadBrowserRelay operation middleware
+func (siw *ServerInterfaceWrapper) GetThreadBrowserRelay(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ThreadIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetThreadBrowserRelay(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// BindThreadBrowserRelay operation middleware
+func (siw *ServerInterfaceWrapper) BindThreadBrowserRelay(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ThreadIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.BindThreadBrowserRelay(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListThreadEntries operation middleware
 func (siw *ServerInterfaceWrapper) ListThreadEntries(w http.ResponseWriter, r *http.Request) {
 
@@ -32585,6 +32960,18 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/provider/v1/fs/{id}/reply", wrapper.ProviderReplyFs)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/browser-relay/clients", wrapper.ListBrowserRelayClients)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/threads/{id}/browser-relay", wrapper.UnbindThreadBrowserRelay)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/threads/{id}/browser-relay", wrapper.GetThreadBrowserRelay)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/threads/{id}/browser-relay", wrapper.BindThreadBrowserRelay)
 	})
 
 	return r

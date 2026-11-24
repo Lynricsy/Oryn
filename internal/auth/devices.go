@@ -28,7 +28,7 @@ const (
 // ValidDeviceKind 校验设备类型。
 func ValidDeviceKind(kind string) bool {
 	switch kind {
-	case "cli", "desktop", "mobile":
+	case "cli", "desktop", "mobile", "browser_extension":
 		return true
 	}
 	return false
@@ -40,7 +40,7 @@ func validateDeviceFields(name, kind, platform string) error {
 		return newErr(http.StatusBadRequest, "invalid_request", "设备名长度须为 1–100")
 	}
 	if !ValidDeviceKind(kind) {
-		return newErr(http.StatusBadRequest, "invalid_request", "kind 必须是 cli / desktop / mobile")
+		return newErr(http.StatusBadRequest, "invalid_request", "kind 必须是 cli / desktop / mobile / browser_extension")
 	}
 	if len(platform) > 64 {
 		return newErr(http.StatusBadRequest, "invalid_request", "platform 过长")

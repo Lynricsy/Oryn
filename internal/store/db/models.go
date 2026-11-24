@@ -1359,6 +1359,13 @@ type Thread struct {
 	Research          *string `json:"research"`
 }
 
+type ThreadBrowserRelayBinding struct {
+	ThreadID  string `json:"threadId"`
+	DeviceID  string `json:"deviceId"`
+	CreatedAt int64  `json:"createdAt"`
+	UpdatedAt int64  `json:"updatedAt"`
+}
+
 type ThreadCommit struct {
 	ThreadID string `json:"threadId"`
 	Sha      string `json:"sha"`
