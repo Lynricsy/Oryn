@@ -104,6 +104,15 @@ fn smoke_dir() -> PathBuf {
     std::env::temp_dir().join(format!("oryn-desktop-smoke-{}", std::process::id()))
 }
 
+/// 构造 opener 插件：Rust 侧直接通过 `OpenerExt` 调系统浏览器；必须关闭默认的点击脚本注入，
+/// 否则 `init-iife.js` 会拦截所有 `target="_blank"` 链接并调用 `plugin:opener|open_url`，
+/// 在桌面端掐断 `webview.rs` 的 `on_new_window` 且因远程能力不含 `opener:*` 权限被 ACL 静默拒绝。
+fn opener_plugin<R: tauri::Runtime>() -> impl tauri::plugin::Plugin<R> {
+    tauri_plugin_opener::Builder::new()
+        .open_js_links_on_click(false)
+        .build()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let raw: Vec<String> = std::env::args().skip(1).collect();
@@ -137,12 +146,12 @@ pub fn run() {
     {
         builder = builder
             .plugin(tauri_plugin_notification::init())
-            .plugin(tauri_plugin_opener::init())
+            .plugin(opener_plugin())
             .plugin(tauri_plugin_updater::Builder::new().build());
     }
     #[cfg(mobile)]
     {
-        builder = builder.plugin(tauri_plugin_opener::init());
+        builder = builder.plugin(opener_plugin());
         #[cfg(target_os = "android")]
         {
             builder = builder.plugin(tauri_plugin_oryn_mobile::init());
@@ -591,5 +600,15 @@ mod tests {
             include_str!("api.rs").matches("CARGO_PKG_VERSION").count(),
             1
         );
+    }
+
+    /// opener 插件不得向 WebView 注入 `init-iife.js` 点击拦截脚本（桌面外链由 `on_new_window` 接管，
+    /// 移动外链由 `host.ts` 的 `host_open_external` 接管；远程页面故意不授予 `opener:*` 权限）。
+    #[test]
+    fn opener_plugin_does_not_inject_click_script() {
+        use tauri::plugin::Plugin;
+        let plugin = super::opener_plugin::<tauri::Wry>();
+        assert_eq!(plugin.initialization_script(), None);
+        assert!(plugin.initialization_script_2().is_none());
     }
 }
