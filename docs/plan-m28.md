@@ -36,7 +36,7 @@ Rollback point:
 - A1 `tauri ios init` 按 tauri 目录解析 `bundle.iOS.template` 的相对路径（未验证；只读到 build 流程会 `set_current_dir`）。影响 Step 0、5；失效走探针分支 P2。
 - A2 运行时给 tao 的 `AppDelegate` 类加方法后，UIKit 会回调远程通知注册结果（未验证）。影响 Step 0、5；失效走 P1。
 - A3 tauri 工程名取自 Cargo 包名，即 target 为 `oryn-desktop_iOS`（未验证）。影响 Step 5；脚本一律用通配，不写死名字。
-- A4 `xcode-27` runner 的模拟器支持 `xcrun simctl push` 并会调起 NSE（未验证）。影响 Step 0、5；失效走 P3。
+- A4 `xcode-27` runner 的模拟器支持 `xcrun simctl push` 并会调起 NSE。**已证伪**（run 45443153455，iOS 27.2 模拟器）：`simctl push` 是本地投递、不调起 NSE；临时签名副本（签入 `aps-environment`）在模拟器上启动不了。按 P3 预案：`PUSH_NSE_GATE=soft`、只跑不签名一轮，解密正确性由 `probe.vector` 把关，NSE 留给 Step 7 真机。P1（`apns.register_failed`，钩子被调到）、P2（appex 在包里、版本一致）、challenge 与自检均已通过。
 - A5 只有 `notification_deliveries` 外键引用 `push_subscriptions`（0055 的注释如此；0056、0057 未读）。影响 Step 3；执行前跑 `grep -rn "REFERENCES push_subscriptions" internal/store/migrations`。
 - A6 已启用 UnifiedPush 的 gms 老用户升级后自动改走网关 FCM（D5 = 迁移）；仍可在设置里手动切回 UnifiedPush。影响 Step 4。
 - A7 App 同一时间只配对一台服务器，所以一把设备密钥至多一个有效授权。影响 Step 2、4。

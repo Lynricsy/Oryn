@@ -532,16 +532,17 @@ jobs:
       # 推送探针（M28 Step 0 / 5）：appex 的包名与版本号（P2）；debug 包带 ORYN_PUSH_PROBE=1 冷启动、点掉授权框后，
       # AppDelegate 补上的 APNs 注册回调被调到（P1，apns.registered / apns.register_failed）；前台 simctl push 网关 challenge
       # 不展示并转成事件；退出后 simctl push 加密通知，NSE 用共享钥匙串里的附录 A 密钥解开（P3，nse.decrypted ok=true）。
-      # 日志原文写进 push/summary.md 与 Step Summary。预案开关：PUSH_ADHOC_SIGN（auto = NSE 没过时自动用临时签名副本重跑一轮；
-      # 1 / 0 只跑签名 / 不签名一轮），PUSH_NSE_GATE=soft 时 NSE 一项只记录（模拟器不调 NSE 时，解密正确性由探针自检把关）。
+      # 日志原文写进 push/summary.md 与 Step Summary。实测（run 45443153455，Xcode 27 / iOS 27.2 模拟器）：simctl push 走本地投递、
+      # 不调起 NSE；临时签名副本（签入 aps-environment）在模拟器上起不来。所以只跑不签名一轮，NSE 一项只记录（PUSH_NSE_GATE=soft），
+      # 解密正确性由探针自检（probe.vector，同一份 Shared/WebPushDecrypt）把关，NSE 与共享钥匙串留给 TestFlight 真机验收。
       - name: 模拟器：推送探针（APNs 钩子、网关 challenge、Notification Service Extension）
         if: ${{ !cancelled() && steps.app.outcome == 'success' }}
         timeout-minutes: 45
         shell: bash
         env:
           APP: ${{ steps.app.outputs.path }}
-          PUSH_ADHOC_SIGN: auto
-          PUSH_NSE_GATE: hard
+          PUSH_ADHOC_SIGN: "0"
+          PUSH_NSE_GATE: soft
         run: |
           mkdir -p ios-shot/push
           rm -f ios-shot/push/.complete

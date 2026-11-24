@@ -236,7 +236,7 @@ iOS 只有一条推送通道：官方推送网关（`https://push.oryn.best`）�
 - **challenge**：网关的 challenge 推送（`kind: gateway_challenge`）App 在前台时不展示、直接交给登记流程；其它远程推送在前台也不展示（前台提示由页面负责）。
 - **NSE**：网关发的 APNs 通知带 `mutable-content`，载荷只有密文 `e`。Notification Service Extension（`web/src-tauri/ios/NotificationService`）先把占位换成按系统语言的「有新通知」，再用共享钥匙串里的密钥解开 `e`，以与本地通知同一套构造（`Sources/Shared/PushContent.swift`）填上真实标题、正文、线程归组与发送者头像；任何一步失败或超时只显示占位。App 离线期间被 APNs 丢弃的通知不补发。
 - **工程**：NSE 是 tauri 生成工程之外的 target，靠自定义 XcodeGen 模板加进来：`tauri.conf.json` 的 `bundle.iOS.template` 指向 `web/src-tauri/ios/project.yml`（tauri-cli 2.12.6 内置模板原样复制，只加 `NotificationService` target 与主 target 对它的依赖；target 名不能含 `_iOS`，tauri 按这个子串找主 target 同步签名）。升级 `@tauri-apps/cli` 时要把新版内置模板的改动合进来。`ci/ios-nse.sh` 在 `tauri ios init` 之后把扩展的两个版本号设成与主包相同，发版时另装扩展的描述文件、把 `ios/NotificationService/Signing.xcconfig` 写成手动签名并把扩展并进 `ExportOptions.plist`。
-- **CI**：`ios-check` 断言包里有 `PlugIns/NotificationService.appex`，并跑 `ci/ios-push-check.sh`（推送探针：debug 包带 `ORYN_PUSH_PROBE=1` 启动，确认注册回调钩子生效、前台 challenge 不展示、`simctl push` 的加密通知被 NSE 解开），产物在 `ios-screenshot/push/`（`summary.md` 含日志原文，`.complete` 表示全部通过）。`ios-release` 断言主包 `aps-environment` 为 `production`、扩展在 IPA 里且包名、两个版本号与 push 组都对。
+- **CI**：`ios-check` 断言包里有 `PlugIns/NotificationService.appex`，并跑 `ci/ios-push-check.sh`（推送探针：debug 包带 `ORYN_PUSH_PROBE=1` 启动，确认注册回调钩子生效、前台 challenge 不展示、App 进程里的 `WebPushDecrypt` 解开 RFC 8291 附录 A），产物在 `ios-screenshot/push/`（`summary.md` 含日志原文，`.complete` 表示全部通过）。模拟器的 `simctl push` 是本地投递、不调起 NSE，所以 NSE 一项只记录（`PUSH_NSE_GATE=soft`），NSE 与共享钥匙串在 TestFlight 真机上验收。`ios-release` 断言主包 `aps-environment` 为 `production`、扩展在 IPA 里且包名、两个版本号与 push 组都对。
 
 Apple 门户（一次性）：
 
