@@ -1,0 +1,9 @@
+# box 部署配置（oryn boxes deploy）：在 orb 里按锁文件装依赖并构建，release 只带构建产物与静态服务。
+build: npm ci && npm run build
+source: false
+artifacts:
+  - dist
+  - server.mjs
+services:
+  web:
+    command: node server.mjs

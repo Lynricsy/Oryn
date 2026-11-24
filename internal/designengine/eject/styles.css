@@ -1,0 +1,5 @@
+/* 导出工程的样式入口，与画布引擎一致：Tailwind 只扫 src/，设计 token 在 src/theme.css（只写 @theme {…}）。 */
+@import "tailwindcss" source(none);
+/* oryn:theme */
+@source "./src";
+@plugin "@iconify/tailwind4";
