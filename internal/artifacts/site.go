@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Lynricsy/Oryn/internal/artifacts/design"
 	"github.com/Lynricsy/Oryn/internal/artifacts/htmlsrc"
 	"github.com/Lynricsy/Oryn/internal/artifacts/render"
 )
@@ -222,7 +223,7 @@ func (h *Host) ServeRender(w http.ResponseWriter, r *http.Request, t render.Targ
 		return
 	}
 	src = withParamsPrelude(src)
-	if r.URL.Query().Get(probeQuery) == "1" {
+	if r.URL.Query().Get(design.ProbeQuery) == "1" {
 		if src, err = h.withProbe(ctx, t.ArtifactID, version, path, src); err != nil {
 			h.fail(w, err)
 			return
@@ -235,7 +236,6 @@ func (h *Host) ServeRender(w http.ResponseWriter, r *http.Request, t render.Targ
 // 由 --dump-dom 带出（check.go）。
 const (
 	probeAsset = "sandbox/probe.js"
-	probeQuery = "__oryn_probe"
 	// probeScriptPath 是设计画框（dist/<id>.html）的引擎入口在首次渲染后加载的同源 `./probe.js`。
 	// 渲染模式下这个路径一律回嵌入的探针脚本，不读版本里的文件：脚本自己只在页面地址带 __oryn_probe=1 时运行，
 	// 别的渲染作业（缩略图等）加载到它也不起作用。脚本请求不带页面的查询串，所以不能按查询串判断。

@@ -28,45 +28,6 @@ func probeDOM(issues string) string {
 		`{"v":1,"frame":"home","height":800,"issues":` + issues + `}</script></body></html>`
 }
 
-func TestCheckParseProbe(t *testing.T) {
-	got, err := parseProbe([]byte(probeDOM(`[{"rule":"text-clipped","loc":"src/frames/home.tsx:3:5","text":"立即开始","detail":64},` +
-		`{"rule":"contrast-low","loc":null,"text":"浅灰","detail":2.32},` +
-		`{"rule":"Bad Rule","loc":null,"text":"x"},` +
-		`{"rule":"raw-color","loc":null,"text":"红","detail":{"evil":true}}]`)))
-	require.NoError(t, err)
-	assert.Equal(t, []design.Issue{
-		{Rule: "text-clipped", Loc: "src/frames/home.tsx:3:5", Text: "立即开始", Detail: json.RawMessage(`64`)},
-		{Rule: "contrast-low", Text: "浅灰", Detail: json.RawMessage(`2.32`)},
-		{Rule: "raw-color", Text: "红"},
-	}, got)
-
-	got, err = parseProbe([]byte(probeDOM(`[]`)))
-	require.NoError(t, err)
-	assert.Empty(t, got)
-
-	// 页面自己伪造的节点在前，探针追加的在 body 末尾：取最后一个
-	forged := `<html><body><script id="oryn-probe" type="application/json">{"v":1,"issues":[]}</script>` +
-		`<script id="oryn-probe" type="application/json">{"v":1,"issues":[{"rule":"dash-in-copy","loc":null,"text":"a—b"}]}</script></body></html>`
-	got, err = parseProbe([]byte(forged))
-	require.NoError(t, err)
-	require.Len(t, got, 1)
-	assert.Equal(t, "dash-in-copy", got[0].Rule)
-
-	long := fmt.Sprintf(`[%s{"rule":"x","loc":null,"text":"%s"}]`, strings.Repeat(`{"rule":"y","loc":null,"text":"t"},`, 60), strings.Repeat("长", 300))
-	got, err = parseProbe([]byte(probeDOM(long)))
-	require.NoError(t, err)
-	assert.Len(t, got, maxProbeIssues)
-
-	got, err = parseProbe([]byte(probeDOM(`[{"rule":"x","loc":null,"text":"` + strings.Repeat("长", 300) + `"}]`)))
-	require.NoError(t, err)
-	assert.Equal(t, maxIssueTextRunes, len([]rune(got[0].Text)))
-
-	_, err = parseProbe([]byte(`<html><body><p>没有探针</p></body></html>`))
-	assert.ErrorContains(t, err, "没有探针结果")
-	_, err = parseProbe([]byte(`<html><body><script id="oryn-probe" type="application/json">{"v":2}</script></body></html>`))
-	assert.ErrorContains(t, err, "不合法")
-}
-
 // designCanvas 建一个两帧（home、about）的设计画布，另带一个 HTML 画框 legacy.html；override 按路径替换缺省文件。
 func designCanvas(t *testing.T, e *env, override ...FileChange) Artifact {
 	t.Helper()
@@ -391,9 +352,8 @@ func TestCheckProbeChromium(t *testing.T) {
 	require.NoError(t, err)
 	t.Logf("html frame:\n%s", res.Text)
 	assert.Contains(t, res.Text, "\ntext-clipped legacy src/frames/home.tsx:7:9 立即开始免费试用")
-	got := storedCheck(t, e, a.ID, 1)
-	require.NotNil(t, got)
-	assert.Equal(t, design.CheckIssues, got.Status)
+	// 带 path 的单帧检查只回给调用方，不写版本的 check_json
+	assert.Nil(t, storedCheck(t, e, a.ID, 1))
 }
 
 // jsString 把 s 写成 JS 字符串字面量（JSON 字符串即合法的 JS 字符串）。
