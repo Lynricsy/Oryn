@@ -115,12 +115,12 @@ func TestSetupRun(t *testing.T) {
 	cp.waitNotif(t, 0, "setup.log", func(raw json.RawMessage) bool {
 		var p apigen.LinkCtlSetupLogParams
 		_ = json.Unmarshal(raw, &p)
-		return p.Phase == apigen.Setup && p.Stream == apigen.Stdout && strings.Contains(p.Data, "setup-ran")
+		return p.Phase == apigen.Setup && p.Stream == apigen.LinkCtlSetupLogParamsStreamStdout && strings.Contains(p.Data, "setup-ran")
 	})
 	cp.waitNotif(t, 0, "setup.log", func(raw json.RawMessage) bool {
 		var p apigen.LinkCtlSetupLogParams
 		_ = json.Unmarshal(raw, &p)
-		return p.Stream == apigen.Stderr && strings.Contains(p.Data, "to-stderr")
+		return p.Stream == apigen.LinkCtlSetupLogParamsStreamStderr && strings.Contains(p.Data, "to-stderr")
 	})
 
 	// 第二次：标记存在，跳过 setup 与 clone，但 resume 照跑。

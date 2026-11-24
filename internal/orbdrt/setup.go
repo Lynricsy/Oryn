@@ -926,7 +926,7 @@ func (l *setupLogger) emit(phase apigen.LinkCtlSetupLogParamsPhase, stream apige
 }
 
 func (l *setupLogger) system(phase apigen.LinkCtlSetupLogParamsPhase, msg string) {
-	l.emit(phase, apigen.System, []byte("[orbd] "+msg+"\n"))
+	l.emit(phase, apigen.LinkCtlSetupLogParamsStreamSystem, []byte("[orbd] "+msg+"\n"))
 }
 
 type logWriter struct {
@@ -946,8 +946,8 @@ func (l *setupLogger) run(ctx context.Context, phase apigen.LinkCtlSetupLogParam
 	cmd.Dir = dir
 	cmd.Env = env
 	cmd.Stdin = nil
-	cmd.Stdout = logWriter{l, phase, apigen.Stdout}
-	cmd.Stderr = logWriter{l, phase, apigen.Stderr}
+	cmd.Stdout = logWriter{l, phase, apigen.LinkCtlSetupLogParamsStreamStdout}
+	cmd.Stderr = logWriter{l, phase, apigen.LinkCtlSetupLogParamsStreamStderr}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = 5 * time.Second
