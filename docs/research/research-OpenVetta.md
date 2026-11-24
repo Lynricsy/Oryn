@@ -90,7 +90,12 @@
 ### 7. 用 Oryn 自己的统计数据检验 `edit` 失败率 ⭐（学习项）
 
 **Vetta** [文档] ADR-0157：他们统计到逐行哈希锚点的 `edit` 失败率在 13.6%–32% 之间（malformed 与 stale 合计占失败的 76%），于是改成「首行 + 可选末行」的内容定位，并加了相对的结构回归检测（编辑后括号开合只许持平或变好）。文中特别提到 oh-my-pi 的 hashline 对 kimi / deepseek / qwen 会自动降级到 `replace` 模式。
-**对 Oryn 的意义**：Oryn Core 用的正是 hashline。控制面的 `tool_calls` 表已经记录每次调用的 `tool` 与 `is_error` [Oryn] `internal/store/migrations/0001_init.sql`，但表里没有模型列。要按模型拆分，需要用 `thread_id` 加最近的 `entry_seq` 关联 `usage_records` 里的模型。本机开发库样本太小，不能下结论（`edit` 7 次失败 1 次，`write` 15 次失败 4 次）[Oryn] `.dev/data/oryn.db`，应该到生产库上跑同一条查询。只需要一条 SQL，就能判断是否要对部分模型默认切到 replace。[推断]
+**对 Oryn 的意义**：Vetta 换掉的「逐行哈希」，和 Oryn Core 的 hashline 不是一回事。hashline 只在每个文件标一个 `[path#TAG]` 快照标签，按原始行号操作，标签过期时还会沿快照链尝试安全恢复。更关键的是，**内容定位在 Core 里已经有了，不需要移植** [源码] `Lynricsy/oryn-core@8951be1` 的 `packages/coding-agent/src/edit/settings.ts` 与 `utils/edit-mode.ts`：
+- `sloppy` 模式用现有文本做锚点，不用快照标签：`*** Find` 必须唯一命中（`*** Find all` 除外），首行 + `…` + 末行可以定位一个块，`*** Replace Block: <开头行>` 按语法块整体替换。这和 Vetta 的 `oldText` + `oldEndText` 是同一个思路，表达能力还更强。
+- `replace` 模式就是 `old_string` / `new_string`。hashline 本来会对 Kimi、MiMo、MiniMax、DeepSeek、StepFun、Codex Spark、GLM 5.3 Flash、Qwen 3.8 自动降级到它（设置 `PI_STRICT_EDIT_MODE` 可关闭）。
+- 按模型选模式用 `edit.modelVariants`（按模型名最长子串匹配）；全局默认用 `edit.mode`。Oryn 的设置页「Agent」分组会把 `config.yml` 下发到所有 orb，所以只要改配置，不用改代码。
+
+因此要回答的只是「哪些模型该用哪种模式」，需要数据。Core 的 `edit` 失败会带 `details.errorKind`（`stale_tag`、`no_match`、`unseen_lines` 等），比单纯的 `is_error` 更能区分「格式问题」和「定位过期」。控制面 `tool_calls` 表目前只有 `tool` 与 `is_error`，没有模型列，也没有 `errorKind` [Oryn] `internal/store/migrations/0001_init.sql`。本机开发库样本太小，看不出结论（`edit` 7 次失败 1 次）。建议入库时补上 `errorKind`，用 `thread_id` 关联 `usage_records` 里的模型，然后在生产库上按模型、按模式对比，再决定 `edit.modelVariants`。[推断]
 
 ## ④ 不建议借鉴
 
