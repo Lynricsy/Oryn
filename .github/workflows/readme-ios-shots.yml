@@ -58,13 +58,14 @@ jobs:
         working-directory: web
         run: VITE_MOCK=1 bunx vite build --outDir dist-readme
 
-      - name: 生成 iOS 工程（未入库时）并装入 App 图标
+      - name: 生成 iOS 工程（未入库时）、装入 App 图标与通信通知权限
         working-directory: web
         shell: bash
         run: |
           set -euo pipefail
           if [[ ! -d src-tauri/gen/apple ]]; then bun run tauri ios init --ci; fi
           bash src-tauri/ci/ios-appicon.sh
+          bash src-tauri/ci/ios-entitlements.sh
 
       - name: 不签名编译模拟器包
         working-directory: web

@@ -439,13 +439,14 @@ jobs:
         working-directory: web
         run: VITE_MOCK=1 bunx vite build --outDir dist-e2e
 
-      - name: 生成 iOS 工程（未入库时）并装入 App 图标
+      - name: 生成 iOS 工程（未入库时）、装入 App 图标与通信通知权限
         working-directory: web
         shell: bash
         run: |
           set -euo pipefail
           if [[ ! -d src-tauri/gen/apple ]]; then bun run tauri ios init --ci; fi
           bash src-tauri/ci/ios-appicon.sh
+          bash src-tauri/ci/ios-entitlements.sh
 
       - name: 不签名编译模拟器包
         working-directory: web
@@ -466,6 +467,14 @@ jobs:
           if [[ "$ver" != "$VERSION" ]]; then echo "::error::CFBundleShortVersionString 是 ${ver}，应为 Cargo.toml 的 ${VERSION}"; exit 1; fi
           /usr/libexec/PlistBuddy -c 'Print :NSCameraUsageDescription' "$plist" > /dev/null \
             || { echo "::error::Info.plist 缺 NSCameraUsageDescription（见 web/src-tauri/Info.ios.plist）"; exit 1; }
+          python3 - "$plist" <<'PY'
+          import plistlib, sys
+          with open(sys.argv[1], "rb") as f:
+              types = plistlib.load(f).get("NSUserActivityTypes") or []
+          if "INSendMessageIntent" not in types:
+              print("::error::Info.plist 的 NSUserActivityTypes 缺 INSendMessageIntent（见 web/src-tauri/Info.ios.plist）", file=sys.stderr)
+              sys.exit(1)
+          PY
           bash web/src-tauri/ci/check-appicon.sh "$app/Assets.car" "iOS 模拟器包" "$plist"
           echo "产物：${app}（版本 ${ver}）" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "path=$app" >> "$GITHUB_OUTPUT"
@@ -591,13 +600,14 @@ jobs:
         working-directory: web
         run: bun install --frozen-lockfile
 
-      - name: 生成 iOS 工程（未入库时）并装入 App 图标
+      - name: 生成 iOS 工程（未入库时）、装入 App 图标与通信通知权限
         working-directory: web
         shell: bash
         run: |
           set -euo pipefail
           if [[ ! -d src-tauri/gen/apple ]]; then bun run tauri ios init --ci; fi
           bash src-tauri/ci/ios-appicon.sh
+          bash src-tauri/ci/ios-entitlements.sh
 
       # tauri 从 IOS_* 建临时钥匙串并装描述文件。
       # build number = (run_number + 1000) × 100 + run_attempt：重跑同一次运行（如 Android 失败后 Re-run）时也换一个新号，
@@ -638,11 +648,32 @@ jobs:
           if [[ "$ver" != "$VERSION" ]]; then echo "::error::CFBundleShortVersionString 是 ${ver}，应为 Cargo.toml 的 ${VERSION}"; exit 1; fi
           /usr/libexec/PlistBuddy -c 'Print :NSCameraUsageDescription' "$plist" > /dev/null \
             || { echo "::error::Info.plist 缺 NSCameraUsageDescription（App Store Connect 会以 ITMS-90683 退回）"; exit 1; }
+          python3 - "$plist" <<'PY'
+          import plistlib, sys
+          with open(sys.argv[1], "rb") as f:
+              types = plistlib.load(f).get("NSUserActivityTypes") or []
+          if "INSendMessageIntent" not in types:
+              print("::error::Info.plist 的 NSUserActivityTypes 缺 INSendMessageIntent（见 web/src-tauri/Info.ios.plist）", file=sys.stderr)
+              sys.exit(1)
+          PY
           signer=$(codesign -dvv "$app" 2>&1 | sed -n 's/^Authority=//p' | head -1)
           if [[ "$signer" != Apple\ Distribution:* && "$signer" != iPhone\ Distribution:* ]]; then
             echo "::error::签名者「${signer}」不是分发证书"
             exit 1
           fi
+          ent_xml=$(codesign -d --entitlements - --xml "$app" 2>/dev/null)
+          python3 - "$ent_xml" <<'PY'
+          import plistlib, sys
+          raw = sys.argv[1].encode("utf-8")
+          if not raw.strip():
+              print("::error::codesign 未输出 IPA entitlements", file=sys.stderr)
+              sys.exit(1)
+          ent = plistlib.loads(raw)
+          key = "com.apple.developer.usernotifications.communication"
+          if ent.get(key) is not True:
+              print(f"::error::IPA 签名缺少 {key}=true（请确认 ios-entitlements.sh 已执行且 IOS_MOBILE_PROVISION 已启用 Communication Notifications）", file=sys.stderr)
+              sys.exit(1)
+          PY
           bash web/src-tauri/ci/check-appicon.sh "$app/Assets.car" "iOS IPA" "$plist"
           echo "path=$ipa" >> "$GITHUB_OUTPUT"
           echo "- iOS：\`${bid}\` ${ver}（build ${build}），签名者 ${signer}" | tee -a "$GITHUB_STEP_SUMMARY"

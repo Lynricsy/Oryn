@@ -77,7 +77,7 @@ Agent 的提问只需点一个选项时（工具审批的「批准 / 拒绝」�
 
 ### 通知样式与头像
 
-Android 通知采用 `NotificationCompat.MessagingStyle`，iOS 15+ 采用对等的 Communication Notifications（`INSendMessageIntent` + `UNNotificationContent.updating(from:)`，`Info.ios.plist` 已声明 `NSUserActivityTypes: ["INSendMessageIntent"]`；若要在 iOS 真机 / TestFlight 完整显示系统级通信大头像，需为 `com.lynricsy.oryn` 的 App ID 启用 Communication Notifications capability 并更新描述文件，未启用时自动回落为标准通知）：
+Android 通知采用 `NotificationCompat.MessagingStyle`，iOS 15+ 采用对等的 Communication Notifications（`INSendMessageIntent` + `UNNotificationContent.updating(from:)`）。iOS 端需两项配置齐备：`web/src-tauri/Info.ios.plist` 声明 `NSUserActivityTypes: ["INSendMessageIntent"]`，以及 `web/src-tauri/ci/ios-entitlements.sh` 在 `tauri ios init` 后把 `com.apple.developer.usernotifications.communication = true` 合并进 target entitlements（`ios-release` 会用 `codesign -d --entitlements - --xml` 断言该权限已签入 IPA）。在真机 / TestFlight 发版前，仍须在 Apple Developer Portal 为 `com.lynricsy.oryn` 启用 Communication Notifications 并更新 `IOS_MOBILE_PROVISION`：
 
 - **普通线程**：发送者头像取线程标题卡图标（Emoji 或内置 Symbols Nerd Font 字形）与线程色，无标题卡图标时回落为 Oryn 品牌标；标题开头与头像重复的图标自动省略。
 - **全局助手动态（主线）与助手对话线程**：发送者头像统一取全局助手头像（自定义图片 / 字形，未设置时为默认 sparkle 标记；不跟随默认 Agent 身份）。Android 后台推送只携带 8 位头像哈希，本地缓存命中即零请求绘制，变更时按需拉取 `GET /api/v1/settings/assistant-identity` 更新缓存。
@@ -207,11 +207,11 @@ keytool -list -v -keystore .dev/android-release.jks -storepass "$PW" | grep 'SHA
 
 ## 附录 A：iOS
 
-Team ID（`XDPWT9ABRD`）写在 `tauri.conf.json` 的 `bundle.iOS.developmentTeam`。App ID `com.lynricsy.oryn` 应开启 Push Notifications 与 Associated Domains（供下面的 APNs 与 Universal Links 用；之后再开要重新生成描述文件）；App Store Connect 里需先建好同一套装 ID 的 App 记录，`ios-release` 才能上传。
+Team ID（`XDPWT9ABRD`）写在 `tauri.conf.json` 的 `bundle.iOS.developmentTeam`。App ID `com.lynricsy.oryn` 应开启 Push Notifications、Associated Domains 与 Communication Notifications（供下面的 APNs、Universal Links 与通信通知头像用；变更能力后须重新导出 `IOS_MOBILE_PROVISION`）；App Store Connect 里需先建好同一套装 ID 的 App 记录，`ios-release` 才能上传。
 
 首次上传后，App Store Connect 的 TestFlight 页会要求回答出口合规问题（构建显示「缺少合规证明」）。iOS 包里的 Rust 网络栈用 rustls 自带的 TLS 实现，不只是系统加密，所以 `ITSAppUsesNonExemptEncryption` 没有预先写死，由发布者按实际情况作答。
 
-iOS 专用的 Info.plist 键写在 `web/src-tauri/Info.ios.plist`，`tauri ios build` 会合并进生成的 Info.plist。目前只有 `NSCameraUsageDescription`（连接页扫配对二维码、输入区拍照附件）；缺了它 App Store Connect 会以 ITMS-90683 退回构建。`ios-check` 与 `ios-release` 都会断言这个键在、且 `CFBundleShortVersionString` 等于 Cargo.toml 的版本。以后用到其它受保护能力（麦克风、定位、相册写入等）时，同样把用途说明加在这个文件里。
+iOS 专用的 Info.plist 键写在 `web/src-tauri/Info.ios.plist`，`tauri ios build` 会合并进生成的 Info.plist。目前含 `NSCameraUsageDescription`（连接页扫配对二维码、输入区拍照附件；缺了它 App Store Connect 会以 ITMS-90683 退回构建）与 `NSUserActivityTypes`（`INSendMessageIntent`，配合 `ci/ios-entitlements.sh` 合并的 `com.apple.developer.usernotifications.communication = true` 启用通信通知）。`ios-check` 与 `ios-release` 都会断言这些 Info.plist 键在、且 `CFBundleShortVersionString` 等于 Cargo.toml 的版本；`ios-release` 另用 `codesign -d --entitlements - --xml` 断言通信通知权限已签入 IPA。以后用到其它受保护能力（麦克风、定位、相册写入等）时，同样把用途说明加在这个文件里。
 
 iOS 26+ 的手机布局（下沉侧栏）用原生的底栏与页头（线程页三件；新建线程页只有左上角的侧栏钮，spec 的 `title`、`trail` 为 null、key 为 `home`），协议是壳 bridge 8（`web/src/lib/host.ts` 与 `web/src-tauri/src/host.rs` 的 `BRIDGE`；设计与探针结论见 `docs/plan-m20.md`）：
 
@@ -229,4 +229,4 @@ CI 的 `ios-check` 在 iOS 26+ 模拟器里跑 `ci/ios-header-check.sh`（原生
 
 CI 不覆盖运动途中的逐帧对齐：按住拖动只在卡片停住后取样比对页头与卡片的位置，开合只看到位后的截图，拖动、甩动、开合动画过程中页头 / 底栏与卡片是否每一帧都对齐，留给真机验收（`docs/plan-m20.md` 步骤 4.3）。
 
-尚未完成：APNs 推送（服务端 `pushSenders["apns"]`、`PushSubscriptionInput` 增加 `kind: apns`）；Share Extension（App Group 容器 + 同一条上传预填流程）；Universal Links（`/.well-known/apple-app-site-association`）；Keychain 令牌存储的真机验证；iPhone / iPad 真机验收。
+尚未完成：APNs 推送（服务端 `pushSenders["apns"]`、`PushSubscriptionInput` 增加 `kind: apns`）；Share Extension（App Group 容器 + 同一条上传预填流程）；Universal Links（`/.well-known/apple-app-site-association`）；Keychain 令牌存储的真机验证；iOS 通信通知权限签入与通知头像的模拟器 / 真机验收；iPhone / iPad 真机验收。
