@@ -2902,3 +2902,30 @@ orynd 在 `<data_dir>/repos/<projectId>.git` 为每个有 `https://` 仓库地�
 ### 技能下发
 
 `coord.SkillFiles()` 由内嵌规格、策略表与原生工具定义生成 `skills/oryn/SKILL.md`、`skills/oryn/domains/<域>.md`（18 个）与 `skills/oryn/ops/<操作>.md`，经 `orbs.DefaultSetup.CoordinatorSkill` 并入协调宿主的 omp-home（`~/.omp/agent/skills/oryn/`，清单机制清理旧文件）。全局助手的 omp 以 `--skills oryn` 启动，覆盖层强制 `skills.enabled`；Space 协调者仍 `--no-skills`，覆盖层不变。
+
+## M27：客户端浏览器中继（Browser Relay）
+
+让 orb 内运行的 agent 安全、可控地操作用户本机 Chrome 浏览器（复用 `oryn-core` 自带的 `omp browser-relay` 与原生 Chrome MV3 扩展），与 M8 云端桌面浏览器并存（`browser.open()` 默认仍走云桌面，显式 `app: "relay"` 走本机浏览器）。
+
+### 设备类型与配对
+
+- `DeviceKind` 新增 `browser_extension`；迁移 `0055_browser_relay.sql` 重建 `devices` / `device_pairings` 放宽 `CHECK` 约束，并新增 `thread_browser_relay_bindings(thread_id PRIMARY KEY, device_id, created_at, updated_at)`。
+- 扩展走现有配对流程（`POST /api/v1/devices/pair/start` → 网页 `/pair` 批准 → `pair/poll`）换取 `odt_…` 设备令牌，在「设置 → 设备」可随时吊销。
+
+### REST 与 WebSocket（tag `browser-relay` / `websocket`）
+
+|方法与路径|operationId|请求|响应|
+|---|---|---|---|
+|`GET /api/v1/browser-relay/clients`|`listBrowserRelayClients`|—|`BrowserRelayClientList{clients}`|
+|`GET /api/v1/browser-relay/ws?ticket=…`|`browserRelaySocket`|`browser_extension` 设备令牌换取的 `ws-ticket`|`101` 文本 JSON 帧；关闭码 `4401` 吊销、`4409` 同设备顶替、`4429` 缓冲溢出|
+|`GET /api/v1/threads/{id}/browser-relay`|`getThreadBrowserRelay`|—|`ThreadBrowserRelay`|
+|`PUT /api/v1/threads/{id}/browser-relay`|`bindThreadBrowserRelay`|`ThreadBrowserRelayBindRequest{deviceId}`|`ThreadBrowserRelay`|
+|`DELETE /api/v1/threads/{id}/browser-relay`|`unbindThreadBrowserRelay`|—|`ThreadBrowserRelay`（幂等）|
+
+- Realtime Hub 新增 `browser_relay.state`（线程订阅者）与 `browser_relay.clients`（全局广播）。
+- `orynd` ↔ `orbd` link：新增 `StreamBrowserRelay = "browser_relay"`（`orynd → orbd` 主动开流，换行分隔 JSON 透传 `/ext` 协议）；`orbd` hello `features` 新增 `browser-relay`。
+
+### 本机策略与非阻塞两阶段审批（Rev 1）
+
+- 所有安全裁决在 Chrome 扩展本机 `policy.ts` 执行：未点选共享的现有标签页元数据绝不出浏览器；越权 `tabId`、`chrome://` 与 `findDownload` 直接拒绝；远端 `reload` 静默丢弃。
+- 因 `omp` `bridge.ts` 对扩展 RPC 硬限 20s 超时且 `createTab` 注册了 `onLateResult` 关页回调，新建标签页（不限域名）、`file://`、共享现有 Tab 跨主域名跳转与凭据/跨目标 CDP 均走**非阻塞两阶段审批**：立即返回 `ORYN_APPROVAL_REQUIRED(<id>)` 结束原 RPC，绝不事后执行过期旧 RPC；用户在扩展 Popup 任意时刻点击「允许这次 / 本会话允许 / 拒绝」后写入单次票据 `oneTimeGrants` 或会话白名单，经 `session.approval_resolved` 通知线程由 agent 重试。

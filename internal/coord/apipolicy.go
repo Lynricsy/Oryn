@@ -299,8 +299,12 @@ func buildAPIPolicy() map[string]opPolicy {
 		"getOrbStats", "getOutputStats", "getBudget", "getCoordinator", "listAutomationActions")
 	set("insights", opWrite, none, "putBudget")
 
+	// browser-relay（M27）：只读查询开放，解绑放行，绑定本机 Chrome 必须经主人确认；线程路径写操作均加 guardThread；WS 升级为内部通道
+	set("desktop", opRead, none, "listBrowserRelayClients", "getThreadBrowserRelay")
+	set("desktop", opWrite, thread, "unbindThreadBrowserRelay")
+	set("desktop", opConfirm, thread, "bindThreadBrowserRelay")
 	// 内部接口：不是用户操作，不进文档
-	set("", opDeny, none, "getBlob", "createWsTicket", "connectWs", "orbDesktopSocket", "sshHostTerminal", "connectPublicShareWs",
+	set("", opDeny, none, "getBlob", "createWsTicket", "connectWs", "orbDesktopSocket", "browserRelaySocket", "sshHostTerminal", "connectPublicShareWs",
 		"getPublicShare", "getPublicShareIdentity", "listPublicShareEntries", "getPublicShareBlob", "receiveGitHubWebhook",
 		"finishGitHubOAuth", "providerHello", "providerClaimJob", "providerCompleteJob", "providerBye", "providerClaimFs",
 		"providerReplyFs", "orbLink", "orbWhoami", "prepareOrbSync", "getOrbSyncBundle")

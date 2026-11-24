@@ -416,3 +416,4 @@ oryn boxes deploy --on workbench --name wiki --create        # 将当前仓库 H
 
 - **Agent 内核**：[`Lynricsy/oryn-core`](https://github.com/Lynricsy/oryn-core)，fork 自 [`can1357/oh-my-pi`](https://github.com/can1357/oh-my-pi)（MIT）；钉定版本与 SHA-256 见 [`core/source.json`](core/source.json)。
 - **远程桌面客户端**：[`@novnc/novnc`](https://github.com/novnc/noVNC) `1.7.0`（MPL-2.0，未修改源码，按需独立分块加载）。
+- **本机浏览器扩展**：`oryn-core/packages/browser-relay`（Chrome MV3 扩展，支持「Oryn 云端模式」直连控制面，按标签页授权与非阻塞审批，见 [`docs/features.md`](docs/features.md#本机浏览器中继chrome-扩展)）。

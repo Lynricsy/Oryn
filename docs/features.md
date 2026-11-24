@@ -494,6 +494,14 @@ Windows / macOS / Linux 桌面端与 Android、iOS 客户端共用一套 Tauri 2
 - `oryn thread attach <线程>`：在终端内流式查看转录，支持实时输入引导（steer）、作答与计划审批。
 - `oryn sync <线程>`：把远端 orb 内的提交与未提交改动实时镜像到本机干净检出（`Ctrl-C` 自动还原，`--apply` 一次性落盘）。
 
+### 本机浏览器中继（Chrome 扩展）
+
+需要复用日常 Chrome 的已登录态、访问本机 `localhost` / 公司内网或使用住宅 IP 时，可在 Chrome 中加载 `oryn-core/packages/browser-relay` 扩展并切换到「Oryn 云端模式」：
+
+- **免额外本地进程**：扩展通过配对码完成认证后直连 `orynd`，在线程页头或扩展弹窗中一键绑定到指定工作线程，不依赖桌面 App 或常驻 CLI；在「设置 → 设备」可随时吊销。
+- **与云端桌面并存**：工作线程的 `browser.open(...)` 默认仍走 orb 内的云端桌面 Chromium；需要操作本机 Chrome 时由 agent 显式使用 `app: "relay"`。
+- **本机隐私与非阻塞审批**：未被主动点选共享的现有标签页对云端完全不可见；新建标签页（不限站点）以及跨主域名跳转、读取 Cookies 等高危 CDP 默认进入扩展弹窗待审批队列（支持「允许这次」「本会话总是允许」「拒绝」），批准后自动通知线程重试，不会因等待审批触发超时关页。
+
 ## 安全边界
 
 完整威胁模型与加固清单见 [`deploy.md` 第 7 节](deploy.md#7-安全)。
