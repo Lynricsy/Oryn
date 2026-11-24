@@ -5,6 +5,7 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "dist");
@@ -53,18 +54,35 @@ async function resolveFile(pathname) {
 	return null;
 }
 
-const server = createServer(async (req, res) => {
+/** 解析请求目标的路径部分；请求行里的目标不是合法 URL（如 `http://[::`）时为 null。 */
+function requestPath(target) {
+	try {
+		return new URL(target ?? "/", "http://localhost").pathname;
+	} catch {
+		return null;
+	}
+}
+
+function plain(res, status, text) {
+	res.writeHead(status, { "Content-Type": "text/plain; charset=utf-8" });
+	res.end(text);
+}
+
+async function handle(req, res) {
 	if (req.method !== "GET" && req.method !== "HEAD") {
 		res.writeHead(405, { Allow: "GET, HEAD" });
 		res.end();
 		return;
 	}
-	const { pathname } = new URL(req.url ?? "/", "http://localhost");
+	const pathname = requestPath(req.url);
+	if (pathname === null) {
+		plain(res, 400, "bad request\n");
+		return;
+	}
 	const hit =
 		(await resolveFile(pathname)) ?? (await resolveFile("/index.html"));
 	if (!hit) {
-		res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-		res.end("dist/ 里没有 index.html，先运行 npm run build。\n");
+		plain(res, 404, "dist/ 里没有 index.html，先运行 npm run build。\n");
 		return;
 	}
 	const ext = path.extname(hit.file).toLowerCase();
@@ -81,7 +99,17 @@ const server = createServer(async (req, res) => {
 		res.end();
 		return;
 	}
-	createReadStream(hit.file).pipe(res);
+	// pipeline 在读文件出错或客户端中途断开时销毁两端并 reject，由下面的 catch 收尾。
+	await pipeline(createReadStream(hit.file), res);
+}
+
+const server = createServer((req, res) => {
+	handle(req, res).catch((err) => {
+		// 客户端断开（ERR_STREAM_PREMATURE_CLOSE 等）不是服务端错误，不记日志。
+		if (err?.code !== "ERR_STREAM_PREMATURE_CLOSE") console.error(err);
+		if (!res.headersSent) plain(res, 500, "internal error\n");
+		else res.destroy();
+	});
 });
 
 server.listen(port, () => {
