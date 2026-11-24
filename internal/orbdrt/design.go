@@ -1,6 +1,7 @@
 package orbdrt
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -11,7 +12,10 @@ import (
 	"hash"
 	"io"
 	"io/fs"
+	"net"
+	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -64,11 +68,14 @@ type designTurn struct{ id, title string }
 
 // designState 是设计运行时的内存状态；零值可用。
 type designState struct {
-	mu    sync.Mutex
-	turns map[string]designTurn  // threadId → 当前回合
-	locks map[string]*sync.Mutex // artifactId → 串行化该副本的 open / seal / check
+	mu     sync.Mutex
+	turns  map[string]designTurn   // threadId → 当前回合
+	locks  map[string]*sync.Mutex  // artifactId → 串行化该副本的 open / seal / check
+	checks map[string]design.Check // artifactId → 最近一次全帧 design.check（Fingerprint = 当时源码的 SourceHash）
 	// shareRoot 覆盖 designShareRoot（测试用）；空 = designShareRoot。
 	shareRoot string
+	// chromium 覆盖 Chromium 的查找（测试用）：非空时只认这一个路径。
+	chromium string
 	// engineMu 串行化引擎源的写出与依赖安装。
 	engineMu sync.Mutex
 }
@@ -117,6 +124,30 @@ func (d *designState) share() string {
 	return designShareRoot
 }
 
+// setCheck 记下 id 最近一次全帧检查。
+func (d *designState) setCheck(id string, c design.Check) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.checks == nil {
+		d.checks = map[string]design.Check{}
+	}
+	d.checks[id] = c
+}
+
+// check 返回 id 缓存的检查，只在它的 Fingerprint 等于 hash（源码自检查以来没变）时有效。
+func (d *designState) check(id, hash string) (design.Check, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	c, ok := d.checks[id]
+	return c, ok && hash != "" && c.Fingerprint == hash
+}
+
+func (d *designState) chromiumOverride() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.chromium
+}
+
 // ---- 路径 ----
 
 func (r *Runtime) designsRoot() string { return filepath.Join(r.home, "designs") }
@@ -163,6 +194,13 @@ func (r *Runtime) handleDesignSock(ctx context.Context, method string, params js
 			return nil, true, err
 		}
 		res, err := r.designSeal(ctx, p, out)
+		return res, true, err
+	case orbsock.MethodDesignCheck:
+		var p orbsock.DesignCheckParams
+		if err := decodeSock(params, &p); err != nil {
+			return nil, true, err
+		}
+		res, err := r.designCheck(ctx, p)
 		return res, true, err
 	case orbsock.MethodDesignStatus:
 		var p orbsock.DesignStatusParams
@@ -537,7 +575,8 @@ func (r *Runtime) designDeps(ctx context.Context, dir string, force bool, out *o
 // ---- design.turn / design.seal ----
 
 // designTurnStart 记下本回合；上一回合留下的脏副本（终态封存失败或没发出）先以旧回合封存，旧回合不明（orbd 重启过）
-// 时不带回合。干净的副本照常跳过；封存失败只记日志，不挡新回合。
+// 时不带回合。干净的副本照常跳过；封存失败只记日志，不挡新回合。随后把本线程的每个副本与 head 对账
+// （designTurnReconcile），这样查看器里的「恢复」在下一回合就进了工作副本。
 func (r *Runtime) designTurnStart(ctx context.Context, p orbsock.DesignTurnParams, out *orbsock.Responder) error {
 	if err := needThread(p.ThreadID); err != nil {
 		return err
@@ -554,7 +593,48 @@ func (r *Runtime) designTurnStart(ctx context.Context, p orbsock.DesignTurnParam
 	if _, err := r.designSealThread(ctx, p.ThreadID, prev, out); err != nil {
 		r.log.Warn("sealing the previous design turn failed", "thread", p.ThreadID, "turn", prev.id, "err", err)
 	}
+	for _, meta := range r.designCopies(p.ThreadID) {
+		if err := r.designTurnReconcile(ctx, p.ThreadID, meta.ArtifactID, out); err != nil {
+			r.log.Warn("reconciling the design copy at turn start failed", "thread", p.ThreadID, "artifact", meta.ArtifactID, "err", err)
+		}
+	}
 	return nil
+}
+
+// designTurnReconcile 按 designReconcile 的规则让一个副本对齐 head（干净且落后 → 重新物化；脏的保留，留给封存报
+// conflict）。重新物化了时：src/package.json 变了就重装设计依赖；dev 服务在跑就重启它（整个 src/ 被换掉，vite 的
+// 监听跟不上）。失败由调用方记日志。
+func (r *Runtime) designTurnReconcile(ctx context.Context, threadID, id string, out *orbsock.Responder) error {
+	unlock := r.design.lock(id)
+	defer unlock()
+	dir := r.designDir(id)
+	before, err := readDesignMeta(dir)
+	if err != nil || before.ThreadID != threadID || before.ArtifactID != id {
+		return nil // 刚被别的线程接管或删掉
+	}
+	oldPkg, _ := os.ReadFile(filepath.Join(dir, "src", "package.json"))
+	head, err := r.designHead(ctx, threadID, id)
+	if err != nil {
+		return err
+	}
+	after, err := r.designReconcile(ctx, threadID, id, head)
+	if err != nil || after.BaseVersion == before.BaseVersion {
+		return err
+	}
+	designLog(out, "[orbd] %s: working copy re-materialized from v%d (was v%d)\n", id, after.BaseVersion, before.BaseVersion)
+	newPkg, _ := os.ReadFile(filepath.Join(dir, "src", "package.json"))
+	if err := r.designDeps(ctx, dir, !bytes.Equal(oldPkg, newPkg), out); err != nil {
+		return err
+	}
+	if after.Service == "" {
+		return nil
+	}
+	switch r.svc.snapshot(after.Service).Status {
+	case apigen.OrbServiceStatusStopped, apigen.OrbServiceStatusFailed:
+		return nil
+	}
+	_, err = r.svc.Restart(after.Service)
+	return sockErr(err)
 }
 
 // designSeal 构建并封存本线程的每个脏副本。回合标题取 design.turn 记下的（turnId 相同时）。
@@ -588,7 +668,9 @@ func (r *Runtime) designSealThread(ctx context.Context, threadID string, turn de
 	return res, nil
 }
 
-// designSealOne 封存一个副本，返回新版本号；源码没变（hash == sealedHash）时返回 0。
+// designSealOne 封存一个副本，返回新版本号；源码没变（hash == sealedHash）时返回 0。顺序：判脏（安装依赖之前的快照，
+// agent 什么都没改时不触发安装）→ 装依赖 → 重读 src/ 并重算 hash（npm install 可能新建或改写 src/package-lock.json）
+// → vite build → 工程锁（D2，写在 dist/_project/）→ 文件差集 → seal_design（带与新 hash 一致的缓存检查）→ 记 sealedHash。
 func (r *Runtime) designSealOne(ctx context.Context, threadID, id string, turn designTurn, out *orbsock.Responder) (int, error) {
 	unlock := r.design.lock(id)
 	defer unlock()
@@ -601,8 +683,7 @@ func (r *Runtime) designSealOne(ctx context.Context, threadID, id string, turn d
 	if err != nil {
 		return 0, err
 	}
-	hash := design.SourceHash(src)
-	if hash == meta.SealedHash {
+	if design.SourceHash(src) == meta.SealedHash {
 		return 0, nil
 	}
 	head, err := r.designHead(ctx, threadID, id)
@@ -613,27 +694,39 @@ func (r *Runtime) designSealOne(ctx context.Context, threadID, id string, turn d
 	for _, f := range head.Files {
 		headSha[f.Path] = f.Sha256
 	}
-	if pkg, ok := src["src/package.json"]; ok {
-		if err := r.designDeps(ctx, dir, designSha(pkg) != headSha["src/package.json"], out); err != nil {
+	_, hasPkg := src["src/package.json"]
+	if hasPkg {
+		if err := r.designDeps(ctx, dir, designSha(src["src/package.json"]) != headSha["src/package.json"], out); err != nil {
+			return 0, err
+		}
+		if src, err = designSourceFiles(dir); err != nil {
 			return 0, err
 		}
 	}
+	hash := design.SourceHash(src)
 	if err := r.designEnsureEngine(ctx, out); err != nil {
 		return 0, err
 	}
 	if err := r.designBuild(ctx, dir, id, out); err != nil {
 		return 0, err
 	}
+	if hasPkg {
+		if err := designengine.WriteProjectLock(ctx, dir); err != nil {
+			return 0, &orbsock.Error{Code: orbsock.CodeBuildFailed, Message: id + " 的导出工程锁生成失败，没有落版本：\n" + designTail(err.Error())}
+		}
+	}
 	files, err := designSealFiles(dir, src, headSha)
 	if err != nil {
 		return 0, err
 	}
+	params := map[string]any{"id": id, "baseVersion": meta.BaseVersion, "files": files}
+	if chk, ok := r.design.check(id, hash); ok {
+		params["check"] = chk
+	}
 	var sealed struct {
 		Version int `json:"version"`
 	}
-	if err := r.designCall(ctx, threadID, &turn, "seal_design", map[string]any{
-		"id": id, "baseVersion": meta.BaseVersion, "files": files,
-	}, &sealed); err != nil {
+	if err := r.designCall(ctx, threadID, &turn, "seal_design", params, &sealed); err != nil {
 		return 0, err
 	}
 	meta.BaseVersion, meta.SealedHash = sealed.Version, hash
@@ -641,6 +734,14 @@ func (r *Runtime) designSealOne(ctx context.Context, threadID, id string, turn d
 		return 0, err
 	}
 	return sealed.Version, nil
+}
+
+// designTail 是 s 末尾至多 4 KiB（错误消息里带的子进程输出尾）。
+func designTail(s string) string {
+	if len(s) > 4<<10 {
+		return s[len(s)-4<<10:]
+	}
+	return s
 }
 
 // designBuild 跑 vite build；失败回 build_failed，消息带 stderr 末尾 4 KiB。
@@ -695,7 +796,8 @@ func designSealFiles(dir string, src map[string][]byte, headSha map[string]strin
 
 // ---- design.status ----
 
-// designStatus 列出本线程的工作副本；check 取最新版本的检查结果，按副本当前源码换算状态（控制面不可达时为 nil）。
+// designStatus 列出本线程的工作副本。check：源码自最近一次全帧 design.check 以来没变时取那次结果；否则取最新版本的
+// 检查结果，按副本当前源码换算状态（控制面不可达时为 nil）。
 func (r *Runtime) designStatus(ctx context.Context, p orbsock.DesignStatusParams) (orbsock.DesignStatusResult, error) {
 	if err := needThread(p.ThreadID); err != nil {
 		return orbsock.DesignStatusResult{}, err
@@ -708,7 +810,11 @@ func (r *Runtime) designStatus(ctx context.Context, p orbsock.DesignStatusParams
 			return res, err
 		}
 		st := orbsock.DesignStatus{ID: meta.ArtifactID, Dir: dir, Dirty: hash != meta.SealedHash}
-		if head, err := r.designHead(ctx, p.ThreadID, meta.ArtifactID); err == nil {
+		if chk, ok := r.design.check(meta.ArtifactID, hash); ok {
+			if raw, err := json.Marshal(chk); err == nil {
+				st.Check = designAPICheck(raw, hash)
+			}
+		} else if head, err := r.designHead(ctx, p.ThreadID, meta.ArtifactID); err == nil {
 			st.Check = designAPICheck(head.Check, hash)
 		}
 		res.Designs = append(res.Designs, st)
@@ -733,7 +839,368 @@ func designAPICheck(raw json.RawMessage, hash string) *apigen.ArtifactCheck {
 	return &out
 }
 
-// ---- 留给 design.check（Q1）的挂点 ----
+// ---- design.check ----
+
+const (
+	// designCheckTimeout 是 design.check 的上限（C4）。
+	designCheckTimeout = 90 * time.Second
+	// designCheckParallel 是同时跑的 Chromium 个数。
+	designCheckParallel = 3
+	// designDOMLimit 是 --dump-dom 输出的上限（与控制面 render.Job.DumpDOM 一致）。
+	designDOMLimit = 4 << 20
+	// 帧的缺省窗口与尺寸范围（与引擎 plugin-frames.mjs 的 DEFAULT_* / MIN_SIZE / MAX_SIZE 一致）。
+	designFrameWidth, designFrameHeight    = 1280, 800
+	designFrameMinSize, designFrameMaxSize = 64, 8000
+)
+
+var (
+	// designFrameIDRe 是帧 id（引擎 FRAME_ID）。
+	designFrameIDRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
+	// designFrameDeclRe 取 `export const frame = {…}` 的对象体；designFrameSizeRe 取其中的数字字面量宽高。
+	designFrameDeclRe = regexp.MustCompile(`export\s+const\s+frame\b[^=]*=\s*\{([^}]*)\}`)
+	designFrameSizeRe = regexp.MustCompile(`["']?\b(width|height)["']?\s*:\s*(\d+(?:\.\d+)?)`)
+	// designChromiumPaths 是 orb 镜像里 Chromium 的位置（P5：/usr/sbin/chromium），都没有再查可信 PATH。
+	designChromiumPaths = []string{"/usr/sbin/chromium", "/usr/bin/chromium"}
+)
+
+// designFrameRun 是一帧的检查结果：Err 非空表示探针没跑成；Image 是截图（base64 PNG），ShotErr 是截图失败的原因。
+type designFrameRun struct {
+	Issues  []design.Issue
+	Err     string
+	Image   string
+	ShotErr string
+}
+
+// designCheck 用 orb 里的 headless Chromium 对工作副本的帧跑设计探针（plan-m29 C8），可附截图。页面来自 dev 服务
+// （`/frames/<id>?__oryn_probe=1`，源码即时）；dev 服务没在跑时临时在 127.0.0.1 起静态服务提供 dist/ 与 probe.js
+// （上一次构建的产物）。没有 Chromium 或某帧没跑成时不报错，status 为 unverified 并在 message 说明。
+// 全帧检查的结果按当时源码的 SourceHash 缓存，供 design.status 与封存使用；只缓存确实对应当前源码的结论：dev 服务上
+// 跑的，或者没有 Chromium（unverified 与内容无关）。静态 dist/ 可能是更早的构建（物化不带 dist/），不缓存。
+func (r *Runtime) designCheck(ctx context.Context, p orbsock.DesignCheckParams) (orbsock.DesignCheckResult, error) {
+	if err := needThread(p.ThreadID); err != nil {
+		return orbsock.DesignCheckResult{}, err
+	}
+	if !designIDRe.MatchString(p.ID) {
+		return orbsock.DesignCheckResult{}, orbsock.Errorf(orbsock.CodeInvalidParams, "invalid artifact id %q", p.ID)
+	}
+	ctx, cancel := context.WithTimeout(ctx, designCheckTimeout)
+	defer cancel()
+	unlock := r.design.lock(p.ID)
+	defer unlock()
+	cp, err := r.designCopyFor(p.ThreadID, p.ID)
+	if err != nil {
+		return orbsock.DesignCheckResult{}, err
+	}
+	all, err := designFrameIDs(cp.Dir)
+	if err != nil {
+		return orbsock.DesignCheckResult{}, err
+	}
+	ids := all
+	if len(p.Frames) > 0 {
+		ids = nil
+		var unknown []string
+		for _, f := range p.Frames {
+			switch {
+			case !slices.Contains(all, f):
+				unknown = append(unknown, f)
+			case !slices.Contains(ids, f):
+				ids = append(ids, f)
+			}
+		}
+		if len(unknown) > 0 {
+			return orbsock.DesignCheckResult{}, orbsock.Errorf(orbsock.CodeInvalidParams, "no such frame(s) in %s: %s (frames are src/frames/<id>.tsx; existing: %s)",
+				p.ID, strings.Join(unknown, ", "), strings.Join(all, ", "))
+		}
+	}
+	hash, err := designSourceHash(cp.Dir)
+	if err != nil {
+		return orbsock.DesignCheckResult{}, err
+	}
+
+	runs := make([]designFrameRun, len(ids))
+	live := false
+	bin, down := r.designChromium()
+	if down == "" && len(ids) > 0 {
+		pageURL, isLive, stop, err := r.designCheckPages(cp)
+		if err != nil {
+			return orbsock.DesignCheckResult{}, err
+		}
+		defer stop()
+		live = isLive
+		tmp, err := os.MkdirTemp("", "oryn-design-check-")
+		if err != nil {
+			return orbsock.DesignCheckResult{}, err
+		}
+		defer os.RemoveAll(tmp)
+		sem := make(chan struct{}, designCheckParallel)
+		var wg sync.WaitGroup
+		for i, id := range ids {
+			wg.Go(func() {
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				runs[i] = r.designCheckFrame(ctx, bin, tmp, cp.Dir, id, pageURL, p.Screenshot)
+			})
+		}
+		wg.Wait()
+	} else if down != "" {
+		for i := range runs {
+			runs[i].Err = down
+		}
+	}
+
+	res := orbsock.DesignCheckResult{Status: design.CheckClean, Issues: []orbsock.DesignCheckIssue{}, Images: []orbsock.DesignCheckImage{}}
+	chk := design.Check{Status: design.CheckClean, Issues: []design.Issue{}, Fingerprint: hash}
+	var notes []string
+	unverified := 0
+	for i, run := range runs {
+		if run.Image != "" {
+			res.Images = append(res.Images, orbsock.DesignCheckImage{Frame: ids[i], Data: run.Image})
+		}
+		if run.ShotErr != "" {
+			notes = append(notes, "截图失败 "+ids[i]+"："+run.ShotErr)
+		}
+		if run.Err != "" {
+			unverified++
+			if down == "" {
+				notes = append(notes, "未检查 "+ids[i]+"："+run.Err)
+			}
+			continue
+		}
+		for _, is := range run.Issues {
+			is.Frame = ids[i]
+			chk.Issues = append(chk.Issues, is)
+			res.Issues = append(res.Issues, orbsock.DesignCheckIssue{Rule: is.Rule, Frame: is.Frame, Loc: is.Loc, Text: is.Text, Detail: is.Detail})
+		}
+	}
+	switch {
+	case len(chk.Issues) > 0:
+		chk.Status = design.CheckIssues
+	case unverified > 0 || len(ids) == 0:
+		chk.Status = design.CheckUnverified
+	}
+	switch {
+	case down != "":
+		notes = append([]string{down + "，检查没有跑成。这和设计内容无关，不要重试 design_check。"}, notes...)
+	case len(ids) == 0:
+		notes = append(notes, "src/frames 下没有帧（每帧一个 src/frames/<id>.tsx）。")
+	case !live:
+		notes = append([]string{"dev 服务没在跑，检查的是上一次构建的 dist/ 产物。"}, notes...)
+	}
+	res.Status, res.Message = chk.Status, strings.Join(notes, "\n")
+
+	if len(p.Frames) == 0 && (live || down != "") {
+		if now, err := designSourceHash(cp.Dir); err == nil && now == hash {
+			r.design.setCheck(p.ID, chk)
+		}
+	}
+	return res, nil
+}
+
+// designFrameIDs 列出 src/frames/ 下的帧 id（`<id>.tsx`，_ 开头的共享外壳与不合规的文件名除外），按字节序排序。
+func designFrameIDs(dir string) ([]string, error) {
+	entries, err := os.ReadDir(filepath.Join(dir, "src", "frames"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	ids := []string{}
+	for _, e := range entries {
+		id, ok := strings.CutSuffix(e.Name(), ".tsx")
+		if ok && e.Type().IsRegular() && designFrameIDRe.MatchString(id) {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	return ids, nil
+}
+
+// designFrameSize 是帧的窗口尺寸：像引擎一样静态读 `export const frame = {width, height}` 的数字字面量（取当前源码，
+// 不依赖上一次构建的 dist/frames.json），缺失或越界时取 1280×800。
+func designFrameSize(dir, id string) (int, int) {
+	w, h := designFrameWidth, designFrameHeight
+	b, err := os.ReadFile(filepath.Join(dir, "src", "frames", id+".tsx"))
+	if err != nil {
+		return w, h
+	}
+	m := designFrameDeclRe.FindSubmatch(b)
+	if m == nil {
+		return w, h
+	}
+	for _, kv := range designFrameSizeRe.FindAllSubmatch(m[1], -1) {
+		f, err := strconv.ParseFloat(string(kv[2]), 64)
+		if err != nil || f < designFrameMinSize || f > designFrameMaxSize {
+			continue
+		}
+		if string(kv[1]) == "width" {
+			w = int(f + 0.5)
+		} else {
+			h = int(f + 0.5)
+		}
+	}
+	return w, h
+}
+
+// designChromium 返回 Chromium 的绝对路径（/usr/sbin/chromium → /usr/bin/chromium → 可信 PATH 里的 chromium）；
+// 找不到时第二个返回值是原因。
+func (r *Runtime) designChromium() (string, string) {
+	paths := designChromiumPaths
+	if p := r.design.chromiumOverride(); p != "" {
+		paths = []string{p}
+	}
+	for _, p := range paths {
+		if st, err := os.Stat(p); err == nil && st.Mode().IsRegular() && st.Mode()&0o111 != 0 {
+			return p, ""
+		}
+	}
+	if r.design.chromiumOverride() == "" {
+		if p, err := r.bins.look("chromium"); err == nil {
+			return p, ""
+		}
+	}
+	return "", "orb 里没有 Chromium（找过 " + strings.Join(paths, "、") + " 与 PATH）"
+}
+
+// designCheckPages 返回每帧的页面地址：dev 服务在跑时用它（live=true）；否则在 127.0.0.1 随机端口临时起静态服务，
+// 提供 dist/ 与 sandbox 里的 probe.js（构建产物的入口以 ./probe.js 加载探针），没有 dist/<id>.html 的帧 ok=false。
+// stop 关掉临时服务。
+func (r *Runtime) designCheckPages(cp designCopy) (pageURL func(frame string) (string, bool), live bool, stop func(), err error) {
+	if cp.Meta.Service != "" {
+		if o := r.svc.snapshot(cp.Meta.Service); o.Status == apigen.OrbServiceStatusRunning && o.Port != nil {
+			base := designDevURL(*o.Port)
+			return func(id string) (string, bool) { return base + "frames/" + id + "?" + design.ProbeQuery + "=1", true }, true, func() {}, nil
+		}
+	}
+	dist := filepath.Join(cp.Dir, "dist")
+	probe := filepath.Join(r.designSandboxDir(), "probe.js")
+	files := http.FileServer(http.Dir(dist))
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, false, nil, err
+	}
+	srv := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, q *http.Request) {
+		if q.URL.Path == "/probe.js" {
+			http.ServeFile(w, q, probe)
+			return
+		}
+		files.ServeHTTP(w, q)
+	})}
+	go func() { _ = srv.Serve(ln) }()
+	base := "http://" + ln.Addr().String() + "/"
+	return func(id string) (string, bool) {
+		if st, err := os.Stat(filepath.Join(dist, id+".html")); err != nil || !st.Mode().IsRegular() {
+			return "", false
+		}
+		return base + id + ".html?" + design.ProbeQuery + "=1", true
+	}, false, func() { _ = srv.Close() }, nil
+}
+
+// designCheckFrame 对一帧跑探针（--dump-dom），screenshot 时再截一张同尺寸的图。
+func (r *Runtime) designCheckFrame(ctx context.Context, bin, tmp, dir, id string, pageURL func(string) (string, bool), screenshot bool) designFrameRun {
+	var run designFrameRun
+	u, ok := pageURL(id)
+	if !ok {
+		run.Err = "dev 服务没在跑，也没有构建产物 dist/" + id + ".html"
+		return run
+	}
+	w, h := designFrameSize(dir, id)
+	dom, err := r.designRunChromium(ctx, bin, tmp, w, h, u, "")
+	if err == nil {
+		run.Issues, err = design.ParseProbe(dom)
+	}
+	if err != nil {
+		run.Err = err.Error()
+	}
+	if screenshot {
+		shot := filepath.Join(tmp, id+".png")
+		if _, err := r.designRunChromium(ctx, bin, tmp, w, h, u, shot); err != nil {
+			run.ShotErr = err.Error()
+		} else if b, err := os.ReadFile(shot); err != nil {
+			run.ShotErr = "Chromium 没有写出截图"
+		} else {
+			run.Image = base64.StdEncoding.EncodeToString(b)
+		}
+	}
+	return run
+}
+
+// designRunChromium 跑一次 headless Chromium：shot 为空时 --dump-dom 并返回 stdout（至多 designDOMLimit），否则
+// --screenshot=shot。参数逐项固定（URL 由 orbd 拼出，帧 id 已校验）；不加 --no-sandbox（P5：orb 内 uid 1000 不需要）。
+// 每次用自己的临时 profile（--user-data-dir、HOME），跑完删除，不碰桌面 Chromium 的 profile。
+func (r *Runtime) designRunChromium(ctx context.Context, bin, tmp string, w, h int, pageURL, shot string) ([]byte, error) {
+	profile, err := os.MkdirTemp(tmp, "profile-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(profile)
+	args := []string{
+		"--headless=new",
+		"--disable-gpu",
+		"--hide-scrollbars",
+		"--mute-audio",
+		"--no-first-run",
+		"--no-default-browser-check",
+		"--disable-extensions",
+		"--disable-sync",
+		"--disable-background-networking",
+		"--disable-component-update",
+		"--disable-dev-shm-usage",
+		"--user-data-dir=" + profile,
+		"--window-size=" + strconv.Itoa(w) + "," + strconv.Itoa(h),
+		"--force-device-scale-factor=1",
+		"--virtual-time-budget=5000",
+		"--run-all-compositor-stages-before-draw",
+	}
+	if shot != "" {
+		args = append(args, "--screenshot="+shot)
+	} else {
+		args = append(args, "--dump-dom")
+	}
+	args = append(args, pageURL)
+	cmd := exec.CommandContext(ctx, bin, args...)
+	env := r.baseEnv()
+	env["HOME"], env["XDG_CONFIG_HOME"], env["XDG_CACHE_HOME"] = profile, profile, profile
+	cmd.Env = envList(env)
+	stdout := &designCappedBuffer{limit: designDOMLimit}
+	stderr := &tailBuffer{}
+	cmd.Stdout, cmd.Stderr = stdout, stderr
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = 2 * time.Second
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("chromium 没有在时限内完成（%v）", ctx.Err())
+		}
+		msg := strings.TrimSpace(stderr.String())
+		if len(msg) > 1<<10 {
+			msg = "…" + msg[len(msg)-1<<10:]
+		}
+		return nil, fmt.Errorf("chromium 失败（%v）：%s", err, msg)
+	}
+	if stdout.over {
+		return nil, fmt.Errorf("chromium 的 --dump-dom 输出超过 %d 字节", designDOMLimit)
+	}
+	return stdout.b.Bytes(), nil
+}
+
+// designCappedBuffer 只留前 limit 字节，多出的丢弃并记下 over。
+type designCappedBuffer struct {
+	b     bytes.Buffer
+	limit int
+	over  bool
+}
+
+func (c *designCappedBuffer) Write(p []byte) (int, error) {
+	if room := c.limit - c.b.Len(); len(p) > room {
+		c.over = true
+		c.b.Write(p[:max(room, 0)])
+		return len(p), nil
+	}
+	return c.b.Write(p)
+}
+
+// ---- 工作副本 ----
 
 // designCopy 是一个工作副本：Dir 是根目录，Meta 是它的 .oryn-design.json（Meta.Port 是 dev 服务端口，
 // designDevURL(Meta.Port) 是本机地址）。

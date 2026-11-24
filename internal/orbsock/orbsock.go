@@ -99,10 +99,13 @@ const (
 	// design.turn（DesignTurnParams → {}）记下本回合，上一回合留下的脏副本先以旧回合封存；
 	// design.seal（DesignSealParams → DesignSealResult，上限 5 分钟）构建并封存本线程的每个脏副本，构建失败回
 	// build_failed（message 是 stderr 末尾 4 KiB），封存冲突原样回控制面的 conflict；
+	// design.check（DesignCheckParams → DesignCheckResult，上限 90 秒）在 orb 里用 headless Chromium 对工作副本的帧跑
+	// 设计探针（plan-m29 C8），可附每帧截图；
 	// design.status（DesignStatusParams → DesignStatusResult）列出本线程的工作副本。
 	MethodDesignOpen   = "design.open"
 	MethodDesignTurn   = "design.turn"
 	MethodDesignSeal   = "design.seal"
+	MethodDesignCheck  = "design.check"
 	MethodDesignStatus = "design.status"
 )
 
@@ -327,6 +330,41 @@ type DesignSealed struct {
 type DesignSealResult struct {
 	Sealed  []DesignSealed `json:"sealed"`
 	Skipped []string       `json:"skipped"`
+}
+
+// DesignCheckParams 是 design.check 的参数：Frames 为空时检查 src/frames/ 下全部帧（不含 _ 开头的共享外壳），
+// 否则只检查这些帧 id；Screenshot 为真时另附每帧截图。
+type DesignCheckParams struct {
+	ThreadID   string   `json:"threadId"`
+	ID         string   `json:"id"`
+	Frames     []string `json:"frames,omitempty"`
+	Screenshot bool     `json:"screenshot,omitempty"`
+}
+
+// DesignCheckIssue 是一条探针发现，与 internal/artifacts/design.Issue 同形（orbsock 不依赖 artifacts 包）：Frame 是帧
+// id，Loc 是 `src/frames/x.tsx:行:列`，Detail 是规则自带的数字或字符串。
+type DesignCheckIssue struct {
+	Rule   string          `json:"rule"`
+	Frame  string          `json:"frame,omitempty"`
+	Loc    string          `json:"loc,omitempty"`
+	Text   string          `json:"text,omitempty"`
+	Detail json.RawMessage `json:"detail,omitempty"`
+}
+
+// DesignCheckImage 是一帧的截图：Data 是 PNG 的 base64。
+type DesignCheckImage struct {
+	Frame string `json:"frame"`
+	Data  string `json:"data"`
+}
+
+// DesignCheckResult 是 design.check 的结果：Status ∈ clean | issues | unverified（任何一帧没跑成且没有发现问题时为
+// unverified，例如 orb 里没有 Chromium）；Message 说明没跑成的帧与原因（全部跑成时为空）；Images 只在 screenshot 时
+// 有内容，否则为空数组。
+type DesignCheckResult struct {
+	Status  string             `json:"status"`
+	Issues  []DesignCheckIssue `json:"issues"`
+	Images  []DesignCheckImage `json:"images"`
+	Message string             `json:"message,omitempty"`
 }
 
 // DesignStatusParams 是 design.status 的参数。

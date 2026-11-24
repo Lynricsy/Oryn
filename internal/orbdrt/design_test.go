@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,16 +22,18 @@ import (
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/artifacts"
 	"github.com/Lynricsy/Oryn/internal/artifacts/canvas"
+	"github.com/Lynricsy/Oryn/internal/artifacts/design"
 	"github.com/Lynricsy/Oryn/internal/designengine"
 	"github.com/Lynricsy/Oryn/internal/link"
 	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/orbsock"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/store/db"
+	"github.com/Lynricsy/Oryn/internal/webui"
 )
 
 // fakeVite 顶替引擎的 vite：`build` 时按 src/frames/*.tsx 写出 dist/<id>.html 与 dist/frames.json（src/FAIL 存在时往
-// stderr 写一大段再失败）；否则在 PORT 上起一个回显工作副本与 sandbox 目录的 dev 服务。
+// stderr 写一大段再失败）；否则在 PORT 上起 dev 服务：`/frames/<id>` 回帧源码原文，其余路径回显工作副本与 sandbox 目录。
 const fakeVite = `const fs = require("fs"), path = require("path"), http = require("http");
 const work = process.env.ORYN_DESIGN_DIR;
 if (process.argv.includes("build")) {
@@ -52,7 +55,13 @@ if (process.argv.includes("build")) {
   fs.writeFileSync(path.join(dist, "frames.json"), JSON.stringify(ids.map((id) => ({ id, name: id.toUpperCase(), width: 800, height: 600, device: "none", links: [] }))));
   process.exit(0);
 }
-http.createServer((q, s) => s.end("dev " + work + " " + process.env.ORYN_DESIGN_SANDBOX)).listen(Number(process.env.PORT), "127.0.0.1");
+http.createServer((q, s) => {
+  const m = /^\/frames\/([a-z0-9-]+)$/.exec(q.url.split("?")[0]);
+  if (m) {
+    try { return s.end(fs.readFileSync(path.join(work, "src", "frames", m[1] + ".tsx"))); } catch { s.statusCode = 404; return s.end(); }
+  }
+  s.end("dev " + work + " " + process.env.ORYN_DESIGN_SANDBOX);
+}).listen(Number(process.env.PORT), "127.0.0.1");
 `
 
 // designEnv 是 orbd + 一个跑真实 artifacts.Service 的假控制面：ctl artifact.call 交给 Service 的 orb 方法，source 经
@@ -376,5 +385,447 @@ func httpGet(t *testing.T, url string) string {
 	defer resp.Body.Close()
 	b, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
+	return string(b)
+}
+
+// fakeChromium 顶替 orb 里的 Chromium：参数逐行记进 <自身路径>.log；--screenshot= 时把「PNG <路径> <窗口>」写进
+// 截图文件；否则取页面（静态产物页另要求同源 ./probe.js 可取），把页面里 `probe: [...]` 标记的 issues 写成探针结果
+// 节点打到 stdout（页面含 NOPROBE 时不写结果节点）。
+const fakeChromium = `#!/usr/bin/env node
+const fs = require("fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(__filename + ".log", JSON.stringify(args) + "\n");
+const url = args[args.length - 1];
+const size = (args.find((a) => a.startsWith("--window-size=")) || "").slice(14);
+(async () => {
+  const body = await (await fetch(url)).text();
+  const shot = args.find((a) => a.startsWith("--screenshot="));
+  if (shot) {
+    fs.writeFileSync(shot.slice(13), "PNG " + new URL(url).pathname + " " + size);
+    return;
+  }
+  if (new URL(url).pathname.endsWith(".html") && !(await fetch(new URL("./probe.js", url))).ok) {
+    process.stdout.write("<html><body>no probe.js</body></html>");
+    return;
+  }
+  if (body.includes("NOPROBE")) {
+    process.stdout.write("<html><body>nothing</body></html>");
+    return;
+  }
+  const m = /probe: (\[.*\])/.exec(body);
+  process.stdout.write('<html><body><div id="root"></div><script id="oryn-probe" type="application/json">{"v":1,"issues":' + (m ? m[1] : "[]") + "}</script></body></html>");
+})().catch((e) => { process.stderr.write(String(e)); process.exit(1); });
+`
+
+// fakeNpm 顶替 PATH 上的 npm：`install --package-lock-only`（WriteProjectLock）按当前目录的 package.json 写出根条目
+// 一致的锁（依赖里有 boom 时输出一大段后失败）；其余 install（src/ 下装设计依赖）建 node_modules 并（重）写
+// package-lock.json。
+const fakeNpm = `#!/usr/bin/env node
+const fs = require("fs");
+const args = process.argv.slice(2);
+const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+const deps = { ...(pkg.devDependencies || {}), ...(pkg.dependencies || {}) };
+if (args.includes("--package-lock-only")) {
+  if (deps.boom) {
+    process.stdout.write("x".repeat(6000) + "\nnpm ERR! 404 boom is not in this registry\n");
+    process.exit(1);
+  }
+  fs.writeFileSync("package-lock.json", JSON.stringify({ name: pkg.name, lockfileVersion: 3, packages: { "": { name: pkg.name, dependencies: pkg.dependencies } } }));
+  process.exit(0);
+}
+fs.mkdirSync("node_modules", { recursive: true });
+fs.writeFileSync("package-lock.json", JSON.stringify({ name: "design", lockfileVersion: 3, deps }) + "\n");
+`
+
+// writeExe 在 dir 下写一个可执行脚本，返回它的路径。
+func writeExe(t *testing.T, dir, name, content string) string {
+	t.Helper()
+	p := filepath.Join(dir, name)
+	require.NoError(t, os.WriteFile(p, []byte(content), 0o755))
+	return p
+}
+
+// chromiumCalls 读假 Chromium 记下的每次调用参数。
+func chromiumCalls(t *testing.T, bin string) [][]string {
+	t.Helper()
+	b, err := os.ReadFile(bin + ".log")
+	if os.IsNotExist(err) {
+		return nil
+	}
+	require.NoError(t, err)
+	var out [][]string
+	for line := range strings.Lines(string(b)) {
+		var args []string
+		require.NoError(t, json.Unmarshal([]byte(line), &args))
+		out = append(out, args)
+	}
+	return out
+}
+
+func (e *designEnv) check(p orbsock.DesignCheckParams) (orbsock.DesignCheckResult, error) {
+	var res orbsock.DesignCheckResult
+	p.ThreadID = testThread
+	err := e.call(orbsock.MethodDesignCheck, p, &res)
+	return res, err
+}
+
+func (e *designEnv) status(id string) orbsock.DesignStatus {
+	e.t.Helper()
+	var st orbsock.DesignStatusResult
+	require.NoError(e.t, e.call(orbsock.MethodDesignStatus, orbsock.DesignStatusParams{ThreadID: testThread}, &st))
+	for _, d := range st.Designs {
+		if d.ID == id {
+			return d
+		}
+	}
+	e.t.Fatalf("design.status has no %s", id)
+	return orbsock.DesignStatus{}
+}
+
+const clippedIssue = `{"rule":"text-clipped","loc":"src/frames/home.tsx:3:5","text":"立即开始","detail":64}`
+
+// M29 Q1：design.check 用 orb 里的 Chromium 对 dev 服务上的帧跑探针：汇总各帧 issues（带帧 id）、窗口取帧声明的尺寸
+// （缺省 1280×800）、参数里没有 --no-sandbox 且每次用自己的 --user-data-dir；frames 过滤、未知帧 invalid_params、
+// screenshot 回每帧 PNG；全帧检查的结果缓存后由 design.status 反映、封存时写进新版本的 check_json，局部检查不进缓存；
+// 改源码后缓存失效（封存不带 check）；探针没跑成的帧让结果为 unverified。
+func TestDesignCheck(t *testing.T) {
+	e := newDesignEnv(t)
+	ctx := context.Background()
+	bin := writeExe(t, t.TempDir(), "chromium", fakeChromium)
+	e.rt.design.chromium = bin
+
+	res := e.open(orbsock.DesignOpenParams{ThreadID: testThread, Title: "检查"})
+	id := res.ID
+	writeSrc(t, res.Dir, "src/frames/home.tsx", "export const frame = { name: \"首页\", width: 390, height: 844 };\n// probe: ["+clippedIssue+"]\nexport default () => <button>立即开始</button>")
+	writeSrc(t, res.Dir, "src/frames/about.tsx", "export default () => <p>about</p>")
+	writeSrc(t, res.Dir, "src/frames/_layout.tsx", "export default ({children}) => children")
+
+	got, err := e.check(orbsock.DesignCheckParams{ID: id})
+	require.NoError(t, err)
+	assert.Equal(t, "issues", got.Status)
+	require.Len(t, got.Issues, 1)
+	assert.Equal(t, orbsock.DesignCheckIssue{Rule: "text-clipped", Frame: "home", Loc: "src/frames/home.tsx:3:5", Text: "立即开始", Detail: json.RawMessage(`64`)}, got.Issues[0])
+	assert.Empty(t, got.Images)
+	assert.Empty(t, got.Message)
+	calls := chromiumCalls(t, bin)
+	require.Len(t, calls, 2, "_layout 不是帧")
+	sizes := map[string]string{}
+	for _, args := range calls {
+		assert.NotContains(t, args, "--no-sandbox")
+		assert.Contains(t, args, "--headless=new")
+		assert.Contains(t, args, "--dump-dom")
+		assert.Contains(t, args, "--virtual-time-budget=5000")
+		var profile, size string
+		for _, a := range args {
+			if v, ok := strings.CutPrefix(a, "--user-data-dir="); ok {
+				profile = v
+			}
+			if v, ok := strings.CutPrefix(a, "--window-size="); ok {
+				size = v
+			}
+		}
+		require.NotEmpty(t, profile)
+		assert.NoDirExists(t, profile, "临时 profile 跑完删掉")
+		url := args[len(args)-1]
+		assert.Regexp(t, `^http://127\.0\.0\.1:\d+/frames/(home|about)\?__oryn_probe=1$`, url)
+		sizes[url[strings.LastIndex(url, "/")+1:strings.Index(url, "?")]] = size
+	}
+	assert.Equal(t, map[string]string{"home": "390,844", "about": "1280,800"}, sizes)
+
+	// design.status 反映这次全帧检查
+	st := e.status(id)
+	require.NotNil(t, st.Check)
+	assert.Equal(t, apigen.ArtifactCheckStatus("issues"), st.Check.Status)
+	require.Len(t, st.Check.Issues, 1)
+	assert.Equal(t, "home", *st.Check.Issues[0].Frame)
+
+	// frames 过滤：只跑 about；局部检查不进缓存
+	got, err = e.check(orbsock.DesignCheckParams{ID: id, Frames: []string{"about"}})
+	require.NoError(t, err)
+	assert.Equal(t, "clean", got.Status)
+	assert.Empty(t, got.Issues)
+	assert.Len(t, chromiumCalls(t, bin), 3)
+	assert.Equal(t, apigen.ArtifactCheckStatus("issues"), e.status(id).Check.Status)
+
+	// 未知帧
+	_, err = e.check(orbsock.DesignCheckParams{ID: id, Frames: []string{"home", "nope"}})
+	var se *orbsock.Error
+	require.ErrorAs(t, err, &se)
+	assert.Equal(t, orbsock.CodeInvalidParams, se.Code)
+	assert.Contains(t, se.Message, "nope")
+
+	// screenshot：每帧一张同尺寸的 PNG
+	got, err = e.check(orbsock.DesignCheckParams{ID: id, Screenshot: true})
+	require.NoError(t, err)
+	require.Len(t, got.Images, 2)
+	imgs := map[string]string{}
+	for _, im := range got.Images {
+		b, err := base64.StdEncoding.DecodeString(im.Data)
+		require.NoError(t, err)
+		imgs[im.Frame] = string(b)
+	}
+	assert.Equal(t, map[string]string{"about": "PNG /frames/about 1280,800", "home": "PNG /frames/home 390,844"}, imgs)
+	for _, args := range chromiumCalls(t, bin)[3:] {
+		assert.NotContains(t, args, "--no-sandbox")
+	}
+
+	// 封存带上与当前源码一致的缓存检查：新版本的 check_json 被写入，fingerprint = 新版本 src/ 的指纹
+	sealed, err := e.seal("turn-1")
+	require.NoError(t, err)
+	require.Len(t, sealed.Sealed, 1)
+	v, err := e.s.Version(ctx, id, sealed.Sealed[0].Version)
+	require.NoError(t, err)
+	require.NotEmpty(t, v.Check, "check_json 被写入")
+	var chk design.Check
+	require.NoError(t, json.Unmarshal(v.Check, &chk))
+	assert.Equal(t, design.CheckIssues, chk.Status)
+	require.Len(t, chk.Issues, 1)
+	assert.Equal(t, "home", chk.Issues[0].Frame)
+	assert.Equal(t, meta2Hash(t, res.Dir), chk.Fingerprint)
+
+	// 检查之后又改了源码：缓存失效，封存不带 check
+	writeSrc(t, res.Dir, "src/frames/about.tsx", "export default () => <p>about 2</p>")
+	assert.Equal(t, apigen.ArtifactCheckStatus("stale"), e.status(id).Check.Status)
+	sealed, err = e.seal("turn-1")
+	require.NoError(t, err)
+	v, err = e.s.Version(ctx, id, sealed.Sealed[0].Version)
+	require.NoError(t, err)
+	assert.Empty(t, v.Check)
+
+	// 页面里没有探针结果：该帧没跑成，整体 unverified 并说明
+	writeSrc(t, res.Dir, "src/frames/about.tsx", "NOPROBE")
+	writeSrc(t, res.Dir, "src/frames/home.tsx", "export default () => <p>ok</p>")
+	got, err = e.check(orbsock.DesignCheckParams{ID: id})
+	require.NoError(t, err)
+	assert.Equal(t, "unverified", got.Status)
+	assert.Contains(t, got.Message, "未检查 about：页面里没有探针结果")
+}
+
+// M29 Q1：没有 Chromium 时 design.check 回 unverified 并说明（不报错）；没有工作副本（别的线程、没 open 过）回 no_design。
+func TestDesignCheckUnavailable(t *testing.T) {
+	e := newDesignEnv(t)
+	e.rt.design.chromium = filepath.Join(t.TempDir(), "chromium") // 不存在
+	res := e.open(orbsock.DesignOpenParams{ThreadID: testThread})
+	writeSrc(t, res.Dir, "src/frames/home.tsx", "export default () => <p>x</p>")
+
+	got, err := e.check(orbsock.DesignCheckParams{ID: res.ID, Screenshot: true})
+	require.NoError(t, err)
+	assert.Equal(t, "unverified", got.Status)
+	assert.Empty(t, got.Issues)
+	assert.Empty(t, got.Images)
+	assert.Contains(t, got.Message, "没有 Chromium")
+	assert.Equal(t, apigen.ArtifactCheckStatus("unverified"), e.status(res.ID).Check.Status)
+
+	var se *orbsock.Error
+	err = e.call(orbsock.MethodDesignCheck, orbsock.DesignCheckParams{ThreadID: "T-other", ID: res.ID}, nil)
+	require.ErrorAs(t, err, &se)
+	assert.Equal(t, orbsock.CodeNoDesign, se.Code)
+	_, err = e.check(orbsock.DesignCheckParams{ID: "art_missing"})
+	require.ErrorAs(t, err, &se)
+	assert.Equal(t, orbsock.CodeNoDesign, se.Code)
+}
+
+// M29 Q1：dev 服务没在跑时 design.check 在 127.0.0.1 临时起静态服务提供 dist/ 与 sandbox 的 probe.js；结果照常汇总，
+// 说明检查的是构建产物，不进缓存。没有 probe.js 时探针结果缺失（unverified）。
+func TestDesignCheckStatic(t *testing.T) {
+	e := newDesignEnv(t)
+	bin := writeExe(t, t.TempDir(), "chromium", fakeChromium)
+	e.rt.design.chromium = bin
+	res := e.open(orbsock.DesignOpenParams{ThreadID: testThread})
+	writeSrc(t, res.Dir, "src/frames/home.tsx", "// probe: ["+clippedIssue+"]\nexport default () => <p>x</p>")
+	_, err := e.seal("turn-1")
+	require.NoError(t, err)
+	_, err = e.rt.svc.Stop(designServiceName(res.ID), false)
+	require.NoError(t, err)
+	sandbox := filepath.Join(e.home, ".oryn", "design", "sandbox")
+	require.NoError(t, os.MkdirAll(sandbox, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(sandbox, "probe.js"), []byte("/* probe */"), 0o644))
+
+	got, err := e.check(orbsock.DesignCheckParams{ID: res.ID})
+	require.NoError(t, err)
+	assert.Equal(t, "issues", got.Status)
+	require.Len(t, got.Issues, 1)
+	assert.Equal(t, "home", got.Issues[0].Frame)
+	assert.Contains(t, got.Message, "dev 服务没在跑")
+	calls := chromiumCalls(t, bin)
+	require.Len(t, calls, 1)
+	assert.Regexp(t, `^http://127\.0\.0\.1:\d+/home\.html\?__oryn_probe=1$`, calls[0][len(calls[0])-1])
+	st := e.status(res.ID)
+	assert.Nil(t, st.Check, "静态产物上的检查不进缓存")
+
+	require.NoError(t, os.Remove(filepath.Join(sandbox, "probe.js")))
+	got, err = e.check(orbsock.DesignCheckParams{ID: res.ID})
+	require.NoError(t, err)
+	assert.Equal(t, "unverified", got.Status)
+}
+
+// M29 Q1 / D2：有 src/package.json 时封存装依赖后重读 src/（npm 新建的 src/package-lock.json 进本次封存，下一次封存
+// 不会因为它多出一版），vite build 之后写出 dist/_project/ 的工程锁并一并封存；工程锁生成失败回 build_failed 带 npm
+// 输出尾、不落版本。
+func TestDesignSealDepsAndProjectLock(t *testing.T) {
+	npmDir := t.TempDir()
+	writeExe(t, npmDir, "npm", fakeNpm)
+	t.Setenv("PATH", npmDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	e := newDesignEnv(t)
+	ctx := context.Background()
+	res := e.open(orbsock.DesignOpenParams{ThreadID: testThread})
+	id := res.ID
+	writeSrc(t, res.Dir, "src/package.json", `{"dependencies":{"left-pad":"1.3.0"}}`)
+	writeSrc(t, res.Dir, "src/frames/home.tsx", "export default () => <p>x</p>")
+
+	sealed, err := e.seal("turn-1")
+	require.NoError(t, err)
+	require.Equal(t, []orbsock.DesignSealed{{ID: id, Version: 2}}, sealed.Sealed)
+	files, err := e.s.Files(ctx, id, 2)
+	require.NoError(t, err)
+	var paths []string
+	for _, f := range files {
+		paths = append(paths, f.Path)
+	}
+	assert.Contains(t, paths, "src/package-lock.json", "npm 新建的锁进了这次封存")
+	assert.Contains(t, paths, "dist/_project/package.json")
+	assert.Contains(t, paths, "dist/_project/package-lock.json")
+	assert.NotContains(t, strings.Join(paths, "\n"), "node_modules")
+	lock := readVersion(t, e.s, id, 2, "dist/_project/package-lock.json")
+	pkg := readVersion(t, e.s, id, 2, "dist/_project/package.json")
+	require.NoError(t, designengine.VerifyProjectLock([]byte(`{"dependencies":{"left-pad":"1.3.0"}}`), []byte(lock)))
+	assert.Contains(t, pkg, `"left-pad": "1.3.0"`)
+
+	sealed, err = e.seal("turn-1")
+	require.NoError(t, err)
+	assert.Empty(t, sealed.Sealed, "锁已在上一版里，不再多出一版")
+	assert.Equal(t, []string{id}, sealed.Skipped)
+	assert.Equal(t, 2, e.head(id).Version)
+
+	// 工程锁生成失败：build_failed，带 npm 输出尾，不落版本
+	writeSrc(t, res.Dir, "src/package.json", `{"dependencies":{"boom":"1.0.0"}}`)
+	_, err = e.seal("turn-1")
+	var se *orbsock.Error
+	require.ErrorAs(t, err, &se)
+	assert.Equal(t, orbsock.CodeBuildFailed, se.Code)
+	assert.Contains(t, se.Message, "npm ERR! 404 boom")
+	assert.Less(t, len(se.Message), 4<<10+300)
+	assert.Equal(t, 2, e.head(id).Version)
+}
+
+// M29 I2 / K5：design.turn 开新回合时把副本与 head 对账，不必再调 design.open——查看器里恢复出的新版本（干净且落后
+// 的副本）重新物化进工作副本并重启 dev 服务；脏副本保留本地改动。
+func TestDesignTurnReconcile(t *testing.T) {
+	e := newDesignEnv(t)
+	ctx := context.Background()
+	res := e.open(orbsock.DesignOpenParams{ThreadID: testThread})
+	id := res.ID
+	require.NoError(t, e.call(orbsock.MethodDesignTurn, orbsock.DesignTurnParams{ThreadID: testThread, TurnID: "turn-1"}, nil))
+	writeSrc(t, res.Dir, "src/frames/home.tsx", "export default () => <p>one</p>")
+	_, err := e.seal("turn-1")
+	require.NoError(t, err)
+	writeSrc(t, res.Dir, "src/frames/home.tsx", "export default () => <p>two</p>")
+	_, err = e.seal("turn-1")
+	require.NoError(t, err)
+	require.Equal(t, 3, e.head(id).Version)
+
+	svc := designServiceName(id)
+	pid := e.rt.svc.snapshot(svc).Pid
+	require.NotNil(t, pid)
+	_, err = e.s.RestoreVersion(ctx, id, 2, 3, artifacts.Author{Label: "user"})
+	require.NoError(t, err)
+	require.Equal(t, 4, e.head(id).Version)
+
+	require.NoError(t, e.call(orbsock.MethodDesignTurn, orbsock.DesignTurnParams{ThreadID: testThread, TurnID: "turn-2"}, nil))
+	b, err := os.ReadFile(filepath.Join(res.Dir, "src", "frames", "home.tsx"))
+	require.NoError(t, err)
+	assert.Equal(t, "export default () => <p>one</p>", string(b), "工作副本是恢复后的源码")
+	meta, err := readDesignMeta(res.Dir)
+	require.NoError(t, err)
+	assert.Equal(t, 4, meta.BaseVersion)
+	assert.False(t, e.status(id).Dirty)
+	require.Eventually(t, func() bool {
+		o := e.rt.svc.snapshot(svc)
+		return o.Status == apigen.OrbServiceStatusRunning && o.Pid != nil && *o.Pid != *pid
+	}, 20*time.Second, 20*time.Millisecond, "dev 服务重启")
+	assert.Equal(t, "export default () => <p>one</p>", httpGet(t, designDevURL(meta.Port)+"frames/home"))
+
+	// 脏副本：上一回合的封存失败（构建坏了）后，design.turn 的对账保留本地改动
+	writeSrc(t, res.Dir, "src/frames/home.tsx", "export default () => <p>mine</p>")
+	writeSrc(t, res.Dir, "src/FAIL", "1")
+	_, err = e.s.RestoreVersion(ctx, id, 3, 4, artifacts.Author{Label: "user"})
+	require.NoError(t, err)
+	require.Equal(t, 5, e.head(id).Version)
+	require.NoError(t, e.call(orbsock.MethodDesignTurn, orbsock.DesignTurnParams{ThreadID: testThread, TurnID: "turn-3"}, nil))
+	b, err = os.ReadFile(filepath.Join(res.Dir, "src", "frames", "home.tsx"))
+	require.NoError(t, err)
+	assert.Equal(t, "export default () => <p>mine</p>", string(b), "脏改动保留")
+	assert.FileExists(t, filepath.Join(res.Dir, "src", "FAIL"))
+	meta, err = readDesignMeta(res.Dir)
+	require.NoError(t, err)
+	assert.Equal(t, 4, meta.BaseVersion)
+	assert.Equal(t, 5, e.head(id).Version)
+}
+
+// 真 Chromium（ORYN_TEST_CHROMIUM=1，且嵌入的 Web 产物里有 sandbox/probe.js）：dev 服务停掉后对静态 dist/ 起临时服务，
+// 页面里一个 overflow:hidden 截断的按钮报出 text-clipped 与它的 loc，screenshot 回一张 PNG。宿主机以 root 跑时经包装
+// 脚本降到 nobody（orb 里 uid 1000 直接跑，不加 --no-sandbox）。
+func TestDesignCheckChromium(t *testing.T) {
+	if os.Getenv("ORYN_TEST_CHROMIUM") != "1" {
+		t.Skip("set ORYN_TEST_CHROMIUM=1 to run Chromium integration tests")
+	}
+	probe, ok := webui.Asset("sandbox/probe.js")
+	if !ok {
+		t.Fatal("嵌入的 Web 产物里没有 sandbox/probe.js：先 make web")
+	}
+	e := newDesignEnv(t)
+	if os.Geteuid() == 0 {
+		var real string
+		for _, p := range designChromiumPaths {
+			if _, err := os.Stat(p); err == nil {
+				real = p
+				break
+			}
+		}
+		require.NotEmpty(t, real, "no chromium")
+		// root 下 Chromium 不加 --no-sandbox 起不来：把本次的 profile 与临时目录交给 nobody 后以 nobody 执行原参数
+		e.rt.design.chromium = writeExe(t, t.TempDir(), "chromium", `#!/bin/sh
+for a in "$@"; do case "$a" in --user-data-dir=*) d="${a#--user-data-dir=}"; chown -R nobody "$d" "$(dirname "$d")";; esac; done
+exec setpriv --reuid=nobody --regid=65534 --clear-groups `+real+` "$@"
+`)
+	}
+	res := e.open(orbsock.DesignOpenParams{ThreadID: testThread})
+	writeSrc(t, res.Dir, "src/frames/home.tsx", "export const frame = { width: 390, height: 844 };\nexport default () => null")
+	_, err := e.rt.svc.Stop(designServiceName(res.ID), false)
+	require.NoError(t, err)
+	sandbox := filepath.Join(e.home, ".oryn", "design", "sandbox")
+	require.NoError(t, os.MkdirAll(sandbox, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(sandbox, "probe.js"), probe, 0o644))
+	const button = `<button data-oryn-loc="src/frames/home.tsx:7:9" style="width:80px;height:32px;overflow:hidden;white-space:nowrap;` +
+		`background:#0f766e;color:#ffffff;border:0">立即开始免费试用</button>`
+	// 模拟引擎入口：页面脚本渲染出按钮后加载同源 ./probe.js
+	writeSrc(t, res.Dir, "dist/home.html", `<!doctype html><html><head><meta charset="utf-8"></head><body><div id="root"></div><script>`+
+		`document.getElementById("root").innerHTML = `+designJSString(button)+`;`+
+		`if (new URLSearchParams(location.search).get("__oryn_probe") === "1") {`+
+		` const s = document.createElement("script"); s.src = new URL("./probe.js", location.href).href; document.head.append(s); }`+
+		`</script></body></html>`)
+
+	got, err := e.check(orbsock.DesignCheckParams{ID: res.ID, Screenshot: true})
+	require.NoError(t, err)
+	t.Logf("design.check: status=%s message=%q issues=%+v images=%d", got.Status, got.Message, got.Issues, len(got.Images))
+	assert.Equal(t, "issues", got.Status)
+	var clipped *orbsock.DesignCheckIssue
+	for i := range got.Issues {
+		if got.Issues[i].Rule == "text-clipped" {
+			clipped = &got.Issues[i]
+		}
+	}
+	require.NotNil(t, clipped)
+	assert.Equal(t, "home", clipped.Frame)
+	assert.Equal(t, "src/frames/home.tsx:7:9", clipped.Loc)
+	require.Len(t, got.Images, 1)
+	png, err := base64.StdEncoding.DecodeString(got.Images[0].Data)
+	require.NoError(t, err)
+	assert.True(t, bytes.HasPrefix(png, []byte("\x89PNG\r\n\x1a\n")), "PNG")
+}
+
+// designJSString 把 s 写成 JS 字符串字面量（JSON 字符串即合法的 JS 字符串）。
+func designJSString(s string) string {
+	b, _ := json.Marshal(s)
 	return string(b)
 }
