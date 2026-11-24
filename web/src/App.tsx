@@ -102,6 +102,12 @@ const BoxesPage = lazy(() =>
 const BoxPage = lazy(() =>
 	import("./pages/BoxPage").then((m) => ({ default: m.BoxPage })),
 );
+// Provider 总览：节点状态、Orb 计数、内存/存储/CPU 监控面板
+const ProvidersOverviewPage = lazy(() =>
+	import("./pages/ProvidersOverviewPage").then((m) => ({
+		default: m.ProvidersOverviewPage,
+	})),
+);
 
 // 不常用的页面（认证、设置、匿名分享页）按需加载
 const SetupPage = lazy(() =>
@@ -219,6 +225,7 @@ export function App(): ReactNode {
 						<Route path="artifacts/open/:slug" element={<ArtifactOpenPage />} />
 						<Route path="boxes" element={<BoxesPage />} />
 						<Route path="boxes/:boxId" element={<BoxPage />} />
+						<Route path="providers" element={<ProvidersOverviewPage />} />
 						{/* 项目管理搬到了项目分区（M9.6） */}
 						<Route
 							path="settings/projects"

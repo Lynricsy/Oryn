@@ -20,6 +20,7 @@ export const qk = {
 	archivedProjects: ["projects", { archived: true }] as const,
 	projectSnapshots: (id: string) => ["projects", id, "snapshots"] as const,
 	providers: ["providers"] as const,
+	providersOverview: ["providers", "overview"] as const,
 	secrets: ["secrets"] as const,
 	gitIdentity: ["settings", "git-identity"] as const,
 	agentIdentity: ["settings", "agent-identity"] as const,
@@ -173,6 +174,16 @@ export function useProviders() {
 		queryKey: qk.providers,
 		queryFn: () => unwrap(api.GET("/api/v1/providers")),
 		staleTime: 15_000,
+	});
+}
+
+/** Provider 算力与资源总览（每 15 秒自动刷新，与 provider 心跳周期对齐）。 */
+export function useProvidersOverview() {
+	return useQuery({
+		queryKey: qk.providersOverview,
+		queryFn: () => unwrap(api.GET("/api/v1/providers/overview")),
+		staleTime: 5_000,
+		refetchInterval: 15_000,
 	});
 }
 

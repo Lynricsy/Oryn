@@ -40,7 +40,7 @@ function isLocalPath(path: unknown): path is string {
 	);
 }
 
-/** `/assistant…` → assistant；`/projects…` → projects；`/settings…`、`/stats…`、`/artifacts…`、`/boxes…` → more；其余（`/`、`/t/…`、`/space/…`、`/inbox`）→ threads。 */
+/** `/assistant…` → assistant；`/projects…` → projects；`/settings…`、`/stats…`、`/artifacts…`、`/boxes…`、`/providers…` → more；其余（`/`、`/t/…`、`/space/…`、`/inbox`）→ threads。 */
 export function sectionOf(pathname: string): SectionId {
 	const p = pathOnly(pathname);
 	if (under(p, "/assistant")) return "assistant";
@@ -49,7 +49,8 @@ export function sectionOf(pathname: string): SectionId {
 		under(p, "/settings") ||
 		under(p, "/stats") ||
 		under(p, "/artifacts") ||
-		under(p, "/boxes")
+		under(p, "/boxes") ||
+		under(p, "/providers")
 	)
 		return "more";
 	return "threads";

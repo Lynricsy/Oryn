@@ -407,6 +407,13 @@ export function CommandPalette(): ReactNode {
 				() => go("/boxes"),
 			),
 			action(
+				"providers-overview",
+				"gauge",
+				t("palette.actions.providersOverview"),
+				"providers overview orbs memory storage cpu disk 节点 算力 内存 存储",
+				() => go("/providers"),
+			),
+			action(
 				"settings",
 				"settings",
 				t("palette.actions.settings"),

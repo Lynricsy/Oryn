@@ -83,6 +83,7 @@ import { MockMemory } from "./memory";
 import { handleNotifyFetch } from "./notify";
 import { handleOrbFetch } from "./orbfs";
 import { MockOwnerMemory } from "./owner-memory";
+import { buildMockProvidersOverview } from "./providers-overview";
 import { MockRepo } from "./repo";
 import { handleSearchFetch } from "./search";
 import { redact, SHARE_RULES } from "./share-scan";
@@ -2021,6 +2022,15 @@ export class MockServer {
 		if (ownerMemoryRes) return ownerMemoryRes;
 		const runnerRes = await this.handleRunnerFetch(p, m, body);
 		if (runnerRes) return runnerRes;
+		if (p === "providers/overview" && m === "GET")
+			return json(
+				buildMockProvidersOverview({
+					providers: () => providers,
+					orbs: () => [...this.orbs.values()],
+					threads: () => [...this.threads.values()],
+					projects: () => this.projects,
+				}),
+			);
 		if (p === "providers" && m === "GET") return json({ providers });
 		if (p === "providers" && m === "POST") {
 			const b = await body();

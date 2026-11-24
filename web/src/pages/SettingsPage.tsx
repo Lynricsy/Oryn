@@ -19,7 +19,7 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { Navigate, useNavigate } from "react-router";
+import { Link, Navigate, useNavigate } from "react-router";
 import { noteAgentConfigWrite } from "../api/agent-config-queries";
 import { useBrowserRelayClients } from "../api/browser-relay-queries";
 import { api, type Schemas, unwrap } from "../api/client";
@@ -392,7 +392,19 @@ function ProvidersSettings() {
 				)}
 				<ErrorText error={create.error} />
 			</Card>
-			<Card title={t("providers.title")} icon="box">
+			<Card
+				title={t("providers.title")}
+				icon="box"
+				action={
+					<Link
+						to="/providers"
+						className="inline-flex h-7 items-center gap-1 rounded-md border border-border bg-panel px-2.5 font-medium text-fg text-xs shadow-xs transition-colors hover:bg-hover"
+					>
+						<Icon name="gauge" size={13} />
+						{t("providers.openOverview")}
+					</Link>
+				}
+			>
 				{providers.isPending && <Spinner />}
 				<ErrorText error={providers.error ?? del.error} />
 				<RowList>

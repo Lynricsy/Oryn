@@ -55,6 +55,14 @@ export const MORE_ENTRIES: readonly MoreEntry[] = [
 		labelKey: "nav.boxes",
 		to: "/boxes",
 	},
+	{
+		// Provider 算力与资源总览：节点健康、Orb 计数、内存/存储/CPU 监控面板
+		key: "providers-overview",
+		group: "overview",
+		icon: "gauge",
+		labelKey: "nav.providersOverview",
+		to: "/providers",
+	},
 	// Agent（M13）：omp 配置的表单化子页；「高级」是原始文件浏览器，放在组末
 	{
 		key: "agent-skills",
