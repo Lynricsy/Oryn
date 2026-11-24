@@ -42,6 +42,8 @@ type area struct {
 	Boxes *BoxesDeps
 	// Research 是 M26 全局助手的后台研究（research.go）；nil 时回 501。
 	Research *ResearchDeps
+	// BrowserRelay 是 M27 客户端浏览器中继（browser_relay.go）；nil 时回 501。
+	BrowserRelay *BrowserRelayDeps
 }
 
 // PortalDeps 是 portal 限时公开接口（portals.go）的依赖。

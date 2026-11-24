@@ -23,6 +23,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/attachments"
 	"github.com/Lynricsy/Oryn/internal/auth"
 	"github.com/Lynricsy/Oryn/internal/boxes"
+	"github.com/Lynricsy/Oryn/internal/browserrelay"
 	"github.com/Lynricsy/Oryn/internal/cfgsync"
 	"github.com/Lynricsy/Oryn/internal/config"
 	"github.com/Lynricsy/Oryn/internal/coord"
@@ -118,6 +119,8 @@ type Server struct {
 	ProjectHomes *agentcfg.ProjectHomes
 	// Desktop 是浏览器 Profile 与桌面 WS（M8）。
 	Desktop *desktop.Service
+	// BrowserRelay 是 M27 客户端浏览器中继控制面（扩展直连 WS + orb 流桥接）。
+	BrowserRelay *browserrelay.Service
 	// Host 是协调宿主（M9，内置 provider @host）；Schedules 是定时；Coord 是 Space / 助手 / 宿主工具。
 	Host      *coordhost.Host
 	Schedules *schedule.Service
@@ -306,6 +309,11 @@ func (s *Server) init(ctx context.Context) error {
 	// 吊销时同时作废该主体未兑换的 WS 票据，连接登记后再向库复核一次主体（H3）
 	s.Auth.Subscribe(s.Tickets.Revoke)
 	s.Hub = realtime.New(s.Threads, s.Tickets, revocations{s.Auth}, s.Auth)
+	// M27：客户端浏览器中继（须在 orb link / 鉴权订阅之前挂钩）
+	s.BrowserRelay = browserrelay.New(browserrelay.Config{Valid: s.Auth, Hub: s.Hub, Deliver: s.Threads}, s.Store, s.Orbs, s.Tickets)
+	s.closers = append(s.closers, s.BrowserRelay.Close)
+	s.Auth.Subscribe(s.BrowserRelay.Revoke)
+	s.Orbs.Subscribe(s.BrowserRelay.OnOrbEvent)
 	if s.Artifacts, err = artifacts.New(artifacts.Config{DataDir: cfg.DataDir, PublicURL: cfg.PublicURL}, s.Store, s.Hub); err != nil {
 		return err
 	}
@@ -497,6 +505,7 @@ func (s *Server) init(ctx context.Context) error {
 	mounts["/s/*"] = s.Share.PageHandler(webui.Handler(base.FrameSrc()))
 	mounts["/f/*"] = s.Share.FileHandler()
 	mounts[desktop.WSPath] = s.Desktop.WSHandler()
+	mounts[browserrelay.WSPath] = s.BrowserRelay.WSHandler()
 	mounts[sshgw.TerminalWSPath] = s.SSH.TerminalHandler(s.Tickets, s.Auth)
 	// M16 模型中转：Hindsight 凭中转令牌调用，不经 /api/v1 的鉴权组
 	mounts[memory.RelayPathPrefix+"*"] = s.Memory.RelayHandler()
@@ -565,6 +574,7 @@ func (s *Server) init(ctx context.Context) error {
 	s.API.Shares = &api.ShareDeps{Service: s.Share}
 	s.API.Notify = &api.NotifyDeps{Service: s.Notify}
 	s.API.Desktop = &api.DesktopDeps{Service: s.Desktop}
+	s.API.BrowserRelay = &api.BrowserRelayDeps{Service: s.BrowserRelay}
 	s.API.Coord = &api.CoordDeps{Service: s.Coord, Host: s.Host}
 	s.API.Research = &api.ResearchDeps{Service: s.Research}
 	s.API.Schedules = &api.ScheduleDeps{Service: s.Schedules}

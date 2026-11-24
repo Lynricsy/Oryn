@@ -741,6 +741,25 @@ func (h *Hub) PlanResolved(threadID string) {
 // Orb 实现 threads.Sink。
 func (h *Hub) Orb(o apigen.Orb) { h.toAll(map[string]any{"type": "orb", "orb": o}) }
 
+// BrowserRelayState 推送线程的本机浏览器绑定与审批状态变更（M27）。
+func (h *Hub) BrowserRelayState(state apigen.ThreadBrowserRelay) {
+	h.toThread(state.ThreadID, apigen.WsServerBrowserRelayState{
+		Type:  apigen.WsServerBrowserRelayStateType("browser_relay.state"),
+		State: state,
+	})
+}
+
+// BrowserRelayClients 广播当前在线的本机浏览器扩展客户端列表（M27）。
+func (h *Hub) BrowserRelayClients(clients []apigen.BrowserRelayClient) {
+	if clients == nil {
+		clients = []apigen.BrowserRelayClient{}
+	}
+	h.toAll(apigen.WsServerBrowserRelayClients{
+		Type:    apigen.WsServerBrowserRelayClientsType("browser_relay.clients"),
+		Clients: clients,
+	})
+}
+
 // TermOutput 实现 threads.Sink：线上仍是普通的 `frame` 消息，但只发给开启了 term.watch 的订阅。
 // 连接待发超过 TermLag 时丢弃本帧、关闭其观看并发一条 term.lagged（客户端经 terminal_snapshot 重同步后重新开启）。
 func (h *Hub) TermOutput(threadID string, frame json.RawMessage) {
