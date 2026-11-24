@@ -3,8 +3,10 @@ package artifacts
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -554,8 +556,9 @@ func (s *Service) readRange(ctx context.Context, id string, version int, path st
 
 // ---- design_head ----
 
-// agentDesignHead 是 design_head：最新版本号、它的 check_json 原文与 src/**、dist/** 的文件摘要。只认设计画布与还没有
-// 画框的画布（design.open 接管时用它校验）。
+// agentDesignHead 是 design_head：最新版本号、它的 check_json 原文与 src/**、dist/** 的文件摘要，以及探针的审美配置
+// （aesthetic = 已选定设计方向，surface 取 artifact_designs，与 ServeRender 注入的 window.__orynProbe 同口径）。只认
+// 设计画布与还没有画框的画布（design.open 接管时用它校验）。
 func (s *Service) agentDesignHead(ctx context.Context, c Caller, params json.RawMessage) (Result, error) {
 	var p idArgs
 	if err := decodeParams(params, &p); err != nil {
@@ -584,6 +587,12 @@ func (s *Service) agentDesignHead(ctx context.Context, c Caller, params json.Raw
 		return Result{}, err
 	}
 	head := orbsock.DesignHead{Version: v.Version, Check: v.Check, Files: []orbsock.DesignHeadFile{}}
+	switch row, err := s.st.Q.GetArtifactDesign(ctx, a.ID); {
+	case err == nil:
+		head.Aesthetic, head.Surface = deref(row.Direction) != "", deref(row.Surface)
+	case !errors.Is(err, sql.ErrNoRows):
+		return Result{}, err
+	}
 	for _, f := range files {
 		if designSourceFile(f.Path) || strings.HasPrefix(f.Path, designDistPrefix) {
 			head.Files = append(head.Files, orbsock.DesignHeadFile{Path: f.Path, Sha256: f.Sha256})

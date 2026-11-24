@@ -296,6 +296,16 @@ func TestSealDesignGuards(t *testing.T) {
 		paths = append(paths, f.Path)
 	}
 	assert.Equal(t, []string{"dist/a.html", "dist/frames.json", "src/frames/a.tsx"}, paths)
+	assert.False(t, head.Aesthetic, "还没选方向：不跑审美规则")
+	assert.Empty(t, head.Surface)
+	// 选定方向后带上审美配置（与 ServeRender 注入的 window.__orynProbe 同口径）
+	surface, direction := "app", `{"id":"calm"}`
+	require.NoError(t, e.st.Q.SetArtifactDesignDirection(context.Background(), db.SetArtifactDesignDirectionParams{ArtifactID: id, Surface: &surface, Direction: &direction}))
+	r = mustCall(t, e.s, internal, OpDesignHead, `{"id":"`+id+`"}`)
+	head = orbsock.DesignHead{}
+	require.NoError(t, json.Unmarshal([]byte(r.Text), &head))
+	assert.True(t, head.Aesthetic)
+	assert.Equal(t, "app", head.Surface)
 	_, err = agentCall(t, e.s, internal, OpDesignHead, `{"id":"`+plain.ID+`"}`)
 	assert.Equal(t, CodeInvalid, code(err))
 }

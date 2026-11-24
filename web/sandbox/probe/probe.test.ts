@@ -298,6 +298,54 @@ describe("配置与汇总", () => {
 		expect(readOptions(win)).toEqual({ aesthetic: false, surface: "" });
 	});
 
+	it("readOptions：没有 window.__orynProbe 时读地址参数，surface 只认 landing / app；window 配置优先", () => {
+		const at = (q: string) =>
+			page("", { url: `http://127.0.0.1:5173/frames/home?__oryn_probe=1${q}` });
+		expect(readOptions(at(""))).toEqual({ aesthetic: false, surface: "" });
+		expect(readOptions(at("&__oryn_aesthetic=1&__oryn_surface=app"))).toEqual({
+			aesthetic: true,
+			surface: "app",
+		});
+		expect(
+			readOptions(at("&__oryn_aesthetic=true&__oryn_surface=landing")),
+		).toEqual({ aesthetic: false, surface: "landing" });
+		expect(readOptions(at("&__oryn_aesthetic=1&__oryn_surface=evil"))).toEqual({
+			aesthetic: true,
+			surface: "",
+		});
+		const both = at("&__oryn_aesthetic=1&__oryn_surface=app");
+		Reflect.set(both, "__orynProbe", { aesthetic: false, surface: "" });
+		expect(readOptions(both)).toEqual({ aesthetic: false, surface: "" });
+	});
+
+	it("地址参数打开审美规则；__oryn_surface=app 关掉 eyebrow-excess 与 split-repeat", () => {
+		const tag = `<span style="text-transform:uppercase;letter-spacing:0.1em;font-size:12px">new</span>`;
+		const split = (left: boolean) =>
+			`<section data-box="0,0,1200,400">` +
+			(left
+				? `<img data-box="0,0,600,400"><div data-box="600,0,600,400">这里是一段足够长的说明文字，介绍功能。${tag}</div>`
+				: `<div data-box="0,0,600,400">这里是一段足够长的说明文字，介绍功能。${tag}</div><img data-box="600,0,600,400">`) +
+			`</section>`;
+		const body = `${split(true)}${split(false)}${split(true)}<p style="color:#ff0000">红</p>`;
+		const at = (q: string) =>
+			page(body, {
+				url: `http://127.0.0.1:5173/frames/home?__oryn_probe=1${q}`,
+			});
+		const names = (q: string) =>
+			new Set(report(at(q)).issues.map((i) => i.rule));
+
+		const none = names("");
+		for (const r of ["raw-color", "eyebrow-excess", "split-repeat"])
+			expect(none.has(r)).toBe(false);
+		const landing = names("&__oryn_aesthetic=1&__oryn_surface=landing");
+		for (const r of ["raw-color", "eyebrow-excess", "split-repeat"])
+			expect(landing.has(r)).toBe(true);
+		const app = names("&__oryn_aesthetic=1&__oryn_surface=app");
+		expect(app.has("raw-color")).toBe(true);
+		expect(app.has("eyebrow-excess")).toBe(false);
+		expect(app.has("split-repeat")).toBe(false);
+	});
+
 	it("frameOf：#oryn-design 优先，其次地址", () => {
 		expect(frameOf(page(""))).toBe("home");
 		expect(

@@ -1,8 +1,9 @@
 // 设计探针（构建成单个 IIFE：dist/sandbox/probe.js；plan-m29 C8）。
 //
 // 只在页面地址带 `?__oryn_probe=1` 时运行。两种加载方式：设计画框的引擎入口在 React 首次渲染提交后加载同源的
-// `./probe.js`；控制面渲染 HTML 画框时把本脚本内联进页面。启动方可以先设 `window.__orynProbe = {aesthetic, surface}`
-// （缺省只跑前 6 条版面规则）。等页面 load、字体就绪、再等一次空闲后测量，把结果写成
+// `./probe.js`；控制面渲染 HTML 画框时把本脚本内联进页面。审美配置 `{aesthetic, surface}` 由启动方给：控制面先设
+// `window.__orynProbe`；orb 里的 design.check 没法往页面里注入脚本，改用地址的 `__oryn_aesthetic=1`、
+// `__oryn_surface=<landing|app>`（缺省只跑前 6 条版面规则）。等页面 load、字体就绪、再等一次空闲后测量，把结果写成
 // `<script id="oryn-probe" type="application/json">{v:1, frame, height, issues}</script>` 追加到 body，
 // 由 headless Chromium 的 --dump-dom 带出。页面运行在不可信的沙箱里，这里不 import 任何应用代码。
 
@@ -18,18 +19,23 @@ export interface ProbeResult {
 	issues: Issue[];
 }
 
-/** 启动方注入的配置；缺省或不合法时只跑版面规则。 */
+/** 启动方的配置：`window.__orynProbe` 存在时只看它（控制面），否则看地址的 `__oryn_aesthetic` / `__oryn_surface`
+ * （orb 的 design.check；surface 只认 landing、app，别的值当作空）。缺省或不合法时只跑版面规则。 */
 export function readOptions(win: Window): Options {
 	const raw: unknown = Reflect.get(win, "__orynProbe");
-	const aesthetic =
-		typeof raw === "object" &&
-		raw !== null &&
-		Reflect.get(raw, "aesthetic") === true;
-	const surface =
-		typeof raw === "object" && raw !== null
-			? Reflect.get(raw, "surface")
-			: undefined;
-	return { aesthetic, surface: typeof surface === "string" ? surface : "" };
+	if (typeof raw !== "object" || raw === null) {
+		const q = new URLSearchParams(win.location.search);
+		const surface = q.get("__oryn_surface");
+		return {
+			aesthetic: q.get("__oryn_aesthetic") === "1",
+			surface: surface === "landing" || surface === "app" ? surface : "",
+		};
+	}
+	const surface = Reflect.get(raw, "surface");
+	return {
+		aesthetic: Reflect.get(raw, "aesthetic") === true,
+		surface: typeof surface === "string" ? surface : "",
+	};
 }
 
 /** 帧 id：先看 dev 入口的 `#oryn-design`，再从地址推（`…/<id>.html` 或 dev 的 `/frames/<id>`），都取不到为空串。 */

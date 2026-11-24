@@ -69,9 +69,9 @@ type designTurn struct{ id, title string }
 // designState 是设计运行时的内存状态；零值可用。
 type designState struct {
 	mu     sync.Mutex
-	turns  map[string]designTurn   // threadId → 当前回合
-	locks  map[string]*sync.Mutex  // artifactId → 串行化该副本的 open / seal / check
-	checks map[string]design.Check // artifactId → 最近一次全帧 design.check（Fingerprint = 当时源码的 SourceHash）
+	turns  map[string]designTurn        // threadId → 当前回合
+	locks  map[string]*sync.Mutex       // artifactId → 串行化该副本的 open / seal / check
+	checks map[string]designCachedCheck // artifactId → 最近一次全帧 design.check
 	// shareRoot 覆盖 designShareRoot（测试用）；空 = designShareRoot。
 	shareRoot string
 	// chromium 覆盖 Chromium 的查找（测试用）：非空时只认这一个路径。
@@ -124,22 +124,56 @@ func (d *designState) share() string {
 	return designShareRoot
 }
 
-// setCheck 记下 id 最近一次全帧检查。
-func (d *designState) setCheck(id string, c design.Check) {
+// designProbeConfig 是探针的审美配置（取自 design_head；surface 只认 landing、app，与探针一致）。
+type designProbeConfig struct {
+	aesthetic bool
+	surface   string
+}
+
+// designProbeConfigOf 取 head 的探针配置。
+func designProbeConfigOf(head orbsock.DesignHead) designProbeConfig {
+	cfg := designProbeConfig{aesthetic: head.Aesthetic}
+	if head.Surface == "landing" || head.Surface == "app" {
+		cfg.surface = head.Surface
+	}
+	return cfg
+}
+
+// query 是页面地址的探针参数（含 `__oryn_probe=1`），不带开头的 ?。
+func (c designProbeConfig) query() string {
+	q := design.ProbeQuery + "=1"
+	if c.aesthetic {
+		q += "&__oryn_aesthetic=1"
+	}
+	if c.surface != "" {
+		q += "&__oryn_surface=" + c.surface
+	}
+	return q
+}
+
+// designCachedCheck 是缓存的一次全帧检查：Check.Fingerprint 是当时源码的 SourceHash，cfg 是当时的探针配置。
+type designCachedCheck struct {
+	check design.Check
+	cfg   designProbeConfig
+}
+
+// setCheck 记下 id 最近一次全帧检查与它用的探针配置。
+func (d *designState) setCheck(id string, c design.Check, cfg designProbeConfig) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.checks == nil {
-		d.checks = map[string]design.Check{}
+		d.checks = map[string]designCachedCheck{}
 	}
-	d.checks[id] = c
+	d.checks[id] = designCachedCheck{check: c, cfg: cfg}
 }
 
-// check 返回 id 缓存的检查，只在它的 Fingerprint 等于 hash（源码自检查以来没变）时有效。
-func (d *designState) check(id, hash string) (design.Check, bool) {
+// check 返回 id 缓存的检查，只在它的 Fingerprint 等于 hash（源码自检查以来没变）且探针配置等于 cfg（方向与 surface
+// 自检查以来没变，cfg 取当前 head）时有效。
+func (d *designState) check(id, hash string, cfg designProbeConfig) (design.Check, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	c, ok := d.checks[id]
-	return c, ok && hash != "" && c.Fingerprint == hash
+	return c.check, ok && hash != "" && c.check.Fingerprint == hash && c.cfg == cfg
 }
 
 func (d *designState) chromiumOverride() string {
@@ -720,7 +754,7 @@ func (r *Runtime) designSealOne(ctx context.Context, threadID, id string, turn d
 		return 0, err
 	}
 	params := map[string]any{"id": id, "baseVersion": meta.BaseVersion, "files": files}
-	if chk, ok := r.design.check(id, hash); ok {
+	if chk, ok := r.design.check(id, hash, designProbeConfigOf(head)); ok {
 		params["check"] = chk
 	}
 	var sealed struct {
@@ -796,8 +830,8 @@ func designSealFiles(dir string, src map[string][]byte, headSha map[string]strin
 
 // ---- design.status ----
 
-// designStatus 列出本线程的工作副本。check：源码自最近一次全帧 design.check 以来没变时取那次结果；否则取最新版本的
-// 检查结果，按副本当前源码换算状态（控制面不可达时为 nil）。
+// designStatus 列出本线程的工作副本。check：源码与探针配置（方向、surface）自最近一次全帧 design.check 以来都没变时
+// 取那次结果；否则取最新版本的检查结果，按副本当前源码换算状态（控制面不可达时为 nil，这时也没法确认配置，不用缓存）。
 func (r *Runtime) designStatus(ctx context.Context, p orbsock.DesignStatusParams) (orbsock.DesignStatusResult, error) {
 	if err := needThread(p.ThreadID); err != nil {
 		return orbsock.DesignStatusResult{}, err
@@ -810,12 +844,13 @@ func (r *Runtime) designStatus(ctx context.Context, p orbsock.DesignStatusParams
 			return res, err
 		}
 		st := orbsock.DesignStatus{ID: meta.ArtifactID, Dir: dir, Dirty: hash != meta.SealedHash}
-		if chk, ok := r.design.check(meta.ArtifactID, hash); ok {
-			if raw, err := json.Marshal(chk); err == nil {
-				st.Check = designAPICheck(raw, hash)
-			}
-		} else if head, err := r.designHead(ctx, p.ThreadID, meta.ArtifactID); err == nil {
+		if head, err := r.designHead(ctx, p.ThreadID, meta.ArtifactID); err == nil {
 			st.Check = designAPICheck(head.Check, hash)
+			if chk, ok := r.design.check(meta.ArtifactID, hash, designProbeConfigOf(head)); ok {
+				if raw, err := json.Marshal(chk); err == nil {
+					st.Check = designAPICheck(raw, hash)
+				}
+			}
 		}
 		res.Designs = append(res.Designs, st)
 	}
@@ -873,9 +908,11 @@ type designFrameRun struct {
 
 // designCheck 用 orb 里的 headless Chromium 对工作副本的帧跑设计探针（plan-m29 C8），可附截图。页面来自 dev 服务
 // （`/frames/<id>?__oryn_probe=1`，源码即时）；dev 服务没在跑时临时在 127.0.0.1 起静态服务提供 dist/ 与 probe.js
-// （上一次构建的产物）。没有 Chromium 或某帧没跑成时不报错，status 为 unverified 并在 message 说明。
-// 全帧检查的结果按当时源码的 SourceHash 缓存，供 design.status 与封存使用；只缓存确实对应当前源码的结论：dev 服务上
-// 跑的，或者没有 Chromium（unverified 与内容无关）。静态 dist/ 可能是更早的构建（物化不带 dist/），不缓存。
+// （上一次构建的产物）。审美配置取自 design_head，拼进页面地址（designProbeConfig.query）；取不到 head 时按缺省（只跑
+// 版面规则）照常检查并在 message 说明。没有 Chromium 或某帧没跑成时不报错，status 为 unverified 并在 message 说明。
+// 全帧检查的结果连同探针配置按当时源码的 SourceHash 缓存，供 design.status 与封存使用；只缓存确实对应当前源码与当前
+// 配置的结论：dev 服务上跑的，或者没有 Chromium（unverified 与内容无关）；静态 dist/ 可能是更早的构建（物化不带
+// dist/），取不到 head 时配置不确定，这两种都不缓存。
 func (r *Runtime) designCheck(ctx context.Context, p orbsock.DesignCheckParams) (orbsock.DesignCheckResult, error) {
 	if err := needThread(p.ThreadID); err != nil {
 		return orbsock.DesignCheckResult{}, err
@@ -916,12 +953,17 @@ func (r *Runtime) designCheck(ctx context.Context, p orbsock.DesignCheckParams) 
 	if err != nil {
 		return orbsock.DesignCheckResult{}, err
 	}
+	var cfg designProbeConfig
+	head, headErr := r.designHead(ctx, p.ThreadID, p.ID)
+	if headErr == nil {
+		cfg = designProbeConfigOf(head)
+	}
 
 	runs := make([]designFrameRun, len(ids))
 	live := false
 	bin, down := r.designChromium()
 	if down == "" && len(ids) > 0 {
-		pageURL, isLive, stop, err := r.designCheckPages(cp)
+		pageURL, isLive, stop, err := r.designCheckPages(cp, cfg)
 		if err != nil {
 			return orbsock.DesignCheckResult{}, err
 		}
@@ -986,11 +1028,14 @@ func (r *Runtime) designCheck(ctx context.Context, p orbsock.DesignCheckParams) 
 	case !live:
 		notes = append([]string{"dev 服务没在跑，检查的是上一次构建的 dist/ 产物。"}, notes...)
 	}
+	if headErr != nil {
+		notes = append([]string{"取不到控制面的设计配置（" + headErr.Error() + "），这次没有跑审美规则，结果也不记作本回合的检查。"}, notes...)
+	}
 	res.Status, res.Message = chk.Status, strings.Join(notes, "\n")
 
-	if len(p.Frames) == 0 && (live || down != "") {
+	if len(p.Frames) == 0 && headErr == nil && (live || down != "") {
 		if now, err := designSourceHash(cp.Dir); err == nil && now == hash {
-			r.design.setCheck(p.ID, chk)
+			r.design.setCheck(p.ID, chk, cfg)
 		}
 	}
 	return res, nil
@@ -1062,14 +1107,15 @@ func (r *Runtime) designChromium() (string, string) {
 	return "", "orb 里没有 Chromium（找过 " + strings.Join(paths, "、") + " 与 PATH）"
 }
 
-// designCheckPages 返回每帧的页面地址：dev 服务在跑时用它（live=true）；否则在 127.0.0.1 随机端口临时起静态服务，
-// 提供 dist/ 与 sandbox 里的 probe.js（构建产物的入口以 ./probe.js 加载探针），没有 dist/<id>.html 的帧 ok=false。
-// stop 关掉临时服务。
-func (r *Runtime) designCheckPages(cp designCopy) (pageURL func(frame string) (string, bool), live bool, stop func(), err error) {
+// designCheckPages 返回每帧的页面地址（查询串是 cfg.query()）：dev 服务在跑时用它（live=true）；否则在 127.0.0.1
+// 随机端口临时起静态服务，提供 dist/ 与 sandbox 里的 probe.js（构建产物的入口以 ./probe.js 加载探针），没有
+// dist/<id>.html 的帧 ok=false。stop 关掉临时服务。
+func (r *Runtime) designCheckPages(cp designCopy, cfg designProbeConfig) (pageURL func(frame string) (string, bool), live bool, stop func(), err error) {
+	query := "?" + cfg.query()
 	if cp.Meta.Service != "" {
 		if o := r.svc.snapshot(cp.Meta.Service); o.Status == apigen.OrbServiceStatusRunning && o.Port != nil {
 			base := designDevURL(*o.Port)
-			return func(id string) (string, bool) { return base + "frames/" + id + "?" + design.ProbeQuery + "=1", true }, true, func() {}, nil
+			return func(id string) (string, bool) { return base + "frames/" + id + query, true }, true, func() {}, nil
 		}
 	}
 	dist := filepath.Join(cp.Dir, "dist")
@@ -1092,7 +1138,7 @@ func (r *Runtime) designCheckPages(cp designCopy) (pageURL func(frame string) (s
 		if st, err := os.Stat(filepath.Join(dist, id+".html")); err != nil || !st.Mode().IsRegular() {
 			return "", false
 		}
-		return base + id + ".html?" + design.ProbeQuery + "=1", true
+		return base + id + ".html" + query, true
 	}, false, func() { _ = srv.Close() }, nil
 }
 

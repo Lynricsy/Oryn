@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -71,6 +72,8 @@ type designEnv struct {
 	s     *artifacts.Service
 	store *store.Store
 	sock  string
+	// failHead 为真时假控制面对 design_head 回错误（模拟控制面不可达）。
+	failHead atomic.Bool
 }
 
 // cpFetch 经 ctl library.fetch 从 orbd 取回 source（控制面的 SourceFetcher）。
@@ -122,15 +125,19 @@ func newDesignEnv(t *testing.T) *designEnv {
 	links := linksMap{}
 	s.RegisterOrbMethod(links, fetch)
 	call := links[string(apigen.MethodArtifactCall)]
+	e := &designEnv{s: s, store: st}
 	cp.extra = func(method string, params json.RawMessage) (any, bool, error) {
 		if method != string(apigen.MethodArtifactCall) {
 			return nil, false, nil
+		}
+		if e.failHead.Load() && strings.Contains(string(params), `"op":"design_head"`) {
+			return nil, true, errors.New("control plane unreachable")
 		}
 		res, err := call(context.Background(), orbID, params)
 		return res, true, err
 	}
 
-	e := &designEnv{svcEnv: newSvcEnv(t, cp, ""), s: s, store: st}
+	e.svcEnv = newSvcEnv(t, cp, "")
 	// 镜像预装目录：<root>/<引擎版本>/node_modules/vite/bin/vite.js 是假 vite
 	share := t.TempDir()
 	vite := filepath.Join(share, designengine.Version, "node_modules", "vite", "bin", "vite.js")
@@ -601,6 +608,86 @@ func TestDesignCheck(t *testing.T) {
 	assert.Contains(t, got.Message, "未检查 about：页面里没有探针结果")
 }
 
+// lastURL 是假 Chromium 最近一次调用打开的页面地址。
+func lastURL(t *testing.T, bin string) string {
+	t.Helper()
+	calls := chromiumCalls(t, bin)
+	require.NotEmpty(t, calls)
+	args := calls[len(calls)-1]
+	return args[len(args)-1]
+}
+
+// M29 Q1：design.check 把控制面 design_head 的审美配置拼进页面地址（dev 帧与静态 dist 两条路径都带）；缓存连同配置
+// 记下，方向或 surface 变了之后 design.status 不再用它、封存也不带它；取不到 head 时按缺省（只跑版面规则）照常检查、
+// 在 message 说明、不缓存。
+func TestDesignCheckProbeConfig(t *testing.T) {
+	e := newDesignEnv(t)
+	ctx := context.Background()
+	bin := writeExe(t, t.TempDir(), "chromium", fakeChromium)
+	e.rt.design.chromium = bin
+	res := e.open(orbsock.DesignOpenParams{ThreadID: testThread})
+	id := res.ID
+	writeSrc(t, res.Dir, "src/frames/home.tsx", "// probe: ["+clippedIssue+"]\nexport default () => <p>x</p>")
+	setDirection := func(surface, direction string) {
+		require.NoError(t, e.store.Q.SetArtifactDesignDirection(ctx, db.SetArtifactDesignDirectionParams{ArtifactID: id, Surface: &surface, Direction: &direction}))
+	}
+
+	// 没有方向：只带 __oryn_probe=1
+	_, err := e.check(orbsock.DesignCheckParams{ID: id})
+	require.NoError(t, err)
+	assert.Regexp(t, `/frames/home\?__oryn_probe=1$`, lastURL(t, bin))
+	assert.Equal(t, apigen.ArtifactCheckStatus("issues"), e.status(id).Check.Status)
+
+	// 选定方向（landing）：带上审美配置
+	setDirection("landing", `{"id":"calm"}`)
+	assert.Nil(t, e.status(id).Check, "配置变了：缓存不再用，head 上也还没有检查")
+	_, err = e.check(orbsock.DesignCheckParams{ID: id})
+	require.NoError(t, err)
+	assert.Regexp(t, `/frames/home\?__oryn_probe=1&__oryn_aesthetic=1&__oryn_surface=landing$`, lastURL(t, bin))
+	assert.Equal(t, apigen.ArtifactCheckStatus("issues"), e.status(id).Check.Status)
+
+	// 检查之后改成 app：封存不带这次缓存的检查
+	setDirection("app", `{"id":"calm"}`)
+	sealed, err := e.seal("turn-1")
+	require.NoError(t, err)
+	require.Len(t, sealed.Sealed, 1)
+	v, err := e.s.Version(ctx, id, sealed.Sealed[0].Version)
+	require.NoError(t, err)
+	assert.Empty(t, v.Check, "方向变了，缓存的检查不进封存")
+
+	// 配置一致时照常带上（对照）
+	writeSrc(t, res.Dir, "src/frames/home.tsx", "// probe: ["+clippedIssue+"]\nexport default () => <p>y</p>")
+	_, err = e.check(orbsock.DesignCheckParams{ID: id})
+	require.NoError(t, err)
+	assert.Regexp(t, `\?__oryn_probe=1&__oryn_aesthetic=1&__oryn_surface=app$`, lastURL(t, bin))
+	sealed, err = e.seal("turn-1")
+	require.NoError(t, err)
+	v, err = e.s.Version(ctx, id, sealed.Sealed[0].Version)
+	require.NoError(t, err)
+	assert.NotEmpty(t, v.Check)
+
+	// 静态 dist 路径同样带配置
+	_, err = e.rt.svc.Stop(designServiceName(id), false)
+	require.NoError(t, err)
+	_, err = e.check(orbsock.DesignCheckParams{ID: id})
+	require.NoError(t, err)
+	assert.Regexp(t, `^http://127\.0\.0\.1:\d+/home\.html\?__oryn_probe=1&__oryn_aesthetic=1&__oryn_surface=app$`, lastURL(t, bin))
+	_, err = e.rt.svc.Restart(designServiceName(id))
+	require.NoError(t, err)
+	e.rt.settle(ctx, e.rt.svc.snapshot(designServiceName(id)))
+
+	// 取不到 head：按缺省检查，说明原因，不缓存
+	writeSrc(t, res.Dir, "src/frames/home.tsx", "// probe: ["+clippedIssue+"]\nexport default () => <p>z</p>")
+	e.failHead.Store(true)
+	got, err := e.check(orbsock.DesignCheckParams{ID: id})
+	require.NoError(t, err)
+	assert.Equal(t, "issues", got.Status)
+	assert.Contains(t, got.Message, "取不到控制面的设计配置")
+	assert.Regexp(t, `/frames/home\?__oryn_probe=1$`, lastURL(t, bin))
+	e.failHead.Store(false)
+	assert.Equal(t, apigen.ArtifactCheckStatus("stale"), e.status(id).Check.Status, "没进缓存：仍是 head 的检查（源码已变）")
+}
+
 // M29 Q1：没有 Chromium 时 design.check 回 unverified 并说明（不报错）；没有工作副本（别的线程、没 open 过）回 no_design。
 func TestDesignCheckUnavailable(t *testing.T) {
 	e := newDesignEnv(t)
@@ -775,19 +862,7 @@ func TestDesignCheckChromium(t *testing.T) {
 	}
 	e := newDesignEnv(t)
 	if os.Geteuid() == 0 {
-		var real string
-		for _, p := range designChromiumPaths {
-			if _, err := os.Stat(p); err == nil {
-				real = p
-				break
-			}
-		}
-		require.NotEmpty(t, real, "no chromium")
-		// root 下 Chromium 不加 --no-sandbox 起不来：把本次的 profile 与临时目录交给 nobody 后以 nobody 执行原参数
-		e.rt.design.chromium = writeExe(t, t.TempDir(), "chromium", `#!/bin/sh
-for a in "$@"; do case "$a" in --user-data-dir=*) d="${a#--user-data-dir=}"; chown -R nobody "$d" "$(dirname "$d")";; esac; done
-exec setpriv --reuid=nobody --regid=65534 --clear-groups `+real+` "$@"
-`)
+		e.rt.design.chromium = rootChromium(t)
 	}
 	res := e.open(orbsock.DesignOpenParams{ThreadID: testThread})
 	writeSrc(t, res.Dir, "src/frames/home.tsx", "export const frame = { width: 390, height: 844 };\nexport default () => null")
@@ -828,4 +903,112 @@ exec setpriv --reuid=nobody --regid=65534 --clear-groups `+real+` "$@"
 func designJSString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+// 真引擎 + 真 dev server + 真 Chromium（ORYN_TEST_CHROMIUM=1，ORYN_TEST_DESIGN_ENGINE_MODULES=<npm ci 过的引擎
+// node_modules>，嵌入的 Web 产物里要有 sandbox/probe.js）：一帧里同时有 3 个 eyebrow 标签（超过 ceil(3/3)=1）、3 个连续
+// 左右图文分栏 section 和一处内联颜色字面量。(a) 没选方向：三条审美规则都不报；(b) 选方向、surface=landing：都报；
+// (c) surface=app：只报 raw-color。
+func TestDesignCheckChromiumDev(t *testing.T) {
+	modules := os.Getenv("ORYN_TEST_DESIGN_ENGINE_MODULES")
+	if os.Getenv("ORYN_TEST_CHROMIUM") != "1" || modules == "" {
+		t.Skip("set ORYN_TEST_CHROMIUM=1 and ORYN_TEST_DESIGN_ENGINE_MODULES=<engine node_modules> to run")
+	}
+	if _, ok := webui.Asset("sandbox/probe.js"); !ok {
+		t.Fatal("嵌入的 Web 产物里没有 sandbox/probe.js：先 make web")
+	}
+	ctx := context.Background()
+	e := newDesignEnv(t)
+	share := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(share, designengine.Version), 0o755))
+	require.NoError(t, os.Symlink(modules, filepath.Join(share, designengine.Version, "node_modules")))
+	e.rt.design.shareRoot = share
+	if os.Geteuid() == 0 {
+		e.rt.design.chromium = rootChromium(t)
+	}
+	res := e.open(orbsock.DesignOpenParams{ThreadID: testThread})
+	id := res.ID
+	writeSrc(t, res.Dir, "src/frames/home.tsx", `const eyebrow = { textTransform: "uppercase", letterSpacing: "0.2em", fontSize: 12 } as const;
+
+function Split({ flip, n }: { flip?: boolean; n: number }) {
+	const media = (
+		<svg width="500" height="300" viewBox="0 0 10 6">
+			<rect width="10" height="6" />
+		</svg>
+	);
+	const text = (
+		<div style={{ width: 500 }}>
+			<span style={eyebrow}>Feature {n}</span>
+			<p>这里是一段足够长的说明文字，介绍这个功能的细节。</p>
+		</div>
+	);
+	return (
+		<section style={{ display: "flex", gap: 40, width: 1100, padding: 20 }}>
+			{flip ? text : media}
+			{flip ? media : text}
+		</section>
+	);
+}
+
+export default function Home() {
+	return (
+		<main>
+			<Split n={1} />
+			<Split flip n={2} />
+			<Split n={3} />
+			<p style={{ color: "#ff0000" }}>红色字面量</p>
+		</main>
+	);
+}
+`)
+	rulesOf := func(label string) map[string]bool {
+		t.Helper()
+		got, err := e.check(orbsock.DesignCheckParams{ID: id})
+		require.NoError(t, err)
+		t.Logf("%s: status=%s message=%q", label, got.Status, got.Message)
+		out := map[string]bool{}
+		for _, is := range got.Issues {
+			t.Logf("  %s %s %s %q %s", is.Rule, is.Frame, is.Loc, is.Text, is.Detail)
+			out[is.Rule] = true
+		}
+		require.NotEqual(t, "unverified", got.Status, got.Message)
+		return out
+	}
+	setDirection := func(surface string) {
+		direction := `{"id":"calm"}`
+		require.NoError(t, e.store.Q.SetArtifactDesignDirection(ctx, db.SetArtifactDesignDirectionParams{ArtifactID: id, Surface: &surface, Direction: &direction}))
+	}
+
+	got := rulesOf("(a) no direction")
+	for _, r := range []string{"eyebrow-excess", "split-repeat", "raw-color"} {
+		assert.False(t, got[r], "(a) %s", r)
+	}
+	setDirection("landing")
+	got = rulesOf("(b) landing")
+	for _, r := range []string{"eyebrow-excess", "split-repeat", "raw-color"} {
+		assert.True(t, got[r], "(b) %s", r)
+	}
+	setDirection("app")
+	got = rulesOf("(c) app")
+	assert.True(t, got["raw-color"], "(c) raw-color")
+	assert.False(t, got["eyebrow-excess"], "(c) eyebrow-excess")
+	assert.False(t, got["split-repeat"], "(c) split-repeat")
+}
+
+// rootChromium 在宿主机以 root 跑测试时包一层：把本次的 profile 与临时目录交给 nobody 后以 nobody 执行原参数（root 下
+// Chromium 不加 --no-sandbox 起不来；orb 里 uid 1000 直接跑）。
+func rootChromium(t *testing.T) string {
+	t.Helper()
+	var real string
+	for _, p := range designChromiumPaths {
+		if _, err := os.Stat(p); err == nil {
+			real = p
+			break
+		}
+	}
+	require.NotEmpty(t, real, "no chromium")
+	return writeExe(t, t.TempDir(), "chromium", `#!/bin/sh
+for a in "$@"; do case "$a" in --user-data-dir=*) d="${a#--user-data-dir=}"; chown -R nobody "$d" "$(dirname "$d")";; esac; done
+exec setpriv --reuid=nobody --regid=65534 --clear-groups `+real+` "$@"
+`)
 }
