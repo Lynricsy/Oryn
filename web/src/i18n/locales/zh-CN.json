@@ -3835,7 +3835,16 @@
 			"backToLatest": "回到最新",
 			"restore": "恢复这个版本",
 			"restored": "已把 v{{n}} 恢复成 v{{version}}",
-			"conflict": "恢复前来了新版本，请再试一次"
+			"conflict": "恢复前来了新版本，请再试一次",
+			"range": "v{{from}}–v{{to}}",
+			"turnVersions": "这一回合的版本 v{{from}}–v{{to}}",
+			"check": {
+				"clean": "检查通过",
+				"issues_one": "{{count}} 个问题",
+				"issues_other": "{{count}} 个问题",
+				"stale": "检查已过期",
+				"unverified": "未检查"
+			}
 		},
 		"edit": {
 			"title": "编辑元素",

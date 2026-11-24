@@ -3835,7 +3835,16 @@
 			"backToLatest": "Back to latest",
 			"restore": "Restore this version",
 			"restored": "Restored v{{n}} as v{{version}}",
-			"conflict": "A newer version arrived before the restore. Try again."
+			"conflict": "A newer version arrived before the restore. Try again.",
+			"range": "v{{from}}–v{{to}}",
+			"turnVersions": "Versions v{{from}}–v{{to}} from this turn",
+			"check": {
+				"clean": "Check passed",
+				"issues_one": "{{count}} issue",
+				"issues_other": "{{count}} issues",
+				"stale": "Check outdated",
+				"unverified": "Not checked"
+			}
 		},
 		"edit": {
 			"title": "Edit element",
