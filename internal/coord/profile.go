@@ -527,9 +527,9 @@ func artifactToolDefs() []apigen.OmpFrame {
 			"width":  integer("窗口宽度（CSS 像素，64–1600），缺省 1280。"),
 			"height": integer("窗口高度（CSS 像素，64–4000），缺省 800。"),
 		}, "id"),
-		tool(ToolExportArtifact, "把 artifact 的一个版本导出成文件存进文件库（之后可用 create_thread 的 files 带给线程，或让主人下载）。html 只对恰好一个 HTML 文件的版本可用；zip 打包全部文件；md 只对文档可用；pdf 只对幻灯片可用。返回文件库 id 与沙箱里的路径。", obj{
+		tool(ToolExportArtifact, "把 artifact 的一个版本导出成文件存进文件库（之后可用 create_thread 的 files 带给线程，或让主人下载）。html 只对恰好一个 HTML 文件的版本可用；zip 打包全部文件；md 只对文档可用；pdf 只对幻灯片可用；project 只对设计画布可用，导出可独立构建的前端工程 zip（npm ci && npm run build）。返回文件库 id 与沙箱里的路径。", obj{
 			"id":      id,
-			"format":  enum("导出格式。", artifacts.ExportHTML, artifacts.ExportZip, artifacts.ExportMarkdown, artifacts.ExportPDF),
+			"format":  enum("导出格式。", artifacts.ExportHTML, artifacts.ExportZip, artifacts.ExportMarkdown, artifacts.ExportPDF, artifacts.ExportProject),
 			"version": integer("导出哪个版本（缺省最新）。"),
 			"name":    str("存库的文件名（缺省用导出建议的名字）。"),
 			"shared":  boolean("true = 存为所有对话共享，缺省只属于本对话。"),
