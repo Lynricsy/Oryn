@@ -2,6 +2,7 @@ package threads
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -109,9 +110,10 @@ type responseHead struct {
 // （terminal_configure：pty:true 的命令与 agent 的 terminal 工具落到 omp 的终端宿主，由 Terminal 面板作答）。
 // terminal 为假时（M11b：runner 没上报 terminal 特性）不发 terminal_configure。
 // 协调线程（prof 非 nil）只有 open_session、set_event_filter、set_host_tools 与可选的思考级别：不开 ask 对话框、
-// 子 agent 订阅与终端。主线（M19）与研究员对话（M26）在 open_session 之后先 clear_context：每次启动都是新的一段，模型
-// 只看到 reset_boundary 之后的内容（转录保留）。主线跨段要记的事在系统提示词的「主线近况」里；研究员的每次运行互不相干。
-func initFrames(t *thread, prof *AgentProfile, terminal bool) []apigen.OmpFrame {
+// 子 agent 订阅与终端。主线（M19）与研究员对话（M26）在存在未清空上下文时（clearContext 为真）于 open_session 之后
+// 先 clear_context：每次启动都是新的一段，模型只看到 reset_boundary 之后的内容（转录保留）；空会话或末尾已经刚清空
+// 过上下文时不重复发，避免产生多余的 reset_boundary。主线跨段要记的事在系统提示词的「主线近况」里；研究员的每次运行互不相干。
+func initFrames(t *thread, prof *AgentProfile, terminal, clearContext bool) []apigen.OmpFrame {
 	open := apigen.OmpFrame{"type": "open_session", "sessionDir": t.sessionDir}
 	if m := parseModel(t.model); m != nil {
 		open["provider"], open["modelId"] = m.Provider, m.ID
@@ -123,7 +125,7 @@ func initFrames(t *thread, prof *AgentProfile, terminal bool) []apigen.OmpFrame 
 			tools = []apigen.OmpFrame{}
 		}
 		frames = []apigen.OmpFrame{open}
-		if t.main || t.research != "" {
+		if (t.main || t.research != "") && clearContext {
 			frames = append(frames, apigen.OmpFrame{"type": "clear_context"})
 		}
 		frames = append(frames,
@@ -145,6 +147,36 @@ func initFrames(t *thread, prof *AgentProfile, terminal bool) []apigen.OmpFrame 
 		frames = append(frames, apigen.OmpFrame{"type": "set_thinking_level", "level": *t.thinking})
 	}
 	return frames
+}
+
+// needsClearContext 判断主线 / 研究员对话在本次启动时是否需要发 clear_context。
+// 线程尚无任何对话条目，或最新一条上下文影响条目已是 reset_boundary 且活动叶子没有跳回其之前时，返回 false；
+// 存在未同步状态（unsynced）或查库出错时保守返回 true，避免漏清旧段上下文。
+func (s *Service) needsClearContext(ctx context.Context, threadID string, main bool, research string, unsynced bool, leaf *string) bool {
+	if !main && research == "" {
+		return false
+	}
+	if unsynced {
+		return true
+	}
+	latest, err := s.st.Q.GetLatestMainContextEntry(ctx, threadID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false
+	}
+	if err != nil {
+		return true
+	}
+	if latest.Type != "reset_boundary" {
+		return true
+	}
+	if leaf == nil || *leaf == "" {
+		return false
+	}
+	leafSeq, err := s.st.Q.GetMainEntrySeq(ctx, db.GetMainEntrySeqParams{ThreadID: threadID, EntryID: *leaf})
+	if err != nil {
+		return true
+	}
+	return leafSeq < latest.Seq
 }
 
 // coordinatorProfile 为协调线程取 AgentProfile：所在 orb 必须是声明了 coordinator 特性的协调宿主
@@ -219,7 +251,11 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 		}
 	}
 	t.mu.Lock()
-	params := apigen.LinkCtlAgentStartParams{ThreadID: t.id, SessionDir: t.sessionDir, Env: map[string]string{}, InitFrames: initFrames(t, prof, terminal)}
+	unsynced, leaf := t.unsynced, t.leaf
+	t.mu.Unlock()
+	clearContext := s.needsClearContext(ctx, t.id, t.main, t.research, unsynced, leaf)
+	t.mu.Lock()
+	params := apigen.LinkCtlAgentStartParams{ThreadID: t.id, SessionDir: t.sessionDir, Env: map[string]string{}, InitFrames: initFrames(t, prof, terminal, clearContext)}
 	// runner 线程（M11b）：agent 在线程的工作目录里启动
 	params.Cwd = t.cwd
 	params.Memory = mem
@@ -465,6 +501,7 @@ func (s *Service) onAgentStatus(ctx context.Context, orbID string, params json.R
 		s.resetLiveLocked(t)
 		s.broadcastLiveResetLocked(t)
 		t.autoActive, t.segMsgs = false, false
+		t.sessionStartPending = false
 		cancelHostCallsLocked(t)
 		resetConfigMarksLocked(t) // 新进程读的就是新配置（M13 6.3）
 		if p.RestartsLeft == nil || *p.RestartsLeft <= 0 {
@@ -579,7 +616,16 @@ func (s *Service) onReadyLocked(ctx context.Context, t *thread) {
 		}
 		return
 	}
-	s.markSessionStartLocked(t)
+	explicit := parseModel(t.model) != nil
+	if (t.main || t.research != "" || t.hidden) && !t.queueNeedsWake() && len(t.msgOrder) == 0 {
+		// 常驻空跑（主线 / 备用 / 研究员）当前没有待发非只读命令：延迟标记，避免每次重启经 ensureOnDisk() 落盘废文件；
+		// 预先记住就绪前的 explicitModel，防止随后 get_state 回写 t.model 把 startup 误判成 manual。
+		t.sessionStartPending = true
+		t.sessionStartExplicit = explicit
+	} else {
+		t.sessionStartPending = false
+		s.markSessionStartLocked(t, explicit)
+	}
 	// M13 6.3：先补发挂起的 reload_plugins（例如冻结期间改了配置），再下发排队命令，排队的 prompt 用的就是新配置
 	s.reloadPluginsLocked(t)
 	q := t.queue
@@ -596,8 +642,8 @@ func (s *Service) onReadyLocked(ctx context.Context, t *thread) {
 // 线程行已被 get_state 回写、恒为真，但那时会话已有记录或消息，Core 不会再写。
 // 旧 Core 应答 "Unknown command"，按失败忽略。不放进 initFrames：orbd 要求每个 initFrame 成功。
 // 直接写流而不经 enqueueLocked：后者在 orb 状态缓存滞后时会把它排到队尾、落在排队的 prompt 之后。调用方持有 t.mu。
-func (s *Service) markSessionStartLocked(t *thread) {
-	frame, _ := json.Marshal(map[string]any{"type": "oryn_mark_session_start", "explicitModel": parseModel(t.model) != nil})
+func (s *Service) markSessionStartLocked(t *thread, explicitModel bool) {
+	frame, _ := json.Marshal(map[string]any{"type": "oryn_mark_session_start", "explicitModel": explicitModel})
 	id := s.newCmdID()
 	frame, err := omprpc.SetID(frame, id)
 	if err != nil {
@@ -903,6 +949,10 @@ func (s *Service) dispatchLocked(t *thread, frame []byte) {
 		ID   string `json:"id"`
 	}
 	_ = json.Unmarshal(frame, &h)
+	if t.sessionStartPending && h.Type != "oryn_mark_session_start" && !passiveCommand(h.Type) {
+		t.sessionStartPending = false
+		s.markSessionStartLocked(t, t.sessionStartExplicit)
+	}
 	if !t.agent.send(frame) {
 		if p := t.pending[h.ID]; p != nil {
 			delete(t.pending, h.ID)

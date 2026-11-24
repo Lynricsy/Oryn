@@ -49,3 +49,23 @@ SELECT * FROM entry_cursors WHERE thread_id = @thread_id ORDER BY file;
 
 -- name: DeleteEntryCursor :exec
 DELETE FROM entry_cursors WHERE thread_id = @thread_id AND file = @file;
+
+-- Latest main-session entry that affects model context (used to decide whether main/research startup needs clear_context).
+-- name: GetLatestMainContextEntry :one
+SELECT seq, type
+FROM entries
+WHERE thread_id = @thread_id
+  AND instr(file, '/') = 0
+  AND type IN ('message', 'custom_message', 'branch_summary', 'compaction', 'reset_boundary')
+ORDER BY seq DESC
+LIMIT 1;
+
+-- Sequence of an entry in the thread's main session files (for checking whether leaf jumped before the latest reset_boundary).
+-- name: GetMainEntrySeq :one
+SELECT seq
+FROM entries
+WHERE thread_id = @thread_id
+  AND instr(file, '/') = 0
+  AND entry_id = @entry_id
+ORDER BY seq DESC
+LIMIT 1;

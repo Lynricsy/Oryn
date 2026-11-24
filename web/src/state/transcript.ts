@@ -168,13 +168,18 @@ export function activeBranch(
 	});
 }
 
-/** 启动文件里允许出现的条目类型（另加来源记录）。 */
+/** 启动文件里允许出现的条目类型（另加来源记录）：包含空启动时自动追加的 reset_boundary 与不渲染的隐藏元数据。 */
 const STARTUP_ENTRY_TYPES: Record<string, true> = {
 	session: true,
 	title: true,
 	model_change: true,
 	thinking_level_change: true,
 	service_tier_change: true,
+	reset_boundary: true,
+	model_usage: true,
+	session_init: true,
+	credential_pin: true,
+	label: true,
 };
 
 /** 分支上只有启动元数据：进程在第一条回复之前重启时留下的会话文件。 */
@@ -272,6 +277,8 @@ export function buildTranscript(
 	let trail = EMPTY_TRAIL;
 	let lastMode: JsonRecord | undefined;
 	let shown = 0;
+	let hasContent = false;
+	let lastWasReset = false;
 	branches.forEach((branch, i) => {
 		// 启动文件（不是最后一个、只有启动元数据）不渲染、不出分隔线，但照常参与轨迹
 		const render = i === branches.length - 1 || !startupOnly(branch);
@@ -292,7 +299,26 @@ export function buildTranscript(
 					item.trail = trail;
 				if (item?.kind === "meta" && e.type === "mode_change" && lastMode)
 					item.prevMode = lastMode;
-				if (item) items.push(item);
+				if (item) {
+					if (item.kind === "meta" && e.type === "reset_boundary") {
+						// 尚无任何对话内容时或紧接另一条 reset_boundary 后不重复渲染「上下文已清空」
+						if (!hasContent || lastWasReset) {
+							trail = advanceTrail(trail, e);
+							continue;
+						}
+						lastWasReset = true;
+					} else if (
+						item.kind === "message" ||
+						item.kind === "compaction" ||
+						item.kind === "branch_summary" ||
+						item.kind === "custom_message" ||
+						item.kind === "tool"
+					) {
+						hasContent = true;
+						lastWasReset = false;
+					}
+					items.push(item);
+				}
 			}
 			// 模式轨迹跨会话文件延续（含不渲染的启动文件）
 			if (e.type === "mode_change" && isRecord(e.payload)) lastMode = e.payload;

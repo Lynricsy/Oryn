@@ -311,20 +311,26 @@ type thread struct {
 	// cwd 是 runner 线程的工作目录（threads.cwd，创建后不变；空 = orb 线程，由 orbd 决定）。
 	cwd string
 
-	mu          sync.Mutex
-	orbID       string
-	live        *Live
-	agentStatus apigen.AgentStatus
-	agent       *agentConn
-	queue       [][]byte
-	pending     map[string]*pendingCmd
-	settled     bool
-	state       string
-	unread      bool
-	leaf        *string
-	lastSeq     int64
-	resetting   map[string]bool
-	ignored     map[string]bool // fork_from 产物：移出前被 tail 到的文件，丢弃
+	mu sync.Mutex
+	// hidden 为真表示尚未被认领的备用助手对话或隐藏研究员对话（threads.hidden；ClaimSpare 认领后置假）。
+	hidden bool
+	// sessionStartPending 为真表示常驻空跑（主线 / 备用 / 研究员）在就绪时延迟了 oryn_mark_session_start，
+	// 避免把尚未有任何消息的空会话经 ensureOnDisk() 提前落盘；首条非只读命令下发前按 sessionStartExplicit 补发。
+	sessionStartPending  bool
+	sessionStartExplicit bool
+	orbID                string
+	live                 *Live
+	agentStatus          apigen.AgentStatus
+	agent                *agentConn
+	queue                [][]byte
+	pending              map[string]*pendingCmd
+	settled              bool
+	state                string
+	unread               bool
+	leaf                 *string
+	lastSeq              int64
+	resetting            map[string]bool
+	ignored              map[string]bool // fork_from 产物：移出前被 tail 到的文件，丢弃
 	// forking > 0 时有 fork_from 在途：其间新出现的主会话文件暂存在 held，不入库（见 onAppend / endForkLocked）。
 	forking  int
 	held     map[string][]apigen.LinkCtlEntriesAppendParams
@@ -477,6 +483,7 @@ func newThread(row db.Thread) *thread {
 		model: row.Model, thinking: row.ThinkingLevel, hostCalls: map[string]context.CancelFunc{},
 	}
 	t.main = row.Main == 1
+	t.hidden = row.Hidden == 1
 	if row.Research != nil {
 		t.research = *row.Research
 	}

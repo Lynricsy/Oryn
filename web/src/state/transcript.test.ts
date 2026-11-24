@@ -166,8 +166,80 @@ describe("buildTranscript 的条目可见性", () => {
 	const kindsOf = (type: string) =>
 		build(chain("a.jsonl", [[type, {}]])).map((it) => it.kind);
 
-	it("reset_boundary 以元信息行显示（/clear 的上下文清空分隔）", () => {
-		expect(kindsOf("reset_boundary")).toEqual(["meta"]);
+	it("reset_boundary 在有消息之后以元信息行显示，连续重复只保留一条，无前置内容时不显示", () => {
+		expect(kindsOf("reset_boundary")).toEqual([]);
+		const items = build(
+			chain("a.jsonl", [
+				["message", user("hi")],
+				["reset_boundary", {}],
+				["reset_boundary", {}],
+				["message", user("again")],
+				["reset_boundary", {}],
+			]),
+		);
+		expect(
+			items.map((it) =>
+				it.kind === "meta" ? `meta:${String(it.entry.type)}` : it.kind,
+			),
+		).toEqual([
+			"message",
+			"meta:reset_boundary",
+			"message",
+			"meta:reset_boundary",
+		]);
+	});
+
+	it("只有启动元数据、reset_boundary 与 model_usage 的空会话文件不渲染「新会话」也不显示「上下文已清空」", () => {
+		const emptyMain = (file: string, withUsage = false) =>
+			chain(file, [
+				["title", { title: "" }],
+				["session", {}],
+				["model_change", { model: SOL }],
+				["thinking_level_change", { thinkingLevel: "high" }],
+				["reset_boundary", {}],
+				["custom", mare],
+				...(withUsage
+					? ([["model_usage", { purpose: "skill-description" }]] as [
+							string,
+							Record<string, unknown>,
+						][])
+					: []),
+			]);
+		const allEmpty = build([
+			...emptyMain("s1.jsonl"),
+			...emptyMain("s2.jsonl", true),
+			...emptyMain("s3.jsonl"),
+		]);
+		expect(allEmpty.filter((it) => it.kind === "session_divider")).toHaveLength(
+			0,
+		);
+		expect(
+			allEmpty.filter(
+				(it) => it.kind === "meta" && it.entry.type === "reset_boundary",
+			),
+		).toHaveLength(0);
+
+		// 中间夹着多个空重启文件时，前后真实消息之间只留一条「新会话」分隔线，不把空文件算进去
+		const first = chain("a.jsonl", [
+			["message", user("1")],
+			["message", reply("一")],
+		]);
+		const next = chain("d.jsonl", [
+			["message", user("2")],
+			["message", reply("二")],
+		]);
+		const mixed = build([
+			...first,
+			...emptyMain("b.jsonl", true),
+			...emptyMain("c.jsonl"),
+			...next,
+		]);
+		expect(mixed.filter((it) => it.kind === "session_divider")).toHaveLength(1);
+		expect(
+			mixed.filter(
+				(it) => it.kind === "meta" && it.entry.type === "reset_boundary",
+			),
+		).toHaveLength(0);
 	});
 
 	it("未归类的新条目类型以元信息行显示，不被静默丢弃", () => {

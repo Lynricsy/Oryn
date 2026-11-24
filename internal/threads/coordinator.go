@@ -348,6 +348,7 @@ func (s *Service) ClaimSpare(ctx context.Context, id string, p CoordinatorParams
 		raw[i] = f
 	}
 	t.mu.Lock()
+	t.hidden = false
 	s.queueStartupLocked(t, raw)
 	s.recompute(ctx, t)
 	s.publish(ctx, id)
@@ -431,6 +432,7 @@ func (s *Service) stopForRefreshLocked(t *thread) {
 		if ok && err == nil {
 			// exited 在监督器完成清理前发送。直到同一条 ctl 回复 stop，新的 start 才不会命中旧监督器。
 			t.agent = nil
+			t.sessionStartPending = false
 			t.agentStatus = apigen.AgentStatusExited
 			s.dropPassiveLocked(t, "agent stopped")
 		} else if t.agentReady() && !orbSuspended(s.orbState(orbID)) {

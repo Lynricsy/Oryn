@@ -84,6 +84,52 @@ func (q *Queries) GetEntryCursor(ctx context.Context, arg GetEntryCursorParams) 
 	return i, err
 }
 
+const getLatestMainContextEntry = `-- name: GetLatestMainContextEntry :one
+SELECT seq, type
+FROM entries
+WHERE thread_id = ?1
+  AND instr(file, '/') = 0
+  AND type IN ('message', 'custom_message', 'branch_summary', 'compaction', 'reset_boundary')
+ORDER BY seq DESC
+LIMIT 1
+`
+
+type GetLatestMainContextEntryRow struct {
+	Seq  int64  `json:"seq"`
+	Type string `json:"type"`
+}
+
+// Latest main-session entry that affects model context (used to decide whether main/research startup needs clear_context).
+func (q *Queries) GetLatestMainContextEntry(ctx context.Context, threadID string) (GetLatestMainContextEntryRow, error) {
+	row := q.db.QueryRowContext(ctx, getLatestMainContextEntry, threadID)
+	var i GetLatestMainContextEntryRow
+	err := row.Scan(&i.Seq, &i.Type)
+	return i, err
+}
+
+const getMainEntrySeq = `-- name: GetMainEntrySeq :one
+SELECT seq
+FROM entries
+WHERE thread_id = ?1
+  AND instr(file, '/') = 0
+  AND entry_id = ?2
+ORDER BY seq DESC
+LIMIT 1
+`
+
+type GetMainEntrySeqParams struct {
+	ThreadID string `json:"threadId"`
+	EntryID  string `json:"entryId"`
+}
+
+// Sequence of an entry in the thread's main session files (for checking whether leaf jumped before the latest reset_boundary).
+func (q *Queries) GetMainEntrySeq(ctx context.Context, arg GetMainEntrySeqParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getMainEntrySeq, arg.ThreadID, arg.EntryID)
+	var seq int64
+	err := row.Scan(&seq)
+	return seq, err
+}
+
 const getTailStartSeq = `-- name: GetTailStartSeq :one
 SELECT CAST(CASE WHEN COUNT(*) < CAST(?1 AS INTEGER) THEN 0 ELSE MIN(seq) - 1 END AS INTEGER) AS start_seq
 FROM (SELECT seq FROM entries WHERE thread_id = ?2 ORDER BY seq DESC LIMIT CAST(?1 AS INTEGER))

@@ -122,3 +122,69 @@ func TestMarkSessionStartManaged(t *testing.T) {
 	require.Len(t, frames, 1)
 	assert.Contains(t, frames[0], `"oryn_select_model"`)
 }
+
+// 常驻空跑的主线 / 备用对话 / 研究员在就绪且无待发非只读命令时，延迟发送 oryn_mark_session_start，
+// 避免每次常驻重启都经 ensureOnDisk() 落盘一个废空会话文件；首条非只读命令下发前再补发，且保留就绪前的 explicitModel。
+func TestMarkSessionStartDeferredForWarmResident(t *testing.T) {
+	cases := []struct {
+		name   string
+		params CoordinatorParams
+	}{
+		{name: "主线", params: CoordinatorParams{Kind: KindAssistant, Main: true, Title: "Main"}},
+		{name: "备用对话", params: CoordinatorParams{Kind: KindAssistant, Hidden: true}},
+		{name: "研究员", params: CoordinatorParams{Kind: KindAssistant, Hidden: true, Research: "web"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t, Config{})
+			orb := f.orb("ready")
+			p := tc.params
+			p.OrbID = orb
+			out, err := f.s.CreateCoordinator(f.ctx, p)
+			require.NoError(t, err)
+			th, err := f.s.get(f.ctx, out.ID)
+			require.NoError(t, err)
+
+			a := fakeAgent(16)
+			attach(th, a, apigen.AgentStatusReady)
+			th.mu.Lock()
+			f.s.onReadyLocked(f.ctx, th)
+			th.mu.Unlock()
+
+			// 纯常驻就绪只发 get_state，不发 oryn_mark_session_start
+			readyFrames := sent(a)
+			require.Len(t, readyFrames, 1, "只发 get_state，不发 oryn_mark_session_start")
+			typ, reqID, ok := frameHeader(json.RawMessage(readyFrames[0]))
+			require.True(t, ok)
+			assert.Equal(t, "get_state", typ)
+
+			// 模拟 get_state 应答把默认模型回写到 th.model（此时不能把 explicitModel 污染成 true）
+			stateResp := `{"type":"response","id":"` + reqID + `","command":"get_state","success":true,"data":{"model":{"provider":"anthropic","id":"claude-opus-5-5"},"isStreaming":false,"isSettled":true}}`
+			renv, err := omprpc.ParseEnvelope([]byte(stateResp))
+			require.NoError(t, err)
+			f.s.onResponse(f.ctx, th, renv, json.RawMessage(stateResp))
+
+			// 客户端只读查询仍不触发 oryn_mark_session_start
+			require.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(`{"type":"get_commands"}`), noReply))
+			assert.Equal(t, []string{"get_commands"}, sentTypes(a))
+
+			// 下发第一条真实消息时：先发 oryn_mark_session_start(explicitModel:false)，再发 prompt
+			require.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(`{"type":"prompt","message":"hello"}`), noReply))
+			first := sent(a)
+			require.Len(t, first, 2)
+			var mark struct {
+				Type          string `json:"type"`
+				ExplicitModel *bool  `json:"explicitModel"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(first[0]), &mark))
+			assert.Equal(t, "oryn_mark_session_start", mark.Type)
+			require.NotNil(t, mark.ExplicitModel)
+			assert.False(t, *mark.ExplicitModel, "explicitModel 取自就绪前，不被 get_state 回写污染")
+			assert.Contains(t, first[1], `"hello"`)
+
+			// 第二条消息不再重复发 oryn_mark_session_start
+			require.NoError(t, f.s.Command(f.ctx, th.id, json.RawMessage(`{"type":"prompt","message":"second"}`), noReply))
+			assert.Equal(t, []string{"prompt"}, sentTypes(a))
+		})
+	}
+}
