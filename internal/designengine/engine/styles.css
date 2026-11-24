@@ -1,0 +1,9 @@
+/* 设计画布引擎样式入口（M29）。
+ * Tailwind 必须从引擎导入：设计目录里解析不到 tailwindcss 包。只扫下面插件注入的 @source，不做自动探测。
+ * 下一行占位注释由引擎插件 oryn-design-css 替换为
+ *   @import "<工作副本>/src/theme.css";（文件存在时）
+ *   @source "<工作副本>/src";
+ * 设计侧 src/theme.css 只写 @theme {…}，不写 @import "tailwindcss"。 */
+@import "tailwindcss" source(none);
+/* oryn:design-css */
+@plugin "@iconify/tailwind4";

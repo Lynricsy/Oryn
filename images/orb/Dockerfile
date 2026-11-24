@@ -226,6 +226,33 @@ RUN case "$TARGETARCH" in \
  && { docker --version && dockerd --version && containerd --version && runc --version \
       && docker buildx version && docker compose version; } > /usr/local/share/oryn/docker-version.txt
 
+# 设计画布引擎（M29）：引擎源（internal/designengine/engine，不含 node_modules）由构建脚本放进上下文的 design-engine/，
+# 按 lock 用 npm ci 预装到 /usr/local/share/oryn/design-engine/<版本>/。版本由构建脚本从 designengine.Version 取来作构建参数，
+# 这里按同一算法（各文件 sha256 清单的 sha256 前 12 位）复算，不一致就构建失败，保证 orbd 写出的引擎与预装的 node_modules 同版。
+# orbd 把引擎源写到 ~/.oryn/design/engine/<版本>/，node_modules 软链到这里；版本不符时才在引擎目录里 npm ci。
+# 最后用一个两帧样例跑一次 vite build：原生依赖（esbuild、rollup、lightningcss、tailwind oxide）按架构装错时这里就失败。
+ARG DESIGN_ENGINE_VERSION
+RUN --mount=type=bind,source=design-engine,target=/tmp/oryn-design-engine \
+    [[ "$DESIGN_ENGINE_VERSION" =~ ^[0-9a-f]{12}$ ]] \
+ && dir="/usr/local/share/oryn/design-engine/$DESIGN_ENGINE_VERSION" \
+ && install -d "$dir" && cp -a /tmp/oryn-design-engine/. "$dir/" \
+ && got="$(cd "$dir" && LC_ALL=C sha256sum $(LC_ALL=C ls) | sha256sum | cut -c1-12)" \
+ && [[ "$got" == "$DESIGN_ENGINE_VERSION" ]] \
+ && (cd "$dir" && npm ci --no-audit --no-fund --cache /tmp/oryn-npm-cache) \
+ && rm -rf /tmp/oryn-npm-cache \
+ && chown -R root:root "$dir" && chmod -R a+rX,go-w "$dir" \
+ && smoke="$(mktemp -d)" && mkdir -p "$smoke/src/frames" \
+ && printf '%s\n' '@theme { --color-accent: #0f766e; }' > "$smoke/src/theme.css" \
+ && printf '%s\n' 'import { Link } from "oryn:design";' \
+      'export default function A() { return <Link to="b" className="text-accent">b</Link>; }' > "$smoke/src/frames/a.tsx" \
+ && printf '%s\n' 'export default function B() { return <p>b</p>; }' > "$smoke/src/frames/b.tsx" \
+ && ORYN_DESIGN_DIR="$smoke" node "$dir/node_modules/vite/bin/vite.js" build --config "$dir/vite.config.mjs" --logLevel warn \
+ && [[ "$(cd "$smoke/dist" && LC_ALL=C ls | tr '\n' ' ')" == "a.html assets b.html frames.json " ]] \
+ && jq -e '.[0].id == "a" and .[0].links == ["b"]' "$smoke/dist/frames.json" \
+ && grep -q 'text-accent' "$smoke"/dist/assets/*.css \
+ && rm -rf "$smoke" "$dir/node_modules/.vite-temp" \
+ && printf 'design-engine %s\n' "$DESIGN_ENGINE_VERSION" >> /usr/local/share/oryn/upstream-versions.txt
+
 # 用户 user（uid 1000，免密 sudo）
 RUN useradd --create-home --uid 1000 --shell /bin/bash user \
  && usermod -aG docker user \
