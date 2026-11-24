@@ -583,7 +583,7 @@ func (q *Queries) GetGithubHookByHookID(ctx context.Context, hookID *int64) (Git
 const getGithubIdentity = `-- name: GetGithubIdentity :one
 
 
-SELECT slot, github_id, login, name, avatar_url, access_token_enc, status, connected_at, updated_at, scopes FROM github_identities WHERE slot = ?1
+SELECT slot, github_id, login, name, avatar_url, access_token_enc, status, connected_at, updated_at, scopes, access_expires_at, refresh_token_enc, refresh_expires_at FROM github_identities WHERE slot = ?1
 `
 
 // M14: GitHub integration.
@@ -602,6 +602,9 @@ func (q *Queries) GetGithubIdentity(ctx context.Context, slot string) (GithubIde
 		&i.ConnectedAt,
 		&i.UpdatedAt,
 		&i.Scopes,
+		&i.AccessExpiresAt,
+		&i.RefreshTokenEnc,
+		&i.RefreshExpiresAt,
 	)
 	return i, err
 }
@@ -1647,7 +1650,7 @@ func (q *Queries) ListGithubHooks(ctx context.Context) ([]GithubHook, error) {
 }
 
 const listGithubIdentities = `-- name: ListGithubIdentities :many
-SELECT slot, github_id, login, name, avatar_url, access_token_enc, status, connected_at, updated_at, scopes FROM github_identities ORDER BY slot
+SELECT slot, github_id, login, name, avatar_url, access_token_enc, status, connected_at, updated_at, scopes, access_expires_at, refresh_token_enc, refresh_expires_at FROM github_identities ORDER BY slot
 `
 
 func (q *Queries) ListGithubIdentities(ctx context.Context) ([]GithubIdentity, error) {
@@ -1670,6 +1673,9 @@ func (q *Queries) ListGithubIdentities(ctx context.Context) ([]GithubIdentity, e
 			&i.ConnectedAt,
 			&i.UpdatedAt,
 			&i.Scopes,
+			&i.AccessExpiresAt,
+			&i.RefreshTokenEnc,
+			&i.RefreshExpiresAt,
 		); err != nil {
 			return nil, err
 		}
@@ -3471,6 +3477,42 @@ func (q *Queries) UnlinkThreadPull(ctx context.Context, arg UnlinkThreadPullPara
 	return result.RowsAffected()
 }
 
+const updateGithubIdentityTokens = `-- name: UpdateGithubIdentityTokens :execrows
+UPDATE github_identities
+SET access_token_enc = ?1,
+    access_expires_at = ?2,
+    refresh_token_enc = ?3,
+    refresh_expires_at = ?4,
+    updated_at = ?5
+WHERE slot = ?6 AND access_token_enc = ?7 AND status = 'ok'
+`
+
+type UpdateGithubIdentityTokensParams struct {
+	AccessTokenEnc     []byte `json:"accessTokenEnc"`
+	AccessExpiresAt    *int64 `json:"accessExpiresAt"`
+	RefreshTokenEnc    []byte `json:"refreshTokenEnc"`
+	RefreshExpiresAt   *int64 `json:"refreshExpiresAt"`
+	UpdatedAt          int64  `json:"updatedAt"`
+	Slot               string `json:"slot"`
+	PrevAccessTokenEnc []byte `json:"prevAccessTokenEnc"`
+}
+
+func (q *Queries) UpdateGithubIdentityTokens(ctx context.Context, arg UpdateGithubIdentityTokensParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateGithubIdentityTokens,
+		arg.AccessTokenEnc,
+		arg.AccessExpiresAt,
+		arg.RefreshTokenEnc,
+		arg.RefreshExpiresAt,
+		arg.UpdatedAt,
+		arg.Slot,
+		arg.PrevAccessTokenEnc,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updateGithubTrigger = `-- name: UpdateGithubTrigger :exec
 UPDATE github_triggers
 SET name = ?1, event = ?2, label = ?3, prompt = ?4, enabled = ?5, announce = ?6,
@@ -3572,23 +3614,37 @@ func (q *Queries) UpsertGithubHook(ctx context.Context, arg UpsertGithubHookPara
 }
 
 const upsertGithubIdentity = `-- name: UpsertGithubIdentity :exec
-INSERT INTO github_identities (slot, github_id, login, name, avatar_url, access_token_enc, status, connected_at, updated_at)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'ok', ?7, ?8)
+INSERT INTO github_identities (
+    slot, github_id, login, name, avatar_url,
+    access_token_enc, access_expires_at, refresh_token_enc, refresh_expires_at,
+    status, connected_at, updated_at
+)
+VALUES (
+    ?1, ?2, ?3, ?4, ?5,
+    ?6, ?7, ?8, ?9,
+    'ok', ?10, ?11
+)
 ON CONFLICT (slot) DO UPDATE SET
     github_id = excluded.github_id, login = excluded.login, name = excluded.name, avatar_url = excluded.avatar_url,
-    access_token_enc = excluded.access_token_enc, status = 'ok', connected_at = excluded.connected_at,
-    updated_at = excluded.updated_at
+    access_token_enc = excluded.access_token_enc,
+    access_expires_at = excluded.access_expires_at,
+    refresh_token_enc = excluded.refresh_token_enc,
+    refresh_expires_at = excluded.refresh_expires_at,
+    status = 'ok', connected_at = excluded.connected_at, updated_at = excluded.updated_at
 `
 
 type UpsertGithubIdentityParams struct {
-	Slot           string  `json:"slot"`
-	GithubID       int64   `json:"githubId"`
-	Login          string  `json:"login"`
-	Name           *string `json:"name"`
-	AvatarUrl      string  `json:"avatarUrl"`
-	AccessTokenEnc []byte  `json:"accessTokenEnc"`
-	ConnectedAt    int64   `json:"connectedAt"`
-	UpdatedAt      int64   `json:"updatedAt"`
+	Slot             string  `json:"slot"`
+	GithubID         int64   `json:"githubId"`
+	Login            string  `json:"login"`
+	Name             *string `json:"name"`
+	AvatarUrl        string  `json:"avatarUrl"`
+	AccessTokenEnc   []byte  `json:"accessTokenEnc"`
+	AccessExpiresAt  *int64  `json:"accessExpiresAt"`
+	RefreshTokenEnc  []byte  `json:"refreshTokenEnc"`
+	RefreshExpiresAt *int64  `json:"refreshExpiresAt"`
+	ConnectedAt      int64   `json:"connectedAt"`
+	UpdatedAt        int64   `json:"updatedAt"`
 }
 
 func (q *Queries) UpsertGithubIdentity(ctx context.Context, arg UpsertGithubIdentityParams) error {
@@ -3599,6 +3655,9 @@ func (q *Queries) UpsertGithubIdentity(ctx context.Context, arg UpsertGithubIden
 		arg.Name,
 		arg.AvatarUrl,
 		arg.AccessTokenEnc,
+		arg.AccessExpiresAt,
+		arg.RefreshTokenEnc,
+		arg.RefreshExpiresAt,
 		arg.ConnectedAt,
 		arg.UpdatedAt,
 	)

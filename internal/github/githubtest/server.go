@@ -97,6 +97,14 @@ type Server struct {
 	Fail map[string]int
 	// BeforeReactions 非 nil 时，评论 reactions 列表请求在取锁之前先调用它（测试用来阻塞请求、在其间投递别的事件）。
 	BeforeReactions func()
+	// ExpiringTokens 为真时模拟 GitHub 2026-08-14 起新建 OAuth App 的短命令牌：
+	// issueOAuthToken 返回 expires_in（默认 28800）、refresh_token 与 refresh_token_expires_in（默认 15897600），
+	// 且支持 grant_type=refresh_token 一次性轮换（消费旧 refresh_token 并作废旧 access_token）。
+	ExpiringTokens  bool
+	TokenTTL        int64 // 秒；<=0 时取 28800（8 小时）
+	RefreshTokenTTL int64 // 秒；<=0 时取 15897600（6 个月）
+	// BeforeRefresh 非 nil 时，refresh_token 请求在持锁轮换之前调用它（测试用来阻塞刷新在途窗口）。
+	BeforeRefresh func()
 
 	// RepoHooks / RepoDeliveries 是仓库 webhook 与它们的投递日志（M15，见 repohooks.go）；
 	// DeliveriesUsed / DeliveriesReset 是投递日志接口的独立额度（上限 500 次/小时，304 不计数）。
@@ -130,11 +138,12 @@ type Server struct {
 	lfsActive     int               // 在途的对象请求数
 	lfsPeak       int               // lfsActive 的最大值
 
-	seq         int64
-	codes       map[string]string // 授权码 → login
-	userTokens  map[string]string // 用户访问令牌 → login
-	tokenScopes map[string]string // 用户访问令牌 → 授予的 scope
-	forkParent  map[int64]int64   // fork 的仓库 id → 上游仓库 id（GraphQL 的 parent，见 gqlquery.go）
+	seq           int64
+	codes         map[string]string        // 授权码 → login
+	userTokens    map[string]string        // 用户访问令牌 → login
+	tokenScopes   map[string]string        // 用户访问令牌 → 授予的 scope
+	refreshTokens map[string]refreshRecord // 刷新令牌 → 对应的 login 与当前 access_token
+	forkParent    map[int64]int64          // fork 的仓库 id → 上游仓库 id（GraphQL 的 parent，见 gqlquery.go）
 }
 
 // New 起一个假 GitHub；URL() 同时作为 APIURL 与 WebURL。
@@ -157,13 +166,14 @@ func (s *Server) Handler() http.Handler { return s.handler() }
 
 func newServer() *Server {
 	return &Server{
-		OAuthApp:    OAuthApp{ClientID: "Ov23.test", ClientSecret: "oauth-secret"},
-		Scopes:      DefaultScopes,
-		Users:       map[string]*User{},
-		Renamed:     map[string]string{},
-		codes:       map[string]string{},
-		userTokens:  map[string]string{},
-		tokenScopes: map[string]string{},
+		OAuthApp:      OAuthApp{ClientID: "Ov23.test", ClientSecret: "oauth-secret"},
+		Scopes:        DefaultScopes,
+		Users:         map[string]*User{},
+		Renamed:       map[string]string{},
+		codes:         map[string]string{},
+		userTokens:    map[string]string{},
+		tokenScopes:   map[string]string{},
+		refreshTokens: map[string]refreshRecord{},
 	}
 }
 
@@ -382,20 +392,85 @@ func (s *Server) paginate(w http.ResponseWriter, r *http.Request, n int) (lo, hi
 	return lo, hi
 }
 
-// issueOAuthToken 给 login 签发 OAuth App 令牌：不过期、无刷新令牌，scope 取 s.Scopes 并随令牌固定。调用方持锁。
-func (s *Server) issueOAuthToken(login string) map[string]any {
+type refreshRecord struct {
+	login     string
+	accessTok string
+	scopes    string
+}
+
+// RevokeToken 吊销一个用户访问令牌（不吊销对应的 refresh_token），模拟令牌提前过期或失效。
+func (s *Server) RevokeToken(tok string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.userTokens, tok)
+	delete(s.tokenScopes, tok)
+}
+
+// RevokeRefreshToken 吊销一个刷新令牌，使下一次刷新返回 bad_refresh_token。
+func (s *Server) RevokeRefreshToken(rt string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.refreshTokens, rt)
+}
+
+// issueOAuthToken 给 login 签发 OAuth App 令牌；ExpiringTokens 为真时附带 expires_in 与可一次性轮换的 refresh_token。调用方持锁。
+func (s *Server) issueOAuthToken(login, scopes string) map[string]any {
 	tok := s.nextToken("gho")
 	s.userTokens[tok] = login
-	s.tokenScopes[tok] = s.Scopes
-	return map[string]any{"access_token": tok, "token_type": "bearer", "scope": strings.ReplaceAll(s.Scopes, " ", "")}
+	s.tokenScopes[tok] = scopes
+	resp := map[string]any{
+		"access_token": tok,
+		"token_type":   "bearer",
+		"scope":        strings.ReplaceAll(scopes, " ", ""),
+	}
+	if s.ExpiringTokens {
+		ttl := s.TokenTTL
+		if ttl <= 0 {
+			ttl = 28800
+		}
+		rttl := s.RefreshTokenTTL
+		if rttl <= 0 {
+			rttl = 15897600
+		}
+		rt := s.nextToken("ghr")
+		s.refreshTokens[rt] = refreshRecord{login: login, accessTok: tok, scopes: scopes}
+		resp["expires_in"] = ttl
+		resp["refresh_token"] = rt
+		resp["refresh_token_expires_in"] = rttl
+	}
+	return resp
 }
 
 func (s *Server) oauthToken(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
+	if r.PostForm.Get("grant_type") == "refresh_token" {
+		s.mu.Lock()
+		hook := s.BeforeRefresh
+		s.mu.Unlock()
+		if hook != nil {
+			hook()
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if r.PostForm.Get("client_id") != s.OAuthApp.ClientID || r.PostForm.Get("client_secret") != s.OAuthApp.ClientSecret {
 		writeJSON(w, http.StatusOK, map[string]string{"error": "incorrect_client_credentials"})
+		return
+	}
+	if r.PostForm.Get("grant_type") == "refresh_token" {
+		rt := r.PostForm.Get("refresh_token")
+		rec, ok := s.refreshTokens[rt]
+		if !ok {
+			writeJSON(w, http.StatusOK, map[string]string{
+				"error":             "bad_refresh_token",
+				"error_description": "The refresh token passed is incorrect or expired.",
+			})
+			return
+		}
+		delete(s.refreshTokens, rt)
+		delete(s.userTokens, rec.accessTok)
+		delete(s.tokenScopes, rec.accessTok)
+		writeJSON(w, http.StatusOK, s.issueOAuthToken(rec.login, rec.scopes))
 		return
 	}
 	code := r.PostForm.Get("code")
@@ -405,9 +480,8 @@ func (s *Server) oauthToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	delete(s.codes, code)
-	writeJSON(w, http.StatusOK, s.issueOAuthToken(login))
+	writeJSON(w, http.StatusOK, s.issueOAuthToken(login, s.Scopes))
 }
-
 func (s *Server) getUser(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

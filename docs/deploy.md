@@ -742,7 +742,7 @@ Oryn 通过你自己注册的 **GitHub OAuth App** 连接 GitHub，用它连接�
 - **我的账号**：交互式线程、首屏新建线程、项目表单里的仓库列表、仓库绑定、仓库 webhook 的管理、仓库级轮询与发布哨兵的读请求都用它。
 - **Agent 账号**（可选，但全自动线程默认用它）：专门给 agent 用的第二个真实 GitHub 账号。两个槽位不能是同一个账号。
 
-OAuth App 的 Client Secret、两个账号的令牌、每个仓库 webhook 的 secret 都用控制面主密钥加密后存在数据库里（AAD 分别为 `github/oauth/client-secret`、`github/identity/<slot>/access`、`github/hook/<repo_id>/secret`），不出现在「密钥」设置页，也不进 orb。
+OAuth App 的 Client Secret、两个账号的访问令牌与刷新令牌、每个仓库 webhook 的 secret 都用控制面主密钥加密后存在数据库里（AAD 分别为 `github/oauth/client-secret`、`github/identity/<slot>/access`、`github/identity/<slot>/refresh`、`github/hook/<repo_id>/secret`），不出现在「密钥」设置页，也不进 orb。
 
 ```yaml
 # orynd.yaml（以下为默认值；只有测试与验收脚本会改）
@@ -774,7 +774,7 @@ github: { api_url: "https://api.github.com", web_url: "https://github.com" }
 |`write:packages`|只用于经 `gh api` 调用的 Packages REST API，见下文「不在本期范围」|
 |`user:email`|读取账号邮箱（`GET /user/emails`）|
 
-控制面绑定仓库、管理 hook、查询写权限、执行门禁现查、轮询投递日志或 REST 轮询时，如果某个槽位的令牌收到 401，就把这个槽位标为「需要重新授权」（`reauth`）。OAuth App 的令牌不过期，也没有刷新令牌，所以重新授权只能重新连接。
+GitHub 2026-08-14 起新建的 OAuth App 默认签发 8 小时过期的访问令牌与 6 个月有效期的刷新令牌（`refresh_token`）；关闭过期的旧 App 不返回过期时间与刷新令牌。持有刷新令牌的槽位会在距离到期 5 分钟内自动轮换，并在未到窗口却遇到 401 时优先尝试刷新恢复（同一槽位并发请求合并为单次刷新，且刷新期间不因网络/5xx 临时故障误标失效）。只有刷新令牌失效（如 `bad_refresh_token`）、刷新后仍 401，或无刷新令牌的槽位收到 401 时，才把该槽位标为「需要重新授权」（`reauth`），此时需在设置页重新连接。
 
 ### 组织批准与 SAML SSO
 

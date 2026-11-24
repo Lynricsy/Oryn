@@ -59,6 +59,9 @@ const (
 	// freezeAfterTurnGrace 是「回合结束后冻结」的兜底宽限：登记后这么久线程仍没离开 working（agent 没有结束回合），
 	// scan 中止当前回合并直接冻结。工具应答经 ctl、orbd 送达 omp 只需秒级，宽限远大于它。
 	freezeAfterTurnGrace = 5 * time.Minute
+	// OAuth 短命令牌刷新（GitHub 2026-08-14 起新建 OAuth App 默认 8 小时过期，附带 6 个月 refresh_token）。
+	tokenRefreshSkew    = 5 * time.Minute  // 距离到期不足此值时主动轮换，避免请求在途过期
+	tokenRefreshTimeout = 20 * time.Second // 脱离调用方取消的刷新超时，确保已轮换的 refresh_token 完整落盘
 )
 
 // oauthScopes 是授权请求的 scope（固定字面量，见 docs/plan-m15.md「全局约束」）。
@@ -161,6 +164,9 @@ type Service struct {
 	mu        sync.Mutex
 	repoLists map[[32]byte]repoListEntry // 用户令牌的 sha256 → 仓库列表（步骤 2.2，惰性初始化）
 	perms     map[permKey]permEntry      // (仓库, 登录名) → 驱动判定的权限结果（惰性初始化）
+	// 令牌刷新（受 refreshMu 保护，惰性初始化）：每槽位同时只发一次 refresh_token 轮换请求。
+	refreshMu    sync.Mutex
+	refreshCalls map[string]*refreshCall
 
 	// PR 跟踪（步骤 5.1 / 5.2，受 mu 保护，惰性初始化）：线程 → 上次按 HEAD 反查过 PR 的 sha；排队中的 CI 汇总。
 	sampledHeads map[string]string

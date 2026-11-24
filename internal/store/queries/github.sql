@@ -9,12 +9,32 @@ SELECT * FROM github_identities WHERE slot = @slot;
 SELECT * FROM github_identities ORDER BY slot;
 
 -- name: UpsertGithubIdentity :exec
-INSERT INTO github_identities (slot, github_id, login, name, avatar_url, access_token_enc, status, connected_at, updated_at)
-VALUES (@slot, @github_id, @login, sqlc.narg(name), @avatar_url, @access_token_enc, 'ok', @connected_at, @updated_at)
+INSERT INTO github_identities (
+    slot, github_id, login, name, avatar_url,
+    access_token_enc, access_expires_at, refresh_token_enc, refresh_expires_at,
+    status, connected_at, updated_at
+)
+VALUES (
+    @slot, @github_id, @login, sqlc.narg(name), @avatar_url,
+    @access_token_enc, sqlc.narg(access_expires_at), @refresh_token_enc, sqlc.narg(refresh_expires_at),
+    'ok', @connected_at, @updated_at
+)
 ON CONFLICT (slot) DO UPDATE SET
     github_id = excluded.github_id, login = excluded.login, name = excluded.name, avatar_url = excluded.avatar_url,
-    access_token_enc = excluded.access_token_enc, status = 'ok', connected_at = excluded.connected_at,
-    updated_at = excluded.updated_at;
+    access_token_enc = excluded.access_token_enc,
+    access_expires_at = excluded.access_expires_at,
+    refresh_token_enc = excluded.refresh_token_enc,
+    refresh_expires_at = excluded.refresh_expires_at,
+    status = 'ok', connected_at = excluded.connected_at, updated_at = excluded.updated_at;
+
+-- name: UpdateGithubIdentityTokens :execrows
+UPDATE github_identities
+SET access_token_enc = @access_token_enc,
+    access_expires_at = sqlc.narg(access_expires_at),
+    refresh_token_enc = @refresh_token_enc,
+    refresh_expires_at = sqlc.narg(refresh_expires_at),
+    updated_at = @updated_at
+WHERE slot = @slot AND access_token_enc = @prev_access_token_enc AND status = 'ok';
 
 -- name: SetGithubIdentityStatus :exec
 UPDATE github_identities SET status = @status, updated_at = @updated_at WHERE slot = @slot;

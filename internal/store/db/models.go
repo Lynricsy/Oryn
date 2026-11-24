@@ -420,16 +420,19 @@ type GithubHook struct {
 }
 
 type GithubIdentity struct {
-	Slot           string  `json:"slot"`
-	GithubID       int64   `json:"githubId"`
-	Login          string  `json:"login"`
-	Name           *string `json:"name"`
-	AvatarUrl      string  `json:"avatarUrl"`
-	AccessTokenEnc []byte  `json:"accessTokenEnc"`
-	Status         string  `json:"status"`
-	ConnectedAt    int64   `json:"connectedAt"`
-	UpdatedAt      int64   `json:"updatedAt"`
-	Scopes         string  `json:"scopes"`
+	Slot             string  `json:"slot"`
+	GithubID         int64   `json:"githubId"`
+	Login            string  `json:"login"`
+	Name             *string `json:"name"`
+	AvatarUrl        string  `json:"avatarUrl"`
+	AccessTokenEnc   []byte  `json:"accessTokenEnc"`
+	Status           string  `json:"status"`
+	ConnectedAt      int64   `json:"connectedAt"`
+	UpdatedAt        int64   `json:"updatedAt"`
+	Scopes           string  `json:"scopes"`
+	AccessExpiresAt  *int64  `json:"accessExpiresAt"`
+	RefreshTokenEnc  []byte  `json:"refreshTokenEnc"`
+	RefreshExpiresAt *int64  `json:"refreshExpiresAt"`
 }
 
 type GithubOauthApp struct {

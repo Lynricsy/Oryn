@@ -111,12 +111,12 @@ func (r egressResolver) githubToken() (string, GitHubTokenState) {
 	return r.s.github.OrbToken(ctx, r.orbID)
 }
 
-// GitHubTokenRejected 把出站代理注入后被上游回 401 的令牌交给 GitHub 集成（R2：按令牌找到槽位置为 reauth）。
+// GitHubTokenRejected 把出站代理注入后被上游回 401 的令牌交给 GitHub 集成（R2：可刷新时轮换恢复，否则标为 reauth）。
 func (r egressResolver) GitHubTokenRejected(token string) {
 	if r.s.github == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	r.s.github.GitHubTokenRejected(ctx, r.orbID, token)
 }

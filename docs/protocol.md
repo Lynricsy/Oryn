@@ -2012,7 +2012,7 @@ Web 的命令面板（Ctrl/⌘+K）里「对话内容」一组的数据源。规
 
 - **`/gh/api.github.com/…`、`/gh/uploads.github.com/…`**：只在 `Policy.GitHub` 非 nil 时放行，否则 403；其它主机 404；拿不到令牌 502。保留原始转义（`RawPath`），注入 `Bearer <OAuth 用户令牌>`，删除客户端的 `Accept-Encoding`（让 Transport 协商并解压，脱敏与识别读到明文），响应里的令牌换成 `oryn-redacted`。不做路径白名单，也不按仓库拦截。上传主机的请求体（二进制附件）不读，只按路径识别。
 - **`/git/github.com/…` 与代理形式 `http://github.com/…`**：两者是同一条路由。代理形式指 absolute-form 请求（`r.URL.Host` 非空），它只走 git 路由：请求行必须是 `http://<host[:port]>/…` 且路径规范，否则回 400；按 `/git/<host[:port]>/<路径>` 处理，不是 git smart-HTTP 端点回 403 `oryn: <原因>`。记忆、模型与 `/gh/` 路由只认 origin-form，所以 owner 叫 `memory` 的仓库也能访问。`Policy.GitHub` 非 nil 时不受 `GitRepos` 限制，读写都放行，注入 `Basic x-access-token:<OAuth 令牌>`。身份槽位不可用时，我的账号身份的 orb 回落到 `git/github.com/token`，按 M2 规则限制仓库；Agent 身份的 orb 不回落，回 404。只读评审线程在 `info/refs?service=git-receive-pack` 阶段就回 403 `oryn: <原因>`。runner 的通道（`runnerEgressHandler`，只放行 origin-form 的 `/llm/` 与 `/memory/`）对 absolute-form 请求一律回 403。
-- **令牌**：`orbs.GitHub.OrbToken` 直接解密 orb 身份槽位的令牌（`github/identity/<slot>/access`），不收窄、不缓存。归管条件（`orbManaged`）是：不是 runner、不是协调宿主，且槽位为 `ok`。我的账号不可用时视为不归管（可回落 PAT）；Agent 账号不可用时视为归管但不可用（不回落）。
+- **令牌**：`orbs.GitHub.OrbToken` 按 orb 身份槽位取访问令牌（`github/identity/<slot>/access`；持有 `refresh_token` 且距到期不足 5 分钟时自动经 per-slot singleflight 轮换落盘），不收窄、不缓存。归管条件（`orbManaged`）是：不是 runner、不是协调宿主，且槽位为 `ok`。我的账号不可用时视为不归管（可回落 PAT）；Agent 账号不可用时视为归管但不可用（不回落）。出站代理收到 401 时同样先尝试经 `refresh_token` 刷新恢复，确定性失效或无刷新令牌时才标 `reauth`。
 - **写操作识别**（`egress.ParseGitHubRequest`）：GET / HEAD 与 GraphQL query 不是写操作。REST 非 GET 按路由表得到类别与路径模板，`/repos/{o}/{r}` 与 `/repositories/{id}` 等价，先解码路径、去掉结尾斜杠与 `.json` 后缀，含 `.` / `..` 段时视为无法解析。GraphQL 用 gqlparser 解析：按 `operationName` 选取 operation、展开 fragment、代入变量（含默认值）；mutation 的每个根字段算一个写操作，别名不影响识别。请求体读入上限 `ghWriteBodyMax = 1 MiB`，读后用 `bytes.Reader` 复原；超限或带 `Content-Encoding` 时只有路径级信息（`Unparsed`）。`git-receive-pack` 只读命令段（上限 `receivePackHeadMax = 64 KiB`）：跳过 `shallow` 行，去掉 NUL 之后的能力串，遇到 `push-cert` 视为无法解析，解析后用 `io.MultiReader` 还原请求体。
 - **门禁**（`egress/gate.go`）：项目门禁 `Policy.GitHub.Gates`（`push`、`pr`、`prHeadings`、`requireClosingRef`）随缓存的出站策略生成；项目门禁经 PATCH 改动后，该项目各 orb 的缓存策略即作废（`InvalidateProjectPolicies`），下一个出站请求按当前配置重建。作废同时把策略代际加一：作废之前已读过配置、尚未写缓存的重建（`policyFor`、setup、omp-home 下发）不再写入，`policyFor` 重建至多 3 次，仍撞上作废则返回最后一次的结果、不缓存。线程限制与其余会变的状态每个写请求经 `GateLookup` 向控制面现查：
   - `ThreadGates()`：返回 `ReviewOnly`（`thread_issues.review_only`）、`CommentOnlyReviews` / `ImplAuth`（取自建立任务的规则，`rule_id` 缺省时取 `trigger_id`）。orb 没有唯一的未归档工作线程、没有任务或规则已删除时为零值；查询失败时三项都按开启处理。
@@ -2077,8 +2077,9 @@ agent 的发言**不追加任何标记**，出站代理也不改写请求正文�
   - `owner.github_automation_identity` 默认值改为 `agent`。
 - `0034_github_drop_app.sql`：破坏性，只能向前。删除旧集成的表与列，并清空 `github_identities`；`github_oauth_states` 只保留 `identity` 类。
 - `0035_github_watch_drop_pulls_etag.sql`：删除 `github_repo_watches.etag_pulls`（PR 改由 issue 列表发现）。
+- `0060_github_refresh_token.sql`：为 `github_identities` 补回 `access_expires_at`、`refresh_token_enc`、`refresh_expires_at`，兼容 2026-08-14 起 GitHub 新建 OAuth App 默认开启的 8 小时短命令牌与 6 个月 `refresh_token` 自动轮换（旧 App 三列保持 NULL）。
 - 沿用 `0028_github.sql` 的 `github_identities`、`github_oauth_states`、`github_deliveries`、`github_pulls`、`thread_pulls`、`github_triggers`、`thread_issues`、`github_outbox`、`orbs.github_identity`、`projects.github_*`（仓库 id、改名前地址、三个回流开关）与 `thread_commits (sha)` 索引。
-- 敏感值经 `secrets.Box` 加密存在本表列里，AAD 分别为 `github/oauth/client-secret`、`github/identity/<slot>/access`、`github/hook/<repo_id>/secret`，不进 `secrets` 表。
+- 敏感值经 `secrets.Box` 加密存在本表列里，AAD 分别为 `github/oauth/client-secret`、`github/identity/<slot>/access`、`github/identity/<slot>/refresh`、`github/hook/<repo_id>/secret`，不进 `secrets` 表。
 
 ### M14 历史
 

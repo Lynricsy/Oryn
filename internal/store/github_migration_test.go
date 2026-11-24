@@ -155,7 +155,7 @@ func TestGitHubDropAppMigration(t *testing.T) {
 		return err
 	}
 	assert.Zero(t, queryInt(ctx, t, s, `SELECT COUNT(*) FROM sqlite_master WHERE name IN ('github_app', 'github_installations')`))
-	assert.Equal(t, 10, cols("github_identities"))
+	assert.Equal(t, 13, cols("github_identities"))
 	assert.Equal(t, 4, cols("github_oauth_states"))
 	require.Error(t, exec(`INSERT INTO github_oauth_states (state_hash, kind, slot, expires_at) VALUES ('m', 'manifest', 'user', 1)`))
 	require.Error(t, exec(`INSERT INTO github_oauth_states (state_hash, kind, expires_at) VALUES ('n', 'identity', 1)`), "slot 必填")
@@ -190,4 +190,33 @@ func TestGitHubDropAppMigration(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, prj.GithubRepoID)
 	assert.EqualValues(t, 42, *prj.GithubRepoID)
+}
+
+// TestGitHubRefreshTokenMigration 覆盖 0060：给 github_identities 补回 access_expires_at / refresh_token_enc / refresh_expires_at，
+// 已有行新列保持 NULL；Down 去掉这三列且不丢失原有行，再 Up 结构恢复。
+func TestGitHubRefreshTokenMigration(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t, t.TempDir())
+	p := githubProvider(t, s)
+	cols := func() int {
+		return queryInt(ctx, t, s, `SELECT COUNT(*) FROM pragma_table_info('github_identities') WHERE name IN ('access_expires_at', 'refresh_token_enc', 'refresh_expires_at')`)
+	}
+	assert.Equal(t, 3, cols())
+
+	_, err := p.DownTo(ctx, 59)
+	require.NoError(t, err)
+	assert.Equal(t, 0, cols())
+	_, err = s.DB.ExecContext(ctx, `INSERT INTO github_identities (slot, github_id, login, access_token_enc, status, connected_at, updated_at, scopes)
+		VALUES ('user', 1, 'owner', x'0102', 'ok', 100, 100, 'repo')`)
+	require.NoError(t, err)
+
+	_, err = p.Up(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 3, cols())
+	row, err := s.Q.GetGithubIdentity(ctx, "user")
+	require.NoError(t, err)
+	assert.Equal(t, "owner", row.Login)
+	assert.Nil(t, row.AccessExpiresAt)
+	assert.Nil(t, row.RefreshTokenEnc)
+	assert.Nil(t, row.RefreshExpiresAt)
 }
