@@ -1348,10 +1348,29 @@
 		"kind": {
 			"cli": "CLI",
 			"desktop": "Desktop",
-			"mobile": "Mobile"
+			"mobile": "Mobile",
+			"browser_extension": "Browser extension"
 		},
 		"pairInBrowser": "Pairing has to be approved in a browser after signing in with your passkey.",
-		"pairInBrowserLink": "Open in browser"
+		"pairInBrowserLink": "Open in browser",
+		"browserRelay": {
+			"title": "Local browser extension (Chrome)",
+			"hint": "Load the Oryn / OMP Browser Relay extension in Chrome, switch to Oryn Cloud mode, and pair with this server. Unshared existing tabs stay hidden from the cloud; creating new tabs and sensitive actions require your confirmation in the extension popup by default.",
+			"onlineCount": "{{count}} extension(s) online",
+			"noneOnline": "No extension online",
+			"pairRisk": "Once approved, this Chrome extension can connect to Oryn and let bound threads drive tabs you explicitly share or approve. You can revoke it anytime under Settings → Devices."
+		}
+	},
+	"browserRelay": {
+		"chipLabel": "Local Chrome",
+		"boundOnline": "Local Chrome: {{name}} ({{tabs}} tab(s) shared)",
+		"boundOffline": "Local Chrome: {{name}} (offline)",
+		"unbound": "Attach local Chrome",
+		"pendingBadge": "{{count}} pending",
+		"bindTo": "Bind {{name}}",
+		"unbind": "Unbind",
+		"noClients": "No online Chrome extension",
+		"approvalBanner": "Agent is waiting for your confirmation in the Chrome extension ({{name}}, {{count}} pending). Click the extension icon in Chrome to approve or deny; the agent will retry once approved."
 	},
 	"providers": {
 		"create": "New provider",

@@ -166,6 +166,13 @@ export function PairApproval({
 					<div className="mt-3">
 						<Callout tone="neutral">{t("pair.verifyHint")}</Callout>
 					</div>
+					{pairing.kind === "browser_extension" && (
+						<div className="mt-2">
+							<Callout tone="warn">
+								{t("devices.browserRelay.pairRisk")}
+							</Callout>
+						</div>
+					)}
 					<div className="mt-3 flex gap-2">
 						<Button
 							variant="primary"

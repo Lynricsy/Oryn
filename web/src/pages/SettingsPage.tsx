@@ -21,6 +21,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { Navigate, useNavigate } from "react-router";
 import { noteAgentConfigWrite } from "../api/agent-config-queries";
+import { useBrowserRelayClients } from "../api/browser-relay-queries";
 import { api, type Schemas, unwrap } from "../api/client";
 import { identityKeys } from "../api/identity-queries";
 import { invalidateModelCatalog } from "../api/model-catalog-queries";
@@ -195,6 +196,7 @@ const DEVICE_ICON: Record<Schemas["Device"]["kind"], IconName> = {
 	cli: "terminal",
 	desktop: "monitor",
 	mobile: "device",
+	browser_extension: "globe",
 };
 
 function DevicesSettings() {
@@ -203,6 +205,7 @@ function DevicesSettings() {
 	const devices = useDevices();
 	const me = useMe();
 	const revoke = useAsync();
+	const relayClients = useBrowserRelayClients();
 	// App 会话（设备令牌换来的网页会话）不能批准配对：设备令牌不能再签发设备
 	const appSession = me.data?.auth.kind === "web" && !!me.data.auth.deviceId;
 	return (
@@ -296,6 +299,22 @@ function DevicesSettings() {
 				{devices.data?.devices.length === 0 && (
 					<p className="text-faint text-sm">{t("devices.empty")}</p>
 				)}
+			</Card>
+			<Card title={t("devices.browserRelay.title")} icon="globe">
+				<p className="text-muted text-xs">{t("devices.browserRelay.hint")}</p>
+				<div className="mt-2 flex items-center gap-2 text-xs">
+					<Badge
+						tone={
+							(relayClients.data?.clients.length ?? 0) > 0 ? "ok" : "neutral"
+						}
+					>
+						{(relayClients.data?.clients.length ?? 0) > 0
+							? t("devices.browserRelay.onlineCount", {
+									count: relayClients.data?.clients.length ?? 0,
+								})
+							: t("devices.browserRelay.noneOnline")}
+					</Badge>
+				</div>
 			</Card>
 			{host.mobile === null && <PairQrCard />}
 		</>

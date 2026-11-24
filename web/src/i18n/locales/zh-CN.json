@@ -1348,10 +1348,29 @@
 		"kind": {
 			"cli": "CLI",
 			"desktop": "桌面",
-			"mobile": "移动"
+			"mobile": "移动",
+			"browser_extension": "浏览器扩展"
 		},
 		"pairInBrowser": "配对需要在浏览器里用 Passkey 登录后批准。",
-		"pairInBrowserLink": "在浏览器中打开"
+		"pairInBrowserLink": "在浏览器中打开",
+		"browserRelay": {
+			"title": "本机浏览器扩展（Chrome）",
+			"hint": "在 Chrome 加载 Oryn / OMP Browser Relay 扩展并切到「Oryn 云端模式」，输入当前服务器地址后按配对码完成授权。未点选共享的现有标签页不会暴露给云端，新建标签页与高危操作默认需在扩展弹窗中确认。",
+			"onlineCount": "当前在线 {{count}} 个扩展",
+			"noneOnline": "暂无在线扩展",
+			"pairRisk": "批准后该 Chrome 扩展可连入控制面，并在你主动点选共享标签页或确认授权后允许指定线程的 agent 操作对应标签页。可随时在「设置 → 设备」吊销。"
+		}
+	},
+	"browserRelay": {
+		"chipLabel": "本机 Chrome",
+		"boundOnline": "本机 Chrome：{{name}}（已共享 {{tabs}} 个标签页）",
+		"boundOffline": "本机 Chrome：{{name}}（离线）",
+		"unbound": "连接本机 Chrome",
+		"pendingBadge": "{{count}} 待授权",
+		"bindTo": "绑定 {{name}}",
+		"unbind": "解除绑定",
+		"noClients": "没有在线的 Chrome 扩展",
+		"approvalBanner": "Agent 正在等待你在 Chrome 扩展（{{name}}）中确认授权（{{count}} 项待处理）。请点击 Chrome 工具栏中的扩展图标批准或拒绝，批准后 agent 会自动重试。"
 	},
 	"providers": {
 		"create": "新建 provider",

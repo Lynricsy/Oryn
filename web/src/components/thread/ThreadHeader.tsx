@@ -22,6 +22,7 @@ import { useBreakpoint, useViewportSegments } from "../../lib/viewport";
 import { deleteThread, patchThread, renameThread } from "../../state/actions";
 import { useIndex, useThread } from "../../state/stores";
 import { uiStore, useUi } from "../../state/ui";
+import { BrowserRelayChip } from "../BrowserRelayControl";
 import { boxThreadLabel } from "../boxes/box-model";
 import { PrChip } from "../github/PrChip";
 import { ChromeLead, WindowControls } from "../layout/WindowControls";
@@ -779,6 +780,9 @@ export function ThreadHeader({
 				) : (
 					<OrbChip orb={orb} working={thread?.state === "working"} />
 				))}
+			{editing === null && thread?.kind === "work" && (
+				<BrowserRelayChip threadId={threadId} />
+			)}
 			<span className="min-w-0 flex-1" />
 			{error && (
 				<span className="max-w-40 truncate text-err text-xs" title={error}>

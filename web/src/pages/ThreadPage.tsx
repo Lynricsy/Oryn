@@ -22,6 +22,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { Navigate, useNavigate, useParams } from "react-router";
 import { useSpaces } from "../api/space-queries";
+import { BrowserRelayApprovalBanner } from "../components/BrowserRelayControl";
 import { Composer } from "../components/composer/Composer";
 import { DockPill, useDockCollapse } from "../components/composer/DockPill";
 import {
@@ -627,6 +628,12 @@ export function ThreadScreen({
 									)}
 									{!coordinator && (
 										<EnvBanner key={`env:${threadId}`} threadId={threadId} />
+									)}
+									{!coordinator && (
+										<BrowserRelayApprovalBanner
+											key={`relay-apr:${threadId}`}
+											threadId={threadId}
+										/>
 									)}
 									{!coordinator && <RunnerOfflineNotice threadId={threadId} />}
 									{dockNotice}

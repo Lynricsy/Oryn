@@ -15,7 +15,13 @@
  * `artifact.activity` / `artifact.canvas` / `artifact.comments` 按 artifact id 分发给 `onArtifact` 的订阅者。`watchArtifact` 按引用计数登记观看，重连后重发 `artifact.watch`。
  */
 
-import { ApiError, api, unwrap, type WsServerMessage } from "../api/client";
+import {
+	ApiError,
+	api,
+	type Schemas,
+	unwrap,
+	type WsServerMessage,
+} from "../api/client";
 import { host } from "../lib/host";
 import type {
 	OmpCommand,
@@ -195,6 +201,46 @@ export class RealtimeClient {
 
 	private emitBoxesChanged() {
 		for (const cb of [...this.boxesListeners]) cb();
+	}
+
+	/** 本机浏览器中继状态变更监听者（M27）：收到 `browser_relay.state` 时携带最新状态，`null` 表示重连后需重拉。 */
+	private readonly browserRelayStateListeners = new Set<
+		(state: Schemas["ThreadBrowserRelay"] | null) => void
+	>();
+
+	/** 订阅线程本机浏览器绑定/审批状态变化；连接重建时以 null 通知刷新。返回取消订阅。 */
+	onBrowserRelayState(
+		cb: (state: Schemas["ThreadBrowserRelay"] | null) => void,
+	): () => void {
+		this.browserRelayStateListeners.add(cb);
+		return () => {
+			this.browserRelayStateListeners.delete(cb);
+		};
+	}
+
+	private emitBrowserRelayState(state: Schemas["ThreadBrowserRelay"] | null) {
+		for (const cb of [...this.browserRelayStateListeners]) cb(state);
+	}
+
+	/** 在线本机浏览器扩展客户端列表变更监听者（M27）。 */
+	private readonly browserRelayClientsListeners = new Set<
+		(clients: Schemas["BrowserRelayClient"][] | null) => void
+	>();
+
+	/** 订阅在线浏览器扩展列表变化；连接重建时以 null 通知刷新。返回取消订阅。 */
+	onBrowserRelayClients(
+		cb: (clients: Schemas["BrowserRelayClient"][] | null) => void,
+	): () => void {
+		this.browserRelayClientsListeners.add(cb);
+		return () => {
+			this.browserRelayClientsListeners.delete(cb);
+		};
+	}
+
+	private emitBrowserRelayClients(
+		clients: Schemas["BrowserRelayClient"][] | null,
+	) {
+		for (const cb of [...this.browserRelayClientsListeners]) cb(clients);
 	}
 
 	/** 项目仓库镜像变更的监听者（M24）：收到 `project_repo.changed`（带项目 id）与每次连接建立时（null = 全部项目）调用。 */
@@ -504,6 +550,8 @@ export class RealtimeClient {
 			this.emitSshChanged();
 			this.emitProjectRepoChanged(null);
 			this.emitBoxesChanged();
+			this.emitBrowserRelayState(null);
+			this.emitBrowserRelayClients(null);
 			for (const [id, w] of this.artifactWatches)
 				this.sendArtifactWatch(id, w.page);
 			this.emitArtifactsChanged();
@@ -824,6 +872,12 @@ export class RealtimeClient {
 				return;
 			case "boxes.changed":
 				this.emitBoxesChanged();
+				return;
+			case "browser_relay.state":
+				this.emitBrowserRelayState(msg.state);
+				return;
+			case "browser_relay.clients":
+				this.emitBrowserRelayClients(msg.clients);
 				return;
 			case "project_repo.changed":
 				this.emitProjectRepoChanged(msg.projectId);
