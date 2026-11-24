@@ -78,6 +78,7 @@ src/frames/_layout.tsx     可选共享外壳
 src/components/**  src/theme.css  src/DESIGN.md
 src/package.json  src/package-lock.json   设计级依赖（可缺）
 dist/<id>.html  dist/assets/**  dist/frames.json
+dist/_project/package.json  dist/_project/package-lock.json   导出工程用的锁（有额外设计依赖时由封存生成）
 ```
 
 `dist/frames.json` = `[{id, name, width, height, device, links:[<id>…]}]`，由引擎构建生成。`src/**` 与 `dist/**` 只经封存写入；对设计画布，`update_artifact` 的 `files`/`edits` 命中这两个前缀时回 `invalid`，提示改工作副本。
@@ -325,9 +326,11 @@ Accept 统一口径：除特别写明外，`go build ./...` 无输出，`go test
 
 **D2 导出为工程**
 - Depends on：T3。
-- Files：`internal/artifacts/export.go`、`internal/designengine/eject/`（`index.html`、`main.tsx`、`vite.config.ts`、`server.mjs`、`.oryn/box.yaml`、`README.md`）。
-- Do：`format=project` 的 zip = `src/**` + eject 文件 + 合并后的 `package.json`（引擎依赖 ∪ 设计依赖）。eject 版 `main.tsx` 用 hash 路由列出全部帧；`box.yaml` 为 `build: npm ci && npm run build`、`source:false`、`artifacts:[dist, server.mjs]`、`services.web.command: node server.mjs`。
-- Accept：`go test ./internal/artifacts/ -run ExportProject` → `ok`（zip 清单断言）；手工解压后 `npm ci && npm run build` 退出码 0。
+- Files：`internal/artifacts/export.go`、`internal/designengine/eject/`（`index.html`、`main.tsx`、`vite.config.ts`、`server.mjs`、`.oryn/box.yaml`、`README.md`）、`internal/designengine/{eject,project}.go`。
+- Do：`format=project` 的 zip = `src/**` + eject 文件 + 合并后的 `package.json`（引擎依赖 ∪ 设计依赖，同名取设计级）+ 与之严格匹配的根 `package-lock.json`。`box.yaml` 为 `build: npm ci && npm run build`、`source:false`、`artifacts:[dist, server.mjs]`、`services.web.command: node server.mjs`；eject 版 `main.tsx` 用 hash 路由列出全部帧。
+  - 锁的来源：版本里有 `dist/_project/package-lock.json` 就用（与合并 manifest 根依赖不符回 `invalid`）；否则无额外设计依赖时由嵌入的引擎 lock 改写根条目得到（不联网）；有额外依赖却缺锁时回 `invalid`，不降级为 `npm install`。`src/package-lock.json` 只覆盖设计依赖，不能顶替。
+  - `designengine.WriteProjectLock(ctx, workDir)`（`npm install --package-lock-only --ignore-scripts`）由 orbd 封存在 `src/package.json` 存在时调用，产物写进 `dist/_project/`；必须排在 `vite build` 之后（build 会清空 `dist/`）。接线在第 3 波，由 Q1 启动器那一片在 T4 的 `design.go` 上一并追加。
+- Accept：`go test ./internal/designengine/ -run Project` 与 `go test ./internal/artifacts/ -run ExportProject` → `ok`（有锁、派生锁、缺锁 invalid 三种）；手工把「无额外依赖」与「带额外依赖」两个 zip 解压后各跑 `npm ci && npm run build`，退出码 0。
 
 **D3 部署到 box**
 - Depends on：D2。
