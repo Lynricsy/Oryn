@@ -215,7 +215,7 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 |---|---|---|
 | 浏览器 | Web / PWA | 无需安装 |
 | Windows / macOS / Linux | Tauri 2 桌面 App | 无系统标题栏，macOS 原生红绿灯（侧栏字标按剩余宽度显示）；托盘、全局快捷键、`oryn://` 深链接 |
-| Android | Tauri 2 App（`foss` / `gms`） | UnifiedPush 或 FCM 端到端加密推送，通知上直接作答 |
+| Android | Tauri 2 App（`foss` / `gms`） | 端到端加密推送：`foss` 走 UnifiedPush，`gms` 配对即经官方推送网关走 FCM；通知上直接作答 |
 | iOS | Tauri 2 App（TestFlight） | iOS 26 原生 Liquid Glass：系统底栏悬浮在内容之上（按住冒出液珠、横滑换项），页头与新建线程页的侧栏钮跟随下沉卡片开合，见 [附录 A](docs/mobile.md#附录-aios) |
 | 终端 | `oryn` CLI | `thread attach` 流式交互，`sync` 把远端改动实时镜像到本机 |
 

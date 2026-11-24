@@ -11,7 +11,7 @@ Oryn 的 Android 客户端与桌面 App 是同一个 Tauri 2 工程（`web/src-t
 | 包 | 推送通道 | 适合 |
 |---|---|---|
 | `foss`：`Oryn_<版本>_android-foss.apk` | UnifiedPush（需要在手机上装一个分发器，推荐 ntfy） | 所有设备，App 里没有任何 Google 依赖 |
-| `gms`：`Oryn_<版本>_android-gms.apk` | 有 UnifiedPush 分发器时用它；没有时回退到 FCM | 装有 Google Play 服务、不想另装分发器的手机 |
+| `gms`：`Oryn_<版本>_android-gms.apk` | 默认经官方推送网关走 FCM，配对后自动启用；可在设置里改用 UnifiedPush | 装有 Google Play 服务、不想另装分发器的手机 |
 
 两个包的应用标识相同、用同一把密钥签名，可以互相覆盖安装（覆盖后需在 App 里重新「启用推送」）。
 
@@ -45,27 +45,24 @@ apksigner verify --print-certs Oryn_<版本>_android-foss.apk | grep 'SHA-256'
 
 服务器只在**没有任何设备正在看该线程**时生成通知；App 在前台时只显示应用内提示，不弹系统通知。通知点击经 `oryn://thread/<id>` 直达线程。
 
-### UnifiedPush（两种包都支持，推荐）
+### 官方推送网关 FCM（gms 包默认）
+
+gms 包配对后自动启用推送：弹出系统通知授权框，允许后经官方推送网关（`https://push.oryn.best`）走 Firebase Cloud Messaging，状态显示「经官方推送网关与 Firebase 云消息（FCM）接收推送」。不需要装分发器，服务器也不需要任何 Google 凭据：orynd 把 RFC 8291 密文交给网关，网关转给 FCM；Firebase 服务账号只在网关上。协议见 [protocol.md](protocol.md)「官方推送网关」，自建网关见 [push-gateway.md](push-gateway.md)。
+
+- **授权**：App 先向网关证明持有这台手机的 FCM 令牌（网关发一条 challenge 推送），再用设备密钥与 orynd 的主机公钥换一份授权，最后把授权登记到 orynd（`kind: gateway`）。陌生 orynd 只能给明确授权过它的手机推送；关闭推送或改用 UnifiedPush 时 App 直接在网关上吊销授权，不依赖 orynd。
+- **端到端加密**：启用时 App 生成自己的 RFC 8291 接收端密钥（P-256 + 16 字节 auth；私钥用 Keystore 里的 AES-GCM 密钥加密保存），随授权一起登记；FCM 的 `data` 只有 `{v:"2", id, e:<密文>}`，网关与 Google 都只见密文。App 用 UnifiedPush 连接器同一份解密代码解开后走同一套通知流程；`v` 不对、缺 `e` 或解不开的消息直接丢弃。
+- **自部署的 orynd** 默认就用官方网关（`orynd.yaml` 的 `push.gateway.url`，见 [deploy.md](deploy.md)「移动 App 推送」）；管理员写空串关闭后，gms 包的推送卡片提示服务器关闭了官方推送网关，可改用 UnifiedPush。
+- **从旧版升级**：gms 包里原先用 UnifiedPush 的会自动改走网关 FCM（旧订阅先删再登记，期间不会两条通道都收）；想继续用 UnifiedPush，在卡片上点「改用 UnifiedPush」。
+- **后台刷新令牌**：FCM 刷新令牌或换授权时，进程里可能只有推送服务、没有界面；App 在下次进入或回到前台时重新登记。UnifiedPush 换端点时 App 排一个 WorkManager 任务（要联网、指数退避，最多 8 次），用上次登记到的服务器和 Keystore 里的设备令牌直接重新登记，不用等你打开 App。
+- **离线积压**：FCM 对离线设备最多存 100 条消息，超出时全部丢弃并在上线后通知 App；App 随即补拉最近 50 条通知，把未读（待答的还要未作答）且没显示过的逐条弹出，同一线程合并成一条；补拉失败时只弹一条不含内容的「Oryn 有新通知」。
+
+### UnifiedPush（foss 包；gms 包可选）
 
 1. 在手机上安装 ntfy（F-Droid / Google Play / GitHub 均可），打开一次并允许其后台运行与通知。
 2. 可选：自建 ntfy 服务器（手机与 orynd 都要能访问），在 ntfy App 的「设置 → 默认服务器」填它；不自建就用 `ntfy.sh`，分发服务器只看得到密文（消息是 RFC 8291 端到端加密的 Web Push）。私有 ntfy 开了鉴权时要放行匿名发布到 UnifiedPush 主题：`ntfy access '*' 'up*' write-only`。
-3. Oryn App 里「设置 → 通知 → 启用推送」，按系统提示允许通知。状态显示「经 ntfy 接收推送（<服务器>）」即可。
+3. Oryn App 里「设置 → 通知 → 启用推送」（gms 包点「改用 UnifiedPush」），按系统提示允许通知。状态显示「经 ntfy 接收推送（<服务器>）」即可。
 
 服务端不需要任何配置：UnifiedPush 端点按 `kind: webpush` 登记，复用 Web Push 发送器。
-
-### FCM（仅 gms 包）
-
-没有安装 UnifiedPush 分发器时，gms 包在「启用推送」后改用 Firebase Cloud Messaging，状态显示「经 FCM 接收推送」。需要服务器管理员先启用 FCM（[deploy.md](deploy.md)「移动 App 推送」）：
-
-1. 服务账号 JSON 只放在控制面密钥库里，**proxy 模式**：`oryn secrets set fcm/service-account < service-account.json`；
-2. `orynd.yaml`：`push: { fcm: { service_account_secret: "fcm/service-account" } }`，重启 orynd。
-
-服务账号必须属于构建该 APK 时 `google-services.json` 所在的同一个 Firebase 项目，否则 FCM 拒绝发送（`SENDER_ID_MISMATCH`）。服务器未启用 FCM 时 App 显示推送错误，UnifiedPush 不受影响。令牌失效（App 卸载、数据被清除）时服务端收到 `UNREGISTERED` 会自动删除该订阅。
-
-FCM 消息同样端到端加密（协议见 [protocol.md](protocol.md)「M7：移动推送」）：启用时 App 生成自己的 RFC 8291 接收端密钥（P-256 + 16 字节 auth；私钥用 Keystore 里的 AES-GCM 密钥加密保存），随令牌一起登记；FCM 的 `data` 只有 `{v:"2", id, e:<密文>}`，Google 只见密文。App 用 UnifiedPush 连接器同一份解密代码解开后走同一套通知流程；`v` 不对、缺 `e` 或解不开的消息直接丢弃。旧版 App 登记的无密钥订阅会被服务端删除，新版每次进入应用都重新登记一次订阅（按令牌 / 端点覆盖），届时带密钥重建。
-
-- **后台刷新令牌**：FCM 刷新令牌、UnifiedPush 换端点时，进程里可能只有推送服务、没有界面。这时 App 排一个 WorkManager 任务（要联网、指数退避，最多 8 次），用上次登记到的服务器和 Keystore 里的设备令牌直接重新登记，不用等你打开 App。
-- **离线积压**：FCM 对离线设备最多存 100 条消息，超出时全部丢弃并在上线后通知 App；App 随即补拉最近 50 条通知，把未读（待答的还要未作答）且没显示过的逐条弹出，同一线程合并成一条；补拉失败时只弹一条不含内容的「Oryn 有新通知」。
 
 ### 在通知上作答
 
@@ -142,7 +139,7 @@ make android DIST=foss                                      # 仓库根目录：
 - 设备只按 AVD 名选择（默认 `oryn-m7`）：脚本用 `adb -s emulator-N emu avd name` 找到对应的模拟器，没有就以空闲端口启动它；本机其它模拟器（如无关的 `emulator-5554`）不会被安装、改动或关闭。
 - UnifiedPush 场景用本机 ntfy 容器（`binwiederhier/ntfy:v2.37.2`，`127.0.0.1:7680`）与 `.dev/m7/` 里的 ntfy APK。
 - A11（Viewport Segments）只能在折叠 AVD 上验证：默认 AVD 上它报 SKIP，另跑 `bun run accept:m7 -- --only A11 --avd oryn-m7-fold`。
-- FCM 场景（A23）需要 gms debug 包（`M7_GMS_APK`，默认 `.dev/m7/oryn-gms-debug.apk`）、带 Google Play 服务且能出网的模拟器镜像，以及 dev 部署里已写入 `fcm/service-account` 密钥（`dev/orynd.yaml` 已引用该名字）：`./bin/oryn secrets set fcm/service-account < .dev/m7/fcm-service-account.json`。
+- 官方推送网关场景（A23）在隔离栈上跑，不动 dev 库（0058 迁移会删掉旧的 FCM 订阅）：先停 `make dev`，`eval "$(bash web/scripts/m28-gateway-stack.sh up)"` 起本机网关（`127.0.0.1:7700`，`.dev/m7/fcm-service-account.json`）与数据目录为 `.dev/m28/data` 的 orynd + process provider，再以 `ORYN_PUSH_GATEWAYS=http://localhost:7700 ORG_GRADLE_PROJECT_orynDistribution=gms bun run tauri android build --debug --apk --target x86_64` 构建 gms 包（`M7_GMS_APK` 指向它）。模拟器镜像要带 Google Play 服务且能出网。结束后 `bash web/scripts/m28-gateway-stack.sh down`。
 - release 包场景（A19）需要 `.dev/android-release.jks` 与 `M7_KEYSTORE_PASSWORD`，并核对上文记录的证书指纹。
 
 ## 发版
@@ -176,7 +173,7 @@ Android 与 iOS 的签名 secret 放在受保护的 environment `mobile-release`
 | `IOS_MOBILE_PROVISION` | `com.lynricsy.oryn` 的「App Store Connect」描述文件（`.mobileprovision`）的 base64 |
 | `IOS_NSE_MOBILE_PROVISION` | `com.lynricsy.oryn.NotificationService`（推送通知服务扩展）的「App Store Connect」描述文件的 base64；缺它 `ios-release` 在凭据检查处失败 |
 
-FCM 的**服务账号** JSON 不进 CI：它只用于服务端发送，存在控制面的密钥库里。
+Firebase 服务账号与 APNs key 都不进 CI：它们只在推送网关上（[push-gateway.md](push-gateway.md)）。
 
 ### 发布密钥的保管
 
@@ -202,7 +199,7 @@ keytool -list -v -keystore .dev/android-release.jks -storepass "$PW" | grep 'SHA
 
 1. **foss 包**（无 Google 依赖）：按「开发」准备环境，生成自己的发布密钥，在 `web/src-tauri/gen/android/keystore.properties` 写
    `keyAlias=…`、`password=…`、`storeFile=<.jks 的绝对路径>`（该文件已 gitignore），然后 `cd web && bun run tauri android build --apk --target aarch64 armv7 x86_64`。
-2. **gms 包**：在自己的 Firebase 项目里添加包名 `com.lynricsy.oryn` 的 Android 应用，下载 `google-services.json` 放到 `web/src-tauri/gen/android/app/`，以 `ORG_GRADLE_PROJECT_orynDistribution=gms` 构建；服务器端用**同一个 Firebase 项目**的服务账号启用 FCM。
+2. **gms 包**：在自己的 Firebase 项目里添加包名 `com.lynricsy.oryn` 的 Android 应用，下载 `google-services.json` 放到 `web/src-tauri/gen/android/app/`，以 `ORG_GRADLE_PROJECT_orynDistribution=gms` 构建。官方网关只服务官方包的 Firebase 项目，所以还要用**同一个 Firebase 项目**的服务账号自建网关（[push-gateway.md](push-gateway.md)「自建网关」），构建时以 `ORYN_PUSH_GATEWAYS=https://<你的网关>` 写入受信网关，并把 orynd 的 `push.gateway.url` 指向它。
 3. 在 fork 的仓库里配好上表的 secrets（桌面端的 secrets 都是可选的，缺了按 [desktop.md](desktop.md)「Secrets」降级），推送 `v*` tag 即由 CI 构建发布。
 4. 自签的包与官方包证书不同，不能互相覆盖安装；改应用标识需要同时改 `tauri.conf.json` 的 `identifier`、`gen/android` 的 `applicationId` / `namespace` 与 Firebase 里的包名。
 

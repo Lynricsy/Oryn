@@ -21,11 +21,13 @@
  *     默认路径见 M7_APK；
  *   - A6–A8 / A18：`docker pull binwiederhier/ntfy:v2.37.2`，ntfy Android APK 放在 .dev/m7/（文件名含 fdroid，或用 M7_NTFY_APK 指定）；
  *   - A19：发布密钥 .dev/android-release.jks 与口令 M7_KEYSTORE_PASSWORD（别名 M7_KEY_ALIAS，默认 oryn），docs/mobile.md 里已记录证书指纹；
- *   - A23（FCM）：gms debug APK（M7_GMS_APK，默认 .dev/m7/oryn-gms-debug.apk）；dev/orynd.yaml 的
- *     `push.fcm.service_account_secret: fcm/service-account` 且已 `./bin/oryn secrets set fcm/service-account < .dev/m7/fcm-service-account.json`；
- *     模拟器镜像带 Google Play 服务且能连外网。
+ *   - A23（M28 官方推送网关 + 真实 FCM）：在隔离栈上跑，不动 dev 库——`bash web/scripts/m28-gateway-stack.sh up` 起本机网关
+ *     （127.0.0.1:7700，.dev/m7/fcm-service-account.json）与一套 data_dir 为 .dev/m28/data 的 orynd（7600，push.gateway.url
+ *     指向本机网关）+ process provider（fakeomp），并打印本脚本要用的环境变量；gms debug APK 须以
+ *     `ORYN_PUSH_GATEWAYS=http://localhost:7700` 构建（M7_GMS_APK）；模拟器镜像带 Google Play 服务且能连外网。
  *
- * 环境变量：ORYN_URL（默认 http://localhost:7600）、ORYN_ROOT、ORYN_TOKEN、ORYND_CONFIG（默认 dev/orynd.yaml）、M7_APK、M7_GMS_APK、M7_NTFY_APK、M7_KEYSTORE_PASSWORD、
+ * 环境变量：ORYN_URL（默认 http://localhost:7600）、ORYN_ROOT、ORYN_TOKEN、ORYN_CREDENTIALS、ORYN_DB、ORYND_CONFIG（默认 dev/orynd.yaml）、
+ *   M28_GATEWAY、M28_GATEWAY_DB、M28_GATEWAY_LOG、M7_APK、M7_GMS_APK、M7_NTFY_APK、M7_KEYSTORE_PASSWORD、
  *   M7_KEY_ALIAS、M7_OUT（结果目录，默认 /tmp/oryn-m7-accept/<run>）、M7_THREAD（复用的线程；缺省用 .dev/m7.thread，没有则新建）。
  *
  * 场景之间的依赖：A3–A18、A22 需要已配对（`--only` 单跑时自动先配对，不做 A2 的断言）；A6–A8 共用 A6 启用的 UnifiedPush；
@@ -52,11 +54,18 @@ const ROOT = process.env.ORYN_ROOT ?? `${import.meta.dir}/../..`;
 const BASE = process.env.ORYN_URL ?? "http://localhost:7600";
 const ORIGIN = new URL(BASE).origin;
 const PORT = new URL(BASE).port || "80";
-const CREDS = `${ROOT}/.dev/credentials.json`;
+const CREDS = process.env.ORYN_CREDENTIALS ?? `${ROOT}/.dev/credentials.json`;
 const TOKEN =
 	process.env.ORYN_TOKEN ??
 	(JSON.parse(readFileSync(CREDS, "utf8")) as { token: string }).token;
-const DB = `${ROOT}/.dev/data/oryn.db`;
+/** 控制面的 SQLite 库；隔离部署（如 A23 的网关栈）用 ORYN_DB 指向它，验收线程记录放在库目录的上一级（缺省 .dev/m7.thread）。 */
+const DB = process.env.ORYN_DB ?? `${ROOT}/.dev/data/oryn.db`;
+/** A23：官方推送网关的 origin、授权库与日志（`bin/oryn-push-gateway` 的 data_dir 与标准输出）。 */
+const GATEWAY = process.env.M28_GATEWAY ?? "http://localhost:7700";
+const GATEWAY_DB =
+	process.env.M28_GATEWAY_DB ?? `${ROOT}/.dev/pushgw/data/gateway.db`;
+const GATEWAY_LOG =
+	process.env.M28_GATEWAY_LOG ?? `${ROOT}/.dev/pushgw/gateway.log`;
 const ORYN = `${ROOT}/bin/oryn`;
 const ORYND = `${ROOT}/bin/orynd`;
 /** `orynd admin` 读的配置：须与正在跑的 bin/orynd 相符（源码里新加了配置键而二进制还没重建时，指向一份去掉新键的副本）。 */
@@ -688,7 +697,7 @@ let THREAD = "";
 let THREAD_TITLE = "";
 async function ensureThread(): Promise<string> {
 	if (THREAD) return THREAD;
-	const f = `${ROOT}/.dev/m7.thread`;
+	const f = `${DB.replace(/\/[^/]+\/[^/]+$/, "")}/m7.thread`;
 	let id = process.env.M7_THREAD ?? "";
 	if (!id && existsSync(f)) id = readFileSync(f, "utf8").trim();
 	if (!id || !threadRow(id)?.orb_id) {
@@ -2238,36 +2247,87 @@ scenario("A22", async () => {
 	DEVICE_ID = "";
 });
 
+/** 网关授权库（只读查询）。 */
+function gwSql<T = Record<string, unknown>>(qs: string): T[] {
+	const r = Bun.spawnSync(["sqlite3", "-json", GATEWAY_DB, qs]);
+	const s = r.stdout.toString().trim();
+	return s ? (JSON.parse(s) as T[]) : [];
+}
+
+/** 卡片进入 active 且经由 `via`。 */
+const cardActive = (p: Page, via: string, what: string) =>
+	waitFor(
+		what,
+		async () =>
+			(await p.getAttribute(
+				"[data-testid=mobile-push-card]",
+				"data-push-state",
+			)) === "active" &&
+			(await p.getAttribute(
+				"[data-testid=mobile-push-card]",
+				"data-push-via",
+			)) === via,
+		90_000,
+		1000,
+	);
+
+/** 收到推送：桌面上回合结束后出现 push.received{via} 与 notify.posted。 */
+async function turnPushed(T: string, via: string, timeoutMs: number) {
+	const after = mark();
+	const before = await send(T, "数到 3");
+	await waitTurn(T, before);
+	await ev("push.received", {
+		after,
+		where: (e) => e.via === via,
+		timeoutMs,
+	});
+	await ev("notify.posted", {
+		after,
+		where: (e) => e.path === `/t/${T}`,
+	});
+}
+
+/**
+ * 把 App 带到前台：进程还在就只是切回来；冷启动（被杀或被推送拉起的只有服务、没有界面）时等远程页面加载完，
+ * 免得紧接着的 goto 撞上首屏导航（Execution context was destroyed）。
+ */
+async function bringUp() {
+	const after = mark();
+	launch();
+	// 新建的 Activity 会写 app.start（am start -W 返回后不久才落盘），这时等远程页面加载完
+	const cold = await waitFor(
+		"app.start",
+		() => since(after, "app.start").length > 0 || undefined,
+		3000,
+		500,
+	).catch(() => false);
+	if (cold) await ev("web.ready", { after, timeoutMs: 60_000 });
+}
+
+// M28：gms 包配对后自动经官方推送网关（本机网关 GATEWAY + 真实 FCM）启用推送（docs/plan-m28.md「Android 模拟器真 FCM 端到端」）
 scenario("A23", async () => {
 	if (!existsSync(GMS_APK))
 		throw new Error(`没有 gms debug APK：${GMS_APK}（M7_GMS_APK）`);
-	// 安全审查第 2 条：FCM 订阅必须带 RFC 8291 密钥（RFC 8291 附录 A 的接收端公钥与 auth 作探测值）
-	const bare = await api("POST", "/api/v1/push/subscriptions", {
+	// 1. orynd 给出网关 origin；已删除的 kind: fcm 登记被拒
+	const gw = await api("GET", "/api/v1/push/gateway");
+	check(gw.status === 200, `GET /api/v1/push/gateway → ${gw.status}`);
+	const info = gw.json as { origin?: string; hostKey?: string };
+	check(info.origin === GATEWAY, `网关 origin = ${info.origin}`);
+	const legacy = await api("POST", "/api/v1/push/subscriptions", {
 		kind: "fcm",
-		token: `m7-probe-bare-${RUN}`,
-	});
-	check(
-		bare.status === 400 || bare.status === 409,
-		`不带 keys 的 FCM 订阅被拒（${bare.status}）`,
-	);
-	const probe = await api("POST", "/api/v1/push/subscriptions", {
-		kind: "fcm",
-		token: `m7-probe-${RUN}`,
+		token: `m28-probe-${RUN}`,
 		keys: {
 			p256dh:
 				"BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4",
 			auth: "BTBZMqHH6r4Tts7J_aSIgg",
 		},
 	});
-	if (probe.status === 409)
-		throw new Error(
-			`服务器未启用 FCM：${probe.text}（dev/orynd.yaml 的 push.fcm.service_account_secret + oryn secrets set）`,
-		);
-	check(probe.status === 201, `FCM 订阅接口可用（${probe.status}）`);
-	await api(
-		"DELETE",
-		`/api/v1/push/subscriptions/${(probe.json as { id: string }).id}`,
+	check(
+		legacy.status === 400 && legacy.text.includes("push_invalid"),
+		`旧的 kind: fcm 登记 → ${legacy.status} ${legacy.text.slice(0, 80)}`,
 	);
+	const gi = await fetch(`${GATEWAY}/v1/info`).then((r) => r.json());
+	check(!!gi?.fcm, `网关 /v1/info 提供 fcm（${JSON.stringify(gi)}）`);
 	if (
 		!ash("pm list packages com.google.android.gms").stdout.includes(
 			"com.google.android.gms",
@@ -2275,64 +2335,123 @@ scenario("A23", async () => {
 	)
 		throw new Skip("镜像没有 Google Play 服务");
 	const T = await ensureThread();
-	ash(`pm disable-user --user 0 ${NTFY_PKG}`); // 没有 UnifiedPush 分发器 → gms 包走 FCM
+	const ntfyInstalled = ash(`pm path ${NTFY_PKG}`).stdout.includes("package:");
+	// 没有 UnifiedPush 分发器也无关：gms 包默认就走网关 FCM；停用它免得自动选到 UnifiedPush 的旧状态
+	if (ntfyInstalled) ash(`pm disable-user --user 0 ${NTFY_PKG}`);
+	adb(`reverse tcp:${new URL(GATEWAY).port} tcp:${new URL(GATEWAY).port}`);
+	const gwLogStart = existsSync(GATEWAY_LOG)
+		? readFileSync(GATEWAY_LOG, "utf8").length
+		: 0;
+	// 之前的运行 pm clear 掉的 App 来不及吊销授权（只能等网关 90 天清理）：只看本次新建的
+	const runStart = Date.now();
 	try {
 		installDebug(GMS_APK);
 		DEVICE_ID = "";
-		await freshStart();
+		// 不预授通知权限：配对后 App 自己弹授权框
+		ash(`pm clear ${PKG}`);
+		ash(`pm revoke ${PKG} android.permission.POST_NOTIFICATIONS`);
+		ash(`pm grant ${PKG} android.permission.CAMERA`);
+		launch();
+		await ev("launcher.ready", { timeoutMs: 30_000 });
+		const after = mark();
 		DEVICE_ID = (await pairFromLauncher()).deviceId;
+
+		// 2. 不点任何按钮：自动启用 → 系统授权框 → 允许
+		await ev("push.auto_enable", { after, timeoutMs: 30_000 });
+		await uiTap(
+			"通知授权框的「允许」",
+			(n) =>
+				n.res.endsWith(":id/permission_allow_button") ||
+				/^(Allow|允许)$/.test(n.text),
+			30_000,
+		);
+		await ev("push.enable", {
+			after,
+			where: (e) => e.channel === "fcm",
+			timeoutMs: 30_000,
+		});
+		// 3. 授权流程
+		await ev("push.challenge", { after, timeoutMs: 60_000 });
+		await ev("push.granted", {
+			after,
+			where: (e) => e.channel === "fcm" && e.origin === GATEWAY,
+			timeoutMs: 30_000,
+		});
+		const synced = await ev("push.synced", {
+			after,
+			where: (e) => e.kind === "gateway",
+			timeoutMs: 30_000,
+		});
 		await goto("/settings/notifications");
 		const p = await page();
 		await p.waitForSelector("[data-testid=mobile-push-card]", {
 			timeout: 15_000,
 		});
-		const after = mark();
-		await p.click("[data-testid=mobile-push-enable]");
-		await waitFor(
-			"推送状态 active（fcm）",
-			async () =>
-				(await p.getAttribute(
-					"[data-testid=mobile-push-card]",
-					"data-push-state",
-				)) === "active" &&
-				(await p.getAttribute(
-					"[data-testid=mobile-push-card]",
-					"data-push-via",
-				)) === "fcm",
-			60_000,
-			1000,
-		);
-		const synced = await ev("push.synced", {
-			after,
-			where: (e) => e.kind === "fcm",
-			timeoutMs: 30_000,
-		});
-		const row = sql<{ kind: string; device_id: string }>(
-			`select kind, device_id from push_subscriptions where id='${String(synced.id)}'`,
-		)[0];
+		await cardActive(p, "fcm", "推送卡 active（fcm）");
 		check(
-			row?.kind === "fcm" && row.device_id === DEVICE_ID,
-			`订阅 ${String(synced.id)}：kind=${row?.kind}，归属本设备`,
-		);
-		check(
-			!since(after).some((e) => JSON.stringify(e).match(/"token":"[^"]{20,}/)),
-			"事件日志不含 FCM 令牌",
+			!!(await p.$("[data-testid=mobile-push-switch]")),
+			"gms 包有「改用 UnifiedPush」按钮",
 		);
 
+		// 4. orynd 订阅
+		const subId = String(synced.id);
+		const row = sql<{ kind: string; endpoint: string; device_id: string }>(
+			`select kind, endpoint, device_id from push_subscriptions where id='${subId}'`,
+		)[0];
+		check(
+			row?.kind === "gateway" &&
+				row.endpoint.startsWith(`${GATEWAY}/v1/grants/`) &&
+				row.device_id === DEVICE_ID,
+			`订阅 ${subId}：kind=${row?.kind} endpoint=${row?.endpoint.slice(0, 48)}… 归属本设备`,
+		);
+		const grant = row?.endpoint.split("/").pop() ?? "";
+
+		// 5. 网关授权表：本次运行新建且有效的授权恰好一条，库里没有 FCM 令牌明文
+		const active = gwSql<{ id: string; channel: string }>(
+			`select id, channel from grants where revoked_at is null and created_at >= ${runStart}`,
+		);
+		check(
+			active.length === 1 &&
+				active[0]?.id === grant &&
+				active[0].channel === "fcm",
+			`本次新建的网关有效授权 ${active.length} 条（${active.map((g) => `${g.id}/${g.channel}`).join(", ")}）`,
+		);
+		const fcmToken = runAs(
+			"cat shared_prefs/oryn_push.xml 2>/dev/null",
+		).stdout.match(/name="fcmToken">([^<]+)</)?.[1];
+		check(!!fcmToken && fcmToken.length > 100, "App 拿到了 FCM 注册令牌");
+		const dbBytes = ["", "-wal"]
+			.map((s) => `${GATEWAY_DB}${s}`)
+			.filter((f) => existsSync(f))
+			.map((f) => readFileSync(f).toString("latin1"))
+			.join("");
+		check(
+			!!fcmToken && !dbBytes.includes(fcmToken.slice(0, 40)),
+			"网关库文件里搜不到 FCM 令牌",
+		);
+
+		// 6. 日志不含令牌与 nonce
+		const evText = since(after).map(show).join("\n");
+		const gwLog = existsSync(GATEWAY_LOG)
+			? readFileSync(GATEWAY_LOG, "utf8").slice(gwLogStart)
+			: "";
+		check(gwLog.length > 0, `网关日志有内容（${GATEWAY_LOG}）`);
+		check(
+			!!fcmToken &&
+				!evText.includes(fcmToken.slice(0, 40)) &&
+				!gwLog.includes(fcmToken.slice(0, 40)),
+			"事件日志与网关日志不含 FCM 令牌",
+		);
+		check(
+			!/"nonce"\s*:/.test(evText) && !/nonce=\S/.test(gwLog),
+			"事件日志与网关日志不含 nonce",
+		);
+
+		// 7. 后台收推送
 		ash("input keyevent 3");
 		await waitFor("回到桌面", () => !ours(), 10_000);
-		let evAfter = mark();
-		let before = await send(T, "数到 3");
-		await waitTurn(T, before);
-		await ev("push.received", {
-			after: evAfter,
-			where: (e) => e.via === "fcm",
-			timeoutMs: 30_000,
-		});
-		await ev("notify.posted", {
-			after: evAfter,
-			where: (e) => e.path === `/t/${T}`,
-		});
+		await detachCdp();
+		await turnPushed(T, "fcm", 60_000);
 		await waitFor(
 			"系统通知",
 			() => notifications().find((x) => x.title.includes(THREAD_TITLE)),
@@ -2340,23 +2459,98 @@ scenario("A23", async () => {
 			1000,
 		);
 		const sub = sql<{ last_success_at: number | null }>(
-			`select last_success_at from push_subscriptions where id='${String(synced.id)}'`,
+			`select last_success_at from push_subscriptions where id='${subId}'`,
 		)[0];
-		check(!!sub?.last_success_at, "服务端记录了 FCM 投递成功");
+		check(!!sub?.last_success_at, "orynd 记录了经网关投递成功");
 
+		// 8. 进程被杀后仍收到
 		killApp();
 		await waitFor("进程已不在", () => !pidof(), 10_000);
-		evAfter = mark();
-		before = await send(T, "数到 3");
-		await waitTurn(T, before);
-		await ev("push.received", {
-			after: evAfter,
-			where: (e) => e.via === "fcm",
-			timeoutMs: 60_000,
+		await turnPushed(T, "fcm", 90_000);
+		note("进程被杀后网关转发的 FCM 高优先级消息仍拉起进程并发出通知");
+
+		// 9. 关闭：网关吊销授权、orynd 删订阅，之后不再收到
+		await bringUp();
+		await goto("/settings/notifications");
+		const p2 = await page();
+		await p2.waitForSelector("[data-testid=mobile-push-disable]", {
+			timeout: 15_000,
 		});
-		note("进程被杀后 FCM 高优先级消息仍拉起进程并发出通知");
+		await p2.click("[data-testid=mobile-push-disable]");
+		await waitFor(
+			"网关授权已吊销",
+			() =>
+				gwSql<{ revoked_at: number | null }>(
+					`select revoked_at from grants where id='${grant}'`,
+				)[0]?.revoked_at,
+			30_000,
+			1000,
+		);
+		await waitFor(
+			"orynd 订阅已删除",
+			() =>
+				sql(`select id from push_subscriptions where id='${subId}'`).length ===
+				0,
+			30_000,
+			1000,
+		);
+		note(`✓ 授权 ${grant} 已吊销，订阅 ${subId} 已删除`);
+		ash("input keyevent 3");
+		await detachCdp();
+		const quiet = mark();
+		const b = await send(T, "数到 3");
+		await waitTurn(T, b);
+		await sleep(20_000);
+		check(
+			since(quiet, "push.received").length === 0,
+			"关闭后 20 秒内没有 push.received",
+		);
+
+		// 10. 重新启用后改用 UnifiedPush：网关授权吊销，改经 ntfy
+		await ensureNtfy();
+		// ensureNtfy 的 adb root 重启 adbd、丢掉全部 reverse 转发（它只补 7600 / 7680）
+		adb(`reverse tcp:${new URL(GATEWAY).port} tcp:${new URL(GATEWAY).port}`);
+		await bringUp();
+		await goto("/settings/notifications");
+		const p3 = await page();
+		const again = mark();
+		await p3.click("[data-testid=mobile-push-enable]");
+		const resynced = await ev("push.synced", {
+			after: again,
+			where: (e) => e.kind === "gateway",
+			timeoutMs: 90_000,
+		});
+		await cardActive(p3, "fcm", "重新启用后 active（fcm）");
+		const grant2 =
+			sql<{ endpoint: string }>(
+				`select endpoint from push_subscriptions where id='${String(resynced.id)}'`,
+			)[0]
+				?.endpoint.split("/")
+				.pop() ?? "";
+		check(!!grant2 && grant2 !== grant, `新授权 ${grant2}`);
+		const sw = mark();
+		await p3.click("[data-testid=mobile-push-switch]");
+		await ev("push.switched", { after: sw, timeoutMs: 60_000 });
+		await cardActive(p3, "unifiedpush", "改用 UnifiedPush 后 active");
+		await waitFor(
+			"改用 UnifiedPush 后网关授权已吊销",
+			() =>
+				gwSql<{ revoked_at: number | null }>(
+					`select revoked_at from grants where id='${grant2}'`,
+				)[0]?.revoked_at,
+			30_000,
+			1000,
+		);
+		check(
+			gwSql(
+				`select id from grants where revoked_at is null and created_at >= ${runStart}`,
+			).length === 0,
+			"本次运行建的网关授权都已吊销",
+		);
+		await p3.click("[data-testid=mobile-push-disable]");
 	} finally {
-		ash(`pm enable ${NTFY_PKG}`);
+		if (ntfyInstalled || ntfyReady) ash(`pm enable ${NTFY_PKG}`);
+		adb(`reverse --remove tcp:${new URL(GATEWAY).port}`);
 		installDebug(APK);
 		DEVICE_ID = "";
 	}

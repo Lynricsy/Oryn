@@ -484,8 +484,8 @@ Windows / macOS / Linux 桌面端与 Android、iOS 客户端共用一套 Tauri 2
 ### 移动
 
 - `<600dp` 窄屏：屏幕圆角同心的下沉式侧栏、悬浮毛玻璃底栏、右上角快捷视图菜单、系统分享接收。
-- 推送：RFC 8291 端到端加密的 **UnifiedPush**（零 Google 依赖）与加密 **FCM** 双通道。工具审批、确认这类可一触作答的提问直接在通知上带「允许 / 拒绝」等按钮（Android 需解锁后点按，浏览器 Web Push 同样支持），后台作答不拉起界面；请求在别处作答后旧按钮自动撤回。
-- iOS 26：原生 Liquid Glass 线程页头与系统 `UITabBar` 底栏，随下沉侧栏的卡片开合；App 图标可在「设置 → 外观」换成品牌色版本。iOS 经 TestFlight 分发，APNs 推送尚未完成。
+- 推送：RFC 8291 端到端加密，orynd 只有两条路径。**UnifiedPush**（`foss` 包，零 Google 依赖）复用 Web Push；**官方推送网关**（`https://push.oryn.best`）让官方 iOS 包与 `gms` 包连任意自部署 orynd 也能收推送：配对后自动启用，网关只见密文、转给 APNs / FCM，APNs key 与 Firebase 服务账号只在网关上，免注册、由手机在网关上授权与吊销。工具审批、确认这类可一触作答的提问直接在通知上带「允许 / 拒绝」等按钮（Android 需解锁后点按，浏览器 Web Push 同样支持），后台作答不拉起界面；请求在别处作答后旧按钮自动撤回。
+- iOS 26：原生 Liquid Glass 线程页头与系统 `UITabBar` 底栏，随下沉侧栏的卡片开合；App 图标可在「设置 → 外观」换成品牌色版本。iOS 经 TestFlight 分发；APNs 推送由 Notification Service Extension 在锁屏前解密，真机验收待 TestFlight。
 
 细节见 [`mobile.md`](mobile.md)。
 
