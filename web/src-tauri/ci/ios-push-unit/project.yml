@@ -1,0 +1,53 @@
+# 推送共享代码（plugins/oryn-mobile/ios/Sources/Shared）的单元测试工程（ci/ios-push-unit.sh 在 CI 里用 XcodeGen 生成到临时目录）。
+# 与 Notification Service Extension 编同一份 Shared 源码：模拟器的 simctl push 不调起 NSE（M28 P3），
+# NSE 的解密与内容构造改在这里硬门禁；NSE 被调起与共享钥匙串留给 TestFlight 真机验收。
+# 测试包挂在一个空宿主 App 上（宿主进程才有钥匙串，PushKeyStore 的读写要用）；只在模拟器上跑，本地签名（"-"）。
+name: OrynPushUnit
+options:
+  bundleIdPrefix: com.lynricsy.oryn.pushunit
+  deploymentTarget:
+    iOS: "17.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    GENERATE_INFOPLIST_FILE: YES
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+    DEVELOPMENT_TEAM: ""
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  PushUnitHost:
+    type: application
+    platform: iOS
+    sources:
+      - path: Host
+      # 与 NSE target（web/src-tauri/ios/project.yml）同一份源码；ios-push-unit.sh 把它拷到 Shared/
+      - path: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lynricsy.oryn.pushunit.host
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+  PushUnitTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests
+      # ci/ios-push/notify.apns（ios-push-unit.sh 拷来），测试经 Bundle(for:) 读
+      - path: Fixtures
+        buildPhase: resources
+    dependencies:
+      - target: PushUnitHost
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lynricsy.oryn.pushunit.tests
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/PushUnitHost.app/PushUnitHost"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+schemes:
+  PushUnit:
+    build:
+      targets:
+        PushUnitHost: all
+        PushUnitTests: [test]
+    test:
+      targets: [PushUnitTests]

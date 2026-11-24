@@ -534,7 +534,7 @@ jobs:
       # 不展示并转成事件；退出后 simctl push 加密通知，NSE 用共享钥匙串里的附录 A 密钥解开（P3，nse.decrypted ok=true）。
       # 日志原文写进 push/summary.md 与 Step Summary。实测（run 45443153455，Xcode 27 / iOS 27.2 模拟器）：simctl push 走本地投递、
       # 不调起 NSE；临时签名副本（签入 aps-environment）在模拟器上起不来。所以只跑不签名一轮，NSE 一项只记录（PUSH_NSE_GATE=soft），
-      # 解密正确性由探针自检（probe.vector，同一份 Shared/WebPushDecrypt）把关，NSE 与共享钥匙串留给 TestFlight 真机验收。
+      # 解密与内容构造由下一步的单元测试硬门禁把关（同一份 Shared 源码），NSE 被调起与共享钥匙串留给 TestFlight 真机验收。
       - name: 模拟器：推送探针（APNs 钩子、网关 challenge、Notification Service Extension）
         if: ${{ !cancelled() && steps.app.outcome == 'success' }}
         timeout-minutes: 45
@@ -549,6 +549,17 @@ jobs:
           trap 'cat ios-shot/push/summary.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true' EXIT
           bash web/src-tauri/ci/ios-push-check.sh "$APP" ios-shot/push
           [[ -f ios-shot/push/.complete ]] || { echo "::error::推送探针没有跑完全部断言"; exit 1; }
+
+      # 硬门禁（M28 P3 预案）：NSE 与插件共用的 Shared/*.swift 编进独立 XCTest 工程（ci/ios-push-unit），在模拟器上跑
+      # RFC 8291 附录 A 向量、notify.apns 解密 → 解析 → 构造通知（标题、正文、归组、点击信息）、篡改与错 auth 失败、钥匙串读写。
+      - name: 模拟器：推送共享代码单元测试（NSE 的解密与内容构造）
+        if: ${{ !cancelled() && steps.app.outcome == 'success' }}
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          trap 'cat ios-shot/push-unit/summary.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true' EXIT
+          bash web/src-tauri/ci/ios-push-unit.sh ios-shot/push-unit
+          [[ -f ios-shot/push-unit/.complete ]] || { echo "::error::推送单元测试没有全部通过"; exit 1; }
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()

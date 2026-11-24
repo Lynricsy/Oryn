@@ -36,7 +36,7 @@ Rollback point:
 - A1 `tauri ios init` 按 tauri 目录解析 `bundle.iOS.template` 的相对路径（未验证；只读到 build 流程会 `set_current_dir`）。影响 Step 0、5；失效走探针分支 P2。
 - A2 运行时给 tao 的 `AppDelegate` 类加方法后，UIKit 会回调远程通知注册结果（未验证）。影响 Step 0、5；失效走 P1。
 - A3 tauri 工程名取自 Cargo 包名，即 target 为 `oryn-desktop_iOS`（未验证）。影响 Step 5；脚本一律用通配，不写死名字。
-- A4 `xcode-27` runner 的模拟器支持 `xcrun simctl push` 并会调起 NSE。**已证伪**（run 45443153455，iOS 27.2 模拟器）：`simctl push` 是本地投递、不调起 NSE；临时签名副本（签入 `aps-environment`）在模拟器上启动不了。按 P3 预案：`PUSH_NSE_GATE=soft`、只跑不签名一轮，解密正确性由 `probe.vector` 把关，NSE 留给 Step 7 真机。P1（`apns.register_failed`，钩子被调到）、P2（appex 在包里、版本一致）、challenge 与自检均已通过。
+- A4 `xcode-27` runner 的模拟器支持 `xcrun simctl push` 并会调起 NSE。**已证伪**（run 45443153455，iOS 27.2 模拟器）：`simctl push` 是本地投递、不调起 NSE；临时签名副本（签入 `aps-environment`）在模拟器上启动不了。按 P3 预案：探针 `PUSH_NSE_GATE=soft`、只跑不签名一轮；NSE 的解密与内容构造由单元测试硬门禁（见下文 P3）；NSE 被调起与共享钥匙串留给 Step 7 真机。P1（`apns.register_failed`，钩子被调到）、P2（appex 在包里、版本一致）、challenge 与自检均已通过。
 - A5 只有 `notification_deliveries` 外键引用 `push_subscriptions`（0055 的注释如此；0056、0057 未读）。影响 Step 3；执行前跑 `grep -rn "REFERENCES push_subscriptions" internal/store/migrations`。
 - A6 已启用 UnifiedPush 的 gms 老用户升级后自动改走网关 FCM（D5 = 迁移）；仍可在设置里手动切回 UnifiedPush。影响 Step 4。
 - A7 App 同一时间只配对一台服务器，所以一把设备密钥至多一个有效授权。影响 Step 2、4。
@@ -167,7 +167,7 @@ Accept: `gh workflow run mobile.yml --ref m28-ios-probe`，`gh run watch` 到结
 - **P1 钩子**：出现 `apns.registered` 或 `apns.register_failed` 之一即通过（未签名包缺 `aps-environment`，失败回调同样证明钩子生效）。都没有 → 在模板的 App target 里加一个 ObjC 文件，用 `+load` 交换 `-[UIApplication setDelegate:]`；仍没有 → 停下重规划。
 - **P2 模板**：appex 在包里即通过。init 报 `failed to read custom Xcode project template` → 把 `tauri.conf.json` 里的路径改成 init 实际工作目录能解析的写法。两轮内解决不了 → 去掉 `bundle.iOS.template`，由 `ci/ios-nse.sh` 在 init 之后往生成的 `gen/apple/project.yml` 追加 target，再跑 `xcodegen generate --spec`。
 - **P3 NSE**：出现 `nse.decrypted ok=true` 即通过，并在 Step 5 设为硬门禁。
-  - 没有 `nse.received` → 模拟器不调 NSE：解密正确性改由 `ci/ios-e2e` 工程里新增的单元测试 target 把关（编 `Shared` 源码，跑附录 A 向量），NSE 留给 Step 7 真机。
+  - 没有 `nse.received` → 模拟器不调 NSE：解密正确性改由单元测试 target 把关（编 `Shared` 源码，跑附录 A 向量），NSE 留给 Step 7 真机。**已落地**：独立工程 `ci/ios-push-unit/`（`ci/ios-push-unit.sh`，ios-check 硬门禁；不放进 `ci/ios-e2e`，因为那是 UI 测试包、没有宿主进程的钥匙串）。除附录 A 外还跑 `notify.apns` 解密 → `PushContent.parse` → `build`、篡改与错 auth 失败、`PushKeyStore` 读写。
   - 有 `nse.received` 但 `nse.keys found=false` → 模拟器包去掉 `--no-sign` 改临时签名再试；仍不行同上。
 
 ## Step 1 — 冻结契约与共享前置（主 agent 顺序完成）
