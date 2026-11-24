@@ -5663,6 +5663,10 @@ type OrynRpcCommand = {
 	role?: string;
 	provider?: string;
 	modelId?: string;
+	/** 新线程按创建时选的 role 开场（控制面首批命令）；手动选 role 不带。 */
+	startup?: boolean;
+	/** 选完后再设的思考级别（压过 role 自带的）。 */
+	thinkingLevel?: ThinkingLevel | "auto";
 } | {
 	id?: string;
 	type: "oryn_mark_session_start";
@@ -5674,6 +5678,8 @@ interface OrynSelectModelResult {
 	source: "role" | "manual";
 	role?: string;
 	alias?: string;
+	/** 会话已在计划模式：启动 role 只记作进入前基线，活动模型保持计划模型，退出计划模式时切到它。 */
+	baseline?: boolean;
 }
 interface OrynMarkSessionStartResult {
 	recorded: boolean;
