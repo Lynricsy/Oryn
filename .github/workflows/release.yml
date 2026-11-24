@@ -145,8 +145,8 @@ jobs:
             done
             tar -C "$RUNNER_TEMP/pkg" -czf "dist/$base.tar.gz" "$base"
           }
-          pkg linux amd64 linux-x64 oryn-server orynd orbd oryn gemini-rerank
-          pkg linux arm64 linux-arm64 oryn-server orynd orbd oryn gemini-rerank
+          pkg linux amd64 linux-x64 oryn-server orynd orbd oryn gemini-rerank oryn-push-gateway
+          pkg linux arm64 linux-arm64 oryn-server orynd orbd oryn gemini-rerank oryn-push-gateway
           # Runner 还支持 Apple 芯片的 macOS（docs/deploy.md 第 11 节），那里只需要 orbd
           pkg darwin arm64 darwin-arm64 orbd orbd
           (cd dist && sha256sum -- *.tar.gz > "oryn-server_${LABEL}_SHA256SUMS")

@@ -1,0 +1,29 @@
+[Unit]
+Description=Oryn 官方推送网关 (oryn-push-gateway)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/oryn-push-gateway -config /etc/oryn-push-gateway/gateway.yaml
+Restart=always
+RestartSec=2
+# 凭据（APNs .p8、Firebase 服务账号）放 /etc/oryn-push-gateway/，属主 root:oryn-push、0640（见 docs/push-gateway.md）
+User=oryn-push
+Group=oryn-push
+StateDirectory=oryn-push-gateway
+StateDirectoryMode=0700
+MemoryMax=256M
+LimitNOFILE=65536
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/oryn-push-gateway
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target
