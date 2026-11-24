@@ -945,37 +945,61 @@ func (d *Orbd) runAgent(p apigen.LinkCtlAgentStartParams, dir string, a *agentPr
 	if _, err := dec.Next(); err != nil { // ready
 		return
 	}
-	call := func(frame map[string]any, id string) error {
+	call := func(frame map[string]any, id string) (json.RawMessage, error) {
 		frame["id"] = id
 		if err := w.WriteFrame(frame); err != nil {
-			return err
+			return nil, err
 		}
 		for {
 			f, err := dec.Next()
 			if err != nil {
-				return err
+				return nil, err
 			}
 			env, _ := omprpc.ParseEnvelope(f)
 			if env.IsResponse() && env.ID == id {
 				if !env.OK() {
-					return errors.New(env.ErrorText())
+					return nil, errors.New(env.ErrorText())
 				}
-				return nil
+				return env.Raw, nil
 			}
 		}
 	}
-	if err := call(map[string]any{"type": "negotiate_protocol", "protocolVersion": 2}, "init-neg"); err != nil {
+	if _, err := call(map[string]any{"type": "negotiate_protocol", "protocolVersion": 2}, "init-neg"); err != nil {
 		return
 	}
+	resumed := false
 	for i, f := range p.InitFrames {
 		frame := map[string]any(f)
+		if frame["type"] == "set_thinking_level" && resumed {
+			if raw, err := call(map[string]any{"type": "get_state"}, "init-plan-check"); err == nil {
+				var st struct {
+					Data struct {
+						PlanModeEnabled bool `json:"planModeEnabled"`
+					} `json:"data"`
+				}
+				if json.Unmarshal(raw, &st) == nil && st.Data.PlanModeEnabled {
+					continue
+				}
+			}
+		}
 		if frame["type"] == "open_session" {
 			frame["sessionDir"] = dir
 		}
-		if err := call(frame, fmt.Sprintf("init-%d", i)); err != nil {
+		raw, err := call(frame, fmt.Sprintf("init-%d", i))
+		if err != nil {
 			code := 1
 			_ = d.ctl.Notify("agent.status", apigen.LinkCtlAgentStatusParams{ThreadID: p.ThreadID, Status: "exited", ExitCode: &code})
 			return
+		}
+		if frame["type"] == "open_session" {
+			var open struct {
+				Data struct {
+					Resumed bool `json:"resumed"`
+				} `json:"data"`
+			}
+			if json.Unmarshal(raw, &open) == nil && open.Data.Resumed {
+				resumed = true
+			}
 		}
 	}
 	st, err := d.sess.Open(d.ctx, link.StreamHeader{T: link.StreamAgent, ThreadID: p.ThreadID})
