@@ -114,11 +114,15 @@ type responseHead struct {
 // 每次启动都是新的一段，模型只看到 reset_boundary 之后的内容（转录保留）；主线跨段要记的事在系统提示词的「主线近况」里；
 // 研究员的每次运行互不相干。
 func initFrames(t *thread, prof *AgentProfile, terminal bool) []apigen.OmpFrame {
+	// 线程常驻的模型与思考级别随 open_session 一起交给 Core：会话处于计划模式（续接的计划会话，或 plan.defaultOnStartup
+	// 刚把新会话带进计划模式）时 Core 不覆盖计划模型，而是把它们改作进入前基线、退出计划模式时恢复。
+	// 不能单独再发 set_thinking_level：那会直接改掉计划思考级别。
 	open := apigen.OmpFrame{"type": "open_session", "sessionDir": t.sessionDir}
-	if !t.planMode {
-		if m := parseModel(t.model); m != nil {
-			open["provider"], open["modelId"] = m.Provider, m.ID
-		}
+	if m := parseModel(t.model); m != nil {
+		open["provider"], open["modelId"] = m.Provider, m.ID
+	}
+	if t.thinking != nil && *t.thinking != "" {
+		open["thinkingLevel"] = *t.thinking
 	}
 	var frames []apigen.OmpFrame
 	if prof != nil {
@@ -144,9 +148,6 @@ func initFrames(t *thread, prof *AgentProfile, terminal bool) []apigen.OmpFrame 
 		if terminal {
 			frames = append(frames, apigen.OmpFrame{"type": "terminal_configure", "interactiveCommands": true, "agentTools": true})
 		}
-	}
-	if !t.planMode && t.thinking != nil && *t.thinking != "" {
-		frames = append(frames, apigen.OmpFrame{"type": "set_thinking_level", "level": *t.thinking})
 	}
 	return frames
 }

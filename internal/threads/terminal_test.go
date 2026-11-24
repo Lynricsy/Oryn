@@ -64,8 +64,8 @@ func frameTypes(fs []apigen.OmpFrame) []string {
 	return out
 }
 
-// terminal_configure 必须在 set_subagent_subscription 之后、set_thinking_level 之前，且开启两项能力；
-// 漏发会让 pty:true 的命令落不到终端面板。
+// terminal_configure 必须在 set_subagent_subscription 之后，且开启两项能力；漏发会让 pty:true 的命令落不到终端面板。
+// 思考级别随 open_session 交给 Core，不再单独发 set_thinking_level（计划模式下它会改掉计划思考级别）。
 func TestInitFramesConfigureTerminal(t *testing.T) {
 	f := newFixture(t, Config{})
 	th := f.thread(f.orb("ready"), StateIdle)
@@ -77,7 +77,8 @@ func TestInitFramesConfigureTerminal(t *testing.T) {
 	level := "high"
 	th.thinking = &level
 	fs = initFrames(th, nil, true)
-	assert.Equal(t, []string{"open_session", "set_event_filter", "set_ask_dialog", "set_subagent_subscription", "terminal_configure", "set_thinking_level"}, frameTypes(fs))
+	assert.Equal(t, []string{"open_session", "set_event_filter", "set_ask_dialog", "set_subagent_subscription", "terminal_configure"}, frameTypes(fs))
+	assert.Equal(t, "high", fs[0]["thinkingLevel"])
 }
 
 // terminal_output 只走 TermOutput：不进普通帧广播、不进实时缓冲、不算 agent 活动（否则开着 dev server 的 orb 永不冻结）。

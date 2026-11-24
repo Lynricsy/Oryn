@@ -425,9 +425,10 @@ func (s *server) handle(line []byte) {
 
 	case "open_session":
 		var c struct {
-			SessionDir string `json:"sessionDir"`
-			Provider   string `json:"provider"`
-			ModelID    string `json:"modelId"`
+			SessionDir    string `json:"sessionDir"`
+			Provider      string `json:"provider"`
+			ModelID       string `json:"modelId"`
+			ThinkingLevel string `json:"thinkingLevel"`
 		}
 		if err := json.Unmarshal(line, &c); err != nil || c.SessionDir == "" {
 			s.fail(id, env.Type, "open_session requires sessionDir")
@@ -447,7 +448,9 @@ func (s *server) handle(line []byte) {
 			} else if resumed && sess.lastProvider != "" && sess.lastModelID != "" {
 				s.provider, s.modelID = sess.lastProvider, sess.lastModelID
 			}
-			if resumed && sess.lastThinking != "" {
+			if c.ThinkingLevel != "" {
+				s.thinking = c.ThinkingLevel
+			} else if resumed && sess.lastThinking != "" {
 				s.thinking = sess.lastThinking
 			}
 		}
