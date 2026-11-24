@@ -406,7 +406,10 @@ const STATIC_COMPONENTS = makeComponents(false);
 const STREAMING_COMPONENTS = makeComponents(true);
 const NO_IMAGE_COMPONENTS = makeComponents(false, false);
 
-/** 相对地址的解析（README 等仓库文档）：不带 scheme、不以 `#` 或 `//` 开头的 href / src 交给它；返回 null 时原样输出 */
+/**
+ * 相对地址的解析（README 等仓库文档）：不带 scheme、不以 `#`、`/` 开头的 href / src 交给它。链接返回 null 时原样输出；
+ * 图片返回 null（或没给 relativeTo）时不渲染 `<img>`：按页面地址解析会落到主站 SPA 路由，回 HTML，显示成破图。
+ */
 export interface RelativeUrls {
 	/** 返回站内路由（以 `/` 开头），用 react-router 的 Link 打开，不新开窗口 */
 	link(href: string): string | null;
@@ -441,7 +444,16 @@ function MdImage({
 }: ComponentProps<"img"> & { node?: unknown }): ReactNode {
 	const rel = useContext(RelativeUrlContext);
 	const raw = typeof src === "string" ? src : undefined;
-	const resolved = rel && raw && isRelativeUrl(raw) ? rel.image(raw) : null;
+	const relative = raw !== undefined && isRelativeUrl(raw);
+	const resolved = relative && rel ? rel.image(raw) : null;
+	if (relative && resolved === null) {
+		// 没有可解析的基准（工具输出、聊天正文里的 `images/x.png`）：不发请求，显示 alt，悬停看原地址
+		return (
+			<span className="md-image-unresolved" title={raw}>
+				{alt || raw}
+			</span>
+		);
+	}
 	// rest 只剩清洗白名单里的属性（内嵌 HTML 的 width / height / align / title）
 	return (
 		<img

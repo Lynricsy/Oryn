@@ -104,6 +104,15 @@
 	max-width: 100%;
 	border-radius: var(--r-lg);
 }
+/* 没有基准可解析的相对图片：只显示 alt，不发请求 */
+.md-image-unresolved {
+	color: var(--text-muted);
+	font-style: italic;
+}
+.md-image-unresolved::before {
+	content: "🖼 ";
+	font-style: normal;
+}
 /* 链接里的图片（徽章、截图）不画下划线 */
 .md a:has(> img) {
 	text-decoration: none;

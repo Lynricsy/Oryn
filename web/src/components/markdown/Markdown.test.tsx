@@ -130,7 +130,7 @@ describe("Markdown", () => {
 		expect(ext?.getAttribute("src")).toBe("https://e.com/w.png");
 	});
 
-	it("relativeTo 返回 null 或不给 relativeTo 时相对地址原样输出", () => {
+	it("relativeTo 返回 null 时相对链接原样输出；相对图片无处可解析，不发请求，降级成文字", () => {
 		const none: RelativeUrls = { link: () => null, image: () => null };
 		for (const relativeTo of [none, undefined]) {
 			const { container, unmount } = render(
