@@ -1,22 +1,10 @@
-// iOS 本地系统通知（Communication Notifications / INSendMessageIntent）：
-// 与 Android 的 NotificationCompat.MessagingStyle 对齐：
-// - 普通线程：用线程标题卡图标与线程色；
-// - 全局助手动态（主线）与助手对话线程：用全局助手头像；
-// - 无线程系统通知：深墨底 Oryn 品牌标。
-// iOS 15+ 经 `INSendMessageIntent` + `UNNotificationContent.updating(from:)` 展示通信消息样式与大圆头像；
-// 若系统环境不支持或更新失败，自动回落到标准通知，绝不丢消息。
+// iOS 系统通知的代理与本地通知投递（Communication Notifications / INSendMessageIntent）：
+// 通知内容（tag、标题、发送者头像、通信通知）由 Shared/PushContent.swift 构造，与 Notification Service Extension 共用。
+// 前台展示规则：官方推送网关的 challenge（`kind: gateway_challenge`）不展示，转给插件发 `pushchallenge` 事件；
+// 其余远程推送也不展示（前台提示由页面的 host_notify 负责，否则会出两条，与 Android 一致）；本地通知照常展示。
 import Foundation
-import Intents
 import UIKit
 import UserNotifications
-
-struct NotifyAvatarArgs: Decodable {
-  let kind: String
-  let icon: String?
-  let color: String?
-  let image: String?
-  let hash: String?
-}
 
 struct NotifyArgs: Decodable {
   let id: String
@@ -36,17 +24,10 @@ struct NotifyOut: Encodable {
 final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   static let shared = NotificationManager()
 
-  private struct MessageDescriptor {
-    let senderKey: String
-    let senderName: String
-    let body: String
-    let conversationId: String
-    let avatarPNG: Data?
-  }
-
   private let lock = NSLock()
   private var onTap: ((String, String) -> Void)?
   private var pendingTaps: [(String, String)] = []
+  private var onChallenge: ((String, String) -> Void)?
 
   private override init() {
     super.init()
@@ -71,6 +52,13 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     for (id, path) in flushed {
       onTap(id, path)
     }
+  }
+
+  /// 绑定网关 challenge 回调（challengeId, nonce）。challenge 只在 Rust 发起登记之后到达，那时插件早已绑定，不暂存。
+  func attachChallenges(_ onChallenge: @escaping (String, String) -> Void) {
+    lock.lock()
+    self.onChallenge = onChallenge
+    lock.unlock()
   }
 
   /// 投递一条本地通知：未决定权限时先向用户请求授权，拒绝时返回 `reason = "permission"`。
@@ -118,6 +106,15 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     willPresent notification: UNNotification,
     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) {
+    if case let (id, nonce)? = Self.challenge(notification.request.content.userInfo) {
+      PushLog.info("apns.challenge foreground=true listener=\(deliverChallenge(id, nonce))")
+      completionHandler([])
+      return
+    }
+    if notification.request.trigger is UNPushNotificationTrigger {
+      completionHandler([])
+      return
+    }
     if #available(iOS 14.0, *) {
       completionHandler([.banner, .list, .sound])
     } else {
@@ -131,8 +128,13 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     withCompletionHandler completionHandler: @escaping () -> Void
   ) {
     defer { completionHandler() }
-    guard response.actionIdentifier == UNNotificationDefaultActionIdentifier else { return }
     let info = response.notification.request.content.userInfo
+    // App 在后台时 challenge 以「正在验证推送通知」展示；用户点开它时同样交给登记流程（5 分钟内仍有效），不当作通知点击
+    if case let (id, nonce)? = Self.challenge(info) {
+      PushLog.info("apns.challenge foreground=false listener=\(deliverChallenge(id, nonce))")
+      return
+    }
+    guard response.actionIdentifier == UNNotificationDefaultActionIdentifier else { return }
     let id = (info["id"] as? String) ?? ""
     let path = (info["path"] as? String) ?? "/"
     let handler: ((String, String) -> Void)?
@@ -147,45 +149,36 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     handler?(id, path)
   }
 
-  // MARK: - 构建通信通知
+  // MARK: - 网关 challenge
+
+  /// `{kind: "gateway_challenge", challengeId, nonce}`；其它通知为 nil。
+  private static func challenge(_ info: [AnyHashable: Any]) -> (String, String)? {
+    guard info["kind"] as? String == "gateway_challenge",
+      let id = info["challengeId"] as? String, !id.isEmpty,
+      let nonce = info["nonce"] as? String, !nonce.isEmpty
+    else { return nil }
+    return (id, nonce)
+  }
+
+  /// 交给插件；还没绑定时丢弃（返回 false）。
+  private func deliverChallenge(_ id: String, _ nonce: String) -> Bool {
+    lock.lock()
+    let handler = onChallenge
+    lock.unlock()
+    handler?(id, nonce)
+    return handler != nil
+  }
+
+  // MARK: - 本地通知
 
   private func enqueue(
     center: UNUserNotificationCenter,
     args: NotifyArgs,
     completion: @escaping (NotifyOut) -> Void
   ) {
-    let tag = Self.tagFor(path: args.path, id: args.id)
-    let avatar = Self.effectiveAvatar(args)
-    let senderName = Self.displayTitle(args.title, avatar: avatar)
-    let body = args.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-      ? senderName
-      : args.body
-
-    let mutable = UNMutableNotificationContent()
-    mutable.title = senderName
-    mutable.body = body
-    mutable.sound = .default
-    mutable.threadIdentifier = tag
-    mutable.userInfo = [
-      "id": args.id,
-      "path": args.path
-    ]
-
-    let pngData = NotificationAvatarRenderer.renderPNG(avatar)
-    let content: UNNotificationContent
-    if #available(iOS 15.0, *) {
-      let descriptor = MessageDescriptor(
-        senderKey: Self.senderKey(tag: tag, path: args.path, avatar: avatar),
-        senderName: senderName,
-        body: body,
-        conversationId: tag,
-        avatarPNG: pngData
-      )
-      content = Self.makeCommunicationContent(base: mutable, descriptor: descriptor)
-    } else {
-      content = mutable
-    }
-
+    let tag = PushContent.tagFor(path: args.path, id: args.id)
+    let content = PushContent.build(
+      PushMessage(id: args.id, title: args.title, body: args.body, path: args.path, tag: tag, avatar: args.avatar))
     let request = UNNotificationRequest(identifier: tag, content: content, trigger: nil)
     center.add(request) { error in
       if let error = error {
@@ -194,110 +187,5 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         completion(NotifyOut(posted: true, reason: nil))
       }
     }
-  }
-
-  @available(iOS 15.0, *)
-  private static func makeCommunicationContent(
-    base: UNMutableNotificationContent,
-    descriptor: MessageDescriptor
-  ) -> UNNotificationContent {
-    let image = descriptor.avatarPNG.map { INImage(imageData: $0) }
-    let handle = INPersonHandle(value: descriptor.senderKey, type: .unknown)
-    let sender = INPerson(
-      personHandle: handle,
-      nameComponents: nil,
-      displayName: descriptor.senderName,
-      image: image,
-      contactIdentifier: nil,
-      customIdentifier: descriptor.senderKey,
-      isMe: false,
-      suggestionType: .none
-    )
-    let intent = INSendMessageIntent(
-      recipients: nil,
-      outgoingMessageType: .outgoingMessageText,
-      content: descriptor.body,
-      speakableGroupName: nil,
-      conversationIdentifier: descriptor.conversationId,
-      serviceName: "Oryn",
-      sender: sender,
-      attachments: nil
-    )
-    if let image = image {
-      intent.setImage(image, forParameterNamed: \.sender)
-    }
-    let interaction = INInteraction(intent: intent, response: nil)
-    interaction.direction = .incoming
-    interaction.donate(completion: nil)
-
-    if let updated = try? base.updating(from: intent) {
-      return updated
-    }
-    return base
-  }
-
-  private static func senderKey(tag: String, path: String, avatar: NotifyAvatarArgs) -> String {
-    if avatar.kind == "assistant" && !path.hasPrefix("/t/") {
-      return "oryn-assistant"
-    }
-    return tag
-  }
-
-  private static func effectiveAvatar(_ args: NotifyArgs) -> NotifyAvatarArgs {
-    if let avatar = args.avatar { return avatar }
-    if under(args.path, prefix: "/settings/assistant") || under(args.path, prefix: "/assistant") {
-      return NotifyAvatarArgs(kind: "assistant", icon: nil, color: nil, image: nil, hash: nil)
-    }
-    if args.path.hasPrefix("/t/") {
-      return NotifyAvatarArgs(kind: "thread", icon: parseTitleCardIcon(args.title), color: nil, image: nil, hash: nil)
-    }
-    return NotifyAvatarArgs(kind: "system", icon: nil, color: nil, image: nil, hash: nil)
-  }
-
-  private static func displayTitle(_ title: String, avatar: NotifyAvatarArgs) -> String {
-    if avatar.kind == "thread", let icon = avatar.icon, !icon.isEmpty {
-      let prefix = icon + " "
-      if title.hasPrefix(prefix), title.count > prefix.count {
-        return String(title.dropFirst(prefix.count))
-      }
-    }
-    return title
-  }
-
-  private static func parseTitleCardIcon(_ title: String) -> String? {
-    guard let space = title.firstIndex(of: " ") else { return nil }
-    let icon = String(title[..<space])
-    guard !icon.isEmpty, icon.utf8.count <= 16 else { return nil }
-    if icon.unicodeScalars.contains(where: { $0.value < 0x80 }) { return nil }
-    let rest = title[title.index(after: space)...]
-    guard let colon = rest.range(of: ": ") else { return nil }
-    let code = rest[..<colon.lowerBound]
-    guard (1...6).contains(code.count),
-      code.unicodeScalars.allSatisfy({
-        ($0.value >= 0x30 && $0.value <= 0x39) || ($0.value >= 0x41 && $0.value <= 0x5A)
-      })
-    else { return nil }
-    let text = rest[colon.upperBound...]
-    guard let first = text.first, !first.isWhitespace else { return nil }
-    return icon
-  }
-
-  private static func tagFor(path: String, id: String) -> String {
-    if path.hasPrefix("/t/") {
-      let rest = String(path.dropFirst(3))
-      if !rest.isEmpty && !rest.contains("/") && !rest.contains("?") && !rest.contains("#") {
-        return "oryn-" + String(rest.suffix(12))
-      }
-    }
-    if under(path, prefix: "/stats") { return "oryn-budget" }
-    if under(path, prefix: "/settings/automations") { return "oryn-automations" }
-    return "oryn-" + id
-  }
-
-  private static func under(_ path: String, prefix: String) -> Bool {
-    guard path.hasPrefix(prefix) else { return false }
-    if path.count == prefix.count { return true }
-    let next = path[path.index(path.startIndex, offsetBy: prefix.count)]
-    return next == "/" || next == "?" || next == "#"
   }
 }

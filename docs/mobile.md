@@ -159,7 +159,7 @@ PR 与手动触发只产出 debug APK（workflow artifacts）并跑冒烟与 iOS
 ### 工作流的安全约束
 
 - 第三方 action 一律钉到完整提交 SHA；checkout 不保留凭据；workflow 级权限为空，只有建 / 发 Release 与上传资产的 job 有 `contents: write`（`release.yml` 调用 `mobile.yml` 时把令牌权限上限设为 `contents: write`）。
-- secret 只出现在用到它的那一步的 `env` 里：`ANDROID_GOOGLE_SERVICES_JSON` 只给「写入 google-services.json」，三个签名 secret 只给 tag 发布时的「构建签名的 release APK + AAB」；密钥解码到 `$RUNNER_TEMP` 下的临时目录，`keystore.properties` 与 `.jks` 在该步骤结束时删除。iOS 的三个签名 secret 只给「签名构建 IPA」（tauri 建临时钥匙串），App Store Connect 的 `.p8` 只在「上传 TestFlight」期间写进 `~/.appstoreconnect/private_keys`，步骤结束即删除。
+- secret 只出现在用到它的那一步的 `env` 里：`ANDROID_GOOGLE_SERVICES_JSON` 只给「写入 google-services.json」，三个签名 secret 只给 tag 发布时的「构建签名的 release APK + AAB」；密钥解码到 `$RUNNER_TEMP` 下的临时目录，`keystore.properties` 与 `.jks` 在该步骤结束时删除。iOS 的三个签名 secret 只给「签名构建 IPA」（tauri 建临时钥匙串），推送扩展的描述文件 `IOS_NSE_MOBILE_PROVISION` 只给「推送扩展的版本号与签名」（`ci/ios-nse.sh`），App Store Connect 的 `.p8` 只在「上传 TestFlight」期间写进 `~/.appstoreconnect/private_keys`，步骤结束即删除。
 
 ### Secrets
 
@@ -174,6 +174,7 @@ Android 与 iOS 的签名 secret 放在受保护的 environment `mobile-release`
 | `IOS_CERTIFICATE` | 「Apple Distribution」证书从钥匙串导出的 `.p12`，base64 单行：`base64 -i dist.p12` |
 | `IOS_CERTIFICATE_PASSWORD` | 导出 `.p12` 时设的口令 |
 | `IOS_MOBILE_PROVISION` | `com.lynricsy.oryn` 的「App Store Connect」描述文件（`.mobileprovision`）的 base64 |
+| `IOS_NSE_MOBILE_PROVISION` | `com.lynricsy.oryn.NotificationService`（推送通知服务扩展）的「App Store Connect」描述文件的 base64；缺它 `ios-release` 在凭据检查处失败 |
 
 FCM 的**服务账号** JSON 不进 CI：它只用于服务端发送，存在控制面的密钥库里。
 
@@ -229,4 +230,24 @@ CI 的 `ios-check` 在 iOS 26+ 模拟器里跑 `ci/ios-header-check.sh`（原生
 
 CI 不覆盖运动途中的逐帧对齐：按住拖动只在卡片停住后取样比对页头与卡片的位置，开合只看到位后的截图，拖动、甩动、开合动画过程中页头 / 底栏与卡片是否每一帧都对齐，留给真机验收（`docs/plan-m20.md` 步骤 4.3）。
 
-尚未完成：APNs 推送（服务端 `pushSenders["apns"]`、`PushSubscriptionInput` 增加 `kind: apns`）；Share Extension（App Group 容器 + 同一条上传预填流程）；Universal Links（`/.well-known/apple-app-site-association`）；Keychain 令牌存储的真机验证；iOS 通信通知权限签入与通知头像的模拟器 / 真机验收；iPhone / iPad 真机验收。
+### APNs 推送与 Notification Service Extension
+
+iOS 只有一条推送通道：官方推送网关（`https://push.oryn.best`）转 APNs，协议见 [protocol.md](protocol.md)「官方推送网关」。配对后 App 自动启用推送（弹系统授权框）；登记编排（网关的 `info → challenges → grants`、orynd 订阅）全在 Rust 壳里，原生只提供 APNs 令牌、RFC 8291 接收端密钥与 challenge 事件：
+
+- **令牌**：tauri 的 iOS 宿主（tao）的 `AppDelegate` 不实现远程通知注册的两个回调。插件交换 `-[UIApplication setDelegate:]`，给代理的类补上 `didRegisterForRemoteNotificationsWithDeviceToken` / `didFailToRegisterForRemoteNotificationsWithError`（`plugins/oryn-mobile/ios/Sources/PushRegistrar.swift`）。令牌以小写十六进制交给 Rust；回到前台时重新注册，令牌或权限有变就发 `push` 事件。
+- **密钥**：CryptoKit 的 P-256 私钥与 16 字节 auth 存钥匙串（service `com.lynricsy.oryn.push`，首次解锁后、仅本机），访问组 `<Team ID>.com.lynricsy.oryn.push` 由 App 与扩展共享（`ci/ios-entitlements.sh` 给主包写 `keychain-access-groups`：先默认组 `…com.lynricsy.oryn`，旧设备令牌留在原处，再 push 组；扩展的 entitlements 在 XcodeGen 模板里）。
+- **challenge**：网关的 challenge 推送（`kind: gateway_challenge`）App 在前台时不展示、直接交给登记流程；其它远程推送在前台也不展示（前台提示由页面负责）。
+- **NSE**：网关发的 APNs 通知带 `mutable-content`，载荷只有密文 `e`。Notification Service Extension（`web/src-tauri/ios/NotificationService`）先把占位换成按系统语言的「有新通知」，再用共享钥匙串里的密钥解开 `e`，以与本地通知同一套构造（`Sources/Shared/PushContent.swift`）填上真实标题、正文、线程归组与发送者头像；任何一步失败或超时只显示占位。App 离线期间被 APNs 丢弃的通知不补发。
+- **工程**：NSE 是 tauri 生成工程之外的 target，靠自定义 XcodeGen 模板加进来：`tauri.conf.json` 的 `bundle.iOS.template` 指向 `web/src-tauri/ios/project.yml`（tauri-cli 2.12.6 内置模板原样复制，只加 `NotificationService` target 与主 target 对它的依赖；target 名不能含 `_iOS`，tauri 按这个子串找主 target 同步签名）。升级 `@tauri-apps/cli` 时要把新版内置模板的改动合进来。`ci/ios-nse.sh` 在 `tauri ios init` 之后把扩展的两个版本号设成与主包相同，发版时另装扩展的描述文件、把 `ios/NotificationService/Signing.xcconfig` 写成手动签名并把扩展并进 `ExportOptions.plist`。
+- **CI**：`ios-check` 断言包里有 `PlugIns/NotificationService.appex`，并跑 `ci/ios-push-check.sh`（推送探针：debug 包带 `ORYN_PUSH_PROBE=1` 启动，确认注册回调钩子生效、前台 challenge 不展示、`simctl push` 的加密通知被 NSE 解开），产物在 `ios-screenshot/push/`（`summary.md` 含日志原文，`.complete` 表示全部通过）。`ios-release` 断言主包 `aps-environment` 为 `production`、扩展在 IPA 里且包名、两个版本号与 push 组都对。
+
+Apple 门户（一次性）：
+
+1. Certificates, IDs & Profiles → Identifiers → `com.lynricsy.oryn`：勾选 **Push Notifications**（不需要建证书，网关用 APNs key）。保存后到 Profiles 重新生成 `com.lynricsy.oryn` 的 App Store Connect 描述文件，下载后 `base64 -i Oryn.mobileprovision | gh secret set IOS_MOBILE_PROVISION --env mobile-release`。
+2. Identifiers → 加号 → App IDs → App：显式 Bundle ID `com.lynricsy.oryn.NotificationService`，描述随意，不勾任何能力（也不需要 App Group）。
+3. Profiles → 加号 → Distribution → App Store Connect → 选 `com.lynricsy.oryn.NotificationService` 与同一张 Apple Distribution 证书，下载后 `base64 -i NotificationService.mobileprovision | gh secret set IOS_NSE_MOBILE_PROVISION --env mobile-release`。
+4. APNs key（Keys → 加号 → Apple Push Notifications service，Sandbox & Production）只放在网关上，见 [push-gateway.md](push-gateway.md)；不进 CI。
+
+没做 1–3 时：`ios-check` 照常通过（模拟器包不签名），但 `ios-release` 在「检查签名与上传凭据」失败、整次 Release 不发布；只做了 3 没做 1 时，签名导出会因描述文件缺 `aps-environment` 失败。
+
+尚未完成：APNs 推送与 NSE 的真机验收（TestFlight：锁屏收到带真实标题与头像的通知、前台不重复弹、关闭后不再收到）；Share Extension（App Group 容器 + 同一条上传预填流程）；Universal Links（`/.well-known/apple-app-site-association`）；Keychain 令牌存储的真机验证；iOS 通信通知头像的真机验收；iPhone / iPad 真机验收。

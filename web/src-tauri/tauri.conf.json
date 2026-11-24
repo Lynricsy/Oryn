@@ -37,7 +37,8 @@
     },
     "iOS": {
       "minimumSystemVersion": "15.0",
-      "developmentTeam": "XDPWT9ABRD"
+      "developmentTeam": "XDPWT9ABRD",
+      "template": "src-tauri/ios/project.yml"
     }
   },
   "plugins": {

@@ -1,0 +1,4 @@
+// Notification Service Extension 的签名设置（XcodeGen 模板 web/src-tauri/ios/project.yml 的 configFiles）。
+// 入库的版本是空的：本地开发沿用 Xcode 的自动签名与 target 里的 DEVELOPMENT_TEAM，CI 的模拟器包不签名。
+// 发版时 ci/ios-nse.sh 在有 IOS_NSE_MOBILE_PROVISION 时把本文件改写成手动签名（Apple Distribution + 该描述文件的 UUID）；
+// 那是 CI 检出目录里的临时改动，不要提交。

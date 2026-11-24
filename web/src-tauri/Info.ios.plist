@@ -12,5 +12,9 @@
 	<array>
 		<string>INSendMessageIntent</string>
 	</array>
+	<!-- 推送接收端密钥（RFC 8291）所在的共享钥匙串访问组 = 本前缀 + com.lynricsy.oryn.push：App 与 Notification Service Extension
+	     （其 Info.plist 有同名键，见 ios/project.yml）都从这里取 <Team ID>.，构建时由 Xcode 展开（plugins/oryn-mobile/ios/Sources/Shared/PushKeyStore.swift） -->
+	<key>OrynAppIdentifierPrefix</key>
+	<string>$(AppIdentifierPrefix)</string>
 </dict>
 </plist>

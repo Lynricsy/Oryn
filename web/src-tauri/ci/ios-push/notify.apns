@@ -1,0 +1,14 @@
+{
+  "Simulator Target Bundle": "com.lynricsy.oryn",
+  "aps": {
+    "alert": {
+      "title": "Oryn",
+      "body": "New notification"
+    },
+    "mutable-content": 1,
+    "sound": "default"
+  },
+  "v": "2",
+  "id": "ntf_probe",
+  "e": "DGv6ra1nlYgDCS1FRnbzlwAAEABBBP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A_e3c0XWOO2NEjY8bRbtFFZwnX2urlQSIXH-HEShfiqCfDQUD1hTCzOXxX-y12VwmsMHO1Y8Re8iK43uYmadS31-j37-8NBQbHMe68nFj5Rvvg9wz8Uva4e_dsffx1zWNsht0vTFHMk9T0OOd8-nxv4ZiZmhN8KWdyegCEQLdAcKZnjNcRAvPv7AkK6VIc8NNKBmScYsAQf_BouSCTUdNbtAHPfFqTStCZK5l35pwp1hXCDLnfmXeXFbar6nNMNC8uTQTaWjLYc7bMTbYXMGh2CF7iFNc7HXF9AR9nCjoMZ5e9tUSmKa7_3deMjSMfes4jxbNcyubjant1OGg"
+}

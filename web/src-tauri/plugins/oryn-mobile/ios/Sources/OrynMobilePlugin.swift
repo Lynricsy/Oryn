@@ -10,12 +10,24 @@
 // 可替换图标：appIconGet 应答 {supported, current}（current = 资源名或 null 表示默认），appIconSet 载荷 {name: <资源名|null>}。
 // 系统通知（Communication Notifications / INSendMessageIntent）：notify 载荷 {id, title, body, path, lang, timestamp?, avatar?}
 // 应答 {posted, reason?}；openNotificationSettings 打开系统通知设置；点击经 trigger("event", {type: "notificationtap", id, path}) 回传。
+// 推送（APNs，经官方推送网关；插件 JSON 契约 K5，登记编排在 Rust）：pushState 应答 PushState；pushEnable（异步，忽略 vapid /
+// transport）请求通知授权 → 已授权则注册远程通知并等令牌（≤ 15 秒，超时或失败 error = "apns_token"）→ 确保接收端密钥 →
+// 应答 PushState（未授权也置 enabled）；pushDisable 注销远程通知、清密钥与本地状态；pushMarkSynced 载荷 {endpoint, id, server}。
+// 事件：{type: "push", state}（回到前台复查后权限有变、或系统给了新令牌）与 {type: "pushchallenge", challengeId, nonce}
+// （收到官方推送网关的 challenge，见 NotificationManager）。AppDelegate 的注册回调钩子见 PushRegistrar。
 import Tauri
 import UIKit
+import UserNotifications
 import WebKit
 
 struct AppIconSetArgs: Decodable {
   let name: String?
+}
+
+struct PushSyncedArgs: Decodable {
+  let endpoint: String
+  let id: String
+  let server: String
 }
 
 struct AppIconOut: Encodable {
@@ -33,10 +45,14 @@ class OrynMobilePlugin: Plugin {
   private var sink: AnyObject?
   /// 只在 debug 的端到端启动中记录实际触摸；主线程配置。
   private var traceHeaderHits = false
+  /// 上次应答 / 通知 Rust 时的通知权限（回到前台复查用）；只在主线程读写。
+  private var lastPermission: String?
 
   override init() {
     super.init()
     NotificationManager.shared.installDelegate()
+    // 可能早于 UIApplicationMain：先交换 setDelegate:，代理一设好就补上 APNs 注册回调
+    PushRegistrar.shared.install()
   }
 
   @objc public override func load(webview: WKWebView) {
@@ -47,6 +63,7 @@ class OrynMobilePlugin: Plugin {
       NotificationManager.shared.attach { [weak self] id, path in
         self?.trigger("event", data: ["type": "notificationtap", "id": id, "path": path])
       }
+      self?.startPush()
     }
   }
 
@@ -255,6 +272,107 @@ class OrynMobilePlugin: Plugin {
   @objc public func openNotificationSettings(_ invoke: Invoke) {
     NotificationManager.shared.openSettings()
     invoke.resolve()
+  }
+
+  // MARK: - 推送（APNs）
+
+  @objc public func pushState(_ invoke: Invoke) {
+    PushStore.state { invoke.resolve($0) }
+  }
+
+  /// 未授权也置 enabled（与 Android 一致）：之后在系统设置里打开通知，回到前台复查时补注册并发 push 事件。
+  @objc public func pushEnable(_ invoke: Invoke) {
+    PushStore.setEnabled(true)
+    PushStore.setError(nil)
+    UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+      PushLog.info("push.enable granted=\(granted)")
+      guard granted else {
+        self.finishEnable(invoke)
+        return
+      }
+      PushRegistrar.shared.register(timeout: 15) { outcome in
+        switch outcome {
+        case .token(let hex)?:
+          PushStore.setToken(hex)
+        case .failed?, nil:
+          PushStore.setError("apns_token")
+        }
+        self.finishEnable(invoke)
+      }
+    }
+  }
+
+  @objc public func pushDisable(_ invoke: Invoke) {
+    DispatchQueue.main.async { UIApplication.shared.unregisterForRemoteNotifications() }
+    PushKeyStore.clear()
+    PushStore.clear()
+    PushLog.info("push.disable")
+    PushStore.state { invoke.resolve($0) }
+  }
+
+  @objc public func pushMarkSynced(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(PushSyncedArgs.self)
+    PushStore.markSynced(endpoint: args.endpoint, subscriptionId: args.id, server: args.server)
+    invoke.resolve()
+  }
+
+  /// 状态里会确保接收端密钥存在（PushStore.state），然后应答。
+  private func finishEnable(_ invoke: Invoke) {
+    PushStore.state { state in
+      DispatchQueue.main.async { self.lastPermission = state.permission }
+      invoke.resolve(state)
+    }
+  }
+
+  /// load 之后在主线程：让 UIKit 重新检查补上的注册回调，绑定 challenge 与新令牌的回调、监听回到前台，并做一次启动复查；
+  /// debug 包另跑 CI 的推送探针。
+  private func startPush() {
+    PushRegistrar.shared.install(refresh: true)
+    NotificationManager.shared.attachChallenges { [weak self] id, nonce in
+      DispatchQueue.main.async {
+        try? self?.trigger("event", data: PushChallengeEvent(challengeId: id, nonce: nonce))
+      }
+    }
+    PushRegistrar.shared.observeTokens { [weak self] hex in
+      guard PushStore.isEnabled, hex != PushStore.token else { return }
+      PushStore.setToken(hex)
+      self?.emitPush()
+    }
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(willEnterForeground), name: UIApplication.willEnterForegroundNotification,
+      object: nil)
+    refreshPush()
+    #if DEBUG
+      if ProcessInfo.processInfo.environment["ORYN_PUSH_PROBE"] == "1" { PushRegistrar.probe() }
+    #endif
+  }
+
+  @objc private func willEnterForeground() {
+    refreshPush()
+  }
+
+  /// 已启用时复查权限并重新注册远程通知（Apple 建议每次启动都注册）：权限有变立即发 push 事件；
+  /// 令牌有变由 PushRegistrar.observeTokens 的回调发。第一次复查只记下基线。
+  private func refreshPush() {
+    guard PushStore.isEnabled else { return }
+    PushStore.permission { permission in
+      DispatchQueue.main.async {
+        let changed = self.lastPermission != nil && self.lastPermission != permission
+        self.lastPermission = permission
+        if changed { self.emitPush() }
+        if permission == "granted" {
+          PushRegistrar.shared.register(timeout: 15) { _ in }
+        }
+      }
+    }
+  }
+
+  private func emitPush() {
+    PushStore.state { state in
+      DispatchQueue.main.async {
+        try? self.trigger("event", data: PushEvent(state: state))
+      }
+    }
   }
 
   /// 返回宿主视图是否已挂到窗口上。

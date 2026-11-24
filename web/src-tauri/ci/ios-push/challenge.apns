@@ -1,0 +1,12 @@
+{
+  "Simulator Target Bundle": "com.lynricsy.oryn",
+  "aps": {
+    "alert": {
+      "title": "Oryn",
+      "body": "Verifying push notifications"
+    }
+  },
+  "kind": "gateway_challenge",
+  "challengeId": "probeChallenge00000001",
+  "nonce": "probeNonce000000000001"
+}

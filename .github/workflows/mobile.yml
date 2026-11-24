@@ -4,14 +4,15 @@ name: mobile
 # 发版由 release.yml 统一调度，与桌面端同一个 tag、同一个 Release。
 # - PR / 手动触发：`android` 构建 foss 与 gms 两个 debug APK（x86_64 + arm64）并跑插件单测，`android-smoke` 在模拟器里冒烟，
 #   `ios-check` 在 macOS 上不签名编译模拟器包，并在 iOS 26+ 模拟器里截图断言原生底栏与原生页头（硬门禁）：web/src-tauri/ci/ios-header-check.sh
-#   是原生页头演示，ios-e2e-check.sh 是端到端（mock Web UI + 远程能力 + XCUITest 真实触摸；原生底栏的裁切要和真实网页的卡片一起看，只在这里检查）。
+#   是原生页头演示，ios-e2e-check.sh 是端到端（mock Web UI + 远程能力 + XCUITest 真实触摸；原生底栏的裁切要和真实网页的卡片一起看，只在这里检查）；
+#   ios-push-check.sh 是推送探针（AppDelegate 的 APNs 注册回调钩子、网关 challenge 的前台处理、Notification Service Extension 解密）。
 #   不签名、拿不到签名 secret。
 # - 被 release.yml 调用（workflow_call，tag `v*`）：`android-release` 额外以发布密钥构建签名的 release APK + AAB（foss 与 gms 各一套）
 #   并上传到调用方建好的草稿 Release，`ios-release` 签名导出 IPA 并上传 TestFlight；`android-smoke` 与 `ios-check` 照跑。
 #   发布 Release 在 release.yml 的 `publish` 里，等服务端与桌面端也成功后才做。
 #   debug APK 只作为 workflow artifact（冒烟与下载调试用），从不上传到 Release：它可调试、允许明文流量，装错会泄露设备令牌。
 # - 签名 secrets（ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS，IOS_CERTIFICATE / IOS_CERTIFICATE_PASSWORD /
-#   IOS_MOBILE_PROVISION）只存在 environment `mobile-release` 里，该 environment 的部署规则只允许 `v*` tag；
+#   IOS_MOBILE_PROVISION / IOS_NSE_MOBILE_PROVISION）只存在 environment `mobile-release` 里，该 environment 的部署规则只允许 `v*` tag；
 #   只有声明了它的 `android-release` / `ios-release` 能取到这些值，PR / 手动 / 分支运行一律拿不到。
 # flavor 由 gradle 属性 `orynDistribution=foss|gms` 选择（`ORG_GRADLE_PROJECT_orynDistribution`）；gms 需要
 # `app/google-services.json`，由 secret ANDROID_GOOGLE_SERVICES_JSON 在构建前写入（没有该 secret 时跳过 gms）。
@@ -439,14 +440,19 @@ jobs:
         working-directory: web
         run: VITE_MOCK=1 bunx vite build --outDir dist-e2e
 
-      - name: 生成 iOS 工程（未入库时）、装入 App 图标与通信通知权限
+      # 自定义 XcodeGen 模板（tauri.conf.json 的 bundle.iOS.template = web/src-tauri/ios/project.yml）在 init 时多生成
+      # Notification Service Extension；ios-nse.sh 把它的版本号设成与主包一致（模拟器包不签名，没有描述文件）
+      - name: 生成 iOS 工程（未入库时）、装入 App 图标、权限与推送扩展版本
         working-directory: web
         shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
           if [[ ! -d src-tauri/gen/apple ]]; then bun run tauri ios init --ci; fi
           bash src-tauri/ci/ios-appicon.sh
           bash src-tauri/ci/ios-entitlements.sh
+          bash src-tauri/ci/ios-nse.sh "$VERSION"
 
       - name: 不签名编译模拟器包
         working-directory: web
@@ -476,6 +482,10 @@ jobs:
               sys.exit(1)
           PY
           bash web/src-tauri/ci/check-appicon.sh "$app/Assets.car" "iOS 模拟器包" "$plist"
+          appex="$app/PlugIns/NotificationService.appex"
+          [[ -d "$appex" ]] || { echo "::error::包里没有 PlugIns/NotificationService.appex（见 web/src-tauri/ios/project.yml 与 tauri.conf.json 的 bundle.iOS.template）"; exit 1; }
+          nse_bid=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$appex/Info.plist")
+          if [[ "$nse_bid" != "com.lynricsy.oryn.NotificationService" ]]; then echo "::error::NotificationService.appex 的包名是 ${nse_bid}"; exit 1; fi
           echo "产物：${app}（版本 ${ver}）" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "path=$app" >> "$GITHUB_OUTPUT"
 
@@ -519,6 +529,26 @@ jobs:
           bash web/src-tauri/ci/ios-e2e-check.sh "$APP" web/dist-e2e ios-shot/e2e
           [[ -f ios-shot/e2e/.complete ]] || { echo "::error::端到端检查没有跑完全部断言"; exit 1; }
 
+      # 推送探针（M28 Step 0 / 5）：appex 的包名与版本号（P2）；debug 包带 ORYN_PUSH_PROBE=1 冷启动、点掉授权框后，
+      # AppDelegate 补上的 APNs 注册回调被调到（P1，apns.registered / apns.register_failed）；前台 simctl push 网关 challenge
+      # 不展示并转成事件；退出后 simctl push 加密通知，NSE 用共享钥匙串里的附录 A 密钥解开（P3，nse.decrypted ok=true）。
+      # 日志原文写进 push/summary.md 与 Step Summary。预案开关：PUSH_ADHOC_SIGN（auto = NSE 没过时自动用临时签名副本重跑一轮；
+      # 1 / 0 只跑签名 / 不签名一轮），PUSH_NSE_GATE=soft 时 NSE 一项只记录（模拟器不调 NSE 时，解密正确性由探针自检把关）。
+      - name: 模拟器：推送探针（APNs 钩子、网关 challenge、Notification Service Extension）
+        if: ${{ !cancelled() && steps.app.outcome == 'success' }}
+        timeout-minutes: 45
+        shell: bash
+        env:
+          APP: ${{ steps.app.outputs.path }}
+          PUSH_ADHOC_SIGN: auto
+          PUSH_NSE_GATE: hard
+        run: |
+          mkdir -p ios-shot/push
+          rm -f ios-shot/push/.complete
+          trap 'cat ios-shot/push/summary.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true' EXIT
+          bash web/src-tauri/ci/ios-push-check.sh "$APP" ios-shot/push
+          [[ -f ios-shot/push/.complete ]] || { echo "::error::推送探针没有跑完全部断言"; exit 1; }
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         continue-on-error: true
@@ -526,7 +556,7 @@ jobs:
           name: ios-screenshot
           path: ios-shot/
           if-no-files-found: ignore
-          # 保留 header/.complete 与 e2e/.complete：验收要能从产物里确认脚本跑完了全部断言（upload-artifact 默认跳过隐藏文件）
+          # 保留 header/.complete、e2e/.complete 与 push/.complete：验收要能从产物里确认脚本跑完了全部断言（upload-artifact 默认跳过隐藏文件）
           include-hidden-files: true
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -540,7 +570,8 @@ jobs:
 
   # 发版：以 Apple Distribution 证书 + App Store Connect 描述文件手动签名，导出 app-store-connect 的 IPA 并上传 TestFlight。
   # IPA 不上传到 Release：它只能经 TestFlight / App Store 安装。签名 secrets（IOS_CERTIFICATE / IOS_CERTIFICATE_PASSWORD /
-  # IOS_MOBILE_PROVISION）只放在 environment mobile-release；上传用的 App Store Connect API 密钥与 desktop.yml 公证共用
+  # IOS_MOBILE_PROVISION，以及 Notification Service Extension 的描述文件 IOS_NSE_MOBILE_PROVISION）只放在 environment mobile-release；
+  # 上传用的 App Store Connect API 密钥与 desktop.yml 公证共用
   # 仓库级 APPLE_API_ISSUER / APPLE_API_KEY / APPLE_API_KEY_P8。Team ID 写在 tauri.conf.json 的 bundle.iOS.developmentTeam。
   ios-release:
     needs: prepare
@@ -569,12 +600,12 @@ jobs:
       - name: 检查签名与上传凭据
         shell: bash
         env:
-          HAS_SIGN: ${{ secrets.IOS_CERTIFICATE != '' && secrets.IOS_CERTIFICATE_PASSWORD != '' && secrets.IOS_MOBILE_PROVISION != '' }}
+          HAS_SIGN: ${{ secrets.IOS_CERTIFICATE != '' && secrets.IOS_CERTIFICATE_PASSWORD != '' && secrets.IOS_MOBILE_PROVISION != '' && secrets.IOS_NSE_MOBILE_PROVISION != '' }}
           HAS_API: ${{ secrets.APPLE_API_ISSUER != '' && secrets.APPLE_API_KEY != '' && secrets.APPLE_API_KEY_P8 != '' }}
         run: |
           set -euo pipefail
           if [[ "$HAS_SIGN" != "true" ]]; then
-            echo "::error::发布 iOS 需要 environment mobile-release 里的 IOS_CERTIFICATE / IOS_CERTIFICATE_PASSWORD / IOS_MOBILE_PROVISION"
+            echo "::error::发布 iOS 需要 environment mobile-release 里的 IOS_CERTIFICATE / IOS_CERTIFICATE_PASSWORD / IOS_MOBILE_PROVISION / IOS_NSE_MOBILE_PROVISION（推送扩展的描述文件，见 docs/mobile.md 附录 A）"
             exit 1
           fi
           if [[ "$HAS_API" != "true" ]]; then
@@ -600,32 +631,51 @@ jobs:
         working-directory: web
         run: bun install --frozen-lockfile
 
-      - name: 生成 iOS 工程（未入库时）、装入 App 图标与通信通知权限
+      # 发版的 APNs 环境是 production（aps-environment 必须与 App Store Connect 描述文件一致）
+      - name: 生成 iOS 工程（未入库时）、装入 App 图标与权限
         working-directory: web
         shell: bash
+        env:
+          ORYN_APS_ENVIRONMENT: production
         run: |
           set -euo pipefail
           if [[ ! -d src-tauri/gen/apple ]]; then bun run tauri ios init --ci; fi
           bash src-tauri/ci/ios-appicon.sh
           bash src-tauri/ci/ios-entitlements.sh
 
-      # tauri 从 IOS_* 建临时钥匙串并装描述文件。
       # build number = (run_number + 1000) × 100 + run_attempt：重跑同一次运行（如 Android 失败后 Re-run）时也换一个新号，
       # 不会因 TestFlight 已收到同号构建而上传失败；单次运行最多重跑 99 次。run_number 是调用方 release.yml 的计数（从 1 起），
       # 加 1000 是为了高过旧 mobile.yml 时期已上传的号（当时 run_number < 1000），TestFlight 要求同一版本的 build number 只增不减。
+      # Notification Service Extension 的两个版本号与主包相同（<版本> / <版本>.<构建号>），并以 IOS_NSE_MOBILE_PROVISION 手动签名：
+      # ios-nse.sh 装描述文件、写 Signing.xcconfig、把扩展的描述文件并进 ExportOptions.plist（secret 只进这一步）。
+      - name: 推送扩展的版本号与签名
+        id: nse
+        working-directory: web
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          IOS_NSE_MOBILE_PROVISION: ${{ secrets.IOS_NSE_MOBILE_PROVISION }}
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          if (( RUN_ATTEMPT > 99 )); then echo "::error::同一次运行重跑超过 99 次，请重新打 tag"; exit 1; fi
+          build=$(( (RUN_NUMBER + 1000) * 100 + RUN_ATTEMPT ))
+          bash src-tauri/ci/ios-nse.sh "$VERSION" "$build"
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+
+      # tauri 从 IOS_* 建临时钥匙串并装主包的描述文件（只同步名字含 _iOS 的 target）。
       - name: 签名构建 IPA（app-store-connect）
         working-directory: web
         env:
           IOS_CERTIFICATE: ${{ secrets.IOS_CERTIFICATE }}
           IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
           IOS_MOBILE_PROVISION: ${{ secrets.IOS_MOBILE_PROVISION }}
-          RUN_NUMBER: ${{ github.run_number }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
+          BUILD_NUMBER: ${{ steps.nse.outputs.build }}
         shell: bash
         run: |
           set -euo pipefail
-          if (( RUN_ATTEMPT > 99 )); then echo "::error::同一次运行重跑超过 99 次，请重新打 tag"; exit 1; fi
-          bun run tauri ios build --export-method app-store-connect --build-number $(( (RUN_NUMBER + 1000) * 100 + RUN_ATTEMPT )) --config "$ORYN_VERSION_CONFIG" --ci
+          bun run tauri ios build --export-method app-store-connect --build-number "$BUILD_NUMBER" --config "$ORYN_VERSION_CONFIG" --ci
 
       - name: 校验 IPA
         id: ipa
@@ -662,16 +712,38 @@ jobs:
             exit 1
           fi
           ent_xml=$(codesign -d --entitlements - --xml "$app" 2>/dev/null)
-          python3 - "$ent_xml" <<'PY'
+          appex="$app/PlugIns/NotificationService.appex"
+          [[ -d "$appex" ]] || { echo "::error::IPA 里没有 PlugIns/NotificationService.appex"; exit 1; }
+          nse_plist="$appex/Info.plist"
+          nse_bid=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$nse_plist")
+          nse_ver=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$nse_plist")
+          nse_build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$nse_plist")
+          if [[ "$nse_bid" != "com.lynricsy.oryn.NotificationService" ]]; then echo "::error::NotificationService.appex 的包名是 ${nse_bid}"; exit 1; fi
+          if [[ "$nse_ver" != "$ver" || "$nse_build" != "$build" ]]; then
+            echo "::error::NotificationService.appex 的版本 ${nse_ver} / ${nse_build} 与主包 ${ver} / ${build} 不一致（App Store Connect 会退回）"
+            exit 1
+          fi
+          nse_ent_xml=$(codesign -d --entitlements - --xml "$appex" 2>/dev/null)
+          python3 - "$ent_xml" "$nse_ent_xml" <<'PY'
           import plistlib, sys
-          raw = sys.argv[1].encode("utf-8")
-          if not raw.strip():
-              print("::error::codesign 未输出 IPA entitlements", file=sys.stderr)
-              sys.exit(1)
-          ent = plistlib.loads(raw)
+          def load(raw, what):
+              raw = raw.encode("utf-8")
+              if not raw.strip():
+                  print(f"::error::codesign 未输出{what}的 entitlements", file=sys.stderr)
+                  sys.exit(1)
+              return plistlib.loads(raw)
+          ent = load(sys.argv[1], "主包")
+          nse = load(sys.argv[2], " NotificationService.appex ")
           key = "com.apple.developer.usernotifications.communication"
           if ent.get(key) is not True:
               print(f"::error::IPA 签名缺少 {key}=true（请确认 ios-entitlements.sh 已执行且 IOS_MOBILE_PROVISION 已启用 Communication Notifications）", file=sys.stderr)
+              sys.exit(1)
+          if ent.get("aps-environment") != "production":
+              print(f"::error::主包的 aps-environment 是 {ent.get('aps-environment')!r}，应为 'production'（请确认 IOS_MOBILE_PROVISION 已启用 Push Notifications）", file=sys.stderr)
+              sys.exit(1)
+          groups = nse.get("keychain-access-groups") or []
+          if not any(g.endswith(".com.lynricsy.oryn.push") for g in groups):
+              print(f"::error::NotificationService.appex 的 keychain-access-groups 缺 <Team ID>.com.lynricsy.oryn.push：{groups}", file=sys.stderr)
               sys.exit(1)
           PY
           bash web/src-tauri/ci/check-appicon.sh "$app/Assets.car" "iOS IPA" "$plist"
