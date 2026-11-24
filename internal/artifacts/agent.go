@@ -64,6 +64,9 @@ type Caller struct {
 	Turn Turn
 	// Fetch 取回 source 路径的字节（调用方负责关闭）；nil = 不接受 source。
 	Fetch func(ctx context.Context, path string) (io.ReadCloser, int64, error)
+	// Internal 为真表示调用来自普通 orb 的 orbd（经 link 的 artifact.call）：只有这样的调用方能用设计画布的内部操作
+	// （seal_design、fetch_design_files、fetch_design_runtime）。助手、REST、Runner 都是假。
+	Internal bool
 }
 
 // Image 是工具结果里的图片（Data 为 base64）。
@@ -118,10 +121,17 @@ func (s *Service) Call(ctx context.Context, c Caller, op string, params json.Raw
 		return s.agentReadData(ctx, c, params)
 	case OpWriteData:
 		return s.agentWriteData(ctx, c, params)
+	case OpCheck:
+		return s.agentCheckArtifact(ctx, c, params)
+	case OpSealDesign, OpFetchDesignFiles, OpFetchDesignRuntime, OpDesignHead:
+		if c.Internal {
+			return s.callInternal(ctx, c, op, params)
+		}
+		fallthrough
 	default:
 		return Result{}, opErr(CodeInvalid, "没有操作 %q。可用的操作：%s。", op,
 			strings.Join([]string{OpCreate, OpRead, OpUpdate, OpList, OpDelete, OpListVersions, OpRestoreVersion, OpReadGuide,
-				OpReadComments, OpReplyComment, OpResolveComment, OpScreenshot, OpReadData, OpWriteData}, "、"))
+				OpReadComments, OpReplyComment, OpResolveComment, OpScreenshot, OpReadData, OpWriteData, OpCheck}, "、"))
 	}
 }
 
@@ -622,6 +632,9 @@ func (s *Service) agentUpdate(ctx context.Context, c Caller, params json.RawMess
 		return Result{}, &OpError{Code: CodeInvalid, State: &State{Version: a.Version},
 			Message: fmt.Sprintf("baseVersion %d 不存在；%s 现在是版本 %d。先 read_artifact 拿到最新版本号。", base, a.ID, a.Version)}
 	}
+	if err := s.guardDesignWrite(ctx, a, p.Files, p.Edits); err != nil {
+		return Result{}, err
+	}
 	if p.given() && a.Type != "" {
 		return Result{}, typedHTMLErr(a.Type)
 	}
@@ -996,7 +1009,7 @@ func (s *Service) orbCaller(ctx context.Context, fetch SourceFetcher, orbID, thr
 		label = t.ID
 	}
 	return Caller{
-		ThreadID: t.ID, Label: label, ProjectID: t.ProjectID, Scope: scope,
+		ThreadID: t.ID, Label: label, ProjectID: t.ProjectID, Scope: scope, Internal: !orbs.IsRunner(o),
 		Fetch: func(ctx context.Context, path string) (io.ReadCloser, int64, error) {
 			rc, size, err := fetch.Fetch(ctx, orbID, path)
 			if errors.Is(err, library.ErrTooLarge) {

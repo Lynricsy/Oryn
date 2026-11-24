@@ -4,9 +4,11 @@
 // 环境变量：
 //   ORYN_DESIGN_DIR            工作副本根（必填，绝对路径），布局见 plugin-frames.mjs
 //   PORT                       dev 端口（orbd 受管服务注入；缺省 5173），只听 127.0.0.1，端口被占即失败
+//   PUBLIC_URL                 dev 的公开地址（orbd 受管服务按 portal 模板注入；可缺）。它的主机名加入放行集合
 //   ORYN_DESIGN_ALLOWED_HOSTS  dev 额外放行的 Host，逗号分隔；每项是完整主机名或以 . 开头的后缀，原样交给
-//                              server.allowedHosts。缺省或为空时不设，保持 vite 默认（localhost、*.localhost、IP 字面量）。
-//                              不推断 portal 域名：portal 代理保留公开 Host 头，放行范围只能由起服务的一方给出受信值
+//                              server.allowedHosts。放行集合 = PUBLIC_URL 主机名 ∪ 本变量；两者都空时不设，保持 vite
+//                              默认（localhost、*.localhost、IP 字面量）。不按请求推断 portal 域名：portal 代理保留公开
+//                              Host 头，放行范围只能由起服务的一方给出受信值，绝不设 true
 //   ORYN_DESIGN_SANDBOX        dev 下 /frames/runtime.js 与 /frames/probe.js 的来源目录（可缺，缺时两者 404，入口静默跳过）
 
 import fs from "node:fs";
@@ -45,6 +47,16 @@ function allowedHosts() {
 		.split(",")
 		.map((h) => h.trim())
 		.filter((h) => h !== "");
+	const publicURL = (process.env.PUBLIC_URL ?? "").trim();
+	if (publicURL !== "") {
+		let host = "";
+		try {
+			host = new URL(publicURL).hostname;
+		} catch {
+			throw new Error(`PUBLIC_URL 不是合法地址：${publicURL}`);
+		}
+		if (host !== "" && !hosts.includes(host)) hosts.push(host);
+	}
 	return hosts.length > 0 ? hosts : undefined;
 }
 

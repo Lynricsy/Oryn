@@ -92,6 +92,18 @@ const (
 	// 后台研究（M26）：follow.add → ctl follow.add（LinkCtlFollowAddParams → LinkCtlFollowAddResult），threadId 恒为调用方线程；
 	// 由 orb 内 `oryn follow add` 发出，控制面核对 quote 是主人在该线程里的原话。只在 orbd.sock 上，runner.sock 不提供。
 	MethodFollowAdd = "follow.add"
+
+	// 设计画布（M29，docs/plan-m29.md C3 / C4）：orbd 在 `~/designs/<artifactId>/` 维护工作副本，经 ctl artifact.call
+	// 的内部操作物化与封存。只在 orbd.sock 上，runner.sock 不提供。threadId 恒为调用方线程。
+	// design.open（DesignOpenParams → DesignOpenResult）建立或接管本线程的工作副本并起 dev 服务；
+	// design.turn（DesignTurnParams → {}）记下本回合，上一回合留下的脏副本先以旧回合封存；
+	// design.seal（DesignSealParams → DesignSealResult，上限 5 分钟）构建并封存本线程的每个脏副本，构建失败回
+	// build_failed（message 是 stderr 末尾 4 KiB），封存冲突原样回控制面的 conflict；
+	// design.status（DesignStatusParams → DesignStatusResult）列出本线程的工作副本。
+	MethodDesignOpen   = "design.open"
+	MethodDesignTurn   = "design.turn"
+	MethodDesignSeal   = "design.seal"
+	MethodDesignStatus = "design.status"
 )
 
 // 消息类型。
@@ -129,10 +141,17 @@ const (
 	CodeControlUser      = "control_user"      // 用户接管了桌面或有待答的 desktop_ask_user（控制状态 user / ask），不能开始录制
 
 	CodeTimeout = "timeout" // thread.wait 到时目标仍未静止
+
+	CodeBuildFailed = "build_failed" // design.seal：vite build 或依赖安装失败，没有落版本
+	CodeNoDesign    = "no_design"    // 本线程没有该 artifact 的工作副本（先 design.open）
 )
 
-// maxRequestBytes 是请求行上限（项目脚本随 project.scripts.set 传入）。
-const maxRequestBytes = 4 << 20
+// MaxRequestBytes 是请求行上限（项目脚本随 project.scripts.set 传入）。
+const MaxRequestBytes = 4 << 20
+
+// DesignFilesPageBytes 是内部操作 fetch_design_files 一页结果（ctl artifact.call 的整条结果 JSON，含 base64 膨胀与
+// 字段开销）的上限：MaxRequestBytes 的一半。
+const DesignFilesPageBytes = MaxRequestBytes / 2
 
 // Path 返回 $HOME 下的控制口路径。
 func Path(home string) string { return filepath.Join(home, ".oryn", "orbd.sock") }
@@ -268,6 +287,113 @@ type GithubPrepareParams struct {
 	Reason     string `json:"reason,omitempty"`
 }
 
+// DesignOpenParams 是 design.open 的参数：没有 ID 时新建一个空设计画布（Title 为空用缺省标题）；
+// 有 ID 时它必须是设计画布，或者还没有画框的画布。
+type DesignOpenParams struct {
+	ThreadID string `json:"threadId"`
+	ID       string `json:"id,omitempty"`
+	Title    string `json:"title,omitempty"`
+}
+
+// DesignOpenResult 是 design.open 的结果：Dir 是工作副本根（`~/designs/<id>`），Version 是副本所基于的版本，
+// DevURL 是 dev 服务的本机地址 `http://127.0.0.1:<port>/`（帧在 `/frames/<帧 id>`）。
+type DesignOpenResult struct {
+	ID      string `json:"id"`
+	Dir     string `json:"dir"`
+	Version int    `json:"version"`
+	DevURL  string `json:"devUrl"`
+}
+
+// DesignTurnParams 是 design.turn 的参数：TurnID 由扩展生成，Title 是回合的用户输入原文。
+type DesignTurnParams struct {
+	ThreadID string `json:"threadId"`
+	TurnID   string `json:"turnId"`
+	Title    string `json:"title,omitempty"`
+}
+
+// DesignSealParams 是 design.seal 的参数。
+type DesignSealParams struct {
+	ThreadID string `json:"threadId"`
+	TurnID   string `json:"turnId"`
+}
+
+// DesignSealed 是封存出的一个版本。
+type DesignSealed struct {
+	ID      string `json:"id"`
+	Version int    `json:"version"`
+}
+
+// DesignSealResult 是 design.seal 的结果：Sealed 是落了新版本的副本，Skipped 是源码自上次封存以来没变的副本。
+type DesignSealResult struct {
+	Sealed  []DesignSealed `json:"sealed"`
+	Skipped []string       `json:"skipped"`
+}
+
+// DesignStatusParams 是 design.status 的参数。
+type DesignStatusParams struct {
+	ThreadID string `json:"threadId"`
+}
+
+// DesignStatus 是本线程的一个工作副本：Dirty 表示源码自上次封存（或物化）以来变了；Check 是最新版本的设计检查，
+// 状态已按副本当前源码换算（指纹不同为 stale），没有检查过为 nil。
+type DesignStatus struct {
+	ID    string                `json:"id"`
+	Dir   string                `json:"dir"`
+	Dirty bool                  `json:"dirty"`
+	Check *apigen.ArtifactCheck `json:"check"`
+}
+
+// DesignStatusResult 是 design.status 的结果。
+type DesignStatusResult struct {
+	Designs []DesignStatus `json:"designs"`
+}
+
+// DesignHead 是 ctl artifact.call 内部操作 design_head `{id}` 的结果（结果的 text 是它的 JSON）：设计画布（或还没有
+// 画框的画布）的最新版本号、该版本的 check_json 原文（design.Check 的形状，没检查过为空），以及该版本 `src/**`
+// （不含 node_modules）与 `dist/**` 的文件摘要。orbd 用它对账、判断封存要传哪些文件、回报 design.status 的检查。
+type DesignHead struct {
+	Version int              `json:"version"`
+	Check   json.RawMessage  `json:"check,omitempty"`
+	Files   []DesignHeadFile `json:"files"`
+}
+
+// DesignHeadFile 是 DesignHead 里一个文件的摘要。
+type DesignHeadFile struct {
+	Path   string `json:"path"`
+	Sha256 string `json:"sha256"`
+}
+
+// DesignFilesPage 是 ctl artifact.call 内部操作 fetch_design_files `{id, version?, cursor?}` 的结果（结果的 text 是它的
+// JSON）：版本里 `src/**`（不含 node_modules）的文件按路径排序、逐片返回。一个文件可以跨页：每片是 [Offset, Offset+len)
+// 的原始字节（Data 为 base64），Size 与 Sha256 是整个文件的。Next 非空时还有下一页，下一次带 cursor=Next 与同一个
+// version 再取。整条结果序列化后不超过 DesignFilesPageBytes。
+type DesignFilesPage struct {
+	Version int               `json:"version"`
+	Files   []DesignFileChunk `json:"files"`
+	Next    string            `json:"next,omitempty"`
+}
+
+// DesignFileChunk 是一个文件的一片。
+type DesignFileChunk struct {
+	Path   string `json:"path"`
+	Offset int64  `json:"offset"`
+	Data   string `json:"data"`
+	Size   int64  `json:"size"`
+	Sha256 string `json:"sha256"`
+}
+
+// DesignRuntimeFiles 是内部操作 fetch_design_runtime `{}` 的结果：控制面 Web 构建里的 `sandbox/runtime.js`、
+// `sandbox/probe.js`（Name 为 runtime.js / probe.js，Data 为 base64），缺哪个就没有哪个。
+type DesignRuntimeFiles struct {
+	Files []DesignRuntimeFile `json:"files"`
+}
+
+// DesignRuntimeFile 是 fetch_design_runtime 返回的一个文件。
+type DesignRuntimeFile struct {
+	Name string `json:"name"`
+	Data string `json:"data"`
+}
+
 // ---- 服务端 ----
 
 // Responder 向调用方流式写日志行；并发安全，写失败（调用方已断开）后静默丢弃。
@@ -352,7 +478,7 @@ func serveConn(ctx context.Context, c net.Conn, h Handler) {
 	defer stop()
 	out := &Responder{enc: json.NewEncoder(c)}
 	br := bufio.NewReaderSize(c, 64<<10)
-	line, err := readLine(br, maxRequestBytes)
+	line, err := readLine(br, MaxRequestBytes)
 	if err != nil {
 		out.write(Message{Type: TypeError, Code: CodeInvalidParams, Message: err.Error()})
 		return

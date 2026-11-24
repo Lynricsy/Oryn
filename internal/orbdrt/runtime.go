@@ -285,6 +285,8 @@ type Runtime struct {
 
 	// lib 是全局助手文件库的同步清单与正在存入的路径（M13，见 library.go）。
 	lib libraryState
+	// design 是设计画布工作副本的内存状态（M29，design.go）；零值可用。
+	design designState
 
 	// bins 把 orbd 自己起的子进程解析到可信 PATH 目录里的绝对路径（不经 $HOME 下的 PATH 项）。
 	bins binResolver

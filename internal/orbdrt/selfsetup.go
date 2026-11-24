@@ -174,6 +174,9 @@ func (r *Runtime) handleSock(ctx context.Context, method string, params json.Raw
 		if res, ok, err := r.handleServiceSock(ctx, method, params, out); ok {
 			return res, err
 		}
+		if res, ok, err := r.handleDesignSock(ctx, method, params, out); ok {
+			return res, err
+		}
 		return nil, orbsock.Errorf(orbsock.CodeMethodNotFound, "unknown method %q", method)
 	}
 }
