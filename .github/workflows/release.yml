@@ -142,6 +142,8 @@ jobs:
             mkdir -p "$dir"
             for b in "$@"; do
               CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags "$ldflags" -o "$dir/$b" "./cmd/$b"
+              # 推送网关随包附 systemd unit（docs/push-gateway.md「安装与 systemd」）
+              if [[ $b == oryn-push-gateway ]]; then cp deploy/systemd/oryn-push-gateway.service "$dir/"; fi
             done
             tar -C "$RUNNER_TEMP/pkg" -czf "dist/$base.tar.gz" "$base"
           }
