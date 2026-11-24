@@ -381,14 +381,62 @@ func (s *Service) RefreshAgent(ctx context.Context, threadID string) {
 	s.refreshLocked(t, "agent profile")
 }
 
+// CoordinatorModelUpdate 描述全局助手主线的一次模型或思考档位同步变更。
+type CoordinatorModelUpdate struct {
+	SetModel bool
+	// Model 为 "provider/id"；SetModel 为真且 Model 为空时，通过 oryn_select_model{role:"default"} 显式切回默认角色。
+	Model       string
+	SetThinking bool
+	// Thinking 为非空思考档位（显式设定值，或恢复默认时由 config.yml 解析出的 defaultThinkingLevel）。
+	Thinking string
+	// ResetToDefaultThinking 为真表示本次是恢复默认思考档位；与切回 default role 同时发生时，
+	// 先恢复全局默认档位再切 default role，保证 default role 自带的 :level 后缀（若有）生效。
+	ResetToDefaultThinking bool
+	// WillRestart 表示外层随后会重启该线程（如联网/MCP 策略变更）。
+	WillRestart bool
+}
+
+func coordinatorModelFrames(u CoordinatorModelUpdate) [][]byte {
+	var out [][]byte
+	addModel := func() {
+		if !u.SetModel {
+			return
+		}
+		if u.Model != "" {
+			if ref := parseModel(&u.Model); ref != nil {
+				f, _ := json.Marshal(map[string]string{"type": "oryn_select_model", "provider": ref.Provider, "modelId": ref.ID})
+				out = append(out, f)
+			}
+			return
+		}
+		f, _ := json.Marshal(map[string]string{"type": "oryn_select_model", "role": "default"})
+		out = append(out, f)
+	}
+	addThinking := func() {
+		if !u.SetThinking || u.Thinking == "" {
+			return
+		}
+		f, _ := json.Marshal(map[string]string{"type": "set_thinking_level", "level": u.Thinking})
+		out = append(out, f)
+	}
+	if u.SetModel && u.Model == "" && u.SetThinking && u.ResetToDefaultThinking {
+		addThinking()
+		addModel()
+	} else {
+		addModel()
+		addThinking()
+	}
+	return out
+}
+
 // SyncCoordinatorModel 将协调线程（全局助手主线）的模型与思考档位同步为新设置。
-// setModel / setThinking 指明要改写的字段，对应值为 nil 或空串表示清除（恢复 omp 默认）。
-// - 会话未就绪、外层即将重启（willRestart）、或任一改动字段被清除时：直接更新内存与数据库行并推送；
-//   若 agent 在运行或启动中则触发静止后重启（避免旧 agent 回写，下次启动随 initFrames 生效）。
-// - 会话已就绪且改动字段均有具体值、无需重启时：在线下发 set_model / set_thinking_level，
-//   并紧跟一次 get_state 将实际生效状态写回数据库与推送客户端。
-func (s *Service) SyncCoordinatorModel(ctx context.Context, threadID string, setModel bool, model *string, setThinking bool, thinking *string, willRestart bool) error {
-	if !setModel && !setThinking {
+// 无论是切换到具体值还是恢复默认，都显式下发 oryn_select_model / set_thinking_level，
+// 避免有历史会话的主线在 open_session → switchSession 时恢复磁盘里的旧模型或旧思考档位：
+// - 会话已就绪且无需重启时：直接在线按序下发显式切换帧并紧跟 get_state 写回数据库与推送客户端；
+// - 会话离线、启动中或即将重启时：更新内存与数据库行，并在需要切回 default role（或合并到已有待切回 default role 的
+//   挂起帧）时把显式切换帧持久化到 startup_frames / pendingModelSync，等下次 onReadyLocked 优先执行并刷新落库。
+func (s *Service) SyncCoordinatorModel(ctx context.Context, threadID string, u CoordinatorModelUpdate) error {
+	if !u.SetModel && !u.SetThinking {
 		return nil
 	}
 	t, err := s.get(ctx, threadID)
@@ -402,58 +450,87 @@ func (s *Service) SyncCoordinatorModel(ctx context.Context, threadID string, set
 	}
 	ready := t.agentReady()
 	running := ready || t.agent != nil || t.agentStatus == apigen.AgentStatusReady || t.starting
-	cleared := (setModel && (model == nil || *model == "")) || (setThinking && (thinking == nil || *thinking == ""))
-	if !ready || willRestart || cleared {
-		if setModel {
-			if model != nil && *model != "" {
-				v := *model
-				t.model = &v
-			} else {
-				t.model = nil
-			}
-		}
-		if setThinking {
-			if thinking != nil && *thinking != "" {
-				v := *thinking
-				t.thinking = &v
-			} else {
-				t.thinking = nil
-			}
-		}
-		dbModel, dbThinking := t.model, t.thinking
-		if running && !willRestart {
-			s.refreshLocked(t, "assistant model")
-		}
+	frames := coordinatorModelFrames(u)
+	if ready && !u.WillRestart {
+		clearPending := len(t.pendingModelSync) > 0
+		t.pendingModelSync = nil
 		t.mu.Unlock()
-		if err := s.st.Q.SetThreadModel(ctx, db.SetThreadModelParams{
-			Model: dbModel, ThinkingLevel: dbThinking, UpdatedAt: s.now(), ID: t.id,
-		}); err != nil {
-			return err
+		if clearPending {
+			_ = s.st.Q.SetThreadStartupFrames(ctx, db.SetThreadStartupFramesParams{StartupFrames: nil, ID: t.id})
 		}
-		s.publish(ctx, t.id)
+		for _, f := range frames {
+			if _, err := s.command(ctx, threadID, f, nil, originAuto, ""); err != nil {
+				return err
+			}
+		}
+		if len(frames) > 0 {
+			s.refreshState(t)
+		}
 		return nil
+	}
+
+	// 离线、启动中或外层即将重启：先更新内存与数据库行，并维护下次就绪时需显式应用的复位帧。
+	if u.SetModel {
+		if u.Model != "" {
+			v := u.Model
+			t.model = &v
+		} else {
+			t.model = nil
+		}
+	}
+	if u.SetThinking && u.Thinking != "" {
+		v := u.Thinking
+		t.thinking = &v
+	}
+	var rawPending [][]byte
+	if u.SetModel && u.Model == "" {
+		// 切回 default role：open_session 无法覆盖有历史会话的旧模型，须持久化显式切换帧
+		rawPending = frames
+	} else if u.SetModel && u.Model != "" {
+		// 改回具体模型：下次 initFrames 的 open_session{provider, modelId} + set_thinking_level 会显式覆盖历史
+		rawPending = nil
+	} else if len(t.pendingModelSync) > 0 && u.SetThinking && u.Thinking != "" {
+		// 之前已挂起切回 default role，本次只改思考档位：合并重排，确保新思考档位按正确顺序生效
+		merged := CoordinatorModelUpdate{
+			SetModel:               true,
+			Model:                  "",
+			SetThinking:            true,
+			Thinking:               u.Thinking,
+			ResetToDefaultThinking: u.ResetToDefaultThinking,
+		}
+		rawPending = coordinatorModelFrames(merged)
+	}
+	updateStartup := u.SetModel || (len(t.pendingModelSync) > 0 && u.SetThinking)
+	var startupBlob []byte
+	if updateStartup {
+		if len(rawPending) > 0 {
+			raw := make([]json.RawMessage, len(rawPending))
+			for i, f := range rawPending {
+				raw[i] = f
+			}
+			t.pendingModelSync = raw
+			startupBlob = startupFrames(rawPending...)
+		} else {
+			t.pendingModelSync = nil
+		}
+	}
+	dbModel, dbThinking := t.model, t.thinking
+	if running && !u.WillRestart {
+		s.refreshLocked(t, "assistant model")
 	}
 	t.mu.Unlock()
 
-	var frames []json.RawMessage
-	if setModel && model != nil {
-		if ref := parseModel(model); ref != nil {
-			f, _ := json.Marshal(map[string]string{"type": "oryn_select_model", "provider": ref.Provider, "modelId": ref.ID})
-			frames = append(frames, f)
-		}
-	}
-	if setThinking && thinking != nil && *thinking != "" {
-		f, _ := json.Marshal(map[string]string{"type": "set_thinking_level", "level": *thinking})
-		frames = append(frames, f)
-	}
-	for _, f := range frames {
-		if _, err := s.command(ctx, threadID, f, nil, originAuto, ""); err != nil {
+	if updateStartup {
+		if err := s.st.Q.SetThreadStartupFrames(ctx, db.SetThreadStartupFramesParams{StartupFrames: startupBlob, ID: t.id}); err != nil {
 			return err
 		}
 	}
-	if len(frames) > 0 {
-		s.refreshState(t)
+	if err := s.st.Q.SetThreadModel(ctx, db.SetThreadModelParams{
+		Model: dbModel, ThinkingLevel: dbThinking, UpdatedAt: s.now(), ID: t.id,
+	}); err != nil {
+		return err
 	}
+	s.publish(ctx, t.id)
 	return nil
 }
 

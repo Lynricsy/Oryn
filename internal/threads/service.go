@@ -419,6 +419,10 @@ type thread struct {
 	// planMode 为真表示最新 get_state 处于计划模式：syncModelLocked 不将临时计划模型/思考级别写回常驻线程行，
 	// 重启时 initFrames 也不传显式模型与思考级别，由 Core 从持久化会话恢复计划态与原基线。
 	planMode bool
+	// pendingModelSync 是全局助手主线离线或即将重启时待显式应用的模型/思考档位切换帧（如恢复默认时的
+	// oryn_select_model{role:"default"} + set_thinking_level），持久化在 threads.startup_frames 中，
+	// 在下次 onReadyLocked 优先于普通队列下发并在确认后清除（不进入 queue、不阻塞静止停机、不唤醒离线主线）。
+	pendingModelSync []json.RawMessage
 }
 
 // msgSlot 是消息顺序队列里的一个位置。ready 之前 frame 为 nil；ready 且 frame 为 nil 表示该消息已失败
@@ -463,9 +467,14 @@ func (s *Service) get(ctx context.Context, id string) (*thread, error) {
 	}
 	t = newThread(row)
 	if startup := s.pendingStartup(ctx, row); len(startup) > 0 {
-		// 线程尚未对外可见：在登记前排好已受理的首批命令，保证它们先于任何其它命令下发
+		// 线程尚未对外可见：在登记前排好已受理的首批命令，保证它们先于任何其它命令下发；
+		// 主线纯模型/档位复位帧挂到 pendingModelSync，在下次 onReadyLocked 优先下发而不唤醒离线主线。
 		t.mu.Lock()
-		s.queueStartupLocked(t, startup)
+		if t.main && isModelSyncFrames(startup) {
+			t.pendingModelSync = startup
+		} else {
+			s.queueStartupLocked(t, startup)
+		}
 		t.mu.Unlock()
 	}
 	s.mu.Lock()

@@ -36,6 +36,11 @@ type sessionFile struct {
 	// hasMessage / hasSource：文件里已有 message 条目 / Oryn 模型来源记录（oryn_mark_session_start 据此判断会话是否全新）。
 	hasMessage bool
 	hasSource  bool
+	// lastProvider / lastModelID / lastThinking：会话历史里最后一次 model_change 与 thinking_level_change
+	// （模拟真实 Core openRpcSession → switchSession 恢复已有会话的旧模型与旧思考档位）。
+	lastProvider string
+	lastModelID  string
+	lastThinking string
 }
 
 // modelSourceType 是 Oryn 模型来源记录的 customType（oryn-core `modes/rpc/oryn-model-source.ts` ORYN_MODEL_SOURCE_ENTRY）。
@@ -190,9 +195,11 @@ func loadSession(path string) (*sessionFile, error) {
 	sc.Buffer(make([]byte, 0, 64<<10), 256<<20)
 	for sc.Scan() {
 		var e struct {
-			Type       string `json:"type"`
-			ID         string `json:"id"`
-			CustomType string `json:"customType"`
+			Type          string `json:"type"`
+			ID            string `json:"id"`
+			CustomType    string `json:"customType"`
+			Model         string `json:"model"`
+			ThinkingLevel string `json:"thinkingLevel"`
 			// ActiveLeafID 存在（含 null）= 分支外条目：叶子取它而不是该条目（与 omp 加载会话一致）。
 			ActiveLeafID json.RawMessage `json:"activeLeafId"`
 		}
@@ -214,6 +221,16 @@ func loadSession(path string) (*sessionFile, error) {
 					if leaf != nil {
 						s.leaf = *leaf
 					}
+				}
+			}
+			switch e.Type {
+			case "model_change":
+				if p, m, ok := strings.Cut(e.Model, "/"); ok && p != "" && m != "" {
+					s.lastProvider, s.lastModelID = p, m
+				}
+			case "thinking_level_change":
+				if e.ThinkingLevel != "" {
+					s.lastThinking = e.ThinkingLevel
 				}
 			}
 			s.note(e.Type, e.CustomType)

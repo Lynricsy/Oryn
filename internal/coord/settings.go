@@ -212,7 +212,20 @@ func strPtrEqual(a, b *string) bool {
 	return *a == *b
 }
 
+// defaultThinkingLevel 返回全局 omp-home/config.yml 解析出的 defaultThinkingLevel（未写或读取失败为 omp 缺省值 high）。
+func (s *Service) defaultThinkingLevel() string {
+	var b []byte
+	if s.home != nil {
+		if raw, _, err := s.home.Get(agentcfg.ConfigFile); err == nil {
+			b = raw
+		}
+	}
+	return agentcfg.ParseDefaultThinkingLevel(b)
+}
+
 // syncMainModel 将全局助手默认模型或思考档位的变化同步到已存在的主线对话（已有其他助手对话不切换）。
+// 恢复默认时显式传入解析出的默认值（coordinator.model 或 default role，以及 config.yml 的 defaultThinkingLevel），
+// 避免有历史会话的主线在 open_session 时恢复磁盘里的旧模型与旧思考档位。
 func (s *Service) syncMainModel(ctx context.Context, modelChanged bool, model *string, thinkingChanged bool, thinking *string, willRestart bool) {
 	row, err := s.st.Q.GetMainThread(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -222,12 +235,27 @@ func (s *Service) syncMainModel(ctx context.Context, modelChanged bool, model *s
 		slog.Warn("coord: 查询主线对话失败", "err", err)
 		return
 	}
-	effModel := model
-	if effModel == nil && s.cfg.Model != "" {
-		m := s.cfg.Model
-		effModel = &m
+	u := threads.CoordinatorModelUpdate{
+		SetModel:    modelChanged,
+		SetThinking: thinkingChanged,
+		WillRestart: willRestart,
 	}
-	if err := s.th.SyncCoordinatorModel(ctx, row.ID, modelChanged, effModel, thinkingChanged, thinking, willRestart); err != nil {
+	if modelChanged {
+		if model != nil {
+			u.Model = *model
+		} else {
+			u.Model = s.cfg.Model
+		}
+	}
+	if thinkingChanged {
+		if thinking != nil {
+			u.Thinking = *thinking
+		} else {
+			u.Thinking = s.defaultThinkingLevel()
+			u.ResetToDefaultThinking = true
+		}
+	}
+	if err := s.th.SyncCoordinatorModel(ctx, row.ID, u); err != nil {
 		slog.Warn("coord: 同步主线模型或思考档位失败", "thread", row.ID, "err", err)
 	}
 }

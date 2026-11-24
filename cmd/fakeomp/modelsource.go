@@ -58,6 +58,8 @@ func (s *server) selectModel(id string, line []byte) {
 	if role == "" {
 		s.provider, s.modelID = *c.Provider, *c.ModelID
 		changeRole, source = "default", "manual"
+	} else if role == "default" {
+		s.provider, s.modelID = "", ""
 	}
 	provider, model := s.modelLocked()
 	key := provider + "/" + model

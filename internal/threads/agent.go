@@ -585,7 +585,7 @@ func (s *Service) onReadyLocked(ctx context.Context, t *thread) {
 		return
 	}
 	explicit := parseModel(t.model) != nil
-	if (t.main || t.research != "" || t.hidden) && !t.queueNeedsWake() && len(t.msgOrder) == 0 {
+	if (t.main || t.research != "" || t.hidden) && !t.queueNeedsWake() && len(t.msgOrder) == 0 && len(t.pendingModelSync) == 0 {
 		// 常驻空跑（主线 / 备用 / 研究员）当前没有待发非只读命令：延迟标记，避免每次重启经 ensureOnDisk() 落盘废文件；
 		// 预先记住就绪前的 explicitModel，防止随后 get_state 回写 t.model 把 startup 误判成 manual。
 		t.sessionStartPending = true
@@ -594,14 +594,56 @@ func (s *Service) onReadyLocked(ctx context.Context, t *thread) {
 		t.sessionStartPending = false
 		s.markSessionStartLocked(t, explicit)
 	}
-	// M13 6.3：先补发挂起的 reload_plugins（例如冻结期间改了配置），再下发排队命令，排队的 prompt 用的就是新配置
+	// M13 6.3：先补发挂起的 reload_plugins（例如冻结期间改了配置），再下发待同步的模型/档位与排队命令
 	s.reloadPluginsLocked(t)
+	s.flushModelSyncLocked(t)
 	q := t.queue
 	t.queue = nil
 	for _, f := range q {
 		s.dispatchLocked(t, f)
 	}
 	s.refreshStateLocked(t)
+}
+
+// flushModelSyncLocked 下发主线离线/重启前挂起的显式模型与思考档位切换帧（位于用户排队消息与 get_state 之前）。
+// 最后一条到达 agent 后清除持久化的 startup_frames；若进程在送达前退出（undelivered），保留帧以便下次就绪重发。
+// 调用方持有 t.mu 且 agent 就绪。
+func (s *Service) flushModelSyncLocked(t *thread) {
+	if len(t.pendingModelSync) == 0 {
+		return
+	}
+	frames := t.pendingModelSync
+	t.pendingModelSync = nil
+	last := len(frames) - 1
+	for i, f := range frames {
+		typ, _, ok := frameHeader(f)
+		if !ok {
+			continue
+		}
+		id := s.newCmdID()
+		line, err := omprpc.SetID(append([]byte(nil), f...), id)
+		if err != nil {
+			continue
+		}
+		rem := append([]json.RawMessage(nil), frames[i:]...)
+		isLast := i == last
+		t.pending[id] = &pendingCmd{cmdType: typ, origin: originAuto, after: func(t *thread, env omprpc.Envelope, _ json.RawMessage) {
+			if undelivered(env) {
+				// 进程在送达前退出：保留尚未送达的帧，下次就绪继续应用
+				if len(t.pendingModelSync) == 0 {
+					t.pendingModelSync = rem
+				}
+				return
+			}
+			if !isLast {
+				return
+			}
+			if err := s.st.Q.SetThreadStartupFrames(context.Background(), db.SetThreadStartupFramesParams{StartupFrames: nil, ID: t.id}); err != nil {
+				slog.Warn("threads: 清除主线模型同步帧失败", "thread", t.id, "err", err)
+			}
+		}}
+		s.dispatchLocked(t, line)
+	}
 }
 
 // markSessionStartLocked 让 Core 记下新会话的模型来源（oryn_mark_session_start）。在下发排队命令之前写入 agent 流，

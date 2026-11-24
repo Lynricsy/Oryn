@@ -79,8 +79,9 @@ func startupFrames(frames ...[]byte) []byte {
 	return b
 }
 
-// pendingStartup 返回线程行里仍未被 agent 确认的首批命令。主会话里已有消息条目说明 prompt 在重启前已被 agent
-// 接收（应答丢在了重启里），此时清除记录而不重发，免得同一提示词执行两遍。
+// pendingStartup 返回线程行里仍未被 agent 确认的首批命令。含 prompt 且主会话已有消息条目时，说明 prompt
+// 在重启前已被 agent 接收（应答丢在了重启里），此时清除记录而不重发，免得同一提示词执行两遍；
+// 不含 prompt 的幂等模型/档位同步帧（主线离线恢复默认）即使已有消息也保留到下次就绪执行。
 func (s *Service) pendingStartup(ctx context.Context, row db.Thread) []json.RawMessage {
 	if len(row.StartupFrames) == 0 {
 		return nil
@@ -90,13 +91,38 @@ func (s *Service) pendingStartup(ctx context.Context, row db.Thread) []json.RawM
 		slog.Warn("threads: 无法解析首批命令，丢弃", "thread", row.ID, "err", err)
 		frames = nil
 	}
-	if n, err := s.st.Q.CountThreadMessageEntries(ctx, row.ID); err == nil && n > 0 {
-		frames = nil
+	if len(frames) > 0 && hasPromptFrame(frames) {
+		if n, err := s.st.Q.CountThreadMessageEntries(ctx, row.ID); err == nil && n > 0 {
+			frames = nil
+		}
 	}
 	if len(frames) == 0 {
 		_ = s.st.Q.SetThreadStartupFrames(ctx, db.SetThreadStartupFramesParams{StartupFrames: nil, ID: row.ID})
 	}
 	return frames
+}
+
+func hasPromptFrame(frames []json.RawMessage) bool {
+	for _, f := range frames {
+		if typ, _, ok := frameHeader(f); ok && typ == "prompt" {
+			return true
+		}
+	}
+	return false
+}
+
+// isModelSyncFrames 报告 frames 是否全为幂等的模型/思考档位同步帧（不含 prompt）。
+func isModelSyncFrames(frames []json.RawMessage) bool {
+	if len(frames) == 0 {
+		return false
+	}
+	for _, f := range frames {
+		typ, _, ok := frameHeader(f)
+		if !ok || (typ != "oryn_select_model" && typ != "set_thinking_level") {
+			return false
+		}
+	}
+	return true
 }
 
 // undeliveredError 是 orbd 为写进已退出进程的 agent 流的命令合成的失败应答文本（internal/orbdrt）：

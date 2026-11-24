@@ -444,6 +444,11 @@ func (s *server) handle(line []byte) {
 			s.sessionDir, s.sess = c.SessionDir, sess
 			if c.Provider != "" {
 				s.provider, s.modelID = c.Provider, c.ModelID
+			} else if resumed && sess.lastProvider != "" && sess.lastModelID != "" {
+				s.provider, s.modelID = sess.lastProvider, sess.lastModelID
+			}
+			if resumed && sess.lastThinking != "" {
+				s.thinking = sess.lastThinking
 			}
 		}
 		s.mu.Unlock()
@@ -516,9 +521,11 @@ func (s *server) handle(line []byte) {
 		_ = json.Unmarshal(line, &c)
 		s.mu.Lock()
 		s.thinking = c.Level
+		if s.sess != nil && c.Level != "" {
+			_, _ = s.sess.appendEntry("thinking_level_change", map[string]any{"thinkingLevel": c.Level}, time.Now())
+		}
 		s.mu.Unlock()
 		s.ok(id, env.Type, map[string]string{"thinkingLevel": c.Level, "thinkingConfigured": c.Level})
-
 	case "get_state":
 		s.ok(id, env.Type, s.state())
 
