@@ -81,10 +81,11 @@ final class PushSharedTests: XCTestCase {
     defer { PushKeyStore.clear() }
     XCTAssertNil(PushKeyStore.load())
     let key = try receiver()
-    XCTAssertTrue(PushKeyStore.save(privateKey: key, auth: data(Self.auth)), "钥匙串写入失败")
+    let auth = try data(Self.auth)
+    XCTAssertTrue(PushKeyStore.save(privateKey: key, auth: auth), "钥匙串写入失败")
     let loaded = try XCTUnwrap(PushKeyStore.load(), "钥匙串读不回刚写入的密钥")
     XCTAssertEqual(loaded.privateKey.rawRepresentation, key.rawRepresentation)
-    XCTAssertEqual(loaded.auth, try data(Self.auth))
+    XCTAssertEqual(loaded.auth, auth)
     PushKeyStore.clear()
     XCTAssertNil(PushKeyStore.load())
   }
