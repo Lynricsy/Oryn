@@ -5845,6 +5845,8 @@ export type RpcCommand = {
 	sessionDir: string;
 	provider?: string;
 	modelId?: string;
+	/** Oryn：会话的思考级别；处于计划模式时改作进入前基线，退出时恢复。 */
+	thinkingLevel?: ThinkingLevel | "auto";
 } | {
 	id?: string;
 	type: "get_state";
