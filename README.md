@@ -219,7 +219,7 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 | iOS | Tauri 2 App（TestFlight） | iOS 26 原生 Liquid Glass：系统底栏悬浮在内容之上（按住冒出液珠、横滑换项），页头与新建线程页的侧栏钮跟随下沉卡片开合，见 [附录 A](docs/mobile.md#附录-aios) |
 | 终端 | `oryn` CLI | `thread attach` 流式交互，`sync` 把远端改动实时镜像到本机 |
 
-客户端只带一个配对页，配对后加载服务器自己的 Web UI；设备令牌存在系统凭据库，网页脚本读不到。
+客户端只带一个配对页，配对后加载服务器自己的 Web UI；设备令牌存在系统凭据库，网页脚本读不到；桌面 App 中的 HTTP(S) 外链交给系统默认浏览器打开。
 
 服务端、桌面与移动 App 统一发版：推送 tag `v<版本>`（预发布 `v<版本>-rc.N`）后，[`release.yml`](.github/workflows/release.yml) 在同一个 GitHub Release 里发布服务端二进制（Linux x64 / ARM64，另有 macOS Runner 用的 `orbd`）、三平台安装包与 Android APK / AAB，并把 iOS 包上传 TestFlight；全部成功才发布。步骤见 [桌面端「发版」](docs/desktop.md#发版)，服务端安装见 [部署第 1 节](docs/deploy.md#1-安装二进制与镜像)。
 
