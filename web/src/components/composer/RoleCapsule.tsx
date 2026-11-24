@@ -7,6 +7,7 @@
  */
 import { type ReactElement, type ReactNode, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useAssistantSettings } from "../../api/assistant-queries";
 import type { Schemas } from "../../api/client";
 import {
 	useAssistantIdentity,
@@ -295,14 +296,27 @@ export function RoleCapsule({
 	};
 	const roles = useRoleOptions();
 	const assistant = useAssistantIdentity(allowAssistant);
+	const assistantSettings = useAssistantSettings(allowAssistant);
 	const catalog = useModelCatalog();
 	const assistantName = assistant.name || t("tabBar.assistant");
-	const current = targetModel(value, roles);
+	const assistantDefaultModel: ModelRef | undefined = useMemo(() => {
+		const m = assistantSettings.data?.model;
+		if (!m) return undefined;
+		const named = catalog.data?.models.find(
+			(x) => x.provider === m.provider && x.id === m.id,
+		);
+		return { provider: m.provider, id: m.id, name: named?.name };
+	}, [assistantSettings.data?.model, catalog.data]);
+	const assistantDefaultThinking = assistantSettings.data?.thinkingLevel;
+	const current =
+		value.kind === "assistant"
+			? (value.model ?? assistantDefaultModel)
+			: targetModel(value, roles);
 	const caps = useModelCaps(current ? modelSelector(current) : "");
 	const identities = useRoleIdentities();
 	// 不改思考级别时实际生效的级别（推不出来为 undefined：不选中、不画角标）：role 取它自己的（见 useRoleOptions）；
 	// 指定模型：与 default role 同一个模型时 Core 不切模型，就是起始级别，否则按切模型的规则；
-	// 全局助手跑在协调宿主自己的配置上，这里没有它的数据
+	// 全局助手：若全局助手设置里配置了默认思考档位，则按当前模型能力收窄显示，否则不猜测。
 	const defaultModel = roles.find((r) => r.role === "default")?.model;
 	const start = sessionStart(
 		roles,
@@ -320,10 +334,10 @@ export function RoleCapsule({
 							: switchedThinking(start, caps?.defaultLevel, caps?.thinking),
 						caps?.thinking,
 					)
-				: undefined;
+				: assistantDefaultThinking
+					? clampThinking(assistantDefaultThinking, caps?.thinking)
+					: undefined;
 	const shownLevel = value.thinking ?? defaultLevel;
-	// 可选级别：模型能力已知时是 auto 加目录里的级别（实际生效的级别不在其中时补在最前，如 off）；
-	// 能力未知时只列实际生效的那一档；模型不能调节思考时没有这一节
 	const levels: readonly string[] | null = caps
 		? caps.thinking.length === 0
 			? null
@@ -412,7 +426,32 @@ export function RoleCapsule({
 				<Option
 					selected={value.kind === "assistant"}
 					leading={<AssistantFace size={18} />}
-					hint={t("roleCapsule.assistantHint")}
+					hint={
+						assistantDefaultModel
+							? modelShortName(assistantDefaultModel)
+							: t("roleCapsule.assistantHint")
+					}
+					trailing={
+						assistantDefaultModel || assistantDefaultThinking ? (
+							<>
+								<span className="inline-flex w-3 justify-center">
+									{assistantDefaultThinking && (
+										<LevelGlyph level={assistantDefaultThinking} size={12} />
+									)}
+								</span>
+								<span className="inline-flex w-3 justify-center">
+									{assistantDefaultModel && (
+										<ModelLogo
+											model={assistantDefaultModel.id}
+											provider={assistantDefaultModel.provider}
+											size={12}
+											className="text-faint"
+										/>
+									)}
+								</span>
+							</>
+						) : undefined
+					}
 					onClick={() => {
 						if (value.kind !== "assistant") onChange({ kind: "assistant" });
 						close();
@@ -421,7 +460,6 @@ export function RoleCapsule({
 					{assistantName}
 				</Option>
 			)}
-			<PopoverLabel>{t("model.roles")}</PopoverLabel>
 			{roles
 				.filter((r) => !(defaultAs && r.role === "default"))
 				.map((r) => (

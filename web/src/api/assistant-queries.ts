@@ -22,9 +22,10 @@ export const assistantKeys = {
 	computer: ["assistant", "computer"] as const,
 };
 
-export function useAssistantSettings() {
+export function useAssistantSettings(enabled = true) {
 	return useQuery({
 		queryKey: assistantKeys.settings,
+		enabled,
 		queryFn: () => unwrap(api.GET("/api/v1/settings/assistant")),
 	});
 }

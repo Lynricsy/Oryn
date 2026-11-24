@@ -159,6 +159,8 @@ type AssistantSetting struct {
 	MainNotes            string  `json:"mainNotes"`
 	MainNotesUpdatedAt   *int64  `json:"mainNotesUpdatedAt"`
 	UpdatedAt            int64   `json:"updatedAt"`
+	Model                *string `json:"model"`
+	ThinkingLevel        *string `json:"thinkingLevel"`
 }
 
 type Attachment struct {

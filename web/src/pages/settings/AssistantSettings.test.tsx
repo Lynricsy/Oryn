@@ -267,4 +267,68 @@ describe("设置 → 全局助手", () => {
 			}),
 		);
 	});
+
+	it("模型与思考档位：默认跟随系统默认，支持选择、修改并恢复默认", async () => {
+		mount();
+		const card = await screen.findByTestId("assistant-model-card");
+		expect(
+			within(card).getByTestId("assistant-model-default"),
+		).toHaveTextContent("跟随默认");
+		expect(within(card).getByTestId("assistant-thinking")).toHaveTextContent(
+			"跟随默认",
+		);
+
+		// 选择模型（自由输入）
+		fireEvent.click(within(card).getByRole("button", { name: "更改" }));
+		const input = await screen.findByRole("textbox", {
+			name: "搜索或输入 provider/模型 id",
+		});
+		fireEvent.change(input, {
+			target: { value: "anthropic/claude-opus-4-6" },
+		});
+		fireEvent.click(
+			screen.getByRole("button", { name: "使用 anthropic/claude-opus-4-6" }),
+		);
+		await waitFor(() =>
+			expect(within(card).getByTestId("assistant-model")).toHaveTextContent(
+				"anthropic/claude-opus-4-6",
+			),
+		);
+		expect(server.assistant.settings.model).toEqual({
+			provider: "anthropic",
+			id: "claude-opus-4-6",
+		});
+
+		// 选择思考档位
+		fireEvent.click(within(card).getByTestId("assistant-thinking"));
+		fireEvent.click(await screen.findByRole("menuitemradio", { name: "高" }));
+		await waitFor(() =>
+			expect(within(card).getByTestId("assistant-thinking")).toHaveTextContent(
+				"高",
+			),
+		);
+		expect(server.assistant.settings.thinkingLevel).toBe("high");
+		expect(puts.at(-1)).toEqual(
+			expect.objectContaining({
+				model: { provider: "anthropic", id: "claude-opus-4-6" },
+				thinkingLevel: "high",
+			}),
+		);
+
+		// 分别恢复默认
+		const resets = within(card).getAllByRole("button", { name: "恢复默认" });
+		expect(resets).toHaveLength(2);
+		const [resetModel] = resets;
+		if (resetModel) fireEvent.click(resetModel);
+		await waitFor(() =>
+			expect(server.assistant.settings.model).toBeUndefined(),
+		);
+		fireEvent.click(within(card).getByRole("button", { name: "恢复默认" }));
+		await waitFor(() =>
+			expect(server.assistant.settings.thinkingLevel).toBeUndefined(),
+		);
+		expect(within(card).getByTestId("assistant-thinking")).toHaveTextContent(
+			"跟随默认",
+		);
+	});
 });

@@ -52,6 +52,28 @@ func (s *Service) kickSpare() {
 	}
 }
 
+// resetSpare 丢弃当前未认领的备用助手对话并尽快按新设置补一个（默认模型或思考档位变更时调用）。
+func (s *Service) resetSpare(ctx context.Context) {
+	if s.cfg.KeepWarm <= 0 {
+		return
+	}
+	o, err := s.st.Q.GetCoordinatorOrb(ctx)
+	if err != nil {
+		return
+	}
+	s.spareMu.Lock()
+	sp, ok, err := s.th.FindSpare(ctx, o.ID)
+	if err == nil && ok {
+		if derr := s.th.Delete(ctx, sp.ID); derr != nil {
+			slog.Warn("coord: 删除旧备用助手对话失败", "thread", sp.ID, "err", derr)
+		}
+	}
+	s.spareMu.Unlock()
+	if ok {
+		s.kickSpare()
+	}
+}
+
 // ensureSpare 保证协调 orb 上有一个备用对话：没有就新建（随即起 agent），过了 spareMaxAge 就删掉换新的，
 // 已有且未过期时确保它的 agent 在跑（orynd 重启后由这里重新拉起）。
 func (s *Service) ensureSpare(ctx context.Context) {
@@ -78,8 +100,9 @@ func (s *Service) ensureSpare(ctx context.Context) {
 			return
 		}
 	}
+	defModel, defThinking := s.assistantDefaults(ctx)
 	if _, err := s.th.CreateCoordinator(ctx, threads.CoordinatorParams{
-		Kind: threads.KindAssistant, OrbID: orbID, Model: s.cfg.Model, Hidden: true,
+		Kind: threads.KindAssistant, OrbID: orbID, Model: defModel, ThinkingLevel: defThinking, Hidden: true,
 	}); err != nil && ctx.Err() == nil {
 		slog.Warn("coord: 新建备用助手对话失败", "err", err)
 	}

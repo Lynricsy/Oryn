@@ -6298,6 +6298,15 @@
 		}
 	},
 	"assistantSettings": {
+		"modelTitle": "Model & thinking",
+		"modelHint": "Default model and thinking effort for new assistant conversations and the main conversation; leave empty to follow system defaults. Changes switch the main conversation too; other existing conversations are unchanged.",
+		"model": "Model",
+		"modelDefault": "Follow default",
+		"modelChange": "Change",
+		"modelReset": "Use default",
+		"thinking": "Thinking effort",
+		"thinkingDefault": "Follow default",
+		"thinkingUnsupported": "This model does not support adjusting thinking effort.",
 		"webTitle": "Web access",
 		"webAccess": "Let the assistant use the web",
 		"webHint": "The assistant reaches the public internet through Oryn's proxy for web_search and reading web pages; private addresses are refused by default. Both fail when this is off. Changes apply once the assistant's conversations are idle.",

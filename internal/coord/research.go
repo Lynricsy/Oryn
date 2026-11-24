@@ -84,7 +84,7 @@ func (s *Service) EnsureResearcher(ctx context.Context, role string) (string, er
 	if err != nil {
 		return "", err
 	}
-	model := s.cfg.Model
+	model, _ := s.assistantDefaults(ctx)
 	if row, err := s.st.Q.GetResearchSettings(ctx); err == nil && row.Model != nil && *row.Model != "" {
 		model = *row.Model
 	}
@@ -342,7 +342,7 @@ func (s *Service) RefreshPolicy(ctx context.Context) error {
 // SetResearcherModel 实现 research.Host：已存在的研究员对话改模型，并在静止后以新模型重启。
 func (s *Service) SetResearcherModel(ctx context.Context, model string) error {
 	if strings.TrimSpace(model) == "" {
-		model = s.cfg.Model
+		model, _ = s.assistantDefaults(ctx)
 	}
 	if model == "" {
 		return nil

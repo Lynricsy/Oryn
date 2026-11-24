@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -22,14 +23,16 @@ import (
 	"github.com/Lynricsy/Oryn/internal/threads"
 )
 
-// 全局助手的设置（M19）：联网总开关、关掉的 MCP 服务器、助手的电脑的 provider 与类型。变更后立即刷新协调宿主的
-// 出站策略，并让未归档的助手对话在静止后用新配置重启 agent。
+// 全局助手的设置（M19）：联网总开关、关掉的 MCP 服务器、助手的电脑的 provider 与类型、默认模型与思考档位。
+// 联网或 MCP 变更后刷新协调宿主出站策略并让未归档助手对话在静止后重启；默认模型或思考档位变更后同步切换主线，
+// 已有其他助手对话不变。
 
 // 设置的上限。
 const (
 	maxDisabledMCP    = 200
 	maxMCPNameRunes   = 200
 	maxComputerString = 200
+	maxModelPart      = 200
 )
 
 // GlobalConfig 是全局 omp 配置（*agentcfg.Home 实现）。
@@ -47,11 +50,13 @@ func (s *Service) SetAgentConfig(home GlobalConfig, env EnvSecrets) {
 	s.home, s.envSecrets = home, env
 }
 
-// assistantSettings 是解析后的设置行；没有行时为默认值（联网开、无禁用项）。
+// assistantSettings 是解析后的设置行；没有行时为默认值（联网开、无禁用项、模型与思考档位跟随默认）。
 type assistantSettings struct {
 	webAccess        bool
 	disabled         []string
 	provider, orbTyp *string
+	model            *string
+	thinkingLevel    *string
 }
 
 func (s *Service) loadSettings(ctx context.Context) (assistantSettings, error) {
@@ -68,14 +73,39 @@ func (s *Service) loadSettings(ctx context.Context) (assistantSettings, error) {
 		out.disabled = []string{}
 	}
 	out.provider, out.orbTyp = row.ComputerProvider, row.ComputerOrbType
+	out.model, out.thinkingLevel = row.Model, row.ThinkingLevel
 	return out, nil
 }
 
 func (a assistantSettings) api() apigen.AssistantSettings {
-	return apigen.AssistantSettings{
+	out := apigen.AssistantSettings{
 		WebAccess: a.webAccess, DisabledMcpServers: a.disabled,
 		Computer: apigen.AssistantComputerSettings{Provider: a.provider, OrbType: a.orbTyp},
+		ThinkingLevel: a.thinkingLevel,
 	}
+	if a.model != nil {
+		if ref, ok := parseModelRef(*a.model); ok {
+			out.Model = ref
+		}
+	}
+	return out
+}
+
+// assistantDefaults 返回全局助手新对话与主线的默认模型（"provider/id" 或空）与思考档位（空 = omp 默认）。
+// 模型优先级：全局助手设置 → orynd.yaml 的 coordinator.model → 空（config.yml 的 modelRoles.default）。
+func (s *Service) assistantDefaults(ctx context.Context) (model, thinking string) {
+	model = s.cfg.Model
+	a, err := s.loadSettings(ctx)
+	if err != nil {
+		return model, ""
+	}
+	if a.model != nil && *a.model != "" {
+		model = *a.model
+	}
+	if a.thinkingLevel != nil && *a.thinkingLevel != "" {
+		thinking = *a.thinkingLevel
+	}
+	return model, thinking
 }
 
 // Settings 返回全局助手的设置。
@@ -87,7 +117,8 @@ func (s *Service) Settings(ctx context.Context) (apigen.AssistantSettings, error
 	return a.api(), nil
 }
 
-// PutSettings 整体替换全局助手的设置，随后刷新协调宿主的出站策略并让助手对话按新配置重启。
+// PutSettings 整体替换全局助手的设置。联网或 MCP 禁用表变更时刷新协调宿主出站策略并让助手对话静止后重启；
+// 默认模型或思考档位变更时同步切换主线并丢弃旧备用对话，已有其他助手对话不变。
 func (s *Service) PutSettings(ctx context.Context, in apigen.AssistantSettings) (apigen.AssistantSettings, error) {
 	if len(in.DisabledMcpServers) > maxDisabledMCP {
 		return apigen.AssistantSettings{}, errf(CodeInvalid, "at most %d disabled MCP servers", maxDisabledMCP)
@@ -115,6 +146,34 @@ func (s *Service) PutSettings(ctx context.Context, in apigen.AssistantSettings) 
 			return apigen.AssistantSettings{}, errf(CodeInvalid, "computer provider and type must be at most %d characters", maxComputerString)
 		}
 	}
+	var model *string
+	if in.Model != nil {
+		p, id := strings.TrimSpace(in.Model.Provider), strings.TrimSpace(in.Model.ID)
+		if p == "" || id == "" {
+			return apigen.AssistantSettings{}, errf(CodeInvalid, "model must have provider and id")
+		}
+		if strings.Contains(p, "/") {
+			return apigen.AssistantSettings{}, errf(CodeInvalid, "model provider must not contain '/'")
+		}
+		if utf8.RuneCountInString(p) > maxModelPart || utf8.RuneCountInString(id) > maxModelPart {
+			return apigen.AssistantSettings{}, errf(CodeInvalid, "model provider and id must be at most %d characters", maxModelPart)
+		}
+		m := p + "/" + id
+		model = &m
+	}
+	var thinking *string
+	if in.ThinkingLevel != nil {
+		if v := strings.TrimSpace(*in.ThinkingLevel); v != "" {
+			if !agentcfg.ValidThinkingLevel(v) {
+				return apigen.AssistantSettings{}, errf(CodeInvalid, "invalid thinkingLevel %q", v)
+			}
+			thinking = &v
+		}
+	}
+	prev, err := s.loadSettings(ctx)
+	if err != nil {
+		return apigen.AssistantSettings{}, err
+	}
 	b, err := json.Marshal(disabled)
 	if err != nil {
 		return apigen.AssistantSettings{}, err
@@ -125,12 +184,52 @@ func (s *Service) PutSettings(ctx context.Context, in apigen.AssistantSettings) 
 	}
 	if err := s.st.Q.UpsertAssistantSettings(ctx, db.UpsertAssistantSettingsParams{
 		WebAccess: web, DisabledMcp: string(b), ComputerProvider: provider, ComputerOrbType: orbType,
+		Model: model, ThinkingLevel: thinking,
 		UpdatedAt: s.cfg.Now().UnixMilli(),
 	}); err != nil {
 		return apigen.AssistantSettings{}, err
 	}
-	s.refreshAssistants(ctx)
-	return assistantSettings{webAccess: in.WebAccess, disabled: disabled, provider: provider, orbTyp: orbType}.api(), nil
+	policyChanged := prev.webAccess != in.WebAccess || !slices.Equal(prev.disabled, disabled)
+	modelChanged := !strPtrEqual(prev.model, model)
+	thinkingChanged := !strPtrEqual(prev.thinkingLevel, thinking)
+	if modelChanged || thinkingChanged {
+		s.syncMainModel(ctx, modelChanged, model, thinkingChanged, thinking, policyChanged)
+		s.resetSpare(ctx)
+	}
+	if policyChanged {
+		s.refreshAssistants(ctx)
+	}
+	return assistantSettings{
+		webAccess: in.WebAccess, disabled: disabled, provider: provider, orbTyp: orbType,
+		model: model, thinkingLevel: thinking,
+	}.api(), nil
+}
+
+func strPtrEqual(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+// syncMainModel 将全局助手默认模型或思考档位的变化同步到已存在的主线对话（已有其他助手对话不切换）。
+func (s *Service) syncMainModel(ctx context.Context, modelChanged bool, model *string, thinkingChanged bool, thinking *string, willRestart bool) {
+	row, err := s.st.Q.GetMainThread(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return
+	}
+	if err != nil {
+		slog.Warn("coord: 查询主线对话失败", "err", err)
+		return
+	}
+	effModel := model
+	if effModel == nil && s.cfg.Model != "" {
+		m := s.cfg.Model
+		effModel = &m
+	}
+	if err := s.th.SyncCoordinatorModel(ctx, row.ID, modelChanged, effModel, thinkingChanged, thinking, willRestart); err != nil {
+		slog.Warn("coord: 同步主线模型或思考档位失败", "thread", row.ID, "err", err)
+	}
 }
 
 // refreshAssistants 立即以新设置刷新协调宿主的出站策略（联网开关当场生效），并让全部未归档的助手对话在静止后重启

@@ -1111,6 +1111,9 @@ func (s *Service) refreshState(t *thread) {
 // syncModelLocked 把 state 中的模型与思考级别写回线程行（agent 重启时 open_session 沿用）。
 // 计划模式期间的活动模型与思考级别是临时切换，不得覆盖常驻线程行。
 func (s *Service) syncModelLocked(t *thread, state json.RawMessage) {
+	if t.refresh || t.stopping {
+		return
+	}
 	var st struct {
 		Model *struct {
 			Provider string `json:"provider"`

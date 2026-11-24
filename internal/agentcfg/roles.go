@@ -171,6 +171,11 @@ const fallbackThinkingLevel = "high"
 // thinkingLevels 是 `defaultThinkingLevel` 的合法取值（omp THINKING_EFFORTS、off 与 auto）。
 var thinkingLevels = []string{"off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"}
 
+// ValidThinkingLevel 报告 level 是否是 omp 合法的思考档位（off / minimal / low / medium / high / xhigh / max / auto）。
+func ValidThinkingLevel(level string) bool {
+	return slices.Contains(thinkingLevels, level)
+}
+
 // ParseDefaultThinkingLevel 从 config.yml 的内容取 `defaultThinkingLevel`；没写、不是合法取值或 YAML 不合法时
 // 按 omp 的缺省值（high）——与 omp 读取设置时的回退一致。
 func ParseDefaultThinkingLevel(config []byte) string {

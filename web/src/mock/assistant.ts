@@ -30,6 +30,16 @@ export interface AssistantDeps {
 const MAX_DISABLED = 200;
 const MAX_NAME = 200;
 const MAX_NOTES = 1500;
+const THINKING_LEVELS: Record<string, true> = {
+	off: true,
+	minimal: true,
+	low: true,
+	medium: true,
+	high: true,
+	xhigh: true,
+	max: true,
+	auto: true,
+};
 
 /** 全局 `mcp.json` 解析后的服务器（按名字排序，同服务端）。 */
 export const MOCK_MCP_SERVERS: readonly Omit<McpServer, "enabled">[] = [
@@ -460,10 +470,30 @@ export class MockAssistant {
 		const computer: Settings["computer"] = {};
 		if (b.computer?.provider) computer.provider = b.computer.provider;
 		if (b.computer?.orbType) computer.orbType = b.computer.orbType;
+		let model: Settings["model"];
+		if (b.model !== undefined) {
+			const provider = b.model.provider?.trim() ?? "";
+			const id = b.model.id?.trim() ?? "";
+			if (!provider || !id) return invalid("model must have provider and id");
+			if (provider.includes("/"))
+				return invalid("model provider must not contain '/'");
+			model = { provider, id };
+		}
+		let thinkingLevel: string | undefined;
+		if (b.thinkingLevel !== undefined) {
+			const v = b.thinkingLevel.trim();
+			if (v !== "") {
+				if (!Object.hasOwn(THINKING_LEVELS, v))
+					return invalid(`invalid thinkingLevel "${v}"`);
+				thinkingLevel = v;
+			}
+		}
 		this.settings = {
 			webAccess: b.webAccess,
 			disabledMcpServers: [...new Set(names)],
 			computer,
+			...(model ? { model } : {}),
+			...(thinkingLevel ? { thinkingLevel } : {}),
 		};
 		return json(this.settings);
 	}

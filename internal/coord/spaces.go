@@ -252,8 +252,12 @@ func (s *Service) CreateConversation(ctx context.Context, p threads.CoordinatorP
 	if err != nil {
 		return apigen.Thread{}, err
 	}
+	defModel, defThinking := s.assistantDefaults(ctx)
 	if p.Model == "" {
-		p.Model = s.cfg.Model
+		p.Model = defModel
+	}
+	if p.ThinkingLevel == "" {
+		p.ThinkingLevel = defThinking
 	}
 	params := threads.CoordinatorParams{
 		Kind: threads.KindAssistant, OrbID: orbID, Model: p.Model, ThinkingLevel: p.ThinkingLevel,
@@ -285,8 +289,9 @@ func (s *Service) EnsureMain(ctx context.Context) (apigen.Thread, error) {
 	if err != nil {
 		return apigen.Thread{}, err
 	}
+	defModel, defThinking := s.assistantDefaults(ctx)
 	t, err := s.th.CreateCoordinator(ctx, threads.CoordinatorParams{
-		Kind: threads.KindAssistant, Main: true, OrbID: orbID, Model: s.cfg.Model, Title: "Main",
+		Kind: threads.KindAssistant, Main: true, OrbID: orbID, Model: defModel, ThinkingLevel: defThinking, Title: "Main",
 	})
 	if err == nil {
 		s.setMainID(t.ID)

@@ -218,3 +218,116 @@ func TestMCPServerTools(t *testing.T) {
 	assert.Equal(t, CodeUpstreamFailed, errCode(err))
 	assert.NotContains(t, err.Error(), "secret-token", "错误里不带请求头的值")
 }
+
+// 全局助手默认模型与思考档位：校验、保存、主线跟随切换（在线切换与恢复默认重启）、
+// 新对话继承默认且显式参数优先、已有普通助手对话不切换也不被打断。
+func TestAssistantModelAndThinkingSettings(t *testing.T) {
+	e := newEnv(t, false)
+
+	// 校验非法 model 与 thinkingLevel
+	badThinking := "turbo"
+	for _, bad := range []apigen.AssistantSettings{
+		{WebAccess: true, Model: &apigen.ModelRef{Provider: "", ID: "claude"}},
+		{WebAccess: true, Model: &apigen.ModelRef{Provider: "anthropic", ID: ""}},
+		{WebAccess: true, Model: &apigen.ModelRef{Provider: "a/b", ID: "claude"}},
+		{WebAccess: true, ThinkingLevel: &badThinking},
+	} {
+		_, err := e.c.PutSettings(e.ctx, bad)
+		assert.Equal(t, CodeInvalid, errCode(err))
+	}
+
+	// 已有普通助手对话与主线对话均已就绪
+	existing, err := e.c.CreateConversation(e.ctx, threads.CoordinatorParams{
+		Model: "openai/gpt-old", ThinkingLevel: "low", Prompt: "hi",
+	})
+	require.NoError(t, err)
+	mainTh, err := e.c.EnsureMain(e.ctx)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		a, err1 := e.th.Get(e.ctx, existing.ID)
+		b, err2 := e.th.Get(e.ctx, mainTh.ID)
+		return err1 == nil && err2 == nil &&
+			a.State == apigen.ThreadStateIdle &&
+			b.State == apigen.ThreadStateIdle
+	}, 10*time.Second, 20*time.Millisecond)
+
+	stops := func() int {
+		n := 0
+		for _, c := range e.orbs.Calls() {
+			if c == "agent.stop" {
+				n++
+			}
+		}
+		return n
+	}
+	stopsBefore := stops()
+
+	// 仅改默认模型与思考档位：主线在线同步切换；已有普通对话不变且不触发 agent.stop
+	xhigh := "xhigh"
+	got, err := e.c.PutSettings(e.ctx, apigen.AssistantSettings{
+		WebAccess:          true,
+		DisabledMcpServers: []string{},
+		Model:              &apigen.ModelRef{Provider: "anthropic", ID: "claude-opus-4-6"},
+		ThinkingLevel:      &xhigh,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, got.Model)
+	assert.Equal(t, apigen.ModelRef{Provider: "anthropic", ID: "claude-opus-4-6"}, *got.Model)
+	require.NotNil(t, got.ThinkingLevel)
+	assert.Equal(t, "xhigh", *got.ThinkingLevel)
+
+	require.Eventually(t, func() bool {
+		m, err := e.th.Get(e.ctx, mainTh.ID)
+		return err == nil &&
+			m.Model != nil && m.Model.Provider == "anthropic" && m.Model.ID == "claude-opus-4-6" &&
+			m.ThinkingLevel != nil && *m.ThinkingLevel == "xhigh"
+	}, 10*time.Second, 20*time.Millisecond, "主线应跟随切换到新的模型与思考档位")
+
+	exAfter, err := e.th.Get(e.ctx, existing.ID)
+	require.NoError(t, err)
+	require.NotNil(t, exAfter.Model)
+	assert.Equal(t, apigen.ModelRef{Provider: "openai", ID: "gpt-old"}, *exAfter.Model, "已有普通对话模型不切换")
+	require.NotNil(t, exAfter.ThinkingLevel)
+	assert.Equal(t, "low", *exAfter.ThinkingLevel, "已有普通对话思考档位不切换")
+	assert.Equal(t, stopsBefore, stops(), "只改模型/档位且非清空时不应打断运行中的对话")
+
+	// 新建全局助手对话（不显式传模型/档位）：继承全局助手设置
+	created, err := e.c.CreateConversation(e.ctx, threads.CoordinatorParams{Prompt: "hello"})
+	require.NoError(t, err)
+	require.NotNil(t, created.Model)
+	assert.Equal(t, apigen.ModelRef{Provider: "anthropic", ID: "claude-opus-4-6"}, *created.Model)
+	require.NotNil(t, created.ThinkingLevel)
+	assert.Equal(t, "xhigh", *created.ThinkingLevel)
+
+	// 新建全局助手对话（显式传模型/档位）：显式参数优先
+	override, err := e.c.CreateConversation(e.ctx, threads.CoordinatorParams{
+		Model: "openai/gpt-5", ThinkingLevel: "minimal", Prompt: "override",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, override.Model)
+	assert.Equal(t, apigen.ModelRef{Provider: "openai", ID: "gpt-5"}, *override.Model)
+	require.NotNil(t, override.ThinkingLevel)
+	assert.Equal(t, "minimal", *override.ThinkingLevel)
+
+	// 恢复默认（清空 model 与 thinkingLevel）：主线清空并触发重启，已有普通对话仍不变
+	got, err = e.c.PutSettings(e.ctx, apigen.AssistantSettings{
+		WebAccess:          true,
+		DisabledMcpServers: []string{},
+	})
+	require.NoError(t, err)
+	assert.Nil(t, got.Model)
+	assert.Nil(t, got.ThinkingLevel)
+
+	mainCleared, err := e.th.Get(e.ctx, mainTh.ID)
+	require.NoError(t, err)
+	assert.Nil(t, mainCleared.Model, "恢复默认后主线模型清空（无 coordinator.model 时回到 omp 默认）")
+	assert.Nil(t, mainCleared.ThinkingLevel, "恢复默认后主线思考档位清空")
+	require.Eventually(t, func() bool { return stops() > stopsBefore }, 10*time.Second, 20*time.Millisecond, "恢复默认时主线应静止后重启以应用 omp 默认")
+
+	exFinal, err := e.th.Get(e.ctx, existing.ID)
+	require.NoError(t, err)
+	require.NotNil(t, exFinal.Model)
+	assert.Equal(t, apigen.ModelRef{Provider: "openai", ID: "gpt-old"}, *exFinal.Model)
+	require.NotNil(t, exFinal.ThinkingLevel)
+	assert.Equal(t, "low", *exFinal.ThinkingLevel)
+}

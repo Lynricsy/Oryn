@@ -6298,6 +6298,15 @@
 		}
 	},
 	"assistantSettings": {
+		"modelTitle": "模型与思考档位",
+		"modelHint": "全局助手新对话与主线默认使用的模型和思考档位，留空跟随系统默认。修改后主线会同步切换，已有的其他对话不受影响。",
+		"model": "模型",
+		"modelDefault": "跟随默认",
+		"modelChange": "更改",
+		"modelReset": "恢复默认",
+		"thinking": "思考档位",
+		"thinkingDefault": "跟随默认",
+		"thinkingUnsupported": "当前模型不支持调节思考档位。",
 		"webTitle": "联网",
 		"webAccess": "允许助手联网",
 		"webHint": "助手经 Oryn 的代理访问公网，用于 web_search 与读网页；内网地址默认拒绝。关闭后这两项会失败。改动在助手对话空闲后生效。",

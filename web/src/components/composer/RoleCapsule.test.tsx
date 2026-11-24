@@ -20,6 +20,10 @@ const chat = (provider: string, id: string, name: string) => ({
 let roleList: unknown[];
 /** 响应里的 `defaultThinkingLevel`；undefined = 不带（旧控制面） */
 let defaultThinking: string | undefined;
+/** 响应里的全局助手设置；undefined = 未配置默认模型/思考档位 */
+let assistantSettings:
+	| { model?: { provider: string; id: string }; thinkingLevel?: string }
+	| undefined;
 
 beforeEach(() => {
 	window.innerWidth = 1280;
@@ -30,6 +34,7 @@ beforeEach(() => {
 		{ role: "old", inCycle: false, avatarIcon: "x" },
 	];
 	defaultThinking = undefined;
+	assistantSettings = undefined;
 	vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
 		const url = new URL(
 			typeof input === "object" && "url" in input ? input.url : String(input),
@@ -39,6 +44,13 @@ beforeEach(() => {
 			return Response.json({
 				roles: roleList,
 				...(defaultThinking ? { defaultThinkingLevel: defaultThinking } : {}),
+			});
+		if (url.pathname === "/api/v1/settings/assistant")
+			return Response.json({
+				webAccess: true,
+				disabledMcpServers: [],
+				computer: {},
+				...(assistantSettings ?? {}),
 			});
 		if (url.pathname === "/api/v1/models/catalog")
 			return Response.json({
@@ -408,6 +420,25 @@ describe("RoleCapsule", () => {
 		expect(within(group).getByRole("radio", { name: "高" })).toHaveAttribute(
 			"aria-checked",
 			"false",
+		);
+	});
+
+	it("全局助手在设置页配置了默认模型与思考档位时，首屏胶囊展示默认模型并选中默认思考档位", async () => {
+		assistantSettings = {
+			model: { provider: "anthropic", id: "claude-opus-5-5" },
+			thinkingLevel: "high",
+		};
+		mount(true, { kind: "assistant" });
+		openCapsule();
+		await vi.waitFor(() =>
+			expect(
+				screen.getByRole("button", { name: /^全局助手/ }),
+			).toHaveTextContent("Opus 5.5"),
+		);
+		const group = screen.getByRole("radiogroup", { name: "思考级别" });
+		expect(within(group).getByRole("radio", { name: "高" })).toHaveAttribute(
+			"aria-checked",
+			"true",
 		);
 	});
 });

@@ -381,6 +381,82 @@ func (s *Service) RefreshAgent(ctx context.Context, threadID string) {
 	s.refreshLocked(t, "agent profile")
 }
 
+// SyncCoordinatorModel 将协调线程（全局助手主线）的模型与思考档位同步为新设置。
+// setModel / setThinking 指明要改写的字段，对应值为 nil 或空串表示清除（恢复 omp 默认）。
+// - 会话未就绪、外层即将重启（willRestart）、或任一改动字段被清除时：直接更新内存与数据库行并推送；
+//   若 agent 在运行或启动中则触发静止后重启（避免旧 agent 回写，下次启动随 initFrames 生效）。
+// - 会话已就绪且改动字段均有具体值、无需重启时：在线下发 set_model / set_thinking_level，
+//   并紧跟一次 get_state 将实际生效状态写回数据库与推送客户端。
+func (s *Service) SyncCoordinatorModel(ctx context.Context, threadID string, setModel bool, model *string, setThinking bool, thinking *string, willRestart bool) error {
+	if !setModel && !setThinking {
+		return nil
+	}
+	t, err := s.get(ctx, threadID)
+	if err != nil {
+		return err
+	}
+	t.mu.Lock()
+	if t.kind == KindWork {
+		t.mu.Unlock()
+		return nil
+	}
+	ready := t.agentReady()
+	running := ready || t.agent != nil || t.agentStatus == apigen.AgentStatusReady || t.starting
+	cleared := (setModel && (model == nil || *model == "")) || (setThinking && (thinking == nil || *thinking == ""))
+	if !ready || willRestart || cleared {
+		if setModel {
+			if model != nil && *model != "" {
+				v := *model
+				t.model = &v
+			} else {
+				t.model = nil
+			}
+		}
+		if setThinking {
+			if thinking != nil && *thinking != "" {
+				v := *thinking
+				t.thinking = &v
+			} else {
+				t.thinking = nil
+			}
+		}
+		dbModel, dbThinking := t.model, t.thinking
+		if running && !willRestart {
+			s.refreshLocked(t, "assistant model")
+		}
+		t.mu.Unlock()
+		if err := s.st.Q.SetThreadModel(ctx, db.SetThreadModelParams{
+			Model: dbModel, ThinkingLevel: dbThinking, UpdatedAt: s.now(), ID: t.id,
+		}); err != nil {
+			return err
+		}
+		s.publish(ctx, t.id)
+		return nil
+	}
+	t.mu.Unlock()
+
+	var frames []json.RawMessage
+	if setModel && model != nil {
+		if ref := parseModel(model); ref != nil {
+			f, _ := json.Marshal(map[string]string{"type": "oryn_select_model", "provider": ref.Provider, "modelId": ref.ID})
+			frames = append(frames, f)
+		}
+	}
+	if setThinking && thinking != nil && *thinking != "" {
+		f, _ := json.Marshal(map[string]string{"type": "set_thinking_level", "level": *thinking})
+		frames = append(frames, f)
+	}
+	for _, f := range frames {
+		if _, err := s.command(ctx, threadID, f, nil, originAuto, ""); err != nil {
+			return err
+		}
+	}
+	if len(frames) > 0 {
+		s.refreshState(t)
+	}
+	return nil
+}
+
 // refreshLocked 让线程在静止后停掉 agent（正在跑的回合不受影响），下一条命令经唤醒路径重新 agent.start、以
 // open_session 拉起原会话：协调线程借此取新的 AgentProfile，工作线程借此让需重启的 omp 配置生效（M13 6.3）。
 // agent 不在运行时什么都不做并返回 false（下次启动自然用新的）。调用方持有 t.mu。

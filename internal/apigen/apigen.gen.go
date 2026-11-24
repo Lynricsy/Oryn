@@ -5455,6 +5455,12 @@ type AssistantSettings struct {
 	// DisabledMcpServers 全局 `mcp.json` 里助手不用的服务器名
 	DisabledMcpServers []string `json:"disabledMcpServers"`
 
+	// Model 全局助手的默认模型；省略 = 跟随服务端默认（coordinator.model → config.yml 的 modelRoles.default）。改动同时切换主线对话，已有其他助手对话不变
+	Model *ModelRef `json:"model,omitempty"`
+
+	// ThinkingLevel 全局助手的默认思考档位（off / minimal / low / medium / high / xhigh / max / auto）；省略 = 跟随默认。改动同时切换主线对话，已有其他助手对话不变
+	ThinkingLevel *string `json:"thinkingLevel,omitempty"`
+
 	// WebAccess 联网总开关：关闭时协调宿主的正向代理拒绝一切 CONNECT 与转发（`web_search`、读网页随之失败）
 	WebAccess bool `json:"webAccess"`
 }
