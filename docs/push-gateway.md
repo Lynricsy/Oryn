@@ -54,8 +54,17 @@ limits:                                      # 以下为缺省值，可整段省
 
 ## 安装与 systemd
 
+二进制与 unit 的来源二选一（`GW_BIN` / `GW_UNIT` 用于后面的命令）：
+
 ```bash
-sudo install -m 0755 bin/oryn-push-gateway /usr/local/bin/
+# Release 包：解包后在 oryn-server_<版本>_linux-x64/ 目录里执行
+GW_BIN=oryn-push-gateway GW_UNIT=oryn-push-gateway.service
+# 从源码：仓库根目录 make build 之后执行
+GW_BIN=bin/oryn-push-gateway GW_UNIT=deploy/systemd/oryn-push-gateway.service
+```
+
+```bash
+sudo install -m 0755 "$GW_BIN" /usr/local/bin/oryn-push-gateway
 sudo useradd --system --home /var/lib/oryn-push-gateway --shell /usr/sbin/nologin oryn-push
 sudo install -d -m 0750 -o root -g oryn-push /etc/oryn-push-gateway
 sudo install -m 0640 -o root -g oryn-push gateway.yaml /etc/oryn-push-gateway/gateway.yaml
@@ -63,8 +72,7 @@ sudo install -m 0640 -o root -g oryn-push gateway.yaml /etc/oryn-push-gateway/ga
 sudo install -m 0640 -o root -g oryn-push AuthKey_<KeyID>.p8 /etc/oryn-push-gateway/apns.p8
 sudo install -m 0640 -o root -g oryn-push fcm-service-account.json /etc/oryn-push-gateway/fcm.json
 
-# Release 包里与二进制同目录；从源码构建时在仓库的 deploy/systemd/ 下
-sudo install -m 0644 oryn-push-gateway.service /etc/systemd/system/
+sudo install -m 0644 "$GW_UNIT" /etc/systemd/system/oryn-push-gateway.service
 sudo systemctl daemon-reload && sudo systemctl enable --now oryn-push-gateway
 journalctl -u oryn-push-gateway -f
 ```
@@ -127,7 +135,7 @@ Firebase 控制台 → 项目设置 → 服务账号 → 生成新的私钥，�
 目标：`https://push.oryn.best` 上跑官方网关。仓库里不放官方部署的密钥、限额与域名配置以外的东西。
 
 1. **DNS**：`push.oryn.best` 的 A / AAAA 记录指向网关主机。
-2. **二进制**：取与生产 orynd 同版本的 Release `oryn-server_<版本>_linux-<arch>.tar.gz`（或在仓库 `make build`），`install -m 0755 oryn-push-gateway /usr/local/bin/`。
+2. **二进制**：取与生产 orynd 同版本的 Release `oryn-server_<版本>_linux-<arch>.tar.gz`（或在仓库 `make build`），按上文「安装与 systemd」设好 `GW_BIN` / `GW_UNIT`，`install -m 0755 "$GW_BIN" /usr/local/bin/oryn-push-gateway`。
 3. **用户与目录**：`useradd --system --home /var/lib/oryn-push-gateway --shell /usr/sbin/nologin oryn-push`；`install -d -m 0750 -o root -g oryn-push /etc/oryn-push-gateway`。
 4. **凭据**：
    - Firebase 服务账号 JSON（与 `.dev/m7/fcm-service-account.json` 同一个项目）→ `/etc/oryn-push-gateway/fcm.json`，root:oryn-push 0640。
@@ -149,8 +157,8 @@ Firebase 控制台 → 项目设置 → 服务账号 → 生成新的私钥，�
      app_id: "com.lynricsy.oryn"
    ```
 
-6. **systemd**：`install -m 0644 oryn-push-gateway.service /etc/systemd/system/`（Release 包内附，源码在 `deploy/systemd/`），`systemctl daemon-reload && systemctl enable --now oryn-push-gateway`；`journalctl -u oryn-push-gateway` 里应有「推送网关已启动」且 `apns=true fcm=true`。
-7. **TLS 与反代**：签 `push.oryn.best` 证书，按 `deploy/openresty/oryn-push-gateway.conf` 建站点（回环 `127.0.0.1:7700`、传 `X-Real-IP`），重载 OpenResty。
+6. **systemd**：`install -m 0644 "$GW_UNIT" /etc/systemd/system/oryn-push-gateway.service`，`systemctl daemon-reload && systemctl enable --now oryn-push-gateway`；`journalctl -u oryn-push-gateway` 里应有「推送网关已启动」且 `apns=true fcm=true`。
+7. **TLS 与反代**：签 `push.oryn.best` 证书，按仓库里的 `deploy/openresty/oryn-push-gateway.conf`（Release 包不含，从同版本 tag 的源码取）建站点（回环 `127.0.0.1:7700`、传 `X-Real-IP`），重载 OpenResty。
 8. **验证**：
 
    ```bash
