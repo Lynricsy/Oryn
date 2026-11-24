@@ -181,6 +181,8 @@ OpenAPI：`ArtifactVersion` 增加可选 `turnId`、`title`、`check{status, iss
 
 后 8 条属审美类，只在 `artifact_designs.direction` 非空时报告；阈值按 `surface` 取（landing 用上表，app 关闭 `eyebrow-excess` 与 `split-repeat`）。
 
+配置来源：控制面渲染时注入 `window.__orynProbe = {aesthetic, surface}`；orb 的 `design.check` 经 URL 查询 `__oryn_aesthetic=1&__oryn_surface=<landing|app>` 传（window 对象优先）。orbd 从 `design_head` 的 `aesthetic`、`surface` 取值，缓存的检查结果只在 `SourceHash` 与这组配置都与 head 一致时才被 `design.status` 与封存使用。
+
 ### C9 内置技能 `oryn-design`（`internal/orbdrt/assets/oryn-design/SKILL.md` + `NOTICE.md`）
 
 - frontmatter description：「在 Oryn 画布上做设计稿、原型、落地页或 App 界面稿（artifact），或处理画布上的便签时使用。在项目仓库里写前端代码不属于这里，那是 `oil-ui` / `frontend-design`。」
