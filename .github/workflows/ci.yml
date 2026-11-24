@@ -44,6 +44,16 @@ jobs:
       - name: 安装 git-lfs
         run: git lfs version || (sudo apt-get update && sudo apt-get install -y git-lfs)
       - run: go test ./...
+      # Artifact 帧与发布页运行在不透明源里：CSP 的自身源在 WebKit 与 Chromium 里行为不同，服务端单测看不出来。
+      # 用真浏览器打开 Go 测试起的帧服务，断言查看器读到入口文件、页面 fetch 与同帧图片都成功（Safari / macOS / iOS App 同 WebKit）。
+      - name: 构建嵌入的 Web 产物（查看器与页面运行时）
+        run: make web
+      - name: 安装 Playwright 浏览器（WebKit、Chromium）
+        working-directory: web
+        run: bunx playwright install --with-deps webkit chromium
+      - name: Artifact 真浏览器探针
+        working-directory: web
+        run: bun run probe:artifact-browser
 
   web:
     runs-on: ubuntu-24.04

@@ -75,11 +75,10 @@ func (h *Host) frameURL(token string) string {
 	return h.base.Origin + FramePathPrefix + token + "/"
 }
 
-// frameSelf 返回帧 CSP 里代表「页面自己的文件」的源表达式。
+// frameSelf 返回帧 CSP 里代表「页面自己的文件」的源表达式：帧根地址本身（泛域名模式 `https://a-<令牌>.<域>/`，
+// 回退模式 `<public_url 源>/_af/<令牌>/`）。不用 `'self'`：sandbox 不含 allow-same-origin，页面在不透明源里，
+// WebKit（Safari、macOS / iOS 桌面与移动 App）里 `'self'` 不匹配页面自己的地址，查看器读入口文件、运行时端点都会被挡。
 func (h *Host) frameSelf(token string) string {
-	if h.base.Enabled() {
-		return "'self'"
-	}
 	return h.frameURL(token)
 }
 

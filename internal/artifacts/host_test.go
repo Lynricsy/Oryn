@@ -96,9 +96,13 @@ func TestHostWildcard(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	csp := rec.Header().Get("Content-Security-Policy")
 	assert.True(t, strings.HasPrefix(csp, "sandbox allow-scripts allow-forms allow-downloads;"), csp)
-	assert.Contains(t, csp, "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https://cdnjs.cloudflare.com")
-	assert.Contains(t, csp, "connect-src 'self' https://cdnjs.cloudflare.com")
-	assert.Contains(t, csp, "form-action 'none'; base-uri 'self'; webrtc 'block'; frame-ancestors http://localhost:7600")
+	// 不透明源（sandbox 不含 allow-same-origin）里 WebKit 不让 'self' 匹配页面自己的地址：查看器读入口文件、
+	// 运行时端点与 module 脚本都会被挡（Safari / 桌面 App 实测），所以写显式的帧源
+	self := "http://a-" + token + ".localhost:7600/"
+	assert.NotContains(t, csp, "'self'")
+	assert.Contains(t, csp, "script-src "+self+" 'unsafe-inline' 'unsafe-eval' blob: https://cdnjs.cloudflare.com")
+	assert.Contains(t, csp, "connect-src "+self+" https://cdnjs.cloudflare.com")
+	assert.Contains(t, csp, "form-action 'none'; base-uri "+self+"; webrtc 'block'; frame-ancestors http://localhost:7600")
 	assert.NotContains(t, csp, "allow-same-origin")
 	hd := rec.Header()
 	assert.Contains(t, hd.Get("Permissions-Policy"), "camera=()")

@@ -101,7 +101,9 @@ func TestPublicPageWildcard(t *testing.T) {
 	csp := rec.Header().Get("Content-Security-Policy")
 	assert.True(t, strings.HasPrefix(csp, sandboxTopLevel+";"), csp)
 	assert.Equal(t, "sandbox allow-scripts allow-forms allow-downloads allow-popups allow-popups-to-escape-sandbox allow-modals allow-top-navigation-by-user-activation", sandboxTopLevel)
-	assert.Contains(t, csp, "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https://cdnjs.cloudflare.com", "非严格策略")
+	self := "http://p-" + p.Slug + ".localhost:7600/"
+	assert.Contains(t, csp, "script-src "+self+" 'unsafe-inline' 'unsafe-eval' blob: https://cdnjs.cloudflare.com", "非严格策略、显式源（WebKit 不透明源里 'self' 不匹配）")
+	assert.NotContains(t, csp, "script-src 'self'")
 	assert.True(t, strings.HasSuffix(csp, "; frame-ancestors 'self'"), csp)
 	assert.Equal(t, "noindex, nofollow", rec.Header().Get("X-Robots-Tag"))
 	assert.Equal(t, "no-store", rec.Header().Get("Cache-Control"))

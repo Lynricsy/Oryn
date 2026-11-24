@@ -56,11 +56,11 @@ func (h *Host) PublicHandler() http.Handler {
 	})
 }
 
-// publicSelf 返回发布页 CSP 里代表「页面自己的文件」的源表达式：泛域名模式 `'self'`，
-// 主域回退模式 `<public_url 源>/p/<slug>/`（授权段在它之下，按路径前缀匹配）。
+// publicSelf 返回发布页 CSP 里代表「页面自己的文件」的源表达式：泛域名模式 `https://p-<slug>.<域>/`，
+// 主域回退模式 `<public_url 源>/p/<slug>/`（授权段在它之下，按路径前缀匹配）。不用 `'self'`，原因同 frameSelf。
 func (h *Host) publicSelf(slug string) string {
 	if h.base.Enabled() {
-		return "'self'"
+		return h.base.ArtifactURL('p', slug)
 	}
 	return h.base.Origin + PublishPathPrefix + slug + "/"
 }
