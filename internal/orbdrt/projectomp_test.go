@@ -300,7 +300,7 @@ func TestProjectConfigSetupAndAgentStart(t *testing.T) {
 	assert.Equal(t, root, rec.Env["ORYN_PROJECT_CONFIG_ROOT"])
 	i := indexOf(rec.Args, "-e")
 	require.GreaterOrEqual(t, i, 0, "argv %v", rec.Args)
-	require.Equal(t, []string{"-e", rt.extensionPath(), "--config", filepath.Join(base, "config.yml")}, rec.Args[i:], "--config 紧随 -e、排在末尾")
+	require.Equal(t, []string{"-e", rt.extensionPath(), "--config", filepath.Join(base, "config.yml"), "--config", rt.browserRelayOverlayPath(thread1)}, rec.Args[i:], "--config 紧随 -e、排在末尾")
 
 	require.NoError(t, cp.call(t, "resume.run", apigen.LinkCtlSetupRunParams{ProjectConfig: projCfg(
 		projFile("rules/b.md", "B", 0o644),
@@ -316,7 +316,7 @@ func TestProjectConfigSetupAndAgentStart(t *testing.T) {
 	rec = setupDump(t, dump, projThread2)
 	assert.Equal(t, "1", rec.Env["ORYN_CENTRAL_CONFIG"])
 	assert.NotContains(t, rec.Env, "ORYN_PROJECT_CONFIG_ROOT")
-	assert.NotContains(t, rec.Args, "--config")
+	assert.Equal(t, []string{rt.browserRelayOverlayPath(projThread2)}, configArgs(rec.Args))
 }
 
 // 桌面 orb：项目层的 --config 排在桌面覆盖层之前（后者优先）。
@@ -335,6 +335,7 @@ func TestProjectConfigBeforeDesktopOverlay(t *testing.T) {
 	assert.Equal(t, []string{
 		filepath.Join(e.rt.projectConfigRoot(), ".omp", "config.yml"),
 		e.rt.desktopOverlayPath(),
+		e.rt.browserRelayOverlayPath(thread1),
 	}, configs)
 }
 
@@ -393,15 +394,15 @@ func TestRunnerProjectConfigPerThread(t *testing.T) {
 	recA := setupDump(t, dump, thread1)
 	assert.Equal(t, "1", recA.Env["ORYN_CENTRAL_CONFIG"])
 	assert.Equal(t, a[0], recA.Env["ORYN_PROJECT_CONFIG_ROOT"])
-	assert.Equal(t, []string{filepath.Join(a[0], ".omp", "config.yml")}, configArgs(recA.Args))
+	assert.Equal(t, []string{filepath.Join(a[0], ".omp", "config.yml"), f.rt.browserRelayOverlayPath(thread1)}, configArgs(recA.Args))
 	recB := setupDump(t, dump, projThread2)
 	assert.Equal(t, "1", recB.Env["ORYN_CENTRAL_CONFIG"])
 	assert.Equal(t, b[0], recB.Env["ORYN_PROJECT_CONFIG_ROOT"])
-	assert.Empty(t, configArgs(recB.Args), "没有 config.yml 就不加 --config")
+	assert.Equal(t, []string{f.rt.browserRelayOverlayPath(projThread2)}, configArgs(recB.Args), "没有 config.yml 时只保留线程 browser-relay 覆盖层")
 	rec3 := setupDump(t, dump, projThread3)
 	assert.NotContains(t, rec3.Env, "ORYN_CENTRAL_CONFIG")
 	assert.NotContains(t, rec3.Env, "ORYN_PROJECT_CONFIG_ROOT")
-	assert.Empty(t, configArgs(rec3.Args))
+	assert.Equal(t, []string{f.rt.browserRelayOverlayPath(projThread3)}, configArgs(rec3.Args))
 	assert.NoDirExists(t, filepath.Join(f.home, ".oryn", "project-config", ".omp"), "runner 不用 orb 的项目层目录")
 }
 

@@ -57,7 +57,7 @@ func TestMemoryAgentStartNil(t *testing.T) {
 	cp.waitNotif(t, 0, "agent.status", statusIs(thread1, "ready"))
 	rec := setupDump(t, dump, thread1)
 	assertNoMemory(t, rt, rec)
-	assert.NotContains(t, rec.Args, "--config")
+	assert.Equal(t, []string{rt.browserRelayOverlayPath(thread1)}, configArgs(rec.Args))
 	assert.NoFileExists(t, rt.memoryOverlayPath())
 }
 
@@ -91,7 +91,7 @@ func TestMemoryAgentStartEnv(t *testing.T) {
 	assert.Equal(t, "corp.example,localhost,internal.example,127.0.0.1", rec.Env["NO_PROXY"])
 	assert.Equal(t, rec.Env["NO_PROXY"], rec.Env["no_proxy"])
 	assert.Equal(t, rt.memoryOverlayPath(), filepath.Join(rt.home, ".oryn", "memory-overlay.yml"))
-	assert.Equal(t, []string{rt.memoryOverlayPath()}, configArgs(rec.Args))
+	assert.Equal(t, []string{rt.memoryOverlayPath(), rt.browserRelayOverlayPath(thread1)}, configArgs(rec.Args))
 	assert.Equal(t, "# 由 orbd 生成（M16）：启用 Oryn 内置的 Hindsight 记忆。\nmemory:\n  backend: hindsight\nhindsight:\n  globalScope: true\n", readFile(t, rt.memoryOverlayPath()))
 
 	// 无项目线程：不带 ORYN_HINDSIGHT_PROJECT（env 里的也去掉），关闭自动写入；没有 NO_PROXY 时只有本机地址。
@@ -120,6 +120,7 @@ func TestMemoryOverlayOrder(t *testing.T) {
 		filepath.Join(e.rt.projectConfigRoot(), ".omp", "config.yml"),
 		e.rt.memoryOverlayPath(),
 		e.rt.desktopOverlayPath(),
+		e.rt.browserRelayOverlayPath(thread1),
 	}, configArgs(procArgs(t, pid)))
 }
 
@@ -179,7 +180,7 @@ func TestRunnerMemoryEgress(t *testing.T) {
 	rec := setupDump(t, dump, projThread2)
 	assert.Equal(t, "http://"+egress+"/memory/t/"+projThread2, rec.Env["HINDSIGHT_API_URL"])
 	assert.Equal(t, proj, rec.Env["ORYN_HINDSIGHT_PROJECT"])
-	assert.Equal(t, []string{f.rt.memoryOverlayPath()}, configArgs(rec.Args))
+	assert.Equal(t, []string{f.rt.memoryOverlayPath(), f.rt.browserRelayOverlayPath(projThread2)}, configArgs(rec.Args))
 
 	req, err := http.NewRequest(http.MethodGet, "http://"+egress+"/memory/t/"+projThread2+"/v1/default/banks/x", nil)
 	require.NoError(t, err)

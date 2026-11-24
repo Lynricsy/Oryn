@@ -700,6 +700,14 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 			// 桌面覆盖层：browser 工具附着到桌面上的 Chromium、启用 computer 工具（高于用户的全局 / 项目设置）。
 			args = append(args, "--config", r.desktopOverlayPath())
 		}
+		if r.browserRelay != nil {
+			if _, statePath, overlayPath, berr := r.browserRelay.ensureThreadFront(p.ThreadID); berr == nil {
+				args = append(args, "--config", overlayPath)
+				env[envBrowserRelayState] = statePath
+			} else {
+				r.log.Warn("prepare thread browser-relay front failed", "thread", p.ThreadID, "err", berr)
+			}
+		}
 	}
 	pid, sshPub, running, err := t.start(startSpec{
 		args:       args,

@@ -131,6 +131,9 @@ type Config struct {
 	Runner *RunnerConfig
 	// ProcStat 是 /proc 指标源读取的 CPU 计数文件（默认 /proc/stat；测试可替换）。
 	ProcStat string
+	// 客户端浏览器中继（M27）的测试钩子（生产为零值）：覆盖子进程启动与流断开后的空闲回收宽限期。
+	BrowserRelayStart     func(ctx context.Context, port int, token string) (stop func(), err error)
+	BrowserRelayIdleGrace time.Duration
 	// ComputerIdleExit 是工具执行器（M19 助手的电脑）没有调用后停掉进程的时长，默认 DefaultComputerIdleExit（测试可调小）。
 	ComputerIdleExit time.Duration
 }
@@ -293,6 +296,8 @@ type Runtime struct {
 
 	// comp 是工具执行器（M19 助手的电脑，见 computer.go）；runner 与协调宿主为 nil。
 	comp *computer
+	// browserRelay 是客户端浏览器中继前门与按需子进程管理器（M27）；协调宿主为 nil。
+	browserRelay *browserRelayManager
 }
 
 // conn 是一条已建立并发过 hello 的 link。
@@ -508,6 +513,9 @@ func New(cfg Config) (_ *Runtime, err error) {
 	if !cfg.Coordinator {
 		r.sshLn = r.listenSSH()
 	}
+	if !cfg.Coordinator {
+		r.browserRelay = newBrowserRelayManager(r)
+	}
 	r.loadSetupStatus()
 	r.ctx, r.cancel = context.WithCancel(context.Background())
 	r.agentVersion = detectAgentVersion(r.bins, cfg.AgentBin)
@@ -615,6 +623,9 @@ func (r *Runtime) Shutdown(grace time.Duration) {
 	}
 	if c := r.comp; c != nil {
 		wg.Go(func() { c.stop(min(grace, computerStopGrace)) })
+	}
+	if br := r.browserRelay; br != nil {
+		wg.Go(func() { br.Close() })
 	}
 	r.stopAllAgents(grace)
 	wg.Wait()
@@ -816,6 +827,12 @@ func (r *Runtime) acceptLoop(sess *link.Session) {
 				continue
 			}
 			go r.serveDesk(st)
+		case link.StreamBrowserRelay:
+			if r.browserRelay == nil {
+				_ = st.Close()
+				continue
+			}
+			go r.browserRelay.handleStream(st)
 		default:
 			r.log.Warn("unexpected stream from control plane", "t", st.Header.T)
 			_ = st.Close()
@@ -837,7 +854,7 @@ func (r *Runtime) hello() apigen.LinkCtlHelloParams {
 	}
 	// terminal（终端面板）与 metrics（metrics.sample）是 M11b 才有名字的既有能力，orb 一直具备。
 	// memory（M16）：agent.start 接受 memory 参数。computer（M19）：认识 computer.*（工具执行器）。
-	features := []string{"fs", "git", "attachments", "services", "portal", "sync", "threads", "repo-update", "setup-defer-resume", "terminal", "metrics", "omphome-apply", "memory", "computer"}
+	features := []string{"fs", "git", "attachments", "services", "portal", "sync", "threads", "repo-update", "setup-defer-resume", "terminal", "metrics", "omphome-apply", "memory", "computer", "browser-relay"}
 	if r.box != nil {
 		features = append(features, "box") // M23：/box/*（app 运行时与 exec）
 	}
@@ -1178,6 +1195,9 @@ func (r *Runtime) reservedPort(port int) bool {
 		return true
 	}
 	if d := r.desk; d != nil && (port == d.cdpPort() || port == d.devtoolsPort()) {
+		return true
+	}
+	if r.browserRelay != nil && r.browserRelay.reservedPort(port) {
 		return true
 	}
 	return false

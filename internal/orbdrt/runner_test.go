@@ -158,19 +158,19 @@ func TestRunnerHelloFeatures(t *testing.T) {
 	t.Run("git", func(t *testing.T) {
 		f := newRunnerHome(t)
 		startRunnerRT(t, f, nil)
-		assert.Equal(t, []string{"fs", "attachments", "metrics", "memory", "omphome-apply", "git", "ssh"}, helloOf(t, f.cp).Features)
+		assert.Equal(t, []string{"fs", "attachments", "metrics", "memory", "omphome-apply", "browser-relay", "git", "ssh"}, helloOf(t, f.cp).Features)
 	})
 	t.Run("terminal", func(t *testing.T) {
 		f := newRunnerHome(t)
 		startRunnerRT(t, f, func(c *Config) { c.Runner.Terminal = true })
-		assert.Equal(t, []string{"fs", "attachments", "metrics", "memory", "omphome-apply", "git", "terminal", "ssh"}, helloOf(t, f.cp).Features)
+		assert.Equal(t, []string{"fs", "attachments", "metrics", "memory", "omphome-apply", "browser-relay", "git", "terminal", "ssh"}, helloOf(t, f.cp).Features)
 	})
 	t.Run("no git", func(t *testing.T) {
 		f := newRunnerHome(t)
 		t.Setenv("PATH", t.TempDir())
 		startRunnerRT(t, f, nil)
 		h := helloOf(t, f.cp)
-		assert.Equal(t, []string{"fs", "attachments", "metrics", "memory", "omphome-apply", "ssh"}, h.Features)
+		assert.Equal(t, []string{"fs", "attachments", "metrics", "memory", "omphome-apply", "browser-relay", "ssh"}, h.Features)
 		assert.False(t, h.Runner.Dirs[0].Git, "work is not a repository")
 	})
 	t.Run("ssh port busy", func(t *testing.T) {

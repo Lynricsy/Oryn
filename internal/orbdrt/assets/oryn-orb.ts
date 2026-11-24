@@ -58,6 +58,23 @@ const DESKTOP_GUIDE = `桌面与浏览器：这台 orb 有一块 X11 桌面（DI
 - 改了界面、需要让用户看到实际效果时，先 desktop_record start，在桌面上演示一遍，再 desktop_record stop，视频会直接显示在对话里；录制最长 10 分钟，到时自动停止。用户接管桌面、你调用 desktop_ask_user 或本回合结束时，录制会先自动结束（避免把用户的输入录进去），用户接管或等待用户操作期间也不能开始录制。
 - 查看状态：oryn orb desktop status。`;
 
+// 客户端浏览器中继说明（M27）：仅在 ORYN_BROWSER_RELAY_STATE 文件报告 online=true 时追加。
+const BROWSER_RELAY_GUIDE = `本机浏览器中继（用户电脑 Chrome）：用户已将本机 Chrome 扩展绑定到当前线程。
+- 普通 browser.open(...) 默认仍走 orb 云端桌面浏览器；需要操作用户本机 Chrome 时显式传 app: "relay"（例如 browser.targets({ app: "relay" }) 查看用户点选共享的标签页，browser.open({ app: "relay", target: "..." }) 借用已共享标签页，或 browser.open({ app: "relay", url: "https://..." }) 申请新建标签页）。
+- 未被用户主动点选共享的现有标签页对你完全不可见。
+- 若调用返回包含 ORYN_APPROVAL_REQUIRED 的错误，说明该操作（如新建标签页、跨主域名跳转或读取 Cookies 等高危 CDP）正在等待用户在 Chrome 扩展弹窗中点击确认：此时立刻停止重复调用，向用户简要说明在等待扩展确认，待收到「[Oryn] 用户已在 Chrome 扩展中批准…」通知或用户告知已批准后再重试同一调用。`;
+
+function browserRelayOnline(): boolean {
+	const p = process.env.ORYN_BROWSER_RELAY_STATE;
+	if (!p || !existsSync(p)) return false;
+	try {
+		const parsed = JSON.parse(readFileSync(p, "utf8")) as { online?: unknown };
+		return parsed.online === true;
+	} catch {
+		return false;
+	}
+}
+
 // desktop_ask_user 的请求格式：标题「需要你操作桌面（<事项>）：<原因>」（other 不带括号），选项恰为「完成」「跳过」。
 // orbd（internal/orbdrt/deskcontrol.go）与 Web（web/src/lib/desktop-ask.ts）按同一格式识别，改动须三处同步（docs/protocol.md）。
 const ASK_KIND_LABELS = { sign_in: "登录", code: "输入验证码", check: "人工验证", other: "" } as const;
@@ -1122,6 +1139,9 @@ export default function orynOrbExtension(pi: ExtensionAPI) {
 			if (process.env.ORYN_SSH === "1") {
 				guide.push(RUNNER_SSH_GUIDE);
 			}
+			if (browserRelayOnline()) {
+				guide.push(BROWSER_RELAY_GUIDE);
+			}
 			return { systemPrompt: [...event.systemPrompt, guide.join("\n")] };
 		});
 		return;
@@ -1140,6 +1160,9 @@ export default function orynOrbExtension(pi: ExtensionAPI) {
 		}
 		if (process.env.ORYN_SSH === "1") {
 			guide.push(SSH_GUIDE);
+		}
+		if (browserRelayOnline()) {
+			guide.push(BROWSER_RELAY_GUIDE);
 		}
 		return { systemPrompt: [...event.systemPrompt, [...guide, ...statusLines()].join("\n")] };
 	});

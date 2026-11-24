@@ -403,7 +403,7 @@ func (r *Runtime) underThreads(p string) (string, error) {
 // runnerFeatures 是 runner 的 hello 特性：fs、attachments、metrics、memory、omphome-apply；PATH 里有 git 时加 git，
 // --terminal 时加 terminal，SSH 网关端口监听成功时加 ssh。
 func (r *Runtime) runnerFeatures() []string {
-	features := []string{"fs", "attachments", "metrics", "memory", "omphome-apply"}
+	features := []string{"fs", "attachments", "metrics", "memory", "omphome-apply", "browser-relay"}
 	if _, err := r.bins.look("git"); err == nil {
 		features = append(features, "git")
 	}
