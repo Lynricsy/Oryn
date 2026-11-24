@@ -258,6 +258,7 @@ Accept 统一口径：除特别写明外，`go build ./...` 无输出，`go test
   - 选中结果带 `loc`，进入 `SelectionChip`、`anchorOf`、`handoffPrompt`。
   - 带 `source` 的帧禁用 EditPanel 直接编辑，提示「在对话里让 Agent 改」。
   - 收到新版本后，对 `hmr` 不可用的帧发 `design-reload`。
+  - 带 `source` 的画框删除后撤销不了（重建会带 `source`，ops 拒绝；T1 实测），编辑器对这类画框禁用删除或明示不可撤销。
   - WebKit 授权兜底（P3 实测）：portal 握手在 WebKit iframe 里会被带到主站 `/login`（主站会话 Cookie 是 `SameSite=Lax`，生产环境主站页还带 `frame-ancestors 'none'`，帧直接空白）。父页读不到跨源帧的 URL，所以判据是「live 帧 5 s 内没有收到 dev 运行时的 `ready`」：该帧退回静态帧，顶栏出现「在新窗口授权实时预览」；点击 `window.open(portalFrameSrc(template, port, "/"))`，窗口回到焦点后重建 live 帧。Chromium 系实测不触发。
 - Accept：`cd web && bun run check && bun run test -- canvas frames frame-link messages` 全绿；`bun run accept:m29 -- --only K1,K2,K3`（K1 设计画布静态帧可见；K2 live 徽标出现且改源码后帧内文本变化；K3 点元素后 chip 显示 `src/frames/…:行`）。
 
