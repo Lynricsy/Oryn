@@ -189,7 +189,9 @@ func (r *Runtime) coordinatorAgentSpec(p apigen.LinkCtlAgentStartParams, dir str
 		"OTEL_SDK_DISABLED": "true",
 		// Core 19 起 RPC 默认不要求工具调用带 intent；Web 的工具卡要显示它
 		"PI_INTENT_TRACING": "1",
-		"ORYN_THREAD_ID":    p.ThreadID,
+		// Core oryn-v19.0.1-4 起：Web 自带 Symbols Nerd Font，标题卡片用 Nerd 字形而不是 emoji（rpc 宿主缺省只给 emoji）
+		"ORYN_NERD_GLYPHS": "1",
+		"ORYN_THREAD_ID":   p.ThreadID,
 	}
 	// 出站（M19，只给全局助手）：omp 的全局 fetch 经 PI_PROXY 走 orynd 的正向代理（https 用 CONNECT），回环与内网地址
 	// 由 omp 直连（沙箱里只有回环 7811 连得通）；是否放行、放行哪些目标由控制面的出站策略决定。MCP 的地址前缀与凭据
