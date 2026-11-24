@@ -7965,6 +7965,8 @@ export interface components {
             text: string;
             /** @description 元素在最新版本里已找不到 */
             missing: boolean;
+            /** @description 设计画布的源码位置 `src/frames/x.tsx:行:列`（取自元素的 `data-oryn-loc`）；省略或 null = 没有 */
+            loc?: string | null;
         };
         ArtifactComment: {
             n: number;

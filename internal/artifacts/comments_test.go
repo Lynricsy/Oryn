@@ -187,6 +187,9 @@ func TestCommentValidation(t *testing.T) {
 		{"画框序号", Anchor{Version: 1, Path: "index.html", Page: &AnchorPage{Number: 0, Name: "首页"}}, "x"},
 		{"正文为空", Anchor{Version: 1, Path: "index.html"}, "   "},
 		{"正文过长", Anchor{Version: 1, Path: "index.html"}, strings.Repeat("长", MaxCommentRunes+1)},
+		{"源码位置不在 src/", Anchor{Version: 1, Path: "index.html", Loc: new("../etc/passwd:1:1")}, "x"},
+		{"源码位置行号为 0", Anchor{Version: 1, Path: "index.html", Loc: new("src/frames/a.tsx:0:1")}, "x"},
+		{"源码位置过长", Anchor{Version: 1, Path: "index.html", Loc: new("src/" + strings.Repeat("a", 520) + ".tsx:1:1")}, "x"},
 	}
 	for _, b := range bad {
 		_, err := e.s.Comment(ctx, a.ID, b.anchor, b.body)
@@ -214,6 +217,23 @@ func TestCommentValidation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, ts[1].Anchor.Version, "没有偏移的锚点不重新定位")
 	assert.Equal(t, script.ID, ts[1].ID)
+
+	// 源码位置（M29）：存下并出现在 read_artifact_comments 的 element 里；空串当作没有
+	withLoc, err := e.s.Comment(ctx, a.ID, Anchor{Version: 1, Path: "index.html", Tag: new("button"), Text: "开始",
+		Loc: new("src/frames/home.tsx:12:5")}, "按钮太挤")
+	require.NoError(t, err)
+	require.NotNil(t, withLoc.Anchor.Loc)
+	assert.Equal(t, "src/frames/home.tsx:12:5", *withLoc.Anchor.Loc)
+	assert.Equal(t, "src/frames/home.tsx:12:5", *withLoc.Anchor.API().Loc)
+	emptyLoc, err := e.s.Comment(ctx, a.ID, Anchor{Version: 1, Path: "index.html", Loc: new("")}, "整页")
+	require.NoError(t, err)
+	assert.Nil(t, emptyLoc.Anchor.Loc)
+	m = commentsJSON(t, mustCall(t, e.s, threadCaller("thr_a"), OpReadComments, `{"id":"`+a.ID+`"}`))
+	threads = m["threads"].([]any)
+	require.Len(t, threads, 4)
+	assert.Equal(t, map[string]any{"tag": "button", "offset": nil, "text": "开始", "gone": false, "loc": "src/frames/home.tsx:12:5"},
+		threads[2].(map[string]any)["element"])
+	assert.Nil(t, threads[3].(map[string]any)["element"])
 
 	// 不存在的串、不属于这个 artifact 的串
 	_, err = e.s.Reply(ctx, a.ID, "act_00000000000000000000000000", "x", Author{})

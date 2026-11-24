@@ -10363,6 +10363,12 @@ components:
         missing:
           type: boolean
           description: 元素在最新版本里已找不到
+        loc:
+          type: string
+          nullable: true
+          maxLength: 512
+          pattern: '^src/[A-Za-z0-9._/-]+\.(tsx|ts|jsx|js):[1-9][0-9]*:[1-9][0-9]*$'
+          description: 设计画布的源码位置 `src/frames/x.tsx:行:列`（取自元素的 `data-oryn-loc`）；省略或 null = 没有
     ArtifactComment:
       type: object
       required: [n, authorLabel, body, createdAt]

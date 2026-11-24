@@ -5057,6 +5057,9 @@ type ArtifactComment struct {
 
 // ArtifactCommentAnchor 评论的锚点；`offset` / `tag` 为空表示整个页面
 type ArtifactCommentAnchor struct {
+	// Loc 设计画布的源码位置 `src/frames/x.tsx:行:列`（取自元素的 `data-oryn-loc`）；省略或 null = 没有
+	Loc *string `json:"loc,omitempty"`
+
 	// Missing 元素在最新版本里已找不到
 	Missing bool `json:"missing"`
 

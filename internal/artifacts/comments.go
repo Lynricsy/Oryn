@@ -30,7 +30,12 @@ const (
 var (
 	anchorTagRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
 	commentIDRe = regexp.MustCompile(`^act_[0-9A-Z]{26}$`)
+	// anchorLocRe 是设计画布源码位置（data-oryn-loc）：src/ 下的脚本文件、行、列都从 1 起。与 openapi 的 pattern 一致。
+	anchorLocRe = regexp.MustCompile(`^src/[A-Za-z0-9._/-]+\.(tsx|ts|jsx|js):[1-9][0-9]*:[1-9][0-9]*$`)
 )
+
+// maxAnchorLocBytes 是锚点源码位置的长度上限。
+const maxAnchorLocBytes = 512
 
 // AnchorPage 是画布页面上的锚点：画框在阅读顺序里的序号（从 1 起）与名字。
 type AnchorPage struct {
@@ -40,6 +45,7 @@ type AnchorPage struct {
 
 // Anchor 是评论串的锚点（以 JSON 存在 anchor 列）。Offset 是元素起始标签在 Path 里的 UTF-8 字节偏移；
 // Offset 与 Tag 都为空表示整个页面，只有 Offset 为空表示页面脚本生成的元素。Version 是锚点最近一次定位所在的版本。
+// Loc 是设计画布元素的源码位置（`src/frames/x.tsx:行:列`，M29）；构建产物里没有稳定的字节偏移，靠它定位源码。
 type Anchor struct {
 	Version int         `json:"version"`
 	Path    string      `json:"path"`
@@ -48,11 +54,12 @@ type Anchor struct {
 	Tag     *string     `json:"tag"`
 	Text    string      `json:"text"`
 	Missing bool        `json:"missing"`
+	Loc     *string     `json:"loc,omitempty"`
 }
 
 // AnchorFromAPI 把 REST 的锚点转成 Anchor（不校验；Comment 负责校验）。
 func AnchorFromAPI(a apigen.ArtifactCommentAnchor) Anchor {
-	out := Anchor{Version: a.Version, Path: a.Path, Offset: a.Offset, Tag: a.Tag, Text: a.Text, Missing: a.Missing}
+	out := Anchor{Version: a.Version, Path: a.Path, Offset: a.Offset, Tag: a.Tag, Text: a.Text, Missing: a.Missing, Loc: a.Loc}
 	if a.Page != nil {
 		out.Page = &AnchorPage{Number: a.Page.Number, Name: a.Page.Name}
 	}
@@ -61,7 +68,7 @@ func AnchorFromAPI(a apigen.ArtifactCommentAnchor) Anchor {
 
 // API 返回 REST 表示。
 func (a Anchor) API() apigen.ArtifactCommentAnchor {
-	out := apigen.ArtifactCommentAnchor{Version: a.Version, Path: a.Path, Offset: a.Offset, Tag: a.Tag, Text: a.Text, Missing: a.Missing}
+	out := apigen.ArtifactCommentAnchor{Version: a.Version, Path: a.Path, Offset: a.Offset, Tag: a.Tag, Text: a.Text, Missing: a.Missing, Loc: a.Loc}
 	if a.Page != nil {
 		out.Page = &struct {
 			Name   string `json:"name"`
@@ -172,6 +179,12 @@ func (s *Service) checkAnchor(ctx context.Context, r db.Artifact, an Anchor) (An
 	}
 	if an.Tag != nil && !anchorTagRe.MatchString(*an.Tag) {
 		return an, opErr(CodeInvalid, "锚点的标签名 %q 不合法。", *an.Tag)
+	}
+	if an.Loc != nil && *an.Loc == "" {
+		an.Loc = nil
+	}
+	if an.Loc != nil && (len(*an.Loc) > maxAnchorLocBytes || !anchorLocRe.MatchString(*an.Loc)) {
+		return an, opErr(CodeInvalid, "锚点的源码位置 %q 不合法，应形如 src/frames/home.tsx:12:5。", *an.Loc)
 	}
 	if an.Page != nil {
 		if an.Page.Number < 1 {
@@ -506,8 +519,18 @@ func (s *Service) agentReadComments(ctx context.Context, c Caller, params json.R
 		if an.Page != nil {
 			page = obj{"number": an.Page.Number, "name": an.Page.Name}
 		}
+		var el obj
 		if an.Offset != nil || an.Tag != nil {
-			element = obj{"tag": deref(an.Tag), "offset": an.Offset, "text": an.Text, "gone": an.Missing}
+			el = obj{"tag": deref(an.Tag), "offset": an.Offset, "text": an.Text, "gone": an.Missing}
+		}
+		if an.Loc != nil {
+			if el == nil {
+				el = obj{"text": an.Text, "gone": an.Missing}
+			}
+			el["loc"] = *an.Loc
+		}
+		if el != nil {
+			element = el
 		}
 		comments := make([]obj, 0, len(t.Comments))
 		for _, cm := range t.Comments {
