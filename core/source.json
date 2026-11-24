@@ -1,13 +1,13 @@
 {
 	"repo": "Lynricsy/oryn-core",
-	"tag": "oryn-v19.0.1-9",
-	"commit": "8951be149ebe896dca18cd10e1b0a4a43ffe1595",
+	"tag": "oryn-v19.0.1-10",
+	"commit": "aeb99de96efe7253e48fbf3a31c1eadde98d48b2",
 	"ompVersion": "19.0.1",
 	"build": "ci",
 	"sha256": {
-		"linux-x64": "5a1d07a48cdaaec3e0e3ab261264ac6056681aaafaf62acb8f6e48368a4fd75f",
-		"linux-arm64": "735a8363ee83430674de5578ca497523e325d6c31fc8055d82c9fdf8ac2ae8fb",
-		"darwin-arm64": "a102004bebd2d90c81ed4319bd5f219362457e4b9f571bdc5a3b46f5723c1e02",
+		"linux-x64": "6e33b67a1fbe7add650076f28450959f1cd8d356692977918f7e69bbdba43239",
+		"linux-arm64": "d31c34f321524b45e94e19f00a8ef1e389a244d7d124dd98a38ed5d6395d595f",
+		"darwin-arm64": "c7d1e4d9034b339ae97e8426e72b0823e5858c8c642b539d63db745fe73cadf7",
 		"omp-rpc-types.d.ts": "60d2781b22c21d73bb102128f3ea4c22398cebef89d8c51ab061e3df59b92264"
 	}
 }
