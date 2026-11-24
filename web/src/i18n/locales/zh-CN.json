@@ -4525,8 +4525,9 @@
 			"homeScreen": "在 iPhone / iPad 上，先用 Safari 的「分享 → 添加到主屏幕」，再从主屏幕打开 Oryn 才能开启后台推送。",
 			"push": "后台推送（标签页关闭时也能收到）",
 			"pushHint": "经浏览器的推送服务送达；关闭后这台设备只在页面打开时收到通知。",
-			"others": "其它已订阅的浏览器",
+			"others": "其它已订阅的浏览器与设备",
 			"subscribedAt": "订阅于 {{when}}",
+			"viaGateway": "经推送网关 {{host}}",
 			"remove": "移除订阅",
 			"desktopApp": "系统通知由桌面应用发送：窗口隐藏或最小化时，线程完成、待答或出错会弹出系统通知，点击直达线程。",
 			"testSend": "发送测试通知",
@@ -4607,8 +4608,7 @@
 			"ntfy": "ntfy",
 			"bark": "Bark",
 			"webpush": "浏览器推送",
-			"apns": "APNs",
-			"fcm": "FCM"
+			"gateway": "官方推送网关"
 		},
 		"delivery": {
 			"sent": "已送达 · {{when}}",
@@ -4911,11 +4911,23 @@
 			"permissionDenied": "系统已关闭 Oryn 的通知权限，推送无法显示。",
 			"openSettings": "打开系统通知设置",
 			"registering": "正在注册推送…",
-			"viaFcm": "经 Firebase 云消息（FCM）接收推送",
+			"viaFcm": "经官方推送网关与 Firebase 云消息（FCM）接收推送",
+			"viaApns": "经官方推送网关与 Apple 推送服务（APNs）接收推送",
 			"viaUnifiedPush": "经 {{distributor}} 接收推送（{{detail}}）",
+			"switchToUnifiedPush": "改用 UnifiedPush",
+			"switchToGateway": "改用官方推送网关（FCM）",
 			"disable": "关闭推送",
 			"error": "推送注册失败：{{error}}",
 			"errorUnknown": "原因不明",
+			"errors": {
+				"gateway_disabled": "服务器关闭了官方推送网关（push.gateway.url 为空），这台设备收不到推送。请服务器管理员开启，或在 Android 上改用 UnifiedPush。",
+				"gateway_unsupported": "服务器的 Oryn 版本太旧，不支持官方推送网关。请服务器管理员升级 orynd。",
+				"gateway_untrusted": "服务器指定的推送网关不在本 App 信任的列表里，已拒绝向它发送推送令牌。",
+				"gateway_app_mismatch": "推送网关不服务这个 App（App 标识或环境不符），暂时无法启用推送。",
+				"gateway_challenge_timeout": "没有按时收到推送网关的验证推送，请检查网络后重试。",
+				"gateway_rejected": "推送网关拒绝了这次登记，请稍后重试。",
+				"gateway_unreachable": "服务器连不上推送网关，请稍后重试。"
+			},
 			"unsupported": "这台设备不支持推送；通知仍会出现在侧栏铃铛里。"
 		},
 		"about": {

@@ -9,6 +9,7 @@ package notify
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/ids"
+	"github.com/Lynricsy/Oryn/internal/pushproto"
 	"github.com/Lynricsy/Oryn/internal/secrets"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/store/db"
@@ -52,7 +54,7 @@ type Broadcaster interface {
 type Config struct {
 	// PublicURL 是主站地址：渠道消息里的线程链接 = PublicURL + "/t/" + 线程 id。
 	PublicURL string
-	// DataDir 存放 vapid.key。
+	// DataDir 存放 vapid.key 与（启用网关时）push-gateway.key。
 	DataDir string
 	// Box 加解密渠道配置（与密钥库同一把主密钥）。
 	Box *secrets.Box
@@ -66,8 +68,8 @@ type Config struct {
 	PollHTTP *http.Client
 	// DoneDelay / InputDelay 是去抖时长（默认 3s / 2s）。
 	DoneDelay, InputDelay time.Duration
-	// FCM 是 FCM 发送参数；FCM.Secret 为空 = 关闭 FCM（不登记、不投递 fcm 订阅）。
-	FCM FCMConfig
+	// Gateway 是官方推送网关参数；Gateway.Origin 为空 = 关闭网关（不登记、不投递 gateway 订阅）。
+	Gateway GatewayConfig
 }
 
 const (
@@ -114,11 +116,13 @@ type Service struct {
 	out  Broadcaster
 	keys *webpush.Keys
 
-	// senders / pushSenders 是发送方注册表：渠道 kind → 构造器；订阅 kind → 构造器（M7 在此注册 apns / fcm）。
+	// senders / pushSenders 是发送方注册表：渠道 kind → 构造器；订阅 kind → 构造器（webpush，启用网关时另有 gateway）。
 	senders     map[string]func(ch db.NotificationChannel, cfg []byte) (Sender, error)
 	pushSenders map[string]func(sub db.PushSubscription) Sender
-	// fcm 缓存 FCM 的 access token。
-	fcm fcmTokenCache
+	// hostKey 是推送网关的主机签名密钥（网关关闭时为 nil）。
+	hostKey ed25519.PrivateKey
+	// gatewayHTTP 是发往网关的客户端：不跟随重定向（签名只覆盖原 origin 与路径）。
+	gatewayHTTP *http.Client
 
 	mu sync.Mutex
 	// timers 是线程 → 该线程的去抖定时器（按 kind / 请求区分）。
@@ -199,15 +203,14 @@ func New(cfg Config, st *store.Store, th Threads, out Broadcaster) (*Service, er
 	if cfg.Box == nil {
 		return nil, errors.New("notify: Config.Box is required")
 	}
-	if cfg.FCM.Secret != "" && cfg.FCM.Secrets == nil {
-		return nil, errors.New("notify: Config.FCM.Secrets is required when FCM.Secret is set")
-	}
 	keys, err := webpush.LoadOrCreateKeys(cfg.DataDir)
 	if err != nil {
 		return nil, err
 	}
 	s := &Service{
 		cfg: cfg, st: st, th: th, out: out, keys: keys,
+		gatewayHTTP: &http.Client{Transport: cfg.HTTP.Transport, Timeout: cfg.HTTP.Timeout,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 		timers:      map[string]map[timerKey]*pendingTimer{},
 		unread:      map[string]bool{},
 		wake:        make(chan struct{}, 1),
@@ -215,10 +218,9 @@ func New(cfg Config, st *store.Store, th Threads, out Broadcaster) (*Service, er
 		pollers:     map[string]*poller{},
 	}
 	s.registerSenders()
-	if s.fcmEnabled() {
-		// 只提示不阻止启动：密钥可以在启动后再用 `oryn secrets set` 写入
-		if _, err := s.fcmAccount(context.Background()); err != nil {
-			slog.Warn("notify: FCM 已配置但服务账号不可用", "secret", cfg.FCM.Secret, "err", err)
+	if s.gatewayEnabled() {
+		if s.hostKey, err = pushproto.LoadOrCreateHostKey(cfg.DataDir); err != nil {
+			return nil, err
 		}
 	}
 	if err := s.loadUnread(context.Background()); err != nil {

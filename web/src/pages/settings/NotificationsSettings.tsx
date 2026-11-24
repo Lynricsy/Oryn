@@ -323,7 +323,11 @@ function DeviceCard() {
 							{others.map((s) => (
 								<li key={s.id}>
 									<ListRow
-										leading={<LeadIcon name="browser" />}
+										leading={
+											<LeadIcon
+												name={s.kind === "gateway" ? "phone" : "browser"}
+											/>
+										}
 										title={
 											<span className="truncate" title={s.userAgent}>
 												{uaSummary(s.userAgent)}
@@ -336,6 +340,15 @@ function DeviceCard() {
 														when: formatRelative(s.createdAt),
 													})}
 												</span>
+												{s.kind === "gateway" && (
+													<span data-testid="push-sub-gateway">
+														{t("notifySettings.device.viaGateway", {
+															host: URL.canParse(s.endpoint)
+																? new URL(s.endpoint).host
+																: s.endpoint,
+														})}
+													</span>
+												)}
 												{s.lastError && (
 													<span className="text-err">{s.lastError}</span>
 												)}

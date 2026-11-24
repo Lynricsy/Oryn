@@ -52,15 +52,15 @@ type OrbDefaults struct {
 	Type     string `yaml:"type"`
 }
 
-// FCM 是 Firebase Cloud Messaging 发送参数（M7，Android `gms` 包的推送回退通道）。
-type FCM struct {
-	// ServiceAccountSecret 是密钥库里存服务账号 JSON 的密钥名（须为 proxy 模式）；空 = 关闭 FCM。
-	ServiceAccountSecret string `yaml:"service_account_secret"`
+// Gateway 是官方推送网关（M28，iOS 包与 Android `gms` 包的推送通道）。
+type Gateway struct {
+	// URL 是网关的 origin（不带路径）：https，或回环主机的 http（本机验收）；空串 = 关闭网关。
+	URL string `yaml:"url"`
 }
 
 // Push 是推送通道配置。
 type Push struct {
-	FCM FCM `yaml:"fcm"`
+	Gateway Gateway `yaml:"gateway"`
 }
 
 // Coordinator 是协调宿主配置（M9 协调宿主分册 H6）。
@@ -322,8 +322,12 @@ func DefaultOrynd() Orynd {
 		},
 		Pool:   Pool{MaxTotal: 2, MaxAge: Duration(12 * time.Hour), ActiveWindow: Duration(72 * time.Hour)},
 		GitHub: GitHub{APIURL: "https://api.github.com", WebURL: "https://github.com"},
+		Push:   Push{Gateway: Gateway{URL: DefaultPushGateway}},
 	}
 }
+
+// DefaultPushGateway 是官方推送网关的 origin（push.gateway.url 的缺省值）。
+const DefaultPushGateway = "https://push.oryn.best"
 
 // LoadOrynd 读取文件，未出现的键保持默认值；data_dir 相对路径按当前工作目录解析。
 func LoadOrynd(path string) (Orynd, error) {
@@ -397,8 +401,8 @@ func (c Orynd) Validate() error {
 	if c.Idle.AgentIdle <= 0 || c.Idle.UserIdle <= 0 || c.Idle.StopAfterFrozen <= 0 {
 		errs = append(errs, errors.New("idle 的各项时长必须为正"))
 	}
-	if s := c.Push.FCM.ServiceAccountSecret; s != "" && !secretNameRe.MatchString(s) {
-		errs = append(errs, fmt.Errorf("push.fcm.service_account_secret %q 不是合法的密钥名", s))
+	if err := validatePushGatewayURL(c.Push.Gateway.URL); err != nil {
+		errs = append(errs, err)
 	}
 	if p := c.Coordinator.EgressPort; p < 1 || p > 65535 {
 		errs = append(errs, fmt.Errorf("coordinator.egress_port %d 必须在 1–65535 之间", p))
@@ -467,8 +471,29 @@ func (c Orynd) Validate() error {
 	return errors.Join(errs...)
 }
 
-// secretNameRe 与密钥库的 proxy 模式密钥名规则一致（internal/secrets.ValidName）。
-var secretNameRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_./-]{0,199}$`)
+// validatePushGatewayURL 校验 push.gateway.url：空串 = 关闭；否则必须是不带路径、查询串与 userinfo 的 origin，
+// 且为 https，或回环主机（localhost / 回环 IP）的 http。
+func validatePushGatewayURL(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	bad := fmt.Errorf("push.gateway.url %q 必须是不带路径的 origin（https，或回环主机的 http）", raw)
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.Opaque != "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" ||
+		strings.HasSuffix(raw, "/") || u.String() != raw {
+		return bad
+	}
+	switch u.Scheme {
+	case "https":
+		return nil
+	case "http":
+		host := u.Hostname()
+		if ip := net.ParseIP(host); host == "localhost" || (ip != nil && ip.IsLoopback()) {
+			return nil
+		}
+	}
+	return bad
+}
 
 // portalDomainRe 是 portal_domain 允许的形态：小写主机名，不带端口与尾点。
 var portalDomainRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)

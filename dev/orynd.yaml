@@ -4,9 +4,8 @@ portal_domain: "localhost"   # portal 形如 http://t-<短码>-p<端口>.localho
 data_dir: "./.dev/data"
 log_level: "debug"
 idle: { agent_idle: "30s", user_idle: "30s", stop_after_frozen: "24h", wake_on_focus: true }
-# FCM（M7，Android gms 包）：服务账号 JSON 存在密钥库里——./bin/oryn secrets set fcm/service-account < .dev/m7/fcm-service-account.json
-# 密钥不存在时只打印警告，FCM 订阅返回 409 fcm_unavailable，UnifiedPush 不受影响
-push: { fcm: { service_account_secret: "fcm/service-account" } }
+# 推送（M28）：iOS 与 Android gms 包经官方推送网关（push.gateway.url，缺省 https://push.oryn.best）；
+# 本机验收网关时改成 push: { gateway: { url: "http://localhost:7700" } }，写空串 "" 关闭网关。
 # 协调宿主（M9）：本机以 root 运行，沙箱降权到自动创建的专用账号 oryn-coord-<fnv32a(dir)>（不写 user 即自动）；
 # 仓库在 /root 下（该账号进不去），所以目录放在 /var/tmp；omp 用 scripts/fetch-core.sh 取到的那份
 coordinator: { omp_path: "build/core/x64/omp", dir: "/var/tmp/oryn-dev-coordinator" }

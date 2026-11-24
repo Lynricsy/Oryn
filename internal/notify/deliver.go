@@ -82,8 +82,8 @@ func (s *Service) registerSenders() {
 	s.pushSenders = map[string]func(db.PushSubscription) Sender{
 		"webpush": s.webpushSender,
 	}
-	if s.fcmEnabled() {
-		s.pushSenders["fcm"] = s.fcmSender
+	if s.gatewayEnabled() {
+		s.pushSenders[kindGateway] = s.gatewaySender
 	}
 }
 
@@ -286,11 +286,17 @@ func httpResult(resp *http.Response, body []byte) Result {
 	switch {
 	case resp.StatusCode == http.StatusRequestTimeout, resp.StatusCode == http.StatusTooManyRequests, resp.StatusCode >= 500:
 		r.Retry = true
-		if sec, err := strconv.Atoi(strings.TrimSpace(resp.Header.Get("Retry-After"))); err == nil && sec > 0 {
-			r.RetryAfter = time.Duration(sec) * time.Second
-		}
+		r.RetryAfter = retryAfter(resp.Header)
 	}
 	return r
+}
+
+// retryAfter 读取 Retry-After 的秒数（HTTP 日期形式与非法值按 0 处理）。
+func retryAfter(h http.Header) time.Duration {
+	if sec, err := strconv.Atoi(strings.TrimSpace(h.Get("Retry-After"))); err == nil && sec > 0 {
+		return time.Duration(sec) * time.Second
+	}
+	return 0
 }
 
 // netResult 是请求未得到响应（网络错误 / 超时）的结果：可重试。错误里的 URL 已脱敏（见 redactURLError）。

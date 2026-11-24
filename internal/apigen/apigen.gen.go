@@ -2062,9 +2062,8 @@ func (e NotificationDeliveryStatus) Valid() bool {
 
 // Defines values for NotificationDeliveryTarget.
 const (
-	NotificationDeliveryTargetApns     NotificationDeliveryTarget = "apns"
 	NotificationDeliveryTargetBark     NotificationDeliveryTarget = "bark"
-	NotificationDeliveryTargetFcm      NotificationDeliveryTarget = "fcm"
+	NotificationDeliveryTargetGateway  NotificationDeliveryTarget = "gateway"
 	NotificationDeliveryTargetNtfy     NotificationDeliveryTarget = "ntfy"
 	NotificationDeliveryTargetTelegram NotificationDeliveryTarget = "telegram"
 	NotificationDeliveryTargetWebhook  NotificationDeliveryTarget = "webhook"
@@ -2074,11 +2073,9 @@ const (
 // Valid indicates whether the value is a known member of the NotificationDeliveryTarget enum.
 func (e NotificationDeliveryTarget) Valid() bool {
 	switch e {
-	case NotificationDeliveryTargetApns:
-		return true
 	case NotificationDeliveryTargetBark:
 		return true
-	case NotificationDeliveryTargetFcm:
+	case NotificationDeliveryTargetGateway:
 		return true
 	case NotificationDeliveryTargetNtfy:
 		return true
@@ -3010,14 +3007,14 @@ func (e ProviderFsRequestOp) Valid() bool {
 
 // Defines values for PushSubscriptionInputKind.
 const (
-	PushSubscriptionInputKindFcm     PushSubscriptionInputKind = "fcm"
+	PushSubscriptionInputKindGateway PushSubscriptionInputKind = "gateway"
 	PushSubscriptionInputKindWebpush PushSubscriptionInputKind = "webpush"
 )
 
 // Valid indicates whether the value is a known member of the PushSubscriptionInputKind enum.
 func (e PushSubscriptionInputKind) Valid() bool {
 	switch e {
-	case PushSubscriptionInputKindFcm:
+	case PushSubscriptionInputKindGateway:
 		return true
 	case PushSubscriptionInputKindWebpush:
 		return true
@@ -3028,17 +3025,14 @@ func (e PushSubscriptionInputKind) Valid() bool {
 
 // Defines values for PushSubscriptionKind.
 const (
-	PushSubscriptionKindApns    PushSubscriptionKind = "apns"
-	PushSubscriptionKindFcm     PushSubscriptionKind = "fcm"
+	PushSubscriptionKindGateway PushSubscriptionKind = "gateway"
 	PushSubscriptionKindWebpush PushSubscriptionKind = "webpush"
 )
 
 // Valid indicates whether the value is a known member of the PushSubscriptionKind enum.
 func (e PushSubscriptionKind) Valid() bool {
 	switch e {
-	case PushSubscriptionKindApns:
-		return true
-	case PushSubscriptionKindFcm:
+	case PushSubscriptionKindGateway:
 		return true
 	case PushSubscriptionKindWebpush:
 		return true
@@ -8784,14 +8778,14 @@ type NotificationDelivery struct {
 	Error  *string                    `json:"error,omitempty"`
 	Status NotificationDeliveryStatus `json:"status"`
 
-	// Target 投递目标（`apns` / `fcm` 为 M7 预留）
+	// Target 投递目标（`gateway` 为官方推送网关，M28）
 	Target NotificationDeliveryTarget `json:"target"`
 }
 
 // NotificationDeliveryStatus defines model for NotificationDeliveryStatus.
 type NotificationDeliveryStatus string
 
-// NotificationDeliveryTarget 投递目标（`apns` / `fcm` 为 M7 预留）
+// NotificationDeliveryTarget 投递目标（`gateway` 为官方推送网关，M28）
 type NotificationDeliveryTarget string
 
 // NotificationID `ntf_<ulid>`
@@ -10949,6 +10943,22 @@ type PublishedFile struct {
 // PublishedFileID `pub_<ulid>`
 type PublishedFileID = string
 
+// PushGateway defines model for PushGateway.
+type PushGateway struct {
+	// HostKey 本机主机公钥：base64url（无填充）的 32 字节 Ed25519 公钥
+	HostKey string `json:"hostKey"`
+
+	// Origin 网关 origin（`push.gateway.url`，不带路径）
+	//
+	// Example: https://push.oryn.best
+	Origin string `json:"origin"`
+
+	// V 接口版本，固定为 1
+	//
+	// Example: 1
+	V int `json:"v"`
+}
+
 // PushSubscription defines model for PushSubscription.
 type PushSubscription struct {
 	// CreatedAt UTC 毫秒时间戳
@@ -10958,7 +10968,7 @@ type PushSubscription struct {
 	// ID `psub_<ulid>`
 	ID PushSubscriptionID `json:"id"`
 
-	// Kind `fcm` 自 M7 起使用（`endpoint` 存 FCM 注册令牌）；`apns` 预留
+	// Kind `webpush` 为 Web Push / UnifiedPush；`gateway` 为官方推送网关（M28，`endpoint` 为 `<网关 origin>/v1/grants/<grant>`）
 	Kind      PushSubscriptionKind `json:"kind"`
 	LastError *string              `json:"lastError,omitempty"`
 
@@ -10972,14 +10982,17 @@ type PushSubscriptionID = string
 
 // PushSubscriptionInput 两种形态，按 `kind` 区分（缺省 `webpush`）：
 // - `webpush`：浏览器 `PushSubscription.toJSON()` 的子集，须带 `endpoint` 与 `keys`（Android 的 UnifiedPush 同此形态）；
-// - `fcm`：带 `token`（Android `gms` 包的 FCM 注册令牌）与 `keys`（载荷加密用，必填）。
+// - `gateway`：带 `gateway`、`grant` 与 `keys`（载荷加密用，必填），不得带 `endpoint`（M28，iOS 包与 Android `gms` 包）。
 type PushSubscriptionInput struct {
-	Endpoint *string                    `json:"endpoint,omitempty"`
-	Keys     *PushSubscriptionKeys      `json:"keys,omitempty"`
-	Kind     *PushSubscriptionInputKind `json:"kind,omitempty"`
+	Endpoint *string `json:"endpoint,omitempty"`
 
-	// Token FCM 注册令牌（`kind: fcm` 时必填）
-	Token *string `json:"token,omitempty"`
+	// Gateway 网关 origin（`kind: gateway` 时必填，须等于 `GET /api/v1/push/gateway` 的 `origin`）
+	Gateway *string `json:"gateway,omitempty"`
+
+	// Grant 网关授权 id（`kind: gateway` 时必填）
+	Grant *string                    `json:"grant,omitempty"`
+	Keys  *PushSubscriptionKeys      `json:"keys,omitempty"`
+	Kind  *PushSubscriptionInputKind `json:"kind,omitempty"`
 }
 
 // PushSubscriptionInputKind defines model for PushSubscriptionInput.Kind.
@@ -10994,7 +11007,7 @@ type PushSubscriptionKeys struct {
 	P256Dh string `json:"p256dh"`
 }
 
-// PushSubscriptionKind `fcm` 自 M7 起使用（`endpoint` 存 FCM 注册令牌）；`apns` 预留
+// PushSubscriptionKind `webpush` 为 Web Push / UnifiedPush；`gateway` 为官方推送网关（M28，`endpoint` 为 `<网关 origin>/v1/grants/<grant>`）
 type PushSubscriptionKind string
 
 // PushSubscriptionList defines model for PushSubscriptionList.
@@ -18036,10 +18049,13 @@ type ServerInterface interface {
 	// RevokePublishedFile 撤回已发布的文件（公开 URL 立即 404；附件本身保留）
 	// (DELETE /api/v1/published-files/{id})
 	RevokePublishedFile(w http.ResponseWriter, r *http.Request, id PublishedFileIDPath)
+	// GetPushGateway 官方推送网关的 origin 与本机主机公钥（M28；App 据此向网关申请授权）
+	// (GET /api/v1/push/gateway)
+	GetPushGateway(w http.ResponseWriter, r *http.Request)
 	// ListPushSubscriptions 推送订阅（所有浏览器 / 设备）
 	// (GET /api/v1/push/subscriptions)
 	ListPushSubscriptions(w http.ResponseWriter, r *http.Request)
-	// CreatePushSubscription 登记推送订阅（Web Push / UnifiedPush 按 `endpoint` upsert，FCM 按 `token` upsert；`userAgent` 取请求头；订阅归属当前网页会话或设备）
+	// CreatePushSubscription 登记推送订阅（Web Push / UnifiedPush 按 `endpoint` upsert，网关订阅按 `<gateway>/v1/grants/<grant>` upsert；`userAgent` 取请求头；订阅归属当前网页会话或设备）
 	// (POST /api/v1/push/subscriptions)
 	CreatePushSubscription(w http.ResponseWriter, r *http.Request)
 	// DeletePushSubscription 删除推送订阅
@@ -19977,13 +19993,19 @@ func (_ Unimplemented) RevokePublishedFile(w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// GetPushGateway 官方推送网关的 origin 与本机主机公钥（M28；App 据此向网关申请授权）
+// (GET /api/v1/push/gateway)
+func (_ Unimplemented) GetPushGateway(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // ListPushSubscriptions 推送订阅（所有浏览器 / 设备）
 // (GET /api/v1/push/subscriptions)
 func (_ Unimplemented) ListPushSubscriptions(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// CreatePushSubscription 登记推送订阅（Web Push / UnifiedPush 按 `endpoint` upsert，FCM 按 `token` upsert；`userAgent` 取请求头；订阅归属当前网页会话或设备）
+// CreatePushSubscription 登记推送订阅（Web Push / UnifiedPush 按 `endpoint` upsert，网关订阅按 `<gateway>/v1/grants/<grant>` upsert；`userAgent` 取请求头；订阅归属当前网页会话或设备）
 // (POST /api/v1/push/subscriptions)
 func (_ Unimplemented) CreatePushSubscription(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -28780,6 +28802,20 @@ func (siw *ServerInterfaceWrapper) RevokePublishedFile(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
+// GetPushGateway operation middleware
+func (siw *ServerInterfaceWrapper) GetPushGateway(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPushGateway(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListPushSubscriptions operation middleware
 func (siw *ServerInterfaceWrapper) ListPushSubscriptions(w http.ResponseWriter, r *http.Request) {
 
@@ -32618,6 +32654,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/push/vapid-key", wrapper.GetVapidKey)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/push/gateway", wrapper.GetPushGateway)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/push/subscriptions", wrapper.ListPushSubscriptions)

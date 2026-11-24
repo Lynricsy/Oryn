@@ -60,7 +60,7 @@ func systemTag(kind string) string {
 }
 
 // pushPayloadLimit 同 pushPayload，但序列化后超过 limit 字节时先去掉按钮（正文回到普通摘要）、再去掉正文
-// （FCM 的密文要经 base64 放进 4096 字节的 data，上限更小）。按钮只与完整的问题一起出现，绝不配截断的正文。
+// （网关路径的密文要经 base64 放进 FCM 4096 字节的 data，上限更小）。按钮只与完整的问题一起出现，绝不配截断的正文。
 func pushPayloadLimit(m Message, limit int) ([]byte, error) {
 	tag, path := pushTag(m)
 	if m.Withdraw {
@@ -164,7 +164,7 @@ func errPushInvalid(msg string) error {
 	return &Error{Status: http.StatusBadRequest, Code: "push_invalid", Message: msg}
 }
 
-// parsePushKeys 校验 RFC 8291 的接收端密钥（Web Push / UnifiedPush / FCM 共用）：p256dh 须是 65 字节未压缩 P-256 点、
+// parsePushKeys 校验 RFC 8291 的接收端密钥（Web Push / UnifiedPush / 网关共用）：p256dh 须是 65 字节未压缩 P-256 点、
 // auth 须是 16 字节；返回规范化（无填充 base64url）的两个值。
 func parsePushKeys(k *apigen.PushSubscriptionKeys) (p256dh, auth string, err error) {
 	p, err := webpush.DecodeKey(k.P256Dh)
@@ -182,17 +182,18 @@ func parsePushKeys(k *apigen.PushSubscriptionKeys) (p256dh, auth string, err err
 	return enc(p), enc(a), nil
 }
 
-// CreatePushSubscription 登记推送订阅：`kind: fcm` 见 createFCMSubscription；其余按 endpoint upsert 一条 Web Push 订阅。
+// CreatePushSubscription 登记推送订阅：`kind: gateway` 见 createGatewaySubscription；其余按 endpoint upsert 一条 Web Push 订阅。
 // 端点须是 https（回环主机允许 http）；p256dh 须是 65 字节未压缩点，auth 须是 16 字节。
 func (s *Service) CreatePushSubscription(ctx context.Context, in apigen.PushSubscriptionInput, owner Owner, userAgent string) (apigen.PushSubscription, error) {
-	if in.Kind != nil && *in.Kind == apigen.PushSubscriptionInputKindFcm {
-		return s.createFCMSubscription(ctx, in, owner, userAgent)
-	}
 	if in.Kind != nil && !in.Kind.Valid() {
+		// 含 M28 删除的 FCM 直发 kind（旧版 App 的登记形态）
 		return apigen.PushSubscription{}, errPushInvalid("unknown kind")
 	}
-	if in.Token != nil {
-		return apigen.PushSubscription{}, errPushInvalid("token is only valid with kind fcm")
+	if in.Kind != nil && *in.Kind == apigen.PushSubscriptionInputKindGateway {
+		return s.createGatewaySubscription(ctx, in, owner, userAgent)
+	}
+	if in.Gateway != nil || in.Grant != nil {
+		return apigen.PushSubscription{}, errPushInvalid("gateway and grant are only valid with kind gateway")
 	}
 	if in.Endpoint == nil || in.Keys == nil {
 		return apigen.PushSubscription{}, errPushInvalid("endpoint and keys are required")
@@ -214,6 +215,9 @@ func (s *Service) CreatePushSubscription(ctx context.Context, in apigen.PushSubs
 	}
 	p256dh, auth, err := parsePushKeys(in.Keys)
 	if err != nil {
+		return apigen.PushSubscription{}, err
+	}
+	if err := s.checkEndpointKind(ctx, *in.Endpoint, "webpush"); err != nil {
 		return apigen.PushSubscription{}, err
 	}
 	row, err := s.st.Q.UpsertPushSubscription(ctx, db.UpsertPushSubscriptionParams{

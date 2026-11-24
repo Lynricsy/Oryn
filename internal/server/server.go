@@ -332,7 +332,7 @@ func (s *Server) init(ctx context.Context) error {
 	s.Artifacts.RegisterOrbMethod(s.Orbs, s.LibrarySync)
 	s.Notify, err = notify.New(notify.Config{
 		PublicURL: cfg.PublicURL, DataDir: cfg.DataDir, Box: box, DoneDelay: notifyDoneDelay, InputDelay: notifyInputDelay,
-		FCM: notify.FCMConfig{Secret: cfg.Push.FCM.ServiceAccountSecret, Secrets: s.Vault},
+		Gateway: notify.GatewayConfig{Origin: cfg.Push.Gateway.URL},
 	}, s.Store, s.Threads, s.Hub)
 	if err != nil {
 		return err

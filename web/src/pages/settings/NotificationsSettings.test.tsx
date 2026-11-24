@@ -407,6 +407,13 @@ describe("NotificationsSettings 此设备", () => {
 		);
 	});
 
+	it("官方推送网关的订阅：手机图标行显示网关主机名", async () => {
+		mount();
+		expect(await screen.findByTestId("push-sub-gateway")).toHaveTextContent(
+			"经推送网关 push.oryn.best",
+		);
+	});
+
 	it("不是安全上下文时只显示说明", async () => {
 		vi.stubGlobal("isSecureContext", false);
 		push.pushSupported.mockReturnValue(false);
@@ -478,6 +485,7 @@ describe("NotificationsSettings 此设备（移动壳，M7）", () => {
 			setChrome: vi.fn(),
 			openNotificationSettings: vi.fn(),
 			changeServer: vi.fn(),
+			pushTransport: false,
 			sink: null,
 			tabBar: null,
 			header: null,

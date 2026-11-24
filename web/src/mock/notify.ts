@@ -122,6 +122,14 @@ function seed(): State {
 			createdAt: NOW - 6 * 86_400_000,
 			lastSuccessAt: NOW - 4 * MIN,
 		},
+		{
+			id: "psub_01JD000000000000000000002",
+			kind: "gateway",
+			endpoint: "https://push.oryn.best/v1/grants/Q2xhdWRlT3J5bk1vY2tHcg",
+			userAgent: "OrynMobile/0.9.3 (ios)",
+			createdAt: NOW - 2 * 86_400_000,
+			lastSuccessAt: NOW - 40 * MIN,
+		},
 	];
 	const notifications: Notification[] = [
 		{

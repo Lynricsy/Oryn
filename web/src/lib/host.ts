@@ -97,15 +97,22 @@ export interface DesktopHost {
 	changeServer(): void;
 }
 
-/** 推送状态（壳归并后的视图，M7 计划 2.7）。 */
+/**
+ * 推送状态（壳归并后的视图，M7 计划 2.7）。bridge ≥ 9 的壳不再报 `unsupported`；旧壳仍可能报，页面的默认分支兜底。
+ */
 export type MobilePushState =
-	| "unsupported"
 	| "disabled"
 	| "permission_denied"
 	| "no_distributor"
 	| "registering"
 	| "active"
 	| "error";
+
+/** 推送通道：UnifiedPush，或经官方推送网关的 FCM（Android gms 包）/ APNs（iOS）。 */
+export type MobilePushChannel = "unifiedpush" | "fcm" | "apns";
+
+/** `enablePush` 的通道选择（bridge ≥ 9）：`default` = 本包的默认通道；`unifiedpush` = 手动改用 UnifiedPush。 */
+export type MobilePushTransport = "default" | "unifiedpush";
 
 /** 四角半径（CSS px，取不到为 0）。 */
 export interface CornerRadii {
@@ -138,9 +145,12 @@ export interface MobileInfo extends Partial<DeviceGeometry> {
 	push: {
 		state: MobilePushState;
 		/** 当前推送通道；未启用时缺省。 */
-		channel?: "unifiedpush" | "fcm" | null;
+		channel?: MobilePushChannel | null;
+		/** 可切换到的另一通道（只有 gms 包有）。 */
+		alt?: "unifiedpush" | "fcm" | null;
 		distributor?: string | null;
 		endpointHost?: string | null;
+		/** 错误码（`gateway_*` 见 docs/protocol.md「官方推送网关」）或原生 / orynd 原样透传的错误。 */
 		error?: string | null;
 	};
 }
@@ -350,13 +360,16 @@ export interface AppIconHost {
 
 export interface MobileHost {
 	info(): Promise<MobileInfo>;
-	enablePush(): Promise<MobileInfo>;
+	/** 启用推送；`transport` 只在 `pushTransport` 为真（bridge ≥ 9）时传给壳，旧壳一律按缺省通道。 */
+	enablePush(transport?: MobilePushTransport): Promise<MobileInfo>;
 	disablePush(): Promise<MobileInfo>;
 	openExternal(url: string): void;
 	shareAck(id: string): void;
 	setChrome(c: { dark: boolean; color: string }): void;
 	openNotificationSettings(): void;
 	changeServer(): void;
+	/** 壳能按 `enablePush(transport)` 切换推送通道（bridge ≥ 9）。 */
+	pushTransport: boolean;
 	/** 下沉侧栏的根滚动跟随（iOS 且 bridge ≥ 8）；其它情况为 null，卡片用网页手势。 */
 	sink: NativeSinkHost | null;
 	/** 原生底栏（iOS 且 bridge ≥ 8）；其它情况为 null，用网页底栏。 */
@@ -395,8 +408,8 @@ export interface Host {
 	mobile: MobileHost | null;
 }
 
-/** 本页面实现的宿主协议版本（与壳 `host_ready` 返回的 `bridge` 对应；3 = 桌面自绘标题栏；4 = iOS 原生底栏；5 = iOS 原生页头；6 = iOS 可替换图标；7 = 原生底栏改系统 UITabBar；8 = 下沉侧栏改由根滚动驱动、原生按 contentOffset 跟随，原生底栏浮在 WebView 之上、右缘裁到卡片左缘，页头可只有侧栏钮）。 */
-export const BRIDGE = 8;
+/** 本页面实现的宿主协议版本（与壳 `host_ready` 返回的 `bridge` 对应；3 = 桌面自绘标题栏；4 = iOS 原生底栏；5 = iOS 原生页头；6 = iOS 可替换图标；7 = 原生底栏改系统 UITabBar；8 = 下沉侧栏改由根滚动驱动、原生按 contentOffset 跟随，原生底栏浮在 WebView 之上、右缘裁到卡片左缘，页头可只有侧栏钮；9 = 官方推送网关：`host_push_enable` 可带 `transport`，推送状态带 `alt`、通道含 `apns`、不再报 `unsupported`）。 */
+export const BRIDGE = 9;
 /** 壳向页面推送事件用的 DOM 事件名。 */
 export const HOST_EVENT = "oryn:host";
 
@@ -592,6 +605,7 @@ function mobileHost(
 	) => Promise<T | undefined>,
 	native: boolean,
 	appIcon: boolean,
+	pushTransport: boolean,
 ): MobileHost {
 	const openExternal = (url: string) => {
 		void call("host_open_external", { url });
@@ -623,7 +637,10 @@ function mobileHost(
 	}) as Window["open"];
 	return {
 		info: () => invoke<MobileInfo>("host_mobile_info"),
-		enablePush: () => invoke<MobileInfo>("host_push_enable"),
+		enablePush: (transport) =>
+			pushTransport && transport
+				? invoke<MobileInfo>("host_push_enable", { transport })
+				: invoke<MobileInfo>("host_push_enable"),
 		disablePush: () => invoke<MobileInfo>("host_push_disable"),
 		openExternal,
 		shareAck: (id) => {
@@ -638,6 +655,7 @@ function mobileHost(
 		changeServer: () => {
 			void call("host_change_server");
 		},
+		pushTransport,
 		// 用 invoke 不用 call：拒绝要交给调用方退回网页手势 / 底栏 / 页头
 		sink: native
 			? {
@@ -784,6 +802,7 @@ function tauriHost(win: Window, invoke: Invoke): Host {
 					call,
 					platform === "ios" && (meta?.bridge ?? 0) >= 8,
 					platform === "ios" && (meta?.bridge ?? 0) >= 6,
+					(meta?.bridge ?? 0) >= 9,
 				)
 			: null,
 		desktop: isMobile

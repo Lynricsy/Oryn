@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,6 +21,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/config"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/notify"
+	"github.com/Lynricsy/Oryn/internal/pushproto"
 	"github.com/Lynricsy/Oryn/internal/secrets"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/store/db"
@@ -44,6 +46,10 @@ type notifyEnv struct {
 func newNotifyEnv(t *testing.T) *notifyEnv { return newNotifyEnvWith(t, nil) }
 
 func newNotifyEnvWith(t *testing.T, th notify.Threads) *notifyEnv {
+	return newNotifyEnvGateway(t, th, notify.GatewayConfig{})
+}
+
+func newNotifyEnvGateway(t *testing.T, th notify.Threads, gw notify.GatewayConfig) *notifyEnv {
 	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -52,7 +58,7 @@ func newNotifyEnvWith(t *testing.T, th notify.Threads) *notifyEnv {
 	t.Cleanup(func() { _ = st.Close() })
 	box, err := secrets.LoadOrCreate(dir)
 	require.NoError(t, err)
-	svc, err := notify.New(notify.Config{PublicURL: h2PublicURL, DataDir: dir, Box: box}, st, th, nopBroadcaster{})
+	svc, err := notify.New(notify.Config{PublicURL: h2PublicURL, DataDir: dir, Box: box, Gateway: gw}, st, th, nopBroadcaster{})
 	require.NoError(t, err)
 	cfg := config.DefaultOrynd()
 	cfg.PublicURL, cfg.DataDir = h2PublicURL, dir
@@ -164,21 +170,78 @@ func TestNotificationsAPI(t *testing.T) {
 	st, body = e.do("POST", "/api/v1/push/subscriptions", map[string]any{"endpoint": "http://push.example/x", "keys": in["keys"]})
 	assert.Equal(t, 400, st)
 	assert.Equal(t, "push_invalid", errCode(body))
-	// kind fcm 不带 keys（旧版 App 的形态）：400 push_invalid，先于 FCM 是否配置的检查
-	st, body = e.do("POST", "/api/v1/push/subscriptions", map[string]any{"kind": "fcm", "token": "reg-token"})
+	// 已删除的 kind fcm（M28 前的 App）：400 push_invalid
+	st, body = e.do("POST", "/api/v1/push/subscriptions", map[string]any{"kind": "fcm", "token": "reg-token", "keys": in["keys"]})
 	assert.Equal(t, 400, st)
 	assert.Equal(t, "push_invalid", errCode(body))
-	assert.Contains(t, string(body), "kind fcm requires keys")
-	// 服务器未配置 FCM：409 fcm_unavailable
-	st, body = e.do("POST", "/api/v1/push/subscriptions", map[string]any{"kind": "fcm", "token": "reg-token", "keys": in["keys"]})
+	// 网关关闭：网关信息 404、登记 409，均为 gateway_disabled
+	st, body = e.do("GET", "/api/v1/push/gateway", nil)
+	assert.Equal(t, 404, st)
+	assert.Equal(t, "gateway_disabled", errCode(body))
+	st, body = e.do("POST", "/api/v1/push/subscriptions", map[string]any{"kind": "gateway", "gateway": "https://push.oryn.best",
+		"grant": "AbCdEfGhIjKlMnOpQrSt_-", "keys": in["keys"]})
 	assert.Equal(t, 409, st)
-	assert.Equal(t, "fcm_unavailable", errCode(body))
+	assert.Equal(t, "gateway_disabled", errCode(body))
 
 	st, body = e.do("GET", "/api/v1/push/subscriptions", nil)
 	require.Equal(t, 200, st)
 	assert.Contains(t, string(body), sub.ID)
 	st, _ = e.do("DELETE", "/api/v1/push/subscriptions/"+sub.ID, nil)
 	assert.Equal(t, 204, st)
+}
+
+// M28：启用网关时 GET push/gateway 给出 origin 与主机公钥；kind gateway 登记经网关 verify 后写入，订阅归属设备。
+func TestPushGatewayAPI(t *testing.T) {
+	var verified []pushproto.Signer
+	var mu sync.Mutex
+	var origin string
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := pushproto.ReadBody(r)
+		require.NoError(t, err)
+		signer, err := pushproto.Verify(r, origin, body, time.Now())
+		if err != nil || r.URL.Path != pushproto.PathVerify {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		mu.Lock()
+		verified = append(verified, signer)
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(gw.Close)
+	origin = gw.URL
+	e := newNotifyEnvGateway(t, nil, notify.GatewayConfig{Origin: origin})
+
+	st, body := e.do("GET", "/api/v1/push/gateway", nil)
+	require.Equal(t, 200, st, string(body))
+	var info apigen.PushGateway
+	require.NoError(t, json.Unmarshal(body, &info))
+	assert.Equal(t, 1, info.V)
+	assert.Equal(t, origin, info.Origin)
+	_, err := pushproto.ParseHostKey(info.HostKey)
+	require.NoError(t, err)
+
+	c, err := webpushtest.NewClient("gateway:")
+	require.NoError(t, err)
+	keys := map[string]string{"p256dh": c.Sub.P256dh, "auth": c.Sub.Auth}
+	const grant = "AbCdEfGhIjKlMnOpQrSt_-"
+	st, body = e.do("POST", "/api/v1/push/subscriptions", map[string]any{"kind": "gateway", "gateway": "https://push.oryn.best", "grant": grant, "keys": keys})
+	assert.Equal(t, 409, st)
+	assert.Equal(t, "gateway_changed", errCode(body))
+	st, body = e.do("POST", "/api/v1/push/subscriptions", map[string]any{"kind": "gateway", "gateway": origin, "grant": grant, "keys": keys})
+	require.Equal(t, 201, st, string(body))
+	var sub apigen.PushSubscription
+	require.NoError(t, json.Unmarshal(body, &sub))
+	assert.Equal(t, apigen.PushSubscriptionKindGateway, sub.Kind)
+	assert.Equal(t, origin+"/v1/grants/"+grant, sub.Endpoint)
+	row, err := e.st.Q.GetPushSubscriptionByEndpoint(context.Background(), sub.Endpoint)
+	require.NoError(t, err)
+	require.NotNil(t, row.DeviceID)
+	assert.Equal(t, e.devID, *row.DeviceID)
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, verified, 1)
+	assert.Equal(t, info.HostKey, verified[0].Key)
 }
 
 // App 补拉被 FCM 丢弃的推送：最近 50 条都已读时，较早仍待回答的 input 不能被挤出窗口。

@@ -382,6 +382,25 @@ describe("移动壳（M7）", () => {
 		]);
 	});
 
+	it("enablePush(transport)：只在壳 bridge ≥ 9 时带 transport；旧壳一律不带", async () => {
+		const f = mobileWindow({ bridge: 9 });
+		const m = createHost(f.win).mobile;
+		expect(m?.pushTransport).toBe(true);
+		await m?.enablePush("unifiedpush");
+		await m?.enablePush("default");
+		await m?.enablePush();
+		const old = mobileWindow({ bridge: 8 });
+		const o = createHost(old.win).mobile;
+		expect(o?.pushTransport).toBe(false);
+		await o?.enablePush("unifiedpush");
+		expect(f.invoke.mock.calls).toEqual([
+			["host_push_enable", { transport: "unifiedpush" }],
+			["host_push_enable", { transport: "default" }],
+			["host_push_enable"],
+		]);
+		expect(old.invoke.mock.calls).toEqual([["host_push_enable"]]);
+	});
+
 	describe("下沉侧栏与原生底栏（bridge 8）", () => {
 		const spec: NativeTabBarSpec = {
 			items: [{ id: "threads", label: "线程", icon: { symbol: "folder" } }],
@@ -477,8 +496,8 @@ describe("移动壳（M7）", () => {
 		const show: NativeHeaderShow = { alpha: 1, ms: 120 };
 		const menu: NativeHeaderMenu = { open: "title", page: "env" };
 
-		it("本页宿主协议版本为 8", () => {
-			expect(BRIDGE).toBe(8);
+		it("本页宿主协议版本为 9（官方推送网关）", () => {
+			expect(BRIDGE).toBe(9);
 		});
 
 		it("ios + bridge 8 → header 非空；set / show / menu 的参数形状（show 只有 alpha 与 ms）", async () => {

@@ -470,8 +470,10 @@ func TestPushSubscriptionValidation(t *testing.T) {
 		{Endpoint: new("https://push.example/x"), Keys: &apigen.PushSubscriptionKeys{P256Dh: c.Sub.P256dh, Auth: "AAAA"}},
 		{Endpoint: new("https://push.example/x")},
 		{Keys: &keys},
-		{Endpoint: new("https://push.example/x"), Keys: &keys, Token: new("tok")},
+		{Endpoint: new("https://push.example/x"), Keys: &keys, Grant: new("AbCdEfGhIjKlMnOpQrSt_-")},
+		{Endpoint: new("https://push.example/x"), Keys: &keys, Gateway: new("https://push.oryn.best")},
 		{Kind: new(apigen.PushSubscriptionInputKind("apns")), Endpoint: new("https://push.example/x"), Keys: &keys},
+		{Kind: new(apigen.PushSubscriptionInputKind("fcm")), Endpoint: new("https://push.example/x"), Keys: &keys},
 	}
 	for i, in := range bad {
 		_, err := f.s.CreatePushSubscription(f.ctx, in, Owner{}, "")

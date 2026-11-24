@@ -41,24 +41,59 @@ func TestValidatePortalDomain(t *testing.T) {
 	}
 }
 
-func TestValidateFCMSecretName(t *testing.T) {
-	for name, ok := range map[string]bool{
-		"":                    true, // 未配置 = 关闭 FCM
-		"fcm/service-account": true,
-		"FCM_SA.json":         true,
-		"/fcm":                false,
-		"fcm sa":              false,
-		"fcm\n":               false,
+// M28：push.gateway.url 只能是不带路径的 origin（https，或回环主机的 http）；空串关闭。
+func TestValidatePushGatewayURL(t *testing.T) {
+	assert.Equal(t, "https://push.oryn.best", DefaultOrynd().Push.Gateway.URL, "缺省为官方网关")
+	for raw, ok := range map[string]bool{
+		"":                           true, // 关闭网关
+		"https://push.oryn.best":     true,
+		"https://push.example:8443":  true,
+		"http://localhost:7700":      true,
+		"http://127.0.0.1:7700":      true,
+		"http://[::1]:7700":          true,
+		"http://push.example":        false,
+		"http://10.0.0.1:7700":       false,
+		"https://push.oryn.best/":    false,
+		"https://push.oryn.best/v1":  false,
+		"https://push.oryn.best?x=1": false,
+		"https://push.oryn.best#x":   false,
+		"https://u:p@push.oryn.best": false,
+		"ftp://push.oryn.best":       false,
+		"push.oryn.best":             false,
+		"https://":                   false,
 	} {
 		cfg := DefaultOrynd()
 		cfg.PublicURL = "https://oryn.example.com"
-		cfg.Push.FCM.ServiceAccountSecret = name
+		cfg.Push.Gateway.URL = raw
 		if ok {
-			assert.NoError(t, cfg.Validate(), "%q", name)
+			assert.NoError(t, cfg.Validate(), "%q", raw)
 		} else {
-			assert.Error(t, cfg.Validate(), "%q", name)
+			assert.Error(t, cfg.Validate(), "%q", raw)
 		}
 	}
+}
+
+// M28 删除了 FCM 直发：仍带 push.fcm 的旧配置因严格解析拒绝启动；push.gateway.url 可读取、可置空关闭。
+func TestLoadRejectsPushFCM(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "orynd.yaml")
+	write := func(push string) {
+		require.NoError(t, os.WriteFile(path, []byte("public_url: https://oryn.example.com\ndata_dir: "+dir+"\npush:\n"+push), 0o600))
+	}
+	write("  fcm:\n    service_account_secret: fcm/service-account\n")
+	_, err := LoadOrynd(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "fcm")
+
+	write("  gateway:\n    url: http://localhost:7700\n")
+	c, err := LoadOrynd(path)
+	require.NoError(t, err)
+	assert.Equal(t, "http://localhost:7700", c.Push.Gateway.URL)
+
+	write("  gateway:\n    url: \"\"\n")
+	c, err = LoadOrynd(path)
+	require.NoError(t, err)
+	assert.Empty(t, c.Push.Gateway.URL, "空串关闭网关")
 }
 
 // M9：协调宿主与定时的校验、默认值与路径解析。

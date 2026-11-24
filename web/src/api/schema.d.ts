@@ -2840,6 +2840,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/push/gateway": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 官方推送网关的 origin 与本机主机公钥（M28；App 据此向网关申请授权）
+         * @description `origin` 是 `orynd.yaml` 的 `push.gateway.url`（缺省 `https://push.oryn.best`），`hostKey` 是 `<data_dir>/push-gateway.key`
+         *     的 Ed25519 公钥。`push.gateway.url` 为空串（关闭网关）时 404 `gateway_disabled`。见 docs/protocol.md「官方推送网关（M28）」。
+         */
+        get: operations["getPushGateway"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/push/subscriptions": {
         parameters: {
             query?: never;
@@ -2851,13 +2872,15 @@ export interface paths {
         get: operations["listPushSubscriptions"];
         put?: never;
         /**
-         * 登记推送订阅（Web Push / UnifiedPush 按 `endpoint` upsert，FCM 按 `token` upsert；`userAgent` 取请求头；订阅归属当前网页会话或设备）
+         * 登记推送订阅（Web Push / UnifiedPush 按 `endpoint` upsert，网关订阅按 `<gateway>/v1/grants/<grant>` upsert；`userAgent` 取请求头；订阅归属当前网页会话或设备）
          * @description `kind` 缺省为 `webpush`：`endpoint` 须是 `https://`（`http://` 仅允许回环主机）；`keys.p256dh` 解码后须为 65 字节且以 0x04 开头、
          *     `keys.auth` 解码后须为 16 字节，否则 400 `push_invalid`。
-         *     `kind: fcm`：须带 `token`（FCM 注册令牌）与 `keys`（App 生成的 RFC 8291 接收端密钥，校验同上），不得带 `endpoint`；
-         *     缺 `keys` 或形态错误 → 400 `push_invalid`。FCM 载荷用这对密钥加密（`data` 只有 `{v:"2", id, e}`，见 docs/protocol.md「M7：移动推送」）。
-         *     服务器未配置 FCM（`orynd.yaml` 的 `push.fcm.service_account_secret` 为空或该密钥不存在）时 409 `fcm_unavailable`。
-         *     按 `token` upsert（再次登记覆盖 `keys`），返回的订阅 `endpoint` 即该令牌。
+         *     `kind: gateway`（M28，官方推送网关）：须带 `gateway`（网关 origin）、`grant`（网关授权 id）与 `keys`（App 生成的 RFC 8291
+         *     接收端密钥，校验同上），不得带 `endpoint`；形态错误（含已删除的 `kind: fcm`）→ 400 `push_invalid`。
+         *     网关已关闭 → 409 `gateway_disabled`；`gateway` 不等于当前 `push.gateway.url` → 409 `gateway_changed`。
+         *     orynd 先以主机签名调网关 `POST /v1/grants/verify`：410 / 403 → 409 `gateway_grant_invalid`；网络错误或 5xx → 502 `gateway_unreachable`。
+         *     通过后按 `endpoint = <gateway>/v1/grants/<grant>` upsert（再次登记覆盖 `keys`）。载荷用这对密钥加密，网关只见密文
+         *     （见 docs/protocol.md「M7：移动推送」）。
          */
         post: operations["createPushSubscription"];
         delete?: never;
@@ -10652,10 +10675,10 @@ export interface components {
          */
         NotificationKind: "done" | "input" | "error" | "budget";
         /**
-         * @description 投递目标（`apns` / `fcm` 为 M7 预留）
+         * @description 投递目标（`gateway` 为官方推送网关，M28）
          * @enum {string}
          */
-        NotificationDeliveryTarget: "telegram" | "webhook" | "ntfy" | "bark" | "webpush" | "apns" | "fcm";
+        NotificationDeliveryTarget: "telegram" | "webhook" | "ntfy" | "bark" | "webpush" | "gateway";
         /** @enum {string} */
         NotificationDeliveryStatus: "pending" | "sent" | "failed";
         NotificationDelivery: {
@@ -10845,11 +10868,25 @@ export interface components {
             /** @description base64url（无填充）的 65 字节未压缩 P-256 点 */
             publicKey: string;
         };
+        PushGateway: {
+            /**
+             * @description 接口版本，固定为 1
+             * @example 1
+             */
+            v: number;
+            /**
+             * @description 网关 origin（`push.gateway.url`，不带路径）
+             * @example https://push.oryn.best
+             */
+            origin: string;
+            /** @description 本机主机公钥：base64url（无填充）的 32 字节 Ed25519 公钥 */
+            hostKey: string;
+        };
         /**
-         * @description `fcm` 自 M7 起使用（`endpoint` 存 FCM 注册令牌）；`apns` 预留
+         * @description `webpush` 为 Web Push / UnifiedPush；`gateway` 为官方推送网关（M28，`endpoint` 为 `<网关 origin>/v1/grants/<grant>`）
          * @enum {string}
          */
-        PushSubscriptionKind: "webpush" | "apns" | "fcm";
+        PushSubscriptionKind: "webpush" | "gateway";
         PushSubscription: {
             id: components["schemas"]["PushSubscriptionId"];
             kind: components["schemas"]["PushSubscriptionKind"];
@@ -10871,18 +10908,20 @@ export interface components {
         /**
          * @description 两种形态，按 `kind` 区分（缺省 `webpush`）：
          *     - `webpush`：浏览器 `PushSubscription.toJSON()` 的子集，须带 `endpoint` 与 `keys`（Android 的 UnifiedPush 同此形态）；
-         *     - `fcm`：带 `token`（Android `gms` 包的 FCM 注册令牌）与 `keys`（载荷加密用，必填）。
+         *     - `gateway`：带 `gateway`、`grant` 与 `keys`（载荷加密用，必填），不得带 `endpoint`（M28，iOS 包与 Android `gms` 包）。
          */
         PushSubscriptionInput: {
             /**
              * @default webpush
              * @enum {string}
              */
-            kind: "webpush" | "fcm";
+            kind: "webpush" | "gateway";
             endpoint?: string;
             keys?: components["schemas"]["PushSubscriptionKeys"];
-            /** @description FCM 注册令牌（`kind: fcm` 时必填） */
-            token?: string;
+            /** @description 网关 origin（`kind: gateway` 时必填，须等于 `GET /api/v1/push/gateway` 的 `origin`） */
+            gateway?: string;
+            /** @description 网关授权 id（`kind: gateway` 时必填） */
+            grant?: string;
         };
         OrbSyncPrepareRequest: {
             /** @description 仓库所在目录（同 `GitRootQuery` 的路径规则）；缺省 = orb 当前工作目录 */
@@ -17008,6 +17047,27 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VapidKey"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getPushGateway: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 网关信息 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushGateway"];
                 };
             };
             default: components["responses"]["Error"];

@@ -224,6 +224,20 @@ func (s *Server) GetVapidKey(w http.ResponseWriter, _ *http.Request) {
 	WriteJSON(w, http.StatusOK, apigen.VapidKey{PublicKey: svc.VapidKey()})
 }
 
+// GetPushGateway 对应 `GET push/gateway`：网关关闭时 404 gateway_disabled。
+func (s *Server) GetPushGateway(w http.ResponseWriter, r *http.Request) {
+	svc, ok := s.notifySvc(w)
+	if !ok {
+		return
+	}
+	info, err := svc.GatewayInfo()
+	if err != nil {
+		writeNotifyErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, info)
+}
+
 // ListPushSubscriptions 对应 `GET push/subscriptions`。
 func (s *Server) ListPushSubscriptions(w http.ResponseWriter, r *http.Request) {
 	svc, ok := s.notifySvc(w)

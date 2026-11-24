@@ -44,7 +44,7 @@ data_dir: "/var/lib/oryn"
 log_level: "info"
 idle: { agent_idle: "5m", user_idle: "20m", stop_after_frozen: "24h", wake_on_focus: true }
 orb_defaults: { provider: "", type: "" }
-push: { fcm: { service_account_secret: "" } }   # Android gms 包的 FCM 推送；空 = 关闭（见下文「移动 App 推送」）
+push: { gateway: { url: "https://push.oryn.best" } }   # 官方推送网关（iOS 与 Android gms 包）；空串 = 关闭（见下文「移动 App 推送」）
 repos: { git: "", max_mirror_gb: 5, max_lfs_cache_gb: 2, min_free_gb: 2 }   # 项目仓库镜像（以上为默认值）
 ```
 
@@ -65,13 +65,26 @@ docker0 地址因机器而异，用 `ip -4 addr show docker0` 查看（例如有
 
 ### 移动 App 推送
 
-Android App 的后台推送默认走 UnifiedPush（手机上装 ntfy 等分发器），服务端不需要任何配置。要给装了 Google Play 服务、又不想装分发器的手机用 `gms` 包的 FCM 回退通道：
+orynd 只有两条推送路径：Web Push（含 Android 的 UnifiedPush）与官方推送网关，协议见 [protocol.md「官方推送网关（M28）」](protocol.md#官方推送网关m28)。
 
-1. 在 Firebase 项目（包名 `com.lynricsy.oryn` 的 Android 应用）的「项目设置 → 服务账号」生成私钥，得到服务账号 JSON。
-2. 存进密钥库（**proxy 模式**，即默认；env 模式会注入每台 orb，被 orynd 拒绝）：`oryn secrets set fcm/service-account < service-account.json`，随后删除本地副本。
-3. `orynd.yaml` 写 `push: { fcm: { service_account_secret: "fcm/service-account" } }` 并重启 orynd。启动日志出现「FCM 已配置但服务账号不可用」说明密钥缺失或内容无效。
+- **UnifiedPush**（Android `foss` 包；`gms` 包可在设置里手动切换）：手机上装 ntfy 等分发器，服务端不需要任何配置。
+- **官方推送网关**（iOS 的 APNs、Android `gms` 包默认的 FCM）：`push.gateway.url` 缺省为 `https://push.oryn.best`，开箱即用。APNs key 与 Firebase 服务账号只在网关上，orynd 只把端到端加密的密文交给网关，网关解不开载荷。
+  - 只能写不带路径的 origin：`https://…`，或回环主机的 `http://…`（本机验收用，例如 `http://localhost:7700`）；写空串 `""` 关闭网关，此时 App 显示「网关已关闭」，Web Push 与 UnifiedPush 照常。
+  - 启用网关时，orynd 在启动期生成主机签名密钥 `<data_dir>/push-gateway.key`（Ed25519 种子，0600），网关凭它识别本实例。备份 `data_dir` 时一并保留；删掉它等于轮换，全部网关订阅失效，App 下次进入时自动重新授权。
+  - 只有手机登记了网关订阅时 orynd 才会访问网关，没开推送的实例不产生任何对外流量。出站需要能访问网关 origin 的 443 端口。
+  - 自编 App（自己的 bundle id / Firebase 项目）要自建网关：部署见 [push-gateway.md](push-gateway.md)，再把 `push.gateway.url` 指向它；App 构建时也要把它写进受信网关列表。
 
-不配置时 App 登记 FCM 订阅会得到 `409 fcm_unavailable`，UnifiedPush 照常。移动 App 的安装、配对与发版见 [mobile.md](mobile.md)。
+移动 App 的安装、配对与发版见 [mobile.md](mobile.md)。
+
+#### 从 M28 之前的版本升级
+
+M28 删除了 orynd 直发 FCM：
+
+1. **先从 `orynd.yaml` 删掉整段 `push.fcm`**（`push: { fcm: { … } }`）。配置按严格模式解析，仍带 `push.fcm` 时新版 orynd 拒绝启动。需要网关时不必再写任何东西（缺省即官方网关）。
+2. 升级并重启。迁移 `0058_push_gateway.sql` 会删除旧的 `fcm` / `apns` 推送订阅及其投递记录；`gms` 包的 App 升级后下次进入时经网关重新登记，Web Push 与 UnifiedPush 订阅不受影响。
+3. 之后可以删除不再使用的密钥：`oryn secrets rm fcm/service-account`。
+
+回滚到旧版本前，**必须先把库降到 0057**：停掉 orynd，在新版的源码目录里执行 `go run github.com/pressly/goose/v3/cmd/goose@v3.30.0 -dir internal/store/migrations sqlite3 <data_dir>/oryn.db down-to 57`，再换回旧二进制。否则旧版不认识 `gateway` 订阅。降级会删除全部网关订阅，被删的订阅不恢复，App 下次进入时重新登记；旧版若仍要直发 FCM，再把 `push.fcm` 加回配置。
 
 ## 3. 反代（1Panel OpenResty）
 
@@ -1135,7 +1148,7 @@ curl --fail https://oryn.ling.plus/healthz
 
 Hindsight API 的健康检查直接访问容器内 `/health/ready`，`dc up --wait` 会等待迁移与数据库连接就绪，不只检查进程是否运行。模型协议、嵌入维度和重排方式统一由管理页生成的 `.env` 提供，不在 Compose 中固定覆盖，避免后续换模型时出现配置不一致。
 
-首次所有者必须由本人在正式域名的初始化页面注册 Passkey，并保存一次性显示的恢复码；初始化链接不得写入本说明或任务日志。「本机生产运维」设备拥有完整管理权限，完成部署后可在设备管理中吊销；吊销后本机 CLI 需重新配对。GitHub OAuth、可选 FCM、外部 SSH 主机等个人集成需各自授权，部署不代建这些身份。
+首次所有者必须由本人在正式域名的初始化页面注册 Passkey，并保存一次性显示的恢复码；初始化链接不得写入本说明或任务日志。「本机生产运维」设备拥有完整管理权限，完成部署后可在设备管理中吊销；吊销后本机 CLI 需重新配对。GitHub OAuth、外部 SSH 主机等个人集成需各自授权，部署不代建这些身份。
 
 ### 备份与撤销边界
 

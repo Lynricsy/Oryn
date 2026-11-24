@@ -4525,8 +4525,9 @@
 			"homeScreen": "On iPhone / iPad, use Safari's Share → Add to Home Screen first, then open Oryn from the home screen to turn on background push.",
 			"push": "Background push (works even with the tab closed)",
 			"pushHint": "Delivered through the browser's push service. When off, this device only gets notifications while the page is open.",
-			"others": "Other subscribed browsers",
+			"others": "Other subscribed browsers and devices",
 			"subscribedAt": "Subscribed {{when}}",
+			"viaGateway": "Via push gateway {{host}}",
 			"remove": "Remove subscription",
 			"desktopApp": "The desktop app sends system notifications: while the window is hidden or minimized, finished, waiting or failed threads pop up a notification that opens the thread.",
 			"testSend": "Send test notification",
@@ -4607,8 +4608,7 @@
 			"ntfy": "ntfy",
 			"bark": "Bark",
 			"webpush": "Browser push",
-			"apns": "APNs",
-			"fcm": "FCM"
+			"gateway": "Official push gateway"
 		},
 		"delivery": {
 			"sent": "Delivered · {{when}}",
@@ -4911,11 +4911,23 @@
 			"permissionDenied": "Notifications for Oryn are turned off in system settings, so pushes can't be shown.",
 			"openSettings": "Open notification settings",
 			"registering": "Registering for push…",
-			"viaFcm": "Receiving pushes via Firebase Cloud Messaging (FCM)",
+			"viaFcm": "Receiving pushes via the official push gateway and Firebase Cloud Messaging (FCM)",
+			"viaApns": "Receiving pushes via the official push gateway and the Apple Push Notification service (APNs)",
 			"viaUnifiedPush": "Receiving pushes via {{distributor}} ({{detail}})",
+			"switchToUnifiedPush": "Switch to UnifiedPush",
+			"switchToGateway": "Switch to the official push gateway (FCM)",
 			"disable": "Turn off push",
 			"error": "Push registration failed: {{error}}",
 			"errorUnknown": "unknown reason",
+			"errors": {
+				"gateway_disabled": "The server has turned off the official push gateway (push.gateway.url is empty), so this device can't receive pushes. Ask the server admin to turn it on, or switch to UnifiedPush on Android.",
+				"gateway_unsupported": "The server runs an Oryn version that doesn't support the official push gateway. Ask the server admin to upgrade orynd.",
+				"gateway_untrusted": "The push gateway the server asked for isn't on this app's trusted list, so the push token wasn't sent to it.",
+				"gateway_app_mismatch": "The push gateway doesn't serve this app (app ID or environment mismatch), so push can't be turned on yet.",
+				"gateway_challenge_timeout": "The push gateway's verification push didn't arrive in time. Check the network and retry.",
+				"gateway_rejected": "The push gateway rejected the registration. Retry later.",
+				"gateway_unreachable": "The server can't reach the push gateway. Retry later."
+			},
 			"unsupported": "This device doesn't support push; notifications still show up in the sidebar bell."
 		},
 		"about": {
