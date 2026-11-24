@@ -208,15 +208,27 @@ pub async fn host_set_chrome(dark: bool, color: String, m: State<'_, Arc<MobileR
 }
 
 #[tauri::command]
-pub async fn host_open_notification_settings(m: State<'_, Arc<MobileRt>>) -> Res<()> {
+pub async fn host_open_notification_settings(
+    app: AppHandle,
+    m: State<'_, Arc<MobileRt>>,
+) -> Res<()> {
     #[cfg(target_os = "android")]
-    m.core
-        .native()
-        .0
-        .open_notification_settings()
-        .map_err(|e| e.to_string())?;
+    {
+        let _ = app;
+        m.core
+            .native()
+            .0
+            .open_notification_settings()
+            .map_err(|e| e.to_string())?;
+    }
     #[cfg(target_os = "ios")]
-    let _ = &m;
+    {
+        let _ = &m;
+        let plugin = ios::plugin(&app).ok_or("unsupported")?;
+        plugin
+            .open_notification_settings()
+            .map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
@@ -500,6 +512,11 @@ mod ios {
                     );
                     host::emit(&handle, detail);
                 }
+            }
+            Event::NotificationTap { id, path } => {
+                let path = crate::session::valid_app_path(&path);
+                eventlog::log("notify.clicked", json!({"id": id, "path": path}));
+                host::open_path(&handle, &path);
             }
             #[cfg(debug_assertions)]
             Event::HeaderHit { x, y, info } => {
@@ -807,7 +824,8 @@ mod android {
             Event::TabBar { .. }
             | Event::Header { .. }
             | Event::HeaderHit { .. }
-            | Event::Sink { .. } => {}
+            | Event::Sink { .. }
+            | Event::NotificationTap { .. } => {}
         }
     }
 

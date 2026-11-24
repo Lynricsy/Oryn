@@ -136,6 +136,13 @@ mod native {
                 },
             )
         }
+        pub fn notify(&self, args: &NotifyArgs) -> Result<NotifyResult> {
+            self.run("notify", args)
+        }
+
+        pub fn open_notification_settings(&self) -> Result<()> {
+            self.call("openNotificationSettings", ())
+        }
     }
 
     #[cfg(target_os = "android")]
@@ -158,9 +165,6 @@ mod native {
             self.call("vaultDelete", json!({"server": server}))
         }
 
-        pub fn notify(&self, args: &NotifyArgs) -> Result<NotifyResult> {
-            self.run("notify", args)
-        }
 
         pub fn push_state(&self) -> Result<PushState> {
             self.run("pushState", ())
@@ -187,9 +191,6 @@ mod native {
             )
         }
 
-        pub fn open_notification_settings(&self) -> Result<()> {
-            self.call("openNotificationSettings", ())
-        }
 
         pub fn set_chrome(&self, dark: bool, color: &str) -> Result<()> {
             self.call("setChrome", json!({"dark": dark, "color": color}))

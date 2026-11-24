@@ -153,4 +153,45 @@ class PushPayloadTest {
     assertEquals("oryn://open", PushPayload.deepLink("/settings/notifications"))
     assertEquals("oryn://open", PushPayload.deepLink("/statsx"))
   }
+
+  @Test
+  fun parsesAvatarAndTimestampAndDisplayTitle() {
+    val m = parse(
+      """{"v":1,"id":"n1","kind":"done","title":"🐳 DOCKER: Speed up","body":"ok","url":"/t/$thread","ts":1730000000000,""" +
+        """"avatar":{"kind":"thread","icon":"🐳","color":"blue"}}""",
+    )!!
+    assertEquals(1730000000000L, m.timestamp)
+    assertEquals(PushPayload.Avatar(kind = "thread", icon = "🐳", color = "blue"), m.avatar)
+    assertEquals("DOCKER: Speed up", PushPayload.displayTitle(m.title, m.avatar))
+
+    // 全局助手对话：头像用全局助手头像，不剥掉标题里的 emoji
+    val am = parse(
+      """{"v":1,"id":"n2","kind":"done","title":"✨ CHAT: 周报","body":"ok","url":"/t/$thread",""" +
+        """"avatar":{"kind":"assistant","icon":"🦊","hash":"a1b2c3d4"}}""",
+    )!!
+    assertEquals(PushPayload.Avatar(kind = "assistant", icon = "🦊", hash = "a1b2c3d4"), am.avatar)
+    assertEquals("✨ CHAT: 周报", PushPayload.displayTitle(am.title, am.avatar))
+
+    // encode 保留轻量 avatar 元数据但不序列化大 image
+    val withImg = am.copy(avatar = am.avatar!!.copy(image = "AAAA=="))
+    val roundTrip = PushPayload.parse(PushPayload.encode(withImg).toByteArray(Charsets.UTF_8))!!
+    assertNull(roundTrip.avatar?.image)
+    assertEquals("a1b2c3d4", roundTrip.avatar?.hash)
+  }
+
+  @Test
+  fun effectiveAvatarFallsBackWhenServerOmitsAvatar() {
+    val nerd = "\uD83D\uDC33" // 🐳
+    val threadModel = PushPayload.Model("n1", "$nerd DOCKER: Build", "ok", "/t/$thread", "oryn-1")
+    assertEquals(PushPayload.Avatar(kind = "thread", icon = nerd), PushPayload.effectiveAvatar(threadModel))
+
+    val assistantModel = PushPayload.Model("n2", "Research paused", "ok", "/settings/assistant", "oryn-budget")
+    assertEquals(PushPayload.Avatar(kind = "assistant"), PushPayload.effectiveAvatar(assistantModel))
+
+    val sysModel = PushPayload.Model("n3", "Budget", "ok", "/stats/usage", "oryn-budget")
+    assertEquals(PushPayload.Avatar(kind = "system"), PushPayload.effectiveAvatar(sysModel))
+
+    assertEquals(true, PushPayload.isNerdGlyph("\uDB82\uDC68")) // U+F0868 md-docker
+    assertEquals(false, PushPayload.isNerdGlyph("🐳"))
+  }
 }

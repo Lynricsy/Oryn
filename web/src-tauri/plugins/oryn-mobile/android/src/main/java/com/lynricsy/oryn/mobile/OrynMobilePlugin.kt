@@ -48,6 +48,8 @@ class NotifyArgs {
   var body: String = ""
   lateinit var path: String
   var lang: String? = null
+  var timestamp: Long? = null
+  var avatar: JSObject? = null
 }
 
 @InvokeArg
@@ -259,7 +261,17 @@ class OrynMobilePlugin(initial: Activity) : Plugin(initial) {
   @Command
   fun notify(invoke: Invoke) {
     val a = invoke.parseArgs(NotifyArgs::class.java)
-    val model = PushPayload.Model(a.id, a.title, a.body, a.path, PushPayload.tagFor(a.path, a.id))
+    val avatar = PushPayload.parseAvatar(a.avatar)
+    NotificationAvatarRenderer.updateAssistantCache(activity, avatar)
+    val model = PushPayload.Model(
+      id = a.id,
+      title = a.title,
+      body = a.body,
+      path = a.path,
+      tag = PushPayload.tagFor(a.path, a.id),
+      timestamp = a.timestamp?.takeIf { it > 0L } ?: 0L,
+      avatar = avatar,
+    )
     val reason = Notifier.post(activity, model, a.lang)
     val o = JSObject()
     o.put("posted", reason == null)

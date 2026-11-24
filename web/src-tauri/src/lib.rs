@@ -120,8 +120,8 @@ pub fn run() {
     log_ignored(&args);
 
     // 插件顺序：single_instance（必须第一个）→ deep_link → window_state → global_shortcut
-    // → notification（Android 不注册）→ opener → updater；
-    // 移动端：deep_link → opener → oryn-mobile（Android）/ notification → oryn-mobile（iOS）→ barcode-scanner
+    // → notification（桌面专用）→ opener → updater；
+    // 移动端：deep_link → opener → oryn-mobile（Android / iOS）→ barcode-scanner
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default();
     #[cfg(desktop)]
@@ -152,16 +152,7 @@ pub fn run() {
     #[cfg(mobile)]
     {
         builder = builder.plugin(opener_plugin());
-        #[cfg(target_os = "android")]
-        {
-            builder = builder.plugin(tauri_plugin_oryn_mobile::init());
-        }
-        #[cfg(target_os = "ios")]
-        {
-            builder = builder
-                .plugin(tauri_plugin_notification::init())
-                .plugin(tauri_plugin_oryn_mobile::init());
-        }
+        builder = builder.plugin(tauri_plugin_oryn_mobile::init());
         builder = builder.plugin(tauri_plugin_barcode_scanner::init());
     }
 
@@ -422,20 +413,6 @@ fn setup(app: &mut App, args: &Args, raw: &[String]) -> Result<(), Box<dyn std::
     let d = Arc::new(Desktop::new(core, nav, false, version));
     app.manage(d.clone());
 
-    // iOS 的通知点击经插件的 on_action 回来（同 macOS）；Android 经深链接
-    #[cfg(target_os = "ios")]
-    {
-        use tauri_plugin_notification::NotificationExt;
-        let click = handle.clone();
-        handle.notification().on_action(move |p| {
-            if p.action_id() != "tap" {
-                return;
-            }
-            if let Some(n) = p.notification().map(|n| n.id()) {
-                notify::clicked(&click, n);
-            }
-        })?;
-    }
 
     #[cfg(target_os = "android")]
     {

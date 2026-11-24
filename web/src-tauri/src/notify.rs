@@ -1,14 +1,16 @@
-//! 系统通知：限流、通知号分配与点击回查（官方 `tauri-plugin-notification`，只在 Rust 侧调用）。
-//! Android 不带通知插件：经 oryn-mobile 插件的 `notify` 发，点击经 `oryn://` 深链接回来，不登记通知号。
+//! 系统通知：限流、通知号分配与点击回查（桌面端用官方 `tauri-plugin-notification` / Linux 用 `notify-rust`，只在 Rust 侧调用）。
+//! Android 与 iOS 统一经 oryn-mobile 插件发 MessagingStyle / 通信通知：Android 点击经 `oryn://` 深链接回来，
+//! iOS 点击经 `Event::NotificationTap` 回来，均不登记桌面通知号。
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
 use serde::Deserialize;
 use serde_json::json;
 use tauri::AppHandle;
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
+use tauri_plugin_oryn_mobile::NotificationAvatar;
+#[cfg(all(desktop, not(target_os = "linux")))]
 use tauri_plugin_notification::NotificationExt;
 
 use crate::session::valid_app_path;
@@ -18,11 +20,16 @@ use crate::{eventlog, host};
 pub const TITLE_MAX: usize = 120;
 pub const BODY_MAX: usize = 300;
 /// 记住的通知条数。
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 pub const REGISTRY_CAP: usize = 64;
 /// 令牌桶：突发 5，每 6 秒补 1。
 pub const BURST: f64 = 5.0;
 pub const REFILL_MS: f64 = 6_000.0;
+
+/// 通知头像字段的净化上限。
+const AVATAR_ICON_MAX_BYTES: usize = 64;
+const AVATAR_IMAGE_MAX_LEN: usize = 192 * 1024;
+const AVATAR_HASH_MAX_LEN: usize = 32;
 
 /// Linux 通知的应用名（通知中心显示的名字、dunst 的 `appname`）。
 #[cfg(target_os = "linux")]
@@ -46,8 +53,55 @@ pub struct HostNotification {
     pub body: String,
     #[serde(default)]
     pub path: String,
+    #[serde(default)]
+    pub timestamp: Option<i64>,
+    #[serde(default)]
+    pub avatar: Option<NotificationAvatar>,
 }
 
+fn valid_thread_color(s: &str) -> bool {
+    matches!(
+        s,
+        "red" | "orange" | "yellow" | "green" | "teal" | "blue" | "purple" | "pink"
+    )
+}
+
+/// 净化来自远程页面的头像字段：限制长度、校验颜色白名单与 base64 / hex 字符集。
+pub fn sanitize_avatar(av: NotificationAvatar) -> NotificationAvatar {
+    let icon = av.icon.and_then(|s| {
+        let t = s.trim();
+        (!t.is_empty()
+            && t.len() <= AVATAR_ICON_MAX_BYTES
+            && !t.chars().any(char::is_control))
+        .then(|| t.to_string())
+    });
+    let color = av.color.and_then(|s| {
+        let t = s.trim();
+        valid_thread_color(t).then(|| t.to_string())
+    });
+    let image = av.image.and_then(|s| {
+        let t = s.trim();
+        (!t.is_empty()
+            && t.len() <= AVATAR_IMAGE_MAX_LEN
+            && t.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'='))
+        .then(|| t.to_string())
+    });
+    let hash = av.hash.and_then(|s| {
+        let t = s.trim();
+        (!t.is_empty()
+            && t.len() <= AVATAR_HASH_MAX_LEN
+            && t.bytes().all(|b| b.is_ascii_hexdigit()))
+        .then(|| t.to_string())
+    });
+    NotificationAvatar {
+        kind: av.kind,
+        icon,
+        color,
+        image,
+        hash,
+    }
+}
 /// 按字符截断；截断时末尾补 `…`（计入上限）。
 pub fn truncate(s: &str, max: usize) -> String {
     let s = s.trim();
@@ -60,13 +114,13 @@ pub fn truncate(s: &str, max: usize) -> String {
 }
 
 /// 通知号 → {页面通知 id, 路径}，最多 [`REGISTRY_CAP`] 条，超出淘汰最旧。
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 #[derive(Default)]
 pub struct Registry {
     entries: VecDeque<(i32, String, String)>,
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 impl Registry {
     pub fn insert(&mut self, n: i32, id: String, path: String) {
         if self.entries.len() >= REGISTRY_CAP {
@@ -134,7 +188,7 @@ impl Bucket {
 #[derive(Default)]
 struct Inner {
     next: i32,
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     registry: Registry,
     bucket: Bucket,
 }
@@ -152,6 +206,8 @@ pub struct Prepared {
     pub title: String,
     pub body: String,
     pub path: String,
+    pub timestamp: Option<i64>,
+    pub avatar: Option<NotificationAvatar>,
 }
 
 impl Notifier {
@@ -176,18 +232,20 @@ impl Notifier {
         g.next = g.next.checked_add(1).unwrap_or(1);
         let num = g.next;
         let path = valid_app_path(&n.path);
-        #[cfg(not(target_os = "android"))]
+        #[cfg(desktop)]
         g.registry.insert(num, n.id, path.clone());
         Some(Prepared {
             n: num,
             title: truncate(&n.title, TITLE_MAX),
             body: truncate(&n.body, BODY_MAX),
             path,
+            timestamp: n.timestamp.filter(|&ts| ts > 0),
+            avatar: n.avatar.map(sanitize_avatar),
         })
     }
 
     /// 点击回查。
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     pub fn lookup(&self, n: i32) -> Option<(String, String)> {
         let g = self.lock();
         g.registry
@@ -222,7 +280,7 @@ fn log_error(id: &str, e: impl ToString) {
 
 /// 点击通知本体：回查通知号 → 记录 `notify.clicked` → 显示主窗口并打开对应路径。
 /// macOS / Windows 由插件的 `on_action` 调到这里，Linux 由 [`deliver`] 的等待线程调到这里。
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 pub fn clicked(app: &AppHandle, n: i32) {
     let Some(d) = host::desktop(app) else { return };
     if let Some((id, path)) = d.notifier.lookup(n) {
@@ -308,8 +366,8 @@ fn deliver(app: &AppHandle, id: String, p: Prepared) {
     }
 }
 
-/// macOS / Windows / iOS：走官方插件，点击经 `on_action` 回到 [`clicked`]。
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
+/// macOS / Windows：走官方插件，点击经 `on_action` 回到 [`clicked`]。
+#[cfg(all(desktop, not(target_os = "linux")))]
 fn deliver(app: &AppHandle, id: String, p: Prepared) {
     let result = app
         .notification()
@@ -324,10 +382,10 @@ fn deliver(app: &AppHandle, id: String, p: Prepared) {
     }
 }
 
-/// Android：经 oryn-mobile 插件发（与推送同一个渠道与 tag 规则）；点击由深链接带回：线程 → `oryn://thread/<id>`，
-/// `/stats…` → `oryn://stats`，`/settings/automations…` → `oryn://automations`，其余 `oryn://open`（见 `deeplink::parse`）。
+/// Android / iOS：经 oryn-mobile 插件发 MessagingStyle / 通信通知。
+/// Android 点击经 `oryn://` 深链接带回；iOS 点击经 `Event::NotificationTap` 带回。
 /// 没有通知权限时插件返回 `posted: false`，记 `notify.dropped{reason}`。
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "ios"))]
 fn deliver(app: &AppHandle, id: String, p: Prepared) {
     use tauri_plugin_oryn_mobile::{NotifyArgs, OrynMobileExt};
     let lang = host::desktop(app).map_or(crate::i18n::Lang::En, |d| d.lang());
@@ -337,6 +395,8 @@ fn deliver(app: &AppHandle, id: String, p: Prepared) {
         body: p.body.clone(),
         path: p.path.clone(),
         lang: lang.as_str().to_string(),
+        timestamp: p.timestamp,
+        avatar: p.avatar.clone(),
     };
     match app.oryn_mobile().notify(&args) {
         Ok(r) if r.posted => log_shown(&id, &p),
@@ -365,7 +425,7 @@ pub fn show_plain(app: &AppHandle, notifier: &Notifier, title: &str, body: &str)
                 }
             });
     }
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    #[cfg(all(desktop, not(target_os = "linux")))]
     {
         let _ = app
             .notification()
@@ -387,10 +447,12 @@ mod tests {
             title: "t".into(),
             body: "b".into(),
             path: path.into(),
+            timestamp: None,
+            avatar: None,
         }
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     #[test]
     fn registry_evicts_oldest() {
         let mut r = Registry::default();
@@ -429,6 +491,8 @@ mod tests {
                     title: long,
                     body: "b".repeat(400),
                     path: "/".into(),
+                    timestamp: Some(1_700_000_000_000),
+                    avatar: None,
                 },
                 0,
             )
@@ -516,5 +580,33 @@ mod tests {
             assert!(n.prepare(note("x", "/"), 1_000_000).is_some());
         }
         assert!(n.prepare(note("x", "/"), 1_000_000).is_none());
+    }
+
+    #[test]
+    fn avatar_sanitization_drops_invalid_fields() {
+        use tauri_plugin_oryn_mobile::NotificationAvatarKind;
+        let clean = sanitize_avatar(NotificationAvatar {
+            kind: NotificationAvatarKind::Thread,
+            icon: Some("  🐳  ".into()),
+            color: Some("blue".into()),
+            image: Some("AAAA==".into()),
+            hash: Some("a1b2c3d4".into()),
+        });
+        assert_eq!(clean.icon.as_deref(), Some("🐳"));
+        assert_eq!(clean.color.as_deref(), Some("blue"));
+        assert_eq!(clean.image.as_deref(), Some("AAAA=="));
+        assert_eq!(clean.hash.as_deref(), Some("a1b2c3d4"));
+
+        let dirty = sanitize_avatar(NotificationAvatar {
+            kind: NotificationAvatarKind::Assistant,
+            icon: Some("bad\nicon".into()),
+            color: Some("neon-rainbow".into()),
+            image: Some("data:image/png;base64,AAAA".into()),
+            hash: Some("zzzz!".into()),
+        });
+        assert_eq!(dirty.icon, None);
+        assert_eq!(dirty.color, None);
+        assert_eq!(dirty.image, None);
+        assert_eq!(dirty.hash, None);
     }
 }

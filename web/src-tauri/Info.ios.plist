@@ -7,5 +7,10 @@
 	     缺这个键 App Store Connect 会以 ITMS-90683 退回构建。 -->
 	<key>NSCameraUsageDescription</key>
 	<string>Oryn uses the camera to scan the pairing QR code shown on your computer and to take photos you attach to messages.</string>
+	<!-- Communication Notifications（INSendMessageIntent）：iOS 通知栏以消息样式展示发送者头像与会话归组 -->
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>INSendMessageIntent</string>
+	</array>
 </dict>
 </plist>

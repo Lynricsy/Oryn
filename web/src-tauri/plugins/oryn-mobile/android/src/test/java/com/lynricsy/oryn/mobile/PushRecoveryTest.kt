@@ -79,4 +79,15 @@ class PushRecoveryTest {
     assertEquals("/stats/usage", got[0].path)
     assertEquals("oryn-budget", got[0].tag)
   }
+
+  /** 补拉通知保留服务端下发的 createdAt 与 avatar 元数据。 */
+  @Test
+  fun recoveryPreservesAvatarAndTimestamp() {
+    val item = n("a1", 1730000123456L)
+      .put("avatar", JSONObject().put("kind", "assistant").put("icon", "🦊").put("hash", "deadbeef"))
+    val got = PushRecovery.pending(JSONObject().put("notifications", JSONArray(listOf(item)))) { false }
+    assertEquals(1, got.size)
+    assertEquals(1730000123456L, got[0].timestamp)
+    assertEquals(PushPayload.Avatar(kind = "assistant", icon = "🦊", hash = "deadbeef"), got[0].avatar)
+  }
 }

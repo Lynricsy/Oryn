@@ -13,6 +13,19 @@ import org.json.JSONObject
  * 由 [OrynFcmService] 转成同样的 JSON 字节再交给这里。纯函数，不依赖 Android。
  */
 object PushPayload {
+  const val AVATAR_THREAD = "thread"
+  const val AVATAR_ASSISTANT = "assistant"
+  const val AVATAR_SYSTEM = "system"
+
+  /** 通知发送者头像元数据：普通线程用标题卡图标与线程色；全局助手主线与线程用全局助手头像。 */
+  data class Avatar(
+    val kind: String,
+    val icon: String? = null,
+    val color: String? = null,
+    val image: String? = null,
+    val hash: String? = null,
+  )
+
   data class Model(
     val id: String,
     val title: String,
@@ -21,8 +34,9 @@ object PushPayload {
     val tag: String,
     val kind: String = "",
     val actions: List<Action> = emptyList(),
+    val timestamp: Long = 0L,
+    val avatar: Avatar? = null,
   )
-
   /** 通知上的作答按钮：`index` 是选项序号（作答时原样回传），`role` 为 `yes` / `no` 时按语言显示「是 / 否」。 */
   data class Action(val index: Int, val label: String, val role: String? = null)
 
@@ -35,6 +49,8 @@ object PushPayload {
 
   private val THREAD_PATH = Regex("^/t/([^/?#]+)$")
   private val THREAD_LINK = Regex("^/t/(T-[0-9a-fA-F-]{36})$")
+  private val TITLE_CARD = Regex("^(\\S+) ([A-Z0-9]{1,6}): (\\S.*)$")
+  private val VALID_COLORS = setOf("red", "orange", "yellow", "green", "teal", "blue", "purple", "pink")
 
   /** 解析载荷；不是 JSON 对象、缺 `title`、`url` 不以 `/` 开头时返回 null。 */
   fun parse(bytes: ByteArray): Model? {
@@ -47,7 +63,19 @@ object PushPayload {
     val tag = text(obj, "tag") ?: tagFor(path, id)
     val kind = text(obj, "kind") ?: ""
     val actions = if (kind == "input" && id.isNotEmpty()) actions(obj.optJSONArray("actions")) else emptyList()
-    return Model(id = id, title = title, body = body, path = path, tag = tag, kind = kind, actions = actions)
+    val timestamp = longValue(obj, "ts")
+    val avatar = parseAvatar(obj.optJSONObject("avatar"))
+    return Model(
+      id = id,
+      title = title,
+      body = body,
+      path = path,
+      tag = tag,
+      kind = kind,
+      actions = actions,
+      timestamp = timestamp,
+      avatar = avatar,
+    )
   }
 
   /** 撤回消息（`kind: "withdraw"`、`id` 与 `tag` 非空）；其它载荷返回 null。 */
@@ -67,7 +95,7 @@ object PushPayload {
       if (a.role != null) o.put("role", a.role)
       acts.put(o)
     }
-    return JSONObject()
+    val root = JSONObject()
       .put("v", 1)
       .put("id", model.id)
       .put("kind", model.kind)
@@ -76,7 +104,77 @@ object PushPayload {
       .put("url", model.path)
       .put("tag", model.tag)
       .put("actions", acts)
-      .toString()
+    if (model.timestamp > 0L) root.put("ts", model.timestamp)
+    // 刻意不把大体积 image base64 放进 Intent extras（防 Binder TransactionTooLargeException）
+    model.avatar?.let { av ->
+      val ao = JSONObject().put("kind", av.kind)
+      if (av.icon != null) ao.put("icon", av.icon)
+      if (av.color != null) ao.put("color", av.color)
+      if (av.hash != null) ao.put("hash", av.hash)
+      root.put("avatar", ao)
+    }
+    return root.toString()
+  }
+
+  /** 解析 `avatar` 对象；只接受合法的 kind / icon / color / image / hash。 */
+  fun parseAvatar(obj: JSONObject?): Avatar? {
+    if (obj == null) return null
+    val kind = text(obj, "kind") ?: return null
+    if (kind != AVATAR_THREAD && kind != AVATAR_ASSISTANT && kind != AVATAR_SYSTEM) return null
+    val icon = text(obj, "icon")?.takeIf { it.toByteArray(Charsets.UTF_8).size <= 64 }
+    val color = text(obj, "color")?.takeIf { it in VALID_COLORS }
+    val image = text(obj, "image")?.takeIf { it.length <= 192 * 1024 }
+    val hash = text(obj, "hash")?.takeIf { it.length <= 32 }
+    return Avatar(kind = kind, icon = icon, color = color, image = image, hash = hash)
+  }
+
+  /** 生效头像：优先使用载荷自带的 `avatar`，缺失（旧服务端）时按路径与标题卡兜底推导。 */
+  fun effectiveAvatar(model: Model): Avatar {
+    model.avatar?.let { return it }
+    return when {
+      under(model.path, "/settings/assistant") || under(model.path, "/assistant") ->
+        Avatar(kind = AVATAR_ASSISTANT)
+      model.path.startsWith("/t/") ->
+        Avatar(kind = AVATAR_THREAD, icon = parseTitleCardIcon(model.title))
+      else -> Avatar(kind = AVATAR_SYSTEM)
+    }
+  }
+
+  /** MessagingStyle 的发送者显示名：普通线程头像已展示标题卡图标时，去掉标题开头重复的 `<图标> ` 前缀。 */
+  fun displayTitle(title: String, avatar: Avatar?): String {
+    if (avatar?.kind == AVATAR_THREAD && !avatar.icon.isNullOrEmpty()) {
+      val prefix = "${avatar.icon} "
+      if (title.startsWith(prefix) && title.length > prefix.length) {
+        return title.substring(prefix.length)
+      }
+    }
+    return title
+  }
+
+  /** 从 omp 标题卡（`<图标> <代码>: <标题>`）提取单个非 ASCII 图标字形；不匹配返回 null。 */
+  fun parseTitleCardIcon(title: String): String? {
+    val m = TITLE_CARD.matchEntire(title) ?: return null
+    val icon = m.groupValues[1]
+    if (icon.isEmpty() || icon.toByteArray(Charsets.UTF_8).size > 16) return null
+    if (icon.any { it.code < 0x80 }) return null
+    return icon
+  }
+
+  /** 判断图标是否以 Nerd Font 私有区码点开头（BMP PUA 或补充私有区 A/B）。 */
+  fun isNerdGlyph(icon: String): Boolean {
+    if (icon.isEmpty()) return false
+    val cp = icon.codePointAt(0)
+    return (cp in 0xE000..0xF8FF) || (cp in 0xF0000..0xFFFFD)
+  }
+
+  private fun longValue(obj: JSONObject, key: String): Long {
+    if (!obj.has(key) || obj.isNull(key)) return 0L
+    val v = obj.get(key)
+    return when (v) {
+      is Number -> v.toLong().takeIf { it > 0L } ?: 0L
+      is String -> v.toLongOrNull()?.takeIf { it > 0L } ?: 0L
+      else -> 0L
+    }
   }
 
   /** 按钮须 2–3 个，每个有非负整数 `i` 与非空 `label`；任一不合法则整组不要（只显示普通通知）。 */

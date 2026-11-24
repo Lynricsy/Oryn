@@ -59,6 +59,10 @@ object PushRecovery {
         .put("title", n.optString("title"))
         .put("body", n.optString("body"))
         .put("url", n.optString("url"))
+      if (n.has("createdAt") && !n.isNull("createdAt")) {
+        payload.put("ts", n.optLong("createdAt", 0L))
+      }
+      n.optJSONObject("avatar")?.let { payload.put("avatar", it) }
       val model = PushPayload.parse(payload.toString().toByteArray(Charsets.UTF_8)) ?: continue
       if (model.id.isEmpty() || shown(model.id)) continue
       out.add(model)

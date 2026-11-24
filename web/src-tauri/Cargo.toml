@@ -29,11 +29,10 @@ tokio-util = { version = "0.7", features = ["io"] } # 分享上传：文件 → 
 # 数据形状全平台共用（推送 / 分享编排、底栏校验在主机上单测）；插件句柄与原生实现只在 Android / iOS 上存在
 tauri-plugin-oryn-mobile = { path = "plugins/oryn-mobile" }
 
-# Android 不带通知插件（其清单会带进开机广播与 WAKE_LOCK，通知改由 oryn-mobile 插件发）；
+# Android / iOS 不带官方通知插件（统一经 oryn-mobile 插件发 MessagingStyle / 通信通知）；
 # 桌面与 iOS 的 reqwest 用默认 TLS（rustls + 平台校验器，信任系统根证书，见计划「假设与预案」）
 [target.'cfg(not(target_os = "android"))'.dependencies]
 reqwest = { version = "0.13", features = ["json", "stream"] }
-tauri-plugin-notification = "=2.8.1"
 
 # Android：平台校验器需要 JNI 初始化，未初始化即 panic；改用 ring + Mozilla 根证书（tls_certs_only）
 [target.'cfg(target_os = "android")'.dependencies]
@@ -50,6 +49,7 @@ security-framework = "3"
 tauri-plugin-barcode-scanner = "=2.5.3"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-notification = "=2.8.1"
 tauri-plugin-single-instance = { version = "=2.5.5", features = ["deep-link"] }
 tauri-plugin-global-shortcut = "=2.4.1"
 tauri-plugin-window-state = "=2.5.0"

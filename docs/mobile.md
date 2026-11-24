@@ -75,6 +75,14 @@ Agent 的提问只需点一个选项时（工具审批的「批准 / 拒绝」�
 - 请求在网页、另一台设备或 Telegram 上作答（或被取消）后，服务器发一条撤回推送，App 撤掉这条仍带按钮的通知；同一线程后来的通知不受影响。撤回没送到时，点过期的按钮得到「已在别处作答」。
 - **锁屏上必须先解锁**：按钮设了 `setAuthenticationRequired(true)`（Android 12 起由系统执行，本 App 最低 Android 13）。锁屏只显示不含内容的公开版，看不到要批准的是什么；而批准工具命令等于在你的设备上执行操作，不能让拿到手机的人不解锁就点掉。
 
+### 通知样式与头像
+
+Android 通知采用 `NotificationCompat.MessagingStyle`，iOS 15+ 采用对等的 Communication Notifications（`INSendMessageIntent` + `UNNotificationContent.updating(from:)`，`Info.ios.plist` 已声明 `NSUserActivityTypes: ["INSendMessageIntent"]`；若要在 iOS 真机 / TestFlight 完整显示系统级通信大头像，需为 `com.lynricsy.oryn` 的 App ID 启用 Communication Notifications capability 并更新描述文件，未启用时自动回落为标准通知）：
+
+- **普通线程**：发送者头像取线程标题卡图标（Emoji 或内置 Symbols Nerd Font 字形）与线程色，无标题卡图标时回落为 Oryn 品牌标；标题开头与头像重复的图标自动省略。
+- **全局助手动态（主线）与助手对话线程**：发送者头像统一取全局助手头像（自定义图片 / 字形，未设置时为默认 sparkle 标记；不跟随默认 Agent 身份）。Android 后台推送只携带 8 位头像哈希，本地缓存命中即零请求绘制，变更时按需拉取 `GET /api/v1/settings/assistant-identity` 更新缓存。
+- **无线程系统通知**：`/settings/assistant` 归属全局助手头像，其余（预算告警、定时）使用 Oryn 品牌标。
+
 ### 锁屏
 
 通知设为「私密」：锁屏上只显示公开版「Oryn · 线程有更新」，解锁后才看到线程标题与回复摘要（系统设置里选了「锁屏时隐藏敏感内容」时连公开版也按系统规则处理）。

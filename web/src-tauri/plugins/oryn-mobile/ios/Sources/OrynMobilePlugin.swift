@@ -8,6 +8,8 @@
 // 原生页头：headerSet 载荷 {"spec": <spec|null>}（挂到窗口上之后才应答）、headerShow 载荷 {alpha, ms}、
 // headerMenu 载荷 {open, page?}、headerProbe（调试）；交互经 trigger("event", {type: "header", op, key, menu?, id?}) 回到 Rust。
 // 可替换图标：appIconGet 应答 {supported, current}（current = 资源名或 null 表示默认），appIconSet 载荷 {name: <资源名|null>}。
+// 系统通知（Communication Notifications / INSendMessageIntent）：notify 载荷 {id, title, body, path, lang, timestamp?, avatar?}
+// 应答 {posted, reason?}；openNotificationSettings 打开系统通知设置；点击经 trigger("event", {type: "notificationtap", id, path}) 回传。
 import Tauri
 import UIKit
 import WebKit
@@ -32,8 +34,20 @@ class OrynMobilePlugin: Plugin {
   /// 只在 debug 的端到端启动中记录实际触摸；主线程配置。
   private var traceHeaderHits = false
 
+  override init() {
+    super.init()
+    NotificationManager.shared.installDelegate()
+  }
+
   @objc public override func load(webview: WKWebView) {
     self.webview = webview
+    NotificationManager.shared.installDelegate()
+    // Rust 的 listen_ios 在主线程同步完成 registerListener 后，主队列下一轮再绑定点击回调并补发冷启动点击
+    DispatchQueue.main.async { [weak self] in
+      NotificationManager.shared.attach { [weak self] id, path in
+        self?.trigger("event", data: ["type": "notificationtap", "id": id, "path": path])
+      }
+    }
   }
 
   /// 命令跑在 Tauri 的后台串行队列上：界面操作转主线程后立即应答，绝不等主线程（Rust 那边可能正阻塞着它）。
@@ -227,6 +241,20 @@ class OrynMobilePlugin: Plugin {
         if let error { invoke.reject(error.localizedDescription) } else { invoke.resolve() }
       }
     }
+  }
+
+  /// 投递通信样式本地通知（INSendMessageIntent + 发送者圆形头像）。
+  @objc public func notify(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(NotifyArgs.self)
+    NotificationManager.shared.post(args) { out in
+      invoke.resolve(out)
+    }
+  }
+
+  /// 打开系统设置里的本应用通知设置页。
+  @objc public func openNotificationSettings(_ invoke: Invoke) {
+    NotificationManager.shared.openSettings()
+    invoke.resolve()
   }
 
   /// 返回宿主视图是否已挂到窗口上。

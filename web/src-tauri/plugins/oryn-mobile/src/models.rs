@@ -488,10 +488,42 @@ pub enum Event {
         #[serde(default)]
         stack: Option<String>,
     },
+    /// iOS 点击系统通知后带回站内路径（Android 经 `oryn://` 深链接）。
+    NotificationTap {
+        #[serde(default)]
+        id: String,
+        path: String,
+    },
 }
 
-/// `notify` 的参数。
+/// 通知发送者头像种类。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NotificationAvatarKind {
+    Thread,
+    Assistant,
+    System,
+}
+
+/// 通知发送者头像元数据（Android MessagingStyle / iOS Communication Notifications 共用）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationAvatar {
+    pub kind: NotificationAvatarKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    /// 预栅格化好的 128×128 头像 PNG base64（不带 `data:` 前缀）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hash: Option<String>,
+}
+
+/// `notify` 的参数（Android 与 iOS 共用）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NotifyArgs {
     /// 页面给的通知 id。
     pub id: String,
@@ -501,8 +533,11 @@ pub struct NotifyArgs {
     pub path: String,
     /// `zh-CN` | `en`（渠道名等原生文案）。
     pub lang: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avatar: Option<NotificationAvatar>,
 }
-
 /// `notify` 的返回。
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct NotifyResult {
@@ -715,6 +750,45 @@ mod tests {
                 lead: true,
                 title: true,
                 trail: false
+            }
+        );
+    }
+
+    #[test]
+    fn notify_args_and_tap_event_round_trip() {
+        let args = NotifyArgs {
+            id: "ntf_1".into(),
+            title: "DOCKER: Fix".into(),
+            body: "Done".into(),
+            path: "/t/T-1".into(),
+            lang: "zh-CN".into(),
+            timestamp: Some(1_730_000_000_000),
+            avatar: Some(NotificationAvatar {
+                kind: NotificationAvatarKind::Thread,
+                icon: Some("🐳".into()),
+                color: Some("blue".into()),
+                image: None,
+                hash: None,
+            }),
+        };
+        let v = serde_json::to_value(&args).unwrap();
+        assert_eq!(v["timestamp"], 1_730_000_000_000i64);
+        assert_eq!(v["avatar"]["kind"], "thread");
+        assert_eq!(v["avatar"]["icon"], "🐳");
+        assert_eq!(v["avatar"]["color"], "blue");
+        assert!(v["avatar"].get("image").is_none());
+
+        let tap: Event = serde_json::from_value(json!({
+            "type": "notificationtap",
+            "id": "ntf_1",
+            "path": "/t/T-1"
+        }))
+        .unwrap();
+        assert_eq!(
+            tap,
+            Event::NotificationTap {
+                id: "ntf_1".into(),
+                path: "/t/T-1".into(),
             }
         );
     }

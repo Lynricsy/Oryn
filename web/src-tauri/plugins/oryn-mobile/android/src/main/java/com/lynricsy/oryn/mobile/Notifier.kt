@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.Person
 import androidx.core.graphics.drawable.IconCompat
 import java.util.Locale
 
@@ -80,6 +81,18 @@ object Notifier {
     else -> listOf(body, stateText(state, lang)).filter { it.isNotEmpty() }.joinToString("\n")
   }
 
+  /** 正文为空时按通知种类回落到简短提示，保证 MessagingStyle 消息行不为空白。 */
+  fun fallbackBody(kind: String, title: String, lang: String?): String {
+    val zh = isZh(lang)
+    return when (kind) {
+      "done" -> if (zh) "已完成" else "Done"
+      "input" -> if (zh) "等待你的回答" else "Waiting for your input"
+      "error" -> if (zh) "任务出错" else "Task failed"
+      "budget" -> if (zh) "预算告警" else "Budget alert"
+      else -> title
+    }
+  }
+
   fun ensureChannel(context: Context, lang: String? = null) {
     val nm = context.getSystemService(NotificationManager::class.java) ?: return
     // 同 id 重复创建只会更新名称，重要性不变
@@ -149,12 +162,34 @@ object Notifier {
       .setContentTitle("Oryn")
       .setContentText(publicText(lang, thread = model.path.startsWith("/t/")))
       .build()
-    val body = stateBody(model.body, state, lang)
+    val avatar = PushPayload.effectiveAvatar(model)
+    val senderName = PushPayload.displayTitle(model.title, avatar)
+    val rawBody = stateBody(model.body, state, lang)
+    val body = rawBody.ifEmpty { fallbackBody(model.kind, senderName, lang) }
+    val avatarBitmap = NotificationAvatarRenderer.render(context, avatar)
+    val selfUser = Person.Builder()
+      .setKey("oryn-self")
+      .setName(if (isZh(lang)) "我" else "Me")
+      .build()
+    val senderKey = if (avatar.kind == PushPayload.AVATAR_ASSISTANT && !model.path.startsWith("/t/")) {
+      "oryn-assistant"
+    } else {
+      model.tag
+    }
+    val sender = Person.Builder()
+      .setKey(senderKey)
+      .setName(senderName)
+      .setIcon(IconCompat.createWithBitmap(avatarBitmap))
+      .build()
+    val ts = model.timestamp.takeIf { it > 0L } ?: System.currentTimeMillis()
+    val style = NotificationCompat.MessagingStyle(selfUser)
+      .setGroupConversation(false)
+      .addMessage(body, ts, sender)
     val builder = NotificationCompat.Builder(context, CHANNEL)
       .setSmallIcon(R.drawable.ic_stat_oryn)
-      .setContentTitle(model.title)
+      .setContentTitle(senderName)
       .setContentText(body)
-      .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+      .setStyle(style)
       .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
       .setPublicVersion(public)
       .setAutoCancel(true)
