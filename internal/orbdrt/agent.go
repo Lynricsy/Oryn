@@ -1116,64 +1116,22 @@ func (s *supervisor) initialize(p *proc) error {
 	case <-tm.C:
 		return errors.New("timed out waiting for ready")
 	}
-	if _, err := s.call(p, []byte(`{"type":"negotiate_protocol","protocolVersion":2}`), initIDPrefix+"negotiate"); err != nil {
+	if err := s.call(p, []byte(`{"type":"negotiate_protocol","protocolVersion":2}`), initIDPrefix+"negotiate"); err != nil {
 		return err
 	}
-	resumed := false
 	for i, f := range s.spec.initFrames {
-		typ := initFrameType(f)
-		// 冷重启（或崩溃自重启复用旧 spec）恢复到已处于计划模式的会话时，跳过初始化帧里的
-		// set_thinking_level，避免用线程行记录的非计划态思考级别覆盖 Core 刚恢复出来的计划思考级别；
-		// 用户手动发送的 set_thinking_level 走正常会话流、不经 initialize，语义不变。
-		if typ == "set_thinking_level" && resumed && s.isPlanModeActive(p) {
-			continue
-		}
-		raw, err := s.call(p, f, fmt.Sprintf("%sinit-%d", initIDPrefix, i))
-		if err != nil {
+		if err := s.call(p, f, fmt.Sprintf("%sinit-%d", initIDPrefix, i)); err != nil {
 			return err
-		}
-		if typ == "open_session" && responseResumed(raw) {
-			resumed = true
 		}
 	}
 	close(p.readyCh)
 	return nil
 }
 
-func initFrameType(frame []byte) string {
-	var h struct {
-		Type string `json:"type"`
-	}
-	_ = json.Unmarshal(frame, &h)
-	return h.Type
-}
-
-func responseResumed(raw json.RawMessage) bool {
-	var resp struct {
-		Data struct {
-			Resumed bool `json:"resumed"`
-		} `json:"data"`
-	}
-	return json.Unmarshal(raw, &resp) == nil && resp.Data.Resumed
-}
-
-func (s *supervisor) isPlanModeActive(p *proc) bool {
-	raw, err := s.call(p, []byte(`{"type":"get_state"}`), initIDPrefix+"plan-check")
-	if err != nil {
-		return false
-	}
-	var resp struct {
-		Data struct {
-			PlanModeEnabled bool `json:"planModeEnabled"`
-		} `json:"data"`
-	}
-	return json.Unmarshal(raw, &resp) == nil && resp.Data.PlanModeEnabled
-}
-
-func (s *supervisor) call(p *proc, frame []byte, id string) (json.RawMessage, error) {
+func (s *supervisor) call(p *proc, frame []byte, id string) error {
 	frame, err := omprpc.SetID(frame, id)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	var typ struct {
 		Type string `json:"type"`
@@ -1189,22 +1147,22 @@ func (s *supervisor) call(p *proc, frame []byte, id string) (json.RawMessage, er
 		p.mu.Unlock()
 	}()
 	if err := p.w.WriteRaw(frame); err != nil {
-		return nil, fmt.Errorf("%s: write: %w", typ.Type, err)
+		return fmt.Errorf("%s: write: %w", typ.Type, err)
 	}
 	tm := time.NewTimer(s.t.r.cfg.InitTimeout)
 	defer tm.Stop()
 	select {
 	case env := <-ch:
 		if !env.OK() {
-			return nil, fmt.Errorf("%s failed: %s", typ.Type, env.ErrorText())
+			return fmt.Errorf("%s failed: %s", typ.Type, env.ErrorText())
 		}
-		return env.Raw, nil
+		return nil
 	case <-p.exited:
-		return nil, fmt.Errorf("%s: agent exited", typ.Type)
+		return fmt.Errorf("%s: agent exited", typ.Type)
 	case <-s.stopCh:
-		return nil, errors.New("stopped")
+		return errors.New("stopped")
 	case <-tm.C:
-		return nil, fmt.Errorf("%s: timed out", typ.Type)
+		return fmt.Errorf("%s: timed out", typ.Type)
 	}
 }
 
