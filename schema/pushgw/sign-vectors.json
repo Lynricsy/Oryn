@@ -1,0 +1,70 @@
+{
+  "hostSeed": "4242424242424242424242424242424242424242424242424242424242424242",
+  "hostKey": "IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xI",
+  "deviceScalar": "c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721",
+  "deviceKey": "BGD-1LolWp0xyWHrdMY1bWjASbiSO2H6bOZpYi5g8p-2eQP-EAi4vJmkGunpVii8ZPLxsgwtfp9Rd6PClNRGIpk",
+  "cases": [
+    {
+      "method": "GET",
+      "origin": "https://push.oryn.best",
+      "path": "/v1/info",
+      "timestamp": 1790000000000,
+      "body": "",
+      "input": "oryn-push-gw/1\nGET\nhttps://push.oryn.best/v1/info\n1790000000000\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "hostSignature": "B_U-2N8KPOnI2P_aBW021m7TCRLEJhPk0CQBObO93fw4GOYuJQREQZGN_SkgwAzqlKJWsMmhmKWSX4xf3Ie8Cw",
+      "deviceSignature": "MEUCIDgnnh7FJNLIcFOzjRMgF4vYl5-Ii-bIfih0uV6V7QozAiEAmnXCOVpKnBYUpdSKuYKwYbpwnuIm3hbh-PCRshZc7JU"
+    },
+    {
+      "method": "POST",
+      "origin": "https://push.oryn.best",
+      "path": "/v1/challenges",
+      "timestamp": 1790000000001,
+      "body": "{\"channel\":\"apns\",\"appId\":\"com.lynricsy.oryn\",\"environment\":\"production\",\"token\":\"abababababababababababababababababababababababababababababababab\"}",
+      "input": "oryn-push-gw/1\nPOST\nhttps://push.oryn.best/v1/challenges\n1790000000001\n9877bb270c6900beee037d33ad413b6759da4d947ca07a80d80fa54632d65bf2",
+      "hostSignature": "SNcNAch-3zXeHSaqMdkY7PRgPONXhGGVPo5Z2foCNQhkNfF8-M7m_Bjf8ZLFMbUAcdEFdj1Fga5WsYM8a976DQ",
+      "deviceSignature": "MEQCIFLKfF51-FINQ205eD0Gn8R9Cb5a7uMwmRpnPOSrYO-xAiBlDfp0QADaV-mg5sYRoRdR5m8YXG4QST87yy0YFeaQ8w"
+    },
+    {
+      "method": "POST",
+      "origin": "https://push.oryn.best",
+      "path": "/v1/push",
+      "timestamp": 1790000000002,
+      "body": "{\"grant\":\"AAAAAAAAAAAAAAAAAAAAAA\",\"id\":\"ntf_01JX\",\"collapse\":\"q1w2e3r4t5y6u7i8o9p0aa\",\"e\":\"ZXhhbXBsZQ\"}",
+      "input": "oryn-push-gw/1\nPOST\nhttps://push.oryn.best/v1/push\n1790000000002\nad528919e40d76cd5739df79d0bfe1554dd4bbd001f92ef704ca079e8b16dd7f",
+      "hostSignature": "8JlmQ7CQATo__ledwy16ymrRYWmtzw-HzJiT-BcNJgSgxhyLTAwiXg9Hg7v78Jlu98_KmO3Q7mo5pkp3eUCJCg",
+      "deviceSignature": "MEUCIQDShF6agx5nmd2EKwfChtNZp31lt-ARibC3qW22KFhqeQIgYrIQn_aVoXgIv1s4VW7mIsRoYSFRA6t-wTaYszIvh_0"
+    },
+    {
+      "method": "DELETE",
+      "origin": "http://localhost:7700",
+      "path": "/v1/grants/AAAAAAAAAAAAAAAAAAAAAA",
+      "timestamp": 1790000000003,
+      "body": "",
+      "input": "oryn-push-gw/1\nDELETE\nhttp://localhost:7700/v1/grants/AAAAAAAAAAAAAAAAAAAAAA\n1790000000003\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "hostSignature": "9k5FpjFVFMFmT90-7zQjyG-pFDRYzBEScKosAB-0zjUGKBaJ_PNF3_rPGKg_vNbCpeHiQr_HbrmLBUXVtoNCCQ",
+      "deviceSignature": "MEUCIB64F2UtAyN0ocA69QoWAbob9XfTGVB-i6CKTTqCp6tEAiEAvtPhNxWRB5M2_w-BEFtjujIWKsWOB8fa03WnxUqp5Po"
+    },
+    {
+      "method": "POST",
+      "origin": "https://push.oryn.best",
+      "path": "/v1/grants",
+      "timestamp": 1790000000004,
+      "body": "{\"challengeId\":\"BBBBBBBBBBBBBBBBBBBBBB\",\"nonce\":\"CCCCCCCCCCCCCCCCCCCCCC\",\"hostKey\":\"IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xI\",\"note\":\"中文与 \\u2028 保持原样\"}",
+      "input": "oryn-push-gw/1\nPOST\nhttps://push.oryn.best/v1/grants\n1790000000004\nbc6cdcc9269e167bf4b868b8cd9856c7a2a76a21356eb99adda62ba7862f6e65",
+      "hostSignature": "CM7A19ni9Kd3wRfjZdiHF-GCQQkmipSw45paqYPiVmIG2ZaOdL8b7Muis19wV9t2lnCGwhp-IGQG807-jbsjDQ",
+      "deviceSignature": "MEQCICuHE8ZiPZJL0tXaKCbWZcCYf3HPjoxNof0z6Mze6Kt5AiBbpEHIZh-n0D81KEoH0nEapinKffKm9MBtt3SpNmQuGg"
+    }
+  ],
+  "collapse": [
+    {
+      "grant": "AAAAAAAAAAAAAAAAAAAAAA",
+      "tag": "oryn-0123456789ab",
+      "out": "9SzGyRse2HY_L0vm5E_Lgd"
+    },
+    {
+      "grant": "Zz_-Zz_-Zz_-Zz_-Zz_-Zz",
+      "tag": "oryn-budget",
+      "out": "KqtE6REJPgLFa7-Ei8xY82"
+    }
+  ]
+}

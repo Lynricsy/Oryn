@@ -421,7 +421,8 @@ Sec-Fetch-Site 不存在：
 |`POST /api/v1/notification-channels/{id}/telegram/link`|`linkTelegramChannel`|—|`TelegramLink{code, botUsername, expiresAt}`|
 |`GET /api/v1/push/vapid-key`|`getVapidKey`|—|`VapidKey{publicKey}`（base64url 的 65 字节未压缩点）|
 |`GET /api/v1/push/subscriptions`|`listPushSubscriptions`|—|`PushSubscriptionList{subscriptions}`|
-|`POST /api/v1/push/subscriptions`|`createPushSubscription`|`PushSubscriptionInput`：Web Push `{kind?: "webpush", endpoint, keys:{p256dh, auth}}`；FCM（M7）`{kind: "fcm", token, keys:{p256dh, auth}}`（`keys` 必填；`userAgent` 取请求头）|`201 PushSubscription`（Web Push 按 endpoint、FCM 按令牌 upsert 并覆盖 keys；FCM 的 `endpoint` 即令牌）|
+|`POST /api/v1/push/subscriptions`|`createPushSubscription`|`PushSubscriptionInput`：Web Push `{kind?: "webpush", endpoint, keys:{p256dh, auth}}`；官方推送网关（M28）`{kind: "gateway", gateway, grant, keys:{p256dh, auth}}`（`keys` 必填；`userAgent` 取请求头）|`201 PushSubscription`（Web Push 按 endpoint、网关按授权 upsert 并覆盖 keys；网关订阅的 `endpoint` 为 `<gateway>/v1/grants/<grant>`）|
+|`GET /api/v1/push/gateway`|`getPushGateway`|—|`PushGateway{v, origin, hostKey}`；网关关闭时 404 `gateway_disabled`（M28）|
 |`DELETE /api/v1/push/subscriptions/{id}`|`deletePushSubscription`|—|`204`|
 |`POST /api/v1/orbs/{id}/sync/prepare`|`prepareOrbSync`|`bg?`；`OrbSyncPrepareRequest{root?, have?≤256, force?}`|`OrbSyncState{root, branch?, head, snapshot, dirty, common, bundle?{id, size}}`|
 |`GET /api/v1/orbs/{id}/sync/bundle`|`getOrbSyncBundle`|`id`（`^[0-9a-f]{16}$`）|`application/octet-stream`|
@@ -435,7 +436,7 @@ Sec-Fetch-Site 不存在：
 - `PublishedFile{id, attachmentId, threadId?, name, mime, size, url, createdAt}`：`url = <public_url>/f/<slug>/<encodeURIComponent(name)>`。
 - `Notification{id, kind, threadId?, title, body, url, createdAt, readAt?, resolvedAt?, deliveries[]}`：`url` 为站内路径 `/t/<threadId>`；`NotificationDelivery{target, channelId?, channelName?, status, attempts, at, error?}`，`at` 在 `pending` 时为下次尝试时间、其余为完成时间。
 - `NotificationChannelInput{kind, name, enabled?, events?, locale?}` + 与 `kind` 同名的**恰好一个**配置对象：`telegram{botToken, apiBase?}`、`webhook{url, secret?, headers?≤16}`、`ntfy{server?, topic, token?}`、`bark{server?, deviceKey}`。`NotificationChannelPatch` 给出配置对象 = 整体替换（Telegram 换 token 会清掉绑定）。`NotificationChannel` 只回脱敏的 `summary`、`telegram?{botUsername, linked, chatTitle?}`、`lastError?`、`lastDelivery?{status, at, error?}`，**机密字段只写不读**。
-- 枚举：`ShareMode`（`live | snapshot`）、`ShareFindingRule`、`NotificationKind`（`done | input | error`）、`NotificationChannelKind`、`NotificationLocale`（`zh-CN | en`）、`NotificationDeliveryTarget`（`telegram | webhook | ntfy | bark | webpush | fcm`，`apns` 预留）、`NotificationDeliveryStatus`、`PushSubscriptionKind`（`webpush | fcm`，`apns` 预留）。为避免 oapi-codegen 在常量名冲突时给既有常量加前缀，`ShareMode` 与匿名 WS 消息的 `type` 枚举用 `x-enum-varnames` 显式命名（`ShareModeSnapshot` 与 `JobOp` 的 `Snapshot` 共存）。
+- 枚举：`ShareMode`（`live | snapshot`）、`ShareFindingRule`、`NotificationKind`（`done | input | error`）、`NotificationChannelKind`、`NotificationLocale`（`zh-CN | en`）、`NotificationDeliveryTarget`（`telegram | webhook | ntfy | bark | webpush | gateway`）、`NotificationDeliveryStatus`、`PushSubscriptionKind`（`webpush | gateway`）。为避免 oapi-codegen 在常量名冲突时给既有常量加前缀，`ShareMode` 与匿名 WS 消息的 `type` 枚举用 `x-enum-varnames` 显式命名（`ShareModeSnapshot` 与 `JobOp` 的 `Snapshot` 共存）。
 
 ### 匿名面
 
@@ -470,16 +471,16 @@ Sec-Fetch-Site 不存在：
 ### 通知与投递
 
 - 触发：`done`（`idle` 且上一状态 ∈ `working / awaiting_input`）与 `error`（转入 `error`）来自线程状态转换；`input` 来自新进入实时缓冲的待答请求（计划提案的 `request_id = "plan"`）。触发时有设备 focus 于该线程则不通知；去抖期间线程回到 `working`、被 focus / 操作、请求被作答都会取消。`(thread_id, request_id)` 的未决通知唯一（控制面重启后 orbd 重放待答请求时去重）。
-- 投递目标：启用且 `events` 含该 kind 的渠道，以及全部可投递的推送订阅（所属设备未吊销；`fcm` 订阅只在服务器启用 FCM 时投递）；每个目标一行 `pending` 投递。网络错误、408、429、5xx 可重试，其余 4xx 不重试；Web Push 404 / 410、FCM `UNREGISTERED` 删除订阅。`budget` 与无线程的 `error` 由 `PostSystem` / `Post` 立即生成，不去抖、不看 focus。
+- 投递目标：启用且 `events` 含该 kind 的渠道，以及全部可投递的推送订阅（所属设备未吊销；`gateway` 订阅只在配置了网关、且其 endpoint 属于当前网关时投递）；每个目标一行 `pending` 投递。网络错误、408、429、5xx 可重试，其余 4xx 不重试；Web Push 404 / 410、网关 410 / 403 删除订阅。`budget` 与无线程的 `error` 由 `PostSystem` / `Post` 立即生成，不去抖、不看 focus。
 - Webhook：`POST <url>`，头 `Content-Type: application/json`、`User-Agent: Oryn/<version>`、`X-Oryn-Event: <event>`、配置的自定义头；有 `secret` 时 `X-Oryn-Signature: sha256=<hex(HMAC-SHA256(secret, body))>`。`event` 取 `thread.<kind>`、`budget.alert`（预算告警）或 `test`（测试）。有线程时体为 `{"event","id","ts","thread":{"id","title","state","url"},"title","body"}`；没有线程时**不出现 `thread` 键**，改带顶层 `"url"`（绝对地址）。消费方应忽略不认识的 `event`。
 - ntfy：`POST <server>` JSON 发布 `{"topic","title","message","click","tags","priority"}`（`input` priority 4，其余 3）；有 `token` 时 `Authorization: Bearer`。Bark：`POST <server>/push` `{"device_key","title","body","url","group":"Oryn","level"}`，HTTP 200 且 `code == 200` 才算成功。
 - Web Push：RFC 8291 `aes128gcm` 单记录 + VAPID（ES256 JWT，`aud` = 端点 origin，`exp` = now+12h）；载荷 `{"v":1,"id","kind","title","body","url","tag"}`（可一触作答的 `input` 另带 `actions`，撤回消息另有格式，见下文「推送上的作答按钮与撤回」）：`url` 为该通知的站内路径（有线程为 `/t/<threadId>`），`tag` 有线程为 `oryn-<threadId 末 12 位>`、没有线程为 `oryn-budget`（`budget`）或 `oryn-automations`（其余）；`Topic` 由线程 id（没有线程时由 tag）求得。`TTL: 86400`，`Urgency`：`input` 为 `high`、其余 `normal`。订阅端点须是 `https://`（`http://` 仅回环主机），`p256dh` 65 字节且以 0x04 开头、`auth` 16 字节，否则 400 `push_invalid`。
-- FCM（M7，见下文「M7：移动推送」）：HTTP v1 `messages:send`，data-only 高优先级（撤回消息为普通优先级），载荷与 Web Push 相同、同样以 RFC 8291 加密，`data` 只有 `{v:"2", id, e:<密文>}`。
+- 官方推送网关（M28，见下文「M7：移动推送 / 官方推送网关」）：载荷与 Web Push 相同、同样以 RFC 8291 加密，以主机签名 `POST <gateway>/v1/push {grant, id, collapse?, withdraw?, e}`，由网关转给 APNs / FCM。
 - Telegram：`getUpdates` 长轮询（不需要公网入站）；至多一个渠道、只接受绑定的那一个私聊（`/start <码>` 绑定，码 8 位、10 分钟）。`input` 且有选项时带 inline 按钮（`callback_data = "o:<deliveryID>:<序号>"`）；点按钮或回复通知作答待答请求，回复其它通知即发给该线程：线程 `working` 时发 `steer`，否则发 `prompt`（开启新回合，与 Web 输入区一致）；请求在别处被作答后撤回按钮。
 
 #### 推送上的作答按钮与撤回
 
-- 可一触作答的 `input`（`uiprompt.SingleChoice`：单选 `select`、`confirm`、单个单选题的 `ask` / `askDialog`；不含文字输入、密钥、多选、多题、表单与计划审批），选项 2–3 个、每个是不超过 24 字符的单行文字，且**完整问题**（`select` 的多行标题原样保留，工具审批即含 `Allow tool: …` 与命令；`confirm` 为标题 + 说明）不超过 300 字符时，Web Push / FCM 载荷带 `actions: [{i, label, role?}]`，`body` 换成完整问题。问题会被截断时不带按钮，只发普通通知（点按打开线程）：按钮只与完整说明一起出现。`role` 只在 `confirm` 上，为 `yes` / `no`，客户端按界面语言显示「是 / 否」；其余按钮显示 `label` 原文。载荷超过上限时先去掉按钮（`body` 回到普通摘要）再去掉正文。投递时请求已解决的通知不带按钮。
+- 可一触作答的 `input`（`uiprompt.SingleChoice`：单选 `select`、`confirm`、单个单选题的 `ask` / `askDialog`；不含文字输入、密钥、多选、多题、表单与计划审批），选项 2–3 个、每个是不超过 24 字符的单行文字，且**完整问题**（`select` 的多行标题原样保留，工具审批即含 `Allow tool: …` 与命令；`confirm` 为标题 + 说明）不超过 300 字符时，Web Push / 网关载荷带 `actions: [{i, label, role?}]`，`body` 换成完整问题。问题会被截断时不带按钮，只发普通通知（点按打开线程）：按钮只与完整说明一起出现。`role` 只在 `confirm` 上，为 `yes` / `no`，客户端按界面语言显示「是 / 否」；其余按钮显示 `label` 原文。载荷超过上限时先去掉按钮（`body` 回到普通摘要）再去掉正文。投递时请求已解决的通知不带按钮。iOS 本轮不显示按钮。
 - 设备点按钮 → `POST /api/v1/notifications/{id}/answer {option}`；与 `ui.response` 同一条先到先得路径（`threads.UIResponse`）。不在载荷里放任何凭据：Web 用会话 Cookie，Android 用设备令牌。
 - 站内作答：`GET notifications` 与 WS `notification` 里，可一触作答且未解决的 `input` 带 `quickAnswer: {question, options: [{i, label, role?}]}`（判定同上，但不受 300 字符上限约束：站内显示完整问题），收件箱在「等你处理」的行内按原文纯文本显示问题（不解析反引号等标记，审批看到的就是会执行的命令）与选项按钮，同样调 `POST …/answer`。收件箱取线程最新一条未解决的 input 通知；解决状态由 WS `notifications.resolved` 与本页作答结果维护（成功或 409 `input_resolved` 都记为已解决，409 另弹「已在别处作答」），同一线程还有更早的未决提问时行内换成它。不拿线程的 `stateChangedAt` 比较：agent 断线重放同一请求时状态时间会变，而通知按 `(thread_id, request_id)` 去重、发出时间不变。
 - 撤回：请求作答或取消（`InputResolved`）时，对**带按钮**且投递状态为 `sent` 的推送订阅尽力发一条 `{"v":1,"kind":"withdraw","id","tag"}`（不重试、不落投递行；Web Push 不设 `Topic`，免得在推送服务里顶掉同线程尚未送达的通知；`Urgency: normal`）。推送刚发出时请求恰好被作答（那时投递还没记成 `sent`）由发送方送达后复查补发。Apple 端点（Safari 不显示按钮、且每条推送都必须弹出通知）不发撤回。没有按钮的推送不撤回。设备只撤 `tag` 上仍显示着同一 `id` 的那一条：Android 直接取消；Service Worker 换成静默的「已在别处作答」（推送事件结束时必须留有可见通知，否则 Chrome 会弹「此网站已在后台更新」），已作答的替换版不再改动。
@@ -523,8 +524,11 @@ hello `features` 追加 `sync`；旧版 orbd → 409 `orbd_outdated`。控制面
 |`channel_exists`（已有 Telegram 渠道）|409|控制面|
 |`invalid_channel`（配置非法、Telegram `getMe` 失败、非 Telegram 渠道上的绑定）|400|控制面|
 |`channel_not_linked`（Telegram 未绑定时测试）|409|控制面|
-|`push_invalid`|400|`createPushSubscription`（含 `kind: fcm` 缺 `keys`：`kind fcm requires keys (p256dh, auth) for payload encryption`）|
-|`fcm_unavailable`|409|`createPushSubscription`（`kind: fcm` 而服务器未启用 FCM，或服务账号密钥缺失 / 不是 proxy 模式 / 内容无效）|
+|`push_invalid`|400|`createPushSubscription`（含旧的 `kind: fcm`，以及 `kind: gateway` 缺 `gateway` / `grant` / `keys`）|
+|`gateway_disabled`|404 / 409|`getPushGateway`（404）；`createPushSubscription` 的 `kind: gateway`（409）：服务器关闭了推送网关|
+|`gateway_changed`|409|`createPushSubscription`：`gateway` 不等于当前配置的网关 origin|
+|`gateway_grant_invalid`|409|`createPushSubscription`：网关 `verify` 回 410 / 403（授权已吊销或不属于本机主机密钥）|
+|`gateway_unreachable`|502|`createPushSubscription`：网关 `verify` 网络错误或 5xx|
 |`is_a_directory` / `too_large`|409 / 413|`publishOrbFile`|
 |`sync_no_commits` / `sync_no_common` / `sync_shallow`|409|orbd `/sync/prepare`|
 |`too_large`（bundle 超过 1GiB）|413|orbd `/sync/prepare`|
@@ -586,25 +590,21 @@ hello `features` 追加 `sync`；旧版 orbd → 409 `orbd_outdated`。控制面
 
 ## M7：移动推送
 
-Android App 有两条后台推送通道，都登记到同一个 `POST /api/v1/push/subscriptions`，订阅归属设备（`device_id`），设备吊销即停止投递：
+移动 App 的后台推送登记到同一个 `POST /api/v1/push/subscriptions`，订阅归属设备（`device_id`），设备吊销即停止投递。orynd 只有两条推送路径（M28 起删除了 FCM 直发）：
 
-- **UnifiedPush**（主路径，`foss` 与 `gms` 包都有）：分发器（推荐 ntfy）给出的端点就是 RFC 8291 的 Web Push 端点，App 以 `kind: webpush` 登记 `{endpoint, keys}`，服务端零改动、端到端加密（分发服务器只见密文）。私有 ntfy 需 `ntfy access '*' 'up*' write-only` 放行匿名发布。
-- **FCM**（回退，仅 `gms` 包、且没有 UnifiedPush 分发器时）：App 以 `kind: fcm` 登记 FCM 注册令牌与自己生成的 RFC 8291 接收端密钥 `{token, keys:{p256dh, auth}}`（`keys` 必填，校验同 Web Push，缺失或非法 → 400 `push_invalid`）。载荷同样端到端加密，Google 只见密文。
+- **UnifiedPush**（`foss` 包；`gms` 包在设置里手动切换）：分发器（推荐 ntfy）给出的端点就是 RFC 8291 的 Web Push 端点，App 以 `kind: webpush` 登记 `{endpoint, keys}`，服务端零改动、端到端加密（分发服务器只见密文）。私有 ntfy 需 `ntfy access '*' 'up*' write-only` 放行匿名发布。
+- **官方推送网关**（`gms` 包的默认通道 FCM，iOS 的 APNs）：App 经网关登记授权后以 `kind: gateway` 登记 `{gateway, grant, keys}`；orynd 把同样以 RFC 8291 加密的载荷交给网关，网关转给 FCM / APNs。见下文「官方推送网关」。
 
-### FCM 发送
+### 推送载荷与离线
 
-- 启用：`orynd.yaml` 的 `push.fcm.service_account_secret` 写密钥名；服务账号 JSON（Firebase 控制台「服务账号」生成，角色含 `cloudmessaging.messages.create`）存在密钥库里，**须为 proxy 模式**（env 模式的密钥会注入每台 orb，被拒绝）。未配置 → `fcm` 订阅登记返回 `409 fcm_unavailable`、也不生成投递；配置了但密钥缺失或无效 → 启动时告警，登记 409，已有订阅的投递以 `fcm_unavailable` 失败（不重试）。每次投递都重新读取密钥，换服务账号不需要重启。
-- 认证：服务账号私钥做 RS256 JWT 断言（RFC 7523：`iss` = `client_email`，`scope = https://www.googleapis.com/auth/firebase.messaging`，`aud` = 令牌端点 `https://oauth2.googleapis.com/token`，`exp` = `iat` + 1h，头带 `kid = private_key_id`），`grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer` 换 access token，进程内缓存 55 分钟（令牌端点给的有效期更短时取其减 1 分钟）；换了服务账号即作废缓存。令牌端点 4xx 不重试。
-- 发送：`POST https://fcm.googleapis.com/v1/projects/<project_id>/messages:send`，体 `{"message":{"token","data":{"v":"2","id":"<通知 id>","e":"<密文>"},"android":{"priority":"HIGH","ttl":"86400s"}}}`，没有 `notification` 块（通知由 App 自己发，点击经 `oryn://thread/<id>` 直达）。
-  - `e`：Web Push 载荷 JSON（`{"v":1,"id","kind","title","body","url","tag"}`，与上文 Web Push 一致）用该订阅的 `keys` 做 RFC 8291 `aes128gcm` 单记录加密后的完整报文体（`salt(16) | rs(4) | idlen(1)=65 | 服务端临时公钥(65) | 密文+标签`，与发给 Web Push 端点的 POST 体逐字节同构），再做无填充 base64url。App 用 UnifiedPush 路径相同的解密代码解开后交给同一套通知流程。`v` 不是 `"2"` 或缺 `e` 的消息 App 一律丢弃。
-  - `id` 是通知 id，只用于去重与补拉，不含标题、正文、线程 id 等任何内容。`data` 里不再出现明文字段（`v: "1"` 的明文格式已废弃）。
-  - 大小：FCM data 上限 4096 字节（[FCM 消息类型](https://firebase.google.com/docs/cloud-messaging/customize-messages/set-message-type)）。密文 = 明文 + 103 字节，base64 后再加 `v` / `id`，因此 FCM 的明文上限为 2800 字节（Web Push 为 3000），超出时去掉 `body`。
-  - 不设 `collapse_key`（非折叠消息）。依据 [FCM collapsible message types](https://firebase.google.com/docs/cloud-messaging/customize-messages/collapsible-message-types)：每个注册令牌同时最多保留 4 个不同 collapse key 的离线消息，超出时「保留哪 4 个没有确定规则」，被淘汰的消息 App 不会得到任何通知；按线程分配 collapse key 会让离线期间第 5 个线程起的通知被静默丢弃。固定一个 collapse key 也不行：离线期间只剩最后一条。非折叠消息每台设备最多存 100 条，超出时全部丢弃，设备上线后 FCM 回调 [`FirebaseMessagingService.onDeletedMessages()`](https://firebase.google.com/docs/reference/android/com/google/firebase/messaging/FirebaseMessagingService#onDeletedMessages())（设备长期未连接、期间有消息被删也走这里），丢失总会被 App 察觉。
-  - 补拉（App 侧）：`onDeletedMessages()` 里用设备令牌请求 `GET /api/v1/notifications?unread=true&limit=50`，按 `before=<本页最后一条的 createdAt>` 翻页到某页不足 50 条为止，总量上限 200 条；只取未读是为了让较早仍待回答的 `input` 不会被一页已读通知挤出窗口。对 `input` 还要求 `resolvedAt` 为空、且未显示过的通知按同一套流程显示系统通知；同一线程的多条通知用本地通知 tag（`oryn-<threadId 末 12 位>`）合并显示；没有线程的通知按路径取 tag（`/stats…` → `oryn-budget`，`/settings/automations…` → `oryn-automations`）。请求失败、或到达上限时最后一页仍是满页，再显示一条通用的「Oryn 有新通知」。TTL 过期（离线超过 24 小时）的消息不补发：届时打开 App 看到的未读状态即为准。
-  - 点击落点（深链接，封闭集合）：线程通知 `oryn://thread/<id>`；`oryn://stats` → `/stats/usage`；`oryn://automations` → `/settings/automations`；其余 `oryn://open`（首页）。
-- 旧订阅：M7 初版 App 登记的 `kind: fcm` 订阅没有 `keys`。服务端不向它发送任何内容（绝不回退明文），投递时直接删除该订阅（投递以 `fcm subscription has no encryption keys` 失败，随订阅级联删除）并记一条 `slog.Warn`；新版 App 每次同步都会重新登记，届时带 `keys` 重建订阅。
-- 结果：2xx 成功；错误体 `details[].errorCode == "UNREGISTERED"` → 删除订阅；401 → 作废缓存的 access token 并按退避重试；其余按 HTTP 状态归类（408 / 429 / 5xx 重试），错误文本为 `fcm <errorCode> (HTTP <状态>)`，不含令牌。
-- 实现：`internal/notify/fcm.go`（加密复用 `internal/webpush.Encrypt`）；测试用 httptest 假冒令牌端点与 FCM 端点（`FCMConfig.TokenURL / APIBase`），校验 JWT 签名与声明、缓存与过期、UNREGISTERED 删订阅、401 换令牌重试，并断言 FCM 请求体里没有任何明文标题 / 正文 / 线程 id、用接收端私钥能解开 `e`、最长载荷不超过 4096 字节、无 keys 的旧订阅不发送且被删除。
+- 加密载荷：Web Push 载荷 JSON（`{"v":1,"id","kind","title","body","url","tag"}`，与上文 Web Push 一致）用订阅的 `keys` 做 RFC 8291 `aes128gcm` 单记录加密后的完整报文体（`salt(16) | rs(4) | idlen(1)=65 | 服务端临时公钥(65) | 密文+标签`），再做无填充 base64url，记作 `e`。App 用 UnifiedPush 路径相同的解密代码解开后交给同一套通知流程。网关路径的推送数据只有 `{v:"2", id, e}`；`v` 不是 `"2"` 或缺 `e` 的消息 App 一律丢弃，绝不显示明文字段。
+- `id` 是通知 id，只用于去重与补拉，不含标题、正文、线程 id 等任何内容。
+- 大小：FCM data 上限 4096 字节（[FCM 消息类型](https://firebase.google.com/docs/cloud-messaging/customize-messages/set-message-type)）。密文 = 明文 + 103 字节，base64 后再加 `v` / `id`，因此网关路径的明文上限为 2800 字节（Web Push 为 3000），超出时去掉 `body`；`e` 最长 3871 字符。
+- FCM 不设 `collapse_key`（非折叠消息）。依据 [FCM collapsible message types](https://firebase.google.com/docs/cloud-messaging/customize-messages/collapsible-message-types)：每个注册令牌同时最多保留 4 个不同 collapse key 的离线消息，超出时「保留哪 4 个没有确定规则」，被淘汰的消息 App 不会得到任何通知；按线程分配 collapse key 会让离线期间第 5 个线程起的通知被静默丢弃。非折叠消息每台设备最多存 100 条，超出时全部丢弃，设备上线后 FCM 回调 [`FirebaseMessagingService.onDeletedMessages()`](https://firebase.google.com/docs/reference/android/com/google/firebase/messaging/FirebaseMessagingService#onDeletedMessages())，丢失总会被 App 察觉。
+- APNs 设 `apns-collapse-id`（按线程，见网关一节）：APNs 对离线设备每个 App 只保留最后一条，与 FCM 的 4 槽规则无关。iOS 本轮不补发离线期间被 APNs 丢弃的通知，打开 App 时的未读状态为准。
+- 补拉（Android）：`onDeletedMessages()` 里用设备令牌请求 `GET /api/v1/notifications?unread=true&limit=50`，按 `before=<本页最后一条的 createdAt>` 翻页到某页不足 50 条为止，总量上限 200 条；只取未读是为了让较早仍待回答的 `input` 不会被一页已读通知挤出窗口。对 `input` 还要求 `resolvedAt` 为空、且未显示过的通知按同一套流程显示系统通知；同一线程的多条通知用本地通知 tag（`oryn-<threadId 末 12 位>`）合并显示；没有线程的通知按路径取 tag（`/stats…` → `oryn-budget`，`/settings/automations…` → `oryn-automations`）。请求失败、或到达上限时最后一页仍是满页，再显示一条通用的「Oryn 有新通知」。TTL 过期（离线超过 24 小时）的消息不补发。
+- 点击落点（深链接，封闭集合）：线程通知 `oryn://thread/<id>`；`oryn://stats` → `/stats/usage`；`oryn://automations` → `/settings/automations`；其余 `oryn://open`（首页）。
+- App 在前台时收到远程推送不弹系统通知（Android 与 iOS 一致），前台提示由页面负责。
 
 ### 扫码配对
 
@@ -612,92 +612,102 @@ Android App 有两条后台推送通道，都登记到同一个 `POST /api/v1/pu
 
 App Links（`/.well-known/assetlinks.json`）不启用：通知、分享与跳转一律用 `oryn://` 深链接。
 
-### 官方推送网关（草案，未实现）
+### 官方推送网关（M28）
 
-让官方签名的 iOS 包与官方 `gms` 包在连任意自部署 orynd 时也能收推送。APNs key 与 Firebase 服务账号只在网关上；自部署 orynd 把 RFC 8291 密文交给网关，由网关转给 APNs / FCM。UnifiedPush 不经网关（orynd 照旧直发分发器）；自编 App 的部署者仍可用自己的凭据直发，或用开源网关代码自建。官方域名待定，下文记作 `<gw>`。
+让官方签名的 iOS 包与官方 `gms` 包在连任意自部署 orynd 时也能收推送。APNs key 与 Firebase 服务账号只在网关上；自部署 orynd 把 RFC 8291 密文交给网关，由网关转给 APNs / FCM。官方网关是 `https://push.oryn.best`；网关代码在本仓库（`cmd/oryn-push-gateway`，部署见 [push-gateway.md](push-gateway.md)），自编 App 的部署者用自己的凭据自建。
 
 **原则**
 
-- 网关只见密文：载荷与 FCM 的 `e` 相同（RFC 8291 `aes128gcm`，见上文「FCM 发送」），网关解不开。
+- 网关只见密文，解不开载荷。
 - 不注册、无账号：orynd 凭主机密钥签名，手机凭设备密钥签名并证明持有推送令牌；陌生 orynd 只能给明确授权过它的那台手机推送。
-- 网关保留最小授权状态（授权表，不存任何通知内容），因此手机能在网关上立即吊销单个主机的授权，不依赖 orynd 配合。
+- 网关保留最小授权状态（授权表，不存任何通知内容），因此手机能在网关上立即吊销授权，不依赖 orynd 配合。
 - 授权绑定网关 origin、主机公钥与 App 标识；换网关、换主机密钥都要重新授权，旧授权从不转交。
 - 网关是否可信由 App 构建决定，不由 orynd 或网关自己决定：App 只向构建时写入的受信 origin 发请求，`/v1/info` 只做兼容性检查。
+- 一把设备密钥同一时间至多一个有效授权（App 同一时间只配对一台服务器）：手机授权新主机即吊销它指向其它主机的授权。
 
-**密钥**
+**密钥与签名**（实现：`internal/pushproto`；测试向量 `schema/pushgw/sign-vectors.json`，Go 与 Rust 两侧共用）
 
-- 主机密钥：Ed25519，orynd 首次需要时生成，存在密钥库 `push/gateway-host-key`（proxy 模式）。轮换即令全部 `gateway` 订阅失效（见「切换与失效」）。
-- 设备密钥：P-256，App 每次安装生成一把，私钥不出 Keystore / Secure Enclave（两者都支持 P-256、不支持 Ed25519）。网关以它识别「同一台手机」。
-- 请求签名：
-  - 主机请求带 `Oryn-Host-Key`（base64url 公钥）、`Oryn-Timestamp`（毫秒）、`Oryn-Signature`（Ed25519）。
-  - 设备请求带 `Oryn-Device-Key`（base64url 未压缩公钥）、`Oryn-Timestamp`、`Oryn-Signature`（ECDSA P-256 / SHA-256，DER）。
-  - 两者签的都是 `oryn-push-gw/1\n<METHOD>\n<网关 origin><路径>\n<Oryn-Timestamp>\n<hex(SHA-256(请求体))>`，签名只对该网关、该路径、该请求体有效。时间与网关时钟差超过 5 分钟 → 401 `clock_skew`。
+- 主机密钥：Ed25519，orynd 启用网关时在启动期生成，存 `<data_dir>/push-gateway.key`（32 字节种子、0600，与 `vapid.key` 同约定）。删掉它等于轮换：全部 `gateway` 订阅失效（见「切换与失效」）。
+- 设备密钥：P-256，壳的 Rust 代码生成，与设备令牌同样存放（Android Keystore 加密 / iOS Keychain）。网关以它识别「同一台手机」。
+- 主机请求头：`Oryn-Host-Key`（base64url 无填充的 32 字节公钥）、`Oryn-Timestamp`（Unix 毫秒十进制）、`Oryn-Signature`（base64url 的 64 字节 Ed25519 签名）。
+- 设备请求头：`Oryn-Device-Key`（base64url 无填充的 65 字节未压缩点）、`Oryn-Timestamp`、`Oryn-Signature`（base64url 的 ECDSA P-256 / SHA-256 DER）。
+- 两种身份头恰有其一；同时出现或带查询串 → 400 `malformed`。
+- 签名输入：`oryn-push-gw/1\n<METHOD>\n<网关 origin><路径>\n<Oryn-Timestamp>\n<hex(SHA-256(请求体))>`，hex 小写，origin 为网关配置的 `public_origin`、无尾斜杠。签名只对该网关、该路径、该请求体有效。时钟差超过 5 分钟 → 401 `clock_skew`；其它验签失败 → 401 `bad_signature`。请求体上限 8 KiB。
+- `collapse = base64url(SHA-256(grant ‖ tag))` 的前 22 个字符，网关看不出线程。
 
 **orynd 侧**
 
-- 配置：`push: { gateway: { url: "https://<gw>" } }`，默认官方网关；空串关闭。只有手机登记了 `kind: gateway` 订阅时 orynd 才会访问网关，没开推送的实例不产生任何对外流量。
-- `GET /api/v1/push/gateway`（已鉴权）→ `{v: 1, origin, hostKey}`；关闭时 404 `gateway_disabled`。这里的 `origin` 只是 orynd 的选择，App 在发出任何网关请求前先核对它在不在本构建的受信列表里（见「切换与失效」）；扫码、深链接等其它来源一律不认。
-- `POST /api/v1/push/subscriptions` 增加 `{kind: "gateway", gateway: <origin>, grant: <授权 id>, keys: {p256dh, auth}}`（`keys` 必填，校验同 Web Push）。orynd 先以主机签名调 `POST /v1/grants/verify {grant}` 确认授权存在、未吊销、绑定的正是本机主机公钥，否则 409 `gateway_grant_invalid`；`gateway` 不等于当前配置的 origin → 409 `gateway_changed`。按 `grant` upsert。
-- 设备在 orynd 被吊销、或订阅被删除时，orynd 尽力调用 `DELETE /v1/grants/{id}`（主机签名），撤销自己名下的授权。这一步只是礼貌清理，吊销的可靠路径是手机直接找网关（见「吊销」）。
-- `PushSubscriptionKind` 与 `NotificationDeliveryTarget` 增加 `gateway`；投递规则与重试分类同 FCM。
+- 配置：`push: { gateway: { url: "https://push.oryn.best" } }`（缺省值），空串关闭。只能是不带路径的 origin，https 或回环主机的 http。只有手机登记了 `kind: gateway` 订阅时 orynd 才会访问网关，没开推送的实例不产生任何对外流量。
+- `GET /api/v1/push/gateway`（已鉴权）→ `{v: 1, origin, hostKey}`；关闭时 404 `gateway_disabled`。这里的 `origin` 只是 orynd 的选择，App 在发出任何网关请求前先核对它在不在本构建的受信列表里。
+- `POST /api/v1/push/subscriptions` 的 `{kind: "gateway", gateway, grant, keys}`：`grant` 匹配 `^[A-Za-z0-9_-]{22}$`，`keys` 校验同 Web Push，不得带 `endpoint`。`gateway` 不等于当前 origin → 409 `gateway_changed`。orynd 先以主机签名调 `POST /v1/grants/verify {grant}`：410 / 403 → 409 `gateway_grant_invalid`；网络错误或 5xx → 502 `gateway_unreachable`。通过后按 `endpoint = <origin>/v1/grants/<grant>` upsert（表结构不变）。
+- 投递：载荷按上文加密（明文上限 2800），以主机签名 `POST /v1/push {grant, id, collapse, e}`；撤回消息带 `withdraw: true`、不带 `collapse`。订阅的 endpoint 前缀不是当前 origin → 删除订阅、不发送。结果：202 成功；410 / 403 → 删除订阅；429 / 502 / 503 → 按 `Retry-After` 或退避重试；401 → 不重试，并告警提示检查时钟；其余失败不重试。
+- orynd 不主动吊销网关授权：订阅行删除后它不再发送，授权 90 天未用自然过期。吊销由手机直接找网关。
 
 **网关接口**
 
 |方法 路径|签名|请求 → 应答|
 |---|---|---|
-|`GET /v1/info`|无|→ `{v: 1, apns?: {topic, environments: ["production"\|"sandbox"]}, fcm?: {projectId, senderId}}`；网关自报，只用于兼容性检查，不作为信任依据|
-|`POST /v1/challenges`|设备|`{channel: "apns"\|"fcm", appId, environment?, token}` → `202 {challengeId}`；网关向该令牌发一条只含 `{kind: "gateway_challenge", challengeId, nonce}` 的推送，nonce 5 分钟有效、只能用一次|
-|`POST /v1/grants`|设备|`{challengeId, nonce, hostKey, label?}` → `201 {grant, createdAt}`：授权绑定该设备密钥、推送令牌、通道 / App 标识 / 环境与主机公钥；同一 `(设备密钥, 主机公钥)` 已有授权时返回原 `grant`|
-|`PUT /v1/devices/self/token`|设备|`{challengeId, nonce}` → `204`：推送令牌变了（APNs / FCM 刷新），先对新令牌走一次 challenge，再把该设备全部授权改到新令牌|
-|`GET /v1/devices/self/grants`|设备|→ `{grants: [{grant, hostKey, label, createdAt, lastUsedAt}]}`|
-|`DELETE /v1/grants/{id}`|设备或主机|→ `204`，立即生效；只认该授权绑定的设备密钥或主机公钥|
-|`DELETE /v1/devices/self/grants`|设备|→ `204`：撤销本机全部授权|
-|`POST /v1/grants/verify`|主机|`{grant}` → `204`，或 410 `grant_revoked` / 403 `host_mismatch`|
-|`POST /v1/push`|主机|`{grant, id, kind, collapse?, e}` → `202`|
+|`GET /healthz`|无|`{ok: true, version}`|
+|`GET /v1/info`|无|`{v: 1, apns?: {topic, environments: ["production"\|"sandbox"]}, fcm?: {projectId}}`；网关自报，只用于兼容性检查，不作为信任依据|
+|`POST /v1/challenges`|设备|`{channel: "apns"\|"fcm", appId, environment?, token}` → `202 {challengeId}`|
+|`POST /v1/grants`|设备|`{challengeId, nonce, hostKey}` → `201 {grant, createdAt}`|
+|`DELETE /v1/grants/{id}`|设备或主机|→ `204`|
+|`POST /v1/grants/verify`|主机|`{grant}` → `204`|
+|`POST /v1/push`|主机|`{grant, id, collapse?, withdraw?, e}` → `202`|
 
-- `challenge` 推送在 App 前台时到达：iOS 用 alert 推送，App 在 `willPresent` 里不展示；FCM 用 data 消息。它只证明「登记者能收到这个令牌的推送」，防止知道别人令牌的人申请授权。
-- `POST /v1/push`：
-  - `id` 是通知 id，`kind` 是 `done | input | error | budget | other`（只用于优先级），`e` 是密文的无填充 base64url，最长 3800 字符（明文上限同 FCM 的 2800 字节）。
-  - `collapse` 只用于 APNs，形如 `base64url(SHA-256(grant ‖ tag))` 的前 22 个字符，网关看不出线程。按线程折叠在 APNs 上是安全的：APNs 对离线设备只保留每个 App 的最后一条，与 FCM 的 4 槽规则无关，丢失由补拉兜底（见下）。
-  - APNs：`apns-push-type: alert`，`apns-priority` 对 `input` 为 10、其余为 5，`apns-expiration` 为 24 小时后，载荷 `{"aps":{"alert":{"title":"Oryn","body":"线程有更新"},"mutable-content":1,"sound":"default"},"v":"2","id","e"}`。Notification Service Extension 解密后替换标题和正文；解不开时只显示这段不含内容的占位文字。
-  - FCM：与 orynd 直发 FCM 的请求体相同（`data: {v: "2", id, e}`，不设 `collapse_key`）。
-- 上游结果：APNs 410 `Unregistered` / FCM `UNREGISTERED` → 网关把该设备全部授权标为失效，并对这次请求回 410 `device_unregistered`。
+- 格式：`grant`、`challengeId`、`nonce` 都是 `^[A-Za-z0-9_-]{22}$`（128 位随机）；`id` 是 `^[A-Za-z0-9_-]{1,80}$`；`collapse` 是 `^[A-Za-z0-9_-]{1,64}$`；`e` 是无填充 base64url、至多 3872 字符。APNs 令牌为 `^[0-9a-f]{64,200}$`，FCM 令牌为非空可见 ASCII、≤4096 字节。
+- `appId` 必须等于网关配置的 APNs topic 或 FCM 应用标识（`com.lynricsy.oryn`）；通道未配置、APNs 环境不在配置里、或上游判定令牌不属于本 App → 409 `app_mismatch`。
+- challenge：网关生成 `challengeId` 与 `nonce`，存内存，5 分钟有效、一次性，只认发起它的设备密钥（否则 409 `challenge_invalid`），并向该令牌推送：
+  - FCM：`data {kind: "gateway_challenge", challengeId, nonce}`，`HIGH`，ttl 300s。
+  - APNs：`{"aps":{"alert":{"title":"Oryn","body":"Verifying push notifications"}},"kind":"gateway_challenge","challengeId","nonce"}`，`apns-push-type: alert`、priority 10、expiration 0（不离线存储）。App 在前台收到它时不展示。
+  - 它只证明「登记者能收到这个令牌的推送」，防止知道别人令牌的人申请授权。
+- `POST /v1/grants` 在一个事务里：吊销该设备密钥指向其它主机的有效授权；同一对（设备，主机）已有有效授权 → 用这次 challenge 证明过的令牌覆盖原令牌并返回原 id；否则新建。令牌刷新同样走这条路径。
+- `DELETE`：授权不存在或已吊销 → 204；存在但签名者不是绑定的设备或主机 → 403 `forbidden`。
+- `verify` 与 `push`：授权不存在或已吊销 → 410 `grant_revoked`；主机不符 → 403 `host_mismatch`。
+- 通知推送：
+  - FCM：`{"message":{"token","data":{"v":"2","id","e"},"android":{"priority":"HIGH","ttl":"86400s"}}}`，撤回时 priority 为 `NORMAL`，没有 `notification` 块。
+  - APNs：`{"aps":{"alert":{"title":"Oryn","body":"New notification"},"mutable-content":1,"sound":"default"},"v":"2","id","e"}`；头 `apns-topic`、`apns-push-type: alert`、`apns-priority: 10`、`apns-expiration` 为 24 小时后、`apns-collapse-id` 为 `collapse`。Notification Service Extension 先把占位换成按系统语言的「有新通知」，解密成功再换成真实标题与正文；解不开时只显示占位。
+  - APNs 授权收到 `withdraw` 直接回 202、不联系 APNs（iOS 本轮没有按钮，无可撤回）。
+- 上游报令牌失效（FCM `UNREGISTERED`；APNs 410，或 400 的 `BadDeviceToken` / `DeviceTokenNotForTopic`）→ 吊销授权并回 410 `device_unregistered`。
 
 **错误码（网关）**
+
+错误体一律 `{code, message}`。
 
 |码|HTTP|含义|orynd 的处理|
 |---|---|---|---|
 |`malformed`|400|请求不合规|不重试|
 |`bad_signature` / `clock_skew`|401|签名或时间不对|不重试并告警（时钟偏差时检查 NTP）|
+|`forbidden`|403|`DELETE` 的签名者不是该授权的设备或主机|—|
 |`host_mismatch`|403|授权不属于这把主机密钥|删除订阅|
 |`grant_revoked` / `device_unregistered`|410|授权已吊销 / 推送令牌失效|删除订阅|
-|`app_mismatch`|409|`/v1/challenges` 的 App 标识不是本网关服务的|—（手机侧错误）|
-|`too_big`|413|`e` 超长|去掉 `body` 重新加密后再发一次|
+|`app_mismatch` / `challenge_invalid`|409|App 标识不是本网关服务的 / challenge 不存在、过期、已用或不属于该设备|—（手机侧错误）|
+|`too_big`|413|请求体或 `e` 超长|不重试（orynd 发送前已按 2800 字节明文降级）|
 |`rate_limited`|429|超限，带 `Retry-After`|按 `Retry-After` 重试|
 |`upstream`|502|APNs / FCM 拒绝或不可达|按退避重试|
 |`unavailable`|503|网关暂不可用|按退避重试|
 
 **吊销**
 
-- 手机端「关闭推送」：先以设备签名 `DELETE /v1/grants/{id}`（成功才算关闭），再尽力删除 orynd 上的订阅（即现有 `push_disable`）。这样自部署 orynd 即使保留着授权 id，也已经发不出去。
-- 「设置 → 通知」列出 `GET /v1/devices/self/grants` 的结果，可以逐个撤销，也可以一键撤销全部，用于手机换过服务器或不再信任某台主机的情况。
+- 手机端「关闭推送」：尽力以设备签名 `DELETE /v1/grants/{id}`，失败则记入待吊销队列、之后每次同步重试；再尽力删除 orynd 上的订阅；最后无条件停用本机推送。离线时也能关。
+- 解除配对（换服务器、设备被吊销）：本机授权挪进待吊销队列并停用推送；下次配对后自动重新启用。
 - 网关对每次 `POST /v1/push` 都查授权表，所以吊销立即生效；不签发自包含的长期令牌。
 
 **切换与失效**
 
-- App 每次同步订阅时都读一遍 `GET /api/v1/push/gateway`。`origin` 或 `hostKey` 与本地授权不一致 → 先在旧网关撤销旧授权（尽力而为），新 `origin` 通过下面的受信检查后，再对它走一遍 `info → challenges → grants`，然后登记新订阅。旧授权从不带到新网关，新网关看到别家的授权 id 也只会回 `grant_revoked`。
-- 受信 origin：App 构建时写入受信网关 origin 列表，官方构建只有 `https://<gw>`，自编包在构建配置里填自己的网关。`GET /api/v1/push/gateway` 给出的 `origin` 不在列表里时，App 不向它发出任何请求（不读 `/v1/info`、不提交推送令牌），状态显示 `gateway_untrusted`。理由：`/v1/info` 是网关自报的，任意 orynd 指向的假网关都能声称同一 topic / project，再从 `/v1/challenges` 收走手机真实的推送令牌。
-- 网关请求只走 HTTPS，不跟随跨 origin 重定向（遇到即失败，按 `gateway_untrusted` 处理）。
-- 兼容性：通过受信检查后，`/v1/info` 里没有与本 App 编译时一致的 APNs topic / 环境或 Firebase `projectId`，或 `v` 不支持时，App 不登记，状态显示 `gateway_app_mismatch`。这一步只防配置错误，比如官方网关尚未支持某个环境。
-- orynd 改 `push.gateway.url` 或轮换主机密钥 → 停止向旧订阅投递，并在订阅登记时回 409 `gateway_changed` / `gateway_grant_invalid`，让 App 重新授权。期间不发推送，绝不回退明文或改走其它通道。
-- 离线丢失：APNs 只留最后一条。App 每次启动、以及 NSE 收到任何推送时都按「FCM 发送」中的补拉规则拉未读通知；补拉失败时只显示一条「Oryn 有新通知」。
+- App 每次同步订阅时都读一遍 `GET /api/v1/push/gateway`。`origin` 或 `hostKey` 与本地授权不一致 → 旧 origin 仍受信时尽力在旧网关撤销旧授权，新 `origin` 通过受信检查后，再对它走一遍 `info → challenges → grants`，然后登记新订阅。旧授权从不带到新网关。
+- 受信 origin：App 构建时写入受信网关 origin 列表（编译期环境变量 `ORYN_PUSH_GATEWAYS`，逗号分隔），官方构建只有 `https://push.oryn.best`。`GET /api/v1/push/gateway` 给出的 `origin` 不在列表里时，App 不向它发出任何请求（不读 `/v1/info`、不提交推送令牌），状态显示 `gateway_untrusted`。理由：`/v1/info` 是网关自报的，任意 orynd 指向的假网关都能声称同一 topic / project，再从 `/v1/challenges` 收走手机真实的推送令牌。
+- 网关请求只走 HTTPS（回环主机允许 http，供本机验收），不跟随任何重定向。
+- 兼容性：通过受信检查后，`/v1/info` 里没有与本 App 编译时一致的 APNs topic / 环境或 Firebase `projectId`，或 `v` 不支持时，App 不登记，状态显示 `gateway_app_mismatch`。这一步只防配置错误，比如官方网关尚未配置 APNs key。
+- orynd 改 `push.gateway.url` 或轮换主机密钥 → 旧订阅在下一次投递时删除，登记时回 409 `gateway_changed` / `gateway_grant_invalid`，App 清掉本地授权、重新授权一次。期间不发推送，绝不回退明文或改走其它通道。
+- 连到没有 `GET /api/v1/push/gateway` 的旧 orynd：状态显示 `gateway_unsupported`。
 
 **网关存储、限额与隐私**
 
-- 授权表：`grant`（128 位随机）、设备公钥、主机公钥、通道、App 标识、环境、推送令牌（静态加密）、`label`、创建时间、最后使用时间、吊销时间。不存任何通知内容，也不存 orynd 的地址。连续 90 天未用的授权删除，已吊销的 7 天后删除。
-- 限额（初值，可配置）：每个授权每分钟 60 条、每天 2000 条；每个主机公钥每分钟 600 条；每个来源 IP 每小时 30 次 `challenges`。
-- 日志只记授权 id、主机公钥的哈希、HTTP 结果与上游错误码，不记推送令牌、`e` 及其它请求内容。来源 IP 只用于内存中的限流，不落盘。
-- 实现：同仓库新增 `cmd/oryn-push-gateway`，单独发布镜像；与 orynd 共用 `internal/webpush` 以及从 `internal/notify/fcm.go` 拆出的 FCM 客户端，新增 APNs 客户端（HTTP/2 长连接、ES256 provider token 缓存 50 分钟）。官方部署的密钥、限额与域名不进仓库。
+- 授权表 `grants`：`id`（128 位随机）、设备公钥、主机公钥、通道、App 标识、环境、推送令牌（以网关主密钥静态加密）、创建时间、最后使用时间（至多每小时写一次）、吊销时间。不存任何通知内容，也不存 orynd 的地址。连续 90 天未用的授权删除，已吊销的 7 天后删除。
+- 限额（初值，可配置）：每个授权每分钟 60 条、每天 2000 条；每个主机公钥每分钟 600 条；每个来源 IP 每小时 30 次 `challenges`。超限回 429 并带 `Retry-After`。
+- 日志只记授权 id、主机公钥哈希前 8 位、HTTP 结果与上游错误码，不记推送令牌、nonce、`e` 及其它请求内容。来源 IP 只用于内存中的限流，不落盘。
+- 实现：`cmd/oryn-push-gateway` + `internal/pushgw`（存储、接口、限流）+ `internal/apns`（HTTP/2、ES256 provider token 缓存 50 分钟）+ `internal/fcm`（与历史上的 orynd FCM 直发同一出站层）；随 `oryn-server` 包发布，附 systemd unit。官方部署的密钥、限额与域名配置不进仓库。
 
 ## M8：Desktop 与浏览器 Profile
 

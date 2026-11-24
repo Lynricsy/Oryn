@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
-	"net"
 	"net/http"
 	"strings"
 
@@ -13,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/clientip"
 	"github.com/Lynricsy/Oryn/internal/config"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/version"
@@ -58,7 +58,7 @@ var publicPaths = map[string]bool{
 // NewRouter 返回控制面根路由。
 func NewRouter(s *Server) http.Handler {
 	r := chi.NewRouter()
-	r.Use(trustedProxyIP, middleware.Recoverer)
+	r.Use(clientip.Trusted, middleware.Recoverer)
 	if s.Portal != nil {
 		r.Use(s.Portal)
 	}
@@ -110,38 +110,6 @@ func notFound(w http.ResponseWriter, _ *http.Request) {
 // paramError 把参数绑定错误写成 400 {code:"bad_request"}（NewRouter 与 NewInternal 共用）。
 func paramError(w http.ResponseWriter, _ *http.Request, err error) {
 	WriteError(w, http.StatusBadRequest, "bad_request", err.Error())
-}
-
-// trustedProxyIP 只在请求来自本机反代（回环地址）时采信 X-Real-IP / X-Forwarded-For。
-// orb 经 docker 网桥直连控制面，其自报的转发头不可信。
-func trustedProxyIP(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err == nil {
-			if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
-				if real := forwardedClient(r); real != "" {
-					r.RemoteAddr = net.JoinHostPort(real, "0")
-				}
-			}
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-// forwardedClient 优先取反代设置的 X-Real-IP，否则取 X-Forwarded-For 的最后一跳（由反代追加，客户端无法伪造）。
-func forwardedClient(r *http.Request) string {
-	if v := strings.TrimSpace(r.Header.Get("X-Real-IP")); net.ParseIP(v) != nil {
-		return v
-	}
-	xff := r.Header.Values("X-Forwarded-For")
-	if len(xff) == 0 {
-		return ""
-	}
-	parts := strings.Split(xff[len(xff)-1], ",")
-	if v := strings.TrimSpace(parts[len(parts)-1]); net.ParseIP(v) != nil {
-		return v
-	}
-	return ""
 }
 
 // GetHealthz 返回 {"ok":true,"version":"…"}，免鉴权（见 publicPaths）。
