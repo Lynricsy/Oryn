@@ -91,11 +91,28 @@
 
 **Vetta** [文档] ADR-0157：他们统计到逐行哈希锚点的 `edit` 失败率在 13.6%–32% 之间（malformed 与 stale 合计占失败的 76%），于是改成「首行 + 可选末行」的内容定位，并加了相对的结构回归检测（编辑后括号开合只许持平或变好）。文中特别提到 oh-my-pi 的 hashline 对 kimi / deepseek / qwen 会自动降级到 `replace` 模式。
 **对 Oryn 的意义**：Vetta 换掉的「逐行哈希」，和 Oryn Core 的 hashline 不是一回事。hashline 只在每个文件标一个 `[path#TAG]` 快照标签，按原始行号操作，标签过期时还会沿快照链尝试安全恢复。更关键的是，**内容定位在 Core 里已经有了，不需要移植** [源码] `Lynricsy/oryn-core@8951be1` 的 `packages/coding-agent/src/edit/settings.ts` 与 `utils/edit-mode.ts`：
-- `sloppy` 模式用现有文本做锚点，不用快照标签：`*** Find` 必须唯一命中（`*** Find all` 除外），首行 + `…` + 末行可以定位一个块，`*** Replace Block: <开头行>` 按语法块整体替换。这和 Vetta 的 `oldText` + `oldEndText` 是同一个思路，表达能力还更强。
+- `sloppy` 模式用现有文本做锚点，不用快照标签 [源码] `crates/edit/prompts/sloppy.md`、`crates/edit/src/modes/sloppy/parse.rs`。动作头只有 `*** Find` 后接 `*** Replace` / `*** Insert Before` / `*** Insert After` 三种。Find 必须唯一命中；要改所有匹配，就在文件头写 `*** Edit File: path all`。块定位不靠专门的语法，而是用 Find 里的 `…`：写在行尾的 `…` 可以跨行捕获，Replace 中的 `…` 会按顺序原样放回这些捕获。所以「首行 + `…` + 末行」就能覆盖一个块，中间内容不用重抄。这与 Vetta 的 `oldText` + `oldEndText` 思路相同。注意：钉定版本**没有**按语法块替换的头（如 `Replace Block`），也**不支持** `*** Find all`。omp 19.1 的文档已经描述了这些写法，但要升级 Core 之后才能用。
 - `replace` 模式就是 `old_string` / `new_string`。hashline 本来会对 Kimi、MiMo、MiniMax、DeepSeek、StepFun、Codex Spark、GLM 5.3 Flash、Qwen 3.8 自动降级到它（设置 `PI_STRICT_EDIT_MODE` 可关闭）。
 - 按模型选模式用 `edit.modelVariants`（按模型名最长子串匹配）；全局默认用 `edit.mode`。Oryn 的设置页「Agent」分组会把 `config.yml` 下发到所有 orb，所以只要改配置，不用改代码。
 
 因此要回答的只是「哪些模型该用哪种模式」，需要数据。Core 的 `edit` 失败会带 `details.errorKind`（`stale_tag`、`no_match`、`unseen_lines` 等），比单纯的 `is_error` 更能区分「格式问题」和「定位过期」。控制面 `tool_calls` 表目前只有 `tool` 与 `is_error`，没有模型列，也没有 `errorKind` [Oryn] `internal/store/migrations/0001_init.sql`。本机开发库样本太小，看不出结论（`edit` 7 次失败 1 次）。建议入库时补上 `errorKind`，用 `thread_id` 关联 `usage_records` 里的模型，然后在生产库上按模型、按模式对比，再决定 `edit.modelVariants`。[推断]
+
+**外部评测（2026-11-24 检索）**：没有一项研究能给出「哪种格式普遍更好」的结论。
+
+| 研究 | 规模 | 主要发现 |
+|---|---|---|
+| [Can Bölük, The Harness Problem](https://stencil.so/blog/the-harness-problem)（2026-02，hashline 作者，即 omp 作者） | 16 个模型 × 180 个 React 变异任务 × 3 轮；有 LSP 反馈 | hashline 在 14/16 个模型上胜过 patch；Grok Code Fast 1 从 6.7% 升到 68.3%。对 replace 只写了「多数模型持平或更好」，大幅提升主要来自和 patch 的比较。早期 hashline 是逐行哈希，不是现在的文件级标签 |
+| [Geometric, AST-targeted edits](https://www.geometric.so/research/ast-edits)（2026-04） | 29 个 Python 单文件任务（100–4,200 行）× 4 个模型 × 7 种格式；以测试通过为准 | 按符号名替换的 AST 编辑最稳（3 个模型 100%）。search/replace 在 Opus 4.6 / GPT-5.4 上达到 100% / 96.6%。加 hashline 后与原格式相比没有一致的提升：search/replace 在 Haiku 上 +3.4，在 GPT-5.4 上 −10.3。按行号的 unified diff 最差（o4-mini 只有 20.7%）。整文件重写正确率高，但输出 token 约 21 倍 |
+| [nwyin, edit-bench](https://nwyin.com/hashline-vs-replace-edit-bench)（2026-03） | 3 个模型 × Python / TS / Rust 各 20 个任务；单次运行 | hashline 对 replace：Python 明显更差（Gemini 3 Flash 70% 对 95%），TS 和 Rust 差不多。模型之间的差距远大于格式之间的差距。fuzzy 匹配一次也没有触发 |
+| [Diff-XYZ](https://arxiv.org/abs/2510.12487)（JetBrains，2025-10） | 1,000 个真实提交，5 种语言；测的是 apply / 生成 diff，不是 agent 编辑 | 大模型在 search-replace 表示下多数任务最好；小模型换什么格式收益都很小 |
+| [Aider unified diffs](https://aider.chat/docs/unified-diffs.html)（2023） | 89 个 Python 重构任务，GPT-4 Turbo | 去掉行号、做灵活匹配的 udiff 从 20% 升到 61%（针对模型偷懒、省略代码）。模型代际太旧，参考价值有限 |
+
+**能借用的结论** [推断]
+- 默认值是有依据的：hashline 只在部分模型上占优，omp 对 Kimi、DeepSeek 等模型降级到 replace，和上面的数据方向一致。
+- 「是否加哈希或标签」本身没有被单独测过。Geometric 和 nwyin 都没有比较「同一个操作语法，只差一个标签」。
+- 只看「补丁是否被接受」会高估效果：Geometric 中 hashline diff 的格式失败从 31 降到 9，但应用成功、结果却错误的从 9 升到 26。Oryn 采集数据时应该把「补丁应用成功」和「回合最终交付」分开统计。
+- 这些评测都没有覆盖 sloppy（omp 自研的文本锚点 + `…` 捕获）。
+- 可以自己跑：钉定的 Core 自带 `packages/typescript-edit-benchmark`，即 Bölük 评测的 TypeScript 版本（生成变异任务并校验结果）。可以用 Oryn 常用的模型，对 hashline / replace / sloppy 各跑一轮，得到直接可用的 `edit.modelVariants` 依据。
 
 ## ④ 不建议借鉴
 
