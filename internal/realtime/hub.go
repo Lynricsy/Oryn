@@ -738,6 +738,13 @@ func (h *Hub) PlanResolved(threadID string) {
 	h.toThread(threadID, map[string]string{"type": "plan.resolved", "threadId": threadID})
 }
 
+// AgentStatus 实现 threads.Sink。
+func (h *Hub) AgentStatus(threadID string, status apigen.AgentStatus) {
+	h.toThread(threadID, apigen.WsServerAgentStatus{
+		Type: apigen.WsServerAgentStatusTypeAgentStatus, ThreadID: threadID, Status: status,
+	})
+}
+
 // Orb 实现 threads.Sink。
 func (h *Hub) Orb(o apigen.Orb) { h.toAll(map[string]any{"type": "orb", "orb": o}) }
 

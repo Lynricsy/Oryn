@@ -172,3 +172,29 @@ func TestAgentStartFailureKeepsUserCommands(t *testing.T) {
 	assert.Equal(t, "set_thinking_level", typ)
 	th.mu.Unlock()
 }
+
+// 回归：orb 冻结后被唤醒（或控制面重启后）时，客户端订阅拿到的快照里 agent 在启动、没有 state；之后控制面自己拉到的
+// state 只进实时缓冲，唤醒期间又不开回合，客户端没有任何时机补拉，输入坞一直显示「模型未知」。现在 agent 进程状态的
+// 每次变化都推给订阅者（agent.status），客户端收到 ready 再拉 state；状态没变不重复推。
+func TestAgentStatusPushedToSubscribers(t *testing.T) {
+	f := newFixture(t, Config{})
+	orb := f.orb("ready")
+	th := f.thread(orb, StateIdle)
+	a := fakeAgent(16)
+	th.mu.Lock()
+	th.agent = a
+	th.mu.Unlock()
+
+	status := func(s apigen.LinkCtlAgentStatusParamsStatus) {
+		raw, _ := json.Marshal(apigen.LinkCtlAgentStatusParams{ThreadID: th.id, Status: s})
+		f.s.onAgentStatus(f.ctx, orb, raw)
+	}
+	status("starting")
+	status("ready")
+	status("ready") // 重复上报：不再推
+	status("exited")
+
+	f.sink.mu.Lock()
+	defer f.sink.mu.Unlock()
+	assert.Equal(t, []string{th.id + " starting", th.id + " ready", th.id + " exited"}, f.sink.agentStatus)
+}

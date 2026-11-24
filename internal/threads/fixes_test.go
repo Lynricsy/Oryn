@@ -35,6 +35,7 @@ type recSink struct {
 	uiResolved   []string
 	resets       []int64
 	planResolved []string
+	agentStatus  []string
 }
 
 func (r *recSink) Entries(_ string, es []Entry, _ *string, last int64) {
@@ -63,6 +64,12 @@ func (r *recSink) PlanResolved(id string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.planResolved = append(r.planResolved, id)
+}
+
+func (r *recSink) AgentStatus(id string, st apigen.AgentStatus) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.agentStatus = append(r.agentStatus, id+" "+string(st))
 }
 
 // stubOrbs 记录 Wake，Create 直接写一行 requested 的 orb。

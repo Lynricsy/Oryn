@@ -42,6 +42,8 @@ type Sink interface {
 	TranscriptReset(threadID string, transcriptRev int64)
 	// PlanResolved 表示计划提案已被成功处理：所有客户端清除 planProposal。
 	PlanResolved(threadID string)
+	// AgentStatus 表示线程 agent 的进程状态变了（快照 agent.status 的增量）。
+	AgentStatus(threadID string, status apigen.AgentStatus)
 	Orb(o apigen.Orb)
 	// TermOutput 是 terminal_output 帧（热路径，未持线程锁）：只发给开启了 term.watch 的连接，可丢弃。
 	TermOutput(threadID string, frame json.RawMessage)
@@ -176,6 +178,7 @@ func (nopSink) UIResolved(string, string)               {}
 func (nopSink) LiveReset(string)                        {}
 func (nopSink) TranscriptReset(string, int64)           {}
 func (nopSink) PlanResolved(string)                     {}
+func (nopSink) AgentStatus(string, apigen.AgentStatus)  {}
 func (nopSink) Orb(apigen.Orb)                          {}
 func (nopSink) TermOutput(string, json.RawMessage)      {}
 func (nopSink) TermLagged(string)                       {}
@@ -886,7 +889,7 @@ func (s *Service) handleOrbEvent(ctx context.Context, ev OrbEvent) {
 			t.agent = nil
 			t.stopping = false
 			t.wakeAfterStart = false
-			t.agentStatus = apigen.AgentStatusNone
+			s.setAgentStatusLocked(t, apigen.AgentStatusNone)
 			t.unsynced = false
 			s.resetLiveLocked(t)
 			_ = s.st.Q.SetThreadOrb(ctx, db.SetThreadOrbParams{OrbID: nil, UpdatedAt: s.now(), ID: t.id})
@@ -895,7 +898,7 @@ func (s *Service) handleOrbEvent(ctx context.Context, ev OrbEvent) {
 		case ev.Kind == OrbEventLinkDown:
 			// agent 仍在 orbd 中运行；重连后 agent.start 会重新上报 ready
 			if t.agentStatus == apigen.AgentStatusReady {
-				t.agentStatus = apigen.AgentStatusStarting
+				s.setAgentStatusLocked(t, apigen.AgentStatusStarting)
 			}
 		}
 		if orbGoingDown(state) && len(t.queue) > 0 {

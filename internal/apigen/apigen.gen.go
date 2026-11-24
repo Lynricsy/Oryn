@@ -4127,6 +4127,21 @@ func (e WsPublicTranscriptResetType) Valid() bool {
 	}
 }
 
+// Defines values for WsServerAgentStatusType.
+const (
+	WsServerAgentStatusTypeAgentStatus WsServerAgentStatusType = "agent.status"
+)
+
+// Valid indicates whether the value is a known member of the WsServerAgentStatusType enum.
+func (e WsServerAgentStatusType) Valid() bool {
+	switch e {
+	case WsServerAgentStatusTypeAgentStatus:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for WsServerArtifactActivityType.
 const (
 	WsServerArtifactActivityTypeArtifactActivity WsServerArtifactActivityType = "artifact.activity"
@@ -12914,6 +12929,23 @@ type WsPublicTranscriptReset struct {
 // WsPublicTranscriptResetType defines model for WsPublicTranscriptReset.Type.
 type WsPublicTranscriptResetType string
 
+// WsServerAgentStatus 线程 agent 的进程状态变了（快照 `agent.status` 的增量）：启动、就绪、退出时各发一次。客户端收到 `ready` 后自行拉
+// `get_state` 与命令表——订阅时 agent 还没就绪（新线程、orb 冻结或控制面重启后唤醒）的客户端靠它拿到模型等会话信息，
+// 不必等下一个回合。
+type WsServerAgentStatus struct {
+	// Status 线程 agent 进程状态；`none` = 尚未启动或 orb 不可用
+	Status AgentStatus `json:"status"`
+
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID ThreadID                `json:"threadId"`
+	Type     WsServerAgentStatusType `json:"type"`
+}
+
+// WsServerAgentStatusType defines model for WsServerAgentStatus.Type.
+type WsServerAgentStatusType string
+
 // WsServerArtifactActivity 某个 artifact 上的在场信息（观看者、agent 正在做什么）；只发给正在观看它的连接
 type WsServerArtifactActivity struct {
 	// Clients 各观看连接所在的画布页
@@ -16335,6 +16367,40 @@ func (t *WsServerMessage) MergeWsServerPlanResolved(v WsServerPlanResolved) erro
 	return err
 }
 
+// AsWsServerAgentStatus returns the union data inside the WsServerMessage as a WsServerAgentStatus
+func (t WsServerMessage) AsWsServerAgentStatus() (WsServerAgentStatus, error) {
+	var body WsServerAgentStatus
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsServerAgentStatus overwrites any union data inside the WsServerMessage as the provided WsServerAgentStatus
+func (t *WsServerMessage) FromWsServerAgentStatus(v WsServerAgentStatus) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"agent.status"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsServerAgentStatus performs a merge with any union data inside the WsServerMessage, using the provided WsServerAgentStatus
+func (t *WsServerMessage) MergeWsServerAgentStatus(v WsServerAgentStatus) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"agent.status"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 // AsWsServerOrb returns the union data inside the WsServerMessage as a WsServerOrb
 func (t WsServerMessage) AsWsServerOrb() (WsServerOrb, error) {
 	var body WsServerOrb
@@ -17063,6 +17129,8 @@ func (t WsServerMessage) ValueByDiscriminator() (interface{}, error) {
 		return nil, err
 	}
 	switch discriminator {
+	case "agent.status":
+		return t.AsWsServerAgentStatus()
 	case "artifact.activity":
 		return t.AsWsServerArtifactActivity()
 	case "artifact.canvas":

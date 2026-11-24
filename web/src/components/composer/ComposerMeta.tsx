@@ -24,10 +24,18 @@ import { ModelLogo } from "../ui/ModelLogo";
 import { Menu, type MenuItem } from "../ui/primitives";
 import { ThinkingMenu } from "../ui/ThinkingDial";
 
-/** 当前模型的全名与短名（认得出品牌时去掉系列名，logo 已说明）；输入坞的模型胶囊与收起后的信息条共用。 */
+/**
+ * 当前模型的全名与短名（认得出品牌时去掉系列名，logo 已说明）；输入坞的模型胶囊与收起后的信息条共用。
+ * 会话 state 还没到（agent 在唤醒、刚建）时先用控制面记下的线程模型（`Thread.model`，只有 provider / id），
+ * 不显示「模型未知」；state 到了再换成带显示名的会话模型。
+ */
 export function useModelName(threadId: string) {
 	const { t } = useTranslation();
-	const model = useThread(threadId, (s) => s.state?.model);
+	const live = useThread(threadId, (s) => s.state?.model);
+	const stored = useThread(threadId, (s) => s.thread?.model);
+	const model:
+		| { id: string; provider?: string; name?: string; reasoning?: boolean }
+		| undefined = live ?? stored;
 	const name = model ? model.name || model.id : t("status.noModel");
 	const short = model
 		? shortModelName(name, modelBrand(model.id, model.provider))

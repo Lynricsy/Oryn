@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Thread } from "../../api/client";
 import { mockSpeedCaps } from "../../mock/fixtures";
 import type { OmpCommand, SessionState } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
@@ -87,6 +88,44 @@ describe("ModelChip 思考级别菜单", () => {
 		setState({ availableThinkingLevels: [] });
 		render(<ModelChip threadId={TID} />);
 		expect(screen.queryByRole("button", { name: /思考级别/ })).toBeNull();
+	});
+});
+
+describe("ModelChip 模型名", () => {
+	const thread: Thread = {
+		id: TID,
+		title: "t",
+		titleSource: "auto",
+		state: "idle",
+		stateChangedAt: 1,
+		pinned: false,
+		labels: [],
+		unread: false,
+		createdAt: 1,
+		updatedAt: 1,
+		model: { provider: "anthropic", id: "claude-opus-5-5" },
+	};
+
+	it("会话 state 还没到（orb 唤醒中）：用线程记下的模型，不显示「模型未知」", () => {
+		getThreadStore(TID).getState().patchLocal({ thread });
+		render(<ModelChip threadId={TID} />);
+		const chip = screen.getByRole("button", { name: /claude-opus-5-5/ });
+		expect(chip).toHaveAttribute("title", "claude-opus-5-5");
+		expect(screen.queryByText("模型未知")).toBeNull();
+	});
+
+	it("state 到了换成会话模型的显示名", () => {
+		getThreadStore(TID).getState().patchLocal({ thread });
+		setState({});
+		render(<ModelChip threadId={TID} />);
+		expect(
+			screen.getByRole("button", { name: /Claude Sonnet 5/ }),
+		).toHaveAttribute("title", "Claude Sonnet 5");
+	});
+
+	it("线程与会话都没有模型时才显示「模型未知」", () => {
+		render(<ModelChip threadId={TID} />);
+		expect(screen.getByText("模型未知")).toBeInTheDocument();
 	});
 });
 

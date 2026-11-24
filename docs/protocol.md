@@ -35,6 +35,7 @@
 
 - `entries.append` 定为 **orbd→orynd 请求**（计划表写作通知）：结果 `LinkCtlEntriesAppendResult{accepted, offset}`，`accepted=false` 时 orbd 从 `offset` 重发。这样「`baseOffset` 与游标不符时要求重发」才有应答通道。
 - `agent.status` 增加可选 `restartsLeft`；`LinkStreamEgress` 不带 `threadId`（egress 监听按 orb 而非线程）。
+- 客户端 WS 增加 `agent.status`（`WsServerAgentStatus{threadId, status}`）：线程 agent 进程状态（`starting` / `ready` / `exited` / `none`）每次变化时推给该线程的订阅者，是快照 `agent.status` 的增量。订阅时 agent 还没就绪（新线程、orb 冻结或控制面重启后唤醒）的快照不带 `state`，控制面就绪后自己拉的 `get_state` 也只进实时缓冲；Web 收到 `ready` 后拉 `get_state` 与命令表，不必等下一个回合。state 到达前，输入坞的模型胶囊先用 `Thread.model`。
 - WebAuthn 仪式：`begin` 返回 `{ceremonyId, options}`，`finish` 回传 `ceremonyId` 与浏览器凭据 JSON。恢复：`auth/recovery` 发放一次性会话后，以该会话调用 `auth/setup/*`（省略 `token`）重新注册 Passkey。
 - `ThreadPatch` / `ProjectPatch`：只改出现的字段；可选字符串传空串清除，`snoozedUntil` 传 0 清除（不使用 nullable 包装类型）。
 - `PUT agent-config/files/{path}` 请求体为原始字节（`application/octet-stream`），权限经查询参数 `mode`；`POST agent-config/import` 为 `application/x-tar`，整体替换 omp-home。项目级同形接口见「M12.2」。

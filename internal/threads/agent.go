@@ -186,7 +186,7 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 	t.variantKnown = false
 	orbID, copyFrom := t.orbID, t.copyFrom
 	if t.agentStatus != apigen.AgentStatusReady {
-		t.agentStatus = apigen.AgentStatusStarting
+		s.setAgentStatusLocked(t, apigen.AgentStatusStarting)
 	}
 	t.mu.Unlock()
 	defer func() {
@@ -454,15 +454,15 @@ func (s *Service) onAgentStatus(ctx context.Context, orbID string, params json.R
 	defer t.mu.Unlock()
 	switch p.Status {
 	case "starting":
-		t.agentStatus = apigen.AgentStatusStarting
+		s.setAgentStatusLocked(t, apigen.AgentStatusStarting)
 		t.statusSinceStart = true
 	case "ready":
-		t.agentStatus = apigen.AgentStatusReady
+		s.setAgentStatusLocked(t, apigen.AgentStatusReady)
 		t.statusSinceStart = true
 		s.clearFailedLocked(t)
 		s.onReadyLocked(ctx, t)
 	case "exited":
-		t.agentStatus = apigen.AgentStatusExited
+		s.setAgentStatusLocked(t, apigen.AgentStatusExited)
 		s.failPendingLocked(t, "agent exited", false)
 		// 进程已退出：仍在跟踪的回合不会再有 prompt_result（规则 6）
 		s.endAllTurnsLocked(t, TurnError, "agent_exited")
@@ -1080,6 +1080,17 @@ func (s *Service) agentWontStart(t *thread, orbState string) bool {
 }
 
 func (s *Service) newCmdID() string { return cmdIDPrefix + strconv.FormatUint(s.nextID.Add(1), 10) }
+
+// setAgentStatusLocked 改 agent 进程状态，变了就推给已订阅的客户端（快照 agent.status 的增量）：订阅时 agent 还没就绪的
+// 客户端（新线程、orb 冻结或控制面重启后唤醒）靠 ready 去拉 state 与命令表，否则模型一直显示未知，要等下一个回合。
+// 调用方持有 t.mu。
+func (s *Service) setAgentStatusLocked(t *thread, st apigen.AgentStatus) {
+	if t.agentStatus == st {
+		return
+	}
+	t.agentStatus = st
+	s.out().AgentStatus(t.id, st)
+}
 
 // refreshStateLocked 向 agent 发 get_state 并把结果写入实时缓冲。调用方持有 t.mu。
 func (s *Service) refreshStateLocked(t *thread) {
@@ -1848,7 +1859,7 @@ func (s *Service) scheduleStart(threadID string) {
 	if t, err := s.get(s.ctx, threadID); err == nil {
 		t.mu.Lock()
 		if !t.stopping && t.orbID != "" && t.agentStatus != apigen.AgentStatusReady {
-			t.agentStatus = apigen.AgentStatusStarting
+			s.setAgentStatusLocked(t, apigen.AgentStatusStarting)
 		}
 		t.mu.Unlock()
 	}

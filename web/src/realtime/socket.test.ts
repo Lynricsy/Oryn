@@ -301,16 +301,18 @@ describe("RealtimeClient", () => {
 		expect(ws.cmds("get_state")).toHaveLength(1);
 	});
 
-	it("订阅时 agent 还没就绪（新线程）：首个回合一开始就补拉 state，不等回合结束", async () => {
+	it("订阅时 agent 还没就绪（orb 冻结后唤醒、新线程）：agent.status ready 到达就拉 state 与命令表，不等下一个回合", async () => {
 		const ws = await connected(client);
 		client.subscribe(TID);
-		// 新线程：订阅时 agent 在启动，快照里没有 state；控制面就绪后拉到的 state 只进实时缓冲、不推给已订阅的客户端
+		// 快照里 agent 在启动、没有 state；唤醒期间回合不会开始，靠帧补拉永远等不到
 		ws.recv(snapshot());
 		vi.advanceTimersByTime(250);
 		expect(ws.cmds("get_state")).toHaveLength(0);
-		ws.recv({ type: "frame", threadId: TID, frame: { type: "agent_start" } });
+		ws.recv({ type: "agent.status", threadId: TID, status: "ready" });
 		vi.advanceTimersByTime(250);
-		expect(ws.cmds("get_state")).toHaveLength(1);
+		client.flush();
+		expect(getThreadStore(TID).getState().agentStatus).toBe("ready");
+		expect(ws.cmds("get_available_commands")).toHaveLength(1);
 		const [cmd] = ws.cmds("get_state");
 		ws.recv({
 			type: "res",
@@ -318,37 +320,29 @@ describe("RealtimeClient", () => {
 			id: cmd?.id,
 			response: {
 				success: true,
-				data: { model: { id: "m" }, isStreaming: true },
+				data: { model: { id: "m" }, isStreaming: false, isSettled: true },
 			},
 		});
 		await vi.advanceTimersByTimeAsync(0);
 		client.flush();
 		expect(getThreadStore(TID).getState().state?.model?.id).toBe("m");
-		// 已有 state 后，回合中的帧不再额外查询
+		// 回合中的普通帧不额外查询
 		ws.recv({ type: "frame", threadId: TID, frame: { type: "message_start" } });
 		vi.advanceTimersByTime(250);
 		expect(ws.cmds("get_state")).toHaveLength(1);
 	});
 
-	it("首帧补拉因断线失败：重连后再拿到不带 state 的启动快照，首帧仍会补拉", async () => {
+	it("agent.status 非 ready（starting / exited）只更新状态，不发查询", async () => {
 		const ws = await connected(client);
 		client.subscribe(TID);
-		ws.recv(snapshot());
-		ws.recv({ type: "frame", threadId: TID, frame: { type: "agent_start" } });
+		ws.recv(snapshot({}, { status: "ready" }));
 		vi.advanceTimersByTime(250);
-		expect(ws.cmds("get_state")).toHaveLength(1);
-		// 应答没到就断线：在途的 get_state 被拒
-		ws.drop();
-		await vi.advanceTimersByTimeAsync(500);
-		await vi.waitFor(() => expect(FakeWS.instances.length).toBe(2));
-		const ws2 = FakeWS.instances[1] as FakeWS;
-		ws2.accept();
-		ws2.recv(snapshot());
+		const before = ws.cmds("get_state").length;
+		ws.recv({ type: "agent.status", threadId: TID, status: "exited" });
 		vi.advanceTimersByTime(250);
-		expect(ws2.cmds("get_state")).toHaveLength(0);
-		ws2.recv({ type: "frame", threadId: TID, frame: { type: "agent_start" } });
-		vi.advanceTimersByTime(250);
-		expect(ws2.cmds("get_state")).toHaveLength(1);
+		client.flush();
+		expect(getThreadStore(TID).getState().agentStatus).toBe("exited");
+		expect(ws.cmds("get_state")).toHaveLength(before);
 	});
 
 	it("schedules.changed 与每次连接建立都通知定时监听者；取消订阅后不再通知（M9 审查 W6）", async () => {

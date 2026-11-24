@@ -11075,7 +11075,7 @@ export interface components {
             id: components["schemas"]["ArtifactId"];
         };
         /** @description 服务端 → 客户端 WS 消息 */
-        WsServerMessage: components["schemas"]["WsServerIndex"] | components["schemas"]["WsServerIndexPatch"] | components["schemas"]["WsServerThreadSnapshot"] | components["schemas"]["WsServerEntries"] | components["schemas"]["WsServerFrame"] | components["schemas"]["WsServerRes"] | components["schemas"]["WsServerUiResolved"] | components["schemas"]["WsServerLiveReset"] | components["schemas"]["WsServerTranscriptReset"] | components["schemas"]["WsServerPlanResolved"] | components["schemas"]["WsServerOrb"] | components["schemas"]["WsServerError"] | components["schemas"]["WsServerPong"] | components["schemas"]["WsServerTermLagged"] | components["schemas"]["WsServerTermResized"] | components["schemas"]["WsServerNotification"] | components["schemas"]["WsServerNotificationsRead"] | components["schemas"]["WsServerNotificationsResolved"] | components["schemas"]["WsServerSchedulesChanged"] | components["schemas"]["WsServerGitHubChanged"] | components["schemas"]["WsServerSshChanged"] | components["schemas"]["WsServerBoxesChanged"] | components["schemas"]["WsServerProjectRepoChanged"] | components["schemas"]["WsServerArtifactsChanged"] | components["schemas"]["WsServerArtifactVersion"] | components["schemas"]["WsServerArtifactActivity"] | components["schemas"]["WsServerArtifactComments"] | components["schemas"]["WsServerArtifactCanvas"] | components["schemas"]["WsServerArtifactConsent"] | components["schemas"]["WsServerBrowserRelayState"] | components["schemas"]["WsServerBrowserRelayClients"];
+        WsServerMessage: components["schemas"]["WsServerIndex"] | components["schemas"]["WsServerIndexPatch"] | components["schemas"]["WsServerThreadSnapshot"] | components["schemas"]["WsServerEntries"] | components["schemas"]["WsServerFrame"] | components["schemas"]["WsServerRes"] | components["schemas"]["WsServerUiResolved"] | components["schemas"]["WsServerLiveReset"] | components["schemas"]["WsServerTranscriptReset"] | components["schemas"]["WsServerPlanResolved"] | components["schemas"]["WsServerAgentStatus"] | components["schemas"]["WsServerOrb"] | components["schemas"]["WsServerError"] | components["schemas"]["WsServerPong"] | components["schemas"]["WsServerTermLagged"] | components["schemas"]["WsServerTermResized"] | components["schemas"]["WsServerNotification"] | components["schemas"]["WsServerNotificationsRead"] | components["schemas"]["WsServerNotificationsResolved"] | components["schemas"]["WsServerSchedulesChanged"] | components["schemas"]["WsServerGitHubChanged"] | components["schemas"]["WsServerSshChanged"] | components["schemas"]["WsServerBoxesChanged"] | components["schemas"]["WsServerProjectRepoChanged"] | components["schemas"]["WsServerArtifactsChanged"] | components["schemas"]["WsServerArtifactVersion"] | components["schemas"]["WsServerArtifactActivity"] | components["schemas"]["WsServerArtifactComments"] | components["schemas"]["WsServerArtifactCanvas"] | components["schemas"]["WsServerArtifactConsent"] | components["schemas"]["WsServerBrowserRelayState"] | components["schemas"]["WsServerBrowserRelayClients"];
         /** @description 线程摘要全量（连接建立后首条） */
         WsServerIndex: {
             /**
@@ -11228,6 +11228,20 @@ export interface components {
              */
             type: "plan.resolved";
             threadId: components["schemas"]["ThreadId"];
+        };
+        /**
+         * @description 线程 agent 的进程状态变了（快照 `agent.status` 的增量）：启动、就绪、退出时各发一次。客户端收到 `ready` 后自行拉
+         *     `get_state` 与命令表——订阅时 agent 还没就绪（新线程、orb 冻结或控制面重启后唤醒）的客户端靠它拿到模型等会话信息，
+         *     不必等下一个回合。
+         */
+        WsServerAgentStatus: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "agent.status";
+            threadId: components["schemas"]["ThreadId"];
+            status: components["schemas"]["AgentStatus"];
         };
         WsServerOrb: {
             /**

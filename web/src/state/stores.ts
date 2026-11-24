@@ -5,6 +5,7 @@
 import { useStore } from "zustand";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import {
+	type AgentStatus,
 	api,
 	type Entry,
 	type Orb,
@@ -140,6 +141,7 @@ export type ThreadMessage =
 	| { type: "live.reset" }
 	| { type: "transcript.reset"; transcriptRev: number }
 	| { type: "plan.resolved" }
+	| { type: "agent.status"; status: AgentStatus }
 	| { type: "orb"; orb: Orb }
 	| { type: "thread"; thread: Thread }
 	| { type: "state"; state: SessionState };
@@ -171,6 +173,8 @@ export function reduceThread(
 			return applyTranscriptReset(s, m.transcriptRev);
 		case "plan.resolved":
 			return applyPlanResolved(s);
+		case "agent.status":
+			return { ...s, agentStatus: m.status };
 		case "orb":
 			return { ...s, orb: m.orb };
 		case "thread":

@@ -586,7 +586,7 @@ func (s *Service) stopForRefreshLocked(t *thread) {
 			// exited 在监督器完成清理前发送。直到同一条 ctl 回复 stop，新的 start 才不会命中旧监督器。
 			t.agent = nil
 			t.sessionStartPending = false
-			t.agentStatus = apigen.AgentStatusExited
+			s.setAgentStatusLocked(t, apigen.AgentStatusExited)
 			s.dropPassiveLocked(t, "agent stopped")
 		} else if t.agentReady() && !orbSuspended(s.orbState(orbID)) {
 			// 停止失败且旧流仍可用：恢复发送，不能让停止期间排队的命令等一个不会来的 ready。

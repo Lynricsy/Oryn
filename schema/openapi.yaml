@@ -14646,6 +14646,7 @@ components:
         - $ref: '#/components/schemas/WsServerLiveReset'
         - $ref: '#/components/schemas/WsServerTranscriptReset'
         - $ref: '#/components/schemas/WsServerPlanResolved'
+        - $ref: '#/components/schemas/WsServerAgentStatus'
         - $ref: '#/components/schemas/WsServerOrb'
         - $ref: '#/components/schemas/WsServerError'
         - $ref: '#/components/schemas/WsServerPong'
@@ -14680,6 +14681,7 @@ components:
           live.reset: '#/components/schemas/WsServerLiveReset'
           transcript.reset: '#/components/schemas/WsServerTranscriptReset'
           plan.resolved: '#/components/schemas/WsServerPlanResolved'
+          agent.status: '#/components/schemas/WsServerAgentStatus'
           orb: '#/components/schemas/WsServerOrb'
           error: '#/components/schemas/WsServerError'
           pong: '#/components/schemas/WsServerPong'
@@ -14859,6 +14861,17 @@ components:
       properties:
         type: { type: string, enum: [plan.resolved] }
         threadId: { $ref: '#/components/schemas/ThreadId' }
+    WsServerAgentStatus:
+      type: object
+      description: |
+        线程 agent 的进程状态变了（快照 `agent.status` 的增量）：启动、就绪、退出时各发一次。客户端收到 `ready` 后自行拉
+        `get_state` 与命令表——订阅时 agent 还没就绪（新线程、orb 冻结或控制面重启后唤醒）的客户端靠它拿到模型等会话信息，
+        不必等下一个回合。
+      required: [type, threadId, status]
+      properties:
+        type: { type: string, enum: [agent.status], x-enum-varnames: [WsServerAgentStatusTypeAgentStatus] }
+        threadId: { $ref: '#/components/schemas/ThreadId' }
+        status: { $ref: '#/components/schemas/AgentStatus' }
     WsServerOrb:
       type: object
       required: [type, orb]
