@@ -61,7 +61,8 @@ type frameCheck struct {
 
 // agentCheckArtifact 是 check_artifact：参数 {id, path?}。设计画布检查每个带 source 的画框（dist/<id>.html），
 // 其它画布检查每个画框，网页检查入口；给了 path 只检查它（画框的文件或版本里的一个 HTML 文件）。
-// 渲染不可用时 status 为 unverified，不报错。结果写进最新版本的 check_json（见 storeCheck）。
+// 渲染不可用时 status 为 unverified，不报错。只有不带 path 的完整检查才写进最新版本的 check_json（见 storeCheck）：
+// 单个页面的结论代表不了整个版本，写进去会让一张干净的帧盖掉别的帧已知的问题。
 func (s *Service) agentCheckArtifact(ctx context.Context, c Caller, params json.RawMessage) (Result, error) {
 	var p checkArgs
 	if err := decodeParams(params, &p); err != nil {
@@ -101,13 +102,15 @@ func (s *Service) agentCheckArtifact(ctx context.Context, c Caller, params json.
 	case unverified > 0 || len(targets) == 0:
 		chk.Status = design.CheckUnverified
 	}
-	if doc != nil && doc.Design != nil {
-		if chk.Fingerprint, err = s.sourceHash(ctx, a.ID, v.Version); err != nil {
+	if p.Path == "" {
+		if doc != nil && doc.Design != nil {
+			if chk.Fingerprint, err = s.sourceHash(ctx, a.ID, v.Version); err != nil {
+				return Result{}, err
+			}
+		}
+		if err := s.storeCheck(ctx, a.ID, v, chk); err != nil {
 			return Result{}, err
 		}
-	}
-	if err := s.storeCheck(ctx, a.ID, v, chk); err != nil {
-		return Result{}, err
 	}
 	return Result{
 		Text: checkText(a, v.Version, chk, targets, results, down),

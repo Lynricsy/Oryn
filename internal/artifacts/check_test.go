@@ -186,6 +186,28 @@ func TestCheckArtifactDesignCanvas(t *testing.T) {
 	require.Len(t, r.jobs, 1)
 	assert.Equal(t, "dist/about.html", r.jobs[0].Path)
 
+	// 单帧检查只回给调用方，不改版本徽标：home 有问题时查干净的 about，版本仍是 issues
+	r.doms["dist/home.html"] = probeDOM(`[{"rule":"text-clipped","loc":"src/frames/home.tsx:3:5","text":"立即开始"}]`)
+	_, err = e.s.agentCheckArtifact(ctx, c, json.RawMessage(`{"id":"`+a.ID+`"}`))
+	require.NoError(t, err)
+	require.Equal(t, design.CheckIssues, storedCheck(t, e, a.ID, 1).Status)
+	res, err = e.s.agentCheckArtifact(ctx, c, json.RawMessage(`{"id":"`+a.ID+`","path":"dist/about.html"}`))
+	require.NoError(t, err)
+	assert.Equal(t, design.CheckClean, res.Details.(obj)["status"])
+	got = storedCheck(t, e, a.ID, 1)
+	assert.Equal(t, design.CheckIssues, got.Status)
+	require.Len(t, got.Issues, 1)
+	assert.Equal(t, "home", got.Issues[0].Frame)
+	// 反过来：版本 clean 时单查一张有问题的帧，也不把版本改成 issues
+	r.doms["dist/home.html"] = probeDOM(`[]`)
+	_, err = e.s.agentCheckArtifact(ctx, c, json.RawMessage(`{"id":"`+a.ID+`"}`))
+	require.NoError(t, err)
+	r.doms["dist/about.html"] = probeDOM(`[{"rule":"dash-in-copy","text":"a—b"}]`)
+	res, err = e.s.agentCheckArtifact(ctx, c, json.RawMessage(`{"id":"`+a.ID+`","path":"dist/about.html"}`))
+	require.NoError(t, err)
+	assert.Equal(t, design.CheckIssues, res.Details.(obj)["status"])
+	assert.Equal(t, design.CheckClean, storedCheck(t, e, a.ID, 1).Status)
+
 	_, err = e.s.agentCheckArtifact(ctx, c, json.RawMessage(`{"id":"`+a.ID+`","path":"dist/nope.html"}`))
 	assert.Equal(t, CodeInvalid, code(err))
 	_, err = e.s.agentCheckArtifact(ctx, c, json.RawMessage(`{"id":"`+a.ID+`","bogus":1}`))
