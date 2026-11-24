@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"html"
 	"io"
 	"net/http"
@@ -152,6 +154,7 @@ func (h *Host) RenderTarget(ctx context.Context, id string, version int) (int, b
 // ServeRender 实现 render.Site：以「渲染模式」提供作业根之内的路径 p——版本里的文件原样提供（不注入运行时、
 // 不标源码），响应头同帧，但 'self' 换成作业根的 URL、没有 frame-ancestors（渲染时页面就是顶层文档）。
 // 类型化 artifact 的根是查看器页（同帧，但没有运行时：查看器只读显示），`_oryn/viewer/<名字>` 提供查看器资源。
+// 设计检查（页面地址带 `__oryn_probe=1`）时 HTML 页面另注入探针配置，`dist/probe.js` 是嵌入的探针脚本（见 withProbe）。
 func (h *Host) ServeRender(w http.ResponseWriter, r *http.Request, t render.Target, p string) {
 	setFrameHeaders(w, r, framePolicy(sandboxFrame, t.Self, "", t.Strict))
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -166,6 +169,10 @@ func (h *Host) ServeRender(w http.ResponseWriter, r *http.Request, t render.Targ
 	path, version, ok := framePath(p, t.Version)
 	if !ok {
 		frameError(w, http.StatusNotFound, "文件不存在")
+		return
+	}
+	if path == probeScriptPath {
+		h.serveProbeScript(w, r)
 		return
 	}
 	ctx := r.Context()
@@ -214,5 +221,71 @@ func (h *Host) ServeRender(w http.ResponseWriter, r *http.Request, t render.Targ
 		h.fail(w, err)
 		return
 	}
-	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(withParamsPrelude(src)))
+	src = withParamsPrelude(src)
+	if r.URL.Query().Get(probeQuery) == "1" {
+		if src, err = h.withProbe(ctx, t.ArtifactID, version, path, src); err != nil {
+			h.fail(w, err)
+			return
+		}
+	}
+	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(src))
+}
+
+// 设计检查的探针（plan-m29 C8）：渲染作业的页面地址带 `__oryn_probe=1` 时，页面在渲染完成后把测量结果写进 DOM，
+// 由 --dump-dom 带出（check.go）。
+const (
+	probeAsset = "sandbox/probe.js"
+	probeQuery = "__oryn_probe"
+	// probeScriptPath 是设计画框（dist/<id>.html）的引擎入口在首次渲染后加载的同源 `./probe.js`。
+	// 渲染模式下这个路径一律回嵌入的探针脚本，不读版本里的文件：脚本自己只在页面地址带 __oryn_probe=1 时运行，
+	// 别的渲染作业（缩略图等）加载到它也不起作用。脚本请求不带页面的查询串，所以不能按查询串判断。
+	probeScriptPath = "dist/probe.js"
+)
+
+// probeConfig 是注入页面的 `window.__orynProbe`：aesthetic 打开后 8 条审美规则（画布选定了设计方向时），
+// surface 为 app 时探针再关掉 eyebrow-excess 与 split-repeat。
+type probeConfig struct {
+	Aesthetic bool   `json:"aesthetic"`
+	Surface   string `json:"surface"`
+}
+
+// serveProbeScript 提供嵌入的探针脚本；没构建 Web 时 404（页面里不会出现结果节点，检查记为 unverified）。
+func (h *Host) serveProbeScript(w http.ResponseWriter, r *http.Request) {
+	js, ok := h.asset(probeAsset)
+	if !ok {
+		frameError(w, http.StatusNotFound, "探针脚本不存在（Web 没有构建）")
+		return
+	}
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(js))
+}
+
+// withProbe 在 InsertionPoint 处插入 `window.__orynProbe=<配置>`（配置取自 artifact_designs）。设计画框由引擎入口
+// 在 React 首次渲染提交后加载 ./probe.js；其余 HTML 页面没有这个入口，探针脚本直接内联在配置之后。
+func (h *Host) withProbe(ctx context.Context, id string, version int, path string, src []byte) ([]byte, error) {
+	var cfg probeConfig
+	row, err := h.s.st.Q.GetArtifactDesign(ctx, id)
+	switch {
+	case err == nil:
+		cfg.Aesthetic = deref(row.Direction) != ""
+		cfg.Surface = deref(row.Surface)
+	case !errors.Is(err, sql.ErrNoRows):
+		return nil, err
+	}
+	c, _ := json.Marshal(cfg) // json 把 < > & 转义成 \u00XX
+	var b bytes.Buffer
+	b.WriteString("<script>window.__orynProbe=")
+	b.Write(c)
+	b.WriteString(";</script>")
+	frame, err := h.s.isDesignFrame(ctx, id, version, path)
+	if err != nil {
+		return nil, err
+	}
+	if js, ok := h.asset(probeAsset); ok && !frame {
+		b.WriteString("<script>")
+		b.Write(inlineScript(js))
+		b.WriteString("</script>")
+	}
+	at := htmlsrc.InsertionPoint(src)
+	return slices.Concat(src[:at], b.Bytes(), src[at:]), nil
 }

@@ -39,6 +39,8 @@ const (
 	maxSide = 8000
 	// stderrTail 是保留的 Chromium stderr 末尾字节数（用于失败原因）。
 	stderrTail = 16 << 10
+	// maxDOM 是 --dump-dom 输出（序列化的 DOM）的上限。
+	maxDOM = 4 << 20
 )
 
 // Config 是渲染器的配置。
@@ -73,6 +75,8 @@ type Job struct {
 	Scale         float64
 	// PDF 为真时打印成 PDF，否则截 PNG。
 	PDF bool
+	// DumpDOM 为真时不截图，返回页面脚本跑完后的序列化 DOM（UTF-8 HTML，上限 4 MiB，超了报错）；与 PDF 互斥。
+	DumpDOM bool
 }
 
 // Renderer 运行渲染作业。
@@ -171,8 +175,8 @@ func (r *Renderer) setStatus(ok bool, reason string) {
 	r.mu.Unlock()
 }
 
-// Run 渲染一个作业，返回 PNG 或 PDF 字节。渲染不可用时回 ErrUnavailable；artifact 不存在、在回收站里时回 Site 的错误。
-// 排队等待受 ctx 约束；截图 30 秒、PDF 60 秒超时，超时整个进程组被杀掉。
+// Run 渲染一个作业，返回 PNG、PDF 字节或（DumpDOM）序列化的 DOM。渲染不可用时回 ErrUnavailable；artifact 不存在、
+// 在回收站里时回 Site 的错误。排队等待受 ctx 约束；截图与 DOM 30 秒、PDF 60 秒超时，超时整个进程组被杀掉。
 func (r *Renderer) Run(ctx context.Context, j Job) ([]byte, error) {
 	if ok, reason := r.Status(); !ok {
 		return nil, fmt.Errorf("%w：%s", ErrUnavailable, reason)
@@ -193,6 +197,8 @@ func (r *Renderer) run(ctx context.Context, j Job, fixed []byte) ([]byte, error)
 		return nil, fmt.Errorf("render: 窗口尺寸 %d×%d 超出 1–%d", j.Width, j.Height, maxSide)
 	case j.Scale < 0.1 || j.Scale > 4:
 		return nil, fmt.Errorf("render: 倍率 %v 超出 0.1–4", j.Scale)
+	case j.PDF && j.DumpDOM:
+		return nil, errors.New("render: PDF 与 DumpDOM 不能同时要")
 	case strings.HasPrefix(j.Path, "/") || strings.ContainsAny(j.Path, "?#\x00"):
 		return nil, fmt.Errorf("render: 路径 %q 必须是不带查询串的相对路径", j.Path)
 	case strings.ContainsAny(j.Query, "# \t\r\n\x00"):
@@ -229,13 +235,26 @@ func (r *Renderer) run(ctx context.Context, j Job, fixed []byte) ([]byte, error)
 	}
 	u := url.URL{Scheme: "http", Host: Host, Path: "/" + token + "/" + j.Path, RawQuery: j.Query}
 	cj := chromiumJob{Dir: dir, Port: r.proxy.port(), URL: u.String(), Width: j.Width, Height: j.Height,
-		Scale: j.Scale, PDF: j.PDF, NoSandbox: r.cfg.NoSandbox}
+		Scale: j.Scale, PDF: j.PDF, DumpDOM: j.DumpDOM, NoSandbox: r.cfg.NoSandbox}
 	timeout := screenshotTimeout
 	if j.PDF {
 		timeout = pdfTimeout
 	}
-	if err := r.exec(ctx, cj, timeout); err != nil {
+	var dom *capBuffer
+	if j.DumpDOM {
+		dom = &capBuffer{limit: maxDOM}
+	}
+	if err := r.exec(ctx, cj, timeout, dom); err != nil {
 		return nil, err
+	}
+	if dom != nil {
+		if dom.over {
+			return nil, fmt.Errorf("render: DOM 超过 %d MiB", maxDOM>>20)
+		}
+		if len(dom.buf) == 0 {
+			return nil, errors.New("render: Chromium 没有输出 DOM")
+		}
+		return dom.buf, nil
 	}
 	out, err := os.ReadFile(cj.output())
 	if err != nil || len(out) == 0 {
@@ -244,8 +263,8 @@ func (r *Renderer) run(ctx context.Context, j Job, fixed []byte) ([]byte, error)
 	return out, nil
 }
 
-// exec 经 `orynd render-exec` 运行一次 Chromium 并等它退出。
-func (r *Renderer) exec(ctx context.Context, cj chromiumJob, timeout time.Duration) error {
+// exec 经 `orynd render-exec` 运行一次 Chromium 并等它退出；stdout 非 nil 时收集 Chromium 的标准输出。
+func (r *Renderer) exec(ctx context.Context, cj chromiumJob, timeout time.Duration, stdout *capBuffer) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	args := ExecArgs{UID: r.uid, GID: r.gid, Port: uint16(cj.Port), Argv: append([]string{r.chromium}, chromiumArgs(cj)...)}
@@ -255,6 +274,9 @@ func (r *Renderer) exec(ctx context.Context, cj chromiumJob, timeout time.Durati
 	cmd.SysProcAttr = procAttr()
 	var stderr tailBuffer
 	cmd.Stderr = &stderr
+	if stdout != nil {
+		cmd.Stdout = stdout
+	}
 	cmd.Cancel = func() error { return killGroup(cmd.Process.Pid) }
 	cmd.WaitDelay = waitDelay
 	err := cmd.Run()
@@ -320,4 +342,21 @@ func (t *tailBuffer) reason() string {
 		}
 	}
 	return "没有输出"
+}
+
+// capBuffer 收集至多 limit 字节；超出的部分丢弃并记下 over（不回写错误：让 Chromium 照常退出，由调用方报错）。
+type capBuffer struct {
+	limit int
+	buf   []byte
+	over  bool
+}
+
+func (c *capBuffer) Write(p []byte) (int, error) {
+	if room := c.limit - len(c.buf); len(p) > room {
+		c.buf = append(c.buf, p[:max(room, 0)]...)
+		c.over = true
+	} else {
+		c.buf = append(c.buf, p...)
+	}
+	return len(p), nil
 }

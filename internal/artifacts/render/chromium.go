@@ -38,7 +38,9 @@ type chromiumJob struct {
 	Width, Height int
 	Scale         float64
 	PDF           bool
-	NoSandbox     bool
+	// DumpDOM 为真时把渲染后的 DOM 序列化到 stdout（--dump-dom），不写输出文件。
+	DumpDOM   bool
+	NoSandbox bool
 }
 
 // output 返回 Chromium 写出结果的文件。
@@ -79,9 +81,13 @@ func chromiumArgs(j chromiumJob) []string {
 	if j.NoSandbox {
 		args = append(args, "--no-sandbox")
 	}
-	if j.PDF {
+	switch {
+	case j.DumpDOM:
+		// 与截图同一套 --virtual-time-budget：页面脚本（含 React 首次渲染与探针的空闲回调）跑完再序列化（plan-m29 P5）
+		args = append(args, "--dump-dom")
+	case j.PDF:
 		args = append(args, "--print-to-pdf="+j.output(), "--no-pdf-header-footer")
-	} else {
+	default:
 		args = append(args, "--screenshot="+j.output())
 	}
 	return append(args, j.URL)
