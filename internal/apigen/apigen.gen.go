@@ -1663,19 +1663,19 @@ func (e LinkCtlSetupLogParamsPhase) Valid() bool {
 
 // Defines values for LinkCtlSetupLogParamsStream.
 const (
-	Stderr LinkCtlSetupLogParamsStream = "stderr"
-	Stdout LinkCtlSetupLogParamsStream = "stdout"
-	System LinkCtlSetupLogParamsStream = "system"
+	LinkCtlSetupLogParamsStreamStderr LinkCtlSetupLogParamsStream = "stderr"
+	LinkCtlSetupLogParamsStreamStdout LinkCtlSetupLogParamsStream = "stdout"
+	LinkCtlSetupLogParamsStreamSystem LinkCtlSetupLogParamsStream = "system"
 )
 
 // Valid indicates whether the value is a known member of the LinkCtlSetupLogParamsStream enum.
 func (e LinkCtlSetupLogParamsStream) Valid() bool {
 	switch e {
-	case Stderr:
+	case LinkCtlSetupLogParamsStreamStderr:
 		return true
-	case Stdout:
+	case LinkCtlSetupLogParamsStreamStdout:
 		return true
-	case System:
+	case LinkCtlSetupLogParamsStreamSystem:
 		return true
 	default:
 		return false
@@ -1988,6 +1988,27 @@ func (e MemoryStatusState) Valid() bool {
 	case MemoryStateUnconfigured:
 		return true
 	case MemoryStateUnreachable:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for NotificationAvatarKind.
+const (
+	NotificationAvatarKindAssistant NotificationAvatarKind = "assistant"
+	NotificationAvatarKindSystem    NotificationAvatarKind = "system"
+	NotificationAvatarKindThread    NotificationAvatarKind = "thread"
+)
+
+// Valid indicates whether the value is a known member of the NotificationAvatarKind enum.
+func (e NotificationAvatarKind) Valid() bool {
+	switch e {
+	case NotificationAvatarKindAssistant:
+		return true
+	case NotificationAvatarKindSystem:
+		return true
+	case NotificationAvatarKindThread:
 		return true
 	default:
 		return false
@@ -8602,7 +8623,9 @@ type ModelRef struct {
 
 // Notification defines model for Notification.
 type Notification struct {
-	Body string `json:"body"`
+	// Avatar 通知发送者头像元数据：普通线程取线程标题卡图标与线程色；全局助手主线与助手线程取全局助手头像；无线程系统通知取系统默认
+	Avatar *NotificationAvatar `json:"avatar,omitempty"`
+	Body   string              `json:"body"`
 
 	// CreatedAt UTC 毫秒时间戳
 	CreatedAt  TimestampMs            `json:"createdAt"`
@@ -8644,6 +8667,24 @@ type NotificationAnswerResult struct {
 	// ThreadID 被作答请求所在的线程
 	ThreadID ThreadID `json:"threadId"`
 }
+
+// NotificationAvatar defines model for NotificationAvatar.
+type NotificationAvatar struct {
+	// Color 线程色（red / orange / yellow / green / teal / blue / purple / pink），仅普通线程可能带
+	Color *string `json:"color,omitempty"`
+
+	// Hash 全局助手自定义头像内容的 8 位 SHA-256 摘要，用于移动端后台缓存校验与按需刷新
+	Hash *string `json:"hash,omitempty"`
+
+	// Icon 单个字形（普通线程的标题卡图标，或全局助手自定义的字形头像）
+	Icon *string `json:"icon,omitempty"`
+
+	// Kind `thread` = 普通线程图标；`assistant` = 全局助手头像（含主线动态与助手线程）；`system` = 系统默认
+	Kind NotificationAvatarKind `json:"kind"`
+}
+
+// NotificationAvatarKind `thread` = 普通线程图标；`assistant` = 全局助手头像（含主线动态与助手线程）；`system` = 系统默认
+type NotificationAvatarKind string
 
 // NotificationChannel 机密字段（token、secret、topic、deviceKey、URL 全文）只写不读
 type NotificationChannel struct {

@@ -171,7 +171,7 @@ func (s *Service) withdraw(ctx context.Context, notificationID string) {
 	if err != nil {
 		return
 	}
-	m := s.message(n, db.NotificationDelivery{})
+	m := s.message(ctx, n, db.NotificationDelivery{})
 	m.Resolved = false // 按发送时的样子判断那条推送是否带了按钮
 	if _, _, ok := pushActions(m); !ok {
 		return

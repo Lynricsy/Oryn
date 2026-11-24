@@ -14127,6 +14127,27 @@ components:
             仅未解决、属于线程、可一触作答的 `input`（判定同 `POST notifications/{id}/answer`）：完整问题与选项，
             客户端可就地以选项作答。不受推送正文 300 字符上限约束（站内能显示完整问题）。
             请求在别处作答后已加载的列表不会收到更新：客户端应结合线程状态判断是否仍待作答，作答得 409 `input_resolved` 时提示已在别处作答。
+        avatar:
+          allOf:
+            - $ref: '#/components/schemas/NotificationAvatar'
+          description: 通知发送者头像元数据：普通线程取线程标题卡图标与线程色；全局助手主线与助手线程取全局助手头像；无线程系统通知取系统默认
+    NotificationAvatar:
+      type: object
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          enum: [thread, assistant, system]
+          description: '`thread` = 普通线程图标；`assistant` = 全局助手头像（含主线动态与助手线程）；`system` = 系统默认'
+        icon:
+          type: string
+          description: 单个字形（普通线程的标题卡图标，或全局助手自定义的字形头像）
+        color:
+          type: string
+          description: 线程色（red / orange / yellow / green / teal / blue / purple / pink），仅普通线程可能带
+        hash:
+          type: string
+          description: 全局助手自定义头像内容的 8 位 SHA-256 摘要，用于移动端后台缓存校验与按需刷新
     NotificationQuickAnswer:
       type: object
       required: [question, options]

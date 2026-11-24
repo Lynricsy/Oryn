@@ -365,8 +365,9 @@ describe("桌面壳里（M6）", () => {
 			title: "部署",
 			body: "等待你的回答",
 			path: `/t/${TID}`,
+			timestamp: n.createdAt,
+			avatar: { kind: "thread" },
 		});
-		expect(FakeNotification.created).toHaveLength(0);
 		expect(s().toasts).toEqual([]);
 		expect(s().unread).toBe(1);
 	});

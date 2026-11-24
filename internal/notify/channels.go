@@ -70,6 +70,12 @@ func pushPayloadLimit(m Message, limit int) ([]byte, error) {
 		"v": 1, "id": m.NotificationID, "kind": m.Kind, "title": truncate(glyph.WithoutNerdIcon(m.Title), 200), "body": truncate(m.Body, maxPushBody),
 		"url": path, "tag": tag,
 	}
+	if m.CreatedAt > 0 {
+		v["ts"] = m.CreatedAt
+	}
+	if m.Avatar != nil {
+		v["avatar"] = m.Avatar
+	}
 	if acts, body, ok := pushActions(m); ok {
 		v["body"], v["actions"] = body, acts
 	}
@@ -85,6 +91,11 @@ func pushPayloadLimit(m Message, limit int) ([]byte, error) {
 		}
 	}
 	v["body"] = ""
+	b, err = json.Marshal(v)
+	if err != nil || len(b) <= limit {
+		return b, err
+	}
+	delete(v, "avatar")
 	return json.Marshal(v)
 }
 

@@ -17,6 +17,10 @@ import { createStore } from "zustand/vanilla";
 import { api, type Schemas, unwrap } from "../api/client";
 import i18n from "../i18n";
 import { host } from "../lib/host";
+import {
+	prepareNotificationAvatar,
+	resolveNotificationAvatar,
+} from "../lib/notification-avatar";
 import { withoutNerdIcon } from "../lib/title";
 
 export type AppNotification = Schemas["Notification"];
@@ -189,11 +193,28 @@ export const notificationsStore = createStore<NotificationsState>(
 					return;
 				}
 				if (host.kind === "tauri") {
-					host.notify({
+					const base = {
 						id: n.id,
 						...systemNotificationText(n),
 						path: n.url,
-					});
+						timestamp: n.createdAt,
+					};
+					const avatar = prepareNotificationAvatar(
+						resolveNotificationAvatar(n),
+						host.platform,
+					);
+					if (avatar instanceof Promise) {
+						void avatar.then(
+							(av) => host.notify({ ...base, avatar: av }),
+							() =>
+								host.notify({
+									...base,
+									avatar: resolveNotificationAvatar(n),
+								}),
+						);
+					} else {
+						host.notify({ ...base, avatar });
+					}
 					return;
 				}
 				if (

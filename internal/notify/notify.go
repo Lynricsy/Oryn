@@ -574,9 +574,10 @@ func (s *Service) record(ctx context.Context, p db.InsertNotificationParams) err
 		return err
 	}
 	names, _ := s.channelNames(ctx)
+	avatar := s.resolveAvatar(ctx, p.ThreadID, p.Link, p.Title)
 	s.out.Notification(notificationAPI(db.Notification{
 		ID: p.ID, ThreadID: p.ThreadID, Kind: p.Kind, Title: p.Title, Body: p.Body, Link: p.Link, RequestID: p.RequestID, Request: p.Request, CreatedAt: now,
-	}, dels, names))
+	}, dels, names, avatar))
 	if len(dels) > 0 {
 		signal(s.deliverWake)
 	}
@@ -764,9 +765,11 @@ func (s *Service) List(ctx context.Context, limit int, before int64, unreadOnly 
 	if err != nil {
 		return apigen.NotificationList{}, err
 	}
+	avatars := s.newAvatarResolver()
 	out := apigen.NotificationList{Notifications: make([]apigen.Notification, 0, len(rows)), Unread: int(unread)}
 	for _, r := range rows {
-		out.Notifications = append(out.Notifications, notificationAPI(r, byN[r.ID], names))
+		av := avatars.resolve(ctx, r.ThreadID, r.Link, r.Title)
+		out.Notifications = append(out.Notifications, notificationAPI(r, byN[r.ID], names, av))
 	}
 	return out, nil
 }
@@ -822,11 +825,11 @@ func (s *Service) channelNames(ctx context.Context) (map[string]string, error) {
 }
 
 // notificationAPI 把通知行与其投递行转换成 API 形态。
-func notificationAPI(n db.Notification, dels []db.NotificationDelivery, names map[string]string) apigen.Notification {
+func notificationAPI(n db.Notification, dels []db.NotificationDelivery, names map[string]string, avatar *apigen.NotificationAvatar) apigen.Notification {
 	out := apigen.Notification{
 		ID: n.ID, Kind: apigen.NotificationKind(n.Kind), Title: n.Title, Body: n.Body, CreatedAt: n.CreatedAt,
 		ThreadID: n.ThreadID, ReadAt: n.ReadAt, ResolvedAt: n.ResolvedAt, Deliveries: make([]apigen.NotificationDelivery, 0, len(dels)),
-		QuickAnswer: quickAnswerAPI(n),
+		QuickAnswer: quickAnswerAPI(n), Avatar: avatar,
 	}
 	out.URL = notificationPath(n.ThreadID, n.Link)
 	for _, d := range dels {

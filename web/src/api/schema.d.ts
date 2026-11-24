@@ -10689,6 +10689,21 @@ export interface components {
              *     请求在别处作答后已加载的列表不会收到更新：客户端应结合线程状态判断是否仍待作答，作答得 409 `input_resolved` 时提示已在别处作答。
              */
             quickAnswer?: components["schemas"]["NotificationQuickAnswer"];
+            /** @description 通知发送者头像元数据：普通线程取线程标题卡图标与线程色；全局助手主线与助手线程取全局助手头像；无线程系统通知取系统默认 */
+            avatar?: components["schemas"]["NotificationAvatar"];
+        };
+        NotificationAvatar: {
+            /**
+             * @description `thread` = 普通线程图标；`assistant` = 全局助手头像（含主线动态与助手线程）；`system` = 系统默认
+             * @enum {string}
+             */
+            kind: "thread" | "assistant" | "system";
+            /** @description 单个字形（普通线程的标题卡图标，或全局助手自定义的字形头像） */
+            icon?: string;
+            /** @description 线程色（red / orange / yellow / green / teal / blue / purple / pink），仅普通线程可能带 */
+            color?: string;
+            /** @description 全局助手自定义头像内容的 8 位 SHA-256 摘要，用于移动端后台缓存校验与按需刷新 */
+            hash?: string;
         };
         NotificationQuickAnswer: {
             /** @description 完整问题（保留多行；confirm 附上说明） */

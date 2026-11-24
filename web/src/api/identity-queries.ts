@@ -43,12 +43,26 @@ function avatarOf(v: AvatarIdentity | undefined): AvatarIdentity {
 	return out;
 }
 
-function fetchIdentity(who: IdentityOwner): Promise<AgentIdentity> {
+/** 全局助手头像的模块级缓存：供非 React 代码（系统通知）即时读取，不发额外请求。 */
+let cachedAssistantAvatar: AvatarIdentity | undefined;
+
+export function getCachedAssistantAvatar(): AvatarIdentity | undefined {
+	return cachedAssistantAvatar;
+}
+
+export function setCachedAssistantAvatar(v: AvatarIdentity | undefined): void {
+	cachedAssistantAvatar = v ? avatarOf(v) : undefined;
+}
+
+async function fetchIdentity(who: IdentityOwner): Promise<AgentIdentity> {
 	switch (who) {
 		case "agent":
 			return unwrap(api.GET("/api/v1/settings/agent-identity"));
-		case "assistant":
-			return unwrap(api.GET("/api/v1/settings/assistant-identity"));
+		case "assistant": {
+			const res = await unwrap(api.GET("/api/v1/settings/assistant-identity"));
+			setCachedAssistantAvatar(res);
+			return res;
+		}
 		case "user":
 			return unwrap(api.GET("/api/v1/settings/user-identity"));
 	}
@@ -93,6 +107,7 @@ export async function saveIdentity(
 	const queryKey = identityKeys[who];
 	await qc.cancelQueries({ queryKey });
 	const saved = await putIdentity(who, body);
+	if (who === "assistant") setCachedAssistantAvatar(saved);
 	await qc.cancelQueries({ queryKey });
 	qc.setQueryData(queryKey, saved);
 }

@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
@@ -35,6 +36,8 @@ type Message struct {
 	Resolved bool
 	// Withdraw 表示这是撤回消息（推送订阅专用，见 withdrawPayload）：只撤掉设备上仍显示的该条通知。
 	Withdraw bool
+	// Avatar 是通知发送者的头像元数据（推送与移动客户端 MessagingStyle / 通信通知使用）。
+	Avatar *apigen.NotificationAvatar
 }
 
 // Result 是一次发送的结果。
@@ -136,7 +139,7 @@ func (s *Service) DeliverDue(ctx context.Context) int {
 			s.finish(ctx, d, statusFailed, d.Attempts, "expired", "")
 			continue
 		}
-		m := s.message(n, d)
+		m := s.message(ctx, n, d)
 		var sender Sender
 		switch {
 		case d.ChannelID != nil:
@@ -183,7 +186,7 @@ func (s *Service) DeliverDue(ctx context.Context) int {
 	return len(due)
 }
 
-func (s *Service) message(n db.Notification, d db.NotificationDelivery) Message {
+func (s *Service) message(ctx context.Context, n db.Notification, d db.NotificationDelivery) Message {
 	m := Message{NotificationID: n.ID, DeliveryID: d.ID, Kind: n.Kind, Title: n.Title, Body: n.Body, CreatedAt: n.CreatedAt, Resolved: n.ResolvedAt != nil}
 	if n.ThreadID != nil {
 		m.ThreadID = *n.ThreadID
@@ -195,6 +198,7 @@ func (s *Service) message(n db.Notification, d db.NotificationDelivery) Message 
 	if n.Request != nil {
 		m.Request = json.RawMessage(*n.Request)
 	}
+	m.Avatar = s.resolveAvatar(ctx, n.ThreadID, n.Link, n.Title)
 	return m
 }
 

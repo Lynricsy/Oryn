@@ -26,12 +26,28 @@ import type { Attachment } from "./attachments";
 
 export type HostPlatform = "linux" | "macos" | "windows" | "android" | "ios";
 
+export interface HostNotificationAvatar {
+	kind: "thread" | "assistant" | "system";
+	/** 单个字形（普通线程标题卡图标，或全局助手自定义字形）。 */
+	icon?: string;
+	/** 线程色（red / orange / yellow / green / teal / blue / purple / pink）。 */
+	color?: string;
+	/** 预栅格化好的 128×128 头像 PNG base64（不带 data: 前缀）。 */
+	image?: string;
+	/** 全局助手自定义头像内容的 8 位 SHA-256 摘要。 */
+	hash?: string;
+}
+
 export interface HostNotification {
 	id: string;
 	title: string;
 	body: string;
 	/** 点击后打开的站内路径（如 `/t/<id>`）。 */
 	path: string;
+	/** 通知创建时间（毫秒），供移动端 MessagingStyle 显示。 */
+	timestamp?: number;
+	/** 通知发送者头像元数据。 */
+	avatar?: HostNotificationAvatar;
 }
 
 export interface HostStatusItem {

@@ -335,7 +335,8 @@ func TestFCMSender(t *testing.T) {
 	}
 	tag := "oryn-" + id[len(id)-12:]
 	assert.Equal(t, map[string]any{"v": float64(1), "id": n.ID, "kind": "input", "title": "推送测试", "body": "选 A 还是 B？",
-		"url": "/t/" + id, "tag": tag, "actions": []any{map[string]any{"i": float64(0), "label": "A"}, map[string]any{"i": float64(1), "label": "B"}}}, fcmPlain(t, c, s0))
+		"url": "/t/" + id, "tag": tag, "ts": float64(n.CreatedAt), "avatar": map[string]any{"kind": "thread"},
+		"actions": []any{map[string]any{"i": float64(0), "label": "A"}, map[string]any{"i": float64(1), "label": "B"}}}, fcmPlain(t, c, s0))
 	// 不用 collapse key：每条都是非折叠消息，离线时不会被 FCM 的「最多 4 个 collapse key」规则静默淘汰
 	assert.Equal(t, map[string]any{"priority": "HIGH", "ttl": "86400s"}, msg["android"])
 	assert.Equal(t, statusSent, f.delivery(ds[0].ID).Status)

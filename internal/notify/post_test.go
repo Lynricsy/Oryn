@@ -175,7 +175,7 @@ func TestPostSystemBudget(t *testing.T) {
 	assert.Equal(t, "Daily budget exceeded", body["title"])
 
 	// 推送载荷：url 为站内路径、tag 按种类合并
-	payload, err := pushPayload(f.s.message(n, db.NotificationDelivery{}))
+	payload, err := pushPayload(f.s.message(f.ctx, n, db.NotificationDelivery{}))
 	require.NoError(t, err)
 	var push map[string]any
 	require.NoError(t, json.Unmarshal(payload, &push))
