@@ -139,9 +139,29 @@ describe("Markdown", () => {
 			const a = container.querySelector("a");
 			expect(a?.getAttribute("href")).toBe("docs/a.md");
 			expect(a?.getAttribute("target")).toBe("_blank");
-			expect(container.querySelector("img")?.getAttribute("src")).toBe("p.png");
+			// 相对图片按页面地址解析会落到主站的 SPA 路由（回 HTML，显示成破图），所以不渲染 <img>
+			const imgs = [...container.querySelectorAll("img")].map((i) =>
+				i.getAttribute("src"),
+			);
+			expect(imgs).toEqual(["https://e.com/w.png"]);
+			expect(container.querySelector(".md-image-unresolved")).toHaveTextContent(
+				"i",
+			);
+			expect(container.querySelector(".md-image-unresolved")).toHaveAttribute(
+				"title",
+				"p.png",
+			);
 			unmount();
 		}
+	});
+
+	it("站内绝对路径与 http(s) 图片照常加载（不算相对地址）", () => {
+		const { container } = render(
+			<Markdown text={"![a](/api/v1/blobs/abc) ![b](https://e.com/b.png)"} />,
+		);
+		expect(
+			[...container.querySelectorAll("img")].map((i) => i.getAttribute("src")),
+		).toEqual(["/api/v1/blobs/abc", "https://e.com/b.png"]);
 	});
 
 	it("images={false}：图片变成指向原图的链接；mermaid 围栏按普通代码块显示，不交给 mermaid（它会加载节点里的图片）", async () => {
