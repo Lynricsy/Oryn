@@ -364,9 +364,11 @@ func TestOAuthRefreshTransientErrorPreservesSlot(t *testing.T) {
 	assert.Equal(t, "ok", e.slotStatus(slotUser))
 }
 
-// TestOAuthRefreshRaceWithReauthorize 覆盖刷新在途期间用户手动重连：条件更新不会覆盖用户的新授权令牌。
+// TestOAuthRefreshRaceWithReauthorize 覆盖刷新在途期间用户改绑异账号（以及 singleflight 等待者）：
+// 旧刷新既不得覆盖新账号的库记录，也不得把新代际令牌作为旧代际轮换结果返回给原调用方与等待者。
 func TestOAuthRefreshRaceWithReauthorize(t *testing.T) {
 	e := newExpiringEnv(t)
+	e.fake.AddUser(2, "other-owner", "Other Owner")
 
 	entered := make(chan struct{})
 	release := make(chan struct{})
@@ -377,30 +379,163 @@ func TestOAuthRefreshRaceWithReauthorize(t *testing.T) {
 	}
 	e.fake.Unlock()
 
-	e.clock.Add(8 * time.Hour)
-	done := make(chan struct{})
-	var gotTok string
-	var gotErr error
-	go func() {
-		defer close(done)
-		gotTok, gotErr = e.s.tokenFor(e.ctx, slotUser)
-	}()
+	oldRow, err := e.st.Q.GetGithubIdentity(e.ctx, slotUser)
+	require.NoError(t, err)
+	oldGen := genOf(oldRow)
 
+	e.clock.Add(8 * time.Hour)
+	var leaderTok, waiterTok string
+	var leaderErr, waiterErr error
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		leaderTok, leaderErr = e.s.tokenFor(e.ctx, slotUser)
+	})
 	<-entered
-	// 刷新在途期间，用户重新授权拿到全新令牌
-	require.NoError(t, e.connect(slotUser, "c-reauth", "owner"))
-	reauthRow, err := e.st.Q.GetGithubIdentity(e.ctx, slotUser)
+	wg.Go(func() {
+		waiterTok, waiterErr = e.s.refreshSlot(e.ctx, slotUser, oldRow.AccessTokenEnc, oldGen, false)
+	})
+	// 刷新在途期间，用户把槽位改绑为另一个账号（新授权代际）
+	require.NoError(t, e.connect(slotUser, "c-rebind", "other-owner"))
+	rebindRow, err := e.st.Q.GetGithubIdentity(e.ctx, slotUser)
 	require.NoError(t, err)
-	reauthPlain, err := e.s.cfg.Box.Open(aadAccess(slotUser), reauthRow.AccessTokenEnc)
-	require.NoError(t, err)
+	require.Equal(t, int64(2), rebindRow.GithubID)
 
 	close(release)
-	<-done
+	wg.Wait()
 
-	require.NoError(t, gotErr)
-	assert.Equal(t, string(reauthPlain), gotTok, "刷新在途被手动重连取代时应返回最新授权的令牌")
+	assert.Equal(t, "github_identity_changed", codeOf(leaderErr), "领跑刷新遇代际变化时不得返回新账号令牌")
+	assert.Empty(t, leaderTok)
+	assert.Equal(t, "github_identity_changed", codeOf(waiterErr), "singleflight 等待者也不得拿到新账号令牌")
+	assert.Empty(t, waiterTok)
 
 	afterRow, err := e.st.Q.GetGithubIdentity(e.ctx, slotUser)
 	require.NoError(t, err)
-	assert.Equal(t, reauthRow.AccessTokenEnc, afterRow.AccessTokenEnc, "数据库中的新授权令牌不得被旧刷新覆盖")
+	assert.Equal(t, rebindRow.AccessTokenEnc, afterRow.AccessTokenEnc, "数据库中的新账号令牌不得被旧刷新覆盖")
+	assert.Equal(t, "ok", afterRow.Status)
+
+	// 之后的新调用正常拿到新账号令牌
+	newTok, err := e.s.tokenFor(e.ctx, slotUser)
+	require.NoError(t, err)
+	rebindPlain, err := e.s.cfg.Box.Open(aadAccess(slotUser), rebindRow.AccessTokenEnc)
+	require.NoError(t, err)
+	assert.Equal(t, string(rebindPlain), newTok)
+}
+
+// TestOAuthRefreshNoCrossAccountReplayOn401 覆盖并发写请求在途或 401 刷新在途期间改绑异账号的回归场景：
+// 绝不得替新账号重放旧 POST/GraphQL 写请求，也绝不得把新账号误标为 reauth。
+func TestOAuthRefreshNoCrossAccountReplayOn401(t *testing.T) {
+	t.Run("rebind_while_write_in_flight", func(t *testing.T) {
+		e := newExpiringEnv(t)
+		e.fake.AddUser(2, "other-owner", "Other Owner")
+
+		reqArrived := make(chan struct{})
+		allowReply := make(chan struct{})
+		var unblockOnce sync.Once
+		unblock := func() { unblockOnce.Do(func() { close(allowReply) }) }
+
+		var authHeaders []string
+		var mu sync.Mutex
+		api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/user" {
+				e.fake.Handler().ServeHTTP(w, r)
+				return
+			}
+			mu.Lock()
+			authHeaders = append(authHeaders, r.Header.Get("Authorization"))
+			n := len(authHeaders)
+			mu.Unlock()
+			if n == 1 {
+				close(reqArrived)
+				<-allowReply
+			}
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"message":"Bad credentials"}`))
+		}))
+		defer api.Close()
+		defer unblock()
+		e.s.cfg.APIURL = api.URL
+
+		done := make(chan error, 1)
+		go func() {
+			done <- e.s.callAs(e.ctx, slotUser, http.MethodPost, "/repos/acme/app/issues/1/comments", map[string]string{"body": "from-old-owner"}, nil)
+		}()
+
+		<-reqArrived
+		// 写请求尚未返回 401 时，把 user 槽位改绑为异账号
+		require.NoError(t, e.connect(slotUser, "c-other", "other-owner"))
+		newRow, err := e.st.Q.GetGithubIdentity(e.ctx, slotUser)
+		require.NoError(t, err)
+		require.Equal(t, int64(2), newRow.GithubID)
+		unblock()
+
+		err = <-done
+		assert.True(t, isStatus(err, http.StatusUnauthorized), "代际已变应直接返回原 401 错误，实际: %v", err)
+
+		mu.Lock()
+		gotCalls := len(authHeaders)
+		mu.Unlock()
+		assert.Equal(t, 1, gotCalls, "绝不得使用新账号令牌重放旧 POST 写请求")
+		assert.Equal(t, "ok", e.slotStatus(slotUser), "新账号槽位绝不得被误标为 reauth")
+		assert.Equal(t, 0, countRefreshCalls(e))
+	})
+
+	t.Run("rebind_while_refreshing_after_401", func(t *testing.T) {
+		e := newExpiringEnv(t)
+		e.fake.AddUser(2, "other-owner", "Other Owner")
+
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		var releaseOnce sync.Once
+		unblock := func() { releaseOnce.Do(func() { close(release) }) }
+		e.fake.Lock()
+		e.fake.BeforeRefresh = func() {
+			close(entered)
+			<-release
+		}
+		e.fake.Unlock()
+
+		var hits int
+		var mu sync.Mutex
+		api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/user" {
+				e.fake.Handler().ServeHTTP(w, r)
+				return
+			}
+			mu.Lock()
+			hits++
+			mu.Unlock()
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"message":"Bad credentials"}`))
+		}))
+		defer api.Close()
+		defer unblock()
+		e.s.cfg.APIURL = api.URL
+
+		done := make(chan error, 1)
+		go func() {
+			done <- e.s.graphql(e.ctx, slotUser, "mutation{addComment{id}}", nil, nil)
+		}()
+
+		// 等待第一次 GraphQL 收到 401 并进入旧代际的 refreshSlot
+		<-entered
+		// 刷新在途期间改绑异账号
+		require.NoError(t, e.connect(slotUser, "c-other-2", "other-owner"))
+		newRow, err := e.st.Q.GetGithubIdentity(e.ctx, slotUser)
+		require.NoError(t, err)
+		require.Equal(t, int64(2), newRow.GithubID)
+		unblock()
+
+		err = <-done
+		assert.True(t, isStatus(err, http.StatusUnauthorized), "刷新期间改绑异账号后应返回原 401 错误，实际: %v", err)
+
+		mu.Lock()
+		gotHits := hits
+		mu.Unlock()
+		assert.Equal(t, 1, gotHits, "绝不得使用新账号令牌重放旧 GraphQL mutation")
+		assert.Equal(t, "ok", e.slotStatus(slotUser), "新账号槽位绝不得因旧请求重试 401 被误标为 reauth")
+
+		afterRow, err := e.st.Q.GetGithubIdentity(e.ctx, slotUser)
+		require.NoError(t, err)
+		assert.Equal(t, newRow.AccessTokenEnc, afterRow.AccessTokenEnc)
+	})
 }

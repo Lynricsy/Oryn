@@ -197,7 +197,7 @@ func (s *Service) do(slot string, req *http.Request) (*http.Response, error) {
 		return resp, nil
 	}
 
-	tok, err := s.tokenFor(ctx, slot)
+	tok, gen, err := s.tokenForGen(ctx, slot)
 	if err != nil {
 		return nil, err
 	}
@@ -214,7 +214,7 @@ func (s *Service) do(slot string, req *http.Request) (*http.Response, error) {
 		return resp, ge
 	}
 
-	newTok, refreshed, rerr := s.handleUnauthorized(ctx, slot, tok)
+	newTok, refreshed, rerr := s.handleUnauthorized(ctx, slot, tok, gen)
 	if !refreshed {
 		if rerr != nil {
 			return resp, errors.Join(ge, rerr)
@@ -241,7 +241,7 @@ func (s *Service) do(slot string, req *http.Request) (*http.Response, error) {
 		return resp2, nil
 	}
 	if ge2.Kind == kindReauth && resp2.Request != nil && resp2.Request.Header.Get("Authorization") == "Bearer "+newTok {
-		if merr := s.markTokenReauth(ctx, newTok, "http_401_after_refresh", slot); merr != nil {
+		if merr := s.markTokenReauth(ctx, newTok, gen, "http_401_after_refresh", slot); merr != nil {
 			return resp2, errors.Join(ge2, merr)
 		}
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/subtle"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -124,11 +125,12 @@ func (s *Service) FinishAuthorize(ctx context.Context, code, state string) (stri
 		name = nil
 	}
 	err = s.st.Tx(ctx, func(q *db.Queries) error {
+		connectedAt := s.nextConnectedAt(ctx, q, slot, now)
 		if err := q.UpsertGithubIdentity(ctx, db.UpsertGithubIdentityParams{
 			Slot: slot, GithubID: user.ID, Login: user.Login, Name: name, AvatarUrl: user.AvatarURL,
 			AccessTokenEnc: sealed.accessEnc, AccessExpiresAt: sealed.accessExpiresAt,
 			RefreshTokenEnc: sealed.refreshEnc, RefreshExpiresAt: sealed.refreshExpiresAt,
-			ConnectedAt: now, UpdatedAt: now,
+			ConnectedAt: connectedAt, UpdatedAt: now,
 		}); err != nil {
 			return err
 		}
@@ -151,7 +153,43 @@ func (s *Service) FinishAuthorize(ctx context.Context, code, state string) (stri
 	return slot, nil
 }
 
+// tokenGen 标识一次 OAuth 授权代际（同一账号的同一次连接）。
+// refresh_token 轮换不改动 github_id 与 connected_at；重新授权或改绑异账号必然推进代际，
+// 以此防止单飞刷新与 401 重放跨代际/跨账号错用新授权令牌。
+type tokenGen struct {
+	githubID    int64
+	connectedAt int64
+}
+
+func genOf(row db.GithubIdentity) tokenGen {
+	return tokenGen{githubID: row.GithubID, connectedAt: row.ConnectedAt}
+}
+
+func errIdentityChanged(slot string) *Error {
+	return errf("github_identity_changed", "GitHub identity "+slot+" authorization changed")
+}
+
+// nextConnectedAt 保证同一槽位每次 FinishAuthorize 的 connected_at 严格递增（包括断开后同毫秒重连），
+// 使 tokenGen 在单测假时钟与生产环境中都能唯一区分每次授权代际。
+func (s *Service) nextConnectedAt(ctx context.Context, q *db.Queries, slot string, now int64) int64 {
+	connectedAt := now
+	if prev, err := q.GetGithubIdentity(ctx, slot); err == nil && connectedAt <= prev.ConnectedAt {
+		connectedAt = prev.ConnectedAt + 1
+	}
+	s.refreshMu.Lock()
+	if s.lastConnectedAt == nil {
+		s.lastConnectedAt = make(map[string]int64, 2)
+	}
+	if connectedAt <= s.lastConnectedAt[slot] {
+		connectedAt = s.lastConnectedAt[slot] + 1
+	}
+	s.lastConnectedAt[slot] = connectedAt
+	s.refreshMu.Unlock()
+	return connectedAt
+}
+
 type refreshCall struct {
+	gen   tokenGen
 	done  chan struct{}
 	token string
 	err   error
@@ -209,51 +247,69 @@ func isRefreshTokenRevoked(code string) bool {
 
 // tokenFor 返回槽位的用户访问令牌：持有刷新令牌且临近/已经过期时自动轮换；未连接或待重新授权时返回 github_identity_required。
 func (s *Service) tokenFor(ctx context.Context, slot string) (string, error) {
+	tok, _, err := s.tokenForGen(ctx, slot)
+	return tok, err
+}
+
+// tokenForGen 返回槽位的访问令牌及其授权代际，供需要做 401 重试的调用方绑定初始授权代际。
+func (s *Service) tokenForGen(ctx context.Context, slot string) (string, tokenGen, error) {
 	if !validSlot(slot) {
-		return "", errf("invalid_request", "slot must be user or agent")
+		return "", tokenGen{}, errf("invalid_request", "slot must be user or agent")
 	}
 	row, err := s.st.Q.GetGithubIdentity(ctx, slot)
 	if err != nil {
 		if isNoRows(err) {
-			return "", errf("github_identity_required", "GitHub identity "+slot+" is not connected")
+			return "", tokenGen{}, errf("github_identity_required", "GitHub identity "+slot+" is not connected")
 		}
-		return "", err
+		return "", tokenGen{}, err
 	}
 	if row.Status == "reauth" {
-		return "", errf("github_identity_required", "GitHub identity "+slot+" needs to be re-authorized")
+		return "", tokenGen{}, errf("github_identity_required", "GitHub identity "+slot+" needs to be re-authorized")
 	}
+	gen := genOf(row)
 	if needsRefresh(row, s.nowMs()) {
-		return s.refreshSlot(ctx, slot, row.AccessTokenEnc, false)
+		tok, err := s.refreshSlot(ctx, slot, row.AccessTokenEnc, gen, false)
+		return tok, gen, err
 	}
 	b, err := s.cfg.Box.Open(aadAccess(slot), row.AccessTokenEnc)
-	return string(b), err
+	return string(b), gen, err
 }
 
-// refreshSlot 按槽位合并并发刷新（per-slot singleflight）：GitHub 的 refresh_token 是一次性轮换的，
+// refreshSlot 按槽位合并同一授权代际的并发刷新（per-slot singleflight）：GitHub 的 refresh_token 是一次性轮换的，
 // 并发发出两次刷新会让第二次拿到 bad_refresh_token 误标 reauth。
+// 结果严格绑定 expectedGen：若在途期间槽位被重新授权或改绑为其他账号，绝不复用或返回新代际的令牌。
 // 领跑协程一旦发起上游刷新即脱离调用方取消（context.WithoutCancel），防止 GitHub 已轮换却未落盘新 refresh_token；
 // 其余等待者随自己的 ctx 取消而返回。
-func (s *Service) refreshSlot(ctx context.Context, slot string, prevAccessEnc []byte, forceOn401 bool) (string, error) {
-	s.refreshMu.Lock()
-	if call := s.refreshCalls[slot]; call != nil {
-		s.refreshMu.Unlock()
-		select {
-		case <-call.done:
-			return call.token, call.err
-		case <-ctx.Done():
-			return "", ctx.Err()
+func (s *Service) refreshSlot(ctx context.Context, slot string, prevAccessEnc []byte, expectedGen tokenGen, forceOn401 bool) (string, error) {
+	var call *refreshCall
+	for {
+		s.refreshMu.Lock()
+		existing := s.refreshCalls[slot]
+		if existing != nil {
+			s.refreshMu.Unlock()
+			select {
+			case <-existing.done:
+				if existing.gen == expectedGen {
+					return existing.token, existing.err
+				}
+				// 在途刷新属于不同代际，绝不复用其结果，待它结束后重新检查本代际。
+				continue
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
 		}
-	}
-	if err := ctx.Err(); err != nil {
+		if err := ctx.Err(); err != nil {
+			s.refreshMu.Unlock()
+			return "", err
+		}
+		call = &refreshCall{gen: expectedGen, done: make(chan struct{})}
+		if s.refreshCalls == nil {
+			s.refreshCalls = make(map[string]*refreshCall, 2)
+		}
+		s.refreshCalls[slot] = call
 		s.refreshMu.Unlock()
-		return "", err
+		break
 	}
-	call := &refreshCall{done: make(chan struct{})}
-	if s.refreshCalls == nil {
-		s.refreshCalls = make(map[string]*refreshCall, 2)
-	}
-	s.refreshCalls[slot] = call
-	s.refreshMu.Unlock()
 
 	defer func() {
 		s.refreshMu.Lock()
@@ -262,12 +318,12 @@ func (s *Service) refreshSlot(ctx context.Context, slot string, prevAccessEnc []
 		close(call.done)
 	}()
 
-	call.token, call.err = s.doRefreshSlot(ctx, slot, prevAccessEnc, forceOn401)
+	call.token, call.err = s.doRefreshSlot(ctx, slot, prevAccessEnc, expectedGen, forceOn401)
 	return call.token, call.err
 }
 
-// doRefreshSlot 在 singleflight 保护下执行一次实际的 refresh_token 轮换与落盘。
-func (s *Service) doRefreshSlot(ctx context.Context, slot string, prevAccessEnc []byte, forceOn401 bool) (string, error) {
+// doRefreshSlot 在 singleflight 保护下执行一次实际的 refresh_token 轮换与落盘（严格限定在 expectedGen 代际内）。
+func (s *Service) doRefreshSlot(ctx context.Context, slot string, prevAccessEnc []byte, expectedGen tokenGen, forceOn401 bool) (string, error) {
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tokenRefreshTimeout)
 	defer cancel()
 
@@ -278,10 +334,13 @@ func (s *Service) doRefreshSlot(ctx context.Context, slot string, prevAccessEnc 
 		}
 		return "", err
 	}
+	if genOf(row) != expectedGen {
+		return "", errIdentityChanged(slot)
+	}
 	if row.Status == "reauth" {
 		return "", errf("github_identity_required", "GitHub identity "+slot+" needs to be re-authorized")
 	}
-	// 已被前一次并发刷新或手动重连换了新令牌，且尚未进入刷新窗口：直接复用，避免重复消费 refresh_token。
+	// 同代际已被前一次并发刷新换了新令牌，且尚未进入刷新窗口：直接复用，避免重复消费 refresh_token。
 	if !bytes.Equal(row.AccessTokenEnc, prevAccessEnc) && !needsRefresh(row, s.nowMs()) {
 		b, err := s.cfg.Box.Open(aadAccess(slot), row.AccessTokenEnc)
 		return string(b), err
@@ -354,13 +413,17 @@ func (s *Service) doRefreshSlot(ctx context.Context, slot string, prevAccessEnc 
 		return "", err
 	}
 	if n == 0 {
-		// 刷新在途期间槽位被重新授权、断开或置为 reauth：不覆盖新状态，重读返回当前有效令牌或错误。
+		// 刷新在途期间槽位被重新授权/改绑、断开或置为 reauth：
+		// 仅当仍在同一授权代际内才复用当前令牌；代际已变则绝不返回新授权（尤其异账号）的令牌。
 		cur, err := s.st.Q.GetGithubIdentity(rctx, slot)
 		if err != nil {
 			if isNoRows(err) {
 				return "", errf("github_identity_required", "GitHub identity "+slot+" is not connected")
 			}
 			return "", err
+		}
+		if genOf(cur) != expectedGen {
+			return "", errIdentityChanged(slot)
 		}
 		if cur.Status == "reauth" {
 			return "", errf("github_identity_required", "GitHub identity "+slot+" needs to be re-authorized")
@@ -390,8 +453,8 @@ func (s *Service) markSlotReauth(ctx context.Context, slot string, accessEnc []b
 	return nil
 }
 
-// markTokenReauth 直接把仍持有明文 tok 的槽位置为 reauth（不再尝试刷新；用于刷新重试后仍 401）。
-func (s *Service) markTokenReauth(ctx context.Context, tok, reason string, slots ...string) error {
+// markTokenReauth 直接把仍处于 expectedGen 代际且持有明文 tok 的槽位置为 reauth（不再尝试刷新；用于刷新重试后仍 401）。
+func (s *Service) markTokenReauth(ctx context.Context, tok string, expectedGen tokenGen, reason string, slots ...string) error {
 	if tok == "" {
 		return nil
 	}
@@ -403,7 +466,7 @@ func (s *Service) markTokenReauth(ctx context.Context, tok, reason string, slots
 		if err != nil {
 			return err
 		}
-		if row.Status == "reauth" {
+		if genOf(row) != expectedGen || row.Status == "reauth" {
 			continue
 		}
 		cur, err := s.cfg.Box.Open(aadAccess(slot), row.AccessTokenEnc)
@@ -420,11 +483,12 @@ func (s *Service) markTokenReauth(ctx context.Context, tok, reason string, slots
 	return nil
 }
 
-// handleUnauthorized 供控制面请求（client.go 的 do）在收到 401 后调用：
-//   - 若槽位已被并发刷新或重连换上新令牌，直接取回新令牌供本次请求透明重试；
-//   - 若槽位仍持有 tok 且有 refresh_token，执行单飞刷新并返回新令牌供重试；
-//   - 若无 refresh_token，条件把槽位标为 reauth。
-func (s *Service) handleUnauthorized(ctx context.Context, slot, tok string) (newTok string, refreshed bool, err error) {
+// handleUnauthorized 供控制面请求（client.go 的 do）在收到 401 后调用，严格绑定首次取令牌时的授权代际 expectedGen：
+//   - 若槽位已被断开、标为 reauth 或代际已变（手动重连 / 改绑异账号），不刷新也不重放，让调用方返回原 401 错误；
+//   - 若同代际已被并发刷新换上新令牌，返回同代际新令牌供本次请求透明重试；
+//   - 若同代际仍持有 tok 且有 refresh_token，执行单飞刷新并在仍属同代际时返回新令牌供重试；
+//   - 若同代际无 refresh_token，条件把槽位标为 reauth。
+func (s *Service) handleUnauthorized(ctx context.Context, slot, tok string, expectedGen tokenGen) (newTok string, refreshed bool, err error) {
 	if tok == "" || !validSlot(slot) {
 		return "", false, nil
 	}
@@ -435,7 +499,7 @@ func (s *Service) handleUnauthorized(ctx context.Context, slot, tok string) (new
 	if err != nil {
 		return "", false, err
 	}
-	if row.Status == "reauth" {
+	if row.Status == "reauth" || genOf(row) != expectedGen {
 		return "", false, nil
 	}
 	cur, err := s.cfg.Box.Open(aadAccess(slot), row.AccessTokenEnc)
@@ -443,16 +507,25 @@ func (s *Service) handleUnauthorized(ctx context.Context, slot, tok string) (new
 		return "", false, err
 	}
 	if subtle.ConstantTimeCompare(cur, []byte(tok)) != 1 {
-		// 在途期间槽位已换上新令牌（并发刷新或手动重连），直接取当前可用令牌重试。
-		nt, err := s.tokenFor(ctx, slot)
-		if err != nil {
-			return "", false, err
+		// 同代际已被并发刷新换上新令牌：若新令牌又临近过期则继续绑定 expectedGen 刷新，否则直接复用。
+		if needsRefresh(row, s.nowMs()) {
+			nt, err := s.refreshSlot(ctx, slot, row.AccessTokenEnc, expectedGen, false)
+			if err != nil {
+				if codeOfErr(err) == "github_identity_changed" {
+					return "", false, nil
+				}
+				return "", false, err
+			}
+			return nt, true, nil
 		}
-		return nt, true, nil
+		return string(cur), true, nil
 	}
 	if len(row.RefreshTokenEnc) > 0 {
-		nt, err := s.refreshSlot(ctx, slot, row.AccessTokenEnc, true)
+		nt, err := s.refreshSlot(ctx, slot, row.AccessTokenEnc, expectedGen, true)
 		if err != nil {
+			if codeOfErr(err) == "github_identity_changed" {
+				return "", false, nil
+			}
 			return "", false, err
 		}
 		return nt, true, nil
@@ -463,8 +536,16 @@ func (s *Service) handleUnauthorized(ctx context.Context, slot, tok string) (new
 	return "", false, nil
 }
 
+func codeOfErr(err error) string {
+	var ge *Error
+	if err != nil && errors.As(err, &ge) {
+		return ge.Code
+	}
+	return ""
+}
+
 // tokenRejected 在上游对令牌 tok 回 401 之后调用（R2）：按明文比对找到仍持有 tok 的槽位。
-// 若槽位有 refresh_token 则尝试轮换恢复（仅确定性失效才标 reauth，临时网络错误保留槽位）；
+// 若槽位有 refresh_token 则按该行授权代际尝试轮换恢复（仅确定性失效才标 reauth，临时网络错误保留槽位）；
 // 若无 refresh_token 则以读到的密文条件更新为 reauth（MarkGithubIdentityReauth），不误伤在途重连换上的新令牌；
 // 与任何槽位都不匹配的令牌（如密钥库里 github.com 的 PAT）直接忽略。
 func (s *Service) tokenRejected(ctx context.Context, tok string, slots ...string) error {
@@ -490,7 +571,10 @@ func (s *Service) tokenRejected(ctx context.Context, tok string, slots ...string
 			continue
 		}
 		if len(row.RefreshTokenEnc) > 0 {
-			if _, err := s.refreshSlot(ctx, slot, row.AccessTokenEnc, true); err != nil {
+			if _, err := s.refreshSlot(ctx, slot, row.AccessTokenEnc, genOf(row), true); err != nil {
+				if codeOfErr(err) == "github_identity_changed" {
+					continue
+				}
 				return err
 			}
 			continue

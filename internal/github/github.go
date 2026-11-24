@@ -164,9 +164,11 @@ type Service struct {
 	mu        sync.Mutex
 	repoLists map[[32]byte]repoListEntry // 用户令牌的 sha256 → 仓库列表（步骤 2.2，惰性初始化）
 	perms     map[permKey]permEntry      // (仓库, 登录名) → 驱动判定的权限结果（惰性初始化）
-	// 令牌刷新（受 refreshMu 保护，惰性初始化）：每槽位同时只发一次 refresh_token 轮换请求。
-	refreshMu    sync.Mutex
-	refreshCalls map[string]*refreshCall
+	// 令牌刷新（受 refreshMu 保护，惰性初始化）：每槽位同时只发一次 refresh_token 轮换请求；
+	// lastConnectedAt 保证进程内同槽位即使断开后同毫秒重连，授权代际也严格递增。
+	refreshMu       sync.Mutex
+	refreshCalls    map[string]*refreshCall
+	lastConnectedAt map[string]int64
 
 	// PR 跟踪（步骤 5.1 / 5.2，受 mu 保护，惰性初始化）：线程 → 上次按 HEAD 反查过 PR 的 sha；排队中的 CI 汇总。
 	sampledHeads map[string]string
