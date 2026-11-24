@@ -12,9 +12,10 @@ import (
 const acquireProviderHello = `-- name: AcquireProviderHello :execrows
 UPDATE providers SET driver = ?1, version = ?2, capabilities = ?3,
     orb_types = ?4, default_type = ?5, allow_multiple = ?6,
-    instance_id = ?7, lease_until = ?8, base_image_id = ?9
-WHERE id = ?10 AND disabled_at IS NULL
-  AND (instance_id IS NULL OR instance_id = ?7 OR lease_until IS NULL OR lease_until <= ?11
+    instance_id = ?7, lease_until = ?8, base_image_id = ?9,
+    host_metrics = CASE WHEN CAST(?10 AS TEXT) != '' THEN CAST(?10 AS TEXT) ELSE host_metrics END
+WHERE id = ?11 AND disabled_at IS NULL
+  AND (instance_id IS NULL OR instance_id = ?7 OR lease_until IS NULL OR lease_until <= ?12
        OR (allow_multiple AND CAST(?6 AS BOOLEAN)))
 `
 
@@ -28,6 +29,7 @@ type AcquireProviderHelloParams struct {
 	InstanceID    *string `json:"instanceId"`
 	LeaseUntil    *int64  `json:"leaseUntil"`
 	BaseImageID   string  `json:"baseImageId"`
+	HostMetrics   string  `json:"hostMetrics"`
 	ID            string  `json:"id"`
 	Now           *int64  `json:"now"`
 }
@@ -45,6 +47,7 @@ func (q *Queries) AcquireProviderHello(ctx context.Context, arg AcquireProviderH
 		arg.InstanceID,
 		arg.LeaseUntil,
 		arg.BaseImageID,
+		arg.HostMetrics,
 		arg.ID,
 		arg.Now,
 	)
@@ -66,6 +69,42 @@ type ClearProviderLeaseParams struct {
 func (q *Queries) ClearProviderLease(ctx context.Context, arg ClearProviderLeaseParams) error {
 	_, err := q.db.ExecContext(ctx, clearProviderLease, arg.ID, arg.InstanceID)
 	return err
+}
+
+const countDeletedOrbsByProvider = `-- name: CountDeletedOrbsByProvider :many
+SELECT provider_id, CAST(COUNT(*) AS INTEGER) AS deleted_count
+FROM orbs
+WHERE deleted_at IS NOT NULL
+GROUP BY provider_id
+`
+
+type CountDeletedOrbsByProviderRow struct {
+	ProviderID   string `json:"providerId"`
+	DeletedCount int64  `json:"deletedCount"`
+}
+
+// Count of soft-deleted orbs grouped by provider.
+func (q *Queries) CountDeletedOrbsByProvider(ctx context.Context) ([]CountDeletedOrbsByProviderRow, error) {
+	rows, err := q.db.QueryContext(ctx, countDeletedOrbsByProvider)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CountDeletedOrbsByProviderRow{}
+	for rows.Next() {
+		var i CountDeletedOrbsByProviderRow
+		if err := rows.Scan(&i.ProviderID, &i.DeletedCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const createProvider = `-- name: CreateProvider :exec
@@ -121,7 +160,7 @@ func (q *Queries) DisableProvider(ctx context.Context, arg DisableProviderParams
 }
 
 const getProvider = `-- name: GetProvider :one
-SELECT id, name, token_hash, driver, version, capabilities, orb_types, default_type, allow_multiple, instance_id, lease_until, created_at, disabled_at, base_image_id FROM providers WHERE id = ?1
+SELECT id, name, token_hash, driver, version, capabilities, orb_types, default_type, allow_multiple, instance_id, lease_until, created_at, disabled_at, base_image_id, host_metrics FROM providers WHERE id = ?1
 `
 
 func (q *Queries) GetProvider(ctx context.Context, id string) (Provider, error) {
@@ -142,12 +181,13 @@ func (q *Queries) GetProvider(ctx context.Context, id string) (Provider, error) 
 		&i.CreatedAt,
 		&i.DisabledAt,
 		&i.BaseImageID,
+		&i.HostMetrics,
 	)
 	return i, err
 }
 
 const getProviderByName = `-- name: GetProviderByName :one
-SELECT id, name, token_hash, driver, version, capabilities, orb_types, default_type, allow_multiple, instance_id, lease_until, created_at, disabled_at, base_image_id FROM providers WHERE name = ?1
+SELECT id, name, token_hash, driver, version, capabilities, orb_types, default_type, allow_multiple, instance_id, lease_until, created_at, disabled_at, base_image_id, host_metrics FROM providers WHERE name = ?1
 `
 
 func (q *Queries) GetProviderByName(ctx context.Context, name string) (Provider, error) {
@@ -168,12 +208,13 @@ func (q *Queries) GetProviderByName(ctx context.Context, name string) (Provider,
 		&i.CreatedAt,
 		&i.DisabledAt,
 		&i.BaseImageID,
+		&i.HostMetrics,
 	)
 	return i, err
 }
 
 const getProviderByTokenHash = `-- name: GetProviderByTokenHash :one
-SELECT id, name, token_hash, driver, version, capabilities, orb_types, default_type, allow_multiple, instance_id, lease_until, created_at, disabled_at, base_image_id FROM providers WHERE token_hash = ?1
+SELECT id, name, token_hash, driver, version, capabilities, orb_types, default_type, allow_multiple, instance_id, lease_until, created_at, disabled_at, base_image_id, host_metrics FROM providers WHERE token_hash = ?1
 `
 
 func (q *Queries) GetProviderByTokenHash(ctx context.Context, tokenHash string) (Provider, error) {
@@ -194,12 +235,85 @@ func (q *Queries) GetProviderByTokenHash(ctx context.Context, tokenHash string) 
 		&i.CreatedAt,
 		&i.DisabledAt,
 		&i.BaseImageID,
+		&i.HostMetrics,
 	)
 	return i, err
 }
 
+const listLatestOrbSamples = `-- name: ListLatestOrbSamples :many
+SELECT s.orb_id, s.ts, s.cpu_pct, s.mem_used_mb, s.mem_limit_mb, s.disk_used_mb, s.net_rx_bytes, s.net_tx_bytes
+FROM orb_samples s
+JOIN (
+    SELECT orb_id, MAX(ts) AS max_ts
+    FROM orb_samples
+    WHERE orb_id IN (SELECT id FROM orbs WHERE deleted_at IS NULL)
+    GROUP BY orb_id
+) latest ON s.orb_id = latest.orb_id AND s.ts = latest.max_ts
+`
+
+// Latest metric sample per live (non-deleted) orb for the providers overview page.
+func (q *Queries) ListLatestOrbSamples(ctx context.Context) ([]OrbSample, error) {
+	rows, err := q.db.QueryContext(ctx, listLatestOrbSamples)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OrbSample{}
+	for rows.Next() {
+		var i OrbSample
+		if err := rows.Scan(
+			&i.OrbID,
+			&i.Ts,
+			&i.CpuPct,
+			&i.MemUsedMb,
+			&i.MemLimitMb,
+			&i.DiskUsedMb,
+			&i.NetRxBytes,
+			&i.NetTxBytes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProjectSnapshotIDs = `-- name: ListProjectSnapshotIDs :many
+SELECT id FROM project_snapshots
+`
+
+// IDs of all project snapshots so overview can classify snapshot_of as project vs fork without N+1 queries.
+func (q *Queries) ListProjectSnapshotIDs(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listProjectSnapshotIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProviders = `-- name: ListProviders :many
-SELECT id, name, token_hash, driver, version, capabilities, orb_types, default_type, allow_multiple, instance_id, lease_until, created_at, disabled_at, base_image_id FROM providers WHERE driver != 'runner' ORDER BY name
+SELECT id, name, token_hash, driver, version, capabilities, orb_types, default_type, allow_multiple, instance_id, lease_until, created_at, disabled_at, base_image_id, host_metrics FROM providers WHERE driver != 'runner' ORDER BY name
 `
 
 // Runner providers (driver = 'runner', M11b) are listed by ListRunners, not here: this feeds GET /providers and
@@ -228,7 +342,46 @@ func (q *Queries) ListProviders(ctx context.Context) ([]Provider, error) {
 			&i.CreatedAt,
 			&i.DisabledAt,
 			&i.BaseImageID,
+			&i.HostMetrics,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listThreadsForLiveOrbs = `-- name: ListThreadsForLiveOrbs :many
+SELECT id, orb_id, title
+FROM threads
+WHERE orb_id IS NOT NULL
+  AND orb_id IN (SELECT id FROM orbs WHERE deleted_at IS NULL)
+ORDER BY updated_at DESC, id
+`
+
+type ListThreadsForLiveOrbsRow struct {
+	ID    string  `json:"id"`
+	OrbID *string `json:"orbId"`
+	Title string  `json:"title"`
+}
+
+// Threads attached to live (non-deleted) orbs, newest activity first.
+func (q *Queries) ListThreadsForLiveOrbs(ctx context.Context) ([]ListThreadsForLiveOrbsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listThreadsForLiveOrbs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListThreadsForLiveOrbsRow{}
+	for rows.Next() {
+		var i ListThreadsForLiveOrbsRow
+		if err := rows.Scan(&i.ID, &i.OrbID, &i.Title); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -256,6 +409,104 @@ type SetProviderLeaseParams struct {
 func (q *Queries) SetProviderLease(ctx context.Context, arg SetProviderLeaseParams) error {
 	_, err := q.db.ExecContext(ctx, setProviderLease, arg.InstanceID, arg.LeaseUntil, arg.ID)
 	return err
+}
+
+const summarizeJobsByProvider = `-- name: SummarizeJobsByProvider :many
+SELECT
+    provider_id,
+    CAST(SUM(CASE WHEN state = 'queued' THEN 1 ELSE 0 END) AS INTEGER) AS queued_count,
+    CAST(SUM(CASE WHEN state = 'claimed' THEN 1 ELSE 0 END) AS INTEGER) AS claimed_count,
+    CAST(SUM(CASE WHEN state = 'succeeded' AND COALESCE(finished_at, created_at) >= ?1 THEN 1 ELSE 0 END) AS INTEGER) AS succeeded_24h,
+    CAST(SUM(CASE WHEN state = 'failed' AND COALESCE(finished_at, created_at) >= ?1 THEN 1 ELSE 0 END) AS INTEGER) AS failed_24h
+FROM jobs
+GROUP BY provider_id
+`
+
+type SummarizeJobsByProviderRow struct {
+	ProviderID   string `json:"providerId"`
+	QueuedCount  int64  `json:"queuedCount"`
+	ClaimedCount int64  `json:"claimedCount"`
+	Succeeded24h int64  `json:"succeeded24h"`
+	Failed24h    int64  `json:"failed24h"`
+}
+
+// Provider job queue status and 24h execution summary grouped by provider.
+func (q *Queries) SummarizeJobsByProvider(ctx context.Context, sinceTs *int64) ([]SummarizeJobsByProviderRow, error) {
+	rows, err := q.db.QueryContext(ctx, summarizeJobsByProvider, sinceTs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SummarizeJobsByProviderRow{}
+	for rows.Next() {
+		var i SummarizeJobsByProviderRow
+		if err := rows.Scan(
+			&i.ProviderID,
+			&i.QueuedCount,
+			&i.ClaimedCount,
+			&i.Succeeded24h,
+			&i.Failed24h,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const summarizeProjectSnapshotsByProvider = `-- name: SummarizeProjectSnapshotsByProvider :many
+SELECT
+    provider_id,
+    CAST(SUM(CASE WHEN state = 'ready' THEN 1 ELSE 0 END) AS INTEGER) AS ready_count,
+    CAST(SUM(CASE WHEN state = 'building' THEN 1 ELSE 0 END) AS INTEGER) AS building_count,
+    CAST(SUM(CASE WHEN state = 'retired' THEN 1 ELSE 0 END) AS INTEGER) AS retired_count,
+    CAST(COALESCE(SUM(CASE WHEN state = 'ready' THEN COALESCE(size_bytes, 0) ELSE 0 END), 0) AS INTEGER) AS ready_bytes
+FROM project_snapshots
+GROUP BY provider_id
+`
+
+type SummarizeProjectSnapshotsByProviderRow struct {
+	ProviderID    string `json:"providerId"`
+	ReadyCount    int64  `json:"readyCount"`
+	BuildingCount int64  `json:"buildingCount"`
+	RetiredCount  int64  `json:"retiredCount"`
+	ReadyBytes    int64  `json:"readyBytes"`
+}
+
+// Project snapshot counts and ready-cache storage bytes grouped by provider.
+func (q *Queries) SummarizeProjectSnapshotsByProvider(ctx context.Context) ([]SummarizeProjectSnapshotsByProviderRow, error) {
+	rows, err := q.db.QueryContext(ctx, summarizeProjectSnapshotsByProvider)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SummarizeProjectSnapshotsByProviderRow{}
+	for rows.Next() {
+		var i SummarizeProjectSnapshotsByProviderRow
+		if err := rows.Scan(
+			&i.ProviderID,
+			&i.ReadyCount,
+			&i.BuildingCount,
+			&i.RetiredCount,
+			&i.ReadyBytes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const updateProviderHello = `-- name: UpdateProviderHello :exec

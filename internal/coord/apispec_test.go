@@ -4,8 +4,8 @@ import "testing"
 
 func TestAPISpec(t *testing.T) {
 	routes := apiRoutes()
-	if len(routes) != 377 || len(apiOps()) != 377 {
-		t.Fatalf("routes = %d, ops = %d, want 377", len(routes), len(apiOps()))
+	if len(routes) != 383 || len(apiOps()) != 383 {
+		t.Fatalf("routes = %d, ops = %d, want 383", len(routes), len(apiOps()))
 	}
 	up := routes["updateProject"]
 	if up.Method != "PATCH" || up.Path != "/api/v1/projects/{id}" {

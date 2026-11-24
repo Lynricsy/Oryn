@@ -164,7 +164,7 @@ func buildAPIPolicy() map[string]opPolicy {
 
 	// orbs
 	set("orbs", opRead, none, "listOrbs", "getOrb", "getOrbMetrics", "listOrbSetupRuns", "getOrbSetupRunLog", "listOrbServices",
-		"getOrbServiceLog", "getOrbTimeline", "listProviders", "listRunners")
+		"getOrbServiceLog", "getOrbTimeline", "listProviders", "getProvidersOverview", "listRunners")
 	set("orbs", opWrite, orb, "pauseOrb", "resumeOrb", "stopOrbService")
 	set("orbs", opWrite, opPolicy{Guard: guardOrb, Timeout: 90 * time.Second}, "startOrbService", "restartOrbService")
 	set("orbs", opConfirm, orb, "deleteOrb")

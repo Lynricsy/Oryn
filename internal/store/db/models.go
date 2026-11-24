@@ -1038,6 +1038,7 @@ type Provider struct {
 	CreatedAt     int64   `json:"createdAt"`
 	DisabledAt    *int64  `json:"disabledAt"`
 	BaseImageID   string  `json:"baseImageId"`
+	HostMetrics   string  `json:"hostMetrics"`
 }
 
 type PublishedFile struct {

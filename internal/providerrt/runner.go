@@ -53,7 +53,8 @@ type Runner struct {
 
 	instanceID string
 	// helloMu 串行化 hello（租约冲突时多个 worker 同时重试）。
-	helloMu sync.Mutex
+	helloMu     sync.Mutex
+	hostSampler *hostMetricsSampler
 }
 
 func (r *Runner) defaults() {
@@ -79,6 +80,9 @@ func (r *Runner) defaults() {
 		b := make([]byte, 8)
 		_, _ = rand.Read(b)
 		r.instanceID = hex.EncodeToString(b)
+	}
+	if r.hostSampler == nil {
+		r.hostSampler = newHostMetricsSampler()
 	}
 }
 
@@ -171,6 +175,9 @@ func (r *Runner) hello(ctx context.Context) error {
 	}
 	if info.BaseImageID != "" {
 		req.BaseImageID = &info.BaseImageID
+	}
+	if r.hostSampler != nil {
+		req.HostMetrics = r.hostSampler.Sample(time.Now(), info.DiskPath, info.Limits)
 	}
 	var res apigen.ProviderHelloResponse
 	return r.post(ctx, "/provider/v1/hello", req, &res)

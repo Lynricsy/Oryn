@@ -54,6 +54,7 @@ func (d *Dispatch) Info() Info {
 		Types:        typeInfos(d.Types),
 		DefaultType:  d.DefaultType,
 		BaseImageID:  d.baseImageID(),
+		DiskPath:     "/",
 	}
 }
 

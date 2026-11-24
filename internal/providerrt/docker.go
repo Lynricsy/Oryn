@@ -38,10 +38,11 @@ type Docker struct {
 	// hookSnapshotStopped（测试用）在 sysbox 快照停机之后、commit 之前调用。
 	hookSnapshotStopped func()
 
-	baseMu sync.Mutex
-	baseID string
-	baseAt time.Time
-
+	baseMu     sync.Mutex
+	baseID     string
+	baseAt     time.Time
+	diskDir    string
+	diskDirSet bool
 	// offline 缓存停机 orb 的文件索引（只读预览，见 offlinefs_docker.go）。
 	offline indexCache
 }
@@ -62,7 +63,33 @@ func (d *Docker) Info() Info {
 		Types:        typeInfos(d.Cfg.Types),
 		DefaultType:  d.Cfg.DefaultType,
 		BaseImageID:  d.baseImageID(),
+		DiskPath:     d.diskPath(),
 	}
+}
+
+// diskPath 返回 Docker 数据目录（用于宿主机存储采样）；首次通过 docker info 探测并缓存，失败回退 /var/lib/docker 或 /。
+func (d *Docker) diskPath() string {
+	d.baseMu.Lock()
+	defer d.baseMu.Unlock()
+	if d.diskDirSet {
+		return d.diskDir
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var stdout bytes.Buffer
+	if err := d.exec(ctx, &stdout, io.Discard, nil, "info", "--format", "{{.DockerRootDir}}"); err == nil {
+		if dir := strings.TrimSpace(stdout.String()); dir != "" {
+			d.diskDir, d.diskDirSet = dir, true
+			return dir
+		}
+	}
+	if _, err := os.Stat("/var/lib/docker"); err == nil {
+		d.diskDir = "/var/lib/docker"
+	} else {
+		d.diskDir = "/"
+	}
+	d.diskDirSet = true
+	return d.diskDir
 }
 
 // baseImageID 返回基础镜像（cfg.image）的镜像 id，成功结果缓存 BaseImageIDTTL；读取失败给空串（不缓存）。

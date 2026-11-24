@@ -934,6 +934,18 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ProviderCreateResponse' }
         default: { $ref: '#/components/responses/Error' }
+  /api/v1/providers/overview:
+    get:
+      tags: [providers]
+      operationId: getProvidersOverview
+      summary: provider 算力与资源总览（节点状态、宿主机资源、orb 数量与实时采样、存储与快照、任务队列）
+      responses:
+        '200':
+          description: provider 总览
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProvidersOverview' }
+        default: { $ref: '#/components/responses/Error' }
   /api/v1/providers/{id}:
     parameters:
       - { $ref: '#/components/parameters/ProviderIdPath' }
@@ -11305,6 +11317,191 @@ components:
         token:
           type: string
           description: '`opv_…`，只显示这一次'
+    ProviderHostLimits:
+      type: object
+      description: provider 配置的显式容量上限（如 Firecracker 的 limits）
+      properties:
+        maxVMs: { type: integer }
+        maxMemoryMB: { type: integer }
+    ProviderHostMetrics:
+      type: object
+      description: provider 进程随心跳上报的宿主机实时资源快照
+      required: [sampledAt, cpuCores, memTotalMB, memUsedMB, diskTotalBytes, diskUsedBytes]
+      properties:
+        sampledAt: { $ref: '#/components/schemas/TimestampMs' }
+        hostname: { type: string }
+        os: { type: string }
+        arch: { type: string }
+        uptimeSeconds: { type: integer, format: int64 }
+        cpuCores: { type: integer }
+        cpuPct:
+          type: number
+          description: 宿主机整机 CPU 使用率（0–100）
+        loadAvg1: { type: number }
+        loadAvg5: { type: number }
+        loadAvg15: { type: number }
+        memTotalMB: { type: integer, format: int64 }
+        memUsedMB: { type: integer, format: int64 }
+        memAvailableMB: { type: integer, format: int64 }
+        diskTotalBytes: { type: integer, format: int64 }
+        diskUsedBytes: { type: integer, format: int64 }
+        diskAvailableBytes: { type: integer, format: int64 }
+        diskPath: { type: string }
+        limits: { $ref: '#/components/schemas/ProviderHostLimits' }
+    ProviderOrbCounts:
+      type: object
+      description: 按状态与角色划分的 orb 计数
+      required: [total, running, starting, frozen, stopped, failed, deleting, deleted, warmPool, boxes, computers]
+      properties:
+        total:
+          type: integer
+          description: 未删除 orb 总数
+        running:
+          type: integer
+          description: state=ready
+        starting:
+          type: integer
+          description: requested / spawning / connecting / setting_up / resuming / waking
+        frozen:
+          type: integer
+          description: frozen / freezing
+        stopped:
+          type: integer
+          description: stopped / stopping
+        failed: { type: integer }
+        deleting: { type: integer }
+        deleted:
+          type: integer
+          description: 历史已删除 orb 总数
+        warmPool:
+          type: integer
+          description: 未删除的预热池 orb 数
+        boxes:
+          type: integer
+          description: 未删除的 Box 常驻 orb 数
+        computers:
+          type: integer
+          description: 未删除的助手电脑 orb 数
+    ProviderResourceAllocation:
+      type: object
+      description: orb 规格配额汇总（运行中 vs 全部未删除）
+      required: [runningCpus, runningMemoryMB, totalCpus, totalMemoryMB]
+      properties:
+        runningCpus: { type: number }
+        runningMemoryMB: { type: integer, format: int64 }
+        totalCpus: { type: number }
+        totalMemoryMB: { type: integer, format: int64 }
+    ProviderLiveMetrics:
+      type: object
+      description: orb 最新采样汇总（CPU / 内存仅汇总近期活跃的运行中 orb，磁盘汇总未删除 orb 的最新采样）
+      required: [sampledOrbs, cpuPct, memUsedMB, memLimitMB, diskUsedMB, netRxBytes, netTxBytes]
+      properties:
+        sampledOrbs: { type: integer }
+        cpuPct: { type: number }
+        memUsedMB: { type: number }
+        memLimitMB: { type: number }
+        diskUsedMB: { type: number }
+        netRxBytes: { type: integer, format: int64 }
+        netTxBytes: { type: integer, format: int64 }
+    ProvidersHostTotals:
+      type: object
+      description: 已上报宿主机指标的在线 provider 宿主机容量汇总
+      required: [reportedCount, cpuCores, memTotalMB, memUsedMB, diskTotalBytes, diskUsedBytes]
+      properties:
+        reportedCount: { type: integer }
+        cpuCores: { type: integer }
+        memTotalMB: { type: integer, format: int64 }
+        memUsedMB: { type: integer, format: int64 }
+        diskTotalBytes: { type: integer, format: int64 }
+        diskUsedBytes: { type: integer, format: int64 }
+    ProviderSnapshotStats:
+      type: object
+      description: 项目快照数量与存储占用
+      required: [readyCount, buildingCount, retiredCount, totalBytes]
+      properties:
+        readyCount: { type: integer }
+        buildingCount: { type: integer }
+        retiredCount: { type: integer }
+        totalBytes: { type: integer, format: int64 }
+    ProviderJobStats:
+      type: object
+      description: provider 任务队列实时状态与近 24 小时执行结果
+      required: [queued, claimed, succeeded24h, failed24h]
+      properties:
+        queued: { type: integer }
+        claimed: { type: integer }
+        succeeded24h: { type: integer }
+        failed24h: { type: integer }
+    ProviderOrbSummary:
+      type: object
+      description: 总览页展示的单台 orb 摘要与最新采样
+      required: [id, type, state, cpus, memoryMB, threadIds, threadTitles, stateChangedAt, createdAt]
+      properties:
+        id: { $ref: '#/components/schemas/OrbId' }
+        type: { type: string }
+        state: { $ref: '#/components/schemas/OrbState' }
+        cpus: { type: number }
+        memoryMB: { type: integer }
+        projectId: { $ref: '#/components/schemas/ProjectId' }
+        projectName: { type: string }
+        threadIds:
+          type: array
+          items: { $ref: '#/components/schemas/ThreadId' }
+        threadTitles:
+          type: array
+          items: { type: string }
+        pool: { $ref: '#/components/schemas/OrbPoolState' }
+        box: { type: boolean }
+        computer: { type: boolean }
+        automation: { type: boolean }
+        nestedDocker: { type: boolean }
+        snapshotKind: { $ref: '#/components/schemas/OrbSnapshotKind' }
+        failureReason: { type: string }
+        stateChangedAt: { $ref: '#/components/schemas/TimestampMs' }
+        createdAt: { $ref: '#/components/schemas/TimestampMs' }
+        lastActivityAt: { $ref: '#/components/schemas/TimestampMs' }
+        latestSample: { $ref: '#/components/schemas/OrbMetricSample' }
+    ProviderOverviewItem:
+      type: object
+      required: [provider, allowMultiple, orbs, allocated, live, snapshots, jobs, orbItems]
+      properties:
+        provider: { $ref: '#/components/schemas/Provider' }
+        version: { type: string }
+        baseImageId: { type: string }
+        allowMultiple: { type: boolean }
+        hostMetrics: { $ref: '#/components/schemas/ProviderHostMetrics' }
+        orbs: { $ref: '#/components/schemas/ProviderOrbCounts' }
+        allocated: { $ref: '#/components/schemas/ProviderResourceAllocation' }
+        live: { $ref: '#/components/schemas/ProviderLiveMetrics' }
+        snapshots: { $ref: '#/components/schemas/ProviderSnapshotStats' }
+        jobs: { $ref: '#/components/schemas/ProviderJobStats' }
+        orbItems:
+          type: array
+          items: { $ref: '#/components/schemas/ProviderOrbSummary' }
+    ProvidersSummary:
+      type: object
+      required: [providersTotal, providersOnline, providersOffline, providersDisabled, orbs, allocated, live, host, snapshots, jobs]
+      properties:
+        providersTotal: { type: integer }
+        providersOnline: { type: integer }
+        providersOffline: { type: integer }
+        providersDisabled: { type: integer }
+        orbs: { $ref: '#/components/schemas/ProviderOrbCounts' }
+        allocated: { $ref: '#/components/schemas/ProviderResourceAllocation' }
+        live: { $ref: '#/components/schemas/ProviderLiveMetrics' }
+        host: { $ref: '#/components/schemas/ProvidersHostTotals' }
+        snapshots: { $ref: '#/components/schemas/ProviderSnapshotStats' }
+        jobs: { $ref: '#/components/schemas/ProviderJobStats' }
+    ProvidersOverview:
+      type: object
+      required: [generatedAt, summary, providers]
+      properties:
+        generatedAt: { $ref: '#/components/schemas/TimestampMs' }
+        orbDefaults: { $ref: '#/components/schemas/OrbDefaults' }
+        summary: { $ref: '#/components/schemas/ProvidersSummary' }
+        providers:
+          type: array
+          items: { $ref: '#/components/schemas/ProviderOverviewItem' }
 
     # ============================================================ runner（M11b）
     RunnerDir:
@@ -14946,6 +15143,10 @@ components:
           description: |
             驱动当前基础镜像的身份（M11a；docker = 镜像 id，process = `process`，dispatch = `ref:<镜像引用>`）。
             空或缺省 = 未知，控制面对该 provider 不启用项目快照。
+        hostMetrics:
+          allOf:
+            - $ref: '#/components/schemas/ProviderHostMetrics'
+          description: 宿主机实时资源快照（可选，老版本 provider 可省略）
     ProviderHelloResponse:
       type: object
       required: [providerId, leaseSeconds]

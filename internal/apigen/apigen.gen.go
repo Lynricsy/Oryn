@@ -10522,6 +10522,9 @@ type ProviderHelloRequest struct {
 	// Driver `runner`（M11b）= runner 的 provider 行（由 `createRunner` 建立，不经 provider 进程，不出现在 `listProviders` 中）
 	Driver ProviderDriver `json:"driver"`
 
+	// HostMetrics 宿主机实时资源快照（可选，老版本 provider 可省略）
+	HostMetrics *ProviderHostMetrics `json:"hostMetrics,omitempty"`
+
 	// InstanceID 本进程实例的随机 id
 	InstanceID string    `json:"instanceId"`
 	Types      []OrbType `json:"types"`
@@ -10535,6 +10538,40 @@ type ProviderHelloResponse struct {
 
 	// ProviderID `prov_<ulid>`
 	ProviderID ProviderID `json:"providerId"`
+}
+
+// ProviderHostLimits provider 配置的显式容量上限（如 Firecracker 的 limits）
+type ProviderHostLimits struct {
+	MaxMemoryMB *int `json:"maxMemoryMB,omitempty"`
+	MaxVMs      *int `json:"maxVMs,omitempty"`
+}
+
+// ProviderHostMetrics provider 进程随心跳上报的宿主机实时资源快照
+type ProviderHostMetrics struct {
+	Arch     *string `json:"arch,omitempty"`
+	CPUCores int     `json:"cpuCores"`
+
+	// CPUPct 宿主机整机 CPU 使用率（0–100）
+	CPUPct             *float32 `json:"cpuPct,omitempty"`
+	DiskAvailableBytes *int64   `json:"diskAvailableBytes,omitempty"`
+	DiskPath           *string  `json:"diskPath,omitempty"`
+	DiskTotalBytes     int64    `json:"diskTotalBytes"`
+	DiskUsedBytes      int64    `json:"diskUsedBytes"`
+	Hostname           *string  `json:"hostname,omitempty"`
+
+	// Limits provider 配置的显式容量上限（如 Firecracker 的 limits）
+	Limits         *ProviderHostLimits `json:"limits,omitempty"`
+	LoadAvg1       *float32            `json:"loadAvg1,omitempty"`
+	LoadAvg15      *float32            `json:"loadAvg15,omitempty"`
+	LoadAvg5       *float32            `json:"loadAvg5,omitempty"`
+	MemAvailableMB *int64              `json:"memAvailableMB,omitempty"`
+	MemTotalMB     int64               `json:"memTotalMB"`
+	MemUsedMB      int64               `json:"memUsedMB"`
+	Os             *string             `json:"os,omitempty"`
+
+	// SampledAt UTC 毫秒时间戳
+	SampledAt     TimestampMs `json:"sampledAt"`
+	UptimeSeconds *int64      `json:"uptimeSeconds,omitempty"`
 }
 
 // ProviderID `prov_<ulid>`
@@ -10562,11 +10599,190 @@ type ProviderJob struct {
 	Params map[string]interface{} `json:"params"`
 }
 
+// ProviderJobStats provider 任务队列实时状态与近 24 小时执行结果
+type ProviderJobStats struct {
+	Claimed      int `json:"claimed"`
+	Failed24H    int `json:"failed24h"`
+	Queued       int `json:"queued"`
+	Succeeded24H int `json:"succeeded24h"`
+}
+
 // ProviderList defines model for ProviderList.
 type ProviderList struct {
 	// OrbDefaults 控制面配置的 `orb_defaults`（新建 orb 省略 provider / 类型时，排在项目默认之后、provider 的 `defaultType` 之前）； 未配置的字段省略。客户端据此预先显示新 orb 会落到哪个 provider / 类型。
 	OrbDefaults *OrbDefaults `json:"orbDefaults,omitempty"`
 	Providers   []Provider   `json:"providers"`
+}
+
+// ProviderLiveMetrics orb 最新采样汇总（CPU / 内存仅汇总近期活跃的运行中 orb，磁盘汇总未删除 orb 的最新采样）
+type ProviderLiveMetrics struct {
+	CPUPct      float32 `json:"cpuPct"`
+	DiskUsedMB  float32 `json:"diskUsedMB"`
+	MemLimitMB  float32 `json:"memLimitMB"`
+	MemUsedMB   float32 `json:"memUsedMB"`
+	NetRxBytes  int64   `json:"netRxBytes"`
+	NetTxBytes  int64   `json:"netTxBytes"`
+	SampledOrbs int     `json:"sampledOrbs"`
+}
+
+// ProviderOrbCounts 按状态与角色划分的 orb 计数
+type ProviderOrbCounts struct {
+	// Boxes 未删除的 Box 常驻 orb 数
+	Boxes int `json:"boxes"`
+
+	// Computers 未删除的助手电脑 orb 数
+	Computers int `json:"computers"`
+
+	// Deleted 历史已删除 orb 总数
+	Deleted  int `json:"deleted"`
+	Deleting int `json:"deleting"`
+	Failed   int `json:"failed"`
+
+	// Frozen frozen / freezing
+	Frozen int `json:"frozen"`
+
+	// Running state=ready
+	Running int `json:"running"`
+
+	// Starting requested / spawning / connecting / setting_up / resuming / waking
+	Starting int `json:"starting"`
+
+	// Stopped stopped / stopping
+	Stopped int `json:"stopped"`
+
+	// Total 未删除 orb 总数
+	Total int `json:"total"`
+
+	// WarmPool 未删除的预热池 orb 数
+	WarmPool int `json:"warmPool"`
+}
+
+// ProviderOrbSummary 总览页展示的单台 orb 摘要与最新采样
+type ProviderOrbSummary struct {
+	Automation *bool   `json:"automation,omitempty"`
+	Box        *bool   `json:"box,omitempty"`
+	Computer   *bool   `json:"computer,omitempty"`
+	Cpus       float32 `json:"cpus"`
+
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt     TimestampMs `json:"createdAt"`
+	FailureReason *string     `json:"failureReason,omitempty"`
+
+	// ID `orb-<26 位小写 ULID>`（同时是容器名与 hostname）
+	//
+	// Example: orb-01jcz8m3w4x5y6z7a8b9c0d1e2
+	ID OrbID `json:"id"`
+
+	// LastActivityAt UTC 毫秒时间戳
+	LastActivityAt *TimestampMs     `json:"lastActivityAt,omitempty"`
+	LatestSample   *OrbMetricSample `json:"latestSample,omitempty"`
+	MemoryMB       int              `json:"memoryMB"`
+	NestedDocker   *bool            `json:"nestedDocker,omitempty"`
+
+	// Pool 预热池状态（M11a）：`warming` 已创建、尚未就绪；`idle` 就绪或冻结、可认领；`claimed` 已被线程认领、正在刷新
+	Pool *OrbPoolState `json:"pool,omitempty"`
+
+	// ProjectID `prj_<ulid>`
+	ProjectID    *ProjectID       `json:"projectId,omitempty"`
+	ProjectName  *string          `json:"projectName,omitempty"`
+	SnapshotKind *OrbSnapshotKind `json:"snapshotKind,omitempty"`
+
+	// State orb 状态机（计划 E 节）
+	State OrbState `json:"state"`
+
+	// StateChangedAt UTC 毫秒时间戳
+	StateChangedAt TimestampMs `json:"stateChangedAt"`
+	ThreadIds      []ThreadID  `json:"threadIds"`
+	ThreadTitles   []string    `json:"threadTitles"`
+	Type           string      `json:"type"`
+}
+
+// ProviderOverviewItem defines model for ProviderOverviewItem.
+type ProviderOverviewItem struct {
+	// Allocated orb 规格配额汇总（运行中 vs 全部未删除）
+	Allocated     ProviderResourceAllocation `json:"allocated"`
+	AllowMultiple bool                       `json:"allowMultiple"`
+	BaseImageID   *string                    `json:"baseImageId,omitempty"`
+
+	// HostMetrics provider 进程随心跳上报的宿主机实时资源快照
+	HostMetrics *ProviderHostMetrics `json:"hostMetrics,omitempty"`
+
+	// Jobs provider 任务队列实时状态与近 24 小时执行结果
+	Jobs ProviderJobStats `json:"jobs"`
+
+	// Live orb 最新采样汇总（CPU / 内存仅汇总近期活跃的运行中 orb，磁盘汇总未删除 orb 的最新采样）
+	Live     ProviderLiveMetrics  `json:"live"`
+	OrbItems []ProviderOrbSummary `json:"orbItems"`
+
+	// Orbs 按状态与角色划分的 orb 计数
+	Orbs     ProviderOrbCounts `json:"orbs"`
+	Provider Provider          `json:"provider"`
+
+	// Snapshots 项目快照数量与存储占用
+	Snapshots ProviderSnapshotStats `json:"snapshots"`
+	Version   *string               `json:"version,omitempty"`
+}
+
+// ProviderResourceAllocation orb 规格配额汇总（运行中 vs 全部未删除）
+type ProviderResourceAllocation struct {
+	RunningCpus     float32 `json:"runningCpus"`
+	RunningMemoryMB int64   `json:"runningMemoryMB"`
+	TotalCpus       float32 `json:"totalCpus"`
+	TotalMemoryMB   int64   `json:"totalMemoryMB"`
+}
+
+// ProviderSnapshotStats 项目快照数量与存储占用
+type ProviderSnapshotStats struct {
+	BuildingCount int   `json:"buildingCount"`
+	ReadyCount    int   `json:"readyCount"`
+	RetiredCount  int   `json:"retiredCount"`
+	TotalBytes    int64 `json:"totalBytes"`
+}
+
+// ProvidersHostTotals 已上报宿主机指标的在线 provider 宿主机容量汇总
+type ProvidersHostTotals struct {
+	CPUCores       int   `json:"cpuCores"`
+	DiskTotalBytes int64 `json:"diskTotalBytes"`
+	DiskUsedBytes  int64 `json:"diskUsedBytes"`
+	MemTotalMB     int64 `json:"memTotalMB"`
+	MemUsedMB      int64 `json:"memUsedMB"`
+	ReportedCount  int   `json:"reportedCount"`
+}
+
+// ProvidersOverview defines model for ProvidersOverview.
+type ProvidersOverview struct {
+	// GeneratedAt UTC 毫秒时间戳
+	GeneratedAt TimestampMs `json:"generatedAt"`
+
+	// OrbDefaults 控制面配置的 `orb_defaults`（新建 orb 省略 provider / 类型时，排在项目默认之后、provider 的 `defaultType` 之前）； 未配置的字段省略。客户端据此预先显示新 orb 会落到哪个 provider / 类型。
+	OrbDefaults *OrbDefaults           `json:"orbDefaults,omitempty"`
+	Providers   []ProviderOverviewItem `json:"providers"`
+	Summary     ProvidersSummary       `json:"summary"`
+}
+
+// ProvidersSummary defines model for ProvidersSummary.
+type ProvidersSummary struct {
+	// Allocated orb 规格配额汇总（运行中 vs 全部未删除）
+	Allocated ProviderResourceAllocation `json:"allocated"`
+
+	// Host 已上报宿主机指标的在线 provider 宿主机容量汇总
+	Host ProvidersHostTotals `json:"host"`
+
+	// Jobs provider 任务队列实时状态与近 24 小时执行结果
+	Jobs ProviderJobStats `json:"jobs"`
+
+	// Live orb 最新采样汇总（CPU / 内存仅汇总近期活跃的运行中 orb，磁盘汇总未删除 orb 的最新采样）
+	Live ProviderLiveMetrics `json:"live"`
+
+	// Orbs 按状态与角色划分的 orb 计数
+	Orbs              ProviderOrbCounts `json:"orbs"`
+	ProvidersDisabled int               `json:"providersDisabled"`
+	ProvidersOffline  int               `json:"providersOffline"`
+	ProvidersOnline   int               `json:"providersOnline"`
+	ProvidersTotal    int               `json:"providersTotal"`
+
+	// Snapshots 项目快照数量与存储占用
+	Snapshots ProviderSnapshotStats `json:"snapshots"`
 }
 
 // PublicAgentIdentity defines model for PublicAgentIdentity.
@@ -17753,6 +17969,9 @@ type ServerInterface interface {
 	// CreateProvider 新建 provider（令牌只显示一次）
 	// (POST /api/v1/providers)
 	CreateProvider(w http.ResponseWriter, r *http.Request)
+	// GetProvidersOverview provider 算力与资源总览（节点状态、宿主机资源、orb 数量与实时采样、存储与快照、任务队列）
+	// (GET /api/v1/providers/overview)
+	GetProvidersOverview(w http.ResponseWriter, r *http.Request)
 	// DeleteProvider 删除（停用）provider，其令牌立即失效
 	// (DELETE /api/v1/providers/{id})
 	DeleteProvider(w http.ResponseWriter, r *http.Request, id ProviderIDPath)
@@ -19661,6 +19880,12 @@ func (_ Unimplemented) ListProviders(w http.ResponseWriter, r *http.Request) {
 // CreateProvider 新建 provider（令牌只显示一次）
 // (POST /api/v1/providers)
 func (_ Unimplemented) CreateProvider(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetProvidersOverview provider 算力与资源总览（节点状态、宿主机资源、orb 数量与实时采样、存储与快照、任务队列）
+// (GET /api/v1/providers/overview)
+func (_ Unimplemented) GetProvidersOverview(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -28234,6 +28459,20 @@ func (siw *ServerInterfaceWrapper) CreateProvider(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// GetProvidersOverview operation middleware
+func (siw *ServerInterfaceWrapper) GetProvidersOverview(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetProvidersOverview(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeleteProvider operation middleware
 func (siw *ServerInterfaceWrapper) DeleteProvider(w http.ResponseWriter, r *http.Request) {
 
@@ -31985,6 +32224,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/providers", wrapper.CreateProvider)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/providers/overview", wrapper.GetProvidersOverview)
 	})
 	r.Group(func(r chi.Router) {
 		r.Delete(options.BaseURL+"/api/v1/providers/{id}", wrapper.DeleteProvider)

@@ -102,12 +102,24 @@ func (d *FirecrackerDriver) Info() Info {
 		t := d.Cfg.Types[name]
 		types = append(types, apigen.OrbType{Name: name, Cpus: float32(t.CPUs), MemoryMB: t.MemoryMB()})
 	}
+	var limits *apigen.ProviderHostLimits
+	if d.Cfg.Limits.MaxVMs > 0 || d.Cfg.Limits.MaxMemoryMB > 0 {
+		limits = &apigen.ProviderHostLimits{}
+		if d.Cfg.Limits.MaxVMs > 0 {
+			limits.MaxVMs = new(d.Cfg.Limits.MaxVMs)
+		}
+		if d.Cfg.Limits.MaxMemoryMB > 0 {
+			limits.MaxMemoryMB = new(d.Cfg.Limits.MaxMemoryMB)
+		}
+	}
 	return Info{
 		Driver:       apigen.Firecracker,
 		Capabilities: apigen.ProviderCapabilities{Freeze: true, Snapshot: true, OfflineFs: new(true)},
 		Types:        types,
 		DefaultType:  d.Cfg.DefaultType,
 		BaseImageID:  d.baseImageID(),
+		DiskPath:     d.Cfg.StateDir,
+		Limits:       limits,
 	}
 }
 

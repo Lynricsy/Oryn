@@ -740,6 +740,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/providers/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** provider 算力与资源总览（节点状态、宿主机资源、orb 数量与实时采样、存储与快照、任务队列） */
+        get: operations["getProvidersOverview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/providers/{id}": {
         parameters: {
             query?: never;
@@ -8673,6 +8690,166 @@ export interface components {
             /** @description `opv_…`，只显示这一次 */
             token: string;
         };
+        /** @description provider 配置的显式容量上限（如 Firecracker 的 limits） */
+        ProviderHostLimits: {
+            maxVMs?: number;
+            maxMemoryMB?: number;
+        };
+        /** @description provider 进程随心跳上报的宿主机实时资源快照 */
+        ProviderHostMetrics: {
+            sampledAt: components["schemas"]["TimestampMs"];
+            hostname?: string;
+            os?: string;
+            arch?: string;
+            /** Format: int64 */
+            uptimeSeconds?: number;
+            cpuCores: number;
+            /** @description 宿主机整机 CPU 使用率（0–100） */
+            cpuPct?: number;
+            loadAvg1?: number;
+            loadAvg5?: number;
+            loadAvg15?: number;
+            /** Format: int64 */
+            memTotalMB: number;
+            /** Format: int64 */
+            memUsedMB: number;
+            /** Format: int64 */
+            memAvailableMB?: number;
+            /** Format: int64 */
+            diskTotalBytes: number;
+            /** Format: int64 */
+            diskUsedBytes: number;
+            /** Format: int64 */
+            diskAvailableBytes?: number;
+            diskPath?: string;
+            limits?: components["schemas"]["ProviderHostLimits"];
+        };
+        /** @description 按状态与角色划分的 orb 计数 */
+        ProviderOrbCounts: {
+            /** @description 未删除 orb 总数 */
+            total: number;
+            /** @description state=ready */
+            running: number;
+            /** @description requested / spawning / connecting / setting_up / resuming / waking */
+            starting: number;
+            /** @description frozen / freezing */
+            frozen: number;
+            /** @description stopped / stopping */
+            stopped: number;
+            failed: number;
+            deleting: number;
+            /** @description 历史已删除 orb 总数 */
+            deleted: number;
+            /** @description 未删除的预热池 orb 数 */
+            warmPool: number;
+            /** @description 未删除的 Box 常驻 orb 数 */
+            boxes: number;
+            /** @description 未删除的助手电脑 orb 数 */
+            computers: number;
+        };
+        /** @description orb 规格配额汇总（运行中 vs 全部未删除） */
+        ProviderResourceAllocation: {
+            runningCpus: number;
+            /** Format: int64 */
+            runningMemoryMB: number;
+            totalCpus: number;
+            /** Format: int64 */
+            totalMemoryMB: number;
+        };
+        /** @description orb 最新采样汇总（CPU / 内存仅汇总近期活跃的运行中 orb，磁盘汇总未删除 orb 的最新采样） */
+        ProviderLiveMetrics: {
+            sampledOrbs: number;
+            cpuPct: number;
+            memUsedMB: number;
+            memLimitMB: number;
+            diskUsedMB: number;
+            /** Format: int64 */
+            netRxBytes: number;
+            /** Format: int64 */
+            netTxBytes: number;
+        };
+        /** @description 已上报宿主机指标的在线 provider 宿主机容量汇总 */
+        ProvidersHostTotals: {
+            reportedCount: number;
+            cpuCores: number;
+            /** Format: int64 */
+            memTotalMB: number;
+            /** Format: int64 */
+            memUsedMB: number;
+            /** Format: int64 */
+            diskTotalBytes: number;
+            /** Format: int64 */
+            diskUsedBytes: number;
+        };
+        /** @description 项目快照数量与存储占用 */
+        ProviderSnapshotStats: {
+            readyCount: number;
+            buildingCount: number;
+            retiredCount: number;
+            /** Format: int64 */
+            totalBytes: number;
+        };
+        /** @description provider 任务队列实时状态与近 24 小时执行结果 */
+        ProviderJobStats: {
+            queued: number;
+            claimed: number;
+            succeeded24h: number;
+            failed24h: number;
+        };
+        /** @description 总览页展示的单台 orb 摘要与最新采样 */
+        ProviderOrbSummary: {
+            id: components["schemas"]["OrbId"];
+            type: string;
+            state: components["schemas"]["OrbState"];
+            cpus: number;
+            memoryMB: number;
+            projectId?: components["schemas"]["ProjectId"];
+            projectName?: string;
+            threadIds: components["schemas"]["ThreadId"][];
+            threadTitles: string[];
+            pool?: components["schemas"]["OrbPoolState"];
+            box?: boolean;
+            computer?: boolean;
+            automation?: boolean;
+            nestedDocker?: boolean;
+            snapshotKind?: components["schemas"]["OrbSnapshotKind"];
+            failureReason?: string;
+            stateChangedAt: components["schemas"]["TimestampMs"];
+            createdAt: components["schemas"]["TimestampMs"];
+            lastActivityAt?: components["schemas"]["TimestampMs"];
+            latestSample?: components["schemas"]["OrbMetricSample"];
+        };
+        ProviderOverviewItem: {
+            provider: components["schemas"]["Provider"];
+            version?: string;
+            baseImageId?: string;
+            allowMultiple: boolean;
+            hostMetrics?: components["schemas"]["ProviderHostMetrics"];
+            orbs: components["schemas"]["ProviderOrbCounts"];
+            allocated: components["schemas"]["ProviderResourceAllocation"];
+            live: components["schemas"]["ProviderLiveMetrics"];
+            snapshots: components["schemas"]["ProviderSnapshotStats"];
+            jobs: components["schemas"]["ProviderJobStats"];
+            orbItems: components["schemas"]["ProviderOrbSummary"][];
+        };
+        ProvidersSummary: {
+            providersTotal: number;
+            providersOnline: number;
+            providersOffline: number;
+            providersDisabled: number;
+            orbs: components["schemas"]["ProviderOrbCounts"];
+            allocated: components["schemas"]["ProviderResourceAllocation"];
+            live: components["schemas"]["ProviderLiveMetrics"];
+            host: components["schemas"]["ProvidersHostTotals"];
+            snapshots: components["schemas"]["ProviderSnapshotStats"];
+            jobs: components["schemas"]["ProviderJobStats"];
+        };
+        ProvidersOverview: {
+            generatedAt: components["schemas"]["TimestampMs"];
+            orbDefaults?: components["schemas"]["OrbDefaults"];
+            summary: components["schemas"]["ProvidersSummary"];
+            providers: components["schemas"]["ProviderOverviewItem"][];
+        };
         /** @description runner 声明（`orbd run --runner --dir`）的一个可用目录 */
         RunnerDir: {
             /** @description 解析符号链接后的绝对路径 */
@@ -11338,6 +11515,8 @@ export interface components {
              *     空或缺省 = 未知，控制面对该 provider 不启用项目快照。
              */
             baseImageId?: string;
+            /** @description 宿主机实时资源快照（可选，老版本 provider 可省略） */
+            hostMetrics?: components["schemas"]["ProviderHostMetrics"];
         };
         ProviderHelloResponse: {
             providerId: components["schemas"]["ProviderId"];
@@ -13624,6 +13803,27 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProviderCreateResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getProvidersOverview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description provider 总览 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProvidersOverview"];
                 };
             };
             default: components["responses"]["Error"];

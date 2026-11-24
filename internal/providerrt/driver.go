@@ -25,6 +25,10 @@ type Info struct {
 	// BaseImageID 是驱动当前基础镜像的身份（M11a）：docker = 镜像 id，process = "process"，
 	// dispatch = "ref:<镜像引用>"；空 = 未知（控制面对该 provider 不启用项目快照）。
 	BaseImageID string
+	// DiskPath 是宿主机存储采样目录（空 = 根目录 "/"）。
+	DiskPath string
+	// Limits 是驱动配置的显式容量上限（如 Firecracker 的 limits；nil = 无显式上限）。
+	Limits *apigen.ProviderHostLimits
 }
 
 // Job 是解析后的任务。

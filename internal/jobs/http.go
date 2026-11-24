@@ -59,6 +59,12 @@ func (q *Queue) Hello(w http.ResponseWriter, r *http.Request) {
 		types = []apigen.OrbType{}
 	}
 	typesJSON, _ := json.Marshal(types)
+	var hostMetricsJSON string
+	if req.HostMetrics != nil {
+		if b, err := json.Marshal(req.HostMetrics); err == nil {
+			hostMetricsJSON = string(b)
+		}
+	}
 	now := q.nowMs()
 	lease := now + ProviderLease.Milliseconds()
 	inst := req.InstanceID
@@ -68,6 +74,7 @@ func (q *Queue) Hello(w http.ResponseWriter, r *http.Request) {
 		DefaultType: req.DefaultType, AllowMultiple: req.AllowMultiple, InstanceID: &inst, LeaseUntil: &lease, ID: p.ID, Now: &now,
 		// 每次 hello 都覆盖：provider 重建基础镜像后新身份立即进入项目快照的配置哈希（M11a；缺省 = 未知）。
 		BaseImageID: deref(req.BaseImageID),
+		HostMetrics: hostMetricsJSON,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())

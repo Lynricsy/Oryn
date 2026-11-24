@@ -73,6 +73,7 @@ func (p *Process) Info() Info {
 		Types:        typeInfos(p.Types),
 		DefaultType:  p.Default,
 		BaseImageID:  "process",
+		DiskPath:     p.Root,
 	}
 }
 
