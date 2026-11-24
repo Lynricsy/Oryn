@@ -56,9 +56,10 @@
 - 无人值守路径（定时、触发规则、Space 工作线程、主线）碰到 Key 过期或余额耗尽，现在只能等主人看到原文再手动重发。
 
 **落地建议** [推断]
-- 在 `ThreadErrorCause` 旁边加回合级的 `TurnFailureCause`（`rate_limit | auth | credit | context_overflow | provider_down | invalid | unknown`），由 orynd 从 omp 的 `stopReason=error` 消息和出站代理看到的上游状态码共同判定。出站代理握有真实 HTTP 状态，比 Vetta 只靠错误字符串的正则更准。
+- 在 `ThreadErrorCause` 旁边加回合级的 `TurnFailureCause`（`rate_limit | auth | credit | context_overflow | provider_down | invalid | unknown`）。**以 `internal/threads/turns.go` 已有的回合终态作为判定依据**：`stopReason == "error"` 时会产出 `TurnEvent{Status: TurnError, Error}`，对 `Error` 原文分类，挂在这一回合上。[Oryn]
+- 出站代理看到的上游 HTTP 状态**只作补充信号**，不能作为依据，原因有两个：一是 `env` 模式的密钥，以及没有绑定上游 `hosts` 的模型 Key，会降级成环境变量直连，代理根本看不到这些请求（`docs/features.md` 「出站代理凭据隔离」）[Oryn]；二是代理响应只对应单次请求，Core 自己重试成功后，那次 429 / 401 就不代表回合失败。可行的做法是：回合以 `TurnError` 结束时，用同一线程在回合时间窗内最后一个上游状态码来细化分类（例如区分 `auth` 和 `credit`）。
 - 收件箱行按类别写人话（「Anthropic 密钥失效，修好后会自动重试 3 个线程」）。
-- 密钥库写入 `secrets set` 时，按上游主机找出 `auth/credit` 类待恢复线程，重发最后一次投递；预算与次数沿用 §③.3。
+- 模型密钥或 `secrets` 有写入时，按回合失败记录里的 provider / 模型（不按上游主机，直连的密钥没有主机绑定）找出 `auth/credit` 类待恢复线程，重发最后一次带标签的投递；预算与次数沿用 §③.3。
 
 ### 3. Space 的恢复预算、回声切断与环形等待 ⭐⭐
 
