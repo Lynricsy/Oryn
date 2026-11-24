@@ -108,7 +108,7 @@
 | [Aider unified diffs](https://aider.chat/docs/unified-diffs.html)（2023） | 89 个 Python 重构任务，GPT-4 Turbo | 去掉行号、做灵活匹配的 udiff 从 20% 升到 61%（针对模型偷懒、省略代码）。模型代际太旧，参考价值有限 |
 
 **能借用的结论** [推断]
-- 默认值是有依据的：hashline 只在部分模型上占优，omp 对 Kimi、DeepSeek 等模型降级到 replace，和上面的数据方向一致。
+- 这些评测只说明「编辑格式应该按模型选」，**不能验证 omp 现在的默认值和降级名单**。它们测的是旧版逐行哈希的 hashline 或第三方实现，没有测现在的文件级 `[path#TAG]` hashline，也没有测 sloppy。Kimi、DeepSeek 等模型降级到 replace 这张名单，目前没有外部数据能支持或否定。
 - 「是否加哈希或标签」本身没有被单独测过。Geometric 和 nwyin 都没有比较「同一个操作语法，只差一个标签」。
 - 只看「补丁是否被接受」会高估效果：Geometric 中 hashline diff 的格式失败从 31 降到 9，但应用成功、结果却错误的从 9 升到 26。Oryn 采集数据时应该把「补丁应用成功」和「回合最终交付」分开统计。
 - 这些评测都没有覆盖 sloppy（omp 自研的文本锚点 + `…` 捕获）。
