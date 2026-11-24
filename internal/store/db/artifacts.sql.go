@@ -448,6 +448,38 @@ func (q *Queries) ListArtifactsDeletedBefore(ctx context.Context, ts *int64) ([]
 	return items, nil
 }
 
+const listDirtyArtifactDesigns = `-- name: ListDirtyArtifactDesigns :many
+SELECT artifact_id, dirty_at FROM artifact_designs WHERE dirty_at IS NOT NULL ORDER BY dirty_at
+`
+
+type ListDirtyArtifactDesignsRow struct {
+	ArtifactID string `json:"artifactId"`
+	DirtyAt    *int64 `json:"dirtyAt"`
+}
+
+func (q *Queries) ListDirtyArtifactDesigns(ctx context.Context) ([]ListDirtyArtifactDesignsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listDirtyArtifactDesigns)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDirtyArtifactDesignsRow{}
+	for rows.Next() {
+		var i ListDirtyArtifactDesignsRow
+		if err := rows.Scan(&i.ArtifactID, &i.DirtyAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const purgeArtifact = `-- name: PurgeArtifact :execrows
 DELETE FROM artifacts WHERE id = ?1 AND deleted_at IS NOT NULL AND deleted_at < ?2
 `
@@ -515,6 +547,72 @@ func (q *Queries) SetArtifactDesignAutoNotes(ctx context.Context, arg SetArtifac
 	return err
 }
 
+const setArtifactDesignDealt = `-- name: SetArtifactDesignDealt :exec
+INSERT INTO artifact_designs (artifact_id, surface, dealt) VALUES (?1, ?2, ?3)
+ON CONFLICT (artifact_id) DO UPDATE SET surface = excluded.surface, dealt = excluded.dealt
+`
+
+type SetArtifactDesignDealtParams struct {
+	ArtifactID string  `json:"artifactId"`
+	Surface    *string `json:"surface"`
+	Dealt      string  `json:"dealt"`
+}
+
+// M29: last dealt directions (JSON array of ids, newest last); surface follows the latest deal.
+func (q *Queries) SetArtifactDesignDealt(ctx context.Context, arg SetArtifactDesignDealtParams) error {
+	_, err := q.db.ExecContext(ctx, setArtifactDesignDealt, arg.ArtifactID, arg.Surface, arg.Dealt)
+	return err
+}
+
+const setArtifactDesignDelivered = `-- name: SetArtifactDesignDelivered :exec
+INSERT INTO artifact_designs (artifact_id, delivered) VALUES (?1, ?2)
+ON CONFLICT (artifact_id) DO UPDATE SET delivered = excluded.delivered
+`
+
+type SetArtifactDesignDeliveredParams struct {
+	ArtifactID string `json:"artifactId"`
+	Delivered  string `json:"delivered"`
+}
+
+// M29: sticky ids already auto-delivered (JSON array).
+func (q *Queries) SetArtifactDesignDelivered(ctx context.Context, arg SetArtifactDesignDeliveredParams) error {
+	_, err := q.db.ExecContext(ctx, setArtifactDesignDelivered, arg.ArtifactID, arg.Delivered)
+	return err
+}
+
+const setArtifactDesignDirection = `-- name: SetArtifactDesignDirection :exec
+INSERT INTO artifact_designs (artifact_id, surface, direction) VALUES (?1, ?2, ?3)
+ON CONFLICT (artifact_id) DO UPDATE SET surface = excluded.surface, direction = excluded.direction
+`
+
+type SetArtifactDesignDirectionParams struct {
+	ArtifactID string  `json:"artifactId"`
+	Surface    *string `json:"surface"`
+	Direction  *string `json:"direction"`
+}
+
+// M29: picked direction (JSON object).
+func (q *Queries) SetArtifactDesignDirection(ctx context.Context, arg SetArtifactDesignDirectionParams) error {
+	_, err := q.db.ExecContext(ctx, setArtifactDesignDirection, arg.ArtifactID, arg.Surface, arg.Direction)
+	return err
+}
+
+const setArtifactDesignDirty = `-- name: SetArtifactDesignDirty :exec
+INSERT INTO artifact_designs (artifact_id, dirty_at) VALUES (?1, ?2)
+ON CONFLICT (artifact_id) DO UPDATE SET dirty_at = excluded.dirty_at
+`
+
+type SetArtifactDesignDirtyParams struct {
+	ArtifactID string `json:"artifactId"`
+	DirtyAt    *int64 `json:"dirtyAt"`
+}
+
+// M29: notes became pending at dirty_at (NULL = clean).
+func (q *Queries) SetArtifactDesignDirty(ctx context.Context, arg SetArtifactDesignDirtyParams) error {
+	_, err := q.db.ExecContext(ctx, setArtifactDesignDirty, arg.ArtifactID, arg.DirtyAt)
+	return err
+}
+
 const setArtifactOpened = `-- name: SetArtifactOpened :execrows
 UPDATE artifacts SET opened_at = ?1 WHERE id = ?2
 `
@@ -530,6 +628,22 @@ func (q *Queries) SetArtifactOpened(ctx context.Context, arg SetArtifactOpenedPa
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const setArtifactVersionCheck = `-- name: SetArtifactVersionCheck :exec
+UPDATE artifact_versions SET check_json = ?1 WHERE artifact_id = ?2 AND n = ?3
+`
+
+type SetArtifactVersionCheckParams struct {
+	CheckJson  *string `json:"checkJson"`
+	ArtifactID string  `json:"artifactId"`
+	N          int64   `json:"n"`
+}
+
+// M29: design check result of one version ({status, issues, fingerprint}); written by seal and check_artifact.
+func (q *Queries) SetArtifactVersionCheck(ctx context.Context, arg SetArtifactVersionCheckParams) error {
+	_, err := q.db.ExecContext(ctx, setArtifactVersionCheck, arg.CheckJson, arg.ArtifactID, arg.N)
+	return err
 }
 
 const updateArtifactHead = `-- name: UpdateArtifactHead :exec

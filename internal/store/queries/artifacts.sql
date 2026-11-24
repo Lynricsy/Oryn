@@ -75,3 +75,30 @@ SELECT * FROM artifact_designs WHERE artifact_id = @artifact_id;
 -- name: SetArtifactDesignAutoNotes :exec
 INSERT INTO artifact_designs (artifact_id, auto_notes) VALUES (@artifact_id, @auto_notes)
 ON CONFLICT (artifact_id) DO UPDATE SET auto_notes = excluded.auto_notes;
+
+-- M29: design check result of one version ({status, issues, fingerprint}); written by seal and check_artifact.
+-- name: SetArtifactVersionCheck :exec
+UPDATE artifact_versions SET check_json = @check_json WHERE artifact_id = @artifact_id AND n = @n;
+
+-- M29: last dealt directions (JSON array of ids, newest last); surface follows the latest deal.
+-- name: SetArtifactDesignDealt :exec
+INSERT INTO artifact_designs (artifact_id, surface, dealt) VALUES (@artifact_id, @surface, @dealt)
+ON CONFLICT (artifact_id) DO UPDATE SET surface = excluded.surface, dealt = excluded.dealt;
+
+-- M29: picked direction (JSON object).
+-- name: SetArtifactDesignDirection :exec
+INSERT INTO artifact_designs (artifact_id, surface, direction) VALUES (@artifact_id, @surface, @direction)
+ON CONFLICT (artifact_id) DO UPDATE SET surface = excluded.surface, direction = excluded.direction;
+
+-- M29: sticky ids already auto-delivered (JSON array).
+-- name: SetArtifactDesignDelivered :exec
+INSERT INTO artifact_designs (artifact_id, delivered) VALUES (@artifact_id, @delivered)
+ON CONFLICT (artifact_id) DO UPDATE SET delivered = excluded.delivered;
+
+-- M29: notes became pending at dirty_at (NULL = clean).
+-- name: SetArtifactDesignDirty :exec
+INSERT INTO artifact_designs (artifact_id, dirty_at) VALUES (@artifact_id, @dirty_at)
+ON CONFLICT (artifact_id) DO UPDATE SET dirty_at = excluded.dirty_at;
+
+-- name: ListDirtyArtifactDesigns :many
+SELECT artifact_id, dirty_at FROM artifact_designs WHERE dirty_at IS NOT NULL ORDER BY dirty_at;
