@@ -3,11 +3,9 @@ package pushgw
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/apns"
@@ -166,7 +164,7 @@ func (u *upstream) sendFCM(ctx context.Context, m fcm.Message) sendResult {
 	ctx, cancel := context.WithTimeout(ctx, sendTimeout)
 	defer cancel()
 	r := u.fcm.Send(ctx, u.account, m)
-	if r.Err != nil && strings.HasPrefix(r.Err.Error(), fcmRejectedAccess) {
+	if r.AccessRejected {
 		// access token 被拒：Send 已作废缓存，重新换取后重试一次
 		r = u.fcm.Send(ctx, u.account, m)
 	}
@@ -174,43 +172,11 @@ func (u *upstream) sendFCM(ctx context.Context, m fcm.Message) sendResult {
 	case r.Err == nil:
 		return sendResult{outcome: sentOK}
 	case r.Unregistered:
-		return sendResult{outcome: sentUnregistered, code: "UNREGISTERED"}
+		return sendResult{outcome: sentUnregistered, code: r.Code}
+	case r.Code == "SENDER_ID_MISMATCH":
+		return sendResult{outcome: sentMismatch, code: r.Code}
 	}
-	code := fcmCode(r.Err)
-	if code == "SENDER_ID_MISMATCH" {
-		return sendResult{outcome: sentMismatch, code: code}
-	}
-	return sendResult{outcome: sentFailed, code: code, retryAfter: r.RetryAfter}
-}
-
-// fcm.Result 只单列 UNREGISTERED，其它错误码从错误文本里取（internal/fcm 的固定格式）。
-const (
-	fcmRejectedAccess = "fcm rejected access token"
-	fcmOAuth          = "fcm oauth token"
-)
-
-// fcmCode 是 FCM 错误里可以写进日志的部分：FCM 错误码（"fcm <errorCode> (HTTP <status>)"），
-// 或令牌端点 / HTTP 状态 / 网络错误的概述。错误体原文不进日志。
-func fcmCode(err error) string {
-	s := err.Error()
-	switch {
-	case strings.HasPrefix(s, fcmOAuth):
-		return "oauth_token"
-	case strings.HasPrefix(s, fcmRejectedAccess):
-		return "UNAUTHENTICATED"
-	case strings.HasPrefix(s, "fcm "):
-		if code, _, ok := strings.Cut(strings.TrimPrefix(s, "fcm "), " (HTTP "); ok {
-			return code
-		}
-	case strings.HasPrefix(s, "HTTP "):
-		code, _, _ := strings.Cut(s, ":")
-		return code
-	}
-	var te interface{ Timeout() bool }
-	if errors.As(err, &te) && te.Timeout() {
-		return "timeout"
-	}
-	return "network"
+	return sendResult{outcome: sentFailed, code: r.Code, retryAfter: r.RetryAfter}
 }
 
 func (u *upstream) sendAPNs(ctx context.Context, n apns.Notification) sendResult {

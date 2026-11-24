@@ -114,6 +114,10 @@ type Result struct {
 	RetryAfter time.Duration
 	// Unregistered 表示令牌已失效（FCM errorCode UNREGISTERED）：调用方应删除它。
 	Unregistered bool
+	// AccessRejected 表示 access token 被拒（HTTP 401）：缓存已作废，重试会重新换取。
+	AccessRejected bool
+	// Code 是可写进日志的失败概述：FCM errorCode、"oauth_token"、"HTTP <状态>"、"timeout" 或 "network"。
+	Code string
 	// Err 为空表示成功；错误文本不含令牌与 access token。
 	Err error
 }
@@ -188,14 +192,15 @@ func (c *Client) Send(ctx context.Context, acct *Account, m Message) Result {
 	code := errorCode(rb)
 	switch {
 	case code == "UNREGISTERED":
-		return Result{Unregistered: true, Err: fmt.Errorf("fcm token unregistered (HTTP %d)", resp.StatusCode)}
+		return Result{Unregistered: true, Code: code, Err: fmt.Errorf("fcm token unregistered (HTTP %d)", resp.StatusCode)}
 	case resp.StatusCode == http.StatusUnauthorized:
 		// access token 被拒（吊销 / 提前过期）：作废缓存，下次重试重新换取
 		c.dropToken(access)
-		return Result{Retry: true, Err: fmt.Errorf("fcm rejected access token (HTTP %d)", resp.StatusCode)}
+		return Result{Retry: true, AccessRejected: true, Code: "UNAUTHENTICATED", Err: fmt.Errorf("fcm rejected access token (HTTP %d)", resp.StatusCode)}
 	}
 	r2 := httpResult(resp, rb)
 	if code != "" {
+		r2.Code = code
 		r2.Err = fmt.Errorf("fcm %s (HTTP %d)", code, resp.StatusCode)
 	}
 	return r2
@@ -252,7 +257,7 @@ func (c *Client) accessToken(ctx context.Context, acct *Account) (string, *Resul
 	rb, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponse))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		r := httpResult(resp, rb)
-		r.Err = fmt.Errorf("fcm oauth token: %w", r.Err)
+		r.Code, r.Err = "oauth_token", fmt.Errorf("fcm oauth token: %w", r.Err)
 		return "", &r
 	}
 	var tr struct {
@@ -260,7 +265,7 @@ func (c *Client) accessToken(ctx context.Context, acct *Account) (string, *Resul
 		ExpiresIn   int64  `json:"expires_in"`
 	}
 	if err := json.Unmarshal(rb, &tr); err != nil || tr.AccessToken == "" {
-		return "", &Result{Err: errors.New("fcm oauth token: response has no access_token")}
+		return "", &Result{Code: "oauth_token", Err: errors.New("fcm oauth token: response has no access_token")}
 	}
 	ttl := tokenTTL
 	if tr.ExpiresIn > 0 {
@@ -314,7 +319,7 @@ func httpResult(resp *http.Response, body []byte) Result {
 	if len(msg) > 200 {
 		msg = msg[:200]
 	}
-	r := Result{Err: fmt.Errorf("HTTP %d: %s", resp.StatusCode, msg)}
+	r := Result{Code: fmt.Sprintf("HTTP %d", resp.StatusCode), Err: fmt.Errorf("HTTP %d: %s", resp.StatusCode, msg)}
 	switch {
 	case resp.StatusCode == http.StatusRequestTimeout, resp.StatusCode == http.StatusTooManyRequests, resp.StatusCode >= 500:
 		r.Retry = true
@@ -327,8 +332,13 @@ func httpResult(resp *http.Response, body []byte) Result {
 
 // netResult 是请求未得到响应（网络错误 / 超时）的结果：除调用方取消外可重试。
 func netResult(err error) Result {
-	if errors.Is(err, context.Canceled) {
-		return Result{Err: err}
+	code := "network"
+	var te interface{ Timeout() bool }
+	if errors.As(err, &te) && te.Timeout() {
+		code = "timeout"
 	}
-	return Result{Err: err, Retry: true}
+	if errors.Is(err, context.Canceled) {
+		return Result{Code: code, Err: err}
+	}
+	return Result{Code: code, Err: err, Retry: true}
 }
