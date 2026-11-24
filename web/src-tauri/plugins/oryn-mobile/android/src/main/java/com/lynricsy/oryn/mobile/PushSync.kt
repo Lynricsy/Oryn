@@ -14,34 +14,27 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
- * 推送订阅的后台登记（代码审查第 6 条）：FCM 刷新令牌、UnifiedPush 换端点时进程里可能只有推送服务、没有 Activity，
+ * 推送订阅的后台登记（代码审查第 6 条）：UnifiedPush 换端点时进程里可能只有推送服务、没有 Activity，
  * 也就没有 Rust 那条登记路径。这时排一个 WorkManager 任务（要求联网、指数退避、进程被杀后系统照样拉起），
  * 用上次登记到的服务器与保险库里的设备令牌直接调 `POST /api/v1/push/subscriptions`。
  * 有 Activity 时仍交给 Rust（[OrynMobilePlugin.pushChanged]）。
+ * 网关通道（FCM）不在后台登记：授权要设备密钥签名与 challenge，令牌变化等下次进入 App 由 Rust 处理。
  */
 object PushSync {
   private const val WORK = "oryn-push-sync"
 
-  /** 要登记的订阅：`key` 是登记成功后记作已同步的端点 / 令牌，`body` 是请求体（与 Rust `PushSubscription` 同形）。 */
+  /** 要登记的订阅：`key` 是登记成功后记作已同步的端点，`body` 是请求体（与 Rust `PushSubscription::WebPush` 同形）。 */
   data class Request(val key: String, val body: JSONObject)
 
-  /** 由 [PushStore.state] 得出要登记的订阅；未启用或材料不全时 null。纯函数。 */
+  /** 由 [PushStore.state] 得出要登记的订阅；未启用、材料不全或不是 UnifiedPush 通道时 null。纯函数。 */
   fun request(state: JSONObject): Request? {
     if (!state.optBoolean("enabled")) return null
+    if (text(state, "channel") != "unifiedpush") return null
     val p256dh = text(state, "p256dh") ?: return null
     val auth = text(state, "auth") ?: return null
+    val endpoint = text(state, "endpoint") ?: return null
     val keys = JSONObject().put("p256dh", p256dh).put("auth", auth)
-    return when (text(state, "channel")) {
-      "fcm" -> {
-        val token = text(state, "fcmToken") ?: return null
-        Request(token, JSONObject().put("kind", "fcm").put("token", token).put("keys", keys))
-      }
-      "unifiedpush" -> {
-        val endpoint = text(state, "endpoint") ?: return null
-        Request(endpoint, JSONObject().put("endpoint", endpoint).put("keys", keys))
-      }
-      else -> null
-    }
+    return Request(endpoint, JSONObject().put("endpoint", endpoint).put("keys", keys))
   }
 
   /** 排一次后台登记（同名任务只保留最新一个）。 */

@@ -1,11 +1,12 @@
 package com.lynricsy.oryn
 
 import android.content.Context
+import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.FirebaseMessaging
 import com.lynricsy.oryn.mobile.Fcm
 import com.lynricsy.oryn.mobile.FcmBridge
 
-/** gms：把 FCM 装进插件；没有 UnifiedPush 分发器时 pushEnable 改走 FCM 令牌。 */
+/** gms：把 FCM 装进插件；推送缺省经官方推送网关走 FCM，用户可在设置里手动切到 UnifiedPush。 */
 object Flavor {
   fun install(context: Context) {
     Fcm.bridge = FirebaseBridge
@@ -38,5 +39,11 @@ private object FirebaseBridge : FcmBridge {
       fm.deleteToken()
     } catch (_: Exception) {
     }
+  }
+
+  override fun projectId(context: Context): String? = try {
+    FirebaseApp.getInstance().options.projectId
+  } catch (_: Exception) {
+    null
   }
 }

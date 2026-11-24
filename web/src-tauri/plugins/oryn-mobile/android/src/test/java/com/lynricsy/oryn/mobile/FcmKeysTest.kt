@@ -55,4 +55,18 @@ class FcmKeysTest {
     assertNull(FcmMessage.cipherText(mapOf("e" to e)))
     assertNull(FcmMessage.cipherText(mapOf("v" to "2", "e" to "!!!")))
   }
+
+  @Test
+  fun gatewayChallengeParses() {
+    val id = "BBBBBBBBBBBBBBBBBBBBBB"
+    val nonce = "CCCCCCCCCCCCCCCCCCCC_-"
+    assertEquals(id to nonce, FcmMessage.challenge(mapOf("kind" to "gateway_challenge", "challengeId" to id, "nonce" to nonce)))
+    // 不是 challenge：通知消息照常走 cipherText
+    assertNull(FcmMessage.challenge(mapOf("v" to "2", "id" to "ntf_1", "e" to "AAAA")))
+    assertNull(FcmMessage.challenge(mapOf("kind" to "other", "challengeId" to id, "nonce" to nonce)))
+    // 形状不对：丢弃
+    assertNull(FcmMessage.challenge(mapOf("kind" to "gateway_challenge", "challengeId" to id)))
+    assertNull(FcmMessage.challenge(mapOf("kind" to "gateway_challenge", "challengeId" to "short", "nonce" to nonce)))
+    assertNull(FcmMessage.challenge(mapOf("kind" to "gateway_challenge", "challengeId" to id, "nonce" to "$nonce=")))
+  }
 }

@@ -1,5 +1,5 @@
 //! Oryn 移动端原生能力的 Rust 侧：Android 上是 Keystore 保险库、系统通知、UnifiedPush / FCM、分享接收、系统栏颜色；
-//! iOS 上是下沉侧栏的原生底栏与线程页的原生页头（iOS 26+）以及可替换图标（Swift 实现在 `ios/`）。
+//! iOS 上是 APNs 推送、下沉侧栏的原生底栏与线程页的原生页头（iOS 26+）以及可替换图标（Swift 实现在 `ios/`）。
 //!
 //! 命令表为空（见 `build.rs`）：远程页面拿不到任何原生命令；这里的方法只给壳的 Rust 代码调用。
 //! 数据形状在 [`models`]，不依赖平台；插件句柄与注册只在 Android / iOS 上存在。
@@ -143,6 +143,40 @@ mod native {
         pub fn open_notification_settings(&self) -> Result<()> {
             self.call("openNotificationSettings", ())
         }
+
+        /// 推送状态（K5 `PushState`）。
+        pub fn push_state(&self) -> Result<PushState> {
+            self.run("pushState", ())
+        }
+
+        /// 可能先弹系统通知权限、再等分发器选择 / 取推送令牌：异步等待，不占线程。
+        /// `vapid` 只有 UnifiedPush 用；iOS 忽略两个参数。
+        pub async fn push_enable(
+            &self,
+            vapid: Option<&str>,
+            transport: PushTransport,
+        ) -> Result<PushState> {
+            ensure_activity()?;
+            Ok(self
+                .0
+                .run_mobile_plugin_async(
+                    "pushEnable",
+                    json!({"vapid": vapid, "transport": transport}),
+                )
+                .await?)
+        }
+
+        pub fn push_disable(&self) -> Result<PushState> {
+            self.run("pushDisable", ())
+        }
+
+        /// 记下已登记的端点、订阅 id 与服务器（Android 的推送服务在只有它存活时据此重新登记 UnifiedPush）。
+        pub fn push_mark_synced(&self, endpoint: &str, id: &str, server: &str) -> Result<()> {
+            self.call(
+                "pushMarkSynced",
+                json!({"endpoint": endpoint, "id": id, "server": server}),
+            )
+        }
     }
 
     #[cfg(target_os = "android")]
@@ -164,33 +198,6 @@ mod native {
         pub fn vault_delete(&self, server: &str) -> Result<()> {
             self.call("vaultDelete", json!({"server": server}))
         }
-
-
-        pub fn push_state(&self) -> Result<PushState> {
-            self.run("pushState", ())
-        }
-
-        /// 可能先弹系统通知权限、再等分发器选择：异步等待，不占线程。
-        pub async fn push_enable(&self, vapid: &str) -> Result<PushState> {
-            ensure_activity()?;
-            Ok(self
-                .0
-                .run_mobile_plugin_async("pushEnable", json!({"vapid": vapid}))
-                .await?)
-        }
-
-        pub fn push_disable(&self) -> Result<PushState> {
-            self.run("pushDisable", ())
-        }
-
-        /// 记下已登记的端点 / 令牌、订阅 id 与服务器（推送服务在只有它存活时据此重新登记）。
-        pub fn push_mark_synced(&self, endpoint: &str, id: &str, server: &str) -> Result<()> {
-            self.call(
-                "pushMarkSynced",
-                json!({"endpoint": endpoint, "id": id, "server": server}),
-            )
-        }
-
 
         pub fn set_chrome(&self, dark: bool, color: &str) -> Result<()> {
             self.call("setChrome", json!({"dark": dark, "color": color}))

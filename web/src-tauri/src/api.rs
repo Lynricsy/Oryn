@@ -1,4 +1,4 @@
-//! 与控制面的 HTTP 交互：健康检查、设备配对、App 会话换取、自我吊销；移动端另有推送订阅与分享上传。
+//! 与控制面的 HTTP 交互：健康检查、设备配对、App 会话换取、自我吊销；移动端另有推送订阅、推送网关与分享上传。
 
 use std::future::Future;
 use std::path::Path;
@@ -61,20 +61,23 @@ pub enum PushSubscription {
         p256dh: String,
         auth: String,
     },
-    /// FCM 注册令牌 + RFC 8291 公钥：服务端把通知加密进 data 的 `e`，Google 只看到密文。
-    Fcm {
-        token: String,
+    /// 官方推送网关（FCM / APNs）：网关 origin + 授权 id + RFC 8291 公钥；orynd 只把密文交给网关。
+    /// `endpoint` 是登记成功后记作「已同步」的 `<gateway>/v1/grants/<grant>`，不发给服务器。
+    Gateway {
+        endpoint: String,
+        gateway: String,
+        grant: String,
         p256dh: String,
         auth: String,
     },
 }
 
 impl PushSubscription {
-    /// 登记成功后记作「已同步」的键：Web Push 为端点，FCM 为令牌。
+    /// 登记成功后记作「已同步」的键：Web Push 为分发器端点，网关为授权端点。
     pub fn key(&self) -> &str {
         match self {
-            PushSubscription::WebPush { endpoint, .. } => endpoint,
-            PushSubscription::Fcm { token, .. } => token,
+            PushSubscription::WebPush { endpoint, .. }
+            | PushSubscription::Gateway { endpoint, .. } => endpoint,
         }
     }
 
@@ -85,15 +88,44 @@ impl PushSubscription {
                 p256dh,
                 auth,
             } => json!({"endpoint": endpoint, "keys": {"p256dh": p256dh, "auth": auth}}),
-            PushSubscription::Fcm {
-                token,
+            PushSubscription::Gateway {
+                gateway,
+                grant,
                 p256dh,
                 auth,
-            } => {
-                json!({"kind": "fcm", "token": token, "keys": {"p256dh": p256dh, "auth": auth}})
-            }
+                ..
+            } => json!({
+                "kind": "gateway", "gateway": gateway, "grant": grant,
+                "keys": {"p256dh": p256dh, "auth": auth}
+            }),
         }
     }
+}
+
+/// `GET /api/v1/push/gateway`：orynd 选用的网关与它的主机公钥。
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayInfo {
+    pub v: u32,
+    pub origin: String,
+    pub host_key: String,
+}
+
+/// 发给推送网关的一次请求（已签好名）。`origin` 必须先经 [`crate::pushgw::trusted_origins`] 核对。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GatewayCall {
+    pub method: &'static str,
+    pub origin: String,
+    pub path: String,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+/// 网关的应答：任何非 3xx 的状态都原样交回，由调用方按错误码处理。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GatewayReply {
+    pub status: u16,
+    pub body: Vec<u8>,
 }
 
 /// 会话状态机与移动端编排依赖的接口；生产实现为 [`HttpApi`]，测试用假实现。
@@ -151,6 +183,20 @@ pub trait Api: Send + Sync + 'static {
         name: &str,
         path: &Path,
     ) -> impl Future<Output = Result<Value, ApiError>> + Send;
+    /// `GET /api/v1/push/gateway`。404 `gateway_disabled` 原样返回；其它 404（旧 orynd 没有这个接口）
+    /// 映射成 `gateway_unsupported`。
+    #[cfg_attr(not(mobile), allow(dead_code))]
+    fn push_gateway(
+        &self,
+        base: &str,
+        token: &str,
+    ) -> impl Future<Output = Result<GatewayInfo, ApiError>> + Send;
+    /// 向推送网关发一次已签名的请求；不跟随重定向，3xx 当失败。
+    #[cfg_attr(not(mobile), allow(dead_code))]
+    fn gateway_call(
+        &self,
+        call: GatewayCall,
+    ) -> impl Future<Output = Result<GatewayReply, ApiError>> + Send;
 }
 
 /// 走 [`reqwest`] 的生产实现。
@@ -205,6 +251,12 @@ impl Api for HttpApi {
         path: &Path,
     ) -> Result<Value, ApiError> {
         upload_attachment(base, token, name, path).await
+    }
+    async fn push_gateway(&self, base: &str, token: &str) -> Result<GatewayInfo, ApiError> {
+        push_gateway(base, token).await
+    }
+    async fn gateway_call(&self, call: GatewayCall) -> Result<GatewayReply, ApiError> {
+        gateway_call(call).await
     }
 }
 
@@ -531,6 +583,61 @@ pub async fn push_unsubscribe(base: &str, token: &str, id: &str) -> Result<(), A
     Err(status_error(resp).await)
 }
 
+/// `GET /api/v1/push/gateway`（Bearer 设备令牌）→ `{v, origin, hostKey}`。
+/// 404 `gateway_disabled`（orynd 关了网关）原样返回；其它 404 = 旧 orynd 没有这个接口 → `gateway_unsupported`。
+pub async fn push_gateway(base: &str, token: &str) -> Result<GatewayInfo, ApiError> {
+    let resp = client()
+        .get(endpoint(base, "/api/v1/push/gateway"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(network)?;
+    if resp.status().is_success() {
+        return resp.json::<GatewayInfo>().await.map_err(network);
+    }
+    match status_error(resp).await {
+        ApiError::Status {
+            status: 404,
+            code,
+            message,
+        } if code != "gateway_disabled" => Err(ApiError::Status {
+            status: 404,
+            code: "gateway_unsupported".into(),
+            message: if code.is_empty() { message } else { code },
+        }),
+        other => Err(other),
+    }
+}
+
+/// 向推送网关发一次请求。共用客户端本来就不跟随重定向（`Policy::none()`）；3xx 当网络失败处理，
+/// 不把签名请求转交给别处。其它状态原样交回。
+pub async fn gateway_call(call: GatewayCall) -> Result<GatewayReply, ApiError> {
+    let method = reqwest::Method::from_bytes(call.method.as_bytes())
+        .map_err(|e| ApiError::Network(e.to_string()))?;
+    let mut req = client().request(method, endpoint(&call.origin, &call.path));
+    for (k, v) in &call.headers {
+        req = req.header(k.as_str(), v.as_str());
+    }
+    if !call.body.is_empty() {
+        req = req
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(call.body);
+    }
+    let resp = req.send().await.map_err(network)?;
+    let status = resp.status();
+    if status.is_redirection() {
+        return Err(ApiError::Network(format!(
+            "push gateway answered {} (redirects are not followed)",
+            status.as_u16()
+        )));
+    }
+    let body = resp.bytes().await.map_err(network)?;
+    Ok(GatewayReply {
+        status: status.as_u16(),
+        body: body.to_vec(),
+    })
+}
+
 /// `POST /api/v1/attachments?name=<name>`：原始字节流式上传（带 `Content-Length`），返回服务端的 Attachment JSON 原样。
 pub async fn upload_attachment(
     base: &str,
@@ -806,10 +913,13 @@ mod tests {
             .await;
         Mock::given(method("POST"))
             .and(path("/api/v1/push/subscriptions"))
-            .and(body_json(json!({"kind": "fcm", "token": "fcm_tok", "keys": {"p256dh": "fpk", "auth": "fau"}})))
+            .and(body_json(json!({
+                "kind": "gateway", "gateway": "https://push.oryn.best", "grant": "AAAAAAAAAAAAAAAAAAAAAA",
+                "keys": {"p256dh": "fpk", "auth": "fau"}
+            })))
             .respond_with(
                 ResponseTemplate::new(409)
-                    .set_body_json(json!({"code": "fcm_unavailable", "message": "m"})),
+                    .set_body_json(json!({"code": "gateway_grant_invalid", "message": "m"})),
             )
             .expect(1)
             .mount(&s)
@@ -825,20 +935,121 @@ mod tests {
             push_subscribe(&s.uri(), "odt_tok", &web).await.unwrap(),
             "ps_1"
         );
-        let fcm = PushSubscription::Fcm {
-            token: "fcm_tok".into(),
+        let gw = PushSubscription::Gateway {
+            endpoint: "https://push.oryn.best/v1/grants/AAAAAAAAAAAAAAAAAAAAAA".into(),
+            gateway: "https://push.oryn.best".into(),
+            grant: "AAAAAAAAAAAAAAAAAAAAAA".into(),
             p256dh: "fpk".into(),
             auth: "fau".into(),
         };
-        assert_eq!(fcm.key(), "fcm_tok");
         assert_eq!(
-            push_subscribe(&s.uri(), "odt_tok", &fcm).await,
+            gw.key(),
+            "https://push.oryn.best/v1/grants/AAAAAAAAAAAAAAAAAAAAAA"
+        );
+        assert_eq!(
+            push_subscribe(&s.uri(), "odt_tok", &gw).await,
             Err(ApiError::Status {
                 status: 409,
-                code: "fcm_unavailable".into(),
+                code: "gateway_grant_invalid".into(),
                 message: "m".into()
             })
         );
+    }
+
+    #[tokio::test]
+    async fn push_gateway_maps_404() {
+        let s = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/push/gateway"))
+            .and(header("authorization", "Bearer odt_on"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "v": 1, "origin": "https://push.oryn.best", "hostKey": "IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xI"
+            })))
+            .mount(&s)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/push/gateway"))
+            .and(header("authorization", "Bearer odt_off"))
+            .respond_with(
+                ResponseTemplate::new(404)
+                    .set_body_json(json!({"code": "gateway_disabled", "message": "off"})),
+            )
+            .mount(&s)
+            .await;
+        assert_eq!(
+            push_gateway(&s.uri(), "odt_on").await.unwrap(),
+            GatewayInfo {
+                v: 1,
+                origin: "https://push.oryn.best".into(),
+                host_key: "IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xI".into()
+            }
+        );
+        assert_eq!(
+            push_gateway(&s.uri(), "odt_off").await,
+            Err(ApiError::Status {
+                status: 404,
+                code: "gateway_disabled".into(),
+                message: "off".into()
+            })
+        );
+        // 旧 orynd：没有这个接口
+        let old = MockServer::start().await;
+        Mock::given(path("/api/v1/push/gateway"))
+            .respond_with(ResponseTemplate::new(404).set_body_json(json!({"code": "not_found"})))
+            .mount(&old)
+            .await;
+        assert!(matches!(
+            push_gateway(&old.uri(), "odt_on").await,
+            Err(ApiError::Status { status: 404, code, .. }) if code == "gateway_unsupported"
+        ));
+    }
+
+    #[tokio::test]
+    async fn gateway_call_sends_headers_and_refuses_redirects() {
+        let s = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/challenges"))
+            .and(NoAuth)
+            .and(header("oryn-device-key", "dk"))
+            .and(header("content-type", "application/json"))
+            .and(body_json(json!({"a": 1})))
+            .respond_with(ResponseTemplate::new(409).set_body_json(json!({"code": "app_mismatch"})))
+            .expect(1)
+            .mount(&s)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v1/info"))
+            .respond_with(
+                ResponseTemplate::new(302)
+                    .insert_header("location", "https://evil.example/v1/info"),
+            )
+            .mount(&s)
+            .await;
+        let reply = gateway_call(GatewayCall {
+            method: "POST",
+            origin: s.uri(),
+            path: "/v1/challenges".into(),
+            headers: vec![("Oryn-Device-Key".into(), "dk".into())],
+            body: br#"{"a":1}"#.to_vec(),
+        })
+        .await
+        .unwrap();
+        assert_eq!(reply.status, 409);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&reply.body).unwrap()["code"],
+            "app_mismatch"
+        );
+        assert!(matches!(
+            gateway_call(GatewayCall {
+                method: "GET",
+                origin: s.uri(),
+                path: "/v1/info".into(),
+                headers: vec![],
+                body: vec![],
+            })
+            .await,
+            Err(ApiError::Network(_))
+        ));
     }
 
     #[tokio::test]

@@ -15,6 +15,7 @@ mod i18n;
 mod mobile;
 mod mobile_logic;
 mod notify;
+mod pushgw;
 mod secrets;
 mod session;
 mod webview;
@@ -403,7 +404,7 @@ fn setup(app: &mut App, args: &Args, raw: &[String]) -> Result<(), Box<dyn std::
         shell,
         eventlog::handle(),
         vault,
-        dir,
+        dir.clone(),
         config,
         nav.clone(),
         device_name,
@@ -413,12 +414,16 @@ fn setup(app: &mut App, args: &Args, raw: &[String]) -> Result<(), Box<dyn std::
     let d = Arc::new(Desktop::new(core, nav, false, version));
     app.manage(d.clone());
 
-
+    // 推送网关（M28）：账本在配置目录，设备密钥与设备令牌同一存储后端（另一个实例），应用标识即 APNs topic / FCM app_id
+    let app_id = handle.config().identifier.clone();
     #[cfg(target_os = "android")]
     {
         let rt = mobile::MobileRt::new(
             mobile::NativeImpl(native.clone()),
             device.webview_version.clone().unwrap_or_default(),
+            dir,
+            Box::new(secrets::KeystoreStore(native.clone())),
+            app_id,
         );
         rt.core.set_insets(device.corner_radii, device.insets);
         app.manage(Arc::new(rt));
@@ -426,9 +431,13 @@ fn setup(app: &mut App, args: &Args, raw: &[String]) -> Result<(), Box<dyn std::
     }
     #[cfg(target_os = "ios")]
     {
+        use tauri_plugin_oryn_mobile::OrynMobileExt;
         app.manage(Arc::new(mobile::MobileRt::new(
-            mobile::NativeImpl,
+            mobile::NativeImpl(handle.oryn_mobile().clone()),
             String::new(),
+            dir,
+            Box::new(secrets::KeychainStore),
+            app_id,
         )));
         mobile::listen_ios(&handle);
     }

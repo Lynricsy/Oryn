@@ -11,15 +11,22 @@ class PushSyncTest {
   private fun state(vararg kv: Pair<String, Any?>) =
     JSONObject().apply { for ((k, v) in kv) put(k, v ?: JSONObject.NULL) }
 
+  /** 网关通道（FCM）不在后台登记：授权要设备签名与 challenge，交给下次进入 App 的 Rust。 */
   @Test
-  fun fcmRegistersTokenWithKeys() {
-    val r = PushSync.request(
-      state("enabled" to true, "channel" to "fcm", "fcmToken" to "tok", "p256dh" to "pk", "auth" to "au"),
-    )!!
-    assertEquals("tok", r.key)
-    assertEquals(
-      JSONObject("""{"kind":"fcm","token":"tok","keys":{"p256dh":"pk","auth":"au"}}""").toString(),
-      JSONObject(r.body.toString()).toString(),
+  fun fcmRegistersNothingInBackground() {
+    assertNull(
+      PushSync.request(
+        state("enabled" to true, "channel" to "fcm", "fcmToken" to "tok", "p256dh" to "pk", "auth" to "au"),
+      ),
+    )
+    // D5 迁移后的状态：分发器与旧的已同步端点还在，同样不登记
+    assertNull(
+      PushSync.request(
+        state(
+          "enabled" to true, "channel" to "fcm", "distributor" to "io.heckel.ntfy", "fcmToken" to "tok",
+          "p256dh" to "pk", "auth" to "au", "syncedEndpoint" to "https://up/x", "subscriptionId" to "ps_1",
+        ),
+      ),
     )
   }
 
@@ -36,11 +43,12 @@ class PushSyncTest {
 
   @Test
   fun incompleteOrDisabledRegistersNothing() {
-    val full = arrayOf<Pair<String, Any?>>("enabled" to true, "channel" to "fcm", "fcmToken" to "tok", "p256dh" to "pk", "auth" to "au")
+    val full = arrayOf<Pair<String, Any?>>("enabled" to true, "channel" to "unifiedpush", "endpoint" to "https://up/x", "p256dh" to "pk", "auth" to "au")
+    assertTrue(PushSync.request(state(*full)) != null)
     assertNull(PushSync.request(state(*full.map { if (it.first == "enabled") it.first to false else it }.toTypedArray())))
-    // FCM 没有密钥：绝不登记明文订阅
+    // 没有密钥：绝不登记明文订阅
     assertNull(PushSync.request(state(*full.map { if (it.first == "p256dh") it.first to null else it }.toTypedArray())))
-    assertNull(PushSync.request(state(*full.map { if (it.first == "fcmToken") it.first to null else it }.toTypedArray())))
+    assertNull(PushSync.request(state(*full.map { if (it.first == "endpoint") it.first to null else it }.toTypedArray())))
     assertNull(PushSync.request(state(*full.map { if (it.first == "channel") it.first to null else it }.toTypedArray())))
   }
 

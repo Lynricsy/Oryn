@@ -384,10 +384,14 @@ impl Shell for TauriShell {
         None
     }
 
+    /// 解除配对：网关授权挪进待吊销队列、停用本机推送、下次配对后自动启用；随后异步尽力吊销。
     fn push_disable(&self) {
         #[cfg(mobile)]
         if let Some(m) = crate::mobile::runtime(&self.app) {
-            m.core.disable_local();
+            m.core.unpaired();
+            tauri::async_runtime::spawn(async move {
+                m.core.flush_revokes().await;
+            });
         }
     }
 }
@@ -402,7 +406,7 @@ mod tests {
         assert!(s.starts_with("window.__ORYN_HOST__ = Object.freeze({"));
         assert!(s.contains("\"version\":\"9.8.7-rc.1\""));
         assert!(s.contains("\"kind\":\"tauri\""));
-        assert!(s.contains("\"bridge\":8"));
+        assert!(s.contains("\"bridge\":9"));
         assert!(!s.contains("chrome"));
         let s = init_script("1.0.0", Some(json!({"controls": "custom-right"})));
         assert!(s.contains("\"chrome\":{\"controls\":\"custom-right\"}"));

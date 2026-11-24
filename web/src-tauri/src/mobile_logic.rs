@@ -1,12 +1,15 @@
-//! 移动端的纯逻辑：导航判定、推送状态归并与订阅同步、分享接收流程、`MobileInfo`、原生底栏入参校验。
+//! 移动端的纯逻辑：导航判定、推送状态归并与订阅同步（含官方推送网关的登记编排）、分享接收流程、`MobileInfo`、
+//! 原生底栏入参校验。
 //!
 //! 不带平台 `cfg`、不依赖 Tauri：原生能力经 [`Native`]、网络经 [`Api`]，在主机上即可单测。
 //! 桌面不调用这里（只在单测里覆盖），故整体允许未使用。
 #![cfg_attr(not(mobile), allow(dead_code))]
 
+use std::collections::VecDeque;
 use std::future::Future;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -16,10 +19,14 @@ use tauri_plugin_oryn_mobile::{
     TabBarFrame, TabBarIcon, TabBarSpec,
 };
 
-use crate::api::{Api, ApiError, PushSubscription};
+pub use tauri_plugin_oryn_mobile::PushTransport as Transport;
+
+use crate::api::{Api, ApiError, GatewayCall, GatewayInfo, GatewayReply, PushSubscription};
 use crate::config::TokenStoreKind;
 use crate::eventlog::EventLog;
 use crate::i18n::{self, Lang};
+use crate::pushgw::{self, DeviceKey, Grant, Ledger, Revoke};
+use crate::secrets::TokenStore;
 use crate::session::Connection;
 
 // ---------------------------------------------------------------- 导航
@@ -196,7 +203,6 @@ impl Platform {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PushViewState {
-    Unsupported,
     Disabled,
     PermissionDenied,
     NoDistributor,
@@ -205,13 +211,16 @@ pub enum PushViewState {
     Error,
 }
 
-/// `MobileInfo.push`。
+/// `MobileInfo.push`（K6）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PushView {
     pub state: PushViewState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub channel: Option<PushChannel>,
+    /// 可切换到的另一通道（只有 gms 包有）：FCM ↔ UnifiedPush。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alt: Option<PushChannel>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub distributor: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -225,6 +234,7 @@ impl PushView {
         Self {
             state,
             channel: None,
+            alt: None,
             distributor: None,
             endpoint_host: None,
             error: None,
@@ -232,35 +242,61 @@ impl PushView {
     }
 }
 
-/// 已登记到服务器时应当记下的键：FCM 为令牌，UnifiedPush 为端点。
-fn sync_key(s: &PushState) -> Option<&str> {
+/// 经官方推送网关的通道（FCM / APNs）。
+pub fn gateway_channel(channel: Option<PushChannel>) -> bool {
+    matches!(channel, Some(PushChannel::Fcm | PushChannel::Apns))
+}
+
+/// 网关通道的推送令牌（FCM 注册令牌 / APNs 设备令牌）；空串当作没有。
+fn push_token(s: &PushState) -> Option<&str> {
     match s.channel {
         Some(PushChannel::Fcm) => s.fcm_token.as_deref(),
-        _ => s.endpoint.as_deref(),
+        Some(PushChannel::Apns) => s.apns_token.as_deref(),
+        _ => None,
+    }
+    .filter(|t| !t.is_empty())
+}
+
+/// 网关通道是否已登记完：有授权、授权时的令牌就是现在的令牌、服务器上登记的就是这个授权。
+fn gateway_synced(s: &PushState, grant: Option<&Grant>) -> bool {
+    match (grant, push_token(s)) {
+        (Some(g), Some(token)) => {
+            g.token_hash == pushgw::token_hash(token)
+                && s.synced_endpoint.as_deref() == Some(g.endpoint().as_str())
+        }
+        _ => false,
     }
 }
 
-/// 状态归并。ios → unsupported；!enabled → disabled；permission != granted → permission_denied；
-/// 没有通道（无分发器且不走 FCM）→ no_distributor；原生或同步错误 → error；
-/// 端点 / 令牌为空或与已同步的不同 → registering；否则 active。
-pub fn push_view(platform: Platform, s: Option<&PushState>, sync_error: Option<&str>) -> PushView {
-    if platform == Platform::Ios {
-        return PushView::bare(PushViewState::Unsupported);
-    }
+/// 状态归并。!enabled → disabled；permission != granted → permission_denied；
+/// 没有通道（无分发器且不走网关）→ no_distributor；原生或同步错误 → error；
+/// UnifiedPush：端点为空或与已同步的不同 → registering；网关通道：见 [`gateway_synced`]；否则 active。
+/// `alt`：gms 包（`fcmAvailable`）在 FCM 与 UnifiedPush 之间可互切。
+pub fn push_view(
+    s: Option<&PushState>,
+    sync_error: Option<&str>,
+    grant: Option<&Grant>,
+) -> PushView {
     let Some(s) = s.filter(|s| s.enabled) else {
         return PushView::bare(PushViewState::Disabled);
     };
+    let gateway = gateway_channel(s.channel);
     let mut view = PushView {
         state: PushViewState::Active,
         channel: s.channel,
+        alt: match s.channel {
+            Some(PushChannel::Fcm) if s.fcm_available => Some(PushChannel::UnifiedPush),
+            Some(PushChannel::UnifiedPush) if s.fcm_available => Some(PushChannel::Fcm),
+            _ => None,
+        },
         distributor: s.distributor.clone(),
-        endpoint_host: match s.channel {
-            Some(PushChannel::Fcm) => None,
-            _ => s
-                .endpoint
+        endpoint_host: if gateway {
+            None
+        } else {
+            s.endpoint
                 .as_deref()
                 .and_then(|e| url::Url::parse(e).ok())
-                .and_then(|u| u.host_str().map(str::to_string)),
+                .and_then(|u| u.host_str().map(str::to_string))
         },
         error: None,
     };
@@ -271,7 +307,13 @@ pub fn push_view(platform: Platform, s: Option<&PushState>, sync_error: Option<&
     } else if let Some(e) = s.error.as_deref().or(sync_error) {
         view.error = Some(e.to_string());
         PushViewState::Error
-    } else if sync_key(s).is_none() || sync_key(s) != s.synced_endpoint.as_deref() {
+    } else if gateway {
+        if gateway_synced(s, grant) {
+            PushViewState::Active
+        } else {
+            PushViewState::Registering
+        }
+    } else if s.endpoint.is_none() || s.endpoint != s.synced_endpoint {
         PushViewState::Registering
     } else {
         PushViewState::Active
@@ -279,25 +321,17 @@ pub fn push_view(platform: Platform, s: Option<&PushState>, sync_error: Option<&
     view
 }
 
-/// 要登记的订阅；材料不全时 `None`。`force = false` 时已同步的也返回 `None`。
-/// `force`：服务器可能已删掉订阅（令牌失效、M7 之前没有密钥的 FCM 订阅），本地「已同步」不可尽信；
-/// 登记按端点 / 令牌 upsert，重复登记无害，所以每次进入应用都强制登记一次。
+/// UnifiedPush 要登记的订阅；材料不全或不是 UnifiedPush 通道时 `None`。`force = false` 时已同步的也返回 `None`。
+/// `force`：服务器可能已删掉订阅，本地「已同步」不可尽信；登记按端点 upsert，重复登记无害，
+/// 所以每次进入应用都强制登记一次。网关通道的订阅由 [`MobileCore::sync_push`] 在授权之后构造。
 pub fn sync_target(s: &PushState, force: bool) -> Option<PushSubscription> {
-    if !s.enabled {
+    if !s.enabled || gateway_channel(s.channel) {
         return None;
     }
-    let sub = match s.channel {
-        // FCM 同样必须带 RFC 8291 公钥：服务端只发密文，缺密钥的订阅会被拒（400 push_invalid）
-        Some(PushChannel::Fcm) => PushSubscription::Fcm {
-            token: s.fcm_token.clone()?,
-            p256dh: s.p256dh.clone()?,
-            auth: s.auth.clone()?,
-        },
-        _ => PushSubscription::WebPush {
-            endpoint: s.endpoint.clone()?,
-            p256dh: s.p256dh.clone()?,
-            auth: s.auth.clone()?,
-        },
+    let sub = PushSubscription::WebPush {
+        endpoint: s.endpoint.clone()?,
+        p256dh: s.p256dh.clone()?,
+        auth: s.auth.clone()?,
     };
     (force || s.synced_endpoint.as_deref() != Some(sub.key())).then_some(sub)
 }
@@ -755,14 +789,108 @@ impl Shares {
     }
 }
 
+// ---------------------------------------------------------------- 网关登记的错误码（K6）
+
+/// 网关地址不在本构建的受信列表里。
+pub const GATEWAY_UNTRUSTED: &str = "gateway_untrusted";
+/// `/v1/info` 里没有本 App 的 APNs topic / 环境或 Firebase 项目。
+pub const GATEWAY_APP_MISMATCH: &str = "gateway_app_mismatch";
+/// 30 秒内没等到 challenge 推送。
+pub const GATEWAY_CHALLENGE_TIMEOUT: &str = "gateway_challenge_timeout";
+/// 网关的其它 4xx。
+pub const GATEWAY_REJECTED: &str = "gateway_rejected";
+
+/// 等 challenge 推送的上限。
+pub const CHALLENGE_WAIT: Duration = Duration::from_secs(30);
+/// 先于 `challenges` 应答到达的 nonce 的缓冲：条数与有效期。
+const CHALLENGE_KEEP: usize = 8;
+const CHALLENGE_TTL: Duration = Duration::from_secs(300);
+
+/// iOS 的 APNs 环境：debug 构建走 sandbox。
+fn apns_environment() -> &'static str {
+    if cfg!(debug_assertions) {
+        "sandbox"
+    } else {
+        "production"
+    }
+}
+
+/// 收到的 challenge（id → nonce），等待方先查缓冲再等通知。
+#[derive(Default)]
+struct Challenges {
+    buf: Mutex<VecDeque<(String, String, Instant)>>,
+    notify: tokio::sync::Notify,
+}
+
+impl Challenges {
+    fn buf(&self) -> MutexGuard<'_, VecDeque<(String, String, Instant)>> {
+        let mut g = self.buf.lock().unwrap_or_else(|e| e.into_inner());
+        g.retain(|(_, _, at)| at.elapsed() < CHALLENGE_TTL);
+        g
+    }
+
+    fn put(&self, id: &str, nonce: &str) {
+        {
+            let mut g = self.buf();
+            g.retain(|(i, _, _)| i != id);
+            g.push_back((id.to_string(), nonce.to_string(), Instant::now()));
+            while g.len() > CHALLENGE_KEEP {
+                g.pop_front();
+            }
+        }
+        self.notify.notify_waiters();
+    }
+
+    fn take(&self, id: &str) -> Option<String> {
+        let mut g = self.buf();
+        let at = g.iter().position(|(i, _, _)| i == id)?;
+        g.remove(at).map(|(_, nonce, _)| nonce)
+    }
+
+    /// 等 `id` 的 nonce，至多 `timeout`。
+    async fn wait(&self, id: &str, timeout: Duration) -> Option<String> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let mut notified = std::pin::pin!(self.notify.notified());
+            // 先登记再查缓冲：查完到开始等待之间到达的 nonce 不会漏掉
+            notified.as_mut().enable();
+            if let Some(nonce) = self.take(id) {
+                return Some(nonce);
+            }
+            if tokio::time::timeout_at(deadline, notified).await.is_err() {
+                return self.take(id);
+            }
+        }
+    }
+}
+
+/// 网关一步失败的处理方式。
+enum GwFail {
+    /// 记成页面可见的错误码。
+    Code(&'static str),
+    /// 网络错误、429、5xx：不记错误，下次同步再试。
+    Retry,
+}
+
+#[derive(serde::Deserialize, Default)]
+struct GwErrorBody {
+    #[serde(default)]
+    code: String,
+}
+
 // ---------------------------------------------------------------- 编排
 
-/// 原生侧能力（Android 为 oryn-mobile 插件；iOS 与单测各有实现）。
+/// 原生侧能力（oryn-mobile 插件的 Kotlin / Swift 实现；单测有假实现）。
 pub trait Native: Send + Sync + 'static {
     fn push_state(&self) -> Result<PushState, String>;
-    fn push_enable(&self, vapid: &str) -> impl Future<Output = Result<PushState, String>> + Send;
+    /// `vapid` 只有 UnifiedPush 用（gms 包缺省走 FCM、iOS 走 APNs 时为 `None`）。
+    fn push_enable(
+        &self,
+        vapid: Option<&str>,
+        transport: Transport,
+    ) -> impl Future<Output = Result<PushState, String>> + Send;
     fn push_disable(&self) -> Result<PushState, String>;
-    /// 记下已登记的端点 / 令牌、订阅 id 与服务器（原生后台任务在 App 不在前台时据此重新登记）。
+    /// 记下已登记的端点、订阅 id 与服务器（Android 的后台任务在 App 不在前台时据此重新登记 UnifiedPush）。
     fn push_mark_synced(&self, endpoint: &str, id: &str, server: &str) -> Result<(), String>;
     fn share_ack(&self, id: &str);
     fn toast(&self, text: &str);
@@ -770,14 +898,14 @@ pub trait Native: Send + Sync + 'static {
 
 #[derive(Default)]
 struct Inner {
-    /// 最近一次登记被服务器以 4xx 拒绝的原因（网络错误不记，下次再试）。
+    /// 最近一次登记被服务器或网关拒绝的原因（网络错误不记，下次再试）。
     sync_error: Option<String>,
     shares: Shares,
     corner_radii: CornerRadii,
     insets: Insets,
 }
 
-/// 推送订阅同步与分享流程的编排（进程级一份）。
+/// 推送订阅同步（含网关授权）与分享流程的编排（进程级一份）。
 pub struct MobileCore<N: Native, A: Api> {
     native: N,
     api: Arc<A>,
@@ -786,10 +914,31 @@ pub struct MobileCore<N: Native, A: Api> {
     inner: Mutex<Inner>,
     /// 串行化订阅同步：插件事件、`host_ready`、回到前台可能同时触发。
     sync_lock: tokio::sync::Mutex<()>,
+    /// 账本所在目录（`<app_config_dir>`）。
+    dir: PathBuf,
+    ledger: Mutex<Ledger>,
+    /// 设备密钥的存储（与设备令牌同一后端）；密钥首次用到时读出或生成。
+    keys: Box<dyn TokenStore>,
+    device: Mutex<Option<Arc<DeviceKey>>>,
+    /// 应用标识：APNs topic / 网关的 FCM `app_id`。
+    app_id: String,
+    /// 本构建信任的网关 origin（[`pushgw::trusted_origins`]）。
+    trusted: Vec<String>,
+    challenges: Challenges,
+    challenge_wait: Duration,
 }
 
 impl<N: Native, A: Api> MobileCore<N, A> {
-    pub fn new(native: N, api: Arc<A>, log: EventLog, platform: Platform) -> Self {
+    pub fn new(
+        native: N,
+        api: Arc<A>,
+        log: EventLog,
+        platform: Platform,
+        dir: PathBuf,
+        keys: Box<dyn TokenStore>,
+        app_id: String,
+    ) -> Self {
+        let ledger = Ledger::load(&dir);
         Self {
             native,
             api,
@@ -797,6 +946,14 @@ impl<N: Native, A: Api> MobileCore<N, A> {
             platform,
             inner: Mutex::new(Inner::default()),
             sync_lock: tokio::sync::Mutex::new(()),
+            dir,
+            ledger: Mutex::new(ledger),
+            keys,
+            device: Mutex::new(None),
+            app_id,
+            trusted: pushgw::trusted_origins(),
+            challenges: Challenges::default(),
+            challenge_wait: CHALLENGE_WAIT,
         }
     }
 
@@ -806,6 +963,38 @@ impl<N: Native, A: Api> MobileCore<N, A> {
 
     fn inner(&self) -> MutexGuard<'_, Inner> {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn ledger(&self) -> MutexGuard<'_, Ledger> {
+        self.ledger.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// 改账本；有变化才写盘。
+    fn update_ledger<T>(&self, f: impl FnOnce(&mut Ledger) -> T) -> T {
+        let mut g = self.ledger();
+        let before = g.clone();
+        let out = f(&mut g);
+        if *g != before {
+            if let Err(e) = g.save(&self.dir) {
+                self.log
+                    .log("push.ledger_error", json!({"error": e.to_string()}));
+            }
+        }
+        out
+    }
+
+    fn is_trusted(&self, origin: &str) -> bool {
+        self.trusted.iter().any(|o| o == origin)
+    }
+
+    fn device_key(&self) -> Result<Arc<DeviceKey>, String> {
+        let mut g = self.device.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(k) = g.as_ref() {
+            return Ok(k.clone());
+        }
+        let key = Arc::new(DeviceKey::load_or_create(self.keys.as_ref())?);
+        *g = Some(key.clone());
+        Ok(key)
     }
 
     /// 记下最新的屏幕圆角与原生 inset；值变了返回 `true`。
@@ -820,7 +1009,8 @@ impl<N: Native, A: Api> MobileCore<N, A> {
     pub fn push_view(&self) -> PushView {
         let state = self.native.push_state().ok();
         let sync_error = self.inner().sync_error.clone();
-        push_view(self.platform, state.as_ref(), sync_error.as_deref())
+        let grant = self.ledger().grant.clone();
+        push_view(state.as_ref(), sync_error.as_deref(), grant.as_ref())
     }
 
     pub fn info(&self, version: &str, token_store: TokenStoreKind, webview: &str) -> MobileInfo {
@@ -837,36 +1027,58 @@ impl<N: Native, A: Api> MobileCore<N, A> {
         }
     }
 
-    /// 把尚未登记（或端点 / 令牌变了；`force` 时无论如何）的订阅登记到服务器。返回页面是否需要重取 `MobileInfo`。
+    /// 把尚未登记（或端点 / 令牌 / 网关变了；`force` 时无论如何）的订阅登记到服务器。返回页面是否需要重取 `MobileInfo`。
+    /// 每次同步先重试待吊销的授权。
     pub async fn sync_push(&self, conn: Option<&Connection>, force: bool) -> bool {
         let Some(conn) = conn else { return false };
         let _serial = self.sync_lock.lock().await;
+        self.flush_revokes().await;
         let Ok(state) = self.native.push_state() else {
             return false;
         };
+        if state.enabled && gateway_channel(state.channel) {
+            return self.sync_gateway(conn, &state, force).await;
+        }
         let Some(sub) = sync_target(&state, force) else {
             return false;
         };
-        let kind = match sub {
-            PushSubscription::Fcm { .. } => "fcm",
-            PushSubscription::WebPush { .. } => "webpush",
-        };
         match self.api.push_subscribe(&conn.base, &conn.token, &sub).await {
-            Ok(id) => {
-                let unchanged = state.synced_endpoint.as_deref() == Some(sub.key())
-                    && state.subscription_id.as_deref() == Some(id.as_str());
-                if let Err(e) = self.native.push_mark_synced(sub.key(), &id, &conn.base) {
-                    self.log.log("push.sync_error", json!({"error": e}));
-                    return false;
-                }
-                let had_error = self.inner().sync_error.take().is_some();
-                self.log.log(
-                    "push.synced",
-                    json!({"id": id, "kind": kind, "forced": force}),
-                );
-                !unchanged || had_error
-            }
-            Err(ApiError::Status { status, code, .. }) if (400..500).contains(&status) => {
+            Ok(id) => self.synced(conn, &state, &sub, &id, force),
+            Err(e) => self.sync_failed(e),
+        }
+    }
+
+    /// 登记成功：记到原生侧，清掉旧错误。
+    fn synced(
+        &self,
+        conn: &Connection,
+        state: &PushState,
+        sub: &PushSubscription,
+        id: &str,
+        force: bool,
+    ) -> bool {
+        let unchanged = state.synced_endpoint.as_deref() == Some(sub.key())
+            && state.subscription_id.as_deref() == Some(id);
+        if let Err(e) = self.native.push_mark_synced(sub.key(), id, &conn.base) {
+            self.log.log("push.sync_error", json!({"error": e}));
+            return false;
+        }
+        let had_error = self.inner().sync_error.take().is_some();
+        let kind = match sub {
+            PushSubscription::WebPush { .. } => "webpush",
+            PushSubscription::Gateway { .. } => "gateway",
+        };
+        self.log.log(
+            "push.synced",
+            json!({"id": id, "kind": kind, "forced": force}),
+        );
+        !unchanged || had_error
+    }
+
+    /// orynd 拒绝（4xx）记成错误；网络错误与 5xx 下次再试。
+    fn sync_failed(&self, e: ApiError) -> bool {
+        match e {
+            ApiError::Status { status, code, .. } if (400..500).contains(&status) => {
                 let reason = if code.is_empty() {
                     format!("http_{status}")
                 } else {
@@ -877,32 +1089,431 @@ impl<N: Native, A: Api> MobileCore<N, A> {
                     .log("push.sync_error", json!({"status": status, "code": code}));
                 true
             }
-            Err(_) => false,
+            _ => false,
         }
     }
 
-    /// `host_push_enable`：取 VAPID 公钥 → 原生启用（可能弹权限、选分发器）→ 登记订阅。
-    pub async fn push_enable(&self, conn: Option<&Connection>) -> Result<(), String> {
-        let conn = conn.ok_or_else(|| "not_connected".to_string())?;
-        let vapid = self
-            .api
-            .vapid_key(&conn.base, &conn.token)
+    /// 记下网关登记的错误码（K6）。
+    fn gateway_error(&self, code: &'static str) -> bool {
+        self.inner().sync_error = Some(code.to_string());
+        self.log.log("push.sync_error", json!({"code": code}));
+        true
+    }
+
+    /// 网关通道（FCM / APNs）的同步：权限 → 删 UnifiedPush 时代的旧订阅 → 读 orynd 的网关 → 受信检查 →
+    /// 授权与网关 / 主机密钥不符则吊销旧授权 → 没有授权或令牌变了就登记（info → challenges → nonce → grants）→
+    /// 登记订阅（409 `gateway_grant_invalid` / `gateway_changed` 时清掉授权重登一次）→ 记为已同步。
+    async fn sync_gateway(&self, conn: &Connection, state: &PushState, force: bool) -> bool {
+        if state.permission != Permission::Granted {
+            return false;
+        }
+        // D5：从 UnifiedPush 迁到网关 FCM（或 M28 之前的直发 FCM 订阅）：服务器上那条旧订阅先删掉。
+        // 删不掉（离线、5xx）就先不登记，免得同一设备在两条通道上各收一份。
+        if let Some(id) = state.subscription_id.as_deref() {
+            if !state
+                .synced_endpoint
+                .as_deref()
+                .is_some_and(pushgw::is_grant_endpoint)
+            {
+                match self.api.push_unsubscribe(&conn.base, &conn.token, id).await {
+                    Ok(()) => self.log.log("push.migrated", json!({"id": id})),
+                    Err(ApiError::Status { status, .. }) if status < 500 => {}
+                    Err(_) => return false,
+                }
+            }
+        }
+        let gw = match self.api.push_gateway(&conn.base, &conn.token).await {
+            Ok(gw) => gw,
+            Err(e) => return self.sync_failed(e),
+        };
+        if !self.is_trusted(&gw.origin) {
+            self.log
+                .log("push.gateway_untrusted", json!({"origin": gw.origin}));
+            return self.gateway_error(GATEWAY_UNTRUSTED);
+        }
+        let stale = self
+            .ledger()
+            .grant
+            .clone()
+            .is_some_and(|g| g.origin != gw.origin || g.host_key != gw.host_key);
+        if stale {
+            self.log.log("push.grant_stale", json!({}));
+            self.retire_grant().await;
+        }
+        let (Some(token), Some(p256dh), Some(auth)) =
+            (push_token(state), state.p256dh.clone(), state.auth.clone())
+        else {
+            // 原生侧还没拿到令牌 / 密钥：等它的 push 事件
+            return false;
+        };
+        let key = match self.device_key() {
+            Ok(k) => k,
+            Err(e) => {
+                self.log.log("push.sync_error", json!({"error": e}));
+                return false;
+            }
+        };
+        let hash = pushgw::token_hash(token);
+        let mut retried = false;
+        loop {
+            let current = self.ledger().grant.clone().filter(|g| g.token_hash == hash);
+            let (grant, fresh) = match current {
+                Some(g) => (g, false),
+                None => match self.enroll(&key, &gw, state, token).await {
+                    Ok(g) => (g, true),
+                    Err(GwFail::Code(code)) => return self.gateway_error(code),
+                    Err(GwFail::Retry) => return false,
+                },
+            };
+            let endpoint = grant.endpoint();
+            if !force && !fresh && state.synced_endpoint.as_deref() == Some(endpoint.as_str()) {
+                return false;
+            }
+            let sub = PushSubscription::Gateway {
+                endpoint,
+                gateway: grant.origin.clone(),
+                grant: grant.grant.clone(),
+                p256dh: p256dh.clone(),
+                auth: auth.clone(),
+            };
+            match self.api.push_subscribe(&conn.base, &conn.token, &sub).await {
+                Ok(id) => return self.synced(conn, state, &sub, &id, force),
+                Err(ApiError::Status {
+                    status: 409, code, ..
+                }) if !retried
+                    && (code == "gateway_grant_invalid" || code == "gateway_changed") =>
+                {
+                    // 网关已判这份授权无效（或 orynd 刚换了网关）：清掉、重新授权一次
+                    self.log.log("push.grant_invalid", json!({"code": code}));
+                    self.update_ledger(|l| l.grant = None);
+                    retried = true;
+                }
+                Err(e) => return self.sync_failed(e),
+            }
+        }
+    }
+
+    /// 向网关发一次请求（`key` 有值时带设备签名）。不在受信列表里的 origin 一律不发。
+    async fn gateway(
+        &self,
+        key: Option<&DeviceKey>,
+        method: &'static str,
+        origin: &str,
+        path: &str,
+        body: Vec<u8>,
+    ) -> Result<GatewayReply, ApiError> {
+        if !self.is_trusted(origin) {
+            return Err(ApiError::Network("untrusted push gateway".into()));
+        }
+        let headers = key
+            .map(|k| k.headers(method, origin, path, pushgw::now_ms(), &body))
+            .unwrap_or_default();
+        self.api
+            .gateway_call(GatewayCall {
+                method,
+                origin: origin.to_string(),
+                path: path.to_string(),
+                headers,
+                body,
+            })
             .await
-            .map_err(|e| e.to_string())?;
-        self.native.push_enable(&vapid).await?;
+    }
+
+    /// 网关应答 → 期望的状态时解出 JSON 体；否则按 K6 归类（日志只记路径、状态与网关错误码）。
+    fn gateway_reply(
+        &self,
+        path: &str,
+        res: Result<GatewayReply, ApiError>,
+        want: u16,
+    ) -> Result<Value, GwFail> {
+        let reply = match res {
+            Ok(r) => r,
+            Err(e) => {
+                self.log.log(
+                    "push.gateway_error",
+                    json!({"path": path, "error": e.to_string()}),
+                );
+                return Err(GwFail::Retry);
+            }
+        };
+        if reply.status == want {
+            return serde_json::from_slice(&reply.body).map_err(|_| GwFail::Code(GATEWAY_REJECTED));
+        }
+        let code = serde_json::from_slice::<GwErrorBody>(&reply.body)
+            .unwrap_or_default()
+            .code;
+        self.log.log(
+            "push.gateway_error",
+            json!({"path": path, "status": reply.status, "code": code}),
+        );
+        Err(match reply.status {
+            409 if code == "app_mismatch" => GwFail::Code(GATEWAY_APP_MISMATCH),
+            429 | 500.. => GwFail::Retry,
+            _ => GwFail::Code(GATEWAY_REJECTED),
+        })
+    }
+
+    /// `/v1/info` 与本 App 兼容：APNs 比对 topic 与环境，FCM 比对 Firebase 项目。
+    fn compatible(&self, info: &Value, state: &PushState) -> bool {
+        if info["v"] != 1 {
+            return false;
+        }
+        match state.channel {
+            Some(PushChannel::Apns) => {
+                info["apns"]["topic"] == self.app_id.as_str()
+                    && info["apns"]["environments"]
+                        .as_array()
+                        .is_some_and(|envs| envs.iter().any(|e| e == apns_environment()))
+            }
+            Some(PushChannel::Fcm) => state
+                .fcm_project_id
+                .as_deref()
+                .is_some_and(|p| info["fcm"]["projectId"] == p),
+            _ => false,
+        }
+    }
+
+    /// 向网关申请授权：info → challenges → 等 nonce → grants，成功后写进账本。
+    async fn enroll(
+        &self,
+        key: &DeviceKey,
+        gw: &GatewayInfo,
+        state: &PushState,
+        token: &str,
+    ) -> Result<Grant, GwFail> {
+        let origin = gw.origin.as_str();
+        let res = self
+            .gateway(None, "GET", origin, pushgw::PATH_INFO, Vec::new())
+            .await;
+        let info = self.gateway_reply(pushgw::PATH_INFO, res, 200)?;
+        if !self.compatible(&info, state) {
+            self.log
+                .log("push.gateway_mismatch", json!({"origin": origin}));
+            return Err(GwFail::Code(GATEWAY_APP_MISMATCH));
+        }
+        let apns = state.channel == Some(PushChannel::Apns);
+        let mut body = json!({
+            "channel": if apns { "apns" } else { "fcm" },
+            "appId": self.app_id,
+            "token": token,
+        });
+        if apns {
+            body["environment"] = json!(apns_environment());
+        }
+        let res = self
+            .gateway(
+                Some(key),
+                "POST",
+                origin,
+                pushgw::PATH_CHALLENGES,
+                body.to_string().into_bytes(),
+            )
+            .await;
+        let challenge = self.gateway_reply(pushgw::PATH_CHALLENGES, res, 202)?;
+        let Some(id) = challenge["challengeId"]
+            .as_str()
+            .filter(|id| pushgw::valid_id(id))
+        else {
+            return Err(GwFail::Code(GATEWAY_REJECTED));
+        };
+        let Some(nonce) = self.challenges.wait(id, self.challenge_wait).await else {
+            self.log.log("push.challenge_timeout", json!({}));
+            return Err(GwFail::Code(GATEWAY_CHALLENGE_TIMEOUT));
+        };
+        let body = json!({"challengeId": id, "nonce": nonce, "hostKey": gw.host_key});
+        let res = self
+            .gateway(
+                Some(key),
+                "POST",
+                origin,
+                pushgw::PATH_GRANTS,
+                body.to_string().into_bytes(),
+            )
+            .await;
+        let granted = self.gateway_reply(pushgw::PATH_GRANTS, res, 201)?;
+        let Some(grant) = granted["grant"].as_str().filter(|g| pushgw::valid_id(g)) else {
+            return Err(GwFail::Code(GATEWAY_REJECTED));
+        };
+        let grant = Grant {
+            origin: origin.to_string(),
+            host_key: gw.host_key.clone(),
+            grant: grant.to_string(),
+            token_hash: pushgw::token_hash(token),
+        };
+        self.update_ledger(|l| l.grant = Some(grant.clone()));
+        self.log.log(
+            "push.granted",
+            json!({"origin": origin, "channel": if apns { "apns" } else { "fcm" }}),
+        );
+        Ok(grant)
+    }
+
+    /// 以设备签名 `DELETE /v1/grants/{id}`。返回是否了结（成功，或网关明确拒绝、重试也没用）；
+    /// 网络错误、401、429、5xx 留待下次。不受信的 origin 直接了结、不发请求。
+    async fn revoke(&self, key: &DeviceKey, r: &Revoke) -> bool {
+        if !self.is_trusted(&r.origin) {
+            return true;
+        }
+        let path = format!("{}/{}", pushgw::PATH_GRANTS, r.grant);
+        match self
+            .gateway(Some(key), "DELETE", &r.origin, &path, Vec::new())
+            .await
+        {
+            Ok(reply) if !matches!(reply.status, 401 | 429 | 500..) => {
+                self.log
+                    .log("push.revoked", json!({"status": reply.status}));
+                true
+            }
+            Ok(reply) => {
+                self.log
+                    .log("push.revoke_error", json!({"status": reply.status}));
+                false
+            }
+            Err(e) => {
+                self.log
+                    .log("push.revoke_error", json!({"error": e.to_string()}));
+                false
+            }
+        }
+    }
+
+    /// 本机授权作废：先挪进待吊销队列（中途退出也不丢），再尽力吊销，成功即移出队列。
+    async fn retire_grant(&self) {
+        let Some(r) = self.update_ledger(|l| {
+            let g = l.grant.take()?;
+            let r = Revoke {
+                origin: g.origin,
+                grant: g.grant,
+            };
+            l.queue_revoke(r.clone());
+            Some(r)
+        }) else {
+            return;
+        };
+        let Ok(key) = self.device_key() else { return };
+        if self.revoke(&key, &r).await {
+            self.update_ledger(|l| l.pending_revokes.retain(|x| x != &r));
+        }
+    }
+
+    /// 重试待吊销的授权（每次同步、解除配对之后）。
+    pub async fn flush_revokes(&self) {
+        let pending = self.ledger().pending_revokes.clone();
+        if pending.is_empty() {
+            return;
+        }
+        let key = match self.device_key() {
+            Ok(k) => k,
+            Err(e) => {
+                self.log.log("push.revoke_error", json!({"error": e}));
+                return;
+            }
+        };
+        for r in pending {
+            if self.revoke(&key, &r).await {
+                self.update_ledger(|l| l.pending_revokes.retain(|x| x != &r));
+            }
+        }
+    }
+
+    /// 原生侧收到网关的 challenge 推送（可能先于 `challenges` 的应答到达，先进缓冲）。日志不记 nonce。
+    pub fn challenge_received(&self, id: &str, nonce: &str) {
+        if !pushgw::valid_id(id) || !pushgw::valid_id(nonce) {
+            self.log.log("push.challenge_invalid", json!({}));
+            return;
+        }
+        self.log.log("push.challenge", json!({}));
+        self.challenges.put(id, nonce);
+    }
+
+    /// 配对后是否还欠一次自动启用（取走即清）。
+    pub fn take_auto_enable(&self) -> bool {
+        self.update_ledger(|l| std::mem::take(&mut l.auto_pending))
+    }
+
+    /// `host_ready` 的推送部分：配对后第一次进入应用时，iOS 或带 FCM 的 gms 包自动启用一次推送；
+    /// 否则强制登记一次。返回页面是否需要重取 `MobileInfo`。
+    pub async fn ready_push(&self, conn: Option<&Connection>) -> bool {
+        let Some(conn) = conn else { return false };
+        if self.take_auto_enable() {
+            let eligible = self.platform == Platform::Ios
+                || self.native.push_state().is_ok_and(|s| s.fcm_available);
+            if eligible {
+                self.log.log("push.auto_enable", json!({}));
+                if let Err(e) = self.push_enable(Some(conn), Transport::Default).await {
+                    self.log.log("push.enable_error", json!({"error": e}));
+                }
+                return true;
+            }
+        }
+        self.sync_push(Some(conn), true).await
+    }
+
+    /// `host_push_enable`：（UnifiedPush 需要时）取 VAPID 公钥 → 原生启用（可能弹权限、选分发器、取令牌）→
+    /// 换了通道就删掉旧通道在服务器上的订阅、离开网关通道就吊销授权 → 登记订阅。
+    pub async fn push_enable(
+        &self,
+        conn: Option<&Connection>,
+        transport: Transport,
+    ) -> Result<(), String> {
+        let conn = conn.ok_or_else(|| "not_connected".to_string())?;
+        let prev = self.native.push_state().ok();
+        let gateway_default =
+            transport == Transport::Default && prev.as_ref().is_some_and(|s| s.fcm_available);
+        let vapid = if self.platform == Platform::Android && !gateway_default {
+            Some(
+                self.api
+                    .vapid_key(&conn.base, &conn.token)
+                    .await
+                    .map_err(|e| e.to_string())?,
+            )
+        } else {
+            None
+        };
+        let now = self.native.push_enable(vapid.as_deref(), transport).await?;
         self.inner().sync_error = None;
+        if let Some(prev) =
+            prev.filter(|p| p.enabled && p.channel.is_some() && p.channel != now.channel)
+        {
+            if let Some(id) = prev.subscription_id.as_deref() {
+                let _ = self.api.push_unsubscribe(&conn.base, &conn.token, id).await;
+                self.log.log(
+                    "push.switched",
+                    json!({"from": prev.channel, "to": now.channel}),
+                );
+            }
+        }
+        if !gateway_channel(now.channel) {
+            self.retire_grant().await;
+        }
         self.sync_push(Some(conn), false).await;
         Ok(())
     }
 
-    /// `host_push_disable`：有订阅 id 则先从服务器删掉（失败忽略），再停用原生推送。
+    /// `host_push_disable`：尽力吊销网关授权（失败进待吊销队列）→ 尽力删服务器上的订阅 → 无条件停用本机推送。
     pub async fn push_disable(&self, conn: Option<&Connection>) {
+        self.retire_grant().await;
         if let (Some(conn), Some(id)) = (conn, self.subscription_id()) {
             let _ = self
                 .api
                 .push_unsubscribe(&conn.base, &conn.token, &id)
                 .await;
         }
+        self.disable_local();
+    }
+
+    /// 解除配对（换服务器、设备被吊销）：授权挪进待吊销队列、停用本机推送、下次配对后自动启用一次。
+    /// 同步执行（会话状态机里调用）；吊销由调用方另起 [`Self::flush_revokes`]。
+    pub fn unpaired(&self) {
+        self.update_ledger(|l| {
+            if let Some(g) = l.grant.take() {
+                l.queue_revoke(Revoke {
+                    origin: g.origin,
+                    grant: g.grant,
+                });
+            }
+            l.auto_pending = true;
+        });
         self.disable_local();
     }
 
@@ -1003,34 +1614,13 @@ impl<N: Native, A: Api> MobileCore<N, A> {
     }
 }
 
-/// iOS（不带原生插件）：推送不可用，分享与 toast 为空操作。
-#[cfg(not(target_os = "android"))]
-pub struct Unsupported;
-
-#[cfg(not(target_os = "android"))]
-impl Native for Unsupported {
-    fn push_state(&self) -> Result<PushState, String> {
-        Err("unsupported".into())
-    }
-    async fn push_enable(&self, _vapid: &str) -> Result<PushState, String> {
-        Err("unsupported".into())
-    }
-    fn push_disable(&self) -> Result<PushState, String> {
-        Ok(PushState::default())
-    }
-    fn push_mark_synced(&self, _endpoint: &str, _id: &str, _server: &str) -> Result<(), String> {
-        Err("unsupported".into())
-    }
-    fn share_ack(&self, _id: &str) {}
-    fn toast(&self, _text: &str) {}
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::api::{Health, PairPoll, PairStart};
     use crate::eventlog::testing::{memory, Buffer};
-    use std::collections::VecDeque;
+    use crate::pushgw::tests::verify;
+    use crate::secrets::testing::FakeStore;
     use tauri_plugin_oryn_mobile::{Event, ShareFile, ShareRejected};
 
     const LAUNCHER: &str = "http://tauri.localhost";
@@ -1700,105 +2290,193 @@ mod tests {
         assert_eq!(spec.trail.unwrap().frame.x, 264.0);
     }
 
+    const GW: &str = "https://push.oryn.best";
+    const GW2: &str = "https://gw2.example.com";
+    const HOST_A: &str = "IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xI";
+    const HOST_B: &str = "hostKeyB_rotated";
+    const APP_ID: &str = "com.lynricsy.oryn";
+    const FCM_TOKEN: &str = "fcm-token-SECRET-1";
+    const APNS_TOKEN: &str = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+    const NONCE: &str = "NONCEnonceNONCEnonce_-";
+    const UP_ENDPOINT: &str = "http://localhost:7680/upAbc?up=1";
+
     fn up_state() -> PushState {
         PushState {
             permission: Permission::Granted,
             enabled: true,
             distributor: Some("io.heckel.ntfy".into()),
             channel: Some(PushChannel::UnifiedPush),
-            endpoint: Some("http://localhost:7680/upAbc?up=1".into()),
+            endpoint: Some(UP_ENDPOINT.into()),
             p256dh: Some("pk".into()),
             auth: Some("au".into()),
             ..PushState::default()
         }
     }
 
+    /// gms 包、经网关走 FCM。
+    fn fcm_state() -> PushState {
+        PushState {
+            permission: Permission::Granted,
+            enabled: true,
+            channel: Some(PushChannel::Fcm),
+            fcm_token: Some(FCM_TOKEN.into()),
+            p256dh: Some("pk".into()),
+            auth: Some("au".into()),
+            fcm_available: true,
+            fcm_project_id: Some("oryn-test".into()),
+            ..PushState::default()
+        }
+    }
+
+    fn apns_state() -> PushState {
+        PushState {
+            permission: Permission::Granted,
+            enabled: true,
+            channel: Some(PushChannel::Apns),
+            apns_token: Some(APNS_TOKEN.into()),
+            p256dh: Some("pk".into()),
+            auth: Some("au".into()),
+            ..PushState::default()
+        }
+    }
+
+    fn grant_for(token: &str) -> Grant {
+        Grant {
+            origin: GW.into(),
+            host_key: HOST_A.into(),
+            grant: "AAAAAAAAAAAAAAAAAAAAAA".into(),
+            token_hash: pushgw::token_hash(token),
+        }
+    }
+
     #[test]
     fn push_view_states() {
         use PushViewState::*;
-        let a = Platform::Android;
         let base = up_state();
-        assert_eq!(
-            push_view(Platform::Ios, Some(&base), None).state,
-            Unsupported
-        );
-        assert_eq!(push_view(a, None, None).state, Disabled);
+        assert_eq!(push_view(None, None, None).state, Disabled);
         let off = PushState {
             enabled: false,
             ..base.clone()
         };
-        assert_eq!(push_view(a, Some(&off), None).state, Disabled);
+        assert_eq!(push_view(Some(&off), None, None).state, Disabled);
         let denied = PushState {
             permission: Permission::Denied,
             ..base.clone()
         };
-        assert_eq!(push_view(a, Some(&denied), None).state, PermissionDenied);
+        assert_eq!(push_view(Some(&denied), None, None).state, PermissionDenied);
         let none = PushState {
             distributor: None,
             channel: None,
             endpoint: None,
             ..base.clone()
         };
-        assert_eq!(push_view(a, Some(&none), None).state, NoDistributor);
+        assert_eq!(push_view(Some(&none), None, None).state, NoDistributor);
         let failed = PushState {
             error: Some("ACTION_NOT_ALLOWED".into()),
             ..base.clone()
         };
-        let v = push_view(a, Some(&failed), None);
+        let v = push_view(Some(&failed), None, None);
         assert_eq!(
             (v.state, v.error.as_deref()),
             (Error, Some("ACTION_NOT_ALLOWED"))
         );
-        let v = push_view(a, Some(&base), Some("fcm_unavailable"));
-        assert_eq!(
-            (v.state, v.error.as_deref()),
-            (Error, Some("fcm_unavailable"))
-        );
-        assert_eq!(push_view(a, Some(&base), None).state, Registering);
+        let v = push_view(Some(&base), Some("push_invalid"), None);
+        assert_eq!((v.state, v.error.as_deref()), (Error, Some("push_invalid")));
+        assert_eq!(push_view(Some(&base), None, None).state, Registering);
         let synced = PushState {
             synced_endpoint: base.endpoint.clone(),
             subscription_id: Some("ps_1".into()),
             ..base.clone()
         };
-        let v = push_view(a, Some(&synced), None);
+        let v = push_view(Some(&synced), None, None);
         assert_eq!(v.state, Active);
         assert_eq!(v.endpoint_host.as_deref(), Some("localhost"));
         assert_eq!(v.distributor.as_deref(), Some("io.heckel.ntfy"));
+        // foss 包：没有可切换的通道
         assert_eq!(
             serde_json::to_value(&v).unwrap(),
             json!({"state": "active", "channel": "unifiedpush", "distributor": "io.heckel.ntfy", "endpointHost": "localhost"})
         );
-
-        // FCM：没有分发器也不算 no_distributor；以令牌判断是否已同步
-        let fcm = PushState {
-            distributor: None,
-            channel: Some(PushChannel::Fcm),
-            endpoint: None,
-            p256dh: None,
-            auth: None,
-            fcm_token: Some("fcm_tok".into()),
-            ..base.clone()
-        };
-        assert_eq!(push_view(a, Some(&fcm), None).state, Registering);
-        let fcm_synced = PushState {
-            synced_endpoint: Some("fcm_tok".into()),
-            ..fcm.clone()
-        };
-        let v = push_view(a, Some(&fcm_synced), None);
-        assert_eq!(v.state, Active);
-        assert_eq!(v.endpoint_host, None);
         assert_eq!(
-            serde_json::to_value(&v).unwrap(),
-            json!({"state": "active", "channel": "fcm"})
-        );
-        assert_eq!(
-            serde_json::to_value(push_view(a, None, None)).unwrap(),
+            serde_json::to_value(push_view(None, None, None)).unwrap(),
             json!({"state": "disabled"})
         );
         assert_eq!(
-            serde_json::to_value(push_view(a, Some(&denied), None)).unwrap()["state"],
+            serde_json::to_value(push_view(Some(&denied), None, None)).unwrap()["state"],
             "permission_denied"
         );
+    }
+
+    /// 网关通道只有在授权存在、令牌哈希一致、且已同步的端点等于授权端点时才是 active；`alt` 只给 gms 包。
+    #[test]
+    fn push_view_gateway_states() {
+        use PushViewState::*;
+        let s = fcm_state();
+        let g = grant_for(FCM_TOKEN);
+        let v = push_view(Some(&s), None, None);
+        assert_eq!(
+            (v.state, v.alt),
+            (Registering, Some(PushChannel::UnifiedPush))
+        );
+        // 有授权但服务器上还没登记
+        assert_eq!(push_view(Some(&s), None, Some(&g)).state, Registering);
+        let synced = PushState {
+            synced_endpoint: Some(g.endpoint()),
+            subscription_id: Some("ps_1".into()),
+            ..s.clone()
+        };
+        let v = push_view(Some(&synced), None, Some(&g));
+        assert_eq!(v.state, Active);
+        assert_eq!(
+            serde_json::to_value(&v).unwrap(),
+            json!({"state": "active", "channel": "fcm", "alt": "unifiedpush"})
+        );
+        // 已同步的是别的授权、或令牌变了：registering
+        let other = Grant {
+            grant: "BBBBBBBBBBBBBBBBBBBBBB".into(),
+            ..g.clone()
+        };
+        assert_eq!(
+            push_view(Some(&synced), None, Some(&other)).state,
+            Registering
+        );
+        let rotated = PushState {
+            fcm_token: Some("fcm-token-SECRET-2".into()),
+            ..synced.clone()
+        };
+        assert_eq!(push_view(Some(&rotated), None, Some(&g)).state, Registering);
+        // 没有令牌（原生侧还在取）
+        let no_token = PushState {
+            fcm_token: None,
+            ..synced.clone()
+        };
+        assert_eq!(
+            push_view(Some(&no_token), None, Some(&g)).state,
+            Registering
+        );
+        let v = push_view(Some(&synced), Some(GATEWAY_UNTRUSTED), Some(&g));
+        assert_eq!(
+            serde_json::to_value(&v).unwrap(),
+            json!({"state": "error", "channel": "fcm", "alt": "unifiedpush", "error": "gateway_untrusted"})
+        );
+        // iOS：APNs，没有 alt，不再是 unsupported
+        let ios = apns_state();
+        let g = grant_for(APNS_TOKEN);
+        let ios_synced = PushState {
+            synced_endpoint: Some(g.endpoint()),
+            ..ios.clone()
+        };
+        assert_eq!(
+            serde_json::to_value(push_view(Some(&ios_synced), None, Some(&g))).unwrap(),
+            json!({"state": "active", "channel": "apns"})
+        );
+        assert_eq!(push_view(Some(&ios), None, None).state, Registering);
+        // gms 包手动切到了 UnifiedPush：可切回 FCM
+        let up = PushState {
+            fcm_available: true,
+            ..up_state()
+        };
+        assert_eq!(push_view(Some(&up), None, None).alt, Some(PushChannel::Fcm));
     }
 
     #[test]
@@ -1807,7 +2485,7 @@ mod tests {
         assert_eq!(
             sync_target(&s, false),
             Some(PushSubscription::WebPush {
-                endpoint: "http://localhost:7680/upAbc?up=1".into(),
+                endpoint: UP_ENDPOINT.into(),
                 p256dh: "pk".into(),
                 auth: "au".into()
             })
@@ -1829,29 +2507,9 @@ mod tests {
             ..s.clone()
         };
         assert_eq!(sync_target(&off, true), None);
-        let fcm = PushState {
-            channel: Some(PushChannel::Fcm),
-            endpoint: None,
-            fcm_token: Some("fcm_tok".into()),
-            p256dh: Some("fpk".into()),
-            auth: Some("fau".into()),
-            synced_endpoint: s.endpoint.clone(),
-            ..s.clone()
-        };
-        assert_eq!(
-            sync_target(&fcm, false),
-            Some(PushSubscription::Fcm {
-                token: "fcm_tok".into(),
-                p256dh: "fpk".into(),
-                auth: "fau".into()
-            })
-        );
-        // FCM 没有密钥（M7 之前的状态）：不登记明文订阅
-        let fcm_no_keys = PushState {
-            p256dh: None,
-            ..fcm.clone()
-        };
-        assert_eq!(sync_target(&fcm_no_keys, true), None);
+        // 网关通道不走这里（要先授权）
+        assert_eq!(sync_target(&fcm_state(), true), None);
+        assert_eq!(sync_target(&apns_state(), true), None);
     }
 
     #[test]
@@ -1913,24 +2571,44 @@ mod tests {
         assert_eq!(d.event_log_path, None);
     }
 
-    // ------------------------------------------------------------ 假原生 / 假网络
+    // ------------------------------------------------------------ 假原生 / 假网络 / 假网关
 
     #[derive(Default)]
     struct FakeNative {
         state: Mutex<PushState>,
+        /// `push_enable` 之后的状态（缺省 `up_state()`）。
+        enable_to: Mutex<Option<PushState>>,
         acked: Mutex<Vec<String>>,
         toasts: Mutex<Vec<String>>,
-        enabled_with: Mutex<Option<String>>,
+        enabled_with: Mutex<Vec<(Option<String>, Transport)>>,
     }
 
     impl Native for Arc<FakeNative> {
         fn push_state(&self) -> Result<PushState, String> {
             Ok(self.state.lock().unwrap().clone())
         }
-        async fn push_enable(&self, vapid: &str) -> Result<PushState, String> {
-            *self.enabled_with.lock().unwrap() = Some(vapid.into());
+        async fn push_enable(
+            &self,
+            vapid: Option<&str>,
+            transport: Transport,
+        ) -> Result<PushState, String> {
+            self.enabled_with
+                .lock()
+                .unwrap()
+                .push((vapid.map(str::to_string), transport));
+            let next = self
+                .enable_to
+                .lock()
+                .unwrap()
+                .clone()
+                .unwrap_or_else(up_state);
             let mut s = self.state.lock().unwrap();
-            *s = up_state();
+            // 原生侧保留已登记记录（与 Kotlin 一致，由 Rust 判断要不要删旧订阅）
+            *s = PushState {
+                synced_endpoint: s.synced_endpoint.clone(),
+                subscription_id: s.subscription_id.clone(),
+                ..next
+            };
             Ok(s.clone())
         }
         fn push_disable(&self) -> Result<PushState, String> {
@@ -1953,14 +2631,46 @@ mod tests {
         }
     }
 
+    type Core = MobileCore<Arc<FakeNative>, FakeApi>;
+
+    /// 假网关什么时候把 challenge 推送交给原生侧。
+    #[derive(Debug, Clone, Copy, Default)]
+    enum NonceMode {
+        /// `challenges` 应答之后（正常顺序）。
+        #[default]
+        After,
+        /// 应答之前就到了。
+        Before,
+        /// 一直没到。
+        Never,
+    }
+
     #[derive(Default)]
     struct FakeApi {
         subscribe: Mutex<VecDeque<Result<String, ApiError>>>,
         subscribed: Mutex<Vec<(String, PushSubscription)>>,
+        unsubscribe: Mutex<VecDeque<ApiError>>,
         unsubscribed: Mutex<Vec<String>>,
         uploads: Mutex<Vec<(String, String, Vec<u8>)>>,
         /// 这些文件名的上传失败。
         fail_names: Vec<&'static str>,
+        /// `GET /api/v1/push/gateway`；`None` = `{origin: GW, hostKey: HOST_A}`。
+        gateway: Mutex<Option<Result<GatewayInfo, ApiError>>>,
+        /// 假网关：`/v1/info` 的应答体。
+        info: Mutex<Value>,
+        /// 假网关：按 `"<METHOD> <路径前缀>"` 预置的应答，先到先用。
+        script: Mutex<Vec<(&'static str, Result<GatewayReply, ApiError>)>>,
+        calls: Mutex<Vec<GatewayCall>>,
+        nonce: Mutex<NonceMode>,
+        core: Mutex<Option<std::sync::Weak<Core>>>,
+        seq: std::sync::atomic::AtomicU32,
+    }
+
+    fn reply(status: u16, body: Value) -> Result<GatewayReply, ApiError> {
+        Ok(GatewayReply {
+            status,
+            body: body.to_string().into_bytes(),
+        })
     }
 
     impl Api for FakeApi {
@@ -2001,7 +2711,10 @@ mod tests {
         }
         async fn push_unsubscribe(&self, _: &str, _: &str, id: &str) -> Result<(), ApiError> {
             self.unsubscribed.lock().unwrap().push(id.into());
-            Ok(())
+            match self.unsubscribe.lock().unwrap().pop_front() {
+                Some(e) => Err(e),
+                None => Ok(()),
+            }
         }
         async fn upload_attachment(
             &self,
@@ -2025,24 +2738,100 @@ mod tests {
                 .push((token.into(), name.into(), bytes.clone()));
             Ok(json!({"id": format!("att_{n}"), "name": name, "size": bytes.len()}))
         }
+        async fn push_gateway(&self, _: &str, token: &str) -> Result<GatewayInfo, ApiError> {
+            assert_eq!(token, "odt_secret");
+            self.gateway
+                .lock()
+                .unwrap()
+                .clone()
+                .unwrap_or(Ok(GatewayInfo {
+                    v: 1,
+                    origin: GW.into(),
+                    host_key: HOST_A.into(),
+                }))
+        }
+        async fn gateway_call(&self, call: GatewayCall) -> Result<GatewayReply, ApiError> {
+            self.calls.lock().unwrap().push(call.clone());
+            let key = format!("{} {}", call.method, call.path);
+            {
+                let mut script = self.script.lock().unwrap();
+                if let Some(i) = script.iter().position(|(k, _)| key.starts_with(k)) {
+                    return script.remove(i).1;
+                }
+            }
+            let n = self.seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            match (call.method, call.path.as_str()) {
+                ("GET", "/v1/info") => reply(200, self.info.lock().unwrap().clone()),
+                ("POST", "/v1/challenges") => {
+                    let id = format!("CH{n:020}");
+                    let core = self.core.lock().unwrap().as_ref().and_then(|w| w.upgrade());
+                    let mode = *self.nonce.lock().unwrap();
+                    match mode {
+                        NonceMode::Before => core.unwrap().challenge_received(&id, NONCE),
+                        NonceMode::After => {
+                            let id = id.clone();
+                            tokio::spawn(async move {
+                                tokio::task::yield_now().await;
+                                core.unwrap().challenge_received(&id, NONCE);
+                            });
+                        }
+                        NonceMode::Never => {}
+                    }
+                    reply(202, json!({"challengeId": id}))
+                }
+                ("POST", "/v1/grants") => {
+                    reply(201, json!({"grant": format!("GR{n:020}"), "createdAt": 1}))
+                }
+                ("DELETE", _) => reply(204, Value::Null),
+                other => unreachable!("unexpected gateway call {other:?}"),
+            }
+        }
     }
 
     struct Rig {
-        core: MobileCore<Arc<FakeNative>, FakeApi>,
+        core: Arc<Core>,
         native: Arc<FakeNative>,
         api: Arc<FakeApi>,
         log: Buffer,
+        keys: FakeStore,
+        dir: tempfile::TempDir,
     }
 
     fn rig(api: FakeApi) -> Rig {
+        rig_with(api, Platform::Android, Duration::from_secs(5))
+    }
+
+    fn rig_with(api: FakeApi, platform: Platform, challenge_wait: Duration) -> Rig {
         let native = Arc::new(FakeNative::default());
         let api = Arc::new(api);
+        *api.info.lock().unwrap() = json!({
+            "v": 1,
+            "apns": {"topic": APP_ID, "environments": ["production", "sandbox"]},
+            "fcm": {"projectId": "oryn-test"}
+        });
         let (log, buf) = memory();
+        let dir = tempfile::tempdir().unwrap();
+        let keys = FakeStore::default();
+        let mut core = MobileCore::new(
+            native.clone(),
+            api.clone(),
+            log,
+            platform,
+            dir.path().to_path_buf(),
+            Box::new(keys.clone()),
+            APP_ID.into(),
+        );
+        core.trusted = vec![GW.into(), GW2.into()];
+        core.challenge_wait = challenge_wait;
+        let core = Arc::new(core);
+        *api.core.lock().unwrap() = Some(Arc::downgrade(&core));
         Rig {
-            core: MobileCore::new(native.clone(), api.clone(), log, Platform::Android),
+            core,
             native,
             api,
             log: buf,
+            keys,
+            dir,
         }
     }
 
@@ -2052,7 +2841,81 @@ mod tests {
             assert!(!text.contains("odt_"), "event log leaked a token: {text}");
             assert!(!text.contains("\"pk\""), "event log leaked p256dh: {text}");
             assert!(!text.contains("\"au\""), "event log leaked auth: {text}");
+            assert!(
+                !text.contains("fcm-token-"),
+                "event log leaked an FCM token: {text}"
+            );
+            assert!(
+                !text.contains(APNS_TOKEN),
+                "event log leaked an APNs token: {text}"
+            );
+            assert!(!text.contains(NONCE), "event log leaked a nonce: {text}");
         }
+    }
+
+    impl Rig {
+        /// 假网关收到的请求，`"<METHOD> <路径>"`。
+        fn gw(&self) -> Vec<String> {
+            self.api
+                .calls
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|c| format!("{} {}", c.method, c.path))
+                .collect()
+        }
+
+        fn call(&self, i: usize) -> GatewayCall {
+            self.api.calls.lock().unwrap()[i].clone()
+        }
+
+        fn ledger(&self) -> Ledger {
+            Ledger::load(self.dir.path())
+        }
+
+        fn set_state(&self, s: PushState) {
+            *self.native.state.lock().unwrap() = s;
+        }
+
+        fn state(&self) -> PushState {
+            self.native.state.lock().unwrap().clone()
+        }
+
+        fn last_sub(&self) -> PushSubscription {
+            self.api
+                .subscribed
+                .lock()
+                .unwrap()
+                .last()
+                .unwrap()
+                .1
+                .clone()
+        }
+
+        /// 请求带设备签名，且能用本机设备公钥验过（与网关 `pushproto.Verify` 同一算法）。
+        fn assert_signed(&self, c: &GatewayCall) {
+            let h = |name: &str| {
+                c.headers
+                    .iter()
+                    .find(|(k, _)| k == name)
+                    .map(|(_, v)| v.clone())
+                    .unwrap_or_else(|| panic!("{name} missing on {} {}", c.method, c.path))
+            };
+            let key = h(pushgw::HEADER_DEVICE_KEY);
+            assert_eq!(key, DeviceKey::load_or_create(&self.keys).unwrap().public());
+            let ts: i64 = h(pushgw::HEADER_TIMESTAMP).parse().unwrap();
+            let input = pushgw::signing_input(c.method, &c.origin, &c.path, ts, &c.body);
+            assert!(
+                verify(&key, input.as_bytes(), &h(pushgw::HEADER_SIGNATURE)),
+                "bad signature on {} {}",
+                c.method,
+                c.path
+            );
+        }
+    }
+
+    fn body(c: &GatewayCall) -> Value {
+        serde_json::from_slice(&c.body).unwrap()
     }
 
     fn conn() -> Connection {
@@ -2069,16 +2932,31 @@ mod tests {
             .collect()
     }
 
+    fn status(status: u16, code: &str) -> ApiError {
+        ApiError::Status {
+            status,
+            code: code.into(),
+            message: String::new(),
+        }
+    }
+
     #[tokio::test]
     async fn enable_syncs_once_and_disable_unsubscribes() {
         let r = rig(FakeApi::default());
         // 未进入应用：不能启用，也不同步
-        assert_eq!(r.core.push_enable(None).await, Err("not_connected".into()));
-        assert!(!r.core.sync_push(None, true).await);
-        r.core.push_enable(Some(&conn())).await.unwrap();
         assert_eq!(
-            r.native.enabled_with.lock().unwrap().as_deref(),
-            Some("BVapid")
+            r.core.push_enable(None, Transport::Default).await,
+            Err("not_connected".into())
+        );
+        assert!(!r.core.sync_push(None, true).await);
+        r.core
+            .push_enable(Some(&conn()), Transport::Default)
+            .await
+            .unwrap();
+        // foss 包：走 UnifiedPush，要 VAPID
+        assert_eq!(
+            r.native.enabled_with.lock().unwrap().as_slice(),
+            [(Some("BVapid".to_string()), Transport::Default)]
         );
         assert_eq!(r.core.push_view().state, PushViewState::Active);
         assert_eq!(r.core.subscription_id().as_deref(), Some("ps_1"));
@@ -2102,6 +2980,8 @@ mod tests {
         r.core.push_disable(Some(&conn())).await;
         assert_eq!(r.api.unsubscribed.lock().unwrap().as_slice(), ["ps_1"]);
         assert_eq!(r.core.push_view().state, PushViewState::Disabled);
+        // UnifiedPush 不碰网关
+        assert!(r.gw().is_empty());
         let ev = r.log.events();
         assert_eq!(ev[0]["event"], "push.synced");
         assert_eq!(ev[0]["kind"], "webpush");
@@ -2110,13 +2990,7 @@ mod tests {
     #[tokio::test]
     async fn rejected_subscription_reports_error_network_does_not() {
         let r = rig(FakeApi::default());
-        *r.native.state.lock().unwrap() = PushState {
-            channel: Some(PushChannel::Fcm),
-            distributor: None,
-            endpoint: None,
-            fcm_token: Some("fcm_tok".into()),
-            ..up_state()
-        };
+        r.set_state(up_state());
         r.api
             .subscribe
             .lock()
@@ -2128,34 +3002,529 @@ mod tests {
             .subscribe
             .lock()
             .unwrap()
-            .push_back(Err(ApiError::Status {
-                status: 409,
-                code: "fcm_unavailable".into(),
-                message: String::new(),
-            }));
+            .push_back(Err(status(400, "push_invalid")));
         assert!(r.core.sync_push(Some(&conn()), false).await);
         let v = r.core.push_view();
         assert_eq!(
             (v.state, v.error.as_deref()),
-            (PushViewState::Error, Some("fcm_unavailable"))
+            (PushViewState::Error, Some("push_invalid"))
         );
         // 下次成功即清掉错误
         assert!(r.core.sync_push(Some(&conn()), false).await);
         assert_eq!(r.core.push_view().state, PushViewState::Active);
+        assert_eq!(r.state().synced_endpoint.as_deref(), Some(UP_ENDPOINT));
+        assert_eq!(events(&r.log), ["push.sync_error", "push.synced"]);
+    }
+
+    #[tokio::test]
+    async fn untrusted_origin_sends_nothing() {
+        let r = rig(FakeApi::default());
+        r.set_state(fcm_state());
+        for origin in ["https://evil.example", "http://localhost:7700"] {
+            *r.api.gateway.lock().unwrap() = Some(Ok(GatewayInfo {
+                v: 1,
+                origin: origin.into(),
+                host_key: HOST_A.into(),
+            }));
+            assert!(r.core.sync_push(Some(&conn()), true).await);
+            let v = r.core.push_view();
+            assert_eq!(
+                (v.state, v.error.as_deref()),
+                (PushViewState::Error, Some(GATEWAY_UNTRUSTED))
+            );
+        }
+        // 不读 /v1/info、不提交令牌，也不向 orynd 登记
+        assert!(r.gw().is_empty());
+        assert!(r.api.subscribed.lock().unwrap().is_empty());
+        assert_eq!(r.ledger().grant, None);
+    }
+
+    /// 登记全程：info（不签名）→ challenges → 等 nonce → grants（都带设备签名）→ 登记 `{kind: gateway}` → 已同步。
+    #[tokio::test]
+    async fn enroll_challenge_grant_subscribe() {
+        let r = rig(FakeApi::default());
+        r.set_state(fcm_state());
+        assert_eq!(r.core.push_view().state, PushViewState::Registering);
+        assert!(r.core.sync_push(Some(&conn()), false).await);
         assert_eq!(
-            r.native.state.lock().unwrap().synced_endpoint.as_deref(),
-            Some("fcm_tok")
+            r.gw(),
+            ["GET /v1/info", "POST /v1/challenges", "POST /v1/grants"]
         );
+        let info = r.call(0);
+        assert!(info.headers.is_empty() && info.body.is_empty());
+        assert_eq!(info.origin, GW);
+        let ch = r.call(1);
+        r.assert_signed(&ch);
         assert_eq!(
-            r.api.subscribed.lock().unwrap().last().unwrap().1,
-            PushSubscription::Fcm {
-                token: "fcm_tok".into(),
+            body(&ch),
+            json!({"channel": "fcm", "appId": APP_ID, "token": FCM_TOKEN})
+        );
+        let gr = r.call(2);
+        r.assert_signed(&gr);
+        let challenge_id = format!("CH{:020}", 1);
+        assert_eq!(
+            body(&gr),
+            json!({"challengeId": challenge_id, "nonce": NONCE, "hostKey": HOST_A})
+        );
+        let grant = format!("GR{:020}", 2);
+        let endpoint = format!("{GW}/v1/grants/{grant}");
+        assert_eq!(
+            r.last_sub(),
+            PushSubscription::Gateway {
+                endpoint: endpoint.clone(),
+                gateway: GW.into(),
+                grant: grant.clone(),
                 p256dh: "pk".into(),
                 auth: "au".into()
             }
         );
-        assert_eq!(events(&r.log), ["push.sync_error", "push.synced"]);
-        assert_eq!(r.log.events()[1]["kind"], "fcm");
+        assert_eq!(
+            r.state().synced_endpoint.as_deref(),
+            Some(endpoint.as_str())
+        );
+        assert_eq!(r.core.push_view().state, PushViewState::Active);
+        let ledger = r.ledger();
+        assert_eq!(
+            ledger.grant,
+            Some(Grant {
+                origin: GW.into(),
+                host_key: HOST_A.into(),
+                grant,
+                token_hash: pushgw::token_hash(FCM_TOKEN),
+            })
+        );
+        // 账本里没有令牌本身
+        let raw = std::fs::read_to_string(Ledger::path(r.dir.path())).unwrap();
+        assert!(!raw.contains(FCM_TOKEN));
+        // 已同步：不再联系网关；强制登记只重新 POST 订阅
+        assert!(!r.core.sync_push(Some(&conn()), false).await);
+        assert!(!r.core.sync_push(Some(&conn()), true).await);
+        assert_eq!(r.gw().len(), 3);
+        assert_eq!(r.api.subscribed.lock().unwrap().len(), 2);
+        assert_eq!(r.log.events().last().unwrap()["kind"], "gateway");
+    }
+
+    /// iOS：APNs 通道带环境（debug 构建 sandbox），兼容检查看 topic 与环境。
+    #[tokio::test]
+    async fn apns_enroll_sends_environment() {
+        let r = rig_with(FakeApi::default(), Platform::Ios, Duration::from_secs(5));
+        r.set_state(apns_state());
+        assert!(r.core.sync_push(Some(&conn()), false).await);
+        assert_eq!(
+            body(&r.call(1)),
+            json!({"channel": "apns", "appId": APP_ID, "environment": apns_environment(), "token": APNS_TOKEN})
+        );
+        assert_eq!(r.core.push_view().state, PushViewState::Active);
+        // 网关只配了另一个环境：不兼容
+        let r = rig_with(FakeApi::default(), Platform::Ios, Duration::from_secs(5));
+        r.set_state(apns_state());
+        let other = if apns_environment() == "sandbox" {
+            "production"
+        } else {
+            "sandbox"
+        };
+        *r.api.info.lock().unwrap() =
+            json!({"v": 1, "apns": {"topic": APP_ID, "environments": [other]}});
+        assert!(r.core.sync_push(Some(&conn()), false).await);
+        assert_eq!(
+            r.core.push_view().error.as_deref(),
+            Some(GATEWAY_APP_MISMATCH)
+        );
+        assert_eq!(r.gw(), ["GET /v1/info"]);
+    }
+
+    #[tokio::test]
+    async fn challenge_before_response_is_buffered() {
+        let r = rig(FakeApi::default());
+        *r.api.nonce.lock().unwrap() = NonceMode::Before;
+        r.set_state(fcm_state());
+        assert!(r.core.sync_push(Some(&conn()), false).await);
+        assert_eq!(r.core.push_view().state, PushViewState::Active);
+        assert_eq!(body(&r.call(2))["nonce"], NONCE);
+        // 缓冲：形状不对的丢弃；至多 8 条，最旧的先出
+        r.core.challenge_received("short", NONCE);
+        r.core.challenge_received(&"A".repeat(22), "not-a-nonce");
+        for i in 0..10 {
+            r.core.challenge_received(&format!("ID{i:020}"), NONCE);
+        }
+        assert_eq!(r.core.challenges.take(&format!("ID{:020}", 1)), None);
+        assert_eq!(
+            r.core.challenges.take(&format!("ID{:020}", 9)).as_deref(),
+            Some(NONCE)
+        );
+        assert_eq!(r.core.challenges.take(&"A".repeat(22)), None);
+    }
+
+    #[tokio::test]
+    async fn challenge_timeout_reports_error() {
+        let r = rig_with(
+            FakeApi::default(),
+            Platform::Android,
+            Duration::from_millis(50),
+        );
+        *r.api.nonce.lock().unwrap() = NonceMode::Never;
+        r.set_state(fcm_state());
+        assert!(r.core.sync_push(Some(&conn()), false).await);
+        let v = r.core.push_view();
+        assert_eq!(
+            (v.state, v.error.as_deref()),
+            (PushViewState::Error, Some(GATEWAY_CHALLENGE_TIMEOUT))
+        );
+        assert_eq!(r.gw(), ["GET /v1/info", "POST /v1/challenges"]);
+        assert_eq!(r.ledger().grant, None);
+        assert!(r.api.subscribed.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn token_change_reenrolls() {
+        let r = rig(FakeApi::default());
+        r.set_state(fcm_state());
+        assert!(r.core.sync_push(Some(&conn()), false).await);
+        let first = r.ledger().grant.unwrap();
+        r.native.state.lock().unwrap().fcm_token = Some("fcm-token-SECRET-2".into());
+        assert_eq!(r.core.push_view().state, PushViewState::Registering);
+        assert!(r.core.sync_push(Some(&conn()), false).await);
+        assert_eq!(
+            r.gw()[3..],
+            ["GET /v1/info", "POST /v1/challenges", "POST /v1/grants"]
+        );
+        assert_eq!(body(&r.call(4))["token"], "fcm-token-SECRET-2");
+        let second = r.ledger().grant.unwrap();
+        assert_eq!(second.token_hash, pushgw::token_hash("fcm-token-SECRET-2"));
+        assert_ne!(second.grant, first.grant);
+        // 同一主机：不吊销旧授权（网关按同一对设备 / 主机更新令牌）
+        assert!(!r.gw().iter().any(|c| c.starts_with("DELETE")));
+        assert_eq!(
+            r.state().synced_endpoint.as_deref(),
+            Some(second.endpoint().as_str())
+        );
+        assert_eq!(r.core.push_view().state, PushViewState::Active);
+    }
+
+    #[tokio::test]
+    async fn host_key_change_revokes_then_reenrolls() {
+        let r = rig(FakeApi::default());
+        r.set_state(fcm_state());
+        assert!(r.core.sync_push(Some(&conn()), false).await);
+        let old = r.ledger().grant.unwrap();
+        // orynd 轮换了主机密钥：旧授权尽力吊销，再对新主机授权
+        *r.api.gateway.lock().unwrap() = Some(Ok(GatewayInfo {
+            v: 1,
+            origin: GW.into(),
+            host_key: HOST_B.into(),
+        }));
+        assert!(r.core.sync_push(Some(&conn()), false).await);
+        assert_eq!(
+            r.gw()[3..],
+            [
+                format!("DELETE /v1/grants/{}", old.grant),
+                "GET /v1/info".into(),
+                "POST /v1/challenges".into(),
+                "POST /v1/grants".into()
+            ]
+        );
+        r.assert_signed(&r.call(3));
+        assert_eq!(body(&r.call(6))["hostKey"], HOST_B);
+        let new = r.ledger().grant.unwrap();
+        assert_eq!(new.host_key, HOST_B);
+        assert!(r.ledger().pending_revokes.is_empty());
+        // 换了网关：在旧网关吊销，在新网关授权（旧授权从不带到新网关）
+        *r.api.gateway.lock().unwrap() = Some(Ok(GatewayInfo {
+            v: 1,
+            origin: GW2.into(),
+            host_key: HOST_B.into(),
+        }));
+        assert!(r.core.sync_push(Some(&conn()), false).await);
+        let calls = r.api.calls.lock().unwrap().clone();
+        let tail: Vec<(String, String)> = calls[7..]
+            .iter()
+            .map(|c| (format!("{} {}", c.method, c.path), c.origin.clone()))
+            .collect();
+        assert_eq!(
+            tail,
+            [
+                (format!("DELETE /v1/grants/{}", new.grant), GW.to_string()),
+                ("GET /v1/info".into(), GW2.into()),
+                ("POST /v1/challenges".into(), GW2.into()),
+                ("POST /v1/grants".into(), GW2.into())
+            ]
+        );
+        assert_eq!(r.ledger().grant.unwrap().origin, GW2);
+        assert_eq!(r.core.push_view().state, PushViewState::Active);
+    }
+
+    #[tokio::test]
+    async fn grant_invalid_reenrolls_once() {
+        let r = rig(FakeApi::default());
+        r.set_state(fcm_state());
+        assert!(r.core.sync_push(Some(&conn()), false).await);
+        // orynd 验证网关授权失败：清掉授权、重新授权一次后登记成功
+        r.api
+            .subscribe
+            .lock()
+            .unwrap()
+            .push_back(Err(status(409, "gateway_grant_invalid")));
+        r.api.subscribe.lock().unwrap().push_back(Ok("ps_2".into()));
+        assert!(r.core.sync_push(Some(&conn()), true).await);
+        assert_eq!(r.gw().len(), 6);
+        assert_eq!(r.core.subscription_id().as_deref(), Some("ps_2"));
+        assert_eq!(r.core.push_view().state, PushViewState::Active);
+        // 网关已判失效的授权不必再吊销
+        assert!(!r.gw().iter().any(|c| c.starts_with("DELETE")));
+        // 重登之后仍被拒：只重试一次，然后报错
+        for code in ["gateway_changed", "gateway_grant_invalid"] {
+            r.api
+                .subscribe
+                .lock()
+                .unwrap()
+                .push_back(Err(status(409, code)));
+        }
+        assert!(r.core.sync_push(Some(&conn()), true).await);
+        assert_eq!(r.gw().len(), 9);
+        let v = r.core.push_view();
+        assert_eq!(
+            (v.state, v.error.as_deref()),
+            (PushViewState::Error, Some("gateway_grant_invalid"))
+        );
+    }
+
+    #[tokio::test]
+    async fn disable_revokes_and_queues_on_failure() {
+        let r = rig(FakeApi::default());
+        r.set_state(fcm_state());
+        assert!(r.core.sync_push(Some(&conn()), false).await);
+        let g1 = r.ledger().grant.unwrap();
+        // 在线：吊销成功 → 删订阅 → 停用
+        r.core.push_disable(Some(&conn())).await;
+        assert_eq!(r.gw()[3], format!("DELETE /v1/grants/{}", g1.grant));
+        r.assert_signed(&r.call(3));
+        assert_eq!(r.api.unsubscribed.lock().unwrap().as_slice(), ["ps_1"]);
+        let l = r.ledger();
+        assert_eq!((l.grant, l.pending_revokes.len()), (None, 0));
+        assert_eq!(r.core.push_view().state, PushViewState::Disabled);
+
+        // 离线：吊销失败进队列，本机照样停用
+        r.set_state(fcm_state());
+        assert!(r.core.sync_push(Some(&conn()), false).await);
+        let g2 = r.ledger().grant.unwrap();
+        r.api
+            .script
+            .lock()
+            .unwrap()
+            .push(("DELETE ", Err(ApiError::Network("offline".into()))));
+        r.core.push_disable(None).await;
+        assert_eq!(r.core.push_view().state, PushViewState::Disabled);
+        assert_eq!(
+            r.ledger().pending_revokes,
+            [Revoke {
+                origin: GW.into(),
+                grant: g2.grant.clone()
+            }]
+        );
+        // 下次同步先重试（5xx 留着，成功才移出）
+        r.api
+            .script
+            .lock()
+            .unwrap()
+            .push(("DELETE ", reply(503, json!({"code": "unavailable"}))));
+        r.core.sync_push(Some(&conn()), false).await;
+        assert_eq!(r.ledger().pending_revokes.len(), 1);
+        r.core.sync_push(Some(&conn()), false).await;
+        assert!(r.ledger().pending_revokes.is_empty());
+        let deletes = r.gw().iter().filter(|c| c.starts_with("DELETE")).count();
+        assert_eq!(deletes, 4);
+
+        // 解除配对：授权挪进队列、停用、下次配对自动启用；随后的 flush 吊销掉
+        r.set_state(fcm_state());
+        assert!(r.core.sync_push(Some(&conn()), false).await);
+        assert!(r.core.take_auto_enable(), "新装待自动启用");
+        r.core.unpaired();
+        let l = r.ledger();
+        assert!(l.auto_pending && l.grant.is_none());
+        assert_eq!(l.pending_revokes.len(), 1);
+        assert_eq!(r.core.push_view().state, PushViewState::Disabled);
+        r.core.flush_revokes().await;
+        assert!(r.ledger().pending_revokes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn auto_enable_once_per_pairing() {
+        // gms 包：配对后第一次进入应用自动启用（走 FCM，不取 VAPID）
+        let r = rig(FakeApi::default());
+        r.set_state(PushState {
+            fcm_available: true,
+            fcm_project_id: Some("oryn-test".into()),
+            ..PushState::default()
+        });
+        *r.native.enable_to.lock().unwrap() = Some(fcm_state());
+        // 还没进入应用：不消耗
+        assert!(!r.core.ready_push(None).await);
+        assert!(r.ledger().auto_pending);
+        assert!(r.core.ready_push(Some(&conn())).await);
+        assert_eq!(
+            r.native.enabled_with.lock().unwrap().as_slice(),
+            [(None, Transport::Default)]
+        );
+        assert!(!r.ledger().auto_pending);
+        assert_eq!(r.core.push_view().state, PushViewState::Active);
+        // 之后的 host_ready 只强制登记，不再启用
+        r.core.ready_push(Some(&conn())).await;
+        assert_eq!(r.native.enabled_with.lock().unwrap().len(), 1);
+        // 解除配对后再配对：再自动启用一次
+        r.core.unpaired();
+        r.set_state(PushState {
+            fcm_available: true,
+            ..PushState::default()
+        });
+        assert!(r.core.ready_push(Some(&conn())).await);
+        assert_eq!(r.native.enabled_with.lock().unwrap().len(), 2);
+        r.core.ready_push(Some(&conn())).await;
+        assert_eq!(r.native.enabled_with.lock().unwrap().len(), 2);
+
+        // foss 包（没有 FCM）：不自动启用，标记照样用掉
+        let r = rig(FakeApi::default());
+        r.core.ready_push(Some(&conn())).await;
+        assert!(r.native.enabled_with.lock().unwrap().is_empty());
+        assert!(!r.ledger().auto_pending);
+
+        // iOS：自动启用（不取 VAPID）
+        let r = rig_with(FakeApi::default(), Platform::Ios, Duration::from_secs(5));
+        *r.native.enable_to.lock().unwrap() = Some(apns_state());
+        assert!(r.core.ready_push(Some(&conn())).await);
+        assert_eq!(
+            r.native.enabled_with.lock().unwrap().as_slice(),
+            [(None, Transport::Default)]
+        );
+        assert_eq!(r.core.push_view().state, PushViewState::Active);
+    }
+
+    #[tokio::test]
+    async fn info_mismatch_reports_gateway_app_mismatch() {
+        for info in [
+            json!({"v": 1, "fcm": {"projectId": "someone-else"}}),
+            json!({"v": 1, "apns": {"topic": APP_ID, "environments": ["production", "sandbox"]}}),
+            json!({"v": 2, "fcm": {"projectId": "oryn-test"}}),
+        ] {
+            let r = rig(FakeApi::default());
+            r.set_state(fcm_state());
+            *r.api.info.lock().unwrap() = info;
+            assert!(r.core.sync_push(Some(&conn()), false).await);
+            let v = r.core.push_view();
+            assert_eq!(
+                (v.state, v.error.as_deref()),
+                (PushViewState::Error, Some(GATEWAY_APP_MISMATCH))
+            );
+            // 兼容检查不过：不提交令牌
+            assert_eq!(r.gw(), ["GET /v1/info"]);
+        }
+        // 上游判定令牌不属于本 App：同一个错误码；其它 4xx 是 gateway_rejected；5xx 下次再试
+        for (resp, want) in [
+            (
+                reply(409, json!({"code": "app_mismatch"})),
+                Some(GATEWAY_APP_MISMATCH),
+            ),
+            (
+                reply(400, json!({"code": "malformed"})),
+                Some(GATEWAY_REJECTED),
+            ),
+            (reply(502, json!({"code": "upstream"})), None),
+        ] {
+            let r = rig(FakeApi::default());
+            r.set_state(fcm_state());
+            r.api
+                .script
+                .lock()
+                .unwrap()
+                .push(("POST /v1/challenges", resp));
+            r.core.sync_push(Some(&conn()), false).await;
+            assert_eq!(r.core.push_view().error.as_deref(), want);
+        }
+        // orynd 关了网关 / 旧 orynd：原样显示
+        for code in ["gateway_disabled", "gateway_unsupported"] {
+            let r = rig(FakeApi::default());
+            r.set_state(fcm_state());
+            *r.api.gateway.lock().unwrap() = Some(Err(status(404, code)));
+            assert!(r.core.sync_push(Some(&conn()), false).await);
+            assert_eq!(r.core.push_view().error.as_deref(), Some(code));
+            assert!(r.gw().is_empty());
+        }
+    }
+
+    /// D5：已用 UnifiedPush 的 gms 老用户升级后原生侧改报 `fcm`：先删 orynd 上旧的 Web Push 订阅，再走网关登记。
+    #[tokio::test]
+    async fn unifiedpush_to_fcm_migration_drops_webpush_subscription() {
+        let r = rig(FakeApi::default());
+        let migrated = PushState {
+            synced_endpoint: Some(UP_ENDPOINT.into()),
+            subscription_id: Some("ps_up".into()),
+            distributor: Some("io.heckel.ntfy".into()),
+            ..fcm_state()
+        };
+        // 删不掉（离线）：先不登记，免得两条通道各收一份
+        r.set_state(migrated.clone());
+        r.api
+            .unsubscribe
+            .lock()
+            .unwrap()
+            .push_back(ApiError::Network("offline".into()));
+        assert!(!r.core.sync_push(Some(&conn()), true).await);
+        assert!(r.gw().is_empty());
+        // 恢复联网：删旧订阅 → 网关登记 → 登记网关订阅
+        assert!(r.core.sync_push(Some(&conn()), true).await);
+        assert_eq!(
+            r.api.unsubscribed.lock().unwrap().as_slice(),
+            ["ps_up", "ps_up"]
+        );
+        assert_eq!(
+            r.gw(),
+            ["GET /v1/info", "POST /v1/challenges", "POST /v1/grants"]
+        );
+        assert!(matches!(r.last_sub(), PushSubscription::Gateway { .. }));
+        assert_eq!(r.core.subscription_id().as_deref(), Some("ps_1"));
+        assert_eq!(r.core.push_view().state, PushViewState::Active);
+        // 之后不再删任何订阅
+        assert!(!r.core.sync_push(Some(&conn()), true).await);
+        assert_eq!(r.api.unsubscribed.lock().unwrap().len(), 2);
+        assert!(events(&r.log).contains(&"push.migrated".to_string()));
+    }
+
+    /// gms 包里手动切到 UnifiedPush：删掉网关订阅、吊销授权，改登记 Web Push。
+    #[tokio::test]
+    async fn switch_to_unifiedpush_retires_grant() {
+        let r = rig(FakeApi::default());
+        r.set_state(fcm_state());
+        assert!(r.core.sync_push(Some(&conn()), false).await);
+        let g = r.ledger().grant.unwrap();
+        *r.native.enable_to.lock().unwrap() = Some(PushState {
+            fcm_available: true,
+            ..up_state()
+        });
+        r.api
+            .subscribe
+            .lock()
+            .unwrap()
+            .push_back(Ok("ps_up".into()));
+        r.core
+            .push_enable(Some(&conn()), Transport::UnifiedPush)
+            .await
+            .unwrap();
+        assert_eq!(
+            r.native.enabled_with.lock().unwrap().as_slice(),
+            [(Some("BVapid".to_string()), Transport::UnifiedPush)]
+        );
+        assert_eq!(r.api.unsubscribed.lock().unwrap().as_slice(), ["ps_1"]);
+        assert_eq!(r.gw()[3], format!("DELETE /v1/grants/{}", g.grant));
+        assert_eq!(r.ledger().grant, None);
+        assert!(matches!(r.last_sub(), PushSubscription::WebPush { .. }));
+        let v = r.core.push_view();
+        assert_eq!(
+            (v.state, v.channel, v.alt),
+            (
+                PushViewState::Active,
+                Some(PushChannel::UnifiedPush),
+                Some(PushChannel::Fcm)
+            )
+        );
     }
 
     fn intake(dir: &Path, id: &str, names: &[&str]) -> ShareIntake {
@@ -2324,14 +3693,10 @@ mod tests {
                 "insets": {"top": 24.0, "right": 0.0, "bottom": 16.0, "left": 0.0}
             })
         );
-        let ios = MobileCore::new(
-            Unsupported,
-            r.api.clone(),
-            EventLog::default(),
-            Platform::Ios,
-        );
-        let info = ios.info("0.1.0", TokenStoreKind::Keychain, "");
-        assert_eq!(info.push.state, PushViewState::Unsupported);
+        // iOS 走同一个插件：推送状态来自原生（APNs），不再是 unsupported
+        let ios = rig_with(FakeApi::default(), Platform::Ios, Duration::from_secs(5));
+        let info = ios.core.info("0.1.0", TokenStoreKind::Keychain, "");
+        assert_eq!(info.push.state, PushViewState::Disabled);
         assert_eq!(info.platform, "ios");
     }
 

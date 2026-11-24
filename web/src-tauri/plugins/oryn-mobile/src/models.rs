@@ -49,13 +49,25 @@ pub enum Permission {
     Prompt,
 }
 
-/// 实际在用的推送通道：有 UnifiedPush 分发器时 `unifiedpush`，否则 gms 构建走 `fcm`。
+/// 实际在用的推送通道：gms 包缺省走 `fcm`（经官方推送网关），手动切换或 foss 包走 `unifiedpush`；iOS 为 `apns`。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PushChannel {
     #[serde(rename = "unifiedpush")]
     UnifiedPush,
     Fcm,
+    Apns,
+}
+
+/// `pushEnable` 的通道选择：`default` = gms 包走 FCM（经网关）、foss 包走 UnifiedPush；
+/// `unifiedpush` = 用户在 gms 包里手动切到 UnifiedPush。iOS 忽略。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PushTransport {
+    #[default]
+    Default,
+    #[serde(rename = "unifiedpush")]
+    UnifiedPush,
 }
 
 /// 原生侧保存的推送状态（`pushState` / `pushEnable` / `pushDisable` 的返回、`push` 事件的载荷）。
@@ -66,13 +78,19 @@ pub struct PushState {
     pub enabled: bool,
     pub distributor: Option<String>,
     pub channel: Option<PushChannel>,
-    /// UnifiedPush 端点（FCM 时为空）；RFC 8291 公钥两种通道都有（FCM 的由插件自己生成，见 `FcmKeys.kt`）。
+    /// UnifiedPush 端点（网关通道时为空）；RFC 8291 公钥各通道都有（FCM 的由插件自己生成，见 `FcmKeys.kt`）。
     pub endpoint: Option<String>,
     pub p256dh: Option<String>,
     pub auth: Option<String>,
     /// FCM 注册令牌（`channel = fcm` 时有值）。
     pub fcm_token: Option<String>,
-    /// 已登记到服务器的端点（FCM 时为令牌）。
+    /// APNs 设备令牌（小写十六进制，`channel = apns` 时有值）。
+    pub apns_token: Option<String>,
+    /// 本包带 FCM（gms 包）；iOS 恒为假。
+    pub fcm_available: bool,
+    /// 本包编进的 Firebase 项目 id（与网关 `/v1/info` 的 `fcm.projectId` 比对）。
+    pub fcm_project_id: Option<String>,
+    /// 已登记到服务器的端点（UnifiedPush 为分发器端点，网关通道为 `<网关 origin>/v1/grants/<grant>`）。
     pub synced_endpoint: Option<String>,
     pub subscription_id: Option<String>,
     pub error: Option<String>,
@@ -442,6 +460,11 @@ pub enum Event {
     Push {
         state: PushState,
     },
+    /// 官方推送网关的 challenge 推送到了（FCM data / APNs 载荷里的 `challengeId` 与 `nonce`），交给 Rust 完成授权。
+    PushChallenge {
+        challenge_id: String,
+        nonce: String,
+    },
     Share {
         share: ShareIntake,
     },
@@ -790,6 +813,44 @@ mod tests {
                 id: "ntf_1".into(),
                 path: "/t/T-1".into(),
             }
+        );
+    }
+
+    /// K5：推送状态的新字段、`apns` 通道、`pushchallenge` 事件与 `pushEnable` 的 `transport`。
+    #[test]
+    fn push_k5_shapes() {
+        let s: PushState = serde_json::from_value(json!({
+            "permission": "granted", "enabled": true, "channel": "apns",
+            "p256dh": "k", "auth": "a", "apnsToken": "abcd", "syncedEndpoint": null
+        }))
+        .unwrap();
+        assert_eq!(s.channel, Some(PushChannel::Apns));
+        assert_eq!(s.apns_token.as_deref(), Some("abcd"));
+        assert!(!s.fcm_available, "iOS 缺省 false");
+        let s: PushState = serde_json::from_value(json!({
+            "enabled": true, "channel": "fcm", "fcmAvailable": true, "fcmProjectId": "oryn-test"
+        }))
+        .unwrap();
+        assert!(s.fcm_available);
+        assert_eq!(s.fcm_project_id.as_deref(), Some("oryn-test"));
+        let e: Event = serde_json::from_value(json!({
+            "type": "pushchallenge", "challengeId": "BBBBBBBBBBBBBBBBBBBBBB", "nonce": "CCCCCCCCCCCCCCCCCCCCCC"
+        }))
+        .unwrap();
+        assert_eq!(
+            e,
+            Event::PushChallenge {
+                challenge_id: "BBBBBBBBBBBBBBBBBBBBBB".into(),
+                nonce: "CCCCCCCCCCCCCCCCCCCCCC".into(),
+            }
+        );
+        assert_eq!(
+            serde_json::to_value(PushTransport::UnifiedPush).unwrap(),
+            json!("unifiedpush")
+        );
+        assert_eq!(
+            serde_json::to_value(PushTransport::default()).unwrap(),
+            json!("default")
         );
     }
 }

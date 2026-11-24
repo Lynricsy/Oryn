@@ -28,8 +28,10 @@ pub const MAIN: &str = "main";
 /// 8 = iOS 下沉侧栏改由 WKWebView 的根滚动驱动：`host_sink_set` / `host_sink_show`，原生按 `contentOffset` 跟随，
 /// 底栏只收遮挡 `host_tab_bar_cover`（不再收卡片位置），`host_header_show` 只剩透明度；原生底栏改为浮在 WebView 之上、
 /// 右缘随根滚动裁到卡片左缘（spec 不再带 `bg`）；原生页头 `title` 可为 null（首页只有侧栏钮）；`host_sink_set` 生效前
-/// 非空的 `host_tab_bar_set` / `host_header_set` 一律 `unsupported`）。
-pub const BRIDGE: u32 = 8;
+/// 非空的 `host_tab_bar_set` / `host_header_set` 一律 `unsupported`，9 = 官方推送网关（M28）：`host_push_enable` 可带
+/// `transport: "default" | "unifiedpush"`，`MobileInfo.push` 增加 `alt`、`channel` 可为 `apns`、不再出现 `unsupported`，
+/// 错误码增加 `gateway_*`）。
+pub const BRIDGE: u32 = 9;
 
 pub type SessionCore = Core<HttpApi, TauriShell>;
 

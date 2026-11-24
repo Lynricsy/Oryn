@@ -55,6 +55,8 @@ class NotifyArgs {
 @InvokeArg
 class PushEnableArgs {
   var vapid: String? = null
+  /** `default`（gms 包走 FCM、foss 包走 UnifiedPush）或 `unifiedpush`（gms 包手动切换）。 */
+  var transport: String? = null
 }
 
 @InvokeArg
@@ -82,7 +84,7 @@ class TextArgs {
 
 /**
  * Oryn 的原生能力（只供 Rust 经 `run_mobile_plugin` 调用；插件的 JS 命令表为空，远程页面调不到）。
- * Kotlin → Rust 的事件统一经 `trigger("event", {type, …})`：resume / stop / push / share / insets / recreated / activity。
+ * Kotlin → Rust 的事件统一经 `trigger("event", {type, …})`：resume / stop / push / pushchallenge / share / insets / recreated / activity。
  *
  * 插件对象与进程同寿：Tauri 只在第一个 WebView 出现时调一次 [load]。Activity 因未声明的配置变更（字体大小等）
  * 重建时，wry 在新 Activity 里重建 WebView，插件却不会再收到 [load]（代码审查第 1 条）。所以这里不把 Activity /
@@ -140,6 +142,20 @@ class OrynMobilePlugin(initial: Activity) : Plugin(initial) {
       }
     }
 
+    /** 官方推送网关的 challenge 推送到了（gms 的 `OrynFcmService`）：交给 Rust 完成授权。Rust 不在跑时丢弃（登记只在前台进行）。 */
+    fun pushChallenge(context: Context, challengeId: String, nonce: String) {
+      val p = instance
+      if (p == null || !p.hasListener("event")) {
+        EventLog.log(context, "push.challenge_dropped")
+        return
+      }
+      val o = JSObject()
+      o.put("type", "pushchallenge")
+      o.put("challengeId", challengeId)
+      o.put("nonce", nonce)
+      p.trigger("event", o)
+    }
+
     /** `MainActivity.onWebViewCreate`：每个新建的主 WebView（含 Activity 重建后的）都走这里。 */
     fun webViewCreated(activity: AppCompatActivity, webView: WebView) {
       instance?.bind(activity, webView)
@@ -161,6 +177,24 @@ class OrynMobilePlugin(initial: Activity) : Plugin(initial) {
 
   override fun load(webView: WebView) {
     bind(activity, webView)
+    migrateToFcm(activity)
+  }
+
+  /**
+   * 用户决定 D5：此前启用了 UnifiedPush 的 gms 用户升级后改走网关 FCM（[PushStore.channelFor]）。这些用户从没取过 FCM 令牌，
+   * 这里补取一次并注销 UnifiedPush；令牌到了经 [pushChanged] 交给 Rust，Rust 先删掉服务器上旧的 Web Push 订阅再走网关登记。
+   */
+  private fun migrateToFcm(act: Activity) {
+    val fcm = Fcm.bridge ?: return
+    if (!PushStore.isEnabled(act) || PushStore.preferUp(act) || PushStore.fcmToken(act) != null) return
+    EventLog.log(act, "push.migrate", mapOf("to" to "fcm"))
+    unregisterUnifiedPush(act)
+    val app = act.applicationContext
+    fcm.token(app) { token, error ->
+      PushStore.setFcmToken(app, token)
+      if (token == null) PushStore.setError(app, error ?: "fcm_token")
+      pushChanged(app)
+    }
   }
 
   /** 绑定到（新的）Activity 与 WebView；同一个 WebView 重复调用无副作用。在 UI 线程上调用。 */
@@ -300,39 +334,55 @@ class OrynMobilePlugin(initial: Activity) : Plugin(initial) {
     enablePush(invoke)
   }
 
+  /**
+   * 启用推送，两条通道互斥：`transport` 为 `unifiedpush` 或本包不带 FCM 时走 UnifiedPush，并先删掉 FCM 令牌与接收端密钥；
+   * 否则走 FCM（经官方推送网关），并先注销 UnifiedPush。只有手动切到 UnifiedPush 才记下 `preferUp`。
+   */
   private fun enablePush(invoke: Invoke) {
-    val vapid = invoke.parseArgs(PushEnableArgs::class.java).vapid
+    val args = invoke.parseArgs(PushEnableArgs::class.java)
     val act = activity
+    val fcm = Fcm.bridge
+    val wantUp = args.transport == "unifiedpush" || fcm == null
     PushStore.setError(act, null)
+    PushStore.setPreferUp(act, fcm != null && wantUp)
+    if (!wantUp) {
+      unregisterUnifiedPush(act)
+      PushStore.setEnabled(act, true)
+      EventLog.log(act, "push.enable", mapOf("channel" to "fcm"))
+      fcm.token(act) { token, error ->
+        PushStore.setFcmToken(act, token)
+        if (token == null) PushStore.setError(act, error ?: "fcm_token")
+        // state() 顺带生成 FCM 的接收端密钥（随授权一起登记）
+        invoke.resolve(PushStore.state(act))
+      }
+      return
+    }
+    if (fcm != null) {
+      fcm.delete(act)
+      PushStore.setFcmToken(act, null)
+      FcmKeys.clear(act)
+    }
     act.runOnUiThread {
       UnifiedPush.tryUseCurrentOrDefaultDistributor(act) { ok ->
         PushStore.setEnabled(act, true)
-        val fcm = Fcm.bridge
-        when {
-          ok -> {
-            try {
-              UnifiedPush.register(act, messageForDistributor = "Oryn", vapid = vapid)
-            } catch (e: Exception) {
-              PushStore.setError(act, "vapid_invalid")
-            }
-            EventLog.log(act, "push.enable", mapOf("channel" to "unifiedpush"))
-            invoke.resolve(PushStore.state(act))
-          }
-          fcm != null -> {
-            EventLog.log(act, "push.enable", mapOf("channel" to "fcm"))
-            fcm.token(act) { token, error ->
-              PushStore.setFcmToken(act, token)
-              if (token == null) PushStore.setError(act, error ?: "fcm_token")
-              // state() 顺带生成 FCM 的接收端密钥（随令牌一起登记）
-              invoke.resolve(PushStore.state(act))
-            }
-          }
-          else -> {
-            EventLog.log(act, "push.enable", mapOf("channel" to null))
-            invoke.resolve(PushStore.state(act))
+        if (ok) {
+          try {
+            UnifiedPush.register(act, messageForDistributor = "Oryn", vapid = args.vapid)
+          } catch (e: Exception) {
+            PushStore.setError(act, "vapid_invalid")
           }
         }
+        EventLog.log(act, "push.enable", mapOf("channel" to if (ok) "unifiedpush" else null))
+        invoke.resolve(PushStore.state(act))
       }
+    }
+  }
+
+  /** 注销 UnifiedPush（尽力而为；没有分发器时什么也不做）。 */
+  private fun unregisterUnifiedPush(context: Context) {
+    try {
+      if (UnifiedPush.getSavedDistributor(context) != null) UnifiedPush.unregister(context)
+    } catch (_: Exception) {
     }
   }
 

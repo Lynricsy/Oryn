@@ -969,6 +969,19 @@ mod tests {
         ) -> Result<serde_json::Value, ApiError> {
             unreachable!("session does not upload")
         }
+        async fn push_gateway(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> Result<crate::api::GatewayInfo, ApiError> {
+            unreachable!("session does not read the push gateway")
+        }
+        async fn gateway_call(
+            &self,
+            _: crate::api::GatewayCall,
+        ) -> Result<crate::api::GatewayReply, ApiError> {
+            unreachable!("session does not call the push gateway")
+        }
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]

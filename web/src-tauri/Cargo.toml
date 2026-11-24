@@ -28,6 +28,12 @@ tokio = { version = "1", features = ["sync", "time", "fs"] } # 计时（配对�
 tokio-util = { version = "0.7", features = ["io"] } # 分享上传：文件 → 流式请求体
 # 数据形状全平台共用（推送 / 分享编排、底栏校验在主机上单测）；插件句柄与原生实现只在 Android / iOS 上存在
 tauri-plugin-oryn-mobile = { path = "plugins/oryn-mobile" }
+# 官方推送网关（M28）：设备密钥是软件 P-256（ECDSA / SHA-256，DER 签名），签名输入取请求体的 SHA-256，
+# 头与存储用无填充 base64url；sha2 0.10、base64 0.22 与依赖图里已有的版本一致（p256 0.13 配 rand_core 0.6）
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "pkcs8", "std"] } # pkcs8 带出 ecdsa 的 DER 签名编码
+sha2 = "0.10"
+base64 = "0.22"
+rand_core = { version = "0.6", features = ["getrandom"] }
 
 # Android / iOS 不带官方通知插件（统一经 oryn-mobile 插件发 MessagingStyle / 通信通知）；
 # 桌面与 iOS 的 reqwest 用默认 TLS（rustls + 平台校验器，信任系统根证书，见计划「假设与预案」）

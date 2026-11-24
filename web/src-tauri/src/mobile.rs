@@ -1,4 +1,5 @@
-//! 移动端的 Tauri 接线：原生插件事件、推送订阅同步、分享下发、导航处理、移动端宿主命令与 iOS 原生底栏 / 页头。
+//! 移动端的 Tauri 接线：原生插件事件、推送订阅同步（含官方推送网关的 challenge）、分享下发、导航处理、移动端宿主命令
+//! 与 iOS 原生底栏 / 页头。
 //!
 //! 逻辑在 [`crate::mobile_logic`]（主机上单测）；这里只把它接到插件、会话状态机与页面事件上。
 
@@ -12,14 +13,15 @@ use tauri_plugin_oryn_mobile::{HeaderMenuCmd, HeaderShow, HeaderSpec, TabBarSpec
 use crate::api::HttpApi;
 use crate::eventlog;
 use crate::host::{self, Desktop};
-use crate::mobile_logic::{self, MobileCore, MobileInfo, Platform};
+use crate::mobile_logic::{self, MobileCore, MobileInfo, Platform, Transport};
 use crate::notify::Bucket;
+use crate::secrets::TokenStore;
 use crate::session::Connection;
 
-#[cfg(target_os = "ios")]
-pub use crate::mobile_logic::Unsupported as NativeImpl;
 #[cfg(target_os = "android")]
 pub use android::AndroidNative as NativeImpl;
+#[cfg(target_os = "ios")]
+pub use ios::IosNative as NativeImpl;
 
 /// `host_open_external` 的令牌桶：突发 3，每 2 秒补 1。
 const OPEN_BURST: f64 = 3.0;
@@ -34,13 +36,23 @@ pub struct MobileRt {
 }
 
 impl MobileRt {
-    pub fn new(native: NativeImpl, webview: String) -> Self {
+    /// `dir` = 推送账本所在的配置目录；`keys` = 设备密钥的存储（与设备令牌同一后端）；`app_id` = 应用标识。
+    pub fn new(
+        native: NativeImpl,
+        webview: String,
+        dir: std::path::PathBuf,
+        keys: Box<dyn TokenStore>,
+        app_id: String,
+    ) -> Self {
         Self {
             core: MobileCore::new(
                 native,
                 Arc::new(HttpApi),
                 eventlog::handle(),
                 Platform::current(),
+                dir,
+                keys,
+                app_id,
             ),
             webview,
             open_bucket: Mutex::new(Bucket::new(OPEN_BURST, OPEN_REFILL_MS)),
@@ -78,7 +90,8 @@ async fn deliver_share(app: &AppHandle, d: &Desktop, m: &MobileRt) {
     }
 }
 
-/// `host_ready` 的移动端部分：清返回栈（返回键不会退回连接页）、强制登记一次推送订阅、重发 / 继续分享。
+/// `host_ready` 的移动端部分：清返回栈（返回键不会退回连接页）、配对后自动启用一次推送或强制登记一次订阅、
+/// 重发 / 继续分享。
 pub fn host_ready(app: &AppHandle, d: Arc<Desktop>) {
     let Some(m) = runtime(app) else { return };
     #[cfg(target_os = "android")]
@@ -90,7 +103,10 @@ pub fn host_ready(app: &AppHandle, d: Arc<Desktop>) {
     }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        sync_push(&app, &d, &m, true).await;
+        let conn = connection(&d).await;
+        if m.core.ready_push(conn.as_ref()).await {
+            host::emit(&app, json!({"type": "mobile"}));
+        }
         deliver_share(&app, &d, &m).await;
     });
 }
@@ -137,13 +153,17 @@ pub async fn host_mobile_info(
     Ok(info(&d, &m).await)
 }
 
+/// `transport`（bridge 9）：`unifiedpush` = gms 包里手动切到 UnifiedPush；缺省 `default`。
 #[tauri::command]
 pub async fn host_push_enable(
     d: State<'_, Arc<Desktop>>,
     m: State<'_, Arc<MobileRt>>,
+    transport: Option<Transport>,
 ) -> Res<MobileInfo> {
     let conn = connection(&d).await;
-    m.core.push_enable(conn.as_ref()).await?;
+    m.core
+        .push_enable(conn.as_ref(), transport.unwrap_or_default())
+        .await?;
     Ok(info(&d, &m).await)
 }
 
@@ -471,10 +491,39 @@ mod ios {
 
     use serde_json::json;
     use tauri::{AppHandle, Manager};
-    use tauri_plugin_oryn_mobile::{Event, OrynMobile};
+    use tauri_plugin_oryn_mobile::{Event, OrynMobile, PushState};
 
-    use crate::mobile_logic;
+    use super::{runtime, sync_push};
+    use crate::mobile_logic::{self, Native, Transport};
     use crate::{eventlog, host};
+
+    /// [`Native`] 的 iOS 实现：四个推送命令直接调插件（Swift 侧 APNs，见 K5）；分享与 toast 是空操作（iOS 没有）。
+    pub struct IosNative(pub OrynMobile<tauri::Wry>);
+
+    fn err(e: tauri_plugin_oryn_mobile::Error) -> String {
+        e.to_string()
+    }
+
+    impl Native for IosNative {
+        fn push_state(&self) -> Result<PushState, String> {
+            self.0.push_state().map_err(err)
+        }
+        async fn push_enable(
+            &self,
+            vapid: Option<&str>,
+            transport: Transport,
+        ) -> Result<PushState, String> {
+            self.0.push_enable(vapid, transport).await.map_err(err)
+        }
+        fn push_disable(&self) -> Result<PushState, String> {
+            self.0.push_disable().map_err(err)
+        }
+        fn push_mark_synced(&self, endpoint: &str, id: &str, server: &str) -> Result<(), String> {
+            self.0.push_mark_synced(endpoint, id, server).map_err(err)
+        }
+        fn share_ack(&self, _id: &str) {}
+        fn toast(&self, _text: &str) {}
+    }
 
     /// 当前页面的 `host_sink_set` 是否生效：原生底栏与页头的非空 set 以它为前提（整页导航时由 `sink_reset` 清掉）。
     static SINK_ON: AtomicBool = AtomicBool::new(false);
@@ -492,7 +541,8 @@ mod ios {
             .map(|s| s.inner().clone())
     }
 
-    /// 插件事件：底栏点击转成页面事件 `{type:"tabbar", id}`，页头交互转成 `{type:"header", op, key, …}`。
+    /// 插件事件：底栏点击转成页面事件 `{type:"tabbar", id}`，页头交互转成 `{type:"header", op, key, …}`；
+    /// 推送状态变化（APNs 令牌到了、权限变了）让页面重取并同步订阅，网关的 challenge 交给登记流程。
     pub fn listen(app: &AppHandle) {
         let Some(p) = plugin(app) else { return };
         let handle = app.clone();
@@ -517,6 +567,25 @@ mod ios {
                 let path = crate::session::valid_app_path(&path);
                 eventlog::log("notify.clicked", json!({"id": id, "path": path}));
                 host::open_path(&handle, &path);
+            }
+            Event::Push { .. } => {
+                host::emit(&handle, json!({"type": "mobile"}));
+                let (Some(d), Some(m)) = (host::desktop(&handle), runtime(&handle)) else {
+                    return;
+                };
+                let app = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    sync_push(&app, &d, &m, false).await;
+                });
+            }
+            // 不记 nonce
+            Event::PushChallenge {
+                challenge_id,
+                nonce,
+            } => {
+                if let Some(m) = runtime(&handle) {
+                    m.core.challenge_received(&challenge_id, &nonce);
+                }
             }
             #[cfg(debug_assertions)]
             Event::HeaderHit { x, y, info } => {
@@ -665,7 +734,7 @@ mod android {
     use super::{deliver_share, runtime, sync_push};
     use crate::eventlog;
     use crate::host;
-    use crate::mobile_logic::{self, MainWindowLife, Native};
+    use crate::mobile_logic::{self, MainWindowLife, Native, Transport};
     use crate::webview::{self, RemoteOrigin};
 
     /// 主窗口随 Activity 销毁后重建要用的状态（`app.manage`）。
@@ -735,8 +804,12 @@ mod android {
         fn push_state(&self) -> Result<PushState, String> {
             self.0.push_state().map_err(err)
         }
-        async fn push_enable(&self, vapid: &str) -> Result<PushState, String> {
-            self.0.push_enable(vapid).await.map_err(err)
+        async fn push_enable(
+            &self,
+            vapid: Option<&str>,
+            transport: Transport,
+        ) -> Result<PushState, String> {
+            self.0.push_enable(vapid, transport).await.map_err(err)
         }
         fn push_disable(&self) -> Result<PushState, String> {
             self.0.push_disable().map_err(err)
@@ -783,6 +856,11 @@ mod android {
                     sync_push(&app, &d, &m, false).await;
                 });
             }
+            // 网关的 challenge 推送：交给正在等它的登记流程（不记 nonce）
+            Event::PushChallenge {
+                challenge_id,
+                nonce,
+            } => m.core.challenge_received(&challenge_id, &nonce),
             Event::Share { share } => {
                 tauri::async_runtime::spawn(async move {
                     m.core.share_received(share);

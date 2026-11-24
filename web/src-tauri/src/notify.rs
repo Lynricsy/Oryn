@@ -9,9 +9,9 @@ use std::sync::Mutex;
 use serde::Deserialize;
 use serde_json::json;
 use tauri::AppHandle;
-use tauri_plugin_oryn_mobile::NotificationAvatar;
 #[cfg(all(desktop, not(target_os = "linux")))]
 use tauri_plugin_notification::NotificationExt;
+use tauri_plugin_oryn_mobile::NotificationAvatar;
 
 use crate::session::valid_app_path;
 use crate::{eventlog, host};
@@ -70,10 +70,8 @@ fn valid_thread_color(s: &str) -> bool {
 pub fn sanitize_avatar(av: NotificationAvatar) -> NotificationAvatar {
     let icon = av.icon.and_then(|s| {
         let t = s.trim();
-        (!t.is_empty()
-            && t.len() <= AVATAR_ICON_MAX_BYTES
-            && !t.chars().any(char::is_control))
-        .then(|| t.to_string())
+        (!t.is_empty() && t.len() <= AVATAR_ICON_MAX_BYTES && !t.chars().any(char::is_control))
+            .then(|| t.to_string())
     });
     let color = av.color.and_then(|s| {
         let t = s.trim();
