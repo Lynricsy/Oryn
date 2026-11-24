@@ -29,9 +29,9 @@
   1. `input` 对 RPC 的 `prompt` 与 `follow_up` 都触发，`source:"rpc"`，`text` 为原文。
   2. `session_stop` 返回 `{continue:true, additionalContext}` 后：先发 `agent_end{willContinue:true}`，随后 `before_agent_start{reason:"prompt", prompt:<additionalContext>}`（**reason 不是 revive**），续跑结束时 `session_stop{stop_hook_active:true}`、终态 `agent_end`（无 `willContinue`）。所以 T5 不能凭 `before_agent_start` 开新回合：续跑也会触发它。
   3. 中止（RPC `abort`）的回合**仍发终态 `agent_end`**，但**不发 `session_stop`**。A1 成立；中止回合照常封存，只是没有「检查不过强制续一轮」。
-  4. 忙时 `follow_up`：先 `input`，再在当前 run 内触发 `before_agent_start{prompt:"<follow_up 原文>"}`，之后**一个** `session_stop` + **一个**终态 `agent_end`，随后是这条排队消息自己的 run（`agent_start` → `session_stop` → `agent_end`）。即排队消息形成独立的 run，每个 run 恰一个终态 `agent_end`。
+  4. 事件顺序：三组实测里都是 `input` → `before_agent_start` → `agent_start`，即 `before_agent_start` **先于**本 run 的首个 `agent_start`。忙时 `follow_up`：先 `input`，再在当前 run 内触发 `before_agent_start{prompt:"<follow_up 原文>"}`（无新的 `agent_start`），之后一个 `session_stop` 与一个终态 `agent_end`。第一次实测在其后又出现过一组 `agent_start → session_stop → agent_end`，但那次 A 阶段只等到第一个 `agent_end` 就继续，强制续跑与之交错；第二次（等足 A 的两个 `agent_end`）没有出现。**不据此断言 follow_up 一定形成独立 run**，T5 的回合边界不依赖它。
 - **P5 通过**：控制面——经真实帧服务（不透明源 CSP）用 `--dump-dom --virtual-time-budget=5000` 拿到 React 渲染后的探针 JSON（`text-clipped`，`detail:144`）；以 `nobody` 带沙箱运行也通过。现有渲染器用的就是 `--virtual-time-budget=5000`，直接复用；`--timeout=8000`（不带 virtual time）**拿不到**结果，弃用该分支。探针脚本须由产物 HTML 引用并与产物同源提供（漏放 `probe.js` 时 DOM 里没有结果节点，排查时注意）。orb 内——`/usr/sbin/chromium` 以 uid 1000 **不加 `--no-sandbox`** 即可，结果一致。
-- **P6 失败，走失败分支**：`defaultInactive` 工具在回合中途经 `setActiveTools` 激活后，omp 以 `tool_addition` 系统块 + `defer_loading` 声明它；本机 Anthropic 兼容网关（codehub）对该请求回 400 `The request format is invalid or unsupported by the upstream provider`（去掉控制块重放后同一端点不再报格式错）。Oryn Core 的 `oryn-tool-change-fallback.ts` 只匹配 `tool_addition|tool_removal|tool_reference_unresolved` 字样，这个网关的报错文本不含它们，降级不触发。**裁决**：T5 不在回合中途激活工具。设计工具在 `before_agent_start`（每个 run 的首次）按 `design.status` 是否有本线程的工作副本决定 `setActiveTools`；`design_open` 的结果文本写明「设计工具从下一条消息起可用；本回合内用 `bash` 编辑 `~/designs/<id>/src/` 即可」。另记一条 Core 侧待办（不在本计划内）：扩充降级正则或按「400 + 含控制块」判定。
+- **P6 失败，走失败分支**：`defaultInactive` 工具在回合中途经 `setActiveTools` 激活后，omp 以 `tool_addition` 系统块 + `defer_loading` 声明它；本机 Anthropic 兼容网关（codehub）对该请求回 400 `The request format is invalid or unsupported by the upstream provider`（去掉控制块重放后同一端点不再报格式错）。补测：改在**第二个回合开始时**（`before_agent_start`）激活，同样产生 `tool_addition` 块并 400——会话里只要工具集相对首个请求变化，omp 就走 tool_addition 通道，与是否在回合中途无关。Oryn Core 的 `oryn-tool-change-fallback.ts` 只匹配 `tool_addition|tool_removal|tool_reference_unresolved` 字样，这个网关的报错文本不含它们，降级不触发。**裁决**：T5 不用 `setActiveTools` 做闸门，设计工具在 orb 线程里始终注册且激活；闸门下沉到处理器（没有本线程工作副本时，除 `design_open` 外一律回 `no_design` 并提示先 `design_open`）与工具描述的反向触发段。Core 侧待办（不在本计划内）：降级判据改为「400 且请求体含控制块」；修好后再评估是否恢复按需激活。
 
 ## 目标
 
@@ -55,7 +55,7 @@
 | P3 | Portal 帧嵌在画布里时，HMR WebSocket 与 Partitioned Cookie 可用吗？ | orb 起 vite（`server.allowedHosts` 放行 `$PUBLIC_URL` 主机、`hmr.clientPort=443`），SPA 里 3 个 iframe 用 `PORTAL_SANDBOX`（`PortalPanel.tsx:41`），先到 `/__oryn/login?next=` | 三帧出图，改源码后 2 s 内热更，Safari 与 Chrome 都过，无 `portal_busy`（`conns.go` 的 `maxOrb`，值未读） | Cookie 被拦：live 模式只在 FocusedPage 单帧开；连接超限：live 帧数上限降到 4；WS 不通：`hmr:false`，由 `design-reload` 消息整帧刷新 |
 | P4 | 钩子可靠吗？ | 临时扩展打日志：发 prompt / steer / follow_up、中止、带后台任务的回合 | `input` 的 `source==="rpc"` 拿到原文（`rpc-mode.ts:2664`）；无 `willContinue` 的 `agent_end` 每个 run 恰一次（`agent-session.ts:6411-6492`）；中止后仍有终态 `agent_end`（未验证）；`session_stop` 返回 `{continue:true, additionalContext}` 能续一轮（`shared-events.ts:530`） | 中止不发 `agent_end`：改由下一次 `before_agent_start` 与 orbd 观察到 agent 进程空闲时补封（与 Vetta 一致） |
 | P5 | `--dump-dom` 在两处都可用吗？ | 控制面：`chromiumArgs` 把 `--screenshot` 换成 `--dump-dom`，取 stdout；orb：`chromium --headless=new --dump-dom http://127.0.0.1:<port>/frames/x?__oryn_probe=1` | DOM 里有 `<script id="oryn-probe" type="application/json">` 且含 React 渲染后的测量；orb 内不加 `--no-sandbox` 能跑 | orb 里起不来：按 `ORYN_NESTED_DOCKER` 同类条件加 `--no-sandbox`（orb 本身是隔离边界）；virtual-time 下 React 没渲染完：探针改为 `requestIdleCallback` 后写结果，并用 `--timeout=8000` |
-| P6 | `defaultInactive` + `setActiveTools` 能在回合中途让新工具对下一次模型请求可见吗？ | 临时扩展注册 inactive 工具，在另一个工具的 `execute` 里激活 | 同一回合的后续请求能调用 | 改为 `before_agent_start` 时按工作副本是否存在决定；`design_open` 的结果文本提示「设计工具下一条消息起可用」 |
+| P6 | `defaultInactive` + `setActiveTools` 能在回合中途让新工具对下一次模型请求可见吗？ | 临时扩展注册 inactive 工具，在另一个工具的 `execute` 里激活 | 同一回合的后续请求能调用 | 实测失败（见探针结论）：工具始终激活，闸门放在处理器里 |
 
 ## 冻结契约
 
@@ -115,11 +115,11 @@ dist/<id>.html  dist/assets/**  dist/frames.json
 
 - `artifact.call` 的 params 外壳增加可选 `turn: {id, title}`（`orbCallParams`，`agent.go:885`），进入 `Caller.Turn`。orb 扩展每次调用都带。
 - 内部操作，不注册成工具：`seal_design {id, baseVersion, files:[{path, source}|{path, remove}], check?}`。控制面按 `dist/frames.json` 对齐 pages（多出的帧 add、自动排位；消失的帧 remove；`name/width/height/device` 只在新增时取用），整体走 `writeCanvas`（`live.go:479`），`canvas.json` 不参与冲突检查，`src/**`、`dist/**` 按 `baseVersion` 检查。
-- agent 工具（`oryn-orb.ts`，除 `design_open` 外 `defaultInactive: true`）：
+- agent 工具（`oryn-orb.ts`）：在 orb 线程里始终注册且激活（P6：任何会话中途的工具集变化在本机网关上 400）。除 `design_open` 外，没有本线程工作副本时处理器回 `no_design`，提示先 `design_open`；描述首句写用途，随后写「只用于 Oryn 画布 artifact；在项目仓库里写前端不要用」。
 
 | 工具 | 参数 | 去向 |
 |---|---|---|
-| `design_open` | `{id?, title?}` | orbd `design.open`；成功后激活其余工具 |
+| `design_open` | `{id?, title?}` | orbd `design.open`；建立或接管本线程的工作副本 |
 | `design_check` | `{id, frames?, screenshot?}` | orbd `design.check` |
 | `design_directions` | `{id, surface:"landing"\|"app", industry?, tone?, proposals?:[{name, palette, type, layout}]×3}` | `artifact.call`；landing 由库发 3 张，app 校验 agent 自拟的 3 张 |
 | `design_direction` | `{id, pick}` | `artifact.call`，记录选定方向 |
@@ -240,8 +240,8 @@ Accept 统一口径：除特别写明外，`go build ./...` 无输出，`go test
 - Do：
   - 注册 C5 的工具。
   - `input`：`source==="rpc"` 且不以 `[Oryn ` 开头时记 `pendingTitle`（`prompt` 与 `follow_up` 都会触发）。
-  - 回合边界以 **run** 为单位：`agent_start` 后的第一个 `before_agent_start` 开新回合（生成 `turnId=crypto.randomUUID()`、取 `pendingTitle`、发 `design.turn`）；同一 run 内后续的 `before_agent_start`（`session_stop` 续跑、run 内吸收的 follow_up，`reason` 都是 `prompt`）不开新回合。P4 实测：续跑的 `before_agent_start.prompt` 就是 `additionalContext`，不能当作用户原话。
-  - 设计工具的激活只在新回合开始时做（P6 失败分支）：按 `design.status` 有无本线程工作副本调用 `setActiveTools`，并追加一行现状；回合中途不改工具集。
+  - 设计回合以 **run** 为单位，跨 `willContinue` 保持：扩展维护 `turn: {id, title} | null`。`agent_start` 时若 `turn` 为空，开新回合（`turnId=crypto.randomUUID()`、`title=pendingTitle`、清空 `pendingTitle`、发 `design.turn`）；`agent_end{willContinue:true}` 不清 `turn`，后续的 `agent_start` 沿用；终态 `agent_end`（无 `willContinue`）封存后把 `turn` 置空。`before_agent_start` 只用来追加一行设计现状，不开回合（P4：它先于首个 `agent_start`，且续跑与 run 内吸收的 follow_up 也会触发它、`prompt` 是 `additionalContext` 或排队原文）。
+  - 不调用 `setActiveTools`（P6 补测：回合开始时切换同样 400）。
   - `session_stop`：有脏副本且 `check.status` 为 `issues` 或 `unverified`、且 `!stop_hook_active` 时，返回 `{continue:true, additionalContext:"设计检查未通过：…"}`，每回合至多一次（P4 实测：续跑结束时 `stop_hook_active:true`）。中止的回合不发 `session_stop`，不强制续跑。
   - `agent_end` 且 `!willContinue`：`void` 发 `design.seal`，不 await。中止的回合同样有终态 `agent_end`，照常封存。
   - `ARTIFACT_GUIDE` 加一行，指向 `oryn-design`。
