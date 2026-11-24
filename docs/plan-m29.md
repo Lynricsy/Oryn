@@ -292,7 +292,7 @@ Accept 统一口径：除特别写明外，`go build ./...` 无输出，`go test
 
 **I2 旧版查看与恢复对账**
 - Depends on：T4、T6。
-- Files：`ArtifactViewer.tsx`（设计画布钉旧版时强制静态帧，横幅文案）、`internal/orbdrt/design.go`（对账已在 T4 实现，这里补测试）。
+- Files：`ArtifactViewer.tsx`（设计画布钉旧版时强制静态帧，横幅文案）。orbd 侧的回合交界对账不在这里：T4 的 `designReconcile` 只在显式 `design.open` 时运行，已在第 3 波由 Q1Orb 补到 `designTurnStart`（封存上一回合后对本线程每个副本取 head 对账：干净且落后 → 重新物化并重启 dev 服务，脏的保留），回归测试不调 `design.open`。
 - Accept：`bun run accept:m29 -- --only K5`（钉 v1 → 静态帧显示旧内容 → 恢复 → 下一回合 agent 的工作副本是恢复后的源码）。
 
 **I3 便签自动投递**
