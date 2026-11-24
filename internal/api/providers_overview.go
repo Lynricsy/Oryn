@@ -269,7 +269,6 @@ func (s *Server) GetProvidersOverview(w http.ResponseWriter, r *http.Request) {
 			if smp, ok := sampleByOrb[o.ID]; ok {
 				smpCopy := smp
 				summary.LatestSample = &smpCopy
-				item.Live.DiskUsedMB += smp.DiskUsedMB
 				item.Live.NetRxBytes += smp.NetRxBytes
 				item.Live.NetTxBytes += smp.NetTxBytes
 				if o.State == orbs.StateReady {
@@ -321,7 +320,6 @@ func (s *Server) GetProvidersOverview(w http.ResponseWriter, r *http.Request) {
 		out.Summary.Live.CPUPct += item.Live.CPUPct
 		out.Summary.Live.MemUsedMB += item.Live.MemUsedMB
 		out.Summary.Live.MemLimitMB += item.Live.MemLimitMB
-		out.Summary.Live.DiskUsedMB += item.Live.DiskUsedMB
 		out.Summary.Live.NetRxBytes += item.Live.NetRxBytes
 		out.Summary.Live.NetTxBytes += item.Live.NetTxBytes
 		out.Summary.Snapshots.ReadyCount += item.Snapshots.ReadyCount

@@ -151,9 +151,6 @@ export function ProvidersOverviewPage(): ReactNode {
 			? (summary.host.diskUsedBytes / summary.host.diskTotalBytes) * 100
 			: undefined;
 
-	const orbDiskBytes = Math.round(
-		(summary?.live.diskUsedMB ?? 0) * 1024 * 1024,
-	);
 	const activeJobs = (summary?.jobs.queued ?? 0) + (summary?.jobs.claimed ?? 0);
 
 	const kpiCols =
@@ -341,7 +338,7 @@ export function ProvidersOverviewPage(): ReactNode {
 									value={
 										hasHostDisk
 											? `${formatBytes(summary.host.diskUsedBytes)} / ${formatBytes(summary.host.diskTotalBytes)}`
-											: formatBytes(orbDiskBytes + summary.snapshots.totalBytes)
+											: formatBytes(summary.snapshots.totalBytes)
 									}
 									meter={
 										diskPct !== undefined
@@ -354,12 +351,10 @@ export function ProvidersOverviewPage(): ReactNode {
 									sub={
 										hasHostDisk
 											? t("providers.overview.kpi.storageHostSub", {
-													orbDisk: formatBytes(orbDiskBytes),
 													snap: formatBytes(summary.snapshots.totalBytes),
+													count: summary.snapshots.readyCount,
 												})
-											: t("providers.overview.kpi.storageOrbSub", {
-													orbDisk: formatBytes(orbDiskBytes),
-													snap: formatBytes(summary.snapshots.totalBytes),
+											: t("providers.overview.kpi.storageSnapSub", {
 													count: summary.snapshots.readyCount,
 												})
 									}

@@ -11393,14 +11393,13 @@ components:
         totalMemoryMB: { type: integer, format: int64 }
     ProviderLiveMetrics:
       type: object
-      description: orb 最新采样汇总（CPU / 内存仅汇总近期活跃的运行中 orb，磁盘汇总未删除 orb 的最新采样）
-      required: [sampledOrbs, cpuPct, memUsedMB, memLimitMB, diskUsedMB, netRxBytes, netTxBytes]
+      description: orb 最新采样汇总（CPU / 内存仅汇总运行中 orb，网络收发汇总未删除 orb；不累加 orb 级 statfs 磁盘以免共享底盘重复计数）
+      required: [sampledOrbs, cpuPct, memUsedMB, memLimitMB, netRxBytes, netTxBytes]
       properties:
         sampledOrbs: { type: integer }
         cpuPct: { type: number }
         memUsedMB: { type: number }
         memLimitMB: { type: number }
-        diskUsedMB: { type: number }
         netRxBytes: { type: integer, format: int64 }
         netTxBytes: { type: integer, format: int64 }
     ProvidersHostTotals:

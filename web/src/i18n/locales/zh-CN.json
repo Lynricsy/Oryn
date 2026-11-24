@@ -1414,8 +1414,8 @@
 				"memoryHostSub": "Orb 实时 {{live}} · 运行配额 {{alloc}}",
 				"memoryOrbSub": "运行配额 {{run}} · 总配额 {{total}}",
 				"storage": "存储占用",
-				"storageHostSub": "Orb 磁盘 {{orbDisk}} · 快照缓存 {{snap}}",
-				"storageOrbSub": "Orb 磁盘 {{orbDisk}} · 快照 {{snap}}（{{count}} 个）",
+				"storageHostSub": "快照缓存 {{snap}}（{{count}} 个就绪）",
+				"storageSnapSub": "快照缓存（{{count}} 个就绪）· 宿主机磁盘待上报",
 				"cpu": "CPU 负载",
 				"cpuSub": "运行 {{run}} 核 / 总 {{total}} 核 · 宿主机 {{host}} 核",
 				"cpuSubNoHost": "运行配额 {{run}} 核 / 总配额 {{total}} 核",
@@ -1440,7 +1440,8 @@
 				"runTotal": "运行 {{run}} / 总 {{total}}",
 				"limitMaxMem": "上限 {{mem}}",
 				"limitMaxVms": "VM 槽位 {{used}} / {{max}}",
-				"orbDisk": "Orb 磁盘",
+				"diskAvailable": "可用空间",
+				"hostDiskPending": "待宿主机上报",
 				"snapshots": "快照缓存",
 				"snapshotsDetail": "{{ready}} 就绪 · {{size}}",
 				"snapshotsBuilding": "{{count}} 构建中",
@@ -1483,7 +1484,8 @@
 				"resume": "唤醒",
 				"delete": "删除 Orb",
 				"deleteConfirm": "确认删除 Orb {{id}}？未保存的容器状态将被移除。",
-				"noSample": "暂无实时采样"
+				"noSample": "暂无实时采样",
+				"fsUsed": "文件系统已用（statfs）"
 			}
 		}
 	},

@@ -296,7 +296,7 @@ function OrbRow({
 						</span>
 						<span
 							className="hidden items-center gap-1 sm:inline-flex"
-							title={t("providers.overview.node.storage")}
+							title={t("providers.overview.orbs.fsUsed")}
 						>
 							<Icon name="database" size={12} className="text-faint" />
 							{formatMemoryMB(sample.diskUsedMB)}
@@ -505,21 +505,26 @@ export function ProviderCard({
 			: []),
 	];
 
-	// 存储仪表计算
+	// 存储仪表计算：仅采信宿主机物理卷与项目快照缓存，不累加各 orb 的 statfs（共享底盘会重复计数）
 	const diskPct =
 		hm && hm.diskTotalBytes > 0
 			? (hm.diskUsedBytes / hm.diskTotalBytes) * 100
 			: undefined;
-	const orbDiskBytes = Math.round(live.diskUsedMB * 1024 * 1024);
 	const diskPrimary =
 		hm && hm.diskTotalBytes > 0
 			? `${formatBytes(hm.diskUsedBytes)} / ${formatBytes(hm.diskTotalBytes)}`
-			: formatBytes(orbDiskBytes + snapshots.totalBytes);
+			: snapshots.totalBytes > 0
+				? formatBytes(snapshots.totalBytes)
+				: "—";
 	const diskRows: { label: string; value: ReactNode }[] = [
-		{
-			label: t("providers.overview.node.orbDisk"),
-			value: live.diskUsedMB > 0 ? formatMemoryMB(live.diskUsedMB) : "—",
-		},
+		...(hm?.diskAvailableBytes !== undefined
+			? [
+					{
+						label: t("providers.overview.node.diskAvailable"),
+						value: formatBytes(hm.diskAvailableBytes),
+					},
+				]
+			: []),
 		{
 			label: t("providers.overview.node.snapshots"),
 			value:
@@ -534,9 +539,12 @@ export function ProviderCard({
 						}`
 					: "—",
 		},
-		...(hm?.diskPath
-			? [{ label: t("providers.overview.node.hostUsage"), value: hm.diskPath }]
-			: []),
+		hm?.diskPath
+			? { label: t("providers.overview.node.hostUsage"), value: hm.diskPath }
+			: {
+					label: t("providers.overview.node.hostUsage"),
+					value: t("providers.overview.node.hostDiskPending"),
+				},
 	];
 
 	// 搜索词命中某个 orb 时自动展开列表

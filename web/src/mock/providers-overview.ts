@@ -131,7 +131,6 @@ export function buildMockProvidersOverview(
 			cpuPct: 0,
 			memUsedMB: 0,
 			memLimitMB: 0,
-			diskUsedMB: 0,
 			netRxBytes: 0,
 			netTxBytes: 0,
 		},
@@ -178,7 +177,6 @@ export function buildMockProvidersOverview(
 			cpuPct: 0,
 			memUsedMB: 0,
 			memLimitMB: 0,
-			diskUsedMB: 0,
 			netRxBytes: 0,
 			netTxBytes: 0,
 		};
@@ -214,7 +212,6 @@ export function buildMockProvidersOverview(
 			if (o.computer) counts.computers++;
 
 			const sample = mockOrbSample(o, now);
-			live.diskUsedMB += sample.diskUsedMB;
 			live.netRxBytes += sample.netRxBytes;
 			live.netTxBytes += sample.netTxBytes;
 			if (o.state === "ready") {
@@ -273,11 +270,8 @@ export function buildMockProvidersOverview(
 						65536 - 12288 - Math.round(live.memUsedMB),
 					),
 					diskTotalBytes: 512 * 1024 ** 3,
-					diskUsedBytes:
-						168 * 1024 ** 3 + Math.round(live.diskUsedMB * 1024 * 1024),
-					diskAvailableBytes:
-						512 * 1024 ** 3 -
-						(168 * 1024 ** 3 + Math.round(live.diskUsedMB * 1024 * 1024)),
+					diskUsedBytes: 186 * 1024 ** 3,
+					diskAvailableBytes: (512 - 186) * 1024 ** 3,
 					diskPath:
 						prov.driver === "firecracker"
 							? "/var/lib/oryn-fc"
@@ -334,7 +328,6 @@ export function buildMockProvidersOverview(
 		summary.live.cpuPct += live.cpuPct;
 		summary.live.memUsedMB += live.memUsedMB;
 		summary.live.memLimitMB += live.memLimitMB;
-		summary.live.diskUsedMB += live.diskUsedMB;
 		summary.live.netRxBytes += live.netRxBytes;
 		summary.live.netTxBytes += live.netTxBytes;
 

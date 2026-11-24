@@ -102,17 +102,21 @@ func TestProvidersOverviewAPI(t *testing.T) {
 		Kind: "work", CreatedAt: now, UpdatedAt: now,
 	}))
 
-	// orb_samples：orb-run1 有两条采样（应取较新那条），orb-frz1 有历史采样（只计入磁盘与网络，不计入实时 CPU/内存）
+	// orb_samples：orb-run1 与 orb-run2 共享同一底层宿主机文件系统（均上报相同的 statfs 磁盘 184320 MB = 180 GiB）；
+	// orb-run1 有两条采样（应取较新那条），orb-frz1 有历史采样（只计入网络，不计入实时 CPU/内存，且任何 orb 的 statfs 磁盘不得跨 orb 求和）。
+	const sharedDiskMB int64 = 180 * 1024
 	require.NoError(t, e.st.Q.InsertOrbSample(ctx, db.InsertOrbSampleParams{
-		OrbID: "orb-run1", Ts: now - 30_000, CpuPct: 10, MemUsedMb: 1000, MemLimitMb: 16384, DiskUsedMb: 2048, NetRxBytes: 100, NetTxBytes: 50,
+		OrbID: "orb-run1", Ts: now - 30_000, CpuPct: 10, MemUsedMb: 1000, MemLimitMb: 16384, DiskUsedMb: sharedDiskMB - 1024, NetRxBytes: 100, NetTxBytes: 50,
 	}))
 	require.NoError(t, e.st.Q.InsertOrbSample(ctx, db.InsertOrbSampleParams{
-		OrbID: "orb-run1", Ts: now - 5_000, CpuPct: 85.5, MemUsedMb: 6144, MemLimitMb: 16384, DiskUsedMb: 4096, NetRxBytes: 5000, NetTxBytes: 2500,
+		OrbID: "orb-run1", Ts: now - 5_000, CpuPct: 85.5, MemUsedMb: 6144, MemLimitMb: 16384, DiskUsedMb: sharedDiskMB, NetRxBytes: 5000, NetTxBytes: 2500,
 	}))
 	require.NoError(t, e.st.Q.InsertOrbSample(ctx, db.InsertOrbSampleParams{
-		OrbID: "orb-frz1", Ts: now - 60_000, CpuPct: 50, MemUsedMb: 2048, MemLimitMb: 4096, DiskUsedMb: 1024, NetRxBytes: 1000, NetTxBytes: 500,
+		OrbID: "orb-run2", Ts: now - 5_000, CpuPct: 14.5, MemUsedMb: 2048, MemLimitMb: 4096, DiskUsedMb: sharedDiskMB, NetRxBytes: 2000, NetTxBytes: 1000,
 	}))
-
+	require.NoError(t, e.st.Q.InsertOrbSample(ctx, db.InsertOrbSampleParams{
+		OrbID: "orb-frz1", Ts: now - 60_000, CpuPct: 50, MemUsedMb: 2048, MemLimitMb: 4096, DiskUsedMb: sharedDiskMB, NetRxBytes: 1000, NetTxBytes: 500,
+	}))
 	// 项目快照：1 ready（2GiB）+ 1 building
 	_, err = e.st.Q.InsertBuildingProjectSnapshot(ctx, db.InsertBuildingProjectSnapshotParams{
 		ID: "snap_1", ProjectID: "prj_1", ProviderID: "prov_1", Type: "small", ConfigHash: "h1", Depth: 1, LineageAt: now, CreatedAt: now,
@@ -161,13 +165,13 @@ func TestProvidersOverviewAPI(t *testing.T) {
 	assert.InDelta(t, 14.0, float64(ov.Summary.Allocated.TotalCpus), 0.01)
 	assert.Equal(t, int64(28672), ov.Summary.Allocated.TotalMemoryMB)
 
-	assert.Equal(t, 1, ov.Summary.Live.SampledOrbs)
-	assert.InDelta(t, 85.5, float64(ov.Summary.Live.CPUPct), 0.01)
-	assert.InDelta(t, 6144.0, float64(ov.Summary.Live.MemUsedMB), 0.01)
-	assert.InDelta(t, 5120.0, float64(ov.Summary.Live.DiskUsedMB), 0.01)
-	assert.Equal(t, int64(6000), ov.Summary.Live.NetRxBytes)
-	assert.Equal(t, int64(3000), ov.Summary.Live.NetTxBytes)
-
+	// 两个运行中 orb 的 CPU/内存正常汇总，但共享底盘 statfs 不做跨 orb 累加（宿主机磁盘只记一次 180 GiB）
+	assert.Equal(t, 2, ov.Summary.Live.SampledOrbs)
+	assert.InDelta(t, 100.0, float64(ov.Summary.Live.CPUPct), 0.01)
+	assert.InDelta(t, 8192.0, float64(ov.Summary.Live.MemUsedMB), 0.01)
+	assert.Equal(t, int64(8000), ov.Summary.Live.NetRxBytes)
+	assert.Equal(t, int64(4000), ov.Summary.Live.NetTxBytes)
+	assert.Equal(t, int64(180<<30), ov.Summary.Host.DiskUsedBytes)
 	assert.Equal(t, 1, ov.Summary.Snapshots.ReadyCount)
 	assert.Equal(t, 1, ov.Summary.Snapshots.BuildingCount)
 	assert.Equal(t, int64(2<<30), ov.Summary.Snapshots.TotalBytes)
@@ -186,13 +190,14 @@ func TestProvidersOverviewAPI(t *testing.T) {
 	assert.Equal(t, "gpu-node-01", *p0.HostMetrics.Hostname)
 	require.Len(t, p0.OrbItems, 4)
 
-	// orb-run1 明细核对（项目名、线程标题、nestedDocker、最新采样）
-	var run1 *apigen.ProviderOrbSummary
-	var failedOrb *apigen.ProviderOrbSummary
+	// 逐台 orb 明细仍保留各自的 statfs 文件系统样本（与同底盘一致，不会被汇总成 3x）
+	var run1, run2, failedOrb *apigen.ProviderOrbSummary
 	for i := range p0.OrbItems {
 		switch p0.OrbItems[i].ID {
 		case "orb-run1":
 			run1 = &p0.OrbItems[i]
+		case "orb-run2":
+			run2 = &p0.OrbItems[i]
 		case "orb-fail":
 			failedOrb = &p0.OrbItems[i]
 		}
@@ -206,6 +211,11 @@ func TestProvidersOverviewAPI(t *testing.T) {
 	assert.True(t, *run1.NestedDocker)
 	require.NotNil(t, run1.LatestSample)
 	assert.InDelta(t, 85.5, float64(run1.LatestSample.CPUPct), 0.01)
+	assert.InDelta(t, float64(sharedDiskMB), float64(run1.LatestSample.DiskUsedMB), 0.1)
+
+	require.NotNil(t, run2)
+	require.NotNil(t, run2.LatestSample)
+	assert.InDelta(t, float64(sharedDiskMB), float64(run2.LatestSample.DiskUsedMB), 0.1)
 
 	require.NotNil(t, failedOrb)
 	require.NotNil(t, failedOrb.FailureReason)

@@ -8756,13 +8756,12 @@ export interface components {
             /** Format: int64 */
             totalMemoryMB: number;
         };
-        /** @description orb 最新采样汇总（CPU / 内存仅汇总近期活跃的运行中 orb，磁盘汇总未删除 orb 的最新采样） */
+        /** @description orb 最新采样汇总（CPU / 内存仅汇总运行中 orb，网络收发汇总未删除 orb；不累加 orb 级 statfs 磁盘以免共享底盘重复计数） */
         ProviderLiveMetrics: {
             sampledOrbs: number;
             cpuPct: number;
             memUsedMB: number;
             memLimitMB: number;
-            diskUsedMB: number;
             /** Format: int64 */
             netRxBytes: number;
             /** Format: int64 */

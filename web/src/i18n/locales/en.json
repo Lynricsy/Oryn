@@ -1414,8 +1414,8 @@
 				"memoryHostSub": "Orb live {{live}} · Running alloc {{alloc}}",
 				"memoryOrbSub": "Running alloc {{run}} · Total alloc {{total}}",
 				"storage": "Storage usage",
-				"storageHostSub": "Orb disk {{orbDisk}} · Snapshot cache {{snap}}",
-				"storageOrbSub": "Orb disk {{orbDisk}} · Snapshots {{snap}} ({{count}})",
+				"storageHostSub": "Snapshot cache {{snap}} ({{count}} ready)",
+				"storageSnapSub": "Snapshot cache ({{count}} ready) · Host disk pending",
 				"cpu": "CPU load",
 				"cpuSub": "{{run}} / {{total}} vCPU alloc · {{host}} host cores",
 				"cpuSubNoHost": "{{run}} running / {{total}} total vCPU alloc",
@@ -1440,7 +1440,8 @@
 				"runTotal": "Run {{run}} / Total {{total}}",
 				"limitMaxMem": "Cap {{mem}}",
 				"limitMaxVms": "VM slots {{used}} / {{max}}",
-				"orbDisk": "Orb disk",
+				"diskAvailable": "Available",
+				"hostDiskPending": "Host disk pending",
 				"snapshots": "Snapshot cache",
 				"snapshotsDetail": "{{ready}} ready · {{size}}",
 				"snapshotsBuilding": "{{count}} building",
@@ -1483,7 +1484,8 @@
 				"resume": "Resume",
 				"delete": "Delete Orb",
 				"deleteConfirm": "Delete Orb {{id}}? Unsaved container state will be removed.",
-				"noSample": "No recent sample"
+				"noSample": "No recent sample",
+				"fsUsed": "Filesystem used (statfs)"
 			}
 		}
 	},

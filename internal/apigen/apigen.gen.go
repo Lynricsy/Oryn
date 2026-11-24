@@ -10614,10 +10614,9 @@ type ProviderList struct {
 	Providers   []Provider   `json:"providers"`
 }
 
-// ProviderLiveMetrics orb 最新采样汇总（CPU / 内存仅汇总近期活跃的运行中 orb，磁盘汇总未删除 orb 的最新采样）
+// ProviderLiveMetrics orb 最新采样汇总（CPU / 内存仅汇总运行中 orb，网络收发汇总未删除 orb；不累加 orb 级 statfs 磁盘以免共享底盘重复计数）
 type ProviderLiveMetrics struct {
 	CPUPct      float32 `json:"cpuPct"`
-	DiskUsedMB  float32 `json:"diskUsedMB"`
 	MemLimitMB  float32 `json:"memLimitMB"`
 	MemUsedMB   float32 `json:"memUsedMB"`
 	NetRxBytes  int64   `json:"netRxBytes"`
@@ -10710,7 +10709,7 @@ type ProviderOverviewItem struct {
 	// Jobs provider 任务队列实时状态与近 24 小时执行结果
 	Jobs ProviderJobStats `json:"jobs"`
 
-	// Live orb 最新采样汇总（CPU / 内存仅汇总近期活跃的运行中 orb，磁盘汇总未删除 orb 的最新采样）
+	// Live orb 最新采样汇总（CPU / 内存仅汇总运行中 orb，网络收发汇总未删除 orb；不累加 orb 级 statfs 磁盘以免共享底盘重复计数）
 	Live     ProviderLiveMetrics  `json:"live"`
 	OrbItems []ProviderOrbSummary `json:"orbItems"`
 
@@ -10771,7 +10770,7 @@ type ProvidersSummary struct {
 	// Jobs provider 任务队列实时状态与近 24 小时执行结果
 	Jobs ProviderJobStats `json:"jobs"`
 
-	// Live orb 最新采样汇总（CPU / 内存仅汇总近期活跃的运行中 orb，磁盘汇总未删除 orb 的最新采样）
+	// Live orb 最新采样汇总（CPU / 内存仅汇总运行中 orb，网络收发汇总未删除 orb；不累加 orb 级 statfs 磁盘以免共享底盘重复计数）
 	Live ProviderLiveMetrics `json:"live"`
 
 	// Orbs 按状态与角色划分的 orb 计数

@@ -42,7 +42,6 @@ function sampleOverview(): Schemas["ProvidersOverview"] {
 				cpuPct: 48.5,
 				memUsedMB: 3072,
 				memLimitMB: 8192,
-				diskUsedMB: 4096,
 				netRxBytes: 50 * 1024 * 1024,
 				netTxBytes: 12 * 1024 * 1024,
 			},
@@ -128,7 +127,6 @@ function sampleOverview(): Schemas["ProvidersOverview"] {
 					cpuPct: 48.5,
 					memUsedMB: 3072,
 					memLimitMB: 8192,
-					diskUsedMB: 4096,
 					netRxBytes: 50 * 1024 * 1024,
 					netTxBytes: 12 * 1024 * 1024,
 				},
@@ -227,7 +225,6 @@ function sampleOverview(): Schemas["ProvidersOverview"] {
 					cpuPct: 0,
 					memUsedMB: 0,
 					memLimitMB: 0,
-					diskUsedMB: 0,
 					netRxBytes: 0,
 					netTxBytes: 0,
 				},
@@ -415,5 +412,74 @@ describe("Provider 总览页", () => {
 			}),
 		);
 		expect(await screen.findByTestId("orb-drawer")).toBeInTheDocument();
+	});
+
+	it("无宿主机指标且多台 orb 共享同底盘样本时，存储主读数仅显示快照缓存而不重复累加 orb 磁盘", async () => {
+		const base = sampleOverview();
+		const prov = base.providers[0];
+		const firstOrb = prov?.orbItems[0];
+		if (!prov || !firstOrb) throw new Error("missing fixture provider");
+		const sharedFsMB = 180 * 1024;
+		overviewData = {
+			...base,
+			summary: {
+				...base.summary,
+				providersTotal: 1,
+				providersOffline: 0,
+				host: {
+					reportedCount: 0,
+					cpuCores: 0,
+					memTotalMB: 0,
+					memUsedMB: 0,
+					diskTotalBytes: 0,
+					diskUsedBytes: 0,
+				},
+			},
+			providers: [
+				{
+					...prov,
+					hostMetrics: undefined,
+					orbItems: [
+						{
+							...firstOrb,
+							id: "orb-shared-1",
+							latestSample: {
+								ts: NOW - 5_000,
+								cpuPct: 30,
+								memUsedMB: 2048,
+								memLimitMB: 8192,
+								diskUsedMB: sharedFsMB,
+								netRxBytes: 100,
+								netTxBytes: 50,
+							},
+						},
+						{
+							...firstOrb,
+							id: "orb-shared-2",
+							latestSample: {
+								ts: NOW - 5_000,
+								cpuPct: 20,
+								memUsedMB: 1024,
+								memLimitMB: 8192,
+								diskUsedMB: sharedFsMB,
+								netRxBytes: 100,
+								netTxBytes: 50,
+							},
+						},
+					],
+				},
+			],
+		};
+		mount();
+		const storageKpi = await screen.findByTestId("kpi-providers-storage");
+		// 仅展示 3.0 GB 快照缓存，而不是 360 GB + 3 GB
+		expect(storageKpi).toHaveTextContent("3.0 GB");
+		expect(storageKpi).not.toHaveTextContent("360");
+		expect(storageKpi).not.toHaveTextContent("363");
+		// 逐台 orb 行仍保留各自的 statfs 文件系统样本（180 GB）
+		const rows = screen.getAllByTestId("provider-orb-row");
+		expect(rows).toHaveLength(2);
+		expect(rows[0]).toHaveTextContent("180 GB");
+		expect(rows[1]).toHaveTextContent("180 GB");
 	});
 });
