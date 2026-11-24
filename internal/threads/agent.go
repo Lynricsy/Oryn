@@ -115,8 +115,10 @@ type responseHead struct {
 // 研究员的每次运行互不相干。
 func initFrames(t *thread, prof *AgentProfile, terminal bool) []apigen.OmpFrame {
 	open := apigen.OmpFrame{"type": "open_session", "sessionDir": t.sessionDir}
-	if m := parseModel(t.model); m != nil {
-		open["provider"], open["modelId"] = m.Provider, m.ID
+	if !t.planMode {
+		if m := parseModel(t.model); m != nil {
+			open["provider"], open["modelId"] = m.Provider, m.ID
+		}
 	}
 	var frames []apigen.OmpFrame
 	if prof != nil {
@@ -143,7 +145,7 @@ func initFrames(t *thread, prof *AgentProfile, terminal bool) []apigen.OmpFrame 
 			frames = append(frames, apigen.OmpFrame{"type": "terminal_configure", "interactiveCommands": true, "agentTools": true})
 		}
 	}
-	if t.thinking != nil && *t.thinking != "" {
+	if !t.planMode && t.thinking != nil && *t.thinking != "" {
 		frames = append(frames, apigen.OmpFrame{"type": "set_thinking_level", "level": *t.thinking})
 	}
 	return frames
@@ -1107,15 +1109,21 @@ func (s *Service) refreshState(t *thread) {
 }
 
 // syncModelLocked 把 state 中的模型与思考级别写回线程行（agent 重启时 open_session 沿用）。
+// 计划模式期间的活动模型与思考级别是临时切换，不得覆盖常驻线程行。
 func (s *Service) syncModelLocked(t *thread, state json.RawMessage) {
 	var st struct {
 		Model *struct {
 			Provider string `json:"provider"`
 			ID       string `json:"id"`
 		} `json:"model"`
-		ThinkingLevel *string `json:"thinkingLevel"`
+		ThinkingLevel   *string `json:"thinkingLevel"`
+		PlanModeEnabled bool    `json:"planModeEnabled"`
 	}
 	if json.Unmarshal(state, &st) != nil {
+		return
+	}
+	t.planMode = st.PlanModeEnabled
+	if st.PlanModeEnabled {
 		return
 	}
 	var model *string

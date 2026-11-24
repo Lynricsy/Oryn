@@ -416,6 +416,9 @@ type thread struct {
 	// 宿主工具的放行按最近一次回报判断，宁可多拦。
 	variant      string
 	variantKnown bool
+	// planMode 为真表示最新 get_state 处于计划模式：syncModelLocked 不将临时计划模型/思考级别写回常驻线程行，
+	// 重启时 initFrames 也不传显式模型与思考级别，由 Core 从持久化会话恢复计划态与原基线。
+	planMode bool
 }
 
 // msgSlot 是消息顺序队列里的一个位置。ready 之前 frame 为 nil；ready 且 frame 为 nil 表示该消息已失败
