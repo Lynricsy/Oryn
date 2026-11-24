@@ -80,7 +80,7 @@ ON CONFLICT (artifact_id) DO UPDATE SET auto_notes = excluded.auto_notes;
 -- name: SetArtifactVersionCheck :exec
 UPDATE artifact_versions SET check_json = @check_json WHERE artifact_id = @artifact_id AND n = @n;
 
--- M29: last dealt directions (JSON array of ids, newest last); surface follows the latest deal.
+-- M29: last dealt directions (JSON array of full Direction objects, at most 9, newest last); surface follows the latest deal.
 -- name: SetArtifactDesignDealt :exec
 INSERT INTO artifact_designs (artifact_id, surface, dealt) VALUES (@artifact_id, @surface, @dealt)
 ON CONFLICT (artifact_id) DO UPDATE SET surface = excluded.surface, dealt = excluded.dealt;

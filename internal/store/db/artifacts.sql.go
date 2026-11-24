@@ -558,7 +558,7 @@ type SetArtifactDesignDealtParams struct {
 	Dealt      string  `json:"dealt"`
 }
 
-// M29: last dealt directions (JSON array of ids, newest last); surface follows the latest deal.
+// M29: last dealt directions (JSON array of full Direction objects, at most 9, newest last); surface follows the latest deal.
 func (q *Queries) SetArtifactDesignDealt(ctx context.Context, arg SetArtifactDesignDealtParams) error {
 	_, err := q.db.ExecContext(ctx, setArtifactDesignDealt, arg.ArtifactID, arg.Surface, arg.Dealt)
 	return err
