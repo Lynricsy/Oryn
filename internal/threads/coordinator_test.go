@@ -222,17 +222,16 @@ func TestCoordinatorInitFrames(t *testing.T) {
 	f := newFixture(t, Config{})
 	th := f.coordThread(f.orb("ready"), KindAssistant, StateIdle)
 	prof := &AgentProfile{Tools: []apigen.OmpFrame{{"name": "list_threads"}}}
-	frames := initFrames(th, prof, false, true)
+	frames := initFrames(th, prof, false)
 	assert.Equal(t, []string{"open_session", "set_event_filter", "set_host_tools"}, frameTypes(frames))
 	assert.Equal(t, prof.Tools, frames[2]["tools"])
 	work := f.thread(f.orb("ready"), StateIdle)
-	assert.Contains(t, frameTypes(initFrames(work, nil, true, true)), "terminal_configure", "工作线程不变")
-	// M19 3.2：主线在需要清上下文时于 open_session 之后先 clear_context，空会话 / 普通助手对话不发
+	assert.Contains(t, frameTypes(initFrames(work, nil, true)), "terminal_configure", "工作线程不变")
+	// M19 3.2：主线在 open_session 之后无条件先 clear_context（含空主线，确保 orbd 崩溃自重启复用 spec 时不丢隔离），普通助手对话不发
 	th.mu.Lock()
 	th.main = true
 	th.mu.Unlock()
-	assert.Equal(t, []string{"open_session", "clear_context", "set_event_filter", "set_host_tools"}, frameTypes(initFrames(th, prof, false, true)))
-	assert.Equal(t, []string{"open_session", "set_event_filter", "set_host_tools"}, frameTypes(initFrames(th, prof, false, false)))
+	assert.Equal(t, []string{"open_session", "clear_context", "set_event_filter", "set_host_tools"}, frameTypes(initFrames(th, prof, false)))
 }
 
 // 协调线程的 agent.start 带协调档与系统提示词；所在 orb 没有 coordinator 特性时线程进入 error、不发 agent.start。
@@ -266,75 +265,6 @@ func TestCoordinatorAgentStart(t *testing.T) {
 	o.mu.Lock()
 	assert.Len(t, o.calls, 1, "没有第二次 agent.start")
 	o.mu.Unlock()
-}
-
-// 主线与研究员只在存在未清空上下文时于启动帧发 clear_context：空会话、末尾已是 reset_boundary 时不发；
-// 叶子跳回 reset_boundary 之前或 unsynced 时保守发送。
-func TestMainStartAgentClearContext(t *testing.T) {
-	f := newFixture(t, Config{})
-	o := newCtlOrbs(t, f.orbs)
-	f.s.orbs = o
-	o.features["coordinator"] = true
-	f.s.SetCoordinator(newFakeCoord())
-	orb := f.orb("ready")
-	mainOut, err := f.s.CreateCoordinator(f.ctx, CoordinatorParams{Kind: KindAssistant, OrbID: orb, Main: true, Title: "Main"})
-	require.NoError(t, err)
-	th, err := f.s.get(f.ctx, mainOut.ID)
-	require.NoError(t, err)
-
-	startFrames := func() []string {
-		t.Helper()
-		f.s.startAgent(f.ctx, th.id)
-		c := o.nextCall(t)
-		require.Equal(t, "agent.start", c.method)
-		var p apigen.LinkCtlAgentStartParams
-		require.NoError(t, json.Unmarshal(c.params, &p))
-		return frameTypes(p.InitFrames)
-	}
-
-	// 1. 空主线（0 对话条目）：不发 clear_context
-	assert.Equal(t, []string{"open_session", "set_event_filter", "set_host_tools"}, startFrames())
-
-	// 2. 只有启动元数据与 model_usage（没有对话条目）：仍不发 clear_context
-	_, err = f.st.Q.UpsertEntry(f.ctx, db.UpsertEntryParams{
-		ThreadID: th.id, File: "s1.jsonl", EntryID: "mc1", Type: "model_change", Payload: []byte(`{"type":"model_change"}`),
-	})
-	require.NoError(t, err)
-	assert.Equal(t, []string{"open_session", "set_event_filter", "set_host_tools"}, startFrames())
-
-	// 3. 有真实对话消息后重启：发 clear_context
-	_, err = f.st.Q.UpsertEntry(f.ctx, db.UpsertEntryParams{
-		ThreadID: th.id, File: "s1.jsonl", EntryID: "m1", Type: "message", Payload: []byte(`{"type":"message","message":{"role":"user","content":"hi"}}`),
-	})
-	require.NoError(t, err)
-	assert.Equal(t, []string{"open_session", "clear_context", "set_event_filter", "set_host_tools"}, startFrames())
-
-	// 4. 末尾已是 reset_boundary（且之后只跟了元数据条目、叶子在元数据上）：不再重复发 clear_context
-	_, err = f.st.Q.UpsertEntry(f.ctx, db.UpsertEntryParams{
-		ThreadID: th.id, File: "s1.jsonl", EntryID: "rb1", Type: "reset_boundary", Payload: []byte(`{"type":"reset_boundary"}`),
-	})
-	require.NoError(t, err)
-	_, err = f.st.Q.UpsertEntry(f.ctx, db.UpsertEntryParams{
-		ThreadID: th.id, File: "s1.jsonl", EntryID: "src1", Type: "custom", Payload: []byte(`{"type":"custom"}`),
-	})
-	require.NoError(t, err)
-	th.mu.Lock()
-	th.leaf = new("src1")
-	th.mu.Unlock()
-	assert.Equal(t, []string{"open_session", "set_event_filter", "set_host_tools"}, startFrames())
-
-	// 5. 叶子跳回 reset_boundary 之前的消息：必须发 clear_context
-	th.mu.Lock()
-	th.leaf = new("m1")
-	th.mu.Unlock()
-	assert.Equal(t, []string{"open_session", "clear_context", "set_event_filter", "set_host_tools"}, startFrames())
-
-	// 6. unsynced（可能有未入库的旧消息）：即使库里最新是 reset_boundary，也保守发 clear_context
-	th.mu.Lock()
-	th.leaf = new("src1")
-	th.unsynced = true
-	th.mu.Unlock()
-	assert.Equal(t, []string{"open_session", "clear_context", "set_event_filter", "set_host_tools"}, startFrames())
 }
 
 func TestCoordinatorCommandWhitelist(t *testing.T) {

@@ -42,10 +42,9 @@ func TestInitFramesResearch(t *testing.T) {
 	require.NoError(t, err)
 	th, err := f.s.get(f.ctx, out.ID)
 	require.NoError(t, err)
-	frames := initFrames(th, &AgentProfile{}, false, true)
+	frames := initFrames(th, &AgentProfile{}, false)
 	assert.Equal(t, []string{"open_session", "clear_context", "set_event_filter", "set_host_tools"}, frameTypes(frames))
 	assert.Equal(t, []apigen.OmpFrame{}, frames[3]["tools"], "空工具表照样下发")
-	assert.Equal(t, []string{"open_session", "set_event_filter", "set_host_tools"}, frameTypes(initFrames(th, &AgentProfile{}, false, false)))
 }
 
 // 研究员对话永远不会被当作备用对话认领。

@@ -2,7 +2,6 @@ package threads
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -110,10 +109,11 @@ type responseHead struct {
 // （terminal_configure：pty:true 的命令与 agent 的 terminal 工具落到 omp 的终端宿主，由 Terminal 面板作答）。
 // terminal 为假时（M11b：runner 没上报 terminal 特性）不发 terminal_configure。
 // 协调线程（prof 非 nil）只有 open_session、set_event_filter、set_host_tools 与可选的思考级别：不开 ask 对话框、
-// 子 agent 订阅与终端。主线（M19）与研究员对话（M26）在存在未清空上下文时（clearContext 为真）于 open_session 之后
-// 先 clear_context：每次启动都是新的一段，模型只看到 reset_boundary 之后的内容（转录保留）；空会话或末尾已经刚清空
-// 过上下文时不重复发，避免产生多余的 reset_boundary。主线跨段要记的事在系统提示词的「主线近况」里；研究员的每次运行互不相干。
-func initFrames(t *thread, prof *AgentProfile, terminal, clearContext bool) []apigen.OmpFrame {
+// 子 agent 订阅与终端。主线（M19）与研究员对话（M26）在 open_session 之后无条件先 clear_context：orbd 崩溃自重启会
+// 原样复用这份 initFrames，若按首次启动时的空库状态省略它，进程跑完一轮后崩溃自重启就会把旧上下文带进新进程。
+// 每次启动都是新的一段，模型只看到 reset_boundary 之后的内容（转录保留）；主线跨段要记的事在系统提示词的「主线近况」里；
+// 研究员的每次运行互不相干。
+func initFrames(t *thread, prof *AgentProfile, terminal bool) []apigen.OmpFrame {
 	open := apigen.OmpFrame{"type": "open_session", "sessionDir": t.sessionDir}
 	if m := parseModel(t.model); m != nil {
 		open["provider"], open["modelId"] = m.Provider, m.ID
@@ -125,7 +125,7 @@ func initFrames(t *thread, prof *AgentProfile, terminal, clearContext bool) []ap
 			tools = []apigen.OmpFrame{}
 		}
 		frames = []apigen.OmpFrame{open}
-		if (t.main || t.research != "") && clearContext {
+		if t.main || t.research != "" {
 			frames = append(frames, apigen.OmpFrame{"type": "clear_context"})
 		}
 		frames = append(frames,
@@ -147,36 +147,6 @@ func initFrames(t *thread, prof *AgentProfile, terminal, clearContext bool) []ap
 		frames = append(frames, apigen.OmpFrame{"type": "set_thinking_level", "level": *t.thinking})
 	}
 	return frames
-}
-
-// needsClearContext 判断主线 / 研究员对话在本次启动时是否需要发 clear_context。
-// 线程尚无任何对话条目，或最新一条上下文影响条目已是 reset_boundary 且活动叶子没有跳回其之前时，返回 false；
-// 存在未同步状态（unsynced）或查库出错时保守返回 true，避免漏清旧段上下文。
-func (s *Service) needsClearContext(ctx context.Context, threadID string, main bool, research string, unsynced bool, leaf *string) bool {
-	if !main && research == "" {
-		return false
-	}
-	if unsynced {
-		return true
-	}
-	latest, err := s.st.Q.GetLatestMainContextEntry(ctx, threadID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false
-	}
-	if err != nil {
-		return true
-	}
-	if latest.Type != "reset_boundary" {
-		return true
-	}
-	if leaf == nil || *leaf == "" {
-		return false
-	}
-	leafSeq, err := s.st.Q.GetMainEntrySeq(ctx, db.GetMainEntrySeqParams{ThreadID: threadID, EntryID: *leaf})
-	if err != nil {
-		return true
-	}
-	return leafSeq < latest.Seq
 }
 
 // coordinatorProfile 为协调线程取 AgentProfile：所在 orb 必须是声明了 coordinator 特性的协调宿主
@@ -251,11 +221,7 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 		}
 	}
 	t.mu.Lock()
-	unsynced, leaf := t.unsynced, t.leaf
-	t.mu.Unlock()
-	clearContext := s.needsClearContext(ctx, t.id, t.main, t.research, unsynced, leaf)
-	t.mu.Lock()
-	params := apigen.LinkCtlAgentStartParams{ThreadID: t.id, SessionDir: t.sessionDir, Env: map[string]string{}, InitFrames: initFrames(t, prof, terminal, clearContext)}
+	params := apigen.LinkCtlAgentStartParams{ThreadID: t.id, SessionDir: t.sessionDir, Env: map[string]string{}, InitFrames: initFrames(t, prof, terminal)}
 	// runner 线程（M11b）：agent 在线程的工作目录里启动
 	params.Cwd = t.cwd
 	params.Memory = mem
