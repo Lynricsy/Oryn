@@ -1,0 +1,3064 @@
+{
+  "source": {
+    "repo": "https://github.com/Leonxlnx/taste-skill",
+    "commit": "6c0b5c78f5d31776e2210305abaa210cdc0030bf",
+    "license": "MIT",
+    "files": [
+      "skills/taste-skill/library/palettes.json",
+      "skills/taste-skill/library/type.json",
+      "skills/taste-skill/assets/layout/heroes.json"
+    ]
+  },
+  "palettes": [
+    {
+      "id": "white-link-blue",
+      "name": "Sheet and biro",
+      "mode": "light",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#ffffff"
+        },
+        {
+          "role": "surface",
+          "hex": "#f4f4f4"
+        },
+        {
+          "role": "text",
+          "hex": "#111111"
+        },
+        {
+          "role": "muted",
+          "hex": "#6b6b6b"
+        },
+        {
+          "role": "accent",
+          "hex": "#1a4be0"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#ffffff"
+        }
+      ],
+      "tags": [
+        "light-neutral",
+        "mono-accent"
+      ],
+      "trades": [
+        "saas",
+        "devtool",
+        "fintech",
+        "law",
+        "clinic",
+        "retail"
+      ],
+      "note": "White holds the whole page with black type, one grey for secondary lines and a pale grey step for tiles and inputs; the footer may invert to black. Blue is the colour of text links and the one button, and nothing else is tinted."
+    },
+    {
+      "id": "cool-white-slate",
+      "name": "Frost and slate",
+      "mode": "light",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#f7f9fa"
+        },
+        {
+          "role": "surface",
+          "hex": "#ecf0f2"
+        },
+        {
+          "role": "text",
+          "hex": "#1f3038"
+        },
+        {
+          "role": "muted",
+          "hex": "#5d6b72"
+        },
+        {
+          "role": "accent",
+          "hex": "#0d7480"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#ffffff"
+        }
+      ],
+      "tags": [
+        "light-neutral"
+      ],
+      "trades": [
+        "clinic",
+        "wellness",
+        "saas",
+        "fintech",
+        "law",
+        "hardware"
+      ],
+      "note": "Cool white and one paler blue-grey step hold everything, with type in dark slate instead of black. Teal appears once per screen at most, as the primary button or one small detail beside the product photograph."
+    },
+    {
+      "id": "rose-grey-green",
+      "name": "Rose grey, green",
+      "mode": "light",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#ebe5e3"
+        },
+        {
+          "role": "surface",
+          "hex": "#e1dad7"
+        },
+        {
+          "role": "text",
+          "hex": "#2b2622"
+        },
+        {
+          "role": "muted",
+          "hex": "#6a615d"
+        },
+        {
+          "role": "accent",
+          "hex": "#0f7d45"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#ffffff"
+        }
+      ],
+      "tags": [
+        "light-neutral"
+      ],
+      "trades": [
+        "cafe",
+        "bakery",
+        "studio",
+        "wellness",
+        "wedding",
+        "retail"
+      ],
+      "note": "A single rosy grey covers the page from top to bottom with brown-black text and grey secondary lines; pictures keep the treatment section 0 deals, greyscale only where it deals black-and-white. Green appears only on the current-page link and on one button in the footer."
+    },
+    {
+      "id": "paper-grey-brass",
+      "name": "Newsprint and brass",
+      "mode": "light",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#e8e8e3"
+        },
+        {
+          "role": "surface",
+          "hex": "#dcdcd6"
+        },
+        {
+          "role": "text",
+          "hex": "#181715"
+        },
+        {
+          "role": "muted",
+          "hex": "#63625c"
+        },
+        {
+          "role": "accent",
+          "hex": "#bfb21a"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#181715"
+        }
+      ],
+      "tags": [
+        "light-neutral"
+      ],
+      "trades": [
+        "agency",
+        "studio",
+        "restaurant",
+        "workshop",
+        "law"
+      ],
+      "note": "Warm paper grey with near-black type holds the upper page, then whole sections flip to near-black with paper-grey type; no section is tinted. Brass yellow marks one small detail per screen, such as the button or a single word."
+    },
+    {
+      "id": "stone-blueprint",
+      "name": "Stone and blueprint",
+      "mode": "light",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#dfdedb"
+        },
+        {
+          "role": "surface",
+          "hex": "#d3d2ce"
+        },
+        {
+          "role": "text",
+          "hex": "#26251e"
+        },
+        {
+          "role": "muted",
+          "hex": "#5f5d55"
+        },
+        {
+          "role": "accent",
+          "hex": "#2456d6"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#ffffff"
+        }
+      ],
+      "tags": [
+        "light-neutral"
+      ],
+      "trades": [
+        "workshop",
+        "hardware",
+        "agency",
+        "studio",
+        "devtool"
+      ],
+      "note": "Stone paper carries the whole page with near-black and grey text. One image at a time is printed in the accent blue as its only ink, and the same blue fills the single button."
+    },
+    {
+      "id": "white-navy-tab",
+      "name": "Navy on white",
+      "mode": "light",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#ffffff"
+        },
+        {
+          "role": "surface",
+          "hex": "#f4f4f2"
+        },
+        {
+          "role": "text",
+          "hex": "#1f2b4d"
+        },
+        {
+          "role": "muted",
+          "hex": "#6a7186"
+        },
+        {
+          "role": "accent",
+          "hex": "#f7941d"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#1f2b4d"
+        }
+      ],
+      "tags": [
+        "light-neutral",
+        "photographic-neutral"
+      ],
+      "trades": [
+        "hotel",
+        "retail",
+        "consumer-product",
+        "clinic"
+      ],
+      "note": "Pure white pages with navy type sit between full-bleed photographs, opening on near-black and closing on a warm grey footer. Tangerine is one small tab or button, never larger than a thumbnail."
+    },
+    {
+      "id": "three-stones",
+      "name": "Three stones",
+      "mode": "light",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#eeecea"
+        },
+        {
+          "role": "surface",
+          "hex": "#e4e1dd"
+        },
+        {
+          "role": "text",
+          "hex": "#333231"
+        },
+        {
+          "role": "muted",
+          "hex": "#6b6763"
+        },
+        {
+          "role": "accent",
+          "hex": "#5c6b54"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#ffffff"
+        }
+      ],
+      "tags": [
+        "light-neutral",
+        "photographic-neutral"
+      ],
+      "trades": [
+        "hotel",
+        "wellness",
+        "wedding",
+        "studio",
+        "law",
+        "clinic"
+      ],
+      "note": "Three close stone tones share the interface: the lightest for the page, the middle one for panels, the darkest for a single band, all with charcoal type. Saturated colour is left to the photographs and their backdrops; the grey-green fills the button only."
+    },
+    {
+      "id": "putty-black-teal",
+      "name": "Putty and black",
+      "mode": "light",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#dedad3"
+        },
+        {
+          "role": "surface",
+          "hex": "#d3cec6"
+        },
+        {
+          "role": "text",
+          "hex": "#0a0a0a"
+        },
+        {
+          "role": "muted",
+          "hex": "#5c5852"
+        },
+        {
+          "role": "accent",
+          "hex": "#256f82"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#ffffff"
+        }
+      ],
+      "tags": [
+        "light-neutral",
+        "photographic-neutral"
+      ],
+      "trades": [
+        "cafe",
+        "restaurant",
+        "workshop",
+        "studio",
+        "hardware",
+        "consumer-product"
+      ],
+      "note": "Warm putty covers the page and pure black handles all type and the main shapes. The only tint in the interface is teal, used for the one button or a single marker placed near the photographs."
+    },
+    {
+      "id": "moss-sand",
+      "name": "Sand and moss",
+      "mode": "light",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#ddd6c6"
+        },
+        {
+          "role": "surface",
+          "hex": "#d2cab8"
+        },
+        {
+          "role": "text",
+          "hex": "#2a2a26"
+        },
+        {
+          "role": "muted",
+          "hex": "#59574e"
+        },
+        {
+          "role": "accent",
+          "hex": "#4f6238"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#ffffff"
+        }
+      ],
+      "tags": [
+        "light-neutral",
+        "earth"
+      ],
+      "trades": [
+        "cafe",
+        "bakery",
+        "hotel",
+        "wellness",
+        "restaurant",
+        "consumer-product"
+      ],
+      "note": "Sand grey holds the page with charcoal type, and one deep leaf-green band may close it. Moss green is reserved for buttons; brighter greens and blues arrive only through photographs."
+    },
+    {
+      "id": "green-mat-chocolate",
+      "name": "Bone, green, chocolate",
+      "mode": "light",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#e5e1d8"
+        },
+        {
+          "role": "surface",
+          "hex": "#dad5ca"
+        },
+        {
+          "role": "text",
+          "hex": "#2a1d17"
+        },
+        {
+          "role": "muted",
+          "hex": "#6b5b51"
+        },
+        {
+          "role": "accent",
+          "hex": "#456f3a"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#ffffff"
+        }
+      ],
+      "tags": [
+        "light-neutral",
+        "earth"
+      ],
+      "trades": [
+        "cafe",
+        "bakery",
+        "restaurant",
+        "hotel",
+        "retail"
+      ],
+      "note": "Bone ground with chocolate-brown text takes most of the page. The green is spent on one large flat block, about a third of a screen, and on the button; all other colour comes from photographs."
+    },
+    {
+      "id": "lunar-grey-bronze",
+      "name": "Lunar and bronze",
+      "mode": "dark",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#111111"
+        },
+        {
+          "role": "surface",
+          "hex": "#1c1c1c"
+        },
+        {
+          "role": "text",
+          "hex": "#f2f2f2"
+        },
+        {
+          "role": "muted",
+          "hex": "#8f8f8f"
+        },
+        {
+          "role": "accent",
+          "hex": "#a08672"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#111111"
+        }
+      ],
+      "tags": [
+        "dark-neutral"
+      ],
+      "trades": [
+        "hardware",
+        "ai",
+        "fintech",
+        "game"
+      ],
+      "note": "Soft black holds the page with panels one step lighter, white text and grey secondary lines, so photographs supply all the colour. Muted bronze goes on small markers and the one button only."
+    },
+    {
+      "id": "blue-black-cornflower",
+      "name": "Night and sky blue",
+      "mode": "dark",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#0a0d14"
+        },
+        {
+          "role": "surface",
+          "hex": "#131824"
+        },
+        {
+          "role": "text",
+          "hex": "#e9edf3"
+        },
+        {
+          "role": "muted",
+          "hex": "#8891a1"
+        },
+        {
+          "role": "accent",
+          "hex": "#5ab9fc"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#0a0d14"
+        }
+      ],
+      "tags": [
+        "dark-neutral"
+      ],
+      "trades": [
+        "ai",
+        "devtool",
+        "saas",
+        "fintech",
+        "game"
+      ],
+      "note": "Blue-black ground and slate panels with silver-white text fill the page; no section changes colour. A sky blue marks the buttons and the links, nothing else."
+    },
+    {
+      "id": "green-black-bone",
+      "name": "Green-black and bone",
+      "mode": "dark",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#161c1a"
+        },
+        {
+          "role": "surface",
+          "hex": "#1f2725"
+        },
+        {
+          "role": "text",
+          "hex": "#e3e2da"
+        },
+        {
+          "role": "muted",
+          "hex": "#8e948d"
+        },
+        {
+          "role": "accent",
+          "hex": "#9fc7b8"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#161c1a"
+        }
+      ],
+      "tags": [
+        "dark-neutral",
+        "earth"
+      ],
+      "trades": [
+        "ai",
+        "devtool",
+        "hardware",
+        "game"
+      ],
+      "note": "Bone type on green-black from top to bottom, with panels and drawn details barely lighter than the ground so photographs supply the colour. Pale jade is for the booking or contact button alone."
+    },
+    {
+      "id": "black-crimson",
+      "name": "Black and crimson",
+      "mode": "dark",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#0a0a0a"
+        },
+        {
+          "role": "surface",
+          "hex": "#151515"
+        },
+        {
+          "role": "text",
+          "hex": "#efefef"
+        },
+        {
+          "role": "muted",
+          "hex": "#8c8c8c"
+        },
+        {
+          "role": "accent",
+          "hex": "#b11226"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#ffffff"
+        }
+      ],
+      "tags": [
+        "dark-neutral",
+        "mono-accent"
+      ],
+      "trades": [
+        "game",
+        "hardware"
+      ],
+      "note": "Black with off-white text and mid-grey texture takes nearly the whole page, and the last sections may invert to off-white with black type. Deep crimson is scattered sparingly: a few characters in a heading, a slider fill, the one button."
+    },
+    {
+      "id": "forest-pale-lime",
+      "name": "Forest and lime",
+      "mode": "dark",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#0f1f10"
+        },
+        {
+          "role": "surface",
+          "hex": "#162a17"
+        },
+        {
+          "role": "text",
+          "hex": "#ffffff"
+        },
+        {
+          "role": "muted",
+          "hex": "#9aa39a"
+        },
+        {
+          "role": "accent",
+          "hex": "#c6f19d"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#0f1f10"
+        }
+      ],
+      "tags": [
+        "dark-neutral",
+        "earth"
+      ],
+      "trades": [
+        "game",
+        "devtool",
+        "ai"
+      ],
+      "note": "Forest green, black and white sections alternate, with forest green holding the most; photographs stay in moss greens and stone browns. Pale lime sits on small squares only, such as arrow buttons and the closing wordmark."
+    },
+    {
+      "id": "charcoal-room-sage",
+      "name": "Charcoal and sage",
+      "mode": "dark",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#1c1c1c"
+        },
+        {
+          "role": "surface",
+          "hex": "#262626"
+        },
+        {
+          "role": "text",
+          "hex": "#f1f1ef"
+        },
+        {
+          "role": "muted",
+          "hex": "#9a9b96"
+        },
+        {
+          "role": "accent",
+          "hex": "#8fa68e"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#1c1c1c"
+        }
+      ],
+      "tags": [
+        "dark-neutral",
+        "photographic-neutral"
+      ],
+      "trades": [
+        "hardware",
+        "ai",
+        "fintech"
+      ],
+      "note": "Charcoal holds the page with off-white text, and one section may flip to a pale concrete tone with dark text. Colour comes from the photographs; grey sage is used for the single button and the active state of a control."
+    },
+    {
+      "id": "warm-black-gold",
+      "name": "Warm black, gold",
+      "mode": "dark",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#0c0a08"
+        },
+        {
+          "role": "surface",
+          "hex": "#181512"
+        },
+        {
+          "role": "text",
+          "hex": "#ffffff"
+        },
+        {
+          "role": "muted",
+          "hex": "#8f8a84"
+        },
+        {
+          "role": "accent",
+          "hex": "#c9a45a"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#0c0a08"
+        }
+      ],
+      "tags": [
+        "dark-neutral",
+        "photographic-neutral"
+      ],
+      "trades": [
+        "game",
+        "hardware",
+        "fintech"
+      ],
+      "note": "Warm near-black fills the page and photographs sit bright against it, with pure white small type; panels warm to a brown-black. Gold is for one text link or small button per screen, never a field."
+    },
+    {
+      "id": "graphite-safety-orange",
+      "name": "Graphite and orange",
+      "mode": "dark",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#18191b"
+        },
+        {
+          "role": "surface",
+          "hex": "#222427"
+        },
+        {
+          "role": "text",
+          "hex": "#eff0f1"
+        },
+        {
+          "role": "muted",
+          "hex": "#9c9ea3"
+        },
+        {
+          "role": "accent",
+          "hex": "#ff4a1f"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#18191b"
+        }
+      ],
+      "tags": [
+        "mono-accent",
+        "dark-neutral"
+      ],
+      "trades": [
+        "hardware",
+        "devtool",
+        "game"
+      ],
+      "note": "Graphite and cool light-grey sections alternate, graphite taking about two thirds, and photographs are chosen calm and low in colour so nothing competes (in full colour where the pictures carry the colour; greyscale only where section 0 deals black-and-white). Safety orange marks the buttons, one thick solid bar across the top of the page and the highlighted item in a list or chart."
+    },
+    {
+      "id": "soot-pale-lime",
+      "name": "Soot and lime",
+      "mode": "dark",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#0f0f0f"
+        },
+        {
+          "role": "surface",
+          "hex": "#1a1a1a"
+        },
+        {
+          "role": "text",
+          "hex": "#ffffff"
+        },
+        {
+          "role": "muted",
+          "hex": "#8f8f8f"
+        },
+        {
+          "role": "accent",
+          "hex": "#dafa9c"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#0f0f0f"
+        }
+      ],
+      "tags": [
+        "mono-accent",
+        "dark-neutral"
+      ],
+      "trades": [
+        "devtool",
+        "ai",
+        "saas",
+        "game"
+      ],
+      "note": "A soot-black opening and close bracket white middle sections, all in black, white and grey. Pale lime is the single action colour: every button, and at most one headline set in it on the dark ground."
+    },
+    {
+      "id": "plum-black-pink",
+      "name": "Plum-black and pink",
+      "mode": "dark",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#0d060b"
+        },
+        {
+          "role": "surface",
+          "hex": "#1b0e17"
+        },
+        {
+          "role": "text",
+          "hex": "#ffffff"
+        },
+        {
+          "role": "muted",
+          "hex": "#9a8f97"
+        },
+        {
+          "role": "accent",
+          "hex": "#ff488b"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#0d060b"
+        }
+      ],
+      "tags": [
+        "mono-accent",
+        "dark-neutral"
+      ],
+      "trades": [
+        "game",
+        "ai"
+      ],
+      "note": "Near-black and plum at the top and bottom bracket a white middle with navy-black text. Hot pink is reserved for primary buttons, bars in charts and map markers; it never fills a section."
+    },
+    {
+      "id": "white-signal-red",
+      "name": "Signal red, white",
+      "mode": "light",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#ffffff"
+        },
+        {
+          "role": "surface",
+          "hex": "#f2f2f2"
+        },
+        {
+          "role": "text",
+          "hex": "#0a0a0a"
+        },
+        {
+          "role": "muted",
+          "hex": "#6b6b6b"
+        },
+        {
+          "role": "accent",
+          "hex": "#d92b21"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#ffffff"
+        }
+      ],
+      "tags": [
+        "mono-accent"
+      ],
+      "trades": [
+        "restaurant",
+        "retail",
+        "agency",
+        "consumer-product",
+        "hardware"
+      ],
+      "note": "White ground, black text and paper grey for filled panels, with one full black band allowed. Signal red is the only colour in the interface: the button and a few solid blocks, never a word in a headline."
+    },
+    {
+      "id": "white-mint-tiles",
+      "name": "Greys and mint",
+      "mode": "light",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#ffffff"
+        },
+        {
+          "role": "surface",
+          "hex": "#f3f3f3"
+        },
+        {
+          "role": "text",
+          "hex": "#232323"
+        },
+        {
+          "role": "muted",
+          "hex": "#6e6e6e"
+        },
+        {
+          "role": "accent",
+          "hex": "#a1ffcb"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#232323"
+        }
+      ],
+      "tags": [
+        "mono-accent"
+      ],
+      "trades": [
+        "saas",
+        "ai",
+        "fintech",
+        "consumer-product"
+      ],
+      "note": "White, near-black and two greys fill a board of flat tiles. Mint floods a few whole tiles (one statement, one figure, the closing call to action) and appears nowhere else."
+    },
+    {
+      "id": "cool-grey-cobalt",
+      "name": "Cool grey, cobalt",
+      "mode": "light",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#eef0f3"
+        },
+        {
+          "role": "surface",
+          "hex": "#e2e5ea"
+        },
+        {
+          "role": "text",
+          "hex": "#0b0c0e"
+        },
+        {
+          "role": "muted",
+          "hex": "#5d6470"
+        },
+        {
+          "role": "accent",
+          "hex": "#1f2de6"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#ffffff"
+        }
+      ],
+      "tags": [
+        "mono-accent"
+      ],
+      "trades": [
+        "devtool",
+        "saas",
+        "ai",
+        "fintech",
+        "hardware"
+      ],
+      "note": "Cool pale grey holds the page with near-black type and nothing else tinted. Cobalt starts as the button and one highlighted sentence, takes one whole section as a flat field with white text, then returns as a single button block."
+    },
+    {
+      "id": "offwhite-bottle-yellow",
+      "name": "Bottle ink, yellow",
+      "mode": "light",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#f7f7f7"
+        },
+        {
+          "role": "surface",
+          "hex": "#ebebeb"
+        },
+        {
+          "role": "text",
+          "hex": "#0d2a1c"
+        },
+        {
+          "role": "muted",
+          "hex": "#5f6b64"
+        },
+        {
+          "role": "accent",
+          "hex": "#f6e016"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#0d2a1c"
+        }
+      ],
+      "tags": [
+        "mono-accent"
+      ],
+      "trades": [
+        "bakery",
+        "cafe",
+        "retail",
+        "consumer-product"
+      ],
+      "note": "Off-white ground with all type in a near-black bottle green instead of black. Yellow is the only saturated note: the button or one small object on most screens, and one later section that turns fully yellow."
+    },
+    {
+      "id": "teal-on-paper",
+      "name": "Teal on paper",
+      "mode": "light",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#f7f9f8"
+        },
+        {
+          "role": "surface",
+          "hex": "#ebf0ee"
+        },
+        {
+          "role": "text",
+          "hex": "#06525c"
+        },
+        {
+          "role": "muted",
+          "hex": "#2f737d"
+        },
+        {
+          "role": "accent",
+          "hex": "#06525c"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#f7f9f8"
+        }
+      ],
+      "tags": [
+        "two-tone"
+      ],
+      "trades": [
+        "clinic",
+        "law",
+        "wellness",
+        "fintech",
+        "saas"
+      ],
+      "note": "Cool white paper and a single teal used for every word, shape and button, with no black anywhere. The accent is that same teal filled solid, for the button and for one inverted band with paper-coloured type."
+    },
+    {
+      "id": "blush-aubergine",
+      "name": "Blush and aubergine",
+      "mode": "light",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#edccbe"
+        },
+        {
+          "role": "surface",
+          "hex": "#e8c2b2"
+        },
+        {
+          "role": "text",
+          "hex": "#351a2b"
+        },
+        {
+          "role": "muted",
+          "hex": "#6c4857"
+        },
+        {
+          "role": "accent",
+          "hex": "#351a2b"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#edccbe"
+        }
+      ],
+      "tags": [
+        "two-tone"
+      ],
+      "trades": [
+        "wedding",
+        "studio",
+        "agency",
+        "consumer-product"
+      ],
+      "note": "Blush pink and dark aubergine alternate as full fields and serve as each other's text colour, in roughly equal shares. There is no third colour: the button is a solid block of whichever of the two is not the ground."
+    },
+    {
+      "id": "cobalt-on-sand",
+      "name": "Cobalt on sand",
+      "mode": "light",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#e6dbc7"
+        },
+        {
+          "role": "surface",
+          "hex": "#ddd0b9"
+        },
+        {
+          "role": "text",
+          "hex": "#062b8a"
+        },
+        {
+          "role": "muted",
+          "hex": "#3a5aa8"
+        },
+        {
+          "role": "accent",
+          "hex": "#062b8a"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#e6dbc7"
+        }
+      ],
+      "tags": [
+        "two-tone"
+      ],
+      "trades": [
+        "bakery",
+        "cafe",
+        "studio",
+        "retail",
+        "agency",
+        "workshop"
+      ],
+      "note": "Sand paper and one cobalt do everything: text, drawings and solid shapes are all the same blue. The button is a cobalt block with sand-coloured type, and no black or second hue is used."
+    },
+    {
+      "id": "oxblood-grey",
+      "name": "Oxblood and grey",
+      "mode": "light",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#e2e2e2"
+        },
+        {
+          "role": "surface",
+          "hex": "#d6d6d6"
+        },
+        {
+          "role": "text",
+          "hex": "#7d0c14"
+        },
+        {
+          "role": "muted",
+          "hex": "#7a4a4e"
+        },
+        {
+          "role": "accent",
+          "hex": "#7d0c14"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#e2e2e2"
+        }
+      ],
+      "tags": [
+        "two-tone"
+      ],
+      "trades": [
+        "restaurant",
+        "law",
+        "agency",
+        "retail",
+        "studio"
+      ],
+      "note": "Deep red text on grey paper holds most of the page, then pale grey text on a solid red field takes one long section and the footer. Photographs are chosen calm and low in colour so nothing breaks the pair (in full colour where the pictures carry the colour; greyscale only where section 0 deals black-and-white), and the button is a solid red block."
+    },
+    {
+      "id": "olive-on-bone",
+      "name": "Olive on bone",
+      "mode": "light",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#ecebe7"
+        },
+        {
+          "role": "surface",
+          "hex": "#e1dfd9"
+        },
+        {
+          "role": "text",
+          "hex": "#38450f"
+        },
+        {
+          "role": "muted",
+          "hex": "#5d683a"
+        },
+        {
+          "role": "accent",
+          "hex": "#38450f"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#ecebe7"
+        }
+      ],
+      "tags": [
+        "two-tone",
+        "earth"
+      ],
+      "trades": [
+        "restaurant",
+        "hotel",
+        "wellness",
+        "bakery",
+        "studio",
+        "law"
+      ],
+      "note": "A bone page with every word, large or small, in one olive green; the footer inverts to a solid olive field with bone text. Photography supplies all other colour, and the button is the same olive, filled."
+    },
+    {
+      "id": "burgundy-bubblegum",
+      "name": "Burgundy and bubblegum",
+      "mode": "dark",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#3d0012"
+        },
+        {
+          "role": "surface",
+          "hex": "#4d0519"
+        },
+        {
+          "role": "text",
+          "hex": "#ff99d3"
+        },
+        {
+          "role": "muted",
+          "hex": "#c77aa0"
+        },
+        {
+          "role": "accent",
+          "hex": "#ff99d3"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#3d0012"
+        }
+      ],
+      "tags": [
+        "two-tone"
+      ],
+      "trades": [
+        "agency",
+        "game"
+      ],
+      "note": "Deep burgundy is the ground for the whole page and bubblegum pink sets every word on it. The button and the active state of a control are solid pink with burgundy type; product photographs supply any other colour."
+    },
+    {
+      "id": "bottle-green-gold",
+      "name": "Bottle green, gold",
+      "mode": "dark",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#133621"
+        },
+        {
+          "role": "surface",
+          "hex": "#1a4429"
+        },
+        {
+          "role": "text",
+          "hex": "#f4d96c"
+        },
+        {
+          "role": "muted",
+          "hex": "#b3a55e"
+        },
+        {
+          "role": "accent",
+          "hex": "#f4d96c"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#133621"
+        }
+      ],
+      "tags": [
+        "two-tone",
+        "earth"
+      ],
+      "trades": [
+        "restaurant",
+        "game"
+      ],
+      "note": "Bottle green covers the page and warm gold sets all the type, with panels one step lighter than the ground. The button is solid gold with green text, and photographs are kept dark and warm so the pair is not disturbed."
+    },
+    {
+      "id": "mustard-field",
+      "name": "Mustard and black",
+      "mode": "light",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#e1ac10"
+        },
+        {
+          "role": "surface",
+          "hex": "#cd9d0f"
+        },
+        {
+          "role": "text",
+          "hex": "#0b0b0b"
+        },
+        {
+          "role": "muted",
+          "hex": "#4d3d0a"
+        },
+        {
+          "role": "accent",
+          "hex": "#24338f"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#ffffff"
+        }
+      ],
+      "tags": [
+        "single-field"
+      ],
+      "trades": [
+        "agency",
+        "consumer-product"
+      ],
+      "note": "One warm mustard field for the whole page with black ink only. Royal blue is the single interruption, kept to a sliver along one edge or one small button."
+    },
+    {
+      "id": "pink-field-lime",
+      "name": "Bubblegum and lime",
+      "mode": "light",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#ff87ab"
+        },
+        {
+          "role": "surface",
+          "hex": "#ff739d"
+        },
+        {
+          "role": "text",
+          "hex": "#0a0a0a"
+        },
+        {
+          "role": "muted",
+          "hex": "#6b1f3a"
+        },
+        {
+          "role": "accent",
+          "hex": "#def915"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#0a0a0a"
+        }
+      ],
+      "tags": [
+        "single-field"
+      ],
+      "trades": [
+        "consumer-product",
+        "agency"
+      ],
+      "note": "A flat bubblegum pink field with black type from top to bottom. Fluorescent lime is the action colour only: the menu button, one highlighter swipe behind a word and the main button."
+    },
+    {
+      "id": "sky-field-navy",
+      "name": "Sky and navy",
+      "mode": "light",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#6bb4ee"
+        },
+        {
+          "role": "surface",
+          "hex": "#7dbdf0"
+        },
+        {
+          "role": "text",
+          "hex": "#0e1822"
+        },
+        {
+          "role": "muted",
+          "hex": "#1b3d5c"
+        },
+        {
+          "role": "accent",
+          "hex": "#ff5a1f"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#0e1822"
+        }
+      ],
+      "tags": [
+        "single-field"
+      ],
+      "trades": [
+        "consumer-product",
+        "agency"
+      ],
+      "note": "Sky blue sits behind everything, white cards lie on top of it, and navy handles all text and the footer. Orange is for buttons and one highlighted word, so orange against blue is the single clash on the page."
+    },
+    {
+      "id": "card-pastels",
+      "name": "Card pastels",
+      "mode": "light",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#f7f7f5"
+        },
+        {
+          "role": "surface",
+          "hex": "#ebebe8"
+        },
+        {
+          "role": "text",
+          "hex": "#000000"
+        },
+        {
+          "role": "muted",
+          "hex": "#666662"
+        },
+        {
+          "role": "accent",
+          "hex": "#d0106f"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#ffffff"
+        }
+      ],
+      "tags": [
+        "pastel-fields"
+      ],
+      "trades": [
+        "agency",
+        "saas",
+        "consumer-product",
+        "studio"
+      ],
+      "note": "Neutral paper ground and black type, with each card or tile given its own flat pastel (sky, lime, amber or cyan), never two alike side by side. Magenta is reserved for the logo, the email address and text links."
+    },
+    {
+      "id": "mint-pink-accounts",
+      "name": "Mint and pink",
+      "mode": "light",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#f8f8f8"
+        },
+        {
+          "role": "surface",
+          "hex": "#eeeeee"
+        },
+        {
+          "role": "text",
+          "hex": "#0a0a0a"
+        },
+        {
+          "role": "muted",
+          "hex": "#6a6a6a"
+        },
+        {
+          "role": "accent",
+          "hex": "#1f6b3a"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#ffffff"
+        }
+      ],
+      "tags": [
+        "pastel-fields"
+      ],
+      "trades": [
+        "fintech",
+        "saas",
+        "bakery",
+        "retail"
+      ],
+      "note": "Near-white base with black type; mint and pink are the only two colours and each stands for one side of the product. They first appear as small circles, then as full-screen section fields, and deep green is used only for the button."
+    },
+    {
+      "id": "warm-paper-walnut",
+      "name": "Warm paper and walnut",
+      "mode": "light",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#f7f3ec"
+        },
+        {
+          "role": "surface",
+          "hex": "#ede6da"
+        },
+        {
+          "role": "text",
+          "hex": "#2a2622"
+        },
+        {
+          "role": "muted",
+          "hex": "#665e55"
+        },
+        {
+          "role": "accent",
+          "hex": "#7a4a2c"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#ffffff"
+        }
+      ],
+      "tags": [
+        "light-neutral",
+        "earth"
+      ],
+      "trades": [
+        "cafe",
+        "bakery",
+        "hotel",
+        "wedding",
+        "studio",
+        "retail"
+      ],
+      "note": "Warm off-white holds the page with brown-black type and one darker paper step for the visit panel and the goods cards. Walnut brown is the one button, the focus ring and the links; photographs carry the rest of the colour."
+    },
+    {
+      "id": "flour-terracotta",
+      "name": "Flour and terracotta",
+      "mode": "light",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#f6f1e7"
+        },
+        {
+          "role": "surface",
+          "hex": "#ebe3d4"
+        },
+        {
+          "role": "text",
+          "hex": "#2b241e"
+        },
+        {
+          "role": "muted",
+          "hex": "#6a5f54"
+        },
+        {
+          "role": "accent",
+          "hex": "#a3472b"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#ffffff"
+        }
+      ],
+      "tags": [
+        "light-neutral",
+        "earth"
+      ],
+      "trades": [
+        "bakery",
+        "cafe",
+        "restaurant",
+        "retail",
+        "workshop"
+      ],
+      "note": "A flour-white ground with warm brown-black type and a sand step for panels. Terracotta red is the main button and the brand band, never a second fill; the photographs of ovens, tiles and bread bring the warmth."
+    },
+    {
+      "id": "clay-pine",
+      "name": "Clay and pine",
+      "mode": "light",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#efe9e0"
+        },
+        {
+          "role": "surface",
+          "hex": "#e2d9cb"
+        },
+        {
+          "role": "text",
+          "hex": "#22261f"
+        },
+        {
+          "role": "muted",
+          "hex": "#5f6158"
+        },
+        {
+          "role": "accent",
+          "hex": "#2e5b44"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#ffffff"
+        }
+      ],
+      "tags": [
+        "light-neutral",
+        "earth"
+      ],
+      "trades": [
+        "wellness",
+        "hotel",
+        "cafe",
+        "workshop",
+        "studio"
+      ],
+      "note": "Pale clay holds the page with green-black type and a darker clay step for panels. Pine green is the one button and may fill the brand band at the close; wood, stone and plants in the photographs match it."
+    },
+    {
+      "id": "steel-orange",
+      "name": "Steel and orange",
+      "mode": "light",
+      "colors": [
+        {
+          "role": "bg",
+          "hex": "#eeeeeb"
+        },
+        {
+          "role": "surface",
+          "hex": "#e1e1dd"
+        },
+        {
+          "role": "text",
+          "hex": "#1c1d1f"
+        },
+        {
+          "role": "muted",
+          "hex": "#5c5e62"
+        },
+        {
+          "role": "accent",
+          "hex": "#c2501b"
+        },
+        {
+          "role": "on-accent",
+          "hex": "#ffffff"
+        }
+      ],
+      "tags": [
+        "light-neutral",
+        "mono-accent"
+      ],
+      "trades": [
+        "workshop",
+        "hardware",
+        "retail",
+        "consumer-product"
+      ],
+      "note": "Light steel grey with graphite type and one darker grey step for panels and the price rows. Workshop orange is the one button and the focus ring; tools and bikes in the photographs bring their own colour."
+    }
+  ],
+  "types": [
+    {
+      "id": "geist",
+      "class": "neo-grotesk",
+      "display": {
+        "family": "Geist",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "body": {
+        "family": "Geist",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "mono": {
+        "family": "Geist Mono",
+        "weights": [
+          400,
+          500
+        ]
+      },
+      "suits": "developer tools, AI, infrastructure, fintech: exact, plain and fast",
+      "kinds": {
+        "tech": 3,
+        "software": 3,
+        "gaming": 1,
+        "product": 1,
+        "service": 1
+      },
+      "moods": [
+        "precise",
+        "technical",
+        "calm"
+      ]
+    },
+    {
+      "id": "host",
+      "class": "neo-grotesk",
+      "display": {
+        "family": "Host Grotesk",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "body": {
+        "family": "Host Grotesk",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "mono": {
+        "family": "JetBrains Mono",
+        "weights": [
+          400,
+          500
+        ]
+      },
+      "suits": "software, studios and agencies that want a quiet, exact page",
+      "kinds": {
+        "tech": 2,
+        "software": 3,
+        "service": 2,
+        "product": 1
+      },
+      "moods": [
+        "calm",
+        "precise"
+      ]
+    },
+    {
+      "id": "instrument",
+      "class": "neo-grotesk",
+      "display": {
+        "family": "Instrument Sans",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "body": {
+        "family": "Instrument Sans",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "mono": {
+        "family": "DM Mono"
+      },
+      "suits": "design and productivity software, studios, modern agencies",
+      "kinds": {
+        "tech": 1,
+        "software": 3,
+        "product": 1,
+        "service": 2
+      },
+      "moods": [
+        "precise",
+        "friendly",
+        "calm"
+      ]
+    },
+    {
+      "id": "mona",
+      "class": "neo-grotesk",
+      "display": {
+        "family": "Mona Sans",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "body": {
+        "family": "Mona Sans",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "mono": {
+        "family": "Geist Mono",
+        "weights": [
+          400,
+          500
+        ]
+      },
+      "suits": "hardware, platforms, games studios: a little wide, firm and modern",
+      "kinds": {
+        "tech": 2,
+        "software": 2,
+        "gaming": 2,
+        "product": 2
+      },
+      "moods": [
+        "technical",
+        "bold",
+        "precise"
+      ]
+    },
+    {
+      "id": "hanken",
+      "class": "neo-grotesk",
+      "display": {
+        "family": "Hanken Grotesk",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "body": {
+        "family": "Hanken Grotesk",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "mono": {
+        "family": "DM Mono"
+      },
+      "suits": "clinics, law, advice, agencies: friendly and trusted without a trace of tech",
+      "kinds": {
+        "software": 1,
+        "product": 2,
+        "service": 3
+      },
+      "moods": [
+        "calm",
+        "trusted"
+      ]
+    },
+    {
+      "id": "schibsted",
+      "class": "neo-grotesk",
+      "display": {
+        "family": "Schibsted Grotesk",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "body": {
+        "family": "Schibsted Grotesk",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "mono": {
+        "family": "JetBrains Mono",
+        "weights": [
+          400,
+          500
+        ]
+      },
+      "suits": "media, agencies, services that want a sturdy editorial voice",
+      "kinds": {
+        "software": 2,
+        "service": 3,
+        "product": 1
+      },
+      "moods": [
+        "bold",
+        "trusted"
+      ]
+    },
+    {
+      "id": "manrope",
+      "class": "geometric",
+      "display": {
+        "family": "Manrope",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "body": {
+        "family": "Manrope",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "mono": {
+        "family": "JetBrains Mono",
+        "weights": [
+          400,
+          500
+        ]
+      },
+      "suits": "fintech, data and AI products: clean geometric forms, open numbers",
+      "kinds": {
+        "tech": 2,
+        "software": 2,
+        "product": 1,
+        "service": 1
+      },
+      "moods": [
+        "precise",
+        "friendly"
+      ]
+    },
+    {
+      "id": "plex",
+      "class": "neo-grotesk",
+      "display": {
+        "family": "IBM Plex Sans",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "body": {
+        "family": "IBM Plex Sans",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "mono": {
+        "family": "IBM Plex Mono"
+      },
+      "suits": "developer tools, security, data infrastructure: engineered and sober",
+      "kinds": {
+        "tech": 3,
+        "software": 2,
+        "service": 1
+      },
+      "moods": [
+        "technical",
+        "trusted"
+      ]
+    },
+    {
+      "id": "sora",
+      "class": "geometric",
+      "display": {
+        "family": "Sora",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "body": {
+        "family": "Figtree",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "mono": {
+        "family": "Martian Mono",
+        "weights": [
+          400,
+          500
+        ]
+      },
+      "suits": "games, web3-free fintech, hardware: a wide, geometric face with a clear text partner",
+      "kinds": {
+        "tech": 2,
+        "gaming": 3,
+        "software": 1
+      },
+      "moods": [
+        "technical",
+        "bold"
+      ]
+    },
+    {
+      "id": "archivo",
+      "class": "wide",
+      "display": {
+        "family": "Archivo",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "body": {
+        "family": "Archivo",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "mono": {
+        "family": "Martian Mono",
+        "weights": [
+          400,
+          500
+        ]
+      },
+      "suits": "hardware, vehicles, equipment and games: a broad, firm face",
+      "kinds": {
+        "product": 3,
+        "tech": 1,
+        "gaming": 2,
+        "service": 1
+      },
+      "moods": [
+        "bold",
+        "technical"
+      ]
+    },
+    {
+      "id": "bricolage",
+      "class": "grotesk-soft",
+      "display": {
+        "family": "Bricolage Grotesque",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "body": {
+        "family": "Figtree",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "mono": {
+        "family": "DM Mono"
+      },
+      "suits": "consumer products and brands with character, studios, kitchens that sell online",
+      "kinds": {
+        "software": 1,
+        "product": 3,
+        "service": 1,
+        "gaming": 1
+      },
+      "moods": [
+        "friendly",
+        "playful",
+        "warm"
+      ]
+    },
+    {
+      "id": "red-hat",
+      "class": "neo-grotesk",
+      "display": {
+        "family": "Red Hat Display",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "body": {
+        "family": "Red Hat Text",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "mono": {
+        "family": "IBM Plex Mono"
+      },
+      "suits": "trades, finance advice, health and schools: steady and approachable",
+      "kinds": {
+        "service": 3,
+        "software": 1,
+        "product": 1
+      },
+      "moods": [
+        "trusted",
+        "friendly"
+      ]
+    },
+    {
+      "id": "gabarito",
+      "class": "geometric",
+      "display": {
+        "family": "Gabarito",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "body": {
+        "family": "Figtree",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "mono": {
+        "family": "DM Mono"
+      },
+      "suits": "consumer apps and casual games: round and friendly",
+      "kinds": {
+        "software": 2,
+        "service": 1,
+        "gaming": 1
+      },
+      "moods": [
+        "friendly",
+        "playful"
+      ]
+    },
+    {
+      "id": "outfit",
+      "class": "geometric",
+      "display": {
+        "family": "Outfit",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "body": {
+        "family": "Outfit",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "mono": {
+        "family": "DM Mono"
+      },
+      "suits": "apps and consumer brands: clean geometric forms",
+      "kinds": {
+        "software": 2,
+        "product": 1,
+        "gaming": 1,
+        "service": 1
+      },
+      "moods": [
+        "friendly",
+        "precise"
+      ]
+    },
+    {
+      "id": "instrument-serif",
+      "class": "serif",
+      "display": {
+        "family": "Instrument Serif"
+      },
+      "body": {
+        "family": "Instrument Sans",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "suits": "brands, studios and firms that want a refined, editorial voice",
+      "kinds": {
+        "product": 3,
+        "service": 2
+      },
+      "moods": [
+        "refined",
+        "calm",
+        "classic"
+      ]
+    },
+    {
+      "id": "fraunces",
+      "class": "serif",
+      "display": {
+        "family": "Fraunces",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "body": {
+        "family": "Figtree",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "suits": "bakeries, roasters, food and homeware brands: a soft, warm serif",
+      "kinds": {
+        "product": 3,
+        "service": 1
+      },
+      "moods": [
+        "warm",
+        "friendly",
+        "classic"
+      ]
+    },
+    {
+      "id": "newsreader",
+      "class": "serif",
+      "display": {
+        "family": "Newsreader",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "body": {
+        "family": "Hanken Grotesk",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "suits": "bookshops, guesthouses, advisers, schools: a calm text serif",
+      "kinds": {
+        "service": 3,
+        "product": 1
+      },
+      "moods": [
+        "trusted",
+        "refined",
+        "calm"
+      ]
+    },
+    {
+      "id": "garamond",
+      "class": "serif",
+      "display": {
+        "family": "EB Garamond",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "body": {
+        "family": "Jost",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "suits": "wine rooms, bookshops, old guesthouses, patisseries: classical and quiet",
+      "kinds": {
+        "product": 2,
+        "service": 1
+      },
+      "moods": [
+        "classic",
+        "refined",
+        "calm"
+      ]
+    },
+    {
+      "id": "zilla",
+      "class": "slab",
+      "display": {
+        "family": "Zilla Slab"
+      },
+      "body": {
+        "family": "Rethink Sans",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "suits": "workshops, bike shops, outfitters and trades: a friendly slab",
+      "kinds": {
+        "product": 2,
+        "service": 2
+      },
+      "moods": [
+        "warm",
+        "trusted",
+        "bold"
+      ]
+    },
+    {
+      "id": "nunito",
+      "class": "soft",
+      "display": {
+        "family": "Nunito",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "body": {
+        "family": "Nunito",
+        "weights": [
+          400,
+          600
+        ]
+      },
+      "suits": "cafes, bakeries, kids and wellbeing: rounded and easy",
+      "kinds": {
+        "product": 1,
+        "service": 1
+      },
+      "moods": [
+        "friendly",
+        "warm"
+      ]
+    }
+  ],
+  "layouts": [
+    {
+      "id": "split",
+      "surface": "landing",
+      "from": "taste-skill",
+      "name": "Split, the picture on the right",
+      "kinds": {
+        "service": 3,
+        "software": 2
+      },
+      "note": "Text left, the real thing right, both whole on the first screen: a photograph of the product in use, the place or the people; a phone or one window for software."
+    },
+    {
+      "id": "photo",
+      "surface": "landing",
+      "from": "taste-skill",
+      "name": "Full-bleed photograph, the words on its calm side",
+      "kinds": {
+        "product": 2,
+        "service": 2,
+        "gaming": 3
+      },
+      "note": "A place or a product with one strong photograph that has a calm area for the words: sky, a wall, cloud, shadow. Never for a software product (its own UI leads); a game with key art is dealt it, and a game without art files is printed it (--has setting): the game's name as the h1, set large in the box or straight on a dark calm part of a stand-in photograph of its setting (photos.mjs search), never an effect in its place."
+    },
+    {
+      "id": "product",
+      "surface": "landing",
+      "from": "taste-skill",
+      "name": "Product stage with one object",
+      "kinds": {
+        "product": 3,
+        "software": 1,
+        "gaming": 1
+      },
+      "note": "The product itself, big, under one head row: the headline left, the lead and the buttons right. A render or a cut-out stands on the page's own ground across the wrap (no box, no gradient, no radius), its widest view (a bike's side) spanning 80% or more of the wrap at 1440; a product photograph runs edge to edge down to the fold, cropped so the product spans 80% or more of the wrap. Nothing on the product: no hotspots by default (the parts are named in the sections below). A product or hardware without photographs of its own: a stand-in photograph of the same kind of thing (photos.mjs search), listed in the report; its product render (assets/objects/product-render), a still, only when the brief asks for 3D or a render. A game puts its name in the h1 (or its wordmark above it), the launch date or status in the lead, and the stage holds its key art (a rendered hero object or world only when the brief asks for 3D; a print or scene keeps the lit stage), an effect allowed only behind it."
+    },
+    {
+      "id": "collage",
+      "surface": "landing",
+      "from": "taste-skill",
+      "name": "UI collage cut by its frame",
+      "kinds": {
+        "software": 3
+      },
+      "note": "Software: the text on the left, the product's main window on a lit ground on the right six columns, the window cut by the frame's right and bottom edges, one small card over its lower-left corner showing the result."
+    },
+    {
+      "id": "word",
+      "surface": "landing",
+      "from": "taste-skill",
+      "name": "Oversized headline with one live word",
+      "kinds": {
+        "service": 2,
+        "software": 2
+      },
+      "note": "Type does the work, for a brief without a strong photograph: an oversized headline across the container where one word changes (what you move, where you ship, who it is for), then a foot row with the line and the buttons on the left half and four facts as a column on the right half."
+    },
+    {
+      "id": "film",
+      "surface": "landing",
+      "from": "taste-skill",
+      "name": "Cinema frame: the film's poster with the words on it",
+      "kinds": {
+        "product": 2,
+        "service": 2,
+        "software": 1,
+        "gaming": 3
+      },
+      "note": "One rounded frame on the container's lines fills the first screen less 16px; the film's poster in it, the headline, the line and the buttons on its dark foot ( For a client with a real film, or a strong photograph with a calm dark foot."
+    },
+    {
+      "id": "statement",
+      "surface": "landing",
+      "from": "taste-skill",
+      "name": "Quiet statement over a ground",
+      "kinds": {
+        "service": 3,
+        "software": 2
+      },
+      "note": "One calm sentence at 56px over a ground that fills the hero, the buttons, then four facts docked under a hairline. For a company whose product is trust or a service, when there is no strong picture. The ground carries the look: a dark horizon with a lit rim, a grainy field in the lit tone, a halo, dusk or (software) liquid."
+    },
+    {
+      "id": "triptych",
+      "surface": "landing",
+      "from": "taste-skill",
+      "name": "Headline, collage, button (Figma's hero)",
+      "kinds": {
+        "software": 2
+      },
+      "note": "Three columns: the headline on the left, a collage of three to five pieces in the middle that changes set every 2.8 s, one large button on the right line. For a product with many outputs: a design tool, a menu or print tool, a shop with several lines."
+    },
+    {
+      "id": "centred",
+      "surface": "landing",
+      "from": "taste-skill",
+      "name": "Centred headline over one window (x.ai's hero)",
+      "kinds": {
+        "software": 3
+      },
+      "note": "Software whose product is one window or one assistant: a news pill, a centred headline with the mark inline, a grey line, two pill buttons, then the window rising out of a lit frame that takes the rest of the first screen and fades into the ground at the hero's foot."
+    },
+    {
+      "id": "sidebar",
+      "surface": "app",
+      "from": "oryn",
+      "name": "侧栏导航",
+      "note": "左侧固定导航（分组 + 当前项高亮），顶栏放搜索与账户，主区是标题行 + 卡片或表格；适合后台、仪表盘、多模块工具。"
+    },
+    {
+      "id": "topbar",
+      "surface": "app",
+      "from": "oryn",
+      "name": "顶栏导航",
+      "note": "顶部一行导航，内容居中成一列（最大宽 960–1200），分区靠留白与细线；适合设置页、文档型应用、轻量工具。"
+    },
+    {
+      "id": "split-pane",
+      "surface": "app",
+      "from": "oryn",
+      "name": "列表 + 详情",
+      "note": "左列表（可筛选、带状态）右详情，选中项驱动右侧；适合收件箱、工单、CRM、文件浏览。"
+    },
+    {
+      "id": "workspace",
+      "surface": "app",
+      "from": "oryn",
+      "name": "工作台",
+      "note": "顶部工具栏，中间是编辑区或画布，右侧检查器面板；适合编辑器、设计/数据工具。"
+    }
+  ],
+  "industries": [
+    {
+      "id": "saas",
+      "trades": [
+        "saas"
+      ],
+      "kinds": [
+        "software"
+      ],
+      "aliases": [
+        "saas",
+        "b2b",
+        "crm",
+        "erp",
+        "productivity",
+        "软件",
+        "企业服务",
+        "协作",
+        "效率"
+      ]
+    },
+    {
+      "id": "devtool",
+      "trades": [
+        "devtool"
+      ],
+      "kinds": [
+        "software",
+        "tech"
+      ],
+      "aliases": [
+        "devtool",
+        "developer",
+        "developers",
+        "api",
+        "infra",
+        "infrastructure",
+        "cloud",
+        "database",
+        "cli",
+        "sdk",
+        "open source",
+        "开发者",
+        "开发工具",
+        "基础设施",
+        "云服务",
+        "数据库",
+        "开源"
+      ]
+    },
+    {
+      "id": "ai",
+      "trades": [
+        "ai"
+      ],
+      "kinds": [
+        "software",
+        "tech"
+      ],
+      "aliases": [
+        "ai",
+        "llm",
+        "agent",
+        "agents",
+        "machine learning",
+        "ml",
+        "人工智能",
+        "大模型",
+        "智能体",
+        "机器学习"
+      ]
+    },
+    {
+      "id": "fintech",
+      "trades": [
+        "fintech"
+      ],
+      "kinds": [
+        "software",
+        "service"
+      ],
+      "aliases": [
+        "fintech",
+        "finance",
+        "payment",
+        "payments",
+        "bank",
+        "banking",
+        "insurance",
+        "invest",
+        "investing",
+        "crypto",
+        "accounting",
+        "金融",
+        "支付",
+        "银行",
+        "保险",
+        "投资",
+        "加密",
+        "财务",
+        "会计"
+      ]
+    },
+    {
+      "id": "game",
+      "trades": [
+        "game"
+      ],
+      "kinds": [
+        "gaming"
+      ],
+      "aliases": [
+        "game",
+        "games",
+        "gaming",
+        "esports",
+        "游戏",
+        "电竞"
+      ]
+    },
+    {
+      "id": "hardware",
+      "trades": [
+        "hardware"
+      ],
+      "kinds": [
+        "product",
+        "tech"
+      ],
+      "aliases": [
+        "hardware",
+        "device",
+        "devices",
+        "robot",
+        "robotics",
+        "electronics",
+        "iot",
+        "硬件",
+        "设备",
+        "机器人",
+        "电子",
+        "汽车"
+      ]
+    },
+    {
+      "id": "consumer-product",
+      "trades": [
+        "consumer-product"
+      ],
+      "kinds": [
+        "product"
+      ],
+      "aliases": [
+        "consumer",
+        "consumer-product",
+        "dtc",
+        "d2c",
+        "brand",
+        "beauty",
+        "fashion",
+        "apparel",
+        "furniture",
+        "消费",
+        "品牌",
+        "美妆",
+        "时尚",
+        "服装",
+        "家居"
+      ]
+    },
+    {
+      "id": "retail",
+      "trades": [
+        "retail"
+      ],
+      "kinds": [
+        "product"
+      ],
+      "aliases": [
+        "retail",
+        "shop",
+        "store",
+        "ecommerce",
+        "e-commerce",
+        "零售",
+        "商店",
+        "电商",
+        "商城"
+      ]
+    },
+    {
+      "id": "agency",
+      "trades": [
+        "agency"
+      ],
+      "kinds": [
+        "service"
+      ],
+      "aliases": [
+        "agency",
+        "marketing",
+        "advertising",
+        "consulting",
+        "creative",
+        "代理",
+        "广告",
+        "营销",
+        "咨询",
+        "创意"
+      ]
+    },
+    {
+      "id": "studio",
+      "trades": [
+        "studio"
+      ],
+      "kinds": [
+        "service"
+      ],
+      "aliases": [
+        "studio",
+        "design",
+        "photography",
+        "architecture",
+        "portfolio",
+        "工作室",
+        "设计",
+        "摄影",
+        "建筑",
+        "作品集"
+      ]
+    },
+    {
+      "id": "law",
+      "trades": [
+        "law"
+      ],
+      "kinds": [
+        "service"
+      ],
+      "aliases": [
+        "law",
+        "legal",
+        "lawyer",
+        "律师",
+        "法律",
+        "律所"
+      ]
+    },
+    {
+      "id": "clinic",
+      "trades": [
+        "clinic"
+      ],
+      "kinds": [
+        "service"
+      ],
+      "aliases": [
+        "clinic",
+        "medical",
+        "healthcare",
+        "hospital",
+        "dental",
+        "诊所",
+        "医疗",
+        "医院",
+        "牙科"
+      ]
+    },
+    {
+      "id": "wellness",
+      "trades": [
+        "wellness"
+      ],
+      "kinds": [
+        "service"
+      ],
+      "aliases": [
+        "wellness",
+        "health",
+        "spa",
+        "yoga",
+        "fitness",
+        "meditation",
+        "健康",
+        "养生",
+        "瑜伽",
+        "健身",
+        "冥想"
+      ]
+    },
+    {
+      "id": "cafe",
+      "trades": [
+        "cafe"
+      ],
+      "kinds": [
+        "service",
+        "product"
+      ],
+      "aliases": [
+        "cafe",
+        "café",
+        "coffee",
+        "tea",
+        "咖啡",
+        "茶"
+      ]
+    },
+    {
+      "id": "bakery",
+      "trades": [
+        "bakery"
+      ],
+      "kinds": [
+        "product",
+        "service"
+      ],
+      "aliases": [
+        "bakery",
+        "dessert",
+        "cake",
+        "pastry",
+        "烘焙",
+        "面包",
+        "甜品",
+        "蛋糕"
+      ]
+    },
+    {
+      "id": "restaurant",
+      "trades": [
+        "restaurant"
+      ],
+      "kinds": [
+        "service"
+      ],
+      "aliases": [
+        "restaurant",
+        "food",
+        "bar",
+        "dining",
+        "餐厅",
+        "餐饮",
+        "美食",
+        "酒吧",
+        "饭店"
+      ]
+    },
+    {
+      "id": "hotel",
+      "trades": [
+        "hotel"
+      ],
+      "kinds": [
+        "service"
+      ],
+      "aliases": [
+        "hotel",
+        "travel",
+        "resort",
+        "hostel",
+        "酒店",
+        "民宿",
+        "旅游",
+        "度假"
+      ]
+    },
+    {
+      "id": "wedding",
+      "trades": [
+        "wedding"
+      ],
+      "kinds": [
+        "service"
+      ],
+      "aliases": [
+        "wedding",
+        "event",
+        "events",
+        "婚礼",
+        "婚庆",
+        "活动"
+      ]
+    },
+    {
+      "id": "workshop",
+      "trades": [
+        "workshop"
+      ],
+      "kinds": [
+        "product",
+        "service"
+      ],
+      "aliases": [
+        "workshop",
+        "craft",
+        "manufacturing",
+        "手工",
+        "作坊",
+        "木工",
+        "制造"
+      ]
+    }
+  ],
+  "tones": [
+    {
+      "id": "dark",
+      "mode": "dark",
+      "moods": [],
+      "tags": [],
+      "aliases": [
+        "dark",
+        "night",
+        "深色",
+        "暗色",
+        "黑色",
+        "夜间"
+      ]
+    },
+    {
+      "id": "light",
+      "mode": "light",
+      "moods": [],
+      "tags": [],
+      "aliases": [
+        "light",
+        "bright",
+        "浅色",
+        "亮色",
+        "白色",
+        "明亮"
+      ]
+    },
+    {
+      "id": "calm",
+      "moods": [
+        "calm",
+        "refined"
+      ],
+      "tags": [
+        "light-neutral",
+        "photographic-neutral"
+      ],
+      "aliases": [
+        "calm",
+        "quiet",
+        "minimal",
+        "minimalist",
+        "极简",
+        "简约",
+        "克制",
+        "安静",
+        "冷静"
+      ]
+    },
+    {
+      "id": "precise",
+      "moods": [
+        "precise",
+        "technical"
+      ],
+      "tags": [
+        "mono-accent",
+        "light-neutral",
+        "dark-neutral"
+      ],
+      "aliases": [
+        "precise",
+        "technical",
+        "professional",
+        "engineering",
+        "专业",
+        "精确",
+        "技术",
+        "理性",
+        "严谨"
+      ]
+    },
+    {
+      "id": "trusted",
+      "moods": [
+        "trusted"
+      ],
+      "tags": [
+        "light-neutral",
+        "two-tone"
+      ],
+      "aliases": [
+        "trust",
+        "trusted",
+        "trustworthy",
+        "sober",
+        "corporate",
+        "可信",
+        "稳重",
+        "可靠",
+        "正式"
+      ]
+    },
+    {
+      "id": "warm",
+      "moods": [
+        "warm",
+        "friendly"
+      ],
+      "tags": [
+        "earth"
+      ],
+      "aliases": [
+        "warm",
+        "cozy",
+        "natural",
+        "organic",
+        "earthy",
+        "温暖",
+        "温馨",
+        "自然",
+        "有机"
+      ]
+    },
+    {
+      "id": "playful",
+      "moods": [
+        "playful",
+        "friendly"
+      ],
+      "tags": [
+        "flat-loud",
+        "pastel-fields",
+        "single-field"
+      ],
+      "aliases": [
+        "playful",
+        "fun",
+        "cute",
+        "young",
+        "活泼",
+        "可爱",
+        "童趣",
+        "有趣",
+        "年轻"
+      ]
+    },
+    {
+      "id": "bold",
+      "moods": [
+        "bold"
+      ],
+      "tags": [
+        "flat-loud",
+        "single-field",
+        "two-tone",
+        "mono-accent"
+      ],
+      "aliases": [
+        "bold",
+        "loud",
+        "punchy",
+        "brutal",
+        "brutalist",
+        "大胆",
+        "醒目",
+        "张扬",
+        "强烈"
+      ]
+    },
+    {
+      "id": "refined",
+      "moods": [
+        "refined",
+        "classic"
+      ],
+      "tags": [
+        "light-neutral",
+        "photographic-neutral",
+        "earth"
+      ],
+      "aliases": [
+        "refined",
+        "elegant",
+        "luxury",
+        "premium",
+        "classic",
+        "editorial",
+        "优雅",
+        "高级",
+        "奢华",
+        "精致",
+        "经典",
+        "杂志"
+      ]
+    },
+    {
+      "id": "friendly",
+      "moods": [
+        "friendly",
+        "warm"
+      ],
+      "tags": [
+        "pastel-fields",
+        "light-neutral"
+      ],
+      "aliases": [
+        "friendly",
+        "approachable",
+        "soft",
+        "亲和",
+        "友好",
+        "亲切",
+        "柔和"
+      ]
+    }
+  ]
+}
