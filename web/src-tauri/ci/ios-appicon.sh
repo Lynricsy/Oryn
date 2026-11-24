@@ -9,7 +9,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 src="$here/icons/ios"
 assets="$here/gen/apple/Assets.xcassets"
 [[ -f "$src/AppIcon.appiconset/Contents.json" ]] || { echo "::error::缺少 $src/AppIcon.appiconset（先跑 web/scripts/gen-icons.py）"; exit 1; }
-[[ -d "$assets" ]] || { echo "::error::没有 $assets（先 tauri ios init）"; exit 1; }
+[[ -d "$assets" ]] || { echo "::error::没有 ${assets}（先 tauri ios init）"; exit 1; }
 for set in "$src"/*.appiconset; do
   name=$(basename "$set")
   rm -rf "${assets:?}/$name"

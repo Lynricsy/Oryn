@@ -352,7 +352,8 @@ else
   else
     msg="P3 NSE：模拟器没有为 simctl push 调起 Notification Service Extension"
   fi
-  if [[ $nse_gate == hard ]]; then bad "$msg"; else warn "$msg（PUSH_NSE_GATE=soft，只记录）"; fi
+  # 变量后紧跟全角字符时一律写 ${…}：macOS 的 bash 3.2 会把多字节字符的字节当成变量名的一部分（set -u 下 unbound variable）
+  if [[ $nse_gate == hard ]]; then bad "$msg"; else warn "${msg}（PUSH_NSE_GATE=soft，只记录）"; fi
 fi
 
 # ---------------------------------------------------------------- 收尾

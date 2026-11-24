@@ -28,7 +28,7 @@ nse_id=com.lynricsy.oryn.NotificationService
 team=XDPWT9ABRD
 
 [[ -f "$plist" ]] || {
-  echo "::error::没有 $plist：自定义 XcodeGen 模板（tauri.conf.json 的 bundle.iOS.template）没有生效，或还没 tauri ios init"
+  echo "::error::没有 ${plist}：自定义 XcodeGen 模板（tauri.conf.json 的 bundle.iOS.template）没有生效，或还没 tauri ios init"
   exit 1
 }
 

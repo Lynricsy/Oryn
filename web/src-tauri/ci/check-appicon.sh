@@ -8,7 +8,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 car=$1
 label=$2
 plist=${3:-}
-[[ -f "$car" ]] || { echo "::error::${label}：没有 $car（App 图标没编进包）"; exit 1; }
+[[ -f "$car" ]] || { echo "::error::${label}：没有 ${car}（App 图标没编进包）"; exit 1; }
 info=$(xcrun assetutil --info "$car")
 names=$(jq -r '.[] | select(.Name? == "AppIcon") | .Appearance // "(默认)"' <<<"$info" | sort -u)
 if [[ -z "$names" ]]; then echo "::error::${label}：Assets.car 里没有 AppIcon"; exit 1; fi

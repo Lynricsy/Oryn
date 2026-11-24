@@ -15,7 +15,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 apple_dir=${1:-"$here/gen/apple"}
 aps=${ORYN_APS_ENVIRONMENT:-development}
 
-[[ -d "$apple_dir" ]] || { echo "::error::没有 $apple_dir（先 tauri ios init）"; exit 1; }
+[[ -d "$apple_dir" ]] || { echo "::error::没有 ${apple_dir}（先 tauri ios init）"; exit 1; }
 [[ "$aps" == development || "$aps" == production ]] ||
   { echo "::error::ORYN_APS_ENVIRONMENT 只能是 development 或 production，当前 ${aps}"; exit 1; }
 
