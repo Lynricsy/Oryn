@@ -18,7 +18,20 @@
 
 ## 探针结论
 
-（Step 0 跑完后逐条填写：问题、实测命令与输出摘要、结论、是否走失败分支。）
+2026-11-24 实测（探针代码不入库，临时文件已删）。环境：vite 7.3.8、@vitejs/plugin-react 5、tailwindcss 4、react 19.1.1；控制面 Chromium `/usr/bin/chromium`；生产 orb 镜像 `oryn-orb:prod-91068c50`（node v26.13.1、`/usr/sbin/chromium`）；omp 19.1.1。
+
+- **P1 通过**：两帧（login、signup）多入口产物建成画布 artifact，经真实帧服务（`NewHost` + `OpenFrame`，泛域名 `a-<令牌>.localhost`）打开。WebKit 与 Chromium、顶层直开与 `sandbox="allow-scripts allow-forms"` iframe 内嵌四种组合全部：渲染、Tailwind 自定义 token 生效（`text-brand` → `rgb(15,118,110)`）、点 `<a href="./signup.html">` 跳转成功、React 状态更新正常。控制台只有既有的 `Unrecognized CSP directive 'webrtc'` 与 iframe 宿主页的无关 404，无 CORS/CSP 拦截。不需要失败分支（`modulePreload` 保留）。
+- **P2 通过，修正一处契约**：12 帧产物 30 个文件、304 KiB（React 共享 chunk 186 KiB，gzip 59 KiB）。踩到两点，写进 T3：
+  1. vite 配置必须放在**引擎根**并从引擎根加载（`--config <engine>/vite.config.mjs`，设计目录经 `ORYN_DESIGN_DIR`）。放在设计目录时 vite 用 esbuild 打包配置，按设计目录解析插件，报 `Missing "./internal" specifier in "vite"`。
+  2. Tailwind 入口 `@import "tailwindcss"` 必须在**引擎**的 `styles.css` 里（设计目录解析不到 `tailwindcss` 包）；设计侧 `src/theme.css` 只写 `@theme {…}`，由引擎插件（`enforce:"pre"`，**排在 `@tailwindcss/vite` 之前**）把占位符替换成 `@import "<work>/src/theme.css"; @source "<work>/src";`。排在之后时自定义 token 与类都不生成。
+- **P3 通过（含 WebKit 条件）**：真实 portal 中间件 + 握手（`AuthHandler`、`Middleware`）+ TLS，upstream 指向真实 vite dev server（`server.allowedHosts:[".localhost"]`）。Chromium：主站页内 3 个 `PORTAL_SANDBOX` iframe 经 `/__oryn/login?next=` 全部登录、出图，改源码后 57 ms 内三帧同时热更，无报错。WebKit：iframe 内握手停在主站 `/login`——主站会话 Cookie 是 `SameSite=Lax`，跨站 iframe 子资源请求不带它，`/portal/auth` 视为未登录。**顶层打开一次该 portal 地址**（拿到 host-only 的 portal Cookie）后，iframe 内直接回跳、渲染，热更 46 ms。这是现有 `PortalPanel` 的同一限制，不是新问题。处理：T6 的 live 帧在收到 portal 主机的未登录跳转（帧 URL 落在主站 `/login`）时退回静态帧，并显示「在新窗口授权实时预览」按钮（`window.open(portalFrameSrc(...))`，授权后刷新 live 帧）；Chromium 系（含桌面壳与 Android WebView）无需此步。连接上限 `maxOrbConns = 256`，6 个 live 帧远低于此。
+- **P4 通过，修正两处**：omp 19.1.1 RPC 模式（`--mode rpc -e <扩展>`），模型 `anthropic/claude-sonnet-5-5`：
+  1. `input` 对 RPC 的 `prompt` 与 `follow_up` 都触发，`source:"rpc"`，`text` 为原文。
+  2. `session_stop` 返回 `{continue:true, additionalContext}` 后：先发 `agent_end{willContinue:true}`，随后 `before_agent_start{reason:"prompt", prompt:<additionalContext>}`（**reason 不是 revive**），续跑结束时 `session_stop{stop_hook_active:true}`、终态 `agent_end`（无 `willContinue`）。所以 T5 不能凭 `before_agent_start` 开新回合：续跑也会触发它。
+  3. 中止（RPC `abort`）的回合**仍发终态 `agent_end`**，但**不发 `session_stop`**。A1 成立；中止回合照常封存，只是没有「检查不过强制续一轮」。
+  4. 忙时 `follow_up`：先 `input`，再在当前 run 内触发 `before_agent_start{prompt:"<follow_up 原文>"}`，之后**一个** `session_stop` + **一个**终态 `agent_end`，随后是这条排队消息自己的 run（`agent_start` → `session_stop` → `agent_end`）。即排队消息形成独立的 run，每个 run 恰一个终态 `agent_end`。
+- **P5 通过**：控制面——经真实帧服务（不透明源 CSP）用 `--dump-dom --virtual-time-budget=5000` 拿到 React 渲染后的探针 JSON（`text-clipped`，`detail:144`）；以 `nobody` 带沙箱运行也通过。现有渲染器用的就是 `--virtual-time-budget=5000`，直接复用；`--timeout=8000`（不带 virtual time）**拿不到**结果，弃用该分支。探针脚本须由产物 HTML 引用并与产物同源提供（漏放 `probe.js` 时 DOM 里没有结果节点，排查时注意）。orb 内——`/usr/sbin/chromium` 以 uid 1000 **不加 `--no-sandbox`** 即可，结果一致。
+- **P6 失败，走失败分支**：`defaultInactive` 工具在回合中途经 `setActiveTools` 激活后，omp 以 `tool_addition` 系统块 + `defer_loading` 声明它；本机 Anthropic 兼容网关（codehub）对该请求回 400 `The request format is invalid or unsupported by the upstream provider`（去掉控制块重放后同一端点不再报格式错）。Oryn Core 的 `oryn-tool-change-fallback.ts` 只匹配 `tool_addition|tool_removal|tool_reference_unresolved` 字样，这个网关的报错文本不含它们，降级不触发。**裁决**：T5 不在回合中途激活工具。设计工具在 `before_agent_start`（每个 run 的首次）按 `design.status` 是否有本线程的工作副本决定 `setActiveTools`；`design_open` 的结果文本写明「设计工具从下一条消息起可用；本回合内用 `bash` 编辑 `~/designs/<id>/src/` 即可」。另记一条 Core 侧待办（不在本计划内）：扩充降级正则或按「400 + 含控制块」判定。
 
 ## 目标
 
@@ -84,7 +97,7 @@ dist/<id>.html  dist/assets/**  dist/frames.json
 - `sealedHash` = `src/**`（排除 `node_modules`）按路径排序后的 sha256。
 - 引擎的 `node_modules` 优先软链到镜像预装目录；版本不符时在引擎目录 `npm ci`（一次，约 1 分钟，对 agent 显示进度）。
 - 引擎依赖：react 19、react-dom、lucide-react、vite 7、@vitejs/plugin-react 5、tailwindcss 4、@tailwindcss/vite、@iconify/tailwind4。去掉 react-router 与 html-to-image。
-- 受管服务名 `dsn-<sha256(artifactId) 前 10 位 hex>`，`Portal: true`，命令 `node <engine>/node_modules/vite/bin/vite.js --config <engine>/vite.config.ts`，环境 `ORYN_DESIGN_DIR`。
+- 受管服务名 `dsn-<sha256(artifactId) 前 10 位 hex>`，`Portal: true`，命令 `node <engine>/node_modules/vite/bin/vite.js --config <engine>/vite.config.mjs`，环境 `ORYN_DESIGN_DIR`。
 
 ### C4 orbd.sock 新方法（`internal/orbsock`，runner.sock 不认）
 
@@ -200,11 +213,12 @@ Accept 统一口径：除特别写明外，`go build ./...` 无输出，`go test
 
 **T3 引擎模板与镜像预装**
 - Depends on：P1、P2。
-- Files：新包 `internal/designengine/`（`embed` 引擎源：`package.json`、`package-lock.json`、`vite.config.ts`、`plugin-frames.ts`、`babel-loc.ts`、`entry.tsx`、`link.tsx`、`styles.css`，以及 `Version` 常量）、`images/orb/Dockerfile`（`npm ci` 到 `/usr/local/share/oryn/design-engine/<v>/`）。
+- Files：新包 `internal/designengine/`（`embed` 引擎源：`package.json`、`package-lock.json`、`vite.config.mjs`、`plugin-frames.mjs`、`babel-loc.mjs`、`entry.tsx`、`link.tsx`、`styles.css`，以及 `Version` 常量）、`images/orb/Dockerfile`（`npm ci` 到 `/usr/local/share/oryn/design-engine/<v>/`）。
 - Do：
   - 引擎插件：dev 中间件为 `/frames/<id>` 生成入口；build 生成 `.oryn-build/<id>.html` 与 `dist/frames.json`。
   - `resolve.alias` 把 react / react-dom 钉到引擎副本。
-  - Tailwind `@source` 指向 `src/`。
+  - 配置从引擎根加载（`--config <engine>/vite.config.mjs`，设计目录经 `ORYN_DESIGN_DIR`），插件按引擎 `node_modules` 解析（P2 实测：配置放设计目录会解析失败）。
+  - Tailwind：引擎 `styles.css` 写 `@import "tailwindcss";` 与占位注释；引擎插件 `oryn-design-css`（`enforce:"pre"`，在 `plugins` 数组里排在 `@tailwindcss/vite` 之前）把占位替换为 `@import "<work>/src/theme.css"; @source "<work>/src";`。设计侧 `src/theme.css` 只写 `@theme {…}`，不写 `@import "tailwindcss"`。
   - `Link` 在 dev 输出 `/frames/<id>`，在 build 输出 `./<id>.html`。
   - babel 插件给 JSX 起始标签加 `data-oryn-loc`。
   - `entry.tsx` 在 `?__oryn_probe=1` 时加载 probe；dev 时加载运行时并回 `ready.design`。
@@ -225,10 +239,11 @@ Accept 统一口径：除特别写明外，`go build ./...` 无输出，`go test
 - Files：`internal/orbdrt/assets/oryn-orb.ts`、`assets/oryn-design/{SKILL.md,NOTICE.md}`、`assets.go`、`selfsetup.go`、`runtime.go:446`（Runner 版）、`internal/coord/{skilldocs/design.md,skill.go,profile.go}`。
 - Do：
   - 注册 C5 的工具。
-  - `input`：`source==="rpc"` 且不以 `[Oryn ` 开头时记 `pendingTitle`。
-  - `before_agent_start`（`reason==="prompt"`）：生成 `turnId=crypto.randomUUID()`，发 `design.turn`；按 `design.status` 的结果激活工具并追加一行现状。
-  - `session_stop`：有脏副本且 `check.status` 为 `issues` 或 `unverified`、且 `!stop_hook_active` 时，返回 `{continue:true, additionalContext:"设计检查未通过：…"}`，每回合至多一次。
-  - `agent_end` 且 `!willContinue`：`void` 发 `design.seal`，不 await。
+  - `input`：`source==="rpc"` 且不以 `[Oryn ` 开头时记 `pendingTitle`（`prompt` 与 `follow_up` 都会触发）。
+  - 回合边界以 **run** 为单位：`agent_start` 后的第一个 `before_agent_start` 开新回合（生成 `turnId=crypto.randomUUID()`、取 `pendingTitle`、发 `design.turn`）；同一 run 内后续的 `before_agent_start`（`session_stop` 续跑、run 内吸收的 follow_up，`reason` 都是 `prompt`）不开新回合。P4 实测：续跑的 `before_agent_start.prompt` 就是 `additionalContext`，不能当作用户原话。
+  - 设计工具的激活只在新回合开始时做（P6 失败分支）：按 `design.status` 有无本线程工作副本调用 `setActiveTools`，并追加一行现状；回合中途不改工具集。
+  - `session_stop`：有脏副本且 `check.status` 为 `issues` 或 `unverified`、且 `!stop_hook_active` 时，返回 `{continue:true, additionalContext:"设计检查未通过：…"}`，每回合至多一次（P4 实测：续跑结束时 `stop_hook_active:true`）。中止的回合不发 `session_stop`，不强制续跑。
+  - `agent_end` 且 `!willContinue`：`void` 发 `design.seal`，不 await。中止的回合同样有终态 `agent_end`，照常封存。
   - `ARTIFACT_GUIDE` 加一行，指向 `oryn-design`。
 - Accept：`go test ./internal/orbdrt/` → `ok`（资产写出路径断言）；`cd /root/Projects/Ling/oryn-core && bunx tsc --noEmit -p <含该扩展的检查配置>` 无错。若该仓库没有现成配置，沿用 `orbdrt_test.go` 里对扩展的既有语法检查方式。
 
@@ -242,6 +257,7 @@ Accept 统一口径：除特别写明外，`go build ./...` 无输出，`go test
   - 选中结果带 `loc`，进入 `SelectionChip`、`anchorOf`、`handoffPrompt`。
   - 带 `source` 的帧禁用 EditPanel 直接编辑，提示「在对话里让 Agent 改」。
   - 收到新版本后，对 `hmr` 不可用的帧发 `design-reload`。
+  - WebKit 授权兜底（P3 实测）：portal 握手在 WebKit iframe 里会被带到主站 `/login`（主站会话 Cookie 是 `SameSite=Lax`，生产环境主站页还带 `frame-ancestors 'none'`，帧直接空白）。父页读不到跨源帧的 URL，所以判据是「live 帧 5 s 内没有收到 dev 运行时的 `ready`」：该帧退回静态帧，顶栏出现「在新窗口授权实时预览」；点击 `window.open(portalFrameSrc(template, port, "/"))`，窗口回到焦点后重建 live 帧。Chromium 系实测不触发。
 - Accept：`cd web && bun run check && bun run test -- canvas frames frame-link messages` 全绿；`bun run accept:m29 -- --only K1,K2,K3`（K1 设计画布静态帧可见；K2 live 徽标出现且改源码后帧内文本变化；K3 点元素后 chip 显示 `src/frames/…:行`）。
 
 ### 品质 Q（依赖 T4）
@@ -364,7 +380,7 @@ Accept 统一口径：除特别写明外，`go build ./...` 无输出，`go test
 
 ## Assumptions
 
-- A1 被中止的回合仍会发终态 `agent_end`（未验证）。影响 T5；失效走 P4 分支。
+- A1 被中止的回合仍会发终态 `agent_end`。P4 已实测成立（中止回合不发 `session_stop`）。
 - A2 `canvas.Parse` 接受 `pages: []`，且 `validate` 允许只有 `canvas.json` 的版本（读到的代码路径上无最小画框数检查，未实测）。影响 T4 的 `design.open`；失效则建画布时带一帧占位 `dist/index.html`。
 - A3 box 上有 `node`（未验证）。影响 D2、D3；失效则 `server.mjs` 换成 `python3 -m http.server "$PORT" -d dist`。
 - A4 orb 内的 Chromium 可无头运行（桌面用的同一二进制，`Dockerfile:90`）。影响 Q1；失效走 P5 分支。
