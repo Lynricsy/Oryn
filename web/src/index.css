@@ -1914,3 +1914,72 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 		display: none;
 	}
 }
+
+/* 附件卡片入场、图片预处理流动条、文件拖拽悬停提示层 */
+.attachment-chip-in {
+	animation: attachment-chip-in 180ms var(--ease) both;
+}
+.attachment-indeterminate {
+	position: relative;
+	overflow: hidden;
+	border-radius: 9999px;
+	background: color-mix(in oklab, var(--brand) 16%, transparent);
+}
+.attachment-indeterminate::after {
+	content: "";
+	position: absolute;
+	inset-block: 0;
+	left: 0;
+	width: 45%;
+	border-radius: 9999px;
+	background: var(--brand);
+	animation: attachment-slide 1.1s ease-in-out infinite;
+}
+.file-drop-overlay {
+	animation: file-drop-in 160ms var(--ease) both;
+}
+.file-drop-icon {
+	animation: file-drop-bob 1.4s ease-in-out infinite;
+}
+@keyframes attachment-chip-in {
+	from {
+		opacity: 0;
+		translate: 0 5px;
+		scale: 0.96;
+	}
+}
+@keyframes attachment-slide {
+	0% {
+		translate: -100% 0;
+	}
+	100% {
+		translate: 240% 0;
+	}
+}
+@keyframes file-drop-in {
+	from {
+		opacity: 0;
+		scale: 0.985;
+	}
+}
+@keyframes file-drop-bob {
+	0%,
+	100% {
+		translate: 0 0;
+	}
+	50% {
+		translate: 0 -3px;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.attachment-chip-in,
+	.attachment-indeterminate::after,
+	.file-drop-overlay,
+	.file-drop-icon {
+		animation: none;
+	}
+	.attachment-indeterminate::after {
+		width: 60%;
+		translate: 33% 0;
+	}
+}

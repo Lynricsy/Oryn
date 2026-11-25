@@ -30,6 +30,7 @@ import {
 	takeArrival,
 	useDockMorph,
 } from "../components/composer/DockTray";
+import { FileDropOverlay, useFileDrop } from "../components/composer/FileDrop";
 import { CompactThreadHeader } from "../components/thread/CompactThreadHeader";
 import {
 	PlanProposalDialog,
@@ -73,7 +74,10 @@ import {
 	useViewportSegments,
 } from "../lib/viewport";
 import { realtime } from "../realtime/socket";
-import { useComposerDraft } from "../state/composer-drafts";
+import {
+	enqueueComposerFiles,
+	useComposerDraft,
+} from "../state/composer-drafts";
 import { closeSideAsk } from "../state/side-ask";
 import {
 	loadEarlierEntries,
@@ -246,6 +250,9 @@ export function ThreadScreen({
 		threadId,
 		(s) => s.snapshotReceived && !s.thread?.orbId,
 	);
+	const assistant = useIndex((s) => s.threads[threadId]?.kind) === "assistant";
+	const composerDisabled = disabled || (orbGone && !coordinator);
+	const canAttach = (!coordinator || assistant) && !composerDisabled;
 
 	useEffect(() => {
 		if (!threadId) return;
@@ -463,6 +470,13 @@ export function ThreadScreen({
 			anchor: anchorOf(sel, req.x, req.y),
 		}),
 	});
+	const fileDrop = useFileDrop({
+		enabled: canAttach,
+		onFiles: (files) => {
+			setMini(false);
+			enqueueComposerFiles(threadId, files);
+		},
+	});
 
 	return (
 		<div
@@ -483,12 +497,14 @@ export function ThreadScreen({
 				inert={away}
 				className={`h-full min-w-0 ${dual ? "" : "flex-1"} flex ${away ? "pointer-events-none absolute inset-0 opacity-0" : "relative"}`}
 				style={dual ? { width: segments.left, flex: "none" } : undefined}
+				{...fileDrop.bind}
 			>
 				<Sheet
 					inset={expanded}
 					// expanded 下面板列没开时转录是最右侧纸面，右上 / 右下角离屏幕边 8px（壳的 p-2）
 					className={`relative flex h-full min-w-0 flex-1 flex-col overflow-visible ${expanded && !showPanelColumn && edgeRight ? DC_SHEET_RIGHT : ""}`}
 				>
+					<FileDropOverlay active={fileDrop.dragging} />
 					<TranscriptContext.Provider value={ctx}>
 						{/* morph-late：首条消息过渡时，气泡与「正在启动 agent…」在托盘走完约六成时淡入 */}
 						<div
@@ -642,8 +658,9 @@ export function ThreadScreen({
 									<Composer
 										key={`composer:${threadId}`}
 										threadId={threadId}
-										disabled={disabled || (orbGone && !coordinator)}
+										disabled={composerDisabled}
 										coordinator={coordinator}
+										dropHandledByParent
 									/>
 									<BelowEditorWidgets threadId={threadId} />
 								</div>

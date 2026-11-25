@@ -18,6 +18,7 @@ import type { AssistantFile, Attachment } from "../../lib/attachments";
 import type * as ImagesLib from "../../lib/images";
 import { ImageBudgetError, type PreparedImage } from "../../lib/images";
 import { AttachButton, AttachmentStrip, useAttachments } from "./attachments";
+import { FileDropOverlay, useFileDrop } from "./FileDrop";
 
 const { upload, del, uploadLib, delLib, prepare } = vi.hoisted(() => ({
 	upload: vi.fn(),
@@ -178,6 +179,57 @@ describe("useAttachments", () => {
 		await adding;
 		expect(upload).not.toHaveBeenCalled();
 	});
+
+	it("图片加入后在压缩预处理期间立即显现为 preparing 并阻止发送，完成后释放预览 URL", async () => {
+		const decoding = deferred<PreparedImage>();
+		prepare.mockReturnValueOnce(decoding.promise);
+		const createUrl = vi
+			.spyOn(URL, "createObjectURL")
+			.mockReturnValue("blob:preview-1");
+		const revokeUrl = vi
+			.spyOn(URL, "revokeObjectURL")
+			.mockImplementation(() => undefined);
+		try {
+			const { result } = renderHook(() =>
+				useAttachments({ threadId: "T-1", library: true }),
+			);
+			const png = new File(["img"], "shot.png", { type: "image/png" });
+			let adding!: Promise<void>;
+			act(() => {
+				adding = result.current.addFiles([png]);
+			});
+			expect(result.current.items).toHaveLength(1);
+			expect(result.current.items[0]).toMatchObject({
+				name: "shot.png",
+				status: "preparing",
+				previewUrl: "blob:preview-1",
+			});
+			expect(result.current.uploading).toBe(true);
+			const { rerender } = render(
+				<AttachmentStrip items={result.current.items} onRemove={() => {}} />,
+			);
+			expect(screen.getByText(i18n.t("attachments.preparing"))).toBeTruthy();
+			expect(screen.getByAltText("shot.png")).toHaveAttribute(
+				"src",
+				"blob:preview-1",
+			);
+			await act(async () => {
+				decoding.resolve(img);
+				await adding;
+			});
+			expect(result.current.items[0]?.status).toBe("done");
+			expect(result.current.items[0]?.previewUrl).toBeUndefined();
+			expect(revokeUrl).toHaveBeenCalledWith("blob:preview-1");
+			expect(result.current.uploading).toBe(false);
+			rerender(
+				<AttachmentStrip items={result.current.items} onRemove={() => {}} />,
+			);
+			expect(screen.queryByText(i18n.t("attachments.preparing"))).toBeNull();
+		} finally {
+			createUrl.mockRestore();
+			revokeUrl.mockRestore();
+		}
+	});
 });
 
 describe("addUploaded（系统分享）", () => {
@@ -314,5 +366,53 @@ describe("useAttachments 助手文件库模式", () => {
 		expect(delLib).toHaveBeenCalledWith("afl_1");
 		expect(result.current.attachmentIds).toEqual(["att_1", "att_s"]);
 		expect(result.current.fileIds).toEqual([]);
+	});
+});
+
+function DropHost({
+	enabled = true,
+	onFiles,
+}: {
+	enabled?: boolean;
+	onFiles: (files: File[]) => void;
+}) {
+	const drop = useFileDrop({ enabled, onFiles });
+	return (
+		<div data-testid="drop-host" {...drop.bind}>
+			<div data-testid="drop-child">body</div>
+			<FileDropOverlay active={drop.dragging} />
+		</div>
+	);
+}
+
+describe("FileDrop", () => {
+	it("拖入文件显示提示遮罩（子元素进出不提前隐藏），松手后隐藏并交出文件；非文件拖拽不激活", () => {
+		const onFiles = vi.fn();
+		render(<DropHost onFiles={onFiles} />);
+		const host = screen.getByTestId("drop-host");
+		const child = screen.getByTestId("drop-child");
+		const file = new File(["abc"], "shot.png", { type: "image/png" });
+
+		// 非文件拖拽不激活遮罩
+		fireEvent.dragEnter(host, {
+			dataTransfer: { types: ["text/plain"], files: [] },
+		});
+		expect(screen.queryByTestId("file-drop-overlay")).toBeNull();
+
+		// 拖入文件激活遮罩，子元素切换不导致提前消失
+		const dt = { types: ["Files"], files: [file], dropEffect: "none" };
+		fireEvent.dragEnter(host, { dataTransfer: dt });
+		expect(screen.getByTestId("file-drop-overlay")).toBeTruthy();
+		expect(screen.getByText(i18n.t("attachments.dropHint"))).toBeTruthy();
+		fireEvent.dragEnter(child, { dataTransfer: dt });
+		fireEvent.dragLeave(host, { dataTransfer: dt });
+		expect(screen.getByTestId("file-drop-overlay")).toBeTruthy();
+		fireEvent.dragOver(host, { dataTransfer: dt });
+		expect(dt.dropEffect).toBe("copy");
+
+		// 松手投放：隐藏遮罩并回调文件
+		fireEvent.drop(host, { dataTransfer: dt });
+		expect(screen.queryByTestId("file-drop-overlay")).toBeNull();
+		expect(onFiles).toHaveBeenCalledWith([file]);
 	});
 });

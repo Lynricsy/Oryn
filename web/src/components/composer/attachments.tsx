@@ -38,13 +38,13 @@ import type { ImageContent } from "../../omp/types";
 import type { ComposerRestoreOp } from "../../state/composer-drafts";
 import { Badge, Meter } from "../ui/data";
 import { Icon } from "../ui/icons";
-import { describeError } from "../ui/primitives";
+import { describeError, Spinner } from "../ui/primitives";
 
 export interface AttachmentItem {
 	key: string;
 	name: string;
 	size: number;
-	status: "uploading" | "done" | "error";
+	status: "preparing" | "uploading" | "done" | "error";
 	/** 已上传字节 / 总字节（0–1）。 */
 	progress: number;
 	/** 单个文件的错误（超限、上传失败）；该文件不会随消息发送。 */
@@ -54,6 +54,8 @@ export interface AttachmentItem {
 	libraryFile?: AssistantFile;
 	/** 内联副本（仅图片且预算允许时）。 */
 	image?: PreparedImage;
+	/** 预处理期间的本机临时缩略图 URL（完成后或移除时 revoke，避免泄漏）。 */
+	previewUrl?: string;
 	/** 图片未能放进内联预算：只作为文件附件。 */
 	fileOnly?: boolean;
 	/** 本机选的原始文件：上传去向改变时据此重传；系统分享进来的已上传条目没有。 */
@@ -63,6 +65,19 @@ export interface AttachmentItem {
 }
 
 let seq = 0;
+
+/** 创建本机临时缩略图地址（兼容不含 createObjectURL 的测试环境）。 */
+function makePreviewUrl(file: File): string | undefined {
+	return typeof URL.createObjectURL === "function"
+		? URL.createObjectURL(file)
+		: undefined;
+}
+
+/** 释放本机临时缩略图地址。 */
+function revokePreview(item: Pick<AttachmentItem, "previewUrl"> | undefined) {
+	if (item?.previewUrl && typeof URL.revokeObjectURL === "function")
+		URL.revokeObjectURL(item.previewUrl);
+}
 
 /** 已上传但不再发送：尽力删除（未随消息发出的上传服务端 24h 后也会清理）。回退带回的旧消息附件不删。 */
 function discard(item: AttachmentItem) {
@@ -96,6 +111,7 @@ export function useAttachments({
 			disposed.current = true;
 			for (const c of map.values()) c.abort();
 			map.clear();
+			for (const it of itemsRef.current) revokePreview(it);
 		};
 	}, []);
 
@@ -168,6 +184,7 @@ export function useAttachments({
 		if (libraryRef.current === library) return;
 		libraryRef.current = library;
 		for (const it of itemsRef.current) {
+			if (it.status === "preparing") continue;
 			if (!it.source) {
 				if (library && it.attachment && it.status === "done")
 					update(it.key, {
@@ -189,6 +206,13 @@ export function useAttachments({
 	const addFiles = useCallback(
 		async (files: Iterable<File>) => {
 			setError(null);
+			const queued: Array<{
+				key: string;
+				file: File;
+				isImage: boolean;
+				ctl: AbortController;
+			}> = [];
+			// 先同步把本批合规条目全部推入列表：拖入/选图后 0ms 立即显现卡片与处理/上传动画
 			for (const file of files) {
 				if (disposed.current) return;
 				const key = `att-${++seq}`;
@@ -197,7 +221,7 @@ export function useAttachments({
 					setError(
 						t("attachments.tooMany", { max: MAX_ATTACHMENTS_PER_MESSAGE }),
 					);
-					return;
+					break;
 				}
 				if (file.size > MAX_ATTACHMENT_BYTES) {
 					push({
@@ -212,38 +236,57 @@ export function useAttachments({
 					});
 					continue;
 				}
-				const item: AttachmentItem = {
+				const isImage = file.type.startsWith("image/");
+				const ctl = new AbortController();
+				aborts.current.set(key, ctl);
+				push({
 					key,
 					name: file.name,
 					size: file.size,
-					status: "uploading",
+					status: isImage ? "preparing" : "uploading",
 					progress: 0,
+					previewUrl: isImage ? makePreviewUrl(file) : undefined,
 					source: file,
-				};
-				const ctl = new AbortController();
-				aborts.current.set(key, ctl);
-				if (file.type.startsWith("image/")) {
+				});
+				queued.push({ key, file, isImage, ctl });
+			}
+			for (const { key, file, isImage, ctl } of queued) {
+				if (disposed.current) return;
+				if (ctl.signal.aborted) {
+					aborts.current.delete(key);
+					continue;
+				}
+				let hasInline = false;
+				if (isImage) {
 					const { remaining } = checkBudget(
 						itemsRef.current.map((i) => i.image?.inlineBytes ?? 0),
 						0,
 					);
+					let prepared: PreparedImage | undefined;
 					try {
-						item.image = await prepareImage(file, file.name, remaining);
+						prepared = await prepareImage(file, file.name, remaining);
 					} catch {
 						// 预算用完或解码失败：只作为文件附件
-						item.fileOnly = true;
 					}
-					// 预处理期间 composer 已卸载：不再加入、不再上传
+					// 预处理期间 composer 已卸载或条目被移除：不再上传
 					if (ctl.signal.aborted || disposed.current) {
 						aborts.current.delete(key);
-						return;
+						if (disposed.current) return;
+						continue;
+					}
+					const current = itemsRef.current.find((i) => i.key === key);
+					revokePreview(current);
+					if (prepared) {
+						hasInline = true;
+						update(key, { image: prepared, previewUrl: undefined });
+					} else {
+						update(key, { fileOnly: true, previewUrl: undefined });
 					}
 				}
-				push(item);
-				upload(key, file, !!item.image);
+				upload(key, file, hasInline);
 			}
 		},
-		[push, t, upload],
+		[push, t, update, upload],
 	);
 
 	/**
@@ -335,6 +378,7 @@ export function useAttachments({
 			aborts.current.get(key)?.abort();
 			aborts.current.delete(key);
 			commit((prev) => prev.filter((i) => i.key !== key));
+			revokePreview(item);
 			if (item) discard(item);
 		},
 		[commit],
@@ -342,6 +386,7 @@ export function useAttachments({
 
 	/** 发送成功后清空（附件已随消息绑定，不删除）。 */
 	const clear = useCallback(() => {
+		for (const it of itemsRef.current) revokePreview(it);
 		commit(() => []);
 		setError(null);
 	}, [commit]);
@@ -370,7 +415,9 @@ export function useAttachments({
 	const fileIds = sendable.flatMap((i) =>
 		i.libraryFile ? [i.libraryFile.id] : [],
 	);
-	const uploading = items.some((i) => i.status === "uploading");
+	const uploading = items.some(
+		(i) => i.status === "preparing" || i.status === "uploading",
+	);
 	return {
 		items,
 		contents,
@@ -446,23 +493,52 @@ export function AttachmentStrip({
 		<ul className="flex flex-wrap gap-2 px-3 pt-3">
 			{items.map((it) => {
 				const percent = Math.round(it.progress * 100);
+				const busy = it.status === "preparing" || it.status === "uploading";
+				const thumb = it.image
+					? `data:${it.image.mimeType};base64,${it.image.data}`
+					: it.previewUrl;
 				return (
 					<li
 						key={it.key}
-						className={`relative flex max-w-60 items-center gap-2 rounded-lg border bg-panel py-1 pr-2.5 pl-1 text-xs shadow-xs ${
-							it.status === "error" ? "border-err/50" : "border-border"
+						data-status={it.status}
+						className={`attachment-chip-in relative flex max-w-60 items-center gap-2 rounded-lg border bg-panel py-1 pr-2.5 pl-1 text-xs shadow-xs ${
+							it.status === "error"
+								? "border-err/50"
+								: busy
+									? "border-accent/40"
+									: "border-border"
 						}`}
 						title={it.error ?? it.name}
 					>
-						{it.image ? (
-							<img
-								src={`data:${it.image.mimeType};base64,${it.image.data}`}
-								alt={it.name}
-								className="h-10 w-10 shrink-0 rounded-md object-cover"
-							/>
+						{thumb ? (
+							<span className="relative h-10 w-10 shrink-0 overflow-hidden rounded-md bg-inset">
+								<img
+									src={thumb}
+									alt={it.name}
+									className={`h-full w-full object-cover transition-opacity duration-150 ${
+										busy ? "opacity-60" : "opacity-100"
+									}`}
+								/>
+								{busy && (
+									<span
+										aria-hidden
+										className="absolute inset-0 flex items-center justify-center bg-bg/35 text-accent-ink backdrop-blur-[1px]"
+									>
+										<Spinner size={14} />
+									</span>
+								)}
+							</span>
 						) : (
-							<span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-inset text-faint">
+							<span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-inset text-faint">
 								<Icon name={fileIcon(it.name)} size={18} />
+								{busy && (
+									<span
+										aria-hidden
+										className="absolute inset-0 flex items-center justify-center rounded-md bg-inset/75 text-accent-ink"
+									>
+										<Spinner size={14} />
+									</span>
+								)}
 							</span>
 						)}
 						<span className="flex min-w-0 flex-col gap-1">
@@ -471,6 +547,14 @@ export function AttachmentStrip({
 							</span>
 							{it.status === "error" ? (
 								<span className="block truncate text-err">{it.error}</span>
+							) : it.status === "preparing" ? (
+								<span className="flex items-center gap-1.5 text-2xs text-faint">
+									<span
+										aria-hidden
+										className="attachment-indeterminate inline-block h-1.5 w-14 shrink-0"
+									/>
+									{t("attachments.preparing")}
+								</span>
 							) : it.status === "uploading" ? (
 								<span className="flex items-center gap-1.5 text-2xs text-faint tabular-nums">
 									<Meter

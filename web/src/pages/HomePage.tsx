@@ -42,6 +42,7 @@ import {
 	useAttachments,
 } from "../components/composer/attachments";
 import { morphToThread } from "../components/composer/DockTray";
+import { FileDropOverlay, useFileDrop } from "../components/composer/FileDrop";
 import { PillButton, type PillText } from "../components/composer/PillButton";
 import { RefMenu, useRefMenu } from "../components/composer/RefMenu";
 import {
@@ -237,6 +238,10 @@ export function HomePage(): ReactNode {
 		setPicked(next);
 	};
 	const att = useAttachments({ library: assistantTarget });
+	const fileDrop = useFileDrop({
+		enabled: true,
+		onFiles: (files) => void att.addFiles(files),
+	});
 	const [profilePick, setProfilePick] = useState<ProfilePick>(null);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -739,7 +744,11 @@ export function HomePage(): ReactNode {
 				</header>
 			)}
 			{/* relative：托盘地平线（点阵与两侧的线）横向以这里为包含块铺满；isolate：它们的 z-index -1 只压在这层内容之下 */}
-			<div className="relative isolate flex flex-1 items-start justify-center overflow-y-auto overflow-x-hidden px-3 pt-[10vh] pb-keyboard sm:items-center sm:pt-0">
+			<div
+				className="relative isolate flex flex-1 items-start justify-center overflow-y-auto overflow-x-hidden px-3 pt-[10vh] pb-keyboard sm:items-center sm:pt-0"
+				{...fileDrop.bind}
+			>
+				<FileDropOverlay active={fileDrop.dragging} />
 				<div className="w-full max-w-2xl">
 					<div className={`mb-3 flex justify-center ${rise("")}`}>
 						<BrandMark ref={markRef} size={32} blink />
@@ -799,15 +808,6 @@ export function HomePage(): ReactNode {
 							<div ref={trayRef} className="glass glass-dock rounded-2xl">
 								<AttachmentStrip items={att.items} onRemove={att.remove} />
 								<textarea
-									onDragOver={(e) => {
-										if (e.dataTransfer.types.includes("Files"))
-											e.preventDefault();
-									}}
-									onDrop={(e) => {
-										if (e.dataTransfer.files.length === 0) return;
-										e.preventDefault();
-										void att.addFiles(e.dataTransfer.files);
-									}}
 									ref={ref}
 									rows={4}
 									value={prompt}

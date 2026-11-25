@@ -82,6 +82,7 @@ import { describeError, IconButton, Spinner } from "../ui/primitives";
 import { AttachButton, AttachmentStrip, useAttachments } from "./attachments";
 import { CommandMenu, type MenuEntry, useCommandMenu } from "./CommandMenu";
 import { ModelChip, SessionReadout } from "./ComposerMeta";
+import { FileDropOverlay, useFileDrop } from "./FileDrop";
 import { RefMenu, useRefMenu } from "./RefMenu";
 import { RoleTrack, useRoleShortcut } from "./RoleTrack";
 
@@ -90,10 +91,13 @@ export const Composer = memo(function Composer({
 	threadId,
 	disabled,
 	coordinator = false,
+	dropHandledByParent = false,
 }: {
 	threadId: string;
 	disabled?: boolean;
 	coordinator?: boolean;
+	/** 外层容器（如线程页整张对话纸面）已接管文件拖拽投放与遮罩时为真，避免双层遮罩与重复加入。 */
+	dropHandledByParent?: boolean;
 }): ReactNode {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
@@ -130,6 +134,10 @@ export const Composer = memo(function Composer({
 	const assistant = useIndex((s) => s.threads[threadId]?.kind) === "assistant";
 	const canAttach = !coordinator || assistant;
 	const att = useAttachments({ threadId, library: assistant });
+	const fileDrop = useFileDrop({
+		enabled: canAttach && !disabled && !dropHandledByParent,
+		onFiles: (files) => void att.addFiles(files),
+	});
 	// 右键菜单「引用到输入框」送来的图片：挂上后加入附件列表
 	const pendingFiles = useComposerPendingFiles(threadId);
 	const addFiles = att.addFiles;
@@ -766,7 +774,14 @@ export const Composer = memo(function Composer({
 	const canSend =
 		!disabled && !att.uploading && (text.trim() !== "" || att.hasFiles);
 	return (
-		<div ref={rootRef} className="relative">
+		<div
+			ref={rootRef}
+			className="relative"
+			{...(dropHandledByParent ? {} : fileDrop.bind)}
+		>
+			{!dropHandledByParent && (
+				<FileDropOverlay active={fileDrop.dragging} compact />
+			)}
 			<RoleTrack threadId={threadId} anchorRef={rootRef} />
 			{menuOpen && (
 				<CommandMenu
@@ -806,15 +821,6 @@ export const Composer = memo(function Composer({
 			{/* 幽灵字叠在输入框上方，排版与输入框一致；只有灰色部分接收点击（触屏没有 Tab，点一下插入） */}
 			<div className="relative">
 				<textarea
-					onDragOver={(e) => {
-						if (canAttach && e.dataTransfer.types.includes("Files"))
-							e.preventDefault();
-					}}
-					onDrop={(e) => {
-						if (!canAttach || e.dataTransfer.files.length === 0) return;
-						e.preventDefault();
-						void att.addFiles(e.dataTransfer.files);
-					}}
 					ref={ref}
 					rows={1}
 					value={text}
