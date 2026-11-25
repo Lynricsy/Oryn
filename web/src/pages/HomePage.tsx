@@ -823,10 +823,7 @@ export function HomePage(): ReactNode {
 										setCaret(e.target.selectionStart);
 									}}
 									onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
-									onKeyUp={(e) => {
-										ime.onKeyUp(e);
-										setCaret(e.currentTarget.selectionStart);
-									}}
+									onKeyUp={(e) => setCaret(e.currentTarget.selectionStart)}
 									onPaste={(e) => {
 										const files = [...e.clipboardData.files];
 										if (files.length > 0) {

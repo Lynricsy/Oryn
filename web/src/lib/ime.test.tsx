@@ -1,10 +1,6 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-	isImeKeyEvent,
-	POST_COMPOSITION_ENTER_MS,
-	useImeComposition,
-} from "./ime";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { isImeKeyEvent, useImeComposition } from "./ime";
 
 function Probe({ onEnter }: { onEnter: () => void }) {
 	const ime = useImeComposition();
@@ -15,7 +11,6 @@ function Probe({ onEnter }: { onEnter: () => void }) {
 			onCompositionStart={ime.onCompositionStart}
 			onCompositionEnd={ime.onCompositionEnd}
 			onBlur={ime.onBlur}
-			onKeyUp={ime.onKeyUp}
 			onKeyDown={(e) => {
 				if (ime.shouldIgnoreKeyDown(e)) return;
 				if (e.key === "Enter" && !e.shiftKey) {
@@ -44,61 +39,44 @@ describe("isImeKeyEvent", () => {
 });
 
 describe("useImeComposition", () => {
-	afterEach(() => {
-		vi.useRealTimers();
+	it("compositionstart 到 compositionend 期间同步拦截，即使 isComposing=false", () => {
+		const onEnter = vi.fn();
+		render(<Probe onEnter={onEnter} />);
+		const el = screen.getByLabelText("probe");
+
+		fireEvent.compositionStart(el);
+		expect(el).toHaveAttribute("data-composing", "1");
+		fireEvent.keyDown(el, { key: "Enter", keyCode: 13, isComposing: false });
+		expect(onEnter).not.toHaveBeenCalled();
+
+		fireEvent.compositionEnd(el, { data: "hello" });
+		expect(el).toHaveAttribute("data-composing", "0");
 	});
 
-	it("高速打字末字母 rollover 的 keyup 不会提前清除 compositionend 保护窗口", () => {
+	it("Safari / WKWebView：compositionend 后补发 keyCode=229 不触发，紧随其后的正常 Enter 立即触发", () => {
 		const onEnter = vi.fn();
 		render(<Probe onEnter={onEnter} />);
 		const el = screen.getByLabelText("probe");
 
 		fireEvent.compositionStart(el);
 		fireEvent.compositionEnd(el, { data: "hello" });
-		// 末字母 o 在 compositionend 后才松手
-		fireEvent.keyUp(el, { key: "o" });
-		fireEvent.keyDown(el, { key: "Enter", keyCode: 13 });
+		fireEvent.keyDown(el, { key: "Enter", keyCode: 229, isComposing: false });
 		expect(onEnter).not.toHaveBeenCalled();
 
-		// 紧接着用户真正再按回车应触发发送
-		fireEvent.keyDown(el, { key: "Enter", keyCode: 13 });
+		fireEvent.keyDown(el, { key: "Enter", keyCode: 13, isComposing: false });
 		expect(onEnter).toHaveBeenCalledTimes(1);
 	});
 
-	it("超过保护窗口后按 Enter 正常发送", () => {
-		vi.useFakeTimers();
+	it("数字键或鼠标选词触发 compositionend 后，紧接着按 Enter 不被吞掉", () => {
 		const onEnter = vi.fn();
 		render(<Probe onEnter={onEnter} />);
 		const el = screen.getByLabelText("probe");
 
 		fireEvent.compositionStart(el);
-		fireEvent.compositionEnd(el, { data: "hello" });
-		act(() => {
-			vi.advanceTimersByTime(POST_COMPOSITION_ENTER_MS + 1);
-		});
-		fireEvent.keyDown(el, { key: "Enter", keyCode: 13 });
+		fireEvent.compositionEnd(el, { data: "你好" });
+		// 模拟鼠标选词后无 keyup，或数字键选词后立即按回车发送
+		fireEvent.keyDown(el, { key: "Enter", keyCode: 13, isComposing: false });
 		expect(onEnter).toHaveBeenCalledTimes(1);
-	});
-
-	it("compositionend 后紧跟 Shift+Enter 换行不被拦截", () => {
-		const onEnter = vi.fn();
-		render(<Probe onEnter={onEnter} />);
-		const el = screen.getByLabelText("probe");
-
-		fireEvent.compositionStart(el);
-		fireEvent.compositionEnd(el, { data: "hello" });
-		const ev = new KeyboardEvent("keydown", {
-			key: "Enter",
-			shiftKey: true,
-			keyCode: 13,
-			bubbles: true,
-			cancelable: true,
-		});
-		act(() => {
-			el.dispatchEvent(ev);
-		});
-		expect(ev.defaultPrevented).toBe(false);
-		expect(onEnter).not.toHaveBeenCalled();
 	});
 
 	it("组字期间失焦会重置状态，重新聚焦后 Enter 正常发送", () => {

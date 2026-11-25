@@ -845,10 +845,7 @@ export const Composer = memo(function Composer({
 						setInserted(null);
 					}}
 					onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
-					onKeyUp={(e) => {
-						ime.onKeyUp(e);
-						setCaret(e.currentTarget.selectionStart);
-					}}
+					onKeyUp={(e) => setCaret(e.currentTarget.selectionStart)}
 					onKeyDown={onKeyDown}
 					onCompositionStart={ime.onCompositionStart}
 					onCompositionEnd={ime.onCompositionEnd}
