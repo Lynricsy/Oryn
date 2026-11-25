@@ -18309,6 +18309,22 @@ export interface operations {
                 /** @description 缺省 = 最新版本 */
                 version?: number;
                 format: components["schemas"]["ArtifactExportFormat"];
+                /** @description 样机导出（`mockup-png` / `mockup-pdf`）：逗号分隔的画框 id，缺省全部画框 */
+                frames?: string;
+                /** @description 样机导出缩放倍数（1–3，缺省 2） */
+                scale?: number;
+                /** @description 样机导出圆角（CSS px，0–64，缺省 12） */
+                radius?: number;
+                /** @description 样机导出是否画边框（缺省 true） */
+                border?: boolean;
+                /** @description 样机导出背景（`transparent`、`light`、`dark` 或 `#rrggbb`，缺省 `light`） */
+                bg?: string;
+                /** @description 样机导出是否带阴影（缺省 true） */
+                shadow?: boolean;
+                /** @description 样机导出是否套设备外壳（缺省 true） */
+                shell?: boolean;
+                /** @description 样机导出长图模式：按页面内容高度渲染，上限 8000 CSS px（缺省 false） */
+                long?: boolean;
             };
             header?: never;
             path: {

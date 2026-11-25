@@ -13749,6 +13749,30 @@ type ExportArtifactParams struct {
 	// Version 缺省 = 最新版本
 	Version *int                 `form:"version,omitempty" json:"version,omitempty"`
 	Format  ArtifactExportFormat `form:"format" json:"format"`
+
+	// Frames 样机导出（`mockup-png` / `mockup-pdf`）：逗号分隔的画框 id，缺省全部画框
+	Frames *string `form:"frames,omitempty" json:"frames,omitempty"`
+
+	// Scale 样机导出缩放倍数（1–3，缺省 2）
+	Scale *int `form:"scale,omitempty" json:"scale,omitempty"`
+
+	// Radius 样机导出圆角（CSS px，0–64，缺省 12）
+	Radius *int `form:"radius,omitempty" json:"radius,omitempty"`
+
+	// Border 样机导出是否画边框（缺省 true）
+	Border *bool `form:"border,omitempty" json:"border,omitempty"`
+
+	// Bg 样机导出背景（`transparent`、`light`、`dark` 或 `#rrggbb`，缺省 `light`）
+	Bg *string `form:"bg,omitempty" json:"bg,omitempty"`
+
+	// Shadow 样机导出是否带阴影（缺省 true）
+	Shadow *bool `form:"shadow,omitempty" json:"shadow,omitempty"`
+
+	// Shell 样机导出是否套设备外壳（缺省 true）
+	Shell *bool `form:"shell,omitempty" json:"shell,omitempty"`
+
+	// Long 样机导出长图模式：按页面内容高度渲染，上限 8000 CSS px（缺省 false）
+	Long *bool `form:"long,omitempty" json:"long,omitempty"`
 }
 
 // GetArtifactFileParams defines parameters for GetArtifactFile.
@@ -21692,6 +21716,110 @@ func (siw *ServerInterfaceWrapper) ExportArtifact(w http.ResponseWriter, r *http
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "format"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "format", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "frames" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "frames", r.URL.Query(), &params.Frames, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "frames"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "frames", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "scale" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "scale", r.URL.Query(), &params.Scale, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "scale"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "scale", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "radius" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "radius", r.URL.Query(), &params.Radius, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "radius"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "radius", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "border" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "border", r.URL.Query(), &params.Border, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "border"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "border", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "bg" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "bg", r.URL.Query(), &params.Bg, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "bg"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "bg", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "shadow" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "shadow", r.URL.Query(), &params.Shadow, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "shadow"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "shadow", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "shell" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "shell", r.URL.Query(), &params.Shell, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "shell"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "shell", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "long" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "long", r.URL.Query(), &params.Long, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "long"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "long", Err: err})
 		}
 		return
 	}
