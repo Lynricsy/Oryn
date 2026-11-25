@@ -410,8 +410,8 @@ export interface Host {
 	mobile: MobileHost | null;
 }
 
-/** 本页面实现的宿主协议版本（与壳 `host_ready` 返回的 `bridge` 对应；3 = 桌面自绘标题栏；4 = iOS 原生底栏；5 = iOS 原生页头；6 = iOS 可替换图标；7 = 原生底栏改系统 UITabBar；8 = 下沉侧栏改由根滚动驱动、原生按 contentOffset 跟随，原生底栏浮在 WebView 之上、右缘裁到卡片左缘，页头可只有侧栏钮；9 = 官方推送网关：`host_push_enable` 可带 `transport`，推送状态带 `alt`、通道含 `apns`、不再报 `unsupported`）。 */
-export const BRIDGE = 9;
+/** 本页面实现的宿主协议版本（与壳 `host_ready` 返回的 `bridge` 对应；3 = 桌面自绘标题栏；4 = iOS 原生底栏；5 = iOS 原生页头；6 = iOS 可替换图标；7 = 原生底栏改系统 UITabBar；8 = 下沉侧栏改由根滚动驱动、原生按 contentOffset 跟随，原生底栏浮在 WebView 之上、右缘裁到卡片左缘，页头可只有侧栏钮；9 = 官方推送网关：`host_push_enable` 可带 `transport`，推送状态带 `alt`、通道含 `apns`、不再报 `unsupported`；10 = 移动端全局助手头像原生共享缓存同步 `host_sync_assistant_avatar`）。 */
+export const BRIDGE = 10;
 /** 壳向页面推送事件用的 DOM 事件名。 */
 export const HOST_EVENT = "oryn:host";
 
@@ -624,6 +624,7 @@ function mobileHost(
 	native: boolean,
 	appIcon: boolean,
 	pushTransport: boolean,
+	syncAvatar: boolean,
 ): MobileHost {
 	const openExternal = (url: string) => {
 		void call("host_open_external", { url });
@@ -671,6 +672,7 @@ function mobileHost(
 			void call("host_open_notification_settings");
 		},
 		syncAssistantAvatar: ({ icon, image }) => {
+			if (!syncAvatar) return;
 			void call("host_sync_assistant_avatar", {
 				icon: icon || null,
 				image: image || null,
@@ -827,6 +829,7 @@ function tauriHost(win: Window, invoke: Invoke): Host {
 					platform === "ios" && (meta?.bridge ?? 0) >= 8,
 					platform === "ios" && (meta?.bridge ?? 0) >= 6,
 					(meta?.bridge ?? 0) >= 9,
+					(meta?.bridge ?? 0) >= 10,
 				)
 			: null,
 		desktop: isMobile

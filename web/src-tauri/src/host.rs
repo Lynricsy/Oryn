@@ -30,8 +30,8 @@ pub const MAIN: &str = "main";
 /// 右缘随根滚动裁到卡片左缘（spec 不再带 `bg`）；原生页头 `title` 可为 null（首页只有侧栏钮）；`host_sink_set` 生效前
 /// 非空的 `host_tab_bar_set` / `host_header_set` 一律 `unsupported`，9 = 官方推送网关（M28）：`host_push_enable` 可带
 /// `transport: "default" | "unifiedpush"`，`MobileInfo.push` 增加 `alt`、`channel` 可为 `apns`、不再出现 `unsupported`，
-/// 错误码增加 `gateway_*`）。
-pub const BRIDGE: u32 = 9;
+/// 错误码增加 `gateway_*`，10 = 移动端全局助手头像原生共享缓存同步（`host_sync_assistant_avatar`））。
+pub const BRIDGE: u32 = 10;
 
 pub type SessionCore = Core<HttpApi, TauriShell>;
 

@@ -496,8 +496,30 @@ describe("移动壳（M7）", () => {
 		const show: NativeHeaderShow = { alpha: 1, ms: 120 };
 		const menu: NativeHeaderMenu = { open: "title", page: "env" };
 
-		it("本页宿主协议版本为 9（官方推送网关）", () => {
-			expect(BRIDGE).toBe(9);
+		it("本页宿主协议版本为 10（全局助手头像共享缓存同步）", () => {
+			expect(BRIDGE).toBe(10);
+		});
+
+		it("syncAssistantAvatar 在 bridge 9 旧壳上静默跳过，bridge 10 正常下发 host_sync_assistant_avatar", () => {
+			const old = mobileWindow({ platform: "ios", bridge: 9 });
+			createHost(old.win).mobile?.syncAssistantAvatar({
+				image: "data:image/webp;base64,AAA",
+			});
+			expect(old.invoke).not.toHaveBeenCalled();
+
+			const cur = mobileWindow({ platform: "ios", bridge: 10 });
+			createHost(cur.win).mobile?.syncAssistantAvatar({
+				icon: "🦊",
+				image: "data:image/webp;base64,AAA",
+			});
+			createHost(cur.win).mobile?.syncAssistantAvatar({});
+			expect(cur.invoke.mock.calls).toEqual([
+				[
+					"host_sync_assistant_avatar",
+					{ icon: "🦊", image: "data:image/webp;base64,AAA" },
+				],
+				["host_sync_assistant_avatar", { icon: null, image: null }],
+			]);
 		});
 
 		it("ios + bridge 8 → header 非空；set / show / menu 的参数形状（show 只有 alpha 与 ms）", async () => {

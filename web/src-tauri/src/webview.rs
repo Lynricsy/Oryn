@@ -407,7 +407,7 @@ mod tests {
         assert!(s.starts_with("window.__ORYN_HOST__ = Object.freeze({"));
         assert!(s.contains("\"version\":\"9.8.7-rc.1\""));
         assert!(s.contains("\"kind\":\"tauri\""));
-        assert!(s.contains("\"bridge\":9"));
+        assert!(s.contains("\"bridge\":10"));
         assert!(!s.contains("chrome"));
         let s = init_script("1.0.0", Some(json!({"controls": "custom-right"})));
         assert!(s.contains("\"chrome\":{\"controls\":\"custom-right\"}"));
