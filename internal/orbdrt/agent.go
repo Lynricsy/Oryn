@@ -736,10 +736,12 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 			if err != nil {
 				return apigen.LinkCtlAgentStartResult{}, ctlErr("failed", "marshal role tools: %v", err)
 			}
+			// 工作线程始终经 -e 加载 oryn-orb.ts（omp 19.2.0 起禁止 --no-tools 与 -e 同传）；
+			// 显式 tools: [] 与非空白名单统一交由 oryn-orb.ts 在 session_start / session_switch 经 setActiveTools 生效。
 			env[envRoleTools] = string(b)
-			if len(clean) == 0 {
-				// 显式 tools: [] 在进程启动层即禁用全部内置工具，再由 oryn-orb.ts 在 session_start 清空激活表
-				args = append(args, "--no-tools")
+			if !seen["report_issue"] {
+				// omp 19.2.0 在禁用 bash 时会把默认开启的 report_issue 提升为顶层工具；白名单未显式允许时关掉 Auto-QA。
+				env["PI_AUTO_QA"] = "0"
 			}
 		}
 	}

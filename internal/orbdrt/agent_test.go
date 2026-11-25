@@ -104,7 +104,7 @@ func TestCoordinatorRejectsWorkThreadRoleParams(t *testing.T) {
 
 // 普通工作线程按 subagent 配置启动：
 // - 非空 tools 白名单：写出 role-prompt.md 并以 --append-system-prompt 传入，设置 ORYN_ROLE_TOOLS（覆盖 p.Env 里的伪造值），不加 --no-tools；
-// - 显式空 tools: []：追加 --no-tools 且设 ORYN_ROLE_TOOLS="[]"；
+// - 显式空 tools: []：设 ORYN_ROLE_TOOLS="[]"，同样不加 --no-tools（omp 19.2.0 起 --no-tools 与 -e 互斥，由 oryn-orb.ts 的 setActiveTools([]) 禁用全部工具）；
 // - 省略 tools (nil)：不加 --no-tools，且清除 p.Env 试图注入的 ORYN_ROLE_TOOLS。
 func TestWorkThreadRolePromptAndTools(t *testing.T) {
 	cp := newFakeCP(t)
@@ -131,11 +131,12 @@ func TestWorkThreadRolePromptAndTools(t *testing.T) {
 	assert.Contains(t, rec.Args, promptFile)
 	assert.NotContains(t, rec.Args, "--no-tools")
 	assert.Equal(t, `["read","grep"]`, rec.Env["ORYN_ROLE_TOOLS"])
+	assert.Equal(t, "0", rec.Env["PI_AUTO_QA"])
 	gotPrompt, err := os.ReadFile(promptFile)
 	require.NoError(t, err)
 	assert.Equal(t, extra, string(gotPrompt))
 
-	// 显式空数组 tools: [] → --no-tools + ORYN_ROLE_TOOLS="[]"
+	// 显式空数组 tools: [] → ORYN_ROLE_TOOLS="[]" 且不传 --no-tools（避免与 -e 冲突）
 	const threadEmpty = "T-01932f6e-8d1a-7c3b-9f2e-0123456789c1"
 	empty := []string{}
 	require.NoError(t, cp.call(t, "agent.start", apigen.LinkCtlAgentStartParams{
@@ -147,9 +148,10 @@ func TestWorkThreadRolePromptAndTools(t *testing.T) {
 	}, &res))
 	cp.waitNotif(t, 0, "agent.status", statusIs(threadEmpty, "ready"))
 	recEmpty := setupDump(t, dump, threadEmpty)
-	assert.Contains(t, recEmpty.Args, "--no-tools")
+	assert.NotContains(t, recEmpty.Args, "--no-tools")
+	assert.Contains(t, recEmpty.Args, "-e")
 	assert.Equal(t, `[]`, recEmpty.Env["ORYN_ROLE_TOOLS"])
-
+	assert.Equal(t, "0", recEmpty.Env["PI_AUTO_QA"])
 	// 省略 tools (nil) → 不限制，且 p.Env 试图伪造的 ORYN_ROLE_TOOLS 被清除
 	const threadNil = "T-01932f6e-8d1a-7c3b-9f2e-0123456789c2"
 	require.NoError(t, cp.call(t, "agent.start", apigen.LinkCtlAgentStartParams{
