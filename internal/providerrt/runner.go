@@ -59,9 +59,11 @@ type Runner struct {
 	helloMu     sync.Mutex
 	hostSampler *hostMetricsSampler
 
-	// orbDiskMu 保护后台单并发采样器写入的最新 orb 磁盘快照，hello 只读快照、绝不阻塞。
+	// orbDiskMu 保护后台单并发采样器写入的最新 orb 磁盘快照，hello 只读快照、绝不阻塞；
+	// 超过 3 个采样周期未拿到新样本后视为过期，防止持续失败时永远上报陈旧盘量。
 	orbDiskMu    sync.Mutex
 	orbDiskValid bool
+	orbDiskAt    time.Time
 	orbDiskTotal int64
 	orbDiskByOrb map[string]int64
 }
@@ -196,8 +198,9 @@ func (r *Runner) hello(ctx context.Context) error {
 		req.BaseImageID = &info.BaseImageID
 	}
 	if r.hostSampler != nil {
-		hm := r.hostSampler.Sample(time.Now(), info.DiskPath, info.Limits)
-		if total, byOrb, ok := r.readOrbDiskSnapshot(); ok {
+		now := time.Now()
+		hm := r.hostSampler.Sample(now, info.DiskPath, info.Limits)
+		if total, byOrb, ok := r.readOrbDiskSnapshot(now); ok {
 			hm.OrbDiskBytes = &total
 			if len(byOrb) > 0 {
 				hm.OrbDiskByOrb = byOrb
@@ -209,10 +212,18 @@ func (r *Runner) hello(ctx context.Context) error {
 	return r.post(ctx, "/provider/v1/hello", req, &res)
 }
 
-func (r *Runner) readOrbDiskSnapshot() (int64, map[string]int64, bool) {
+func (r *Runner) orbDiskMaxStale() time.Duration {
+	iv := r.OrbDiskInterval
+	if iv <= 0 {
+		iv = orbDiskCacheTTL
+	}
+	return 3 * iv
+}
+
+func (r *Runner) readOrbDiskSnapshot(now time.Time) (int64, map[string]int64, bool) {
 	r.orbDiskMu.Lock()
 	defer r.orbDiskMu.Unlock()
-	if !r.orbDiskValid {
+	if !r.orbDiskValid || now.Sub(r.orbDiskAt) > r.orbDiskMaxStale() {
 		return 0, nil, false
 	}
 	return r.orbDiskTotal, maps.Clone(r.orbDiskByOrb), true
@@ -232,10 +243,10 @@ func (r *Runner) sampleOrbDiskLoop(ctx context.Context, sizer OrbDiskSizer) {
 		r.orbDiskMu.Lock()
 		r.orbDiskTotal = total
 		r.orbDiskByOrb = trimmed
+		r.orbDiskAt = time.Now()
 		r.orbDiskValid = true
 		r.orbDiskMu.Unlock()
 	}
-
 	sampleOnce()
 	t := time.NewTicker(r.OrbDiskInterval)
 	defer t.Stop()

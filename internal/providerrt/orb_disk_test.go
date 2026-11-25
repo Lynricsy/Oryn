@@ -241,3 +241,101 @@ func TestRunnerHelloNotBlockedBySlowOrbDiskSizer(t *testing.T) {
 		t.Fatal("Runner 未在 ctx 取消后及时退出")
 	}
 }
+
+type toggleOrbDiskDriver struct {
+	fail atomic.Bool
+}
+
+func (d *toggleOrbDiskDriver) Info() Info {
+	return Info{Driver: apigen.Process}
+}
+
+func (d *toggleOrbDiskDriver) Exec(context.Context, Job, io.Writer) (*apigen.JobResult, error) {
+	return nil, nil
+}
+
+func (d *toggleOrbDiskDriver) OrbDiskUsage(context.Context) (int64, map[string]int64, bool) {
+	if d.fail.Load() {
+		return 0, nil, false
+	}
+	return 65536, map[string]int64{"orb-exp-1": 65536}, true
+}
+
+// TestRunnerOrbDiskSnapshotExpiresOnSustainedFailure 证明磁盘采样成功后若持续失败，
+// 超过有限过期窗口后 hello 会省略 orbDiskBytes，不再无限上报陈旧数值。
+func TestRunnerOrbDiskSnapshotExpiresOnSustainedFailure(t *testing.T) {
+	var (
+		mu      sync.Mutex
+		lastReq apigen.ProviderHelloRequest
+		stopSrv = make(chan struct{})
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/provider/v1/hello":
+			var req apigen.ProviderHelloRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			mu.Lock()
+			lastReq = req
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(apigen.ProviderHelloResponse{})
+		case "/provider/v1/jobs/claim":
+			select {
+			case <-r.Context().Done():
+			case <-stopSrv:
+			}
+		case "/provider/v1/bye":
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer func() {
+		close(stopSrv)
+		srv.Close()
+	}()
+
+	drv := &toggleOrbDiskDriver{}
+	runner := &Runner{
+		URL:               srv.URL,
+		Token:             "opv_test",
+		Driver:            drv,
+		Concurrency:       1,
+		HeartbeatInterval: 20 * time.Millisecond,
+		OrbDiskInterval:   25 * time.Millisecond,
+		ShutdownGrace:     time.Second,
+		HTTP:              srv.Client(),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- runner.Run(ctx) }()
+
+	// 1. 先看到成功采样后的盘量上报
+	eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return lastReq.HostMetrics != nil &&
+			lastReq.HostMetrics.OrbDiskBytes != nil &&
+			*lastReq.HostMetrics.OrbDiskBytes == 65536
+	}, "首次成功采样后心跳应上报 orbDiskBytes")
+
+	// 2. 切为持续失败：超过 3 * OrbDiskInterval（75ms）后，后续心跳必须省略 orbDiskBytes
+	drv.fail.Store(true)
+	eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return lastReq.HostMetrics != nil &&
+			lastReq.HostMetrics.OrbDiskBytes == nil &&
+			len(lastReq.HostMetrics.OrbDiskByOrb) == 0
+	}, "持续采样失败过期后心跳应省略陈旧的 orbDiskBytes")
+
+	cancel()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("Runner 未在 ctx 取消后及时退出")
+	}
+}

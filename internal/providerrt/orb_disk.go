@@ -48,14 +48,12 @@ func (d *Docker) OrbDiskUsage(ctx context.Context) (int64, map[string]int64, boo
 		"ps", "-a", "--filter", "label=oryn-orb=1", "--size", "--format", "{{.Names}}\t{{.Size}}",
 	)
 
-	d.orbDiskMu.Lock()
-	defer d.orbDiskMu.Unlock()
 	if err != nil {
-		if d.orbDiskValid {
-			return d.orbDiskTotal, maps.Clone(d.orbDiskByOrb), true
-		}
 		return 0, nil, false
 	}
+
+	d.orbDiskMu.Lock()
+	defer d.orbDiskMu.Unlock()
 
 	total, byOrb := parseDockerPSSizes(stdout.String())
 	d.orbDiskTotal = total
