@@ -55,6 +55,9 @@ func (s *Service) toolArtifact(ctx context.Context, c toolCtx, op string) thread
 		// 标题、文件内容与作者名来自别的 agent（orb 内线程写的 artifact）；评论锚点里的元素文本与页名来自页面；
 		// 数据是页面写入的
 		return threads.HostToolResult{Text: wrapUntrustedText(res.Text), Details: res.Details}
+	case artifacts.OpDesignNotes:
+		// 便签与评论串里的元素文本、页名来自页面（M29）；逐帧截图照常带上
+		return threads.HostToolResult{Text: wrapUntrustedText(res.Text), Details: res.Details, Images: images}
 	}
 	return threads.HostToolResult{Text: res.Text, Details: res.Details, Images: images}
 }

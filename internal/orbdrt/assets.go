@@ -29,6 +29,20 @@ var boxesSkill []byte
 //go:embed assets/oryn-library-runner/SKILL.md
 var runnerLibrarySkill []byte
 
+// designSkill 与 designNotice 是写到 $HOME/.agents/skills/oryn-design/{SKILL.md,NOTICE.md} 的设计画布技能（M29 C9）。
+//
+//go:embed assets/oryn-design/SKILL.md
+var designSkill []byte
+
+//go:embed assets/oryn-design/NOTICE.md
+var designNotice []byte
+
+// runnerDesignSkill 是 runner 写到 $HOME/.oryn/omp/agent/skills/oryn-design/SKILL.md 的版本（M29 C9）：runner 没有
+// 设计画布的工作副本，去掉画布契约与自动封存两节，换成「用 HTML 画框做设计稿」。NOTICE.md 与 orb 版共用。
+//
+//go:embed assets/oryn-design/SKILL-runner.md
+var runnerDesignSkill []byte
+
 // openboxRC 是写到 $HOME/.oryn/desktop/openbox-rc.xml 的窗口管理器配置（M8，仅桌面启用时）。
 //
 //go:embed assets/openbox-rc.xml

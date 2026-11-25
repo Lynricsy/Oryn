@@ -30,7 +30,7 @@ func (c toolCtx) inSpace() bool { return c.space != nil }
 
 // HostToolCall 实现 threads.Coordinator：执行宿主工具。结果的 Text 是紧凑 JSON；read_thread / list_threads /
 // list_schedules / get_stats / list_files / read_artifact / list_artifacts / list_artifact_versions / read_artifact_comments /
-// read_artifact_data 的结果含线程标题、定时名称、文件名、artifact 内容、页面文本与页面数据等不可信文本，另加不可信包裹（C9.1）。Details 是同一对象；
+// read_artifact_data / design_notes 的结果含线程标题、定时名称、文件名、artifact 内容、页面文本与页面数据等不可信文本，另加不可信包裹（C9.1）。Details 是同一对象；
 // 失败时 IsError、Text 以错误码开头。
 func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) threads.HostToolResult {
 	tc := toolCtx{HostToolCall: c}
@@ -109,7 +109,8 @@ func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) thre
 	case ToolCreateArtifact, ToolReadArtifact, ToolUpdateArtifact, ToolListArtifacts, ToolDeleteArtifact,
 		ToolListArtifactVersions, ToolRestoreArtifactVersion, ToolReadArtifactGuide,
 		ToolReadArtifactComments, ToolReplyArtifactComment, ToolResolveArtifactComment,
-		ToolReadArtifactData, ToolWriteArtifactData, ToolScreenshotArtifact:
+		ToolReadArtifactData, ToolWriteArtifactData, ToolScreenshotArtifact,
+		ToolCheckArtifact, ToolDesignDirections, ToolDesignDirection, ToolDesignNotes, ToolDesignResolveNote:
 		// artifact 工具只属于全局助手；工具名就是 artifacts 的操作名
 		return s.toolArtifact(ctx, tc, c.Name)
 	case ToolExportArtifact, ToolImportArtifact:

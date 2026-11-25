@@ -39,7 +39,14 @@ var skillNativeDomain = map[string]string{
 	ToolDeleteArtifact: "artifacts", ToolListArtifactVersions: "artifacts", ToolRestoreArtifactVersion: "artifacts",
 	ToolReadArtifactComments: "artifacts", ToolReplyArtifactComment: "artifacts", ToolResolveArtifactComment: "artifacts",
 	ToolReadArtifactData: "artifacts", ToolWriteArtifactData: "artifacts", ToolExportArtifact: "artifacts",
-	ToolImportArtifact: "artifacts",
+	ToolImportArtifact: "artifacts", ToolCheckArtifact: "artifacts", ToolDesignDirections: "artifacts",
+	ToolDesignDirection: "artifacts", ToolDesignNotes: "artifacts", ToolDesignResolveNote: "artifacts",
+}
+
+// domainSupplements 是追加在域说明（skilldocs/<域>.md）之后的专题段落：skilldocs/ 下的文件名，按顺序拼接。
+// design.md 是设计画布的做法（M29 C9 的助手版：没有工作副本，用 HTML 画框）。
+var domainSupplements = map[string][]string{
+	"artifacts": {"design.md"},
 }
 
 // skillNativeDefs 返回技能原生操作的定义：artifactToolDefs() 里不在 topLevelArtifactTools 的、threadToolDefs()、fileToolDefs()。
@@ -116,6 +123,14 @@ func buildSkillFiles() map[string][]byte {
 		fmt.Fprintf(&doc, "# %s — %s\n\n", dom.Name, dom.Desc)
 		if intro, err := skillDocs.ReadFile("skilldocs/" + dom.Name + ".md"); err == nil {
 			doc.Write(intro)
+			doc.WriteString("\n")
+		}
+		for _, name := range domainSupplements[dom.Name] {
+			sup, err := skillDocs.ReadFile("skilldocs/" + name)
+			if err != nil {
+				panic("coord: 缺少内嵌的 " + name + ": " + err.Error())
+			}
+			doc.Write(sup)
 			doc.WriteString("\n")
 		}
 		doc.WriteString("## Operations\n")

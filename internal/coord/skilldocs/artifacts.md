@@ -1,2 +1,2 @@
-- Creating, reading, updating and screenshotting artifacts are top-level tools. The snake_case operations here cover versions, comments, page data, export and import, and moving to the trash.
+- Creating, reading, updating and screenshotting artifacts are top-level tools. The snake_case operations here cover versions, comments, page data, export and import, moving to the trash, design checks (`check_artifact`), direction dealing and canvas notes (`design_*`, see "Design canvases" below).
 - `listArtifacts` with `deleted: true` lists the trash; `undeleteArtifact` restores from it; `deleteArtifact` is only for `permanent: true`.

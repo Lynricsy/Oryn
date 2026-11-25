@@ -442,10 +442,15 @@ func New(cfg Config) (_ *Runtime, err error) {
 	if err := resetDir(filepath.Join(home, ".oryn", "tmp")); err != nil {
 		return nil, fmt.Errorf("orbdrt: %w", err)
 	}
-	// runner 只写 orbd 自带的扩展（ORYN_RUNNER=1 时只注册 artifact / 文件库工具与 Runner 的指引）到 orbd 自己的目录，
-	// 以及 runner 版的 oryn-library 技能到自己的 agent 目录（M21；oryn-setup 只用于 orb 的 setup，不写）。
+	// runner 只写 orbd 自带的扩展（ORYN_RUNNER=1 时只注册 artifact / 文件库 / 设计发牌与便签工具与 Runner 的指引）到 orbd
+	// 自己的目录，以及 runner 版的 oryn-library、oryn-design 技能到自己的 agent 目录（M21、M29；oryn-setup 只用于 orb 的
+	// setup，不写）。
 	if rs != nil {
-		for path, data := range map[string][]byte{runnerExtensionPath(home): orbExtension, runnerLibrarySkillPath(home): runnerLibrarySkill} {
+		design := runnerDesignSkillDir(home)
+		for path, data := range map[string][]byte{
+			runnerExtensionPath(home): orbExtension, runnerLibrarySkillPath(home): runnerLibrarySkill,
+			filepath.Join(design, "SKILL.md"): runnerDesignSkill, filepath.Join(design, "NOTICE.md"): designNotice,
+		} {
 			if err := writeFileAtomic(path, data, 0o644); err != nil {
 				return nil, fmt.Errorf("orbdrt: write %s: %w", path, err)
 			}

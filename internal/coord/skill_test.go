@@ -15,7 +15,7 @@ func TestSkillFiles(t *testing.T) {
 	allowed := AllowedAPIOps()
 	require.Len(t, files, 1+len(apiDomains)+len(allowed)+len(skillNativeDomain))
 	assert.Len(t, allowed, 279)
-	assert.Len(t, skillNativeDomain, 18)
+	assert.Len(t, skillNativeDomain, 23)
 
 	skill := string(files[skillDir+"SKILL.md"])
 	assert.True(t, strings.HasPrefix(skill, "---\nname: oryn\n"), skill[:min(len(skill), 40)])

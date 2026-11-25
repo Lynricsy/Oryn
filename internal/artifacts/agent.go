@@ -123,6 +123,14 @@ func (s *Service) Call(ctx context.Context, c Caller, op string, params json.Raw
 		return s.agentWriteData(ctx, c, params)
 	case OpCheck:
 		return s.agentCheckArtifact(ctx, c, params)
+	case OpDesignDirections:
+		return s.agentDesignDirections(ctx, c, params)
+	case OpDesignDirection:
+		return s.agentDesignDirection(ctx, c, params)
+	case OpDesignNotes:
+		return s.agentDesignNotes(ctx, c, params)
+	case OpDesignResolveNote:
+		return s.agentDesignResolveNote(ctx, c, params)
 	case OpSealDesign, OpFetchDesignFiles, OpFetchDesignRuntime, OpDesignHead:
 		if c.Internal {
 			return s.callInternal(ctx, c, op, params)
@@ -131,7 +139,8 @@ func (s *Service) Call(ctx context.Context, c Caller, op string, params json.Raw
 	default:
 		return Result{}, opErr(CodeInvalid, "没有操作 %q。可用的操作：%s。", op,
 			strings.Join([]string{OpCreate, OpRead, OpUpdate, OpList, OpDelete, OpListVersions, OpRestoreVersion, OpReadGuide,
-				OpReadComments, OpReplyComment, OpResolveComment, OpScreenshot, OpReadData, OpWriteData, OpCheck}, "、"))
+				OpReadComments, OpReplyComment, OpResolveComment, OpScreenshot, OpReadData, OpWriteData, OpCheck,
+				OpDesignDirections, OpDesignDirection, OpDesignNotes, OpDesignResolveNote}, "、"))
 	}
 }
 

@@ -274,6 +274,12 @@ func runnerLibrarySkillPath(home string) string {
 	return filepath.Join(home, filepath.FromSlash(runnerOmpConfigDir), "agent", "skills", "oryn-library", "SKILL.md")
 }
 
+// runnerDesignSkillDir 是 runner 写出 oryn-design 技能（SKILL.md 与 NOTICE.md）的目录（M29 C9），同 runnerLibrarySkillPath
+// 不进 omp-home 清单。
+func runnerDesignSkillDir(home string) string {
+	return filepath.Join(home, filepath.FromSlash(runnerOmpConfigDir), "agent", "skills", "oryn-design")
+}
+
 func (r *Runtime) skillPath() string {
 	return filepath.Join(r.home, ".agents", "skills", "oryn-setup", "SKILL.md")
 }
@@ -286,11 +292,17 @@ func (r *Runtime) boxesSkillPath() string {
 	return filepath.Join(r.home, ".agents", "skills", "oryn-boxes", "SKILL.md")
 }
 
+// designSkillDir 是设计画布技能 oryn-design 的目录（M29 C9：SKILL.md 与 NOTICE.md）。
+func (r *Runtime) designSkillDir() string {
+	return filepath.Join(r.home, ".agents", "skills", "oryn-design")
+}
+
 // writeAgentAssets 写出内嵌的扩展与技能（每次启动覆盖，保持与 orbd 版本一致）与工具执行器的设置覆盖层；桌面启用时另写给 omp 的
 // 设置覆盖层（地址取 CDP 前门的实际地址）、openbox 配置与主题，未启用时删除残留的覆盖层。
 func (r *Runtime) writeAgentAssets() error {
 	files := map[string][]byte{
 		r.extensionPath(): orbExtension, r.skillPath(): setupSkill, r.librarySkillPath(): librarySkill, r.boxesSkillPath(): boxesSkill,
+		filepath.Join(r.designSkillDir(), "SKILL.md"): designSkill, filepath.Join(r.designSkillDir(), "NOTICE.md"): designNotice,
 		r.computerOverlayPath(): []byte(computerOverlay),
 	}
 	if d := r.desk; d != nil {
