@@ -3924,7 +3924,13 @@
 			"sendFailed": "没能发送评论：{{reason}}",
 			"sent": "已发送",
 			"sentTo": "已发给 {{thread}}",
-			"focusAnchor": "聚焦到这处：{{label}}"
+			"focusAnchor": "聚焦到这处：{{label}}",
+			"autoNotes": "自动发给设计线程",
+			"autoNotesOn": "新评论与画布便签静默 30 秒后，在创建这个设计的线程空闲时自动发给它。",
+			"autoNotesOff": "不会自动发送，需要时用下面的「发送」。",
+			"autoNotesFailed": "没能切换自动发送：{{reason}}",
+			"queued": "已排队",
+			"queuedHint": "线程空闲时会自动发出"
 		},
 		"prompt": {
 			"comments": "请处理 artifact {{id}} 版本 {{version}} 上的这些评论：用 reply_artifact_comment 回复每一条，处理完用 resolve_artifact_comment 标为已解决。",

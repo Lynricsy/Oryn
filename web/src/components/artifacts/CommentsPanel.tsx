@@ -4,6 +4,8 @@
  * 与时间、回复框（`Mod+Enter`，只对未解决的串）、「标为已解决 / 重新打开」。
  * 底部「把 N 条未处理的评论发给 [线程] [发送]」：未处理 = 未解决且还没发出；发给已有线程后记下已发送，
  * 发给「新线程」只把消息交给首屏输入框（不记已发送，那时还没有线程）。
+ * 设计画布（M29 I3）顶部多一个「自动投递」开关：开着时未处理的评论标「已排队」，由控制面在创建线程空闲时自动发出；
+ * 手动发送仍然可用。
  */
 import { type ReactNode, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -16,8 +18,10 @@ import {
 	type ArtifactVersion,
 	useArtifact,
 	useArtifactComments,
+	useArtifactDesign,
 	useArtifactVersions,
 	useMarkArtifactCommentsSent,
+	usePatchArtifactDesign,
 	useReplyArtifactComment,
 	useResolveArtifactComment,
 } from "../../api/artifact-queries";
@@ -36,6 +40,7 @@ import {
 	EmptyState,
 	Select,
 	Spinner,
+	Toggle,
 } from "../ui/primitives";
 import { anchorLabel, orderThreads } from "./anchors";
 import {
@@ -129,9 +134,16 @@ export function CommentsPanel({
 	const comments = useArtifactComments(artifactId);
 	const index = useIndex((s) => s.threads);
 	const [showResolved, setShowResolved] = useState(false);
+	const isCanvas = useArtifact(artifactId).data?.artifact.kind === "canvas";
+	const design = useArtifactDesign(artifactId, isCanvas).data;
+	// 设计画布且开着自动投递：未发出的评论由控制面排队投递
+	const auto = design?.design === true && design.autoNotes;
 	const liveTitle = (id: string) =>
 		threads.find((x) => x.threadId === id)?.title ?? index[id]?.title;
-
+	const autoBar =
+		design?.design === true ? (
+			<AutoNotesBar artifactId={artifactId} on={design.autoNotes} />
+		) : null;
 	if (comments.isPending)
 		return (
 			<div className="flex justify-center py-8 text-faint">
@@ -155,15 +167,19 @@ export function CommentsPanel({
 	const { open, resolved } = orderThreads(comments.data?.threads ?? []);
 	if (open.length === 0 && resolved.length === 0)
 		return (
-			<EmptyState icon="message" title={t("artifacts.comments.empty")}>
-				{canComment ? t("artifacts.comments.emptyHint") : null}
-			</EmptyState>
+			<div className="flex min-h-full flex-col gap-2 p-2">
+				{autoBar}
+				<EmptyState icon="message" title={t("artifacts.comments.empty")}>
+					{canComment ? t("artifacts.comments.emptyHint") : null}
+				</EmptyState>
+			</div>
 		);
 	return (
 		<div
 			data-testid="comments-panel"
 			className="flex min-h-full flex-col gap-2 p-2"
 		>
+			{autoBar}
 			{open.length === 0 && (
 				<p className="px-1 py-2 text-center text-muted text-sm">
 					{t("artifacts.comments.allResolved")}
@@ -180,6 +196,7 @@ export function CommentsPanel({
 							thread={thread}
 							n={n}
 							liveTitle={liveTitle}
+							queued={auto}
 							onAnchor={onAnchor}
 						/>
 					</li>
@@ -228,6 +245,49 @@ export function CommentsPanel({
 					detailThreads={threads}
 				/>
 			)}
+		</div>
+	);
+}
+
+/** 设计画布的「自动投递」开关：新评论与画布便签在去抖后自动发给创建线程。 */
+function AutoNotesBar({
+	artifactId,
+	on,
+}: {
+	artifactId: string;
+	on: boolean;
+}): ReactNode {
+	const { t } = useTranslation();
+	const patch = usePatchArtifactDesign();
+	return (
+		<div
+			data-testid="comments-auto-notes"
+			className="flex flex-col gap-1 rounded-lg border border-border bg-panel p-2.5"
+		>
+			<Toggle
+				checked={patch.isPending ? (patch.variables?.autoNotes ?? on) : on}
+				disabled={patch.isPending}
+				label={t("artifacts.comments.autoNotes")}
+				onChange={(v) =>
+					patch.mutate(
+						{ id: artifactId, autoNotes: v },
+						{
+							onError: (err) =>
+								showToast({
+									tone: "err",
+									text: t("artifacts.comments.autoNotesFailed", {
+										reason: describeError(err, t),
+									}),
+								}),
+						},
+					)
+				}
+			/>
+			<p className="text-muted text-xs">
+				{on
+					? t("artifacts.comments.autoNotesOn")
+					: t("artifacts.comments.autoNotesOff")}
+			</p>
 		</div>
 	);
 }
@@ -372,6 +432,7 @@ function ThreadCard({
 	thread,
 	n,
 	liveTitle,
+	queued = false,
 	onAnchor,
 }: {
 	artifactId: string;
@@ -379,6 +440,8 @@ function ThreadCard({
 	/** 未解决的串的编号；已解决的没有。 */
 	n?: number;
 	liveTitle(threadId: string): string | undefined;
+	/** 自动投递开着：还没发出的未解决串显示「已排队」。 */
+	queued?: boolean;
 	onAnchor?(anchor: ArtifactCommentAnchor): void;
 }): ReactNode {
 	const { t } = useTranslation();
@@ -433,6 +496,14 @@ function ThreadCard({
 						}
 					>
 						<Badge>{t("artifacts.comments.sent")}</Badge>
+					</span>
+				)}
+				{queued && thread.sentAt === undefined && !isResolved && (
+					<span
+						data-testid="comment-queued"
+						title={t("artifacts.comments.queuedHint")}
+					>
+						<Badge>{t("artifacts.comments.queued")}</Badge>
 					</span>
 				)}
 			</header>
