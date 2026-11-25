@@ -4,7 +4,8 @@
  * - 忙碌：Enter = steer；Ctrl/Cmd+Enter = 排队（follow_up）；Alt+Enter = 中断并发送（abort_and_prompt）。
  * - 连按两次 Esc（间隔 ≤ 500ms）：忙碌时 = 中断（abort）；空闲且输入框为空时 = 回退（rewind，同 omp 的 Esc Esc）。
  *   空闲时输入框里有字，Esc 不计入连按（不让一次误触 Esc 毁掉草稿）。
- * - `!cmd` = bash；`!!cmd` = bash 且不进上下文；`/` 开头 = 斜杠命令；单独 `.` = 继续（resume）。
+ * - `!cmd` = bash；`!!cmd` = bash 且不进上下文；`$ code` / `$$ code` = Python eval；
+ *   `? 问题` = `/btw`；`-> msg` / `=> msg` = follow_up 队列简写；`/` 开头 = 斜杠命令；单独 `.` = 继续（resume）。
  */
 import { isImeKeyEvent } from "./ime";
 
@@ -64,8 +65,22 @@ export type ParsedInput =
 	| { kind: "empty" }
 	| { kind: "resume" }
 	| { kind: "bash"; command: string; excludeFromContext: boolean }
+	| { kind: "eval"; code: string; excludeFromContext: boolean }
+	| { kind: "btw"; question: string }
+	| { kind: "queue"; text: string }
 	| { kind: "slash"; text: string }
 	| { kind: "text"; text: string };
+
+/**
+ * 识别 `$` / `$$` Python 前缀：必须紧跟空白字符（同 Core `pythonCommandPrefixLength`），
+ * 避免把 `$HOME`、`$100` 等自然文本误判为 eval。
+ */
+function pythonPrefixLength(text: string): 0 | 1 | 2 {
+	if (text.charCodeAt(0) !== 36 /* $ */) return 0;
+	const len = text.charCodeAt(1) === 36 /* $ */ ? 2 : 1;
+	const next = text.charCodeAt(len);
+	return next === 32 || next === 9 || next === 10 || next === 13 ? len : 0;
+}
 
 export function parseComposerInput(raw: string): ParsedInput {
 	const text = raw.trim();
@@ -81,6 +96,20 @@ export function parseComposerInput(raw: string): ParsedInput {
 		return command
 			? { kind: "bash", command, excludeFromContext: false }
 			: { kind: "empty" };
+	}
+	const pyLen = pythonPrefixLength(text);
+	if (pyLen > 0) {
+		const code = text.slice(pyLen).trim();
+		return code
+			? { kind: "eval", code, excludeFromContext: pyLen === 2 }
+			: { kind: "empty" };
+	}
+	if (text[0] === "?" && text[1] !== "?") {
+		return { kind: "btw", question: text.slice(1).trim() };
+	}
+	if (text.startsWith("->") || text.startsWith("=>")) {
+		const body = text.slice(2).trim();
+		return body ? { kind: "queue", text: body } : { kind: "empty" };
 	}
 	if (text === ".") return { kind: "resume" };
 	if (/^\/[^\s/]/.test(text)) return { kind: "slash", text };

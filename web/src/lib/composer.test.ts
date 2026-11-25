@@ -141,4 +141,47 @@ describe("输入解析", () => {
 		});
 		expect(parseComposerInput("c")).toEqual({ kind: "text", text: "c" });
 	});
+
+	it("$ / $$ 紧跟空白解析为 Python eval；$HOME 等自然文本保持 text", () => {
+		expect(parseComposerInput("$ print(1)")).toEqual({
+			kind: "eval",
+			code: "print(1)",
+			excludeFromContext: false,
+		});
+		expect(parseComposerInput("$$ 1 + 1")).toEqual({
+			kind: "eval",
+			code: "1 + 1",
+			excludeFromContext: true,
+		});
+		expect(parseComposerInput("$HOME")).toEqual({
+			kind: "text",
+			text: "$HOME",
+		});
+		expect(parseComposerInput("$$var")).toEqual({
+			kind: "text",
+			text: "$$var",
+		});
+	});
+
+	it("? 开头解析为 btw，?? 保持普通文本", () => {
+		expect(parseComposerInput("? 这是什么")).toEqual({
+			kind: "btw",
+			question: "这是什么",
+		});
+		expect(parseComposerInput("?")).toEqual({ kind: "btw", question: "" });
+		expect(parseComposerInput("??")).toEqual({ kind: "text", text: "??" });
+	});
+
+	it("-> / => 解析为 follow_up 队列简写，空正文忽略", () => {
+		expect(parseComposerInput("-> 下一步再跑单测")).toEqual({
+			kind: "queue",
+			text: "下一步再跑单测",
+		});
+		expect(parseComposerInput("=> 顺手看日志")).toEqual({
+			kind: "queue",
+			text: "顺手看日志",
+		});
+		expect(parseComposerInput("->")).toEqual({ kind: "empty" });
+		expect(parseComposerInput("=>   ")).toEqual({ kind: "empty" });
+	});
 });

@@ -1,6 +1,6 @@
 /**
- * 当前工具报告（`/tools`）：按来源分组（内置 / MCP / 扩展 / 插件 / xd:// 挂载设备），可搜索；描述先显示第一段，
- * 更长的可展开全文。挂载设备靠 Core 的 `mounted` 标记区分。
+ * 当前工具报告（`/tools`）：按来源分组（内置 / MCP / 扩展 / 插件 / 工具命令），可搜索；描述先显示第一段，
+ * 更长的可展开全文。工具命令靠 Core 的 `mounted` 标记区分。
  */
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -54,9 +54,7 @@ function ToolRow({ tool }: { tool: RpcActiveTool }): ReactNode {
 			className="flex min-w-0 flex-col gap-1 border-border border-t py-2.5 first:border-t-0"
 		>
 			<div className="flex min-w-0 flex-wrap items-center gap-1.5">
-				<span className="min-w-0 break-all font-mono text-sm">
-					{tool.mounted ? `xd://${tool.name}` : tool.name}
-				</span>
+				<span className="min-w-0 break-all font-mono text-sm">{tool.name}</span>
 				{server && <Badge>{server}</Badge>}
 			</div>
 			{desc ? (

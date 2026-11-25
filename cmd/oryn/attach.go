@@ -84,11 +84,11 @@ type attacher struct {
 	plan        json.RawMessage // 未决的 plan_proposal 帧（nil = 无）
 	planPrinted bool
 
-	state    string
-	turnSeen bool
-	cmdSeq   int
-	settleAt time.Time
-
+	state       string
+	queuedCount int // 来自 queue_update 的待投递队列总数（忙时空回车走 abort_and_deliver_queue）
+	turnSeen    bool
+	cmdSeq      int
+	settleAt    time.Time
 	// queued 是本连接收到快照之前读到的输入行：待答请求 / 计划状态要等快照才建立，提前处理会把审批词当成普通消息发出。
 	queued []string
 }
@@ -539,8 +539,10 @@ func (a *attacher) frame(raw json.RawMessage) {
 		Type    string `json:"type"`
 		ID      string `json:"id"`
 		Method  string `json:"method"`
-		Target  string `json:"targetId"`
-		Message *struct {
+		Target   string   `json:"targetId"`
+		Steering []string `json:"steering"`
+		FollowUp []string `json:"followUp"`
+		Message  *struct {
 			Role string `json:"role"`
 		} `json:"message"`
 		Event *struct {
@@ -555,6 +557,10 @@ func (a *attacher) frame(raw json.RawMessage) {
 	switch f.Type {
 	case "agent_start":
 		a.turnSeen = true
+	case "agent_end":
+		a.queuedCount = 0
+	case "queue_update":
+		a.queuedCount = len(f.Steering) + len(f.FollowUp)
 	case "message_start":
 		a.streaming = assistant && a.backfilled && a.o.tty && !a.o.json
 	case "message_update":
@@ -753,9 +759,15 @@ func (a *attacher) endLine() {
 // input 处理一行输入；quit 为真表示用户要求退出。
 func (a *attacher) input(ctx context.Context, conn *wsConn, line string) (bool, error) {
 	line = strings.TrimSpace(line)
-	switch line {
-	case "":
+	if line == "" {
+		if a.state == string(apigen.ThreadStateWorking) && a.queuedCount > 0 && a.plan == nil {
+			if _, frame := a.latestPending(); frame == nil {
+				return false, a.cmd(ctx, conn, map[string]any{"type": "abort_and_deliver_queue"})
+			}
+		}
 		return false, nil
+	}
+	switch line {
 	case "/quit":
 		a.endLine()
 		return true, nil
@@ -790,9 +802,64 @@ func (a *attacher) input(ctx context.Context, conn *wsConn, line string) (bool, 
 	if line == "." {
 		return false, a.cmd(ctx, conn, map[string]any{"type": "resume"})
 	}
+	if strings.HasPrefix(line, "!!") {
+		cmd := strings.TrimSpace(line[2:])
+		if cmd == "" {
+			return false, nil
+		}
+		return false, a.cmd(ctx, conn, map[string]any{"type": "bash", "command": cmd, "excludeFromContext": true})
+	}
+	if strings.HasPrefix(line, "!") {
+		cmd := strings.TrimSpace(line[1:])
+		if cmd == "" {
+			return false, nil
+		}
+		return false, a.cmd(ctx, conn, map[string]any{"type": "bash", "command": cmd})
+	}
+	if pyLen := attachPythonPrefixLen(line); pyLen > 0 {
+		code := strings.TrimSpace(line[pyLen:])
+		if code == "" {
+			return false, nil
+		}
+		frame := map[string]any{"type": "eval", "language": "python", "code": code}
+		if pyLen == 2 {
+			frame["excludeFromContext"] = true
+		}
+		return false, a.cmd(ctx, conn, frame)
+	}
+	if strings.HasPrefix(line, "?") && !strings.HasPrefix(line, "??") {
+		if q := strings.TrimSpace(line[1:]); q != "" {
+			return false, a.cmd(ctx, conn, map[string]any{"type": "btw", "question": q})
+		}
+		return false, nil
+	}
+	if strings.HasPrefix(line, "->") || strings.HasPrefix(line, "=>") {
+		if body := strings.TrimSpace(line[2:]); body != "" {
+			return false, a.cmd(ctx, conn, map[string]any{"type": "follow_up", "message": body})
+		}
+		return false, nil
+	}
 	return false, a.cmd(ctx, conn, map[string]any{"type": "prompt", "message": line, "streamingBehavior": "steer"})
 }
 
+// attachPythonPrefixLen 识别 `$ ` / `$$ ` Python 前缀（必须紧跟空白，避免误判 `$HOME`）。
+func attachPythonPrefixLen(s string) int {
+	if len(s) < 2 || s[0] != '$' {
+		return 0
+	}
+	n := 1
+	if s[1] == '$' {
+		n = 2
+	}
+	if len(s) <= n {
+		return 0
+	}
+	switch s[n] {
+	case ' ', '\t', '\n', '\r':
+		return n
+	}
+	return 0
+}
 func (a *attacher) cmd(ctx context.Context, conn *wsConn, frame map[string]any) error {
 	a.cmdSeq++
 	return conn.send(ctx, map[string]any{"type": "cmd", "threadId": a.o.threadID, "id": "attach-" + strconv.Itoa(a.cmdSeq), "frame": frame})

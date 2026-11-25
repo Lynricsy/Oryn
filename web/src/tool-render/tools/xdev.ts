@@ -150,6 +150,7 @@ function executeCard(
 	device: string,
 	rawArgs: Record<string, unknown>,
 	unwrap: boolean,
+	label = `${XD_PREFIX}${device}`,
 ): XdevCard {
 	let args = rawArgs;
 	let intent: string | undefined;
@@ -163,7 +164,7 @@ function executeCard(
 		const report = str(args.report);
 		if (report) args = reportIssueArgs(report);
 	}
-	return { label: `${XD_PREFIX}${device}`, tool: device, args, intent, unwrap };
+	return { label, tool: device, args, intent, unwrap };
 }
 
 function deviceCard(device: string, payload: string | null): XdevCard {
@@ -175,8 +176,30 @@ function deviceCard(device: string, payload: string | null): XdevCard {
 	};
 }
 
+/** 从 Core 19.1+ bash 工具结果的 `details.toolCommands` 中识别单工具命令派发。 */
+function singleToolCommandOf(
+	details: unknown,
+): (Dispatch & { inner?: unknown }) | null {
+	if (!isRecord(details) || !Array.isArray(details.toolCommands)) return null;
+	const list = details.toolCommands.filter(isRecord);
+	if (list.length !== 1) return null;
+	const item = list[0];
+	if (!item) return null;
+	const tool = str(item.tool);
+	const mode =
+		item.mode === "help" || item.mode === "execute" ? item.mode : null;
+	if (!tool || !mode) return null;
+	return {
+		tool,
+		mode,
+		args: isRecord(item.args) ? item.args : null,
+		inner: item.inner,
+	};
+}
+
 /**
- * 把一次 `write` / `read` 调用识别为 `xd://` 设备卡片；不是设备调用时返回 null（普通文件读写不受影响）。
+ * 把一次 `write` / `read` 调用识别为 `xd://` 设备卡片，或把 Core 19.1+ 单条 `bash` 工具命令
+ * （`details.toolCommands`）识别为真实工具卡片；不是派发调用时返回 null。
  * `args` 是外层调用已去掉意图字段的参数。
  */
 export function xdevCardOf(input: {
@@ -186,6 +209,22 @@ export function xdevCardOf(input: {
 	partialResult?: ToolResultLike;
 }): XdevCard | null {
 	const { name, args, result } = input;
+	if (name === "bash") {
+		const tc = singleToolCommandOf(
+			result ? result.details : input.partialResult?.details,
+		);
+		if (!tc) return null;
+		if (tc.mode === "help") {
+			return {
+				label: `${tc.tool} --help`,
+				tool: XDEV_DOCS_TOOL,
+				args: { device: tc.tool, topic: null },
+				unwrap: false,
+			};
+		}
+		if (tc.args) return executeCard(tc.tool, tc.args, true, tc.tool);
+		return null;
+	}
 	const path = str(args.path);
 	if (name === "read") {
 		if (!path) return null;
@@ -195,7 +234,6 @@ export function xdevCardOf(input: {
 		return target ? docsCard(target.name, null) : null;
 	}
 	if (name !== "write") return null;
-
 	const target = path ? parseXdUrl(path) : null;
 	// 完成后看最终结果，运行中看部分结果（Core 把真实工具的进度同样包在 details.xdev 里）
 	const dispatch = result
@@ -220,7 +258,7 @@ export function xdevCardOf(input: {
 	return deviceCard(device, content);
 }
 
-/** 派发卡片的结果：外层 write 的 details 换成内层工具的 details（没有派发时为 undefined）。 */
+/** 派发卡片的结果：外层 write/bash 的 details 换成内层工具的 details（没有派发时为 undefined）。 */
 export function unwrapXdevResult(
 	result: ToolResultLike | undefined,
 ): ToolResultLike | undefined {
@@ -229,9 +267,10 @@ export function unwrapXdevResult(
 		isRecord(result.details) && isRecord(result.details.xdev)
 			? result.details.xdev
 			: null;
+	const inner = xdev ? xdev.inner : singleToolCommandOf(result.details)?.inner;
 	return {
 		content: result.content,
-		details: xdev?.inner,
+		details: inner,
 		isError: result.isError,
 	};
 }

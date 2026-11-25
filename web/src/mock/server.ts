@@ -4291,6 +4291,19 @@ export class MockServer {
 				for (const msg of queued) await this.runPrompt(threadId, msg);
 				return;
 			}
+			case "abort_and_restore_queue": {
+				const q = this.queues.get(threadId);
+				const steering = (q?.steering ?? []).map((text) => ({ text }));
+				const followUp = (q?.followUp ?? []).map((text) => ({ text }));
+				this.queues.set(threadId, { steering: [], followUp: [] });
+				this.frame(threadId, {
+					type: "queue_update",
+					steering: [],
+					followUp: [],
+					liveSteered: 0,
+				});
+				return this.respond(socket, threadId, id, type, { steering, followUp });
+			}
 			case "resume": {
 				const q = this.queues.get(threadId);
 				const queued = q ? [...q.steering, ...q.followUp] : [];
@@ -4326,6 +4339,19 @@ export class MockServer {
 					role: "bashExecution",
 					command: String(frame.command),
 					output: "Linux orb-mock 6.12.0 #1 SMP x86_64 GNU/Linux\n",
+					exitCode: 0,
+					cancelled: false,
+					truncated: false,
+					excludeFromContext: frame.excludeFromContext === true,
+					timestamp: Date.now(),
+				});
+				return this.respond(socket, threadId, id, type, { exitCode: 0 });
+			}
+			case "eval": {
+				this.appendEntry(threadId, {
+					role: "pythonExecution",
+					code: String(frame.code ?? ""),
+					output: "ok\n",
 					exitCode: 0,
 					cancelled: false,
 					truncated: false,

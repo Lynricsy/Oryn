@@ -763,3 +763,131 @@ describe("继续快捷键 '.'（resume）与忙时队列空 Enter（abort_and_de
 		]);
 	});
 });
+
+describe("忙时双击 Esc 撤回排队消息（abort_and_restore_queue）", () => {
+	beforeEach(() => {
+		cmd.mockReset();
+		resetThreadStores();
+		resetComposerDrafts();
+		getThreadStore(A).setState({ agentStatus: "ready", running: true });
+	});
+
+	it("有排队消息时双击 Esc 发 abort_and_restore_queue 并把撤回的文本放回输入区", async () => {
+		cmd.mockResolvedValue({
+			steering: [{ text: "先查日志" }],
+			followUp: [{ text: "再补测试" }],
+		});
+		getThreadStore(A).setState({
+			running: true,
+			queue: { steering: ["先查日志"], followUp: ["再补测试"], liveSteered: 0 },
+		});
+		wrap(<Composer threadId={A} />);
+		await act(async () => {
+			fireEvent.keyDown(box(), { key: "Escape" });
+			fireEvent.keyDown(box(), { key: "Escape" });
+		});
+		expect(framesOf("abort_and_restore_queue")).toEqual([
+			{ type: "abort_and_restore_queue" },
+		]);
+		expect(framesOf("abort")).toHaveLength(0);
+		expect(box().value).toBe("先查日志\n再补测试");
+	});
+
+	it("无排队消息时双击 Esc 仍只发 abort", async () => {
+		cmd.mockResolvedValue({});
+		wrap(<Composer threadId={A} />);
+		await act(async () => {
+			fireEvent.keyDown(box(), { key: "Escape" });
+			fireEvent.keyDown(box(), { key: "Escape" });
+		});
+		expect(framesOf("abort")).toEqual([{ type: "abort" }]);
+		expect(framesOf("abort_and_restore_queue")).toHaveLength(0);
+	});
+});
+
+describe("omp TUI 输入快捷对齐：? /btw、->/=> 队列简写、$/$$ Python eval", () => {
+	beforeEach(() => {
+		cmd.mockReset();
+		resetThreadStores();
+		resetComposerDrafts();
+		getThreadStore(A).setState({ agentStatus: "ready" });
+	});
+
+	it("? <问题> 触发 btw 命令并清空输入区；协调对话按原文发 prompt", async () => {
+		cmd.mockResolvedValue({});
+		const view = wrap(<Composer threadId={A} />);
+		type("? 这段为何报错");
+		await act(async () => {
+			enter();
+		});
+		expect(framesOf("btw")).toEqual([
+			{ type: "btw", question: "这段为何报错" },
+		]);
+		expect(box().value).toBe("");
+		view.unmount();
+
+		cmd.mockClear();
+		wrap(<Composer threadId={A} coordinator />);
+		type("? 协调问题");
+		await act(async () => {
+			enter();
+		});
+		expect(framesOf("btw")).toHaveLength(0);
+		expect(framesOf("prompt")).toMatchObject([{ message: "? 协调问题" }]);
+	});
+
+	it("-> / => 队列简写剥离前缀直接发 follow_up（含忙时与空闲时）", async () => {
+		cmd.mockResolvedValue({});
+		getThreadStore(A).setState({ running: true });
+		wrap(<Composer threadId={A} />);
+		type("-> 先合并再测试");
+		await act(async () => {
+			enter();
+		});
+		expect(framesOf("follow_up")).toMatchObject([{ message: "先合并再测试" }]);
+		expect(framesOf("steer")).toHaveLength(0);
+
+		cmd.mockClear();
+		getThreadStore(A).setState({ running: false });
+		type("=> 空闲也能排队");
+		await act(async () => {
+			enter();
+		});
+		expect(framesOf("follow_up")).toMatchObject([{ message: "空闲也能排队" }]);
+	});
+
+	it("$ / $$ 发 Python eval 命令（$$ 带 excludeFromContext）；协调对话按原文发 prompt", async () => {
+		cmd.mockResolvedValue({});
+		const view = wrap(<Composer threadId={A} />);
+		type("$ print(42)");
+		await act(async () => {
+			enter();
+		});
+		expect(framesOf("eval")).toEqual([
+			{ type: "eval", language: "python", code: "print(42)" },
+		]);
+
+		cmd.mockClear();
+		type("$$ 1 + 1");
+		await act(async () => {
+			enter();
+		});
+		expect(framesOf("eval")).toEqual([
+			{
+				type: "eval",
+				language: "python",
+				code: "1 + 1",
+				excludeFromContext: true,
+			},
+		]);
+		view.unmount();
+		cmd.mockClear();
+		wrap(<Composer threadId={A} coordinator />);
+		type("$ print(1)");
+		await act(async () => {
+			enter();
+		});
+		expect(framesOf("eval")).toHaveLength(0);
+		expect(framesOf("prompt")).toMatchObject([{ message: "$ print(1)" }]);
+	});
+});

@@ -823,7 +823,7 @@
 				"mcp": "MCP",
 				"extension": "Extensions",
 				"plugin": "Plugins",
-				"mounted": "xd:// mounted devices"
+				"mounted": "Tool commands"
 			}
 		},
 		"session": {

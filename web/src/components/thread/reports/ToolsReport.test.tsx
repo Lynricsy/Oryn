@@ -1,4 +1,4 @@
-/** 当前工具报告：按来源分组（含 xd:// 挂载设备）、来源徽标、搜索与无结果、描述第一段 + 展开全文、空态。 */
+/** 当前工具报告：按来源分组（含工具命令）、来源徽标、搜索与无结果、描述第一段 + 展开全文、空态。 */
 import { fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetThreadStores } from "../../../state/stores";
@@ -67,7 +67,7 @@ const group = (g: string) =>
 	});
 
 describe("ToolsReport", () => {
-	it("按来源分组：内置 / MCP / 扩展 / xd:// 挂载设备，挂载项不混进内置", async () => {
+	it("按来源分组：内置 / MCP / 扩展 / 工具命令，挂载项不混进内置", async () => {
 		open();
 		const builtin = await group("builtin");
 		expect(
@@ -76,11 +76,11 @@ describe("ToolsReport", () => {
 			),
 		).toEqual(["bash", "read"]);
 		const mounted = await group("mounted");
-		expect(within(mounted).getByText("xd://browser")).toBeTruthy();
+		expect(within(mounted).getByText("browser")).toBeTruthy();
 		// MCP 工具带服务器名徽标
 		expect(within(await group("mcp")).getByText("github")).toBeTruthy();
 		expect(within(await group("extension")).getByText("没有描述")).toBeTruthy();
-		for (const label of ["内置", "MCP", "扩展", "xd:// 挂载设备"])
+		for (const label of ["内置", "MCP", "扩展", "工具命令"])
 			expect(screen.getByText(label)).toBeTruthy();
 		expect(screen.getByText("共 5 个")).toBeTruthy();
 	});

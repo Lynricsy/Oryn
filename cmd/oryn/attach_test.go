@@ -615,3 +615,59 @@ func TestAttachReconnectPrintsRestoredPlan(t *testing.T) {
 	assert.Equal(t, exitAttachAwaiting, code)
 	assert.Equal(t, "[plan] Offline plan\n# Plan\n- step one\n  1) execute\n  2) refine\n（等待审批）\n", r.out.String())
 }
+
+// CLI attach 输入快捷对齐：忙时有队列空回车、!/!! bash、$/$$ Python eval、? btw、->/=> follow_up（不含单字母 c）。
+func TestAttachInputShortcuts(t *testing.T) {
+	ws := newFakeWS(t)
+	r := startAttach(t, ws, attachOpts{tail: 0}, true)
+	c := ws.accept()
+	c.expectSub()
+	c.send(snapshot("working", 0, nil))
+	c.send(map[string]any{
+		"type":     "frame",
+		"threadId": attachThread,
+		"frame":    map[string]any{"type": "queue_update", "steering": []string{"queued-1"}, "followUp": []string{}},
+	})
+	// 同步点：先发一条 prompt 确认 snapshot 与 queue_update 均已被 attacher 消费
+	r.line(t, "sync")
+	assert.Equal(t, map[string]any{"type": "prompt", "message": "sync", "streamingBehavior": "steer"}, c.next()["frame"])
+
+	// 忙时有队列空回车 → abort_and_deliver_queue
+	r.line(t, "")
+	assert.Equal(t, map[string]any{"type": "abort_and_deliver_queue"}, c.next()["frame"])
+
+	// ! / !! bash
+	r.line(t, "!git status")
+	assert.Equal(t, map[string]any{"type": "bash", "command": "git status"}, c.next()["frame"])
+	r.line(t, "!!ls -la")
+	assert.Equal(t, map[string]any{"type": "bash", "command": "ls -la", "excludeFromContext": true}, c.next()["frame"])
+
+	// $ / $$ Python eval；$HOME 仍是普通 prompt
+	r.line(t, "$ print(1)")
+	assert.Equal(t, map[string]any{"type": "eval", "language": "python", "code": "print(1)"}, c.next()["frame"])
+	r.line(t, "$$ 1+1")
+	assert.Equal(t, map[string]any{"type": "eval", "language": "python", "code": "1+1", "excludeFromContext": true}, c.next()["frame"])
+	r.line(t, "$HOME")
+	assert.Equal(t, map[string]any{"type": "prompt", "message": "$HOME", "streamingBehavior": "steer"}, c.next()["frame"])
+
+	// ? btw；?? 仍是普通 prompt
+	r.line(t, "? 为何失败")
+	assert.Equal(t, map[string]any{"type": "btw", "question": "为何失败"}, c.next()["frame"])
+	r.line(t, "??")
+	assert.Equal(t, map[string]any{"type": "prompt", "message": "??", "streamingBehavior": "steer"}, c.next()["frame"])
+
+	// -> / => follow_up 队列简写
+	r.line(t, "-> 下一步")
+	assert.Equal(t, map[string]any{"type": "follow_up", "message": "下一步"}, c.next()["frame"])
+	r.line(t, "=> 顺手查")
+	assert.Equal(t, map[string]any{"type": "follow_up", "message": "顺手查"}, c.next()["frame"])
+
+	// 单字母 c 保持普通消息，不触发 resume
+	r.line(t, "c")
+	assert.Equal(t, map[string]any{"type": "prompt", "message": "c", "streamingBehavior": "steer"}, c.next()["frame"])
+
+	r.line(t, "/quit")
+	code, err := r.wait(t)
+	require.NoError(t, err)
+	assert.Equal(t, 0, code)
+}

@@ -823,7 +823,7 @@
 				"mcp": "MCP",
 				"extension": "扩展",
 				"plugin": "插件",
-				"mounted": "xd:// 挂载设备"
+				"mounted": "工具命令"
 			}
 		},
 		"session": {

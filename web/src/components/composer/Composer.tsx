@@ -90,6 +90,17 @@ import { FileDropOverlay, useFileDrop } from "./FileDrop";
 import { RefMenu, useRefMenu } from "./RefMenu";
 import { RoleTrack, useRoleShortcut } from "./RoleTrack";
 
+function hasQueuedMessages(threadId: string): boolean {
+	const ts = getThreadStore(threadId).getState();
+	return (
+		(ts.queue?.steering.length ?? 0) +
+			(ts.queue?.followUp.length ?? 0) +
+			(ts.queueItems?.steering.length ?? 0) +
+			(ts.queueItems?.followUp.length ?? 0) +
+			ts.optimisticQueue.length >
+		0
+	);
+}
 /** memo：线程页因页头、面板、侧栏开合重渲染时输入区不跟着重算（props 都是原始值）。 */
 export const Composer = memo(function Composer({
 	threadId,
@@ -566,14 +577,17 @@ export const Composer = memo(function Composer({
 		if (isInFlightDraft(getComposerDraft(threadId).inFlight, markerText, keys))
 			return;
 		const parsed = parseComposerInput(sent.text);
-		// 协调对话没有工作区：`!` 前缀不是 bash，按原文发送
+		// 协调对话没有工作区/Python 内核，且不开放 /btw：这些前缀按原文发送
 		const asText =
-			coordinator && parsed.kind === "bash"
+			coordinator &&
+			(parsed.kind === "bash" ||
+				parsed.kind === "eval" ||
+				parsed.kind === "btw")
 				? { kind: "text" as const, text: sent.text.trim() }
 				: parsed;
 		setError(null);
 		setKeptFor(null);
-		if (att.uploading && parsed.kind !== "bash") {
+		if (att.uploading && parsed.kind !== "bash" && parsed.kind !== "eval") {
 			setError(new Error(t("attachments.waitUpload")));
 			return;
 		}
@@ -582,19 +596,11 @@ export const Composer = memo(function Composer({
 		try {
 			if (parsed.kind === "empty") {
 				if (!att.hasFiles) {
-					const ts = getThreadStore(threadId).getState();
-					const hasQueued =
-						(ts.queue?.steering.length ?? 0) +
-							(ts.queue?.followUp.length ?? 0) +
-							(ts.queueItems?.steering.length ?? 0) +
-							(ts.queueItems?.followUp.length ?? 0) +
-							ts.optimisticQueue.length >
-						0;
 					if (
 						mode === "steer" &&
 						!sent.quote &&
 						!sent.artifactSelection &&
-						hasQueued
+						hasQueuedMessages(threadId)
 					) {
 						await realtime.cmd(threadId, { type: "abort_and_deliver_queue" });
 					}
@@ -664,6 +670,38 @@ export const Composer = memo(function Composer({
 				}
 				return;
 			}
+			if (asText.kind === "eval") {
+				reset();
+				setBashRunning(true);
+				try {
+					await realtime.cmd(
+						threadId,
+						asText.excludeFromContext
+							? {
+									type: "eval",
+									language: "python",
+									code: asText.code,
+									excludeFromContext: true,
+								}
+							: { type: "eval", language: "python", code: asText.code },
+						3_600_000,
+					);
+				} finally {
+					setBashRunning(false);
+				}
+				return;
+			}
+			if (asText.kind === "btw") {
+				const action: SlashAction = asText.question
+					? { kind: "ask_btw", question: asText.question }
+					: { kind: "open_btw" };
+				await runSlash(action, mode, "/btw");
+				if (sent.items.length > 0) {
+					clearTextIfUnchanged(sent);
+					setKeptFor("/btw");
+				} else resetIfUnchanged(sent, false);
+				return;
+			}
 			if (asText.kind === "slash") {
 				const action = resolveSlashText(threadId, asText.text);
 				if (action) {
@@ -676,10 +714,15 @@ export const Composer = memo(function Composer({
 					return;
 				}
 			}
-			const body = asText.kind === "text" ? asText.text : sent.text.trim();
+			const effectiveMode: SendMode =
+				asText.kind === "queue" ? "follow_up" : mode;
+			const body =
+				asText.kind === "text" || asText.kind === "queue"
+					? asText.text
+					: sent.text.trim();
 			const outText = outgoing(body, sent);
 			const frame = promptFrame(
-				mode,
+				effectiveMode,
 				outText,
 				att.contents,
 				att.attachmentIds,
@@ -687,10 +730,10 @@ export const Composer = memo(function Composer({
 			);
 			// 引导（steer）与排队（follow_up）：发送后立即在输入框上方排队条中可见、清空输入区；
 			// 服务端广播权威 `queue_update` 后自动无缝接管，发送失败则撤回乐观项并放回草稿。
-			if (mode === "steer" || mode === "follow_up") {
+			if (effectiveMode === "steer" || effectiveMode === "follow_up") {
 				const optId = addOptimisticQueue(
 					threadId,
-					mode === "steer" ? "steering" : "followUp",
+					effectiveMode === "steer" ? "steering" : "followUp",
 					outText,
 					att.contents,
 				);
@@ -826,13 +869,33 @@ export const Composer = memo(function Composer({
 		);
 		escAt.current = decision.escAt;
 		switch (decision.action) {
-			case "abort":
+			case "abort": {
 				e.preventDefault();
-				void realtime.cmd(threadId, { type: "abort" }).catch(() => undefined);
+				if (hasQueuedMessages(threadId)) {
+					void realtime
+						.cmd(threadId, { type: "abort_and_restore_queue" })
+						.then((res) => {
+							const restored = [
+								...(res.steering ?? []),
+								...(res.followUp ?? []),
+							]
+								.map((m) => m.text)
+								.filter((s) => s.length > 0)
+								.join("\n");
+							if (!restored) return;
+							const cur = getComposerDraft(threadId).text;
+							setText(cur.trim() ? `${restored}\n${cur}` : restored);
+						})
+						.catch(() =>
+							realtime.cmd(threadId, { type: "abort" }).catch(() => undefined),
+						);
+				} else {
+					void realtime.cmd(threadId, { type: "abort" }).catch(() => undefined);
+				}
 				return;
+			}
 			case "rewind":
 				// 离散输入的更新同步提交、effect 也同步执行：对话框在这次 keydown 冒泡到 window 之前就挂上了
-				// 自己的 Esc 监听，不拦住冒泡会被同一个 Esc 立刻关掉
 				e.preventDefault();
 				e.stopPropagation();
 				uiStore.getState().open({ kind: "rewind" });

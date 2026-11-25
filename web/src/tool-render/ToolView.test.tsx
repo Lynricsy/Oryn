@@ -815,3 +815,49 @@ describe("ask 的参数形态（Core 19 `recoverAskHtml`）", () => {
 		expect(container.querySelector(".tv-err-text")).toBeNull();
 	});
 });
+
+describe("Core 19.1+ bash 工具命令（details.toolCommands）卡片解包", () => {
+	it("单条 execute 派发解包成真实工具卡片，不带过时 xd:// 前缀", () => {
+		const { container } = render(
+			<ToolView
+				name="bash"
+				args={{ command: "grep needle src" }}
+				result={{
+					content: [{ type: "text", text: "src/a.ts:1:needle" }],
+					details: {
+						toolCommands: [
+							{
+								tool: "grep",
+								mode: "execute",
+								exitCode: 0,
+								args: { pattern: "needle", path: "src", i: "查 needle" },
+							},
+						],
+					},
+				}}
+				defaultOpen
+			/>,
+		);
+		expect(nameOf(container)).toBe("grep");
+		expect(summaryOf(container)).toBe("查 needle");
+		expect(screen.getByRole("region", { name: "输入" })).toHaveTextContent(
+			"needle",
+		);
+	});
+
+	it("单条 help 派发展示为工具文档卡", () => {
+		const { container } = render(
+			<ToolView
+				name="bash"
+				args={{ command: "lsp --help" }}
+				result={{
+					content: [{ type: "text", text: "Usage: lsp ..." }],
+					details: {
+						toolCommands: [{ tool: "lsp", mode: "help", exitCode: 0 }],
+					},
+				}}
+			/>,
+		);
+		expect(nameOf(container)).toBe("lsp --help");
+	});
+});

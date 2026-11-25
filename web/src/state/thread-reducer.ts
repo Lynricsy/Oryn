@@ -954,9 +954,9 @@ export function applyFrame(
 			return pushNotice(s, "irc_message", "info", text, f);
 		}
 		case "notice": {
-			// omp 的 xd:// 挂载变动提示（`xd://: mounted …`，source `xdev`）只是罗列工具名，对人没有信息量；
+			// omp 的工具挂载变动提示（旧版 `xdev` / 新版 `tool-commands`）只是罗列工具名，对人没有信息量；
 			// 模型照样会随下一条 prompt 得知变动，这里不进转录
-			if (f.source === "xdev") return s;
+			if (f.source === "xdev" || f.source === "tool-commands") return s;
 			const level =
 				f.level === "warning" || f.level === "error" ? f.level : "info";
 			return pushNotice(s, "notice", level, str(f.message) ?? "", f);
