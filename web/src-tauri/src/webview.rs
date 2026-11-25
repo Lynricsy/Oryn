@@ -33,6 +33,7 @@ const DESKTOP_HOST_PERMISSIONS: &[&str] = &[
     "allow-host-check-update",
     "allow-host-install-update",
     "allow-host-change-server",
+    "allow-host-open-external",
     "allow-host-window",
 ];
 
@@ -78,7 +79,15 @@ pub fn host_platform() -> &'static str {
     }
 }
 
-/// 注入每个主框架的宿主标识；`version` 取 Tauri 配置的应用版本（与更新器比较用的是同一个）。
+/// 主框架外链拦截脚本（仅随 `initialization_script` 注入主框架，绝不触碰 portal / artifact 等 iframe）：
+/// - 跳过连接页本身（非 http(s) 或 `tauri.localhost` 或 `/launcher.html`）；
+/// - 在 `window` 捕获期拦截 `click` 与中键 `auxclick` 的外链（`target="_blank"`、`<base target="_blank">`、
+///   跨源 `http(s)`、修饰键 Ctrl/Meta/Shift 点击、`mailto:`/`tel:`），调用 `host_open_external` 在系统浏览器打开；
+/// - 覆写主框架 `window.open`，绕过 WebKit / WKWebView 弹窗拦截器并直接交由 `host_open_external`；
+/// - 只调 `e.preventDefault()` 不阻止冒泡，避免 `host.ts` 重复触发的同时不影响菜单 / 弹层的点击收起。
+const EXTERNAL_LINK_GUARD_SCRIPT: &str = r##"(function(){if(window!==window.top)return;var loc=window.location;if(!loc||(loc.protocol!=="http:"&&loc.protocol!=="https:"))return;if(loc.hostname==="tauri.localhost"||loc.pathname==="/launcher.html")return;var openExt=function(u){var inv=(window.__TAURI__&&window.__TAURI__.core&&window.__TAURI__.core.invoke)||(window.__TAURI_INTERNALS__&&window.__TAURI_INTERNALS__.invoke);if(inv)inv("host_open_external",{url:u}).catch(function(){});};var resolveExt=function(a,forceNew){var raw=a.getAttribute("href");if(!raw||raw.charAt(0)==="#")return null;var cur=window.location;var u;try{u=new URL(raw,cur.href);}catch(_){return null;}if(u.protocol==="mailto:"||u.protocol==="tel:")return u.href;if(u.protocol!=="http:"&&u.protocol!=="https:")return null;var t=a.getAttribute("target");if(!t){var b=a.ownerDocument&&a.ownerDocument.querySelector("base[target]");if(b)t=b.getAttribute("target");}if(forceNew||t==="_blank"||u.origin!==cur.origin)return u.href;return null;};var findAnchor=function(e){if(typeof e.composedPath==="function"){var p=e.composedPath();for(var i=0;i<p.length;i++){var n=p[i];if(n&&n.nodeType===1&&n.tagName&&n.tagName.toUpperCase()==="A"&&n.hasAttribute("href"))return n;}}var t=e.target;var el=t&&(t.nodeType===1?t:t.parentElement);return el&&typeof el.closest==="function"?el.closest("a[href]"):null;};var onClick=function(e){if(e.defaultPrevented)return;var aux=e.type==="auxclick";if(aux?e.button!==1:e.button!==0)return;var a=findAnchor(e);if(!a||a.hasAttribute("download"))return;var href=resolveExt(a,aux||e.ctrlKey||e.metaKey||e.shiftKey);if(!href)return;e.preventDefault();openExt(href);};window.addEventListener("click",onClick,true);window.addEventListener("auxclick",onClick,true);window.open=function(u){if(u!==undefined&&u!==""){try{var parsed=new URL(String(u),window.location.href);if(parsed.protocol==="http:"||parsed.protocol==="https:"||parsed.protocol==="mailto:"||parsed.protocol==="tel:")openExt(parsed.href);}catch(_){}}return null;};})();"##;
+
+/// 注入每个主框架的宿主标识与外链保护；`version` 取 Tauri 配置的应用版本（与更新器比较用的是同一个）。
 /// `chrome`：桌面的标题栏布局（见 `chrome.rs`），页面首帧前就按它留位置；移动端没有。
 pub fn init_script(version: &str, chrome: Option<Value>) -> String {
     let mut host = json!({
@@ -90,7 +99,7 @@ pub fn init_script(version: &str, chrome: Option<Value>) -> String {
     if let Some(c) = chrome {
         host["chrome"] = c;
     }
-    format!("window.__ORYN_HOST__ = Object.freeze({host});")
+    format!("window.__ORYN_HOST__ = Object.freeze({host});\n{EXTERNAL_LINK_GUARD_SCRIPT}")
 }
 
 /// 页面事件脚本：`window.dispatchEvent(new CustomEvent('oryn:host', {detail}))`。
@@ -100,24 +109,45 @@ pub fn event_script(detail: &Value) -> String {
 
 /// 两个 URL 同源（按 scheme + host + port 比较：`tauri://` 这类非特殊 scheme 的 `Url::origin` 是不透明的，彼此永不相等）。
 pub fn same_origin(a: &Url, b: &Url) -> bool {
-    a.scheme() == b.scheme()
-        && a.host_str() == b.host_str()
-        && a.port_or_known_default() == b.port_or_known_default()
+    crate::mobile_logic::same_origin(a, b)
 }
 
-#[cfg(desktop)]
-fn is_external(url: &Url) -> bool {
-    matches!(url.scheme(), "http" | "https")
+/// 主框架导航拦截（Android `shouldOverrideUrlLoading`、Windows WebView2 `NavigationStarting`，两者均只触发主框架，不影响 iframe）。
+/// 副作用全部放到异步任务，避免在 WebView UI 线程回调中重入或死锁。
+#[cfg(any(target_os = "android", target_os = "windows"))]
+fn on_navigation(app: &AppHandle, url: &Url, launcher: &str, server: Option<&str>) -> bool {
+    use crate::mobile_logic::NavDecision;
+    let decision = crate::mobile_logic::nav_decision(url.as_str(), launcher, server);
+    let (app, url) = (app.clone(), url.to_string());
+    match decision {
+        NavDecision::Allow => return true,
+        NavDecision::External => {
+            tauri::async_runtime::spawn(async move {
+                let _ = app.opener().open_url(&url, None::<&str>);
+                eventlog::log("nav.external", json!({"url": eventlog::redact_url(&url)}));
+            });
+        }
+        NavDecision::DeepLink => {
+            tauri::async_runtime::spawn(async move {
+                crate::deeplink::open_url(&app, &url);
+            });
+        }
+        NavDecision::Block => {}
+    }
+    false
 }
 
 /// 连接页在应用资源里的路径。
 const LAUNCHER_PAGE: &str = "launcher.html";
-
 /// 创建主窗口（`tauri.conf.json` 的 `windows` 为空：钩子只能在代码里挂）。
 /// `remote` 为已开放的服务器 origin（Android 的导航白名单用）。
 pub fn create_main(app: &AppHandle, remote: &RemoteOrigin) -> tauri::Result<WebviewWindow> {
+    let launcher = launcher_url(app)?;
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    let launcher_origin = launcher.as_str().to_string();
     let loader = app.clone();
-    // 第一次取会探测布局，macOS 上顺带在主线程校准红绿灯（`chrome::lights`），下面建窗要用校准出的 y
+    let load_remote = remote.clone();
+    let load_launcher = launcher.as_str().to_string();
     #[cfg(desktop)]
     let chrome = serde_json::to_value(crate::chrome::current()).ok();
     #[cfg(mobile)]
@@ -144,6 +174,42 @@ pub fn create_main(app: &AppHandle, remote: &RemoteOrigin) -> tauri::Result<Webv
                     crate::mobile::header_reset(&loader);
                     #[cfg(target_os = "ios")]
                     crate::mobile::sink_reset(&loader);
+                    // 主框架逃逸兜底（on_page_load 在全平台均严格只针对主框架，不影响 portal / artifact iframe）：
+                    // 若服务端 302、拖拽链接或 iframe target="_top" 等把主窗口带离 Oryn，立即交给系统浏览器并拉回应用
+                    let server = load_remote
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .clone();
+                    if let Some(server) = server {
+                        use crate::mobile_logic::NavDecision;
+                        let url = payload.url().to_string();
+                        let decision =
+                            crate::mobile_logic::nav_decision(&url, &load_launcher, Some(&server));
+                        if decision != NavDecision::Allow {
+                            let app = loader.clone();
+                            tauri::async_runtime::spawn(async move {
+                                match decision {
+                                    NavDecision::External => {
+                                        let _ = app.opener().open_url(&url, None::<&str>);
+                                        eventlog::log(
+                                            "nav.external",
+                                            json!({"url": eventlog::redact_url(&url)}),
+                                        );
+                                    }
+                                    NavDecision::DeepLink => {
+                                        crate::deeplink::open_url(&app, &url);
+                                    }
+                                    NavDecision::Block | NavDecision::Allow => {}
+                                }
+                                if let (Ok(back), Some(w)) =
+                                    (Url::parse(&server), app.get_webview_window(host::MAIN))
+                                {
+                                    let _ = w.navigate(back);
+                                    eventlog::log("nav.recovered", json!({"to": server}));
+                                }
+                            });
+                        }
+                    }
                 }
                 // 首个页面加载完时窗口已映射，外框才是恢复后的实际值（刚 build 时 GTK 上为 0×0）
                 PageLoadEvent::Finished => {
@@ -155,19 +221,15 @@ pub fn create_main(app: &AppHandle, remote: &RemoteOrigin) -> tauri::Result<Webv
         .enable_clipboard_access();
     #[cfg(desktop)]
     let builder = {
-        let _ = remote;
         let opener = app.clone();
         builder
             .inner_size(1280.0, 820.0)
             .min_inner_size(380.0, 560.0)
             .on_new_window(move |url, _features| {
-                // 外链（Markdown 链接、portal 的「新窗口」等）一律交给系统浏览器
-                if is_external(&url) {
-                    let _ = opener.opener().open_url(url.as_str(), None::<&str>);
-                    eventlog::log(
-                        "browser.open",
-                        json!({"url": eventlog::redact_url(url.as_str())}),
-                    );
+                // 兜住 iframe（portal / artifact）或旧页面的新窗口请求：一律交给系统浏览器
+                if let Some(ext) = crate::mobile_logic::external_url(url.as_str()) {
+                    let _ = opener.opener().open_url(&ext, None::<&str>);
+                    eventlog::log("browser.open", json!({"url": eventlog::redact_url(&ext)}));
                 }
                 NewWindowResponse::Deny
             })
@@ -186,20 +248,18 @@ pub fn create_main(app: &AppHandle, remote: &RemoteOrigin) -> tauri::Result<Webv
         ));
     #[cfg(all(desktop, not(target_os = "macos")))]
     let builder = builder.decorations(false);
-    // Android：`target="_blank"` 与 `window.open` 都是主框架导航（wry 没有新窗口钩子），在这里兜住；
-    // http(s) 的 iframe 导航不进这个回调，portal 不受影响
-    #[cfg(target_os = "android")]
+    // Android（shouldOverrideUrlLoading）与 Windows（WebView2 NavigationStarting）的 on_navigation
+    // 均只触发主框架导航，不影响 portal / artifact 的 http(s) iframe，直接前置拦截；
+    // macOS / Linux / iOS 的 wry on_navigation 会拦截 iframe，故由上面的主框架 init_script + on_page_load 兜底。
+    #[cfg(any(target_os = "android", target_os = "windows"))]
     let builder = {
-        let launcher = launcher_url(app)?.origin().ascii_serialization();
         let app = app.clone();
         let remote = remote.clone();
         builder.on_navigation(move |url| {
             let server = remote.lock().unwrap_or_else(|e| e.into_inner()).clone();
-            crate::mobile::on_navigation(&app, url, &launcher, server.as_deref())
+            on_navigation(&app, url, &launcher_origin, server.as_deref())
         })
     };
-    #[cfg(target_os = "ios")]
-    let _ = remote;
     let window = builder.build()?;
     // Tauri 没有工具栏的 builder 选项：建好后（仍在主线程）再挂，换上与 `chrome.radius` 对应的大圆角外框
     #[cfg(target_os = "macos")]
@@ -207,20 +267,14 @@ pub fn create_main(app: &AppHandle, remote: &RemoteOrigin) -> tauri::Result<Webv
     Ok(window)
 }
 
-/// 连接页的 URL：读刚建好的窗口。
-#[cfg(desktop)]
-pub fn launcher_url(window: &WebviewWindow) -> tauri::Result<Url> {
-    window.url()
-}
-
-/// 连接页的 URL。移动端 WebView 要等 Activity 就绪后才异步创建，`build()` 返回时 `url()` 还是空串，
-/// 只能按 Tauri 的规则推出：开发态取 devUrl，否则 Android `http://tauri.localhost/`、
-/// iOS `tauri://localhost/`（未开 useHttpsScheme）。
-#[cfg(mobile)]
+/// 连接页的 URL。移动端 WebView 异步创建、`build()` 返回时 `url()` 还是空串，
+/// 桌面端在 `create_main` 内挂载钩子时也尚未拿到 `window.url()`，统一按 Tauri 的规则推出：
+/// 开发态取 devUrl，否则 Android / Windows 为 `http://tauri.localhost/`、
+/// macOS / Linux / iOS 为 `tauri://localhost/`（未开 useHttpsScheme）。
 pub fn launcher_url(app: &AppHandle) -> tauri::Result<Url> {
     let base = match app.config().build.dev_url.clone() {
         Some(dev) if tauri::is_dev() => dev,
-        _ => Url::parse(if cfg!(target_os = "android") {
+        _ => Url::parse(if cfg!(any(target_os = "android", target_os = "windows")) {
             "http://tauri.localhost/"
         } else {
             "tauri://localhost/"
@@ -407,7 +461,9 @@ mod tests {
         assert!(s.starts_with("window.__ORYN_HOST__ = Object.freeze({"));
         assert!(s.contains("\"version\":\"9.8.7-rc.1\""));
         assert!(s.contains("\"kind\":\"tauri\""));
-        assert!(s.contains("\"bridge\":10"));
+        assert!(s.contains("\"bridge\":11"));
+        assert!(s.contains("host_open_external"));
+        assert!(s.contains("window!==window.top"));
         assert!(!s.contains("chrome"));
         let s = init_script("1.0.0", Some(json!({"controls": "custom-right"})));
         assert!(s.contains("\"chrome\":{\"controls\":\"custom-right\"}"));
@@ -416,7 +472,6 @@ mod tests {
         assert!(e.ends_with("}}));"));
         assert!(e.contains("\"path\":\"/t/x\""));
     }
-
     #[test]
     fn origins() {
         let launcher = Url::parse("tauri://localhost/launcher.html").unwrap();
@@ -436,10 +491,10 @@ mod tests {
             &Url::parse("http://tauri.localhost/").unwrap(),
             &Url::parse("https://tauri.localhost/").unwrap()
         ));
-        assert_eq!(DESKTOP_HOST_PERMISSIONS.len(), 11);
+        assert_eq!(DESKTOP_HOST_PERMISSIONS.len(), 12);
+        assert!(DESKTOP_HOST_PERMISSIONS.contains(&"allow-host-open-external"));
         assert_eq!(MOBILE_HOST_PERMISSIONS.len(), 23);
     }
-
     /// 两个平台的远程权限都对应 `build.rs` 里声明的命令；移动端连接页能力只在移动平台生效、
     /// 除系统栏颜色外不含任何宿主命令。
     #[test]

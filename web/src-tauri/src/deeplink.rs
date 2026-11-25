@@ -53,7 +53,6 @@ fn valid_thread_id(id: &str) -> bool {
     })
 }
 
-#[cfg(mobile)]
 pub use wiring::open_url;
 pub use wiring::setup;
 

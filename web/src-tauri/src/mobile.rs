@@ -3,36 +3,28 @@
 //!
 //! 逻辑在 [`crate::mobile_logic`]（主机上单测）；这里只把它接到插件、会话状态机与页面事件上。
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use serde_json::json;
-use tauri::{AppHandle, Manager, State, Url};
-use tauri_plugin_opener::OpenerExt;
+use tauri::{AppHandle, Manager, State};
 use tauri_plugin_oryn_mobile::{HeaderMenuCmd, HeaderShow, HeaderSpec, TabBarSpec};
 
 use crate::api::HttpApi;
 use crate::eventlog;
 use crate::host::{self, Desktop};
 use crate::mobile_logic::{self, MobileCore, MobileInfo, Platform, Transport};
-use crate::notify::Bucket;
 use crate::secrets::TokenStore;
 use crate::session::Connection;
-
 #[cfg(target_os = "android")]
 pub use android::AndroidNative as NativeImpl;
 #[cfg(target_os = "ios")]
 pub use ios::IosNative as NativeImpl;
-
-/// `host_open_external` 的令牌桶：突发 3，每 2 秒补 1。
-const OPEN_BURST: f64 = 3.0;
-const OPEN_REFILL_MS: f64 = 2_000.0;
 
 /// 进程级移动端状态（`app.manage(Arc<MobileRt>)`）。
 pub struct MobileRt {
     pub core: MobileCore<NativeImpl, HttpApi>,
     /// 系统 WebView 版本（启动时取一次）。
     pub webview: String,
-    open_bucket: Mutex<Bucket>,
 }
 
 impl MobileRt {
@@ -55,7 +47,6 @@ impl MobileRt {
                 app_id,
             ),
             webview,
-            open_bucket: Mutex::new(Bucket::new(OPEN_BURST, OPEN_REFILL_MS)),
         }
     }
 }
@@ -111,31 +102,6 @@ pub fn host_ready(app: &AppHandle, d: Arc<Desktop>) {
     });
 }
 
-/// 主框架导航（Android 的 `shouldOverrideUrlLoading`）。返回是否放行。
-/// 回调在 Java 的 UI 线程上：同步的插件调用会等 UI 线程处理而死锁，副作用一律放到异步任务里。
-#[cfg_attr(target_os = "ios", allow(dead_code))]
-pub fn on_navigation(app: &AppHandle, url: &Url, launcher: &str, server: Option<&str>) -> bool {
-    use mobile_logic::NavDecision;
-    let decision = mobile_logic::nav_decision(url.as_str(), launcher, server);
-    let (app, url) = (app.clone(), url.to_string());
-    match decision {
-        NavDecision::Allow => return true,
-        NavDecision::External => {
-            tauri::async_runtime::spawn(async move {
-                let _ = app.opener().open_url(&url, None::<&str>);
-                eventlog::log("nav.external", json!({"url": eventlog::redact_url(&url)}));
-            });
-        }
-        NavDecision::DeepLink => {
-            tauri::async_runtime::spawn(async move {
-                crate::deeplink::open_url(&app, &url);
-            });
-        }
-        NavDecision::Block => {}
-    }
-    false
-}
-
 // ---------------------------------------------------------------- 宿主命令（移动端）
 
 type Res<T> = Result<T, String>;
@@ -175,33 +141,6 @@ pub async fn host_push_disable(
     let conn = connection(&d).await;
     m.core.push_disable(conn.as_ref()).await;
     Ok(info(&d, &m).await)
-}
-
-#[tauri::command]
-pub async fn host_open_external(
-    app: AppHandle,
-    url: String,
-    m: State<'_, Arc<MobileRt>>,
-) -> Res<()> {
-    let Some(url) = mobile_logic::external_url(&url) else {
-        return Err("invalid_url".into());
-    };
-    let logged = eventlog::redact_url(&url);
-    let allowed = m
-        .open_bucket
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .take(eventlog::now_ms());
-    if !allowed {
-        eventlog::log(
-            "open.external",
-            json!({"url": logged, "ok": false, "reason": "rate_limited"}),
-        );
-        return Ok(());
-    }
-    let ok = app.opener().open_url(&url, None::<&str>).is_ok();
-    eventlog::log("open.external", json!({"url": logged, "ok": ok}));
-    Ok(())
 }
 
 #[tauri::command]

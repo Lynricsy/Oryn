@@ -44,13 +44,25 @@ pub enum NavDecision {
     Block,
 }
 
-/// launcher = 连接页 origin（`http(s)://tauri.localhost`）；server = 已配对或正在连接的服务器 origin。
+/// 两个 URL 是否同源（按 scheme + host + port 比较：`tauri://` 这类非特殊 scheme 的 `Url::origin`
+/// 是不透明的，彼此永不相等）。
+pub fn same_origin(a: &url::Url, b: &url::Url) -> bool {
+    a.scheme() == b.scheme()
+        && a.host_str() == b.host_str()
+        && a.port_or_known_default() == b.port_or_known_default()
+}
+
+/// launcher = 连接页 origin（`http(s)://tauri.localhost`、`tauri://localhost` 或开发态 `devUrl`）；
+/// server = 已配对或正在连接的服务器 origin。
 /// 主框架只放行这两个 origin 与 `about:blank`：`blob:` 只认服务器自己 origin 下的（portal 页面经 `window.open`
 /// 弹出的 `blob:` 会把整个 App 换成无地址栏的伪造界面），`data:` 一律拦截。
 pub fn nav_decision(url: &str, launcher: &str, server: Option<&str>) -> NavDecision {
     let Ok(u) = url::Url::parse(url) else {
         return NavDecision::Block;
     };
+    if url::Url::parse(launcher).is_ok_and(|l| same_origin(&u, &l)) {
+        return NavDecision::Allow;
+    }
     match u.scheme() {
         "http" | "https" => {
             let origin = u.origin().ascii_serialization();
@@ -71,10 +83,10 @@ pub fn nav_decision(url: &str, launcher: &str, server: Option<&str>) -> NavDecis
     }
 }
 
-/// `host_open_external` 只接受 http / https；返回规范化后的地址。
+/// `host_open_external` 只接受 http / https / mailto / tel；返回规范化后的地址。
 pub fn external_url(url: &str) -> Option<String> {
     let u = url::Url::parse(url.trim()).ok()?;
-    matches!(u.scheme(), "http" | "https").then(|| u.into())
+    matches!(u.scheme(), "http" | "https" | "mailto" | "tel").then(|| u.into())
 }
 
 /// `host_set_chrome` 的颜色：`^#[0-9a-fA-F]{6}$`。
@@ -1000,12 +1012,7 @@ impl<N: Native, A: Api> MobileCore<N, A> {
     }
 
     /// 记下最新的屏幕圆角、原生外边距与安全区；值变了返回 `true`。
-    pub fn set_insets(
-        &self,
-        corner_radii: CornerRadii,
-        insets: Insets,
-        safe_area: Insets,
-    ) -> bool {
+    pub fn set_insets(&self, corner_radii: CornerRadii, insets: Insets, safe_area: Insets) -> bool {
         let mut g = self.inner();
         let changed =
             g.corner_radii != corner_radii || g.insets != insets || g.safe_area != safe_area;
@@ -1743,6 +1750,15 @@ mod tests {
         ] {
             assert_eq!(nav_decision(url, LAUNCHER, server), want, "{url}");
         }
+        // macOS / Linux / iOS 连接页使用非特殊 scheme `tauri://localhost`
+        assert_eq!(
+            nav_decision("tauri://localhost/launcher.html", "tauri://localhost", s),
+            Allow
+        );
+        assert_eq!(
+            nav_decision("https://evil.example/", "tauri://localhost", s),
+            External
+        );
     }
 
     #[test]
@@ -1779,8 +1795,14 @@ mod tests {
             external_url("http://a.example").as_deref(),
             Some("http://a.example/")
         );
+        assert_eq!(
+            external_url("mailto:hi@example.com").as_deref(),
+            Some("mailto:hi@example.com")
+        );
+        assert_eq!(external_url("tel:+10086").as_deref(), Some("tel:+10086"));
         for bad in [
             "javascript:alert(1)",
+            "data:text/html,hi",
             "intent://x",
             "file:///etc",
             "oryn://open",

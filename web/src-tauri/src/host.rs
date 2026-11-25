@@ -11,15 +11,15 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager, State, WebviewWindow};
+use tauri_plugin_opener::OpenerExt;
 
 use crate::api::{Api, HttpApi};
 use crate::config::TokenStoreKind;
 use crate::eventlog;
 use crate::i18n::Lang;
-use crate::notify::{self, HostNotification, Notifier};
+use crate::notify::{self, Bucket, HostNotification, Notifier};
 use crate::session::{Core, LauncherState, Nav, Next, SharedNav};
 use crate::webview::{self, TauriShell};
-
 /// 主窗口标签。
 pub const MAIN: &str = "main";
 /// 宿主命令集版本：以后新增命令就加一（2 = M7 移动端命令，3 = 桌面自绘标题栏 `host_window` 与 `chrome`，
@@ -30,11 +30,15 @@ pub const MAIN: &str = "main";
 /// 右缘随根滚动裁到卡片左缘（spec 不再带 `bg`）；原生页头 `title` 可为 null（首页只有侧栏钮）；`host_sink_set` 生效前
 /// 非空的 `host_tab_bar_set` / `host_header_set` 一律 `unsupported`，9 = 官方推送网关（M28）：`host_push_enable` 可带
 /// `transport: "default" | "unifiedpush"`，`MobileInfo.push` 增加 `alt`、`channel` 可为 `apns`、不再出现 `unsupported`，
-/// 错误码增加 `gateway_*`，10 = 移动端全局助手头像原生共享缓存同步（`host_sync_assistant_avatar`））。
-pub const BRIDGE: u32 = 10;
+/// 错误码增加 `gateway_*`，10 = 移动端全局助手头像原生共享缓存同步（`host_sync_assistant_avatar`），
+/// 11 = 桌面端开放 `host_open_external`，全平台统一外链打开）。
+pub const BRIDGE: u32 = 11;
+
+/// `host_open_external` 的令牌桶：突发 3，每 2 秒补 1。
+const OPEN_BURST: f64 = 3.0;
+const OPEN_REFILL_MS: f64 = 2_000.0;
 
 pub type SessionCore = Core<HttpApi, TauriShell>;
-
 /// 同步回调（窗口事件、托盘、通知）需要读的偏好，镜像自配置。
 #[derive(Debug, Clone, Copy)]
 pub struct Prefs {
@@ -56,6 +60,7 @@ pub struct Desktop {
     /// 应用版本：Tauri 配置的 `package_info().version`（可被 `--config` 覆盖，更新器比较的就是它）。
     pub version: String,
     pub notifier: Notifier,
+    open_bucket: Mutex<Bucket>,
     /// 主 WebView 已建好（移动端会话启动前要等它，见 [`crate::mobile_logic::WebviewGate`]）。
     #[cfg(mobile)]
     pub webview_up: crate::mobile_logic::WebviewGate,
@@ -99,6 +104,7 @@ impl Desktop {
             smoke,
             version,
             notifier: Notifier::default(),
+            open_bucket: Mutex::new(Bucket::new(OPEN_BURST, OPEN_REFILL_MS)),
             #[cfg(mobile)]
             webview_up: Default::default(),
             #[cfg(desktop)]
@@ -567,8 +573,14 @@ pub async fn launcher_state(app: AppHandle, d: State<'_, Arc<Desktop>>) -> Res<L
     #[cfg(target_os = "android")]
     if let Some(m) = app.try_state::<Arc<crate::mobile::MobileRt>>() {
         let (radii, insets, safe_area) = m.core.geometry();
-        if radii != Default::default() || insets != Default::default() || safe_area != Default::default() {
-            emit(&app, crate::mobile_logic::insets_event(radii, insets, safe_area));
+        if radii != Default::default()
+            || insets != Default::default()
+            || safe_area != Default::default()
+        {
+            emit(
+                &app,
+                crate::mobile_logic::insets_event(radii, insets, safe_area),
+            );
         }
     }
     // 已进入过应用却又回到连接页 = WebView 被重建（Activity 重建）：重新换取会话回到应用
@@ -807,6 +819,34 @@ pub async fn host_window(
 pub async fn host_change_server(app: AppHandle, d: State<'_, Arc<Desktop>>) -> Res<()> {
     d.core.lock().await.request_change();
     show_main(&app);
+    Ok(())
+}
+
+/// 在系统浏览器（或系统邮件 / 拨号应用）中打开外链；全平台共用，受协议白名单与令牌桶限流约束。
+#[tauri::command]
+pub async fn host_open_external(
+    app: AppHandle,
+    url: String,
+    d: State<'_, Arc<Desktop>>,
+) -> Res<()> {
+    let Some(url) = crate::mobile_logic::external_url(&url) else {
+        return Err("invalid_url".into());
+    };
+    let logged = eventlog::redact_url(&url);
+    let allowed = d
+        .open_bucket
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take(eventlog::now_ms());
+    if !allowed {
+        eventlog::log(
+            "open.external",
+            json!({"url": logged, "ok": false, "reason": "rate_limited"}),
+        );
+        return Ok(());
+    }
+    let ok = app.opener().open_url(&url, None::<&str>).is_ok();
+    eventlog::log("open.external", json!({"url": logged, "ok": ok}));
     Ok(())
 }
 

@@ -107,7 +107,8 @@ fn smoke_dir() -> PathBuf {
 
 /// 构造 opener 插件：Rust 侧直接通过 `OpenerExt` 调系统浏览器；必须关闭默认的点击脚本注入，
 /// 否则 `init-iife.js` 会拦截所有 `target="_blank"` 链接并调用 `plugin:opener|open_url`，
-/// 在桌面端掐断 `webview.rs` 的 `on_new_window` 且因远程能力不含 `opener:*` 权限被 ACL 静默拒绝。
+/// 因远程能力刻意不含 `opener:*` 权限而被 ACL 静默拒绝；全平台外链统一由主框架 `init_script` + `host.ts`
+/// 经 `host_open_external`（带协议白名单与限流）以及 `on_new_window` / 主框架导航兜底接管。
 fn opener_plugin<R: tauri::Runtime>() -> impl tauri::plugin::Plugin<R> {
     tauri_plugin_opener::Builder::new()
         .open_js_links_on_click(false)
@@ -172,6 +173,7 @@ pub fn run() {
             host::host_set_language,
             host::host_reauth,
             host::host_change_server,
+            host::host_open_external,
             #[cfg(desktop)]
             host::host_info,
             #[cfg(desktop)]
@@ -188,8 +190,6 @@ pub fn run() {
             mobile::host_push_enable,
             #[cfg(mobile)]
             mobile::host_push_disable,
-            #[cfg(mobile)]
-            mobile::host_open_external,
             #[cfg(mobile)]
             mobile::host_share_ack,
             #[cfg(mobile)]
@@ -258,9 +258,8 @@ fn setup(app: &mut App, args: &Args, raw: &[String]) -> Result<(), Box<dyn std::
 
     let remote = RemoteOrigin::default();
     let window = webview::create_main(&handle, &remote)?;
-    let launcher_url = webview::launcher_url(&window)?;
+    let launcher_url = window.url()?;
     host::wire_window(&handle, &window);
-    let _ = window.set_focus();
 
     let nav = SharedNav::default();
     let shell = TauriShell::new(handle.clone(), launcher_url, remote);
@@ -591,8 +590,8 @@ mod tests {
         );
     }
 
-    /// opener 插件不得向 WebView 注入 `init-iife.js` 点击拦截脚本（桌面外链由 `on_new_window` 接管，
-    /// 移动外链由 `host.ts` 的 `host_open_external` 接管；远程页面故意不授予 `opener:*` 权限）。
+    /// opener 插件不得向 WebView 注入 `init-iife.js` 点击拦截脚本（外链统一由主框架脚本 / `host.ts`
+    /// 经 `host_open_external` 以及桌面 `on_new_window` 接管；远程页面故意不授予 `opener:*` 权限）。
     #[test]
     fn opener_plugin_does_not_inject_click_script() {
         use tauri::plugin::Plugin;
