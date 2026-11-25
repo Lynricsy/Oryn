@@ -6,12 +6,13 @@
 -- name: CreateThread :exec
 INSERT INTO threads (id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id,
                      forked_from_entry_id, session_dir, model, thinking_level, color, created_at, updated_at, short_code,
-                     kind, space_id, schedule_id, schedule_run, cwd, worktree, main, hidden, research)
+                     kind, space_id, schedule_id, schedule_run, cwd, worktree, main, hidden, research,
+                     agent_role, append_system_prompt, allowed_tools)
 VALUES (@id, @project_id, @orb_id, @title, @title_source, @state, @state_changed_at, @parent_thread_id,
         @forked_from_entry_id, @session_dir, @model, @thinking_level, @color, @created_at, @updated_at, @short_code,
         @kind, @space_id, @schedule_id, @schedule_run, sqlc.narg(cwd), sqlc.narg(worktree),
         COALESCE(CAST(sqlc.narg(main) AS INTEGER), 0), COALESCE(CAST(sqlc.narg(hidden) AS INTEGER), 0),
-        sqlc.narg(research));
+        sqlc.narg(research), sqlc.narg(agent_role), sqlc.narg(append_system_prompt), sqlc.narg(allowed_tools));
 
 -- Oldest spare assistant conversation on the coordinator orb (hidden = 1, see 0052). Researchers are never spares.
 -- name: GetSpareThread :one

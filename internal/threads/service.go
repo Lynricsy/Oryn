@@ -15,6 +15,7 @@ import (
 	"errors"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -316,6 +317,10 @@ type thread struct {
 	research string
 	// cwd 是 runner 线程的工作目录（threads.cwd，创建后不变；空 = orb 线程，由 orbd 决定）。
 	cwd string
+	// agentRole / appendSystemPrompt / allowedTools 是按 subagent 配置启动工作线程时的持久化配置（创建后不变）。
+	agentRole          string
+	appendSystemPrompt string
+	allowedTools       []string
 
 	mu sync.Mutex
 	// hidden 为真表示尚未被认领的备用助手对话或隐藏研究员对话（threads.hidden；ClaimSpare 认领后置假）。
@@ -517,6 +522,13 @@ func newThread(row db.Thread) *thread {
 	if row.OrbID != nil {
 		t.orbID = *row.OrbID
 	}
+	if row.AgentRole != nil {
+		t.agentRole = *row.AgentRole
+	}
+	if row.AppendSystemPrompt != nil {
+		t.appendSystemPrompt = *row.AppendSystemPrompt
+	}
+	t.allowedTools = decodeToolsJSON(row.AllowedTools)
 	if row.State != StateProvisioning {
 		// 控制面重启前 agent 已就绪过
 		t.live.AgentReady()
@@ -542,6 +554,42 @@ func newThread(row db.Thread) *thread {
 		}
 	}
 	return t
+}
+
+// encodeToolsJSON 把允许的工具白名单规范化（去空白、去重保序）后编码成 JSON 字符串；空列表返回 nil。
+func encodeToolsJSON(tools []string) *string {
+	if len(tools) == 0 {
+		return nil
+	}
+	clean := make([]string, 0, len(tools))
+	seen := make(map[string]bool, len(tools))
+	for _, item := range tools {
+		if s := strings.TrimSpace(item); s != "" && !seen[s] {
+			seen[s] = true
+			clean = append(clean, s)
+		}
+	}
+	if len(clean) == 0 {
+		return nil
+	}
+	b, err := json.Marshal(clean)
+	if err != nil {
+		return nil
+	}
+	s := string(b)
+	return &s
+}
+
+// decodeToolsJSON 解码 threads.allowed_tools 里的 JSON 字符串数组；为空或非法返回 nil。
+func decodeToolsJSON(raw *string) []string {
+	if raw == nil || *raw == "" {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(*raw), &out); err != nil || len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func (s *Service) forget(id string) {

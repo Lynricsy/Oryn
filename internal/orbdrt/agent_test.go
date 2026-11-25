@@ -1,11 +1,15 @@
 package orbdrt
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 
+	"github.com/Lynricsy/Oryn/internal/agentcfg"
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/link"
 )
@@ -70,4 +74,80 @@ func TestOrdinaryOrbRejectsVariant(t *testing.T) {
 		ThreadID: "T-01932f6e-8d1a-7c3b-9f2e-0123456789ab", Variant: &v,
 	}, nil)
 	assert.Equal(t, link.CodeInvalidParams, ctlCode(err), "%v", err)
+}
+
+// 协调宿主拒绝工作线程专属的 appendSystemPrompt 与 tools 参数。
+func TestCoordinatorRejectsWorkThreadRoleParams(t *testing.T) {
+	_, cp, _, _ := startCoordinator(t)
+	cp.waitNotif(t, 0, "hello", nil)
+	coord := apigen.AgentProfileCoordinator
+	prompt := "You are the Oryn coordinator.\nKeep replies short."
+	extra := "# Role: scout"
+	for name, p := range map[string]apigen.LinkCtlAgentStartParams{
+		"appendSystemPrompt": {
+			ThreadID: "T-01932f6e-8d1a-7c3b-9f2e-0123456789b1", Profile: &coord, SystemPrompt: &prompt,
+			AppendSystemPrompt: &extra,
+		},
+		"tools": {
+			ThreadID: "T-01932f6e-8d1a-7c3b-9f2e-0123456789b2", Profile: &coord, SystemPrompt: &prompt,
+			Tools: []string{"read", "grep"},
+		},
+	} {
+		err := cp.call(t, "agent.start", p, nil)
+		assert.Equal(t, link.CodeInvalidParams, ctlCode(err), "%s: %v", name, err)
+	}
+}
+
+// 普通工作线程带 appendSystemPrompt 与 tools 启动：
+// 写出 role-prompt.md 并以 --append-system-prompt 传入；写出 role-overlay.yml 保留原 config.yml 的
+// disabledExtensions 并禁用白名单外内置工具，以 --config 传入。
+func TestWorkThreadRolePromptAndToolsOverlay(t *testing.T) {
+	cp := newFakeCP(t)
+	rt := startRuntime(t, cp, nil)
+	cp.waitNotif(t, 0, "hello", nil)
+
+	// 预先放一份带 disabledExtensions 的 config.yml，验证覆盖层不会丢掉用户原有禁用项
+	cfgPath := filepath.Join(rt.ompAgentDir(), agentcfg.ConfigFile)
+	require.NoError(t, os.MkdirAll(filepath.Dir(cfgPath), 0o755))
+	require.NoError(t, os.WriteFile(cfgPath, []byte("disabledExtensions:\n  - rule:custom\n"), 0o600))
+
+	dump := filepath.Join(rt.home, "dump")
+	extra := "# Agent Role: scout\n\nInvestigate rapidly."
+	var res apigen.LinkCtlAgentStartResult
+	require.NoError(t, cp.call(t, "agent.start", apigen.LinkCtlAgentStartParams{
+		ThreadID:           thread1,
+		SessionDir:         "~/.oryn/threads/" + thread1,
+		Env:                map[string]string{"FAKEOMP_DUMP_DIR": dump},
+		InitFrames:         []apigen.OmpFrame{{"type": "open_session", "sessionDir": "~/.oryn/threads/" + thread1}},
+		AppendSystemPrompt: &extra,
+		Tools:              []string{"read", "grep", "glob"},
+	}, &res))
+	cp.waitNotif(t, 0, "agent.status", statusIs(thread1, "ready"))
+
+	rec := setupDump(t, dump, thread1)
+	threadDir := filepath.Join(rt.home, ".oryn", "threads", thread1)
+	promptFile := filepath.Join(threadDir, "role-prompt.md")
+	overlayFile := filepath.Join(threadDir, "role-overlay.yml")
+
+	assert.Contains(t, rec.Args, "--append-system-prompt")
+	assert.Contains(t, rec.Args, promptFile)
+	assert.Contains(t, configArgs(rec.Args), overlayFile)
+
+	gotPrompt, err := os.ReadFile(promptFile)
+	require.NoError(t, err)
+	assert.Equal(t, extra, string(gotPrompt))
+
+	gotOverlay, err := os.ReadFile(overlayFile)
+	require.NoError(t, err)
+	var parsed struct {
+		DisabledExtensions []string `yaml:"disabledExtensions"`
+	}
+	require.NoError(t, yaml.Unmarshal(gotOverlay, &parsed))
+	assert.Contains(t, parsed.DisabledExtensions, "rule:custom", "保留用户原有的 disabledExtensions")
+	assert.Contains(t, parsed.DisabledExtensions, "tool:edit")
+	assert.Contains(t, parsed.DisabledExtensions, "tool:write")
+	assert.Contains(t, parsed.DisabledExtensions, "tool:bash")
+	assert.NotContains(t, parsed.DisabledExtensions, "tool:read")
+	assert.NotContains(t, parsed.DisabledExtensions, "tool:grep")
+	assert.NotContains(t, parsed.DisabledExtensions, "tool:glob")
 }

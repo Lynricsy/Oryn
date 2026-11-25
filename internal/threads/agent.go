@@ -245,6 +245,15 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 			params.McpToken = &tok
 		}
 	}
+	if prof == nil {
+		if t.appendSystemPrompt != "" {
+			ap := t.appendSystemPrompt
+			params.AppendSystemPrompt = &ap
+		}
+		if len(t.allowedTools) > 0 {
+			params.Tools = slices.Clone(t.allowedTools)
+		}
+	}
 	t.mu.Unlock()
 	if prof != nil && !s.prepareCoordinator(ctx, ctl, t, orbID, prof) {
 		return

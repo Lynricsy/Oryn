@@ -70,6 +70,12 @@ type CreateParams struct {
 	// Cwd 是线程的工作目录（M23）：只能与 OrbID 同用，且那台 orb 必须是 box；由 API 层从 executor.kind = box
 	// 经 boxes.ThreadTarget 解析得出（`~` 或 `~/apps/<app>/current[/<root>]`），从不来自客户端。
 	Cwd string
+	// AgentRole / AppendSystemPrompt / AllowedTools 是按 subagent 配置启动普通工作线程时的设置：
+	// 持久化在 threads 表里，唤醒与重启沿用；AgentRole 记录所用的 subagent 角色名，AppendSystemPrompt 经
+	// --append-system-prompt 追加到工作线程系统提示词，AllowedTools 为允许的内置工具白名单（空 = 不限制）。
+	AgentRole          string
+	AppendSystemPrompt string
+	AllowedTools       []string
 }
 
 // maxRoleLen 是新建线程时 role 名的长度上限（字节），与 role 头像接口的校验一致。
@@ -266,6 +272,15 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 	}
 	if p.ThinkingLevel != "" {
 		row.ThinkingLevel = &p.ThinkingLevel
+	}
+	if ar := strings.TrimSpace(p.AgentRole); ar != "" {
+		row.AgentRole = &ar
+	}
+	if ap := strings.TrimSpace(p.AppendSystemPrompt); ap != "" {
+		row.AppendSystemPrompt = &ap
+	}
+	if toolsJSON := encodeToolsJSON(p.AllowedTools); toolsJSON != nil {
+		row.AllowedTools = toolsJSON
 	}
 	prompt := map[string]any{"type": "prompt", "message": p.Prompt}
 	if len(p.Images) > 0 {
@@ -1086,6 +1101,8 @@ func (s *Service) Fork(ctx context.Context, srcID string, entryID *string, env s
 		Model: row.Model, ThinkingLevel: row.ThinkingLevel, Color: row.Color, ShortCode: shortCode(newID),
 		// runner 线程（M11b）：子线程在同一工作目录里继续，worktree 仍归源线程（不继承）
 		Cwd: row.Cwd,
+		// 按 subagent 配置启动的线程：fork 后沿用角色配置
+		AgentRole: row.AgentRole, AppendSystemPrompt: row.AppendSystemPrompt, AllowedTools: row.AllowedTools,
 	}
 	// 源 orb 读一次（读不到时按普通 orb 处理）：runner 与 box 的线程只能共用 fork
 	o, oerr := s.st.Q.GetOrb(ctx, orbID)

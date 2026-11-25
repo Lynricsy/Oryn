@@ -86,6 +86,7 @@ func parseOptions(args []string, getenv func(string) string, stderr io.Writer) (
 	fs.String("tools", "", "内置工具白名单（忽略）")
 	fs.String("skills", "", "技能白名单（忽略）")
 	fs.StringVar(&o.systemPrompt, "system-prompt", "", "系统提示词（首行 #dump <路径> 时写出参数与环境）")
+	fs.String("append-system-prompt", "", "追加到系统提示词末尾的文本或文件路径（忽略）")
 	o.args = append([]string(nil), args...)
 	version := fs.Bool("version", false, "打印版本")
 	if err := fs.Parse(args); err != nil {

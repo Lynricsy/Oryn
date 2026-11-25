@@ -53,3 +53,34 @@ func TestCreateRejectsBadRole(t *testing.T) {
 		assert.Contains(t, err.Error(), "invalid role")
 	}
 }
+
+// 按 subagent 配置启动的工作线程：AgentRole / AppendSystemPrompt / AllowedTools 落库，并在启动后原样恢复。
+func TestCreatePersistsAgentRoleConfig(t *testing.T) {
+	f := newFixture(t, Config{})
+	out, err := f.s.Create(f.ctx, CreateParams{
+		Prompt:             "inspect repo",
+		Role:               "smol",
+		ThinkingLevel:      "medium",
+		AgentRole:          "scout",
+		AppendSystemPrompt: "# Agent Role: scout\nStay concise.",
+		AllowedTools:       []string{" read ", "grep", "read", ""},
+	})
+	require.NoError(t, err)
+
+	row, err := f.st.Q.GetThread(f.ctx, out.ID)
+	require.NoError(t, err)
+	require.NotNil(t, row.AgentRole)
+	assert.Equal(t, "scout", *row.AgentRole)
+	require.NotNil(t, row.AppendSystemPrompt)
+	assert.Equal(t, "# Agent Role: scout\nStay concise.", *row.AppendSystemPrompt)
+	require.NotNil(t, row.AllowedTools)
+	assert.JSONEq(t, `["read","grep"]`, *row.AllowedTools)
+
+	// 模拟重启后从库重新加载内存线程对象
+	f.s.forget(out.ID)
+	reloaded, err := f.s.get(f.ctx, out.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "scout", reloaded.agentRole)
+	assert.Equal(t, "# Agent Role: scout\nStay concise.", reloaded.appendSystemPrompt)
+	assert.Equal(t, []string{"read", "grep"}, reloaded.allowedTools)
+}

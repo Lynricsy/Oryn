@@ -16421,6 +16421,14 @@ components:
         # setup.run / omphome.apply 下发）。
         projectId: { $ref: '#/components/schemas/ProjectId' }
         projectConfig: { $ref: '#/components/schemas/LinkCtlProjectConfig' }
+        # 工作线程按 subagent 配置启动时的附加系统提示词与工具白名单（仅普通工作线程接受，协调宿主拒绝）。
+        appendSystemPrompt:
+          type: string
+          description: 追加到工作线程系统提示词末尾的文本（由 orbd 写入文件并以 `--append-system-prompt` 传入 omp）；只有普通工作线程接受
+        tools:
+          type: array
+          description: 工作线程允许的内置工具白名单（省略或空 = 不限制；由 orbd 生成覆盖层禁用表外内置工具）；只有普通工作线程接受
+          items: { type: string }
     LinkCtlAgentStartResult:
       type: object
       required: [pid]
