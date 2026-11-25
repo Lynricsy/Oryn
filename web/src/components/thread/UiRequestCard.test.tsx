@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionUiRequest } from "../../omp/types";
 import { answerUi } from "../../state/actions";
+import { getThreadStore, resetThreadStores } from "../../state/stores";
 import { uiStore } from "../../state/ui";
 import { UiRequestCard } from "./UiRequestCard";
 
@@ -225,5 +226,126 @@ describe("UiRequestCard：助手的确认卡（M19）", () => {
 		};
 		const { container } = card(req);
 		expect(container.querySelector("h3")?.textContent).toBe(base.title);
+	});
+});
+
+describe("UiRequestCard：重设计的 ask/form 卡片与 HTML/SVG/图片支持", () => {
+	it("从运行中的 ask 工具还原完整 HTML（含内联 SVG、图片、选项拆分、number 与校验）并按规范回传 formData", () => {
+		vi.mocked(answerUi).mockClear();
+		resetThreadStores();
+		getThreadStore("T-ui")
+			.getState()
+			.apply([
+				{
+					type: "frame",
+					frame: {
+						type: "tool_execution_start",
+						toolCallId: "tc_ask_1",
+						toolName: "ask",
+						args: {
+							html: `<form>
+								<p>Sessions live in memory and are lost on restart.</p>
+								<svg viewBox="0 0 100 30" aria-label="拓扑图"><rect x="1" y="1" width="98" height="28" fill="var(--surface)" stroke="var(--accent)" /></svg>
+								<img src="https://example.com/mock.png" alt="参考截图">
+								<fieldset>
+									<legend>Session store</legend>
+									<label><input type="radio" name="store" value="sqlite" checked> SQLite: one file, no new service</label>
+									<label><input type="radio" name="store" value="redis"> Redis: shared across instances, needs ops</label>
+								</fieldset>
+								<label>Session lifetime (days) <input type="number" name="ttl_days" value="30" min="1" required></label>
+							</form>`,
+						},
+					},
+				},
+			]);
+
+		const { container } = card({
+			type: "extension_ui_request",
+			id: "f1",
+			method: "form",
+			sections: [
+				{
+					title: [{ text: "Session store" }],
+					blocks: [
+						{
+							kind: "field",
+							field: {
+								kind: "choice",
+								name: "store",
+								multi: false,
+								select: false,
+								other: true,
+								label: [],
+								required: false,
+								options: [
+									{
+										value: "sqlite",
+										label: [{ text: "SQLite: one file, no new service" }],
+										checked: true,
+										disabled: false,
+									},
+									{
+										value: "redis",
+										label: [
+											{ text: "Redis: shared across instances, needs ops" },
+										],
+										checked: false,
+										disabled: false,
+									},
+								],
+							},
+						},
+					],
+				},
+				{
+					title: [],
+					blocks: [
+						{
+							kind: "field",
+							field: {
+								kind: "text",
+								name: "ttl_days",
+								type: "number",
+								multiline: false,
+								label: [{ text: "Session lifetime (days)" }],
+								value: "30",
+								placeholder: "",
+								required: true,
+								min: 1,
+								rows: 1,
+							},
+						},
+					],
+				},
+			],
+		});
+
+		expect(screen.getByTestId("ask-form")).toHaveAttribute(
+			"data-ask-source",
+			"html",
+		);
+		// 内联 SVG 与图片都已渲染
+		expect(container.querySelector("svg.ask-svg-graphic")).not.toBeNull();
+		expect(container.querySelector('img[alt="参考截图"]')).not.toBeNull();
+		// 选项标题与说明拆分清晰
+		expect(screen.getByText("SQLite")).toBeVisible();
+		expect(screen.getByText("one file, no new service")).toBeVisible();
+
+		// 切换到 Redis 并修改天数后提交
+		fireEvent.click(screen.getByText("Redis"));
+		const ttlInput = screen.getByLabelText(/Session lifetime/);
+		fireEvent.change(ttlInput, { target: { value: "0" } });
+		fireEvent.click(screen.getByRole("button", { name: "提交" }));
+		// 触发 min 校验，未提交
+		expect(screen.getByRole("alert")).toHaveTextContent("不能小于 1");
+		expect(answerUi).not.toHaveBeenCalled();
+
+		fireEvent.change(ttlInput, { target: { value: "14" } });
+		fireEvent.click(screen.getByRole("button", { name: "提交" }));
+		expect(answerUi).toHaveBeenCalledWith("T-ui", {
+			type: "extension_ui_response",
+			id: "f1",
+			formData: { store: "redis", ttl_days: "14" },
+		});
 	});
 });
