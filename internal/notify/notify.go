@@ -66,8 +66,8 @@ type Config struct {
 	HTTP *http.Client
 	// PollHTTP 是 Telegram getUpdates 的客户端（默认超时 70s）。
 	PollHTTP *http.Client
-	// DoneDelay / InputDelay 是去抖时长（默认 3s / 2s）。
-	DoneDelay, InputDelay time.Duration
+	// DoneDelay / InputDelay 是去抖时长（默认 3s / 2s）；TitleWait 是首轮无标题线程等待自动命名的最长时间（默认 8s）。
+	DoneDelay, InputDelay, TitleWait time.Duration
 	// Gateway 是官方推送网关参数；Gateway.Origin 为空 = 关闭网关（不登记、不投递 gateway 订阅）。
 	Gateway GatewayConfig
 }
@@ -75,6 +75,7 @@ type Config struct {
 const (
 	defaultDoneDelay  = 3 * time.Second
 	defaultInputDelay = 2 * time.Second
+	defaultTitleWait  = 8 * time.Second
 	httpTimeout       = 15 * time.Second
 	pollTimeout       = 70 * time.Second
 	retention         = 30 * 24 * time.Hour
@@ -127,6 +128,10 @@ type Service struct {
 	mu sync.Mutex
 	// timers 是线程 → 该线程的去抖定时器（按 kind / 请求区分）。
 	timers map[string]map[timerKey]*pendingTimer
+	// threadGen 在线程发生 Seen 或 StateChanged 时递增，避免等待自动标题重排期覆盖并发到达的取消；
+	// titleGen 在线程自动标题写入库后递增，避免 emit 读库与 TitleUpdated 之间的窗口丢失唤醒。
+	threadGen map[string]uint64
+	titleGen  map[string]uint64
 	// unread 是有未读通知的线程（Seen 的 O(1) 快速路径）。
 	unread map[string]bool
 	// emitGen 在每次 emit 预登记未读时递增；emitting 是已预登记、尚未结束的 emit 数。REST 的 MarkRead 据此判断
@@ -135,7 +140,6 @@ type Service struct {
 	emitting int
 	queue    []event
 	wake     chan struct{}
-	// deliverWake 唤醒投递循环。
 	deliverWake chan struct{}
 
 	// stateMu 串行化渠道 state 的读改写（Telegram offset / 绑定码 / 绑定结果）。
@@ -159,6 +163,11 @@ type pendingTimer struct {
 	plan   bool
 	// auto（done）：这段活动只由自动化投递引起；emit 时若线程是“交给助手”的运行则不发（由助手在主线里决定）
 	auto bool
+	// waitedTitle / waitingTitle（done）：首轮无标题线程是否已等待过自动标题、当前定时器是否正在等标题。
+	waitedTitle  bool
+	waitingTitle bool
+	gen          uint64
+	titleGen     uint64
 }
 
 type eventKind int
@@ -200,6 +209,9 @@ func New(cfg Config, st *store.Store, th Threads, out Broadcaster) (*Service, er
 	if cfg.InputDelay <= 0 {
 		cfg.InputDelay = defaultInputDelay
 	}
+	if cfg.TitleWait <= 0 {
+		cfg.TitleWait = defaultTitleWait
+	}
 	if cfg.Box == nil {
 		return nil, errors.New("notify: Config.Box is required")
 	}
@@ -212,6 +224,8 @@ func New(cfg Config, st *store.Store, th Threads, out Broadcaster) (*Service, er
 		gatewayHTTP: &http.Client{Transport: cfg.HTTP.Transport, Timeout: cfg.HTTP.Timeout,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 		timers:      map[string]map[timerKey]*pendingTimer{},
+		threadGen:   map[string]uint64{},
+		titleGen:    map[string]uint64{},
 		unread:      map[string]bool{},
 		wake:        make(chan struct{}, 1),
 		deliverWake: make(chan struct{}, 1),
@@ -310,12 +324,18 @@ func signal(ch chan struct{}) {
 
 // ---- Observer（持线程锁调用：只操作内存并入队）----
 
-var _ threads.Observer = (*Service)(nil)
+var (
+	_ threads.Observer      = (*Service)(nil)
+	_ threads.TitleObserver = (*Service)(nil)
+)
 
 // StateChanged 实现 threads.Observer：完成 / 出错排去抖定时器，其余状态变化取消它们。
 func (s *Service) StateChanged(ev threads.StateEvent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.threadGen[ev.ThreadID]++
+	gen := s.threadGen[ev.ThreadID]
+	tgen := s.titleGen[ev.ThreadID]
 	done, errk := timerKey{kind: KindDone}, timerKey{kind: KindError}
 	switch {
 	case ev.State == threads.StateIdle && (ev.Prev == threads.StateWorking || ev.Prev == threads.StateAwaitingInput) && !ev.Focused:
@@ -325,10 +345,10 @@ func (s *Service) StateChanged(ev threads.StateEvent) {
 			s.cancelLocked(ev.ThreadID, done)
 			return
 		}
-		s.armLocked(ev.ThreadID, done, s.cfg.DoneDelay, &pendingTimer{auto: ev.Auto})
+		s.armLocked(ev.ThreadID, done, s.cfg.DoneDelay, &pendingTimer{auto: ev.Auto, gen: gen, titleGen: tgen})
 	case ev.State == threads.StateError && ev.Prev != threads.StateError && !ev.Focused:
 		s.cancelLocked(ev.ThreadID, done)
-		s.armLocked(ev.ThreadID, errk, s.cfg.DoneDelay, &pendingTimer{reason: ev.Reason})
+		s.armLocked(ev.ThreadID, errk, s.cfg.DoneDelay, &pendingTimer{reason: ev.Reason, gen: gen, titleGen: tgen})
 	default:
 		s.cancelLocked(ev.ThreadID, done)
 		s.cancelLocked(ev.ThreadID, errk)
@@ -358,6 +378,7 @@ func (s *Service) InputResolved(threadID, requestID string) {
 // Seen 实现 threads.Observer（热路径）：线程没有定时器、也没有未读通知时直接返回。
 func (s *Service) Seen(threadID string) {
 	s.mu.Lock()
+	s.threadGen[threadID]++
 	tm := s.timers[threadID]
 	unread := s.unread[threadID]
 	if len(tm) == 0 && !unread {
@@ -377,6 +398,23 @@ func (s *Service) Seen(threadID string) {
 	if unread {
 		signal(s.wake)
 	}
+}
+
+// TitleUpdated 实现 threads.TitleObserver：线程自动标题落库后，若正在等待标题则立即发出完成通知。
+func (s *Service) TitleUpdated(threadID string) {
+	s.mu.Lock()
+	s.titleGen[threadID]++
+	done := timerKey{kind: KindDone}
+	pt := s.timers[threadID][done]
+	if pt == nil || !pt.waitingTitle {
+		s.mu.Unlock()
+		return
+	}
+	pt.stop()
+	pt.waitingTitle = false
+	s.queue = append(s.queue, event{kind: evEmit, threadID: threadID, key: done, timer: pt})
+	s.mu.Unlock()
+	signal(s.wake)
 }
 
 // TurnEnded 实现 threads.Observer（不关心）。
@@ -488,10 +526,33 @@ func (s *Service) emit(ctx context.Context, threadID string, key timerKey, pt *p
 			return
 		}
 	}
-	title := th.Title
-	if th.Main != nil && *th.Main {
-		title = s.assistantName(ctx)
+	// 首轮新对话的自动标题（omp session_info_update）通常比 3s 去抖晚到几秒：
+	// 若此时仍无标题且处于自动命名状态，最多再等 TitleWait，标题一到即刻由 TitleUpdated 唤醒发出。
+	if key.kind == KindDone && !pt.waitedTitle && s.cfg.TitleWait > 0 &&
+		strings.TrimSpace(th.Title) == "" && th.TitleSource == apigen.ThreadTitleSourceAuto &&
+		(th.Main == nil || !*th.Main) && th.State == apigen.ThreadStateIdle {
+		s.mu.Lock()
+		if s.threadGen[threadID] != pt.gen {
+			s.mu.Unlock()
+			s.dropUnreadIfNone(ctx, threadID)
+			return
+		}
+		if s.titleGen[threadID] != pt.titleGen {
+			// 在读库期间自动标题刚好落库：直接重读一次，不再等待。
+			s.mu.Unlock()
+			if fresh, ferr := s.th.Get(ctx, threadID); ferr == nil {
+				th = fresh
+			}
+		} else {
+			s.armLocked(threadID, key, s.cfg.TitleWait, &pendingTimer{
+				auto: pt.auto, waitedTitle: true, waitingTitle: true, gen: pt.gen, titleGen: pt.titleGen,
+			})
+			s.mu.Unlock()
+			s.dropUnreadIfNone(ctx, threadID)
+			return
+		}
 	}
+	title := s.threadTitle(ctx, th)
 	p := db.InsertNotificationParams{ID: ids.New("ntf"), ThreadID: &threadID, Kind: key.kind, Title: title, CreatedAt: s.now()}
 	switch key.kind {
 	case KindDone:
@@ -514,6 +575,20 @@ func (s *Service) emit(ctx context.Context, threadID string, key timerKey, pt *p
 		slog.Warn("notify: 写入通知失败", "thread", threadID, "kind", key.kind, "err", err)
 		s.dropUnreadIfNone(ctx, threadID)
 	}
+}
+
+// threadTitle 返回写入通知行的标题：主线始终用助手名；无标题的助手子对话也回落到助手名，避免推送空标题。
+func (s *Service) threadTitle(ctx context.Context, th apigen.Thread) string {
+	if th.Main != nil && *th.Main {
+		return s.assistantName(ctx)
+	}
+	if strings.TrimSpace(th.Title) != "" {
+		return th.Title
+	}
+	if th.Kind != nil && *th.Kind == apigen.ThreadKindAssistant {
+		return s.assistantName(ctx)
+	}
+	return ""
 }
 
 // assistantName 是主线通知的标题：全局助手身份的名字；未设置时跟随 agent 身份（与客户端的回落一致），都没有则为 Assistant。
@@ -642,7 +717,7 @@ func (s *Service) PostThread(ctx context.Context, threadID, kind, body string) e
 	if th.ArchivedAt != nil {
 		return nil
 	}
-	p.ThreadID, p.Title = &threadID, th.Title
+	p.ThreadID, p.Title = &threadID, s.threadTitle(ctx, th)
 	// 与 processEvents 相同：先登记未读，此后到达的 Seen 会在本通知落库之后把它标为已读
 	s.mu.Lock()
 	s.unread[threadID] = true

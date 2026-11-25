@@ -10,6 +10,8 @@ import android.os.Bundle
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.Person
+import androidx.core.content.pm.ShortcutInfoCompat
+import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.core.graphics.drawable.IconCompat
 import java.util.Locale
 
@@ -176,17 +178,23 @@ object Notifier {
     } else {
       model.tag
     }
+    val senderIcon = IconCompat.createWithBitmap(avatarBitmap)
     val sender = Person.Builder()
       .setKey(senderKey)
       .setName(senderName)
-      .setIcon(IconCompat.createWithBitmap(avatarBitmap))
+      .setIcon(senderIcon)
+      .setImportant(true)
       .build()
     val ts = model.timestamp.takeIf { it > 0L } ?: System.currentTimeMillis()
     val style = NotificationCompat.MessagingStyle(selfUser)
       .setGroupConversation(false)
       .addMessage(body, ts, sender)
+    // Android 11+ / HyperOS 会话通知要求绑定 long-lived Conversation Shortcut：
+    // 缺少 shortcutId 时系统会退回普通 MessagingStyle 样式（左侧显示 App 图标，展开后像群聊）。
+    val shortcutId = pushConversationShortcut(context, senderKey, senderName, sender, senderIcon, intent)
     val builder = NotificationCompat.Builder(context, CHANNEL)
       .setSmallIcon(R.drawable.ic_stat_oryn)
+      .setLargeIcon(avatarBitmap)
       .setContentTitle(senderName)
       .setContentText(body)
       .setStyle(style)
@@ -198,6 +206,7 @@ object Notifier {
       .setCategory(NotificationCompat.CATEGORY_MESSAGE)
       .setContentIntent(pending)
       .addExtras(Bundle().apply { putString(EXTRA_ID, model.id) })
+    if (shortcutId != null) builder.setShortcutId(shortcutId)
     if (state == State.ANSWERED) builder.setTimeoutAfter(ANSWERED_TIMEOUT_MS)
     if (state == null || state == State.RETRY) {
       for (a in model.actions) builder.addAction(answerAction(context, model, a, lang))
@@ -208,6 +217,34 @@ object Notifier {
     } catch (_: SecurityException) {
       EventLog.log(context, "notify.blocked", mapOf("id" to model.id))
       false
+    }
+  }
+
+  /**
+   * 推送 / 更新一条 long-lived 会话快捷方式，让系统将通知识别为单聊 Conversation Notification
+   *（左侧显示发送者大圆头像 + 右下角 Oryn 应用角标，展开态也不套群聊壳）。失败时返回 null 静默降级。
+   */
+  private fun pushConversationShortcut(
+    context: Context,
+    shortcutId: String,
+    label: String,
+    sender: Person,
+    icon: IconCompat,
+    intent: Intent,
+  ): String? {
+    if (shortcutId.isBlank() || label.isBlank()) return null
+    return try {
+      val shortcut = ShortcutInfoCompat.Builder(context, shortcutId)
+        .setShortLabel(label)
+        .setLongLived(true)
+        .setIcon(icon)
+        .setPerson(sender)
+        .setIntent(intent)
+        .build()
+      ShortcutManagerCompat.pushDynamicShortcut(context, shortcut)
+      shortcutId
+    } catch (_: Exception) {
+      null
     }
   }
 

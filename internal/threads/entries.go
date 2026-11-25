@@ -279,6 +279,9 @@ func (s *Service) ingestLocked(ctx context.Context, t *thread, orbID string, p a
 		}
 	}
 	s.recompute(ctx, t)
+	if titled {
+		notifyTitle(s.observer(), t.id)
+	}
 	if len(entries) > 0 {
 		s.observer().EntriesAppended(t.id)
 	}

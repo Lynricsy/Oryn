@@ -94,6 +94,13 @@ if [[ -d $appex ]]; then
 else
   bad "P2 模板：包里没有 PlugIns/NotificationService.appex（tauri.conf.json 的 bundle.iOS.template 没生效）"
 fi
+for f in "$built/SymbolsNerdFontMono-Regular.ttf" "$appex/SymbolsNerdFontMono-Regular.ttf"; do
+  if [[ -f $f ]]; then
+    pass "P2 字体：已打包 $(basename "$(dirname "$f")")/SymbolsNerdFontMono-Regular.ttf"
+  else
+    bad "P2 字体：缺少 $f（通知线程 Nerd Font 图标会退回品牌标）"
+  fi
+done
 note "Info.plist 的 OrynAppIdentifierPrefix：主包「$(plist_get "$built/Info.plist" OrynAppIdentifierPrefix)」，扩展「$(plist_get "$appex/Info.plist" OrynAppIdentifierPrefix)」"
 note ""
 

@@ -99,6 +99,19 @@ enum PushKeyStore {
     return Data(base64Encoded: s)
   }
 
+  /// 读写删共享 Keychain 里的附加条目（复用同一 service 与 accessGroup，供主 App 与 NSE 共享缓存）。
+  static func readShared(_ account: String) -> Data? { read(account) }
+
+  @discardableResult
+  static func writeShared(_ account: String, _ value: Data) -> Bool { write(account, value) }
+
+  static func deleteShared(_ account: String) {
+    let status = SecItemDelete(query(account) as CFDictionary)
+    if status != errSecSuccess && status != errSecItemNotFound {
+      PushLog.info("push.keys op=delete status=\(status)")
+    }
+  }
+
   private static func query(_ account: String) -> [String: Any] {
     var q: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,

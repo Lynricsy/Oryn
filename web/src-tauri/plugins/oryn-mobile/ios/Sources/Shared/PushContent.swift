@@ -43,17 +43,20 @@ enum PushContent {
   private static let avatarKinds: Set<String> = ["thread", "assistant", "system"]
   private static let avatarColors: Set<String> = ["red", "orange", "yellow", "green", "teal", "blue", "purple", "pink"]
 
-  /// 解析 Web Push 明文载荷；不是 JSON 对象、缺 `title`、`url` 不以 `/` 开头时为 nil（撤回消息也是 nil：它没有标题）。
+  /// 解析 Web Push 明文载荷；非 JSON、撤回消息、`url` 不以 `/` 开头、或标题与正文同时为空时返回 nil。
   static func parse(_ data: Data) -> PushMessage? {
     guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-      let title = text(obj, "title"),
+      text(obj, "kind") != "withdraw",
       let path = text(obj, "url"), path.hasPrefix("/")
     else { return nil }
+    let body = text(obj, "body") ?? ""
+    let title = text(obj, "title") ?? (body.isEmpty ? nil : "Oryn")
+    guard let resolvedTitle = title else { return nil }
     let id = text(obj, "id") ?? ""
     return PushMessage(
       id: id,
-      title: title,
-      body: text(obj, "body") ?? "",
+      title: resolvedTitle,
+      body: body,
       path: path,
       tag: text(obj, "tag") ?? tagFor(path: path, id: id),
       avatar: parseAvatar(obj["avatar"]))

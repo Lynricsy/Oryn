@@ -15,7 +15,6 @@ import (
 	"strings"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
-	"github.com/Lynricsy/Oryn/internal/glyph"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/webpush"
@@ -67,7 +66,7 @@ func pushPayloadLimit(m Message, limit int) ([]byte, error) {
 		return withdrawPayload(m.NotificationID, tag)
 	}
 	v := map[string]any{
-		"v": 1, "id": m.NotificationID, "kind": m.Kind, "title": truncate(glyph.WithoutNerdIcon(m.Title), 200), "body": truncate(m.Body, maxPushBody),
+		"v": 1, "id": m.NotificationID, "kind": m.Kind, "title": truncate(displayTitle(m), 200), "body": truncate(m.Body, maxPushBody),
 		"url": path, "tag": tag,
 	}
 	if m.CreatedAt > 0 {

@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
 )
@@ -306,5 +307,78 @@ func TestMarkReadInterleavedWithEmit(t *testing.T) {
 			assert.False(t, f.s.unread[id])
 			f.s.mu.Unlock()
 		})
+	}
+}
+
+// 首轮无标题的自动命名线程：3s 去抖后若自动标题尚未落库，最多再等 TitleWait；
+// 一旦 TitleUpdated 到达立即发出带正式标题的完成通知。
+func TestDoneWaitsForAutoTitleAndEmitsOnTitleUpdated(t *testing.T) {
+	f := newFixture(t)
+	id := f.thread("")
+
+	f.done(id)
+	assert.Empty(t, f.notifications(), "3s 去抖后仍无标题时应进入 TitleWait 而不是发空标题")
+	assert.Empty(t, f.out.Notes())
+
+	// 模拟 omp 几秒后推来 session_info_update 写入自动标题
+	n, err := f.st.Q.SetThreadAutoTitle(f.ctx, db.SetThreadAutoTitleParams{
+		Title: "󰂛 ISLAND: 禁止应用灵动岛通知", UpdatedAt: 10, ID: id,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, n)
+	f.s.TitleUpdated(id)
+	f.s.processEvents(f.ctx)
+
+	ns := f.notifications()
+	require.Len(t, ns, 1)
+	assert.Equal(t, "󰂛 ISLAND: 禁止应用灵动岛通知", ns[0].Title)
+}
+
+// 无标题线程在 TitleWait 期间被用户查看（Seen）时取消等待，不再发出通知。
+func TestDoneTitleWaitCanceledBySeen(t *testing.T) {
+	f := newFixture(t)
+	id := f.thread("")
+
+	f.done(id)
+	assert.Empty(t, f.notifications())
+
+	f.s.Seen(id)
+	f.s.TitleUpdated(id)
+	f.flush()
+	assert.Empty(t, f.notifications())
+}
+
+// 无标题的助手子对话超过 TitleWait 仍无自动标题时：通知标题回落到全局助手名，且推送载荷 title 绝不为空。
+func TestUntitledAssistantThreadFallsBackToAssistantNameAndNonEmptyPushTitle(t *testing.T) {
+	f := newFixture(t)
+	id := ids.Thread()
+	require.NoError(t, f.st.Q.CreateThread(f.ctx, db.CreateThreadParams{
+		Kind: "assistant", ID: id, Title: "", TitleSource: "auto", State: threads.StateIdle,
+		SessionDir: "~/.oryn/threads/" + id, CreatedAt: 1, UpdatedAt: 1,
+	}))
+
+	// 第一次 flush 走完 3s 去抖并进入 TitleWait；第二次 flush 模拟 TitleWait 超时
+	f.done(id)
+	assert.Empty(t, f.notifications())
+	f.flush()
+
+	ns := f.notifications()
+	require.Len(t, ns, 1)
+	assert.Equal(t, "Assistant", ns[0].Title)
+
+	// 即使消息标题为空或只剩 Nerd Font 图标，pushPayload 仍必须产出非空 title（避免 iOS/Android 拒收）
+	for _, rawTitle := range []string{"", "󰂛", "   "} {
+		raw, err := pushPayloadLimit(Message{
+			NotificationID: "ntf_1",
+			ThreadID:       id,
+			Kind:           KindDone,
+			Title:          rawTitle,
+			Body:           "Hi!",
+			Locale:         "zh-CN",
+		}, 2700)
+		require.NoError(t, err)
+		var got map[string]any
+		require.NoError(t, json.Unmarshal(raw, &got))
+		assert.NotEmpty(t, got["title"], "rawTitle=%q", rawTitle)
 	}
 }

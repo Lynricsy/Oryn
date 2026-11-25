@@ -52,14 +52,15 @@ object PushPayload {
   private val TITLE_CARD = Regex("^(\\S+) ([A-Z0-9]{1,6}): (\\S.*)$")
   private val VALID_COLORS = setOf("red", "orange", "yellow", "green", "teal", "blue", "purple", "pink")
 
-  /** 解析载荷；不是 JSON 对象、缺 `title`、`url` 不以 `/` 开头时返回 null。 */
+  /** 解析载荷；非 JSON、撤回消息、`url` 不以 `/` 开头、或标题与正文同时为空时返回 null。 */
   fun parse(bytes: ByteArray): Model? {
     val obj = json(bytes) ?: return null
-    val title = text(obj, "title") ?: return null
+    if (text(obj, "kind") == "withdraw") return null
     val path = text(obj, "url") ?: return null
     if (!path.startsWith("/")) return null
-    val id = text(obj, "id") ?: ""
     val body = text(obj, "body") ?: ""
+    val title = text(obj, "title") ?: if (body.isNotEmpty()) "Oryn" else return null
+    val id = text(obj, "id") ?: ""
     val tag = text(obj, "tag") ?: tagFor(path, id)
     val kind = text(obj, "kind") ?: ""
     val actions = if (kind == "input" && id.isNotEmpty()) actions(obj.optJSONArray("actions")) else emptyList()

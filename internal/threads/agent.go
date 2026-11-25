@@ -825,6 +825,7 @@ func (s *Service) onFrame(ctx context.Context, t *thread, orbID string, line []b
 		if title := cleanTitle(derefStr(x.Title)); title != "" {
 			if n, err := s.st.Q.SetThreadAutoTitle(ctx, db.SetThreadAutoTitleParams{Title: title, UpdatedAt: s.now(), ID: t.id}); err == nil && n > 0 {
 				s.publish(ctx, t.id)
+				notifyTitle(s.observer(), t.id)
 			}
 			s.adoptProjectIcon(ctx, t.id, title)
 		}

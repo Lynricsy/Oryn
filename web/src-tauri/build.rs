@@ -29,7 +29,7 @@ fn main() {
             "host_share_ack",
             "host_set_chrome",
             "host_open_notification_settings",
-            // 下沉侧栏的根滚动跟随与原生底栏：只有 iOS 26+ 真正实现
+            "host_sync_assistant_avatar",
             "host_tab_bar_set",
             "host_tab_bar_cover",
             "host_sink_set",

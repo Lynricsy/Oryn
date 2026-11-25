@@ -52,6 +52,7 @@ const MOBILE_HOST_PERMISSIONS: &[&str] = &[
     "allow-host-share-ack",
     "allow-host-set-chrome",
     "allow-host-open-notification-settings",
+    "allow-host-sync-assistant-avatar",
     "allow-host-tab-bar-set",
     "allow-host-tab-bar-cover",
     "allow-host-sink-set",
@@ -436,7 +437,7 @@ mod tests {
             &Url::parse("https://tauri.localhost/").unwrap()
         ));
         assert_eq!(DESKTOP_HOST_PERMISSIONS.len(), 11);
-        assert_eq!(MOBILE_HOST_PERMISSIONS.len(), 22);
+        assert_eq!(MOBILE_HOST_PERMISSIONS.len(), 23);
     }
 
     /// 两个平台的远程权限都对应 `build.rs` 里声明的命令；移动端连接页能力只在移动平台生效、

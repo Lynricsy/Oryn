@@ -28,6 +28,11 @@ type Observer interface {
 	EntriesAppended(threadID string)
 }
 
+// TitleObserver 是 Observer 的可选扩展：线程自动标题写入库后调用，供 notify 立即唤醒正在等标题的完成通知。
+type TitleObserver interface {
+	TitleUpdated(threadID string)
+}
+
 // StateEvent 是一次线程状态变化。Reason 只在 State == error 时可能非空（所在 orb 失败的原因，或 agent 没能启动的原因）。
 type StateEvent struct {
 	ThreadID, Prev, State, Reason string
@@ -90,6 +95,20 @@ func (l observerList) TurnEnded(ev TurnEvent) {
 func (l observerList) EntriesAppended(threadID string) {
 	for _, o := range l {
 		o.EntriesAppended(threadID)
+	}
+}
+
+func (l observerList) TitleUpdated(threadID string) {
+	for _, o := range l {
+		if to, ok := o.(TitleObserver); ok {
+			to.TitleUpdated(threadID)
+		}
+	}
+}
+
+func notifyTitle(o Observer, threadID string) {
+	if to, ok := o.(TitleObserver); ok {
+		to.TitleUpdated(threadID)
 	}
 }
 

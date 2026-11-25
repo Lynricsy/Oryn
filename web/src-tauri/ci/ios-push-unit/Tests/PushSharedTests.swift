@@ -69,13 +69,47 @@ final class PushSharedTests: XCTestCase {
     XCTAssertThrowsError(try WebPushDecrypt.open(Data(count: 20), privateKey: receiver(), auth: data(Self.auth)))
   }
 
-  /// 撤回消息与非站内路径都不展示（NSE 交付占位）。
-  func testParseRejectsNonNotifications() {
+  /// 撤回消息、非站内路径、标题与正文皆空都不展示；标题为空但有正文时标题回落 "Oryn"。
+  func testParseRejectsNonNotifications() throws {
     XCTAssertNil(PushContent.parse(Data(#"{"v":1,"kind":"withdraw","id":"ntf_1","tag":"oryn-x"}"#.utf8)))
     XCTAssertNil(PushContent.parse(Data(#"{"title":"t","url":"https://evil.example/"}"#.utf8)))
+    XCTAssertNil(PushContent.parse(Data(#"{"title":"","body":"","url":"/t/T-1"}"#.utf8)))
     XCTAssertNil(PushContent.parse(Data("not json".utf8)))
+    let fallback = try XCTUnwrap(
+      PushContent.parse(Data(#"{"v":1,"kind":"done","id":"ntf_2","title":"","body":"Hi!","url":"/t/T-1"}"#.utf8)))
+    XCTAssertEqual(fallback.title, "Oryn")
+    XCTAssertEqual(fallback.body, "Hi!")
+    XCTAssertEqual(fallback.path, "/t/T-1")
   }
 
+  /// 打包的 Symbols Nerd Font 能渲染线程图标，不再退回 Oryn 品牌标。
+  func testNerdGlyphRendersDistinctAvatar() throws {
+    let iconAvatar = NotifyAvatarArgs(kind: "thread", icon: "\u{F407}", color: nil, image: nil, hash: nil)
+    let brandAvatar = NotifyAvatarArgs(kind: "thread", icon: nil, color: nil, image: nil, hash: nil)
+    let iconPNG = try XCTUnwrap(NotificationAvatarRenderer.renderPNG(iconAvatar), "Nerd Font 头像应产出 PNG")
+    let brandPNG = try XCTUnwrap(NotificationAvatarRenderer.renderPNG(brandAvatar), "品牌标头像应产出 PNG")
+    XCTAssertNotEqual(iconPNG, brandPNG, "带 Nerd Font 线程图标时不应退回品牌标")
+  }
+
+  /// 主 App 同步全局助手自定义图片后，NSE 仅凭服务端同算法 8 位 hash 即可从共享 Keychain 命中同一张图。
+  func testAssistantAvatarCacheRoundTrip() throws {
+    NotificationAvatarRenderer.clearAssistantAvatarCache()
+    defer { NotificationAvatarRenderer.clearAssistantAvatarCache() }
+    let sample = try XCTUnwrap(
+      NotificationAvatarRenderer.renderPNG(
+        NotifyAvatarArgs(kind: "thread", icon: "★", color: "blue", image: nil, hash: nil)))
+    let dataURL = "data:image/png;base64," + sample.base64EncodedString()
+    NotificationAvatarRenderer.syncAssistantAvatar(icon: nil, image: dataURL)
+    let hash = NotificationAvatarRenderer.avatarDigest(kind: "image", value: dataURL)
+    XCTAssertEqual(hash.count, 8)
+    let cached = try XCTUnwrap(
+      NotificationAvatarRenderer.renderPNG(
+        NotifyAvatarArgs(kind: "assistant", icon: nil, color: nil, image: nil, hash: hash)))
+    let sparkle = try XCTUnwrap(
+      NotificationAvatarRenderer.renderPNG(
+        NotifyAvatarArgs(kind: "assistant", icon: nil, color: nil, image: nil, hash: nil)))
+    XCTAssertNotEqual(cached, sparkle, "命中共享缓存后应返回自定义图片而非默认 sparkle")
+  }
   func testKeyStoreRoundTrip() throws {
     PushKeyStore.clear()
     defer { PushKeyStore.clear() }

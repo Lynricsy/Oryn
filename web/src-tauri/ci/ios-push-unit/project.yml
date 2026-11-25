@@ -24,6 +24,8 @@ targets:
       - path: Host
       # 与 NSE target（web/src-tauri/ios/project.yml）同一份源码；ios-push-unit.sh 把它拷到 Shared/
       - path: Shared
+      - path: Fonts
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lynricsy.oryn.pushunit.host

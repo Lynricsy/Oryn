@@ -368,8 +368,9 @@ export interface MobileHost {
 	shareAck(id: string): void;
 	setChrome(c: { dark: boolean; color: string }): void;
 	openNotificationSettings(): void;
+	/** 把全局助手自定义头像同步到原生共享缓存（供后台推送按 hash 零网络显示）。 */
+	syncAssistantAvatar(a: { icon?: string; image?: string }): void;
 	changeServer(): void;
-	/** 壳能按 `enablePush(transport)` 切换推送通道（bridge ≥ 9）。 */
 	pushTransport: boolean;
 	/** 下沉侧栏的根滚动跟随（iOS 且 bridge ≥ 8）；其它情况为 null，卡片用网页手势。 */
 	sink: NativeSinkHost | null;
@@ -668,6 +669,12 @@ function mobileHost(
 		},
 		openNotificationSettings: () => {
 			void call("host_open_notification_settings");
+		},
+		syncAssistantAvatar: ({ icon, image }) => {
+			void call("host_sync_assistant_avatar", {
+				icon: icon || null,
+				image: image || null,
+			});
 		},
 		changeServer: () => {
 			void call("host_change_server");

@@ -59,6 +59,7 @@ beforeEach(() => {
 		shareAck: vi.fn(),
 		setChrome: vi.fn(),
 		openNotificationSettings: vi.fn(),
+		syncAssistantAvatar: vi.fn(),
 		changeServer: vi.fn(),
 		pushTransport: true,
 		sink: null,

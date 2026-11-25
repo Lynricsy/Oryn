@@ -1,11 +1,12 @@
 // iOS 通知发送者 128×128 圆形头像绘制（与 Android NotificationAvatarRenderer 保持同一套视觉语言）：
 // - 前端预栅格化 PNG（全局助手自定义照片或 Nerd Font 线程图标）优先解码裁圆；
-// - 普通线程：按线程标题卡图标与线程色绘制，无图标时绘制 Oryn 品牌标；
-// - 全局助手（主线动态与助手对话线程）：自定义字形 / 默认四芒星 sparkle 标记；
+// - 普通线程：按线程标题卡图标（Emoji 或打包的 Symbols Nerd Font）与线程色绘制，无图标时绘制 Oryn 品牌标；
+// - 全局助手（主线动态与助手对话线程）：优先自定义图片（含主 App ↔ NSE 共享缓存），其次自定义字形，否则四芒星 sparkle 标记；
 // - 系统通知：深墨底白色 Oryn 品牌标。
+import CoreText
+import CryptoKit
 import Foundation
 import UIKit
-
 enum NotificationAvatarRenderer {
   private struct Palette {
     let background: UIColor
@@ -27,6 +28,66 @@ enum NotificationAvatarRenderer {
   private static let assistantPalette = Palette(background: rgb(0xE8EFFC), foreground: rgb(0x2B5CE6))
   private static let systemPalette = Palette(background: rgb(0x1F2430), foreground: .white)
   private static let avatarPx: CGFloat = 128
+  private static let assistantHashAccount = "assistant_avatar_hash"
+  private static let assistantImageAccount = "assistant_avatar_img"
+  private static let maxCachedAvatarBytes = 64 * 1024
+
+  /// 打包在主 App 与 NotificationService.appex 内的 Symbols Nerd Font Mono（CGDataProvider 按需 mmap，适配 NSE 内存限制）。
+  private static let nerdCGFont: CGFont? = {
+    guard let url = Bundle.main.url(forResource: "SymbolsNerdFontMono-Regular", withExtension: "ttf"),
+      let provider = CGDataProvider(url: url as CFURL)
+    else { return nil }
+    return CGFont(provider)
+  }()
+
+  /// 前台收到全局助手头像信息时更新共享 Keychain 缓存（128×128 圆形 PNG），供 NSE 后台推送按 hash 零网络复用。
+  static func cacheAssistantAvatar(_ avatar: NotifyAvatarArgs?) {
+    guard let avatar = avatar, avatar.kind == "assistant" else { return }
+    let hasIcon = avatar.icon.map { !$0.isEmpty } ?? false
+    let hasImage = avatar.image.map { !$0.isEmpty } ?? false
+    let hash = avatar.hash.flatMap { $0.isEmpty ? nil : $0 }
+    if !hasIcon && !hasImage && hash == nil {
+      clearAssistantAvatarCache()
+      return
+    }
+    guard let hash = hash, let raw = avatar.image, !raw.isEmpty else { return }
+    if let existing = PushKeyStore.readShared(assistantHashAccount),
+      String(data: existing, encoding: .utf8) == hash,
+      PushKeyStore.readShared(assistantImageAccount) != nil
+    {
+      return
+    }
+    guard let circle = decodeCircularImage(raw), let encoded = encodeCachedAvatar(circle) else { return }
+    if PushKeyStore.writeShared(assistantImageAccount, encoded) {
+      PushKeyStore.writeShared(assistantHashAccount, Data(hash.utf8))
+    }
+  }
+
+  static func clearAssistantAvatarCache() {
+    PushKeyStore.deleteShared(assistantHashAccount)
+    PushKeyStore.deleteShared(assistantImageAccount)
+  }
+
+  /// 由主 App 在拉取或保存全局助手身份后直接同步原始头像（计算与服务端一致的 8 位 SHA-256 摘要并裁圆存入共享 Keychain）。
+  static func syncAssistantAvatar(icon: String?, image: String?) {
+    guard let raw = image, !raw.isEmpty else {
+      clearAssistantAvatarCache()
+      return
+    }
+    let hash = avatarDigest(kind: "image", value: raw)
+    cacheAssistantAvatar(
+      NotifyAvatarArgs(kind: "assistant", icon: icon, color: nil, image: raw, hash: hash))
+  }
+
+  /// 与服务端 `internal/notify/avatar.go` 的 `avatarDigest` 保持字节级一致：`sha256(kind + "\0" + val)[:8]`。
+  static func avatarDigest(kind: String, value: String) -> String {
+    var data = Data()
+    data.append(contentsOf: kind.utf8)
+    data.append(0)
+    data.append(contentsOf: value.utf8)
+    let digest = SHA256.hash(data: data)
+    return digest.prefix(4).map { String(format: "%02x", $0) }.joined()
+  }
 
   static func renderPNG(_ avatar: NotifyAvatarArgs) -> Data? {
     if let base64 = avatar.image, !base64.isEmpty, let image = decodeCircularImage(base64) {
@@ -34,21 +95,27 @@ enum NotificationAvatarRenderer {
     }
     switch avatar.kind {
     case "assistant":
-      if let icon = avatar.icon, !icon.isEmpty, !isNerdGlyph(icon) {
-        return renderGlyphImage(icon, palette: assistantPalette).pngData()
+      if let icon = avatar.icon, !icon.isEmpty {
+        if let img = renderIconImage(icon, palette: assistantPalette) {
+          return img.pngData()
+        }
+      }
+      if let hash = avatar.hash, !hash.isEmpty, let cached = loadCachedAssistantAvatar(hash: hash) {
+        return cached
       }
       return renderSparkleImage(palette: assistantPalette).pngData()
     case "thread":
       let palette = avatar.color.flatMap { threadPalettes[$0] } ?? neutralPalette
-      if let icon = avatar.icon, !icon.isEmpty, !isNerdGlyph(icon) {
-        return renderGlyphImage(icon, palette: palette).pngData()
+      if let icon = avatar.icon, !icon.isEmpty {
+        if let img = renderIconImage(icon, palette: palette) {
+          return img.pngData()
+        }
       }
       return renderBrandMarkImage(palette: palette).pngData()
     default:
       return renderBrandMarkImage(palette: systemPalette).pngData()
     }
   }
-
   static func isNerdGlyph(_ icon: String) -> Bool {
     guard let scalar = icon.unicodeScalars.first else { return false }
     let value = scalar.value
@@ -98,6 +165,70 @@ enum NotificationAvatarRenderer {
     }
   }
 
+  private static func loadCachedAssistantAvatar(hash: String) -> Data? {
+    guard let savedHash = PushKeyStore.readShared(assistantHashAccount),
+      String(data: savedHash, encoding: .utf8) == hash
+    else { return nil }
+    return PushKeyStore.readShared(assistantImageAccount)
+  }
+
+  private static func encodeCachedAvatar(_ image: UIImage) -> Data? {
+    if let png = image.pngData(), png.count <= maxCachedAvatarBytes {
+      return png
+    }
+    if let jpg = image.jpegData(compressionQuality: 0.85), jpg.count <= maxCachedAvatarBytes {
+      return jpg
+    }
+    return nil
+  }
+
+  private static func renderIconImage(_ icon: String, palette: Palette) -> UIImage? {
+    if isNerdGlyph(icon) {
+      return renderNerdGlyphImage(icon, palette: palette)
+    }
+    return renderGlyphImage(icon, palette: palette)
+  }
+
+  /// 使用打包的 Symbols Nerd Font 绘制 PUA 字形并按真实墨迹边界居中；缺字体或缺字形时返回 nil 以安全回落，绝不画豆腐块。
+  private static func renderNerdGlyphImage(_ glyph: String, palette: Palette) -> UIImage? {
+    guard let cgFont = nerdCGFont else { return nil }
+    let ctFont = CTFontCreateWithGraphicsFont(cgFont, avatarPx * 0.56, nil, nil)
+    var chars = Array(glyph.utf16)
+    guard !chars.isEmpty else { return nil }
+    var glyphs = [CGGlyph](repeating: 0, count: chars.count)
+    guard CTFontGetGlyphsForCharacters(ctFont, &chars, &glyphs, chars.count),
+      glyphs.contains(where: { $0 != 0 })
+    else { return nil }
+
+    let attrs: [NSAttributedString.Key: Any] = [
+      NSAttributedString.Key(kCTFontAttributeName as String): ctFont,
+      NSAttributedString.Key(kCTForegroundColorAttributeName as String): palette.foreground.cgColor
+    ]
+    let line = CTLineCreateWithAttributedString(NSAttributedString(string: glyph, attributes: attrs))
+    var drew = false
+    let img = renderer().image { ctx in
+      let rect = CGRect(x: 0, y: 0, width: avatarPx, height: avatarPx)
+      palette.background.setFill()
+      UIBezierPath(ovalIn: rect).fill()
+
+      let cg = ctx.cgContext
+      cg.saveGState()
+      cg.textMatrix = .identity
+      cg.translateBy(x: 0, y: avatarPx)
+      cg.scaleBy(x: 1, y: -1)
+      let bounds = CTLineGetImageBounds(line, cg)
+      if !bounds.isEmpty && bounds.width > 0 && bounds.height > 0 {
+        let x = (avatarPx - bounds.width) / 2 - bounds.origin.x
+        let y = (avatarPx - bounds.height) / 2 - bounds.origin.y
+        cg.textPosition = CGPoint(x: x, y: y)
+        CTLineDraw(line, cg)
+        drew = true
+      }
+      cg.restoreGState()
+    }
+    return drew ? img : nil
+  }
+
   private static func renderGlyphImage(_ glyph: String, palette: Palette) -> UIImage {
     renderer().image { _ in
       let rect = CGRect(x: 0, y: 0, width: avatarPx, height: avatarPx)
@@ -112,7 +243,6 @@ enum NotificationAvatarRenderer {
       text.draw(at: CGPoint(x: (avatarPx - size.width) / 2, y: (avatarPx - size.height) / 2))
     }
   }
-
   private static func renderSparkleImage(palette: Palette) -> UIImage {
     renderer().image { _ in
       let rect = CGRect(x: 0, y: 0, width: avatarPx, height: avatarPx)

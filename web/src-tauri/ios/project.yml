@@ -37,6 +37,8 @@ targets:
     sources:
       - path: ../../ios/NotificationService
       - path: ../../plugins/oryn-mobile/ios/Sources/Shared
+      - path: ../../plugins/oryn-mobile/android/src/main/assets/fonts/SymbolsNerdFontMono-Regular.ttf
+        buildPhase: resources
     configFiles:
       debug: ../../ios/NotificationService/Signing.xcconfig
       release: ../../ios/NotificationService/Signing.xcconfig
@@ -83,6 +85,8 @@ targets:
       {{~#each ios-additional-targets}}
       - path: {{prefix-path this}}{{/each}}
       - path: LaunchScreen.storyboard
+      - path: ../../plugins/oryn-mobile/android/src/main/assets/fonts/SymbolsNerdFontMono-Regular.ttf
+        buildPhase: resources
     info:
       path: {{app.name}}_iOS/Info.plist
       properties:

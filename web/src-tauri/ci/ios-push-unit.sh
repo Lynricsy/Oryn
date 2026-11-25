@@ -27,8 +27,9 @@ pick=$(pick_iphone)
 udid=$(jq -r .udid <<<"$pick")
 
 cp -R "$here/ios-push-unit" "$work/proj"
-mkdir -p "$work/proj/Shared" "$work/proj/Fixtures"
+mkdir -p "$work/proj/Shared" "$work/proj/Fixtures" "$work/proj/Fonts"
 cp "$shared"/*.swift "$work/proj/Shared/"
+cp "$here/../plugins/oryn-mobile/android/src/main/assets/fonts/SymbolsNerdFontMono-Regular.ttf" "$work/proj/Fonts/"
 cp "$here/ios-push/notify.apns" "$work/proj/Fixtures/"
 (cd "$work/proj" && xcodegen generate --quiet)
 

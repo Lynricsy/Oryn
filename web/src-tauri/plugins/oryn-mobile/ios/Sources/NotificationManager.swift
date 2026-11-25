@@ -176,6 +176,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     args: NotifyArgs,
     completion: @escaping (NotifyOut) -> Void
   ) {
+    NotificationAvatarRenderer.cacheAssistantAvatar(args.avatar)
     let tag = PushContent.tagFor(path: args.path, id: args.id)
     let content = PushContent.build(
       PushMessage(id: args.id, title: args.title, body: args.body, path: args.path, tag: tag, avatar: args.avatar))

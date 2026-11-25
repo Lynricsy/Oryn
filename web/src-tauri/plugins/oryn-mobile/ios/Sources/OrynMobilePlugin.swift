@@ -35,6 +35,11 @@ struct AppIconOut: Encodable {
   let current: String?
 }
 
+struct AssistantAvatarSyncArgs: Decodable {
+  let icon: String?
+  let image: String?
+}
+
 class OrynMobilePlugin: Plugin {
   private weak var webview: WKWebView?
   /// `TabBarOverlay`（iOS 26+）；按 AnyObject 存，存储属性不能带可用性标注。只在主线程读写。
@@ -271,6 +276,13 @@ class OrynMobilePlugin: Plugin {
   /// 打开系统设置里的本应用通知设置页。
   @objc public func openNotificationSettings(_ invoke: Invoke) {
     NotificationManager.shared.openSettings()
+    invoke.resolve()
+  }
+
+  /// 同步全局助手头像到共享 Keychain 缓存，供 NSE 后台推送按 hash 命中显示自定义头像。
+  @objc public func syncAssistantAvatar(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(AssistantAvatarSyncArgs.self)
+    NotificationAvatarRenderer.syncAssistantAvatar(icon: args.icon, image: args.image)
     invoke.resolve()
   }
 

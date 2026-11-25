@@ -231,7 +231,7 @@ self.addEventListener("push", (event) => {
 				if (apps.some((x) => x.reply.toasts === true)) return;
 			}
 			await self.registration.showNotification(
-				d.title ?? "Oryn",
+				d.title || "Oryn",
 				notificationOptions({
 					body: d.body ?? "",
 					tag: d.tag,

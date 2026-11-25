@@ -129,7 +129,9 @@ var (
 // displayTitle 返回消息标题：线程标题为空时用渠道语言的「未命名线程」；卡片的 Nerd 字形图标去掉（渠道没有该字体）。
 func displayTitle(m Message) string {
 	if m.Title != "" {
-		return glyph.WithoutNerdIcon(m.Title)
+		if clean := strings.TrimSpace(glyph.WithoutNerdIcon(m.Title)); clean != "" {
+			return clean
+		}
 	}
 	if m.Kind == KindTest {
 		return text(m.Locale, "testTitle")

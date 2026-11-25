@@ -530,6 +530,7 @@ describe("设置 → 桌面壳（M6）/ 移动壳（M7）", () => {
 			shareAck: vi.fn(),
 			setChrome: vi.fn(),
 			openNotificationSettings: vi.fn(),
+			syncAssistantAvatar: vi.fn(),
 			changeServer: vi.fn(),
 			pushTransport: false,
 			sink: null,

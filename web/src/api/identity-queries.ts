@@ -14,8 +14,8 @@ import {
 } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { agentDefaultGlyph } from "../lib/avatar-defaults";
+import { host } from "../lib/host";
 import { api, type Schemas, unwrap } from "./client";
-
 export type IdentityOwner = "agent" | "assistant" | "user";
 
 export const identityKeys = {
@@ -52,8 +52,13 @@ export function getCachedAssistantAvatar(): AvatarIdentity | undefined {
 
 export function setCachedAssistantAvatar(v: AvatarIdentity | undefined): void {
 	cachedAssistantAvatar = v ? avatarOf(v) : undefined;
+	if (v !== undefined) {
+		host.mobile?.syncAssistantAvatar?.({
+			icon: cachedAssistantAvatar?.avatarIcon,
+			image: cachedAssistantAvatar?.avatarImage,
+		});
+	}
 }
-
 async function fetchIdentity(who: IdentityOwner): Promise<AgentIdentity> {
 	switch (who) {
 		case "agent":

@@ -252,6 +252,37 @@ pub async fn host_open_notification_settings(
     Ok(())
 }
 
+/// 同步全局助手头像到原生共享缓存（iOS 共享 Keychain / Android cacheDir），供后台推送按 8 位 hash 零网络命中。
+#[tauri::command]
+pub async fn host_sync_assistant_avatar(
+    app: AppHandle,
+    m: State<'_, Arc<MobileRt>>,
+    icon: Option<String>,
+    image: Option<String>,
+) -> Res<()> {
+    let icon = icon.filter(|s| !s.is_empty() && s.len() <= 64);
+    let image = image.filter(|s| !s.is_empty() && s.len() <= 256 * 1024);
+    let args = tauri_plugin_oryn_mobile::AssistantAvatarSyncArgs { icon, image };
+    #[cfg(target_os = "android")]
+    {
+        let _ = app;
+        m.core
+            .native()
+            .0
+            .sync_assistant_avatar(&args)
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "ios")]
+    {
+        let _ = &m;
+        let plugin = ios::plugin(&app).ok_or("unsupported")?;
+        plugin
+            .sync_assistant_avatar(&args)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// 原生底栏（iOS 26+）：整份状态；`null` 撤掉。其它平台与更低系统版本返回 `unsupported`，页面继续用网页底栏。
 /// 非空 spec 要等本页 `host_sink_set(true)` 生效后才接受（bridge 8）：旧网页按 bridge 7 的语义直接 set，
 /// 在这里被拒，走它已有的「set 被拒 → 网页底栏」路径。

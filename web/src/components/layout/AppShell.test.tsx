@@ -397,6 +397,7 @@ describe("移动壳里（M7）", () => {
 			shareAck: vi.fn(),
 			setChrome: vi.fn(),
 			openNotificationSettings: vi.fn(),
+			syncAssistantAvatar: vi.fn(),
 			changeServer: vi.fn(),
 			pushTransport: false,
 			sink: null,

@@ -197,6 +197,8 @@ pub fn run() {
             #[cfg(mobile)]
             mobile::host_open_notification_settings,
             #[cfg(mobile)]
+            mobile::host_sync_assistant_avatar,
+            #[cfg(mobile)]
             mobile::host_tab_bar_set,
             #[cfg(mobile)]
             mobile::host_tab_bar_cover,

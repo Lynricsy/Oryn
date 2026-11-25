@@ -54,6 +54,12 @@ class NotifyArgs {
 }
 
 @InvokeArg
+class AssistantAvatarSyncArgs {
+  var icon: String? = null
+  var image: String? = null
+}
+
+@InvokeArg
 class PushEnableArgs {
   var vapid: String? = null
   /** `default`（gms 包走 FCM、foss 包走 UnifiedPush）或 `unifiedpush`（gms 包手动切换）。 */
@@ -313,6 +319,20 @@ class OrynMobilePlugin(initial: Activity) : Plugin(initial) {
     o.put("posted", reason == null)
     if (reason != null) o.put("reason", reason)
     invoke.resolve(o)
+  }
+
+  @Command
+  fun syncAssistantAvatar(invoke: Invoke) {
+    val a = invoke.parseArgs(AssistantAvatarSyncArgs::class.java)
+    NotificationAvatarRenderer.updateAssistantCache(
+      activity,
+      PushPayload.Avatar(
+        kind = PushPayload.AVATAR_ASSISTANT,
+        icon = a.icon?.takeIf { it.isNotEmpty() },
+        image = a.image?.takeIf { it.isNotEmpty() },
+      ),
+    )
+    invoke.resolve()
   }
 
   @Command

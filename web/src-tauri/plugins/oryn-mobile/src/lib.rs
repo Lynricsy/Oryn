@@ -139,6 +139,10 @@ mod native {
         pub fn notify(&self, args: &NotifyArgs) -> Result<NotifyResult> {
             self.run("notify", args)
         }
+        pub fn sync_assistant_avatar(&self, args: &AssistantAvatarSyncArgs) -> Result<()> {
+            self.call("syncAssistantAvatar", args)
+        }
+
 
         pub fn open_notification_settings(&self) -> Result<()> {
             self.call("openNotificationSettings", ())

@@ -572,6 +572,16 @@ pub struct NotifyResult {
     pub reason: Option<String>,
 }
 
+/// `syncAssistantAvatar` 的参数（主 App 在拉取或保存全局助手身份后同步给原生通知缓存，供后台推送按 hash 命中）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssistantAvatarSyncArgs {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

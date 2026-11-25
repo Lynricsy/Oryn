@@ -78,8 +78,10 @@ class PushPayloadTest {
   }
 
   @Test
-  fun rejectsMissingTitle() {
-    assertNull(parse("""{"id":"n1","body":"b","url":"/t/$thread"}"""))
+  fun fallsBackOrRejectsMissingTitle() {
+    // 标题缺失/为空但有正文时兜底为 "Oryn"，不静默丢弃有效通知；标题与正文皆空时拒收
+    assertEquals("Oryn", parse("""{"id":"n1","body":"b","url":"/t/$thread"}""")?.title)
+    assertEquals("Oryn", parse("""{"id":"n1","title":"","body":"b","url":"/t/$thread"}""")?.title)
     assertNull(parse("""{"id":"n1","title":"","url":"/t/$thread"}"""))
     assertNull(parse("""{"id":"n1","title":null,"url":"/t/$thread"}"""))
   }
