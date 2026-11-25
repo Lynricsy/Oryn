@@ -272,13 +272,14 @@ func TestCoordinatorAgentStart(t *testing.T) {
 	webOverlay := filepath.Join(rt.home, ".oryn", "coordinator", "overlay-web.yml")
 	assert.Equal(t, []string{
 		"--mode", "rpc-ui", "--cwd", cwd, "--session-dir", filepath.Join(rt.home, ".oryn", "threads", thread2),
-		"--no-tools", "--tools", "read,write,web_search,generate_image", "--allow-mcp", "--skills", "oryn", "--no-extensions", "--no-rules", "--no-context-files", "--no-lsp",
+		"--no-tools", "--tools", "read,write,web_search,generate_image", "--skills", "oryn", "--no-extensions", "--no-rules", "--no-context-files", "--no-lsp",
 		"--config", webOverlay, "--system-prompt", filepath.Join(rt.home, ".oryn", "coordinator", "prompts", thread2+".md"),
 	}, rec.Args)
 	egress := "http://" + rt.egressLn.Addr().String()
 	assert.Equal(t, egress, rec.Env["PI_PROXY"])
 	assert.Equal(t, egress, rec.Env["ORYN_MCP_BASE"])
 	assert.Equal(t, mcpTok, rec.Env["ORYN_MCP_TOKEN"])
+	assert.Equal(t, "1", rec.Env["ORYN_ALLOW_RESTRICTED_MCP"])
 	for _, a := range rec.Args {
 		assert.NotContains(t, a, mcpTok, "凭据不进 argv")
 	}
@@ -341,13 +342,13 @@ func TestCoordinatorAgentSpecVariants(t *testing.T) {
 		},
 		{
 			name: "omitted (web)", p: params("", true, &tok),
-			args: argv([]string{"--tools", "read,write,web_search,generate_image", "--allow-mcp"}, []string{"--skills", "oryn"}, "overlay-web.yml"), overlay: "overlay-web.yml",
-			overlayBody: coordinatorOverlay(true, ""), env: map[string]string{"PI_PROXY": egress, "ORYN_MCP_BASE": egress, "ORYN_MCP_TOKEN": tok},
+			args: argv([]string{"--tools", "read,write,web_search,generate_image"}, []string{"--skills", "oryn"}, "overlay-web.yml"), overlay: "overlay-web.yml",
+			overlayBody: coordinatorOverlay(true, ""), env: map[string]string{"PI_PROXY": egress, "ORYN_MCP_BASE": egress, "ORYN_MCP_TOKEN": tok, "ORYN_ALLOW_RESTRICTED_MCP": "1"},
 		},
 		{
 			name: "omitted (web, no token)", p: params("", true, nil),
-			args: argv([]string{"--tools", "read,write,web_search,generate_image", "--allow-mcp"}, []string{"--skills", "oryn"}, "overlay-web.yml"), overlay: "overlay-web.yml",
-			overlayBody: coordinatorOverlay(true, ""), env: map[string]string{"PI_PROXY": egress, "ORYN_MCP_BASE": egress},
+			args: argv([]string{"--tools", "read,write,web_search,generate_image"}, []string{"--skills", "oryn"}, "overlay-web.yml"), overlay: "overlay-web.yml",
+			overlayBody: coordinatorOverlay(true, ""), env: map[string]string{"PI_PROXY": egress, "ORYN_MCP_BASE": egress, "ORYN_ALLOW_RESTRICTED_MCP": "1"},
 		},
 		{
 			name: "research_web", p: params(apigen.AgentVariantResearchWeb, false, &tok), variant: "research_web",
@@ -357,17 +358,17 @@ func TestCoordinatorAgentSpecVariants(t *testing.T) {
 		},
 		{
 			name: "research_private", p: params(apigen.AgentVariantResearchPrivate, false, &tok), variant: "research_private",
-			args: argv([]string{"--allow-mcp"}, []string{"--no-skills"}, "overlay-research-private.yml"), overlay: "overlay-research-private.yml",
+			args: argv(nil, []string{"--no-skills"}, "overlay-research-private.yml"), overlay: "overlay-research-private.yml",
 			overlayBody: strings.Replace(coordinatorOverlay(false, ""), "mcp: { enableProjectConfig: false }",
 				"mcp: { enableProjectConfig: false, shared: false, startupTimeoutMs: 0 }", 1) + "prompt: { fileMentions: false }\n",
-			env: map[string]string{"ORYN_MCP_BASE": egress, "ORYN_MCP_TOKEN": tok},
+			env: map[string]string{"ORYN_MCP_BASE": egress, "ORYN_MCP_TOKEN": tok, "ORYN_ALLOW_RESTRICTED_MCP": "1"},
 		},
 		{
 			name: "research_private without token", p: params(apigen.AgentVariantResearchPrivate, false, nil), variant: "research_private",
-			args: argv([]string{"--allow-mcp"}, []string{"--no-skills"}, "overlay-research-private.yml"), overlay: "overlay-research-private.yml",
+			args: argv(nil, []string{"--no-skills"}, "overlay-research-private.yml"), overlay: "overlay-research-private.yml",
 			overlayBody: strings.Replace(coordinatorOverlay(false, ""), "mcp: { enableProjectConfig: false }",
 				"mcp: { enableProjectConfig: false, shared: false, startupTimeoutMs: 0 }", 1) + "prompt: { fileMentions: false }\n",
-			env: map[string]string{},
+			env: map[string]string{"ORYN_ALLOW_RESTRICTED_MCP": "1"},
 		},
 		{
 			name: "main_restricted", p: params(apigen.AgentVariantMainRestricted, false, &tok), variant: "main_restricted",
@@ -382,7 +383,7 @@ func TestCoordinatorAgentSpecVariants(t *testing.T) {
 			assert.Equal(t, tc.args, args)
 			assert.Equal(t, cwd, gotCwd)
 			assert.Equal(t, tc.variant, variant)
-			for _, k := range []string{"PI_PROXY", "ORYN_MCP_BASE", "ORYN_MCP_TOKEN"} {
+			for _, k := range []string{"PI_PROXY", "ORYN_MCP_BASE", "ORYN_MCP_TOKEN", "ORYN_ALLOW_RESTRICTED_MCP"} {
 				want, ok := tc.env[k]
 				got, has := env[k]
 				assert.Equal(t, ok, has, "%s present", k)

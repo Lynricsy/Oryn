@@ -178,10 +178,6 @@ func (r *Runtime) coordinatorAgentSpec(p apigen.LinkCtlAgentStartParams, dir str
 	if mode.tools != "" {
 		args = append(args, "--tools", mode.tools)
 	}
-	if mode.mcp {
-		// Core 19.2.0 起 --no-tools 默认一并关闭 MCP；全局助手与私有研究员需要按 --allow-mcp 显式放行 MCP。
-		args = append(args, "--allow-mcp")
-	}
 	args = append(args, skills...)
 	args = append(args, "--no-extensions", "--no-rules", "--no-context-files", "--no-lsp",
 		"--config", overlay, "--system-prompt", promptFile)
@@ -199,7 +195,10 @@ func (r *Runtime) coordinatorAgentSpec(p apigen.LinkCtlAgentStartParams, dir str
 		"ORYN_NERD_GLYPHS": "1",
 		"ORYN_THREAD_ID":   p.ThreadID,
 	}
-	// 出站（M19，只给全局助手）：omp 的全局 fetch 经 PI_PROXY 走 orynd 的正向代理（https 用 CONNECT），回环与内网地址
+	if mode.mcp {
+		// Core 19.2.0 起 --no-tools 默认一并关闭 MCP；用环境变量显式放行（旧版 19.0.1 Core 静默忽略，不会因未知 CLI flag 退出）。
+		env["ORYN_ALLOW_RESTRICTED_MCP"] = "1"
+	}
 	// 由 omp 直连（沙箱里只有回环 7811 连得通）；是否放行、放行哪些目标由控制面的出站策略决定。MCP 的地址前缀与凭据
 	// 也只给全局助手（mcp.json 里是 ${ORYN_MCP_BASE}/mcp/m<i> 与 X-Oryn-MCP-Token: ${ORYN_MCP_TOKEN}，出站代理核对凭据）。
 	// Space 协调者都没有：连不到公网、用不了 MCP（D10）。M26：公网研究员只有 PI_PROXY；私有研究员只在带了凭据时
