@@ -6,6 +6,7 @@
  *   空闲时输入框里有字，Esc 不计入连按（不让一次误触 Esc 毁掉草稿）。
  * - `!cmd` = bash；`!!cmd` = bash 且不进上下文；`/` 开头 = 斜杠命令。
  */
+import { isImeKeyEvent } from "./ime";
 
 export type ComposerAction =
 	| "prompt"
@@ -24,6 +25,8 @@ export interface KeyLike {
 	metaKey?: boolean;
 	altKey?: boolean;
 	isComposing?: boolean;
+	keyCode?: number;
+	which?: number;
 }
 
 export const DOUBLE_ESC_MS = 500;
@@ -42,7 +45,7 @@ export function composerKeyAction(
 	/** 输入框没有文字（空闲时 Esc Esc 回退的前提） */
 	empty = false,
 ): KeyDecision {
-	if (e.isComposing) return { action: "none", escAt: null };
+	if (isImeKeyEvent(e)) return { action: "none", escAt: null };
 	if (e.key === "Escape") {
 		if (!busy && !empty) return { action: "none", escAt: null };
 		if (lastEscAt !== null && now - lastEscAt <= DOUBLE_ESC_MS)

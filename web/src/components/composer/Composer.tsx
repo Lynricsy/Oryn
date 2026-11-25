@@ -25,6 +25,7 @@ import { chatModels, fetchModelCatalog } from "../../api/model-catalog-queries";
 import { selectionPrompt } from "../../lib/artifacts/prompt";
 import { composerKeyAction, parseComposerInput } from "../../lib/composer";
 import { predictionView } from "../../lib/composer-prediction";
+import { useImeComposition } from "../../lib/ime";
 import { selectModel } from "../../lib/model-select";
 import { composeQuoted } from "../../lib/quote";
 import {
@@ -174,7 +175,7 @@ export const Composer = memo(function Composer({
 		},
 		onAttached: (a) => att.addUploaded([a]),
 	});
-	const [composing, setComposing] = useState(false);
+	const ime = useImeComposition();
 	/** 最近一次从预测插入的文本（轮换用）；之后的任何其他编辑都清掉它。 */
 	const [inserted, setInserted] = useState<string | null>(null);
 	const ghostRef = useRef<HTMLDivElement>(null);
@@ -188,7 +189,7 @@ export const Composer = memo(function Composer({
 			!disabled &&
 			!busy &&
 			!inFlight &&
-			!composing &&
+			!ime.composing &&
 			!menuOpen &&
 			!refMenu.open,
 		inserted,
@@ -198,7 +199,7 @@ export const Composer = memo(function Composer({
 	const argHint =
 		!ghost &&
 		!disabled &&
-		!composing &&
+		!ime.composing &&
 		caret >= text.length &&
 		!text.includes("\n")
 			? menu?.inlineHint
@@ -673,6 +674,7 @@ export const Composer = memo(function Composer({
 	};
 
 	const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+		if (ime.shouldIgnoreKeyDown(e)) return;
 		if (refMenu.onKeyDown(e)) return;
 		if (menuOpen && entries.length > 0) {
 			if (e.key === "ArrowDown") {
@@ -843,10 +845,14 @@ export const Composer = memo(function Composer({
 						setInserted(null);
 					}}
 					onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
-					onKeyUp={(e) => setCaret(e.currentTarget.selectionStart)}
+					onKeyUp={(e) => {
+						ime.onKeyUp(e);
+						setCaret(e.currentTarget.selectionStart);
+					}}
 					onKeyDown={onKeyDown}
-					onCompositionStart={() => setComposing(true)}
-					onCompositionEnd={() => setComposing(false)}
+					onCompositionStart={ime.onCompositionStart}
+					onCompositionEnd={ime.onCompositionEnd}
+					onBlur={ime.onBlur}
 					onScroll={(e) => {
 						if (ghostRef.current)
 							ghostRef.current.scrollTop = e.currentTarget.scrollTop;

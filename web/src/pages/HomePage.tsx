@@ -100,6 +100,7 @@ import {
 } from "../components/ui/primitives";
 import { releaseSplash } from "../lib/boot-splash";
 import { formatMemoryMB } from "../lib/format";
+import { useImeComposition } from "../lib/ime";
 import {
 	useHeaderCover,
 	useHeaderTheme,
@@ -499,6 +500,8 @@ export function HomePage(): ReactNode {
 			? `transition-[opacity,translate] duration-300 ease-out starting:translate-y-2 ${fade ? "starting:opacity-0" : ""} ${delay}`
 			: "";
 
+	const ime = useImeComposition();
+
 	/** 发送当前输入：全局助手新建助手对话；其余新建线程，Profile 被占用时记下这次请求并弹冲突对话框。 */
 	const submit = async () => {
 		const text = prompt.trim();
@@ -820,7 +823,10 @@ export function HomePage(): ReactNode {
 										setCaret(e.target.selectionStart);
 									}}
 									onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
-									onKeyUp={(e) => setCaret(e.currentTarget.selectionStart)}
+									onKeyUp={(e) => {
+										ime.onKeyUp(e);
+										setCaret(e.currentTarget.selectionStart);
+									}}
 									onPaste={(e) => {
 										const files = [...e.clipboardData.files];
 										if (files.length > 0) {
@@ -828,13 +834,13 @@ export function HomePage(): ReactNode {
 											void att.addFiles(files);
 										}
 									}}
+									onCompositionStart={ime.onCompositionStart}
+									onCompositionEnd={ime.onCompositionEnd}
+									onBlur={ime.onBlur}
 									onKeyDown={(e) => {
+										if (ime.shouldIgnoreKeyDown(e)) return;
 										if (refMenu.onKeyDown(e)) return;
-										if (
-											e.key === "Enter" &&
-											!e.shiftKey &&
-											!e.nativeEvent.isComposing
-										) {
+										if (e.key === "Enter" && !e.shiftKey) {
 											e.preventDefault();
 											void submit();
 										}

@@ -531,3 +531,38 @@ describe("系统分享预填新建线程框", () => {
 		expect(shareIntakeStore.getState().pending).toBeNull();
 	});
 });
+
+describe("首页输入框中文输入法回车确认不误发送", () => {
+	it("compositionend 后补发的 keyCode=229 或同帧 Enter 不触发新建发送，确认后再次 Enter 才发送", async () => {
+		renderHome();
+		const el = screen.getByRole("textbox", {
+			name: i18n.t("newThread.prompt"),
+		}) as HTMLTextAreaElement;
+
+		// 场景 1：Safari/WKWebView 补发 keyCode=229
+		fireEvent.compositionStart(el);
+		fireEvent.change(el, { target: { value: "hello" } });
+		fireEvent.compositionEnd(el, { data: "hello" });
+		fireEvent.keyDown(el, { key: "Enter", keyCode: 229, isComposing: false });
+		await act(async () => {
+			await Promise.resolve();
+		});
+		expect(posts).toHaveLength(0);
+
+		// 场景 2：WebKitGTK / Linux IME 同帧补发 keyCode=13
+		fireEvent.compositionStart(el);
+		fireEvent.change(el, { target: { value: "hello world" } });
+		fireEvent.compositionEnd(el, { data: "hello world" });
+		fireEvent.keyDown(el, { key: "Enter", keyCode: 13, isComposing: false });
+		await act(async () => {
+			await Promise.resolve();
+		});
+		expect(posts).toHaveLength(0);
+
+		// 确认完成后再次按 Enter 应正常发送
+		fireEvent.keyDown(el, { key: "Enter", keyCode: 13 });
+		await waitFor(() => {
+			expect(posts.some((p) => p.path === "/api/v1/threads")).toBe(true);
+		});
+	});
+});

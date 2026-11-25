@@ -74,10 +74,29 @@ describe("输入区按键", () => {
 		).toBe("none");
 	});
 
-	it("输入法组字中不响应", () => {
+	it("输入法组字中与 Safari/WebKit 补发的 229 / Process 不响应", () => {
 		expect(
 			composerKeyAction({ ...enter, isComposing: true }, true, null, 0).action,
 		).toBe("none");
+		expect(
+			composerKeyAction(
+				{ ...enter, isComposing: false, keyCode: 229 },
+				false,
+				null,
+				0,
+			).action,
+		).toBe("none");
+		expect(
+			composerKeyAction(
+				{ ...enter, isComposing: false, which: 229 },
+				false,
+				null,
+				0,
+			).action,
+		).toBe("none");
+		expect(composerKeyAction({ key: "Process" }, false, null, 0).action).toBe(
+			"none",
+		);
 	});
 });
 

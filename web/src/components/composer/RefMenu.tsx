@@ -9,6 +9,7 @@ import { useTranslation } from "react-i18next";
 import type { Schemas } from "../../api/client";
 import { attachGitHubRef, useGitHubRefs } from "../../api/github-queries";
 import type { Attachment } from "../../lib/attachments";
+import { isImeKeyEvent } from "../../lib/ime";
 import { Icon } from "../ui/icons";
 
 type GitHubRef = Schemas["GitHubRef"];
@@ -79,7 +80,7 @@ export function useRefMenu(o: {
 	const dismiss = () => setDismissedAt(o.text);
 
 	const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-		if (!open || e.nativeEvent.isComposing) return false;
+		if (!open || isImeKeyEvent(e.nativeEvent)) return false;
 		if (e.key === "Escape") {
 			e.preventDefault();
 			dismiss();

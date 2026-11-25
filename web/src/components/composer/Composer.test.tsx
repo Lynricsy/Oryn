@@ -629,3 +629,78 @@ describe("agent 未就绪时发送：转录先显示「发送中」气泡", () =
 		expect(sending()).toHaveLength(0);
 	});
 });
+
+describe("中文输入法（IME）回车确认英文不误发送", () => {
+	beforeEach(() => {
+		cmd.mockReset();
+		resetThreadStores();
+		resetComposerDrafts();
+		getThreadStore(A).setState({ agentStatus: "ready" });
+	});
+
+	it("Safari / WKWebView：compositionend 后补发 keyCode=229 的 Enter 不发送，再次按 Enter 才发送", () => {
+		cmd.mockImplementation(() => new Promise(() => undefined));
+		wrap(<Composer threadId={A} />);
+		const el = box();
+		fireEvent.compositionStart(el);
+		type("hello");
+		fireEvent.compositionEnd(el, { data: "hello" });
+		fireEvent.keyDown(el, {
+			key: "Enter",
+			keyCode: 229,
+			isComposing: false,
+		});
+		expect(framesOf("prompt")).toHaveLength(0);
+		expect(el.value).toBe("hello");
+
+		fireEvent.keyUp(el, { key: "Enter" });
+		fireEvent.keyDown(el, { key: "Enter", keyCode: 13 });
+		expect(framesOf("prompt")).toMatchObject([{ message: "hello" }]);
+	});
+
+	it("WebKitGTK / Fcitx：compositionend 后同帧补发 keyCode=13 的 Enter 不发送且阻止换行，再次按 Enter 才发送", () => {
+		cmd.mockImplementation(() => new Promise(() => undefined));
+		wrap(<Composer threadId={A} />);
+		const el = box();
+		fireEvent.compositionStart(el);
+		type("hello");
+		fireEvent.compositionEnd(el, { data: "hello" });
+		const ev = new KeyboardEvent("keydown", {
+			key: "Enter",
+			keyCode: 13,
+			bubbles: true,
+			cancelable: true,
+		});
+		act(() => {
+			el.dispatchEvent(ev);
+		});
+		expect(framesOf("prompt")).toHaveLength(0);
+		expect(ev.defaultPrevented).toBe(true);
+
+		// 幽灵回车已消费，紧接着再按一次回车应正常发送
+		fireEvent.keyDown(el, { key: "Enter", keyCode: 13 });
+		expect(framesOf("prompt")).toMatchObject([{ message: "hello" }]);
+	});
+
+	it("compositionstart 之后、compositionend 之前即使 isComposing=false 也不发送", () => {
+		cmd.mockImplementation(() => new Promise(() => undefined));
+		wrap(<Composer threadId={A} />);
+		const el = box();
+		fireEvent.compositionStart(el);
+		type("hello");
+		fireEvent.keyDown(el, { key: "Enter", keyCode: 13, isComposing: false });
+		expect(framesOf("prompt")).toHaveLength(0);
+	});
+
+	it("空格选词上屏并松开空格后，立刻按 Enter 应正常发送", () => {
+		cmd.mockImplementation(() => new Promise(() => undefined));
+		wrap(<Composer threadId={A} />);
+		const el = box();
+		fireEvent.compositionStart(el);
+		type("你好");
+		fireEvent.compositionEnd(el, { data: "你好" });
+		fireEvent.keyUp(el, { key: " " });
+		fireEvent.keyDown(el, { key: "Enter", keyCode: 13 });
+		expect(framesOf("prompt")).toMatchObject([{ message: "你好" }]);
+	});
+});
