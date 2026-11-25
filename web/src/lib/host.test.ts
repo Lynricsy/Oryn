@@ -248,13 +248,21 @@ describe("移动壳（M7）", () => {
 		const emit = (detail: unknown) =>
 			target.dispatchEvent(new CustomEvent(HOST_EVENT, { detail }));
 		/** 在文档里放一个链接并点击；返回事件是否被阻止。 */
-		const click = (attrs: Record<string, string>) => {
+		const click = (
+			attrs: Record<string, string>,
+			evInit: MouseEventInit & { type?: "click" | "auxclick" } = {},
+		) => {
 			const a = doc.createElement("a");
 			for (const [k, v] of Object.entries(attrs)) a.setAttribute(k, v);
 			const span = doc.createElement("span");
 			a.append(span);
 			doc.body.append(a);
-			const ev = new MouseEvent("click", { bubbles: true, cancelable: true });
+			const { type = "click", ...init } = evInit;
+			const ev = new MouseEvent(type, {
+				bubbles: true,
+				cancelable: true,
+				...init,
+			});
 			span.dispatchEvent(ev);
 			a.remove();
 			return ev.defaultPrevented;
@@ -278,7 +286,7 @@ describe("移动壳（M7）", () => {
 		expect(createHost(fakeWindow().win).mobile).toBeNull();
 	});
 
-	it("_blank 与跨源链接改经 host_open_external；同源普通链接、download、锚点不拦", () => {
+	it("_blank 与跨源链接改经 host_open_external；同源普通链接、download、锚点不拦；旧壳不拦 mailto", () => {
 		const f = mobileWindow();
 		createHost(f.win);
 		expect(f.click({ href: "/docs", target: "_blank" })).toBe(true);
@@ -295,6 +303,51 @@ describe("移动壳（M7）", () => {
 		]);
 	});
 
+	it("桌面壳 bridge ≥ 11 统一接管 _blank / 跨源 / 修饰键 / 中键 / mailto / window.open", () => {
+		const f = mobileWindow({ platform: "macos", bridge: 11 });
+		const h = createHost(f.win);
+		expect(h.desktop).not.toBeNull();
+		expect(h.mobile).toBeNull();
+		expect(f.click({ href: "https://example.com/x", target: "_blank" })).toBe(
+			true,
+		);
+		expect(f.click({ href: "https://example.com/plain" })).toBe(true);
+		expect(f.click({ href: "/t/T-9" }, { metaKey: true })).toBe(true);
+		expect(f.click({ href: "/t/T-8" }, { type: "auxclick", button: 1 })).toBe(
+			true,
+		);
+		expect(f.click({ href: "mailto:hi@example.com" })).toBe(true);
+		expect(f.click({ href: "/t/T-2" })).toBe(false);
+		expect(
+			f.win.open("https://example.com/w", "_blank", "noopener"),
+		).toBeNull();
+		expect(f.invoke.mock.calls).toEqual([
+			["host_open_external", { url: "https://example.com/x" }],
+			["host_open_external", { url: "https://example.com/plain" }],
+			["host_open_external", { url: "http://localhost:7600/t/T-9" }],
+			["host_open_external", { url: "http://localhost:7600/t/T-8" }],
+			["host_open_external", { url: "mailto:hi@example.com" }],
+			["host_open_external", { url: "https://example.com/w" }],
+		]);
+	});
+
+	it("旧桌面壳（bridge ≤ 10）将无 _blank 的跨源链接改由 window.open 交旧壳 on_new_window", () => {
+		const f = mobileWindow({ platform: "linux", bridge: 10 });
+		createHost(f.win);
+		// 带 _blank 交由旧壳原生 on_new_window，不拦也不调未授权的 host_open_external
+		expect(f.click({ href: "https://example.com/a", target: "_blank" })).toBe(
+			false,
+		);
+		// 无 _blank 的跨源链接拦截并转为 window.open
+		expect(f.click({ href: "https://example.com/plain" })).toBe(true);
+		expect(f.win.open).toHaveBeenCalledWith(
+			"https://example.com/plain",
+			"_blank",
+			"noopener",
+		);
+		expect(f.invoke).not.toHaveBeenCalled();
+	});
+
 	it("window.open 改道到系统浏览器并返回 null", () => {
 		const f = mobileWindow();
 		createHost(f.win);
@@ -305,7 +358,6 @@ describe("移动壳（M7）", () => {
 			["host_open_external", { url: "http://localhost:7600/rel" }],
 		]);
 	});
-
 	it("share / mobile / insets 事件到回调；畸形与桌面壳上的同名事件被忽略", () => {
 		const f = mobileWindow();
 		const h = createHost(f.win);
@@ -496,8 +548,8 @@ describe("移动壳（M7）", () => {
 		const show: NativeHeaderShow = { alpha: 1, ms: 120 };
 		const menu: NativeHeaderMenu = { open: "title", page: "env" };
 
-		it("本页宿主协议版本为 10（全局助手头像共享缓存同步）", () => {
-			expect(BRIDGE).toBe(10);
+		it("本页宿主协议版本为 11（桌面端开放 host_open_external，全平台统一外链打开）", () => {
+			expect(BRIDGE).toBe(11);
 		});
 
 		it("syncAssistantAvatar 在 bridge 9 旧壳上静默跳过，bridge 10 正常下发 host_sync_assistant_avatar", () => {

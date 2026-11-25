@@ -410,9 +410,8 @@ export interface Host {
 	mobile: MobileHost | null;
 }
 
-/** 本页面实现的宿主协议版本（与壳 `host_ready` 返回的 `bridge` 对应；3 = 桌面自绘标题栏；4 = iOS 原生底栏；5 = iOS 原生页头；6 = iOS 可替换图标；7 = 原生底栏改系统 UITabBar；8 = 下沉侧栏改由根滚动驱动、原生按 contentOffset 跟随，原生底栏浮在 WebView 之上、右缘裁到卡片左缘，页头可只有侧栏钮；9 = 官方推送网关：`host_push_enable` 可带 `transport`，推送状态带 `alt`、通道含 `apns`、不再报 `unsupported`；10 = 移动端全局助手头像原生共享缓存同步 `host_sync_assistant_avatar`）。 */
-export const BRIDGE = 10;
-/** 壳向页面推送事件用的 DOM 事件名。 */
+/** 本页面实现的宿主协议版本（与壳 `host_ready` 返回的 `bridge` 对应；3 = 桌面自绘标题栏；4 = iOS 原生底栏；5 = iOS 原生页头；6 = iOS 可替换图标；7 = 原生底栏改系统 UITabBar；8 = 下沉侧栏改由根滚动驱动、原生按 contentOffset 跟随，原生底栏浮在 WebView 之上、右缘裁到卡片左缘，页头可只有侧栏钮；9 = 官方推送网关：`host_push_enable` 可带 `transport`，推送状态带 `alt`、通道含 `apns`、不再报 `unsupported`；10 = 移动端全局助手头像原生共享缓存同步 `host_sync_assistant_avatar`；11 = 桌面端开放 `host_open_external`、`host_open_external` 支持 `mailto:`/`tel:`，全平台统一外链打开）。 */
+export const BRIDGE = 11;
 export const HOST_EVENT = "oryn:host";
 
 export type Invoke = <T>(
@@ -593,8 +592,12 @@ function parseShare(v: unknown): ShareIntake | null {
 	};
 }
 
-/** 链接是否该交给系统浏览器：新窗口目标，或 http(s) 且跨源。 */
-export function externalHref(a: HTMLAnchorElement, win: Window): string | null {
+/** 链接是否该交给系统浏览器：新窗口目标、跨源 `http(s)`、修饰键/中键打开，或新壳（bridge ≥ 11）下的 `mailto:`/`tel:`。 */
+export function externalHref(
+	a: HTMLAnchorElement,
+	win: Window,
+	opts: { forceNew?: boolean; allowMailTel?: boolean } = {},
+): string | null {
 	const raw = a.getAttribute("href");
 	if (!raw || raw.startsWith("#")) return null;
 	let url: URL;
@@ -603,57 +606,127 @@ export function externalHref(a: HTMLAnchorElement, win: Window): string | null {
 	} catch {
 		return null;
 	}
+	if (
+		opts.allowMailTel &&
+		(url.protocol === "mailto:" || url.protocol === "tel:")
+	)
+		return url.href;
 	const web = url.protocol === "http:" || url.protocol === "https:";
 	if (!web) return null;
-	if (a.target === "_blank" || url.origin !== win.location.origin)
+	const target =
+		a.getAttribute("target") ??
+		a.ownerDocument?.querySelector("base[target]")?.getAttribute("target") ??
+		"";
+	if (
+		opts.forceNew ||
+		target === "_blank" ||
+		url.origin !== win.location.origin
+	)
 		return url.href;
 	return null;
 }
 
+/** 从鼠标事件定位最近的 `a[href]`（兼容 Shadow DOM 与 `Text` 节点 target）。 */
+function findEventAnchor(e: MouseEvent): HTMLAnchorElement | null {
+	if (typeof e.composedPath === "function") {
+		for (const n of e.composedPath()) {
+			if (
+				n &&
+				typeof n === "object" &&
+				"nodeType" in n &&
+				(n as Node).nodeType === 1 &&
+				(n as Element).tagName?.toUpperCase() === "A" &&
+				(n as Element).hasAttribute("href")
+			) {
+				return n as HTMLAnchorElement;
+			}
+		}
+	}
+	const t = e.target as Node | null;
+	const el = (t?.nodeType === 1 ? t : t?.parentElement) as Element | null;
+	return (el?.closest?.("a[href]") as HTMLAnchorElement | null) ?? null;
+}
+
 /**
- * 移动壳的宿主命令；构造时接管外链：捕获阶段的 `click`（`a[href]` 且新窗口或跨源 → 系统浏览器）与 `window.open`。
- * 同源普通链接与 `download` 链接不拦（后者由原生下载监听处理）。
+ * 接管主框架外链：捕获期 `click` + 中键 `auxclick`（`a[href]` 且新窗口、跨源或修饰键 → 系统浏览器）与 `window.open`。
+ * 同源普通左键链接与 `download` 链接不拦（前者走 SPA 路由，后者由原生下载监听处理）。
  */
-function mobileHost(
+function installExternalLinks(
 	win: Window,
-	invoke: Invoke,
-	call: <T>(
-		cmd: string,
-		args?: Record<string, unknown>,
-	) => Promise<T | undefined>,
-	native: boolean,
-	appIcon: boolean,
-	pushTransport: boolean,
-	syncAvatar: boolean,
-): MobileHost {
-	const openExternal = (url: string) => {
-		void call("host_open_external", { url });
+	openExternal: (url: string) => void,
+	allowMailTel: boolean,
+): void {
+	const onClick = (ev: Event) => {
+		const e = ev as MouseEvent;
+		if (e.defaultPrevented) return;
+		const aux = e.type === "auxclick";
+		if (aux ? e.button !== 1 : e.button !== 0) return;
+		const a = findEventAnchor(e);
+		if (!a || a.hasAttribute("download")) return;
+		const href = externalHref(a, win, {
+			forceNew: aux || e.ctrlKey || e.metaKey || e.shiftKey,
+			allowMailTel,
+		});
+		if (!href) return;
+		e.preventDefault();
+		openExternal(href);
 	};
-	win.document?.addEventListener(
-		"click",
-		(ev) => {
-			const e = ev as MouseEvent;
-			if (e.defaultPrevented || e.button !== 0) return;
-			const t = e.target as Element | null;
-			const a = t?.closest?.("a[href]") as HTMLAnchorElement | null;
-			if (!a || a.hasAttribute("download")) return;
-			const href = externalHref(a, win);
-			if (!href) return;
-			e.preventDefault();
-			openExternal(href);
-		},
-		true,
-	);
+	win.document?.addEventListener("click", onClick, true);
+	win.document?.addEventListener("auxclick", onClick, true);
 	win.open = ((u?: string | URL) => {
 		if (u !== undefined && u !== "") {
 			try {
-				openExternal(new URL(String(u), win.location.href).href);
+				const parsed = new URL(String(u), win.location.href);
+				const ok =
+					parsed.protocol === "http:" ||
+					parsed.protocol === "https:" ||
+					(allowMailTel &&
+						(parsed.protocol === "mailto:" || parsed.protocol === "tel:"));
+				if (ok) openExternal(parsed.href);
 			} catch {
 				// 非法地址：忽略
 			}
 		}
 		return null;
 	}) as Window["open"];
+}
+
+/**
+ * 旧桌面壳（bridge ≤ 10，没有 `host_open_external` 权限）的降级防护：
+ * 不抢占已带 `_blank` 的链接（继续走旧壳 `on_new_window`），但把无 `_blank` 的跨源 `http(s)` 链接改写为
+ * `window.open(href, "_blank", "noopener")`，避免直接在客户端主窗口内导航。
+ */
+function installLegacyDesktopCrossOriginGuard(win: Window): void {
+	win.document?.addEventListener(
+		"click",
+		(ev) => {
+			const e = ev as MouseEvent;
+			if (e.defaultPrevented || e.button !== 0) return;
+			const a = findEventAnchor(e);
+			if (!a || a.hasAttribute("download")) return;
+			if (a.getAttribute("target") === "_blank") return;
+			const href = externalHref(a, win);
+			if (!href) return;
+			e.preventDefault();
+			win.open(href, "_blank", "noopener");
+		},
+		true,
+	);
+}
+
+/** 移动壳的宿主命令；外链拦截由 `tauriHost` 统一安装。 */
+function mobileHost(
+	invoke: Invoke,
+	call: <T>(
+		cmd: string,
+		args?: Record<string, unknown>,
+	) => Promise<T | undefined>,
+	openExternal: (url: string) => void,
+	native: boolean,
+	appIcon: boolean,
+	pushTransport: boolean,
+	syncAvatar: boolean,
+): MobileHost {
 	return {
 		info: () => invoke<MobileInfo>("host_mobile_info"),
 		enablePush: (transport) =>
@@ -726,9 +799,9 @@ function tauriHost(win: Window, invoke: Invoke): Host {
 	const insets = listeners<[DeviceGeometry]>();
 	const tabBar = listeners<[string]>();
 	const header = listeners<[NativeHeaderEvent]>();
+	const bridge = meta?.bridge ?? 0;
 	const isMobile =
-		(platform === "android" || platform === "ios") && (meta?.bridge ?? 0) >= 2;
-
+		(platform === "android" || platform === "ios") && bridge >= 2;
 	const setVisible = (v: boolean) => {
 		if (v === visible) return;
 		visible = v;
@@ -778,6 +851,14 @@ function tauriHost(win: Window, invoke: Invoke): Host {
 			return undefined;
 		}
 	};
+	const openExternal = (url: string) => {
+		void call("host_open_external", { url });
+	};
+	if (isMobile || bridge >= 11) {
+		installExternalLinks(win, openExternal, bridge >= 11);
+	} else {
+		installLegacyDesktopCrossOriginGuard(win);
+	}
 
 	return {
 		kind: "tauri",
@@ -823,13 +904,13 @@ function tauriHost(win: Window, invoke: Invoke): Host {
 		onHeader: (cb) => header.add(cb),
 		mobile: isMobile
 			? mobileHost(
-					win,
 					invoke,
 					call,
-					platform === "ios" && (meta?.bridge ?? 0) >= 8,
-					platform === "ios" && (meta?.bridge ?? 0) >= 6,
-					(meta?.bridge ?? 0) >= 9,
-					(meta?.bridge ?? 0) >= 10,
+					openExternal,
+					platform === "ios" && bridge >= 8,
+					platform === "ios" && bridge >= 6,
+					bridge >= 9,
+					bridge >= 10,
 				)
 			: null,
 		desktop: isMobile

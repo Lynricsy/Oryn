@@ -50,6 +50,7 @@ import {
 } from "../../components/ui/primitives";
 import { confirmAction } from "../../lib/confirm";
 import { formatDateTime, formatRelative } from "../../lib/format";
+import { host } from "../../lib/host";
 import { useIndex } from "../../state/stores";
 
 /** 回调页带回来的错误码里有专门文案的；其余显示通用文案。 */
@@ -429,7 +430,13 @@ function IdentitiesCard({ status }: { status: GitHubStatus }): ReactNode {
 						<Button
 							variant="primary"
 							icon="external"
-							onClick={() => window.location.assign(pending.url)}
+							onClick={() => {
+								if (host.kind === "tauri") {
+									window.open(pending.url, "_blank", "noopener");
+								} else {
+									window.location.assign(pending.url);
+								}
+							}}
 						>
 							{t("github.identity.continueHere")}
 						</Button>
