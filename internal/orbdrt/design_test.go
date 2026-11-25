@@ -1,10 +1,13 @@
 package orbdrt
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -74,6 +77,8 @@ type designEnv struct {
 	sock  string
 	// failHead 为真时假控制面对 design_head 回错误（模拟控制面不可达）。
 	failHead atomic.Bool
+	// exportOverride 非空时拦截 export_design_project 调用（测试 sha256 篡改与恶意 zip）。
+	exportOverride atomic.Pointer[func(params json.RawMessage) (any, bool, error)]
 }
 
 // cpFetch 经 ctl library.fetch 从 orbd 取回 source（控制面的 SourceFetcher）。
@@ -132,6 +137,11 @@ func newDesignEnv(t *testing.T) *designEnv {
 		}
 		if e.failHead.Load() && strings.Contains(string(params), `"op":"design_head"`) {
 			return nil, true, errors.New("control plane unreachable")
+		}
+		if fn := e.exportOverride.Load(); fn != nil && strings.Contains(string(params), `"op":"export_design_project"`) {
+			if res, handled, err := (*fn)(params); handled {
+				return res, true, err
+			}
 		}
 		res, err := call(context.Background(), orbID, params)
 		return res, true, err
@@ -1011,4 +1021,196 @@ func rootChromium(t *testing.T) string {
 for a in "$@"; do case "$a" in --user-data-dir=*) d="${a#--user-data-dir=}"; chown -R nobody "$d" "$(dirname "$d")";; esac; done
 exec setpriv --reuid=nobody --regid=65534 --clear-groups `+real+` "$@"
 `)
+}
+
+// M29 D3：design.eject 经真 artifacts.Service + ExportProject 分片传输并安全解压到目标目录（含目标尚不存在与
+// 已存在空目录两种场景），校验 package.json、package-lock.json、.oryn/box.yaml、src/frames/** 及跨页大文件完整；
+// 拒绝非空目标目录、相对路径与坏参数；拒绝 sha256 篡改；拒绝 zip-slip / 绝对路径 / 符号链接恶意条目；runner.sock 不认。
+func TestDesignEject(t *testing.T) {
+	e := newDesignEnv(t)
+	opened := e.open(orbsock.DesignOpenParams{ThreadID: testThread, Title: "官网设计"})
+	id := opened.ID
+
+	writeSrc(t, opened.Dir, "src/frames/home.tsx", `export const frame = { name: "首页", width: 1280, height: 800 };
+export default function Home() { return <main>Hello Box</main>; }`)
+	writeSrc(t, opened.Dir, "src/theme.css", `@theme { --color-bg: #fff; --color-text: #111; --color-accent: #0f766e; }`)
+	// 放一块不可压缩随机数据，确保导出 zip 跨多页分片传输
+	blob := make([]byte, 2_600_000)
+	_, err := rand.Read(blob)
+	require.NoError(t, err)
+	blobPath := filepath.Join(opened.Dir, "src", "assets", "hero.bin")
+	require.NoError(t, os.MkdirAll(filepath.Dir(blobPath), 0o755))
+	require.NoError(t, os.WriteFile(blobPath, blob, 0o644))
+
+	sealed, err := e.seal("turn-eject")
+	require.NoError(t, err)
+	require.Len(t, sealed.Sealed, 1)
+	ver := sealed.Sealed[0].Version
+
+	// 1. 目标目录尚不存在：完整分片拉取并解压
+	outDir := filepath.Join(t.TempDir(), "ejected-app")
+	var res orbsock.DesignEjectResult
+	require.NoError(t, e.call(orbsock.MethodDesignEject, orbsock.DesignEjectParams{
+		ThreadID: testThread, ID: id, To: outDir,
+	}, &res))
+	assert.Equal(t, id, res.ID)
+	assert.Equal(t, ver, res.Version)
+	assert.Equal(t, outDir, res.Dir)
+	assert.Greater(t, res.Files, 8)
+
+	for _, rel := range []string{
+		"package.json",
+		"package-lock.json",
+		".oryn/box.yaml",
+		"src/frames/home.tsx",
+		"src/theme.css",
+		"oryn-frames.json",
+	} {
+		assert.FileExists(t, filepath.Join(outDir, filepath.FromSlash(rel)), rel)
+	}
+	gotHome, err := os.ReadFile(filepath.Join(outDir, "src", "frames", "home.tsx"))
+	require.NoError(t, err)
+	assert.Contains(t, string(gotHome), "Hello Box")
+	gotBox, err := os.ReadFile(filepath.Join(outDir, ".oryn", "box.yaml"))
+	require.NoError(t, err)
+	assert.Contains(t, string(gotBox), "npm ci && npm run build")
+	gotBlob, err := os.ReadFile(filepath.Join(outDir, "src", "assets", "hero.bin"))
+	require.NoError(t, err)
+	assert.True(t, bytes.Equal(blob, gotBlob), "跨页二进制文件应逐字节一致")
+
+	// 2. 目标目录已存在且为空目录：允许落位并指定明确版本号
+	emptyDir := filepath.Join(t.TempDir(), "empty-dir")
+	require.NoError(t, os.MkdirAll(emptyDir, 0o755))
+	var res2 orbsock.DesignEjectResult
+	require.NoError(t, e.call(orbsock.MethodDesignEject, orbsock.DesignEjectParams{
+		ThreadID: testThread, ID: id, Version: ver, To: emptyDir,
+	}, &res2))
+	assert.Equal(t, res.Files, res2.Files)
+	assert.FileExists(t, filepath.Join(emptyDir, "package.json"))
+
+	// 3. 覆盖非空目标目录、普通文件、相对路径、非法 id、缺 threadId 均被拒（invalid_params）
+	nonEmpty := filepath.Join(t.TempDir(), "has-file")
+	require.NoError(t, os.MkdirAll(nonEmpty, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(nonEmpty, "keep.txt"), []byte("keep"), 0o644))
+	plainFile := filepath.Join(t.TempDir(), "plain.txt")
+	require.NoError(t, os.WriteFile(plainFile, []byte("x"), 0o644))
+
+	for _, tc := range []struct {
+		name string
+		p    orbsock.DesignEjectParams
+	}{
+		{"非空目录", orbsock.DesignEjectParams{ThreadID: testThread, ID: id, To: nonEmpty}},
+		{"目标是文件", orbsock.DesignEjectParams{ThreadID: testThread, ID: id, To: plainFile}},
+		{"相对路径", orbsock.DesignEjectParams{ThreadID: testThread, ID: id, To: "rel/dir"}},
+		{"根目录", orbsock.DesignEjectParams{ThreadID: testThread, ID: id, To: "/"}},
+		{"非法 id", orbsock.DesignEjectParams{ThreadID: testThread, ID: "../bad", To: filepath.Join(t.TempDir(), "x")}},
+		{"缺 threadId", orbsock.DesignEjectParams{ID: id, To: filepath.Join(t.TempDir(), "x")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := e.call(orbsock.MethodDesignEject, tc.p, nil)
+			var se *orbsock.Error
+			require.ErrorAs(t, err, &se)
+			assert.Equal(t, orbsock.CodeInvalidParams, se.Code)
+		})
+	}
+	// 确认非空目录里的原文件未被破坏
+	keep, err := os.ReadFile(filepath.Join(nonEmpty, "keep.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "keep", string(keep))
+
+	// 4. sha256 篡改被拒且不创建目标目录
+	badShaDir := filepath.Join(t.TempDir(), "bad-sha")
+	tamper := func(_ json.RawMessage) (any, bool, error) {
+		payload := []byte("not even matching sha")
+		page := orbsock.DesignProjectPage{
+			Version: ver,
+			Size:    int64(len(payload)),
+			Sha256:  strings.Repeat("0", 64),
+			Offset:  0,
+			Data:    base64.StdEncoding.EncodeToString(payload),
+		}
+		b, _ := json.Marshal(page)
+		return apigen.LinkCtlArtifactCallResult{Text: string(b)}, true, nil
+	}
+	e.exportOverride.Store(&tamper)
+	err = e.call(orbsock.MethodDesignEject, orbsock.DesignEjectParams{ThreadID: testThread, ID: id, To: badShaDir}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "different digest")
+	assert.NoDirExists(t, badShaDir)
+
+	// 5. zip-slip / 绝对路径 / 符号链接恶意条目被拒且不落盘
+	for _, tc := range []struct {
+		name string
+		zip  []byte
+	}{
+		{"父目录穿越", buildTestZip(t, testZipEntry{name: "../escaped.txt", data: "pwn"})},
+		{"嵌套穿越", buildTestZip(t, testZipEntry{name: "a/../../escaped.txt", data: "pwn"})},
+		{"绝对路径", buildTestZip(t, testZipEntry{name: "/tmp/escaped.txt", data: "pwn"})},
+		{"符号链接", buildTestZip(t, testZipEntry{name: "link", data: "/etc/passwd", mode: os.ModeSymlink | 0o777})},
+	} {
+		t.Run("恶意zip/"+tc.name, func(t *testing.T) {
+			rawZip := tc.zip
+			sum := sha256.Sum256(rawZip)
+			serveEvil := func(_ json.RawMessage) (any, bool, error) {
+				page := orbsock.DesignProjectPage{
+					Version: ver,
+					Size:    int64(len(rawZip)),
+					Sha256:  hex.EncodeToString(sum[:]),
+					Offset:  0,
+					Data:    base64.StdEncoding.EncodeToString(rawZip),
+				}
+				b, _ := json.Marshal(page)
+				return apigen.LinkCtlArtifactCallResult{Text: string(b)}, true, nil
+			}
+			e.exportOverride.Store(&serveEvil)
+			base := t.TempDir()
+			dst := filepath.Join(base, "sub", "target")
+			err := e.call(orbsock.MethodDesignEject, orbsock.DesignEjectParams{ThreadID: testThread, ID: id, To: dst}, nil)
+			require.Error(t, err)
+			assert.NoDirExists(t, dst)
+			assert.NoFileExists(t, filepath.Join(base, "sub", "escaped.txt"))
+			assert.NoFileExists(t, filepath.Join(base, "escaped.txt"))
+		})
+	}
+	e.exportOverride.Store(nil)
+}
+
+// M29 D3：runner.sock 不提供 design.eject。
+func TestDesignEjectRunnerRejected(t *testing.T) {
+	f := newRunnerHome(t)
+	startRunnerRT(t, f, nil)
+	sock := orbsock.RunnerPath(f.home)
+	waitSock(t, sock)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := orbsock.Call(ctx, sock, orbsock.MethodDesignEject, orbsock.DesignEjectParams{
+		ThreadID: "T-1", ID: "art_1", To: filepath.Join(t.TempDir(), "out"),
+	}, nil)
+	var se *orbsock.Error
+	require.ErrorAs(t, err, &se)
+	assert.Equal(t, orbsock.CodeMethodNotFound, se.Code)
+}
+
+type testZipEntry struct {
+	name string
+	data string
+	mode os.FileMode
+}
+
+func buildTestZip(t *testing.T, entries ...testZipEntry) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for _, e := range entries {
+		h := &zip.FileHeader{Name: e.name, Method: zip.Deflate}
+		if e.mode != 0 {
+			h.SetMode(e.mode)
+		}
+		w, err := zw.CreateHeader(h)
+		require.NoError(t, err)
+		_, err = w.Write([]byte(e.data))
+		require.NoError(t, err)
+	}
+	require.NoError(t, zw.Close())
+	return buf.Bytes()
 }

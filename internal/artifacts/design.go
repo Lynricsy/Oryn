@@ -3,8 +3,10 @@ package artifacts
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,13 +36,16 @@ const (
 	OpFetchDesignRuntime = "fetch_design_runtime"
 	// OpDesignHead 是工作副本对账用的最新版本摘要：{id} → orbsock.DesignHead。
 	OpDesignHead = "design_head"
+	// OpExportDesignProject 分页导出设计画布版本的工程 zip（ExportProject）：{id, version?, cursor?} → orbsock.DesignProjectPage。
+	OpExportDesignProject = "export_design_project"
 )
 
 const (
 	// designFramesFile 是引擎构建写出的帧清单（C2）。
-	designFramesFile = "dist/frames.json"
-	designSrcPrefix  = "src/"
-	designDistPrefix = "dist/"
+	designFramesFile            = "dist/frames.json"
+	designSrcPrefix             = "src/"
+	designDistPrefix            = "dist/"
+	exportDesignProjectMaxBytes = 64 << 20
 )
 
 // frameIDRe 是帧 id：src/frames/<id>.tsx 的 <id>（与 canvas 的 source 规则一致）。
@@ -66,6 +71,8 @@ func (s *Service) callInternal(ctx context.Context, c Caller, op string, params 
 		return s.agentFetchDesignFiles(ctx, c, params)
 	case OpDesignHead:
 		return s.agentDesignHead(ctx, c, params)
+	case OpExportDesignProject:
+		return s.agentExportDesignProject(ctx, c, params)
 	default:
 		return s.agentFetchDesignRuntime(params)
 	}
@@ -623,4 +630,117 @@ func (s *Service) agentFetchDesignRuntime(params json.RawMessage) (Result, error
 	var buf bytes.Buffer
 	_ = json.NewEncoder(&buf).Encode(out)
 	return Result{Text: strings.TrimSpace(buf.String()), Details: obj{"op": OpFetchDesignRuntime, "files": names}}, nil
+}
+
+// ---- export_design_project ----
+
+var errExportTooLarge = errors.New("export project zip exceeds limit")
+
+// limitedBuffer 在超过 limit 字节时立即返回 errExportTooLarge，避免无界占用内存。
+type limitedBuffer struct {
+	buf   bytes.Buffer
+	limit int64
+}
+
+func (w *limitedBuffer) Write(p []byte) (int, error) {
+	if int64(w.buf.Len())+int64(len(p)) > w.limit {
+		return 0, errExportTooLarge
+	}
+	return w.buf.Write(p)
+}
+
+// agentExportDesignProject 是 export_design_project：对调用方可见的设计画布指定版本（缺省最新）调用 ExportProject，
+// 将生成的工程 zip 按字节偏移分页返回；整条 artifact.call 结果序列化后不超过 orbsock.DesignFilesPageBytes。
+func (s *Service) agentExportDesignProject(ctx context.Context, c Caller, params json.RawMessage) (Result, error) {
+	var p fetchFilesArgs
+	if err := decodeParams(params, &p); err != nil {
+		return Result{}, err
+	}
+	if p.Version < 0 {
+		return Result{}, opErr(CodeInvalid, "version 不能是负数；不给表示最新版本。")
+	}
+	var off int64
+	if p.Cursor != "" {
+		var err error
+		off, err = strconv.ParseInt(p.Cursor, 10, 64)
+		if err != nil || off < 0 {
+			return Result{}, opErr(CodeInvalid, "cursor %q 不合法：原样传上一页返回的 next。", p.Cursor)
+		}
+	}
+	a, err := s.lookup(ctx, c, p.ID, true)
+	if err != nil {
+		return Result{}, err
+	}
+	v, err := s.Version(ctx, a.ID, p.Version)
+	if err != nil {
+		return Result{}, err
+	}
+	exp, err := s.Export(ctx, a.ID, v.Version, ExportProject)
+	if err != nil {
+		return Result{}, err
+	}
+	lw := &limitedBuffer{limit: exportDesignProjectMaxBytes}
+	if err := exp.Write(lw); err != nil {
+		if errors.Is(err, errExportTooLarge) {
+			return Result{}, opErr(CodeTooLarge, "artifact %s 版本 %d 导出的工程 zip 超过上限 %d MiB。", a.ID, v.Version, exportDesignProjectMaxBytes>>20)
+		}
+		return Result{}, err
+	}
+	raw := lw.buf.Bytes()
+	total := int64(len(raw))
+	if off > total || (off == total && (total > 0 || p.Cursor != "")) {
+		return Result{}, opErr(CodeInvalid, "cursor %q 超出版本 %d 工程 zip 的范围（%d 字节）：从头（不带 cursor）重新取。", p.Cursor, v.Version, total)
+	}
+	sum := sha256.Sum256(raw)
+	sha := hex.EncodeToString(sum[:])
+	page, err := designProjectPage(a.ID, v.Version, raw, sha, off, orbsock.DesignFilesPageBytes)
+	if err != nil {
+		return Result{}, err
+	}
+	return designProjectResult(a.ID, page), nil
+}
+
+// designProjectPage 从 off 起切出不超过 limit 字节（外送 JSON 总长）的一页。base64 字符不含 JSON 转义字符，
+// 在 Text 二次编码后按原长计，固定开销按 next 取最长时的空片实测。
+func designProjectPage(id string, version int, raw []byte, sha string, off int64, limit int) (orbsock.DesignProjectPage, error) {
+	total := int64(len(raw))
+	longest := strconv.FormatInt(total, 10)
+	fixed := designProjectResultBytes(id, orbsock.DesignProjectPage{
+		Version: version, Size: total, Sha256: sha, Offset: off, Next: longest,
+	})
+	room := limit - fixed
+	maxRaw := int64(max(room, 0) / 4 * 3)
+	if maxRaw <= 0 && total > off {
+		return orbsock.DesignProjectPage{}, opErr(CodeInvalid, "分页上限 %d 字节不足以容纳导出数据。", limit)
+	}
+	n := min(total-off, maxRaw)
+	page := orbsock.DesignProjectPage{
+		Version: version,
+		Size:    total,
+		Sha256:  sha,
+		Offset:  off,
+		Data:    base64.StdEncoding.EncodeToString(raw[off : off+n]),
+	}
+	if off+n < total {
+		page.Next = strconv.FormatInt(off+n, 10)
+	}
+	return page, nil
+}
+
+// designProjectResult 是 export_design_project 的结果：Text 是页的 JSON，Details 只带元信息。
+func designProjectResult(id string, page orbsock.DesignProjectPage) Result {
+	b, _ := json.Marshal(page)
+	d := obj{"op": OpExportDesignProject, "id": id, "version": page.Version, "offset": page.Offset, "size": page.Size}
+	if page.Next != "" {
+		d["next"] = page.Next
+	}
+	return Result{Text: string(b), Details: d}
+}
+
+// designProjectResultBytes 是 export_design_project 结果经 artifact.call 外送时的序列化大小。
+func designProjectResultBytes(id string, page orbsock.DesignProjectPage) int {
+	r := designProjectResult(id, page)
+	d, _ := r.Details.(obj)
+	b, _ := json.Marshal(apigen.LinkCtlArtifactCallResult{Text: r.Text, Details: d})
+	return len(b)
 }

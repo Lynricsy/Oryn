@@ -82,8 +82,21 @@ description: "在 Oryn 画布上做设计稿、原型、落地页或 App 界面�
 
 ## 7. 交付
 
-- 用户要把设计变成可运行的工程：设计画布的每个版本都能导出为独立的前端工程（导出格式 `project`，zip 里是 `src/`、构建配置与锁文件，`npm ci && npm run build` 可构建）。告诉用户在画布的导出菜单里选它。
-- 用户要让它一直在线、有自己的地址：把导出的工程放进仓库并提交，再按 `oryn-boxes` 技能部署到 box。不要用工作副本的 dev 服务或 portal 冒充常驻部署。
+- **导出工程**：设计画布的每个版本都能导出为独立 Vite 工程（`src/`、构建配置、`.oryn/box.yaml` 与锁文件，`npm ci && npm run build` 可构建）。用户在画布导出菜单里选「导出为工程」可下载 zip；你在 orb 内导出用 `oryn design eject`。
+- **部署到 box**（让设计一直在线、有独立地址；不要用工作副本的 dev 服务或 portal 冒充常驻部署）：
+  1. 导出工程到空目录或尚不存在的目录（可选 `--version <n>` 指定版本）：
+     ```sh
+     oryn design eject <id> --to <dir>
+     ```
+  2. 初始化 git 仓库并提交（`oryn boxes deploy` 只打包 `HEAD` 提交，未提交的改动含 `.oryn/box.yaml` 不会带上）：
+     ```sh
+     cd <dir> && git init && git add -A && git commit -m "init"
+     ```
+  3. 按 `oryn-boxes` 技能部署到 box（还没有 box 时直接加 `--create` 新建；需要仅主人登录后访问时加 `--private`）：
+     ```sh
+     oryn boxes deploy --on <box> --name <app> --create
+     ```
+  4. 后续在画布改了设计要更新线上版本：重新导出或同步 `src/` 与锁文件并提交，再在 `<dir>` 里直接运行 `oryn boxes deploy`。
 
 ## 8. 自动发生的事
 

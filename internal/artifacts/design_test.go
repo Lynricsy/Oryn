@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/artifacts/canvas"
 	"github.com/Lynricsy/Oryn/internal/artifacts/design"
+	"github.com/Lynricsy/Oryn/internal/link"
 	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/orbsock"
 	"github.com/Lynricsy/Oryn/internal/store/db"
@@ -255,7 +258,7 @@ func TestSealDesignGuards(t *testing.T) {
 	src := fakeFetch{}
 	c := threadCaller("thr_a")
 	c.Fetch = src.fetch
-	for _, op := range []string{OpSealDesign, OpFetchDesignFiles, OpFetchDesignRuntime, OpDesignHead} {
+	for _, op := range []string{OpSealDesign, OpFetchDesignFiles, OpFetchDesignRuntime, OpDesignHead, OpExportDesignProject} {
 		_, err := agentCall(t, e.s, c, op, `{"id":"`+id+`"}`)
 		require.Equal(t, CodeInvalid, code(err), op)
 		assert.Contains(t, err.Error(), "没有操作", op)
@@ -407,4 +410,156 @@ func TestDesignFilesPaging(t *testing.T) {
 	for _, f := range rt.Files {
 		assert.Contains(t, []string{"runtime.js", "probe.js"}, f.Name)
 	}
+}
+
+// M29 D3：export_design_project 校验调用方范围（跨项目/跨线程拒访，Runner 不可调用）、按 DesignFilesPageBytes
+// 分片返回 ExportProject 生成的工程 zip（逐字节与 sha256 一致）、非设计画布与缺工程锁原样返回 Export 错误。
+func TestExportDesignProject(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	require.NoError(t, e.st.Q.CreateProvider(ctx, db.CreateProviderParams{ID: "prov_1", Name: "local", TokenHash: "h", CreatedAt: 1}))
+	mkOrb(t, e, "orb_a", "")
+	mkOrb(t, e, "orb_b", "")
+	mkOrb(t, e, "orb_r", orbs.KindRunner)
+	mkProject(t, e, "proj_a")
+	mkProject(t, e, "proj_b")
+	mkOrbThread(t, e, "thr_a", "orb_a", "proj_a")
+	mkOrbThread(t, e, "thr_b", "orb_b", "proj_b")
+	mkOrbThread(t, e, "thr_r", "orb_r", "proj_a")
+
+	doc := canvas.Doc{Design: &canvas.Design{Engine: canvas.DesignEngine}, Canvases: []canvas.Canvas{{ID: canvas.DefaultCanvasID, Name: canvas.DefaultCanvasName}}}
+	created, err := e.s.Create(ctx, CreateParams{
+		Title: "设计", ThreadID: "thr_a", ProjectID: "proj_a",
+		Files: []FileChange{put(EntryCanvas, string(doc.JSON()))},
+	})
+	require.NoError(t, err)
+	id := created.ID
+	// 塞入 3.5 MiB 不可压缩随机数据，保证工程 zip 跨越 3 页以上
+	big := make([]byte, 3_500_000)
+	_, err = rand.Read(big)
+	require.NoError(t, err)
+	_, err = e.s.Write(ctx, WriteParams{
+		ID: id, BaseVersion: 1,
+		Files: []FileChange{
+			put("src/frames/home.tsx", "export default function Home(){ return <main>hello</main>; }"),
+			{Path: "src/assets/hero.bin", Data: bytes.NewReader(big)},
+		},
+	})
+	require.NoError(t, err)
+
+	links := fakeLinks{}
+	e.s.RegisterOrbMethod(links, fakeSource{})
+	fn := links[string(apigen.MethodArtifactCall)]
+	call := func(orbID, thread, op string, params any) (any, error) {
+		raw, err := json.Marshal(map[string]any{"threadId": thread, "op": op, "params": params})
+		require.NoError(t, err)
+		return fn(ctx, orbID, raw)
+	}
+	linkCode := func(err error) string {
+		if le, ok := err.(*link.CtlError); ok {
+			return le.Code
+		}
+		return code(err)
+	}
+
+	// 跨项目拒访 & Runner 不是内部调用方
+	_, err = call("orb_b", "thr_b", OpExportDesignProject, map[string]any{"id": id})
+	require.Error(t, err)
+	assert.Equal(t, CodeNotFound, linkCode(err))
+	_, err = call("orb_r", "thr_r", OpExportDesignProject, map[string]any{"id": id})
+	require.Error(t, err)
+	assert.Equal(t, CodeInvalid, linkCode(err))
+	// 分页拉取全部字节，确认每页外送序列化不超过 DesignFilesPageBytes
+	var (
+		got      []byte
+		wantSize int64
+		wantSha  string
+		cursor   string
+		pages    int
+	)
+	for {
+		params := map[string]any{"id": id}
+		if pages > 0 {
+			params["version"] = 2
+		}
+		if cursor != "" {
+			params["cursor"] = cursor
+		}
+		res, err := call("orb_a", "thr_a", OpExportDesignProject, params)
+		require.NoError(t, err)
+		wire, err := json.Marshal(res)
+		require.NoError(t, err)
+		assert.LessOrEqual(t, len(wire), orbsock.DesignFilesPageBytes, "第 %d 页", pages)
+
+		var page orbsock.DesignProjectPage
+		require.NoError(t, json.Unmarshal([]byte(res.(apigen.LinkCtlArtifactCallResult).Text), &page))
+		assert.Equal(t, 2, page.Version)
+		assert.Equal(t, int64(len(got)), page.Offset)
+		if pages == 0 {
+			wantSize = page.Size
+			wantSha = page.Sha256
+		} else {
+			assert.Equal(t, wantSize, page.Size)
+			assert.Equal(t, wantSha, page.Sha256)
+		}
+		chunk, err := base64.StdEncoding.DecodeString(page.Data)
+		require.NoError(t, err)
+		got = append(got, chunk...)
+		pages++
+		if page.Next == "" {
+			break
+		}
+		require.Less(t, pages, 20)
+		cursor = page.Next
+	}
+	assert.GreaterOrEqual(t, pages, 3, "3.5 MiB 随机数据应分 3 页以上")
+	assert.Equal(t, wantSize, int64(len(got)))
+	sum := sha256.Sum256(got)
+	assert.Equal(t, wantSha, hex.EncodeToString(sum[:]))
+
+	// 与直接调用 Export(..., ExportProject) 的 zip 逐字节一致
+	exp, err := e.s.Export(ctx, id, 2, ExportProject)
+	require.NoError(t, err)
+	var direct bytes.Buffer
+	require.NoError(t, exp.Write(&direct))
+	assert.True(t, bytes.Equal(direct.Bytes(), got), "分片导出结果应与 ExportProject 逐字节一致")
+
+	// 坏游标、越界游标与负版本
+	for _, params := range []map[string]any{
+		{"id": id, "version": -1},
+		{"id": id, "version": 2, "cursor": "abc"},
+		{"id": id, "version": 2, "cursor": "-1"},
+		{"id": id, "version": 2, "cursor": fmt.Sprintf("%d", wantSize)},
+		{"id": id, "version": 2, "cursor": fmt.Sprintf("%d", wantSize+1)},
+	} {
+		_, err := call("orb_a", "thr_a", OpExportDesignProject, params)
+		require.Error(t, err, params)
+		assert.Equal(t, CodeInvalid, linkCode(err), params)
+	}
+
+	// 非设计画布（HTML 页面与普通 HTML 画布）报 invalid
+	plain, err := e.s.Create(ctx, CreateParams{Title: "普通页", ThreadID: "thr_a", ProjectID: "proj_a", Files: []FileChange{put(EntryHTML, "<p>x</p>")}})
+	require.NoError(t, err)
+	_, err = call("orb_a", "thr_a", OpExportDesignProject, map[string]any{"id": plain.ID})
+	require.Error(t, err)
+	assert.Equal(t, CodeInvalid, linkCode(err))
+
+	htmlCanvas, err := e.s.Create(ctx, CreateParams{Title: "HTML 画布", ThreadID: "thr_a", ProjectID: "proj_a", Files: []FileChange{
+		put(EntryCanvas, string(canvas.Doc{Canvases: []canvas.Canvas{{ID: canvas.DefaultCanvasID, Name: canvas.DefaultCanvasName}}}.JSON())),
+	}})
+	require.NoError(t, err)
+	_, err = call("orb_a", "thr_a", OpExportDesignProject, map[string]any{"id": htmlCanvas.ID})
+	require.Error(t, err)
+	assert.Equal(t, CodeInvalid, linkCode(err))
+
+	// 有额外依赖但缺少工程锁：原样返回 Export 的 invalid 错误
+	_, err = e.s.Write(ctx, WriteParams{
+		ID: id, BaseVersion: 2,
+		Files: []FileChange{put("src/package.json", `{"dependencies":{"recharts":"^2.12.0"}}`)},
+	})
+	require.NoError(t, err)
+	_, err = call("orb_a", "thr_a", OpExportDesignProject, map[string]any{"id": id, "version": 3})
+	require.Error(t, err)
+	assert.Equal(t, CodeInvalid, linkCode(err))
+	assert.Contains(t, err.Error(), "缺少工程锁")
 }

@@ -101,12 +101,14 @@ const (
 	// build_failed（message 是 stderr 末尾 4 KiB），封存冲突原样回控制面的 conflict；
 	// design.check（DesignCheckParams → DesignCheckResult，上限 90 秒）在 orb 里用 headless Chromium 对工作副本的帧跑
 	// 设计探针（plan-m29 C8），可附每帧截图；
-	// design.status（DesignStatusParams → DesignStatusResult）列出本线程的工作副本。
+	// design.status（DesignStatusParams → DesignStatusResult）列出本线程的工作副本；
+	// design.eject（DesignEjectParams → DesignEjectResult）把设计画布指定版本导出为独立 Vite 工程并解到目标空目录。
 	MethodDesignOpen   = "design.open"
 	MethodDesignTurn   = "design.turn"
 	MethodDesignSeal   = "design.seal"
 	MethodDesignCheck  = "design.check"
 	MethodDesignStatus = "design.status"
+	MethodDesignEject  = "design.eject"
 )
 
 // 消息类型。
@@ -386,6 +388,23 @@ type DesignStatusResult struct {
 	Designs []DesignStatus `json:"designs"`
 }
 
+// DesignEjectParams 是 design.eject 的参数：把设计画布的指定版本（Version 为 0 取最新）导出为可独立构建与部署到
+// box 的 Vite 工程，安全解压到 To（须是绝对路径；若已存在须是空目录）。
+type DesignEjectParams struct {
+	ThreadID string `json:"threadId"`
+	ID       string `json:"id"`
+	Version  int    `json:"version,omitempty"`
+	To       string `json:"to"`
+}
+
+// DesignEjectResult 是 design.eject 的结果：Dir 是最终导出目录的绝对路径，Files 是解压出的普通文件数。
+type DesignEjectResult struct {
+	ID      string `json:"id"`
+	Version int    `json:"version"`
+	Dir     string `json:"dir"`
+	Files   int    `json:"files"`
+}
+
 // DesignHead 是 ctl artifact.call 内部操作 design_head `{id}` 的结果（结果的 text 是它的 JSON）：设计画布（或还没有
 // 画框的画布）的最新版本号、该版本的 check_json 原文（design.Check 的形状，没检查过为空），以及该版本 `src/**`
 // （不含 node_modules）与 `dist/**` 的文件摘要。orbd 用它对账、判断封存要传哪些文件、回报 design.status 的检查。
@@ -422,6 +441,19 @@ type DesignFileChunk struct {
 	Data   string `json:"data"`
 	Size   int64  `json:"size"`
 	Sha256 string `json:"sha256"`
+}
+
+// DesignProjectPage 是 ctl artifact.call 内部操作 export_design_project `{id, version?, cursor?}` 的结果（结果的 text
+// 是它的 JSON）：设计画布版本导出的工程 zip 按字节偏移分页返回。每片是 [Offset, Offset+len) 的原始字节（Data 为
+// base64），Size 与 Sha256 是整个 zip 的。Next 非空时还有下一页，下一次带 cursor=Next 与同一个 version 再取。
+// 整条结果序列化后不超过 DesignFilesPageBytes。
+type DesignProjectPage struct {
+	Version int    `json:"version"`
+	Size    int64  `json:"size"`
+	Sha256  string `json:"sha256"`
+	Offset  int64  `json:"offset"`
+	Data    string `json:"data"`
+	Next    string `json:"next,omitempty"`
 }
 
 // DesignRuntimeFiles 是内部操作 fetch_design_runtime `{}` 的结果：控制面 Web 构建里的 `sandbox/runtime.js`、

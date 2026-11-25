@@ -131,7 +131,7 @@ func (s *Service) Call(ctx context.Context, c Caller, op string, params json.Raw
 		return s.agentDesignNotes(ctx, c, params)
 	case OpDesignResolveNote:
 		return s.agentDesignResolveNote(ctx, c, params)
-	case OpSealDesign, OpFetchDesignFiles, OpFetchDesignRuntime, OpDesignHead:
+	case OpSealDesign, OpFetchDesignFiles, OpFetchDesignRuntime, OpDesignHead, OpExportDesignProject:
 		if c.Internal {
 			return s.callInternal(ctx, c, op, params)
 		}

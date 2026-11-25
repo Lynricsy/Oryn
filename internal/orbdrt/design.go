@@ -1,6 +1,7 @@
 package orbdrt
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -46,6 +47,14 @@ const (
 	designOpenTimeout = 10 * time.Minute
 	// designDefaultTitle 是 design.open 没给标题时新画布的标题。
 	designDefaultTitle = "未命名设计"
+	// designEjectTimeout 是 design.eject 的上限。
+	designEjectTimeout = 5 * time.Minute
+	// designEjectMaxZipBytes 是 design.eject 接收工程 zip 的大小上限。
+	designEjectMaxZipBytes = 64 << 20
+	// designEjectMaxUncompressedBytes 是 design.eject 解压出的总字节数上限。
+	designEjectMaxUncompressedBytes = 128 << 20
+	// designEjectMaxFiles 是 design.eject 解压出的普通文件数上限。
+	designEjectMaxFiles = 4096
 )
 
 // designIDRe 限定工作副本目录名（artifact id），防止路径穿越。
@@ -242,6 +251,13 @@ func (r *Runtime) handleDesignSock(ctx context.Context, method string, params js
 			return nil, true, err
 		}
 		res, err := r.designStatus(ctx, p)
+		return res, true, err
+	case orbsock.MethodDesignEject:
+		var p orbsock.DesignEjectParams
+		if err := decodeSock(params, &p); err != nil {
+			return nil, true, err
+		}
+		res, err := r.designEject(ctx, p)
 		return res, true, err
 	}
 	return nil, false, nil
@@ -1460,3 +1476,309 @@ func writeDesignMeta(dir string, m designMeta) error {
 
 // designQuote 把 s 引成单个 shell 词。
 func designQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// ---- design.eject ----
+
+// designEject 把设计画布的指定版本（Version 为 0 取最新）经内部操作 export_design_project 分片取回临时 zip、
+// 核对大小与 sha256，再安全解压到临时目录并原子落位到 p.To。目标目录若已存在必须为空，避免覆盖已有仓库。
+func (r *Runtime) designEject(ctx context.Context, p orbsock.DesignEjectParams) (orbsock.DesignEjectResult, error) {
+	if err := needThread(p.ThreadID); err != nil {
+		return orbsock.DesignEjectResult{}, err
+	}
+	if !designIDRe.MatchString(p.ID) {
+		return orbsock.DesignEjectResult{}, orbsock.Errorf(orbsock.CodeInvalidParams, "invalid artifact id %q", p.ID)
+	}
+	if p.Version < 0 {
+		return orbsock.DesignEjectResult{}, orbsock.Errorf(orbsock.CodeInvalidParams, "version must be non-negative")
+	}
+	if p.To == "" || !filepath.IsAbs(p.To) {
+		return orbsock.DesignEjectResult{}, orbsock.Errorf(orbsock.CodeInvalidParams, "to must be an absolute path")
+	}
+	to := filepath.Clean(p.To)
+	if to == string(filepath.Separator) {
+		return orbsock.DesignEjectResult{}, orbsock.Errorf(orbsock.CodeInvalidParams, "to must not be root directory")
+	}
+	if err := checkEmptyTargetDir(to); err != nil {
+		return orbsock.DesignEjectResult{}, err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, designEjectTimeout)
+	defer cancel()
+
+	zipPath, version, err := r.designFetchProjectZip(ctx, p.ThreadID, p.ID, p.Version)
+	if err != nil {
+		return orbsock.DesignEjectResult{}, err
+	}
+	defer os.Remove(zipPath)
+
+	// 解压前再确认一次目标目录为空，避免下载期间被外部写入。
+	exists, err := targetDirExistsEmpty(to)
+	if err != nil {
+		return orbsock.DesignEjectResult{}, err
+	}
+	// 先在同文件系统的父目录建临时目录解压，校验全部通过后再落位到 to。
+	parent := filepath.Dir(to)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return orbsock.DesignEjectResult{}, orbsock.Errorf(orbsock.CodeInternal, "eject %s: %v", p.ID, err)
+	}
+	stage, err := os.MkdirTemp(parent, ".oryn-eject-*")
+	if err != nil {
+		return orbsock.DesignEjectResult{}, orbsock.Errorf(orbsock.CodeInternal, "eject %s: %v", p.ID, err)
+	}
+	defer os.RemoveAll(stage)
+
+	files, err := designExtractZip(zipPath, stage)
+	if err != nil {
+		return orbsock.DesignEjectResult{}, orbsock.Errorf(orbsock.CodeInternal, "eject %s: %v", p.ID, err)
+	}
+	if err := os.Chmod(stage, 0o755); err != nil {
+		return orbsock.DesignEjectResult{}, orbsock.Errorf(orbsock.CodeInternal, "eject %s: %v", p.ID, err)
+	}
+	if err := placeEjectStage(stage, to, exists); err != nil {
+		return orbsock.DesignEjectResult{}, orbsock.Errorf(orbsock.CodeInternal, "eject %s: %v", p.ID, err)
+	}
+	return orbsock.DesignEjectResult{ID: p.ID, Version: version, Dir: to, Files: files}, nil
+}
+
+// checkEmptyTargetDir 要求目标路径尚不存在，或者已存在且是一个空目录（符号链接或普通文件一律拒绝）。
+func checkEmptyTargetDir(to string) error {
+	_, err := targetDirExistsEmpty(to)
+	return err
+}
+
+// targetDirExistsEmpty 检查目标路径是否为空目录或尚不存在；返回 true 表示已存在且为空目录。
+func targetDirExistsEmpty(to string) (bool, error) {
+	fi, err := os.Lstat(to)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, orbsock.Errorf(orbsock.CodeInvalidParams, "target %q: %v", to, err)
+	}
+	if !fi.IsDir() {
+		return false, orbsock.Errorf(orbsock.CodeInvalidParams, "target %q already exists and is not a directory", to)
+	}
+	entries, err := os.ReadDir(to)
+	if err != nil {
+		return false, orbsock.Errorf(orbsock.CodeInvalidParams, "target %q: %v", to, err)
+	}
+	if len(entries) > 0 {
+		return false, orbsock.Errorf(orbsock.CodeInvalidParams, "target directory %q is not empty", to)
+	}
+	return true, nil
+}
+
+// placeEjectStage 把校验并解压完成的临时目录 stage 落位到 to：
+// to 尚不存在时直接原子重命名；to 已是空目录时把顶层条目逐个移入（保留原有目录 inode，兼容 `--to .`）。
+func placeEjectStage(stage, to string, exists bool) error {
+	if !exists {
+		return os.Rename(stage, to)
+	}
+	entries, err := os.ReadDir(stage)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if err := os.Rename(filepath.Join(stage, e.Name()), filepath.Join(to, e.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// designFetchProjectZip 经 export_design_project 循环拉取工程 zip 的全部分片写进临时文件，并核对总大小与 sha256；
+// 失败时删除临时文件。成功时由调用方负责删除返回的临时文件。
+func (r *Runtime) designFetchProjectZip(ctx context.Context, threadID, id string, wantVersion int) (string, int, error) {
+	f, err := os.CreateTemp("", "oryn-eject-*.zip")
+	if err != nil {
+		return "", 0, orbsock.Errorf(orbsock.CodeInternal, "eject %s: %v", id, err)
+	}
+	zipPath := f.Name()
+	ok := false
+	defer func() {
+		_ = f.Close()
+		if !ok {
+			_ = os.Remove(zipPath)
+		}
+	}()
+
+	var (
+		version  = wantVersion
+		wantSize int64
+		wantSha  string
+		written  int64
+		seen     bool
+		cursor   string
+		h        = sha256.New()
+	)
+	for {
+		params := map[string]any{"id": id}
+		if version > 0 {
+			params["version"] = version
+		}
+		if cursor != "" {
+			params["cursor"] = cursor
+		}
+		var page orbsock.DesignProjectPage
+		if err := r.designCall(ctx, threadID, nil, "export_design_project", params, &page); err != nil {
+			return "", 0, err
+		}
+		if !seen {
+			if page.Version <= 0 || (wantVersion > 0 && page.Version != wantVersion) {
+				return "", 0, orbsock.Errorf(orbsock.CodeInternal, "export_design_project returned version %d, want %d", page.Version, wantVersion)
+			}
+			if page.Size <= 0 || page.Size > designEjectMaxZipBytes {
+				return "", 0, orbsock.Errorf(orbsock.CodeInternal, "export_design_project returned invalid zip size %d", page.Size)
+			}
+			if page.Sha256 == "" {
+				return "", 0, orbsock.Errorf(orbsock.CodeInternal, "export_design_project returned empty sha256")
+			}
+			version = page.Version
+			wantSize = page.Size
+			wantSha = page.Sha256
+			seen = true
+		} else if page.Version != version || page.Size != wantSize || page.Sha256 != wantSha {
+			return "", 0, orbsock.Errorf(orbsock.CodeInternal, "export_design_project metadata changed mid-transfer")
+		}
+		if page.Offset != written {
+			return "", 0, orbsock.Errorf(orbsock.CodeInternal, "export_design_project offset %d does not continue %d written bytes", page.Offset, written)
+		}
+		data, err := base64.StdEncoding.DecodeString(page.Data)
+		if err != nil {
+			return "", 0, orbsock.Errorf(orbsock.CodeInternal, "export_design_project decode chunk: %v", err)
+		}
+		if written+int64(len(data)) > wantSize {
+			return "", 0, orbsock.Errorf(orbsock.CodeInternal, "export_design_project chunks exceed declared size %d", wantSize)
+		}
+		if _, err := f.Write(data); err != nil {
+			return "", 0, orbsock.Errorf(orbsock.CodeInternal, "eject %s: %v", id, err)
+		}
+		h.Write(data)
+		written += int64(len(data))
+		if page.Next == "" {
+			break
+		}
+		if page.Next == cursor && len(data) == 0 {
+			return "", 0, orbsock.Errorf(orbsock.CodeInternal, "export_design_project made no progress at cursor %q", cursor)
+		}
+		cursor = page.Next
+	}
+	if err := f.Close(); err != nil {
+		return "", 0, orbsock.Errorf(orbsock.CodeInternal, "eject %s: %v", id, err)
+	}
+	if written != wantSize || hex.EncodeToString(h.Sum(nil)) != wantSha {
+		return "", 0, orbsock.Errorf(orbsock.CodeInternal, "eject %s: got %d bytes with a different digest, want %d bytes sha256 %s", id, written, wantSize, wantSha)
+	}
+	ok = true
+	return zipPath, version, nil
+}
+
+// designExtractZip 把 zipPath 安全解压到空目录 dstDir，返回解压出的普通文件数：
+// 拒绝绝对路径、含 `..`/`.`/反斜杠或规范化后越出 dstDir 的条目、拒绝任何符号链接或非普通文件条目，
+// 并限制总解压字节数（designEjectMaxUncompressedBytes）与文件数（designEjectMaxFiles）。
+func designExtractZip(zipPath, dstDir string) (int, error) {
+	zr, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return 0, fmt.Errorf("open zip: %w", err)
+	}
+	defer zr.Close()
+
+	var (
+		fileCount  int
+		totalBytes int64
+	)
+	for _, zf := range zr.File {
+		mode := zf.Mode()
+		if mode&fs.ModeSymlink != 0 {
+			return 0, fmt.Errorf("zip entry %q is a symlink", zf.Name)
+		}
+		isDir := zf.FileInfo().IsDir() || strings.HasSuffix(zf.Name, "/")
+		rel, err := cleanZipEntryPath(zf.Name, isDir)
+		if err != nil {
+			return 0, err
+		}
+		target := filepath.Join(dstDir, filepath.FromSlash(rel))
+		checkRel, err := filepath.Rel(dstDir, target)
+		if err != nil || checkRel == ".." || strings.HasPrefix(checkRel, ".."+string(filepath.Separator)) || filepath.IsAbs(checkRel) {
+			return 0, fmt.Errorf("zip entry %q escapes target directory", zf.Name)
+		}
+		if isDir {
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				return 0, err
+			}
+			continue
+		}
+		if !mode.IsRegular() {
+			return 0, fmt.Errorf("zip entry %q is not a regular file", zf.Name)
+		}
+		fileCount++
+		if fileCount > designEjectMaxFiles {
+			return 0, fmt.Errorf("zip exceeds max file count %d", designEjectMaxFiles)
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return 0, err
+		}
+		n, err := extractZipFile(zf, target, designEjectMaxUncompressedBytes-totalBytes)
+		if err != nil {
+			return 0, err
+		}
+		totalBytes += n
+	}
+	return fileCount, nil
+}
+
+// cleanZipEntryPath 校验并返回 zip 条目的相对路径（`/` 分隔）。
+func cleanZipEntryPath(name string, isDir bool) (string, error) {
+	if name == "" || strings.ContainsRune(name, 0) || strings.Contains(name, "\\") {
+		return "", fmt.Errorf("invalid zip entry path %q", name)
+	}
+	if strings.HasPrefix(name, "/") || filepath.IsAbs(name) {
+		return "", fmt.Errorf("zip entry %q has absolute path", name)
+	}
+	rel := name
+	if isDir {
+		rel = strings.TrimSuffix(rel, "/")
+	}
+	if rel == "" {
+		return "", fmt.Errorf("invalid zip entry path %q", name)
+	}
+	for _, seg := range strings.Split(rel, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return "", fmt.Errorf("zip entry %q contains unsafe path segment", name)
+		}
+	}
+	if !filepath.IsLocal(filepath.FromSlash(rel)) {
+		return "", fmt.Errorf("zip entry %q is not a local path", name)
+	}
+	return rel, nil
+}
+
+// extractZipFile 把单个普通文件条目写到 target，按实际读取字节数限制不超过 remaining。
+func extractZipFile(zf *zip.File, target string, remaining int64) (int64, error) {
+	rc, err := zf.Open()
+	if err != nil {
+		return 0, err
+	}
+	defer rc.Close()
+
+	perm := fs.FileMode(0o644)
+	if zf.Mode()&0o100 != 0 {
+		perm = 0o755
+	}
+	out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if err != nil {
+		return 0, err
+	}
+	n, copyErr := io.Copy(out, io.LimitReader(rc, remaining+1))
+	closeErr := out.Close()
+	if copyErr != nil {
+		return 0, copyErr
+	}
+	if closeErr != nil {
+		return 0, closeErr
+	}
+	if n > remaining {
+		return 0, fmt.Errorf("zip uncompressed content exceeds limit %d MiB", designEjectMaxUncompressedBytes>>20)
+	}
+	return n, nil
+}
