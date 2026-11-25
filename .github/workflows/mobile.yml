@@ -486,6 +486,8 @@ jobs:
           [[ -d "$appex" ]] || { echo "::error::包里没有 PlugIns/NotificationService.appex（见 web/src-tauri/ios/project.yml 与 tauri.conf.json 的 bundle.iOS.template）"; exit 1; }
           nse_bid=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$appex/Info.plist")
           if [[ "$nse_bid" != "com.lynricsy.oryn.NotificationService" ]]; then echo "::error::NotificationService.appex 的包名是 ${nse_bid}"; exit 1; fi
+          nse_name=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$appex/Info.plist" 2>/dev/null || true)
+          if [[ -z "$nse_name" || "$nse_name" == *'$('* ]]; then echo "::error::NotificationService.appex 缺少有效的 CFBundleDisplayName（App Store Connect 90360）"; exit 1; fi
           echo "产物：${app}（版本 ${ver}）" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "path=$app" >> "$GITHUB_OUTPUT"
 
@@ -728,9 +730,11 @@ jobs:
           [[ -d "$appex" ]] || { echo "::error::IPA 里没有 PlugIns/NotificationService.appex"; exit 1; }
           nse_plist="$appex/Info.plist"
           nse_bid=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$nse_plist")
+          nse_name=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$nse_plist" 2>/dev/null || true)
           nse_ver=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$nse_plist")
           nse_build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$nse_plist")
           if [[ "$nse_bid" != "com.lynricsy.oryn.NotificationService" ]]; then echo "::error::NotificationService.appex 的包名是 ${nse_bid}"; exit 1; fi
+          if [[ -z "$nse_name" || "$nse_name" == *'$('* ]]; then echo "::error::NotificationService.appex 缺少有效的 CFBundleDisplayName（App Store Connect 90360）"; exit 1; fi
           if [[ "$nse_ver" != "$ver" || "$nse_build" != "$build" ]]; then
             echo "::error::NotificationService.appex 的版本 ${nse_ver} / ${nse_build} 与主包 ${ver} / ${build} 不一致（App Store Connect 会退回）"
             exit 1

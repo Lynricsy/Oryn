@@ -43,6 +43,7 @@ targets:
     info:
       path: NotificationService/Info.plist
       properties:
+        CFBundleDisplayName: NotificationService
         CFBundleShortVersionString: "{{apple.bundle-version-short}}"
         CFBundleVersion: "{{apple.bundle-version}}"
         NSExtension:
