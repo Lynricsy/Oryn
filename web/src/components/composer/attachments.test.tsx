@@ -367,6 +367,43 @@ describe("useAttachments 助手文件库模式", () => {
 		expect(result.current.attachmentIds).toEqual(["att_1", "att_s"]);
 		expect(result.current.fileIds).toEqual([]);
 	});
+
+	it("首图预处理期间切换发送对象：旧队列恢复后不删掉后排文件的新上传控制器，移除仍能取消上传", async () => {
+		const decoding = deferred<PreparedImage>();
+		const uploading = deferred<AssistantFile>();
+		prepare.mockReturnValueOnce(decoding.promise);
+		uploadLib.mockReturnValueOnce(uploading.promise);
+
+		const { result, rerender } = renderHook(
+			({ library }) => useAttachments({ library }),
+			{ initialProps: { library: false } },
+		);
+		const png = new File(["a"], "a.png", { type: "image/png" });
+		const txt = new File(["b"], "b.txt", { type: "text/plain" });
+		let adding!: Promise<void>;
+		act(() => {
+			adding = result.current.addFiles([png, txt]);
+		});
+
+		// 首图仍在预处理时切到助手文件库：b.txt 立即按新去向发起上传并换上新控制器
+		act(() => rerender({ library: true }));
+		expect(uploadLib).toHaveBeenCalledTimes(1);
+		const signal = uploadLib.mock.calls[0]?.[1]?.signal as
+			| AbortSignal
+			| undefined;
+		expect(signal).toBeDefined();
+		expect(signal?.aborted).toBe(false);
+
+		// 首图预处理完成、旧 addFiles 循环继续扫过 b.txt，随后用户移除 b.txt：新上传必须能被中止
+		await act(async () => {
+			decoding.resolve(img);
+			await adding;
+		});
+		const txtItem = result.current.items.find((i) => i.name === "b.txt");
+		expect(txtItem).toBeDefined();
+		act(() => result.current.remove(txtItem?.key ?? ""));
+		expect(signal?.aborted).toBe(true);
+	});
 });
 
 function DropHost({

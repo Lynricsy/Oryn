@@ -253,7 +253,7 @@ export function useAttachments({
 			for (const { key, file, isImage, ctl } of queued) {
 				if (disposed.current) return;
 				if (ctl.signal.aborted) {
-					aborts.current.delete(key);
+					if (aborts.current.get(key) === ctl) aborts.current.delete(key);
 					continue;
 				}
 				let hasInline = false;
@@ -270,7 +270,7 @@ export function useAttachments({
 					}
 					// 预处理期间 composer 已卸载或条目被移除：不再上传
 					if (ctl.signal.aborted || disposed.current) {
-						aborts.current.delete(key);
+						if (aborts.current.get(key) === ctl) aborts.current.delete(key);
 						if (disposed.current) return;
 						continue;
 					}
