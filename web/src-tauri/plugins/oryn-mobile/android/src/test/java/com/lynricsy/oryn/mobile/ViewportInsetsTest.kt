@@ -22,22 +22,81 @@ class ViewportInsetsTest {
   }
 
   @Test
-  fun fromPxMapsCornersInOrderAndNullsToZero() {
-    val v = ViewportInsets.fromPx(2f, top = 48, right = 0, bottom = 96, left = 10, corners = listOf(80, 80, null, 60))
-    assertEquals(ViewportInsets(24.0, 0.0, 48.0, 5.0, 40.0, 40.0, 0.0, 30.0), v)
+  fun fromWindowInsetsClampsGestureNavBottomAndMapsCorners() {
+    // 手势导航（tappableBottom = 0）：系统报 24dp / 32dp 时收敛到 16dp，避免与小白条之间空出大缝
+    val v = ViewportInsets.fromWindowInsets(
+      density = 2f,
+      safeTop = 64,
+      safeRight = 0,
+      safeBottom = 64,
+      safeLeft = 20,
+      imeBottom = 0,
+      corners = listOf(80, 80, null, 60),
+      tappableBottom = 0,
+    )
+    assertEquals(
+      ViewportInsets(
+        top = 0.0,
+        right = 0.0,
+        bottom = 0.0,
+        left = 0.0,
+        safeTop = 32.0,
+        safeRight = 0.0,
+        safeBottom = 16.0,
+        safeLeft = 10.0,
+        tl = 40.0,
+        tr = 40.0,
+        bl = 0.0,
+        br = 30.0,
+      ),
+      v,
+    )
   }
 
   @Test
-  fun fromPxWithoutCornersIsZero() {
-    val v = ViewportInsets.fromPx(3f, 0, 0, 0, 0, emptyList())
+  fun fromWindowInsetsPreservesThreeButtonNavBottom() {
+    // 三键导航（tappableBottom > 0）：完整保留系统 48dp 导航栏高度，避免遮挡按键
+    val v = ViewportInsets.fromWindowInsets(
+      density = 2f,
+      safeTop = 64,
+      safeRight = 0,
+      safeBottom = 96,
+      safeLeft = 0,
+      imeBottom = 0,
+      corners = emptyList(),
+      tappableBottom = 96,
+    )
+    assertEquals(48.0, v.safeBottom, 0.0)
+  }
+
+  @Test
+  fun fromWindowInsetsMovesImeToOuterPaddingAndZerosCoveredSafeBottom() {
+    val v = ViewportInsets.fromWindowInsets(
+      density = 2f,
+      safeTop = 64,
+      safeRight = 0,
+      safeBottom = 48,
+      safeLeft = 0,
+      imeBottom = 600,
+      corners = listOf(80, 80, 80, 80),
+    )
+    assertEquals(0.0, v.top, 0.0)
+    assertEquals(300.0, v.bottom, 0.0)
+    assertEquals(32.0, v.safeTop, 0.0)
+    assertEquals(0.0, v.safeBottom, 0.0)
+  }
+
+  @Test
+  fun fromWindowInsetsWithoutCornersOrBarsIsZero() {
+    val v = ViewportInsets.fromWindowInsets(3f, 0, 0, 0, 0, 0, emptyList())
     assertEquals(ViewportInsets.ZERO, v)
   }
 
   @Test
   fun equalSnapshotsCompareEqual() {
     // 插件按值比较决定是否重发 insets 事件
-    val a = ViewportInsets.fromPx(2.75f, 66, 0, 132, 0, listOf(110, 110, 110, 110))
-    val b = ViewportInsets.fromPx(2.75f, 66, 0, 132, 0, listOf(110, 110, 110, 110))
+    val a = ViewportInsets.fromWindowInsets(2.75f, 66, 0, 132, 0, 0, listOf(110, 110, 110, 110))
+    val b = ViewportInsets.fromWindowInsets(2.75f, 66, 0, 132, 0, 0, listOf(110, 110, 110, 110))
     assertEquals(a, b)
   }
 }

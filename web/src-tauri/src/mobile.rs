@@ -870,9 +870,13 @@ mod android {
             Event::Insets {
                 corner_radii,
                 insets,
+                safe_area,
             } => {
-                if m.core.set_insets(corner_radii, insets) {
-                    host::emit(&app, mobile_logic::insets_event(corner_radii, insets));
+                if m.core.set_insets(corner_radii, insets, safe_area) {
+                    host::emit(
+                        &app,
+                        mobile_logic::insets_event(corner_radii, insets, safe_area),
+                    );
                 }
             }
             // 插件已重新绑定新的 Activity / WebView；重建前所在的服务器页面作为待开路径，

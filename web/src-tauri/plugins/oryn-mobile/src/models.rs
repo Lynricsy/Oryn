@@ -37,6 +37,7 @@ pub struct DeviceInfo {
     pub event_log_path: Option<String>,
     pub corner_radii: CornerRadii,
     pub insets: Insets,
+    pub safe_area: Insets,
 }
 
 /// 系统通知权限。
@@ -473,6 +474,8 @@ pub enum Event {
         corner_radii: CornerRadii,
         #[serde(default)]
         insets: Insets,
+        #[serde(default)]
+        safe_area: Insets,
     },
     /// 插件已绑定新的 WebView（Activity 重建后，或被系统销毁后在同一进程里新建并重建了主窗口）；
     /// `url` 是销毁前主框架所在地址（那时还没加载页面则为空）。

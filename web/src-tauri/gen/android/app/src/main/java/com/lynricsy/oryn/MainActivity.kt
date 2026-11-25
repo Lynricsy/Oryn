@@ -1,15 +1,20 @@
 package com.lynricsy.oryn
 
+import android.graphics.Color
 import android.os.Bundle
 import android.webkit.WebView
+import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import com.lynricsy.oryn.mobile.OrynMobilePlugin
 
 class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
-    enableEdgeToEdge()
+    // 状态栏与导航栏均设为全透明，WebView 铺满整屏（含手势条与三键导航下方）
+    enableEdgeToEdge(
+      statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
+      navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
+    )
     super.onCreate(savedInstanceState)
-    // 先前的 Activity 被系统销毁、进程留着时，Rust 要为这个 Activity 重建主窗口（插件判断要不要）
     OrynMobilePlugin.activityCreated(this)
   }
 

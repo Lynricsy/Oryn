@@ -347,11 +347,12 @@ pub struct MobileInfo {
     pub push: PushView,
     pub corner_radii: CornerRadii,
     pub insets: Insets,
+    pub safe_area: Insets,
 }
 
-/// 页面事件 `{type:"insets", cornerRadii, insets}`。
-pub fn insets_event(corner_radii: CornerRadii, insets: Insets) -> Value {
-    json!({"type": "insets", "cornerRadii": corner_radii, "insets": insets})
+/// 页面事件 `{type:"insets", cornerRadii, insets, safeArea}`。
+pub fn insets_event(corner_radii: CornerRadii, insets: Insets, safe_area: Insets) -> Value {
+    json!({"type": "insets", "cornerRadii": corner_radii, "insets": insets, "safeArea": safe_area})
 }
 
 // ---------------------------------------------------------------- 原生底栏
@@ -903,6 +904,7 @@ struct Inner {
     shares: Shares,
     corner_radii: CornerRadii,
     insets: Insets,
+    safe_area: Insets,
 }
 
 /// 推送订阅同步（含网关授权）与分享流程的编排（进程级一份）。
@@ -997,13 +999,26 @@ impl<N: Native, A: Api> MobileCore<N, A> {
         Ok(key)
     }
 
-    /// 记下最新的屏幕圆角与原生 inset；值变了返回 `true`。
-    pub fn set_insets(&self, corner_radii: CornerRadii, insets: Insets) -> bool {
+    /// 记下最新的屏幕圆角、原生外边距与安全区；值变了返回 `true`。
+    pub fn set_insets(
+        &self,
+        corner_radii: CornerRadii,
+        insets: Insets,
+        safe_area: Insets,
+    ) -> bool {
         let mut g = self.inner();
-        let changed = g.corner_radii != corner_radii || g.insets != insets;
+        let changed =
+            g.corner_radii != corner_radii || g.insets != insets || g.safe_area != safe_area;
         g.corner_radii = corner_radii;
         g.insets = insets;
+        g.safe_area = safe_area;
         changed
+    }
+
+    /// 当前记录的屏幕几何与安全区快照。
+    pub fn geometry(&self) -> (CornerRadii, Insets, Insets) {
+        let g = self.inner();
+        (g.corner_radii, g.insets, g.safe_area)
     }
 
     pub fn push_view(&self) -> PushView {
@@ -1024,6 +1039,7 @@ impl<N: Native, A: Api> MobileCore<N, A> {
             push,
             corner_radii: g.corner_radii,
             insets: g.insets,
+            safe_area: g.safe_area,
         }
     }
 
@@ -2535,22 +2551,26 @@ mod tests {
         assert_eq!(share.rejected[0].reason, "too_large");
         let e: Event = serde_json::from_value(json!({
             "type": "insets", "cornerRadii": {"tl": 40.5, "tr": 40.5, "bl": 40.5, "br": 40.5},
-            "insets": {"top": 24, "right": 0, "bottom": 48, "left": 0}
+            "insets": {"top": 0, "right": 0, "bottom": 48, "left": 0},
+            "safeArea": {"top": 24, "right": 0, "bottom": 0, "left": 0}
         }))
         .unwrap();
         let Event::Insets {
             corner_radii,
             insets,
+            safe_area,
         } = e
         else {
             panic!()
         };
         assert_eq!(corner_radii.tl, 40.5);
         assert_eq!(insets.bottom, 48.0);
+        assert_eq!(safe_area.top, 24.0);
         assert_eq!(
-            insets_event(corner_radii, insets),
+            insets_event(corner_radii, insets, safe_area),
             json!({"type": "insets", "cornerRadii": {"tl": 40.5, "tr": 40.5, "bl": 40.5, "br": 40.5},
-                   "insets": {"top": 24.0, "right": 0.0, "bottom": 48.0, "left": 0.0}})
+                   "insets": {"top": 0.0, "right": 0.0, "bottom": 48.0, "left": 0.0},
+                   "safeArea": {"top": 24.0, "right": 0.0, "bottom": 0.0, "left": 0.0}})
         );
         assert_eq!(
             serde_json::from_value::<Event>(json!({"type": "stop"})).unwrap(),
@@ -3674,13 +3694,19 @@ mod tests {
             br: 32.0,
         };
         let insets = Insets {
+            top: 0.0,
+            right: 0.0,
+            bottom: 0.0,
+            left: 0.0,
+        };
+        let safe_area = Insets {
             top: 24.0,
             right: 0.0,
             bottom: 16.0,
             left: 0.0,
         };
-        assert!(r.core.set_insets(radii, insets));
-        assert!(!r.core.set_insets(radii, insets));
+        assert!(r.core.set_insets(radii, insets, safe_area));
+        assert!(!r.core.set_insets(radii, insets, safe_area));
         let info = r
             .core
             .info("0.1.0", TokenStoreKind::Keystore, "144.0.7559.59");
@@ -3690,7 +3716,8 @@ mod tests {
                 "version": "0.1.0", "platform": "android", "tokenStore": "keystore",
                 "webview": "144.0.7559.59", "push": {"state": "disabled"},
                 "cornerRadii": {"tl": 32.0, "tr": 32.0, "bl": 32.0, "br": 32.0},
-                "insets": {"top": 24.0, "right": 0.0, "bottom": 16.0, "left": 0.0}
+                "insets": {"top": 0.0, "right": 0.0, "bottom": 0.0, "left": 0.0},
+                "safeArea": {"top": 24.0, "right": 0.0, "bottom": 16.0, "left": 0.0}
             })
         );
         // iOS 走同一个插件：推送状态来自原生（APNs），不再是 unsupported

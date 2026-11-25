@@ -425,7 +425,8 @@ fn setup(app: &mut App, args: &Args, raw: &[String]) -> Result<(), Box<dyn std::
             Box::new(secrets::KeystoreStore(native.clone())),
             app_id,
         );
-        rt.core.set_insets(device.corner_radii, device.insets);
+        rt.core
+            .set_insets(device.corner_radii, device.insets, device.safe_area);
         app.manage(Arc::new(rt));
         mobile::listen(&handle, &native);
     }

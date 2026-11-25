@@ -15,6 +15,7 @@ import android.webkit.CookieManager
 import android.webkit.WebView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.graphics.Insets as CoreInsets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -268,6 +269,7 @@ class OrynMobilePlugin(initial: Activity) : Plugin(initial) {
     o.put("eventLogPath", EventLog.path(act) ?: JSONObject.NULL)
     val snap = insets.toJson()
     o.put("insets", snap.getJSONObject("insets"))
+    o.put("safeArea", snap.getJSONObject("safeArea"))
     o.put("cornerRadii", snap.getJSONObject("cornerRadii"))
     invoke.resolve(o)
   }
@@ -476,14 +478,21 @@ class OrynMobilePlugin(initial: Activity) : Plugin(initial) {
 
   // ---- inset、系统栏 ----
 
-  /** 模板默认 edge-to-edge：给内容容器加「系统栏 + 刘海 + 输入法」的 padding 并消费 inset，WebView 始终落在安全区内。 */
+  /**
+   * 真正 edge-to-edge：WebView 铺满整屏（状态栏、刘海与导航栏之下均可见），原生容器只为软键盘加底部 padding；
+   * 扣除键盘后的剩余 insets 透传给 WebView（供现代 Chromium 填充 CSS `env(safe-area-inset-*)`），
+   * 同时将物理圆角与安全区上报给 Rust / Web 侧兜底（覆盖不支持 systemBars env() 的旧版或定制 WebView）。
+   */
   private fun installInsets(act: Activity) {
     val content = act.findViewById<View>(android.R.id.content) ?: return
     ViewCompat.setOnApplyWindowInsetsListener(content) { v, wi ->
       val bars = wi.getInsets(
-        WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout() or WindowInsetsCompat.Type.ime(),
+        WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
       )
-      v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+      val tappable = wi.getInsets(WindowInsetsCompat.Type.tappableElement())
+      val ime = wi.getInsets(WindowInsetsCompat.Type.ime())
+      val density = v.resources.displayMetrics.density
+      v.setPadding(0, 0, 0, ime.bottom)
       val platform = wi.toWindowInsets()
       val corners = listOf(
         RoundedCorner.POSITION_TOP_LEFT,
@@ -491,26 +500,57 @@ class OrynMobilePlugin(initial: Activity) : Plugin(initial) {
         RoundedCorner.POSITION_BOTTOM_LEFT,
         RoundedCorner.POSITION_BOTTOM_RIGHT,
       ).map { platform?.getRoundedCorner(it)?.radius }
-      val next = ViewportInsets.fromPx(
-        v.resources.displayMetrics.density,
-        bars.top,
-        bars.right,
-        bars.bottom,
-        bars.left,
-        corners,
+      val next = ViewportInsets.fromWindowInsets(
+        density = density,
+        safeTop = bars.top,
+        safeRight = bars.right,
+        safeBottom = bars.bottom,
+        safeLeft = bars.left,
+        imeBottom = ime.bottom,
+        corners = corners,
+        tappableBottom = tappable.bottom,
       )
       if (next != insets) {
         insets = next
         emitInsets(next)
       }
-      WindowInsetsCompat.CONSUMED
+      val effectiveBottom = ViewportInsets.effectiveSafeBottomPx(
+        barsBottom = bars.bottom,
+        tappableBottom = tappable.bottom,
+        imeBottom = ime.bottom,
+        density = density,
+      )
+      val remaining = wi.inset(0, 0, 0, ime.bottom)
+      if (tappable.bottom <= 0 && ime.bottom <= 0 && effectiveBottom < bars.bottom) {
+        val nav = remaining.getInsets(WindowInsetsCompat.Type.navigationBars())
+        val sys = remaining.getInsets(WindowInsetsCompat.Type.systemBars())
+        WindowInsetsCompat.Builder(remaining)
+          .setInsets(
+            WindowInsetsCompat.Type.navigationBars(),
+            CoreInsets.of(nav.left, nav.top, nav.right, effectiveBottom),
+          )
+          .setInsets(
+            WindowInsetsCompat.Type.systemBars(),
+            CoreInsets.of(sys.left, sys.top, sys.right, effectiveBottom),
+          )
+          .build()
+      } else {
+        remaining
+      }
     }
     ViewCompat.requestApplyInsets(content)
   }
 
   private fun emitInsets(snap: ViewportInsets) {
     val o = snap.toJson()
-    EventLog.log(activity, "insets", mapOf("insets" to o.getJSONObject("insets")))
+    EventLog.log(
+      activity,
+      "insets",
+      mapOf(
+        "insets" to o.getJSONObject("insets"),
+        "safeArea" to o.getJSONObject("safeArea"),
+      ),
+    )
     o.put("type", "insets")
     trigger("event", o)
   }
@@ -526,6 +566,8 @@ class OrynMobilePlugin(initial: Activity) : Plugin(initial) {
       val window = act.window
       act.findViewById<View>(android.R.id.content)?.setBackgroundColor(color)
       window.decorView.setBackgroundColor(color)
+      // 禁止系统在透明导航栏下方叠半透明对比度遮罩，由网页自身背景延伸铺满
+      window.isNavigationBarContrastEnforced = false
       val controller = WindowCompat.getInsetsController(window, window.decorView)
       controller.isAppearanceLightStatusBars = !dark
       controller.isAppearanceLightNavigationBars = !dark

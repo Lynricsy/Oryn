@@ -563,6 +563,14 @@ pub async fn launcher_state(app: AppHandle, d: State<'_, Arc<Desktop>>) -> Res<L
             app.exit(0);
         }
     }
+    // 连接页无 host_mobile_info 权限，这里把当前已记录的安全区与圆角补推一次（防止错过冷启动首条 insets 事件）
+    #[cfg(target_os = "android")]
+    if let Some(m) = app.try_state::<Arc<crate::mobile::MobileRt>>() {
+        let (radii, insets, safe_area) = m.core.geometry();
+        if radii != Default::default() || insets != Default::default() || safe_area != Default::default() {
+            emit(&app, crate::mobile_logic::insets_event(radii, insets, safe_area));
+        }
+    }
     // 已进入过应用却又回到连接页 = WebView 被重建（Activity 重建）：重新换取会话回到应用
     #[cfg(mobile)]
     if matches!(info.state, LauncherState::Connected { .. }) {
