@@ -2095,11 +2095,49 @@ async function caseK6() {
 	const shell = dialog.locator("[data-testid=device-shell][data-device=phone]");
 	await shell.waitFor({ timeout: 10_000 });
 	expect(await shell.isVisible(), "登录帧按 device=phone 套上手机设备外壳");
+	const clickProtoLink = async (
+		frame: Frame,
+		linkText: string,
+	): Promise<void> => {
+		// 等 OOPIF 提交至少两帧合成器命中区，并按 ScaledPage 实际缩放比例换算真实屏幕坐标
+		// （Playwright 的 frame.locator().click() 在 CSS transform: scale() 跨源 OOPIF 下未乘以父级缩放）
+		const rect = await frame.evaluate(async (want) => {
+			const { promise, resolve } = Promise.withResolvers<void>();
+			requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+			await promise;
+			const a = [...document.querySelectorAll("a")].find((el) =>
+				(el.textContent ?? "").includes(want),
+			);
+			if (!a) return null;
+			const r = a.getBoundingClientRect();
+			return {
+				x: r.x,
+				y: r.y,
+				w: r.width,
+				h: r.height,
+				iw: window.innerWidth,
+			};
+		}, linkText);
+		check(!!rect && rect.iw > 0, `在原型帧内找到链接「${linkText}」`);
+		const fbox = await p
+			.locator("[data-testid=canvas-prototype] iframe")
+			.first()
+			.boundingBox();
+		check(!!fbox && fbox.width > 0, "取到原型帧 iframe 屏幕包围盒");
+		if (rect && fbox) {
+			const scale = fbox.width / rect.iw;
+			await p.mouse.click(
+				fbox.x + (rect.x + rect.w / 2) * scale,
+				fbox.y + (rect.y + rect.h / 2) * scale,
+			);
+		}
+	};
+
 	const protoFrame1 = await waitCanvasFrame(p, {
 		iframeSelector: "[data-testid=canvas-prototype] iframe",
 		text: "前往注册",
 	});
-	await protoFrame1.frame.locator("a", { hasText: "前往注册" }).first().click();
+	await clickProtoLink(protoFrame1.frame, "前往注册");
 
 	await waitFor(
 		'点击 <Link to="signup"> 后原型顶栏标题切换为「注册」',
@@ -2116,7 +2154,7 @@ async function caseK6() {
 	await shot(p, "k6-prototype-signup");
 
 	// 再点回登录帧，验证双向跳转
-	await protoFrame2.frame.locator("a", { hasText: "返回登录" }).first().click();
+	await clickProtoLink(protoFrame2.frame, "返回登录");
 	await waitFor(
 		'点击 <Link to="login"> 后原型顶栏标题切回「登录」',
 		async () => oneLine((await title.textContent()) ?? "") === "登录",
