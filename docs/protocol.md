@@ -2941,3 +2941,73 @@ orynd 在 `<data_dir>/repos/<projectId>.git` 为每个有 `https://` 仓库地�
 
 - 所有安全裁决在 Chrome 扩展本机 `policy.ts` 执行：未点选共享的现有标签页元数据绝不出浏览器；越权 `tabId`、`chrome://` 与 `findDownload` 直接拒绝；远端 `reload` 静默丢弃。
 - 因 `omp` `bridge.ts` 对扩展 RPC 硬限 20s 超时且 `createTab` 注册了 `onLateResult` 关页回调，新建标签页（不限域名）、`file://`、共享现有 Tab 跨主域名跳转与凭据/跨目标 CDP 均走**非阻塞两阶段审批**：立即返回 `ORYN_APPROVAL_REQUIRED(<id>)` 结束原 RPC，绝不事后执行过期旧 RPC；用户在扩展 Popup 任意时刻点击「允许这次 / 本会话允许 / 拒绝」后写入单次票据 `oneTimeGrants` 或会话白名单，经 `session.approval_resolved` 通知线程由 agent 重试。
+
+## M29：设计画布（Artifacts 画布升级）
+
+把现有 `canvas` 类型升级为可用 TSX + Tailwind v4 + npm 的设计画布（不新增 artifact 类型）。orb 工作副本（`~/designs/<artifactId>/`）是回合内缓冲，每回合结束由 orbd 构建并封存源码与静态产物为一个版本；查看旧版、离线访问、发布、缩略图、渲染与探针检查都基于静态产物。无 orb 的全局助手与 Runner 仍使用 HTML 画框。
+
+### `canvas.json` format 2 与 `Anchor.loc`
+
+- `format`：解析接受 `1` 与 `2`；文档含顶层 `design` 或任一画框带 `source` / `device` 时写出 `2`，否则写出 `1`（HTML 画布逐字节不变）。
+- 顶层新增可选 `design: {engine: 1, start: <pageId> | null}`；`start` 为原型起始画框 id（须指向存在的画框）或 `null`。
+- 画框（`pages[]`）新增可选字段：
+  - `source`：匹配 `^src/frames/[a-z0-9][a-z0-9-]{0,63}\.tsx$`，只在 `design` 存在时允许；带 `source` 的画框其 `file` 恒为 `dist/<同名>.html`。
+  - `device`：`"none" | "phone" | "tablet" | "browser"`，缺省 `none`（规范化输出省略 `none`）。
+- `ops` 拒绝 `set` 修改 `source` 与 `file`（`design` 与 `source` 仅由封存维护），允许 `set` 修改 `device`。测试向量见 `schema/testdata/canvas-ops.json`。
+- 设计画布版本内文件：`canvas.json`、`src/frames/<id>.tsx`、可选 `src/frames/_layout.tsx`、`src/components/**`、`src/theme.css`、`src/DESIGN.md`、`src/package.json`、`src/package-lock.json`、`dist/<id>.html`、`dist/assets/**`、`dist/frames.json`（`[{id, name, width, height, device, links:[<id>…]}]`）、`dist/_project/{package.json,package-lock.json}`（有额外设计依赖时由封存写入）。对设计画布，`update_artifact` 的 `files` / `edits` 命中 `src/` 或 `dist/` 返回 `invalid`。
+- 评论锚点 `Anchor`（`ArtifactCommentAnchor`）新增可选 `loc: string | null`，匹配 `^src/[A-Za-z0-9._/-]+\.(tsx|ts|jsx|js):[1-9][0-9]*:[1-9][0-9]*$`（上限 512 字节），取自元素 `data-oryn-loc`（引擎在 dev 与静态构建里均注入）。
+
+### `orbd.sock` `design.*`（仅 `orbd.sock`，`runner.sock` 不提供）
+
+|方法|参数|结果|说明|
+|---|---|---|---|
+|`design.open`|`{threadId, id?, title?}`|`{id, dir, version, devUrl}`|建立或接管工作副本（`dir` = `~/designs/<id>`），物化 `src/**`，启动受管服务 `dsn-<sha256(id) 前 10 位 hex>`（`Portal: true`）；`devUrl` 为 `http://127.0.0.1:<port>/`（帧在 `/frames/<帧 id>`）；上限 10 分钟|
+|`design.turn`|`{threadId, turnId, title?}`|`{}`|记录当前回合；若上一回合留有脏副本先以旧回合封存，再对本线程副本按 head 对账（干净且落后时重新物化并重启 dev 服务）|
+|`design.seal`|`{threadId, turnId}`|`{sealed:[{id, version}], skipped:[id]}`|按 `SourceHash` 判脏，设计依赖变化时在 `src/` 运行 `npm install`，执行 `vite build` 后调控制面 `seal_design`；构建失败不落版本回 `build_failed`（附 stderr 尾 4 KiB），冲突透传 `conflict`；上限 5 分钟|
+|`design.check`|`{threadId, id, frames?:[id], screenshot?:bool}`|`{status, issues, images, message?}`|在 orb 内用 headless Chromium `--dump-dom` 对工作副本跑探针，`status ∈ clean \| issues \| unverified`；`screenshot=true` 时 `images` 附 `{frame, data}`（PNG base64）；上限 90 秒|
+|`design.status`|`{threadId}`|`{designs:[{id, dir, dirty, check}]}`|列出本线程工作副本；`check` 指纹与当前源码不符时状态换算为 `stale`|
+|`design.eject`|`{threadId, id, version?, to}`|`{id, version, dir, files}`|`version` 省略或 `0` 取最新版，`to` 须为绝对路径且若已存在须为空目录；经控制面 `export_design_project` 分片取回工程 zip 并解压，返回绝对路径 `dir` 与普通文件数 `files`。对应 CLI：`oryn design eject <artifact-id> --to <dir> [--version <n>] [--json]`|
+
+- 新增错误码：`build_failed`、`no_design`。分片传输单页序列化上限：`DesignFilesPageBytes = MaxRequestBytes / 2`（2 MiB）。
+
+### ctl `artifact.call` 扩展与内部操作
+
+- `LinkCtlArtifactCallParams` 新增可选 `turn: {id, title}`，orb 扩展每次调用都带；写入的版本记录 `turn_id` 与 `title`（取首行并截断，忽略 `[Oryn ` 开头的自动消息）。
+- 新增公开操作：`check_artifact`（`{id, path?}`，助手与 Runner 可用）、`design_directions`（`{id, surface:"landing"\|"app", industry?, tone?, proposals?}`）、`design_direction`（`{id, pick}`）、`design_notes`（`{id}`）、`design_resolve_note`（`{id, ref, reply}`）。
+- 新增内部操作（仅 `Caller.Internal == true`，即普通 orb 的 `orbd` 经 link 发出，不注册为 agent 工具）：
+  - `seal_design`：`{id, baseVersion, files:[{path, source}\|{path, remove}], check?}`，按 `dist/frames.json` 对齐画框后走 `writeCanvas` 落版本（`canvas.json` 不参与冲突检查，`src/**` 与 `dist/**` 按 `baseVersion` 检查）。
+  - `design_head`：`{id}` → `{version, check?, files:[{path, sha256}], aesthetic?, surface?}`。
+  - `fetch_design_files`：`{id, version?, cursor?}` → `{version, files:[{path, offset, data(base64), size, sha256}], next?}`（单页 ≤ `DesignFilesPageBytes`）。
+  - `fetch_design_runtime`：`{}` → `{files:[{name, data(base64)}]}`（控制面 Web 构建里的 `sandbox/runtime.js`、`sandbox/probe.js`）。
+  - `export_design_project`：`{id, version?, cursor?}` → `{version, size, sha256, offset, data(base64), next?}`（`cursor` 为字节偏移十进制串，缺省 `0`，单页 ≤ `DesignFilesPageBytes`）。
+
+### REST
+
+|方法与路径|operationId|参数 / 请求体|响应|
+|---|---|---|---|
+|`GET /api/v1/artifacts/{id}/design`|`getArtifactDesign`|—|`ArtifactDesign{design, live:{threadId, port}\|null, direction, autoNotes, check?}`；非画布回 400 `invalid`|
+|`PATCH /api/v1/artifacts/{id}/design`|`patchArtifactDesign`|`ArtifactDesignPatch{autoNotes}`|`ArtifactDesign`；非画布回 400 `invalid`，回收站回 410|
+|`GET /api/v1/artifacts/{id}/export`|`exportArtifact`|`version?`, `format` 新增 `project`、`mockup-png`、`mockup-pdf`（仅设计画布可用）；样机另支持 `frames`, `scale`, `radius`, `border`, `bg`, `shadow`, `shell`, `long`|`project` → zip；`mockup-png` → `image/png`；`mockup-pdf` → `application/pdf`（渲染不可用回 503 `render_unavailable`）|
+
+- `ArtifactVersion` 新增可选 `turnId`、`title`、`check: ArtifactCheck{status: clean|issues|stale|unverified, issues: ArtifactCheckIssue[]}`。
+- 样机查询参数校验（非法回 400 `invalid`）：`frames`（逗号分隔画框 `page.id`，缺省全部）、`scale`（整数 1–3，缺省 `2`，仅 `mockup-png`，`mockup-pdf` 固定 `1`）、`radius`（整数 0–64 CSS px，缺省 `12`）、`border`（bool，缺省 `true`）、`bg`（`transparent` / `light` / `dark` / `#rrggbb`，缺省 `light`）、`shadow`（bool，缺省 `true`）、`shell`（bool，缺省 `true`）、`long`（bool，缺省 `false`，先用探针量实测高度并展开，总高钳制 ≤ 8000 CSS px）。
+- `GET /api/v1/artifacts/{id}/design` 的 `live` 由控制面查询全部 `ready` orb 上运行中的 `dsn-<sha256(id) 前 10 位 hex>` 服务（校验服务所属线程为该画布的创建线程或同项目未归档工作线程），返回实际运行该服务的 `threadId` 与 `port`。
+
+### 父子 postMessage 扩展（`web/sandbox/runtime/messages.ts`）
+
+`PROTOCOL_VERSION` 保持 `1`，只增不改（单条消息上限仍为 64 KiB）：
+
+- `PageSelection` 新增可选 `loc: string | null`（同 `Anchor.loc` 格式）。
+- 父 → 页：
+  - `select-loc {loc}`：选中 `data-oryn-loc` 匹配的第一个元素并回 `select`（找不到回 `selection: null`）。
+  - `design-reload {}`：整页重新加载（热更不可用或对账后）。
+  - `navigate {frame}`：帧内跳转至 `frame`（dev 帧 `./<frame>`，静态产物 `./<frame>.html`）。
+- 页 → 父：
+  - `navigated {frame}`：当前显示的帧 id（带 `design` 的 `ready` 之后及每次帧内跳转后上报）。
+  - `ready` 新增可选 `design: {frame, links:[id]}`（`frame` 匹配帧 id，`links` 上限 256 项）。
+- 实时帧（`LiveFrame`，经 portal 加载）的 `FrameLink` 发送 `postMessage` 时把 `targetOrigin` 设为该 portal 源（静态帧因不透明源仍为 `*`）。
+
+### 存储与探针
+
+- 迁移 `0059_artifact_design.sql`：`artifact_versions` 增加 `turn_id`、`title`、`check_json` 与索引 `artifact_versions_turn(artifact_id, turn_id)`；新增表 `artifact_designs(artifact_id PRIMARY KEY, surface, direction, dealt, auto_notes, delivered, dirty_at)`。
+- 探针（`sandbox/probe.js`）：由 `?__oryn_probe=1` 触发（控制面注入 `window.__orynProbe = {aesthetic, surface}`，orb 经 `__oryn_aesthetic=1`、`__oryn_surface=<landing|app>` 传入），输出 `<script id="oryn-probe" type="application/json">{v:1, frame, height, issues:[{rule, loc, text, detail}]}</script>`；14 条规则（前 6 条版面类常驻，后 8 条审美类在 `direction` 非空时启用，`app` 面关闭 `eyebrow-excess` 与 `split-repeat`），每条最多报 3 处。

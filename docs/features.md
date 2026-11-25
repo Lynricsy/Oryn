@@ -458,11 +458,14 @@ box 是一台常驻机器：由 Provider（Docker / Sysbox / Firecracker）拉�
 
 orb 线程、Runner 线程与全局助手的 Agent 都能用 `create_artifact` / `update_artifact` 等工具做出页面、画布、文档（Markdown）与幻灯片。
 
-- **版本**：每次写入生成一个新版本，冲突按文件粒度检查；可以恢复旧版本，删除的进「最近删除」保留 30 天。
-- **隔离渲染**：每个 artifact 在不透明源的沙箱帧里显示（配置了 `portal_domain` 时用 `a-<令牌>` 泛域名，否则用主域的 `/_af/` 路径），只能加载自身文件与白名单 CDN。控制面主机上带沙箱的 headless Chromium 负责渲染缩略图、PNG 与 PDF。
+- **版本**：每次写入生成一个新版本，冲突按文件粒度检查；可以恢复旧版本，删除的进「最近删除」保留 30 天。版本历史按 agent 回合折叠，以用户输入首行作主标题并带设计检查徽标；查看设计画布旧版本时强制显示静态帧并提示横幅，恢复后下一回合工作副本自动对账。
+- **隔离渲染**：每个 artifact 在不透明源的沙箱帧里显示（配置了 `portal_domain` 时用 `a-<令牌>` 泛域名，否则用主域的 `/_af/` 路径），只能加载自身文件与白名单 CDN。控制面主机上带沙箱的 headless Chromium 负责渲染缩略图、PNG、PDF 与设计探针检查。
 - **入口**：「更多」分区的 `/artifacts` 总览页（大卡片预览、类型标签、搜索、筛选、导入、回收站）；线程右面板的 Artifacts 标签；转录里的 artifact 卡片；命令面板。
-- **查看器** `/artifacts/<id>`：版本历史、评论（可发给线程）、元素直接编辑、导出（HTML / zip、Word、Markdown、PowerPoint、PDF）和分享。
+- **查看器** `/artifacts/<id>`：版本历史、评论（可发给线程）、元素直接编辑、导出（HTML / zip、Word、Markdown、PowerPoint、PDF，设计画布另支持样机 PNG / PDF 与可运行工程 zip）和分享。
 - **画布编辑器**：工具条、图层与属性面板；画框可声明调节参数，在「调节」面板里即时预览并写回；选中的画框与标注可连同合成图「交给 Agent」。
+- **设计画布**：orb 线程可通过 `design_open` 把 `canvas` 升级为 TSX + Tailwind v4 多帧设计画布（支持 `src/frames/_layout.tsx` 共享外壳、`src/package.json` 额外依赖与 `<Link to>` 帧间跳转；无 orb 的助手与 Runner 仍使用 HTML 画框）。有活跃 orb 且配置 `portal_domain` 时，查看器顶栏显示「实时 / 静态」切换，离视口最近的至多 6 帧直连 Vite 开发服务热更新（WebKit 跨站握手受限时回退静态帧并提示新窗口授权），回合结束自动构建并封存源码与静态产物供离线查看、发布与缩略图使用；点选元素按 `src/frames/…:行` 定位源码，源码画框禁直接编辑。
+- **品质与迭代**：内置 14 条无头浏览器探针规则（6 条版面规则：文字截断、意外折行、图标缺失、边缘错位、未定义 token、对比度不足；8 条审美规则：点击目标过小、文案破折号、眉标过多、多强调色、单一圆角、大面积纯黑白、重复分栏、内联原始颜色，选定方向后启用，`app` 面关闭眉标与重复分栏），orb 线程用 `design_check`（可附截图），助手与 Runner 用 `check_artifact`，回合结束仍有未通过或未检查改动时自动续跑一轮；`design_directions` / `design_direction` 发牌选定视觉方向并生成语义 token；画布评论与用户便签默认开启自动投递（30 秒去抖，线程空闲时发往创建线程，可按 artifact 关闭），由 Agent 用 `design_notes` / `design_resolve_note` 处理回复。
+- **原型与交付**：画框支持 `none` / `phone` / `tablet` / `browser` 设备外壳，画布按 `<Link>` 只读绘制帧间连线；原型模式从起始帧单帧交互预览，点击链接同步切换帧名、尺寸与外壳。支持配置帧范围、缩放、圆角、边框、阴影、背景、设备外壳与长图（上限 8000 px）导出样机 PNG / PDF，导出含源码、锁文件与 `.oryn/box.yaml` 的可运行前端工程，以及在菜单里「部署到 box」或在 orb 内用 `oryn design eject <id> --to <dir>` 导出提交后经 `oryn boxes deploy` 上线。
 - **演示与聚焦**：页面与画布可铺满窗口逐页演示，单个画框可全尺寸聚焦查看；手机上画布只读，演示可左右轻扫翻页。
 - **在场**：查看器与卡片显示正在读、正在改的线程头像；画布上显示 agent 指针，可以「跟随」它的镜头。
 - **页面能力**：页面可通过 `oryn.use("db" | "files" | "sample")` 存数据、只读项目文件、向用户的模型提问；后两项首次使用需要用户同意，可在 设置 › Artifacts 收回。

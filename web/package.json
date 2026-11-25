@@ -42,6 +42,7 @@
     "accept:m23": "bun scripts/m23-accept.ts",
     "accept:m25": "bun scripts/m25-accept.ts",
     "accept:m26": "bun scripts/m26-accept.ts",
+    "accept:m29": "bun scripts/m29-design-accept.ts",
     "probe:artifact-browser": "bun scripts/artifact-browser-probe.ts",
     "walk:m121": "bun scripts/m121-walk.ts",
     "tauri": "tauri"
