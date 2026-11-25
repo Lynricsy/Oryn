@@ -14,7 +14,7 @@ import {
 	type WsEntries,
 	type WsThreadSnapshot,
 } from "../api/client";
-import type { SessionState } from "../omp/types";
+import type { ImageContent, SessionState } from "../omp/types";
 import {
 	applyEntries,
 	applyFrame,
@@ -25,7 +25,9 @@ import {
 	applyUiResolved,
 	initialThreadState,
 	type OmpFrame,
+	type OptimisticQueuedMessage,
 	prependEntries,
+	type QueueLane,
 	type ThreadViewState,
 } from "./thread-reducer";
 
@@ -262,6 +264,51 @@ export async function loadEarlierEntries(threadId: string): Promise<void> {
 	store.getState().apply([{ type: "entries.earlier", page }]);
 }
 
+let optimisticQueueSeq = 0;
+
+/** 往线程本地乐观队列压入一条引导 / 排队消息，立即在输入坞上方显示。 */
+export function addOptimisticQueue(
+	threadId: string,
+	lane: QueueLane,
+	text: string,
+	images?: ImageContent[],
+): string {
+	const id = `__opt_q_${++optimisticQueueSeq}`;
+	const item: OptimisticQueuedMessage = {
+		id,
+		lane,
+		text,
+		...(images && images.length > 0 ? { images } : {}),
+		timestamp: Date.now(),
+	};
+	const store = getThreadStore(threadId);
+	const prev = store.getState().optimisticQueue;
+	store.getState().patchLocal({ optimisticQueue: [...prev, item] });
+	return id;
+}
+
+/** 命令已应答：标记乐观项为 settled，若已被权威 `queue_update` 接管则无操作。 */
+export function settleOptimisticQueue(threadId: string, id: string): void {
+	const store = peekThreadStore(threadId);
+	if (!store) return;
+	const prev = store.getState().optimisticQueue;
+	if (!prev.some((o) => o.id === id)) return;
+	store.getState().patchLocal({
+		optimisticQueue: prev.map((o) =>
+			o.id === id ? { ...o, settled: true } : o,
+		),
+	});
+}
+
+/** 发送失败或兜底清理：移除指定的本地乐观排队项。 */
+export function removeOptimisticQueue(threadId: string, id: string): void {
+	const store = peekThreadStore(threadId);
+	if (!store) return;
+	const prev = store.getState().optimisticQueue;
+	const next = prev.filter((o) => o.id !== id);
+	if (next.length !== prev.length)
+		store.getState().patchLocal({ optimisticQueue: next });
+}
 /** 仅测试用：清空所有线程 store。 */
 export function resetThreadStores() {
 	threadStores.clear();

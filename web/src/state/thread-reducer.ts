@@ -17,12 +17,14 @@ import type {
 } from "../api/client";
 import type {
 	ExtensionUiRequest,
+	ImageContent,
 	RpcAvailableSlashCommand,
 	RpcBtwHistoryRecord,
 	RpcGetQueueResult,
 	RpcLoopModeState,
 	RpcPlanProposalFrame,
 	RpcPromptResultFrame,
+	RpcQueuedMessage,
 	SessionState,
 } from "../omp/types";
 import { isRecord } from "../tool-render/util";
@@ -168,6 +170,19 @@ export interface QueueSnapshot {
 	liveSteered: number;
 }
 
+export type QueueLane = "steering" | "followUp";
+
+/** 本地乐观排队项：用户在忙时发出 steer / follow_up 后立刻在输入坞上方展示，待权威 `queue_update` 接管。 */
+export interface OptimisticQueuedMessage {
+	id: string;
+	lane: QueueLane;
+	text: string;
+	images?: ImageContent[];
+	timestamp: number;
+	/** 命令已应答但尚未被权威帧消解时为真；后续权威帧、用户消息落盘或回合结束会清理它。 */
+	settled?: boolean;
+}
+
 export interface CompactionStatus {
 	kind: "auto" | "manual";
 	reason?: string;
@@ -215,8 +230,10 @@ export interface ThreadViewState {
 	running: boolean;
 	state: SessionState | null;
 	queue: QueueSnapshot | null;
-	/** 最近一次 `get_queue` 结果（带 id，可编辑 / 移动 / 删除）。 */
+	/** 最近一次 `queue_update`（新版对象格式）或 `get_queue` 结果（带 id，可编辑 / 移动 / 删除）。 */
 	queueItems: RpcGetQueueResult | null;
+	/** 已发出、等待服务端 `queue_update` 接管的本地乐观排队项。 */
+	optimisticQueue: OptimisticQueuedMessage[];
 	pendingUi: ExtensionUiRequest[];
 	statuses: Record<string, string>;
 	widgets: Record<
@@ -275,6 +292,7 @@ export function initialThreadState(threadId: string): ThreadViewState {
 		state: null,
 		queue: null,
 		queueItems: null,
+		optimisticQueue: [],
 		pendingUi: [],
 		statuses: {},
 		widgets: {},
@@ -479,11 +497,26 @@ export function applyEntries(
 ): ThreadViewState {
 	const next = mergeEntries(s, msg.entries);
 	let lastSeq = next.lastSeq;
-	for (const e of msg.entries) if (e.seq > lastSeq) lastSeq = e.seq;
+	let hasUserEntry = false;
+	for (const e of msg.entries) {
+		if (e.seq > lastSeq) lastSeq = e.seq;
+		if (
+			e.type === "message" &&
+			isRecord(e.payload) &&
+			isRecord(e.payload.message) &&
+			e.payload.message.role === "user"
+		)
+			hasUserEntry = true;
+	}
+	const optimisticQueue =
+		hasUserEntry && next.optimisticQueue.some((o) => o.settled)
+			? next.optimisticQueue.filter((o) => !o.settled)
+			: next.optimisticQueue;
 	return {
 		...next,
 		lastSeq,
 		leafEntryId: msg.leafEntryId ?? next.leafEntryId,
+		optimisticQueue,
 	};
 }
 
@@ -515,16 +548,89 @@ export function applyPlanResolved(s: ThreadViewState): ThreadViewState {
 	return s.planProposal ? { ...s, planProposal: null } : s;
 }
 
+interface ParsedQueueLane {
+	texts: string[];
+	/** 当且仅当该路所有元素均为带 id 的对象（或为空数组）时非空；旧版纯字符串数组时为 null。 */
+	items: RpcQueuedMessage[] | null;
+}
+
+function parseQueueLane(raw: unknown): ParsedQueueLane {
+	if (!Array.isArray(raw)) return { texts: [], items: null };
+	if (raw.length === 0) return { texts: [], items: [] };
+	const texts: string[] = [];
+	const items: RpcQueuedMessage[] = [];
+	let allObjects = true;
+	for (const x of raw) {
+		if (typeof x === "string") {
+			texts.push(x);
+			allObjects = false;
+			continue;
+		}
+		if (isRecord(x) && typeof x.text === "string") {
+			texts.push(x.text);
+			if (typeof x.id === "string" && x.id) {
+				const images = Array.isArray(x.images)
+					? (x.images as ImageContent[])
+					: undefined;
+				items.push({
+					id: x.id,
+					text: x.text,
+					...(images && images.length > 0 ? { images } : {}),
+					editable: x.editable === true,
+					timestamp: num(x.timestamp) ?? 0,
+				});
+			} else {
+				allObjects = false;
+			}
+		}
+	}
+	return { texts, items: allObjects ? items : null };
+}
+
 function queueFrom(frame: JsonRecord): QueueSnapshot {
+	const steering = parseQueueLane(frame.steering);
+	const followUp = parseQueueLane(frame.followUp);
 	return {
-		steering: Array.isArray(frame.steering)
-			? frame.steering.filter((x): x is string => typeof x === "string")
-			: [],
-		followUp: Array.isArray(frame.followUp)
-			? frame.followUp.filter((x): x is string => typeof x === "string")
-			: [],
+		steering: steering.texts,
+		followUp: followUp.texts,
 		liveSteered: num(frame.liveSteered) ?? 0,
 	};
+}
+
+/** 新版 omp `queue_update` 直接携带 `SessionQueuedMessage[]`（带 id / editable），无需再等 `get_queue`。 */
+function queueItemsFrom(frame: JsonRecord): RpcGetQueueResult | null {
+	const steering = parseQueueLane(frame.steering);
+	const followUp = parseQueueLane(frame.followUp);
+	if (steering.items === null || followUp.items === null) return null;
+	return { steering: steering.items, followUp: followUp.items };
+}
+
+/** 权威 `queue_update` 到达后，按 lane+文本频次消解已被服务端接管的乐观项，并清理已应答的旧乐观项。 */
+function reconcileOptimisticQueue(
+	optimistic: readonly OptimisticQueuedMessage[],
+	authoritative: QueueSnapshot,
+): OptimisticQueuedMessage[] {
+	if (optimistic.length === 0) return [];
+	const counts: Record<QueueLane, Map<string, number>> = {
+		steering: new Map(),
+		followUp: new Map(),
+	};
+	for (const text of authoritative.steering)
+		counts.steering.set(text, (counts.steering.get(text) ?? 0) + 1);
+	for (const text of authoritative.followUp)
+		counts.followUp.set(text, (counts.followUp.get(text) ?? 0) + 1);
+	const kept: OptimisticQueuedMessage[] = [];
+	for (const item of optimistic) {
+		if (item.settled) continue;
+		const bag = counts[item.lane];
+		const left = bag.get(item.text) ?? 0;
+		if (left > 0) {
+			bag.set(item.text, left - 1);
+			continue;
+		}
+		kept.push(item);
+	}
+	return kept;
 }
 
 function upsertSubagent(
@@ -636,7 +742,14 @@ export function applyFrame(
 			};
 		case "agent_end":
 			// isTerminal === false：仍有续跑或异步投递
-			return f.isTerminal !== false ? { ...s, running: false, retry: null } : s;
+			return f.isTerminal !== false
+				? {
+						...s,
+						running: false,
+						retry: null,
+						optimisticQueue: s.optimisticQueue.filter((o) => !o.settled),
+					}
+				: s;
 		case "turn_start":
 		case "turn_end":
 			return s;
@@ -873,8 +986,16 @@ export function applyFrame(
 						},
 					}
 				: s;
-		case "queue_update":
-			return { ...s, queue: queueFrom(f) };
+		case "queue_update": {
+			const queue = queueFrom(f);
+			const queueItems = queueItemsFrom(f);
+			return {
+				...s,
+				queue,
+				queueItems,
+				optimisticQueue: reconcileOptimisticQueue(s.optimisticQueue, queue),
+			};
+		}
 
 		// ---- 非会话帧 ----
 		case "prompt_result": {
@@ -895,6 +1016,7 @@ export function applyFrame(
 				...s,
 				running: false,
 				state: s.state ? { ...s.state, isSettled: true } : s.state,
+				optimisticQueue: s.optimisticQueue.filter((o) => !o.settled),
 			};
 		case "extension_error":
 			return pushNotice(
@@ -1064,8 +1186,20 @@ export function applySnapshot(
 			? next.state.isStreaming || !next.state.isSettled
 			: false,
 	};
-	if (isRecord(snap.agent.queue))
-		next = { ...next, queue: queueFrom(snap.agent.queue) };
+	if (isRecord(snap.agent.queue)) {
+		const queue = queueFrom(snap.agent.queue);
+		next = {
+			...next,
+			queue,
+			queueItems: queueItemsFrom(snap.agent.queue),
+			optimisticQueue: reconcileOptimisticQueue(s.optimisticQueue, queue),
+		};
+	} else if (s.optimisticQueue.length > 0) {
+		next = {
+			...next,
+			optimisticQueue: s.optimisticQueue.filter((o) => !o.settled),
+		};
+	}
 	for (const ui of snap.agent.pendingUi) {
 		if (isRecord(ui) && typeof ui.type === "string")
 			next = applyFrame(next, ui as OmpFrame);
@@ -1114,7 +1248,10 @@ export function snapshotEffects(snap: WsThreadSnapshot): FrameEffect[] {
 	if (!snap.agent.state) effects.push("refresh_state");
 	if (isRecord(snap.agent.queue)) {
 		const q = queueFrom(snap.agent.queue);
-		if (q.steering.length > 0 || q.followUp.length > 0)
+		if (
+			(q.steering.length > 0 || q.followUp.length > 0) &&
+			queueItemsFrom(snap.agent.queue) === null
+		)
 			effects.push("refresh_queue");
 	}
 	return effects;
@@ -1138,8 +1275,14 @@ export function effectsOf(frame: OmpFrame): FrameEffect[] {
 			return ["refresh_state"];
 		case "tool_execution_end":
 			return frame.toolName === "todo" ? ["refresh_state"] : [];
-		case "queue_update":
-			return ["refresh_queue"];
+		case "queue_update": {
+			const f = frame as JsonRecord;
+			const q = queueFrom(f);
+			return (q.steering.length > 0 || q.followUp.length > 0) &&
+				queueItemsFrom(f) === null
+				? ["refresh_queue"]
+				: [];
+		}
 		default:
 			return [];
 	}

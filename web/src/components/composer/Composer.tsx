@@ -63,8 +63,11 @@ import {
 	useComposerPendingRestores,
 } from "../../state/composer-drafts";
 import {
+	addOptimisticQueue,
 	agentQueryable,
 	getThreadStore,
+	removeOptimisticQueue,
+	settleOptimisticQueue,
 	useIndex,
 	useThread,
 } from "../../state/stores";
@@ -579,16 +582,36 @@ export const Composer = memo(function Composer({
 		try {
 			if (parsed.kind === "empty") {
 				if (!att.hasFiles) return;
-				await realtime.cmd(
-					threadId,
-					promptFrame(
-						mode,
-						outgoing("", sent),
-						att.contents,
-						att.attachmentIds,
-						att.fileIds,
-					),
+				const outText = outgoing("", sent);
+				const frame = promptFrame(
+					mode,
+					outText,
+					att.contents,
+					att.attachmentIds,
+					att.fileIds,
 				);
+				if (mode === "steer" || mode === "follow_up") {
+					const optId = addOptimisticQueue(
+						threadId,
+						mode === "steer" ? "steering" : "followUp",
+						outText || t("queue.attachmentOnly", { count: sent.items.length }),
+						att.contents,
+					);
+					reset(sent);
+					if (getComposerDraft(threadId).inFlight === marker)
+						patchComposerDraft(threadId, { inFlight: null });
+					try {
+						await realtime.cmd(threadId, frame);
+						settleOptimisticQueue(threadId, optId);
+						setTimeout(() => removeOptimisticQueue(threadId, optId), 1500);
+					} catch (e) {
+						removeOptimisticQueue(threadId, optId);
+						restoreDraft(sent);
+						throw e;
+					}
+					return;
+				}
+				await realtime.cmd(threadId, frame);
 				resetIfUnchanged(sent, true);
 				return;
 			}
@@ -625,13 +648,38 @@ export const Composer = memo(function Composer({
 				}
 			}
 			const body = asText.kind === "text" ? asText.text : sent.text.trim();
+			const outText = outgoing(body, sent);
 			const frame = promptFrame(
 				mode,
-				outgoing(body, sent),
+				outText,
 				att.contents,
 				att.attachmentIds,
 				att.fileIds,
 			);
+			// 引导（steer）与排队（follow_up）：发送后立即在输入框上方排队条中可见、清空输入区；
+			// 服务端广播权威 `queue_update` 后自动无缝接管，发送失败则撤回乐观项并放回草稿。
+			if (mode === "steer" || mode === "follow_up") {
+				const optId = addOptimisticQueue(
+					threadId,
+					mode === "steer" ? "steering" : "followUp",
+					outText,
+					att.contents,
+				);
+				reset(sent);
+				if (getComposerDraft(threadId).inFlight === marker)
+					patchComposerDraft(threadId, { inFlight: null });
+				try {
+					await realtime.cmd(threadId, frame);
+					settleOptimisticQueue(threadId, optId);
+					// 若发送瞬间 agent 恰好变为空闲并直接消费、不再推送 `queue_update`，兜底清理避免残留
+					setTimeout(() => removeOptimisticQueue(threadId, optId), 1500);
+				} catch (e) {
+					removeOptimisticQueue(threadId, optId);
+					restoreDraft(sent);
+					throw e;
+				}
+				return;
+			}
 			// agent 未就绪（orb 冻结 / 唤醒中、agent 启动中）时命令在服务端排队，agent 接下才应答：消息先以「发送中」气泡
 			// 进转录、输入区立即清空，对应的 user 条目到达时气泡由转录清除。就绪的 agent 几毫秒内应答，不闪气泡，
 			// 仍是应答后清空。未识别的斜杠命令照原文交给 agent，可能不产生 user 条目，不走气泡

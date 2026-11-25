@@ -586,7 +586,10 @@
 		"remove": "删除",
 		"heading": "排队中",
 		"steering": "引导",
-		"followUp": "排队"
+		"followUp": "排队",
+		"sending": "发送中",
+		"attachmentOnly": "{{count}} 个附件",
+		"imagesCount": "{{count}} 张图"
 	},
 	"ui": {
 		"approvalOrigin": "来源",
@@ -596,7 +599,25 @@
 		"moreQueued": "另有 {{count}} 个待答",
 		"otherAnswer": "其他回答…",
 		"recommended": "推荐",
-		"timeLeft": "{{s}} 秒"
+		"required": "必填",
+		"multiChoice": "可多选",
+		"selectPlaceholder": "请选择…",
+		"formProgress": "已填 {{answered}}/{{total}}",
+		"submitShortcut": "{{key}} 提交",
+		"imageLoadFailed": "图片加载失败",
+		"imageZoomHint": "点击查看大图",
+		"timeLeft": "{{s}} 秒",
+		"validation": {
+			"required": "此项为必填",
+			"number": "请输入有效数字",
+			"min": "不能小于 {{min}}",
+			"max": "不能大于 {{max}}",
+			"minLength": "至少输入 {{min}} 个字符",
+			"maxLength": "最多输入 {{max}} 个字符",
+			"pattern": "格式不符合要求",
+			"email": "请输入有效的邮箱地址",
+			"url": "请输入有效的链接（含 https://）"
+		}
 	},
 	"ttsrRule": {
 		"kind": "TTSR 规则",

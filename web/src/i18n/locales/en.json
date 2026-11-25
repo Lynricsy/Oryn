@@ -586,7 +586,10 @@
 		"remove": "Remove",
 		"heading": "Queued",
 		"steering": "Steering",
-		"followUp": "Follow-up"
+		"followUp": "Follow-up",
+		"sending": "Sending",
+		"attachmentOnly": "{{count}} attachment(s)",
+		"imagesCount": "{{count}} image(s)"
 	},
 	"ui": {
 		"approvalOrigin": "Origin",
@@ -596,7 +599,25 @@
 		"moreQueued": "{{count}} more pending",
 		"otherAnswer": "Other answer…",
 		"recommended": "Recommended",
-		"timeLeft": "{{s}}s"
+		"required": "Required",
+		"multiChoice": "Multi-select",
+		"selectPlaceholder": "Select an option…",
+		"formProgress": "{{answered}}/{{total}} answered",
+		"submitShortcut": "{{key}} to submit",
+		"imageLoadFailed": "Failed to load image",
+		"imageZoomHint": "Click to zoom",
+		"timeLeft": "{{s}}s",
+		"validation": {
+			"required": "This field is required",
+			"number": "Enter a valid number",
+			"min": "Must be at least {{min}}",
+			"max": "Must be at most {{max}}",
+			"minLength": "Use at least {{min}} characters",
+			"maxLength": "Use at most {{max}} characters",
+			"pattern": "Value does not match the required format",
+			"email": "Enter a valid email address",
+			"url": "Enter a valid URL (including https://)"
+		}
 	},
 	"ttsrRule": {
 		"kind": "TTSR rule",

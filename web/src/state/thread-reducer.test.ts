@@ -8,6 +8,7 @@ import {
 	applyFrame,
 	applyLiveReset,
 	applySnapshot,
+	effectsOf,
 	initialThreadState,
 	type OmpFrame,
 	SESSION_EVENT_TYPES,
@@ -428,6 +429,33 @@ describe("帧覆盖面", () => {
 			targetId: "u1",
 		});
 		expect(cancelled.pendingUi).toEqual([]);
+	});
+
+	it("新版 omp 对象格式 queue_update 直接填充 queue 与 queueItems，不触发多余 get_queue", () => {
+		const frame = {
+			type: "queue_update",
+			steering: [
+				{ id: "s1", text: "改走 sqlite", editable: true, timestamp: 123 },
+			],
+			followUp: [
+				{ id: "f1", text: "补一下文档", editable: true, timestamp: 124 },
+			],
+		};
+		const s = applyFrame(initialThreadState(TID), frame);
+		expect(s.queue).toEqual({
+			steering: ["改走 sqlite"],
+			followUp: ["补一下文档"],
+			liveSteered: 0,
+		});
+		expect(s.queueItems).toEqual({
+			steering: [
+				{ id: "s1", text: "改走 sqlite", editable: true, timestamp: 123 },
+			],
+			followUp: [
+				{ id: "f1", text: "补一下文档", editable: true, timestamp: 124 },
+			],
+		});
+		expect(effectsOf(frame)).toEqual([]);
 	});
 
 	it("xd:// 挂载变动提示不进转录，其它 notice 照常", () => {

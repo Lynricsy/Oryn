@@ -3844,10 +3844,17 @@ export class MockServer {
 					String(frame.message ?? ""),
 				);
 				this.queues.set(threadId, q);
+				const toItems = (lane: string[], p: string) =>
+					lane.map((text, i) => ({
+						id: `${p}${i}`,
+						text,
+						editable: true,
+						timestamp: Date.now(),
+					}));
 				this.frame(threadId, {
 					type: "queue_update",
-					steering: q.steering,
-					followUp: q.followUp,
+					steering: toItems(q.steering, "s"),
+					followUp: toItems(q.followUp, "f"),
 					liveSteered: 0,
 				});
 				return this.respond(socket, threadId, id, type);

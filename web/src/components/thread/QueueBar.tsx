@@ -1,22 +1,64 @@
 /**
- * 排队条：显示 steering / follow-up 队列，支持编辑、删除、拖动排序（跨队列）、提前发送、清空。
- * 带 id 的队列项来自 `get_queue`（`queue_update` 后自动刷新）。是输入坞玻璃托盘里的一节。
+ * 排队条：停靠在输入坞输入框上方，显示 steering（引导）与 follow-up（排队）队列。
+ * - 支持乐观项：用户在忙时发送引导/排队消息后立即可见，待权威 `queue_update` 到达无缝接管。
+ * - 支持编辑、删除、拖动排序（跨队列）、提前发送、清空。
  */
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { OmpCommand, RpcQueuedMessage } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
 import { getThreadStore, useThread } from "../../state/stores";
+import type {
+	OptimisticQueuedMessage,
+	QueueLane,
+} from "../../state/thread-reducer";
 import { Badge } from "../ui/data";
 import { Icon } from "../ui/icons";
 import { Button, IconButton, TextInput } from "../ui/primitives";
 
-type Lane = "steering" | "followUp";
+type DisplayItem = RpcQueuedMessage & { pending?: boolean };
 
 async function run(threadId: string, frame: OmpCommand) {
 	await realtime.cmd(threadId, frame);
 	const data = await realtime.cmd(threadId, { type: "get_queue" });
 	getThreadStore(threadId).getState().patchLocal({ queueItems: data });
+}
+
+function mergeLane(
+	lane: QueueLane,
+	authoritative: RpcQueuedMessage[] | undefined,
+	texts: readonly string[] | undefined,
+	optimistic: readonly OptimisticQueuedMessage[],
+): DisplayItem[] {
+	const base: DisplayItem[] =
+		authoritative ??
+		(texts ?? []).map((text, i) => ({
+			id: `${lane === "steering" ? "s" : "f"}${i}`,
+			text,
+			editable: false,
+			timestamp: 0,
+		}));
+	const mine = optimistic.filter((o) => o.lane === lane);
+	if (mine.length === 0) return base;
+	const counts = new Map<string, number>();
+	for (const b of base) counts.set(b.text, (counts.get(b.text) ?? 0) + 1);
+	const extra: DisplayItem[] = [];
+	for (const o of mine) {
+		const left = counts.get(o.text) ?? 0;
+		if (left > 0) {
+			counts.set(o.text, left - 1);
+			continue;
+		}
+		extra.push({
+			id: o.id,
+			text: o.text,
+			images: o.images,
+			editable: false,
+			timestamp: o.timestamp,
+			pending: true,
+		});
+	}
+	return [...base, ...extra];
 }
 
 function Item({
@@ -26,15 +68,18 @@ function Item({
 	index,
 }: {
 	threadId: string;
-	item: RpcQueuedMessage;
-	lane: Lane;
+	item: DisplayItem;
+	lane: QueueLane;
 	index: number;
 }) {
 	const { t } = useTranslation();
 	const [editing, setEditing] = useState<string | null>(null);
+	const isSteer = lane === "steering";
 	return (
 		<li
 			draggable={item.editable}
+			data-queue-lane={lane}
+			data-queue-pending={item.pending ? "true" : undefined}
 			onDragStart={(e) =>
 				e.dataTransfer.setData(
 					"text/x-oryn-queue",
@@ -44,6 +89,7 @@ function Item({
 			onDragOver={(e) => e.preventDefault()}
 			onDrop={(e) => {
 				e.preventDefault();
+				if (item.pending) return;
 				const raw = e.dataTransfer.getData("text/x-oryn-queue");
 				if (!raw) return;
 				const { id } = JSON.parse(raw) as { id: string };
@@ -55,13 +101,30 @@ function Item({
 						toLane: lane,
 					});
 			}}
-			className="flex items-center gap-1.5 rounded-lg border border-border bg-panel/60 py-1 pr-1 pl-2 text-xs"
+			className={`flex items-center gap-1.5 rounded-lg border py-1.5 pr-1.5 pl-2.5 text-xs transition-colors duration-150 ${
+				isSteer
+					? "border-accent/25 bg-accent-soft/55"
+					: "border-border bg-panel/70"
+			} ${item.pending ? "opacity-80" : ""}`}
 		>
 			{item.editable && (
-				<span className="cursor-grab select-none text-ghost" aria-hidden="true">
+				<span
+					className="cursor-grab select-none text-ghost active:cursor-grabbing"
+					aria-hidden="true"
+				>
 					⋮⋮
 				</span>
 			)}
+			<span
+				className={`inline-flex shrink-0 items-center ${isSteer ? "text-accent-ink" : "text-faint"}`}
+				aria-hidden="true"
+			>
+				<Icon
+					name={isSteer ? "bolt" : "clock"}
+					size={12}
+					weight={isSteer ? "fill" : "regular"}
+				/>
+			</span>
 			{editing !== null ? (
 				<form
 					className="flex min-w-0 flex-1 gap-1"
@@ -85,10 +148,23 @@ function Item({
 					</Button>
 				</form>
 			) : (
-				<span className="min-w-0 flex-1 truncate">{item.text}</span>
+				<span className="min-w-0 flex-1 truncate text-fg" title={item.text}>
+					{item.text}
+				</span>
+			)}
+			{item.images && item.images.length > 0 && editing === null && (
+				<span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-inset px-1.5 py-0.5 text-2xs text-muted">
+					<Icon name="image" size={11} />
+					{t("queue.imagesCount", { count: item.images.length })}
+				</span>
+			)}
+			{item.pending && (
+				<span className="shrink-0 pr-1 text-2xs text-faint">
+					{t("queue.sending")}
+				</span>
 			)}
 			{item.editable && editing === null && (
-				<>
+				<div className="flex shrink-0 items-center gap-0.5">
 					{lane === "followUp" && (
 						<IconButton
 							icon="bolt"
@@ -119,7 +195,7 @@ function Item({
 							void run(threadId, { type: "queue_remove", queueId: item.id })
 						}
 					/>
-				</>
+				</div>
 			)}
 		</li>
 	);
@@ -129,62 +205,63 @@ export function QueueBar({ threadId }: { threadId: string }): ReactNode {
 	const { t } = useTranslation();
 	const queue = useThread(threadId, (s) => s.queue);
 	const items = useThread(threadId, (s) => s.queueItems);
+	const optimistic = useThread(threadId, (s) => s.optimisticQueue);
 	const [open, setOpen] = useState(true);
-	const total = (queue?.steering.length ?? 0) + (queue?.followUp.length ?? 0);
+	const steering = mergeLane(
+		"steering",
+		items?.steering,
+		queue?.steering,
+		optimistic,
+	);
+	const followUp = mergeLane(
+		"followUp",
+		items?.followUp,
+		queue?.followUp,
+		optimistic,
+	);
+	const total = steering.length + followUp.length;
 	if (total === 0) return null;
-	const lanes: { lane: Lane; list: RpcQueuedMessage[] }[] = [
-		{
-			lane: "steering",
-			list:
-				items?.steering ??
-				(queue?.steering ?? []).map((text, i) => ({
-					id: `s${i}`,
-					text,
-					editable: false,
-					timestamp: 0,
-				})),
-		},
-		{
-			lane: "followUp",
-			list:
-				items?.followUp ??
-				(queue?.followUp ?? []).map((text, i) => ({
-					id: `f${i}`,
-					text,
-					editable: false,
-					timestamp: 0,
-				})),
-		},
+	const hasAuthoritative =
+		(queue?.steering.length ?? 0) + (queue?.followUp.length ?? 0) > 0 ||
+		(items?.steering.length ?? 0) + (items?.followUp.length ?? 0) > 0;
+	const lanes: { lane: QueueLane; list: DisplayItem[] }[] = [
+		{ lane: "steering", list: steering },
+		{ lane: "followUp", list: followUp },
 	];
 	return (
-		<div className="px-3 py-2">
+		<div data-testid="queue-bar" className="px-3.5 py-2.5">
 			<div className="flex items-center gap-2 text-muted text-xs">
 				<button
 					type="button"
-					className="-ml-1 flex items-center gap-1.5 rounded-md px-1 py-0.5 font-medium hover:bg-hover hover:text-fg"
+					className="-ml-1 flex items-center gap-1.5 rounded-md px-1 py-0.5 font-medium transition-colors duration-150 hover:bg-hover hover:text-fg"
 					onClick={() => setOpen((v) => !v)}
 					aria-expanded={open}
 				>
 					<Icon name={open ? "chevronDown" : "chevronRight"} size={12} />
 					{t("queue.heading")}
-					<Badge>{total}</Badge>
+					<Badge tone={steering.length > 0 ? "accent" : "neutral"}>
+						{total}
+					</Badge>
 				</button>
 				<div className="flex-1" />
-				<Button
-					size="sm"
-					variant="ghost"
-					onClick={() => void run(threadId, { type: "queue_clear" })}
-				>
-					{t("queue.clear")}
-				</Button>
+				{hasAuthoritative && (
+					<Button
+						size="sm"
+						variant="ghost"
+						onClick={() => void run(threadId, { type: "queue_clear" })}
+					>
+						{t("queue.clear")}
+					</Button>
+				)}
 			</div>
 			{open && (
-				<div className="mt-1.5 flex flex-col gap-2">
+				<div className="mt-2 flex flex-col gap-2">
 					{lanes.map(({ lane, list }) =>
 						list.length === 0 ? null : (
 							<div key={lane}>
-								<div className="mb-1 font-medium text-2xs text-faint">
-									{t(`queue.${lane}`)}
+								<div className="mb-1 flex items-center gap-1.5 font-medium text-2xs text-faint">
+									<span>{t(`queue.${lane}`)}</span>
+									<span className="tabular-nums opacity-75">{list.length}</span>
 								</div>
 								<ul className="flex flex-col gap-1">
 									{list.map((item, i) => (
