@@ -253,10 +253,15 @@ func ParseLine(line string) (ParsedEntry, error) {
 				p.Usage = u
 			}
 		case "toolResult":
-			// 经 write xd://<tool> 派发的调用按真实工具名归属（与 Web ToolView 一致，但失败的派发也归到真实工具）
+			// 经 write xd://<tool>（旧 Core）或 bash 工具命令（Core 19.1+ details.toolCommands）派发的调用按真实工具名归属
 			name := m.ToolName
-			if name == "write" {
+			switch name {
+			case "write":
 				if dispatched := xdevTool(m.Details); dispatched != "" {
+					name = dispatched
+				}
+			case "bash":
+				if dispatched := bashToolCommand(m.Details); dispatched != "" {
 					name = dispatched
 				}
 			}
@@ -297,6 +302,39 @@ func xdevTool(details json.RawMessage) string {
 		return ""
 	}
 	return d.Xdev.Tool
+}
+
+// bashToolCommand 从 Core 19.1+ bash 工具结果的 details.toolCommands 中提取真实派发的工具名：
+// 形如 {"toolCommands":[{"tool":"lsp","mode":"execute","exitCode":0,"args":{…}}]}。
+// 只认带非空 args 的 execute 派发（参数校验通过才写入 args，避免把不存在的命令算成工具）；
+// 若一条 bash 调用中只执行了同一个工具命令（可重复多次，忽略 --help 项），归属到该工具；
+// 若同时执行了多个不同的工具命令或无有效 execute 派发，返回空串（保持记为 bash）。
+func bashToolCommand(details json.RawMessage) string {
+	var d struct {
+		ToolCommands []struct {
+			Tool string          `json:"tool"`
+			Mode string          `json:"mode"`
+			Args json.RawMessage `json:"args"`
+		} `json:"toolCommands"`
+	}
+	if len(details) == 0 || json.Unmarshal(details, &d) != nil || len(d.ToolCommands) == 0 {
+		return ""
+	}
+	name := ""
+	for _, tc := range d.ToolCommands {
+		if tc.Mode != "execute" || tc.Tool == "" {
+			continue
+		}
+		if a := tc.Args; len(a) == 0 || string(a) == "null" {
+			continue
+		}
+		if name == "" {
+			name = tc.Tool
+		} else if name != tc.Tool {
+			return ""
+		}
+	}
+	return name
 }
 
 // warnClamped 在一条条目的用量数值越界（已记 0 / NULL）时打一条警告。

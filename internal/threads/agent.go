@@ -1192,8 +1192,10 @@ func (s *Service) syncModelLocked(t *thread, state json.RawMessage) {
 			Provider string `json:"provider"`
 			ID       string `json:"id"`
 		} `json:"model"`
-		ThinkingLevel   *string `json:"thinkingLevel"`
-		PlanModeEnabled bool    `json:"planModeEnabled"`
+		ThinkingLevel           *string `json:"thinkingLevel"`
+		ThinkingConfigured      *string `json:"thinkingConfigured"`
+		ConfiguredThinkingLevel *string `json:"configuredThinkingLevel"`
+		PlanModeEnabled         bool    `json:"planModeEnabled"`
 	}
 	if json.Unmarshal(state, &st) != nil {
 		return
@@ -1206,12 +1208,20 @@ func (s *Service) syncModelLocked(t *thread, state json.RawMessage) {
 	if st.Model != nil {
 		model = modelString(&apigen.ModelRef{Provider: st.Model.Provider, ID: st.Model.ID})
 	}
-	if eqPtr(model, t.model) && eqPtr(st.ThinkingLevel, t.thinking) {
+	// Core 19.2.0 起用户选「自动」时 thinkingLevel 是当轮解析出的具体档位（如 high），配置值在
+	// configuredThinkingLevel / thinkingConfigured（"auto"）；优先落库配置值，避免重启后 open_session 把 auto 覆盖成固定档位。
+	thinking := st.ThinkingLevel
+	if st.ConfiguredThinkingLevel != nil && *st.ConfiguredThinkingLevel != "" {
+		thinking = st.ConfiguredThinkingLevel
+	} else if st.ThinkingConfigured != nil && *st.ThinkingConfigured != "" {
+		thinking = st.ThinkingConfigured
+	}
+	if eqPtr(model, t.model) && eqPtr(thinking, t.thinking) {
 		return
 	}
-	t.model, t.thinking = model, st.ThinkingLevel
+	t.model, t.thinking = model, thinking
 	ctx := context.Background()
-	if err := s.st.Q.SetThreadModel(ctx, db.SetThreadModelParams{Model: model, ThinkingLevel: st.ThinkingLevel, UpdatedAt: s.now(), ID: t.id}); err == nil {
+	if err := s.st.Q.SetThreadModel(ctx, db.SetThreadModelParams{Model: model, ThinkingLevel: thinking, UpdatedAt: s.now(), ID: t.id}); err == nil {
 		s.publish(ctx, t.id)
 	}
 }

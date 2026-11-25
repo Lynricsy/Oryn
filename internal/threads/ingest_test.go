@@ -81,3 +81,28 @@ func TestParseLineXdevTool(t *testing.T) {
 		})
 	}
 }
+
+// Core 19.1+ 经 bash 工具命令派发的工具结果按 details.toolCommands 归属真实工具名。
+func TestParseLineBashToolCommands(t *testing.T) {
+	cases := []struct {
+		name    string
+		message string
+		want    ToolCall
+	}{
+		{"单工具 execute 归到真实工具", `{"role":"toolResult","toolName":"bash","timestamp":9,"details":{"toolCommands":[{"tool":"lsp","mode":"execute","exitCode":0,"args":{"op":"hover"}}]}}`, ToolCall{TS: 9, Tool: "lsp"}},
+		{"失败的 execute 也归到真实工具", `{"role":"toolResult","toolName":"bash","isError":true,"timestamp":9,"details":{"toolCommands":[{"tool":"ast_edit","mode":"execute","exitCode":1,"args":{"op":"replace"}}]}}`, ToolCall{TS: 9, Tool: "ast_edit", IsError: true}},
+		{"同一工具多次 execute 加上 help 归到该工具", `{"role":"toolResult","toolName":"bash","timestamp":9,"details":{"toolCommands":[{"tool":"lsp","mode":"help","exitCode":0},{"tool":"lsp","mode":"execute","exitCode":0,"args":{"op":"hover"}},{"tool":"lsp","mode":"execute","exitCode":0,"args":{"op":"refs"}}]}}`, ToolCall{TS: 9, Tool: "lsp"}},
+		{"混合多个不同工具命令保持 bash", `{"role":"toolResult","toolName":"bash","timestamp":9,"details":{"toolCommands":[{"tool":"lsp","mode":"execute","exitCode":0,"args":{"op":"hover"}},{"tool":"ast_edit","mode":"execute","exitCode":0,"args":{"op":"replace"}}]}}`, ToolCall{TS: 9, Tool: "bash"}},
+		{"无 args 的失败派发保持 bash", `{"role":"toolResult","toolName":"bash","isError":true,"timestamp":9,"details":{"toolCommands":[{"tool":"lsp","mode":"execute","exitCode":2}]}}`, ToolCall{TS: 9, Tool: "bash", IsError: true}},
+		{"仅 help 保持 bash", `{"role":"toolResult","toolName":"bash","timestamp":9,"details":{"toolCommands":[{"tool":"lsp","mode":"help","exitCode":0}]}}`, ToolCall{TS: 9, Tool: "bash"}},
+		{"非 bash 工具不看 toolCommands", `{"role":"toolResult","toolName":"write","timestamp":9,"details":{"toolCommands":[{"tool":"lsp","mode":"execute","exitCode":0,"args":{}}]}}`, ToolCall{TS: 9, Tool: "write"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p, err := ParseLine(`{"type":"message","id":"t2","parentId":"a","message":` + c.message + `}`)
+			require.NoError(t, err)
+			require.NotNil(t, p.Tool)
+			assert.Equal(t, c.want, *p.Tool)
+		})
+	}
+}

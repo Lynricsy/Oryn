@@ -22,7 +22,8 @@ import (
 // 3：入库钳制数值 / 字符串 / 时间，超长条目 id 在去重键里改为哈希（回填开头先由 sanitizeFacts 改写已有行）。
 // 4：经 write xd://<tool> 派发的工具结果按真实工具名（details.xdev.tool）计入 tool_calls。
 // 5：只认 details.xdev 带 args 的派发（设备解析成功），不存在的设备名仍记为 write。
-const FactsVersion = 5
+// 6：经 bash 工具命令（Core 19.1+ details.toolCommands）派发的单工具调用按真实工具名计入 tool_calls。
+const FactsVersion = 6
 
 // stats_state 的键。
 const (

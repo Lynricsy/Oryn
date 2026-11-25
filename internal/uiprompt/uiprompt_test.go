@@ -134,6 +134,50 @@ func TestForm(t *testing.T) {
 	}
 }
 
+// Core 19.2.0 原生 HTML 表单：单 radio 组、单 select、单 text/number 支持文本作答并回传 data；多字段 / checkbox / password 不支持。
+func TestFormHTML(t *testing.T) {
+	ans := answerer(t)
+	// 单 radio 组（带 <p> 说明与 <legend> 标题，默认允许 Other 自由文本）
+	radio := raw(`{"type":"extension_ui_request","id":"h1","method":"form","html":"<form><p>Sessions live in memory.</p><fieldset><legend>Session store</legend><label><input type=\"radio\" name=\"store\" value=\"sqlite\" checked> SQLite</label><label><input type=\"radio\" name=\"store\" value=\"redis\"> Redis</label></fieldset></form>"}`)
+	assert.Equal(t, Prompt{
+		Title: "Session store", Body: "Sessions live in memory.",
+		Options: []string{"SQLite", "Redis"}, FreeText: true, Supported: true,
+	}, Describe(radio, Labels{}))
+	assert.JSONEq(t, `{"type":"extension_ui_response","id":"h1","data":{"store":"redis"}}`, ans(AnswerOption(radio, 1)))
+	assert.JSONEq(t, `{"type":"extension_ui_response","id":"h1","data":{"store":"sqlite"}}`, ans(AnswerText(radio, "1")))
+	assert.JSONEq(t, `{"type":"extension_ui_response","id":"h1","data":{"store":"postgres"}}`, ans(AnswerText(radio, " postgres ")))
+
+	// 单 select（不允许自由文本）
+	sel := raw(`{"type":"extension_ui_request","id":"h2","method":"form","html":"<form><label>Environment <select name=\"env\"><option value=\"prod\">Production</option><option value=\"dev\">Dev</option></select></label></form>"}`)
+	p := Describe(sel, Labels{})
+	assert.Equal(t, Prompt{Title: "Environment", Options: []string{"Production", "Dev"}, FreeText: false, Supported: true}, p)
+	assert.JSONEq(t, `{"type":"extension_ui_response","id":"h2","data":{"env":"dev"}}`, ans(AnswerText(sel, "2")))
+	_, err := AnswerText(sel, "staging")
+	assert.ErrorIs(t, err, ErrNeedOption)
+
+	// 单 number 字段（转 JSON 数值）
+	num := raw(`{"type":"extension_ui_request","id":"h3","method":"form","html":"<form><label>TTL (days) <input type=\"number\" name=\"ttl_days\" value=\"30\" min=\"1\"></label></form>"}`)
+	assert.Equal(t, Prompt{Title: "TTL (days)", FreeText: true, Supported: true}, Describe(num, Labels{}))
+	assert.JSONEq(t, `{"type":"extension_ui_response","id":"h3","data":{"ttl_days":14}}`, ans(AnswerText(num, "14")))
+
+	// 单 textarea 字段
+	ta := raw(`{"type":"extension_ui_request","id":"h4","method":"form","html":"<form><label>Reason <textarea name=\"reason\"></textarea></label></form>"}`)
+	assert.Equal(t, Prompt{Title: "Reason", FreeText: true, Supported: true}, Describe(ta, Labels{}))
+	assert.JSONEq(t, `{"type":"extension_ui_response","id":"h4","data":{"reason":"ok"}}`, ans(AnswerText(ta, "ok")))
+
+	// 多字段 / checkbox / password / multiple select：不支持
+	for _, s := range []string{
+		`{"type":"extension_ui_request","id":"h5","method":"form","html":"<form><label>A <input name=\"a\"></label><label>B <input name=\"b\"></label></form>"}`,
+		`{"type":"extension_ui_request","id":"h6","method":"form","html":"<form><label><input type=\"checkbox\" name=\"x\" value=\"1\"> One</label></form>"}`,
+		`{"type":"extension_ui_request","id":"h7","method":"form","html":"<form><label>Secret <input type=\"password\" name=\"pw\"></label></form>"}`,
+		`{"type":"extension_ui_request","id":"h8","method":"form","html":"<form><label>Pick <select name=\"s\" multiple><option value=\"a\">A</option></select></label></form>"}`,
+	} {
+		assert.False(t, Describe(raw(s), Labels{}).Supported, s)
+		_, err := AnswerText(raw(s), "1")
+		assert.ErrorIs(t, err, ErrUnsupported, s)
+	}
+}
+
 func TestAsk(t *testing.T) {
 	ans := answerer(t)
 	f := raw(`{"type":"extension_ui_request","id":"a1","method":"ask","questions":[{"id":"q1","question":"A or B?","options":[{"label":"A"},{"label":"B","description":"second"}],"recommended":0}]}`)

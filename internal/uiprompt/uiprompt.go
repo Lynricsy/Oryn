@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"golang.org/x/net/html"
 )
 
 var (
@@ -51,6 +53,7 @@ type request struct {
 	LoginPromptFor string     `json:"loginPromptFor"`
 	Questions      []question `json:"questions"`
 	Sections       []section  `json:"sections"`
+	HTML           string     `json:"html"`
 }
 
 type question struct {
@@ -85,6 +88,7 @@ type formField struct {
 	Name    string `json:"name"`
 	Multi   bool   `json:"multi"`
 	Other   bool   `json:"other"`
+	Number  bool   `json:"-"` // HTML <input type="number">，作答时转为 JSON 数值
 	Label   []span `json:"label"`
 	Options []struct {
 		Value string `json:"value"`
@@ -170,11 +174,23 @@ func parse(frame json.RawMessage, l Labels) plan {
 	return pl
 }
 
-// formPlan 处理恰好一个字段（非多选）的表单。
+// formPlan 处理恰好一个字段（非多选）的表单，同时支持 sections 结构化形态与 Core 19.2.0 原生 html 形态。
 func formPlan(pl *plan) {
 	var blocks []formBlock
-	for _, s := range pl.req.Sections {
-		blocks = append(blocks, s.Blocks...)
+	useDataField := false
+	if len(pl.req.Sections) > 0 {
+		for _, s := range pl.req.Sections {
+			blocks = append(blocks, s.Blocks...)
+		}
+	} else if strings.TrimSpace(pl.req.HTML) != "" {
+		parsed, ok := parseHTMLForm(pl.req.HTML)
+		if !ok {
+			return
+		}
+		blocks = parsed
+		useDataField = true
+	} else {
+		return
 	}
 	fieldAt := -1
 	for i, b := range blocks {
@@ -233,9 +249,23 @@ func formPlan(pl *plan) {
 	}
 	pl.prompt = Prompt{Title: oneLine(title), Body: strings.Join(body, "\n"), Supported: true}
 	name := f.Name
+	makeAnswer := func(val any) any {
+		m := map[string]any{name: val}
+		if useDataField {
+			return formDataAnswer{m}
+		}
+		return formAnswer{m}
+	}
 	if f.Kind == "text" {
 		pl.prompt.FreeText = true
-		pl.answer = func(_ int, text string) any { return formAnswer{map[string]any{name: text}} }
+		pl.answer = func(_ int, text string) any {
+			if f.Number {
+				if n, err := strconv.ParseFloat(strings.TrimSpace(text), 64); err == nil {
+					return makeAnswer(n)
+				}
+			}
+			return makeAnswer(text)
+		}
 		return
 	}
 	values := make([]string, len(f.Options))
@@ -248,10 +278,337 @@ func formPlan(pl *plan) {
 	pl.prompt.FreeText = f.Other
 	pl.answer = func(opt int, text string) any {
 		if opt >= 0 {
-			return formAnswer{map[string]any{name: values[opt]}}
+			return makeAnswer(values[opt])
 		}
-		return formAnswer{map[string]any{name: strings.TrimSpace(text)}}
+		return makeAnswer(strings.TrimSpace(text))
 	}
+}
+
+// parseHTMLForm 把 Core 19.2.0 原生 <form> HTML 解析为与 sections 等价的 formBlock 列表。
+// 遇到多选、password 或非法结构时返回 ok=false，引导到 Web 作答。
+func parseHTMLForm(raw string) ([]formBlock, bool) {
+	doc, err := html.Parse(strings.NewReader(raw))
+	if err != nil {
+		return nil, false
+	}
+	root := findElement(doc, "form")
+	if root == nil {
+		root = findElement(doc, "body")
+	}
+	if root == nil {
+		root = doc
+	}
+	var (
+		blocks     []formBlock
+		fields     = map[string]*formField{}
+		unsupported bool
+	)
+	var walk func(n *html.Node, legend string, labelText string)
+	walk = func(n *html.Node, legend string, labelText string) {
+		if unsupported || n == nil {
+			return
+		}
+		if n.Type != html.ElementNode {
+			for c := n.FirstChild; c != nil; c = c.NextSibling {
+				walk(c, legend, labelText)
+			}
+			return
+		}
+		tag := strings.ToLower(n.Data)
+		switch tag {
+		case "script", "style", "svg", "img", "button":
+			return
+		case "p", "h1", "h2", "h3", "h4", "h5", "h6":
+			if !containsControl(n) {
+				if txt := nodeText(n); txt != "" {
+					blocks = append(blocks, formBlock{Kind: "text", Spans: []span{{Text: txt}}})
+				}
+				return
+			}
+		case "ul", "ol":
+			if !containsControl(n) {
+				var items [][]span
+				for c := n.FirstChild; c != nil; c = c.NextSibling {
+					if c.Type == html.ElementNode && strings.EqualFold(c.Data, "li") {
+						if txt := nodeText(c); txt != "" {
+							items = append(items, []span{{Text: txt}})
+						}
+					}
+				}
+				if len(items) > 0 {
+					blocks = append(blocks, formBlock{Kind: "list", Ordered: tag == "ol", Items: items})
+				}
+				return
+			}
+		case "pre":
+			if !containsControl(n) {
+				if txt := rawText(n); txt != "" {
+					blocks = append(blocks, formBlock{Kind: "pre", Text: txt})
+				}
+				return
+			}
+		case "fieldset":
+			fsLegend := legend
+			for c := n.FirstChild; c != nil; c = c.NextSibling {
+				if c.Type == html.ElementNode && strings.EqualFold(c.Data, "legend") {
+					if txt := nodeText(c); txt != "" {
+						fsLegend = txt
+					}
+					break
+				}
+			}
+			for c := n.FirstChild; c != nil; c = c.NextSibling {
+				if c.Type == html.ElementNode && strings.EqualFold(c.Data, "legend") {
+					continue
+				}
+				walk(c, fsLegend, labelText)
+			}
+			return
+		case "label":
+			lbl := labelOnlyText(n)
+			for c := n.FirstChild; c != nil; c = c.NextSibling {
+				walk(c, legend, lbl)
+			}
+			return
+		case "input":
+			if hasAttr(n, "disabled") {
+				return
+			}
+			typ := strings.ToLower(strings.TrimSpace(getAttr(n, "type")))
+			if typ == "" {
+				typ = "text"
+			}
+			switch typ {
+			case "hidden", "submit", "button", "reset", "image":
+				return
+			case "password":
+				unsupported = true
+				return
+			case "checkbox":
+				unsupported = true
+				return
+			case "radio":
+				name := strings.TrimSpace(getAttr(n, "name"))
+				if name == "" {
+					unsupported = true
+					return
+				}
+				val := getAttr(n, "value")
+				optLabel := labelText
+				if optLabel == "" {
+					optLabel = val
+				}
+				f, ok := fields[name]
+				if !ok {
+					f = &formField{Kind: "choice", Name: name, Other: true}
+					if legend != "" {
+						f.Label = []span{{Text: legend}}
+					}
+					fields[name] = f
+					blocks = append(blocks, formBlock{Kind: "field", Field: f})
+				} else if f.Kind != "choice" {
+					unsupported = true
+					return
+				}
+				f.Options = append(f.Options, struct {
+					Value string `json:"value"`
+					Label []span `json:"label"`
+				}{Value: val, Label: []span{{Text: optLabel}}})
+				return
+			default:
+				name := strings.TrimSpace(getAttr(n, "name"))
+				if name == "" {
+					unsupported = true
+					return
+				}
+				lbl := labelText
+				if lbl == "" {
+					lbl = legend
+				}
+				f := &formField{Kind: "text", Name: name, Number: typ == "number"}
+				if lbl != "" {
+					f.Label = []span{{Text: lbl}}
+				}
+				blocks = append(blocks, formBlock{Kind: "field", Field: f})
+				return
+			}
+		case "textarea":
+			if hasAttr(n, "disabled") {
+				return
+			}
+			name := strings.TrimSpace(getAttr(n, "name"))
+			if name == "" {
+				unsupported = true
+				return
+			}
+			lbl := labelText
+			if lbl == "" {
+				lbl = legend
+			}
+			f := &formField{Kind: "text", Name: name}
+			if lbl != "" {
+				f.Label = []span{{Text: lbl}}
+			}
+			blocks = append(blocks, formBlock{Kind: "field", Field: f})
+			return
+		case "select":
+			if hasAttr(n, "disabled") {
+				return
+			}
+			name := strings.TrimSpace(getAttr(n, "name"))
+			if name == "" || hasAttr(n, "multiple") {
+				unsupported = true
+				return
+			}
+			lbl := labelText
+			if lbl == "" {
+				lbl = legend
+			}
+			f := &formField{Kind: "choice", Name: name, Other: false}
+			if lbl != "" {
+				f.Label = []span{{Text: lbl}}
+			}
+			collectSelectOptions(n, f)
+			if len(f.Options) == 0 {
+				unsupported = true
+				return
+			}
+			blocks = append(blocks, formBlock{Kind: "field", Field: f})
+			return
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c, legend, labelText)
+		}
+	}
+	walk(root, "", "")
+	if unsupported {
+		return nil, false
+	}
+	return blocks, true
+}
+
+func findElement(n *html.Node, tag string) *html.Node {
+	if n == nil {
+		return nil
+	}
+	if n.Type == html.ElementNode && strings.EqualFold(n.Data, tag) {
+		return n
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if found := findElement(c, tag); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+func containsControl(n *html.Node) bool {
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == html.ElementNode {
+			switch strings.ToLower(c.Data) {
+			case "input", "select", "textarea":
+				return true
+			}
+		}
+		if containsControl(c) {
+			return true
+		}
+	}
+	return false
+}
+
+func collectSelectOptions(n *html.Node, f *formField) {
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type != html.ElementNode {
+			continue
+		}
+		tag := strings.ToLower(c.Data)
+		if tag == "optgroup" {
+			if !hasAttr(c, "disabled") {
+				collectSelectOptions(c, f)
+			}
+			continue
+		}
+		if tag != "option" || hasAttr(c, "disabled") {
+			continue
+		}
+		txt := nodeText(c)
+		val := txt
+		if hasAttr(c, "value") {
+			val = getAttr(c, "value")
+		}
+		f.Options = append(f.Options, struct {
+			Value string `json:"value"`
+			Label []span `json:"label"`
+		}{Value: val, Label: []span{{Text: txt}}})
+	}
+}
+
+func getAttr(n *html.Node, key string) string {
+	for _, a := range n.Attr {
+		if strings.EqualFold(a.Key, key) {
+			return a.Val
+		}
+	}
+	return ""
+}
+
+func hasAttr(n *html.Node, key string) bool {
+	for _, a := range n.Attr {
+		if strings.EqualFold(a.Key, key) {
+			return true
+		}
+	}
+	return false
+}
+
+func nodeText(n *html.Node) string {
+	return oneLine(rawText(n))
+}
+
+func rawText(n *html.Node) string {
+	var b strings.Builder
+	var visit func(*html.Node)
+	visit = func(cur *html.Node) {
+		if cur.Type == html.TextNode {
+			b.WriteString(cur.Data)
+			return
+		}
+		if cur.Type == html.ElementNode {
+			switch strings.ToLower(cur.Data) {
+			case "script", "style", "svg":
+				return
+			}
+		}
+		for c := cur.FirstChild; c != nil; c = c.NextSibling {
+			visit(c)
+		}
+	}
+	visit(n)
+	return b.String()
+}
+
+// labelOnlyText 提取 <label> 中去掉表单控件自身文字（如 <select>/<option>/<textarea>）后的标签文本。
+func labelOnlyText(n *html.Node) string {
+	var b strings.Builder
+	var visit func(*html.Node)
+	visit = func(cur *html.Node) {
+		if cur.Type == html.TextNode {
+			b.WriteString(cur.Data)
+			return
+		}
+		if cur.Type == html.ElementNode {
+			switch strings.ToLower(cur.Data) {
+			case "input", "select", "textarea", "button", "script", "style", "svg":
+				return
+			}
+		}
+		for c := cur.FirstChild; c != nil; c = c.NextSibling {
+			visit(c)
+		}
+	}
+	visit(n)
+	return oneLine(b.String())
 }
 
 // Describe 返回请求帧的纯文本呈现；无法解析或不支持的请求 Supported=false（Title 尽量取帧的 `title`）。
@@ -384,6 +741,9 @@ type (
 	}
 	formAnswer struct {
 		FormData map[string]any `json:"formData"`
+	}
+	formDataAnswer struct {
+		Data map[string]any `json:"data"`
 	}
 	askItem struct {
 		ID              string   `json:"id"`

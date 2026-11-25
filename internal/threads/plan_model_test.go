@@ -75,3 +75,44 @@ func TestPlanModeDoesNotOverwriteThreadModel(t *testing.T) {
 	assert.Equal(t, "low", normalFrames[0]["thinkingLevel"])
 	assert.NotContains(t, frameTypes(normalFrames), "set_thinking_level")
 }
+
+// Core 19.2.0 auto 思考模式：get_state 同时报 configuredThinkingLevel="auto" 与当前生效的 thinkingLevel="high" 时，
+// 线程行应落库 "auto" 而非 "high"，确保 orb 重启后 open_session 保留 auto 而不是把会话覆写成固定档位。
+func TestSyncModelPreservesAutoThinkingLevel(t *testing.T) {
+	f := newFixture(t, Config{})
+	th := f.thread(f.orb("ready"), StateIdle)
+
+	th.mu.Lock()
+	f.s.syncModelLocked(th, json.RawMessage(`{
+		"model":{"provider":"anthropic","id":"claude-sonnet-4-5"},
+		"thinkingLevel":"high",
+		"configuredThinkingLevel":"auto",
+		"planModeEnabled":false
+	}`))
+	frames := initFrames(th, nil, true)
+	th.mu.Unlock()
+
+	row, err := f.st.Q.GetThread(f.ctx, th.id)
+	require.NoError(t, err)
+	require.NotNil(t, row.ThinkingLevel)
+	assert.Equal(t, "auto", *row.ThinkingLevel)
+	require.NotEmpty(t, frames)
+	assert.Equal(t, "auto", frames[0]["thinkingLevel"])
+
+	// 兼容 thinkingConfigured 字段名
+	th.mu.Lock()
+	f.s.syncModelLocked(th, json.RawMessage(`{
+		"model":{"provider":"anthropic","id":"claude-sonnet-4-5"},
+		"thinkingLevel":"medium",
+		"thinkingConfigured":"high",
+		"planModeEnabled":false
+	}`))
+	frames = initFrames(th, nil, true)
+	th.mu.Unlock()
+
+	row, err = f.st.Q.GetThread(f.ctx, th.id)
+	require.NoError(t, err)
+	require.NotNil(t, row.ThinkingLevel)
+	assert.Equal(t, "high", *row.ThinkingLevel)
+	assert.Equal(t, "high", frames[0]["thinkingLevel"])
+}
