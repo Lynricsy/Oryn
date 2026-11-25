@@ -35,6 +35,7 @@ import {
 	openArtifactLink,
 	useArtifact,
 	useArtifactComments,
+	useArtifactDesign,
 	useRestoreArtifactVersion,
 	useUndeleteArtifact,
 } from "../../api/artifact-queries";
@@ -221,6 +222,11 @@ export function ArtifactViewer({
 	const live = artifact && artifact.deletedAt === undefined;
 	const typed = artifact?.type !== undefined;
 	const head = artifact?.version ?? 0;
+	const designState = useArtifactDesign(
+		artifactId,
+		!!live && artifact?.kind === "canvas",
+	);
+	const isDesign = !!designState.data?.design;
 	// 选中的是最新版本就回到跟随
 	const pinnedVersion = pinned && pinned.version !== head ? pinned : null;
 	// 选择与评论只对跟随最新版本、不在回收站的页面 artifact（画布有自己的编辑器）
@@ -772,15 +778,23 @@ export function ArtifactViewer({
 							<Icon name="history" size={14} className="shrink-0 text-muted" />
 							<span className="min-w-0 flex-1 truncate">
 								{t(
-									pinnedVersion.note
+									pinnedVersion.title || pinnedVersion.note
 										? "artifacts.history.pinnedNote"
 										: "artifacts.history.pinned",
 									{
 										n: pinnedVersion.version,
 										head,
 										when: formatRelative(pinnedVersion.createdAt),
-										note: pinnedVersion.note ?? "",
+										note: pinnedVersion.title || pinnedVersion.note || "",
 									},
+								)}
+								{isDesign && (
+									<span
+										data-testid="artifact-pinned-static"
+										className="ml-2 text-muted text-xs"
+									>
+										· {t("artifacts.history.pinnedStatic")}
+									</span>
 								)}
 							</span>
 							<Button size="sm" variant="ghost" onClick={() => setPinned(null)}>

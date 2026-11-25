@@ -3832,6 +3832,7 @@
 			"byline": "{{author}} · {{when}}",
 			"pinned": "版本 {{n}} / {{head}} · {{when}}",
 			"pinnedNote": "版本 {{n}} / {{head}} · {{when}} · {{note}}",
+			"pinnedStatic": "正在查看旧版静态帧，实时预览已暂停",
 			"backToLatest": "回到最新",
 			"restore": "恢复这个版本",
 			"restored": "已把 v{{n}} 恢复成 v{{version}}",

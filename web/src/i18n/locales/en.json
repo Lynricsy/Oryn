@@ -3832,6 +3832,7 @@
 			"byline": "{{author}} · {{when}}",
 			"pinned": "Version {{n}} of {{head}} · {{when}}",
 			"pinnedNote": "Version {{n}} of {{head}} · {{when}} · {{note}}",
+			"pinnedStatic": "Viewing sealed static frames; live preview is paused",
 			"backToLatest": "Back to latest",
 			"restore": "Restore this version",
 			"restored": "Restored v{{n}} as v{{version}}",
