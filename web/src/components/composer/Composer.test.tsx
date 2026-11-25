@@ -678,3 +678,88 @@ describe("中文输入法（IME）回车确认英文不误发送", () => {
 		expect(framesOf("prompt")).toMatchObject([{ message: "你好" }]);
 	});
 });
+
+describe("继续快捷键 '.'（resume）与忙时队列空 Enter（abort_and_deliver_queue）", () => {
+	beforeEach(() => {
+		cmd.mockReset();
+		resetThreadStores();
+		resetComposerDrafts();
+		getThreadStore(A).setState({ agentStatus: "ready" });
+	});
+
+	it("空闲时输入 '.' 发 resume 而不是 prompt，不挂发送中气泡，应答后清空", async () => {
+		cmd.mockResolvedValue({});
+		wrap(<Composer threadId={A} />);
+		type(".");
+		await act(async () => {
+			enter();
+		});
+		expect(framesOf("resume")).toEqual([{ type: "resume" }]);
+		expect(framesOf("prompt")).toHaveLength(0);
+		expect(box().value).toBe("");
+		expect(pendingPromptStore.getState().prompts[A]).toBeUndefined();
+	});
+
+	it("忙时输入 '.'：Enter 发 resume；Ctrl+Enter 排队原文 '.'（follow_up）", async () => {
+		cmd.mockResolvedValue({});
+		getThreadStore(A).setState({ running: true });
+		wrap(<Composer threadId={A} />);
+		type(".");
+		await act(async () => {
+			enter();
+		});
+		expect(framesOf("resume")).toEqual([{ type: "resume" }]);
+		expect(framesOf("steer")).toHaveLength(0);
+
+		cmd.mockClear();
+		type(".");
+		await act(async () => {
+			fireEvent.keyDown(box(), { key: "Enter", ctrlKey: true });
+		});
+		expect(framesOf("resume")).toHaveLength(0);
+		expect(framesOf("follow_up")).toMatchObject([{ message: "." }]);
+	});
+
+	it("协调对话输入 '.' 同样发送 resume", async () => {
+		cmd.mockResolvedValue({});
+		wrap(<Composer threadId={A} coordinator />);
+		type(" . ");
+		await act(async () => {
+			enter();
+		});
+		expect(framesOf("resume")).toEqual([{ type: "resume" }]);
+	});
+
+	it("resume 失败（如 Nothing to resume）时展示错误提示且不丢失草稿", async () => {
+		cmd.mockRejectedValue(new Error("Nothing to resume"));
+		wrap(<Composer threadId={A} />);
+		type(".");
+		await act(async () => {
+			enter();
+		});
+		expect(framesOf("resume")).toEqual([{ type: "resume" }]);
+		expect(screen.getByRole("alert")).toHaveTextContent("Nothing to resume");
+		expect(box().value).toBe(".");
+	});
+
+	it("忙时且有排队消息时，空输入框按 Enter 发 abort_and_deliver_queue；无排队时不发", async () => {
+		cmd.mockResolvedValue({ aborted: true });
+		getThreadStore(A).setState({ running: true });
+		wrap(<Composer threadId={A} />);
+		await act(async () => {
+			enter();
+		});
+		expect(framesOf("abort_and_deliver_queue")).toHaveLength(0);
+
+		getThreadStore(A).setState({
+			running: true,
+			queue: { steering: ["next step"], followUp: [], liveSteered: 0 },
+		});
+		await act(async () => {
+			enter();
+		});
+		expect(framesOf("abort_and_deliver_queue")).toEqual([
+			{ type: "abort_and_deliver_queue" },
+		]);
+	});
+});

@@ -193,10 +193,13 @@ func userContent(text string, images []json.RawMessage) []any {
 }
 
 func (t *turn) runDefault(p promptReq) {
-	user := map[string]any{
-		"role": "user", "content": userContent(p.message, p.images), "attribution": "user", "timestamp": nowMs(),
+	var userEntryID string
+	if !p.resume {
+		user := map[string]any{
+			"role": "user", "content": userContent(p.message, p.images), "attribution": "user", "timestamp": nowMs(),
+		}
+		userEntryID = t.appendEntry(user)
 	}
-	userEntryID := t.appendEntry(user)
 	t.s.emitEvent(map[string]any{"type": "agent_start"})
 	if reason := t.failReason(p.message); reason != "" {
 		t.failTurn(reason)

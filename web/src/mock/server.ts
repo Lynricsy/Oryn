@@ -4274,6 +4274,53 @@ export class MockServer {
 				await this.runPrompt(threadId, message);
 				return;
 			}
+			case "abort_and_deliver_queue": {
+				const q = this.queues.get(threadId);
+				const queued = q ? [...q.steering, ...q.followUp] : [];
+				if (queued.length === 0) {
+					return this.respond(socket, threadId, id, type, { aborted: false });
+				}
+				this.queues.set(threadId, { steering: [], followUp: [] });
+				this.frame(threadId, {
+					type: "queue_update",
+					steering: [],
+					followUp: [],
+					liveSteered: 0,
+				});
+				this.respond(socket, threadId, id, type, { aborted: true });
+				for (const msg of queued) await this.runPrompt(threadId, msg);
+				return;
+			}
+			case "resume": {
+				const q = this.queues.get(threadId);
+				const queued = q ? [...q.steering, ...q.followUp] : [];
+				if (queued.length > 0) {
+					this.queues.set(threadId, { steering: [], followUp: [] });
+					this.frame(threadId, {
+						type: "queue_update",
+						steering: [],
+						followUp: [],
+						liveSteered: 0,
+					});
+					this.respond(socket, threadId, id, type);
+					for (const msg of queued) await this.runPrompt(threadId, msg);
+					return;
+				}
+				const hist = this.entries.get(threadId) ?? [];
+				if (hist.length === 0) {
+					return this.respond(
+						socket,
+						threadId,
+						id,
+						type,
+						undefined,
+						"Nothing to resume",
+					);
+				}
+				this.respond(socket, threadId, id, type);
+				await this.runPrompt(threadId, "", { resume: true });
+				return;
+			}
 			case "bash": {
 				this.appendEntry(threadId, {
 					role: "bashExecution",
@@ -4329,7 +4376,7 @@ export class MockServer {
 	}
 
 	/** fakeomp 风格的一轮：流式帧 + 条目复制。 */
-	async runPrompt(threadId: string, text: string) {
+	async runPrompt(threadId: string, text: string, opts?: { resume?: boolean }) {
 		const d = this.delay;
 		const t = this.threads.get(threadId);
 		if (!t) return;
@@ -4338,20 +4385,21 @@ export class MockServer {
 		// 同控制面：新一轮开始时作废缓存的输入框预测
 		this.predictions.delete(threadId);
 		this.desktop.turn(t.orbId, true);
-		const userMsg = { role: "user", content: text, timestamp: Date.now() };
-		this.frame(threadId, {
-			type: "message_start",
-			messageId: `m${this.idSeq++}`,
-			message: userMsg,
-		});
-		this.frame(threadId, {
-			type: "message_end",
-			messageId: `m${this.idSeq++}`,
-			message: userMsg,
-		});
-		await sleep(d);
-		this.appendEntry(threadId, userMsg);
-		// 助手对话：omp 随这一轮注入 xd:// 设备挂载提示（display: false），模型首个 token 前它是最后一条在途消息
+		if (!opts?.resume) {
+			const userMsg = { role: "user", content: text, timestamp: Date.now() };
+			this.frame(threadId, {
+				type: "message_start",
+				messageId: `m${this.idSeq++}`,
+				message: userMsg,
+			});
+			this.frame(threadId, {
+				type: "message_end",
+				messageId: `m${this.idSeq++}`,
+				message: userMsg,
+			});
+			await sleep(d);
+			this.appendEntry(threadId, userMsg);
+		}
 		if (t.kind === "assistant") {
 			const notice = xdevMountNotice(Date.now());
 			const nid = `m${this.idSeq++}`;

@@ -787,6 +787,9 @@ func (a *attacher) input(ctx context.Context, conn *wsConn, line string) (bool, 
 		}
 		return false, a.cmd(ctx, conn, frame)
 	}
+	if line == "." {
+		return false, a.cmd(ctx, conn, map[string]any{"type": "resume"})
+	}
 	return false, a.cmd(ctx, conn, map[string]any{"type": "prompt", "message": line, "streamingBehavior": "steer"})
 }
 

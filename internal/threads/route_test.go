@@ -42,12 +42,16 @@ func TestRouteSessionSwitchCommands(t *testing.T) {
 		{`{"type":"set_loop_mode","enabled":true}`, RoutePass},
 		{`{"type":"import_foreign_session","source":"claude","foreignId":"x"}`, RoutePass},
 		{`{"type":"set_session_name","name":"x"}`, RoutePass},
+		{`{"type":"resume"}`, RoutePass},
+		{`{"type":"abort_and_deliver_queue"}`, RoutePass},
 	}
 	for _, c := range cases {
 		got, typ := RouteCommand(raw(c.frame))
 		assert.Equal(t, c.route, got, c.frame)
 		assert.NotEmpty(t, typ, c.frame)
 	}
+	assert.True(t, coordinatorAllowed("resume"))
+	assert.True(t, coordinatorAllowed("abort_and_deliver_queue"))
 }
 
 // prompt 正文里会换会话文件的内置斜杠命令（omp 在 RPC 里直接执行）按 omp 的解析规则拦下，cmdType 报出被拦的命令。

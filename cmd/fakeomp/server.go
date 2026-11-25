@@ -160,6 +160,7 @@ type promptReq struct {
 	id      string
 	message string
 	images  []json.RawMessage
+	resume  bool
 }
 
 type server struct {
@@ -640,6 +641,46 @@ func (s *server) handle(line []byte) {
 		s.mu.Unlock()
 		s.ok(id, env.Type, nil)
 
+	case "abort_and_deliver_queue":
+		s.mu.Lock()
+		aborted := false
+		if s.streaming && s.pending > 1 && s.cancelTurn != nil {
+			s.cancelTurn()
+			aborted = true
+		}
+		s.mu.Unlock()
+		s.ok(id, env.Type, map[string]bool{"aborted": aborted})
+
+	case "resume":
+		if err := s.ensureSession(); err != nil {
+			s.fail(id, env.Type, err.Error())
+			return
+		}
+		s.mu.Lock()
+		if s.streaming {
+			queued := s.pending > 1
+			if s.cancelTurn != nil {
+				s.cancelTurn()
+			}
+			if queued {
+				s.mu.Unlock()
+				s.ok(id, env.Type, nil)
+				return
+			}
+		} else if s.messageCount == 0 && (s.sess == nil || len(s.sess.ids) == 0) {
+			s.mu.Unlock()
+			s.fail(id, env.Type, "Nothing to resume")
+			return
+		}
+		if s.pending >= cap(s.prompts) {
+			s.mu.Unlock()
+			s.fail(id, env.Type, "fakeomp: prompt queue full")
+			return
+		}
+		s.pending++
+		s.mu.Unlock()
+		s.ok(id, env.Type, nil)
+		s.prompts <- promptReq{id: id, resume: true}
 	case "extension_ui_response":
 		s.mu.Lock()
 		ch := s.uiWait[id]

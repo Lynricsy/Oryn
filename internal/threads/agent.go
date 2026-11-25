@@ -940,6 +940,10 @@ func (s *Service) onResponse(ctx context.Context, t *thread, env omprpc.Envelope
 		if !r.Success || (d.AgentInvoked != nil && !*d.AgentInvoked) {
 			t.live.working = false
 		}
+	case "resume":
+		if !r.Success {
+			t.live.working = false
+		}
 	case "oryn_cancel_job":
 		// 取消在 Core 里同步生效（任务立即不再计入 hasPendingAsyncWork）。随后的 session_settled 通常会复位 pendingAsync；
 		// 这里按应答再刷新一次，不把复位只押在那一帧上。
@@ -1006,10 +1010,11 @@ func (s *Service) dispatchLocked(t *thread, frame []byte) {
 		t.quiet = false
 	}
 	switch h.Type {
-	case "prompt", "abort_and_prompt":
-		// prompt 的应答先于 agent_start 到达；乐观地进入 working，避免中间闪现 idle
+	case "prompt", "abort_and_prompt", "resume":
+		// prompt / resume 的应答先于 agent_start 到达；乐观地进入 working，避免中间闪现 idle
 		t.live.working = true
 		t.settled = false
+		t.quiet = false
 	}
 }
 

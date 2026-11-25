@@ -4,7 +4,7 @@
  * - 忙碌：Enter = steer；Ctrl/Cmd+Enter = 排队（follow_up）；Alt+Enter = 中断并发送（abort_and_prompt）。
  * - 连按两次 Esc（间隔 ≤ 500ms）：忙碌时 = 中断（abort）；空闲且输入框为空时 = 回退（rewind，同 omp 的 Esc Esc）。
  *   空闲时输入框里有字，Esc 不计入连按（不让一次误触 Esc 毁掉草稿）。
- * - `!cmd` = bash；`!!cmd` = bash 且不进上下文；`/` 开头 = 斜杠命令。
+ * - `!cmd` = bash；`!!cmd` = bash 且不进上下文；`/` 开头 = 斜杠命令；单独 `.` = 继续（resume）。
  */
 import { isImeKeyEvent } from "./ime";
 
@@ -62,6 +62,7 @@ export function composerKeyAction(
 
 export type ParsedInput =
 	| { kind: "empty" }
+	| { kind: "resume" }
 	| { kind: "bash"; command: string; excludeFromContext: boolean }
 	| { kind: "slash"; text: string }
 	| { kind: "text"; text: string };
@@ -81,6 +82,7 @@ export function parseComposerInput(raw: string): ParsedInput {
 			? { kind: "bash", command, excludeFromContext: false }
 			: { kind: "empty" };
 	}
+	if (text === ".") return { kind: "resume" };
 	if (/^\/[^\s/]/.test(text)) return { kind: "slash", text };
 	return { kind: "text", text };
 }

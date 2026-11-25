@@ -325,6 +325,11 @@ func TestAttachInput(t *testing.T) {
 	assert.NotEmpty(t, cmd["id"])
 	assert.Equal(t, map[string]any{"type": "prompt", "message": "hello there", "streamingBehavior": "steer"}, cmd["frame"])
 
+	// 单独 '.' = resume
+	r.line(t, ".")
+	resCmd := c.next()
+	assert.Equal(t, map[string]any{"type": "resume"}, resCmd["frame"])
+
 	// 有待答：一行 = ui.response（编号 → 选项）
 	c.send(frame(map[string]any{"type": "extension_ui_request", "id": "q1", "method": "select", "title": "Pick one", "options": []any{"A", "B"}}))
 	r.out.waitFor(t, "（输入编号选择）")

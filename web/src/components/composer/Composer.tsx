@@ -581,7 +581,25 @@ export const Composer = memo(function Composer({
 		patchComposerDraft(threadId, { inFlight: marker });
 		try {
 			if (parsed.kind === "empty") {
-				if (!att.hasFiles) return;
+				if (!att.hasFiles) {
+					const ts = getThreadStore(threadId).getState();
+					const hasQueued =
+						(ts.queue?.steering.length ?? 0) +
+							(ts.queue?.followUp.length ?? 0) +
+							(ts.queueItems?.steering.length ?? 0) +
+							(ts.queueItems?.followUp.length ?? 0) +
+							ts.optimisticQueue.length >
+						0;
+					if (
+						mode === "steer" &&
+						!sent.quote &&
+						!sent.artifactSelection &&
+						hasQueued
+					) {
+						await realtime.cmd(threadId, { type: "abort_and_deliver_queue" });
+					}
+					return;
+				}
 				const outText = outgoing("", sent);
 				const frame = promptFrame(
 					mode,
@@ -613,6 +631,17 @@ export const Composer = memo(function Composer({
 				}
 				await realtime.cmd(threadId, frame);
 				resetIfUnchanged(sent, true);
+				return;
+			}
+			if (
+				asText.kind === "resume" &&
+				!att.hasFiles &&
+				!sent.quote &&
+				!sent.artifactSelection &&
+				mode !== "follow_up"
+			) {
+				await realtime.cmd(threadId, { type: "resume" });
+				resetIfUnchanged(sent, false);
 				return;
 			}
 			if (asText.kind === "bash") {

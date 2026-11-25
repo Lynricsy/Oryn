@@ -526,3 +526,42 @@ func TestSwitchLeafMovesParent(t *testing.T) {
 		assert.Equal(t, typ, r["command"])
 	}
 }
+
+func TestResumeAndAbortDeliverQueue(t *testing.T) {
+	dir := t.TempDir()
+	h := start(t, []string{"--mode", "rpc-ui", "--session-dir", dir, "--delay", "1ms"}, nil)
+	open := handshake(t, h, dir)
+	sessionFile := open["sessionFile"].(string)
+
+	// 空会话 resume 报错
+	r, _ := h.call(map[string]any{"id": "r0", "type": "resume"})
+	assert.Equal(t, false, r["success"])
+	assert.Equal(t, "Nothing to resume", r["error"])
+
+	// 无流式/无排队时 abort_and_deliver_queue 返回 aborted: false
+	r, _ = h.call(map[string]any{"id": "d0", "type": "abort_and_deliver_queue"})
+	assert.Equal(t, true, r["success"])
+	assert.Equal(t, map[string]any{"aborted": false}, r["data"])
+
+	// 先完成一轮普通对话
+	r, _ = h.call(map[string]any{"id": "p1", "type": "prompt", "message": "one"})
+	require.Equal(t, true, r["success"], r)
+	h.until("session_settled")
+	_, before := readSession(t, sessionFile)
+
+	// resume 成功并完成一轮，且不新增 user 消息条目
+	r, _ = h.call(map[string]any{"id": "r1", "type": "resume"})
+	require.Equal(t, true, r["success"], r)
+	h.until("session_settled")
+	_, after := readSession(t, sessionFile)
+	require.Greater(t, len(after), len(before))
+	for _, e := range after[len(before):] {
+		if e.Type == "message" && len(e.Message) > 0 {
+			var msg struct {
+				Role string `json:"role"`
+			}
+			require.NoError(t, json.Unmarshal(e.Message, &msg))
+			assert.NotEqual(t, "user", msg.Role, "resume 不应追加可见用户消息")
+		}
+	}
+}

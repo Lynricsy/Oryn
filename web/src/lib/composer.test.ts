@@ -130,4 +130,15 @@ describe("输入解析", () => {
 		});
 		expect(parseComposerInput("   ")).toEqual({ kind: "empty" });
 	});
+
+	it("单独的 '.' 解析为 resume，其他含点文本与 'c' 仍为普通文本", () => {
+		expect(parseComposerInput(".")).toEqual({ kind: "resume" });
+		expect(parseComposerInput("  . \n")).toEqual({ kind: "resume" });
+		expect(parseComposerInput("..")).toEqual({ kind: "text", text: ".." });
+		expect(parseComposerInput(". 继续")).toEqual({
+			kind: "text",
+			text: ". 继续",
+		});
+		expect(parseComposerInput("c")).toEqual({ kind: "text", text: "c" });
+	});
 });
