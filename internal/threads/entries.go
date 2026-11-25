@@ -545,6 +545,7 @@ func (s *Service) fetchBlobs(orbID string, shas []string) {
 					delete(s.blobs, sha)
 				}
 				s.mu.Unlock()
+				f.closeDone()
 			}()
 			ctl, ok := s.orbs.Ctl(orbID)
 			if !ok {
@@ -591,7 +592,7 @@ func (s *Service) onBlobStream(ctx context.Context, orbID string, h link.StreamH
 			delete(s.blobs, h.SHA256)
 		}
 		s.mu.Unlock()
-		close(f.done)
+		f.closeDone()
 	}()
 	if err := s.storeBlob(ctx, h.SHA256, h.Size, st); err != nil {
 		slog.Warn("threads: 接收 blob 失败", "orb", orbID, "sha256", h.SHA256, "err", err)
@@ -654,9 +655,11 @@ func (s *Service) storeBlob(ctx context.Context, sha string, size int64, r io.Re
 const blobWaitMax = 30 * time.Second
 
 // Blob 返回 blob 元数据与文件路径；库中尚无而该 blob 正在从 orb 拉取时，等拉取结束（≤blobWaitMax）再查。
+// 若无在途拉取且协调宿主在线，尝试按需补拉一次（修复历史会话中因早期未放行 blob.fetch 而缺失的协调者图片）。
 func (s *Service) Blob(ctx context.Context, sha string) (db.Blob, string, error) {
 	deadline := time.NewTimer(blobWaitMax)
 	defer deadline.Stop()
+	backfilled := false
 	for {
 		b, err := s.st.Q.GetBlob(ctx, sha)
 		if err == nil {
@@ -669,9 +672,17 @@ func (s *Service) Blob(ctx context.Context, sha string) (db.Blob, string, error)
 		f := s.blobs[sha]
 		s.mu.Unlock()
 		if f == nil {
+			if !backfilled {
+				backfilled = true
+				if o, err := s.st.Q.GetCoordinatorOrb(ctx); err == nil {
+					if _, ok := s.orbs.Ctl(o.ID); ok {
+						s.fetchBlobs(o.ID, []string{sha})
+						continue
+					}
+				}
+			}
 			return b, "", errf("not_found", "blob not found")
 		}
-		// done 只在收到 blob 流后关闭；orb 回 found=false 等失败路径只删登记，故兼以短轮询
 		select {
 		case <-f.done:
 		case <-time.After(200 * time.Millisecond):

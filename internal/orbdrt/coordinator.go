@@ -95,10 +95,12 @@ var (
 const researchPrivateMCP = "shared: false, startupTimeoutMs: 0"
 
 // coordinatorMethods 是协调宿主接受的 ctl 方法；其余一律 method_not_found。
+// 包含 blob.fetch：全局助手 / Space 协调者会话里的用户上传图片、生图与工具截图存在 ~/.omp/agent/blobs/<sha256>。
 var coordinatorMethods = map[string]bool{
 	"setup.run": true, "resume.run": true, "agent.start": true, "agent.stop": true, "shutdown": true,
 	string(apigen.MethodOmpHomeApply): true,
 	string(apigen.MethodLibrarySync):  true, string(apigen.MethodLibraryFetch): true,
+	string(apigen.MethodBlobFetch):    true,
 }
 
 func (r *Runtime) coordinatorDir() string { return filepath.Join(r.home, ".oryn", "coordinator") }

@@ -160,10 +160,13 @@ type orbCache struct {
 
 // blobFetch 是一次在途的 blob.fetch：只接受该 orb 为它打开的 blob 流（M5）。
 type blobFetch struct {
-	orbID   string
-	done    chan struct{}
-	claimed bool // 已有 blob 流在接收（由 Service.mu 保护）
+	orbID     string
+	done      chan struct{}
+	closeOnce sync.Once
+	claimed   bool // 已有 blob 流在接收（由 Service.mu 保护）
 }
+
+func (f *blobFetch) closeDone() { f.closeOnce.Do(func() { close(f.done) }) }
 
 type sinkBox struct{ Sink }
 

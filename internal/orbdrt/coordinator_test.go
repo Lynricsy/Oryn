@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -85,7 +86,7 @@ func TestCoordinatorHelloAndRejectedMethods(t *testing.T) {
 	assert.Equal(t, []string{"coordinator", "omphome-apply", "library"}, hello.Features)
 	assert.Equal(t, "test-coord", hello.OrbdVersion)
 
-	for _, m := range []string{"blob.fetch", "fs.copyTree", "fs.move", string(apigen.MethodPortalConfigure), string(apigen.MethodProfileMode)} {
+	for _, m := range []string{"fs.copyTree", "fs.move", string(apigen.MethodPortalConfigure), string(apigen.MethodProfileMode)} {
 		err := cp.call(t, m, map[string]any{}, nil)
 		assert.Equal(t, link.CodeMethodNotFound, ctlCode(err), "%s: %v", m, err)
 	}
@@ -93,6 +94,33 @@ func TestCoordinatorHelloAndRejectedMethods(t *testing.T) {
 	assert.ErrorIs(t, err, os.ErrNotExist)
 	_, err = os.Stat(orbsock.Path(rt.home))
 	assert.ErrorIs(t, err, os.ErrNotExist, "no local control socket on the coordinator host")
+}
+
+// 协调宿主同样服务 blob.fetch：全局助手 / Space 协调者会话里的用户上传图片与生图/工具截图存在 ~/.omp/agent/blobs/<sha256>。
+func TestCoordinatorBlobFetch(t *testing.T) {
+	rt, cp, _, _ := startCoordinator(t)
+	cp.waitNotif(t, 0, "hello", nil)
+	sha := strings.Repeat("ab", 32)
+	require.NoError(t, os.MkdirAll(filepath.Join(rt.home, ".omp", "agent", "blobs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(rt.home, ".omp", "agent", "blobs", sha), []byte("PNGDATA"), 0o644))
+
+	var res apigen.LinkCtlBlobFetchResult
+	require.NoError(t, cp.call(t, "blob.fetch", apigen.LinkCtlBlobFetchParams{Sha256: strings.Repeat("cd", 32)}, &res))
+	assert.False(t, res.Found)
+	require.NoError(t, cp.call(t, "blob.fetch", apigen.LinkCtlBlobFetchParams{Sha256: sha}, &res))
+	assert.True(t, res.Found)
+	select {
+	case st := <-cp.blobs:
+		assert.Equal(t, sha, st.Header.SHA256)
+		assert.EqualValues(t, 7, st.Header.Size)
+		b, err := io.ReadAll(st)
+		require.NoError(t, err)
+		assert.Equal(t, "PNGDATA", string(b))
+	case <-time.After(10 * time.Second):
+		t.Fatal("no blob stream")
+	}
+	err := cp.call(t, "blob.fetch", apigen.LinkCtlBlobFetchParams{Sha256: "../etc/passwd"}, nil)
+	assert.Equal(t, link.CodeInvalidParams, ctlCode(err))
 }
 
 // H3：setup.run 带仓库 / 脚本 / git / env 被拒；只带 ompHome 时文件落盘、不跑任何东西、不发 setup.result。
