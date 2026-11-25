@@ -178,6 +178,10 @@ func (r *Runtime) coordinatorAgentSpec(p apigen.LinkCtlAgentStartParams, dir str
 	if mode.tools != "" {
 		args = append(args, "--tools", mode.tools)
 	}
+	if mode.mcp {
+		// Core 19.2.0 起 --no-tools 默认一并关闭 MCP；全局助手与私有研究员需要按 --allow-mcp 显式放行 MCP。
+		args = append(args, "--allow-mcp")
+	}
 	args = append(args, skills...)
 	args = append(args, "--no-extensions", "--no-rules", "--no-context-files", "--no-lsp",
 		"--config", overlay, "--system-prompt", promptFile)

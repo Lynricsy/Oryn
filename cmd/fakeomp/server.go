@@ -79,7 +79,7 @@ func parseOptions(args []string, getenv func(string) string, stderr io.Writer) (
 	var configs multiFlag
 	fs.Var(&configs, "config", "设置覆盖层文件（忽略，可重复）")
 	// M9 协调档的开关与 M19 工具执行器的 --no-session：接受并忽略（参数本身经转储与 `probe args` 供测试断言）。
-	for _, name := range []string{"no-tools", "no-skills", "no-extensions", "no-rules", "no-context-files", "no-lsp", "no-session"} {
+	for _, name := range []string{"no-tools", "allow-mcp", "no-skills", "no-extensions", "no-rules", "no-context-files", "no-lsp", "no-session"} {
 		fs.Bool(name, false, "忽略")
 	}
 	// M13 协调档的内置工具白名单（`--tools read,write`）与全局助手的技能白名单（`--skills oryn`）：接受并忽略。
@@ -651,6 +651,13 @@ func (s *server) handle(line []byte) {
 		s.mu.Unlock()
 		s.ok(id, env.Type, map[string]bool{"aborted": aborted})
 
+	case "abort_and_restore_queue":
+		s.mu.Lock()
+		if s.cancelTurn != nil {
+			s.cancelTurn()
+		}
+		s.mu.Unlock()
+		s.ok(id, env.Type, map[string]any{"steering": []any{}, "followUp": []any{}})
 	case "resume":
 		if err := s.ensureSession(); err != nil {
 			s.fail(id, env.Type, err.Error())

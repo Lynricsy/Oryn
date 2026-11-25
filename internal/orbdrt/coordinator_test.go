@@ -272,7 +272,7 @@ func TestCoordinatorAgentStart(t *testing.T) {
 	webOverlay := filepath.Join(rt.home, ".oryn", "coordinator", "overlay-web.yml")
 	assert.Equal(t, []string{
 		"--mode", "rpc-ui", "--cwd", cwd, "--session-dir", filepath.Join(rt.home, ".oryn", "threads", thread2),
-		"--no-tools", "--tools", "read,write,web_search,generate_image", "--skills", "oryn", "--no-extensions", "--no-rules", "--no-context-files", "--no-lsp",
+		"--no-tools", "--tools", "read,write,web_search,generate_image", "--allow-mcp", "--skills", "oryn", "--no-extensions", "--no-rules", "--no-context-files", "--no-lsp",
 		"--config", webOverlay, "--system-prompt", filepath.Join(rt.home, ".oryn", "coordinator", "prompts", thread2+".md"),
 	}, rec.Args)
 	egress := "http://" + rt.egressLn.Addr().String()
@@ -341,12 +341,12 @@ func TestCoordinatorAgentSpecVariants(t *testing.T) {
 		},
 		{
 			name: "omitted (web)", p: params("", true, &tok),
-			args: argv([]string{"--tools", "read,write,web_search,generate_image"}, []string{"--skills", "oryn"}, "overlay-web.yml"), overlay: "overlay-web.yml",
+			args: argv([]string{"--tools", "read,write,web_search,generate_image", "--allow-mcp"}, []string{"--skills", "oryn"}, "overlay-web.yml"), overlay: "overlay-web.yml",
 			overlayBody: coordinatorOverlay(true, ""), env: map[string]string{"PI_PROXY": egress, "ORYN_MCP_BASE": egress, "ORYN_MCP_TOKEN": tok},
 		},
 		{
 			name: "omitted (web, no token)", p: params("", true, nil),
-			args: argv([]string{"--tools", "read,write,web_search,generate_image"}, []string{"--skills", "oryn"}, "overlay-web.yml"), overlay: "overlay-web.yml",
+			args: argv([]string{"--tools", "read,write,web_search,generate_image", "--allow-mcp"}, []string{"--skills", "oryn"}, "overlay-web.yml"), overlay: "overlay-web.yml",
 			overlayBody: coordinatorOverlay(true, ""), env: map[string]string{"PI_PROXY": egress, "ORYN_MCP_BASE": egress},
 		},
 		{
@@ -357,14 +357,14 @@ func TestCoordinatorAgentSpecVariants(t *testing.T) {
 		},
 		{
 			name: "research_private", p: params(apigen.AgentVariantResearchPrivate, false, &tok), variant: "research_private",
-			args: argv(nil, []string{"--no-skills"}, "overlay-research-private.yml"), overlay: "overlay-research-private.yml",
+			args: argv([]string{"--allow-mcp"}, []string{"--no-skills"}, "overlay-research-private.yml"), overlay: "overlay-research-private.yml",
 			overlayBody: strings.Replace(coordinatorOverlay(false, ""), "mcp: { enableProjectConfig: false }",
 				"mcp: { enableProjectConfig: false, shared: false, startupTimeoutMs: 0 }", 1) + "prompt: { fileMentions: false }\n",
 			env: map[string]string{"ORYN_MCP_BASE": egress, "ORYN_MCP_TOKEN": tok},
 		},
 		{
 			name: "research_private without token", p: params(apigen.AgentVariantResearchPrivate, false, nil), variant: "research_private",
-			args: argv(nil, []string{"--no-skills"}, "overlay-research-private.yml"), overlay: "overlay-research-private.yml",
+			args: argv([]string{"--allow-mcp"}, []string{"--no-skills"}, "overlay-research-private.yml"), overlay: "overlay-research-private.yml",
 			overlayBody: strings.Replace(coordinatorOverlay(false, ""), "mcp: { enableProjectConfig: false }",
 				"mcp: { enableProjectConfig: false, shared: false, startupTimeoutMs: 0 }", 1) + "prompt: { fileMentions: false }\n",
 			env: map[string]string{},
