@@ -307,7 +307,7 @@ HTML 类内容放进不执行脚本、不发网络请求的沙箱帧。
 
 ### Space 协调者
 
-只开放内置 `read` / `write`，负责拆解阶段目标、并发创建与检视工作线程，并在需要人工决策时汇总提醒。它不能联网、没有 MCP，也不能读写或操控 Runner 线程。
+只开放内置 `read` / `write`，负责拆解阶段目标、并发创建与检视工作线程，并在需要人工决策时汇总提醒。派出工作线程时默认使用 `default`（未指定 `role` 与 `model` 时自动落到 `default`），也可按需指定可用的子 Agent 角色（内置子 Agent 与 `agents/*.md`，不含 `cycleOrder` 中的 cycle role 与被禁用的子 Agent）——以该子 Agent 的提示词、工具白名单与默认模型/思考档位配置启动独立工作线程（不作为嵌套子 Agent），并支持显式覆盖 `model`（可通过 `list_models` 查询）与 `thinkingLevel`。它不能联网、没有 MCP，也不能读写或操控 Runner 线程。
 
 ### 全局助手
 

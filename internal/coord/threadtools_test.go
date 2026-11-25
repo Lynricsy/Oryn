@@ -217,7 +217,7 @@ func TestMutateRateLimit(t *testing.T) {
 	assert.False(t, l.allow("k", now, mutateRules), "24 小时内第 201 次")
 }
 
-// 顶层工具表：Space 协调者恰为基础 9 个；全局助手恰为 23 个（其余能力都是 oryn 技能的操作），oryn 以顶层工具出现。
+// 顶层工具表：Space 协调者为基础 9 个 + list_models；全局助手恰为 23 个（其余能力都是 oryn 技能的操作），oryn 以顶层工具出现。
 func TestAssistantToolDefs(t *testing.T) {
 	names := func(defs []apigen.OmpFrame) map[string]apigen.OmpFrame {
 		out := map[string]apigen.OmpFrame{}
@@ -229,7 +229,7 @@ func TestAssistantToolDefs(t *testing.T) {
 	space, asst := names(ToolDefs(ToolSet{InSpace: true})), names(ToolDefs(ToolSet{}))
 	base := []string{ToolListThreads, ToolReadThread, ToolCreateThread, ToolSendMessage, ToolArchiveThread, ToolSetSchedule,
 		ToolListSchedules, ToolListProjects, ToolGetStats}
-	assert.ElementsMatch(t, base, slices.Collect(maps.Keys(space)))
+	assert.ElementsMatch(t, append(slices.Clone(base), ToolListModels), slices.Collect(maps.Keys(space)))
 	want := append(slices.Clone(base), ToolSaveFile, ToolListFiles, ToolShareFile,
 		ToolCreateArtifact, ToolReadArtifact, ToolUpdateArtifact, ToolListArtifacts, ToolReadArtifactGuide, ToolScreenshotArtifact,
 		ToolOryn, ToolComputerStatus, ToolComputerUpload, ToolComputerDownload, ToolComputerRecord)
@@ -240,7 +240,9 @@ func TestAssistantToolDefs(t *testing.T) {
 	assert.Equal(t, []string{"threadId", "message"}, space[ToolSendMessage]["parameters"].(obj)["required"])
 	assert.Contains(t, props(asst[ToolSendMessage]), "space")
 	assert.Equal(t, []string{"message"}, asst[ToolSendMessage]["parameters"].(obj)["required"])
-	for _, k := range []string{"space", "runner", "dir", "orbId", "provider", "role", "labels"} {
+	assert.Contains(t, props(space[ToolCreateThread]), "role")
+	assert.Contains(t, props(asst[ToolCreateThread]), "role")
+	for _, k := range []string{"space", "runner", "dir", "orbId", "provider", "labels"} {
 		assert.Contains(t, props(asst[ToolCreateThread]), k)
 		assert.NotContains(t, props(space[ToolCreateThread]), k)
 	}
@@ -258,7 +260,7 @@ func TestAssistantPromptThirdLayer(t *testing.T) {
 	assert.Empty(t, removed.FindAllString(a, -1), "提示词不提已删除的工具")
 	sp := SystemPrompt(&apigen.Space{Name: "S"}, "", "T-2", true)
 	assert.Contains(t, sp, "\n"+spaceLimits+"\n")
-	assert.Contains(t, sp, "- Use get_stats for questions about usage and cost.\n\nRules:")
+	assert.Contains(t, sp, "- Use get_stats for questions about usage and cost."+spaceHowTo+"\n\nRules:")
 	assert.NotContains(t, sp, "oryn")
 	assert.NotContains(t, sp, "confirmation")
 }

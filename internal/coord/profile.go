@@ -54,6 +54,10 @@ const spaceLimits = "- You cannot delete threads, orbs or projects, or change se
 // assistantLimits 是全局助手的能力边界一条（M19 D7 / D18）：删除、对外公开与凭据、安全设置要主人点确认卡。
 const assistantLimits = "- Deleting things, making anything public, and changing credentials or security settings need the owner's confirmation: call the operation, tell the owner it is waiting, and continue when the automatic result message arrives. You cannot sign in, pair devices, create provider or runner tokens, or answer confirmations yourself."
 
+// spaceHowTo 接在 Space 协调者的 How to work 段末尾：指导按需使用 agent role / model / thinkingLevel，大部分任务默认用 default。
+const spaceHowTo = `
+- When dispatching work with create_thread, use default for most tasks (omit role or pass "default"). Only choose a specialist agent role (from the available roles below; never cycle roles) when the task clearly fits it, and optionally pass model (check list_models if needed) and/or thinkingLevel to override defaults.`
+
 // assistantHowTo 接在 How to work 段末尾（只给全局助手）：Runner 线程、Space 对话、电脑，以及 oryn 技能。
 const assistantHowTo = `
 - Runner threads run on the owner's own machines: start one with create_thread's runner and dir (the oryn operation listRunners shows the runners and their directories); send_message, read_thread, archive_thread and schedules work on them like on any thread.
@@ -115,7 +119,7 @@ func SystemPrompt(space *apigen.Space, projectName, threadID string, webAccess b
 		scope = "You coordinate the Space \"" + space.Name + "\".\nGoal: " + goal + "\nDefault project for new threads: " + proj +
 			"\nThreads you create join this Space, and list_threads shows this Space's threads unless you pass scope \"all\". This is a default, not a limit."
 		files = spaceFiles
-		untrusted, howTo, limits = "", "", spaceLimits
+		untrusted, howTo, limits = "", spaceHowTo, spaceLimits
 	}
 	return strings.NewReplacer("<CAPS>", caps, "<SCOPE>", scope, "<FILES>", files, "<UNTRUSTED>", untrusted,
 		"<HOWTO>", howTo, "<LIMITS>", limits).Replace(systemPromptTemplate)
@@ -178,6 +182,10 @@ func (s *Service) AgentProfile(ctx context.Context, threadID string) (threads.Ag
 			prof.SystemPrompt += "\n\n" + assistantCustomPromptHeader + customPrompt
 		}
 	}
+	if space != nil {
+		cat := s.loadSpaceRoles(ctx)
+		prof.SystemPrompt += "\n\n" + formatSpaceRolesPrompt(cat.specs)
+	}
 	if memOn {
 		brief, err := s.mem.Brief(ctx, threadID)
 		if err != nil {
@@ -215,6 +223,8 @@ const (
 	ToolListSchedules = "list_schedules"
 	ToolListProjects  = "list_projects"
 	ToolGetStats      = "get_stats"
+	// 模型查询（仅 Space 协调者；全局助手经 oryn 的 getModelCatalog 查询）。
+	ToolListModels = "list_models"
 	// 文件库（M13，只给全局助手）。
 	ToolSaveFile  = "save_file"
 	ToolListFiles = "list_files"
@@ -325,6 +335,11 @@ func ToolDefs(o ToolSet) []apigen.OmpFrame {
 		"thinkingLevel": str("Thinking level."),
 		"orbType":       str("Orb type."),
 	}
+	if inSpace {
+		createProps["role"] = str(`Optional agent role (subagent profile, excluding cycle roles) to configure the thread's prompt, tools, and default model. Omit or pass "default" for most tasks.`)
+		createProps["model"] = str("Optional model override as provider/id (use list_models to see available models). Overrides the role's default model; omit to use the role or default.")
+		createProps["thinkingLevel"] = enum("Optional thinking effort level. Overrides the role's default thinking level.", "off", "minimal", "low", "medium", "high", "xhigh", "max", "auto")
+	}
 	sendDesc := "Send a message to a work thread. You get a report when it settles."
 	sendProps := obj{
 		"threadId": str("Thread id (T-…)."),
@@ -385,6 +400,10 @@ func ToolDefs(o ToolSet) []apigen.OmpFrame {
 		}),
 	}
 	if inSpace {
+		defs = append(defs, tool(ToolListModels, "List available models (provider/id, name, thinking levels) for create_thread overrides.", obj{
+			"query": str("Optional case-insensitive substring filter on provider/id or model name."),
+			"limit": integer("At most this many models (default 50, max 200)."),
+		}))
 		return defs
 	}
 	defs = append(defs,

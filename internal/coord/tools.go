@@ -83,6 +83,13 @@ func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) thre
 		v, err = s.toolListProjects(ctx, tc)
 	case ToolGetStats:
 		v, err = s.toolGetStats(ctx, tc)
+	case ToolListModels:
+		// 模型目录查询只给 Space 协调者（全局助手经 oryn 工具的 getModelCatalog 查询）
+		if c.Kind != threads.KindSpace {
+			err = errf("unknown_tool", "no tool named %q", c.Name)
+			break
+		}
+		v, err = s.toolListModels(ctx, tc)
 	case ToolSaveFile, ToolListFiles, ToolShareFile:
 		// 文件库只属于全局助手（Space 协调者没有这些工具）
 		if c.Kind != threads.KindAssistant {
@@ -144,8 +151,8 @@ func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) thre
 		return failResult(err)
 	}
 	switch c.Name {
-	case ToolListThreads, ToolListSchedules, ToolGetStats, ToolListFiles:
-		// list_files 的文件名可能来自 orb 内的 agent（oryn library put）
+	case ToolListThreads, ToolListSchedules, ToolGetStats, ToolListFiles, ToolListModels:
+		// list_files 的文件名可能来自 orb 内的 agent（oryn library put）；list_models 含模型提供商与名称
 		return threads.HostToolResult{Text: wrapUntrusted("", v), Details: v}
 	}
 	return threads.HostToolResult{Text: jsonText(v), Details: v}
@@ -404,7 +411,7 @@ type createThreadArgs struct {
 	OrbType       string `json:"orbType"`
 	// Files 是要带给新线程的文件库 id（M13 4.4，只有全局助手可用）：逐个复制成附件，随首条提示词投递进新线程的 orb。
 	Files []string `json:"files"`
-	// M19：执行位置、Space、role 与标签，只有全局助手可用（Space 协调者传了也忽略）。
+	// M19：执行位置、Space、role 与标签。除 role 外仅全局助手可用（Space 协调者的 role 用于选择 subagent 配置，其余忽略）。
 	assistantCreateArgs
 }
 
@@ -446,8 +453,12 @@ func (s *Service) toolCreateThread(ctx context.Context, c toolCtx) (any, error) 
 			projectName = names[p.ProjectID]
 		}
 	}
+	effectiveRole := ""
 	if c.inSpace() {
 		p.SpaceID = c.space.ID
+		if effectiveRole, err = s.applySpaceCreateRole(ctx, a, &p); err != nil {
+			return nil, err
+		}
 	} else if err = s.applyAssistantCreate(ctx, a.assistantCreateArgs, &p, &projectName); err != nil {
 		return nil, err
 	}
@@ -475,9 +486,13 @@ func (s *Service) toolCreateThread(ctx context.Context, c toolCtx) (any, error) 
 	} else {
 		s.setArmed(t.ID, armedReport{gen: gen, seq: seq0})
 	}
-	return map[string]any{
+	res := map[string]any{
 		"threadId": t.ID, "title": t.Title, "project": projectName, "url": s.threadURL(t.ID), "threadIds": []string{t.ID},
-	}, nil
+	}
+	if effectiveRole != "" {
+		res["role"] = effectiveRole
+	}
+	return res, nil
 }
 
 // ---- send_message ----

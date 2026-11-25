@@ -124,6 +124,8 @@ type Service struct {
 	// home / envSecrets 是全局 omp 配置与 env 模式密钥（M19，SetAgentConfig 设置）。
 	home       GlobalConfig
 	envSecrets EnvSecrets
+	// models 是中央模型目录与内置子代理来源（SetModelCatalog 设置）；nil 时 list_models 返回 coordinator_unavailable。
+	models ModelCatalog
 	// refreshPolicy 以当前设置刷新协调宿主的出站策略（M19；orbs 为 nil 时为 nil，测试可替换）。
 	refreshPolicy func(ctx context.Context, orbID string) error
 	// machines 是 orb 与 Runner 的操作入口（M19，SetMachines 设置）；nil 时依赖它的助手工具回 coordinator_unavailable。

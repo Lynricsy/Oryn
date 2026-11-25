@@ -569,6 +569,8 @@ func (s *Server) init(ctx context.Context) error {
 		s.Threads.SetConfigSchema(s.API.Auth.ModelCatalog)
 		// M15 R14：GitHub 的 `/model <别名>` 指令在中央模型目录里查找
 		s.GitHub.SetModelCatalog(githubModels{s.API.Auth.ModelCatalog})
+		// Space 协调者：查可用模型目录与解包内置子代理定义
+		s.Coord.SetModelCatalog(coordModels{s.API.Auth.ModelCatalog})
 	}
 	s.API.Orbs = &api.OrbsDeps{Service: s.Orbs}
 	s.API.Threads = &api.ThreadsDeps{Service: s.Threads}
@@ -633,6 +635,28 @@ func (m githubModels) Models(ctx context.Context) ([]apigen.ModelRef, error) {
 		out = append(out, apigen.ModelRef{Provider: mm.Provider, ID: mm.ID})
 	}
 	return out, nil
+}
+
+// coordModels 把中央模型目录适配为 coord.ModelCatalog（coord 不导入 modelcat）：取缓存中的目录与解包内置子代理。
+type coordModels struct{ c *modelcat.Catalog }
+
+func (m coordModels) Models(ctx context.Context) ([]coord.ModelInfo, error) {
+	r, err := m.c.Get(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]coord.ModelInfo, 0, len(r.Models))
+	for _, mm := range r.Models {
+		out = append(out, coord.ModelInfo{
+			Provider: mm.Provider, ID: mm.ID, Name: mm.Name, Reasoning: mm.Reasoning,
+			Thinking: mm.Thinking, ThinkingDefault: mm.ThinkingDefault.Value, ContextWindow: mm.ContextWindow,
+		})
+	}
+	return out, nil
+}
+
+func (m coordModels) BundledAgents(ctx context.Context) ([]agentcfg.AgentSpec, error) {
+	return m.c.BundledAgents(ctx)
 }
 
 // githubOrbs 把 orbs 服务适配为 github.Orbs：冻结 = orbs.Pause(freeze)。

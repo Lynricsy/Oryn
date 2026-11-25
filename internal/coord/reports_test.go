@@ -278,10 +278,11 @@ func TestCreateThreadSourceLine(t *testing.T) {
 	id := details(t, e.call(chat, ToolCreateThread, `{"prompt":"do x"}`, true))["threadId"].(string)
 	var frames []map[string]any
 	require.NoError(t, json.Unmarshal(e.row(id).StartupFrames, &frames))
-	require.NotEmpty(t, frames)
-	assert.Equal(t, "[Oryn message from Space \"Alpha\" ("+chat.ID+") — sent by an agent, not typed by the owner]\ndo x", frames[0]["message"])
-	assert.Equal(t, e.report(id).Gen, frames[0]["orynTag"], "首条提示词带登记代号作投递标签")
-
+	require.Len(t, frames, 2)
+	assert.Equal(t, "oryn_select_model", frames[0]["type"])
+	assert.Equal(t, "default", frames[0]["role"])
+	assert.Equal(t, "[Oryn message from Space \"Alpha\" ("+chat.ID+") — sent by an agent, not typed by the owner]\ndo x", frames[1]["message"])
+	assert.Equal(t, e.report(id).Gen, frames[1]["orynTag"], "首条提示词带登记代号作投递标签")
 	x := e.newOrb()
 	parent := e.threadOn(x, "", "", "")
 	res, err := e.c.onThreadCreate(e.ctx, x, raw(apigen.LinkCtlThreadCreateParams{ThreadID: parent.ID, Prompt: "sub task"}))
