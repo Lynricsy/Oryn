@@ -37,7 +37,11 @@ func TestDesignToolsRegistered(t *testing.T) {
 	} {
 		assert.Contains(t, ext, s)
 	}
-	assert.NotContains(t, ext, "setActiveTools(", "探针 P6：设计工具始终激活，不切换工具集")
+	// 探针 P6：设计工具与回合钩子始终激活，不在设计路径里调用 setActiveTools（registerRoleTools 的显式角色白名单只在 session_start/session_switch 生效）。
+	designStart := strings.Index(ext, "function registerDesign(")
+	designEnd := strings.Index(ext, "function registerArtifacts(")
+	require.True(t, designStart >= 0 && designEnd > designStart, "应能定位 registerDesign..registerRunnerDesign 代码段")
+	assert.NotContains(t, ext[designStart:designEnd], "setActiveTools(", "探针 P6：设计工具与回合钩子不切换工具集")
 }
 
 // M29 C9：oryn-design 技能按 8 节组织；Runner 版去掉第 3、8 节（画布契约、自动封存），换成「用 HTML 画框」；NOTICE 列全部出处。
