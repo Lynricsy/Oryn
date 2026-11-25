@@ -3,9 +3,23 @@
 由 `web/e2e/ui-audit/inventory.ts` 从 `areas/*.md` 生成，勿手改。状态列依次为 d1920 明/暗、d1366 明/暗、m390 明/暗：
 ✓ after 跑完全程断言 0 问题且 before / after 截图都在；✗ after 有问题；— 显式跳过（视口不适用，清单里注明）；· 其余（没跑、中途失败、缺截图），不算通过。
 
-界面 327 个，全部视口通过 327 个。问题 96 条：错乱 47、设计 43、冗余 5、设计 + 错乱 1。
+界面 340 个，全部视口通过 321 个。问题 97 条：设计 44、错乱 47、冗余 5、设计 + 错乱 1。
 
-覆盖对账（spec 327 个用例 vs 清单 327 个 id）：一致
+覆盖对账（spec 340 个用例 vs 清单 340 个 id）：一致
+
+## boxes（9 个界面，1 条问题，详见 [areas/boxes.md](areas/boxes.md)）
+
+| id | 界面 | 打开路径 | 形态 | 状态 |
+|---|---|---|---|---|
+| `boxes.empty` | Boxes 介绍页（还没有 box） | 更多 → Boxes | 页面 | ✓ ✓ ✓ ✓ ✓ ✓ |
+| `boxes.list` | Boxes 总览（box 列表与最近活动） | 更多 → Boxes | 页面 | ✓ ✓ ✓ ✓ ✓ ✓ |
+| `boxes.new-dialog` | 新建 Box 对话框 | 总览页头「新建 Box」 | 弹窗（手机为抽屉） | ✓ ✓ ✓ ✓ ✓ ✓ |
+| `boxes.detail` | 单台 box 页（应用、活动、21 天用量、关于） | 总览点某台 box | 页面 | ✓ ✓ ✓ ✓ ✓ ✓ |
+| `boxes.detail.app-menu` | app 行菜单（公开性、重启、回滚、密钥、日志、下线） | app 行「…」 | 菜单 | ✓ ✓ ✓ ✓ ✓ ✓ |
+| `boxes.detail.schedule` | 运行时段对话框 | 页头「…」→ 运行时段… | 弹窗（手机为抽屉） | ✓ ✓ ✓ ✓ ✓ ✓ |
+| `boxes.detail.secrets` | app 的密钥对话框 | app 行「…」→ 密钥… | 弹窗（手机为抽屉） | ✓ ✓ ✓ ✓ ✓ ✓ |
+| `boxes.detail.preview` | app 悬停预览 | 指针停在 app 徽标上 | 提示（仅桌面：触屏没有悬停） | ✓ ✓ ✓ ✓ — — |
+| `boxes.home-executor` | 首屏执行位置弹层的 Boxes 分组 | 首屏执行位置胶囊 → 滚到底 | 下拉 | ✓ ✓ ✓ ✓ ✓ ✓ |
 
 ## fallback（4 个界面，3 条问题，详见 [areas/fallback.md](areas/fallback.md)）
 
@@ -107,25 +121,29 @@
 | `panels.artifacts.switch` | Artifact 切换菜单 | Artifacts → 标题下拉 | 菜单 | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `panels.artifacts.menu` | ArtifactMenu | Artifacts → 「…」 | 菜单 | ✓ ✓ ✓ ✓ ✓ ✓ |
 
-## sections（85 个界面，18 条问题，详见 [areas/sections.md](areas/sections.md)）
+## sections（89 个界面，18 条问题，详见 [areas/sections.md](areas/sections.md)）
 
 | id | 界面 | 打开路径 | 形态 | 状态 |
 |---|---|---|---|---|
-| `projects.list` | 项目列表 | 底栏 / 侧栏「项目」 | 页面 | ✓ ✓ ✓ ✓ ✓ ✓ |
-| `projects.new` | 新建项目 | 项目分区「新建项目」 | 页面 | ✓ ✓ ✓ ✓ ✓ ✓ |
-| `projects.page` | 项目页（顶部：项目设置） | 项目分区点某个项目 | 页面 | ✓ ✓ ✓ ✓ ✓ ✓ |
-| `projects.page.settings-bottom` | 项目设置下半部分（setup 脚本、保存） | 项目页往下滚 | 页面 | ✓ ✓ ✓ ✓ ✓ ✓ |
-| `projects.page.agent-config` | Agent 配置卡 | 项目页往下滚 | 页面 | ✓ ✓ ✓ ✓ ✓ ✓ |
-| `projects.page.github` | GitHub 卡（钩子、触发规则） | 项目页往下滚 | 页面 | ✓ ✓ ✓ ✓ ✓ ✓ |
-| `projects.page.ssh` | SSH 主机卡 | 项目页往下滚 | 页面 | ✓ ✓ ✓ ✓ ✓ ✓ |
-| `projects.page.accel` | 快照与预热卡 | 项目页往下滚 | 页面 | ✓ ✓ ✓ ✓ ✓ ✓ |
-| `projects.page.schedules` | 服务卡与定时任务卡（页底） | 项目页滚到底 | 页面 | ✓ ✓ ✓ ✓ ✓ ✓ |
-| `projects.page.repo-picker` | 仓库选择下拉 | 项目设置「从 GitHub 选择」 | 下拉 | ✓ ✓ ✓ ✓ ✓ ✓ |
-| `projects.page.trigger-dialog` | 新建触发规则对话框 | GitHub 卡「新建」 | 弹窗（手机为抽屉） | ✓ ✓ ✓ ✓ ✓ ✓ |
-| `projects.page.trigger-dialog.model` | 触发规则的模型池选择器 | 触发规则对话框「添加模型」 | 下拉 | ✓ ✓ ✓ ✓ ✓ ✓ |
-| `projects.page.schedule-menu` | 定时任务行菜单 | 定时卡某行「…」 | 菜单 | ✓ ✓ ✓ ✓ ✓ ✓ |
-| `projects.page.schedule-new` | 新建定时任务对话框 | 定时卡「新建定时任务」 | 弹窗（手机为抽屉） | ✓ ✓ ✓ ✓ ✓ ✓ |
-| `projects.page.schedule-edit` | 编辑定时任务对话框（含运行记录） | 定时卡某行「…」→ 编辑 | 弹窗（手机为抽屉） | ✓ ✓ ✓ ✓ ✓ ✓ |
+| `projects.list` | 项目总览 | 底栏 / 侧栏「项目」 | 页面 | · · · · · · |
+| `projects.list.menu` | 项目总览的「更多操作」菜单（显示已归档项目） | 项目总览页头「⋯」 | 菜单 | · · · · · · |
+| `projects.list.archived` | 项目总览 · 已归档区 | 「⋯」→ 显示已归档项目 | 页面 | · · · · · · |
+| `projects.new` | 新建项目 | 项目分区「新建项目」 | 页面 | · · · · · · |
+| `projects.threads` | 项目的线程子页（搜索、状态筛选） | 项目主页「最近线程」→ 查看全部 | 页面 | · · · · · · |
+| `projects.threads.archived` | 项目的线程子页 · 只看已归档 | 线程子页状态选「已归档」 | 页面 | · · · · · · |
+| `projects.page` | 项目页（顶部：项目设置） | 项目分区点某个项目 | 页面 | · · · · · · |
+| `projects.page.settings-bottom` | 项目设置下半部分（setup 脚本、保存） | 项目页往下滚 | 页面 | · · · · · · |
+| `projects.page.agent-config` | Agent 配置卡 | 项目页往下滚 | 页面 | · · · · · · |
+| `projects.page.github` | GitHub 卡（钩子、触发规则） | 项目页往下滚 | 页面 | · · · · · · |
+| `projects.page.ssh` | SSH 主机卡 | 项目页往下滚 | 页面 | · · · · · · |
+| `projects.page.accel` | 快照与预热卡 | 项目页往下滚 | 页面 | · · · · · · |
+| `projects.page.schedules` | 服务卡与定时任务卡（页底） | 项目页滚到底 | 页面 | · · · · · · |
+| `projects.page.repo-picker` | 仓库选择下拉 | 项目设置「从 GitHub 选择」 | 下拉 | · · · · · · |
+| `projects.page.trigger-dialog` | 新建触发规则对话框 | GitHub 卡「新建」 | 弹窗（手机为抽屉） | · · · · · · |
+| `projects.page.trigger-dialog.model` | 触发规则的模型池选择器 | 触发规则对话框「添加模型」 | 下拉 | · · · · · · |
+| `projects.page.schedule-menu` | 定时任务行菜单 | 定时卡某行「…」 | 菜单 | · · · · · · |
+| `projects.page.schedule-new` | 新建定时任务对话框 | 定时卡「新建定时任务」 | 弹窗（手机为抽屉） | · · · · · · |
+| `projects.page.schedule-edit` | 编辑定时任务对话框（含运行记录） | 定时卡某行「…」→ 编辑 | 弹窗（手机为抽屉） | · · · · · · |
 | `space.page` | Space 页（聊天 + 右列） | 侧栏「空间」下点某个空间 | 页面 | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `space.side` | Space 右列（进度、定时、线程卡片；手机在「线程」标签） | 宽屏直接可见 / 手机切到「线程」标签 | 页面 | ✓ ✓ ✓ ✓ ✓ ✓ |
 | `space.menu` | 空间操作菜单 | 页头「…」 | 菜单 | ✓ ✓ ✓ ✓ ✓ ✓ |
