@@ -29,12 +29,32 @@ export interface OverviewText {
 	invalid: string;
 }
 
+/** 样机模式配置（`?view=mockup` 或服务端写入 `#oryn-canvas`）。 */
+export interface MockupConfig {
+	frames?: string[];
+	heights?: Record<string, number>;
+	radius: number;
+	border: boolean;
+	bg: string;
+	shadow: boolean;
+	shell: boolean;
+	width?: number;
+	height?: number;
+}
+
 /** `#oryn-canvas` 里的数据。 */
 export interface OverviewData {
 	title: string;
 	doc: unknown;
 	text: { zh?: OverviewText; en?: OverviewText };
+	view?: "overview" | "thumbnail" | "mockup";
+	mockup?: MockupConfig;
 }
+
+/** 样机布局常量（与服务端 internal/artifacts/overview.go、export.go 同值）。 */
+export const MOCKUP_PADDING = 48;
+export const MOCKUP_GAP = 40;
+export const MOCKUP_MAX_SIDE = 8000;
 
 export const ZOOM_MIN = 0.02;
 export const ZOOM_MAX = 4;
@@ -289,7 +309,219 @@ function button(doc: Document, label: string, text: string): HTMLButtonElement {
 	return b;
 }
 
-/** 读页面里的数据并渲染概览；`?view=thumbnail` 时不显示任何控件，把第一个画布页的画框铺进视口。 */
+/** 设备外壳四周占用的尺寸（CSS px）；与服务端 mockupShellChrome 同值。 */
+export function shellChrome(
+	device: CanvasPage["device"],
+	shell: boolean,
+): { top: number; right: number; bottom: number; left: number } {
+	if (!shell || !device) return { top: 0, right: 0, bottom: 0, left: 0 };
+	switch (device) {
+		case "phone":
+			return { top: 36, right: 12, bottom: 24, left: 12 };
+		case "tablet":
+			return { top: 24, right: 16, bottom: 24, left: 16 };
+		case "browser":
+			return { top: 36, right: 0, bottom: 0, left: 0 };
+	}
+}
+
+/** 按查询参数解析样机配置（服务端未把 mockup 块写进 JSON 时兜底）。 */
+export function parseMockupQuery(qs: URLSearchParams): MockupConfig {
+	const flag = (key: string, fallback: boolean): boolean => {
+		const v = qs.get(key);
+		if (v === null || v === "") return fallback;
+		return v !== "0" && v !== "false";
+	};
+	const rawRadius = qs.get("radius");
+	const parsedRadius =
+		rawRadius !== null && rawRadius !== "" ? Number(rawRadius) : 12;
+	const radius = Number.isFinite(parsedRadius)
+		? Math.min(64, Math.max(0, Math.round(parsedRadius)))
+		: 12;
+	const framesRaw = qs.get("frames")?.trim();
+	const frames = framesRaw
+		? framesRaw
+				.split(",")
+				.map((s) => s.trim())
+				.filter(Boolean)
+		: undefined;
+	const heightsRaw = qs.get("heights")?.trim();
+	let heights: Record<string, number> | undefined;
+	if (heightsRaw) {
+		heights = {};
+		for (const item of heightsRaw.split(",")) {
+			const idx = item.lastIndexOf(":");
+			if (idx <= 0) continue;
+			const id = item.slice(0, idx).trim();
+			const h = Number(item.slice(idx + 1));
+			if (id && Number.isFinite(h) && h > 0) heights[id] = Math.round(h);
+		}
+	}
+	const w = Number(qs.get("w"));
+	const h = Number(qs.get("h"));
+	return {
+		...(frames ? { frames } : {}),
+		...(heights && Object.keys(heights).length > 0 ? { heights } : {}),
+		radius,
+		border: flag("border", true),
+		bg: qs.get("bg") || "light",
+		shadow: flag("shadow", true),
+		shell: flag("shell", true),
+		...(Number.isFinite(w) && w > 0 ? { width: Math.round(w) } : {}),
+		...(Number.isFinite(h) && h > 0 ? { height: Math.round(h) } : {}),
+	};
+}
+
+function isHexDark(hex: string): boolean {
+	const r = Number.parseInt(hex.slice(1, 3), 16);
+	const g = Number.parseInt(hex.slice(3, 5), 16);
+	const b = Number.parseInt(hex.slice(5, 7), 16);
+	return (r * 299 + g * 587 + b * 114) / 1000 < 128;
+}
+
+/** 样机背景值转 CSS 颜色与明暗标记。 */
+export function mockupBgStyle(bg: string): { cssBg: string; dark: boolean } {
+	if (bg === "transparent") return { cssBg: "transparent", dark: false };
+	if (bg === "dark") return { cssBg: "#111114", dark: true };
+	if (/^#[0-9a-fA-F]{6}$/.test(bg)) return { cssBg: bg, dark: isHexDark(bg) };
+	return { cssBg: "#f4f4f5", dark: false };
+}
+
+/** 按 ids 筛选要放进样机的画框（去重、保持请求顺序；空则全部画框）。 */
+export function selectMockupPages(
+	pages: readonly CanvasPage[],
+	ids?: readonly string[],
+): CanvasPage[] {
+	if (!ids || ids.length === 0) return [...pages];
+	const byId = new Map(pages.map((p) => [p.id, p]));
+	const seen = new Set<string>();
+	const out: CanvasPage[] = [];
+	for (const id of ids) {
+		if (seen.has(id)) continue;
+		const p = byId.get(id);
+		if (!p) continue;
+		seen.add(id);
+		out.push(p);
+	}
+	return out;
+}
+
+/** 渲染样机视图：并排展示选中的画框，应用背景、圆角、边框、阴影与设备外壳，无交互控件。 */
+function renderMockup(
+	doc: Document,
+	win: Window,
+	canvas: CanvasDoc,
+	cfg: MockupConfig,
+): void {
+	const { cssBg, dark } = mockupBgStyle(cfg.bg);
+	doc.documentElement.classList.add("mockup");
+	doc.documentElement.classList.toggle("mockup-dark", dark);
+	doc.documentElement.style.background = cssBg;
+	doc.body.style.background = cssBg;
+
+	const pages = selectMockupPages(canvas.pages, cfg.frames);
+	const stage = doc.createElement("div");
+	stage.className = "mockup-stage";
+	const row = doc.createElement("div");
+	row.className = "mockup-row";
+	row.style.padding = `${MOCKUP_PADDING}px`;
+	row.style.gap = `${MOCKUP_GAP}px`;
+
+	let rawW = MOCKUP_PADDING * 2;
+	for (let i = 0; i < pages.length; i++) {
+		const p = pages[i];
+		if (!p) continue;
+		const w = Math.max(1, Math.round(p.width));
+		const h = Math.max(1, Math.round(cfg.heights?.[p.id] ?? p.height));
+		const dev = cfg.shell ? (p.device ?? "none") : "none";
+		const ch = shellChrome(p.device, cfg.shell);
+		const boxW = w + ch.left + ch.right;
+		const boxH = h + ch.top + ch.bottom;
+		if (i > 0) rawW += MOCKUP_GAP;
+		rawW += boxW;
+
+		const item = doc.createElement("div");
+		item.className = `mockup-item mockup-shell-${dev}`;
+		if (cfg.border) item.classList.add("has-border");
+		if (cfg.shadow) item.classList.add("has-shadow");
+		item.dataset.frame = p.id;
+		item.dataset.device = dev;
+		item.style.width = `${boxW}px`;
+		item.style.height = `${boxH}px`;
+
+		const screen = doc.createElement("div");
+		screen.className = "mockup-screen";
+		screen.style.width = `${w}px`;
+		screen.style.height = `${h}px`;
+
+		const frame = doc.createElement("iframe");
+		frame.title = p.name;
+		frame.tabIndex = -1;
+		frame.src = pageHref(p.file);
+		frame.style.width = `${w}px`;
+		frame.style.height = `${h}px`;
+		screen.append(frame);
+
+		if (dev === "phone") {
+			item.style.borderRadius = `${Math.max(cfg.radius, 28)}px`;
+			screen.style.borderRadius = `${Math.max(cfg.radius, 18)}px`;
+			const notch = doc.createElement("div");
+			notch.className = "mockup-notch";
+			const home = doc.createElement("div");
+			home.className = "mockup-home";
+			item.append(notch, screen, home);
+		} else if (dev === "tablet") {
+			item.style.borderRadius = `${Math.max(cfg.radius, 20)}px`;
+			screen.style.borderRadius = `${Math.max(cfg.radius, 10)}px`;
+			const cam = doc.createElement("div");
+			cam.className = "mockup-camera";
+			const home = doc.createElement("div");
+			home.className = "mockup-home";
+			item.append(cam, screen, home);
+		} else if (dev === "browser") {
+			item.style.borderRadius = `${cfg.radius}px`;
+			const chrome = doc.createElement("div");
+			chrome.className = "mockup-chrome";
+			const dots = doc.createElement("div");
+			dots.className = "mockup-dots";
+			for (let d = 0; d < 3; d++) {
+				const dot = doc.createElement("span");
+				dot.className = "mockup-dot";
+				dots.append(dot);
+			}
+			const title = doc.createElement("span");
+			title.className = "mockup-title";
+			title.textContent = p.name;
+			chrome.append(dots, title);
+			item.append(chrome, screen);
+		} else {
+			item.style.borderRadius = `${cfg.radius}px`;
+			screen.style.borderRadius = `${cfg.radius}px`;
+			item.append(screen);
+		}
+		row.append(item);
+	}
+
+	const viewW = cfg.width ?? win.innerWidth;
+	if (rawW > MOCKUP_MAX_SIDE && viewW > 0 && rawW > viewW) {
+		row.style.transformOrigin = "0 0";
+		row.style.transform = `scale(${viewW / rawW})`;
+	}
+	if (
+		cfg.width &&
+		cfg.height &&
+		!doc.querySelector("style[data-mockup-page]")
+	) {
+		const st = doc.createElement("style");
+		st.setAttribute("data-mockup-page", "1");
+		st.textContent = `@page { size: ${cfg.width}px ${cfg.height}px; margin: 0 }`;
+		doc.head.append(st);
+	}
+	stage.append(row);
+	doc.body.append(stage);
+}
+
+/** 读页面里的数据并渲染概览；`?view=thumbnail` 缩略图模式、`view=mockup` 样机导出模式。 */
 export function boot(doc: Document, win: Window): void {
 	const dataEl = doc.getElementById("oryn-canvas");
 	if (!dataEl) return;
@@ -308,12 +540,15 @@ export function boot(doc: Document, win: Window): void {
 		doc.body.append(p);
 		return;
 	}
+	const qs = new URLSearchParams(win.location.search);
+	if (data.view === "mockup" || qs.get("view") === "mockup") {
+		renderMockup(doc, win, canvas, data.mockup ?? parseMockupQuery(qs));
+		return;
+	}
 	if (!text) return;
 	const t = text;
-	const thumbnail =
-		new URLSearchParams(win.location.search).get("view") === "thumbnail";
+	const thumbnail = data.view === "thumbnail" || qs.get("view") === "thumbnail";
 	doc.documentElement.classList.toggle("thumbnail", thumbnail);
-
 	const stage = doc.createElement("div");
 	stage.className = "stage";
 	const world = doc.createElement("div");

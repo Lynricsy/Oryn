@@ -92,13 +92,48 @@ const overviewCSS = `:root{color-scheme:light dark;--bg:#f4f4f5;--fg:#18181b;--m
 	`.text{fill:var(--c)}.sticky{fill:var(--c);fill-opacity:.25;stroke:var(--c);stroke-opacity:.5}.done{opacity:.5}` +
 	`.sticky-text{height:100%;overflow:hidden;padding:12px;font-size:16px;color:var(--fg);white-space:pre-wrap;overflow-wrap:anywhere}` +
 	`.message{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);margin:0;color:var(--muted)}` +
-	`#oryn-fallback{height:100%;overflow:auto;padding:24px}`
+	`#oryn-fallback{height:100%;overflow:auto;padding:24px}` +
+	`html.mockup,html.mockup body{overflow:hidden;--m-border:rgba(0,0,0,.1);--m-shell:#18181b;--m-chrome:#f4f4f5;--m-chrome-line:#e4e4e7;--m-chrome-fg:#52525b;--m-dot:#d4d4d8}` +
+	`html.mockup.mockup-dark{--m-border:rgba(255,255,255,.14);--m-shell:#27272a;--m-chrome:#18181b;--m-chrome-line:#27272a;--m-chrome-fg:#a1a1aa;--m-dot:#3f3f46}` +
+	`.mockup-stage{position:fixed;inset:0;overflow:hidden}` +
+	`.mockup-row{display:flex;align-items:flex-start;width:max-content}` +
+	`.mockup-item{position:relative;flex:none;box-shadow:var(--m-ring,0 0 0 0 transparent),var(--m-shadow,0 0 0 0 transparent)}` +
+	`.mockup-item.has-border{--m-ring:0 0 0 1px var(--m-border)}` +
+	`.mockup-item.has-shadow{--m-shadow:0 24px 60px rgba(0,0,0,.16),0 6px 18px rgba(0,0,0,.08)}` +
+	`.mockup-screen{overflow:hidden;background:#fff}` +
+	`.mockup-screen iframe{display:block;border:0;pointer-events:none;background:#fff}` +
+	`.mockup-shell-phone{background:var(--m-shell);padding:36px 12px 24px}` +
+	`.mockup-shell-tablet{background:var(--m-shell);padding:24px 16px}` +
+	`.mockup-shell-browser{background:var(--m-chrome);overflow:hidden}` +
+	`.mockup-shell-none{overflow:hidden}` +
+	`.mockup-notch{position:absolute;top:12px;left:50%;transform:translateX(-50%);width:76px;height:14px;border-radius:999px;background:rgba(0,0,0,.45)}` +
+	`.mockup-camera{position:absolute;top:9px;left:50%;transform:translateX(-50%);width:7px;height:7px;border-radius:999px;background:rgba(255,255,255,.22)}` +
+	`.mockup-home{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);width:96px;height:4px;border-radius:999px;background:rgba(255,255,255,.35)}` +
+	`.mockup-chrome{height:36px;display:flex;align-items:center;gap:10px;padding:0 12px;background:var(--m-chrome);border-bottom:1px solid var(--m-chrome-line)}` +
+	`.mockup-dots{display:flex;gap:6px;flex:none}` +
+	`.mockup-dot{width:10px;height:10px;border-radius:999px;background:var(--m-dot)}` +
+	`.mockup-title{font-size:12px;color:var(--m-chrome-fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}`
+
+// mockupPageConfig 是样机页里 `#oryn-canvas` 的 mockup 配置块（与 web/sandbox/overview/main.ts 的 MockupConfig 对应）。
+type mockupPageConfig struct {
+	Frames  []string       `json:"frames,omitempty"`
+	Heights map[string]int `json:"heights,omitempty"`
+	Radius  int            `json:"radius"`
+	Border  bool           `json:"border"`
+	Bg      string         `json:"bg"`
+	Shadow  bool           `json:"shadow"`
+	Shell   bool           `json:"shell"`
+	Width   int            `json:"width,omitempty"`
+	Height  int            `json:"height,omitempty"`
+}
 
 // overviewData 是概览页里 `<script type="application/json" id="oryn-canvas">` 的内容。
 type overviewData struct {
-	Title string                  `json:"title"`
-	Doc   json.RawMessage         `json:"doc"`
-	Text  map[string]overviewText `json:"text"`
+	Title  string                  `json:"title"`
+	Doc    json.RawMessage         `json:"doc"`
+	Text   map[string]overviewText `json:"text"`
+	View   string                  `json:"view,omitempty"`
+	Mockup *mockupPageConfig       `json:"mockup,omitempty"`
 }
 
 // pageHref 把 artifact 里的相对路径逐段编码成相对地址（文件名里的 #、?、% 与空格不会变成片段、查询或转义）。
@@ -176,6 +211,124 @@ func (s *Service) overviewFor(ctx context.Context, a Artifact, version int, loca
 		return nil, false, err
 	}
 	return canvasOverview(doc, a.Title, locale), true, nil
+}
+
+// mockupConfigFromQuery 从渲染请求的查询串还原样机页配置（非预期值按缺省收敛）。
+func mockupConfigFromQuery(q url.Values) mockupPageConfig {
+	flag := func(k string, def bool) bool {
+		v := q.Get(k)
+		if v == "" {
+			return def
+		}
+		return v != "0" && v != "false"
+	}
+	cfg := mockupPageConfig{
+		Radius: 12,
+		Border: flag("border", true),
+		Bg:     "light",
+		Shadow: flag("shadow", true),
+		Shell:  flag("shell", true),
+	}
+	if raw := strings.TrimSpace(q.Get("frames")); raw != "" {
+		for _, part := range strings.Split(raw, ",") {
+			if id := strings.TrimSpace(part); id != "" {
+				cfg.Frames = append(cfg.Frames, id)
+			}
+		}
+	}
+	if raw := strings.TrimSpace(q.Get("heights")); raw != "" {
+		heights := map[string]int{}
+		for _, item := range strings.Split(raw, ",") {
+			idx := strings.LastIndex(item, ":")
+			if idx <= 0 {
+				continue
+			}
+			id := strings.TrimSpace(item[:idx])
+			if h, err := strconv.Atoi(strings.TrimSpace(item[idx+1:])); err == nil && id != "" && h > 0 {
+				heights[id] = h
+			}
+		}
+		if len(heights) > 0 {
+			cfg.Heights = heights
+		}
+	}
+	if r, err := strconv.Atoi(q.Get("radius")); err == nil {
+		cfg.Radius = min(64, max(0, r))
+	}
+	if bg := q.Get("bg"); validMockupBg(bg) {
+		cfg.Bg = bg
+	}
+	if w, err := strconv.Atoi(q.Get("w")); err == nil && w > 0 {
+		cfg.Width = w
+	}
+	if h, err := strconv.Atoi(q.Get("h")); err == nil && h > 0 {
+		cfg.Height = h
+	}
+	return cfg
+}
+
+// mockupCSSBg 把样机背景选项转成内联 CSS 背景值。
+func mockupCSSBg(bg string) string {
+	switch bg {
+	case "transparent":
+		return "transparent"
+	case "dark":
+		return "#111114"
+	case "light", "":
+		return "#f4f4f5"
+	default:
+		if validMockupBg(bg) {
+			return bg
+		}
+		return "#f4f4f5"
+	}
+}
+
+// canvasMockup 生成画布的样机渲染页：复用 overview.js，在 `#oryn-canvas` 写入 `view: "mockup"` 与样机配置，
+// 并在 `<style>` 里预设背景与 PDF 打印的 `@page` 尺寸。
+func canvasMockup(doc canvas.Doc, title string, cfg mockupPageConfig) []byte {
+	data, _ := json.Marshal(overviewData{
+		Title:  title,
+		Doc:    doc.JSON(),
+		Text:   overviewTexts,
+		View:   "mockup",
+		Mockup: &cfg,
+	})
+	var b bytes.Buffer
+	b.WriteString("<!doctype html>\n<html class=\"mockup\"><head><meta charset=\"utf-8\">")
+	b.WriteString("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">")
+	b.WriteString("<title>" + html.EscapeString(title) + "</title><style>" + overviewCSS)
+	b.WriteString("html.mockup,html.mockup body{background:" + mockupCSSBg(cfg.Bg) + "}")
+	b.WriteString("</style>")
+	if cfg.Width > 0 && cfg.Height > 0 {
+		b.WriteString("<style data-mockup-page=\"1\">@page{size:" + strconv.Itoa(cfg.Width) + "px " + strconv.Itoa(cfg.Height) + "px;margin:0}</style>")
+	}
+	b.WriteString("</head><body><script type=\"application/json\" id=\"oryn-canvas\">")
+	b.Write(data)
+	b.WriteString("</script>")
+	if js := overviewScript(); len(js) > 0 {
+		b.WriteString("<script>")
+		b.Write(js)
+		b.WriteString("</script>")
+	}
+	b.WriteString("</body></html>\n")
+	return b.Bytes()
+}
+
+// mockupFor 在 artifact a 的版本 version 是画布时返回按查询参数生成的样机页（即使该画布自己也有 index.html）。
+func (s *Service) mockupFor(ctx context.Context, a Artifact, version int, q url.Values) (page []byte, ok bool, err error) {
+	if a.Type != "" || a.Kind != KindCanvas {
+		return nil, false, nil
+	}
+	b, _, err := s.ReadFile(ctx, a.ID, version, EntryCanvas)
+	if err != nil {
+		return nil, false, err
+	}
+	doc, err := canvas.Parse(b)
+	if err != nil {
+		return nil, false, err
+	}
+	return canvasMockup(doc, a.Title, mockupConfigFromQuery(q)), true, nil
 }
 
 // writePage 把生成的 HTML 页面写成 200 响应（HEAD 只写头）。

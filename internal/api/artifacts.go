@@ -476,7 +476,8 @@ func (s *Server) ImportArtifact(w http.ResponseWriter, r *http.Request, params a
 }
 
 // ExportArtifact 对应 `GET artifacts/{id}/export?version=&format=`：`html` 回单个文件，`zip` 流式打包，`md` 回文档
-// （有图片时为 zip），`pdf` 回控制面渲染的幻灯片（渲染在写响应头之前完成，不可用时回 503 render_unavailable）。
+// （有图片时为 zip），`pdf` 回控制面渲染的幻灯片，`project` 回设计画布的独立工程 zip，`mockup-png` / `mockup-pdf`
+// 按样机选项渲染画布（渲染在写响应头之前完成，不可用时回 503 render_unavailable）。
 // 一律 attachment，带 `Content-Security-Policy: sandbox` 与 nosniff（主域上不把 artifact 当页面渲染）。
 func (s *Server) ExportArtifact(w http.ResponseWriter, r *http.Request, id apigen.ArtifactIDPath, params apigen.ExportArtifactParams) {
 	svc, ok := s.artifactsSvc(w)
@@ -487,7 +488,40 @@ func (s *Server) ExportArtifact(w http.ResponseWriter, r *http.Request, id apige
 	if !ok {
 		return
 	}
-	x, err := svc.Export(r.Context(), id, version, string(params.Format))
+	var opts *artifacts.MockupOptions
+	if f := string(params.Format); f == artifacts.ExportMockupPNG || f == artifacts.ExportMockupPDF {
+		o := artifacts.DefaultMockupOptions()
+		if params.Frames != nil {
+			if raw := strings.TrimSpace(*params.Frames); raw != "" {
+				for _, part := range strings.Split(raw, ",") {
+					o.Frames = append(o.Frames, strings.TrimSpace(part))
+				}
+			}
+		}
+		if params.Scale != nil {
+			o.Scale = *params.Scale
+		}
+		if params.Radius != nil {
+			o.Radius = *params.Radius
+		}
+		if params.Border != nil {
+			o.Border = *params.Border
+		}
+		if params.Bg != nil {
+			o.Bg = *params.Bg
+		}
+		if params.Shadow != nil {
+			o.Shadow = *params.Shadow
+		}
+		if params.Shell != nil {
+			o.Shell = *params.Shell
+		}
+		if params.Long != nil {
+			o.Long = *params.Long
+		}
+		opts = &o
+	}
+	x, err := svc.ExportWithOptions(r.Context(), id, version, string(params.Format), opts)
 	if err != nil {
 		writeArtifactErr(w, r, err)
 		return

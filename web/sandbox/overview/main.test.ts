@@ -5,9 +5,12 @@ import {
 	boundsOf,
 	type Camera,
 	fitBox,
+	mockupBgStyle,
 	type OverviewData,
 	pageHref,
+	parseMockupQuery,
 	pickText,
+	shellChrome,
 	visiblePages,
 	ZOOM_MAX,
 	ZOOM_MIN,
@@ -266,5 +269,175 @@ describe("概览页", () => {
 		}).document;
 		expect(d.querySelector(".message")?.textContent).toBe("无法显示这个画布");
 		expect(d.querySelector("iframe")).toBeNull();
+	});
+});
+
+describe("样机模式", () => {
+	const DESIGN_DOC = {
+		format: 2,
+		design: { engine: 1, start: "home" },
+		canvases: [{ id: "c1", name: "首页" }],
+		pages: [
+			{
+				id: "home",
+				canvas: "c1",
+				name: "首页",
+				file: "dist/home.html",
+				source: "src/frames/home.tsx",
+				device: "browser",
+				x: 0,
+				y: 0,
+				width: 1280,
+				height: 800,
+				locked: false,
+			},
+			{
+				id: "mobile",
+				canvas: "c1",
+				name: "移动端",
+				file: "dist/mobile.html",
+				source: "src/frames/mobile.tsx",
+				device: "phone",
+				x: 1328,
+				y: 0,
+				width: 390,
+				height: 844,
+				locked: false,
+			},
+			{
+				id: "pad",
+				canvas: "c1",
+				name: "平板",
+				file: "dist/pad.html",
+				source: "src/frames/pad.tsx",
+				device: "tablet",
+				x: 1766,
+				y: 0,
+				width: 820,
+				height: 1180,
+				locked: false,
+			},
+		],
+		notes: [],
+	};
+
+	it("按配置渲染选中帧、设备外壳、背景、圆角、边框与阴影，无交互工具栏", () => {
+		const w = page({
+			title: "设计稿",
+			doc: DESIGN_DOC,
+			text: {},
+			view: "mockup",
+			mockup: {
+				frames: ["mobile", "home"],
+				heights: { home: 2400 },
+				radius: 16,
+				border: true,
+				bg: "dark",
+				shadow: true,
+				shell: true,
+				width: 1830,
+				height: 2532,
+			},
+		});
+		const d = w.document;
+		expect(d.documentElement.classList.contains("mockup")).toBe(true);
+		expect(d.documentElement.classList.contains("mockup-dark")).toBe(true);
+		expect(d.querySelector("header")).toBeNull();
+		expect(d.querySelector("a.open")).toBeNull();
+		expect(d.querySelector("style[data-mockup-page]")?.textContent).toContain(
+			"1830px 2532px",
+		);
+
+		const items = [...d.querySelectorAll<HTMLElement>(".mockup-item")];
+		expect(items.map((el) => el.dataset.frame)).toEqual(["mobile", "home"]);
+		expect(items[0]?.dataset.device).toBe("phone");
+		expect(items[0]?.style.width).toBe("414px");
+		expect(items[0]?.style.height).toBe("904px");
+		expect(items[0]?.classList.contains("has-border")).toBe(true);
+		expect(items[0]?.classList.contains("has-shadow")).toBe(true);
+		expect(items[0]?.querySelector(".mockup-notch")).not.toBeNull();
+
+		expect(items[1]?.dataset.device).toBe("browser");
+		expect(items[1]?.style.width).toBe("1280px");
+		expect(items[1]?.style.height).toBe("2436px");
+		expect(
+			items[1]?.querySelector(".mockup-chrome .mockup-title")?.textContent,
+		).toBe("首页");
+		const iframes = [...d.querySelectorAll("iframe")];
+		expect(iframes.map((f) => f.getAttribute("src"))).toEqual([
+			"dist/mobile.html",
+			"dist/home.html",
+		]);
+		expect(iframes[1]?.style.height).toBe("2400px");
+	});
+
+	it("?view=mockup 查询参数模式：关闭外壳/边框/阴影与自定义色背景", () => {
+		const w = page(
+			{ title: "设计稿", doc: DESIGN_DOC, text: { zh: ZH } },
+			"?view=mockup&frames=pad&radius=0&border=0&shadow=0&shell=0&bg=%23102030",
+		);
+		const d = w.document;
+		expect(d.documentElement.classList.contains("mockup-dark")).toBe(true);
+		const items = [...d.querySelectorAll<HTMLElement>(".mockup-item")];
+		expect(items).toHaveLength(1);
+		expect(items[0]?.dataset.frame).toBe("pad");
+		expect(items[0]?.dataset.device).toBe("none");
+		expect(items[0]?.style.width).toBe("820px");
+		expect(items[0]?.style.height).toBe("1180px");
+		expect(items[0]?.style.borderRadius).toBe("0px");
+		expect(items[0]?.classList.contains("has-border")).toBe(false);
+		expect(items[0]?.classList.contains("has-shadow")).toBe(false);
+	});
+
+	it("辅助函数：parseMockupQuery / shellChrome / mockupBgStyle", () => {
+		expect(shellChrome("phone", true)).toEqual({
+			top: 36,
+			right: 12,
+			bottom: 24,
+			left: 12,
+		});
+		expect(shellChrome("tablet", true)).toEqual({
+			top: 24,
+			right: 16,
+			bottom: 24,
+			left: 16,
+		});
+		expect(shellChrome("browser", true)).toEqual({
+			top: 36,
+			right: 0,
+			bottom: 0,
+			left: 0,
+		});
+		expect(shellChrome("phone", false)).toEqual({
+			top: 0,
+			right: 0,
+			bottom: 0,
+			left: 0,
+		});
+		expect(mockupBgStyle("transparent")).toEqual({
+			cssBg: "transparent",
+			dark: false,
+		});
+		expect(mockupBgStyle("#ffffff")).toEqual({
+			cssBg: "#ffffff",
+			dark: false,
+		});
+		expect(mockupBgStyle("#000000")).toEqual({
+			cssBg: "#000000",
+			dark: true,
+		});
+		expect(
+			parseMockupQuery(
+				new URLSearchParams("frames=a,b&radius=999&heights=a:1500,b:900"),
+			),
+		).toEqual({
+			frames: ["a", "b"],
+			heights: { a: 1500, b: 900 },
+			radius: 64,
+			border: true,
+			bg: "light",
+			shadow: true,
+			shell: true,
+		});
 	});
 });

@@ -14,7 +14,9 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
 import {
 	type Artifact,
+	type ArtifactDesign,
 	artifactDetailQuery,
+	artifactQk,
 	fetchArtifactExport,
 	fetchArtifactPng,
 	openArtifactLink,
@@ -26,6 +28,7 @@ import { api, unwrap } from "../../api/client";
 import { dispositionName, downloadBlob } from "../../lib/artifacts/download";
 import { exportDocx } from "../../lib/artifacts/export-docx";
 import { exportPptx } from "../../lib/artifacts/export-pptx";
+import { sendGeneratedPrompt } from "../../state/actions";
 import { showToast } from "../../state/toasts";
 import { uiStore } from "../../state/ui";
 import {
@@ -35,8 +38,8 @@ import {
 	type MenuItem,
 } from "../ui/primitives";
 import { DeleteDialog, PurgeDialog, RenameDialog } from "./ArtifactDialogs";
+import { MockupDialog } from "./MockupDialog";
 import { ArtifactShareDialog } from "./SharePopover";
-
 export type ArtifactMenuPlace = "card" | "viewer" | "trash";
 
 export type MenuArtifact = Pick<
@@ -195,6 +198,73 @@ export async function downloadPng(
 	}
 }
 
+/** 导出设计画布工程（`format=project`）：下载可独立构建与部署的 zip，失败时 toast 提示并支持重试。 */
+export async function exportProject(
+	a: Pick<Artifact, "id" | "title" | "version">,
+	t: TFunction,
+): Promise<void> {
+	const id = `artifact-export:${a.id}`;
+	showToast({
+		id,
+		busy: true,
+		text: t("artifacts.export.running", { title: a.title }),
+	});
+	try {
+		const { blob, disposition } = await fetchArtifactExport(
+			a.id,
+			"project",
+			a.version,
+		);
+		downloadBlob(
+			blob,
+			dispositionName(disposition) ??
+				`${a.title.replaceAll("/", "_")}-v${a.version}-project.zip`,
+		);
+		showToast({ id, text: t("artifacts.export.done", { title: a.title }) });
+	} catch (e) {
+		showToast({
+			id,
+			tone: "err",
+			text: t("artifacts.export.failed", {
+				title: a.title,
+				reason: describeError(e, t),
+			}),
+			action: {
+				label: t("artifacts.export.retry"),
+				run: () => void exportProject(a, t),
+			},
+		});
+	}
+}
+
+/** 部署到 box（M29 D3）：给作者线程发一条提示，让 agent 按 oryn-design 第 7 节执行 eject 并部署到 box。 */
+export async function deployToBox(
+	a: Pick<Artifact, "id" | "title" | "threadId">,
+	t: TFunction,
+): Promise<void> {
+	if (!a.threadId) return;
+	const dir = `~/box-${a.id}`;
+	const prompt = t("artifacts.export.deployPrompt", {
+		id: a.id,
+		title: a.title,
+		dir,
+	});
+	try {
+		await sendGeneratedPrompt(a.threadId, prompt);
+		showToast({
+			text: t("artifacts.export.deploySent", { title: a.title }),
+		});
+	} catch (e) {
+		showToast({
+			tone: "err",
+			text: t("artifacts.export.deployFailed", {
+				title: a.title,
+				reason: describeError(e, t),
+			}),
+		});
+	}
+}
+
 export interface ArtifactMenuProps {
 	artifact: MenuArtifact;
 	place: ArtifactMenuPlace;
@@ -228,7 +298,7 @@ export function ArtifactMenu({
 	const remove = useDeleteArtifact();
 	const undelete = useUndeleteArtifact();
 	const [dialog, setDialog] = useState<
-		"rename" | "purge" | "share" | "delete" | null
+		"rename" | "purge" | "share" | "delete" | "mockup" | null
 	>(null);
 
 	const restore = async () => {
@@ -273,6 +343,10 @@ export function ArtifactMenu({
 
 	const render = caps.data?.render === true;
 	const renderReason = caps.data?.renderReason;
+	// 卡片上不另发 /design 请求；仅当查看器缓存明确标明非设计画布时隐藏工程导出与部署
+	const designCache = qc.getQueryData<ArtifactDesign>(artifactQk.design(a.id));
+	const showDesignDelivery =
+		a.kind === "canvas" && designCache?.design !== false;
 	const items: MenuItem[] =
 		place === "trash"
 			? [
@@ -323,58 +397,113 @@ export function ArtifactMenu({
 						label: t("artifacts.viewer.openInBrowser"),
 						onSelect: openInBrowser,
 					},
-					...(a.type === undefined
+					...(a.type === undefined && a.kind === "canvas"
 						? [
 								{
 									key: "export",
 									icon: "export" as const,
 									label: t("artifacts.menu.export"),
 									attrs: { "data-menu": "export" } as const,
-									onSelect: () => void exportRaw(qc, a, t),
-								},
-							]
-						: [
-								{
-									key: "export",
-									icon: "export" as const,
-									label: t("artifacts.menu.export"),
-									attrs: { "data-menu": "export" } as const,
-									children:
-										a.type === "document"
+									children: [
+										{
+											key: "mockup",
+											icon: "image" as const,
+											label: t("artifacts.export.mockup"),
+											attrs: { "data-menu": "export-mockup" } as const,
+											disabled: !render,
+											...(!render
+												? {
+														title:
+															renderReason ??
+															t("artifacts.menu.pngUnavailable"),
+													}
+												: {}),
+											onSelect: () => setDialog("mockup"),
+										},
+										...(showDesignDelivery
 											? [
 													{
-														key: "docx",
-														label: t("artifacts.export.docx"),
-														onSelect: () => void exportTyped(a, "docx", t),
-													},
-													{
-														key: "md",
-														label: t("artifacts.export.md"),
-														onSelect: () => void exportTyped(a, "md", t),
+														key: "project",
+														icon: "package" as const,
+														label: t("artifacts.export.project"),
+														attrs: { "data-menu": "export-project" } as const,
+														onSelect: () => void exportProject(a, t),
 													},
 												]
-											: [
+											: []),
+										{
+											key: "raw",
+											icon: "download" as const,
+											label: t("artifacts.export.rawZip"),
+											attrs: { "data-menu": "export-raw" } as const,
+											onSelect: () => void exportRaw(qc, a, t),
+										},
+										...(showDesignDelivery && a.threadId
+											? [
 													{
-														key: "pptx",
-														label: t("artifacts.export.pptx"),
-														onSelect: () => void exportTyped(a, "pptx", t),
+														key: "deploy",
+														icon: "rocket" as const,
+														label: t("artifacts.export.deploy"),
+														attrs: { "data-menu": "deploy-box" } as const,
+														onSelect: () => void deployToBox(a, t),
 													},
-													{
-														key: "pdf",
-														label: t("artifacts.export.pdf"),
-														disabled: !render,
-														...(!render
-															? {
-																	title:
-																		renderReason ??
-																		t("artifacts.menu.pngUnavailable"),
-																}
-															: {}),
-														onSelect: () => void exportTyped(a, "pdf", t),
-													},
-												],
+												]
+											: []),
+									],
 								},
-							]),
+							]
+						: a.type === undefined
+							? [
+									{
+										key: "export",
+										icon: "export" as const,
+										label: t("artifacts.menu.export"),
+										attrs: { "data-menu": "export" } as const,
+										onSelect: () => void exportRaw(qc, a, t),
+									},
+								]
+							: [
+									{
+										key: "export",
+										icon: "export" as const,
+										label: t("artifacts.menu.export"),
+										attrs: { "data-menu": "export" } as const,
+										children:
+											a.type === "document"
+												? [
+														{
+															key: "docx",
+															label: t("artifacts.export.docx"),
+															onSelect: () => void exportTyped(a, "docx", t),
+														},
+														{
+															key: "md",
+															label: t("artifacts.export.md"),
+															onSelect: () => void exportTyped(a, "md", t),
+														},
+													]
+												: [
+														{
+															key: "pptx",
+															label: t("artifacts.export.pptx"),
+															onSelect: () => void exportTyped(a, "pptx", t),
+														},
+														{
+															key: "pdf",
+															label: t("artifacts.export.pdf"),
+															disabled: !render,
+															...(!render
+																? {
+																		title:
+																			renderReason ??
+																			t("artifacts.menu.pngUnavailable"),
+																	}
+																: {}),
+															onSelect: () => void exportTyped(a, "pdf", t),
+														},
+													],
+									},
+								]),
 					...(a.kind === "web"
 						? [
 								{
@@ -463,6 +592,9 @@ export function ArtifactMenu({
 					onClose={() => setDialog(null)}
 					onDeleted={deletedToast}
 				/>
+			)}
+			{dialog === "mockup" && (
+				<MockupDialog artifact={a} onClose={() => setDialog(null)} />
 			)}
 		</>
 	);

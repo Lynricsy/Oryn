@@ -194,6 +194,18 @@ func (h *Host) ServeRender(w http.ResponseWriter, r *http.Request, t render.Targ
 			http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(page))
 			return
 		}
+		// 样机导出（?view=mockup）：按查询参数生成样机页（不受画布自带 index.html 影响）
+		if r.URL.Query().Get("view") == "mockup" {
+			page, ok, err := h.s.mockupFor(ctx, a, version, r.URL.Query())
+			if err != nil {
+				h.fail(w, err)
+				return
+			}
+			if ok {
+				writePage(w, r, page)
+				return
+			}
+		}
 		// 没有自己的 index.html 的画布：根是生成的概览页（缩略图带 ?view=thumbnail，由概览脚本自己读取）
 		page, ok, err := h.s.overviewFor(ctx, a, version, "")
 		if err != nil {
