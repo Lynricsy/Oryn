@@ -136,10 +136,10 @@ type Service struct {
 	unread map[string]bool
 	// emitGen 在每次 emit 预登记未读时递增；emitting 是已预登记、尚未结束的 emit 数。REST 的 MarkRead 据此判断
 	// 它的 SQL 是否可能早于某条新通知落库：可能时不清内存未读（宁可多一次 Seen 标读，不能让库里的未读失去登记）。
-	emitGen  uint64
-	emitting int
-	queue    []event
-	wake     chan struct{}
+	emitGen     uint64
+	emitting    int
+	queue       []event
+	wake        chan struct{}
 	deliverWake chan struct{}
 
 	// stateMu 串行化渠道 state 的读改写（Telegram offset / 绑定码 / 绑定结果）。
