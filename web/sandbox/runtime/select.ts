@@ -9,6 +9,7 @@ import {
 import { type Dom, now } from "./dom";
 import {
 	type Box,
+	isLoc,
 	MAX_STYLE_VALUE_CHARS,
 	type PageMessageBody,
 	type PageSelection,
@@ -25,6 +26,9 @@ export const MAX_PICKS_PER_SECOND = 20;
 
 /** 源码标记属性：`data-oryn-src="<mark>:<字节偏移>"`，由服务端在本次响应里给每个起始标签加上。 */
 export const SOURCE_ATTR = "data-oryn-src";
+
+/** 设计画布的源码位置属性：`data-oryn-loc="src/frames/x.tsx:行:列"`，由设计引擎在 dev 与构建里给每个 JSX 元素加上。 */
+export const LOC_ATTR = "data-oryn-loc";
 
 // 选择模式下吞掉的指针事件（页面自己的监听器收不到，也不触发默认行为）；`click` 与 `pointermove` 另行处理
 const SWALLOWED = [
@@ -184,6 +188,28 @@ export function installSelection(
 		return el ?? null;
 	};
 
+	// 设计画布的源码位置：元素自己的，没有就取最近祖先的（组件内部的元素也能指回帧源码里的调用处）
+	const locOf = (el: Element): string | null => {
+		let n: Node | null = el;
+		while (n && dom.nodeType(n) === ELEMENT_NODE) {
+			const v = dom.getAttribute(n as Element, LOC_ATTR);
+			if (isLoc(v)) return v;
+			n = dom.parentNode(n);
+		}
+		return null;
+	};
+
+	// 带这个源码位置的第一个元素（同一处 JSX 渲染出多个元素时取文档顺序的第一个）
+	const findLoc = (loc: string): Element | null => {
+		const list = dom.querySelectorAll(doc, `[${LOC_ATTR}]`);
+		const n = dom.listLength(list);
+		for (let i = 0; i < n; i++) {
+			const el = dom.listItem(list, i) as Element;
+			if (dom.getAttribute(el, LOC_ATTR) === loc) return el;
+		}
+		return null;
+	};
+
 	// 事件目标或坐标处的元素 → 可选取的元素；`<html>`、`<body>` 与覆盖层算「没有元素」（整个页面）
 	const resolve = (target: EventTarget | Node | null): Element | null => {
 		try {
@@ -255,6 +281,7 @@ export function installSelection(
 		text: textOf(el),
 		textOnly: isTextOnly(el),
 		style: styleOf(el),
+		loc: locOf(el),
 	});
 
 	const boxOf = (el: Element): Box => {
@@ -446,6 +473,12 @@ export function installSelection(
 						selection: isLive(selected) ? describe(selected) : null,
 						located: { src: msg.src, box: el ? boxOf(el) : null },
 					});
+					break;
+				}
+				case "select-loc": {
+					const el = findLoc(msg.loc);
+					select(el);
+					send({ kind: "select", selection: el ? describe(el) : null });
 					break;
 				}
 				case "preview-style":

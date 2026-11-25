@@ -4,9 +4,11 @@
 import { createUse } from "./capabilities";
 import { captureDom } from "./dom";
 import {
+	type DesignFrameInfo,
 	fitsMessageLimit,
 	type PageMessageBody,
 	PROTOCOL_VERSION,
+	parseDesignInfo,
 	parseParentMessage,
 } from "./messages";
 import { installParams, type PageParams } from "./params";
@@ -23,6 +25,29 @@ export interface RuntimeConfig {
 	root: string;
 	/** 跟随最新版本的帧为真；钉住旧版本时为假，只保留滚动与链接拦截。 */
 	runtime: boolean;
+	/** 设计画布 dev 帧的帧信息（引擎入口给出，静态产物没有）；不合法时丢弃。 */
+	design?: DesignFrameInfo;
+}
+
+/** 设计画布静态产物的页面路径 `dist/<帧 id>.html`。 */
+const DESIGN_PAGE = /^dist\/([a-z0-9][a-z0-9-]{0,63})\.html$/;
+
+/** 页面所在的设计帧：dev 帧取配置里的 `design.frame`，静态产物从路径推出；不是设计画布的帧为 `null`。 */
+export function designFrameOf(config: RuntimeConfig): string | null {
+	if (config.design) return config.design.frame;
+	return DESIGN_PAGE.exec(config.path)?.[1] ?? null;
+}
+
+/**
+ * `navigate` 的目标地址（相对当前页）：dev 帧（配置带 `design`）由开发服务按 `/frames/<id>` 提供，是 `./<id>`；
+ * 静态产物（`path` 是 `dist/<id>.html`）是同目录的 `./<id>.html`。不是设计画布的帧回 `null`（不跳）。
+ */
+export function navigateTarget(
+	config: RuntimeConfig,
+	frame: string,
+): string | null {
+	if (designFrameOf(config) === null) return null;
+	return config.design ? `./${frame}` : `./${frame}.html`;
 }
 
 /**
@@ -59,6 +84,7 @@ export function readConfig(raw: unknown): RuntimeConfig {
 		typeof c.mark === "string" &&
 		(c.mark === "" || MARK_PATTERN.test(c.mark)) &&
 		typeof c.path === "string";
+	const design = valid ? parseDesignInfo(c.design) : null;
 	return {
 		v: PROTOCOL_VERSION,
 		mark: valid ? (c.mark as string) : "",
@@ -66,6 +92,7 @@ export function readConfig(raw: unknown): RuntimeConfig {
 		root:
 			valid && typeof c.root === "string" && c.root.endsWith("/") ? c.root : "",
 		runtime: valid && c.runtime === true,
+		...(design ? { design } : {}),
 	};
 }
 
@@ -103,10 +130,20 @@ export function install(win: Window, parent: Window, raw: unknown): void {
 		parent.postMessage(msg, "*");
 	};
 
-	// ready 要等 DOM 就绪且父页面已用 hello 定下通道（hello 在帧的 load 事件之后才到）
+	// 设计画布的帧：dev 帧取配置里的帧信息，静态产物从路径推出
+	const designFrame = designFrameOf(config);
+
+	// ready 要等 DOM 就绪且父页面已用 hello 定下通道（hello 在帧的 load 事件之后才到）。设计画布的帧随后报
+	// `navigated`：帧内跳转后新页面重新 ready，父页面据此知道现在显示的是哪一帧
 	const sendReady = () => {
-		if (config.runtime && domReady)
-			send({ kind: "ready", params: params?.decl ?? {} });
+		if (!config.runtime || !domReady) return;
+		const decl = params?.decl ?? {};
+		send(
+			config.design
+				? { kind: "ready", params: decl, design: config.design }
+				: { kind: "ready", params: decl },
+		);
+		if (designFrame !== null) send({ kind: "navigated", frame: designFrame });
 	};
 
 	// 选择与评论模式只在跟随最新版本的帧上有；捕获阶段的指针监听要先于下面的链接拦截注册
@@ -141,6 +178,15 @@ export function install(win: Window, parent: Window, raw: unknown): void {
 				case "params":
 					if (config.runtime) params?.preview(msg.values);
 					break;
+				case "design-reload":
+					if (designFrame !== null) win.location.reload();
+					break;
+				case "navigate": {
+					const to = navigateTarget(config, msg.frame);
+					if (to !== null && msg.frame !== designFrame)
+						win.location.assign(new natives.URL(to, win.location.href).href);
+					break;
+				}
 				default:
 					selection?.handle(msg);
 					break;

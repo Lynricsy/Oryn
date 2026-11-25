@@ -2,6 +2,7 @@
  * 画布上的画框（计划 M14 6.3）：每个画框是一个绝对定位的 `<iframe>`（属性同 `PageFrame`），整个编辑器共用一个帧令牌。
  * 地址是 `<帧根>_oryn/v/<n>/<file>`，`n` 取「这个文件或任何非 HTML 文件最近一次变化」的版本：新版本到来时只有内容变了的
  * 画框才重载。同时最多 `MAX_LOADED` 个画框保持加载，其余显示名字与尺寸的占位。
+ * 设计画布（M29）的画框在实时预览开着时换成 portal 上的 dev 帧（`LiveFrame.tsx`）。
  */
 import { type ReactNode, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
@@ -11,8 +12,10 @@ import type {
 } from "../../../../sandbox/runtime/messages";
 import type { ArtifactDetail } from "../../../api/artifact-queries";
 import type { Box, CanvasPage } from "../../../lib/artifacts/canvas-doc";
-import { FrameLink } from "../frame-link";
+import type { FrameLink } from "../frame-link";
 import { ARTIFACT_SANDBOX } from "../PageFrame";
+import { LiveFrame } from "./LiveFrame";
+import { useFrameLink } from "./use-frame-link";
 
 /** 同时保持加载的画框数。 */
 export const MAX_LOADED = 48;
@@ -116,9 +119,13 @@ export function nearestPages(
 	);
 }
 
-/** 画框的内容状态：可加载的地址、还没有文件或是空白页（agent 还没写）、超出加载上限。 */
+/**
+ * 画框的内容状态：可加载的地址、设计画布的实时帧（portal 地址与帧源；`nonce` 变了就重建）、还没有文件或是空白页
+ * （agent 还没写）、超出加载上限。
+ */
 export type PageContent =
 	| { kind: "frame"; src: string }
+	| { kind: "live"; src: string; origin: string; nonce: number }
 	| { kind: "empty" }
 	| { kind: "parked" };
 
@@ -137,6 +144,8 @@ export interface CanvasFrameProps {
 	/** 帧加载完成后 `READY_WAIT_MS` 内没收到 `ready`：帧令牌可能已失效。 */
 	onStale(): void;
 	onReady(): void;
+	/** 实时帧 `LIVE_READY_MS` 内没收到 `ready`（WebKit 下 portal 握手被带到主站登录页）。 */
+	onLiveTimeout(): void;
 	/** 只在跟随最新版本时检测失效（旧版本的帧不带运行时）。 */
 	detectStale: boolean;
 	/** 每次变化都把画框重载一次（同意请求落定后页面重新 `use`）。 */
@@ -157,6 +166,7 @@ export function CanvasFrame({
 	onLink,
 	onStale,
 	onReady,
+	onLiveTimeout,
 	detectStale,
 	reloadNonce,
 }: CanvasFrameProps): ReactNode {
@@ -173,7 +183,20 @@ export function CanvasFrame({
 				height: page.height,
 			}}
 		>
-			{content.kind === "frame" ? (
+			{content.kind === "live" ? (
+				<LiveFrame
+					key={content.nonce}
+					pageId={page.id}
+					src={content.src}
+					origin={content.origin}
+					title={title}
+					mode={mode}
+					accent={accent}
+					pins={pins}
+					onLink={onLink}
+					onTimeout={onLiveTimeout}
+				/>
+			) : content.kind === "frame" ? (
 				<FrameIframe
 					pageId={page.id}
 					src={content.src}
@@ -229,54 +252,31 @@ function FrameIframe({
 	reloadNonce: number;
 }): ReactNode {
 	const ref = useRef<HTMLIFrameElement>(null);
-	const linkRef = useRef<FrameLink | null>(null);
-	const cb = useRef({ onLink, onStale, onReady, detectStale });
-	cb.current = { onLink, onStale, onReady, detectStale };
-
-	useEffect(() => {
-		const el = ref.current;
-		if (!el) return;
-		const link = new FrameLink(el);
-		linkRef.current = link;
-		let ready = false;
-		let timer: number | undefined;
-		const offs = [
-			link.on("ready", () => {
-				ready = true;
-				clearTimeout(timer);
-				cb.current.onReady();
-			}),
-			link.onLoaded(() => {
-				ready = false;
-				clearTimeout(timer);
-				if (cb.current.detectStale)
-					timer = window.setTimeout(() => {
-						if (!ready) cb.current.onStale();
-					}, READY_WAIT_MS);
-			}),
-		];
-		cb.current.onLink(pageId, link);
-		return () => {
-			for (const off of offs) off();
-			clearTimeout(timer);
-			cb.current.onLink(pageId, null);
-			linkRef.current = null;
-			link.dispose();
-		};
-	}, [pageId]);
-
-	useEffect(() => {
-		linkRef.current?.post({ kind: "select-mode", mode, accent });
-	}, [mode, accent]);
-
-	// 调用方每次渲染都给新数组：按内容比较，没变就不重发
-	const pinsKey = JSON.stringify(pins);
-	useEffect(() => {
-		linkRef.current?.post({
-			kind: "select-pins",
-			pins: JSON.parse(pinsKey) as SelectPin[],
-		});
-	}, [pinsKey]);
+	const cb = useRef({ onStale, detectStale });
+	cb.current = { onStale, detectStale };
+	const ready = useRef(false);
+	const timer = useRef<number | undefined>(undefined);
+	useEffect(() => () => clearTimeout(timer.current), []);
+	useFrameLink(ref, {
+		pageId,
+		mode,
+		accent,
+		pins,
+		onLink,
+		onReady: () => {
+			ready.current = true;
+			clearTimeout(timer.current);
+			onReady();
+		},
+		onLoaded: () => {
+			ready.current = false;
+			clearTimeout(timer.current);
+			if (cb.current.detectStale)
+				timer.current = window.setTimeout(() => {
+					if (!ready.current) cb.current.onStale();
+				}, READY_WAIT_MS);
+		},
+	});
 
 	// 只在 reloadNonce 变化时重载（挂载时不算）；地址变化由 src 属性本身处理
 	const seenNonce = useRef(reloadNonce);

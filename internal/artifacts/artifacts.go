@@ -637,9 +637,11 @@ type DesignState struct {
 	AutoNotes bool
 	// Check 是最新版本的设计检查结果；nil = 没有。
 	Check *apigen.ArtifactCheck
+	// Live 是实时预览（dev 服务在跑时非 nil，live_design.go）。
+	Live *DesignLive
 }
 
-// API 返回 REST 表示。live（实时预览）由 orb 侧的设计服务决定，这里一律为 null。
+// API 返回 REST 表示。
 func (d DesignState) API() apigen.ArtifactDesign {
 	out := apigen.ArtifactDesign{Design: d.Design, AutoNotes: d.AutoNotes, Check: d.Check}
 	if len(d.Direction) > 0 {
@@ -647,6 +649,12 @@ func (d DesignState) API() apigen.ArtifactDesign {
 		if json.Unmarshal(d.Direction, &m) == nil {
 			out.Direction = m
 		}
+	}
+	if d.Live != nil {
+		out.Live = &struct {
+			Port     int             `json:"port"`
+			ThreadID apigen.ThreadID `json:"threadId"`
+		}{Port: d.Live.Port, ThreadID: d.Live.ThreadID}
 	}
 	return out
 }
@@ -691,6 +699,12 @@ func (s *Service) Design(ctx context.Context, id string) (DesignState, error) {
 		if json.Unmarshal(b, &top) == nil {
 			d, ok := top["design"]
 			out.Design = ok && string(d) != "null"
+		}
+	}
+	// 只有设计画布才有 dev 服务；回收站里的不开实时预览
+	if out.Design && r.DeletedAt == nil {
+		if out.Live, err = s.designLive(ctx, r.ThreadID, id); err != nil {
+			return DesignState{}, err
 		}
 	}
 	return out, nil

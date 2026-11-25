@@ -46,8 +46,8 @@ import {
 /** 停手多久后保存。 */
 export const EDIT_SAVE_DELAY_MS = 800;
 
-/** 不能编辑的原因（由查看器给出）：看的是旧版本，或 artifact 在回收站里。 */
-export type EditBlock = "old-version" | "deleted";
+/** 不能编辑的原因（由查看器给出）：看的是旧版本、artifact 在回收站里，或是设计画布的源码帧。 */
+export type EditBlock = "old-version" | "deleted" | "design-source";
 
 export interface EditPanelProps {
 	artifactId: string;
@@ -163,6 +163,8 @@ export function EditPanel({
 	let body: ReactNode;
 	if (block === "old-version") body = t("artifacts.edit.oldVersion");
 	else if (block === "deleted") body = t("artifacts.edit.deleted");
+	else if (block === "design-source" || selection.loc)
+		body = t("artifacts.edit.designSource");
 	else if (selection.src === null) body = t("artifacts.edit.scripted");
 
 	return (

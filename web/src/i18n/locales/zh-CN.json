@@ -3852,6 +3852,7 @@
 			"oldVersion": "只有最新版本能编辑",
 			"deleted": "恢复这个 artifact 后才能编辑",
 			"scripted": "这个元素由页面的脚本生成，只能评论",
+			"designSource": "这是设计画布的源码元素，请在对话里让 Agent 修改",
 			"text": "文字",
 			"textTooLong": "文字不能超过 {{max}} 个字符",
 			"textUnavailable": "暂时读不到这个元素的完整文字，只能改样式",
@@ -3870,6 +3871,17 @@
 			"saved": "已保存为 v{{n}}",
 			"failed": "没有保存：{{reason}}",
 			"conflict": "保存前来了新版本，所以没有保存。在新版本上重新选中这个元素再改。"
+		},
+		"design": {
+			"live": "实时",
+			"static": "静态",
+			"liveHint": "正在显示 orb 里的实时预览，源码改动会热更新",
+			"staticHint": "已切换为已封存的静态预览",
+			"unavailableHint": "没有正在运行的实时预览，显示已封存的静态版本",
+			"useStatic": "切到静态",
+			"useLive": "切到实时",
+			"authorize": "在新窗口授权实时预览",
+			"sourceFrameLocked": "源码帧由封存维护，不能直接删除或复制"
 		},
 		"comments": {
 			"title": "评论",

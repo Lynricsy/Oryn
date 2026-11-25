@@ -55,6 +55,23 @@ export const MAX_STYLE_VALUE_CHARS = 200;
 /** 锚点里的标签名：小写，与服务端的评论锚点校验一致。 */
 export const TAG_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
 
+/** 设计画布元素的源码位置 `src/frames/x.tsx:行:列`（`data-oryn-loc`），与服务端的评论锚点 `loc` 校验一致。 */
+export const LOC_PATTERN =
+	/^src\/[A-Za-z0-9._/-]+\.(tsx|ts|jsx|js):[1-9][0-9]*:[1-9][0-9]*$/;
+/** `loc` 的长度上限（字节，全是 ASCII）。 */
+export const MAX_LOC_CHARS = 512;
+
+/** 设计画布的帧 id：`src/frames/<id>.tsx` 的文件名（与 canvas.json 的 `source` 校验一致）。 */
+export const FRAME_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+/** `ready.design.links` 的条数上限。 */
+export const MAX_DESIGN_LINKS = 256;
+
+/** 设计画布 dev 帧的帧信息：当前帧与它链接到的帧（引擎从 `<Link>` 推出）。 */
+export interface DesignFrameInfo {
+	frame: string;
+	links: string[];
+}
+
 /** 视口坐标里的矩形（CSS 像素）。 */
 export interface Box {
 	x: number;
@@ -77,6 +94,8 @@ export interface PageSelection {
 	textOnly: boolean;
 	/** 七个可编辑属性的计算值。 */
 	style: EditableStyle;
+	/** 设计画布：元素或最近祖先的 `data-oryn-loc`；没有时为 `null`。旧运行时不带这个字段。 */
+	loc?: string | null;
 }
 
 /** 父页面 → 页面。 */
@@ -103,17 +122,31 @@ export type ParentMessage = Envelope &
 		| { kind: "preview-reset" }
 		/** 预览调节参数（不落盘，页面重载后失效）：只含参数名与基本类型的值，是否符合声明由页面运行时再判。 */
 		| { kind: "params"; values: Record<string, ParamValue> }
+		/** 设计画布：选中 `data-oryn-loc` 等于 `loc` 的第一个元素并回 `select`（找不到回 `selection: null`）。 */
+		| { kind: "select-loc"; loc: string }
+		/** 设计画布：整页重新加载（开发服务的热更不可用、或工作副本对账后）。 */
+		| { kind: "design-reload" }
+		/** 设计画布：帧内跳到另一帧（dev 帧 `./<frame>`，静态产物 `./<frame>.html`）。 */
+		| { kind: "navigate"; frame: string }
 	);
 
 /** 页面 → 父页面。 */
 export type PageMessage = Envelope &
 	/** `params` 是页面声明的调节参数（规整后，「参数名 → 定义」）；父页面用 `parseParamsDecl` 再校验一遍。 */
+
+	/** `design` 只在设计画布的 dev 帧里有（引擎入口随运行时配置给出）。 */
 	(
-		| { kind: "ready"; params: Record<string, unknown> }
+		| {
+				kind: "ready";
+				params: Record<string, unknown>;
+				design?: DesignFrameInfo;
+		  }
 		| { kind: "scroll"; x: number; y: number }
 		| { kind: "blocked"; url: string }
 		/** 类型化 artifact 的查看器进入 / 退出演示：父页面把帧铺满窗口或还原。 */
 		| { kind: "present"; on: boolean }
+		/** 设计画布：页面现在显示的帧（每次带 `design` 的 `ready` 之后紧跟一条，帧内跳转后即新帧）。 */
+		| { kind: "navigated"; frame: string }
 		/** 选中变化或回应 `select-source` / `select-locate`；`at` 是点击处的视口坐标。 */
 		| {
 				kind: "select";
@@ -266,10 +299,36 @@ function parseBox(x: unknown): Box | null {
 		: null;
 }
 
+/** 合规的源码位置（`data-oryn-loc`）。 */
+export function isLoc(x: unknown): x is string {
+	return (
+		typeof x === "string" && x.length <= MAX_LOC_CHARS && LOC_PATTERN.test(x)
+	);
+}
+
+/** 合规的设计帧 id。 */
+export function isFrameId(x: unknown): x is string {
+	return typeof x === "string" && FRAME_ID_PATTERN.test(x);
+}
+
+/** 校验并重建帧信息 `{frame, links}`；任一项不合规时返回 `null`。运行时配置与 `ready.design` 共用。 */
+export function parseDesignInfo(x: unknown): DesignFrameInfo | null {
+	if (!isFields(x) || !isFrameId(x.frame)) return null;
+	const links = x.links;
+	if (!Array.isArray(links) || links.length > MAX_DESIGN_LINKS) return null;
+	const out: string[] = [];
+	for (let i = 0; i < links.length; i++) {
+		const id: unknown = links[i];
+		if (!isFrameId(id)) return null;
+		out[i] = id;
+	}
+	return { frame: x.frame, links: out };
+}
+
 function parseSelection(x: unknown): PageSelection | null {
 	if (!isFields(x)) return null;
 	const src = offsetOrNull(x.src);
-	const { path, tag, text, textOnly, style } = x;
+	const { path, tag, text, textOnly, style, loc } = x;
 	if (
 		src === undefined ||
 		typeof path !== "string" ||
@@ -278,7 +337,8 @@ function parseSelection(x: unknown): PageSelection | null {
 		typeof text !== "string" ||
 		runeCount(text) > SELECTION_TEXT_CHARS ||
 		typeof textOnly !== "boolean" ||
-		!isFields(style)
+		!isFields(style) ||
+		(loc !== undefined && loc !== null && !isLoc(loc))
 	) {
 		return null;
 	}
@@ -288,7 +348,9 @@ function parseSelection(x: unknown): PageSelection | null {
 		if (typeof v !== "string" || v.length > MAX_STYLE_VALUE_CHARS) return null;
 		values[prop] = v;
 	}
-	return { path, src, tag, text, textOnly, style: values };
+	const out: PageSelection = { path, src, tag, text, textOnly, style: values };
+	if (loc !== undefined) out.loc = loc;
+	return out;
 }
 
 // 页面发来的 `select`：这些数据来自不可信的页面，逐个字段校验后重建
@@ -343,6 +405,14 @@ export function parseParentMessage(data: unknown): ParentMessage | null {
 			const values = parseParamValues(m.values);
 			return values ? { ...head, kind: m.kind, values } : null;
 		}
+		case "select-loc":
+			return isLoc(m.loc) ? { ...head, kind: m.kind, loc: m.loc } : null;
+		case "design-reload":
+			return { ...head, kind: m.kind };
+		case "navigate":
+			return isFrameId(m.frame)
+				? { ...head, kind: m.kind, frame: m.frame }
+				: null;
 		default:
 			return null;
 	}
@@ -354,9 +424,18 @@ export function parsePageMessage(data: unknown): PageMessage | null {
 	if (!m) return null;
 	const head: Envelope = { v: m.v, channel: m.channel };
 	switch (m.kind) {
-		case "ready":
-			return isFields(m.params)
-				? { ...head, kind: m.kind, params: m.params }
+		case "ready": {
+			if (!isFields(m.params)) return null;
+			if (m.design === undefined)
+				return { ...head, kind: m.kind, params: m.params };
+			const design = parseDesignInfo(m.design);
+			return design
+				? { ...head, kind: m.kind, params: m.params, design }
+				: null;
+		}
+		case "navigated":
+			return isFrameId(m.frame)
+				? { ...head, kind: m.kind, frame: m.frame }
 				: null;
 		case "scroll":
 			return isCoord(m.x) && isCoord(m.y)

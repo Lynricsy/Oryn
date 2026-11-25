@@ -43,6 +43,7 @@ export const artifactQk = {
 	publication: (id: string) => ["artifacts", "publication", id] as const,
 	publications: ["artifacts", "publications"] as const,
 	prefs: ["artifacts", "prefs"] as const,
+	design: (id: string) => ["artifacts", "design", id] as const,
 };
 
 function invalidateArtifacts(qc: QueryClient) {
@@ -366,6 +367,55 @@ export function useMarkArtifactCommentsSent() {
 				}),
 			),
 	);
+}
+
+export type ArtifactDesign = Schemas["ArtifactDesign"];
+
+/**
+ * 画布的设计状态（M29：是否设计画布、实时预览 `live`、选定方向、便签自动投递、最新版本的检查）。观看者收到
+ * `artifact.version`（新版本可能变成设计画布、检查结果变了）时失效重取；`live` 随 orb 服务变化，靠
+ * `artifacts.changed` 的整组失效之外再按分钟级轮询兜底。非画布回 400，不发请求由调用方用 `enabled` 控制。
+ */
+export function useArtifactDesign(
+	id: string,
+	enabled = true,
+	client: Pick<RealtimeClient, "onArtifact"> = realtime,
+) {
+	const qc = useQueryClient();
+	useEffect(() => {
+		if (!enabled) return;
+		return client.onArtifact(id, (msg) => {
+			if (msg.type === "artifact.version")
+				void qc.invalidateQueries({ queryKey: artifactQk.design(id) });
+		});
+	}, [client, qc, id, enabled]);
+	return useQuery({
+		queryKey: artifactQk.design(id),
+		enabled,
+		queryFn: () =>
+			unwrap(
+				api.GET("/api/v1/artifacts/{id}/design", {
+					params: { path: { id } },
+				}),
+			),
+		refetchInterval: 60_000,
+		retry: false,
+	});
+}
+
+/** 改便签自动投递开关（`PATCH artifacts/{id}/design`）；成功后直接写回设计状态缓存。 */
+export function usePatchArtifactDesign() {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: ({ id, autoNotes }: { id: string; autoNotes: boolean }) =>
+			unwrap(
+				api.PATCH("/api/v1/artifacts/{id}/design", {
+					params: { path: { id } },
+					body: { autoNotes },
+				}),
+			),
+		onSuccess: (d, v) => qc.setQueryData(artifactQk.design(v.id), d),
+	});
 }
 
 /**

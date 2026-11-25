@@ -286,7 +286,7 @@ func (s *Server) RestoreArtifactVersion(w http.ResponseWriter, r *http.Request, 
 }
 
 // GetArtifactDesign 对应 `GET artifacts/{id}/design`：画布的设计状态。没有 artifact_designs 行时回缺省值（autoNotes 开）；
-// 非画布回 400 invalid。live 暂一律为 null（实时预览由 orb 侧的设计服务提供）。
+// 非画布回 400 invalid。live 取自创建线程所在 orb 的服务镜像（该画布的 dev 服务在跑时非 null）。
 func (s *Server) GetArtifactDesign(w http.ResponseWriter, r *http.Request, id apigen.ArtifactIDPath) {
 	svc, ok := s.artifactsSvc(w)
 	if !ok {

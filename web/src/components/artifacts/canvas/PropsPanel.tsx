@@ -45,7 +45,7 @@ import {
 	selectedPages,
 	sizeOps,
 } from "./arrange";
-import { deleteOps, duplicateOps, findItem } from "./selection";
+import { deletableIds, deleteOps, duplicateOps, findItem } from "./selection";
 import { ColorChoices, WidthChoices } from "./Toolbar";
 
 export interface PropsPanelProps {
@@ -100,6 +100,10 @@ export function PropsPanel({
 	const single = selected.length === 1 && only ? findItem(doc, only) : null;
 	const pages = selectedPages(doc, selected);
 	const locked = allLocked(doc, selected);
+	// 设计画布的帧（带 source）不能删也不能复制，由封存维护
+	const removable = deletableIds(doc, selected).length;
+	const deletable = removable > 0;
+	const sourced = removable < selected.length;
 
 	const arrange: {
 		key: string;
@@ -209,6 +213,7 @@ export function PropsPanel({
 									size={15}
 									label={t("artifacts.canvas.props.duplicate")}
 									data-testid="canvas-duplicate"
+									disabled={duplicateOps(doc, selected).ops.length === 0}
 									onClick={() => {
 										const dup = duplicateOps(doc, selected);
 										if (commit(dup.ops)) onSelect(dup.ids);
@@ -245,12 +250,22 @@ export function PropsPanel({
 									box="sm"
 									size={15}
 									label={t("artifacts.canvas.props.delete")}
+									data-testid="canvas-delete"
 									className="hover:text-err"
+									disabled={!deletable}
 									onClick={() => {
-										if (commit(deleteOps(selected))) onSelect([]);
+										if (commit(deleteOps(doc, selected))) onSelect([]);
 									}}
 								/>
 							</div>
+							{sourced && (
+								<p
+									data-testid="canvas-source-locked"
+									className="text-faint text-xs"
+								>
+									{t("artifacts.design.sourceFrameLocked")}
+								</p>
+							)}
 						</section>
 					</>
 				)}

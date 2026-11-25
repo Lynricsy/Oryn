@@ -1,8 +1,9 @@
 /**
  * 父页面这一侧的 postMessage 通道：绑定一个 artifact 帧（`iframe`），随机生成 16 位十六进制 `channel`，
  * 帧每次 `load` 后发 `hello` 定下通道；只处理来源正是这个帧的窗口、且 `channel` 相符的消息。
- * 协议与校验在 `sandbox/runtime/messages.ts`（与沙箱运行时共用）。帧里是不透明源，`postMessage` 的目标源只能写 `*`；
- * 通道号不是秘密，防的是同页里别的帧冒充。
+ * 协议与校验在 `sandbox/runtime/messages.ts`（与沙箱运行时共用）。artifact 帧里是不透明源，`postMessage` 的目标源只能写 `*`；
+ * 通道号不是秘密，防的是同页里别的帧冒充。设计画布的实时帧（portal）有真实的源：构造时给 `targetOrigin`，
+ * 帧被带到别处（如 portal 握手落到主站登录页）时消息不会送达。
  */
 import {
 	fitsMessageLimit,
@@ -25,19 +26,22 @@ export function newChannel(): string {
 export class FrameLink {
 	readonly channel = newChannel();
 	private readonly frame: HTMLIFrameElement;
+	private readonly targetOrigin: string;
 	private readonly handlers = new Map<
 		PageMessageKind,
 		Set<(msg: PageMessage) => void>
 	>();
 	private readonly loadHandlers = new Set<() => void>();
-	// 帧每次加载后要重发的选择状态：页面重载（新版本、帧重新申请）会丢掉它们
+	// 帧每次加载后要重发的选择状态：页面重载（新版本、帧重新申请、热更整页刷新）会丢掉它们。
+	// 最近一次的选中按偏移（`select-source`）或设计画布的源码位置（`select-loc`）恢复
 	private mode: Extract<ParentMessageBody, { kind: "select-mode" }> | null =
 		null;
 	private pins: Extract<ParentMessageBody, { kind: "select-pins" }> | null =
 		null;
-	private source: Extract<ParentMessageBody, { kind: "select-source" }> | null =
-		null;
-
+	private source: Extract<
+		ParentMessageBody,
+		{ kind: "select-source" } | { kind: "select-loc" }
+	> | null = null;
 	private readonly onMessage = (event: MessageEvent) => {
 		const win = this.frame.contentWindow;
 		if (!win || event.source !== win) return;
@@ -46,7 +50,13 @@ export class FrameLink {
 		// 用户在页面里点选的元素也算「最近一次的选中」，重载后照样重新选中它
 		if (msg.kind === "select" && !msg.located) {
 			const src = msg.selection?.src ?? null;
-			this.source = src === null ? null : { kind: "select-source", src };
+			const loc = msg.selection?.loc ?? null;
+			this.source =
+				src !== null
+					? { kind: "select-source", src }
+					: loc !== null
+						? { kind: "select-loc", loc }
+						: null;
 		}
 		for (const cb of [...(this.handlers.get(msg.kind) ?? [])]) cb(msg);
 	};
@@ -59,13 +69,15 @@ export class FrameLink {
 		for (const cb of [...this.loadHandlers]) cb();
 	};
 
-	constructor(frame: HTMLIFrameElement) {
+	/** `targetOrigin`：帧的源；缺省 `*`（不透明源的 artifact 帧）。 */
+	constructor(frame: HTMLIFrameElement, targetOrigin = "*") {
 		this.frame = frame;
+		this.targetOrigin = targetOrigin;
 		window.addEventListener("message", this.onMessage);
 		frame.addEventListener("load", this.onLoad);
 	}
 
-	/** 发给帧里的页面；帧还没有窗口或消息超限时丢弃。最近一次的 `select-mode`、`select-pins`、`select-source` 在帧每次加载后重发。 */
+	/** 发给帧里的页面；帧还没有窗口或消息超限时丢弃。最近一次的 `select-mode`、`select-pins`、选中（`select-source` / `select-loc`）在帧每次加载后重发。 */
 	post(body: ParentMessageBody): void {
 		switch (body.kind) {
 			case "select-mode":
@@ -79,12 +91,15 @@ export class FrameLink {
 			case "select-source":
 				this.source = body.src === null ? null : body;
 				break;
+			case "select-loc":
+				this.source = body;
+				break;
 		}
 		const win = this.frame.contentWindow;
 		if (!win) return;
 		const msg = { v: PROTOCOL_VERSION, channel: this.channel, ...body };
 		if (!fitsMessageLimit(msg)) return;
-		win.postMessage(msg, "*");
+		win.postMessage(msg, this.targetOrigin);
 	}
 
 	/** 订阅页面发来的某种消息。返回取消订阅。 */

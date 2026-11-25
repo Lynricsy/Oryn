@@ -84,6 +84,7 @@ import {
 	wheelCamera,
 	zoomAt,
 } from "./camera";
+import { DesignBar } from "./DesignBar";
 import { FocusedPage, SoloPage } from "./FocusedPage";
 import {
 	downloadFramePng,
@@ -136,6 +137,7 @@ import {
 } from "./Toolbar";
 import { TweaksPanel, useFrameParams } from "./TweaksPanel";
 import { useCanvasDoc } from "./use-canvas-doc";
+import { useDesignPreview } from "./use-design-preview";
 import "./canvas.css";
 
 /** 评论工具点中的位置：交给评论界面构造锚点（`anchorOf(selection, shown)`）并在 `at` 弹出评论框。 */
@@ -496,14 +498,38 @@ export function CanvasEditor({
 		() => (doc ? doc.pages.filter((p) => p.canvas === canvasKey) : []),
 		[doc, canvasKey],
 	);
-	const loaded = useMemo(
-		() => nearestPages(pagesOnCanvas, viewBox(cam, size.width, size.height)),
-		[pagesOnCanvas, cam, size.width, size.height],
+	const view = useMemo(
+		() => viewBox(cam, size.width, size.height),
+		[cam, size.width, size.height],
 	);
+	const loaded = useMemo(
+		() => nearestPages(pagesOnCanvas, view),
+		[pagesOnCanvas, view],
+	);
+	// 设计画布（M29）：实时预览开着时离视口最近的几个带 source 的画框是 portal 上的 dev 帧
+	const designPreview = useDesignPreview({
+		artifactId,
+		design: !!baseDoc?.design,
+		pinned,
+		pages: pagesOnCanvas,
+		view,
+	});
+	// 收到新版本时给实时帧发 design-reload（热更没覆盖到的结构改动或恢复旧版也能同步刷新）
+	const seenHead = useRef(head);
+	useEffect(() => {
+		const prev = seenHead.current;
+		seenHead.current = head;
+		if (prev <= 0 || head <= prev || designPreview.mode !== "live") return;
+		for (const id of designPreview.liveIds)
+			links.current.get(id)?.post({ kind: "design-reload" });
+	}, [head, designPreview.mode, designPreview.liveIds]);
 
 	const shownVersion = version ?? head;
-	/** 画框的内容；`parkable` 为假时不因离视口远而停放（聚焦与演示）。 */
+	/** 画框的内容；`parkable` 为假时不因离视口远而停放（聚焦与演示用静态帧）。 */
 	const contentOf = (p: CanvasPage, parkable = true): PageContent => {
+		// 实时帧不看静态产物：还没封存过的帧也能显示 dev 服务里的样子
+		const liveContent = parkable ? designPreview.liveContent(p) : null;
+		if (liveContent) return liveContent;
 		const f = fileMap.get(p.file);
 		if (!f || isBlankPage(f)) return { kind: "empty" };
 		if (!frame || (parkable && !loaded.has(p.id))) return { kind: "parked" };
@@ -1163,11 +1189,17 @@ export function CanvasEditor({
 			case "tool":
 				chooseTool(action.tool);
 				break;
-			case "delete":
-				if (readOnly || selected.length === 0) return;
-				commit(deleteOps(selected));
-				setSelected([]);
+			case "delete": {
+				if (readOnly || !d || selected.length === 0) return;
+				const ops = deleteOps(d, selected);
+				if (ops.length === 0) return;
+				commit(ops);
+				const removed = new Set(
+					ops.flatMap((o) => (o.op === "remove" ? [o.id] : [])),
+				);
+				setSelected((cur) => cur.filter((id) => !removed.has(id)));
 				break;
+			}
 			case "nudge":
 				if (readOnly || !d || selected.length === 0) return;
 				commit(moveOps(d, selected, action.dx, action.dy));
@@ -1183,6 +1215,7 @@ export function CanvasEditor({
 			case "duplicate": {
 				if (readOnly || !d || selected.length === 0) return;
 				const dup = duplicateOps(d, selected);
+				if (dup.ops.length === 0) return;
 				if (commit(dup.ops)) setSelected(dup.ids);
 				break;
 			}
@@ -1343,6 +1376,7 @@ export function CanvasEditor({
 								onReady={onReady}
 								detectStale={live}
 								reloadNonce={consentReloads}
+								onLiveTimeout={designPreview.onTimeout}
 							/>
 						))}
 						<NotesLayer
@@ -1553,6 +1587,7 @@ export function CanvasEditor({
 						</span>
 					</div>
 				)}
+				<DesignBar preview={designPreview} />
 				<FollowBar presence={presence} />
 				{live && items.length > 0 && (
 					<HandOffBar

@@ -122,6 +122,20 @@ describe("EditPanel", () => {
 			"这个元素由页面的脚本生成，只能评论",
 		);
 		expect(screen.queryByTestId("edit-color")).toBeNull();
+		rerender(
+			<EditPanel
+				{...props}
+				block={null}
+				selection={sel({ loc: "src/frames/home.tsx:12:5" })}
+			/>,
+		);
+		expect(screen.getByTestId("edit-blocked").textContent).toBe(
+			"这是设计画布的源码元素，请在对话里让 Agent 修改",
+		);
+		rerender(<EditPanel {...props} block="design-source" />);
+		expect(screen.getByTestId("edit-blocked").textContent).toBe(
+			"这是设计画布的源码元素，请在对话里让 Agent 修改",
+		);
 	});
 
 	it("初始值来自计算样式；改颜色立即预览，停手后保存并重新选中", async () => {

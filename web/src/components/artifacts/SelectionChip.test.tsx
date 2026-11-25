@@ -47,6 +47,21 @@ describe("SelectionChip", () => {
 		).toBe("周报 › 首页 › <button>“提交”");
 	});
 
+	it("设计画布的选中带 loc 时显示 文件:行", () => {
+		render(
+			<SelectionChip
+				selection={{
+					...base,
+					anchor: { ...base.anchor, loc: "src/frames/login.tsx:42:7" },
+				}}
+				onRemove={() => undefined}
+			/>,
+		);
+		expect(
+			screen.getByTestId("composer-artifact-selection-loc").textContent,
+		).toBe("src/frames/login.tsx:42");
+	});
+
 	it("移除钮调 onRemove", () => {
 		const onRemove = vi.fn();
 		render(<SelectionChip selection={base} onRemove={onRemove} />);

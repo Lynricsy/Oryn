@@ -1,12 +1,13 @@
 /**
  * 输入区上方的选中元素条（计划 M14 3.5）：「{标题} › {锚点标签}」+ 移除钮，位置与样式同引用回复条。
+ * 设计画布的元素另显示源码位置 `src/frames/x.tsx:行`。
  * 选中来自右面板查看器的选择模式；发送普通消息时由输入区用 `selectionPrompt` 把它接在正文后面。
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { ArtifactSelectionRef } from "../../lib/artifacts/prompt";
 import { Icon } from "../ui/icons";
-import { anchorLabel } from "./anchors";
+import { anchorLabel, locLabel } from "./anchors";
 
 export function SelectionChip({
 	selection,
@@ -20,6 +21,7 @@ export function SelectionChip({
 		title: selection.title,
 		target: anchorLabel(selection.anchor, t),
 	});
+	const loc = selection.anchor.loc ? locLabel(selection.anchor.loc) : null;
 	return (
 		<div className="px-3 pt-3" data-testid="composer-artifact-selection">
 			<div className="flex items-center gap-2 rounded-lg border border-border bg-panel py-1.5 pr-1.5 pl-3 shadow-xs">
@@ -31,10 +33,18 @@ export function SelectionChip({
 				/>
 				<p
 					className="min-w-0 flex-1 truncate text-muted text-xs leading-5"
-					title={label}
+					title={loc ? `${label} · ${loc}` : label}
 				>
 					<span className="sr-only">{t("artifacts.selection.selected")}</span>
 					{label}
+					{loc && (
+						<code
+							data-testid="composer-artifact-selection-loc"
+							className="ml-2 font-mono text-faint"
+						>
+							{loc}
+						</code>
+					)}
 				</p>
 				<button
 					type="button"

@@ -23,7 +23,8 @@ export interface AnchorShown {
 
 /**
  * 页面选中 → 评论锚点。`selection` 为空（点了 `<html>` / `<body>` / 空白处）时是「整个页面」：`offset`、`tag` 都为空。
- * 页面脚本生成的元素 `src` 为空，锚点也不带 `offset`（之后不会重新定位）。
+ * 页面脚本生成的元素 `src` 为空，锚点也不带 `offset`（之后不会重新定位）。设计画布的元素带源码位置 `loc`
+ * （`src/frames/x.tsx:行:列`），锚点随之带上，agent 据此直接定位源码。
  */
 export function anchorOf(
 	selection: PageSelection | null,
@@ -48,7 +49,13 @@ export function anchorOf(
 		tag: selection.tag,
 		text: selection.text,
 		missing: false,
+		...(selection.loc ? { loc: selection.loc } : {}),
 	};
+}
+
+/** 源码位置的显示形式：去掉列号，`src/frames/x.tsx:42:5` → `src/frames/x.tsx:42`。 */
+export function locLabel(loc: string): string {
+	return loc.replace(/:\d+$/, "");
 }
 
 /** 锚点的显示文字：「{页名} › <标签>“文本”」或「整个页面」。元素已不在由调用方另外标出。 */

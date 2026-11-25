@@ -375,14 +375,25 @@ export function resizeOps(
 	}
 }
 
-/** 删除一组对象。 */
-export function deleteOps(ids: readonly string[]): CanvasOp[] {
-	return ids.map((id) => ({ op: "remove", id }));
+/**
+ * 能删的对象：带 `source` 的画框（设计画布的帧）不能删——它由封存按 `dist/frames.json` 维护，删掉后撤销不回来
+ * （重建会带 `source`，操作校验拒绝）；要去掉一帧，在对话里让 Agent 删源码。
+ */
+export function deletableIds(doc: CanvasDoc, ids: readonly string[]): string[] {
+	return ids.filter((id) => {
+		const it = findItem(doc, id);
+		return !(it?.type === "page" && it.value.source !== undefined);
+	});
+}
+
+/** 删除一组对象（带 `source` 的画框跳过，见 `deletableIds`）。 */
+export function deleteOps(doc: CanvasDoc, ids: readonly string[]): CanvasOp[] {
+	return deletableIds(doc, ids).map((id) => ({ op: "remove", id }));
 }
 
 /**
- * 复制一组对象：画框偏移 48 并带 `copyOf`（落版本时由服务端复制它的 HTML），标注偏移 24。
- * 返回操作与新对象的 id（按原顺序）。
+ * 复制一组对象：画框偏移 48 并带 `copyOf`（落版本时由服务端复制它的 HTML），标注偏移 24。带 `source` 的画框不复制
+ * （`source` 只由封存添加）。返回操作与新对象的 id（按原顺序）。
  */
 export function duplicateOps(
 	doc: CanvasDoc,
@@ -394,6 +405,7 @@ export function duplicateOps(
 		const it = findItem(doc, id);
 		if (!it) continue;
 		if (it.type === "page") {
+			if (it.value.source !== undefined) continue;
 			const nid = canvasId("p");
 			const { file: _file, ...rest } = it.value;
 			ops.push({

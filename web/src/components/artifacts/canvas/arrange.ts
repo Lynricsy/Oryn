@@ -233,9 +233,15 @@ export function renameSheetOps(
 	return [{ op: "set", id, key: "name", value: next }];
 }
 
-/** 能不能删这个画布页：最后一个画布页不能删。 */
+/**
+ * 能不能删这个画布页：最后一个画布页不能删；页上有带 `source` 的画框（设计画布的帧，删掉撤销不回来）也不能删。
+ */
 export function canDeleteSheet(doc: CanvasDoc, id: string): boolean {
-	return doc.canvases.length > 1 && doc.canvases.some((c) => c.id === id);
+	return (
+		doc.canvases.length > 1 &&
+		doc.canvases.some((c) => c.id === id) &&
+		!doc.pages.some((p) => p.canvas === id && p.source !== undefined)
+	);
 }
 
 /** 删除画布页（连带它的画框与标注）；最后一个画布页不能删，返回 null。 */
@@ -245,7 +251,8 @@ export function deleteSheetOps(doc: CanvasDoc, id: string): CanvasOp[] | null {
 
 /**
  * 复制画布页：新页紧跟在原页之后，画框原位复制（带 `copyOf`，落版本时服务端复制它的 HTML），
- * 标注原样复制，吸附关系指向复制出来的画框。返回操作与新页的 id。
+ * 标注原样复制，吸附关系指向复制出来的画框。带 `source` 的画框不复制（`source` 只由封存添加），吸附它的端点置空。
+ * 返回操作与新页的 id。
  */
 export function copySheetOps(
 	doc: CanvasDoc,
@@ -261,7 +268,7 @@ export function copySheetOps(
 	];
 	const ids = new Map<string, string>();
 	for (const p of doc.pages) {
-		if (p.canvas !== id) continue;
+		if (p.canvas !== id || p.source !== undefined) continue;
 		const pid = canvasId("p");
 		ids.set(p.id, pid);
 		const { file: _file, ...rest } = p;

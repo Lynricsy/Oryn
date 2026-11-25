@@ -51,7 +51,10 @@ function titleLine(title: string): string {
 	return Array.from(oneLine(title)).slice(0, PROMPT_TITLE_CHARS).join("");
 }
 
-/** 锚点在数据块里的位置描述：`{path}, page {n} "{页名}", <{tag}> at offset {offset}: "{text}"`。 */
+/**
+ * 锚点在数据块里的位置描述：`{path}, page {n} "{页名}", <{tag}> at offset {offset}: "{text}"`；设计画布的元素
+ * 另接 `, source {loc}`（`src/frames/x.tsx:行:列`）。
+ */
 function located(a: ArtifactCommentAnchor): string {
 	const parts = [oneLine(a.path)];
 	if (a.page) parts.push(`page ${a.page.number} "${oneLine(a.page.name)}"`);
@@ -59,11 +62,14 @@ function located(a: ArtifactCommentAnchor): string {
 	else {
 		const where =
 			a.offset === null || a.missing
-				? "made by a script"
+				? a.loc
+					? "in the design source"
+					: "made by a script"
 				: `at offset ${a.offset}`;
 		const text = a.text ? `: "${oneLine(a.text)}"` : "";
 		parts.push(`<${oneLine(a.tag)}> ${where}${text}`);
 	}
+	if (a.loc) parts.push(`source ${oneLine(a.loc)}`);
 	return parts.join(", ");
 }
 
@@ -165,7 +171,7 @@ function noteLine(note: CanvasNote, pages: readonly CanvasPage[]): string {
 	return `note ${note.id}, ${note.kind} in ${note.color}${on} at ${Math.round(b.x)},${Math.round(b.y)} size ${Math.round(b.width)}x${Math.round(b.height)}${text}`;
 }
 
-/** 「交给 Agent」（6.6）：选中的画框与其上的标注。 */
+/** 「交给 Agent」（6.6）：选中的画框与其上的标注。设计画布的画框带源码文件（`source`），agent 直接改它。 */
 export function handoffPrompt(
 	artifact: PromptArtifact,
 	version: number,
@@ -183,7 +189,7 @@ export function handoffPrompt(
 			`artifact: "${titleLine(artifact.title)}"`,
 			...pages.map(
 				(p) =>
-					`page ${p.id} "${oneLine(p.name)}", file ${oneLine(p.file)}, ${p.width}x${p.height}`,
+					`page ${p.id} "${oneLine(p.name)}", file ${oneLine(p.file)}${p.source ? `, source ${oneLine(p.source)}` : ""}, ${p.width}x${p.height}`,
 			),
 			...notes.map((n) => noteLine(n, pages)),
 		],
