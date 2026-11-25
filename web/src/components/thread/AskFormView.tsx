@@ -29,6 +29,7 @@ import {
 	buildAskFormData,
 	createInitialFormValues,
 	isFieldAnswered,
+	parseAskHtml,
 	type RichNode,
 	resolveAskFormDoc,
 	resolveFormImageSource,
@@ -930,10 +931,19 @@ export function AskFormBody({
 	const liveToolOrder = useThread(threadId, (s) => s.liveToolOrder);
 	const entries = useThread(threadId, (s) => s.entries);
 
-	const doc: AskFormDoc = useMemo(
-		() => resolveAskFormDoc(req.sections, liveTools, liveToolOrder, entries),
-		[req.sections, liveTools, liveToolOrder, entries],
-	);
+	const doc: AskFormDoc = useMemo(() => {
+		if ("html" in req) {
+			return (
+				parseAskHtml(req.html) ?? {
+					source: "html",
+					sections: [],
+					fields: [],
+					hidden: [],
+				}
+			);
+		}
+		return resolveAskFormDoc(req.sections, liveTools, liveToolOrder, entries);
+	}, [req, liveTools, liveToolOrder, entries]);
 
 	const [values, setValues] = useState<AskFormValues>(() =>
 		createInitialFormValues(doc),
@@ -999,7 +1009,11 @@ export function AskFormBody({
 			return;
 		}
 		const formData = buildAskFormData(doc, values);
-		answer({ type: "extension_ui_response", id: req.id, formData });
+		answer(
+			"html" in req
+				? { type: "extension_ui_response", id: req.id, data: formData }
+				: { type: "extension_ui_response", id: req.id, formData },
+		);
 	};
 
 	return (

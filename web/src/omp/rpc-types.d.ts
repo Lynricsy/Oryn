@@ -1121,14 +1121,37 @@ interface PipeStreamChunk {
 interface PipeStreamInfo {
 	/** Stream number, from 1. */
 	id: number;
-	/** Source text of the stage writing into the pipe. */
+	/**
+	 * Source text of the stage writing into the pipe, or of the command whose
+	 * redirection opened the file.
+	 */
 	producer: string;
-	/** Source text of the stage reading from it. */
+	/**
+	 * Source text of the stage reading from the pipe, or the file's absolute
+	 * path.
+	 */
 	consumer: string;
-	/** Bytes written so far, including those no longer retained. */
+	/**
+	 * Bytes written so far, including those no longer retained; a file's
+	 * size now.
+	 */
 	total: number;
-	/** Whether bytes may still arrive. */
+	/** Whether bytes may still arrive; for a file, whether the run goes on. */
 	open: boolean;
+	/** The stream is a file a command redirected its output into. */
+	file: boolean;
+	/**
+	 * Run-trace node key (`unit:0:node`) of the stage writing into the pipe,
+	 * or of the command whose redirection opened the file. Absent when the
+	 * run has no trace or the writer's unit is not in it.
+	 */
+	node?: string;
+	/**
+	 * When it was last written, in ms since the UNIX epoch: a pipe's last
+	 * write (its opening before any), a file's modification time (0 when
+	 * unreadable).
+	 */
+	modified: number;
 }
 type ModelResolutionSource = "bundled" | "cache" | "models.dev" | "provider";
 type KnownApi = "openai-completions" | "openai-responses" | "openrouter" | "openai-codex-responses" | "azure-openai-responses" | "anthropic-messages" | "bedrock-converse-stream" | "google-generative-ai" | "google-gemini-cli" | "google-vertex" | "kiro-api" | "ollama-chat" | "cursor-agent" | "factory-droid-agent" | "gitlab-duo-agent" | "devin-agent" | "antigravity-acp" | "apple-foundation-models";
@@ -1484,13 +1507,18 @@ interface OpenAICompat {
 	 * grammar converter reads them as closed/open-object semantics, and
 	 * `additionalProperties: false` pins the strict object shape.
 	 *
+	 * `"google"` rewrites schemas into Google's Gemini dialect
+	 * (`normalizeSchemaForGoogle`: scalar `type`, `nullable`, no unsupported
+	 * keywords) for Gemini models behind an OpenAI-compatible host (GitHub
+	 * Copilot), which 400s on JSON Schema `type` arrays.
+	 *
 	 * Default: auto-detected — `"moonshot-mfjs"` on Moonshot native hosts
 	 * (api.moonshot.ai / api.kimi.com) and Kimi-family model ids on any host,
 	 * since proxies (OpenRouter, custom gateways) forward schemas to Moonshot
 	 * verbatim; `"grammar"` on local OpenAI-compatible backends. Set `"none"`
 	 * to opt a host out.
 	 */
-	toolSchemaFlavor?: "moonshot-mfjs" | "grammar" | "none";
+	toolSchemaFlavor?: "moonshot-mfjs" | "grammar" | "google" | "none";
 	/**
 	 * Stream-watchdog first-event timeout in ms.
 	 * Set to `0` to allow unbounded prompt processing. Default: auto-detected
@@ -1938,6 +1966,19 @@ interface ResolvedOpenAISharedCompat {
 	requiresMistralToolIds: boolean;
 	requiresToolResultName: boolean;
 	requiresAssistantAfterToolResult: boolean;
+	/**
+	 * Append a user/developer message that directly follows a tool result to
+	 * that result's content instead of sending it as its own turn. Rule-owned:
+	 * Gemini 4 Neon ends about half of the requests that close on user text
+	 * after a function response with an empty `MALFORMED_RESPONSE`.
+	 */
+	foldUserAfterToolResult: boolean;
+	/**
+	 * Replay each call of a multi-call assistant turn as its own assistant
+	 * message followed by its result. Rule-owned: vLLM's Llama 3 chat templates
+	 * reject an assistant message with more than one tool call.
+	 */
+	splitToolCalls: boolean;
 	requiresAssistantContentForToolCalls: boolean;
 	stripDeepseekSpecialTokens: boolean;
 	streamMarkupHealingPattern?: OpenAIStreamMarkupHealingPattern;
@@ -2525,9 +2566,10 @@ interface Model<TApi extends Api = Api> {
 	 *
 	 * Used by containerized omp installs (e.g. robomp slots) to route every
 	 * LLM call through a sidecar gateway that holds the real provider
-	 * credentials. The model's other metadata (pricing, context window,
-	 * thinking config, …) still resolves locally; only the streaming
-	 * dispatch is redirected.
+	 * credentials. The provider's roster and model metadata (pricing, context
+	 * window, thinking config, …) come from the gateway's `GET /v1/pi/models`
+	 * (`piNativeModelManagerOptions`), falling back to the local catalog when
+	 * the gateway predates that route.
 	 */
 	transport?: "pi-native";
 	/** Standard Responses is opt-in and catalog-gated; either model/request false vetoes true. Codex keeps its independent policy. */
@@ -3284,6 +3326,8 @@ interface AssistantMessage {
 	contextSnapshot?: ContextSnapshot;
 	retryRecovery?: AssistantRetryRecovery;
 	responseId?: string;
+	/** Provider request id (Anthropic's `request-id` response header); provider support asks for it when a request is refused or fails. */
+	requestId?: string;
 	/**
 	 * Name of the upstream provider an aggregator routed this request to, as
 	 * reported in the response (e.g. OpenRouter's top-level `provider` field:
@@ -3329,6 +3373,11 @@ interface AssistantMessage {
 	errorStatus?: number;
 	/** Structured machine-readable error classifier; see `utils/error-id.ts` for bit layout and helpers. */
 	errorId?: number;
+	/**
+	 * True when the agent loop ended the turn with this error itself (for example, after the model
+	 * kept missing a soft tool requirement), so no provider request failed.
+	 */
+	errorFromAgentLoop?: boolean;
 	/**
 	 * Stable identifiers for request features the provider silently dropped
 	 * during this turn (e.g. `"priority"`). Set when a server-side rejection
@@ -3677,168 +3726,17 @@ interface CompactionResult<T = unknown> {
 	 */
 	providerReplayThroughEntryId?: string;
 }
-type ShellTraceBytes = string | number[];
-type ShellTraceNodeKind = "and_or" | "pipeline" | "simple" | "brace" | "subshell" | "if" | "while" | "until" | "for" | "arith_for" | "select" | "case" | "arith" | "cond" | "func_def" | "coproc" | "assign" | "word";
-type ShellTraceResolved = "function" | "intrinsic" | "tool" | "native" | "device" | "self_shell" | "external" | "not_found" | "none";
-type ShellTraceState = "pending" | "running" | "ok" | "fail" | "skipped";
-interface ShellTraceRedir {
-	fd: number;
-	op: string;
-	target: ShellTraceBytes;
+type GoalStatus = "active" | "paused" | "budget-limited" | "complete" | "dropped";
+interface Goal {
+	id: string;
+	objective: string;
+	status: GoalStatus;
+	tokenBudget?: number;
+	tokensUsed: number;
+	timeUsedSeconds: number;
+	createdAt: number;
+	updatedAt: number;
 }
-interface ShellTraceDiag {
-	code: string;
-	message: ShellTraceBytes;
-}
-interface ShellTraceNode {
-	k: ShellTraceNodeKind;
-	/** Byte span relative to the unit source. */
-	lo: number;
-	hi: number;
-	/** Parent node id; absent for the root. */
-	p?: number;
-	state: ShellTraceState;
-	/** CmdStart count. */
-	runs?: number;
-	/** CmdStart − CmdEnd. */
-	live?: number;
-	/** Status of the last CmdEnd. */
-	st?: number;
-	/** CmdEnds with a non-zero status. */
-	fails?: number;
-	/** Sum of `dur_ns` over the ended runs. */
-	ns?: number;
-	/** `t_ns` of the last CmdStart, relative to RunStart. */
-	at?: number;
-	/** Last CmdExpanded argv (each arg ≤ 256 bytes, ≤ 64 args). */
-	argv?: ShellTraceBytes[];
-	/** The full argv length when `argv` was cut. */
-	argc?: number;
-	/** Last CmdExpanded assigns. */
-	env?: [
-		ShellTraceBytes,
-		ShellTraceBytes
-	][];
-	res?: ShellTraceResolved;
-	redirs?: ShellTraceRedir[];
-	/** Pipestatus of the last CmdEnd. */
-	pipe?: number[];
-	/** Last IterStart n. */
-	iter?: number;
-	/** LoopEnd iterations. */
-	iters?: number;
-	/** Last Branch decision. */
-	taken?: boolean;
-	/** A Background event named this node. */
-	bg?: boolean;
-	/** Last Spawn pid. */
-	pid?: number;
-	/** Actual last command completion timestamp and trace revision. */
-	end_ns?: number;
-	end_seq?: number;
-}
-interface ShellTraceUnit {
-	/** Byte offset of the unit inside `script`; absent when the unit is not part of the script. */
-	at?: number;
-	/** 1-based script line. */
-	line: number;
-	/** Exact UTF-8 source byte length, including heredocs; absent in older traces. */
-	bytes?: number;
-	/** The unit's source; present only for unlocated units (an eval or function body). */
-	source?: ShellTraceBytes;
-	/** Opaque canonical native syntax archive. Only omp-shell may interpret it. */
-	syntax?: unknown;
-	/** Compiler-known wrapper bytes removed from this unit's displayed source. */
-	projection?: number;
-	/** Script a callout (`timeout`, `git`, `xargs`, …) ran for its operands; its calling command stands for it. */
-	callout?: boolean;
-	nodes: ShellTraceNode[];
-}
-interface ShellTraceCommandTag {
-	/** Actual engine field: descendant vprocs without a root run queue use 0.
-	 * Do not reject those tags; capture generation and explicit fork events
-	 * establish run ownership, while vpid/seq distinguish the producer. */
-	run: number;
-	vpid: number;
-	seq: number;
-}
-interface ShellTraceOutputContributor {
-	t_ns: number;
-	bytes: number[];
-	command?: ShellTraceCommandTag;
-	vpid?: number;
-	u?: number;
-	n?: number;
-}
-interface ShellTraceHistoryEvent {
-	/** Trace revision, including coalesced output growth. */
-	seq: number;
-	/** Measured monotonic engine/host nanoseconds since RunStart, like node.at. */
-	t_ns: number;
-	/** Original engine event sequence; absent for Output callbacks. */
-	event_seq?: number;
-	/** Zero-based actual minimizer segment submission; lifecycle entries remain real engine events. */
-	segment?: number;
-	/** The last real root RunEnd finalized the entire logical segmented call. */
-	logicalEnd?: boolean;
-	/** Actual host outcome after output/close draining, without replacing engine status. */
-	logicalStatus?: number;
-	/** Actual emitting vproc, present on semantic entries even without a command tag. */
-	vpid?: number;
-	kind: "CmdStart" | "CmdExpanded" | "CmdEnd" | "Pipeline" | "Branch" | "IterStart" | "LoopEnd" | "Background" | "FuncEnter" | "FuncExit" | "Assign" | "RunStart" | "RunEnd" | "Output" | "Diag" | "Exit" | "ErrExit" | "Spawn";
-	u?: number;
-	n?: number;
-	command?: ShellTraceCommandTag;
-	status?: number;
-	dur_ns?: number;
-	pipestatus?: number[];
-	argv?: ShellTraceBytes[];
-	assigns?: [
-		ShellTraceBytes,
-		ShellTraceBytes
-	][];
-	resolved?: ShellTraceResolved;
-	redirs?: ShellTraceRedir[];
-	name?: ShellTraceBytes;
-	value?: ShellTraceBytes;
-	full_len?: number;
-	scope?: string;
-	iteration?: number;
-	iterations?: number;
-	taken?: boolean;
-	construct?: string;
-	/** `Output` text is always a string (undecodable bytes arrive as U+FFFD); `Diag` text is run bytes. */
-	text?: ShellTraceBytes;
-	contributors?: ShellTraceOutputContributor[];
-	/** Final visible capture descriptor; merged stderr uses stdout's descriptor. */
-	fd?: number;
-	pid?: number;
-}
-interface ShellTrace {
-	v: 1;
-	/** Semantic/output revision, including assignments/coalesced bytes; monotonic poll key. */
-	seq: number;
-	/** Root RunEnd status; absent while running. */
-	status?: number;
-	/** Actual root vproc, even if history trimming removed its RunStart. */
-	rootVpid?: number;
-	/** Run clock (ns since RunStart) at the last folded event. */
-	t_ns: number;
-	/** The command text given at construction. */
-	script: string;
-	/** Compiled units, in announce order. */
-	units: ShellTraceUnit[];
-	/** Newest ≤20,000 semantic/output records, ≤2 MiB visible output and ≤8 MiB retained payload.
-	 * Adjacent output from the same execution may coalesce; its seq changes
-	 * when text grows. Consumers must replace the full journal on revision. */
-	history?: ShellTraceHistoryEvent[];
-	/** True when any replay record or output byte was evicted. */
-	historyTruncated?: boolean;
-	/** The last ≤ 8 diagnostics. */
-	diags?: ShellTraceDiag[];
-}
-type TspTone = "neutral" | "accent" | "info" | "success" | "warning" | "error" | "pending" | "muted" | "user";
-type LivePhase = "connecting" | "listening" | "working" | "speaking" | "muted" | "error";
 type FormSpanStyle = "code" | "strong" | "em";
 interface FormSpan {
 	text: string;
@@ -3932,14 +3830,6 @@ interface CopyTarget {
 	copyMessage?: string;
 	children?: CopyTarget[];
 }
-interface LogoutAccount {
-	credentialId: number;
-	provider: string;
-	label: string;
-	detail: string;
-	type: "api_key" | "oauth";
-	active: boolean;
-}
 type LoopLimitRuntime = {
 	kind: "iterations";
 	initial: number;
@@ -3949,18 +3839,551 @@ type LoopLimitRuntime = {
 	durationMs: number;
 	deadlineMs: number;
 };
+type ProviderDiscoveryStatus = "idle" | "ok" | "empty" | "cached" | "unavailable" | "unauthenticated";
+interface ProviderDiscoveryState {
+	provider: string;
+	status: ProviderDiscoveryStatus;
+	optional: boolean;
+	stale: boolean;
+	fetchedAt?: number;
+	source?: ModelResolutionSource;
+	models: string[];
+	error?: string;
+}
+type ShellTraceBytes = string | number[];
+type ShellTraceNodeKind = "and_or" | "pipeline" | "simple" | "brace" | "subshell" | "if" | "while" | "until" | "for" | "arith_for" | "select" | "case" | "arith" | "cond" | "func_def" | "coproc" | "assign" | "word";
+type ShellTraceResolved = "function" | "intrinsic" | "tool" | "native" | "device" | "self_shell" | "external" | "not_found" | "none";
+type ShellTraceState = "pending" | "running" | "ok" | "fail" | "skipped";
+interface ShellTraceRedir {
+	fd: number;
+	op: string;
+	target: ShellTraceBytes;
+}
+interface ShellTraceDiag {
+	code: string;
+	message: ShellTraceBytes;
+}
+interface ShellTraceNode {
+	k: ShellTraceNodeKind;
+	/** Byte span relative to the unit source. */
+	lo: number;
+	hi: number;
+	/** Parent node id; absent for the root. */
+	p?: number;
+	state: ShellTraceState;
+	/** CmdStart count. */
+	runs?: number;
+	/** CmdStart − CmdEnd. */
+	live?: number;
+	/** Status of the last CmdEnd. */
+	st?: number;
+	/** CmdEnds with a non-zero status. */
+	fails?: number;
+	/** Sum of `dur_ns` over the ended runs. */
+	ns?: number;
+	/** `t_ns` of the last CmdStart, relative to RunStart. */
+	at?: number;
+	/** Last CmdExpanded argv (each arg ≤ 256 bytes, ≤ 64 args). */
+	argv?: ShellTraceBytes[];
+	/** The full argv length when `argv` was cut. */
+	argc?: number;
+	/** Last CmdExpanded assigns. */
+	env?: [
+		ShellTraceBytes,
+		ShellTraceBytes
+	][];
+	res?: ShellTraceResolved;
+	redirs?: ShellTraceRedir[];
+	/** Pipestatus of the last CmdEnd. */
+	pipe?: number[];
+	/** Last IterStart n. */
+	iter?: number;
+	/** LoopEnd iterations. */
+	iters?: number;
+	/** Last Branch decision. */
+	taken?: boolean;
+	/** A Background event named this node. */
+	bg?: boolean;
+	/** Last Spawn pid. */
+	pid?: number;
+	/** Actual last command completion timestamp and trace revision. */
+	end_ns?: number;
+	end_seq?: number;
+}
+interface ShellTraceUnit {
+	/** Byte offset of the unit inside `script`; absent when the unit is not part of the script. */
+	at?: number;
+	/** 1-based script line. */
+	line: number;
+	/** Exact UTF-8 source byte length, including heredocs; absent in older traces. */
+	bytes?: number;
+	/** The unit's source; present only for unlocated units (an eval or function body). */
+	source?: ShellTraceBytes;
+	/** Opaque canonical native syntax archive. Only omp-shell may interpret it. */
+	syntax?: unknown;
+	/** Compiler-known wrapper bytes removed from this unit's displayed source. */
+	projection?: number;
+	/** Script a callout (`timeout`, `git`, `xargs`, …) ran for its operands; its calling command stands for it. */
+	callout?: boolean;
+	/** Command (unit index, node id) that ran this unit's script when the script is not literal in it: `eval "$x"`, `.`, a nested shell's file. */
+	runner?: {
+		unit: number;
+		node: number;
+	};
+	nodes: ShellTraceNode[];
+}
+interface ShellTraceCommandTag {
+	/** Actual engine field: descendant vprocs without a root run queue use 0.
+	 * Do not reject those tags; capture generation and explicit fork events
+	 * establish run ownership, while vpid/seq distinguish the producer. */
+	run: number;
+	vpid: number;
+	seq: number;
+}
+interface ShellTraceOutputContributor {
+	t_ns: number;
+	bytes: number[];
+	command?: ShellTraceCommandTag;
+	vpid?: number;
+	u?: number;
+	n?: number;
+}
+interface ShellTraceHistoryEvent {
+	/** Trace revision, including coalesced output growth. */
+	seq: number;
+	/** Measured monotonic engine/host nanoseconds since RunStart, like node.at. */
+	t_ns: number;
+	/** Original engine event sequence; absent for Output callbacks. */
+	event_seq?: number;
+	/** Zero-based actual minimizer segment submission; lifecycle entries remain real engine events. */
+	segment?: number;
+	/** The last real root RunEnd finalized the entire logical segmented call. */
+	logicalEnd?: boolean;
+	/** Actual host outcome after output/close draining, without replacing engine status. */
+	logicalStatus?: number;
+	/** Actual emitting vproc, present on semantic entries even without a command tag. */
+	vpid?: number;
+	kind: "CmdStart" | "CmdExpanded" | "CmdEnd" | "Pipeline" | "Branch" | "IterStart" | "LoopEnd" | "Background" | "FuncEnter" | "FuncExit" | "Assign" | "RunStart" | "RunEnd" | "Output" | "Diag" | "Exit" | "ErrExit" | "Spawn";
+	u?: number;
+	n?: number;
+	command?: ShellTraceCommandTag;
+	status?: number;
+	dur_ns?: number;
+	pipestatus?: number[];
+	argv?: ShellTraceBytes[];
+	assigns?: [
+		ShellTraceBytes,
+		ShellTraceBytes
+	][];
+	resolved?: ShellTraceResolved;
+	redirs?: ShellTraceRedir[];
+	name?: ShellTraceBytes;
+	value?: ShellTraceBytes;
+	full_len?: number;
+	scope?: string;
+	iteration?: number;
+	iterations?: number;
+	taken?: boolean;
+	construct?: string;
+	/** `Output` text is always a string (undecodable bytes arrive as U+FFFD); `Diag` text is run bytes. */
+	text?: ShellTraceBytes;
+	contributors?: ShellTraceOutputContributor[];
+	/** Final visible capture descriptor; merged stderr uses stdout's descriptor. */
+	fd?: number;
+	pid?: number;
+}
+interface ShellTrace {
+	v: 1;
+	/** Semantic/output revision, including assignments/coalesced bytes; monotonic poll key. */
+	seq: number;
+	/** Root RunEnd status; absent while running. */
+	status?: number;
+	/** Actual root vproc, even if history trimming removed its RunStart. */
+	rootVpid?: number;
+	/** Run clock (ns since RunStart) at the last folded event. */
+	t_ns: number;
+	/** The command text given at construction. */
+	script: string;
+	/** Compiled units, in announce order. */
+	units: ShellTraceUnit[];
+	/** Newest ≤20,000 semantic/output records, ≤2 MiB visible output and ≤8 MiB retained payload.
+	 * Adjacent output from the same execution may coalesce; its seq changes
+	 * when text grows. Consumers must replace the full journal on revision. */
+	history?: ShellTraceHistoryEvent[];
+	/** True when any replay record or output byte was evicted. */
+	historyTruncated?: boolean;
+	/** The last ≤ 8 diagnostics. */
+	diags?: ShellTraceDiag[];
+}
+type TspTone = "neutral" | "accent" | "info" | "success" | "warning" | "error" | "pending" | "muted" | "user";
+type OutputArtifactError = "open" | "write" | "flush" | "end";
+interface OutputSummary {
+	output: string;
+	truncated: boolean;
+	totalLines: number;
+	totalBytes: number;
+	outputLines: number;
+	outputBytes: number;
+	/** Bytes elided from the middle when head-retain mode is active. */
+	elidedBytes?: number;
+	/** Lines elided from the middle when head-retain mode is active. */
+	elidedLines?: number;
+	/** Bytes dropped by the per-line column cap (sum across all lines). */
+	columnDroppedBytes?: number;
+	/** Number of distinct lines that hit the per-line column cap. */
+	columnTruncatedLines?: number;
+	/**
+	 * 1-indexed first and last lines the column cap cut, numbered as in the
+	 * artifact. Absent when the numbering cannot match the artifact (an inline
+	 * substitute was capped, or `replace()` rewrote the buffer).
+	 */
+	columnTruncatedRange?: {
+		first: number;
+		last: number;
+	};
+	/** Configured per-line column cap in effect (UTF-8 bytes), when > 0. */
+	columnMax?: number;
+	/** Spill id of the full output (`local://<id>.log`) when truncated */
+	artifactId?: string;
+	/**
+	 * Bytes the artifact cap dropped from the middle of the saved file. When
+	 * set, `local://<id>.log` holds a head/tail sample, not the full output.
+	 */
+	artifactElidedBytes?: number;
+	/** Full raw output was not completely saved; artifactId is unavailable. */
+	artifactError?: OutputArtifactError;
+}
+interface TruncationMeta {
+	direction: "head" | "tail" | "middle";
+	truncatedBy: "lines" | "bytes" | "middle";
+	totalLines: number;
+	totalBytes: number;
+	outputLines: number;
+	outputBytes: number;
+	maxBytes?: number;
+	/** Line range shown (1-indexed, inclusive). Omitted for middle elision. */
+	shownRange?: {
+		start: number;
+		end: number;
+	};
+	/** Head/tail line ranges shown when direction === "middle". */
+	headRange?: {
+		start: number;
+		end: number;
+	};
+	tailRange?: {
+		start: number;
+		end: number;
+	};
+	/** Bytes elided from the middle. */
+	elidedBytes?: number;
+	/** Lines elided from the middle. */
+	elidedLines?: number;
+	/** Artifact ID if full output was saved */
+	artifactId?: string;
+	/** Bytes the artifact cap dropped from the saved file's middle; the artifact is then a head/tail sample. */
+	artifactElidedBytes?: number;
+	/** Next offset for pagination (head truncation only) */
+	nextOffset?: number;
+	/**
+	 * The single shown line is a byte-capped preview of one oversized line, not
+	 * a complete line. `outputBytes`/`totalBytes` are the preview vs full line
+	 * size; renders a distinct "partial" notice instead of a line range.
+	 */
+	partialLine?: boolean;
+}
+type SourceMeta = {
+	type: "path";
+	value: string;
+} | {
+	type: "url";
+	value: string;
+} | {
+	type: "internal";
+	value: string;
+}
+/** A complete aggregate report, whose entries may contain incomplete source captures. */
+ | {
+	type: "report";
+	value: string;
+};
+interface DiagnosticMeta {
+	summary: string;
+	messages: string[];
+}
+interface LimitsMeta {
+	matchLimit?: {
+		reached: number;
+		suggestion: number;
+	};
+	/** `suggestion` is omitted when the tool is already at its hard cap, so no larger usable limit exists to advise. */
+	resultLimit?: {
+		reached: number;
+		suggestion?: number;
+	};
+	headLimit?: {
+		reached: number;
+		suggestion: number;
+	};
+	/**
+	 * `unit` may be absent in sessions persisted before it was recorded. `lines` is
+	 * the first-to-last range of cut lines, and `selectorBase` the target a
+	 * `:raw:<line>-<line>` selector reads one of them whole from (the spill's
+	 * `local://<id>.log` stands in when absent).
+	 */
+	columnTruncated?: {
+		maxColumn: number;
+		unit?: "bytes" | "chars";
+		artifactId?: string;
+		artifactElidedBytes?: number;
+		lines?: {
+			first: number;
+			last: number;
+		};
+		selectorBase?: string;
+		/** The first cut line exceeds what one `:raw` read returns; that read stops at this many bytes. */
+		rawByteCap?: number;
+	};
+}
+interface MinimizedMeta {
+	filter: string;
+	inputBytes: number;
+	outputBytes: number;
+	artifactId: string;
+}
+interface OutputMeta {
+	truncation?: TruncationMeta;
+	/** Capture failure of this output itself; aggregate reports keep source failures on their entries. */
+	artifactError?: OutputArtifactError;
+	source?: SourceMeta;
+	/** The output is a bounded page of a file or session artifact its `source` re-reads with line selectors; spill-to-artifact skips it. */
+	pagedSource?: true;
+	diagnostics?: DiagnosticMeta;
+	limits?: LimitsMeta;
+	minimized?: MinimizedMeta;
+}
 type ConfiguredThinkingLevel = ThinkingLevel | "auto";
-type GoalStatus = "active" | "paused" | "budget-limited" | "complete" | "dropped";
-interface Goal {
-	id: string;
-	objective: string;
-	status: GoalStatus;
-	tokenBudget?: number;
-	tokensUsed: number;
-	timeUsedSeconds: number;
-	createdAt: number;
+interface BashResult extends OutputSummary {
+	exitCode: number | undefined;
+	cancelled: boolean;
+	/** True when the command was killed by its timeout deadline (not a user abort). */
+	timedOut?: boolean;
+	/** The final trace snapshot of an embedded-shell run started with `onTrace`. */
+	trace?: ShellTrace;
+	/** The native minimizer's rewrite, set when its output replaced the raw stream. */
+	minimized?: MinimizedMeta;
+	workingDir?: string;
+	/** The command ended in another directory than it started in (a `cd` in it); the next command starts in its own `cwd`. */
+	movedCwd?: boolean;
+	/** The command ended with `set -e` on; the next command starts with it off. */
+	errexit?: boolean;
+	/** Terminal graphics extracted from raw stdout before sanitization or truncation. */
+	images?: ImageContent[];
+	/**
+	 * Set when the command overlapped another one on the session's persistent
+	 * shell and so ran in a fork of it, which saw the shell's state as of before
+	 * that command.
+	 */
+	fork?: ShellForkOutcome;
+}
+interface ShellForkOutcome {
+	/**
+	 * What it set (variables, functions, aliases, options, traps) carried back into
+	 * the session's shell, a name both set keeping the value of the command that
+	 * ended last; `false`: it stayed in the fork.
+	 */
+	carried: boolean;
+	/** It left background jobs running in the fork, where later commands' `jobs`, `wait` and `%N` miss them. */
+	jobs: boolean;
+}
+type TodoStatus = "pending" | "in_progress" | "completed" | "abandoned";
+interface TodoItem {
+	content: string;
+	status: TodoStatus;
+	details?: string;
+	notes?: string[];
+}
+interface TodoPhase {
+	name: string;
+	tasks: TodoItem[];
+}
+interface CustomAgentMessages {
+	bashExecution: BashExecutionMessage;
+	pythonExecution: PythonExecutionMessage;
+	custom: CustomMessage$1;
+	hookMessage: HookMessage$1;
+	branchSummary: BranchSummaryMessage;
+	compactionSummary: CompactionSummaryMessage;
+	fileMention: FileMentionMessage;
+}
+type CustomMessageContent = string | (TextContent | ImageContent)[];
+interface BashExecutionMessage {
+	role: "bashExecution";
+	command: string;
+	output: string;
+	exitCode: number | undefined;
+	cancelled: boolean;
+	truncated: boolean;
+	/** Images extracted from terminal graphics in the command's stdout. */
+	images?: ImageContent[];
+	meta?: OutputMeta;
+	timestamp: number;
+	/** If true, this message is excluded from LLM context (!! prefix) */
+	excludeFromContext?: boolean;
+}
+interface PythonExecutionMessage {
+	role: "pythonExecution";
+	code: string;
+	output: string;
+	exitCode: number | undefined;
+	cancelled: boolean;
+	truncated: boolean;
+	meta?: OutputMeta;
+	timestamp: number;
+	/** If true, this message is excluded from LLM context ($ prefix) */
+	excludeFromContext?: boolean;
+}
+interface CustomMessage$1<T = unknown> {
+	role: "custom";
+	customType: string;
+	content: CustomMessageContent;
+	display: boolean;
+	details?: T;
+	/** Who initiated this message for billing/attribution semantics. */
+	attribution?: MessageAttribution;
+	/** Rendered and saved, never sent to the model (like `!!` bash rows). */
+	excludeFromContext?: boolean;
+	timestamp: number;
+}
+interface HookMessage$1<T = unknown> {
+	role: "hookMessage";
+	customType: string;
+	content: CustomMessageContent;
+	display: boolean;
+	details?: T;
+	/** Who initiated this message for billing/attribution semantics. */
+	attribution?: MessageAttribution;
+	timestamp: number;
+}
+interface FileMentionMessage {
+	role: "fileMention";
+	files: Array<{
+		path: string;
+		content: string;
+		lineCount?: number;
+		/** File size in bytes, if known. */
+		byteSize?: number;
+		/** Why the file contents were omitted from auto-read. */
+		skippedReason?: "tooLarge" | "binary";
+		image?: ImageContent;
+	}>;
+	timestamp: number;
+}
+type JobWidgetState = 
+/** The cheap model is writing the spec; the view holds the model-free fallback meanwhile. */
+"authoring"
+/** The spec's rules drive the view. */
+ | "live"
+/** No spec (no model, authoring failed, nothing to read yet): last line and rates only. */
+ | "fallback";
+interface JobWidgetTrend {
+	/** `▲ 15%`, `▼ 3.2 ms`. */
+	text: string;
+	/** `success` when the move is toward `better`, `error` away from it, `muted` without a direction. */
+	tone: "success" | "error" | "muted";
+}
+interface JobWidgetHeadline {
+	/** Formatted value with its unit. */
+	text: string;
+	/** What the value is, when the title does not already say it (`decode`, `p50`). */
+	label?: string;
+	trend?: JobWidgetTrend;
+}
+interface JobWidgetSparkBlock {
+	kind: "spark";
+	/** What the series measures (`tok/s · nvfp4 b1`). */
+	label: string;
+	/** At most 48 values, oldest first, already downsampled. */
+	values: number[];
+	/** Domain of the chart; covers the values and every mark. */
+	min: number;
+	max: number;
+	/** Horizontal reference lines in value units (a target, a baseline). */
+	marks?: {
+		value: number;
+		label: string;
+		tone?: TspTone;
+	}[];
+	/** Latest value, formatted (`186 tok/s`). */
+	last: string;
+	/** Per-point tooltip text, same length as `values` (`12:04:31 · 186 tok/s`). */
+	tips?: string[];
+	tone?: TspTone;
+}
+interface JobWidgetBarsBlock {
+	kind: "bars";
+	label: string;
+	items: {
+		label: string;
+		value: number;
+		text: string;
+		tone?: TspTone;
+	}[];
+	/** The value a full bar stands for. */
+	max: number;
+}
+interface JobWidgetMeterBlock {
+	kind: "meter";
+	label: string;
+	/** 0–1. */
+	value: number;
+	/** `7/9 trials`. */
+	text: string;
+	tone?: TspTone;
+}
+interface JobWidgetStatBlock {
+	kind: "stat";
+	items: {
+		label: string;
+		text: string;
+		tone?: TspTone;
+		trend?: JobWidgetTrend;
+	}[];
+}
+interface JobWidgetGridBlock {
+	kind: "grid";
+	label: string;
+	items: {
+		label: string;
+		text: string;
+		tone: TspTone;
+	}[];
+}
+interface JobWidgetTextBlock {
+	kind: "text";
+	text: string;
+}
+type JobWidgetBlock = JobWidgetSparkBlock | JobWidgetBarsBlock | JobWidgetMeterBlock | JobWidgetStatBlock | JobWidgetGridBlock | JobWidgetTextBlock;
+interface JobWidgetView {
+	/** Short name of what is being watched (`loadtest · 3 models`). */
+	title: string;
+	headline?: JobWidgetHeadline;
+	/** What the job is doing now: a subagent's stage, or the last line of output. */
+	stage?: string;
+	/** Top to bottom; the first block is the primary one, and compact views show only it. */
+	blocks: JobWidgetBlock[];
+	state: JobWidgetState;
+	/** Epoch ms of the newest data the view reflects. */
 	updatedAt: number;
 }
+interface ContextUsage {
+	/** Estimated context tokens. */
+	tokens: number;
+	contextWindow: number;
+	/** Context usage as percentage of context window. */
+	percent: number;
+}
+type LivePhase = "connecting" | "listening" | "working" | "speaking" | "muted" | "error";
 type AgentSource = "bundled" | "user" | "project";
 type StructuredSubagentSchemaMode = "permissive" | "strict";
 type StructuredSubagentSchemaSource = "caller" | "agent" | "session" | "none";
@@ -3972,6 +4395,17 @@ interface StructuredSubagentOutput {
 	data?: unknown;
 	error?: string;
 }
+type AgentStreaming = {
+	kind: "thinking";
+} | {
+	kind: "text";
+} | {
+	kind: "call";
+	tool: string;
+	args?: string;
+	argsKey?: string;
+	intent?: string;
+};
 interface AgentProgress {
 	index: number;
 	id: string;
@@ -3989,12 +4423,20 @@ interface AgentProgress {
 	/** Intent the model attached to the current call; undefined when that call carried none. */
 	currentToolIntent?: string;
 	currentToolStartMs?: number;
+	/**
+	 * What the model is producing now, while a response streams. A call it finished writing stays
+	 * until it starts running ({@link currentTool}); reasoning and prose clear when the response ends.
+	 */
+	streaming?: AgentStreaming;
 	recentTools: Array<{
 		tool: string;
 		args: string;
 		argsKey?: string;
 		intent?: string;
 		isError?: boolean;
+		/** Lines an edit call added and removed, by its diff; absent for other calls and failed ones. */
+		added?: number;
+		removed?: number;
 		endMs: number;
 	}>;
 	recentOutput: string[];
@@ -4197,379 +4639,6 @@ interface NestedRepoPatch {
 	relativePath: string;
 	patch: string;
 }
-type OutputArtifactError = "open" | "write" | "flush" | "end";
-interface OutputSummary {
-	output: string;
-	truncated: boolean;
-	totalLines: number;
-	totalBytes: number;
-	outputLines: number;
-	outputBytes: number;
-	/** Bytes elided from the middle when head-retain mode is active. */
-	elidedBytes?: number;
-	/** Lines elided from the middle when head-retain mode is active. */
-	elidedLines?: number;
-	/** Bytes dropped by the per-line column cap (sum across all lines). */
-	columnDroppedBytes?: number;
-	/** Number of distinct lines that hit the per-line column cap. */
-	columnTruncatedLines?: number;
-	/**
-	 * 1-indexed first and last lines the column cap cut, numbered as in the
-	 * artifact. Absent when the numbering cannot match the artifact (an inline
-	 * substitute was capped, or `replace()` rewrote the buffer).
-	 */
-	columnTruncatedRange?: {
-		first: number;
-		last: number;
-	};
-	/** Configured per-line column cap in effect (UTF-8 bytes), when > 0. */
-	columnMax?: number;
-	/** Spill id of the full output (`local://<id>.log`) when truncated */
-	artifactId?: string;
-	/**
-	 * Bytes the artifact cap dropped from the middle of the saved file. When
-	 * set, `local://<id>.log` holds a head/tail sample, not the full output.
-	 */
-	artifactElidedBytes?: number;
-	/** Full raw output was not completely saved; artifactId is unavailable. */
-	artifactError?: OutputArtifactError;
-}
-interface TruncationMeta {
-	direction: "head" | "tail" | "middle";
-	truncatedBy: "lines" | "bytes" | "middle";
-	totalLines: number;
-	totalBytes: number;
-	outputLines: number;
-	outputBytes: number;
-	maxBytes?: number;
-	/** Line range shown (1-indexed, inclusive). Omitted for middle elision. */
-	shownRange?: {
-		start: number;
-		end: number;
-	};
-	/** Head/tail line ranges shown when direction === "middle". */
-	headRange?: {
-		start: number;
-		end: number;
-	};
-	tailRange?: {
-		start: number;
-		end: number;
-	};
-	/** Bytes elided from the middle. */
-	elidedBytes?: number;
-	/** Lines elided from the middle. */
-	elidedLines?: number;
-	/** Artifact ID if full output was saved */
-	artifactId?: string;
-	/** Bytes the artifact cap dropped from the saved file's middle; the artifact is then a head/tail sample. */
-	artifactElidedBytes?: number;
-	/** Next offset for pagination (head truncation only) */
-	nextOffset?: number;
-	/**
-	 * The single shown line is a byte-capped preview of one oversized line, not
-	 * a complete line. `outputBytes`/`totalBytes` are the preview vs full line
-	 * size; renders a distinct "partial" notice instead of a line range.
-	 */
-	partialLine?: boolean;
-}
-type SourceMeta = {
-	type: "path";
-	value: string;
-} | {
-	type: "url";
-	value: string;
-} | {
-	type: "internal";
-	value: string;
-}
-/** A complete aggregate report, whose entries may contain incomplete source captures. */
- | {
-	type: "report";
-	value: string;
-};
-interface DiagnosticMeta {
-	summary: string;
-	messages: string[];
-}
-interface LimitsMeta {
-	matchLimit?: {
-		reached: number;
-		suggestion: number;
-	};
-	/** `suggestion` is omitted when the tool is already at its hard cap, so no larger usable limit exists to advise. */
-	resultLimit?: {
-		reached: number;
-		suggestion?: number;
-	};
-	headLimit?: {
-		reached: number;
-		suggestion: number;
-	};
-	/**
-	 * `unit` may be absent in sessions persisted before it was recorded. `lines` is
-	 * the first-to-last range of cut lines, and `selectorBase` the target a
-	 * `:raw:<line>-<line>` selector reads one of them whole from (the spill's
-	 * `local://<id>.log` stands in when absent).
-	 */
-	columnTruncated?: {
-		maxColumn: number;
-		unit?: "bytes" | "chars";
-		artifactId?: string;
-		artifactElidedBytes?: number;
-		lines?: {
-			first: number;
-			last: number;
-		};
-		selectorBase?: string;
-		/** The first cut line exceeds what one `:raw` read returns; that read stops at this many bytes. */
-		rawByteCap?: number;
-	};
-}
-interface MinimizedMeta {
-	filter: string;
-	inputBytes: number;
-	outputBytes: number;
-	artifactId: string;
-}
-interface OutputMeta {
-	truncation?: TruncationMeta;
-	/** Capture failure of this output itself; aggregate reports keep source failures on their entries. */
-	artifactError?: OutputArtifactError;
-	source?: SourceMeta;
-	/** The output is a bounded page of a file or session artifact its `source` re-reads with line selectors; spill-to-artifact skips it. */
-	pagedSource?: true;
-	diagnostics?: DiagnosticMeta;
-	limits?: LimitsMeta;
-	minimized?: MinimizedMeta;
-}
-interface CustomAgentMessages {
-	bashExecution: BashExecutionMessage;
-	pythonExecution: PythonExecutionMessage;
-	custom: CustomMessage$1;
-	hookMessage: HookMessage$1;
-	branchSummary: BranchSummaryMessage;
-	compactionSummary: CompactionSummaryMessage;
-	fileMention: FileMentionMessage;
-}
-type CustomMessageContent = string | (TextContent | ImageContent)[];
-interface BashExecutionMessage {
-	role: "bashExecution";
-	command: string;
-	output: string;
-	exitCode: number | undefined;
-	cancelled: boolean;
-	truncated: boolean;
-	/** Images extracted from terminal graphics in the command's stdout. */
-	images?: ImageContent[];
-	meta?: OutputMeta;
-	timestamp: number;
-	/** If true, this message is excluded from LLM context (!! prefix) */
-	excludeFromContext?: boolean;
-}
-interface PythonExecutionMessage {
-	role: "pythonExecution";
-	code: string;
-	output: string;
-	exitCode: number | undefined;
-	cancelled: boolean;
-	truncated: boolean;
-	meta?: OutputMeta;
-	timestamp: number;
-	/** If true, this message is excluded from LLM context ($ prefix) */
-	excludeFromContext?: boolean;
-}
-interface CustomMessage$1<T = unknown> {
-	role: "custom";
-	customType: string;
-	content: CustomMessageContent;
-	display: boolean;
-	details?: T;
-	/** Who initiated this message for billing/attribution semantics. */
-	attribution?: MessageAttribution;
-	/** Rendered and saved, never sent to the model (like `!!` bash rows). */
-	excludeFromContext?: boolean;
-	timestamp: number;
-}
-interface HookMessage$1<T = unknown> {
-	role: "hookMessage";
-	customType: string;
-	content: CustomMessageContent;
-	display: boolean;
-	details?: T;
-	/** Who initiated this message for billing/attribution semantics. */
-	attribution?: MessageAttribution;
-	timestamp: number;
-}
-interface FileMentionMessage {
-	role: "fileMention";
-	files: Array<{
-		path: string;
-		content: string;
-		lineCount?: number;
-		/** File size in bytes, if known. */
-		byteSize?: number;
-		/** Why the file contents were omitted from auto-read. */
-		skippedReason?: "tooLarge" | "binary";
-		image?: ImageContent;
-	}>;
-	timestamp: number;
-}
-type TodoStatus = "pending" | "in_progress" | "completed" | "abandoned";
-interface TodoItem {
-	content: string;
-	status: TodoStatus;
-	details?: string;
-	notes?: string[];
-}
-interface TodoPhase {
-	name: string;
-	tasks: TodoItem[];
-}
-type ProviderDiscoveryStatus = "idle" | "ok" | "empty" | "cached" | "unavailable" | "unauthenticated";
-interface ProviderDiscoveryState {
-	provider: string;
-	status: ProviderDiscoveryStatus;
-	optional: boolean;
-	stale: boolean;
-	fetchedAt?: number;
-	source?: ModelResolutionSource;
-	models: string[];
-	error?: string;
-}
-interface BashResult extends OutputSummary {
-	exitCode: number | undefined;
-	cancelled: boolean;
-	/** True when the command was killed by its timeout deadline (not a user abort). */
-	timedOut?: boolean;
-	/** The final trace snapshot of an embedded-shell run started with `onTrace`. */
-	trace?: ShellTrace;
-	/** The native minimizer's rewrite, set when its output replaced the raw stream. */
-	minimized?: MinimizedMeta;
-	workingDir?: string;
-	/** Terminal graphics extracted from raw stdout before sanitization or truncation. */
-	images?: ImageContent[];
-	/**
-	 * Set when the command overlapped another one on the session's persistent
-	 * shell and so ran in a fork of it, which saw the shell's state as of before
-	 * that command.
-	 */
-	fork?: ShellForkOutcome;
-}
-interface ShellForkOutcome {
-	/**
-	 * What it set (variables, functions, aliases, options, traps) carried back into
-	 * the session's shell, a name both set keeping the value of the command that
-	 * ended last; `false`: it stayed in the fork.
-	 */
-	carried: boolean;
-	/** It left background jobs running in the fork, where later commands' `jobs`, `wait` and `%N` miss them. */
-	jobs: boolean;
-}
-type JobWidgetState = 
-/** The cheap model is writing the spec; the view holds the model-free fallback meanwhile. */
-"authoring"
-/** The spec's rules drive the view. */
- | "live"
-/** No spec (no model, authoring failed, nothing to read yet): last line and rates only. */
- | "fallback";
-interface JobWidgetTrend {
-	/** `▲ 15%`, `▼ 3.2 ms`. */
-	text: string;
-	/** `success` when the move is toward `better`, `error` away from it, `muted` without a direction. */
-	tone: "success" | "error" | "muted";
-}
-interface JobWidgetHeadline {
-	/** Formatted value with its unit. */
-	text: string;
-	/** What the value is, when the title does not already say it (`decode`, `p50`). */
-	label?: string;
-	trend?: JobWidgetTrend;
-}
-interface JobWidgetSparkBlock {
-	kind: "spark";
-	/** What the series measures (`tok/s · nvfp4 b1`). */
-	label: string;
-	/** At most 48 values, oldest first, already downsampled. */
-	values: number[];
-	/** Domain of the chart; covers the values and every mark. */
-	min: number;
-	max: number;
-	/** Horizontal reference lines in value units (a target, a baseline). */
-	marks?: {
-		value: number;
-		label: string;
-		tone?: TspTone;
-	}[];
-	/** Latest value, formatted (`186 tok/s`). */
-	last: string;
-	/** Per-point tooltip text, same length as `values` (`12:04:31 · 186 tok/s`). */
-	tips?: string[];
-	tone?: TspTone;
-}
-interface JobWidgetBarsBlock {
-	kind: "bars";
-	label: string;
-	items: {
-		label: string;
-		value: number;
-		text: string;
-		tone?: TspTone;
-	}[];
-	/** The value a full bar stands for. */
-	max: number;
-}
-interface JobWidgetMeterBlock {
-	kind: "meter";
-	label: string;
-	/** 0–1. */
-	value: number;
-	/** `7/9 trials`. */
-	text: string;
-	tone?: TspTone;
-}
-interface JobWidgetStatBlock {
-	kind: "stat";
-	items: {
-		label: string;
-		text: string;
-		tone?: TspTone;
-		trend?: JobWidgetTrend;
-	}[];
-}
-interface JobWidgetGridBlock {
-	kind: "grid";
-	label: string;
-	items: {
-		label: string;
-		text: string;
-		tone: TspTone;
-	}[];
-}
-interface JobWidgetTextBlock {
-	kind: "text";
-	text: string;
-}
-type JobWidgetBlock = JobWidgetSparkBlock | JobWidgetBarsBlock | JobWidgetMeterBlock | JobWidgetStatBlock | JobWidgetGridBlock | JobWidgetTextBlock;
-interface JobWidgetView {
-	/** Short name of what is being watched (`loadtest · 3 models`). */
-	title: string;
-	headline?: JobWidgetHeadline;
-	/** What the job is doing now: a subagent's stage, or the last line of output. */
-	stage?: string;
-	/** Top to bottom; the first block is the primary one, and compact views show only it. */
-	blocks: JobWidgetBlock[];
-	state: JobWidgetState;
-	/** Epoch ms of the newest data the view reflects. */
-	updatedAt: number;
-}
-interface ContextUsage {
-	/** Estimated context tokens. */
-	tokens: number;
-	contextWindow: number;
-	/** Context usage as percentage of context window. */
-	percent: number;
-}
 interface JobTextChunk {
 	/** Offset of `text`'s first unit; past the requested `from` when older text was dropped. */
 	start: number;
@@ -4580,7 +4649,7 @@ interface JobTextChunk {
 	open: boolean;
 }
 interface JobTextSource {
-	/** Stable id a widget rule names in `from`: `out`, `pipe:1`, `tools`, `bg_7:pipe:1`. */
+	/** Stable id a widget rule names in `from`: `out`, `pipe:1`, `file:2`, `tools`, `bg_7:pipe:1`. */
 	readonly id: string;
 	/** What the text is, for the widget author (`cargo nextest run … → tail -n 5`). */
 	readonly label: string;
@@ -4705,8 +4774,18 @@ interface AsyncJobProcess {
 	readonly cwd: string;
 	/** Live pids the command spawned, in spawn order; empty before it starts and after it ends. */
 	pids(): readonly number[];
-	/** Copies of the bytes crossing the command's pipes, kept with the job row (`proc://<id>/streams`). */
+	/**
+	 * The command's output that never reaches its own: copies of the bytes crossing its pipes and the files it
+	 * redirects into, kept with the job row (`proc://<id>/streams`).
+	 */
 	readonly streams?: PipeStreams;
+	/** Milliseconds since the UNIX epoch the command last wrote its own output; undefined before it wrote. */
+	outputModified?(): number | undefined;
+	/**
+	 * The run's shell trace: the live one while it runs, the final one once it ended. Undefined before the first
+	 * poll, and always with the shell visualization off.
+	 */
+	trace?(): ShellTrace | undefined;
 }
 interface SourceMeta$1 {
 	/** Provider ID that loaded this item */
@@ -4735,6 +4814,12 @@ interface SourceMeta$1 {
 	 * put the version, not the plugin name, in the path segment owning `skills/`.
 	 */
 	pluginName?: string;
+	/**
+	 * Filesystem-resolved plugin root supplying this item. Body read paths
+	 * substitute `${CLAUDE_PLUGIN_ROOT}` / `${OMP_PLUGIN_ROOT}` in Markdown
+	 * bodies with it, matching Claude Code's in-body resolution (#20165).
+	 */
+	pluginRoot?: string;
 }
 interface Rule {
 	/** Rule name (derived from filename) */
@@ -4822,6 +4907,7 @@ interface RuntimeIdentity {
 }
 declare const TITLE_CHANGE_ENTRY_TYPE = "title_change";
 type SessionTitleSource = "auto" | "user";
+type SessionOrigin = "chrome";
 interface SessionHeader {
 	type: "session";
 	version?: number;
@@ -4830,6 +4916,12 @@ interface SessionHeader {
 	titleSource?: SessionTitleSource;
 	timestamp: string;
 	cwd: string;
+	/**
+	 * Set when another client started the session ({@link SessionOrigin}); only that client lists it, so the
+	 * terminal's resume picker, `--continue`, recent sessions and ACP listings skip it. An explicit
+	 * `--resume <id|path>` still opens it.
+	 */
+	origin?: SessionOrigin;
 	/**
 	 * Additional workspace directories beyond `cwd` (multi-root workspace).
 	 * Absolute, normalized, deduplicated. Absent on legacy single-cwd sessions.
@@ -4944,6 +5036,19 @@ interface ThinkingLevelChangeEntry extends SessionEntryBase {
 	 */
 	configured?: string | null;
 }
+interface ModelFallbackCause {
+	/** The model the session left, named as in `retry_fallback_applied.from` (`provider/modelId`, plus any `:thinking` level). */
+	from: string;
+	/**
+	 * - `request-error`: a request to `from` failed.
+	 * - `agent-loop`: the agent loop stopped the turn itself (e.g. an unmet soft tool requirement); no request failed.
+	 * - `usage-preflight`: usage health moved the request before it was sent.
+	 * - `missing-credential`: `from`'s provider had no usable credential.
+	 */
+	trigger: "request-error" | "agent-loop" | "usage-preflight" | "missing-credential";
+	/** The failed turn's error, or the usage or credential condition. */
+	reason?: string;
+}
 interface ModelChangeEntry extends SessionEntryBase {
 	type: "model_change";
 	/** Model in "provider/modelId" format */
@@ -4952,6 +5057,8 @@ interface ModelChangeEntry extends SessionEntryBase {
 	role?: string;
 	/** True when this transition selected a retry-fallback model rather than the configured model. */
 	resolvedModelIsFallback?: boolean;
+	/** Why the retry fallback that wrote this entry switched models. */
+	fallback?: ModelFallbackCause;
 }
 interface ServiceTierChangeEntry extends SessionEntryBase {
 	type: "service_tier_change";
@@ -5031,7 +5138,7 @@ interface SessionInitEntry extends SessionEntryBase {
 	task: string;
 	/** Tools available to the agent */
 	tools: string[];
-	/** Names in `tools` presented as `xd://` devices instead of top-level tools (absent from older files). */
+	/** Names in `tools` presented as tool commands instead of top-level tools (absent from older files). */
 	mountedTools?: string[];
 	/** Agent definition name (for example `scout` or `reviewer`). */
 	agent?: string;
@@ -5385,10 +5492,49 @@ type UsageLimitState = {
 	/** Whether paid extra usage serves requests once the allowance is spent. */
 	extraUsage: boolean;
 };
+interface LogoutAccount {
+	credentialId: number;
+	provider: string;
+	label: string;
+	detail: string;
+	type: "api_key" | "oauth";
+	active: boolean;
+}
 type RpcGoalOp = "get" | "create" | "resume" | "pause" | "drop";
 interface RpcGoalResult {
 	goal: Goal | null;
 	state: GoalModeState | null;
+}
+interface RpcModelPickerRole {
+	role: string;
+	/** The role's display tag. */
+	label: string;
+	/** Auto-selected: the role has no configured model. */
+	auto?: boolean;
+}
+interface RpcModelPickerRow {
+	provider: string;
+	id: string;
+	name: string;
+	/** The quick role this row applies (`@` search); the client passes it to `set_model`. */
+	role?: string;
+	/** Visible roles the model holds, built-in order first. */
+	roles?: RpcModelPickerRole[];
+	/** Steps of the model's thinking slider, low to high; absent when it has no effort to pick. */
+	thinking?: ConfiguredThinkingLevel[];
+	/** Model rows: the session's level as this model would run it. Quick-role rows: the role's explicit level. */
+	thinkingLevel?: ConfiguredThinkingLevel;
+	/** The session's context exceeds the model's window. */
+	overContext?: boolean;
+	/** The session runs this row: its model, or under `@` its active quick role. */
+	current?: boolean;
+}
+interface RpcModelPickerResult {
+	rows: RpcModelPickerRow[];
+	/** Leading rows in the Recent block; 0 when there is no such split. */
+	recent: number;
+	/** Matching rows before the limit. */
+	total: number;
 }
 interface RpcMessagesPage {
 	messages: AgentMessage[];
@@ -5396,7 +5542,7 @@ interface RpcMessagesPage {
 	totalMessages: number;
 }
 declare const debugSchema: FluentType<{
-	action: "output" | "sessions" | "modules" | "pause" | "continue" | "threads" | "attach" | "scopes" | "launch" | "evaluate" | "terminate" | "variables" | "disassemble" | "stack_trace" | "read_memory" | "loaded_sources" | "set_breakpoint" | "remove_breakpoint" | "set_instruction_breakpoint" | "remove_instruction_breakpoint" | "data_breakpoint_info" | "set_data_breakpoint" | "remove_data_breakpoint" | "step_over" | "step_in" | "step_out" | "write_memory" | "custom_request";
+	action: "output" | "sessions" | "modules" | "pause" | "continue" | "threads" | "attach" | "scopes" | "launch" | "variables" | "evaluate" | "terminate" | "disassemble" | "stack_trace" | "read_memory" | "loaded_sources" | "set_breakpoint" | "remove_breakpoint" | "set_instruction_breakpoint" | "remove_instruction_breakpoint" | "data_breakpoint_info" | "set_data_breakpoint" | "remove_data_breakpoint" | "step_over" | "step_in" | "step_out" | "write_memory" | "custom_request";
 	offset?: number | undefined;
 	cwd?: string | undefined;
 	name?: string | undefined;
@@ -5433,7 +5579,7 @@ declare const debugSchema: FluentType<{
 	start_module?: number | undefined;
 	module_count?: number | undefined;
 }, {
-	action: "output" | "sessions" | "modules" | "pause" | "continue" | "threads" | "attach" | "scopes" | "launch" | "evaluate" | "terminate" | "variables" | "disassemble" | "stack_trace" | "read_memory" | "loaded_sources" | "set_breakpoint" | "remove_breakpoint" | "set_instruction_breakpoint" | "remove_instruction_breakpoint" | "data_breakpoint_info" | "set_data_breakpoint" | "remove_data_breakpoint" | "step_over" | "step_in" | "step_out" | "write_memory" | "custom_request";
+	action: "output" | "sessions" | "modules" | "pause" | "continue" | "threads" | "attach" | "scopes" | "launch" | "variables" | "evaluate" | "terminate" | "disassemble" | "stack_trace" | "read_memory" | "loaded_sources" | "set_breakpoint" | "remove_breakpoint" | "set_instruction_breakpoint" | "remove_instruction_breakpoint" | "data_breakpoint_info" | "set_data_breakpoint" | "remove_data_breakpoint" | "step_over" | "step_in" | "step_out" | "write_memory" | "custom_request";
 	offset?: number | undefined;
 	cwd?: string | undefined;
 	name?: string | undefined;
@@ -5840,6 +5986,12 @@ export type RpcCommand = {
 	type: "abort_and_restore_queue";
 } | {
 	id?: string;
+	type: "abort_and_deliver_queue";
+} | {
+	id?: string;
+	type: "resume";
+} | {
+	id?: string;
 	type: "new_session";
 	parentSession?: string;
 } | {
@@ -6032,6 +6184,8 @@ export type RpcCommand = {
 	type: "set_model";
 	provider: string;
 	modelId: string;
+	thinkingLevel?: ConfiguredThinkingLevel;
+	role?: string;
 } | {
 	id?: string;
 	type: "cycle_model";
@@ -6040,6 +6194,11 @@ export type RpcCommand = {
 	id?: string;
 	type: "get_available_models";
 	forceRefresh?: boolean;
+} | {
+	id?: string;
+	type: "get_model_picker";
+	query?: string;
+	limit?: number;
 } | {
 	id?: string;
 	type: "discover_provider_models";
@@ -6056,7 +6215,7 @@ export type RpcCommand = {
 } | {
 	id?: string;
 	type: "set_thinking_level";
-	level: ThinkingLevel | "auto";
+	level: ConfiguredThinkingLevel;
 } | {
 	id?: string;
 	type: "cycle_thinking_level";
@@ -6765,6 +6924,10 @@ export interface RpcSessionState {
 	thinkingConfigured?: ConfiguredThinkingLevel;
 	/** Levels the active model actually supports (empty = model does not reason); pickers must not offer unsupported values. */
 	availableThinkingLevels?: ThinkingLevel[];
+	/** The user's thinking selector: `auto` while auto mode picks the effort. */
+	configuredThinkingLevel?: ConfiguredThinkingLevel;
+	/** Selectors the active model accepts: `off`, `auto`, then its efforts. */
+	thinkingLevels?: ConfiguredThinkingLevel[];
 	isStreaming: boolean;
 	isCompacting: boolean;
 	/** Manual compaction that prepares without blocking the current turn. */
@@ -7450,10 +7613,10 @@ export interface RpcPlanApprovalResult {
 	freshSessionStarted?: boolean;
 }
 /**
- * Emitted when the agent submits a plan for approval (a `write` to
- * `xd://propose` while plan mode is active). The host answers with a
- * `plan_approval` command. `options` lists the approval choices; `"refine"`
- * is answered with `approved: false` plus `feedback`, not `option`.
+ * Emitted when the agent submits a plan for approval (a `propose` call while
+ * plan mode is active, direct or dispatched through `bash`). The host answers
+ * with a `plan_approval` command. `options` lists the approval choices;
+ * `"refine"` is answered with `approved: false` plus `feedback`, not `option`.
  */
 export interface RpcPlanProposalFrame {
 	type: "plan_proposal";
@@ -8226,7 +8389,7 @@ export interface RpcActiveTool {
 }
 /**
  * Result of get_active_tools: active top-level tools (TUI /tools rows),
- * followed by xd:// mounted entries (the `~ xd://name` rows).
+ * followed by mounted tool-command entries.
  */
 export interface RpcActiveToolsResult {
 	tools: RpcActiveTool[];
@@ -8344,6 +8507,19 @@ export type RpcResponse = {
 	command: "abort_and_restore_queue";
 	success: true;
 	data: RpcAbortAndRestoreQueueResult;
+} | {
+	id?: string;
+	type: "response";
+	command: "abort_and_deliver_queue";
+	success: true;
+	data: {
+		aborted: boolean;
+	};
+} | {
+	id?: string;
+	type: "response";
+	command: "resume";
+	success: true;
 } | {
 	id?: string;
 	type: "response";
@@ -8537,6 +8713,12 @@ export type RpcResponse = {
 	data: {
 		models: RpcDiscoveredModel[];
 	};
+} | {
+	id?: string;
+	type: "response";
+	command: "get_model_picker";
+	success: true;
+	data: RpcModelPickerResult;
 } | {
 	id?: string;
 	type: "response";
@@ -10016,6 +10198,14 @@ export type RpcExtensionUIRequest = {
 	method: "form";
 	sections: RpcFormSection[];
 	timeout?: number;
+}
+/** The whole HTML form of one `ui.formDialog` call (the `ask` tool or an extension); no opt-in is required. */
+ | {
+	type: "extension_ui_request";
+	id: string;
+	method: "form";
+	html: string;
+	timeout?: number;
 } | {
 	type: "extension_ui_request";
 	id: string;
@@ -10188,6 +10378,12 @@ export type RpcExtensionUIResponse = {
 		selectedOptions: string[];
 		customInput?: string;
 	}>;
+}
+/** Submitted data of a `form` request, by control `name`; validated against the form. */
+ | {
+	type: "extension_ui_response";
+	id: string;
+	data: Record<string, unknown>;
 };
 export type RpcCommandType = RpcCommand["type"];
 
