@@ -155,6 +155,15 @@ export interface CanvasCommentTarget {
 	/** 点击处，相对于编辑器根元素（`relative`）的坐标。 */
 	at: { x: number; y: number };
 }
+/** 元素选择模式点中的画框内元素：交给查看器填入线程输入区引用条。 */
+export interface CanvasSelectTarget {
+	selection: PageSelection;
+	shown: {
+		version: number;
+		path: string;
+		page: { number: number; name: string };
+	};
+}
 
 export interface CanvasEditorProps {
 	artifactId: string;
@@ -165,6 +174,12 @@ export interface CanvasEditorProps {
 	title: string;
 	/** 评论工具点中了画框；不给时没有评论工具。 */
 	onComment?(target: CanvasCommentTarget): void;
+	/** 右面板选择模式：为真时悬浮高亮并点击选中画框内元素（带 `data-oryn-loc`）交给输入区。 */
+	selectElementMode?: boolean;
+	/** 选择模式点中画框内元素（或点击空白清除）时回调。 */
+	onSelectElement?(target: CanvasSelectTarget | null): void;
+	/** 递增时清除各画框内的选中高亮（输入区移除引用条或消息发出后）。 */
+	clearSelectionSeq?: number;
 	/** 某个画框文件上要画的评论图钉。 */
 	pins?(path: string): SelectPin[];
 	/** 演示（6.8，状态在查看器里）：`null` / 不给 = 没在演示。 */
@@ -225,7 +240,8 @@ type Gesture =
 	| { kind: "frame"; start: Point }
 	| { kind: "pen"; points: number[] }
 	| { kind: "shape"; start: Point }
-	| { kind: "comment"; start: Point };
+	| { kind: "comment"; start: Point }
+	| { kind: "select-element"; start: Point };
 
 interface Preview {
 	doc?: CanvasDoc;
@@ -339,6 +355,9 @@ export function CanvasEditor({
 	variant,
 	title,
 	onComment,
+	selectElementMode = false,
+	onSelectElement,
+	clearSelectionSeq = 0,
 	pins,
 	present = null,
 	onPresentChange,
@@ -524,6 +543,28 @@ export function CanvasEditor({
 		if (tool === "comment" && !commentable) setTool("move");
 	}, [readOnly, tool, commentable]);
 
+	// 右面板选择模式进入时退出画框内部交互，退出时清悬停与选中框
+	useEffect(() => {
+		if (selectElementMode) {
+			setInside(null);
+			return;
+		}
+		if (hoverPage.current) {
+			links.current.get(hoverPage.current)?.post({ kind: "select-leave" });
+			hoverPage.current = null;
+		}
+		for (const link of links.current.values()) {
+			link.post({ kind: "select-source", src: null });
+		}
+	}, [selectElementMode]);
+
+	useEffect(() => {
+		if (clearSelectionSeq === 0) return;
+		for (const link of links.current.values()) {
+			link.post({ kind: "select-source", src: null });
+		}
+	}, [clearSelectionSeq]);
+
 	// 滚轮：平移；Ctrl / ⌘（含触控板捏合）缩放。React 的 onWheel 是被动监听，不能 preventDefault
 	// biome-ignore lint/correctness/useExhaustiveDependencies: 画布区出现后才有元素可挂
 	useEffect(() => {
@@ -688,9 +729,16 @@ export function CanvasEditor({
 		return { kind: "frame", src: pageUrl(frame.url, n, p.file) };
 	};
 
-	// ------------------------------------------------------------ 评论
-	const pickComment = (page: CanvasPage, world: Point, at: Point) => {
-		if (!onComment || !doc) return;
+	// ------------------------------------------------------------ 评论与元素选择
+	const pickFrameElement = (
+		page: CanvasPage,
+		world: Point,
+		onResult: (
+			selection: PageSelection | null,
+			shown: CanvasCommentTarget["shown"],
+		) => void,
+	) => {
+		if (!doc) return;
 		const number =
 			readingOrder(doc, page.canvas).findIndex((p) => p.id === page.id) + 1;
 		const shown = {
@@ -700,7 +748,7 @@ export function CanvasEditor({
 		};
 		const link = links.current.get(page.id);
 		if (!link) {
-			onComment({ selection: null, shown, at });
+			onResult(null, shown);
 			return;
 		}
 		let done = false;
@@ -709,7 +757,7 @@ export function CanvasEditor({
 			done = true;
 			off();
 			clearTimeout(timer);
-			onComment({ selection, shown, at });
+			onResult(selection, shown);
 		};
 		const off = link.on("select", (m) => {
 			if (m.at) finish(m.selection);
@@ -719,6 +767,24 @@ export function CanvasEditor({
 			kind: "select-pick",
 			x: world.x - page.x,
 			y: world.y - page.y,
+		});
+	};
+
+	const pickComment = (page: CanvasPage, world: Point, at: Point) => {
+		if (!onComment) return;
+		pickFrameElement(page, world, (selection, shown) =>
+			onComment({ selection, shown, at }),
+		);
+	};
+
+	const pickSelectElement = (page: CanvasPage, world: Point) => {
+		if (!onSelectElement) return;
+		pickFrameElement(page, world, (selection, shown) => {
+			// 清掉别的画框上残留的选中框
+			for (const [id, l] of links.current.entries()) {
+				if (id !== page.id) l.post({ kind: "select-source", src: null });
+			}
+			onSelectElement(selection ? { selection, shown } : null);
 		});
 	};
 
@@ -829,12 +895,16 @@ export function CanvasEditor({
 			e.button === 1 ||
 			space ||
 			tool === "hand" ||
-			(compact && tool !== "comment");
+			(compact && tool !== "comment" && !selectElementMode);
 		if (pan) {
 			gesture.current = { kind: "pan", sx: s.x, sy: s.y, cam };
 			return;
 		}
 		if (e.button !== 0) return;
+		if (selectElementMode) {
+			gesture.current = { kind: "select-element", start: p };
+			return;
+		}
 		switch (tool) {
 			case "move": {
 				// 单选、可缩放时先看手柄
@@ -1018,7 +1088,7 @@ export function CanvasEditor({
 			touches.current.set(e.pointerId, s);
 		const g = gesture.current;
 		if (!g) {
-			if (tool === "comment") hoverComment(p);
+			if (tool === "comment" || selectElementMode) hoverComment(p);
 			return;
 		}
 		switch (g.kind) {
@@ -1102,6 +1172,7 @@ export function CanvasEditor({
 				setPreview({ draft: shapeDraft(g.start, p) });
 				return;
 			case "comment":
+			case "select-element":
 				hoverComment(p);
 				return;
 		}
@@ -1200,6 +1271,14 @@ export function CanvasEditor({
 					break;
 				const page = pageAt(d, canvasKey, p);
 				if (page) pickComment(page, p, s);
+				break;
+			}
+			case "select-element": {
+				if (Math.hypot(p.x - g.start.x, p.y - g.start.y) * cam.zoom > DRAG_PX)
+					break;
+				const page = pageAt(d, canvasKey, p);
+				if (page) pickSelectElement(page, p);
+				else onSelectElement?.(null);
 				break;
 			}
 			default:
@@ -1431,16 +1510,20 @@ export function CanvasEditor({
 		transform: `translate(${cam.x}px, ${cam.y}px) scale(${z})`,
 		"--z": String(z),
 	} as CSSProperties;
-	const mode: SelectMode = tool === "comment" ? "comment" : null;
+	const mode: SelectMode = selectElementMode
+		? "select"
+		: tool === "comment"
+			? "comment"
+			: null;
 	const cursor =
 		gesture.current?.kind === "pan"
 			? "grabbing"
 			: space || tool === "hand"
 				? "grab"
-				: tool === "move"
-					? "default"
-					: tool === "comment"
-						? "pointer"
+				: selectElementMode || tool === "comment"
+					? "pointer"
+					: tool === "move"
+						? "default"
 						: "crosshair";
 	const sizeLabel = preview?.size
 		? toScreen(cam, preview.size.x, preview.size.y + preview.size.height)
@@ -1659,7 +1742,8 @@ export function CanvasEditor({
 						onPointerUp={onPointerUp}
 						onPointerCancel={onPointerCancel}
 						onPointerLeave={() => {
-							if (!gesture.current && tool === "comment") hoverComment(null);
+							if (!gesture.current && (tool === "comment" || selectElementMode))
+								hoverComment(null);
 						}}
 						onDoubleClick={onDoubleClick}
 					/>

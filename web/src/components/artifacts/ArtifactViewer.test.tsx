@@ -72,6 +72,32 @@ beforeEach(() => {
 			const path = new URL(req.url).pathname;
 			if (path === `/api/v1/artifacts/${ID}` && req.method === "GET")
 				return typeof detail === "function" ? detail() : detail;
+			if (path === `/api/v1/artifacts/${ID}/design` && req.method === "GET")
+				return Response.json({ design: false, autoNotes: true });
+			if (path === `/api/v1/artifacts/${ID}/canvas` && req.method === "GET")
+				return Response.json({
+					version: 3,
+					seq: 0,
+					doc: {
+						format: 2,
+						design: { engine: 1, start: null },
+						canvases: [{ id: "c1", name: "首页" }],
+						pages: [
+							{
+								id: "p1",
+								canvas: "c1",
+								name: "登录",
+								file: "dist/login.html",
+								source: "src/frames/login.tsx",
+								x: 0,
+								y: 0,
+								width: 390,
+								height: 844,
+							},
+						],
+						notes: [],
+					},
+				});
 			if (path === `/api/v1/artifacts/${ID}/frames`)
 				return Response.json(
 					{ url: FRAME_URL, token: "t".repeat(26) },
@@ -358,5 +384,121 @@ describe("ArtifactViewer", () => {
 			expect(drawer).toHaveAccessibleName(i18n.t("artifacts.edit.title"));
 			expect(screen.queryByTestId("artifact-edit-side")).toBeNull();
 		});
+	});
+
+	it("M29 K3：画布在右面板开启选择模式点选画框元素，通过 onSelection 回传带 loc 的锚点", async () => {
+		detail = () =>
+			Response.json({
+				artifact: artifact({ kind: "canvas", title: "登录原型", pages: 1 }),
+				version: 3,
+				head: 3,
+				files: [
+					{ path: "canvas.json", size: 200, sha256: "a".repeat(64) },
+					{ path: "dist/login.html", size: 256, sha256: "b".repeat(64) },
+				],
+				capabilities: [],
+				threads: [],
+			});
+		const onSel = vi.fn();
+		wrap(
+			<ArtifactViewer
+				artifactId={ID}
+				variant="panel"
+				onSelection={onSel}
+				selectionHeld
+			/>,
+		);
+		// 右面板顶栏出现选择按钮
+		const selectBtn = await screen.findByTestId("artifact-mode-select");
+		const overlay = await screen.findByTestId("canvas-overlay");
+		const stage = overlay.parentElement as HTMLElement;
+		vi.spyOn(stage, "getBoundingClientRect").mockReturnValue({
+			left: 0,
+			top: 0,
+			right: 800,
+			bottom: 600,
+			width: 800,
+			height: 600,
+			x: 0,
+			y: 0,
+			toJSON: () => ({}),
+		});
+		const frame = (await screen.findByTestId(
+			"canvas-frame",
+		)) as HTMLIFrameElement;
+		let channel = "";
+		vi.spyOn(frame.contentWindow as Window, "postMessage").mockImplementation(
+			(msg: unknown) => {
+				const m = msg as {
+					kind?: string;
+					channel?: string;
+					x?: number;
+					y?: number;
+				};
+				if (m.kind === "hello" && m.channel) channel = m.channel;
+				if (m.kind === "select-pick" && channel) {
+					window.dispatchEvent(
+						new MessageEvent("message", {
+							data: {
+								v: 1,
+								channel,
+								kind: "select",
+								at: { x: m.x ?? 40, y: m.y ?? 40 },
+								selection: {
+									path: "dist/login.html",
+									src: null,
+									loc: "src/frames/login.tsx:12:5",
+									tag: "h1",
+									text: "欢迎回来",
+									textOnly: true,
+									style: {
+										color: "#18181b",
+										"background-color": "#00000000",
+										"font-size": "28px",
+										"font-weight": "700",
+										"text-align": "left",
+										padding: "0px",
+										"border-radius": "0px",
+									},
+								},
+							},
+							source: frame.contentWindow,
+						}),
+					);
+				}
+			},
+		);
+		act(() => {
+			frame.dispatchEvent(new Event("load"));
+		});
+		fireEvent.click(selectBtn);
+		// jsdom 中 clientWidth=0 时 cam=IDENTITY，唯一画框 p1 在 (0..390, 0..844)
+		fireEvent.pointerDown(overlay, {
+			button: 0,
+			pointerId: 1,
+			clientX: 100,
+			clientY: 100,
+		});
+		fireEvent.pointerUp(overlay, {
+			button: 0,
+			pointerId: 1,
+			clientX: 100,
+			clientY: 100,
+		});
+		await waitFor(() =>
+			expect(onSel).toHaveBeenLastCalledWith(
+				expect.objectContaining({
+					artifactId: ID,
+					anchor: expect.objectContaining({
+						path: "dist/login.html",
+						loc: "src/frames/login.tsx:12:5",
+						tag: "h1",
+					}),
+				}),
+			),
+		);
+		// 画布选择元素只发给输入区，不弹 web 的直接编辑面板
+		expect(screen.queryByTestId("artifact-edit-side")).toBeNull();
+		expect(screen.queryByTestId("artifact-edit-drawer")).toBeNull();
 	});
 });

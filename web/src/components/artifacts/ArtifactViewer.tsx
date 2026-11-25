@@ -54,7 +54,11 @@ import { ArtifactMenu } from "./ArtifactMenu";
 import { anchorOf, pinsOf } from "./anchors";
 import { CommentBox } from "./CommentBox";
 import { CommentsPanel } from "./CommentsPanel";
-import { CanvasEditor, type PresentRequest } from "./canvas/CanvasEditor";
+import {
+	CanvasEditor,
+	type CanvasSelectTarget,
+	type PresentRequest,
+} from "./canvas/CanvasEditor";
 import { EditPanel } from "./EditPanel";
 import { type FramePost, PageFrame, type PageSelectMessage } from "./PageFrame";
 import { PresenceFaces } from "./PresenceFaces";
@@ -197,8 +201,11 @@ export function ArtifactViewer({
 	const [draft, setDraft] = useState<CommentDraft | null>(null);
 	// 页面最近一次报来的选中元素（选择模式下在侧栏直接编辑它）
 	const [selection, setSelection] = useState<PageSelection | null>(null);
+	// 画布右面板选择模式下选中的画框内元素（交给线程输入区引用条）
+	const [canvasSelection, setCanvasSelection] =
+		useState<CanvasSelectTarget | null>(null);
+	const [canvasClearSeq, setCanvasClearSeq] = useState(0);
 	const frameBoxRef = useRef<HTMLDivElement>(null);
-	// 正在看的旧版本；null = 跟随最新
 	const [pinned, setPinned] = useState<ArtifactVersion | null>(null);
 	// 类型化 artifact 的查看器在演示：帧容器铺满窗口
 	const [presenting, setPresenting] = useState(false);
@@ -229,10 +236,15 @@ export function ArtifactViewer({
 	const isDesign = !!designState.data?.design;
 	// 选中的是最新版本就回到跟随
 	const pinnedVersion = pinned && pinned.version !== head ? pinned : null;
-	// 选择与评论只对跟随最新版本、不在回收站的页面 artifact（画布有自己的编辑器）
+	// 页面支持选择（编辑 + 引用）与评论；画布在右面板有输入区回调时也支持选择元素引用给线程
 	const canSelect = !!live && !pinnedVersion && artifact?.kind === "web";
-	const activeMode = canSelect ? mode : null;
-	// 评论面板只在整页里有
+	const canCanvasSelect =
+		!!live && !pinnedVersion && artifact?.kind === "canvas" && !!onSelection;
+	const activeMode = canSelect
+		? mode
+		: canCanvasSelect && mode === "select"
+			? "select"
+			: null;
 	const commentsTab = variant === "page" && !!live;
 	const comments = useArtifactComments(artifactId, !!live);
 	const commentThreads = comments.data?.threads ?? [];
@@ -272,7 +284,7 @@ export function ArtifactViewer({
 		setMode(entering ? m : null);
 		setDraft(null);
 		setSelection(null);
-		// 整页（非 compact）进入评论模式时顺手打开评论面板
+		setCanvasSelection(null);
 		if (entering && m === "comment" && commentsTab && !compact) {
 			setSide("comments");
 			setSegment("side");
@@ -290,6 +302,7 @@ export function ArtifactViewer({
 			setMode(null);
 			setDraft(null);
 			setSelection(null);
+			setCanvasSelection(null);
 			return true;
 		}
 		if (showSide) {
@@ -307,9 +320,15 @@ export function ArtifactViewer({
 		() => false,
 	);
 	modeKeyRef.current = (m) => {
-		if (!canSelect) return false;
-		toggleMode(m);
-		return true;
+		if (canSelect) {
+			toggleMode(m);
+			return true;
+		}
+		if (canCanvasSelect && m === "select") {
+			toggleMode("select");
+			return true;
+		}
+		return false;
 	};
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
@@ -371,17 +390,27 @@ export function ArtifactViewer({
 	// 关掉编辑面板或保存冲突：页面与这里一起清掉选中
 	const clearSelection = () => {
 		setSelection(null);
+		setCanvasSelection(null);
+		setCanvasClearSeq((n) => n + 1);
 		post?.({ kind: "select-source", src: null });
 	};
 
-	// 右面板（3.5）：选择模式下选中的元素交给输入区；内容不变就不重报（JSON 作键）
+	// 右面板（3.5 / M29 K3）：选择模式下选中的元素交给输入区；内容不变就不重报（JSON 作键）
+	const selectedAnchor =
+		activeMode === "select"
+			? selection
+				? anchorOf(selection, { version: head, path: pagePath })
+				: canvasSelection
+					? anchorOf(canvasSelection.selection, canvasSelection.shown)
+					: null
+			: null;
 	const selectedKey =
-		onSelection && activeMode === "select" && selection && artifact
+		onSelection && selectedAnchor && artifact
 			? JSON.stringify({
 					artifactId,
 					title: artifact.title,
 					version: head,
-					anchor: anchorOf(selection, { version: head, path: pagePath }),
+					anchor: selectedAnchor,
 				} satisfies ArtifactSelectionRef)
 			: "";
 	const onSelectionRef = useRef(onSelection);
@@ -406,7 +435,8 @@ export function ArtifactViewer({
 	useEffect(() => {
 		const was = heldRef.current;
 		heldRef.current = selectionHeld;
-		if (was && !selectionHeld && selection) clearSelection();
+		if (was && !selectionHeld && (selection || canvasSelection))
+			clearSelection();
 	}, [selectionHeld]);
 
 	const editPanel = (sel: PageSelection) => (
@@ -506,6 +536,9 @@ export function ArtifactViewer({
 							}
 						: undefined
 				}
+				selectElementMode={canCanvasSelect && activeMode === "select"}
+				onSelectElement={canCanvasSelect ? setCanvasSelection : undefined}
+				clearSelectionSeq={canvasClearSeq}
 				pins={
 					canvasComments ? (path) => pinsOf(commentThreads, path) : undefined
 				}
@@ -612,37 +645,37 @@ export function ArtifactViewer({
 							threads={detail.data?.threads}
 							canFollow={artifact.kind === "canvas" && !pinnedVersion}
 						/>
+						{(canSelect || canCanvasSelect) && (
+							<IconButton
+								icon="cursor"
+								box="sm"
+								size={15}
+								active={activeMode === "select"}
+								data-testid="artifact-mode-select"
+								label={t("artifacts.comments.selectMode")}
+								onClick={() => toggleMode("select")}
+							/>
+						)}
 						{canSelect && (
-							<>
+							<span className="relative inline-flex shrink-0">
 								<IconButton
-									icon="cursor"
+									icon="message"
 									box="sm"
 									size={15}
-									active={activeMode === "select"}
-									data-testid="artifact-mode-select"
-									label={t("artifacts.comments.selectMode")}
-									onClick={() => toggleMode("select")}
+									active={activeMode === "comment"}
+									data-testid="artifact-mode-comment"
+									label={t("artifacts.comments.commentMode")}
+									onClick={() => toggleMode("comment")}
 								/>
-								<span className="relative inline-flex shrink-0">
-									<IconButton
-										icon="message"
-										box="sm"
-										size={15}
-										active={activeMode === "comment"}
-										data-testid="artifact-mode-comment"
-										label={t("artifacts.comments.commentMode")}
-										onClick={() => toggleMode("comment")}
-									/>
-									{unresolved > 0 && (
-										<span
-											aria-hidden
-											className="pointer-events-none absolute -top-0.5 -right-0.5 inline-flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-accent px-0.5 font-semibold text-[9px] text-accent-fg tabular-nums leading-none"
-										>
-											{unresolved > 99 ? "99+" : unresolved}
-										</span>
-									)}
-								</span>
-							</>
+								{unresolved > 0 && (
+									<span
+										aria-hidden
+										className="pointer-events-none absolute -top-0.5 -right-0.5 inline-flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-accent px-0.5 font-semibold text-[9px] text-accent-fg tabular-nums leading-none"
+									>
+										{unresolved > 99 ? "99+" : unresolved}
+									</span>
+								)}
+							</span>
 						)}
 						{(artifact.kind === "web" || artifact.kind === "canvas") && (
 							<IconButton
