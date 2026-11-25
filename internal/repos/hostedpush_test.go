@@ -76,10 +76,13 @@ func newHostedPushServer(t *testing.T) *hostedPushServer {
 			pusher = egress.HostedPusher{OrbID: "orb-1", ThreadID: s.thread}
 		case "gone":
 			pusher = egress.HostedPusher{OrbID: "orb-1", ThreadID: s.thread}
-			ctx, cancel := context.WithCancel(r.Context())
-			defer cancel()
-			r = r.WithContext(ctx)
-			w = &cancelOnWrite{ResponseWriter: w, cancel: cancel}
+			// 只在 POST git-receive-pack 写响应时取消 ctx，避免在握手 GET info/refs 阶段就把 git-http-backend 杀掉。
+			if r.Method == http.MethodPost && rest == "git-receive-pack" {
+				ctx, cancel := context.WithCancel(r.Context())
+				defer cancel()
+				r = r.WithContext(ctx)
+				w = &cancelOnWrite{ResponseWriter: w, cancel: cancel}
+			}
 		}
 		s.env.svc.ServeHostedGit(w, r, s.id, rest, pusher)
 	}))
