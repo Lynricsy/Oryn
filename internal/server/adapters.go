@@ -119,7 +119,9 @@ func (r runnerAgent) ProjectSSH(ctx context.Context, threadID string) ([]byte, e
 	return r.Service.RunnerProjectSSH(ctx, threadID)
 }
 
-func (r runnerAgent) KnownSecrets(ctx context.Context) (map[string]string, error) { return r.secrets.All(ctx) }
+func (r runnerAgent) KnownSecrets(ctx context.Context) (map[string]string, error) {
+	return r.secrets.All(ctx)
+}
 
 func (r runnerAgent) NoteWithheld(ctx context.Context, orbID, threadID string, withheld []agentcfg.Withheld) {
 	r.orbs.NoteRunnerWithheld(ctx, orbID, threadID, withheld)

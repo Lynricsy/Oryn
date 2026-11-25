@@ -70,7 +70,9 @@ func clampFactTS(ts, now int64) int64 {
 
 // factKey 是跨线程去重键：fork 拷贝的条目 id 与时间戳都与源条目相同。ts 用条目里的原值（不钳制），
 // 同一条目无论何时、在哪个线程入库都得到同一个键。
-func factKey(entryID string, ts int64) string { return factKeyID(entryID) + "@" + strconv.FormatInt(ts, 10) }
+func factKey(entryID string, ts int64) string {
+	return factKeyID(entryID) + "@" + strconv.FormatInt(ts, 10)
+}
 
 func factKeyID(entryID string) string {
 	if len(entryID) <= maxFactKeyIDLen {

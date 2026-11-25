@@ -24,14 +24,14 @@ import (
 
 // fakeInnerRelay 模拟 orb 内的 `omp browser-relay`：提供 /ext、/json/version 与 /cdp。
 type fakeInnerRelay struct {
-	srv         *http.Server
-	ln          net.Listener
-	token       string
-	extSeen     atomic.Bool
+	srv          *http.Server
+	ln           net.Listener
+	token        string
+	extSeen      atomic.Bool
 	extConnected chan struct{}
-	extIncoming chan string
-	extSend     chan string
-	stopped     atomic.Bool
+	extIncoming  chan string
+	extSend      chan string
+	stopped      atomic.Bool
 }
 
 func startFakeInnerRelay(t *testing.T, port int, token string) (*fakeInnerRelay, func(), error) {

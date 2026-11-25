@@ -432,9 +432,9 @@ func coordinatorModelFrames(u CoordinatorModelUpdate) [][]byte {
 // SyncCoordinatorModel 将协调线程（全局助手主线）的模型与思考档位同步为新设置。
 // 无论是切换到具体值还是恢复默认，都显式下发 oryn_select_model / set_thinking_level，
 // 避免有历史会话的主线在 open_session → switchSession 时恢复磁盘里的旧模型或旧思考档位：
-// - 会话已就绪且无需重启时：直接在线按序下发显式切换帧并紧跟 get_state 写回数据库与推送客户端；
-// - 会话离线、启动中或即将重启时：更新内存与数据库行，并在需要切回 default role（或合并到已有待切回 default role 的
-//   挂起帧）时把显式切换帧持久化到 startup_frames / pendingModelSync，等下次 onReadyLocked 优先执行并刷新落库。
+//   - 会话已就绪且无需重启时：直接在线按序下发显式切换帧并紧跟 get_state 写回数据库与推送客户端；
+//   - 会话离线、启动中或即将重启时：更新内存与数据库行，并在需要切回 default role（或合并到已有待切回 default role 的
+//     挂起帧）时把显式切换帧持久化到 startup_frames / pendingModelSync，等下次 onReadyLocked 优先执行并刷新落库。
 func (s *Service) SyncCoordinatorModel(ctx context.Context, threadID string, u CoordinatorModelUpdate) error {
 	if !u.SetModel && !u.SetThinking {
 		return nil

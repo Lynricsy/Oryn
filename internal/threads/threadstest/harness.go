@@ -67,8 +67,8 @@ type Orbs struct {
 	snapshots []string
 	blobs     map[string][]byte
 	// hold 为真时新建 / 唤醒的 orb 停在 requested，直到 Release（模拟 provider 尚未执行 spawn）。
-	hold     bool
-	held     map[string]bool
+	hold bool
+	held map[string]bool
 	// booting 是正在拉起 fake orbd 的 orb（startOrbd 在途；同一 orb 同时只拉起一个）。
 	booting  map[string]bool
 	snapGate chan struct{}

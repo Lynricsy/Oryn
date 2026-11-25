@@ -45,8 +45,8 @@ type ParsedEntry struct {
 
 // UsageRecord 对应 usage_records 的一行（不含 thread / seq / ukey）。
 type UsageRecord struct {
-	TS                                 int64
-	Provider, Model                    string
+	TS              int64
+	Provider, Model string
 	// Purpose 是 model_usage 的用途（缺失记 unknown）；对话回合的 assistant 消息为空串。
 	Purpose                            string
 	StopReason                         string

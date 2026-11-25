@@ -100,7 +100,7 @@ var coordinatorMethods = map[string]bool{
 	"setup.run": true, "resume.run": true, "agent.start": true, "agent.stop": true, "shutdown": true,
 	string(apigen.MethodOmpHomeApply): true,
 	string(apigen.MethodLibrarySync):  true, string(apigen.MethodLibraryFetch): true,
-	string(apigen.MethodBlobFetch):    true,
+	string(apigen.MethodBlobFetch): true,
 }
 
 func (r *Runtime) coordinatorDir() string { return filepath.Join(r.home, ".oryn", "coordinator") }
