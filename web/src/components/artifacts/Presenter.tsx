@@ -13,6 +13,7 @@ import {
 	type ReactNode,
 	type RefObject,
 	useEffect,
+	useLayoutEffect,
 	useRef,
 	useState,
 } from "react";
@@ -61,11 +62,17 @@ export function useBoxSize(ref: RefObject<HTMLElement | null>): {
 	height: number;
 } {
 	const [size, setSize] = useState({ width: 0, height: 0 });
-	useEffect(() => {
+	useLayoutEffect(() => {
 		const el = ref.current;
 		if (!el) return;
+		const measure = () => {
+			if (el.clientWidth > 0 && el.clientHeight > 0)
+				setSize({ width: el.clientWidth, height: el.clientHeight });
+		};
+		measure();
 		if (typeof ResizeObserver === "undefined") {
-			setSize({ width: window.innerWidth, height: window.innerHeight });
+			if (el.clientWidth === 0 && el.clientHeight === 0)
+				setSize({ width: window.innerWidth, height: window.innerHeight });
 			return;
 		}
 		const ro = new ResizeObserver(([entry]) => {

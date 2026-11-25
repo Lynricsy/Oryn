@@ -2093,8 +2093,8 @@ async function caseK6() {
 	note("✓ 原型模式打开，初始帧标题为「登录」");
 
 	const shell = dialog.locator("[data-testid=device-shell][data-device=phone]");
+	await shell.waitFor({ timeout: 10_000 });
 	expect(await shell.isVisible(), "登录帧按 device=phone 套上手机设备外壳");
-
 	const protoFrame1 = await waitCanvasFrame(p, {
 		iframeSelector: "[data-testid=canvas-prototype] iframe",
 		text: "前往注册",
