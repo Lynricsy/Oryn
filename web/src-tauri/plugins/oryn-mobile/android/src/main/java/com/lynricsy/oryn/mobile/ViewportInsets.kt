@@ -65,25 +65,27 @@ data class ViewportInsets(
       return (px / density.toDouble() * 100.0).roundToLong() / 100.0
     }
 
-    /** 计算有效底部安全区物理 px（手势导航收紧、三键导航原样保留，并扣除已作原生 padding 的软键盘高度）。 */
-    fun effectiveSafeBottomPx(
-      barsBottom: Int,
+    /**
+     * 仅对手势导航的 `navigationBars().bottom`（`tappableBottom <= 0`）收紧上限至 16dp；
+     * 三键导航（`tappableBottom > 0`）原样保留。不触碰 `displayCutout` / `statusBars` / `captionBar`。
+     */
+    fun clampGestureNavBottomPx(
+      navBottom: Int,
       tappableBottom: Int,
-      imeBottom: Int,
       density: Float,
     ): Int {
-      val clamped = if (tappableBottom <= 0 && barsBottom > 0 && density > 0f && !density.isInfinite()) {
-        min(barsBottom, (GESTURE_NAV_MAX_DP * density).roundToInt())
+      val nb = navBottom.coerceAtLeast(0)
+      return if (tappableBottom <= 0 && nb > 0 && density > 0f && !density.isInfinite()) {
+        min(nb, (GESTURE_NAV_MAX_DP * density).roundToInt())
       } else {
-        barsBottom.coerceAtLeast(0)
+        nb
       }
-      val kb = imeBottom.coerceAtLeast(0)
-      return (clamped - kb).coerceAtLeast(0)
     }
 
     /**
-     * 由窗口原生 px 构造：WebView 铺满屏幕，仅底部软键盘 `imeBottom` 作为容器外 padding，
-     * 系统栏 + 挖孔安全区由 Web 侧消费（键盘弹出时底部已被容器推离导航栏，故扣除 `imeBottom`）。
+     * 由窗口原生 px 构造：WebView 铺满屏幕，仅底部软键盘 `imeBottom` 作为容器外 padding；
+     * `safe*` 必须取自扣除 `imeBottom` 且仅钳制手势 `navigationBars().bottom` 后的最终 insets，
+     * 从而完整保留底部挖孔与其余系统遮挡。
      */
     fun fromWindowInsets(
       density: Float,
@@ -93,10 +95,8 @@ data class ViewportInsets(
       safeLeft: Int,
       imeBottom: Int,
       corners: List<Int?>,
-      tappableBottom: Int = 0,
     ): ViewportInsets {
       val kb = imeBottom.coerceAtLeast(0)
-      val remainingBottom = effectiveSafeBottomPx(safeBottom, tappableBottom, kb, density)
       fun c(i: Int) = toCss(corners.getOrNull(i) ?: 0, density)
       return ViewportInsets(
         top = 0.0,
@@ -105,7 +105,7 @@ data class ViewportInsets(
         left = 0.0,
         safeTop = toCss(safeTop, density),
         safeRight = toCss(safeRight, density),
-        safeBottom = toCss(remainingBottom, density),
+        safeBottom = toCss(safeBottom, density),
         safeLeft = toCss(safeLeft, density),
         tl = c(0),
         tr = c(1),

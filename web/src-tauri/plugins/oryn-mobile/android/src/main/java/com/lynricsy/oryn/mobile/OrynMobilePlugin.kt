@@ -506,13 +506,32 @@ class OrynMobilePlugin(initial: Activity) : Plugin(initial) {
   private fun installInsets(act: Activity) {
     val content = act.findViewById<View>(android.R.id.content) ?: return
     ViewCompat.setOnApplyWindowInsetsListener(content) { v, wi ->
-      val bars = wi.getInsets(
-        WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
-      )
-      val tappable = wi.getInsets(WindowInsetsCompat.Type.tappableElement())
       val ime = wi.getInsets(WindowInsetsCompat.Type.ime())
       val density = v.resources.displayMetrics.density
       v.setPadding(0, 0, 0, ime.bottom)
+      val base = wi.inset(0, 0, 0, ime.bottom)
+      val nav = base.getInsets(WindowInsetsCompat.Type.navigationBars())
+      val tappable = base.getInsets(WindowInsetsCompat.Type.tappableElement())
+      val clampedNavBottom = ViewportInsets.clampGestureNavBottomPx(
+        navBottom = nav.bottom,
+        tappableBottom = tappable.bottom,
+        density = density,
+      )
+      // 仅改写 navigationBars 位，避免 setInsets(systemBars(), …) 按位覆写 statusBars / captionBar，
+      // 且不裁切 displayCutout 底部挖孔
+      val passthrough = if (clampedNavBottom < nav.bottom) {
+        WindowInsetsCompat.Builder(base)
+          .setInsets(
+            WindowInsetsCompat.Type.navigationBars(),
+            CoreInsets.of(nav.left, nav.top, nav.right, clampedNavBottom),
+          )
+          .build()
+      } else {
+        base
+      }
+      val safe = passthrough.getInsets(
+        WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
+      )
       val platform = wi.toWindowInsets()
       val corners = listOf(
         RoundedCorner.POSITION_TOP_LEFT,
@@ -522,41 +541,18 @@ class OrynMobilePlugin(initial: Activity) : Plugin(initial) {
       ).map { platform?.getRoundedCorner(it)?.radius }
       val next = ViewportInsets.fromWindowInsets(
         density = density,
-        safeTop = bars.top,
-        safeRight = bars.right,
-        safeBottom = bars.bottom,
-        safeLeft = bars.left,
+        safeTop = safe.top,
+        safeRight = safe.right,
+        safeBottom = safe.bottom,
+        safeLeft = safe.left,
         imeBottom = ime.bottom,
         corners = corners,
-        tappableBottom = tappable.bottom,
       )
       if (next != insets) {
         insets = next
         emitInsets(next)
       }
-      val effectiveBottom = ViewportInsets.effectiveSafeBottomPx(
-        barsBottom = bars.bottom,
-        tappableBottom = tappable.bottom,
-        imeBottom = ime.bottom,
-        density = density,
-      )
-      val remaining = wi.inset(0, 0, 0, ime.bottom)
-      if (tappable.bottom <= 0 && ime.bottom <= 0 && effectiveBottom < bars.bottom) {
-        val nav = remaining.getInsets(WindowInsetsCompat.Type.navigationBars())
-        val sys = remaining.getInsets(WindowInsetsCompat.Type.systemBars())
-        WindowInsetsCompat.Builder(remaining)
-          .setInsets(
-            WindowInsetsCompat.Type.navigationBars(),
-            CoreInsets.of(nav.left, nav.top, nav.right, effectiveBottom),
-          )
-          .setInsets(
-            WindowInsetsCompat.Type.systemBars(),
-            CoreInsets.of(sys.left, sys.top, sys.right, effectiveBottom),
-          )
-          .build()
-      } else {
-        remaining
-      }
+      passthrough
     }
     ViewCompat.requestApplyInsets(content)
   }
