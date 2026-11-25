@@ -38,6 +38,12 @@ func TestProvidersOverviewAPI(t *testing.T) {
 		DiskUsedBytes:      180 << 30,
 		DiskAvailableBytes: new(int64(320 << 30)),
 		DiskPath:           new("/var/lib/docker"),
+		OrbDiskBytes:       new(int64(3584 << 20)),
+		OrbDiskByOrb: map[string]int64{
+			"orb-run1": 2048 << 20,
+			"orb-run2": 1024 << 20,
+			"orb-frz1": 512 << 20,
+		},
 	}
 	hello := apigen.ProviderHelloRequest{
 		InstanceID:   "inst-1",
@@ -165,13 +171,16 @@ func TestProvidersOverviewAPI(t *testing.T) {
 	assert.InDelta(t, 14.0, float64(ov.Summary.Allocated.TotalCpus), 0.01)
 	assert.Equal(t, int64(28672), ov.Summary.Allocated.TotalMemoryMB)
 
-	// 两个运行中 orb 的 CPU/内存正常汇总，但共享底盘 statfs 不做跨 orb 累加（宿主机磁盘只记一次 180 GiB）
+	// 两个运行中 orb 的 CPU/内存正常汇总，但共享底盘 statfs 不做跨 orb 累加（宿主机磁盘只记一次 180 GiB，orb 独占盘精确计 3.5 GiB）
 	assert.Equal(t, 2, ov.Summary.Live.SampledOrbs)
 	assert.InDelta(t, 100.0, float64(ov.Summary.Live.CPUPct), 0.01)
 	assert.InDelta(t, 8192.0, float64(ov.Summary.Live.MemUsedMB), 0.01)
 	assert.Equal(t, int64(8000), ov.Summary.Live.NetRxBytes)
 	assert.Equal(t, int64(4000), ov.Summary.Live.NetTxBytes)
 	assert.Equal(t, int64(180<<30), ov.Summary.Host.DiskUsedBytes)
+	assert.InDelta(t, 13.6, float64(ov.Summary.Host.CPUUsedCores), 0.01) // 32 * 42.5% = 13.6 核
+	assert.Equal(t, int64(3584<<20), ov.Summary.Host.OrbDiskBytes)
+	assert.Equal(t, 1, ov.Summary.Host.OrbDiskReportedCount)
 	assert.Equal(t, 1, ov.Summary.Snapshots.ReadyCount)
 	assert.Equal(t, 1, ov.Summary.Snapshots.BuildingCount)
 	assert.Equal(t, int64(2<<30), ov.Summary.Snapshots.TotalBytes)
@@ -212,10 +221,14 @@ func TestProvidersOverviewAPI(t *testing.T) {
 	require.NotNil(t, run1.LatestSample)
 	assert.InDelta(t, 85.5, float64(run1.LatestSample.CPUPct), 0.01)
 	assert.InDelta(t, float64(sharedDiskMB), float64(run1.LatestSample.DiskUsedMB), 0.1)
+	require.NotNil(t, run1.DiskBytes)
+	assert.Equal(t, int64(2048<<20), *run1.DiskBytes)
 
 	require.NotNil(t, run2)
 	require.NotNil(t, run2.LatestSample)
 	assert.InDelta(t, float64(sharedDiskMB), float64(run2.LatestSample.DiskUsedMB), 0.1)
+	require.NotNil(t, run2.DiskBytes)
+	assert.Equal(t, int64(1024<<20), *run2.DiskBytes)
 
 	require.NotNil(t, failedOrb)
 	require.NotNil(t, failedOrb.FailureReason)

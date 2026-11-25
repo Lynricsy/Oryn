@@ -38,11 +38,16 @@ type Docker struct {
 	// hookSnapshotStopped（测试用）在 sysbox 快照停机之后、commit 之前调用。
 	hookSnapshotStopped func()
 
-	baseMu     sync.Mutex
-	baseID     string
-	baseAt     time.Time
-	diskDir    string
-	diskDirSet bool
+	baseMu       sync.Mutex
+	baseID       string
+	baseAt       time.Time
+	diskDir      string
+	diskDirSet   bool
+	orbDiskMu    sync.Mutex
+	orbDiskAt    time.Time
+	orbDiskTotal int64
+	orbDiskByOrb map[string]int64
+	orbDiskValid bool
 	// offline 缓存停机 orb 的文件索引（只读预览，见 offlinefs_docker.go）。
 	offline indexCache
 }

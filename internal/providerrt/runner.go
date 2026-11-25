@@ -177,7 +177,16 @@ func (r *Runner) hello(ctx context.Context) error {
 		req.BaseImageID = &info.BaseImageID
 	}
 	if r.hostSampler != nil {
-		req.HostMetrics = r.hostSampler.Sample(time.Now(), info.DiskPath, info.Limits)
+		hm := r.hostSampler.Sample(time.Now(), info.DiskPath, info.Limits)
+		if sizer, ok := r.Driver.(OrbDiskSizer); ok {
+			if total, byOrb, ok := sizer.OrbDiskUsage(ctx); ok {
+				hm.OrbDiskBytes = &total
+				if trimmed := trimOrbDiskMap(byOrb); len(trimmed) > 0 {
+					hm.OrbDiskByOrb = trimmed
+				}
+			}
+		}
+		req.HostMetrics = hm
 	}
 	var res apigen.ProviderHelloResponse
 	return r.post(ctx, "/provider/v1/hello", req, &res)

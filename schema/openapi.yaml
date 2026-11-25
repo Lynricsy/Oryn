@@ -11509,6 +11509,14 @@ components:
         diskUsedBytes: { type: integer, format: int64 }
         diskAvailableBytes: { type: integer, format: int64 }
         diskPath: { type: string }
+        orbDiskBytes:
+          type: integer
+          format: int64
+          description: 该节点上全部 orb 可写层/可写盘大小之和（Docker 为容器逻辑可写层 SizeRw，含稀疏文件逻辑大小；Firecracker 为稀疏盘 st_blocks*512，reflink 卷上可能与快照共享块；Process 为 orb 目录大小）。作为独立参考读数，不与宿主机 statfs 做物理扣减。
+        orbDiskByOrb:
+          type: object
+          additionalProperties: { type: integer, format: int64 }
+          description: 按 orbId 记录的单台 orb 可写层/可写盘字节数（口径同 orbDiskBytes）
         limits: { $ref: '#/components/schemas/ProviderHostLimits' }
     ProviderOrbCounts:
       type: object
@@ -11567,14 +11575,22 @@ components:
     ProvidersHostTotals:
       type: object
       description: 已上报宿主机指标的在线 provider 宿主机容量汇总
-      required: [reportedCount, cpuCores, memTotalMB, memUsedMB, diskTotalBytes, diskUsedBytes]
+      required: [reportedCount, cpuCores, cpuUsedCores, memTotalMB, memUsedMB, diskTotalBytes, diskUsedBytes, orbDiskBytes, orbDiskReportedCount]
       properties:
         reportedCount: { type: integer }
         cpuCores: { type: integer }
+        cpuUsedCores:
+          type: number
+          description: 已上报整机 CPU 使用率的宿主机实际占用核数之和（sum(cpuCores * cpuPct / 100)）
         memTotalMB: { type: integer, format: int64 }
         memUsedMB: { type: integer, format: int64 }
         diskTotalBytes: { type: integer, format: int64 }
         diskUsedBytes: { type: integer, format: int64 }
+        orbDiskBytes:
+          type: integer
+          format: int64
+          description: 已上报 orbDiskBytes 的在线 provider 的 orb 可写层/可写盘字节数之和（独立参考读数，不与宿主机 statfs 或快照缓存做物理扣减）
+        orbDiskReportedCount: { type: integer }
     ProviderSnapshotStats:
       type: object
       description: 项目快照数量与存储占用
@@ -11621,6 +11637,10 @@ components:
         stateChangedAt: { $ref: '#/components/schemas/TimestampMs' }
         createdAt: { $ref: '#/components/schemas/TimestampMs' }
         lastActivityAt: { $ref: '#/components/schemas/TimestampMs' }
+        diskBytes:
+          type: integer
+          format: int64
+          description: 该 orb 可写层/可写盘字节数（Docker 为逻辑 SizeRw，Firecracker 为 st_blocks*512 可能含 reflink 共享块；缺失时省略）
         latestSample: { $ref: '#/components/schemas/OrbMetricSample' }
     ProviderOverviewItem:
       type: object

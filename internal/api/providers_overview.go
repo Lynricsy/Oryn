@@ -266,6 +266,11 @@ func (s *Server) GetProvidersOverview(w http.ResponseWriter, r *http.Request) {
 			if act := maxOptionalTS(o.LastAgentActivityAt, o.LastUserInteractionAt); act != nil {
 				summary.LastActivityAt = act
 			}
+			if item.HostMetrics != nil && item.HostMetrics.OrbDiskByOrb != nil {
+				if dbBytes, ok := item.HostMetrics.OrbDiskByOrb[o.ID]; ok {
+					summary.DiskBytes = &dbBytes
+				}
+			}
 			if smp, ok := sampleByOrb[o.ID]; ok {
 				smpCopy := smp
 				summary.LatestSample = &smpCopy
@@ -306,10 +311,17 @@ func (s *Server) GetProvidersOverview(w http.ResponseWriter, r *http.Request) {
 		if pv.Online && item.HostMetrics != nil {
 			out.Summary.Host.ReportedCount++
 			out.Summary.Host.CPUCores += item.HostMetrics.CPUCores
+			if item.HostMetrics.CPUPct != nil && item.HostMetrics.CPUCores > 0 {
+				out.Summary.Host.CPUUsedCores += float32(float64(item.HostMetrics.CPUCores) * float64(*item.HostMetrics.CPUPct) / 100.0)
+			}
 			out.Summary.Host.MemTotalMB += item.HostMetrics.MemTotalMB
 			out.Summary.Host.MemUsedMB += item.HostMetrics.MemUsedMB
 			out.Summary.Host.DiskTotalBytes += item.HostMetrics.DiskTotalBytes
 			out.Summary.Host.DiskUsedBytes += item.HostMetrics.DiskUsedBytes
+			if item.HostMetrics.OrbDiskBytes != nil {
+				out.Summary.Host.OrbDiskBytes += *item.HostMetrics.OrbDiskBytes
+				out.Summary.Host.OrbDiskReportedCount++
+			}
 		}
 		addOrbCounts(&out.Summary.Orbs, item.Orbs)
 		out.Summary.Allocated.RunningCpus += item.Allocated.RunningCpus

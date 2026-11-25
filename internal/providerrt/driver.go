@@ -57,6 +57,12 @@ type Preflighter interface {
 	Preflight(ctx context.Context) error
 }
 
+// OrbDiskSizer 是驱动可选实现的 orb 可写层/可写盘大小统计接口（随心跳采样上报）。
+// totalBytes 为全部 orb 可写层/盘之和（Docker 为逻辑 SizeRw，Firecracker 为 st_blocks*512 可能含 reflink 共享块），
+// 仅作独立参考读数，不应用于从宿主机 statfs 已用空间中扣减。
+type OrbDiskSizer interface {
+	OrbDiskUsage(ctx context.Context) (totalBytes int64, byOrb map[string]int64, ok bool)
+}
 // ParseJob 把协议任务按 op 解析为 Job。
 func ParseJob(pj apigen.ProviderJob) (Job, error) {
 	j := Job{ID: pj.ID, Op: string(pj.Op), OrbID: pj.OrbID, Attempt: pj.Attempt}

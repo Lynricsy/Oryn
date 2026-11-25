@@ -8815,6 +8815,15 @@ export interface components {
             /** Format: int64 */
             diskAvailableBytes?: number;
             diskPath?: string;
+            /**
+             * Format: int64
+             * @description 该节点上全部 orb 可写层/可写盘大小之和（Docker 为容器逻辑可写层 SizeRw，含稀疏文件逻辑大小；Firecracker 为稀疏盘 st_blocks*512，reflink 卷上可能与快照共享块；Process 为 orb 目录大小）。作为独立参考读数，不与宿主机 statfs 做物理扣减。
+             */
+            orbDiskBytes?: number;
+            /** @description 按 orbId 记录的单台 orb 可写层/可写盘字节数（口径同 orbDiskBytes） */
+            orbDiskByOrb?: {
+                [key: string]: number;
+            };
             limits?: components["schemas"]["ProviderHostLimits"];
         };
         /** @description 按状态与角色划分的 orb 计数 */
@@ -8864,6 +8873,8 @@ export interface components {
         ProvidersHostTotals: {
             reportedCount: number;
             cpuCores: number;
+            /** @description 已上报整机 CPU 使用率的宿主机实际占用核数之和（sum(cpuCores * cpuPct / 100)） */
+            cpuUsedCores: number;
             /** Format: int64 */
             memTotalMB: number;
             /** Format: int64 */
@@ -8872,6 +8883,12 @@ export interface components {
             diskTotalBytes: number;
             /** Format: int64 */
             diskUsedBytes: number;
+            /**
+             * Format: int64
+             * @description 已上报 orbDiskBytes 的在线 provider 的 orb 可写层/可写盘字节数之和（独立参考读数，不与宿主机 statfs 或快照缓存做物理扣减）
+             */
+            orbDiskBytes: number;
+            orbDiskReportedCount: number;
         };
         /** @description 项目快照数量与存储占用 */
         ProviderSnapshotStats: {
@@ -8909,6 +8926,11 @@ export interface components {
             stateChangedAt: components["schemas"]["TimestampMs"];
             createdAt: components["schemas"]["TimestampMs"];
             lastActivityAt?: components["schemas"]["TimestampMs"];
+            /**
+             * Format: int64
+             * @description 该 orb 可写层/可写盘字节数（Docker 为逻辑 SizeRw，Firecracker 为 st_blocks*512 可能含 reflink 共享块；缺失时省略）
+             */
+            diskBytes?: number;
             latestSample?: components["schemas"]["OrbMetricSample"];
         };
         ProviderOverviewItem: {
