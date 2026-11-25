@@ -427,14 +427,17 @@ describe("ArtifactViewer", () => {
 			"canvas-frame",
 		)) as HTMLIFrameElement;
 		let channel = "";
+		const posted: { kind?: string; src?: unknown }[] = [];
 		vi.spyOn(frame.contentWindow as Window, "postMessage").mockImplementation(
 			(msg: unknown) => {
 				const m = msg as {
 					kind?: string;
 					channel?: string;
+					src?: unknown;
 					x?: number;
 					y?: number;
 				};
+				posted.push(m);
 				if (m.kind === "hello" && m.channel) channel = m.channel;
 				if (m.kind === "select-pick" && channel) {
 					window.dispatchEvent(
@@ -500,5 +503,24 @@ describe("ArtifactViewer", () => {
 		// 画布选择元素只发给输入区，不弹 web 的直接编辑面板
 		expect(screen.queryByTestId("artifact-edit-side")).toBeNull();
 		expect(screen.queryByTestId("artifact-edit-drawer")).toBeNull();
+
+		// 点击画框外空白（p1 宽 390，x=500 落在画框外）：清掉引用条并同步通知帧内清掉旧选中框
+		posted.length = 0;
+		fireEvent.pointerDown(overlay, {
+			button: 0,
+			pointerId: 1,
+			clientX: 500,
+			clientY: 100,
+		});
+		fireEvent.pointerUp(overlay, {
+			button: 0,
+			pointerId: 1,
+			clientX: 500,
+			clientY: 100,
+		});
+		await waitFor(() => expect(onSel).toHaveBeenLastCalledWith(null));
+		expect(posted).toContainEqual(
+			expect.objectContaining({ kind: "select-source", src: null }),
+		);
 	});
 });

@@ -780,9 +780,10 @@ export function CanvasEditor({
 	const pickSelectElement = (page: CanvasPage, world: Point) => {
 		if (!onSelectElement) return;
 		pickFrameElement(page, world, (selection, shown) => {
-			// 清掉别的画框上残留的选中框
+			// 清掉别的画框上残留的选中框；未命中元素时当前画框也一并清掉
 			for (const [id, l] of links.current.entries()) {
-				if (id !== page.id) l.post({ kind: "select-source", src: null });
+				if (!selection || id !== page.id)
+					l.post({ kind: "select-source", src: null });
 			}
 			onSelectElement(selection ? { selection, shown } : null);
 		});
@@ -1278,7 +1279,12 @@ export function CanvasEditor({
 					break;
 				const page = pageAt(d, canvasKey, p);
 				if (page) pickSelectElement(page, p);
-				else onSelectElement?.(null);
+				else {
+					for (const link of links.current.values()) {
+						link.post({ kind: "select-source", src: null });
+					}
+					onSelectElement?.(null);
+				}
 				break;
 			}
 			default:
