@@ -9,7 +9,7 @@ import (
 	"errors"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
-	"github.com/Lynricsy/Oryn/internal/orbs"
+	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
 )
 
@@ -27,54 +27,61 @@ func DesignServiceName(id string) string {
 	return "dsn-" + hex.EncodeToString(sum[:])[:10]
 }
 
-// designLive 读 artifact 创建线程所在 orb 的服务镜像（orb_services），该 artifact 的 dev 服务在跑且有 portal 端口时
-// 返回它；否则 nil。只读控制面镜像，不唤醒 orb：orb 不在 ready（冻结、停止、删除中）时镜像可能还写着 running，
-// 一律按没有处理。
-func (s *Service) designLive(ctx context.Context, threadID *string, id string) (*DesignLive, error) {
-	if threadID == nil || *threadID == "" {
-		return nil, nil
-	}
-	t, err := s.st.Q.GetThread(ctx, *threadID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
+// designLive 在全部 ready orb 的服务镜像里找该画布的 dev 服务（dsn-<hash>）：同项目线程 B 可以在另一台 orb 上
+// design_open 接管线程 A 创建的画布，所以不能只看创建线程的 orb。
+//
+// 边界校验：
+//   - 服务落在创建线程所在的同一台 orb 上：直接放行，threadId 取服务登记的 threadId（缺省创建线程）；
+//   - 服务落在别的 orb 上（跨 orb 接管）：要求画布属于某个项目，且服务登记的线程是该 orb 上未归档、同项目的工作线程。
+//
+// 多台 orb 同时在跑时按 updated_at 降序取最近活跃的那台，并用实际启动线程生成 portal 地址。
+func (s *Service) designLive(ctx context.Context, r db.Artifact) (*DesignLive, error) {
+	rows, err := s.st.Q.ListReadyOrbServicesByName(ctx, DesignServiceName(r.ID))
 	if err != nil {
 		return nil, err
 	}
-	if t.Kind != threads.KindWork || t.OrbID == nil {
+	if len(rows) == 0 {
 		return nil, nil
 	}
-	o, err := s.st.Q.GetOrb(ctx, *t.OrbID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
+	var creatorOrb string
+	if r.ThreadID != nil && *r.ThreadID != "" {
+		t, err := s.st.Q.GetThread(ctx, *r.ThreadID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+		if err == nil && t.Kind == threads.KindWork && t.OrbID != nil {
+			creatorOrb = *t.OrbID
+		}
 	}
-	if err != nil {
-		return nil, err
-	}
-	if o.State != orbs.StateReady {
-		return nil, nil
-	}
-	rows, err := s.st.Q.ListOrbServices(ctx, *t.OrbID)
-	if err != nil {
-		return nil, err
-	}
-	name := DesignServiceName(id)
-	for _, r := range rows {
-		if r.Name != name {
+	for _, row := range rows {
+		var sv apigen.OrbService
+		if json.Unmarshal([]byte(row.Doc), &sv) != nil || sv.Status != apigen.OrbServiceStatusRunning || sv.Port == nil {
 			continue
 		}
-		if r.HasPortal == 0 || r.Port == nil {
-			return nil, nil
+		tid := deref(sv.ThreadID)
+		if creatorOrb != "" && row.OrbID == creatorOrb {
+			if tid == "" {
+				tid = *r.ThreadID
+			}
+			return &DesignLive{ThreadID: tid, Port: *sv.Port}, nil
 		}
-		var sv apigen.OrbService
-		if json.Unmarshal([]byte(r.Doc), &sv) != nil || sv.Status != apigen.OrbServiceStatusRunning || sv.Port == nil {
-			return nil, nil
+		if tid == "" || r.ProjectID == nil || *r.ProjectID == "" {
+			continue
 		}
-		live := &DesignLive{ThreadID: t.ID, Port: *sv.Port}
-		if sv.ThreadID != nil && *sv.ThreadID != "" {
-			live.ThreadID = *sv.ThreadID
+		t, err := s.st.Q.GetThread(ctx, tid)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
 		}
-		return live, nil
+		if err != nil {
+			return nil, err
+		}
+		if t.Kind != threads.KindWork || t.ArchivedAt != nil || t.OrbID == nil || *t.OrbID != row.OrbID {
+			continue
+		}
+		if t.ProjectID == nil || *t.ProjectID != *r.ProjectID {
+			continue
+		}
+		return &DesignLive{ThreadID: t.ID, Port: *sv.Port}, nil
 	}
 	return nil, nil
 }

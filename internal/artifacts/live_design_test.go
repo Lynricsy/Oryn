@@ -113,6 +113,66 @@ func TestDesignLiveNotDesign(t *testing.T) {
 	assert.Nil(t, d.Live)
 }
 
+// M29 K2：跨 orb 接管——同项目线程 B 在另一台 orb 上 design_open 线程 A 创建的画布，live 必须查到 B 的服务并用 B
+// 作为 portal threadId；两台 orb 同时在跑时取最近更新的那台；不同项目的线程即使跑了同名服务也不可见。
+func TestDesignLiveCrossOrbTakeover(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	require.NoError(t, e.st.Q.CreateProvider(ctx, db.CreateProviderParams{ID: "prov_1", Name: "local", TokenHash: "h", CreatedAt: 1}))
+	require.NoError(t, e.st.Q.CreateProject(ctx, db.CreateProjectParams{ID: "proj_1", Name: "P1", CreatedAt: 1}))
+	require.NoError(t, e.st.Q.CreateProject(ctx, db.CreateProjectParams{ID: "proj_2", Name: "P2", CreatedAt: 1}))
+	mkOrb(t, e, "orb_a", "proj_1")
+	mkOrb(t, e, "orb_b", "proj_1")
+	mkOrb(t, e, "orb_c", "proj_2")
+	mkOrbThread(t, e, "thr_a", "orb_a", "proj_1")
+	mkOrbThread(t, e, "thr_b", "orb_b", "proj_1")
+	mkOrbThread(t, e, "thr_c", "orb_c", "proj_2")
+
+	a, err := e.s.Create(ctx, CreateParams{
+		Title: "设计", ThreadID: "thr_a", ProjectID: "proj_1",
+		Files: []FileChange{put(EntryCanvas, `{"format":2,"design":{"engine":1,"start":null},"canvases":[{"id":"c1","name":"首页"}],"pages":[],"notes":[]}`)},
+	})
+	require.NoError(t, err)
+	svcName := DesignServiceName(a.ID)
+
+	insertAt := func(orbID string, port int, thr string, updatedAt int64) {
+		sv := apigen.OrbService{Name: svcName, Command: "node vite.js", Source: "dynamic", Status: apigen.OrbServiceStatusRunning, Port: &port, ThreadID: &thr, Links: []apigen.OrbPortalLink{}}
+		doc, err := json.Marshal(sv)
+		require.NoError(t, err)
+		p := int64(port)
+		require.NoError(t, e.st.Q.InsertOrbService(ctx, db.InsertOrbServiceParams{
+			OrbID: orbID, Name: svcName, Port: &p, HasPortal: 1, Doc: string(doc), UpdatedAt: updatedAt,
+		}))
+	}
+
+	// 不同项目的线程 C 跑了同名服务：不泄露给 proj_1 的画布
+	insertAt("orb_c", 5199, "thr_c", 300)
+	d, err := e.s.Design(ctx, a.ID)
+	require.NoError(t, err)
+	assert.Nil(t, d.Live)
+
+	// 同项目线程 B 在另一台 orb 上接管：A 没跑服务，B 跑着 → live 返回 B
+	insertAt("orb_b", 5180, "thr_b", 200)
+	d, err = e.s.Design(ctx, a.ID)
+	require.NoError(t, err)
+	require.NotNil(t, d.Live)
+	assert.Equal(t, &DesignLive{ThreadID: "thr_b", Port: 5180}, d.Live)
+
+	// A 在 orb_a 上也跑着但更新时间更早：仍取后接管的 B
+	insertAt("orb_a", 5173, "thr_a", 100)
+	d, err = e.s.Design(ctx, a.ID)
+	require.NoError(t, err)
+	require.NotNil(t, d.Live)
+	assert.Equal(t, &DesignLive{ThreadID: "thr_b", Port: 5180}, d.Live)
+
+	// B 所在 orb 冻结后，自动回落到还在 ready 的 A
+	require.NoError(t, e.st.Q.SetOrbState(ctx, db.SetOrbStateParams{ID: "orb_b", State: orbs.StateStopped, StateChangedAt: 2}))
+	d, err = e.s.Design(ctx, a.ID)
+	require.NoError(t, err)
+	require.NotNil(t, d.Live)
+	assert.Equal(t, &DesignLive{ThreadID: "thr_a", Port: 5173}, d.Live)
+}
+
 func (s *Service) mustDesignAPI(t *testing.T, id string) apigen.ArtifactDesign {
 	t.Helper()
 	d, err := s.Design(context.Background(), id)

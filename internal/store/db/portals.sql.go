@@ -321,6 +321,44 @@ func (q *Queries) ListPortalSharesByOrb(ctx context.Context, orbID string) ([]Po
 	return items, nil
 }
 
+const listReadyOrbServicesByName = `-- name: ListReadyOrbServicesByName :many
+SELECT s.orb_id, s.name, s.port, s.has_portal, s.doc, s.updated_at FROM orb_services s
+JOIN orbs o ON o.id = s.orb_id
+WHERE s.name = ?1 AND s.has_portal = 1 AND s.port IS NOT NULL AND o.state = 'ready'
+ORDER BY s.updated_at DESC, s.orb_id
+`
+
+// M29: find live design dev service across ready orbs (same-project thread may take over on another orb).
+func (q *Queries) ListReadyOrbServicesByName(ctx context.Context, name string) ([]OrbService, error) {
+	rows, err := q.db.QueryContext(ctx, listReadyOrbServicesByName, name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OrbService{}
+	for rows.Next() {
+		var i OrbService
+		if err := rows.Scan(
+			&i.OrbID,
+			&i.Name,
+			&i.Port,
+			&i.HasPortal,
+			&i.Doc,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertPortalShare = `-- name: UpsertPortalShare :exec
 INSERT INTO portal_shares (orb_id, port, created_at, expires_at)
 VALUES (?1, ?2, ?3, ?4)

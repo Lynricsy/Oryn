@@ -10,6 +10,13 @@ VALUES (@orb_id, @name, @port, @has_portal, @doc, @updated_at);
 -- name: ListOrbServices :many
 SELECT * FROM orb_services WHERE orb_id = @orb_id ORDER BY name;
 
+-- M29: find live design dev service across ready orbs (same-project thread may take over on another orb).
+-- name: ListReadyOrbServicesByName :many
+SELECT s.* FROM orb_services s
+JOIN orbs o ON o.id = s.orb_id
+WHERE s.name = @name AND s.has_portal = 1 AND s.port IS NOT NULL AND o.state = 'ready'
+ORDER BY s.updated_at DESC, s.orb_id;
+
 -- name: GetOrbPortalService :one
 SELECT * FROM orb_services WHERE orb_id = @orb_id AND port = CAST(@port AS INTEGER) AND has_portal = 1 LIMIT 1;
 

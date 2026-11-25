@@ -703,7 +703,7 @@ func (s *Service) Design(ctx context.Context, id string) (DesignState, error) {
 	}
 	// 只有设计画布才有 dev 服务；回收站里的不开实时预览
 	if out.Design && r.DeletedAt == nil {
-		if out.Live, err = s.designLive(ctx, r.ThreadID, id); err != nil {
+		if out.Live, err = s.designLive(ctx, r); err != nil {
 			return DesignState{}, err
 		}
 	}
