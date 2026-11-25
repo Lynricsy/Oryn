@@ -124,6 +124,8 @@ type Config struct {
 	// SchemaRun 以 RPC 模式运行 omp、发送 get_settings_schema 并返回 id 匹配的 response 行；home 同 Run。
 	// nil = 运行 OmpPath（测试可替换）。
 	SchemaRun func(ctx context.Context, home string) (response []byte, err error)
+	// AgentsRun 执行 `omp agents unpack --dir <dir> --json` 把内置子代理写到 dir；nil = 运行 OmpPath（测试可替换）。
+	AgentsRun func(ctx context.Context, dir string) error
 }
 
 // AgentDir 返回临时 HOME 下 omp 的配置目录（PI_CODING_AGENT_DIR）。
@@ -142,6 +144,10 @@ type Catalog struct {
 	schemaMu     sync.Mutex
 	schema       *schemaEntry // 最近一份成功的设置 schema
 	schemaFlight *schemaCall  // 正在进行的 schema 运行
+
+	agentsMu  sync.Mutex
+	agentsKey string
+	agents    []agentcfg.AgentSpec
 }
 
 // entry 是一份成功结果及其缓存键。

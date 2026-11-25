@@ -198,6 +198,52 @@ func (h *Home) DefaultThinkingLevel() string {
 	return ParseDefaultThinkingLevel(b)
 }
 
+// TaskSettings 是 config.yml 中 `task` 段的子代理开关与模型覆盖设置。
+type TaskSettings struct {
+	DisabledAgents      []string
+	AgentModelOverrides map[string][]string
+}
+
+// ParseTaskSettings 从 config.yml 解析 `task.disabledAgents` 与 `task.agentModelOverrides`；
+// 内容为空或 YAML 不合法时返回零值。
+func ParseTaskSettings(config []byte) TaskSettings {
+	root, err := parseConfigRoot(config)
+	if err != nil || root == nil {
+		return TaskSettings{}
+	}
+	task := mapGetDeref(root, "task")
+	if task == nil || task.Kind != yaml.MappingNode {
+		return TaskSettings{}
+	}
+	var out TaskSettings
+	out.DisabledAgents = yamlStringList(mapGetDeref(task, "disabledAgents"))
+	if ov := mapGetDeref(task, "agentModelOverrides"); ov != nil && ov.Kind == yaml.MappingNode {
+		overrides := make(map[string][]string)
+		for _, kv := range mapPairs(ov) {
+			k, ok := str(kv[0])
+			if !ok || k == "" {
+				continue
+			}
+			if list := yamlStringList(deref(kv[1])); len(list) > 0 {
+				overrides[k] = list
+			}
+		}
+		if len(overrides) > 0 {
+			out.AgentModelOverrides = overrides
+		}
+	}
+	return out
+}
+
+// ParseDisabledExtensions 从 config.yml 解析 `disabledExtensions`；为空或解析失败返回 nil。
+func ParseDisabledExtensions(config []byte) []string {
+	root, err := parseConfigRoot(config)
+	if err != nil || root == nil {
+		return nil
+	}
+	return yamlStringList(mapGetDeref(root, "disabledExtensions"))
+}
+
 func defaultCycleRoles() []CycleRole {
 	out := make([]CycleRole, len(DefaultCycleOrder))
 	for i, r := range DefaultCycleOrder {

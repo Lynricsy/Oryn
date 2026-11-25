@@ -84,3 +84,64 @@ func TestHomeAgents(t *testing.T) {
 	assert.Equal(t, "agents/plain.md", warns[2].Path)
 	assert.Contains(t, warns[2].Message, "frontmatter")
 }
+
+func TestParseAgentSpec(t *testing.T) {
+	in := `---
+name: scout
+description: 快速侦察
+model:
+  - "@smol"
+  - openai/gpt-5-mini
+thinkingLevel: medium
+tools: read, find, grep, glob
+---
+
+You are a scout.
+---
+Keep it short.
+`
+	spec, err := ParseAgentSpec([]byte(in))
+	require.NoError(t, err)
+	assert.Equal(t, AgentSpec{
+		Name:          "scout",
+		Description:   "快速侦察",
+		Model:         []string{"@smol", "openai/gpt-5-mini"},
+		ThinkingLevel: "medium",
+		Tools:         []string{"read", "find", "grep", "glob"},
+		SystemPrompt:  "You are a scout.\n---\nKeep it short.",
+	}, spec)
+
+	// thinkingLevel 优先于旧键 thinking；只有 thinking 时回退它
+	legacy, err := ParseAgentSpec([]byte("---\nname: old\nthinking: low\nmodel: \"a/b, c/d\"\ntools: [read, bash]\n---\nBody\n"))
+	require.NoError(t, err)
+	assert.Equal(t, "low", legacy.ThinkingLevel)
+	assert.Equal(t, []string{"a/b", "c/d"}, legacy.Model)
+	assert.Equal(t, []string{"read", "bash"}, legacy.Tools)
+	assert.Equal(t, "Body", legacy.SystemPrompt)
+
+	prefer, err := ParseAgentSpec([]byte("---\nname: both\nthinking: low\nthinkingLevel: high\n---\n"))
+	require.NoError(t, err)
+	assert.Equal(t, "high", prefer.ThinkingLevel)
+}
+
+func TestHomeAgentSpecs(t *testing.T) {
+	h, err := NewHome(t.TempDir())
+	require.NoError(t, err)
+	p := filepath.Join(h.Dir(), "agents", "writer.md")
+	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+	require.NoError(t, os.WriteFile(p, []byte("---\nname: writer\ndescription: 文档专家\nmodel: \"@slow\"\nthinkingLevel: high\ntools: [read, write, edit]\n---\nWrite clearly.\n"), 0o600))
+
+	specs, warns, err := h.AgentSpecs()
+	require.NoError(t, err)
+	assert.Empty(t, warns)
+	assert.Equal(t, []AgentSpec{{
+		Name:          "writer",
+		Description:   "文档专家",
+		Model:         []string{"@slow"},
+		ThinkingLevel: "high",
+		Tools:         []string{"read", "write", "edit"},
+		SystemPrompt:  "Write clearly.",
+		Source:        "user",
+		Path:          "agents/writer.md",
+	}}, specs)
+}

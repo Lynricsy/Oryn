@@ -224,3 +224,30 @@ func TestParseDefaultThinkingLevel(t *testing.T) {
 		assert.Equal(t, c.want, ParseDefaultThinkingLevel([]byte(c.in)), c.in)
 	}
 }
+
+func TestParseTaskSettingsAndDisabledExtensions(t *testing.T) {
+	cfg := `
+disabledExtensions:
+  - tool:debug
+  - rule:custom
+task:
+  disabledAgents: [sonic, scout]
+  agentModelOverrides:
+    reviewer: "openai/gpt-5.2:high, @slow"
+    writer:
+      - anthropic/claude-opus-4
+      - "@default"
+`
+	ts := ParseTaskSettings([]byte(cfg))
+	assert.Equal(t, []string{"sonic", "scout"}, ts.DisabledAgents)
+	assert.Equal(t, map[string][]string{
+		"reviewer": {"openai/gpt-5.2:high", "@slow"},
+		"writer":   {"anthropic/claude-opus-4", "@default"},
+	}, ts.AgentModelOverrides)
+	assert.Equal(t, []string{"tool:debug", "rule:custom"}, ParseDisabledExtensions([]byte(cfg)))
+
+	// 空配置或非法 YAML 返回零值
+	assert.Equal(t, TaskSettings{}, ParseTaskSettings(nil))
+	assert.Equal(t, TaskSettings{}, ParseTaskSettings([]byte("task: [broken")))
+	assert.Nil(t, ParseDisabledExtensions([]byte("disabledExtensions: [broken")))
+}
