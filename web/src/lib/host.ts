@@ -122,7 +122,7 @@ export interface CornerRadii {
 	br: number;
 }
 
-/** 原生容器加在 WebView 四周的 padding（系统栏 + 刘海 + 软键盘，CSS px）。 */
+/** 原生容器加在 WebView 四周的 padding 或安全区四边距离（CSS px）。 */
 export interface EdgeInsets {
 	top: number;
 	right: number;
@@ -130,12 +130,13 @@ export interface EdgeInsets {
 	left: number;
 }
 
-/** 屏幕几何：物理屏幕圆角与 WebView 外的 inset（`insets` 事件与 `MobileInfo` 同形）。 */
+/** 屏幕几何：物理屏幕圆角、WebView 外的原生 padding 与 WebView 内部需避让的安全区（`insets` 事件与 `MobileInfo` 同形）。 */
 export interface DeviceGeometry {
 	cornerRadii: CornerRadii;
 	insets: EdgeInsets;
+	/** 系统栏 + 刘海/挖孔安全区（Android edge-to-edge 时由壳上报；旧壳与 iOS 缺省）。 */
+	safeArea?: EdgeInsets;
 }
-
 export interface MobileInfo extends Partial<DeviceGeometry> {
 	version: string;
 	platform: "android" | "ios";
@@ -507,15 +508,22 @@ function num(v: unknown): number {
 	return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0;
 }
 
-/** 解析 `insets` 事件 / `MobileInfo` 里的屏幕几何；两项都缺时为 null，单项缺省按 0。 */
+/** 解析 `insets` 事件 / `MobileInfo` 里的屏幕几何；全部缺失时为 null，单项缺省按 0。 */
 export function parseGeometry(v: unknown): DeviceGeometry | null {
 	if (!v || typeof v !== "object") return null;
-	const o = v as { cornerRadii?: unknown; insets?: unknown };
+	const o = v as {
+		cornerRadii?: unknown;
+		insets?: unknown;
+		safeArea?: unknown;
+	};
 	const r = (o.cornerRadii ?? null) as Record<string, unknown> | null;
 	const i = (o.insets ?? null) as Record<string, unknown> | null;
-	if ((!r || typeof r !== "object") && (!i || typeof i !== "object"))
-		return null;
-	return {
+	const s = (o.safeArea ?? null) as Record<string, unknown> | null;
+	const hasR = Boolean(r && typeof r === "object");
+	const hasI = Boolean(i && typeof i === "object");
+	const hasS = Boolean(s && typeof s === "object");
+	if (!hasR && !hasI && !hasS) return null;
+	const res: DeviceGeometry = {
 		cornerRadii: {
 			tl: num(r?.tl),
 			tr: num(r?.tr),
@@ -529,6 +537,15 @@ export function parseGeometry(v: unknown): DeviceGeometry | null {
 			left: num(i?.left),
 		},
 	};
+	if (hasS) {
+		res.safeArea = {
+			top: num(s?.top),
+			right: num(s?.right),
+			bottom: num(s?.bottom),
+			left: num(s?.left),
+		};
+	}
+	return res;
 }
 
 function menuKind(v: unknown): NativeMenuKind | null {

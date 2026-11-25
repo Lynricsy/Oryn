@@ -128,7 +128,7 @@ export function CompactThreadHeader({
 	const leadRef = useRef<HTMLButtonElement>(null);
 	const probeRef = useRef<HTMLSpanElement>(null);
 	const native = useNativeHeaderActive();
-	const veilH = safeTop > 0 ? safeTop + 12 : veil;
+	const veilH = safeTop > 0 ? safeTop + 8 : veil;
 	const theme = useHeaderTheme(probeRef);
 	const dark = theme?.dark ?? isDark();
 	const leadFrame = useSlotFrame(leadRef);
@@ -461,7 +461,7 @@ export function CompactThreadHeader({
 			data-window-drag=""
 			data-testid="compact-thread-header"
 			className="veil-host relative isolate flex shrink-0 items-center gap-2 px-3 pb-2"
-			style={{ paddingTop: safeTop + 8 }}
+			style={{ paddingTop: safeTop > 0 ? safeTop : 8 }}
 		>
 			<div
 				aria-hidden

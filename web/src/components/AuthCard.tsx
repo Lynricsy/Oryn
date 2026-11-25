@@ -28,7 +28,7 @@ export function AuthCard({
 	return (
 		<div className="shell-wash relative h-dvh overflow-y-auto">
 			<ChromeBar />
-			<div className="flex min-h-full items-center justify-center px-4 pt-safe pb-safe">
+			<div className="flex min-h-full items-center justify-center pt-[max(1rem,var(--safe-top))] pr-[max(1rem,var(--safe-right))] pb-[max(1rem,var(--safe-bottom))] pl-[max(1rem,var(--safe-left))]">
 				<div className="glass pop-in w-full max-w-sm rounded-2xl p-6">
 					<div className="mb-4 flex items-center gap-2.5">
 						<BrandMark ref={mark} size={32} blink={blink} />

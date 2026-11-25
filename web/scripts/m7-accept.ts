@@ -1498,12 +1498,24 @@ scenario("A12", async () => {
 	const ins = insets();
 	const [, top, , bottom] = webViewBounds();
 	note(
-		`WebView 顶 ${top} 底 ${bottom}；状态栏底 ${ins.statusBottom} 导航栏顶 ${ins.navTop}`,
+		`WebView 顶 ${top} 底 ${bottom}；屏高 ${ins.height} 状态栏底 ${ins.statusBottom} 导航栏顶 ${ins.navTop}`,
 	);
-	check(Math.abs(top - ins.statusBottom) <= 2, "WebView 顶 = 状态栏高度");
-	check(Math.abs(bottom - ins.navTop) <= 2, "WebView 底 = 屏高 − 导航栏高度");
+	check(Math.abs(top) <= 2, "WebView 顶 = 0（edge-to-edge 铺满状态栏）");
+	check(
+		Math.abs(bottom - ins.height) <= 2,
+		"WebView 底 = 屏高（edge-to-edge 铺满导航栏）",
+	);
 	const p = await page();
 	const h0 = await p.evaluate(() => innerHeight);
+	const safe0 = await p.evaluate(() => {
+		const cs = getComputedStyle(document.documentElement);
+		return {
+			top: Number.parseFloat(cs.getPropertyValue("--host-safe-top")) || 0,
+			bottom: Number.parseFloat(cs.getPropertyValue("--host-safe-bottom")) || 0,
+		};
+	});
+	check(safe0.top > 0, `无键盘时上报顶部安全区（${safe0.top}px）`);
+	check(safe0.bottom > 0, `无键盘时上报底部安全区（${safe0.bottom}px）`);
 	await touch("textarea");
 	await waitFor(
 		"软键盘弹出",
@@ -1517,13 +1529,20 @@ scenario("A12", async () => {
 		b:
 			document.querySelector("textarea")?.getBoundingClientRect().bottom ??
 			Number.POSITIVE_INFINITY,
+		safeBottom:
+			Number.parseFloat(
+				getComputedStyle(document.documentElement).getPropertyValue(
+					"--host-safe-bottom",
+				),
+			) || 0,
 	}));
 	note(
-		`键盘弹出：WebView 底 ${bottom2}，innerHeight ${h0} → ${r.h}，输入框底 ${r.b}`,
+		`键盘弹出：WebView 底 ${bottom2}，innerHeight ${h0} → ${r.h}，输入框底 ${r.b}，safeBottom ${r.safeBottom}`,
 	);
 	check(bottom2 < bottom, "WebView 底上移到键盘顶");
 	check(r.h < h0, "innerHeight 变小");
 	check(r.b <= r.h, "输入框在可视区内");
+	check(r.safeBottom === 0, "键盘弹出时底部安全区归 0（不与键盘叠加缝隙）");
 	ash("input keyevent 111");
 });
 

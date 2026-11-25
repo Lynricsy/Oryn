@@ -329,12 +329,18 @@ export function AppShell(): ReactNode {
 		);
 	}
 
+	const expanded = bp === "expanded";
+	const expandedFrame = expanded && !segments;
+	// 展开态（非双段）：外层壁纸铺满整屏，统一按安全区与 8px 的大者留出四周外边距，左右卡片顶底齐平；
+	// 卡片子树内通过 `.safe-consumed` 将 `--safe-*` 归零，避免重复让出安全区。
+	// compact / medium / 双段：主区铺满整屏 bg-panel，自己让出顶部、右侧与（无常驻侧栏时的）左侧安全区；
+	// 带 [data-safe-bleed] 的手机线程页由 index.css 清掉 pt-safe，让内容铺到状态栏下渐进模糊。
+	const mainSafe = expandedFrame
+		? "safe-consumed"
+		: `pt-safe pr-safe ${sink || drawerMode || !shown ? "pl-safe" : ""}`;
 	const main = (
-		// pt-safe：iOS 的 WKWebView 铺满整屏（Android 由原生容器把 WebView 让到状态栏下面），
-		// 不让出顶部安全区时页头与状态栏重叠（模拟器端到端里点侧栏按钮无效）。
-		// 非 expanded 时页面是满幅 bg-panel 底的 Sheet：让出的状态栏条也铺同色，不露出壁纸晕染
 		<main
-			className={`flex h-full min-w-0 flex-1 flex-col pt-safe pr-safe ${bp === "expanded" ? "" : "bg-panel"}`}
+			className={`flex h-full min-w-0 flex-1 flex-col ${mainSafe} ${expandedFrame ? "" : "bg-panel"}`}
 		>
 			<Outlet />
 		</main>
@@ -351,13 +357,16 @@ export function AppShell(): ReactNode {
 			</>
 		);
 
-	const expanded = bp === "expanded";
 	// 侧栏玻璃离屏幕左、上、下缘 8px：左两角取同心半径（--side-r 在 macOS 26 壳里按窗口外框同心）
 	const sidebarCorners = "dc-tl dc-bl [--dc-gap:0.5rem] [--dc-r:var(--side-r)]";
 	return (
 		<div
 			// 双段时不留外边距：线程页按段的视口坐标分窗格
-			className={`shell-wash flex h-dvh w-full overflow-hidden text-fg ${expanded && !segments ? "p-2" : ""}`}
+			className={`shell-wash flex h-dvh w-full overflow-hidden text-fg ${
+				expandedFrame
+					? "pt-[max(0.5rem,var(--safe-top))] pr-[max(0.5rem,var(--safe-right))] pb-[max(0.5rem,var(--safe-bottom))] pl-[max(0.5rem,var(--safe-left))]"
+					: ""
+			}`}
 		>
 			{!drawerMode && (
 				// 外层只负责占位宽度与右侧 8px 缝；内层固定宽度，translate 与列宽同时长同缓动，
@@ -367,11 +376,17 @@ export function AppShell(): ReactNode {
 					data-sidebar={shown ? "shown" : "collapsed"}
 					className={`h-full shrink-0 transition-[width,margin-right] duration-[260ms] ease-out ${shown ? `w-64 lg:w-72 ${expanded ? "mr-2" : ""}` : "mr-0 w-0"}`}
 				>
-					{/* 只动 translate、不动 opacity（opacity<1 会让玻璃的模糊在收起途中失效，见下面抽屉的注释）；多移 1rem 越过 8px 外边距，完全藏住 */}
+					{/* 只动 translate、不动 opacity（opacity<1 会让玻璃的模糊在收起途中失效，见下面抽屉的注释）；多移出左侧外边距（含左安全区），完全藏住 */}
 					<div
-						className={`h-full w-64 transition-[translate] duration-[260ms] ease-out lg:w-72 ${expanded ? "" : "p-2"} ${shown ? "" : "-translate-x-[calc(100%+1rem)]"}`}
+						className={`h-full w-64 transition-[translate] duration-[260ms] ease-out lg:w-72 ${
+							expanded
+								? ""
+								: "pt-[max(0.5rem,var(--safe-top))] pr-2 pb-[max(0.5rem,var(--safe-bottom))] pl-[max(0.5rem,var(--safe-left))]"
+						} ${shown ? "" : "-translate-x-[calc(100%+max(1rem,var(--safe-left)+0.5rem))]"}`}
 					>
-						<div className={`glass-sidebar h-full ${sidebarCorners}`}>
+						<div
+							className={`glass-sidebar safe-consumed h-full ${sidebarCorners}`}
+						>
 							<Sidebar />
 						</div>
 					</div>
@@ -393,7 +408,7 @@ export function AppShell(): ReactNode {
 					<div
 						inert={!sidebarOpen}
 						data-shown={drawer.shown ? "" : undefined}
-						className={`drawer-spot ${sidebarCorners} absolute top-[max(0.5rem,env(safe-area-inset-top))] bottom-[max(0.5rem,env(safe-area-inset-bottom))] left-[max(0.5rem,env(safe-area-inset-left))] w-[min(85vw,20rem)] ${drawer.shown ? "translate-x-0" : "-translate-x-[calc(100%+1rem)]"}`}
+						className={`drawer-spot ${sidebarCorners} absolute top-[max(0.5rem,var(--safe-top))] bottom-[max(0.5rem,var(--safe-bottom))] left-[max(0.5rem,var(--safe-left))] w-[min(85vw,20rem)] ${drawer.shown ? "translate-x-0" : "-translate-x-[calc(100%+max(1rem,var(--safe-left)+0.5rem))]"}`}
 					>
 						<div className={`glass-sidebar h-full ${sidebarCorners}`}>
 							<Sidebar floating />

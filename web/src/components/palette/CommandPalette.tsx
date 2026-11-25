@@ -635,7 +635,7 @@ export function CommandPalette(): ReactNode {
 	return createPortal(
 		<div
 			ref={hostRef}
-			className="fixed inset-0 z-50 flex items-start justify-center px-2 pt-[max(0.5rem,env(safe-area-inset-top))] sm:px-4 sm:pt-[12dvh]"
+			className="fixed inset-0 z-50 flex items-start justify-center px-2 pt-[max(0.5rem,var(--safe-top))] sm:px-4 sm:pt-[12dvh]"
 		>
 			<button
 				type="button"

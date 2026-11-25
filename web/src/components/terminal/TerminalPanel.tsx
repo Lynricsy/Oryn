@@ -212,7 +212,7 @@ export default function TerminalPanel({
 			data-testid="terminal-panel"
 			className="flex h-full min-h-0 flex-col bg-panel"
 			style={{
-				paddingBottom: "max(env(safe-area-inset-bottom), var(--kb-inset))",
+				paddingBottom: "max(var(--safe-bottom), var(--kb-inset))",
 			}}
 		>
 			{/* 标签多了只在标签区内横向滚动；「新建终端」钉在右侧，不随标签被挤出可视区 */}

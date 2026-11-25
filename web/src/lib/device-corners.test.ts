@@ -2,11 +2,13 @@
 import { describe, expect, it, vi } from "vitest";
 import {
 	applyDeviceCorners,
+	applyDeviceGeometry,
 	concentricRadius,
 	installDeviceCorners,
 	viewportCornerRadii,
 } from "./device-corners";
 import type { DeviceGeometry, Host, MobileHost, MobileInfo } from "./host";
+import { parseGeometry } from "./host";
 
 const R40 = { tl: 40, tr: 40, bl: 40, br: 40 };
 const NO_INSETS = { top: 0, right: 0, bottom: 0, left: 0 };
@@ -118,5 +120,44 @@ describe("applyDeviceCorners / installDeviceCorners", () => {
 		await Promise.resolve();
 		await Promise.resolve();
 		expect(vars(el)).toEqual(["40px", "40px", "40px", "40px"]);
+	});
+
+	it("写入移动壳上报的 safeArea 到 --host-safe-*，并在键盘弹出后归零 bottom", () => {
+		const el = document.createElement("div");
+		const readSafe = () =>
+			["top", "right", "bottom", "left"].map((k) =>
+				el.style.getPropertyValue(`--host-safe-${k}`),
+			);
+		applyDeviceGeometry(el, {
+			cornerRadii: R40,
+			insets: NO_INSETS,
+			safeArea: { top: 32, right: 0, bottom: 24, left: 12 },
+		});
+		expect(readSafe()).toEqual(["32px", "0px", "24px", "12px"]);
+		applyDeviceGeometry(el, {
+			cornerRadii: R40,
+			insets: { ...NO_INSETS, bottom: 280 },
+			safeArea: { top: 32, right: 0, bottom: 0, left: 12 },
+		});
+		expect(readSafe()).toEqual(["32px", "0px", "0px", "12px"]);
+		expect(vars(el)).toEqual(["40px", "40px", "0px", "0px"]);
+	});
+
+	it("parseGeometry 兼容含 safeArea 与不含 safeArea 的旧载荷", () => {
+		expect(
+			parseGeometry({
+				cornerRadii: R40,
+				insets: NO_INSETS,
+				safeArea: { top: 36, right: 0, bottom: 24, left: 0 },
+			}),
+		).toEqual({
+			cornerRadii: R40,
+			insets: NO_INSETS,
+			safeArea: { top: 36, right: 0, bottom: 24, left: 0 },
+		});
+		expect(parseGeometry({ cornerRadii: R40, insets: NO_INSETS })).toEqual({
+			cornerRadii: R40,
+			insets: NO_INSETS,
+		});
 	});
 });

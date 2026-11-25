@@ -295,6 +295,16 @@
 	--bg-inset: var(--inset);
 	--bg-raised: var(--raised);
 	--kb-inset: 0px;
+	/* 移动壳上报的系统安全区（Android 铺满整屏时兜底，覆盖不把 systemBars 映到 env() 的 WebView；其它宿主恒为 0） */
+	--host-safe-top: 0px;
+	--host-safe-right: 0px;
+	--host-safe-bottom: 0px;
+	--host-safe-left: 0px;
+	/* 生效安全区：取浏览器 env() 与移动壳上报的大者，绝不叠加双倍；iOS / 浏览器退化为 env() */
+	--safe-top: max(env(safe-area-inset-top, 0px), var(--host-safe-top));
+	--safe-right: max(env(safe-area-inset-right, 0px), var(--host-safe-right));
+	--safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--host-safe-bottom));
+	--safe-left: max(env(safe-area-inset-left, 0px), var(--host-safe-left));
 	/* 视口四角的屏幕同心半径（lib/device-corners.ts 由移动壳写入）；浏览器与桌面恒为 0 */
 	--device-r-tl: 0px;
 	--device-r-tr: 0px;
@@ -368,31 +378,40 @@ body {
 }
 
 @utility pt-safe {
-	padding-top: env(safe-area-inset-top);
+	padding-top: var(--safe-top);
 }
 @utility pb-safe {
-	padding-bottom: env(safe-area-inset-bottom);
+	padding-bottom: var(--safe-bottom);
 }
 @utility pl-safe {
-	padding-left: env(safe-area-inset-left);
+	padding-left: var(--safe-left);
 }
 @utility pr-safe {
-	padding-right: env(safe-area-inset-right);
+	padding-right: var(--safe-right);
 }
 /* 输入区随软键盘上移 */
 @utility pb-keyboard {
-	padding-bottom: max(env(safe-area-inset-bottom), var(--kb-inset));
+	padding-bottom: max(var(--safe-bottom), var(--kb-inset));
+}
+/*
+ * 外层框架已统一消费四周安全区（如 expanded 展开态外框、medium 浮起侧栏）：
+ * 子树内的卡片与滚动区不再重复计入安全区；挂在 document.body 的 portal 弹层与顶层 Toast 仍读 :root 的真实安全区。
+ */
+.safe-consumed {
+	--safe-top: 0px;
+	--safe-right: 0px;
+	--safe-bottom: 0px;
+	--safe-left: 0px;
 }
 /*
  * 内容铺到状态栏下面：页面里有 [data-safe-bleed] 时，应用壳 <main> 不再让出顶部安全区，
- * 由该页自己把页头往下推、转录的顶部留白加上安全区（手机线程页 / 协调对话：对话滚到灵动岛下面，只在那一带渐进模糊）。
+ * 由该页自己把页头往下推、转录的顶部留白加上安全区（手机线程页 / 协调对话：对话滚到状态栏 / 灵动岛下面，只在那一带渐进模糊）。
  * main 里叠在原处但 inert 的隐藏面（Space 页切到「线程」时的聊天）里的标记不算；main 外的 inert（下沉侧栏打开时
  * 包住整个 main 的卡片内容）不影响。不放进 @layer：要压过 pt-safe 工具类。
  */
 main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 	padding-top: 0;
 }
-
 /*
  * 屏幕圆角同心（M7）：贴着屏幕边缘的浮层（抽屉、侧栏、底部弹层、输入坞）在对应角上取
  * max(自身令牌圆角 --dc-r, 视口角半径 − 与边缘的间距 --dc-gap)。`--device-r-*` 为 0 时就是令牌圆角，视觉不变。

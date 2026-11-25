@@ -104,7 +104,7 @@ export function OrbDrawer({
 				aria-label={title}
 				tabIndex={-1}
 				data-testid="orb-drawer"
-				className={`relative flex flex-col bg-panel outline-none ${compact ? "h-full w-full pt-safe" : "h-full w-[min(34rem,100vw)] border-border border-l shadow-xl"}`}
+				className={`relative flex flex-col bg-panel pt-safe pr-safe outline-none ${compact ? "h-full w-full pl-safe" : "h-full w-[min(34rem,100vw)] border-border border-l shadow-xl"}`}
 			>
 				<div className="flex h-12 shrink-0 items-center gap-2 border-border border-b px-4">
 					<h2

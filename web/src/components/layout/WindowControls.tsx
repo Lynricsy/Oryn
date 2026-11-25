@@ -303,8 +303,11 @@ const LIGHTS_DIVIDER = 13;
  * 其它环境（浏览器、移动壳、Windows / Linux）与以前完全相同：56px 行高，字标同样按实际宽度决定显隐。
  */
 export function SidebarBrandRow({
+	compact = false,
 	children,
 }: {
+	/** 手机下沉侧栏：上方已有 pt-safe，品牌行收紧高度避免状态栏下留白过大。 */
+	compact?: boolean;
 	children: ReactNode;
 }): ReactNode {
 	const { t } = useTranslation();
@@ -334,7 +337,7 @@ export function SidebarBrandRow({
 			ref={row}
 			data-window-drag=""
 			data-brand-row={native ? "lights" : undefined}
-			className={`flex shrink-0 items-center pr-2.5 pl-4 ${native ? "gap-1" : "h-14 gap-2"}`}
+			className={`flex shrink-0 items-center pr-2.5 pl-4 ${native ? "gap-1" : compact ? "h-11 gap-2" : "h-14 gap-2"}`}
 			style={
 				native ? { height: LIGHTS_ROW + padTop, paddingTop: padTop } : undefined
 			}

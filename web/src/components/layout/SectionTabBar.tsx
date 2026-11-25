@@ -53,9 +53,9 @@ export function tabBarHeight(
 ): string {
 	const bottom =
 		tone === "glass"
-			? "max(env(safe-area-inset-bottom), 0.5rem)"
+			? "max(var(--safe-bottom), 0.5rem)"
 			: safeBottom
-				? "calc(0.5rem + env(safe-area-inset-bottom))"
+				? "calc(0.5rem + var(--safe-bottom))"
 				: "0.5rem";
 	return `calc(${PILL} + 0.375rem + ${bottom})`;
 }
@@ -241,8 +241,8 @@ export function SectionTabBar({
 	);
 
 	const outer = sink
-		? "px-3 pt-1.5 pb-[max(env(safe-area-inset-bottom),0.5rem)]"
-		: `px-2 pt-1.5 ${safeBottom ? "pb-[calc(0.5rem+env(safe-area-inset-bottom))]" : "pb-2"}`;
+		? "px-3 pt-1.5 pb-[max(var(--safe-bottom),0.5rem)]"
+		: `px-2 pt-1.5 ${safeBottom ? "pb-[calc(0.5rem+var(--safe-bottom))]" : "pb-2"}`;
 	return (
 		<nav
 			aria-label={t("tabBar.label")}

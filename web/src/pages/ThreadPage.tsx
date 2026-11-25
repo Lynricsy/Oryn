@@ -720,13 +720,14 @@ export function ThreadScreen({
 					<RewindTopPill ctrl={rewind} top={topInset + bleedTop - 4} />
 					<div
 						ref={dockRef}
-						// 输入坞整体独立悬浮：外层透明、不遮罩、不晕染，只有托盘本身是玻璃
-						className="pointer-events-none absolute inset-x-0 bottom-0 z-20 px-3 pb-keyboard sm:px-5"
+						// 输入坞整体独立悬浮：外层透明、不遮罩、不晕染，只有托盘本身是玻璃；
+						// 底部间距取安全区与「软键盘 + 12px」的大者，避免手势条安全区再叠加 12px 留白显得底部过空
+						className="pointer-events-none absolute inset-x-0 bottom-0 z-20 px-3 pb-[max(var(--safe-bottom),calc(var(--kb-inset)+0.75rem))] sm:px-5"
 					>
-						<div className="relative mx-auto w-full max-w-3xl pb-3">
+						<div className="relative mx-auto w-full max-w-3xl">
 							{/*
 							 * 一整块玻璃托盘：各节透明无边框，节间只有发丝线；不裁剪，命令菜单要伸出去。
-							 * compact 下托盘离屏幕左右与底边 12px（px-3 / pb-3），底部两角跟屏幕圆角同心；
+							 * compact 下托盘离屏幕左右 12px（px-3）、底部按安全区或键盘留白，底部两角跟屏幕圆角同心；
 							 * 往上翻历史时收成胶囊（data-dock="mini"，见 DockPill），托盘两侧空出来的地方不拦触摸
 							 */}
 							<div

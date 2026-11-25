@@ -768,7 +768,7 @@ function DesktopView({
 			className="flex h-full min-h-0 flex-col"
 			data-testid="desktop-panel"
 			style={{
-				paddingBottom: "max(env(safe-area-inset-bottom), var(--kb-inset))",
+				paddingBottom: "max(var(--safe-bottom), var(--kb-inset))",
 			}}
 		>
 			<div

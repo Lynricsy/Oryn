@@ -43,7 +43,7 @@ export const Sidebar = memo(function Sidebar({
 			aria-label={t("nav.sidebar")}
 		>
 			{!floating && <SidebarChromeRow />}
-			<SidebarBrandRow>
+			<SidebarBrandRow compact={sink}>
 				<NotificationBell />
 				<IconButton
 					icon="sidebar"

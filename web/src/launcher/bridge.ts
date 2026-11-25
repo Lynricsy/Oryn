@@ -3,7 +3,12 @@
  * 壳经 `oryn:host` 事件（`detail.type === "launcher"`）推送新的 `LauncherState`。类型与壳的 `session.rs` 一致（字段 camelCase）。
  * 移动壳（M7 计划 4.8）复用同一连接页：平台取 `window.__ORYN_HOST__.platform`，扫码走 barcode-scanner 插件的命令。
  */
-import { findInvoke, HOST_EVENT } from "../lib/host";
+import {
+	type DeviceGeometry,
+	findInvoke,
+	HOST_EVENT,
+	parseGeometry,
+} from "../lib/host";
 
 /** 壳给出的错误码（`session.rs` 的 `LauncherError.code`）。 */
 export const LAUNCHER_ERROR_CODES = [
@@ -70,6 +75,20 @@ export function onState(cb: (s: LauncherState) => void): () => void {
 			state?: LauncherState;
 		} | null;
 		if (d?.type === "launcher" && d.state) cb(d.state);
+	};
+	window.addEventListener(HOST_EVENT, listener);
+	return () => window.removeEventListener(HOST_EVENT, listener);
+}
+
+/** 订阅壳推来的屏幕几何与安全区变化（移动壳）；返回取消订阅。 */
+export function onInsets(cb: (g: DeviceGeometry) => void): () => void {
+	const listener = (ev: Event) => {
+		const d = (ev as CustomEvent<unknown>).detail as {
+			type?: unknown;
+		} | null;
+		if (d?.type !== "insets") return;
+		const g = parseGeometry(d);
+		if (g) cb(g);
 	};
 	window.addEventListener(HOST_EVENT, listener);
 	return () => window.removeEventListener(HOST_EVENT, listener);

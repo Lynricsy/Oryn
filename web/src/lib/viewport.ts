@@ -34,24 +34,39 @@ export function useBreakpoint(): Breakpoint {
 	);
 }
 
-// 顶部安全区（状态栏 / 灵动岛）的 px：env() 只能在 CSS 里取，用一个隐藏探针读计算值。
+// 顶部安全区（状态栏 / 灵动岛）的 px：env() 与 --safe-top 只能在 CSS 里取，用一个隐藏探针读计算值。
 // 不缓存数值：没人订阅时（不在线程页）转屏不会有人清缓存，回来会沿用旧值而 env() 已经变了；每次读计算值，number 本身就稳定
 let safeTopProbe: HTMLDivElement | null = null;
+const safeAreaListeners = new Set<() => void>();
+
+/** 移动壳更新 `--host-safe-*` 后通知安全区订阅者重读计算值（避免未触发 window resize 时页头停留在 0）。 */
+export function notifySafeAreaChange(): void {
+	for (const cb of [...safeAreaListeners]) cb();
+}
+
+function subscribeSafeTop(cb: () => void) {
+	const offResize = subscribeResize(cb);
+	safeAreaListeners.add(cb);
+	return () => {
+		offResize();
+		safeAreaListeners.delete(cb);
+	};
+}
 
 function readSafeTop(): number {
 	if (!safeTopProbe?.isConnected) {
 		safeTopProbe = document.createElement("div");
 		safeTopProbe.setAttribute("aria-hidden", "true");
 		safeTopProbe.style.cssText =
-			"position:fixed;top:0;left:0;width:0;height:0;visibility:hidden;pointer-events:none;padding-top:env(safe-area-inset-top)";
+			"position:fixed;top:0;left:0;width:0;height:0;visibility:hidden;pointer-events:none;padding-top:var(--safe-top, env(safe-area-inset-top))";
 		document.body.appendChild(safeTopProbe);
 	}
 	return Number.parseFloat(getComputedStyle(safeTopProbe).paddingTop) || 0;
 }
 
-/** 顶部安全区高度（px）：iOS 铺满整屏的 WKWebView 里是状态栏 / 灵动岛的高度，其它宿主通常为 0。 */
+/** 顶部安全区高度（px）：铺满整屏的移动 WebView（iOS / Android）里是状态栏 / 灵动岛 / 挖孔的高度，其它宿主通常为 0。 */
 export function useSafeTop(): number {
-	return useSyncExternalStore(subscribeResize, readSafeTop, () => 0);
+	return useSyncExternalStore(subscribeSafeTop, readSafeTop, () => 0);
 }
 
 /** 左右双段视口：左段宽、铰链宽（两段之间的缝）、右段宽（px）。 */

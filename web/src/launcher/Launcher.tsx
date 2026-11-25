@@ -31,6 +31,7 @@ import {
 	TextInput,
 } from "../components/ui/primitives";
 import { holdSplash } from "../lib/boot-splash";
+import { applyDeviceGeometry } from "../lib/device-corners";
 import { watchChrome } from "../lib/host-chrome";
 import { scannedServer } from "../lib/pair-qr";
 import {
@@ -42,6 +43,7 @@ import {
 	type LauncherErrorCode,
 	type LauncherInfo,
 	type LauncherState,
+	onInsets,
 	onState,
 	scanQr,
 } from "./bridge";
@@ -157,12 +159,19 @@ export function Launcher(): ReactNode {
 	/** 本页扫码得到、等用户确认的服务器地址。 */
 	const [proposed, setProposed] = useState<string | null>(null);
 
-	// 移动壳：状态栏 / 导航栏颜色跟随页面底色
+	// 移动壳：状态栏 / 导航栏颜色跟随页面底色；同步系统安全区与屏幕圆角
 	useEffect(() => {
 		if (!mobile) return;
-		return watchChrome(window, (c) =>
+		const offChrome = watchChrome(window, (c) =>
 			fire("host_set_chrome", { dark: c.dark, color: c.color }),
 		);
+		const offInsets = onInsets((g) =>
+			applyDeviceGeometry(document.documentElement, g),
+		);
+		return () => {
+			offChrome();
+			offInsets();
+		};
 	}, [mobile]);
 
 	useEffect(() => {

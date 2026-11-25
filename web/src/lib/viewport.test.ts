@@ -8,6 +8,7 @@ import {
 	installNoFocusZoom,
 	installViewportTracking,
 	keyboardInset,
+	notifySafeAreaChange,
 	readSegments,
 	setMinScale,
 	settleViewport,
@@ -324,5 +325,22 @@ describe("useSafeTop", () => {
 		pad = "0px"; // 转到横屏：这时没有订阅者在场
 		const second = renderHook(() => useSafeTop());
 		expect(second.result.current).toBe(0);
+	});
+
+	it("notifySafeAreaChange 触发 useSafeTop 立即重读（无需 window resize）", () => {
+		let pad = "0px";
+		const real = window.getComputedStyle.bind(window);
+		vi.spyOn(window, "getComputedStyle").mockImplementation((el, pseudo) => {
+			const s = real(el, pseudo);
+			return (el as HTMLElement).style?.cssText.includes("safe-area-inset-top")
+				? ({ ...s, paddingTop: pad } as CSSStyleDeclaration)
+				: s;
+		});
+		const hook = renderHook(() => useSafeTop());
+		expect(hook.result.current).toBe(0);
+		pad = "36px";
+		act(() => notifySafeAreaChange());
+		expect(hook.result.current).toBe(36);
+		hook.unmount();
 	});
 });
