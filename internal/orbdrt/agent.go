@@ -17,9 +17,6 @@ import (
 	"syscall"
 	"time"
 
-	"gopkg.in/yaml.v3"
-
-	"github.com/Lynricsy/Oryn/internal/agentcfg"
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/link"
 	"github.com/Lynricsy/Oryn/internal/omprpc"
@@ -38,6 +35,9 @@ const (
 	stderrTailLines = 20
 	// stableReady 是 agent 保持就绪多久后重置崩溃重启计数。
 	stableReady = time.Minute
+	// envRoleTools 是工作线程按 subagent 配置启动时传入 oryn-orb.ts 扩展的工具白名单 JSON 数组环境变量名；
+	// 未设置表示不限制，空数组 "[]" 表示禁用全部工具（由 orbd 在 p.Env 之后写入，防止用户密钥覆盖）。
+	envRoleTools = "ORYN_ROLE_TOOLS"
 	// initIDPrefix 标记 orbd 自己发出的初始化命令；其应答不转发给控制面。
 	initIDPrefix = "orbd-"
 )
@@ -559,7 +559,7 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 	if r.cfg.Coordinator && p.Memory != nil {
 		return apigen.LinkCtlAgentStartResult{}, ctlErr(link.CodeInvalidParams, "memory is not available on the coordinator host")
 	}
-	if r.cfg.Coordinator && ((p.AppendSystemPrompt != nil && *p.AppendSystemPrompt != "") || len(p.Tools) > 0) {
+	if r.cfg.Coordinator && ((p.AppendSystemPrompt != nil && *p.AppendSystemPrompt != "") || p.Tools != nil) {
 		return apigen.LinkCtlAgentStartResult{}, ctlErr(link.CodeInvalidParams, "appendSystemPrompt and tools are only available for work threads")
 	}
 	dir := filepath.Join(r.home, ".oryn", "threads", p.ThreadID)
@@ -714,6 +714,8 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 				r.log.Warn("prepare thread browser-relay front failed", "thread", p.ThreadID, "err", berr)
 			}
 		}
+		// 防止 p.Env（用户 env 密钥）伪造或覆盖线程角色的工具白名单
+		delete(env, envRoleTools)
 		if p.AppendSystemPrompt != nil && *p.AppendSystemPrompt != "" {
 			promptFile := filepath.Join(dir, "role-prompt.md")
 			if err := writeFileAtomic(promptFile, []byte(*p.AppendSystemPrompt), 0o600); err != nil {
@@ -721,12 +723,24 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 			}
 			args = append(args, "--append-system-prompt", promptFile)
 		}
-		if len(p.Tools) > 0 {
-			overlayPath, err := r.writeRoleOverlay(dir, p.Tools)
-			if err != nil {
-				return apigen.LinkCtlAgentStartResult{}, ctlErr("failed", "write role overlay: %v", err)
+		if p.Tools != nil {
+			clean := make([]string, 0, len(*p.Tools))
+			seen := make(map[string]bool, len(*p.Tools))
+			for _, name := range *p.Tools {
+				if s := strings.TrimSpace(name); s != "" && !seen[s] {
+					seen[s] = true
+					clean = append(clean, s)
+				}
 			}
-			args = append(args, "--config", overlayPath)
+			b, err := json.Marshal(clean)
+			if err != nil {
+				return apigen.LinkCtlAgentStartResult{}, ctlErr("failed", "marshal role tools: %v", err)
+			}
+			env[envRoleTools] = string(b)
+			if len(clean) == 0 {
+				// 显式 tools: [] 在进程启动层即禁用全部内置工具，再由 oryn-orb.ts 在 session_start 清空激活表
+				args = append(args, "--no-tools")
+			}
 		}
 	}
 	pid, sshPub, running, err := t.start(startSpec{
@@ -758,54 +772,6 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 		res.Variant = &running
 	}
 	return res, nil
-}
-
-// ompBuiltinTools 是 omp 内置工具全集（对应 `omp --help` Built-in Tools）。
-// 限制工作线程工具集时通过覆盖层的 disabledExtensions 禁用白名单之外的内置工具，
-// 避免直接传 --tools 时因可选工具（如 ast_grep / find）未启用而导致 omp 启动退出。
-var ompBuiltinTools = []string{
-	"read", "edit", "write", "bash", "grep", "glob", "find", "eval",
-	"task", "wait", "todo", "ask", "web_search", "lsp", "ast_edit", "debug",
-	"ast_grep", "github", "checkpoint", "rewind", "context_notes", "new_context",
-	"retain", "recall", "reflect", "memory_edit", "learn", "manage_skill", "security_scan",
-}
-
-// writeRoleOverlay 生成工作线程的工具白名单覆盖层（<dir>/role-overlay.yml）：保留用户 config.yml
-// 里原有的 disabledExtensions，并追加白名单之外的内置工具（tool:<name>）。
-func (r *Runtime) writeRoleOverlay(dir string, allowed []string) (string, error) {
-	allow := make(map[string]bool, len(allowed))
-	for _, name := range allowed {
-		if s := strings.TrimSpace(name); s != "" {
-			allow[s] = true
-		}
-	}
-	var disabled []string
-	seen := make(map[string]bool)
-	add := func(ext string) {
-		if ext != "" && !seen[ext] {
-			seen[ext] = true
-			disabled = append(disabled, ext)
-		}
-	}
-	if cfgBytes, err := os.ReadFile(filepath.Join(r.ompAgentDir(), agentcfg.ConfigFile)); err == nil {
-		for _, ext := range agentcfg.ParseDisabledExtensions(cfgBytes) {
-			add(ext)
-		}
-	}
-	for _, toolName := range ompBuiltinTools {
-		if !allow[toolName] {
-			add("tool:" + toolName)
-		}
-	}
-	body, err := yaml.Marshal(map[string][]string{"disabledExtensions": disabled})
-	if err != nil {
-		return "", err
-	}
-	overlayPath := filepath.Join(dir, "role-overlay.yml")
-	if err := writeFileAtomic(overlayPath, body, 0o600); err != nil {
-		return "", err
-	}
-	return overlayPath, nil
 }
 
 // fixOpenSession 把 open_session 帧里 `~/…` 或相对形式的 sessionDir 换成本机绝对路径，

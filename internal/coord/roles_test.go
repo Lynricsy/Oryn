@@ -69,6 +69,13 @@ tools: [read, write, edit]
 ---
 Write crisp technical docs.
 `)
+	writeHome("agents/pure.md", `---
+name: pure
+description: Pure text analyst without tools
+tools: []
+---
+Reason only from the prompt.
+`)
 	// 如果用户碰巧定义了与 cycle role 同名的文件，Space 协调者仍必须排除 cycle role
 	writeHome("agents/mare.md", `---
 name: Mare
@@ -185,6 +192,12 @@ Should be excluded.
 	assert.Contains(t, deref(row.AppendSystemPrompt), "Write crisp technical docs.")
 	assert.JSONEq(t, `["read","write","edit"]`, deref(row.AllowedTools))
 
+	// 7b. 显式 tools: [] 的 subagent (pure) → 落库 "[]" 而非 NULL，禁用全部内置工具
+	r = details(t, e.call(chat, ToolCreateThread, `{"prompt":"analyze design","role":"pure"}`, true))
+	row = e.row(r["threadId"].(string))
+	assert.Equal(t, "pure", deref(row.AgentRole))
+	require.NotNil(t, row.AllowedTools)
+	assert.Equal(t, "[]", *row.AllowedTools)
 	// 7. 未配 model 的 subagent (security-reviewer) → 模型回退到 default，仍保留其提示词与工具白名单
 	r = details(t, e.call(chat, ToolCreateThread, `{"prompt":"audit auth","role":"security-reviewer"}`, true))
 	row = e.row(r["threadId"].(string))

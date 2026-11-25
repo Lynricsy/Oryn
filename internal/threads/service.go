@@ -556,9 +556,10 @@ func newThread(row db.Thread) *thread {
 	return t
 }
 
-// encodeToolsJSON 把允许的工具白名单规范化（去空白、去重保序）后编码成 JSON 字符串；空列表返回 nil。
+// encodeToolsJSON 把允许的工具白名单规范化（去空白、去重保序）后编码成 JSON 字符串。
+// tools == nil 表示未限制（返回 nil，落库 NULL）；非 nil 空切片 []string{} 表示显式禁用全部工具（编码为 "[]"）。
 func encodeToolsJSON(tools []string) *string {
-	if len(tools) == 0 {
+	if tools == nil {
 		return nil
 	}
 	clean := make([]string, 0, len(tools))
@@ -569,9 +570,6 @@ func encodeToolsJSON(tools []string) *string {
 			clean = append(clean, s)
 		}
 	}
-	if len(clean) == 0 {
-		return nil
-	}
 	b, err := json.Marshal(clean)
 	if err != nil {
 		return nil
@@ -580,14 +578,18 @@ func encodeToolsJSON(tools []string) *string {
 	return &s
 }
 
-// decodeToolsJSON 解码 threads.allowed_tools 里的 JSON 字符串数组；为空或非法返回 nil。
+// decodeToolsJSON 解码 threads.allowed_tools 里的 JSON 字符串数组。
+// NULL 或空串返回 nil（不限制）；"[]" 返回非 nil 空切片 []string{}（禁用全部工具）。
 func decodeToolsJSON(raw *string) []string {
 	if raw == nil || *raw == "" {
 		return nil
 	}
 	var out []string
-	if err := json.Unmarshal([]byte(*raw), &out); err != nil || len(out) == 0 {
+	if err := json.Unmarshal([]byte(*raw), &out); err != nil {
 		return nil
+	}
+	if out == nil {
+		return []string{}
 	}
 	return out
 }

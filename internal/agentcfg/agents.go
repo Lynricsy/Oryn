@@ -151,7 +151,7 @@ func ParseAgentSpec(content []byte) (AgentSpec, error) {
 		spec.Description = strings.TrimSpace(d.Value)
 	}
 	spec.Model = yamlStringList(mapGetDeref(root, "model"))
-	spec.Tools = yamlStringList(mapGetDeref(root, "tools"))
+	spec.Tools = yamlToolList(mapGetDeref(root, "tools"))
 	if v, ok := str(mapGetDeref(root, "thinkingLevel")); ok && v != "" {
 		spec.ThinkingLevel = v
 	} else if v, ok := str(mapGetDeref(root, "thinking")); ok && v != "" {
@@ -184,6 +184,25 @@ func yamlStringList(n *yaml.Node) []string {
 		}
 	}
 	return out
+}
+
+// yamlToolList 解析 frontmatter 的 `tools`：缺失、null 或空串返回 nil（不限制工具）；
+// 显式 YAML 空数组 `tools: []` 返回非 nil 空切片 `[]string{}`（表示禁用全部内置工具）。
+func yamlToolList(n *yaml.Node) []string {
+	n = deref(n)
+	if n == nil || isNull(n) {
+		return nil
+	}
+	if n.Kind == yaml.SequenceNode {
+		out := make([]string, 0, len(n.Content))
+		for _, it := range n.Content {
+			if v, ok := str(it); ok && v != "" {
+				out = append(out, v)
+			}
+		}
+		return out
+	}
+	return yamlStringList(n)
 }
 
 // isFence 判断一行是否为 frontmatter 分隔线（容忍行尾空白与 \r）；closing 时 `...` 也算结尾。

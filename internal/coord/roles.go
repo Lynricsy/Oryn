@@ -179,7 +179,12 @@ func (s *Service) applySpaceCreateRole(ctx context.Context, a createThreadArgs, 
 
 	p.AgentRole = spec.Name
 	p.AppendSystemPrompt = buildRoleAppendPrompt(spec)
-	p.AllowedTools = slices.Clone(spec.Tools)
+	if spec.Tools != nil {
+		p.AllowedTools = slices.Clone(spec.Tools)
+		if p.AllowedTools == nil {
+			p.AllowedTools = []string{}
+		}
+	}
 	modelRole, modelRef, effThinking := resolveRoleModelAndThinking(spec, p.Model, thinking, cat.knownModelRoles)
 	p.Role = modelRole
 	p.Model = modelRef

@@ -122,6 +122,16 @@ Keep it short.
 	prefer, err := ParseAgentSpec([]byte("---\nname: both\nthinking: low\nthinkingLevel: high\n---\n"))
 	require.NoError(t, err)
 	assert.Equal(t, "high", prefer.ThinkingLevel)
+
+	// 区分 tools 省略（nil，不限制）与显式空数组 tools: []（非 nil 空切片，禁用全部内置工具）
+	omitted, err := ParseAgentSpec([]byte("---\nname: open\n---\nAll tools.\n"))
+	require.NoError(t, err)
+	assert.Nil(t, omitted.Tools)
+
+	emptyTools, err := ParseAgentSpec([]byte("---\nname: pure\ntools: []\n---\nNo tools.\n"))
+	require.NoError(t, err)
+	assert.NotNil(t, emptyTools.Tools)
+	assert.Empty(t, emptyTools.Tools)
 }
 
 func TestHomeAgentSpecs(t *testing.T) {

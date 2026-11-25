@@ -250,8 +250,12 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 			ap := t.appendSystemPrompt
 			params.AppendSystemPrompt = &ap
 		}
-		if len(t.allowedTools) > 0 {
-			params.Tools = slices.Clone(t.allowedTools)
+		if t.allowedTools != nil {
+			tools := slices.Clone(t.allowedTools)
+			if tools == nil {
+				tools = []string{}
+			}
+			params.Tools = &tools
 		}
 	}
 	t.mu.Unlock()

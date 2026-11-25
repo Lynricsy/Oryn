@@ -7225,8 +7225,8 @@ type LinkCtlAgentStartParams struct {
 	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
 	ThreadID ThreadID `json:"threadId"`
 
-	// Tools 工作线程允许的内置工具白名单（省略或空 = 不限制；由 orbd 生成覆盖层禁用表外内置工具）；只有普通工作线程接受
-	Tools []string `json:"tools,omitempty"`
+	// Tools 工作线程允许的工具白名单（省略 = 不限制；空数组 `[]` = 禁用全部内置工具；由 orbd 在启动时与实际注册工具取交集生效）；只有普通工作线程接受
+	Tools *[]string `json:"tools,omitempty"`
 
 	// Variant M26：协调档的启动变体。`research_web` 公网研究员（`web_search` 与只读公网网址的 `read`）；`research_private` 私有研究员
 	// （没有内置工具、没有 `PI_PROXY`）；`main_restricted` 受限的主线（只有 `read`）。与 `web` 互斥。只有协调宿主接受；省略 = 改动前的行为。

@@ -1621,8 +1621,39 @@ function statusLines(): string[] {
 	return [...(github ? [github] : []), ...(setup ? [setup] : []), ...serviceLines()];
 }
 
+// 按工作线程角色白名单限制激活的工具（ORYN_ROLE_TOOLS 为 JSON 字符串数组；未设置时不限制，空数组 [] 禁用全部工具）。
+// 通过扩展 API 对 pi.getAllTools() 取交集，避免白名单含当前会话未启用的可选工具（如 ast_grep / find）时启动失败。
+function registerRoleTools(pi: ExtensionAPI) {
+	const raw = process.env.ORYN_ROLE_TOOLS;
+	if (raw === undefined || raw === "") {
+		return;
+	}
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch {
+		return;
+	}
+	if (!Array.isArray(parsed)) {
+		return;
+	}
+	const allowed = new Set(
+		parsed
+			.filter((x): x is string => typeof x === "string")
+			.map((s) => s.trim())
+			.filter(Boolean),
+	);
+	const apply = async () => {
+		const all = pi.getAllTools().map((t) => t.name);
+		await pi.setActiveTools(all.filter((name) => allowed.has(name)));
+	};
+	pi.on("session_start", apply);
+	pi.on("session_switch", apply);
+}
+
 export default function orynOrbExtension(pi: ExtensionAPI) {
 	// bash 卡片的 pseudo 视图：orb 与 Runner 都注册（Runner 上的 omp 版本不定，原生模块缺失时自动跳过）
+	registerRoleTools(pi);
 	registerShellPseudo(pi);
 	const artifacts = registerArtifacts(pi);
 	if (process.env.ORYN_RUNNER === "1") {

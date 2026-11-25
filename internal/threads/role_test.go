@@ -84,3 +84,34 @@ func TestCreatePersistsAgentRoleConfig(t *testing.T) {
 	assert.Equal(t, "# Agent Role: scout\nStay concise.", reloaded.appendSystemPrompt)
 	assert.Equal(t, []string{"read", "grep"}, reloaded.allowedTools)
 }
+
+// 显式空工具列表 AllowedTools: []string{} 与省略 nil 严格区分：前者落库 "[]" 且恢复为非 nil 空切片。
+func TestCreatePersistsEmptyAllowedToolsDistinctFromNil(t *testing.T) {
+	f := newFixture(t, Config{})
+	emptyOut, err := f.s.Create(f.ctx, CreateParams{
+		Prompt:       "pure reasoning",
+		AgentRole:    "pure",
+		AllowedTools: []string{},
+	})
+	require.NoError(t, err)
+	row, err := f.st.Q.GetThread(f.ctx, emptyOut.ID)
+	require.NoError(t, err)
+	require.NotNil(t, row.AllowedTools)
+	assert.Equal(t, "[]", *row.AllowedTools)
+
+	f.s.forget(emptyOut.ID)
+	reloaded, err := f.s.get(f.ctx, emptyOut.ID)
+	require.NoError(t, err)
+	assert.NotNil(t, reloaded.allowedTools)
+	assert.Empty(t, reloaded.allowedTools)
+
+	nilOut, err := f.s.Create(f.ctx, CreateParams{Prompt: "default tools"})
+	require.NoError(t, err)
+	nilRow, err := f.st.Q.GetThread(f.ctx, nilOut.ID)
+	require.NoError(t, err)
+	assert.Nil(t, nilRow.AllowedTools)
+	f.s.forget(nilOut.ID)
+	reloadedNil, err := f.s.get(f.ctx, nilOut.ID)
+	require.NoError(t, err)
+	assert.Nil(t, reloadedNil.allowedTools)
+}

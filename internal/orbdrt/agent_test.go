@@ -7,9 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
 
-	"github.com/Lynricsy/Oryn/internal/agentcfg"
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/link"
 )
@@ -83,6 +81,8 @@ func TestCoordinatorRejectsWorkThreadRoleParams(t *testing.T) {
 	coord := apigen.AgentProfileCoordinator
 	prompt := "You are the Oryn coordinator.\nKeep replies short."
 	extra := "# Role: scout"
+	nonEmpty := []string{"read", "grep"}
+	empty := []string{}
 	for name, p := range map[string]apigen.LinkCtlAgentStartParams{
 		"appendSystemPrompt": {
 			ThreadID: "T-01932f6e-8d1a-7c3b-9f2e-0123456789b1", Profile: &coord, SystemPrompt: &prompt,
@@ -90,7 +90,11 @@ func TestCoordinatorRejectsWorkThreadRoleParams(t *testing.T) {
 		},
 		"tools": {
 			ThreadID: "T-01932f6e-8d1a-7c3b-9f2e-0123456789b2", Profile: &coord, SystemPrompt: &prompt,
-			Tools: []string{"read", "grep"},
+			Tools: &nonEmpty,
+		},
+		"empty tools": {
+			ThreadID: "T-01932f6e-8d1a-7c3b-9f2e-0123456789b3", Profile: &coord, SystemPrompt: &prompt,
+			Tools: &empty,
 		},
 	} {
 		err := cp.call(t, "agent.start", p, nil)
@@ -98,56 +102,64 @@ func TestCoordinatorRejectsWorkThreadRoleParams(t *testing.T) {
 	}
 }
 
-// 普通工作线程带 appendSystemPrompt 与 tools 启动：
-// 写出 role-prompt.md 并以 --append-system-prompt 传入；写出 role-overlay.yml 保留原 config.yml 的
-// disabledExtensions 并禁用白名单外内置工具，以 --config 传入。
-func TestWorkThreadRolePromptAndToolsOverlay(t *testing.T) {
+// 普通工作线程按 subagent 配置启动：
+// - 非空 tools 白名单：写出 role-prompt.md 并以 --append-system-prompt 传入，设置 ORYN_ROLE_TOOLS（覆盖 p.Env 里的伪造值），不加 --no-tools；
+// - 显式空 tools: []：追加 --no-tools 且设 ORYN_ROLE_TOOLS="[]"；
+// - 省略 tools (nil)：不加 --no-tools，且清除 p.Env 试图注入的 ORYN_ROLE_TOOLS。
+func TestWorkThreadRolePromptAndTools(t *testing.T) {
 	cp := newFakeCP(t)
 	rt := startRuntime(t, cp, nil)
 	cp.waitNotif(t, 0, "hello", nil)
 
-	// 预先放一份带 disabledExtensions 的 config.yml，验证覆盖层不会丢掉用户原有禁用项
-	cfgPath := filepath.Join(rt.ompAgentDir(), agentcfg.ConfigFile)
-	require.NoError(t, os.MkdirAll(filepath.Dir(cfgPath), 0o755))
-	require.NoError(t, os.WriteFile(cfgPath, []byte("disabledExtensions:\n  - rule:custom\n"), 0o600))
-
 	dump := filepath.Join(rt.home, "dump")
 	extra := "# Agent Role: scout\n\nInvestigate rapidly."
+	allow := []string{" read ", "grep", "read"}
 	var res apigen.LinkCtlAgentStartResult
 	require.NoError(t, cp.call(t, "agent.start", apigen.LinkCtlAgentStartParams{
 		ThreadID:           thread1,
 		SessionDir:         "~/.oryn/threads/" + thread1,
-		Env:                map[string]string{"FAKEOMP_DUMP_DIR": dump},
+		Env:                map[string]string{"FAKEOMP_DUMP_DIR": dump, "ORYN_ROLE_TOOLS": `["bash"]`},
 		InitFrames:         []apigen.OmpFrame{{"type": "open_session", "sessionDir": "~/.oryn/threads/" + thread1}},
 		AppendSystemPrompt: &extra,
-		Tools:              []string{"read", "grep", "glob"},
+		Tools:              &allow,
 	}, &res))
 	cp.waitNotif(t, 0, "agent.status", statusIs(thread1, "ready"))
 
 	rec := setupDump(t, dump, thread1)
-	threadDir := filepath.Join(rt.home, ".oryn", "threads", thread1)
-	promptFile := filepath.Join(threadDir, "role-prompt.md")
-	overlayFile := filepath.Join(threadDir, "role-overlay.yml")
-
+	promptFile := filepath.Join(rt.home, ".oryn", "threads", thread1, "role-prompt.md")
 	assert.Contains(t, rec.Args, "--append-system-prompt")
 	assert.Contains(t, rec.Args, promptFile)
-	assert.Contains(t, configArgs(rec.Args), overlayFile)
-
+	assert.NotContains(t, rec.Args, "--no-tools")
+	assert.Equal(t, `["read","grep"]`, rec.Env["ORYN_ROLE_TOOLS"])
 	gotPrompt, err := os.ReadFile(promptFile)
 	require.NoError(t, err)
 	assert.Equal(t, extra, string(gotPrompt))
 
-	gotOverlay, err := os.ReadFile(overlayFile)
-	require.NoError(t, err)
-	var parsed struct {
-		DisabledExtensions []string `yaml:"disabledExtensions"`
-	}
-	require.NoError(t, yaml.Unmarshal(gotOverlay, &parsed))
-	assert.Contains(t, parsed.DisabledExtensions, "rule:custom", "保留用户原有的 disabledExtensions")
-	assert.Contains(t, parsed.DisabledExtensions, "tool:edit")
-	assert.Contains(t, parsed.DisabledExtensions, "tool:write")
-	assert.Contains(t, parsed.DisabledExtensions, "tool:bash")
-	assert.NotContains(t, parsed.DisabledExtensions, "tool:read")
-	assert.NotContains(t, parsed.DisabledExtensions, "tool:grep")
-	assert.NotContains(t, parsed.DisabledExtensions, "tool:glob")
+	// 显式空数组 tools: [] → --no-tools + ORYN_ROLE_TOOLS="[]"
+	const threadEmpty = "T-01932f6e-8d1a-7c3b-9f2e-0123456789c1"
+	empty := []string{}
+	require.NoError(t, cp.call(t, "agent.start", apigen.LinkCtlAgentStartParams{
+		ThreadID:   threadEmpty,
+		SessionDir: "~/.oryn/threads/" + threadEmpty,
+		Env:        map[string]string{"FAKEOMP_DUMP_DIR": dump},
+		InitFrames: []apigen.OmpFrame{{"type": "open_session", "sessionDir": "~/.oryn/threads/" + threadEmpty}},
+		Tools:      &empty,
+	}, &res))
+	cp.waitNotif(t, 0, "agent.status", statusIs(threadEmpty, "ready"))
+	recEmpty := setupDump(t, dump, threadEmpty)
+	assert.Contains(t, recEmpty.Args, "--no-tools")
+	assert.Equal(t, `[]`, recEmpty.Env["ORYN_ROLE_TOOLS"])
+
+	// 省略 tools (nil) → 不限制，且 p.Env 试图伪造的 ORYN_ROLE_TOOLS 被清除
+	const threadNil = "T-01932f6e-8d1a-7c3b-9f2e-0123456789c2"
+	require.NoError(t, cp.call(t, "agent.start", apigen.LinkCtlAgentStartParams{
+		ThreadID:   threadNil,
+		SessionDir: "~/.oryn/threads/" + threadNil,
+		Env:        map[string]string{"FAKEOMP_DUMP_DIR": dump, "ORYN_ROLE_TOOLS": `["read"]`},
+		InitFrames: []apigen.OmpFrame{{"type": "open_session", "sessionDir": "~/.oryn/threads/" + threadNil}},
+	}, &res))
+	cp.waitNotif(t, 0, "agent.status", statusIs(threadNil, "ready"))
+	recNil := setupDump(t, dump, threadNil)
+	assert.NotContains(t, recNil.Args, "--no-tools")
+	assert.NotContains(t, recNil.Env, "ORYN_ROLE_TOOLS")
 }

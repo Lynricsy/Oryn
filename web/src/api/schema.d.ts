@@ -12382,7 +12382,7 @@ export interface components {
             projectConfig?: components["schemas"]["LinkCtlProjectConfig"];
             /** @description 追加到工作线程系统提示词末尾的文本（由 orbd 写入文件并以 `--append-system-prompt` 传入 omp）；只有普通工作线程接受 */
             appendSystemPrompt?: string;
-            /** @description 工作线程允许的内置工具白名单（省略或空 = 不限制；由 orbd 生成覆盖层禁用表外内置工具）；只有普通工作线程接受 */
+            /** @description 工作线程允许的工具白名单（省略 = 不限制；空数组 `[]` = 禁用全部内置工具；由 orbd 在启动时与实际注册工具取交集生效）；只有普通工作线程接受 */
             tools?: string[];
         };
         LinkCtlAgentStartResult: {
