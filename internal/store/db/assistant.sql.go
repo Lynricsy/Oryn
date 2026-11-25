@@ -122,7 +122,7 @@ func (q *Queries) GetAssistantConfirmation(ctx context.Context, id string) (Assi
 const getAssistantSettings = `-- name: GetAssistantSettings :one
 
 
-SELECT id, web_access, disabled_mcp, computer_provider, computer_orb_type, computer_tools, computer_tools_version, main_notes, main_notes_updated_at, updated_at, model, thinking_level FROM assistant_settings WHERE id = 1
+SELECT id, web_access, disabled_mcp, computer_provider, computer_orb_type, computer_tools, computer_tools_version, main_notes, main_notes_updated_at, updated_at, model, thinking_level, system_prompt FROM assistant_settings WHERE id = 1
 `
 
 // M19: global assistant settings, confirmations, the main conversation inbox and the assistant's computer.
@@ -143,6 +143,7 @@ func (q *Queries) GetAssistantSettings(ctx context.Context) (AssistantSetting, e
 		&i.UpdatedAt,
 		&i.Model,
 		&i.ThinkingLevel,
+		&i.SystemPrompt,
 	)
 	return i, err
 }
@@ -555,12 +556,13 @@ func (q *Queries) UnmarkAssistantInboxDelivered(ctx context.Context, id string) 
 }
 
 const upsertAssistantSettings = `-- name: UpsertAssistantSettings :exec
-INSERT INTO assistant_settings (id, web_access, disabled_mcp, computer_provider, computer_orb_type, model, thinking_level, updated_at)
-VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)
+INSERT INTO assistant_settings (id, web_access, disabled_mcp, computer_provider, computer_orb_type, model, thinking_level, system_prompt, updated_at)
+VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
 ON CONFLICT (id) DO UPDATE SET
     web_access = excluded.web_access, disabled_mcp = excluded.disabled_mcp,
     computer_provider = excluded.computer_provider, computer_orb_type = excluded.computer_orb_type,
     model = excluded.model, thinking_level = excluded.thinking_level,
+    system_prompt = excluded.system_prompt,
     updated_at = excluded.updated_at
 `
 
@@ -571,6 +573,7 @@ type UpsertAssistantSettingsParams struct {
 	ComputerOrbType  *string `json:"computerOrbType"`
 	Model            *string `json:"model"`
 	ThinkingLevel    *string `json:"thinkingLevel"`
+	SystemPrompt     string  `json:"systemPrompt"`
 	UpdatedAt        int64   `json:"updatedAt"`
 }
 
@@ -582,6 +585,7 @@ func (q *Queries) UpsertAssistantSettings(ctx context.Context, arg UpsertAssista
 		arg.ComputerOrbType,
 		arg.Model,
 		arg.ThinkingLevel,
+		arg.SystemPrompt,
 		arg.UpdatedAt,
 	)
 	return err

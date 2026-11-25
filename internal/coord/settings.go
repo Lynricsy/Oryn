@@ -23,16 +23,17 @@ import (
 	"github.com/Lynricsy/Oryn/internal/threads"
 )
 
-// 全局助手的设置（M19）：联网总开关、关掉的 MCP 服务器、助手的电脑的 provider 与类型、默认模型与思考档位。
-// 联网或 MCP 变更后刷新协调宿主出站策略并让未归档助手对话在静止后重启；默认模型或思考档位变更后同步切换主线，
-// 已有其他助手对话不变。
+// 全局助手的设置（M19）：联网总开关、关掉的 MCP 服务器、助手的电脑的 provider 与类型、默认模型与思考档位、自定义附加系统提示词。
+// 联网或 MCP 变更后刷新协调宿主出站策略并让未归档助手对话在静止后重启；自定义系统提示词变更后让未归档助手对话在静止后重启并丢弃旧备用对话；
+// 默认模型或思考档位变更后同步切换主线并丢弃旧备用对话，已有其他助手对话不变。
 
 // 设置的上限。
 const (
-	maxDisabledMCP    = 200
-	maxMCPNameRunes   = 200
-	maxComputerString = 200
-	maxModelPart      = 200
+	maxDisabledMCP       = 200
+	maxMCPNameRunes      = 200
+	maxComputerString    = 200
+	maxModelPart         = 200
+	maxSystemPromptRunes = 8000
 )
 
 // GlobalConfig 是全局 omp 配置（*agentcfg.Home 实现）。
@@ -50,13 +51,14 @@ func (s *Service) SetAgentConfig(home GlobalConfig, env EnvSecrets) {
 	s.home, s.envSecrets = home, env
 }
 
-// assistantSettings 是解析后的设置行；没有行时为默认值（联网开、无禁用项、模型与思考档位跟随默认）。
+// assistantSettings 是解析后的设置行；没有行时为默认值（联网开、无禁用项、模型与思考档位跟随默认、无自定义提示词）。
 type assistantSettings struct {
 	webAccess        bool
 	disabled         []string
 	provider, orbTyp *string
 	model            *string
 	thinkingLevel    *string
+	systemPrompt     string
 }
 
 func (s *Service) loadSettings(ctx context.Context) (assistantSettings, error) {
@@ -74,19 +76,24 @@ func (s *Service) loadSettings(ctx context.Context) (assistantSettings, error) {
 	}
 	out.provider, out.orbTyp = row.ComputerProvider, row.ComputerOrbType
 	out.model, out.thinkingLevel = row.Model, row.ThinkingLevel
+	out.systemPrompt = row.SystemPrompt
 	return out, nil
 }
 
 func (a assistantSettings) api() apigen.AssistantSettings {
 	out := apigen.AssistantSettings{
 		WebAccess: a.webAccess, DisabledMcpServers: a.disabled,
-		Computer: apigen.AssistantComputerSettings{Provider: a.provider, OrbType: a.orbTyp},
+		Computer:      apigen.AssistantComputerSettings{Provider: a.provider, OrbType: a.orbTyp},
 		ThinkingLevel: a.thinkingLevel,
 	}
 	if a.model != nil {
 		if ref, ok := parseModelRef(*a.model); ok {
 			out.Model = ref
 		}
+	}
+	if a.systemPrompt != "" {
+		p := a.systemPrompt
+		out.SystemPrompt = &p
 	}
 	return out
 }
@@ -118,7 +125,7 @@ func (s *Service) Settings(ctx context.Context) (apigen.AssistantSettings, error
 }
 
 // PutSettings 整体替换全局助手的设置。联网或 MCP 禁用表变更时刷新协调宿主出站策略并让助手对话静止后重启；
-// 默认模型或思考档位变更时同步切换主线并丢弃旧备用对话，已有其他助手对话不变。
+// 自定义提示词变更时让未归档助手对话静止后重启并丢弃旧备用对话；默认模型或思考档位变更时同步切换主线并丢弃旧备用对话，已有其他助手对话不变。
 func (s *Service) PutSettings(ctx context.Context, in apigen.AssistantSettings) (apigen.AssistantSettings, error) {
 	if len(in.DisabledMcpServers) > maxDisabledMCP {
 		return apigen.AssistantSettings{}, errf(CodeInvalid, "at most %d disabled MCP servers", maxDisabledMCP)
@@ -170,6 +177,15 @@ func (s *Service) PutSettings(ctx context.Context, in apigen.AssistantSettings) 
 			thinking = &v
 		}
 	}
+	var systemPrompt string
+	if in.SystemPrompt != nil {
+		if v := strings.TrimSpace(*in.SystemPrompt); v != "" {
+			if n := utf8.RuneCountInString(v); n > maxSystemPromptRunes {
+				return apigen.AssistantSettings{}, errf(CodeInvalid, "system prompt has %d characters; the limit is %d", n, maxSystemPromptRunes)
+			}
+			systemPrompt = v
+		}
+	}
 	prev, err := s.loadSettings(ctx)
 	if err != nil {
 		return apigen.AssistantSettings{}, err
@@ -184,7 +200,7 @@ func (s *Service) PutSettings(ctx context.Context, in apigen.AssistantSettings) 
 	}
 	if err := s.st.Q.UpsertAssistantSettings(ctx, db.UpsertAssistantSettingsParams{
 		WebAccess: web, DisabledMcp: string(b), ComputerProvider: provider, ComputerOrbType: orbType,
-		Model: model, ThinkingLevel: thinking,
+		Model: model, ThinkingLevel: thinking, SystemPrompt: systemPrompt,
 		UpdatedAt: s.cfg.Now().UnixMilli(),
 	}); err != nil {
 		return apigen.AssistantSettings{}, err
@@ -192,16 +208,22 @@ func (s *Service) PutSettings(ctx context.Context, in apigen.AssistantSettings) 
 	policyChanged := prev.webAccess != in.WebAccess || !slices.Equal(prev.disabled, disabled)
 	modelChanged := !strPtrEqual(prev.model, model)
 	thinkingChanged := !strPtrEqual(prev.thinkingLevel, thinking)
+	promptChanged := prev.systemPrompt != systemPrompt
+	willRestart := policyChanged || promptChanged
 	if modelChanged || thinkingChanged {
-		s.syncMainModel(ctx, modelChanged, model, thinkingChanged, thinking, policyChanged)
+		s.syncMainModel(ctx, modelChanged, model, thinkingChanged, thinking, willRestart)
+	}
+	if modelChanged || thinkingChanged || promptChanged {
 		s.resetSpare(ctx)
 	}
 	if policyChanged {
 		s.refreshAssistants(ctx)
+	} else if promptChanged {
+		s.refreshConversations(ctx)
 	}
 	return assistantSettings{
 		webAccess: in.WebAccess, disabled: disabled, provider: provider, orbTyp: orbType,
-		model: model, thinkingLevel: thinking,
+		model: model, thinkingLevel: thinking, systemPrompt: systemPrompt,
 	}.api(), nil
 }
 
@@ -288,6 +310,15 @@ func (s *Service) refreshConversations(ctx context.Context) {
 func (s *Service) webAccess(ctx context.Context) bool {
 	a, err := s.loadSettings(ctx)
 	return err != nil || a.webAccess
+}
+
+// assistantWebAndPrompt 返回全局助手的联网开关与自定义附加系统提示词（读设置失败按默认：联网开、无自定义提示词）。
+func (s *Service) assistantWebAndPrompt(ctx context.Context) (web bool, customPrompt string) {
+	a, err := s.loadSettings(ctx)
+	if err != nil {
+		return true, ""
+	}
+	return a.webAccess, a.systemPrompt
 }
 
 // WebAccess 报告全局助手联网是否开启（M26：后台研究在联网关着时不发起公网运行）。

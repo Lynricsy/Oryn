@@ -89,6 +89,9 @@ const assistantArtifacts = `Artifacts（交付物）：
 // spaceFiles 是 Space 协调者的文件段：没有文件库。
 const spaceFiles = "You have no files: do not use the read or write tools."
 
+// assistantCustomPromptHeader 是主人自定义附加系统提示词的段头（仅拼在全局助手系统提示词里，不影响 Space 协调者与研究员）。
+const assistantCustomPromptHeader = "## Owner's custom instructions\n\n"
+
 // SystemPrompt 返回协调对话 threadID 的系统提示词。space 为 nil 时是全局助手；projectName 空 = 无项目；
 // webAccess 是全局助手的联网开关（Space 协调者忽略）。
 func SystemPrompt(space *apigen.Space, projectName, threadID string, webAccess bool) string {
@@ -157,15 +160,24 @@ func (s *Service) AgentProfile(ctx context.Context, threadID string) (threads.Ag
 	}
 	tools := ToolDefs(ToolSet{InSpace: space != nil, Memory: memOn, Main: main, Computer: computer})
 	// Web：第一层（内置联网与生图、MCP）只给全局助手，Space 协调者不变（D10）；联网总开关由出站策略执行
+	webOn, customPrompt := true, ""
+	if space == nil {
+		webOn, customPrompt = s.assistantWebAndPrompt(ctx)
+		if restricted {
+			webOn = false
+		}
+	}
 	prof := threads.AgentProfile{
-		SystemPrompt: SystemPrompt(space, project, threadID, space != nil || (!restricted && s.webAccess(ctx))),
+		SystemPrompt: SystemPrompt(space, project, threadID, webOn),
 		Tools:        tools,
 		Web:          space == nil,
 	}
 	if space == nil {
 		prof.MCPToken = s.cfg.MCPToken
+		if customPrompt != "" {
+			prof.SystemPrompt += "\n\n" + assistantCustomPromptHeader + customPrompt
+		}
 	}
-	// M17：助手记忆运行时，全局助手的系统提示词末尾接记忆段与记忆工具用法；记忆段生成失败不阻止启动（只是这次没有记忆）
 	if memOn {
 		brief, err := s.mem.Brief(ctx, threadID)
 		if err != nil {

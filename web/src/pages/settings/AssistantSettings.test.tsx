@@ -331,4 +331,46 @@ describe("设置 → 全局助手", () => {
 			"跟随默认",
 		);
 	});
+
+	it("自定义提示词：编辑保存、超长校验与清空", async () => {
+		mount();
+		const card = await screen.findByTestId("assistant-prompt-card");
+		const textarea = within(card).getByRole("textbox", {
+			name: "自定义提示词",
+		});
+		const saveBtn = within(card).getByRole("button", { name: "保存" });
+		expect(saveBtn).toBeDisabled();
+		expect(within(card).queryByRole("button", { name: "清空" })).toBeNull();
+
+		// 超长拦截
+		fireEvent.change(textarea, { target: { value: "字".repeat(8001) } });
+		expect(saveBtn).toBeDisabled();
+		expect(within(card).getByRole("alert")).toHaveTextContent("8000");
+
+		// 正常输入并保存
+		fireEvent.change(textarea, {
+			target: { value: "  始终用简体中文回答，先给结论。  " },
+		});
+		expect(saveBtn).toBeEnabled();
+		fireEvent.click(saveBtn);
+		await waitFor(() =>
+			expect(server.assistant.settings.systemPrompt).toBe(
+				"始终用简体中文回答，先给结论。",
+			),
+		);
+		expect(puts.at(-1)).toEqual(
+			expect.objectContaining({
+				systemPrompt: "始终用简体中文回答，先给结论。",
+			}),
+		);
+		await waitFor(() => expect(saveBtn).toBeDisabled());
+
+		// 一键清空
+		const clearBtn = within(card).getByRole("button", { name: "清空" });
+		fireEvent.click(clearBtn);
+		await waitFor(() =>
+			expect(server.assistant.settings.systemPrompt).toBeUndefined(),
+		);
+		expect(textarea).toHaveValue("");
+	});
 });

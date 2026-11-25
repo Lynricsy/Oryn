@@ -518,3 +518,50 @@ func TestAssistantMainResetFallsBackToCoordinatorModel(t *testing.T) {
 	assert.Equal(t, "gemini-3", resp.Data.Model.ID)
 	assert.Equal(t, "high", resp.Data.ThinkingLevel)
 }
+
+// 仅修改自定义附加系统提示词：不重刷出站策略，但让未归档的全局助手对话（含主线与普通对话）在静止后重启以应用新提示词。
+func TestAssistantSystemPromptRefreshesConversations(t *testing.T) {
+	e := newEnv(t, false)
+	var policyRefreshes int
+	var mu sync.Mutex
+	e.c.refreshPolicy = func(context.Context, string) error {
+		mu.Lock()
+		policyRefreshes++
+		mu.Unlock()
+		return nil
+	}
+
+	conv, err := e.c.CreateConversation(e.ctx, threads.CoordinatorParams{Prompt: "hi"})
+	require.NoError(t, err)
+	mainTh, err := e.c.EnsureMain(e.ctx)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		a, err1 := e.th.Get(e.ctx, conv.ID)
+		b, err2 := e.th.Get(e.ctx, mainTh.ID)
+		return err1 == nil && err2 == nil &&
+			a.State == apigen.ThreadStateIdle &&
+			b.State == apigen.ThreadStateIdle
+	}, 10*time.Second, 20*time.Millisecond)
+
+	stops := func() int {
+		n := 0
+		for _, c := range e.orbs.Calls() {
+			if c == "agent.stop" {
+				n++
+			}
+		}
+		return n
+	}
+	stopsBefore := stops()
+
+	custom := "称呼我为主人，回复保持简洁。"
+	_, err = e.c.PutSettings(e.ctx, apigen.AssistantSettings{
+		WebAccess: true, DisabledMcpServers: []string{}, SystemPrompt: &custom,
+	})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return stops() >= stopsBefore+2 }, 10*time.Second, 20*time.Millisecond, "未归档的普通助手对话与主线均应在静止后重启")
+
+	mu.Lock()
+	assert.Equal(t, 0, policyRefreshes, "仅改自定义提示词时不应重刷出站策略")
+	mu.Unlock()
+}

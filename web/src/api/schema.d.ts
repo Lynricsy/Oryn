@@ -8584,6 +8584,8 @@ export interface components {
             model?: components["schemas"]["ModelRef"];
             /** @description 全局助手的默认思考档位（off / minimal / low / medium / high / xhigh / max / auto）；省略 = 跟随默认。改动同时切换主线对话，已有其他助手对话不变 */
             thinkingLevel?: string;
+            /** @description 附加到全局助手系统提示词中的自定义指令（最多 8000 字，不影响内置工具与安全规则，也不影响 Space 协调者）；省略或空串 = 不追加。改动后未归档的助手对话在静止后自动重启生效，新对话立即生效 */
+            systemPrompt?: string;
         };
         /** @description 助手的电脑下一次创建时用的 provider 与 orb 类型；省略 = 默认解析 */
         AssistantComputerSettings: {

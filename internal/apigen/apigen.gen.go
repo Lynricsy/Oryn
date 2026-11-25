@@ -5592,6 +5592,9 @@ type AssistantSettings struct {
 	// Model 全局助手的默认模型；省略 = 跟随服务端默认（coordinator.model → config.yml 的 modelRoles.default）。改动同时切换主线对话，已有其他助手对话不变
 	Model *ModelRef `json:"model,omitempty"`
 
+	// SystemPrompt 附加到全局助手系统提示词中的自定义指令（最多 8000 字，不影响内置工具与安全规则，也不影响 Space 协调者）；省略或空串 = 不追加。改动后未归档的助手对话在静止后自动重启生效，新对话立即生效
+	SystemPrompt *string `json:"systemPrompt,omitempty"`
+
 	// ThinkingLevel 全局助手的默认思考档位（off / minimal / low / medium / high / xhigh / max / auto）；省略 = 跟随默认。改动同时切换主线对话，已有其他助手对话不变
 	ThinkingLevel *string `json:"thinkingLevel,omitempty"`
 

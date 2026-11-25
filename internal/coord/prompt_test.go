@@ -92,3 +92,68 @@ func TestProfileWebAccess(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, spBefore.SystemPrompt, spAfter.SystemPrompt)
 }
+
+// 自定义附加系统提示词：追加到全局助手（含主线）系统提示词中且位于主线说明之前，
+// 不覆盖内置规则，不影响 Space 协调者与后台研究员；超长拒绝；清空后移除。
+func TestProfileCustomSystemPrompt(t *testing.T) {
+	e := newEnv(t, true)
+	conv := e.assistant()
+	sp := e.space("s", "")
+	mainTh, err := e.c.EnsureMain(e.ctx)
+	require.NoError(t, err)
+	spBefore, err := e.c.AgentProfile(e.ctx, sp.ThreadID)
+	require.NoError(t, err)
+
+	// 超长（8001 字符）拒绝
+	tooLong := strings.Repeat("字", maxSystemPromptRunes+1)
+	_, err = e.c.PutSettings(e.ctx, apigen.AssistantSettings{
+		WebAccess: true, DisabledMcpServers: []string{}, SystemPrompt: &tooLong,
+	})
+	assert.Equal(t, CodeInvalid, errCode(err))
+
+	// 保存自定义提示词（带首尾空白，保留内部换行）
+	raw := "  \n始终使用简体中文回答。\n先给结论，再给理由。\n  "
+	got, err := e.c.PutSettings(e.ctx, apigen.AssistantSettings{
+		WebAccess: true, DisabledMcpServers: []string{}, SystemPrompt: &raw,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, got.SystemPrompt)
+	assert.Equal(t, "始终使用简体中文回答。\n先给结论，再给理由。", *got.SystemPrompt)
+
+	// 普通助手对话：在内置规则之后追加自定义指令
+	p, err := e.c.AgentProfile(e.ctx, conv.ID)
+	require.NoError(t, err)
+	base := SystemPrompt(nil, "", conv.ID, true)
+	assert.Equal(t, base+"\n\n"+assistantCustomPromptHeader+"始终使用简体中文回答。\n先给结论，再给理由。", p.SystemPrompt)
+
+	// 主线对话：在内置规则之后、主线说明之前包含自定义指令
+	mp, err := e.c.AgentProfile(e.ctx, mainTh.ID)
+	require.NoError(t, err)
+	idxCustom := strings.Index(mp.SystemPrompt, assistantCustomPromptHeader+"始终使用简体中文回答。")
+	idxMain := strings.Index(mp.SystemPrompt, "## This is the main conversation")
+	assert.Greater(t, idxCustom, 0)
+	assert.Greater(t, idxMain, idxCustom, "自定义指令应位于主线说明之前")
+
+	// Space 协调者不受影响
+	spAfter, err := e.c.AgentProfile(e.ctx, sp.ThreadID)
+	require.NoError(t, err)
+	assert.Equal(t, spBefore.SystemPrompt, spAfter.SystemPrompt)
+
+	// 后台研究员不受影响
+	resID, err := e.c.EnsureResearcher(e.ctx, "web")
+	require.NoError(t, err)
+	rp, err := e.c.AgentProfile(e.ctx, resID)
+	require.NoError(t, err)
+	assert.NotContains(t, rp.SystemPrompt, "始终使用简体中文回答。")
+
+	// 传空白即清空
+	blank := "   \n\t  "
+	cleared, err := e.c.PutSettings(e.ctx, apigen.AssistantSettings{
+		WebAccess: true, DisabledMcpServers: []string{}, SystemPrompt: &blank,
+	})
+	require.NoError(t, err)
+	assert.Nil(t, cleared.SystemPrompt)
+	pCleared, err := e.c.AgentProfile(e.ctx, conv.ID)
+	require.NoError(t, err)
+	assert.Equal(t, base, pCleared.SystemPrompt)
+}

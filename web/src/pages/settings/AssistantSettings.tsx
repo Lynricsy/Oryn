@@ -1,11 +1,12 @@
 /**
- * 设置 → 全局助手（M19 步骤 1.6 / 4.4，M26）：五张卡片。
+ * 设置 → 全局助手（M19 步骤 1.6 / 4.4，M26）：六张卡片。
  * 1. 模型与思考档位：全局助手默认使用的模型与思考档位（留空跟随系统默认）；改动同时切换主线，已有其他对话不变。
- * 2. 联网：助手沙箱经 orynd 代理访问公网的总开关（关掉后 `web_search` 与读网页失败）。
- * 3. MCP 服务器：全局 `mcp.json` 里的服务器——名字、主机、传输方式、不可用的原因，可用的逐个开关；可用且开着的
+ * 2. 自定义提示词：附加到全局助手系统提示词中的指令（最多 8000 字，不影响内置工具与安全规则）；改动后未归档助手对话在空闲后自动应用。
+ * 3. 联网：助手沙箱经 orynd 代理访问公网的总开关（关掉后 `web_search` 与读网页失败）。
+ * 4. MCP 服务器：全局 `mcp.json` 里的服务器——名字、主机、传输方式、不可用的原因，可用的逐个开关；可用且开着的
  *    行尾有「研究可用工具（N）」，打开 `McpResearchToolsDialog` 勾选后台研究可调用的工具（M26）。
- * 4. 后台研究（M26，`ResearchCard`）：总开关、四条管线、研究员的模型、每日上限与研究偏好，整体 PUT 研究设置。
- * 5. 助手的电脑：创建它时用的 provider 与 orb 类型（都留空走 orb 的默认解析）；只影响下一次创建。
+ * 5. 后台研究（M26，`ResearchCard`）：总开关、四条管线、研究员的模型、每日上限与研究偏好，整体 PUT 研究设置。
+ * 6. 助手的电脑：创建它时用的 provider 与 orb 类型（都留空走 orb 的默认解析）；只影响下一次创建。
  * 除后台研究外都整体 PUT 助手设置；请求进行中先显示要改成的值。
  */
 import { type ReactNode, useState } from "react";
@@ -34,6 +35,7 @@ import {
 	type MenuItem,
 	Select,
 	Spinner,
+	TextArea,
 	Toggle,
 } from "../../components/ui/primitives";
 import { type DIAL_LEVELS, LevelGlyph } from "../../components/ui/ThinkingDial";
@@ -51,6 +53,9 @@ const ALL_THINKING_LEVELS = [
 	"xhigh",
 	"max",
 ] as const;
+/** 自定义附加系统提示词的字数上限（同服务端）。 */
+const SYSTEM_PROMPT_LIMIT = 8000;
+
 function ServerRow({
 	server,
 	enabled,
@@ -131,16 +136,19 @@ export default function AssistantSettings(): ReactNode {
 	const [toolsFor, setToolsFor] = useState<string | null>(null);
 	// 正在弹出全局助手模型选择器
 	const [pickingModel, setPickingModel] = useState(false);
+	// 自定义提示词草稿（null = 未编辑，显示服务端值）
+	const [promptDraft, setPromptDraft] = useState<string | null>(null);
 	// 请求进行中先显示要改成的值
 	const current: Settings | undefined = put.isPending
 		? put.variables
 		: settings.data;
-	const save = (patch: Partial<Settings>) => {
+	const save = (patch: Partial<Settings>, onSuccess?: () => void) => {
 		if (!current) return;
 		const next: Settings = { ...current, ...patch };
 		if (!next.model) delete next.model;
 		if (!next.thinkingLevel) delete next.thinkingLevel;
-		put.mutate(next);
+		if (!next.systemPrompt) delete next.systemPrompt;
+		put.mutate(next, onSuccess ? { onSuccess } : undefined);
 	};
 	const setServer = (name: string, on: boolean) => {
 		if (!current) return;
@@ -180,6 +188,12 @@ export default function AssistantSettings(): ReactNode {
 		(p) => p.name === computer.provider,
 	);
 	const busy = put.isPending || !current;
+	const savedPrompt = current?.systemPrompt ?? "";
+	const promptText = promptDraft ?? savedPrompt;
+	const promptCount = [...promptText].length;
+	const promptOver = promptCount > SYSTEM_PROMPT_LIMIT;
+	const promptDirty =
+		promptDraft !== null && promptDraft.trim() !== savedPrompt;
 	return (
 		<>
 			<Card title={t("assistantSettings.modelTitle")} icon="cpu">
@@ -309,6 +323,79 @@ export default function AssistantSettings(): ReactNode {
 									{t("assistantSettings.thinkingUnsupported")}
 								</p>
 							)}
+						</div>
+					</div>
+				)}
+				<ErrorText error={put.error} />
+			</Card>
+			<Card title={t("assistantSettings.promptTitle")} icon="fileText">
+				<p className="text-faint text-xs">
+					{t("assistantSettings.promptHint")}
+				</p>
+				{settings.isPending ? (
+					<Spinner />
+				) : settings.isError ? (
+					<ErrorText error={settings.error} />
+				) : (
+					<div
+						data-testid="assistant-prompt-card"
+						className="mt-3 flex flex-col gap-2"
+					>
+						<TextArea
+							mono={false}
+							rows={5}
+							aria-label={t("assistantSettings.promptTitle")}
+							aria-invalid={promptOver || undefined}
+							placeholder={t("assistantSettings.promptPlaceholder")}
+							disabled={busy}
+							value={promptText}
+							onChange={(e) => setPromptDraft(e.target.value)}
+						/>
+						<div className="flex items-center justify-between gap-3 text-xs">
+							<span
+								role={promptOver ? "alert" : undefined}
+								className="text-err"
+							>
+								{promptOver
+									? t("assistantSettings.promptTooLong", {
+											limit: SYSTEM_PROMPT_LIMIT,
+										})
+									: ""}
+							</span>
+							<span className="flex shrink-0 items-center gap-2">
+								<span
+									data-testid="assistant-prompt-count"
+									className={`tabular-nums ${promptOver ? "text-err" : "text-faint"}`}
+								>
+									{promptCount} / {SYSTEM_PROMPT_LIMIT}
+								</span>
+								{savedPrompt && (
+									<Button
+										size="sm"
+										variant="ghost"
+										disabled={busy}
+										onClick={() =>
+											save({ systemPrompt: undefined }, () =>
+												setPromptDraft(null),
+											)
+										}
+									>
+										{t("assistantSettings.promptClear")}
+									</Button>
+								)}
+								<Button
+									size="sm"
+									variant="primary"
+									disabled={!promptDirty || promptOver || busy}
+									onClick={() =>
+										save({ systemPrompt: promptText.trim() || undefined }, () =>
+											setPromptDraft(null),
+										)
+									}
+								>
+									{t("common.save")}
+								</Button>
+							</span>
 						</div>
 					</div>
 				)}

@@ -174,6 +174,7 @@ type AssistantSetting struct {
 	UpdatedAt            int64   `json:"updatedAt"`
 	Model                *string `json:"model"`
 	ThinkingLevel        *string `json:"thinkingLevel"`
+	SystemPrompt         string  `json:"systemPrompt"`
 }
 
 type Attachment struct {

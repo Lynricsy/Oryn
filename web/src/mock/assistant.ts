@@ -488,12 +488,25 @@ export class MockAssistant {
 				thinkingLevel = v;
 			}
 		}
+		let systemPrompt: string | undefined;
+		if (b.systemPrompt !== undefined) {
+			const v = b.systemPrompt.trim();
+			if (v !== "") {
+				if ([...v].length > 8000) {
+					return invalid(
+						`system prompt has ${[...v].length} characters; the limit is 8000`,
+					);
+				}
+				systemPrompt = v;
+			}
+		}
 		this.settings = {
 			webAccess: b.webAccess,
 			disabledMcpServers: [...new Set(names)],
 			computer,
 			...(model ? { model } : {}),
 			...(thinkingLevel ? { thinkingLevel } : {}),
+			...(systemPrompt ? { systemPrompt } : {}),
 		};
 		return json(this.settings);
 	}

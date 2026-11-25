@@ -6,12 +6,13 @@
 SELECT * FROM assistant_settings WHERE id = 1;
 
 -- name: UpsertAssistantSettings :exec
-INSERT INTO assistant_settings (id, web_access, disabled_mcp, computer_provider, computer_orb_type, model, thinking_level, updated_at)
-VALUES (1, @web_access, @disabled_mcp, sqlc.narg(computer_provider), sqlc.narg(computer_orb_type), sqlc.narg(model), sqlc.narg(thinking_level), @updated_at)
+INSERT INTO assistant_settings (id, web_access, disabled_mcp, computer_provider, computer_orb_type, model, thinking_level, system_prompt, updated_at)
+VALUES (1, @web_access, @disabled_mcp, sqlc.narg(computer_provider), sqlc.narg(computer_orb_type), sqlc.narg(model), sqlc.narg(thinking_level), @system_prompt, @updated_at)
 ON CONFLICT (id) DO UPDATE SET
     web_access = excluded.web_access, disabled_mcp = excluded.disabled_mcp,
     computer_provider = excluded.computer_provider, computer_orb_type = excluded.computer_orb_type,
     model = excluded.model, thinking_level = excluded.thinking_level,
+    system_prompt = excluded.system_prompt,
     updated_at = excluded.updated_at;
 -- name: SetAssistantMainNotes :exec
 INSERT INTO assistant_settings (id, main_notes, main_notes_updated_at, updated_at)
