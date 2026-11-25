@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"strings"
 	"sync"
@@ -49,12 +50,20 @@ type Runner struct {
 	ShutdownGrace time.Duration
 	// HeartbeatInterval 是重发 hello 续租的间隔（默认 15s）。
 	HeartbeatInterval time.Duration
-	HTTP              *http.Client
+	// OrbDiskInterval 是后台采样 orb 可写盘占用的间隔（默认 60s）。
+	OrbDiskInterval time.Duration
+	HTTP            *http.Client
 
 	instanceID string
 	// helloMu 串行化 hello（租约冲突时多个 worker 同时重试）。
 	helloMu     sync.Mutex
 	hostSampler *hostMetricsSampler
+
+	// orbDiskMu 保护后台单并发采样器写入的最新 orb 磁盘快照，hello 只读快照、绝不阻塞。
+	orbDiskMu    sync.Mutex
+	orbDiskValid bool
+	orbDiskTotal int64
+	orbDiskByOrb map[string]int64
 }
 
 func (r *Runner) defaults() {
@@ -72,6 +81,9 @@ func (r *Runner) defaults() {
 	}
 	if r.HeartbeatInterval <= 0 {
 		r.HeartbeatInterval = 15 * time.Second
+	}
+	if r.OrbDiskInterval <= 0 {
+		r.OrbDiskInterval = orbDiskCacheTTL
 	}
 	if r.HTTP == nil {
 		r.HTTP = &http.Client{}
@@ -129,6 +141,13 @@ func (r *Runner) Run(ctx context.Context) error {
 			fail(err)
 		}
 	}()
+	if sizer, ok := r.Driver.(OrbDiskSizer); ok {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r.sampleOrbDiskLoop(runCtx, sizer)
+		}()
+	}
 	for range r.Concurrency {
 		wg.Add(1)
 		go func() {
@@ -178,18 +197,56 @@ func (r *Runner) hello(ctx context.Context) error {
 	}
 	if r.hostSampler != nil {
 		hm := r.hostSampler.Sample(time.Now(), info.DiskPath, info.Limits)
-		if sizer, ok := r.Driver.(OrbDiskSizer); ok {
-			if total, byOrb, ok := sizer.OrbDiskUsage(ctx); ok {
-				hm.OrbDiskBytes = &total
-				if trimmed := trimOrbDiskMap(byOrb); len(trimmed) > 0 {
-					hm.OrbDiskByOrb = trimmed
-				}
+		if total, byOrb, ok := r.readOrbDiskSnapshot(); ok {
+			hm.OrbDiskBytes = &total
+			if len(byOrb) > 0 {
+				hm.OrbDiskByOrb = byOrb
 			}
 		}
 		req.HostMetrics = hm
 	}
 	var res apigen.ProviderHelloResponse
 	return r.post(ctx, "/provider/v1/hello", req, &res)
+}
+
+func (r *Runner) readOrbDiskSnapshot() (int64, map[string]int64, bool) {
+	r.orbDiskMu.Lock()
+	defer r.orbDiskMu.Unlock()
+	if !r.orbDiskValid {
+		return 0, nil, false
+	}
+	return r.orbDiskTotal, maps.Clone(r.orbDiskByOrb), true
+}
+
+// sampleOrbDiskLoop 以单并发在后台周期采样 orb 可写盘占用，结果写入快照缓存；
+// 与 hello/heartbeat 解耦，确保慢盘或大目录不会卡住首次 hello 启动或 45s 租约续租。
+func (r *Runner) sampleOrbDiskLoop(ctx context.Context, sizer OrbDiskSizer) {
+	sampleOnce := func() {
+		sctx, cancel := context.WithTimeout(ctx, orbDiskSampleTimeout)
+		defer cancel()
+		total, byOrb, ok := sizer.OrbDiskUsage(sctx)
+		if !ok {
+			return
+		}
+		trimmed := maps.Clone(trimOrbDiskMap(byOrb))
+		r.orbDiskMu.Lock()
+		r.orbDiskTotal = total
+		r.orbDiskByOrb = trimmed
+		r.orbDiskValid = true
+		r.orbDiskMu.Unlock()
+	}
+
+	sampleOnce()
+	t := time.NewTicker(r.OrbDiskInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			sampleOnce()
+		}
+	}
 }
 
 // helloUntilOK 重试 hello 直到成功；令牌无效时立即返回错误。

@@ -14,8 +14,11 @@ import (
 	"time"
 )
 
-// orbDiskCacheTTL 是 Docker 驱动缓存 `docker ps -a --size` 结果的时长（避免每次 15s 心跳都扫 overlayfs）。
+// orbDiskCacheTTL 是 Docker 驱动缓存 `docker ps -a --size` 与 Runner 后台采样 orb 磁盘的默认周期（避免每次 15s 心跳都扫磁盘）。
 const orbDiskCacheTTL = 60 * time.Second
+
+// orbDiskSampleTimeout 限制单次后台 orb 磁盘采样的最长耗时，防止慢盘或超大目录长期占住采样器。
+const orbDiskSampleTimeout = 30 * time.Second
 
 // orbDiskMaxEntries 限制随心跳上报的 orbDiskByOrb 明细上限（总计 orbDiskBytes 始终完整）。
 const orbDiskMaxEntries = 500
@@ -139,7 +142,10 @@ func parseHumanBytes(s string) (int64, bool) {
 
 // OrbDiskUsage 实现 OrbDiskSizer：统计 Firecracker 每台 VM 可写盘（vms/<orbId>/disk.ext4）的已分配块字节数（st_blocks*512）。
 // 注意：由于 CopySparse 使用 --reflink=auto，支持 CoW 的文件系统上 VM 盘与快照可能共享物理块，此值仅作独立参考读数，不得与宿主机 statfs 扣减。
-func (d *FirecrackerDriver) OrbDiskUsage(_ context.Context) (int64, map[string]int64, bool) {
+func (d *FirecrackerDriver) OrbDiskUsage(ctx context.Context) (int64, map[string]int64, bool) {
+	if ctx.Err() != nil {
+		return 0, nil, false
+	}
 	entries, err := os.ReadDir(d.paths.vmsDir())
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -150,6 +156,9 @@ func (d *FirecrackerDriver) OrbDiskUsage(_ context.Context) (int64, map[string]i
 	byOrb := make(map[string]int64, len(entries))
 	var total int64
 	for _, ent := range entries {
+		if ctx.Err() != nil {
+			return 0, nil, false
+		}
 		if !ent.IsDir() {
 			continue
 		}
@@ -166,7 +175,10 @@ func (d *FirecrackerDriver) OrbDiskUsage(_ context.Context) (int64, map[string]i
 }
 
 // OrbDiskUsage 实现 OrbDiskSizer：统计 Process 驱动下各 orb 目录（<Root>/orbs/<orbId>）的实际物理磁盘占用。
-func (p *Process) OrbDiskUsage(_ context.Context) (int64, map[string]int64, bool) {
+func (p *Process) OrbDiskUsage(ctx context.Context) (int64, map[string]int64, bool) {
+	if ctx.Err() != nil {
+		return 0, nil, false
+	}
 	orbsDir := filepath.Join(p.Root, "orbs")
 	entries, err := os.ReadDir(orbsDir)
 	if err != nil {
@@ -178,13 +190,19 @@ func (p *Process) OrbDiskUsage(_ context.Context) (int64, map[string]int64, bool
 	byOrb := make(map[string]int64, len(entries))
 	var total int64
 	for _, ent := range entries {
+		if ctx.Err() != nil {
+			return 0, nil, false
+		}
 		if !ent.IsDir() {
 			continue
 		}
 		orbID := ent.Name()
 		var orbBytes int64
-		_ = filepath.WalkDir(filepath.Join(orbsDir, orbID), func(_ string, d fs.DirEntry, walkErr error) error {
-			if walkErr != nil || !d.Type().IsRegular() {
+		walkErr := filepath.WalkDir(filepath.Join(orbsDir, orbID), func(_ string, d fs.DirEntry, err error) error {
+			if cerr := ctx.Err(); cerr != nil {
+				return cerr
+			}
+			if err != nil || !d.Type().IsRegular() {
 				return nil
 			}
 			if info, statErr := d.Info(); statErr == nil {
@@ -192,6 +210,9 @@ func (p *Process) OrbDiskUsage(_ context.Context) (int64, map[string]int64, bool
 			}
 			return nil
 		})
+		if walkErr != nil && ctx.Err() != nil {
+			return 0, nil, false
+		}
 		byOrb[orbID] = orbBytes
 		total += orbBytes
 	}
