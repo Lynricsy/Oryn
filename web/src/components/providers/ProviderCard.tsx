@@ -17,7 +17,7 @@ import {
 	formatRelative,
 	formatUptime,
 } from "../../lib/format";
-import { Badge, Meter, StatusDot, type Tone, thresholdTone } from "../ui/data";
+import { Badge, StatusDot, type Tone } from "../ui/data";
 import { Icon, type IconName } from "../ui/icons";
 import { DockerBadge, typeHasDocker, WarmBadge } from "../ui/OrbBadges";
 import { ErrorText, IconButton } from "../ui/primitives";
@@ -117,20 +117,197 @@ export function OrbDistributionBar({
 	);
 }
 
-/** 单个资源仪表小块（CPU / 内存 / 存储）。 */
+export interface StackedResourceBarProps {
+	/** Orb 占用占整条总容量的百分比（0–100） */
+	orbPct: number;
+	/** 宿主机总占用占整条总容量的百分比（可选；有则在其后以柔灰绘制“宿主机其他”部分） */
+	hostTotalPct?: number;
+	/** Orb 段图例文字，例如 "Orb 3.0 GB" */
+	orbLegend: string;
+	/** 宿主机其他段图例文字，例如 "其他 17 GB" */
+	otherLegend?: string;
+	/** 进度条可访问性标签 */
+	label: string;
+	/** 测试定位标识 */
+	testId?: string;
+}
+
+/**
+ * 双段分层资源占用条：
+ * 左段高亮品牌色表示 Orb 自身占用，紧随其后的柔灰段表示宿主机其他进程/系统占用，
+ * 轨道空白代表剩余可用空间；下方附紧凑双色图例，一眼区分 Orb 与宿主机背景占用。
+ */
+export function StackedResourceBar({
+	orbPct,
+	hostTotalPct,
+	orbLegend,
+	otherLegend,
+	label,
+	testId,
+}: StackedResourceBarProps): ReactNode {
+	const clampedOrb = Math.max(
+		0,
+		Math.min(100, Number.isFinite(orbPct) ? orbPct : 0),
+	);
+	const clampedHost =
+		hostTotalPct !== undefined && Number.isFinite(hostTotalPct)
+			? Math.max(clampedOrb, Math.min(100, hostTotalPct))
+			: clampedOrb;
+	const otherPct = Math.max(0, clampedHost - clampedOrb);
+	const orbColor =
+		clampedOrb >= 85
+			? "var(--bad)"
+			: clampedOrb >= 70
+				? "var(--caution)"
+				: "var(--brand)";
+	const otherColor = "color-mix(in oklab, var(--text-muted) 34%, transparent)";
+
+	return (
+		<div data-testid={testId} className="flex min-w-0 flex-col gap-1.5">
+			<div
+				role="img"
+				aria-label={
+					otherLegend
+						? `${label}: ${orbLegend}, ${otherLegend}`
+						: `${label}: ${orbLegend}`
+				}
+				className="flex h-2 w-full overflow-hidden rounded-full bg-inset ring-1 ring-border/60 ring-inset"
+			>
+				{clampedOrb > 0 && (
+					<span
+						data-segment="orb"
+						className="h-full shrink-0 transition-[width] duration-300 ease-out"
+						style={{
+							width: `${clampedOrb}%`,
+							minWidth: "4px",
+							background: orbColor,
+						}}
+					/>
+				)}
+				{otherPct > 0 && (
+					<span
+						data-segment="other"
+						className={`h-full transition-[width] duration-300 ease-out ${
+							clampedOrb > 0 ? "border-panel border-l" : ""
+						}`}
+						style={{
+							width: `${otherPct}%`,
+							background: otherColor,
+						}}
+					/>
+				)}
+			</div>
+			<div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 text-[11px] leading-tight tabular-nums">
+				<span className="inline-flex min-w-0 items-center gap-1 font-medium text-fg">
+					<span
+						aria-hidden
+						className="h-1.5 w-1.5 shrink-0 rounded-full"
+						style={{ background: orbColor }}
+					/>
+					<span className="truncate">{orbLegend}</span>
+				</span>
+				{otherLegend && (
+					<span className="inline-flex min-w-0 items-center gap-1 text-faint">
+						<span
+							aria-hidden
+							className="h-1.5 w-1.5 shrink-0 rounded-full"
+							style={{ background: otherColor }}
+						/>
+						<span className="truncate">{otherLegend}</span>
+					</span>
+				)}
+			</div>
+		</div>
+	);
+}
+
+export interface VolumeUsageBarProps {
+	/** 宿主机物理卷使用率（0–100，来自 statfs） */
+	percent: number;
+	/** 左侧图例文字，例如 "宿主机卷 218 GB / 512 GB" */
+	legendLeft: string;
+	/** 右侧图例文字，例如 "可用 294 GB" */
+	legendRight?: string;
+	/** 进度条可访问性标签 */
+	label: string;
+	/** 测试定位标识 */
+	testId?: string;
+}
+
+/**
+ * 单段物理卷占用条：严格反映 statfs 物理卷用量，
+ * 不把逻辑 SizeRw 或 CoW/reflink 可写盘错误地从物理卷中扣减或堆叠。
+ */
+export function VolumeUsageBar({
+	percent,
+	legendLeft,
+	legendRight,
+	label,
+	testId,
+}: VolumeUsageBarProps): ReactNode {
+	const clamped = Math.max(
+		0,
+		Math.min(100, Number.isFinite(percent) ? percent : 0),
+	);
+	const fillColor =
+		clamped >= 85
+			? "var(--bad)"
+			: clamped >= 70
+				? "var(--caution)"
+				: "color-mix(in oklab, var(--text-muted) 42%, transparent)";
+
+	return (
+		<div data-testid={testId} className="flex min-w-0 flex-col gap-1.5">
+			<div
+				role="img"
+				aria-label={`${label}: ${legendLeft}`}
+				className="flex h-2 w-full overflow-hidden rounded-full bg-inset ring-1 ring-border/60 ring-inset"
+			>
+				{clamped > 0 && (
+					<span
+						data-segment="volume"
+						className="h-full shrink-0 transition-[width] duration-300 ease-out"
+						style={{
+							width: `${clamped}%`,
+							minWidth: "4px",
+							background: fillColor,
+						}}
+					/>
+				)}
+			</div>
+			<div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 text-[11px] leading-tight tabular-nums">
+				<span className="inline-flex min-w-0 items-center gap-1 text-muted">
+					<span
+						aria-hidden
+						className="h-1.5 w-1.5 shrink-0 rounded-full"
+						style={{ background: fillColor }}
+					/>
+					<span className="truncate">{legendLeft}</span>
+				</span>
+				{legendRight && (
+					<span className="truncate text-faint">{legendRight}</span>
+				)}
+			</div>
+		</div>
+	);
+}
+
+/** 单个资源仪表小块（CPU / 内存 / 存储），以 Orb 占用为核心视角。 */
 function ResourceTile({
 	icon,
 	title,
 	primary,
-	percent,
-	meterLabel,
+	badgeText,
+	bar,
+	volumeBar,
 	rows,
 }: {
 	icon: IconName;
 	title: string;
 	primary: string;
-	percent?: number;
-	meterLabel: string;
+	badgeText?: string;
+	bar?: StackedResourceBarProps;
+	volumeBar?: VolumeUsageBarProps;
 	rows: { label: string; value: ReactNode }[];
 }): ReactNode {
 	return (
@@ -140,22 +317,17 @@ function ResourceTile({
 					<Icon name={icon} size={13} className="shrink-0 text-faint" />
 					{title}
 				</span>
-				{percent !== undefined && (
+				{badgeText && (
 					<span className="font-mono text-xs text-muted tabular-nums">
-						{formatPercent(percent)}
+						{badgeText}
 					</span>
 				)}
 			</div>
 			<div className="truncate font-semibold text-base text-fg tabular-nums">
 				{primary}
 			</div>
-			{percent !== undefined && (
-				<Meter
-					value={percent}
-					tone={thresholdTone(percent)}
-					label={meterLabel}
-				/>
-			)}
+			{bar && <StackedResourceBar {...bar} />}
+			{volumeBar && <VolumeUsageBar {...volumeBar} />}
 			<dl className="mt-0.5 flex flex-col gap-1 text-xs">
 				{rows.map((r) => (
 					<div
@@ -294,13 +466,23 @@ function OrbRow({
 								? `${formatMemoryMB(sample.memUsedMB)} / ${formatMemoryMB(sample.memLimitMB || orb.memoryMB)}`
 								: "—"}
 						</span>
-						<span
-							className="hidden items-center gap-1 sm:inline-flex"
-							title={t("providers.overview.orbs.fsUsed")}
-						>
-							<Icon name="database" size={12} className="text-faint" />
-							{formatMemoryMB(sample.diskUsedMB)}
-						</span>
+						{orb.diskBytes !== undefined ? (
+							<span
+								className="hidden items-center gap-1 sm:inline-flex"
+								title={t("providers.overview.orbs.exclusiveDisk")}
+							>
+								<Icon name="database" size={12} className="text-faint" />
+								{formatBytes(orb.diskBytes)}
+							</span>
+						) : (
+							<span
+								className="hidden items-center gap-1 sm:inline-flex"
+								title={t("providers.overview.orbs.fsUsed")}
+							>
+								<Icon name="database" size={12} className="text-faint" />
+								{formatMemoryMB(sample.diskUsedMB)}
+							</span>
+						)}
 					</>
 				) : (
 					<span className="text-faint">
@@ -422,24 +604,55 @@ export function ProviderCard({
 			? t("providers.online")
 			: t("providers.offline");
 
-	// CPU 仪表计算
-	const cpuPct =
-		hm?.cpuPct !== undefined
-			? hm.cpuPct
-			: hm && hm.cpuCores > 0 && live.sampledOrbs > 0
-				? Math.min(100, live.cpuPct / hm.cpuCores)
-				: allocated.runningCpus > 0 && live.sampledOrbs > 0
-					? Math.min(100, live.cpuPct / allocated.runningCpus)
-					: undefined;
+	// 1) CPU 仪表：以 Orb 实时 CPU 为主角，双段条区分 Orb 占比 vs 宿主机其他进程占比
+	const orbCpuCores = live.cpuPct / 100;
+	const hasHostCores = Boolean(hm && hm.cpuCores > 0);
+	const orbCpuHostPct = hasHostCores
+		? live.cpuPct / (hm?.cpuCores ?? 1)
+		: allocated.runningCpus > 0
+			? live.cpuPct / allocated.runningCpus
+			: undefined;
+	const otherCpuHostPct =
+		hasHostCores && hm?.cpuPct !== undefined
+			? Math.max(0, hm.cpuPct - (orbCpuHostPct ?? 0))
+			: undefined;
 	const cpuPrimary =
-		hm?.cpuPct !== undefined
-			? `${formatPercent(hm.cpuPct)} · ${t("panel.cores", { n: hm.cpuCores })}`
-			: hm
-				? t("panel.cores", { n: hm.cpuCores })
-				: live.sampledOrbs > 0
-					? formatPercent(live.cpuPct)
-					: t("panel.cores", { n: formatCpus(allocated.runningCpus) });
+		live.sampledOrbs > 0
+			? `${formatPercent(live.cpuPct)} · ${t("panel.cores", { n: formatCpus(orbCpuCores) })}`
+			: t("panel.cores", { n: formatCpus(allocated.runningCpus) });
+	const cpuBar: StackedResourceBarProps | undefined =
+		orbCpuHostPct !== undefined
+			? {
+					orbPct: orbCpuHostPct,
+					hostTotalPct: hm?.cpuPct,
+					orbLegend: t("providers.overview.node.barOrb", {
+						value: formatPercent(orbCpuHostPct),
+					}),
+					otherLegend:
+						otherCpuHostPct !== undefined
+							? t("providers.overview.node.barOther", {
+									value: formatPercent(otherCpuHostPct),
+								})
+							: undefined,
+					label: t("providers.overview.node.cpu"),
+					testId: `provider-bar-cpu-${p.id}`,
+				}
+			: undefined;
 	const cpuRows: { label: string; value: ReactNode }[] = [
+		...(hm && hm.cpuCores > 0
+			? [
+					{
+						label: t("providers.overview.node.hostTotal"),
+						value:
+							hm.cpuPct !== undefined
+								? t("providers.overview.node.hostCpuValue", {
+										pct: formatPercent(hm.cpuPct),
+										cores: hm.cpuCores,
+									})
+								: t("panel.cores", { n: hm.cpuCores }),
+					},
+				]
+			: []),
 		...(hm?.loadAvg1 !== undefined
 			? [
 					{
@@ -453,13 +666,6 @@ export function ProviderCard({
 				]
 			: []),
 		{
-			label: t("providers.overview.node.orbLive"),
-			value:
-				live.sampledOrbs > 0
-					? `${formatPercent(live.cpuPct)} (${live.sampledOrbs})`
-					: "—",
-		},
-		{
 			label: t("providers.overview.node.allocated"),
 			value: t("providers.overview.node.runTotal", {
 				run: `${formatCpus(allocated.runningCpus)}C`,
@@ -468,24 +674,50 @@ export function ProviderCard({
 		},
 	];
 
-	// 内存仪表计算
-	const memPct =
-		hm && hm.memTotalMB > 0
-			? (hm.memUsedMB / hm.memTotalMB) * 100
-			: allocated.runningMemoryMB > 0 && live.sampledOrbs > 0
-				? (live.memUsedMB / allocated.runningMemoryMB) * 100
-				: undefined;
+	// 2) 内存仪表：以 Orb 实时内存为主角，双段条区分 Orb 实时内存 vs 宿主机其他内存
+	const hasHostMem = Boolean(hm && hm.memTotalMB > 0);
+	const orbMemPct = hasHostMem
+		? (live.memUsedMB / (hm?.memTotalMB ?? 1)) * 100
+		: allocated.runningMemoryMB > 0 && live.sampledOrbs > 0
+			? (live.memUsedMB / allocated.runningMemoryMB) * 100
+			: undefined;
+	const hostMemPct = hasHostMem
+		? ((hm?.memUsedMB ?? 0) / (hm?.memTotalMB ?? 1)) * 100
+		: undefined;
+	const otherMemMB = hasHostMem
+		? Math.max(0, (hm?.memUsedMB ?? 0) - live.memUsedMB)
+		: undefined;
 	const memPrimary =
-		hm && hm.memTotalMB > 0
-			? `${formatMemoryMB(hm.memUsedMB)} / ${formatMemoryMB(hm.memTotalMB)}`
-			: live.sampledOrbs > 0
-				? `${formatMemoryMB(live.memUsedMB)} / ${formatMemoryMB(allocated.runningMemoryMB)}`
-				: formatMemoryMB(allocated.runningMemoryMB);
+		live.sampledOrbs > 0
+			? formatMemoryMB(live.memUsedMB)
+			: formatMemoryMB(allocated.runningMemoryMB);
+	const memBar: StackedResourceBarProps | undefined =
+		orbMemPct !== undefined
+			? {
+					orbPct: orbMemPct,
+					hostTotalPct: hostMemPct,
+					orbLegend: t("providers.overview.node.barOrb", {
+						value: formatMemoryMB(live.memUsedMB),
+					}),
+					otherLegend:
+						otherMemMB !== undefined
+							? t("providers.overview.node.barOther", {
+									value: formatMemoryMB(otherMemMB),
+								})
+							: undefined,
+					label: t("providers.overview.node.memory"),
+					testId: `provider-bar-mem-${p.id}`,
+				}
+			: undefined;
 	const memRows: { label: string; value: ReactNode }[] = [
-		{
-			label: t("providers.overview.node.orbLive"),
-			value: live.sampledOrbs > 0 ? formatMemoryMB(live.memUsedMB) : "—",
-		},
+		...(hasHostMem && hm
+			? [
+					{
+						label: t("providers.overview.node.hostTotal"),
+						value: `${formatMemoryMB(hm.memUsedMB)} / ${formatMemoryMB(hm.memTotalMB)}`,
+					},
+				]
+			: []),
 		{
 			label: t("providers.overview.node.allocated"),
 			value: t("providers.overview.node.runTotal", {
@@ -505,26 +737,42 @@ export function ProviderCard({
 			: []),
 	];
 
-	// 存储仪表计算：仅采信宿主机物理卷与项目快照缓存，不累加各 orb 的 statfs（共享底盘会重复计数）
-	const diskPct =
-		hm && hm.diskTotalBytes > 0
-			? (hm.diskUsedBytes / hm.diskTotalBytes) * 100
+	// 3) 存储仪表：Orb 可写层/盘（Docker 逻辑 SizeRw / Firecracker 含 reflink 共享块）与快照缓存独立标注，
+	// 宿主机物理卷进度条仅反映 statfs 物理已用比例，绝不从 statfs 中扣减非物理可加量。
+	const hasHostDisk = Boolean(hm && hm.diskTotalBytes > 0);
+	const hasOrbDisk = hm?.orbDiskBytes !== undefined;
+	const orbOwnDiskBytes = hm?.orbDiskBytes ?? 0;
+	const hostDiskPct = hasHostDisk
+		? ((hm?.diskUsedBytes ?? 0) / (hm?.diskTotalBytes ?? 1)) * 100
+		: undefined;
+	const diskPrimary = hasOrbDisk
+		? formatBytes(orbOwnDiskBytes)
+		: snapshots.totalBytes > 0
+			? formatBytes(snapshots.totalBytes)
+			: "—";
+	const diskVolumeBar: VolumeUsageBarProps | undefined =
+		hostDiskPct !== undefined && hm
+			? {
+					percent: hostDiskPct,
+					legendLeft: t("providers.overview.node.hostVolLegend", {
+						used: formatBytes(hm.diskUsedBytes),
+						total: formatBytes(hm.diskTotalBytes),
+					}),
+					legendRight:
+						hm.diskAvailableBytes !== undefined
+							? `${t("providers.overview.node.diskAvailable")} ${formatBytes(hm.diskAvailableBytes)}`
+							: undefined,
+					label: t("providers.overview.node.storage"),
+					testId: `provider-bar-disk-${p.id}`,
+				}
 			: undefined;
-	const diskPrimary =
-		hm && hm.diskTotalBytes > 0
-			? `${formatBytes(hm.diskUsedBytes)} / ${formatBytes(hm.diskTotalBytes)}`
-			: snapshots.totalBytes > 0
-				? formatBytes(snapshots.totalBytes)
-				: "—";
 	const diskRows: { label: string; value: ReactNode }[] = [
-		...(hm?.diskAvailableBytes !== undefined
-			? [
-					{
-						label: t("providers.overview.node.diskAvailable"),
-						value: formatBytes(hm.diskAvailableBytes),
-					},
-				]
-			: []),
+		{
+			label: t("providers.overview.node.orbDisk"),
+			value: hasOrbDisk
+				? formatBytes(orbOwnDiskBytes)
+				: t("providers.overview.node.orbDiskPending"),
+		},
 		{
 			label: t("providers.overview.node.snapshots"),
 			value:
@@ -539,8 +787,13 @@ export function ProviderCard({
 						}`
 					: "—",
 		},
-		hm?.diskPath
-			? { label: t("providers.overview.node.hostUsage"), value: hm.diskPath }
+		hasHostDisk && hm
+			? {
+					label: t("providers.overview.node.hostUsage"),
+					value: hm.diskPath
+						? `${formatBytes(hm.diskUsedBytes)} / ${formatBytes(hm.diskTotalBytes)} · ${hm.diskPath}`
+						: `${formatBytes(hm.diskUsedBytes)} / ${formatBytes(hm.diskTotalBytes)}`,
+				}
 			: {
 					label: t("providers.overview.node.hostUsage"),
 					value: t("providers.overview.node.hostDiskPending"),
@@ -744,24 +997,42 @@ export function ProviderCard({
 						icon="cpu"
 						title={t("providers.overview.node.cpu")}
 						primary={cpuPrimary}
-						percent={cpuPct}
-						meterLabel={t("providers.overview.node.cpu")}
+						badgeText={
+							orbCpuHostPct !== undefined
+								? t("providers.overview.node.orbShare", {
+										pct: formatPercent(orbCpuHostPct),
+									})
+								: undefined
+						}
+						bar={cpuBar}
 						rows={cpuRows}
 					/>
 					<ResourceTile
 						icon="memory"
 						title={t("providers.overview.node.memory")}
 						primary={memPrimary}
-						percent={memPct}
-						meterLabel={t("providers.overview.node.memory")}
+						badgeText={
+							orbMemPct !== undefined
+								? t("providers.overview.node.orbShare", {
+										pct: formatPercent(orbMemPct),
+									})
+								: undefined
+						}
+						bar={memBar}
 						rows={memRows}
 					/>
 					<ResourceTile
 						icon="database"
 						title={t("providers.overview.node.storage")}
 						primary={diskPrimary}
-						percent={diskPct}
-						meterLabel={t("providers.overview.node.storage")}
+						badgeText={
+							hostDiskPct !== undefined
+								? t("providers.overview.node.hostVolShare", {
+										pct: formatPercent(hostDiskPct),
+									})
+								: undefined
+						}
+						volumeBar={diskVolumeBar}
 						rows={diskRows}
 					/>
 				</div>

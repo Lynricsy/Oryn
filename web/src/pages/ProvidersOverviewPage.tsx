@@ -16,9 +16,13 @@ import {
 	formatCpus,
 	OrbDistributionBar,
 	ProviderCard,
+	StackedResourceBar,
+	type StackedResourceBarProps,
+	VolumeUsageBar,
+	type VolumeUsageBarProps,
 } from "../components/providers/ProviderCard";
 import { OrbDrawer } from "../components/stats/OrbDrawer";
-import { Meter, Sheet, thresholdTone } from "../components/ui/data";
+import { Sheet } from "../components/ui/data";
 import { Icon, type IconName } from "../components/ui/icons";
 import {
 	Button,
@@ -44,16 +48,20 @@ function SummaryKpiCard({
 	icon,
 	label,
 	value,
+	badgeText,
 	sub,
-	meter,
+	bar,
+	volumeBar,
 	extra,
 }: {
 	testId: string;
 	icon: IconName;
 	label: string;
 	value: string;
+	badgeText?: string;
 	sub?: ReactNode;
-	meter?: { value: number; label: string };
+	bar?: StackedResourceBarProps;
+	volumeBar?: VolumeUsageBarProps;
 	extra?: ReactNode;
 }): ReactNode {
 	return (
@@ -66,22 +74,17 @@ function SummaryKpiCard({
 					<Icon name={icon} size={13} className="shrink-0" />
 					<span className="truncate">{label}</span>
 				</span>
-				{meter && (
+				{badgeText && (
 					<span className="shrink-0 font-mono text-muted text-xs tabular-nums">
-						{formatPercent(meter.value)}
+						{badgeText}
 					</span>
 				)}
 			</div>
 			<div className="truncate font-semibold text-fg text-xl tabular-nums">
 				{value}
 			</div>
-			{meter && (
-				<Meter
-					value={meter.value}
-					tone={thresholdTone(meter.value)}
-					label={meter.label}
-				/>
-			)}
+			{bar && <StackedResourceBar {...bar} />}
+			{volumeBar && <VolumeUsageBar {...volumeBar} />}
 			{extra}
 			{sub && (
 				<div className="truncate text-faint text-xs tabular-nums">{sub}</div>
@@ -136,23 +139,57 @@ export function ProvidersOverviewPage(): ReactNode {
 	const summary = data?.summary;
 	const hasHostMem = Boolean(summary && summary.host.memTotalMB > 0);
 	const hasHostDisk = Boolean(summary && summary.host.diskTotalBytes > 0);
+	const hasHostCpu = Boolean(summary && summary.host.cpuCores > 0);
+	const hasOrbDisk = Boolean(summary && summary.host.orbDiskReportedCount > 0);
 
-	const memPct =
+	// 全局内存：Orb 实时内存 vs 宿主机其他内存
+	const orbMemPct =
 		summary && hasHostMem
-			? (summary.host.memUsedMB / summary.host.memTotalMB) * 100
+			? (summary.live.memUsedMB / summary.host.memTotalMB) * 100
 			: summary &&
 					summary.allocated.runningMemoryMB > 0 &&
 					summary.live.sampledOrbs > 0
 				? (summary.live.memUsedMB / summary.allocated.runningMemoryMB) * 100
 				: undefined;
+	const hostMemPct =
+		summary && hasHostMem
+			? (summary.host.memUsedMB / summary.host.memTotalMB) * 100
+			: undefined;
+	const otherMemMB =
+		summary && hasHostMem
+			? Math.max(0, summary.host.memUsedMB - summary.live.memUsedMB)
+			: undefined;
 
-	const diskPct =
+	// 全局存储：Orb 可写层/盘（逻辑或含 CoW 块）与快照缓存独立标注，宿主机物理卷进度条仅反映 statfs，不做扣减
+	const hostDiskPct =
 		summary && hasHostDisk
 			? (summary.host.diskUsedBytes / summary.host.diskTotalBytes) * 100
 			: undefined;
+	const storagePrimaryBytes = summary
+		? hasOrbDisk
+			? summary.host.orbDiskBytes
+			: summary.snapshots.totalBytes
+		: 0;
+	// 全局 CPU：Orb 实时 CPU 核数 vs 宿主机其他 CPU 核数
+	const orbCpuCores = summary ? summary.live.cpuPct / 100 : 0;
+	const orbCpuPct =
+		summary && hasHostCpu
+			? (orbCpuCores / summary.host.cpuCores) * 100
+			: summary &&
+					summary.allocated.runningCpus > 0 &&
+					summary.live.sampledOrbs > 0
+				? (orbCpuCores / summary.allocated.runningCpus) * 100
+				: undefined;
+	const hostCpuPct =
+		summary && hasHostCpu && summary.host.cpuUsedCores > 0
+			? (summary.host.cpuUsedCores / summary.host.cpuCores) * 100
+			: undefined;
+	const otherCpuCores =
+		summary && hasHostCpu && summary.host.cpuUsedCores > 0
+			? Math.max(0, summary.host.cpuUsedCores - orbCpuCores)
+			: undefined;
 
 	const activeJobs = (summary?.jobs.queued ?? 0) + (summary?.jobs.claimed ?? 0);
-
 	const kpiCols =
 		bp === "compact"
 			? "grid-cols-1 sm:grid-cols-2"
@@ -299,24 +336,41 @@ export function ProvidersOverviewPage(): ReactNode {
 									icon="memory"
 									label={t("providers.overview.kpi.memory")}
 									value={
-										hasHostMem
-											? `${formatMemoryMB(summary.host.memUsedMB)} / ${formatMemoryMB(summary.host.memTotalMB)}`
-											: summary.live.sampledOrbs > 0
-												? formatMemoryMB(summary.live.memUsedMB)
-												: formatMemoryMB(summary.allocated.runningMemoryMB)
+										summary.live.sampledOrbs > 0
+											? formatMemoryMB(summary.live.memUsedMB)
+											: formatMemoryMB(summary.allocated.runningMemoryMB)
 									}
-									meter={
-										memPct !== undefined
+									badgeText={
+										orbMemPct !== undefined
+											? t("providers.overview.node.orbShare", {
+													pct: formatPercent(orbMemPct),
+												})
+											: undefined
+									}
+									bar={
+										orbMemPct !== undefined
 											? {
-													value: memPct,
+													orbPct: orbMemPct,
+													hostTotalPct: hostMemPct,
+													orbLegend: t("providers.overview.node.barOrb", {
+														value: formatMemoryMB(summary.live.memUsedMB),
+													}),
+													otherLegend:
+														otherMemMB !== undefined
+															? t("providers.overview.node.barOther", {
+																	value: formatMemoryMB(otherMemMB),
+																})
+															: undefined,
 													label: t("providers.overview.kpi.memory"),
+													testId: "kpi-bar-memory",
 												}
 											: undefined
 									}
 									sub={
 										hasHostMem
 											? t("providers.overview.kpi.memoryHostSub", {
-													live: formatMemoryMB(summary.live.memUsedMB),
+													used: formatMemoryMB(summary.host.memUsedMB),
+													total: formatMemoryMB(summary.host.memTotalMB),
 													alloc: formatMemoryMB(
 														summary.allocated.runningMemoryMB,
 													),
@@ -335,26 +389,46 @@ export function ProvidersOverviewPage(): ReactNode {
 									testId="kpi-providers-storage"
 									icon="database"
 									label={t("providers.overview.kpi.storage")}
-									value={
-										hasHostDisk
-											? `${formatBytes(summary.host.diskUsedBytes)} / ${formatBytes(summary.host.diskTotalBytes)}`
-											: formatBytes(summary.snapshots.totalBytes)
+									value={formatBytes(storagePrimaryBytes)}
+									badgeText={
+										hostDiskPct !== undefined
+											? t("providers.overview.node.hostVolShare", {
+													pct: formatPercent(hostDiskPct),
+												})
+											: undefined
 									}
-									meter={
-										diskPct !== undefined
+									volumeBar={
+										hostDiskPct !== undefined
 											? {
-													value: diskPct,
+													percent: hostDiskPct,
+													legendLeft: t(
+														"providers.overview.node.hostVolLegend",
+														{
+															used: formatBytes(summary.host.diskUsedBytes),
+															total: formatBytes(summary.host.diskTotalBytes),
+														},
+													),
 													label: t("providers.overview.kpi.storage"),
+													testId: "kpi-bar-storage",
 												}
 											: undefined
 									}
 									sub={
 										hasHostDisk
-											? t("providers.overview.kpi.storageHostSub", {
-													snap: formatBytes(summary.snapshots.totalBytes),
-													count: summary.snapshots.readyCount,
-												})
-											: t("providers.overview.kpi.storageSnapSub", {
+											? hasOrbDisk
+												? t("providers.overview.kpi.storageDetailSub", {
+														snap: formatBytes(summary.snapshots.totalBytes),
+														count: summary.snapshots.readyCount,
+														used: formatBytes(summary.host.diskUsedBytes),
+														total: formatBytes(summary.host.diskTotalBytes),
+													})
+												: t("providers.overview.kpi.storageSnapOnlySub", {
+														snap: formatBytes(summary.snapshots.totalBytes),
+														count: summary.snapshots.readyCount,
+														used: formatBytes(summary.host.diskUsedBytes),
+														total: formatBytes(summary.host.diskTotalBytes),
+													})
+											: t("providers.overview.kpi.storageSnapNoHostSub", {
 													count: summary.snapshots.readyCount,
 												})
 									}
@@ -369,6 +443,36 @@ export function ProvidersOverviewPage(): ReactNode {
 											: t("panel.cores", {
 													n: formatCpus(summary.allocated.runningCpus),
 												})
+									}
+									badgeText={
+										orbCpuPct !== undefined
+											? t("providers.overview.node.orbShare", {
+													pct: formatPercent(orbCpuPct),
+												})
+											: undefined
+									}
+									bar={
+										orbCpuPct !== undefined
+											? {
+													orbPct: orbCpuPct,
+													hostTotalPct: hostCpuPct,
+													orbLegend: t("providers.overview.node.barOrb", {
+														value: t("panel.cores", {
+															n: formatCpus(orbCpuCores),
+														}),
+													}),
+													otherLegend:
+														otherCpuCores !== undefined
+															? t("providers.overview.node.barOther", {
+																	value: t("panel.cores", {
+																		n: formatCpus(otherCpuCores),
+																	}),
+																})
+															: undefined,
+													label: t("providers.overview.kpi.cpu"),
+													testId: "kpi-bar-cpu",
+												}
+											: undefined
 									}
 									sub={
 										summary.host.cpuCores > 0

@@ -137,10 +137,13 @@ export function buildMockProvidersOverview(
 		host: {
 			reportedCount: 0,
 			cpuCores: 0,
+			cpuUsedCores: 0,
 			memTotalMB: 0,
 			memUsedMB: 0,
 			diskTotalBytes: 0,
 			diskUsedBytes: 0,
+			orbDiskBytes: 0,
+			orbDiskReportedCount: 0,
 		},
 		snapshots: {
 			readyCount: 0,
@@ -180,7 +183,8 @@ export function buildMockProvidersOverview(
 			netRxBytes: 0,
 			netTxBytes: 0,
 		};
-
+		const orbDiskByOrb: Record<string, number> = {};
+		let orbDiskBytes = 0;
 		const orbItems: Schemas["ProviderOrbSummary"][] = liveOrbs.map((o) => {
 			counts.total++;
 			allocated.totalCpus += o.cpus;
@@ -220,6 +224,12 @@ export function buildMockProvidersOverview(
 				live.memUsedMB += sample.memUsedMB;
 				live.memLimitMB += sample.memLimitMB;
 			}
+			// 模拟每台 orb 自身独占的可写层 / 稀疏盘物理占用（约 0.8 GB ~ 6.5 GB，与共享底盘 statfs 区分）
+			const diskSeed = hashSeed(`${o.id}:disk`);
+			const exclusiveDiskBytes =
+				Math.round((0.8 + (diskSeed % 58) * 0.1) * 1024) * 1024 * 1024;
+			orbDiskByOrb[o.id] = exclusiveDiskBytes;
+			orbDiskBytes += exclusiveDiskBytes;
 			const ths = threadsByOrb.get(o.id) ?? [];
 			return {
 				id: o.id,
@@ -241,6 +251,7 @@ export function buildMockProvidersOverview(
 				stateChangedAt: o.stateChangedAt,
 				createdAt: o.createdAt,
 				lastActivityAt: o.lastAgentActivityAt ?? o.lastUserInteractionAt,
+				diskBytes: prov.online ? exclusiveDiskBytes : undefined,
 				latestSample: sample,
 			};
 		});
@@ -251,6 +262,17 @@ export function buildMockProvidersOverview(
 				b.stateChangedAt - a.stateChangedAt,
 		);
 
+		const snapshots = snapsByProv.get(prov.id) ?? {
+			readyCount: 0,
+			buildingCount: 0,
+			retiredCount: 0,
+			totalBytes: 0,
+		};
+		const hostCpuCores = 16;
+		const orbHostCpuPct = live.cpuPct / hostCpuCores;
+		const hostCpuPct = Number(Math.min(92, orbHostCpuPct + 14.2).toFixed(1));
+		// 宿主机存储卷 statfs 物理占用独立于 orbDiskBytes（Docker 逻辑 SizeRw / Firecracker reflink 不可与 statfs 直接扣减）
+		const hostDiskUsedBytes = 218 * 1024 ** 3;
 		const hostMetrics: Schemas["ProviderHostMetrics"] | undefined = prov.online
 			? {
 					sampledAt: now - 8_000,
@@ -258,8 +280,8 @@ export function buildMockProvidersOverview(
 					os: "linux",
 					arch: "amd64",
 					uptimeSeconds: 12 * 86400 + 4 * 3600 + 20 * 60,
-					cpuCores: 16,
-					cpuPct: Number(Math.min(92, 14.2 + live.cpuPct * 0.25).toFixed(1)),
+					cpuCores: hostCpuCores,
+					cpuPct: hostCpuPct,
 					loadAvg1: 1.84,
 					loadAvg5: 1.42,
 					loadAvg15: 1.15,
@@ -270,21 +292,16 @@ export function buildMockProvidersOverview(
 						65536 - 12288 - Math.round(live.memUsedMB),
 					),
 					diskTotalBytes: 512 * 1024 ** 3,
-					diskUsedBytes: 186 * 1024 ** 3,
-					diskAvailableBytes: (512 - 186) * 1024 ** 3,
+					diskUsedBytes: hostDiskUsedBytes,
+					diskAvailableBytes: Math.max(0, 512 * 1024 ** 3 - hostDiskUsedBytes),
 					diskPath:
 						prov.driver === "firecracker"
 							? "/var/lib/oryn-fc"
 							: "/var/lib/docker",
+					orbDiskBytes,
+					orbDiskByOrb,
 				}
 			: undefined;
-
-		const snapshots = snapsByProv.get(prov.id) ?? {
-			readyCount: 0,
-			buildingCount: 0,
-			retiredCount: 0,
-			totalBytes: 0,
-		};
 		const jobs: Schemas["ProviderJobStats"] = prov.online
 			? {
 					queued: 0,
@@ -302,10 +319,18 @@ export function buildMockProvidersOverview(
 		if (prov.online && hostMetrics) {
 			summary.host.reportedCount++;
 			summary.host.cpuCores += hostMetrics.cpuCores;
+			if (hostMetrics.cpuPct !== undefined) {
+				summary.host.cpuUsedCores +=
+					(hostMetrics.cpuCores * hostMetrics.cpuPct) / 100;
+			}
 			summary.host.memTotalMB += hostMetrics.memTotalMB;
 			summary.host.memUsedMB += hostMetrics.memUsedMB;
 			summary.host.diskTotalBytes += hostMetrics.diskTotalBytes;
 			summary.host.diskUsedBytes += hostMetrics.diskUsedBytes;
+			if (hostMetrics.orbDiskBytes !== undefined) {
+				summary.host.orbDiskBytes += hostMetrics.orbDiskBytes;
+				summary.host.orbDiskReportedCount++;
+			}
 		}
 		summary.orbs.total += counts.total;
 		summary.orbs.running += counts.running;

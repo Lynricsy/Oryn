@@ -48,10 +48,13 @@ function sampleOverview(): Schemas["ProvidersOverview"] {
 			host: {
 				reportedCount: 1,
 				cpuCores: 16,
+				cpuUsedCores: 3.92,
 				memTotalMB: 65536,
 				memUsedMB: 20480,
 				diskTotalBytes: 500 * 1024 ** 3,
 				diskUsedBytes: 200 * 1024 ** 3,
+				orbDiskBytes: 2 * 1024 ** 3,
+				orbDiskReportedCount: 1,
 			},
 			snapshots: {
 				readyCount: 2,
@@ -102,6 +105,11 @@ function sampleOverview(): Schemas["ProvidersOverview"] {
 					diskTotalBytes: 500 * 1024 ** 3,
 					diskUsedBytes: 200 * 1024 ** 3,
 					diskPath: "/var/lib/docker",
+					orbDiskBytes: 2 * 1024 ** 3,
+					orbDiskByOrb: {
+						"orb-run-0001": 1536 * 1024 ** 2,
+						"orb-frz-0002": 512 * 1024 ** 2,
+					},
 				},
 				orbs: {
 					total: 3,
@@ -151,6 +159,7 @@ function sampleOverview(): Schemas["ProvidersOverview"] {
 						nestedDocker: true,
 						stateChangedAt: NOW - 60_000,
 						createdAt: NOW - 3_600_000,
+						diskBytes: 1536 * 1024 ** 2,
 						latestSample: {
 							ts: NOW - 10_000,
 							cpuPct: 48.5,
@@ -340,19 +349,29 @@ describe("Provider 总览页", () => {
 		);
 	});
 
-	it("渲染全局 KPI 与节点卡片，支持状态筛选与关键字搜索", async () => {
+	it("渲染全局 KPI 与双段占用条（Orb 占比 + 宿主机其他），支持状态筛选与关键字搜索", async () => {
 		mount();
 		const nodesKpi = await screen.findByTestId("kpi-providers-nodes");
 		expect(nodesKpi).toHaveTextContent("1 / 2");
 		expect(screen.getByTestId("kpi-providers-orbs")).toHaveTextContent("1 / 3");
-		expect(screen.getByTestId("kpi-providers-memory")).toHaveTextContent(
-			"20 GB / 64 GB",
-		);
-		expect(screen.getByTestId("kpi-providers-storage")).toHaveTextContent(
-			"200.0 GB / 500.0 GB",
-		);
+		// 内存主读数聚焦 Orb 实时占用（3 GB），条上明确拆分 Orb 段与宿主机其他段
+		const memKpi = screen.getByTestId("kpi-providers-memory");
+		expect(memKpi).toHaveTextContent("3 GB");
+		const memBar = screen.getByTestId("kpi-bar-memory");
+		expect(memBar.querySelector('[data-segment="orb"]')).toBeTruthy();
+		expect(memBar.querySelector('[data-segment="other"]')).toBeTruthy();
+		// 存储主读数独立标注 Orb 可写盘 (2.0 GB)，磁盘条仅反映 statfs 物理卷 (40%)，不从 statfs 做逻辑/CoW 扣减
+		const storageKpi = screen.getByTestId("kpi-providers-storage");
+		expect(storageKpi).toHaveTextContent("2.0 GB");
+		const storageBar = screen.getByTestId("kpi-bar-storage");
+		expect(storageBar.querySelector('[data-segment="volume"]')).toBeTruthy();
+		expect(storageBar.querySelector('[data-segment="orb"]')).toBeNull();
+		expect(storageBar.querySelector('[data-segment="other"]')).toBeNull();
+		// CPU 条上明确区分 Orb CPU 与宿主机其他 CPU
+		const cpuBar = screen.getByTestId("kpi-bar-cpu");
+		expect(cpuBar.querySelector('[data-segment="orb"]')).toBeTruthy();
+		expect(cpuBar.querySelector('[data-segment="other"]')).toBeTruthy();
 		expect(screen.getAllByTestId("provider-node-card")).toHaveLength(2);
-
 		// 筛选仅离线节点
 		fireEvent.click(
 			screen.getByRole("tab", {
@@ -429,10 +448,13 @@ describe("Provider 总览页", () => {
 				host: {
 					reportedCount: 0,
 					cpuCores: 0,
+					cpuUsedCores: 0,
 					memTotalMB: 0,
 					memUsedMB: 0,
 					diskTotalBytes: 0,
 					diskUsedBytes: 0,
+					orbDiskBytes: 0,
+					orbDiskReportedCount: 0,
 				},
 			},
 			providers: [
@@ -443,6 +465,7 @@ describe("Provider 总览页", () => {
 						{
 							...firstOrb,
 							id: "orb-shared-1",
+							diskBytes: undefined,
 							latestSample: {
 								ts: NOW - 5_000,
 								cpuPct: 30,
@@ -456,6 +479,7 @@ describe("Provider 总览页", () => {
 						{
 							...firstOrb,
 							id: "orb-shared-2",
+							diskBytes: undefined,
 							latestSample: {
 								ts: NOW - 5_000,
 								cpuPct: 20,
@@ -481,5 +505,48 @@ describe("Provider 总览页", () => {
 		expect(rows).toHaveLength(2);
 		expect(rows[0]).toHaveTextContent("180 GB");
 		expect(rows[1]).toHaveTextContent("180 GB");
+	});
+
+	it("Docker 稀疏文件导致 orbDiskBytes 大于 statfs 已用空间时，磁盘条按真实 statfs 渲染且不错误扣减", async () => {
+		const base = sampleOverview();
+		const prov = base.providers[0];
+		if (!prov?.hostMetrics) throw new Error("missing fixture provider");
+		const tenGiB = 10 * 1024 ** 3;
+		const twoGiB = 2 * 1024 ** 3;
+		const hundredGiB = 100 * 1024 ** 3;
+		overviewData = {
+			...base,
+			summary: {
+				...base.summary,
+				host: {
+					...base.summary.host,
+					diskTotalBytes: hundredGiB,
+					diskUsedBytes: twoGiB,
+					orbDiskBytes: tenGiB,
+					orbDiskReportedCount: 1,
+				},
+			},
+			providers: [
+				{
+					...prov,
+					hostMetrics: {
+						...prov.hostMetrics,
+						diskTotalBytes: hundredGiB,
+						diskUsedBytes: twoGiB,
+						orbDiskBytes: tenGiB,
+					},
+				},
+			],
+		};
+		mount();
+		const storageKpi = await screen.findByTestId("kpi-providers-storage");
+		// 独立展示 Orb 可写层逻辑大小 10.0 GB，同时右上角与条宽按 statfs 物理卷 2% 渲染
+		expect(storageKpi).toHaveTextContent("10.0 GB");
+		expect(storageKpi).toHaveTextContent("2%");
+		const volSeg = screen
+			.getByTestId("kpi-bar-storage")
+			.querySelector('[data-segment="volume"]') as HTMLElement | null;
+		expect(volSeg).not.toBeNull();
+		expect(volSeg?.style.width).toBe("2%");
 	});
 });
