@@ -136,7 +136,10 @@ function currentOf(
 		provider: m.provider,
 		id: m.id,
 		name: m.name,
-		thinkingLevel: state.thinkingConfigured ?? state.thinkingLevel,
+		thinkingLevel:
+			state.thinkingConfigured ??
+			state.configuredThinkingLevel ??
+			state.thinkingLevel,
 	};
 }
 

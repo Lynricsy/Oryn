@@ -961,21 +961,27 @@ export function applyFrame(
 				f.level === "warning" || f.level === "error" ? f.level : "info";
 			return pushNotice(s, "notice", level, str(f.message) ?? "", f);
 		}
-		case "thinking_level_changed":
-			return s.state
-				? {
-						...s,
-						state: {
-							...s.state,
-							thinkingLevel:
-								(f.thinkingLevel as SessionState["thinkingLevel"]) ??
-								s.state.thinkingLevel,
-							thinkingConfigured:
-								(f.configured as SessionState["thinkingConfigured"]) ??
-								s.state.thinkingConfigured,
-						},
-					}
-				: s;
+		case "thinking_level_changed": {
+			if (!s.state) return s;
+			const nextEffective =
+				(f.resolved as SessionState["thinkingLevel"]) ??
+				(f.thinkingLevel as SessionState["thinkingLevel"]) ??
+				s.state.thinkingLevel;
+			// 上游事件只在配置值与生效值不同（如 auto）时附带 configured；切回具体档位时省略它。
+			const nextConfigured =
+				(f.configured as SessionState["thinkingConfigured"]) ??
+				(f.thinkingLevel as SessionState["thinkingConfigured"]) ??
+				s.state.thinkingConfigured;
+			return {
+				...s,
+				state: {
+					...s.state,
+					thinkingLevel: nextEffective,
+					thinkingConfigured: nextConfigured,
+					configuredThinkingLevel: nextConfigured,
+				},
+			};
+		}
 		case "goal_updated":
 			return s.state
 				? {

@@ -331,21 +331,54 @@ describe("UiRequestCard：重设计的 ask/form 卡片与 HTML/SVG/图片支持"
 		expect(screen.getByText("SQLite")).toBeVisible();
 		expect(screen.getByText("one file, no new service")).toBeVisible();
 
-		// 切换到 Redis 并修改天数后提交
+		// 切换到 Redis 并输入越界值：输入时即时提示，但不再阻断提交（对齐 omp 19.2.0）
 		fireEvent.click(screen.getByText("Redis"));
 		const ttlInput = screen.getByLabelText(/Session lifetime/);
 		fireEvent.change(ttlInput, { target: { value: "0" } });
-		fireEvent.click(screen.getByRole("button", { name: "提交" }));
-		// 触发 min 校验，未提交
 		expect(screen.getByRole("alert")).toHaveTextContent("不能小于 1");
-		expect(answerUi).not.toHaveBeenCalled();
 
+		fireEvent.click(screen.getByRole("button", { name: "提交" }));
+		expect(answerUi).toHaveBeenCalledWith("T-ui", {
+			type: "extension_ui_response",
+			id: "f1",
+			formData: { store: "redis", ttl_days: "0" },
+		});
+
+		// 改成合法值后提示消失，再次提交回传最新值
+		vi.mocked(answerUi).mockClear();
 		fireEvent.change(ttlInput, { target: { value: "14" } });
+		expect(screen.queryByRole("alert")).toBeNull();
 		fireEvent.click(screen.getByRole("button", { name: "提交" }));
 		expect(answerUi).toHaveBeenCalledWith("T-ui", {
 			type: "extension_ui_response",
 			id: "f1",
 			formData: { store: "redis", ttl_days: "14" },
+		});
+	});
+
+	it("原生 omp 19.2.0 { method: 'form', html } 帧直接解析渲染并按规范回传 data", () => {
+		card({
+			type: "extension_ui_request",
+			id: "f-html",
+			method: "form",
+			html: `<form>
+				<fieldset>
+					<legend>Deploy target</legend>
+					<label><input type="radio" name="env" value="staging" checked> Staging</label>
+					<label><input type="radio" name="env" value="prod"> Prod</label>
+				</fieldset>
+			</form>`,
+		});
+		expect(screen.getByTestId("ask-form")).toHaveAttribute(
+			"data-ask-source",
+			"html",
+		);
+		fireEvent.click(screen.getByText("Prod"));
+		fireEvent.click(screen.getByRole("button", { name: "提交" }));
+		expect(answerUi).toHaveBeenCalledWith("T-ui", {
+			type: "extension_ui_response",
+			id: "f-html",
+			data: { env: "prod" },
 		});
 	});
 });

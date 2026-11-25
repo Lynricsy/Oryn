@@ -1254,3 +1254,41 @@ describe("回合头身份（M9.6：只认来源记录）", () => {
 		expect(head(stored)).toEqual(live);
 	});
 });
+
+describe("bashExecution 状态徽章（omp 19.2.0 movedCwd / errexit）", () => {
+	it("在 !cmd 卡片顶栏展示目录已重置与 set -e 提示", () => {
+		vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+		vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(80);
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		const { getByText } = render(
+			<QueryClientProvider client={client}>
+				<TranscriptContext.Provider
+					value={{ ...ctx, threadId: "T-bash", readOnly: true }}
+				>
+					<Transcript
+						items={[
+							{
+								kind: "message",
+								key: "bash-1",
+								seq: 1,
+								message: {
+									role: "bashExecution",
+									command: "cd /tmp && set -e",
+									output: "",
+									exitCode: 0,
+									movedCwd: true,
+									errexit: true,
+								},
+								live: false,
+							},
+						]}
+					/>
+				</TranscriptContext.Provider>
+			</QueryClientProvider>,
+		);
+		expect(getByText("目录已重置")).toBeVisible();
+		expect(getByText("set -e")).toBeVisible();
+	});
+});

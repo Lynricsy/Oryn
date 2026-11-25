@@ -1464,6 +1464,16 @@ function ExecutionMessage({ message }: { message: JsonRecord }) {
 				{message.excludeFromContext === true && (
 					<Badge>{t("transcript.excluded")}</Badge>
 				)}
+				{isBash && message.movedCwd === true && (
+					<Badge tone="warn" title={t("transcript.movedCwdHint")}>
+						{t("transcript.movedCwd")}
+					</Badge>
+				)}
+				{isBash && message.errexit === true && (
+					<Badge tone="warn" title={t("transcript.errexitHint")}>
+						set -e
+					</Badge>
+				)}
 				{message.cancelled === true && (
 					<Badge tone="warn">{t("transcript.cancelled")}</Badge>
 				)}

@@ -65,10 +65,21 @@ export function useSessionCost(threadId: string): {
 export function ModelChip({ threadId }: { threadId: string }): ReactNode {
 	const state = useThread(threadId, (s) => s.state);
 	const { model, name, short } = useModelName(threadId);
-	const levels = state?.availableThinkingLevels;
-	const reasons = model?.reasoning !== false && (levels?.length ?? 1) > 0;
+	// 兼容 omp 19.2.0 上游字段（thinkingLevels / configuredThinkingLevel）与旧 Core 字段（availableThinkingLevels / thinkingConfigured）
+	const rawLevels = state?.thinkingLevels ?? state?.availableThinkingLevels;
+	const options =
+		rawLevels && rawLevels.length > 0
+			? rawLevels.includes("auto")
+				? ["auto", ...rawLevels.filter((l) => l !== "auto")]
+				: ["auto", ...rawLevels]
+			: ["auto"];
+	const reasons = model?.reasoning !== false && (rawLevels?.length ?? 1) > 0;
 	// 菜单里勾选的是配置值（auto 或具体级别）；圆圈画实际生效的级别
-	const configured = state?.thinkingConfigured ?? state?.thinkingLevel ?? "";
+	const configured =
+		state?.thinkingConfigured ??
+		state?.configuredThinkingLevel ??
+		state?.thinkingLevel ??
+		"";
 	const effective =
 		configured && configured !== "auto" ? configured : state?.thinkingLevel;
 	return (
@@ -100,7 +111,7 @@ export function ModelChip({ threadId }: { threadId: string }): ReactNode {
 				<ThinkingMenu
 					value={configured}
 					shown={effective}
-					options={["auto", ...(levels ?? [])]}
+					options={options}
 					onSelect={(level) =>
 						void runTrayCommand(threadId, {
 							type: "set_thinking_level",

@@ -84,6 +84,30 @@ describe("ModelChip 思考级别菜单", () => {
 		);
 	});
 
+	it("兼容 omp 19.2.0 thinkingLevels（含 auto）与 configuredThinkingLevel", () => {
+		setState({
+			thinkingLevel: "high",
+			thinkingConfigured: undefined,
+			availableThinkingLevels: undefined,
+			configuredThinkingLevel: "auto",
+			thinkingLevels: ["off", "auto", "low", "high"],
+		} as unknown as Partial<SessionState>);
+		render(<ModelChip threadId={TID} />);
+		// 菜单里勾选的是 auto，且不产生重复的「自动」选项
+		fireEvent.click(screen.getByRole("button", { name: /思考级别：自动/ }));
+		const items = screen.getAllByRole("menuitemradio");
+		expect(items.map((i) => i.textContent)).toEqual([
+			"自动",
+			"关闭",
+			"低",
+			"高",
+		]);
+		expect(screen.getByRole("menuitemradio", { name: "自动" })).toHaveAttribute(
+			"aria-checked",
+			"true",
+		);
+	});
+
 	it("模型不推理时没有圆圈按钮", () => {
 		setState({ availableThinkingLevels: [] });
 		render(<ModelChip threadId={TID} />);

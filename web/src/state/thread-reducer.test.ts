@@ -853,3 +853,38 @@ describe("注入消息落盘为 custom_message：实时副本不重影", () => {
 		).toBe(true);
 	});
 });
+
+describe("thinking_level_changed 兼容 auto 动态解析与切回具体档位", () => {
+	it("auto 解析出 resolved 更新生效档位，切回具体档位时清除旧 auto 配置", () => {
+		let s = initialThreadState(TID);
+		s = {
+			...s,
+			state: {
+				thinkingLevel: "medium",
+				thinkingConfigured: "auto",
+				configuredThinkingLevel: "auto",
+			} as unknown as ThreadViewState["state"],
+		};
+		// auto 本轮分类器解析为 high：configured 维持 auto，生效值更新为 high
+		s = frames(s, [
+			{
+				type: "thinking_level_changed",
+				configured: "auto",
+				resolved: "high",
+			},
+		]);
+		expect(s.state?.thinkingLevel).toBe("high");
+		expect(s.state?.thinkingConfigured).toBe("auto");
+		expect(s.state?.configuredThinkingLevel).toBe("auto");
+		// 切回具体档位 low：上游省略 configured，两个配置字段都随之变为 low
+		s = frames(s, [
+			{
+				type: "thinking_level_changed",
+				thinkingLevel: "low",
+			},
+		]);
+		expect(s.state?.thinkingLevel).toBe("low");
+		expect(s.state?.thinkingConfigured).toBe("low");
+		expect(s.state?.configuredThinkingLevel).toBe("low");
+	});
+});

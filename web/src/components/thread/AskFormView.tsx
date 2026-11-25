@@ -948,7 +948,7 @@ export function AskFormBody({
 	const [values, setValues] = useState<AskFormValues>(() =>
 		createInitialFormValues(doc),
 	);
-	const [errors, setErrors] = useState<Record<string, AskValidationError>>({});
+	const [touched, setTouched] = useState<Record<string, true>>({});
 	const formRef = useRef<HTMLFormElement>(null);
 
 	// 当底层解析从 RPC 升级为匹配到的 HTML 或字段集变化时，保留已有输入并补齐新字段初始值
@@ -982,32 +982,22 @@ export function AskFormBody({
 		/mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent);
 	const shortcutKey = isMac ? "⌘↵" : "Ctrl↵";
 
+	// 对齐 omp 19.2.0：输入时即时标红提示校验问题，但不再阻断提交（允许直接回复问题而不被约束死锁）。
+	const errors = useMemo<Record<string, AskValidationError>>(() => {
+		const all = validateAskForm(doc, values);
+		const shown: Record<string, AskValidationError> = {};
+		for (const [name, err] of Object.entries(all)) {
+			if (touched[name]) shown[name] = err;
+		}
+		return shown;
+	}, [doc, values, touched]);
+
 	const handleFieldChange = (name: string, next: AskFieldValue) => {
 		setValues((prev) => ({ ...prev, [name]: next }));
-		setErrors((prev) => {
-			if (!prev[name]) return prev;
-			const copy = { ...prev };
-			delete copy[name];
-			return copy;
-		});
+		setTouched((prev) => (prev[name] ? prev : { ...prev, [name]: true }));
 	};
 
 	const submitForm = () => {
-		const errs = validateAskForm(doc, values);
-		if (Object.keys(errs).length > 0) {
-			setErrors(errs);
-			const firstBad = Object.keys(errs)[0];
-			if (firstBad && formRef.current) {
-				const formEl = formRef.current;
-				requestAnimationFrame(() => {
-					const target = formEl.querySelector(
-						`[data-field-name="${CSS.escape(firstBad)}"]`,
-					);
-					target?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
-				});
-			}
-			return;
-		}
 		const formData = buildAskFormData(doc, values);
 		answer(
 			"html" in req
