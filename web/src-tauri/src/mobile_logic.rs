@@ -89,6 +89,60 @@ pub fn external_url(url: &str) -> Option<String> {
     matches!(u.scheme(), "http" | "https" | "mailto" | "tel").then(|| u.into())
 }
 
+/// 主框架逃逸恢复动作。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RecoveryAction {
+    /// 首次逃逸且存在同服务器上次就绪的 Oryn 路由：尝试恢复回该站内路由一次。
+    Restore { url: String, open_external: bool },
+    /// 从未就绪过（例如首次进入 `/` 即跨源 302）或恢复导航本身再次逃逸：
+    /// 绝不重试同一跳转，直接回到内置连接页错误态。
+    FallbackLauncher { open_external: bool },
+}
+
+/// 主框架逃逸恢复状态机：记住上次在 Oryn 页面就绪的合法路由，限制每次连续逃逸最多恢复一次，
+/// 避免服务器返回跨源 302（如 SSO 网关）时无限重开系统浏览器并循环跳转。
+#[derive(Debug, Default)]
+pub struct NavRecovery {
+    ready_origin: Option<String>,
+    last_ready_path: Option<String>,
+    recovering: bool,
+}
+
+impl NavRecovery {
+    /// Oryn 页面通过 `host_ready` 报告就绪：记录当前服务器的合法站内路由并结束恢复态。
+    pub fn note_ready(&mut self, origin: &str, path: &str) {
+        if origin.is_empty() {
+            return;
+        }
+        let path = crate::session::valid_app_path(path);
+        if path == "/auth/app" || path.starts_with("/auth/app?") {
+            return;
+        }
+        self.ready_origin = Some(origin.to_string());
+        self.last_ready_path = Some(path);
+        self.recovering = false;
+    }
+
+    /// 主框架逃逸离已配对 `server` 时决定下一步动作。
+    pub fn on_escape(&mut self, server: &str) -> RecoveryAction {
+        if !self.recovering && self.ready_origin.as_deref() == Some(server) {
+            if let Some(path) = self.last_ready_path.as_deref() {
+                self.recovering = true;
+                return RecoveryAction::Restore {
+                    url: format!("{server}{path}"),
+                    open_external: true,
+                };
+            }
+        }
+        // 恢复导航自身再次逃逸时不再重复打开系统浏览器；首次即逃逸（从未就绪）允许打开一次（仍受令牌桶限流）
+        let open_external = !self.recovering;
+        self.recovering = false;
+        self.ready_origin = None;
+        self.last_ready_path = None;
+        RecoveryAction::FallbackLauncher { open_external }
+    }
+}
+
 /// `host_set_chrome` 的颜色：`^#[0-9a-fA-F]{6}$`。
 pub fn valid_color(color: &str) -> bool {
     color.len() == 7 && color.starts_with('#') && color[1..].bytes().all(|b| b.is_ascii_hexdigit())
@@ -1758,6 +1812,63 @@ mod tests {
         assert_eq!(
             nav_decision("https://evil.example/", "tauri://localhost", s),
             External
+        );
+    }
+
+    #[test]
+    fn nav_recovery_restores_once_and_breaks_redirect_loops() {
+        // 场景 1：已配对站点 `/` 返回跨源 302（从未调用过 host_ready）→ 不重试 `/`，仅允许开一次浏览器并直接回连接页
+        let mut r = NavRecovery::default();
+        assert_eq!(
+            r.on_escape(SERVER),
+            RecoveryAction::FallbackLauncher {
+                open_external: true
+            }
+        );
+
+        // 场景 2：在 `/t/T-1?tab=files` 就绪后发生逃逸 → 恢复回上次就绪路由（仅一次）
+        r.note_ready(SERVER, "/t/T-1?tab=files");
+        assert_eq!(
+            r.on_escape(SERVER),
+            RecoveryAction::Restore {
+                url: format!("{SERVER}/t/T-1?tab=files"),
+                open_external: true
+            }
+        );
+
+        // 恢复导航本身再次跨源 302 逃逸 → 不再重试也不重复开浏览器，直接回连接页
+        assert_eq!(
+            r.on_escape(SERVER),
+            RecoveryAction::FallbackLauncher {
+                open_external: false
+            }
+        );
+
+        // 场景 3：恢复成功后再次就绪 → 重置恢复态，后续单次逃逸仍可恢复
+        r.note_ready(SERVER, "/t/T-2");
+        assert_eq!(
+            r.on_escape(SERVER),
+            RecoveryAction::Restore {
+                url: format!("{SERVER}/t/T-2"),
+                open_external: true
+            }
+        );
+        r.note_ready(SERVER, "/t/T-2");
+        assert_eq!(
+            r.on_escape(SERVER),
+            RecoveryAction::Restore {
+                url: format!("{SERVER}/t/T-2"),
+                open_external: true
+            }
+        );
+
+        // 场景 4：换服务器后旧服务器的就绪路由不可用于新服务器
+        r.note_ready(SERVER, "/t/T-3");
+        assert_eq!(
+            r.on_escape("https://other.example.com"),
+            RecoveryAction::FallbackLauncher {
+                open_external: true
+            }
         );
     }
 

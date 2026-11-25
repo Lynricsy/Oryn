@@ -61,6 +61,7 @@ pub struct Desktop {
     pub version: String,
     pub notifier: Notifier,
     open_bucket: Mutex<Bucket>,
+    nav_recovery: Mutex<crate::mobile_logic::NavRecovery>,
     /// 主 WebView 已建好（移动端会话启动前要等它，见 [`crate::mobile_logic::WebviewGate`]）。
     #[cfg(mobile)]
     pub webview_up: crate::mobile_logic::WebviewGate,
@@ -105,6 +106,7 @@ impl Desktop {
             version,
             notifier: Notifier::default(),
             open_bucket: Mutex::new(Bucket::new(OPEN_BURST, OPEN_REFILL_MS)),
+            nav_recovery: Mutex::new(crate::mobile_logic::NavRecovery::default()),
             #[cfg(mobile)]
             webview_up: Default::default(),
             #[cfg(desktop)]
@@ -142,6 +144,30 @@ impl Desktop {
 
     pub fn lang(&self) -> Lang {
         self.prefs().lang
+    }
+
+    /// 申请一次系统浏览器打开配额（`host_open_external` 与主框架逃逸兜底共用同一令牌桶）。
+    pub fn take_open_token(&self) -> bool {
+        self.open_bucket
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take(eventlog::now_ms())
+    }
+
+    /// 记录 Oryn 页面已就绪的路由，并重置逃逸恢复状态。
+    pub fn note_ready(&self, origin: &str, path: &str) {
+        self.nav_recovery
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .note_ready(origin, path);
+    }
+
+    /// 主框架发生跨源逃逸：按恢复状态机决定恢复回上次就绪路由或直接退回连接页。
+    pub fn on_nav_escape(&self, server: &str) -> crate::mobile_logic::RecoveryAction {
+        self.nav_recovery
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .on_escape(server)
     }
 
     #[cfg(desktop)]
@@ -650,11 +676,11 @@ pub async fn host_ready(
     path: String,
     d: State<'_, Arc<Desktop>>,
 ) -> Res<HostReady> {
-    let _ = path;
     let origin = main_window(&app)
         .and_then(|w| w.url().ok())
         .map(|u| u.origin().ascii_serialization())
         .unwrap_or_default();
+    d.note_ready(&origin, &path);
     let pending_path = d.core.lock().await.host_ready(&origin, bridge, &lang);
     d.set_prefs(|p| p.lang = Lang::from_tag(&lang));
     #[cfg(desktop)]
@@ -833,12 +859,7 @@ pub async fn host_open_external(
         return Err("invalid_url".into());
     };
     let logged = eventlog::redact_url(&url);
-    let allowed = d
-        .open_bucket
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .take(eventlog::now_ms());
-    if !allowed {
+    if !d.take_open_token() {
         eventlog::log(
             "open.external",
             json!({"url": logged, "ok": false, "reason": "rate_limited"}),

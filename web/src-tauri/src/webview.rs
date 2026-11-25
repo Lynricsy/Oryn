@@ -181,31 +181,58 @@ pub fn create_main(app: &AppHandle, remote: &RemoteOrigin) -> tauri::Result<Webv
                         .unwrap_or_else(|e| e.into_inner())
                         .clone();
                     if let Some(server) = server {
-                        use crate::mobile_logic::NavDecision;
+                        use crate::mobile_logic::{NavDecision, RecoveryAction};
                         let url = payload.url().to_string();
                         let decision =
                             crate::mobile_logic::nav_decision(&url, &load_launcher, Some(&server));
                         if decision != NavDecision::Allow {
+                            let action = d.on_nav_escape(&server);
+                            let open_ext = match &action {
+                                RecoveryAction::Restore { open_external, .. }
+                                | RecoveryAction::FallbackLauncher { open_external } => {
+                                    *open_external
+                                }
+                            };
                             let app = loader.clone();
+                            let d = d.clone();
                             tauri::async_runtime::spawn(async move {
                                 match decision {
-                                    NavDecision::External => {
-                                        let _ = app.opener().open_url(&url, None::<&str>);
-                                        eventlog::log(
-                                            "nav.external",
-                                            json!({"url": eventlog::redact_url(&url)}),
-                                        );
+                                    NavDecision::External if open_ext => {
+                                        let logged = eventlog::redact_url(&url);
+                                        if d.take_open_token() {
+                                            let ok = app
+                                                .opener()
+                                                .open_url(&url, None::<&str>)
+                                                .is_ok();
+                                            eventlog::log(
+                                                "nav.external",
+                                                json!({"url": logged, "ok": ok}),
+                                            );
+                                        } else {
+                                            eventlog::log(
+                                                "nav.external",
+                                                json!({"url": logged, "ok": false, "reason": "rate_limited"}),
+                                            );
+                                        }
                                     }
                                     NavDecision::DeepLink => {
                                         crate::deeplink::open_url(&app, &url);
                                     }
-                                    NavDecision::Block | NavDecision::Allow => {}
+                                    _ => {}
                                 }
-                                if let (Ok(back), Some(w)) =
-                                    (Url::parse(&server), app.get_webview_window(host::MAIN))
-                                {
-                                    let _ = w.navigate(back);
-                                    eventlog::log("nav.recovered", json!({"to": server}));
+                                match action {
+                                    RecoveryAction::Restore { url: back_url, .. } => {
+                                        if let (Ok(back), Some(w)) = (
+                                            Url::parse(&back_url),
+                                            app.get_webview_window(host::MAIN),
+                                        ) {
+                                            let _ = w.navigate(back);
+                                            eventlog::log("nav.recovered", json!({"to": back_url}));
+                                        }
+                                    }
+                                    RecoveryAction::FallbackLauncher { .. } => {
+                                        d.core.lock().await.navigation_escaped(&url);
+                                    }
                                 }
                             });
                         }

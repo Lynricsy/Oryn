@@ -711,6 +711,17 @@ impl<A: Api, S: Shell> Core<A, S> {
         self.fail(codes::WEB_TIMEOUT, "");
     }
 
+    /// 主框架逃逸且无法恢复（例如已配对站点 `/` 返回跨源 302）：停看门狗、回到连接页错误态，不再重试同一个跳转。
+    pub fn navigation_escaped(&mut self, url: &str) {
+        self.gen += 1;
+        self.nav().web_ready = false;
+        self.log.log(
+            "nav.recovery_failed",
+            json!({"url": crate::eventlog::redact_url(url)}),
+        );
+        self.fail(codes::WEB_TIMEOUT, "");
+    }
+
     /// 远程页面就绪：停看门狗、状态 `Connected`、保存语言；返回并清空待开路径。
     pub fn host_ready(&mut self, origin: &str, bridge: u32, lang: &str) -> Option<String> {
         self.gen += 1;
@@ -2236,5 +2247,23 @@ mod tests {
             serde_json::to_value(&s).unwrap(),
             json!({"step": "connect", "serverUrl": "", "error": {"code": "revoked", "message": ""}})
         );
+    }
+
+    #[tokio::test]
+    async fn navigation_escaped_falls_back_to_launcher_error_and_stops_watchdog() {
+        let mut r = paired();
+        r.api
+            .app_session
+            .lock()
+            .unwrap()
+            .push_back(Ok("oac_1".into()));
+        let Next::Watchdog { gen, .. } = r.core.start(None).await else {
+            panic!("expected watchdog");
+        };
+        r.core.navigation_escaped("https://sso.example.com/login");
+        assert_eq!(err_code(r.core.state()), Some(codes::WEB_TIMEOUT));
+        assert!(r.shell.calls.lock().unwrap().contains(&Call::Launcher));
+        r.core.watchdog_fired(gen);
+        assert_eq!(err_code(r.core.state()), Some(codes::WEB_TIMEOUT));
     }
 }
