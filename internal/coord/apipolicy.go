@@ -269,7 +269,7 @@ func buildAPIPolicy() map[string]opPolicy {
 	set("owner-memory", opDeny, deny(denyHuman), "updateOwnerMemoryExplicit", "approveOwnerMemoryExplicit")
 
 	// notifications
-	set("notifications", opRead, none, "listNotifications", "listNotificationChannels", "getVapidKey", "listPushSubscriptions")
+	set("notifications", opRead, none, "listNotifications", "listNotificationChannels", "getVapidKey", "getPushGateway", "listPushSubscriptions")
 	set("notifications", opWrite, none, "markNotificationsRead", "testNotificationChannel")
 	set("notifications", opConfirm, none, "createNotificationChannel", "updateNotificationChannel", "deleteNotificationChannel", "deletePushSubscription")
 	set("notifications", opDeny, deny(denyHuman), "answerNotification")       // 它能作答助手自己的确认卡

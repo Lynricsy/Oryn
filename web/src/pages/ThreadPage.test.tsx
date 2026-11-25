@@ -25,7 +25,12 @@ import { uiStore } from "../state/ui";
 import { ThreadPage } from "./ThreadPage";
 
 vi.mock("../realtime/socket", () => ({
-	realtime: { subscribe: () => () => {}, focus: () => {} },
+	realtime: {
+		subscribe: () => () => {},
+		focus: () => {},
+		onBrowserRelayState: () => () => {},
+		onBrowserRelayClients: () => () => {},
+	},
 }));
 vi.mock("../state/terminals", () => ({
 	terminalHub: { attach: () => () => {} },

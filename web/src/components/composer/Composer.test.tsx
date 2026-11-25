@@ -59,6 +59,8 @@ vi.mock("../../realtime/socket", () => ({
 		uiResponse: () => true,
 		subscribe: () => () => undefined,
 		focus: () => undefined,
+		onBrowserRelayState: () => () => undefined,
+		onBrowserRelayClients: () => () => undefined,
 	},
 	OmpCommandError: class extends Error {},
 }));
