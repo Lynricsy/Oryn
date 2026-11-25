@@ -4230,6 +4230,10 @@ interface BashExecutionMessage {
 	timestamp: number;
 	/** If true, this message is excluded from LLM context (!! prefix) */
 	excludeFromContext?: boolean;
+	/** Command ended in a different working directory than it started in; next command resets cwd. */
+	movedCwd?: boolean;
+	/** Command ended with `set -e` enabled; next command starts with it off. */
+	errexit?: boolean;
 }
 interface PythonExecutionMessage {
 	role: "pythonExecution";
