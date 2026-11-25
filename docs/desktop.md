@@ -13,7 +13,7 @@ Windows / macOS / Linux 的 Oryn 桌面客户端。App 本身只带一个很小�
 | 平台 | 安装包 |
 |---|---|
 | Windows x64 | `Oryn_<版本>_x64-setup.exe`（NSIS）或 `.msi`。包没有代码签名，SmartScreen 会提示「未知发布者」，选「仍要运行」。 |
-| macOS（Apple Silicon 与 Intel 通用） | `Oryn_<版本>_universal.dmg`。已签名并公证的包可以直接打开；没配 Apple 证书的构建是 ad-hoc 签名，只能在 Apple Silicon 上运行，首次需在 Finder 里右键「打开」。 |
+| macOS（Apple Silicon / Intel 分架构） | Apple Silicon 用 `Oryn_<版本>_aarch64.dmg`，Intel 用 `Oryn_<版本>_x64.dmg`。已签名并公证的包可以直接打开；没配 Apple 证书的构建是 ad-hoc 签名，首次需在 Finder 里右键「打开」。 |
 | Linux x64 | `.deb`、`.rpm` 或 `.AppImage`。 |
 
 Linux 运行时依赖：WebKitGTK 4.1、GTK 3、librsvg，托盘需要 `libayatana-appindicator`（Debian / Ubuntu：`libayatana-appindicator3-1`；Arch：`libayatana-appindicator`），令牌存储使用 Secret Service（GNOME Keyring、KWallet 或 KeePassXC）。AppImage 需要 FUSE 2；没有 FUSE 时设 `APPIMAGE_EXTRACT_AND_RUN=1` 运行。
@@ -149,7 +149,7 @@ D1（全部安装包）和 D11（两次签名的更新包）用的都是**一次
 - 校验 tag，创建草稿 Release（标题 `Oryn <版本>`）。
 - 并行三路：
   - `server`：在 Linux 上构建 Web UI 并交叉编译（静态链接），上传 `oryn-server_<版本>_linux-{x64,arm64}.tar.gz`（`orynd`、`orbd`、`oryn`、`gemini-rerank`）、`orbd_<版本>_darwin-arm64.tar.gz`（macOS Runner）与 `oryn-server_<版本>_SHA256SUMS`。二进制的版本号就是 tag（`orynd --version` 输出 `v<版本>`）。上传前用临时数据目录启动 linux-x64 的 `orynd`，确认 `/healthz` 的版本、首页与入口脚本来自内嵌的 Web UI（没嵌入前端时 orynd 也能编译，但只返回占位页）。orb 镜像不随版本发布，部署方 checkout 同一 tag 后 `make image`（见 [deploy.md](deploy.md) 第 1 节）。
-  - 调用 `desktop.yml`：在 Ubuntu 22.04、Windows、macOS（universal）上构建，跑 `--smoke`，把安装包上传到 Release。
+  - 调用 `desktop.yml`：分别构建 Linux x64（Ubuntu 22.04）、Windows x64、macOS arm64、macOS x64（独立架构，不打 universal），原生架构跑 `--smoke`，把安装包上传到 Release。
   - 调用 `mobile.yml`：见 [mobile.md](mobile.md)「发版」。
 - 三路全部成功后，生成 `latest.json`（`web/scripts/updater-manifest.ts`），然后发布 Release。任一路失败时 Release 停在草稿，修好后在 Actions 里「Re-run failed jobs」续跑。
 - 不是预发布时，用新的 `latest.json` 覆盖 `desktop-updater`，已安装的 App 随后会收到更新。

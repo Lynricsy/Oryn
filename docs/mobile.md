@@ -148,9 +148,8 @@ make android DIST=foss                                      # 仓库根目录：
 
 1. 改 `web/src-tauri/Cargo.toml` 的 `version`（只写 `x.y.z`；`versionCode` = `major*1000000 + minor*1000 + patch`，预发布与正式版相同）。
 2. 打 tag `v<版本>` 或预发布 `v<版本>-rc.N` 并推送。
-3. `.github/workflows/release.yml` 校验 tag 并建草稿 Release，然后以 `workflow_call` 调用 `.github/workflows/mobile.yml`：`android-release`（foss / gms 各一套：debug APK、插件单测、签名的 release APK 与 AAB、`apksigner` / `zipalign` / `aapt2` 校验并把包名、版本号、SDK 与证书指纹写进 Step Summary、上传 Release 资产）→ `android-smoke`（API 34 模拟器里装 foss debug 包，90 秒内出现 `launcher.ready`）→ `ios-check`（macOS 上不签名编译模拟器包）→ `ios-release`（Apple Distribution 签名导出 IPA，build number 为 `(run_number + 1000) × 100 + run_attempt`，重跑同一次运行也不会与已上传的构建撞号，+1000 让它高过旧 `mobile.yml` 时期上传过的号；校验包名与签名者后用 `xcrun altool` 上传 TestFlight；IPA 不进 Release）。服务端、桌面端与移动端全部成功后，`release.yml` 的 `publish` 才发布 Release。
-4. Release 里移动端的资产只有 release 签名的 `Oryn_<版本>_android-{foss,gms}.apk` 与 `.aab`。debug APK（可调试、允许任意明文请求）只作为 workflow artifact，从 Actions 运行页下载，不进 Release。
-
+3. `.github/workflows/release.yml` 校验 tag 并建草稿 Release，然后以 `workflow_call` 调用 `.github/workflows/mobile.yml`：`android-release`（foss / gms 各一套：分架构 debug APK、插件单测、签名的分架构 release APK（`arm64-v8a` / `armeabi-v7a` / `x86_64`）与 Google Play 多 ABI AAB、`apksigner` / `zipalign` / `aapt2` 校验单 ABI 与包元数据并写进 Step Summary、上传 Release 资产）→ `android-smoke`（API 34 模拟器里装 foss `x86_64` debug 包，90 秒内出现 `launcher.ready`）→ `ios-check`（macOS 上不签名编译模拟器包）→ `ios-release`（Apple Distribution 签名导出 IPA，build number 为 `(run_number + 1000) × 100 + run_attempt`，重跑同一次运行也不会与已上传的构建撞号，+1000 让它高过旧 `mobile.yml` 时期上传过的号；校验包名与签名者后用 `xcrun altool` 上传 TestFlight；IPA 不进 Release）。服务端、桌面端与移动端全部成功后，`release.yml` 的 `publish` 才发布 Release。
+4. Release 里移动端的资产只有 release 签名的分架构 APK（`Oryn_<版本>_android-{foss,gms}-{arm64-v8a,armeabi-v7a,x86_64}.apk`）与 Play 商店用的 `.aab`（`Oryn_<版本>_android-{foss,gms}.aab`）。debug APK（可调试、允许任意明文请求）只作为 workflow artifact，从 Actions 运行页下载，不进 Release。
 PR 与手动触发只产出 debug APK（workflow artifacts）并跑冒烟与 iOS 编译，拿不到签名密钥；来自 fork 的 PR 没有 `ANDROID_GOOGLE_SERVICES_JSON`，跳过 gms。手动触发可勾选 `export_ios_project`，把 `tauri ios init` 生成的 `gen/apple` 作为产物导出以便入库。
 
 ### 工作流的安全约束

@@ -82,18 +82,34 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: linux
+          - platform: linux-x64
+            os: linux
             runner: ubuntu-22.04
+            target: ""
             args: ""
             targets: ""
-          - platform: windows
+            smoke: true
+          - platform: windows-x64
+            os: windows
             runner: windows-latest
+            target: ""
             args: ""
             targets: ""
-          - platform: macos
+            smoke: true
+          - platform: macos-arm64
+            os: macos
             runner: macos-latest
-            args: "--target universal-apple-darwin"
-            targets: "aarch64-apple-darwin,x86_64-apple-darwin"
+            target: aarch64-apple-darwin
+            args: "--target aarch64-apple-darwin"
+            targets: "aarch64-apple-darwin"
+            smoke: true
+          - platform: macos-x64
+            os: macos
+            runner: macos-latest
+            target: x86_64-apple-darwin
+            args: "--target x86_64-apple-darwin"
+            targets: "x86_64-apple-darwin"
+            smoke: false
     name: build (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
     steps: &build-steps
@@ -102,7 +118,7 @@ jobs:
           persist-credentials: false
 
       - name: 安装 Linux 构建依赖
-        if: matrix.platform == 'linux'
+        if: matrix.os == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf xdg-utils xvfb
@@ -119,14 +135,14 @@ jobs:
       - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: "web/src-tauri -> target"
-
+          key: ${{ matrix.platform }}
       - name: 安装 web 依赖
         working-directory: web
         run: bun install --frozen-lockfile
 
       # Icon Composer 图标（浅色 / 深色 / 着色）只能由 Xcode 26+ 的 actool 编成 Assets.car，随包放进 Contents/Resources
       - name: 编译 App 图标（macOS）
-        if: matrix.platform == 'macos'
+        if: matrix.os == 'macos'
         shell: bash
         run: |
           set -euo pipefail
@@ -140,6 +156,7 @@ jobs:
         shell: bash
         env:
           PLATFORM: ${{ matrix.platform }}
+          OS: ${{ matrix.os }}
           MATRIX_ARGS: ${{ matrix.args }}
           HAS_UPDATER_KEY: ${{ needs.prepare.outputs.is_release == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
           HAS_APPLE_CERT: ${{ needs.prepare.outputs.is_release == 'true' && secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
@@ -170,7 +187,7 @@ jobs:
           madd() { mac="${mac:+$mac, }$1"; }
           notarize=none
           mac_sign=none
-          if [[ "$PLATFORM" == "macos" ]]; then
+          if [[ "$OS" == "macos" ]]; then
             if [[ "$HAS_APPLE_CERT" == "true" ]]; then
               apple_cert=true
               if [[ "$HAS_APPLE_API" == "true" ]]; then
@@ -262,15 +279,14 @@ jobs:
           releaseDraft: true
           uploadUpdaterJson: false
           uploadWorkflowArtifacts: true
-
-      # 冒烟（8.3）：临时配置目录、不碰凭据库与网络；连接页首次调用 launcher_state 成功即退出 0，30 秒内没等到退出 1
+          workflowArtifactNamePattern: "${{ matrix.platform }}_[name]_[version]_[arch][ext]"
       - name: 冒烟启动（Linux）
-        if: matrix.platform == 'linux'
+        if: matrix.os == 'linux' && matrix.smoke
         timeout-minutes: 3
         run: xvfb-run -a dbus-run-session -- web/src-tauri/target/release/oryn-desktop --smoke
 
       - name: 冒烟启动（Windows）
-        if: matrix.platform == 'windows'
+        if: matrix.os == 'windows' && matrix.smoke
         timeout-minutes: 3
         shell: pwsh
         run: |
@@ -280,28 +296,28 @@ jobs:
           exit $p.ExitCode
 
       - name: 冒烟启动（macOS）
-        if: matrix.platform == 'macos'
+        if: matrix.os == 'macos' && matrix.smoke
         timeout-minutes: 3
-        run: web/src-tauri/target/universal-apple-darwin/release/bundle/macos/Oryn.app/Contents/MacOS/oryn-desktop --smoke
+        run: web/src-tauri/target/${{ matrix.target }}/release/bundle/macos/Oryn.app/Contents/MacOS/oryn-desktop --smoke
 
       - name: 断言 App 图标（macOS）
-        if: matrix.platform == 'macos'
+        if: matrix.os == 'macos'
         shell: bash
         run: |
           set -euo pipefail
-          app=web/src-tauri/target/universal-apple-darwin/release/bundle/macos/Oryn.app
+          app=web/src-tauri/target/${{ matrix.target }}/release/bundle/macos/Oryn.app
           name=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$app/Contents/Info.plist")
           if [[ "$name" != "AppIcon" ]]; then echo "::error::CFBundleIconName 是「${name}」，应为 AppIcon（见 web/src-tauri/Info.plist）"; exit 1; fi
           bash web/src-tauri/ci/check-appicon.sh "$app/Contents/Resources/Assets.car" "macOS"
 
       - name: 验签（macOS）
-        if: matrix.platform == 'macos' && steps.sign.outputs.mac_sign != 'adhoc'
+        if: matrix.os == 'macos' && steps.sign.outputs.mac_sign != 'adhoc'
         shell: bash
         env:
           MAC_SIGN: ${{ steps.sign.outputs.mac_sign }}
         run: |
           set -euo pipefail
-          bundle=web/src-tauri/target/universal-apple-darwin/release/bundle
+          bundle=web/src-tauri/target/${{ matrix.target }}/release/bundle
           app="$bundle/macos/Oryn.app"
           dmg=$(find "$bundle/dmg" -maxdepth 1 -name "*.dmg" | head -1)
           codesign --verify --deep --strict "$app"

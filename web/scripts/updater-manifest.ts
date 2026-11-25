@@ -48,11 +48,14 @@ export class AmbiguousAssetError extends Error {
 	}
 }
 
-/** 资产后缀 → 清单平台键。`.app.tar.gz` 是通用二进制（universal-apple-darwin），两种 mac 架构共用。 */
+/** 资产后缀 → 清单平台键（各架构独立分包，不打 universal）。 */
 const RULES: { suffix: string; platforms: string[] }[] = [
-	{ suffix: ".AppImage", platforms: ["linux-x86_64"] },
-	{ suffix: "-setup.exe", platforms: ["windows-x86_64"] },
-	{ suffix: ".app.tar.gz", platforms: ["darwin-aarch64", "darwin-x86_64"] },
+	{ suffix: "_amd64.AppImage", platforms: ["linux-x86_64"] },
+	{ suffix: "_aarch64.AppImage", platforms: ["linux-aarch64"] },
+	{ suffix: "_x64-setup.exe", platforms: ["windows-x86_64"] },
+	{ suffix: "_arm64-setup.exe", platforms: ["windows-aarch64"] },
+	{ suffix: "_aarch64.app.tar.gz", platforms: ["darwin-aarch64"] },
+	{ suffix: "_x64.app.tar.gz", platforms: ["darwin-x86_64"] },
 ];
 
 /**

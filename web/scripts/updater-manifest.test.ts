@@ -23,20 +23,24 @@ const ALL = [
 	asset("Oryn_0.1.0_x64-setup.exe.sig"),
 	asset("Oryn_0.1.0_x64_en-US.msi"),
 	asset("Oryn_0.1.0_x64_en-US.msi.sig"),
-	asset("Oryn_0.1.0_universal.dmg"),
-	asset("Oryn_universal.app.tar.gz"),
-	asset("Oryn_universal.app.tar.gz.sig"),
+	asset("Oryn_0.1.0_aarch64.dmg"),
+	asset("Oryn_0.1.0_aarch64.app.tar.gz"),
+	asset("Oryn_0.1.0_aarch64.app.tar.gz.sig"),
+	asset("Oryn_0.1.0_x64.dmg"),
+	asset("Oryn_0.1.0_x64.app.tar.gz"),
+	asset("Oryn_0.1.0_x64.app.tar.gz.sig"),
 ];
 const SIGS = {
 	"Oryn_0.1.0_amd64.AppImage.sig": "sig-linux\n",
 	"Oryn_0.1.0_x64-setup.exe.sig": "sig-win",
 	"Oryn_0.1.0_x64_en-US.msi.sig": "sig-msi",
-	"Oryn_universal.app.tar.gz.sig": "sig-mac",
+	"Oryn_0.1.0_aarch64.app.tar.gz.sig": "sig-mac-arm64",
+	"Oryn_0.1.0_x64.app.tar.gz.sig": "sig-mac-x64",
 };
 const DATE = "2026-11-13T00:00:00.000Z";
 
 describe("buildManifest", () => {
-	it("三平台齐全：四个平台键，mac 两种架构共用通用包", () => {
+	it("三平台齐全：四个平台键，mac 两种架构各指独立更新包", () => {
 		const m = buildManifest(ALL, SIGS, "0.1.0", DATE);
 		expect(m).toEqual({
 			version: "0.1.0",
@@ -52,12 +56,12 @@ describe("buildManifest", () => {
 					url: `${BASE}/Oryn_0.1.0_x64-setup.exe`,
 				},
 				"darwin-aarch64": {
-					signature: "sig-mac",
-					url: `${BASE}/Oryn_universal.app.tar.gz`,
+					signature: "sig-mac-arm64",
+					url: `${BASE}/Oryn_0.1.0_aarch64.app.tar.gz`,
 				},
 				"darwin-x86_64": {
-					signature: "sig-mac",
-					url: `${BASE}/Oryn_universal.app.tar.gz`,
+					signature: "sig-mac-x64",
+					url: `${BASE}/Oryn_0.1.0_x64.app.tar.gz`,
 				},
 			},
 		});
@@ -72,9 +76,10 @@ describe("buildManifest", () => {
 			"linux-x86_64",
 		]);
 
-		const { "Oryn_universal.app.tar.gz.sig": _mac, ...noMacSig } = SIGS;
-		const m2 = buildManifest(ALL, noMacSig, "0.1.0", DATE);
+		const { "Oryn_0.1.0_x64.app.tar.gz.sig": _macX64, ...noMacX64Sig } = SIGS;
+		const m2 = buildManifest(ALL, noMacX64Sig, "0.1.0", DATE);
 		expect(Object.keys(m2.platforms).sort()).toEqual([
+			"darwin-aarch64",
 			"linux-x86_64",
 			"windows-x86_64",
 		]);
