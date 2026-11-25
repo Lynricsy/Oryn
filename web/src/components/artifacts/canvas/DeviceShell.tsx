@@ -51,8 +51,9 @@ export function DeviceShell({
 }: DeviceShellProps): ReactNode {
 	if (device === "none") return <>{children}</>;
 
-	const screenStyle =
-		width !== undefined && height !== undefined ? { width, height } : undefined;
+	const fixed = width !== undefined && height !== undefined;
+	const outerStyle = fixed ? deviceShellSize(device, width, height) : undefined;
+	const screenStyle = fixed ? { width, height } : undefined;
 
 	const outerClass =
 		device === "phone"
@@ -61,15 +62,21 @@ export function DeviceShell({
 				? "box-border inline-flex max-w-full flex-col rounded-xl border-2 border-border-strong bg-panel px-3 shadow-lg"
 				: "box-border inline-flex max-w-full flex-col overflow-hidden rounded-lg border border-border-strong bg-panel shadow-lg";
 
+	const screenSizeClass = fixed ? "shrink-0" : "min-h-0 min-w-0 flex-1";
 	const screenClass =
 		device === "phone"
-			? "min-h-0 min-w-0 flex-1 overflow-hidden rounded-lg bg-inset ring-1 ring-border"
+			? `${screenSizeClass} overflow-hidden rounded-lg bg-inset ring-1 ring-border`
 			: device === "tablet"
-				? "min-h-0 min-w-0 flex-1 overflow-hidden rounded-md bg-inset ring-1 ring-border"
-				: "min-h-0 min-w-0 flex-1 bg-inset";
+				? `${screenSizeClass} overflow-hidden rounded-md bg-inset ring-1 ring-border`
+				: `${screenSizeClass} bg-inset`;
 
 	return (
-		<div data-testid="device-shell" data-device={device} className={outerClass}>
+		<div
+			data-testid="device-shell"
+			data-device={device}
+			className={outerClass}
+			style={outerStyle}
+		>
 			{device === "phone" ? (
 				<div
 					aria-hidden="true"

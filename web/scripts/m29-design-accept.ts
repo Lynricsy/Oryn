@@ -1897,6 +1897,17 @@ async function caseK4() {
 	const p = await openPage({ previewPref: "static" });
 	await goto(p, `/artifacts/${opened.id}?history=1`);
 	await p.locator("[data-testid=version-list]").waitFor({ timeout: 20_000 });
+	// 同回合的创建(v1)与封存(v2)会按 I1 规则折叠为 version-group，组头即带检查徽标；展开后逐行亦带徽标
+	const groupBtn = p
+		.locator(`[data-testid=version-group][data-turn="${turnId}"] > button`)
+		.first();
+	if (await groupBtn.isVisible().catch(() => false)) {
+		const groupBadge = groupBtn.locator(
+			"[data-testid=version-check][data-status=issues]",
+		);
+		await groupBadge.waitFor({ timeout: 10_000 });
+		await groupBtn.click();
+	}
 	const checkBadge = p
 		.locator(
 			`[data-testid=version-list] [data-version="${sealedVer}"] [data-testid=version-check][data-status=issues]`,
@@ -1908,7 +1919,6 @@ async function caseK4() {
 		`版本历史行 v${sealedVer} 显示问题徽标（${oneLine((await checkBadge.textContent()) ?? "")}）`,
 	);
 	await shot(p, "k4-probe-badge");
-
 	await orbSockCall(t1, "service.stop", {
 		name: designServiceName(opened.id),
 		remove: true,
@@ -1980,10 +1990,15 @@ async function caseK5() {
 	const p = await openPage({ previewPref: "live" });
 	await goto(p, `/artifacts/${opened.id}?history=1`);
 	await p.locator("[data-testid=version-list]").waitFor({ timeout: 25_000 });
+	const turnAGroup = p
+		.locator(`[data-testid=version-group][data-turn="${turnA}"] > button`)
+		.first();
+	if (await turnAGroup.isVisible().catch(() => false)) {
+		await turnAGroup.click();
+	}
 	await p
 		.locator(`[data-testid=version-list] [data-version="${vOld}"]`)
 		.click();
-
 	await p.locator("[data-testid=artifact-pinned]").waitFor({ timeout: 10_000 });
 	const staticBanner = p.locator("[data-testid=artifact-pinned-static]");
 	await staticBanner.waitFor({ timeout: 10_000 });
