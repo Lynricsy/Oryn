@@ -190,7 +190,7 @@ func (q *Queries) GetComputerOrb(ctx context.Context) (Orb, error) {
 
 const getMainThread = `-- name: GetMainThread :one
 
-SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code, kind, space_id, shipped_at, schedule_id, schedule_run, cwd, worktree, main, hidden, research FROM threads WHERE main = 1
+SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code, kind, space_id, shipped_at, schedule_id, schedule_run, cwd, worktree, main, hidden, research, agent_role, append_system_prompt, allowed_tools FROM threads WHERE main = 1
 `
 
 // ---------- singletons ----------
@@ -234,6 +234,9 @@ func (q *Queries) GetMainThread(ctx context.Context) (Thread, error) {
 		&i.Main,
 		&i.Hidden,
 		&i.Research,
+		&i.AgentRole,
+		&i.AppendSystemPrompt,
+		&i.AllowedTools,
 	)
 	return i, err
 }

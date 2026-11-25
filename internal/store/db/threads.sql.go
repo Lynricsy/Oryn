@@ -123,40 +123,44 @@ const createThread = `-- name: CreateThread :exec
 
 INSERT INTO threads (id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id,
                      forked_from_entry_id, session_dir, model, thinking_level, color, created_at, updated_at, short_code,
-                     kind, space_id, schedule_id, schedule_run, cwd, worktree, main, hidden, research)
+                     kind, space_id, schedule_id, schedule_run, cwd, worktree, main, hidden, research,
+                     agent_role, append_system_prompt, allowed_tools)
 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
         ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
         ?17, ?18, ?19, ?20, ?21, ?22,
         COALESCE(CAST(?23 AS INTEGER), 0), COALESCE(CAST(?24 AS INTEGER), 0),
-        ?25)
+        ?25, ?26, ?27, ?28)
 `
 
 type CreateThreadParams struct {
-	ID                string  `json:"id"`
-	ProjectID         *string `json:"projectId"`
-	OrbID             *string `json:"orbId"`
-	Title             string  `json:"title"`
-	TitleSource       string  `json:"titleSource"`
-	State             string  `json:"state"`
-	StateChangedAt    int64   `json:"stateChangedAt"`
-	ParentThreadID    *string `json:"parentThreadId"`
-	ForkedFromEntryID *string `json:"forkedFromEntryId"`
-	SessionDir        string  `json:"sessionDir"`
-	Model             *string `json:"model"`
-	ThinkingLevel     *string `json:"thinkingLevel"`
-	Color             *string `json:"color"`
-	CreatedAt         int64   `json:"createdAt"`
-	UpdatedAt         int64   `json:"updatedAt"`
-	ShortCode         *string `json:"shortCode"`
-	Kind              string  `json:"kind"`
-	SpaceID           *string `json:"spaceId"`
-	ScheduleID        *string `json:"scheduleId"`
-	ScheduleRun       *int64  `json:"scheduleRun"`
-	Cwd               *string `json:"cwd"`
-	Worktree          *string `json:"worktree"`
-	Main              *int64  `json:"main"`
-	Hidden            *int64  `json:"hidden"`
-	Research          *string `json:"research"`
+	ID                 string  `json:"id"`
+	ProjectID          *string `json:"projectId"`
+	OrbID              *string `json:"orbId"`
+	Title              string  `json:"title"`
+	TitleSource        string  `json:"titleSource"`
+	State              string  `json:"state"`
+	StateChangedAt     int64   `json:"stateChangedAt"`
+	ParentThreadID     *string `json:"parentThreadId"`
+	ForkedFromEntryID  *string `json:"forkedFromEntryId"`
+	SessionDir         string  `json:"sessionDir"`
+	Model              *string `json:"model"`
+	ThinkingLevel      *string `json:"thinkingLevel"`
+	Color              *string `json:"color"`
+	CreatedAt          int64   `json:"createdAt"`
+	UpdatedAt          int64   `json:"updatedAt"`
+	ShortCode          *string `json:"shortCode"`
+	Kind               string  `json:"kind"`
+	SpaceID            *string `json:"spaceId"`
+	ScheduleID         *string `json:"scheduleId"`
+	ScheduleRun        *int64  `json:"scheduleRun"`
+	Cwd                *string `json:"cwd"`
+	Worktree           *string `json:"worktree"`
+	Main               *int64  `json:"main"`
+	Hidden             *int64  `json:"hidden"`
+	Research           *string `json:"research"`
+	AgentRole          *string `json:"agentRole"`
+	AppendSystemPrompt *string `json:"appendSystemPrompt"`
+	AllowedTools       *string `json:"allowedTools"`
 }
 
 // Threads and labels.
@@ -190,6 +194,9 @@ func (q *Queries) CreateThread(ctx context.Context, arg CreateThreadParams) erro
 		arg.Main,
 		arg.Hidden,
 		arg.Research,
+		arg.AgentRole,
+		arg.AppendSystemPrompt,
+		arg.AllowedTools,
 	)
 	return err
 }
@@ -207,7 +214,7 @@ func (q *Queries) DeleteThread(ctx context.Context, id string) (int64, error) {
 }
 
 const getResearchThread = `-- name: GetResearchThread :one
-SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code, kind, space_id, shipped_at, schedule_id, schedule_run, cwd, worktree, main, hidden, research FROM threads WHERE research = ?1
+SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code, kind, space_id, shipped_at, schedule_id, schedule_run, cwd, worktree, main, hidden, research, agent_role, append_system_prompt, allowed_tools FROM threads WHERE research = ?1
 `
 
 // The researcher conversation of a role (M26); no archived filter: the unique index has none either.
@@ -251,12 +258,15 @@ func (q *Queries) GetResearchThread(ctx context.Context, role *string) (Thread, 
 		&i.Main,
 		&i.Hidden,
 		&i.Research,
+		&i.AgentRole,
+		&i.AppendSystemPrompt,
+		&i.AllowedTools,
 	)
 	return i, err
 }
 
 const getSpareThread = `-- name: GetSpareThread :one
-SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code, kind, space_id, shipped_at, schedule_id, schedule_run, cwd, worktree, main, hidden, research FROM threads WHERE orb_id = ?1 AND hidden = 1 AND kind = 'assistant' AND archived_at IS NULL
+SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code, kind, space_id, shipped_at, schedule_id, schedule_run, cwd, worktree, main, hidden, research, agent_role, append_system_prompt, allowed_tools FROM threads WHERE orb_id = ?1 AND hidden = 1 AND kind = 'assistant' AND archived_at IS NULL
   AND research IS NULL
 ORDER BY created_at LIMIT 1
 `
@@ -302,12 +312,15 @@ func (q *Queries) GetSpareThread(ctx context.Context, orbID *string) (Thread, er
 		&i.Main,
 		&i.Hidden,
 		&i.Research,
+		&i.AgentRole,
+		&i.AppendSystemPrompt,
+		&i.AllowedTools,
 	)
 	return i, err
 }
 
 const getThread = `-- name: GetThread :one
-SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code, kind, space_id, shipped_at, schedule_id, schedule_run, cwd, worktree, main, hidden, research FROM threads WHERE id = ?1
+SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code, kind, space_id, shipped_at, schedule_id, schedule_run, cwd, worktree, main, hidden, research, agent_role, append_system_prompt, allowed_tools FROM threads WHERE id = ?1
 `
 
 func (q *Queries) GetThread(ctx context.Context, id string) (Thread, error) {
@@ -350,12 +363,15 @@ func (q *Queries) GetThread(ctx context.Context, id string) (Thread, error) {
 		&i.Main,
 		&i.Hidden,
 		&i.Research,
+		&i.AgentRole,
+		&i.AppendSystemPrompt,
+		&i.AllowedTools,
 	)
 	return i, err
 }
 
 const getThreadByShortCode = `-- name: GetThreadByShortCode :one
-SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code, kind, space_id, shipped_at, schedule_id, schedule_run, cwd, worktree, main, hidden, research FROM threads WHERE short_code = CAST(?1 AS TEXT)
+SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code, kind, space_id, shipped_at, schedule_id, schedule_run, cwd, worktree, main, hidden, research, agent_role, append_system_prompt, allowed_tools FROM threads WHERE short_code = CAST(?1 AS TEXT)
 `
 
 // Thread short code (last 12 hex of the id) in portal host names -> thread (M4).
@@ -399,6 +415,9 @@ func (q *Queries) GetThreadByShortCode(ctx context.Context, shortCode string) (T
 		&i.Main,
 		&i.Hidden,
 		&i.Research,
+		&i.AgentRole,
+		&i.AppendSystemPrompt,
+		&i.AllowedTools,
 	)
 	return i, err
 }
@@ -536,7 +555,7 @@ func (q *Queries) ListThreadLabels(ctx context.Context, threadID string) ([]stri
 }
 
 const listThreads = `-- name: ListThreads :many
-SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code, kind, space_id, shipped_at, schedule_id, schedule_run, cwd, worktree, main, hidden, research FROM threads
+SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code, kind, space_id, shipped_at, schedule_id, schedule_run, cwd, worktree, main, hidden, research, agent_role, append_system_prompt, allowed_tools FROM threads
 WHERE (CAST(?1 AS TEXT) IS NULL OR state = CAST(?1 AS TEXT))
   AND (CAST(?2 AS TEXT) IS NULL OR project_id = CAST(?2 AS TEXT))
   AND (CAST(?3 AS TEXT) IS NULL OR kind = CAST(?3 AS TEXT))
@@ -610,6 +629,9 @@ func (q *Queries) ListThreads(ctx context.Context, arg ListThreadsParams) ([]Thr
 			&i.Main,
 			&i.Hidden,
 			&i.Research,
+			&i.AgentRole,
+			&i.AppendSystemPrompt,
+			&i.AllowedTools,
 		); err != nil {
 			return nil, err
 		}
@@ -625,7 +647,7 @@ func (q *Queries) ListThreads(ctx context.Context, arg ListThreadsParams) ([]Thr
 }
 
 const listThreadsByOrb = `-- name: ListThreadsByOrb :many
-SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code, kind, space_id, shipped_at, schedule_id, schedule_run, cwd, worktree, main, hidden, research FROM threads WHERE orb_id = ?1 ORDER BY created_at
+SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code, kind, space_id, shipped_at, schedule_id, schedule_run, cwd, worktree, main, hidden, research, agent_role, append_system_prompt, allowed_tools FROM threads WHERE orb_id = ?1 ORDER BY created_at
 `
 
 func (q *Queries) ListThreadsByOrb(ctx context.Context, orbID *string) ([]Thread, error) {
@@ -674,6 +696,9 @@ func (q *Queries) ListThreadsByOrb(ctx context.Context, orbID *string) ([]Thread
 			&i.Main,
 			&i.Hidden,
 			&i.Research,
+			&i.AgentRole,
+			&i.AppendSystemPrompt,
+			&i.AllowedTools,
 		); err != nil {
 			return nil, err
 		}

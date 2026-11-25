@@ -12380,6 +12380,10 @@ export interface components {
             memory?: components["schemas"]["LinkCtlAgentMemory"];
             projectId?: components["schemas"]["ProjectId"];
             projectConfig?: components["schemas"]["LinkCtlProjectConfig"];
+            /** @description 追加到工作线程系统提示词末尾的文本（由 orbd 写入文件并以 `--append-system-prompt` 传入 omp）；只有普通工作线程接受 */
+            appendSystemPrompt?: string;
+            /** @description 工作线程允许的内置工具白名单（省略或空 = 不限制；由 orbd 生成覆盖层禁用表外内置工具）；只有普通工作线程接受 */
+            tools?: string[];
         };
         LinkCtlAgentStartResult: {
             pid: number;
