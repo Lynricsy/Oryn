@@ -16,7 +16,6 @@ import {
 	formatCount,
 	formatDateTime,
 	formatDuration,
-	formatRelative,
 } from "../../lib/format";
 import { modelBrand, shortModelName } from "../../lib/model-brand";
 import { selectModel } from "../../lib/model-select";
@@ -93,7 +92,7 @@ import {
 import { SessionReport } from "./reports/SessionReport";
 import { ToolsReport } from "./reports/ToolsReport";
 import { UsageReport } from "./reports/UsageReport";
-import { applyLeafSwitchDraft, rewindTo } from "./rewind";
+import { applyLeafSwitchDraft } from "./rewind";
 import { useOrbOf } from "./ThreadHeader";
 
 // 稳定的空数组，避免 zustand 选择器每次返回新引用
@@ -342,131 +341,6 @@ function SessionTreeDialog({
 								</button>
 							)}
 						</div>
-					</li>
-				))}
-			</ul>
-		</Dialog>
-	);
-}
-
-// ---------------------------------------------------------------- rewind
-
-/**
- * 回退选择器（omp 的 Esc Esc）：活动分支上的用户消息，最近的在前、默认选中最近一条，打开即可用方向键挑选、Enter 回退。
- */
-function RewindDialog({
-	threadId,
-	onClose,
-}: {
-	threadId: string;
-	onClose: () => void;
-}) {
-	const { t } = useTranslation();
-	const tree = useRpc(threadId, { type: "get_session_tree" });
-	const turns = useMemo(
-		() =>
-			(tree.data?.tree ?? [])
-				.filter((n) => n.role === "user" && n.onActiveBranch)
-				.toSorted((a, b) => b.timestamp - a.timestamp),
-		[tree.data],
-	);
-	const [picked, setPicked] = useState<string | null>(null);
-	const selected = picked ?? turns[0]?.entryId ?? null;
-	const index = turns.findIndex((n) => n.entryId === selected);
-	const [busy, setBusy] = useState(false);
-	const [error, setError] = useState<unknown>(null);
-	const listRef = useRef<HTMLUListElement>(null);
-	// 焦点跟着选中项：列表异步取回（或缓存的旧列表刷新出更新的消息）后落到最近一条，方向键与 Enter 才作用在列表上
-	useEffect(() => {
-		if (!selected) return;
-		listRef.current
-			?.querySelector<HTMLButtonElement>(
-				`[data-entry="${CSS.escape(selected)}"]`,
-			)
-			?.focus();
-	}, [selected]);
-	const go = async () => {
-		if (!selected || busy) return;
-		setBusy(true);
-		setError(null);
-		try {
-			await rewindTo(threadId, selected);
-			onClose();
-		} catch (e) {
-			setError(e);
-		} finally {
-			setBusy(false);
-		}
-	};
-	const move = (delta: number) => {
-		const next = turns[Math.min(turns.length - 1, Math.max(0, index + delta))];
-		if (next) setPicked(next.entryId);
-	};
-	return (
-		<Dialog
-			open
-			wide
-			onClose={onClose}
-			title={t("rewind.title")}
-			footer={
-				<>
-					<Button onClick={onClose}>{t("common.cancel")}</Button>
-					<Button
-						variant="primary"
-						disabled={!selected || busy}
-						onClick={() => void go()}
-					>
-						{busy ? <Spinner /> : t("rewind.submit")}
-					</Button>
-				</>
-			}
-		>
-			<p className="mb-3 text-muted text-sm">
-				{index >= 0
-					? t("rewind.hint", { count: index + 1 })
-					: t("rewind.intro")}
-			</p>
-			<ErrorText error={error ?? tree.error} />
-			{tree.isPending && <Spinner />}
-			{!tree.isPending && !tree.error && turns.length === 0 && (
-				<EmptyState icon="undo" title={t("rewind.empty")} />
-			)}
-			<ul
-				ref={listRef}
-				className="flex flex-col gap-px"
-				onKeyDown={(e) => {
-					if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-						e.preventDefault();
-						move(e.key === "ArrowDown" ? 1 : -1);
-					} else if (e.key === "Enter") {
-						e.preventDefault();
-						void go();
-					}
-				}}
-			>
-				{turns.map((node) => (
-					<li key={node.entryId}>
-						<button
-							type="button"
-							data-entry={node.entryId}
-							aria-pressed={selected === node.entryId}
-							className={`flex min-h-9 w-full items-center gap-3 rounded-sm px-2 py-1.5 text-left text-sm transition-colors duration-150 ${selected === node.entryId ? "bg-hover" : "hover:bg-hover/60"}`}
-							onClick={() => setPicked(node.entryId)}
-							onDoubleClick={() => void go()}
-						>
-							<span className="line-clamp-2 min-w-0 flex-1 break-words">
-								{/* 预览已压成一行：控制面追加的附件块从标签处截掉 */}
-								{node.textPreview.split("<oryn-attachments>")[0]?.trim() || "…"}
-							</span>
-							{node.label && (
-								<Badge tone="accent" icon="pin">
-									{node.label}
-								</Badge>
-							)}
-							<span className="shrink-0 text-faint text-xs">
-								{formatRelative(node.timestamp)}
-							</span>
-						</button>
 					</li>
 				))}
 			</ul>
@@ -1945,7 +1819,8 @@ export function ThreadDialogs({ threadId }: { threadId: string }): ReactNode {
 	if (!dialog) return null;
 	switch (dialog.kind) {
 		case "rewind":
-			return <RewindDialog threadId={threadId} onClose={close} />;
+			// 原位回退由 ThreadScreen 直接在转录流与输入坞托盘里渲染，不弹模态对话框
+			return null;
 		case "tree":
 			return <SessionTreeDialog threadId={threadId} onClose={close} />;
 		case "fork":

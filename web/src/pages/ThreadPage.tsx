@@ -43,6 +43,11 @@ import {
 } from "../components/thread/ModeBar";
 import { QueueBar } from "../components/thread/QueueBar";
 import {
+	RewindDockBar,
+	RewindTopPill,
+	useRewindMode,
+} from "../components/thread/RewindMode";
+import {
 	RightPanel,
 	ThreadTabStrip,
 	ThreadViewMenu,
@@ -57,6 +62,7 @@ import {
 	ThreadHeader,
 } from "../components/thread/ThreadHeader";
 import { UiRequestCard } from "../components/thread/UiRequestCard";
+import { ToolsExpandContext } from "../components/transcript/active-tools";
 import {
 	TranscriptContext,
 	type TranscriptContextValue,
@@ -65,6 +71,7 @@ import { Transcript } from "../components/transcript/Transcript";
 import { WorkingFooter } from "../components/transcript/WorkingFooter";
 import { Sheet } from "../components/ui/data";
 import { Spinner } from "../components/ui/primitives";
+import { DOUBLE_ESC_MS } from "../lib/composer";
 import { useContextTarget } from "../lib/context-menu/registry";
 import { anchorOf } from "../lib/context-menu/selection";
 import { usePresence } from "../lib/presence";
@@ -76,6 +83,7 @@ import {
 import { realtime } from "../realtime/socket";
 import {
 	enqueueComposerFiles,
+	getComposerDraft,
 	useComposerDraft,
 } from "../state/composer-drafts";
 import { closeSideAsk } from "../state/side-ask";
@@ -228,6 +236,8 @@ export function ThreadScreen({
 	const panelTab = useUi((s) => s.panelTab);
 	const panelWidth = useUi((s) => s.panelWidth);
 	const panelMax = useUi((s) => s.panelMax);
+	const dialog = useUi((s) => s.dialog);
+	const closeDialog = useUi((s) => s.close);
 	const sidebarShown = useSidebarShown();
 	const conn = useConnection((s) => s.status);
 	const known = useIndex((s) => Boolean(s.threads[threadId]));
@@ -241,6 +251,7 @@ export function ThreadScreen({
 	const pendingUi = useThread(threadId, (s) => s.pendingUi);
 	const plan = useThread(threadId, (s) => s.planProposal);
 	const snapshotReceived = useThread(threadId, (s) => s.snapshotReceived);
+	const running = useThread(threadId, (s) => s.running);
 	const hasEarlier = useThread(threadId, (s) => s.windowStart > 0);
 	const loadEarlier = useCallback(
 		() => loadEarlierEntries(threadId),
@@ -293,18 +304,42 @@ export function ThreadScreen({
 		};
 	}, [threadId]);
 
+	const rewind = useRewindMode({
+		threadId,
+		entries,
+		leafEntryId: leaf,
+		active: dialog?.kind === "rewind",
+		startAt: dialog?.kind === "rewind" ? dialog.startAt : undefined,
+		hasEarlier: tail !== undefined ? hasEarlier : false,
+		onLoadEarlier: tail !== undefined ? loadEarlier : undefined,
+		onClose: closeDialog,
+	});
 	const model = useMemo(
 		() =>
 			buildTranscript({
 				entries,
-				leafEntryId: leaf,
+				leafEntryId: rewind.active ? rewind.previewLeafId : leaf,
 				liveMessage,
 				liveTools,
 				liveToolOrder,
 				notices,
 			}),
-		[entries, leaf, liveMessage, liveTools, liveToolOrder, notices],
+		[
+			entries,
+			leaf,
+			rewind.active,
+			rewind.previewLeafId,
+			liveMessage,
+			liveTools,
+			liveToolOrder,
+			notices,
+		],
 	);
+	const transcriptItems = useMemo(() => {
+		const keys = rewind.visibleRowKeys;
+		if (!keys) return model.items;
+		return model.items.filter((it) => keys.has(it.key));
+	}, [model.items, rewind.visibleRowKeys]);
 	// 转录是 memo 的：footer 每次新建元素会让它跟着页面的每次重渲染重算
 	const transcriptFooter = useMemo(
 		() => <WorkingFooter threadId={threadId} />,
@@ -320,6 +355,8 @@ export function ThreadScreen({
 			openSubagent: (id) => uiStore.getState().open({ kind: "subagent", id }),
 			forkFrom: (entryId) => uiStore.getState().open({ kind: "fork", entryId }),
 			rewindTo: (entryId) => rewindWithToast(threadId, entryId),
+			openRewind: (entryId) =>
+				uiStore.getState().open({ kind: "rewind", startAt: entryId }),
 			labelEntry: (entryId) =>
 				uiStore.getState().open({ kind: "label", entryId }),
 			// 协调对话没有右面板：artifact 在整页查看器里打开
@@ -405,7 +442,7 @@ export function ThreadScreen({
 	// 手机：往上翻历史时输入坞收成一条胶囊（DockPill），往下翻回来、回到底部或点胶囊时展开
 	const collapsible = bp === "compact" && !dual;
 	const [miniWanted, setMini] = useState(false);
-	const mini = collapsible && miniWanted;
+	const mini = collapsible && miniWanted && !rewind.active;
 	const [draft, setDraft] = useState(false);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: 换线程或离开手机宽度时回到展开
 	useEffect(() => {
@@ -457,6 +494,78 @@ export function ThreadScreen({
 		dockRef.current?.querySelector("textarea")?.focus({ preventScroll: true });
 	}, [morph]);
 
+	// 退出原位 Rewind 后，在精细指针设备上把焦点还给输入区（方便直接编辑回退回来的草稿或继续输入）
+	const wasRewinding = useRef(false);
+	useEffect(() => {
+		const prev = wasRewinding.current;
+		wasRewinding.current = rewind.active;
+		if (prev && !rewind.active) {
+			if (!window.matchMedia?.("(pointer: fine)").matches) return;
+			requestAnimationFrame(() =>
+				dockRef.current
+					?.querySelector("textarea")
+					?.focus({ preventScroll: true }),
+			);
+		}
+	}, [rewind.active]);
+
+	// 全局双击 Esc（焦点在转录区 / 页面空白处，且空闲、输入区草稿为空、无对话框或弹层）：
+	// 同样进入原位 Rewind，框选最后一个可 rewind 对象（输入框聚焦时的双击 Esc 由 Composer 自己处理）
+	const globalEscAt = useRef<number | null>(null);
+	useEffect(() => {
+		const onKeyDown = (e: globalThis.KeyboardEvent) => {
+			if (e.isComposing || e.key !== "Escape") {
+				globalEscAt.current = null;
+				return;
+			}
+			if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) {
+				globalEscAt.current = null;
+				return;
+			}
+			const target = e.target;
+			if (
+				target instanceof HTMLElement &&
+				(target.tagName === "TEXTAREA" ||
+					target.tagName === "INPUT" ||
+					target.tagName === "SELECT" ||
+					target.isContentEditable)
+			) {
+				globalEscAt.current = null;
+				return;
+			}
+			if (
+				away ||
+				composerDisabled ||
+				running ||
+				dialog !== null ||
+				plan ||
+				firstUi ||
+				document.querySelector(":popover-open")
+			) {
+				globalEscAt.current = null;
+				return;
+			}
+			if (getComposerDraft(threadId).text.trim() !== "") {
+				globalEscAt.current = null;
+				return;
+			}
+			const now = Date.now();
+			if (
+				globalEscAt.current !== null &&
+				now - globalEscAt.current <= DOUBLE_ESC_MS
+			) {
+				e.preventDefault();
+				e.stopPropagation();
+				globalEscAt.current = null;
+				uiStore.getState().open({ kind: "rewind" });
+				return;
+			}
+			globalEscAt.current = now;
+		};
+		window.addEventListener("keydown", onKeyDown);
+		return () => window.removeEventListener("keydown", onKeyDown);
+	}, [threadId, away, composerDisabled, running, dialog, plan, firstUi]);
+
 	// 线程页里 AI 动作（旁路提问）归这个线程；协调对话服务端拒绝 btw，所以没有。
 	// 转录、文件等子区域各自认领选区；落在别处的选区只给最基本的上下文
 	const ctxRef = useContextTarget<HTMLDivElement>({
@@ -471,7 +580,7 @@ export function ThreadScreen({
 		}),
 	});
 	const fileDrop = useFileDrop({
-		enabled: canAttach,
+		enabled: canAttach && !rewind.active,
 		onFiles: (files) => {
 			setMini(false);
 			enqueueComposerFiles(threadId, files);
@@ -519,18 +628,21 @@ export function ThreadScreen({
 									)}
 								</div>
 							) : (
-								<Transcript
-									items={model.items}
-									footer={transcriptFooter}
-									insetTop={topInset + bleedTop}
-									insetBottom={dockH + 16}
-									onReadDirection={collapsible ? onReadDirection : undefined}
-									trayTop={mini && miniH > 0 ? miniH : undefined}
-									mainline={mainline}
-									{...(tail !== undefined
-										? { hasEarlier, onLoadEarlier: loadEarlier }
-										: {})}
-								/>
+								<ToolsExpandContext.Provider value={rewind.toolsExpand}>
+									<Transcript
+										items={transcriptItems}
+										footer={rewind.active ? undefined : transcriptFooter}
+										insetTop={topInset + bleedTop + (rewind.active ? 32 : 0)}
+										insetBottom={dockH + 16}
+										onReadDirection={collapsible ? onReadDirection : undefined}
+										trayTop={mini && miniH > 0 ? miniH : undefined}
+										mainline={mainline && !rewind.active}
+										rewind={rewind.transcript}
+										{...(tail !== undefined
+											? { hasEarlier, onLoadEarlier: loadEarlier }
+											: {})}
+									/>
+								</ToolsExpandContext.Provider>
 							)}
 						</div>
 					</TranscriptContext.Provider>
@@ -605,6 +717,7 @@ export function ThreadScreen({
 							</div>
 						</div>
 					)}
+					<RewindTopPill ctrl={rewind} top={topInset + bleedTop - 4} />
 					<div
 						ref={dockRef}
 						// 输入坞整体独立悬浮：外层透明、不遮罩、不晕染，只有托盘本身是玻璃
@@ -622,10 +735,15 @@ export function ThreadScreen({
 								data-dock={collapsible ? (mini ? "mini" : "open") : undefined}
 								className={`glass glass-dock pointer-events-auto mx-auto rounded-xl ${collapsible ? DC_DOCK_BOTTOM : ""} ${morph === "dock" ? "dock-morphing" : ""}`}
 							>
+								{rewind.active && <RewindDockBar ctrl={rewind} />}
 								<div
 									ref={bodyRef}
-									inert={mini}
-									className="dock-body divide-y divide-[var(--glass-line)]"
+									inert={mini || rewind.active}
+									className={
+										rewind.active
+											? "hidden"
+											: "dock-body divide-y divide-[var(--glass-line)]"
+									}
 								>
 									{plan && (
 										<PlanProposalDialog

@@ -45,6 +45,7 @@ import { patchComposerDraft } from "../../state/composer-drafts";
 import type { JsonRecord } from "../../state/message-builder";
 import { getThreadStore, useIndex, useThread } from "../../state/stores";
 import { activeBranch, type TranscriptItem } from "../../state/transcript";
+import type { RewindTranscriptState } from "../thread/RewindMode";
 import { Badge } from "../ui/data";
 import { IdentityAvatar } from "../ui/IdentityAvatar";
 import { Icon, type IconName } from "../ui/icons";
@@ -217,6 +218,7 @@ function ItemView({
 			return (
 				<MemoMessageView
 					message={{ ...item.entry, role: "custom" }}
+					entryId={item.entryId}
 					live={false}
 				/>
 			);
@@ -690,6 +692,7 @@ export const Transcript = memo(function Transcript({
 	hasEarlier = false,
 	onLoadEarlier,
 	mainline = false,
+	rewind,
 }: {
 	items: TranscriptItem[];
 	footer?: ReactNode;
@@ -712,6 +715,8 @@ export const Transcript = memo(function Transcript({
 	onLoadEarlier?: () => Promise<void>;
 	/** 主线对话（M19）：自动来料与幕后过程、沉默的回合各折叠成一行，助手回合下有「在新对话中继续」。 */
 	mainline?: boolean;
+	/** 原位 Rewind 模式状态：框选当前目标、弱化后续条目、支持单击选中与自动滚动定位。 */
+	rewind?: RewindTranscriptState;
 }): ReactNode {
 	const { t } = useTranslation();
 	const { threadId, readOnly } = useTranscriptContext();
@@ -958,8 +963,8 @@ export const Transcript = memo(function Transcript({
 	// 内容增长（新条目 / 流式增量 / 高度重测 / 输入坞变高）时，贴底则跟随
 	// biome-ignore lint/correctness/useExhaustiveDependencies: items、total 与 insetBottom 变化即需要重新贴底
 	useLayoutEffect(() => {
-		if (stick.current && !hold.current) scrollToEnd();
-	}, [items, total, insetBottom, scrollToEnd]);
+		if (stick.current && !hold.current && !rewind) scrollToEnd();
+	}, [items, total, insetBottom, scrollToEnd, rewind]);
 
 	// 向前翻页：点击时记下距底距离，更早的条目并入后恢复它（内容从上方长出，阅读位置不动）
 	const [loadingEarlier, setLoadingEarlier] = useState(false);
@@ -1051,6 +1056,27 @@ export const Transcript = memo(function Transcript({
 		};
 	}, [revealed]);
 
+	// 原位 Rewind 模式：选中目标变化或 Ctrl+O 批量展开/收起后，把该行滚到页头与输入坞正中，避免被玻璃覆盖层遮挡
+	const rewindSelectedKey = rewind?.selectedKey ?? null;
+	const rewindScrollNonce = rewind?.scrollNonce ?? 0;
+	const rowsRef = useRef(rows);
+	rowsRef.current = rows;
+	useEffect(() => {
+		if (!rewindSelectedKey) return;
+		const scroll = () => {
+			const idx = rowsRef.current.findIndex((r) => r.key === rewindSelectedKey);
+			if (idx < 0) return;
+			stick.current = false;
+			setAtBottom(false);
+			virtualizer.scrollToIndex(idx, { align: "center" });
+		};
+		scroll();
+		if (rewindScrollNonce === 0) return;
+		// 工具卡展开后虚拟列表需要下一帧完成 ResizeObserver 重测，再居中一次确保不偏出视口
+		const id = requestAnimationFrame(() => requestAnimationFrame(scroll));
+		return () => cancelAnimationFrame(id);
+	}, [rewindSelectedKey, rewindScrollNonce, virtualizer]);
+
 	const virtualItems = virtualizer.getVirtualItems();
 	const rendered = useMemo(
 		() =>
@@ -1060,6 +1086,19 @@ export const Transcript = memo(function Transcript({
 				const quote = mainline && turn ? turnFinalText(turn) : "";
 				// 会话分隔线、自动消息与 agent 各块都铺满正文列；主人的用户气泡右侧让出头像列（pr-10）
 				const userRow = item !== undefined && isOwnerRow(item);
+				const rowEntryId =
+					item?.kind === "message" || item?.kind === "custom_message"
+						? item.entryId
+						: undefined;
+				const rewindSelected = Boolean(
+					rewind && item && rewind.selectedKey === item.key,
+				);
+				const rewindSelectable = Boolean(
+					rewind && item && rewind.selectableKeys.has(item.key),
+				);
+				const rewindDropped = Boolean(
+					rewind && item && rewind.droppedKeys.has(item.key),
+				);
 				return (
 					<div
 						key={v.key}
@@ -1068,12 +1107,14 @@ export const Transcript = memo(function Transcript({
 						data-role={
 							item?.kind === "message" ? String(item.message.role) : undefined
 						}
-						data-entry-id={item?.kind === "message" ? item.entryId : undefined}
+						data-entry-id={rowEntryId}
 						data-live={item?.kind === "message" && item.live ? "1" : undefined}
+						data-rewind-selected={rewindSelected ? "1" : undefined}
+						data-rewind-dropped={rewindDropped ? "1" : undefined}
 						ref={virtualizer.measureElement}
 						// 行内菜单（消息操作）会溢出到相邻行：悬停 / 聚焦时把本行抬到兄弟行之上；
 						// 行是 inline-size 容器：助手正文的表格按行宽（100cqw）伸出正文列
-						className="@container absolute left-0 w-full px-3 focus-within:z-10 hover:z-10 sm:px-5"
+						className={`@container absolute left-0 w-full px-3 focus-within:z-10 hover:z-10 sm:px-5 ${rewindSelected ? "z-10" : ""}`}
 						style={{
 							transform: `translateY(${v.start}px)`,
 							// 行间距只来自本行上边距（见 rowGaps）；末尾的 footer 行再留一点底
@@ -1081,9 +1122,35 @@ export const Transcript = memo(function Transcript({
 							paddingBottom: item ? 0 : 6,
 						}}
 					>
+						{/* biome-ignore lint/a11y/noStaticElementInteractions: Rewind 模式允许点击任意转录行移动选中框，键盘由 RewindMode 全局接管 */}
+						{/* biome-ignore lint/a11y/useKeyWithClickEvents: 键盘导航由 RewindMode 全局窗口监听接管 */}
 						<div
-							className={`group/row relative mx-auto max-w-3xl ${userRow ? "pr-10" : ""} ${revealed && !revealed.toolCallId && item?.key === revealed.key ? REVEAL_RING.join(" ") : ""}`}
+							onClick={
+								rewindSelectable && item
+									? () => rewind?.onPick(item.key)
+									: undefined
+							}
+							className={`group/row relative mx-auto max-w-3xl ${userRow ? "pr-10" : ""} ${rewindSelectable ? "cursor-pointer" : ""} ${rewindDropped ? "opacity-45 transition-opacity duration-150" : ""} ${revealed && !revealed.toolCallId && item?.key === revealed.key ? REVEAL_RING.join(" ") : ""}`}
 						>
+							{rewindSelected && (
+								<div
+									aria-hidden
+									data-testid="rewind-outline"
+									className="pointer-events-none absolute -inset-x-2.5 -inset-y-1.5 rounded-md border-[1.5px] border-accent border-dashed bg-accent-soft/35"
+								>
+									{rewind?.badge && (
+										<span className="absolute -top-2.5 right-2 rounded-full border border-accent/40 bg-panel px-2 py-px font-medium text-2xs text-accent-ink">
+											{rewind.badge}
+										</span>
+									)}
+								</div>
+							)}
+							{!rewindSelected && rewindSelectable && (
+								<div
+									aria-hidden
+									className="pointer-events-none absolute -inset-x-2.5 -inset-y-1.5 rounded-md border border-transparent border-dashed transition-colors duration-150 group-hover/row:border-border-strong"
+								/>
+							)}
 							{turns.starts.has(v.index) && (
 								// 回合起点：头像单独占一行，放在本行（回合首行）内部，不另占虚拟行
 								<TurnHead
@@ -1172,6 +1239,7 @@ export const Transcript = memo(function Transcript({
 			awaitingModel,
 			awaitingTrail,
 			revealed,
+			rewind,
 		],
 	);
 
@@ -1214,6 +1282,15 @@ export const Transcript = memo(function Transcript({
 					<ActiveToolCallsContext.Provider value={activeTools}>
 						{rendered}
 					</ActiveToolCallsContext.Provider>
+					{rewind?.emptyFilterText && rows.length === 0 && (
+						<div
+							data-testid="rewind-empty-filter"
+							className="flex items-center justify-center px-4 text-center text-muted text-sm"
+							style={{ paddingTop: insetTop + 48 }}
+						>
+							{rewind.emptyFilterText}
+						</div>
+					)}
 					{selection.quote && !quoteBar && (
 						<QuoteChip
 							quote={selection.quote}
@@ -1232,8 +1309,7 @@ export const Transcript = memo(function Transcript({
 					onDismiss={selection.dismiss}
 				/>
 			)}
-			{!atBottom && !quoteBar && (
-				// 水平居中、悬在托盘顶边上方留白里的小圆钮
+			{!atBottom && !quoteBar && !rewind && (
 				<button
 					type="button"
 					aria-label={t("transcript.jumpToEnd")}

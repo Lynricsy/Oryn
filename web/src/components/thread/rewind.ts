@@ -120,35 +120,53 @@ export async function applyLeafSwitchDraft(
 }
 
 /**
- * 回退到用户消息 `entryId` 之前，原文与附件放回输入区。`switch_leaf` 失败（例如回合还在进行）时抛出，叶子不变。
+ * 回退到 `entryId`：
+ * - 用户消息 / 可编辑自定义消息：叶子移到该条目之前，原文与附件放回输入区（即使已是当前叶子也会移动）；
+ * - 助手消息 / 工具调用等非用户消息：叶子落在该条目上，保留它及之前内容、裁掉之后内容，不改动输入区草稿；
+ *   若它已经是当前叶子（无后续内容可裁），仅提示「已经在这个位置」而不发无效切换。
+ * `switch_leaf` 失败（例如回合还在进行）时抛出，叶子不变。
  */
 export async function rewindTo(
 	threadId: string,
 	entryId: string,
-): Promise<void> {
+	opts?: { rewindsBefore?: boolean },
+): Promise<"rewound" | "noop" | "cancelled"> {
 	const prevLeaf = getThreadStore(threadId).getState().leafEntryId;
+	const rewindsBefore = opts?.rewindsBefore ?? true;
+	if (!rewindsBefore && prevLeaf === entryId) {
+		showToast({ text: i18n.t("rewind.alreadyHere") });
+		return "noop";
+	}
 	const prevText = getComposerDraft(threadId).text;
 	const res = await realtime.cmd(threadId, { type: "switch_leaf", entryId });
-	if (res.cancelled || res.aborted) return;
-	const tag = await applyLeafSwitchDraft(threadId, res);
+	if (res.cancelled || res.aborted) return "cancelled";
+	const hasDraft = Boolean(res.editorText || res.editorImages?.length);
+	const tag = hasDraft ? await applyLeafSwitchDraft(threadId, res) : null;
 	showToast({
-		text: i18n.t("rewind.done"),
+		text: hasDraft ? i18n.t("rewind.done") : i18n.t("rewind.donePoint"),
 		...(prevLeaf
 			? {
 					action: {
 						label: i18n.t("rewind.undo"),
-						run: () => void undoRewind(threadId, prevLeaf, prevText, tag),
+						run: () =>
+							void undoRewind(
+								threadId,
+								prevLeaf,
+								hasDraft ? prevText : null,
+								tag,
+							),
 					},
 				}
 			: {}),
 	});
+	return "rewound";
 }
 
-/** 撤销一次回退：叶子回到 `leaf`（回退时那条路径留成了分支），输入区回到回退前的正文，去掉回退带回的附件。 */
+/** 撤销一次回退：叶子回到 `leaf`（回退时那条路径留成了分支）；回退时改过输入区草稿的才还原草稿与附件。 */
 async function undoRewind(
 	threadId: string,
 	leaf: string,
-	text: string,
+	text: string | null,
 	tag: string | null,
 ): Promise<void> {
 	try {
@@ -161,11 +179,10 @@ async function undoRewind(
 		showToast({ tone: "err", text: describeError(e, i18n.t) });
 		return;
 	}
-	setComposerText(threadId, text);
+	if (text !== null) setComposerText(threadId, text);
 	if (tag) enqueueComposerRestore(threadId, { kind: "drop", tag });
 	showToast({ text: i18n.t("rewind.undone") });
 }
-
 /** 消息菜单的「回到这里编辑」：失败时以提示条报错。 */
 export function rewindWithToast(threadId: string, entryId: string): void {
 	void rewindTo(threadId, entryId).catch((e: unknown) =>

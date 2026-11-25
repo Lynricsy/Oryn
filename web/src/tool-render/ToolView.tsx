@@ -158,6 +158,8 @@ export interface ToolViewProps {
 	 * 用户点过头部后以用户为准。
 	 */
 	defaultOpen?: boolean;
+	/** 递增时清除用户手动开合态，重新跟随 `defaultOpen`（如 Rewind 模式 Ctrl+O 批量切换）。 */
+	expandEpoch?: number;
 	/** Host capabilities (sub-session drill-down, …). */
 	host?: ToolRenderHost;
 	/** 这次调用转入了后台：任务此刻的状态（宿主合成）。头部动态标记，展开体附最近输出与入口。 */
@@ -185,10 +187,14 @@ function normalizeArgs(raw: unknown): {
 
 export function ToolView(props: ToolViewProps): ReactNode {
 	const { t } = useTranslation();
-	// 用户点过头部后以用户为准；否则跟随宿主给的 defaultOpen
+	// 用户点过头部后以用户为准；否则跟随宿主给的 defaultOpen。expandEpoch 变化时清掉手动覆写。
 	const [userOpen, setUserOpen] = useState<boolean | null>(null);
+	const [prevEpoch, setPrevEpoch] = useState(props.expandEpoch);
+	if (props.expandEpoch !== prevEpoch) {
+		setPrevEpoch(props.expandEpoch);
+		setUserOpen(null);
+	}
 	const open = userOpen ?? props.defaultOpen ?? false;
-	// ask 的参数可以是裸字符串 HTML（Core 19 `recoverAskHtml` 照样提问），其余工具非对象参数一律当空
 	const { args: outerArgs, intent: argIntent } = normalizeArgs(
 		props.name === "ask" && typeof props.args === "string"
 			? { html: props.args }

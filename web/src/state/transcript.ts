@@ -41,7 +41,13 @@ export type TranscriptItem =
 	  }
 	| { kind: "compaction"; key: string; seq: number; entry: JsonRecord }
 	| { kind: "branch_summary"; key: string; seq: number; entry: JsonRecord }
-	| { kind: "custom_message"; key: string; seq: number; entry: JsonRecord }
+	| {
+			kind: "custom_message";
+			key: string;
+			seq: number;
+			entryId?: string;
+			entry: JsonRecord;
+	  }
 	| {
 			kind: "meta";
 			key: string;
@@ -226,7 +232,13 @@ function entryItem(e: Entry): TranscriptItem | null {
 	if (e.type === "custom_message") {
 		return p.display === false
 			? null
-			: { kind: "custom_message", key: `e${e.seq}`, seq: e.seq, entry: p };
+			: {
+					kind: "custom_message",
+					key: `e${e.seq}`,
+					seq: e.seq,
+					entryId: e.entryId,
+					entry: p,
+				};
 	}
 	// 已知元信息类型与未归类的新类型都以元信息行显示（后者由 MetaLine 标为未知条目）
 	return { kind: "meta", key: `e${e.seq}`, seq: e.seq, entry: p };

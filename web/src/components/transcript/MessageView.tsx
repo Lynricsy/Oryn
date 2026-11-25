@@ -57,7 +57,7 @@ import { Icon, type IconName } from "../ui/icons";
 import { Menu, type MenuItem, ThreadStateIcon } from "../ui/primitives";
 import { UserAvatar } from "../ui/UserAvatar";
 import { AgentAvatar } from "./AgentAvatar";
-import { useToolCallActive } from "./active-tools";
+import { useToolCallActive, useToolsExpand } from "./active-tools";
 import { type TranscriptContextValue, useTranscriptContext } from "./context";
 import { Foldable } from "./Foldable";
 import { BackgroundToolView, JobEventMessage } from "./JobEvents";
@@ -300,6 +300,13 @@ function messageMenuItems(o: {
 			icon: "undo",
 			label: t("transcript.editFromHere"),
 			onSelect: () => ctx.rewindTo(entryId),
+		});
+	else if (editable && entryId && ctx.openRewind)
+		items.push({
+			key: "rewindHere",
+			icon: "undo",
+			label: t("transcript.rewindFromHere"),
+			onSelect: () => ctx.openRewind?.(entryId),
 		});
 	if (editable && entryId)
 		items.push(
@@ -873,13 +880,20 @@ function ThinkingBlock({
 	streaming: boolean;
 }) {
 	const { t } = useTranslation();
-	const [open, setOpen] = useState(false);
+	const expand = useToolsExpand();
+	const [userOpen, setUserOpen] = useState<boolean | null>(null);
+	const [prevEpoch, setPrevEpoch] = useState(expand.epoch);
+	if (expand.epoch !== prevEpoch) {
+		setPrevEpoch(expand.epoch);
+		setUserOpen(null);
+	}
+	const open = userOpen ?? expand.expanded;
 	return (
 		<div>
 			<button
 				type="button"
 				className="group/think flex h-7 w-full min-w-0 items-center gap-2 rounded-md pr-[11px] text-left text-[12.5px] text-muted hover:text-fg"
-				onClick={() => setOpen((v) => !v)}
+				onClick={() => setUserOpen(!open)}
 				aria-expanded={open}
 			>
 				<Icon name="brain" size={14} className="shrink-0 text-faint" />
@@ -958,8 +972,9 @@ export function ToolCard({
 	const { t } = useTranslation();
 	const ctx = useTranscriptContext();
 	const cwd = useThread(ctx.threadId, (s) => s.thread?.cwd);
-	// 当前一批调用默认展开，模型开始下一批或回合结束时收起（见 active-tools.ts）
+	// 当前一批调用默认展开，模型开始下一批或回合结束时收起（见 active-tools.ts）；Rewind 模式 Ctrl+O 可批量展开
 	const active = useToolCallActive(toolCallId);
+	const expand = useToolsExpand();
 	const live = ctx.liveTools[toolCallId];
 	const entryResult = ctx.toolResults.get(toolCallId);
 	const result = entryResult
@@ -1066,7 +1081,8 @@ export function ToolCard({
 			? { ...result, isError: result.isError || live?.isError }
 			: undefined,
 		running,
-		defaultOpen: active,
+		defaultOpen: active || expand.expanded,
+		expandEpoch: expand.epoch,
 		intent: intent ?? live?.intent,
 		partial,
 		partialResult,

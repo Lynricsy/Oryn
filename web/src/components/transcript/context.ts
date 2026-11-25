@@ -23,6 +23,8 @@ export interface TranscriptContextValue {
 	forkFrom(entryId: string): void;
 	/** 回退到这条用户消息之前，原文放回输入区（消息菜单的「回到这里编辑」）。 */
 	rewindTo(entryId: string): void;
+	/** 打开原位 Rewind 选择器，可选把高亮框直接定位到 `entryId`（助手/工具消息菜单的「从这里回退…」）。 */
+	openRewind?(entryId?: string): void;
 	labelEntry(entryId: string): void;
 	/** 打开转录里 artifact 卡片指向的 artifact（线程页：右面板；协调对话没有面板：整页查看器）。不给时卡片不可点。 */
 	openArtifact?(id: string): void;

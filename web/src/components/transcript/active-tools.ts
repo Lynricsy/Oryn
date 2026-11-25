@@ -56,3 +56,21 @@ export const ActiveToolCallsContext =
 export function useToolCallActive(toolCallId: string): boolean {
 	return useContext(ActiveToolCallsContext).has(toolCallId);
 }
+
+/** 批量展开/收起工具卡与思考块（Rewind 模式 Ctrl+O）：epoch 递增时重置各卡片的手动展开态。 */
+export interface ToolsExpandState {
+	expanded: boolean;
+	epoch: number;
+}
+
+export const DEFAULT_TOOLS_EXPAND: ToolsExpandState = {
+	expanded: false,
+	epoch: 0,
+};
+
+export const ToolsExpandContext =
+	createContext<ToolsExpandState>(DEFAULT_TOOLS_EXPAND);
+
+export function useToolsExpand(): ToolsExpandState {
+	return useContext(ToolsExpandContext);
+}
