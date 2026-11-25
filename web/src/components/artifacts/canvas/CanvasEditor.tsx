@@ -39,6 +39,7 @@ import type {
 import {
 	type ArtifactFrame,
 	closeArtifactFrame,
+	fetchArtifactFileBytes,
 	openArtifactFrame,
 	useArtifact,
 	useArtifactCapabilities,
@@ -107,6 +108,7 @@ import { isTypingTarget, keyAction, type Tool, type ZoomTarget } from "./keys";
 import { LayersPanel } from "./LayersPanel";
 import { NotesLayer } from "./notes";
 import { PropsPanel, type PropsTab } from "./PropsPanel";
+import { Prototype, pageFrameId } from "./Prototype";
 import {
 	attachAt,
 	type CanvasItem,
@@ -279,6 +281,58 @@ function canvasBounds(doc: CanvasDoc, canvas: string): Box | null {
 	return unionBox(itemsOn(doc, canvas).map((it) => itemBox(doc, it)));
 }
 
+/** 解析 `dist/frames.json` 的帧间链接表（`[{id, links:[...]}]`）；内容异常时回空表。 */
+export function parseFramesLinks(bytes: Uint8Array): Record<string, string[]> {
+	try {
+		const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
+		if (!Array.isArray(parsed)) return {};
+		const out: Record<string, string[]> = {};
+		for (const item of parsed) {
+			if (!item || typeof item !== "object") continue;
+			const id = Reflect.get(item, "id");
+			const rawLinks = Reflect.get(item, "links");
+			if (typeof id !== "string" || !Array.isArray(rawLinks)) continue;
+			const targets = rawLinks.filter(
+				(x): x is string => typeof x === "string",
+			);
+			if (targets.length > 0) out[id] = targets;
+		}
+		return out;
+	} catch {
+		return {};
+	}
+}
+
+/** 源画框右边中点到目标画框左边中点的三次贝塞尔连线与轻量箭头。 */
+export function flowBezier(
+	from: CanvasPage,
+	to: CanvasPage,
+	zoom: number,
+): { line: string; arrow: string; x1: number; y1: number } {
+	const x1 = from.x + from.width;
+	const y1 = from.y + from.height / 2;
+	const x2 = to.x;
+	const y2 = to.y + to.height / 2;
+	const dx = Math.max(48, Math.min(240, Math.abs(x2 - x1) * 0.45));
+	const bow =
+		x2 < x1 && Math.abs(y2 - y1) < 80
+			? -Math.min(220, Math.max(from.height, to.height) * 0.35 + 40)
+			: 0;
+	const c1x = x1 + dx;
+	const c1y = y1 + bow;
+	const c2x = x2 - dx;
+	const c2y = y2 + bow;
+	const line = `M${x1} ${y1} C${c1x} ${c1y} ${c2x} ${c2y} ${x2} ${y2}`;
+	const len = Math.min(18, Math.max(7, 10 / Math.max(zoom, 0.2)));
+	const angle = Math.atan2(y2 - c2y, x2 - c2x);
+	const spread = (26 * Math.PI) / 180;
+	const ax = x2 - len * Math.cos(angle - spread);
+	const ay = y2 - len * Math.sin(angle - spread);
+	const bx = x2 - len * Math.cos(angle + spread);
+	const by = y2 - len * Math.sin(angle + spread);
+	return { line, arrow: `M${ax} ${ay}L${x2} ${y2}L${bx} ${by}`, x1, y1 };
+}
+
 export function CanvasEditor({
 	artifactId,
 	version,
@@ -404,6 +458,15 @@ export function CanvasEditor({
 	const [layersOpen, setLayersOpen] = useState(false);
 	// 聚焦的画框（6.8）
 	const [focused, setFocused] = useState<string | null>(null);
+	// 设计画布：原型预览覆盖层与只读帧间连线（M29 R1）
+	const [prototypeOpen, setPrototypeOpen] = useState(false);
+	const [showFlowLinks, setShowFlowLinks] = useState(true);
+	const [staticFlowLinks, setStaticFlowLinks] = useState<
+		Record<string, string[]>
+	>({});
+	const [liveFlowLinks, setLiveFlowLinks] = useState<Record<string, string[]>>(
+		{},
+	);
 
 	const baseDoc = live ? snapshot.doc : pinnedDoc;
 	const doc = preview?.doc ?? baseDoc;
@@ -417,6 +480,7 @@ export function CanvasEditor({
 	const gesture = useRef<Gesture | null>(null);
 	const touches = useRef(new Map<number, Point>());
 	const links = useRef(new Map<string, FrameLink>());
+	const linkReadyOffs = useRef(new Map<string, () => void>());
 	const hoverPage = useRef<string | null>(null);
 	// 事件处理里读最新值
 	const state = useRef({ cam, doc: baseDoc, canvasKey, selected, readOnly });
@@ -478,11 +542,40 @@ export function CanvasEditor({
 
 	const onLink = useCallback(
 		(pageId: string, link: FrameLink | null) => {
-			if (link) links.current.set(pageId, link);
-			else links.current.delete(pageId);
+			linkReadyOffs.current.get(pageId)?.();
+			linkReadyOffs.current.delete(pageId);
+			if (link) {
+				links.current.set(pageId, link);
+				linkReadyOffs.current.set(
+					pageId,
+					link.on("ready", (msg) => {
+						const info = msg.design;
+						if (!info) return;
+						setLiveFlowLinks((cur) => {
+							const prev = cur[info.frame];
+							if (
+								prev &&
+								prev.length === info.links.length &&
+								prev.every((v, i) => v === info.links[i])
+							)
+								return cur;
+							return { ...cur, [info.frame]: info.links };
+						});
+					}),
+				);
+			} else {
+				links.current.delete(pageId);
+			}
 			frameParams.track(pageId, link);
 		},
 		[frameParams.track],
+	);
+	useEffect(
+		() => () => {
+			for (const off of linkReadyOffs.current.values()) off();
+			linkReadyOffs.current.clear();
+		},
+		[],
 	);
 
 	const commit = (ops: CanvasOp[], inverse?: CanvasOp[]): boolean =>
@@ -525,6 +618,64 @@ export function CanvasEditor({
 	}, [head, designPreview.mode, designPreview.liveIds]);
 
 	const shownVersion = version ?? head;
+	const isDesign = !!baseDoc?.design;
+	const framesSha = isDesign
+		? (fileMap.get("dist/frames.json")?.sha256 ?? "")
+		: "";
+	useEffect(() => {
+		if (!isDesign || !framesSha || shownVersion <= 0) {
+			setStaticFlowLinks({});
+			return;
+		}
+		let alive = true;
+		fetchArtifactFileBytes(artifactId, shownVersion, "dist/frames.json").then(
+			(bytes) => {
+				if (alive) setStaticFlowLinks(parseFramesLinks(bytes));
+			},
+			() => {
+				if (alive) setStaticFlowLinks({});
+			},
+		);
+		return () => {
+			alive = false;
+		};
+	}, [artifactId, isDesign, framesSha, shownVersion]);
+
+	const flowEdges = useMemo(() => {
+		if (!isDesign || !showFlowLinks || pagesOnCanvas.length < 2) return [];
+		const byFrame = new Map<string, CanvasPage>();
+		for (const p of pagesOnCanvas) {
+			const fid = pageFrameId(p);
+			if (fid) byFrame.set(fid, p);
+		}
+		const merged: Record<string, string[]> =
+			designPreview.mode === "live"
+				? { ...staticFlowLinks, ...liveFlowLinks }
+				: staticFlowLinks;
+		const seen = new Set<string>();
+		const out: { key: string; from: CanvasPage; to: CanvasPage }[] = [];
+		for (const [fromId, targets] of Object.entries(merged)) {
+			const from = byFrame.get(fromId);
+			if (!from) continue;
+			for (const toId of targets) {
+				if (toId === fromId) continue;
+				const to = byFrame.get(toId);
+				if (!to) continue;
+				const key = `${from.id}->${to.id}`;
+				if (seen.has(key)) continue;
+				seen.add(key);
+				out.push({ key, from, to });
+			}
+		}
+		return out;
+	}, [
+		isDesign,
+		showFlowLinks,
+		pagesOnCanvas,
+		designPreview.mode,
+		staticFlowLinks,
+		liveFlowLinks,
+	]);
 	/** 画框的内容；`parkable` 为假时不因离视口远而停放（聚焦与演示用静态帧）。 */
 	const contentOf = (p: CanvasPage, parkable = true): PageContent => {
 		// 实时帧不看静态产物：还没封存过的帧也能显示 dev 服务里的样子
@@ -1379,6 +1530,46 @@ export function CanvasEditor({
 								onLiveTimeout={designPreview.onTimeout}
 							/>
 						))}
+						{flowEdges.length > 0 &&
+							(() => {
+								const hasSelectedPage = items.some((it) => it.type === "page");
+								const selSet = new Set(selectedIds);
+								return (
+									<svg
+										className="canvas-layer canvas-flow"
+										data-testid="canvas-flow-links"
+										aria-hidden="true"
+									>
+										{flowEdges.map((e) => {
+											const geom = flowBezier(e.from, e.to, z);
+											const active =
+												selSet.has(e.from.id) || selSet.has(e.to.id);
+											const cls = active
+												? "is-active"
+												: hasSelectedPage
+													? "is-dim"
+													: undefined;
+											return (
+												<g
+													key={e.key}
+													data-from={e.from.id}
+													data-to={e.to.id}
+													className={cls}
+												>
+													<path className="flow-line" d={geom.line} />
+													<path className="flow-arrow" d={geom.arrow} />
+													<circle
+														className="flow-dot"
+														cx={geom.x1}
+														cy={geom.y1}
+														r={3.5 / z}
+													/>
+												</g>
+											);
+										})}
+									</svg>
+								);
+							})()}
 						<NotesLayer
 							doc={doc}
 							canvas={canvasKey}
@@ -1634,6 +1825,19 @@ export function CanvasEditor({
 								? { open: layersOpen, onToggle: () => setLayersOpen((o) => !o) }
 								: undefined
 						}
+						onPrototype={
+							isDesign && doc.pages.length > 0
+								? () => setPrototypeOpen(true)
+								: undefined
+						}
+						flowLinks={
+							isDesign
+								? {
+										open: showFlowLinks,
+										onToggle: () => setShowFlowLinks((o) => !o),
+									}
+								: undefined
+						}
 					/>
 				)}
 				{focusedPage && (
@@ -1688,6 +1892,18 @@ export function CanvasEditor({
 						<SoloPage page={p} content={contentOf(p, false)} />
 					)}
 					onClose={() => onPresentChange?.(null)}
+				/>
+			)}
+			{prototypeOpen && isDesign && (
+				<Prototype
+					title={title}
+					doc={doc}
+					contentOf={(p) => designPreview.liveContent(p) ?? contentOf(p, false)}
+					onLiveTimeout={designPreview.onTimeout}
+					onClose={() => {
+						setPrototypeOpen(false);
+						stageRef.current?.focus({ preventScroll: true });
+					}}
 				/>
 			)}
 		</section>

@@ -3882,7 +3882,24 @@
 			"useStatic": "Use static",
 			"useLive": "Use live",
 			"authorize": "Authorize live preview in new window",
-			"sourceFrameLocked": "Source frames are maintained by sealing and cannot be deleted or duplicated"
+			"sourceFrameLocked": "Source frames are maintained by sealing and cannot be deleted or duplicated",
+			"device": {
+				"label": "Device shell",
+				"none": "None",
+				"phone": "Phone",
+				"tablet": "Tablet",
+				"browser": "Browser"
+			},
+			"prototype": {
+				"open": "Prototype preview",
+				"dialogTitle": "Prototype preview “{{title}}”",
+				"close": "Exit prototype preview",
+				"frameSelect": "Switch frame",
+				"deviceSelect": "Preview device shell",
+				"deviceAuto": "Match frame",
+				"reset": "Reset to start frame",
+				"flowLinksToggle": "Toggle frame links"
+			}
 		},
 		"comments": {
 			"title": "Comments",

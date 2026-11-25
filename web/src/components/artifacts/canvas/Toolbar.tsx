@@ -201,6 +201,10 @@ export interface ToolbarProps {
 	onZoom(to: ZoomTarget): void;
 	/** 图层开关；不给时没有这个按钮（右面板里）。 */
 	layers?: { open: boolean; onToggle(): void };
+	/** 设计画布：打开原型预览；非设计画布或无画框时不传。 */
+	onPrototype?(): void;
+	/** 设计画布：帧间连线显示开关；非设计画布时不传。 */
+	flowLinks?: { open: boolean; onToggle(): void };
 }
 
 export function Toolbar({
@@ -222,6 +226,8 @@ export function Toolbar({
 	hasSelection,
 	onZoom,
 	layers,
+	onPrototype,
+	flowLinks,
 }: ToolbarProps): ReactNode {
 	const { t } = useTranslation();
 	const editable = !readOnly;
@@ -403,6 +409,32 @@ export function Toolbar({
 							label={t("artifacts.canvas.layers.toggle")}
 							onClick={layers.onToggle}
 						/>
+					</>
+				)}
+				{(onPrototype || flowLinks) && (
+					<>
+						<span className="mx-1 h-5 w-px shrink-0 bg-border" />
+						{flowLinks && (
+							<IconButton
+								icon="link"
+								box="sm"
+								size={15}
+								active={flowLinks.open}
+								data-testid="canvas-flow-links-toggle"
+								label={t("artifacts.design.prototype.flowLinksToggle")}
+								onClick={flowLinks.onToggle}
+							/>
+						)}
+						{onPrototype && (
+							<IconButton
+								icon="play"
+								box="sm"
+								size={15}
+								data-testid="canvas-prototype-open"
+								label={t("artifacts.design.prototype.open")}
+								onClick={onPrototype}
+							/>
+						)}
 					</>
 				)}
 				<span className="mx-1 h-5 w-px shrink-0 bg-border" />

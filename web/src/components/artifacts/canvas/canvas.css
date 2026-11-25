@@ -50,6 +50,14 @@
 	background: #fff;
 	pointer-events: none;
 }
+/* 原型预览舞台（M29 R1）：静态与实时帧的 iframe 在有无设备外壳时都铺满画框内容区 */
+.prototype-stage iframe {
+	display: block;
+	width: 100%;
+	height: 100%;
+	border: 0;
+	background: #fff;
+}
 .canvas-page[data-inside] iframe {
 	pointer-events: auto;
 }
@@ -209,4 +217,41 @@
 	background: var(--panel);
 	color: var(--text-faint);
 	font-size: 13px;
+}
+
+/* 设计画布的只读帧间连线（M29 R1）：默认浅色虚线，选中关联画框时高亮主题色 */
+.canvas-flow * {
+	vector-effect: non-scaling-stroke;
+}
+.canvas-flow .flow-line {
+	fill: none;
+	stroke: var(--line-strong);
+	stroke-width: 1.5;
+	stroke-dasharray: 5 4;
+	stroke-linecap: round;
+}
+.canvas-flow .flow-arrow {
+	fill: none;
+	stroke: var(--line-strong);
+	stroke-width: 1.5;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+.canvas-flow .flow-dot {
+	fill: var(--line-strong);
+}
+.canvas-flow .is-active .flow-line {
+	stroke: var(--brand);
+	stroke-width: 2;
+	stroke-dasharray: none;
+}
+.canvas-flow .is-active .flow-arrow {
+	stroke: var(--brand);
+	stroke-width: 2;
+}
+.canvas-flow .is-active .flow-dot {
+	fill: var(--brand);
+}
+.canvas-flow .is-dim {
+	opacity: 0.35;
 }

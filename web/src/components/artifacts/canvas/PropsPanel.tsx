@@ -14,6 +14,8 @@ import {
 	type CanvasNote,
 	type CanvasOp,
 	type CanvasPage,
+	DEVICES,
+	type Device,
 	MAX_COORD,
 	NAME_CHARS,
 	PAGE_MAX,
@@ -382,6 +384,19 @@ function FrameSection({
 					<option value="custom" disabled={preset !== "custom"}>
 						{t("artifacts.canvas.props.presets.custom")}
 					</option>
+				</Select>
+			</Field>
+			<Field label={t("artifacts.design.device.label")}>
+				<Select
+					value={page.device ?? "none"}
+					data-testid="canvas-frame-device"
+					onChange={(e) => set("device", e.target.value as Device)}
+				>
+					{DEVICES.map((d) => (
+						<option key={d} value={d}>
+							{t(`artifacts.design.device.${d}`)}
+						</option>
+					))}
 				</Select>
 			</Field>
 			<div className="grid grid-cols-2 gap-2">

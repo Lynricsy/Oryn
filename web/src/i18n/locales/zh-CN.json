@@ -3882,7 +3882,24 @@
 			"useStatic": "切到静态",
 			"useLive": "切到实时",
 			"authorize": "在新窗口授权实时预览",
-			"sourceFrameLocked": "源码帧由封存维护，不能直接删除或复制"
+			"sourceFrameLocked": "源码帧由封存维护，不能直接删除或复制",
+			"device": {
+				"label": "设备外壳",
+				"none": "无",
+				"phone": "手机",
+				"tablet": "平板",
+				"browser": "浏览器"
+			},
+			"prototype": {
+				"open": "原型预览",
+				"dialogTitle": "原型预览「{{title}}」",
+				"close": "退出原型预览",
+				"frameSelect": "切换画框",
+				"deviceSelect": "预览设备外壳",
+				"deviceAuto": "跟随画框",
+				"reset": "重置到起始帧",
+				"flowLinksToggle": "显示或隐藏帧间连线"
+			}
 		},
 		"comments": {
 			"title": "评论",
