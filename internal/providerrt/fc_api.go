@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/fcguest"
+	"github.com/Lynricsy/Oryn/internal/unixsock"
 )
 
 // fcHost 是驱动对宿主的副作用：进程、磁盘、网络（真实现见 fc_host.go，单元测试用内存假实现）。
@@ -84,7 +85,7 @@ func (a unixAPI) do(ctx context.Context, orbID, method, path string, body any, o
 	sock := a.sock(orbID)
 	c := &http.Client{Transport: &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return dialUnix(ctx, sock)
+			return unixsock.Dial(ctx, sock)
 		},
 		DisableKeepAlives: true,
 	}}
@@ -188,7 +189,7 @@ type vsockGuest struct {
 
 // Do 实现 fcGuest：语义同 fcguest.Call（整个过程受 ctx 约束；guest 应答 ok=false 时返回 *fcguest.RemoteError）。
 func (g vsockGuest) Do(ctx context.Context, orbID string, req fcguest.Request) error {
-	conn, err := dialUnix(ctx, g.sock(orbID))
+	conn, err := unixsock.Dial(ctx, g.sock(orbID))
 	if err != nil {
 		return fmt.Errorf("fcguest %s: %w", req.Op, err)
 	}

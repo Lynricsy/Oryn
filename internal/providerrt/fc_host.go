@@ -18,6 +18,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/Lynricsy/Oryn/internal/config"
+	"github.com/Lynricsy/Oryn/internal/unixsock"
 )
 
 // fcCgroupParent 是所有 VM 的父 cgroup（jailer 的 --parent-cgroup），位于 cgroup v2 根下。
@@ -121,7 +122,7 @@ func (h *osHost) Launch(ctx context.Context, vm vmMeta) error {
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		dctx, cancel := context.WithTimeout(ctx, time.Second)
-		c, err := dialUnix(dctx, sock)
+		c, err := unixsock.Dial(dctx, sock)
 		cancel()
 		if err == nil {
 			_ = c.Close()

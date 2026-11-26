@@ -36,34 +36,7 @@ func longSockListener(t *testing.T) (net.Listener, string) {
 	return ln, path
 }
 
-func TestDialUnixLongPath(t *testing.T) {
-	ln, path := longSockListener(t)
-	accepted := make(chan struct{})
-	go func() {
-		if c, err := ln.Accept(); err == nil {
-			_ = c.Close()
-			close(accepted)
-		}
-	}()
-	c, err := dialUnix(context.Background(), path)
-	require.NoError(t, err)
-	_ = c.Close()
-	<-accepted
-
-	// 短路径照常直拨；不存在的路径报错，且不泄漏 fd。
-	ln2, err := net.Listen("unix", filepath.Join(t.TempDir(), "s"))
-	require.NoError(t, err)
-	defer ln2.Close()
-	c, err = dialUnix(context.Background(), ln2.Addr().String())
-	require.NoError(t, err)
-	_ = c.Close()
-	_, err = dialUnix(context.Background(), filepath.Join(filepath.Dir(path), "missing.sock"))
-	assert.Error(t, err)
-	_, err = dialUnix(context.Background(), filepath.Join(filepath.Dir(path), "nodir", "x.sock"))
-	assert.Error(t, err)
-}
-
-// api.sock 与 v.sock 的客户端都经 dialUnix：路径超过 sun_path 时照样能连上。
+// api.sock 与 v.sock 的客户端都经 unixsock.Dial：路径超过 sun_path 时照样能连上。
 func TestFCLongSockClients(t *testing.T) {
 	ln, path := longSockListener(t)
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
