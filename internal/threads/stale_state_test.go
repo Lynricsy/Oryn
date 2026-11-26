@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -48,4 +49,48 @@ func TestStaleStreamingStateAfterAgentEndDoesNotWedgeWorking(t *testing.T) {
 			assert.True(t, th.quiescentLocked(), "session_settled 之后静止")
 		})
 	}
+}
+
+// 首 token 到达前重新订阅（切换对话 / 重载）：agent_start 只置了 Live.working，缓存的 get_state 仍是上一轮结束时的
+// 空闲态（isStreaming=false, isSettled=true）。Subscribe 快照必须透传 Live.working，同时在仅有后台异步任务
+// （pendingAsync=true、Live.working=false）时不把 working 标成真。
+func TestSubscribeSnapshotCarriesWorkingWithoutPendingAsyncConflation(t *testing.T) {
+	f := newFixture(t, Config{})
+	th, a, _ := readyThread(f)
+
+	// 先跑完一轮并缓存空闲态 get_state（还原生产中「上一轮结束后留有空闲 state 缓存」的前提）
+	f.frame(th, `{"type":"agent_start"}`)
+	f.frame(th, `{"type":"agent_end","messages":[],"isTerminal":true,"yielded":true}`)
+	var idleGetState string
+	for _, fr := range sent(a) {
+		if strings.Contains(fr, `"get_state"`) {
+			idleGetState = fr
+		}
+	}
+	require.NotEmpty(t, idleGetState, "上一轮 agent_end 后应刷新 get_state")
+	f.respond(th, idleGetState, true, `{"isStreaming":false,"isSettled":true,"hasPendingAsyncWork":false}`)
+	f.frame(th, `{"type":"session_settled"}`)
+	// 新回合开始、尚无 message_start（等待慢 TTFT 期间）
+	f.frame(th, `{"type":"agent_start"}`)
+	var midTurn Snapshot
+	require.NoError(t, f.s.Subscribe(f.ctx, th.id, func(s Snapshot) { midTurn = s }))
+	assert.Equal(t, apigen.ThreadStateWorking, midTurn.Thread.State)
+	assert.True(t, midTurn.Agent.Working, "回合进行中（即使 get_state 仍是旧空闲缓存）快照应透传 working=true")
+	assert.Empty(t, midTurn.Agent.Live)
+
+	// 回合结束但仍有后台异步任务（hasPendingAsyncWork=true）：摘要状态仍是 working，但 Live.working 必须为 false
+	f.frame(th, `{"type":"agent_end","messages":[],"isTerminal":true,"yielded":true}`)
+	var afterEndGetState string
+	for _, fr := range sent(a) {
+		if strings.Contains(fr, `"get_state"`) {
+			afterEndGetState = fr
+		}
+	}
+	require.NotEmpty(t, afterEndGetState, "agent_end 后应刷新 get_state")
+	f.respond(th, afterEndGetState, true, `{"isStreaming":false,"isSettled":false,"hasPendingAsyncWork":true}`)
+
+	var asyncOnly Snapshot
+	require.NoError(t, f.s.Subscribe(f.ctx, th.id, func(s Snapshot) { asyncOnly = s }))
+	assert.Equal(t, apigen.ThreadStateWorking, asyncOnly.Thread.State)
+	assert.False(t, asyncOnly.Agent.Working, "仅有后台异步任务未静止时，agent.working 必须为 false")
 }

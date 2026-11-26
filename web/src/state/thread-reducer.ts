@@ -1188,9 +1188,9 @@ export function applySnapshot(
 	};
 	next = {
 		...next,
-		running: next.state
-			? next.state.isStreaming || !next.state.isSettled
-			: false,
+		running:
+			snap.agent.working === true ||
+			(next.state ? next.state.isStreaming || !next.state.isSettled : false),
 	};
 	if (isRecord(snap.agent.queue)) {
 		const queue = queueFrom(snap.agent.queue);

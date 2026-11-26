@@ -11194,6 +11194,8 @@ export interface components {
         /** @description 线程实时缓冲（只含未被条目覆盖的部分） */
         AgentLiveState: {
             status: components["schemas"]["AgentStatus"];
+            /** @description 当前是否有正在进行的回合（控制面实时缓冲 `Live.working`，由 `prompt` / `agent_start` 置真、终结 `agent_end` 或 `live.reset` 清零；不含仅有后台异步任务未静止的情况）。`get_state` 缓存可能在 `agent_start` 之后滞后，重订阅时客户端据此还原运行态 */
+            working?: boolean;
             /** @description 最近一次 `get_state` 应答的 data */
             state?: components["schemas"]["OmpFrame"];
             /** @description 最新 `queue_update` 帧 */

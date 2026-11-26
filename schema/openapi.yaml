@@ -14896,6 +14896,9 @@ components:
       required: [status, pendingUi, subagents, live]
       properties:
         status: { $ref: '#/components/schemas/AgentStatus' }
+        working:
+          type: boolean
+          description: 当前是否有正在进行的回合（控制面实时缓冲 `Live.working`，由 `prompt` / `agent_start` 置真、终结 `agent_end` 或 `live.reset` 清零；不含仅有后台异步任务未静止的情况）。`get_state` 缓存可能在 `agent_start` 之后滞后，重订阅时客户端据此还原运行态
         state:
           allOf:
             - $ref: '#/components/schemas/OmpFrame'

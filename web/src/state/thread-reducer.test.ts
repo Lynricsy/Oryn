@@ -593,6 +593,70 @@ describe("thread.snapshot", () => {
 		expect(s.widgets).toEqual({});
 		expect(s.statuses).toEqual({});
 	});
+
+	it("agent.working 为真且缓存的 agent.state 仍为旧空闲态时，applySnapshot 保持 running 为真", () => {
+		let s = applyFrame(initialThreadState(TID), { type: "agent_start" });
+		expect(s.running).toBe(true);
+
+		s = applySnapshot(s, {
+			type: "thread.snapshot",
+			threadId: TID,
+			thread: {
+				id: TID,
+				title: "t",
+				titleSource: "auto",
+				state: "working",
+				stateChangedAt: 0,
+				pinned: false,
+				labels: [],
+				unread: false,
+				createdAt: 0,
+				updatedAt: 0,
+			},
+			agent: {
+				status: "ready",
+				working: true,
+				state: { isStreaming: false, isSettled: true },
+				pendingUi: [],
+				subagents: [],
+				live: [],
+			},
+			lastSeq: 1,
+			transcriptRev: 0,
+			fullReplay: false,
+		});
+		expect(s.running).toBe(true);
+	});
+
+	it("仅 thread.state 为 working（如 pendingAsync）但 agent.working 不为真且 state 空闲时，不强行置 running", () => {
+		const s = applySnapshot(initialThreadState(TID), {
+			type: "thread.snapshot",
+			threadId: TID,
+			thread: {
+				id: TID,
+				title: "t",
+				titleSource: "auto",
+				state: "working",
+				stateChangedAt: 0,
+				pinned: false,
+				labels: [],
+				unread: false,
+				createdAt: 0,
+				updatedAt: 0,
+			},
+			agent: {
+				status: "ready",
+				state: { isStreaming: false, isSettled: true },
+				pendingUi: [],
+				subagents: [],
+				live: [],
+			},
+			lastSeq: 1,
+			transcriptRev: 0,
+			fullReplay: false,
+		});
+		expect(s.running).toBe(false);
+	});
 });
 
 describe("转录推导", () => {

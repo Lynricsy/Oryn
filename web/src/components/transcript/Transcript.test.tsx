@@ -594,6 +594,58 @@ describe("助手头像闪烁", () => {
 			]);
 			expect(dotsIn(container)).toBe(0);
 		});
+
+		it("首 token 到达前收到 thread.snapshot（agent.working=true、agent.state 为旧空闲态）时，头像与三点不消失", () => {
+			const store = getThreadStore(ctx.threadId);
+			store.getState().apply([
+				{ type: "frame", frame: { type: "agent_start" } },
+				{
+					type: "thread.snapshot",
+					snapshot: {
+						type: "thread.snapshot",
+						threadId: ctx.threadId,
+						thread: {
+							id: ctx.threadId,
+							title: "新对话",
+							titleSource: "auto",
+							state: "working",
+							stateChangedAt: 0,
+							pinned: false,
+							labels: [],
+							unread: false,
+							createdAt: 0,
+							updatedAt: 0,
+						},
+						agent: {
+							status: "ready",
+							working: true,
+							state: { isStreaming: false, isSettled: true },
+							pendingUi: [],
+							subagents: [],
+							live: [],
+						},
+						lastSeq: 6,
+						transcriptRev: 0,
+						fullReplay: false,
+					},
+				},
+			]);
+			const { container, unmount } = renderTranscript("working", [
+				...done,
+				user(6),
+			]);
+			const awaiting = screen.getByTestId("awaiting-turn");
+			expect(awaiting.querySelector('[data-avatar-of="agent"]')).not.toBeNull();
+			expect(dotsIn(awaiting)).toBe(1);
+			expect(dotsIn(container)).toBe(1);
+			unmount();
+			store.getState().patchLocal({
+				running: false,
+				thread: undefined,
+				state: undefined,
+				snapshotReceived: false,
+			});
+		});
 	});
 });
 

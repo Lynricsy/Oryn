@@ -1008,6 +1008,7 @@ type Snapshot struct {
 // AgentSnapshot 对应规格 AgentLiveState（帧保持原始字节）。
 type AgentSnapshot struct {
 	Status       apigen.AgentStatus `json:"status"`
+	Working      bool               `json:"working,omitempty"`
 	State        json.RawMessage    `json:"state,omitempty"`
 	Queue        json.RawMessage    `json:"queue,omitempty"`
 	PendingUI    []json.RawMessage  `json:"pendingUi"`
@@ -1048,7 +1049,7 @@ func (s *Service) Subscribe(ctx context.Context, id string, fn func(Snapshot)) e
 	}
 	l := t.live
 	snap.Agent = AgentSnapshot{
-		Status: t.agentStatus, State: l.State, Queue: l.Queue, PlanProposal: l.PlanProposal,
+		Status: t.agentStatus, Working: l.working, State: l.State, Queue: l.Queue, PlanProposal: l.PlanProposal,
 		ComposerPrediction: l.ComposerPrediction,
 		PendingUI:          nonNilFrames(l.PendingUI()), DisplayUI: nonNilFrames(l.DisplayUI()),
 		Subagents: nonNilFrames(l.Subagents()), Live: nonNilFrames(l.LiveFrames()),
