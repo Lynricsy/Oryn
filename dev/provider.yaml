@@ -10,3 +10,5 @@ docker:
     medium: { cpus: 4, memory: "8g" }
     large: { cpus: 8, memory: "16g" }
     dind: { cpus: 4, memory: "8g", runtime: sysbox-runc, nested_docker: true }
+  # M30 agent 沙箱：先 sudo deploy/docker/oryn-sbx-net.sh up（建 oryn-sbx 网络与防火墙规则），并 make image 重建含新 orbd 的镜像
+  sandbox: { enabled: true, network: "oryn-sbx", dns: ["1.1.1.1"] }

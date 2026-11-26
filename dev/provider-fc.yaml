@@ -12,3 +12,5 @@ firecracker:
     small: { cpus: 2, memory: "2g" }
     medium: { cpus: 2, memory: "4g" }
   default_type: medium
+  # M30 agent 沙箱（link 经 vsock 中继）：须重装含新 orbd 的根盘（make image && make fc-artifacts，再按上面的说明换新文件）
+  sandbox: { enabled: true }
