@@ -243,6 +243,11 @@ export interface UiState {
 	/** 缩放偏好；null = 按断点取默认（compact 为 `fit`，其余 `follow`）。 */
 	desktopScale: DesktopScale | null;
 	setDesktopScale(scale: DesktopScale | null): void;
+	/**
+	 * 「重置界面布局」：本机布局偏好恢复默认并立刻生效——侧栏展开、面板宽度回默认、信息卡片全部展开、
+	 * Desktop 缩放回按断点取默认。删掉对应的 localStorage 键（与首次打开时一样按默认渲染）；不动主题、壁纸、语言。
+	 */
+	resetLayout(): void;
 }
 
 /** `openFile` 的请求序号（见 `UiState.fileSel`）。 */
@@ -419,6 +424,21 @@ export const uiStore = createStore<UiState>((set, get) => ({
 	setDesktopScale: (desktopScale) => {
 		writeKey(DESKTOP_SCALE_KEY, desktopScale);
 		set({ desktopScale });
+	},
+	resetLayout: () => {
+		for (const key of [
+			SIDEBAR_COLLAPSED_KEY,
+			PANEL_WIDTH_KEY,
+			COLLAPSED_CARDS_KEY,
+			DESKTOP_SCALE_KEY,
+		])
+			writeKey(key, null);
+		set({
+			sidebarCollapsed: false,
+			panelWidth: clampPanelWidth(PANEL_DEFAULT_WIDTH, viewportWidth()),
+			collapsedCards: {},
+			desktopScale: null,
+		});
 	},
 }));
 

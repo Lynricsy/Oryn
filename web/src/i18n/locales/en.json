@@ -85,7 +85,12 @@
 			"accent": "Brand color"
 		},
 		"appIconHint": "The home screen icon; it follows the system's light, dark and tinted appearance. iOS shows a system alert after switching.",
-		"appIconError": "The icon wasn't changed: {{message}}"
+		"appIconError": "The icon wasn't changed: {{message}}",
+		"layout": "Layout",
+		"resetLayout": "Reset interface layout",
+		"resetLayoutHint": "Restores the collapsed sidebar, thread side panel width, collapsed info cards and desktop view scaling to their defaults. Only affects this device; theme, wallpaper and language stay as they are.",
+		"resetLayoutAction": "Reset",
+		"resetLayoutDone": "Restored defaults"
 	},
 	"stat": {
 		"input": "Input",
@@ -1423,7 +1428,6 @@
 			"title": "Background research",
 			"hint": "When on, the assistant looks for new information without being asked: public topics you care about, contradictions and stalls across your threads, and the read-only MCP tools you allow. It tells you in the main conversation only when something is worth saying. The web researcher can only search and read public web pages; it never sees your local data.",
 			"enabled": "Turn on background research",
-			"pipelines": "Pipelines",
 			"pipeline": {
 				"web": "Follow public topics",
 				"mine": "Pick topics to follow from assistant conversations and the main conversation",
@@ -1459,6 +1463,7 @@
 		}
 	},
 	"devices": {
+		"pairTitle": "Pair a new device",
 		"pairQr": {
 			"title": "Connect a phone by scanning",
 			"label": "Server address QR code: {{server}}",
@@ -1499,6 +1504,15 @@
 		"noClients": "No online Chrome extension",
 		"approvalBanner": "Agent is waiting for your confirmation in the Chrome extension ({{name}}, {{count}} pending). Click the extension icon in Chrome to approve or deny; the agent will retry once approved."
 	},
+	"compute": {
+		"new": "New",
+		"name": "Name",
+		"token": "Token",
+		"done": "Done",
+		"online": "Online",
+		"offline": "Offline",
+		"more": "More actions for {{name}}"
+	},
 	"providers": {
 		"create": "New provider",
 		"default": "default",
@@ -1508,7 +1522,8 @@
 		"offline": "offline",
 		"online": "online",
 		"title": "Providers",
-		"tokenOnce": "The provider token is shown only once — put it in the provider's token_file:",
+		"tokenOnce": "The token for provider {{name}} is shown only once",
+		"tokenHint": "Put it in the provider's token_file, then start the provider process.",
 		"supported": "supported",
 		"unsupported": "not supported",
 		"freeze": "Freeze",
@@ -1669,10 +1684,15 @@
 		"nameHint": "e.g. git/github.com/token",
 		"put": "Store a secret",
 		"title": "Secrets",
-		"value": "Value"
+		"value": "Value",
+		"add": "Store",
+		"optional": "Optional",
+		"more": "More actions for {{name}}",
+		"update": "Update value",
+		"updateTitle": "Update secret {{name}}"
 	},
 	"gitIdentity": {
-		"title": "Git commit identity",
+		"title": "Committer",
 		"hint": "Default user.name / user.email for git commits inside orbs; projects can override it. Changes are written on the next setup or orb wake; running orbs are not updated immediately.",
 		"name": "Name",
 		"email": "Email",
@@ -1686,18 +1706,11 @@
 		"extracted": "Extracted into the secret store: {{names}}",
 		"hint": "omp's text config (config.yml, models.yml, AGENTS.md, skills/ …). Literal API keys in models.yml are moved into the secret store on save.",
 		"pushHint": "Import from your machine with `oryn config push`.",
+		"scopeConfigYml": "config.yml is the exception: it is pushed to the global assistant too.",
 		"title": "Agent config"
 	},
 	"memoryPage": {
 		"scope": "Applies to orbs and runners, not the global assistant. Threads in the same project share its memory; global memories are recalled in every project; projects never see each other. Switch changes take effect for newly started agents.",
-		"toc": {
-			"label": "On this page",
-			"status": "Status",
-			"models": "Models",
-			"browse": "Browse",
-			"global": "Global",
-			"usage": "Usage"
-		},
 		"failed": "{{step}} failed",
 		"listSep": ", ",
 		"steps": {
@@ -2056,6 +2069,7 @@
 		},
 		"export": {
 			"title": "Export",
+			"rowTitle": "Memory archive",
 			"hint": "Export every memory in bank oryn as an archive. For scheduled full backups see the",
 			"backupDoc": "deploy docs",
 			"start": "Export bank",
@@ -2066,8 +2080,9 @@
 		},
 		"owner": {
 			"title": "Assistant memory",
-			"scope": "The global assistant's long-term memory about you (bank oryn-owner): your identity, preferences and recent work, distilled from assistant conversations and work threads and appended to the system prompt when an assistant conversation starts. Stored separately from the engineering memory above.",
-			"unavailable": "Assistant memory builds on the engineering memory above: enable and configure the Connection card first (Hindsight URL, .env and master switch), then these settings appear.",
+			"scope": "The global assistant's long-term memory about you (bank oryn-owner): your identity, preferences and recent work, distilled from assistant conversations and work threads and appended to the system prompt when an assistant conversation starts. Stored separately from Agent memory (Settings › Memory).",
+			"unavailableTitle": "Set up Agent memory first",
+			"unavailable": "Assistant memory builds on Agent memory (Hindsight): enable and configure its connection in Settings › Memory first (Hindsight URL, .env and master switch), then these settings appear.",
 			"settings": {
 				"title": "Settings",
 				"enabled": "Turn on assistant memory",
@@ -2122,6 +2137,7 @@
 			},
 			"status": {
 				"title": "Assistant memory status",
+				"state": "State",
 				"backfill": "Backfill",
 				"backfillProgress": "{{done}} / {{total}}",
 				"backfillSince": "since {{when}}",
@@ -2251,6 +2267,7 @@
 				"editLabel": "Edit explicit memory",
 				"approve": "Approve",
 				"pending": "To review",
+				"pendingCount": "{{n}} to review",
 				"quote": "Your words: “{{text}}”",
 				"reject": "Reject",
 				"rejectConfirm": "Confirm reject"
@@ -2262,7 +2279,12 @@
 		"status": {
 			"untested": "Not tested yet",
 			"ok": "Test passed at {{at}}",
-			"failed": "Test failed at {{at}}: {{error}}"
+			"failed": "Test failed at {{at}}: {{error}}",
+			"short": {
+				"untested": "Untested",
+				"ok": "Reachable",
+				"failed": "Failed"
+			}
 		},
 		"test": {
 			"ok": "Connected",
@@ -2408,14 +2430,6 @@
 	"agentPages": {
 		"scope": "Changes are pushed to orbs after saving. They don't apply to the global assistant.",
 		"scopeConfig": "Saved to config.yml and pushed to orbs and to the global assistant.",
-		"composer": {
-			"title": "Next-message predictions",
-			"predictions": "Predict my next message",
-			"predictionsHint": "After each completed turn, the active model guesses what you'll send next and shows it as gray text in the empty composer. Tab or → inserts it without sending; on touch screens, tap it. Extra usage: every completed turn sends one more billed request that carries the whole conversation.",
-			"alternatives": "Offer alternatives",
-			"alternativesHint": "Ask for up to four different predictions, most likely first. After inserting one, press Tab again to switch to the next. Still a single request, with a few more output tokens.",
-			"alternativesNeedsPredictions": "Turn on predictions first."
-		},
 		"apply": {
 			"pushing": "Pushing to running orbs…",
 			"pushed": "Pushed. Idle sessions pick it up now; sessions mid-turn pick it up when the turn ends.",
@@ -2626,7 +2640,12 @@
 			"displayName": "Display name",
 			"displayNameHint": "Written to modelTags.<role>.name. Leave empty for the default name.",
 			"displayNameInput": "Display name for {{name}}",
-			"delete": "Delete this role"
+			"delete": "Delete this role",
+			"deleteConfirm": "Delete the role “{{name}}”?",
+			"deleteBody": "Removes its cycle position, model and display name from config.yml. Its avatar stays under leftover avatars, where you can clear it.",
+			"sessionTitle": "New sessions",
+			"thinking": "Default thinking level",
+			"thinkingHint": "New sessions start here when no thinking level is given (defaultThinkingLevel in config.yml); a model's own default level takes precedence. Unset means “{{fallback}}”."
 		}
 	},
 	"language": {
@@ -2634,13 +2653,21 @@
 		"label": "Language",
 		"hint": "Synced across devices. Applies to the interface, generated agent titles, and tool call intents."
 	},
+	"account": {
+		"connection": "Connection and session",
+		"server": "Current server",
+		"serverHint": "Takes you to the connect page; after you confirm, this device's sign-in on this server is removed.",
+		"changeServer": "Change server…",
+		"session": "Sign-in on this browser",
+		"sessionHint": "You'll need to sign in again afterwards.",
+		"logout": "Sign out"
+	},
 	"about": {
-		"language": "Language",
-		"logout": "Sign out",
+		"server": "Server",
+		"mobileApp": "Mobile app",
 		"owner": "Owner",
 		"session": "Signed in via",
 		"since": "Created",
-		"title": "About",
 		"version": "Version",
 		"authKind": {
 			"web": "web session",
@@ -3709,7 +3736,9 @@
 			"noProject": "No project",
 			"grantedAt": "Allowed {{when}}",
 			"revoke": "Revoke",
-			"revokeConfirm": "Confirm revoke",
+			"revokeTitle": "Revoke page capabilities for “{{title}}”?",
+			"revokeBody": "The page asks again the next time it needs to read project files or ask the model.",
+			"more": "More actions for “{{title}}”",
 			"caps": {
 				"files": "Read project files",
 				"sample": "Ask the model"
@@ -4023,7 +4052,8 @@
 				"autoPublish": "Publish new artifacts privately and keep them on the latest version",
 				"title": "Published Artifacts",
 				"empty": "No published artifacts yet. Publish one from its Share button.",
-				"unpublishConfirm": "Confirm unpublish"
+				"unpublishTitle": "Unpublish “{{title}}”?",
+				"unpublishBody": "The public link and access code stop working right away; visitors see that it was taken down."
 			}
 		},
 		"history": {
@@ -4868,6 +4898,32 @@
 		"deleteConfirm": "Delete the channel \"{{name}}\"?",
 		"deleteConfirmBody": "Its delivery records are deleted too.",
 		"recent": "Recent notifications",
+		"budget": {
+			"title": "Budget",
+			"viewUsage": "View usage",
+			"enabled": "Budget alerts",
+			"enabledHint": "Crossing the warning line or a limit sends a budget event: notification center, push, and channels with “Budget alert” checked above.",
+			"limit": {
+				"day": "Daily limit",
+				"month": "Monthly limit",
+				"dayUsd": "Daily limit (USD)",
+				"monthUsd": "Monthly limit (USD)"
+			},
+			"spent": {
+				"day": "{{spent}} spent today",
+				"month": "{{spent}} spent this month"
+			},
+			"warnPct": "Warning line",
+			"warnHint": "Warn once spending reaches this share of a limit; 0 = alert only when exceeded.",
+			"warnPctField": "Warning line (%)",
+			"warnZero": "0–99; 0 = alert only when exceeded",
+			"timezone": "Time zone",
+			"timezoneHint": "Days and months are split in this time zone.",
+			"timezoneField": "IANA name, e.g. Asia/Shanghai",
+			"optional": "Optional",
+			"dialogTitle": "Edit budget",
+			"invalid": "Leave an amount empty for no limit; otherwise it must be at least 0.01."
+		},
 		"target": {
 			"telegram": "Telegram",
 			"webhook": "Webhook",
@@ -4959,7 +5015,13 @@
 			"findings": "{{n}} findings acknowledged",
 			"fileThread": "Thread",
 			"noThreads": "No public threads.",
-			"noFiles": "No public files."
+			"noFiles": "No public files.",
+			"public": "Public threads and files",
+			"more": "More actions for “{{name}}”",
+			"revokeTitle": "Revoke the public link to “{{title}}”?",
+			"revokeBody": "The link stops working right away; visitors who have it open see no further updates.",
+			"unpublishTitle": "Unpublish the public file “{{name}}”?",
+			"unpublishBody": "The public link stops working right away; the attachment itself stays in the thread."
 		}
 	},
 	"publish": {
@@ -5144,9 +5206,12 @@
 		}
 	},
 	"desktop": {
-		"title": "Desktop app",
+		"groups": {
+			"update": "Updates",
+			"window": "Window",
+			"security": "Security"
+		},
 		"version": "Version",
-		"update": "Updates",
 		"checkUpdate": "Check for updates",
 		"upToDate": "You're up to date",
 		"available": "v{{version}} found, downloading…",
@@ -5154,18 +5219,22 @@
 		"restartToUpdate": "Restart to update to v{{version}}",
 		"updateError": "Update check failed: {{error}}",
 		"autoUpdate": "Install and restart automatically after downloading",
+		"autoUpdateHint": "When off, a downloaded update waits for you to click \"Restart to update\".",
 		"shortcut": "Global shortcut",
-		"shortcutHint": "Format like Control+Alt+Space; leave empty to turn off. Shows or hides the window.",
+		"shortcutHint": "Shows or hides the window.",
+		"shortcutAside": "Format like Control+Alt+Space; empty = off",
+		"shortcutOff": "Not set",
+		"shortcutEdit": "Change",
 		"shortcutError": "The shortcut isn't active: {{error}}",
 		"closeToTray": "Hide to tray when closing the window",
+		"closeToTrayHint": "The app keeps running in the tray after you close the window, and notifications still arrive.",
 		"tokenStore": "Token storage",
+		"tokenStoreHint": "Where this computer keeps the device token it uses to connect to the server.",
 		"tokenStoreKind": {
 			"keyring": "System keyring",
 			"file": "Local file"
 		},
-		"fileStore": "No system keyring found; the token is stored in a file only you can read.",
-		"changeServer": "Change server…",
-		"changeServerHint": "Takes you to the connect page; after you confirm, this device's sign-in on the current server is removed."
+		"fileStore": "No system keyring found; the token is stored in a file only you can read."
 	},
 	"mobile": {
 		"push": {
@@ -5382,7 +5451,9 @@
 		"deleteConfirmBody": "Project defaults that use it are cleared.",
 		"emptyTitle": "No browser profiles yet",
 		"emptyHint": "A profile is a saved browser sign-in state you can reuse across threads; only one orb at a time writes it back.",
-		"hint": "A profile is a saved browser sign-in state you can reuse across threads; only one orb at a time writes it back."
+		"add": "New",
+		"more": "More actions for {{name}}",
+		"renameTitle": "Rename profile"
 	},
 	"assistant": {
 		"actions": "Conversation actions",
@@ -6305,24 +6376,13 @@
 		"budget": {
 			"title": "Budget",
 			"open": "Budget…",
-			"edit": "Set budget",
+			"manage": "Change in Settings",
 			"day": "Today",
 			"month": "This month",
 			"spent": "{{spent}} / {{limit}}",
 			"noLimit": "No limit",
 			"disabled": "Alerts off",
-			"level": { "none": "", "warn": "Near limit", "over": "Over limit" },
-			"dialog": {
-				"title": "Set budget",
-				"daily": "Daily limit (USD)",
-				"monthly": "Monthly limit (USD)",
-				"warnPct": "Warning at (%)",
-				"warnHint": "0 = alert only when exceeded",
-				"timezone": "Time zone (IANA)",
-				"enabled": "Enable budget alerts",
-				"invalid": "Leave an amount empty for no limit; otherwise it must be at least 0.01."
-			},
-			"notifyHint": "Crossing the warning line or the limit posts a system notification: to the notification center, push, and channels that have “Budget alert” checked in <settings>Settings → Notifications</settings>."
+			"level": { "none": "", "warn": "Near limit", "over": "Over limit" }
 		}
 	},
 	"accel": {
@@ -6410,17 +6470,13 @@
 		"title": "Runners",
 		"create": "New runner",
 		"intro": "A runner is your own machine: run orbd run --runner --dir <directory> there and threads work right in that directory, using that machine's own omp config and git credentials.",
-		"name": "Name",
 		"namePlaceholder": "Name, e.g. laptop",
 		"tokenOnce": "The token for runner {{name}} is shown only once",
-		"token": "Token",
 		"command": "Start command",
 		"commandHint": "Run it on that machine as a regular user (not root). --dir can be repeated; add --terminal to enable the terminal panel.",
-		"empty": "No runners yet",
-		"emptyHint": "Create one, then run the start command on your machine.",
+		"emptyHint": "No runners yet. Create one, then run the start command on your machine.",
 		"lastSeen": "Last online {{when}}",
 		"gitRepo": "Git repository; worktrees can be created",
-		"delete": "Delete runner {{name}}",
 		"deleteConfirm": "Delete runner {{name}}?",
 		"deleteConfirmBody": "Its token stops working right away; its threads keep their transcripts and become read-only."
 	},
@@ -6434,7 +6490,8 @@
 	},
 	"github": {
 		"identity": {
-			"title": "Accounts",
+			"title": "GitHub accounts",
+			"more": "More actions for {{slot}}",
 			"user": "My account",
 			"agent": "Agent account",
 			"reauth": "Needs reauthorization",
@@ -6454,8 +6511,8 @@
 			"missingHint": "The authorization is missing these scopes and some actions will fail. Reconnect to grant them:"
 		},
 		"automation": {
-			"title": "Automation",
-			"legend": "GitHub identity for automated tasks (GitHub triggers, project schedules)",
+			"title": "Account for automation",
+			"legend": "GitHub triggers and project schedules act on GitHub as this account",
 			"agentMissing": "Connect the agent account to choose it"
 		},
 		"notice": {
@@ -6620,7 +6677,13 @@
 			"secretKeep": "Leave empty to keep the saved secret.",
 			"webhookBase": "Webhook base URL",
 			"webhookBaseHint": "Prefix for the webhooks Oryn creates on repositories; defaults to public_url. When GitHub can't reach it, Oryn polls the delivery log instead.",
-			"saved": "Saved",
+			"editTitle": "Edit OAuth App",
+			"setupTitle": "Set up OAuth App",
+			"setup": "Set up",
+			"notConfigured": "Not configured",
+			"setupHint": "Oryn connects to GitHub through an OAuth App you register yourself; set it up before connecting accounts.",
+			"webhookAt": "Webhook base {{url}}",
+			"more": "More actions for the OAuth App",
 			"delete": "Delete configuration",
 			"deleteConfirm": "Delete the OAuth App configuration?",
 			"deleteConfirmBody": "Oryn first removes the webhooks it created on repositories, then disconnects My account and the Agent account. The OAuth App itself stays on GitHub."
@@ -6688,7 +6751,7 @@
 		"promptPlaceholder": "e.g. Always reply concisely; lead with the conclusion before details.",
 		"promptClear": "Clear",
 		"promptTooLong": "Exceeds the {{limit}}-character limit. Shorten it before saving.",
-		"webTitle": "Web access",
+		"webMcpTitle": "Web & MCP",
 		"webAccess": "Let the assistant use the web",
 		"webHint": "The assistant reaches the public internet through Oryn's proxy for web_search and reading web pages; private addresses are refused by default. Both fail when this is off. Changes apply once the assistant's conversations are idle.",
 		"mcpTitle": "MCP servers",
@@ -6797,6 +6860,47 @@
 		"stop": "Stop",
 		"openInBtw": "Open in side questions"
 	},
+	"inputSettings": {
+		"composer": "Composer",
+		"sendKey": {
+			"title": "Send key",
+			"hint": "This device only. The other combination inserts a new line.",
+			"option": "{{key}} sends"
+		},
+		"predictions": {
+			"title": "Predict my next message",
+			"hint": "After each turn, the active model guesses your next message and shows it as gray text in the empty composer; Tab or → inserts it (tap it on touch screens). One extra billed request per turn.",
+			"alternatives": "Offer alternatives",
+			"alternativesHint": "Up to four predictions in one request; press Tab again after inserting to switch to the next.",
+			"needsPredictions": "Turn on predictions first.",
+			"omp": "omp setting: saved to config.yml and pushed to orbs and the global assistant."
+		},
+		"shortcuts": {
+			"title": "Keyboard shortcuts",
+			"scope": {
+				"app": "Anywhere",
+				"appNotInInput": "Anywhere, outside text fields",
+				"thread": "Thread page",
+				"composer": "Composer",
+				"composerBusy": "Composer, while a turn is running",
+				"composerEmpty": "Empty composer"
+			},
+			"palette": "Command palette",
+			"newThread": "New conversation",
+			"sidebar": "Collapse / expand sidebar",
+			"assistant": "Global assistant",
+			"sections": "Switch section (threads / assistant / projects / more)",
+			"roleNext": "Next role model",
+			"rolePrev": "Previous role model",
+			"send": "Send",
+			"newline": "New line",
+			"steer": "Steer the running turn",
+			"followUp": "Queue for after the turn",
+			"abortAndSend": "Interrupt and send",
+			"abort": "Interrupt the turn",
+			"rewind": "Rewind to an earlier message"
+		}
+	},
 	"selectionActions": {
 		"title": "Selection actions",
 		"hint": "Shown in the context menu when text is selected; your prompt is sent to the model together with the selection.",
@@ -6808,6 +6912,7 @@
 		"limit": "Up to 12 actions",
 		"deleteConfirm": "Delete this action?",
 		"moveUp": "Move up",
-		"moveDown": "Move down"
+		"moveDown": "Move down",
+		"more": "More actions"
 	}
 }

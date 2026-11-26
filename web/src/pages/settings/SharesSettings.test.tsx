@@ -1,10 +1,17 @@
-/** 设置页「公开分享」：线程与文件两张列表；都为空时只有空态。 */
+/** 设置 → 分享与 Artifacts 的公开线程与文件两组；都为空时只有一组空态；撤销与撤回经 ⋯ 菜单并先确认。 */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+	within,
+} from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PublishedFile, ThreadShare } from "../../api/share-queries";
 import i18n from "../../i18n";
+import { answerConfirm } from "../../test/confirm";
 import SharesSettings from "./SharesSettings";
 
 const T = (k: string) => i18n.t(k as "common.copy");
@@ -46,11 +53,6 @@ function renderWith(overview: {
 				deletes.push(u.pathname);
 				return new Response(null, { status: 204 });
 			}
-			// 同页的 Artifacts 两块（ArtifactPublishing 有自己的测试）
-			if (u.pathname === "/api/v1/settings/artifacts")
-				return Response.json({ autoPublish: false });
-			if (u.pathname === "/api/v1/artifact-publications")
-				return Response.json({ publications: [] });
 			return Response.json(overview);
 		}),
 	);
@@ -72,43 +74,54 @@ afterEach(() => {
 });
 
 describe("SharesSettings", () => {
-	it("都为空：只显示空态", async () => {
+	it("都为空：只显示一组空态", async () => {
 		renderWith({ shares: [], files: [] });
-		expect(
-			await screen.findByText(T("share.settings.empty")),
-		).toBeInTheDocument();
+		const empty = await screen.findByRole("region", {
+			name: T("share.settings.public"),
+		});
+		expect(empty).toHaveTextContent(T("share.settings.empty"));
 		expect(screen.queryByText(T("share.settings.threads"))).toBeNull();
 	});
 
-	it("列出公开的线程与文件；线程标题点进线程，撤销与撤回都要两步", async () => {
+	it("列出公开的线程与文件；线程标题点进线程，撤销与撤回经 ⋯ 菜单并先确认", async () => {
 		renderWith({ shares: [SHARE], files: [FILE] });
 		const title = await screen.findByRole("link", { name: "冻结后重连" });
 		expect(title).toHaveAttribute("href", `/t/${SHARE.threadId}`);
-		expect(screen.getByText(T("share.settings.threads"))).toBeInTheDocument();
-		expect(screen.getByText(T("share.settings.files"))).toBeInTheDocument();
-		expect(screen.getByRole("link", { name: "trace.log" })).toHaveAttribute(
-			"href",
-			FILE.url,
-		);
+		const threads = screen.getByRole("region", {
+			name: T("share.settings.threads"),
+		});
+		const files = screen.getByRole("region", {
+			name: T("share.settings.files"),
+		});
+		expect(
+			within(files).getByRole("link", { name: "trace.log" }),
+		).toHaveAttribute("href", FILE.url);
+		expect(
+			within(threads).getByRole("button", {
+				name: T("share.page.copyLink"),
+			}),
+		).toBeInTheDocument();
 
 		fireEvent.click(
-			screen.getByRole("button", { name: T("share.dialog.revoke") }),
+			within(threads).getByRole("button", { name: "「冻结后重连」的更多操作" }),
 		);
 		fireEvent.click(
-			screen.getByRole("button", { name: T("publish.unpublish") }),
+			await screen.findByRole("menuitem", { name: T("share.dialog.revoke") }),
+		);
+		expect((await answerConfirm(false)).title).toBe(
+			"撤销「冻结后重连」的公开链接？",
 		);
 		expect(deletes).toEqual([]);
+
 		fireEvent.click(
-			screen.getByRole("button", { name: T("share.dialog.revokeConfirm") }),
+			within(files).getByRole("button", { name: "「trace.log」的更多操作" }),
 		);
 		fireEvent.click(
-			screen.getByRole("button", { name: T("publish.unpublishConfirm") }),
+			await screen.findByRole("menuitem", { name: T("publish.unpublish") }),
 		);
+		await answerConfirm(true);
 		await waitFor(() =>
-			expect(deletes.sort()).toEqual([
-				`/api/v1/published-files/${FILE.id}`,
-				`/api/v1/shares/${SHARE.id}`,
-			]),
+			expect(deletes).toEqual([`/api/v1/published-files/${FILE.id}`]),
 		);
 	});
 });

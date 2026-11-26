@@ -1,6 +1,7 @@
 /**
- * 设置 → 通知 → 此设备（移动壳，M7 计划 4.7；M28 官方推送网关）：系统推送由壳注册（UnifiedPush，或经官方推送网关的
- * FCM / APNs），页面只呈现壳归并后的状态并给出下一步。
+ * 设置 → 通知与预算 → 此设备（移动壳，M7 计划 4.7；M28 官方推送网关）：系统推送由壳注册（UnifiedPush，或经官方推送网关的
+ * FCM / APNs），页面只呈现壳归并后的状态并给出下一步。D 分组里一行「后台推送」：说明在 meta、动作在行尾，
+ * 需要处理的警告 / 错误（Callout）与就地结果在行下方。
  * - disabled：说明 + 启用；no_distributor（foss 包或无 Google 服务的设备）：装 UnifiedPush 分发器的说明 + 重试；
  * - permission_denied：打开系统通知设置；registering：转圈；error：原因（`gateway_*` 各有专属文案）+ 重试；
  * - active：当前通道（网关 FCM / APNs，或 UnifiedPush 分发器与端点主机）、关闭推送、发送测试通知；
@@ -10,8 +11,9 @@
  */
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Callout, Card } from "../../components/ui/data";
+import { Callout } from "../../components/ui/data";
 import { Button, ErrorText, Spinner } from "../../components/ui/primitives";
+import { Group, GroupList, GroupRow } from "../../components/ui/workbench";
 import {
 	host,
 	type MobileHost,
@@ -110,28 +112,38 @@ function PushCard({ mobile }: { mobile: MobileHost }) {
 				: t("mobile.push.switchToGateway")}
 		</Button>
 	) : null;
-	let body: ReactNode = <Spinner />;
+	const sendTest = () => {
+		host.notify({
+			id: `test-${Date.now()}`,
+			title: t("notifySettings.device.testTitle"),
+			body: t("notifySettings.device.testBody"),
+			path: "/settings/notifications",
+		});
+		setSent(true);
+	};
+	// 一行「后台推送」：说明在 meta、动作在行尾；警告与错误（要看到才能处理）放在行下方的 Callout
+	let meta: ReactNode = <Spinner />;
+	let trailing: ReactNode = null;
+	let notice: ReactNode = null;
 	if (push) {
 		switch (push.state) {
 			case "disabled":
-				body = (
-					<>
-						<p className="text-muted text-sm">{t("mobile.push.disabled")}</p>
-						<div>
-							<Button
-								variant="primary"
-								disabled={busy}
-								onClick={enable}
-								data-testid="mobile-push-enable"
-							>
-								{t("mobile.push.enable")}
-							</Button>
-						</div>
-					</>
+				meta = t("mobile.push.disabled");
+				trailing = (
+					<Button
+						size="sm"
+						variant="primary"
+						disabled={busy}
+						onClick={enable}
+						data-testid="mobile-push-enable"
+					>
+						{t("mobile.push.enable")}
+					</Button>
 				);
 				break;
 			case "no_distributor":
-				body = (
+				meta = null;
+				notice = (
 					<Callout
 						tone="warn"
 						actions={
@@ -160,7 +172,8 @@ function PushCard({ mobile }: { mobile: MobileHost }) {
 				);
 				break;
 			case "permission_denied":
-				body = (
+				meta = null;
+				notice = (
 					<Callout
 						tone="warn"
 						actions={
@@ -178,69 +191,55 @@ function PushCard({ mobile }: { mobile: MobileHost }) {
 				);
 				break;
 			case "registering":
-				body = (
-					<p className="inline-flex items-center gap-2 text-muted text-sm">
-						<Spinner size={13} />
+				meta = (
+					<span className="inline-flex items-center gap-2">
+						<Spinner size={12} />
 						{t("mobile.push.registering")}
-					</p>
+					</span>
 				);
 				break;
-			case "active": {
-				const via =
-					push.channel === "fcm"
-						? t("mobile.push.viaFcm")
-						: push.channel === "apns"
-							? t("mobile.push.viaApns")
-							: t("mobile.push.viaUnifiedPush", {
-									distributor: push.distributor || "UnifiedPush",
-									detail: ["UnifiedPush", push.endpointHost]
-										.filter(Boolean)
-										.join(" · "),
-								});
-				body = (
+			case "active":
+				meta = (
+					<span data-testid="mobile-push-via">
+						{push.channel === "fcm"
+							? t("mobile.push.viaFcm")
+							: push.channel === "apns"
+								? t("mobile.push.viaApns")
+								: t("mobile.push.viaUnifiedPush", {
+										distributor: push.distributor || "UnifiedPush",
+										detail: ["UnifiedPush", push.endpointHost]
+											.filter(Boolean)
+											.join(" · "),
+									})}
+					</span>
+				);
+				trailing = (
 					<>
-						<p className="text-sm" data-testid="mobile-push-via">
-							{via}
-						</p>
-						<div className="flex flex-wrap items-center gap-2">
-							<Button
-								size="sm"
-								onClick={() => {
-									host.notify({
-										id: `test-${Date.now()}`,
-										title: t("notifySettings.device.testTitle"),
-										body: t("notifySettings.device.testBody"),
-										path: "/settings/notifications",
-									});
-									setSent(true);
-								}}
-								data-testid="mobile-push-test"
-							>
-								{t("notifySettings.device.testSend")}
-							</Button>
-							<Button
-								size="sm"
-								variant="ghost"
-								disabled={busy}
-								onClick={() => void act(() => mobile.disablePush())}
-								data-testid="mobile-push-disable"
-							>
-								{t("mobile.push.disable")}
-							</Button>
-							{switcher}
-							{sent && (
-								<span role="status" className="text-faint text-xs">
-									{t("notifySettings.device.testSent")}
-								</span>
-							)}
-						</div>
+						{switcher}
+						<Button
+							size="sm"
+							variant="ghost"
+							disabled={busy}
+							onClick={() => void act(() => mobile.disablePush())}
+							data-testid="mobile-push-disable"
+						>
+							{t("mobile.push.disable")}
+						</Button>
+						<Button size="sm" onClick={sendTest} data-testid="mobile-push-test">
+							{t("notifySettings.device.testSend")}
+						</Button>
 					</>
 				);
+				notice = sent && (
+					<span role="status" className="text-faint text-xs">
+						{t("notifySettings.device.testSent")}
+					</span>
+				);
 				break;
-			}
 			case "error": {
 				const code = pushErrorCode(push.error);
-				body = (
+				meta = null;
+				notice = (
 					<Callout
 						tone="err"
 						actions={
@@ -269,7 +268,7 @@ function PushCard({ mobile }: { mobile: MobileHost }) {
 				break;
 			}
 			default:
-				body = <Callout tone="neutral">{t("mobile.push.unsupported")}</Callout>;
+				meta = t("mobile.push.unsupported");
 		}
 	}
 
@@ -278,13 +277,25 @@ function PushCard({ mobile }: { mobile: MobileHost }) {
 			data-testid="mobile-push-card"
 			data-push-state={state}
 			data-push-via={push?.channel ?? ""}
+			className="contents"
 		>
-			<Card title={t("notifySettings.device.title")} icon="phone">
-				<div className="flex flex-col gap-3">
-					{body}
-					<ErrorText error={error} />
-				</div>
-			</Card>
+			<Group title={t("notifySettings.device.title")}>
+				<GroupList>
+					<GroupRow
+						icon="phone"
+						title={t("notifySettings.device.push")}
+						meta={meta}
+						trailing={trailing}
+					>
+						{(notice || error !== null) && (
+							<div className="flex flex-col gap-2">
+								{notice}
+								<ErrorText error={error} />
+							</div>
+						)}
+					</GroupRow>
+				</GroupList>
+			</Group>
 		</div>
 	);
 }

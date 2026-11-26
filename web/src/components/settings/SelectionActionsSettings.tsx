@@ -1,7 +1,8 @@
 /**
- * 设置 → Agent → 选区快捷动作（M22）：自定义的右键菜单动作，名称 + 提示词，选中文字后连同选区交给模型。
- * 列表可上移、下移、编辑、删除（删除先经应用内确认 `confirmAction`）；新增与编辑在对话框里填。每次改动都整体 PUT
- * （`saveSelectionActions`，成功后写回查询缓存，菜单读的副本由 AppShell 的 `useSelectionActionsSync` 跟上）。
+ * 设置 → 输入与快捷键 → 选区快捷动作（M22）：自定义的右键菜单动作，名称 + 提示词，选中文字后连同选区交给模型。
+ * D 分组列表：每条一行（名称 + 提示词首行），行尾悬停出现上移 / 下移，⋯ 里编辑 / 删除（删除先经应用内确认
+ * `confirmAction`）；新增与编辑在对话框里填。每次改动都整体 PUT（`saveSelectionActions`，成功后写回查询缓存，
+ * 菜单读的副本由 AppShell 的 `useSelectionActionsSync` 跟上）。
  * 上限 12 条、名称 ≤ 24 字、提示词 ≤ 2000 字，与服务端校验一致。
  */
 import { useQueryClient } from "@tanstack/react-query";
@@ -13,17 +14,17 @@ import {
 } from "../../api/selection-actions-queries";
 import { confirmAction } from "../../lib/confirm";
 import type { SelectionAction } from "../../state/selection-actions";
-import { Card, ListRow } from "../ui/data";
 import {
 	Button,
 	Dialog,
 	ErrorText,
-	Field,
 	IconButton,
+	Menu,
 	Spinner,
 	TextArea,
 	TextInput,
 } from "../ui/primitives";
+import { FormField, Group, GroupList, GroupRow, Reveal } from "../ui/workbench";
 
 const MAX_ACTIONS = 12;
 const ID_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -114,17 +115,12 @@ export default function SelectionActionsSettings(): ReactNode {
 		draft !== null && draft.name.trim() !== "" && draft.prompt.trim() !== "";
 
 	return (
-		<Card
+		<Group
 			title={t("selectionActions.title")}
-			icon="bolt"
+			meta={full ? t("selectionActions.limit") : undefined}
 			action={
-				<span className="flex items-center gap-2">
+				<>
 					{pending && <Spinner />}
-					{full && (
-						<span className="font-normal text-faint">
-							{t("selectionActions.limit")}
-						</span>
-					)}
 					<Button
 						size="sm"
 						icon="plus"
@@ -133,67 +129,86 @@ export default function SelectionActionsSettings(): ReactNode {
 					>
 						{t("selectionActions.add")}
 					</Button>
-				</span>
+				</>
 			}
 		>
-			<p className="pb-2 text-faint text-xs">{t("selectionActions.hint")}</p>
 			{q.error ? (
 				<ErrorText error={q.error} />
 			) : !q.data ? (
-				<div className="flex justify-center py-6">
-					<Spinner />
-				</div>
+				<Spinner />
 			) : actions.length === 0 ? (
-				<p className="text-faint text-sm">{t("selectionActions.empty")}</p>
+				<p className="px-1.5 text-faint text-sm">
+					{t("selectionActions.empty")}
+				</p>
 			) : (
-				<ul
-					className="-mx-2 flex flex-col"
-					aria-label={t("selectionActions.title")}
-				>
+				<GroupList>
 					{actions.map((a, i) => (
-						<li key={a.id} data-testid="selection-action-row">
-							<ListRow
-								title={<span className="truncate font-medium">{a.name}</span>}
-								meta={
-									<span className="min-w-0 truncate">
-										{a.prompt.split("\n", 1)[0]}
-									</span>
-								}
-								trailing={
-									<>
+						<GroupRow
+							key={a.id}
+							icon="bolt"
+							title={<span className="truncate">{a.name}</span>}
+							meta={
+								<span className="min-w-0 truncate">
+									{a.prompt.split("\n", 1)[0]}
+								</span>
+							}
+							trailing={
+								<>
+									<Reveal>
 										<IconButton
 											icon="chevronUp"
+											box="sm"
 											label={t("selectionActions.moveUp")}
 											disabled={pending || i === 0}
 											onClick={() => move(i, -1)}
 										/>
 										<IconButton
 											icon="chevronDown"
+											box="sm"
 											label={t("selectionActions.moveDown")}
 											disabled={pending || i === actions.length - 1}
 											onClick={() => move(i, 1)}
 										/>
-										<IconButton
-											icon="edit"
-											label={t("common.edit")}
-											disabled={pending}
-											onClick={() =>
-												openDraft({ id: a.id, name: a.name, prompt: a.prompt })
-											}
-										/>
-										<IconButton
-											icon="trash"
-											label={t("common.delete")}
-											disabled={pending}
-											onClick={() => remove(a)}
-										/>
-									</>
-								}
-							/>
-						</li>
+									</Reveal>
+									<Menu
+										trigger={(p) => (
+											<IconButton
+												icon="more"
+												box="sm"
+												label={t("selectionActions.more")}
+												{...p}
+											/>
+										)}
+										items={[
+											{
+												key: "edit",
+												icon: "edit",
+												label: t("common.edit"),
+												disabled: pending,
+												onSelect: () =>
+													openDraft({
+														id: a.id,
+														name: a.name,
+														prompt: a.prompt,
+													}),
+											},
+											{
+												key: "delete",
+												icon: "trash",
+												label: t("common.delete"),
+												danger: true,
+												disabled: pending,
+												onSelect: () => void remove(a),
+											},
+										]}
+									/>
+								</>
+							}
+						/>
 					))}
-				</ul>
+				</GroupList>
 			)}
+			<p className="px-1.5 text-faint text-xs">{t("selectionActions.hint")}</p>
 			<ErrorText error={error} />
 			<Dialog
 				open={draft !== null}
@@ -223,30 +238,38 @@ export default function SelectionActionsSettings(): ReactNode {
 						className="flex flex-col gap-3"
 						onSubmit={(e) => void submitDraft(e)}
 					>
-						<Field label={t("selectionActions.name")}>
-							<TextInput
-								autoFocus
-								maxLength={24}
-								value={draft.name}
-								onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-							/>
-						</Field>
-						<Field
+						<FormField label={t("selectionActions.name")}>
+							{(p) => (
+								<TextInput
+									{...p}
+									autoFocus
+									maxLength={24}
+									value={draft.name}
+									onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+								/>
+							)}
+						</FormField>
+						<FormField
 							label={t("selectionActions.prompt")}
-							hint={t("selectionActions.promptHint")}
+							aside={t("selectionActions.promptHint")}
 						>
-							<TextArea
-								mono={false}
-								rows={6}
-								maxLength={2000}
-								value={draft.prompt}
-								onChange={(e) => setDraft({ ...draft, prompt: e.target.value })}
-							/>
-						</Field>
+							{(p) => (
+								<TextArea
+									{...p}
+									mono={false}
+									rows={6}
+									maxLength={2000}
+									value={draft.prompt}
+									onChange={(e) =>
+										setDraft({ ...draft, prompt: e.target.value })
+									}
+								/>
+							)}
+						</FormField>
 						<ErrorText error={draftError} />
 					</form>
 				)}
 			</Dialog>
-		</Card>
+		</Group>
 	);
 }

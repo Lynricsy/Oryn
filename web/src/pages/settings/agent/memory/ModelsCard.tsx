@@ -1,5 +1,5 @@
 /**
- * 记忆页「模型」卡（T1、U2、T3、R16）：五种用途各选一个模型，「默认」必选，其余第一项是「跟随默认」。
+ * 「模型」分组（T1、U2、T3、R16）：五种用途各选一个模型，「默认」必选，其余第一项是「跟随默认」。
  * 候选是控制面给的 `options`（中央模型目录里的对话模型，协议类型由控制面判定）；不能用于 Hindsight 的置灰并写明原因。
  * 生效协议与 `.env` 里已部署的不同时，给出要改进 `.env` 的片段、「需要重启 Hindsight」与「我已重启」。
  */
@@ -14,18 +14,26 @@ import {
 	useMemoryModels,
 	usePutMemoryModels,
 } from "../../../../api/memory-queries";
+import { GroupNote } from "../../../../components/settings/agent-config-ui";
 import { CopyButton } from "../../../../components/ui/CopyButton";
-import { Badge, Callout, Card } from "../../../../components/ui/data";
+import { Badge, Callout } from "../../../../components/ui/data";
 import {
 	Button,
-	Field,
 	Select,
+	type SelectOption,
 	Spinner,
 } from "../../../../components/ui/primitives";
+import {
+	FormField,
+	Group,
+	GroupPanel,
+} from "../../../../components/ui/workbench";
 import { MemoryError } from "./errors";
 
 /** 选择器的值：空串 = 跟随默认（「默认」用途里表示尚未选择）。 */
 type Draft = Record<MemoryPurpose, string>;
+/** 下拉里「跟随默认」的取值（选项键是 JSON 数组，不会撞上）。 */
+const FOLLOW = "follow";
 
 function optionKey(providerKey: string, modelId: string): string {
 	return JSON.stringify([providerKey, modelId]);
@@ -47,15 +55,15 @@ export function ModelsCard(): ReactNode {
 	const { t } = useTranslation();
 	const q = useMemoryModels();
 	return (
-		<Card title={t("memoryPage.models.title")} icon="sparkle">
+		<Group title={t("memoryPage.models.title")}>
 			{q.isPending ? (
 				<Spinner />
 			) : q.error ? (
 				<MemoryError step="loadModels" error={q.error} />
-			) : q.data ? (
+			) : (
 				<ModelsForm models={q.data} />
-			) : null}
-		</Card>
+			)}
+		</Group>
 	);
 }
 
@@ -76,6 +84,21 @@ function ModelsForm({ models }: { models: MemoryModels }): ReactNode {
 	const unavailable = models.options.filter((o) => !o.family).length;
 	const restart = models.items.filter((i) => i.needsRestart);
 	const defaultName = byKey.get(draft.default)?.name;
+	const modelOptions: SelectOption<string>[] = models.options.map((o) => ({
+		value: optionKey(o.providerKey, o.modelId),
+		disabled: !o.family,
+		label: o.family
+			? t("memoryPage.models.option", {
+					name: o.name,
+					provider: o.providerKey,
+					family: t(`memoryPage.family.${o.family}`),
+				})
+			: t("memoryPage.models.optionUnavailable", {
+					name: o.name,
+					provider: o.providerKey,
+					reason: o.reason ?? t("memoryPage.models.unknownReason"),
+				}),
+	}));
 
 	const save = () =>
 		put.mutate({
@@ -88,102 +111,93 @@ function ModelsForm({ models }: { models: MemoryModels }): ReactNode {
 		});
 
 	return (
-		<div className="flex flex-col gap-3">
-			<p className="text-faint text-xs">{t("memoryPage.models.hint")}</p>
-			<div className="grid gap-3 sm:grid-cols-2">
-				{MEMORY_PURPOSES.map((purpose) => {
-					const choice = models.items.find((i) => i.purpose === purpose);
-					const value = draft[purpose];
-					const known = value === "" || byKey.has(value);
-					return (
-						<Field
-							key={purpose}
-							label={
-								<span className="flex flex-wrap items-center gap-1.5">
-									{t(`memoryPage.purpose.${purpose}`)}
-									{choice?.family && (
-										<Badge>{t(`memoryPage.family.${choice.family}`)}</Badge>
+		<>
+			<GroupPanel>
+				<div className="grid gap-3 sm:grid-cols-2">
+					{MEMORY_PURPOSES.map((purpose) => {
+						const choice = models.items.find((i) => i.purpose === purpose);
+						const value = draft[purpose];
+						const known = value === "" || byKey.has(value);
+						const options: SelectOption<string>[] = [
+							...(purpose === "default"
+								? []
+								: [
+										{
+											value: FOLLOW,
+											label: defaultName
+												? t("memoryPage.models.followNamed", {
+														name: defaultName,
+													})
+												: t("memoryPage.models.follow"),
+										},
+									]),
+							...(!known && choice?.modelId
+								? [
+										{
+											value,
+											disabled: true,
+											label: t("memoryPage.models.missing", {
+												name: choice.modelId,
+											}),
+										},
+									]
+								: []),
+							...modelOptions,
+						];
+						return (
+							<div key={purpose} data-purpose={purpose}>
+								<FormField
+									label={
+										<span className="inline-flex flex-wrap items-center gap-1.5">
+											{t(`memoryPage.purpose.${purpose}`)}
+											{choice?.family && (
+												<Badge>{t(`memoryPage.family.${choice.family}`)}</Badge>
+											)}
+											{choice?.needsRestart && (
+												<Badge tone="warn" icon="alert">
+													{t("memoryPage.models.needsRestartBadge")}
+												</Badge>
+											)}
+										</span>
+									}
+									aside={t(`memoryPage.purposeHint.${purpose}`)}
+								>
+									{(p) => (
+										<Select
+											{...p}
+											value={
+												value === "" && purpose !== "default" ? FOLLOW : value
+											}
+											placeholder={t("memoryPage.models.pick")}
+											options={options}
+											onChange={(v) =>
+												setDraft((d) => ({
+													...d,
+													[purpose]: v === FOLLOW ? "" : v,
+												}))
+											}
+										/>
 									)}
-									{choice?.needsRestart && (
-										<Badge tone="warn" icon="alert">
-											{t("memoryPage.models.needsRestartBadge")}
-										</Badge>
-									)}
-								</span>
-							}
-							hint={t(`memoryPage.purposeHint.${purpose}`)}
-						>
-							<Select
-								value={value}
-								data-purpose={purpose}
-								onChange={(e) =>
-									setDraft((d) => ({ ...d, [purpose]: e.target.value }))
-								}
-							>
-								{purpose === "default" ? (
-									value === "" && (
-										<option value="" disabled>
-											{t("memoryPage.models.pick")}
-										</option>
-									)
-								) : (
-									<option value="">
-										{defaultName
-											? t("memoryPage.models.followNamed", {
-													name: defaultName,
-												})
-											: t("memoryPage.models.follow")}
-									</option>
-								)}
-								{!known && choice?.modelId && (
-									<option value={value} disabled>
-										{t("memoryPage.models.missing", { name: choice.modelId })}
-									</option>
-								)}
-								{models.options.map((o) => (
-									<option
-										key={optionKey(o.providerKey, o.modelId)}
-										value={optionKey(o.providerKey, o.modelId)}
-										disabled={!o.family}
-									>
-										{o.family
-											? t("memoryPage.models.option", {
-													name: o.name,
-													provider: o.providerKey,
-													family: t(`memoryPage.family.${o.family}`),
-												})
-											: t("memoryPage.models.optionUnavailable", {
-													name: o.name,
-													provider: o.providerKey,
-													reason:
-														o.reason ?? t("memoryPage.models.unknownReason"),
-												})}
-									</option>
-								))}
-							</Select>
-						</Field>
-					);
-				})}
-			</div>
-			{unavailable > 0 && (
-				<p className="text-faint text-xs">
-					{t("memoryPage.models.unavailable", { n: unavailable })}
-				</p>
-			)}
-			<div className="flex flex-wrap items-center justify-end gap-2">
-				{dirty && (
-					<Button variant="ghost" onClick={() => setDraft(saved)}>
-						{t("common.cancel")}
+								</FormField>
+							</div>
+						);
+					})}
+				</div>
+				<div className="flex flex-wrap items-center justify-end gap-2">
+					{dirty && (
+						<Button variant="ghost" onClick={() => setDraft(saved)}>
+							{t("common.cancel")}
+						</Button>
+					)}
+					<Button
+						variant="primary"
+						disabled={!dirty || draft.default === "" || put.isPending}
+						onClick={save}
+					>
+						{t("common.save")}
 					</Button>
-				)}
-				<Button
-					variant="primary"
-					disabled={!dirty || draft.default === "" || put.isPending}
-					onClick={save}
-				>
-					{t("common.save")}
-				</Button>
-			</div>
+				</div>
+			</GroupPanel>
 			<MemoryError step="saveModels" error={put.error} />
 			{restart.length > 0 && (
 				<Callout
@@ -209,7 +223,7 @@ function ModelsForm({ models }: { models: MemoryModels }): ReactNode {
 								</div>
 								<pre
 									data-testid="memory-env-snippet"
-									className="overflow-auto whitespace-pre rounded-md bg-inset px-3 py-2 font-mono text-xs"
+									className="overflow-auto whitespace-pre rounded-[11px] bg-inset px-3 py-2 font-mono text-xs"
 								>
 									{models.envSnippet}
 								</pre>
@@ -229,6 +243,11 @@ function ModelsForm({ models }: { models: MemoryModels }): ReactNode {
 					</div>
 				</Callout>
 			)}
-		</div>
+			<GroupNote>
+				{t("memoryPage.models.hint")}
+				{unavailable > 0 &&
+					` ${t("memoryPage.models.unavailable", { n: unavailable })}`}
+			</GroupNote>
+		</>
 	);
 }

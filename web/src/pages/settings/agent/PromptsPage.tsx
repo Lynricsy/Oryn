@@ -1,22 +1,21 @@
 /**
- * 设置 → Agent → 提示词与上下文：omp-home 顶层的六个提示词文件，各自可新建、编辑、删除。
+ * 设置 → 技能与指令 › 提示词与上下文：omp-home 顶层的六个提示词文件，各自可新建、编辑、删除（一组，一行一个文件）。
  * - `AGENTS.md` 是用户级上下文文件，启停键 `context-file:user:AGENTS.md`（Core `capability/context-file.ts`，
  *   `loadContextFiles` 以 `level: "user"` 读 agent 目录下的 AGENTS.md）；
  * - `RULES.md` 合成为名为 `RULES` 的常驻规则（`loadStickyRulesFile`），启停键 `rule:RULES`；
- * - `SYSTEM.md` 整段替换内置系统提示词：行上与编辑器里都有警示，存在时卡片顶部另有提示。
+ * - `SYSTEM.md` 整段替换内置系统提示词：行上与编辑器里都有警示，存在时分组顶部另有提示。
+ * 作用范围说明与下发状态由页面（`InstructionsPage`）统一给出。
  */
-import { type ReactNode, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAgentFiles, useOmpConfig } from "../../../api/agent-config-queries";
-import { ApplyStatusBanner } from "../../../components/settings/ApplyStatusBanner";
 import {
 	AgentErrorText,
-	AgentScopeNote,
 	ConfirmDeleteDialog,
+	GroupNote,
 	TextFileDialog,
 } from "../../../components/settings/agent-config-ui";
-import { Badge, Callout, Card, ListRow } from "../../../components/ui/data";
-import { Icon } from "../../../components/ui/icons";
+import { Badge, Callout } from "../../../components/ui/data";
 import {
 	Button,
 	ErrorText,
@@ -24,6 +23,12 @@ import {
 	Spinner,
 	Toggle,
 } from "../../../components/ui/primitives";
+import {
+	Group,
+	GroupList,
+	GroupRow,
+	Reveal,
+} from "../../../components/ui/workbench";
 import { formatBytes } from "../../../lib/format";
 import {
 	contextFileKey,
@@ -62,116 +67,98 @@ export default function PromptsPage() {
 		</Callout>
 	);
 
-	let body: ReactNode;
-	if (files.error) body = <ErrorText error={files.error} />;
-	else if (files.data === undefined)
-		body = (
-			<div className="flex justify-center py-6">
-				<Spinner />
-			</div>
-		);
-	else
-		body = (
-			<div className="-mx-2 flex flex-col">
-				{FILES.map((f) => {
-					const { path, id } = f;
-					const key = "key" in f ? f.key : undefined;
-					const size = sizes.get(path);
-					const exists = size !== undefined;
-					return (
-						<ListRow
-							key={path}
-							leading={
-								<Icon name="fileText" size={16} className="text-faint" />
-							}
-							title={
-								<>
-									<span className="min-w-0 truncate font-medium font-mono">
-										{path}
-									</span>
-									{path === "SYSTEM.md" && (
-										<Badge tone="warn" icon="alert">
-											{t("agentPages.context.replacesBuiltin")}
-										</Badge>
-									)}
-								</>
-							}
-							meta={
-								<>
-									<span>{t(`agentPages.context.files.${id}`)}</span>
-									<span aria-hidden>·</span>
-									<span>
-										{exists
-											? formatBytes(size)
-											: t("agentPages.context.missing")}
-									</span>
-								</>
-							}
-							trailing={
-								<>
-									{key && (
-										<Toggle
-											checked={!config.disabled.has(key)}
-											disabled={!exists || config.doc === undefined}
-											onChange={(on) =>
-												void config.mutate((doc) =>
-													toggleDisabled(doc, key, on),
-												)
-											}
-											label={
-												<span className="sr-only">
-													{t("agentPages.enable", { name: path })}
-												</span>
-											}
-										/>
-									)}
-									{exists ? (
-										<>
-											<IconButton
-												icon="edit"
-												box="sm"
-												size={14}
-												label={t("agentPages.edit", { name: path })}
-												onClick={() => setEditing(path)}
-											/>
-											<IconButton
-												icon="trash"
-												box="sm"
-												size={14}
-												label={t("agentPages.delete", { name: path })}
-												onClick={() => setDeleting(path)}
-											/>
-										</>
-									) : (
-										<Button
-											size="sm"
-											icon="plus"
-											aria-label={t("agentPages.createFile", { name: path })}
-											onClick={() => setEditing(path)}
-										>
-											{t("common.create")}
-										</Button>
-									)}
-								</>
-							}
-						/>
-					);
-				})}
-			</div>
-		);
-
 	return (
-		<>
-			<ApplyStatusBanner />
-			<AgentScopeNote />
-			<Card title={t("agentPages.context.title")} icon="fileText">
-				<p className="mb-2 text-faint text-xs">
-					{t("agentPages.context.hint")}
-				</p>
-				{sizes.has("SYSTEM.md") && <div className="mb-2">{systemWarning}</div>}
-				{body}
-				<AgentErrorText error={config.mutateError} />
-			</Card>
+		<Group title={t("agentPages.context.title")}>
+			{sizes.has("SYSTEM.md") && systemWarning}
+			{files.error ? (
+				<ErrorText error={files.error} />
+			) : files.data === undefined ? (
+				<Spinner />
+			) : (
+				<GroupList>
+					{FILES.map((f) => {
+						const { path, id } = f;
+						const key = "key" in f ? f.key : undefined;
+						const size = sizes.get(path);
+						const exists = size !== undefined;
+						return (
+							<GroupRow
+								key={path}
+								icon="fileText"
+								title={
+									<>
+										<span className="min-w-0 truncate font-mono">{path}</span>
+										{path === "SYSTEM.md" && (
+											<Badge tone="warn" icon="alert">
+												{t("agentPages.context.replacesBuiltin")}
+											</Badge>
+										)}
+									</>
+								}
+								meta={
+									<>
+										<span>{t(`agentPages.context.files.${id}`)}</span>
+										<span aria-hidden className="text-faint">
+											·
+										</span>
+										<span>
+											{exists
+												? formatBytes(size)
+												: t("agentPages.context.missing")}
+										</span>
+									</>
+								}
+								trailing={
+									<>
+										{exists ? (
+											<Reveal>
+												<IconButton
+													icon="edit"
+													box="sm"
+													size={14}
+													label={t("agentPages.edit", { name: path })}
+													onClick={() => setEditing(path)}
+												/>
+												<IconButton
+													icon="trash"
+													box="sm"
+													size={14}
+													label={t("agentPages.delete", { name: path })}
+													onClick={() => setDeleting(path)}
+												/>
+											</Reveal>
+										) : (
+											<Button
+												size="sm"
+												icon="plus"
+												aria-label={t("agentPages.createFile", { name: path })}
+												onClick={() => setEditing(path)}
+											>
+												{t("common.create")}
+											</Button>
+										)}
+										{key && (
+											<Toggle
+												hideLabel
+												checked={!config.disabled.has(key)}
+												disabled={!exists || config.doc === undefined}
+												onChange={(on) =>
+													void config.mutate((doc) =>
+														toggleDisabled(doc, key, on),
+													)
+												}
+												label={t("agentPages.enable", { name: path })}
+											/>
+										)}
+									</>
+								}
+							/>
+						);
+					})}
+				</GroupList>
+			)}
+			<GroupNote>{t("agentPages.context.hint")}</GroupNote>
+			<AgentErrorText error={config.mutateError} />
 			{editing && (
 				<TextFileDialog
 					path={editing}
@@ -187,6 +174,6 @@ export default function PromptsPage() {
 					onClose={() => setDeleting(null)}
 				/>
 			)}
-		</>
+		</Group>
 	);
 }

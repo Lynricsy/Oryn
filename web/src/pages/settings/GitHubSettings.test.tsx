@@ -1,7 +1,7 @@
 /**
- * 设置页「GitHub」（M14 / M15）：未配置 OAuth App 时只有 OAuth App 卡片；配置后四张卡片（OAuth App、账号含自动化、
- * 仓库 webhook、审计）；Agent 未连接时自动化单选禁用；回调错误码显示文案。OAuth App 卡片的回调地址（取服务端给的值）
- * 与保存 / 删除请求；身份的 scope 与缺失项；hook 状态与申请批准链接；审计表格的过滤与分页。
+ * 设置 → Git 与 GitHub（M14 / M15）：未配置 OAuth App 时只有「提交者」与 OAuth App 一行；配置后再有 GitHub 账号
+ * （含自动化用哪个账号）、仓库 webhook、审计。OAuth App 对话框的回调地址（取服务端给的值）与保存 / 删除请求；
+ * 账号的 scope 与缺失项；hook 状态与申请批准链接；审计表格的过滤与分页；回调错误码显示文案。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -21,7 +21,8 @@ import type {
 } from "../../api/github-queries";
 import i18n from "../../i18n";
 import { answerConfirm } from "../../test/confirm";
-import GitHubSettings, { callbackNotice } from "./GitHubSettings";
+import { callbackNotice } from "./GitHubSettings";
+import GitSettings from "./GitSettings";
 
 const T = (k: string) => i18n.t(k as "common.copy");
 
@@ -164,7 +165,7 @@ function renderAt(status: GitHubStatus, path = "/settings/git") {
 						path="/settings/git"
 						element={
 							<>
-								<GitHubSettings />
+								<GitSettings />
 								<Where />
 							</>
 						}
@@ -179,60 +180,88 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 });
 
-describe("GitHubSettings", () => {
-	it("未配置 OAuth App：只有 OAuth App 卡片", async () => {
+const region = (name: string) => screen.getByRole("region", { name });
+
+/** OAuth App 分组（等状态加载完、行出现后再取：加载中的占位分组随后会被换掉）。 */
+async function oauthGroup(): Promise<HTMLElement> {
+	await screen.findByTestId("github-oauth-row");
+	return region(T("github.oauth.title"));
+}
+
+/** 打开 OAuth App 对话框（未配置时是「配置」，已配置时是「编辑」）。 */
+async function openOAuthDialog(button: string): Promise<HTMLElement> {
+	const group = await oauthGroup();
+	fireEvent.click(within(group).getByRole("button", { name: button }));
+	return screen.findByTestId("github-oauth-app");
+}
+
+describe("Git 与 GitHub", () => {
+	it("未配置 OAuth App：提交者 + OAuth App 一行「配置」，不请求 hook 与审计", async () => {
 		renderAt(EMPTY);
-		expect(await screen.findByTestId("github-oauth-app")).toBeInTheDocument();
+		const oauth = await oauthGroup();
+		expect(oauth).toHaveTextContent(T("github.oauth.notConfigured"));
+		expect(
+			within(oauth).getByRole("button", { name: T("github.oauth.setup") }),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("region", { name: T("gitIdentity.title") }),
+		).toBeInTheDocument();
 		expect(screen.queryByText(T("github.identity.title"))).toBeNull();
-		expect(screen.queryByText(T("github.automation.title"))).toBeNull();
 		expect(screen.queryByText(T("github.hooks.title"))).toBeNull();
 		expect(screen.queryByText(T("github.audit.title"))).toBeNull();
-		// 未配置时不请求 hook 与审计
 		expect(calls.some((c) => c.includes("/github/hooks"))).toBe(false);
 		expect(calls.some((c) => c.includes("/github/audit"))).toBe(false);
 	});
 
-	it("已配置：四张卡片（OAuth App、账号含自动化、webhook、审计），显示账号与最近投递来源", async () => {
+	it("已配置：提交者、OAuth App、GitHub 账号（含自动化）、webhook、审计各一组，标题不再用「身份」", async () => {
 		renderAt(CONNECTED);
+		const accounts = await screen.findByRole("region", {
+			name: T("github.identity.title"),
+		});
+		const titles = screen
+			.getAllByRole("region")
+			.map((r) => r.querySelector("h3")?.textContent);
+		expect(titles).toEqual([
+			"提交者",
+			"OAuth App",
+			"GitHub 账号",
+			"仓库 webhook",
+			"审计",
+		]);
+		expect(region("OAuth App")).toHaveTextContent("Ov23liTEST");
+		// 自动化是账号分组里的一行
 		expect(
-			await screen.findByText(T("github.identity.title")),
+			within(accounts).getByRole("combobox", {
+				name: T("github.automation.title"),
+			}),
 		).toBeInTheDocument();
-		expect(screen.getByText(T("github.oauth.title"))).toBeInTheDocument();
-		expect(screen.getByText(T("github.hooks.title"))).toBeInTheDocument();
-		expect(screen.getByText(T("github.audit.title"))).toBeInTheDocument();
-		// 自动化是账号卡片里的一节，不是单独的卡片
-		expect(screen.getByTestId("github-automation")).toHaveTextContent(
-			T("github.automation.title"),
-		);
-		const identityList = screen
-			.getByTestId("github-identity-user")
-			.closest("ul")?.parentElement;
-		expect(
-			identityList?.contains(screen.getByTestId("github-automation")),
-		).toBe(true);
 		expect(screen.getByTestId("github-last-delivery")).toHaveTextContent(
 			/轮询/,
 		);
 		expect(screen.getByTestId("github-identity-user")).toHaveTextContent(
 			"@octo",
 		);
-		expect(screen.getByTestId("github-identity-agent")).toHaveTextContent(
-			T("github.identity.notConnected"),
-		);
+		expect(
+			screen.getByTestId("github-identity-agent").closest("li"),
+		).toHaveTextContent(T("github.identity.notConnected"));
 	});
 
-	it("Agent 未连接：自动化单选的 Agent 项禁用，我的账号选中", async () => {
+	it("Agent 未连接：自动化下拉里 Agent 账号不可选，当前为我的账号", async () => {
 		renderAt(CONNECTED);
-		const agent = await screen.findByRole("radio", {
-			name: T("github.identity.agent"),
+		const select = await screen.findByRole("combobox", {
+			name: T("github.automation.title"),
 		});
-		expect(agent).toBeDisabled();
-		const user = screen.getByRole("radio", { name: T("github.identity.user") });
-		expect(user).toBeChecked();
-		expect(user).toBeEnabled();
+		expect(select).toHaveTextContent(T("github.identity.user"));
+		expect(select.closest("li")).toHaveTextContent(
+			T("github.automation.agentMissing"),
+		);
+		fireEvent.click(select);
+		expect(
+			screen.getByRole("option", { name: T("github.identity.agent") }),
+		).toHaveAttribute("aria-disabled", "true");
 	});
 
-	it("Agent 已连接：Agent 项可选；令牌失效的槽位显示「需要重新授权」", async () => {
+	it("Agent 已连接：选 Agent 账号发 PUT；令牌失效的槽位显示「需要重新授权」", async () => {
 		renderAt({
 			...CONNECTED,
 			identities: {
@@ -246,16 +275,35 @@ describe("GitHubSettings", () => {
 				},
 			},
 		});
-		const agent = await screen.findByRole("radio", {
-			name: T("github.identity.agent"),
+		const select = await screen.findByRole("combobox", {
+			name: T("github.automation.title"),
 		});
-		expect(agent).toBeEnabled();
+		fireEvent.click(select);
+		fireEvent.click(
+			screen.getByRole("option", { name: T("github.identity.agent") }),
+		);
+		await waitFor(() => expect(sent).toHaveLength(1));
+		expect(sent[0]?.method).toBe("PUT");
 		expect(screen.getByTestId("github-identity-user")).toHaveTextContent(
 			T("github.identity.reauth"),
 		);
 		expect(
 			screen.getByRole("button", { name: T("github.identity.reconnect") }),
 		).toBeInTheDocument();
+	});
+
+	it("账号 ⋯ → 断开：确认后发 DELETE", async () => {
+		renderAt(CONNECTED);
+		fireEvent.click(
+			await screen.findByRole("button", { name: "我的账号的更多操作" }),
+		);
+		fireEvent.click(
+			await screen.findByRole("menuitem", { name: "断开我的账号" }),
+		);
+		expect((await answerConfirm(true)).title).toBe("断开我的账号 @octo？");
+		await waitFor(() =>
+			expect(sent.some((s) => s.method === "DELETE")).toBe(true),
+		);
 	});
 
 	it("带 ?error=same_account 进入：显示对应错误文案，并清掉 query", async () => {
@@ -273,42 +321,48 @@ describe("GitHubSettings", () => {
 			screen.getByText("不能与另一个槽位是同一个账号"),
 		).toBeInTheDocument();
 	});
+
+	it("带 ?connected=agent 进入：显示连接成功", async () => {
+		renderAt(CONNECTED, "/settings/git?connected=agent");
+		expect(await screen.findByTestId("github-notice")).toHaveTextContent(
+			"Agent 账号已连接",
+		);
+	});
 });
 
-describe("GitHubSettings · OAuth App（M15）", () => {
-	it("首次配置：回调地址取服务端给的值；Secret 必填；保存发 PUT 全部字段", async () => {
+describe("Git 与 GitHub · OAuth App（M15）", () => {
+	it("首次配置：回调地址取服务端给的值；Secret 必填；保存发 PUT 全部字段后关闭对话框", async () => {
 		renderAt(EMPTY);
-		const card = await screen.findByTestId("github-oauth-app");
+		const form = await openOAuthDialog(T("github.oauth.setup"));
+		const dialog = screen.getByRole("dialog", {
+			name: T("github.oauth.setupTitle"),
+		});
 		expect(screen.getByTestId("github-oauth-callback")).toHaveTextContent(
 			EMPTY.callbackUrl,
 		);
 		expect(
-			within(card).getByRole("link", { name: T("github.oauth.register") }),
+			within(form).getByRole("link", { name: T("github.oauth.register") }),
 		).toHaveAttribute("href", "https://github.com/settings/applications/new");
 		expect(
-			within(card).getByRole("button", {
+			within(form).getByRole("button", {
 				name: T("github.oauth.copyCallback"),
 			}),
 		).toBeInTheDocument();
 		// webhook 基址默认填好
 		expect(
-			within(card).getByRole("textbox", { name: /Webhook 基址/ }),
+			within(form).getByRole("textbox", { name: /Webhook 基址/ }),
 		).toHaveValue("https://oryn.example");
-		const save = within(card).getByRole("button", { name: T("common.save") });
+		const save = within(dialog).getByRole("button", { name: T("common.save") });
 		expect(save).toBeDisabled();
-		fireEvent.change(within(card).getByRole("textbox", { name: "Client ID" }), {
+		fireEvent.change(within(form).getByRole("textbox", { name: "Client ID" }), {
 			target: { value: " Ov23liNEW " },
 		});
 		// 只有 Client ID 还不够：首次保存 Secret 必填
 		expect(save).toBeDisabled();
-		fireEvent.change(within(card).getByLabelText("Client Secret"), {
+		fireEvent.change(within(form).getByLabelText("Client Secret"), {
 			target: { value: "s3cret" },
 		});
 		expect(save).toBeEnabled();
-		// 首次配置没有删除按钮
-		expect(
-			within(card).queryByRole("button", { name: T("github.oauth.delete") }),
-		).toBeNull();
 		fireEvent.click(save);
 		await waitFor(() => expect(sent).toHaveLength(1));
 		expect(sent[0]).toEqual({
@@ -320,19 +374,19 @@ describe("GitHubSettings · OAuth App（M15）", () => {
 				webhookBase: "https://oryn.example",
 			},
 		});
-		expect(await within(card).findByRole("status")).toHaveTextContent(
-			T("github.oauth.saved"),
-		);
+		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 	});
 
 	it("已配置：Secret 留空时不发送；回调地址取服务端的值", async () => {
 		renderAt(OAUTH);
-		const card = await screen.findByTestId("github-oauth-app");
+		const form = await openOAuthDialog(T("common.edit"));
 		expect(screen.getByTestId("github-oauth-callback")).toHaveTextContent(
 			OAUTH.callbackUrl,
 		);
-		expect(within(card).getByText(T("github.oauth.secretKeep"))).toBeVisible();
-		const save = within(card).getByRole("button", { name: T("common.save") });
+		expect(within(form).getByText(T("github.oauth.secretKeep"))).toBeVisible();
+		const save = within(screen.getByRole("dialog")).getByRole("button", {
+			name: T("common.save"),
+		});
 		expect(save).toBeEnabled();
 		fireEvent.click(save);
 		await waitFor(() => expect(sent).toHaveLength(1));
@@ -342,18 +396,25 @@ describe("GitHubSettings · OAuth App（M15）", () => {
 		});
 	});
 
-	it("删除：确认文案说明会删 hook、断开身份；取消不发请求，确认后发 DELETE", async () => {
+	it("⋯ → 删除配置：确认文案说明会删 hook、断开账号；取消不发请求，确认后发 DELETE", async () => {
 		renderAt(OAUTH);
-		const card = await screen.findByTestId("github-oauth-app");
-		const del = within(card).getByRole("button", {
-			name: T("github.oauth.delete"),
-		});
-		fireEvent.click(del);
+		const group = await oauthGroup();
+		const remove = async () => {
+			fireEvent.click(
+				await within(group).findByRole("button", {
+					name: T("github.oauth.more"),
+				}),
+			);
+			fireEvent.click(
+				await screen.findByRole("menuitem", { name: T("github.oauth.delete") }),
+			);
+		};
+		await remove();
 		const request = await answerConfirm(false);
 		expect(request.title).toBe(T("github.oauth.deleteConfirm"));
 		expect(request.body).toMatch(/webhook/);
 		expect(sent).toHaveLength(0);
-		fireEvent.click(del);
+		await remove();
 		await answerConfirm(true);
 		await waitFor(() =>
 			expect(sent).toEqual([
@@ -362,10 +423,12 @@ describe("GitHubSettings · OAuth App（M15）", () => {
 		);
 	});
 
-	it("身份：显示授予的 scope；缺 scope 时警告并给出重新连接", async () => {
+	it("账号：显示授予的 scope；缺 scope 时警告并给出重新连接", async () => {
 		renderAt(OAUTH);
-		const user = await screen.findByTestId("github-identity-user");
-		expect(within(user).getByTestId("github-scopes")).toHaveTextContent(
+		const user = (await screen.findByTestId("github-identity-user")).closest(
+			"li",
+		) as HTMLElement;
+		expect(within(user).getByTestId("github-scopes-user")).toHaveTextContent(
 			"admin:repo_hook",
 		);
 		expect(within(user).queryByRole("alert")).toBeNull();
@@ -374,7 +437,9 @@ describe("GitHubSettings · OAuth App（M15）", () => {
 				name: T("github.identity.reconnect"),
 			}),
 		).toBeNull();
-		const agent = screen.getByTestId("github-identity-agent");
+		const agent = screen
+			.getByTestId("github-identity-agent")
+			.closest("li") as HTMLElement;
 		expect(agent).toHaveTextContent(T("github.identity.scopesMissing"));
 		expect(within(agent).getByRole("alert")).toHaveTextContent(
 			"gist write:packages",
@@ -386,14 +451,17 @@ describe("GitHubSettings · OAuth App（M15）", () => {
 		).toBeInTheDocument();
 	});
 
-	it("hook：按仓库列出状态徽标与说明；组织限制给出申请批准链接", async () => {
+	it("hook：按仓库列出状态与最近投递；非正常状态展开说明，组织限制给出申请批准链接", async () => {
 		renderAt(OAUTH);
-		const rows = await screen.findAllByTestId("github-hook");
+		const rows = (await screen.findAllByTestId("github-hook")).map(
+			(r) => r.closest("li") as HTMLElement,
+		);
 		expect(rows).toHaveLength(2);
 		const [active, restricted] = rows as [HTMLElement, HTMLElement];
 		expect(active).toHaveTextContent("acme/widgets");
 		expect(active).toHaveTextContent(T("github.hooks.status.active"));
 		expect(active).toHaveTextContent(/实时/);
+		expect(active).not.toHaveTextContent(T("github.hooks.explain.active"));
 		expect(restricted).toHaveTextContent(
 			T("github.hooks.status.org_restricted"),
 		);

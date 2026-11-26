@@ -357,30 +357,29 @@ function EnvironmentFields({
 			<Field label={t("projects.defaultProvider")}>
 				<Select
 					value={f.defaultProvider ?? ""}
-					onChange={(e) => set("defaultProvider", e.target.value || undefined)}
-				>
-					<option value="">{t("projects.inherit")}</option>
-					{providers.data?.providers.map((p) => (
-						<option key={p.id} value={p.name}>
-							{p.name}
-						</option>
-					))}
-				</Select>
+					onChange={(v) => set("defaultProvider", v || undefined)}
+					options={[
+						{ value: "", label: t("projects.inherit") },
+						...(providers.data?.providers ?? []).map((p) => ({
+							value: p.name,
+							label: p.name,
+						})),
+					]}
+				/>
 			</Field>
 			<Field label={t("projects.defaultOrbType")}>
 				<Select
 					value={f.defaultOrbType ?? ""}
-					onChange={(e) => set("defaultOrbType", e.target.value || undefined)}
-				>
-					<option value="">{t("projects.inherit")}</option>
-					{(provider?.orbTypes ?? []).map((ot) => (
-						<option key={ot.name} value={ot.name}>
-							{typeHasDocker(ot)
-								? `${ot.name} · ${t("accel.docker")}`
-								: ot.name}
-						</option>
-					))}
-				</Select>
+					onChange={(v) => set("defaultOrbType", v || undefined)}
+					options={[
+						{ value: "", label: t("projects.inherit") },
+						...(provider?.orbTypes ?? []).map((ot) => ({
+							value: ot.name,
+							label: ot.name,
+							hint: typeHasDocker(ot) ? t("accel.docker") : undefined,
+						})),
+					]}
+				/>
 			</Field>
 			<Field
 				label={t("projects.defaultBrowserProfile")}
@@ -388,17 +387,15 @@ function EnvironmentFields({
 			>
 				<Select
 					value={f.defaultBrowserProfileId ?? ""}
-					onChange={(e) =>
-						set("defaultBrowserProfileId", e.target.value || undefined)
-					}
-				>
-					<option value="">{t("common.none")}</option>
-					{profiles.data?.profiles.map((p) => (
-						<option key={p.id} value={p.id}>
-							{p.name}
-						</option>
-					))}
-				</Select>
+					onChange={(v) => set("defaultBrowserProfileId", v || undefined)}
+					options={[
+						{ value: "", label: t("common.none") },
+						...(profiles.data?.profiles ?? []).map((p) => ({
+							value: p.id,
+							label: p.name,
+						})),
+					]}
+				/>
 			</Field>
 			<div className="flex items-end">
 				<Toggle

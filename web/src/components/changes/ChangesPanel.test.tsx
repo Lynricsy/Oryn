@@ -17,6 +17,7 @@ import { closeContextMenu } from "../../lib/context-menu/store";
 import { handleOrbFetch, resetOrbFs } from "../../mock/orbfs";
 import { getThreadStore } from "../../state/stores";
 import { uiStore } from "../../state/ui";
+import { pickOption } from "../../test/select";
 import { ContextMenuHost } from "../ui/ContextMenu";
 import ChangesPanel, { POLL_MS } from "./ChangesPanel";
 import { GIT_REQUEST_TIMEOUT_MS } from "./git";
@@ -125,10 +126,8 @@ describe("ChangesPanel", () => {
 		).toBeInTheDocument();
 		expect(within(list).getByText("src")).toBeInTheDocument();
 		expect(
-			screen.getByRole("option", {
-				name: t("changes.scope.allBase", { base: "main" }),
-			}),
-		).toBeInTheDocument();
+			screen.getByRole("combobox", { name: t("changes.scope.label") }),
+		).toHaveTextContent(t("changes.scope.allBase", { base: "main" }));
 		expect(box("README.md").checked).toBe(true);
 		expect(box("src/main.ts").indeterminate).toBe(true);
 		expect(box("src/main.ts").checked).toBe(false);
@@ -280,18 +279,21 @@ describe("ChangesPanel", () => {
 		const picker = screen.getByRole("combobox", {
 			name: t("changes.scope.label"),
 		});
-		fireEvent.change(picker, { target: { value: "uncommitted" } });
+		pickOption(picker, t("changes.scope.uncommitted"));
 		await waitFor(() => expect(screen.queryByText("files.ts")).toBeNull());
 		expect(statusReqs().at(-1)?.query.get("scope")).toBe("uncommitted");
 		expect(box("src/util.ts")).toBeInTheDocument();
 
 		const sha = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b";
+		fireEvent.click(picker);
 		await waitFor(() =>
 			expect(
 				screen.getByRole("option", { name: /^1a2b3c4 docs: 更新 README/ }),
 			).toBeInTheDocument(),
 		);
-		fireEvent.change(picker, { target: { value: `commit:${sha}` } });
+		fireEvent.click(
+			screen.getByRole("option", { name: /^1a2b3c4 docs: 更新 README/ }),
+		);
 		await waitFor(() => expect(screen.queryByText("util.ts")).toBeNull());
 		expect(statusReqs().at(-1)?.query.get("scope")).toBe("commit");
 		expect(statusReqs().at(-1)?.query.get("commit")).toBe(sha);
@@ -307,10 +309,11 @@ describe("ChangesPanel", () => {
 		await filesList();
 		const picker = screen.getByRole("combobox", {
 			name: t("changes.scope.label"),
-		}) as HTMLSelectElement;
-		fireEvent.change(picker, { target: { value: "base:pick" } });
+		});
+		const scope = picker.textContent;
+		pickOption(picker, t("changes.scope.compareBranch"));
 		// 受控下拉框保持原范围，只弹出分支名输入
-		expect(picker.value).toBe("all");
+		expect(picker.textContent).toBe(scope);
 		const input = await screen.findByRole("textbox");
 		const before = statusReqs().length;
 		fireEvent.change(input, { target: { value: "-bad" } });
@@ -350,7 +353,7 @@ describe("ChangesPanel", () => {
 		const picker = screen.getByRole("combobox", {
 			name: t("changes.scope.label"),
 		});
-		fireEvent.change(picker, { target: { value: "base:pick" } });
+		pickOption(picker, t("changes.scope.compareBranch"));
 		const input = await screen.findByRole("textbox");
 		fireEvent.change(input, { target: { value: "release/1.0" } });
 		fireEvent.click(
@@ -575,6 +578,9 @@ describe("ChangesPanel diff 刷新与渲染", () => {
 		const { rerender } = render(<ChangesPanel threadId="T-c13" orbId={ORB} />);
 		await filesList();
 		rerender(<ChangesPanel threadId="T-c13" orbId={other} />);
+		fireEvent.click(
+			screen.getByRole("combobox", { name: t("changes.scope.label") }),
+		);
 		await waitFor(() =>
 			expect(
 				screen.getByRole("option", { name: /^1a2b3c4 docs: 更新 README/ }),

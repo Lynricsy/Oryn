@@ -1,10 +1,11 @@
-/** 设置 › Artifacts：已授权列表（项目名、能力、两步收回）与加载中、失败（重试）、空三种占位。 */
+/** 设置 → 分享与 Artifacts 的「已授权的 Artifacts」分组：列表（项目名、能力、⋯ → 收回先确认）与加载中、失败（重试）、空三种占位。 */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ArtifactConsent } from "../../api/artifact-queries";
 import i18n from "../../i18n";
+import { answerConfirm } from "../../test/confirm";
 import { ArtifactsSection } from "./ArtifactsSection";
 
 const T = (k: string) => i18n.t(k as "common.copy");
@@ -74,15 +75,18 @@ afterEach(() => {
 });
 
 describe("ArtifactsSection", () => {
-	it("没有授权：只显示空态", async () => {
+	it("没有授权：分组里只有空态说明", async () => {
 		renderWith([]);
-		expect(
-			await screen.findByText(T("artifacts.settings.empty")),
-		).toBeInTheDocument();
-		expect(screen.queryByText(T("artifacts.settings.granted"))).toBeNull();
+		const group = screen.getByRole("region", {
+			name: T("artifacts.settings.granted"),
+		});
+		await waitFor(() =>
+			expect(group).toHaveTextContent(T("artifacts.settings.empty")),
+		);
+		expect(screen.queryByRole("list")).toBeNull();
 	});
 
-	it("列出授权：标题链到查看器，项目名与能力，两步收回整个 artifact", async () => {
+	it("列出授权：标题链到查看器，项目名与能力，⋯ → 收回整个 artifact（先确认）", async () => {
 		renderWith([GRANT, LOOSE]);
 		const link = await screen.findByRole("link", { name: "仓库浏览" });
 		expect(link).toHaveAttribute("href", `/artifacts/${GRANT.artifactId}`);
@@ -97,15 +101,16 @@ describe("ArtifactsSection", () => {
 			screen.getAllByText(T("artifacts.settings.caps.sample")),
 		).toHaveLength(2);
 
-		const [first] = screen.getAllByRole("button", {
-			name: T("artifacts.settings.revoke"),
-		});
-		fireEvent.click(first as HTMLElement);
-		expect(deletes).toEqual([]);
 		fireEvent.click(
-			screen.getByRole("button", {
-				name: T("artifacts.settings.revokeConfirm"),
+			screen.getByRole("button", { name: "「仓库浏览」的更多操作" }),
+		);
+		fireEvent.click(
+			await screen.findByRole("menuitem", {
+				name: T("artifacts.settings.revoke"),
 			}),
+		);
+		expect((await answerConfirm(true)).title).toBe(
+			"收回「仓库浏览」的页面能力？",
 		);
 		await waitFor(() =>
 			expect(deletes).toEqual([

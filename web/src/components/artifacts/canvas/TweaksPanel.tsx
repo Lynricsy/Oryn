@@ -345,14 +345,9 @@ function ParamField({
 				<Field label={label}>
 					<Select
 						value={String(value)}
-						onChange={(e) => onChange(e.target.value)}
-					>
-						{param.options.map((o) => (
-							<option key={o} value={o}>
-								{o}
-							</option>
-						))}
-					</Select>
+						onChange={onChange}
+						options={param.options.map((o) => ({ value: o, label: o }))}
+					/>
 				</Field>
 			);
 	}

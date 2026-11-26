@@ -29,6 +29,7 @@ import {
 import { pairUri } from "../lib/pair-qr";
 import { type ProcessedWallpaper, processWallpaper } from "../lib/wallpaper";
 import { installTheme, THEME_KEY, themeStore } from "../state/theme";
+import { uiStore } from "../state/ui";
 import { answerConfirm } from "../test/confirm";
 import { SettingsPage } from "./SettingsPage";
 import {
@@ -541,16 +542,39 @@ describe("设置 → 外观", () => {
 		expect(document.documentElement.dataset.accent).toBe("cobalt");
 	});
 
-	it("外观包含主题与全局语言，没有头像卡", () => {
+	it("外观分三组：主题、语言、布局，没有头像卡", () => {
 		setup("appearance");
-		expect(screen.getByRole("heading", { name: "主题" })).toBeInTheDocument();
 		expect(
-			screen.getByRole("heading", { name: "全局语言" }),
+			screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent),
+		).toEqual(["主题", "语言", "布局"]);
+		expect(
+			screen.getByRole("radiogroup", { name: "全局语言" }),
 		).toBeInTheDocument();
-		expect(screen.getAllByRole("heading", { level: 3 })).toHaveLength(2);
 		expect(
 			screen.queryByRole("group", { name: i18n.t("appearance.avatarGlyphs") }),
 		).toBeNull();
+	});
+
+	it("重置界面布局：侧栏、面板宽度、卡片折叠、Desktop 缩放立刻回到默认，主题与壁纸不动", () => {
+		window.innerWidth = 1280;
+		const ui = uiStore.getState();
+		ui.setSidebarCollapsed(true);
+		ui.setPanelWidth(700);
+		ui.toggleCard("usage");
+		ui.setDesktopScale("fit");
+		themeStore.getState().setMode("dark");
+		setup("appearance");
+		fireEvent.click(screen.getByRole("button", { name: "重置" }));
+		expect(screen.getByRole("status")).toHaveTextContent("已恢复默认");
+		const after = uiStore.getState();
+		expect(after.sidebarCollapsed).toBe(false);
+		expect(after.panelWidth).toBe(420);
+		expect(after.collapsedCards).toEqual({});
+		expect(after.desktopScale).toBeNull();
+		expect(localStorage.getItem("oryn.sidebar.collapsed")).toBeNull();
+		expect(localStorage.getItem("oryn.panel.width")).toBeNull();
+		expect(themeStore.getState().mode).toBe("dark");
+		expect(themeStore.getState().wallpaper).toBe("aurora");
 	});
 
 	const IMAGE = "data:image/png;base64,AAAA";
@@ -716,22 +740,37 @@ describe("设置 → 桌面壳（M6）/ 移动壳（M7）", () => {
 		expect(screen.getByText("SETTINGS HOME")).toBeInTheDocument();
 	});
 
-	it("桌面壳里关于页没有「退出登录」，导航里有「桌面应用」", () => {
+	it("桌面壳：账户页「更换服务器…」交给桌面壳，没有「退出登录」；导航里有「桌面应用」", () => {
 		h.desktop = fakeDesktop;
-		mount("about");
+		mount("account");
 		expect(screen.queryByRole("button", { name: "退出登录" })).toBeNull();
+		fireEvent.click(screen.getByRole("button", { name: "更换服务器…" }));
+		expect(fakeDesktop.changeServer).toHaveBeenCalledTimes(1);
 		expect(screen.getByRole("link", { name: "桌面应用" })).toHaveAttribute(
 			"href",
 			"/settings/desktop",
 		);
 	});
 
-	it("浏览器里关于页有「退出登录」，导航里没有「桌面应用」", () => {
-		mount("about");
-		expect(
-			screen.getByRole("button", { name: "退出登录" }),
-		).toBeInTheDocument();
+	it("浏览器：账户页有「退出登录」（POST /auth/logout），没有「更换服务器…」；导航里没有「桌面应用」", async () => {
+		mount("account");
+		expect(screen.queryByRole("button", { name: "更换服务器…" })).toBeNull();
 		expect(screen.queryByRole("link", { name: "桌面应用" })).toBeNull();
+		fireEvent.click(screen.getByRole("button", { name: "退出登录" }));
+		await waitFor(() =>
+			expect(calls.map((c) => `${c.method} ${c.path}`)).toContain(
+				"POST /api/v1/auth/logout",
+			),
+		);
+	});
+
+	it("关于页只放信息：没有语言、退出登录与更换服务器", () => {
+		mount("about");
+		expect(screen.getByText("Ada")).toBeInTheDocument();
+		expect(screen.queryByRole("radiogroup", { name: "全局语言" })).toBeNull();
+		expect(screen.queryByRole("combobox")).toBeNull();
+		expect(screen.queryByRole("button", { name: "退出登录" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "更换服务器…" })).toBeNull();
 	});
 
 	it("App 会话（设备换来的网页会话）：批准配对卡改为引导到浏览器", () => {
@@ -762,9 +801,7 @@ describe("设置 → 桌面壳（M6）/ 移动壳（M7）", () => {
 		expect(qr).toHaveAttribute("role", "img");
 		expect(qr.querySelectorAll("rect").length).toBeGreaterThan(0);
 		expect(screen.getByText(window.location.origin)).toBeInTheDocument();
-		expect(
-			screen.getByRole("heading", { name: "用手机扫码连接" }),
-		).toBeInTheDocument();
+		expect(screen.getByText("用手机扫码连接")).toBeInTheDocument();
 	});
 
 	it("移动壳：账户与设备页没有二维码卡，desktop 路由回设置首页", () => {
@@ -776,15 +813,17 @@ describe("设置 → 桌面壳（M6）/ 移动壳（M7）", () => {
 		expect(screen.getByText("SETTINGS HOME")).toBeInTheDocument();
 	});
 
-	it("移动壳关于页：App 版本、WebView、令牌存储与「更换服务器…」，没有「退出登录」", async () => {
+	it("移动壳：关于页列 App 版本、WebView、令牌存储；账户页「更换服务器…」交给移动壳，没有「退出登录」", async () => {
 		const mobile = fakeMobile();
 		h.mobile = mobile;
-		mount("about");
+		const view = mount("about");
 		expect(await screen.findByText("0.2.0")).toBeInTheDocument();
 		expect(screen.getByText("141.0.7390.0")).toBeInTheDocument();
 		expect(screen.getByText("Android Keystore")).toBeInTheDocument();
+		view.unmount();
+		mount("account");
 		expect(screen.queryByRole("button", { name: "退出登录" })).toBeNull();
-		fireEvent.click(screen.getByTestId("mobile-change-server"));
+		fireEvent.click(screen.getByTestId("change-server"));
 		expect(mobile.changeServer).toHaveBeenCalledTimes(1);
 	});
 });

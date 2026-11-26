@@ -33,10 +33,6 @@ import BrowserProfilesSettings from "./settings/BrowserProfilesSettings";
 import ComputeSettings from "./settings/ComputeSettings";
 import DesktopSettings from "./settings/DesktopSettings";
 import GitSettings from "./settings/GitSettings";
-import {
-	AgentIdentityCard,
-	AssistantIdentityCard,
-} from "./settings/IdentitySettings";
 import InputSettings from "./settings/InputSettings";
 import NotificationsSettings from "./settings/NotificationsSettings";
 import { SETTINGS_SECTIONS, type SettingsSection } from "./settings/registry";
@@ -51,18 +47,8 @@ const VIEWS: Record<SettingsSection, () => ReactNode> = {
 	input: () => <InputSettings />,
 	notifications: () => <NotificationsSettings />,
 	desktop: () => <DesktopSettings />,
-	assistant: () => (
-		<>
-			<AssistantIdentityCard />
-			<AssistantSettings />
-		</>
-	),
-	"agent-models": () => (
-		<>
-			<AgentIdentityCard />
-			<RolesPage />
-		</>
-	),
+	assistant: () => <AssistantSettings />,
+	"agent-models": () => <RolesPage />,
 	"agent-subagents": () => <SubagentsPage />,
 	"agent-instructions": () => <InstructionsPage />,
 	"agent-extensions": () => <ExtensionsPage />,
@@ -150,7 +136,7 @@ export function SettingsPage({
 					</div>
 				)}
 				<div className="min-h-0 flex-1 overflow-y-auto p-3 pb-safe sm:p-5">
-					<div className="mx-auto flex max-w-3xl flex-col gap-3">
+					<div className="mx-auto flex max-w-3xl flex-col gap-[30px]">
 						{View ? <View /> : <SettingsNav variant="index" />}
 					</div>
 				</div>

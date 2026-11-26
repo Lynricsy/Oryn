@@ -1,24 +1,17 @@
 /**
  * 预算卡（M10 计划 5.3 + 修订 R4.3）：设了上限时显示当日、当月两条量表（`warn` 警告色、`over` 错误色），
- * 每条带 `data-budget-period` 与 `data-level`；「设置预算」对话框：日上限、月上限、预警线、时区、启用。
- * 对话框底部说明告警怎么送达，「设置 → 通知」链到通知设置。没设上限时卡片不出现，入口是页头导出旁的「预算…」。
+ * 每条带 `data-budget-period` 与 `data-level`。统计页只看预算：改预算在「设置 → 通知与预算」
+ * （pages/settings/BudgetSettings.tsx），卡片与页头的「预算…」都是链过去的 `BudgetSettingsLink`。
+ * 没设上限时卡片不出现，入口只有页头导出旁的「预算…」。
  */
-import { type ReactNode, useState } from "react";
-import { Trans, useTranslation } from "react-i18next";
+import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import type { Schemas } from "../../api/client";
-import { type BudgetStatus, useSetBudget } from "../../api/stats-queries";
+import type { BudgetStatus } from "../../api/stats-queries";
 import { formatCost } from "../../lib/format";
 import { Badge, Card, Meter, type Tone } from "../ui/data";
-import {
-	Button,
-	Dialog,
-	ErrorText,
-	Field,
-	TextInput,
-	Toggle,
-} from "../ui/primitives";
-import { browserTimeZone } from "./statsParams";
+import { Icon } from "../ui/icons";
 
 type Period = Schemas["BudgetPeriod"];
 
@@ -86,13 +79,26 @@ function PeriodRow({
 	);
 }
 
-export function BudgetCard({
-	status,
-	onEdit,
+/** 链到预算设置（设置 → 通知与预算），外观同小号按钮。 */
+export function BudgetSettingsLink({
+	children,
+	variant = "secondary",
 }: {
-	status: BudgetStatus;
-	onEdit: () => void;
+	children: ReactNode;
+	variant?: "secondary" | "ghost";
 }): ReactNode {
+	return (
+		<Link
+			to="/settings/notifications"
+			className={`inline-flex h-7 select-none items-center justify-center gap-1 whitespace-nowrap rounded-[10px] px-2.5 font-medium text-xs transition-colors duration-150 ${variant === "secondary" ? "border border-border bg-panel text-fg shadow-xs hover:bg-hover" : "text-muted hover:bg-hover hover:text-fg"}`}
+		>
+			{variant === "secondary" && <Icon name="coin" size={13} />}
+			{children}
+		</Link>
+	);
+}
+
+export function BudgetCard({ status }: { status: BudgetStatus }): ReactNode {
 	const { t } = useTranslation();
 	return (
 		<Card
@@ -103,9 +109,9 @@ export function BudgetCard({
 					{!status.budget.enabled && (
 						<Badge>{t("stats.budget.disabled")}</Badge>
 					)}
-					<Button size="sm" variant="ghost" onClick={onEdit}>
-						{t("stats.budget.edit")}
-					</Button>
+					<BudgetSettingsLink variant="ghost">
+						{t("stats.budget.manage")}
+					</BudgetSettingsLink>
 				</span>
 			}
 		>
@@ -114,141 +120,5 @@ export function BudgetCard({
 				<PeriodRow period={status.month} kind="month" />
 			</div>
 		</Card>
-	);
-}
-
-/** 金额输入：空 = 不设；否则须 ≥ 0.01。 */
-function parseUsd(s: string): number | undefined | null {
-	const v = s.trim();
-	if (!v) return undefined;
-	const n = Number(v);
-	return Number.isFinite(n) && n >= 0.01 ? n : null;
-}
-
-export function BudgetDialog({
-	status,
-	onClose,
-}: {
-	status: BudgetStatus | undefined;
-	onClose: () => void;
-}): ReactNode {
-	const { t } = useTranslation();
-	const b = status?.budget;
-	const [daily, setDaily] = useState(b?.dailyUsd ? String(b.dailyUsd) : "");
-	const [monthly, setMonthly] = useState(
-		b?.monthlyUsd ? String(b.monthlyUsd) : "",
-	);
-	const [warn, setWarn] = useState(String(b?.warnPct ?? 80));
-	const [tz, setTz] = useState(
-		b && b.timezone !== "UTC" ? b.timezone : (b?.timezone ?? browserTimeZone()),
-	);
-	const [enabled, setEnabled] = useState(b?.enabled ?? true);
-	const save = useSetBudget();
-	const d = parseUsd(daily);
-	const m = parseUsd(monthly);
-	const w = Number(warn);
-	const valid =
-		d !== null &&
-		m !== null &&
-		Number.isInteger(w) &&
-		w >= 0 &&
-		w <= 99 &&
-		tz.trim() !== "";
-	const submit = () => {
-		if (!valid) return;
-		save.mutate(
-			{
-				...(d !== undefined ? { dailyUsd: d } : {}),
-				...(m !== undefined ? { monthlyUsd: m } : {}),
-				warnPct: w,
-				timezone: tz.trim(),
-				enabled,
-			},
-			{ onSuccess: onClose },
-		);
-	};
-	return (
-		<Dialog
-			open
-			title={t("stats.budget.dialog.title")}
-			onClose={onClose}
-			footer={
-				<>
-					<Button variant="ghost" onClick={onClose}>
-						{t("common.cancel")}
-					</Button>
-					<Button
-						variant="primary"
-						disabled={!valid || save.isPending}
-						onClick={submit}
-					>
-						{t("common.save")}
-					</Button>
-				</>
-			}
-		>
-			<form
-				className="flex flex-col gap-3"
-				onSubmit={(e) => {
-					e.preventDefault();
-					submit();
-				}}
-			>
-				<div className="grid grid-cols-2 gap-3">
-					<Field label={t("stats.budget.dialog.daily")}>
-						<TextInput
-							inputMode="decimal"
-							value={daily}
-							placeholder="—"
-							onChange={(e) => setDaily(e.target.value)}
-						/>
-					</Field>
-					<Field label={t("stats.budget.dialog.monthly")}>
-						<TextInput
-							inputMode="decimal"
-							value={monthly}
-							placeholder="—"
-							onChange={(e) => setMonthly(e.target.value)}
-						/>
-					</Field>
-					<Field
-						label={t("stats.budget.dialog.warnPct")}
-						hint={t("stats.budget.dialog.warnHint")}
-					>
-						<TextInput
-							inputMode="numeric"
-							value={warn}
-							onChange={(e) => setWarn(e.target.value)}
-						/>
-					</Field>
-					<Field label={t("stats.budget.dialog.timezone")}>
-						<TextInput value={tz} onChange={(e) => setTz(e.target.value)} />
-					</Field>
-				</div>
-				<Toggle
-					checked={enabled}
-					onChange={setEnabled}
-					label={t("stats.budget.dialog.enabled")}
-				/>
-				{(d === null || m === null) && (
-					<p className="text-err text-xs">{t("stats.budget.dialog.invalid")}</p>
-				)}
-				<ErrorText error={save.error} />
-				<p className="text-faint text-xs">
-					<Trans
-						i18nKey="stats.budget.notifyHint"
-						components={{
-							// 标签名不能用 link：它是 HTML 空元素，Trans 的解析器会把它当自闭合、丢掉里面的文字
-							settings: (
-								<Link
-									to="/settings/notifications"
-									className="text-accent-ink underline-offset-2 hover:underline"
-								/>
-							),
-						}}
-					/>
-				</p>
-			</form>
-		</Dialog>
 	);
 }

@@ -24,6 +24,7 @@ import {
 } from "../../mock/fixtures";
 import { MockServer } from "../../mock/server";
 import { indexStore } from "../../state/stores";
+import { pickOption } from "../../test/select";
 import { ScheduleDialog, type ScheduleTarget } from "./ScheduleDialog";
 
 interface Call {
@@ -108,7 +109,9 @@ const field = (label: string) => {
 	const host = Array.from(dialog().querySelectorAll("label")).find(
 		(l) => l.firstElementChild?.textContent === label,
 	);
-	const control = host?.querySelector<HTMLElement>("input,textarea,select");
+	const control = host?.querySelector<HTMLElement>(
+		"input,textarea,[role=combobox]",
+	);
 	if (!control) throw new Error(`没有「${label}」字段`);
 	return control;
 };
@@ -129,9 +132,7 @@ describe("ScheduleDialog：线程内定时", () => {
 		fireEvent.change(within(dialog()).getByLabelText("间隔数值"), {
 			target: { value: "2" },
 		});
-		fireEvent.change(within(dialog()).getByLabelText("间隔单位"), {
-			target: { value: "h" },
-		});
+		pickOption(within(dialog()).getByLabelText("间隔单位"), "小时");
 		expect(save()).toBeDisabled();
 		fireEvent.change(field("提示词"), { target: { value: "看一眼 CI" } });
 		// 线程内定时没有项目 / 模型 / 保留数
@@ -196,9 +197,11 @@ describe("ScheduleDialog：每次新建线程", () => {
 		fireEvent.change(field("提示词"), { target: { value: "跑测试" } });
 		expect(save()).toBeDisabled();
 		fireEvent.change(field("名称"), { target: { value: "smoke" } });
-		fireEvent.change(field("上一次还没结束时"), { target: { value: "allow" } });
+		pickOption(field("上一次还没结束时"), "允许并行");
 		fireEvent.change(field("保留最近几次"), { target: { value: "80" } });
-		await waitFor(() => expect(field("项目")).toHaveValue(oryn));
+		await waitFor(() =>
+			expect(field("项目")).toHaveTextContent(projects[0]?.name ?? ""),
+		);
 		fireEvent.click(save());
 		await waitFor(() => expect(onClose).toHaveBeenCalled());
 		const [post] = writes();
@@ -228,7 +231,9 @@ describe("ScheduleDialog：每次新建线程", () => {
 		await ready();
 		expect(field("项目")).toBeDisabled();
 		// 项目列表到了之后才有对应的选项
-		await waitFor(() => expect(field("项目")).toHaveValue(projects[1]?.id));
+		await waitFor(() =>
+			expect(field("项目")).toHaveTextContent(projects[1]?.name ?? ""),
+		);
 	});
 
 	it("同项目重名：409 schedule_name_taken 标在名称框上，对话框不关", async () => {
@@ -433,7 +438,7 @@ describe("ScheduleDialog：秒级间隔（M9 审查 W3）", () => {
 		const onClose = mount({ mode: "thread", threadId: M9_IDS.scheduledThread });
 		await ready();
 		expect(within(dialog()).getByLabelText("间隔数值")).toHaveValue(sec);
-		expect(within(dialog()).getByLabelText("间隔单位")).toHaveValue("s");
+		expect(within(dialog()).getByLabelText("间隔单位")).toHaveTextContent("秒");
 		fireEvent.change(field("提示词"), { target: { value: "只改提示词" } });
 		fireEvent.click(save());
 		await waitFor(() => expect(onClose).toHaveBeenCalled());
@@ -573,8 +578,8 @@ describe("ScheduleDialog：浏览器本地时间（M9 审查 W5）", () => {
 		});
 		const onClose = mount({ mode: "thread", threadId: M9_IDS.spaceIdle });
 		await ready();
-		fireEvent.change(field("时区"), { target: { value: "Asia/Tokyo" } });
-		expect(field("时区")).toHaveValue("Asia/Tokyo");
+		pickOption(field("时区"), "Asia/Tokyo");
+		expect(field("时区")).toHaveTextContent("Asia/Tokyo");
 		expect(field("截止时间（浏览器本地时间，UTC）")).toHaveAttribute(
 			"type",
 			"datetime-local",
@@ -688,7 +693,7 @@ describe("ScheduleDialog：运行前闸门", () => {
 		expect(
 			within(dialog()).getByRole("radio", { name: "SSH 主机" }),
 		).toHaveAttribute("aria-checked", "true");
-		await waitFor(() => expect(field("SSH 主机")).toHaveValue("bastion"));
+		await waitFor(() => expect(field("SSH 主机")).toHaveTextContent("bastion"));
 		expect(field("命令")).toHaveValue(gate?.command);
 		expect(field("超时（秒）")).toHaveValue(30);
 		// 工作线程的定时提示「安静结束」
@@ -735,17 +740,20 @@ describe("ScheduleDialog：运行前闸门", () => {
 		).toHaveAttribute("aria-checked", "true");
 		fireEvent.click(within(dialog()).getByRole("radio", { name: "SSH 主机" }));
 		expect(save()).toBeDisabled();
-		await waitFor(() => expect(field("SSH 主机").tagName).toBe("SELECT"));
-		const host = field("SSH 主机");
+		await waitFor(() =>
+			expect(field("SSH 主机")).toHaveAttribute("role", "combobox"),
+		);
+		fireEvent.click(field("SSH 主机"));
+		const hosts = screen.getByRole("listbox");
 		// 无项目的定时不是全自动运行：未允许全自动线程的主机照样可选
 		expect(
-			within(host).getByRole("option", { name: "prod-web" }),
-		).toBeEnabled();
+			within(hosts).getByRole("option", { name: "prod-web" }),
+		).not.toHaveAttribute("aria-disabled", "true");
 		// 无项目的定时只列全局主机
 		expect(
-			within(host).queryByRole("option", { name: "staging-db" }),
+			within(hosts).queryByRole("option", { name: /staging-db/ }),
 		).toBeNull();
-		fireEvent.change(host, { target: { value: "bastion" } });
+		fireEvent.click(within(hosts).getByRole("option", { name: "bastion" }));
 		expect(save()).toBeDisabled();
 		fireEvent.change(field("命令"), {
 			target: { value: "check-inbox --json" },

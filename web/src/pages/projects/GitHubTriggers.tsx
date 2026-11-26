@@ -512,14 +512,12 @@ export function TriggerDialog({
 				<Field label={t("github.triggers.eventLabel")}>
 					<Select
 						value={f.event}
-						onChange={(e) => set("event", e.target.value as TriggerEvent)}
-					>
-						{EVENTS.map((ev) => (
-							<option key={ev} value={ev}>
-								{t(`github.triggers.event.${ev}`)}
-							</option>
-						))}
-					</Select>
+						onChange={(v) => set("event", v)}
+						options={EVENTS.map((ev) => ({
+							value: ev,
+							label: t(`github.triggers.event.${ev}`),
+						}))}
+					/>
 				</Field>
 				{f.event === "issue_labeled" && (
 					<Field label={t("github.triggers.label")}>
@@ -545,20 +543,16 @@ export function TriggerDialog({
 				<Field label={t("github.triggers.preset")}>
 					<Select
 						value=""
-						onChange={(e) => {
-							const preset = TRIGGER_PRESETS.find(
-								(p) => p.key === e.target.value,
-							);
+						placeholder={t("github.triggers.presetNone")}
+						onChange={(v) => {
+							const preset = TRIGGER_PRESETS.find((p) => p.key === v);
 							if (preset) set("prompt", preset.prompt);
 						}}
-					>
-						<option value="">{t("github.triggers.presetNone")}</option>
-						{TRIGGER_PRESETS.map((p) => (
-							<option key={p.key} value={p.key}>
-								{t(p.labelKey)}
-							</option>
-						))}
-					</Select>
+						options={TRIGGER_PRESETS.map((p) => ({
+							value: p.key,
+							label: t(p.labelKey),
+						}))}
+					/>
 				</Field>
 				<Field
 					label={t("github.triggers.prompt")}
@@ -633,17 +627,17 @@ export function TriggerDialog({
 				<ModelPool value={f.models} onChange={(v) => set("models", v)} />
 				<Field label={t("github.triggers.thinking")}>
 					<Select
-						wrapperClassName="w-full max-w-60"
+						className="w-full max-w-60"
 						value={f.thinking}
-						onChange={(e) => set("thinking", e.target.value)}
-					>
-						<option value="">{t("github.triggers.thinkingDefault")}</option>
-						{TRIGGER_THINKING.map((l) => (
-							<option key={l} value={l}>
-								{t(`model.levels.${l}`)}
-							</option>
-						))}
-					</Select>
+						onChange={(v) => set("thinking", v)}
+						options={[
+							{ value: "", label: t("github.triggers.thinkingDefault") },
+							...TRIGGER_THINKING.map((l) => ({
+								value: l,
+								label: t(`model.levels.${l}`),
+							})),
+						]}
+					/>
 				</Field>
 
 				<Section>{t("github.triggers.sectionTask")}</Section>

@@ -63,10 +63,14 @@ function mount(node: React.ReactNode, path = "/settings/automations") {
 	);
 }
 
+/** 定时行与操作记录行的标识在标题上（`GroupRow` 不带属性），取整行 li。 */
 const rowNames = (section: HTMLElement) =>
 	Array.from(section.querySelectorAll("[data-schedule]")).map(
-		(li) => li.getAttribute("data-schedule") as string,
+		(el) => el.getAttribute("data-schedule") as string,
 	);
+
+const rowOf = (section: HTMLElement, selector: string) =>
+	section.querySelector(selector)?.closest("li") as HTMLElement;
 
 describe("设置 → 自动化：定时任务", () => {
 	it("分「项目定时」「线程内定时」两段；agent 建的带徽标，线程内定时用线程标题", async () => {
@@ -86,14 +90,16 @@ describe("设置 → 自动化：定时任务", () => {
 			M9_IDS.mainReminder,
 		]);
 		expect(threadSec).toHaveTextContent("每天早上同步上游并跑测试");
-		const patrol = projectSec.querySelector(
+		const patrol = rowOf(
+			projectSec,
 			`[data-schedule="${M9_IDS.spaceSchedule}"]`,
-		) as HTMLElement;
+		);
 		expect(patrol).toHaveTextContent("由 agent 创建");
 		expect(patrol).toHaveTextContent("工作日 9:00");
-		const failing = projectSec.querySelector(
+		const failing = rowOf(
+			projectSec,
 			`[data-schedule="${M9_IDS.failingSchedule}"]`,
-		) as HTMLElement;
+		);
 		expect(failing).toHaveTextContent("失败");
 		expect(within(failing).getByRole("switch")).not.toBeChecked();
 	});
@@ -128,8 +134,7 @@ describe("设置 → 自动化：操作记录", () => {
 		await waitFor(() =>
 			expect(list.querySelectorAll("[data-action]")).toHaveLength(5),
 		);
-		const row = (id: string) =>
-			list.querySelector(`[data-action="${id}"]`) as HTMLElement;
+		const row = (id: string) => rowOf(list, `[data-action="${id}"]`);
 		const auto = row("cac_01JD0000000000000000CAC004");
 		expect(auto).toHaveTextContent("归档线程");
 		expect(auto).toHaveTextContent("自动");
@@ -194,9 +199,7 @@ describe("项目设置里的定时任务", () => {
 				M9_IDS.spaceSchedule,
 			]),
 		);
-		const nightly = box.querySelector(
-			`[data-schedule="${M9_IDS.projectSchedule}"]`,
-		) as HTMLElement;
+		const nightly = rowOf(box, `[data-schedule="${M9_IDS.projectSchedule}"]`);
 		expect(nightly).toHaveTextContent("每 6 小时");
 		fireEvent.click(within(nightly).getByRole("switch"));
 		await waitFor(() =>
@@ -214,8 +217,12 @@ describe("项目设置里的定时任务", () => {
 		await waitFor(() => expect(rowNames(box)).toHaveLength(2));
 		fireEvent.click(within(box).getByRole("button", { name: "新建定时任务" }));
 		const dialog = await screen.findByRole("dialog", { name: "新建定时任务" });
-		const select = dialog.querySelector("select:disabled") as HTMLSelectElement;
-		await waitFor(() => expect(select.value).toBe(oryn.id));
+		// 项目锁定为本项目：下拉禁用并显示该项目
+		const projectSelect = within(dialog).getByRole("combobox", {
+			name: /项目/,
+		});
+		expect(projectSelect).toBeDisabled();
+		await waitFor(() => expect(projectSelect).toHaveTextContent(oryn.name));
 		const control = (label: string) =>
 			Array.from(dialog.querySelectorAll("label"))
 				.find((l) => l.firstElementChild?.textContent === label)
@@ -227,9 +234,7 @@ describe("项目设置里的定时任务", () => {
 		const created = server.automation.schedules.find((s) => s.name === "lint");
 		expect(created).toMatchObject({ mode: "new_thread", projectId: oryn.id });
 
-		const row = box.querySelector(
-			`[data-schedule="${created?.id}"]`,
-		) as HTMLElement;
+		const row = rowOf(box, `[data-schedule="${created?.id}"]`);
 		fireEvent.click(
 			within(row).getByRole("button", { name: "「lint」的操作" }),
 		);

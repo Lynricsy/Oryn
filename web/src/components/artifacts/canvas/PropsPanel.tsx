@@ -15,7 +15,6 @@ import {
 	type CanvasOp,
 	type CanvasPage,
 	DEVICES,
-	type Device,
 	MAX_COORD,
 	NAME_CHARS,
 	PAGE_MAX,
@@ -365,39 +364,35 @@ function FrameSection({
 				/>
 			</Field>
 			<Field label={t("artifacts.canvas.props.size")}>
-				<Select
+				<Select<FramePreset>
 					value={preset}
 					disabled={page.locked}
-					data-testid="canvas-frame-preset"
-					onChange={(e) =>
-						commit(presetOps(page, e.target.value as FramePreset))
-					}
-				>
-					{FRAME_PRESETS.map((p) => (
-						<option key={p.key} value={p.key}>
-							{t(`artifacts.canvas.props.presets.${p.key}`, {
+					onChange={(v) => commit(presetOps(page, v))}
+					options={[
+						...FRAME_PRESETS.map((p) => ({
+							value: p.key,
+							label: t(`artifacts.canvas.props.presets.${p.key}`, {
 								width: p.width,
 								height: p.height,
-							})}
-						</option>
-					))}
-					<option value="custom" disabled={preset !== "custom"}>
-						{t("artifacts.canvas.props.presets.custom")}
-					</option>
-				</Select>
+							}),
+						})),
+						{
+							value: "custom",
+							label: t("artifacts.canvas.props.presets.custom"),
+							disabled: preset !== "custom",
+						},
+					]}
+				/>
 			</Field>
 			<Field label={t("artifacts.design.device.label")}>
 				<Select
 					value={page.device ?? "none"}
-					data-testid="canvas-frame-device"
-					onChange={(e) => set("device", e.target.value as Device)}
-				>
-					{DEVICES.map((d) => (
-						<option key={d} value={d}>
-							{t(`artifacts.design.device.${d}`)}
-						</option>
-					))}
-				</Select>
+					onChange={(v) => set("device", v)}
+					options={DEVICES.map((d) => ({
+						value: d,
+						label: t(`artifacts.design.device.${d}`),
+					}))}
+				/>
 			</Field>
 			<div className="grid grid-cols-2 gap-2">
 				<NumberField

@@ -1,6 +1,7 @@
 /**
- * 设置 › 分享 的 Artifacts 两块（M14 8.4）：自动发布开关发 `PUT /settings/artifacts`；「已发布的 Artifacts」列出标题、
- * 访问级别、版本、访客数，复制链接（有访问码时两行），两步取消发布；空、加载失败两种占位。
+ * 设置 → 分享与 Artifacts 的「已发布的 Artifacts」分组（M14 8.4）：首行自动发布开关发 `PUT /settings/artifacts`；
+ * 每个已发布的 artifact 一行：标题、访问级别、版本、访客数，复制链接（有访问码时两行），⋯ → 取消发布（先确认）；
+ * 空、加载失败两种占位。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -8,6 +9,7 @@ import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Schemas } from "../../api/client";
 import i18n from "../../i18n";
+import { answerConfirm } from "../../test/confirm";
 import { ArtifactPublishing } from "./ArtifactPublishing";
 
 const ID = "art_01JDNADOC0000000000000000B";
@@ -121,7 +123,9 @@ describe("ArtifactPublishing", () => {
 
 	it("列出已发布的 artifact：标题、访问级别、版本、访客数；复制链接带访问码", async () => {
 		mount();
-		const row = await screen.findByTestId("artifact-publication");
+		const row = (await screen.findByTestId("artifact-publication")).closest(
+			"li",
+		) as HTMLElement;
 		expect(
 			screen.getByRole("link", { name: ITEM.artifact.title }),
 		).toHaveAttribute("href", `/artifacts/${ID}`);
@@ -140,19 +144,21 @@ describe("ArtifactPublishing", () => {
 		);
 	});
 
-	it("取消发布要点两次，之后列表为空", async () => {
+	it("⋯ → 取消发布：确认后发 DELETE，之后列表为空", async () => {
 		mount();
 		await screen.findByTestId("artifact-publication");
 		fireEvent.click(
 			screen.getByRole("button", {
+				name: `「${ITEM.artifact.title}」的更多操作`,
+			}),
+		);
+		fireEvent.click(
+			await screen.findByRole("menuitem", {
 				name: i18n.t("artifacts.share.unpublishConfirm"),
 			}),
 		);
-		expect(deletes).toEqual([]);
-		fireEvent.click(
-			screen.getByRole("button", {
-				name: i18n.t("artifacts.share.settings.unpublishConfirm"),
-			}),
+		expect((await answerConfirm(true)).title).toBe(
+			`取消发布「${ITEM.artifact.title}」？`,
 		);
 		await waitFor(() =>
 			expect(deletes).toEqual([`/api/v1/artifacts/${ID}/publication`]),

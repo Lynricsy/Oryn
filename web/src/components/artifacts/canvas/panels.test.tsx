@@ -11,6 +11,7 @@ import {
 	type CanvasOp,
 	parseCanvasDoc,
 } from "../../../lib/artifacts/canvas-doc";
+import { pickOption } from "../../../test/select";
 import { FrameLabel } from "./FrameLabel";
 import { LayersPanel } from "./LayersPanel";
 import { PropsPanel } from "./PropsPanel";
@@ -178,9 +179,7 @@ function props(selected: string[]) {
 describe("属性面板", () => {
 	it("「手机」预设提交 390×844", () => {
 		const { commit } = props(["a"]);
-		fireEvent.change(screen.getByTestId("canvas-frame-preset"), {
-			target: { value: "phone" },
-		});
+		pickOption(screen.getByRole("combobox", { name: /^尺寸/ }), /^手机/);
 		expect(commit).toHaveBeenCalledWith([
 			{ op: "set", id: "a", key: "width", value: 390 },
 			{ op: "set", id: "a", key: "height", value: 844 },

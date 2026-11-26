@@ -1,6 +1,6 @@
 /**
- * 设置 → Agent → 扩展、hook 与工具：列出 omp-home 下 `extensions/`、`hooks/pre|post/`、`tools/` 的条目，
- * 提供源码编辑（行内对话框；「高级」的文件浏览器没有按路径直达的入口）、新建、删除与启停。这些改动要重启会话才生效。
+ * 设置 → 扩展与工具：列出 omp-home 下 `extensions/`、`hooks/pre|post/`、`tools/` 的条目（每类一组），
+ * 提供源码编辑（行内对话框；「配置文件」的文件浏览器没有按路径直达的入口）、新建、删除与启停。这些改动要重启会话才生效。
  *
  * 名称与启停键对照 Core：
  * - 扩展模块（`discoverExtensionModulePaths` + `getExtensionNameFromPath`，键 `extension-module:<名称>`）：
@@ -17,14 +17,15 @@ import {
 	useAgentTexts,
 	useOmpConfig,
 } from "../../../api/agent-config-queries";
-import { ApplyStatusBanner } from "../../../components/settings/ApplyStatusBanner";
 import {
 	AgentErrorText,
-	AgentScopeNote,
+	AgentPageHead,
 	ConfirmDeleteDialog,
+	EmptyPanel,
+	GroupNote,
 	TextFileDialog,
 } from "../../../components/settings/agent-config-ui";
-import { Badge, Callout, Card, ListRow } from "../../../components/ui/data";
+import { Badge, Callout } from "../../../components/ui/data";
 import type { IconName } from "../../../components/ui/icons";
 import {
 	Button,
@@ -37,6 +38,13 @@ import {
 	TextInput,
 	Toggle,
 } from "../../../components/ui/primitives";
+import {
+	FormField,
+	Group,
+	GroupList,
+	GroupRow,
+	Reveal,
+} from "../../../components/ui/workbench";
 import { parseFrontmatter } from "../../../lib/frontmatter";
 import {
 	extensionModuleKey,
@@ -285,14 +293,15 @@ export default function ExtensionsPage() {
 		{ id: "tools", icon: "wrench", entries: toolEntries(paths, texts) },
 	];
 
-	const row = (e: CodeEntry): ReactNode => {
+	const row = (e: CodeEntry, icon: IconName): ReactNode => {
 		const key = e.key;
 		return (
-			<ListRow
+			<GroupRow
 				key={e.id}
+				icon={icon}
 				title={
 					<>
-						<span className="min-w-0 truncate font-medium">{e.name}</span>
+						<span className="min-w-0 truncate">{e.name}</span>
 						{key === undefined && (
 							<Badge tone="warn" icon="alert">
 								{t("agentPages.code.notLoaded")}
@@ -303,34 +312,33 @@ export default function ExtensionsPage() {
 				meta={<span className="truncate font-mono">{e.location}</span>}
 				trailing={
 					<>
+						<Reveal>
+							<IconButton
+								icon="code"
+								box="sm"
+								size={14}
+								label={t("agentPages.code.open", { name: e.name })}
+								onClick={() => setEditing(e)}
+							/>
+							<IconButton
+								icon="trash"
+								box="sm"
+								size={14}
+								label={t("agentPages.delete", { name: e.name })}
+								onClick={() => setDeleting(e)}
+							/>
+						</Reveal>
 						{key !== undefined && (
 							<Toggle
+								hideLabel
 								checked={!config.disabled.has(key)}
 								disabled={config.doc === undefined}
 								onChange={(on) =>
 									void config.mutate((doc) => toggleDisabled(doc, key, on))
 								}
-								label={
-									<span className="sr-only">
-										{t("agentPages.enable", { name: e.name })}
-									</span>
-								}
+								label={t("agentPages.enable", { name: e.name })}
 							/>
 						)}
-						<IconButton
-							icon="code"
-							box="sm"
-							size={14}
-							label={t("agentPages.code.open", { name: e.name })}
-							onClick={() => setEditing(e)}
-						/>
-						<IconButton
-							icon="trash"
-							box="sm"
-							size={14}
-							label={t("agentPages.delete", { name: e.name })}
-							onClick={() => setDeleting(e)}
-						/>
 					</>
 				}
 			/>
@@ -339,16 +347,14 @@ export default function ExtensionsPage() {
 
 	return (
 		<>
-			<ApplyStatusBanner />
-			<AgentScopeNote />
+			<AgentPageHead />
 			<Callout tone="warn" icon="restart">
 				{t("agentPages.code.restart")}
 			</Callout>
 			{sections.map((s) => (
-				<Card
+				<Group
 					key={s.id}
 					title={t(`agentPages.code.${s.id}.title`)}
-					icon={s.icon}
 					action={
 						<Button
 							size="sm"
@@ -362,23 +368,17 @@ export default function ExtensionsPage() {
 						</Button>
 					}
 				>
-					<p className="mb-2 text-faint text-xs">
-						{t(`agentPages.code.${s.id}.hint`)}
-					</p>
 					{files.error ? (
 						<ErrorText error={files.error} />
 					) : files.data === undefined ? (
-						<div className="flex justify-center py-6">
-							<Spinner />
-						</div>
+						<Spinner />
 					) : s.entries.length === 0 ? (
-						<p className="text-faint text-sm">
-							{t(`agentPages.code.${s.id}.empty`)}
-						</p>
+						<EmptyPanel>{t(`agentPages.code.${s.id}.empty`)}</EmptyPanel>
 					) : (
-						<div className="-mx-2 flex flex-col">{s.entries.map(row)}</div>
+						<GroupList>{s.entries.map((e) => row(e, s.icon))}</GroupList>
 					)}
-				</Card>
+					<GroupNote>{t(`agentPages.code.${s.id}.hint`)}</GroupNote>
+				</Group>
 			))}
 			{textError ? <ErrorText error={textError} /> : null}
 			<AgentErrorText error={config.mutateError} />
@@ -431,15 +431,16 @@ function EntryEditor({
 	const [path, setPath] = useState(entry.main);
 	const picker =
 		entry.paths.length > 1 ? (
-			<Field label={t("agentPages.code.file")}>
-				<Select value={path} onChange={(e) => setPath(e.target.value)}>
-					{entry.paths.map((p) => (
-						<option key={p} value={p}>
-							{p}
-						</option>
-					))}
-				</Select>
-			</Field>
+			<FormField label={t("agentPages.code.file")}>
+				{(p) => (
+					<Select
+						{...p}
+						value={path}
+						options={entry.paths.map((x) => ({ value: x, label: x }))}
+						onChange={setPath}
+					/>
+				)}
+			</FormField>
 		) : undefined;
 	return (
 		<TextFileDialog
@@ -512,17 +513,19 @@ function NewFileDialog({
 				}}
 			>
 				{section === "hooks" && (
-					<Field label={t("agentPages.code.hookType")}>
-						<Select
-							value={hookType}
-							onChange={(e) =>
-								setHookType(e.target.value === "post" ? "post" : "pre")
-							}
-						>
-							<option value="pre">{t("agentPages.code.hookPre")}</option>
-							<option value="post">{t("agentPages.code.hookPost")}</option>
-						</Select>
-					</Field>
+					<FormField label={t("agentPages.code.hookType")}>
+						{(p) => (
+							<Select<"pre" | "post">
+								{...p}
+								value={hookType}
+								options={[
+									{ value: "pre", label: t("agentPages.code.hookPre") },
+									{ value: "post", label: t("agentPages.code.hookPost") },
+								]}
+								onChange={setHookType}
+							/>
+						)}
+					</FormField>
 				)}
 				<Field
 					label={t("agentPages.code.fileName")}

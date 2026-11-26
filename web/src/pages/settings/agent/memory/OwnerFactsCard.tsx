@@ -1,5 +1,5 @@
 /**
- * 记忆页「助手记忆 › 事实」卡（M17 R20）：浏览或搜索主人记忆里的 world 事实与 observation，每条带出处
+ * 「事实」分组（M17 R20）：浏览或搜索主人记忆里的 world 事实与 observation，每条带出处
  * （主人陈述 / 含助手消息 / 明确记忆 / 来源未确认，能回溯时给出对话与消息范围并可跳过去）。搜索按召回相关度排序、不分页；
  * 不搜索时按时间倒序分页。world 事实可以设为失效（可填原因）或恢复；observation 不能直接失效，只能失效它的来源事实。
  * 失效后全部活跃主题在刷新完成前不进入注入。
@@ -14,15 +14,21 @@ import {
 	useOwnerMemoryFacts,
 	useSetOwnerMemoryFactState,
 } from "../../../../api/owner-memory-queries";
-import { Badge, Card } from "../../../../components/ui/data";
+import {
+	EmptyPanel,
+	GroupNote,
+} from "../../../../components/settings/agent-config-ui";
+import { Badge } from "../../../../components/ui/data";
 import {
 	Button,
 	Select,
 	Spinner,
 	TextInput,
 } from "../../../../components/ui/primitives";
+import { Group, GroupList } from "../../../../components/ui/workbench";
 import { parseTitleCard } from "../../../../lib/title";
 import { MemoryError } from "./errors";
+import { ItemMeta, ItemRow, Pager } from "./rows";
 import { threadHref } from "./shared";
 
 const PAGE = 20;
@@ -45,115 +51,98 @@ export function OwnerFactsCard({ enabled }: { enabled: boolean }): ReactNode {
 	);
 	const items = q.data?.items ?? [];
 	return (
-		<Card title={t("memoryPage.owner.facts.title")} icon="list">
-			<div className="flex flex-col gap-3">
-				<p className="text-faint text-xs">{t("memoryPage.owner.facts.hint")}</p>
-				<div className="flex flex-wrap gap-2">
-					<Select
-						aria-label={t("memoryPage.owner.facts.type")}
-						value={type}
-						wrapperClassName="w-full sm:w-44"
-						onChange={(e) => {
-							setType(e.target.value as OwnerMemoryFactType | "");
-							setOffset(0);
-						}}
-					>
-						<option value="">{t("memoryPage.owner.facts.allTypes")}</option>
-						<option value="world">
-							{t("memoryPage.owner.facts.types.world")}
-						</option>
-						<option value="observation">
-							{t("memoryPage.owner.facts.types.observation")}
-						</option>
-					</Select>
-					<form
-						className="flex min-w-0 flex-1 basis-60 gap-2"
-						onSubmit={(e) => {
-							e.preventDefault();
-							setQuery(draft.trim());
-							setOffset(0);
-						}}
-					>
-						<TextInput
-							value={draft}
-							onChange={(e) => setDraft(e.target.value)}
-							maxLength={800}
-							placeholder={t("memoryPage.owner.facts.searchPlaceholder")}
-							aria-label={t("memoryPage.owner.facts.search")}
-							className="min-w-0 flex-1"
-						/>
-						<Button type="submit" icon="search" disabled={!draft.trim()}>
-							{t("memoryPage.owner.facts.search")}
-						</Button>
-					</form>
-				</div>
-				{query && (
-					<div className="flex items-center justify-between gap-2">
-						<span className="min-w-0 truncate text-muted text-xs">
-							{t("memoryPage.browse.resultsFor", { q: query })}
-						</span>
-						<Button
-							size="sm"
-							variant="ghost"
-							onClick={() => {
-								setQuery("");
-								setDraft("");
-							}}
-						>
-							{t("memoryPage.browse.clearSearch")}
-						</Button>
-					</div>
-				)}
-				{!enabled ? (
-					<p className="text-faint text-sm">
-						{t("memoryPage.owner.facts.disabled")}
-					</p>
-				) : q.isPending ? (
-					<Spinner />
-				) : q.error ? (
-					<MemoryError step="ownerLoadFacts" error={q.error} />
-				) : items.length === 0 ? (
-					<p className="text-faint text-sm">
-						{query
-							? t("memoryPage.browse.noHits")
-							: offset === 0
-								? t("memoryPage.owner.facts.empty")
-								: t("memoryPage.browse.pageEmpty")}
-					</p>
-				) : (
-					<ul className="-mx-2 flex flex-col">
-						{items.map((f) => (
-							<FactRow key={f.id} fact={f} />
-						))}
-					</ul>
-				)}
-				{!query && (offset > 0 || q.data?.hasMore) && (
-					<div className="flex items-center justify-end gap-2">
-						<span className="text-faint text-xs tabular-nums">
-							{t("memoryPage.browse.range", {
-								from: offset + 1,
-								to: offset + items.length,
-							})}
-						</span>
-						<Button
-							size="sm"
-							icon="chevronLeft"
-							disabled={offset === 0}
-							onClick={() => setOffset(Math.max(0, offset - PAGE))}
-						>
-							{t("memoryPage.browse.prev")}
-						</Button>
-						<Button
-							size="sm"
-							disabled={!q.data?.hasMore}
-							onClick={() => setOffset(offset + PAGE)}
-						>
-							{t("memoryPage.browse.next")}
-						</Button>
-					</div>
-				)}
+		<Group title={t("memoryPage.owner.facts.title")}>
+			<div className="flex flex-wrap gap-2">
+				<Select<OwnerMemoryFactType | "all">
+					aria-label={t("memoryPage.owner.facts.type")}
+					value={type || "all"}
+					className="w-full sm:w-44"
+					options={[
+						{ value: "all", label: t("memoryPage.owner.facts.allTypes") },
+						{
+							value: "world",
+							label: t("memoryPage.owner.facts.types.world"),
+						},
+						{
+							value: "observation",
+							label: t("memoryPage.owner.facts.types.observation"),
+						},
+					]}
+					onChange={(v) => {
+						setType(v === "all" ? "" : v);
+						setOffset(0);
+					}}
+				/>
+				<form
+					className="flex min-w-0 flex-1 basis-60 gap-2"
+					onSubmit={(e) => {
+						e.preventDefault();
+						setQuery(draft.trim());
+						setOffset(0);
+					}}
+				>
+					<TextInput
+						value={draft}
+						onChange={(e) => setDraft(e.target.value)}
+						maxLength={800}
+						placeholder={t("memoryPage.owner.facts.searchPlaceholder")}
+						aria-label={t("memoryPage.owner.facts.search")}
+						className="min-w-0 flex-1"
+					/>
+					<Button type="submit" icon="search" disabled={!draft.trim()}>
+						{t("memoryPage.owner.facts.search")}
+					</Button>
+				</form>
 			</div>
-		</Card>
+			{query && (
+				<div className="flex items-center justify-between gap-2 px-1.5">
+					<span className="min-w-0 truncate text-muted text-xs">
+						{t("memoryPage.browse.resultsFor", { q: query })}
+					</span>
+					<Button
+						size="sm"
+						variant="ghost"
+						onClick={() => {
+							setQuery("");
+							setDraft("");
+						}}
+					>
+						{t("memoryPage.browse.clearSearch")}
+					</Button>
+				</div>
+			)}
+			{!enabled ? (
+				<EmptyPanel>{t("memoryPage.owner.facts.disabled")}</EmptyPanel>
+			) : q.isPending ? (
+				<Spinner />
+			) : q.error ? (
+				<MemoryError step="ownerLoadFacts" error={q.error} />
+			) : items.length === 0 ? (
+				<EmptyPanel>
+					{query
+						? t("memoryPage.browse.noHits")
+						: offset === 0
+							? t("memoryPage.owner.facts.empty")
+							: t("memoryPage.browse.pageEmpty")}
+				</EmptyPanel>
+			) : (
+				<GroupList>
+					{items.map((f) => (
+						<FactRow key={f.id} fact={f} />
+					))}
+				</GroupList>
+			)}
+			{!query && (
+				<Pager
+					offset={offset}
+					page={PAGE}
+					hasMore={q.data?.hasMore}
+					shown={items.length}
+					onOffset={setOffset}
+				/>
+			)}
+			<GroupNote>{t("memoryPage.owner.facts.hint")}</GroupNote>
+		</Group>
 	);
 }
 
@@ -164,13 +153,38 @@ function FactRow({ fact: f }: { fact: OwnerMemoryFact }): ReactNode {
 	const [reason, setReason] = useState("");
 	const invalid = f.state === "invalidated";
 	return (
-		<li className="flex flex-col gap-1 rounded-md px-2 py-2" data-fact={f.id}>
+		<ItemRow data-fact={f.id}>
 			<p
-				className={`whitespace-pre-wrap break-words text-sm ${invalid ? "text-muted line-through" : ""}`}
+				className={`whitespace-pre-wrap break-words text-sm ${invalid ? "text-muted line-through" : "text-fg"}`}
 			>
 				{f.text}
 			</p>
-			<div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-faint text-xs">
+			<ItemMeta
+				actions={
+					f.type === "world" &&
+					!invalidating &&
+					(invalid ? (
+						<Button
+							size="sm"
+							variant="ghost"
+							disabled={set.isPending}
+							onClick={() =>
+								set.mutate({ factId: f.id, body: { state: "valid" } })
+							}
+						>
+							{t("memoryPage.owner.facts.restore")}
+						</Button>
+					) : (
+						<Button
+							size="sm"
+							variant="ghost"
+							onClick={() => setInvalidating(true)}
+						>
+							{t("memoryPage.owner.facts.invalidate")}
+						</Button>
+					))
+				}
+			>
 				<Badge>
 					{f.type === "world" || f.type === "observation"
 						? t(`memoryPage.owner.facts.types.${f.type}`)
@@ -181,34 +195,10 @@ function FactRow({ fact: f }: { fact: OwnerMemoryFact }): ReactNode {
 				)}
 				{f.mentionedAt && <span>{f.mentionedAt}</span>}
 				<Provenance p={f.provenance} />
-				{f.type === "world" && !invalidating && (
-					<span className="ml-auto flex shrink-0 items-center gap-1">
-						{invalid ? (
-							<Button
-								size="sm"
-								variant="ghost"
-								disabled={set.isPending}
-								onClick={() =>
-									set.mutate({ factId: f.id, body: { state: "valid" } })
-								}
-							>
-								{t("memoryPage.owner.facts.restore")}
-							</Button>
-						) : (
-							<Button
-								size="sm"
-								variant="ghost"
-								onClick={() => setInvalidating(true)}
-							>
-								{t("memoryPage.owner.facts.invalidate")}
-							</Button>
-						)}
-					</span>
-				)}
-			</div>
+			</ItemMeta>
 			{invalidating && (
 				<form
-					className="flex flex-col gap-2 rounded-md bg-inset p-2"
+					className="flex flex-col gap-2 rounded-[14px] bg-inset p-2.5"
 					onSubmit={(e) => {
 						e.preventDefault();
 						const why = reason.trim();
@@ -261,7 +251,7 @@ function FactRow({ fact: f }: { fact: OwnerMemoryFact }): ReactNode {
 				</form>
 			)}
 			<MemoryError step="ownerSetFactState" error={set.error} />
-		</li>
+		</ItemRow>
 	);
 }
 

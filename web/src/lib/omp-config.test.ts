@@ -3,6 +3,7 @@ import type { Document } from "yaml";
 import {
 	composerPredictionSettings,
 	contextFileKey,
+	defaultThinkingLevel,
 	extensionModuleKey,
 	hookKey,
 	hookKeyFromPath,
@@ -13,6 +14,7 @@ import {
 	setAgentModelOverride,
 	setComposerPredictionSetting,
 	setCycleOrder,
+	setDefaultThinkingLevel,
 	setDisabledAgent,
 	setModelRole,
 	setModelTagName,
@@ -272,6 +274,20 @@ describe("其他设置项", () => {
 		expect(readConfigDoc(out).toJS()).toEqual({
 			composer: { predictions: false },
 		});
+	});
+
+	it("defaultThinkingLevel：缺省与非法取值按 high；写入只改这一键并保留注释；null 删除", () => {
+		expect(defaultThinkingLevel(readConfigDoc(""))).toBe("high");
+		expect(
+			defaultThinkingLevel(readConfigDoc("defaultThinkingLevel: huge\n")),
+		).toBe("high");
+		expect(
+			defaultThinkingLevel(readConfigDoc("defaultThinkingLevel: low\n")),
+		).toBe("low");
+		const out = edit(CONFIG, (doc) => setDefaultThinkingLevel(doc, "xhigh"));
+		expect(out).toBe(`${CONFIG}defaultThinkingLevel: xhigh\n`);
+		expect(defaultThinkingLevel(readConfigDoc(out))).toBe("xhigh");
+		expect(edit(out, (doc) => setDefaultThinkingLevel(doc, null))).toBe(CONFIG);
 	});
 });
 

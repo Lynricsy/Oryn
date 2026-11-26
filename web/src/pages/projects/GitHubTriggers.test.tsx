@@ -19,6 +19,7 @@ import type {
 } from "../../api/github-queries";
 import i18n from "../../i18n";
 import { TRIGGER_PRESETS } from "../../lib/trigger-presets";
+import { pickOption } from "../../test/select";
 import { GitHubTriggers } from "./GitHubTriggers";
 
 const T = (k: string) => i18n.t(k as "common.copy");
@@ -153,6 +154,8 @@ async function openNew() {
 
 const eventSelect = () =>
 	screen.getByRole("combobox", { name: T("github.triggers.eventLabel") });
+const pickEvent = (ev: string) =>
+	pickOption(eventSelect(), T(`github.triggers.event.${ev}`));
 const saveButton = () => screen.getByRole("button", { name: T("common.save") });
 
 afterEach(() => {
@@ -181,11 +184,11 @@ describe("GitHubTriggers", () => {
 		expect(
 			screen.getByRole("textbox", { name: T("github.triggers.label") }),
 		).toBeInTheDocument();
-		fireEvent.change(eventSelect(), { target: { value: "issue_opened" } });
+		pickEvent("issue_opened");
 		expect(
 			screen.queryByRole("textbox", { name: T("github.triggers.label") }),
 		).toBeNull();
-		fireEvent.change(eventSelect(), { target: { value: "issue_labeled" } });
+		pickEvent("issue_labeled");
 		expect(
 			screen.getByRole("textbox", { name: T("github.triggers.label") }),
 		).toBeInTheDocument();
@@ -198,9 +201,9 @@ describe("GitHubTriggers", () => {
 			name: new RegExp(T("github.triggers.prompt")),
 		}) as HTMLTextAreaElement;
 		fireEvent.change(prompt, { target: { value: "old" } });
-		fireEvent.change(
+		pickOption(
 			screen.getByRole("combobox", { name: T("github.triggers.preset") }),
-			{ target: { value: "triage" } },
+			T(TRIGGER_PRESETS[0].labelKey),
 		);
 		expect(prompt.value.startsWith("Triage {{kind}}")).toBe(true);
 		expect(prompt.value).toBe(TRIGGER_PRESETS[0].prompt);
@@ -219,12 +222,12 @@ describe("GitHubTriggers", () => {
 			}),
 			{ target: { value: "Do it" } },
 		);
-		fireEvent.change(eventSelect(), { target: { value: "mention" } });
+		pickEvent("mention");
 		expect(
 			await screen.findByText(T("github.triggers.agentMissing")),
 		).toBeInTheDocument();
 		expect(saveButton()).toBeDisabled();
-		fireEvent.change(eventSelect(), { target: { value: "issue_opened" } });
+		pickEvent("issue_opened");
 		expect(saveButton()).toBeEnabled();
 	});
 
@@ -252,7 +255,7 @@ describe("GitHubTriggers", () => {
 			}),
 			{ target: { value: "Do it" } },
 		);
-		fireEvent.change(eventSelect(), { target: { value: "mention" } });
+		pickEvent("mention");
 		await waitFor(() => expect(saveButton()).toBeEnabled());
 		expect(screen.queryByText(T("github.triggers.agentMissing"))).toBeNull();
 	});
@@ -299,17 +302,21 @@ describe("GitHubTriggers", () => {
 	it("事件下拉含 M15 新事件；「只发 COMMENT」只在外部 PR、发布前缀只在发布哨兵出现", async () => {
 		renderList([]);
 		await openNew();
-		const values = within(eventSelect())
-			.getAllByRole("option")
-			.map((o) => (o as HTMLOptionElement).value);
-		expect(values).toEqual([
-			"issue_opened",
-			"issue_reopened",
-			"issue_labeled",
-			"mention",
-			"pull_request_opened",
-			"workflow_run_completed",
-		]);
+		// 打开时列表在 label 里，会并进 label 的名称：先取到引用
+		const events = eventSelect();
+		fireEvent.click(events);
+		const labels = screen.getAllByRole("option").map((o) => o.textContent);
+		fireEvent.click(events);
+		expect(labels).toEqual(
+			[
+				"issue_opened",
+				"issue_reopened",
+				"issue_labeled",
+				"mention",
+				"pull_request_opened",
+				"workflow_run_completed",
+			].map((ev) => T(`github.triggers.event.${ev}`)),
+		);
 		const commentOnly = () =>
 			screen.queryByRole("switch", {
 				name: T("github.triggers.commentOnlyReviews"),
@@ -320,14 +327,10 @@ describe("GitHubTriggers", () => {
 			});
 		expect(commentOnly()).toBeNull();
 		expect(prefix()).toBeNull();
-		fireEvent.change(eventSelect(), {
-			target: { value: "pull_request_opened" },
-		});
+		pickEvent("pull_request_opened");
 		expect(commentOnly()).toBeInTheDocument();
 		expect(prefix()).toBeNull();
-		fireEvent.change(eventSelect(), {
-			target: { value: "workflow_run_completed" },
-		});
+		pickEvent("workflow_run_completed");
 		expect(commentOnly()).toBeNull();
 		expect(prefix()).toHaveValue("chore: bump version to ");
 		// 驱动者默认「有写权限的人和作者」
@@ -351,9 +354,7 @@ describe("GitHubTriggers", () => {
 			}),
 			{ target: { value: "Fix it" } },
 		);
-		fireEvent.change(eventSelect(), {
-			target: { value: "workflow_run_completed" },
-		});
+		pickEvent("workflow_run_completed");
 		fireEvent.click(
 			screen.getByRole("radio", {
 				name: starts("github.triggers.drivers.anyone"),
@@ -371,9 +372,9 @@ describe("GitHubTriggers", () => {
 			}),
 			{ target: { value: "coderabbitai[bot]" } },
 		);
-		fireEvent.change(
+		pickOption(
 			screen.getByRole("combobox", { name: T("github.triggers.thinking") }),
-			{ target: { value: "xhigh" } },
+			T("model.levels.xhigh"),
 		);
 		fireEvent.click(
 			screen.getByRole("switch", { name: T("github.triggers.implAuth") }),
@@ -433,7 +434,9 @@ describe("GitHubTriggers", () => {
 		expect(
 			screen.getByRole("textbox", { name: T("github.triggers.name") }),
 		).toHaveValue("robomp 分诊");
-		expect(eventSelect()).toHaveValue("issue_opened");
+		expect(eventSelect()).toHaveTextContent(
+			T("github.triggers.event.issue_opened"),
+		);
 		expect(
 			screen.getByRole("textbox", {
 				name: new RegExp(T("github.triggers.prompt")),
@@ -449,7 +452,7 @@ describe("GitHubTriggers", () => {
 		).toHaveValue(120);
 		expect(
 			screen.getByRole("combobox", { name: T("github.triggers.thinking") }),
-		).toHaveValue("high");
+		).toHaveTextContent(T("model.levels.high"));
 		expect(screen.getByText(T("github.triggers.presetGates"))).toBeVisible();
 		fireEvent.click(
 			screen.getByRole("button", {

@@ -2687,10 +2687,10 @@ const settings: Shooter = async (scheme) =>
 	duo(
 		scheme,
 		await capture(mac(scheme, DUO_W, DUO_H), async (page) => {
-			await go(page, "/settings/agent-roles", "li[data-role]", 1_000);
+			await go(page, "/settings/agent-models", "li[data-role]", 1_000);
 		}),
 		await capture(mac(scheme, DUO_W, DUO_H), async (page) => {
-			await go(page, "/settings/agent-ssh", "main", 1_400);
+			await go(page, "/settings/ssh", "main", 1_400);
 		}),
 		[
 			["模型角色", "轮换顺序、别名与每个角色的模型和思考档位"],

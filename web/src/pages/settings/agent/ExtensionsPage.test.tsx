@@ -143,9 +143,10 @@ describe("ExtensionsPage", () => {
 		expect(
 			await within(dialog).findByLabelText("editor:extensions/guard/index.ts"),
 		).toHaveValue("export default () => {};\n");
-		fireEvent.change(within(dialog).getByRole("combobox"), {
-			target: { value: "extensions/guard/util.ts" },
-		});
+		fireEvent.click(within(dialog).getByRole("combobox", { name: /^文件/ }));
+		fireEvent.click(
+			await screen.findByRole("option", { name: "extensions/guard/util.ts" }),
+		);
 		const editor = await screen.findByLabelText(
 			"editor:extensions/guard/util.ts",
 		);
@@ -163,9 +164,8 @@ describe("ExtensionsPage", () => {
 		await screen.findByText("bash.ts");
 		fireEvent.click(screen.getByRole("button", { name: "在「Hook」中新建" }));
 		const dialog = await screen.findByRole("dialog");
-		fireEvent.change(within(dialog).getByRole("combobox"), {
-			target: { value: "post" },
-		});
+		fireEvent.click(within(dialog).getByRole("combobox", { name: /^时机/ }));
+		fireEvent.click(await screen.findByRole("option", { name: /post/i }));
 		const name = within(dialog).getByLabelText(/^文件名/);
 		fireEvent.change(name, { target: { value: "bad name" } });
 		fireEvent.click(within(dialog).getByRole("button", { name: "继续" }));

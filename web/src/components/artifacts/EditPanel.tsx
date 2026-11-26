@@ -427,17 +427,11 @@ function ElementForm({
 				{pxField("font-size", t("artifacts.edit.fontSize"))}
 				<Field label={t("artifacts.edit.fontWeight")}>
 					<Select
-						data-testid="edit-font-weight"
 						value={raw["font-weight"]}
-						onChange={(e) => change("font-weight", e.target.value)}
-					>
-						{raw["font-weight"] === "" && <option value="">—</option>}
-						{WEIGHTS.map((w) => (
-							<option key={w} value={w}>
-								{w}
-							</option>
-						))}
-					</Select>
+						placeholder="—"
+						onChange={(v) => change("font-weight", v)}
+						options={WEIGHTS.map((w) => ({ value: w, label: w }))}
+					/>
 				</Field>
 			</div>
 			<fieldset className="flex min-w-0 flex-col gap-1 text-sm">

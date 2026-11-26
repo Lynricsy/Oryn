@@ -124,17 +124,14 @@ export function SpaceDialog({
 				<Field label={t("space.project")} hint={t("space.projectHint")}>
 					<Select
 						value={projectId}
-						onChange={(e) => setProjectId(e.target.value)}
-					>
-						<option value="">{t("sidebar.noProject")}</option>
-						{(projects.data?.projects ?? [])
-							.filter((p) => !p.archivedAt || p.id === projectId)
-							.map((p) => (
-								<option key={p.id} value={p.id}>
-									{p.name}
-								</option>
-							))}
-					</Select>
+						onChange={setProjectId}
+						options={[
+							{ value: "", label: t("sidebar.noProject") },
+							...(projects.data?.projects ?? [])
+								.filter((p) => !p.archivedAt || p.id === projectId)
+								.map((p) => ({ value: p.id, label: p.name })),
+						]}
+					/>
 				</Field>
 				{!nameTaken && <ErrorText error={error} />}
 			</form>

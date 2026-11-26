@@ -1,7 +1,8 @@
 /**
- * 记忆页「助手记忆 › 来源」卡（M17 R21）：已写入（或写入失败）的对话与线程，按最近更新倒序分页；每条可以按来源遗忘
- * （删除它写入的全部 document，受影响的主题在刷新前不进入注入；之后有新内容仍会再写入，除非设了排除）。
- * 下半部分是排除项：不进助手记忆的对话与项目，可取消排除；可以从项目列表里选一个项目排除（已写入的随之遗忘）。
+ * 「来源」与「排除项」两组（M17 R21）。
+ * 来源：已写入（或写入失败）的对话与线程，按最近更新倒序分页；每条可以按来源遗忘（删除它写入的全部 document，
+ * 受影响的主题在刷新前不进入注入；之后有新内容仍会再写入，除非设了排除）。
+ * 排除项：不进助手记忆的对话与项目，可取消排除；可以从项目列表里选一个项目排除（已写入的随之遗忘）。
  * 单个对话的排除在助手对话的菜单里切换。
  */
 import type { TFunction } from "i18next";
@@ -19,16 +20,26 @@ import {
 	usePutOwnerMemoryExclusion,
 } from "../../../../api/owner-memory-queries";
 import { useProjects } from "../../../../api/queries";
-import { Badge, Callout, Card } from "../../../../components/ui/data";
+import {
+	EmptyPanel,
+	GroupNote,
+} from "../../../../components/settings/agent-config-ui";
+import { Badge, Callout } from "../../../../components/ui/data";
 import {
 	Button,
 	Dialog,
 	Select,
 	Spinner,
 } from "../../../../components/ui/primitives";
+import {
+	Group,
+	GroupList,
+	GroupRow,
+} from "../../../../components/ui/workbench";
 import { formatRelative } from "../../../../lib/format";
 import { parseTitleCard } from "../../../../lib/title";
 import { MemoryError } from "./errors";
+import { ItemMeta, ItemRow, Pager } from "./rows";
 import { threadHref } from "./shared";
 
 const PAGE = 20;
@@ -44,67 +55,48 @@ export function OwnerSourcesCard(): ReactNode {
 	);
 	const items = q.data?.items ?? [];
 	return (
-		<Card title={t("memoryPage.owner.sources.title")} icon="chats">
-			<div className="flex flex-col gap-3">
-				<p className="text-faint text-xs">
-					{t("memoryPage.owner.sources.hint")}
-				</p>
-				{result && (
-					<Callout tone={result.pending > 0 ? "warn" : "ok"} role="status">
-						{t("memoryPage.owner.sources.forgotten", { n: result.deleted })}
-						{result.pending > 0 &&
-							` ${t("memoryPage.browse.forgetPending", { n: result.pending })}`}
-					</Callout>
-				)}
-				<MemoryError step="ownerForgetSource" error={forget.error} />
-				{q.isPending ? (
-					<Spinner />
-				) : q.error ? (
-					<MemoryError step="ownerLoadSources" error={q.error} />
-				) : items.length === 0 ? (
-					<p className="text-faint text-sm">
-						{offset === 0
-							? t("memoryPage.owner.sources.empty")
-							: t("memoryPage.browse.pageEmpty")}
-					</p>
-				) : (
-					<ul className="-mx-2 flex flex-col">
-						{items.map((s) => (
-							<SourceRow
-								key={s.threadId}
-								source={s}
-								busy={forget.isPending}
-								onForget={() => {
-									forget.reset();
-									setResult(null);
-									setTarget(s);
-								}}
-							/>
-						))}
-					</ul>
-				)}
-				{(offset > 0 || q.data?.hasMore) && (
-					<div className="flex items-center justify-end gap-2">
-						<Button
-							size="sm"
-							icon="chevronLeft"
-							disabled={offset === 0}
-							onClick={() => setOffset(Math.max(0, offset - PAGE))}
-						>
-							{t("memoryPage.browse.prev")}
-						</Button>
-						<Button
-							size="sm"
-							disabled={!q.data?.hasMore}
-							onClick={() => setOffset(offset + PAGE)}
-						>
-							{t("memoryPage.browse.next")}
-						</Button>
-					</div>
-				)}
-				<div className="border-border border-t" />
-				<Exclusions />
-			</div>
+		<Group title={t("memoryPage.owner.sources.title")}>
+			{result && (
+				<Callout tone={result.pending > 0 ? "warn" : "ok"} role="status">
+					{t("memoryPage.owner.sources.forgotten", { n: result.deleted })}
+					{result.pending > 0 &&
+						` ${t("memoryPage.browse.forgetPending", { n: result.pending })}`}
+				</Callout>
+			)}
+			<MemoryError step="ownerForgetSource" error={forget.error} />
+			{q.isPending ? (
+				<Spinner />
+			) : q.error ? (
+				<MemoryError step="ownerLoadSources" error={q.error} />
+			) : items.length === 0 ? (
+				<EmptyPanel>
+					{offset === 0
+						? t("memoryPage.owner.sources.empty")
+						: t("memoryPage.browse.pageEmpty")}
+				</EmptyPanel>
+			) : (
+				<GroupList>
+					{items.map((s) => (
+						<SourceRow
+							key={s.threadId}
+							source={s}
+							busy={forget.isPending}
+							onForget={() => {
+								forget.reset();
+								setResult(null);
+								setTarget(s);
+							}}
+						/>
+					))}
+				</GroupList>
+			)}
+			<Pager
+				offset={offset}
+				page={PAGE}
+				hasMore={q.data?.hasMore}
+				onOffset={setOffset}
+			/>
+			<GroupNote>{t("memoryPage.owner.sources.hint")}</GroupNote>
 			<Dialog
 				open={target !== null}
 				onClose={() => setTarget(null)}
@@ -137,7 +129,7 @@ export function OwnerSourcesCard(): ReactNode {
 					})}
 				</p>
 			</Dialog>
-		</Card>
+		</Group>
 	);
 }
 
@@ -161,17 +153,14 @@ function SourceRow({
 	const { t } = useTranslation();
 	const name = sourceName(s, t);
 	return (
-		<li
-			className="flex flex-col gap-1 rounded-md px-2 py-2"
-			data-source={s.threadId}
-		>
+		<ItemRow data-source={s.threadId}>
 			<div className="flex flex-wrap items-center gap-x-2 gap-y-1">
 				{s.missing ? (
 					<span className="min-w-0 truncate text-muted text-sm">{name}</span>
 				) : (
 					<Link
 						to={threadHref(s.threadId, s.threadKind)}
-						className="min-w-0 max-w-full truncate font-medium text-sm hover:underline"
+						className="min-w-0 max-w-full truncate font-[550] text-fg text-sm hover:underline"
 						title={s.threadTitle}
 					>
 						{name}
@@ -183,17 +172,19 @@ function SourceRow({
 						{t("memoryPage.owner.sources.failed", { n: s.attempts })}
 					</Badge>
 				)}
-				<Button
-					size="sm"
-					variant="ghost"
-					className="ml-auto"
-					disabled={busy || s.chunks === 0}
-					onClick={onForget}
-				>
-					{t("memoryPage.owner.sources.forget")}
-				</Button>
 			</div>
-			<div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-faint text-xs">
+			<ItemMeta
+				actions={
+					<Button
+						size="sm"
+						variant="ghost"
+						disabled={busy || s.chunks === 0}
+						onClick={onForget}
+					>
+						{t("memoryPage.owner.sources.forget")}
+					</Button>
+				}
+			>
 				<span className="tabular-nums">
 					{t("memoryPage.owner.sources.chunks", { n: s.chunks })}
 				</span>
@@ -211,17 +202,17 @@ function SourceRow({
 						})}
 					</span>
 				)}
-			</div>
+			</ItemMeta>
 			{s.lastError && (
 				<p className="break-words text-muted text-xs">
 					{t("memoryPage.status.detail", { detail: s.lastError })}
 				</p>
 			)}
-		</li>
+		</ItemRow>
 	);
 }
 
-function Exclusions(): ReactNode {
+export function OwnerExclusionsCard(): ReactNode {
 	const { t } = useTranslation();
 	const q = useOwnerMemoryExclusions();
 	const projects = useProjects();
@@ -235,27 +226,19 @@ function Exclusions(): ReactNode {
 		(p) => !p.archivedAt && !excluded.has(p.id),
 	);
 	return (
-		<div className="flex flex-col gap-2">
-			<h4 className="font-medium text-sm">
-				{t("memoryPage.owner.exclusions.title")}
-			</h4>
-			<p className="text-faint text-xs">
-				{t("memoryPage.owner.exclusions.hint")}
-			</p>
+		<Group title={t("memoryPage.owner.exclusions.title")}>
 			{q.isPending ? (
 				<Spinner />
 			) : q.error ? (
 				<MemoryError step="ownerLoadExclusions" error={q.error} />
 			) : items.length === 0 ? (
-				<p className="text-faint text-sm">
-					{t("memoryPage.owner.exclusions.empty")}
-				</p>
+				<EmptyPanel>{t("memoryPage.owner.exclusions.empty")}</EmptyPanel>
 			) : (
-				<ul className="-mx-2 flex flex-col">
+				<GroupList>
 					{items.map((e) => (
 						<ExclusionRow key={`${e.kind}:${e.targetId}`} exclusion={e} />
 					))}
-				</ul>
+				</GroupList>
 			)}
 			<form
 				className="flex flex-wrap gap-2"
@@ -271,19 +254,12 @@ function Exclusions(): ReactNode {
 				<Select
 					aria-label={t("memoryPage.owner.exclusions.project")}
 					value={projectId}
-					wrapperClassName="w-full sm:w-56"
+					placeholder={t("memoryPage.owner.exclusions.pickProject")}
+					className="w-full sm:w-56"
 					disabled={projects.isPending}
-					onChange={(e) => setProjectId(e.target.value)}
-				>
-					<option value="">
-						{t("memoryPage.owner.exclusions.pickProject")}
-					</option>
-					{choices.map((p) => (
-						<option key={p.id} value={p.id}>
-							{p.name}
-						</option>
-					))}
-				</Select>
+					options={choices.map((p) => ({ value: p.id, label: p.name }))}
+					onChange={setProjectId}
+				/>
 				<Button
 					type="submit"
 					icon="minusCircle"
@@ -293,7 +269,8 @@ function Exclusions(): ReactNode {
 				</Button>
 			</form>
 			<MemoryError step="ownerSaveExclusion" error={put.error} />
-		</div>
+			<GroupNote>{t("memoryPage.owner.exclusions.hint")}</GroupNote>
+		</Group>
 	);
 }
 
@@ -309,18 +286,26 @@ function ExclusionRow({
 			? parseTitleCard(e.name).text || t("thread.untitled")
 			: (e.name ?? e.targetId);
 	return (
-		<li
-			className="flex min-h-9 flex-col gap-1 rounded-md px-2 py-1.5"
-			data-exclusion={`${e.kind}:${e.targetId}`}
-		>
-			<div className="flex flex-wrap items-center gap-2">
-				<Badge>{t(`memoryPage.owner.exclusions.kind.${e.kind}`)}</Badge>
-				<span className="min-w-0 flex-1 truncate text-sm" title={e.targetId}>
+		<GroupRow
+			title={
+				<span
+					className="truncate"
+					title={e.targetId}
+					data-exclusion={`${e.kind}:${e.targetId}`}
+				>
 					{name}
 				</span>
-				<span className="text-faint text-xs">
-					{formatRelative(e.createdAt)}
-				</span>
+			}
+			meta={
+				<>
+					<span>{t(`memoryPage.owner.exclusions.kind.${e.kind}`)}</span>
+					<span aria-hidden className="text-faint">
+						·
+					</span>
+					<span>{formatRelative(e.createdAt)}</span>
+				</>
+			}
+			trailing={
 				<Button
 					size="sm"
 					variant="ghost"
@@ -329,8 +314,11 @@ function ExclusionRow({
 				>
 					{t("memoryPage.owner.exclusions.remove")}
 				</Button>
-			</div>
-			<MemoryError step="ownerDeleteExclusion" error={del.error} />
-		</li>
+			}
+		>
+			{del.error ? (
+				<MemoryError step="ownerDeleteExclusion" error={del.error} />
+			) : undefined}
+		</GroupRow>
 	);
 }

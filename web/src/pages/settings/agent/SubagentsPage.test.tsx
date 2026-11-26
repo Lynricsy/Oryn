@@ -113,7 +113,10 @@ describe("SubagentsPage", () => {
 		fireEvent.click(
 			within(row).getByRole("button", { name: "设置 task 的模型与头像" }),
 		);
-		const input = within(row).getByLabelText("为 task 添加覆盖模型");
+		const dialog = await screen.findByRole("dialog", {
+			name: "设置 task 的模型与头像",
+		});
+		const input = within(dialog).getByLabelText("为 task 添加覆盖模型");
 		fireEvent.change(input, { target: { value: "openai/gpt-5" } });
 		fireEvent.keyDown(input, { key: "Enter" });
 		await waitFor(() =>
@@ -122,7 +125,7 @@ describe("SubagentsPage", () => {
 			}),
 		);
 		// 再加一个：写成按顺序回退的列表
-		const again = within(row).getByLabelText("为 task 添加覆盖模型");
+		const again = within(dialog).getByLabelText("为 task 添加覆盖模型");
 		fireEvent.change(again, { target: { value: "@slow" } });
 		fireEvent.keyDown(again, { key: "Enter" });
 		await waitFor(() =>
@@ -139,7 +142,7 @@ describe("SubagentsPage", () => {
 		fireEvent.click(
 			within(row).getByRole("button", { name: "设置 scout 的模型与头像" }),
 		);
-		pickAvatarGlyph(row, "🦊");
+		pickAvatarGlyph(await screen.findByRole("dialog"), "🦊");
 		await waitFor(() =>
 			expect(avatarPuts).toEqual([{ name: "scout", avatarIcon: "🦊" }]),
 		);
@@ -159,9 +162,10 @@ describe("SubagentsPage", () => {
 		const model = within(dialog).getByLabelText("添加模型");
 		fireEvent.change(model, { target: { value: "@smol" } });
 		fireEvent.keyDown(model, { key: "Enter" });
-		fireEvent.change(within(dialog).getByLabelText("思考档位"), {
-			target: { value: "high" },
-		});
+		fireEvent.click(
+			within(dialog).getByRole("combobox", { name: /^思考档位/ }),
+		);
+		fireEvent.click(await screen.findByRole("option", { name: "高" }));
 		fireEvent.change(within(dialog).getByLabelText(/^工具/), {
 			target: { value: "read, grep" },
 		});

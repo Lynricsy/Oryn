@@ -1,22 +1,29 @@
-/** 设置页「Git 身份」（default export，由设置页接入）：orb 内提交身份的全局默认值，可保存或清除。 */
+/**
+ * 设置 → Git 与 GitHub 的「提交者」分组：orb 内 git 提交默认使用的 user.name / user.email（全局默认值，项目设置里可覆盖），
+ * 一块表单面板，可保存或清除。
+ */
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, type Schemas, unwrap } from "../../api/client";
 import { qk, useGitIdentity } from "../../api/queries";
 import { useAsync } from "../../components/settings/useAsync";
-import { Callout, Card } from "../../components/ui/data";
+import { Callout } from "../../components/ui/data";
 import { Icon } from "../../components/ui/icons";
 import {
 	Button,
 	ErrorText,
-	Field,
 	Spinner,
 	TextInput,
 } from "../../components/ui/primitives";
+import { FormField, Group, GroupPanel } from "../../components/ui/workbench";
 import { confirmAction } from "../../lib/confirm";
 
-function GitIdentityForm({ initial }: { initial?: Schemas["GitIdentity"] }) {
+function GitIdentityForm({
+	initial,
+}: {
+	initial?: Schemas["GitIdentity"];
+}): ReactNode {
 	const { t } = useTranslation();
 	const qc = useQueryClient();
 	const [name, setName] = useState(initial?.name ?? "");
@@ -29,7 +36,7 @@ function GitIdentityForm({ initial }: { initial?: Schemas["GitIdentity"] }) {
 		email.trim() !== (initial?.email ?? "");
 	return (
 		<form
-			className="grid gap-3 sm:grid-cols-2"
+			className="flex flex-col gap-3"
 			onSubmit={async (e) => {
 				e.preventDefault();
 				setSaved(false);
@@ -48,32 +55,40 @@ function GitIdentityForm({ initial }: { initial?: Schemas["GitIdentity"] }) {
 				});
 			}}
 		>
-			<Field label={t("gitIdentity.name")}>
-				<TextInput
-					required
-					maxLength={200}
-					autoComplete="name"
-					value={name}
-					onChange={(e) => {
-						setName(e.target.value);
-						setSaved(false);
-					}}
-				/>
-			</Field>
-			<Field label={t("gitIdentity.email")}>
-				<TextInput
-					required
-					type="email"
-					maxLength={320}
-					autoComplete="email"
-					value={email}
-					onChange={(e) => {
-						setEmail(e.target.value);
-						setSaved(false);
-					}}
-				/>
-			</Field>
-			<div className="flex items-center gap-2 sm:col-span-2">
+			<div className="grid gap-3 sm:grid-cols-2">
+				<FormField label={t("gitIdentity.name")}>
+					{(p) => (
+						<TextInput
+							{...p}
+							required
+							maxLength={200}
+							autoComplete="name"
+							value={name}
+							onChange={(e) => {
+								setName(e.target.value);
+								setSaved(false);
+							}}
+						/>
+					)}
+				</FormField>
+				<FormField label={t("gitIdentity.email")}>
+					{(p) => (
+						<TextInput
+							{...p}
+							required
+							type="email"
+							maxLength={320}
+							autoComplete="email"
+							value={email}
+							onChange={(e) => {
+								setEmail(e.target.value);
+								setSaved(false);
+							}}
+						/>
+					)}
+				</FormField>
+			</div>
+			<div className="flex flex-wrap items-center gap-2">
 				<Button
 					type="submit"
 					variant="primary"
@@ -83,6 +98,7 @@ function GitIdentityForm({ initial }: { initial?: Schemas["GitIdentity"] }) {
 				</Button>
 				{initial && (
 					<Button
+						variant="ghost"
 						disabled={clear.busy}
 						onClick={async () => {
 							if (
@@ -119,31 +135,35 @@ function GitIdentityForm({ initial }: { initial?: Schemas["GitIdentity"] }) {
 	);
 }
 
-export default function GitIdentitySettings() {
+export default function GitIdentitySettings(): ReactNode {
 	const { t } = useTranslation();
 	const q = useGitIdentity();
 	const id = q.data?.identity;
 	return (
-		<Card title={t("gitIdentity.title")} icon="fork">
-			<p className="mb-3 text-muted text-xs">{t("gitIdentity.hint")}</p>
-			{q.isPending && <Spinner />}
-			<ErrorText error={q.error} />
-			{q.data && (
-				<>
-					<div className="mb-3">
-						{/* 「当前：name <email>」须是同一个文本节点（测试与验收脚本按整句查找） */}
-						<Callout
-							tone={id ? "neutral" : "warn"}
-							icon={id ? "user" : undefined}
-						>
-							{id
-								? t("gitIdentity.current", { name: id.name, email: id.email })
-								: t("gitIdentity.notSet")}
-						</Callout>
-					</div>
-					<GitIdentityForm initial={id} />
-				</>
-			)}
-		</Card>
+		<Group title={t("gitIdentity.title")}>
+			<GroupPanel>
+				{q.isPending && <Spinner />}
+				<ErrorText error={q.error} />
+				{q.data && (
+					<>
+						{/* 「当前：name <email>」须是同一个文本节点（测试与验收脚本按整句查找）；没设置时必须看到，用警示 */}
+						{id ? (
+							<p className="flex items-center gap-1.5 text-[13px] text-muted">
+								<Icon name="user" size={13} aria-hidden className="shrink-0" />
+								<span className="min-w-0 truncate">
+									{t("gitIdentity.current", { name: id.name, email: id.email })}
+								</span>
+							</p>
+						) : (
+							<Callout tone="warn">{t("gitIdentity.notSet")}</Callout>
+						)}
+						<GitIdentityForm initial={id} />
+					</>
+				)}
+				<p className="border-border border-t pt-2.5 text-[12.5px] text-muted">
+					{t("gitIdentity.hint")}
+				</p>
+			</GroupPanel>
+		</Group>
 	);
 }

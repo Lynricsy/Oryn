@@ -1,10 +1,12 @@
 /**
- * 设置 → Agent → 模型角色（M13 R27）：config.yml 的 `cycleOrder`（轮换顺序，拖动或上下移调整）、
- * `modelRoles.<role>`（模型，补全来自中央模型目录）、`modelTags.<role>.name`（显示名），增删自定义 role，
- * 以及每个 role 的头像（原身份页「角色头像」卡片的能力）。
- * 已知 role 同控制面 `agentcfg.ParseKnownRoles`：cycleOrder、modelRoles 的键与内置 role 的并集；
- * 只剩头像、不再是已知 role 的遗留项单列，可清除头像。
- * config.yml 的每次改动都在最新内容上执行（`useOmpConfig().mutate`），不会把别处的改动盖掉。
+ * 设置 → 模型与角色（M13 R27）：
+ * - 默认 Agent 身份（`AgentIdentityCard`）；
+ * - 新会话：默认思考档位（config.yml 的 `defaultThinkingLevel`，新会话没有显式级别时从它起步）；
+ * - 轮换顺序 / 其他角色：config.yml 的 `cycleOrder`（拖动或上下移调整）、`modelRoles.<role>`（模型，补全来自中央模型目录）、
+ *   `modelTags.<role>.name`（显示名），增删自定义 role，以及每个 role 的头像——一行一个 role，「设置」打开对话框编辑；
+ * - 遗留头像：只剩头像、不再是已知 role 的遗留项，可清除头像。
+ * 已知 role 同控制面 `agentcfg.ParseKnownRoles`：cycleOrder、modelRoles 的键与内置 role 的并集。
+ * config.yml 的每次改动都在最新内容上执行（`useOmpConfig().mutate`），不会把别处的改动盖掉，注释原样保留。
  */
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useMemo, useState } from "react";
@@ -16,22 +18,17 @@ import {
 	saveRoleAvatar,
 	useRoleIdentities,
 } from "../../../api/identity-queries";
-import { ApplyStatusBanner } from "../../../components/settings/ApplyStatusBanner";
 import { AvatarEditor } from "../../../components/settings/AvatarEditor";
 import {
 	AgentErrorText,
-	AgentScopeNote,
+	AgentPageHead,
+	AvatarRow,
+	GroupNote,
 } from "../../../components/settings/agent-config-ui";
 import { ModelPatternInput } from "../../../components/settings/ModelPatternInput";
 import { useAsync } from "../../../components/settings/useAsync";
 import { AvatarTile } from "../../../components/ui/AvatarTile";
-import {
-	Badge,
-	Callout,
-	Card,
-	firstGrapheme,
-	ListRow,
-} from "../../../components/ui/data";
+import { Badge, Callout, firstGrapheme } from "../../../components/ui/data";
 import { IdentityAvatar } from "../../../components/ui/IdentityAvatar";
 import {
 	Button,
@@ -39,17 +36,25 @@ import {
 	ErrorText,
 	Field,
 	IconButton,
+	Select,
 	Spinner,
 	TextInput,
 } from "../../../components/ui/primitives";
+import { Group, GroupList, GroupRow } from "../../../components/ui/workbench";
 import i18n from "../../../i18n";
 import { roleDefaultGlyph } from "../../../lib/avatar-defaults";
+import { confirmAction } from "../../../lib/confirm";
 import { BUILTIN_ROLE_NAMES, parseCycleOrder } from "../../../lib/model-roles";
 import {
+	defaultThinkingLevel,
 	setCycleOrder,
+	setDefaultThinkingLevel,
 	setModelRole,
 	setModelTagName,
+	THINKING_LEVELS,
+	type ThinkingLevel,
 } from "../../../lib/omp-config";
+import { AgentIdentityCard } from "../IdentitySettings";
 
 type AvatarIdentity = Schemas["AvatarIdentity"];
 type RoleIdentity = Schemas["RoleIdentity"];
@@ -151,12 +156,12 @@ function RoleAvatar({
 }): ReactNode {
 	const glyph = roleDefaultGlyph(role);
 	return identity?.avatarIcon || identity?.avatarImage || glyph ? (
-		<IdentityAvatar identity={identity} of="role" glyph={glyph} size={32} />
+		<IdentityAvatar identity={identity} of="role" glyph={glyph} size={28} />
 	) : (
 		<AvatarTile
 			of="role"
 			identity={undefined}
-			size={32}
+			size={28}
 			tone="neutral"
 			fallback={
 				<span className="font-semibold text-sm">{firstGrapheme(label)}</span>
@@ -207,6 +212,11 @@ function CommitInput({
 	);
 }
 
+/** 默认思考档位的显示名（`model.levels.*`）。 */
+function levelLabel(level: ThinkingLevel): string {
+	return i18n.t(`model.levels.${level}`);
+}
+
 export default function RolesPage(): ReactNode {
 	const { t } = useTranslation();
 	const qc = useQueryClient();
@@ -230,6 +240,7 @@ export default function RolesPage(): ReactNode {
 		) ?? [];
 	const invalid = config.doc !== undefined && config.doc.errors.length > 0;
 	const ready = config.doc !== undefined && !invalid;
+	const thinking = defaultThinkingLevel(ready ? config.doc : undefined);
 
 	/** 在最新的 config.yml 上改轮换顺序；`edit` 返回 null 表示不改。 */
 	const editCycle = (edit: (cur: string[]) => string[] | null) =>
@@ -241,15 +252,14 @@ export default function RolesPage(): ReactNode {
 		});
 	const move = (role: string, to: number) =>
 		editCycle((cur) => moveRole(cur, role, to));
-	const removeFromCycle = (role: string) =>
-		editCycle((cur) =>
-			cur.includes(role) && cur.length > 1
-				? cur.filter((r) => r !== role)
-				: null,
-		);
-	const addToCycle = (role: string) =>
-		editCycle((cur) => (cur.includes(role) ? null : [...cur, role]));
-	const deleteRole = (role: string) => {
+	const deleteRole = async (role: string, label: string) => {
+		const ok = await confirmAction({
+			title: t("agentPages.roles.deleteConfirm", { name: label }),
+			body: t("agentPages.roles.deleteBody"),
+			action: t("common.delete"),
+			danger: true,
+		});
+		if (!ok) return;
 		setOpen(null);
 		void config.mutate((doc) => {
 			const cur = rolesConfig(doc).cycle;
@@ -271,13 +281,20 @@ export default function RolesPage(): ReactNode {
 		const builtin = Object.hasOwn(BUILTIN_ROLE_NAMES, role);
 		const identity = byRole.get(role);
 		const model = cfg.models[role] ?? "";
-		const expanded = open === role;
 		const hasAvatar = Boolean(identity?.avatarIcon || identity?.avatarImage);
+		const draggable = inCycle && ready;
 		return (
-			<li
+			// 整行可拖（拖动是鼠标捷径，键盘与读屏用行尾的上移 / 下移按钮）
+			<AvatarRow
 				key={role}
 				data-role={role}
-				className={`flex flex-col ${dragging === role ? "opacity-50" : ""}`}
+				draggable={draggable}
+				onDragStart={(e) => {
+					e.dataTransfer?.setData("text/plain", role);
+					if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+					setDragging(role);
+				}}
+				onDragEnd={() => setDragging(null)}
 				onDragOver={(e) => {
 					if (inCycle && dragging) e.preventDefault();
 				}}
@@ -287,182 +304,103 @@ export default function RolesPage(): ReactNode {
 					move(dragging, index);
 					setDragging(null);
 				}}
-			>
-				{/* 只有行头可拖，展开面板里的输入框照常选字 */}
-				{/* biome-ignore lint/a11y/noStaticElementInteractions: 拖动是鼠标捷径，键盘与读屏用行尾的上移 / 下移按钮 */}
-				<div
-					draggable={inCycle && ready}
-					onDragStart={(e) => {
-						e.dataTransfer?.setData("text/plain", role);
-						if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
-						setDragging(role);
-					}}
-					onDragEnd={() => setDragging(null)}
-					className={inCycle && ready ? "cursor-grab" : undefined}
-				>
-					<ListRow
-						leading={
-							<span className="inline-flex items-center gap-2">
-								{inCycle && (
-									<span
-										aria-hidden
-										className="w-3 select-none text-center text-ghost text-xs"
-									>
-										⋮⋮
-									</span>
-								)}
-								<RoleAvatar role={role} identity={identity} label={label} />
+				className={`${draggable ? "cursor-grab" : ""} ${dragging === role ? "opacity-50" : ""}`}
+				leading={<RoleAvatar role={role} identity={identity} label={label} />}
+				title={
+					<>
+						<span className="min-w-0 truncate">{label}</span>
+						{label !== role && (
+							<span className="shrink-0 font-mono font-normal text-faint text-xs">
+								{role}
 							</span>
-						}
-						title={
-							<>
-								<span className="min-w-0 truncate font-medium">{label}</span>
-								{label !== role && (
-									<span className="shrink-0 font-mono text-faint text-xs">
-										{role}
-									</span>
-								)}
-								{!builtin && <Badge>{t("agentPages.roles.custom")}</Badge>}
-							</>
-						}
-						meta={
-							<>
-								<span
-									className={`min-w-0 truncate ${model ? "font-mono" : ""}`}
-									title={model || undefined}
-								>
-									{model || t("agentPages.roles.noModel")}
-								</span>
-								{!hasAvatar && !builtin && (
-									<span className="shrink-0">
-										{t("agentPages.roles.noAvatar")}
-									</span>
-								)}
-							</>
-						}
-						trailing={
-							<>
-								{inCycle ? (
-									<>
-										<IconButton
-											icon="chevronUp"
-											box="sm"
-											size={14}
-											label={t("agentPages.roles.moveUp", { name: label })}
-											disabled={!ready || index === 0}
-											onClick={() => move(role, index - 1)}
-										/>
-										<IconButton
-											icon="chevronDown"
-											box="sm"
-											size={14}
-											label={t("agentPages.roles.moveDown", { name: label })}
-											disabled={!ready || index === cycle.length - 1}
-											onClick={() => move(role, index + 1)}
-										/>
-										<IconButton
-											icon="minusCircle"
-											box="sm"
-											size={14}
-											label={t("agentPages.roles.removeFromCycle", {
-												name: label,
-											})}
-											disabled={!ready || cycle.length <= 1}
-											onClick={() => removeFromCycle(role)}
-										/>
-									</>
-								) : (
-									<IconButton
-										icon="plus"
-										box="sm"
-										size={14}
-										label={t("agentPages.roles.addToCycle", { name: label })}
-										disabled={!ready}
-										onClick={() => addToCycle(role)}
-									/>
-								)}
-								<Button
-									size="sm"
-									variant={expanded ? "secondary" : "ghost"}
-									aria-expanded={expanded}
-									aria-label={t("agentPages.roles.configure", { name: label })}
-									onClick={() => setOpen(expanded ? null : role)}
-								>
-									{t("agentPages.roles.configureShort")}
-								</Button>
-							</>
-						}
-					/>
-				</div>
-				{expanded && (
-					<div className="mx-2 mb-2 flex flex-col gap-4 rounded-lg border border-border bg-raised p-3">
-						<Field
-							label={t("agentPages.roles.model")}
-							hint={t("agentPages.roles.modelHint")}
-						>
-							<ModelPatternInput
-								value={model}
-								label={t("agentPages.roles.modelInput", { name: label })}
-								placeholder={t("agentPages.models.placeholder")}
-								disabled={!ready}
-								onCommit={(next) =>
-									void config.mutate((doc) => {
-										setModelRole(doc, role, next || null);
-										return true;
-									})
-								}
-							/>
-						</Field>
-						<Field
-							label={t("agentPages.roles.displayName")}
-							hint={t("agentPages.roles.displayNameHint")}
-						>
-							<CommitInput
-								value={tagName ?? ""}
-								placeholder={roleDisplayName(role)}
-								label={t("agentPages.roles.displayNameInput", { name: role })}
-								disabled={!ready}
-								onCommit={(next) =>
-									void config.mutate((doc) => {
-										setModelTagName(doc, role, next || null);
-										return true;
-									})
-								}
-							/>
-						</Field>
-						<div className="flex flex-col gap-2">
-							<span className="font-medium text-muted text-xs">
-								{t("agentPages.avatar")}
-							</span>
-							<AvatarEditor
-								value={identity}
-								busy={avatarSave.busy}
-								resetLabel={t("agentPages.removeAvatar")}
-								onChange={(avatar) => putAvatar(role, avatar)}
-							/>
-						</div>
-						{!builtin && (
-							<Button
-								variant="danger"
-								size="sm"
-								icon="trash"
-								className="self-start"
-								disabled={!ready}
-								onClick={() => deleteRole(role)}
-							>
-								{t("agentPages.roles.delete")}
-							</Button>
 						)}
-					</div>
-				)}
-			</li>
+						{!builtin && <Badge>{t("agentPages.roles.custom")}</Badge>}
+					</>
+				}
+				meta={
+					<>
+						<span
+							className={`min-w-0 truncate ${model ? "font-mono" : ""}`}
+							title={model || undefined}
+						>
+							{model || t("agentPages.roles.noModel")}
+						</span>
+						{!hasAvatar && !builtin && (
+							<span className="shrink-0">
+								· {t("agentPages.roles.noAvatar")}
+							</span>
+						)}
+					</>
+				}
+				trailing={
+					<>
+						{inCycle ? (
+							<>
+								<IconButton
+									icon="chevronUp"
+									box="sm"
+									size={14}
+									label={t("agentPages.roles.moveUp", { name: label })}
+									disabled={!ready || index === 0}
+									onClick={() => move(role, index - 1)}
+								/>
+								<IconButton
+									icon="chevronDown"
+									box="sm"
+									size={14}
+									label={t("agentPages.roles.moveDown", { name: label })}
+									disabled={!ready || index === cycle.length - 1}
+									onClick={() => move(role, index + 1)}
+								/>
+								<IconButton
+									icon="minusCircle"
+									box="sm"
+									size={14}
+									label={t("agentPages.roles.removeFromCycle", {
+										name: label,
+									})}
+									disabled={!ready || cycle.length <= 1}
+									onClick={() =>
+										editCycle((cur) =>
+											cur.includes(role) && cur.length > 1
+												? cur.filter((r) => r !== role)
+												: null,
+										)
+									}
+								/>
+							</>
+						) : (
+							<IconButton
+								icon="plus"
+								box="sm"
+								size={14}
+								label={t("agentPages.roles.addToCycle", { name: label })}
+								disabled={!ready}
+								onClick={() =>
+									editCycle((cur) =>
+										cur.includes(role) ? null : [...cur, role],
+									)
+								}
+							/>
+						)}
+						<Button
+							size="sm"
+							aria-label={t("agentPages.roles.configure", { name: label })}
+							onClick={() => setOpen(role)}
+						>
+							{t("agentPages.roles.configureShort")}
+						</Button>
+					</>
+				}
+			/>
 		);
 	};
 
+	const editing = open !== null && known.includes(open) ? open : null;
 	return (
 		<>
-			<ApplyStatusBanner />
-			<AgentScopeNote reachesAssistant />
+			<AgentPageHead reachesAssistant />
+			<AgentIdentityCard />
 			{invalid && (
 				<Callout tone="warn" role="status">
 					{t("agentPages.errors.configInvalid", {
@@ -470,9 +408,38 @@ export default function RolesPage(): ReactNode {
 					})}
 				</Callout>
 			)}
-			<Card
+			<Group title={t("agentPages.roles.sessionTitle")}>
+				<GroupList>
+					<GroupRow
+						icon="brain"
+						title={t("agentPages.roles.thinking")}
+						meta={t("agentPages.roles.thinkingHint", {
+							fallback: levelLabel("high"),
+						})}
+						trailing={
+							<Select<ThinkingLevel>
+								className="w-32"
+								aria-label={t("agentPages.roles.thinking")}
+								value={thinking}
+								disabled={!ready}
+								options={THINKING_LEVELS.map((l) => ({
+									value: l,
+									label: levelLabel(l),
+								}))}
+								onChange={(level) =>
+									void config.mutate((doc) => {
+										if (doc.get("defaultThinkingLevel") === level) return false;
+										setDefaultThinkingLevel(doc, level);
+										return true;
+									})
+								}
+							/>
+						}
+					/>
+				</GroupList>
+			</Group>
+			<Group
 				title={t("agentPages.roles.cycleTitle")}
-				icon="repeat"
 				action={
 					<span className="inline-flex items-center gap-2">
 						{(config.pending || avatarSave.busy) && <Spinner />}
@@ -487,52 +454,38 @@ export default function RolesPage(): ReactNode {
 					</span>
 				}
 			>
-				<p className="mb-2 text-faint text-xs">
-					{t("agentPages.roles.cycleHint")}
-				</p>
 				{config.error ? (
 					<ErrorText error={config.error} />
 				) : config.doc === undefined ? (
-					<div className="flex justify-center py-6">
-						<Spinner />
-					</div>
+					<Spinner />
 				) : (
-					<ul data-testid="roles-cycle" className="-mx-2 flex flex-col">
-						{cycle.map((r, i) => row(r, i, true))}
-					</ul>
+					<div data-testid="roles-cycle" className="contents">
+						<GroupList>{cycle.map((r, i) => row(r, i, true))}</GroupList>
+					</div>
 				)}
-			</Card>
+				<GroupNote>{t("agentPages.roles.cycleHint")}</GroupNote>
+			</Group>
 			{config.doc !== undefined && others.length > 0 && (
-				<Card title={t("agentPages.roles.othersTitle")} icon="cpu">
-					<p className="mb-2 text-faint text-xs">
-						{t("agentPages.roles.othersHint")}
-					</p>
-					<ul data-testid="roles-others" className="-mx-2 flex flex-col">
-						{others.map((r, i) => row(r, i, false))}
-					</ul>
-				</Card>
+				<Group title={t("agentPages.roles.othersTitle")}>
+					<div data-testid="roles-others" className="contents">
+						<GroupList>{others.map((r, i) => row(r, i, false))}</GroupList>
+					</div>
+					<GroupNote>{t("agentPages.roles.othersHint")}</GroupNote>
+				</Group>
 			)}
 			{orphans.length > 0 && (
-				<Card title={t("agentPages.roles.orphansTitle")} icon="user">
-					<p className="mb-2 text-faint text-xs">
-						{t("agentPages.roles.orphansHint")}
-					</p>
-					<ul className="-mx-2 flex flex-col">
-						{orphans.map((r) => (
-							<li key={r.role} data-role={r.role}>
-								<ListRow
+				<Group title={t("agentPages.roles.orphansTitle")}>
+					<GroupList>
+						{orphans.map((r) => {
+							const label = roleDisplayName(r.role, r.name);
+							return (
+								<AvatarRow
+									key={r.role}
+									data-role={r.role}
 									leading={
-										<RoleAvatar
-											role={r.role}
-											identity={r}
-											label={roleDisplayName(r.role, r.name)}
-										/>
+										<RoleAvatar role={r.role} identity={r} label={label} />
 									}
-									title={
-										<span className="min-w-0 truncate font-medium">
-											{roleDisplayName(r.role, r.name)}
-										</span>
-									}
+									title={<span className="min-w-0 truncate">{label}</span>}
 									trailing={
 										<Button
 											size="sm"
@@ -545,16 +498,47 @@ export default function RolesPage(): ReactNode {
 										</Button>
 									}
 								/>
-							</li>
-						))}
-					</ul>
-				</Card>
+							);
+						})}
+					</GroupList>
+					<GroupNote>{t("agentPages.roles.orphansHint")}</GroupNote>
+				</Group>
 			)}
 			<div className="flex flex-col gap-1 empty:hidden">
 				{identities.error ? <ErrorText error={identities.error} /> : null}
 				{avatarSave.error ? <ErrorText error={avatarSave.error} /> : null}
 				<AgentErrorText error={config.mutateError} />
 			</div>
+			{editing !== null && (
+				<RoleDialog
+					role={editing}
+					tagName={cfg.names[editing]}
+					model={cfg.models[editing] ?? ""}
+					identity={byRole.get(editing)}
+					ready={ready}
+					avatarBusy={avatarSave.busy}
+					onModel={(next) =>
+						void config.mutate((doc) => {
+							setModelRole(doc, editing, next || null);
+							return true;
+						})
+					}
+					onName={(next) =>
+						void config.mutate((doc) => {
+							setModelTagName(doc, editing, next || null);
+							return true;
+						})
+					}
+					onAvatar={(avatar) => putAvatar(editing, avatar)}
+					onDelete={() =>
+						void deleteRole(
+							editing,
+							roleDisplayName(editing, cfg.names[editing]),
+						)
+					}
+					onClose={() => setOpen(null)}
+				/>
+			)}
 			{creating && (
 				<NewRoleDialog
 					taken={new Set([...known, ...orphans.map((r) => r.role)])}
@@ -572,6 +556,100 @@ export default function RolesPage(): ReactNode {
 				/>
 			)}
 		</>
+	);
+}
+
+/** 一个 role 的设置：模型、显示名、头像（都即改即存），自定义 role 可删除。 */
+function RoleDialog({
+	role,
+	tagName,
+	model,
+	identity,
+	ready,
+	avatarBusy,
+	onModel,
+	onName,
+	onAvatar,
+	onDelete,
+	onClose,
+}: {
+	role: string;
+	tagName: string | undefined;
+	model: string;
+	identity: AvatarIdentity | undefined;
+	ready: boolean;
+	avatarBusy: boolean;
+	onModel(next: string): void;
+	onName(next: string): void;
+	onAvatar(avatar: AvatarIdentity): Promise<boolean>;
+	onDelete(): void;
+	onClose(): void;
+}): ReactNode {
+	const { t } = useTranslation();
+	const label = roleDisplayName(role, tagName);
+	const builtin = Object.hasOwn(BUILTIN_ROLE_NAMES, role);
+	return (
+		<Dialog
+			open
+			onClose={onClose}
+			title={t("agentPages.roles.configure", { name: label })}
+			footer={
+				<>
+					{!builtin && (
+						<Button
+							variant="danger"
+							icon="trash"
+							className="mr-auto"
+							disabled={!ready}
+							onClick={onDelete}
+						>
+							{t("agentPages.roles.delete")}
+						</Button>
+					)}
+					<Button variant="primary" onClick={onClose}>
+						{t("common.close")}
+					</Button>
+				</>
+			}
+		>
+			<div data-role-dialog={role} className="flex flex-col gap-4">
+				<Field
+					label={t("agentPages.roles.model")}
+					hint={t("agentPages.roles.modelHint")}
+				>
+					<ModelPatternInput
+						value={model}
+						label={t("agentPages.roles.modelInput", { name: label })}
+						placeholder={t("agentPages.models.placeholder")}
+						disabled={!ready}
+						onCommit={onModel}
+					/>
+				</Field>
+				<Field
+					label={t("agentPages.roles.displayName")}
+					hint={t("agentPages.roles.displayNameHint")}
+				>
+					<CommitInput
+						value={tagName ?? ""}
+						placeholder={roleDisplayName(role)}
+						label={t("agentPages.roles.displayNameInput", { name: role })}
+						disabled={!ready}
+						onCommit={onName}
+					/>
+				</Field>
+				<div className="flex flex-col gap-[7px]">
+					<span className="font-[550] text-[13px] text-fg">
+						{t("agentPages.avatar")}
+					</span>
+					<AvatarEditor
+						value={identity}
+						busy={avatarBusy}
+						resetLabel={t("agentPages.removeAvatar")}
+						onChange={onAvatar}
+					/>
+				</div>
+			</div>
+		</Dialog>
 	);
 }
 

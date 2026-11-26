@@ -15,6 +15,7 @@ import type { Project } from "../../../api/client";
 import { projects } from "../../../mock/fixtures";
 import { MockServer } from "../../../mock/server";
 import { answerConfirm } from "../../../test/confirm";
+import { pickOption } from "../../../test/select";
 import { SecretsTab } from "./SecretsTab";
 
 const ORYN = projects[0] as Project;
@@ -129,9 +130,7 @@ describe("SecretsTab", () => {
 	it("Git 令牌总是保密，名称拼成 git/<主机>/token", async () => {
 		mount();
 		await screen.findAllByTestId("project-secret-row");
-		fireEvent.change(screen.getByLabelText("类型"), {
-			target: { value: "git" },
-		});
+		pickOption(screen.getByLabelText("类型"), "Git 令牌");
 		const secret = screen.getByLabelText("保密");
 		expect(secret).toBeChecked();
 		expect(secret).toBeDisabled();

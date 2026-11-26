@@ -334,36 +334,30 @@ export function Prototype({
 					{doc.pages.length > 0 && (
 						<Select
 							aria-label={t("artifacts.design.prototype.frameSelect")}
-							data-testid="prototype-frame-select"
-							wrapperClassName="w-auto max-w-[160px]"
-							className="h-7 py-0 text-xs"
+							size="sm"
+							className="w-auto max-w-[160px]"
 							value={currentPage?.id ?? ""}
-							onChange={(e) => navigateTo(e.target.value)}
-						>
-							{doc.pages.map((p) => (
-								<option key={p.id} value={p.id}>
-									{p.name}
-								</option>
-							))}
-						</Select>
+							onChange={(v) => navigateTo(v)}
+							options={doc.pages.map((p) => ({ value: p.id, label: p.name }))}
+						/>
 					)}
 					<Select
 						aria-label={t("artifacts.design.prototype.deviceSelect")}
-						data-testid="prototype-device-select"
-						wrapperClassName="w-auto max-w-[130px]"
-						className="h-7 py-0 text-xs"
+						size="sm"
+						className="w-auto max-w-[130px]"
 						value={deviceOverride ?? "auto"}
-						onChange={(e) => onDeviceSelect(e.target.value)}
-					>
-						<option value="auto">
-							{t("artifacts.design.prototype.deviceAuto")}
-						</option>
-						{DEVICES.map((d) => (
-							<option key={d} value={d}>
-								{t(`artifacts.design.device.${d}`)}
-							</option>
-						))}
-					</Select>
+						onChange={onDeviceSelect}
+						options={[
+							{
+								value: "auto",
+								label: t("artifacts.design.prototype.deviceAuto"),
+							},
+							...DEVICES.map((d) => ({
+								value: d,
+								label: t(`artifacts.design.device.${d}`),
+							})),
+						]}
+					/>
 					{startPage && (
 						<IconButton
 							icon="restart"

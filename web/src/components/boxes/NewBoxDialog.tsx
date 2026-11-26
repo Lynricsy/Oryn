@@ -125,14 +125,14 @@ export function NewBoxDialog({ onClose }: { onClose: () => void }): ReactNode {
 						</p>
 					)}
 					<Field label={t("boxes.new.size")}>
-						<Select value={size} onChange={(e) => setSize(e.target.value)}>
-							<option value="">{t("boxes.new.sizeDefault")}</option>
-							{sizes.map((s) => (
-								<option key={s.key} value={s.key}>
-									{s.label}
-								</option>
-							))}
-						</Select>
+						<Select
+							value={size}
+							onChange={setSize}
+							options={[
+								{ value: "", label: t("boxes.new.sizeDefault") },
+								...sizes.map((s) => ({ value: s.key, label: s.label })),
+							]}
+						/>
 					</Field>
 					<ErrorText error={create.error} />
 				</form>

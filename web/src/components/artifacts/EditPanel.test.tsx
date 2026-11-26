@@ -9,6 +9,7 @@ import type {
 	ParentMessageBody,
 } from "../../../sandbox/runtime/messages";
 import { dismissToast, toastsStore } from "../../state/toasts";
+import { pickOption } from "../../test/select";
 import { EDIT_SAVE_DELAY_MS, EditPanel, fieldValue } from "./EditPanel";
 
 const ID = "art_01JDNAWEB0000000000000000A";
@@ -202,9 +203,7 @@ describe("EditPanel", () => {
 	it("409：提示、还原预览、清除选中，状态不显示已保存", async () => {
 		editStatus = [409];
 		const { props } = panel();
-		fireEvent.change(screen.getByTestId("edit-font-weight"), {
-			target: { value: "400" },
-		});
+		pickOption(screen.getByRole("combobox", { name: /字重/ }), "400");
 		await idle();
 		expect(editBodies).toHaveLength(1);
 		expect(props.onConflict).toHaveBeenCalledTimes(1);

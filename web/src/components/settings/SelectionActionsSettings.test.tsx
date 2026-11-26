@@ -1,6 +1,6 @@
 /**
  * 设置 → 选区快捷动作（M22）：添加后整体 PUT、写回缓存并同步进菜单读的 selectionActionsStore；
- * 上移 / 删除整体替换；满 12 条时「添加动作」禁用。fetch 换成按路径记账的桩。
+ * 上移（行尾）/ 编辑、删除（⋯ 菜单）整体替换；满 12 条时「添加动作」禁用。fetch 换成按路径记账的桩。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -58,6 +58,18 @@ function mount() {
 	);
 }
 
+/** 动作列表的各行（分组「选区快捷动作」里的列表项）。 */
+const rows = () =>
+	within(screen.getByRole("region", { name: "选区快捷动作" })).queryAllByRole(
+		"listitem",
+	);
+
+/** 行尾 ⋯ 菜单里的一项（编辑 / 删除）。 */
+async function rowMenu(row: HTMLElement, item: string) {
+	fireEvent.click(within(row).getByRole("button", { name: "更多操作" }));
+	fireEvent.click(await screen.findByRole("menuitem", { name: item }));
+}
+
 const action = (id: string, name: string, prompt = `${name} 的提示词`) => ({
 	id,
 	name,
@@ -108,10 +120,11 @@ describe("SelectionActionsSettings", () => {
 				{ id: sent?.id, name: "挑毛病", prompt: "找出这段话里的漏洞\n第二行" },
 			]),
 		);
-		const row = screen.getByTestId("selection-action-row");
-		expect(row.textContent).toContain("挑毛病");
-		expect(row.textContent).toContain("找出这段话里的漏洞");
-		expect(row.textContent).not.toContain("第二行");
+		const [row] = rows();
+		expect(rows()).toHaveLength(1);
+		expect(row?.textContent).toContain("挑毛病");
+		expect(row?.textContent).toContain("找出这段话里的漏洞");
+		expect(row?.textContent).not.toContain("第二行");
 	});
 
 	it("名称或提示词为空白时不能保存", async () => {
@@ -134,43 +147,48 @@ describe("SelectionActionsSettings", () => {
 		).toBe(true);
 	});
 
-	it("上移整体替换顺序；删除先确认，取消则不发请求", async () => {
+	it("上移整体替换顺序；删除（⋯ 菜单）先确认，取消则不发请求", async () => {
 		stored = { actions: [action("aaaaaaaa", "甲"), action("bbbbbbbb", "乙")] };
 		mount();
-		const rows = await screen.findAllByTestId("selection-action-row");
-		expect(
-			(
-				within(rows[0] as HTMLElement).getByRole("button", {
-					name: "上移",
-				}) as HTMLButtonElement
-			).disabled,
-		).toBe(true);
-		fireEvent.click(
-			within(rows[1] as HTMLElement).getByRole("button", { name: "上移" }),
-		);
+		await waitFor(() => expect(rows()).toHaveLength(2));
+		const [a, b] = rows() as [HTMLElement, HTMLElement];
+		expect(within(a).getByRole("button", { name: "上移" })).toBeDisabled();
+		fireEvent.click(within(b).getByRole("button", { name: "上移" }));
 		await waitFor(() => expect(puts).toHaveLength(1));
-		expect(puts[0]?.actions.map((a) => a.id)).toEqual(["bbbbbbbb", "aaaaaaaa"]);
-		await waitFor(() =>
-			expect(
-				screen.getAllByTestId("selection-action-row")[0]?.textContent,
-			).toContain("乙"),
-		);
+		expect(puts[0]?.actions.map((x) => x.id)).toEqual(["bbbbbbbb", "aaaaaaaa"]);
+		await waitFor(() => expect(rows()[0]?.textContent).toContain("乙"));
 
-		const first = () =>
-			screen.getAllByTestId("selection-action-row")[0] as HTMLElement;
-		fireEvent.click(within(first()).getByRole("button", { name: "删除" }));
+		const first = () => rows()[0] as HTMLElement;
+		await rowMenu(first(), "删除");
 		expect((await answerConfirm(false)).title).toBe("删除这个动作？");
 		expect(puts).toHaveLength(1);
 
-		fireEvent.click(within(first()).getByRole("button", { name: "删除" }));
+		await rowMenu(first(), "删除");
 		await answerConfirm(true);
 		await waitFor(() => expect(puts).toHaveLength(2));
-		expect(puts[1]?.actions.map((a) => a.id)).toEqual(["aaaaaaaa"]);
+		expect(puts[1]?.actions.map((x) => x.id)).toEqual(["aaaaaaaa"]);
 		await waitFor(() =>
-			expect(selectionActionsStore.getState().actions.map((a) => a.id)).toEqual(
+			expect(selectionActionsStore.getState().actions.map((x) => x.id)).toEqual(
 				["aaaaaaaa"],
 			),
 		);
+	});
+
+	it("编辑（⋯ 菜单）：对话框带原值，保存后整体替换该条", async () => {
+		stored = { actions: [action("aaaaaaaa", "甲"), action("bbbbbbbb", "乙")] };
+		mount();
+		await waitFor(() => expect(rows()).toHaveLength(2));
+		await rowMenu(rows()[1] as HTMLElement, "编辑");
+		const dialog = await screen.findByRole("dialog", { name: "编辑" });
+		const name = within(dialog).getByLabelText("名称");
+		expect(name).toHaveValue("乙");
+		fireEvent.change(name, { target: { value: "丙" } });
+		fireEvent.click(within(dialog).getByRole("button", { name: "保存" }));
+		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+		expect(puts[0]?.actions).toEqual([
+			action("aaaaaaaa", "甲"),
+			{ id: "bbbbbbbb", name: "丙", prompt: "乙 的提示词" },
+		]);
 	});
 
 	it("满 12 条时「添加动作」禁用并提示上限", async () => {
@@ -180,9 +198,7 @@ describe("SelectionActionsSettings", () => {
 			),
 		};
 		mount();
-		await waitFor(() =>
-			expect(screen.getAllByTestId("selection-action-row")).toHaveLength(12),
-		);
+		await waitFor(() => expect(rows()).toHaveLength(12));
 		expect(
 			(screen.getByRole("button", { name: "添加动作" }) as HTMLButtonElement)
 				.disabled,

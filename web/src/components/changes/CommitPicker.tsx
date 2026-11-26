@@ -38,44 +38,53 @@ export function CommitPicker({
 	const selectedSha = value.scope === "commit" ? value.sha : null;
 	const known =
 		selectedSha === null || commits.some((c) => c.sha === selectedSha);
+	// 原 optgroup「提交」展平：组名作提交项的 hint
+	const group = t("changes.scope.commits");
 	return (
 		<Select
 			aria-label={t("changes.scope.label")}
-			wrapperClassName="min-w-0 flex-1"
-			className="h-7 py-0 text-xs"
+			size="sm"
+			className="min-w-0 flex-1"
 			value={encode(value)}
-			onChange={(e) => {
+			onChange={(v) => {
 				// 受控：不调用 onChange 时，下拉框回到当前范围
-				if (e.target.value === COMPARE) onCompareBranch();
-				else onChange(decode(e.target.value));
+				if (v === COMPARE) onCompareBranch();
+				else onChange(decode(v));
 			}}
-		>
-			<option value="all">
-				{baseName
-					? t("changes.scope.allBase", { base: baseName })
-					: t("changes.scope.all")}
-			</option>
-			<option value="uncommitted">{t("changes.scope.uncommitted")}</option>
-			<option value={COMPARE}>{t("changes.scope.compareBranch")}</option>
-			{(commits.length > 0 || !known) && (
-				<optgroup label={t("changes.scope.commits")}>
-					{!known && selectedSha && (
-						<option value={`commit:${selectedSha}`}>
-							{selectedSha.slice(0, 7)}
-						</option>
-					)}
-					{commits.map((c) => (
-						<option key={c.sha} value={`commit:${c.sha}`}>
-							{`${c.shortSha} ${c.subject} · ${c.authorName} · ${formatRelative(c.ts)}`}
-						</option>
-					))}
-					{truncated && (
-						<option disabled value="">
-							{t("changes.scope.moreCommits")}
-						</option>
-					)}
-				</optgroup>
-			)}
-		</Select>
+			options={[
+				{
+					value: "all",
+					label: baseName
+						? t("changes.scope.allBase", { base: baseName })
+						: t("changes.scope.all"),
+				},
+				{ value: "uncommitted", label: t("changes.scope.uncommitted") },
+				{ value: COMPARE, label: t("changes.scope.compareBranch") },
+				...(!known && selectedSha
+					? [
+							{
+								value: `commit:${selectedSha}`,
+								label: selectedSha.slice(0, 7),
+								hint: group,
+							},
+						]
+					: []),
+				...commits.map((c) => ({
+					value: `commit:${c.sha}`,
+					label: `${c.shortSha} ${c.subject} · ${c.authorName} · ${formatRelative(c.ts)}`,
+					hint: group,
+				})),
+				...(truncated
+					? [
+							{
+								value: "",
+								label: t("changes.scope.moreCommits"),
+								hint: group,
+								disabled: true,
+							},
+						]
+					: []),
+			]}
+		/>
 	);
 }

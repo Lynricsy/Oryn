@@ -1,15 +1,8 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-	fireEvent,
-	render,
-	screen,
-	waitFor,
-	within,
-} from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { BudgetStatus } from "../../api/stats-queries";
-import { BudgetCard, BudgetDialog, hasBudget } from "./BudgetCard";
+import { BudgetCard, BudgetSettingsLink, hasBudget } from "./BudgetCard";
 
 const status: BudgetStatus = {
 	budget: {
@@ -38,23 +31,12 @@ const status: BudgetStatus = {
 };
 
 function wrap(node: React.ReactNode) {
-	const client = new QueryClient({
-		defaultOptions: { queries: { retry: false } },
-	});
-	return render(
-		<MemoryRouter>
-			<QueryClientProvider client={client}>{node}</QueryClientProvider>
-		</MemoryRouter>,
-	);
+	return render(<MemoryRouter>{node}</MemoryRouter>);
 }
-
-afterEach(() => {
-	vi.unstubAllGlobals();
-});
 
 describe("BudgetCard", () => {
 	it("当日、当月两条：data-budget-period / data-level，量表按级别着色", () => {
-		wrap(<BudgetCard status={status} onEdit={() => {}} />);
+		wrap(<BudgetCard status={status} />);
 		const card = screen.getByTestId("budget-card");
 		const day = card.querySelector("[data-budget-period=day]") as HTMLElement;
 		const month = card.querySelector(
@@ -72,6 +54,28 @@ describe("BudgetCard", () => {
 		expect(fill(month).className).toMatch(/bg-err/);
 	});
 
+	it("只看不改：没有编辑按钮，「到设置里修改」链到设置 → 通知与预算；告警停用时带徽标", () => {
+		wrap(
+			<BudgetCard
+				status={{ ...status, budget: { ...status.budget, enabled: false } }}
+			/>,
+		);
+		expect(screen.queryByRole("button")).toBeNull();
+		expect(screen.getByRole("link", { name: "到设置里修改" })).toHaveAttribute(
+			"href",
+			"/settings/notifications",
+		);
+		expect(screen.getByText("告警已停用")).toBeInTheDocument();
+	});
+
+	it("BudgetSettingsLink（页头「预算…」）也是链到设置的链接", () => {
+		wrap(<BudgetSettingsLink>预算…</BudgetSettingsLink>);
+		expect(screen.getByRole("link", { name: "预算…" })).toHaveAttribute(
+			"href",
+			"/settings/notifications",
+		);
+	});
+
 	it("hasBudget：日或月任一设了上限", () => {
 		expect(hasBudget(status)).toBe(true);
 		expect(
@@ -81,44 +85,5 @@ describe("BudgetCard", () => {
 			}),
 		).toBe(false);
 		expect(hasBudget(undefined)).toBe(false);
-	});
-});
-
-describe("BudgetDialog", () => {
-	it("提交 PUT stats/budget：留空的上限不提交；底部说明链到通知设置", async () => {
-		const bodies: unknown[] = [];
-		vi.stubGlobal(
-			"fetch",
-			vi.fn(async (req: Request) => {
-				bodies.push(await req.json());
-				return Response.json(status);
-			}),
-		);
-		const onClose = vi.fn();
-		wrap(<BudgetDialog status={undefined} onClose={onClose} />);
-		const dialog = screen.getByRole("dialog", { name: "设置预算" });
-		expect(
-			within(dialog).getByRole("link", { name: "「设置 → 通知」" }),
-		).toHaveAttribute("href", "/settings/notifications");
-		fireEvent.change(within(dialog).getByLabelText("日上限（美元）"), {
-			target: { value: "12.5" },
-		});
-		fireEvent.change(within(dialog).getByLabelText("时区（IANA）"), {
-			target: { value: "Asia/Shanghai" },
-		});
-		fireEvent.click(within(dialog).getByRole("button", { name: "保存" }));
-		await waitFor(() => expect(onClose).toHaveBeenCalled());
-		expect(bodies).toEqual([
-			{ dailyUsd: 12.5, warnPct: 80, timezone: "Asia/Shanghai", enabled: true },
-		]);
-	});
-
-	it("金额小于 0.01 时不能保存", () => {
-		wrap(<BudgetDialog status={status} onClose={() => {}} />);
-		const dialog = screen.getByRole("dialog", { name: "设置预算" });
-		fireEvent.change(within(dialog).getByLabelText("月上限（美元）"), {
-			target: { value: "0.001" },
-		});
-		expect(within(dialog).getByRole("button", { name: "保存" })).toBeDisabled();
 	});
 });

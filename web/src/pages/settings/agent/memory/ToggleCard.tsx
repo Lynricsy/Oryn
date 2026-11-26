@@ -1,5 +1,5 @@
 /**
- * 记忆页「项目」卡（Q6、R11）：每个未归档项目一个开关；没单独设置过的跟随全局总开关。
+ * 「项目」分组（Q6、R11）：每个未归档项目一行开关；没单独设置过的跟随全局总开关。
  * 改动对新启动的 agent 生效，运行中需要重启的会话由页顶的生效状态条列出。
  */
 import type { ReactNode } from "react";
@@ -9,12 +9,14 @@ import {
 	useMemoryProjects,
 	usePutMemoryProject,
 } from "../../../../api/memory-queries";
-import { Badge, Card, ProjectBadge } from "../../../../components/ui/data";
 import {
-	EmptyState,
-	Spinner,
-	Toggle,
-} from "../../../../components/ui/primitives";
+	AvatarRow,
+	EmptyPanel,
+	GroupNote,
+} from "../../../../components/settings/agent-config-ui";
+import { Badge, ProjectBadge } from "../../../../components/ui/data";
+import { Spinner, Toggle } from "../../../../components/ui/primitives";
+import { Group, GroupList } from "../../../../components/ui/workbench";
 import { MemoryError } from "./errors";
 
 export function ToggleCard(): ReactNode {
@@ -23,30 +25,49 @@ export function ToggleCard(): ReactNode {
 	const put = usePutMemoryProject();
 	const items = q.data?.items ?? [];
 	return (
-		<Card title={t("memoryPage.projects.title")} icon="folder">
+		<Group title={t("memoryPage.projects.title")}>
 			{q.isPending ? (
 				<Spinner />
 			) : q.error ? (
 				<MemoryError step="loadProjects" error={q.error} />
 			) : items.length === 0 ? (
-				<EmptyState icon="folder" title={t("memoryPage.projects.empty")} />
+				<EmptyPanel>{t("memoryPage.projects.empty")}</EmptyPanel>
 			) : (
-				<div className="flex flex-col gap-2">
-					<p className="text-faint text-xs">{t("memoryPage.projects.hint")}</p>
-					<ul className="-mx-2 flex flex-col">
+				<>
+					<GroupList>
 						{items.map((p) => (
-							<MemoryProjectRow
+							<AvatarRow
 								key={p.projectId}
-								project={p}
-								busy={put.isPending && put.variables?.id === p.projectId}
-								onChange={(enabled) => put.mutate({ id: p.projectId, enabled })}
+								leading={<ProjectBadge name={p.name} />}
+								title={
+									<>
+										<span className="min-w-0 truncate">{p.name}</span>
+										{!p.overridden && (
+											<Badge>{t("memoryPage.projects.followsGlobal")}</Badge>
+										)}
+									</>
+								}
+								trailing={
+									<Toggle
+										hideLabel
+										checked={p.enabled}
+										disabled={
+											put.isPending && put.variables?.id === p.projectId
+										}
+										onChange={(enabled) =>
+											put.mutate({ id: p.projectId, enabled })
+										}
+										label={t("memoryPage.projects.toggle", { name: p.name })}
+									/>
+								}
 							/>
 						))}
-					</ul>
+					</GroupList>
 					<MemoryError step="saveProject" error={put.error} />
-				</div>
+					<GroupNote>{t("memoryPage.projects.hint")}</GroupNote>
+				</>
 			)}
-		</Card>
+		</Group>
 	);
 }
 

@@ -21,7 +21,7 @@ import {
 } from "../../api/agent-config-queries";
 import { parseFrontmatter, stringifyFrontmatter } from "../../lib/frontmatter";
 import { toggleDisabled } from "../../lib/omp-config";
-import { Badge, Callout, Card, ListRow } from "../ui/data";
+import { Badge, Callout } from "../ui/data";
 import { Icon, type IconName } from "../ui/icons";
 import {
 	Button,
@@ -34,11 +34,14 @@ import {
 	TextInput,
 	Toggle,
 } from "../ui/primitives";
+import { Group, GroupList, GroupRow, Reveal } from "../ui/workbench";
 import {
 	AgentErrorText,
 	CodeField,
 	ConfirmDeleteDialog,
 	EditConflict,
+	EmptyPanel,
+	GroupNote,
 } from "./agent-config-ui";
 
 export type FieldKind = "text" | "textarea" | "list" | "bool";
@@ -64,8 +67,9 @@ export interface MarkdownCollectionProps {
 	keyOf(name: string): string;
 	fields: readonly FieldSpec[];
 	title: string;
+	/** 行首图标 */
 	icon: IconName;
-	/** 卡片顶部的一行说明 */
+	/** 分组下方的说明 */
 	hint?: ReactNode;
 	emptyText: string;
 	/** `flat-md`：文件名 → 条目名；缺省去掉扩展名 */
@@ -223,36 +227,33 @@ export function MarkdownCollection(props: MarkdownCollectionProps) {
 	};
 
 	return (
-		<Card
+		<Group
 			title={title}
-			icon={icon}
 			action={
 				<Button size="sm" icon="plus" onClick={() => setEditing("new")}>
 					{t("agentPages.new")}
 				</Button>
 			}
 		>
-			{hint && <p className="mb-2 text-faint text-xs">{hint}</p>}
 			{files.error ? (
 				<ErrorText error={files.error} />
 			) : files.data === undefined ? (
-				<div className="flex justify-center py-6">
-					<Spinner />
-				</div>
+				<Spinner />
 			) : entries.length === 0 ? (
-				<p className="text-faint text-sm">{emptyText}</p>
+				<EmptyPanel>{emptyText}</EmptyPanel>
 			) : (
-				<div className="-mx-2 flex flex-col">
+				<GroupList>
 					{rows.map(({ entry, parsed }) => {
 						const name = parsed?.name ?? entry.stem;
 						const key = keyOf(name);
 						const enabled = !config.disabled.has(key);
 						return (
-							<ListRow
+							<GroupRow
 								key={entry.path}
+								icon={icon}
 								title={
 									<>
-										<span className="min-w-0 truncate font-medium">{name}</span>
+										<span className="min-w-0 truncate">{name}</span>
 										{entry.ext !== "md" && <Badge>.{entry.ext}</Badge>}
 										{requireDescription &&
 											parsed &&
@@ -282,7 +283,25 @@ export function MarkdownCollection(props: MarkdownCollectionProps) {
 								}
 								trailing={
 									<>
+										<Reveal>
+											<IconButton
+												icon="edit"
+												box="sm"
+												size={14}
+												label={t("agentPages.edit", { name })}
+												disabled={parsed === undefined}
+												onClick={() => setEditing(entry)}
+											/>
+											<IconButton
+												icon="trash"
+												box="sm"
+												size={14}
+												label={t("agentPages.delete", { name })}
+												onClick={() => setDeleting({ entry, name })}
+											/>
+										</Reveal>
 										<Toggle
+											hideLabel
 											checked={enabled}
 											disabled={config.doc === undefined}
 											onChange={(on) =>
@@ -290,35 +309,17 @@ export function MarkdownCollection(props: MarkdownCollectionProps) {
 													toggleDisabled(doc, key, on),
 												)
 											}
-											label={
-												<span className="sr-only">
-													{t("agentPages.enable", { name })}
-												</span>
-											}
-										/>
-										<IconButton
-											icon="edit"
-											box="sm"
-											size={14}
-											label={t("agentPages.edit", { name })}
-											disabled={parsed === undefined}
-											onClick={() => setEditing(entry)}
-										/>
-										<IconButton
-											icon="trash"
-											box="sm"
-											size={14}
-											label={t("agentPages.delete", { name })}
-											onClick={() => setDeleting({ entry, name })}
+											label={t("agentPages.enable", { name })}
 										/>
 									</>
 								}
 							/>
 						);
 					})}
-				</div>
+				</GroupList>
 			)}
-			<div className="mt-1 flex flex-col gap-1 empty:hidden">
+			{hint && <GroupNote>{hint}</GroupNote>}
+			<div className="flex flex-col gap-1 empty:hidden">
 				{textError ? <ErrorText error={textError} /> : null}
 				<AgentErrorText error={config.mutateError} />
 			</div>
@@ -341,7 +342,7 @@ export function MarkdownCollection(props: MarkdownCollectionProps) {
 					onDeleted={() => onDeleted(deleting.name)}
 				/>
 			)}
-		</Card>
+		</Group>
 	);
 }
 
@@ -589,9 +590,9 @@ function EntryDialog({
 								</Field>
 							);
 						})}
-						<div className="flex flex-col gap-1">
-							<span className="flex items-center gap-1.5 font-medium text-muted text-xs">
-								<Icon name="fileText" size={12} aria-hidden />
+						<div className="flex flex-col gap-[7px]">
+							<span className="flex items-center gap-1.5 font-[550] text-[13px] text-fg">
+								<Icon name="fileText" size={13} aria-hidden />
 								{t("agentPages.body")}
 							</span>
 							<CodeField

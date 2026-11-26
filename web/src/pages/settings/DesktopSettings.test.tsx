@@ -1,5 +1,11 @@
-/** 设置 → 桌面应用：各更新状态的呈现、保存快捷键、开关、令牌存储提示、更换服务器、壳推来 update 后重取。 */
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+/** 设置 → 桌面应用：各更新状态的呈现、在对话框里改快捷键、开关、令牌存储提示、壳推来 update 后重取。 */
+import {
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+	within,
+} from "@testing-library/react";
 import {
 	afterEach,
 	beforeEach,
@@ -100,7 +106,7 @@ describe("设置 → 桌面应用", () => {
 		).toBeInTheDocument();
 	});
 
-	it("保存快捷键：去掉首尾空白后提交；壳报告的注册失败原因显示在下方", async () => {
+	it("修改快捷键：对话框里去掉首尾空白后提交，成功后关闭；壳报告的注册失败原因显示在行下方", async () => {
 		fake.setSettings.mockImplementation(async (patch) => {
 			info = {
 				...info,
@@ -110,8 +116,11 @@ describe("设置 → 桌面应用", () => {
 			return info;
 		});
 		render(<DesktopSettings />);
-		const input = await screen.findByDisplayValue("Control+Alt+Space");
-		const save = screen.getByRole("button", { name: "保存" });
+		expect(await screen.findByText("Control+Alt+Space")).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "修改" }));
+		const dialog = screen.getByRole("dialog");
+		const input = within(dialog).getByDisplayValue("Control+Alt+Space");
+		const save = within(dialog).getByRole("button", { name: "保存" });
 		expect(save).toBeDisabled();
 		fireEvent.change(input, { target: { value: "  Control+Alt+K " } });
 		fireEvent.click(save);
@@ -120,9 +129,19 @@ describe("设置 → 桌面应用", () => {
 				shortcut: "Control+Alt+K",
 			}),
 		);
+		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+		expect(screen.getByText("Control+Alt+K")).toBeInTheDocument();
 		expect(
 			await screen.findByText("快捷键没有生效：already registered"),
 		).toBeInTheDocument();
+	});
+
+	it("快捷键为空时显示「未设置」", async () => {
+		info = makeInfo({
+			settings: { shortcut: "", closeToTray: true, autoUpdate: false },
+		});
+		render(<DesktopSettings />);
+		expect(await screen.findByText("未设置")).toBeInTheDocument();
 	});
 
 	it("开关：关闭到托盘与自动安装各自提交一个字段", async () => {
@@ -140,14 +159,14 @@ describe("设置 → 桌面应用", () => {
 		);
 	});
 
-	it("令牌存在文件里时给出警告；更换服务器交给壳", async () => {
+	it("令牌存在文件里时给出警告；更换服务器不在这里（在账户与设备）", async () => {
 		info = makeInfo({ tokenStore: "file" });
 		render(<DesktopSettings />);
 		expect(
 			await screen.findByText("未找到系统凭据库，令牌以仅本人可读的文件保存。"),
 		).toBeInTheDocument();
-		fireEvent.click(screen.getByRole("button", { name: "更换服务器…" }));
-		expect(fake.changeServer).toHaveBeenCalledTimes(1);
+		expect(screen.getByText("本地文件")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "更换服务器…" })).toBeNull();
 	});
 
 	it("壳推来 update 事件后重新取 info", async () => {

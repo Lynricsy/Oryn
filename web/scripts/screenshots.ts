@@ -561,12 +561,12 @@ function m14Screens(): Screen[] {
 	return [
 		{
 			name: "m14-settings-github",
-			prepare: ({ page }) => open(page, "/settings/github", "main", 1200),
+			prepare: ({ page }) => open(page, "/settings/git", "main", 1200),
 		},
 		{
 			name: "m14-settings-github-empty",
 			init: `localStorage.setItem("oryn.mock.github","none");`,
-			prepare: ({ page }) => open(page, "/settings/github", "main", 1200),
+			prepare: ({ page }) => open(page, "/settings/git", "main", 1200),
 		},
 		{
 			name: "m14-thread-pr",
@@ -910,15 +910,14 @@ function noHorizontalOverflow(testId: string) {
 }
 
 const SETTINGS_SECTIONS = [
-	"devices",
-	"providers",
+	"account",
+	"compute",
 	"projects",
 	"secrets",
-	"git-identity",
-	"github",
+	"git",
 	"agent-config",
 	"notifications",
-	"shares",
+	"sharing",
 	"appearance",
 	"automations",
 	"about",
@@ -2258,14 +2257,16 @@ const SCREENS: Screen[] = [
 	{
 		name: "m11b-settings",
 		prepare: async ({ page }) => {
-			await open(
-				page,
-				"/settings/runners",
-				"[data-testid=runner-settings-row]",
-			);
-			await page.getByRole("textbox", { name: "名字" }).fill("studio-2");
-			await page.getByRole("button", { name: "创建", exact: true }).click();
-			await page.locator("[data-testid=runner-created]").waitFor();
+			await open(page, "/settings/compute", "main");
+			await page
+				.locator("main")
+				.getByRole("region", { name: "Runner", exact: true })
+				.getByRole("button", { name: "新建" })
+				.click();
+			const d = page.getByRole("dialog");
+			await d.getByRole("textbox", { name: "名字" }).fill("studio-2");
+			await d.getByRole("button", { name: "创建", exact: true }).click();
+			await d.getByTestId("compute-token").waitFor();
 			await settle(page, 400);
 		},
 	},

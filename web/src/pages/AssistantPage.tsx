@@ -44,6 +44,7 @@ import {
 	Spinner,
 	TextArea,
 } from "../components/ui/primitives";
+import { GroupList } from "../components/ui/workbench";
 import {
 	useArchiveAssistantConversation,
 	useAssistantConversations,
@@ -178,7 +179,7 @@ function RemindersDialog({
 						</p>
 					)}
 					{list.length > 0 && (
-						<ul className="-mx-2 flex flex-col">
+						<GroupList>
 							{list.map((s) => (
 								<ScheduleRow
 									key={s.id}
@@ -186,7 +187,7 @@ function RemindersDialog({
 									onEdit={() => setEditing(s)}
 								/>
 							))}
-						</ul>
+						</GroupList>
 					)}
 				</div>
 			</Dialog>

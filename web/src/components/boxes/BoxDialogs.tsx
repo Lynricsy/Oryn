@@ -165,13 +165,11 @@ export function ScheduleDialog({
 					</Field>
 				</div>
 				<Field label={t("boxes.schedule.tz")}>
-					<Select value={tz} onChange={(e) => setTz(e.target.value)}>
-						{timeZones(tz).map((z) => (
-							<option key={z} value={z}>
-								{z}
-							</option>
-						))}
-					</Select>
+					<Select
+						value={tz}
+						onChange={setTz}
+						options={timeZones(tz).map((z) => ({ value: z, label: z }))}
+					/>
 				</Field>
 				<ErrorText error={update.error} />
 			</div>

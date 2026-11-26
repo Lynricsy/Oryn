@@ -1,25 +1,14 @@
 /**
- * 工作台原生（D）控件：分组列表与行、L2 表单字段、自绘下拉。输入框、开关、按钮等基础件在 primitives.tsx。
+ * 工作台原生（D）控件：分组列表与行、L2 表单字段。输入框、下拉、开关、按钮等基础件在 primitives.tsx。
  *
  * - 分组：标题在外（12.5/600 次要灰），行在内（22px 圆角的悬浮毛玻璃面板 `.glass`，行间一条贯穿整行的发丝线）。
  * - 行：28px 中性图标方块 + 标题 / 说明 + 行尾；`Reveal` 包住的动作平时不占位，悬停或 Tab 进这一行时出现，
  *   `StatusCell` 是定宽状态列，所以出现的动作与状态文字长短无关，后面的 ⋯ 和开关也不动。
  * - 字段标题（L2）：标题 13/550，说明并到标题行右侧，只标「可选」；说明与「可选」经 aria-describedby 读给读屏。
- * - 下拉：粗指针（触屏）用原生 select；其余是 combobox + listbox，焦点留在触发钮上（aria-activedescendant）。
  */
-import {
-	type KeyboardEvent,
-	type ReactNode,
-	useEffect,
-	useId,
-	useRef,
-	useState,
-} from "react";
-import { useCoarsePointer } from "../../lib/viewport";
+import { type ReactNode, useId } from "react";
 import { StatusDot, type Tone } from "./data";
-import { Floating } from "./Floating";
 import { Icon, type IconName } from "./icons";
-import { FIELD } from "./primitives";
 
 // ---------------------------------------------------------------- 分组与行
 
@@ -59,6 +48,15 @@ export function GroupList({ children }: { children: ReactNode }): ReactNode {
 		<ul className="glass divide-y divide-border overflow-hidden rounded-[22px]">
 			{children}
 		</ul>
+	);
+}
+
+/** 分组面板里放非列表内容（表单、预览、说明块）：与 `GroupList` 同一块毛玻璃，四周 16px 内边距。 */
+export function GroupPanel({ children }: { children: ReactNode }): ReactNode {
+	return (
+		<div className="glass flex flex-col gap-3 rounded-[22px] px-4 py-3.5">
+			{children}
+		</div>
 	);
 }
 
@@ -217,188 +215,6 @@ export function FormField({
 				"aria-labelledby": labelId,
 				"aria-describedby": described,
 			})}
-		</div>
-	);
-}
-
-export interface ComboOption<T extends string> {
-	value: T;
-	label: string;
-	/** 选项右侧的次要说明（如英文名的中文） */
-	hint?: string;
-}
-
-/**
- * 下拉选择。鼠标 / 键盘：combobox 触发钮 + 毛玻璃 listbox（`Floating`），焦点始终留在触发钮上；
- * 关闭时 ↓ ↑ Enter Space 打开，打开时 ↑ ↓ Home End 移动、首字母跳转、Enter / Space 选中，
- * Esc 关闭不改值（不冒泡到外层对话框），Tab 关闭并照常前进，点外面关闭。触屏用原生 select。
- */
-export function ComboSelect<T extends string>({
-	value,
-	options,
-	onChange,
-	...control
-}: FieldControlProps & {
-	value: T;
-	options: readonly ComboOption<T>[];
-	onChange: (v: T) => void;
-}): ReactNode {
-	const coarse = useCoarsePointer();
-	const [open, setOpen] = useState(false);
-	const [active, setActive] = useState(0);
-	const wrapRef = useRef<HTMLDivElement>(null);
-	const listId = useId();
-	const selected = options.findIndex((o) => o.value === value);
-
-	useEffect(() => {
-		if (!open) return;
-		const onDown = (e: MouseEvent) => {
-			if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
-		};
-		document.addEventListener("mousedown", onDown);
-		return () => document.removeEventListener("mousedown", onDown);
-	}, [open]);
-
-	if (coarse)
-		return (
-			<span className="relative flex">
-				<select
-					{...control}
-					value={value}
-					onChange={(e) => onChange(e.target.value as T)}
-					className={`h-[34px] appearance-none pr-9 ${FIELD}`}
-				>
-					{options.map((o) => (
-						<option key={o.value} value={o.value}>
-							{o.label}
-						</option>
-					))}
-				</select>
-				<Icon
-					name="caretUpDown"
-					size={13}
-					className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-faint"
-				/>
-			</span>
-		);
-
-	const show = () => {
-		setActive(Math.max(selected, 0));
-		setOpen(true);
-	};
-	const choose = (i: number) => {
-		const o = options[i];
-		if (o) onChange(o.value);
-		setOpen(false);
-	};
-	const move = (i: number) => setActive((i + options.length) % options.length);
-
-	const onKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
-		if (!open) {
-			if (["ArrowDown", "ArrowUp", "Enter", " "].includes(e.key)) {
-				e.preventDefault();
-				show();
-			}
-			return;
-		}
-		switch (e.key) {
-			case "ArrowDown":
-				e.preventDefault();
-				move(active + 1);
-				return;
-			case "ArrowUp":
-				e.preventDefault();
-				move(active - 1);
-				return;
-			case "Home":
-				e.preventDefault();
-				move(0);
-				return;
-			case "End":
-				e.preventDefault();
-				move(options.length - 1);
-				return;
-			case "Enter":
-			case " ":
-				e.preventDefault();
-				choose(active);
-				return;
-			case "Escape":
-				// 只关列表：不让外层对话框的 Esc 一起关掉
-				e.preventDefault();
-				e.stopPropagation();
-				setOpen(false);
-				return;
-			case "Tab":
-				setOpen(false);
-				return;
-		}
-		if (e.key.length === 1 && !e.nativeEvent.isComposing) {
-			const k = e.key.toLowerCase();
-			for (let s = 1; s <= options.length; s++) {
-				const i = (active + s) % options.length;
-				if (options[i]?.label.toLowerCase().startsWith(k)) {
-					setActive(i);
-					return;
-				}
-			}
-		}
-	};
-
-	return (
-		<div ref={wrapRef} className="relative">
-			<button
-				type="button"
-				role="combobox"
-				aria-haspopup="listbox"
-				aria-expanded={open}
-				aria-controls={listId}
-				aria-activedescendant={open ? `${listId}-${active}` : undefined}
-				{...control}
-				aria-labelledby={`${control["aria-labelledby"]} ${control.id}`}
-				onClick={() => (open ? setOpen(false) : show())}
-				onKeyDown={onKeyDown}
-				className={`flex h-[34px] cursor-pointer items-center justify-between gap-2 text-left aria-expanded:-translate-y-px aria-expanded:bg-[var(--field-focus)] aria-expanded:shadow-[var(--sh-field-focus)] ${FIELD}`}
-			>
-				<span className="min-w-0 truncate">{options[selected]?.label}</span>
-				<Icon name="caretUpDown" size={13} className="shrink-0 text-faint" />
-			</button>
-			{open && (
-				<Floating
-					id={listId}
-					role="listbox"
-					aria-labelledby={control["aria-labelledby"]}
-					side="bottom"
-					align="stretch"
-					gap={4}
-					bodyClassName="p-1"
-				>
-					{options.map((o, i) => (
-						// 焦点留在触发钮上（aria-activedescendant），选项不进 Tab 序列
-						<button
-							key={o.value}
-							type="button"
-							tabIndex={-1}
-							id={`${listId}-${i}`}
-							role="option"
-							aria-selected={i === selected}
-							onMouseMove={() => setActive(i)}
-							onMouseDown={(e) => e.preventDefault()}
-							onClick={() => choose(i)}
-							className={`flex h-[30px] w-full cursor-default items-center gap-2 rounded-[9px] px-2.5 text-left text-[13.5px] text-fg ${i === active ? "bg-hover" : ""}`}
-						>
-							<span className="min-w-0 flex-1 truncate">{o.label}</span>
-							{o.hint && <span className="text-muted text-xs">{o.hint}</span>}
-							<Icon
-								name="check"
-								size={13}
-								weight="bold"
-								className={`shrink-0 text-fg ${i === selected ? "" : "invisible"}`}
-							/>
-						</button>
-					))}
-				</Floating>
-			)}
 		</div>
 	);
 }

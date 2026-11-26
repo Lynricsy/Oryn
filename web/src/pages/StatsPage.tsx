@@ -1,9 +1,10 @@
 /**
  * 统计页 `/stats/:tab`（M10 计划 5.3）：用量 / Orb / 产出三个标签，范围与筛选都在 URL 查询串里（刷新、分享后视图不变）。
  * 独立的全宽数据页（不进设置），整页懒加载。回填未完成时页头下方一条提示。
- * 用量标签挂载期间把通知 store 里未读的预算通知逐条按 id 标为已读（修订 R4.3：看到即已读）。
+ * 用量标签挂载期间把通知 store 里未读的预算通知逐条按 id 标为已读（修订 R4.3：看到即已读）。预算只在设置里改：
+ * 没设上限时页头的「预算…」链到「设置 → 通知与预算」。
  */
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	Navigate,
@@ -12,7 +13,7 @@ import {
 	useSearchParams,
 } from "react-router";
 import { statsExportUrl, useBudget, useStatsMeta } from "../api/stats-queries";
-import { BudgetDialog, hasBudget } from "../components/stats/BudgetCard";
+import { BudgetSettingsLink, hasBudget } from "../components/stats/BudgetCard";
 import { OrbsTab } from "../components/stats/OrbsTab";
 import { OutputTab } from "../components/stats/OutputTab";
 import {
@@ -34,7 +35,6 @@ import {
 } from "../components/stats/statsParams";
 import { UsageTab } from "../components/stats/UsageTab";
 import { Callout, Sheet } from "../components/ui/data";
-import { Button } from "../components/ui/primitives";
 import { useBreakpoint } from "../lib/viewport";
 import { notificationsStore, useNotifications } from "../state/notifications";
 
@@ -120,7 +120,6 @@ function StatsScreen({ tab }: { tab: StatsTab }): ReactNode {
 	const params = parseStatsParams(sp);
 	const meta = useStatsMeta();
 	const budget = useBudget();
-	const [budgetOpen, setBudgetOpen] = useState(false);
 	useReadBudgetNotifications(tab === "usage");
 	// 窗口按「今天」算；`all` 的起点等 meta（没有则退回 30 天）
 	const w = statsWindow(params, Date.now(), meta.data?.earliestTs);
@@ -144,13 +143,9 @@ function StatsScreen({ tab }: { tab: StatsTab }): ReactNode {
 						links={exportLinks(tab, params, w)}
 						extra={
 							tab === "usage" && budget.data && !hasBudget(budget.data) ? (
-								<Button
-									size="sm"
-									icon="coin"
-									onClick={() => setBudgetOpen(true)}
-								>
+								<BudgetSettingsLink>
 									{t("stats.budget.open")}
-								</Button>
+								</BudgetSettingsLink>
 							) : undefined
 						}
 					/>
@@ -168,7 +163,6 @@ function StatsScreen({ tab }: { tab: StatsTab }): ReactNode {
 							window={w}
 							onChange={onChange}
 							budget={budget.data}
-							onEditBudget={() => setBudgetOpen(true)}
 						/>
 					)}
 					{tab === "orbs" && <OrbsTab params={params} window={w} />}
@@ -177,12 +171,6 @@ function StatsScreen({ tab }: { tab: StatsTab }): ReactNode {
 					)}
 				</div>
 			</div>
-			{budgetOpen && (
-				<BudgetDialog
-					status={budget.data}
-					onClose={() => setBudgetOpen(false)}
-				/>
-			)}
 		</Sheet>
 	);
 }

@@ -1,5 +1,5 @@
 /**
- * 设置 → 通知（M5 计划 6.3），工作台原生（D）分组列表试点（components/ui/workbench.tsx）。
+ * 设置 → 通知与预算（M5 计划 6.3），工作台原生（D）分组列表（components/ui/workbench.tsx）。
  * 1. 此设备：系统通知权限、「后台推送」开关（Web Push 订阅 / 退订）、其它已订阅的浏览器。
  *    桌面壳（M6）里系统通知由壳发送：只有一句说明与「发送测试通知」，不渲染权限与推送开关；
  *    移动壳（M7）换成 `MobilePushCard`（壳注册的 UnifiedPush / FCM 推送状态）。
@@ -7,7 +7,8 @@
  *    行尾：测试（悬停出现）· 定宽状态列 · ⋯（编辑 / 发送测试 / 删除）· 开关；出错时点状态看原文。
  *    机密字段只写不读：编辑时「连接配置」整组留空 = 不变（不提交配置对象），填了任一项 = 整体替换。
  *    Telegram 创建后进入绑定向导：显示 `/start <码>`，每 2s 拉一次渠道列表直到已绑定。
- * 3. 最近通知：最近 20 条与各投递的状态。
+ * 3. 预算（`BudgetGroup`，BudgetSettings.tsx）：告警开关、日 / 月上限、预警线、时区；统计页只看。
+ * 4. 最近通知：最近 20 条与各投递的状态。
  */
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -46,13 +47,13 @@ import {
 	ErrorText,
 	IconButton,
 	Menu,
+	Select,
 	Spinner,
 	TextArea,
 	TextInput,
 	Toggle,
 } from "../../components/ui/primitives";
 import {
-	ComboSelect,
 	FormField,
 	Group,
 	GroupList,
@@ -76,6 +77,7 @@ import {
 	notificationsStore,
 	useNotifications,
 } from "../../state/notifications";
+import { BudgetGroup } from "./BudgetSettings";
 import MobilePushCard from "./MobilePushCard";
 
 type Kind = Schemas["NotificationChannelKind"];
@@ -574,7 +576,7 @@ function ChannelDialog({
 					aside={t("notifySettings.localeHint")}
 				>
 					{(p) => (
-						<ComboSelect
+						<Select
 							{...p}
 							value={form.locale}
 							options={LOCALES.map((l) => ({
@@ -1181,9 +1183,9 @@ function RecentCard() {
 }
 
 export default function NotificationsSettings(): ReactNode {
+	// 分组间距（30px）由设置页外壳给出
 	return (
-		// 分组间 30（G3）：分组标题小而淡，靠留白分层
-		<div className="flex flex-col gap-[30px]">
+		<>
 			{host.mobile ? (
 				<MobilePushCard />
 			) : host.desktop ? (
@@ -1192,7 +1194,8 @@ export default function NotificationsSettings(): ReactNode {
 				<DeviceCard />
 			)}
 			<ChannelsCard />
+			<BudgetGroup />
 			<RecentCard />
-		</div>
+		</>
 	);
 }

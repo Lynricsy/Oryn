@@ -1,9 +1,9 @@
 /**
- * 设置页「浏览器 Profile」（M8 4.6，default export，由设置页接入）：顶部新建表单（名字）；
- * 列表每行 = 名字、大小、上次保存时间、状态（空闲 / 使用中 · 线程（链接）/ 只读副本数 / 上次保存失败的原因），
- * 行内重命名与删除（删除先经应用内确认 `confirmAction`；被独占持有时禁用并提示先在 Desktop 面板解除）。
+ * 设置 → 浏览器 Profile（M8 4.6）：分组右上「新建」打开对话框（名字）；
+ * 每行 = 名字 · 状态（空闲 / 使用中 · 线程（链接）/ 只读副本数 / 上次保存失败的原因）、大小、上次保存时间 ·
+ * ⋯（重命名走对话框；删除先经应用内确认 `confirmAction`，被独占持有时禁用并提示先在 Desktop 面板解除）。
  */
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import type { Schemas } from "../../api/client";
@@ -14,16 +14,22 @@ import {
 	useRenameBrowserProfile,
 } from "../../api/queries";
 import { holderTitle } from "../../components/desktop/profile-status";
-import { Badge, Card, ListRow } from "../../components/ui/data";
-import { Icon } from "../../components/ui/icons";
+import { Badge } from "../../components/ui/data";
 import {
 	Button,
-	EmptyState,
+	Dialog,
 	ErrorText,
 	IconButton,
+	Menu,
 	Spinner,
 	TextInput,
 } from "../../components/ui/primitives";
+import {
+	FormField,
+	Group,
+	GroupList,
+	GroupRow,
+} from "../../components/ui/workbench";
 import { confirmAction } from "../../lib/confirm";
 import { formatBytes, formatRelative } from "../../lib/format";
 
@@ -42,215 +48,235 @@ export function validProfileName(name: string): boolean {
 	);
 }
 
-function LeadIcon() {
+/** 新建或重命名：只有名字一个字段；`profile` 给出时是重命名。 */
+function NameDialog({
+	profile,
+	onClose,
+}: {
+	profile?: Profile;
+	onClose: () => void;
+}): ReactNode {
+	const { t } = useTranslation();
+	const formId = useId();
+	const create = useCreateBrowserProfile();
+	const rename = useRenameBrowserProfile();
+	const [name, setName] = useState(profile?.name ?? "");
+	const pending = create.isPending || rename.isPending;
+	const valid = validProfileName(name);
+	const submit = () => {
+		if (!valid || pending) return;
+		const next = name.trim();
+		if (!profile) create.mutate(next, { onSuccess: onClose });
+		else if (next === profile.name) onClose();
+		else rename.mutate({ id: profile.id, name: next }, { onSuccess: onClose });
+	};
 	return (
-		<span className="grid h-8 w-8 place-items-center rounded-md border border-border bg-raised text-muted">
-			<Icon name="browser" size={15} />
-		</span>
+		<Dialog
+			open
+			onClose={onClose}
+			title={
+				profile ? t("browserProfiles.renameTitle") : t("browserProfiles.new")
+			}
+			footer={
+				<>
+					<Button variant="ghost" onClick={onClose}>
+						{t("common.cancel")}
+					</Button>
+					<Button
+						type="submit"
+						form={formId}
+						variant="primary"
+						disabled={!valid || pending}
+					>
+						{pending && <Spinner size={13} />}
+						{profile ? t("common.save") : t("common.create")}
+					</Button>
+				</>
+			}
+		>
+			<form
+				id={formId}
+				className="flex flex-col gap-4"
+				onSubmit={(e) => {
+					e.preventDefault();
+					submit();
+				}}
+			>
+				<FormField label={t("browserProfiles.name")}>
+					{(p) => (
+						<TextInput
+							{...p}
+							autoFocus
+							maxLength={40}
+							placeholder={t("browserProfiles.namePlaceholder")}
+							value={name}
+							onChange={(e) => setName(e.target.value)}
+						/>
+					)}
+				</FormField>
+				<ErrorText error={create.error ?? rename.error} />
+			</form>
+		</Dialog>
 	);
 }
 
-function ProfileRow({ profile }: { profile: Profile }): ReactNode {
+function ProfileRow({
+	profile,
+	onRename,
+}: {
+	profile: Profile;
+	onRename: () => void;
+}): ReactNode {
 	const { t } = useTranslation();
-	const rename = useRenameBrowserProfile();
 	const del = useDeleteBrowserProfile();
-	const [editing, setEditing] = useState<string | null>(null);
 	const holder = profile.holder;
 	const readers = profile.readers?.length ?? 0;
-	const submitRename = () => {
-		if (editing === null || !validProfileName(editing)) return;
-		if (editing.trim() === profile.name) {
-			setEditing(null);
-			return;
-		}
-		rename.mutate(
-			{ id: profile.id, name: editing.trim() },
-			{ onSuccess: () => setEditing(null) },
-		);
-	};
+	const inUse = holder && (
+		<Badge tone="frost" icon="lock">
+			{t("browserProfiles.inUse", { thread: holderTitle(holder, t) })}
+		</Badge>
+	);
 	return (
-		<li data-testid="browser-profile-row">
-			{editing !== null ? (
-				<form
-					className="flex items-center gap-2 px-2 py-2"
-					onSubmit={(e) => {
-						e.preventDefault();
-						submitRename();
-					}}
-				>
-					<TextInput
-						autoFocus
-						aria-label={t("browserProfiles.name")}
-						maxLength={40}
-						value={editing}
-						onChange={(e) => setEditing(e.target.value)}
-						onKeyDown={(e) => {
-							if (e.key === "Escape") setEditing(null);
-						}}
-					/>
-					<Button
-						type="submit"
-						size="sm"
-						variant="primary"
-						disabled={rename.isPending || !validProfileName(editing)}
-					>
-						{t("common.save")}
-					</Button>
-					<Button size="sm" onClick={() => setEditing(null)}>
-						{t("common.cancel")}
-					</Button>
-				</form>
-			) : (
-				<ListRow
-					leading={<LeadIcon />}
-					title={<span className="truncate font-medium">{profile.name}</span>}
-					meta={
-						<>
-							{holder?.threadId ? (
-								// 链接包在徽章外：徽章里的文字截断会把链接的焦点环一起切掉
-								<Link
-									to={`/t/${holder.threadId}`}
-									className="inline-flex min-w-0 max-w-full rounded hover:[&_span]:underline"
-								>
-									<Badge tone="frost" icon="lock">
-										{t("browserProfiles.inUse", {
-											thread: holderTitle(holder, t),
-										})}
-									</Badge>
-								</Link>
-							) : holder ? (
-								<Badge tone="frost" icon="lock">
-									{t("browserProfiles.inUse", {
-										thread: holderTitle(holder, t),
-									})}
-								</Badge>
-							) : (
-								<Badge>{t("browserProfiles.idle")}</Badge>
-							)}
-							{readers > 0 && (
-								<Badge icon="eye">
-									{t("browserProfiles.readers", { count: readers })}
-								</Badge>
-							)}
-							{profile.saveError && (
-								<Badge tone="warn" icon="alert">
-									{t("browserProfiles.saveFailed", {
-										reason: t(`browserProfiles.saveError.${profile.saveError}`),
-									})}
-								</Badge>
-							)}
-							<span>
-								{profile.revision > 0
-									? formatBytes(profile.sizeBytes)
-									: t("browserProfiles.empty")}
-							</span>
-							<span>
-								{profile.savedAt
-									? t("browserProfiles.savedAt", {
-											when: formatRelative(profile.savedAt),
-										})
-									: t("browserProfiles.neverSaved")}
-							</span>
-						</>
-					}
-					trailing={
-						<>
-							<IconButton
-								icon="edit"
-								label={t("browserProfiles.rename")}
-								onClick={() => setEditing(profile.name)}
-							/>
-							<IconButton
-								icon="trash"
-								label={
-									holder ? t("browserProfiles.deleteHeld") : t("common.delete")
-								}
-								disabled={!!holder || del.isPending}
-								onClick={async () => {
-									if (
-										!(await confirmAction({
-											title: t("browserProfiles.deleteConfirm", {
-												name: profile.name,
-											}),
-											body: t("browserProfiles.deleteConfirmBody"),
-											action: t("common.delete"),
-											danger: true,
-										}))
-									)
-										return;
+		<GroupRow
+			icon="browser"
+			title={
+				<span data-testid="browser-profile-row" className="truncate">
+					{profile.name}
+				</span>
+			}
+			meta={
+				<>
+					{holder?.threadId ? (
+						// 链接包在徽章外：徽章里的文字截断会把链接的焦点环一起切掉
+						<Link
+							to={`/t/${holder.threadId}`}
+							className="inline-flex min-w-0 max-w-full rounded hover:[&_span]:underline"
+						>
+							{inUse}
+						</Link>
+					) : holder ? (
+						inUse
+					) : (
+						<span>{t("browserProfiles.idle")}</span>
+					)}
+					{readers > 0 && (
+						<Badge icon="eye">
+							{t("browserProfiles.readers", { count: readers })}
+						</Badge>
+					)}
+					<span className="tabular-nums">
+						{profile.revision > 0
+							? formatBytes(profile.sizeBytes)
+							: t("browserProfiles.empty")}
+					</span>
+					<span>
+						{profile.savedAt
+							? t("browserProfiles.savedAt", {
+									when: formatRelative(profile.savedAt),
+								})
+							: t("browserProfiles.neverSaved")}
+					</span>
+				</>
+			}
+			trailing={
+				<Menu
+					trigger={(p) => (
+						<IconButton
+							icon="more"
+							box="sm"
+							label={t("browserProfiles.more", { name: profile.name })}
+							{...p}
+						/>
+					)}
+					items={[
+						{
+							key: "rename",
+							icon: "edit",
+							label: t("browserProfiles.rename"),
+							onSelect: onRename,
+						},
+						{
+							key: "delete",
+							icon: "trash",
+							label: t("common.delete"),
+							danger: true,
+							disabled: !!holder || del.isPending,
+							hint: holder ? t("browserProfiles.deleteHeld") : undefined,
+							title: holder ? t("browserProfiles.deleteHeld") : undefined,
+							onSelect: async () => {
+								if (
+									await confirmAction({
+										title: t("browserProfiles.deleteConfirm", {
+											name: profile.name,
+										}),
+										body: t("browserProfiles.deleteConfirmBody"),
+										action: t("common.delete"),
+										danger: true,
+									})
+								)
 									del.mutate(profile.id);
-								}}
-							/>
-						</>
-					}
+							},
+						},
+					]}
 				/>
+			}
+		>
+			{(profile.saveError || del.error) && (
+				<div className="flex flex-col gap-1">
+					{profile.saveError && (
+						<p className="text-[12.5px] text-warn-ink">
+							{t("browserProfiles.saveFailed", {
+								reason: t(`browserProfiles.saveError.${profile.saveError}`),
+							})}
+						</p>
+					)}
+					<ErrorText error={del.error} />
+				</div>
 			)}
-			<div className="px-2 empty:hidden">
-				<ErrorText error={rename.error ?? del.error} />
-			</div>
-		</li>
+		</GroupRow>
 	);
 }
 
 export default function BrowserProfilesSettings(): ReactNode {
 	const { t } = useTranslation();
 	const profiles = useBrowserProfiles();
-	const create = useCreateBrowserProfile();
-	const [name, setName] = useState("");
+	const [editing, setEditing] = useState<Profile | "new" | null>(null);
 	const list = profiles.data?.profiles ?? [];
 	return (
-		<>
-			<Card title={t("browserProfiles.new")} icon="plus">
-				<form
-					className="flex flex-col gap-2 sm:flex-row sm:items-start"
-					onSubmit={(e) => {
-						e.preventDefault();
-						if (!validProfileName(name)) return;
-						create.mutate(name.trim(), { onSuccess: () => setName("") });
-					}}
-				>
-					<div className="min-w-0 flex-1">
-						<TextInput
-							aria-label={t("browserProfiles.name")}
-							placeholder={t("browserProfiles.namePlaceholder")}
-							maxLength={40}
-							value={name}
-							onChange={(e) => setName(e.target.value)}
-						/>
-					</div>
-					<Button
-						type="submit"
-						variant="primary"
-						icon="plus"
-						disabled={create.isPending || !validProfileName(name)}
-					>
-						{t("common.create")}
-					</Button>
-				</form>
-				<div className="mt-2 empty:hidden">
-					<ErrorText error={create.error} />
-				</div>
-			</Card>
-			<Card title={t("browserProfiles.title")} icon="browser">
-				{/* 说明放在卡片顶部，与其他设置卡片一致 */}
-				{list.length > 0 && (
-					<p className="mb-2 text-faint text-xs">{t("browserProfiles.hint")}</p>
-				)}
-				{profiles.isPending && <Spinner />}
-				<ErrorText error={profiles.error} />
-				{list.length > 0 && (
-					<ul className="-mx-2 flex flex-col">
-						{list.map((p) => (
-							<ProfileRow key={p.id} profile={p} />
-						))}
-					</ul>
-				)}
-				{profiles.isSuccess && list.length === 0 && (
-					<EmptyState icon="browser" title={t("browserProfiles.emptyTitle")}>
-						{t("browserProfiles.emptyHint")}
-					</EmptyState>
-				)}
-			</Card>
-		</>
+		<Group
+			title={t("browserProfiles.title")}
+			action={
+				<Button size="sm" icon="plus" onClick={() => setEditing("new")}>
+					{t("browserProfiles.add")}
+				</Button>
+			}
+		>
+			{profiles.isPending && <Spinner />}
+			<ErrorText error={profiles.error} />
+			{list.length > 0 && (
+				<GroupList>
+					{list.map((p) => (
+						<ProfileRow key={p.id} profile={p} onRename={() => setEditing(p)} />
+					))}
+				</GroupList>
+			)}
+			{profiles.isSuccess && (
+				<p className="px-1.5 text-faint text-sm">
+					{list.length === 0 && (
+						<span className="text-muted">
+							{t("browserProfiles.emptyTitle")}
+							{" · "}
+						</span>
+					)}
+					{t("browserProfiles.emptyHint")}
+				</p>
+			)}
+			{editing && (
+				<NameDialog
+					profile={editing === "new" ? undefined : editing}
+					onClose={() => setEditing(null)}
+				/>
+			)}
+		</Group>
 	);
 }

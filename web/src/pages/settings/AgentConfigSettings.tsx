@@ -1,6 +1,7 @@
 /**
- * 设置页「agent 配置」（default export，由设置页接入）：与线程 Files 面板同一个文件浏览器 + CodeMirror 编辑器，不做表单化；
- * 保存后显示提取出的密钥与告警。
+ * 设置 → 配置文件（default export，由设置页接入）：与线程 Files 面板同一个文件浏览器 + CodeMirror 编辑器，不做表单化；
+ * 保存后显示提取出的密钥与告警。页顶与其它 Agent 子页一样给出作用范围说明与下发状态。
+ * 文件浏览器的高度：手机上随视口（70dvh，至少 20rem），宽屏固定 32rem。
  */
 import { useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
@@ -10,8 +11,12 @@ import type { Schemas } from "../../api/client";
 import { identityKeys } from "../../api/identity-queries";
 import { invalidateModelCatalog } from "../../api/model-catalog-queries";
 import { FileBrowser } from "../../components/files/FileBrowser";
-import { ApplyStatusBanner } from "../../components/settings/ApplyStatusBanner";
-import { Callout, Card } from "../../components/ui/data";
+import {
+	AgentPageHead,
+	GroupNote,
+} from "../../components/settings/agent-config-ui";
+import { Callout } from "../../components/ui/data";
+import { Group } from "../../components/ui/workbench";
 import { agentConfigSource } from "../../lib/file-source";
 
 /** omp 主配置文件：其中的 `cycleOrder` / `modelTags` 决定角色头像列表。 */
@@ -50,16 +55,13 @@ export default function AgentConfigSettings() {
 	}, [qc]);
 	return (
 		<>
-			<ApplyStatusBanner />
-			<Card title={t("agentConfig.title")} icon="file">
-				<p className="mb-3 text-muted text-xs">
-					{t("agentConfig.hint")} {t("agentConfig.pushHint")}
-				</p>
-				<div className="h-[32rem] overflow-hidden rounded-lg border border-border">
+			<AgentPageHead>{t("agentConfig.scopeConfigYml")}</AgentPageHead>
+			<Group title={t("agentConfig.title")}>
+				<div className="glass h-[70dvh] min-h-80 overflow-hidden rounded-[22px] sm:h-[32rem]">
 					<FileBrowser sources={sources} storageKey="settings.agent-config" />
 				</div>
 				{result && (
-					<div className="mt-2 flex flex-col gap-1.5">
+					<div className="flex flex-col gap-1.5">
 						{result.extractedSecrets.length > 0 && (
 							<Callout tone="ok">
 								{t("agentConfig.extracted", {
@@ -74,7 +76,10 @@ export default function AgentConfigSettings() {
 						))}
 					</div>
 				)}
-			</Card>
+				<GroupNote>
+					{t("agentConfig.hint")} {t("agentConfig.pushHint")}
+				</GroupNote>
+			</Group>
 		</>
 	);
 }

@@ -1,5 +1,5 @@
 /**
- * 设置：27 个分区页面（长页另按卡片分段截图），以及分区里的下拉、菜单、弹窗、确认框。
+ * 设置：各分区页面（id 同 src/pages/settings/registry.ts；长页另按分组分段截图），以及分区里的下拉、菜单、弹窗、确认框。
  * 页面级用例先等主内容里的加载转圈消失，避免截到半加载的骨架。
  */
 import type { Locator, Page } from "@playwright/test";
@@ -101,40 +101,33 @@ function overlay(
 // ---------------------------------------------------------------- 页面
 
 const SECTIONS = [
-	"devices",
-	"providers",
-	"runners",
-	"secrets",
-	"browser-profiles",
-	"git-identity",
-	"github",
-	"agent-skills",
+	"account",
+	"appearance",
+	"input",
+	"notifications",
+	"assistant",
+	"agent-models",
 	"agent-subagents",
-	"agent-roles",
-	"agent-prompts",
-	"agent-commands",
+	"agent-instructions",
 	"agent-extensions",
 	"agent-memory",
-	"agent-ssh",
-	"agent-composer",
-	"selection-actions",
 	"agent-config",
-	"identity",
-	"assistant",
-	"appearance",
-	"notifications",
-	"shares",
-	"artifacts",
 	"automations",
+	"compute",
+	"secrets",
+	"ssh",
+	"git",
+	"browser-profiles",
+	"sharing",
 	"about",
 ] as const;
 
 for (const s of SECTIONS) pageSurface(`settings.${s}`, s);
 
-// 长页面：按卡片分段
-pageSurface("settings.github.automation", "github", "自动化");
-pageSurface("settings.agent-roles.others", "agent-roles", "其他角色");
-pageSurface("settings.agent-ssh.audit", "agent-ssh", "网关审计");
+// 长页面：按分组分段
+pageSurface("settings.git.accounts", "git", "GitHub 账号");
+pageSurface("settings.agent-models.others", "agent-models", "其他角色");
+pageSurface("settings.ssh.audit", "ssh", "网关审计");
 pageSurface("settings.agent-memory.models", "agent-memory", /^模型$/);
 pageSurface("settings.agent-memory.browse", "agent-memory", /^浏览$/);
 // 状态卡里也有一行「待批准」：锚在紧挨着的「全局记忆」卡片标题上，一屏里是全局记忆、待批准与 mental models
@@ -179,7 +172,7 @@ surface({
 	},
 });
 pageSurface("settings.agent-memory.owner-sources", "agent-memory", /^来源$/);
-pageSurface("settings.identity.assistant", "identity", "全局助手");
+pageSurface("settings.account.assistant", "account", "全局助手");
 pageSurface("settings.notifications.recent", "notifications", "最近通知");
 pageSurface("settings.automations.actions", "automations", "操作记录");
 
@@ -272,7 +265,7 @@ shellSurface("settings.mobile.about", "about", "mobile");
 // 手机：分区导航在侧栏抽屉里（抽屉是 <nav>，不是浮层；关抽屉要点遮罩，不做关掉重开）
 surface({
 	id: "settings.nav",
-	path: "/settings/devices",
+	path: "/settings/account",
 	ready: READY,
 	only: "mobile",
 	noReopen: true,
@@ -315,50 +308,52 @@ overlay("settings.automations.row-menu", "automations", (page) =>
 
 // ---------------------------------------------------------------- SSH
 
-overlay("settings.agent-ssh.host-new", "agent-ssh", (page) =>
+overlay("settings.ssh.host-new", "ssh", (page) =>
 	dialog(page, /主机/, () => btn(page, "添加主机").click()),
 );
-overlay("settings.agent-ssh.host-menu", "agent-ssh", (page) =>
+overlay("settings.ssh.host-menu", "ssh", (page) =>
 	btn(page, "bastion 的操作").click(),
 );
-overlay("settings.agent-ssh.host-edit", "agent-ssh", (page) =>
+overlay("settings.ssh.host-edit", "ssh", (page) =>
 	dialog(page, /编辑主机/, async () => {
 		await btn(page, "prod-web 的操作").click();
 		await page.getByRole("menuitem", { name: "编辑" }).click();
 	}),
 );
-overlay("settings.agent-ssh.host-delete", "agent-ssh", async (page) => {
+overlay("settings.ssh.host-delete", "ssh", async (page) => {
 	await btn(page, "down 的操作").click();
 	await page.getByRole("menuitem", { name: "删除" }).click();
 });
-overlay("settings.agent-ssh.host-files", "agent-ssh", async (page) => {
+overlay("settings.ssh.host-files", "ssh", async (page) => {
 	await btn(page, "bastion 的操作").click();
 	await page.getByRole("menuitem", { name: /文件/ }).click();
 });
-overlay("settings.agent-ssh.key-generate", "agent-ssh", (page) =>
+overlay("settings.ssh.key-generate", "ssh", (page) =>
 	btn(page, "生成钥匙").click(),
 );
-overlay("settings.agent-ssh.key-import", "agent-ssh", (page) =>
+overlay("settings.ssh.key-import", "ssh", (page) =>
 	btn(page, "导入私钥").click(),
 );
-overlay("settings.agent-ssh.key-menu", "agent-ssh", (page) =>
+overlay("settings.ssh.key-menu", "ssh", (page) =>
 	btn(page, "deploy 的操作").click(),
 );
-overlay("settings.agent-ssh.key-rename", "agent-ssh", async (page) => {
+overlay("settings.ssh.key-rename", "ssh", async (page) => {
 	await btn(page, "deploy 的操作").click();
 	await page.getByRole("menuitem", { name: /重命名/ }).click();
 });
-overlay("settings.agent-ssh.key-delete", "agent-ssh", async (page) => {
+overlay("settings.ssh.key-delete", "ssh", async (page) => {
 	await btn(page, "legacy rsa 的操作").click();
 	await page.getByRole("menuitem", { name: "删除" }).click();
 });
 surface({
-	id: "settings.agent-ssh.test-result",
-	path: "/settings/agent-ssh",
+	id: "settings.ssh.test-result",
+	path: "/settings/ssh",
 	ready: READY,
 	noReopen: true,
 	open: async (page) => {
 		await loaded(page);
+		// 「测试」是悬停才出现的行尾动作：先悬停到第一行
+		await page.locator("main [data-testid=ssh-host-row]").first().hover();
 		await btn(page, "测试").click();
 		await loaded(page);
 		return undefined;
@@ -367,17 +362,14 @@ surface({
 
 // ---------------------------------------------------------------- Agent 子页
 
-overlay("settings.agent-skills.new", "agent-skills", (page) =>
+overlay("settings.agent-instructions.new", "agent-instructions", (page) =>
 	btn(page, "新建").click(),
 );
-overlay("settings.agent-skills.edit", "agent-skills", (page) =>
+overlay("settings.agent-instructions.edit", "agent-instructions", (page) =>
 	btn(page, "编辑 review").click(),
 );
-overlay("settings.agent-skills.delete", "agent-skills", (page) =>
+overlay("settings.agent-instructions.delete", "agent-instructions", (page) =>
 	btn(page, "删除 review").click(),
-);
-overlay("settings.agent-commands.new", "agent-commands", (page) =>
-	btn(page, "新建").click(),
 );
 overlay("settings.agent-subagents.new", "agent-subagents", (page) =>
 	btn(page, "新建").click(),
@@ -394,12 +386,12 @@ surface({
 		return undefined;
 	},
 });
-overlay("settings.agent-roles.new", "agent-roles", (page) =>
+overlay("settings.agent-models.new", "agent-models", (page) =>
 	btn(page, "新建角色").click(),
 );
 surface({
-	id: "settings.agent-roles.expanded",
-	path: "/settings/agent-roles",
+	id: "settings.agent-models.expanded",
+	path: "/settings/agent-models",
 	ready: READY,
 	noReopen: true,
 	open: async (page) => {
@@ -409,11 +401,15 @@ surface({
 		return undefined;
 	},
 });
-overlay("settings.agent-prompts.edit", "agent-prompts", (page) =>
-	btn(page, "编辑 AGENTS.md").click(),
+overlay(
+	"settings.agent-instructions.prompt-edit",
+	"agent-instructions",
+	(page) => btn(page, "编辑 AGENTS.md").click(),
 );
-overlay("settings.agent-prompts.delete", "agent-prompts", (page) =>
-	btn(page, "删除 AGENTS.md").click(),
+overlay(
+	"settings.agent-instructions.prompt-delete",
+	"agent-instructions",
+	(page) => btn(page, "删除 AGENTS.md").click(),
 );
 overlay("settings.agent-extensions.new", "agent-extensions", (page) =>
 	btn(page, "在「扩展模块」中新建").click(),
@@ -436,7 +432,7 @@ surface({
 		return undefined;
 	},
 });
-overlay("settings.selection-actions.new", "selection-actions", (page) =>
+overlay("settings.input.selection-action-new", "input", (page) =>
 	btn(page, "添加动作").click(),
 );
 
@@ -467,12 +463,10 @@ overlay("settings.notifications.channel-edit", "notifications", (page) =>
 
 // ---------------------------------------------------------------- 其他分区
 
-overlay("settings.github.connect", "github", (page) =>
-	btn(page, "连接").click(),
-);
+overlay("settings.git.connect", "git", (page) => btn(page, "连接").click());
 overlay(
-	"settings.identity.crop",
-	"identity",
+	"settings.account.crop",
+	"account",
 	async (page) => {
 		await page.locator("main input[type=file]").first().setInputFiles({
 			name: "avatar.png",
@@ -485,38 +479,37 @@ overlay(
 overlay("settings.assistant.mcp-research-tools", "assistant", (page) =>
 	btn(page, /^研究可用工具/).click(),
 );
+/** 算力：Provider / Runner 分组的「新建」→ 对话框填名字 → 一次性令牌。 */
+function computeCreated(id: string, group: string, name: string) {
+	surface({
+		id,
+		path: "/settings/compute",
+		ready: READY,
+		noReopen: true,
+		open: async (page) => {
+			await loaded(page);
+			await page
+				.locator("main")
+				.getByRole("region", { name: group, exact: true })
+				.getByRole("button", { name: "新建" })
+				.click();
+			const d = page.getByRole("dialog");
+			await d.getByRole("textbox", { name: "名字" }).fill(name);
+			await d.getByRole("button", { name: "创建" }).click();
+			await d.getByTestId("compute-token").waitFor();
+			return d;
+		},
+	});
+}
+computeCreated(
+	"settings.compute.provider-created",
+	"Provider",
+	"gpu-box-shanghai-02",
+);
+computeCreated("settings.compute.runner-created", "Runner", "workstation-lab");
 surface({
-	id: "settings.providers.created",
-	path: "/settings/providers",
-	ready: READY,
-	noReopen: true,
-	open: async (page) => {
-		await loaded(page);
-		await page
-			.locator("main")
-			.getByPlaceholder(/名称/)
-			.fill("gpu-box-shanghai-02");
-		await btn(page, "创建").click();
-		await loaded(page);
-		return undefined;
-	},
-});
-surface({
-	id: "settings.runners.created",
-	path: "/settings/runners",
-	ready: READY,
-	noReopen: true,
-	open: async (page) => {
-		await loaded(page);
-		await page.locator("main").getByPlaceholder(/名字/).fill("workstation-lab");
-		await btn(page, "创建").click();
-		await loaded(page);
-		return undefined;
-	},
-});
-surface({
-	id: "settings.devices.pair",
-	path: "/settings/devices",
+	id: "settings.account.pair",
+	path: "/settings/account",
 	ready: READY,
 	noReopen: true,
 	open: async (page) => {

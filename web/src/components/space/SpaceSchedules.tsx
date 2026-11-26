@@ -1,6 +1,7 @@
 /**
  * Space 页的「定时」小节：`listSchedules?space=<id>`（本 Space 的「每次新建线程」定时，加上挂在本 Space 线程上的线程内定时），
- * 每行名称、表达式、下次运行与启停；「新建」打开新建线程定时的对话框（项目预填 Space 的项目，`spaceId` 固定）。
+ * 每行名称、表达式、下次运行与启停（`ScheduleRow` 放在 D 的 `GroupList` 面板里；小节标题沿用右列其他小节的样式）；
+ * 「新建」打开新建线程定时的对话框（项目预填 Space 的项目，`spaceId` 固定）。
  */
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -9,6 +10,7 @@ import type { Space } from "../../api/space-queries";
 import { ScheduleDialog } from "../schedule/ScheduleDialog";
 import { editTarget, ScheduleRow } from "../schedule/ScheduleRow";
 import { Button, Spinner } from "../ui/primitives";
+import { GroupList } from "../ui/workbench";
 
 export function SpaceSchedules({ space }: { space: Space }): ReactNode {
 	const { t } = useTranslation();
@@ -29,11 +31,11 @@ export function SpaceSchedules({ space }: { space: Space }): ReactNode {
 				<p className="text-faint text-xs">{t("space.noSchedules")}</p>
 			)}
 			{list.length > 0 && (
-				<ul className="-mx-2 flex flex-col">
+				<GroupList>
 					{list.map((s) => (
 						<ScheduleRow key={s.id} schedule={s} onEdit={() => setEditing(s)} />
 					))}
-				</ul>
+				</GroupList>
 			)}
 			{editing === "new" && (
 				<ScheduleDialog

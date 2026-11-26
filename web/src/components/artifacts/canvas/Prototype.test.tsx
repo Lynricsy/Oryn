@@ -18,6 +18,7 @@ import {
 	type CanvasPage,
 	parseCanvasDoc,
 } from "../../../lib/artifacts/canvas-doc";
+import { pickOption } from "../../../test/select";
 import { flowBezier, parseFramesLinks } from "./CanvasEditor";
 import { DeviceShell, deviceShellSize } from "./DeviceShell";
 import type { PageContent } from "./frames";
@@ -258,9 +259,7 @@ describe("Prototype", () => {
 		mock.postMessage.mockClear();
 
 		// 顶栏下拉切到控制台
-		fireEvent.change(screen.getByTestId("prototype-frame-select"), {
-			target: { value: "p-dash" },
-		});
+		pickOption(screen.getByRole("combobox", { name: "切换画框" }), "控制台");
 		expect(mock.postMessage).toHaveBeenCalledWith(
 			expect.objectContaining({
 				v: PROTOCOL_VERSION,
@@ -297,9 +296,8 @@ describe("Prototype", () => {
 			/>,
 		);
 
-		fireEvent.change(screen.getByTestId("prototype-device-select"), {
-			target: { value: "tablet" },
-		});
+		const device = screen.getByRole("combobox", { name: "预览设备外壳" });
+		pickOption(device, "平板");
 		expect(screen.getByTestId("device-shell").getAttribute("data-device")).toBe(
 			"tablet",
 		);
@@ -307,9 +305,7 @@ describe("Prototype", () => {
 		expect(doc.pages[0]?.device).toBe("phone");
 
 		// 切回跟随画框
-		fireEvent.change(screen.getByTestId("prototype-device-select"), {
-			target: { value: "auto" },
-		});
+		pickOption(device, "跟随画框");
 		expect(screen.getByTestId("device-shell").getAttribute("data-device")).toBe(
 			"phone",
 		);
@@ -381,17 +377,15 @@ describe("PropsPanel 设备外壳选择与 Toolbar 原型按钮", () => {
 				overlay={false}
 			/>,
 		);
-		const select = screen.getByTestId(
-			"canvas-frame-device",
-		) as HTMLSelectElement;
-		expect(select.value).toBe("phone");
+		const select = screen.getByRole("combobox", { name: /^设备外壳/ });
+		expect(select).toHaveTextContent("手机");
 
-		fireEvent.change(select, { target: { value: "browser" } });
+		pickOption(select, "浏览器");
 		expect(commit).toHaveBeenCalledWith([
 			{ op: "set", id: "p-login", key: "device", value: "browser" },
 		]);
 
-		fireEvent.change(select, { target: { value: "none" } });
+		pickOption(select, "无");
 		expect(commit).toHaveBeenLastCalledWith([
 			{ op: "set", id: "p-login", key: "device", value: "none" },
 		]);

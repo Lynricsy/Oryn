@@ -269,13 +269,12 @@ describe("项目设置：环境", () => {
 
 	it("默认浏览器 Profile：选中后保存带它的 id", async () => {
 		mount(ENV);
-		await screen.findByRole("option", { name: "工作账号" });
-		fireEvent.change(
-			screen.getByRole("combobox", {
+		fireEvent.click(
+			await screen.findByRole("combobox", {
 				name: new RegExp(`^${i18n.t("projects.defaultBrowserProfile")}`),
 			}),
-			{ target: { value: "bpf_A" } },
 		);
+		fireEvent.click(await screen.findByRole("option", { name: "工作账号" }));
 		fireEvent.click(screen.getByRole("button", { name: "保存" }));
 		await waitFor(() => expect(kit.writes).toHaveLength(1));
 		expect(kit.writes[0]?.body).toEqual(

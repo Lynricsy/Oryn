@@ -73,20 +73,12 @@ function TopicForm({
 				<Field label={t("mainline.followUps.kindLabel")}>
 					<Select
 						value={draft.kind}
-						onChange={(e) =>
-							setDraft({
-								...draft,
-								kind: e.target.value as TopicDraft["kind"],
-							})
-						}
-					>
-						<option value="question">
-							{t("mainline.followUps.kind.question")}
-						</option>
-						<option value="interest">
-							{t("mainline.followUps.kind.interest")}
-						</option>
-					</Select>
+						onChange={(kind) => setDraft({ ...draft, kind })}
+						options={(["question", "interest"] as const).map((v) => ({
+							value: v,
+							label: t(`mainline.followUps.kind.${v}`),
+						}))}
+					/>
 				</Field>
 				<Field label={t("mainline.followUps.titleLabel")}>
 					<TextInput

@@ -1,6 +1,7 @@
 /**
- * 记忆页「助手记忆 › 状态」卡（M17 R19）：运行状态（不可用 / 已关闭 / 正常 / 出错及原因）、回填进度、写入失败的来源数、
- * 待确认的明确记忆数、bank `oryn-owner` 的记忆数与 document 数、最近 24 小时 / 7 天的 LLM 用量；「注入预览」打开对话框。
+ * 「助手记忆状态」分组（M17 R19）：运行状态（不可用 / 已关闭 / 正常 / 出错及原因）、回填进度、写入失败的来源数、
+ * 待确认的明确记忆数、bank `oryn-owner` 的记忆数与 document 数、最近整理时间、最近 24 小时 / 7 天的 LLM 用量，
+ * 一项一行；「注入预览」打开对话框。
  */
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -10,19 +11,18 @@ import {
 	type OwnerMemoryStatus,
 	useOwnerMemoryStatus,
 } from "../../../../api/owner-memory-queries";
-import { CountPill } from "../../../../components/layout/pane-parts";
-import {
-	Badge,
-	Callout,
-	Card,
-	KeyValue,
-	type Tone,
-} from "../../../../components/ui/data";
+import type { Tone } from "../../../../components/ui/data";
 import {
 	Button,
 	IconButton,
 	Spinner,
 } from "../../../../components/ui/primitives";
+import {
+	Group,
+	GroupList,
+	GroupRow,
+	StatusText,
+} from "../../../../components/ui/workbench";
 import {
 	formatCount,
 	formatDateTime,
@@ -44,9 +44,8 @@ export function OwnerStatusCard(): ReactNode {
 	const q = useOwnerMemoryStatus();
 	const [briefOpen, setBriefOpen] = useState(false);
 	return (
-		<Card
+		<Group
 			title={t("memoryPage.owner.status.title")}
-			icon="database"
 			action={
 				<span className="flex items-center gap-1">
 					<Button size="sm" icon="eye" onClick={() => setBriefOpen(true)}>
@@ -67,105 +66,101 @@ export function OwnerStatusCard(): ReactNode {
 				<Spinner />
 			) : q.error ? (
 				<MemoryError step="ownerLoadStatus" error={q.error} />
-			) : q.data ? (
+			) : (
 				<StatusBody status={q.data} />
-			) : null}
+			)}
 			<OwnerBriefDialog open={briefOpen} onClose={() => setBriefOpen(false)} />
-		</Card>
+		</Group>
+	);
+}
+
+/** 行尾的数值：次要灰、等宽数字。 */
+function Value({ children }: { children: ReactNode }): ReactNode {
+	return (
+		<span className="text-[12.5px] text-muted tabular-nums">{children}</span>
 	);
 }
 
 function StatusBody({ status: s }: { status: OwnerMemoryStatus }): ReactNode {
 	const { t } = useTranslation();
-	const tone = STATE_TONE[s.state];
+	const count = (n: number | undefined) =>
+		n === undefined ? "—" : formatCount(n);
 	return (
-		<div className="flex flex-col gap-3" data-owner-memory-state={s.state}>
-			<div className="flex flex-wrap items-center gap-2">
-				<Badge tone={tone}>
-					{t(`memoryPage.owner.state.${s.state}.label`)}
-				</Badge>
-			</div>
-			{s.state !== "ok" && (
-				<Callout tone={tone === "ok" ? "neutral" : tone}>
-					<p>{t(`memoryPage.owner.state.${s.state}.action`)}</p>
-					{s.error && (
-						<p className="mt-1 break-words">
-							{t("memoryPage.status.detail", { detail: s.error })}
-						</p>
-					)}
-				</Callout>
-			)}
-			<KeyValue
-				rows={[
-					{
-						key: "backfill",
-						label: t("memoryPage.owner.status.backfill"),
-						value: (
-							<span className="flex flex-wrap items-center gap-1.5">
-								<span className="tabular-nums">
-									{t("memoryPage.owner.status.backfillProgress", {
-										done: s.backfillDone,
-										total: s.backfillTotal,
-									})}
-								</span>
-								{s.backfillSince !== undefined && (
-									<span className="text-faint text-xs">
-										{t("memoryPage.owner.status.backfillSince", {
-											when: formatDateTime(s.backfillSince),
-										})}
-									</span>
-								)}
+		<div data-owner-memory-state={s.state} className="contents">
+			<GroupList>
+				<GroupRow
+					icon="memory"
+					title={t("memoryPage.owner.status.state")}
+					meta={
+						s.state !== "ok" && (
+							<span className="break-words">
+								{t(`memoryPage.owner.state.${s.state}.action`)}
+								{s.error &&
+									` ${t("memoryPage.status.detail", { detail: s.error })}`}
 							</span>
-						),
-					},
-					{
-						key: "failing",
-						label: t("memoryPage.owner.status.failingSources"),
-						value: <CountPill n={s.failingSources} />,
-					},
-					{
-						key: "pending",
-						label: t("memoryPage.owner.status.pendingExplicit"),
-						value: <CountPill n={s.pendingExplicit} />,
-					},
-					{
-						key: "memories",
-						label: t("memoryPage.owner.status.bank"),
-						value: (
-							<span className="tabular-nums">
-								{t("memoryPage.owner.status.bankCounts", {
-									memories:
-										s.memoryCount === undefined
-											? "—"
-											: formatCount(s.memoryCount),
-									documents:
-										s.documentCount === undefined
-											? "—"
-											: formatCount(s.documentCount),
-								})}
-							</span>
-						),
-					},
-					{
-						key: "curated",
-						label: t("memoryPage.owner.status.lastCurated"),
-						value:
-							s.lastCuratedAt === undefined
+						)
+					}
+					trailing={
+						<StatusText tone={STATE_TONE[s.state]}>
+							{t(`memoryPage.owner.state.${s.state}.label`)}
+						</StatusText>
+					}
+				/>
+				<GroupRow
+					title={t("memoryPage.owner.status.backfill")}
+					meta={
+						s.backfillSince !== undefined &&
+						t("memoryPage.owner.status.backfillSince", {
+							when: formatDateTime(s.backfillSince),
+						})
+					}
+					trailing={
+						<Value>
+							{t("memoryPage.owner.status.backfillProgress", {
+								done: s.backfillDone,
+								total: s.backfillTotal,
+							})}
+						</Value>
+					}
+				/>
+				<GroupRow
+					title={t("memoryPage.owner.status.failingSources")}
+					trailing={<Value>{s.failingSources}</Value>}
+				/>
+				<GroupRow
+					title={t("memoryPage.owner.status.pendingExplicit")}
+					trailing={<Value>{s.pendingExplicit}</Value>}
+				/>
+				<GroupRow
+					title={t("memoryPage.owner.status.bank")}
+					trailing={
+						<Value>
+							{t("memoryPage.owner.status.bankCounts", {
+								memories: count(s.memoryCount),
+								documents: count(s.documentCount),
+							})}
+						</Value>
+					}
+				/>
+				<GroupRow
+					title={t("memoryPage.owner.status.lastCurated")}
+					trailing={
+						<Value>
+							{s.lastCuratedAt === undefined
 								? "—"
-								: formatRelative(s.lastCuratedAt),
-					},
-					{
-						key: "day",
-						label: t("memoryPage.owner.status.usageDay"),
-						value: <Usage counts={s.usageDay} />,
-					},
-					{
-						key: "week",
-						label: t("memoryPage.owner.status.usageWeek"),
-						value: <Usage counts={s.usageWeek} />,
-					},
-				]}
-			/>
+								: formatRelative(s.lastCuratedAt)}
+						</Value>
+					}
+				/>
+				<GroupRow
+					title={t("memoryPage.owner.status.usageDay")}
+					trailing={<Usage counts={s.usageDay} />}
+				/>
+				<GroupRow
+					title={t("memoryPage.owner.status.usageWeek")}
+					trailing={<Usage counts={s.usageWeek} />}
+				/>
+			</GroupList>
 		</div>
 	);
 }
@@ -176,14 +171,15 @@ function Usage({
 	counts: Schemas["MemoryUsageCounts"] | undefined;
 }): ReactNode {
 	const { t } = useTranslation();
-	if (!counts) return "—";
 	return (
-		<span className="tabular-nums">
-			{t("memoryPage.owner.status.usage", {
-				calls: counts.calls,
-				input: formatTokens(counts.inputTokens),
-				output: formatTokens(counts.outputTokens),
-			})}
-		</span>
+		<Value>
+			{counts
+				? t("memoryPage.owner.status.usage", {
+						calls: counts.calls,
+						input: formatTokens(counts.inputTokens),
+						output: formatTokens(counts.outputTokens),
+					})
+				: "—"}
+		</Value>
 	);
 }

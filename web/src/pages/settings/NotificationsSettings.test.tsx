@@ -7,6 +7,7 @@ import {
 	waitFor,
 	within,
 } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	type DesktopHost,
@@ -74,6 +75,18 @@ beforeEach(() => {
 				path: url.pathname,
 				body: text ? JSON.parse(text) : undefined,
 			});
+			if (url.pathname === "/api/v1/stats/budget")
+				return Response.json({
+					budget: { warnPct: 80, timezone: "UTC", enabled: true },
+					day: {
+						key: "2026-11-27",
+						from: 0,
+						to: 1,
+						spentUsd: 0,
+						level: "none",
+					},
+					month: { key: "2026-11", from: 0, to: 1, spentUsd: 0, level: "none" },
+				});
 			return (
 				(await handleNotifyFetch(req)) ?? new Response(null, { status: 404 })
 			);
@@ -92,9 +105,11 @@ function mount() {
 		defaultOptions: { queries: { retry: false } },
 	});
 	render(
-		<QueryClientProvider client={client}>
-			<NotificationsSettings />
-		</QueryClientProvider>,
+		<MemoryRouter>
+			<QueryClientProvider client={client}>
+				<NotificationsSettings />
+			</QueryClientProvider>
+		</MemoryRouter>,
 	);
 }
 
@@ -574,6 +589,22 @@ describe("最近通知", () => {
 			.getByText(/失败（共 4 次）/)
 			.closest("li");
 		expect(failed).toHaveClass("text-err");
+	});
+});
+
+describe("预算", () => {
+	it("预算分组在渠道之后、最近通知之前，告警开关在这里（编辑见 BudgetSettings.test）", async () => {
+		mount();
+		const budget = await screen.findByRole("region", { name: "预算" });
+		const titles = screen
+			.getAllByRole("region")
+			.map((r) => r.getAttribute("aria-labelledby"))
+			.map((id) => (id ? document.getElementById(id)?.textContent : ""));
+		expect(titles.indexOf("预算")).toBe(titles.indexOf("渠道") + 1);
+		expect(titles.indexOf("最近通知")).toBe(titles.indexOf("预算") + 1);
+		expect(
+			await within(budget).findByRole("switch", { name: "预算告警" }),
+		).toBeChecked();
 	});
 });
 

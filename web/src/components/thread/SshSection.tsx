@@ -295,10 +295,14 @@ function RunnerHostDialog({
 					/>
 				</Field>
 				<Field label={t("sshPanel.runner.scope")}>
-					<Select value={form.scope} onChange={set("scope")}>
-						<option value="user">user</option>
-						<option value="project">project</option>
-					</Select>
+					<Select
+						value={form.scope}
+						onChange={(scope) => setForm((f) => ({ ...f, scope }))}
+						options={(["user", "project"] as const).map((v) => ({
+							value: v,
+							label: v,
+						}))}
+					/>
 				</Field>
 				<div className="sm:col-span-2">
 					<Field label={t("sshPage.hostDialog.description")}>

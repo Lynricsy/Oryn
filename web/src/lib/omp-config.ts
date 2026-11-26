@@ -39,6 +39,30 @@ const COMPOSER_PREDICTION_ALTERNATIVES: Path = [
 	"composer",
 	"predictionAlternatives",
 ];
+const DEFAULT_THINKING_LEVEL: Path = ["defaultThinkingLevel"];
+
+/**
+ * omp 的思考档位（`ThinkingLevel` 去掉 inherit，加 auto），与后端 `internal/agentcfg/roles.go` 的 `thinkingLevels`
+ * 同一份取值；按 auto → off → … → max 排列，供各处档位下拉共用。
+ */
+export const THINKING_LEVELS = [
+	"auto",
+	"off",
+	"minimal",
+	"low",
+	"medium",
+	"high",
+	"xhigh",
+	"max",
+] as const;
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+
+/** omp `defaultThinkingLevel` 没写或不合法时的缺省值。 */
+export const FALLBACK_THINKING_LEVEL: ThinkingLevel = "high";
+
+export function isThinkingLevel(v: unknown): v is ThinkingLevel {
+	return (THINKING_LEVELS as readonly unknown[]).includes(v);
+}
 
 /** 解析 config.yml；空文本得到空文档。 */
 export function readConfigDoc(text: string): Document {
@@ -306,6 +330,21 @@ export function setComposerPredictionSetting(
 	const path = COMPOSER_PREDICTION_PATHS[key];
 	if (on === COMPOSER_PREDICTION_DEFAULTS[key]) removePath(doc, path);
 	else setPath(doc, path, on);
+}
+
+/** `defaultThinkingLevel`：没写或取值不合法时按 omp 缺省值（high），与后端 `ParseDefaultThinkingLevel` 一致。 */
+export function defaultThinkingLevel(doc: Document | undefined): ThinkingLevel {
+	const v: unknown = doc?.getIn(DEFAULT_THINKING_LEVEL);
+	return isThinkingLevel(v) ? v : FALLBACK_THINKING_LEVEL;
+}
+
+/** 设置新会话的默认思考档位；null 删除该键（回到 omp 缺省值）。 */
+export function setDefaultThinkingLevel(
+	doc: Document,
+	level: ThinkingLevel | null,
+): void {
+	if (level === null) removePath(doc, DEFAULT_THINKING_LEVEL);
+	else setPath(doc, DEFAULT_THINKING_LEVEL, level);
 }
 
 // ── 启停键：与 Core 各 capability 的 `toExtensionId` 一致（`packages/coding-agent/src/capability/*.ts`） ──

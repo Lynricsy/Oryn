@@ -1,5 +1,5 @@
 /**
- * 设置 → 外观里的「App 图标」：只在宿主支持可替换图标时出现（iOS 移动壳，bridge ≥ 6）。
+ * 设置 → 外观「主题」组里的「App 图标」一行（放在 GroupList 里）：只在宿主支持可替换图标时出现（iOS 移动壳，bridge ≥ 6）。
  * 缩略图用 BrandMark 的同一份字形，配色取自 gen-icons.py 生成的 app-icon-palette.gen.ts（与主屏图标同源），
  * 只按页面浅 / 深切换，不跟用户选的主题强调色：主屏上的图标是打包时画死的。
  */
@@ -7,6 +7,7 @@ import { useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { radioKeys } from "../../components/settings/radioKeys";
 import { ErrorText, Spinner } from "../../components/ui/primitives";
+import { GroupRow } from "../../components/ui/workbench";
 import { type AppIconState, host } from "../../lib/host";
 import { APP_ICON_PALETTE } from "./app-icon-palette.gen";
 
@@ -111,45 +112,47 @@ export function AppIconPicker() {
 	};
 
 	return (
-		<div className="flex flex-col gap-2" data-testid="app-icon-picker">
-			<span aria-hidden className="font-medium text-muted text-xs">
-				{t("appearance.appIcon")}
-			</span>
-			<div
-				role="radiogroup"
-				aria-label={t("appearance.appIcon")}
-				onKeyDown={radioKeys}
-				className="flex flex-wrap gap-x-4 gap-y-3"
-			>
-				{options.map((id) => {
-					const on = state.current === id;
-					const label = t(`appearance.appIcons.${id}`);
-					return (
-						// biome-ignore lint/a11y/useSemanticElements: 缩略图外观的单选（WAI-ARIA radio），原生 radio 画不出
-						<button
-							key={id}
-							type="button"
-							role="radio"
-							aria-checked={on}
-							aria-label={label}
-							tabIndex={on ? 0 : -1}
-							disabled={busy !== null}
-							onClick={() => choose(id)}
-							className={`relative flex flex-col items-center gap-1.5 rounded-md py-1 text-2xs transition-colors duration-150 disabled:cursor-default ${on ? "font-medium text-fg" : "text-muted hover:text-fg"}`}
-						>
-							<Thumb id={id} on={on} />
-							{busy === id && (
-								<span className="absolute top-1 grid h-14 w-14 place-items-center">
-									<Spinner />
-								</span>
-							)}
-							<span aria-hidden>{label}</span>
-						</button>
-					);
-				})}
+		<GroupRow
+			icon="appWindow"
+			title={t("appearance.appIcon")}
+			meta={t("appearance.appIconHint")}
+		>
+			<div className="flex flex-col gap-2" data-testid="app-icon-picker">
+				<div
+					role="radiogroup"
+					aria-label={t("appearance.appIcon")}
+					onKeyDown={radioKeys}
+					className="flex flex-wrap gap-x-4 gap-y-3"
+				>
+					{options.map((id) => {
+						const on = state.current === id;
+						const label = t(`appearance.appIcons.${id}`);
+						return (
+							// biome-ignore lint/a11y/useSemanticElements: 缩略图外观的单选（WAI-ARIA radio），原生 radio 画不出
+							<button
+								key={id}
+								type="button"
+								role="radio"
+								aria-checked={on}
+								aria-label={label}
+								tabIndex={on ? 0 : -1}
+								disabled={busy !== null}
+								onClick={() => choose(id)}
+								className={`relative flex flex-col items-center gap-1.5 rounded-md py-1 text-2xs transition-colors duration-150 disabled:cursor-default ${on ? "font-medium text-fg" : "text-muted hover:text-fg"}`}
+							>
+								<Thumb id={id} on={on} />
+								{busy === id && (
+									<span className="absolute top-1 grid h-14 w-14 place-items-center">
+										<Spinner />
+									</span>
+								)}
+								<span aria-hidden>{label}</span>
+							</button>
+						);
+					})}
+				</div>
+				<ErrorText error={error} />
 			</div>
-			<p className="text-faint text-xs">{t("appearance.appIconHint")}</p>
-			<ErrorText error={error} />
-		</div>
+		</GroupRow>
 	);
 }

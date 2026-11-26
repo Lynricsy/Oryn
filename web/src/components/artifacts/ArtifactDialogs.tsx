@@ -289,16 +289,15 @@ export function ImportDialog({
 				<Field label={t("artifacts.import.project")}>
 					<Select
 						value={projectId}
-						data-testid="import-project"
-						onChange={(e) => setProjectId(e.target.value)}
-					>
-						<option value="">{t("artifacts.page.noProject")}</option>
-						{(projects.data?.projects ?? []).map((p) => (
-							<option key={p.id} value={p.id}>
-								{p.name}
-							</option>
-						))}
-					</Select>
+						onChange={setProjectId}
+						options={[
+							{ value: "", label: t("artifacts.page.noProject") },
+							...(projects.data?.projects ?? []).map((p) => ({
+								value: p.id,
+								label: p.name,
+							})),
+						]}
+					/>
 				</Field>
 				{reason && (
 					<p

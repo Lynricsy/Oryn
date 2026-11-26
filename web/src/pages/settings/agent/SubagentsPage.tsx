@@ -1,9 +1,9 @@
 /**
- * 设置 → Agent → 子 agent（M13 R27 / R28）：
+ * 设置 → 子 agent（M13 R27 / R28），工作台原生（D）分组：
  * - 内置 agent 只读展示名字、简介与头像（简介取头像接口的 description，没有时用本地化说明）；
  * - 自定义 agent 是 `agents/*.md`：名字以 frontmatter `name` 为准，Core 只加载同时有 `name` 与 `description` 的定义
  *   （`discovery/helpers.ts` 的 `parseAgentFields`）。表单字段对应 Core 认的 frontmatter，未列出的键原样保留；
- * - 每行都能启停（`task.disabledAgents`）、设模型覆盖（`task.agentModelOverrides.<agent>`）与改头像。
+ * - 每行都能启停（`task.disabledAgents`）；「设置」对话框里设模型覆盖（`task.agentModelOverrides.<agent>`）与改头像。
  * 编辑框的保存基线在打开时冻结（同 MarkdownCollection 的 EntryDialog）：之后文件在别处被改，保存一律冲突，
  * 只能「载入最新内容」后重做，不会静默覆盖。
  */
@@ -25,19 +25,21 @@ import {
 	useAgentAvatars,
 	useRoleIdentities,
 } from "../../../api/identity-queries";
-import { ApplyStatusBanner } from "../../../components/settings/ApplyStatusBanner";
 import { AvatarEditor } from "../../../components/settings/AvatarEditor";
 import {
 	AgentErrorText,
-	AgentScopeNote,
+	AgentPageHead,
+	AvatarRow,
 	CodeField,
 	ConfirmDeleteDialog,
 	EditConflict,
+	EmptyPanel,
+	GroupNote,
 } from "../../../components/settings/agent-config-ui";
 import { collectionEntries } from "../../../components/settings/MarkdownCollection";
 import { ModelPatternList } from "../../../components/settings/ModelPatternInput";
 import { useAsync } from "../../../components/settings/useAsync";
-import { Badge, Callout, Card, ListRow } from "../../../components/ui/data";
+import { Badge, Callout } from "../../../components/ui/data";
 import { IdentityAvatar } from "../../../components/ui/IdentityAvatar";
 import { Icon } from "../../../components/ui/icons";
 import {
@@ -52,6 +54,12 @@ import {
 	TextInput,
 	Toggle,
 } from "../../../components/ui/primitives";
+import {
+	FormField,
+	Group,
+	GroupList,
+	Reveal,
+} from "../../../components/ui/workbench";
 import i18n from "../../../i18n";
 import {
 	parseFrontmatter,
@@ -60,6 +68,7 @@ import {
 import {
 	setAgentModelOverride,
 	setDisabledAgent,
+	THINKING_LEVELS,
 } from "../../../lib/omp-config";
 
 type AvatarIdentity = Schemas["AvatarIdentity"];
@@ -70,17 +79,7 @@ const AGENT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 /** Core 的保留名：主会话与无名子会话的 agentName（`MAIN_AGENT_RULE_NAME` / `SUB_AGENT_RULE_NAME`）。 */
 const RESERVED_NAMES: Record<string, true> = { main: true, sub: true };
 /** 子 agent 可设的思考档位（Core `parseConfiguredThinkingLevel`）；空串 = 不设置。 */
-const THINKING_LEVELS = [
-	"",
-	"auto",
-	"off",
-	"minimal",
-	"low",
-	"medium",
-	"high",
-	"xhigh",
-	"max",
-] as const;
+const AGENT_THINKING_LEVELS = ["", ...THINKING_LEVELS] as const;
 
 // ---------------------------------------------------------------- config.yml 的 task 设置
 
@@ -350,28 +349,16 @@ export default function SubagentsPage(): ReactNode {
 	) => {
 		const { face, glyph } = agentFace(list, name);
 		const override = task.overrides.get(name) ?? [];
-		const expanded = open === name;
 		return (
-			<li
+			<AvatarRow
 				key={props.rowKey ?? name}
 				data-agent={name}
-				className="flex flex-col"
-			>
-				<ListRow
-					leading={
-						<IdentityAvatar
-							identity={face}
-							of="agent"
-							glyph={glyph}
-							size={32}
-						/>
-					}
-					title={
-						props.title ?? (
-							<span className="min-w-0 truncate font-medium">{name}</span>
-						)
-					}
-					meta={
+				leading={
+					<IdentityAvatar identity={face} of="agent" glyph={glyph} size={28} />
+				}
+				title={props.title ?? <span className="min-w-0 truncate">{name}</span>}
+				meta={
+					(props.description || override.length > 0) && (
 						<>
 							{props.description && (
 								<span className="line-clamp-2 min-w-0">
@@ -386,116 +373,73 @@ export default function SubagentsPage(): ReactNode {
 								</span>
 							)}
 						</>
-					}
-					trailing={
-						<>
-							{!props.inert && (
-								<Toggle
-									checked={!task.disabled.has(name)}
-									disabled={!configReady}
-									onChange={(on) => toggle(name, on)}
-									label={
-										<span className="sr-only">
-											{t("agentPages.enable", { name })}
-										</span>
-									}
-								/>
-							)}
-							{props.actions}
-							{!props.inert && (
+					)
+				}
+				trailing={
+					<>
+						{props.actions && <Reveal>{props.actions}</Reveal>}
+						{!props.inert && (
+							<>
 								<Button
 									size="sm"
-									variant={expanded ? "secondary" : "ghost"}
-									aria-expanded={expanded}
 									aria-label={t("agentPages.subagents.configure", { name })}
-									onClick={() => setOpen(expanded ? null : name)}
+									onClick={() => setOpen(name)}
 								>
 									{t("agentPages.subagents.configureShort")}
 								</Button>
-							)}
-						</>
-					}
-				/>
-				{expanded && (
-					<div className="mx-2 mb-2 flex flex-col gap-4 rounded-lg border border-border bg-raised p-3">
-						<Field
-							label={t("agentPages.subagents.override")}
-							hint={t("agentPages.subagents.overrideHint")}
-						>
-							<ModelPatternList
-								value={override}
-								roles={roles}
-								disabled={!configReady}
-								label={t("agentPages.subagents.overrideInput", { name })}
-								placeholder={t("agentPages.models.placeholder")}
-								onChange={(next) => setOverride(name, next)}
-							/>
-						</Field>
-						<div className="flex flex-col gap-2">
-							<span className="font-medium text-muted text-xs">
-								{t("agentPages.avatar")}
-							</span>
-							<AvatarEditor
-								value={face}
-								busy={avatarSave.busy}
-								resetLabel={t("agentPages.removeAvatar")}
-								onChange={(avatar) => putAvatar(name, avatar)}
-							/>
-						</div>
-					</div>
-				)}
-			</li>
+								<Toggle
+									hideLabel
+									checked={!task.disabled.has(name)}
+									disabled={!configReady}
+									onChange={(on) => toggle(name, on)}
+									label={t("agentPages.enable", { name })}
+								/>
+							</>
+						)}
+					</>
+				}
+			/>
 		);
 	};
 
 	return (
 		<>
-			<ApplyStatusBanner />
-			<AgentScopeNote />
-			<Card
+			<AgentPageHead />
+			<Group
 				title={t("agentPages.subagents.bundledTitle")}
-				icon="tree"
 				action={avatars.isPending && <Spinner />}
 			>
-				<p className="mb-2 text-faint text-xs">
-					{t("agentPages.subagents.bundledHint")}
-				</p>
 				{avatars.error ? (
 					<ErrorText error={avatars.error} />
 				) : (
-					<ul className="-mx-2 flex flex-col">
-						{bundled.map((a) =>
-							row(a.name, {
-								description: bundledDescription(a.name, a.description),
-							}),
-						)}
-					</ul>
+					bundled.length > 0 && (
+						<GroupList>
+							{bundled.map((a) =>
+								row(a.name, {
+									description: bundledDescription(a.name, a.description),
+								}),
+							)}
+						</GroupList>
+					)
 				)}
-			</Card>
-			<Card
+				<GroupNote>{t("agentPages.subagents.bundledHint")}</GroupNote>
+			</Group>
+			<Group
 				title={t("agentPages.subagents.customTitle")}
-				icon="robot"
 				action={
 					<Button size="sm" icon="plus" onClick={() => setEditing("new")}>
 						{t("agentPages.new")}
 					</Button>
 				}
 			>
-				<p className="mb-2 text-faint text-xs">
-					{t("agentPages.subagents.customHint")}
-				</p>
 				{files.error ? (
 					<ErrorText error={files.error} />
 				) : files.data === undefined ? (
-					<div className="flex justify-center py-6">
-						<Spinner />
-					</div>
+					<Spinner />
 				) : entries.length === 0 ? (
-					<p className="text-faint text-sm">
-						{t("agentPages.subagents.empty")}
-					</p>
+					<EmptyPanel>{t("agentPages.subagents.empty")}</EmptyPanel>
 				) : (
-					<ul className="-mx-2 flex flex-col">
+					<GroupList>
 						{entries.map((e, i) => {
 							const a = custom[i] ?? null;
 							const name = a?.name || e.stem;
@@ -526,7 +470,7 @@ export default function SubagentsPage(): ReactNode {
 								actions,
 								title: (
 									<>
-										<span className="min-w-0 truncate font-medium">{name}</span>
+										<span className="min-w-0 truncate">{name}</span>
 										{a?.error ? (
 											<Badge tone="warn" icon="alert">
 												{t("agentPages.frontmatterBroken")}
@@ -544,53 +488,87 @@ export default function SubagentsPage(): ReactNode {
 								),
 							});
 						})}
-					</ul>
+					</GroupList>
 				)}
-			</Card>
+				<GroupNote>{t("agentPages.subagents.customHint")}</GroupNote>
+			</Group>
 			{orphans.length > 0 && (
-				<Card title={t("agentPages.subagents.orphansTitle")} icon="user">
-					<p className="mb-2 text-faint text-xs">
-						{t("agentPages.subagents.orphansHint")}
-					</p>
-					<ul className="-mx-2 flex flex-col">
+				<Group title={t("agentPages.subagents.orphansTitle")}>
+					<GroupList>
 						{orphans.map((a) => (
-							<li key={a.name} data-agent={a.name}>
-								<ListRow
-									leading={
-										<IdentityAvatar
-											identity={a}
-											of="agent"
-											glyph={agentFace(list, a.name).glyph}
-											size={32}
-										/>
-									}
-									title={
-										<span className="min-w-0 truncate font-medium">
-											{a.name}
-										</span>
-									}
-									trailing={
-										<Button
-											size="sm"
-											variant="ghost"
-											icon="trash"
-											disabled={avatarSave.busy}
-											onClick={() => void putAvatar(a.name, {})}
-										>
-											{t("agentPages.removeAvatar")}
-										</Button>
-									}
-								/>
-							</li>
+							<AvatarRow
+								key={a.name}
+								data-agent={a.name}
+								leading={
+									<IdentityAvatar
+										identity={a}
+										of="agent"
+										glyph={agentFace(list, a.name).glyph}
+										size={28}
+									/>
+								}
+								title={<span className="min-w-0 truncate">{a.name}</span>}
+								trailing={
+									<Button
+										size="sm"
+										variant="ghost"
+										icon="trash"
+										disabled={avatarSave.busy}
+										onClick={() => void putAvatar(a.name, {})}
+									>
+										{t("agentPages.removeAvatar")}
+									</Button>
+								}
+							/>
 						))}
-					</ul>
-				</Card>
+					</GroupList>
+					<GroupNote>{t("agentPages.subagents.orphansHint")}</GroupNote>
+				</Group>
 			)}
 			<div className="flex flex-col gap-1 empty:hidden">
 				{textError ? <ErrorText error={textError} /> : null}
 				{avatarSave.error ? <ErrorText error={avatarSave.error} /> : null}
 				<AgentErrorText error={config.mutateError} />
 			</div>
+			{open !== null && (
+				<Dialog
+					open
+					onClose={() => setOpen(null)}
+					title={t("agentPages.subagents.configure", { name: open })}
+					footer={
+						<Button variant="primary" onClick={() => setOpen(null)}>
+							{t("common.close")}
+						</Button>
+					}
+				>
+					<div className="flex flex-col gap-4">
+						<Field
+							label={t("agentPages.subagents.override")}
+							hint={t("agentPages.subagents.overrideHint")}
+						>
+							<ModelPatternList
+								value={task.overrides.get(open) ?? []}
+								roles={roles}
+								disabled={!configReady}
+								label={t("agentPages.subagents.overrideInput", { name: open })}
+								placeholder={t("agentPages.models.placeholder")}
+								onChange={(next) => setOverride(open, next)}
+							/>
+						</Field>
+						<div className="flex flex-col gap-[7px]">
+							<span className="font-[550] text-[13px] text-fg">
+								{t("agentPages.avatar")}
+							</span>
+							<AvatarEditor
+								value={agentFace(list, open).face}
+								busy={avatarSave.busy}
+								resetLabel={t("agentPages.removeAvatar")}
+								onChange={(avatar) => putAvatar(open, avatar)}
+							/>
+						</div>
+					</div>
+				</Dialog>
+			)}
 			{editing && (
 				<AgentDialog
 					key={editKey}
@@ -632,43 +610,44 @@ function TargetField({
 	const { t } = useTranslation();
 	const listId = useId();
 	return (
-		<Field label={label} hint={hint}>
-			<div className="flex flex-col gap-1.5 sm:flex-row">
-				<Select
-					wrapperClassName="sm:w-44 w-full shrink-0"
-					value={value.mode}
-					onChange={(e) =>
-						onChange({
-							...value,
-							mode: e.target.value as OptionalTarget["mode"],
-						})
-					}
-				>
-					<option value="off">{t("agentPages.subagents.targetOff")}</option>
-					<option value="default">
-						{t("agentPages.subagents.targetDefault")}
-					</option>
-					<option value="custom">
-						{t("agentPages.subagents.targetCustom")}
-					</option>
-				</Select>
-				{value.mode === "custom" && (
-					<TextInput
-						aria-label={t("agentPages.subagents.targetPattern", { label })}
-						className="font-mono"
-						list={listId}
-						placeholder={t("agentPages.models.placeholder")}
-						value={value.pattern}
-						onChange={(e) => onChange({ ...value, pattern: e.target.value })}
+		<FormField label={label} aside={hint}>
+			{(p) => (
+				<div className="flex flex-col gap-1.5 sm:flex-row">
+					<Select<OptionalTarget["mode"]>
+						{...p}
+						className="w-full shrink-0 sm:w-44"
+						value={value.mode}
+						options={[
+							{ value: "off", label: t("agentPages.subagents.targetOff") },
+							{
+								value: "default",
+								label: t("agentPages.subagents.targetDefault"),
+							},
+							{
+								value: "custom",
+								label: t("agentPages.subagents.targetCustom"),
+							},
+						]}
+						onChange={(mode) => onChange({ ...value, mode })}
 					/>
-				)}
-				<datalist id={listId}>
-					{roles.map((r) => (
-						<option key={r} value={`@${r}`} />
-					))}
-				</datalist>
-			</div>
-		</Field>
+					{value.mode === "custom" && (
+						<TextInput
+							aria-label={t("agentPages.subagents.targetPattern", { label })}
+							className="font-mono"
+							list={listId}
+							placeholder={t("agentPages.models.placeholder")}
+							value={value.pattern}
+							onChange={(e) => onChange({ ...value, pattern: e.target.value })}
+						/>
+					)}
+					<datalist id={listId}>
+						{roles.map((r) => (
+							<option key={r} value={`@${r}`} />
+						))}
+					</datalist>
+				</div>
+			)}
+		</FormField>
 	);
 }
 
@@ -729,9 +708,9 @@ function AgentDialog({
 	const path = agent ? agent.path : `${AGENTS_DIR}/${trimmed}.md`;
 	const levels: readonly string[] =
 		form.thinkingLevel &&
-		!(THINKING_LEVELS as readonly string[]).includes(form.thinkingLevel)
-			? [...THINKING_LEVELS, form.thinkingLevel]
-			: THINKING_LEVELS;
+		!(AGENT_THINKING_LEVELS as readonly string[]).includes(form.thinkingLevel)
+			? [...AGENT_THINKING_LEVELS, form.thinkingLevel]
+			: AGENT_THINKING_LEVELS;
 
 	const set = <K extends keyof AgentForm>(key: K, v: AgentForm[K]) =>
 		setForm((prev) => ({ ...prev, [key]: v }));
@@ -850,22 +829,27 @@ function AgentDialog({
 								onChange={(next) => set("model", next)}
 							/>
 						</Field>
-						<Field label={t("agentPages.subagents.thinking")}>
-							<Select
-								value={form.thinkingLevel}
-								onChange={(e) => set("thinkingLevel", e.target.value)}
-							>
-								{levels.map((l) => (
-									<option key={l} value={l}>
-										{l === ""
-											? t("agentPages.subagents.thinkingDefault")
-											: i18n.exists(`model.levels.${l}`)
-												? t(`model.levels.${l}` as "model.levels.auto")
-												: l}
-									</option>
-								))}
-							</Select>
-						</Field>
+						<FormField label={t("agentPages.subagents.thinking")}>
+							{(p) => (
+								<Select
+									{...p}
+									// 空串（不设置）也是一个选项：显示「跟随默认」
+									value={form.thinkingLevel || "default"}
+									options={levels.map((l) => ({
+										value: l || "default",
+										label:
+											l === ""
+												? t("agentPages.subagents.thinkingDefault")
+												: i18n.exists(`model.levels.${l}`)
+													? t(`model.levels.${l}` as "model.levels.auto")
+													: l,
+									}))}
+									onChange={(v) =>
+										set("thinkingLevel", v === "default" ? "" : v)
+									}
+								/>
+							)}
+						</FormField>
 						<Field
 							label={t("agentPages.subagents.tools")}
 							hint={t("agentPages.subagents.toolsHint")}
@@ -920,9 +904,9 @@ function AgentDialog({
 							roles={roles}
 							onChange={(v) => set("prewalk", v)}
 						/>
-						<div className="flex flex-col gap-1">
-							<span className="flex items-center gap-1.5 font-medium text-muted text-xs">
-								<Icon name="fileText" size={12} aria-hidden />
+						<div className="flex flex-col gap-[7px]">
+							<span className="flex items-center gap-1.5 font-[550] text-[13px] text-fg">
+								<Icon name="fileText" size={13} aria-hidden />
 								{t("agentPages.subagents.body")}
 							</span>
 							<CodeField

@@ -1,6 +1,7 @@
 /**
- * 「钥匙」卡片与新建钥匙对话框。钥匙只有全局一层；私钥只存控制面（加密），页面只见公钥与指纹。
+ * 「钥匙」分组与新建钥匙对话框。钥匙只有全局一层；私钥只存控制面（加密），页面只见公钥与指纹。
  * 生成：只填名称，成功后显示公钥并提示加到目标机的 authorized_keys。导入：名称、私钥、口令（可空；只用于解开，不落库）。
+ * 行 = 名称与类型 · 指纹、在用主机数 · 复制公钥（悬停出现）· ⋯（重命名；删除，先确认，被主机引用时的拒绝原因显示在行下）。
  */
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -12,7 +13,6 @@ import {
 	useSshKeys,
 } from "../../../../api/ssh-queries";
 import { CopyButton } from "../../../../components/ui/CopyButton";
-import { Badge, Card, ListRow } from "../../../../components/ui/data";
 import {
 	Button,
 	Dialog,
@@ -24,6 +24,13 @@ import {
 	TextArea,
 	TextInput,
 } from "../../../../components/ui/primitives";
+import {
+	Group,
+	GroupList,
+	GroupRow,
+	Reveal,
+} from "../../../../components/ui/workbench";
+import { confirmAction } from "../../../../lib/confirm";
 
 export type KeyMode = "generate" | "import";
 
@@ -205,47 +212,91 @@ function RenameDialog({
 	);
 }
 
-function DeleteKeyDialog({
-	sshKey,
-	onClose,
+function KeyRow({
+	sshKey: k,
+	onRename,
 }: {
 	sshKey: SshKey;
-	onClose: () => void;
+	onRename: () => void;
 }): ReactNode {
 	const { t } = useTranslation();
 	const del = useDeleteSshKey();
 	return (
-		<Dialog
-			open
-			onClose={onClose}
-			title={t("sshPage.keys.deleteTitle", { name: sshKey.name })}
-			footer={
+		<GroupRow
+			icon="key"
+			title={
 				<>
-					<Button variant="ghost" onClick={onClose}>
-						{t("common.cancel")}
-					</Button>
-					<Button
-						variant="danger"
-						disabled={del.isPending}
-						onClick={() => del.mutate(sshKey.id, { onSuccess: onClose })}
-					>
-						{t("common.delete")}
-					</Button>
+					<span className="min-w-0 truncate font-mono">{k.name}</span>
+					<span className="shrink-0 font-medium text-faint text-xs">
+						{k.type}
+					</span>
+				</>
+			}
+			meta={
+				<>
+					<span className="min-w-0 truncate font-mono text-xs">
+						{k.fingerprint}
+					</span>
+					<span className="shrink-0">
+						{t("sshPage.keys.hostCount", { count: k.hostCount })}
+					</span>
+				</>
+			}
+			trailing={
+				<>
+					<Reveal>
+						<CopyButton
+							text={k.publicKey}
+							ariaLabel={t("sshPage.keys.copyPublic")}
+						/>
+					</Reveal>
+					<Menu
+						items={[
+							{
+								key: "rename",
+								icon: "edit",
+								label: t("sshPage.keys.rename"),
+								onSelect: onRename,
+							},
+							{
+								key: "delete",
+								icon: "trash",
+								danger: true,
+								label: t("common.delete"),
+								disabled: del.isPending,
+								onSelect: async () => {
+									if (
+										await confirmAction({
+											title: t("sshPage.keys.deleteTitle", { name: k.name }),
+											body: t("sshPage.keys.deleteHint"),
+											action: t("common.delete"),
+											danger: true,
+										})
+									)
+										del.mutate(k.id);
+								},
+							},
+						]}
+						trigger={(p) => (
+							<IconButton
+								{...p}
+								icon="more"
+								box="sm"
+								label={t("sshPage.keys.actions", { name: k.name })}
+							/>
+						)}
+					/>
 				</>
 			}
 		>
-			<div className="flex flex-col gap-2">
-				<p className="text-muted text-sm">{t("sshPage.keys.deleteHint")}</p>
-				<ErrorText error={del.error} />
-			</div>
-		</Dialog>
+			{del.error ? <ErrorText error={del.error} /> : undefined}
+		</GroupRow>
 	);
 }
 
 type KeyAction =
 	| { kind: "create"; mode: KeyMode }
-	| { kind: "rename"; key: SshKey }
-	| { kind: "delete"; key: SshKey };
+	| { kind: "rename"; key: SshKey };
 
 export function KeysCard(): ReactNode {
 	const { t } = useTranslation();
@@ -254,106 +305,52 @@ export function KeysCard(): ReactNode {
 	const list = keys.data?.keys ?? [];
 	const close = () => setAction(null);
 	return (
-		<Card
-			title={t("sshPage.keys.title")}
-			icon="key"
-			action={
-				<span className="flex gap-1">
-					<Button
-						size="sm"
-						variant="ghost"
-						icon="plus"
-						onClick={() => setAction({ kind: "create", mode: "generate" })}
-					>
-						{t("sshPage.keys.generate")}
-					</Button>
-					<Button
-						size="sm"
-						variant="ghost"
-						icon="upload"
-						onClick={() => setAction({ kind: "create", mode: "import" })}
-					>
-						{t("sshPage.keys.import")}
-					</Button>
-				</span>
-			}
-		>
-			{keys.isPending && <Spinner size={12} />}
-			<ErrorText error={keys.error} />
-			{keys.isSuccess && list.length === 0 && (
-				<p className="text-faint text-xs">{t("sshPage.keys.empty")}</p>
-			)}
-			{list.length > 0 && (
-				<ul className="-mx-2 flex flex-col" data-testid="ssh-keys">
-					{list.map((k) => (
-						<li key={k.id}>
-							<ListRow
-								title={
-									<>
-										<span className="min-w-0 truncate font-medium font-mono">
-											{k.name}
-										</span>
-										<Badge>{k.type}</Badge>
-									</>
-								}
-								meta={
-									<>
-										<span className="min-w-0 truncate font-mono">
-											{k.fingerprint}
-										</span>
-										<span className="shrink-0">
-											{t("sshPage.keys.hostCount", { count: k.hostCount })}
-										</span>
-									</>
-								}
-								trailing={
-									<>
-										<CopyButton
-											text={k.publicKey}
-											ariaLabel={t("sshPage.keys.copyPublic")}
-										/>
-										<Menu
-											items={[
-												{
-													key: "rename",
-													icon: "edit",
-													label: t("sshPage.keys.rename"),
-													onSelect: () => setAction({ kind: "rename", key: k }),
-												},
-												{
-													key: "delete",
-													icon: "trash",
-													danger: true,
-													label: t("common.delete"),
-													onSelect: () => setAction({ kind: "delete", key: k }),
-												},
-											]}
-											trigger={(p) => (
-												<IconButton
-													{...p}
-													icon="more"
-													box="sm"
-													size={14}
-													label={t("sshPage.keys.actions", { name: k.name })}
-												/>
-											)}
-										/>
-									</>
-								}
+		<div data-testid="ssh-keys" className="contents">
+			<Group
+				title={t("sshPage.keys.title")}
+				action={
+					<>
+						<Button
+							size="sm"
+							icon="plus"
+							onClick={() => setAction({ kind: "create", mode: "generate" })}
+						>
+							{t("sshPage.keys.generate")}
+						</Button>
+						<Button
+							size="sm"
+							variant="ghost"
+							icon="upload"
+							onClick={() => setAction({ kind: "create", mode: "import" })}
+						>
+							{t("sshPage.keys.import")}
+						</Button>
+					</>
+				}
+			>
+				{keys.isPending && <Spinner size={12} />}
+				<ErrorText error={keys.error} />
+				{keys.isSuccess && list.length === 0 && (
+					<p className="px-1.5 text-faint text-sm">{t("sshPage.keys.empty")}</p>
+				)}
+				{list.length > 0 && (
+					<GroupList>
+						{list.map((k) => (
+							<KeyRow
+								key={k.id}
+								sshKey={k}
+								onRename={() => setAction({ kind: "rename", key: k })}
 							/>
-						</li>
-					))}
-				</ul>
-			)}
-			{action?.kind === "create" && (
-				<KeyDialog mode={action.mode} onClose={close} />
-			)}
-			{action?.kind === "rename" && (
-				<RenameDialog sshKey={action.key} onClose={close} />
-			)}
-			{action?.kind === "delete" && (
-				<DeleteKeyDialog sshKey={action.key} onClose={close} />
-			)}
-		</Card>
+						))}
+					</GroupList>
+				)}
+				{action?.kind === "create" && (
+					<KeyDialog mode={action.mode} onClose={close} />
+				)}
+				{action?.kind === "rename" && (
+					<RenameDialog sshKey={action.key} onClose={close} />
+				)}
+			</Group>
+		</div>
 	);
 }

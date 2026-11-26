@@ -1,10 +1,10 @@
 /**
- * 设置 → 自动化（M9）：
- * - 「定时任务」：全部定时，分「项目定时」（每次新建线程）与「线程内定时」两段；每行名称 / 线程、目标、表达式、下次运行、
- *   最近一次状态、`由 agent 创建`、启停与菜单。右上「新建」是项目定时（项目可选）。`?schedule=<id>` 直接打开该定时的
- *   对话框（侧栏折叠行的「全部运行」、失败通知的链接），`?project=<id>` 只列该项目的项目定时。
- * - 「操作记录」：协调者与 orb 内 agent 的操作（审计，新的在前）——时间、发起方、动作、目标线程、`自动` 徽标、失败的错误码；
- *   「加载更多」每次再取 50 条。
+ * 设置 → 自动化（M9），D 分组列表：
+ * - 「项目定时（每次新建线程）」「线程内定时」两组，每行是 `ScheduleRow`（名称 / 线程、目标、表达式、下次运行、
+ *   最近一次状态、`由 agent 创建`、⋯ 菜单与启停）。项目定时组右上「新建」（项目可选）。`?schedule=<id>` 直接打开该定时的
+ *   对话框（侧栏折叠行的「全部运行」、失败通知的链接），`?project=<id>` 只列该项目的项目定时（不显示线程内定时）。
+ * - 「操作记录」：协调者与 orb 内 agent 的操作（审计，新的在前）——动作、`自动` 徽标、失败的错误码 · 时间、发起方、目标线程，
+ *   摘要在行下方；「加载更多」每次再取 50 条。
  */
 import { type ReactNode, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -22,9 +22,10 @@ import {
 import { useSpaces } from "../../api/space-queries";
 import { ScheduleDialog } from "../../components/schedule/ScheduleDialog";
 import { editTarget, ScheduleRow } from "../../components/schedule/ScheduleRow";
-import { Badge, Card } from "../../components/ui/data";
-import { Icon } from "../../components/ui/icons";
+import { Badge } from "../../components/ui/data";
+import type { IconName } from "../../components/ui/icons";
 import { Button, ErrorText, Spinner } from "../../components/ui/primitives";
+import { Group, GroupList, GroupRow } from "../../components/ui/workbench";
 import { formatDateTime } from "../../lib/format";
 import { parseTitleCard } from "../../lib/title";
 import { useIndex } from "../../state/stores";
@@ -50,7 +51,49 @@ function DialogById({ id, onClose }: { id: string; onClose: () => void }) {
 	);
 }
 
-function SchedulesCard(): ReactNode {
+/** 一组定时：空时一句说明。外层 `data-testid` 给测试与验收脚本定位。 */
+function ScheduleGroup({
+	testId,
+	title,
+	meta,
+	action,
+	schedules,
+	onEdit,
+	children,
+}: {
+	testId: string;
+	title: string;
+	meta?: ReactNode;
+	action?: ReactNode;
+	schedules: readonly Schedule[];
+	onEdit: (s: Schedule) => void;
+	children?: ReactNode;
+}): ReactNode {
+	const { t } = useTranslation();
+	return (
+		<div data-testid={testId} className="contents">
+			<Group title={title} meta={meta} action={action}>
+				{children}
+				{schedules.length === 0 ? (
+					<p className="px-1.5 text-faint text-sm">{t("automation.none")}</p>
+				) : (
+					<GroupList>
+						{schedules.map((s) => (
+							<ScheduleRow
+								key={s.id}
+								schedule={s}
+								showTarget
+								onEdit={() => onEdit(s)}
+							/>
+						))}
+					</GroupList>
+				)}
+			</Group>
+		</div>
+	);
+}
+
+function Schedules(): ReactNode {
 	const { t } = useTranslation();
 	const [params, setParams] = useSearchParams();
 	const projectFilter = params.get("project") ?? undefined;
@@ -69,6 +112,7 @@ function SchedulesCard(): ReactNode {
 			setParams(next, { replace: true });
 		}
 	};
+	const edit = (s: Schedule) => setEditing({ kind: "edit", schedule: s });
 	const list = all.data?.schedules ?? [];
 	const projectRuns = list.filter(
 		(s) =>
@@ -78,78 +122,53 @@ function SchedulesCard(): ReactNode {
 					? !s.projectId
 					: s.projectId === projectFilter)),
 	);
-	const threadRuns =
-		projectFilter === undefined ? list.filter((s) => s.mode === "thread") : [];
+	const threadRuns = list.filter((s) => s.mode === "thread");
 	const filterName =
 		projectFilter === "none"
 			? t("sidebar.noProject")
 			: projects.data?.projects?.find((p) => p.id === projectFilter)?.name;
 	return (
-		<Card
-			title={t("automation.schedules")}
-			icon="clock"
-			action={
-				<Button
-					size="sm"
-					icon="plus"
-					onClick={() => setEditing({ kind: "new" })}
-				>
-					{t("common.create")}
-				</Button>
-			}
-		>
-			{projectFilter !== undefined && (
-				<p className="mb-2 flex items-center gap-2 text-muted text-xs">
-					{t("automation.filteredBy", { name: filterName ?? projectFilter })}
-					<Link
-						to="/settings/automations"
-						className="text-accent-ink underline"
+		<>
+			<ScheduleGroup
+				testId="automation-project-schedules"
+				title={t("automation.projectSchedules")}
+				meta={
+					projectFilter !== undefined && (
+						<span className="inline-flex items-center gap-2">
+							{t("automation.filteredBy", {
+								name: filterName ?? projectFilter,
+							})}
+							<Link
+								to="/settings/automations"
+								className="text-accent-ink underline-offset-2 hover:underline"
+							>
+								{t("automation.showAll")}
+							</Link>
+						</span>
+					)
+				}
+				action={
+					<Button
+						size="sm"
+						icon="plus"
+						onClick={() => setEditing({ kind: "new" })}
 					>
-						{t("automation.showAll")}
-					</Link>
-				</p>
-			)}
-			{all.isPending && <Spinner />}
-			<ErrorText error={all.error} />
-			<section data-testid="automation-project-schedules" className="mb-3">
-				<h4 className="mb-1 font-medium text-faint text-xs">
-					{t("automation.projectSchedules")}
-				</h4>
-				{projectRuns.length === 0 ? (
-					<p className="text-faint text-xs">{t("automation.none")}</p>
-				) : (
-					<ul className="-mx-2 flex flex-col">
-						{projectRuns.map((s) => (
-							<ScheduleRow
-								key={s.id}
-								schedule={s}
-								showTarget
-								onEdit={() => setEditing({ kind: "edit", schedule: s })}
-							/>
-						))}
-					</ul>
-				)}
-			</section>
-			{projectFilter === undefined && (
-				<section data-testid="automation-thread-schedules">
-					<h4 className="mb-1 font-medium text-faint text-xs">
-						{t("automation.threadSchedules")}
-					</h4>
-					{threadRuns.length === 0 ? (
-						<p className="text-faint text-xs">{t("automation.none")}</p>
-					) : (
-						<ul className="-mx-2 flex flex-col">
-							{threadRuns.map((s) => (
-								<ScheduleRow
-									key={s.id}
-									schedule={s}
-									showTarget
-									onEdit={() => setEditing({ kind: "edit", schedule: s })}
-								/>
-							))}
-						</ul>
-					)}
-				</section>
+						{t("common.create")}
+					</Button>
+				}
+				schedules={all.isSuccess ? projectRuns : []}
+				onEdit={edit}
+			>
+				{all.isPending && <Spinner />}
+				<ErrorText error={all.error} />
+			</ScheduleGroup>
+			{projectFilter === undefined && all.isSuccess && (
+				<ScheduleGroup
+					testId="automation-thread-schedules"
+					title={t("automation.threadSchedules")}
+					schedules={threadRuns}
+					onEdit={edit}
+				/>
 			)}
 			{editing?.kind === "new" && (
 				<ScheduleDialog
@@ -171,7 +190,7 @@ function SchedulesCard(): ReactNode {
 			{editing?.kind === "byId" && (
 				<DialogById id={editing.id} onClose={close} />
 			)}
-		</Card>
+		</>
 	);
 }
 
@@ -228,82 +247,97 @@ function Target({ id }: { id: string }): ReactNode {
 	);
 }
 
-function ActionsCard(): ReactNode {
+const ACTOR_ICON: Record<AutomationAction["actorKind"], IconName> = {
+	space: "chats",
+	assistant: "globe",
+	agent: "robot",
+};
+
+function ActionRow({ a }: { a: AutomationAction }): ReactNode {
+	const { t } = useTranslation();
+	return (
+		<GroupRow
+			icon={ACTOR_ICON[a.actorKind]}
+			title={
+				<span data-action={a.id} className="flex min-w-0 items-center gap-1.5">
+					<span className="truncate">{t(`automation.action.${a.action}`)}</span>
+					{a.origin === "auto" && (
+						<Badge icon="bolt" title={t("automation.autoHint")}>
+							{t("automation.auto")}
+						</Badge>
+					)}
+					{!a.ok && (
+						<Badge tone="err">{a.error ?? t("automation.failed")}</Badge>
+					)}
+				</span>
+			}
+			meta={
+				<>
+					<span className="tabular-nums">{formatDateTime(a.ts)}</span>
+					<span aria-hidden>·</span>
+					<Actor a={a} />
+					{a.targetThreadId && (
+						<>
+							<span aria-hidden>→</span>
+							<Target id={a.targetThreadId} />
+						</>
+					)}
+				</>
+			}
+		>
+			{a.summary && (
+				<p className="min-w-0 break-words text-[12.5px] text-muted">
+					{a.summary}
+				</p>
+			)}
+		</GroupRow>
+	);
+}
+
+function ActionsLog(): ReactNode {
 	const { t } = useTranslation();
 	const [limit, setLimit] = useState(PAGE);
 	const actions = useAutomationActions({ limit });
 	const list = actions.data?.actions ?? [];
 	return (
-		<Card title={t("automation.log")} icon="list">
-			<p className="mb-2 text-faint text-xs">{t("automation.logHint")}</p>
-			{actions.isPending && <Spinner />}
-			<ErrorText error={actions.error} />
-			{!actions.isPending && list.length === 0 && (
-				<p className="text-faint text-xs">{t("automation.logEmpty")}</p>
-			)}
-			<ul data-testid="automation-actions" className="flex flex-col">
-				{list.map((a) => (
-					<li
-						key={a.id}
-						data-action={a.id}
-						className="flex flex-col gap-0.5 border-border border-b py-2 text-xs last:border-b-0"
-					>
-						<span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
-							<span className="text-faint tabular-nums">
-								{formatDateTime(a.ts)}
-							</span>
-							<Actor a={a} />
-							<span className="font-medium text-fg">
-								{t(`automation.action.${a.action}`)}
-							</span>
-							{a.targetThreadId && (
-								<>
-									<Icon
-										name="forward"
-										size={11}
-										aria-hidden
-										className="text-faint"
-									/>
-									<Target id={a.targetThreadId} />
-								</>
-							)}
-							{a.origin === "auto" && (
-								<Badge icon="bolt" title={t("automation.autoHint")}>
-									{t("automation.auto")}
-								</Badge>
-							)}
-							{!a.ok && (
-								<Badge tone="err">{a.error ?? t("automation.failed")}</Badge>
-							)}
-						</span>
-						{a.summary && (
-							<span className="min-w-0 break-words text-muted">
-								{a.summary}
-							</span>
-						)}
-					</li>
-				))}
-			</ul>
-			{list.length >= limit && (
-				<div className="mt-2">
-					<Button
-						size="sm"
-						disabled={actions.isFetching}
-						onClick={() => setLimit((n) => n + PAGE)}
-					>
-						{t("automation.loadMore")}
-					</Button>
-				</div>
-			)}
-		</Card>
+		<div data-testid="automation-actions" className="contents">
+			<Group title={t("automation.log")}>
+				{actions.isPending && <Spinner />}
+				<ErrorText error={actions.error} />
+				{list.length > 0 && (
+					<GroupList>
+						{list.map((a) => (
+							<ActionRow key={a.id} a={a} />
+						))}
+					</GroupList>
+				)}
+				{list.length >= limit && (
+					<div>
+						<Button
+							size="sm"
+							disabled={actions.isFetching}
+							onClick={() => setLimit((n) => n + PAGE)}
+						>
+							{t("automation.loadMore")}
+						</Button>
+					</div>
+				)}
+				<p className="px-1.5 text-faint text-xs">
+					{!actions.isPending && list.length === 0
+						? `${t("automation.logEmpty")} `
+						: ""}
+					{t("automation.logHint")}
+				</p>
+			</Group>
+		</div>
 	);
 }
 
 export default function AutomationsSettings(): ReactNode {
 	return (
 		<>
-			<SchedulesCard />
-			<ActionsCard />
+			<Schedules />
+			<ActionsLog />
 		</>
 	);
 }

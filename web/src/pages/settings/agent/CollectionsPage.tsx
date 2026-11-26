@@ -1,5 +1,6 @@
 /**
- * 设置 → Agent → 命令与规则：`commands/`、`rules/`、`prompts/`、`instructions/` 四类 Markdown 条目。
+ * 设置 → 技能与指令 › 命令、规则、提示片段、instruction：`commands/`、`rules/`、`prompts/`、`instructions/` 四类
+ * Markdown 条目，每类一组。作用范围说明与下发状态由页面（`InstructionsPage`）统一给出。
  * 名称与启停键对照 Core `discovery/builtin.ts`：
  * - 命令 `commands/*.md`，名称为文件名去 `.md`，键 `slash-command:<名称>`；frontmatter `description`、`argument-hint`；
  * - 规则 `rules/*.{md,mdc}`，名称为文件名去扩展名，键 `rule:<名称>`；frontmatter `description`、`globs`、`alwaysApply`；
@@ -7,8 +8,6 @@
  * - instruction `instructions/*.md`，名称去 `.instructions.md` 或 `.md`，键 `instruction:<名称>`；frontmatter `applyTo`。
  */
 import { useTranslation } from "react-i18next";
-import { ApplyStatusBanner } from "../../../components/settings/ApplyStatusBanner";
-import { AgentScopeNote } from "../../../components/settings/agent-config-ui";
 import { MarkdownCollection } from "../../../components/settings/MarkdownCollection";
 import {
 	instructionKey,
@@ -33,8 +32,6 @@ export default function CollectionsPage() {
 	} as const;
 	return (
 		<>
-			<ApplyStatusBanner />
-			<AgentScopeNote />
 			<MarkdownCollection
 				dir="commands"
 				layout="flat-md"

@@ -17,7 +17,7 @@ import {
 } from "../../../../api/memory-queries";
 import { ConfirmButton } from "../../../../components/share/ConfirmButton";
 import { CopyButton } from "../../../../components/ui/CopyButton";
-import { Badge, Callout, Card } from "../../../../components/ui/data";
+import { Badge, Callout } from "../../../../components/ui/data";
 import {
 	Button,
 	Checkbox,
@@ -25,6 +25,7 @@ import {
 	Spinner,
 	TextInput,
 } from "../../../../components/ui/primitives";
+import { Group, GroupPanel } from "../../../../components/ui/workbench";
 import { MemoryError } from "./errors";
 import { MEMORY_REEMBED_DOC_URL } from "./shared";
 
@@ -33,24 +34,27 @@ export function EndpointsCard(): ReactNode {
 	const q = useMemoryEndpoints();
 	const d = q.data;
 	return (
-		<Card title={t("memoryPage.endpoints.title")} icon="plugs">
+		<Group title={t("memoryPage.endpoints.title")}>
 			{q.isPending ? (
 				<Spinner />
 			) : q.error ? (
 				<MemoryError step="loadEndpoints" error={q.error} />
 			) : d ? (
-				<div className="flex flex-col gap-4">
-					<EndpointForm
-						kind="embed"
-						endpoint={d.embed}
-						locked={d.embedLocked}
-					/>
-					<div className="border-border border-t" />
-					<EndpointForm kind="rerank" endpoint={d.rerank} locked={false} />
+				<>
+					<GroupPanel>
+						<EndpointForm
+							kind="embed"
+							endpoint={d.embed}
+							locked={d.embedLocked}
+						/>
+					</GroupPanel>
+					<GroupPanel>
+						<EndpointForm kind="rerank" endpoint={d.rerank} locked={false} />
+					</GroupPanel>
 					{d.needsRestart && <RerankRestart endpoints={d} />}
-				</div>
+				</>
 			) : null}
-		</Card>
+		</Group>
 	);
 }
 

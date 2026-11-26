@@ -102,13 +102,11 @@ export function UsageTab({
 	window: w,
 	onChange,
 	budget,
-	onEditBudget,
 }: {
 	params: StatsParams;
 	window: StatsWindow;
 	onChange: (patch: Partial<StatsParams>) => void;
 	budget: BudgetStatus | undefined;
-	onEditBudget: () => void;
 }): ReactNode {
 	const { t } = useTranslation();
 	const bp = useBreakpoint();
@@ -358,9 +356,7 @@ export function UsageTab({
 			) : (
 				<KpiGrid items={kpis} />
 			)}
-			{budget && hasBudget(budget) && (
-				<BudgetCard status={budget} onEdit={onEditBudget} />
-			)}
+			{budget && hasBudget(budget) && <BudgetCard status={budget} />}
 			<Card
 				title={t("stats.chart.usage", {
 					metric: t(`stats.metric.${metric}`),

@@ -1,5 +1,5 @@
 /**
- * 记忆页「全局记忆」卡（R6、R20）：所有项目与无项目线程都能召回的记忆；新建、改写、删除。
+ * 「全局记忆」分组（R6、R20）：所有项目与无项目线程都能召回的记忆；新建、改写、删除。
  * 每次新建或改写后，控制面自动刷新全局的 user-preferences mental model。
  */
 import { type ReactNode, useState } from "react";
@@ -11,15 +11,24 @@ import {
 	useMemoryDocuments,
 	useUpdateGlobalMemory,
 } from "../../../../api/memory-queries";
+import {
+	EmptyPanel,
+	GroupNote,
+} from "../../../../components/settings/agent-config-ui";
 import { ConfirmButton } from "../../../../components/share/ConfirmButton";
-import { Card } from "../../../../components/ui/data";
 import {
 	Button,
 	Spinner,
 	TextArea,
 } from "../../../../components/ui/primitives";
+import {
+	Group,
+	GroupList,
+	GroupPanel,
+} from "../../../../components/ui/workbench";
 import { formatRelative } from "../../../../lib/format";
 import { MemoryError } from "./errors";
+import { ItemMeta, ItemRow, Pager } from "./rows";
 import { secToMs } from "./shared";
 
 /** 与 `MemoryContent.content` 的上限一致。 */
@@ -33,9 +42,8 @@ export function GlobalCard(): ReactNode {
 	const [adding, setAdding] = useState(false);
 	const docs = q.data?.items ?? [];
 	return (
-		<Card
+		<Group
 			title={t("memoryPage.global.title")}
-			icon="globe"
 			action={
 				!adding && (
 					<Button size="sm" icon="plus" onClick={() => setAdding(true)}>
@@ -44,47 +52,32 @@ export function GlobalCard(): ReactNode {
 				)
 			}
 		>
-			<div className="flex flex-col gap-2">
-				<p className="text-faint text-xs">{t("memoryPage.global.hint")}</p>
-				{adding && <NewGlobal onDone={() => setAdding(false)} />}
-				{q.isPending ? (
-					<Spinner />
-				) : q.error ? (
-					<MemoryError step="loadDocuments" error={q.error} />
-				) : docs.length === 0 ? (
-					<p className="text-faint text-sm">{t("memoryPage.global.empty")}</p>
-				) : (
-					<ul className="-mx-2 flex flex-col">
-						{docs.map((d) => (
-							<GlobalRow key={d.id} doc={d} />
-						))}
-					</ul>
-				)}
-				{(offset > 0 || q.data?.hasMore) && (
-					<div className="flex justify-end gap-2">
-						<Button
-							size="sm"
-							icon="chevronLeft"
-							disabled={offset === 0}
-							onClick={() => setOffset(Math.max(0, offset - PAGE))}
-						>
-							{t("memoryPage.browse.prev")}
-						</Button>
-						<Button
-							size="sm"
-							disabled={!q.data?.hasMore}
-							onClick={() => setOffset(offset + PAGE)}
-						>
-							{t("memoryPage.browse.next")}
-						</Button>
-					</div>
-				)}
-			</div>
-		</Card>
+			{adding && <NewGlobal onDone={() => setAdding(false)} />}
+			{q.isPending ? (
+				<Spinner />
+			) : q.error ? (
+				<MemoryError step="loadDocuments" error={q.error} />
+			) : docs.length === 0 ? (
+				<EmptyPanel>{t("memoryPage.global.empty")}</EmptyPanel>
+			) : (
+				<GroupList>
+					{docs.map((d) => (
+						<GlobalRow key={d.id} doc={d} />
+					))}
+				</GroupList>
+			)}
+			<Pager
+				offset={offset}
+				page={PAGE}
+				hasMore={q.data?.hasMore}
+				onOffset={setOffset}
+			/>
+			<GroupNote>{t("memoryPage.global.hint")}</GroupNote>
+		</Group>
 	);
 }
 
-/** 内容编辑区：新建、改写全局记忆与改写候选共用。 */
+/** 内容编辑区：新建、改写全局记忆与改写候选、明确记忆共用。 */
 export function ContentEditor({
 	initial,
 	label,
@@ -106,6 +99,7 @@ export function ContentEditor({
 	return (
 		<div className="flex flex-col gap-2">
 			<TextArea
+				mono={false}
 				aria-label={label}
 				value={text}
 				maxLength={MEMORY_CONTENT_MAX}
@@ -136,7 +130,7 @@ function NewGlobal({ onDone }: { onDone: () => void }): ReactNode {
 	const { t } = useTranslation();
 	const create = useCreateGlobalMemory();
 	return (
-		<div className="flex flex-col gap-2 rounded-md border border-border p-2.5">
+		<GroupPanel>
 			<ContentEditor
 				initial=""
 				label={t("memoryPage.global.newLabel")}
@@ -146,7 +140,7 @@ function NewGlobal({ onDone }: { onDone: () => void }): ReactNode {
 				onCancel={onDone}
 			/>
 			<MemoryError step="createGlobal" error={create.error} />
-		</div>
+		</GroupPanel>
 	);
 }
 
@@ -157,10 +151,7 @@ function GlobalRow({ doc }: { doc: MemoryDocument }): ReactNode {
 	const [editing, setEditing] = useState(false);
 	const content = doc.content ?? doc.preview;
 	return (
-		<li
-			className="flex flex-col gap-1.5 rounded-md px-2 py-2"
-			data-document={doc.id}
-		>
+		<ItemRow data-document={doc.id}>
 			{editing ? (
 				<ContentEditor
 					initial={content}
@@ -177,33 +168,38 @@ function GlobalRow({ doc }: { doc: MemoryDocument }): ReactNode {
 				/>
 			) : (
 				<>
-					<p className="whitespace-pre-wrap break-words text-sm">{content}</p>
-					<div className="flex flex-wrap items-center gap-2 text-faint text-xs">
+					<p className="whitespace-pre-wrap break-words text-fg text-sm">
+						{content}
+					</p>
+					<ItemMeta
+						actions={
+							<>
+								<Button
+									size="sm"
+									variant="ghost"
+									onClick={() => setEditing(true)}
+								>
+									{t("common.edit")}
+								</Button>
+								<ConfirmButton
+									label={t("common.delete")}
+									confirmLabel={t("memoryPage.browse.deleteConfirm")}
+									disabled={del.isPending}
+									onConfirm={() => del.mutate(doc.id)}
+								/>
+							</>
+						}
+					>
 						<span>
 							{t("memoryPage.browse.updated", {
 								when: formatRelative(secToMs(doc.updatedAt)),
 							})}
 						</span>
-						<span className="ml-auto flex shrink-0 items-center gap-1">
-							<Button
-								size="sm"
-								variant="ghost"
-								onClick={() => setEditing(true)}
-							>
-								{t("common.edit")}
-							</Button>
-							<ConfirmButton
-								label={t("common.delete")}
-								confirmLabel={t("memoryPage.browse.deleteConfirm")}
-								disabled={del.isPending}
-								onConfirm={() => del.mutate(doc.id)}
-							/>
-						</span>
-					</div>
+					</ItemMeta>
 				</>
 			)}
 			<MemoryError step="updateGlobal" error={update.error} />
 			<MemoryError step="deleteDocument" error={del.error} />
-		</li>
+		</ItemRow>
 	);
 }

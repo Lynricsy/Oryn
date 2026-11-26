@@ -189,15 +189,17 @@ export function HostDialog({
 					/>
 				</Field>
 				<Field label={t("sshPage.hostDialog.authType")}>
-					<Select
+					<Select<"key" | "password">
 						value={authType}
-						onChange={(e) => setAuthType(e.target.value as "key" | "password")}
-					>
-						<option value="key">{t("sshPage.hostDialog.authKey")}</option>
-						<option value="password">
-							{t("sshPage.hostDialog.authPassword")}
-						</option>
-					</Select>
+						onChange={setAuthType}
+						options={[
+							{ value: "key", label: t("sshPage.hostDialog.authKey") },
+							{
+								value: "password",
+								label: t("sshPage.hostDialog.authPassword"),
+							},
+						]}
+					/>
 				</Field>
 				{authType === "key" ? (
 					// 「新建钥匙」放在 label 外：label 只关联下拉框
@@ -206,15 +208,10 @@ export function HostDialog({
 							<Field label={t("sshPage.hostDialog.key")}>
 								<Select
 									value={keyId}
-									onChange={(e) => setKeyId(e.target.value)}
-								>
-									<option value="">{t("sshPage.hostDialog.pickKey")}</option>
-									{keyList.map((k) => (
-										<option key={k.id} value={k.id}>
-											{k.name}
-										</option>
-									))}
-								</Select>
+									onChange={setKeyId}
+									placeholder={t("sshPage.hostDialog.pickKey")}
+									options={keyList.map((k) => ({ value: k.id, label: k.name }))}
+								/>
 							</Field>
 						</div>
 						<Button icon="plus" onClick={() => setNewKey(true)}>
@@ -242,31 +239,34 @@ export function HostDialog({
 				>
 					<Select
 						value={jumpHostId}
-						onChange={(e) => setJumpHostId(e.target.value)}
-					>
-						<option value="">{t("common.none")}</option>
-						{jumps.map((h) => (
-							<option key={h.id} value={h.id}>
-								{h.name}
-								{h.enabled ? "" : ` (${t("sshPage.row.disabled")})`}
-							</option>
-						))}
-					</Select>
+						onChange={setJumpHostId}
+						options={[
+							{ value: "", label: t("common.none") },
+							...jumps.map((h) => ({
+								value: h.id,
+								label: h.enabled
+									? h.name
+									: `${h.name} (${t("sshPage.row.disabled")})`,
+							})),
+						]}
+					/>
 				</Field>
 				<Field
 					label={t("sshPage.hostDialog.compat")}
 					hint={t("sshPage.hostDialog.compatHint")}
 				>
-					<Select
+					<Select<Compat>
 						value={compat}
-						onChange={(e) => setCompat(e.target.value as Compat)}
-					>
-						<option value="default">
-							{t("sshPage.hostDialog.compatDefault")}
-						</option>
-						<option value="on">{t("sshPage.hostDialog.compatOn")}</option>
-						<option value="off">{t("sshPage.hostDialog.compatOff")}</option>
-					</Select>
+						onChange={setCompat}
+						options={[
+							{
+								value: "default",
+								label: t("sshPage.hostDialog.compatDefault"),
+							},
+							{ value: "on", label: t("sshPage.hostDialog.compatOn") },
+							{ value: "off", label: t("sshPage.hostDialog.compatOff") },
+						]}
+					/>
 				</Field>
 				<div className="sm:col-span-2">
 					<Field label={t("sshPage.hostDialog.description")}>

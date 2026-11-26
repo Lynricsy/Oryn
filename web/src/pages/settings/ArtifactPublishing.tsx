@@ -1,8 +1,8 @@
 /**
- * 设置 › 分享 里的「已发布的 Artifacts」卡片（M14 8.4）：
+ * 设置 → 分享与 Artifacts 的「已发布的 Artifacts」分组（M14 8.4）：
  * - 首行是自动发布开关：把新建的 artifact（agent 创建与用户导入）以私有方式发布，并跟着最新版本更新。
- * - 下面是已发布列表：标题（点进查看器）、类型图标、访问级别、版本、访客数、复制链接（有访问码时第二行是访问码）、
- *   两步取消发布；加载中、失败、空三种占位。
+ * - 其后每个已发布的 artifact 一行：标题（点进查看器）、类型图标 · 访问级别、版本、访客数 · 复制链接（悬停出现；
+ *   有访问码时第二行是访问码）· ⋯（取消发布，先确认）。加载中、失败、空三种占位。
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -14,12 +14,18 @@ import {
 	useSetArtifactPrefs,
 	useUnpublishArtifact,
 } from "../../api/artifact-queries";
-import { ConfirmButton } from "../../components/share/ConfirmButton";
 import { CopyButton } from "../../components/ui/CopyButton";
-import { Badge, Card, ListRow } from "../../components/ui/data";
-import { Icon } from "../../components/ui/icons";
+import { Badge } from "../../components/ui/data";
 import { ErrorText, Spinner, Toggle } from "../../components/ui/primitives";
+import {
+	Group,
+	GroupList,
+	GroupRow,
+	Reveal,
+} from "../../components/ui/workbench";
 import { kindIcon } from "../../lib/artifacts/kinds";
+import { confirmAction } from "../../lib/confirm";
+import { RowMenu } from "./SharesSettings";
 
 const ACCESS_ICON = { private: "lock", code: "key", public: "globe" } as const;
 
@@ -32,38 +38,35 @@ function PublicationRow({
 	const unpublish = useUnpublishArtifact();
 	const { artifact: a, publication: p } = item;
 	return (
-		<li data-testid="artifact-publication">
-			<ListRow
-				leading={
-					<span className="grid h-8 w-8 place-items-center rounded-md border border-border bg-raised text-muted">
-						<Icon name={kindIcon(a.kind)} size={15} />
+		<GroupRow
+			icon={kindIcon(a.kind)}
+			title={
+				<Link
+					to={`/artifacts/${a.id}`}
+					className="min-w-0 truncate hover:underline"
+					data-testid="artifact-publication"
+				>
+					{a.title}
+				</Link>
+			}
+			meta={
+				<>
+					<Badge icon={ACCESS_ICON[p.access]}>
+						{t(`artifacts.share.access.${p.access}`)}
+					</Badge>
+					<span className="font-mono tabular-nums">
+						{t("artifacts.viewer.version", { n: p.version })}
 					</span>
-				}
-				title={
-					<Link
-						to={`/artifacts/${a.id}`}
-						className="min-w-0 truncate font-medium hover:underline"
-					>
-						{a.title}
-					</Link>
-				}
-				meta={
-					<>
-						<Badge icon={ACCESS_ICON[p.access]}>
-							{t(`artifacts.share.access.${p.access}`)}
-						</Badge>
-						<span className="font-mono tabular-nums">
-							{t("artifacts.viewer.version", { n: p.version })}
+					{p.visitors > 0 && (
+						<span title={t("artifacts.share.visitorsHint")}>
+							{t("artifacts.share.visitors", { count: p.visitors })}
 						</span>
-						{p.visitors > 0 && (
-							<span title={t("artifacts.share.visitorsHint")}>
-								{t("artifacts.share.visitors", { count: p.visitors })}
-							</span>
-						)}
-					</>
-				}
-				trailing={
-					<>
+					)}
+				</>
+			}
+			trailing={
+				<>
+					<Reveal>
 						<CopyButton
 							text={
 								p.code
@@ -72,17 +75,37 @@ function PublicationRow({
 							}
 							ariaLabel={t("artifacts.share.copyLink")}
 						/>
-						<ConfirmButton
-							label={t("artifacts.share.unpublishConfirm")}
-							confirmLabel={t("artifacts.share.settings.unpublishConfirm")}
-							disabled={unpublish.isPending}
-							onConfirm={() => unpublish.mutate(a.id)}
-						/>
-					</>
-				}
-			/>
-			<ErrorText error={unpublish.error} />
-		</li>
+					</Reveal>
+					<RowMenu
+						label={t("share.settings.more", { name: a.title })}
+						items={[
+							{
+								key: "unpublish",
+								icon: "trash",
+								label: t("artifacts.share.unpublishConfirm"),
+								danger: true,
+								disabled: unpublish.isPending,
+								onSelect: async () => {
+									if (
+										await confirmAction({
+											title: t("artifacts.share.settings.unpublishTitle", {
+												title: a.title,
+											}),
+											body: t("artifacts.share.settings.unpublishBody"),
+											action: t("artifacts.share.unpublishConfirm"),
+											danger: true,
+										})
+									)
+										unpublish.mutate(a.id);
+								},
+							},
+						]}
+					/>
+				</>
+			}
+		>
+			{unpublish.error ? <ErrorText error={unpublish.error} /> : undefined}
+		</GroupRow>
 	);
 }
 
@@ -92,43 +115,47 @@ export function ArtifactPublishing(): ReactNode {
 	const setPrefs = useSetArtifactPrefs();
 	const list = useArtifactPublications();
 	return (
-		// 自动发布开关只有一行，并进「已发布的 Artifacts」卡片的首行，不单独占一张卡
-		<Card title={t("artifacts.share.settings.title")} icon="globe">
-			<div className="mb-2 border-border border-b pb-3">
-				{prefs.isPending ? (
-					<Spinner />
-				) : prefs.isError ? (
-					<ErrorText error={prefs.error} />
-				) : (
-					<Toggle
-						disabled={setPrefs.isPending}
-						// 请求进行中先显示要改成的值
-						checked={
-							setPrefs.isPending
-								? setPrefs.variables.autoPublish
-								: prefs.data.autoPublish
-						}
-						label={t("artifacts.share.settings.autoPublish")}
-						onChange={(autoPublish) => setPrefs.mutate({ autoPublish })}
-					/>
-				)}
-				<ErrorText error={setPrefs.error} />
-			</div>
-			{list.isPending ? (
-				<Spinner />
-			) : list.isError ? (
-				<ErrorText error={list.error} />
-			) : list.data.length === 0 ? (
-				<p className="text-faint text-sm">
+		<Group title={t("artifacts.share.settings.title")}>
+			<GroupList>
+				{/* 自动发布开关只有一行，作为本组首行，不单独占一组 */}
+				<GroupRow
+					icon="sparkle"
+					title={t("artifacts.share.settings.autoTitle")}
+					meta={t("artifacts.share.settings.autoPublish")}
+					trailing={
+						prefs.isPending ? (
+							<Spinner />
+						) : prefs.isError ? undefined : (
+							<Toggle
+								hideLabel
+								disabled={setPrefs.isPending}
+								// 请求进行中先显示要改成的值
+								checked={
+									setPrefs.isPending
+										? setPrefs.variables.autoPublish
+										: prefs.data.autoPublish
+								}
+								label={t("artifacts.share.settings.autoPublish")}
+								onChange={(autoPublish) => setPrefs.mutate({ autoPublish })}
+							/>
+						)
+					}
+				>
+					{prefs.error || setPrefs.error ? (
+						<ErrorText error={prefs.error ?? setPrefs.error} />
+					) : undefined}
+				</GroupRow>
+				{list.data?.map((item) => (
+					<PublicationRow key={item.publication.id} item={item} />
+				))}
+			</GroupList>
+			{list.isPending && <Spinner />}
+			<ErrorText error={list.error} />
+			{list.data?.length === 0 && (
+				<p className="px-1.5 text-faint text-sm">
 					{t("artifacts.share.settings.empty")}
 				</p>
-			) : (
-				<ul className="-mx-2 flex flex-col">
-					{list.data.map((item) => (
-						<PublicationRow key={item.publication.id} item={item} />
-					))}
-				</ul>
 			)}
-		</Card>
+		</Group>
 	);
 }

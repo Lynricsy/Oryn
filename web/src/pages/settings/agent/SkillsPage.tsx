@@ -1,10 +1,9 @@
 /**
- * 设置 → Agent → 技能：`skills/<名称>/SKILL.md` 的增删改与启停（`disabledExtensions` 的 `skill:<名称>`）。
+ * 设置 → 技能与指令 › 技能：`skills/<名称>/SKILL.md` 的增删改与启停（`disabledExtensions` 的 `skill:<名称>`）。
  * Core 只加载带 `description` 的技能（`scanSkillsFromDir` 的 `requireDescription`），表单里描述必填。
+ * 作用范围说明与下发状态由页面（`InstructionsPage`）统一给出。
  */
 import { useTranslation } from "react-i18next";
-import { ApplyStatusBanner } from "../../../components/settings/ApplyStatusBanner";
-import { AgentScopeNote } from "../../../components/settings/agent-config-ui";
 import {
 	type FieldSpec,
 	MarkdownCollection,
@@ -26,22 +25,18 @@ export default function SkillsPage() {
 		},
 	];
 	return (
-		<>
-			<ApplyStatusBanner />
-			<AgentScopeNote />
-			<MarkdownCollection
-				dir="skills"
-				layout="dir-skill"
-				keyOf={skillKey}
-				fields={fields}
-				title={t("agentPages.skills.title")}
-				icon="sparkle"
-				hint={t("agentPages.skills.hint")}
-				emptyText={t("agentPages.skills.empty")}
-				namePattern={SKILL_NAME}
-				nameHint={t("agentPages.skills.nameHint")}
-				requireDescription
-			/>
-		</>
+		<MarkdownCollection
+			dir="skills"
+			layout="dir-skill"
+			keyOf={skillKey}
+			fields={fields}
+			title={t("agentPages.skills.title")}
+			icon="sparkle"
+			hint={t("agentPages.skills.hint")}
+			emptyText={t("agentPages.skills.empty")}
+			namePattern={SKILL_NAME}
+			nameHint={t("agentPages.skills.nameHint")}
+			requireDescription
+		/>
 	);
 }

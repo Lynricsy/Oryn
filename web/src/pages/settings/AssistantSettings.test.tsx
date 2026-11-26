@@ -59,8 +59,17 @@ function mount() {
 	);
 }
 
+/** MCP 服务器所在的行（定位钩子挂在行标题上）。 */
 const row = (name: string) =>
-	document.querySelector(`[data-mcp-server="${name}"]`) as HTMLElement;
+	document
+		.querySelector(`[data-mcp-server="${name}"]`)
+		?.closest("li") as HTMLElement;
+
+/** 自绘下拉：点开后点选项。 */
+async function choose(combo: HTMLElement, option: string | RegExp) {
+	fireEvent.click(combo);
+	fireEvent.click(await screen.findByRole("option", { name: option }));
+}
 
 describe("设置 → 全局助手", () => {
 	it("联网开关保存整份设置", async () => {
@@ -120,21 +129,21 @@ describe("设置 → 全局助手", () => {
 			screen.queryByRole("switch", { name: "助手使用 filesystem" }),
 		).toBeNull();
 	});
+
 	it("助手的电脑：provider 与类型进设置，换 provider 时类型回到默认", async () => {
 		mount();
-		const providerSel = (await screen.findByTestId(
-			"computer-provider",
-		)) as HTMLSelectElement;
-		await screen.findByRole("option", { name: "local" });
-		fireEvent.change(providerSel, { target: { value: "local" } });
+		const group = await screen.findByRole("region", { name: "助手的电脑" });
+		const providerSel = within(group).getByRole("combobox", {
+			name: "Provider",
+		});
+		await waitFor(() => expect(providerSel).toBeEnabled());
+		await choose(providerSel, "local");
 		await waitFor(() =>
 			expect(server.assistant.settings.computer).toEqual({ provider: "local" }),
 		);
-		const typeSel = screen.getByTestId(
-			"computer-orb-type",
-		) as HTMLSelectElement;
+		const typeSel = within(group).getByRole("combobox", { name: "类型" });
 		await waitFor(() => expect(typeSel).toBeEnabled());
-		fireEvent.change(typeSel, { target: { value: "large" } });
+		await choose(typeSel, /^large/);
 		await waitFor(() =>
 			expect(server.assistant.settings.computer).toEqual({
 				provider: "local",
@@ -142,8 +151,27 @@ describe("设置 → 全局助手", () => {
 			}),
 		);
 		await waitFor(() => expect(providerSel).toBeEnabled());
-		fireEvent.change(providerSel, { target: { value: "" } });
+		await choose(providerSel, "默认");
 		await waitFor(() => expect(server.assistant.settings.computer).toEqual({}));
+	});
+
+	it("页内按顺序是助手身份、模型、提示词、联网与 MCP、后台研究、助手的电脑、助手记忆", async () => {
+		mount();
+		await screen.findByRole("switch", { name: "允许助手联网" });
+		const titles = screen
+			.getAllByRole("heading", { level: 3 })
+			.map((h) => h.textContent);
+		expect(titles.slice(0, 6)).toEqual([
+			"全局助手",
+			"模型与思考档位",
+			"自定义提示词",
+			"联网与 MCP",
+			"后台研究",
+			"助手的电脑",
+		]);
+		expect(
+			await screen.findByTestId("owner-memory-section"),
+		).toBeInTheDocument();
 	});
 
 	it("后台研究（M26）：总开关整体 PUT，带今天已花；上限与偏好各自保存", async () => {

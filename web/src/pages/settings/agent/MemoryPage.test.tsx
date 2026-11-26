@@ -205,28 +205,30 @@ describe("MemoryPage", () => {
 	});
 });
 
-/** 用途的选择器（accessible name 里混着选中项的文字，按 data-purpose 取更稳）。 */
+/** 用途的选择器（自绘 combobox，按外层 data-purpose 取更稳）。 */
 async function purposeSelect(
 	container: HTMLElement,
 	purpose: string,
-): Promise<HTMLSelectElement> {
-	const selector = `select[data-purpose="${purpose}"]`;
+): Promise<HTMLElement> {
+	const selector = `[data-purpose="${purpose}"] [role="combobox"]`;
 	await waitFor(() => expect(container.querySelector(selector)).not.toBeNull());
-	return container.querySelector(selector) as HTMLSelectElement;
+	return container.querySelector(selector) as HTMLElement;
 }
 
 describe("ModelsCard", () => {
 	it("不可用的模型置灰并写明原因", async () => {
 		const { container } = mount(<ModelsCard />);
 		const select = await purposeSelect(container, "default");
-		const codex = within(select).getByRole("option", {
+		fireEvent.click(select);
+		const codex = await screen.findByRole("option", {
 			name: /GPT-5\.1 Codex/,
 		});
-		expect(codex).toBeDisabled();
+		expect(codex).toHaveAttribute("aria-disabled", "true");
 		expect(codex.textContent).toMatch(/openai-codex-responses/);
-		// 其余用途第一项是「跟随默认」
+		fireEvent.keyDown(codex, { key: "Escape" });
+		// 其余用途第一项是「跟随默认」，未单独设置时显示的就是它
 		const retain = await purposeSelect(container, "retain");
-		expect(retain.querySelector("option")?.textContent).toBe(
+		expect(retain).toHaveTextContent(
 			T("memoryPage.models.followNamed", { name: "Claude Haiku 4.5" }),
 		);
 	});
@@ -235,11 +237,10 @@ describe("ModelsCard", () => {
 		const { container } = mount(<ModelsCard />);
 		const retain = await purposeSelect(container, "retain");
 		expect(screen.queryByText(T("memoryPage.models.needsRestart"))).toBeNull();
-		fireEvent.change(retain, {
-			target: {
-				value: JSON.stringify(["openrouter", "deepseek/deepseek-v3.2"]),
-			},
-		});
+		fireEvent.click(retain);
+		fireEvent.click(
+			await screen.findByRole("option", { name: /DeepSeek V3\.2/ }),
+		);
 		fireEvent.click(screen.getByRole("button", { name: T("common.save") }));
 		expect(
 			await screen.findByText(T("memoryPage.models.needsRestart")),
@@ -480,11 +481,10 @@ describe("EndpointsCard", () => {
 			</>,
 		);
 		const retain = await purposeSelect(container, "retain");
-		fireEvent.change(retain, {
-			target: {
-				value: JSON.stringify(["openrouter", "deepseek/deepseek-v3.2"]),
-			},
-		});
+		fireEvent.click(retain);
+		fireEvent.click(
+			await screen.findByRole("option", { name: /DeepSeek V3\.2/ }),
+		);
 		expect(screen.queryByTestId("memory-env-snippet")).toBeNull();
 		const [saveModels] = screen.getAllByRole("button", {
 			name: T("common.save"),

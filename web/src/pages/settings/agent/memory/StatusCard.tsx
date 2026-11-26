@@ -1,6 +1,6 @@
 /**
- * 记忆页「状态」卡（R1、R23）：Hindsight 的状态徽标与每种失败状态下一步怎么做、版本与已验证小版本不符的警告、
- * bank `oryn` 的记忆数、待批准候选与删除重试队列的计数；重试队列非空时列出失败的条目。
+ * 「状态」分组（R1、R23）：Hindsight 的状态与每种失败状态下一步怎么做、版本与已验证小版本不符的警告、
+ * bank `oryn` 的记忆数、待批准候选与删除重试队列的计数，一项一行；重试队列非空时列出失败的条目。
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -10,17 +10,18 @@ import {
 	useMemoryPendingDeletes,
 	useMemoryStatus,
 } from "../../../../api/memory-queries";
-import { CountPill } from "../../../../components/layout/pane-parts";
-import {
-	Badge,
-	Callout,
-	Card,
-	KeyValue,
-	type Tone,
-} from "../../../../components/ui/data";
+import { GroupNote } from "../../../../components/settings/agent-config-ui";
+import { Callout, type Tone } from "../../../../components/ui/data";
 import { IconButton, Spinner } from "../../../../components/ui/primitives";
+import {
+	Group,
+	GroupList,
+	GroupRow,
+	StatusText,
+} from "../../../../components/ui/workbench";
 import { formatCount, formatRelative } from "../../../../lib/format";
 import { MemoryError } from "./errors";
+import { ItemMeta, ItemRow } from "./rows";
 import { MEMORY_DEPLOY_DOC_URL, secToMs } from "./shared";
 
 const STATE_TONE: Record<MemoryState, Tone> = {
@@ -37,11 +38,9 @@ const STATE_TONE: Record<MemoryState, Tone> = {
 export function StatusCard(): ReactNode {
 	const { t } = useTranslation();
 	const q = useMemoryStatus();
-	const s = q.data;
 	return (
-		<Card
+		<Group
 			title={t("memoryPage.status.title")}
-			icon="database"
 			action={
 				<IconButton
 					icon="refresh"
@@ -57,10 +56,17 @@ export function StatusCard(): ReactNode {
 				<Spinner />
 			) : q.error ? (
 				<MemoryError step="loadStatus" error={q.error} />
-			) : s ? (
-				<StatusBody status={s} />
-			) : null}
-		</Card>
+			) : (
+				<StatusBody status={q.data} />
+			)}
+		</Group>
+	);
+}
+
+/** 行尾的数值：次要灰、等宽数字。 */
+function Value({ children }: { children: ReactNode }): ReactNode {
+	return (
+		<span className="text-[12.5px] text-muted tabular-nums">{children}</span>
 	);
 }
 
@@ -68,15 +74,7 @@ function StatusBody({ status: s }: { status: MemoryStatus }): ReactNode {
 	const { t } = useTranslation();
 	const tone = STATE_TONE[s.state];
 	return (
-		<div className="flex flex-col gap-3" data-memory-state={s.state}>
-			<div className="flex flex-wrap items-center gap-2">
-				<Badge tone={tone}>{t(`memoryPage.state.${s.state}.label`)}</Badge>
-				<span className="text-faint text-xs">
-					{t("memoryPage.status.checkedAt", {
-						when: formatRelative(secToMs(s.checkedAt)),
-					})}
-				</span>
-			</div>
+		<div data-memory-state={s.state} className="contents">
 			{s.state !== "ok" && (
 				<Callout
 					tone={tone === "ok" ? "neutral" : tone}
@@ -108,41 +106,45 @@ function StatusBody({ status: s }: { status: MemoryStatus }): ReactNode {
 					})}
 				</Callout>
 			)}
-			<KeyValue
-				rows={[
-					{
-						key: "version",
-						label: t("memoryPage.status.version"),
-						value: (
-							<span className="flex flex-wrap items-center gap-1.5">
-								<span className="font-mono">{s.version ?? "—"}</span>
-								<span className="text-faint text-xs">
-									{t("memoryPage.status.tested", { tested: s.testedMinor })}
-								</span>
-							</span>
-						),
-					},
-					{
-						key: "count",
-						label: t("memoryPage.status.memoryCount"),
-						value: (
-							<span className="tabular-nums">
-								{s.memoryCount === undefined ? "—" : formatCount(s.memoryCount)}
-							</span>
-						),
-					},
-					{
-						key: "candidates",
-						label: t("memoryPage.status.candidates"),
-						value: <CountPill n={s.candidates} />,
-					},
-					{
-						key: "pending",
-						label: t("memoryPage.status.pendingDeletes"),
-						value: <CountPill n={s.pendingDeletes} />,
-					},
-				]}
-			/>
+			<GroupList>
+				<GroupRow
+					icon="database"
+					title="Hindsight"
+					meta={t("memoryPage.status.checkedAt", {
+						when: formatRelative(secToMs(s.checkedAt)),
+					})}
+					trailing={
+						<StatusText tone={tone}>
+							{t(`memoryPage.state.${s.state}.label`)}
+						</StatusText>
+					}
+				/>
+				<GroupRow
+					title={t("memoryPage.status.version")}
+					meta={t("memoryPage.status.tested", { tested: s.testedMinor })}
+					trailing={
+						<span className="font-mono text-[12.5px] text-muted">
+							{s.version ?? "—"}
+						</span>
+					}
+				/>
+				<GroupRow
+					title={t("memoryPage.status.memoryCount")}
+					trailing={
+						<Value>
+							{s.memoryCount === undefined ? "—" : formatCount(s.memoryCount)}
+						</Value>
+					}
+				/>
+				<GroupRow
+					title={t("memoryPage.status.candidates")}
+					trailing={<Value>{s.candidates}</Value>}
+				/>
+				<GroupRow
+					title={t("memoryPage.status.pendingDeletes")}
+					trailing={<Value>{s.pendingDeletes}</Value>}
+				/>
+			</GroupList>
 			{s.pendingDeletes > 0 && <PendingDeletes />}
 		</div>
 	);
@@ -157,31 +159,33 @@ function PendingDeletes(): ReactNode {
 	const items = q.data?.items ?? [];
 	if (items.length === 0) return null;
 	return (
-		<div className="flex flex-col gap-1.5">
-			<p className="text-muted text-xs">{t("memoryPage.status.pendingHint")}</p>
-			<ul className="flex flex-col gap-1">
+		<>
+			<GroupNote>{t("memoryPage.status.pendingHint")}</GroupNote>
+			<GroupList>
 				{items.map((d) => (
-					<li
-						key={d.documentId}
-						className="flex min-w-0 flex-col gap-0.5 rounded-md bg-inset px-2.5 py-1.5 text-xs"
-					>
-						<code className="min-w-0 truncate font-mono" title={d.documentId}>
+					<ItemRow key={d.documentId}>
+						<code
+							className="min-w-0 truncate font-mono text-fg text-xs"
+							title={d.documentId}
+						>
 							{d.documentId}
 						</code>
-						<span className="text-faint">
-							{t("memoryPage.status.pendingMeta", {
-								n: d.attempts,
-								when: formatRelative(secToMs(d.nextAttemptAt)),
-							})}
-						</span>
-						{d.lastError && (
-							<span className="break-words text-muted">
-								{t("memoryPage.status.detail", { detail: d.lastError })}
+						<ItemMeta>
+							<span>
+								{t("memoryPage.status.pendingMeta", {
+									n: d.attempts,
+									when: formatRelative(secToMs(d.nextAttemptAt)),
+								})}
 							</span>
-						)}
-					</li>
+							{d.lastError && (
+								<span className="break-words">
+									{t("memoryPage.status.detail", { detail: d.lastError })}
+								</span>
+							)}
+						</ItemMeta>
+					</ItemRow>
 				))}
-			</ul>
-		</div>
+			</GroupList>
+		</>
 	);
 }

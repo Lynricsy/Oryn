@@ -5,6 +5,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readConfigDoc } from "../../../lib/omp-config";
+import { answerConfirm } from "../../../test/confirm";
 import { pickAvatarGlyph } from "../../../test/glyph-picker";
 import { agentFetch, home, renderPage, resetHome } from "./agent-config-mock";
 import RolesPage, { knownRoles, moveRole, rolesConfig } from "./RolesPage";
@@ -101,8 +102,8 @@ describe("RolesPage", () => {
 		await waitFor(() =>
 			expect(screen.getByRole("button", { name: "下移 快速" })).toBeEnabled(),
 		);
-		const handle = roleRow("smol").querySelector("[draggable='true']");
-		if (!handle) throw new Error("no drag handle");
+		const handle = roleRow("smol");
+		expect(handle).toHaveAttribute("draggable", "true");
 		fireEvent.dragStart(handle);
 		fireEvent.dragOver(roleRow("slow"));
 		fireEvent.drop(roleRow("slow"));
@@ -163,11 +164,26 @@ describe("RolesPage", () => {
 				cycleOrder: ["smol", "default", "slow", "draft"],
 			}),
 		);
+		// 新建后直接打开它的设置对话框：先关掉
+		const draftDialog = await screen.findByRole("dialog", {
+			name: "设置 draft",
+		});
+		const closes = within(draftDialog).getAllByRole("button", {
+			name: "关闭",
+		});
+		fireEvent.click(closes[closes.length - 1] as HTMLElement);
+		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
 		fireEvent.click(screen.getByRole("button", { name: "设置 审查" }));
+		const dialogReview = await screen.findByRole("dialog", {
+			name: "设置 审查",
+		});
 		fireEvent.click(
-			within(roleRow("review")).getByRole("button", { name: "删除这个角色" }),
+			within(dialogReview).getByRole("button", { name: "删除这个角色" }),
 		);
+		const asked = await answerConfirm(true);
+		expect(asked.title).toBe("删除角色「审查」？");
+		expect(asked.danger).toBe(true);
 		await waitFor(() =>
 			expect(lastConfig()).toEqual({
 				cycleOrder: ["smol", "default", "slow", "draft"],
@@ -178,7 +194,7 @@ describe("RolesPage", () => {
 	it("头像：选字形写 role 头像接口；遗留项可清除头像", async () => {
 		renderPage(<RolesPage />);
 		fireEvent.click(await screen.findByRole("button", { name: "设置 思考" }));
-		pickAvatarGlyph(roleRow("slow"), "🦊");
+		pickAvatarGlyph(await screen.findByRole("dialog"), "🦊");
 		await waitFor(() =>
 			expect(rolePuts).toEqual([{ role: "slow", avatarIcon: "🦊" }]),
 		);
@@ -186,6 +202,29 @@ describe("RolesPage", () => {
 		fireEvent.click(within(gone).getByRole("button", { name: "清除头像" }));
 		await waitFor(() => expect(rolePuts).toHaveLength(2));
 		expect(rolePuts[1]).toEqual({ role: "gone" });
+	});
+
+	it("默认思考档位：缺省显示「高」，选别的写 config.yml 的 defaultThinkingLevel 并保留注释", async () => {
+		home.files["config.yml"] =
+			"# 我的配置\ncycleOrder: [smol, default] # 轮换\n";
+		renderPage(<RolesPage />);
+		const level = await screen.findByRole("combobox", {
+			name: "默认思考档位",
+		});
+		await waitFor(() => expect(level).toBeEnabled());
+		expect(level).toHaveTextContent("高");
+		fireEvent.click(level);
+		fireEvent.click(await screen.findByRole("option", { name: "超高" }));
+		await waitFor(() =>
+			expect(lastConfig()).toEqual({
+				cycleOrder: ["smol", "default"],
+				defaultThinkingLevel: "xhigh",
+			}),
+		);
+		const body = home.puts.at(-1)?.body ?? "";
+		expect(body).toContain("# 我的配置");
+		expect(body).toContain("# 轮换");
+		await waitFor(() => expect(level).toHaveTextContent("超高"));
 	});
 });
 

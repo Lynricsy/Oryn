@@ -85,7 +85,12 @@
 			"accent": "品牌色"
 		},
 		"appIconHint": "主屏上的图标，跟随系统的浅色、深色与着色外观。切换后 iOS 会弹出一条系统提示。",
-		"appIconError": "图标没有换成：{{message}}"
+		"appIconError": "图标没有换成：{{message}}",
+		"layout": "布局",
+		"resetLayout": "重置界面布局",
+		"resetLayoutHint": "侧栏收起、线程右侧面板宽度、信息卡片折叠与桌面画面缩放恢复默认；只影响这台设备，不动主题、壁纸与语言。",
+		"resetLayoutAction": "重置",
+		"resetLayoutDone": "已恢复默认"
 	},
 	"stat": {
 		"input": "输入",
@@ -1423,7 +1428,6 @@
 			"title": "后台研究",
 			"hint": "开着时，全局助手会在你没问的时候自己去看新信息：公网上你关心的话题、线程之间的矛盾与卡住、你允许的 MCP 只读工具。值得说才在主线里告诉你。公网研究员只能搜索和读公网网页，碰不到你的任何本地数据。",
 			"enabled": "开启后台研究",
-			"pipelines": "管线",
 			"pipeline": {
 				"web": "公网话题跟进",
 				"mine": "从助手对话与主线里自动挖掘要跟进的话题",
@@ -1459,6 +1463,7 @@
 		}
 	},
 	"devices": {
+		"pairTitle": "配对新设备",
 		"pairQr": {
 			"title": "用手机扫码连接",
 			"label": "服务器地址二维码：{{server}}",
@@ -1499,6 +1504,15 @@
 		"noClients": "没有在线的 Chrome 扩展",
 		"approvalBanner": "Agent 正在等待你在 Chrome 扩展（{{name}}）中确认授权（{{count}} 项待处理）。请点击 Chrome 工具栏中的扩展图标批准或拒绝，批准后 agent 会自动重试。"
 	},
+	"compute": {
+		"new": "新建",
+		"name": "名字",
+		"token": "令牌",
+		"done": "完成",
+		"online": "在线",
+		"offline": "离线",
+		"more": "{{name}} 的更多操作"
+	},
 	"providers": {
 		"create": "新建 provider",
 		"default": "默认",
@@ -1508,7 +1522,8 @@
 		"offline": "离线",
 		"online": "在线",
 		"title": "Provider",
-		"tokenOnce": "provider 令牌只显示这一次，请写入 provider 的 token_file：",
+		"tokenOnce": "provider {{name}} 的令牌只显示这一次",
+		"tokenHint": "写入 provider 的 token_file，再启动 provider 进程。",
 		"supported": "支持",
 		"unsupported": "不支持",
 		"freeze": "冻结",
@@ -1669,10 +1684,15 @@
 		"nameHint": "如 git/github.com/token",
 		"put": "写入密钥",
 		"title": "密钥",
-		"value": "值"
+		"value": "值",
+		"add": "写入",
+		"optional": "可选",
+		"more": "{{name}} 的更多操作",
+		"update": "更新值",
+		"updateTitle": "更新密钥 {{name}}"
 	},
 	"gitIdentity": {
-		"title": "Git 提交身份",
+		"title": "提交者",
 		"hint": "orb 内 git 提交默认使用的 user.name / user.email；项目设置里可单独覆盖。修改在下次 setup 或 orb 唤醒时写入，已在运行的 orb 不会立即变化。",
 		"name": "名字",
 		"email": "邮箱",
@@ -1686,18 +1706,11 @@
 		"extracted": "已抽取进密钥库：{{names}}",
 		"hint": "omp 的文本配置（config.yml、models.yml、AGENTS.md、skills/ …）。models.yml 里的明文 API key 保存时自动抽进密钥库。",
 		"pushHint": "用 oryn config push 从本机导入。",
+		"scopeConfigYml": "config.yml 例外：它也下发给全局助手。",
 		"title": "agent 配置"
 	},
 	"memoryPage": {
 		"scope": "作用于 orb 与 runner，不作用于全局助手。同一项目的线程共享该项目的记忆，全局记忆所有项目都能召回，项目之间互相看不到。开关改动对新启动的 agent 生效。",
-		"toc": {
-			"label": "本页目录",
-			"status": "状态",
-			"models": "模型",
-			"browse": "浏览",
-			"global": "全局记忆",
-			"usage": "用量"
-		},
 		"failed": "{{step}}失败",
 		"listSep": "、",
 		"steps": {
@@ -2056,6 +2069,7 @@
 		},
 		"export": {
 			"title": "导出",
+			"rowTitle": "记忆归档",
 			"hint": "导出 bank oryn 的全部记忆为归档文件。定时整库备份的做法见",
 			"backupDoc": "部署文档",
 			"start": "导出 bank",
@@ -2066,8 +2080,9 @@
 		},
 		"owner": {
 			"title": "助手记忆",
-			"scope": "全局助手关于主人的长期记忆（bank oryn-owner）：从助手对话与工作线程里提炼主人的身份、偏好与近况，助手对话启动时附加到系统提示词。与上面的工程记忆分开存放。",
-			"unavailable": "助手记忆依赖上面的工程记忆：先启用并配置好「连接」卡（Hindsight 地址、.env 与总开关），这里的设置才会出现。",
+			"scope": "全局助手关于主人的长期记忆（bank oryn-owner）：从助手对话与工作线程里提炼主人的身份、偏好与近况，助手对话启动时附加到系统提示词。与 Agent 记忆（设置 › 记忆）分开存放。",
+			"unavailableTitle": "需要先配置 Agent 记忆",
+			"unavailable": "助手记忆依赖 Agent 记忆（Hindsight）：先在「设置 › 记忆」里启用并配置好连接（Hindsight 地址、.env 与总开关），这里的设置才会出现。",
 			"settings": {
 				"title": "设置",
 				"enabled": "开启助手记忆",
@@ -2122,6 +2137,7 @@
 			},
 			"status": {
 				"title": "助手记忆状态",
+				"state": "运行状态",
 				"backfill": "回填进度",
 				"backfillProgress": "{{done}} / {{total}}",
 				"backfillSince": "从 {{when}} 起",
@@ -2251,6 +2267,7 @@
 				"editLabel": "编辑明确记忆",
 				"approve": "批准",
 				"pending": "待确认",
+				"pendingCount": "{{n}} 条待确认",
 				"quote": "主人原话：「{{text}}」",
 				"reject": "拒绝",
 				"rejectConfirm": "确认拒绝"
@@ -2262,7 +2279,12 @@
 		"status": {
 			"untested": "还没测试过",
 			"ok": "{{at}} 测试成功",
-			"failed": "{{at}} 测试失败：{{error}}"
+			"failed": "{{at}} 测试失败：{{error}}",
+			"short": {
+				"untested": "未测试",
+				"ok": "连接正常",
+				"failed": "连接失败"
+			}
 		},
 		"test": {
 			"ok": "连接成功",
@@ -2408,14 +2430,6 @@
 	"agentPages": {
 		"scope": "保存后下发到 orb，不作用于全局助手。",
 		"scopeConfig": "保存后写进 config.yml，下发到 orb，也下发给全局助手。",
-		"composer": {
-			"title": "下一条消息预测",
-			"predictions": "预测我的下一条消息",
-			"predictionsHint": "每轮完成后，由当前模型猜你接下来要发的消息，以灰色文字显示在空输入框里。按 Tab 或 → 插入，不会发送；触屏上点一下灰色文字。额外用量：每完成一轮就多发一次计费请求，请求带着整段对话。",
-			"alternatives": "提供多个候选",
-			"alternativesHint": "一次给出至多四条不同的预测，最可能的在前。插入一条后再按 Tab 换成下一条。仍是同一次请求，只多一些输出 token。",
-			"alternativesNeedsPredictions": "先开启消息预测。"
-		},
 		"apply": {
 			"pushing": "正在下发到运行中的 orb……",
 			"pushed": "已下发：空闲的会话随即生效，正在跑回合的会话在回合结束后生效。",
@@ -2626,7 +2640,12 @@
 			"displayName": "显示名",
 			"displayNameHint": "写入 modelTags.<role>.name；留空用默认名称。",
 			"displayNameInput": "{{name}} 的显示名",
-			"delete": "删除这个角色"
+			"delete": "删除这个角色",
+			"deleteConfirm": "删除角色「{{name}}」？",
+			"deleteBody": "会从 config.yml 移除它的轮换位置、模型与显示名；头像保留在遗留头像里，可另行清除。",
+			"sessionTitle": "新会话",
+			"thinking": "默认思考档位",
+			"thinkingHint": "新会话没有指定思考档位时从这里起步（写入 config.yml 的 defaultThinkingLevel）；模型自带默认档位时以模型为准。未设置时为「{{fallback}}」。"
 		}
 	},
 	"language": {
@@ -2634,13 +2653,21 @@
 		"label": "语言",
 		"hint": "跨设备同步，用于界面显示，以及 agent 自动生成标题和工具调用意图的语言。"
 	},
+	"account": {
+		"connection": "连接与会话",
+		"server": "当前服务器",
+		"serverHint": "更换时回到连接页确认，并移除这台设备在此服务器上的登录。",
+		"changeServer": "更换服务器…",
+		"session": "此浏览器的登录",
+		"sessionHint": "退出后需要重新登录。",
+		"logout": "退出登录"
+	},
 	"about": {
-		"language": "全局语言",
-		"logout": "退出登录",
+		"server": "服务器",
+		"mobileApp": "移动 App",
 		"owner": "所有者",
 		"session": "当前凭据",
 		"since": "创建于",
-		"title": "关于",
 		"version": "版本",
 		"authKind": {
 			"web": "网页会话",
@@ -3709,7 +3736,9 @@
 			"noProject": "无项目",
 			"grantedAt": "{{when}}授权",
 			"revoke": "收回",
-			"revokeConfirm": "确认收回",
+			"revokeTitle": "收回「{{title}}」的页面能力？",
+			"revokeBody": "页面下次要读取项目文件或向模型提问时会重新询问。",
+			"more": "「{{title}}」的更多操作",
 			"caps": {
 				"files": "读取项目文件",
 				"sample": "向模型提问"
@@ -4023,7 +4052,8 @@
 				"autoPublish": "把新建的 artifact 以私有方式发布，并跟着最新版本更新",
 				"title": "已发布的 Artifacts",
 				"empty": "还没有发布的 artifact。在 artifact 的「分享」里发布。",
-				"unpublishConfirm": "确认取消发布"
+				"unpublishTitle": "取消发布「{{title}}」？",
+				"unpublishBody": "公开链接与访问码立即失效，访客再打开会看到已下线。"
 			}
 		},
 		"history": {
@@ -4868,6 +4898,32 @@
 		"deleteConfirm": "删除渠道「{{name}}」？",
 		"deleteConfirmBody": "它的投递记录也会删除。",
 		"recent": "最近通知",
+		"budget": {
+			"title": "预算",
+			"viewUsage": "查看用量",
+			"enabled": "预算告警",
+			"enabledHint": "超过预警线或上限时发一条预算事件：通知中心、推送，以及上面勾选了「预算告警」的渠道。",
+			"limit": {
+				"day": "日上限",
+				"month": "月上限",
+				"dayUsd": "日上限（美元）",
+				"monthUsd": "月上限（美元）"
+			},
+			"spent": {
+				"day": "今日已用 {{spent}}",
+				"month": "本月已用 {{spent}}"
+			},
+			"warnPct": "预警线",
+			"warnHint": "用量达到上限的这个比例时先提醒一次；0 = 只在超出时告警。",
+			"warnPctField": "预警线（%）",
+			"warnZero": "0–99；0 = 只在超出时告警",
+			"timezone": "时区",
+			"timezoneHint": "按这个时区切分自然日和自然月。",
+			"timezoneField": "IANA 时区名，如 Asia/Shanghai",
+			"optional": "可选",
+			"dialogTitle": "编辑预算",
+			"invalid": "金额留空表示不设，填写时至少 0.01。"
+		},
 		"target": {
 			"telegram": "Telegram",
 			"webhook": "Webhook",
@@ -4959,7 +5015,13 @@
 			"findings": "确认过 {{n}} 处疑似密钥",
 			"fileThread": "所属线程",
 			"noThreads": "没有公开的线程。",
-			"noFiles": "没有公开的文件。"
+			"noFiles": "没有公开的文件。",
+			"public": "公开的线程与文件",
+			"more": "「{{name}}」的更多操作",
+			"revokeTitle": "撤销「{{title}}」的公开链接？",
+			"revokeBody": "链接立即失效，已打开的访客也看不到后续内容。",
+			"unpublishTitle": "撤回公开文件「{{name}}」？",
+			"unpublishBody": "公开链接立即失效，附件本身仍留在线程里。"
 		}
 	},
 	"publish": {
@@ -5144,9 +5206,12 @@
 		}
 	},
 	"desktop": {
-		"title": "桌面应用",
+		"groups": {
+			"update": "更新",
+			"window": "窗口",
+			"security": "安全"
+		},
 		"version": "版本",
-		"update": "更新",
 		"checkUpdate": "检查更新",
 		"upToDate": "已是最新版本",
 		"available": "发现 v{{version}}，正在下载…",
@@ -5154,18 +5219,22 @@
 		"restartToUpdate": "重启以更新到 v{{version}}",
 		"updateError": "检查更新失败：{{error}}",
 		"autoUpdate": "下载后自动安装并重启",
+		"autoUpdateHint": "关闭时下载好的新版本等你点「重启以更新」。",
 		"shortcut": "全局快捷键",
-		"shortcutHint": "格式如 Control+Alt+Space，留空 = 关闭；按下时显示或隐藏窗口。",
+		"shortcutHint": "按下时显示或隐藏窗口。",
+		"shortcutAside": "格式如 Control+Alt+Space，留空 = 关闭",
+		"shortcutOff": "未设置",
+		"shortcutEdit": "修改",
 		"shortcutError": "快捷键没有生效：{{error}}",
 		"closeToTray": "关闭窗口时隐藏到托盘",
+		"closeToTrayHint": "关闭窗口后应用留在托盘里继续运行，通知照常送达。",
 		"tokenStore": "令牌存储",
+		"tokenStoreHint": "这台电脑连接服务器所用的设备令牌保存在哪里。",
 		"tokenStoreKind": {
 			"keyring": "系统凭据库",
 			"file": "本地文件"
 		},
-		"fileStore": "未找到系统凭据库，令牌以仅本人可读的文件保存。",
-		"changeServer": "更换服务器…",
-		"changeServerHint": "回到连接页确认后，移除这台设备在当前服务器上的登录。"
+		"fileStore": "未找到系统凭据库，令牌以仅本人可读的文件保存。"
 	},
 	"mobile": {
 		"push": {
@@ -5382,7 +5451,9 @@
 		"deleteConfirmBody": "引用它的项目默认值会被清除。",
 		"emptyTitle": "还没有浏览器 Profile",
 		"emptyHint": "Profile 是一份浏览器登录态，可以在多个线程间复用；同一时间只在一台 orb 上写回。",
-		"hint": "Profile 是一份浏览器登录态，可以在多个线程间复用；同一时间只在一台 orb 上写回。"
+		"add": "新建",
+		"more": "{{name}} 的更多操作",
+		"renameTitle": "重命名 Profile"
 	},
 	"assistant": {
 		"actions": "对话操作",
@@ -6305,24 +6376,13 @@
 		"budget": {
 			"title": "预算",
 			"open": "预算…",
-			"edit": "设置预算",
+			"manage": "到设置里修改",
 			"day": "今日",
 			"month": "本月",
 			"spent": "{{spent}} / {{limit}}",
 			"noLimit": "未设上限",
 			"disabled": "告警已停用",
-			"level": { "none": "", "warn": "接近上限", "over": "已超出" },
-			"dialog": {
-				"title": "设置预算",
-				"daily": "日上限（美元）",
-				"monthly": "月上限（美元）",
-				"warnPct": "预警线（%）",
-				"warnHint": "0 = 只在超出时告警",
-				"timezone": "时区（IANA）",
-				"enabled": "启用预算告警",
-				"invalid": "金额留空表示不设，填写时至少 0.01。"
-			},
-			"notifyHint": "超过预警线或上限时发一条系统通知：通知中心、推送，以及在<settings>「设置 → 通知」</settings>里勾选了「预算告警」的渠道。"
+			"level": { "none": "", "warn": "接近上限", "over": "已超出" }
 		}
 	},
 	"accel": {
@@ -6410,17 +6470,13 @@
 		"title": "Runner",
 		"create": "新建 runner",
 		"intro": "runner 是你自己的机器：在那台机器上运行 orbd run --runner --dir <目录>，线程就直接在那个目录里工作，用那台机器自己的 omp 配置与 git 凭据。",
-		"name": "名字",
 		"namePlaceholder": "名字，如 laptop",
 		"tokenOnce": "runner {{name}} 的令牌只显示这一次",
-		"token": "令牌",
 		"command": "启动命令",
 		"commandHint": "在那台机器上以普通用户运行（不要用 root）；--dir 可重复，加 --terminal 开放终端面板。",
-		"empty": "还没有 runner",
-		"emptyHint": "新建一个，按提示在自己的机器上运行启动命令。",
+		"emptyHint": "还没有 runner。新建一个，按提示在自己的机器上运行启动命令。",
 		"lastSeen": "最近在线 {{when}}",
 		"gitRepo": "git 仓库，可新建 worktree",
-		"delete": "删除 runner {{name}}",
 		"deleteConfirm": "删除 runner {{name}}？",
 		"deleteConfirmBody": "令牌立即失效，它上面的线程保留转录、变为只读。"
 	},
@@ -6434,7 +6490,8 @@
 	},
 	"github": {
 		"identity": {
-			"title": "账号",
+			"title": "GitHub 账号",
+			"more": "{{slot}}的更多操作",
 			"user": "我的账号",
 			"agent": "Agent 账号",
 			"reauth": "需要重新授权",
@@ -6454,8 +6511,8 @@
 			"missingHint": "授权缺少以下 scope，部分操作会失败，请重新连接："
 		},
 		"automation": {
-			"title": "自动化",
-			"legend": "自动化任务（GitHub 触发、项目级定时）使用的 GitHub 身份",
+			"title": "自动化使用的账号",
+			"legend": "GitHub 触发与项目级定时以这个账号操作 GitHub",
 			"agentMissing": "连接 Agent 账号后才能选择它"
 		},
 		"notice": {
@@ -6620,7 +6677,13 @@
 			"secretKeep": "留空表示沿用已保存的 Secret。",
 			"webhookBase": "Webhook 基址",
 			"webhookBaseHint": "Oryn 在仓库上建 webhook 时用的地址前缀，默认等于 public_url。GitHub 访问不到时，Oryn 轮询投递日志补齐事件。",
-			"saved": "已保存",
+			"editTitle": "编辑 OAuth App",
+			"setupTitle": "配置 OAuth App",
+			"setup": "配置",
+			"notConfigured": "还没有配置",
+			"setupHint": "Oryn 通过你自己注册的 GitHub OAuth App 连接 GitHub；配置后才能连接账号。",
+			"webhookAt": "Webhook 基址 {{url}}",
+			"more": "OAuth App 的更多操作",
 			"delete": "删除配置",
 			"deleteConfirm": "删除 OAuth App 配置？",
 			"deleteConfirmBody": "Oryn 会先删掉它在各仓库建的 webhook，再断开「我的账号」和「Agent 账号」。GitHub 上的 OAuth App 本身不会被删除。"
@@ -6688,7 +6751,7 @@
 		"promptPlaceholder": "例如：始终使用简体中文回复；先给结论再展开细节；汇报进展时尽量简洁。",
 		"promptClear": "清空",
 		"promptTooLong": "已超过 {{limit}} 字上限，请精简后再保存。",
-		"webTitle": "联网",
+		"webMcpTitle": "联网与 MCP",
 		"webAccess": "允许助手联网",
 		"webHint": "助手经 Oryn 的代理访问公网，用于 web_search 与读网页；内网地址默认拒绝。关闭后这两项会失败。改动在助手对话空闲后生效。",
 		"mcpTitle": "MCP 服务器",
@@ -6797,6 +6860,47 @@
 		"stop": "停止",
 		"openInBtw": "在旁路提问里打开"
 	},
+	"inputSettings": {
+		"composer": "输入框",
+		"sendKey": {
+			"title": "发送键",
+			"hint": "只对这台设备生效；另一个组合键换行。",
+			"option": "{{key}} 发送"
+		},
+		"predictions": {
+			"title": "预测我的下一条消息",
+			"hint": "每轮结束后由当前模型猜你接下来要发的消息，灰字显示在空输入框里，按 Tab 或 → 插入（触屏点灰字）。每轮多一次计费请求。",
+			"alternatives": "提供多个候选",
+			"alternativesHint": "同一次请求给出至多四条预测，插入后再按 Tab 换下一条。",
+			"needsPredictions": "先开启消息预测。",
+			"omp": "omp 配置：写进 config.yml，下发到 orb 和全局助手。"
+		},
+		"shortcuts": {
+			"title": "快捷键",
+			"scope": {
+				"app": "任何页面",
+				"appNotInInput": "任何页面，焦点不在输入框时",
+				"thread": "线程页",
+				"composer": "输入框",
+				"composerBusy": "输入框，回合进行中",
+				"composerEmpty": "空输入框"
+			},
+			"palette": "命令面板",
+			"newThread": "新对话",
+			"sidebar": "收起 / 展开侧边栏",
+			"assistant": "全局助手",
+			"sections": "切换分区（线程 / 助手 / 项目 / 更多）",
+			"roleNext": "下一个角色模型",
+			"rolePrev": "上一个角色模型",
+			"send": "发送",
+			"newline": "换行",
+			"steer": "引导正在进行的回合",
+			"followUp": "排队，回合结束后发送",
+			"abortAndSend": "中断并发送",
+			"abort": "中断回合",
+			"rewind": "回退到之前的消息"
+		}
+	},
 	"selectionActions": {
 		"title": "选区快捷动作",
 		"hint": "选中文字后出现在右键菜单里，把你写的提示词连同选中的内容一起交给模型。",
@@ -6808,6 +6912,7 @@
 		"limit": "最多 12 个",
 		"deleteConfirm": "删除这个动作？",
 		"moveUp": "上移",
-		"moveDown": "下移"
+		"moveDown": "下移",
+		"more": "更多操作"
 	}
 }

@@ -107,11 +107,12 @@ function EntryFields({
 				<Select
 					value={draft.kind}
 					disabled={locked}
-					onChange={(e) => set({ kind: e.target.value as Kind })}
-				>
-					<option value="env">{t("projectSecrets.kindEnv")}</option>
-					<option value="git">{t("projectSecrets.kindGit")}</option>
-				</Select>
+					onChange={(v) => set({ kind: v })}
+					options={[
+						{ value: "env", label: t("projectSecrets.kindEnv") },
+						{ value: "git", label: t("projectSecrets.kindGit") },
+					]}
+				/>
 			</Field>
 			{draft.kind === "git" ? (
 				<Field

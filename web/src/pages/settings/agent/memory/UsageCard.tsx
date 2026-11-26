@@ -1,6 +1,6 @@
 /**
- * 记忆页「用量」卡（T8、R18）：中转计数，每种用途（另有嵌入、重排）最近 24 小时 / 7 天的调用次数与输入、输出 token。
- * 窄屏放不下两段并排的六列，所以用标签切换时间窗。
+ * 「用量」分组（T8、R18）：中转计数，每种用途（另有嵌入、重排）最近 24 小时 / 7 天的调用次数与输入、输出 token，
+ * 一个用途一行；分组标题右侧切换时间窗。
  */
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -8,9 +8,13 @@ import {
 	type MemoryPurpose,
 	useMemoryUsage,
 } from "../../../../api/memory-queries";
-import { CountPill } from "../../../../components/layout/pane-parts";
-import { Card } from "../../../../components/ui/data";
+import { EmptyPanel } from "../../../../components/settings/agent-config-ui";
 import { Spinner, tabClass } from "../../../../components/ui/primitives";
+import {
+	Group,
+	GroupList,
+	GroupRow,
+} from "../../../../components/ui/workbench";
 import { formatTokens } from "../../../../lib/format";
 import { MemoryError } from "./errors";
 
@@ -39,9 +43,8 @@ export function UsageCard(): ReactNode {
 	const [win, setWin] = useState<Window>("day");
 	const items = q.data?.items ?? [];
 	return (
-		<Card
+		<Group
 			title={t("memoryPage.usage.title")}
-			icon="chart"
 			action={
 				<div role="tablist" className="flex gap-0.5">
 					{(["day", "week"] as const).map((w) => (
@@ -64,50 +67,39 @@ export function UsageCard(): ReactNode {
 			) : q.error ? (
 				<MemoryError step="loadUsage" error={q.error} />
 			) : items.length === 0 ? (
-				<p className="text-faint text-sm">{t("memoryPage.usage.empty")}</p>
+				<EmptyPanel>{t("memoryPage.usage.empty")}</EmptyPanel>
 			) : (
-				<table className="w-full text-sm">
-					<thead>
-						<tr className="text-left text-faint text-xs">
-							<th className="py-1 pr-2 font-medium">
-								{t("memoryPage.usage.purpose")}
-							</th>
-							<th className="py-1 pr-2 text-right font-medium">
-								{t("memoryPage.usage.calls")}
-							</th>
-							<th className="py-1 pr-2 text-right font-medium">
-								{t("memoryPage.usage.input")}
-							</th>
-							<th className="py-1 text-right font-medium">
-								{t("memoryPage.usage.output")}
-							</th>
-						</tr>
-					</thead>
-					<tbody>
-						{items.map((i) => {
-							const c = i[win];
-							return (
-								<tr key={i.purpose} className="border-border border-t">
-									<td className="py-1.5 pr-2">
-										{isUsagePurpose(i.purpose)
-											? t(`memoryPage.usagePurpose.${i.purpose}`)
-											: i.purpose}
-									</td>
-									<td className="py-1.5 pr-2 text-right">
-										<CountPill n={c.calls} />
-									</td>
-									<td className="py-1.5 pr-2 text-right tabular-nums">
-										{formatTokens(c.inputTokens)}
-									</td>
-									<td className="py-1.5 text-right tabular-nums">
-										{formatTokens(c.outputTokens)}
-									</td>
-								</tr>
-							);
-						})}
-					</tbody>
-				</table>
+				<GroupList>
+					{items.map((i) => {
+						const c = i[win];
+						return (
+							<GroupRow
+								key={i.purpose}
+								title={
+									isUsagePurpose(i.purpose)
+										? t(`memoryPage.usagePurpose.${i.purpose}`)
+										: i.purpose
+								}
+								trailing={
+									<span className="flex flex-wrap justify-end gap-x-3 text-[12.5px] text-muted tabular-nums">
+										<span>
+											{t("memoryPage.usage.calls")} {c.calls}
+										</span>
+										<span>
+											{t("memoryPage.usage.input")}{" "}
+											{formatTokens(c.inputTokens)}
+										</span>
+										<span>
+											{t("memoryPage.usage.output")}{" "}
+											{formatTokens(c.outputTokens)}
+										</span>
+									</span>
+								}
+							/>
+						);
+					})}
+				</GroupList>
 			)}
-		</Card>
+		</Group>
 	);
 }

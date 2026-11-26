@@ -44,7 +44,7 @@ export function TestResultView({
 		<div
 			data-testid="ssh-test-result"
 			// 量表轨道是内嵌井（bg-inset），外框不能再用 inset，否则轨道看不见
-			className="flex flex-col gap-2 rounded-md border border-border bg-raised px-3 py-2 text-xs"
+			className="flex flex-col gap-2 rounded-[12px] border border-border bg-raised px-3 py-2 text-xs"
 		>
 			<div className="flex items-start gap-2">
 				<Icon

@@ -17,6 +17,7 @@ import type {
 } from "../../../../sandbox/runtime/messages";
 import type { CanvasPage } from "../../../lib/artifacts/canvas-doc";
 import { parseParamsDecl } from "../../../lib/artifacts/params";
+import { pickOption } from "../../../test/select";
 import type { FrameLink } from "../frame-link";
 import {
 	type FrameParams,
@@ -143,9 +144,7 @@ describe("TweaksPanel", () => {
 		expect(slider.step).toBe("2");
 		fireEvent.change(slider, { target: { value: "24" } });
 		fireEvent.click(screen.getByLabelText("深色"));
-		fireEvent.change(screen.getByRole("combobox"), {
-			target: { value: "list" },
-		});
+		pickOption(screen.getByRole("combobox"), "list");
 		expect(screen.getByText("24px")).toBeTruthy();
 
 		await act(() => vi.advanceTimersByTimeAsync(TWEAK_SAVE_DELAY_MS - 100));
@@ -163,9 +162,7 @@ describe("TweaksPanel", () => {
 		);
 
 		// 下一次保存的 baseVersion 取上次保存返回的版本
-		fireEvent.change(screen.getByRole("combobox"), {
-			target: { value: "grid" },
-		});
+		pickOption(screen.getByRole("combobox"), "grid");
 		await idle();
 		expect(bodies[1]?.baseVersion).toBe(4);
 	});
@@ -208,9 +205,7 @@ describe("TweaksPanel", () => {
 	it("画框以新值回报后草稿清掉；没跟上的重新预览", () => {
 		const { rerender } = panel();
 		fireEvent.click(screen.getByLabelText("深色"));
-		fireEvent.change(screen.getByRole("combobox"), {
-			target: { value: "list" },
-		});
+		pickOption(screen.getByRole("combobox"), "list");
 		posts = [];
 		const next = parseParamsDecl({
 			...DECL,

@@ -1,5 +1,5 @@
 /**
- * 记忆页「助手记忆 › 主题」卡（M17 R19）：注入「关于主人」的各主题（名称、范围、固定种子、状态、最近刷新时间、当前内容），
+ * 「主题」分组（M17 R19）：注入「关于主人」的各主题（名称、范围、固定种子、状态、最近刷新时间、当前内容），
  * 遗忘或失效之后主题标为「等待刷新」，刷新完成前不进入注入。每个主题可以立即刷新（异步，提交后稍等再看），
  * 也可以立即运行一次主题整理（新建、归档主题），下方显示最近一次整理的结果。
  */
@@ -12,10 +12,16 @@ import {
 	useOwnerMemoryTopics,
 	useRefreshOwnerMemoryTopic,
 } from "../../../../api/owner-memory-queries";
-import { Badge, Callout, Card } from "../../../../components/ui/data";
+import {
+	EmptyPanel,
+	GroupNote,
+} from "../../../../components/settings/agent-config-ui";
+import { Badge } from "../../../../components/ui/data";
 import { Button, Spinner } from "../../../../components/ui/primitives";
+import { Group, GroupList } from "../../../../components/ui/workbench";
 import { formatDateTime, formatRelative } from "../../../../lib/format";
 import { MemoryError } from "./errors";
+import { ItemMeta, ItemRow } from "./rows";
 
 export function OwnerTopicsCard(): ReactNode {
 	const { t } = useTranslation();
@@ -23,9 +29,8 @@ export function OwnerTopicsCard(): ReactNode {
 	const curate = useCurateOwnerMemoryTopics();
 	const items = q.data?.items ?? [];
 	return (
-		<Card
+		<Group
 			title={t("memoryPage.owner.topics.title")}
-			icon="brain"
 			action={
 				<Button
 					size="sm"
@@ -37,35 +42,27 @@ export function OwnerTopicsCard(): ReactNode {
 				</Button>
 			}
 		>
-			<div className="flex flex-col gap-2">
-				<p className="text-faint text-xs">
-					{t("memoryPage.owner.topics.hint")}
-				</p>
-				<MemoryError step="ownerCurate" error={curate.error} />
-				{q.isPending ? (
-					<Spinner />
-				) : q.error ? (
-					<MemoryError step="ownerLoadTopics" error={q.error} />
-				) : (
-					<>
-						{items.length === 0 ? (
-							<p className="text-faint text-sm">
-								{t("memoryPage.owner.topics.empty")}
-							</p>
-						) : (
-							<ul className="flex flex-col gap-2">
-								{items.map((topic) => (
-									<TopicRow key={topic.id} topic={topic} />
-								))}
-							</ul>
-						)}
-						{q.data?.lastCuration && (
-							<Curation curation={q.data.lastCuration} />
-						)}
-					</>
-				)}
-			</div>
-		</Card>
+			<MemoryError step="ownerCurate" error={curate.error} />
+			{q.isPending ? (
+				<Spinner />
+			) : q.error ? (
+				<MemoryError step="ownerLoadTopics" error={q.error} />
+			) : (
+				<>
+					{items.length === 0 ? (
+						<EmptyPanel>{t("memoryPage.owner.topics.empty")}</EmptyPanel>
+					) : (
+						<GroupList>
+							{items.map((topic) => (
+								<TopicRow key={topic.id} topic={topic} />
+							))}
+						</GroupList>
+					)}
+					{q.data?.lastCuration && <Curation curation={q.data.lastCuration} />}
+				</>
+			)}
+			<GroupNote>{t("memoryPage.owner.topics.hint")}</GroupNote>
+		</Group>
 	);
 }
 
@@ -74,12 +71,11 @@ function TopicRow({ topic: tp }: { topic: OwnerMemoryTopic }): ReactNode {
 	const refresh = useRefreshOwnerMemoryTopic();
 	const [open, setOpen] = useState(false);
 	return (
-		<li
-			className="flex flex-col gap-1.5 rounded-md border border-border px-3 py-2"
-			data-topic={tp.id}
-		>
+		<ItemRow data-topic={tp.id}>
 			<div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-				<span className="min-w-0 truncate font-medium text-sm">{tp.name}</span>
+				<span className="min-w-0 truncate font-[550] text-fg text-sm">
+					{tp.name}
+				</span>
 				{tp.seed && (
 					<Badge icon="pin">{t("memoryPage.owner.topics.seed")}</Badge>
 				)}
@@ -91,21 +87,38 @@ function TopicRow({ topic: tp }: { topic: OwnerMemoryTopic }): ReactNode {
 						{t("memoryPage.owner.topics.stale")}
 					</Badge>
 				)}
-				<Button
-					size="sm"
-					variant="ghost"
-					icon="refresh"
-					className="ml-auto"
-					disabled={refresh.isPending}
-					onClick={() => refresh.mutate(tp.id)}
-				>
-					{t("memoryPage.owner.topics.refresh")}
-				</Button>
 			</div>
-			<p className="break-words text-muted text-xs">
+			<p className="break-words text-[12.5px] text-muted">
 				{t("memoryPage.owner.topics.scope", { scope: tp.scope })}
 			</p>
-			<span className="flex flex-wrap items-center gap-2 text-faint text-xs">
+			<ItemMeta
+				actions={
+					<>
+						{tp.content && (
+							<Button
+								size="sm"
+								variant="ghost"
+								icon={open ? "chevronUp" : "chevronDown"}
+								aria-expanded={open}
+								onClick={() => setOpen(!open)}
+							>
+								{open
+									? t("memoryPage.owner.topics.hideContent")
+									: t("memoryPage.owner.topics.showContent")}
+							</Button>
+						)}
+						<Button
+							size="sm"
+							variant="ghost"
+							icon="refresh"
+							disabled={refresh.isPending}
+							onClick={() => refresh.mutate(tp.id)}
+						>
+							{t("memoryPage.owner.topics.refresh")}
+						</Button>
+					</>
+				}
+			>
 				<span>
 					{tp.lastRefreshedAt === undefined
 						? t("memoryPage.mental.neverRefreshed")
@@ -114,32 +127,19 @@ function TopicRow({ topic: tp }: { topic: OwnerMemoryTopic }): ReactNode {
 							})}
 					{refresh.isSuccess && ` · ${t("memoryPage.mental.submitted")}`}
 				</span>
-				{tp.content ? (
-					<Button
-						size="sm"
-						variant="ghost"
-						icon={open ? "chevronUp" : "chevronDown"}
-						aria-expanded={open}
-						onClick={() => setOpen(!open)}
-					>
-						{open
-							? t("memoryPage.owner.topics.hideContent")
-							: t("memoryPage.owner.topics.showContent")}
-					</Button>
-				) : (
-					<span>{t("memoryPage.mental.noContent")}</span>
-				)}
-			</span>
+				{!tp.content && <span>{t("memoryPage.mental.noContent")}</span>}
+			</ItemMeta>
 			{open && tp.content && (
-				<p className="whitespace-pre-wrap break-words rounded-md bg-inset px-3 py-2 text-sm">
+				<p className="whitespace-pre-wrap break-words rounded-[11px] bg-inset px-3 py-2 text-sm">
 					{tp.content}
 				</p>
 			)}
 			<MemoryError step="ownerRefreshTopic" error={refresh.error} />
-		</li>
+		</ItemRow>
 	);
 }
 
+/** 最近一次整理：新建 / 保留 / 归档的主题；出错时附原因。 */
 function Curation({
 	curation: c,
 }: {
@@ -153,26 +153,27 @@ function Curation({
 		{ key: "archived", names: c.archived },
 	] as const;
 	return (
-		<Callout
-			tone={c.error ? "err" : "neutral"}
-			title={t("memoryPage.owner.topics.lastCuration", {
-				when: formatDateTime(c.at),
-			})}
+		<div
+			role={c.error ? "alert" : undefined}
+			className="flex flex-col gap-0.5 px-1.5 text-[12.5px] text-muted"
 		>
-			<div className="flex flex-col gap-0.5">
-				{rows.map((r) => (
-					<p key={r.key} className="break-words">
-						{t(`memoryPage.owner.topics.curation.${r.key}`, {
-							names: r.names.length > 0 ? r.names.join(sep) : "—",
-						})}
-					</p>
-				))}
-				{c.error && (
-					<p className="break-words">
-						{t("memoryPage.status.detail", { detail: c.error })}
-					</p>
-				)}
-			</div>
-		</Callout>
+			<p className={`font-[550] ${c.error ? "text-err" : "text-fg"}`}>
+				{t("memoryPage.owner.topics.lastCuration", {
+					when: formatDateTime(c.at),
+				})}
+			</p>
+			{rows.map((r) => (
+				<p key={r.key} className="break-words">
+					{t(`memoryPage.owner.topics.curation.${r.key}`, {
+						names: r.names.length > 0 ? r.names.join(sep) : "—",
+					})}
+				</p>
+			))}
+			{c.error && (
+				<p className="break-words text-err">
+					{t("memoryPage.status.detail", { detail: c.error })}
+				</p>
+			)}
+		</div>
 	);
 }

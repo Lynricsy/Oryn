@@ -1,14 +1,24 @@
 /**
- * 设置 → 关于里的「协调宿主」一栏（M9）：全局助手与 Space 协调者跑在控制面宿主上的 omp 进程里。
- * 显示可用性、omp 版本与隔离摘要（网络、Landlock ABI、PID 命名空间、seccomp、运行用户 uid）；不可用时显示原因原文。
- * 设置里没有别的 orb 列表：协调 orb（provider `@host`）在这里列出，带「协调」标注（首页的执行位置不列它）。
+ * 设置 → 关于里的「协调宿主」一组（M9）：全局助手与 Space 协调者跑在控制面宿主上的 omp 进程里。
+ * 行：状态（不可用时行下方显示原因原文）、omp 版本、隔离摘要（网络、Landlock ABI、PID 命名空间、seccomp、运行用户 uid）。
+ * 设置里没有别的 orb 列表：协调 orb（provider `@host`）在这里各占一行，带「协调」标注（首页的执行位置不列它）。
  */
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useCoordinatorStatus } from "../../api/coordinator-queries";
 import { useOrbs } from "../../api/queries";
-import { Badge, KeyValue } from "../../components/ui/data";
+import { Badge } from "../../components/ui/data";
 import { ErrorText, Spinner } from "../../components/ui/primitives";
+import {
+	Group,
+	GroupList,
+	GroupPanel,
+	GroupRow,
+	StatusText,
+} from "../../components/ui/workbench";
+
+/** 行尾值的样式（与关于页的信息行一致） */
+const VALUE = "break-all text-[12.5px] text-muted";
 
 export function CoordinatorAbout(): ReactNode {
 	const { t } = useTranslation();
@@ -19,93 +29,95 @@ export function CoordinatorAbout(): ReactNode {
 	);
 	const s = status.data;
 	const sb = s?.sandbox;
+	const isolation = sb
+		? [
+				t(`coordinator.network.${sb.network}`),
+				t("coordinator.landlock", { abi: sb.landlockAbi }),
+				sb.pidNamespace && t("coordinator.pidNs"),
+				sb.seccomp && "seccomp",
+				sb.ipcScope && t("coordinator.ipcScope"),
+				t("coordinator.uid", { uid: sb.uid }),
+			].filter((x): x is string => !!x)
+		: [];
 	return (
-		<section
-			data-testid="coordinator-about"
-			className="mt-4 flex flex-col gap-2 border-border border-t pt-3"
-		>
-			<h3 className="font-medium text-sm">{t("coordinator.title")}</h3>
-			<p className="text-faint text-xs">{t("coordinator.hint")}</p>
-			{status.isPending && <Spinner />}
-			<ErrorText error={status.error} />
-			{s && (
-				<KeyValue
-					rows={[
-						{
-							key: "available",
-							label: t("coordinator.status"),
-							value: s.available ? (
-								<Badge tone="ok" icon="checkCircle">
-									{t("coordinator.available")}
-								</Badge>
-							) : (
-								<span className="flex flex-col items-start gap-1">
-									<Badge tone="err" icon="alert">
-										{t("coordinator.unavailable")}
-									</Badge>
-									{s.reason && (
-										<span className="break-words text-muted text-xs">
-											{s.reason}
-										</span>
-									)}
-								</span>
-							),
-						},
-						{
-							key: "omp",
-							label: t("coordinator.ompVersion"),
-							value: <span className="font-mono">{s.ompVersion || "—"}</span>,
-						},
-						{
-							key: "sandbox",
-							label: t("coordinator.isolation"),
-							value: sb ? (
-								<span className="flex flex-wrap gap-1">
-									<Badge>{t(`coordinator.network.${sb.network}`)}</Badge>
-									<Badge>
-										{t("coordinator.landlock", { abi: sb.landlockAbi })}
-									</Badge>
-									{sb.pidNamespace && <Badge>{t("coordinator.pidNs")}</Badge>}
-									{sb.seccomp && <Badge>seccomp</Badge>}
-									{sb.ipcScope && <Badge>{t("coordinator.ipcScope")}</Badge>}
-									<Badge>{t("coordinator.uid", { uid: sb.uid })}</Badge>
-								</span>
-							) : (
-								<span className="text-faint">
-									{t("coordinator.notStarted")}
-								</span>
-							),
-						},
-						...(coordOrbs.length > 0
-							? [
-									{
-										key: "orb",
-										label: t("coordinator.orb"),
-										value: (
-											<span className="flex flex-col items-start gap-1">
-												{coordOrbs.map((o) => (
-													<span
-														key={o.id}
-														data-testid="coordinator-orb"
-														className="flex flex-wrap items-center gap-1.5"
-													>
-														<span className="font-mono text-xs">{o.id}</span>
-														<Badge icon="robot">
-															{t("coordinator.orbTag")}
-														</Badge>
-														<span className="text-muted text-xs">
-															{t(`orbState.${o.state}`)}
-														</span>
+		<div data-testid="coordinator-about" className="contents">
+			<Group title={t("coordinator.title")}>
+				{status.isPending ? (
+					<GroupPanel>
+						<Spinner />
+					</GroupPanel>
+				) : (
+					s && (
+						<GroupList>
+							<GroupRow
+								title={t("coordinator.status")}
+								meta={t("coordinator.hint")}
+								trailing={
+									<StatusText tone={s.available ? "ok" : "err"}>
+										{t(
+											s.available
+												? "coordinator.available"
+												: "coordinator.unavailable",
+										)}
+									</StatusText>
+								}
+							>
+								{!s.available && s.reason && (
+									<p className="break-words text-[12.5px] text-err">
+										{s.reason}
+									</p>
+								)}
+							</GroupRow>
+							<GroupRow
+								title={t("coordinator.ompVersion")}
+								trailing={
+									<span className={`${VALUE} font-mono`}>
+										{s.ompVersion || "—"}
+									</span>
+								}
+							/>
+							<GroupRow
+								title={t("coordinator.isolation")}
+								meta={
+									sb ? (
+										isolation.map((x, i) => (
+											<Fragment key={x}>
+												{i > 0 && (
+													<span aria-hidden className="text-faint">
+														·
 													</span>
-												))}
-											</span>
-										),
-									},
-								]
-							: []),
-					]}
-				/>
-			)}
-		</section>
+												)}
+												<span>{x}</span>
+											</Fragment>
+										))
+									) : (
+										<span className="text-faint">
+											{t("coordinator.notStarted")}
+										</span>
+									)
+								}
+							/>
+							{coordOrbs.map((o) => (
+								<GroupRow
+									key={o.id}
+									title={t("coordinator.orb")}
+									trailing={
+										<span
+											data-testid="coordinator-orb"
+											className="flex flex-wrap items-center justify-end gap-1.5"
+										>
+											<span className={`${VALUE} font-mono`}>{o.id}</span>
+											<Badge icon="robot">{t("coordinator.orbTag")}</Badge>
+											<span className={VALUE}>{t(`orbState.${o.state}`)}</span>
+										</span>
+									}
+								/>
+							))}
+						</GroupList>
+					)
+				)}
+				<ErrorText error={status.error} />
+			</Group>
+		</div>
 	);
 }

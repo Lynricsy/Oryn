@@ -1,5 +1,6 @@
 /**
- * 记忆页「助手记忆 › 设置」卡（M17 R18）：助手记忆开关、主人的名字与别名、判断模型接口。
+ * 「助手记忆」的设置（M17 R18）：助手记忆开关、主人的名字与别名（`OwnerSettingsCard`，放在「助手记忆」分组里），
+ * 判断模型接口（`OwnerDecideCard`，单独一组）。
  * 开关即改即存（沿用已保存的名字）；名字与别名改完点「保存」。名字写入时一律归为「主人」，最多 16 个、每个不超过 64 字。
  * 判断模型（Google Decisions API，用于召回重排）的 key 只写不读：只显示是否已设置，留空保存 = 保留原 key，可单独清除；
  * 删除接口后召回改按 RRF 顺序给出并标注未经重排。
@@ -14,14 +15,19 @@ import {
 	usePutOwnerMemorySettings,
 } from "../../../../api/owner-memory-queries";
 import { ConfirmButton } from "../../../../components/share/ConfirmButton";
-import { Badge, Card } from "../../../../components/ui/data";
 import {
 	Button,
-	Field,
 	IconButton,
 	TextInput,
 	Toggle,
 } from "../../../../components/ui/primitives";
+import {
+	FormField,
+	Group,
+	GroupList,
+	GroupPanel,
+	GroupRow,
+} from "../../../../components/ui/workbench";
 import { MemoryError } from "./errors";
 
 /** 与服务端 `normalizeNames` 一致。 */
@@ -32,6 +38,7 @@ export const DEFAULT_DECIDE_BASE_URL =
 	"https://generativelanguage.googleapis.com";
 export const DEFAULT_DECIDE_MODEL = "gemini-decision-1";
 
+/** 「助手记忆」分组的内容：开关一行 + 名字与别名面板。 */
 export function OwnerSettingsCard({
 	settings,
 }: {
@@ -40,27 +47,28 @@ export function OwnerSettingsCard({
 	const { t } = useTranslation();
 	const put = usePutOwnerMemorySettings();
 	return (
-		<Card title={t("memoryPage.owner.settings.title")} icon="user">
-			<div className="flex flex-col gap-4">
-				<div className="flex flex-col gap-1">
-					<Toggle
-						checked={settings.enabled}
-						disabled={put.isPending}
-						onChange={(enabled) =>
-							put.mutate({ enabled, ownerNames: settings.ownerNames })
-						}
-						label={t("memoryPage.owner.settings.enabled")}
-					/>
-					<p className="text-faint text-xs">
-						{t("memoryPage.owner.settings.enabledHint")}
-					</p>
-				</div>
-				<NamesForm settings={settings} />
-				<MemoryError step="ownerSaveSettings" error={put.error} />
-				<div className="border-border border-t" />
-				<DecideForm decide={settings.decide} />
-			</div>
-		</Card>
+		<>
+			<GroupList>
+				<GroupRow
+					icon="memory"
+					title={t("memoryPage.owner.settings.enabled")}
+					meta={t("memoryPage.owner.settings.enabledHint")}
+					trailing={
+						<Toggle
+							hideLabel
+							checked={settings.enabled}
+							disabled={put.isPending}
+							onChange={(enabled) =>
+								put.mutate({ enabled, ownerNames: settings.ownerNames })
+							}
+							label={t("memoryPage.owner.settings.enabled")}
+						/>
+					}
+				/>
+			</GroupList>
+			<MemoryError step="ownerSaveSettings" error={put.error} />
+			<NamesForm settings={settings} />
+		</>
 	);
 }
 
@@ -93,38 +101,41 @@ function NamesForm({ settings }: { settings: OwnerMemorySettings }): ReactNode {
 		setDraft("");
 	};
 	return (
-		<div className="flex flex-col gap-2">
-			<Field
+		<GroupPanel>
+			<FormField
 				label={t("memoryPage.owner.settings.names")}
-				hint={t("memoryPage.owner.settings.namesHint", {
+				aside={t("memoryPage.owner.settings.namesHint", {
 					max: OWNER_NAMES_MAX,
 					chars: OWNER_NAME_MAX_CHARS,
 				})}
 			>
-				<div className="flex min-w-0 flex-wrap gap-2">
-					<TextInput
-						value={draft}
-						onChange={(e) => setDraft(e.target.value.replace(/[\r\n]/g, ""))}
-						onKeyDown={(e) => {
-							if (e.key === "Enter" && !e.nativeEvent.isComposing) {
-								e.preventDefault();
-								add();
-							}
-						}}
-						placeholder={t("memoryPage.owner.settings.namePlaceholder")}
-						autoComplete="off"
-						spellCheck={false}
-						className="min-w-0 flex-1 basis-48"
-					/>
-					<Button
-						icon="plus"
-						disabled={candidate === "" || problem !== null}
-						onClick={add}
-					>
-						{t("memoryPage.owner.settings.addName")}
-					</Button>
-				</div>
-			</Field>
+				{(p) => (
+					<div className="flex min-w-0 flex-wrap gap-2">
+						<TextInput
+							{...p}
+							value={draft}
+							onChange={(e) => setDraft(e.target.value.replace(/[\r\n]/g, ""))}
+							onKeyDown={(e) => {
+								if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+									e.preventDefault();
+									add();
+								}
+							}}
+							placeholder={t("memoryPage.owner.settings.namePlaceholder")}
+							autoComplete="off"
+							spellCheck={false}
+							className="min-w-0 flex-1 basis-48"
+						/>
+						<Button
+							icon="plus"
+							disabled={candidate === "" || problem !== null}
+							onClick={add}
+						>
+							{t("memoryPage.owner.settings.addName")}
+						</Button>
+					</div>
+				)}
+			</FormField>
 			{problem && problem !== "empty" && (
 				<p className="text-err text-xs" role="alert">
 					{t(`memoryPage.owner.settings.nameProblem.${problem}`, {
@@ -133,35 +144,38 @@ function NamesForm({ settings }: { settings: OwnerMemorySettings }): ReactNode {
 					})}
 				</p>
 			)}
-			{names.length === 0 ? (
-				<p className="text-faint text-xs">
-					{t("memoryPage.owner.settings.noNames")}
-				</p>
-			) : (
-				<ul
-					className="flex flex-wrap gap-1.5"
-					aria-label={t("memoryPage.owner.settings.names")}
-				>
-					{names.map((n) => (
-						<li
-							key={n}
-							className="inline-flex h-7 max-w-full items-center gap-0.5 rounded-md bg-inset pr-0.5 pl-2 text-sm"
-						>
-							<span className="min-w-0 truncate">{n}</span>
-							<IconButton
-								icon="close"
-								box="xs"
-								size={12}
-								label={t("memoryPage.owner.settings.removeName", { name: n })}
-								onClick={() => setNames(names.filter((x) => x !== n))}
-							/>
-						</li>
-					))}
-				</ul>
-			)}
-			<div className="flex justify-end">
+			<div className="flex flex-wrap items-center gap-2">
+				{names.length === 0 ? (
+					<p className="text-[12.5px] text-muted">
+						{t("memoryPage.owner.settings.noNames")}
+					</p>
+				) : (
+					<ul
+						className="flex min-w-0 flex-1 flex-wrap gap-1.5"
+						aria-label={t("memoryPage.owner.settings.names")}
+					>
+						{names.map((n) => (
+							<li
+								key={n}
+								className="inline-flex h-7 max-w-full items-center gap-0.5 rounded-[9px] bg-inset pr-0.5 pl-2 text-sm"
+							>
+								<span className="min-w-0 truncate">{n}</span>
+								<IconButton
+									icon="close"
+									box="xs"
+									size={12}
+									label={t("memoryPage.owner.settings.removeName", {
+										name: n,
+									})}
+									onClick={() => setNames(names.filter((x) => x !== n))}
+								/>
+							</li>
+						))}
+					</ul>
+				)}
 				<Button
 					variant="primary"
+					className="ml-auto"
 					disabled={!dirty || put.isPending}
 					onClick={() =>
 						put.mutate({ enabled: settings.enabled, ownerNames: names })
@@ -171,11 +185,12 @@ function NamesForm({ settings }: { settings: OwnerMemorySettings }): ReactNode {
 				</Button>
 			</div>
 			<MemoryError step="ownerSaveSettings" error={put.error} />
-		</div>
+		</GroupPanel>
 	);
 }
 
-function DecideForm({
+/** 判断模型（召回重排）：一组，标题旁标「可选」。 */
+export function OwnerDecideCard({
 	decide,
 }: {
 	decide: OwnerMemoryDecideEndpoint | undefined;
@@ -211,93 +226,103 @@ function DecideForm({
 			{ onSuccess: () => setApiKey("") },
 		);
 	return (
-		<form
-			className="flex flex-col gap-2.5"
-			data-testid="owner-decide-form"
-			onSubmit={(e) => {
-				e.preventDefault();
-				if (canSave && !busy) save();
-			}}
+		<Group
+			title={t("memoryPage.owner.decide.title")}
+			meta={t("memoryPage.owner.decide.optional")}
 		>
-			<div className="flex flex-wrap items-center gap-1.5">
-				<h4 className="font-medium text-sm">
-					{t("memoryPage.owner.decide.title")}
-				</h4>
-				<Badge>{t("memoryPage.owner.decide.optional")}</Badge>
-			</div>
-			<p className="text-faint text-xs">
-				{decide
-					? t("memoryPage.owner.decide.configuredHint")
-					: t("memoryPage.owner.decide.unsetHint")}
-			</p>
-			<Field label={t("memoryPage.owner.decide.baseUrl")}>
-				<TextInput
-					value={baseUrl}
-					onChange={(e) => setBaseUrl(e.target.value)}
-					inputMode="url"
-					autoComplete="off"
-					spellCheck={false}
-					className="font-mono"
-				/>
-			</Field>
-			<Field label={t("memoryPage.owner.decide.model")}>
-				<TextInput
-					value={model}
-					onChange={(e) => setModel(e.target.value)}
-					autoComplete="off"
-					spellCheck={false}
-					className="font-mono"
-				/>
-			</Field>
-			<Field
-				label={t("memoryPage.owner.decide.apiKey")}
-				hint={
-					decide?.hasKey
-						? t("memoryPage.owner.decide.keySet")
-						: t("memoryPage.owner.decide.keyUnset")
-				}
-			>
-				<TextInput
-					type="password"
-					value={apiKey}
-					onChange={(e) => setApiKey(e.target.value)}
-					autoComplete="new-password"
-					placeholder={
-						decide?.hasKey
-							? t("memoryPage.owner.decide.keyKeep")
-							: t("memoryPage.owner.decide.keyEmpty")
-					}
-				/>
-			</Field>
-			<div className="flex flex-wrap items-center justify-end gap-2">
-				{decide?.hasKey && (
-					<ConfirmButton
-						label={t("memoryPage.owner.decide.clearKey")}
-						confirmLabel={t("memoryPage.owner.decide.clearKeyConfirm")}
-						disabled={busy}
-						onConfirm={() =>
-							put.mutate({
-								baseUrl: decide.baseUrl,
-								model: decide.model,
-								apiKey: "",
-							})
+			<GroupPanel>
+				<form
+					className="flex flex-col gap-3"
+					data-testid="owner-decide-form"
+					onSubmit={(e) => {
+						e.preventDefault();
+						if (canSave && !busy) save();
+					}}
+				>
+					<p className="text-[12.5px] text-muted leading-normal">
+						{decide
+							? t("memoryPage.owner.decide.configuredHint")
+							: t("memoryPage.owner.decide.unsetHint")}
+					</p>
+					<FormField label={t("memoryPage.owner.decide.baseUrl")}>
+						{(p) => (
+							<TextInput
+								{...p}
+								value={baseUrl}
+								onChange={(e) => setBaseUrl(e.target.value)}
+								inputMode="url"
+								autoComplete="off"
+								spellCheck={false}
+								className="font-mono"
+							/>
+						)}
+					</FormField>
+					<FormField label={t("memoryPage.owner.decide.model")}>
+						{(p) => (
+							<TextInput
+								{...p}
+								value={model}
+								onChange={(e) => setModel(e.target.value)}
+								autoComplete="off"
+								spellCheck={false}
+								className="font-mono"
+							/>
+						)}
+					</FormField>
+					<FormField
+						label={t("memoryPage.owner.decide.apiKey")}
+						aside={
+							decide?.hasKey
+								? t("memoryPage.owner.decide.keySet")
+								: t("memoryPage.owner.decide.keyUnset")
 						}
-					/>
-				)}
-				{decide && (
-					<ConfirmButton
-						label={t("memoryPage.owner.decide.delete")}
-						confirmLabel={t("memoryPage.owner.decide.deleteConfirm")}
-						disabled={busy}
-						onConfirm={() => del.mutate()}
-					/>
-				)}
-				<Button type="submit" variant="primary" disabled={!canSave || busy}>
-					{t("common.save")}
-				</Button>
-			</div>
-			<MemoryError step="ownerSaveDecide" error={put.error} />
-			<MemoryError step="ownerDeleteDecide" error={del.error} />
-		</form>
+					>
+						{(p) => (
+							<TextInput
+								{...p}
+								type="password"
+								value={apiKey}
+								onChange={(e) => setApiKey(e.target.value)}
+								autoComplete="new-password"
+								placeholder={
+									decide?.hasKey
+										? t("memoryPage.owner.decide.keyKeep")
+										: t("memoryPage.owner.decide.keyEmpty")
+								}
+							/>
+						)}
+					</FormField>
+					<div className="flex flex-wrap items-center justify-end gap-2">
+						{decide?.hasKey && (
+							<ConfirmButton
+								label={t("memoryPage.owner.decide.clearKey")}
+								confirmLabel={t("memoryPage.owner.decide.clearKeyConfirm")}
+								disabled={busy}
+								onConfirm={() =>
+									put.mutate({
+										baseUrl: decide.baseUrl,
+										model: decide.model,
+										apiKey: "",
+									})
+								}
+							/>
+						)}
+						{decide && (
+							<ConfirmButton
+								label={t("memoryPage.owner.decide.delete")}
+								confirmLabel={t("memoryPage.owner.decide.deleteConfirm")}
+								disabled={busy}
+								onConfirm={() => del.mutate()}
+							/>
+						)}
+						<Button type="submit" variant="primary" disabled={!canSave || busy}>
+							{t("common.save")}
+						</Button>
+					</div>
+					<MemoryError step="ownerSaveDecide" error={put.error} />
+					<MemoryError step="ownerDeleteDecide" error={del.error} />
+				</form>
+			</GroupPanel>
+		</Group>
 	);
 }

@@ -259,14 +259,15 @@ function SessionTreeDialog({
 					onChange={(e) => setQ(e.target.value)}
 				/>
 				<Select
-					wrapperClassName="max-w-36"
+					className="w-full max-w-36"
 					value={filter}
-					onChange={(e) => setFilter(e.target.value as typeof filter)}
-				>
-					<option value="all">{t("tree.filterAll")}</option>
-					<option value="user">{t("tree.filterUser")}</option>
-					<option value="labeled">{t("tree.filterLabeled")}</option>
-				</Select>
+					onChange={setFilter}
+					options={[
+						{ value: "all", label: t("tree.filterAll") },
+						{ value: "user", label: t("tree.filterUser") },
+						{ value: "labeled", label: t("tree.filterLabeled") },
+					]}
+				/>
 				<Toggle
 					checked={summarize}
 					onChange={setSummarize}

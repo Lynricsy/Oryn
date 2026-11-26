@@ -460,30 +460,29 @@ function GateHostField({
 		);
 	return (
 		<Field label={t("schedule.gate.host")}>
-			<Select value={value} onChange={(e) => onChange(e.target.value)}>
-				<option value="" disabled>
-					{t("schedule.gate.hostPick")}
-				</option>
-				{list.map((h) => {
-					const why = !h.enabled
-						? t("schedule.gate.hostDisabled")
-						: automated && !h.allowAutomation
-							? t("schedule.gate.hostNoAutomation")
-							: "";
-					return (
-						<option
-							key={h.id}
-							value={h.name}
-							disabled={why !== "" && h.name !== value}
-						>
-							{why ? `${h.name}（${why}）` : h.name}
-						</option>
-					);
-				})}
-				{value && !list.some((h) => h.name === value) && (
-					<option value={value}>{value}</option>
-				)}
-			</Select>
+			<Select
+				value={value}
+				onChange={onChange}
+				placeholder={t("schedule.gate.hostPick")}
+				options={[
+					...list.map((h) => {
+						const why = !h.enabled
+							? t("schedule.gate.hostDisabled")
+							: automated && !h.allowAutomation
+								? t("schedule.gate.hostNoAutomation")
+								: "";
+						return {
+							value: h.name,
+							label: h.name,
+							hint: why || undefined,
+							disabled: why !== "" && h.name !== value,
+						};
+					}),
+					...(value && !list.some((h) => h.name === value)
+						? [{ value, label: value }]
+						: []),
+				]}
+			/>
 		</Field>
 	);
 }
@@ -891,17 +890,14 @@ function ScheduleForm({
 							<Select
 								value={s.projectId}
 								disabled={projectLocked}
-								onChange={(e) => set("projectId", e.target.value)}
-							>
-								<option value="">{t("sidebar.noProject")}</option>
-								{(projects.data?.projects ?? [])
-									.filter((p) => !p.archivedAt || p.id === s.projectId)
-									.map((p) => (
-										<option key={p.id} value={p.id}>
-											{p.name}
-										</option>
-									))}
-							</Select>
+								onChange={(v) => set("projectId", v)}
+								options={[
+									{ value: "", label: t("sidebar.noProject") },
+									...(projects.data?.projects ?? [])
+										.filter((p) => !p.archivedAt || p.id === s.projectId)
+										.map((p) => ({ value: p.id, label: p.name })),
+								]}
+							/>
 						</Field>
 					)}
 					{newThread && spaceId && (
@@ -969,17 +965,15 @@ function ScheduleForm({
 								onChange={(e) => set("everyValue", Number(e.target.value) || 1)}
 							/>
 							<Select
-								wrapperClassName="w-32"
+								className="w-32"
 								aria-label={t("schedule.everyUnit")}
 								value={s.everyUnit}
-								onChange={(e) => set("everyUnit", e.target.value as EveryUnit)}
-							>
-								{EVERY_UNITS.map((u) => (
-									<option key={u} value={u}>
-										{t(UNIT_LABEL[u])}
-									</option>
-								))}
-							</Select>
+								onChange={(v) => set("everyUnit", v)}
+								options={EVERY_UNITS.map((u) => ({
+									value: u,
+									label: t(UNIT_LABEL[u]),
+								}))}
+							/>
 						</span>
 					</Field>
 				)}
@@ -1000,14 +994,12 @@ function ScheduleForm({
 						<Field label={t("schedule.timezone")}>
 							<Select
 								value={s.timezone}
-								onChange={(e) => set("timezone", e.target.value)}
-							>
-								{zoneList(s.timezone).map((z) => (
-									<option key={z} value={z}>
-										{z}
-									</option>
-								))}
-							</Select>
+								onChange={(v) => set("timezone", v)}
+								options={zoneList(s.timezone).map((z) => ({
+									value: z,
+									label: z,
+								}))}
+							/>
 						</Field>
 						<Field
 							label={`${t("schedule.endsAt")}${t("schedule.localTime", { zone })}`}
@@ -1171,15 +1163,15 @@ function ScheduleForm({
 							<Field label={t("schedule.orbType")}>
 								<Select
 									value={s.executor}
-									onChange={(e) => set("executor", e.target.value)}
-								>
-									<option value="">{t("newThread.newOrbDefault")}</option>
-									{executors.map((x) => (
-										<option key={x.value} value={x.value}>
-											{x.label}
-										</option>
-									))}
-								</Select>
+									onChange={(v) => set("executor", v)}
+									options={[
+										{ value: "", label: t("newThread.newOrbDefault") },
+										...executors.map((x) => ({
+											value: x.value,
+											label: x.label,
+										})),
+									]}
+								/>
 							</Field>
 							{/* 胶囊里有按钮与弹层，不能包在 <label> 里 */}
 							<div className="flex min-w-0 flex-col gap-1 text-sm">
@@ -1195,13 +1187,12 @@ function ScheduleForm({
 							<Field label={t("schedule.overlapLabel")}>
 								<Select
 									value={s.overlap}
-									onChange={(e) =>
-										set("overlap", e.target.value as Schemas["ScheduleOverlap"])
-									}
-								>
-									<option value="skip">{t("schedule.overlap.skip")}</option>
-									<option value="allow">{t("schedule.overlap.allow")}</option>
-								</Select>
+									onChange={(v) => set("overlap", v)}
+									options={(["skip", "allow"] as const).map((v) => ({
+										value: v,
+										label: t(`schedule.overlap.${v}`),
+									}))}
+								/>
 							</Field>
 							<Field
 								label={t("schedule.keepLast")}

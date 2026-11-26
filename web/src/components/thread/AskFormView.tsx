@@ -458,14 +458,8 @@ function ChoiceFieldView({
 	const groupId = useId();
 	const otherInputRef = useRef<HTMLInputElement>(null);
 
-	// `<select>` 单选：使用项目统一的 Select 控件（支持 optgroup）
+	// `<select>` 单选：使用项目统一的 Select 控件；分组（optgroup）展平，组名作选项的 hint
 	if (field.select && !field.multi) {
-		const groups: { name?: string; opts: typeof field.options }[] = [];
-		for (const opt of field.options) {
-			const last = groups[groups.length - 1];
-			if (last && last.name === opt.group) last.opts.push(opt);
-			else groups.push({ name: opt.group, opts: [opt] });
-		}
 		const current = value.selected[0] ?? "";
 		return (
 			<div data-field-name={field.name} className="flex flex-col">
@@ -479,51 +473,20 @@ function ChoiceFieldView({
 				)}
 				<Select
 					id={groupId}
-					name={field.name}
 					value={current}
-					aria-invalid={error ? true : undefined}
-					className={error ? "border-err!" : ""}
-					onChange={(e) =>
-						onChange({
-							...value,
-							selected: e.target.value ? [e.target.value] : [],
-						})
+					placeholder={t("ui.selectPlaceholder")}
+					aria-invalid={!!error}
+					className={
+						error ? "w-full rounded-[11px] ring-1 ring-err" : undefined
 					}
-				>
-					{!current && (
-						<option value="" disabled={field.required}>
-							{t("ui.selectPlaceholder")}
-						</option>
-					)}
-					{groups.map((g) =>
-						g.name ? (
-							<optgroup
-								key={`g:${g.name}:${g.opts[0]?.value ?? ""}`}
-								label={g.name}
-							>
-								{g.opts.map((opt) => (
-									<option
-										key={opt.value}
-										value={opt.value}
-										disabled={opt.disabled}
-									>
-										{opt.plainLabel}
-									</option>
-								))}
-							</optgroup>
-						) : (
-							g.opts.map((opt) => (
-								<option
-									key={opt.value}
-									value={opt.value}
-									disabled={opt.disabled}
-								>
-									{opt.plainLabel}
-								</option>
-							))
-						),
-					)}
-				</Select>
+					onChange={(v) => onChange({ ...value, selected: v ? [v] : [] })}
+					options={field.options.map((opt) => ({
+						value: opt.value,
+						label: opt.plainLabel,
+						hint: opt.group,
+						disabled: opt.disabled,
+					}))}
+				/>
 				<FieldErrorLine error={error} />
 			</div>
 		);

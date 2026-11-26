@@ -4,6 +4,7 @@
  * 按层叠顺序解析令牌（`oklch()`、`color-mix(in oklab, …)`、`var()`），换算到 sRGB（超色域裁剪）后按 WCAG 相对亮度计算。
  */
 import { render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { BudgetStatus } from "../../api/stats-queries";
 import { BudgetCard } from "./BudgetCard";
@@ -132,7 +133,11 @@ const status: BudgetStatus = {
 
 describe("预算级别文字的对比度", () => {
 	it("「接近上限」用 text-warn-ink、「已超出」用 text-err；Tailwind 主题把 warn-ink 映射到 --caution-ink", () => {
-		render(<BudgetCard status={status} onEdit={() => {}} />);
+		render(
+			<MemoryRouter>
+				<BudgetCard status={status} />
+			</MemoryRouter>,
+		);
 		const [warn, over] = screen.getAllByTestId("budget-level");
 		expect(warn).toHaveClass("text-warn-ink");
 		expect(warn).not.toHaveClass("text-warn");

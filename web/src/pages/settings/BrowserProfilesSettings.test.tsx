@@ -1,6 +1,6 @@
 /**
- * 设置 → 浏览器 Profile：空态说明、新建（名字校验）、列表（大小、保存时间、空闲 / 使用中 · 线程链接 / 只读副本 / 保存失败原因）、
- * 重命名、删除（确认；被持有时禁用）。
+ * 设置 → 浏览器 Profile：空态说明、「新建」对话框（名字校验）、列表（大小、保存时间、空闲 / 使用中 · 线程链接 / 只读副本 /
+ * 保存失败原因）、⋯ → 重命名（对话框）与删除（确认；被持有时禁用）。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -117,10 +117,18 @@ function mount() {
 	);
 }
 
+/** 行标识在标题上（`GroupRow` 不带属性），取整行 li。 */
 const rowOf = async (name: string) =>
-	(await screen.findAllByTestId("browser-profile-row")).find((r) =>
-		r.textContent?.includes(name),
-	) as HTMLElement;
+	(await screen.findAllByTestId("browser-profile-row"))
+		.map((r) => r.closest("li") as HTMLElement)
+		.find((r) => r.textContent?.includes(name)) as HTMLElement;
+
+const openMenu = (row: HTMLElement, name: string) =>
+	fireEvent.click(
+		within(row).getByRole("button", {
+			name: i18n.t("browserProfiles.more", { name }),
+		}),
+	);
 
 describe("validProfileName", () => {
 	it("trim 后 1–40 个字符、不含控制字符", () => {
@@ -137,12 +145,13 @@ describe("BrowserProfilesSettings", () => {
 	it("空列表：说明 Profile 是什么、同一时间只在一台 orb 上写回", async () => {
 		profiles = [];
 		mount();
-		expect(
-			await screen.findByText(i18n.t("browserProfiles.emptyTitle")),
-		).toBeInTheDocument();
-		expect(
-			screen.getByText(i18n.t("browserProfiles.emptyHint")),
-		).toBeInTheDocument();
+		const group = screen.getByRole("region", {
+			name: i18n.t("browserProfiles.title"),
+		});
+		await waitFor(() =>
+			expect(group).toHaveTextContent(i18n.t("browserProfiles.emptyTitle")),
+		);
+		expect(group).toHaveTextContent(i18n.t("browserProfiles.emptyHint"));
 	});
 
 	it("行：使用中 · 线程（链接到线程）、只读副本数、大小与保存时间；保存失败给原因", async () => {
@@ -166,12 +175,19 @@ describe("BrowserProfilesSettings", () => {
 		expect(shop).toHaveTextContent(i18n.t("browserProfiles.neverSaved"));
 	});
 
-	it("新建：名字非法时禁用；重名显示错误；成功后清空输入并出现在列表里", async () => {
+	it("新建：名字非法时禁用；重名错误留在对话框里；成功后关闭并出现在列表里", async () => {
 		mount();
-		const input = screen.getByRole("textbox", {
+		await rowOf("工作账号");
+		fireEvent.click(
+			screen.getByRole("button", { name: i18n.t("browserProfiles.add") }),
+		);
+		const dialog = await screen.findByRole("dialog", {
+			name: i18n.t("browserProfiles.new"),
+		});
+		const input = within(dialog).getByRole("textbox", {
 			name: i18n.t("browserProfiles.name"),
 		});
-		const create = screen.getByRole("button", {
+		const create = within(dialog).getByRole("button", {
 			name: i18n.t("common.create"),
 		});
 		fireEvent.change(input, { target: { value: "   " } });
@@ -181,7 +197,7 @@ describe("BrowserProfilesSettings", () => {
 			fireEvent.click(create);
 		});
 		expect(
-			await screen.findByText(i18n.t("errors.profile_name_taken")),
+			await within(dialog).findByText(i18n.t("errors.profile_name_taken")),
 		).toBeInTheDocument();
 		fireEvent.change(input, { target: { value: " 新账号 " } });
 		await act(async () => {
@@ -192,25 +208,30 @@ describe("BrowserProfilesSettings", () => {
 			path: "/api/v1/browser-profiles",
 			body: { name: "新账号" },
 		});
-		await waitFor(() => expect(input).toHaveValue(""));
+		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 		expect(await rowOf("新账号")).toBeInTheDocument();
 	});
 
-	it("重命名：行内编辑后 PATCH", async () => {
+	it("⋯ → 重命名：对话框里改名后 PATCH", async () => {
 		mount();
-		const shop = await rowOf("淘宝采购");
+		openMenu(await rowOf("淘宝采购"), "淘宝采购");
 		fireEvent.click(
-			within(shop).getByRole("button", {
+			await screen.findByRole("menuitem", {
 				name: i18n.t("browserProfiles.rename"),
 			}),
 		);
-		const input = within(shop).getByRole("textbox", {
-			name: i18n.t("browserProfiles.name"),
+		const dialog = await screen.findByRole("dialog", {
+			name: i18n.t("browserProfiles.renameTitle"),
 		});
-		fireEvent.change(input, { target: { value: "采购" } });
+		fireEvent.change(
+			within(dialog).getByRole("textbox", {
+				name: i18n.t("browserProfiles.name"),
+			}),
+			{ target: { value: "采购" } },
+		);
 		await act(async () => {
 			fireEvent.click(
-				within(shop).getByRole("button", { name: i18n.t("common.save") }),
+				within(dialog).getByRole("button", { name: i18n.t("common.save") }),
 			);
 		});
 		expect(requests).toContainEqual({
@@ -221,18 +242,21 @@ describe("BrowserProfilesSettings", () => {
 		expect(await rowOf("采购")).toBeInTheDocument();
 	});
 
-	it("删除：被持有时禁用并提示先解除；空闲的确认后 DELETE", async () => {
+	it("⋯ → 删除：被持有时禁用并提示先解除；空闲的确认后 DELETE", async () => {
 		mount();
-		const work = await rowOf("工作账号");
-		expect(
-			within(work).getByRole("button", {
-				name: i18n.t("browserProfiles.deleteHeld"),
-			}),
-		).toBeDisabled();
-		const shop = await rowOf("淘宝采购");
+		openMenu(await rowOf("工作账号"), "工作账号");
+		const held = await screen.findByRole("menuitem", {
+			name: new RegExp(i18n.t("common.delete")),
+		});
+		expect(held).toBeDisabled();
+		expect(held).toHaveTextContent(i18n.t("browserProfiles.deleteHeld"));
+		fireEvent.keyDown(held, { key: "Escape" });
+		await waitFor(() => expect(screen.queryByRole("menuitem")).toBeNull());
+
+		openMenu(await rowOf("淘宝采购"), "淘宝采购");
 		await act(async () => {
 			fireEvent.click(
-				within(shop).getByRole("button", { name: i18n.t("common.delete") }),
+				await screen.findByRole("menuitem", { name: i18n.t("common.delete") }),
 			);
 		});
 		expect((await answerConfirm(true)).title).toBe(

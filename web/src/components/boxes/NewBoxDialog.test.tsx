@@ -98,11 +98,11 @@ describe("新建 Box", () => {
 		const select = screen.getByRole("combobox", {
 			name: i18n.t("boxes.new.size"),
 		});
-		await waitFor(() =>
-			expect(select.querySelectorAll("option")).toHaveLength(2),
-		);
-		expect(select).toHaveTextContent("local");
-		expect(select).not.toHaveTextContent("retired");
+		fireEvent.click(select);
+		await waitFor(() => expect(screen.getAllByRole("option")).toHaveLength(2));
+		const list = screen.getByRole("listbox");
+		expect(list).toHaveTextContent("local");
+		expect(list).not.toHaveTextContent("retired");
 	});
 
 	it("服务端回 box_exists：对话框还开着、输入还在、看得到人话错误", async () => {
@@ -138,15 +138,9 @@ describe("新建 Box", () => {
 		const select = screen.getByRole("combobox", {
 			name: i18n.t("boxes.new.size"),
 		});
-		await waitFor(() =>
-			expect(select.querySelectorAll("option")).toHaveLength(2),
-		);
-		fireEvent.change(select, {
-			target: {
-				value: (select.querySelectorAll("option")[1] as HTMLOptionElement)
-					.value,
-			},
-		});
+		fireEvent.click(select);
+		await waitFor(() => expect(screen.getAllByRole("option")).toHaveLength(2));
+		fireEvent.click(screen.getAllByRole("option")[1] as HTMLElement);
 		fireEvent.change(nameInput(), { target: { value: "lab" } });
 		fireEvent.click(createButton());
 		await waitFor(() =>

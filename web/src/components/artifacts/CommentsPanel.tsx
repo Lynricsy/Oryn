@@ -398,21 +398,16 @@ function SendBar({
 			<div className="flex items-center gap-1.5">
 				<Select
 					id={selectId}
-					wrapperClassName="min-w-0 flex-1"
+					className="min-w-0 flex-1"
 					aria-label={t("artifacts.comments.sendTarget")}
 					value={target}
 					disabled={disabled}
-					onChange={(e) => setChoice(e.target.value)}
-				>
-					{targets.map((x) => (
-						<option key={x.threadId} value={x.threadId}>
-							{titleOf(x)}
-						</option>
-					))}
-					<option value={NEW_THREAD}>
-						{t("artifacts.comments.sendNewThread")}
-					</option>
-				</Select>
+					onChange={setChoice}
+					options={[
+						...targets.map((x) => ({ value: x.threadId, label: titleOf(x) })),
+						{ value: NEW_THREAD, label: t("artifacts.comments.sendNewThread") },
+					]}
+				/>
 				<Button
 					variant="primary"
 					icon={busy ? undefined : "send"}

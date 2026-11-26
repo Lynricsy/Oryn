@@ -1,5 +1,5 @@
 /**
- * 设置 → Agent → 记忆 › 助手记忆（M17 步骤 5.1）：走 mock 服务端（与 orynd 同格式）。覆盖工程记忆不可用时只显示提示、
+ * 设置 → 全局助手 › 助手记忆（M17 步骤 5.1）：走 mock 服务端（与 orynd 同格式）。覆盖 Agent 记忆不可用时只显示提示、
  * 开关即改即存、名字与别名保存、判断模型 key 只写（保存后不回显、留空保留、可清除）、world 事实失效（observation 不能失效）
  * 与之后主题进入等待刷新、按来源遗忘（确认对话框）、待确认的明确记忆改写后批准。
  */
@@ -17,9 +17,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../../../../i18n";
 import { MAIN_THREAD } from "../../../../mock/fixtures";
 import { MockServer } from "../../../../mock/server";
-import MemoryPage from "../MemoryPage";
 import { OwnerExplicitCard } from "./OwnerExplicitCard";
 import { OwnerFactsCard } from "./OwnerFactsCard";
+import { OwnerMemorySection } from "./OwnerMemorySection";
 import { OwnerSourcesCard } from "./OwnerSourcesCard";
 
 const T = (k: string, o?: Record<string, unknown>): string =>
@@ -76,7 +76,7 @@ async function serverGet<R>(path: string): Promise<R> {
 }
 
 async function ownerSection(): Promise<HTMLElement> {
-	mount(<MemoryPage />);
+	mount(<OwnerMemorySection />);
 	const section = await screen.findByTestId("owner-memory-section");
 	await within(section).findByRole("switch", {
 		name: T("memoryPage.owner.settings.enabled"),
@@ -87,7 +87,7 @@ async function ownerSection(): Promise<HTMLElement> {
 describe("助手记忆分区", () => {
 	it("工程记忆未启用或未配置：分区只显示提示", async () => {
 		localStorage.setItem(MOCK_KEY, "unavailable");
-		mount(<MemoryPage />);
+		mount(<OwnerMemorySection />);
 		const section = await screen.findByTestId("owner-memory-section");
 		expect(
 			await within(section).findByText(T("memoryPage.owner.unavailable")),

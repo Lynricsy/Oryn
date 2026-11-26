@@ -155,12 +155,15 @@ describe("RightPanel", () => {
 			{ name: i18n.t("changes.scope.label") },
 			{ timeout: 5000 },
 		);
+		fireEvent.click(picker);
 		await waitFor(() =>
 			expect(
 				screen.getByRole("option", { name: /^1a2b3c4 docs: 更新 README/ }),
 			).toBeInTheDocument(),
 		);
-		fireEvent.change(picker, { target: { value: `commit:${SHA}` } });
+		fireEvent.click(
+			screen.getByRole("option", { name: /^1a2b3c4 docs: 更新 README/ }),
+		);
 		await waitFor(() =>
 			expect(statusQueries.at(-1)?.query.get("commit")).toBe(SHA),
 		);
@@ -174,7 +177,7 @@ describe("RightPanel", () => {
 		expect(forB.some((q) => q.query.has("commit"))).toBe(false);
 		expect(
 			screen.getByRole("combobox", { name: i18n.t("changes.scope.label") }),
-		).toHaveValue("all");
+		).toHaveTextContent(new RegExp(`^${i18n.t("changes.scope.all")}`));
 	});
 
 	it("新改动亮点，切到改动标签即清除并记为已看", async () => {

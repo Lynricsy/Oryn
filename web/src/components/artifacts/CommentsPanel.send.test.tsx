@@ -24,6 +24,7 @@ import { sendGeneratedPrompt } from "../../state/actions";
 import { indexStore } from "../../state/stores";
 import { toastsStore } from "../../state/toasts";
 import { uiStore } from "../../state/ui";
+import { pickOption } from "../../test/select";
 import { CommentsPanel, sendTargets } from "./CommentsPanel";
 import { useArtifactActivity } from "./use-activity";
 
@@ -154,7 +155,7 @@ async function sendBar() {
 	const bar = await screen.findByTestId("comments-send");
 	const select = screen.getByRole("combobox", {
 		name: t("artifacts.comments.sendTarget"),
-	}) as HTMLSelectElement;
+	});
 	const button = screen.getByRole("button", {
 		name: t("artifacts.comments.send"),
 	});
@@ -170,11 +171,13 @@ describe("把评论发给线程", () => {
 		expect(bar).toHaveTextContent(
 			t("artifacts.comments.sendLead", { count: 2 }),
 		);
-		expect([...select.options].map((o) => o.text)).toEqual([
+		fireEvent.click(select);
+		expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
 			"做报告",
 			t("artifacts.comments.sendNewThread"),
 		]);
-		expect(select.value).toBe("T-maker");
+		fireEvent.click(select);
+		expect(select).toHaveTextContent("做报告");
 		fireEvent.click(button);
 		await waitFor(() =>
 			expect(requests).toContainEqual({
@@ -215,7 +218,7 @@ describe("把评论发给线程", () => {
 	it("发给新线程：交给首屏输入框并跳到 /，不记已发送", async () => {
 		wrap(<CommentsPanel artifactId={ID} threads={DETAIL_THREADS} canComment />);
 		const { select, button } = await sendBar();
-		fireEvent.change(select, { target: { value: "" } });
+		pickOption(select, t("artifacts.comments.sendNewThread"));
 		fireEvent.click(button);
 		expect(await screen.findByTestId("home")).toBeVisible();
 		const seed = uiStore.getState().homeSeed;

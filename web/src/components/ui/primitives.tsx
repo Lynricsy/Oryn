@@ -5,9 +5,9 @@ import {
 	type ButtonHTMLAttributes,
 	type ComponentProps,
 	type InputHTMLAttributes,
+	type KeyboardEvent as ReactKeyboardEvent,
 	type ReactNode,
 	type Ref,
-	type SelectHTMLAttributes,
 	type TextareaHTMLAttributes,
 	useCallback,
 	useEffect,
@@ -21,6 +21,7 @@ import { useTranslation } from "react-i18next";
 import { ApiError, type ThreadState } from "../../api/client";
 import { focusablesIn, isTopModal, pushModal, trapTab } from "../../lib/modal";
 import type { NativeHint } from "../../lib/native-header";
+import { useCoarsePointer } from "../../lib/viewport";
 import { Floating } from "./Floating";
 import { Icon, type IconName } from "./icons";
 import { OrbBead } from "./OrbBead";
@@ -460,23 +461,225 @@ export function TextArea({
 	);
 }
 
-/** 原生下拉（保留 combobox 语义），外观统一并加右侧箭头；`wrapperClassName` 控制外包宽度。 */
-export function Select({
-	wrapperClassName = "w-full",
-	...props
-}: SelectHTMLAttributes<HTMLSelectElement> & { wrapperClassName?: string }) {
+export interface SelectOption<T extends string> {
+	value: T;
+	label: string;
+	/** 选项右侧的次要说明（如英文名的中文） */
+	hint?: string;
+	disabled?: boolean;
+}
+
+/**
+ * 下拉选择（D）。鼠标 / 键盘：combobox 触发钮 + 毛玻璃 listbox（`Floating`），焦点始终留在触发钮上（aria-activedescendant）；
+ * 关闭时 ↓ ↑ Enter Space 打开，打开时 ↑ ↓ Home End 移动、首字母跳转、Enter / Space 选中，
+ * Esc 关闭不改值（不冒泡到外层对话框），Tab 关闭并照常前进，点外面关闭。粗指针（触屏）用原生 select。
+ * 可读名称三选一：外层 `<label>` 包住、`aria-labelledby`（FormField 给出）、`aria-label`。
+ * `className` 加在外包上，缺省占满一行；`value` 不在选项里时显示 `placeholder`。
+ * `size="sm"`：工具条里的紧凑款（高 28、12px 字）。
+ */
+export function Select<T extends string>({
+	value,
+	options,
+	onChange,
+	placeholder,
+	disabled,
+	size = "md",
+	className = "w-full",
+	id,
+	...aria
+}: {
+	value: T | "";
+	options: readonly SelectOption<T>[];
+	onChange: (v: T) => void;
+	placeholder?: string;
+	disabled?: boolean;
+	size?: "sm" | "md";
+	className?: string;
+	id?: string;
+	"aria-label"?: string;
+	"aria-labelledby"?: string;
+	"aria-describedby"?: string;
+	"aria-invalid"?: boolean;
+}): ReactNode {
+	// FIELD 自带 13.5px 字号：紧凑款用 `!` 压过它
+	const box = size === "sm" ? "h-7 text-xs!" : "h-[34px]";
+	const coarse = useCoarsePointer();
+	const [open, setOpen] = useState(false);
+	const [active, setActive] = useState(0);
+	const wrapRef = useRef<HTMLDivElement>(null);
+	const ownId = useId();
+	const buttonId = id ?? `${ownId}-b`;
+	const listId = `${ownId}-l`;
+	const selected = options.findIndex((o) => o.value === value);
+
+	useEffect(() => {
+		if (!open) return;
+		const onDown = (e: MouseEvent) => {
+			if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+		};
+		document.addEventListener("mousedown", onDown);
+		return () => document.removeEventListener("mousedown", onDown);
+	}, [open]);
+
+	if (coarse)
+		return (
+			<span className={`relative flex min-w-0 ${className}`}>
+				<select
+					{...aria}
+					id={buttonId}
+					disabled={disabled}
+					value={value}
+					onChange={(e) => onChange(e.target.value as T)}
+					className={`${box} appearance-none pr-9 ${FIELD}`}
+				>
+					{selected < 0 && (
+						<option value="" disabled>
+							{placeholder ?? ""}
+						</option>
+					)}
+					{options.map((o) => (
+						<option key={o.value} value={o.value} disabled={o.disabled}>
+							{o.label}
+						</option>
+					))}
+				</select>
+				<Icon
+					name="caretUpDown"
+					size={13}
+					className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-faint"
+				/>
+			</span>
+		);
+
+	const show = () => {
+		setActive(Math.max(selected, 0));
+		setOpen(true);
+	};
+	const choose = (i: number) => {
+		const o = options[i];
+		if (!o || o.disabled) return;
+		onChange(o.value);
+		setOpen(false);
+	};
+	const move = (i: number) => setActive((i + options.length) % options.length);
+
+	const onKeyDown = (e: ReactKeyboardEvent<HTMLButtonElement>) => {
+		if (!open) {
+			if (["ArrowDown", "ArrowUp", "Enter", " "].includes(e.key)) {
+				e.preventDefault();
+				show();
+			}
+			return;
+		}
+		switch (e.key) {
+			case "ArrowDown":
+				e.preventDefault();
+				move(active + 1);
+				return;
+			case "ArrowUp":
+				e.preventDefault();
+				move(active - 1);
+				return;
+			case "Home":
+				e.preventDefault();
+				move(0);
+				return;
+			case "End":
+				e.preventDefault();
+				move(options.length - 1);
+				return;
+			case "Enter":
+			case " ":
+				e.preventDefault();
+				choose(active);
+				return;
+			case "Escape":
+				// 只关列表：不让外层对话框的 Esc 一起关掉
+				e.preventDefault();
+				e.stopPropagation();
+				setOpen(false);
+				return;
+			case "Tab":
+				setOpen(false);
+				return;
+		}
+		if (e.key.length === 1 && !e.nativeEvent.isComposing) {
+			const k = e.key.toLowerCase();
+			for (let s = 1; s <= options.length; s++) {
+				const i = (active + s) % options.length;
+				if (options[i]?.label.toLowerCase().startsWith(k)) {
+					setActive(i);
+					return;
+				}
+			}
+		}
+	};
+
+	const labelledBy = aria["aria-labelledby"];
 	return (
-		<span className={`relative inline-flex min-w-0 ${wrapperClassName}`}>
-			<select
-				{...props}
-				className={`${FIELD} py-[7px] pr-8 leading-5 appearance-none ${props.className ?? ""}`}
-			/>
-			<Icon
-				name="chevronDown"
-				size={12}
-				className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-faint"
-			/>
-		</span>
+		<div ref={wrapRef} className={`relative min-w-0 ${className}`}>
+			<button
+				type="button"
+				role="combobox"
+				aria-haspopup="listbox"
+				aria-expanded={open}
+				aria-controls={listId}
+				aria-activedescendant={open ? `${listId}-${active}` : undefined}
+				{...aria}
+				// 读出「标题 + 当前值」：标题之后再引用触发钮自己
+				aria-labelledby={labelledBy ? `${labelledBy} ${buttonId}` : undefined}
+				id={buttonId}
+				disabled={disabled}
+				onClick={() => (open ? setOpen(false) : show())}
+				onKeyDown={onKeyDown}
+				className={`flex ${box} cursor-pointer items-center justify-between gap-2 text-left disabled:cursor-default aria-expanded:-translate-y-px aria-expanded:bg-[var(--field-focus)] aria-expanded:shadow-[var(--sh-field-focus)] ${FIELD}`}
+			>
+				<span
+					className={`min-w-0 truncate ${selected < 0 ? "text-faint" : ""}`}
+				>
+					{options[selected]?.label ?? placeholder}
+				</span>
+				<Icon name="caretUpDown" size={13} className="shrink-0 text-faint" />
+			</button>
+			{open && (
+				<Floating
+					id={listId}
+					role="listbox"
+					aria-labelledby={labelledBy}
+					aria-label={aria["aria-label"]}
+					side="bottom"
+					align="stretch"
+					gap={4}
+					bodyClassName="p-1"
+				>
+					{options.map((o, i) => (
+						// 焦点留在触发钮上（aria-activedescendant），选项不进 Tab 序列
+						<button
+							key={o.value}
+							type="button"
+							tabIndex={-1}
+							id={`${listId}-${i}`}
+							role="option"
+							aria-selected={i === selected}
+							aria-disabled={o.disabled}
+							onMouseMove={() => setActive(i)}
+							onMouseDown={(e) => e.preventDefault()}
+							onClick={() => choose(i)}
+							className={`flex h-[30px] w-full cursor-default items-center gap-2 rounded-[9px] px-2.5 text-left text-[13.5px] ${o.disabled ? "text-faint" : "text-fg"} ${i === active ? "bg-hover" : ""}`}
+						>
+							<span className="min-w-0 flex-1 truncate">{o.label}</span>
+							{o.hint && <span className="text-muted text-xs">{o.hint}</span>}
+							<Icon
+								name="check"
+								size={13}
+								weight="bold"
+								className={`shrink-0 text-fg ${i === selected ? "" : "invisible"}`}
+							/>
+						</button>
+					))}
+				</Floating>
+			)}
+		</div>
 	);
 }
 

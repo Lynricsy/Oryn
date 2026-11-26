@@ -1,8 +1,14 @@
 /**
- * 设置 → Agent 各子页共用的小件：作用范围说明、错误行（写入冲突、config.yml 不合法有专门文案）、
+ * 设置 → Agent 各子页共用的小件：页头（作用范围说明 + 下发状态）、错误行（写入冲突、config.yml 不合法有专门文案）、
  * 删除确认、懒加载的代码编辑器，以及整文件编辑对话框（提示词文件、扩展 / hook / 工具源码）。
  */
-import { lazy, type ReactNode, Suspense, useState } from "react";
+import {
+	type ComponentProps,
+	lazy,
+	type ReactNode,
+	Suspense,
+	useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import {
 	ConfigInvalidError,
@@ -10,14 +16,14 @@ import {
 	useAgentFileActions,
 	useAgentText,
 } from "../../api/agent-config-queries";
-import { Callout } from "../ui/data";
 import { Button, Dialog, ErrorText, Spinner } from "../ui/primitives";
+import { ApplyStatusBanner } from "./ApplyStatusBanner";
 
 const CodeEditor = lazy(() => import("../editor/CodeEditor"));
 
 /**
  * R31：各子页都标明不作用于全局助手；保存即下发。只改 `config.yml`、且所改的键对全局助手同样有效的页面
- * （模型角色）传 `reachesAssistant`：`config.yml` 也下发给全局助手。
+ * （模型角色）传 `reachesAssistant`：`config.yml` 也下发给全局助手。中性说明，一行次要灰字，不用 Callout。
  */
 export function AgentScopeNote({
 	children,
@@ -28,10 +34,90 @@ export function AgentScopeNote({
 }) {
 	const { t } = useTranslation();
 	return (
-		<Callout tone="neutral">
+		<p className="px-1.5 text-[12.5px] text-muted leading-normal">
 			{t(reachesAssistant ? "agentPages.scopeConfig" : "agentPages.scope")}
 			{children && <> {children}</>}
-		</Callout>
+		</p>
+	);
+}
+
+/** 分组下方的中性说明（12.5、次要灰，与分组标题左对齐）：放不进行 meta 的长说明。 */
+export function GroupNote({ children }: { children: ReactNode }) {
+	return (
+		<p className="px-1.5 text-[12.5px] text-muted leading-normal">{children}</p>
+	);
+}
+
+/** 分组里的空状态 / 单句提示：一块毛玻璃里的一行次要灰字（代替空的 `GroupList`）。 */
+export function EmptyPanel({ children }: { children: ReactNode }) {
+	return (
+		<div className="glass rounded-[22px] px-4 py-3.5 text-[12.5px] text-muted">
+			{children}
+		</div>
+	);
+}
+
+/**
+ * 带头像的行：与 `GroupRow` 同一套行高、内边距与悬停底色，行首是头像（role、子 agent）而不是图标方块。
+ * 其余 `li` 属性（`data-*`、拖放事件）原样透传。
+ */
+export function AvatarRow({
+	leading,
+	title,
+	meta,
+	trailing,
+	className = "",
+	...li
+}: Omit<ComponentProps<"li">, "title"> & {
+	leading: ReactNode;
+	title: ReactNode;
+	meta?: ReactNode;
+	trailing?: ReactNode;
+}) {
+	return (
+		<li
+			{...li}
+			className={`group/row transition-colors duration-150 hover:bg-raised ${className}`}
+		>
+			<div className="flex min-h-14 flex-wrap items-center gap-x-3 gap-y-2 py-2 pr-3 pl-3.5">
+				{leading}
+				<div className="flex min-w-40 flex-1 flex-col gap-0.5">
+					<div className="flex min-w-0 items-center gap-1.5 font-[550] text-fg text-sm">
+						{title}
+					</div>
+					{meta && (
+						<div className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-[12.5px] text-muted leading-normal">
+							{meta}
+						</div>
+					)}
+				</div>
+				{trailing && (
+					<div className="ml-auto flex shrink-0 items-center gap-2">
+						{trailing}
+					</div>
+				)}
+			</div>
+		</li>
+	);
+}
+
+/**
+ * Agent 子页的页头：作用范围说明 + 下发状态横幅（没有待办时不渲染）。每页只放一次，放在第一个 `Group` 之前。
+ */
+export function AgentPageHead({
+	children,
+	reachesAssistant = false,
+}: {
+	children?: ReactNode;
+	reachesAssistant?: boolean;
+}) {
+	return (
+		<div className="flex flex-col gap-2">
+			<AgentScopeNote reachesAssistant={reachesAssistant}>
+				{children}
+			</AgentScopeNote>
+			<ApplyStatusBanner />
+		</div>
 	);
 }
 

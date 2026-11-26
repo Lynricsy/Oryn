@@ -3,7 +3,11 @@ import { renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SECTION_PATHS_KEY } from "../lib/sections";
 import {
+	COLLAPSED_CARDS_KEY,
+	DESKTOP_CONTROL_KEY,
+	DESKTOP_SCALE_KEY,
 	hasUnseenChanges,
+	PANEL_WIDTH_KEY,
 	SIDEBAR_COLLAPSED_KEY,
 	uiStore,
 	useSidebarToggleShown,
@@ -223,5 +227,35 @@ describe("分区记忆（M9.6）", () => {
 		expect(
 			Object.keys(uiStore.getState()).filter((k) => /sidebar_?view/i.test(k)),
 		).toEqual([]);
+	});
+});
+
+describe("重置界面布局", () => {
+	it("resetLayout 把侧栏收起、面板宽度、卡片折叠、Desktop 缩放恢复默认并删掉存储；不动 Desktop 控制偏好", () => {
+		localStorage.clear();
+		window.innerWidth = 1280;
+		const s = uiStore.getState();
+		s.setSidebarCollapsed(true);
+		s.setPanelWidth(700);
+		s.toggleCard("usage");
+		s.setDesktopScale("fit");
+		s.setDesktopControl(false);
+		expect(localStorage.getItem(PANEL_WIDTH_KEY)).toBe("700");
+
+		uiStore.getState().resetLayout();
+		const after = uiStore.getState();
+		expect(after.sidebarCollapsed).toBe(false);
+		expect(after.panelWidth).toBe(420);
+		expect(after.collapsedCards).toEqual({});
+		expect(after.desktopScale).toBeNull();
+		expect(after.desktopControl).toBe(false);
+		for (const key of [
+			SIDEBAR_COLLAPSED_KEY,
+			PANEL_WIDTH_KEY,
+			COLLAPSED_CARDS_KEY,
+			DESKTOP_SCALE_KEY,
+		])
+			expect(localStorage.getItem(key)).toBeNull();
+		expect(localStorage.getItem(DESKTOP_CONTROL_KEY)).toBe("0");
 	});
 });

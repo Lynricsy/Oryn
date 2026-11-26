@@ -1,8 +1,8 @@
 /**
- * 定时列表的一行（设置 → 自动化、项目设置里的「定时任务」、Space 页的「定时」小节共用）：
- * 名称或线程标题、可选的目标（项目徽标 / 线程链接）、表达式摘要、下次运行、最近一次状态、
- * 运行前闸门摘要（主机 + 命令首行）、`由 agent 创建` 徽标、
- * 启停开关与菜单（编辑 / 立即运行 / 运行记录 / 删除）。点名称 = 编辑（对话框由调用方渲染）。
+ * 定时列表的一行（设置 → 自动化、项目设置里的「定时任务」、Space 页的「定时」小节共用），D 的 `GroupRow`，放在 `GroupList` 里：
+ * 标题 = 名称或线程标题（点击 = 编辑，对话框由调用方渲染）与 `由 agent 创建` 徽标；
+ * 说明 = 可选的目标（项目徽标 / 线程链接）、表达式摘要、下次运行、运行前闸门摘要（主机 + 命令首行）；
+ * 行尾 = 最近一次状态（定宽状态列）· ⋯（编辑 / 立即运行 / 运行记录 / 删除）· 启停开关。出错原文在行下方。
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -22,7 +22,8 @@ import { parseTitleCard } from "../../lib/title";
 import { useIndex } from "../../state/stores";
 import { Badge, ProjectBadge, type Tone } from "../ui/data";
 import { Icon } from "../ui/icons";
-import { describeError, Menu, Toggle } from "../ui/primitives";
+import { ErrorText, IconButton, Menu, Toggle } from "../ui/primitives";
+import { GroupRow, StatusCell, StatusText } from "../ui/workbench";
 
 const LAST_TONE: Record<Schemas["ScheduleRunStatus"], Tone> = {
 	pending: "neutral",
@@ -65,22 +66,17 @@ export function ScheduleRow({
 		: undefined;
 	const error = setEnabled.error ?? run.error ?? del.error;
 	return (
-		<li
-			data-schedule={s.id}
-			className="flex min-h-11 items-center gap-3 rounded-md px-2 py-1.5"
-		>
-			<span className="flex min-w-0 flex-1 flex-col gap-0.5">
-				<span className="flex min-w-0 items-center gap-1.5 text-sm">
-					<Icon
-						name={s.mode === "new_thread" ? "repeat" : "clock"}
-						size={14}
-						aria-hidden
-						className="shrink-0 text-faint"
-					/>
+		<GroupRow
+			icon={s.mode === "new_thread" ? "repeat" : "clock"}
+			title={
+				<span
+					data-schedule={s.id}
+					className="flex min-w-0 items-center gap-1.5"
+				>
 					<button
 						type="button"
 						onClick={onEdit}
-						className="min-w-0 truncate text-left font-medium hover:underline"
+						className="min-w-0 truncate text-left hover:underline"
 					>
 						{title}
 					</button>
@@ -88,7 +84,9 @@ export function ScheduleRow({
 						<Badge icon="robot">{t("automation.byAgent")}</Badge>
 					)}
 				</span>
-				<span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-faint text-xs">
+			}
+			meta={
+				<>
 					{showTarget &&
 						(s.mode === "new_thread" ? (
 							<span className="inline-flex min-w-0 items-center gap-1">
@@ -124,11 +122,6 @@ export function ScheduleRow({
 								? t(`schedule.pausedReason.${s.pausedReason}`)
 								: t("schedule.paused")}
 					</span>
-					{s.lastRun && (
-						<Badge tone={LAST_TONE[s.lastRun.status]}>
-							{t(`schedule.runStatus.${s.lastRun.status}`)}
-						</Badge>
-					)}
 					{s.gate && (
 						<span
 							data-testid="schedule-gate-summary"
@@ -145,71 +138,76 @@ export function ScheduleRow({
 							</span>
 						</span>
 					)}
-					{error ? (
-						<span className="text-err">{describeError(error, t)}</span>
-					) : null}
-				</span>
-			</span>
-			<Toggle
-				checked={s.enabled}
-				disabled={setEnabled.isPending}
-				onChange={(v) => setEnabled.mutate({ id: s.id, enabled: v })}
-				label={
-					<span className="sr-only">
-						{t("automation.toggle", { name: title })}
-					</span>
-				}
-			/>
-			<Menu
-				items={[
-					{
-						key: "edit",
-						icon: "edit",
-						label: t("common.edit"),
-						onSelect: onEdit,
-					},
-					{
-						key: "run",
-						icon: "play",
-						label: t("schedule.runNow"),
-						onSelect: () => run.mutate(s.id),
-					},
-					{
-						key: "runs",
-						icon: "list",
-						label: t("automation.runs"),
-						onSelect: onEdit,
-					},
-					{
-						key: "delete",
-						icon: "trash",
-						danger: true,
-						label: t("common.delete"),
-						onSelect: async () => {
-							if (
-								await confirmAction({
-									title: t("schedule.deleteConfirm"),
-									body: t("schedule.deleteConfirmBody"),
-									action: t("common.delete"),
-									danger: true,
-								})
-							)
-								del.mutate(s.id);
-						},
-					},
-				]}
-				trigger={(p) => (
-					<button
-						type="button"
-						aria-label={t("automation.menu", { name: title })}
-						className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted transition-colors duration-150 hover:bg-hover hover:text-fg"
-						{...p}
-					>
-						<Icon name="more" size={16} />
-					</button>
-				)}
-			/>
-		</li>
+				</>
+			}
+			trailing={
+				<>
+					<StatusCell>
+						{s.lastRun && (
+							<StatusText tone={LAST_TONE[s.lastRun.status]}>
+								{t(`schedule.runStatus.${s.lastRun.status}`)}
+							</StatusText>
+						)}
+					</StatusCell>
+					<Menu
+						items={[
+							{
+								key: "edit",
+								icon: "edit",
+								label: t("common.edit"),
+								onSelect: onEdit,
+							},
+							{
+								key: "run",
+								icon: "play",
+								label: t("schedule.runNow"),
+								onSelect: () => run.mutate(s.id),
+							},
+							{
+								key: "runs",
+								icon: "list",
+								label: t("automation.runs"),
+								onSelect: onEdit,
+							},
+							{
+								key: "delete",
+								icon: "trash",
+								danger: true,
+								label: t("common.delete"),
+								onSelect: async () => {
+									if (
+										await confirmAction({
+											title: t("schedule.deleteConfirm"),
+											body: t("schedule.deleteConfirmBody"),
+											action: t("common.delete"),
+											danger: true,
+										})
+									)
+										del.mutate(s.id);
+								},
+							},
+						]}
+						trigger={(p) => (
+							<IconButton
+								icon="more"
+								box="sm"
+								label={t("automation.menu", { name: title })}
+								{...p}
+							/>
+						)}
+					/>
+					<Toggle
+						hideLabel
+						checked={s.enabled}
+						disabled={setEnabled.isPending}
+						onChange={(v) => setEnabled.mutate({ id: s.id, enabled: v })}
+						label={t("automation.toggle", { name: title })}
+					/>
+				</>
+			}
+		>
+			{error ? <ErrorText error={error} /> : undefined}
+		</GroupRow>
 	);
 }
 
