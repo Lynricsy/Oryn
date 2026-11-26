@@ -226,4 +226,44 @@ describe("subagentMessages", () => {
 			subagentMessages(entries, `${ART2}/0-Scout.jsonl`).map((m) => m.content),
 		).toEqual(["新会话"]);
 	});
+
+	it("保留可见的 custom_message（如 advisor 建议）并过滤 display:false 的隐藏注入", () => {
+		const file = `${ART}/0-Scout.jsonl`;
+		const entries = [
+			msg(1, file, "开始排查"),
+			entry(2, file, "custom_message", {
+				type: "custom_message",
+				customType: "xdev-mount-notice",
+				display: false,
+				content: "<system-notice>hidden</system-notice>",
+			}),
+			entry(3, file, "custom_message", {
+				type: "custom_message",
+				customType: "advisor",
+				display: true,
+				content: '<advisory severity="concern">检查边界条件</advisory>',
+				details: { notes: [{ severity: "concern", note: "检查边界条件" }] },
+			}),
+			entry(4, file, "message", {
+				type: "message",
+				message: {
+					role: "custom",
+					customType: "mid-run-todo-nudge",
+					display: false,
+					content: "<system-reminder>hidden nudge</system-reminder>",
+				},
+			}),
+			msg(5, file, "排查完成"),
+		];
+		const list = subagentMessages(entries, file);
+		expect(list).toHaveLength(3);
+		expect(list[0]?.content).toBe("开始排查");
+		expect(list[1]).toMatchObject({
+			role: "custom",
+			customType: "advisor",
+			display: true,
+			details: { notes: [{ severity: "concern", note: "检查边界条件" }] },
+		});
+		expect(list[2]?.content).toBe("排查完成");
+	});
 });

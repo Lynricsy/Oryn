@@ -257,6 +257,51 @@ describe("SubagentDialog", () => {
 		expect(await screen.findByText("新会话的消息")).toBeInTheDocument();
 		expect(screen.queryByText("旧会话的消息")).toBeNull();
 	});
+
+	it("本地存档中的可见 advisor custom_message 渲染成顾问卡，display:false 隐藏注入不展示", async () => {
+		setup({
+			agentStatus: "none",
+			entries: [
+				text(1, SUB, "开始分析代码"),
+				{
+					seq: 2,
+					file: SUB,
+					entryId: "e2",
+					type: "custom_message",
+					payload: {
+						type: "custom_message",
+						customType: "mid-run-todo-nudge",
+						display: false,
+						content: "<system-reminder>不应展示的隐藏注入</system-reminder>",
+					},
+				},
+				{
+					seq: 3,
+					file: SUB,
+					entryId: "e3",
+					type: "custom_message",
+					payload: {
+						type: "custom_message",
+						customType: "advisor",
+						display: true,
+						content:
+							'<advisory severity="concern" guidance="weigh">\n子 agent 漏检了空指针分支\n</advisory>',
+						details: {
+							notes: [
+								{ severity: "concern", note: "子 agent 漏检了空指针分支" },
+							],
+						},
+					},
+				},
+			],
+		});
+		expect(await screen.findByText("开始分析代码")).toBeInTheDocument();
+		const card = await screen.findByTestId("advisor-card");
+		expect(card.getAttribute("data-severity")).toBe("concern");
+		expect(screen.getByText("子 agent 漏检了空指针分支")).toBeInTheDocument();
+		expect(screen.queryByText(/不应展示的隐藏注入/)).toBeNull();
+		expect(sentTypes()).not.toContain("get_subagent_messages");
+	});
 });
 
 describe("信息面板子 agent 列表", () => {

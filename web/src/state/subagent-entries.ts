@@ -122,17 +122,35 @@ export function subagentLabel(
 	return description || saved?.title;
 }
 
-/** 存档 `file`（完整路径，精确匹配）的已入库消息，按 `seq` 升序。 */
+/** 只给模型看的注入消息（`display: false` 的 custom / hook 消息），与主转录一致不进视图。 */
+function isHiddenCustomMessage(m: JsonRecord): boolean {
+	return (
+		(m.role === "custom" || m.role === "hookMessage") && m.display === false
+	);
+}
+
+/** 存档 `file`（完整路径，精确匹配）的已入库消息（含可见 `custom_message`），按 `seq` 升序。 */
 export function subagentMessages(
 	entries: readonly Entry[],
 	file: string,
 ): JsonRecord[] {
 	return entries
-		.filter((e) => e.type === "message" && e.file === file)
+		.filter(
+			(e) =>
+				e.file === file &&
+				(e.type === "message" || e.type === "custom_message"),
+		)
 		.sort((a, b) => a.seq - b.seq)
-		.flatMap((e) =>
-			isRecord(e.payload) && isRecord(e.payload.message)
-				? [e.payload.message]
-				: [],
-		);
+		.flatMap((e) => {
+			if (!isRecord(e.payload)) return [];
+			if (e.type === "custom_message") {
+				return e.payload.display === false
+					? []
+					: [{ ...e.payload, role: "custom" }];
+			}
+			if (!isRecord(e.payload.message)) return [];
+			return isHiddenCustomMessage(e.payload.message)
+				? []
+				: [e.payload.message];
+		});
 }

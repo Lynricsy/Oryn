@@ -906,7 +906,14 @@ export function SubagentDialog({
 				{/* inline-size 容器：助手正文表格的伸出宽度（.md-wide 的 100cqw）以这里为界，不按视口算 */}
 				<div className="@container flex flex-col gap-2">
 					{messages
-						.filter((m) => m.role !== "toolResult")
+						.filter(
+							(m) =>
+								m.role !== "toolResult" &&
+								!(
+									(m.role === "custom" || m.role === "hookMessage") &&
+									m.display === false
+								),
+						)
 						.map((m, i) => (
 							// biome-ignore lint/suspicious/noArrayIndexKey: 子 agent 消息无稳定 id
 							<MessageView key={i} message={m} live={false} />
