@@ -1008,7 +1008,7 @@ type Snapshot struct {
 // AgentSnapshot 对应规格 AgentLiveState（帧保持原始字节）。
 type AgentSnapshot struct {
 	Status       apigen.AgentStatus `json:"status"`
-	Working      bool               `json:"working,omitempty"`
+	Working      bool               `json:"working"`
 	State        json.RawMessage    `json:"state,omitempty"`
 	Queue        json.RawMessage    `json:"queue,omitempty"`
 	PendingUI    []json.RawMessage  `json:"pendingUi"`

@@ -646,6 +646,55 @@ describe("助手头像闪烁", () => {
 				snapshotReceived: false,
 			});
 		});
+
+		it("仅后台异步任务未静止（thread.state=working、agent.working=false、isSettled=false）时，不误画等待头像", () => {
+			const store = getThreadStore(ctx.threadId);
+			store.getState().apply([
+				{
+					type: "thread.snapshot",
+					snapshot: {
+						type: "thread.snapshot",
+						threadId: ctx.threadId,
+						thread: {
+							id: ctx.threadId,
+							title: "新对话",
+							titleSource: "auto",
+							state: "working",
+							stateChangedAt: 0,
+							pinned: false,
+							labels: [],
+							unread: false,
+							createdAt: 0,
+							updatedAt: 0,
+						},
+						agent: {
+							status: "ready",
+							working: false,
+							state: {
+								isStreaming: false,
+								isSettled: false,
+								hasPendingAsyncWork: true,
+							},
+							pendingUi: [],
+							subagents: [],
+							live: [],
+						},
+						lastSeq: 6,
+						transcriptRev: 0,
+						fullReplay: false,
+					},
+				},
+			]);
+			const { unmount } = renderTranscript("working", [...done, user(6)]);
+			expect(screen.queryByTestId("awaiting-turn")).toBeNull();
+			unmount();
+			store.getState().patchLocal({
+				running: false,
+				thread: undefined,
+				state: undefined,
+				snapshotReceived: false,
+			});
+		});
 	});
 });
 

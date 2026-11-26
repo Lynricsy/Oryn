@@ -4901,7 +4901,7 @@ type AgentLiveState struct {
 	// Subagents 各子 agent 最新的 `subagent_lifecycle` / `subagent_progress` 帧
 	Subagents []OmpFrame `json:"subagents"`
 
-	// Working 当前是否有正在进行的回合（控制面实时缓冲 `Live.working`，由 `prompt` / `agent_start` 置真、终结 `agent_end` 或 `live.reset` 清零；不含仅有后台异步任务未静止的情况）。`get_state` 缓存可能在 `agent_start` 之后滞后，重订阅时客户端据此还原运行态
+	// Working 当前是否有正在进行的回合（控制面实时缓冲 `Live.working`，由 `prompt` / `agent_start` 置真、终结 `agent_end` 或 `live.reset` 清零；不含仅有后台异步任务未静止的情况）。控制面始终显式下发 `true` / `false`，客户端直接采用，仅在旧服务端缺省时回退到 `state`
 	Working *bool `json:"working,omitempty"`
 }
 

@@ -1189,8 +1189,11 @@ export function applySnapshot(
 	next = {
 		...next,
 		running:
-			snap.agent.working === true ||
-			(next.state ? next.state.isStreaming || !next.state.isSettled : false),
+			typeof snap.agent.working === "boolean"
+				? snap.agent.working
+				: next.state
+					? next.state.isStreaming || !next.state.isSettled
+					: false,
 	};
 	if (isRecord(snap.agent.queue)) {
 		const queue = queueFrom(snap.agent.queue);

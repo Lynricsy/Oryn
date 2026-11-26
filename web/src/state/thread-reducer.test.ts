@@ -628,7 +628,7 @@ describe("thread.snapshot", () => {
 		expect(s.running).toBe(true);
 	});
 
-	it("仅 thread.state 为 working（如 pendingAsync）但 agent.working 不为真且 state 空闲时，不强行置 running", () => {
+	it("仅后台异步任务未静止（thread.state=working、agent.working=false、state.isSettled=false）时，不误判为 running", () => {
 		const s = applySnapshot(initialThreadState(TID), {
 			type: "thread.snapshot",
 			threadId: TID,
@@ -646,7 +646,12 @@ describe("thread.snapshot", () => {
 			},
 			agent: {
 				status: "ready",
-				state: { isStreaming: false, isSettled: true },
+				working: false,
+				state: {
+					isStreaming: false,
+					isSettled: false,
+					hasPendingAsyncWork: true,
+				},
 				pendingUi: [],
 				subagents: [],
 				live: [],

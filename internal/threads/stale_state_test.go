@@ -1,6 +1,7 @@
 package threads
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -93,4 +94,7 @@ func TestSubscribeSnapshotCarriesWorkingWithoutPendingAsyncConflation(t *testing
 	require.NoError(t, f.s.Subscribe(f.ctx, th.id, func(s Snapshot) { asyncOnly = s }))
 	assert.Equal(t, apigen.ThreadStateWorking, asyncOnly.Thread.State)
 	assert.False(t, asyncOnly.Agent.Working, "仅有后台异步任务未静止时，agent.working 必须为 false")
+	rawAgent, err := json.Marshal(asyncOnly.Agent)
+	require.NoError(t, err)
+	assert.Contains(t, string(rawAgent), `"working":false`, "快照必须显式发送 working:false，便于前端直接覆盖滞后的 state")
 }
