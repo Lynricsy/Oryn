@@ -80,7 +80,11 @@ export function Tile({ icon }: { icon: IconName }): ReactNode {
 	);
 }
 
-/** 列表行；`children` 渲染在行下方、与文字列对齐（就地结果、错误）。 */
+/**
+ * 列表行；`children` 渲染在行下方、与文字列对齐（就地结果、错误）。
+ * 行宽放不下「文字列至少 10rem + 行尾」时（手机竖屏），行尾整体换到下一行靠右，标题不被挤没、尾部不被裁切；
+ * 桌面宽度下行尾仍在同一行，各行的定宽状态列照常对齐。
+ */
 export function GroupRow({
 	icon,
 	title,
@@ -96,9 +100,9 @@ export function GroupRow({
 }): ReactNode {
 	return (
 		<li className="group/row transition-colors duration-150 hover:bg-raised">
-			<div className="flex min-h-14 items-center gap-3 py-2 pr-3 pl-3.5">
+			<div className="flex min-h-14 flex-wrap items-center gap-x-3 gap-y-2 py-2 pr-3 pl-3.5">
 				{icon && <Tile icon={icon} />}
-				<div className="flex min-w-0 flex-1 flex-col gap-0.5">
+				<div className="flex min-w-40 flex-1 flex-col gap-0.5">
 					<div className="flex min-w-0 items-center gap-1.5 font-[550] text-fg text-sm">
 						{title}
 					</div>
@@ -109,7 +113,9 @@ export function GroupRow({
 					)}
 				</div>
 				{trailing && (
-					<div className="flex shrink-0 items-center gap-2">{trailing}</div>
+					<div className="ml-auto flex shrink-0 items-center gap-2">
+						{trailing}
+					</div>
 				)}
 			</div>
 			{children && <div className="pr-3 pb-2.5 pl-[54px]">{children}</div>}
