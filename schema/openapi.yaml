@@ -15053,6 +15053,7 @@ components:
         - $ref: '#/components/schemas/WsServerGitHubChanged'
         - $ref: '#/components/schemas/WsServerSshChanged'
         - $ref: '#/components/schemas/WsServerBoxesChanged'
+        - $ref: '#/components/schemas/WsServerSandboxesChanged'
         - $ref: '#/components/schemas/WsServerProjectRepoChanged'
         - $ref: '#/components/schemas/WsServerArtifactsChanged'
         - $ref: '#/components/schemas/WsServerArtifactVersion'

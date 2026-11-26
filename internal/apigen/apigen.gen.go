@@ -17354,6 +17354,40 @@ func (t *WsServerMessage) MergeWsServerBoxesChanged(v WsServerBoxesChanged) erro
 	return err
 }
 
+// AsWsServerSandboxesChanged returns the union data inside the WsServerMessage as a WsServerSandboxesChanged
+func (t WsServerMessage) AsWsServerSandboxesChanged() (WsServerSandboxesChanged, error) {
+	var body WsServerSandboxesChanged
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWsServerSandboxesChanged overwrites any union data inside the WsServerMessage as the provided WsServerSandboxesChanged
+func (t *WsServerMessage) FromWsServerSandboxesChanged(v WsServerSandboxesChanged) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"sandboxes.changed"}`))
+	t.union = b
+	return err
+}
+
+// MergeWsServerSandboxesChanged performs a merge with any union data inside the WsServerMessage, using the provided WsServerSandboxesChanged
+func (t *WsServerMessage) MergeWsServerSandboxesChanged(v WsServerSandboxesChanged) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"type":"sandboxes.changed"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 // AsWsServerProjectRepoChanged returns the union data inside the WsServerMessage as a WsServerProjectRepoChanged
 func (t WsServerMessage) AsWsServerProjectRepoChanged() (WsServerProjectRepoChanged, error) {
 	var body WsServerProjectRepoChanged
@@ -17724,6 +17758,8 @@ func (t WsServerMessage) ValueByDiscriminator() (interface{}, error) {
 		return t.AsWsServerProjectRepoChanged()
 	case "res":
 		return t.AsWsServerRes()
+	case "sandboxes.changed":
+		return t.AsWsServerSandboxesChanged()
 	case "schedules.changed":
 		return t.AsWsServerSchedulesChanged()
 	case "ssh.changed":
