@@ -30,6 +30,7 @@ type fakeHS struct {
 	patches    []map[string]any
 	models     []map[string]any
 	retains    [][]map[string]any // 每次 retain 请求的 items
+	retainSync []bool             // 每次 retain 请求是否同步（async=false）
 	deletes    []string           // 删除的 document id
 	down       bool
 	failRetain bool
@@ -94,10 +95,21 @@ func (f *fakeHS) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var items []map[string]any
+		seen := map[string]bool{}
 		for _, it := range body["items"].([]any) {
-			items = append(items, it.(map[string]any))
+			item := it.(map[string]any)
+			// 与 Hindsight 一致：异步批次里 document_id 不得重复，同步路径才会把它们合成一个 document
+			if id, _ := item["document_id"].(string); id != "" && body["async"] == true {
+				if seen[id] {
+					http.Error(w, `{"detail":"Batch contains duplicate document_ids"}`, http.StatusBadRequest)
+					return
+				}
+				seen[id] = true
+			}
+			items = append(items, item)
 		}
 		f.retains = append(f.retains, items)
+		f.retainSync = append(f.retainSync, body["async"] != true)
 		_, _ = w.Write([]byte(`{"operation_id":"op"}`))
 	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, root+"/documents/"):
 		f.deletes = append(f.deletes, strings.TrimPrefix(r.URL.Path, root+"/documents/"))

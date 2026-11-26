@@ -202,18 +202,33 @@ type retainItem struct {
 	UpdateMode string `json:"update_mode"`
 }
 
-// retain 异步写入块（一次请求）。
+// retain 写入块。每块一个 item 的（工作线程）合成一次异步请求；一块多个 item 的（助手对话：一个单元一个 item，各自带
+// seq 出处）逐块同步写入——Hindsight 只在同步路径把同一 document_id 的多个 item 合成一个 document，异步批次里
+// document_id 重复直接 400（memory_engine.py retain_batch_async）。
 func (s *Service) retain(ctx context.Context, b *memory.Bank, chunks []Chunk) error {
-	var items []retainItem
+	var batch []retainItem
 	for _, c := range chunks {
+		items := make([]retainItem, 0, len(c.Items))
 		for _, it := range c.Items {
 			items = append(items, retainItem{RetainItem: it, UpdateMode: "replace"})
 		}
+		if len(items) > 1 {
+			if err := s.postRetain(ctx, b, items, false); err != nil {
+				return err
+			}
+			continue
+		}
+		batch = append(batch, items...)
 	}
-	if len(items) == 0 {
+	if len(batch) == 0 {
 		return nil
 	}
-	if err := b.Call(ctx, http.MethodPost, "/memories", map[string]any{"items": items, "async": true}, nil); err != nil {
+	return s.postRetain(ctx, b, batch, true)
+}
+
+// postRetain 发一次 retain 请求。同步请求要等 Hindsight 抽取完事实，受 memory 客户端 5 分钟的响应头时限约束。
+func (s *Service) postRetain(ctx context.Context, b *memory.Bank, items []retainItem, async bool) error {
+	if err := b.Call(ctx, http.MethodPost, "/memories", map[string]any{"items": items, "async": async}, nil); err != nil {
 		return upstream("写入记忆", err)
 	}
 	return nil

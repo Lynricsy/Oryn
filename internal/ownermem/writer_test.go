@@ -90,6 +90,8 @@ func TestWriterIdleAndArchive(t *testing.T) {
 	e.now = e.now.Add(25 * time.Minute)
 	assert.Equal(t, 1, e.scan(t), "对话空闲满 30 分钟")
 	assert.Equal(t, []string{"conv:c1:0"}, e.hs.retainedDocs(0))
+	assert.Len(t, e.hs.retains[0], 2, "主人消息与末尾助手回复各一个 item，同属一个 document")
+	assert.True(t, e.hs.retainSync[0], "一块多个 item 时同步写入（异步批次不允许重复 document_id）")
 	it := e.hs.retains[0][0]
 	assert.Equal(t, "replace", it["update_mode"])
 	assert.Contains(t, it["tags"], "src:assistant")
@@ -98,6 +100,7 @@ func TestWriterIdleAndArchive(t *testing.T) {
 	e.exec(t, `UPDATE threads SET archived_at = ? WHERE id = 'w1'`, e.now.UnixMilli())
 	assert.Equal(t, 1, e.scan(t), "归档的线程即使在运行也立即写入")
 	assert.Equal(t, []string{"thread:w1:0"}, e.hs.retainedDocs(1))
+	assert.False(t, e.hs.retainSync[1], "每块一个 item 的工作线程照常异步写入")
 }
 
 // TestWriterChangedChunksOnly:追加消息只重写变了的块；转录回退后块数变少时删除多出的 document。
