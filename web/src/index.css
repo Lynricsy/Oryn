@@ -2074,11 +2074,3 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 		translate: 33% 0;
 	}
 }
-
-/* 工作台分组列表（components/ui/workbench.tsx）：行间发丝线从文字列起，不穿过左侧 54px 的图标列 */
-.wb-list > li + li {
-	background-image: linear-gradient(var(--line), var(--line));
-	background-size: calc(100% - 54px) 1px;
-	background-position: right top;
-	background-repeat: no-repeat;
-}

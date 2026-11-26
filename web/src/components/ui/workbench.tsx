@@ -4,7 +4,7 @@
  * 试点：目前只有「设置 › 通知」与它的弹窗在用；确认真实效果后替换 data.tsx 的 Card / ListRow 与
  * primitives.tsx 的 Toggle / Field / TextInput / TextArea / Select，届时删除旧件，不长期并存。
  *
- * - 分组：标题在外（12.5/600 次要灰），行在内（16px 圆角面板，发丝线从文字列起，见 index.css `.wb-list`）。
+ * - 分组：标题在外（12.5/600 次要灰），行在内（16px 圆角面板，行间一条贯穿整行的发丝线）。
  * - 行：28px 中性图标方块 + 标题 / 说明 + 行尾；`Reveal` 包住的动作平时不占位，悬停或 Tab 进这一行时出现，
  *   `StatusCell` 是定宽状态列，所以出现的动作与状态文字长短无关，后面的 ⋯ 和开关也不动。
  * - 开关 / 勾选开态用墨色（深色里整体反色：白底黑钮）。
@@ -62,7 +62,7 @@ export function Group({
 /** 分组面板：一列 `GroupRow`。 */
 export function GroupList({ children }: { children: ReactNode }): ReactNode {
 	return (
-		<ul className="wb-list overflow-hidden rounded-[16px] bg-panel shadow-xs ring-1 ring-border">
+		<ul className="divide-y divide-border overflow-hidden rounded-[16px] bg-panel shadow-xs ring-1 ring-border">
 			{children}
 		</ul>
 	);
