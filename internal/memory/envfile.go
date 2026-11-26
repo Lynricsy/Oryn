@@ -167,6 +167,9 @@ func envLines(in envInput) []envLine {
 		{Key: "HINDSIGHT_API_LLM_OUTPUT_LANGUAGE", Value: OutputLanguage},
 		{Key: "HINDSIGHT_API_LLM_MAX_CONCURRENT", Value: llmConcurrency},
 		{Key: "HINDSIGHT_API_WORKER_MAX_SLOTS", Value: workerSlots},
+		{Value: "关闭 gemini 显式上下文缓存：中转不放行 cachedContents（上游按请求换真实模型与密钥，缓存对象无法跨请求复用），" +
+			"开着只会每次建缓存失败再回退；隐式缓存由上游自动命中，不受影响"},
+		{Key: "HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED", Value: "false"},
 		{Value: "模型：每种用途写固定别名，经 orynd 中转替换成管理页选定的真实模型"},
 	}
 	for _, p := range Purposes {
