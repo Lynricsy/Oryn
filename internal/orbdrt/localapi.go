@@ -44,7 +44,8 @@ func (c rollingConn) Write(b []byte) (int, error) {
 	return c.Conn.Write(b)
 }
 
-// localHandler 返回本机 API 的路由：文件（fs）、改动（git）、附件（attachments）、受管服务（services）、sync 与桌面（desktop）。
+// localHandler 返回本机 API 的路由：文件（fs）、改动（git）、附件（attachments）、受管服务（services）、sync 与桌面（desktop）；
+// 沙箱（M30 精简模式）只有 /fs/* 与 /sandbox/*。
 func (r *Runtime) localHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /fs/roots", r.handleFsRoots)
@@ -55,6 +56,8 @@ func (r *Runtime) localHandler() http.Handler {
 	mux.HandleFunc("POST /fs/mkdir", r.handleFsMkdir)
 	mux.HandleFunc("POST /fs/rename", r.handleFsRename)
 	mux.HandleFunc("POST /fs/delete", r.handleFsDelete)
+	mux.HandleFunc("GET /fs/tar", r.handleFsTarGet)
+	mux.HandleFunc("PUT /fs/tar", r.handleFsTarPut)
 	mux.HandleFunc("GET /git/status", r.handleGitStatus)
 	mux.HandleFunc("GET /git/diff", r.handleGitDiff)
 	mux.HandleFunc("GET /git/commits", r.handleGitCommits)
@@ -71,6 +74,9 @@ func (r *Runtime) localHandler() http.Handler {
 	mux.HandleFunc("GET /sync/bundle", r.handleSyncBundle)
 	r.deskRoutes(mux)
 	r.boxRoutes(mux)
+	if r.cfg.Sandbox {
+		r.sandboxRoutes(mux)
+	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		writeErr(w, &apiError{status: http.StatusNotFound, code: "not_found", msg: "no such route"})
 	})
@@ -78,8 +84,12 @@ func (r *Runtime) localHandler() http.Handler {
 		if h := r.cfg.OnLocalRequest; h != nil {
 			h(req)
 		}
-		// runner 没有 oryn sync、受管服务与 box app。
-		if r.runner != nil && (strings.HasPrefix(req.URL.Path, "/sync/") || strings.HasPrefix(req.URL.Path, "/services/") || strings.HasPrefix(req.URL.Path, "/box/")) {
+		if r.cfg.Sandbox && !strings.HasPrefix(req.URL.Path, "/fs/") && !strings.HasPrefix(req.URL.Path, "/sandbox/") {
+			writeErr(w, &apiError{status: http.StatusNotFound, code: "not_found", msg: "not available in a sandbox"})
+			return
+		}
+		// runner 没有 oryn sync、受管服务、box app 与目录传输。
+		if r.runner != nil && (strings.HasPrefix(req.URL.Path, "/sync/") || strings.HasPrefix(req.URL.Path, "/services/") || strings.HasPrefix(req.URL.Path, "/box/") || strings.HasPrefix(req.URL.Path, "/fs/tar")) {
 			writeErr(w, &apiError{status: http.StatusNotFound, code: "not_found", msg: "not available on a runner"})
 			return
 		}

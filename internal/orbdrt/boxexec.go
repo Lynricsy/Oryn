@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -102,8 +103,8 @@ func incompleteRuneTail(b []byte) int {
 	return 0
 }
 
-// boxExecDir 解析 exec 的工作目录：`~` / `~/…` / 绝对路径，须（跟随符号链接后）落在 $HOME 之下或等于 $HOME，且是目录。
-func (r *Runtime) boxExecDir(cwd string) (string, error) {
+// execDir 解析 exec 的工作目录（box 与沙箱共用）：`~` / `~/…` / 绝对路径，须（跟随符号链接后）落在 $HOME 之下或等于 $HOME，且是目录。
+func (r *Runtime) execDir(cwd string) (string, error) {
 	if cwd == "" {
 		cwd = "~"
 	}
@@ -149,15 +150,22 @@ func (r *Runtime) handleBoxExec(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, badRequest("timeoutSec must be 1-%d", maxBoxExecTimeout))
 		return
 	}
-	dir, err := r.boxExecDir(body.Cwd)
+	dir, err := r.execDir(body.Cwd)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	ctx, cancel := context.WithTimeout(req.Context(), time.Duration(body.TimeoutSec)*time.Second)
+	r.runExecNDJSON(w, req, dir, body.Command, nil, time.Duration(body.TimeoutSec)*time.Second)
+}
+
+// runExecNDJSON 在 dir 里以登录 shell（bash -lc）跑 command，输出按 NDJSON 流回（格式见文件头）；extraEnv 覆盖在
+// 登录环境之上。超时回 124、启动失败回 127、被信号结束回 128+n；超时或对端断开时杀进程组。
+func (r *Runtime) runExecNDJSON(w http.ResponseWriter, req *http.Request, dir, command string, extraEnv map[string]string, timeout time.Duration) {
+	ctx, cancel := context.WithTimeout(req.Context(), timeout)
 	defer cancel()
 	env := loginEnv(ctx, dir, r.baseEnv())
-	cmd := r.bins.command(ctx, "bash", "-lc", body.Command)
+	maps.Copy(env, extraEnv)
+	cmd := r.bins.command(ctx, "bash", "-lc", command)
 	cmd.Dir = dir
 	cmd.Env = envList(env)
 	cmd.Stdin = nil

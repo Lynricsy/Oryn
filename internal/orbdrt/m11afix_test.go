@@ -383,20 +383,20 @@ func TestOrbHTTPClient(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	hc, err := orbHTTPClient(certPEM(cp.srv.Certificate().Raw))
+	hc, err := orbHTTPClient(certPEM(cp.srv.Certificate().Raw), "")
 	require.NoError(t, err)
 	want := x509.NewCertPool()
 	want.AddCert(cp.srv.Certificate())
 	assert.True(t, want.Equal(hc.Transport.(*http.Transport).TLSClientConfig.RootCAs), "only the pinned CA")
 
-	other, err := orbHTTPClient(unrelatedCAPEM(t))
+	other, err := orbHTTPClient(unrelatedCAPEM(t), "")
 	require.NoError(t, err)
 	_, err = link.DialClient(ctx, link.URL(cp.srv.URL), testToken, other)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "certificate signed by unknown authority")
 
 	for _, empty := range []string{"", "  \n\t"} {
-		hc, err := orbHTTPClient(empty)
+		hc, err := orbHTTPClient(empty, "")
 		require.NoError(t, err)
 		assert.Nil(t, hc, "system roots")
 	}

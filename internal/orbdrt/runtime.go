@@ -125,6 +125,12 @@ type Config struct {
 	// 一切 HTTPS 请求只信任这里的证书（不合并系统根）；为空且 URL 为 https 时用系统根（反代场景）。
 	// 解析失败时 New 返回错误。
 	OrbCAPEM string
+	// LinkVia 是拨 URL 时底层连接的走法（M30，ConfigFromEnv 读 ORYN_LINK_VIA）：`unix:<绝对路径>` 或 `vsock:<端口>`；
+	// 空 = 按 URL 直连。无法解析时 New 返回错误。
+	LinkVia string
+	// Sandbox 为真时以 Agent 沙箱的精简模式运行（M30，ConfigFromEnv 读 ORYN_SANDBOX=1）：只服务控制面的 fs 流
+	// （`/fs/*` 与 `/sandbox/*`）与 shutdown；不开 egress、orbd.sock、SSH 网关、桌面、box 与受管服务的上报。
+	Sandbox bool
 
 	// Runner 非 nil 时以 runner 形态运行（M11b，`orbd run --runner`，见 runner.go）：用户自己的机器与真实 $HOME，
 	// 只服务声明的目录；不开 orbd.sock / 受管服务 / 桌面，不写技能。OrbID 为空时 New 经 whoami 取得。
@@ -175,6 +181,8 @@ func ConfigFromEnv(version string) (Config, error) {
 	cfg.DesktopTmpDir = os.Getenv("ORYN_DESKTOP_X11_TMPDIR")
 	cfg.NestedDocker = os.Getenv("ORYN_NESTED_DOCKER") == "1"
 	cfg.OrbCAPEM = os.Getenv("ORYN_ORB_CA_PEM")
+	cfg.LinkVia = os.Getenv("ORYN_LINK_VIA")
+	cfg.Sandbox = os.Getenv("ORYN_SANDBOX") == "1"
 	return cfg, nil
 }
 
@@ -270,6 +278,8 @@ type Runtime struct {
 	// maxFileBytes / maxAttachmentBytes 是 PUT /fs/file 与 PUT /attachments/file 的上限（测试可调小）。
 	maxFileBytes       int64
 	maxAttachmentBytes int64
+	// maxTarBytes 是 PUT /fs/tar 的上限（M30，fstar.go；测试可调小）。
+	maxTarBytes int64
 
 	// svc 是受管服务监督器（M4）。
 	svc *serviceSupervisor
@@ -300,6 +310,8 @@ type Runtime struct {
 	comp *computer
 	// browserRelay 是客户端浏览器中继前门与按需子进程管理器（M27）；协调宿主为 nil。
 	browserRelay *browserRelayManager
+	// sbxJobs 是沙箱里的后台作业（M30，sandboxjobs.go）；只在精简模式下非 nil。
+	sbxJobs *sandboxJobs
 }
 
 // conn 是一条已建立并发过 hello 的 link。
@@ -311,6 +323,9 @@ type conn struct {
 
 // New 校验配置、绑定 egress 监听并探测 agent 版本。runner 形态另取实例锁并经 whoami 取得 orb id。
 func New(cfg Config) (_ *Runtime, err error) {
+	if cfg.Sandbox && (cfg.Runner != nil || cfg.Coordinator) {
+		return nil, errors.New("orbdrt: sandbox mode cannot be combined with runner or coordinator mode")
+	}
 	if cfg.Coordinator {
 		if cfg.OrbID == "" || cfg.Connect == nil {
 			return nil, errors.New("orbdrt: OrbID and Connect are required in coordinator mode")
@@ -396,8 +411,13 @@ func New(cfg Config) (_ *Runtime, err error) {
 	if cfg.DockerdProbeInterval <= 0 {
 		cfg.DockerdProbeInterval = defaultDockerdProbeInterval
 	}
-	// 先于任何资源分配：CA 无效直接启动失败。
-	hc, err := orbHTTPClient(cfg.OrbCAPEM)
+	// 先于任何资源分配：CA 或 link 走法无效直接启动失败。
+	if cfg.LinkVia != "" {
+		if _, _, err := parseLinkVia(cfg.LinkVia); err != nil {
+			return nil, fmt.Errorf("orbdrt: ORYN_LINK_VIA: %w", err)
+		}
+	}
+	hc, err := orbHTTPClient(cfg.OrbCAPEM, cfg.LinkVia)
 	if err != nil {
 		return nil, fmt.Errorf("orbdrt: ORYN_ORB_CA_PEM: %w", err)
 	}
@@ -457,9 +477,9 @@ func New(cfg Config) (_ *Runtime, err error) {
 		}
 	}
 	// 出站通道常驻（M21 起 runner 也是）：控制面在其上注入密钥，runner 只被放行模型中转与记忆。
-	// 协调宿主由调用方给好监听（EgressListener）。
+	// 协调宿主由调用方给好监听（EgressListener）。沙箱没有出站通道（M30）。
 	ln := cfg.EgressListener
-	if ln == nil {
+	if ln == nil && !cfg.Sandbox {
 		if ln, err = net.Listen("tcp", cfg.EgressAddr); err != nil {
 			if rs != nil {
 				return nil, fmt.Errorf("orbdrt: egress listen %s: %w (another process holds the port; set ORYN_EGRESS_ADDR to another address)", cfg.EgressAddr, err)
@@ -468,7 +488,7 @@ func New(cfg Config) (_ *Runtime, err error) {
 		}
 	}
 	defer func() {
-		if err != nil {
+		if err != nil && ln != nil {
 			_ = ln.Close()
 		}
 	}()
@@ -487,12 +507,13 @@ func New(cfg Config) (_ *Runtime, err error) {
 		local:              link.NewStreamListener("oryn-fs"),
 		maxFileBytes:       MaxFileBytes,
 		maxAttachmentBytes: MaxAttachmentBytes,
+		maxTarBytes:        MaxTarBytes,
 
 		bins:       newBinResolver(os.Getenv("PATH"), home),
 		httpClient: hc,
 		runner:     rs,
 	}
-	if hc != nil && !strings.HasPrefix(cfg.URL, "https://") && !strings.HasPrefix(cfg.URL, "wss://") {
+	if strings.TrimSpace(cfg.OrbCAPEM) != "" && !strings.HasPrefix(cfg.URL, "https://") && !strings.HasPrefix(cfg.URL, "wss://") {
 		r.log.Warn("ORYN_ORB_CA_PEM is set but ORYN_URL is not https; the link stays unencrypted", "url", cfg.URL)
 	}
 	if rs != nil && plainRemoteURL(cfg.URL) {
@@ -500,7 +521,16 @@ func New(cfg Config) (_ *Runtime, err error) {
 	}
 	r.localSrv = &http.Server{Handler: r.localHandler(), ReadHeaderTimeout: 30 * time.Second}
 	r.svc = newServiceSupervisor(r)
-	if !cfg.Coordinator && rs == nil {
+	if cfg.Sandbox {
+		// 精简模式（M30）：没有 box、桌面、工具执行器，不写 agent 的扩展与技能；嵌套 Docker 照旧。
+		if cfg.NestedDocker {
+			r.dockerd = newDockerd(r)
+		}
+		if r.sbxJobs, err = newSandboxJobs(r); err != nil {
+			return nil, fmt.Errorf("orbdrt: %w", err)
+		}
+	}
+	if !cfg.Coordinator && rs == nil && !cfg.Sandbox {
 		// 协调宿主没有桌面，也不写 orb 扩展与技能（协调档的 omp 以 --no-extensions 启动；全局助手只加载控制面经
 		// omp-home 下发的内置技能 oryn，Space 协调者 --no-skills）；
 		// runner 的扩展与技能见上，也没有桌面、工具执行器与嵌套 Docker。
@@ -517,20 +547,25 @@ func New(cfg Config) (_ *Runtime, err error) {
 			return nil, fmt.Errorf("orbdrt: %w", err)
 		}
 	}
-	if !cfg.Coordinator {
+	if !cfg.Coordinator && !cfg.Sandbox {
 		r.sshLn = r.listenSSH()
-	}
-	if !cfg.Coordinator {
 		r.browserRelay = newBrowserRelayManager(r)
 	}
 	r.loadSetupStatus()
 	r.ctx, r.cancel = context.WithCancel(context.Background())
-	r.agentVersion = detectAgentVersion(r.bins, cfg.AgentBin)
+	if !cfg.Sandbox {
+		r.agentVersion = detectAgentVersion(r.bins, cfg.AgentBin)
+	}
 	return r, nil
 }
 
-// EgressAddr 返回 egress 实际监听地址。
-func (r *Runtime) EgressAddr() string { return r.egressLn.Addr().String() }
+// EgressAddr 返回 egress 实际监听地址；沙箱没有 egress（空串）。
+func (r *Runtime) EgressAddr() string {
+	if r.egressLn == nil {
+		return ""
+	}
+	return r.egressLn.Addr().String()
+}
 
 // AgentVersion 返回 `<agent> --version` 的输出（探测失败为空）。
 func (r *Runtime) AgentVersion() string { return r.agentVersion }
@@ -575,7 +610,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 		wg.Go(func() { r.metricsLoop(ctx) })
 		wg.Go(func() { _ = r.localSrv.Serve(r.local) })
 	}
-	if !r.cfg.Coordinator && r.runner == nil {
+	if !r.cfg.Coordinator && r.runner == nil && !r.cfg.Sandbox {
 		wg.Go(func() { r.serveSocket(ctx) })
 		wg.Go(func() { r.serveGh(ctx) })
 		wg.Go(func() { r.svc.reportLoop(ctx) })
@@ -630,6 +665,9 @@ func (r *Runtime) Shutdown(grace time.Duration) {
 	}
 	if c := r.comp; c != nil {
 		wg.Go(func() { c.stop(min(grace, computerStopGrace)) })
+	}
+	if j := r.sbxJobs; j != nil {
+		wg.Go(j.killAll)
 	}
 	if br := r.browserRelay; br != nil {
 		wg.Go(func() { br.Close() })
@@ -777,7 +815,7 @@ func (r *Runtime) connectOnce(ctx context.Context) (connected bool, err error) {
 	r.flushResultsLocked(c)
 	r.resultsMu.Unlock()
 	// 服务与桌面快照在每条新 link 上补发一次（断连期间的变化被丢弃了）。
-	if !r.cfg.Coordinator && r.runner == nil {
+	if !r.cfg.Coordinator && r.runner == nil && !r.cfg.Sandbox {
 		r.svc.markDirty()
 	}
 	if r.desk != nil {
@@ -798,7 +836,8 @@ func (r *Runtime) connectOnce(ctx context.Context) (connected bool, err error) {
 }
 
 // acceptLoop 分派控制面主动打开的流：`fs` 流交给本机 API 的 http.Server，`portal` 流对接本机端口，
-// `desk` 流对接 Xvnc（桌面未启用时关闭），其余类型直接关闭。协调宿主只接受同步文件库的 `library` 流（M13）。
+// `desk` 流对接 Xvnc（桌面未启用时关闭），其余类型直接关闭。协调宿主只接受同步文件库的 `library` 流（M13），
+// 沙箱只接受 `fs` 流（M30）。
 func (r *Runtime) acceptLoop(sess *link.Session) {
 	for {
 		st, err := sess.AcceptStream(context.Background())
@@ -815,6 +854,11 @@ func (r *Runtime) acceptLoop(sess *link.Session) {
 				continue
 			}
 			r.log.Warn("coordinator host refuses streams from the control plane", "t", st.Header.T)
+			_ = st.Close()
+			continue
+		}
+		if r.cfg.Sandbox && st.Header.T != link.StreamFS {
+			r.log.Warn("sandbox refuses streams other than fs", "t", st.Header.T)
 			_ = st.Close()
 			continue
 		}
@@ -861,7 +905,7 @@ func (r *Runtime) hello() apigen.LinkCtlHelloParams {
 	}
 	// terminal（终端面板）与 metrics（metrics.sample）是 M11b 才有名字的既有能力，orb 一直具备。
 	// memory（M16）：agent.start 接受 memory 参数。computer（M19）：认识 computer.*（工具执行器）。
-	features := []string{"fs", "git", "attachments", "services", "portal", "sync", "threads", "repo-update", "setup-defer-resume", "terminal", "metrics", "omphome-apply", "memory", "computer", "browser-relay"}
+	features := []string{"fs", "git", "attachments", "services", "portal", "sync", "threads", "repo-update", "setup-defer-resume", "terminal", "metrics", "omphome-apply", "memory", "computer", "browser-relay", "fs-tar"}
 	if r.box != nil {
 		features = append(features, "box") // M23：/box/*（app 运行时与 exec）
 	}
@@ -876,6 +920,13 @@ func (r *Runtime) hello() apigen.LinkCtlHelloParams {
 	}
 	if r.cfg.Coordinator {
 		features = []string{"coordinator", "omphome-apply", "library"}
+	}
+	if r.cfg.Sandbox {
+		// M30：精简模式只有本机 API 的 /fs/* 与 /sandbox/*、指标，监督着 dockerd 时另有 docker。
+		features = []string{"fs", "fs-tar", "metrics", "sandbox"}
+		if r.dockerd != nil {
+			features = append(features, "docker")
+		}
 	}
 	var runnerInfo *apigen.LinkRunnerInfo
 	if r.runner != nil {
@@ -913,6 +964,9 @@ func decode[T any](params json.RawMessage) (T, error) {
 func (r *Runtime) onRequest(reqCtx context.Context, c *conn, method string, params json.RawMessage) (any, error) {
 	// 长操作使用运行时 ctx：link 断开不应中断 setup 或 agent 停止。
 	ctx := r.ctx
+	if r.cfg.Sandbox && method != "shutdown" {
+		return nil, link.ErrMethodNotFound
+	}
 	if computerMethods[method] && r.comp == nil {
 		return nil, ctlErr(CodeNotSupported, "%s is only available on an orb", method)
 	}

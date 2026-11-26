@@ -23,6 +23,8 @@ const (
 	StreamSSH = "ssh"
 	// StreamBrowserRelay 是 orynd→orbd 的一条流（M27）：客户端 Chrome 扩展经控制面与 orb 内 omp browser-relay 的 NDJSON 协议流。
 	StreamBrowserRelay = "browser_relay"
+	// StreamSandbox 是 orbd→orynd 的一条流（M30）：owner orb 内对 Agent 沙箱的一次调用，其后是 JSON 行。
+	StreamSandbox = "sandbox"
 )
 
 // MaxHeaderBytes 是流头行（含换行）的上限。
