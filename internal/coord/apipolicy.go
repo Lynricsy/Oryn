@@ -191,6 +191,10 @@ func buildAPIPolicy() map[string]opPolicy {
 	set("boxes", opConfirm, none, "deleteBox", "undeployBoxApp", "putBoxSecret", "deleteBoxSecret")
 	set("boxes", opDeny, deny(denyBinary("streamed; start a thread on the box (create_thread with box) to run commands")), "execBox")
 
+	// sandboxes（M30）
+	set("orbs", opRead, none, "listSandboxes")
+	set("orbs", opDeny, deny("sandboxes are destroyed by the thread that owns them or by the owner"), "deleteSandbox")
+
 	// shares（全部另计 share 限速）
 	set("shares", opRead, share, "listThreadShares", "listShares")
 	set("shares", opWrite, share, "revokeShare", "revokePublishedFile")

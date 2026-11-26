@@ -5261,6 +5261,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sandboxes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * agent 沙箱列表
+         * @description 给了 `thread` 时返回该线程名下在用的沙箱加最近 60 分钟内结束的；省略时返回全部在用的沙箱。
+         */
+        get: operations["listSandboxes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sandboxes/{sandbox}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description `sbx_<ULID>` */
+                sandbox: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * 销毁沙箱（原因记为 `owner`）
+         * @description 不存在 → 404 `sandbox_not_found`；已结束的沙箱直接成功。
+         */
+        delete: operations["deleteSandbox"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/box-activity": {
         parameters: {
             query?: never;
@@ -21342,6 +21385,51 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Box"];
                 };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listSandboxes: {
+        parameters: {
+            query?: {
+                thread?: components["schemas"]["ThreadId"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 沙箱列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SandboxList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteSandbox: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description `sbx_<ULID>` */
+                sandbox: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已开始销毁 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             default: components["responses"]["Error"];
         };

@@ -14669,6 +14669,11 @@ type ListPublicShareEntriesParams struct {
 	Limit *int   `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// ListSandboxesParams defines parameters for ListSandboxes.
+type ListSandboxesParams struct {
+	Thread *ThreadID `form:"thread,omitempty" json:"thread,omitempty"`
+}
+
 // ListSchedulesParams defines parameters for ListSchedules.
 type ListSchedulesParams struct {
 	Mode *ScheduleMode `form:"mode,omitempty" json:"mode,omitempty"`
@@ -18688,6 +18693,12 @@ type ServerInterface interface {
 	// DeleteRunner 删除 runner：令牌立即失效、其 orb 进入 `deleted`；线程保留转录（`orbId` 置空，只读）
 	// (DELETE /api/v1/runners/{id})
 	DeleteRunner(w http.ResponseWriter, r *http.Request, id ProviderIDPath)
+	// ListSandboxes agent 沙箱列表
+	// (GET /api/v1/sandboxes)
+	ListSandboxes(w http.ResponseWriter, r *http.Request, params ListSandboxesParams)
+	// DeleteSandbox 销毁沙箱（原因记为 `owner`）
+	// (DELETE /api/v1/sandboxes/{sandbox})
+	DeleteSandbox(w http.ResponseWriter, r *http.Request, sandbox string)
 	// ListSchedules 定时列表（两种模式；按创建时间）
 	// (GET /api/v1/schedules)
 	ListSchedules(w http.ResponseWriter, r *http.Request, params ListSchedulesParams)
@@ -20671,6 +20682,18 @@ func (_ Unimplemented) CreateRunner(w http.ResponseWriter, r *http.Request) {
 // DeleteRunner 删除 runner：令牌立即失效、其 orb 进入 `deleted`；线程保留转录（`orbId` 置空，只读）
 // (DELETE /api/v1/runners/{id})
 func (_ Unimplemented) DeleteRunner(w http.ResponseWriter, r *http.Request, id ProviderIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListSandboxes agent 沙箱列表
+// (GET /api/v1/sandboxes)
+func (_ Unimplemented) ListSandboxes(w http.ResponseWriter, r *http.Request, params ListSandboxesParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteSandbox 销毁沙箱（原因记为 `owner`）
+// (DELETE /api/v1/sandboxes/{sandbox})
+func (_ Unimplemented) DeleteSandbox(w http.ResponseWriter, r *http.Request, sandbox string) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -29739,6 +29762,65 @@ func (siw *ServerInterfaceWrapper) DeleteRunner(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// ListSandboxes operation middleware
+func (siw *ServerInterfaceWrapper) ListSandboxes(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListSandboxesParams
+
+	// ------------- Optional query parameter "thread" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "thread", r.URL.Query(), &params.Thread, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "thread"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "thread", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListSandboxes(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteSandbox operation middleware
+func (siw *ServerInterfaceWrapper) DeleteSandbox(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "sandbox" -------------
+	var sandbox string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "sandbox", chi.URLParam(r, "sandbox"), &sandbox, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sandbox", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteSandbox(w, r, sandbox)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListSchedules operation middleware
 func (siw *ServerInterfaceWrapper) ListSchedules(w http.ResponseWriter, r *http.Request) {
 
@@ -33978,6 +34060,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/boxes", wrapper.CreateBox)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/sandboxes", wrapper.ListSandboxes)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/sandboxes/{sandbox}", wrapper.DeleteSandbox)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/box-activity", wrapper.ListAllBoxActivity)

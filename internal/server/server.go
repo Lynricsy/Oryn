@@ -617,6 +617,7 @@ func (s *Server) init(ctx context.Context) error {
 	s.API.OwnerMemory = &api.OwnerMemoryDeps{Service: s.OwnerMemory}
 	s.API.SSH = &api.SSHDeps{Service: s.SSH}
 	s.API.Boxes = &api.BoxesDeps{Service: s.Boxes}
+	s.API.Sandboxes = &api.SandboxesDeps{Service: s.Sandboxes}
 	s.API.Repos = &api.ReposDeps{Service: s.Repos}
 	s.API.Artifacts = &api.ArtifactsDeps{Service: s.Artifacts, Host: frames, Render: renderer}
 	if s.Portal != nil {

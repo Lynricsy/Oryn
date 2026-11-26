@@ -40,6 +40,8 @@ type area struct {
 	Repos *ReposDeps
 	// Boxes 是 M23 的 box（boxes.go）；nil 时回 501。
 	Boxes *BoxesDeps
+	// Sandboxes 是 M30 的 agent 沙箱（sandboxes.go）；nil 时回 501。
+	Sandboxes *SandboxesDeps
 	// Research 是 M26 全局助手的后台研究（research.go）；nil 时回 501。
 	Research *ResearchDeps
 	// BrowserRelay 是 M27 客户端浏览器中继（browser_relay.go）；nil 时回 501。

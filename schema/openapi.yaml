@@ -62,6 +62,8 @@ tags:
     description: provider → 控制面（C1）
   - name: boxes
     description: Boxes：常驻机器与应用部署（M23）
+  - name: sandboxes
+    description: Agent 沙箱（M30）
   - name: websocket
     description: WebSocket 升级端点（不进入 strict server，由手写处理器服务）
   - name: shares
@@ -6372,6 +6374,44 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Box' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/sandboxes:
+    get:
+      tags: [sandboxes]
+      operationId: listSandboxes
+      summary: agent 沙箱列表
+      description: 给了 `thread` 时返回该线程名下在用的沙箱加最近 60 分钟内结束的；省略时返回全部在用的沙箱。
+      parameters:
+        - name: thread
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/ThreadId' }
+      responses:
+        '200':
+          description: 沙箱列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SandboxList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/sandboxes/{sandbox}:
+    parameters:
+      - name: sandbox
+        in: path
+        required: true
+        description: '`sbx_<ULID>`'
+        schema: { type: string }
+    delete:
+      tags: [sandboxes]
+      operationId: deleteSandbox
+      summary: 销毁沙箱（原因记为 `owner`）
+      description: 不存在 → 404 `sandbox_not_found`；已结束的沙箱直接成功。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204':
+          description: 已开始销毁
         default: { $ref: '#/components/responses/Error' }
   /api/v1/box-activity:
     get:
