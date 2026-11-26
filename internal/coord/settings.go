@@ -306,6 +306,22 @@ func (s *Service) refreshConversations(ctx context.Context) {
 	}
 }
 
+// OnLanguageChanged 在全局语言设置变更后丢弃旧备用对话，并让所有未归档的助手与 Space 协调对话在静止后重启
+// 以注入新的 ORYN_LANGUAGE 环境变量。
+func (s *Service) OnLanguageChanged(ctx context.Context) {
+	s.resetSpare(ctx)
+	s.refreshConversations(ctx)
+	kind, archived := threads.KindSpace, false
+	rows, err := s.st.Q.ListThreads(ctx, db.ListThreadsParams{Kind: &kind, Archived: &archived})
+	if err != nil {
+		slog.Warn("coord: 列出 Space 协调对话失败", "err", err)
+		return
+	}
+	for _, t := range rows {
+		s.th.RefreshAgent(ctx, t.ID)
+	}
+}
+
 // webAccess 报告全局助手联网是否开启（读设置失败按开启处理：真正的放行由出站代理按同一行决定）。
 func (s *Service) webAccess(ctx context.Context) bool {
 	a, err := s.loadSettings(ctx)

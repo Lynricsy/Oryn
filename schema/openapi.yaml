@@ -2727,6 +2727,40 @@ paths:
               schema: { $ref: '#/components/schemas/ComposerPrefs' }
         default: { $ref: '#/components/responses/Error' }
 
+  /api/v1/settings/language:
+    get:
+      tags: [settings]
+      operationId: getLanguageSettings
+      summary: 全局语言设置
+      responses:
+        '200':
+          description: 当前设置（尚未初始化所有者时为缺省值 zh-CN）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LanguageSettings' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [settings]
+      operationId: putLanguageSettings
+      summary: 设置全局语言（整体替换）
+      description: 尚未初始化所有者 → 409。变更后同步影响界面显示与后续启动的 agent（协调与助手对话在静止后自动重启生效）。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LanguageSettings' }
+      responses:
+        '200':
+          description: 写入后的设置
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LanguageSettings' }
+        default: { $ref: '#/components/responses/Error' }
+
   /api/v1/settings/selection-actions:
     get:
       tags: [settings]
@@ -9957,6 +9991,15 @@ components:
           type: string
           enum: [role, assistant]
           description: 首屏输入框默认选中的对象：`role` = config 里的 default role（普通 agent）；`assistant` = 全局助手
+    LanguageCode:
+      type: string
+      enum: [zh-CN, en]
+      description: 全局语言代码：`zh-CN`（简体中文）或 `en`（English）
+    LanguageSettings:
+      type: object
+      required: [language]
+      properties:
+        language: { $ref: '#/components/schemas/LanguageCode' }
     SelectionAction:
       type: object
       required: [id, name, prompt]
@@ -16433,6 +16476,8 @@ components:
           description: 工作线程允许的工具白名单（省略 = 不限制；空数组 `[]` = 禁用全部内置工具；由 orbd 在启动时与实际注册工具取交集生效）；只有普通工作线程接受
           items: { type: string }
           x-go-type-skip-optional-pointer: false
+        # 全局语言设置（由控制面下发；orbd 以 ORYN_LANGUAGE 传入 omp，约束标题生成与工具调用 intent 的语言；省略时不设置）
+        language: { $ref: '#/components/schemas/LanguageCode' }
     LinkCtlAgentStartResult:
       type: object
       required: [pid]

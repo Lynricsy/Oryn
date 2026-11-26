@@ -860,6 +860,7 @@ type Owner struct {
 	AutoPublishArtifacts     int64   `json:"autoPublishArtifacts"`
 	GithubAutomationIdentity string  `json:"githubAutomationIdentity"`
 	SelectionActions         string  `json:"selectionActions"`
+	Language                 string  `json:"language"`
 }
 
 type OwnerMemoryChunk struct {

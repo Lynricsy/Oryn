@@ -223,12 +223,14 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 			return
 		}
 	}
+	lang := s.ownerLanguage(ctx)
 	t.mu.Lock()
 	params := apigen.LinkCtlAgentStartParams{ThreadID: t.id, SessionDir: t.sessionDir, Env: map[string]string{}, InitFrames: initFrames(t, prof, terminal)}
 	// runner 线程（M11b）：agent 在线程的工作目录里启动
 	params.Cwd = t.cwd
 	params.Memory = mem
 	params.ProjectID, params.ProjectConfig = projectID, projectCfg
+	params.Language = &lang
 	if prof != nil {
 		profile := apigen.AgentProfileCoordinator
 		params.Profile, params.SystemPrompt = &profile, &prof.SystemPrompt
@@ -326,6 +328,22 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 		t.mu.Unlock()
 	}
 	slog.Debug("threads: agent 已启动", "thread", t.id, "pid", res.Pid)
+}
+
+// ownerLanguage 读取全局语言设置；尚未初始化所有者或读取异常时回退到 zh-CN。
+func (s *Service) ownerLanguage(ctx context.Context) apigen.LanguageCode {
+	if s.st == nil {
+		return apigen.ZhCN
+	}
+	v, err := s.st.Q.GetOwnerLanguage(ctx)
+	if err != nil {
+		return apigen.ZhCN
+	}
+	lang := apigen.LanguageCode(v)
+	if !lang.Valid() {
+		return apigen.ZhCN
+	}
+	return lang
 }
 
 // coordinatorSyncTimeout 是协调线程启动前同步文件库的上限（首次同步可能要推送较多文件）。

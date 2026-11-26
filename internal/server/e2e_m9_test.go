@@ -310,7 +310,7 @@ func TestE2EM9Coordinator(t *testing.T) {
 	assert.Contains(t, probe.Args, "--system-prompt")
 	assert.Contains(t, probe.Args, "--config")
 	// D10：Space 协调者没有 M19 第一层——环境里没有 PI_PROXY 与 ORYN_MCP_BASE，内置工具只有 read / write
-	allowed := []string{"HOME", "PATH", "LANG", "TMPDIR", "PI_RPC_EMIT_TITLE", "PI_NOTIFICATIONS", "OTEL_SDK_DISABLED", "PI_INTENT_TRACING", "ORYN_NERD_GLYPHS", "ORYN_THREAD_ID"}
+	allowed := []string{"HOME", "PATH", "LANG", "TMPDIR", "PI_RPC_EMIT_TITLE", "PI_NOTIFICATIONS", "OTEL_SDK_DISABLED", "PI_INTENT_TRACING", "ORYN_NERD_GLYPHS", "ORYN_LANGUAGE", "ORYN_THREAD_ID"}
 	for _, k := range probe.EnvKeys {
 		assert.Contains(t, allowed, k, "Space 协调 agent 的环境变量只有白名单")
 	}
@@ -319,6 +319,7 @@ func TestE2EM9Coordinator(t *testing.T) {
 	assert.Contains(t, probe.EnvKeys, "ORYN_THREAD_ID")
 	assert.Contains(t, probe.EnvKeys, "PI_INTENT_TRACING", "Web 的工具卡显示 intent（Core 19 起 RPC 默认关闭）")
 	assert.Contains(t, probe.EnvKeys, "ORYN_NERD_GLYPHS", "标题卡片改用 Nerd 字形（Core oryn-v19.0.1-4 起）")
+	assert.Contains(t, probe.EnvKeys, "ORYN_LANGUAGE", "全局语言设置传给协调 agent")
 	if os.Getuid() == 0 {
 		// C10.1′：root 部署时协调宿主降权到本实例的专用账号（不再与 nobody 共用身份）
 		acct, err := user.Lookup(coordhost.AutoUserName(coordDir))

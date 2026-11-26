@@ -83,6 +83,19 @@ func (q *Queries) GetOwnerAssistantIdentity(ctx context.Context) (GetOwnerAssist
 	return i, err
 }
 
+const getOwnerLanguage = `-- name: GetOwnerLanguage :one
+
+SELECT language FROM owner WHERE id = 1
+`
+
+// Global language preference ('zh-CN' | 'en').
+func (q *Queries) GetOwnerLanguage(ctx context.Context) (string, error) {
+	row := q.db.QueryRowContext(ctx, getOwnerLanguage)
+	var language string
+	err := row.Scan(&language)
+	return language, err
+}
+
 const getOwnerNewThreadTarget = `-- name: GetOwnerNewThreadTarget :one
 
 SELECT new_thread_target FROM owner WHERE id = 1
@@ -247,6 +260,18 @@ type SetOwnerAssistantIdentityParams struct {
 
 func (q *Queries) SetOwnerAssistantIdentity(ctx context.Context, arg SetOwnerAssistantIdentityParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, setOwnerAssistantIdentity, arg.AssistantName, arg.AssistantAvatarIcon, arg.AssistantAvatarImage)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setOwnerLanguage = `-- name: SetOwnerLanguage :execrows
+UPDATE owner SET language = ?1 WHERE id = 1
+`
+
+func (q *Queries) SetOwnerLanguage(ctx context.Context, language string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setOwnerLanguage, language)
 	if err != nil {
 		return 0, err
 	}

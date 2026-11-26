@@ -38,6 +38,8 @@ const (
 	// envRoleTools 是工作线程按 subagent 配置启动时传入 oryn-orb.ts 扩展的工具白名单 JSON 数组环境变量名；
 	// 未设置表示不限制，空数组 "[]" 表示禁用全部工具（由 orbd 在 p.Env 之后写入，防止用户密钥覆盖）。
 	envRoleTools = "ORYN_ROLE_TOOLS"
+	// envLanguage 是全局语言设置（控制面在 agent.start 下发，约束 omp 标题生成与工具调用 intent 的语言）。
+	envLanguage = "ORYN_LANGUAGE"
 	// initIDPrefix 标记 orbd 自己发出的初始化命令；其应答不转发给控制面。
 	initIDPrefix = "orbd-"
 )
@@ -716,6 +718,10 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 		}
 		// 防止 p.Env（用户 env 密钥）伪造或覆盖线程角色的工具白名单
 		delete(env, envRoleTools)
+		delete(env, envLanguage)
+		if p.Language != nil && *p.Language != "" {
+			env[envLanguage] = string(*p.Language)
+		}
 		if p.AppendSystemPrompt != nil && *p.AppendSystemPrompt != "" {
 			promptFile := filepath.Join(dir, "role-prompt.md")
 			if err := writeFileAtomic(promptFile, []byte(*p.AppendSystemPrompt), 0o600); err != nil {

@@ -1430,6 +1430,24 @@ func (e JobState) Valid() bool {
 	}
 }
 
+// Defines values for LanguageCode.
+const (
+	En   LanguageCode = "en"
+	ZhCN LanguageCode = "zh-CN"
+)
+
+// Valid indicates whether the value is a known member of the LanguageCode enum.
+func (e LanguageCode) Valid() bool {
+	switch e {
+	case En:
+		return true
+	case ZhCN:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for LinkCtlAgentStartParamsProfile.
 const (
 	AgentProfileCoordinator LinkCtlAgentStartParamsProfile = "coordinator"
@@ -7167,6 +7185,15 @@ type JobSpawnParams struct {
 // JobState defines model for JobState.
 type JobState string
 
+// LanguageCode 全局语言代码：`zh-CN`（简体中文）或 `en`（English）
+type LanguageCode string
+
+// LanguageSettings defines model for LanguageSettings.
+type LanguageSettings struct {
+	// Language 全局语言代码：`zh-CN`（简体中文）或 `en`（English）
+	Language LanguageCode `json:"language"`
+}
+
 // LinkCtlAgentGapParams 断连期间帧缓冲溢出，实时状态不连续
 type LinkCtlAgentGapParams struct {
 	// ThreadID `T-<uuidv7>`
@@ -7197,6 +7224,9 @@ type LinkCtlAgentStartParams struct {
 
 	// InitFrames `ready` 并完成 `negotiate_protocol` 后依次发送的 omp 命令帧
 	InitFrames []OmpFrame `json:"initFrames"`
+
+	// Language 全局语言代码：`zh-CN`（简体中文）或 `en`（English）
+	Language *LanguageCode `json:"language,omitempty"`
 
 	// McpToken M19：协调宿主 /mcp/ 路由的凭据，`web` 为真或 `variant` 为 `research_private` 时生效：orbd 以环境变量 `ORYN_MCP_TOKEN`
 	// 交给该 agent，mcp.json 的 `X-Oryn-MCP-Token` 请求头引用它，出站代理逐个请求核对（D10：Space 协调者没有它，直接请求
@@ -14882,6 +14912,9 @@ type PutComposerPrefsJSONRequestBody = ComposerPrefs
 // PutGitIdentityJSONRequestBody defines body for PutGitIdentity for application/json ContentType.
 type PutGitIdentityJSONRequestBody = GitIdentity
 
+// PutLanguageSettingsJSONRequestBody defines body for PutLanguageSettings for application/json ContentType.
+type PutLanguageSettingsJSONRequestBody = LanguageSettings
+
 // PutRoleIdentityJSONRequestBody defines body for PutRoleIdentity for application/json ContentType.
 type PutRoleIdentityJSONRequestBody = RoleIdentityInput
 
@@ -18400,6 +18433,12 @@ type ServerInterface interface {
 	// PutGitIdentity 设置 git 提交身份的全局默认值（下次 setup / 唤醒时写入 orb）
 	// (PUT /api/v1/settings/git-identity)
 	PutGitIdentity(w http.ResponseWriter, r *http.Request)
+	// GetLanguageSettings 全局语言设置
+	// (GET /api/v1/settings/language)
+	GetLanguageSettings(w http.ResponseWriter, r *http.Request)
+	// PutLanguageSettings 设置全局语言（整体替换）
+	// (PUT /api/v1/settings/language)
+	PutLanguageSettings(w http.ResponseWriter, r *http.Request)
 	// ListRoleIdentities omp role 的身份与头像（已知 role + 只剩头像的遗留项）
 	// (GET /api/v1/settings/role-identities)
 	ListRoleIdentities(w http.ResponseWriter, r *http.Request)
@@ -20464,6 +20503,18 @@ func (_ Unimplemented) GetGitIdentity(w http.ResponseWriter, r *http.Request) {
 // PutGitIdentity 设置 git 提交身份的全局默认值（下次 setup / 唤醒时写入 orb）
 // (PUT /api/v1/settings/git-identity)
 func (_ Unimplemented) PutGitIdentity(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetLanguageSettings 全局语言设置
+// (GET /api/v1/settings/language)
+func (_ Unimplemented) GetLanguageSettings(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutLanguageSettings 设置全局语言（整体替换）
+// (PUT /api/v1/settings/language)
+func (_ Unimplemented) PutLanguageSettings(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -29979,6 +30030,34 @@ func (siw *ServerInterfaceWrapper) PutGitIdentity(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// GetLanguageSettings operation middleware
+func (siw *ServerInterfaceWrapper) GetLanguageSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetLanguageSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutLanguageSettings operation middleware
+func (siw *ServerInterfaceWrapper) PutLanguageSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutLanguageSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListRoleIdentities operation middleware
 func (siw *ServerInterfaceWrapper) ListRoleIdentities(w http.ResponseWriter, r *http.Request) {
 
@@ -32966,6 +33045,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/api/v1/settings/composer", wrapper.PutComposerPrefs)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/settings/language", wrapper.GetLanguageSettings)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/settings/language", wrapper.PutLanguageSettings)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/settings/selection-actions", wrapper.GetSelectionActions)

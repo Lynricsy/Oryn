@@ -82,7 +82,7 @@ var apiDomains = []struct{ Name, Desc string }{
 	{"memory", "Engineering memory: settings, documents, search, mental models"},
 	{"owner-memory", "Your memory about the owner: topics, facts, sources, exclusions"},
 	{"notifications", "Notifications, notification channels and push subscriptions"},
-	{"settings", "Identities and avatars, git identity, composer and selection actions, global agent configuration, secrets vault, devices"},
+	{"settings", "Global language, identities and avatars, git identity, composer and selection actions, global agent configuration, secrets vault, devices"},
 	{"insights", "Search, usage and cost statistics, budget, the automation log, system status"},
 }
 
@@ -278,7 +278,7 @@ func buildAPIPolicy() map[string]opPolicy {
 
 	// settings
 	set("settings", opRead, none, "getGitIdentity", "getAgentIdentity", "listRoleIdentities", "listAgentAvatars", "getComposerPrefs",
-		"getSelectionActions", "getModelCatalog", "getUserIdentity", "listAgentConfigFiles", "getAgentConfigApplyStatus", "listSecrets", "listDevices")
+		"getLanguageSettings", "getSelectionActions", "getModelCatalog", "getUserIdentity", "listAgentConfigFiles", "getAgentConfigApplyStatus", "listSecrets", "listDevices")
 	set("settings", opRead, opPolicy{Check: func(path map[string]string) error {
 		// 与 Home.Get 同一套规范化（agentcfg.CleanPath）：./mcp.json、x/../mcp.json 之类的等价路径同样拒绝。
 		// 规范化失败的路径 Home.Get 也会以同一错误拒绝、读不到文件，交给处理器回原有错误码。
@@ -288,7 +288,7 @@ func buildAPIPolicy() map[string]opPolicy {
 		return nil
 	}}, "getAgentConfigFile")
 	set("settings", opWrite, none, "putGitIdentity", "deleteGitIdentity", "putAgentIdentity", "putRoleIdentity", "putAgentAvatar",
-		"putComposerPrefs", "putSelectionActions", "putUserIdentity")
+		"putComposerPrefs", "putLanguageSettings", "putSelectionActions", "putUserIdentity")
 	set("settings", opConfirm, none, "putAgentConfigFile", "deleteAgentConfigFile", "restartAgentConfigSessions", "putSecret", "deleteSecret", "revokeDevice")
 	set("settings", opDeny, deny(denyBinary("write files one by one with putAgentConfigFile")), "importAgentConfig")
 	set("settings", opDeny, deny(denyClient), "getMe")

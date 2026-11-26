@@ -75,3 +75,11 @@ SELECT selection_actions FROM owner WHERE id = 1;
 
 -- name: SetOwnerSelectionActions :execrows
 UPDATE owner SET selection_actions = @selection_actions WHERE id = 1;
+
+-- Global language preference ('zh-CN' | 'en').
+
+-- name: GetOwnerLanguage :one
+SELECT language FROM owner WHERE id = 1;
+
+-- name: SetOwnerLanguage :execrows
+UPDATE owner SET language = @language WHERE id = 1;

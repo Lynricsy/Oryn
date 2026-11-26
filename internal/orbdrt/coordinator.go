@@ -195,6 +195,9 @@ func (r *Runtime) coordinatorAgentSpec(p apigen.LinkCtlAgentStartParams, dir str
 		"ORYN_NERD_GLYPHS": "1",
 		"ORYN_THREAD_ID":   p.ThreadID,
 	}
+	if p.Language != nil && *p.Language != "" {
+		env[envLanguage] = string(*p.Language)
+	}
 	if mode.mcp {
 		// Core 19.2.0 起 --no-tools 默认一并关闭 MCP；用环境变量显式放行（旧版 19.0.1 Core 静默忽略，不会因未知 CLI flag 退出）。
 		env["ORYN_ALLOW_RESTRICTED_MCP"] = "1"

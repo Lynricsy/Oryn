@@ -165,3 +165,52 @@ func TestWorkThreadRolePromptAndTools(t *testing.T) {
 	assert.NotContains(t, recNil.Args, "--no-tools")
 	assert.NotContains(t, recNil.Env, "ORYN_ROLE_TOOLS")
 }
+
+// 全局语言设置经 agent.start 的 language 字段以 ORYN_LANGUAGE 环境变量传给工作线程与协调线程；
+// 工作线程中用户密钥（p.Env）不得伪造或覆盖 ORYN_LANGUAGE。
+func TestAgentStartLanguageEnv(t *testing.T) {
+	cp := newFakeCP(t)
+	rt := startRuntime(t, cp, nil)
+	cp.waitNotif(t, 0, "hello", nil)
+
+	dump := filepath.Join(rt.home, "dump")
+	lang := apigen.ZhCN
+	var res apigen.LinkCtlAgentStartResult
+	require.NoError(t, cp.call(t, "agent.start", apigen.LinkCtlAgentStartParams{
+		ThreadID:   thread1,
+		SessionDir: "~/.oryn/threads/" + thread1,
+		Env:        map[string]string{"FAKEOMP_DUMP_DIR": dump, "ORYN_LANGUAGE": "en"},
+		InitFrames: []apigen.OmpFrame{{"type": "open_session", "sessionDir": "~/.oryn/threads/" + thread1}},
+		Language:   &lang,
+	}, &res))
+	cp.waitNotif(t, 0, "agent.status", statusIs(thread1, "ready"))
+	rec := setupDump(t, dump, thread1)
+	assert.Equal(t, "zh-CN", rec.Env["ORYN_LANGUAGE"])
+
+	// 未传 language 时，p.Env 中试图伪造的 ORYN_LANGUAGE 必须被清除
+	const threadNoLang = "T-01932f6e-8d1a-7c3b-9f2e-0123456789c3"
+	require.NoError(t, cp.call(t, "agent.start", apigen.LinkCtlAgentStartParams{
+		ThreadID:   threadNoLang,
+		SessionDir: "~/.oryn/threads/" + threadNoLang,
+		Env:        map[string]string{"FAKEOMP_DUMP_DIR": dump, "ORYN_LANGUAGE": "fr"},
+		InitFrames: []apigen.OmpFrame{{"type": "open_session", "sessionDir": "~/.oryn/threads/" + threadNoLang}},
+	}, &res))
+	cp.waitNotif(t, 0, "agent.status", statusIs(threadNoLang, "ready"))
+	recNoLang := setupDump(t, dump, threadNoLang)
+	assert.NotContains(t, recNoLang.Env, "ORYN_LANGUAGE")
+
+	// 协调宿主同样通过 ORYN_LANGUAGE 注入全局语言
+	crt, _, _, _ := startCoordinator(t)
+	coord := apigen.AgentProfileCoordinator
+	prompt := "You are the Oryn coordinator.\nKeep replies short."
+	en := apigen.En
+	_, _, env, _, err := crt.coordinatorAgentSpec(apigen.LinkCtlAgentStartParams{
+		ThreadID:     thread1,
+		SessionDir:   "~/.oryn/threads/" + thread1,
+		Profile:      &coord,
+		SystemPrompt: &prompt,
+		Language:     &en,
+	}, filepath.Join(crt.home, ".oryn", "threads", thread1))
+	require.NoError(t, err)
+	assert.Equal(t, "en", env["ORYN_LANGUAGE"])
+}
