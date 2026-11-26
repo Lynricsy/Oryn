@@ -24,6 +24,11 @@ import { noteAgentConfigWrite } from "../api/agent-config-queries";
 import { useBrowserRelayClients } from "../api/browser-relay-queries";
 import { api, type Schemas, unwrap } from "../api/client";
 import { identityKeys } from "../api/identity-queries";
+import {
+	type LanguageCode,
+	saveLanguageSettings,
+	useLanguageSettings,
+} from "../api/language-queries";
 import { invalidateModelCatalog } from "../api/model-catalog-queries";
 import {
 	qk,
@@ -980,6 +985,62 @@ function ThemeSettings() {
 	);
 }
 
+const LANGUAGES: readonly { code: LanguageCode; label: string }[] = [
+	{ code: "zh-CN", label: "简体中文" },
+	{ code: "en", label: "English" },
+];
+
+function LanguageSettingsCard() {
+	const { t, i18n } = useTranslation();
+	const qc = useQueryClient();
+	const q = useLanguageSettings();
+	const save = useAsync();
+	const current: LanguageCode =
+		q.data?.language ?? (i18n.language === "en" ? "en" : "zh-CN");
+	const onPick = (code: LanguageCode) => {
+		if (code === current && q.data?.language === code) return;
+		void save.run(() => saveLanguageSettings(qc, code));
+	};
+	return (
+		<Card title={t("language.title")} icon="globe">
+			<div className="flex flex-col gap-3">
+				<div className="flex flex-col gap-2">
+					<span aria-hidden className="font-medium text-muted text-xs">
+						{t("language.label")}
+					</span>
+					<div
+						role="radiogroup"
+						aria-label={t("language.title")}
+						onKeyDown={radioKeys}
+						className="inline-flex w-fit max-w-full rounded-full border border-border bg-inset p-0.5"
+					>
+						{LANGUAGES.map((item) => {
+							const on = current === item.code;
+							return (
+								// biome-ignore lint/a11y/useSemanticElements: 分段按钮外观的单选（WAI-ARIA radio），原生 radio 画不出
+								<button
+									key={item.code}
+									type="button"
+									role="radio"
+									aria-checked={on}
+									tabIndex={on ? 0 : -1}
+									disabled={save.busy}
+									onClick={() => onPick(item.code)}
+									className={`inline-flex h-7 items-center gap-1.5 rounded-full px-3 font-medium text-xs transition-[background-color,color,box-shadow] duration-150 ${on ? "bg-panel text-fg shadow-xs ring-1 ring-border" : "text-muted hover:text-fg"}`}
+								>
+									{item.label}
+								</button>
+							);
+						})}
+					</div>
+				</div>
+				<p className="text-faint text-xs">{t("language.hint")}</p>
+				<ErrorText error={q.error ?? save.error} />
+			</div>
+		</Card>
+	);
+}
+
 /**
  * 壁纸：内置三种 + 自定义图片。缩略卡挂 `.wp-<名>` 类，按当前主题色与明暗真实渲染；
  * 自定义卡的图片与纱厚度经内联变量传入（壁纸不是 custom 时 <html> 上没有这些变量）。
@@ -1131,6 +1192,9 @@ function AboutSettings() {
 	const me = useMe();
 	const navigate = useNavigate();
 	const logout = useAsync();
+	const qc = useQueryClient();
+	const langQuery = useLanguageSettings();
+	const saveLang = useAsync();
 	const mobile = host.mobile;
 	const [mobileInfo, setMobileInfo] = useState<MobileInfo | null>(null);
 	const [mobileError, setMobileError] = useState<unknown>(null);
@@ -1209,15 +1273,22 @@ function AboutSettings() {
 						key: "language",
 						label: t("about.language"),
 						value: (
-							<Select
-								wrapperClassName="max-w-40"
-								aria-label={t("about.language")}
-								value={i18n.language}
-								onChange={(e) => void i18n.changeLanguage(e.target.value)}
-							>
-								<option value="zh-CN">简体中文</option>
-								<option value="en">English</option>
-							</Select>
+							<div className="flex flex-col gap-1">
+								<Select
+									wrapperClassName="max-w-40"
+									aria-label={t("about.language")}
+									disabled={saveLang.busy}
+									value={langQuery.data?.language ?? i18n.language}
+									onChange={(e) => {
+										const next = e.target.value as LanguageCode;
+										void saveLang.run(() => saveLanguageSettings(qc, next));
+									}}
+								>
+									<option value="zh-CN">简体中文</option>
+									<option value="en">English</option>
+								</Select>
+								<ErrorText error={saveLang.error} />
+							</div>
 						),
 					},
 					...mobileRows,
@@ -1323,7 +1394,12 @@ export function SettingsPage({
 					{section === "agent-config" && <AgentConfigSettings />}
 					{section === "identity" && <IdentitySettings />}
 					{section === "assistant" && <AssistantSettings />}
-					{section === "appearance" && <ThemeSettings />}
+					{section === "appearance" && (
+						<>
+							<ThemeSettings />
+							<LanguageSettingsCard />
+						</>
+					)}
 					{section === "notifications" && <NotificationsSettings />}
 					{section === "shares" && <SharesSettings />}
 					{section === "artifacts" && <ArtifactsSection />}

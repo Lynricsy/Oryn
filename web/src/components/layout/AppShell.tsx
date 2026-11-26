@@ -25,6 +25,7 @@ import { useRealtimeArtifactSync } from "../../api/artifact-queries";
 import { useRealtimeBoxSync } from "../../api/box-queries";
 import { ApiError, UNAUTHORIZED_EVENT } from "../../api/client";
 import { useRealtimeGitHubSync } from "../../api/github-queries";
+import { useLanguageSync } from "../../api/language-queries";
 import { useMe } from "../../api/queries";
 import { useRealtimeRepoSync } from "../../api/repo-queries";
 import { useRealtimeScheduleSync } from "../../api/schedule-queries";
@@ -225,6 +226,8 @@ export function AppShell(): ReactNode {
 	useRealtimeArtifactSync();
 	// 自定义选区快捷动作（M22）：鉴权通过后拉一次，写进菜单读的同步副本
 	useSelectionActionsSync(me.isSuccess);
+	// 全局语言设置：鉴权通过后拉取服务端偏好并同步到 i18n
+	useLanguageSync(me.isSuccess);
 	const here = useRef("");
 	here.current = location.pathname + location.search;
 	// 双段抽屉的进出场（挂载与过渡状态）；钩子必须在下面的提前返回之前

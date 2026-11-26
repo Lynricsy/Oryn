@@ -2606,8 +2606,13 @@
 			"delete": "删除这个角色"
 		}
 	},
+	"language": {
+		"title": "全局语言",
+		"label": "语言",
+		"hint": "跨设备同步，用于界面显示，以及 agent 自动生成标题和工具调用意图的语言。"
+	},
 	"about": {
-		"language": "界面语言",
+		"language": "全局语言",
 		"logout": "退出登录",
 		"owner": "所有者",
 		"session": "当前凭据",

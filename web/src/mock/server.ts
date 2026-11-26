@@ -680,6 +680,8 @@ export class MockServer {
 	agentAvatars: Record<string, Schemas["AvatarIdentity"]> = {};
 	/** 新对话输入框偏好（`owner.new_thread_target`）。 */
 	composerPrefs: Schemas["ComposerPrefs"] = { defaultTarget: "role" };
+	/** 全局语言设置（`owner.language`）。 */
+	languageSettings: Schemas["LanguageSettings"] = { language: "zh-CN" };
 	/** 自定义选区快捷动作（`owner.selection_actions`，M22）。 */
 	selectionActions: Schemas["SelectionActions"] = { actions: [] };
 	/** config.yml 解析失败的原因（模拟 `configError`）。 */
@@ -1981,6 +1983,18 @@ export class MockServer {
 				this.composerPrefs = { defaultTarget: b.defaultTarget };
 			}
 			return json(this.composerPrefs);
+		}
+		if (p === "settings/language") {
+			if (m === "PUT") {
+				const b = (await body()) as Schemas["LanguageSettings"];
+				if (b.language !== "zh-CN" && b.language !== "en")
+					return json(
+						{ code: "invalid_request", message: "language 无效" },
+						400,
+					);
+				this.languageSettings = { language: b.language };
+			}
+			return json(this.languageSettings);
 		}
 		if (p === "settings/selection-actions") {
 			if (m === "PUT") {

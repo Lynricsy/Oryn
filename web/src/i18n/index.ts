@@ -29,7 +29,32 @@ function systemLanguages(): readonly string[] {
 	return navigator.language ? [navigator.language] : [];
 }
 
-const initialLocale = detectLocale(systemLanguages());
+const LANGUAGE_STORAGE_KEY = "oryn.language";
+
+function isLocale(value: string | null | undefined): value is Locale {
+	return value === "zh-CN" || value === "en";
+}
+
+function readStoredLocale(): Locale | null {
+	if (typeof localStorage === "undefined") return null;
+	try {
+		const v = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+		return isLocale(v) ? v : null;
+	} catch {
+		return null;
+	}
+}
+
+function writeStoredLocale(lng: string): void {
+	if (typeof localStorage === "undefined" || !isLocale(lng)) return;
+	try {
+		localStorage.setItem(LANGUAGE_STORAGE_KEY, lng);
+	} catch {
+		// 隐私模式或存储受限时忽略本地缓存
+	}
+}
+
+const initialLocale = readStoredLocale() ?? detectLocale(systemLanguages());
 
 void i18n.use(initReactI18next).init({
 	resources,
@@ -41,5 +66,12 @@ void i18n.use(initReactI18next).init({
 if (typeof document !== "undefined") {
 	document.documentElement.lang = initialLocale;
 }
+
+i18n.on("languageChanged", (lng) => {
+	if (typeof document !== "undefined") {
+		document.documentElement.lang = lng;
+	}
+	writeStoredLocale(lng);
+});
 
 export default i18n;

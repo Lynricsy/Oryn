@@ -2606,6 +2606,11 @@
 			"delete": "Delete this role"
 		}
 	},
+	"language": {
+		"title": "Global language",
+		"label": "Language",
+		"hint": "Synced across devices. Applies to the interface, generated agent titles, and tool call intents."
+	},
 	"about": {
 		"language": "Language",
 		"logout": "Sign out",

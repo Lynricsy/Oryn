@@ -66,6 +66,7 @@ interface Call {
 }
 
 let identity: { name: string; email: string } | undefined;
+let language: "zh-CN" | "en" = "zh-CN";
 let calls: Call[] = [];
 let agentFiles: Record<string, string> = {};
 let agentPuts: { path: string; body: string }[] = [];
@@ -134,6 +135,13 @@ const fetchMock = vi.fn(
 				return new Response(null, { status: 204 });
 			}
 			return Response.json(identity ? { identity } : {});
+		}
+		if (url.pathname === "/api/v1/settings/language") {
+			if (req.method === "PUT") {
+				const parsed = JSON.parse(text) as { language: "zh-CN" | "en" };
+				language = parsed.language;
+			}
+			return Response.json({ language });
 		}
 		// 身份与头像：各卡只读不写（保存语义见 IdentitySettings.test）
 		if (
@@ -433,10 +441,13 @@ describe("设置 → 外观", () => {
 		expect(document.documentElement.dataset.accent).toBe("cobalt");
 	});
 
-	it("外观只有主题（明暗、主题色、壁纸），没有头像卡", () => {
+	it("外观包含主题与全局语言，没有头像卡", () => {
 		setup("appearance");
 		expect(screen.getByRole("heading", { name: "主题" })).toBeInTheDocument();
-		expect(screen.getAllByRole("heading", { level: 3 })).toHaveLength(1);
+		expect(
+			screen.getByRole("heading", { name: "全局语言" }),
+		).toBeInTheDocument();
+		expect(screen.getAllByRole("heading", { level: 3 })).toHaveLength(2);
 		expect(
 			screen.queryByRole("group", { name: i18n.t("appearance.avatarGlyphs") }),
 		).toBeNull();
@@ -479,6 +490,31 @@ describe("设置 → 外观", () => {
 		});
 		expect(themeStore.getState().wallpaper).toBe("custom");
 		expect(document.documentElement.dataset.wallpaper).toBe("custom");
+	});
+
+	it("全局语言卡片切换语言后经 PUT /api/v1/settings/language 持久化并同步 i18n", async () => {
+		language = "zh-CN";
+		calls = [];
+		vi.stubGlobal("fetch", fetchMock);
+		fetchMock.mockClear();
+		try {
+			setup("appearance");
+			const group = await screen.findByRole("radiogroup", { name: "全局语言" });
+			fireEvent.click(within(group).getByRole("radio", { name: "English" }));
+			await waitFor(() => {
+				expect(calls).toContainEqual({
+					method: "PUT",
+					path: "/api/v1/settings/language",
+					body: { language: "en" },
+					csrf: "1",
+				});
+			});
+			expect(i18n.language).toBe("en");
+			expect(document.documentElement.lang).toBe("en");
+		} finally {
+			await act(() => i18n.changeLanguage("zh-CN"));
+			vi.unstubAllGlobals();
+		}
 	});
 });
 

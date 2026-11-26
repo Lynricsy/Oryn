@@ -2324,6 +2324,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/settings/language": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 全局语言设置 */
+        get: operations["getLanguageSettings"];
+        /**
+         * 设置全局语言（整体替换）
+         * @description 尚未初始化所有者 → 409。变更后同步影响界面显示与后续启动的 agent（协调与助手对话在静止后自动重启生效）。
+         */
+        put: operations["putLanguageSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/settings/selection-actions": {
         parameters: {
             query?: never;
@@ -7676,6 +7697,14 @@ export interface components {
              */
             defaultTarget: "role" | "assistant";
         };
+        /**
+         * @description 全局语言代码：`zh-CN`（简体中文）或 `en`（English）
+         * @enum {string}
+         */
+        LanguageCode: "zh-CN" | "en";
+        LanguageSettings: {
+            language: components["schemas"]["LanguageCode"];
+        };
         SelectionAction: {
             id: string;
             name: string;
@@ -12386,6 +12415,7 @@ export interface components {
             appendSystemPrompt?: string;
             /** @description 工作线程允许的工具白名单（省略 = 不限制；空数组 `[]` = 禁用全部内置工具；由 orbd 在启动时与实际注册工具取交集生效）；只有普通工作线程接受 */
             tools?: string[];
+            language?: components["schemas"]["LanguageCode"];
         };
         LinkCtlAgentStartResult: {
             pid: number;
@@ -16319,6 +16349,52 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ComposerPrefs"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getLanguageSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前设置（尚未初始化所有者时为缺省值 zh-CN） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LanguageSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putLanguageSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LanguageSettings"];
+            };
+        };
+        responses: {
+            /** @description 写入后的设置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LanguageSettings"];
                 };
             };
             default: components["responses"]["Error"];
