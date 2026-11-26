@@ -309,6 +309,35 @@ func TestWriterExclusionWaitsForInflightRetain(t *testing.T) {
 	assert.Equal(t, 1, e.retainCount())
 }
 
+// TestWriterCanceledFirstRetainStillForgotten:来源第一次写入时请求发出后被取消（Hindsight 照样落库），
+// 扫描直接返回、来不及记失败；来源记录已先建好，线程删除后的巡检仍能找到并删掉它的块。
+func TestWriterCanceledFirstRetainStillForgotten(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t, true)
+	e.enable(t)
+	e.thread(t, "c", "assistant", "idle", 1, time.Hour)
+	sctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	e.hs.mu.Lock()
+	e.hs.beforeRetain = cancel
+	e.hs.mu.Unlock()
+	_, err := e.svc.Scan(sctx)
+	require.ErrorIs(t, err, context.Canceled)
+	src, err := e.st.Q.GetOwnerMemorySource(ctx, "c")
+	require.NoError(t, err, "来源记录在写入前建好")
+	assert.Nil(t, src.RetainedAt, "没有写成，不能记成已写入")
+
+	e.hs.mu.Lock()
+	e.hs.beforeRetain = nil
+	e.hs.mu.Unlock()
+	e.exec(t, `DELETE FROM threads WHERE id = 'c'`)
+	e.scan(t)
+	assert.Contains(t, e.hs.deletes, "conv:c:0")
+	chunks, err := e.st.Q.ListOwnerMemoryChunks(ctx, "c")
+	require.NoError(t, err)
+	assert.Empty(t, chunks)
+}
+
 // TestWriterBackfillWindow:回填只取开启前 30 天内有活动的来源；进度按来源数计算。
 func TestWriterBackfillWindow(t *testing.T) {
 	ctx := context.Background()

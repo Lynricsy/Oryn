@@ -139,6 +139,25 @@ func (q *Queries) DeleteOwnerMemoryTopic(ctx context.Context, modelID string) er
 	return err
 }
 
+const ensureOwnerMemorySource = `-- name: EnsureOwnerMemorySource :exec
+INSERT INTO owner_memory_sources (thread_id, kind, created_at, updated_at)
+VALUES (?1, ?2, ?3, ?3)
+ON CONFLICT (thread_id) DO NOTHING
+`
+
+type EnsureOwnerMemorySourceParams struct {
+	ThreadID string `json:"threadId"`
+	Kind     string `json:"kind"`
+	Now      int64  `json:"now"`
+}
+
+// Create the source row (empty progress, still due) before registering chunks, so sweeps that enumerate sources
+// (deleted threads, project exclusions) can find chunks written by an interrupted first retain.
+func (q *Queries) EnsureOwnerMemorySource(ctx context.Context, arg EnsureOwnerMemorySourceParams) error {
+	_, err := q.db.ExecContext(ctx, ensureOwnerMemorySource, arg.ThreadID, arg.Kind, arg.Now)
+	return err
+}
+
 const getOwnerMemoryChunkByDocument = `-- name: GetOwnerMemoryChunkByDocument :one
 SELECT thread_id, idx, document_id, hash, seq_from, seq_to, retained_at FROM owner_memory_chunks WHERE document_id = ?1
 `

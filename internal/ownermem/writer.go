@@ -212,9 +212,15 @@ func (s *Service) retainThread(ctx context.Context, b *memory.Bank, threadID str
 			changed = append(changed, c)
 		}
 	}
-	// 先登记再写入：写入前把变了的块登记为待写（哈希留空，下一轮必定重写），每个请求成功后再记下它的哈希。
-	// 同步写入逐块进行，后面的块失败时前面的已经落库；超时等结果不明的失败也可能已落库。登记在先，
-	// 排除或删除来源时 forgetSource 才删得到它们（删除不存在的 document 按成功处理）。
+	// 先登记再写入：写入前建好来源记录（空进度，仍到期）并把变了的块登记为待写（哈希留空，下一轮必定重写），
+	// 每个请求成功后再记下它的哈希。同步写入逐块进行，后面的块失败时前面的已经落库；超时、取消等结果不明的失败
+	// 也可能已落库。登记在先，遗忘（排除、删除线程、项目排除的巡检都从来源记录枚举）才删得到它们
+	// （删除不存在的 document 按成功处理）。
+	if err := s.cfg.Q.EnsureOwnerMemorySource(ctx, db.EnsureOwnerMemorySourceParams{
+		ThreadID: threadID, Kind: kind, Now: s.cfg.Now().UnixMilli(),
+	}); err != nil {
+		return err
+	}
 	for _, c := range changed {
 		if err := s.putChunk(ctx, threadID, c, "", 0); err != nil {
 			return err

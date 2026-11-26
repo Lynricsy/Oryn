@@ -77,6 +77,13 @@ ON CONFLICT (thread_id) DO UPDATE SET
     next_attempt_at = excluded.next_attempt_at, attempts = owner_memory_sources.attempts + 1,
     last_error = excluded.last_error, updated_at = excluded.updated_at;
 
+-- Create the source row (empty progress, still due) before registering chunks, so sweeps that enumerate sources
+-- (deleted threads, project exclusions) can find chunks written by an interrupted first retain.
+-- name: EnsureOwnerMemorySource :exec
+INSERT INTO owner_memory_sources (thread_id, kind, created_at, updated_at)
+VALUES (@thread_id, @kind, @now, @now)
+ON CONFLICT (thread_id) DO NOTHING;
+
 -- name: ListOwnerMemorySources :many
 SELECT s.*, t.title AS thread_title, t.kind AS thread_kind, t.project_id AS thread_project_id
 FROM owner_memory_sources s LEFT JOIN threads t ON t.id = s.thread_id
