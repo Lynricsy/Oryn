@@ -7,7 +7,8 @@
  */
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useAssetUrls } from "../../lib/asset-urls";
+import { assistantFileContentUrl } from "../../api/library-queries";
+import { type AssetUrls, useAssetUrls } from "../../lib/asset-urls";
 import { formatBytes } from "../../lib/format";
 import { imageSrc, rasterMime } from "../../lib/image-src";
 import { describeOrynHeader } from "../../lib/oryn-message";
@@ -35,6 +36,18 @@ type DisplayItem = RpcQueuedMessage & {
 	pending?: boolean;
 	optimisticAttachments?: OptimisticAttachmentMeta[];
 };
+
+const AFL_ID_RE = /\/(afl_[^/]+)\/[^/]+$/;
+
+/** 按附件 id 解析安全栅格图的内联缩略图地址（支持线程附件 att_ 与助手库文件 afl_）。 */
+function attachmentThumbById(
+	id: string | null | undefined,
+	assets: AssetUrls,
+): string | undefined {
+	if (!id) return undefined;
+	if (id.startsWith("afl_")) return assistantFileContentUrl(id, true);
+	return assets.attachment(id, true) ?? undefined;
+}
 
 async function run(threadId: string, frame: OmpCommand) {
 	await realtime.cmd(threadId, frame);
@@ -155,98 +168,106 @@ function Item({
 		}))
 		.filter((x): x is { src: string; alt: string } => x.src !== null);
 
-	let nextInlineImg = 0;
-	const gallery: LightboxImage[] = [];
-	const attachments: Array<{
+	const rawAttachments: Array<{
 		key: string;
+		id?: string;
 		name: string;
 		mime?: string;
 		size?: number;
 		title?: string;
-		thumb?: string;
-		galleryIndex?: number;
 	}> =
 		parsed.attachments.length > 0
-			? parsed.attachments.map((a, i) => {
-					const isRaster = rasterMime(a.mime) !== null;
-					let thumb: string | undefined;
-					if (isRaster) {
-						thumb = (a.id ? assets.attachment(a.id, true) : null) ?? undefined;
-						if (!thumb && nextInlineImg < inlineImages.length) {
-							thumb = inlineImages[nextInlineImg]?.src;
-						}
-						if (nextInlineImg < inlineImages.length) nextInlineImg++;
-					}
-					let galleryIndex: number | undefined;
-					if (thumb) {
-						galleryIndex = gallery.length;
-						gallery.push({
-							src: thumb,
-							alt: a.name,
-							caption: a.name,
-							filename: a.name,
-						});
-					}
-					return {
-						key: `${a.path}-${i}`,
-						name: a.name,
-						mime: a.mime,
-						size: a.size,
-						title: `${a.name} (${formatBytes(a.size)})`,
-						thumb,
-						galleryIndex,
-					};
-				})
-			: (item.optimisticAttachments ?? []).map((a, i) => {
-					const isRaster = a.mime ? rasterMime(a.mime) !== null : false;
-					let thumb: string | undefined;
-					if (isRaster && nextInlineImg < inlineImages.length) {
-						thumb = inlineImages[nextInlineImg]?.src;
-						nextInlineImg++;
-					}
-					let galleryIndex: number | undefined;
-					if (thumb) {
-						galleryIndex = gallery.length;
-						gallery.push({
-							src: thumb,
-							alt: a.name,
-							caption: a.name,
-							filename: a.name,
-						});
-					}
-					return {
-						key: `${a.name}-${i}`,
-						name: a.name,
-						mime: a.mime,
-						size: a.size,
-						title:
-							a.size !== undefined
-								? `${a.name} (${formatBytes(a.size)})`
-								: a.name,
-						thumb,
-						galleryIndex,
-					};
-				});
+			? parsed.attachments.map((a, i) => ({
+					key: `${a.path}-${i}`,
+					id: a.id ?? AFL_ID_RE.exec(a.path)?.[1],
+					name: a.name,
+					mime: a.mime,
+					size: a.size,
+					title: `${a.name} (${formatBytes(a.size)})`,
+				}))
+			: (item.optimisticAttachments ?? []).map((a, i) => ({
+					key: `${a.id ?? a.name}-${i}`,
+					id: a.id,
+					name: a.name,
+					mime: a.mime,
+					size: a.size,
+					title:
+						a.size !== undefined
+							? `${a.name} (${formatBytes(a.size)})`
+							: a.name,
+				}));
 
-	// 剩余未配对到附件芯片的内联图片也放进画廊并渲染小预览
+	const rawImageCount = item.images?.length ?? 0;
+	const imageAttachmentList = rawAttachments.filter((a) =>
+		a.mime?.startsWith("image/"),
+	);
+	const imageAttachmentCount = imageAttachmentList.length;
+	// 仅在全部图片附件都无 id 且与内联图数量严格 1:1 时按序配对（与 rewind.ts 一致）；
+	// 数量不等（如混有仅文件图片）或有 id 混杂时绝不盲目按序消耗 inlineImages，防止 A 错配成 B。
+	const canPairInline =
+		imageAttachmentCount > 0 &&
+		imageAttachmentCount === rawImageCount &&
+		rawImageCount === inlineImages.length &&
+		imageAttachmentList.every((a) => !a.id);
+
+	let nextInlineImg = 0;
+	let coveredAttRasterCount = 0;
+	let allImageAttsAreResolvedThreadAtts = imageAttachmentCount > 0;
+	const gallery: LightboxImage[] = [];
+	const attachments = rawAttachments.map((a) => {
+		const isImageAtt = a.mime?.startsWith("image/") === true;
+		const isRaster = a.mime ? rasterMime(a.mime) !== null : false;
+		const idThumb = isRaster ? attachmentThumbById(a.id, assets) : undefined;
+		if (isImageAtt) {
+			if (idThumb && a.id && !a.id.startsWith("afl_")) {
+				coveredAttRasterCount++;
+			} else {
+				allImageAttsAreResolvedThreadAtts = false;
+			}
+		}
+		const thumb =
+			idThumb ??
+			(canPairInline && isRaster
+				? inlineImages[nextInlineImg++]?.src
+				: undefined);
+		let galleryIndex: number | undefined;
+		if (thumb) {
+			galleryIndex = gallery.length;
+			gallery.push({
+				src: thumb,
+				alt: a.name,
+				caption: a.name,
+				filename: a.name,
+			});
+		}
+		return {
+			key: a.key,
+			name: a.name,
+			mime: a.mime,
+			size: a.size,
+			title: a.title,
+			thumb,
+			galleryIndex,
+		};
+	});
+
+	// 若内联图未 1:1 配对到芯片，且未全部被线程附件 id 芯片覆盖（例如无 id 混合、或助手模式内联图未上传），
+	// 则把内联图单独展示为独立小预览，既不丢失也不张冠李戴。
+	const inlineCovered =
+		canPairInline ||
+		(allImageAttsAreResolvedThreadAtts &&
+			coveredAttRasterCount >= inlineImages.length);
 	const extraGalleryItems: Array<{ src: string; alt: string; index: number }> =
 		[];
-	for (let i = nextInlineImg; i < inlineImages.length; i++) {
-		const img = inlineImages[i];
-		if (!img) continue;
-		const idx = gallery.length;
-		gallery.push({ src: img.src, alt: img.alt });
-		extraGalleryItems.push({ src: img.src, alt: img.alt, index: idx });
+	if (!inlineCovered) {
+		for (const img of inlineImages) {
+			const idx = gallery.length;
+			gallery.push({ src: img.src, alt: img.alt });
+			extraGalleryItems.push({ src: img.src, alt: img.alt, index: idx });
+		}
 	}
 
-	// 图片文件已出现在附件芯片里时不重复显示「N 张图」
-	const imageAttachments = attachments.filter((a) =>
-		a.mime?.startsWith("image/"),
-	).length;
-	const extraImages = Math.max(
-		0,
-		(item.images?.length ?? 0) - imageAttachments - extraGalleryItems.length,
-	);
+	const extraImages = Math.max(0, rawImageCount - inlineImages.length);
 	const hasChips =
 		attachments.length > 0 ||
 		parsed.artifactTitle !== null ||

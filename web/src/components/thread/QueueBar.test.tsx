@@ -223,6 +223,77 @@ describe("QueueBar：引导与排队消息展示", () => {
 		);
 	});
 
+	it("混合乐观附件（系统分享仅文件图片 A + 可内联图片 B）：按附件 ID 各自取缩略图，点 A 不会看到 B", () => {
+		const imgB =
+			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+		addOptimisticQueue(
+			TID,
+			"steering",
+			"对比两张图",
+			[{ type: "image", data: imgB, mimeType: "image/png" }],
+			[
+				{
+					id: "att_01SHAREONLYAAAAAAAAAAAAAAA",
+					name: "shared-a.jpg",
+					mime: "image/jpeg",
+					size: 10240,
+				},
+				{
+					id: "att_01INLINEBBBBBBBBBBBBBBBB",
+					name: "inline-b.png",
+					mime: "image/png",
+					size: 2048,
+				},
+			],
+		);
+		render(<QueueBar threadId={TID} />);
+
+		const thumbA = screen.getByRole("img", { name: "shared-a.jpg" });
+		const thumbB = screen.getByRole("img", { name: "inline-b.png" });
+		expect(thumbA).toHaveAttribute(
+			"src",
+			"/api/v1/attachments/att_01SHAREONLYAAAAAAAAAAAAAAA/content?inline=true",
+		);
+		expect(thumbB).toHaveAttribute(
+			"src",
+			"/api/v1/attachments/att_01INLINEBBBBBBBBBBBBBBBB/content?inline=true",
+		);
+
+		// 点击 A：灯箱打开的必须是 A 自己的地址，绝不是 B 的内联 data URL
+		fireEvent.click(screen.getByText("shared-a.jpg"));
+		const dialog = screen.getByRole("dialog", { name: "shared-a.jpg" });
+		expect(dialog.querySelector("img")?.getAttribute("src")).toBe(
+			"/api/v1/attachments/att_01SHAREONLYAAAAAAAAAAAAAAA/content?inline=true",
+		);
+	});
+
+	it("无附件 ID 且图片附件数与内联图数不等时不强行配对，内联图单独显示", () => {
+		const imgB =
+			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+		addOptimisticQueue(
+			TID,
+			"steering",
+			"混合无 ID",
+			[{ type: "image", data: imgB, mimeType: "image/png" }],
+			[
+				{ name: "shared-a.jpg", mime: "image/jpeg", size: 10240 },
+				{ name: "inline-b.png", mime: "image/png", size: 2048 },
+			],
+		);
+		render(<QueueBar threadId={TID} />);
+
+		// 附件芯片不错误绑定内联图 B，而是内联图 B 作为独立缩略图展示
+		expect(screen.queryByRole("img", { name: "shared-a.jpg" })).toBeNull();
+		expect(screen.queryByRole("img", { name: "inline-b.png" })).toBeNull();
+		const standalone = screen.getByRole("img", { name: "图片 1" });
+		expect(standalone).toHaveAttribute("src", `data:image/png;base64,${imgB}`);
+		fireEvent.click(standalone);
+		const dialog = screen.getByRole("dialog", { name: "图片 1" });
+		expect(dialog.querySelector("img")?.getAttribute("src")).toBe(
+			`data:image/png;base64,${imgB}`,
+		);
+	});
+
 	it("已有纯附件 A 在队列中时再发纯附件 B：B 立即显示，无关 queue_update 不误删 B，直到 B 的权威条目到达才接管", () => {
 		const attA =
 			"<oryn-attachments>\nThe user attached these files.\n" +
