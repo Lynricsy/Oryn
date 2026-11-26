@@ -71,7 +71,7 @@ type Tool = {
 		id: string,
 		params: unknown,
 		signal: AbortSignal | undefined,
-		onUpdate?: (u: { content: { text: string }[] }) => void,
+		onUpdate?: (u: { content: { text: string }[]; details?: Record<string, unknown> }) => void,
 		ctx?: unknown,
 	) => Promise<{
 		content: { text: string }[];
@@ -117,10 +117,16 @@ if (extra.length > 0) fail(`多注册了 ${extra.join(", ")}`);
 
 // sandbox_exec：流式输出与最终结果
 const updates: string[] = [];
+const liveDetails: unknown[] = [];
 const res = await tools.get("sandbox_exec")!.execute("tc-1", { sandbox: "sbx_1", command: "x" }, undefined, (u) => {
 	updates.push(u.content[0].text);
+	liveDetails.push(u.details?.output);
 });
 if (updates.length === 0) fail("sandbox_exec 没有调用 onUpdate");
+// 经 bash 工具命令调用时 Core 只转发部分结果的 details，输出尾巴必须也在 details.output 里
+if (liveDetails.at(-1) !== updates.at(-1) || !String(liveDetails.at(-1)).includes("a\n")) {
+	fail(`onUpdate 的 details.output 不对：${JSON.stringify(liveDetails)}`);
+}
 const text = res.content[0].text;
 for (const s of ["a\n", "b\n", "exit 2"]) {
 	if (!text.includes(s)) fail(`sandbox_exec 的文本缺少 ${JSON.stringify(s)}：${JSON.stringify(text)}`);

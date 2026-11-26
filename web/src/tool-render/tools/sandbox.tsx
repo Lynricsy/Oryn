@@ -3,7 +3,8 @@
  * 摘要：exec 是命令首行（`detach` 时带标记），cp 是 `source → dest`，create 是 `后端 · 网络`，其余是沙箱 id 末 6 位
  * （network / jobs / extend 另带目标网络、动作、TTL）。读数：exec 是退出码与耗时（`detach` 时是作业 id），
  * cp 是文件数与字节数（有跳过时另计），list 是台数。输入段：exec 是命令行加选项标记，其余是参数树；输出段是结果文本。
- * 运行中的输出尾巴由 ToolView 的通用逻辑显示（不设 `livePartial`）。
+ * 运行中：exec 把部分结果 details.output（orb 扩展随 onUpdate 给的输出尾巴）显示在输出段（`livePartial`）——
+ * 经 bash 工具命令调用时 Core 只转发部分结果的 details，文本尾巴到不了 ToolView 的通用逻辑。
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -209,14 +210,24 @@ function Input({ name, args }: ToolRenderProps): ReactNode {
 	);
 }
 
-function Result({ name, result }: ToolRenderProps): ReactNode {
+function Result({ name, result, partial }: ToolRenderProps): ReactNode {
+	const exec = name === "sandbox_exec";
+	const live = exec && !result ? str(detailsRecord(partial)?.output) : null;
 	return (
 		<ResultText
-			result={result}
-			maxLines={name === "sandbox_exec" ? 16 : 10}
-			variant={name === "sandbox_exec" ? "code" : "plain"}
+			result={
+				live !== null ? { content: [{ type: "text", text: live }] } : result
+			}
+			maxLines={exec ? 16 : 10}
+			variant={exec ? "code" : "plain"}
 		/>
 	);
 }
 
-export const sandboxRenderer: ToolRenderer = { Summary, Meta, Input, Result };
+export const sandboxRenderer: ToolRenderer = {
+	Summary,
+	Meta,
+	Input,
+	Result,
+	livePartial: true,
+};

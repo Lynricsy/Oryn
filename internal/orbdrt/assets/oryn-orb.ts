@@ -1579,7 +1579,9 @@ function registerSandbox(pi: ExtensionAPI): string | undefined {
 						out = out.slice(-SANDBOX_EXEC_KEEP_BYTES);
 						dropped = true;
 					}
-					onUpdate?.({ content: [{ type: "text", text: out.slice(-SANDBOX_EXEC_UPDATE_CHARS) }] });
+					// 输出尾巴同时放进 details：经 bash 工具命令调用时 Core 只转发部分结果的 details（作为 inner），不转发文本
+					const tail = out.slice(-SANDBOX_EXEC_UPDATE_CHARS);
+					onUpdate?.({ content: [{ type: "text", text: tail }], details: { tool: name, sandbox: p.sandbox, output: tail } });
 				};
 				try {
 					const reply = await call("exec", params, signal, onChunk);

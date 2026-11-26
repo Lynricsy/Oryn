@@ -135,4 +135,36 @@ describe("sandbox 卡片", () => {
 		expect(other.container).toHaveTextContent("1U0P3A");
 		expect(other.container).not.toHaveTextContent("sbx_01JD");
 	});
+
+	it("exec 运行中经 bash 工具命令调用：输出段显示部分结果 details 里的输出尾巴", () => {
+		const command = "for i in 1 2 3; do echo tick $i; done";
+		const { container } = render(
+			<ToolView
+				name="bash"
+				running
+				defaultOpen
+				args={{ command: `sandbox_exec ${SBX} '${command}'` }}
+				partialResult={{
+					content: [{ type: "text", text: "" }],
+					details: {
+						toolCommands: [
+							{
+								tool: "sandbox_exec",
+								mode: "execute",
+								exitCode: 1,
+								args: { sandbox: SBX, command },
+								inner: {
+									tool: "sandbox_exec",
+									sandbox: SBX,
+									output: "tick 1\ntick 2\n",
+								},
+							},
+						],
+					},
+				}}
+			/>,
+		);
+		expect(q(container, ".tv-head")).toHaveTextContent("sandbox_exec");
+		expect(container).toHaveTextContent("tick 2");
+	});
 });
