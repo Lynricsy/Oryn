@@ -417,7 +417,7 @@ func (s *Service) exec(ctx context.Context, linkOrbID string, p execParams, out 
 	if err != nil {
 		return nil, err
 	}
-	defer s.hold(ctx, sb.ID)()
+	defer s.hold(ctx, sb)()
 	body, err := json.Marshal(apigen.OrbSandboxExecRequest{
 		Command: p.Command, Cwd: p.Cwd, Env: p.Env, TimeoutSec: timeout, Detach: &p.Detach,
 	})
@@ -522,7 +522,7 @@ func (s *Service) cp(ctx context.Context, linkOrbID string, p cpParams) (map[str
 	if !s.orbs.HasFeature(linkOrbID, orbs.FeatureFSTar) || !s.orbs.HasFeature(sb.OrbID, orbs.FeatureFSTar) {
 		return nil, errf(CodeOrbdOutdated, "orbd on this machine or in the sandbox is too old for directory transfer; recreate the machine")
 	}
-	defer s.hold(ctx, sb.ID)()
+	defer s.hold(ctx, sb)()
 	from, to := linkOrbID, sb.OrbID
 	if p.Direction == "from_sandbox" {
 		from, to = sb.OrbID, linkOrbID
@@ -600,7 +600,7 @@ func (s *Service) network(ctx context.Context, linkOrbID string, p networkParams
 	if sb.Network == p.Network {
 		return view(sb), nil
 	}
-	release := s.hold(ctx, sb.ID)
+	release := s.hold(ctx, sb)
 	err = s.orbs.SetSandboxNetwork(ctx, sb.OrbID, p.Network)
 	release()
 	if err != nil {
@@ -613,8 +613,7 @@ func (s *Service) network(ctx context.Context, linkOrbID string, p networkParams
 	if err := s.st.Q.SetSandboxNetwork(ctx, db.SetSandboxNetworkParams{Network: p.Network, ID: sb.ID}); err != nil {
 		return apigen.Sandbox{}, err
 	}
-	s.touch(ctx, sb.ID)
-	s.changed(sb.OwnerThreadID)
+	s.touch(ctx, sb)
 	sb, err = s.st.Q.GetSandbox(ctx, sb.ID)
 	return view(sb), err
 }
@@ -639,8 +638,7 @@ func (s *Service) extend(ctx context.Context, linkOrbID string, p extendParams) 
 	if err := s.st.Q.SetSandboxTTL(ctx, db.SetSandboxTTLParams{TtlDeadline: &ttl, ID: sb.ID}); err != nil {
 		return apigen.Sandbox{}, err
 	}
-	s.touch(ctx, sb.ID)
-	s.changed(sb.OwnerThreadID)
+	s.touch(ctx, sb)
 	sb, err = s.st.Q.GetSandbox(ctx, sb.ID)
 	return view(sb), err
 }
@@ -682,13 +680,13 @@ func (s *Service) jobs(ctx context.Context, linkOrbID string, p jobsParams) (any
 		if err := s.orbJSON(ctx, sb.OrbID, http.MethodGet, target, &r); err != nil {
 			return nil, err
 		}
-		s.touch(ctx, sb.ID)
+		s.touch(ctx, sb)
 		return r, nil
 	default:
 		if err := s.orbJSON(ctx, sb.OrbID, http.MethodPost, "/sandbox/jobs/"+url.PathEscape(p.Job)+"/kill", nil); err != nil {
 			return nil, err
 		}
-		s.touch(ctx, sb.ID)
+		s.touch(ctx, sb)
 		return map[string]any{"ok": true}, nil
 	}
 }

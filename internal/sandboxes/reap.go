@@ -225,7 +225,7 @@ func (s *Service) reconcileOne(ctx context.Context, sb db.Sandbox, now time.Time
 		return
 	}
 	if slices.ContainsFunc(jobs.Jobs, func(j apigen.OrbSandboxJob) bool { return j.State == apigen.OrbSandboxJobRunning }) {
-		s.touch(ctx, sb.ID)
+		s.touch(ctx, sb)
 		return
 	}
 	destroy(ReasonIdle)

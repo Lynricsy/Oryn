@@ -504,7 +504,7 @@ func TestExpiry(t *testing.T) {
 	jobs.Jobs = nil
 	jmu.Unlock()
 	e.clk.Add(31 * time.Minute)
-	release := e.s.hold(e.ctx, idle.ID)
+	release := e.s.hold(e.ctx, e.row(idle.ID))
 	e.clk.Add(31 * time.Minute)
 	e.s.Reconcile(e.ctx)
 	assert.Equal(t, stateReady, e.row(idle.ID).State)
@@ -518,7 +518,7 @@ func TestExpiry(t *testing.T) {
 	e.orbs.handle(life.OrbID, sbHandler)
 	for range 4 {
 		e.clk.Add(3 * time.Hour)
-		e.s.touch(e.ctx, life.ID)
+		e.s.touch(e.ctx, e.row(life.ID))
 	}
 	e.s.Reconcile(e.ctx)
 	assert.Equal(t, ReasonMaxLifetime, *e.row(life.ID).DestroyReason)
@@ -673,11 +673,17 @@ func TestExec(t *testing.T) {
 	e := newEnv(t, nil)
 	sb := e.create(map[string]any{"network": "none"})
 	e.orbs.handle(sb.OrbID, execHandler(nil, nil))
-
+	e.chMu.Lock()
+	e.changed = nil
+	e.chMu.Unlock()
 	res, code, lines := e.callAs(e.owner, e.thread, "exec", map[string]any{"sandbox": sb.ID, "command": "x"})
 	require.Empty(t, code)
 	assert.Equal(t, []string{`{"s":"o","d":"out\n"}`, `{"s":"e","d":"err\n"}`}, lines)
 	assert.Equal(t, 3, res.(map[string]any)["exit"])
+	// 开始与结束各记一次活动并通知客户端（空闲倒计时随之重置）
+	e.chMu.Lock()
+	assert.Equal(t, []string{e.thread, e.thread}, e.changed)
+	e.chMu.Unlock()
 
 	_, code, _ = e.callAs(e.owner, e.thread, "exec", map[string]any{"sandbox": sb.ID, "command": "drop"})
 	assert.Equal(t, CodeLinkLost, code, "没等到 exit 行就断了")

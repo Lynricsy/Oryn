@@ -250,26 +250,28 @@ func (s *Service) destroy(ctx context.Context, sb db.Sandbox, reason string) err
 	return nil
 }
 
-// touch 记一次活动（只对 ready 的行生效）。
-func (s *Service) touch(ctx context.Context, id string) {
-	if err := s.st.Q.TouchSandbox(ctx, db.TouchSandboxParams{Now: s.now().UnixMilli(), ID: id}); err != nil {
-		slog.Warn("sandboxes: 记录活动失败", "sandbox", id, "err", err)
+// touch 记一次活动（只对 ready 的行生效），并通知客户端刷新空闲倒计时。
+func (s *Service) touch(ctx context.Context, sb db.Sandbox) {
+	if err := s.st.Q.TouchSandbox(ctx, db.TouchSandboxParams{Now: s.now().UnixMilli(), ID: sb.ID}); err != nil {
+		slog.Warn("sandboxes: 记录活动失败", "sandbox", sb.ID, "err", err)
+		return
 	}
+	s.changed(sb.OwnerThreadID)
 }
 
 // hold 把沙箱记为忙（exec / cp / 改网络进行中），返回释放函数；进出各记一次活动。
-func (s *Service) hold(ctx context.Context, id string) (release func()) {
+func (s *Service) hold(ctx context.Context, sb db.Sandbox) (release func()) {
 	s.mu.Lock()
-	s.busy[id]++
+	s.busy[sb.ID]++
 	s.mu.Unlock()
-	s.touch(ctx, id)
+	s.touch(ctx, sb)
 	return func() {
 		s.mu.Lock()
-		if s.busy[id]--; s.busy[id] <= 0 {
-			delete(s.busy, id)
+		if s.busy[sb.ID]--; s.busy[sb.ID] <= 0 {
+			delete(s.busy, sb.ID)
 		}
 		s.mu.Unlock()
-		s.touch(context.WithoutCancel(ctx), id)
+		s.touch(context.WithoutCancel(ctx), sb)
 	}
 }
 
