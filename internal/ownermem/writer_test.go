@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
@@ -255,6 +257,56 @@ func TestWriterPartialRetainThenExclude(t *testing.T) {
 	for _, id := range all {
 		assert.Contains(t, e.hs.deletes, id)
 	}
+}
+
+// TestWriterExclusionWaitsForInflightRetain:首个同步块的请求停在半路时排除对话，排除要等这个请求结束；
+// 写入随后放弃剩下的块，排除删掉全部已登记的块（含刚写成的首块），之后既不再写入也不留登记。
+func TestWriterExclusionWaitsForInflightRetain(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t, true)
+	e.enable(t)
+	e.thread(t, "c", "assistant", "idle", 16, time.Hour)
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	e.hs.mu.Lock()
+	e.hs.beforeRetain = func() { once.Do(func() { close(entered); <-release }) }
+	e.hs.mu.Unlock()
+
+	scanned := make(chan int, 1)
+	go func() {
+		n, _ := e.svc.Scan(ctx)
+		scanned <- n
+	}()
+	<-entered
+	excluded := make(chan error, 1)
+	go func() {
+		_, err := e.svc.PutExclusion(ctx, apigen.OwnerMemoryExclusionThread, "c")
+		excluded <- err
+	}()
+	select {
+	case err := <-excluded:
+		t.Fatalf("排除没有等进行中的写入就返回了：%v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	require.NoError(t, <-excluded)
+	assert.Equal(t, 0, <-scanned, "写入被排除打断，不算成功")
+
+	assert.Equal(t, 1, e.retainCount(), "排除登记后不再发下一块")
+	assert.Contains(t, e.hs.deletes, "conv:c:0", "刚写成的首块也被删除")
+	assert.Contains(t, e.hs.deletes, "conv:c:1", "预登记的块一并删除")
+	chunks, err := e.st.Q.ListOwnerMemoryChunks(ctx, "c")
+	require.NoError(t, err)
+	assert.Empty(t, chunks)
+	_, err = e.st.Q.GetOwnerMemorySource(ctx, "c")
+	require.Error(t, err, "来源记录随排除删除，失败也没有把它写回")
+
+	e.hs.mu.Lock()
+	e.hs.beforeRetain = nil
+	e.hs.mu.Unlock()
+	e.now = e.now.Add(time.Hour)
+	assert.Equal(t, 0, e.scan(t))
+	assert.Equal(t, 1, e.retainCount())
 }
 
 // TestWriterBackfillWindow:回填只取开启前 30 天内有活动的来源；进度按来源数计算。

@@ -36,6 +36,9 @@ type Service struct {
 	cfg Config
 	// bankMu 串行化 bank 配置的检查与写入（配置哈希一致时只读一次库）。
 	bankMu sync.Mutex
+	// gatesMu 保护 gates：每个来源一把门，串行化同一来源的写入与遗忘（见 lockSource）
+	gatesMu sync.Mutex
+	gates   map[string]*sourceGate
 }
 
 // New 构造服务。

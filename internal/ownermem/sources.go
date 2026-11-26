@@ -40,7 +40,8 @@ func (s *Service) Sources(ctx context.Context, p apigen.ListOwnerMemorySourcesPa
 }
 
 // ForgetSource 按来源遗忘：删除它写入的全部 document。之后有新内容时仍会再写入（除非设了排除），
-// 所以记下当前线程版本、块数 0，而不是删掉来源记录（否则下一轮扫描会把旧内容原样写回）。
+// 所以记下当前线程版本、块数 0，而不是删掉来源记录（否则下一轮扫描会把旧内容原样写回）。删除与记下版本都在
+// 来源的门内完成：等门的写入拿到门后看到版本已是当前的，就不会把旧内容写回。
 func (s *Service) ForgetSource(ctx context.Context, threadID string) (apigen.MemoryForgetResult, error) {
 	src, err := s.cfg.Q.GetOwnerMemorySource(ctx, threadID)
 	if errors.Is(err, errNoRows) {
@@ -53,7 +54,9 @@ func (s *Service) ForgetSource(ctx context.Context, threadID string) (apigen.Mem
 	if err != nil {
 		return apigen.MemoryForgetResult{}, err
 	}
-	out, err := s.forgetSource(ctx, b, threadID)
+	_, release := s.lockSource(threadID, true)
+	defer release()
+	out, err := s.forgetLocked(ctx, b, threadID)
 	if err != nil {
 		return out, err
 	}

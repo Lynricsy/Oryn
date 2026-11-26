@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
@@ -29,6 +31,47 @@ const (
 	entryPage  = 500
 	maxErrText = 500
 )
+
+// errSourceForgotten 表示写入开始前或进行中，同一来源被排除或遗忘：写入放弃，不算失败。
+var errSourceForgotten = errors.New("来源已被排除或遗忘")
+
+// sourceGate 串行化同一来源的写入与遗忘。逐块同步写入可能持续数分钟；遗忘先登记 forgets 再等锁，
+// 写入在每个请求前看到 forgets 非零就放弃，所以遗忘最多等一个进行中的请求，之后删掉的就是全部已登记的块。
+type sourceGate struct {
+	mu      sync.Mutex
+	forgets atomic.Int32
+	refs    int // 持有或等待这把门的调用数，受 Service.gatesMu 保护
+}
+
+// lockSource 取得来源的门；forget 为真时先登记遗忘，让进行中的写入尽早放弃。返回的函数释放门。
+func (s *Service) lockSource(threadID string, forget bool) (*sourceGate, func()) {
+	s.gatesMu.Lock()
+	if s.gates == nil {
+		s.gates = map[string]*sourceGate{}
+	}
+	g := s.gates[threadID]
+	if g == nil {
+		g = &sourceGate{}
+		s.gates[threadID] = g
+	}
+	g.refs++
+	s.gatesMu.Unlock()
+	if forget {
+		g.forgets.Add(1)
+	}
+	g.mu.Lock()
+	return g, func() {
+		if forget {
+			g.forgets.Add(-1)
+		}
+		g.mu.Unlock()
+		s.gatesMu.Lock()
+		if g.refs--; g.refs == 0 {
+			delete(s.gates, threadID)
+		}
+		s.gatesMu.Unlock()
+	}
+}
 
 // retryBackoff 是第 attempts 次失败后到下次重试的间隔。
 func retryBackoff(attempts int64) time.Duration {
@@ -98,6 +141,9 @@ func (s *Service) Scan(ctx context.Context) (int, error) {
 			done++
 			continue
 		}
+		if errors.Is(err, errSourceForgotten) {
+			continue
+		}
 		if ctx.Err() != nil {
 			return done, ctx.Err()
 		}
@@ -126,7 +172,10 @@ func (s *Service) markFailed(ctx context.Context, threadID, kind string, cause e
 }
 
 // retainThread 写入一个来源：构造块、只 retain 哈希变了的块、删除多出的块，最后记下已写入时的线程版本。
+// 持有来源的门；等门期间来源可能已被排除或遗忘，拿到门后重新确认仍需写入。
 func (s *Service) retainThread(ctx context.Context, b *memory.Bank, threadID string) error {
+	g, release := s.lockSource(threadID, false)
+	defer release()
 	t, err := s.cfg.Q.GetThread(ctx, threadID)
 	if err != nil {
 		return err
@@ -134,6 +183,11 @@ func (s *Service) retainThread(ctx context.Context, b *memory.Bank, threadID str
 	kind := SourceKindOf(t.Kind)
 	if kind == "" {
 		return fmt.Errorf("线程种类 %q 不写入助手记忆", t.Kind)
+	}
+	if due, err := s.stillDue(ctx, t); err != nil {
+		return err
+	} else if !due {
+		return errSourceForgotten
 	}
 	meta, err := s.threadMeta(ctx, t)
 	if err != nil {
@@ -166,7 +220,7 @@ func (s *Service) retainThread(ctx context.Context, b *memory.Bank, threadID str
 			return err
 		}
 	}
-	if err := s.retain(ctx, b, changed, func(done []Chunk) error {
+	if err := s.retain(ctx, b, g, changed, func(done []Chunk) error {
 		nowMs := s.cfg.Now().UnixMilli()
 		for _, c := range done {
 			if err := s.putChunk(ctx, threadID, c, c.Hash, nowMs); err != nil {
@@ -204,6 +258,31 @@ func (s *Service) retainThread(ctx context.Context, b *memory.Bank, threadID str
 	})
 }
 
+// stillDue 在持有来源的门之后重新确认来源仍需写入：没被排除（对话本身或所在项目），且没有被遗忘成当前版本
+// （ForgetSource 在门内把来源记成当前线程版本）。
+func (s *Service) stillDue(ctx context.Context, t db.Thread) (bool, error) {
+	excl, err := s.cfg.Q.ListOwnerMemoryExclusions(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, e := range excl {
+		if (e.Kind == string(apigen.OwnerMemoryExclusionThread) && e.TargetID == t.ID) ||
+			(e.Kind == string(apigen.OwnerMemoryExclusionProject) && t.ProjectID != nil && e.TargetID == *t.ProjectID) {
+			return false, nil
+		}
+	}
+	src, err := s.cfg.Q.GetOwnerMemorySource(ctx, t.ID)
+	if errors.Is(err, errNoRows) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	same := src.LastMessageAt != nil && t.LastMessageAt != nil && *src.LastMessageAt == *t.LastMessageAt &&
+		src.TranscriptRev == t.TranscriptRev
+	return !same, nil
+}
+
 // putChunk 登记一个块；hash 为空表示已提交写入、尚未确认成功。
 func (s *Service) putChunk(ctx context.Context, threadID string, c Chunk, hash string, retainedAt int64) error {
 	return s.cfg.Q.UpsertOwnerMemoryChunk(ctx, db.UpsertOwnerMemoryChunkParams{
@@ -218,10 +297,11 @@ type retainItem struct {
 	UpdateMode string `json:"update_mode"`
 }
 
-// retain 写入块，每个请求成功后用它写入的块调用 done。每块一个 item 的（工作线程）合成一次异步请求；一块多个 item 的
-// （助手对话：一个单元一个 item，各自带 seq 出处）逐块同步写入——Hindsight 只在同步路径把同一 document_id 的多个 item
-// 合成一个 document，异步批次里 document_id 重复直接 400（memory_engine.py retain_batch_async）。
-func (s *Service) retain(ctx context.Context, b *memory.Bank, chunks []Chunk, done func([]Chunk) error) error {
+// retain 写入块，每个请求成功后用它写入的块调用 done；每个请求之前看到有遗忘在等门就放弃（errSourceForgotten）。
+// 每块一个 item 的（工作线程）合成一次异步请求；一块多个 item 的（助手对话：一个单元一个 item，各自带 seq 出处）
+// 逐块同步写入——Hindsight 只在同步路径把同一 document_id 的多个 item 合成一个 document，异步批次里 document_id
+// 重复直接 400（memory_engine.py retain_batch_async）。
+func (s *Service) retain(ctx context.Context, b *memory.Bank, g *sourceGate, chunks []Chunk, done func([]Chunk) error) error {
 	var batch []retainItem
 	var batched []Chunk
 	for _, c := range chunks {
@@ -230,6 +310,9 @@ func (s *Service) retain(ctx context.Context, b *memory.Bank, chunks []Chunk, do
 			items = append(items, retainItem{RetainItem: it, UpdateMode: "replace"})
 		}
 		if len(items) > 1 {
+			if g.forgets.Load() > 0 {
+				return errSourceForgotten
+			}
 			if err := postRetain(ctx, b, items, false); err != nil {
 				return err
 			}
@@ -243,6 +326,9 @@ func (s *Service) retain(ctx context.Context, b *memory.Bank, chunks []Chunk, do
 	}
 	if len(batched) == 0 {
 		return nil
+	}
+	if g.forgets.Load() > 0 {
+		return errSourceForgotten
 	}
 	if err := postRetain(ctx, b, batch, true); err != nil {
 		return err
@@ -321,9 +407,16 @@ func (s *Service) forgetStale(ctx context.Context, b *memory.Bank) error {
 	return nil
 }
 
-// forgetSource 删除一个来源在 bank 里的全部 document（遗忘保护：刷新完成前相关主题不再给出），
-// 并清掉本地的块与进度。删除失败的 document 进入 M16 的重试队列（计入 Pending）。
+// forgetSource 在来源的门内遗忘：先登记遗忘让进行中的写入在下一个请求前放弃，等它退出后再删。
 func (s *Service) forgetSource(ctx context.Context, b *memory.Bank, threadID string) (apigen.MemoryForgetResult, error) {
+	_, release := s.lockSource(threadID, true)
+	defer release()
+	return s.forgetLocked(ctx, b, threadID)
+}
+
+// forgetLocked 删除一个来源在 bank 里的全部 document（遗忘保护：刷新完成前相关主题不再给出），
+// 并清掉本地的块与进度。删除失败的 document 进入 M16 的重试队列（计入 Pending）。调用方持有来源的门。
+func (s *Service) forgetLocked(ctx context.Context, b *memory.Bank, threadID string) (apigen.MemoryForgetResult, error) {
 	var out apigen.MemoryForgetResult
 	chunks, err := s.cfg.Q.ListOwnerMemoryChunks(ctx, threadID)
 	if err != nil {

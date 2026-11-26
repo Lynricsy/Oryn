@@ -36,7 +36,9 @@ type fakeHS struct {
 	// retainCalls 计全部 retain 请求（含失败的）；failRetainFrom > 0 时第 failRetainFrom 次（从 1 计）及之后的请求失败
 	retainCalls    int
 	failRetainFrom int
-	failRetain     bool
+	// beforeRetain 非 nil 时在处理 retain 请求之前调用（不持有 mu），用来让请求停在半路
+	beforeRetain func()
+	failRetain   bool
 	// 主题：reflect 返回的 topics、recall 结果的 mentioned_at（空串 = 无结果）、提交的刷新
 	curated   []map[string]any
 	reflects  int
@@ -72,6 +74,12 @@ func newFakeHS(t *testing.T) *fakeHS {
 }
 
 func (f *fakeHS) serve(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	hook := f.beforeRetain
+	f.mu.Unlock()
+	if hook != nil && r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/memories") {
+		hook()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.down {
