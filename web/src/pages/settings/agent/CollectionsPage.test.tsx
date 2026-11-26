@@ -49,7 +49,7 @@ afterEach(() => {
 });
 
 async function toggle(name: string) {
-	const sw = await screen.findByRole("checkbox", { name: `启用 ${name}` });
+	const sw = await screen.findByRole("switch", { name: `启用 ${name}` });
 	await waitFor(() => expect(sw).toBeEnabled());
 	fireEvent.click(sw);
 	return sw;
@@ -62,9 +62,7 @@ describe("CollectionsPage", () => {
 		// 命令没有 frontmatter 描述时取正文首行；这里有描述
 		expect(screen.getByText("发布")).toBeInTheDocument();
 		expect(screen.getByText(".mdc")).toBeInTheDocument();
-		expect(
-			screen.getByRole("checkbox", { name: "启用 old" }),
-		).not.toBeChecked();
+		expect(screen.getByRole("switch", { name: "启用 old" })).not.toBeChecked();
 
 		await toggle("ship");
 		await waitFor(() =>
@@ -134,7 +132,7 @@ describe("CollectionsPage", () => {
 		const globs = within(dialog).getByLabelText(/^文件匹配/);
 		expect(globs).toHaveValue("*.ts");
 		fireEvent.change(globs, { target: { value: "*.ts, src/**/*.tsx" } });
-		fireEvent.click(within(dialog).getByRole("checkbox", { name: "始终应用" }));
+		fireEvent.click(within(dialog).getByRole("switch", { name: "始终应用" }));
 		fireEvent.click(within(dialog).getByRole("button", { name: "保存" }));
 		await waitFor(() => expect(home.puts).toHaveLength(1));
 		expect(home.puts[0]?.path).toBe("rules/style.mdc");

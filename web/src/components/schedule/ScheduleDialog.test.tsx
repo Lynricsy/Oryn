@@ -331,7 +331,7 @@ describe("ScheduleDialog：版本冲突（M9 审查 W1）", () => {
 		expect(within(dialog()).queryByTestId("schedule-conflict")).toBeNull();
 		expect(field("提示词")).toHaveValue(stored(M9_IDS.threadSchedule).prompt);
 		expect(
-			within(dialog()).getByRole("checkbox", { name: "启用" }),
+			within(dialog()).getByRole("switch", { name: "启用" }),
 		).not.toBeChecked();
 		fireEvent.click(save());
 		await waitFor(() => expect(onClose).toHaveBeenCalled());

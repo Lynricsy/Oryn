@@ -78,7 +78,7 @@ async function serverGet<R>(path: string): Promise<R> {
 async function ownerSection(): Promise<HTMLElement> {
 	mount(<MemoryPage />);
 	const section = await screen.findByTestId("owner-memory-section");
-	await within(section).findByRole("checkbox", {
+	await within(section).findByRole("switch", {
 		name: T("memoryPage.owner.settings.enabled"),
 	});
 	return section;
@@ -93,7 +93,7 @@ describe("助手记忆分区", () => {
 			await within(section).findByText(T("memoryPage.owner.unavailable")),
 		).toBeInTheDocument();
 		expect(
-			within(section).queryByRole("checkbox", {
+			within(section).queryByRole("switch", {
 				name: T("memoryPage.owner.settings.enabled"),
 			}),
 		).toBeNull();
@@ -104,7 +104,7 @@ describe("助手记忆分区", () => {
 
 	it("开关即改即存：带上已保存的名字", async () => {
 		const section = await ownerSection();
-		const toggle = within(section).getByRole("checkbox", {
+		const toggle = within(section).getByRole("switch", {
 			name: T("memoryPage.owner.settings.enabled"),
 		});
 		expect(toggle).toBeChecked();

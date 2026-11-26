@@ -32,7 +32,7 @@ describe("SkillsPage", () => {
 		expect(
 			screen.getByText("保存后下发到 orb，不作用于全局助手。"),
 		).toBeInTheDocument();
-		const sw = await screen.findByRole("checkbox", { name: "启用 x" });
+		const sw = await screen.findByRole("switch", { name: "启用 x" });
 		await waitFor(() => expect(sw).toBeEnabled());
 		fireEvent.click(sw);
 		await waitFor(() => expect(lastDisabled()).toEqual(["skill:x"]));

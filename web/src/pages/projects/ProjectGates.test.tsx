@@ -52,7 +52,7 @@ function renderCard(project: Project) {
 }
 
 const save = () => screen.getByRole("button", { name: T("common.save") });
-const toggle = (k: string) => screen.getByRole("checkbox", { name: T(k) });
+const toggle = (k: string) => screen.getByRole("switch", { name: T(k) });
 const area = (k: string) =>
 	screen.getByRole("textbox", { name: (n) => n.startsWith(T(k)) });
 

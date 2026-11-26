@@ -68,7 +68,7 @@ export function Button({
 		<button
 			type="button"
 			// 按钮高度固定，文字换行只会溢出；中文在任意两字之间都可断行，不禁止换行时 flex 行里的按钮会被挤成一字一行
-			className={`inline-flex select-none items-center justify-center whitespace-nowrap rounded-md font-medium transition-[background-color,box-shadow,scale,color] duration-150 ease-out active:scale-[0.98] disabled:pointer-events-none ${sz} ${VARIANT[variant]} ${DISABLED[variant]} ${className}`}
+			className={`inline-flex select-none items-center justify-center whitespace-nowrap rounded-[10px] font-medium transition-[background-color,box-shadow,scale,color] duration-150 ease-out active:scale-[0.98] disabled:pointer-events-none ${sz} ${VARIANT[variant]} ${DISABLED[variant]} ${className}`}
 			{...rest}
 		>
 			{icon && <Icon name={icon} size={size === "sm" ? 13 : 15} />}
@@ -106,7 +106,7 @@ export function IconButton({
 			aria-label={label}
 			title={label}
 			aria-pressed={active}
-			className={`inline-flex ${BOX[box]} shrink-0 items-center justify-center rounded-md text-muted transition-[background-color,color,scale] duration-150 ease-out hover:bg-hover hover:text-fg active:scale-95 disabled:opacity-40 ${active ? "bg-active text-fg" : ""} ${className}`}
+			className={`inline-flex ${BOX[box]} shrink-0 items-center justify-center rounded-[9px] text-muted transition-[background-color,color,scale] duration-150 ease-out hover:bg-hover hover:text-fg active:scale-95 disabled:opacity-40 ${active ? "bg-active text-fg" : ""} ${className}`}
 			{...rest}
 		>
 			<Icon name={icon} size={size} />
@@ -430,12 +430,20 @@ export function Menu({
 	);
 }
 
-/** 输入框聚焦：强调色描边 + 一圈淡光晕，替代全局的 2px 外描边（两者叠加会成双层环）。 */
-const INPUT =
-	"w-full rounded-md border border-border bg-inset px-2.5 py-1.5 text-sm text-fg placeholder:text-faint transition-[border-color,box-shadow] duration-150 focus-visible:border-accent focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-accent/20";
+/**
+ * 输入框（D）：圆角 11、半透明底 + 细外缘；聚焦「提亮浮起」——底色变实、外缘加深、上浮 1px，不加主题色，
+ * 只有光标是主题色（令牌 `--field*`、`--sh-field*`，见 index.css）。强制色模式下补系统高亮轮廓。
+ */
+export const FIELD =
+	"w-full rounded-[11px] bg-[var(--field)] px-3 text-[13.5px] text-fg caret-[var(--brand)] shadow-[var(--sh-field)] outline-none transition-[background-color,box-shadow,translate] duration-150 placeholder:text-faint focus:-translate-y-px focus:bg-[var(--field-focus)] focus:shadow-[var(--sh-field-focus)] disabled:opacity-60 motion-reduce:focus:translate-y-0 forced-colors:focus-visible:outline-2 forced-colors:focus-visible:outline-offset-1 forced-colors:focus-visible:outline-[Highlight]";
 
 export function TextInput(props: InputHTMLAttributes<HTMLInputElement>) {
-	return <input {...props} className={`${INPUT} ${props.className ?? ""}`} />;
+	return (
+		<input
+			{...props}
+			className={`${FIELD} py-[7px] leading-5 ${props.className ?? ""}`}
+		/>
+	);
 }
 
 /** 多行输入；默认等宽字体（配置 / 代码类内容），`mono={false}` 用正文字体（提示词等自然语言）。 */
@@ -447,7 +455,7 @@ export function TextArea({
 	return (
 		<textarea
 			{...props}
-			className={`${INPUT} ${mono ? "font-mono" : ""} ${className}`}
+			className={`${FIELD} py-2 ${mono ? "font-mono" : ""} ${className}`}
 		/>
 	);
 }
@@ -461,7 +469,7 @@ export function Select({
 		<span className={`relative inline-flex min-w-0 ${wrapperClassName}`}>
 			<select
 				{...props}
-				className={`${INPUT} w-full appearance-none pr-8 ${props.className ?? ""}`}
+				className={`${FIELD} py-[7px] pr-8 leading-5 appearance-none ${props.className ?? ""}`}
 			/>
 			<Icon
 				name="chevronDown"
@@ -472,6 +480,7 @@ export function Select({
 	);
 }
 
+/** 字段（L2）：标题 13/550 正文色，说明在控件下方（12、faint）。整块是 label，点标题即聚焦控件。 */
 export function Field({
 	label,
 	hint,
@@ -483,36 +492,47 @@ export function Field({
 }) {
 	return (
 		// biome-ignore lint/a11y/noLabelWithoutControl: 控件以 children 传入
-		<label className="flex flex-col gap-1 text-sm">
-			<span className="font-medium text-muted text-xs">{label}</span>
+		<label className="flex flex-col gap-[7px]">
+			<span className="font-[550] text-[13px] text-fg">{label}</span>
 			{children}
 			{hint && <span className="text-faint text-xs">{hint}</span>}
 		</label>
 	);
 }
 
+/**
+ * 开关（D）：原生 checkbox + `role=switch`；开态墨色轨道 + 反色圆钮，深色里整体反色。
+ * `hideLabel`：行标题已在视觉上说明时，文案只给读屏。
+ */
 export function Toggle({
 	checked,
 	onChange,
 	label,
+	hideLabel = false,
 	disabled,
 }: {
 	checked: boolean;
 	onChange: (v: boolean) => void;
 	label: ReactNode;
+	hideLabel?: boolean;
 	disabled?: boolean;
 }) {
 	return (
-		<label className="inline-flex cursor-pointer items-center gap-2 text-sm">
+		<label className="inline-flex shrink-0 cursor-pointer items-center gap-2 text-sm has-disabled:cursor-default">
 			<input
 				type="checkbox"
+				role="switch"
+				aria-checked={checked}
 				className="peer sr-only"
 				checked={checked}
 				disabled={disabled}
 				onChange={(e) => onChange(e.target.checked)}
 			/>
-			<span className="relative h-[18px] w-8 shrink-0 rounded-full bg-border-strong transition-colors duration-150 after:absolute after:top-0.5 after:left-0.5 after:h-3.5 after:w-3.5 after:rounded-full after:bg-panel after:shadow-xs after:transition-transform after:duration-150 peer-checked:bg-accent peer-checked:after:translate-x-3.5 peer-focus-visible:outline-2 peer-focus-visible:outline-[var(--ring)] peer-focus-visible:outline-offset-2 peer-disabled:opacity-50" />
-			<span>{label}</span>
+			<span
+				aria-hidden
+				className="relative h-5 w-9 shrink-0 rounded-full bg-border-strong transition-colors duration-150 after:absolute after:top-0.5 after:left-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow-xs after:transition-[translate,background-color] after:duration-150 peer-checked:bg-ink peer-checked:after:translate-x-4 peer-checked:after:bg-ink-fg peer-focus-visible:outline-2 peer-focus-visible:outline-[var(--ring)] peer-focus-visible:outline-offset-2 peer-disabled:opacity-50 motion-reduce:after:transition-none"
+			/>
+			<span className={hideLabel ? "sr-only" : ""}>{label}</span>
 		</label>
 	);
 }
@@ -552,7 +572,7 @@ export function Checkbox({
 				{...props}
 				ref={set}
 				type="checkbox"
-				className="peer h-4 w-4 cursor-pointer appearance-none rounded border border-border-strong bg-panel transition-colors duration-150 checked:border-ink checked:bg-ink indeterminate:border-ink indeterminate:bg-ink disabled:cursor-default disabled:opacity-50"
+				className="peer h-4 w-4 cursor-pointer appearance-none rounded-[5px] border border-border-strong bg-panel transition-colors duration-150 checked:border-ink checked:bg-ink indeterminate:border-ink indeterminate:bg-ink disabled:cursor-default disabled:opacity-50"
 			/>
 			<Icon
 				name="check"

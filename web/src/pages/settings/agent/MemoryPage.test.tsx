@@ -187,7 +187,7 @@ describe("MemoryPage", () => {
 		mount(<MemoryPage />);
 		expect(screen.getByText(T("memoryPage.scope"))).toBeInTheDocument();
 		const name = projects[0]?.name ?? "";
-		const toggle = await screen.findByRole("checkbox", {
+		const toggle = await screen.findByRole("switch", {
 			name: T("memoryPage.projects.toggle", { name }),
 		});
 		expect(toggle).toBeChecked();

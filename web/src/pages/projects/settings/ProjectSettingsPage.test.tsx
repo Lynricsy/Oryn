@@ -321,7 +321,7 @@ describe("项目设置：环境", () => {
 
 	it("快照开关：关掉后保存，PATCH 带 snapshots=false", async () => {
 		mount(ENV);
-		const toggle = await screen.findByRole("checkbox", {
+		const toggle = await screen.findByRole("switch", {
 			name: i18n.t("accel.snapshotsToggle"),
 		});
 		expect(toggle).toBeChecked();
@@ -510,11 +510,11 @@ describe("项目设置：Agent", () => {
 			{ projectId: CORE.id, name: CORE.name, enabled: true, overridden: false },
 		];
 		mount(`/projects/${ORYN.id}/settings/agent`);
-		const toggle = await screen.findByRole("checkbox", {
+		const toggle = await screen.findByRole("switch", {
 			name: i18n.t("memoryPage.projects.toggle", { name: ORYN.name }),
 		});
 		expect(
-			screen.queryByRole("checkbox", {
+			screen.queryByRole("switch", {
 				name: i18n.t("memoryPage.projects.toggle", { name: CORE.name }),
 			}),
 		).toBeNull();

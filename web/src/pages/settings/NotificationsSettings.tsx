@@ -47,6 +47,9 @@ import {
 	IconButton,
 	Menu,
 	Spinner,
+	TextArea,
+	TextInput,
+	Toggle,
 } from "../../components/ui/primitives";
 import {
 	ComboSelect,
@@ -57,9 +60,6 @@ import {
 	Reveal,
 	StatusCell,
 	StatusText,
-	Switch,
-	TextAreaField,
-	TextField,
 } from "../../components/ui/workbench";
 import type { ActionStep } from "../../lib/action-error";
 import { confirmAction } from "../../lib/confirm";
@@ -316,7 +316,8 @@ function DeviceCard() {
 							}
 							trailing={
 								supported && (
-									<Switch
+									<Toggle
+										hideLabel
 										checked={pushActive}
 										disabled={busy || permission === "denied"}
 										onChange={(v) => void setPush(v)}
@@ -540,7 +541,7 @@ function ChannelDialog({
 			>
 				<FormField label={t("notifySettings.name")}>
 					{(p) => (
-						<TextField
+						<TextInput
 							{...p}
 							required
 							value={form.name}
@@ -632,7 +633,7 @@ function ChannelDialog({
 							>
 								{(p) =>
 									d.multiline ? (
-										<TextAreaField
+										<TextArea
 											{...p}
 											rows={3}
 											placeholder={d.placeholder}
@@ -640,7 +641,7 @@ function ChannelDialog({
 											onChange={(e) => set(e.target.value)}
 										/>
 									) : (
-										<TextField
+										<TextInput
 											{...p}
 											type={d.secret ? "password" : "text"}
 											autoComplete="off"
@@ -975,7 +976,8 @@ function ChannelRow({
 							},
 						]}
 					/>
-					<Switch
+					<Toggle
+						hideLabel
 						checked={ch.enabled}
 						disabled={update.isPending}
 						onChange={(v) =>

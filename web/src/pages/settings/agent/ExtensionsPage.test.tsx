@@ -107,13 +107,13 @@ describe("ExtensionsPage", () => {
 		expect(
 			screen.getByText("保存后下发到 orb，不作用于全局助手。"),
 		).toBeInTheDocument();
-		const notify = await screen.findByRole("checkbox", { name: "启用 notify" });
+		const notify = await screen.findByRole("switch", { name: "启用 notify" });
 		await waitFor(() => expect(notify).toBeEnabled());
 		fireEvent.click(notify);
 		await waitFor(() =>
 			expect(lastDisabled()).toEqual(["extension-module:notify"]),
 		);
-		fireEvent.click(screen.getByRole("checkbox", { name: "启用 bash.ts" }));
+		fireEvent.click(screen.getByRole("switch", { name: "启用 bash.ts" }));
 		await waitFor(() =>
 			expect(lastDisabled()).toEqual([
 				"extension-module:notify",
@@ -121,7 +121,7 @@ describe("ExtensionsPage", () => {
 			]),
 		);
 		fireEvent.click(
-			await screen.findByRole("checkbox", { name: "启用 get_weather" }),
+			await screen.findByRole("switch", { name: "启用 get_weather" }),
 		);
 		await waitFor(() =>
 			expect(lastDisabled()).toEqual([
@@ -130,7 +130,7 @@ describe("ExtensionsPage", () => {
 				"tool:get_weather",
 			]),
 		);
-		expect(screen.queryByRole("checkbox", { name: "启用 empty" })).toBeNull();
+		expect(screen.queryByRole("switch", { name: "启用 empty" })).toBeNull();
 		expect(screen.getByText("不会加载")).toBeInTheDocument();
 	});
 

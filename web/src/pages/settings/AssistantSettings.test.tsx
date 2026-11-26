@@ -65,7 +65,7 @@ const row = (name: string) =>
 describe("设置 → 全局助手", () => {
 	it("联网开关保存整份设置", async () => {
 		mount();
-		const web = await screen.findByRole("checkbox", { name: "允许助手联网" });
+		const web = await screen.findByRole("switch", { name: "允许助手联网" });
 		expect(web).toBeChecked();
 		fireEvent.click(web);
 		await waitFor(() =>
@@ -80,10 +80,10 @@ describe("设置 → 全局助手", () => {
 
 	it("可用的服务器逐个关闭与重新打开", async () => {
 		mount();
-		const github = await screen.findByRole("checkbox", {
+		const github = await screen.findByRole("switch", {
 			name: "助手使用 github",
 		});
-		const linear = screen.getByRole("checkbox", { name: "助手使用 linear" });
+		const linear = screen.getByRole("switch", { name: "助手使用 linear" });
 		expect(github).toBeChecked();
 		expect(linear).toBeChecked();
 		expect(row("github")).toHaveTextContent("api.githubcopilot.com");
@@ -107,17 +107,17 @@ describe("设置 → 全局助手", () => {
 
 	it("不可用的服务器显示原因、没有开关", async () => {
 		mount();
-		await screen.findByRole("checkbox", { name: "助手使用 github" });
+		await screen.findByRole("switch", { name: "助手使用 github" });
 		expect(row("filesystem")).toHaveTextContent(
 			"本地进程型服务器，助手的沙箱里无法运行",
 		);
 		expect(row("notion")).toHaveTextContent("需要 OAuth 登录，暂不支持");
 		expect(row("notion")).toHaveTextContent("不可用");
 		expect(
-			screen.queryByRole("checkbox", { name: "助手使用 notion" }),
+			screen.queryByRole("switch", { name: "助手使用 notion" }),
 		).toBeNull();
 		expect(
-			screen.queryByRole("checkbox", { name: "助手使用 filesystem" }),
+			screen.queryByRole("switch", { name: "助手使用 filesystem" }),
 		).toBeNull();
 	});
 	it("助手的电脑：provider 与类型进设置，换 provider 时类型回到默认", async () => {
@@ -148,7 +148,7 @@ describe("设置 → 全局助手", () => {
 
 	it("后台研究（M26）：总开关整体 PUT，带今天已花；上限与偏好各自保存", async () => {
 		mount();
-		const master = await screen.findByRole("checkbox", {
+		const master = await screen.findByRole("switch", {
 			name: "开启后台研究",
 		});
 		expect(master).not.toBeChecked();
@@ -203,7 +203,7 @@ describe("设置 → 全局助手", () => {
 
 	it("研究可用工具（M26）：列出工具、不预先勾选，勾一个保存后 PUT 只带它", async () => {
 		mount();
-		await screen.findByRole("checkbox", { name: "助手使用 github" });
+		await screen.findByRole("switch", { name: "助手使用 github" });
 		const open = within(row("github")).getByRole("button", {
 			name: "研究可用工具（0）",
 		});
@@ -245,7 +245,7 @@ describe("设置 → 全局助手", () => {
 
 	it("研究可用工具（M26）：列不出工具（SSE）时改为手动输入", async () => {
 		mount();
-		await screen.findByRole("checkbox", { name: "助手使用 linear" });
+		await screen.findByRole("switch", { name: "助手使用 linear" });
 		fireEvent.click(
 			within(row("linear")).getByRole("button", { name: /^研究可用工具/ }),
 		);

@@ -90,7 +90,7 @@ describe("SubagentsPage", () => {
 		expect(
 			screen.getByText("保存后下发到 orb，不作用于全局助手。"),
 		).toBeInTheDocument();
-		const sw = await screen.findByRole("checkbox", { name: "启用 foo" });
+		const sw = await screen.findByRole("switch", { name: "启用 foo" });
 		await waitFor(() => expect(sw).toBeEnabled());
 		fireEvent.click(sw);
 		await waitFor(() =>
@@ -107,7 +107,7 @@ describe("SubagentsPage", () => {
 		expect(within(row).queryByRole("button", { name: "删除 task" })).toBeNull();
 		await waitFor(() =>
 			expect(
-				within(row).getByRole("checkbox", { name: "启用 task" }),
+				within(row).getByRole("switch", { name: "启用 task" }),
 			).toBeEnabled(),
 		);
 		fireEvent.click(
@@ -165,7 +165,7 @@ describe("SubagentsPage", () => {
 		fireEvent.change(within(dialog).getByLabelText(/^工具/), {
 			target: { value: "read, grep" },
 		});
-		fireEvent.click(within(dialog).getByRole("checkbox", { name: "阻塞运行" }));
+		fireEvent.click(within(dialog).getByRole("switch", { name: "阻塞运行" }));
 		fireEvent.change(within(dialog).getByLabelText("editor:agents/bar.md"), {
 			target: { value: "你是 bar。\n" },
 		});

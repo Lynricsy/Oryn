@@ -95,7 +95,7 @@ describe("设置 → 自动化：定时任务", () => {
 			`[data-schedule="${M9_IDS.failingSchedule}"]`,
 		) as HTMLElement;
 		expect(failing).toHaveTextContent("失败");
-		expect(within(failing).getByRole("checkbox")).not.toBeChecked();
+		expect(within(failing).getByRole("switch")).not.toBeChecked();
 	});
 
 	it("?schedule=<id> 直接打开该定时的对话框", async () => {
@@ -198,9 +198,9 @@ describe("项目设置里的定时任务", () => {
 			`[data-schedule="${M9_IDS.projectSchedule}"]`,
 		) as HTMLElement;
 		expect(nightly).toHaveTextContent("每 6 小时");
-		fireEvent.click(within(nightly).getByRole("checkbox"));
+		fireEvent.click(within(nightly).getByRole("switch"));
 		await waitFor(() =>
-			expect(within(nightly).getByRole("checkbox")).not.toBeChecked(),
+			expect(within(nightly).getByRole("switch")).not.toBeChecked(),
 		);
 		expect(requests).toContain(
 			`POST /api/v1/schedules/${M9_IDS.projectSchedule}/pause`,

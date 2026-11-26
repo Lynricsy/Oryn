@@ -269,7 +269,7 @@ describe("GitHubTriggers", () => {
 			{ target: { value: "oryn" } },
 		);
 		fireEvent.click(
-			screen.getByRole("checkbox", { name: T("github.triggers.announce") }),
+			screen.getByRole("switch", { name: T("github.triggers.announce") }),
 		);
 		fireEvent.change(
 			screen.getByRole("textbox", {
@@ -311,7 +311,7 @@ describe("GitHubTriggers", () => {
 			"workflow_run_completed",
 		]);
 		const commentOnly = () =>
-			screen.queryByRole("checkbox", {
+			screen.queryByRole("switch", {
 				name: T("github.triggers.commentOnlyReviews"),
 			});
 		const prefix = () =>
@@ -376,15 +376,15 @@ describe("GitHubTriggers", () => {
 			{ target: { value: "xhigh" } },
 		);
 		fireEvent.click(
-			screen.getByRole("checkbox", { name: T("github.triggers.implAuth") }),
+			screen.getByRole("switch", { name: T("github.triggers.implAuth") }),
 		);
 		fireEvent.click(
-			screen.getByRole("checkbox", {
+			screen.getByRole("switch", {
 				name: T("github.triggers.completionReminders"),
 			}),
 		);
 		fireEvent.click(
-			screen.getByRole("checkbox", {
+			screen.getByRole("switch", {
 				name: T("github.triggers.handToAssistant"),
 			}),
 		);
@@ -440,7 +440,7 @@ describe("GitHubTriggers", () => {
 			}),
 		).toHaveValue("Triage {{repo}}#{{number}}");
 		expect(
-			screen.getByRole("checkbox", { name: T("github.triggers.implAuth") }),
+			screen.getByRole("switch", { name: T("github.triggers.implAuth") }),
 		).toBeChecked();
 		expect(
 			screen.getByRole("spinbutton", {
@@ -523,7 +523,7 @@ describe("GitHubTriggers", () => {
 
 	it("启停开关发 PATCH { enabled }", async () => {
 		renderList([TRIGGER]);
-		const toggle = await screen.findByRole("checkbox", {
+		const toggle = await screen.findByRole("switch", {
 			name: `启用「${TRIGGER.name}」`,
 		});
 		fireEvent.click(toggle);

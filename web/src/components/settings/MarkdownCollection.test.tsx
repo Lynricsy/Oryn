@@ -110,7 +110,7 @@ describe("MarkdownCollection（技能）", () => {
 
 	it("停用：config.yml 的 disabledExtensions 加入 skill:<名称>，注释保留；再启用则移除", async () => {
 		mountSkills();
-		const sw = await screen.findByRole("checkbox", {
+		const sw = await screen.findByRole("switch", {
 			name: "启用 code-review",
 		});
 		await waitFor(() => expect(sw).toBeEnabled());
@@ -128,7 +128,7 @@ describe("MarkdownCollection（技能）", () => {
 
 	it("config.yml 在别处被改过：不写入，提示冲突并载入最新内容", async () => {
 		mountSkills();
-		const sw = await screen.findByRole("checkbox", {
+		const sw = await screen.findByRole("switch", {
 			name: "启用 code-review",
 		});
 		await waitFor(() => expect(sw).toBeEnabled());
@@ -140,7 +140,7 @@ describe("MarkdownCollection（技能）", () => {
 		expect(home.puts).toEqual([]);
 		await waitFor(() =>
 			expect(
-				screen.getByRole("checkbox", { name: "启用 draft" }),
+				screen.getByRole("switch", { name: "启用 draft" }),
 			).not.toBeChecked(),
 		);
 	});

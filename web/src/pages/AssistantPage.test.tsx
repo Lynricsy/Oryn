@@ -449,7 +449,7 @@ describe("AssistantPage：主线（M19）", () => {
 		fireEvent.click(await screen.findByRole("button", { name: "提醒" }));
 		const dialog = await screen.findByRole("dialog", { name: "提醒" });
 		expect(await within(dialog).findByText("早间简报")).toBeVisible();
-		fireEvent.click(within(dialog).getByRole("checkbox"));
+		fireEvent.click(within(dialog).getByRole("switch"));
 		await waitFor(() =>
 			expect(
 				server.automation.schedules.find((s) => s.id === M9_IDS.mainReminder)

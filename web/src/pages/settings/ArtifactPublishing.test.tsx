@@ -110,7 +110,7 @@ afterEach(() => {
 describe("ArtifactPublishing", () => {
 	it("自动发布开关发 PUT，并显示服务端返回的状态", async () => {
 		mount();
-		const toggle = await screen.findByRole("checkbox", {
+		const toggle = await screen.findByRole("switch", {
 			name: i18n.t("artifacts.share.settings.autoPublish"),
 		});
 		expect(toggle).not.toBeChecked();

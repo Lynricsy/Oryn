@@ -48,11 +48,11 @@ afterEach(() => {
 describe("PromptsPage", () => {
 	it("AGENTS.md 启停写 context-file:user:AGENTS.md；未创建的 RULES.md 开关不可用", async () => {
 		renderPage(<PromptsPage />);
-		const agents = await screen.findByRole("checkbox", {
+		const agents = await screen.findByRole("switch", {
 			name: "启用 AGENTS.md",
 		});
 		expect(
-			screen.getByRole("checkbox", { name: "启用 RULES.md" }),
+			screen.getByRole("switch", { name: "启用 RULES.md" }),
 		).toBeDisabled();
 		await waitFor(() => expect(agents).toBeEnabled());
 		fireEvent.click(agents);

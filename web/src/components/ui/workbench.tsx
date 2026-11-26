@@ -1,22 +1,15 @@
 /**
- * 工作台原生（D）控件：分组列表与行、开关、L2 表单字段、输入框、自绘下拉。
- *
- * 试点：目前只有「设置 › 通知」与它的弹窗在用；确认真实效果后替换 data.tsx 的 Card / ListRow 与
- * primitives.tsx 的 Toggle / Field / TextInput / TextArea / Select，届时删除旧件，不长期并存。
+ * 工作台原生（D）控件：分组列表与行、L2 表单字段、自绘下拉。输入框、开关、按钮等基础件在 primitives.tsx。
  *
  * - 分组：标题在外（12.5/600 次要灰），行在内（22px 圆角的悬浮毛玻璃面板 `.glass`，行间一条贯穿整行的发丝线）。
  * - 行：28px 中性图标方块 + 标题 / 说明 + 行尾；`Reveal` 包住的动作平时不占位，悬停或 Tab 进这一行时出现，
  *   `StatusCell` 是定宽状态列，所以出现的动作与状态文字长短无关，后面的 ⋯ 和开关也不动。
- * - 开关 / 勾选开态用墨色（深色里整体反色：白底黑钮）。
- * - 输入框：高 34、圆角 11；聚焦「提亮浮起」——底色变实、外缘加深、上浮 1px，不加主题色（令牌 `--field*`、`--sh-field*`）。
  * - 字段标题（L2）：标题 13/550，说明并到标题行右侧，只标「可选」；说明与「可选」经 aria-describedby 读给读屏。
  * - 下拉：粗指针（触屏）用原生 select；其余是 combobox + listbox，焦点留在触发钮上（aria-activedescendant）。
  */
 import {
-	type InputHTMLAttributes,
 	type KeyboardEvent,
 	type ReactNode,
-	type TextareaHTMLAttributes,
 	useEffect,
 	useId,
 	useRef,
@@ -26,6 +19,7 @@ import { useCoarsePointer } from "../../lib/viewport";
 import { StatusDot, type Tone } from "./data";
 import { Floating } from "./Floating";
 import { Icon, type IconName } from "./icons";
+import { FIELD } from "./primitives";
 
 // ---------------------------------------------------------------- 分组与行
 
@@ -158,41 +152,6 @@ export function StatusText({
 	);
 }
 
-// ---------------------------------------------------------------- 开关
-
-/** 开关：原生 checkbox（role=switch）；开态墨色轨道 + 反色圆钮，深色里自动反色。 */
-export function Switch({
-	checked,
-	onChange,
-	label,
-	disabled,
-}: {
-	checked: boolean;
-	onChange: (v: boolean) => void;
-	/** 读屏名称（行标题已在视觉上说明） */
-	label: string;
-	disabled?: boolean;
-}): ReactNode {
-	return (
-		<label className="relative inline-flex shrink-0 cursor-pointer has-disabled:cursor-default">
-			<input
-				type="checkbox"
-				role="switch"
-				aria-checked={checked}
-				aria-label={label}
-				className="peer sr-only"
-				checked={checked}
-				disabled={disabled}
-				onChange={(e) => onChange(e.target.checked)}
-			/>
-			<span
-				aria-hidden
-				className="relative h-5 w-9 rounded-full bg-border-strong transition-colors duration-150 after:absolute after:top-0.5 after:left-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow-xs after:transition-[translate,background-color] after:duration-150 peer-checked:bg-ink peer-checked:after:translate-x-4 peer-checked:after:bg-ink-fg peer-focus-visible:outline-2 peer-focus-visible:outline-[var(--ring)] peer-focus-visible:outline-offset-2 peer-disabled:opacity-50 motion-reduce:after:transition-none"
-			/>
-		</label>
-	);
-}
-
 // ---------------------------------------------------------------- 表单
 
 /** 交给控件的属性：`id` 对上标题的 `htmlFor`，说明与「可选」经 `aria-describedby` 读出。 */
@@ -259,36 +218,6 @@ export function FormField({
 				"aria-describedby": described,
 			})}
 		</div>
-	);
-}
-
-/** 输入框外观（单行 / 多行 / 下拉触发钮共用）。 */
-const FIELD =
-	"w-full rounded-[11px] bg-[var(--field)] px-3 text-[13.5px] text-fg shadow-[var(--sh-field)] outline-none transition-[background-color,box-shadow,translate] duration-150 placeholder:text-faint focus:-translate-y-px focus:bg-[var(--field-focus)] focus:shadow-[var(--sh-field-focus)] motion-reduce:focus:translate-y-0 forced-colors:focus-visible:outline-2 forced-colors:focus-visible:outline-offset-1 forced-colors:focus-visible:outline-[Highlight]";
-
-/** 单行输入。 */
-export function TextField({
-	className = "",
-	...props
-}: InputHTMLAttributes<HTMLInputElement>): ReactNode {
-	return (
-		<input
-			{...props}
-			className={`h-[34px] caret-[var(--brand)] ${FIELD} ${className}`}
-		/>
-	);
-}
-
-/** 多行输入；默认等宽字体（配置类内容）。 */
-export function TextAreaField({
-	className = "",
-	...props
-}: TextareaHTMLAttributes<HTMLTextAreaElement>): ReactNode {
-	return (
-		<textarea
-			{...props}
-			className={`py-2 font-mono caret-[var(--brand)] ${FIELD} ${className}`}
-		/>
 	);
 }
 

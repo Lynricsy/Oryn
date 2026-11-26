@@ -110,7 +110,7 @@ afterEach(() => {
 describe("CommentsPanel 设计便签自动投递", () => {
 	it("开着时未发出的评论标「已排队」；关掉发 PATCH 并去掉标记", async () => {
 		wrap(<CommentsPanel artifactId={ID} threads={[]} canComment />);
-		const toggle = await screen.findByRole("checkbox", {
+		const toggle = await screen.findByRole("switch", {
 			name: t("artifacts.comments.autoNotes"),
 		});
 		expect(toggle).toBeChecked();

@@ -79,17 +79,17 @@ describe("ProjectGitHubCard", () => {
 		expect(screen.getByTestId("project-github")).toHaveTextContent(
 			"acme/widgets",
 		);
-		const reviews = screen.getByRole("checkbox", {
+		const reviews = screen.getByRole("switch", {
 			name: T("github.project.listen.reviews"),
 		});
 		expect(reviews).toBeChecked();
 		expect(
-			screen.getByRole("checkbox", {
+			screen.getByRole("switch", {
 				name: T("github.project.listen.comments"),
 			}),
 		).toBeChecked();
 		expect(
-			screen.getByRole("checkbox", { name: T("github.project.listen.ci") }),
+			screen.getByRole("switch", { name: T("github.project.listen.ci") }),
 		).toBeChecked();
 		fireEvent.click(reviews);
 		await waitFor(() => expect(patches).toHaveLength(1));
@@ -106,7 +106,7 @@ describe("ProjectGitHubCard", () => {
 				bound: false,
 			},
 		});
-		expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
+		expect(screen.queryAllByRole("switch")).toHaveLength(0);
 		expect(
 			await screen.findByText(T("github.project.unbound")),
 		).toBeInTheDocument();
@@ -118,7 +118,7 @@ describe("ProjectGitHubCard", () => {
 	it("GitHub 地址但从未解析出仓库：同样链接到设置页", async () => {
 		const { github: _g, ...plain } = BOUND;
 		renderCard(plain);
-		expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
+		expect(screen.queryAllByRole("switch")).toHaveLength(0);
 		expect(
 			await screen.findByRole("link", { name: T("github.project.connect") }),
 		).toHaveAttribute("href", "/settings/github");
@@ -162,7 +162,7 @@ describe("ProjectGitHubCard", () => {
 				"href",
 				"https://github.com/settings/connections/applications/Ov23liTEST",
 			);
-			expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
+			expect(screen.queryAllByRole("switch")).toHaveLength(0);
 		});
 
 		it("组织批准链接取 GitHub 网页基址（webUrl）", async () => {

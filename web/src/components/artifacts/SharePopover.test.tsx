@@ -289,7 +289,7 @@ describe("SharePanel", () => {
 		pub = publication();
 		mountPanel();
 		fireEvent.click(
-			await screen.findByRole("checkbox", {
+			await screen.findByRole("switch", {
 				name: i18n.t("artifacts.share.follow"),
 			}),
 		);
