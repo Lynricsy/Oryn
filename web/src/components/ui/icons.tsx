@@ -180,6 +180,7 @@ import { User } from "@phosphor-icons/react/dist/csr/User";
 import { Vibrate } from "@phosphor-icons/react/dist/csr/Vibrate";
 import { VideoCamera } from "@phosphor-icons/react/dist/csr/VideoCamera";
 import { WarningCircle } from "@phosphor-icons/react/dist/csr/WarningCircle";
+import { WarningOctagon } from "@phosphor-icons/react/dist/csr/WarningOctagon";
 import { Waveform } from "@phosphor-icons/react/dist/csr/Waveform";
 import { WebhooksLogo } from "@phosphor-icons/react/dist/csr/WebhooksLogo";
 import { Wrench } from "@phosphor-icons/react/dist/csr/Wrench";
@@ -412,6 +413,8 @@ const ICONS = {
 	footprints: Footprints,
 	folderMinus: FolderMinus,
 	lightbulb: Lightbulb,
+	/** 顾问阻断级建议（对齐 Core 的 octagon-alert） */
+	octagonAlert: WarningOctagon,
 	undo: ArrowArcLeft,
 	/** 图片灯箱：逆时针旋转、顺时针旋转、水平翻转、透明棋盘格底纹 */
 	rotateCcw: ArrowCounterClockwise,

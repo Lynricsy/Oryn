@@ -386,6 +386,62 @@
 		"contextCleared": "上下文已清空",
 		"unknownEntry": "未知条目：{{type}}",
 		"aborted": "已中断",
+		"advisor": {
+			"title": "顾问",
+			"copy": "复制顾问建议",
+			"rank": {
+				"blocker": "阻断",
+				"concern": "关注",
+				"nit": "建议",
+				"note": "批注"
+			},
+			"tally": {
+				"blocker_one": "{{count}} 阻断",
+				"blocker_other": "{{count}} 阻断",
+				"concern_one": "{{count}} 关注",
+				"concern_other": "{{count}} 关注",
+				"nit_one": "{{count}} 建议",
+				"nit_other": "{{count}} 建议",
+				"note_one": "{{count}} 批注",
+				"note_other": "{{count}} 批注"
+			},
+			"turnsAgo_one": "{{count}} 轮前",
+			"turnsAgo_other": "{{count}} 轮前",
+			"showMore_one": "展开其余 {{count}} 条建议",
+			"showMore_other": "展开其余 {{count}} 条建议",
+			"collapse": "收起建议"
+		},
+		"handoff": "会话交接",
+		"handoffEmpty": "（无交接摘要内容）",
+		"irc": {
+			"title": "IRC 协作",
+			"kind": {
+				"incoming": "来信",
+				"autoreply": "自动回复",
+				"relay": "转发",
+				"workpool": "工作池"
+			},
+			"progress": "进度",
+			"broadcast": "广播"
+		},
+		"lateDiagnostics": {
+			"title": "迟到诊断",
+			"files_one": "{{count}} 个文件",
+			"files_other": "{{count}} 个文件",
+			"items_one": "{{count}} 条",
+			"items_other": "{{count}} 条",
+			"more_one": "… 其余 {{count}} 条，点击展开查看",
+			"more_other": "… 其余 {{count}} 条，点击展开查看"
+		},
+		"skillPrompt": {
+			"lines_one": "{{count}} 行",
+			"lines_other": "{{count}} 行",
+			"showPrompt": "展开技能提示词",
+			"hidePrompt": "收起技能提示词"
+		},
+		"tanDispatch": {
+			"title": "后台分支"
+		},
 		"automated": "自动投递",
 		"branchSummary": "分支摘要",
 		"cancelled": "已取消",

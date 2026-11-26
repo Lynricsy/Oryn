@@ -17,6 +17,11 @@ import {
 import { imageGroup } from "../../lib/context-menu/image-actions";
 import { useContextTarget } from "../../lib/context-menu/registry";
 import { copyWithToast } from "../../lib/context-menu/selection-groups";
+import {
+	firstCustomMessagePreview,
+	isSilentAbortMessage,
+	parseHandoffMessage,
+} from "../../lib/custom-messages";
 import { joinPath, orbFileSource } from "../../lib/file-source";
 import {
 	formatBytes,
@@ -58,6 +63,7 @@ import { Menu, type MenuItem, ThreadStateIcon } from "../ui/primitives";
 import { UserAvatar } from "../ui/UserAvatar";
 import { AgentAvatar } from "./AgentAvatar";
 import { useToolCallActive, useToolsExpand } from "./active-tools";
+import { renderKnownCustomMessage } from "./CustomMessages";
 import { type TranscriptContextValue, useTranscriptContext } from "./context";
 import { Foldable } from "./Foldable";
 import { BackgroundToolView, JobEventMessage } from "./JobEvents";
@@ -1284,8 +1290,10 @@ export function assistantEdges(
 	for (let i = content.length - 1; i >= 0 && tail === null; i--)
 		tail = blockKind(content[i]);
 	const stop = message.stopReason;
-	// 停止提示与回合脚注都是正文层的块
-	const tailProse = hasFooter || stop === "error" || stop === "aborted";
+	const silentAbort = stop === "aborted" && isSilentAbortMessage(message);
+	// 停止提示与回合脚注都是正文层的块；Core 静默中止不渲染提示
+	const tailProse =
+		hasFooter || stop === "error" || (stop === "aborted" && !silentAbort);
 	const last = tailProse ? "prose" : (tail ?? "prose");
 	return [head ?? "prose", live && head === null ? "prose" : last];
 }
@@ -1442,7 +1450,8 @@ function AssistantMessage({
 			{blocks}
 			{/* 流式中还没有可见块（空 content，或只有空的 text / thinking 块）：接力回合开始时的三点，直到首个可见块 */}
 			{live && blocks.length === 0 && <TypingDots />}
-			{(stop === "error" || stop === "aborted") && (
+			{(stop === "error" ||
+				(stop === "aborted" && !isSilentAbortMessage(message))) && (
 				<div style={blocks.length > 0 ? { marginTop: GAP_FLOW } : undefined}>
 					<Callout
 						tone={stop === "error" ? "err" : "neutral"}
@@ -1520,13 +1529,12 @@ function CustomMessage({ message }: { message: JsonRecord }) {
 				<div className="mb-1.5">
 					<Badge icon="message">{label}</Badge>
 				</div>
-				<Markdown text={text} />
+				<Markdown text={escapeAngles(text)} />
 				<Images content={message.content} />
 			</div>
 		);
-	// 摘要取第一行正文：跳过 `<system-notice>` 这类包裹标签行
-	const first =
-		lines.map((l) => l.trim()).find((l) => l && !/^<\/?[\w-]+>$/.test(l)) ?? "";
+	// 摘要取第一行正文：跳过 `<system-notice>` / `<advisory ...>` 这类包裹标签行
+	const first = firstCustomMessagePreview(text);
 	return (
 		<div className="overflow-hidden rounded-lg border border-border-strong border-dashed">
 			<button
@@ -1545,7 +1553,7 @@ function CustomMessage({ message }: { message: JsonRecord }) {
 			</button>
 			{open && (
 				<div className="border-border border-t border-dashed px-3 py-2">
-					<Markdown text={text} />
+					<Markdown text={escapeAngles(text)} />
 					<Images content={message.content} />
 				</div>
 			)}
@@ -1558,11 +1566,13 @@ function SummaryCard({
 	label,
 	summary,
 	extra,
+	warning,
 }: {
 	icon: IconName;
 	label: string;
 	summary: string;
 	extra?: string;
+	warning?: string;
 }) {
 	const [open, setOpen] = useState(false);
 	return (
@@ -1576,6 +1586,9 @@ function SummaryCard({
 				<Icon name={icon} size={13} className="shrink-0 text-faint" />
 				<span className="truncate font-medium">{label}</span>
 				{extra && <Badge>{extra}</Badge>}
+				{warning && (
+					<Icon name="alert" size={13} className="shrink-0 text-warn-ink" />
+				)}
 				<span className="flex-1" />
 				<Icon
 					name="chevronRight"
@@ -1584,8 +1597,13 @@ function SummaryCard({
 				/>
 			</button>
 			{open && (
-				<div className="border-border border-t px-3 py-2">
-					<Markdown text={summary} />
+				<div className="flex flex-col gap-2 border-border border-t px-3 py-2">
+					{warning && (
+						<Callout tone="warn" icon="alert">
+							{warning}
+						</Callout>
+					)}
+					<Markdown text={escapeAngles(summary)} />
 				</div>
 			)}
 		</section>
@@ -1602,11 +1620,16 @@ export function CompactionCard({ entry }: { entry: JsonRecord }) {
 		typeof entry.tokensAfter === "number"
 			? formatTokens(entry.tokensAfter)
 			: "?";
+	const warning =
+		typeof entry.warning === "string" && entry.warning.trim()
+			? entry.warning.trim()
+			: undefined;
 	return (
 		<SummaryCard
 			icon="minimize"
 			label={t("transcript.compaction")}
 			extra={`${before} → ${after}`}
+			warning={warning}
 			summary={String(entry.shortSummary ?? entry.summary ?? "")}
 		/>
 	);
@@ -1662,7 +1685,22 @@ export function MessageView({
 		case "pythonExecution":
 			return <ExecutionMessage message={message} />;
 		case "custom":
-		case "hookMessage":
+		case "hookMessage": {
+			const handoff = parseHandoffMessage(message);
+			if (handoff !== null) {
+				return (
+					<SummaryCard
+						icon="handoff"
+						label={t("transcript.handoff")}
+						summary={handoff || t("transcript.handoffEmpty")}
+					/>
+				);
+			}
+			const known = renderKnownCustomMessage(
+				message,
+				<Images content={message.content} />,
+			);
+			if (known) return known;
 			// 后台任务的交付 / 提醒 / 常驻进程退出：解析成事件行；认不出时退回通用卡片
 			return (
 				<JobEventMessage
@@ -1670,6 +1708,7 @@ export function MessageView({
 					fallback={<CustomMessage message={message} />}
 				/>
 			);
+		}
 		case "branchSummary":
 			return <BranchSummaryCard entry={message} />;
 		case "compactionSummary":

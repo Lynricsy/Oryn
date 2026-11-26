@@ -386,6 +386,62 @@
 		"contextCleared": "Context cleared",
 		"unknownEntry": "Unknown entry: {{type}}",
 		"aborted": "Aborted",
+		"advisor": {
+			"title": "Advisor",
+			"copy": "Copy advisor notes",
+			"rank": {
+				"blocker": "Blocker",
+				"concern": "Concern",
+				"nit": "Nit",
+				"note": "Note"
+			},
+			"tally": {
+				"blocker_one": "{{count}} blocker",
+				"blocker_other": "{{count}} blockers",
+				"concern_one": "{{count}} concern",
+				"concern_other": "{{count}} concerns",
+				"nit_one": "{{count}} nit",
+				"nit_other": "{{count}} nits",
+				"note_one": "{{count}} note",
+				"note_other": "{{count}} notes"
+			},
+			"turnsAgo_one": "{{count}} turn ago",
+			"turnsAgo_other": "{{count}} turns ago",
+			"showMore_one": "Show {{count}} more note",
+			"showMore_other": "Show {{count}} more notes",
+			"collapse": "Show fewer"
+		},
+		"handoff": "Handed off",
+		"handoffEmpty": "(No handoff content)",
+		"irc": {
+			"title": "IRC",
+			"kind": {
+				"incoming": "Incoming",
+				"autoreply": "Auto-reply",
+				"relay": "Relay",
+				"workpool": "Workpool"
+			},
+			"progress": "Progress",
+			"broadcast": "Broadcast"
+		},
+		"lateDiagnostics": {
+			"title": "Late diagnostics",
+			"files_one": "{{count}} file",
+			"files_other": "{{count}} files",
+			"items_one": "{{count}} item",
+			"items_other": "{{count}} items",
+			"more_one": "… {{count}} more, click to expand",
+			"more_other": "… {{count}} more, click to expand"
+		},
+		"skillPrompt": {
+			"lines_one": "{{count}} line",
+			"lines_other": "{{count}} lines",
+			"showPrompt": "Show skill prompt",
+			"hidePrompt": "Hide skill prompt"
+		},
+		"tanDispatch": {
+			"title": "Background tangent"
+		},
 		"automated": "Automated",
 		"branchSummary": "Branch summary",
 		"cancelled": "cancelled",

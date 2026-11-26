@@ -30,6 +30,7 @@ import {
 	useContextTarget,
 } from "../../lib/context-menu/registry";
 import { anchorOf } from "../../lib/context-menu/selection";
+import { isSkillPromptCustomMessage } from "../../lib/custom-messages";
 import { BUILTIN_ROLE_NAMES, type BuiltinRole } from "../../lib/model-roles";
 import { describeOrynHeader, parseOrynMessage } from "../../lib/oryn-message";
 import {
@@ -449,8 +450,17 @@ export function layoutTurns(items: readonly MainlineRow[]): {
 			openStart = undefined;
 			return;
 		}
-		// 主线的折叠行与会话分隔一样是回合边界：其后的助手正文另起一个回合（带头像）
-		if (it.kind === "session_divider" || it.kind === "fold") {
+		// 主线的折叠行、会话分隔以及用户触发的 /skill: 都是回合边界：其后的助手正文另起一个回合（带头像）
+		const isSkillTurnStart =
+			(it.kind === "custom_message" && isSkillPromptCustomMessage(it.entry)) ||
+			(it.kind === "message" &&
+				it.message.role === "custom" &&
+				isSkillPromptCustomMessage(it.message));
+		if (
+			it.kind === "session_divider" ||
+			it.kind === "fold" ||
+			isSkillTurnStart
+		) {
 			close();
 			openStart = undefined;
 			return;
