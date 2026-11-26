@@ -76,6 +76,8 @@ type Config struct {
 	// BoxThreadsChanged 在 box 的 orb 上建、共用 fork、删线程之后调用（M23：box 页的活动流与用量图都数线程，而在已经
 	// ready 的 orb 上增删线程不产生任何 orb 事件）；nil = 不通知。
 	BoxThreadsChanged func()
+	// ThreadRetired 在线程归档（deleted=false）或删除（deleted=true）之后调用（M30：销毁它名下的沙箱）；nil = 不通知。
+	ThreadRetired func(threadID string, deleted bool)
 }
 
 // DeliveredAttachment 是已投递到 orb 的附件（Path 为 orb 内绝对路径）。

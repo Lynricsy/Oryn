@@ -47,6 +47,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/realtime"
 	"github.com/Lynricsy/Oryn/internal/repos"
 	"github.com/Lynricsy/Oryn/internal/research"
+	"github.com/Lynricsy/Oryn/internal/sandboxes"
 	"github.com/Lynricsy/Oryn/internal/schedule"
 	"github.com/Lynricsy/Oryn/internal/search"
 	"github.com/Lynricsy/Oryn/internal/secrets"
@@ -67,6 +68,13 @@ var notifyDoneDelay, notifyInputDelay time.Duration
 // boxesTick / boxesUnlinkedAfter 是 box 对账周期与「ready 却没有 link」多久之后重新拉起；零值 = boxes 默认（30s / 90s）。
 // e2e 在 newStack 之前设、t.Cleanup 里还原。
 var boxesTick, boxesUnlinkedAfter time.Duration
+
+// sandboxesTick / sandboxesNow 是沙箱对账周期与时钟；零值 = sandboxes 默认（30s / time.Now）。e2e 在 newStack 之前设、
+// t.Cleanup 里还原。
+var (
+	sandboxesTick time.Duration
+	sandboxesNow  func() time.Time
+)
 
 // scheduleNow / scheduleAfterFunc 是定时（与协调层限速、进度图、主线的静止与收件合并定时器）的时钟；零值 = 真实时钟。e2e 注入。
 var (
@@ -135,6 +143,8 @@ type Server struct {
 	Repos *repos.Service
 	// Boxes 是 M23 的 box（常驻机器与应用部署）。
 	Boxes *boxes.Service
+	// Sandboxes 是 M30 的 agent 沙箱。
+	Sandboxes *sandboxes.Service
 	// Memory 是 M16 的内置 Hindsight 记忆（连接设置、状态与 .env 生成）。
 	Memory *memory.Service
 	// OwnerMemory 是 M17 全局助手的主人记忆（bank `oryn-owner`，连接与 key 与 Memory 共用）。
@@ -238,6 +248,11 @@ func (s *Server) init(ctx context.Context) error {
 				s.Boxes.Touch()
 			}
 		},
+		ThreadRetired: func(threadID string, deleted bool) {
+			if s.Sandboxes != nil {
+				s.Sandboxes.ThreadRetired(threadID, deleted)
+			}
+		},
 	}, s.Store, orbsAdapter{s.Orbs})
 	// M23：box。须在 ctl 方法登记（box.call 与 ssh.call 同处）之前构造，并在 orb 服务接受 link 之前注册闸门；
 	// s.Hub 在后面才构造，回调晚绑定
@@ -256,6 +271,17 @@ func (s *Server) init(ctx context.Context) error {
 		},
 		Tick: boxesTick, UnlinkedAfter: boxesUnlinkedAfter,
 	}, s.Store, s.Orbs, boxThreads{s.Store})
+	// M30：agent 沙箱。owner orb 内的调用经 sandbox 流到达；s.Hub 在后面才构造，回调晚绑定
+	s.Sandboxes = sandboxes.New(sandboxes.Config{
+		Sandbox: cfg.Sandbox,
+		Changed: func(threadID string) {
+			if s.Hub != nil {
+				s.Hub.SandboxesChanged(threadID)
+			}
+		},
+		Tick: sandboxesTick, Now: sandboxesNow,
+	}, s.Store, s.Orbs)
+	s.Orbs.HandleStream(link.StreamSandbox, s.Sandboxes.OnStream)
 	// M18：SSH 主机与网关。主机变化经 omp 下发链路推到 orb（ssh.json 摘要参与比较，线程据此 reload_plugins）；
 	// 回调在被调用时才取 s.Orbs / s.Hub（s.Hub 在后面才构造）
 	if s.SSH, err = sshgw.New(sshgw.Config{
@@ -484,6 +510,7 @@ func (s *Server) init(ctx context.Context) error {
 	go s.GitHub.Run(runCtx)
 	go s.SSH.Run(runCtx)
 	go s.Boxes.Run(runCtx)
+	go s.Sandboxes.Run(runCtx)
 	go s.Repos.Run(runCtx)
 	// M16：重试删除失败的 Hindsight 记忆，并在记忆启用时保证 user-preferences 存在
 	go s.Memory.RunTombstones(runCtx)

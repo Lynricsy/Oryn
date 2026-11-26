@@ -415,3 +415,8 @@ func (h *Hub) ProjectRepoChanged(projectID string) {
 func (h *Hub) BoxesChanged() {
 	h.toAll(apigen.WsServerBoxesChanged{Type: apigen.WsServerBoxesChangedTypeBoxesChanged})
 }
+
+// SandboxesChanged 实现 sandboxes.Config.Changed：某线程名下的沙箱变了，广播给全部私有连接（M30）。
+func (h *Hub) SandboxesChanged(threadID string) {
+	h.toAll(apigen.WsServerSandboxesChanged{Type: apigen.WsServerSandboxesChangedTypeSandboxesChanged, ThreadID: threadID})
+}

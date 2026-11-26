@@ -385,6 +385,13 @@ func (s *Service) boxThreadsChanged() {
 	}
 }
 
+// threadRetired 通知线程已归档或删除（M30：销毁它名下的沙箱；Config.ThreadRetired 为 nil 时无操作）。
+func (s *Service) threadRetired(id string, deleted bool) {
+	if s.cfg.ThreadRetired != nil {
+		s.cfg.ThreadRetired(id, deleted)
+	}
+}
+
 // insertThread 在一个事务里写入线程行、标签与 extra（持久化的续作）。工作线程带 Space 时，事务的第一条语句复核
 // Space 仍存在（契约 C4：存储是单连接 + BEGIN IMMEDIATE，事务彼此串行，复核与写引用之间不会插入删除）。
 // 线程挂在 runner 上时同样复核 runner 仍在用（删除 runner 先提交 → 建线程失败；后提交 → 其 deleted 事件必能列到本线程）。
@@ -721,6 +728,7 @@ func (s *Service) Patch(ctx context.Context, id string, p apigen.ThreadPatch) (a
 	}
 	if archived {
 		s.dropThreadKey(id)
+		s.threadRetired(id, false)
 	} else if unarchived && s.runnerAgent != nil {
 		if kind, _ := s.orbs.Features(orbID); kind == orbs.KindRunner {
 			s.scheduleStart(id)
@@ -848,6 +856,7 @@ func (s *Service) deleteThread(ctx context.Context, t *thread, inTx func(q *db.Q
 	if n == 0 {
 		return ErrNotFound
 	}
+	s.threadRetired(id, true)
 	t.mu.Lock()
 	s.out().IndexRemove(id)
 	t.mu.Unlock()
