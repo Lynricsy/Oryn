@@ -34,7 +34,7 @@ function renderNodes(
 		const [tag, rawAttrs, children] = node;
 		const props: Record<string, unknown> = { key: `${prefix}${index}` };
 		for (const [k, v] of Object.entries(rawAttrs)) {
-			const rk = ATTR_MAP[k] ?? k;
+			const rk = Object.hasOwn(ATTR_MAP, k) ? (ATTR_MAP[k] as string) : k;
 			props[rk] =
 				(rk === "fill" || rk === "stroke") && Object.hasOwn(CTP_VAR, v)
 					? CTP_VAR[v]
@@ -84,7 +84,9 @@ export const FileTypeIcon = memo(function FileTypeIcon({
 			? iconKey
 			: resolveEntryIconKey(name, resolvedKind, open, mime);
 	const nodes = FILE_TYPE_ICONS[key] ?? FILE_TYPE_ICONS._file;
-	const viewBox = ICON_VIEWBOX[key] ?? "0 0 16 16";
+	const viewBox = Object.hasOwn(ICON_VIEWBOX, key)
+		? (ICON_VIEWBOX[key] as string)
+		: "0 0 16 16";
 
 	return (
 		// biome-ignore lint/a11y/noSvgWithoutTitle: 装饰性图标默认 aria-hidden，有 aria-label 时由无障碍名称承担

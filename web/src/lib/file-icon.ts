@@ -146,9 +146,11 @@ export function resolveFileIconKey(
 ): FileTypeIconKey {
 	const base = baseLower(name);
 	if (base) {
-		const exact = EXACT_FILE_ICONS[base];
-		if (exact && Object.hasOwn(FILE_TYPE_ICONS, exact))
-			return exact as FileTypeIconKey;
+		if (Object.hasOwn(EXACT_FILE_ICONS, base)) {
+			const exact = EXACT_FILE_ICONS[base];
+			if (exact && Object.hasOwn(FILE_TYPE_ICONS, exact))
+				return exact as FileTypeIconKey;
+		}
 
 		const pattern = iconFromPattern(base);
 		if (pattern && Object.hasOwn(FILE_TYPE_ICONS, pattern)) return pattern;
@@ -157,9 +159,11 @@ export function resolveFileIconKey(
 		let dot = base.indexOf(".", 1);
 		while (dot !== -1 && dot < base.length - 1) {
 			const ext = base.slice(dot + 1);
-			const hit = EXT_FILE_ICONS[ext];
-			if (hit && Object.hasOwn(FILE_TYPE_ICONS, hit))
-				return hit as FileTypeIconKey;
+			if (Object.hasOwn(EXT_FILE_ICONS, ext)) {
+				const hit = EXT_FILE_ICONS[ext];
+				if (hit && Object.hasOwn(FILE_TYPE_ICONS, hit))
+					return hit as FileTypeIconKey;
+			}
 			dot = base.indexOf(".", dot + 1);
 		}
 	}
@@ -176,7 +180,10 @@ export function resolveFolderIconKey(
 	open = false,
 ): FileTypeIconKey {
 	const base = baseLower(name);
-	const matched = base ? FOLDER_NAME_ICONS[base] : undefined;
+	const matched =
+		base && Object.hasOwn(FOLDER_NAME_ICONS, base)
+			? FOLDER_NAME_ICONS[base]
+			: undefined;
 	if (matched) {
 		if (open) {
 			const openKey = matched.startsWith("m:")

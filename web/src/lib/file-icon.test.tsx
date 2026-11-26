@@ -77,6 +77,27 @@ describe("file-icon 解析（Catppuccin 主集 + Material 兜底）", () => {
 		expect(resolveEntryIconKey("link", "symlink")).toBe("symlink");
 	});
 
+	it("原型属性名（constructor / __proto__ / toString）作目录或文件名时不崩溃且正确回退", () => {
+		for (const tricky of [
+			"constructor",
+			"__proto__",
+			"toString",
+			"valueOf",
+			"hasOwnProperty",
+		]) {
+			expect(resolveFolderIconKey(tricky, false)).toBe("_folder");
+			expect(resolveFolderIconKey(tricky, true)).toBe("_folder_open");
+			expect(resolveFileIconKey(tricky)).toBe("_file");
+			expect(resolveFileIconKey(`demo.${tricky}`)).toBe("_file");
+		}
+		const { container } = render(
+			<FileTypeIcon name="constructor" kind="dir" open size={15} />,
+		);
+		expect(container.querySelector("svg")?.getAttribute("data-file-icon")).toBe(
+			"_folder_open",
+		);
+	});
+
 	it("FileTypeIcon 渲染出带主题变量的矢量 SVG", () => {
 		const { container } = render(<FileTypeIcon name="src/App.tsx" size={18} />);
 		const svg = container.querySelector("svg");
