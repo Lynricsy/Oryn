@@ -3,7 +3,7 @@
  * 「公开的线程」（标题点进线程、模式、时间、复制、两步撤销）与「公开的文件」（名称、大小、所属线程、复制、两步撤回），
  * 两类都为空时只显示一个空态；其后是 Artifacts 的自动发布开关与「已发布的 Artifacts」（`ArtifactPublishing`）。
  */
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import {
@@ -18,9 +18,11 @@ import { ShareModeBadge } from "../../components/share/share-url";
 import { CopyButton } from "../../components/ui/CopyButton";
 import { Badge, Card, ListRow } from "../../components/ui/data";
 import { FileTypeIcon } from "../../components/ui/FileTypeIcon";
+import { ImageViewer } from "../../components/ui/ImageViewer";
 import { Icon, type IconName } from "../../components/ui/icons";
 import { EmptyState, ErrorText, Spinner } from "../../components/ui/primitives";
 import { formatBytes, formatRelative } from "../../lib/format";
+import { rasterMime } from "../../lib/image-src";
 import { parseTitleCard } from "../../lib/title";
 import { useIndex } from "../../state/stores";
 import { ArtifactPublishing } from "./ArtifactPublishing";
@@ -86,17 +88,36 @@ function ShareRow({ share }: { share: ThreadShare }): ReactNode {
 
 function FileRow({ file }: { file: PublishedFile }): ReactNode {
 	const { t } = useTranslation();
+	const [previewOpen, setPreviewOpen] = useState(false);
 	const revoke = useRevokePublishedFile();
 	const thread = useIndex((s) =>
 		file.threadId ? s.threads[file.threadId] : undefined,
 	);
+	const isImage = rasterMime(file.mime) !== null && Boolean(file.url);
 	return (
 		<li>
 			<ListRow
 				leading={
-					<span className="grid h-8 w-8 place-items-center rounded-md border border-border bg-raised">
-						<FileTypeIcon name={file.name} mime={file.mime} size={17} />
-					</span>
+					isImage ? (
+						<button
+							type="button"
+							onClick={() => setPreviewOpen(true)}
+							aria-label={`${file.name} — ${t("image.lightbox.fullscreen")}`}
+							title={t("image.lightbox.fullscreen")}
+							className="h-8 w-8 shrink-0 cursor-zoom-in overflow-hidden rounded-md border border-border bg-inset focus-visible:outline-2 focus-visible:outline-[var(--ring)] focus-visible:outline-offset-2"
+						>
+							<img
+								src={file.url}
+								alt={file.name}
+								loading="lazy"
+								className="h-full w-full object-cover"
+							/>
+						</button>
+					) : (
+						<span className="grid h-8 w-8 place-items-center rounded-md border border-border bg-raised">
+							<FileTypeIcon name={file.name} mime={file.mime} size={17} />
+						</span>
+					)
 				}
 				title={
 					<a
@@ -141,6 +162,15 @@ function FileRow({ file }: { file: PublishedFile }): ReactNode {
 					</>
 				}
 			/>
+			{previewOpen && isImage && (
+				<ImageViewer
+					src={file.url}
+					alt={file.name}
+					caption={file.name}
+					filename={file.name}
+					onClose={() => setPreviewOpen(false)}
+				/>
+			)}
 			<ErrorText error={revoke.error} />
 		</li>
 	);

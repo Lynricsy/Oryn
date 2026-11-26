@@ -16,9 +16,11 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { assistantFileContentUrl } from "../../api/library-queries";
 import {
 	type AssistantFile,
 	type Attachment,
+	attachmentContentUrl,
 	deleteAssistantFile,
 	deleteAttachment,
 	MAX_ATTACHMENT_BYTES,
@@ -27,6 +29,7 @@ import {
 	uploadAttachment,
 } from "../../lib/attachments";
 import { formatBytes } from "../../lib/format";
+import { rasterMime } from "../../lib/image-src";
 import {
 	checkBudget,
 	type PreparedImage,
@@ -63,6 +66,27 @@ export interface AttachmentItem {
 	source?: File;
 	/** 回退带回的条目（`ComposerRestoreOp` 的批次标记）：附件属于旧消息，移除时不删除上传。 */
 	restoredTag?: string;
+}
+
+const RASTER_IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif)$/i;
+
+/** 本地文件是否可视为安全栅格图（用于无 MIME 的拖拽/选图场景生成本地缩略图）。 */
+function isLocalRasterImage(file: File): boolean {
+	if (file.type) return rasterMime(file.type) !== null;
+	return RASTER_IMAGE_EXT.test(file.name);
+}
+
+/** 解析附件条目的小预览图地址：内联副本 → 本地临时 URL → 已上传的栅格图附件内联地址。 */
+function attachmentThumbSrc(it: AttachmentItem): string | undefined {
+	if (it.image) return `data:${it.image.mimeType};base64,${it.image.data}`;
+	if (it.previewUrl) return it.previewUrl;
+	if (it.attachment && rasterMime(it.attachment.mime)) {
+		return attachmentContentUrl(it.attachment.id, true);
+	}
+	if (it.libraryFile && rasterMime(it.libraryFile.mime)) {
+		return assistantFileContentUrl(it.libraryFile.id, true);
+	}
+	return undefined;
 }
 
 let seq = 0;
@@ -166,6 +190,20 @@ export function useAttachments({
 			done
 				.then((patch) => {
 					if (ctl.signal.aborted) return;
+					const cur = itemsRef.current.find((i) => i.key === key);
+					const uploadedImg =
+						(patch.attachment && rasterMime(patch.attachment.mime) !== null) ||
+						(patch.libraryFile && rasterMime(patch.libraryFile.mime) !== null);
+					if (cur?.previewUrl && uploadedImg) {
+						revokePreview(cur);
+						update(key, {
+							status: "done",
+							progress: 1,
+							previewUrl: undefined,
+							...patch,
+						});
+						return;
+					}
 					update(key, { status: "done", progress: 1, ...patch });
 				})
 				.catch((e: unknown) => {
@@ -237,7 +275,9 @@ export function useAttachments({
 					});
 					continue;
 				}
-				const isImage = file.type.startsWith("image/");
+				const isImage =
+					file.type.startsWith("image/") || RASTER_IMAGE_EXT.test(file.name);
+				const canLocalThumb = isLocalRasterImage(file);
 				const ctl = new AbortController();
 				aborts.current.set(key, ctl);
 				push({
@@ -246,7 +286,7 @@ export function useAttachments({
 					size: file.size,
 					status: isImage ? "preparing" : "uploading",
 					progress: 0,
-					previewUrl: isImage ? makePreviewUrl(file) : undefined,
+					previewUrl: canLocalThumb ? makePreviewUrl(file) : undefined,
 					source: file,
 				});
 				queued.push({ key, file, isImage, ctl });
@@ -276,12 +316,13 @@ export function useAttachments({
 						continue;
 					}
 					const current = itemsRef.current.find((i) => i.key === key);
-					revokePreview(current);
 					if (prepared) {
+						revokePreview(current);
 						hasInline = true;
 						update(key, { image: prepared, previewUrl: undefined });
 					} else {
-						update(key, { fileOnly: true, previewUrl: undefined });
+						// 预算用完或解码失败：若本机已有缩略图则保留至上传完成，避免闪退回图标
+						update(key, { fileOnly: true });
 					}
 				}
 				upload(key, file, hasInline);
@@ -494,9 +535,7 @@ export function AttachmentStrip({
 	const gallery: LightboxImage[] = [];
 	const galleryIndexByKey = new Map<string, number>();
 	for (const it of items) {
-		const thumb = it.image
-			? `data:${it.image.mimeType};base64,${it.image.data}`
-			: it.previewUrl;
+		const thumb = attachmentThumbSrc(it);
 		if (thumb) {
 			galleryIndexByKey.set(it.key, gallery.length);
 			gallery.push({
@@ -513,9 +552,7 @@ export function AttachmentStrip({
 				{items.map((it) => {
 					const percent = Math.round(it.progress * 100);
 					const busy = it.status === "preparing" || it.status === "uploading";
-					const thumb = it.image
-						? `data:${it.image.mimeType};base64,${it.image.data}`
-						: it.previewUrl;
+					const thumb = attachmentThumbSrc(it);
 					const gIdx = galleryIndexByKey.get(it.key);
 					return (
 						<li
@@ -536,70 +573,115 @@ export function AttachmentStrip({
 									onClick={() => {
 										if (gIdx !== undefined) setPreviewIndex(gIdx);
 									}}
-									aria-label={t("image.lightbox.fullscreen")}
-									title={t("image.lightbox.fullscreen")}
-									className="relative h-10 w-10 shrink-0 cursor-zoom-in overflow-hidden rounded-md bg-inset focus-visible:outline-2 focus-visible:outline-[var(--ring)]"
+									aria-label={`${it.name} — ${t("image.lightbox.fullscreen")}`}
+									title={
+										it.error ?? `${it.name} · ${t("image.lightbox.fullscreen")}`
+									}
+									className="flex min-w-0 flex-1 cursor-zoom-in items-center gap-2 rounded-md text-left focus-visible:outline-2 focus-visible:outline-[var(--ring)] focus-visible:outline-offset-2"
 								>
-									<img
-										src={thumb}
-										alt={it.name}
-										className={`h-full w-full object-cover transition-opacity duration-150 ${
-											busy ? "opacity-60" : "opacity-100"
-										}`}
-									/>
-									{busy && (
-										<span
-											aria-hidden
-											className="absolute inset-0 flex items-center justify-center bg-bg/35 text-accent-ink backdrop-blur-[1px]"
-										>
-											<Spinner size={14} />
+									<span className="relative h-10 w-10 shrink-0 overflow-hidden rounded-md bg-inset">
+										<img
+											src={thumb}
+											alt={it.name}
+											className={`h-full w-full object-cover transition-opacity duration-150 ${
+												busy ? "opacity-60" : "opacity-100"
+											}`}
+										/>
+										{busy && (
+											<span
+												aria-hidden
+												className="absolute inset-0 flex items-center justify-center bg-bg/35 text-accent-ink backdrop-blur-[1px]"
+											>
+												<Spinner size={14} />
+											</span>
+										)}
+									</span>
+									<span className="flex min-w-0 flex-col gap-1">
+										<span className="block truncate font-medium text-fg">
+											{it.name}
 										</span>
-									)}
+										{it.status === "error" ? (
+											<span className="block truncate text-err">
+												{it.error}
+											</span>
+										) : it.status === "preparing" ? (
+											<span className="flex items-center gap-1.5 text-2xs text-faint">
+												<span
+													aria-hidden
+													className="attachment-indeterminate inline-block h-1.5 w-14 shrink-0"
+												/>
+												{t("attachments.preparing")}
+											</span>
+										) : it.status === "uploading" ? (
+											<span className="flex items-center gap-1.5 text-2xs text-faint tabular-nums">
+												<Meter
+													value={percent}
+													tone="accent"
+													label={t("attachments.uploading", { percent })}
+													className="w-16"
+												/>
+												{t("attachments.uploading", { percent })}
+											</span>
+										) : (
+											<span className="flex min-w-0 items-center gap-1.5 text-2xs text-faint tabular-nums">
+												{formatBytes(it.size)}
+												{it.fileOnly && (
+													<Badge>{t("attachments.fileOnly")}</Badge>
+												)}
+											</span>
+										)}
+									</span>
 								</button>
 							) : (
-								<span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-inset text-faint">
-									<FileTypeIcon name={it.name} size={22} />
-									{busy && (
-										<span
-											aria-hidden
-											className="absolute inset-0 flex items-center justify-center rounded-md bg-inset/75 text-accent-ink"
-										>
-											<Spinner size={14} />
+								<>
+									<span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-inset text-faint">
+										<FileTypeIcon name={it.name} size={22} />
+										{busy && (
+											<span
+												aria-hidden
+												className="absolute inset-0 flex items-center justify-center rounded-md bg-inset/75 text-accent-ink"
+											>
+												<Spinner size={14} />
+											</span>
+										)}
+									</span>
+									<span className="flex min-w-0 flex-col gap-1">
+										<span className="block truncate font-medium text-fg">
+											{it.name}
 										</span>
-									)}
-								</span>
+										{it.status === "error" ? (
+											<span className="block truncate text-err">
+												{it.error}
+											</span>
+										) : it.status === "preparing" ? (
+											<span className="flex items-center gap-1.5 text-2xs text-faint">
+												<span
+													aria-hidden
+													className="attachment-indeterminate inline-block h-1.5 w-14 shrink-0"
+												/>
+												{t("attachments.preparing")}
+											</span>
+										) : it.status === "uploading" ? (
+											<span className="flex items-center gap-1.5 text-2xs text-faint tabular-nums">
+												<Meter
+													value={percent}
+													tone="accent"
+													label={t("attachments.uploading", { percent })}
+													className="w-16"
+												/>
+												{t("attachments.uploading", { percent })}
+											</span>
+										) : (
+											<span className="flex min-w-0 items-center gap-1.5 text-2xs text-faint tabular-nums">
+												{formatBytes(it.size)}
+												{it.fileOnly && (
+													<Badge>{t("attachments.fileOnly")}</Badge>
+												)}
+											</span>
+										)}
+									</span>
+								</>
 							)}
-							<span className="flex min-w-0 flex-col gap-1">
-								<span className="block truncate font-medium text-fg">
-									{it.name}
-								</span>
-								{it.status === "error" ? (
-									<span className="block truncate text-err">{it.error}</span>
-								) : it.status === "preparing" ? (
-									<span className="flex items-center gap-1.5 text-2xs text-faint">
-										<span
-											aria-hidden
-											className="attachment-indeterminate inline-block h-1.5 w-14 shrink-0"
-										/>
-										{t("attachments.preparing")}
-									</span>
-								) : it.status === "uploading" ? (
-									<span className="flex items-center gap-1.5 text-2xs text-faint tabular-nums">
-										<Meter
-											value={percent}
-											tone="accent"
-											label={t("attachments.uploading", { percent })}
-											className="w-16"
-										/>
-										{t("attachments.uploading", { percent })}
-									</span>
-								) : (
-									<span className="flex min-w-0 items-center gap-1.5 text-2xs text-faint tabular-nums">
-										{formatBytes(it.size)}
-										{it.fileOnly && <Badge>{t("attachments.fileOnly")}</Badge>}
-									</span>
-								)}
-							</span>
 							<button
 								type="button"
 								aria-label={t("attachments.remove", { name: it.name })}

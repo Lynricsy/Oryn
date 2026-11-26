@@ -184,4 +184,42 @@ describe("QueueBar：引导与排队消息展示", () => {
 		expect(screen.getAllByText("参考这份规范")).toHaveLength(1);
 		expect(screen.queryByText("发送中")).toBeNull();
 	});
+
+	it("排队消息里的图片附件显示小预览缩略图，鼠标点击打开灯箱预览", () => {
+		const attBlock =
+			"<oryn-attachments>\n" +
+			"The user attached these files.\n" +
+			"- /home/user/.oryn/attachments/T-queue/att_01JCZ800000000000000000009/ui.png (image/png, 4096 bytes)\n" +
+			"</oryn-attachments>";
+		getThreadStore(TID)
+			.getState()
+			.apply([
+				{
+					type: "frame",
+					frame: {
+						type: "queue_update",
+						steering: [
+							{
+								id: "s-img",
+								text: `看看这张截图\n\n${attBlock}`,
+								editable: true,
+								timestamp: 5000,
+							},
+						],
+						followUp: [],
+					},
+				},
+			]);
+		render(<QueueBar threadId={TID} />);
+		const thumb = screen.getByRole("img", { name: "ui.png" });
+		expect(thumb).toHaveAttribute(
+			"src",
+			"/api/v1/attachments/att_01JCZ800000000000000000009/content?inline=true",
+		);
+		fireEvent.click(screen.getByText("ui.png"));
+		const dialog = screen.getByRole("dialog", { name: "ui.png" });
+		expect(dialog.querySelector("img")?.getAttribute("src")).toBe(
+			"/api/v1/attachments/att_01JCZ800000000000000000009/content?inline=true",
+		);
+	});
 });

@@ -248,6 +248,31 @@ describe("addUploaded（系统分享）", () => {
 		expect(result.current.uploading).toBe(false);
 	});
 
+	it("已上传与 fileOnly 的图片附件均显示小预览缩略图而非类型图标，点击打开灯箱", () => {
+		const { result } = renderHook(() => useAttachments());
+		const photo = { ...meta("att_p", "photo.jpg"), mime: "image/jpeg" };
+		act(() => result.current.addUploaded([meta("att_d", "doc.pdf"), photo]));
+		const { container } = render(
+			<AttachmentStrip items={result.current.items} onRemove={() => {}} />,
+		);
+		// 图片附件展示小预览 img，不渲染文件类型图标；PDF 附件继续展示类型图标
+		const thumb = screen.getByRole("img", { name: "photo.jpg" });
+		expect(thumb).toHaveAttribute(
+			"src",
+			"/api/v1/attachments/att_p/content?inline=true",
+		);
+		expect(
+			container.querySelectorAll('svg[data-file-icon="pdf"]'),
+		).toHaveLength(1);
+		expect(container.querySelector('svg[data-file-icon="image"]')).toBeNull();
+		// 鼠标点击图片附件（含文字区）弹出灯箱预览
+		fireEvent.click(screen.getByText("photo.jpg"));
+		const dialog = screen.getByRole("dialog", { name: "photo.jpg" });
+		expect(dialog.querySelector("img")?.getAttribute("src")).toBe(
+			"/api/v1/attachments/att_p/content?inline=true",
+		);
+	});
+
 	it("超过每条消息的上限后停止追加并报错", () => {
 		const { result } = renderHook(() => useAttachments());
 		const list = Array.from({ length: 22 }, (_, i) => meta(`att_${i}`, `${i}`));

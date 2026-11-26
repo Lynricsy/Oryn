@@ -17,6 +17,7 @@ import {
 	formatDateTime,
 	formatDuration,
 } from "../../lib/format";
+import { rasterMime } from "../../lib/image-src";
 import { modelBrand, shortModelName } from "../../lib/model-brand";
 import { selectModel } from "../../lib/model-select";
 import type { ReportKind } from "../../lib/slash";
@@ -59,7 +60,9 @@ import {
 import { MessageView } from "../transcript/MessageView";
 import { CopyButton } from "../ui/CopyButton";
 import { Badge, Callout, Meter, type Tone, thresholdTone } from "../ui/data";
-import { Icon, type IconName } from "../ui/icons";
+import { FileTypeIcon } from "../ui/FileTypeIcon";
+import { ImageViewer, type LightboxImage } from "../ui/ImageViewer";
+import { Icon } from "../ui/icons";
 import { ModelCatalogFooter } from "../ui/ModelCatalogFooter";
 import { ModelLogo } from "../ui/ModelLogo";
 import {
@@ -1504,14 +1507,6 @@ export function LabelsDialog({
 
 // ---------------------------------------------------------------- 附件
 
-/** 附件图标：按 MIME 大类。 */
-function attachmentIcon(mime: string): IconName {
-	if (mime.startsWith("image/")) return "fileImage";
-	if (mime.startsWith("text/") || mime === "application/pdf") return "fileText";
-	if (mime === "application/json") return "fileCode";
-	return "file";
-}
-
 function AttachmentsDialog({
 	threadId,
 	onClose,
@@ -1535,112 +1530,169 @@ function AttachmentsDialog({
 	});
 	const [error, setError] = useState<unknown>(null);
 	const [deleting, setDeleting] = useState<string | null>(null);
+	const [previewIndex, setPreviewIndex] = useState<number | null>(null);
 	// 已发布附件的撤回要用发布记录的 id（附件列表只带 publicUrl）
 	const overview = useShareOverview();
 	const list = q.data ?? [];
+	const gallery: LightboxImage[] = [];
+	const galleryIndexById = new Map<string, number>();
+	for (const a of list) {
+		if (rasterMime(a.mime)) {
+			galleryIndexById.set(a.id, gallery.length);
+			gallery.push({
+				src: attachmentContentUrl(a.id, true),
+				alt: a.name,
+				caption: a.name,
+				filename: a.name,
+			});
+		}
+	}
 	return (
-		<Dialog open wide onClose={onClose} title={t("attachments.title")}>
-			{q.isPending && <Spinner />}
-			<ErrorText error={q.error ?? error} />
-			{q.isSuccess && list.length === 0 && (
-				<EmptyState icon="attach" title={t("attachments.empty")}>
-					{t("attachments.hint")}
-				</EmptyState>
-			)}
-			<ul className="flex flex-col divide-y divide-border">
-				{list.map((a) => (
-					// 第一行文件名、第二行元信息（大小 · 时间 · 已公开）；操作在宽屏靠右，窄屏另起一行与文字左缘对齐
-					<li
-						key={a.id}
-						className="grid grid-cols-[2rem_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5 py-2 text-sm sm:grid-cols-[2rem_minmax(0,1fr)_auto]"
-					>
-						<span className="grid h-8 w-8 place-items-center rounded-md border border-border bg-inset text-faint">
-							<Icon name={attachmentIcon(a.mime)} size={15} aria-hidden />
-						</span>
-						<span className="min-w-0">
-							<span className="block truncate font-medium" title={a.name}>
-								{a.name}
-							</span>
-							<span className="mt-0.5 flex min-w-0 items-center gap-1.5 whitespace-nowrap text-faint text-xs tabular-nums">
-								<span>{formatBytes(a.size)}</span>
-								<span aria-hidden>·</span>
-								<time
-									dateTime={new Date(a.createdAt).toISOString()}
-									title={formatDateTime(a.createdAt)}
-									className="truncate"
-								>
-									{shortDate.format(a.createdAt)}
-								</time>
-								{a.publicUrl && (
-									<>
-										<span aria-hidden>·</span>
-										<span className="inline-flex shrink-0 items-center gap-1 text-muted">
-											<Icon name="globe" size={12} aria-hidden />
-											{t("publish.published")}
-										</span>
-										<CopyButton
-											text={a.publicUrl}
-											ariaLabel={t("publish.copyUrl")}
+		<>
+			<Dialog open wide onClose={onClose} title={t("attachments.title")}>
+				{q.isPending && <Spinner />}
+				<ErrorText error={q.error ?? error} />
+				{q.isSuccess && list.length === 0 && (
+					<EmptyState icon="attach" title={t("attachments.empty")}>
+						{t("attachments.hint")}
+					</EmptyState>
+				)}
+				<ul className="flex flex-col divide-y divide-border">
+					{list.map((a) => {
+						const gIdx = galleryIndexById.get(a.id);
+						const previewImg = gIdx !== undefined ? gallery[gIdx] : undefined;
+						return (
+							// 第一行文件名、第二行元信息（大小 · 时间 · 已公开）；操作在宽屏靠右，窄屏另起一行与文字左缘对齐
+							<li
+								key={a.id}
+								className="grid grid-cols-[2rem_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5 py-2 text-sm sm:grid-cols-[2rem_minmax(0,1fr)_auto]"
+							>
+								{previewImg && gIdx !== undefined ? (
+									<button
+										type="button"
+										onClick={() => setPreviewIndex(gIdx)}
+										aria-label={`${a.name} — ${t("image.lightbox.fullscreen")}`}
+										title={t("image.lightbox.fullscreen")}
+										className="h-8 w-8 shrink-0 cursor-zoom-in overflow-hidden rounded-md border border-border bg-inset focus-visible:outline-2 focus-visible:outline-[var(--ring)] focus-visible:outline-offset-2"
+									>
+										<img
+											src={previewImg.src}
+											alt={a.name}
+											loading="lazy"
+											className="h-full w-full object-cover"
 										/>
-									</>
+									</button>
+								) : (
+									<span className="grid h-8 w-8 place-items-center rounded-md border border-border bg-inset text-faint">
+										<FileTypeIcon name={a.name} mime={a.mime} size={18} />
+									</span>
 								)}
-							</span>
-						</span>
-						<span className="col-start-2 -ml-2 flex flex-wrap items-center gap-1 sm:col-start-3 sm:ml-0">
-							<AttachmentPublishButton
-								attachment={a}
-								published={overview.data?.files.find(
-									(f) => f.attachmentId === a.id,
-								)}
-								onError={setError}
-							/>
-							<a
-								href={attachmentContentUrl(a.id)}
-								download={a.name}
-								className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-muted text-xs transition-colors duration-150 hover:bg-hover hover:text-fg"
-							>
-								<Icon name="download" size={13} aria-hidden />
-								{t("attachments.download")}
-							</a>
-							<Button
-								size="sm"
-								variant="danger"
-								icon="trash"
-								disabled={deleting === a.id}
-								onClick={async () => {
-									if (
-										!(await confirmAction({
-											title: t("attachments.deleteConfirm", { name: a.name }),
-											body: t("attachments.deleteConfirmBody"),
-											action: t("common.delete"),
-											danger: true,
-										}))
-									)
-										return;
-									setError(null);
-									setDeleting(a.id);
-									try {
-										await deleteAttachment(a.id);
-										await qc.invalidateQueries({ queryKey: key });
-									} catch (e) {
-										setError(e);
-									} finally {
-										setDeleting(null);
-									}
-								}}
-							>
-								{t("attachments.delete")}
-							</Button>
-						</span>
-					</li>
-				))}
-			</ul>
-			{list.length > 0 && (
-				<p className="mt-3 text-faint text-xs">
-					{t("attachments.hint")} {t("publish.hint")}
-				</p>
+								<span className="min-w-0">
+									{previewImg && gIdx !== undefined ? (
+										<button
+											type="button"
+											onClick={() => setPreviewIndex(gIdx)}
+											className="block max-w-full cursor-zoom-in truncate text-left font-medium hover:underline"
+											title={a.name}
+										>
+											{a.name}
+										</button>
+									) : (
+										<span className="block truncate font-medium" title={a.name}>
+											{a.name}
+										</span>
+									)}
+									<span className="mt-0.5 flex min-w-0 items-center gap-1.5 whitespace-nowrap text-faint text-xs tabular-nums">
+										<span>{formatBytes(a.size)}</span>
+										<span aria-hidden>·</span>
+										<time
+											dateTime={new Date(a.createdAt).toISOString()}
+											title={formatDateTime(a.createdAt)}
+											className="truncate"
+										>
+											{shortDate.format(a.createdAt)}
+										</time>
+										{a.publicUrl && (
+											<>
+												<span aria-hidden>·</span>
+												<span className="inline-flex shrink-0 items-center gap-1 text-muted">
+													<Icon name="globe" size={12} aria-hidden />
+													{t("publish.published")}
+												</span>
+												<CopyButton
+													text={a.publicUrl}
+													ariaLabel={t("publish.copyUrl")}
+												/>
+											</>
+										)}
+									</span>
+								</span>
+								<span className="col-start-2 -ml-2 flex flex-wrap items-center gap-1 sm:col-start-3 sm:ml-0">
+									<AttachmentPublishButton
+										attachment={a}
+										published={overview.data?.files.find(
+											(f) => f.attachmentId === a.id,
+										)}
+										onError={setError}
+									/>
+									<a
+										href={attachmentContentUrl(a.id)}
+										download={a.name}
+										className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-muted text-xs transition-colors duration-150 hover:bg-hover hover:text-fg"
+									>
+										<Icon name="download" size={13} aria-hidden />
+										{t("attachments.download")}
+									</a>
+									<Button
+										size="sm"
+										variant="danger"
+										icon="trash"
+										disabled={deleting === a.id}
+										onClick={async () => {
+											if (
+												!(await confirmAction({
+													title: t("attachments.deleteConfirm", {
+														name: a.name,
+													}),
+													body: t("attachments.deleteConfirmBody"),
+													action: t("common.delete"),
+													danger: true,
+												}))
+											)
+												return;
+											setError(null);
+											setDeleting(a.id);
+											try {
+												await deleteAttachment(a.id);
+												await qc.invalidateQueries({ queryKey: key });
+											} catch (e) {
+												setError(e);
+											} finally {
+												setDeleting(null);
+											}
+										}}
+									>
+										{t("attachments.delete")}
+									</Button>
+								</span>
+							</li>
+						);
+					})}
+				</ul>
+				{list.length > 0 && (
+					<p className="mt-3 text-faint text-xs">
+						{t("attachments.hint")} {t("publish.hint")}
+					</p>
+				)}
+			</Dialog>
+			{previewIndex !== null && gallery.length > 0 && (
+				<ImageViewer
+					images={gallery}
+					initialIndex={previewIndex}
+					onClose={() => setPreviewIndex(null)}
+				/>
 			)}
-		</Dialog>
+		</>
 	);
 }
 

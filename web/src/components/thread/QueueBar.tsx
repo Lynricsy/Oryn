@@ -7,7 +7,9 @@
  */
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useAssetUrls } from "../../lib/asset-urls";
 import { formatBytes } from "../../lib/format";
+import { imageSrc, rasterMime } from "../../lib/image-src";
 import { describeOrynHeader } from "../../lib/oryn-message";
 import {
 	type OptimisticAttachmentMeta,
@@ -25,6 +27,7 @@ import type {
 } from "../../state/thread-reducer";
 import { Badge } from "../ui/data";
 import { FileTypeIcon } from "../ui/FileTypeIcon";
+import { ImageViewer, type LightboxImage } from "../ui/ImageViewer";
 import { Icon } from "../ui/icons";
 import { Button, IconButton, TextInput } from "../ui/primitives";
 
@@ -137,7 +140,9 @@ function Item({
 	index: number;
 }) {
 	const { t, i18n } = useTranslation();
+	const assets = useAssetUrls();
 	const [editing, setEditing] = useState<string | null>(null);
+	const [previewIndex, setPreviewIndex] = useState<number | null>(null);
 	const isSteer = lane === "steering";
 	const parsed = parseQueueMessage(item.text);
 	const senderId =
@@ -151,31 +156,96 @@ function Item({
 			)
 		: null;
 
+	const inlineImages = (item.images ?? [])
+		.map((img, i) => ({
+			src: imageSrc(img.data, img.mimeType, assets.blob),
+			alt: t("image.alt", { n: i + 1 }),
+		}))
+		.filter((x): x is { src: string; alt: string } => x.src !== null);
+
+	let nextInlineImg = 0;
+	const gallery: LightboxImage[] = [];
 	const attachments: Array<{
 		key: string;
 		name: string;
 		mime?: string;
 		size?: number;
 		title?: string;
+		thumb?: string;
+		galleryIndex?: number;
 	}> =
 		parsed.attachments.length > 0
-			? parsed.attachments.map((a, i) => ({
-					key: `${a.path}-${i}`,
-					name: a.name,
-					mime: a.mime,
-					size: a.size,
-					title: `${a.name} (${formatBytes(a.size)})`,
-				}))
-			: (item.optimisticAttachments ?? []).map((a, i) => ({
-					key: `${a.name}-${i}`,
-					name: a.name,
-					mime: a.mime,
-					size: a.size,
-					title:
-						a.size !== undefined
-							? `${a.name} (${formatBytes(a.size)})`
-							: a.name,
-				}));
+			? parsed.attachments.map((a, i) => {
+					const isRaster = rasterMime(a.mime) !== null;
+					let thumb: string | undefined;
+					if (isRaster) {
+						thumb = (a.id ? assets.attachment(a.id, true) : null) ?? undefined;
+						if (!thumb && nextInlineImg < inlineImages.length) {
+							thumb = inlineImages[nextInlineImg]?.src;
+						}
+						if (nextInlineImg < inlineImages.length) nextInlineImg++;
+					}
+					let galleryIndex: number | undefined;
+					if (thumb) {
+						galleryIndex = gallery.length;
+						gallery.push({
+							src: thumb,
+							alt: a.name,
+							caption: a.name,
+							filename: a.name,
+						});
+					}
+					return {
+						key: `${a.path}-${i}`,
+						name: a.name,
+						mime: a.mime,
+						size: a.size,
+						title: `${a.name} (${formatBytes(a.size)})`,
+						thumb,
+						galleryIndex,
+					};
+				})
+			: (item.optimisticAttachments ?? []).map((a, i) => {
+					const isRaster = a.mime ? rasterMime(a.mime) !== null : false;
+					let thumb: string | undefined;
+					if (isRaster && nextInlineImg < inlineImages.length) {
+						thumb = inlineImages[nextInlineImg]?.src;
+						nextInlineImg++;
+					}
+					let galleryIndex: number | undefined;
+					if (thumb) {
+						galleryIndex = gallery.length;
+						gallery.push({
+							src: thumb,
+							alt: a.name,
+							caption: a.name,
+							filename: a.name,
+						});
+					}
+					return {
+						key: `${a.name}-${i}`,
+						name: a.name,
+						mime: a.mime,
+						size: a.size,
+						title:
+							a.size !== undefined
+								? `${a.name} (${formatBytes(a.size)})`
+								: a.name,
+						thumb,
+						galleryIndex,
+					};
+				});
+
+	// 剩余未配对到附件芯片的内联图片也放进画廊并渲染小预览
+	const extraGalleryItems: Array<{ src: string; alt: string; index: number }> =
+		[];
+	for (let i = nextInlineImg; i < inlineImages.length; i++) {
+		const img = inlineImages[i];
+		if (!img) continue;
+		const idx = gallery.length;
+		gallery.push({ src: img.src, alt: img.alt });
+		extraGalleryItems.push({ src: img.src, alt: img.alt, index: idx });
+	}
 
 	// 图片文件已出现在附件芯片里时不重复显示「N 张图」
 	const imageAttachments = attachments.filter((a) =>
@@ -183,12 +253,14 @@ function Item({
 	).length;
 	const extraImages = Math.max(
 		0,
-		(item.images?.length ?? 0) - imageAttachments,
+		(item.images?.length ?? 0) - imageAttachments - extraGalleryItems.length,
 	);
 	const hasChips =
-		attachments.length > 0 || parsed.artifactTitle !== null || extraImages > 0;
+		attachments.length > 0 ||
+		parsed.artifactTitle !== null ||
+		extraGalleryItems.length > 0 ||
+		extraImages > 0;
 	const displayBody = parsed.body.trim();
-
 	return (
 		<li
 			draggable={item.editable}
@@ -275,7 +347,15 @@ function Item({
 									key={a.key}
 									className="inline-flex max-w-44 items-center gap-1 rounded border border-border/70 bg-panel/70 px-1.5 py-0.5 text-2xs text-muted"
 								>
-									<FileTypeIcon name={a.name} mime={a.mime} size={12} />
+									{a.thumb ? (
+										<img
+											src={a.thumb}
+											alt={a.name}
+											className="h-4 w-4 shrink-0 rounded-[3px] object-cover"
+										/>
+									) : (
+										<FileTypeIcon name={a.name} mime={a.mime} size={12} />
+									)}
 									<span className="truncate">{a.name}</span>
 								</span>
 							))}
@@ -313,21 +393,44 @@ function Item({
 							data-testid="queue-attachments"
 							className="flex flex-wrap items-center gap-1"
 						>
-							{attachments.map((a) => (
-								<span
-									key={a.key}
-									title={a.title}
-									className="inline-flex max-w-48 items-center gap-1 rounded-md border border-border/80 bg-panel/85 px-1.5 py-0.5 text-2xs text-fg"
-								>
-									<FileTypeIcon name={a.name} mime={a.mime} size={13} />
-									<span className="min-w-0 truncate">{a.name}</span>
-									{a.size !== undefined && (
-										<span className="shrink-0 text-faint tabular-nums">
-											{formatBytes(a.size)}
-										</span>
-									)}
-								</span>
-							))}
+							{attachments.map((a) =>
+								a.thumb && a.galleryIndex !== undefined ? (
+									<button
+										key={a.key}
+										type="button"
+										onClick={() => setPreviewIndex(a.galleryIndex ?? 0)}
+										title={`${a.title ?? a.name} · ${t("image.lightbox.fullscreen")}`}
+										className="inline-flex max-w-48 cursor-zoom-in items-center gap-1.5 rounded-md border border-border/80 bg-panel/85 py-0.5 pr-1.5 pl-0.5 text-2xs text-fg hover:bg-hover focus-visible:outline-2 focus-visible:outline-[var(--ring)]"
+									>
+										<img
+											src={a.thumb}
+											alt={a.name}
+											loading="lazy"
+											className="h-5 w-5 shrink-0 rounded-[4px] border border-border/60 bg-inset object-cover"
+										/>
+										<span className="min-w-0 truncate">{a.name}</span>
+										{a.size !== undefined && (
+											<span className="shrink-0 text-faint tabular-nums">
+												{formatBytes(a.size)}
+											</span>
+										)}
+									</button>
+								) : (
+									<span
+										key={a.key}
+										title={a.title}
+										className="inline-flex max-w-48 items-center gap-1 rounded-md border border-border/80 bg-panel/85 px-1.5 py-0.5 text-2xs text-fg"
+									>
+										<FileTypeIcon name={a.name} mime={a.mime} size={13} />
+										<span className="min-w-0 truncate">{a.name}</span>
+										{a.size !== undefined && (
+											<span className="shrink-0 text-faint tabular-nums">
+												{formatBytes(a.size)}
+											</span>
+										)}
+									</span>
+								),
+							)}
 							{parsed.artifactTitle && (
 								<span className="inline-flex max-w-44 items-center gap-1 rounded-md border border-border/80 bg-panel/85 px-1.5 py-0.5 text-2xs text-muted">
 									<Icon name="cursor" size={11} className="shrink-0" />
@@ -336,6 +439,22 @@ function Item({
 									</span>
 								</span>
 							)}
+							{extraGalleryItems.map((img) => (
+								<button
+									key={img.index}
+									type="button"
+									onClick={() => setPreviewIndex(img.index)}
+									aria-label={t("image.open", { n: img.index + 1 })}
+									title={t("image.lightbox.fullscreen")}
+									className="h-5 w-5 shrink-0 cursor-zoom-in overflow-hidden rounded border border-border/80 bg-inset focus-visible:outline-2 focus-visible:outline-[var(--ring)]"
+								>
+									<img
+										src={img.src}
+										alt={img.alt}
+										className="h-full w-full object-cover"
+									/>
+								</button>
+							))}
 							{extraImages > 0 && (
 								<span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border/80 bg-panel/85 px-1.5 py-0.5 text-2xs text-muted">
 									<Icon name="image" size={11} />
@@ -384,6 +503,13 @@ function Item({
 						}
 					/>
 				</div>
+			)}
+			{previewIndex !== null && gallery.length > 0 && (
+				<ImageViewer
+					images={gallery}
+					initialIndex={previewIndex}
+					onClose={() => setPreviewIndex(null)}
+				/>
 			)}
 		</li>
 	);

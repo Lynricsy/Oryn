@@ -29,7 +29,7 @@ import {
 	formatDuration,
 	formatTokens,
 } from "../../lib/format";
-import { imageSrc } from "../../lib/image-src";
+import { imageSrc, rasterMime } from "../../lib/image-src";
 import {
 	describeOrynHeader,
 	type OrynAutomationItem,
@@ -203,8 +203,9 @@ function Images({ content }: { content: unknown }): ReactNode {
 }
 
 /**
- * 用户消息附件块解析出的附件芯片：有下载地址（站内 `attachments/{id}/content`、分享页里已发布的公开 URL）
- * 时点击以附件形式下载，否则是不可点的芯片。
+ * 用户消息附件块解析出的附件芯片：
+ * - 安全栅格图片且有可访问地址时显示小预览缩略图，鼠标点击打开灯箱预览（同条消息多图支持画廊切换）；
+ * - 其余附件显示文件类型图标，有下载地址时点击下载，否则是不可点的芯片。
  */
 export function AttachmentChips({
 	attachments,
@@ -213,44 +214,93 @@ export function AttachmentChips({
 }): ReactNode {
 	const { t } = useTranslation();
 	const assets = useAssetUrls();
+	const [previewIndex, setPreviewIndex] = useState<number | null>(null);
 	if (attachments.length === 0) return null;
+	const gallery: LightboxImage[] = [];
+	const galleryIndexByPath = new Map<string, number>();
+	for (const a of attachments) {
+		const inlineUrl =
+			a.id && rasterMime(a.mime) ? assets.attachment(a.id, true) : null;
+		if (inlineUrl) {
+			galleryIndexByPath.set(a.path, gallery.length);
+			gallery.push({
+				src: inlineUrl,
+				alt: a.name,
+				caption: a.name,
+				filename: a.name,
+			});
+		}
+	}
 	return (
-		<ul
-			className="mt-2 flex flex-wrap gap-1.5"
-			aria-label={t("attachments.inMessage")}
-		>
-			{attachments.map((a) => {
-				const body = (
-					<>
-						<FileTypeIcon name={a.name} mime={a.mime} size={14} />
-						<span className="max-w-56 truncate">{a.name}</span>
-						<span className="text-faint tabular-nums">
-							{formatBytes(a.size)}
-						</span>
-					</>
-				);
-				const cls = CHIP;
-				const url = a.id ? assets.attachment(a.id) : null;
-				return (
-					<li key={a.path}>
-						{url ? (
-							<a
-								href={url}
-								download={a.name}
-								className={`${cls} hover:bg-hover`}
-								title={a.path}
-							>
-								{body}
-							</a>
-						) : (
-							<span className={cls} title={a.path}>
-								{body}
+		<>
+			<ul
+				className="mt-2 flex flex-wrap gap-1.5"
+				aria-label={t("attachments.inMessage")}
+			>
+				{attachments.map((a) => {
+					const gIdx = galleryIndexByPath.get(a.path);
+					const previewImg = gIdx !== undefined ? gallery[gIdx] : undefined;
+					if (previewImg && gIdx !== undefined) {
+						return (
+							<li key={a.path}>
+								<button
+									type="button"
+									onClick={() => setPreviewIndex(gIdx)}
+									className={`${CHIP} cursor-zoom-in py-0.5 pl-1 hover:bg-hover focus-visible:outline-2 focus-visible:outline-[var(--ring)] focus-visible:outline-offset-2`}
+									title={`${a.name} · ${t("image.lightbox.fullscreen")}`}
+								>
+									<img
+										src={previewImg.src}
+										alt={a.name}
+										loading="lazy"
+										className="h-6 w-6 shrink-0 rounded-[4px] border border-border/70 bg-inset object-cover"
+									/>
+									<span className="max-w-56 truncate">{a.name}</span>
+									<span className="text-faint tabular-nums">
+										{formatBytes(a.size)}
+									</span>
+								</button>
+							</li>
+						);
+					}
+					const body = (
+						<>
+							<FileTypeIcon name={a.name} mime={a.mime} size={14} />
+							<span className="max-w-56 truncate">{a.name}</span>
+							<span className="text-faint tabular-nums">
+								{formatBytes(a.size)}
 							</span>
-						)}
-					</li>
-				);
-			})}
-		</ul>
+						</>
+					);
+					const url = a.id ? assets.attachment(a.id) : null;
+					return (
+						<li key={a.path}>
+							{url ? (
+								<a
+									href={url}
+									download={a.name}
+									className={`${CHIP} hover:bg-hover`}
+									title={a.path}
+								>
+									{body}
+								</a>
+							) : (
+								<span className={CHIP} title={a.path}>
+									{body}
+								</span>
+							)}
+						</li>
+					);
+				})}
+			</ul>
+			{previewIndex !== null && gallery.length > 0 && (
+				<ImageViewer
+					images={gallery}
+					initialIndex={previewIndex}
+					onClose={() => setPreviewIndex(null)}
+				/>
+			)}
+		</>
 	);
 }
 

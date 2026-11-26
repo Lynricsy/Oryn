@@ -22,11 +22,13 @@ import {
 	readCapped,
 } from "../../lib/file-source";
 import { formatBytes, formatDateTime } from "../../lib/format";
+import { rasterMime } from "../../lib/image-src";
 import { parseTitleCard } from "../../lib/title";
 import { useIndex } from "../../state/stores";
 import { FileViewer } from "../files/FileViewer";
 import { Badge } from "../ui/data";
 import { FileTypeIcon } from "../ui/FileTypeIcon";
+import { ImageViewer, type LightboxImage } from "../ui/ImageViewer";
 import {
 	EmptyState,
 	ErrorText,
@@ -148,14 +150,18 @@ function FileRow({
 	file,
 	threadId,
 	busy,
+	imageThumb,
 	onPreview,
+	onOpenImage,
 	onToggleShared,
 	onDelete,
 }: {
 	file: AssistantFile;
 	threadId: string;
 	busy: boolean;
+	imageThumb?: string;
 	onPreview(): void;
+	onOpenImage?: () => void;
 	onToggleShared(): void;
 	onDelete(): void;
 }): ReactNode {
@@ -166,13 +172,30 @@ function FileRow({
 			aria-label={file.name}
 			className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm"
 		>
-			<span className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-border bg-inset">
-				<FileTypeIcon name={file.name} mime={file.mime} size={18} />
-			</span>
+			{imageThumb && onOpenImage ? (
+				<button
+					type="button"
+					onClick={onOpenImage}
+					aria-label={`${file.name} — ${t("image.lightbox.fullscreen")}`}
+					title={t("image.lightbox.fullscreen")}
+					className="h-8 w-8 shrink-0 cursor-zoom-in overflow-hidden rounded-md border border-border bg-inset focus-visible:outline-2 focus-visible:outline-[var(--ring)] focus-visible:outline-offset-2"
+				>
+					<img
+						src={imageThumb}
+						alt={file.name}
+						loading="lazy"
+						className="h-full w-full object-cover"
+					/>
+				</button>
+			) : (
+				<span className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-border bg-inset">
+					<FileTypeIcon name={file.name} mime={file.mime} size={18} />
+				</span>
+			)}
 			<span className="min-w-0 flex-1">
 				<button
 					type="button"
-					onClick={onPreview}
+					onClick={onOpenImage ?? onPreview}
 					className="block max-w-full truncate text-left font-medium hover:underline"
 					title={file.name}
 				>
@@ -270,6 +293,7 @@ export function LibraryPanel({ threadId }: { threadId: string }): ReactNode {
 	const { t } = useTranslation();
 	const [showAll, setShowAll] = useState(false);
 	const [previewing, setPreviewing] = useState<AssistantFile | null>(null);
+	const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 	const q = useAssistantFiles(showAll ? undefined : threadId);
 	const setScope = useSetAssistantFileScope();
 	const remove = useDeleteAssistantFile();
@@ -281,6 +305,19 @@ export function LibraryPanel({ threadId }: { threadId: string }): ReactNode {
 	if (previewing)
 		return <Preview file={previewing} onBack={() => setPreviewing(null)} />;
 	const list = q.data ?? [];
+	const gallery: LightboxImage[] = [];
+	const galleryIndexById = new Map<string, number>();
+	for (const f of list) {
+		if (rasterMime(f.mime)) {
+			galleryIndexById.set(f.id, gallery.length);
+			gallery.push({
+				src: assistantFileContentUrl(f.id, true),
+				alt: f.name,
+				caption: f.name,
+				filename: f.name,
+			});
+		}
+	}
 	return (
 		<div className="flex flex-col gap-2">
 			<div className="flex items-center gap-0.5">
@@ -309,35 +346,50 @@ export function LibraryPanel({ threadId }: { threadId: string }): ReactNode {
 				</EmptyState>
 			)}
 			<ul className="flex flex-col divide-y divide-border">
-				{list.map((f) => (
-					<FileRow
-						key={f.id}
-						file={f}
-						threadId={threadId}
-						busy={pendingId === f.id}
-						onPreview={() => setPreviewing(f)}
-						onToggleShared={() =>
-							setScope.mutate({
-								id: f.id,
-								scope: f.scope === "shared" ? "conversation" : "shared",
-							})
-						}
-						onDelete={async () => {
-							if (
-								await confirmAction({
-									title: t("library.deleteConfirm", { name: f.name }),
-									body: t("library.deleteConfirmBody"),
-									action: t("common.delete"),
-									danger: true,
+				{list.map((f) => {
+					const gIdx = galleryIndexById.get(f.id);
+					const previewImg = gIdx !== undefined ? gallery[gIdx] : undefined;
+					return (
+						<FileRow
+							key={f.id}
+							file={f}
+							threadId={threadId}
+							busy={pendingId === f.id}
+							imageThumb={previewImg?.src}
+							onPreview={() => setPreviewing(f)}
+							onOpenImage={
+								gIdx !== undefined ? () => setLightboxIndex(gIdx) : undefined
+							}
+							onToggleShared={() =>
+								setScope.mutate({
+									id: f.id,
+									scope: f.scope === "shared" ? "conversation" : "shared",
 								})
-							)
-								remove.mutate(f.id);
-						}}
-					/>
-				))}
+							}
+							onDelete={async () => {
+								if (
+									await confirmAction({
+										title: t("library.deleteConfirm", { name: f.name }),
+										body: t("library.deleteConfirmBody"),
+										action: t("common.delete"),
+										danger: true,
+									})
+								)
+									remove.mutate(f.id);
+							}}
+						/>
+					);
+				})}
 			</ul>
 			{list.length > 0 && (
 				<p className="text-faint text-xs">{t("library.hint")}</p>
+			)}
+			{lightboxIndex !== null && gallery.length > 0 && (
+				<ImageViewer
+					images={gallery}
+					initialIndex={lightboxIndex}
+					onClose={() => setLightboxIndex(null)}
+				/>
 			)}
 		</div>
 	);

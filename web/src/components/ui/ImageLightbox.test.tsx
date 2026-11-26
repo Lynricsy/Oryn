@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { Markdown } from "../markdown/Markdown";
+import { AttachmentChips } from "../transcript/MessageView";
 import { ImageLightbox } from "./ImageLightbox";
 import { ImageViewer } from "./ImageViewer";
 
@@ -97,6 +98,44 @@ describe("ImageLightbox / ImageViewer", () => {
 		const dialog = screen.getByRole("dialog", { name: "架构图" });
 		expect(dialog.querySelector("img")?.getAttribute("src")).toBe(
 			"https://x.test/arch.png",
+		);
+	});
+
+	it("消息附件芯片：图片附件显示小预览并点击打开灯箱，非图片附件维持类型图标与下载链接", () => {
+		const { container } = render(
+			<AttachmentChips
+				attachments={[
+					{
+						id: "att_01JCZ8M3W4X5Y6Z7A8B9C0D1E1",
+						name: "shot.png",
+						path: "/tmp/shot.png",
+						mime: "image/png",
+						size: 4096,
+					},
+					{
+						id: "att_01JCZ8M3W4X5Y6Z7A8B9C0D1E2",
+						name: "notes.pdf",
+						path: "/tmp/notes.pdf",
+						mime: "application/pdf",
+						size: 2048,
+					},
+				]}
+			/>,
+		);
+		const thumb = screen.getByRole("img", { name: "shot.png" });
+		expect(thumb).toHaveAttribute(
+			"src",
+			"/api/v1/attachments/att_01JCZ8M3W4X5Y6Z7A8B9C0D1E1/content?inline=true",
+		);
+		expect(container.querySelector('svg[data-file-icon="image"]')).toBeNull();
+		expect(
+			screen.getByText("notes.pdf").closest("a")?.getAttribute("href"),
+		).toBe("/api/v1/attachments/att_01JCZ8M3W4X5Y6Z7A8B9C0D1E2/content");
+
+		fireEvent.click(screen.getByText("shot.png"));
+		const dialog = screen.getByRole("dialog", { name: "shot.png" });
+		expect(dialog.querySelector("img")?.getAttribute("src")).toBe(
+			"/api/v1/attachments/att_01JCZ8M3W4X5Y6Z7A8B9C0D1E1/content?inline=true",
 		);
 	});
 });

@@ -9,14 +9,14 @@ import { attachmentContentUrl } from "./attachments";
 export interface AssetUrls {
 	/** 转录图片 `blob:sha256:<hex>` 的读取地址。 */
 	blob(sha256: string): string;
-	/** 附件的下载地址；null = 不可下载（芯片只显示名称）。 */
-	attachment(id: string): string | null;
+	/** 附件地址；`inline` 为 true 时请求栅格图内联预览，否则下载；null = 不可访问（芯片只显示名称）。 */
+	attachment(id: string, inline?: boolean): string | null;
 }
 
 /** 站内（已登录）地址。 */
 export const PRIVATE_ASSET_URLS: AssetUrls = {
 	blob: blobUrl,
-	attachment: (id) => attachmentContentUrl(id),
+	attachment: (id, inline) => attachmentContentUrl(id, inline),
 };
 
 export const AssetUrlContext = createContext<AssetUrls>(PRIVATE_ASSET_URLS);
