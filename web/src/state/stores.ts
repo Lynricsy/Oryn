@@ -14,6 +14,7 @@ import {
 	type WsEntries,
 	type WsThreadSnapshot,
 } from "../api/client";
+import type { OptimisticAttachmentMeta } from "../lib/queue-message";
 import type { ImageContent, SessionState } from "../omp/types";
 import {
 	applyEntries,
@@ -272,6 +273,7 @@ export function addOptimisticQueue(
 	lane: QueueLane,
 	text: string,
 	images?: ImageContent[],
+	attachments?: OptimisticAttachmentMeta[],
 ): string {
 	const id = `__opt_q_${++optimisticQueueSeq}`;
 	const item: OptimisticQueuedMessage = {
@@ -279,6 +281,7 @@ export function addOptimisticQueue(
 		lane,
 		text,
 		...(images && images.length > 0 ? { images } : {}),
+		...(attachments && attachments.length > 0 ? { attachments } : {}),
 		timestamp: Date.now(),
 	};
 	const store = getThreadStore(threadId);

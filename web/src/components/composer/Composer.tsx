@@ -615,11 +615,19 @@ export const Composer = memo(function Composer({
 					att.fileIds,
 				);
 				if (mode === "steer" || mode === "follow_up") {
+					const optAttachments = sent.items
+						.filter((i) => i.status === "done")
+						.map((i) => ({
+							name: i.name,
+							size: i.size,
+							mime: i.attachment?.mime ?? i.libraryFile?.mime,
+						}));
 					const optId = addOptimisticQueue(
 						threadId,
 						mode === "steer" ? "steering" : "followUp",
-						outText || t("queue.attachmentOnly", { count: sent.items.length }),
+						outText,
 						att.contents,
+						optAttachments,
 					);
 					reset(sent);
 					if (getComposerDraft(threadId).inFlight === marker)
@@ -731,11 +739,19 @@ export const Composer = memo(function Composer({
 			// 引导（steer）与排队（follow_up）：发送后立即在输入框上方排队条中可见、清空输入区；
 			// 服务端广播权威 `queue_update` 后自动无缝接管，发送失败则撤回乐观项并放回草稿。
 			if (effectiveMode === "steer" || effectiveMode === "follow_up") {
+				const optAttachments = sent.items
+					.filter((i) => i.status === "done")
+					.map((i) => ({
+						name: i.name,
+						size: i.size,
+						mime: i.attachment?.mime ?? i.libraryFile?.mime,
+					}));
 				const optId = addOptimisticQueue(
 					threadId,
 					effectiveMode === "steer" ? "steering" : "followUp",
 					outText,
 					att.contents,
+					optAttachments,
 				);
 				reset(sent);
 				if (getComposerDraft(threadId).inFlight === marker)

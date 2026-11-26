@@ -1,22 +1,37 @@
 /**
  * 排队条：停靠在输入坞输入框上方，显示 steering（引导）与 follow-up（排队）队列。
  * - 支持乐观项：用户在忙时发送引导/排队消息后立即可见，待权威 `queue_update` 到达无缝接管。
+ * - 解析 `<oryn-attachments>` 附件块、前导引用、Oryn 自动消息头与 artifact 选区块，渲染为正文 + 文件芯片；
+ *   编辑时只修改纯正文，保存时无损拼回附件块与引用前缀。
  * - 支持编辑、删除、拖动排序（跨队列）、提前发送、清空。
  */
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { formatBytes } from "../../lib/format";
+import { describeOrynHeader } from "../../lib/oryn-message";
+import {
+	type OptimisticAttachmentMeta,
+	parseQueueMessage,
+	queueMatchKey,
+} from "../../lib/queue-message";
+import { parseTitleCard } from "../../lib/title";
+import { userMarkdown } from "../../lib/user-markdown";
 import type { OmpCommand, RpcQueuedMessage } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
-import { getThreadStore, useThread } from "../../state/stores";
+import { getThreadStore, useIndex, useThread } from "../../state/stores";
 import type {
 	OptimisticQueuedMessage,
 	QueueLane,
 } from "../../state/thread-reducer";
 import { Badge } from "../ui/data";
+import { FileTypeIcon } from "../ui/FileTypeIcon";
 import { Icon } from "../ui/icons";
 import { Button, IconButton, TextInput } from "../ui/primitives";
 
-type DisplayItem = RpcQueuedMessage & { pending?: boolean };
+type DisplayItem = RpcQueuedMessage & {
+	pending?: boolean;
+	optimisticAttachments?: OptimisticAttachmentMeta[];
+};
 
 async function run(threadId: string, frame: OmpCommand) {
 	await realtime.cmd(threadId, frame);
@@ -41,24 +56,73 @@ function mergeLane(
 	const mine = optimistic.filter((o) => o.lane === lane);
 	if (mine.length === 0) return base;
 	const counts = new Map<string, number>();
-	for (const b of base) counts.set(b.text, (counts.get(b.text) ?? 0) + 1);
+	for (const b of base) {
+		const key = queueMatchKey(b.text);
+		counts.set(key, (counts.get(key) ?? 0) + 1);
+	}
 	const extra: DisplayItem[] = [];
 	for (const o of mine) {
-		const left = counts.get(o.text) ?? 0;
+		const key = queueMatchKey(o.text);
+		const left = counts.get(key) ?? 0;
 		if (left > 0) {
-			counts.set(o.text, left - 1);
+			counts.set(key, left - 1);
 			continue;
 		}
 		extra.push({
 			id: o.id,
 			text: o.text,
 			images: o.images,
+			optimisticAttachments: o.attachments,
 			editable: false,
 			timestamp: o.timestamp,
 			pending: true,
 		});
 	}
 	return [...base, ...extra];
+}
+
+/** 紧凑单行行内格式：复用 `userMarkdown` 给行内代码/粗体/斜体/删除线着色，换行折叠为空格。 */
+function QueueInlineText({ text }: { text: string }): ReactNode {
+	const singleLine = text.replace(/\s*\n+\s*/g, " ").trim();
+	const segments = userMarkdown(singleLine);
+	return (
+		<>
+			{segments.map((seg, i) => {
+				const key = `${i}-${seg.text.slice(0, 6)}`;
+				const s = seg.style;
+				if (s.marker)
+					return (
+						<span key={key} className="text-faint">
+							{seg.text}
+						</span>
+					);
+				if (s.code)
+					return (
+						<code
+							key={key}
+							className="rounded bg-inset/90 px-1 py-0.5 font-mono text-[11px] text-fg"
+						>
+							{seg.text}
+						</code>
+					);
+				const cls = [
+					s.strong ? "font-semibold" : "",
+					s.em ? "italic" : "",
+					s.del ? "line-through text-muted" : "",
+					s.link ? "text-accent-ink underline decoration-accent/40" : "",
+				]
+					.filter(Boolean)
+					.join(" ");
+				return cls ? (
+					<span key={key} className={cls}>
+						{seg.text}
+					</span>
+				) : (
+					<span key={key}>{seg.text}</span>
+				);
+			})}
+		</>
+	);
 }
 
 function Item({
@@ -72,9 +136,59 @@ function Item({
 	lane: QueueLane;
 	index: number;
 }) {
-	const { t } = useTranslation();
+	const { t, i18n } = useTranslation();
 	const [editing, setEditing] = useState<string | null>(null);
 	const isSteer = lane === "steering";
+	const parsed = parseQueueMessage(item.text);
+	const senderId =
+		parsed.oryn?.header.kind === "message" ? parsed.oryn.header.threadId : "";
+	const senderTitle = useIndex((s) =>
+		senderId ? s.threads[senderId]?.title : undefined,
+	);
+	const orynLabel = parsed.oryn
+		? describeOrynHeader(parsed.oryn, t, i18n.language, () =>
+				senderTitle ? parseTitleCard(senderTitle).text : undefined,
+			)
+		: null;
+
+	const attachments: Array<{
+		key: string;
+		name: string;
+		mime?: string;
+		size?: number;
+		title?: string;
+	}> =
+		parsed.attachments.length > 0
+			? parsed.attachments.map((a, i) => ({
+					key: `${a.path}-${i}`,
+					name: a.name,
+					mime: a.mime,
+					size: a.size,
+					title: `${a.name} (${formatBytes(a.size)})`,
+				}))
+			: (item.optimisticAttachments ?? []).map((a, i) => ({
+					key: `${a.name}-${i}`,
+					name: a.name,
+					mime: a.mime,
+					size: a.size,
+					title:
+						a.size !== undefined
+							? `${a.name} (${formatBytes(a.size)})`
+							: a.name,
+				}));
+
+	// 图片文件已出现在附件芯片里时不重复显示「N 张图」
+	const imageAttachments = attachments.filter((a) =>
+		a.mime?.startsWith("image/"),
+	).length;
+	const extraImages = Math.max(
+		0,
+		(item.images?.length ?? 0) - imageAttachments,
+	);
+	const hasChips =
+		attachments.length > 0 || parsed.artifactTitle !== null || extraImages > 0;
+	const displayBody = parsed.body.trim();
+
 	return (
 		<li
 			draggable={item.editable}
@@ -101,7 +215,7 @@ function Item({
 						toLane: lane,
 					});
 			}}
-			className={`flex items-center gap-1.5 rounded-lg border py-1.5 pr-1.5 pl-2.5 text-xs transition-colors duration-150 ${
+			className={`flex items-start gap-1.5 rounded-lg border py-1.5 pr-1.5 pl-2.5 text-xs transition-colors duration-150 ${
 				isSteer
 					? "border-accent/25 bg-accent-soft/55"
 					: "border-border bg-panel/70"
@@ -109,14 +223,14 @@ function Item({
 		>
 			{item.editable && (
 				<span
-					className="cursor-grab select-none text-ghost active:cursor-grabbing"
+					className="mt-0.5 cursor-grab select-none text-ghost active:cursor-grabbing"
 					aria-hidden="true"
 				>
 					⋮⋮
 				</span>
 			)}
 			<span
-				className={`inline-flex shrink-0 items-center ${isSteer ? "text-accent-ink" : "text-faint"}`}
+				className={`mt-0.5 inline-flex shrink-0 items-center ${isSteer ? "text-accent-ink" : "text-faint"}`}
 				aria-hidden="true"
 			>
 				<Icon
@@ -127,39 +241,113 @@ function Item({
 			</span>
 			{editing !== null ? (
 				<form
-					className="flex min-w-0 flex-1 gap-1"
+					className="flex min-w-0 flex-1 flex-col gap-1"
 					onSubmit={(e) => {
 						e.preventDefault();
 						void run(threadId, {
 							type: "queue_edit",
 							queueId: item.id,
-							text: editing,
+							text: parsed.rebuild(editing),
 						}).then(() => setEditing(null));
 					}}
 				>
-					<TextInput
-						autoFocus
-						className="h-6 py-0 text-xs"
-						value={editing}
-						onChange={(e) => setEditing(e.target.value)}
-					/>
-					<Button size="sm" type="submit">
-						{t("common.save")}
-					</Button>
+					<div className="flex min-w-0 items-center gap-1">
+						<TextInput
+							autoFocus
+							className="h-6 py-0 text-xs"
+							value={editing}
+							onKeyDown={(e) => {
+								if (e.key === "Escape") {
+									e.preventDefault();
+									setEditing(null);
+								}
+							}}
+							onChange={(e) => setEditing(e.target.value)}
+						/>
+						<Button size="sm" type="submit">
+							{t("common.save")}
+						</Button>
+					</div>
+					{attachments.length > 0 && (
+						<div className="flex flex-wrap items-center gap-1 opacity-80">
+							{attachments.map((a) => (
+								<span
+									key={a.key}
+									className="inline-flex max-w-44 items-center gap-1 rounded border border-border/70 bg-panel/70 px-1.5 py-0.5 text-2xs text-muted"
+								>
+									<FileTypeIcon name={a.name} mime={a.mime} size={12} />
+									<span className="truncate">{a.name}</span>
+								</span>
+							))}
+						</div>
+					)}
 				</form>
 			) : (
-				<span className="min-w-0 flex-1 truncate text-fg" title={item.text}>
-					{item.text}
-				</span>
-			)}
-			{item.images && item.images.length > 0 && editing === null && (
-				<span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-inset px-1.5 py-0.5 text-2xs text-muted">
-					<Icon name="image" size={11} />
-					{t("queue.imagesCount", { count: item.images.length })}
-				</span>
+				<div className="flex min-w-0 flex-1 flex-col gap-1">
+					{orynLabel && (
+						<span className="inline-flex w-fit max-w-full items-center gap-1 truncate rounded bg-inset px-1.5 py-0.5 font-medium text-2xs text-muted">
+							{orynLabel}
+						</span>
+					)}
+					{parsed.quote && (
+						<div
+							className="flex min-w-0 items-center gap-1 border-border-strong border-l-2 pl-1.5 text-2xs text-muted"
+							title={parsed.quote}
+						>
+							<Icon name="quote" size={10} className="shrink-0 opacity-70" />
+							<span className="min-w-0 truncate">
+								{parsed.quote.replace(/\s*\n+\s*/g, " ")}
+							</span>
+						</div>
+					)}
+					{displayBody && (
+						<span
+							className="min-w-0 truncate text-fg leading-4"
+							title={displayBody}
+						>
+							<QueueInlineText text={displayBody} />
+						</span>
+					)}
+					{hasChips && (
+						<div
+							data-testid="queue-attachments"
+							className="flex flex-wrap items-center gap-1"
+						>
+							{attachments.map((a) => (
+								<span
+									key={a.key}
+									title={a.title}
+									className="inline-flex max-w-48 items-center gap-1 rounded-md border border-border/80 bg-panel/85 px-1.5 py-0.5 text-2xs text-fg"
+								>
+									<FileTypeIcon name={a.name} mime={a.mime} size={13} />
+									<span className="min-w-0 truncate">{a.name}</span>
+									{a.size !== undefined && (
+										<span className="shrink-0 text-faint tabular-nums">
+											{formatBytes(a.size)}
+										</span>
+									)}
+								</span>
+							))}
+							{parsed.artifactTitle && (
+								<span className="inline-flex max-w-44 items-center gap-1 rounded-md border border-border/80 bg-panel/85 px-1.5 py-0.5 text-2xs text-muted">
+									<Icon name="cursor" size={11} className="shrink-0" />
+									<span className="min-w-0 truncate">
+										{parsed.artifactTitle}
+									</span>
+								</span>
+							)}
+							{extraImages > 0 && (
+								<span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border/80 bg-panel/85 px-1.5 py-0.5 text-2xs text-muted">
+									<Icon name="image" size={11} />
+									{t("queue.imagesCount", { count: extraImages })}
+								</span>
+							)}
+						</div>
+					)}
+				</div>
 			)}
 			{item.pending && (
-				<span className="shrink-0 pr-1 text-2xs text-faint">
+				<span className="mt-0.5 shrink-0 pr-1 text-2xs text-faint">
 					{t("queue.sending")}
 				</span>
 			)}
@@ -184,7 +372,7 @@ function Item({
 						size={13}
 						box="xs"
 						label={t("queue.edit")}
-						onClick={() => setEditing(item.text)}
+						onClick={() => setEditing(parsed.body)}
 					/>
 					<IconButton
 						icon="close"
@@ -200,7 +388,6 @@ function Item({
 		</li>
 	);
 }
-
 export function QueueBar({ threadId }: { threadId: string }): ReactNode {
 	const { t } = useTranslation();
 	const queue = useThread(threadId, (s) => s.queue);

@@ -15,6 +15,10 @@ import type {
 	WsEntries,
 	WsThreadSnapshot,
 } from "../api/client";
+import {
+	type OptimisticAttachmentMeta,
+	queueMatchKey,
+} from "../lib/queue-message";
 import type {
 	ExtensionUiRequest,
 	ImageContent,
@@ -178,6 +182,7 @@ export interface OptimisticQueuedMessage {
 	lane: QueueLane;
 	text: string;
 	images?: ImageContent[];
+	attachments?: OptimisticAttachmentMeta[];
 	timestamp: number;
 	/** 命令已应答但尚未被权威帧消解时为真；后续权威帧、用户消息落盘或回合结束会清理它。 */
 	settled?: boolean;
@@ -615,17 +620,22 @@ function reconcileOptimisticQueue(
 		steering: new Map(),
 		followUp: new Map(),
 	};
-	for (const text of authoritative.steering)
-		counts.steering.set(text, (counts.steering.get(text) ?? 0) + 1);
-	for (const text of authoritative.followUp)
-		counts.followUp.set(text, (counts.followUp.get(text) ?? 0) + 1);
+	for (const text of authoritative.steering) {
+		const key = queueMatchKey(text);
+		counts.steering.set(key, (counts.steering.get(key) ?? 0) + 1);
+	}
+	for (const text of authoritative.followUp) {
+		const key = queueMatchKey(text);
+		counts.followUp.set(key, (counts.followUp.get(key) ?? 0) + 1);
+	}
 	const kept: OptimisticQueuedMessage[] = [];
 	for (const item of optimistic) {
 		if (item.settled) continue;
 		const bag = counts[item.lane];
-		const left = bag.get(item.text) ?? 0;
+		const key = queueMatchKey(item.text);
+		const left = bag.get(key) ?? 0;
 		if (left > 0) {
-			bag.set(item.text, left - 1);
+			bag.set(key, left - 1);
 			continue;
 		}
 		kept.push(item);

@@ -1,5 +1,6 @@
-import { act, render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { realtime } from "../../realtime/socket";
 import {
 	addOptimisticQueue,
 	getThreadStore,
@@ -93,5 +94,94 @@ describe("QueueBar：引导与排队消息展示", () => {
 			removeOptimisticQueue(TID, optId);
 		});
 		expect(container).toBeEmptyDOMElement();
+	});
+
+	it("带 <oryn-attachments> 的引导消息解析为正文 + 文件芯片，不暴露原始标签；编辑保存时保留附件块", async () => {
+		const attBlock =
+			"<oryn-attachments>\n" +
+			"The user attached these files. They are stored outside the repository; read them when relevant and do not copy them into the repository unless asked.\n" +
+			"- /home/user/.oryn/attachments/T-queue/att_01JCZ800000000000000000001/template.md (text/markdown, 2048 bytes)\n" +
+			"</oryn-attachments>";
+		const cmdSpy = vi
+			.spyOn(realtime, "cmd")
+			.mockResolvedValue({ steering: [], followUp: [] } as never);
+
+		getThreadStore(TID)
+			.getState()
+			.apply([
+				{
+					type: "frame",
+					frame: {
+						type: "queue_update",
+						steering: [
+							{
+								id: "s1",
+								text: `每个报告要用这个模板写\n\n${attBlock}`,
+								editable: true,
+								timestamp: 3000,
+							},
+						],
+						followUp: [],
+					},
+				},
+			]);
+
+		render(<QueueBar threadId={TID} />);
+		expect(screen.getByText("每个报告要用这个模板写")).toBeVisible();
+		expect(screen.getByText("template.md")).toBeVisible();
+		expect(screen.queryByText(/<oryn-attachments>/)).toBeNull();
+
+		// 点击编辑：输入框只显示纯正文，不含附件标签
+		fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+		const input = screen.getByDisplayValue("每个报告要用这个模板写");
+		fireEvent.change(input, { target: { value: "改成按新模板写" } });
+		await act(async () => {
+			fireEvent.click(screen.getByRole("button", { name: "保存" }));
+		});
+
+		expect(cmdSpy).toHaveBeenCalledWith(TID, {
+			type: "queue_edit",
+			queueId: "s1",
+			text: `改成按新模板写\n\n${attBlock}`,
+		});
+		cmdSpy.mockRestore();
+	});
+
+	it("带附件的乐观引导项在权威 queue_update（追加了 <oryn-attachments>）到达后精准去重", () => {
+		const attBlock =
+			"<oryn-attachments>\n" +
+			"The user attached these files.\n" +
+			"- /home/user/.oryn/attachments/T-queue/att_01JCZ800000000000000000002/spec.pdf (application/pdf, 1024 bytes)\n" +
+			"</oryn-attachments>";
+		addOptimisticQueue(TID, "steering", "参考这份规范", undefined, [
+			{ name: "spec.pdf", mime: "application/pdf", size: 1024 },
+		]);
+		render(<QueueBar threadId={TID} />);
+		expect(screen.getByText("参考这份规范")).toBeVisible();
+		expect(screen.getByText("spec.pdf")).toBeVisible();
+
+		act(() => {
+			getThreadStore(TID)
+				.getState()
+				.apply([
+					{
+						type: "frame",
+						frame: {
+							type: "queue_update",
+							steering: [
+								{
+									id: "s1",
+									text: `参考这份规范\n\n${attBlock}`,
+									editable: true,
+									timestamp: 4000,
+								},
+							],
+							followUp: [],
+						},
+					},
+				]);
+		});
+		expect(screen.getAllByText("参考这份规范")).toHaveLength(1);
+		expect(screen.queryByText("发送中")).toBeNull();
 	});
 });
