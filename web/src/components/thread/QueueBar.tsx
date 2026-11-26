@@ -12,9 +12,9 @@ import { formatBytes } from "../../lib/format";
 import { imageSrc, rasterMime } from "../../lib/image-src";
 import { describeOrynHeader } from "../../lib/oryn-message";
 import {
+	filterUnmatchedOptimistic,
 	type OptimisticAttachmentMeta,
 	parseQueueMessage,
-	queueMatchKey,
 } from "../../lib/queue-message";
 import { parseTitleCard } from "../../lib/title";
 import { userMarkdown } from "../../lib/user-markdown";
@@ -58,29 +58,21 @@ function mergeLane(
 		}));
 	const mine = optimistic.filter((o) => o.lane === lane);
 	if (mine.length === 0) return base;
-	const counts = new Map<string, number>();
-	for (const b of base) {
-		const key = queueMatchKey(b.text);
-		counts.set(key, (counts.get(key) ?? 0) + 1);
-	}
-	const extra: DisplayItem[] = [];
-	for (const o of mine) {
-		const key = queueMatchKey(o.text);
-		const left = counts.get(key) ?? 0;
-		if (left > 0) {
-			counts.set(key, left - 1);
-			continue;
-		}
-		extra.push({
-			id: o.id,
-			text: o.text,
-			images: o.images,
-			optimisticAttachments: o.attachments,
-			editable: false,
-			timestamp: o.timestamp,
-			pending: true,
-		});
-	}
+	const unmatched = filterUnmatchedOptimistic(
+		mine,
+		authoritative ?? null,
+		texts ?? null,
+	);
+	if (unmatched.length === 0) return base;
+	const extra: DisplayItem[] = unmatched.map((o) => ({
+		id: o.id,
+		text: o.text,
+		images: o.images,
+		optimisticAttachments: o.attachments,
+		editable: false,
+		timestamp: o.timestamp,
+		pending: true,
+	}));
 	return [...base, ...extra];
 }
 

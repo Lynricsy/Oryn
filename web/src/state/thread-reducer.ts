@@ -16,8 +16,8 @@ import type {
 	WsThreadSnapshot,
 } from "../api/client";
 import {
+	filterUnmatchedOptimistic,
 	type OptimisticAttachmentMeta,
-	queueMatchKey,
 } from "../lib/queue-message";
 import type {
 	ExtensionUiRequest,
@@ -183,6 +183,10 @@ export interface OptimisticQueuedMessage {
 	text: string;
 	images?: ImageContent[];
 	attachments?: OptimisticAttachmentMeta[];
+	/** 提交时刻该 lane 已存在的权威条目 id，防止旧权威项吞掉同正文的新乐观项。 */
+	baselineIds?: string[];
+	/** 提交时刻该 lane 已存在的权威条目数（旧版纯字符串帧回退用）。 */
+	baselineCount?: number;
 	timestamp: number;
 	/** 命令已应答但尚未被权威帧消解时为真；后续权威帧、用户消息落盘或回合结束会清理它。 */
 	settled?: boolean;
@@ -610,37 +614,31 @@ function queueItemsFrom(frame: JsonRecord): RpcGetQueueResult | null {
 	return { steering: steering.items, followUp: followUp.items };
 }
 
-/** 权威 `queue_update` 到达后，按 lane+文本频次消解已被服务端接管的乐观项，并清理已应答的旧乐观项。 */
+/** 权威 `queue_update` 到达后，仅用新出现的权威项（按正文 + 附件身份）消解乐观项，避免旧项误删在途消息。 */
 function reconcileOptimisticQueue(
 	optimistic: readonly OptimisticQueuedMessage[],
 	authoritative: QueueSnapshot,
+	authoritativeItems: RpcGetQueueResult | null,
 ): OptimisticQueuedMessage[] {
 	if (optimistic.length === 0) return [];
-	const counts: Record<QueueLane, Map<string, number>> = {
-		steering: new Map(),
-		followUp: new Map(),
-	};
-	for (const text of authoritative.steering) {
-		const key = queueMatchKey(text);
-		counts.steering.set(key, (counts.steering.get(key) ?? 0) + 1);
-	}
-	for (const text of authoritative.followUp) {
-		const key = queueMatchKey(text);
-		counts.followUp.set(key, (counts.followUp.get(key) ?? 0) + 1);
-	}
-	const kept: OptimisticQueuedMessage[] = [];
-	for (const item of optimistic) {
-		if (item.settled) continue;
-		const bag = counts[item.lane];
-		const key = queueMatchKey(item.text);
-		const left = bag.get(key) ?? 0;
-		if (left > 0) {
-			bag.set(key, left - 1);
-			continue;
-		}
-		kept.push(item);
-	}
-	return kept;
+	const steering = filterUnmatchedOptimistic(
+		optimistic.filter((o) => o.lane === "steering"),
+		authoritativeItems?.steering ?? null,
+		authoritative.steering,
+		{ dropSettled: true },
+	);
+	const followUp = filterUnmatchedOptimistic(
+		optimistic.filter((o) => o.lane === "followUp"),
+		authoritativeItems?.followUp ?? null,
+		authoritative.followUp,
+		{ dropSettled: true },
+	);
+	if (steering.length === 0 && followUp.length === 0) return [];
+	const keepIds = new Set([
+		...steering.map((o) => o.id),
+		...followUp.map((o) => o.id),
+	]);
+	return optimistic.filter((o) => keepIds.has(o.id));
 }
 
 function upsertSubagent(
@@ -1009,7 +1007,11 @@ export function applyFrame(
 				...s,
 				queue,
 				queueItems,
-				optimisticQueue: reconcileOptimisticQueue(s.optimisticQueue, queue),
+				optimisticQueue: reconcileOptimisticQueue(
+					s.optimisticQueue,
+					queue,
+					queueItems,
+				),
 			};
 		}
 
@@ -1207,11 +1209,16 @@ export function applySnapshot(
 	};
 	if (isRecord(snap.agent.queue)) {
 		const queue = queueFrom(snap.agent.queue);
+		const queueItems = queueItemsFrom(snap.agent.queue);
 		next = {
 			...next,
 			queue,
-			queueItems: queueItemsFrom(snap.agent.queue),
-			optimisticQueue: reconcileOptimisticQueue(s.optimisticQueue, queue),
+			queueItems,
+			optimisticQueue: reconcileOptimisticQueue(
+				s.optimisticQueue,
+				queue,
+				queueItems,
+			),
 		};
 	} else if (s.optimisticQueue.length > 0) {
 		next = {

@@ -222,4 +222,93 @@ describe("QueueBar：引导与排队消息展示", () => {
 			"/api/v1/attachments/att_01JCZ800000000000000000009/content?inline=true",
 		);
 	});
+
+	it("已有纯附件 A 在队列中时再发纯附件 B：B 立即显示，无关 queue_update 不误删 B，直到 B 的权威条目到达才接管", () => {
+		const attA =
+			"<oryn-attachments>\nThe user attached these files.\n" +
+			"- /home/user/.oryn/attachments/T-queue/att_01AAAAAAAAAAAAAAAAAAAAAAAA/first.pdf (application/pdf, 100 bytes)\n" +
+			"</oryn-attachments>";
+		const attB =
+			"<oryn-attachments>\nThe user attached these files.\n" +
+			"- /home/user/.oryn/attachments/T-queue/att_01BBBBBBBBBBBBBBBBBBBBBBBB/second.pdf (application/pdf, 200 bytes)\n" +
+			"</oryn-attachments>";
+
+		getThreadStore(TID)
+			.getState()
+			.apply([
+				{
+					type: "frame",
+					frame: {
+						type: "queue_update",
+						steering: [
+							{ id: "s1", text: attA, editable: true, timestamp: 1000 },
+						],
+						followUp: [],
+					},
+				},
+			]);
+
+		addOptimisticQueue(TID, "steering", "", undefined, [
+			{
+				id: "att_01BBBBBBBBBBBBBBBBBBBBBBBB",
+				name: "second.pdf",
+				mime: "application/pdf",
+				size: 200,
+			},
+		]);
+
+		render(<QueueBar threadId={TID} />);
+		expect(screen.getByText("first.pdf")).toBeVisible();
+		expect(screen.getByText("second.pdf")).toBeVisible();
+		expect(screen.getByText("发送中")).toBeVisible();
+
+		// 无关 queue_update（followUp 变动，steering 仍只有 s1）：不能误删在途的 second.pdf
+		act(() => {
+			getThreadStore(TID)
+				.getState()
+				.apply([
+					{
+						type: "frame",
+						frame: {
+							type: "queue_update",
+							steering: [
+								{ id: "s1", text: attA, editable: true, timestamp: 1000 },
+							],
+							followUp: [
+								{
+									id: "f1",
+									text: "另外一条排队",
+									editable: true,
+									timestamp: 1001,
+								},
+							],
+						},
+					},
+				]);
+		});
+		expect(screen.getByText("second.pdf")).toBeVisible();
+		expect(screen.getByText("发送中")).toBeVisible();
+
+		// 真正包含 s2（second.pdf）的 queue_update 到达：无缝接管，不重复
+		act(() => {
+			getThreadStore(TID)
+				.getState()
+				.apply([
+					{
+						type: "frame",
+						frame: {
+							type: "queue_update",
+							steering: [
+								{ id: "s1", text: attA, editable: true, timestamp: 1000 },
+								{ id: "s2", text: attB, editable: true, timestamp: 1002 },
+							],
+							followUp: [],
+						},
+					},
+				]);
+		});
+		expect(screen.getAllByText("first.pdf")).toHaveLength(1);
+		expect(screen.getAllByText("second.pdf")).toHaveLength(1);
+		expect(screen.queryByText("发送中")).toBeNull();
+	});
 });

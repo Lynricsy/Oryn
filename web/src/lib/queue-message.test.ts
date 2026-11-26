@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { parseQueueMessage, queueMatchKey } from "./queue-message";
+import {
+	filterUnmatchedOptimistic,
+	parseQueueMessage,
+	queueMatchKey,
+} from "./queue-message";
 
 const ATT_BLOCK =
 	"<oryn-attachments>\n" +
@@ -71,5 +75,91 @@ describe("queue-message：排队消息格式解析与保真编辑", () => {
 			queueMatchKey("每个报告要用这个模板写"),
 		);
 		expect(queueMatchKey(ATT_BLOCK)).toBe(queueMatchKey(""));
+	});
+
+	it("已有纯附件 A 时提交纯附件 B：A 不会隐藏 B，无关帧不会删掉 B，直到 B 的新权威 id 到达才消解", () => {
+		const attA =
+			"<oryn-attachments>\nThe user attached these files.\n" +
+			"- /h/.oryn/attachments/T-1/att_01AAAAAAAAAAAAAAAAAAAAAAAA/a.pdf (application/pdf, 100 bytes)\n</oryn-attachments>";
+		const attB =
+			"<oryn-attachments>\nThe user attached these files.\n" +
+			"- /h/.oryn/attachments/T-1/att_01BBBBBBBBBBBBBBBBBBBBBBBB/b.pdf (application/pdf, 200 bytes)\n</oryn-attachments>";
+		const optB = {
+			id: "opt_b",
+			text: "",
+			attachments: [
+				{
+					id: "att_01BBBBBBBBBBBBBBBBBBBBBBBB",
+					name: "b.pdf",
+					mime: "application/pdf",
+					size: 200,
+				},
+			],
+			baselineIds: ["s1"],
+			baselineCount: 1,
+		};
+		const authOnlyA = [
+			{ id: "s1", text: attA, editable: true, timestamp: 100 },
+		];
+		// 已有 A 绝不能消解 B
+		expect(filterUnmatchedOptimistic([optB], authOnlyA, [attA])).toEqual([
+			optB,
+		]);
+		// 即使新来一条同正文不同附件的 s2（仍是 a.pdf），也不能误消解 b.pdf
+		const authWrongAtt = [
+			...authOnlyA,
+			{ id: "s2", text: attA, editable: true, timestamp: 101 },
+		];
+		expect(
+			filterUnmatchedOptimistic([optB], authWrongAtt, [attA, attA]),
+		).toEqual([optB]);
+		// 真正的新权威项 s3（b.pdf）到达后才精确消解
+		const authWithB = [
+			...authOnlyA,
+			{ id: "s3", text: attB, editable: true, timestamp: 102 },
+		];
+		expect(filterUnmatchedOptimistic([optB], authWithB, [attA, attB])).toEqual(
+			[],
+		);
+	});
+
+	it("同正文不同附件（及连发完全相同消息）：旧权威 id 不会抵消新乐观项", () => {
+		const attA =
+			"<oryn-attachments>\nThe user attached these files.\n" +
+			"- /h/.oryn/attachments/T-1/att_01AAAAAAAAAAAAAAAAAAAAAAAA/a.md (text/markdown, 50 bytes)\n</oryn-attachments>";
+		const optSameTextDiffAtt = {
+			id: "opt_2",
+			text: "用这个模板",
+			attachments: [
+				{
+					id: "att_01BBBBBBBBBBBBBBBBBBBBBBBB",
+					name: "b.md",
+					size: 60,
+				},
+			],
+			baselineIds: ["s1"],
+			baselineCount: 1,
+		};
+		const optIdentical = {
+			id: "opt_3",
+			text: "用这个模板",
+			attachments: [
+				{
+					id: "att_01AAAAAAAAAAAAAAAAAAAAAAAA",
+					name: "a.md",
+					size: 50,
+				},
+			],
+			baselineIds: ["s1"],
+			baselineCount: 1,
+		};
+		const authS1 = [
+			{ id: "s1", text: `用这个模板\n\n${attA}`, editable: true, timestamp: 1 },
+		];
+		expect(
+			filterUnmatchedOptimistic([optSameTextDiffAtt, optIdentical], authS1, [
+				`用这个模板\n\n${attA}`,
+			]),
+		).toEqual([optSameTextDiffAtt, optIdentical]);
 	});
 });

@@ -267,7 +267,7 @@ export async function loadEarlierEntries(threadId: string): Promise<void> {
 
 let optimisticQueueSeq = 0;
 
-/** 往线程本地乐观队列压入一条引导 / 排队消息，立即在输入坞上方显示。 */
+/** 往线程本地乐观队列压入一条引导 / 排队消息，记录提交时刻的权威基线以便精确去重。 */
 export function addOptimisticQueue(
 	threadId: string,
 	lane: QueueLane,
@@ -276,17 +276,24 @@ export function addOptimisticQueue(
 	attachments?: OptimisticAttachmentMeta[],
 ): string {
 	const id = `__opt_q_${++optimisticQueueSeq}`;
+	const store = getThreadStore(threadId);
+	const state = store.getState();
+	const baselineIds = (state.queueItems?.[lane] ?? []).map((x) => x.id);
+	const baselineCount =
+		state.queueItems?.[lane].length ?? state.queue?.[lane].length ?? 0;
 	const item: OptimisticQueuedMessage = {
 		id,
 		lane,
 		text,
 		...(images && images.length > 0 ? { images } : {}),
 		...(attachments && attachments.length > 0 ? { attachments } : {}),
+		baselineIds,
+		baselineCount,
 		timestamp: Date.now(),
 	};
-	const store = getThreadStore(threadId);
-	const prev = store.getState().optimisticQueue;
-	store.getState().patchLocal({ optimisticQueue: [...prev, item] });
+	store.getState().patchLocal({
+		optimisticQueue: [...state.optimisticQueue, item],
+	});
 	return id;
 }
 

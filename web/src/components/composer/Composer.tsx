@@ -616,8 +616,11 @@ export const Composer = memo(function Composer({
 				);
 				if (mode === "steer" || mode === "follow_up") {
 					const optAttachments = sent.items
-						.filter((i) => i.status === "done")
+						.filter(
+							(i) => i.status === "done" && (i.attachment || i.libraryFile),
+						)
 						.map((i) => ({
+							id: i.attachment?.id ?? i.libraryFile?.id,
 							name: i.name,
 							size: i.size,
 							mime: i.attachment?.mime ?? i.libraryFile?.mime,
@@ -740,8 +743,9 @@ export const Composer = memo(function Composer({
 			// 服务端广播权威 `queue_update` 后自动无缝接管，发送失败则撤回乐观项并放回草稿。
 			if (effectiveMode === "steer" || effectiveMode === "follow_up") {
 				const optAttachments = sent.items
-					.filter((i) => i.status === "done")
+					.filter((i) => i.status === "done" && (i.attachment || i.libraryFile))
 					.map((i) => ({
+						id: i.attachment?.id ?? i.libraryFile?.id,
 						name: i.name,
 						size: i.size,
 						mime: i.attachment?.mime ?? i.libraryFile?.mime,
