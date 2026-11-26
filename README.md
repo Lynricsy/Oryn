@@ -130,6 +130,7 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 - **环境跟着线程走**：新线程总有一台新环境，删掉最后一个线程环境即回收，全部归档即冻结，不用手动管理。
 - **快照与预热池**：项目首次 `.oryn/setup` 后自动快照，之后的新线程跳过构建；高频项目可留常驻预热池。
 - **冻结与唤醒**：空闲自动冻结，打开线程或访问受管服务时自动唤醒。
+- **Agent 沙箱**：线程里的 agent 可以随手开一台零凭据、用完即焚的平级沙箱（Firecracker 或 Docker，断网或可出网，运行中可切断网络），传文件、跑命令、起后台作业；空闲 30 分钟、到期或线程归档时自动销毁，主人在线程信息页查看与销毁。详见 [features.md「Agent 沙箱」](docs/features.md#agent-沙箱)。
 - **开发镜像**：Arch Linux（x64 / ARM64），预装主流语言、语言服务器、文档与媒体工具链和图形桌面；已启用 BlackArch 源，安全工具按需用 pacman 安装。
 
 ## Boxes
@@ -382,6 +383,7 @@ oryn boxes restart workbench --app wiki                      # 重启应用服�
 oryn boxes exec workbench --app wiki -- ./migrate            # 在应用线上目录执行命令（流式输出，Ctrl-C 中断）
 oryn boxes cp ./seed.db workbench:seed.db --app wiki         # 与应用数据目录互传文件
 oryn thread new --box workbench --app wiki "排查线上慢查询"    # 在 box 应用的线上目录直接启动线程
+oryn sandbox ls --thread <线程> && oryn sandbox rm <沙箱>    # 列出线程名下的 Agent 沙箱并销毁其中一台
 ```
 
 </details>
@@ -396,6 +398,14 @@ oryn orb service ls | start <名> | logs <名>           # 查看或启停 .oryn
 oryn orb desktop status | browser start               # 查看虚拟桌面状态或拉起受管 Chromium
 oryn thread new "跑一遍全量集成测试" && oryn thread wait <id>   # 派生子线程并等待其静止（退出码 0/3/4/124）
 oryn boxes deploy --on workbench --name wiki --create        # 将当前仓库 HEAD 构建打包并部署到 box（首次可顺手建 box）
+
+# Agent 沙箱（零凭据、用完即焚；orb 外只能用 ls 与 rm）
+id=$(oryn sandbox up --network none --backend kvm)           # 开一台断网的沙箱（--network egress 可出网；--idle / --ttl 设回收期限）
+oryn sandbox cp --gitignore ~/workspace/repo $id:repo        # 传目录（只带 git 会跟踪的文件）；反向写成 $id:<路径> <本机路径>
+oryn sandbox exec $id --cwd '~/repo' -- make test            # 运行命令，输出实时转发、退出码透传；--detach 起后台作业
+oryn sandbox jobs $id logs <作业>                             # 后台作业：jobs <id> [ls | logs <作业> | kill <作业>]
+oryn sandbox net <沙箱> none && oryn sandbox extend <沙箱> --ttl 1h   # 切网络（创建时为 none 的不能开网）；续期
+oryn sandbox ls && oryn sandbox rm $id                       # 列出本机的沙箱；销毁
 ```
 
 </details>

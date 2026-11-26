@@ -3012,3 +3012,123 @@ orynd 在 `<data_dir>/repos/<projectId>.git` 为每个有 `https://` 仓库地�
 
 - 迁移 `0059_artifact_design.sql`：`artifact_versions` 增加 `turn_id`、`title`、`check_json` 与索引 `artifact_versions_turn(artifact_id, turn_id)`；新增表 `artifact_designs(artifact_id PRIMARY KEY, surface, direction, dealt, auto_notes, delivered, dirty_at)`。
 - 探针（`sandbox/probe.js`）：由 `?__oryn_probe=1` 触发（控制面注入 `window.__orynProbe = {aesthetic, surface}`，orb 经 `__oryn_aesthetic=1`、`__oryn_surface=<landing|app>` 传入），输出 `<script id="oryn-probe" type="application/json">{v:1, frame, height, issues:[{rule, loc, text, detail}]}</script>`；14 条规则（前 6 条版面类常驻，后 8 条审美类在 `direction` 非空时启用，`app` 面关闭 `eyebrow-excess` 与 `split-repeat`），每条最多报 3 处。
+
+## M30：Agent 沙箱
+
+orb 内的工作线程可以临时开出沙箱：一台 `orbs.sandbox_network` 非空的特殊 orb，里面跑精简模式的 `orbd`（`ORYN_SANDBOX=1`），零凭据，link 经 provider 中继回到控制面，调度、鉴权、中继与回收归 `internal/sandboxes`。权限主体是 link 认证的 owner orb；`owner_thread_id` 只做归因与级联——orb 内调用方线程取自可改的 `ORYN_THREAD_ID`，控制面只能校验它属于这台 orb，同一 orb 的多条线程不是安全边界。迁移 `0064_sandboxes.sql`（`sandboxes` 表与 `orbs.sandbox_network`）、`0065_jobs_set_network.sql`（`jobs.op` 的 CHECK 加 `set_network`）。行为见 [`features.md`「Agent 沙箱」](features.md#agent-沙箱)，部署见 [`deploy.md`](deploy.md) 第 2、5、12 节的「Agent 沙箱（M30）」。
+
+### 数据模型与生命周期
+
+- **`orbs.sandbox_network`**（`none|egress`，`NULL` = 不是沙箱；值是创建时的网络模式。API `Orb.sandbox?: boolean` 与 `ProviderOrbSummary.sandbox?: boolean`，为 `false` 时省略；provider 总览的 `orbs.sandboxes` 是未删除的沙箱 orb 数）：创建时必须指定 provider，与 `Pool`、`Box`、`Computer`、`Coordinator`、`ProjectID`、`SnapshotID`、`SnapshotOf`、`BrowserProfileID` 互斥（`ErrInvalidState`）。豁免 `EvaluateIdle`（不空闲冻结）、`retired`（不随线程归档冻结）与 `DeleteUnused`（无线程不回收）；`Wake`、`Pause`、`Snapshot` 对沙箱回 `ErrInvalidState`。经 `/api/v1/orbs/{id}` 暂停、恢复、删除沙箱 orb 回 409 `orb_is_sandbox`；以 `executor.kind = orb` 在沙箱上建线程回 `invalid`（`orb is a sandbox; threads cannot run on it`）；全局助手的 orb 工具指向沙箱回 `invalid_target`。
+- **`sandboxes(id, orb_id, owner_orb_id, owner_thread_id, backend, provider_name, type, created_network, network, state, idle_sec, last_active_at, ttl_deadline, hard_deadline, created_at, ready_at, destroyed_at, destroy_reason, error)`**：`id` 为 `sbx_<ULID>`，`orb_id` 唯一；`owner_orb_id` 与 `owner_thread_id` 不加外键（owner 软删除、线程删除后行仍可读）。时间一律 Unix 毫秒。`backend ∈ docker|kvm`；`created_network` 与 `network ∈ none|egress`；`state ∈ creating|ready|destroying|destroyed|failed`；`destroy_reason ∈ agent|owner|idle|ttl|max_lifetime|thread_archived|thread_deleted|owner_orb_gone|lost|create_failed|create_timeout`。已结束的行保留 7 天后裁剪。
+- **状态迁移**：`create` 写 `creating` 行（`hard_deadline = now + sandbox.max_lifetime`，给了 `ttlMinutes` 时 `ttl_deadline = min(now + ttl, hard_deadline)`）→ orb `ready`、link 在线且 hello 带 `sandbox` 时 `ready`（`last_active_at = ready_at`）；orb `failed` → `failed`（`error` 取 orb 的失败原因，随后删 orb）。销毁一律先置 `destroying` 并删 orb，orb 到达 `deleted` 时由 orb 事件或对账置为 `destroyed`。
+- **对账**（`sandboxes.Service.Run`：启动时一轮，之后每 30 秒一轮，另处理 orb 状态事件）：
+  - 孤儿：创建超过 60 秒、没有 `creating` / `ready` 行的沙箱 orb 直接删除；`destroying` 的行 orb 已删则补记 `destroyed`，orb 不在 `deleting` 则重试删除。
+  - 级联：归属线程不存在 → `thread_deleted`，已归档 → `thread_archived`（线程归档 / 删除时 `threads` 另经 `ThreadRetired` 立即触发）；owner orb 不存在或进入 `stopping` / `stopped` / `deleting` / `deleted` / `failed` → `owner_orb_gone`（冻结不算）。沙箱 orb 在 `ready` 之后进入 `failed` → `lost`。
+  - `creating` 超过创建超时（120 秒）再加 30 秒仍未推进（创建它的进程已不在）→ `create_timeout`。
+  - `ready`：`now ≥ hard_deadline` → `max_lifetime`；`ttl_deadline` 到点 → `ttl`（哪怕命令在跑）；provider 在线（未停用、租约有效）而 link 连续 2 分钟不在 → `lost`（计时只在内存里，provider 离线期间不计时）；没有进行中的 `exec` / `cp` / 改网络且 `now - last_active_at ≥ idle_sec` 时查 `GET /sandbox/jobs`，有 `running` 的作业就记一次活动，没有就按 `idle` 销毁，查询失败则本轮跳过。
+  - 活动（`last_active_at`）：`exec`、`cp`、`network` 开始与结束各记一次，`extend`、`jobs` 的 `logs` / `kill` 各记一次。
+
+### provider：能力、`JobSpawnParams.sandbox` 与 job op `set_network`
+
+- **`ProviderCapabilities.sandbox`**（缺省 `false`）：provider 认识 `JobSpawnParams.sandbox` 与 `set_network`。docker 驱动在 `docker.sandbox.enabled`、firecracker 驱动在 `firecracker.sandbox.enabled` 时声明（测试用的 process 驱动恒声明）。控制面只在声明了它、未停用且租约有效的 provider 里选：`backend` 给了只看该后端（`docker` 驱动算 `docker`，`firecracker` 算 `kvm`）；省略时先看 `sandbox.default_backend` 再看另一个；候选里有 owner orb 所在的 provider 就用它，否则取名字最小的；`type` 省略取该 provider 的 `default_type`，不在其类型表里回 `invalid_type`（message 列出可用类型）。
+- **`JobSpawnParams.sandbox: JobSpawnSandbox{network: SandboxNetwork}`**（`SandboxNetwork = none|egress`）：spawn 一台沙箱。provider 没开启沙箱时任务失败（`docker: sandbox is not enabled on this provider` / `firecracker: …`）。
+  - docker：镜像固定为 `docker.image`（不用快照与 `JobSpawnParams.image`），容器带标签 `oryn-sandbox=<none|egress>` 与 `oryn-sandbox-link=<中继目标 host:port>`；`none` 为 `--network none`，`egress` 只接入 `docker.sandbox.network`（配置了 `docker.sandbox.dns` 时逐项加 `--dns`）；`-v <socket_dir>/<orbId>:/run/oryn-link:ro`；不加 `--add-host host.docker.internal:host-gateway`，不追加 `docker.extra_run_args`，seccomp 恒用内置 profile；类型的 `runtime`（sysbox）、`nested_docker` 与 `NET_RAW` / `NET_ADMIN` 的剥离规则同普通 orb。
+  - firecracker：`none` 的 VM 不建 tap、Boot 不配 `network-interfaces/eth0`、`boot_args` 不带 `ip=`，guest 启动请求不带 DNS；`egress` 照常有 tap 与 guest 网络（宿主 nft 规则同普通 orb）。guest 启动请求 `fcguest.Request` 带 `sandbox: true` 与 `linkVia: "vsock:5006"`，guest-init 据此给 orbd 设 `ORYN_SANDBOX=1` 与 `ORYN_LINK_VIA`。
+- **job op `set_network`**（`jobs.OpSetNetwork`）：参数 `JobNetworkParams{network: SandboxNetwork}`，由 `orbs.Service.SetSandboxNetwork` 入队并等待完成。创建时为 `none` 的沙箱切到 `egress` 一律失败，错误文本以 `network_unavailable:` 开头（控制面据此映射为同名错误码）；已处于目标状态时不做事。
+  - docker：按容器标签 `oryn-sandbox` 判断创建时的模式（标签为空 → 不是沙箱，报错），`docker network connect <net> <id>` 或 `docker network disconnect -f <net> <id>`。
+  - firecracker：VM 不存在或不是沙箱时报错；`ip link set dev <tap> up|down`。
+
+### `ORYN_SANDBOX`、`ORYN_LINK_VIA` 与中继
+
+- **`ORYN_SANDBOX=1`**：`orbd` 以精简模式运行（与 `--runner`、协调宿主模式互斥，启动即报错）。
+- **`ORYN_LINK_VIA`**：`orbd` 拨 `ORYN_URL` 时底层连接的走法，只接受 `unix:<绝对路径>` 与 `vsock:<1..4294967295>`（连宿主 CID 2）；解析失败 `orbd` 启动失败。TLS、WebSocket 与 Bearer 令牌仍是 `orbd ↔ orynd` 端到端，中继只转发字节；给了 `ORYN_LINK_VIA` 时 HTTP 客户端不用代理（`Proxy = nil`），有 `ORYN_ORB_CA_PEM` 时照旧只信任它。vsock 只在 Linux 上支持。
+- **中继**：provider 为每台沙箱开一个本机监听，每条连接以 10 秒超时 TCP 拨中继目标（spawn 任务 `env.ORYN_URL` 的 host:port，`http` / `ws` 缺省 80，`https` / `wss` 缺省 443）后双向复制；每台沙箱同时最多 8 条连接，超出的立即关闭。
+  - docker：宿主目录 `<docker.sandbox.socket_dir>/<orbId>/`（0755，`socket_dir` 本身 0700）里的 `link.sock`（0666），整个目录只读挂进容器的 `/run/oryn-link`，容器内 `ORYN_LINK_VIA=unix:/run/oryn-link/link.sock`。挂目录而不是挂 socket 文件：provider 重启后重建 socket，文件挂载会失效。删除时连目录一起删。
+  - firecracker：guest 连 vsock `CID 2 : 5006`（`fcguest.LinkPort`），Firecracker 把它转到 jail 里的 `v.sock_5006`（provider 在 `launch` 之后、`Boot` 之前建监听，属槽位 uid、0600；jail 根目录每次启动都重建）。
+  - provider 重启：docker 驱动的 `Housekeep` 按 `docker ps --filter label=oryn-sandbox` 与标签 `oryn-sandbox-link` 为在运行的沙箱容器重建监听；firecracker 驱动为在运行的沙箱 VM 重建。`orbd` 随后经新的中继自动重连。
+
+### 沙箱的 link：默认拒绝
+
+沙箱里跑的是不可信代码，它的 link 不开放任何控制面能力：
+
+- **控制面侧**（`orbLink.sandbox`）：沙箱发来的任何 ctl 请求回 `sandbox_unsupported`（`<method> is not available to a sandbox`）；通知只处理 `hello` 与 `metrics.sample`（距上次不足 10 秒的丢弃），其余丢弃；沙箱 `orbd` 发起的任何流（含 `egress`）直接关闭。`connecting` 阶段不发 `setup.run`：hello 带 `sandbox` 特性则直接 `ready`（detail `{"reason": "sandbox link"}`），否则 `failed`（`orbd in the provider image has no sandbox mode; rebuild the orb image`，创建方随之回 `create_failed`）。
+- **`orbd` 侧**（精简模式）：不开出站代理端口、`orbd.sock`、SSH 网关、桌面、box、受管服务与其上报，不写 agent 资产；link 上只接受 `fs` 流，ctl 只响应 `shutdown`（其余 `method_not_found`）；本机 API 只有 `/fs/*` 与 `/sandbox/*`，其余路径 404 `not_found`（`not available in a sandbox`）。
+- **hello `features`**：普通 `orbd` 追加 `fs-tar`（`orbs.FeatureFSTar`）；精简模式恰为 `["fs", "fs-tar", "metrics", "sandbox"]`（`orbs.FeatureSandbox`），监督着 `dockerd` 时再加 `docker`。
+- 沙箱的 link 令牌对沙箱里的代码可见（`~/.oryn/orb-token`），它只能以这台沙箱的身份建立 link，而上述限制让它借不到任何能力。
+
+### link 流 `sandbox` 与 `orbd.sock` `sandbox.call`
+
+orb 内的 `oryn sandbox …` 与 `sandbox_*` 工具经 `orbd.sock` 发 `sandbox.call`，参数 `orbsock.SandboxCallParams{threadId, op, params}`；`orbd` 校验 `threadId` 与非空 `op`（否则 `invalid_params`），没有 link 时回 `offline`，否则在当前 link 上开一条流（一条流一次调用）：
+
+- 流头 `LinkStreamSandbox{"t":"sandbox","threadId":"<调用方线程>"}`。
+- `orbd → orynd` 一行请求（≤ 1 MiB，超限回 `invalid_request`）：`{"op":"<op>","params":{…}}`。
+- `orynd → orbd` 零或多行输出 `{"s":"o"|"e","d":"<文本>"}`（只有同步 `exec` 有，`orbd` 转成 sock 的 `stdout` / `stderr` 日志行），最后恰好一行 `{"result":{…}}`（原样作为 sock 结果）或 `{"error":{"code","message"}}`（原样作为 sock 错误码），然后关流。流在最后一行之前断开 → sock 回 `offline`。
+- 调用方断开 sock 时 `orbd` 关流；`orynd` 读到 EOF 即取消这次操作（同步 `exec` 随之杀掉沙箱里的进程组）。`create` 除外：沙箱照常建好并出现在 `list` 里。
+- `runner.sock` 不提供 `sandbox.call`；精简模式没有 `orbd.sock`。
+
+**调用方校验**（`status` 以外每个 `op`）：线程存在、`kind = work`、未归档、`orb_id` 等于当前 link 的 orb，且该 orb 不是 runner 也不是沙箱，否则 `forbidden`。自动化线程可以用。**沙箱定位**：行不存在或不属于当前 link 的 orb 一律 `sandbox_not_found`（不暴露别的 orb 的沙箱是否存在）；需要运行中的 `op` 还要求 `state = ready` 且 link 在线，否则 `sandbox_not_ready`。参数按 JSON 严格解析，多余字段回 `invalid_request`。
+
+|`op`|`params`|`result`|
+|---|---|---|
+|`status`|`{}`|`{available, backends: ["kvm", "docker"] 的子集, reason?}`（`available = sandbox.enabled` 且至少一个后端有候选 provider）|
+|`create`|`{network, backend?, type?, idleMinutes?, ttlMinutes?}`|`{sandbox: Sandbox}`（等到就绪才返回）|
+|`list`|`{}`|`{sandboxes: Sandbox[]}`：本 owner orb 的在用沙箱，加最近 60 分钟内结束的|
+|`exec`|`{sandbox, command, cwd?, env?, timeoutSec?, detach?}`|同步：`{exit, durationMs}`；`detach`：`{jobId}`|
+|`cp`|`{sandbox, direction: "to_sandbox"\|"from_sandbox", source, dest, exclude?, gitignore?}`|`{files, bytes, skipped}`|
+|`network`|`{sandbox, network}`|`{sandbox: Sandbox}`|
+|`extend`|`{sandbox, ttlMinutes}`|`{sandbox: Sandbox}`（`ttl_deadline = min(now + ttlMinutes, hard_deadline)`；`creating` 与 `ready` 都可续）|
+|`jobs`|`{sandbox, action: "list"\|"logs"\|"kill", job?, offset?}`|`list`：`{jobs: OrbSandboxJob[]}`；`logs`：`OrbSandboxJobLog`；`kill`：`{ok: true}`|
+|`destroy`|`{sandbox}`|`{ok: true}`（`destroy_reason = agent`）|
+
+- **参数范围**（越界回 `invalid_request`）：`network ∈ none|egress`（`create` 必填）；`backend ∈ docker|kvm`；`idleMinutes` 5–240（缺省 `sandbox.idle`）；`ttlMinutes` 1–720；同步 `timeoutSec` 1–1800（缺省 600，更长的用 `detach`）；`detach` 的 `timeoutSec` 0（不限，缺省）或 1–86400；`command` 1–32000 字符；`env` ≤ 64 项、键匹配 `^[A-Za-z_][A-Za-z0-9_]*$`、键值总长 ≤ 64 KiB；`exclude` ≤ 64 条、每条 1–256 字节。
+- **`create`**：`sandbox.enabled` 为假 → `sandbox_disabled`；在一把锁下核对配额（owner orb 在用的 `creating` + `ready` ≥ `sandbox.max_per_orb` → `quota_per_orb`，全局 ≥ `sandbox.max_total` → `quota_total`）、选 provider、建 orb 并写行；之后每 500ms 查一次，至多 120 秒：orb `failed` 时失败原因以 `capacity:` 开头回 `capacity`，否则 `create_failed`；超时按 `create_timeout` 销毁并回同名错误。
+- **`exec`**：控制面向沙箱发 `POST /sandbox/exec`，把 NDJSON 的 `{"s","d"}` 行原样写回流，`{"exit":N}` 改写成 `{"result":{"exit":N,"durationMs":…}}`；没等到 exit 行就断了 → `link_lost`。
+- **`cp`**：两端 `orbd` 都要有 `fs-tar` 特性，否则 `orbd_outdated`。源端 `GET /fs/tar`（`exclude` / `gitignore` 只作用于源端），目标端 `PUT /fs/tar?path=<dest>&kind=<源端的 X-Oryn-Tar-Kind>`，控制面流式中转、不落盘；超过 2 GiB → `transfer_too_large`。任一端 `orbd` 的错误码原样透传（如 `not_found`、`outside_home`、`protected_path`、`not_a_git_worktree`、`is_a_directory`、`not_a_directory`）。
+- **`network`**：`created_network = none` 而目标是 `egress` → `network_unavailable`；与当前相同直接回；否则入队 `set_network`，失败文本带 `network_unavailable:` 映射为同名错误码，其余为 `internal`。
+- **`Sandbox`**（REST 与流共用）：`{id, backend, type, provider, network, createdNetwork, state, ownerThreadId, idleSec, lastActiveAt, idleDeadline, ttlDeadline?, hardDeadline, createdAt, readyAt?, destroyedAt?, destroyReason?, error?}`，`idleDeadline = lastActiveAt + idleSec*1000`。
+
+错误码：
+
+|码|含义|
+|---|---|
+|`sandbox_disabled`|`orynd.yaml` 的 `sandbox.enabled` 为假|
+|`no_sandbox_provider`|没有在线且声明了 `sandbox` 能力的 provider（给了 `backend` 时限该后端）|
+|`invalid_request`、`invalid_type`|参数不合法；`type` 不在所选 provider 的类型表里|
+|`forbidden`|调用方线程校验失败，或调用方是 runner / 沙箱|
+|`quota_per_orb`、`quota_total`|每 owner orb / 全局的在用沙箱满额|
+|`sandbox_not_found`、`sandbox_not_ready`|沙箱不存在或不属于本 orb；沙箱不在 `ready` 或 link 不在线|
+|`network_unavailable`|创建时为 `none` 的沙箱不能开网|
+|`create_failed`、`create_timeout`、`capacity`|沙箱 orb 启动失败（含镜像里的 `orbd` 没有精简模式）；120 秒内未就绪；provider 容量不足|
+|`orbd_outdated`|owner orb 或沙箱的 `orbd` 没有 `fs-tar`（需重建 orb）|
+|`transfer_too_large`|`cp` 超过 2 GiB（或包内条目超过 500000）|
+|`not_found`、`outside_home`、`protected_path`、`not_a_git_worktree`|`cp` 的路径不存在、在 `$HOME` 之外、是 `$HOME` 本身或在 `$HOME/.oryn` 内、`gitignore` 时源目录不在 git 工作树里|
+|`job_not_found`、`too_many_jobs`|作业不存在；沙箱里同时运行的后台作业已满 16 个|
+|`link_lost`、`internal`|与沙箱（或 `cp` 的一端）断了连接；其它内部错误|
+
+### orbd 本机路由：`/fs/tar` 与 `/sandbox/*`
+
+控制面经 `orbs.Service.Do` 调用（`cp` 的两端，沙箱的 `exec` 与作业）。
+
+|路由|请求 → 响应|语义与错误|
+|---|---|---|
+|`GET /fs/tar?path=&exclude=…&gitignore=1`|— → `200 application/x-tar`，响应头 `X-Oryn-Tar-Kind: file\|dir`|普通 orb 与沙箱都有，runner 上 404。普通文件打成一个条目（名字是 basename）；目录的条目名相对源目录、不带 `./`，含目录、普通文件与符号链接（原样，不跟随），其余类型跳过。`exclude`（可重复）：含 `/` 的模式按 `path.Match` 匹配相对路径，不含的匹配任意深度的 basename，命中的目录连子树跳过。`gitignore=1` 只对目录有效（文件 → 400 `invalid_request`）：不在 git 工作树里 → 400 `not_a_git_worktree`，否则取 `git ls-files -z --cached --others --exclude-standard` 里仍存在的普通文件与符号链接及其父目录（子模块跳过，`.git/` 因此不在其中），再应用 `exclude`。不存在 → 404 `not_found`|
+|`PUT /fs/tar?path=&kind=file\|dir`|tar（≤ 2 GiB）→ `200 OrbFsTarResult{files, bytes, skipped}`|超限 413 `transfer_too_large`，包损坏 400 `invalid_request`。`kind=file`：目标是已存在的目录 → 409 `is_a_directory`；父目录自动创建，包里第一个普通文件覆盖写到 `path`。`kind=dir`：目标已存在且不是目录 → 409 `not_a_directory`；不存在则创建，已存在则合并、同名文件覆盖；全部写入经 `os.Root`（拒绝解析到根之外，包括经由包里先放进来的符号链接）；条目名非法 → 400 `invalid_request`；权限取 `mode & 0o777`；指向目标根之外的符号链接、硬链接与其余类型计入 `skipped`；条目超过 500000 → 413 `transfer_too_large`|
+|`POST /sandbox/exec`|`OrbSandboxExecRequest{command, cwd, env?, timeoutSec, detach?}` → 同步 `200 application/x-ndjson`；`detach` 时 `200 OrbSandboxJobStart{jobId}`|只在精简模式注册。范围同上表；`cwd` 空 = `~`，否则须是绝对路径或 `~/` 开头、落在 `$HOME` 内的已存在目录（400 `invalid_path` / 404 `not_found` / 409 `not_a_directory`）。同步时格式与 `POST /box/exec` 相同：以登录环境跑 `bash -lc`（独立进程组，`env` 覆盖在登录环境之上），`{"s":"o"\|"e","d"}` 行与末行 `{"exit":N}`（超时 124、启动失败 127、信号 `128+n`；对端断开杀进程组）|
+|`GET /sandbox/jobs`|— → `OrbSandboxJobList{jobs: OrbSandboxJob[]}`|`OrbSandboxJob{id, command, state: running\|exited, exit?, startedAt, endedAt?, logBytes, logTruncated}`，按启动顺序|
+|`GET /sandbox/jobs/{id}/log?offset=N`|— → `OrbSandboxJobLog{text, offset, nextOffset, eof, state, exit?}`|单次至多 256 KiB，没给 `offset` 时取末尾 256 KiB；段首段尾落在 UTF-8 字符边界；`eof` = 已结束且读到日志末尾。未知 id → 404 `job_not_found`|
+|`POST /sandbox/jobs/{id}/kill`|— → `{ok: true}`|杀掉作业的进程组并等它结束（至多 5 秒）；已结束的不做事；未知 id → 404 `job_not_found`|
+
+后台作业：id 为 `j1`、`j2`… 递增；同时运行超过 16 个 → 409 `too_many_jobs`；同样 `bash -lc` + 独立进程组，`timeoutSec > 0` 时到点杀进程组（退出码 124）；stdout 与 stderr 合写到 `$HOME/.oryn/sandbox/jobs/<id>.log`，写满 64 MiB 后丢弃后续输出并置 `logTruncated`。记录只在内存里，最多留 200 条（超出时淘汰最早结束的并删其日志），`orbd` 启动时清空日志目录、退出时杀掉全部仍在运行的作业。
+
+`/fs/tar` 的路径（两端相同）：相对路径以 `$HOME` 为根；解析符号链接后须在 `$HOME` 之下（否则 403 `outside_home`）、不是 `$HOME` 本身、不在 `$HOME/.oryn` 之内（403 `protected_path`，读写都拒）。`dest` 永远是目标的完整路径而不是父目录：源是文件时 `dest` 成为该文件，源是目录时 `dest` 成为该目录（内容合并进已存在的 `dest`）。
+
+### REST 与 WS
+
+|方法与路径|operationId|参数|响应|
+|---|---|---|---|
+|`GET /api/v1/sandboxes`|`listSandboxes`|`thread?`|`SandboxList{sandboxes: Sandbox[]}`：给了 `thread` 时是该线程名下在用的加最近 60 分钟内结束的；省略时是全部在用的|
+|`DELETE /api/v1/sandboxes/{sandbox}`|`deleteSandbox`|—|204（`destroy_reason = owner`；已结束的直接成功）；不存在 404 `sandbox_not_found`，其余沙箱错误 400|
+
+- tag `sandboxes`，只对主人开放（Cookie + CSRF 或设备令牌 `odt_…`）。全局助手的 `oryn` 工具策略：`listSandboxes` 只读放行，`deleteSandbox` 拒绝（`sandboxes are destroyed by the thread that owns them or by the owner`）。
+- **`sandboxes.changed`**：WS 服务端消息 `WsServerSandboxesChanged{type: "sandboxes.changed", threadId}`，在某线程名下的沙箱创建、就绪、失败、改网络、续期、开始销毁与销毁完成时发给全部私有连接。客户端让该线程的沙箱查询失效，WS 每次重新 open 后也要自行失效一次。

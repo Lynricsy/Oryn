@@ -10,6 +10,7 @@ README 只列每项能力的一句话概要，这里写完整的行为、边界�
 - [全局助手与 Space](#全局助手与-space)
 - [记忆、GitHub 与 SSH](#记忆github-与-ssh)
 - [Boxes](#boxes)
+- [Agent 沙箱](#agent-沙箱)
 - [Artifacts](#artifacts)
 - [客户端](#客户端)
 - [安全边界](#安全边界)
@@ -453,6 +454,40 @@ box 是一台常驻机器：由 Provider（Docker / Sysbox / Firecracker）拉�
 - **在 box 上开线程**：box 页的「新线程」或首屏执行位置里的 Boxes 分组，可以把线程开在机器（`~`）或某个 app 的线上目录（`~/apps/<app>/current`）上，线程直接操作线上的应用和数据。带源码的 release 在 box 上改了代码、没有推送时，新的部署会拒绝覆盖（`box_changes`），要么在 box 上的线程里提交并推送，要么加 `--discard-box-changes`。
 - **悬停预览**：app 根页面的 `<head>` 里声明 `<meta name="oryn-preview" content="v1; enabled; iframe">`，box 页悬停 app 徽标时显示实时预览（带 `?oryn-preview=light|dark` 参数，app 可以据此调整样式）。
 - **边界**：部署只能在线程的 orb 里进行；同一台 box 上的 app 与线程以同一个用户运行，彼此没有隔离，不可信的 app 放到单独的 box；box 的数据就是那台机器的磁盘，删 box 即丢；全自动线程不能使用 box；orb 里的 agent 不能删 box，删除只能由主人在 Boxes 页、设备令牌 CLI 或经全局助手的确认卡完成。
+
+## Agent 沙箱
+
+线程里的 agent 需要一次性的隔离环境时（跑不可信代码、破坏性实验、离线测试、在干净环境里复现问题），可以开一台沙箱：与自己的 orb 平级的临时机器，里面没有任何凭据，用完即焚。协议见 [`protocol.md`「M30：Agent 沙箱」](protocol.md#m30agent-沙箱)，部署见 [`deploy.md`](deploy.md) 第 2、5、12 节的「Agent 沙箱（M30）」。
+
+- **怎么用**：orb 里的 agent 有 8 个原生工具，全部按需加载（discoverable）；控制面报告沙箱可用时，系统提示里另有一段沙箱指引，列出可用的后端。终端里的等价命令是 `oryn sandbox …`：
+
+  | 工具 | 等价命令 | 作用 |
+  |---|---|---|
+  | `sandbox_create` | `oryn sandbox up --network none\|egress [--backend docker\|kvm] [--type T] [--idle 30m] [--ttl 2h]` | 开一台沙箱，等它就绪后返回 id |
+  | `sandbox_exec` | `oryn sandbox exec <id> [--cwd D] [--env K=V]... [--timeout 600] [--detach] -- <命令>` | 运行命令；`detach` 起后台作业 |
+  | `sandbox_cp` | `oryn sandbox cp [--exclude P]... [--gitignore] <src> <dst>` | 双向传文件或目录（恰有一侧写成 `<id>:<路径>`） |
+  | `sandbox_network` | `oryn sandbox net <id> none\|egress` | 切换网络 |
+  | `sandbox_jobs` | `oryn sandbox jobs <id> [ls \| logs <job> [--offset N] \| kill <job>]` | 后台作业列表、读输出、终止 |
+  | `sandbox_extend` | `oryn sandbox extend <id> --ttl 1h` | 把绝对期限设为从现在起多久 |
+  | `sandbox_list` | `oryn sandbox ls [--json]` | 列出这台机器的沙箱（含最近 60 分钟内结束的） |
+  | `sandbox_destroy` | `oryn sandbox rm <id>` | 销毁 |
+
+  `sandbox_list` 是只读工具，其余 7 个按执行类工具审批。对话里每次调用显示一张工具卡，`sandbox_exec` 运行时输出实时滚动。
+- **两种后端**：`kvm` 是 Firecracker microVM，`docker` 是 Docker 容器（包括 Sysbox 类型）。省略 `backend` 时优先 `kvm`（部署方可改），没有可用的再退到另一个；规格用 Provider 的 orb 类型名，省略取 Provider 的默认类型。沙箱只用 Provider 的基础镜像或根盘，不带项目、快照、setup 与 agent。Provider 要在 `provider.yaml` 里显式开启沙箱，没开启的 Provider 不参与调度。
+- **两种网络**：`network` 必填。`none` 是完全没有网卡（只有 `lo`）；`egress` 可以访问公网，宿主与私有网段被防火墙挡住。控制通道不走沙箱的网卡，而是经 Provider 中继（Docker 是挂进容器的 unix socket，Firecracker 是 vsock），所以断网的沙箱照样能运行命令、传文件。
+- **运行时切换网络**：创建时为 `egress` 的沙箱可以在 `egress` 与 `none` 之间来回切；创建时为 `none` 的根本没有网卡，不能开网（`network_unavailable`），需要联网就新开一台 `egress` 的。
+- **运行命令**：同步执行默认超时 600 秒、上限 1800 秒，stdout 与 stderr 实时转发，退出码原样透传（超时 124）；调用方中途放弃时沙箱里的进程组随之被杀。更长的任务用 `detach` 起后台作业（超时可不限，或 1 秒到 24 小时），同时至多 16 个；输出合写到日志，至多 64 MiB，用 `sandbox_jobs` 分段读取（单次 256 KiB，缺省读末尾）。工作目录缺省 `~`，可附加环境变量。
+- **传文件**：双向，文件或目录，以 tar 流经控制面中转、不落盘，单次至多 2 GiB。`dst` 是目标的完整路径而不是父目录：源是目录时内容合并进已存在的目标目录，父目录自动创建。两端路径都限在各自的 `$HOME` 之内，不能是 `$HOME` 本身或 `~/.oryn` 里的东西。`--exclude` 排除（带 `/` 的模式匹配相对路径，否则匹配任意层的名字）；`--gitignore` 只带 git 会跟踪的文件与未被忽略的新文件，`.git/` 不带。符号链接原样保留，指向目标目录之外的跳过并计入「跳过」数。
+- **回收**：
+  - 空闲超时缺省 30 分钟，创建时可设 5–240 分钟。空闲指没有命令在跑（包括后台作业），也没有在传文件或改网络。
+  - 最长寿命硬上限缺省 12 小时。
+  - 可以另设绝对 TTL（1–720 分钟）：到点即销毁，哪怕命令还在跑；用 `sandbox_extend` 续期，但不能越过最长寿命。
+- **级联**：归属线程归档或删除 → 销毁；owner orb 停机、删除或失败 → 销毁；owner orb 冻结 → 不动。Provider 在线而沙箱失联 2 分钟 → 销毁；创建后 120 秒仍未就绪 → 创建失败并清理。控制面重启后由对账补做清理，没人认领的沙箱机器也会被删掉。
+- **配额**：每台 owner orb 同时至多 2 台，全局至多 8 台（部署方可改）。
+- **谁能用**：Docker 与 Firecracker orb 上的工作线程，包括自动化线程和开在 box 上的线程。Runner 线程、Space 协调者、全局助手与沙箱自身不能开沙箱。权限按机器算：同一台 orb 上的线程看得到、也操作得了彼此的沙箱，别的 orb 看不到。
+- **主人这边**：线程信息页的「沙箱」区块列出该线程的沙箱（后端、网络、状态、剩余空闲时间、到期时刻），在用的可以「销毁」，已结束的显示原因。orb 外的 `oryn sandbox ls [--thread <id>]` 与 `oryn sandbox rm <id>` 用设备令牌列出与销毁。全局助手只能列出沙箱，不能销毁。没有沙箱的终端、文件浏览与独立总览页；普通的 orb 接口不能暂停、恢复或删除沙箱机器，也不能在上面开线程。
+- **零凭据**：沙箱里没有模型与 git 密钥、项目环境变量、GitHub、记忆、SSH 网关，也没有出站代理；它的 link 不开放任何控制面能力。沙箱里的输出与带回来的文件都按不可信内容对待。
+- **升级与兼容**：沙箱里跑的是 Provider 镜像（或 Firecracker 根盘）自带的 `orbd`，镜像没更新时创建会失败并提示重建镜像。已有 orb 里的 agent 要等这台 orb 的 `orbd` 升级（重建 orb）后才有沙箱工具；`cp` 要求两端的 `orbd` 都是新版，否则报 `orbd_outdated`。
 
 ## Artifacts
 
