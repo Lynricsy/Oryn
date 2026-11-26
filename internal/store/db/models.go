@@ -770,6 +770,7 @@ type Orb struct {
 	Computer              int64   `json:"computer"`
 	Automation            bool    `json:"automation"`
 	Box                   int64   `json:"box"`
+	SandboxNetwork        *string `json:"sandboxNetwork"`
 }
 
 type OrbDesktop struct {
@@ -1181,6 +1182,28 @@ type Runner struct {
 	Dirs       string `json:"dirs"`
 	Features   string `json:"features"`
 	LastSeenAt *int64 `json:"lastSeenAt"`
+}
+
+type Sandbox struct {
+	ID             string  `json:"id"`
+	OrbID          string  `json:"orbId"`
+	OwnerOrbID     string  `json:"ownerOrbId"`
+	OwnerThreadID  string  `json:"ownerThreadId"`
+	Backend        string  `json:"backend"`
+	ProviderName   string  `json:"providerName"`
+	Type           string  `json:"type"`
+	CreatedNetwork string  `json:"createdNetwork"`
+	Network        string  `json:"network"`
+	State          string  `json:"state"`
+	IdleSec        int64   `json:"idleSec"`
+	LastActiveAt   int64   `json:"lastActiveAt"`
+	TtlDeadline    *int64  `json:"ttlDeadline"`
+	HardDeadline   int64   `json:"hardDeadline"`
+	CreatedAt      int64   `json:"createdAt"`
+	ReadyAt        *int64  `json:"readyAt"`
+	DestroyedAt    *int64  `json:"destroyedAt"`
+	DestroyReason  *string `json:"destroyReason"`
+	Error          *string `json:"error"`
 }
 
 type Schedule struct {

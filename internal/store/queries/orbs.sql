@@ -4,15 +4,25 @@
 -- pool_state 'warming' = a warm-pool orb (M11a); config_hash = project config hash at creation (pool matching);
 -- base_image_id = the provider's base image identity when the orb was created (M11a review fix).
 -- kind: orb | runner (M11b); NULL = 'orb'. automation (M18): created by an unattended entry point; NULL = 0.
+-- sandbox_network (M30): non-NULL = an agent sandbox, value = network mode at creation.
 -- name: CreateOrb :exec
 INSERT INTO orbs (id, provider_id, type, cpus, memory_mb, image, project_id, state, state_changed_at,
                   token_hash, snapshot_of, created_at, coordinator, pool_state, config_hash, base_image_id, kind, github_identity,
-                  automation, computer, box)
+                  automation, computer, box, sandbox_network)
 VALUES (@id, @provider_id, @type, @cpus, @memory_mb, @image, @project_id, @state, @state_changed_at,
         @token_hash, @snapshot_of, @created_at, @coordinator, sqlc.narg(pool_state), sqlc.narg(config_hash), @base_image_id,
         COALESCE(CAST(sqlc.narg(kind) AS TEXT), 'orb'), COALESCE(CAST(sqlc.narg(github_identity) AS TEXT), 'user'),
         COALESCE(CAST(sqlc.narg(automation) AS BOOLEAN), 0), COALESCE(CAST(sqlc.narg(computer) AS INTEGER), 0),
-        COALESCE(CAST(sqlc.narg(box) AS INTEGER), 0));
+        COALESCE(CAST(sqlc.narg(box) AS INTEGER), 0), sqlc.narg(sandbox_network));
+
+-- M30: sandbox orbs older than @before with no creating / ready sandboxes row (left behind by a crash).
+-- name: ListOrphanSandboxOrbs :many
+SELECT * FROM orbs
+WHERE orbs.sandbox_network IS NOT NULL
+  AND orbs.state NOT IN ('deleting', 'deleted')
+  AND orbs.created_at < @before
+  AND NOT EXISTS (SELECT 1 FROM sandboxes s WHERE s.orb_id = orbs.id AND s.state IN ('creating', 'ready'))
+ORDER BY orbs.created_at;
 
 -- name: GetOrb :one
 SELECT * FROM orbs WHERE id = @id;
