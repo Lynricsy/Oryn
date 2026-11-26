@@ -3,7 +3,7 @@
  * 页面级用例先等主内容里的加载转圈消失，避免截到半加载的骨架。
  */
 import type { Locator, Page } from "@playwright/test";
-import { expect, go, lastOverlay, PHASE, surface } from "./audit";
+import { expect, go, lastOverlay, surface } from "./audit";
 
 /** 等设置页主内容加载完：网络空闲且主滚动区里没有可见的转圈。 */
 async function loaded(page: Page) {
@@ -16,7 +16,8 @@ async function loaded(page: Page) {
 		.catch(() => undefined);
 }
 
-const READY = "h1:has-text('设置')";
+/** 设置壳的标题：宽屏是「设置」，手机分区页是分区名，手机首页是「设置」。 */
+const READY = "header h1";
 
 /** 主内容里按名字找按钮（排除侧栏里的同名入口）。 */
 const btn = (page: Page, name: string | RegExp) =>
@@ -64,6 +65,13 @@ async function scrollTo(page: Page, text: string | RegExp) {
 		});
 }
 
+/** 确认真的停在该分区：标题选择器在任何设置页都成立，被重定向到别处时会拿错页截图。 */
+async function onSection(page: Page, section: string) {
+	await expect
+		.poll(() => new URL(page.url()).pathname)
+		.toBe(`/settings/${section}`);
+}
+
 /** 页面级界面（可选滚到某段）。 */
 function pageSurface(id: string, section: string, anchor?: string | RegExp) {
 	surface({
@@ -71,6 +79,7 @@ function pageSurface(id: string, section: string, anchor?: string | RegExp) {
 		path: `/settings/${section}`,
 		ready: READY,
 		open: async (page) => {
+			await onSection(page, section);
 			await loaded(page);
 			if (anchor) await scrollTo(page, anchor);
 			return undefined;
@@ -133,46 +142,10 @@ pageSurface("settings.agent-memory.browse", "agent-memory", /^浏览$/);
 // 状态卡里也有一行「待批准」：锚在紧挨着的「全局记忆」卡片标题上，一屏里是全局记忆、待批准与 mental models
 pageSurface("settings.agent-memory.candidates", "agent-memory", /^全局记忆$/);
 pageSurface("settings.agent-memory.usage", "agent-memory", /^用量$/);
-pageSurface("settings.agent-memory.owner", "agent-memory", "助手记忆");
-pageSurface("settings.agent-memory.owner-facts", "agent-memory", /^事实$/);
-// 页内目录：点「全局记忆」跳过去。只滚内容区（文档不动、页头还在），目录贴着内容区上沿吸顶，
-// 跳到的节停在目录下方不被压住，目录高亮跟到这一节。基线没有目录，before 只截页顶
-surface({
-	id: "settings.agent-memory.toc",
-	path: "/settings/agent-memory",
-	ready: READY,
-	open: async (page) => {
-		await loaded(page);
-		if (PHASE === "before") return undefined;
-		const toc = page.getByTestId("memory-toc");
-		await toc.getByRole("button", { name: "全局记忆", exact: true }).click();
-		await expect(toc.locator("[aria-current]")).toHaveText("全局记忆");
-		await expect
-			.poll(() =>
-				page.evaluate(() => {
-					const nav = document.querySelector("[data-testid=memory-toc]");
-					const sec = document.getElementById("memory-global");
-					let s = nav?.parentElement ?? null;
-					while (s && !/(auto|scroll)/.test(getComputedStyle(s).overflowY))
-						s = s.parentElement;
-					if (!nav || !sec || !s) return "缺元素";
-					const n = nav.getBoundingClientRect();
-					const top = sec.getBoundingClientRect().top;
-					const edge = s.getBoundingClientRect().top;
-					if (document.scrollingElement?.scrollTop) return "文档被滚动";
-					if (Math.abs(n.top - edge) > 1)
-						return `目录没贴上沿 ${n.top} vs ${edge}`;
-					if (top < n.bottom || top > n.bottom + 16)
-						return `节顶 ${top} 不在目录下沿 ${n.bottom} 之下 16px 内`;
-					return "ok";
-				}),
-			)
-			.toBe("ok");
-		return undefined;
-	},
-});
-pageSurface("settings.agent-memory.owner-sources", "agent-memory", /^来源$/);
-pageSurface("settings.account.assistant", "account", "全局助手");
+// 助手记忆（M17）在「全局助手」分区；全局助手身份是该分区第一组，页顶截图 settings.assistant 已覆盖
+pageSurface("settings.assistant.owner", "assistant", "助手记忆");
+pageSurface("settings.assistant.owner-facts", "assistant", /^事实$/);
+pageSurface("settings.assistant.owner-sources", "assistant", /^来源$/);
 pageSurface("settings.notifications.recent", "notifications", "最近通知");
 pageSurface("settings.automations.actions", "automations", "操作记录");
 
@@ -249,6 +222,7 @@ function shellSurface(
 				};
 			}, shell);
 			await go(page, `/settings/${section}`, READY);
+			await onSection(page, section);
 			await loaded(page);
 			if (anchor) await scrollTo(page, anchor);
 			return undefined;
@@ -262,19 +236,19 @@ shellSurface("settings.mobile.notifications", "notifications", "mobile");
 shellSurface("settings.mobile.appearance", "appearance", "mobile", "壁纸");
 shellSurface("settings.mobile.about", "about", "mobile");
 
-// 手机：分区导航在侧栏抽屉里（抽屉是 <nav>，不是浮层；关抽屉要点遮罩，不做关掉重开）
+// 手机：`/settings` 是分组首页，页内导航（搜索 + 四组分区）就是整页内容
 surface({
 	id: "settings.nav",
-	path: "/settings/account",
+	path: "/settings",
 	ready: READY,
 	only: "mobile",
-	noReopen: true,
 	open: async (page) => {
 		await loaded(page);
-		await page.getByRole("button", { name: "侧边栏", exact: true }).click();
-		const nav = page.getByRole("navigation", { name: "侧边栏" });
+		const nav = page.getByRole("navigation", { name: "设置", exact: true });
 		await nav.waitFor({ state: "visible" });
-		return nav;
+		await expect(nav.getByRole("link", { name: /通知与预算/ })).toBeVisible();
+		// 首页导航是整页内容，不是浮层：按整页审计，不做关掉重开
+		return undefined;
 	},
 });
 
@@ -362,14 +336,24 @@ surface({
 
 // ---------------------------------------------------------------- Agent 子页
 
+/**
+ * 点悬停才出现的行尾动作（`Reveal`）：先悬停这一行，等动作展开就位再点，跟鼠标用户的顺序一致。
+ * 直接点会按收起时（宽 0）的位置瞄准，落到后面的开关上。
+ */
+async function rowAction(page: Page, name: string) {
+	const b = btn(page, name);
+	await b.locator("xpath=ancestor::li[1]").hover();
+	await b.click();
+}
+
 overlay("settings.agent-instructions.new", "agent-instructions", (page) =>
 	btn(page, "新建").click(),
 );
 overlay("settings.agent-instructions.edit", "agent-instructions", (page) =>
-	btn(page, "编辑 review").click(),
+	rowAction(page, "编辑 review"),
 );
 overlay("settings.agent-instructions.delete", "agent-instructions", (page) =>
-	btn(page, "删除 review").click(),
+	rowAction(page, "删除 review"),
 );
 overlay("settings.agent-subagents.new", "agent-subagents", (page) =>
 	btn(page, "新建").click(),
@@ -404,12 +388,12 @@ surface({
 overlay(
 	"settings.agent-instructions.prompt-edit",
 	"agent-instructions",
-	(page) => btn(page, "编辑 AGENTS.md").click(),
+	(page) => rowAction(page, "编辑 AGENTS.md"),
 );
 overlay(
 	"settings.agent-instructions.prompt-delete",
 	"agent-instructions",
-	(page) => btn(page, "删除 AGENTS.md").click(),
+	(page) => rowAction(page, "删除 AGENTS.md"),
 );
 overlay("settings.agent-extensions.new", "agent-extensions", (page) =>
 	btn(page, "在「扩展模块」中新建").click(),
@@ -441,10 +425,10 @@ overlay("settings.input.selection-action-new", "input", (page) =>
 overlay("settings.agent-memory.env-file", "agent-memory", (page) =>
 	btn(page, "重新生成 .env").click(),
 );
-overlay("settings.agent-memory.owner-brief", "agent-memory", (page) =>
+overlay("settings.assistant.owner-brief", "assistant", (page) =>
 	btn(page, "注入预览").click(),
 );
-overlay("settings.agent-memory.owner-forget", "agent-memory", (page) =>
+overlay("settings.assistant.owner-forget", "assistant", (page) =>
 	btn(page, "按来源遗忘").click(),
 );
 

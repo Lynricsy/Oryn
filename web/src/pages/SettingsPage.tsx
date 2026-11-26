@@ -106,22 +106,23 @@ export function SettingsPage({
 						/>
 					)
 				)}
-				{!(compact && section) && (
+				{/* 每屏恰好一个 h1：手机分区页的标题就是分区名，其余是「设置」 */}
+				{compact && section ? (
+					<h1 className="truncate font-semibold text-sm">
+						{t(`settings.${section}`)}
+					</h1>
+				) : (
 					<>
 						<Icon name="settings" size={16} className="text-faint" />
 						<h1 className="font-semibold text-sm">{t("nav.settings")}</h1>
 					</>
 				)}
-				{section && (
+				{section && !compact && (
 					<>
-						{!compact && (
-							<span aria-hidden className="text-ghost text-sm">
-								/
-							</span>
-						)}
-						<span
-							className={`truncate text-sm ${compact ? "font-semibold" : "text-muted"}`}
-						>
+						<span aria-hidden className="text-ghost text-sm">
+							/
+						</span>
+						<span className="truncate text-muted text-sm">
 							{t(`settings.${section}`)}
 						</span>
 					</>
