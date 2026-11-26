@@ -17,9 +17,9 @@ import { useTranslation } from "react-i18next";
 import { useContextTarget } from "../../lib/context-menu/registry";
 import { openContextMenu } from "../../lib/context-menu/store";
 import type { MenuGroup } from "../../lib/context-menu/types";
-import { fileIcon } from "../../lib/file-icon";
 import { type FileEntry, isDirEntry, isWithin } from "../../lib/file-source";
 import { formatBytes } from "../../lib/format";
+import { FileTypeIcon } from "../ui/FileTypeIcon";
 import { Icon, type IconName } from "../ui/icons";
 import { describeError, Spinner } from "../ui/primitives";
 
@@ -361,11 +361,11 @@ export function FileTree({
 							<Icon name={open ? "chevronDown" : "chevronRight"} size={11} />
 						)}
 					</span>
-					<Icon
-						name={dir ? (open ? "folderOpen" : "folder") : fileIcon(e.name)}
-						size={14}
-						weight={dir ? "fill" : "regular"}
-						className={`shrink-0 ${dir ? "text-faint" : "text-muted"}`}
+					<FileTypeIcon
+						name={e.name}
+						kind={dir ? "dir" : e.type === "symlink" ? "symlink" : "file"}
+						open={open}
+						size={15}
 					/>
 					<span className="min-w-0 flex-1 truncate">
 						{e.name}

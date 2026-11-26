@@ -6,6 +6,7 @@
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { FileTypeIcon } from "../../components/ui/FileTypeIcon";
 import { Icon } from "../../components/ui/icons";
 import {
 	Badge,
@@ -16,7 +17,6 @@ import {
 	ErrorBlock,
 	FileHead,
 	FootNotes,
-	fileIconName,
 	InvalidArg,
 	Kv,
 	KvGrid,
@@ -293,7 +293,7 @@ function WorkspaceEdits({ text }: { text: string }): ReactNode {
 			<div className="tv-lsp-files">
 				{rows.map((r, i) => (
 					<div key={i} className="tv-lsp-file">
-						<Icon name={fileIconName(r.path)} size={13} />
+						<FileTypeIcon name={r.path} size={14} />
 						<PathText path={r.path} />
 						<span className="tv-lsp-file-aside">{r.aside}</span>
 					</div>

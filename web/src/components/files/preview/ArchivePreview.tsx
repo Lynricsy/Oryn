@@ -13,6 +13,7 @@ import {
 	MAX_TGZ_EXPANDED_BYTES,
 } from "../../../lib/archive-list";
 import { formatBytes, formatDateTime } from "../../../lib/format";
+import { FileTypeIcon } from "../../ui/FileTypeIcon";
 import { Icon } from "../../ui/icons";
 import { ErrorText, Spinner } from "../../ui/primitives";
 import type { BlobPreviewProps } from "./types";
@@ -193,10 +194,10 @@ function Row({ entry, top }: { entry: ArchiveEntry; top: number }) {
 			style={{ height: ROW_PX, transform: `translateY(${top}px)` }}
 		>
 			<span className="flex min-w-0 items-center gap-1.5" title={entry.path}>
-				<Icon
-					name={entry.dir ? "folder" : "file"}
-					size={13}
-					className="shrink-0 text-faint"
+				<FileTypeIcon
+					name={entry.path}
+					kind={entry.dir ? "dir" : "file"}
+					size={14}
 				/>
 				<span className="truncate font-mono text-fg">{entry.path}</span>
 			</span>

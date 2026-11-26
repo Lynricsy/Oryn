@@ -81,6 +81,23 @@
 	--viz-7: var(--ctx-instructions);
 	--viz-8: var(--ctx-skills);
 	--viz-other: var(--ctx-tool-output);
+	/* 文件类型图标调色板（Catppuccin Latte 浅色；深色在下方切 Mocha） */
+	--ctp-rosewater: #dc8a78;
+	--ctp-flamingo: #dd7878;
+	--ctp-pink: #ea76cb;
+	--ctp-mauve: #8839ef;
+	--ctp-red: #d20f39;
+	--ctp-maroon: #e64553;
+	--ctp-peach: #fe640b;
+	--ctp-yellow: #df8e1d;
+	--ctp-green: #40a02b;
+	--ctp-teal: #179299;
+	--ctp-sky: #04a5e5;
+	--ctp-sapphire: #209fb5;
+	--ctp-blue: #1e66f5;
+	--ctp-lavender: #7287fd;
+	--ctp-text: #4c4f69;
+	--ctp-overlay1: #8c8fa1;
 	color-scheme: light;
 }
 
@@ -138,6 +155,22 @@
 	--ctx-tool-calls: oklch(0.76 0.14 52);
 	--ctx-tool-output: oklch(0.58 0.04 245);
 	--ctx-messages: oklch(0.74 0.1 215);
+	--ctp-rosewater: #f5e0dc;
+	--ctp-flamingo: #f2cdcd;
+	--ctp-pink: #f5c2e7;
+	--ctp-mauve: #cba6f7;
+	--ctp-red: #f38ba8;
+	--ctp-maroon: #eba0ac;
+	--ctp-peach: #fab387;
+	--ctp-yellow: #f9e2af;
+	--ctp-green: #a6e3a1;
+	--ctp-teal: #94e2d5;
+	--ctp-sky: #89dceb;
+	--ctp-sapphire: #74c7ec;
+	--ctp-blue: #89b4fa;
+	--ctp-lavender: #b4befe;
+	--ctp-text: #cdd6f4;
+	--ctp-overlay1: #7f849c;
 	color-scheme: dark;
 }
 
@@ -1990,11 +2023,34 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 		translate: 0 -3px;
 	}
 }
+@keyframes lightbox-in {
+	from {
+		opacity: 0;
+	}
+}
+.lightbox-in {
+	animation: lightbox-in 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.lightbox-checker {
+	background-color: #20242c;
+	background-image:
+		linear-gradient(45deg, #2b303b 25%, transparent 25%),
+		linear-gradient(-45deg, #2b303b 25%, transparent 25%),
+		linear-gradient(45deg, transparent 75%, #2b303b 75%),
+		linear-gradient(-45deg, transparent 75%, #2b303b 75%);
+	background-size: 20px 20px;
+	background-position:
+		0 0,
+		0 10px,
+		10px -10px,
+		-10px 0;
+}
 @media (prefers-reduced-motion: reduce) {
 	.attachment-chip-in,
 	.attachment-indeterminate::after,
 	.file-drop-overlay,
-	.file-drop-icon {
+	.file-drop-icon,
+	.lightbox-in {
 		animation: none;
 	}
 	.attachment-indeterminate::after {

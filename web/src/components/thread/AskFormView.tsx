@@ -331,6 +331,10 @@ function AskFormImage({
 				<ImageViewer
 					src={imgUrl}
 					alt={alt || src}
+					caption={alt || undefined}
+					referrerPolicy={
+						resolved.kind === "external" ? "no-referrer" : undefined
+					}
 					onClose={() => setZoomOpen(false)}
 				/>
 			)}

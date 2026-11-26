@@ -44,6 +44,7 @@ import { useHighlighted } from "../../lib/highlight";
 import { locateEntry, runSideAsk, sideAskBusy } from "../../state/side-ask";
 import { THEME_EVENT } from "../../state/theme";
 import { CopyButton } from "../ui/CopyButton";
+import { ImageViewer, type LightboxImage } from "../ui/ImageViewer";
 import { FrontmatterFields } from "./Frontmatter";
 import { MarkdownSourceContext, MdTable } from "./Table";
 import "./markdown.css";
@@ -512,6 +513,45 @@ export const Markdown = memo(function Markdown({
 	const ctxRef = useContextTarget<HTMLDivElement>({
 		items: (req) => markdownGroups(req, root.current),
 	});
+	const [lightbox, setLightbox] = useState<{
+		images: LightboxImage[];
+		index: number;
+	} | null>(null);
+	// 点击正文里非链接包裹的图片时，在内置灯箱中以整篇画廊打开（排除 [![badge](...)](...) 徽章链接）
+	useEffect(() => {
+		const el = root.current;
+		if (!el || !images) return;
+		const onClick = (e: MouseEvent) => {
+			if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey)
+				return;
+			const target = e.target;
+			if (!(target instanceof Element)) return;
+			const img = target.closest("img");
+			if (!img || !el.contains(img)) return;
+			const anchor = img.closest("a");
+			if (anchor && el.contains(anchor)) return;
+			const all = Array.from(el.querySelectorAll("img")).filter((node) => {
+				const a = node.closest("a");
+				return !(a && el.contains(a));
+			});
+			const items: LightboxImage[] = [];
+			let clickedIdx = 0;
+			for (const node of all) {
+				const src = node.currentSrc || node.getAttribute("src") || "";
+				if (!src) continue;
+				if (node === img) clickedIdx = items.length;
+				items.push({
+					src,
+					alt: node.alt || "",
+					caption: node.title || node.alt || undefined,
+					referrerPolicy: "no-referrer",
+				});
+			}
+			if (items.length > 0) setLightbox({ images: items, index: clickedIdx });
+		};
+		el.addEventListener("click", onClick);
+		return () => el.removeEventListener("click", onClick);
+	}, [images]);
 	const doc = splitFrontmatter(text);
 	const source = (doc ? doc.body : text).replace(BLOB_RE, (_, sha: string) =>
 		assets.blob(sha),
@@ -554,6 +594,13 @@ export const Markdown = memo(function Markdown({
 					</ReactMarkdown>
 				</MarkdownSourceContext.Provider>
 			</RelativeUrlContext.Provider>
+			{lightbox && (
+				<ImageViewer
+					images={lightbox.images}
+					initialIndex={lightbox.index}
+					onClose={() => setLightbox(null)}
+				/>
+			)}
 		</div>
 	);
 });

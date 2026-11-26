@@ -26,7 +26,6 @@ import {
 	uploadAssistantFile,
 	uploadAttachment,
 } from "../../lib/attachments";
-import { fileIcon } from "../../lib/file-icon";
 import { formatBytes } from "../../lib/format";
 import {
 	checkBudget,
@@ -37,6 +36,8 @@ import { useCoarsePointer } from "../../lib/viewport";
 import type { ImageContent } from "../../omp/types";
 import type { ComposerRestoreOp } from "../../state/composer-drafts";
 import { Badge, Meter } from "../ui/data";
+import { FileTypeIcon } from "../ui/FileTypeIcon";
+import { ImageViewer, type LightboxImage } from "../ui/ImageViewer";
 import { Icon } from "../ui/icons";
 import { describeError, Spinner } from "../ui/primitives";
 
@@ -488,101 +489,136 @@ export function AttachmentStrip({
 	onRemove: (key: string) => void;
 }) {
 	const { t } = useTranslation();
+	const [previewIndex, setPreviewIndex] = useState<number | null>(null);
 	if (items.length === 0) return null;
+	const gallery: LightboxImage[] = [];
+	const galleryIndexByKey = new Map<string, number>();
+	for (const it of items) {
+		const thumb = it.image
+			? `data:${it.image.mimeType};base64,${it.image.data}`
+			: it.previewUrl;
+		if (thumb) {
+			galleryIndexByKey.set(it.key, gallery.length);
+			gallery.push({
+				src: thumb,
+				alt: it.name,
+				caption: it.name,
+				filename: it.name,
+			});
+		}
+	}
 	return (
-		<ul className="flex flex-wrap gap-2 px-3 pt-3">
-			{items.map((it) => {
-				const percent = Math.round(it.progress * 100);
-				const busy = it.status === "preparing" || it.status === "uploading";
-				const thumb = it.image
-					? `data:${it.image.mimeType};base64,${it.image.data}`
-					: it.previewUrl;
-				return (
-					<li
-						key={it.key}
-						data-status={it.status}
-						className={`attachment-chip-in relative flex max-w-60 items-center gap-2 rounded-lg border bg-panel py-1 pr-2.5 pl-1 text-xs shadow-xs ${
-							it.status === "error"
-								? "border-err/50"
-								: busy
-									? "border-accent/40"
-									: "border-border"
-						}`}
-						title={it.error ?? it.name}
-					>
-						{thumb ? (
-							<span className="relative h-10 w-10 shrink-0 overflow-hidden rounded-md bg-inset">
-								<img
-									src={thumb}
-									alt={it.name}
-									className={`h-full w-full object-cover transition-opacity duration-150 ${
-										busy ? "opacity-60" : "opacity-100"
-									}`}
-								/>
-								{busy && (
-									<span
-										aria-hidden
-										className="absolute inset-0 flex items-center justify-center bg-bg/35 text-accent-ink backdrop-blur-[1px]"
-									>
-										<Spinner size={14} />
-									</span>
-								)}
-							</span>
-						) : (
-							<span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-inset text-faint">
-								<Icon name={fileIcon(it.name)} size={18} />
-								{busy && (
-									<span
-										aria-hidden
-										className="absolute inset-0 flex items-center justify-center rounded-md bg-inset/75 text-accent-ink"
-									>
-										<Spinner size={14} />
-									</span>
-								)}
-							</span>
-						)}
-						<span className="flex min-w-0 flex-col gap-1">
-							<span className="block truncate font-medium text-fg">
-								{it.name}
-							</span>
-							{it.status === "error" ? (
-								<span className="block truncate text-err">{it.error}</span>
-							) : it.status === "preparing" ? (
-								<span className="flex items-center gap-1.5 text-2xs text-faint">
-									<span
-										aria-hidden
-										className="attachment-indeterminate inline-block h-1.5 w-14 shrink-0"
+		<>
+			<ul className="flex flex-wrap gap-2 px-3 pt-3">
+				{items.map((it) => {
+					const percent = Math.round(it.progress * 100);
+					const busy = it.status === "preparing" || it.status === "uploading";
+					const thumb = it.image
+						? `data:${it.image.mimeType};base64,${it.image.data}`
+						: it.previewUrl;
+					const gIdx = galleryIndexByKey.get(it.key);
+					return (
+						<li
+							key={it.key}
+							data-status={it.status}
+							className={`attachment-chip-in relative flex max-w-60 items-center gap-2 rounded-lg border bg-panel py-1 pr-2.5 pl-1 text-xs shadow-xs ${
+								it.status === "error"
+									? "border-err/50"
+									: busy
+										? "border-accent/40"
+										: "border-border"
+							}`}
+							title={it.error ?? it.name}
+						>
+							{thumb ? (
+								<button
+									type="button"
+									onClick={() => {
+										if (gIdx !== undefined) setPreviewIndex(gIdx);
+									}}
+									aria-label={t("image.lightbox.fullscreen")}
+									title={t("image.lightbox.fullscreen")}
+									className="relative h-10 w-10 shrink-0 cursor-zoom-in overflow-hidden rounded-md bg-inset focus-visible:outline-2 focus-visible:outline-[var(--ring)]"
+								>
+									<img
+										src={thumb}
+										alt={it.name}
+										className={`h-full w-full object-cover transition-opacity duration-150 ${
+											busy ? "opacity-60" : "opacity-100"
+										}`}
 									/>
-									{t("attachments.preparing")}
-								</span>
-							) : it.status === "uploading" ? (
-								<span className="flex items-center gap-1.5 text-2xs text-faint tabular-nums">
-									<Meter
-										value={percent}
-										tone="accent"
-										label={t("attachments.uploading", { percent })}
-										className="w-16"
-									/>
-									{t("attachments.uploading", { percent })}
-								</span>
+									{busy && (
+										<span
+											aria-hidden
+											className="absolute inset-0 flex items-center justify-center bg-bg/35 text-accent-ink backdrop-blur-[1px]"
+										>
+											<Spinner size={14} />
+										</span>
+									)}
+								</button>
 							) : (
-								<span className="flex min-w-0 items-center gap-1.5 text-2xs text-faint tabular-nums">
-									{formatBytes(it.size)}
-									{it.fileOnly && <Badge>{t("attachments.fileOnly")}</Badge>}
+								<span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-inset text-faint">
+									<FileTypeIcon name={it.name} size={22} />
+									{busy && (
+										<span
+											aria-hidden
+											className="absolute inset-0 flex items-center justify-center rounded-md bg-inset/75 text-accent-ink"
+										>
+											<Spinner size={14} />
+										</span>
+									)}
 								</span>
 							)}
-						</span>
-						<button
-							type="button"
-							aria-label={t("attachments.remove", { name: it.name })}
-							className="absolute -top-1.5 -right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-ink text-ink-fg shadow-xs transition-[scale] duration-150 hover:scale-110"
-							onClick={() => onRemove(it.key)}
-						>
-							<Icon name="close" size={11} weight="bold" />
-						</button>
-					</li>
-				);
-			})}
-		</ul>
+							<span className="flex min-w-0 flex-col gap-1">
+								<span className="block truncate font-medium text-fg">
+									{it.name}
+								</span>
+								{it.status === "error" ? (
+									<span className="block truncate text-err">{it.error}</span>
+								) : it.status === "preparing" ? (
+									<span className="flex items-center gap-1.5 text-2xs text-faint">
+										<span
+											aria-hidden
+											className="attachment-indeterminate inline-block h-1.5 w-14 shrink-0"
+										/>
+										{t("attachments.preparing")}
+									</span>
+								) : it.status === "uploading" ? (
+									<span className="flex items-center gap-1.5 text-2xs text-faint tabular-nums">
+										<Meter
+											value={percent}
+											tone="accent"
+											label={t("attachments.uploading", { percent })}
+											className="w-16"
+										/>
+										{t("attachments.uploading", { percent })}
+									</span>
+								) : (
+									<span className="flex min-w-0 items-center gap-1.5 text-2xs text-faint tabular-nums">
+										{formatBytes(it.size)}
+										{it.fileOnly && <Badge>{t("attachments.fileOnly")}</Badge>}
+									</span>
+								)}
+							</span>
+							<button
+								type="button"
+								aria-label={t("attachments.remove", { name: it.name })}
+								className="absolute -top-1.5 -right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-ink text-ink-fg shadow-xs transition-[scale] duration-150 hover:scale-110"
+								onClick={() => onRemove(it.key)}
+							>
+								<Icon name="close" size={11} weight="bold" />
+							</button>
+						</li>
+					);
+				})}
+			</ul>
+			{previewIndex !== null && gallery.length > 0 && (
+				<ImageViewer
+					images={gallery}
+					initialIndex={previewIndex}
+					onClose={() => setPreviewIndex(null)}
+				/>
+			)}
+		</>
 	);
 }

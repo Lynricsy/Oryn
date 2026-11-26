@@ -31,6 +31,7 @@ import {
 	useWorkspaceActivity,
 } from "../files/hooks";
 import { Badge } from "../ui/data";
+import { FileTypeIcon } from "../ui/FileTypeIcon";
 import { Icon } from "../ui/icons";
 import { ManualCopy } from "../ui/ManualCopy";
 import {
@@ -677,7 +678,7 @@ export default function ChangesPanel({
 				{groups.map(([dir, group]) => (
 					<li key={dir}>
 						<div className="flex items-center gap-1.5 px-2 pt-2 pb-1 text-2xs text-faint">
-							<Icon name="folder" size={12} aria-hidden className="shrink-0" />
+							<FileTypeIcon name={dir || "root"} kind="dir" open size={13} />
 							<span className="min-w-0 truncate font-mono">
 								{dir || t("changes.rootDir")}
 							</span>

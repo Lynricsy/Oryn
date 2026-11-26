@@ -2637,7 +2637,33 @@
 		"viewer": "Image",
 		"unsupported": "Unsupported image type: {{type}}",
 		"open": "Open image {{n}}",
-		"alt": "Image {{n}}"
+		"alt": "Image {{n}}",
+		"lightbox": {
+			"title": "Image preview",
+			"prev": "Previous image (←)",
+			"next": "Next image (→)",
+			"zoomIn": "Zoom in (+)",
+			"zoomOut": "Zoom out (-)",
+			"fit": "Fit to window (0)",
+			"actual": "Actual size 1:1 (1)",
+			"rotateCcw": "Rotate left 90° (Shift+R)",
+			"rotateCw": "Rotate right 90° (R)",
+			"flipH": "Flip horizontally",
+			"reset": "Reset view (0)",
+			"backdrop": "Switch backdrop (B)",
+			"backdropDark": "Dark backdrop",
+			"backdropChecker": "Transparency checkerboard",
+			"backdropLight": "Light backdrop",
+			"copy": "Copy image",
+			"copied": "Image copied",
+			"copyFailed": "Failed to copy image",
+			"download": "Download image",
+			"fullscreen": "Open in lightbox",
+			"loadFailed": "Failed to load image",
+			"retry": "Retry",
+			"counter": "{{current}} / {{total}}",
+			"thumbnails": "Image thumbnails"
+		}
 	},
 	"tool": {
 		"oryn": {

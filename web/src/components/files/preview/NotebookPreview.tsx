@@ -3,9 +3,10 @@
  * 输出按 MIME 优先级取一种：位图 / SVG（`data:` URL 的 `<img>`）→ HTML（惰性 iframe）→ Markdown → LaTeX → JSON → 纯文本；
  * 错误输出去掉 ANSI 转义后显示 traceback。
  */
-import { type ReactNode, useMemo } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { CodeBlock, Markdown } from "../../markdown/Markdown";
+import { ImageViewer } from "../../ui/ImageViewer";
 import { InertFrame } from "./InertFrame";
 
 type MultiLine = string | string[];
@@ -139,31 +140,44 @@ function RichOutput({
 	data: Record<string, MultiLine | object>;
 	title: string;
 }): ReactNode {
+	const { t } = useTranslation();
+	const [viewingSrc, setViewingSrc] = useState<string | null>(null);
 	const str = (k: string) => {
 		const v = data[k];
 		return typeof v === "string" || Array.isArray(v)
 			? joined(v as MultiLine)
 			: undefined;
 	};
+	const renderZoomable = (src: string) => (
+		<>
+			<button
+				type="button"
+				onClick={() => setViewingSrc(src)}
+				aria-label={t("image.lightbox.fullscreen")}
+				title={t("image.lightbox.fullscreen")}
+				className="block max-w-full cursor-zoom-in rounded-sm focus-visible:outline-2 focus-visible:outline-[var(--ring)] focus-visible:outline-offset-2"
+			>
+				<img src={src} alt={title} className="block max-w-full bg-white" />
+			</button>
+			{viewingSrc && (
+				<ImageViewer
+					src={viewingSrc}
+					alt={title}
+					caption={title}
+					onClose={() => setViewingSrc(null)}
+				/>
+			)}
+		</>
+	);
 	for (const type of IMAGE_TYPES) {
 		const b64 = str(type);
 		if (b64)
-			return (
-				<img
-					src={`data:${type};base64,${b64.replace(/\s+/g, "")}`}
-					alt={title}
-					className="max-w-full bg-white"
-				/>
-			);
+			return renderZoomable(`data:${type};base64,${b64.replace(/\s+/g, "")}`);
 	}
 	const svg = str("image/svg+xml");
 	if (svg)
-		return (
-			<img
-				src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`}
-				alt={title}
-				className="max-w-full bg-white"
-			/>
+		return renderZoomable(
+			`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`,
 		);
 	const html = str("text/html");
 	if (html) return <InertFrame html={html} title={title} autoHeight />;

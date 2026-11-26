@@ -6,7 +6,7 @@
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Icon } from "../../components/ui/icons";
+import { FileTypeIcon } from "../../components/ui/FileTypeIcon";
 import { formatBytes } from "../../lib/format";
 import {
 	CodeLines,
@@ -15,7 +15,6 @@ import {
 	ErrorBlock,
 	FileHead,
 	FootNotes,
-	fileIconName,
 	MarkdownBlock,
 	Output,
 	PathText,
@@ -298,7 +297,7 @@ function DirTree({ body }: { body: string[] }): ReactNode {
 							</span>
 						)}
 						<span className="tv-dir-icon" aria-hidden="true">
-							{!e.more && <Icon name={fileIconName(e.name)} size={13} />}
+							{!e.more && <FileTypeIcon name={e.name} size={14} />}
 						</span>
 						<span className="tv-dir-name">{e.name}</span>
 						{e.size && <span className="tv-dir-size">{e.size}</span>}

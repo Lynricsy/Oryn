@@ -15,7 +15,6 @@ import {
 	useSetAssistantFileScope,
 } from "../../api/library-queries";
 import { confirmAction } from "../../lib/confirm";
-import { fileIcon } from "../../lib/file-icon";
 import {
 	type FileSource,
 	MAX_EDIT_BYTES,
@@ -27,7 +26,7 @@ import { parseTitleCard } from "../../lib/title";
 import { useIndex } from "../../state/stores";
 import { FileViewer } from "../files/FileViewer";
 import { Badge } from "../ui/data";
-import { Icon } from "../ui/icons";
+import { FileTypeIcon } from "../ui/FileTypeIcon";
 import {
 	EmptyState,
 	ErrorText,
@@ -167,8 +166,8 @@ function FileRow({
 			aria-label={file.name}
 			className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm"
 		>
-			<span className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-border bg-inset text-faint">
-				<Icon name={fileIcon(file.name, file.mime)} size={15} aria-hidden />
+			<span className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-border bg-inset">
+				<FileTypeIcon name={file.name} mime={file.mime} size={18} />
 			</span>
 			<span className="min-w-0 flex-1">
 				<button

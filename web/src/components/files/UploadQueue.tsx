@@ -14,7 +14,6 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { ApiError } from "../../api/client";
-import { fileIcon } from "../../lib/file-icon";
 import {
 	type FileSource,
 	joinPath,
@@ -23,6 +22,7 @@ import {
 } from "../../lib/file-source";
 import { formatBytes } from "../../lib/format";
 import { Badge, ListRow, Meter, type Tone } from "../ui/data";
+import { FileTypeIcon } from "../ui/FileTypeIcon";
 import { Icon } from "../ui/icons";
 import {
 	Button,
@@ -338,10 +338,10 @@ export function UploadQueue({ uploads }: { uploads: Uploads }): ReactNode {
 					<li key={it.id}>
 						<ListRow
 							leading={
-								<Icon
-									name={fileIcon(it.file.name, it.file.type)}
-									size={14}
-									className="text-faint"
+								<FileTypeIcon
+									name={it.file.name}
+									mime={it.file.type}
+									size={15}
 								/>
 							}
 							title={

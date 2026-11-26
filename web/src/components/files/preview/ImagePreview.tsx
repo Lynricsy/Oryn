@@ -7,6 +7,7 @@ import { type ReactNode, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { BlobViewer } from "../../../lib/preview-kind";
 import { imageMime } from "../../../lib/preview-kind";
+import { ImageViewer } from "../../ui/ImageViewer";
 import { ErrorText, IconButton, Spinner } from "../../ui/primitives";
 import type { BlobPreviewProps } from "./types";
 
@@ -131,6 +132,7 @@ export default function ImagePreview({
 	/** null = 适应窗口 */
 	const [zoom, setZoom] = useState<number | null>(null);
 	const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
+	const [lightboxOpen, setLightboxOpen] = useState(false);
 
 	useEffect(() => {
 		let alive = true;
@@ -220,6 +222,12 @@ export default function ImagePreview({
 					label={t("files.preview.zoomIn")}
 					onClick={() => step(1)}
 				/>
+				<span aria-hidden className="mx-0.5 h-3.5 w-px bg-border" />
+				<IconButton
+					icon="maximize"
+					label={t("image.lightbox.fullscreen")}
+					onClick={() => setLightboxOpen(true)}
+				/>
 			</div>
 			<div
 				className={`min-h-0 flex-1 overflow-auto ${zoom === null ? "flex items-center justify-center p-3" : "p-3"}`}
@@ -248,6 +256,15 @@ export default function ImagePreview({
 					}
 				/>
 			</div>
+			{lightboxOpen && (
+				<ImageViewer
+					src={decoded.url}
+					alt={name}
+					caption={name}
+					filename={name}
+					onClose={() => setLightboxOpen(false)}
+				/>
+			)}
 		</div>
 	);
 }

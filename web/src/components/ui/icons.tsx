@@ -10,6 +10,7 @@ import { AppWindow } from "@phosphor-icons/react/dist/csr/AppWindow";
 import { Archive } from "@phosphor-icons/react/dist/csr/Archive";
 import { ArrowArcLeft } from "@phosphor-icons/react/dist/csr/ArrowArcLeft";
 import { ArrowClockwise } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
+import { ArrowCounterClockwise } from "@phosphor-icons/react/dist/csr/ArrowCounterClockwise";
 import { ArrowDown } from "@phosphor-icons/react/dist/csr/ArrowDown";
 import { ArrowLeft } from "@phosphor-icons/react/dist/csr/ArrowLeft";
 import { ArrowLineDown } from "@phosphor-icons/react/dist/csr/ArrowLineDown";
@@ -42,6 +43,7 @@ import { ChatCircle } from "@phosphor-icons/react/dist/csr/ChatCircle";
 import { Chats } from "@phosphor-icons/react/dist/csr/Chats";
 import { Check } from "@phosphor-icons/react/dist/csr/Check";
 import { CheckCircle } from "@phosphor-icons/react/dist/csr/CheckCircle";
+import { Checkerboard } from "@phosphor-icons/react/dist/csr/Checkerboard";
 import { Circle } from "@phosphor-icons/react/dist/csr/Circle";
 import { CircleHalf } from "@phosphor-icons/react/dist/csr/CircleHalf";
 import { ClipboardText } from "@phosphor-icons/react/dist/csr/ClipboardText";
@@ -72,6 +74,7 @@ import { FileImage } from "@phosphor-icons/react/dist/csr/FileImage";
 import { FilePlus } from "@phosphor-icons/react/dist/csr/FilePlus";
 import { FileText } from "@phosphor-icons/react/dist/csr/FileText";
 import { Fire } from "@phosphor-icons/react/dist/csr/Fire";
+import { FlipHorizontal } from "@phosphor-icons/react/dist/csr/FlipHorizontal";
 import { Folder } from "@phosphor-icons/react/dist/csr/Folder";
 import { FolderMinus } from "@phosphor-icons/react/dist/csr/FolderMinus";
 import { FolderOpen } from "@phosphor-icons/react/dist/csr/FolderOpen";
@@ -410,6 +413,11 @@ const ICONS = {
 	folderMinus: FolderMinus,
 	lightbulb: Lightbulb,
 	undo: ArrowArcLeft,
+	/** 图片灯箱：逆时针旋转、顺时针旋转、水平翻转、透明棋盘格底纹 */
+	rotateCcw: ArrowCounterClockwise,
+	rotateCw: ArrowClockwise,
+	flipH: FlipHorizontal,
+	checkerboard: Checkerboard,
 } satisfies Record<string, PhosphorIcon>;
 
 export type IconName = keyof typeof ICONS;

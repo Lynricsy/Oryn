@@ -17,9 +17,9 @@ import { ConfirmButton } from "../../components/share/ConfirmButton";
 import { ShareModeBadge } from "../../components/share/share-url";
 import { CopyButton } from "../../components/ui/CopyButton";
 import { Badge, Card, ListRow } from "../../components/ui/data";
+import { FileTypeIcon } from "../../components/ui/FileTypeIcon";
 import { Icon, type IconName } from "../../components/ui/icons";
 import { EmptyState, ErrorText, Spinner } from "../../components/ui/primitives";
-import { fileIcon } from "../../lib/file-icon";
 import { formatBytes, formatRelative } from "../../lib/format";
 import { parseTitleCard } from "../../lib/title";
 import { useIndex } from "../../state/stores";
@@ -93,7 +93,11 @@ function FileRow({ file }: { file: PublishedFile }): ReactNode {
 	return (
 		<li>
 			<ListRow
-				leading={<LeadIcon name={fileIcon(file.name, file.mime)} />}
+				leading={
+					<span className="grid h-8 w-8 place-items-center rounded-md border border-border bg-raised">
+						<FileTypeIcon name={file.name} mime={file.mime} size={17} />
+					</span>
+				}
 				title={
 					<a
 						href={file.url}

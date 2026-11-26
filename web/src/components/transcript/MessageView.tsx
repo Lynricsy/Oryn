@@ -17,7 +17,6 @@ import {
 import { imageGroup } from "../../lib/context-menu/image-actions";
 import { useContextTarget } from "../../lib/context-menu/registry";
 import { copyWithToast } from "../../lib/context-menu/selection-groups";
-import { fileIcon } from "../../lib/file-icon";
 import { joinPath, orbFileSource } from "../../lib/file-source";
 import {
 	formatBytes,
@@ -52,7 +51,8 @@ import type { ToolResultLike } from "../../tool-render/types";
 import { isRecord, resultTextOf, toolSubject } from "../../tool-render/util";
 import { Markdown } from "../markdown/Markdown";
 import { Badge, Callout, Stat } from "../ui/data";
-import { ImageViewer } from "../ui/ImageViewer";
+import { FileTypeIcon } from "../ui/FileTypeIcon";
+import { ImageViewer, type LightboxImage } from "../ui/ImageViewer";
 import { Icon, type IconName } from "../ui/icons";
 import { Menu, type MenuItem, ThreadStateIcon } from "../ui/primitives";
 import { UserAvatar } from "../ui/UserAvatar";
@@ -119,7 +119,7 @@ export function textOfContent(content: unknown): string {
 function Images({ content }: { content: unknown }): ReactNode {
 	const { t } = useTranslation();
 	const assets = useAssetUrls();
-	const [viewing, setViewing] = useState<string | null>(null);
+	const [viewingIndex, setViewingIndex] = useState<number | null>(null);
 	const ctxRef = useContextTarget<HTMLDivElement>({
 		items: (req) => {
 			const img = req.target.closest("img");
@@ -137,10 +137,24 @@ function Images({ content }: { content: unknown }): ReactNode {
 			typeof b.mimeType === "string",
 	);
 	if (imgs.length === 0) return null;
+	const resolved = imgs.map((img, i) => ({
+		img,
+		src: imageSrc(img.data, img.mimeType, assets.blob),
+		n: i + 1,
+	}));
+	const gallery: LightboxImage[] = [];
+	const galleryIndexByRaw = new Map<number, number>();
+	resolved.forEach((item, i) => {
+		if (!item.src) return;
+		galleryIndexByRaw.set(i, gallery.length);
+		gallery.push({
+			src: item.src,
+			alt: t("image.alt", { n: item.n }),
+		});
+	});
 	return (
 		<div ref={ctxRef} className="mt-2 flex flex-wrap gap-2">
-			{imgs.map((img, i) => {
-				const src = imageSrc(img.data, img.mimeType, assets.blob);
+			{resolved.map(({ img, src, n }, i) => {
 				if (!src)
 					return (
 						<span
@@ -151,15 +165,16 @@ function Images({ content }: { content: unknown }): ReactNode {
 							{t("image.unsupported", { type: img.mimeType })}
 						</span>
 					);
+				const gIdx = galleryIndexByRaw.get(i) ?? 0;
 				return (
 					<button
 						// biome-ignore lint/suspicious/noArrayIndexKey: 图片块无稳定 id
 						key={i}
 						type="button"
-						className="rounded-md"
+						className="cursor-zoom-in rounded-md focus-visible:outline-2 focus-visible:outline-[var(--ring)] focus-visible:outline-offset-2"
 						data-ctx-touch=""
-						onClick={() => setViewing(src)}
-						aria-label={t("image.open", { n: i + 1 })}
+						onClick={() => setViewingIndex(gIdx)}
+						aria-label={t("image.open", { n })}
 					>
 						<img
 							src={src}
@@ -170,8 +185,12 @@ function Images({ content }: { content: unknown }): ReactNode {
 					</button>
 				);
 			})}
-			{viewing && (
-				<ImageViewer src={viewing} alt="" onClose={() => setViewing(null)} />
+			{viewingIndex !== null && gallery.length > 0 && (
+				<ImageViewer
+					images={gallery}
+					initialIndex={viewingIndex}
+					onClose={() => setViewingIndex(null)}
+				/>
 			)}
 		</div>
 	);
@@ -197,11 +216,7 @@ export function AttachmentChips({
 			{attachments.map((a) => {
 				const body = (
 					<>
-						<Icon
-							name={fileIcon(a.name, a.mime)}
-							size={13}
-							className="shrink-0 text-faint"
-						/>
+						<FileTypeIcon name={a.name} mime={a.mime} size={14} />
 						<span className="max-w-56 truncate">{a.name}</span>
 						<span className="text-faint tabular-nums">
 							{formatBytes(a.size)}
@@ -1672,11 +1687,7 @@ export function MessageView({
 								className={`${CHIP} text-muted`}
 								title={path}
 							>
-								<Icon
-									name={fileIcon(path)}
-									size={13}
-									className="shrink-0 text-faint"
-								/>
+								<FileTypeIcon name={path} size={14} />
 								<span className="max-w-72 truncate">{path}</span>
 							</span>
 						);

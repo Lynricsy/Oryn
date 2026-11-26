@@ -19,7 +19,7 @@ import { anchorOf } from "../../lib/context-menu/selection";
 import { diffRows } from "../../tool-render/parts";
 import "../../tool-render/tool-render.css";
 import { Callout } from "../ui/data";
-import { Icon } from "../ui/icons";
+import { FileTypeIcon } from "../ui/FileTypeIcon";
 import { ErrorText, IconButton, Spinner } from "../ui/primitives";
 import {
 	type GitFileChange,
@@ -109,12 +109,7 @@ export function FileDiff({
 				{onBack && (
 					<IconButton icon="back" label={t("changes.back")} onClick={onBack} />
 				)}
-				<Icon
-					name="fileCode"
-					size={14}
-					aria-hidden
-					className="ml-1 shrink-0 text-faint"
-				/>
+				<FileTypeIcon name={file.path} size={15} className="ml-1" />
 				<FileChangeLabel file={file} />
 			</div>
 			<div ref={scrollHost} className="min-h-0 flex-1 overflow-auto p-2">

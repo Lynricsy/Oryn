@@ -10,17 +10,10 @@ import { Link } from "react-router";
 import type { RepoTree, RepoTreeEntry } from "../../../api/repo-queries";
 import { useNow } from "../../../components/layout/pane-parts";
 import { Badge } from "../../../components/ui/data";
-import { Icon, type IconName } from "../../../components/ui/icons";
+import { FileTypeIcon } from "../../../components/ui/FileTypeIcon";
 import { formatRelative } from "../../../lib/format";
 import { emojify } from "../../../lib/gitmoji";
 import { repoFileHref } from "../repo/paths";
-
-const ICON: Record<RepoTreeEntry["type"], IconName> = {
-	dir: "folder",
-	file: "file",
-	symlink: "link",
-	submodule: "box",
-};
 
 const ROW = "flex min-h-10 items-center gap-3 px-4 py-2 text-sm";
 
@@ -35,16 +28,9 @@ function EntryRow({
 }): ReactNode {
 	const { t } = useTranslation();
 	const c = entry.lastCommit;
-	const dir = entry.type === "dir";
 	return (
 		<>
-			<Icon
-				name={ICON[entry.type]}
-				size={16}
-				weight={dir ? "fill" : undefined}
-				aria-hidden
-				className={`shrink-0 ${dir ? "text-frost" : "text-faint"}`}
-			/>
+			<FileTypeIcon name={entry.name} kind={entry.type} size={16} />
 			<span className="flex min-w-0 flex-1 items-center gap-1.5 sm:flex-none sm:basis-2/5">
 				<span className="min-w-0 truncate group-hover:text-accent-ink group-hover:underline">
 					{entry.name}

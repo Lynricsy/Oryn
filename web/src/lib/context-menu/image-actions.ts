@@ -44,39 +44,44 @@ function failed() {
 	showToast({ text: i18n.t("contextMenu.copyFailed"), tone: "err" });
 }
 
-export function imageGroup(src: string, askThreadId: string | null): MenuGroup {
-	const items: MenuGroup["items"] = [];
-	if (
+export function canCopyImage(): boolean {
+	return (
 		typeof ClipboardItem !== "undefined" &&
 		typeof navigator.clipboard?.write === "function"
-	)
+	);
+}
+
+/** 把图片源转成 PNG 写入剪贴板；失败抛出异常由调用方提示。 */
+export async function copyImageToClipboard(src: string): Promise<void> {
+	const png = await fetchBlob(src).then(toPng);
+	await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+}
+
+/** 触发浏览器下载图片；未提供文件名时按时间戳与推断扩展名生成。 */
+export function downloadImage(src: string, filename?: string): void {
+	const type = /^data:([^;,]+)/.exec(src)?.[1] ?? "";
+	const a = document.createElement("a");
+	a.href = src;
+	a.download = filename?.trim() || `image-${Date.now()}.${extOf(src, type)}`;
+	document.body.append(a);
+	a.click();
+	a.remove();
+}
+
+export function imageGroup(src: string, askThreadId: string | null): MenuGroup {
+	const items: MenuGroup["items"] = [];
+	if (canCopyImage())
 		items.push({
 			key: "copyImage",
 			icon: "image",
 			label: i18n.t("contextMenu.copyImage"),
-			onSelect: () =>
-				void fetchBlob(src)
-					.then(toPng)
-					.then((png) =>
-						navigator.clipboard.write([
-							new ClipboardItem({ "image/png": png }),
-						]),
-					)
-					.catch(failed),
+			onSelect: () => void copyImageToClipboard(src).catch(failed),
 		});
 	items.push({
 		key: "download",
 		icon: "download",
 		label: i18n.t("contextMenu.downloadImage"),
-		onSelect: () => {
-			const type = /^data:([^;,]+)/.exec(src)?.[1] ?? "";
-			const a = document.createElement("a");
-			a.href = src;
-			a.download = `image-${Date.now()}.${extOf(src, type)}`;
-			document.body.append(a);
-			a.click();
-			a.remove();
-		},
+		onSelect: () => downloadImage(src),
 	});
 	if (askThreadId)
 		items.push({

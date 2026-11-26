@@ -27,7 +27,6 @@ import { useTranslation } from "react-i18next";
 import { ApiError } from "../../api/client";
 import { useContextTarget } from "../../lib/context-menu/registry";
 import { anchorOf } from "../../lib/context-menu/selection";
-import { fileIcon } from "../../lib/file-icon";
 import {
 	type FileEntry,
 	type FileSource,
@@ -44,6 +43,7 @@ import {
 import { AROUND_MAX } from "../../lib/side-ask";
 import { Markdown, type RelativeUrls } from "../markdown/Markdown";
 import { Badge } from "../ui/data";
+import { FileTypeIcon } from "../ui/FileTypeIcon";
 import { Icon } from "../ui/icons";
 import {
 	Button,
@@ -410,11 +410,7 @@ export function FileViewer({
 						onClick={onBack}
 					/>
 				)}
-				<Icon
-					name={fileIcon(namePart, entry?.mime)}
-					size={14}
-					className="shrink-0 text-faint"
-				/>
+				<FileTypeIcon name={namePart} mime={entry?.mime} size={15} />
 				{/* 路径拆段：文件名不收缩（超过整行才截断），目录占剩下的宽度、先截断 */}
 				<span
 					className="flex min-w-0 flex-1 items-center font-mono text-xs"
@@ -594,10 +590,10 @@ export function FileViewer({
 				) : (
 					<div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-sm">
 						<span className="grid h-11 w-11 place-items-center rounded-full bg-inset">
-							<Icon
-								name={fileIcon(loaded.entry.name, loaded.entry.mime)}
-								size={20}
-								className="text-faint"
+							<FileTypeIcon
+								name={loaded.entry.name}
+								mime={loaded.entry.mime}
+								size={24}
 							/>
 						</span>
 						<div className="max-w-full truncate font-medium">

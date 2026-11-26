@@ -15,7 +15,8 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { Markdown } from "../components/markdown/Markdown";
-import { ImageViewer } from "../components/ui/ImageViewer";
+import { FileTypeIcon } from "../components/ui/FileTypeIcon";
+import { ImageViewer, type LightboxImage } from "../components/ui/ImageViewer";
 import { Icon, type IconName } from "../components/ui/icons";
 import { useAssetUrls } from "../lib/asset-urls";
 import {
@@ -418,14 +419,23 @@ export function ResultImages({
 	const assets = useAssetUrls();
 	const images = resultImagesOf(result);
 	if (images.length === 0) return null;
-	const viewSrc =
-		viewing !== null && images[viewing]
-			? imageSrc(images[viewing].data, images[viewing].mimeType, assets.blob)
-			: null;
+	const gallery: LightboxImage[] = [];
+	const galleryIndexByRaw = new Map<number, number>();
+	const srcs = images.map((img, i) => {
+		const src = imageSrc(img.data, img.mimeType, assets.blob);
+		if (src) {
+			galleryIndexByRaw.set(i, gallery.length);
+			gallery.push({
+				src,
+				alt: t("image.alt", { n: i + 1 }),
+			});
+		}
+		return src;
+	});
 	return (
 		<div className="tv-imgs">
 			{images.map((img, i) => {
-				const src = imageSrc(img.data, img.mimeType, assets.blob);
+				const src = srcs[i];
 				const n = i + 1;
 				if (!src)
 					return (
@@ -433,22 +443,23 @@ export function ResultImages({
 							{t("image.unsupported", { type: img.mimeType })}
 						</Badge>
 					);
+				const gIdx = galleryIndexByRaw.get(i) ?? 0;
 				return (
 					<button
 						key={i}
 						type="button"
-						style={{ all: "unset", display: "inline-flex" }}
-						onClick={() => setViewing(i)}
+						style={{ all: "unset", display: "inline-flex", cursor: "zoom-in" }}
+						onClick={() => setViewing(gIdx)}
 						aria-label={t("image.open", { n })}
 					>
 						<img className="tv-img" src={src} alt={t("image.alt", { n })} />
 					</button>
 				);
 			})}
-			{viewSrc && viewing !== null && (
+			{viewing !== null && gallery.length > 0 && (
 				<ImageViewer
-					src={viewSrc}
-					alt={t("image.alt", { n: viewing + 1 })}
+					images={gallery}
+					initialIndex={viewing}
 					onClose={() => setViewing(null)}
 				/>
 			)}
@@ -1115,7 +1126,7 @@ export function FileHead({
 	return (
 		<div className="tv-fh" title={path}>
 			<span className="tv-fh-icon" aria-hidden="true">
-				<Icon name={fileIconName(path)} size={13} />
+				<FileTypeIcon name={path} size={14} />
 			</span>
 			<span className="tv-fh-path">
 				{dir && <span className="tv-fh-dir">{dir}</span>}

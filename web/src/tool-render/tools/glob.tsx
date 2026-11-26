@@ -6,13 +6,12 @@
  */
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Icon } from "../../components/ui/icons";
+import { FileTypeIcon } from "../../components/ui/FileTypeIcon";
 import {
 	EmptyNote,
 	ErrorBlock,
 	ExpandToggle,
 	FootNotes,
-	fileIconName,
 	InvalidArg,
 	MetaCount,
 	splitDir,
@@ -144,7 +143,7 @@ function PathTree({ paths }: { paths: string[] }): ReactNode {
 					<div key={g.dir} className="tv-ptree-group">
 						{g.dir && (
 							<div className="tv-ptree-dir">
-								<Icon name="folder" size={13} />
+								<FileTypeIcon name={g.dir} kind="dir" open size={14} />
 								<span className="tv-ptree-dirname">{g.dir}</span>
 								<span className="tv-ptree-count">{g.names.length}</span>
 							</div>
@@ -154,7 +153,7 @@ function PathTree({ paths }: { paths: string[] }): ReactNode {
 								key={`${name}:${i}`}
 								className={`tv-ptree-file${g.dir ? "" : " tv-ptree-file--root"}`}
 							>
-								<Icon name={fileIconName(name)} size={13} />
+								<FileTypeIcon name={name} size={14} />
 								<span>{name}</span>
 							</div>
 						))}

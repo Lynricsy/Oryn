@@ -104,6 +104,9 @@
 	max-width: 100%;
 	border-radius: var(--r-lg);
 }
+.md img:not(a img) {
+	cursor: zoom-in;
+}
 /* 没有基准可解析的相对图片：只显示 alt，不发请求 */
 .md-image-unresolved {
 	color: var(--text-muted);
