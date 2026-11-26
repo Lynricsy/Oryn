@@ -56,6 +56,7 @@ import {
 	Spec,
 } from "./info-parts";
 import { JobsSection } from "./JobsSection";
+import { SandboxSection } from "./SandboxSection";
 import {
 	faultyServices,
 	ServiceLogDialog,
@@ -1078,6 +1079,7 @@ export function InfoPanel({ threadId }: { threadId: string }): ReactNode {
 			<TodoSection threadId={threadId} />
 			<SubagentSection threadId={threadId} />
 			<JobsSection threadId={threadId} />
+			<SandboxSection threadId={threadId} />
 			<div className="flex flex-col empty:hidden">
 				<OrbRows threadId={threadId} />
 				<CapabilitiesRow threadId={threadId} />

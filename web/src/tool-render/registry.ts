@@ -32,6 +32,7 @@ import { ORYN_TOOLS, orynRenderer } from "./tools/oryn";
 import { readRenderer } from "./tools/read";
 import { reportToolIssueRenderer } from "./tools/report-tool-issue";
 import { resolveRenderer } from "./tools/resolve";
+import { SANDBOX_TOOLS, sandboxRenderer } from "./tools/sandbox";
 import { securityScanRenderer } from "./tools/security-scan";
 import { taskRenderer } from "./tools/task";
 import { terminalRenderer } from "./tools/terminal";
@@ -101,6 +102,8 @@ const RENDERERS: Record<string, ToolRenderer> = {
 for (const name of ORYN_TOOLS) RENDERERS[name] = orynRenderer;
 // Artifacts 工具（M14）：orb / Runner 的扩展工具与全局助手的宿主工具同名
 for (const name of ARTIFACT_TOOLS) RENDERERS[name] = artifactRenderer;
+// Agent 沙箱工具（M30）：orb 扩展注册的 8 个 `sandbox_*` 共用一张卡片
+for (const name of SANDBOX_TOOLS) RENDERERS[name] = sandboxRenderer;
 
 /**
  * 按名字取查找表里的值，只认自有属性：工具名 / 设备名可能来自模型写的 `xd://<name>`，

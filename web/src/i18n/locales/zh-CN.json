@@ -2781,7 +2781,66 @@
 			"showAll": "显示全部 {{n}} 个线程"
 		}
 	},
+	"infoPanel": {
+		"sandboxes": {
+			"title": "沙箱",
+			"active": "{{n}} 台在用",
+			"total": "共 {{n}} 台",
+			"backend": {
+				"docker": "Docker",
+				"kvm": "KVM"
+			},
+			"network": {
+				"egress": "联网",
+				"none": "断网"
+			},
+			"networkHint": {
+				"egress": "可以访问公网",
+				"none": "没有网卡"
+			},
+			"state": {
+				"creating": "创建中",
+				"ready": "运行中",
+				"destroying": "销毁中",
+				"destroyed": "已销毁",
+				"failed": "创建失败"
+			},
+			"idleLeft": "空闲 {{time}} 后回收",
+			"idleSoon": "即将回收",
+			"ttl": "{{time}} 到期",
+			"destroy": "销毁",
+			"destroyLabel": "销毁沙箱 {{id}}",
+			"confirmTitle": "销毁沙箱 {{id}}？",
+			"confirmBody": "沙箱里正在跑的命令会被中止，里面的文件一并删除，不能恢复。",
+			"reason": {
+				"agent": "agent 销毁",
+				"owner": "主人销毁",
+				"idle": "空闲回收",
+				"ttl": "TTL 到期",
+				"max_lifetime": "到达最长寿命",
+				"thread_archived": "线程已归档",
+				"thread_deleted": "线程已删除",
+				"owner_orb_gone": "所属 orb 已停机",
+				"lost": "失去连接",
+				"create_failed": "创建失败",
+				"create_timeout": "创建超时"
+			}
+		}
+	},
 	"toolRender": {
+		"sandbox": {
+			"auto": "自动",
+			"network": {
+				"egress": "联网",
+				"none": "断网"
+			},
+			"job": "作业 {{id}}",
+			"ttl": "TTL {{n}} 分钟",
+			"skipped_one": "跳过 {{count}} 项",
+			"skipped_other": "跳过 {{count}} 项",
+			"sandboxes_one": "{{count}} 台",
+			"sandboxes_other": "{{count}} 台"
+		},
 		"files": {
 			"gap_one": "省略 {{count}} 行",
 			"gap_other": "省略 {{count}} 行",

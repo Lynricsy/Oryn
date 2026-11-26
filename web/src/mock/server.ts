@@ -85,6 +85,7 @@ import { handleOrbFetch } from "./orbfs";
 import { MockOwnerMemory } from "./owner-memory";
 import { buildMockProvidersOverview } from "./providers-overview";
 import { MockRepo } from "./repo";
+import { MockSandboxes } from "./sandboxes";
 import { handleSearchFetch } from "./search";
 import { redact, SHARE_RULES } from "./share-scan";
 import { MockSsh } from "./ssh";
@@ -620,6 +621,11 @@ export class MockServer {
 		orbs: this.orbs,
 		orbChanged: (orb) => this.broadcast({ type: "orb", orb }),
 		serviceLogs: this.serviceLogs,
+	});
+	/** Agent 沙箱（M30）：线程信息页的「沙箱」区块。 */
+	readonly sandboxes = new MockSandboxes({
+		changed: (threadId) =>
+			this.broadcast({ type: "sandboxes.changed", threadId }),
 	});
 	/** GitHub 集成（M14）。 */
 	readonly github = new MockGitHub({
@@ -2030,6 +2036,8 @@ export class MockServer {
 		if (sshRes) return sshRes;
 		const boxRes = await this.boxes.handle(req, p, m, url);
 		if (boxRes) return boxRes;
+		const sandboxRes = this.sandboxes.handle(p, m, url);
+		if (sandboxRes) return sandboxRes;
 		const memoryRes = await this.memory.handle(p, m, body, url);
 		if (memoryRes) return memoryRes;
 		const ownerMemoryRes = await this.ownerMemory.handle(p, m, body, url);

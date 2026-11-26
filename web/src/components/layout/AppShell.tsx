@@ -28,6 +28,7 @@ import { useRealtimeGitHubSync } from "../../api/github-queries";
 import { useLanguageSync } from "../../api/language-queries";
 import { useMe } from "../../api/queries";
 import { useRealtimeRepoSync } from "../../api/repo-queries";
+import { useRealtimeSandboxSync } from "../../api/sandbox-queries";
 import { useRealtimeScheduleSync } from "../../api/schedule-queries";
 import { useRealtimeSshSync } from "../../api/ssh-queries";
 import { releaseSplash } from "../../lib/boot-splash";
@@ -222,6 +223,8 @@ export function AppShell(): ReactNode {
 	useRealtimeRepoSync();
 	// Boxes（M23）同理
 	useRealtimeBoxSync();
+	// Agent 沙箱（M30）：收到某线程的 `sandboxes.changed` 时让它的沙箱查询失效，重连时全部失效
+	useRealtimeSandboxSync();
 	// Artifacts 列表（M14）同理
 	useRealtimeArtifactSync();
 	// 自定义选区快捷动作（M22）：鉴权通过后拉一次，写进菜单读的同步副本

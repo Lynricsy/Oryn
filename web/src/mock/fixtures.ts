@@ -1798,6 +1798,12 @@ interface ZooCall {
 	image?: boolean;
 }
 
+/** 工具样例线程名下的两台沙箱（M30，`mock/sandboxes.ts`）：一台联网运行中，一台断网、已因空闲回收。 */
+export const ZOO_SANDBOX_IDS = {
+	ready: "sbx_01JD9K3M7Q2W8E5R4T6Y1U0P3A",
+	idle: "sbx_01JD9J0F4H6K8M2N5P7R9T1V3X",
+} as const;
+
 /** 一组工具调用：一条 assistant 消息（文字 + 多个 toolCall），随后逐个 toolResult。 */
 const ZOO_GROUPS: { text: string; calls: ZooCall[] }[] = [
 	{
@@ -4031,7 +4037,137 @@ const ZOO_GROUPS: { text: string; calls: ZooCall[] }[] = [
 			},
 		],
 	},
+	{
+		// Agent 沙箱（M30）：开一台联网的 docker 沙箱、拷仓库进去、跑测试（一次通过一次失败）、起后台作业
+		text: "在沙箱里跑一遍：",
+		calls: [
+			{
+				name: "sandbox_create",
+				args: { network: "egress", backend: "docker", idleMinutes: 30 },
+				text: `Sandbox ${ZOO_SANDBOX_IDS.ready} is ready: backend docker, type standard, network egress. Idle timeout 30 min.`,
+				details: {
+					tool: "sandbox_create",
+					sandbox: {
+						id: ZOO_SANDBOX_IDS.ready,
+						backend: "docker",
+						network: "egress",
+					},
+				},
+			},
+			{
+				name: "sandbox_cp",
+				args: {
+					sandbox: ZOO_SANDBOX_IDS.ready,
+					direction: "to_sandbox",
+					source: "/home/user/workspace/repo",
+					dest: "repo",
+					gitignore: true,
+				},
+				text: "Copied 214 files (3481190 bytes).",
+				details: {
+					tool: "sandbox_cp",
+					files: 214,
+					bytes: 3_481_190,
+					skipped: 0,
+				},
+			},
+			{
+				name: "sandbox_exec",
+				args: {
+					sandbox: ZOO_SANDBOX_IDS.ready,
+					command: "cd ~/repo/web && bun install && bun run test -- socket",
+					timeoutSec: 600,
+				},
+				text: " ✓ src/realtime/socket.test.ts (6 tests) 44ms\n\n Test Files  1 passed (1)\n      Tests  6 passed (6)\nexit 0",
+				details: {
+					tool: "sandbox_exec",
+					sandbox: ZOO_SANDBOX_IDS.ready,
+					exit: 0,
+					durationMs: 18_420,
+					truncated: false,
+				},
+			},
+			{
+				name: "sandbox_exec",
+				args: {
+					sandbox: ZOO_SANDBOX_IDS.ready,
+					command: "cd ~/repo && go test ./internal/realtime/...",
+				},
+				text: "--- FAIL: TestReconnectBackoff (0.21s)\n    backoff_test.go:41: delay 16s exceeds cap 15s\nFAIL\nexit 2",
+				details: {
+					tool: "sandbox_exec",
+					sandbox: ZOO_SANDBOX_IDS.ready,
+					exit: 2,
+					durationMs: 7_310,
+					truncated: false,
+				},
+				isError: true,
+			},
+			{
+				name: "sandbox_exec",
+				args: {
+					sandbox: ZOO_SANDBOX_IDS.ready,
+					command: "cd ~/repo && ./scripts/soak.sh --hours 1",
+					detach: true,
+				},
+				text: `Started job j1 in sandbox ${ZOO_SANDBOX_IDS.ready}.`,
+				details: {
+					tool: "sandbox_exec",
+					sandbox: ZOO_SANDBOX_IDS.ready,
+					jobId: "j1",
+				},
+			},
+			{
+				name: "sandbox_list",
+				args: {},
+				text: `${ZOO_SANDBOX_IDS.ready}  docker/standard  egress  ready\n${ZOO_SANDBOX_IDS.idle}  kvm/small  none  destroyed (idle)`,
+				details: { tool: "sandbox_list", sandboxes: [{}, {}] },
+			},
+		],
+	},
 ];
+
+export function sandboxFixtures(): Schemas["Sandbox"][] {
+	const readyActive = NOW - 4 * MIN;
+	const idleCreated = NOW - 52 * MIN;
+	return [
+		{
+			id: ZOO_SANDBOX_IDS.idle,
+			backend: "kvm",
+			type: "small",
+			provider: "fc-local",
+			network: "none",
+			createdNetwork: "none",
+			state: "destroyed",
+			ownerThreadId: TOOL_ZOO_THREAD,
+			idleSec: 5 * 60,
+			lastActiveAt: idleCreated + 3 * MIN,
+			idleDeadline: idleCreated + 8 * MIN,
+			hardDeadline: idleCreated + 12 * HOUR,
+			createdAt: idleCreated,
+			readyAt: idleCreated + 20_000,
+			destroyedAt: idleCreated + 8 * MIN,
+			destroyReason: "idle",
+		},
+		{
+			id: ZOO_SANDBOX_IDS.ready,
+			backend: "docker",
+			type: "standard",
+			provider: "docker-local",
+			network: "egress",
+			createdNetwork: "egress",
+			state: "ready",
+			ownerThreadId: TOOL_ZOO_THREAD,
+			idleSec: 30 * 60,
+			lastActiveAt: readyActive,
+			idleDeadline: readyActive + 30 * MIN,
+			ttlDeadline: NOW + 90 * MIN,
+			hardDeadline: NOW - 6 * MIN + 12 * HOUR,
+			createdAt: NOW - 6 * MIN,
+			readyAt: NOW - 6 * MIN + 3_000,
+		},
+	];
+}
 
 /** 工具样例线程里转入后台的 bash 调用（`bg_9` 一直在跑，mock 服务端按时推它的输出）。 */
 export interface ZooJob {

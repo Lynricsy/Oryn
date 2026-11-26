@@ -201,6 +201,23 @@ export class RealtimeClient {
 		for (const cb of [...this.boxesListeners]) cb();
 	}
 
+	/** 沙箱变更的监听者（M30）：收到 `sandboxes.changed` 时带线程 id，每次连接建立时带 null（全部重拉）。 */
+	private readonly sandboxesListeners = new Set<
+		(threadId: string | null) => void
+	>();
+
+	/** 订阅「某线程名下的沙箱可能变了」；`null` = 连接（重新）建立，所有线程都要重拉。返回取消订阅。 */
+	onSandboxesChanged(cb: (threadId: string | null) => void): () => void {
+		this.sandboxesListeners.add(cb);
+		return () => {
+			this.sandboxesListeners.delete(cb);
+		};
+	}
+
+	private emitSandboxesChanged(threadId: string | null) {
+		for (const cb of [...this.sandboxesListeners]) cb(threadId);
+	}
+
 	/** 本机浏览器中继状态变更监听者（M27）：收到 `browser_relay.state` 时携带最新状态，`null` 表示重连后需重拉。 */
 	private readonly browserRelayStateListeners = new Set<
 		(state: Schemas["ThreadBrowserRelay"] | null) => void
@@ -544,6 +561,7 @@ export class RealtimeClient {
 			this.emitSshChanged();
 			this.emitProjectRepoChanged(null);
 			this.emitBoxesChanged();
+			this.emitSandboxesChanged(null);
 			this.emitBrowserRelayState(null);
 			this.emitBrowserRelayClients(null);
 			for (const [id, w] of this.artifactWatches)
@@ -868,6 +886,9 @@ export class RealtimeClient {
 				return;
 			case "boxes.changed":
 				this.emitBoxesChanged();
+				return;
+			case "sandboxes.changed":
+				this.emitSandboxesChanged(msg.threadId);
 				return;
 			case "browser_relay.state":
 				this.emitBrowserRelayState(msg.state);

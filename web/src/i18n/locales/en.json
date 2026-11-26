@@ -2781,7 +2781,66 @@
 			"showAll": "Show all {{n}} threads"
 		}
 	},
+	"infoPanel": {
+		"sandboxes": {
+			"title": "Sandboxes",
+			"active": "{{n}} active",
+			"total": "{{n}} total",
+			"backend": {
+				"docker": "Docker",
+				"kvm": "KVM"
+			},
+			"network": {
+				"egress": "Online",
+				"none": "Offline"
+			},
+			"networkHint": {
+				"egress": "Can reach the public internet",
+				"none": "No network interface"
+			},
+			"state": {
+				"creating": "Creating",
+				"ready": "Running",
+				"destroying": "Destroying",
+				"destroyed": "Destroyed",
+				"failed": "Failed to create"
+			},
+			"idleLeft": "Reclaimed after {{time}} idle",
+			"idleSoon": "Reclaiming soon",
+			"ttl": "Expires {{time}}",
+			"destroy": "Destroy",
+			"destroyLabel": "Destroy sandbox {{id}}",
+			"confirmTitle": "Destroy sandbox {{id}}?",
+			"confirmBody": "Commands running in the sandbox are stopped and its files are deleted. This cannot be undone.",
+			"reason": {
+				"agent": "Destroyed by the agent",
+				"owner": "Destroyed by owner",
+				"idle": "Idle timeout",
+				"ttl": "TTL expired",
+				"max_lifetime": "Reached max lifetime",
+				"thread_archived": "Thread archived",
+				"thread_deleted": "Thread deleted",
+				"owner_orb_gone": "Owning orb stopped",
+				"lost": "Connection lost",
+				"create_failed": "Creation failed",
+				"create_timeout": "Creation timed out"
+			}
+		}
+	},
 	"toolRender": {
+		"sandbox": {
+			"auto": "auto",
+			"network": {
+				"egress": "online",
+				"none": "offline"
+			},
+			"job": "job {{id}}",
+			"ttl": "TTL {{n}} min",
+			"skipped_one": "{{count}} skipped",
+			"skipped_other": "{{count}} skipped",
+			"sandboxes_one": "{{count}} sandbox",
+			"sandboxes_other": "{{count}} sandboxes"
+		},
 		"files": {
 			"gap_one": "{{count}} line hidden",
 			"gap_other": "{{count}} lines hidden",
