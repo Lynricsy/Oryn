@@ -29,6 +29,7 @@ function sampleOverview(): Schemas["ProvidersOverview"] {
 				deleted: 4,
 				warmPool: 1,
 				boxes: 0,
+				sandboxes: 0,
 				computers: 0,
 			},
 			allocated: {
@@ -122,6 +123,7 @@ function sampleOverview(): Schemas["ProvidersOverview"] {
 					deleted: 4,
 					warmPool: 1,
 					boxes: 0,
+					sandboxes: 0,
 					computers: 0,
 				},
 				allocated: {
@@ -221,6 +223,7 @@ function sampleOverview(): Schemas["ProvidersOverview"] {
 					deleted: 0,
 					warmPool: 0,
 					boxes: 0,
+					sandboxes: 0,
 					computers: 0,
 				},
 				allocated: {

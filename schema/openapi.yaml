@@ -8159,7 +8159,8 @@ components:
       enum: [proxy, env]
     JobOp:
       type: string
-      enum: [spawn, pause, snapshot, delete, delete_snapshot]
+      enum: [spawn, pause, snapshot, delete, delete_snapshot, set_network]
+      description: '`set_network`（M30）= 切换沙箱 orb 的网络模式，参数 `JobNetworkParams`'
     JobState:
       type: string
       enum: [queued, claimed, succeeded, failed]
@@ -9180,6 +9181,67 @@ components:
           type: integer
           format: int64
           description: 还有更早的记录时给出，作为下一页的 `before`
+    # ---------------------------------------------------------------- sandboxes（M30）
+    SandboxBackend:
+      type: string
+      description: '`kvm` = Firecracker provider；`docker` = docker provider（含 sysbox 类型）'
+      enum: [docker, kvm]
+      x-enum-varnames: [SandboxBackendDocker, SandboxBackendKvm]
+    SandboxState:
+      type: string
+      enum: [creating, ready, destroying, destroyed, failed]
+      x-enum-varnames: [SandboxStateCreating, SandboxStateReady, SandboxStateDestroying, SandboxStateDestroyed, SandboxStateFailed]
+    Sandbox:
+      type: object
+      description: agent 沙箱：线程临时开出的零凭据平级环境，用完即焚
+      required: [id, backend, type, provider, network, createdNetwork, state, ownerThreadId, idleSec, lastActiveAt, idleDeadline, hardDeadline, createdAt]
+      properties:
+        id:
+          type: string
+          description: '`sbx_<ULID>`'
+        backend: { $ref: '#/components/schemas/SandboxBackend' }
+        type:
+          type: string
+          description: provider 的 orb 类型名
+        provider:
+          type: string
+          description: provider 名
+        network: { $ref: '#/components/schemas/SandboxNetwork' }
+        createdNetwork: { $ref: '#/components/schemas/SandboxNetwork' }
+        state: { $ref: '#/components/schemas/SandboxState' }
+        ownerThreadId: { $ref: '#/components/schemas/ThreadId' }
+        idleSec:
+          type: integer
+          description: 空闲多少秒后自动销毁
+        lastActiveAt: { $ref: '#/components/schemas/TimestampMs' }
+        idleDeadline:
+          allOf:
+            - $ref: '#/components/schemas/TimestampMs'
+          description: '`lastActiveAt + idleSec*1000`'
+        ttlDeadline:
+          allOf:
+            - $ref: '#/components/schemas/TimestampMs'
+          description: 绝对 TTL（到点即销毁）；没设时省略
+        hardDeadline:
+          allOf:
+            - $ref: '#/components/schemas/TimestampMs'
+          description: 最长寿命上限
+        createdAt: { $ref: '#/components/schemas/TimestampMs' }
+        readyAt: { $ref: '#/components/schemas/TimestampMs' }
+        destroyedAt: { $ref: '#/components/schemas/TimestampMs' }
+        destroyReason:
+          type: string
+          description: '`agent` `owner` `idle` `ttl` `max_lifetime` `thread_archived` `thread_deleted` `owner_orb_gone` `lost` `create_failed` `create_timeout`'
+        error:
+          type: string
+          description: 创建失败的原因
+    SandboxList:
+      type: object
+      required: [sandboxes]
+      properties:
+        sandboxes:
+          type: array
+          items: { $ref: '#/components/schemas/Sandbox' }
     # ---------------------------------------------------------------- boxes（M23）
     BoxState:
       type: string
@@ -9464,6 +9526,78 @@ components:
         command: { type: string }
         cwd: { type: string }
         timeoutSec: { type: integer }
+    OrbSandboxExecRequest:
+      type: object
+      description: 'M30：沙箱 orbd 本机路由 `POST /sandbox/exec` 的请求体（只在精简模式注册）'
+      required: [command, cwd, timeoutSec]
+      properties:
+        command: { type: string }
+        cwd:
+          type: string
+          description: 工作目录（`~` 开头或 `$HOME` 下的路径；空 = `~`）
+        env:
+          type: object
+          additionalProperties: { type: string }
+        timeoutSec:
+          type: integer
+          description: '同步：1–1800；`detach`：0（不限）或 1–86400'
+        detach:
+          type: boolean
+          description: true = 作为后台作业启动，立即回 `OrbSandboxJobStart`
+    OrbSandboxJobStart:
+      type: object
+      required: [jobId]
+      properties:
+        jobId: { type: string }
+    OrbSandboxJobState:
+      type: string
+      enum: [running, exited]
+      x-enum-varnames: [OrbSandboxJobRunning, OrbSandboxJobExited]
+    OrbSandboxJob:
+      type: object
+      description: M30：沙箱里的一个后台作业（记录只在沙箱 orbd 内存里）
+      required: [id, command, state, startedAt, logBytes, logTruncated]
+      properties:
+        id: { type: string }
+        command: { type: string }
+        state: { $ref: '#/components/schemas/OrbSandboxJobState' }
+        exit: { type: integer }
+        startedAt: { $ref: '#/components/schemas/TimestampMs' }
+        endedAt: { $ref: '#/components/schemas/TimestampMs' }
+        logBytes: { type: integer, format: int64 }
+        logTruncated:
+          type: boolean
+          description: 日志写满 64 MiB 后丢弃了后续输出
+    OrbSandboxJobList:
+      type: object
+      required: [jobs]
+      properties:
+        jobs:
+          type: array
+          items: { $ref: '#/components/schemas/OrbSandboxJob' }
+    OrbSandboxJobLog:
+      type: object
+      description: 'M30：`GET /sandbox/jobs/{id}/log` 的结果；单次至多 256 KiB'
+      required: [text, offset, nextOffset, eof, state]
+      properties:
+        text: { type: string }
+        offset: { type: integer, format: int64 }
+        nextOffset: { type: integer, format: int64 }
+        eof:
+          type: boolean
+          description: 作业已结束且已读到日志末尾
+        state: { $ref: '#/components/schemas/OrbSandboxJobState' }
+        exit: { type: integer }
+    OrbFsTarResult:
+      type: object
+      description: 'M30：`PUT /fs/tar` 的结果'
+      required: [files, bytes, skipped]
+      properties:
+        files: { type: integer }
+        bytes: { type: integer, format: int64 }
+        skipped:
+          type: integer
+          description: 跳过的条目数（指向目标根之外的符号链接、硬链接与其他类型）
     OrbBoxAppState:
       type: object
       required: [name, port, live, releases]
@@ -11474,6 +11608,9 @@ components:
         offlineFs:
           type: boolean
           description: 能经 `/provider/v1/fs/*` 只读读取停机 orb 的文件（缺省 false）
+        sandbox:
+          type: boolean
+          description: M30：provider 开启了沙箱，认识 `JobSpawnParams.sandbox` 与 `set_network`（缺省 false）
     Provider:
       type: object
       required: [id, name, online, orbTypes, createdAt]
@@ -11564,7 +11701,7 @@ components:
     ProviderOrbCounts:
       type: object
       description: 按状态与角色划分的 orb 计数
-      required: [total, running, starting, frozen, stopped, failed, deleting, deleted, warmPool, boxes, computers]
+      required: [total, running, starting, frozen, stopped, failed, deleting, deleted, warmPool, boxes, sandboxes, computers]
       properties:
         total:
           type: integer
@@ -11592,6 +11729,9 @@ components:
         boxes:
           type: integer
           description: 未删除的 Box 常驻 orb 数
+        sandboxes:
+          type: integer
+          description: 未删除的 agent 沙箱 orb 数（M30）
         computers:
           type: integer
           description: 未删除的助手电脑 orb 数
@@ -11672,6 +11812,9 @@ components:
           items: { type: string }
         pool: { $ref: '#/components/schemas/OrbPoolState' }
         box: { type: boolean }
+        sandbox:
+          type: boolean
+          description: M30：agent 沙箱
         computer: { type: boolean }
         automation: { type: boolean }
         nestedDocker: { type: boolean }
@@ -12302,6 +12445,9 @@ components:
         box:
           type: boolean
           description: box 的常驻 orb（M23）；为 false 时省略
+        sandbox:
+          type: boolean
+          description: M30：agent 沙箱（由创建它的线程管理）；为 false 时省略
     OrbKind:
       type: string
       description: '`orb` = provider 创建的 orb；`runner` = runner 的常驻 orb（M11b）'
@@ -14902,6 +15048,7 @@ components:
           github.changed: '#/components/schemas/WsServerGitHubChanged'
           ssh.changed: '#/components/schemas/WsServerSshChanged'
           boxes.changed: '#/components/schemas/WsServerBoxesChanged'
+          sandboxes.changed: '#/components/schemas/WsServerSandboxesChanged'
           project_repo.changed: '#/components/schemas/WsServerProjectRepoChanged'
           artifacts.changed: '#/components/schemas/WsServerArtifactsChanged'
           artifact.version: '#/components/schemas/WsServerArtifactVersion'
@@ -15182,6 +15329,13 @@ components:
       required: [type]
       properties:
         type: { type: string, enum: [boxes.changed], x-enum-varnames: [WsServerBoxesChangedTypeBoxesChanged] }
+    WsServerSandboxesChanged:
+      type: object
+      description: M30：某线程名下的沙箱变了（创建、就绪、网络、续期、销毁）；发给全部私有连接。客户端让该线程的沙箱查询失效，WS 每次重新 open 后也要自行失效一次
+      required: [type, threadId]
+      properties:
+        type: { type: string, enum: [sandboxes.changed], x-enum-varnames: [WsServerSandboxesChangedTypeSandboxesChanged] }
+        threadId: { $ref: '#/components/schemas/ThreadId' }
     WsServerProjectRepoChanged:
       type: object
       description: M24：项目仓库镜像状态变了（开始 / 结束克隆或拉取、出错、被删除）；发给全部私有连接。客户端让该项目的仓库查询失效，WS 每次重新 open 后对全部项目失效一次
@@ -15563,6 +15717,26 @@ components:
         orbCaPem:
           type: string
           description: 'M11a 审查修复：orb link 的 TLS CA 证书（PEM）。非空时 provider 以环境变量 `ORYN_ORB_CA_PEM` 下发给 orb（走调用方环境，不进 argv），dispatch 脚本也拿到同名环境变量；orbd 拨 `ORYN_URL` 时只信任这张 CA'
+        sandbox:
+          allOf:
+            - $ref: '#/components/schemas/JobSpawnSandbox'
+          description: M30：非空 = 这台 orb 是 agent 沙箱（精简模式 orbd，link 经 provider 中继）
+    SandboxNetwork:
+      type: string
+      description: '`none` = 完全没有网卡；`egress` = 可访问公网'
+      enum: [none, egress]
+      x-enum-varnames: [SandboxNetworkNone, SandboxNetworkEgress]
+    JobSpawnSandbox:
+      type: object
+      required: [network]
+      properties:
+        network: { $ref: '#/components/schemas/SandboxNetwork' }
+    JobNetworkParams:
+      type: object
+      description: '`set_network` 任务参数（M30）；创建时为 `none` 的沙箱不能切到 `egress`（错误文本以 `network_unavailable:` 开头）'
+      required: [network]
+      properties:
+        network: { $ref: '#/components/schemas/SandboxNetwork' }
     JobPauseParams:
       type: object
       required: [mode]
@@ -15607,6 +15781,7 @@ components:
         - $ref: '#/components/schemas/LinkStreamPortal'
         - $ref: '#/components/schemas/LinkStreamDesk'
         - $ref: '#/components/schemas/LinkStreamLibrary'
+        - $ref: '#/components/schemas/LinkStreamSandbox'
         - $ref: '#/components/schemas/LinkStreamSsh'
         - $ref: '#/components/schemas/LinkStreamBrowserRelay'
       discriminator:
@@ -15620,6 +15795,7 @@ components:
           portal: '#/components/schemas/LinkStreamPortal'
           desk: '#/components/schemas/LinkStreamDesk'
           library: '#/components/schemas/LinkStreamLibrary'
+          sandbox: '#/components/schemas/LinkStreamSandbox'
           ssh: '#/components/schemas/LinkStreamSsh'
           browser_relay: '#/components/schemas/LinkStreamBrowserRelay'
     LinkStreamCtl:
@@ -15700,6 +15876,19 @@ components:
       required: [t]
       properties:
         t: { type: string, enum: [ssh] }
+    LinkStreamSandbox:
+      type: object
+      description: |
+        orbd→orynd（M30）：owner orb 上一次沙箱调用。流头之后 orbd 写一行请求 `{"op","params"}`（≤ 1 MiB），
+        orynd 回零或多行 `{"s":"o"|"e","d"}`（只有 `exec`），最后恰好一行 `{"result":…}` 或 `{"error":{"code","message"}}` 后关流。
+        orbd 提前关流 = 放弃（`create` 除外）。沙箱自身、runner 与协调宿主不可用。
+      required: [t, threadId]
+      properties:
+        t: { type: string, enum: [sandbox] }
+        threadId:
+          allOf:
+            - $ref: '#/components/schemas/ThreadId'
+          description: 调用方线程（只做归因；鉴权主体是 link 认证的 orb）
     LinkStreamLibrary:
       type: object
       description: |
@@ -15955,6 +16144,7 @@ components:
             M18 起：`ssh`（orbd 监听本机 SSH 网关端口并认识 `setup.run` / `omphome.apply` 的 `ssh`；runner 与协调宿主不上报）。
             M19 起：`computer`（认识 `computer.*`：惰性拉起不调模型的 omp 当工具执行器；只由普通 orbd 上报）。
             M25 起：`desktop-apps`（`desktop.state` 带 `apps` / `windows`，本机路由 `/desktop/apps/*` 与 `/desktop/windows/*`；只在有 `desktop` 时上报）。
+            M30 起：`fs-tar`（本机路由 `GET/PUT /fs/tar`，普通 orbd 与沙箱上报）、`sandbox`（精简模式 orbd，此时特性表恰为 `["fs", "fs-tar", "metrics", "sandbox"]`，监督着 dockerd 时再加 `docker`）。
             缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync / 桌面请求回 409 `orbd_outdated`。
           items: { type: string }
     LinkRunnerInfo:

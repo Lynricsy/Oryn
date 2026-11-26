@@ -53,6 +53,7 @@ function emptyOrbCounts(): Schemas["ProviderOrbCounts"] {
 		deleted: 0,
 		warmPool: 0,
 		boxes: 0,
+		sandboxes: 0,
 		computers: 0,
 	};
 }

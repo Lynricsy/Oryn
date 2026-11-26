@@ -1384,6 +1384,7 @@ const (
 	Delete         JobOp = "delete"
 	DeleteSnapshot JobOp = "delete_snapshot"
 	Pause          JobOp = "pause"
+	SetNetwork     JobOp = "set_network"
 	Snapshot       JobOp = "snapshot"
 	Spawn          JobOp = "spawn"
 )
@@ -1396,6 +1397,8 @@ func (e JobOp) Valid() bool {
 	case DeleteSnapshot:
 		return true
 	case Pause:
+		return true
+	case SetNetwork:
 		return true
 	case Snapshot:
 		return true
@@ -1862,6 +1865,21 @@ const (
 func (e LinkStreamPortalT) Valid() bool {
 	switch e {
 	case Portal:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for LinkStreamSandboxT.
+const (
+	LinkStreamSandboxTSandbox LinkStreamSandboxT = "sandbox"
+)
+
+// Valid indicates whether the value is a known member of the LinkStreamSandboxT enum.
+func (e LinkStreamSandboxT) Valid() bool {
+	switch e {
+	case LinkStreamSandboxTSandbox:
 		return true
 	default:
 		return false
@@ -2399,6 +2417,24 @@ func (e OrbPoolState) Valid() bool {
 	case OrbPoolStateIdle:
 		return true
 	case OrbPoolStateWarming:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OrbSandboxJobState.
+const (
+	OrbSandboxJobExited  OrbSandboxJobState = "exited"
+	OrbSandboxJobRunning OrbSandboxJobState = "running"
+)
+
+// Valid indicates whether the value is a known member of the OrbSandboxJobState enum.
+func (e OrbSandboxJobState) Valid() bool {
+	switch e {
+	case OrbSandboxJobExited:
+		return true
+	case OrbSandboxJobRunning:
 		return true
 	default:
 		return false
@@ -3212,6 +3248,69 @@ func (e ResearchTopicPatchState) Valid() bool {
 	case ResearchTopicPatchActive:
 		return true
 	case ResearchTopicPatchPaused:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SandboxBackend.
+const (
+	SandboxBackendDocker SandboxBackend = "docker"
+	SandboxBackendKvm    SandboxBackend = "kvm"
+)
+
+// Valid indicates whether the value is a known member of the SandboxBackend enum.
+func (e SandboxBackend) Valid() bool {
+	switch e {
+	case SandboxBackendDocker:
+		return true
+	case SandboxBackendKvm:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SandboxNetwork.
+const (
+	SandboxNetworkEgress SandboxNetwork = "egress"
+	SandboxNetworkNone   SandboxNetwork = "none"
+)
+
+// Valid indicates whether the value is a known member of the SandboxNetwork enum.
+func (e SandboxNetwork) Valid() bool {
+	switch e {
+	case SandboxNetworkEgress:
+		return true
+	case SandboxNetworkNone:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SandboxState.
+const (
+	SandboxStateCreating   SandboxState = "creating"
+	SandboxStateDestroyed  SandboxState = "destroyed"
+	SandboxStateDestroying SandboxState = "destroying"
+	SandboxStateFailed     SandboxState = "failed"
+	SandboxStateReady      SandboxState = "ready"
+)
+
+// Valid indicates whether the value is a known member of the SandboxState enum.
+func (e SandboxState) Valid() bool {
+	switch e {
+	case SandboxStateCreating:
+		return true
+	case SandboxStateDestroyed:
+		return true
+	case SandboxStateDestroying:
+		return true
+	case SandboxStateFailed:
+		return true
+	case SandboxStateReady:
 		return true
 	default:
 		return false
@@ -4565,6 +4664,21 @@ const (
 func (e WsServerResType) Valid() bool {
 	switch e {
 	case Res:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WsServerSandboxesChangedType.
+const (
+	WsServerSandboxesChangedTypeSandboxesChanged WsServerSandboxesChangedType = "sandboxes.changed"
+)
+
+// Valid indicates whether the value is a known member of the WsServerSandboxesChangedType enum.
+func (e WsServerSandboxesChangedType) Valid() bool {
+	switch e {
+	case WsServerSandboxesChangedTypeSandboxesChanged:
 		return true
 	default:
 		return false
@@ -7131,7 +7245,13 @@ type JobDeleteSnapshotParams struct {
 // JobID `job_<ulid>`
 type JobID = string
 
-// JobOp defines model for JobOp.
+// JobNetworkParams `set_network` 任务参数（M30）；创建时为 `none` 的沙箱不能切到 `egress`（错误文本以 `network_unavailable:` 开头）
+type JobNetworkParams struct {
+	// Network `none` = 完全没有网卡；`egress` = 可访问公网
+	Network SandboxNetwork `json:"network"`
+}
+
+// JobOp `set_network`（M30）= 切换沙箱 orb 的网络模式，参数 `JobNetworkParams`
 type JobOp string
 
 // JobPauseParams defines model for JobPauseParams.
@@ -7172,6 +7292,9 @@ type JobSpawnParams struct {
 	// OrbCaPem M11a 审查修复：orb link 的 TLS CA 证书（PEM）。非空时 provider 以环境变量 `ORYN_ORB_CA_PEM` 下发给 orb（走调用方环境，不进 argv），dispatch 脚本也拿到同名环境变量；orbd 拨 `ORYN_URL` 时只信任这张 CA
 	OrbCaPem *string `json:"orbCaPem,omitempty"`
 
+	// Sandbox M30：非空 = 这台 orb 是 agent 沙箱（精简模式 orbd，link 经 provider 中继）
+	Sandbox *JobSpawnSandbox `json:"sandbox,omitempty"`
+
 	// SnapshotID 快照 id，同时是 Docker 镜像名
 	SnapshotID *SnapshotID `json:"snapshotId,omitempty"`
 
@@ -7180,6 +7303,12 @@ type JobSpawnParams struct {
 
 	// Type orb 类型名
 	Type string `json:"type"`
+}
+
+// JobSpawnSandbox defines model for JobSpawnSandbox.
+type JobSpawnSandbox struct {
+	// Network `none` = 完全没有网卡；`egress` = 可访问公网
+	Network SandboxNetwork `json:"network"`
 }
 
 // JobState defines model for JobState.
@@ -7630,6 +7759,7 @@ type LinkCtlHelloParams struct {
 	// M18 起：`ssh`（orbd 监听本机 SSH 网关端口并认识 `setup.run` / `omphome.apply` 的 `ssh`；runner 与协调宿主不上报）。
 	// M19 起：`computer`（认识 `computer.*`：惰性拉起不调模型的 omp 当工具执行器；只由普通 orbd 上报）。
 	// M25 起：`desktop-apps`（`desktop.state` 带 `apps` / `windows`，本机路由 `/desktop/apps/*` 与 `/desktop/windows/*`；只在有 `desktop` 时上报）。
+	// M30 起：`fs-tar`（本机路由 `GET/PUT /fs/tar`，普通 orbd 与沙箱上报）、`sandbox`（精简模式 orbd，此时特性表恰为 `["fs", "fs-tar", "metrics", "sandbox"]`，监督着 dockerd 时再加 `docker`）。
 	// 缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync / 桌面请求回 409 `orbd_outdated`。
 	Features    []string `json:"features,omitempty"`
 	OrbdVersion string   `json:"orbdVersion"`
@@ -8379,6 +8509,19 @@ type LinkStreamPortal struct {
 // LinkStreamPortalT defines model for LinkStreamPortal.T.
 type LinkStreamPortalT string
 
+// LinkStreamSandbox orbd→orynd（M30）：owner orb 上一次沙箱调用。流头之后 orbd 写一行请求 `{"op","params"}`（≤ 1 MiB），
+// orynd 回零或多行 `{"s":"o"|"e","d"}`（只有 `exec`），最后恰好一行 `{"result":…}` 或 `{"error":{"code","message"}}` 后关流。
+// orbd 提前关流 = 放弃（`create` 除外）。沙箱自身、runner 与协调宿主不可用。
+type LinkStreamSandbox struct {
+	T LinkStreamSandboxT `json:"t"`
+
+	// ThreadID 调用方线程（只做归因；鉴权主体是 link 认证的 orb）
+	ThreadID ThreadID `json:"threadId"`
+}
+
+// LinkStreamSandboxT defines model for LinkStreamSandbox.T.
+type LinkStreamSandboxT string
+
 // LinkStreamSSH orbd→orynd（M18）：orb 内到 SSH 网关的一条 TCP 连接，其后是裸 SSH 字节流；runner 与协调宿主不可用
 type LinkStreamSSH struct {
 	T LinkStreamSSHT `json:"t"`
@@ -9097,6 +9240,9 @@ type Orb struct {
 	ProviderID   ProviderID `json:"providerId"`
 	ProviderName *string    `json:"providerName,omitempty"`
 
+	// Sandbox M30：agent 沙箱（由创建它的线程管理）；为 false 时省略
+	Sandbox *bool `json:"sandbox,omitempty"`
+
 	// Services orbd 上报的受管服务（控制面镜像，M4）；orb 已删除时省略
 	Services []OrbService `json:"services,omitempty"`
 
@@ -9383,6 +9529,15 @@ type OrbDesktopWindowAction string
 // OrbDesktopWindowID X 窗口 id 的十进制
 type OrbDesktopWindowID = string
 
+// OrbFsTarResult M30：`PUT /fs/tar` 的结果
+type OrbFsTarResult struct {
+	Bytes int64 `json:"bytes"`
+	Files int   `json:"files"`
+
+	// Skipped 跳过的条目数（指向目标根之外的符号链接、硬链接与其他类型）
+	Skipped int `json:"skipped"`
+}
+
 // OrbGroupBy defines model for OrbGroupBy.
 type OrbGroupBy string
 
@@ -9459,6 +9614,63 @@ type OrbPortalPublic struct {
 	// ExpiresAt UTC 毫秒时间戳
 	ExpiresAt TimestampMs `json:"expiresAt"`
 }
+
+// OrbSandboxExecRequest M30：沙箱 orbd 本机路由 `POST /sandbox/exec` 的请求体（只在精简模式注册）
+type OrbSandboxExecRequest struct {
+	Command string `json:"command"`
+
+	// Cwd 工作目录（`~` 开头或 `$HOME` 下的路径；空 = `~`）
+	Cwd string `json:"cwd"`
+
+	// Detach true = 作为后台作业启动，立即回 `OrbSandboxJobStart`
+	Detach *bool             `json:"detach,omitempty"`
+	Env    map[string]string `json:"env,omitempty"`
+
+	// TimeoutSec 同步：1–1800；`detach`：0（不限）或 1–86400
+	TimeoutSec int `json:"timeoutSec"`
+}
+
+// OrbSandboxJob M30：沙箱里的一个后台作业（记录只在沙箱 orbd 内存里）
+type OrbSandboxJob struct {
+	Command string `json:"command"`
+
+	// EndedAt UTC 毫秒时间戳
+	EndedAt  *TimestampMs `json:"endedAt,omitempty"`
+	Exit     *int         `json:"exit,omitempty"`
+	ID       string       `json:"id"`
+	LogBytes int64        `json:"logBytes"`
+
+	// LogTruncated 日志写满 64 MiB 后丢弃了后续输出
+	LogTruncated bool `json:"logTruncated"`
+
+	// StartedAt UTC 毫秒时间戳
+	StartedAt TimestampMs        `json:"startedAt"`
+	State     OrbSandboxJobState `json:"state"`
+}
+
+// OrbSandboxJobList defines model for OrbSandboxJobList.
+type OrbSandboxJobList struct {
+	Jobs []OrbSandboxJob `json:"jobs"`
+}
+
+// OrbSandboxJobLog M30：`GET /sandbox/jobs/{id}/log` 的结果；单次至多 256 KiB
+type OrbSandboxJobLog struct {
+	// EOF 作业已结束且已读到日志末尾
+	EOF        bool               `json:"eof"`
+	Exit       *int               `json:"exit,omitempty"`
+	NextOffset int64              `json:"nextOffset"`
+	Offset     int64              `json:"offset"`
+	State      OrbSandboxJobState `json:"state"`
+	Text       string             `json:"text"`
+}
+
+// OrbSandboxJobStart defines model for OrbSandboxJobStart.
+type OrbSandboxJobStart struct {
+	JobID string `json:"jobId"`
+}
+
+// OrbSandboxJobState defines model for OrbSandboxJobState.
+type OrbSandboxJobState string
 
 // OrbService defines model for OrbService.
 type OrbService struct {
@@ -10626,7 +10838,10 @@ type ProviderCapabilities struct {
 
 	// OfflineFs 能经 `/provider/v1/fs/*` 只读读取停机 orb 的文件（缺省 false）
 	OfflineFs *bool `json:"offlineFs,omitempty"`
-	Snapshot  bool  `json:"snapshot"`
+
+	// Sandbox M30：provider 开启了沙箱，认识 `JobSpawnParams.sandbox` 与 `set_network`（缺省 false）
+	Sandbox  *bool `json:"sandbox,omitempty"`
+	Snapshot bool  `json:"snapshot"`
 }
 
 // ProviderClaimRequest defines model for ProviderClaimRequest.
@@ -10795,6 +11010,8 @@ type ProviderJob struct {
 
 	// ID `job_<ulid>`
 	ID JobID `json:"id"`
+
+	// Op `set_network`（M30）= 切换沙箱 orb 的网络模式，参数 `JobNetworkParams`
 	Op JobOp `json:"op"`
 
 	// OrbID `orb-<26 位小写 ULID>`（同时是容器名与 hostname）
@@ -10852,6 +11069,9 @@ type ProviderOrbCounts struct {
 	// Running state=ready
 	Running int `json:"running"`
 
+	// Sandboxes 未删除的 agent 沙箱 orb 数（M30）
+	Sandboxes int `json:"sandboxes"`
+
 	// Starting requested / spawning / connecting / setting_up / resuming / waking
 	Starting int `json:"starting"`
 
@@ -10894,8 +11114,11 @@ type ProviderOrbSummary struct {
 	Pool *OrbPoolState `json:"pool,omitempty"`
 
 	// ProjectID `prj_<ulid>`
-	ProjectID    *ProjectID       `json:"projectId,omitempty"`
-	ProjectName  *string          `json:"projectName,omitempty"`
+	ProjectID   *ProjectID `json:"projectId,omitempty"`
+	ProjectName *string    `json:"projectName,omitempty"`
+
+	// Sandbox M30：agent 沙箱
+	Sandbox      *bool            `json:"sandbox,omitempty"`
 	SnapshotKind *OrbSnapshotKind `json:"snapshotKind,omitempty"`
 
 	// State orb 状态机（计划 E 节）
@@ -11476,6 +11699,77 @@ type RunnerDir struct {
 type RunnerList struct {
 	Runners []Runner `json:"runners"`
 }
+
+// Sandbox agent 沙箱：线程临时开出的零凭据平级环境，用完即焚
+type Sandbox struct {
+	// Backend `kvm` = Firecracker provider；`docker` = docker provider（含 sysbox 类型）
+	Backend SandboxBackend `json:"backend"`
+
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt TimestampMs `json:"createdAt"`
+
+	// CreatedNetwork `none` = 完全没有网卡；`egress` = 可访问公网
+	CreatedNetwork SandboxNetwork `json:"createdNetwork"`
+
+	// DestroyReason `agent` `owner` `idle` `ttl` `max_lifetime` `thread_archived` `thread_deleted` `owner_orb_gone` `lost` `create_failed` `create_timeout`
+	DestroyReason *string `json:"destroyReason,omitempty"`
+
+	// DestroyedAt UTC 毫秒时间戳
+	DestroyedAt *TimestampMs `json:"destroyedAt,omitempty"`
+
+	// Error 创建失败的原因
+	Error *string `json:"error,omitempty"`
+
+	// HardDeadline 最长寿命上限
+	HardDeadline TimestampMs `json:"hardDeadline"`
+
+	// ID `sbx_<ULID>`
+	ID string `json:"id"`
+
+	// IdleDeadline `lastActiveAt + idleSec*1000`
+	IdleDeadline TimestampMs `json:"idleDeadline"`
+
+	// IdleSec 空闲多少秒后自动销毁
+	IdleSec int `json:"idleSec"`
+
+	// LastActiveAt UTC 毫秒时间戳
+	LastActiveAt TimestampMs `json:"lastActiveAt"`
+
+	// Network `none` = 完全没有网卡；`egress` = 可访问公网
+	Network SandboxNetwork `json:"network"`
+
+	// OwnerThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	OwnerThreadID ThreadID `json:"ownerThreadId"`
+
+	// Provider provider 名
+	Provider string `json:"provider"`
+
+	// ReadyAt UTC 毫秒时间戳
+	ReadyAt *TimestampMs `json:"readyAt,omitempty"`
+	State   SandboxState `json:"state"`
+
+	// TTLDeadline 绝对 TTL（到点即销毁）；没设时省略
+	TTLDeadline *TimestampMs `json:"ttlDeadline,omitempty"`
+
+	// Type provider 的 orb 类型名
+	Type string `json:"type"`
+}
+
+// SandboxBackend `kvm` = Firecracker provider；`docker` = docker provider（含 sysbox 类型）
+type SandboxBackend string
+
+// SandboxList defines model for SandboxList.
+type SandboxList struct {
+	Sandboxes []Sandbox `json:"sandboxes"`
+}
+
+// SandboxNetwork `none` = 完全没有网卡；`egress` = 可访问公网
+type SandboxNetwork string
+
+// SandboxState defines model for SandboxState.
+type SandboxState string
 
 // Schedule 定时（两种模式共用）。`thread` 模式下 `overlap` 恒为 `skip`、`keepLast` 恒为 5（无意义）
 type Schedule struct {
@@ -13424,6 +13718,18 @@ type WsServerRes struct {
 // WsServerResType defines model for WsServerRes.Type.
 type WsServerResType string
 
+// WsServerSandboxesChanged M30：某线程名下的沙箱变了（创建、就绪、网络、续期、销毁）；发给全部私有连接。客户端让该线程的沙箱查询失效，WS 每次重新 open 后也要自行失效一次
+type WsServerSandboxesChanged struct {
+	// ThreadID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ThreadID ThreadID                     `json:"threadId"`
+	Type     WsServerSandboxesChangedType `json:"type"`
+}
+
+// WsServerSandboxesChangedType defines model for WsServerSandboxesChanged.Type.
+type WsServerSandboxesChangedType string
+
 // WsServerSchedulesChanged 某个定时的定义或运行记录变了（新建 / 替换 / 删除 / 暂停 / 恢复 / 自动暂停 / 触发 / 运行状态变化）；发给全部私有连接。客户端据此让定时相关查询失效，WS 每次重新 open 后也要自行失效一次
 type WsServerSchedulesChanged struct {
 	// ScheduleID `sch_<ulid>`（M9）
@@ -15265,6 +15571,40 @@ func (t *LinkStreamHeader) MergeLinkStreamLibrary(v LinkStreamLibrary) error {
 	return err
 }
 
+// AsLinkStreamSandbox returns the union data inside the LinkStreamHeader as a LinkStreamSandbox
+func (t LinkStreamHeader) AsLinkStreamSandbox() (LinkStreamSandbox, error) {
+	var body LinkStreamSandbox
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromLinkStreamSandbox overwrites any union data inside the LinkStreamHeader as the provided LinkStreamSandbox
+func (t *LinkStreamHeader) FromLinkStreamSandbox(v LinkStreamSandbox) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"t":"sandbox"}`))
+	t.union = b
+	return err
+}
+
+// MergeLinkStreamSandbox performs a merge with any union data inside the LinkStreamHeader, using the provided LinkStreamSandbox
+func (t *LinkStreamHeader) MergeLinkStreamSandbox(v LinkStreamSandbox) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"t":"sandbox"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 // AsLinkStreamSSH returns the union data inside the LinkStreamHeader as a LinkStreamSSH
 func (t LinkStreamHeader) AsLinkStreamSSH() (LinkStreamSSH, error) {
 	var body LinkStreamSSH
@@ -15365,6 +15705,8 @@ func (t LinkStreamHeader) ValueByDiscriminator() (interface{}, error) {
 		return t.AsLinkStreamLibrary()
 	case "portal":
 		return t.AsLinkStreamPortal()
+	case "sandbox":
+		return t.AsLinkStreamSandbox()
 	case "ssh":
 		return t.AsLinkStreamSSH()
 	default:

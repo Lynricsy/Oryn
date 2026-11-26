@@ -6403,8 +6403,11 @@ export interface components {
          * @enum {string}
          */
         SecretMode: "proxy" | "env";
-        /** @enum {string} */
-        JobOp: "spawn" | "pause" | "snapshot" | "delete" | "delete_snapshot";
+        /**
+         * @description `set_network`（M30）= 切换沙箱 orb 的网络模式，参数 `JobNetworkParams`
+         * @enum {string}
+         */
+        JobOp: "spawn" | "pause" | "snapshot" | "delete" | "delete_snapshot" | "set_network";
         /** @enum {string} */
         JobState: "queued" | "claimed" | "succeeded" | "failed";
         /**
@@ -7148,6 +7151,46 @@ export interface components {
             nextBefore?: number;
         };
         /**
+         * @description `kvm` = Firecracker provider；`docker` = docker provider（含 sysbox 类型）
+         * @enum {string}
+         */
+        SandboxBackend: "docker" | "kvm";
+        /** @enum {string} */
+        SandboxState: "creating" | "ready" | "destroying" | "destroyed" | "failed";
+        /** @description agent 沙箱：线程临时开出的零凭据平级环境，用完即焚 */
+        Sandbox: {
+            /** @description `sbx_<ULID>` */
+            id: string;
+            backend: components["schemas"]["SandboxBackend"];
+            /** @description provider 的 orb 类型名 */
+            type: string;
+            /** @description provider 名 */
+            provider: string;
+            network: components["schemas"]["SandboxNetwork"];
+            createdNetwork: components["schemas"]["SandboxNetwork"];
+            state: components["schemas"]["SandboxState"];
+            ownerThreadId: components["schemas"]["ThreadId"];
+            /** @description 空闲多少秒后自动销毁 */
+            idleSec: number;
+            lastActiveAt: components["schemas"]["TimestampMs"];
+            /** @description `lastActiveAt + idleSec*1000` */
+            idleDeadline: components["schemas"]["TimestampMs"];
+            /** @description 绝对 TTL（到点即销毁）；没设时省略 */
+            ttlDeadline?: components["schemas"]["TimestampMs"];
+            /** @description 最长寿命上限 */
+            hardDeadline: components["schemas"]["TimestampMs"];
+            createdAt: components["schemas"]["TimestampMs"];
+            readyAt?: components["schemas"]["TimestampMs"];
+            destroyedAt?: components["schemas"]["TimestampMs"];
+            /** @description `agent` `owner` `idle` `ttl` `max_lifetime` `thread_archived` `thread_deleted` `owner_orb_gone` `lost` `create_failed` `create_timeout` */
+            destroyReason?: string;
+            /** @description 创建失败的原因 */
+            error?: string;
+        };
+        SandboxList: {
+            sandboxes: components["schemas"]["Sandbox"][];
+        };
+        /**
          * @description 由 box orb 的状态映射得出
          * @enum {string}
          */
@@ -7338,6 +7381,60 @@ export interface components {
             command: string;
             cwd: string;
             timeoutSec: number;
+        };
+        /** @description M30：沙箱 orbd 本机路由 `POST /sandbox/exec` 的请求体（只在精简模式注册） */
+        OrbSandboxExecRequest: {
+            command: string;
+            /** @description 工作目录（`~` 开头或 `$HOME` 下的路径；空 = `~`） */
+            cwd: string;
+            env?: {
+                [key: string]: string;
+            };
+            /** @description 同步：1–1800；`detach`：0（不限）或 1–86400 */
+            timeoutSec: number;
+            /** @description true = 作为后台作业启动，立即回 `OrbSandboxJobStart` */
+            detach?: boolean;
+        };
+        OrbSandboxJobStart: {
+            jobId: string;
+        };
+        /** @enum {string} */
+        OrbSandboxJobState: "running" | "exited";
+        /** @description M30：沙箱里的一个后台作业（记录只在沙箱 orbd 内存里） */
+        OrbSandboxJob: {
+            id: string;
+            command: string;
+            state: components["schemas"]["OrbSandboxJobState"];
+            exit?: number;
+            startedAt: components["schemas"]["TimestampMs"];
+            endedAt?: components["schemas"]["TimestampMs"];
+            /** Format: int64 */
+            logBytes: number;
+            /** @description 日志写满 64 MiB 后丢弃了后续输出 */
+            logTruncated: boolean;
+        };
+        OrbSandboxJobList: {
+            jobs: components["schemas"]["OrbSandboxJob"][];
+        };
+        /** @description M30：`GET /sandbox/jobs/{id}/log` 的结果；单次至多 256 KiB */
+        OrbSandboxJobLog: {
+            text: string;
+            /** Format: int64 */
+            offset: number;
+            /** Format: int64 */
+            nextOffset: number;
+            /** @description 作业已结束且已读到日志末尾 */
+            eof: boolean;
+            state: components["schemas"]["OrbSandboxJobState"];
+            exit?: number;
+        };
+        /** @description M30：`PUT /fs/tar` 的结果 */
+        OrbFsTarResult: {
+            files: number;
+            /** Format: int64 */
+            bytes: number;
+            /** @description 跳过的条目数（指向目标根之外的符号链接、硬链接与其他类型） */
+            skipped: number;
         };
         OrbBoxAppState: {
             name: string;
@@ -8780,6 +8877,8 @@ export interface components {
             snapshot: boolean;
             /** @description 能经 `/provider/v1/fs/*` 只读读取停机 orb 的文件（缺省 false） */
             offlineFs?: boolean;
+            /** @description M30：provider 开启了沙箱，认识 `JobSpawnParams.sandbox` 与 `set_network`（缺省 false） */
+            sandbox?: boolean;
         };
         Provider: {
             id: components["schemas"]["ProviderId"];
@@ -8875,6 +8974,8 @@ export interface components {
             warmPool: number;
             /** @description 未删除的 Box 常驻 orb 数 */
             boxes: number;
+            /** @description 未删除的 agent 沙箱 orb 数（M30） */
+            sandboxes: number;
             /** @description 未删除的助手电脑 orb 数 */
             computers: number;
         };
@@ -8947,6 +9048,8 @@ export interface components {
             threadTitles: string[];
             pool?: components["schemas"]["OrbPoolState"];
             box?: boolean;
+            /** @description M30：agent 沙箱 */
+            sandbox?: boolean;
             computer?: boolean;
             automation?: boolean;
             nestedDocker?: boolean;
@@ -9379,6 +9482,8 @@ export interface components {
             computer?: boolean;
             /** @description box 的常驻 orb（M23）；为 false 时省略 */
             box?: boolean;
+            /** @description M30：agent 沙箱（由创建它的线程管理）；为 false 时省略 */
+            sandbox?: boolean;
         };
         /**
          * @description `orb` = provider 创建的 orb；`runner` = runner 的常驻 orb（M11b）
@@ -11485,6 +11590,15 @@ export interface components {
              */
             type: "boxes.changed";
         };
+        /** @description M30：某线程名下的沙箱变了（创建、就绪、网络、续期、销毁）；发给全部私有连接。客户端让该线程的沙箱查询失效，WS 每次重新 open 后也要自行失效一次 */
+        WsServerSandboxesChanged: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "sandboxes.changed";
+            threadId: components["schemas"]["ThreadId"];
+        };
         /** @description M24：项目仓库镜像状态变了（开始 / 结束克隆或拉取、出错、被删除）；发给全部私有连接。客户端让该项目的仓库查询失效，WS 每次重新 open 后对全部项目失效一次 */
         WsServerProjectRepoChanged: {
             /**
@@ -11798,6 +11912,20 @@ export interface components {
             snapshotOptional?: boolean;
             /** @description M11a 审查修复：orb link 的 TLS CA 证书（PEM）。非空时 provider 以环境变量 `ORYN_ORB_CA_PEM` 下发给 orb（走调用方环境，不进 argv），dispatch 脚本也拿到同名环境变量；orbd 拨 `ORYN_URL` 时只信任这张 CA */
             orbCaPem?: string;
+            /** @description M30：非空 = 这台 orb 是 agent 沙箱（精简模式 orbd，link 经 provider 中继） */
+            sandbox?: components["schemas"]["JobSpawnSandbox"];
+        };
+        /**
+         * @description `none` = 完全没有网卡；`egress` = 可访问公网
+         * @enum {string}
+         */
+        SandboxNetwork: "none" | "egress";
+        JobSpawnSandbox: {
+            network: components["schemas"]["SandboxNetwork"];
+        };
+        /** @description `set_network` 任务参数（M30）；创建时为 `none` 的沙箱不能切到 `egress`（错误文本以 `network_unavailable:` 开头） */
+        JobNetworkParams: {
+            network: components["schemas"]["SandboxNetwork"];
         };
         JobPauseParams: {
             mode: components["schemas"]["PauseMode"];
@@ -11823,7 +11951,7 @@ export interface components {
             snapshotUsed?: boolean;
         };
         /** @description yamux 流的第一行（JSON + `\n`）。 */
-        LinkStreamHeader: components["schemas"]["LinkStreamCtl"] | components["schemas"]["LinkStreamAgent"] | components["schemas"]["LinkStreamEgress"] | components["schemas"]["LinkStreamBlob"] | components["schemas"]["LinkStreamFs"] | components["schemas"]["LinkStreamPortal"] | components["schemas"]["LinkStreamDesk"] | components["schemas"]["LinkStreamLibrary"] | components["schemas"]["LinkStreamSsh"] | components["schemas"]["LinkStreamBrowserRelay"];
+        LinkStreamHeader: components["schemas"]["LinkStreamCtl"] | components["schemas"]["LinkStreamAgent"] | components["schemas"]["LinkStreamEgress"] | components["schemas"]["LinkStreamBlob"] | components["schemas"]["LinkStreamFs"] | components["schemas"]["LinkStreamPortal"] | components["schemas"]["LinkStreamDesk"] | components["schemas"]["LinkStreamLibrary"] | components["schemas"]["LinkStreamSandbox"] | components["schemas"]["LinkStreamSsh"] | components["schemas"]["LinkStreamBrowserRelay"];
         /** @description orbd 建连后开的第一条且唯一的控制流 */
         LinkStreamCtl: {
             /**
@@ -11915,6 +12043,20 @@ export interface components {
              * @enum {string}
              */
             t: "ssh";
+        };
+        /**
+         * @description orbd→orynd（M30）：owner orb 上一次沙箱调用。流头之后 orbd 写一行请求 `{"op","params"}`（≤ 1 MiB），
+         *     orynd 回零或多行 `{"s":"o"|"e","d"}`（只有 `exec`），最后恰好一行 `{"result":…}` 或 `{"error":{"code","message"}}` 后关流。
+         *     orbd 提前关流 = 放弃（`create` 除外）。沙箱自身、runner 与协调宿主不可用。
+         */
+        LinkStreamSandbox: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            t: "sandbox";
+            /** @description 调用方线程（只做归因；鉴权主体是 link 认证的 orb） */
+            threadId: components["schemas"]["ThreadId"];
         };
         /**
          * @description M13 全局助手文件库的字节流，两种用法：
@@ -12046,6 +12188,7 @@ export interface components {
              *     M18 起：`ssh`（orbd 监听本机 SSH 网关端口并认识 `setup.run` / `omphome.apply` 的 `ssh`；runner 与协调宿主不上报）。
              *     M19 起：`computer`（认识 `computer.*`：惰性拉起不调模型的 omp 当工具执行器；只由普通 orbd 上报）。
              *     M25 起：`desktop-apps`（`desktop.state` 带 `apps` / `windows`，本机路由 `/desktop/apps/*` 与 `/desktop/windows/*`；只在有 `desktop` 时上报）。
+             *     M30 起：`fs-tar`（本机路由 `GET/PUT /fs/tar`，普通 orbd 与沙箱上报）、`sandbox`（精简模式 orbd，此时特性表恰为 `["fs", "fs-tar", "metrics", "sandbox"]`，监督着 dockerd 时再加 `docker`）。
              *     缺省 = 旧版 orbd，控制面对其文件 / 改动 / 附件 / 服务 / portal / sync / 桌面请求回 409 `orbd_outdated`。
              */
             features?: string[];
