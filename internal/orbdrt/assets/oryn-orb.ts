@@ -2,7 +2,8 @@
 // 在 before_agent_start 向系统提示词追加一段 orb 生命周期约定，并附上最近一次 setup / resume 与受管服务的异常现状；
 // 启用了桌面时另注册 desktop_ask_user 工具（ORYN_ARTIFACT_SOCK 也非空时再注册录屏工具 desktop_record，M25）；
 // ORYN_ARTIFACT_SOCK 非空时注册 artifact 工具（M14）、GitHub 任务工具（M15）与设计画布工具和回合钩子（M29：design_open 等 6 个，
-// 始终激活、闸门在处理器里；回合结束发 design.seal），另有 ORYN_SSH=1 时注册 ssh_exec_many 并追加 SSH 指引（M18）。
+// 始终激活、闸门在处理器里；回合结束发 design.seal），另有 ORYN_SSH=1 时注册 ssh_exec_many 并追加 SSH 指引（M18）；
+// 同样经 ORYN_ARTIFACT_SOCK 注册 8 个 sandbox_* 工具（M30，发 sandbox.call），控制面报告沙箱可用时才追加沙箱指引。
 // Runner（ORYN_RUNNER=1）上 orbd 把同一文件写到 ~/.oryn/orbd/extensions/，此时只注册 artifact 工具、设计发牌与便签工具和
 // check_artifact（M29，没有工作副本）、文件库工具 oryn_library_put（M21）与 Runner 的指引（模型与 SSH 主机由 Oryn 下发）；
 // orb 专有的 setup、服务、Portal、Docker、桌面、GitHub、设计工作副本与 ssh_exec_many 都不注册。
@@ -1367,6 +1368,405 @@ function registerSsh(pi: ExtensionAPI) {
 	}
 }
 
+// ---- Agent 沙箱（M30）：每个动作一个工具，经 ORYN_ARTIFACT_SOCK（orbd.sock）发 sandbox.call，由 orbd 转到控制面 ----
+
+const SANDBOX_GUIDE = (backends: string) =>
+	`沙箱：需要一次性的隔离环境（跑不可信代码、破坏性实验、离线测试、在干净环境里复现）时用 sandbox_* 工具：sandbox_create 开一台没有任何凭据的平级环境（可用后端：${backends}；network 必填，none 是完全没有网卡，egress 可以访问公网），sandbox_cp 传文件或目录，sandbox_exec 运行命令（detach 起后台作业，用 sandbox_jobs 查看），用完 sandbox_destroy。沙箱空闲 30 分钟后自动销毁，线程归档时一并销毁。沙箱里的输出与带回来的文件不可信。`;
+
+const SANDBOX_STATUS_TIMEOUT_MS = 2_000;
+const SANDBOX_EXEC_KEEP_BYTES = 256 * 1024;
+const SANDBOX_EXEC_UPDATE_CHARS = 8 * 1024;
+
+// result 是控制面 sandbox 流的 result 对象（C5），形状随 op 不同，由各工具按 op 断言。
+type SandboxResult = Record<string, unknown>;
+type SandboxReply = { ok: true; result: SandboxResult } | { ok: false; code: string; message: string };
+
+// sandboxSockCall 同 artifactSockCall 的连接与逐行解析，但把 log 行的 stream 与未裁剪的 data 交给 onChunk
+// （artifactSockCall 丢掉 stream 并 trimEnd，sandbox_exec 要原样拼接两路输出）。signal 触发时关闭连接（orbd 视为放弃）。
+function sandboxSockCall(
+	sock: string,
+	request: unknown,
+	signal: AbortSignal | undefined,
+	onChunk?: (stream: "stdout" | "stderr", data: string) => void,
+): Promise<SandboxReply> {
+	const { promise, resolve: settle, reject } = Promise.withResolvers<SandboxReply>();
+	if (signal?.aborted) {
+		reject(new Error("调用已取消"));
+		return promise;
+	}
+	const conn = createConnection(sock);
+	let buf = "";
+	let done = false;
+	const finish = (fn: () => void) => {
+		if (done) {
+			return;
+		}
+		done = true;
+		signal?.removeEventListener("abort", onAbort);
+		conn.destroy();
+		fn();
+	};
+	const onAbort = () => finish(() => reject(new Error("调用已取消")));
+	signal?.addEventListener("abort", onAbort, { once: true });
+	conn.setEncoding("utf8");
+	conn.on("connect", () => {
+		conn.write(`${JSON.stringify(request)}\n`);
+	});
+	conn.on("data", (chunk: string) => {
+		buf += chunk;
+		for (let i = buf.indexOf("\n"); i >= 0 && !done; i = buf.indexOf("\n")) {
+			const line = buf.slice(0, i).trim();
+			buf = buf.slice(i + 1);
+			if (!line) {
+				continue;
+			}
+			let msg: { type?: string; result?: unknown; code?: string; message?: string; stream?: string; data?: string };
+			try {
+				msg = JSON.parse(line);
+			} catch {
+				finish(() => reject(new Error(`orbd 回了无法解析的一行：${line.slice(0, 200)}`)));
+				return;
+			}
+			if (msg.type === "log") {
+				if (onChunk && typeof msg.data === "string" && (msg.stream === "stdout" || msg.stream === "stderr")) {
+					onChunk(msg.stream, msg.data);
+				}
+			} else if (msg.type === "result") {
+				const result = msg.result ?? {};
+				finish(() => settle({ ok: true, result }));
+			} else if (msg.type === "error") {
+				const code = msg.code ?? "internal";
+				const message = msg.message ?? "";
+				finish(() => settle({ ok: false, code, message }));
+			}
+		}
+	});
+	conn.on("error", (err: Error) => finish(() => reject(err)));
+	conn.on("close", () => finish(() => reject(new Error("orbd 在返回结果之前关闭了连接"))));
+	return promise;
+}
+
+type SandboxView = {
+	id: string;
+	backend: string;
+	type: string;
+	network: string;
+	state: string;
+	idleSec: number;
+	ttlDeadline?: number;
+	destroyReason?: string;
+};
+
+// tailBytes 只留 text 末尾至多 max 字节（UTF-8），返回是否截断；切在多字节字符中间时丢掉残缺的首字符。
+function tailBytes(text: string, max: number): { text: string; truncated: boolean } {
+	const b = Buffer.from(text, "utf8");
+	if (b.length <= max) {
+		return { text, truncated: false };
+	}
+	let start = b.length - max;
+	while (start < b.length && (b[start] & 0xc0) === 0x80) {
+		start++;
+	}
+	return { text: b.subarray(start).toString("utf8"), truncated: true };
+}
+
+// sandboxStatus 问控制面沙箱是否可用；失败或超时返回 undefined。
+async function sandboxStatus(sock: string): Promise<{ available: boolean; backends: string[] } | undefined> {
+	try {
+		const reply = await sandboxSockCall(
+			sock,
+			{ method: "sandbox.call", params: { threadId: process.env.ORYN_THREAD_ID ?? "", op: "status", params: {} } },
+			withTimeout(undefined, SANDBOX_STATUS_TIMEOUT_MS),
+		);
+		if (!reply.ok) {
+			return undefined;
+		}
+		const backends = Array.isArray(reply.result.backends) ? reply.result.backends.filter((b): b is string => typeof b === "string") : [];
+		return { available: reply.result.available === true, backends };
+	} catch {
+		return undefined;
+	}
+}
+
+// registerSandbox 注册 8 个 sandbox_* 工具（全部 discoverable）；ORYN_ARTIFACT_SOCK 为空时不注册。注册失败只记一行。
+// 返回 sock（before_agent_start 据此问 status）；没注册时为 undefined。
+function registerSandbox(pi: ExtensionAPI): string | undefined {
+	const sock = process.env.ORYN_ARTIFACT_SOCK ?? "";
+	if (!sock) {
+		return undefined;
+	}
+	try {
+		const z = pi.zod;
+		const call = (op: string, params: unknown, signal: AbortSignal | undefined, onChunk?: (stream: "stdout" | "stderr", data: string) => void) =>
+			sandboxSockCall(
+				sock,
+				{ method: "sandbox.call", params: { threadId: process.env.ORYN_THREAD_ID ?? "", op, params } },
+				signal,
+				onChunk,
+			);
+		// run 包一层：失败统一走 sockError，成功交给 format 写文本。
+		const run = async (
+			name: string,
+			op: string,
+			params: unknown,
+			signal: AbortSignal | undefined,
+			format: (result: SandboxResult) => AgentToolResult,
+		): Promise<AgentToolResult> => {
+			try {
+				const reply = await call(op, params, signal);
+				return reply.ok ? format(reply.result) : sockError(name, reply.code, reply.message);
+			} catch (err) {
+				return sockError(name, "unavailable", err instanceof Error ? err.message : String(err));
+			}
+		};
+		const sandboxId = z.string().min(1).describe("Sandbox id (sbx_…) returned by sandbox_create");
+		const network = z.enum(["none", "egress"]);
+
+		pi.registerTool({
+			name: "sandbox_create",
+			label: "Create sandbox",
+			description:
+				"Create a disposable, isolated sandbox: a peer machine with no credentials, destroyed automatically when idle or when this thread is archived. network is required: none = no network interface at all; egress = public internet only (can later be switched to none and back). Returns the sandbox id used by the other sandbox_* tools.",
+			parameters: z.object({
+				network: network.describe("none = no network at all; egress = public internet"),
+				backend: z.enum(["docker", "kvm"]).optional().describe("kvm = Firecracker microVM, docker = container; omit to let Oryn choose"),
+				type: z.string().min(1).optional().describe("Provider orb type name (size); omit for the provider default"),
+				idleMinutes: z.number().int().min(5).max(240).optional().describe("Destroy after this many idle minutes (default 30)"),
+				ttlMinutes: z.number().int().min(1).max(720).optional().describe("Destroy at this absolute deadline, even if busy"),
+			}),
+			loadMode: "discoverable",
+			approval: "exec",
+			async execute(_toolCallId, params, signal) {
+				return run("sandbox_create", "create", params, signal, (r) => {
+					const s = r.sandbox as SandboxView;
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Sandbox ${s.id} is ready: backend ${s.backend}, type ${s.type}, network ${s.network}. Idle timeout ${Math.round(s.idleSec / 60)} min.`,
+							},
+						],
+						details: { tool: "sandbox_create", sandbox: s },
+					};
+				});
+			},
+		});
+
+		pi.registerTool({
+			name: "sandbox_exec",
+			label: "Run in sandbox",
+			description:
+				"Run a shell command (bash -lc) in a sandbox as its user, streaming stdout and stderr. Synchronous runs time out after timeoutSec (default 600, max 1800; exit 124 on timeout). With detach the command starts as a background job and the job id is returned at once; use sandbox_jobs to read its output or kill it.",
+			parameters: z.object({
+				sandbox: sandboxId,
+				command: z.string().min(1).max(32000),
+				cwd: z.string().min(1).optional().describe("Working directory inside the sandbox (default ~)"),
+				env: z.record(z.string(), z.string()).optional().describe("Extra environment variables"),
+				timeoutSec: z.number().int().min(0).max(86400).optional().describe("Sync: 1–1800 (default 600). detach: 0 = no limit, or 1–86400"),
+				detach: z.boolean().optional().describe("Start as a background job and return its id"),
+			}),
+			loadMode: "discoverable",
+			approval: "exec",
+			async execute(_toolCallId, params, signal, onUpdate) {
+				const name = "sandbox_exec";
+				const p = params as { sandbox: string; detach?: boolean };
+				let out = "";
+				let dropped = false;
+				const onChunk = (_stream: "stdout" | "stderr", data: string) => {
+					out += data;
+					// 只在内存里留够最终输出要用的末尾
+					if (out.length > SANDBOX_EXEC_KEEP_BYTES * 2) {
+						out = out.slice(-SANDBOX_EXEC_KEEP_BYTES);
+						dropped = true;
+					}
+					onUpdate?.({ content: [{ type: "text", text: out.slice(-SANDBOX_EXEC_UPDATE_CHARS) }] });
+				};
+				try {
+					const reply = await call("exec", params, signal, onChunk);
+					if (!reply.ok) {
+						return sockError(name, reply.code, reply.message);
+					}
+					if (p.detach) {
+						const jobId = String(reply.result.jobId ?? "");
+						return {
+							content: [{ type: "text", text: `Started job ${jobId} in sandbox ${p.sandbox}.` }],
+							details: { tool: name, sandbox: p.sandbox, jobId },
+						};
+					}
+					const exit = Number(reply.result.exit ?? -1);
+					const durationMs = Number(reply.result.durationMs ?? 0);
+					const tail = tailBytes(out, SANDBOX_EXEC_KEEP_BYTES);
+					const truncated = dropped || tail.truncated;
+					const body = truncated ? `[output truncated to the last 256 KiB]\n${tail.text}` : tail.text;
+					const text = `${body}${body === "" || body.endsWith("\n") ? "" : "\n"}exit ${exit}`;
+					return {
+						content: [{ type: "text", text }],
+						details: { tool: name, sandbox: p.sandbox, exit, durationMs, truncated },
+						...(exit !== 0 ? { isError: true } : {}),
+					};
+				} catch (err) {
+					return sockError(name, "unavailable", err instanceof Error ? err.message : String(err));
+				}
+			},
+		});
+
+		pi.registerTool({
+			name: "sandbox_cp",
+			label: "Copy to/from sandbox",
+			description:
+				"Copy a file or directory between this machine and a sandbox (streamed tar, up to 2 GiB). dest is the full destination path, not its parent: a file source becomes dest; a directory source becomes dest and is merged into an existing one. Both paths must be under the respective home directory. exclude takes glob patterns (with / = relative path, without = any basename); gitignore copies only files git would track (directory sources in a git work tree). Symlinks pointing outside the destination are skipped.",
+			parameters: z.object({
+				sandbox: sandboxId,
+				direction: z.enum(["to_sandbox", "from_sandbox"]),
+				source: z.string().min(1),
+				dest: z.string().min(1),
+				exclude: z.array(z.string().min(1).max(256)).max(64).optional(),
+				gitignore: z.boolean().optional(),
+			}),
+			loadMode: "discoverable",
+			approval: "exec",
+			async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+				const p = { ...(params as { direction: string; source: string; dest: string }) };
+				// orb 一侧的相对路径按当前目录解析
+				if (p.direction === "to_sandbox") {
+					p.source = resolve(ctx.cwd, p.source);
+				} else {
+					p.dest = resolve(ctx.cwd, p.dest);
+				}
+				return run("sandbox_cp", "cp", p, signal, (r) => {
+					const skipped = Number(r.skipped ?? 0);
+					let text = `Copied ${r.files} files (${r.bytes} bytes).`;
+					if (skipped > 0) {
+						text += ` Skipped ${skipped} entries (links leaving the destination).`;
+					}
+					return { content: [{ type: "text", text }], details: { tool: "sandbox_cp", ...r } };
+				});
+			},
+		});
+
+		pi.registerTool({
+			name: "sandbox_network",
+			label: "Switch sandbox network",
+			description:
+				"Switch a sandbox between egress (public internet) and none (cut off). A sandbox created with network none has no interface and cannot be switched to egress.",
+			parameters: z.object({ sandbox: sandboxId, network }),
+			loadMode: "discoverable",
+			approval: "exec",
+			async execute(_toolCallId, params, signal) {
+				return run("sandbox_network", "network", params, signal, (r) => {
+					const s = r.sandbox as SandboxView;
+					return {
+						content: [{ type: "text", text: `Sandbox ${s.id} network is now ${s.network}.` }],
+						details: { tool: "sandbox_network", sandbox: s },
+					};
+				});
+			},
+		});
+
+		pi.registerTool({
+			name: "sandbox_jobs",
+			label: "Sandbox background jobs",
+			description:
+				"Manage background jobs started with sandbox_exec detach: list them, read a job's output (logs; pass offset from the previous call's next offset to continue, omit it for the last 256 KiB), or kill one.",
+			parameters: z.object({
+				sandbox: sandboxId,
+				action: z.enum(["list", "logs", "kill"]),
+				job: z.string().min(1).optional().describe("Job id (required for logs and kill)"),
+				offset: z.number().int().min(0).optional(),
+			}),
+			loadMode: "discoverable",
+			approval: "exec",
+			async execute(_toolCallId, params, signal) {
+				const p = params as { sandbox: string; action: string; job?: string };
+				return run("sandbox_jobs", "jobs", params, signal, (r) => {
+					let text: string;
+					if (p.action === "list") {
+						const jobs = (r.jobs ?? []) as { id: string; state: string; exit?: number; command: string }[];
+						text = jobs.length === 0 ? "No jobs." : jobs.map((j) => `${j.id}  ${j.state}  exit=${j.exit ?? "-"}  ${j.command}`).join("\n");
+					} else if (p.action === "logs") {
+						const body = String(r.text ?? "");
+						text = `${body}${body === "" || body.endsWith("\n") ? "" : "\n"}next offset: ${r.nextOffset}`;
+					} else {
+						text = `Killed job ${p.job}.`;
+					}
+					return { content: [{ type: "text", text }], details: { tool: "sandbox_jobs", sandbox: p.sandbox, ...r } };
+				});
+			},
+		});
+
+		pi.registerTool({
+			name: "sandbox_extend",
+			label: "Extend sandbox TTL",
+			description:
+				"Set a sandbox's absolute deadline to ttlMinutes from now (capped by the maximum lifetime). The sandbox is destroyed at the deadline even if a command is running.",
+			parameters: z.object({ sandbox: sandboxId, ttlMinutes: z.number().int().min(1).max(720) }),
+			loadMode: "discoverable",
+			approval: "exec",
+			async execute(_toolCallId, params, signal) {
+				return run("sandbox_extend", "extend", params, signal, (r) => {
+					const s = r.sandbox as SandboxView;
+					const at = s.ttlDeadline ? new Date(s.ttlDeadline).toISOString() : "unknown";
+					return {
+						content: [{ type: "text", text: `Sandbox ${s.id} will be destroyed at ${at}.` }],
+						details: { tool: "sandbox_extend", sandbox: s },
+					};
+				});
+			},
+		});
+
+		pi.registerTool({
+			name: "sandbox_list",
+			label: "List sandboxes",
+			description: "List this machine's sandboxes: live ones plus those that ended in the last hour (with the reason).",
+			parameters: z.object({}),
+			loadMode: "discoverable",
+			approval: "read",
+			async execute(_toolCallId, _params, signal) {
+				return run("sandbox_list", "list", {}, signal, (r) => {
+					const list = (r.sandboxes ?? []) as SandboxView[];
+					return {
+						content: [
+							{
+								type: "text",
+								text:
+									list.length === 0
+										? "No sandboxes."
+										: list
+												.map((s) => {
+													const ended = s.state === "destroyed" || s.state === "failed";
+													return `${s.id}  ${s.backend}/${s.type}  ${s.network}  ${s.state}${ended && s.destroyReason ? ` (${s.destroyReason})` : ""}`;
+												})
+												.join("\n"),
+							},
+						],
+						details: { tool: "sandbox_list", sandboxes: list },
+					};
+				});
+			},
+		});
+
+		pi.registerTool({
+			name: "sandbox_destroy",
+			label: "Destroy sandbox",
+			description: "Destroy a sandbox and everything in it. Copy out anything you need first with sandbox_cp.",
+			parameters: z.object({ sandbox: sandboxId }),
+			loadMode: "discoverable",
+			approval: "exec",
+			async execute(_toolCallId, params, signal) {
+				const p = params as { sandbox: string };
+				return run("sandbox_destroy", "destroy", params, signal, () => ({
+					content: [{ type: "text", text: `Destroyed sandbox ${p.sandbox}.` }],
+					details: { tool: "sandbox_destroy", sandbox: p.sandbox },
+				}));
+			},
+		});
+		return sock;
+	} catch (err) {
+		console.error("oryn-orb: register sandbox tools failed:", err);
+		return undefined;
+	}
+}
+
 // ---- Runner（M21）：指引与文件库工具 ----
 // Runner 上 agent 是 Oryn Core，配置根为 ~/.oryn/omp（与这台机器上用户自己的 omp 配置无关），模型、配置与 SSH 主机
 // 由 Oryn 下发；oryn_library_put 经 ORYN_ARTIFACT_SOCK（runner.sock）发 library.put，orbd 只收本线程工作目录内的文件。
@@ -1679,6 +2079,7 @@ export default function orynOrbExtension(pi: ExtensionAPI) {
 	registerGitHub(pi);
 	const designLines = registerDesign(pi);
 	registerSsh(pi);
+	const sandboxSock = registerSandbox(pi);
 	if (desktopEnabled()) {
 		registerDesktopAsk(pi);
 		registerDesktopRecord(pi);
@@ -1694,6 +2095,12 @@ export default function orynOrbExtension(pi: ExtensionAPI) {
 		}
 		if (browserRelayOnline()) {
 			guide.push(BROWSER_RELAY_GUIDE);
+		}
+		if (sandboxSock) {
+			const st = await sandboxStatus(sandboxSock);
+			if (st?.available) {
+				guide.push(SANDBOX_GUIDE(st.backends.join("、")));
+			}
 		}
 		const designNow = designLines ? await designLines() : [];
 		return { systemPrompt: [...event.systemPrompt, [...guide, ...statusLines(), ...designNow].join("\n")] };
