@@ -679,13 +679,13 @@ func (o *Orbs) Delete(ctx context.Context, orbID string) error {
 	return nil
 }
 
-// DeleteUnused 实现 threads.Orbs：runner、协调 orb、助手的电脑、box 或除 except 外仍有线程引用时不删，否则同 Delete。
+// DeleteUnused 实现 threads.Orbs：runner、协调 orb、助手的电脑、box、沙箱或除 except 外仍有线程引用时不删，否则同 Delete。
 func (o *Orbs) DeleteUnused(ctx context.Context, orbID, except string) (bool, error) {
 	orb, err := o.st.Q.GetOrb(ctx, orbID)
 	if err != nil {
 		return false, err
 	}
-	if orbs.IsRunner(orb) || orb.Coordinator || orb.Computer != 0 || orb.Box != 0 || orb.State == "deleted" {
+	if orbs.IsRunner(orb) || orb.Coordinator || orb.Computer != 0 || orb.Box != 0 || orbs.IsSandbox(orb) || orb.State == "deleted" {
 		return false, nil
 	}
 	n, err := o.st.Q.CountOtherThreadsByOrb(ctx, db.CountOtherThreadsByOrbParams{OrbID: orbID, ExceptID: except})

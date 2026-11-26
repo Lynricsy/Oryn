@@ -199,6 +199,9 @@ func (s *Service) Create(ctx context.Context, p CreateParams) (apigen.Thread, er
 		if o.Computer == 1 {
 			return apigen.Thread{}, errf(CodeOrbIsComputer, "orb is the assistant's computer; threads cannot run on it")
 		}
+		if orbs.IsSandbox(o) {
+			return apigen.Thread{}, errf("invalid", "orb is a sandbox; threads cannot run on it")
+		}
 		// box 的线程只能经 executor.kind = box 建（ThreadTarget 判定停机与目录）；cwd 也只对 box 有意义
 		if o.Box == 1 && p.Cwd == "" {
 			return apigen.Thread{}, errf(CodeOrbIsBox, "this orb is a box; start the thread with executor.kind = box")

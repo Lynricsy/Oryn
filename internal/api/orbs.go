@@ -70,10 +70,18 @@ func (s *Server) orbView(r *http.Request, o db.Orb) (apigen.Orb, error) {
 	return v, nil
 }
 
-// rejectBoxOrb 在 id 是 box 的 orb 时回 409 orb_is_box 并返回 true（M23：box 的启停与删除只经 /api/v1/boxes）。
-func rejectBoxOrb(w http.ResponseWriter, r *http.Request, svc *orbs.Service, id string) bool {
-	if o, err := svc.Get(r.Context(), id); err == nil && o.Box == 1 {
+// rejectManagedOrb 在 id 是有专属归属的 orb 时回 409 并返回 true：box 的 orb 回 orb_is_box（M23：启停与删除只经
+// /api/v1/boxes）；沙箱回 orb_is_sandbox（M30：由创建它的线程或 /api/v1/sandboxes 管理）。
+func rejectManagedOrb(w http.ResponseWriter, r *http.Request, svc *orbs.Service, id string) bool {
+	o, err := svc.Get(r.Context(), id)
+	switch {
+	case err != nil:
+		return false
+	case o.Box == 1:
 		WriteError(w, http.StatusConflict, "orb_is_box", "this orb is a box; use /api/v1/boxes")
+		return true
+	case orbs.IsSandbox(o):
+		WriteError(w, http.StatusConflict, "orb_is_sandbox", "this orb is a sandbox; it is managed by the thread that created it")
 		return true
 	}
 	return false
@@ -85,7 +93,7 @@ func (s *Server) PauseOrb(w http.ResponseWriter, r *http.Request, id apigen.OrbI
 	if !ok {
 		return
 	}
-	if rejectBoxOrb(w, r, svc, id) {
+	if rejectManagedOrb(w, r, svc, id) {
 		return
 	}
 	var req apigen.OrbPauseRequest
@@ -109,7 +117,7 @@ func (s *Server) ResumeOrb(w http.ResponseWriter, r *http.Request, id apigen.Orb
 	if !ok {
 		return
 	}
-	if rejectBoxOrb(w, r, svc, id) {
+	if rejectManagedOrb(w, r, svc, id) {
 		return
 	}
 	if o, err := svc.Get(r.Context(), id); err == nil && orbs.IsRunner(o) {
@@ -131,7 +139,7 @@ func (s *Server) DeleteOrb(w http.ResponseWriter, r *http.Request, id apigen.Orb
 	if !ok {
 		return
 	}
-	if rejectBoxOrb(w, r, svc, id) {
+	if rejectManagedOrb(w, r, svc, id) {
 		return
 	}
 	if err := svc.Delete(r.Context(), id); err != nil {

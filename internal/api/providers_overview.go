@@ -209,6 +209,9 @@ func (s *Server) GetProvidersOverview(w http.ResponseWriter, r *http.Request) {
 			if o.Box == 1 {
 				item.Orbs.Boxes++
 			}
+			if orbs.IsSandbox(o) {
+				item.Orbs.Sandboxes++
+			}
 			if o.Computer == 1 {
 				item.Orbs.Computers++
 			}
@@ -241,6 +244,9 @@ func (s *Server) GetProvidersOverview(w http.ResponseWriter, r *http.Request) {
 			}
 			if o.Box == 1 {
 				summary.Box = new(true)
+			}
+			if orbs.IsSandbox(o) {
+				summary.Sandbox = new(true)
 			}
 			if o.Computer == 1 {
 				summary.Computer = new(true)

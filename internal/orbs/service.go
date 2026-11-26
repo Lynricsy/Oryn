@@ -143,7 +143,22 @@ type CreateParams struct {
 	Automation bool
 	// Box 为真时建 box 的常驻 orb（M23）：无项目、不进预热池、不来自快照、不冻结、不随线程回收。
 	Box bool
+	// SandboxNetwork 非空时建 agent 沙箱的 orb（M30）：取值 SandboxNetNone / SandboxNetEgress（创建时的网络模式）；
+	// 须显式指定 Provider，与项目、快照、预热池、Profile、box、电脑、协调 orb 互斥；不冻结、不随线程回收。
+	SandboxNetwork string
 }
+
+// agent 沙箱 orb 的网络模式（M30，与 orbs.sandbox_network 取值一致）。
+const (
+	SandboxNetNone   = "none"
+	SandboxNetEgress = "egress"
+)
+
+// CodeSandboxUnsupported 是沙箱的 link 发来 ctl 请求时回的错误码（M30：沙箱 link 默认拒绝一切控制面能力）。
+const CodeSandboxUnsupported = "sandbox_unsupported"
+
+// IsSandbox 报告 orb 是否是 agent 沙箱（M30）。
+func IsSandbox(o db.Orb) bool { return o.SandboxNetwork != nil }
 
 // 内置协调宿主 provider（M9 协调宿主分册 H6）。名称 `@host` 不满足 API 的 provider 名称正则，用户建不出同名行。
 const (
@@ -538,6 +553,9 @@ func (s *Service) spawnIn(t *txn) error {
 			p.SnapshotOptional = new(true)
 		}
 	}
+	if t.orb.SandboxNetwork != nil {
+		p.Sandbox = &apigen.JobSpawnSandbox{Network: apigen.SandboxNetwork(*t.orb.SandboxNetwork)}
+	}
 	return s.enqueueIn(t, jobs.OpSpawn, p)
 }
 
@@ -784,6 +802,11 @@ func providerTypes(prov db.Provider) []apigen.OrbType {
 
 // Create 新建 orb（requested）并入队 spawn 任务。有项目时按 M11a 2.2 选用该项目的就绪快照。
 func (s *Service) Create(ctx context.Context, p CreateParams) (_ db.Orb, err error) {
+	if p.SandboxNetwork != "" && (p.SandboxNetwork != SandboxNetNone && p.SandboxNetwork != SandboxNetEgress ||
+		p.Coordinator || p.Pool || p.Box || p.Computer || p.ProjectID != "" || p.SnapshotID != "" || p.SnapshotOf != "" ||
+		p.BrowserProfileID != "" || p.Provider == "") {
+		return db.Orb{}, fmt.Errorf("%w: 沙箱 orb 须指定 provider 与网络模式，不属于项目，不能来自快照、预热池或 Profile", ErrInvalidState)
+	}
 	if p.Coordinator {
 		prov, err := s.st.Q.GetProviderByName(ctx, HostProviderName)
 		if errors.Is(err, sql.ErrNoRows) || (err == nil && prov.DisabledAt != nil) {
@@ -866,6 +889,9 @@ func (s *Service) insertOrb(ctx context.Context, p CreateParams, t target, pick 
 	if p.Box {
 		base.Box = new(int64(1))
 	}
+	if p.SandboxNetwork != "" {
+		base.SandboxNetwork = &p.SandboxNetwork
+	}
 	// orb、requested 事件与首个 spawn 任务同一事务提交：不存在「有 orb 没任务」的中间状态。
 	var ch *change
 	var params db.CreateOrbParams
@@ -877,6 +903,9 @@ func (s *Service) insertOrb(ctx context.Context, p CreateParams, t target, pick 
 		}
 		if p.Pool {
 			detail["pool"] = true
+		}
+		if p.SandboxNetwork != "" {
+			detail["sandbox"] = true
 		}
 		if pick.snapID != "" {
 			n, err := q.TouchProjectSnapshotUse(ctx, db.TouchProjectSnapshotUseParams{LastUsedAt: now, ID: pick.snapID})
@@ -961,6 +990,10 @@ func (s *Service) Wake(ctx context.Context, orbID string) error {
 	if err != nil {
 		return err
 	}
+	if IsSandbox(orb) {
+		// 沙箱的生命周期归 sandboxes 服务：停机即销毁，不唤醒
+		return fmt.Errorf("%w: orb %s 是沙箱", ErrInvalidState, orbID)
+	}
 	if orb.Box != 0 && !s.boxAllowed(orbID) {
 		return ErrBoxStopped
 	}
@@ -1021,6 +1054,9 @@ func (s *Service) Pause(ctx context.Context, orbID, mode string) error {
 	}
 	if IsRunner(orb) {
 		return ErrRunnerUnsupported
+	}
+	if IsSandbox(orb) {
+		return fmt.Errorf("%w: orb %s 是沙箱，不能暂停", ErrInvalidState, orbID)
 	}
 	switch {
 	case mode == PauseFreeze && orb.State == StateFrozen, mode == PauseStop && orb.State == StateStopped:
@@ -1133,7 +1169,7 @@ func (s *Service) DeleteUnused(ctx context.Context, orbID, except string) (bool,
 	if err != nil {
 		return false, err
 	}
-	if IsRunner(orb) || orb.Coordinator || orb.Computer != 0 || orb.Box != 0 {
+	if IsRunner(orb) || orb.Coordinator || orb.Computer != 0 || orb.Box != 0 || IsSandbox(orb) {
 		return false, nil
 	}
 	return s.deleteIf(ctx, orbID, func(q *db.Queries) (bool, error) {
@@ -1230,6 +1266,9 @@ func (s *Service) Snapshot(ctx context.Context, orbID string) (string, error) {
 	if IsRunner(orb) {
 		return "", ErrRunnerUnsupported
 	}
+	if IsSandbox(orb) {
+		return "", fmt.Errorf("%w: orb %s 是沙箱，不能拍快照", ErrInvalidState, orbID)
+	}
 	snap := ids.Snapshot()
 	if _, err := s.snapshotAs(ctx, orb, snap); err != nil {
 		if errors.Is(err, errTokenRotate) {
@@ -1269,6 +1308,40 @@ func (s *Service) snapshotAs(ctx context.Context, orb db.Orb, snap string) (db.J
 		return done, err
 	}
 	return done, nil
+}
+
+// SetSandboxNetwork 为沙箱 orb 入队 set_network 任务并等待完成（M30）。任务失败时返回的错误文本就是任务的错误原文
+// （provider 以 `network_unavailable:` 开头表示创建时没有网卡、不能开网），调用方据此映射错误码。
+func (s *Service) SetSandboxNetwork(ctx context.Context, orbID, network string) error {
+	if network != SandboxNetNone && network != SandboxNetEgress {
+		return fmt.Errorf("%w: 网络模式 %q", ErrInvalidState, network)
+	}
+	orb, err := s.Get(ctx, orbID)
+	if err != nil {
+		return err
+	}
+	if !IsSandbox(orb) {
+		return fmt.Errorf("%w: orb %s 不是沙箱", ErrInvalidState, orbID)
+	}
+	if orb.State == StateDeleting || orb.State == StateDeleted {
+		return fmt.Errorf("%w: orb %s 已删除", ErrInvalidState, orbID)
+	}
+	job, err := s.jobs.Enqueue(ctx, orb.ProviderID, orb.ID, jobs.OpSetNetwork, apigen.JobNetworkParams{Network: apigen.SandboxNetwork(network)})
+	if err != nil {
+		return err
+	}
+	done, err := s.jobs.Wait(ctx, job.ID)
+	if err != nil {
+		return err
+	}
+	if done.State != jobs.StateSucceeded {
+		msg := "set_network failed"
+		if done.Error != nil {
+			msg = *done.Error
+		}
+		return errors.New(msg)
+	}
+	return nil
 }
 
 // TouchUser 记录一次用户交互。
@@ -1572,9 +1645,10 @@ func (s *Service) EvaluateIdle(ctx context.Context) {
 			return
 		}
 		for _, orb := range orbs {
-			if IsRunner(orb) || orb.Box != 0 || orb.Coordinator {
+			if IsRunner(orb) || orb.Box != 0 || orb.Coordinator || IsSandbox(orb) {
 				// runner 与 box 是常驻的：不冻结、不停机。协调 orb 同样常驻：全局助手要随时能立即回复，
-				// 冻结它就是结束协调宿主子进程与其中全部 omp，下一条消息要付完整的冷启动（见 coord.keepWarm）
+				// 冻结它就是结束协调宿主子进程与其中全部 omp，下一条消息要付完整的冷启动（见 coord.keepWarm）。
+				// 沙箱的空闲回收归 sandboxes 服务（到期即销毁），这里不冻结
 				continue
 			}
 			idle := s.idleFrozenTooLong
@@ -1627,7 +1701,7 @@ func (s *Service) idleReady(orb db.Orb) bool {
 // retired 判断 orb 是否只剩已归档的线程（至少有一个线程，且都已归档）。协调 orb 与助手的电脑不属于线程，不在此列；
 // 预热池里尚未认领的 orb 没有线程，同样不算。
 func (s *Service) retired(ctx context.Context, orb db.Orb) bool {
-	if orb.Coordinator || orb.Computer != 0 || orb.Box != 0 {
+	if orb.Coordinator || orb.Computer != 0 || orb.Box != 0 || IsSandbox(orb) {
 		return false
 	}
 	n, err := s.st.Q.OrbThreadCounts(ctx, orb.ID)

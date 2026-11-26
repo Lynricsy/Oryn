@@ -75,6 +75,8 @@ type OrbCreate struct {
 	Automation bool
 	// Box 对应 orbs.CreateParams.Box（M23 box 的常驻 orb；本包从不置位）。
 	Box bool
+	// SandboxNetwork 对应 orbs.CreateParams.SandboxNetwork（M30 agent 沙箱；本包从不置位）。
+	SandboxNetwork string
 }
 
 // CodeOrbIsPooled 是把线程挂到预热池 orb 上（executor.kind = orb 指向池 orb）的错误码（M11a，HTTP 409）。

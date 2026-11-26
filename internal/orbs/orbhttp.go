@@ -37,6 +37,10 @@ const (
 	FeatureSync = "sync"
 	// FeatureBox：/box/*（M23 box 的 app 运行时：release 上传、激活、回滚、重启、下线、exec）。
 	FeatureBox = "box"
+	// FeatureSandbox：orbd 以 agent 沙箱的精简模式运行（M30：/sandbox/*）。
+	FeatureSandbox = "sandbox"
+	// FeatureFSTar：/fs/tar 的目录 / 文件流式传输（M30 sandbox cp）。
+	FeatureFSTar = "fs-tar"
 )
 
 // usableState 报告 orb 处于 state 时 orbd 是否在跑、可服务 fs 流。

@@ -34,6 +34,10 @@ type orbLink struct {
 	prepared chan struct{}
 	// runner 为真时这是 runner 的常驻 orb 的 link（M11b）。
 	runner bool
+	// sandbox 为真时这是 agent 沙箱的 link（M30）：默认拒绝一切控制面能力，只收 hello 与限速的 metrics.sample。
+	sandbox bool
+	// lastSample 是沙箱 link 上次接受 metrics.sample 的时间（只在 ctl 读循环里读写）。
+	lastSample time.Time
 	// rejected 为真时发布后的复核没有通过（令牌已吊销 / orb 已删除等）：在关闭 published 之前写入，
 	// ctl 处理器等到 published 之后读它，为真则一律不处理。
 	rejected bool
@@ -243,12 +247,17 @@ func (s *Service) attach(orb db.Orb, sess *link.Session, remote string, recheck 
 	// ctl 端点先完整构造、link 先发布并通过复核，之后才处理其消息：任何人从 links 里拿到的都是 ctl 已就绪的 link，
 	// hello 等回调也不会在发布与复核之前运行。
 	published := make(chan struct{})
-	l := &orbLink{orbID: orb.ID, sess: sess, helloCh: make(chan struct{}), prepared: make(chan struct{}), runner: IsRunner(orb), tokenGen: orb.TokenGen}
+	l := &orbLink{orbID: orb.ID, sess: sess, helloCh: make(chan struct{}), prepared: make(chan struct{}), runner: IsRunner(orb), sandbox: IsSandbox(orb), tokenGen: orb.TokenGen}
 	l.ctl = link.NewCtl(first, link.CtlHandlers{
 		OnRequest: func(ctx context.Context, method string, params json.RawMessage) (any, error) {
 			<-published
 			if l.rejected {
 				return nil, &link.CtlError{Code: "unauthorized", Message: "link rejected"}
+			}
+			if l.sandbox {
+				// 沙箱里跑的是不可信代码：控制面的任何能力都不对它开放
+				slog.Warn("沙箱发来 ctl 请求，拒绝", "orb", orb.ID, "method", method)
+				return nil, &link.CtlError{Code: CodeSandboxUnsupported, Message: method + " is not available to a sandbox"}
 			}
 			if l.runner && !runnerRequestAllowed(method) {
 				// runner 不可信：只放行它正常流程会发的请求（控制面的密钥不去 runner）
@@ -266,6 +275,9 @@ func (s *Service) attach(orb db.Orb, sess *link.Session, remote string, recheck 
 		OnNotify: func(ctx context.Context, method string, params json.RawMessage) {
 			<-published
 			if l.rejected {
+				return
+			}
+			if l.sandbox && !l.sandboxNotifyAllowed(method) {
 				return
 			}
 			if l.runner && !runnerNotifyAllowed(method) {
@@ -330,6 +342,12 @@ func (s *Service) attach(orb db.Orb, sess *link.Session, remote string, recheck 
 				continue
 			}
 			break
+		}
+		if l.sandbox {
+			// 沙箱不发起任何流（含 egress）：它没有凭据可借，也不该经控制面出站
+			slog.Warn("沙箱发起流，关闭", "orb", orb.ID, "t", st.Header.T)
+			_ = st.Close()
+			continue
 		}
 		switch st.Header.T {
 		case link.StreamEgress:
@@ -424,7 +442,7 @@ func (s *Service) onHello(l *orbLink) {
 	}
 	ctx := context.Background()
 	orb, err := s.Get(ctx, l.orbID)
-	if err == nil && orbLinkAcceptable(orb) && slices.Contains(l.hello.Features, FeaturePortal) {
+	if err == nil && orbLinkAcceptable(orb) && !l.sandbox && slices.Contains(l.hello.Features, FeaturePortal) {
 		s.portalConfigure(ctx, l)
 	}
 	close(l.prepared)
@@ -499,6 +517,10 @@ func (s *Service) runPhase(l *orbLink) {
 	ctx := context.Background()
 	if l.runner {
 		s.runnerReady(ctx, l)
+		return
+	}
+	if l.sandbox {
+		s.sandboxReady(ctx, l)
 		return
 	}
 	everReady, err := s.st.Q.OrbEverReady(ctx, l.orbID)

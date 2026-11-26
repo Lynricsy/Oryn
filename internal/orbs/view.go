@@ -44,6 +44,9 @@ func View(ctx context.Context, q *db.Queries, o db.Orb) (apigen.Orb, error) {
 	if o.Box == 1 {
 		v.Box = new(true)
 	}
+	if IsSandbox(o) {
+		v.Sandbox = new(true)
+	}
 	if IsRunner(o) {
 		v.Kind = new(apigen.OrbKindRunner)
 		r, err := q.GetRunnerByOrb(ctx, o.ID)

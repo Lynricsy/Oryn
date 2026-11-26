@@ -26,6 +26,7 @@ const (
 	OpSnapshot       = "snapshot"
 	OpDelete         = "delete"
 	OpDeleteSnapshot = "delete_snapshot"
+	OpSetNetwork     = "set_network"
 )
 
 // 任务状态。

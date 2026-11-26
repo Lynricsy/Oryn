@@ -198,6 +198,9 @@ type fakeDriver struct {
 	// spawns 记录 spawn 任务的参数；origins 记录建机器那次 spawn 实际用的快照（退回基础镜像时 missing）。
 	spawns  []apigen.JobSpawnParams
 	origins map[string]machineOrigin
+	// netErr 非空时 set_network 任务以它为错误失败（M30）；networks 记录 set_network 任务的目标网络模式。
+	netErr   string
+	networks []string
 }
 
 type machineOrigin struct {
@@ -307,6 +310,13 @@ func (d *fakeDriver) Exec(_ context.Context, j providerrt.Job, out io.Writer) (*
 			return nil, fmt.Errorf("commit failed")
 		}
 		return &apigen.JobResult{SnapshotBytes: snapBytes}, nil
+	case "set_network":
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if d.netErr != "" {
+			return nil, fmt.Errorf("%s", d.netErr)
+		}
+		d.networks = append(d.networks, j.Network)
 	case "delete_snapshot":
 		d.mu.Lock()
 		d.deletedSnaps = append(d.deletedSnaps, j.SnapshotID)

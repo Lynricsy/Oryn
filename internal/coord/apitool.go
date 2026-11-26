@@ -82,6 +82,8 @@ func (s *Service) orbTarget(ctx context.Context, orbID string) (db.Orb, error) {
 		return db.Orb{}, errf(CodeInvalidTarget, "orb %s is your own computer; it is managed by Oryn", orbID)
 	case o.Box == 1:
 		return db.Orb{}, errf(CodeInvalidTarget, "orb %s is a box; use the box operations", orbID)
+	case orbs.IsSandbox(o):
+		return db.Orb{}, errf(CodeInvalidTarget, "orb %s is a sandbox; it is managed by the thread that created it", orbID)
 	case ps == orbs.PoolWarming || ps == orbs.PoolIdle:
 		return db.Orb{}, errf(CodeInvalidTarget, "orb %s is a warm pool orb; it is managed by Oryn", orbID)
 	}
