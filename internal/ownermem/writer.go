@@ -158,7 +158,23 @@ func (s *Service) retainThread(ctx context.Context, b *memory.Bank, threadID str
 			changed = append(changed, c)
 		}
 	}
-	if err := s.retain(ctx, b, changed); err != nil {
+	// 先登记再写入：写入前把变了的块登记为待写（哈希留空，下一轮必定重写），每个请求成功后再记下它的哈希。
+	// 同步写入逐块进行，后面的块失败时前面的已经落库；超时等结果不明的失败也可能已落库。登记在先，
+	// 排除或删除来源时 forgetSource 才删得到它们（删除不存在的 document 按成功处理）。
+	for _, c := range changed {
+		if err := s.putChunk(ctx, threadID, c, "", 0); err != nil {
+			return err
+		}
+	}
+	if err := s.retain(ctx, b, changed, func(done []Chunk) error {
+		nowMs := s.cfg.Now().UnixMilli()
+		for _, c := range done {
+			if err := s.putChunk(ctx, threadID, c, c.Hash, nowMs); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
 		return err
 	}
 	var extra []string
@@ -174,14 +190,6 @@ func (s *Service) retainThread(ctx context.Context, b *memory.Bank, threadID str
 		}
 	}
 	nowMs := s.cfg.Now().UnixMilli()
-	for _, c := range changed {
-		if err := s.cfg.Q.UpsertOwnerMemoryChunk(ctx, db.UpsertOwnerMemoryChunkParams{
-			ThreadID: threadID, Idx: int64(c.Idx), DocumentID: c.DocumentID, Hash: c.Hash,
-			SeqFrom: c.SeqFrom, SeqTo: c.SeqTo, RetainedAt: nowMs,
-		}); err != nil {
-			return err
-		}
-	}
 	for _, o := range old {
 		if o.Idx >= int64(len(chunks)) {
 			if err := s.cfg.Q.DeleteOwnerMemoryChunk(ctx, db.DeleteOwnerMemoryChunkParams{ThreadID: threadID, Idx: o.Idx}); err != nil {
@@ -196,38 +204,54 @@ func (s *Service) retainThread(ctx context.Context, b *memory.Bank, threadID str
 	})
 }
 
+// putChunk 登记一个块；hash 为空表示已提交写入、尚未确认成功。
+func (s *Service) putChunk(ctx context.Context, threadID string, c Chunk, hash string, retainedAt int64) error {
+	return s.cfg.Q.UpsertOwnerMemoryChunk(ctx, db.UpsertOwnerMemoryChunkParams{
+		ThreadID: threadID, Idx: int64(c.Idx), DocumentID: c.DocumentID, Hash: hash,
+		SeqFrom: c.SeqFrom, SeqTo: c.SeqTo, RetainedAt: retainedAt,
+	})
+}
+
 // retainItem 是发往 Hindsight 的 item：同一 document 再次写入时整体替换。
 type retainItem struct {
 	RetainItem
 	UpdateMode string `json:"update_mode"`
 }
 
-// retain 写入块。每块一个 item 的（工作线程）合成一次异步请求；一块多个 item 的（助手对话：一个单元一个 item，各自带
-// seq 出处）逐块同步写入——Hindsight 只在同步路径把同一 document_id 的多个 item 合成一个 document，异步批次里
-// document_id 重复直接 400（memory_engine.py retain_batch_async）。
-func (s *Service) retain(ctx context.Context, b *memory.Bank, chunks []Chunk) error {
+// retain 写入块，每个请求成功后用它写入的块调用 done。每块一个 item 的（工作线程）合成一次异步请求；一块多个 item 的
+// （助手对话：一个单元一个 item，各自带 seq 出处）逐块同步写入——Hindsight 只在同步路径把同一 document_id 的多个 item
+// 合成一个 document，异步批次里 document_id 重复直接 400（memory_engine.py retain_batch_async）。
+func (s *Service) retain(ctx context.Context, b *memory.Bank, chunks []Chunk, done func([]Chunk) error) error {
 	var batch []retainItem
+	var batched []Chunk
 	for _, c := range chunks {
 		items := make([]retainItem, 0, len(c.Items))
 		for _, it := range c.Items {
 			items = append(items, retainItem{RetainItem: it, UpdateMode: "replace"})
 		}
 		if len(items) > 1 {
-			if err := s.postRetain(ctx, b, items, false); err != nil {
+			if err := postRetain(ctx, b, items, false); err != nil {
+				return err
+			}
+			if err := done([]Chunk{c}); err != nil {
 				return err
 			}
 			continue
 		}
 		batch = append(batch, items...)
+		batched = append(batched, c)
 	}
-	if len(batch) == 0 {
+	if len(batched) == 0 {
 		return nil
 	}
-	return s.postRetain(ctx, b, batch, true)
+	if err := postRetain(ctx, b, batch, true); err != nil {
+		return err
+	}
+	return done(batched)
 }
 
 // postRetain 发一次 retain 请求。同步请求要等 Hindsight 抽取完事实，受 memory 客户端 5 分钟的响应头时限约束。
-func (s *Service) postRetain(ctx context.Context, b *memory.Bank, items []retainItem, async bool) error {
+func postRetain(ctx context.Context, b *memory.Bank, items []retainItem, async bool) error {
 	if err := b.Call(ctx, http.MethodPost, "/memories", map[string]any{"items": items, "async": async}, nil); err != nil {
 		return upstream("写入记忆", err)
 	}

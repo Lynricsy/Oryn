@@ -33,7 +33,10 @@ type fakeHS struct {
 	retainSync []bool             // 每次 retain 请求是否同步（async=false）
 	deletes    []string           // 删除的 document id
 	down       bool
-	failRetain bool
+	// retainCalls 计全部 retain 请求（含失败的）；failRetainFrom > 0 时第 failRetainFrom 次（从 1 计）及之后的请求失败
+	retainCalls    int
+	failRetainFrom int
+	failRetain     bool
 	// 主题：reflect 返回的 topics、recall 结果的 mentioned_at（空串 = 无结果）、提交的刷新
 	curated   []map[string]any
 	reflects  int
@@ -90,7 +93,8 @@ func (f *fakeHS) serve(w http.ResponseWriter, r *http.Request) {
 		f.models = append(f.models, body)
 		_, _ = w.Write([]byte(`{"operation_id":"op"}`))
 	case r.Method == http.MethodPost && r.URL.Path == root+"/memories":
-		if f.failRetain {
+		f.retainCalls++
+		if f.failRetain || (f.failRetainFrom > 0 && f.retainCalls >= f.failRetainFrom) {
 			http.Error(w, `{"detail":"boom"}`, http.StatusInternalServerError)
 			return
 		}

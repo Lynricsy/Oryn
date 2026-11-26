@@ -200,6 +200,63 @@ func TestWriterRetry(t *testing.T) {
 	assert.Equal(t, int64(0), src.Attempts)
 }
 
+// TestWriterPartialRetainThenExclude:多块对话逐块同步写入，首块成功、次块失败时首块已记下哈希、其余块登记为待写；
+// 重试只重写没成功的块；随后排除对话时，全部块（含落库后未确认的）都被删除。
+func TestWriterPartialRetainThenExclude(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t, true)
+	e.enable(t)
+	e.thread(t, "c", "assistant", "idle", 16, time.Hour)
+	e.hs.mu.Lock()
+	e.hs.failRetainFrom = 2
+	e.hs.mu.Unlock()
+	assert.Equal(t, 0, e.scan(t))
+
+	chunks, err := e.st.Q.ListOwnerMemoryChunks(ctx, "c")
+	require.NoError(t, err)
+	require.Greater(t, len(chunks), 2, "需要多块才能覆盖逐块写入")
+	require.Equal(t, 1, e.retainCount())
+	assert.True(t, e.hs.retainSync[0])
+	assert.Equal(t, []string{"conv:c:0"}, e.hs.retainedDocs(0))
+	assert.NotEmpty(t, chunks[0].Hash, "成功写入的首块记下哈希")
+	var all []string
+	for i, c := range chunks {
+		all = append(all, c.DocumentID)
+		if i > 0 {
+			assert.Empty(t, c.Hash, "未确认的块登记为待写：%s", c.DocumentID)
+		}
+	}
+
+	// 恢复后重试：首块不再重写，失败与未写的块逐块写入
+	e.hs.mu.Lock()
+	e.hs.failRetainFrom = 0
+	e.hs.mu.Unlock()
+	e.now = e.now.Add(31 * time.Second)
+	assert.Equal(t, 1, e.scan(t))
+	var retried []string
+	for i := 1; i < e.retainCount(); i++ {
+		retried = append(retried, e.hs.retainedDocs(i)...)
+	}
+	assert.Equal(t, all[1:], retried)
+
+	// 再写入一次后失败，然后排除：所有块都被删除
+	e.hs.mu.Lock()
+	e.hs.failRetainFrom = e.hs.retainCalls + 1
+	e.hs.mu.Unlock()
+	e.now = e.now.Add(2 * time.Hour)
+	e.turns(t, "c", 16, 1)
+	e.touch(t, "c", time.Hour)
+	assert.Equal(t, 0, e.scan(t))
+	require.NoError(t, e.st.Q.InsertOwnerMemoryExclusion(ctx, db.InsertOwnerMemoryExclusionParams{Kind: "thread", TargetID: "c", CreatedAt: 1}))
+	e.scan(t)
+	chunks, err = e.st.Q.ListOwnerMemoryChunks(ctx, "c")
+	require.NoError(t, err)
+	assert.Empty(t, chunks)
+	for _, id := range all {
+		assert.Contains(t, e.hs.deletes, id)
+	}
+}
+
 // TestWriterBackfillWindow:回填只取开启前 30 天内有活动的来源；进度按来源数计算。
 func TestWriterBackfillWindow(t *testing.T) {
 	ctx := context.Background()
