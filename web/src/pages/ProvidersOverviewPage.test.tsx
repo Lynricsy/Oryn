@@ -344,9 +344,7 @@ describe("Provider 总览页", () => {
 				name: i18n.t("providers.overview.emptyAction"),
 			}),
 		);
-		expect(screen.getByTestId("where")).toHaveTextContent(
-			"/settings/providers",
-		);
+		expect(screen.getByTestId("where")).toHaveTextContent("/settings/compute");
 	});
 
 	it("渲染全局 KPI 与双段占用条（Orb 占比 + 宿主机其他），支持状态筛选与关键字搜索", async () => {

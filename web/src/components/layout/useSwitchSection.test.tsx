@@ -61,7 +61,7 @@ describe("useSwitchSection：导航还没提交", () => {
 
 	it("已提交的就是该分区、之后没有发出过导航：不导航", () => {
 		render(
-			<MemoryRouter initialEntries={["/settings/devices"]}>
+			<MemoryRouter initialEntries={["/settings/account"]}>
 				<Switcher />
 			</MemoryRouter>,
 		);

@@ -17,7 +17,12 @@ import type { Schemas } from "../../api/client";
 import { identityKeys } from "../../api/identity-queries";
 import { loadAvatarSource, renderAvatar } from "../../lib/avatar-image";
 import { pickAvatarGlyph } from "../../test/glyph-picker";
-import { IdentitySettings } from "./IdentitySettings";
+import {
+	AgentIdentityCard,
+	AssistantIdentityCard,
+	NewThreadTargetCard,
+	UserAvatarCard,
+} from "./IdentitySettings";
 
 vi.mock("../../lib/avatar-image", async (orig) => ({
 	...(await orig<object>()),
@@ -87,13 +92,16 @@ function mount() {
 	return render(
 		<QueryClientProvider client={client}>
 			<MemoryRouter>
-				<IdentitySettings />
+				<AgentIdentityCard />
+				<AssistantIdentityCard />
+				<NewThreadTargetCard />
+				<UserAvatarCard />
 			</MemoryRouter>
 		</QueryClientProvider>,
 	);
 }
 
-const card = (id: "agent" | "assistant" | "new-thread" | "roles" | "user") =>
+const card = (id: "agent" | "assistant" | "new-thread" | "user") =>
 	screen.getByTestId(`identity-${id}`);
 
 const puts = () => writes.filter((w) => w.method === "PUT");
@@ -301,15 +309,10 @@ describe("全局助手", () => {
 	});
 });
 
-describe("默认 Agent 身份与角色头像入口", () => {
-	it("标题是「默认 Agent 身份」；角色头像只剩链接到「Agent › 模型角色」的卡片", () => {
+describe("默认 Agent 身份", () => {
+	it("标题是「默认 Agent 身份」；不写角色头像", () => {
 		mount();
 		expect(screen.getByText("默认 Agent 身份")).toBeInTheDocument();
-		const scope = card("roles");
-		expect(scope.querySelector("li")).toBeNull();
-		expect(
-			within(scope).getByRole("link", { name: "前往模型角色" }),
-		).toHaveAttribute("href", "/settings/agent-roles");
 		expect(writes.some((w) => w.path.includes("role-identities"))).toBe(false);
 	});
 });

@@ -123,13 +123,13 @@ func TestGitHubAPI(t *testing.T) {
 	u, err := url.Parse(red.URL)
 	require.NoError(t, err)
 	resp := getNoRedirect(t, e.srv.URL+"/api/v1/public/github/oauth/callback?code=u1&state="+url.QueryEscape(u.Query().Get("state")))
-	assert.Equal(t, h2PublicURL+"/settings/github?connected=user", resp.Header.Get("Location"))
+	assert.Equal(t, h2PublicURL+"/settings/git?connected=user", resp.Header.Get("Location"))
 
 	resp = getNoRedirect(t, e.srv.URL+"/api/v1/public/github/oauth/callback?state=bogus&code=x")
 	assert.Equal(t, 302, resp.StatusCode)
 	assert.True(t, strings.HasSuffix(resp.Header.Get("Location"), "?error=state_invalid"), resp.Header.Get("Location"))
 	resp = getNoRedirect(t, e.srv.URL+"/api/v1/public/github/oauth/callback?error=access_denied&state=x")
-	assert.Equal(t, h2PublicURL+"/settings/github?error=access_denied", resp.Header.Get("Location"))
+	assert.Equal(t, h2PublicURL+"/settings/git?error=access_denied", resp.Header.Get("Location"))
 
 	// 设置：Agent 账号未连接也可设为 agent（R6，使用时按 Q6 回退）
 	require.NoError(t, e.st.Q.CreateOwner(context.Background(), db.CreateOwnerParams{DisplayName: "o", UserHandle: []byte("h"), CreatedAt: 1}))
@@ -199,7 +199,7 @@ func TestGitHubOAuthAppAPI(t *testing.T) {
 	assert.Equal(t, "repo workflow read:org admin:repo_hook gist write:packages user:email", u.Query().Get("scope"))
 	assert.Equal(t, fake.OAuthApp.ClientID, u.Query().Get("client_id"))
 	resp := getNoRedirect(t, e.srv.URL+"/api/v1/public/github/oauth/callback?code=u1&state="+url.QueryEscape(u.Query().Get("state")))
-	assert.Equal(t, h2PublicURL+"/settings/github?connected=user", resp.Header.Get("Location"))
+	assert.Equal(t, h2PublicURL+"/settings/git?connected=user", resp.Header.Get("Location"))
 	r = e.do("GET", "/api/v1/github", dev, nil)
 	r.json(t, &st)
 	require.NotNil(t, st.Identities.User)

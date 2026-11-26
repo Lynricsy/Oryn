@@ -187,7 +187,7 @@ describe("Ctrl/⌘+1…4", () => {
 		document.body.append(input);
 		input.focus();
 		press({ key: "4", code: "Digit4", ctrlKey: true }, input);
-		expect(where()).toBe("/settings/automations");
+		expect(where()).toBe("/settings");
 		expect(uiStore.getState().sidebarCollapsed).toBe(true);
 		input.remove();
 	});
@@ -332,7 +332,7 @@ describe("追踪器", () => {
 	it("记忆里是 /t/<助手对话>（冷启动竞态留下的）时，切到线程落到 /", async () => {
 		indexStore.getState().setAll([th("A1", { kind: "assistant" })], 1);
 		uiStore.setState({ sectionPaths: { threads: "/t/A1" } });
-		mount("/settings/devices");
+		mount("/settings/account");
 		await settle();
 		digit(1);
 		expect(where()).toBe("/");
@@ -340,7 +340,7 @@ describe("追踪器", () => {
 
 	it("记忆里的路径属于别的分区或以 // 开头时用缺省路径", async () => {
 		uiStore.setState({ sectionPaths: { threads: "/settings/secrets" } });
-		mount("/settings/devices");
+		mount("/settings/account");
 		await settle();
 		digit(1);
 		expect(where()).toBe("/");
@@ -351,6 +351,6 @@ describe("追踪器", () => {
 			},
 		});
 		digit(4);
-		expect(where()).toBe("/settings/automations");
+		expect(where()).toBe("/settings");
 	});
 });

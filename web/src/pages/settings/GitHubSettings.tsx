@@ -52,6 +52,7 @@ import { confirmAction } from "../../lib/confirm";
 import { formatDateTime, formatRelative } from "../../lib/format";
 import { host } from "../../lib/host";
 import { useIndex } from "../../state/stores";
+import { LeadIcon } from "./parts";
 
 /** 回调页带回来的错误码里有专门文案的；其余显示通用文案。 */
 const KNOWN_ERRORS = [
@@ -89,18 +90,6 @@ function NoticeText({ notice }: { notice: Notice }): ReactNode {
 	return t("github.notice.connected", {
 		slot: t(`github.identity.${notice.slot}`),
 	});
-}
-
-function LeadIcon({
-	name,
-}: {
-	name: "github" | "user" | "robot" | "webhook";
-}): ReactNode {
-	return (
-		<span className="grid h-8 w-8 place-items-center rounded-md border border-border bg-raised text-muted">
-			<Icon name={name} size={15} />
-		</span>
-	);
 }
 
 /** 外链（新窗口打开，带外链图标）。 */
@@ -779,7 +768,7 @@ export default function GitHubSettings(): ReactNode {
 		if (handled.current) return;
 		handled.current = true;
 		if ([...params.keys()].length > 0)
-			navigate("/settings/github", { replace: true });
+			navigate("/settings/git", { replace: true });
 	}, [params, navigate]);
 	const data = status.data;
 	return (

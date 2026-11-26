@@ -1967,7 +1967,7 @@ Web 的命令面板（Ctrl/⌘+K）里「对话内容」一组的数据源。规
 公开端点（tag `public`，免鉴权）：
 
 - `POST /api/v1/public/github/webhook`：按 `X-GitHub-Hook-ID` 找到 Oryn 管理的 hook 行，用它的 secret 校验 `X-Hub-Signature-256`，并要求 `X-GitHub-Hook-Installation-Target-ID` 等于该行的 `repo_id`。hook 不存在、签名错或 target 不符 → 401；缺 `X-GitHub-Delivery` / `X-GitHub-Event` → 400；体超过 25 MiB → 413；受理 → 202，并写 `last_webhook_at`。
-- `GET /api/v1/public/github/oauth/callback`：302 回 `<public_url>/settings/github?connected=<slot>` 或 `?error=<code>`，`code` ∈ `state_invalid`、`exchange_failed`、`same_account`、`access_denied`、`github_not_configured`、`github_upstream`、`internal`。
+- `GET /api/v1/public/github/oauth/callback`：302 回 `<public_url>/settings/git?connected=<slot>` 或 `?error=<code>`，`code` ∈ `state_invalid`、`exchange_failed`、`same_account`、`access_denied`、`github_not_configured`、`github_upstream`、`internal`。
 
 错误码：`github_not_configured`、`github_identity_required`、`github_agent_required`、`github_not_bound`、`conflict`（均 409）；`invalid_request`、`state_invalid`（400）；`not_found`（404）；`github_upstream`（502）。
 
@@ -2138,7 +2138,8 @@ M14 用 GitHub App 连接，下列契约已在 M15 删除，不再存在：`POST
   - 协议类型与 `.env` 里已部署的不一致时，返回 409 `family_mismatch`；
   - 把请求里的别名（`oryn-retain` 等）替换成真实模型名，gemini 的模型名在 URL 路径里；
   - 按中央模型目录的路由转发，注入 Oryn 加密库里的 provider 密钥，响应里的密钥做脱敏。
-- **嵌入与重排**：按 `memory_endpoints` 转发。重排可选：没配重排接口时 `.env` 写 `HINDSIGHT_API_RERANKER_PROVIDER=rrf`，Hindsight 不会调用重排中转；配了写 `cohere`。
+- **嵌入与重排**：按 `memory_endpoints` 转发。嵌入的成功响应里 `data[].index` 缺失或为 null 时（Gemini 的 OpenAI 兼容接口会把第 0 条的 index 省成 null），中转按数组位置补齐，因为 Hindsight 按 index 排序批量结果。重排可选：没配重排接口时 `.env` 写 `HINDSIGHT_API_RERANKER_PROVIDER=rrf`，Hindsight 不会调用重排中转；配了写 `cohere`。
+- **上下文缓存**：只放行 `generateContent` / `streamGenerateContent`，gemini 的 `cachedContents` 不经中转，所以 `.env` 写 `HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED=false`，关掉 Hindsight 的显式缓存。上游的隐式缓存照常命中。
 - **用量**：从响应的 usage 字段解析，按小时计进 `memory_usage`。
 
 ### REST（tag `memory`）
@@ -2233,7 +2234,7 @@ omp 的 `composer.predictions`：回合正常结束后用当前模型跑一次�
 
 ### 设置
 
-两个开关都写在全局 omp `config.yml` 里（`composer.predictions`、`composer.predictionAlternatives`，默认都是 false），由 设置 › Agent › 输入框（`/settings/agent-composer`）通过 agent 配置文件接口写入，再随 `omphome.apply` 下发。关闭时删除该键。项目层的 `config.yml` 可以覆盖。
+两个开关都写在全局 omp `config.yml` 里（`composer.predictions`、`composer.predictionAlternatives`，默认都是 false），由 设置 › 输入与快捷键（`/settings/input`）通过 agent 配置文件接口写入，再随 `omphome.apply` 下发。关闭时删除该键。项目层的 `config.yml` 可以覆盖。
 
 ### Web
 

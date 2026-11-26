@@ -1,12 +1,11 @@
 /**
- * 「更多」分区侧栏（M9.6）：条目与 `MORE_ENTRIES` 一致（浏览器里没有「桌面」，桌面壳里有）、分三组、当前页高亮；
+ * 「更多」分区侧栏（M9.6）：条目与 `MORE_ENTRIES` 一致；「设置」一行（无组标题）在前，「概览」组在后；当前页高亮；
  * 连接行只在断线时出现（在第一行）；明暗切换；注册表里的每个 labelKey 在两种语言里都有。
  */
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resources } from "../../i18n";
-import { host } from "../../lib/host";
 import { connectionStore } from "../../state/stores";
 import { themeStore } from "../../state/theme";
 import { uiStore } from "../../state/ui";
@@ -51,40 +50,44 @@ function lookup(tree: unknown, key: string): unknown {
 		);
 }
 
-const h = host as { desktop: unknown };
-const realDesktop = h.desktop;
-
 beforeEach(() => {
 	connectionStore.setState({ status: "open" });
 	themeStore.getState().setMode("system");
 });
 
 afterEach(() => {
-	h.desktop = realDesktop;
 	window.innerWidth = 1024;
 });
 
 describe("MorePane", () => {
-	it("条目与 MORE_ENTRIES 一致、按组排列；浏览器里没有「桌面」", () => {
+	it("条目与 MORE_ENTRIES 一致、按组排列；「设置」只占一行且没有组标题", () => {
 		mount();
-		const expected = MORE_ENTRIES.filter((e) => !e.desktopOnly);
 		expect(entryLinks().map((a) => a.dataset.moreEntry)).toEqual(
-			expected.map((e) => e.key),
+			MORE_ENTRIES.map((e) => e.key),
 		);
 		expect(entryLinks().map((a) => a.getAttribute("href"))).toEqual(
-			expected.map((e) => e.to),
+			MORE_ENTRIES.map((e) => e.to),
 		);
 		expect(entryLinks().map((a) => a.textContent)).toEqual(
-			expected.map((e) => lookup(resources["zh-CN"].translation, e.labelKey)),
+			MORE_ENTRIES.map((e) =>
+				lookup(resources["zh-CN"].translation, e.labelKey),
+			),
 		);
 		const groups = Array.from(
 			more().querySelectorAll<HTMLElement>("[data-more-group]"),
 		);
-		expect(groups.map((g) => g.firstElementChild?.textContent)).toEqual([
-			"概览",
-			"Agent",
-			"设置",
+		expect(groups.map((g) => g.dataset.moreGroup)).toEqual([
+			"settings",
+			"overview",
 		]);
+		const [settings, overview] = groups as [HTMLElement, HTMLElement];
+		expect(within(settings).getAllByRole("link")).toHaveLength(1);
+		expect(settings.firstElementChild).toHaveAttribute(
+			"data-more-entry",
+			"settings",
+		);
+		expect(settings.firstElementChild).toHaveAttribute("href", "/settings");
+		expect(overview.firstElementChild?.textContent).toBe("概览");
 		for (const g of groups)
 			for (const a of within(g).getAllByRole("link"))
 				expect(
@@ -92,24 +95,20 @@ describe("MorePane", () => {
 				).toBe(g.dataset.moreGroup);
 	});
 
-	it("桌面壳里出现桌面专属条目", () => {
-		h.desktop = {};
-		mount();
-		expect(entryLinks().map((a) => a.dataset.moreEntry)).toEqual(
-			MORE_ENTRIES.map((e) => e.key),
-		);
-	});
-
 	it("当前页高亮（含子路径），点条目导航", () => {
 		mount("/settings/secrets");
-		const secrets = entryLinks().find((a) => a.dataset.moreEntry === "secrets");
-		expect(secrets).toHaveAttribute("aria-current", "page");
+		const settings = entryLinks().find(
+			(a) => a.dataset.moreEntry === "settings",
+		);
+		expect(settings).toHaveAttribute("aria-current", "page");
 		expect(
 			entryLinks().filter((a) => a.getAttribute("aria-current") === "page"),
 		).toHaveLength(1);
-		const about = entryLinks().find((a) => a.dataset.moreEntry === "about");
-		fireEvent.click(about as HTMLElement);
-		expect(screen.getByTestId("where")).toHaveTextContent("/settings/about");
+		const boxes = entryLinks().find((a) => a.dataset.moreEntry === "boxes");
+		fireEvent.click(boxes as HTMLElement);
+		expect(screen.getByTestId("where")).toHaveTextContent("/boxes");
+		expect(boxes).toHaveAttribute("aria-current", "page");
+		expect(settings).not.toHaveAttribute("aria-current");
 	});
 
 	it("统计入口（M10）：在「概览」组里，链到 /stats，统计页的子路径下高亮", () => {

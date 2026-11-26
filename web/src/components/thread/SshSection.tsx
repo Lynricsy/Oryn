@@ -58,7 +58,7 @@ function ManageLink(): ReactNode {
 	const { t } = useTranslation();
 	return (
 		<Link
-			to="/settings/agent-ssh"
+			to="/settings/ssh"
 			className="mt-2 inline-block text-accent text-xs hover:underline"
 		>
 			{t("sshPanel.manage")}

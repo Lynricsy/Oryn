@@ -354,7 +354,7 @@ func (s *Server) writeThread(w http.ResponseWriter, r *http.Request, th *threads
 
 // githubSettingsRedirect 302 回设置页的 GitHub 分区，query 为 key=value。
 func (s *Server) githubSettingsRedirect(w http.ResponseWriter, r *http.Request, key, value string) {
-	http.Redirect(w, r, s.Config.PublicURL+"/settings/github?"+url.Values{key: {value}}.Encode(), http.StatusFound)
+	http.Redirect(w, r, s.Config.PublicURL+"/settings/git?"+url.Values{key: {value}}.Encode(), http.StatusFound)
 }
 
 // FinishGitHubOAuth 对应公开的 `GET /api/v1/public/github/oauth/callback`。

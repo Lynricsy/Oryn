@@ -755,7 +755,7 @@ github: { api_url: "https://api.github.com", web_url: "https://github.com" }
 2. **Authorization callback URL** 填卡片上显示的回调地址 `<public_url>/api/v1/public/github/oauth/callback`（旁边有「复制回调地址」）。没保存过配置时，这个地址也会显示。
 3. 在 GitHub 上生成 Client secret，把 **Client ID** 和 **Client Secret** 填回卡片并保存（`PUT /api/v1/github/oauth-app`）。之后再改 Client ID 或 webhook 基址时，Secret 留空表示沿用已保存的值。
 4. **Webhook 基址**默认等于 `public_url`，仓库 webhook 的投递地址是 `<webhook 基址>/api/v1/public/github/webhook`。改动基址后，Oryn 会立刻重写所有仓库 webhook 的 `config.url`，失败只记日志，之后每 10 分钟的同步还会再重写一遍。
-5. 在「账号」卡片里分别「连接」我的账号与 Agent 账号。授权链接 10 分钟内有效，带 `prompt=select_account`；可以「复制链接」到已登录目标账号的另一个浏览器里打开。回调完成后 302 回到 `<public_url>/settings/github?connected=<slot>`，失败时是 `?error=<code>`（`state_invalid`、`exchange_failed`、`same_account`、`access_denied`、`github_not_configured`）。
+5. 在「账号」卡片里分别「连接」我的账号与 Agent 账号。授权链接 10 分钟内有效，带 `prompt=select_account`；可以「复制链接」到已登录目标账号的另一个浏览器里打开。回调完成后 302 回到 `<public_url>/settings/git?connected=<slot>`，失败时是 `?error=<code>`（`state_invalid`、`exchange_failed`、`same_account`、`access_denied`、`github_not_configured`）。
 6. 「删除配置」先删除 Oryn 在各仓库建的 webhook，再断开两个账号，最后删掉配置行。GitHub 上的 OAuth App 本身不会被删除。单独断开「我的账号」时，同样先删除全部仓库 webhook，因为这些 webhook 由我的账号管理。
 
 没有 OAuth App 配置时，连接账号返回 409 `github_not_configured`。
@@ -974,6 +974,7 @@ docker compose -f deploy/hindsight/compose.yaml up -d
 - 重排是可选的：管理页没配重排接口时 `.env` 写 `HINDSIGHT_API_RERANKER_PROVIDER=rrf`（Hindsight 自带，只按 RRF 分融合排序，不调用模型），配了才走 Cohere 兼容中转；cohere 的三行总是写出，rrf 下被忽略。之后添加或删除重排接口时，管理页同样给出要改的那一行（切到 cohere 时连同三行 cohere 配置），重启 Hindsight 后点「我已重启」。
 - 「我已重启」会把所有待部署的变化（各用途的协议类型和重排模式）一起确认。所以协议类型和重排模式同时变了时，模型卡和接口卡给出的是同一份完整片段，按其中任何一份改完 `.env` 再确认都可以。
 - 中文检索依赖 pgroonga（`HINDSIGHT_API_TEXT_SEARCH_EXTENSION=pgroonga`）。输出语言固定为简体中文。
+- `.env` 固定写 `HINDSIGHT_API_LLM_PROMPT_CACHE_ENABLED=false`。中转不放行 gemini 的 `cachedContents`，开着显式缓存只会让每次调用先建缓存失败、再退回普通调用；上游的隐式缓存不受影响（生产实测 retain、consolidation、reflect 的部分调用仍有 `cached_tokens`）。旧 `.env` 没有这一行时手动补上，再执行 `docker compose -f deploy/hindsight/compose.yaml up -d api`。
 - `HINDSIGHT_DB_PASSWORD` 只在数据卷首次初始化时生效，之后改它会导致 API 连不上库。数据库只在 compose 的内部网络里，所以默认值可以接受；要改就在首次 `up` 之前改。
 - 开关、单项目关闭、生成 `.env` 之后，正在运行的线程会出现在 Agent 页的「需要重启」里，下一个会话（或点「重启」之后）才会生效。
 

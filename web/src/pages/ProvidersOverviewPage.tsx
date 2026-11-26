@@ -262,13 +262,13 @@ export function ProvidersOverviewPage(): ReactNode {
 						box="sm"
 						size={14}
 						label={t("providers.overview.manage")}
-						onClick={() => navigate("/settings/providers")}
+						onClick={() => navigate("/settings/compute")}
 					/>
 				) : (
 					<Button
 						size="sm"
 						icon="settings"
-						onClick={() => navigate("/settings/providers")}
+						onClick={() => navigate("/settings/compute")}
 					>
 						{t("providers.overview.manage")}
 					</Button>
@@ -295,7 +295,7 @@ export function ProvidersOverviewPage(): ReactNode {
 							<Button
 								variant="primary"
 								icon="plus"
-								onClick={() => navigate("/settings/providers")}
+								onClick={() => navigate("/settings/compute")}
 							>
 								{t("providers.overview.emptyAction")}
 							</Button>

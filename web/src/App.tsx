@@ -1,12 +1,12 @@
 import { lazy, type ReactNode, Suspense } from "react";
-import { Navigate, Route, Routes } from "react-router";
+import { Navigate, Route, Routes, useLocation } from "react-router";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { AppShell } from "./components/layout/AppShell";
 import { ConfirmHost } from "./components/ui/ConfirmHost";
 import { ContextMenuHost } from "./components/ui/ContextMenu";
 import { Spinner } from "./components/ui/primitives";
 import { HomePage } from "./pages/HomePage";
-import type { SettingsSection } from "./pages/SettingsPage";
+import { LEGACY_SECTIONS, SETTINGS_SECTIONS } from "./pages/settings/registry";
 import { ThreadPage } from "./pages/ThreadPage";
 
 // Space 页与助手页（M9）：协调对话不常开，按需加载
@@ -126,36 +126,11 @@ const SharePage = lazy(() =>
 	import("./pages/SharePage").then((m) => ({ default: m.SharePage })),
 );
 
-/** 设置分区（路由与命令面板的「设置」组共用这一份） */
-export const SETTINGS: SettingsSection[] = [
-	"devices",
-	"providers",
-	"runners",
-	"secrets",
-	"browser-profiles",
-	"git-identity",
-	"github",
-	"agent-skills",
-	"agent-subagents",
-	"agent-roles",
-	"agent-prompts",
-	"agent-commands",
-	"agent-extensions",
-	"agent-memory",
-	"agent-ssh",
-	"agent-composer",
-	"selection-actions",
-	"agent-config",
-	"identity",
-	"assistant",
-	"appearance",
-	"notifications",
-	"shares",
-	"artifacts",
-	"automations",
-	"desktop",
-	"about",
-];
+/** 旧设置地址 → 新分区，保留查询串与锚点（GitHub OAuth 回调带 `?connected=` / `?error=`）。 */
+function LegacySettings({ to }: { to: string }): ReactNode {
+	const { search, hash } = useLocation();
+	return <Navigate to={`/settings/${to}${search}${hash}`} replace />;
+}
 
 /** 路由表（SPA）；外层由 main.tsx 提供 BrowserRouter 与 QueryClient。渲染异常由顶层错误边界接住，不整页白屏。 */
 export function App(): ReactNode {
@@ -231,15 +206,20 @@ export function App(): ReactNode {
 							path="settings/projects"
 							element={<Navigate to="/projects" replace />}
 						/>
-						<Route
-							path="settings"
-							element={<Navigate to="/settings/devices" replace />}
-						/>
-						{SETTINGS.map((s) => (
+						<Route path="settings" element={<SettingsPage />} />
+						{SETTINGS_SECTIONS.map((s) => (
 							<Route
 								key={s}
 								path={`settings/${s}`}
 								element={<SettingsPage section={s} />}
+							/>
+						))}
+						{/* 重排前的分区地址（推送、文档、书签里的旧链接） */}
+						{Object.entries(LEGACY_SECTIONS).map(([from, to]) => (
+							<Route
+								key={from}
+								path={`settings/${from}`}
+								element={<LegacySettings to={to} />}
 							/>
 						))}
 					</Route>

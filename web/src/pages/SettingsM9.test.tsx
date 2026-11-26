@@ -9,7 +9,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { M9_IDS, projects } from "../mock/fixtures";
 import { MockServer } from "../mock/server";
 import { ProjectSettingsPage } from "./projects/settings/ProjectSettingsPage";
-import { SettingsPage, type SettingsSection } from "./SettingsPage";
+import { SettingsPage } from "./SettingsPage";
+import type { SettingsSection } from "./settings/registry";
 
 let server: MockServer;
 

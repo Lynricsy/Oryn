@@ -1,12 +1,12 @@
 /**
- * 设置 → 身份与头像（M9.6 / M13）：默认 Agent 身份（名字 + 头像）、全局助手（名字 + 头像，留空显示「全局助手」与 sparkle，
- * 带底栏预览）、role 头像入口（链接卡，头像改在「Agent › 模型角色」里编辑）、新对话默认对象、我的头像。
+ * 身份卡片（M9.6 / M13），分别挂在各自的设置分区：
+ * - 默认 Agent 身份（名字 + 头像）→「模型与角色」；全局助手（名字 + 头像，留空显示「全局助手」与 sparkle，带底栏预览）→「全局助手」；
+ * - 新对话默认对象 →「输入与快捷键」；我的头像 →「账户与设备」。
  * 身份接口是整体替换：每次保存都发完整对象——只改名字时带上当前头像，只改头像时带上当前名字（见 `useIdentityWriter`）。
  */
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router";
 import type { Schemas } from "../../api/client";
 import {
 	identityKeys,
@@ -133,7 +133,7 @@ function NameField({
 	);
 }
 
-function AgentIdentityCard(): ReactNode {
+export function AgentIdentityCard(): ReactNode {
 	const { t } = useTranslation();
 	const q = useIdentity("agent");
 	const save = useIdentityWriter("agent");
@@ -172,7 +172,7 @@ function AgentIdentityCard(): ReactNode {
 	);
 }
 
-function AssistantIdentityCard(): ReactNode {
+export function AssistantIdentityCard(): ReactNode {
 	const { t } = useTranslation();
 	const own = useIdentity("assistant");
 	const effective = useAssistantIdentity();
@@ -223,28 +223,10 @@ function AssistantIdentityCard(): ReactNode {
 	);
 }
 
-/** role 头像入口：头像改在「Agent › 模型角色」编辑。 */
-function RoleAvatarsLinkCard(): ReactNode {
-	const { t } = useTranslation();
-	return (
-		<Card title={t("identity.rolesTitle")} icon="robot">
-			<div data-testid="identity-roles" className="flex flex-col gap-2">
-				<p className="text-faint text-xs">{t("identity.rolesHint")}</p>
-				<Link
-					to="/settings/agent-roles"
-					className="self-start text-accent-ink text-xs underline"
-				>
-					{t("identity.rolesLink")}
-				</Link>
-			</div>
-		</Card>
-	);
-}
-
 const NEW_THREAD_TARGETS: readonly NewThreadTarget[] = ["role", "assistant"];
 
 /** 新对话默认对象（R18）：存在服务端，首屏每次打开都按它预选。 */
-function NewThreadTargetCard(): ReactNode {
+export function NewThreadTargetCard(): ReactNode {
 	const { t } = useTranslation();
 	const qc = useQueryClient();
 	const q = useComposerPrefs();
@@ -294,7 +276,7 @@ function NewThreadTargetCard(): ReactNode {
 	);
 }
 
-function UserAvatarCard(): ReactNode {
+export function UserAvatarCard(): ReactNode {
 	const { t } = useTranslation();
 	const qc = useQueryClient();
 	const q = useIdentity("user");
@@ -328,17 +310,5 @@ function UserAvatarCard(): ReactNode {
 				<ErrorText error={save.error ?? q.error} />
 			</div>
 		</Card>
-	);
-}
-
-export function IdentitySettings(): ReactNode {
-	return (
-		<>
-			<AgentIdentityCard />
-			<AssistantIdentityCard />
-			<NewThreadTargetCard />
-			<RoleAvatarsLinkCard />
-			<UserAvatarCard />
-		</>
 	);
 }

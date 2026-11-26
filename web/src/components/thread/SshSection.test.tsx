@@ -108,7 +108,7 @@ describe("SshSection", () => {
 		).toBeInTheDocument();
 		expect(screen.getByRole("link", { name: "管理主机" })).toHaveAttribute(
 			"href",
-			"/settings/agent-ssh",
+			"/settings/ssh",
 		);
 		expect(cmd).not.toHaveBeenCalled();
 	});

@@ -156,11 +156,11 @@ describe("tauri", () => {
 					: undefined,
 		});
 		const h = createHost(f.win);
-		expect(await h.ready("en", "/settings/devices")).toBe("/t/T-9");
+		expect(await h.ready("en", "/settings/account")).toBe("/t/T-9");
 		expect(f.invoke).toHaveBeenCalledWith("host_ready", {
 			bridge: BRIDGE,
 			lang: "en",
-			path: "/settings/devices",
+			path: "/settings/account",
 		});
 		expect(h.isForeground()).toBe(false);
 	});

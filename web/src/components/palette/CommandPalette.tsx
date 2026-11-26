@@ -22,7 +22,6 @@ import {
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
-import { SETTINGS } from "../../App";
 import { useArtifacts } from "../../api/artifact-queries";
 import { api, type Schemas, unwrap } from "../../api/client";
 import { useProjects } from "../../api/queries";
@@ -43,11 +42,11 @@ import { isCoordinatorThread } from "../../lib/thread-kind";
 import { parseTitleCard } from "../../lib/title";
 import { useDebounced } from "../../lib/use-debounced";
 import { useBreakpoint } from "../../lib/viewport";
+import { visibleEntries } from "../../pages/settings/registry";
 import { useIndex } from "../../state/stores";
 import { type ThemeMode, themeStore, useTheme } from "../../state/theme";
 import { uiStore } from "../../state/ui";
 import { recentAt } from "../artifacts/artifacts-model";
-import { MORE_ENTRIES } from "../layout/more-entries";
 import { revealWhenReady } from "../transcript/reveal";
 import { ProjectBadge } from "../ui/data";
 import { Icon, type IconName } from "../ui/icons";
@@ -339,25 +338,25 @@ export function CommandPalette(): ReactNode {
 
 	const settingCands = useMemo<Candidate[]>(
 		() =>
-			SETTINGS.filter((s) => s !== "desktop" || host.desktop !== null).map(
-				(s) => {
-					const label = t(`settings.${s}`);
-					const icon =
-						MORE_ENTRIES.find((e) => e.key === s)?.icon ?? "settings";
-					return {
-						fields: [fold(label), fold(s)],
-						recency: 0,
-						row: (ranges) => ({
-							kind: "item",
-							key: `setting:${s}`,
-							leading: <Icon name={icon} size={15} className="text-muted" />,
-							label,
-							labelRanges: ranges[0],
-							run: () => go(`/settings/${s}`),
-						}),
-					};
-				},
-			),
+			visibleEntries(host.desktop !== null).map((e) => {
+				const label = t(`settings.${e.id}`);
+				return {
+					fields: [
+						fold(label),
+						fold(e.id),
+						fold(t(`settings.keywords.${e.id}`)),
+					],
+					recency: 0,
+					row: (ranges) => ({
+						kind: "item",
+						key: `setting:${e.id}`,
+						leading: <Icon name={e.icon} size={15} className="text-muted" />,
+						label,
+						labelRanges: ranges[0],
+						run: () => go(`/settings/${e.id}`),
+					}),
+				};
+			}),
 		[t, go],
 	);
 

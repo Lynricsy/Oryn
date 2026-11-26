@@ -19,21 +19,13 @@ import { CopyButton } from "../../components/ui/CopyButton";
 import { Badge, Card, ListRow } from "../../components/ui/data";
 import { FileTypeIcon } from "../../components/ui/FileTypeIcon";
 import { ImageViewer } from "../../components/ui/ImageViewer";
-import { Icon, type IconName } from "../../components/ui/icons";
 import { EmptyState, ErrorText, Spinner } from "../../components/ui/primitives";
 import { formatBytes, formatRelative } from "../../lib/format";
 import { rasterMime } from "../../lib/image-src";
 import { parseTitleCard } from "../../lib/title";
 import { useIndex } from "../../state/stores";
 import { ArtifactPublishing } from "./ArtifactPublishing";
-
-function LeadIcon({ name }: { name: IconName }) {
-	return (
-		<span className="grid h-8 w-8 place-items-center rounded-md border border-border bg-raised text-muted">
-			<Icon name={name} size={15} />
-		</span>
-	);
-}
+import { LeadIcon } from "./parts";
 
 function ShareRow({ share }: { share: ThreadShare }): ReactNode {
 	const { t } = useTranslation();

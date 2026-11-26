@@ -209,7 +209,7 @@ func (e *m15Env) stepIdentities(t *testing.T) {
 		assert.Equal(t, e.cfg.PublicURL+"/api/v1/public/github/oauth/callback", q.Get("redirect_uri"))
 		resp := noRedirect(t, e.http.URL+"/api/v1/public/github/oauth/callback?code="+c.code+"&state="+url.QueryEscape(q.Get("state")))
 		assert.Equal(t, http.StatusFound, resp.StatusCode)
-		assert.Equal(t, e.cfg.PublicURL+"/settings/github?connected="+c.slot, resp.Header.Get("Location"))
+		assert.Equal(t, e.cfg.PublicURL+"/settings/git?connected="+c.slot, resp.Header.Get("Location"))
 	}
 	type ident struct {
 		Login         string   `json:"login"`

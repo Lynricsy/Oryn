@@ -62,7 +62,7 @@ describe("defaultSectionPath", () => {
 		expect(defaultSectionPath("assistant")).toBe("/assistant");
 		expect(defaultSectionPath("projects")).toBe("/projects");
 		expect(defaultSectionPath("more")).toBe(MORE_ENTRIES[0]?.to);
-		expect(defaultSectionPath("more")).toBe("/settings/automations");
+		expect(defaultSectionPath("more")).toBe("/settings");
 	});
 
 	it("每个分区的缺省落点都属于该分区", () => {
@@ -100,12 +100,8 @@ describe("sectionTarget", () => {
 	});
 
 	it("没有记忆、属于别的分区、协议相对路径、不落定 → 缺省路径", () => {
-		expect(sectionTarget("more", undefined, kindOf)).toBe(
-			"/settings/automations",
-		);
-		expect(sectionTarget("more", "/t/T-work", kindOf)).toBe(
-			"/settings/automations",
-		);
+		expect(sectionTarget("more", undefined, kindOf)).toBe("/settings");
+		expect(sectionTarget("more", "/t/T-work", kindOf)).toBe("/settings");
 		expect(sectionTarget("threads", "//evil.example/t/x", kindOf)).toBe("/");
 		expect(sectionTarget("threads", "t/T-work", kindOf)).toBe("/");
 		expect(sectionTarget("threads", "/t/T-asst", kindOf)).toBe("/");
@@ -161,8 +157,9 @@ describe("MORE_ENTRIES", () => {
 				);
 			expect(typeof label, e.labelKey).toBe("string");
 		}
-		expect(MORE_ENTRIES.filter((e) => e.desktopOnly).map((e) => e.key)).toEqual(
-			["desktop"],
-		);
+		// 设置只占一行（各分区的导航在设置页里），其余是「概览」组
+		expect(
+			MORE_ENTRIES.filter((e) => e.group === "settings").map((e) => e.to),
+		).toEqual(["/settings"]);
 	});
 });

@@ -48,7 +48,7 @@ const (
 )
 
 // githubSettingsPath 是 Web 上连接 GitHub 身份的设置页（无线程通知的落点）。
-const githubSettingsPath = "/settings/github"
+const githubSettingsPath = "/settings/git"
 
 func init() {
 	on("issues", (*Service).onIssues)

@@ -112,7 +112,7 @@ describe("ProjectGitHubCard", () => {
 		).toBeInTheDocument();
 		expect(
 			screen.getByRole("link", { name: T("github.project.connect") }),
-		).toHaveAttribute("href", "/settings/github");
+		).toHaveAttribute("href", "/settings/git");
 	});
 
 	it("GitHub 地址但从未解析出仓库：同样链接到设置页", async () => {
@@ -121,7 +121,7 @@ describe("ProjectGitHubCard", () => {
 		expect(screen.queryAllByRole("switch")).toHaveLength(0);
 		expect(
 			await screen.findByRole("link", { name: T("github.project.connect") }),
-		).toHaveAttribute("href", "/settings/github");
+		).toHaveAttribute("href", "/settings/git");
 	});
 
 	it("仓库地址不是 GitHub：不渲染", () => {
@@ -207,7 +207,7 @@ describe("ProjectGitHubCard", () => {
 			).toBeInTheDocument();
 			expect(
 				screen.getByRole("link", { name: T("github.project.connect") }),
-			).toHaveAttribute("href", "/settings/github");
+			).toHaveAttribute("href", "/settings/git");
 		});
 
 		it("已绑定：显示 hook 状态徽标；不是 active 时附说明", () => {

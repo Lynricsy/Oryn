@@ -7,7 +7,7 @@ import {
 	waitFor,
 	within,
 } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import {
 	afterEach,
 	beforeAll,
@@ -30,8 +30,12 @@ import { pairUri } from "../lib/pair-qr";
 import { type ProcessedWallpaper, processWallpaper } from "../lib/wallpaper";
 import { installTheme, THEME_KEY, themeStore } from "../state/theme";
 import { answerConfirm } from "../test/confirm";
-import type { SettingsSection } from "./SettingsPage";
 import { SettingsPage } from "./SettingsPage";
+import {
+	SETTINGS_SECTIONS,
+	type SettingsSection,
+	visibleEntries,
+} from "./settings/registry";
 
 // 壁纸处理要真解码图片，jsdom 做不到：换成测试里手动兑现的 promise，其余（存取图片）用真实现
 vi.mock("../lib/wallpaper", async (importOriginal) => ({
@@ -171,7 +175,7 @@ const fetchMock = vi.fn(
 	},
 );
 
-function setup(section: SettingsSection = "git-identity") {
+function setup(section: SettingsSection = "git") {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false } },
 	});
@@ -183,6 +187,10 @@ function setup(section: SettingsSection = "git-identity") {
 			</MemoryRouter>
 		</QueryClientProvider>,
 	);
+}
+
+function Where() {
+	return <span data-testid="where">{useLocation().pathname}</span>;
 }
 
 const writes = () => calls.filter((c) => c.method !== "GET");
@@ -336,33 +344,125 @@ describe("设置 → agent 配置", () => {
 	});
 });
 
-describe("设置页外框与「身份与头像」", () => {
+describe("设置页外框与导航", () => {
 	beforeEach(() => {
 		calls = [];
 		vi.stubGlobal("fetch", fetchMock);
 	});
 	afterEach(() => {
 		vi.unstubAllGlobals();
+		window.innerWidth = 1024;
 	});
 
-	it("页面里没有分区导航（导航在侧栏「更多」分区）", () => {
-		setup("devices");
-		expect(screen.queryByRole("navigation")).toBeNull();
-		expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("设置");
-	});
+	/** 与 App 的路由一样：`/settings` 是首页，`/settings/<id>` 是各分区。 */
+	function mountAt(path: string) {
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		return render(
+			<QueryClientProvider client={client}>
+				<MemoryRouter initialEntries={[path]}>
+					<Routes>
+						<Route path="/settings" element={<SettingsPage />} />
+						{SETTINGS_SECTIONS.map((s) => (
+							<Route
+								key={s}
+								path={`/settings/${s}`}
+								element={<SettingsPage section={s} />}
+							/>
+						))}
+					</Routes>
+					<Where />
+				</MemoryRouter>
+			</QueryClientProvider>,
+		);
+	}
 
-	it("身份与头像：依次是默认 Agent 身份、全局助手、新对话默认对象、角色头像、我的头像五张卡", async () => {
-		setup("identity");
+	const where = () => screen.getByTestId("where").textContent;
+	const entries = () =>
+		Array.from(
+			screen
+				.getByRole("navigation", { name: "设置" })
+				.querySelectorAll<HTMLElement>("[data-settings-entry]"),
+		).map((a) => a.dataset.settingsEntry);
+
+	it("宽屏：/settings 落到「账户与设备」，左侧是四组导航，当前分区高亮", () => {
+		mountAt("/settings");
+		expect(where()).toBe("/settings/account");
+		const nav = screen.getByRole("navigation", { name: "设置" });
 		expect(
-			screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent),
-		).toEqual([
-			"默认 Agent 身份",
-			"全局助手",
-			"新对话默认对象",
-			"角色头像",
-			"我的头像",
-		]);
-		expect(await screen.findByTestId("identity-roles")).toBeInTheDocument();
+			within(nav)
+				.getAllByRole("heading", { level: 2 })
+				.map((h) => h.textContent),
+		).toEqual(["个人", "助手与 Agent", "工作区", "其它"]);
+		// 浏览器里没有「桌面应用」
+		expect(entries()).toEqual(visibleEntries(false).map((e) => e.id));
+		expect(entries()).not.toContain("desktop");
+		expect(
+			within(nav).getByRole("link", { name: "账户与设备" }),
+		).toHaveAttribute("aria-current", "page");
+		expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("设置");
+		expect(screen.queryByRole("button", { name: "返回设置" })).toBeNull();
+	});
+
+	it("宽屏：点导航条目切换分区", () => {
+		mountAt("/settings/account");
+		fireEvent.click(screen.getByRole("link", { name: "通知与预算" }));
+		expect(where()).toBe("/settings/notifications");
+		expect(screen.getByRole("link", { name: "通知与预算" })).toHaveAttribute(
+			"aria-current",
+			"page",
+		);
+		expect(screen.getByRole("heading", { name: "渠道" })).toBeInTheDocument();
+	});
+
+	it("搜索按分区名与关键词匹配：「预算」只剩「通知与预算」；无匹配时提示；Esc 清空", () => {
+		mountAt("/settings/account");
+		const search = screen.getByRole("searchbox", { name: "搜索设置" });
+		fireEvent.change(search, { target: { value: "预算" } });
+		expect(entries()).toEqual(["notifications"]);
+		fireEvent.change(search, { target: { value: "BUDGET" } });
+		expect(entries()).toEqual(["notifications"]);
+		fireEvent.change(search, { target: { value: "zzz-没有这个" } });
+		expect(entries()).toEqual([]);
+		expect(screen.getByText("没有匹配的设置")).toBeInTheDocument();
+		fireEvent.keyDown(search, { key: "Escape" });
+		expect(search).toHaveValue("");
+		expect(entries()).toEqual(visibleEntries(false).map((e) => e.id));
+	});
+
+	it("手机：/settings 是分组首页；点进分区后页头是「返回设置」，点它回到首页", () => {
+		window.innerWidth = 390;
+		mountAt("/settings");
+		expect(where()).toBe("/settings");
+		expect(entries()).toEqual(visibleEntries(false).map((e) => e.id));
+		for (const g of ["个人", "助手与 Agent", "工作区", "其它"])
+			expect(screen.getByText(g)).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "返回设置" })).toBeNull();
+		fireEvent.click(screen.getByRole("link", { name: "通知与预算" }));
+		expect(where()).toBe("/settings/notifications");
+		// 分区页只有分区内容，没有导航
+		expect(screen.queryByRole("navigation", { name: "设置" })).toBeNull();
+		expect(screen.getByText("通知与预算")).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "返回设置" }));
+		expect(where()).toBe("/settings");
+		expect(
+			screen.getByRole("searchbox", { name: "搜索设置" }),
+		).toBeInTheDocument();
+	});
+
+	it("身份卡分到各自的分区：账户有我的头像，输入有新对话默认对象，助手有全局助手，模型与角色有默认 Agent 身份", () => {
+		const firstCard = (section: SettingsSection) => {
+			const view = setup(section);
+			const title = screen.getAllByRole("heading", { level: 3 })[0]
+				?.textContent;
+			view.unmount();
+			return title;
+		};
+		expect(firstCard("account")).toBe("我的头像");
+		expect(firstCard("input")).toBe("新对话默认对象");
+		expect(firstCard("assistant")).toBe("全局助手");
+		expect(firstCard("agent-models")).toBe("默认 Agent 身份");
 	});
 });
 
@@ -600,16 +700,7 @@ describe("设置 → 桌面壳（M6）/ 移动壳（M7）", () => {
 			<QueryClientProvider client={client}>
 				<MemoryRouter initialEntries={[`/settings/${section}`]}>
 					<Routes>
-						<Route
-							path="/settings/devices"
-							element={
-								section === "desktop" ? (
-									<p>DEVICES</p>
-								) : (
-									<SettingsPage section="devices" />
-								)
-							}
-						/>
+						<Route path="/settings" element={<p>SETTINGS HOME</p>} />
 						<Route
 							path={`/settings/${section}`}
 							element={<SettingsPage section={section} />}
@@ -620,26 +711,31 @@ describe("设置 → 桌面壳（M6）/ 移动壳（M7）", () => {
 		);
 	}
 
-	it("「桌面应用」分区在浏览器里访问时回到设备页", () => {
+	it("「桌面应用」分区在浏览器里访问时回到设置首页", () => {
 		mount("desktop");
-		expect(screen.getByText("DEVICES")).toBeInTheDocument();
+		expect(screen.getByText("SETTINGS HOME")).toBeInTheDocument();
 	});
 
-	it("桌面壳里关于页没有「退出登录」", () => {
+	it("桌面壳里关于页没有「退出登录」，导航里有「桌面应用」", () => {
 		h.desktop = fakeDesktop;
 		mount("about");
 		expect(screen.queryByRole("button", { name: "退出登录" })).toBeNull();
+		expect(screen.getByRole("link", { name: "桌面应用" })).toHaveAttribute(
+			"href",
+			"/settings/desktop",
+		);
 	});
 
-	it("浏览器里关于页有「退出登录」", () => {
+	it("浏览器里关于页有「退出登录」，导航里没有「桌面应用」", () => {
 		mount("about");
 		expect(
 			screen.getByRole("button", { name: "退出登录" }),
 		).toBeInTheDocument();
+		expect(screen.queryByRole("link", { name: "桌面应用" })).toBeNull();
 	});
 
 	it("App 会话（设备换来的网页会话）：批准配对卡改为引导到浏览器", () => {
-		mount("devices", { kind: "web", deviceId: "dev_1" });
+		mount("account", { kind: "web", deviceId: "dev_1" });
 		const link = screen.getByRole("link", { name: "在浏览器中打开" });
 		expect(link).toHaveAttribute("href", "/pair");
 		expect(link).toHaveAttribute("target", "_blank");
@@ -648,13 +744,13 @@ describe("设置 → 桌面壳（M6）/ 移动壳（M7）", () => {
 	});
 
 	it("普通网页会话：批准配对卡照常显示配对码输入", () => {
-		mount("devices");
+		mount("account");
 		expect(screen.getByLabelText("配对码")).toBeInTheDocument();
 		expect(screen.queryByRole("link", { name: "在浏览器中打开" })).toBeNull();
 	});
 
-	it("设备页：二维码内容是 oryn://pair?server=<编码后的 origin>，下方写服务器地址", () => {
-		mount("devices");
+	it("账户与设备页：二维码内容是 oryn://pair?server=<编码后的 origin>，下方写服务器地址", () => {
+		mount("account");
 		const qr = screen.getByTestId("pair-qr");
 		expect(qr).toHaveAttribute(
 			"data-qr-payload",
@@ -671,13 +767,13 @@ describe("设置 → 桌面壳（M6）/ 移动壳（M7）", () => {
 		).toBeInTheDocument();
 	});
 
-	it("移动壳：设备页没有二维码卡，desktop 路由回设备页", () => {
+	it("移动壳：账户与设备页没有二维码卡，desktop 路由回设置首页", () => {
 		h.mobile = fakeMobile();
-		const view = mount("devices");
+		const view = mount("account");
 		expect(screen.queryByTestId("pair-qr")).toBeNull();
 		view.unmount();
 		mount("desktop");
-		expect(screen.getByText("DEVICES")).toBeInTheDocument();
+		expect(screen.getByText("SETTINGS HOME")).toBeInTheDocument();
 	});
 
 	it("移动壳关于页：App 版本、WebView、令牌存储与「更换服务器…」，没有「退出登录」", async () => {

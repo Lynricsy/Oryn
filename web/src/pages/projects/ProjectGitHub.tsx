@@ -97,7 +97,7 @@ function UnboundText({
 }): ReactNode {
 	const { t } = useTranslation();
 	const connect = (
-		<Link to="/settings/github" className="text-accent hover:underline">
+		<Link to="/settings/git" className="text-accent hover:underline">
 			{t("github.project.connect")}
 		</Link>
 	);

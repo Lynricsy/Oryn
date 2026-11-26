@@ -1,6 +1,7 @@
-/** 路由：鉴权跳转；项目分区（M9.6）的路由与 `/settings/projects` 的重定向；渲染异常由顶层错误边界接住。 */
+/** 路由：鉴权跳转；项目分区（M9.6）的路由与 `/settings/projects` 的重定向；设置首页与旧设置地址的重定向；渲染异常由顶层错误边界接住。 */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
+import { useEffect } from "react";
 import type * as ReactRouter from "react-router";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -61,12 +62,20 @@ vi.mock("./pages/projects/settings/ProjectSettingsPage", async () => {
 	};
 });
 
+/** 依次到过的地址（含查询串与锚点）：落点页可能随即清掉查询串（GitHub 回调提示），断言重定向看这份记录。 */
+let seen: string[] = [];
+
 function Where() {
 	const loc = useLocation();
-	return <span data-testid="where">{loc.pathname}</span>;
+	const at = loc.pathname + loc.search + loc.hash;
+	useEffect(() => {
+		seen.push(at);
+	}, [at]);
+	return <span data-testid="where">{at}</span>;
 }
 
 function renderAt(path: string) {
+	seen = [];
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false } },
 	});
@@ -188,14 +197,45 @@ describe("项目分区的路由（M9.6）", () => {
 			"THREADS prj_1",
 		);
 	});
+});
 
-	it("/settings 仍重定向到设备页", async () => {
+describe("设置的路由（分区重排）", () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		window.innerWidth = 1024;
+	});
+
+	it("宽屏的 /settings 落到第一个分区「账户与设备」", async () => {
 		signedIn();
 		renderAt("/settings");
 		await waitFor(() =>
 			expect(screen.getByTestId("where")).toHaveTextContent(
-				"/settings/devices",
+				/^\/settings\/account$/,
 			),
+		);
+	});
+
+	it("手机宽度的 /settings 停在设置首页，不重定向", async () => {
+		window.innerWidth = 390;
+		signedIn();
+		renderAt("/settings");
+		expect(
+			await screen.findByRole("searchbox", { name: "搜索设置" }),
+		).toBeInTheDocument();
+		expect(screen.getByTestId("where")).toHaveTextContent(/^\/settings$/);
+	});
+
+	it("旧地址重定向到新分区并保留查询串（GitHub OAuth 回调）", async () => {
+		signedIn();
+		renderAt("/settings/github?connected=user");
+		await waitFor(() => expect(seen).toContain("/settings/git?connected=user"));
+	});
+
+	it("旧地址重定向时保留锚点", async () => {
+		signedIn();
+		renderAt("/settings/agent-skills#prompts");
+		await waitFor(() =>
+			expect(seen).toContain("/settings/agent-instructions#prompts"),
 		);
 	});
 });

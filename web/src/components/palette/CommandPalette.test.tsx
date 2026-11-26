@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { artifactQk } from "../../api/artifact-queries";
 import type { Schemas, Thread } from "../../api/client";
+import { host } from "../../lib/host";
 import { indexStore } from "../../state/stores";
 import { revealWhenReady } from "../transcript/reveal";
 import { CommandPalette } from "./CommandPalette";
@@ -249,5 +250,34 @@ describe("CommandPalette", () => {
 		).toEqual(["路线图", "季度报告", "落地页"]);
 		fireEvent.click(screen.getByRole("option", { name: "打开 Artifacts" }));
 		expect(where()).toBe("/artifacts");
+	});
+
+	it("设置组按分区名与关键词匹配：「预算」命中「通知与预算」，选中打开新分区地址", () => {
+		mount();
+		type("预算");
+		const group = screen.getByRole("group", { name: "设置" });
+		const rows = group.querySelectorAll("[role=option]");
+		expect([...rows].map((r) => r.textContent)).toEqual(["通知与预算"]);
+		fireEvent.click(rows[0] as HTMLElement);
+		expect(where()).toBe("/settings/notifications");
+		expect(paletteStore.getState().open).toBe(false);
+	});
+
+	it("设置组：「桌面应用」只在桌面壳里出现", () => {
+		const h = host as { desktop: unknown };
+		const real = h.desktop;
+		const view = mount();
+		type("桌面");
+		expect(screen.queryByRole("option", { name: "桌面应用" })).toBeNull();
+		view.unmount();
+		h.desktop = {};
+		try {
+			mount();
+			type("桌面");
+			fireEvent.click(screen.getByRole("option", { name: "桌面应用" }));
+			expect(where()).toBe("/settings/desktop");
+		} finally {
+			h.desktop = real;
+		}
 	});
 });

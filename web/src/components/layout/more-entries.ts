@@ -1,35 +1,27 @@
 /**
  * 「更多」分区的条目注册表（M9.6）：「更多」侧栏的条目只在这里注册，侧栏与测试都从这里取。
  * 顺序即显示顺序；第一项是「更多」分区的缺省落点（`sections.ts` 的 `defaultSectionPath("more")`）。
+ * 设置只占一行：各分区的导航在设置页里（`pages/settings/registry.ts`）。
  */
 import type { IconName } from "../ui/icons";
 
 export interface MoreEntry {
 	key: string;
-	group: "overview" | "agent" | "settings";
+	group: "settings" | "overview";
 	icon: IconName;
 	/** i18n 键 */
 	labelKey: string;
 	/** 站内路径；pathname 等于它或以 `它 + "/"` 开头时高亮 */
 	to: string;
-	/** 只在桌面 App 里出现 */
-	desktopOnly?: boolean;
 }
 
 export const MORE_ENTRIES: readonly MoreEntry[] = [
 	{
-		key: "automations",
-		group: "overview",
-		icon: "clock",
-		labelKey: "settings.automations",
-		to: "/settings/automations",
-	},
-	{
-		key: "notifications",
-		group: "overview",
-		icon: "bell",
-		labelKey: "settings.notifications",
-		to: "/settings/notifications",
+		key: "settings",
+		group: "settings",
+		icon: "settings",
+		labelKey: "nav.settings",
+		to: "/settings",
 	},
 	{
 		// 统计分析（M10）：独立页 /stats（用量 / Orb / 产出）
@@ -62,184 +54,5 @@ export const MORE_ENTRIES: readonly MoreEntry[] = [
 		icon: "gauge",
 		labelKey: "nav.providersOverview",
 		to: "/providers",
-	},
-	// Agent（M13）：omp 配置的表单化子页；「高级」是原始文件浏览器，放在组末
-	{
-		key: "agent-skills",
-		group: "agent",
-		icon: "sparkle",
-		labelKey: "settings.agent-skills",
-		to: "/settings/agent-skills",
-	},
-	{
-		key: "agent-subagents",
-		group: "agent",
-		icon: "tree",
-		labelKey: "settings.agent-subagents",
-		to: "/settings/agent-subagents",
-	},
-	{
-		key: "agent-roles",
-		group: "agent",
-		icon: "repeat",
-		labelKey: "settings.agent-roles",
-		to: "/settings/agent-roles",
-	},
-	{
-		key: "agent-prompts",
-		group: "agent",
-		icon: "fileText",
-		labelKey: "settings.agent-prompts",
-		to: "/settings/agent-prompts",
-	},
-	{
-		key: "agent-commands",
-		group: "agent",
-		icon: "terminal",
-		labelKey: "settings.agent-commands",
-		to: "/settings/agent-commands",
-	},
-	{
-		key: "agent-extensions",
-		group: "agent",
-		icon: "plugs",
-		labelKey: "settings.agent-extensions",
-		to: "/settings/agent-extensions",
-	},
-	{
-		key: "agent-memory",
-		group: "agent",
-		icon: "brain",
-		labelKey: "settings.agent-memory",
-		to: "/settings/agent-memory",
-	},
-	{
-		key: "agent-ssh",
-		group: "agent",
-		icon: "hardDrives",
-		labelKey: "settings.agent-ssh",
-		to: "/settings/agent-ssh",
-	},
-	{
-		key: "agent-composer",
-		group: "agent",
-		icon: "keyboard",
-		labelKey: "settings.agent-composer",
-		to: "/settings/agent-composer",
-	},
-	{
-		key: "selection-actions",
-		group: "agent",
-		icon: "bolt",
-		labelKey: "settings.selection-actions",
-		to: "/settings/selection-actions",
-	},
-	{
-		key: "agent-config",
-		group: "agent",
-		icon: "file",
-		labelKey: "settings.agent-config",
-		to: "/settings/agent-config",
-	},
-	{
-		key: "identity",
-		group: "settings",
-		icon: "robot",
-		labelKey: "settings.identity",
-		to: "/settings/identity",
-	},
-	{
-		// 全局助手（M19）：联网开关与 MCP 服务器
-		key: "assistant",
-		group: "settings",
-		icon: "globe",
-		labelKey: "settings.assistant",
-		to: "/settings/assistant",
-	},
-	{
-		key: "appearance",
-		group: "settings",
-		icon: "palette",
-		labelKey: "settings.appearance",
-		to: "/settings/appearance",
-	},
-	{
-		key: "devices",
-		group: "settings",
-		icon: "device",
-		labelKey: "settings.devices",
-		to: "/settings/devices",
-	},
-	{
-		key: "providers",
-		group: "settings",
-		icon: "box",
-		labelKey: "settings.providers",
-		to: "/settings/providers",
-	},
-	{
-		key: "runners",
-		group: "settings",
-		icon: "laptop",
-		labelKey: "settings.runners",
-		to: "/settings/runners",
-	},
-	{
-		key: "secrets",
-		group: "settings",
-		icon: "key",
-		labelKey: "settings.secrets",
-		to: "/settings/secrets",
-	},
-	{
-		key: "browser-profiles",
-		group: "settings",
-		icon: "browser",
-		labelKey: "settings.browser-profiles",
-		to: "/settings/browser-profiles",
-	},
-	{
-		key: "git-identity",
-		group: "settings",
-		icon: "fork",
-		labelKey: "settings.git-identity",
-		to: "/settings/git-identity",
-	},
-	{
-		key: "github",
-		group: "settings",
-		icon: "github",
-		labelKey: "settings.github",
-		to: "/settings/github",
-	},
-	{
-		key: "shares",
-		group: "settings",
-		icon: "share",
-		labelKey: "settings.shares",
-		to: "/settings/shares",
-	},
-	{
-		// Artifacts 的页面能力授权（M14 步骤 7.3）
-		key: "artifact-consents",
-		group: "settings",
-		icon: "shapes",
-		labelKey: "settings.artifacts",
-		to: "/settings/artifacts",
-	},
-	{
-		key: "desktop",
-		group: "settings",
-		icon: "monitor",
-		labelKey: "settings.desktop",
-		to: "/settings/desktop",
-		desktopOnly: true,
-	},
-	{
-		key: "about",
-		group: "settings",
-		icon: "info",
-		labelKey: "settings.about",
-		to: "/settings/about",
 	},
 ];

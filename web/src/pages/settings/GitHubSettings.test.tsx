@@ -121,7 +121,7 @@ function Where() {
 	return <span data-testid="where">{loc.pathname + loc.search}</span>;
 }
 
-function renderAt(status: GitHubStatus, path = "/settings/github") {
+function renderAt(status: GitHubStatus, path = "/settings/git") {
 	calls = [];
 	sent = [];
 	vi.stubGlobal(
@@ -161,7 +161,7 @@ function renderAt(status: GitHubStatus, path = "/settings/github") {
 			<MemoryRouter initialEntries={[path]}>
 				<Routes>
 					<Route
-						path="/settings/github"
+						path="/settings/git"
 						element={
 							<>
 								<GitHubSettings />
@@ -259,13 +259,13 @@ describe("GitHubSettings", () => {
 	});
 
 	it("带 ?error=same_account 进入：显示对应错误文案，并清掉 query", async () => {
-		renderAt(CONNECTED, "/settings/github?error=same_account");
+		renderAt(CONNECTED, "/settings/git?error=same_account");
 		expect(
 			await screen.findByText("不能与另一个槽位是同一个账号"),
 		).toBeInTheDocument();
 		await waitFor(() =>
 			expect(screen.getByTestId("where")).toHaveTextContent(
-				/^\/settings\/github$/,
+				/^\/settings\/git$/,
 			),
 		);
 		// 提示在清掉 query 之后仍在
